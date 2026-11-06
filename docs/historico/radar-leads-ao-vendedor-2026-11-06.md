@@ -3,7 +3,7 @@
 > Pacote D da revisão Codex + Fable do Radar (A: defeitos da fila · B: entrada do vendedor · C: mapa e território ·
 > D: este). Migration `20261106181000_radar_leads_ao_vendedor.sql` (**manual**), edge `dispatch-notifications`
 > `v1.2-radar-leads-vendedor` (**deploy**), card e rota no front (**Publish**). Prova PG17
-> `db/test-radar-leads-vendedor.sh`: 39 asserts, 29 sabotagens vermelhas no assert certo, nos dois locales.
+> `db/test-radar-leads-vendedor.sh`: 39 asserts, 31 sabotagens vermelhas no assert certo, nos dois locales.
 > **O cron nasce DESLIGADO e nenhuma vendedora está ligada: ativar é decisão do founder.**
 
 ## A medição que decidiu a ordem (psql-ro + HogQL, 2026-11-06)
@@ -43,8 +43,8 @@ pequeno e reusar a mesma escolha, mas o card só vai ser visto quando alguém ab
 | Peça | O quê |
 | --- | --- |
 | `private.radar_territorio_do_vendedor(p_vendedor, p_top)` | Municípios onde o vendedor tem mais clientes da carteira elegível (endereço padrão, `norm_cidade` + UF). Cada município tem **um dono**, quem tem mais clientes nele (empate: menor uuid). Sem isso as duas farmers receberiam os mesmos leads de Divinópolis. Só disputa quem é vendedor de verdade (employee + farmer/hunter/closer): o master (12.690 clientes) e cargos residuais ficam fora. |
-| `private.radar_leads_do_vendedor(p_vendedor, p_n, p_nao_repetir_desde, p_agora)` | Top-N por score no território (3 municípios). Fora: `ja_cliente`, status ≠ `a_contatar`, **sem score (fica fora, não entra como 0)**, situação RFB 03/04/08, dono temporário ativo de outro vendedor (mesma regra de `radar_atendimentos_ativos`). `elegiveis` = universo, o denominador do e-mail. |
-| `public.radar_avisar_vendedores(p_agora)` + cron `radar-avisar-vendedores-semanal` | Segunda 11:00 UTC (08:00 BRT), **criado com `active = false`**. Para cada vendedor com `radar_email_vendedor_config.ativo`: 1 e-mail por semana com 5 leads, link `https://steu.lovable.app/radar/abrir/<envio>/<cnpj>` por lead, e o porquê ("maior score entre N empresas a contatar nesses municípios; ficam de fora…"). Nenhum lead se repete para o mesmo vendedor em 90 dias. `email_teste` desvia para um destinatário de teste; esse envio não entra no denominador nem queima lead. Pulado (sem acesso, sem e-mail, sem território, sem leads, já enviado) sai com o motivo em `acoes_execucoes` (`radar.avisar_vendedores`). O e-mail sai pelo canal vivo: `fornecedor_alerta` → job 102 (`net.http_post`, `timeout_milliseconds := 60000`, a cada 30 min) → edge. |
+| `private.radar_leads_do_vendedor(p_vendedor, p_n, p_nao_repetir_desde, p_agora)` | Top-N por score no território (3 municípios), **uma empresa por raiz de CNPJ** (a filial de maior score; na prévia em prod o top-5 da Regina trazia a mesma metalúrgica 4 vezes). Fora: `ja_cliente`, status ≠ `a_contatar`, **sem score (fica fora, não entra como 0)**, situação RFB 03/04/08, dono temporário ativo de outro vendedor (mesma regra de `radar_atendimentos_ativos`). `elegiveis` = universo, o denominador do e-mail. |
+| `public.radar_avisar_vendedores(p_agora)` + cron `radar-avisar-vendedores-semanal` | Segunda 11:00 UTC (08:00 BRT), **criado com `active = false`**. Para cada vendedor com `radar_email_vendedor_config.ativo`: 1 e-mail por semana com 5 leads, link `https://steu.lovable.app/radar/abrir/<envio>/<cnpj>` por lead, e o porquê ("maior score entre N empresas a contatar nesses municípios; ficam de fora…"). Nenhuma empresa (raiz de CNPJ) se repete para o mesmo vendedor em 90 dias. `email_teste` desvia para um destinatário de teste; esse envio não entra no denominador nem queima lead. Pulado (sem acesso, sem e-mail, sem território, sem leads, já enviado) sai com o motivo em `acoes_execucoes` (`radar.avisar_vendedores`). O e-mail sai pelo canal vivo: `fornecedor_alerta` → job 102 (`net.http_post`, `timeout_milliseconds := 60000`, a cada 30 min) → edge. |
 | Edge `dispatch-notifications` v1.2 (`destinatario.ts`) | Alerta com linha em `radar_email_vendedor_envios` vai para o **vendedor** daquele envio, com corpo próprio e links clicáveis; o resto segue no `NOTIFICATION_EMAIL_TO`. O destinatário vem da tabela fechada ao JWT, nunca de coluna livre de `fornecedor_alerta` (staff escreve nela; seria um relay). Tabela ausente (edge antes da migration) não derruba os avisos do gestor; qualquer outra falha de leitura aborta antes do token. |
 | `public.radar_prospectar_hoje(p_vendedor, p_n)` + card `ProspectarHojeCard` | Leitura **pura** (`STABLE`, na allowlist de leitura da lente) de 3 leads e do território. No painel `/farmer`, logo abaixo do SLA: nome, município, score e motivos, **Assumir** (dono temporário, `radar_definir_atendimento`) e **Abrir ficha** (`/radar?cnpj=`). Erro de leitura ≠ "sem leads" ≠ "sem território". Lente: lê a persona (o servidor exige gestor), Assumir desligado, nada gravado. |
 | Sensor no ledger | `radar_email_vendedor_envios` (denominador do D1), `radar_lead_aberturas` (numerador: aberturas pelo link do e-mail ou pelo card, 1 por origem/cnpj/usuário/dia, com `do_destinatario`), `radar_prospectar_hoje_servido` (denominador do D2: dias em que o card mostrou ≥ 1 lead, gravado por `radar_registrar_card_servido`, bloqueada na lente). Todas com RLS, sem policy, REVOKE de PUBLIC/anon/authenticated. |
@@ -57,6 +57,14 @@ pequeno e reusar a mesma escolha, mas o card só vai ser visto quando alguém ab
 - **Deep link e "Meus atendimentos"**: pacote B (B5). Este pacote só **usa** o formato `/radar?cnpj=`.
 - **Amostra de controle 1/10**: o e-mail empurra os de maior score, que ficam no grupo "topo" da coorte. A comparação
   topo × amostra passa a medir também o efeito do empurrão; registrado aqui para quem ler o placar da coorte.
+
+## Desempenho medido em prod
+
+A 1ª forma do território passava de 30 s no `psql-ro`: o cast `::text` nas colunas enum fazia o planejador estimar 1
+linha de carteira (são 2.842) e casar endereço × município num laço aninhado (8 milhões de linhas descartadas). Com a
+comparação direta no enum e o dono carregado junto do endereço, a mesma consulta executa em ~100 ms, e o top-5 com
+filtros em 63 ms (`EXPLAIN ANALYZE`). Prévia do 1º e-mail da Regina: 5 de **977** empresas elegíveis em Divinópolis,
+Nova Serrana e Cláudio, scores 94 a 86.
 
 ## Quando medir (query, não recado)
 

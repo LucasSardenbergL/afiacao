@@ -214,7 +214,7 @@ AS $fn$
   ),
   universo AS (
     SELECT re.cnpj, re.razao_social, re.nome_fantasia, re.municipio_codigo, re.municipio_nome, re.uf,
-           re.score, re.score_motivos, t.clientes
+           re.score, re.score_motivos, t.clientes, left(re.cnpj, 8) AS raiz
       FROM terr t
       JOIN public.radar_empresas re ON re.municipio_codigo = t.municipio_codigo
      WHERE re.ja_cliente = false
@@ -231,15 +231,21 @@ AS $fn$
        AND (p_nao_repetir_desde IS NULL OR NOT EXISTS (
              SELECT 1 FROM public.radar_email_vendedor_leads l
                JOIN public.radar_email_vendedor_envios e ON e.id = l.envio_id
-              WHERE l.cnpj = re.cnpj
+              WHERE left(l.cnpj, 8) = left(re.cnpj, 8)
                 AND e.vendedor_user_id = p_vendedor
                 AND e.eh_teste = false
                 AND e.criado_em >= p_nao_repetir_desde))
+  ),
+  -- Uma empresa por raiz de CNPJ (a filial de maior score): em prod o top-5 da Regina trazia a mesma metalúrgica 4 vezes.
+  por_raiz AS (
+    SELECT DISTINCT ON (u.raiz) u.*
+      FROM universo u
+     ORDER BY u.raiz, u.score DESC, u.clientes DESC, u.cnpj
   )
   SELECT (row_number() OVER (ORDER BY u.score DESC, u.clientes DESC, u.cnpj))::integer,
          u.cnpj, u.razao_social, u.nome_fantasia, u.municipio_codigo, u.municipio_nome, u.uf,
          u.score, u.score_motivos, (count(*) OVER ())::integer
-    FROM universo u
+    FROM por_raiz u
    ORDER BY u.score DESC, u.clientes DESC, u.cnpj
    LIMIT GREATEST(1, LEAST(COALESCE(p_n, 5), 5));
 $fn$;

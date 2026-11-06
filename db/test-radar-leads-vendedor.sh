@@ -21,7 +21,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261106181000_radar_leads_ao_vendedor.sql"
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!A3_FALHOU` = a postcondição da migration aborta o apply com a
   # marca exata (`_` vira espaço; grep -F). `_sem_post` cega a postcondição para provar que a suíte pega sozinha.
-  SABOTAGENS="sem_ja_cliente:A3 status_qualquer:A3 score_nulo:A3 rfb_baixada:A3 atendimento_ignorado:A3 atendimento_nao_expira:A3 dono_proprio_bloqueia:A3 dono_sem_acesso_bloqueia:A3 territorio_disputado:A2 carteira_inelegivel:A1 vendedor_sem_employee:A2 endereco_nao_default:A1 repete_lead:A13a teste_queima_lead:A13b sem_dedupe_semana:A12 teste_conta:A10b sem_ledger:A10d ledger_sujo:A9 gate_cap:A6b gestor_livre:A6c servido_duplica:A6f servido_sem_faixa:A6g link_sem_validar:A14d acl_aberta:POST!A3_FALHOU acl_aberta_sem_post:A16 tabela_aberta:POST!A2_FALHOU tabela_aberta_sem_post:A17 cron_ligado:A8a cron_religa:A18"
+  SABOTAGENS="sem_ja_cliente:A3 status_qualquer:A3 score_nulo:A3 rfb_baixada:A3 atendimento_ignorado:A3 atendimento_nao_expira:A3 dono_proprio_bloqueia:A3 dono_sem_acesso_bloqueia:A3 territorio_disputado:A2 carteira_inelegivel:A1 vendedor_sem_employee:A2 endereco_nao_default:A1 repete_lead:A13a teste_queima_lead:A13b sem_dedupe_semana:A12 teste_conta:A10b sem_ledger:A10d ledger_sujo:A9 gate_cap:A6b gestor_livre:A6c servido_duplica:A6f servido_sem_faixa:A6g link_sem_validar:A14d acl_aberta:POST!A3_FALHOU acl_aberta_sem_post:A16 tabela_aberta:POST!A2_FALHOU tabela_aberta_sem_post:A17 cron_ligado:A8a cron_religa:A18 sem_dedupe_raiz:A3 repete_filial:A13a"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-leads-vendedor.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -127,6 +127,8 @@ case "${SABOTAGEM:-}" in
   tabela_aberta_sem_post) sabotar "              public.radar_lead_aberturas, public.radar_prospectar_hoje_servido FROM PUBLIC, anon, authenticated;" "              public.radar_lead_aberturas, public.radar_prospectar_hoje_servido FROM anon;"; cegar_post ;;
   cron_ligado)           sabotar "    PERFORM cron.alter_job(job_id := v_job, active := false);" "" ;;
   cron_religa)           sabotar "  IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'radar-avisar-vendedores-semanal') THEN" "  IF true THEN" ;;
+  sem_dedupe_raiz)       sabotar "    SELECT DISTINCT ON (u.raiz) u.*" "    SELECT u.*" ;;
+  repete_filial)         sabotar "WHERE left(l.cnpj, 8) = left(re.cnpj, 8)" "WHERE l.cnpj = re.cnpj" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
@@ -290,32 +292,33 @@ SQL
 # V2: Carmo do Cajuru L20 60 · Itaúna L21 75 · Pará de Minas L22 50 · Belo Horizonte (4º, fora) L23 99
 P -q <<'SQL'
 INSERT INTO public.radar_empresas (cnpj, razao_social, nome_fantasia, municipio_codigo, municipio_nome, uf, ja_cliente, prospeccao_status, rfb_situacao, score, score_motivos) VALUES
-  ('00000000000101','Lead Um Ltda','Marcenaria Um','3122306','Divinopolis','MG',false,'a_contatar',NULL,95,ARRAY['CNAE 3101','porte EPP','extra']),
-  ('00000000000102','Lead Dois','','3122306','Divinopolis','MG',true,'a_contatar',NULL,99,NULL),
-  ('00000000000103','Lead Tres',NULL,'3122306','Divinopolis','MG',false,'descartado',NULL,99,NULL),
-  ('00000000000104','Lead Quatro',NULL,'3122306','Divinopolis','MG',false,'em_conversa',NULL,99,NULL),
-  ('00000000000105','Lead Cinco',NULL,'3122306','Divinopolis','MG',false,'a_contatar',NULL,NULL,NULL),
-  ('00000000000106','Lead Seis',NULL,'3122306','Divinopolis','MG',false,'a_contatar','08',99,NULL),
-  ('00000000000107','Lead Sete',NULL,'3122306','Divinopolis','MG',false,'a_contatar','02',98,NULL),
-  ('00000000000108','Lead Oito',NULL,'3122306','Divinopolis','MG',false,'a_contatar',NULL,94,NULL),
-  ('00000000000109','Lead Nove',NULL,'3122306','Divinopolis','MG',false,'a_contatar',NULL,93,NULL),
-  ('00000000000110','Lead Dez',NULL,'3122306','Divinopolis','MG',false,'a_contatar',NULL,92,NULL),
-  ('00000000000111','Lead Onze',NULL,'3145208','Nova Serrana','MG',false,'a_contatar',NULL,91,NULL),
-  ('00000000000112','Lead Doze',NULL,'3145208','Nova Serrana','MG',false,'a_contatar',NULL,80,NULL),
-  ('00000000000113','Lead Treze',NULL,'3116907','Claudio','MG',false,'a_contatar',NULL,85,NULL),
-  ('00000000000114','Lead Catorze',NULL,'3116907','Claudio','MG',false,'a_contatar',NULL,70,NULL),
-  ('00000000000115','Lead Quinze',NULL,'3126109','Formiga','MG',false,'a_contatar',NULL,100,NULL),
-  ('00000000000120','Lead Vinte',NULL,'3114402','Carmo do Cajuru','MG',false,'a_contatar',NULL,60,NULL),
-  ('00000000000121','Lead Vinte e Um',NULL,'3133808','Itauna','MG',false,'a_contatar',NULL,75,NULL),
-  ('00000000000122','Lead Vinte e Dois',NULL,'3147105','Para de Minas','MG',false,'a_contatar',NULL,50,NULL),
-  ('00000000000123','Lead Vinte e Tres',NULL,'3106200','Belo Horizonte','MG',false,'a_contatar',NULL,99,NULL);
+  ('10100000000001','Lead Um Ltda','Marcenaria Um','3122306','Divinopolis','MG',false,'a_contatar',NULL,95,ARRAY['CNAE 3101','porte EPP','extra']),
+  ('10100000000102','Lead Um Filial','Marcenaria Um Filial','3122306','Divinopolis','MG',false,'a_contatar',NULL,94,NULL),
+  ('10200000000001','Lead Dois','','3122306','Divinopolis','MG',true,'a_contatar',NULL,99,NULL),
+  ('10300000000001','Lead Tres',NULL,'3122306','Divinopolis','MG',false,'descartado',NULL,99,NULL),
+  ('10400000000001','Lead Quatro',NULL,'3122306','Divinopolis','MG',false,'em_conversa',NULL,99,NULL),
+  ('10500000000001','Lead Cinco',NULL,'3122306','Divinopolis','MG',false,'a_contatar',NULL,NULL,NULL),
+  ('10600000000001','Lead Seis',NULL,'3122306','Divinopolis','MG',false,'a_contatar','08',99,NULL),
+  ('10700000000001','Lead Sete',NULL,'3122306','Divinopolis','MG',false,'a_contatar','02',98,NULL),
+  ('10800000000001','Lead Oito',NULL,'3122306','Divinopolis','MG',false,'a_contatar',NULL,94,NULL),
+  ('10900000000001','Lead Nove',NULL,'3122306','Divinopolis','MG',false,'a_contatar',NULL,93,NULL),
+  ('11000000000001','Lead Dez',NULL,'3122306','Divinopolis','MG',false,'a_contatar',NULL,92,NULL),
+  ('11100000000001','Lead Onze',NULL,'3145208','Nova Serrana','MG',false,'a_contatar',NULL,91,NULL),
+  ('11200000000001','Lead Doze',NULL,'3145208','Nova Serrana','MG',false,'a_contatar',NULL,80,NULL),
+  ('11300000000001','Lead Treze',NULL,'3116907','Claudio','MG',false,'a_contatar',NULL,85,NULL),
+  ('11400000000001','Lead Catorze',NULL,'3116907','Claudio','MG',false,'a_contatar',NULL,70,NULL),
+  ('11500000000001','Lead Quinze',NULL,'3126109','Formiga','MG',false,'a_contatar',NULL,100,NULL),
+  ('12000000000001','Lead Vinte',NULL,'3114402','Carmo do Cajuru','MG',false,'a_contatar',NULL,60,NULL),
+  ('12100000000001','Lead Vinte e Um',NULL,'3133808','Itauna','MG',false,'a_contatar',NULL,75,NULL),
+  ('12200000000001','Lead Vinte e Dois',NULL,'3147105','Para de Minas','MG',false,'a_contatar',NULL,50,NULL),
+  ('12300000000001','Lead Vinte e Tres',NULL,'3106200','Belo Horizonte','MG',false,'a_contatar',NULL,99,NULL);
 SQL
 P -q -v v1="$V1" -v v2="$V2" -v c="$C" <<'SQL'
 INSERT INTO public.radar_atendimentos (cnpj, dono_user_id, assumido_em) VALUES
-  ('00000000000107', :'v2', now() - interval '1 day'),
-  ('00000000000108', :'v1', now() - interval '1 day'),
-  ('00000000000109', :'v2', now() - interval '30 days'),
-  ('00000000000110', :'c',  now() - interval '1 day');
+  ('10700000000001', :'v2', now() - interval '1 day'),
+  ('10800000000001', :'v1', now() - interval '1 day'),
+  ('10900000000001', :'v2', now() - interval '30 days'),
+  ('11000000000001', :'c',  now() - interval '1 day');
 SQL
 
 APPLY_LOG="$(dirname "$DATA")/apply.log"
@@ -350,11 +353,11 @@ eq "A2 território de V2 = sem Divinópolis (dono é V1, 4 × 2); não-vendedor 
    "3114402:3,3133808:2,3147105:2"
 
 # ── Leads ─────────────────────────────────────────────────────────────────────────────────────────────────
-eq "A3 top-5 de V1 por score: fora ja_cliente/descartado/em_conversa/sem score/RFB 08/dono ativo de outro; elegíveis = 8" \
-   "$(Pq -c "SELECT string_agg(right(cnpj,3), ',' ORDER BY posicao)||'|'||max(elegiveis) FROM private.radar_leads_do_vendedor('$V1', 5, NULL, now())")" \
+eq "A3 top-5 de V1 por score, 1 por raiz de CNPJ (a filial 94 do 101 sai do top e do denominador): fora ja_cliente/descartado/em_conversa/sem score/RFB 08/dono ativo de outro; elegíveis = 8" \
+   "$(Pq -c "SELECT string_agg(left(cnpj,3), ',' ORDER BY posicao)||'|'||max(elegiveis) FROM private.radar_leads_do_vendedor('$V1', 5, NULL, now())")" \
    "101,108,109,110,111|8"
 eq "A4 top de V2 (3 elegíveis no território, Belo Horizonte é o 4º município e fica fora)" \
-   "$(Pq -c "SELECT string_agg(right(cnpj,3), ',' ORDER BY posicao)||'|'||max(elegiveis) FROM private.radar_leads_do_vendedor('$V2', 5, NULL, now())")" \
+   "$(Pq -c "SELECT string_agg(left(cnpj,3), ',' ORDER BY posicao)||'|'||max(elegiveis) FROM private.radar_leads_do_vendedor('$V2', 5, NULL, now())")" \
    "121,120,122|3"
 eq "A5 p_n é limitado a 5 e a posição é 1..n" \
    "$(Pq -c "SELECT count(*)||':'||min(posicao)||'-'||max(posicao) FROM private.radar_leads_do_vendedor('$V1', 50, NULL, now())")" \
@@ -368,7 +371,7 @@ prefixo "A6b customer com cargo residual: 42501 forbidden: radar_prospectar" \
 prefixo "A6c vendedor não lê os leads de OUTRO vendedor: 42501" \
    "$(erro_como authenticated "$V1" "SELECT public.radar_prospectar_hoje('$V2')")" "42501 forbidden: leads de outro vendedor exigem gestor"
 eq "A6d o próprio vendedor recebe 3 leads e o território" \
-   "$(como authenticated "$V1" "SELECT (SELECT string_agg(right(l->>'cnpj',3), ',' ORDER BY (l->>'posicao')::int) FROM jsonb_array_elements(x->'leads') l)||'|'||jsonb_array_length(x->'territorio') FROM public.radar_prospectar_hoje() x" | tail -1)" \
+   "$(como authenticated "$V1" "SELECT (SELECT string_agg(left(l->>'cnpj',3), ',' ORDER BY (l->>'posicao')::int) FROM jsonb_array_elements(x->'leads') l)||'|'||jsonb_array_length(x->'territorio') FROM public.radar_prospectar_hoje() x" | tail -1)" \
    "101,108,109|3"
 eq "A6e leitura é PURA (cabe na allowlist da lente): nem o vendedor nem o gestor gravam 'servido' ao ler" \
    "$(como authenticated "$G" "SELECT jsonb_array_length(x->'leads') FROM public.radar_prospectar_hoje('$V2') x" | tail -1)|$(Pq -c "SELECT count(*) FROM public.radar_prospectar_hoje_servido")|$(Pq -c "SELECT provolatile FROM pg_proc WHERE oid = 'public.radar_prospectar_hoje(uuid,integer)'::regprocedure")" \
@@ -404,14 +407,14 @@ eq "A10b envio com destinatário de teste é marcado teste (fora do denominador)
    "$(Pq -c "SELECT string_agg(right(vendedor_user_id::text,1)||':'||eh_teste, ',' ORDER BY vendedor_user_id) FROM public.radar_email_vendedor_envios")" \
    "1:false,2:true"
 eq "A10c cada envio tem 1 alerta pendente para o dispatch e os leads gravados na ordem" \
-   "$(Pq -c "SELECT (SELECT count(*) FROM public.fornecedor_alerta WHERE status = 'pendente_notificacao' AND tipo = 'outro')||'|'||(SELECT string_agg(right(l.cnpj,3), ',' ORDER BY l.posicao) FROM public.radar_email_vendedor_leads l JOIN public.radar_email_vendedor_envios e ON e.id = l.envio_id WHERE e.vendedor_user_id = '$V1')")" \
+   "$(Pq -c "SELECT (SELECT count(*) FROM public.fornecedor_alerta WHERE status = 'pendente_notificacao' AND tipo = 'outro')||'|'||(SELECT string_agg(left(l.cnpj,3), ',' ORDER BY l.posicao) FROM public.radar_email_vendedor_leads l JOIN public.radar_email_vendedor_envios e ON e.id = l.envio_id WHERE e.vendedor_user_id = '$V1')")" \
    "2|101,108,109,110,111"
 eq "A10d ledger: 1 linha radar.avisar_vendedores automatica com 2 avisados e 1 pulado" \
    "$(Pq -c "SELECT count(*)||':'||max(jsonb_array_length(detalhes->'avisados'))||':'||max(jsonb_array_length(detalhes->'pulados')) FROM public.acoes_execucoes WHERE acao = 'radar.avisar_vendedores' AND origem = 'automatica' AND status = 'sucesso'")" \
    "1:2:1"
 ENVIO1="$(Pq -c "SELECT id FROM public.radar_email_vendedor_envios WHERE vendedor_user_id = '$V1'")"
 eq "A11 corpo do e-mail: link direto por lead, denominador e regra; título com os municípios" \
-   "$(Pq -c "SELECT (a.mensagem LIKE '%https://steu.lovable.app/radar/abrir/$ENVIO1/00000000000101%')||':'||(a.mensagem LIKE '%entre 8 empresas a contatar%')||':'||(a.mensagem LIKE 'Olá, Regina!%')||':'||(a.titulo = 'Radar: 5 empresas para prospectar esta semana (DIVINÓPOLIS, NOVA SERRANA, CLÁUDIO)')||':'||(a.mensagem LIKE '%[TESTE]%') FROM public.fornecedor_alerta a JOIN public.radar_email_vendedor_envios e ON e.alerta_id = a.id WHERE e.vendedor_user_id = '$V1'")" \
+   "$(Pq -c "SELECT (a.mensagem LIKE '%https://steu.lovable.app/radar/abrir/$ENVIO1/10100000000001%')||':'||(a.mensagem LIKE '%entre 8 empresas a contatar%')||':'||(a.mensagem LIKE 'Olá, Regina!%')||':'||(a.titulo = 'Radar: 5 empresas para prospectar esta semana (DIVINÓPOLIS, NOVA SERRANA, CLÁUDIO)')||':'||(a.mensagem LIKE '%[TESTE]%') FROM public.fornecedor_alerta a JOIN public.radar_email_vendedor_envios e ON e.alerta_id = a.id WHERE e.vendedor_user_id = '$V1'")" \
    "true:true:true:true:false"
 
 R2="$(Pq -c "SELECT public.radar_avisar_vendedores('2026-11-12 11:00+00')" 2>&1 || true)"
@@ -421,33 +424,33 @@ eq "A12 mesma semana (quinta): nenhum e-mail novo, V1 e V2 pulados por já envia
 
 Pq -c "SELECT public.radar_avisar_vendedores('2026-11-16 11:00+00')" >/dev/null
 eq "A13a semana seguinte: V1 não recebe de novo os 5 da semana anterior; o 107 volta porque a posse de V2 expirou no relógio de p_agora" \
-   "$(Pq -c "SELECT string_agg(right(l.cnpj,3), ',' ORDER BY l.posicao)||'|'||max(e.elegiveis) FROM public.radar_email_vendedor_leads l JOIN public.radar_email_vendedor_envios e ON e.id = l.envio_id WHERE e.vendedor_user_id = '$V1' AND e.semana = '2026-11-16'")" \
+   "$(Pq -c "SELECT string_agg(left(l.cnpj,3), ',' ORDER BY l.posicao)||'|'||max(e.elegiveis) FROM public.radar_email_vendedor_leads l JOIN public.radar_email_vendedor_envios e ON e.id = l.envio_id WHERE e.vendedor_user_id = '$V1' AND e.semana = '2026-11-16'")" \
    "107,113,112,114|4"
 eq "A13b envio de TESTE não queima lead: V2 recebe os mesmos 3 de novo" \
-   "$(Pq -c "SELECT string_agg(right(l.cnpj,3), ',' ORDER BY l.posicao) FROM public.radar_email_vendedor_leads l JOIN public.radar_email_vendedor_envios e ON e.id = l.envio_id WHERE e.vendedor_user_id = '$V2' AND e.semana = '2026-11-16'")" \
+   "$(Pq -c "SELECT string_agg(left(l.cnpj,3), ',' ORDER BY l.posicao) FROM public.radar_email_vendedor_leads l JOIN public.radar_email_vendedor_envios e ON e.id = l.envio_id WHERE e.vendedor_user_id = '$V2' AND e.semana = '2026-11-16'")" \
    "121,120,122"
 
 # ── Sensor de abertura ────────────────────────────────────────────────────────────────────────────────────
 eq "A14a V1 abre o lead do PRÓPRIO e-mail: registrado e do destinatário" \
-   "$(como authenticated "$V1" "SELECT public.radar_registrar_abertura_empurrada('email', '00000000000101', '$ENVIO1')" | tail -1)" \
+   "$(como authenticated "$V1" "SELECT public.radar_registrar_abertura_empurrada('email', '10100000000001', '$ENVIO1')" | tail -1)" \
    '{"ok": true, "registrado": true, "do_destinatario": true}'
 eq "A14b 2ª abertura no mesmo dia não infla" \
-   "$(como authenticated "$V1" "SELECT public.radar_registrar_abertura_empurrada('email', '00000000000101', '$ENVIO1')" | tail -1)" \
+   "$(como authenticated "$V1" "SELECT public.radar_registrar_abertura_empurrada('email', '10100000000001', '$ENVIO1')" | tail -1)" \
    '{"ok": true, "registrado": false, "do_destinatario": true}'
 eq "A14c gestor abrindo o link de V1 fica registrado como NÃO destinatário" \
-   "$(como authenticated "$G" "SELECT public.radar_registrar_abertura_empurrada('email', '00000000000101', '$ENVIO1')" | tail -1)" \
+   "$(como authenticated "$G" "SELECT public.radar_registrar_abertura_empurrada('email', '10100000000001', '$ENVIO1')" | tail -1)" \
    '{"ok": true, "registrado": true, "do_destinatario": false}'
 eq "A14d cnpj que não estava no envio: link desconhecido, nada gravado" \
-   "$(como authenticated "$V1" "SELECT public.radar_registrar_abertura_empurrada('email', '00000000000115', '$ENVIO1')" | tail -1)|$(Pq -c "SELECT count(*) FROM public.radar_lead_aberturas")" \
+   "$(como authenticated "$V1" "SELECT public.radar_registrar_abertura_empurrada('email', '11500000000001', '$ENVIO1')" | tail -1)|$(Pq -c "SELECT count(*) FROM public.radar_lead_aberturas")" \
    '{"ok": false, "motivo": "link_desconhecido"}|2'
 prefixo "A14e origem fora da lista: 22023" \
-   "$(erro_como authenticated "$V1" "SELECT public.radar_registrar_abertura_empurrada('whatsapp', '00000000000101')")" "22023 origem invalida"
+   "$(erro_como authenticated "$V1" "SELECT public.radar_registrar_abertura_empurrada('whatsapp', '10100000000001')")" "22023 origem invalida"
 prefixo "A14f card com envio: 22023" \
-   "$(erro_como authenticated "$V1" "SELECT public.radar_registrar_abertura_empurrada('card', '00000000000101', '$ENVIO1')")" "22023 envio obrigatorio so na origem email"
+   "$(erro_como authenticated "$V1" "SELECT public.radar_registrar_abertura_empurrada('card', '10100000000001', '$ENVIO1')")" "22023 envio obrigatorio so na origem email"
 prefixo "A14g customer com cargo residual não registra: 42501" \
-   "$(erro_como authenticated "$C" "SELECT public.radar_registrar_abertura_empurrada('card', '00000000000101')")" "42501 forbidden: radar_prospectar"
+   "$(erro_como authenticated "$C" "SELECT public.radar_registrar_abertura_empurrada('card', '10100000000001')")" "42501 forbidden: radar_prospectar"
 prefixo "A14h anon não executa (ACL)" \
-   "$(erro_como anon '' "SELECT public.radar_registrar_abertura_empurrada('card', '00000000000101')")" "42501 permission denied for function radar_registrar_abertura_empurrada"
+   "$(erro_como anon '' "SELECT public.radar_registrar_abertura_empurrada('card', '10100000000001')")" "42501 permission denied for function radar_registrar_abertura_empurrada"
 eq "A15 placar do sensor (query do doc): aberturas do destinatário / e-mails reais notificados" \
    "$(Pq -c "UPDATE public.fornecedor_alerta SET status = 'notificado'; SELECT count(DISTINCT ab.envio_id) FILTER (WHERE ab.do_destinatario)||' de '||count(DISTINCT e.id) FROM public.radar_email_vendedor_envios e JOIN public.fornecedor_alerta a ON a.id = e.alerta_id AND a.status = 'notificado' LEFT JOIN public.radar_lead_aberturas ab ON ab.envio_id = e.id WHERE NOT e.eh_teste" | tail -1)" \
    "1 de 2"

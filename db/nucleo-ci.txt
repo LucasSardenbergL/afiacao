@@ -973,7 +973,7 @@ db/test-radar-possiveis-vinculos.sh        19  falsificar=12
 db/test-radar-vinculos-em-lote.sh          23  falsificar=14
 
 # Radar pacote D — levar o lead ao vendedor (migration 20261106181000): território por carteira elegível com 1 dono por
-# município, top-N sem já-cliente/descartado/sem score/RFB baixada/dono ativo de outro, e-mail semanal com dedupe por
+# município, top-N 1 por raiz de CNPJ sem já-cliente/descartado/sem score/RFB baixada/dono ativo de outro, e-mail com dedupe por
 # semana e sem repetir lead (teste não queima), cron nascido desligado, RPCs do card e do sensor com SQLSTATE, tabelas
 # fechadas ao JWT e ACL nas duas pontas.
-db/test-radar-leads-vendedor.sh            39  falsificar=29
+db/test-radar-leads-vendedor.sh            39  falsificar=31
