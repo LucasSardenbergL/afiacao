@@ -13,6 +13,13 @@
 -- check-in lançado retroativo, o delta comparava descontos de check-ins diferentes. Agora os dois lados
 -- usam o checkin_id da v_des_checkin_atual. Na prod não há check-in cadastrado ainda.
 --
+-- Ambiguidade e lacunas que mudariam dinheiro (2ª opinião Codex) também recusam: prazo escolhido ou padrão
+-- INATIVO; mais de um prazo padrão ativo; mais de um frete ativo; check-in gravado que a v_des_checkin_atual
+-- não mostra; critério atingido sem percentual cadastrado para a faixa ('DES sem configuracao de desconto').
+-- E a v_des_checkin_atual ganha o desempate único (id DESC) no DISTINCT ON: com data e criação empatadas,
+-- o vigente era arbitrário. Medido na prod: 1 padrão ativo, 1 frete ativo, 54/54 percentuais (9 critérios ×
+-- 6 faixas) — nada disso dispara hoje.
+--
 -- Mesma assinatura, defaults, retorno, search_path, SECURITY INVOKER e STABLE; CREATE OR REPLACE preserva
 -- dono e ACL (a PÓS confere tudo contra o lido na PRE). Molde TRAVA → PRE → CREATE → PÓS. Sem BEGIN/COMMIT:
 -- aplica por `bun run db:aplicar`. Pelo SQL Editor/MCP, envolver em BEGIN; … COMMIT;.
@@ -27,18 +34,26 @@ BEGIN
     RAISE EXCEPTION 'TRAVA: public.simular_puxar_volume_trimestre ausente — esta migration recria a função, não a cria';
   END IF;
   ALTER FUNCTION public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer) COST 100;
+  -- A view do check-in vigente, que este arquivo também recria: o valor VIVO (on) prende a view até o COMMIT.
+  IF to_regclass('public.v_des_checkin_atual') IS NULL THEN
+    RAISE EXCEPTION 'TRAVA: public.v_des_checkin_atual ausente — esta migration recria a view, não a cria';
+  END IF;
+  ALTER VIEW public.v_des_checkin_atual SET (security_invoker = on);
 END
 $trava$;
 
--- PRE: o corpo vivo é o da prod de 2026-11-05 (md5 do prosrc via psql-ro) ou já é este, e segue INVOKER,
+-- PRE: o corpo vivo é o da prod de 2026-11-06 (md5 do prosrc via psql-ro) ou já é este, e segue INVOKER,
 -- STABLE, com o search_path da prod. Guarda ACL/config/dono/assinatura para a PÓS (GUC local à transação).
 DO $pre$
 DECLARE
   p record;
 BEGIN
   SELECT * INTO p FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)');
-  IF p.oid IS NULL OR md5(p.prosrc) NOT IN ('fea04a3887c8d0ac809e5588f5b6ee97', '60173be9c4a2e773ee60e84d39d661d7') THEN
-    RAISE EXCEPTION 'PRE FALHOU: simular_puxar_volume_trimestre viva (md5 %) não é a da prod de 2026-11-05 nem esta — outra sessão mudou a função; confira antes de recriar', md5(p.prosrc);
+  IF p.oid IS NULL OR md5(p.prosrc) NOT IN ('fea04a3887c8d0ac809e5588f5b6ee97', '946b934b92c1676570260462b74aa935') THEN
+    RAISE EXCEPTION 'PRE FALHOU: simular_puxar_volume_trimestre viva (md5 %) não é a da prod de 2026-11-06 nem esta — outra sessão mudou a função; confira antes de recriar', md5(p.prosrc);
+  END IF;
+  IF (SELECT md5(pg_catalog.pg_get_viewdef('public.v_des_checkin_atual'::regclass, true))) NOT IN ('cd1c2b4f0b815e35c0ae5540f54443e5', 'cfe9a0e161ceaff70cf710fbc6dbd17d') THEN
+    RAISE EXCEPTION 'PRE FALHOU: v_des_checkin_atual viva (md5 %) não é a da prod de 2026-11-06 nem esta', (SELECT md5(pg_catalog.pg_get_viewdef('public.v_des_checkin_atual'::regclass, true)));
   END IF;
   IF p.prosecdef OR p.provolatile <> 's' OR p.proconfig::text IS DISTINCT FROM '{"search_path=public, pg_temp"}' THEN
     RAISE EXCEPTION 'PRE FALHOU: atributos da função mudaram (secdef %, volatilidade %, config %)', p.prosecdef, p.provolatile, p.proconfig;
@@ -106,17 +121,25 @@ BEGIN
   FROM fornecedor_prazo_pagamento_config
   WHERE empresa = p_empresa 
     AND fornecedor_nome = 'RENNER SAYERLACK S/A'
-    AND codigo = p_prazo_pagamento_codigo;
+    AND codigo = p_prazo_pagamento_codigo
+    AND ativo = true;
   IF NOT FOUND THEN
-    RAISE EXCEPTION 'DES sem configuracao de custo: % sem o prazo de pagamento % cadastrado', p_empresa, p_prazo_pagamento_codigo;
+    RAISE EXCEPTION 'DES sem configuracao de custo: % sem o prazo de pagamento % cadastrado e ativo', p_empresa, p_prazo_pagamento_codigo;
   END IF;
   
-  -- Prazo padrão (antecipado default). Sem ele, a perda do antecipado saía 0 (inventada).
+  -- Prazo padrão (antecipado default). Sem ele, a perda do antecipado saía 0 (inventada); com dois, um
+  -- arbitrário decidia a perda — recusa a ambiguidade.
+  IF (SELECT count(*) FROM fornecedor_prazo_pagamento_config
+       WHERE empresa = p_empresa AND fornecedor_nome = 'RENNER SAYERLACK S/A'
+         AND padrao = true AND ativo = true) > 1 THEN
+    RAISE EXCEPTION 'DES sem configuracao de custo: % com mais de um prazo de pagamento padrão ativo', p_empresa;
+  END IF;
   SELECT * INTO v_prazo_atual
   FROM fornecedor_prazo_pagamento_config
   WHERE empresa = p_empresa 
     AND fornecedor_nome = 'RENNER SAYERLACK S/A'
-    AND padrao = true;
+    AND padrao = true
+    AND ativo = true;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'DES sem configuracao de custo: % sem prazo de pagamento padrão cadastrado', p_empresa;
   END IF;
@@ -159,6 +182,21 @@ BEGIN
   -- novo de um check-in com o atual de outro.
   v_checkin_id := (SELECT checkin_id FROM v_des_checkin_atual
                    WHERE empresa = p_empresa AND ano = v_ano AND trimestre = v_trimestre LIMIT 1);
+  -- View vazia não prova "sem check-in": com check-in gravado e a view sem ele (contrato/critérios
+  -- ausentes), os qualitativos virariam 0 inventado.
+  IF v_checkin_id IS NULL AND EXISTS (SELECT 1 FROM des_checkin_qualitativo
+       WHERE empresa = p_empresa AND ano = v_ano AND trimestre = v_trimestre) THEN
+    RAISE EXCEPTION 'DES sem configuracao de desconto: o check-in de % T%/% não aparece na v_des_checkin_atual (contrato ou critérios ausentes)', p_empresa, v_trimestre, v_ano;
+  END IF;
+  -- Critério atingido sem percentual cadastrado para a faixa sumiria da soma (0 inventado): recusa.
+  IF v_checkin_id IS NOT NULL AND EXISTS (
+       SELECT 1 FROM des_checkin_qualitativo_resposta qr
+        CROSS JOIN (VALUES (v_faixa_atual.faixa_id), (v_faixa_nova.faixa_id)) f(faixa_id)
+        WHERE qr.checkin_id = v_checkin_id AND qr.atingido AND f.faixa_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM des_criterio_percentual cp
+                           WHERE cp.criterio_id = qr.criterio_id AND cp.faixa_id = f.faixa_id)) THEN
+    RAISE EXCEPTION 'DES sem configuracao de desconto: critério atingido no check-in % sem percentual cadastrado para a faixa', v_checkin_id;
+  END IF;
   IF v_faixa_nova.faixa_id IS NOT NULL THEN
     v_desc_novo_total := v_faixa_nova.desconto_padrao_perc +
       COALESCE((
@@ -214,7 +252,13 @@ BEGIN
     v_encargo_prazo := p_valor_extra * (ABS(v_prazo_novo.desconto_ou_encargo_perc) / 100.0);
   END IF;
   
-  -- 3. Frete adicional sobre o valor extra. Sem frete ativo cadastrado, recusa (antes: 2,5% inventado).
+  -- 3. Frete adicional sobre o valor extra. Sem frete ativo cadastrado, recusa (antes: 2,5% inventado);
+  -- com dois ativos, um arbitrário decidiria o custo — recusa a ambiguidade.
+  IF (SELECT count(*) FROM fornecedor_custo_adicional_config
+       WHERE empresa = p_empresa AND fornecedor_nome = 'RENNER SAYERLACK S/A'
+         AND tipo = 'frete_perc_valor' AND ativo = true) > 1 THEN
+    RAISE EXCEPTION 'DES sem configuracao de custo: % com mais de um frete ativo (frete_perc_valor)', p_empresa;
+  END IF;
   v_frete_perc :=
     (SELECT valor FROM fornecedor_custo_adicional_config 
      WHERE empresa = p_empresa 
@@ -289,6 +333,42 @@ BEGIN
 END;
 $function$;
 
+CREATE OR REPLACE VIEW public.v_des_checkin_atual
+WITH (security_invoker = on)
+AS
+ WITH checkin_mais_recente AS (
+         SELECT DISTINCT ON (des_checkin_qualitativo.empresa, des_checkin_qualitativo.ano, des_checkin_qualitativo.trimestre) des_checkin_qualitativo.id,
+            des_checkin_qualitativo.empresa,
+            des_checkin_qualitativo.ano,
+            des_checkin_qualitativo.trimestre,
+            des_checkin_qualitativo.data_avaliacao,
+            des_checkin_qualitativo.tipo,
+            des_checkin_qualitativo.avaliado_com,
+            des_checkin_qualitativo.avaliado_por,
+            des_checkin_qualitativo.observacoes_gerais
+           FROM des_checkin_qualitativo
+          ORDER BY des_checkin_qualitativo.empresa, des_checkin_qualitativo.ano, des_checkin_qualitativo.trimestre, des_checkin_qualitativo.data_avaliacao DESC, des_checkin_qualitativo.criado_em DESC, des_checkin_qualitativo.id DESC
+        )
+ SELECT cr.empresa,
+    cr.ano,
+    cr.trimestre,
+    cr.id AS checkin_id,
+    cr.data_avaliacao,
+    cr.tipo,
+    cr.avaliado_com,
+    cr.avaliado_por,
+    cq.codigo,
+    cq.nome,
+    cq.tipo AS criterio_tipo,
+    COALESCE(cr_resp.atingido, false) AS atingido,
+    cr_resp.observacao AS observacao_criterio
+   FROM checkin_mais_recente cr
+     CROSS JOIN des_criterio_qualitativo cq
+     LEFT JOIN des_checkin_qualitativo_resposta cr_resp ON cr_resp.checkin_id = cr.id AND cr_resp.criterio_id = cq.id
+  WHERE cq.contrato_versao_id = (( SELECT des_contrato_versao.id
+           FROM des_contrato_versao
+          WHERE des_contrato_versao.versao = '2026'::text));
+
 -- PÓS: o corpo vivo é ESTE; ACL, config, dono e assinatura iguais aos lidos na PRE; INVOKER e STABLE.
 DO $pos$
 DECLARE
@@ -296,7 +376,7 @@ DECLARE
   v_agora text;
 BEGIN
   SELECT * INTO p FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)');
-  IF md5(p.prosrc) IS DISTINCT FROM '60173be9c4a2e773ee60e84d39d661d7' THEN
+  IF md5(p.prosrc) IS DISTINCT FROM '946b934b92c1676570260462b74aa935' THEN
     RAISE EXCEPTION 'POS1 FALHOU: simular_puxar_volume_trimestre viva (md5 %) não é a desta migration', md5(p.prosrc);
   END IF;
   v_agora := COALESCE(p.proacl::text, 'NULO') || '|' || COALESCE(p.proconfig::text, 'NULO') || '|' ||
@@ -308,6 +388,14 @@ BEGIN
   END IF;
   IF p.prosecdef OR p.provolatile <> 's' THEN
     RAISE EXCEPTION 'POS3 FALHOU: a função deixou de ser SECURITY INVOKER/STABLE';
+  END IF;
+  IF (SELECT md5(pg_catalog.pg_get_viewdef('public.v_des_checkin_atual'::regclass, true))) IS DISTINCT FROM 'cfe9a0e161ceaff70cf710fbc6dbd17d' THEN
+    RAISE EXCEPTION 'POS4 FALHOU: v_des_checkin_atual viva não é a desta migration';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c, unnest(c.reloptions) o
+                  WHERE c.oid = 'public.v_des_checkin_atual'::regclass
+                    AND lower(o) IN ('security_invoker=on', 'security_invoker=true')) THEN
+    RAISE EXCEPTION 'POS5 FALHOU: v_des_checkin_atual sem security_invoker (leria como dono, sem RLS)';
   END IF;
 END
 $pos$;

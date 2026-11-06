@@ -41,10 +41,12 @@ FIX_VIEW_PRED="$REPO_ROOT/db/fixtures/des-posicao-ao-vivo-prod-20261105.sql"
 MIG_VIEW="$REPO_ROOT/supabase/migrations/20261105091216_des_posicao_ao_vivo_sem_faturado_e_nula.sql"
 MIG_CHECKIN="$REPO_ROOT/supabase/migrations/20260929002059_des_desconto_total_maximo_por_faixa.sql"
 MD5_PROD_PRED=fea04a3887c8d0ac809e5588f5b6ee97   # md5(prosrc), psql-ro 2026-11-06 (o corpo do lote 3c)
-MD5_ESTE=60173be9c4a2e773ee60e84d39d661d7
+MD5_ESTE=946b934b92c1676570260462b74aa935
+MD5_VIEW_PROD=cd1c2b4f0b815e35c0ae5540f54443e5   # v_des_checkin_atual, psql-ro 2026-11-06
+MD5_VIEW_ESTE=cfe9a0e161ceaff70cf710fbc6dbd17d
 SIG="public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)"
-# Denominador: P1 B0-B4 · K1 · K2-K7 · P2 A1 · C1-C4 · R1 · V1 · N1 M1 Y1 S3
-TOTAL_ESPERADO=25
+# Denominador: P1 B0-B4 · K1 KV0 · K2-K7 KV1 KV2 · P2 P3 A1 · C1-C7 · D1 D2 · R1 T1 · V1 · N1 M1 Y1 S3
+TOTAL_ESPERADO=35
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODO --falsificar: prova que os asserts têm DENTE.
@@ -59,6 +61,12 @@ TOTAL_ESPERADO=25
 #   volta_capital_20    sem custos volta a usar 20%
 #   volta_max_id        o desconto novo volta a ler o check-in MAX(id)
 #   vizinha_alterada    outro cálculo muda junto (a troca não foi cirúrgica)
+#   tira_ativo          o prazo escolhido INATIVO volta a valer
+#   sem_guarda_dup_padrao / sem_guarda_dup_frete   dois padrões / dois fretes ativos voltam a passar (um arbitrário)
+#   sem_guarda_orfao    check-in gravado e ausente da view volta a virar "sem qualitativos"
+#   sem_guarda_percentual  critério atingido sem percentual volta a sumir da soma
+#   view_sem_desempate  a v_des_checkin_atual volta sem o id DESC (só o md5 o vê: o empate é arbitrário)
+#   sem_pre_view, pos_sem_invoker_view — o envelope da VIEW, 1 camada por vez
 #   sem_trava, sem_pre, pre_sem_atributo, pos_sem_acl, pos_sem_md5, pre_sem_este — o envelope, 1 camada por vez
 #   trava_escreve_atributo  a trava reescreve a volatilidade (STABLE): apaga a deriva que a PRE devia ver
 # ══════════════════════════════════════════════════════════════════════════════
@@ -69,13 +77,21 @@ if [ "${1:-}" = "--falsificar" ]; then
               volta_capital_20:C4:C1,C2,C3,R1,V1,N1,M1,Y1,S3
               volta_max_id:R1:C1,C2,C3,C4,V1,N1,M1,Y1,S3
               vizinha_alterada:V1,R1:C1,C2,C3,C4,N1,M1
-              sem_trava:K1:K2,K3,K4,K5,K6,K7
+              sem_trava:K1,KV0:K2,K3,K4,K5,K6,K7
               sem_pre:K2:K1,K3,K4,K5,K6,K7
               pre_sem_atributo:K3,K7:K1,K2,K4,K5,K6
               pos_sem_acl:K4:K1,K2,K3,K5,K6,K7
               pos_sem_md5:K5:K1,K2,K3,K4,K6,K7
               pre_sem_este:K6:K1,K2,K3,K4,K5,K7
-              trava_escreve_atributo:K7:K1,K2,K3,K4,K5,K6"
+              trava_escreve_atributo:K7:K1,K2,K3,K4,K5,K6
+              tira_ativo:C5:C1,C2,C3,C4,C6,C7,D1,D2,R1,V1
+              sem_guarda_dup_padrao:C6:C1,C2,C3,C4,C5,C7,D1,D2,R1,V1
+              sem_guarda_dup_frete:C7:C1,C2,C3,C4,C5,C6,D1,D2,R1,V1
+              sem_guarda_orfao:D1:C1,C2,C3,C4,C5,C6,C7,D2,R1,V1
+              sem_guarda_percentual:D2:C1,C2,C3,C4,C5,C6,C7,D1,R1,V1
+              view_sem_desempate:P3:P2,C1,R1,V1,D1,D2
+              sem_pre_view:KV1:K1,KV0,K2,K3,K4,K5,K6,K7,KV2
+              pos_sem_invoker_view:KV2:K1,KV0,K2,K3,K4,K5,K6,K7,KV1"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -137,6 +153,8 @@ MODO_MD5=""
 SABOTAGEM="${SABOTAGEM:-}"
 case "$SABOTAGEM" in
   ""|sem_guarda_prazo|sem_guarda_padrao|volta_frete_25|volta_capital_20|volta_max_id|vizinha_alterada) ;;
+  tira_ativo|sem_guarda_dup_padrao|sem_guarda_dup_frete|sem_guarda_orfao|sem_guarda_percentual|view_sem_desempate) ;;
+  sem_pre_view|pos_sem_invoker_view) ;;
   sem_trava|sem_pre|pre_sem_atributo|pos_sem_acl|pos_sem_md5|pre_sem_este|trava_escreve_atributo) ;;
   *) echo "❌ SABOTAGEM desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
@@ -229,7 +247,7 @@ Aplica() {   # <arquivo> <marca da negação> [<preparo, na MESMA transação, a
 # Recortes da migration (e das fixtures) em arquivo. Nos modos mig/parte1 a sabotagem de ENVELOPE
 # ativa corta a camada dela; as trocas <de> <para> <n> têm de ocorrer exatamente n× — uma troca
 # que não pegou deixaria a suíte verde (e o laço, que exige vermelho no assert certo, acusa).
-gerar() {   # <modo: mig|parte1|funcao|pred|viewpred|checkin> <saída> [<de> <para> <n> ...]
+gerar() {   # <modo: mig|parte1|funcao|pred|viewpred|viewnova|checkin> <saída> [<de> <para> <n> ...]
   python3 - "$MIG" "$FIX_PRED" "$FIX_VIEW_PRED" "$MIG_CHECKIN" "$SABOTAGEM" "$@" <<'PYGEN' || { echo "❌ SABOTAGEM NAO APLICAVEL ($SABOTAGEM): gerar $1"; exit 9; }
 import sys
 mig_path, pred_path, vpred_path, chk_path, sab, modo, out = sys.argv[1:8]
@@ -261,6 +279,10 @@ if modo in ("mig", "parte1"):
         s = corta(s, "  IF md5(p.prosrc) IS DISTINCT FROM", "  END IF;\n")
     elif sab == "pos_sem_acl":
         s = corta(s, "  IF v_agora IS DISTINCT FROM", "  END IF;\n")
+    elif sab == "sem_pre_view":
+        s = corta(s, "  IF (SELECT md5(pg_catalog.pg_get_viewdef('public.v_des_checkin_atual'::regclass, true))) NOT IN", "  END IF;\n")
+    elif sab == "pos_sem_invoker_view":
+        s = corta(s, "  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c, unnest(c.reloptions) o", "  END IF;\n")
     elif sab == "trava_escreve_atributo":
         de = "  ALTER FUNCTION public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer) COST 100;"
         if s.count(de) != 1:
@@ -281,6 +303,9 @@ elif modo == "funcao":
     s = mig[i:j]
 elif modo == "pred":
     s = open(pred_path, encoding="utf-8").read().rstrip("\n") + ";"
+elif modo == "viewnova":
+    i, j = trecho(mig, "CREATE OR REPLACE VIEW public.v_des_checkin_atual\n", ";\n")
+    s = mig[i:j]
 elif modo == "viewpred":
     fx = open(vpred_path, encoding="utf-8").read()
     i, j = trecho(fx, "CREATE VIEW public.v_des_posicao_trimestre_ao_vivo\n", ";\n")
@@ -428,6 +453,7 @@ GRANT EXECUTE ON FUNCTION $SIG TO anon, authenticated, service_role;
 SQL
 
 Q_MD5="SELECT md5(prosrc) FROM pg_proc WHERE oid = '$SIG'::regprocedure"
+Q_MD5_VIEW="SELECT md5(pg_get_viewdef('public.v_des_checkin_atual'::regclass, true))"
 Q_ATTR="SELECT COALESCE(p.proacl::text, 'NULO') || '|' || COALESCE(p.proconfig::text, 'NULO') || '|' ||
           pg_get_userbyid(p.proowner) || '|' || p.provolatile::text || '|' || p.prosecdef::text || '|' ||
           pg_get_function_arguments(p.oid) || '|' || pg_get_function_result(p.oid)
@@ -437,6 +463,9 @@ if [ -n "$MODO_MD5" ]; then
   gerar funcao "$TMPD/md5.sql"
   P -q -f "$TMPD/md5.sql"
   echo "MD5_ESTE (md5 do prosrc): $(Exec "$Q_MD5")"
+  gerar viewnova "$TMPD/md5v.sql"
+  P -q -f "$TMPD/md5v.sql"
+  echo "MD5_VIEW_ESTE (md5 do viewdef): $(Exec "$Q_MD5_VIEW")"
   exit 0
 fi
 
@@ -493,6 +522,36 @@ INSERT INTO public.des_checkin_qualitativo (id, empresa, ano, trimestre, data_av
   (9, 'RETRO', 2026, 2, '2026-05-10', 'projecao', '2026-06-02 10:00+00');
 INSERT INTO public.des_checkin_qualitativo_resposta (id, checkin_id, criterio_id, atingido) VALUES
   (1, 2, 101, true), (2, 5, 101, true), (3, 9, 101, false);
+-- EMPATE: 2 check-ins com a MESMA data e a MESMA criação (inseridos na mesma transação): vigente = id 21.
+INSERT INTO public.des_checkin_qualitativo (id, empresa, ano, trimestre, data_avaliacao, tipo, criado_em) VALUES
+  (20, 'EMPATE', 2026, 2, '2026-05-30', 'projecao', '2026-05-30 10:00+00'),
+  (21, 'EMPATE', 2026, 2, '2026-05-30', 'projecao', '2026-05-30 10:00+00');
+INSERT INTO public.des_checkin_qualitativo_resposta (id, checkin_id, criterio_id, atingido) VALUES
+  (20, 20, 101, true), (21, 21, 101, false);
+-- PRAZOINATIVO / DUPPADRAO / DUPFRETE: posição e metas como as demais.
+INSERT INTO public.v_des_snapshot_mais_recente (id, empresa, ano, trimestre, data_referencia, objetivo_valor, fat_bruto_valor, pedidos_abertos_valor) VALUES
+  (20, 'PRAZOINATIVO', 2026, 2, '2026-05-20', 500000, 120000, 0),
+  (21, 'DUPPADRAO',    2026, 2, '2026-05-20', 500000, 120000, 0),
+  (22, 'DUPFRETE',     2026, 2, '2026-05-20', 500000, 120000, 0);
+INSERT INTO public.des_meta_empresa (id, empresa, ano, trimestre, meta_faturamento)
+  SELECT 200 + row_number() OVER (), e, 2026, t, 400840.02
+    FROM unnest(ARRAY['PRAZOINATIVO', 'DUPPADRAO', 'DUPFRETE']) e, unnest(ARRAY[2, 3]) t;
+-- PRAZOINATIVO: o 28_42_56 existe, INATIVO. DUPPADRAO: os 2 prazos são padrão e ativos.
+INSERT INTO public.fornecedor_prazo_pagamento_config (id, empresa, fornecedor_nome, codigo, nome, desconto_ou_encargo_perc, ativo, padrao) VALUES
+  (201, 'PRAZOINATIVO', 'RENNER SAYERLACK S/A', 'antecipado', 'antecipado',  2.00, true,  true),
+  (202, 'PRAZOINATIVO', 'RENNER SAYERLACK S/A', '28_42_56',   '28_42_56',   -2.56, false, false),
+  (203, 'DUPPADRAO',    'RENNER SAYERLACK S/A', 'antecipado', 'antecipado',  2.00, true,  true),
+  (204, 'DUPPADRAO',    'RENNER SAYERLACK S/A', '28_42_56',   '28_42_56',   -2.56, true,  true),
+  (205, 'DUPFRETE',     'RENNER SAYERLACK S/A', 'antecipado', 'antecipado',  2.00, true,  true),
+  (206, 'DUPFRETE',     'RENNER SAYERLACK S/A', '28_42_56',   '28_42_56',   -2.56, true,  false);
+-- DUPFRETE: 2 fretes ativos (2,5% e 5%).
+INSERT INTO public.fornecedor_custo_adicional_config (id, empresa, fornecedor_nome, tipo, valor, ativo) VALUES
+  (201, 'PRAZOINATIVO', 'RENNER SAYERLACK S/A', 'frete_perc_valor', 2.50, true),
+  (202, 'DUPPADRAO',    'RENNER SAYERLACK S/A', 'frete_perc_valor', 2.50, true),
+  (203, 'DUPFRETE',     'RENNER SAYERLACK S/A', 'frete_perc_valor', 2.50, true),
+  (204, 'DUPFRETE',     'RENNER SAYERLACK S/A', 'frete_perc_valor', 5.00, true);
+INSERT INTO public.empresa_configuracao_custos (empresa, selic_anual, spread_oportunidade, armazenagem_fisica)
+  SELECT e, 14.75, 3.00, 8.00 FROM unnest(ARRAY['PRAZOINATIVO', 'DUPPADRAO', 'DUPFRETE']) e;
 -- Prazos: antecipado (padrão) e 28_42_56 — SEMPRAZO só o antecipado; SEMPADRAO tem os 2 sem padrão.
 INSERT INTO public.fornecedor_prazo_pagamento_config (id, empresa, fornecedor_nome, codigo, nome, desconto_ou_encargo_perc, ativo, padrao)
   SELECT row_number() OVER (), e, 'RENNER SAYERLACK S/A', c, c, d, true, CASE WHEN e = 'SEMPADRAO' THEN false ELSE pd END
@@ -533,6 +592,7 @@ SIM_SQL() { printf "SELECT public.simular_puxar_volume_trimestre('%s', %s, %s, %
 MARCA_POS="DES sem posicao confirmada"
 MARCA_META="DES sem meta para projetar"
 MARCA_CFG="DES sem configuracao de custo"
+MARCA_DESC="DES sem configuracao de desconto"
 # As 8 combinações do diferencial (tudo configurado, 1 check-in ou nenhum): empresa|ano|tri|valor|prazo|dias.
 COMBOS="CHEIO|2026|2|0|antecipado|60 CHEIO|2026|2|50000|antecipado|60 CHEIO|2026|2|200000|28_42_56|30
         CHEIO|2026|2|200000|antecipado|90 ZERO|2026|2|50000|antecipado|60 ZERO|2026|2|120000|28_42_56|60
@@ -580,6 +640,8 @@ if [ ! -e "$TMPD/a.pronta" ]; then
 fi
 eq K1 "com A parada após a pré-condição, B não mexe na função" \
   "$(Nega "ALTER FUNCTION $SIG STABLE" 55P03 '' '-c lock_timeout=1500')" NEGOU
+eq KV0 "... e B também não mexe na v_des_checkin_atual" \
+  "$(Nega "ALTER VIEW public.v_des_checkin_atual SET (security_invoker = on)" 55P03 '' '-c lock_timeout=1500')" NEGOU
 printf 'ROLLBACK;\n\\q\n' >&7
 exec 7>&-
 wait "$PID_A" || true
@@ -618,14 +680,23 @@ eq K6 "reaplicar sobre ela mesma passa (a PRÉ aceita este)" \
 printf "ALTER FUNCTION %s VOLATILE;\n" "$SIG" > "$TMPD/k_volatile.sql"
 eq K7 "PRÉ: deriva de volatilidade commitada antes da trava, a migration aborta (a trava não a apaga)" \
   "$(Aplica "$TMPD/k_mig.sql" 'PRE FALHOU' "$TMPD/k_volatile.sql")" NEGOU
+gerar viewnova "$TMPD/kv_terceira.sql" "des_checkin_qualitativo.criado_em DESC, des_checkin_qualitativo.id DESC" "des_checkin_qualitativo.criado_em DESC, des_checkin_qualitativo.id" 1
+gerar mig "$TMPD/kv_sem_with.sql" "CREATE OR REPLACE VIEW public.v_des_checkin_atual
+WITH (security_invoker = on)
+AS" "CREATE OR REPLACE VIEW public.v_des_checkin_atual
+AS" 1
+eq KV1 "PRÉ: a v_des_checkin_atual numa 3ª versão viva (mudança concorrente), a migration aborta" \
+  "$(Aplica "$TMPD/k_mig.sql" 'PRE FALHOU' "$TMPD/kv_terceira.sql")" NEGOU
+eq KV2 "PÓS: a view recriada SEM o WITH (leria como dono, sem RLS) aborta" \
+  "$(Aplica "$TMPD/kv_sem_with.sql" 'POS5 FALHOU' "$TMPD/k_pred.sql")" NEGOU
 
 # ── SABOTAGEM da função (só no modo --falsificar) — no BANCO, recriando a função instalada com o trecho
 # trocado; o repo nunca é tocado. As de envelope já entraram pelo `gerar` (K1-K6).
 sabotar() { gerar funcao "$TMPD/sab.sql" "$@"; P -q -f "$TMPD/sab.sql"; }
 NL=$'\n'
 case "$SABOTAGEM" in
-  sem_guarda_prazo)  sabotar "    RAISE EXCEPTION 'DES sem configuracao de custo: % sem o prazo de pagamento % cadastrado'" \
-                             "    NULL; -- 'DES sem configuracao de custo: % sem o prazo de pagamento % cadastrado'" 1 \
+  sem_guarda_prazo)  sabotar "    RAISE EXCEPTION 'DES sem configuracao de custo: % sem o prazo de pagamento % cadastrado e ativo'" \
+                             "    NULL; -- 'DES sem configuracao de custo: % sem o prazo de pagamento % cadastrado e ativo'" 1 \
                              ", p_empresa, p_prazo_pagamento_codigo;" " -- p_empresa, p_prazo_pagamento_codigo;" 1 ;;
   sem_guarda_padrao) sabotar "    RAISE EXCEPTION 'DES sem configuracao de custo: % sem prazo de pagamento padrão cadastrado', p_empresa;" \
                              "    NULL;" 1 ;;
@@ -636,6 +707,14 @@ case "$SABOTAGEM" in
   volta_max_id)      sabotar "          AND ck.id = v_checkin_id" \
                              "          AND ck.id = (SELECT MAX(id) FROM des_checkin_qualitativo WHERE empresa = p_empresa AND ano = v_ano AND trimestre = v_trimestre)" 1 ;;
   vizinha_alterada)  sabotar "v_desc_novo_total := v_faixa_nova.desconto_padrao_perc +" "v_desc_novo_total := 0.01 + v_faixa_nova.desconto_padrao_perc +" 1 ;;
+  tira_ativo)        sabotar "    AND codigo = p_prazo_pagamento_codigo
+    AND ativo = true;" "    AND codigo = p_prazo_pagamento_codigo;" 1 ;;
+  sem_guarda_dup_padrao) sabotar "AND padrao = true AND ativo = true) > 1 THEN" "AND padrao = true AND ativo = true) > 99 THEN" 1 ;;
+  sem_guarda_dup_frete)  sabotar "AND tipo = 'frete_perc_valor' AND ativo = true) > 1 THEN" "AND tipo = 'frete_perc_valor' AND ativo = true) > 99 THEN" 1 ;;
+  sem_guarda_orfao)      sabotar "  IF v_checkin_id IS NULL AND EXISTS" "  IF false AND EXISTS" 1 ;;
+  sem_guarda_percentual) sabotar "  IF v_checkin_id IS NOT NULL AND EXISTS (" "  IF false AND EXISTS (" 1 ;;
+  view_sem_desempate)    gerar viewnova "$TMPD/sabv.sql" "des_checkin_qualitativo.criado_em DESC, des_checkin_qualitativo.id DESC" "des_checkin_qualitativo.criado_em DESC" 1
+                         P -q -f "$TMPD/sabv.sql" ;;
   *) ;;
 esac
 [ -n "$SABOTAGEM" ] && echo "→ SABOTAGEM ativa: $SABOTAGEM"
@@ -644,6 +723,7 @@ esac
 # ZONA 4 — ASSERTS
 # ══════════════════════════════════════════════════════════════════════════════
 eq P2 "instalada = a da PÓS" "$(Exec "$Q_MD5")" "$MD5_ESTE"
+eq P3 "v_des_checkin_atual instalada = a da PÓS (com o desempate id DESC)" "$(Exec "$Q_MD5_VIEW")" "$MD5_VIEW_ESTE"
 eq A1 "ACL, config, dono, volatilidade, INVOKER, argumentos e retorno idênticos aos do predecessor" \
   "$(Exec "$Q_ATTR")" "$ATTR_ANTES"
 
@@ -657,9 +737,25 @@ eq C3 "SEMFRETE (frete cadastrado mas inativo): recusa — não 2,5%" \
 eq C4 "SEMCUSTO (sem empresa_configuracao_custos): recusa — não 20%" \
   "$(Nega "$(SIM_SQL SEMCUSTO 2026 2 50000 antecipado 60)" P0001 "$MARCA_CFG")" NEGOU
 
+eq C5 "PRAZOINATIVO (o prazo pedido existe, INATIVO): recusa" \
+  "$(Nega "$(SIM_SQL PRAZOINATIVO 2026 2 50000 28_42_56 60)" P0001 "$MARCA_CFG")" NEGOU
+eq C6 "DUPPADRAO (2 prazos padrão ativos): recusa a ambiguidade" \
+  "$(Nega "$(SIM_SQL DUPPADRAO 2026 2 50000 28_42_56 60)" P0001 "$MARCA_CFG")" NEGOU
+eq C7 "DUPFRETE (2 fretes ativos, 2,5% e 5%): recusa a ambiguidade" \
+  "$(Nega "$(SIM_SQL DUPFRETE 2026 2 50000 antecipado 60)" P0001 "$MARCA_CFG")" NEGOU
+
+# D — lacunas do desconto: check-in fora da view; critério atingido sem percentual.
+eq D1 "CHEIO com os critérios apagados (o check-in some da view): recusa — não 'sem qualitativos'" \
+  "$(Nega "$(SIM_SQL CHEIO 2026 2 50000 antecipado 60)" P0001 "$MARCA_DESC" "" "DELETE FROM public.des_criterio_percentual; DELETE FROM public.des_criterio_qualitativo;")" NEGOU
+eq D2 "RETRO sem percentual da faixa nº3 (Mix atingido): recusa — não soma 0" \
+  "$(Nega "$(SIM_SQL RETRO 2026 2 200000 antecipado 60)" P0001 "$MARCA_DESC" "" "DELETE FROM public.des_criterio_percentual WHERE faixa_id = 13;")" NEGOU
+
 # R — check-in retroativo: os dois lados do desconto saem do VIGENTE (id 5, Mix atingido).
 eq R1 "RETRO: atual 1,40 (faixa 2 + Mix 0,40) e novo 2,25 (faixa 3 + Mix 0,75) do MESMO check-in — delta 0,85" \
   "$(Descontos RETRO 2026 2 200000 antecipado 60)" "1.40|2.25|0.85"
+
+eq T1 "EMPATE (mesma data e criação): o vigente é o de id maior (21), não arbitrário" \
+  "$(Exec "SELECT checkin_id FROM public.v_des_checkin_atual WHERE empresa = 'EMPATE' LIMIT 1")" "21"
 
 # V — tudo configurado, 1 check-in ou nenhum: o JSON é idêntico ao do predecessor.
 Q_V="SELECT count(*) || '|' || count(*) FILTER (WHERE a.r IS DISTINCT FROM n.r) FROM public.antes a
