@@ -125,6 +125,11 @@ CREATE TABLE IF NOT EXISTS public.purchase_orders_tracking (
   numero_contrato_fornecedor text
 );
 -- Catálogo de condições do Omie (prod: 145 linhas OBEN) e a tabela de falhas do cron (lida pelo painel).
+-- private.cap_compras_ler (prod: matriz de capacidades); aqui = staff, o suficiente para provar o gate.
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE OR REPLACE FUNCTION private.cap_compras_ler(_uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $f$
+  SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _uid AND role IN ('employee','master'))
+$f$;
 CREATE TABLE IF NOT EXISTS public.omie_condicao_pagamento_catalogo (
   empresa text NOT NULL, codigo text NOT NULL, descricao text, num_parcelas integer, ativo boolean NOT NULL DEFAULT true
 );
@@ -385,7 +390,7 @@ restaura
 sabota 's/^  IF coalesce(v_cond_matches, 0) <> 1 OR v_cond_codigo IS NULL OR coalesce(v_cond_parc, 0) < 1 THEN$/  IF false THEN/'
 dente "F12 sem a exigência de correspondência ÚNICA, condição ambígua grava" "$(imp "'4100013', $ENT, 5181.82, '$DFA'::jsonb, '70 - 14 DIAS'")" "IMP_OK_novo_4100013"
 restaura
-sabota 's/^  IF auth\.uid() IS NULL OR NOT (public\.has_role/  IF false AND (public.has_role/'
+sabota 's/^  IF auth\.uid() IS NULL OR NOT private\.cap_compras_ler(auth\.uid()) THEN$/  IF false THEN/'
 dente "F13 sem o gate do painel, customer lê pendências" "$(printf '%s\nSELECT public.tentar_painel();\n' "SET test.uid='22222222-2222-2222-2222-222222222222';" | P -q -tA 2>/dev/null | cut -c1-11)" "PAINEL_OK_1"
 restaura
 # Controle: a migration REAL re-aplicada segue verde nos asserts centrais.

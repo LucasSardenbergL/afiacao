@@ -6,7 +6,7 @@
 --   • IP006 compara CADA número de contrato composto ("1998739/1998740") — antes o botão criava 2º PO (P1).
 --   • IP008 recusa enquanto houver pedido do app em envio/conciliação no portal — a mesma trava do cron (P1).
 --   • IP007 condição de pagamento LIDA do portal → catálogo do Omie por texto exato; antes gravava a condição à vista fixa (P1).
--- Nova sayerlack_painel_portal(): leitura SÓ de staff para o card "Varredura do portal" em Gerir pedidos —
+-- Nova sayerlack_painel_portal(): leitura SÓ de quem tem cap_compras_ler para o card "Varredura do portal" em Gerir pedidos —
 --   pendências abertas do cron, importados recentes e importados ainda sem PO no Omie.
 -- Todos os UPDATE com WHERE (pg-safeupdate do Supabase recusa UPDATE sem WHERE vindo da API).
 -- ============================================================================================
@@ -262,8 +262,9 @@ SECURITY DEFINER
 SET search_path TO 'public'
 AS $painel$
 BEGIN
-  IF auth.uid() IS NULL OR NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
-    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  -- Gate de capacidade de compras (o mesmo das RPCs de leitura de reposição; ver scripts/authz-manifest.ts).
+  IF auth.uid() IS NULL OR NOT private.cap_compras_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'Acesso negado: requer capacidade de compras' USING ERRCODE = '42501';
   END IF;
   RETURN jsonb_build_object(
     'pendencias', coalesce((
