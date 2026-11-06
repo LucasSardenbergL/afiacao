@@ -1149,11 +1149,11 @@ jobs:
         # entra no default (30 s) até a tabela ser re-medida — receita no cabeçalho dela.
         # Re-medida em 2026-11-05 (lote 6 do plano v6, 20 runs): a parte 5 somava 19,4 min de núcleo
         # contra 14,9–17,6 nas outras (9 provas no default); com a tabela nova, 16,4 min cada.
-        # 6 -> 7 partes (2026-11-05, E16 do plano v7, EXPERIMENTO): mesma tabela e mesmo LPT, 14,3 min
+        # 6 -> 7 partes (2026-11-05, E16 do plano v7, MEDIDO e mantido): mesma tabela e mesmo LPT, 14,3 min
         # de núcleo por parte (eram 16,6 com as provas novas). A 1ª parte carrega ainda o harness do
         # runner (~0,7 min, p50 de 17 runs), que o LPT não pesa: some no ruído de máquina (±45%) e não
         # justifica constante nova no balanceador. Medição e veredito no PR e em
-        # docs/historico/ci-e16-nucleo-sql-7-partes.md.
+        # docs/historico/ci-e16-nucleo-sql-7-partes.md (pior parte 16,5 e 15,9 contra p50 de 19,3).
         parte: [1, 2, 3, 4, 5, 6, 7]
     permissions:
       contents: read
