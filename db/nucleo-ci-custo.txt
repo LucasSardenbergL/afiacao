@@ -135,6 +135,7 @@ db/test-reposicao-logs-insert-cap-compras.sh 1
 db/test-reposicao-po-observado.sh 93
 db/test-resolver-cliente-por-telefone.sh 7
 db/test-retencao-scores-60d.sh 2
+db/test-drop-indices-scores.sh 2
 db/test-retencao-scores-farmer.sh 1
 db/test-rls-carteira-visibilidade-conjunto.sh 12
 db/test-rls-has-role-initplan-classe.sh 230

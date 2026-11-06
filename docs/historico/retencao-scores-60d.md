@@ -51,7 +51,7 @@ inteira voltaria atrás toda semana sem apagar nada. Com o teto, cada chamada av
 `RowExclusiveLock`, que não conflita com o INSERT da `calculate-scores`, e só toca linha velha que
 ninguém atualiza. O que o teto limita é a duração da transação (o horizonte do vacuum do banco todo).
 
-## Os 4 índices sem scan (fica para depois)
+## Os 4 índices sem scan
 
 `idx_health_history_customer` 104 MB, `idx_health_history_farmer` 24 MB, `idx_priority_log_customer`
 65 MB, `idx_priority_log_farmer_date` 16 MB: 0 scans desde o restart de 2026-10-31 10:33 UTC
@@ -68,3 +68,12 @@ SELECT pg_postmaster_start_time() AS boot, now() - pg_postmaster_start_time() AS
 
 DROP só se `janela ≥ 7 days` e `idx_scan = 0` nos 4. Se houver restart no meio, a janela recomeça.
 `DROP INDEX` é DDL destrutivo, então vai pelo founder no SQL Editor, com pós-condição.
+
+**2026-11-06: DROP antecipado em 14 h, por decisão do founder.** Às 20:55 UTC, com 6 d 10 h de contador,
+os 4 seguiam com 0 scan e nenhuma constraint dependente. A janela já cobria o escritor diário, o expurgo
+de 1º/11 e todos os dias da semana; como ninguém lê as tabelas, as 14 h restantes não traziam informação.
+Migration `supabase/migrations/20261106205556_drop_indices_ociosos_scores.sql` (SQL Editor, o arquivo traz
+a transação). A PRE aborta se algum índice ganhou scan, e a pós-condição exige os 4 fora e PKs + índices
+por data válidos. Prova `db/test-drop-indices-scores.sh` (PG17, 12 asserts, 2 falsificações, no núcleo do
+CI). Ganho: ~211 MB. A reversão (4 `CREATE INDEX`) está no cabeçalho da migration. Tirado do escopo da
+sessão `v5-d5-b1-indices` (plano v7, D5), que segue com os índices do Radar e do tintométrico.
