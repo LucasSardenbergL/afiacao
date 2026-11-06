@@ -13,7 +13,7 @@
 
 DROP FUNCTION IF EXISTS public.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid);
 
-CREATE FUNCTION public.sayerlack_importar_pedido_portal(
+CREATE OR REPLACE FUNCTION public.sayerlack_importar_pedido_portal(
   p_protocolo     text,
   p_data_entrega  date,
   p_valor_total   numeric,

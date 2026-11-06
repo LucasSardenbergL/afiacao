@@ -221,7 +221,7 @@ echo "── asserts ──"
 eq "A1 importa o 2140603 (novo)" "$(imp "'2140603', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_OK_novo_2140603"
 eq "A1 cabeçalho: OBEN/Sayerlack, aprovado p/ disparo, sucesso_portal + protocolo + entrega, à vista, importado" \
   "$(Pq -c "SELECT empresa||'|'||fornecedor_nome||'|'||status||'|'||status_envio_portal||'|'||portal_protocolo||'|'||portal_data_entrega||'|'||condicao_pagamento_codigo||'|'||num_parcelas||'|'||canal_usado||'|'||(importado_portal_em IS NOT NULL)||'|'||importado_portal_por||'|'||aprovado_por||'|'||num_skus FROM public.pedido_compra_sugerido WHERE portal_protocolo='2140603'")" \
-  "OBEN|RENNER SAYERLACK S/A|aprovado_aguardando_disparo|sucesso_portal|2140603|2026-10-26|000|1|portal_sayerlack|true|11111111-1111-1111-1111-111111111111|11111111-1111-1111-1111-111111111111|1"
+  "OBEN|RENNER SAYERLACK S/A|aprovado_aguardando_disparo|sucesso_portal|2140603|2026-10-26|A07|1|portal_sayerlack|true|11111111-1111-1111-1111-111111111111|11111111-1111-1111-1111-111111111111|1"
 eq "A1 item: sku Omie, descrição do cadastro, qtde 16, preço COM IPI (5181,82÷16), decomposição 6,5%" \
   "$(Pq -c "SELECT sku_codigo_omie||'|'||sku_descricao||'|'||trim_scale(qtde_final)||'|'||trim_scale(round(preco_unitario,6))||'|'||trim_scale(valor_linha)||'|'||trim_scale(valor_ipi_portal)||'|'||trim_scale(aliquota_ipi_portal)||'|'||sku_portal_aprovado||'|'||trim_scale(fator_portal_aprovado) FROM public.pedido_compra_item WHERE pedido_id=(SELECT id FROM public.pedido_compra_sugerido WHERE portal_protocolo='2140603')")" \
   "12101724100|DILUENTE PU DFA.4080LT|16|323.86375|5181.82|316.26|6.5|DFA.4080LT|1"
