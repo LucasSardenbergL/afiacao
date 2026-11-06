@@ -21,7 +21,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261106181000_radar_leads_ao_vendedor.sql"
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!A3_FALHOU` = a postcondição da migration aborta o apply com a
   # marca exata (`_` vira espaço; grep -F). `_sem_post` cega a postcondição para provar que a suíte pega sozinha.
-  SABOTAGENS="sem_ja_cliente:A3 status_qualquer:A3 score_nulo:A3 rfb_baixada:A3 atendimento_ignorado:A3 atendimento_nao_expira:A3 dono_proprio_bloqueia:A3 dono_sem_acesso_bloqueia:A3 territorio_disputado:A2 carteira_inelegivel:A1 vendedor_sem_employee:A2 endereco_nao_default:A1 repete_lead:A13a teste_queima_lead:A13b sem_dedupe_semana:A12 teste_conta:A10b sem_ledger:A10d ledger_sujo:A9 gate_cap:A6b gestor_livre:A6c servido_sob_lente:A6e servido_duplica:A6f link_sem_validar:A14d acl_aberta:POST!A3_FALHOU acl_aberta_sem_post:A16 tabela_aberta:POST!A2_FALHOU tabela_aberta_sem_post:A17 cron_ligado:A8a cron_religa:A18"
+  SABOTAGENS="sem_ja_cliente:A3 status_qualquer:A3 score_nulo:A3 rfb_baixada:A3 atendimento_ignorado:A3 atendimento_nao_expira:A3 dono_proprio_bloqueia:A3 dono_sem_acesso_bloqueia:A3 territorio_disputado:A2 carteira_inelegivel:A1 vendedor_sem_employee:A2 endereco_nao_default:A1 repete_lead:A13a teste_queima_lead:A13b sem_dedupe_semana:A12 teste_conta:A10b sem_ledger:A10d ledger_sujo:A9 gate_cap:A6b gestor_livre:A6c servido_duplica:A6f servido_sem_faixa:A6g link_sem_validar:A14d acl_aberta:POST!A3_FALHOU acl_aberta_sem_post:A16 tabela_aberta:POST!A2_FALHOU tabela_aberta_sem_post:A17 cron_ligado:A8a cron_religa:A18"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-leads-vendedor.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -117,7 +117,7 @@ case "${SABOTAGEM:-}" in
   END IF;
   v_alvo" "  v_alvo" ;;
   gestor_livre)          sabotar "  IF v_alvo <> v_uid AND NOT COALESCE(private.pode_ver_carteira_completa(v_uid), false) THEN" "  IF false THEN" ;;
-  servido_sob_lente)     sabotar "  IF v_alvo = v_uid AND v_qtd > 0 THEN" "  IF v_qtd > 0 THEN" ;;
+  servido_sem_faixa)     sabotar "  IF p_n_leads IS NULL OR p_n_leads NOT BETWEEN 1 AND 5 THEN" "  IF p_n_leads IS NULL THEN" ;;
   servido_duplica)       sabotar "    ON CONFLICT (user_id, dia) DO NOTHING;" "    ON CONFLICT (user_id, dia) DO UPDATE SET n_leads = EXCLUDED.n_leads, servido_em = clock_timestamp();" ;;
   link_sem_validar)      sabotar "      JOIN public.radar_email_vendedor_leads l ON l.envio_id = e.id AND l.cnpj = p_cnpj" "" ;;
   acl_aberta)            sabotar "REVOKE ALL ON FUNCTION public.radar_avisar_vendedores(timestamptz) FROM PUBLIC, anon, authenticated;" "REVOKE ALL ON FUNCTION public.radar_avisar_vendedores(timestamptz) FROM anon;" ;;
@@ -369,15 +369,19 @@ prefixo "A6c vendedor não lê os leads de OUTRO vendedor: 42501" \
 eq "A6d o próprio vendedor recebe 3 leads e o território" \
    "$(como authenticated "$V1" "SELECT (SELECT string_agg(right(l->>'cnpj',3), ',' ORDER BY (l->>'posicao')::int) FROM jsonb_array_elements(x->'leads') l)||'|'||jsonb_array_length(x->'territorio') FROM public.radar_prospectar_hoje() x" | tail -1)" \
    "101,108,109|3"
-eq "A6e gestor (lente) lê os leads de V2 e NÃO grava 'servido' por ele nem por si" \
-   "$(como authenticated "$G" "SELECT jsonb_array_length(x->'leads') FROM public.radar_prospectar_hoje('$V2') x" | tail -1)|$(Pq -c "SELECT string_agg(left(user_id::text,1)||right(user_id::text,1)||':'||n_leads, ',') FROM public.radar_prospectar_hoje_servido")" \
-   "3|a1:3"
-como authenticated "$V1" "SELECT public.radar_prospectar_hoje(NULL, 2)" >/dev/null
-eq "A6f 2ª leitura no mesmo dia não duplica nem reescreve o 'servido' (1 por vendedor e dia)" \
-   "$(Pq -c "SELECT count(*)||':'||max(n_leads) FROM public.radar_prospectar_hoje_servido")" "1:3"
-eq "A6g gestor sem carteira (próprio card): 0 leads, 0 território, nada gravado" \
-   "$(como authenticated "$G" "SELECT jsonb_array_length(x->'leads')||':'||jsonb_array_length(x->'territorio') FROM public.radar_prospectar_hoje() x" | tail -1)|$(Pq -c "SELECT count(*) FROM public.radar_prospectar_hoje_servido")" \
-   "0:0|1"
+eq "A6e leitura é PURA (cabe na allowlist da lente): nem o vendedor nem o gestor gravam 'servido' ao ler" \
+   "$(como authenticated "$G" "SELECT jsonb_array_length(x->'leads') FROM public.radar_prospectar_hoje('$V2') x" | tail -1)|$(Pq -c "SELECT count(*) FROM public.radar_prospectar_hoje_servido")|$(Pq -c "SELECT provolatile FROM pg_proc WHERE oid = 'public.radar_prospectar_hoje(uuid,integer)'::regprocedure")" \
+   "3|0|s"
+eq "A6f 'servido' do card: 1 por vendedor e dia; a 2ª chamada não duplica nem reescreve" \
+   "$(como authenticated "$V1" "SELECT public.radar_registrar_card_servido(3)" | tail -1)|$(como authenticated "$V1" "SELECT public.radar_registrar_card_servido(2)" | tail -1)|$(Pq -c "SELECT count(*)||':'||max(n_leads) FROM public.radar_prospectar_hoje_servido")" \
+   '{"ok": true, "registrado": true}|{"ok": true, "registrado": false}|1:3'
+prefixo "A6g 'servido' com n fora de 1..5: 22023" \
+   "$(erro_como authenticated "$V1" "SELECT public.radar_registrar_card_servido(0)")" "22023 n_leads fora de 1..5"
+prefixo "A6h customer com cargo residual não grava 'servido': 42501" \
+   "$(erro_como authenticated "$C" "SELECT public.radar_registrar_card_servido(3)")" "42501 forbidden: radar_prospectar"
+eq "A6i gestor sem carteira (próprio card): 0 leads, 0 território" \
+   "$(como authenticated "$G" "SELECT jsonb_array_length(x->'leads')||':'||jsonb_array_length(x->'territorio') FROM public.radar_prospectar_hoje() x" | tail -1)" \
+   "0:0"
 
 # ── Cron e e-mail semanal ─────────────────────────────────────────────────────────────────────────────────
 eq "A8a cron nasce DESLIGADO, segunda 11:00 UTC, comando exato" \

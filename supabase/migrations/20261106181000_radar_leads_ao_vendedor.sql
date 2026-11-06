@@ -34,8 +34,9 @@
 --      net.http_post com timeout de 60 s e a edge manda o e-mail) + o envio + os leads. Nenhum lead se repete
 --      para o mesmo vendedor em 90 dias (envios de teste não contam). Vendedor pulado sai com o motivo no ledger
 --      acoes_execucoes (radar.avisar_vendedores). Erro propaga, tudo numa transação.
---   5. public.radar_prospectar_hoje(p_vendedor, p_n): leitura do card (D2). Gate cap_radar_prospectar; ver outro
---      vendedor exige gestor. Grava o "servido" só quando o vendedor lê o próprio card.
+--   5. public.radar_prospectar_hoje(p_vendedor, p_n): leitura PURA do card (D2). Gate cap_radar_prospectar; ver outro
+--      vendedor exige gestor (lente "Ver como"). O "servido" é gravado por public.radar_registrar_card_servido(n),
+--      separada para a leitura caber na allowlist de leitura da lente e a escrita ficar bloqueada nela.
 --   6. public.radar_registrar_abertura_empurrada(p_origem, p_cnpj, p_envio): grava a abertura vinda do e-mail ou
 --      do card.
 --   7. cron radar-avisar-vendedores-semanal, segunda 11:00 UTC (08:00 BRT), CRIADO DESLIGADO (active = false).
@@ -393,7 +394,7 @@ GRANT EXECUTE ON FUNCTION public.radar_avisar_vendedores(timestamptz) TO service
 CREATE OR REPLACE FUNCTION public.radar_prospectar_hoje(p_vendedor uuid DEFAULT NULL, p_n integer DEFAULT 3)
 RETURNS jsonb
 LANGUAGE plpgsql
-VOLATILE
+STABLE
 SECURITY DEFINER
 SET search_path = ''
 AS $fn$
@@ -403,7 +404,6 @@ DECLARE
   v_n     integer := GREATEST(1, LEAST(COALESCE(p_n, 3), 5));
   v_terr  jsonb;
   v_leads jsonb;
-  v_qtd   integer;
 BEGIN
   IF NOT COALESCE(private.cap_radar_prospectar(v_uid), false) THEN
     RAISE EXCEPTION 'forbidden: radar_prospectar' USING ERRCODE = '42501';
@@ -421,23 +421,44 @@ BEGIN
   SELECT COALESCE(jsonb_agg(jsonb_build_object('posicao', x.posicao, 'cnpj', x.cnpj, 'razao_social', x.razao_social,
                                                'nome_fantasia', x.nome_fantasia, 'municipio_nome', x.municipio_nome,
                                                'uf', x.uf, 'score', x.score, 'score_motivos', to_jsonb(x.score_motivos),
-                                               'elegiveis', x.elegiveis) ORDER BY x.posicao), '[]'::jsonb),
-         count(*)
-    INTO v_leads, v_qtd
+                                               'elegiveis', x.elegiveis) ORDER BY x.posicao), '[]'::jsonb)
+    INTO v_leads
     FROM private.radar_leads_do_vendedor(v_alvo, v_n, NULL, now()) x;
-
-  -- Sensor do D2: só quando o vendedor lê o PRÓPRIO card (gestor sob a lente "Ver como" não infla).
-  IF v_alvo = v_uid AND v_qtd > 0 THEN
-    INSERT INTO public.radar_prospectar_hoje_servido (user_id, dia, n_leads)
-    VALUES (v_uid, (now() AT TIME ZONE 'America/Sao_Paulo')::date, v_qtd)
-    ON CONFLICT (user_id, dia) DO NOTHING;
-  END IF;
 
   RETURN jsonb_build_object('territorio', v_terr, 'leads', v_leads);
 END
 $fn$;
 REVOKE ALL ON FUNCTION public.radar_prospectar_hoje(uuid, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.radar_prospectar_hoje(uuid, integer) TO authenticated;
+
+-- Sensor do D2 em RPC própria: a leitura acima fica PURA (entra na allowlist de leitura da lente "Ver como"); esta
+-- grava e por isso o write-guard a bloqueia na lente — gestor inspecionando não infla o denominador.
+CREATE OR REPLACE FUNCTION public.radar_registrar_card_servido(p_n_leads integer)
+RETURNS jsonb
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = ''
+AS $fn$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_n   integer;
+BEGIN
+  IF NOT COALESCE(private.cap_radar_prospectar(v_uid), false) THEN
+    RAISE EXCEPTION 'forbidden: radar_prospectar' USING ERRCODE = '42501';
+  END IF;
+  IF p_n_leads IS NULL OR p_n_leads NOT BETWEEN 1 AND 5 THEN
+    RAISE EXCEPTION 'n_leads fora de 1..5: %', p_n_leads USING ERRCODE = '22023';
+  END IF;
+  INSERT INTO public.radar_prospectar_hoje_servido (user_id, dia, n_leads)
+  VALUES (v_uid, (now() AT TIME ZONE 'America/Sao_Paulo')::date, p_n_leads)
+  ON CONFLICT (user_id, dia) DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN jsonb_build_object('ok', true, 'registrado', v_n = 1);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.radar_registrar_card_servido(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.radar_registrar_card_servido(integer) TO authenticated;
 
 -- ── 6. Abertura de lead empurrado ───────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.radar_registrar_abertura_empurrada(p_origem text, p_cnpj text, p_envio uuid DEFAULT NULL)
@@ -533,6 +554,7 @@ BEGIN
   END LOOP;
 
   FOREACH f IN ARRAY ARRAY['public.radar_prospectar_hoje(uuid,integer)',
+                           'public.radar_registrar_card_servido(integer)',
                            'public.radar_registrar_abertura_empurrada(text,text,uuid)'] LOOP
     IF to_regprocedure(f) IS NULL THEN
       RAISE EXCEPTION 'A4 FALHOU: % ausente', f;
