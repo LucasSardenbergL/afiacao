@@ -25,8 +25,9 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
 /**
  * v1.3 (2026-10-16) — aceita `situacoes_permitidas` (lista fechada de códigos, só a varredura manda): a situação RELIDA
  * tem de estar nela antes da RPC (pedido que faturou no meio da rodada não vira PO; Codex P1).
+ * v1.4 (2026-11) — lê a condição de pagamento na tela de detalhe e passa à RPC (6 args); disparo com prazo; após gravar, nunca "não importado".
  */
-export const VERSAO = "v1.3-situacao-permitida-na-releitura";
+export const VERSAO = "v1.4-condicao-do-portal";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

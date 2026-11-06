@@ -134,3 +134,30 @@ caso algum pedido esteja lançado no portal da Sayerlack e não exista no Omie, 
 - **21/10 22:30 — 1ª importação 100% pelo cron**: 2142771 (visto, carência cumprida, sync `complete` depois) →
   PO Omie **1306**, espelho com uma linha só para o contrato. De 21/10 a 05/11: 49 rodadas `sucesso`, 0 `erro`, 0
   falha nova em `sayerlack_varredura_falha`.
+
+## Revisão Fable + Codex (2026-11)
+
+Os dois revisores, separados, chegaram aos mesmos P1 (nenhum P0). O que mudou:
+
+- **Contrato composto** ("1998739/1998740", 15 POs em prod): o IP006 do botão comparava o contrato inteiro e criava
+  2º PO; agora compara cada número (o cron já fazia).
+- **Trava "pedido do app em voo"** (IP008) também no botão — antes só o cron tinha.
+- **Condição de pagamento lida do portal** (decisão do founder: regra exata). A tela de detalhe tem
+  `#condicoes_pagamento` ("70 - 7 DIAS"); a RPC casa com o catálogo `omie_condicao_pagamento_catalogo` por texto exato
+  ("N DIAS"→"Para N dias", "28/56"→"28/56", "A VISTA"→000) e exige 1 linha única — senão **IP007** (nunca chuta, nunca
+  cai em à vista). Antes TODO importado ia como "000 À Vista".
+- **Depois de gravar, nunca "não importado"**: o disparo tem prazo de 60 s e a resposta sempre carrega o #id; na tela,
+  chamada sem corpo vira "Não sei se entrou — importe de novo, não duplica; não lance à mão no Omie".
+- **Cron**: pedido no app SEM PO não é mais "resolvido" — é re-disparado pela importadora; adiado por pedido em voo
+  deixou de contar como falha.
+- **Tela**: card "Pedidos do portal Sayerlack" em Gerir pedidos (RPC `sayerlack_painel_portal`, gate
+  `cap_compras_ler`): pendências abertas do cron (com "Importar de novo" já preenchido), gravados sem PO e importados
+  dos últimos 14 dias, com link para o pedido. Diálogo: link "Abrir pedido", copiar nº do PO, condição exibida, X e
+  Esc travados durante a espera com tempo decorrido, `role=status`/`alert`, rolagem no celular. `mensagemDoErroEdge`
+  passou a ler `mensagem` além de `error`.
+- **Código**: trecho login → Consulta Pedidos das duas edges em `_shared/sayerlack-portal-navegador.ts`.
+- Fica de fora (sem tela, decisão consciente): cadastrar alíquota de IPI por NCM continua por SQL — a mensagem do
+  CP006 agora diz isso em vez de "cadastre o NCM".
+
+Provas: `db/test-sayerlack-importar-pedido-portal.sh` 75/75 nos 2 locales (13 falsificações), testes de tela do card
+e do diálogo, `test:edges` 2403, suíte vitest completa.

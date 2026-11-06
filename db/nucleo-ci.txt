@@ -214,7 +214,7 @@ db/test-sayerlack-ipi-po.sh                95
 # Importar pedido digitado direto no portal Sayerlack: de-para inverso (ambíguo/inativo/outra empresa = sem de-para),
 # qtde inteira no Omie (÷ fator), custo pela MESMA prova da RPC acima na MESMA transação (recusa = nada gravado),
 # idempotência por protocolo (lock + UNIQUE), authz, falsificação por camada.
-db/test-sayerlack-importar-pedido-portal.sh 51
+db/test-sayerlack-importar-pedido-portal.sh 75
 # Saldo inicial da projeção de 13 semanas (20261028014827): conta ausente/velha/NaN ou lista vazia → saldo_projetado
 # NULL, nunca R$ 0 nem soma parcial; régua de frescor = classificarSaldoConta (04h SP), sob sessão UTC e SP; relógio
 # controlado; PRE recusa deriva; 16 sabotagens num espelho (docs/historico/saldo-cc-fresco-e-ncg-leitura-pontual.md).
