@@ -62,7 +62,12 @@ resultado, porque o núcleo casa por `cnpj = ANY` em `radar_empresas`.
      `RadarClientes-BHS5WR4l.js`, com o controle negativo OK. No mesmo chunk estão `selo-vinculo-` e
      `possível sucessor`.
    - O sync do Lovable não reverteu nada: os símbolos seguem nos 5 arquivos de `src/` em `origin/main`.
-   - Não houve QA visual logado: os bytes provam que o código subiu, não como a linha renderiza.
+   - QA visual: print do founder em 06/11, no preview do Lovable em `/radar`, logado. O chip aparece depois dos
+     selos de filial. "possível vínculo" sai azul (pista média), em METALURGICA AMAPA S.A., que também é filial de
+     cliente: o vínculo é com OUTRA raiz, como manda a regra. Sai laranja (pista forte) em AGIL FLORESTAL e LUARTE
+     MOVEIS. Nesse trecho não apareceu nenhum "possível sucessor".
+   - Nota de design, sem mudança: o laranja da pista forte é o mesmo tom do "filial de cliente". Só vale revisitar se
+     o Radar ganhar uso, porque hoje ele está em fase sem sinal.
 
 ## Quando medir ("quando" é query)
 
