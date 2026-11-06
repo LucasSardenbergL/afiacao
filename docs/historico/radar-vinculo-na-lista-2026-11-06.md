@@ -53,7 +53,21 @@ resultado, porque o núcleo casa por `cnpj = ANY` em `radar_empresas`.
 ## Deploy
 
 1. Migration por `bun run db:aplicar` (ensaio com ROLLBACK antes) e validação por `psql-ro` (md5 dos 3 corpos e ACL).
+   ✅ Aplicada em 06/11 (`db_aplicacoes` tentativa #918). `psql-ro` conferiu: núcleo `bc00b310…` sem DEFINER e
+   fechado ao JWT, ficha `2452f463…` e lista `a9278dd0…` com DEFINER, fechadas a `anon` e abertas ao JWT.
 2. Publish do front pelo founder; conferir o `radar_vinculos_por_cnpjs` no bundle servido em `steu.lovable.app`.
+   ✅ No ar em 06/11. O PR #3656 (squash `af0956dc4`) mergeou às 13:24Z.
+   - `monitor-deploy.sh --pr 3656` voltou `PR_NO_AR`: o ar serve `3dad9809`, que descende do squash.
+   - `verify-frontend.sh --pai af0956dc4^` voltou exit 0: a sentinela é exclusiva (0 ocorrências no pai) e está em
+     `RadarClientes-BHS5WR4l.js`, com o controle negativo OK. No mesmo chunk estão `selo-vinculo-` e
+     `possível sucessor`.
+   - O sync do Lovable não reverteu nada: os símbolos seguem nos 5 arquivos de `src/` em `origin/main`.
+   - QA visual: print do founder em 06/11, no preview do Lovable em `/radar`, logado. O chip aparece depois dos
+     selos de filial. "possível vínculo" sai azul (pista média), em METALURGICA AMAPA S.A., que também é filial de
+     cliente: o vínculo é com OUTRA raiz, como manda a regra. Sai laranja (pista forte) em AGIL FLORESTAL e LUARTE
+     MOVEIS. Nesse trecho não apareceu nenhum "possível sucessor".
+   - Nota de design, sem mudança: o laranja da pista forte é o mesmo tom do "filial de cliente". Só vale revisitar se
+     o Radar ganhar uso, porque hoje ele está em fase sem sinal.
 
 ## Quando medir ("quando" é query)
 
