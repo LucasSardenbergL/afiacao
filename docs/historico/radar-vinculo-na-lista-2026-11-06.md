@@ -71,6 +71,8 @@ resultado, porque o núcleo casa por `cnpj = ANY` em `radar_empresas`.
 
 ## Quando medir ("quando" é query)
 
-Não há evento novo: o chip é determinístico e abrir a ficha já grava `radar_eventos.evento='abriu'`. A pergunta
+Não há evento novo: o chip é determinístico e abrir a ficha grava `radar_eventos.evento='abriu'` com o CNPJ — mas só
+desde a migration `20261106132259` (antes o `abriu` era só a tela `/radar`, sem CNPJ; ver
+[radar-abriu-ficha-com-cnpj-2026-11-06.md](radar-abriu-ficha-com-cnpj-2026-11-06.md)). A pergunta
 "o chip leva a abrir a ficha?" se responde com os leads abertos por humano (denominador da query do parecer de 04/11)
 cruzados com os que têm vínculo, que se tiram pela RPC com o JWT de quem prospecta.

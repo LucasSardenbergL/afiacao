@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 786
+-- Total de custom migrations: 787
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -854,7 +854,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261105180000', 'des_simular_puxar_sem_posicao_recusa', '20261105180000_des_simular_puxar_sem_posicao_recusa.sql'),
   ('20261106022016', 'profiles_origem_omie_import_backfill', '20261106022016_profiles_origem_omie_import_backfill.sql'),
   ('20261106083754', 'radar_vinculos_em_lote', '20261106083754_radar_vinculos_em_lote.sql'),
-  ('20261106090000', 'des_simular_puxar_config_e_checkin', '20261106090000_des_simular_puxar_config_e_checkin.sql')
+  ('20261106090000', 'des_simular_puxar_config_e_checkin', '20261106090000_des_simular_puxar_config_e_checkin.sql'),
+  ('20261106132259', 'radar_abriu_ficha_com_cnpj', '20261106132259_radar_abriu_ficha_com_cnpj.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3385,7 +3386,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_vinculos_em_lote', 'function', 'public', 'radar_possiveis_vinculos', ''),
   ('radar_vinculos_em_lote', 'function', 'public', 'radar_vinculos_por_cnpjs', ''),
   ('des_simular_puxar_config_e_checkin', 'function', 'public', 'simular_puxar_volume_trimestre', ''),
-  ('des_simular_puxar_config_e_checkin', 'view', 'public', 'v_des_checkin_atual', '')
+  ('des_simular_puxar_config_e_checkin', 'view', 'public', 'v_des_checkin_atual', ''),
+  ('radar_abriu_ficha_com_cnpj', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('radar_abriu_ficha_com_cnpj', 'function', 'private', 'radar_evento_abertura', ''),
+  ('radar_abriu_ficha_com_cnpj', 'function', 'public', 'radar_placar_uso', ''),
+  ('radar_abriu_ficha_com_cnpj', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5964,7 +5969,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_vinculos_em_lote', 'function', 'public', 'radar_possiveis_vinculos', ''),
   ('radar_vinculos_em_lote', 'function', 'public', 'radar_vinculos_por_cnpjs', ''),
   ('des_simular_puxar_config_e_checkin', 'function', 'public', 'simular_puxar_volume_trimestre', ''),
-  ('des_simular_puxar_config_e_checkin', 'view', 'public', 'v_des_checkin_atual', '')
+  ('des_simular_puxar_config_e_checkin', 'view', 'public', 'v_des_checkin_atual', ''),
+  ('radar_abriu_ficha_com_cnpj', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('radar_abriu_ficha_com_cnpj', 'function', 'private', 'radar_evento_abertura', ''),
+  ('radar_abriu_ficha_com_cnpj', 'function', 'public', 'radar_placar_uso', ''),
+  ('radar_abriu_ficha_com_cnpj', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox')
 )
 SELECT
   e.migration,
@@ -5992,7 +6001,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 175.
+-- Funções redefinidas com corpo extraível: 177.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6538,6 +6547,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 7, '20261028100200_analytics_ledger_corantes.sql', '1007fd19696f6fcd8c8e5029a8f80de9'),
   ('public', 'analytics_ledger_registrar', 8, '20261031130100_analytics_ledger_raio_x.sql', '4fa14fb6b6d08e1b81be776ebe9a9b88'),
   ('public', 'analytics_ledger_registrar', 9, '20261103120100_analytics_ledger_raio_x_decisao.sql', 'abde874d81523fdf819d56ede9bac618'),
+  ('public', 'analytics_ledger_registrar', 10, '20261106132259_radar_abriu_ficha_com_cnpj.sql', '98173f8f8228cecf88eddea0d206c2b2'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),
@@ -6627,6 +6637,10 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', '_venda_repasse_base', 2, '20261021021500_venda_repasse_base_desempenho.sql', '4cb2e342f09337e03b1f967c3bc0c819'),
   ('public', 'venda_repasse_candidatos', 1, '20261020233000_venda_cliente_repasse.sql', '76ffdad3aae967ca7d12ab4ad923473c'),
   ('public', 'venda_repasse_candidatos', 2, '20261031233000_venda_repasse_substituicao.sql', '056472fcdec0ffb4214bca795678dbc4'),
+  ('private', 'radar_evento_abertura', 1, '20261029150100_radar_eventos_placar.sql', '3d146cb7191813f6f45455268c854db2'),
+  ('private', 'radar_evento_abertura', 2, '20261106132259_radar_abriu_ficha_com_cnpj.sql', '7334260396d6d5f3064cdf1e86df5b4b'),
+  ('public', 'radar_placar_uso', 1, '20261029150100_radar_eventos_placar.sql', 'd70dfbeccd70b95e9f8bc0a46fc7ccd7'),
+  ('public', 'radar_placar_uso', 2, '20261106132259_radar_abriu_ficha_com_cnpj.sql', '359ec9e4ceebfecba245d3c89c1fe511'),
   ('public', 'radar_penetracao_por_municipio', 1, '20261029170140_radar_penetracao_e_concorrentes.sql', '87b1e469e8bfcc17b9695574d8ec74f4'),
   ('public', 'radar_penetracao_por_municipio', 2, '20261103100000_radar_agregado_municipio.sql', '973256e21f1dd292103195b896aaae3b'),
   ('public', 'cliente_situacao_receita', 1, '20261029200343_cliente_situacao_receita.sql', '0b6f8d4dac462f14b3b417b355085c2f'),
