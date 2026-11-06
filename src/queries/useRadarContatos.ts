@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 
-export type RadarContato = Database['public']['Tables']['radar_contatos']['Row'];
+type RadarContato = Database['public']['Tables']['radar_contatos']['Row'];
 
 export const LIMITE_HISTORICO_RADAR = 20;
 
