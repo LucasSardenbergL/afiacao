@@ -34,12 +34,12 @@ describe('RadarLinha — selos de lote', () => {
   it('inédito do lote vigente ganha o selo "inédito"', () => {
     renderLinha(empresa({ primeira_vista_em: '2026-10-19T16:35:00+00:00' }), LOTE);
     expect(screen.getByText(/^inédito$/i)).toBeTruthy();
-    expect(screen.queryByText(/saiu do dump/i)).toBeNull();
+    expect(screen.queryByText(/última presença/i)).toBeNull();
   });
 
-  it('quem saiu do dump ganha "saiu do dump em mai/2026" — sem dizer motivo', () => {
+  it('quem saiu do dump ganha "última presença: mai/2026 · ausente no lote atual" — sem dizer motivo', () => {
     renderLinha(empresa({ ultimo_lote: '2026-05' }), LOTE);
-    expect(screen.getByText(/saiu do dump em mai\/2026/i)).toBeTruthy();
+    expect(screen.getByText(/última presença: mai\/2026 · ausente no lote atual/i)).toBeTruthy();
     expect(screen.queryByText(/baix/i), 'fabricou motivo (baixa é outra entrega)').toBeNull();
     expect(screen.queryByText(/^inédito$/i)).toBeNull();
   });
@@ -47,13 +47,13 @@ describe('RadarLinha — selos de lote', () => {
   it('empresa comum do lote vigente: nenhum selo de lote', () => {
     renderLinha(empresa({}), LOTE);
     expect(screen.queryByText(/^inédito$/i)).toBeNull();
-    expect(screen.queryByText(/saiu do dump/i)).toBeNull();
+    expect(screen.queryByText(/última presença/i)).toBeNull();
   });
 
   it('sem lote vigente: não fabrica selo', () => {
     renderLinha(empresa({ ultimo_lote: '2026-05', primeira_vista_em: '2026-10-19T16:35:00+00:00' }), null);
     expect(screen.queryByText(/^inédito$/i)).toBeNull();
-    expect(screen.queryByText(/saiu do dump/i)).toBeNull();
+    expect(screen.queryByText(/última presença/i)).toBeNull();
   });
 });
 
