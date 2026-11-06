@@ -39,8 +39,6 @@ const safeQuery = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {
 
 /** Exportado para o teste da posição ao vivo (src/pages/__tests__/PerformanceHub.posicao.test.tsx). */
 export function KpiCards({ empresa }: { empresa: string }) {
-  void empresa;
-
   const { data } = useQuery({
     queryKey: ["performance-hub-kpis", empresa],
     queryFn: async () => {
@@ -51,13 +49,14 @@ export function KpiCards({ empresa }: { empresa: string }) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const client = supabase as any;
 
-      const [posicao, meta, ligacoes, spin] = await Promise.all([
+      const [des, ligacoes, spin] = await Promise.all([
         safeQuery(
           async () => {
+            // A empresa do seletor (antes fixava OBEN: com COLACOR o card mostrava a posição da OBEN).
             const { data: linha, error } = await client
               .from("v_des_posicao_trimestre_ao_vivo")
-              .select("fat_bruto_confirmado, posicao_ao_vivo_otimista")
-              .eq("empresa", "OBEN")
+              .select("fat_bruto_confirmado, posicao_ao_vivo_otimista, meta_pessoal")
+              .eq("empresa", empresa)
               .eq("trimestre", trimestre)
               .eq("ano", ano)
               .limit(1)
@@ -68,23 +67,11 @@ export function KpiCards({ empresa }: { empresa: string }) {
             // nova devolve NULL): ausente ≠ zero — o card mostra "—", nunca R$ 0 nem o trânsito.
             const semFaturado = linha?.fat_bruto_confirmado == null;
             const n = semFaturado ? Number.NaN : Number(linha?.posicao_ao_vivo_otimista ?? Number.NaN);
-            return Number.isFinite(n) ? n : null;
+            // Meta não cadastrada também é ausência: "—", não "R$ 0".
+            const m = Number(linha?.meta_pessoal ?? Number.NaN);
+            return { posicao: Number.isFinite(n) ? n : null, meta: Number.isFinite(m) ? m : null };
           },
-          null as number | null,
-        ),
-        safeQuery(
-          async () => {
-            const { data } = await client
-              .from("v_des_posicao_trimestre_ao_vivo")
-              .select("meta_pessoal")
-              .eq("empresa", "OBEN")
-              .eq("trimestre", trimestre)
-              .eq("ano", ano)
-              .limit(1)
-              .maybeSingle();
-            return Number(data?.meta_pessoal ?? 0);
-          },
-          0,
+          { posicao: null, meta: null } as { posicao: number | null; meta: number | null },
         ),
         safeQuery(
           async () => {
@@ -99,7 +86,7 @@ export function KpiCards({ empresa }: { empresa: string }) {
         Promise.resolve(0),
       ]);
 
-      return { posicao, meta, ligacoes, spin };
+      return { posicao: des.posicao, meta: des.meta, ligacoes, spin };
     },
   });
 
@@ -108,7 +95,7 @@ export function KpiCards({ empresa }: { empresa: string }) {
 
   const cards = [
     { label: "Posição ao Vivo", value: data?.posicao == null ? "—" : brl(data.posicao), icon: Trophy },
-    { label: "Meta Pessoal", value: brl(Number(data?.meta ?? 0)), icon: Target },
+    { label: "Meta Pessoal", value: data?.meta == null ? "—" : brl(data.meta), icon: Target },
     { label: "Ligações Hoje", value: data?.ligacoes ?? 0, icon: Phone },
     { label: "Score SPIN Médio", value: data?.spin ?? 0, icon: MessageSquare },
   ];

@@ -527,6 +527,13 @@ db/test-des-desconto-total-maximo.sh       19  falsificar=12
 # v_des_desconto_por_checkin (corpo da prod) perde a linha sem faixa; RLS sob SET ROLE; o envelope.
 # Autocontida: initdb + stubs + a migration + db/fixtures/des-posicao-ao-vivo-prod-20261105.sql.
 db/test-des-posicao-ao-vivo-sem-faturado.sh 32  falsificar=14
+# O simulador DES sem posição ou meta confirmada (20261105180000): a RPC fazia IF posição NULL THEN 0
+# (faixa, ganho e recomendação inventados; anon recebia uma simulação inteira), lia em T4 a meta de T1
+# do MESMO ano e caía num 400000 fixo. Agora recusa com P0001 + marca (4 jeitos de não ter faturado,
+# e sobre a view antiga); faturado 0 simula a partir do trânsito; JSON idêntico ao da prod em 8
+# combinações; trava em 2 sessões, PRÉ de md5 e de atributo, PÓS de ACL/dono/assinatura.
+# Autocontida: initdb + stubs + a migration + db/fixtures/des-simular-puxar-prod-20261105.sql.
+db/test-des-simular-puxar-sem-posicao.sh   29  falsificar=13
 # O "hoje" de SP no preço de partida (get_ultimos_precos_cliente) e na medição do piso
 # (medir_abaixo_piso_tier): o current_date da sessão UTC era amanhã das 21:00 às 23:59 BRT
 # (20260927172443). Mesmo relógio controlado, borda do DIA cruzada sob as duas sessões; o
