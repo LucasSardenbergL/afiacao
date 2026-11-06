@@ -11,12 +11,12 @@ import { RadarConflitosDoLead } from './RadarConflitosCadastro';
 import { RadarAtendimentoLead } from './RadarAtendimentoLead';
 import { RadarModoDiscagem } from './RadarModoDiscagem';
 import { RadarVinculosLead } from './RadarVinculosLead';
+import { RadarTelefoneAcao } from './RadarTelefoneAcao';
 import { avisoTelefoneCompartilhado, gravarModoDiscagem, lerModoDiscagem } from '@/lib/radar/atendimento';
 import { useRadarTelefoneCompartilhado } from '@/queries/useRadarTelefoneCompartilhado';
 import { track } from '@/lib/analytics';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { isCellphone, whatsappLink } from '@/lib/phone';
-import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
 import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
@@ -38,13 +38,13 @@ function Linha({ label, children }: { label: string; children: React.ReactNode }
 }
 
 /** `outras`: em quantas OUTRAS raízes de CNPJ o número aparece; undefined = não consegui verificar (sem aviso). */
-function Telefone({ numero, nome, outras }: { numero: string; nome: string; outras?: number }) {
+function Telefone({ numero, outras }: { numero: string; outras?: number }) {
   const wa = isCellphone(numero) ? whatsappLink(numero) : null;
   const aviso = outras != null ? avisoTelefoneCompartilhado(outras) : null;
   return (
     <span className="inline-flex items-center gap-1.5 flex-wrap">
       <span className="font-tabular">{numero}</span>
-      <BotaoLigar telefone={numero} nomeCliente={nome} variant="icon" />
+      <RadarTelefoneAcao telefone={numero} />
       {wa && (
         <a className="inline-flex items-center gap-1 text-xs text-status-success-bold" href={wa} target="_blank" rel="noreferrer">
           <MessageSquare className="w-3 h-3" /> WhatsApp
@@ -175,7 +175,7 @@ export function RadarDetailSheet({
         {discagem ? (
           <div className="mt-3">
             <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data}
-              ligar={telPrincipal ? <BotaoLigar telefone={telPrincipal} nomeCliente={nome} variant="full" /> : null}
+              ligar={telPrincipal ? <RadarTelefoneAcao telefone={telPrincipal} variant="full" /> : null}
               compartilhadoFalhou={compartilhado.isError} onProximo={onProximo} />
           </div>
         ) : (
@@ -235,7 +235,7 @@ export function RadarDetailSheet({
           <Linha label="Porte">{rotuloPorte(empresa.porte)}</Linha>
           <Linha label="Capital">{formatarCapital(empresa.capital_social)}</Linha>
           <Linha label="Telefone">
-            {empresa.telefone1 ? <Telefone numero={empresa.telefone1} nome={nome} outras={outras(empresa.telefone1)} /> : '—'}
+            {empresa.telefone1 ? <Telefone numero={empresa.telefone1} outras={outras(empresa.telefone1)} /> : '—'}
           </Linha>
           {compartilhado.isError && (empresa.telefone1 || empresa.telefone2) && (
             <p className="py-1 text-xs text-muted-foreground" data-testid="radar-telefone-compartilhado-erro">
@@ -243,7 +243,7 @@ export function RadarDetailSheet({
             </p>
           )}
           {empresa.telefone2 && (
-            <Linha label="Telefone 2"><Telefone numero={empresa.telefone2} nome={nome} outras={outras(empresa.telefone2)} /></Linha>
+            <Linha label="Telefone 2"><Telefone numero={empresa.telefone2} outras={outras(empresa.telefone2)} /></Linha>
           )}
           <Linha label="E-mail">
             {empresa.email ? (

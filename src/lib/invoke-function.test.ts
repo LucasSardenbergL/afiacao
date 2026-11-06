@@ -123,3 +123,17 @@ describe('invokeFunction — status e Retry-After', () => {
     await expect(invokeFunction<{ ok: boolean }>('identify-tool')).resolves.toEqual({ ok: true });
   });
 });
+
+describe('mensagemDoErroEdge', () => {
+  const comCorpo = (corpo: unknown) => ({ context: new Response(JSON.stringify(corpo), { status: 500 }) });
+  it('lê `error` (contrato antigo) e `mensagem` (edges novas, ex.: importar do portal)', async () => {
+    const { mensagemDoErroEdge } = await import('./invoke-function');
+    expect(await mensagemDoErroEdge(comCorpo({ error: 'x' }))).toBe('x');
+    expect(await mensagemDoErroEdge(comCorpo({ ok: false, mensagem: 'Configuração ausente: BROWSERLESS_TOKEN' }))).toBe('Configuração ausente: BROWSERLESS_TOKEN');
+  });
+  it('sem corpo legível devolve null (quem chama trata como indeterminado)', async () => {
+    const { mensagemDoErroEdge } = await import('./invoke-function');
+    expect(await mensagemDoErroEdge({ context: new Response('<html>504</html>', { status: 504 }) })).toBeNull();
+    expect(await mensagemDoErroEdge(new Error('rede'))).toBeNull();
+  });
+});

@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **788** custom migrations totais
-- **2577** objetos esperados (criados por estas migrations)
+- **790** custom migrations totais
+- **2579** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 979
+  - `function`: 981
   - `rls_policy`: 519
   - `index`: 369
   - `table`: 232
@@ -6436,6 +6436,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_placar_uso` | — |
 | `trigger` | `public.trg_radar_evento_abertura` | `analytics_outbox` |
 
+### `20261106140000_sayerlack_importar_portal_revisao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_importar_pedido_portal` | — |
+| `function` | `public.sayerlack_painel_portal` | — |
+
 ### `20261106193714_credito_aviso_vinculo_vencido.sql`
 
 | Tipo | Objeto | Parent |
@@ -6444,6 +6451,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `private.radar_vinculos_nucleo` | — |
 | `function` | `public.credito_vinculo_aviso` | — |
 | `function` | `public.credito_vinculo_aviso_registrar` | — |
+
+### `20261106205556_drop_indices_ociosos_scores.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

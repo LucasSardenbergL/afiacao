@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeFunction } from '@/lib/invoke-function';
 import { track } from '@/lib/analytics';
-import { lerRegistroComDedupe } from '@/lib/radar/borda-rpc';
+import { invalidarRadar } from '@/lib/radar/invalidar-cache';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import {
   cadastrarEmpresaNoOmie,
@@ -96,35 +96,10 @@ export function useRadarCadastrarOmie() {
       cadastrarEmpresaNoOmie(v.empresa, depsCadastroSupabase, v.opcoes),
     onSuccess: (r) => {
       track('radar.lead_cadastrado_omie', { ja_existia: r.jaExistia, recuperado: r.recuperado });
-      qc.invalidateQueries({ queryKey: ['radar'] });
+      void invalidarRadar(qc);
     },
     // A v2 grava o conflito e a lib LANÇA DivergenciaCadastro: sem isto a ficha e o indicador seguiriam em zero
     // com 1 conflito no servidor (Codex, código P2-2).
     onError: () => qc.invalidateQueries({ queryKey: ['radar', 'conflitos-cadastro'] }),
-  });
-}
-
-/** RPC `radar_atribuir_tarefa` (SECURITY DEFINER gestor/master): { id, deduped }. */
-async function atribuirTarefaRadar(v: { cnpj: string; diasRetomada?: number }) {
-  const { data, error } = await supabase.rpc('radar_atribuir_tarefa', {
-    p_cnpj: v.cnpj,
-    p_dias_retomada: v.diasRetomada ?? 7,
-  });
-  if (error) throw error;
-  return lerRegistroComDedupe(data, 'radar_atribuir_tarefa');
-}
-
-/**
- * Cria (ou reaproveita) uma tarefa de retomada para o lead do radar.
- * `deduped: true` quando já havia tarefa aberta (janela de 2 min).
- */
-export function useRadarAtribuirTarefa() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: atribuirTarefaRadar,
-    onSuccess: () => {
-      track('radar.tarefa_criada', {});
-      qc.invalidateQueries({ queryKey: ['radar'] });
-    },
   });
 }

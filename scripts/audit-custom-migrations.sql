@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 788
+-- Total de custom migrations: 790
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -856,7 +856,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106083754', 'radar_vinculos_em_lote', '20261106083754_radar_vinculos_em_lote.sql'),
   ('20261106090000', 'des_simular_puxar_config_e_checkin', '20261106090000_des_simular_puxar_config_e_checkin.sql'),
   ('20261106132259', 'radar_abriu_ficha_com_cnpj', '20261106132259_radar_abriu_ficha_com_cnpj.sql'),
-  ('20261106193714', 'credito_aviso_vinculo_vencido', '20261106193714_credito_aviso_vinculo_vencido.sql')
+  ('20261106140000', 'sayerlack_importar_portal_revisao', '20261106140000_sayerlack_importar_portal_revisao.sql'),
+  ('20261106193714', 'credito_aviso_vinculo_vencido', '20261106193714_credito_aviso_vinculo_vencido.sql'),
+  ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3392,6 +3394,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_abriu_ficha_com_cnpj', 'function', 'private', 'radar_evento_abertura', ''),
   ('radar_abriu_ficha_com_cnpj', 'function', 'public', 'radar_placar_uso', ''),
   ('radar_abriu_ficha_com_cnpj', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
+  ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
+  ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_painel_portal', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_base', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_nucleo', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'public', 'credito_vinculo_aviso', ''),
@@ -5979,6 +5983,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_abriu_ficha_com_cnpj', 'function', 'private', 'radar_evento_abertura', ''),
   ('radar_abriu_ficha_com_cnpj', 'function', 'public', 'radar_placar_uso', ''),
   ('radar_abriu_ficha_com_cnpj', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
+  ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
+  ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_painel_portal', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_base', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_nucleo', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'public', 'credito_vinculo_aviso', ''),
@@ -6606,6 +6612,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'expurgar_scores_antigos', 2, '20261102183000_retencao_scores_60d_semanal.sql', '503360f918cf4af6aa5a919f198eb557'),
   ('public', 'sayerlack_importar_pedido_portal', 1, '20261014120000_sayerlack_importar_pedido_portal.sql', 'c14ac9f70c17b8b4cdf505f568857517'),
   ('public', 'sayerlack_importar_pedido_portal', 2, '20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql', 'f6fd335ab6cdd75263cefc10539fcca4'),
+  ('public', 'sayerlack_importar_pedido_portal', 3, '20261106140000_sayerlack_importar_portal_revisao.sql', '41c5024788a62f9a3b7f02ce74123ec2'),
   ('public', 'vendas_sync_lease_acquire_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '0d0aaef070dfc5a46cdd0964ec5279f3'),
   ('public', 'vendas_sync_lease_acquire_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '8404d00f852bbcac3d5262ffa6bc5170'),
   ('public', 'vendas_sync_heartbeat_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '8e4c883f6fe239a2183a2c1915a8a5ad'),

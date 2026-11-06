@@ -83,12 +83,12 @@ describe('saiuDoDump + rótulo', () => {
   });
 
   it('rótulo diz O MÊS em que foi visto pela última vez — sem motivo (baixa é outra entrega)', () => {
-    expect(rotuloSaiuDoDump('2026-05')).toBe('saiu do dump em mai/2026');
-    expect(rotuloSaiuDoDump('2026-12')).toBe('saiu do dump em dez/2026');
+    expect(rotuloSaiuDoDump('2026-05')).toBe('última presença: mai/2026 · ausente no lote atual');
+    expect(rotuloSaiuDoDump('2026-12')).toBe('última presença: dez/2026 · ausente no lote atual');
   });
 
   it('rótulo não inventa mês para lote fora do formato', () => {
-    expect(rotuloSaiuDoDump('lixo')).toBe('saiu do dump em lixo');
+    expect(rotuloSaiuDoDump('lixo')).toBe('última presença: lixo · ausente no lote atual');
   });
 });
 
