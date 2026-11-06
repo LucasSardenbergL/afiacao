@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **783** custom migrations totais
-- **2561** objetos esperados (criados por estas migrations)
+- **784** custom migrations totais
+- **2564** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 968
   - `rls_policy`: 519
   - `index`: 369
   - `table`: 232
-  - `cron_job`: 210
+  - `cron_job`: 213
   - `view`: 134
   - `trigger`: 125
   - `enum_value`: 4
@@ -6393,6 +6393,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.radar_score_estado` | — |
 | `index` | `public.idx_radar_empresas_ja_cliente` | `radar_empresas` |
 | `index` | `public.idx_radar_empresas_updated_at` | `radar_empresas` |
+
+### `20261105160000_fin_cashflow_cron_carga_unica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario` | — |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor` | — |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor-sc` | — |
 
 ### `20261105180000_des_simular_puxar_sem_posicao_recusa.sql`
 
