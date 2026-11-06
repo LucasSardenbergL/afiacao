@@ -5,7 +5,7 @@ import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 import { lerProspectarHoje, type ProspectarHoje } from '@/lib/radar/prospectar-hoje';
 
-export const LEADS_DO_CARD = 3;
+const LEADS_DO_CARD = 3;
 
 /**
  * Leads do card "Prospectar hoje" (RPC `radar_prospectar_hoje`, migration 20261106181000). Leitura PURA — está na
