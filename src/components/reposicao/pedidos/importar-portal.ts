@@ -24,6 +24,10 @@ interface RespostaImportacao {
   itens?: ItemImportado[];
   /** Passos do navegador remoto — a edge devolve quando a LEITURA do portal falha. */
   trace?: unknown[] | null;
+  /** SQLSTATE da recusa da RPC (IP002 sem de-para, CP006 NCM sem alíquota, IP007 condição…). */
+  sqlstate?: string | null;
+  /** Condição de pagamento gravada no pedido ("A07 · Para 7 dias"). */
+  condicao?: string | null;
 }
 
 type TomResultado = 'sucesso' | 'aviso' | 'erro';
@@ -39,6 +43,21 @@ export interface ResultadoTela {
   valorTotal: number | null;
   /** Diagnóstico da leitura do portal (só em falha de leitura): o que o navegador remoto fez, passo a passo. */
   detalheTecnico: string | null;
+  /** Condição de pagamento que foi ao Omie. */
+  condicao: string | null;
+  /** O que o operador faz para destravar (link para a tela certa), quando existe. */
+  acao: { rotulo: string; href: string } | null;
+}
+
+/** Recusas que têm uma TELA onde se resolve. As demais dizem na mensagem quem resolve. */
+const ACAO_POR_SQLSTATE: Readonly<Record<string, { rotulo: string; href: string }>> = {
+  IP002: { rotulo: 'Abrir Mapeamento de SKU', href: '/admin/sku-mapeamento' },
+  IP003: { rotulo: 'Abrir Mapeamento de SKU', href: '/admin/sku-mapeamento' },
+};
+
+/** Link para o pedido no app (Gerir pedidos abre o detalhe por ?id=, em qualquer ciclo). */
+export function linkDoPedido(pedidoId: number): string {
+  return `/admin/reposicao/pedidos?id=${pedidoId}`;
 }
 
 /**
@@ -55,6 +74,8 @@ export function interpretarRespostaImportacao(data: unknown, protocolo: string):
     situacaoPortal: r.situacao_portal ?? null,
     valorTotal: typeof r.valor_total === 'number' ? r.valor_total : (typeof r.valor_total_portal === 'number' ? r.valor_total_portal : null),
     detalheTecnico: Array.isArray(r.trace) && r.trace.length > 0 ? JSON.stringify(r.trace, null, 1) : null,
+    condicao: r.condicao ?? null,
+    acao: r.sqlstate ? ACAO_POR_SQLSTATE[r.sqlstate] ?? null : null,
   };
   if (r.ok === true && r.etapa === 'concluido') {
     return {
@@ -76,4 +97,61 @@ export function interpretarRespostaImportacao(data: unknown, protocolo: string):
     ? `Não consegui ler o pedido ${protocolo} no portal`
     : `Pedido ${protocolo} não foi importado`;
   return { ...base, tom: 'erro', titulo, mensagem: r.mensagem ?? 'Resposta inesperada da importação.' };
+}
+
+/**
+ * A chamada não trouxe resposta legível (prazo do gateway, rede). A importação PODE ter gravado e criado o PO depois:
+ * não é "não importado" — é "não sei". Reimportar é seguro (não duplica) e é o que se pede; lançar à mão no Omie não.
+ */
+export function respostaIndeterminada(protocolo: string, detalhe: string | null): ResultadoTela {
+  return {
+    tom: 'aviso',
+    titulo: `Não sei se o pedido ${protocolo} entrou`,
+    mensagem: `A resposta do servidor não chegou${detalhe ? ` (${detalhe})` : ''}. Espere 1 minuto e clique em Importar de novo — ` +
+      'não duplica: se já entrou, eu mostro o pedido de compra. Não lance à mão no Omie.',
+    pedidoId: null, omieNumero: null, itens: [], situacaoPortal: null, valorTotal: null,
+    detalheTecnico: null, condicao: null, acao: null,
+  };
+}
+
+// ---- Painel "Pedidos do portal Sayerlack" (RPC sayerlack_painel_portal) ----
+
+export interface PendenciaPortal { protocolo: string; mensagem: string; tentativas: number; ultimaEm: string | null }
+export interface SemPoPortal { pedidoId: number; protocolo: string; status: string | null; importadoEm: string | null }
+export interface ImportadoPortal {
+  pedidoId: number; protocolo: string; omieNumero: string | null; valorTotal: number | null;
+  importadoEm: string | null; origem: 'cron' | 'botao';
+}
+export interface PainelPortal { pendencias: PendenciaPortal[]; semPo: SemPoPortal[]; importados: ImportadoPortal[] }
+
+const lista = (v: unknown): Record<string, unknown>[] =>
+  Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object') : [];
+const texto = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+const inteiro = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) ? v : null);
+
+/**
+ * Normaliza o JSON do painel. Linha sem identidade (protocolo/pedido) é DESCARTADA, não inventada; resposta que não é
+ * objeto LANÇA — o card mostra "não consegui ler", nunca "nada pendente" (ausente ≠ vazio).
+ */
+export function normalizarPainel(data: unknown): PainelPortal {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Resposta do painel do portal ilegível');
+  const d = data as Record<string, unknown>;
+  return {
+    pendencias: lista(d.pendencias).flatMap((p) => {
+      const protocolo = texto(p.protocolo);
+      return protocolo ? [{ protocolo, mensagem: texto(p.mensagem) ?? '(sem motivo registrado)', tentativas: inteiro(p.tentativas) ?? 1, ultimaEm: texto(p.ultima_em) }] : [];
+    }),
+    semPo: lista(d.sem_po).flatMap((p) => {
+      const pedidoId = inteiro(p.pedido_id); const protocolo = texto(p.protocolo);
+      return pedidoId != null && protocolo ? [{ pedidoId, protocolo, status: texto(p.status), importadoEm: texto(p.importado_em) }] : [];
+    }),
+    importados: lista(d.importados).flatMap((p) => {
+      const pedidoId = inteiro(p.pedido_id); const protocolo = texto(p.protocolo);
+      return pedidoId != null && protocolo ? [{
+        pedidoId, protocolo, omieNumero: texto(p.omie_numero),
+        valorTotal: typeof p.valor_total === 'number' && Number.isFinite(p.valor_total) ? p.valor_total : null,
+        importadoEm: texto(p.importado_em), origem: p.origem === 'cron' ? 'cron' as const : 'botao' as const,
+      }] : [];
+    }),
+  };
 }
