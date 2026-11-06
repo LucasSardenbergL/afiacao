@@ -57,6 +57,32 @@ de 8 s). Três mapas concorrentes por empresa. Recorrência: 10 dias com menos d
   Os 3 cálculos são lineares (sem CR×CP), e a carga pesada passa a sair 1×. A medida vem do 1º
   ciclo: `Server-Timing` da resposta e a duração em `acoes_execucoes`.
 
-## Deploy
+## Deploy (conferido por `psql-ro` em 2026-11-06 14:25Z)
 
-<!-- edge (MCP Lovable) → sonda → migration (db:aplicar) → ciclo seguinte em fin_projecao_snapshots -->
+1. **Merge** do #3646 em 2026-11-06 05:05Z (`eafa6b21f`).
+2. **Edge v2.3 no ar:** `bun run pendencias:deploy` → `fin-cashflow-engine` **CONFERE**. A sonda
+   atestou `v2.3-carga-unica-cenarios` em 11:37Z, com a fonte (`e166b1bd…`) igual à da main.
+3. **Migration do cron:** `db_aplicacoes` #915, `aplicada` às 12:17Z, pelo `db:aplicar`, depois da
+   atestação (a PRE exige isso). O sha256 (`6bf63202…`) bate com o arquivo da main. Conferência
+   por fora: os 3 jobs com `company` certa, os 3 cenários, `timeout_milliseconds := 120000` e
+   nenhum `FOREACH`.
+4. **Ciclo de 06/11:** rodou ANTES do deploy (10:00–10:10Z, v2.2, 9 chamadas, 9 sucessos) e
+   tem os 3 cenários nas 3 empresas. Não prova o caminho novo.
+5. **1º ciclo pelo caminho novo: 07/11, 10:00/10:05/10:10Z.** Pronto quando a query abaixo
+   der 3 empresas × 3 cenários, 9 registros `sucesso` e 3 respostas HTTP 200 da v2.3 com
+   `resultados` (uma por empresa):
+
+```sql
+select company, string_agg(cenario, ',' order by cenario), count(*)
+  from fin_projecao_snapshots
+ where (snapshot_at at time zone 'America/Sao_Paulo')::date = date '2026-11-07'
+ group by 1 order by 1;
+select status, count(*) from acoes_execucoes
+ where acao = 'fin_cashflow.snapshot_diario' and iniciado_em >= '2026-11-07 10:00Z' group by 1;
+select status_code, content::jsonb->>'versao', content::jsonb ? 'resultados', length(content::text)
+  from net._http_response where created >= '2026-11-07 10:00Z' and created < '2026-11-07 10:20Z'
+   and content::text like '%"versao":"v2.%' order by created;
+```
+
+**Pendente fora desta entrega:** o realista da colacor de 05/11 segue ausente. Pelo plano, ele é
+refeito só para o cenário que falta, sem re-rodar o cron em lote.
