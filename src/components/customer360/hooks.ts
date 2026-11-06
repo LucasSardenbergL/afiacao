@@ -77,29 +77,42 @@ export function useCustomerScore(customerId: string | undefined, farmerId: strin
     enabled: !!customerId && !!farmerId,
     staleTime: 60_000,
     queryFn: async () => {
-      // Tenta o score do farmer atual primeiro; cai pra qualquer score se não existir
-      const { data: own } = await supabase
-        .from('farmer_client_scores')
-        .select(COLUNAS_SCORE_C360)
-        .eq('customer_user_id', customerId!)
-        .eq('farmer_id', farmerId!)
-        .maybeSingle();
-      const linha = own ?? (await supabase
-        .from('farmer_client_scores')
-        .select(COLUNAS_SCORE_C360)
-        .eq('customer_user_id', customerId!)
-        .limit(1)
-        .maybeSingle()).data;
-      if (!linha) return linha;
+      // A margem só precisa do cliente, então sai JUNTO com o score (F12, plano v7): a espera é
+      // max(score, margem), não score + margem. O `.catch` fica preso na hora — a promessa nunca
+      // rejeita, então não vira rejeição sem dono se a leitura do score lançar antes do `await`.
       // A margem NÃO vem da tabela: a coluna é fechada para authenticated (FU4-F) e sai pela RPC com
       // gate de projeção. `margem_oculta` separa "o servidor não concedeu" de "não apurada" — sem ele
       // o hero diria "sem compra na janela" sobre quem compra todo mês.
       // Falha da RPC NÃO derruba o score: health/churn/cobertura foram lidos e seguem na tela; só a
       // margem some (`margem_oculta`), sem legenda que afirme algo sobre o cliente (achado Codex).
-      const margem = await buscarMargemScore(customerId!).catch((e: unknown) => {
+      const margemP = buscarMargemScore(customerId!).catch((e: unknown) => {
         captureException(e, { fonte: 'get_scores_margem/c360' });
         return undefined;
       });
+      // Score do farmer atual primeiro; o fallback (qualquer score do cliente) só roda quando a
+      // leitura própria teve SUCESSO sem linha. Falha LANÇA: o erro descartado virava "Sem score"
+      // na tela — ausência afirmada sobre uma leitura que não aconteceu.
+      const own = await supabase
+        .from('farmer_client_scores')
+        .select(COLUNAS_SCORE_C360)
+        .eq('customer_user_id', customerId!)
+        .eq('farmer_id', farmerId!)
+        .maybeSingle();
+      if (own.error) throw own.error;
+      let linha = own.data;
+      if (!linha) {
+        const fallback = await supabase
+          .from('farmer_client_scores')
+          .select(COLUNAS_SCORE_C360)
+          .eq('customer_user_id', customerId!)
+          .limit(1)
+          .maybeSingle();
+        if (fallback.error) throw fallback.error;
+        linha = fallback.data;
+      }
+      // Sem linha não há onde pendurar a margem: devolve já (a RPC em voo morre sem dono e sem custo).
+      if (!linha) return linha;
+      const margem = await margemP;
       return {
         ...linha,
         gross_margin_pct: margem?.margem ?? null,

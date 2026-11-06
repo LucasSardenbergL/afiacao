@@ -11,9 +11,11 @@ import {
   formatBRL, splitEmails, formatCustomerType, formatPhone, formatCep,
 } from './format';
 import type { Customer, CustomerScore, AddressQuery, ContactsQuery } from './viewTypes';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import type { EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 
 export function IdentityColumn({
-  customer, isPj, customerId, contacts, address, score: s,
+  customer, isPj, customerId, contacts, address, score: s, scoreSemLeitura = null,
 }: {
   customer: Customer;
   isPj: boolean;
@@ -21,6 +23,8 @@ export function IdentityColumn({
   contacts: ContactsQuery;
   address: AddressQuery;
   score: CustomerScore;
+  /** Leitura do score que NÃO aconteceu (sem score em mãos). Sem isto o card sumia como "sem score". */
+  scoreSemLeitura?: EstadoSemLeitura | null;
 }) {
   return (
     <div className="lg:col-span-1 space-y-4">
@@ -184,6 +188,10 @@ export function IdentityColumn({
           )}
         </CardContent>
       </Card>
+
+      {!s && scoreSemLeitura && (
+        <AvisoLeituraFalhou oque="o score comercial" estado={scoreSemLeitura} variante="bloco" testId="aviso-c360-score" />
+      )}
 
       {s && (
         <Card>
