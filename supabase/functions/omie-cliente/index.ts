@@ -4,6 +4,7 @@ import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { deveReporTelefone, telefoneCompleto, telefoneOmie } from "./telefone.ts";
 import { deveInterromperPagina, podeIniciarPagina } from "./orcamento.ts";
+import { linhaPerfilPlaceholder } from "./perfil-placeholder.ts";
 import {
   type AvancoRodada,
   type CursorRodada,
@@ -986,15 +987,17 @@ Deno.serve(async (req) => {
         const newUserId = authData.user.id;
 
         // Create profile (trigger auto_assign_user_role will assign 'customer')
+        // Origem `omie_import`: o placeholder não pediu conta, então fica fora da fila de aprovações (C7).
         const { error: profileError } = await adminClient
           .from("profiles")
-          .insert({
-            user_id: newUserId,
-            name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
-            email: cliente.email || null,
+          .insert(linhaPerfilPlaceholder({
+            userId: newUserId,
+            nomeFantasia: cliente.nome_fantasia,
+            razaoSocial: cliente.razao_social,
+            email: cliente.email,
             phone: telefoneCompleto(cliente.telefone),
             document: cliente.cnpj_cpf ? normalizarDocumento(cliente.cnpj_cpf) : null,
-          });
+          }));
 
         if (profileError) {
           console.error("[criar_perfil_local] Profile error:", profileError);
@@ -1328,13 +1331,15 @@ Deno.serve(async (req) => {
                   // O supabase-js NÃO lança em falha de escrita: devolve { error }. Ignorá-lo
                   // deixava o usuário Auth recém-criado SEM profile — órfão — e o laço seguia
                   // contando "importado". Nenhum UNIQUE segura: o user_id acabou de nascer.
-                  const { error: profileError } = await adminClient.from("profiles").insert({
-                    user_id: userId,
-                    name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
-                    email: cliente.email || null,
+                  // A origem `omie_import` tira este fantasma da fila de aprovações e do KPI da home (C7).
+                  const { error: profileError } = await adminClient.from("profiles").insert(linhaPerfilPlaceholder({
+                    userId,
+                    nomeFantasia: cliente.nome_fantasia,
+                    razaoSocial: cliente.razao_social,
+                    email: cliente.email,
                     phone: telefoneOmie(cliente.telefone1_ddd, cliente.telefone1_numero),
                     document: cnpjCpf,
-                  });
+                  }));
                   if (profileError) {
                     console.error(`[sync_all_clients] profile insert falhou (user ${userId}, código ${codigoCliente}):`, profileError);
                     accErrors++;

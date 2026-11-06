@@ -3,20 +3,48 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PlayCircle } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { naoConsegui, type EstadoLeitura } from "@/lib/leitura/estado-de-leitura";
 import { formatBRL, formatDateLong, diasBadge } from "./shared";
 
+/**
+ * O que um KPI mostra quando NÃO tem número (plano v7, C10): esqueleto enquanto carrega e "—" com
+ * o motivo quando a leitura falhou. Nunca R$ 0: a falha da view saía como "economia R$ 0",
+ * idêntica a um dia sem oportunidade.
+ */
+function SemNumero({ estado, grande = true }: { estado: EstadoLeitura; grande?: boolean }) {
+  if (estado === "carregando") return <Skeleton className="h-8 w-24" aria-label="Carregando" />;
+  return (
+    <>
+      <div className={`${grande ? "text-2xl" : "text-lg"} font-bold text-muted-foreground/60`}>—</div>
+      {naoConsegui(estado) && (
+        <p className="text-xs text-status-warning mt-1">
+          {estado === "sem-rede" ? "Sem conexão — não foi possível ler" : "Não foi possível carregar"}
+        </p>
+      )}
+    </>
+  );
+}
+
 export function KpiCards({
-  totalEconomia, ganhoLiquidoPotencial, oportunidadesCount, totalSkusAtivos, dataLimiteMaisProxima, diasAteLimite, cicloHoje, onGerarCiclo,
+  estados, totalEconomia, ganhoLiquidoPotencial, oportunidadesCount, totalSkusAtivos, dataLimiteMaisProxima, diasAteLimite, cicloHoje, onGerarCiclo,
 }: {
-  totalEconomia: number;
-  ganhoLiquidoPotencial: number;
-  oportunidadesCount: number;
-  totalSkusAtivos: number;
+  /**
+   * Estado de cada leitura de origem. `'pronta'` = há dado em mãos (inclusive o desatualizado, que
+   * a página avisa à parte). Os números abaixo são `null` exatamente quando o estado não é
+   * `'pronta'` — `null` é "não sei", nunca zero.
+   */
+  estados: { oportunidades: EstadoLeitura; skusAtivos: EstadoLeitura; ciclo: EstadoLeitura };
+  totalEconomia: number | null;
+  ganhoLiquidoPotencial: number | null;
+  oportunidadesCount: number | null;
+  totalSkusAtivos: number | null;
   dataLimiteMaisProxima: string | null;
   diasAteLimite: number | null;
-  cicloHoje: number;
+  cicloHoje: number | null;
   onGerarCiclo: () => void;
 }) {
+  const semOportunidades = oportunidadesCount == null;
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
       <Card>
@@ -26,13 +54,17 @@ export function KpiCards({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div
-            className={`text-2xl font-bold tabular-nums ${
-              ganhoLiquidoPotencial > 0 ? "text-status-success" : "text-muted-foreground"
-            }`}
-          >
-            {formatBRL(ganhoLiquidoPotencial)}
-          </div>
+          {ganhoLiquidoPotencial == null ? (
+            <SemNumero estado={estados.oportunidades} />
+          ) : (
+            <div
+              className={`text-2xl font-bold tabular-nums ${
+                ganhoLiquidoPotencial > 0 ? "text-status-success" : "text-muted-foreground"
+              }`}
+            >
+              {formatBRL(ganhoLiquidoPotencial)}
+            </div>
+          )}
           <p className="text-xs text-muted-foreground mt-1">
             net-R$ dos SKUs com "comprar mais"
           </p>
@@ -46,9 +78,13 @@ export function KpiCards({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold text-status-success tabular-nums">
-            {formatBRL(totalEconomia)}
-          </div>
+          {totalEconomia == null ? (
+            <SemNumero estado={estados.oportunidades} />
+          ) : (
+            <div className="text-2xl font-bold text-status-success tabular-nums">
+              {formatBRL(totalEconomia)}
+            </div>
+          )}
           <p className="text-xs text-muted-foreground mt-1">
             economia bruta (promoções e aumentos vigentes)
           </p>
@@ -62,11 +98,15 @@ export function KpiCards({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold tabular-nums">
-            {oportunidadesCount}
-          </div>
+          {oportunidadesCount == null ? (
+            <SemNumero estado={estados.oportunidades} />
+          ) : (
+            <div className="text-2xl font-bold tabular-nums">
+              {oportunidadesCount}
+            </div>
+          )}
           <p className="text-xs text-muted-foreground mt-1">
-            de {totalSkusAtivos} SKUs ativos
+            de {totalSkusAtivos ?? "—"} SKUs ativos
           </p>
         </CardContent>
       </Card>
@@ -78,7 +118,10 @@ export function KpiCards({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {dataLimiteMaisProxima ? (
+          {semOportunidades ? (
+            // Sem a lista, "Sem janelas ativas" seria uma afirmação que a tela não pode fazer.
+            <SemNumero estado={estados.oportunidades} grande={false} />
+          ) : dataLimiteMaisProxima ? (
             <>
               <div className="text-lg font-bold tabular-nums">
                 {formatDateLong(dataLimiteMaisProxima)}
@@ -110,7 +153,9 @@ export function KpiCards({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {cicloHoje > 0 ? (
+          {cicloHoje == null ? (
+            <SemNumero estado={estados.ciclo} grande={false} />
+          ) : cicloHoje > 0 ? (
             <>
               <Badge
                 className="bg-status-success/15 text-status-success border-status-success/30 cursor-pointer hover:bg-status-success/25"
