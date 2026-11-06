@@ -96,16 +96,35 @@ Os cortes do v5 (E6, D2, E2, E8, F6, E4) e do v6 (C3, D7, F10, NF-NULL, NF-CHAVE
 
 | Lote | Conteúdo | Depende de | Quem aplica |
 |---|---|---|---|
-| 1 | D10 — 1 carga de dados por execução dos 3 cenários na `fin-cashflow-engine` | — | sessão + prova PG17 + Codex + **deploy de edge**; conferir o ciclo seguinte em `fin_projecao_snapshots` |
-| 2 | C7 — import marca a origem do perfil criado + backfill por procedência | — | sessão + Codex + **deploy de edge** + **backfill** (envelope ou founder no SQL Editor) |
+| 1 | ~~D10 — 1 carga de dados por execução dos 3 cenários na `fin-cashflow-engine`~~ ✅ #3646 (sonda #3653), **no ar**: ledger `pendencias:deploy` → `fin-cashflow-engine v2.3-carga-unica-cenarios` CONFERE; cron pelo `db:aplicar` (`db_aplicacoes` #915 `aplicada`), os 3 jobs `fin-cashflow-snapshot-diario*` ativos com `timeout_milliseconds` e `cenarios`. 1º ciclo em `fin_projecao_snapshots` a conferir em 07/11 (10:00–10:10 UTC; query no [histórico](../../../historico/fin-cashflow-carga-unica-d10-v7.md)) | — | sessão + prova PG17 + Codex + **deploy de edge**; conferir o ciclo seguinte em `fin_projecao_snapshots` |
+| 2 | ~~C7 — import marca a origem do perfil criado + backfill por procedência~~ ✅ #3645 (sonda #3653), **no ar**: `omie-cliente v1.7-perfil-placeholder-com-origem` CONFERE no ledger; backfill `db_aplicacoes` #916 `aplicada` ([histórico](../../../historico/aprov-fantasma-origem-placeholder-c7-v7.md)) | — | sessão + Codex + **deploy de edge** + **backfill** (envelope ou founder no SQL Editor) |
 | 3 | ~~C8 + C9 + C10 + C11 (+ erro do histórico de ciclos) — estados honestos nos KPIs de reposição e no badge~~ ✅ #3648, **no ar**: `monitor-deploy --pr 3648` → `PR_NO_AR` (ar `3dad9809` = ponta da main, 2026-11-06). 8 sabotagens vermelhas nos dois locales ([histórico](../../../historico/reposicao-kpis-badge-leitura-v7-lote3.md)) | — | sessão + **Publish** |
 | 4 | ~~E16 — 7 partes no núcleo SQL, medido~~ ✅ #3643, **mantido**: pior parte 16,5 e 15,9 min (base p50 19,3, mín. 18,6 em 17 runs), parede até o `validate` 17,3 e 16,6 (base p50 23,0), runner-min empatado (145,4 e 146,2 sem o mutcheck; base p50 146,1). Fila não medida sob carga ([histórico](../../../historico/ci-e16-nucleo-sql-7-partes.md)) | — | sessão |
 | 5 | ~~E14 restrito — escopo documental cumulativo no dispatch da main~~ ✅ #3657 (Codex APROVAR): simulação sobre 197 dispatches reais dá 34 elegíveis (17%, não ~60%: o diff é cumulativo e a coalescência leva código junto), ~91 runner-min cada. Medição pós-merge em [ci-e14-escopo-main-docs.md](../../../historico/ci-e14-escopo-main-docs.md) | lote 4 medido | sessão + Codex |
-| 6 | F13 — DND sob demanda na home | lab antes/depois | sessão + **Publish** |
-| 7 | F12 — score e margem em paralelo no Customer 360 | lab antes/depois | sessão + **Publish** |
+| 6 | ~~F13 — DND sob demanda na home~~ ✅ #3649, **no ar**: `monitor-deploy --pr 3649` → `PR_NO_AR` ([histórico](../../../historico/f13-dnd-sob-demanda-home-v7.md)) | lab antes/depois | sessão + **Publish** |
+| 7 | ~~F12 — score e margem em paralelo no Customer 360~~ ✅ #3647, **no ar**: `monitor-deploy --pr 3647` → `PR_NO_AR` ([histórico](../../../historico/c360-score-margem-paralelo-f12-v7.md)) | lab antes/depois | sessão + **Publish** |
 | — | E17 | lotes 4 e 5 medidos | experimento |
 | — | D11 | — | diagnóstico read-only, sem PR de código |
 | — | D12 | #3638/#3639 | outra sessão |
 | — | ~~#3634 Publish + migration~~ ✅ aplicados em 2026-11-05 (ver §0) | — | — |
 
 Os lotes 1, 2, 3, 6 e 7 tocam arquivos distintos e são independentes entre si. 4 → 5 → E17 rodam em sequência para não misturar a medição do CI. Antes de cada lote, procurar o artefato na main (`git grep <símbolo> origin/main`): no meio da escrita deste plano, outra sessão abriu o #3638/#3639 sobre o Radar, que este levantamento também tinha achado.
+
+### Fecho (2026-11-06 ~14:40 UTC, `origin/main` = `891ffdd5e`)
+
+Conferido de novo, camada por camada. O ar serve `3dad9809`, que contém todos os squashes abaixo:
+
+- **Publish:** `monitor-deploy --pr N` → `PR_NO_AR` (rc 0) para #3644, #3647, #3649 e #3655. O #3648 está no #3664.
+- **Edges:** `bun run pendencias:deploy` (rc 0) → 83/83 CONFERE, incluindo `fin-cashflow-engine` v2.3 e `omie-cliente` v1.7.
+- **Banco** (`psql-ro -v ON_ERROR_STOP=1`, rc 0, marcador `FIM_OK`):
+  - `db_aplicacoes` #915 e #916 `aplicada`.
+  - DES 3d (#3655, v6 lote 3d): migration `20261106090000` aplicada; `simular_puxar_volume_trimestre` tem md5 `61c51d0f…` (o POS1) e `v_des_checkin_atual` tem md5 `cfe9a0e1…` (o POS4). O md5 `fea04a38…` do 3c foi substituído, como a PRE previa.
+
+O que fica aberto, cada item com dono e data:
+
+| Item | Dono | Quando |
+|---|---|---|
+| E17 | sessão "Plano v7 · lote 5 + E17", draft #3660 | O CI terminou verde em 06/11; sai do draft após medir o custo no runner |
+| D11 + D12 | sessão "Plano v7 · D11 + D12" (doc commitado, PR só de docs) | D11 fecha após o watchdog das 17:00/17:30 UTC de 06/11; D12 mede em 07/11 com o `pg_stat_statements` |
+| 1º ciclo do D10 | quem abrir 07/11 | 07/11 após 10:10 UTC, pela query do histórico do D10 |
+| Instância Micro (achado do D11) | **founder** | Decide olhando Reports → Database (30/10–06/11: Memory/Swap, CPU, Disk IO budget). Opções: (a) Micro → Small, (b) cortar o `tint_promocao_tick` (~38% das leituras), em entrega própria, ou (c) aceitar como está |
