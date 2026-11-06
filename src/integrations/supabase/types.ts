@@ -12844,6 +12844,36 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_score_estado: {
+        Row: {
+          calculado_em: string
+          id: number
+          ja_cliente_n: number | null
+          lote: string | null
+          lote_iniciado_em: string | null
+          max_updated_at: string | null
+          versao_formula: string | null
+        }
+        Insert: {
+          calculado_em: string
+          id?: number
+          ja_cliente_n?: number | null
+          lote?: string | null
+          lote_iniciado_em?: string | null
+          max_updated_at?: string | null
+          versao_formula?: string | null
+        }
+        Update: {
+          calculado_em?: string
+          id?: number
+          ja_cliente_n?: number | null
+          lote?: string | null
+          lote_iniciado_em?: string | null
+          max_updated_at?: string | null
+          versao_formula?: string | null
+        }
+        Relationships: []
+      }
       radar_situacao_cadastral: {
         Row: {
           alertado_em: string | null

@@ -251,3 +251,15 @@ restantes fora de EX. Ele não é reaplicável: rodar de novo aborta na PRE, por
 coordenada. Pelo psql-ro depois: nenhum município com lead sem coordenada e **nenhum lead sem ponto**.
 Na camada de concorrentes, ficam sem ponto o EXTERIOR e os 3 códigos sem lead (9 estabelecimentos).
 
+
+**Base morta tirada da sonda (2026-11-06).** A sonda ficava vermelha toda segunda e nunca concluía
+"indisponivel". O motivo: `dadosabertos.rfb.gov.br` dá timeout desde pelo menos 2026-11-02, tanto do Mac
+quanto do runner (runs 41465820397, do schedule, e 42210922371, do dispatch, os dois falhando em "Escolher
+o mês"). Timeout é inconclusivo por desenho em `concluirSonda`, então uma base morta na lista basta para
+travar a decisão. HEAD de `Cnaes.zip` em 06/11: webdav dá 200 em 2026-10 e 404 em 2026-11, `dados/cnpj` dá
+404 nos dois e `dadosabertos` dá timeout nos dois. O conserto tirou a base de `basesCandidatas`
+(`scripts/radar/rfb.ts`), que também serve à carga, e **não** mexeu na regra "timeout ≠ não publicado".
+A sonda virou `sondarMes(mes, head)` com o HEAD injetável, e o teste [B1]–[B3] usa o mundo medido. A
+regra do teste: base que não está no mapa conta como timeout, então base nova só entra se responder de
+verdade. Falsificado com controle verde: devolver a base morta à lista deixa o [B1] vermelho, com o
+mesmo "sem resposta conclusiva" da produção. Tratar timeout como 404 deixa o [S3] e o [B3] vermelhos.

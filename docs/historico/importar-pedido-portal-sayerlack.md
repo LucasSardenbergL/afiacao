@@ -131,3 +131,6 @@ caso algum pedido esteja lançado no portal da Sayerlack e não exista no Omie, 
   22:30 sem candidatos (`importados: []`, `falhas: []`).
 - **Lição**: o 1º pedido "novo" do portal travou na alíquota de IPI do NCM, não na varredura — NCM novo de item
   Sayerlack ainda depende de cadastro manual; o e-mail é o aviso.
+- **21/10 22:30 — 1ª importação 100% pelo cron**: 2142771 (visto, carência cumprida, sync `complete` depois) →
+  PO Omie **1306**, espelho com uma linha só para o contrato. De 21/10 a 05/11: 49 rodadas `sucesso`, 0 `erro`, 0
+  falha nova em `sayerlack_varredura_falha`.
