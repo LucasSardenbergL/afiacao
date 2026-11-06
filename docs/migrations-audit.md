@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **785** custom migrations totais
-- **2566** objetos esperados (criados por estas migrations)
+- **786** custom migrations totais
+- **2569** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 969
+  - `function`: 972
   - `rls_policy`: 519
   - `index`: 369
   - `table`: 232
@@ -6411,6 +6411,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261106022016_profiles_origem_omie_import_backfill.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261106083754_radar_vinculos_em_lote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_vinculos_nucleo` | — |
+| `function` | `public.radar_possiveis_vinculos` | — |
+| `function` | `public.radar_vinculos_por_cnpjs` | — |
 
 ### `20261106090000_des_simular_puxar_config_e_checkin.sql`
 

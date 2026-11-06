@@ -9,6 +9,7 @@ import {
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
 import { ehSugerido, LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
+import { seloVinculo, type EstadoVinculos, type ResumoVinculoLista } from '@/lib/radar/vinculos';
 import { ChipAtendimento } from './RadarAtendimentoLead';
 
 /**
@@ -25,6 +26,8 @@ export function RadarLinha({
   mostrarMotivos = false,
   irmaos = null,
   amostra = null,
+  vinculo = null,
+  vinculoEstado = 'carregando',
 }: {
   empresa: RadarEmpresa;
   hojeISO: string;
@@ -39,6 +42,10 @@ export function RadarLinha({
   irmaos?: IrmaosRaiz | null;
   /** Sorteio da amostra de controle a que o lead pertence (selo "amostra"); null = não sorteado. */
   amostra?: string | null;
+  /** Resumo do vínculo com cliente (selo "possível sucessor" / "possível vínculo"); null = sem vínculo na página lida. */
+  vinculo?: ResumoVinculoLista | null;
+  /** Estado da leitura do vínculo desta linha: 'falhou' mostra "vínculo?" — nunca vira "sem vínculo". */
+  vinculoEstado?: EstadoVinculos;
 }) {
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.nome_fantasia || empresa.razao_social || empresa.cnpj;
@@ -47,6 +54,7 @@ export function RadarLinha({
   const score = scoreUI(empresa.score, empresa.score_motivos);
   const sugerido = ehSugerido(empresa, lote);
   const filial = selosFilial(irmaos);
+  const vinc = seloVinculo(vinculoEstado, vinculo);
   return (
     <div
       className={cn(
@@ -101,6 +109,15 @@ export function RadarLinha({
               {s.texto}
             </span>
           ))}
+          {vinc && (
+            <span
+              className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[vinc.tom])}
+              title={vinc.titulo}
+              data-testid={`selo-vinculo-${vinc.chave}`}
+            >
+              {vinc.texto}
+            </span>
+          )}
           {rfb && (
             <span
               className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[rfb.tom])}

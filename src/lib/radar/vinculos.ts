@@ -62,7 +62,7 @@ export function evidenciaVinculo(v: VinculoCliente): string {
 }
 
 /** "Possível sucessor de X (baixada na Receita)" ou "Possível vínculo com X". */
-export function tituloVinculo(v: VinculoCliente): string {
+export function tituloVinculo(v: Pick<VinculoCliente, 'clienteNome' | 'clienteSituacao'>): string {
   const nome = v.clienteNome ?? 'um cliente da base';
   const fora = v.clienteSituacao ? FORA_DE_OPERACAO[v.clienteSituacao] : undefined;
   return fora ? `Possível sucessor de ${nome} (${fora} na Receita)` : `Possível vínculo com ${nome}`;
@@ -70,4 +70,80 @@ export function tituloVinculo(v: VinculoCliente): string {
 
 export function rotuloForca(f: ForcaVinculo): string {
   return f === 'forte' ? 'pista forte' : 'pista média';
+}
+
+// ── Selo na LISTA (RPC em lote `radar_vinculos_por_cnpjs`, migration 20261106083754) ─────────────────────────────
+// O servidor devolve, por lead COM vínculo, o resumo do que a ficha mostraria (mesmo núcleo de regras): a força do
+// 1º vínculo (o mais forte), quantos, e nomes/situações na ordem da ficha. "Sucessor" é decidido AQUI, com o mesmo
+// mapa FORA_DE_OPERACAO da ficha — uma regra, um lugar.
+
+export interface ResumoVinculoLista {
+  forca: ForcaVinculo;
+  clientes: number;
+  nomes: (string | null)[];
+  situacoes: (string | null)[];
+}
+
+const textoOuNulo = (x: unknown) => x === null || typeof x === 'string';
+
+/** Valida a linha crua da RPC em lote. Forma inesperada LANÇA: a página vira "não consegui verificar", nunca "sem vínculo". */
+export function lerResumoVinculo(l: unknown): { cnpj: string; resumo: ResumoVinculoLista } {
+  const r = l as Record<string, unknown> | null;
+  const nomes = r?.clientes_nomes;
+  const situacoes = r?.clientes_situacoes;
+  if (
+    !r ||
+    typeof r.cnpj !== 'string' ||
+    !FORCAS.includes(r.forca as ForcaVinculo) ||
+    typeof r.clientes !== 'number' || !Number.isInteger(r.clientes) || r.clientes < 1 ||
+    !Array.isArray(nomes) || nomes.length !== r.clientes || !nomes.every(textoOuNulo) ||
+    !Array.isArray(situacoes) || situacoes.length !== r.clientes || !situacoes.every(textoOuNulo)
+  ) {
+    throw new Error('radar_vinculos_por_cnpjs: resposta fora da forma esperada');
+  }
+  return {
+    cnpj: r.cnpj,
+    resumo: {
+      forca: r.forca as ForcaVinculo,
+      clientes: r.clientes,
+      nomes: nomes as (string | null)[],
+      situacoes: situacoes as (string | null)[],
+    },
+  };
+}
+
+export type EstadoVinculos = 'carregando' | 'falhou' | 'ok';
+export interface SeloVinculo {
+  chave: 'sucessor' | 'vinculo' | 'nao-verificado';
+  texto: string;
+  tom: 'warning' | 'info' | 'muted';
+  titulo: string;
+}
+
+/**
+ * Chip da linha. Pista, nunca veredito: o detalhe (a evidência) fica na ficha.
+ *   ok + vínculo  → "possível sucessor" (algum cliente do vínculo está fora de operação na Receita) ou "possível vínculo"
+ *   ok sem linha  → nenhum chip (a RPC respondeu e não há vínculo)
+ *   falhou        → "vínculo?" (não consegui verificar — ausente ≠ "cliente novo")
+ *   carregando    → nenhum chip ainda
+ */
+export function seloVinculo(estado: EstadoVinculos, r: ResumoVinculoLista | null | undefined): SeloVinculo | null {
+  if (estado === 'falhou') {
+    return {
+      chave: 'nao-verificado', texto: 'vínculo?', tom: 'muted',
+      titulo: 'Não consegui verificar se este CNPJ tem vínculo com um cliente. Abra a ficha para tentar de novo.',
+    };
+  }
+  if (estado !== 'ok' || !r) return null;
+  const iSucessor = r.situacoes.findIndex((s) => s != null && Object.prototype.hasOwnProperty.call(FORA_DE_OPERACAO, s));
+  const i = iSucessor >= 0 ? iSucessor : 0;
+  const outros = r.clientes - 1;
+  return {
+    chave: iSucessor >= 0 ? 'sucessor' : 'vinculo',
+    texto: iSucessor >= 0 ? 'possível sucessor' : 'possível vínculo',
+    tom: r.forca === 'forte' ? 'warning' : 'info',
+    titulo: tituloVinculo({ clienteNome: r.nomes[i] ?? null, clienteSituacao: r.situacoes[i] ?? null })
+      + (outros > 0 ? ` (+${outros} ${outros === 1 ? 'outro cliente' : 'outros clientes'})` : '')
+      + ` · ${r.forca === 'forte' ? 'há pista forte' : 'pista média'}. Veja a evidência na ficha e confira antes de tratar como cliente novo.`,
+  };
 }

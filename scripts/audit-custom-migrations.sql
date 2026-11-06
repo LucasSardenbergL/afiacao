@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 785
+-- Total de custom migrations: 786
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -853,6 +853,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261105160000', 'fin_cashflow_cron_carga_unica', '20261105160000_fin_cashflow_cron_carga_unica.sql'),
   ('20261105180000', 'des_simular_puxar_sem_posicao_recusa', '20261105180000_des_simular_puxar_sem_posicao_recusa.sql'),
   ('20261106022016', 'profiles_origem_omie_import_backfill', '20261106022016_profiles_origem_omie_import_backfill.sql'),
+  ('20261106083754', 'radar_vinculos_em_lote', '20261106083754_radar_vinculos_em_lote.sql'),
   ('20261106090000', 'des_simular_puxar_config_e_checkin', '20261106090000_des_simular_puxar_config_e_checkin.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -3380,6 +3381,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
   ('des_simular_puxar_sem_posicao_recusa', 'function', 'public', 'simular_puxar_volume_trimestre', ''),
+  ('radar_vinculos_em_lote', 'function', 'private', 'radar_vinculos_nucleo', ''),
+  ('radar_vinculos_em_lote', 'function', 'public', 'radar_possiveis_vinculos', ''),
+  ('radar_vinculos_em_lote', 'function', 'public', 'radar_vinculos_por_cnpjs', ''),
   ('des_simular_puxar_config_e_checkin', 'function', 'public', 'simular_puxar_volume_trimestre', ''),
   ('des_simular_puxar_config_e_checkin', 'view', 'public', 'v_des_checkin_atual', '')
 ),
@@ -5956,6 +5960,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
   ('des_simular_puxar_sem_posicao_recusa', 'function', 'public', 'simular_puxar_volume_trimestre', ''),
+  ('radar_vinculos_em_lote', 'function', 'private', 'radar_vinculos_nucleo', ''),
+  ('radar_vinculos_em_lote', 'function', 'public', 'radar_possiveis_vinculos', ''),
+  ('radar_vinculos_em_lote', 'function', 'public', 'radar_vinculos_por_cnpjs', ''),
   ('des_simular_puxar_config_e_checkin', 'function', 'public', 'simular_puxar_volume_trimestre', ''),
   ('des_simular_puxar_config_e_checkin', 'view', 'public', 'v_des_checkin_atual', '')
 )
@@ -5985,7 +5992,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 174.
+-- Funções redefinidas com corpo extraível: 175.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6640,6 +6647,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_agregado_recalcular', 3, '20261104153351_radar_cnae_secundario.sql', 'bce4f5981e1491d2df5796b4489aae99'),
   ('public', 'radar_lista', 1, '20261103131500_radar_lista_rpc.sql', '35f2b704bf5d9b3d429156aed6ac4890'),
   ('public', 'radar_lista', 2, '20261104153351_radar_cnae_secundario.sql', 'b514c898e63fe2e0301ba8323cdd2955'),
+  ('public', 'radar_possiveis_vinculos', 1, '20261104201756_radar_possiveis_vinculos.sql', 'effde9346bb799f4b662d37fc89919d1'),
+  ('public', 'radar_possiveis_vinculos', 2, '20261106083754_radar_vinculos_em_lote.sql', 'b7ae2cb1304fb4e6e64d626b2a305e42'),
   ('public', 'simular_puxar_volume_trimestre', 1, '20261105180000_des_simular_puxar_sem_posicao_recusa.sql', '9e43c9425748b54d783ca9f4c3737755'),
   ('public', 'simular_puxar_volume_trimestre', 2, '20261106090000_des_simular_puxar_config_e_checkin.sql', 'fefcf8c0890cd3fe21a60efbe2ed6d37')
 ),

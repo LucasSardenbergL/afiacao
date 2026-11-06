@@ -409,6 +409,7 @@ export const MODULOS: ModuloApp[] = [
       "src/queries/__tests__/useRadarLote.esquecer.test.tsx",
       "src/queries/__tests__/useRadarConflitosCadastro.paginacao.test.ts",
       "src/components/radar/__tests__/RadarLinha.selos.test.tsx",
+      "src/queries/__tests__/useRadarVinculosLista.estados.test.tsx",
       "src/components/venda-cliente/painel/__tests__/painel.estados.test.tsx",
       "src/hooks/__tests__/useMinhasSugestoes.lente.test.tsx",
       "src/lib/venda-cliente/__tests__/painel.test.ts",
