@@ -170,3 +170,11 @@ describe("PerformanceHub — empresa do seletor", () => {
     expect(await valorDoCard("Meta Pessoal")).toBe("R$ 200.000");
   });
 });
+
+describe("PerformanceHub — card Score SPIN Médio", () => {
+  it("sem fonte de score ainda: '—', nunca 0 inventado", async () => {
+    estado.posicao = COM_FATURADO;
+    renderizar();
+    expect(await valorDoCard("Score SPIN Médio")).toBe("—");
+  });
+});

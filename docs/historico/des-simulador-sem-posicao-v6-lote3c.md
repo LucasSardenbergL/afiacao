@@ -52,6 +52,8 @@ Impacto em prod hoje (psql-ro, 2026-11-05): as metas da OBEN são 400.840,02 em 
 
 ## Fora deste lote (follow-up)
 
+✅ Os 4 itens abaixo foram resolvidos no [lote 3d](des-simulador-config-checkin-v6-lote3d.md).
+
 - Os fallbacks de custo `2,5%` (frete) e `0,20` (custo de capital) quando a configuração não existe. Não foram observados no recorte atual, porque a OBEN tem as duas configurações.
 - A escolha do check-in: a RPC usa `MAX(id)` e a `v_des_desconto_por_checkin` usa a data. Um check-in retroativo pode comparar descontos de check-ins diferentes. O diferencial deste lote não certifica essa parte.
 - O card "Score SPIN Médio" do Hub mostra 0 fixo (`Promise.resolve(0)`).
