@@ -87,13 +87,37 @@ function classifyTituloStatus(status: string | null | undefined): TituloStatusCl
 }
 
 type Cenario = 'realista' | 'otimista' | 'pessimista';
+const CENARIOS: readonly Cenario[] = ['realista', 'otimista', 'pessimista'];
 
 type Input = {
   company: Company;
   cenario?: Cenario;
+  // v2.3 (D10 do plano v7): os cenários de UMA execução, com UMA carga de dados. É o caminho do cron
+  // (1 chamada por empresa). Exclusivo com `cenario`; o contrato de cenário único segue intacto.
+  cenarios?: Cenario[];
   horizon_weeks?: number;
   save_snapshot?: boolean;
 };
+
+/**
+ * Valida `cenarios` ANTES de qualquer leitura. `null` = campo ausente (caminho de cenário único);
+ * string = erro 400. Recusa vazio, repetido, desconhecido e a mistura com `cenario`: o cron que
+ * mandasse os dois teria um dos campos ignorado em silêncio, e um cenário repetido gravaria dois
+ * snapshots do mesmo combo no mesmo dia (a persistência é INSERT).
+ */
+function validarCenarios(payload: Record<string, unknown>): Cenario[] | null | string {
+  if (!('cenarios' in payload) || payload.cenarios === undefined) return null;
+  if ('cenario' in payload && payload.cenario !== undefined) return 'use cenario OU cenarios, não os dois';
+  const lista = payload.cenarios;
+  if (!Array.isArray(lista) || lista.length === 0) return 'cenarios: lista não vazia';
+  const vistos = new Set<string>();
+  for (const c of lista) {
+    if (typeof c !== 'string' || !(CENARIOS as readonly string[]).includes(c)) return 'cenarios: valor inválido';
+    if (vistos.has(c)) return 'cenarios: valor repetido';
+    vistos.add(c);
+  }
+  return lista as Cenario[];
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -132,12 +156,20 @@ Deno.serve(async (req: Request) => {
   if (!payload.company || !['oben', 'colacor', 'colacor_sc'].includes(payload.company)) {
     return jsonResponse({ error: 'company inválido' }, 400);
   }
+  const cenarios = validarCenarios(payload as unknown as Record<string, unknown>);
+  if (typeof cenarios === 'string') return jsonResponse({ error: cenarios }, 400);
 
   const cenario: Cenario = payload.cenario ?? 'realista';
   const horizon = payload.horizon_weeks ?? 13;
   const save = payload.save_snapshot ?? false;
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
+
+  if (cenarios) {
+    const r = await calcularCenarios(supabase, payload.company, cenarios, horizon, save, auth, tempos);
+    tempos.total = performance.now() - t0;
+    return jsonResponse(r.corpo, r.status, tempos);
+  }
 
   try {
     // Só a execução que PERSISTE entra no registro: é a do cron diário (9/dia) e a única
@@ -1369,6 +1401,78 @@ async function calcular(
   tempos?: Tempos,
 ) {
   const dados = await medir(tempos, 'dados', carregarDados(supabase, company, tempos));
+  return calcularComDados(supabase, company, cenario, horizon, save, dados);
+}
+
+type ResultadoCenario = Awaited<ReturnType<typeof calcularComDados>>;
+
+/**
+ * D10 (plano v7): os cenários de UMA execução com UMA carga. Antes o cron disparava 3 chamadas por
+ * empresa e cada uma relia tudo — inclusive o mapa de baixas (`fin_titulo_baixas_cr_mapa`, ~3,9 s e
+ * spill de temp na colacor) que estourou o statement_timeout e derrubou o realista da colacor em
+ * 2026-11-05. O cálculo e a gravação de cada cenário são os MESMOS de `calcular` (paridade provada
+ * em `multi-cenario_test.ts`); `calcularComDados` não muta `dados`, então compartilhá-lo é seguro.
+ *
+ * Isolamento por cenário, como eram as 3 chamadas: um cenário que falha (INSERT recusado, alerta)
+ * não impede os outros, e cada um abre o SEU registro em `acoes_execucoes` — a série de cobertura
+ * (3 empresas × 3 cenários) continua contando um registro por combo. A carga é preguiçosa e
+ * memoizada DENTRO do registro do 1º cenário: se ela falha, os três registram o mesmo erro (antes,
+ * as 3 cargas falhariam cada uma). Sem retry: a persistência é INSERT, repetir duplicaria snapshot.
+ * Qualquer falha → HTTP 500 com o detalhe por cenário (o `net._http_response` do cron acusa).
+ */
+async function calcularCenarios(
+  supabase: SupabaseClient,
+  company: Company,
+  cenarios: Cenario[],
+  horizon: number,
+  save: boolean,
+  auth: Parameters<typeof comRegistro>[2],
+  tempos: Tempos,
+): Promise<{ status: number; corpo: Record<string, unknown> }> {
+  let carga: Promise<DadosBase> | null = null;
+  const obterDados = () => (carga ??= medir(tempos, 'dados', carregarDados(supabase, company, tempos)));
+
+  const resultados: Array<{ cenario: Cenario } & ResultadoCenario> = [];
+  const falhas: Array<{ cenario: Cenario; error: string }> = [];
+  for (const cen of cenarios) {
+    const executar = async () => calcularComDados(supabase, company, cen, horizon, save, await obterDados());
+    try {
+      const r = save
+        ? await comRegistro(
+          supabase as unknown as DbRegistro,
+          'fin_cashflow.snapshot_diario',
+          auth,
+          executar,
+          (x) => ({ company, cenario: cen, horizon, alertas: x.alertas.length }),
+        )
+        : await executar();
+      resultados.push({ cenario: cen, ...r });
+    } catch (err) {
+      falhas.push({ cenario: cen, error: String((err as Error).message ?? err) });
+    }
+  }
+
+  if (falhas.length > 0) {
+    return {
+      status: 500,
+      corpo: {
+        error: `${falhas.length} de ${cenarios.length} cenário(s) falharam: ${falhas.map((f) => `${f.cenario}: ${f.error}`).join(' | ')}`,
+        falhas,
+        cenarios_ok: resultados.map((r) => r.cenario),
+      },
+    };
+  }
+  return { status: 200, corpo: { resultados } };
+}
+
+async function calcularComDados(
+  supabase: SupabaseClient,
+  company: Company,
+  cenario: Cenario,
+  horizon: number,
+  save: boolean,
+  dados: DadosBase,
+) {
   const taxas = calcularTaxasHistoricas(dados.crs);
   const premissas = aplicarCenario(taxas, cenario, dados.config, dados.curvas_aging);
   const { semanas, apos_horizonte, ar_impaired } = gerarSemanas(dados, premissas, horizon);

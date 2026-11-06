@@ -50,7 +50,11 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // v2.1 → v2.2: o snapshot diário grava estoque_valor/estoque_fonte/estoque_cobertura_ok/cmv_ttm em
 // colunas dedicadas (migration 20261031210000) — nasce a série de estoque de giro que o PME por
 // estoque MÉDIO dos 90 d lê (Oben PME/PMR, Frente A, item 3). Exige a migration aplicada ANTES.
-export const VERSAO = "v2.2-serie-estoque-snapshot";
+// v2.2 → v2.3: aceita `cenarios: [...]` — UMA carga de dados para os cenários da execução (D10 do
+// plano v7; o mapa de baixas relido 3× derrubou o realista da colacor em 2026-11-05). Cálculo e
+// gravação por cenário idênticos aos de `cenario` (paridade em multi-cenario_test.ts). A migration
+// do cron que passa a mandar `cenarios` EXIGE esta versão atestada no ledger ANTES de aplicar.
+export const VERSAO = "v2.3-carga-unica-cenarios";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
