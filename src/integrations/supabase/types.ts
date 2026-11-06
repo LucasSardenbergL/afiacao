@@ -25443,6 +25443,7 @@ export type Database = {
       }
       sayerlack_importar_pedido_portal: {
         Args: {
+          p_condicao_portal: string
           p_data_entrega: string
           p_itens: Json
           p_operador: string
@@ -25459,6 +25460,7 @@ export type Database = {
           ncm: string
         }[]
       }
+      sayerlack_painel_portal: { Args: never; Returns: Json }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
       seed_targets_faltantes: {
         Args: never
