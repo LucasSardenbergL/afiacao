@@ -253,8 +253,8 @@ if modo in ("mig", "parte1"):
     s = mig
     if sab == "sem_trava":
         s = corta(s, "DO $trava$", "$trava$;\n")
-    elif sab == "sem_pre":
-        s = corta(s, "DO $pre$", "$pre$;\n")
+    elif sab == "sem_pre":   # só o md5 da PRE: o resto do bloco guarda o ACL de antes para a PÓS
+        s = corta(s, "  IF p.oid IS NULL OR md5(p.prosrc) NOT IN", "  END IF;\n")
     elif sab == "pre_sem_atributo":
         s = corta(s, "  IF p.prosecdef OR p.provolatile <> 's' OR p.proconfig::text", "  END IF;\n")
     elif sab == "pos_sem_md5":
