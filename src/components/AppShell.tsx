@@ -36,6 +36,8 @@ import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
 import { useSaidaComFilaPendente } from '@/components/shell/SaidaComFilaPendente';
 import { DataHealthBadge } from '@/components/shell/DataHealthBadge';
+import { BadgeIndisponivel } from '@/components/shell/BadgeDeContagem';
+import { faceDoBadge, motivoDoBadgeIndisponivel } from '@/components/shell/badge-de-contagem';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
 import { VersaoDoApp } from '@/components/shell/VersaoDoApp';
 import { IndicadorAtualizacao } from '@/components/shell/IndicadorAtualizacao';
@@ -88,6 +90,8 @@ interface NavItem {
   path: string;
   badge?: number;
   badgeVariant?: 'default' | 'destructive';
+  /** A contagem do badge NÃO pôde ser lida — desenha "?" com este motivo (BadgeDeContagem). */
+  badgeIndisponivel?: string;
   /** Visível a QUALQUER staff (employee/master). Era `managerOnly` — nome mentiroso. */
   staffOnly?: boolean;
   masterOnly?: boolean;
@@ -376,7 +380,8 @@ const SidebarItem = React.memo(function SidebarItem({
       >
         <Icon className={cn('shrink-0', collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
         {!collapsed && <span className="truncate">{item.label}</span>}
-        {!collapsed && item.badge && item.badge > 0 && (
+        {!collapsed && item.badgeIndisponivel && <BadgeIndisponivel motivo={item.badgeIndisponivel} />}
+        {!collapsed && !item.badgeIndisponivel && item.badge && item.badge > 0 && (
           <span className={cn(
             'ml-auto text-2xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center tabular-nums',
             item.badgeVariant === 'destructive'
@@ -549,7 +554,16 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   // Badge de melhorias abertas: a fila é master-only (item de nav masterOnly),
   // então o poll só roda pro master REAL — um employee polando contaria só os
   // PRÓPRIOS abertos (RLS) e mostraria badge errado.
-  const { data: melhoriasAbertas } = useMelhoriasBadge(enableStaffPolls && isMaster);
+  // Contrato de 3 faces (plano v7, C11): número / oculto / "?" quando a leitura falhou.
+  const melhoriasQuery = useMelhoriasBadge(enableStaffPolls && isMaster);
+  const melhoriasFace = faceDoBadge(melhoriasQuery);
+  // Primitivos para o useMemo abaixo: o objeto da face é novo a cada render e invalidaria o memo
+  // dos itens da nav (plano v4, lote 10 — C8).
+  const melhoriasAbertas = melhoriasFace.tipo === 'numero' ? melhoriasFace.valor : undefined;
+  const melhoriasIndisponivel =
+    melhoriasFace.tipo === 'indisponivel'
+      ? motivoDoBadgeIndisponivel('as melhorias abertas', melhoriasFace.estado, melhoriasFace.ultimo)
+      : undefined;
 
   const sectionsWithBadges = React.useMemo(
     () => navSections.map((s) => ({
@@ -592,13 +606,16 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
         if (it.path === '/whatsapp' && waSlaMeusVermelhos && waSlaMeusVermelhos > 0) {
           return { ...it, badge: waSlaMeusVermelhos, badgeVariant: 'destructive' as const };
         }
-        if (it.path === '/gestao/melhorias' && melhoriasAbertas && melhoriasAbertas > 0) {
+        if (it.path === '/gestao/melhorias' && melhoriasIndisponivel) {
+          return { ...it, badgeIndisponivel: melhoriasIndisponivel };
+        }
+        if (it.path === '/gestao/melhorias' && melhoriasAbertas) {
           return { ...it, badge: melhoriasAbertas };
         }
         return it;
       }),
     })),
-    [pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, isImpersonating],
+    [pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, melhoriasIndisponivel, isImpersonating],
   );
 
   const isActive = (path: string) => {

@@ -158,7 +158,9 @@ export function useMelhoriasBadge(enabled: boolean) {
       const { count, error } = await supabase
         .from('melhoria_itens').select('id', { count: 'exact', head: true })
         .eq('status', 'aberto');
-      if (error) return 0;
+      // Lança (plano v7, C11): com `return 0` a falha ficava `success` e o badge sumia calado —
+      // "nada aberto". O shell desenha "?" a partir do erro (shell/badge-de-contagem.ts, faceDoBadge).
+      if (error) throw error;
       return count ?? 0;
     },
   });
