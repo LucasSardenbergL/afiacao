@@ -44,8 +44,32 @@ na normal, com cache frio; a série alternada é a que vale.
 
 ## No runner do CI
 
-RUNNER
+Run 42232877105 do draft #3660 (parte 1, que é onde a prova cai): `✅ test-radar-cadastro-conflitos asserts=56 4s`
+e `--falsificar sabotagens=15 65s`, ou seja **69 s** contra os **360 s** da tabela (−291 s, −81%).
+
+Esse run ainda particionava pela tabela velha, e a parte 1 terminou em **12,0 min** de job, contra 15,3–16,4 das
+outras 6: o LPT a carregava como se a prova custasse 360 s. A simulação com o próprio runner
+(`NUCLEO_PARTE=i/7 bash db/roda-nucleo-ci.sh --lista`, somando os custos da tabela) dá o mesmo desenho:
+
+| min de núcleo por parte | 0 | 1–6 |
+|---|---|---|
+| tabela velha, custo velho | 14,5 | 14,5 |
+| partição velha, custo real (69 s) | **9,6** | 14,5 |
+| **tabela nova (69 s), rebalanceada** | **13,8** | **13,8** |
+
+Por isso o PR atualiza `db/nucleo-ci-custo.txt` (360 → 69): sem a tabela nova, o ganho fica preso numa parte que
+já não é o caminho crítico.
 
 ## Veredito
 
-VEREDITO
+**MANTIDO.** O ganho é pequeno, mas positivo, e não custa nada:
+
+- **runner:** −4,9 runner-min por run que executa as provas (todo PR que toca `db/`/`supabase/`/`scripts/`/
+  `.github/` e todo dispatch da main que não pula pelo E14), ~4,6% dos ~106 runner-min do núcleo;
+- **parede do `validate`:** −0,7 min na pior parte pelo LPT (14,5 → 13,8 min de núcleo). Isso fica abaixo do ruído
+  de ±45% de uma amostra, então é previsão da tabela, não medida; confira na mediana da pior parte dos próximos
+  runs;
+- **robustez:** a prova deixa de depender de "2 s bastam", tem timeout de falha explícito (`timeout` vira
+  vermelho) e o veredito "B esperou" passa a ser de quem segura o lock.
+
+Reverter é voltar o `pg_sleep(2)` e o `espera_estado` de B (o diff é só este arquivo) e a linha da tabela a 360.
