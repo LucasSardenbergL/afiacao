@@ -45,8 +45,8 @@ MIG_CHECKIN="$REPO_ROOT/supabase/migrations/20260929002059_des_desconto_total_ma
 MD5_PROD_PRED=50d0f4eaf68eb2aa1616296d3980efed   # md5(prosrc), psql-ro 2026-11-05
 MD5_ESTE=b41e1d3b7cfebcf3f02ddd9edec705d6
 SIG="public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)"
-# Denominador: P1 B0 B1 B2 B3 · K1 · K2-K6 · P2 A1 · N1-N5 · Z1 Z2 · V1 · Y1 Y2 Y3 · M1 · S1 S2 S3
-TOTAL_ESPERADO=28
+# Denominador: P1 B0 B1 B2 B3 · K1 · K2-K7 · P2 A1 · N1-N5 · Z1 Z2 · V1 · Y1 Y2 Y3 · M1 · S1 S2 S3
+TOTAL_ESPERADO=29
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODO --falsificar: prova que os asserts têm DENTE.
@@ -62,6 +62,7 @@ TOTAL_ESPERADO=28
 #   volta_400000      sem meta nenhuma volta a projetar 400000
 #   vizinha_alterada  outro cálculo muda junto (a troca não foi cirúrgica)
 #   sem_trava, sem_pre, pre_sem_atributo, pos_sem_acl, pos_sem_md5, pre_sem_este — o envelope, 1 camada por vez
+#   trava_escreve_atributo  a trava reescreve a volatilidade (STABLE): apaga a deriva que a PRE devia ver
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="volta_zero:N1,N2,N3,N4,N5,S1,S2:Z1,Z2,V1,Y1,Y2,M1,S3
@@ -70,12 +71,13 @@ if [ "${1:-}" = "--falsificar" ]; then
               ano_antigo:Y1,Y2:N1,Z1,Z2,V1,Y3,M1,S3
               volta_400000:M1:N1,Z1,Z2,V1,Y1,Y2,S1,S2,S3
               vizinha_alterada:V1:N1,N2,N3,N4,N5,Z2,M1,S1,S2
-              sem_trava:K1:K2,K3,K4,K5,K6
-              sem_pre:K2:K1,K3,K4,K5,K6
-              pre_sem_atributo:K3:K1,K2,K4,K5,K6
-              pos_sem_acl:K4:K1,K2,K3,K5,K6
-              pos_sem_md5:K5:K1,K2,K3,K4,K6
-              pre_sem_este:K6:K1,K2,K3,K4,K5"
+              sem_trava:K1:K2,K3,K4,K5,K6,K7
+              sem_pre:K2:K1,K3,K4,K5,K6,K7
+              pre_sem_atributo:K3,K7:K1,K2,K4,K5,K6
+              pos_sem_acl:K4:K1,K2,K3,K5,K6,K7
+              pos_sem_md5:K5:K1,K2,K3,K4,K6,K7
+              pre_sem_este:K6:K1,K2,K3,K4,K5,K7
+              trava_escreve_atributo:K7:K1,K2,K3,K4,K5,K6"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -137,7 +139,7 @@ MODO_MD5=""
 SABOTAGEM="${SABOTAGEM:-}"
 case "$SABOTAGEM" in
   ""|volta_zero|so_posicao|zero_vira_nulo|ano_antigo|volta_400000|vizinha_alterada) ;;
-  sem_trava|sem_pre|pre_sem_atributo|pos_sem_acl|pos_sem_md5|pre_sem_este) ;;
+  sem_trava|sem_pre|pre_sem_atributo|pos_sem_acl|pos_sem_md5|pre_sem_este|trava_escreve_atributo) ;;
   *) echo "❌ SABOTAGEM desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 
@@ -261,6 +263,11 @@ if modo in ("mig", "parte1"):
         s = corta(s, "  IF md5(p.prosrc) IS DISTINCT FROM", "  END IF;\n")
     elif sab == "pos_sem_acl":
         s = corta(s, "  IF v_agora IS DISTINCT FROM", "  END IF;\n")
+    elif sab == "trava_escreve_atributo":
+        de = "  ALTER FUNCTION public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer) COST 100;"
+        if s.count(de) != 1:
+            sys.exit("trava não achada")
+        s = s.replace(de, de.replace("COST 100;", "STABLE;"))
     elif sab == "pre_sem_este":
         de = "NOT IN ('50d0f4eaf68eb2aa1616296d3980efed', '"
         i = s.find(de)
@@ -608,6 +615,11 @@ eq K5 "PÓS: um corpo que não é o do md5 aborta" \
   "$(Aplica "$TMPD/k_corpo_errado.sql" 'POS1 FALHOU' "$TMPD/k_pred.sql")" NEGOU
 eq K6 "reaplicar sobre ela mesma passa (a PRÉ aceita este)" \
   "$(Aplica "$TMPD/k_mig.sql" 'PRE FALHOU')" PASSOU
+# K7 — outra sessão commitou VOLATILE antes da trava: a trava não pode reescrever a volatilidade e
+# esconder a deriva; a PRE tem de vê-la (o caso sequencial da janela leitura→ALTER do estágio 2).
+printf "ALTER FUNCTION %s VOLATILE;\n" "$SIG" > "$TMPD/k_volatile.sql"
+eq K7 "PRÉ: deriva de volatilidade commitada antes da trava, a migration aborta (a trava não a apaga)" \
+  "$(Aplica "$TMPD/k_mig.sql" 'PRE FALHOU' "$TMPD/k_volatile.sql")" NEGOU
 
 # ── SABOTAGEM da função (só no modo --falsificar) — no BANCO, recriando a função instalada com o trecho
 # trocado; o repo nunca é tocado. As de envelope já entraram pelo `gerar` (K1-K6).

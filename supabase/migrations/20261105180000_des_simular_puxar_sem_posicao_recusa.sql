@@ -23,18 +23,16 @@
 -- (.claude/skills/lovable-db-operator/references/sql-house-style.md). Sem BEGIN/COMMIT: aplica por
 -- `bun run db:aplicar` (a transação é do executor). Pelo SQL Editor/MCP, envolver em BEGIN; … COMMIT;.
 
--- TRAVA: ALTER para a volatilidade VIVA (sem efeito) prende a linha da função até o COMMIT. Não "conserta"
--- nada que a PRE precise ver: a volatilidade é lida e reescrita igual.
+-- TRAVA: um ALTER prende a linha da função até o COMMIT. É COST 100 — o da prod e o que o CREATE OR REPLACE
+-- abaixo reaplica (default de plpgsql) — porque a PRE NÃO o confere. Uma trava que reescrevesse um atributo
+-- conferido (volatilidade, search_path) apagaria a deriva que outra sessão commitou entre a leitura e o ALTER,
+-- e a PRE a aprovaria (2ª opinião Codex, estágio 2; K7 do teste).
 DO $trava$
-DECLARE
-  v_vol "char" := (SELECT p.provolatile FROM pg_catalog.pg_proc p
-                     WHERE p.oid = to_regprocedure('public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)'));
 BEGIN
-  IF v_vol IS NULL THEN
+  IF to_regprocedure('public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)') IS NULL THEN
     RAISE EXCEPTION 'TRAVA: public.simular_puxar_volume_trimestre ausente — esta migration recria a função, não a cria';
   END IF;
-  EXECUTE format('ALTER FUNCTION public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer) %s',
-                 CASE v_vol WHEN 'i' THEN 'IMMUTABLE' WHEN 's' THEN 'STABLE' ELSE 'VOLATILE' END);
+  ALTER FUNCTION public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer) COST 100;
 END
 $trava$;
 
