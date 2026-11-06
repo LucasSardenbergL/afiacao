@@ -211,17 +211,51 @@ v2()  { echo "public.radar_registrar_cadastro_omie_v2('$1', '$2', false)"; }
 est() { echo "public.radar_estado_cadastro_omie('$1')"; }
 reg() { echo "public.radar_registrar_conflito_cadastro('$1', '$2', $3, 'visto no teste')"; }
 res() { echo "public.radar_resolver_conflito_cadastro($1, $2, '$3')"; }
-# em_sessao NOME EXPRESSÃO FIM SEGUNDOS — chama numa transação que fica ABERTA por SEGUNDOS e termina em COMMIT
-# ou ROLLBACK (FIM). Roda em background; o marcador sai em $TMPD/NOME.out.
+# segura_ate_ver_bloqueio NOME_B — bloco SQL da sessão A: segura a transação ABERTA até OBSERVAR a sessão
+# conf_NOME_B esperando Lock em pg_stat_activity ('sim'), ou ela terminar sem esperar ('nao'), ou o timeout
+# de 10 s ('timeout'). Substitui a retenção FIXA de 2 s (E17 do plano v7): A solta assim que o bloqueio é
+# visto, e quem afirma "B esperou" é a própria A, que viu B parada atrás dela. `pg_stat_clear_snapshot()`
+# a cada volta: sem ele, pg_stat_activity devolve a MESMA foto a transação inteira.
+segura_ate_ver_bloqueio() {
+  sed "s/@B@/conf_$1/g" <<'SQL'
+CREATE TEMP TABLE espera_b (v text);
+DO $segura$
+DECLARE t0 timestamptz := clock_timestamp(); viu boolean := false; v text;
+BEGIN
+  LOOP
+    PERFORM pg_stat_clear_snapshot();
+    IF EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = '@B@' AND wait_event_type = 'Lock') THEN
+      v := 'sim'; EXIT;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = '@B@') THEN viu := true;
+    ELSIF viu THEN v := 'nao'; EXIT;
+    END IF;
+    IF clock_timestamp() - t0 > interval '10 seconds' THEN v := 'timeout'; EXIT; END IF;
+    PERFORM pg_sleep(0.01);
+  END LOOP;
+  INSERT INTO pg_temp.espera_b VALUES (v);
+END $segura$;
+SELECT v FROM pg_temp.espera_b;
+SQL
+}
+# Janela mínima de 50 ms em que a sessão B aparece em pg_stat_activity ANTES da chamada: sem ela, uma B que
+# não bloqueia (sabotagem) pode nascer e morrer entre duas voltas de A, e A só sairia no timeout. Zero linhas:
+# não muda a 1ª linha da saída de B. O filtro é VOLÁTIL de propósito: `WHERE false` o planner dobra e o sleep nem roda.
+B_VISIVEL="SELECT 1 FROM pg_sleep(0.05) WHERE random() < 0;"
+# em_sessao NOME EXPRESSÃO FIM [VIGIA] — chama numa transação que termina em COMMIT ou ROLLBACK (FIM). Com
+# VIGIA (a sessão A), segura a transação até ver conf_VIGIA bloqueada (segura_ate_ver_bloqueio) e escreve o
+# veredito na 2ª linha. Sem VIGIA (a sessão B), só abre a janela de visibilidade. Roda em background; o
+# marcador sai na 1ª linha de $TMPD/NOME.out.
 em_sessao() {
   "$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d prova -v ON_ERROR_STOP=1 -qtA > "$TMPD/$1.out" 2> "$TMPD/$1.err" <<SQL &
 SET application_name = 'conf_$1';
 SET test.uid = '$GESTOR';
 CREATE TEMP TABLE res (k text);
 BEGIN;
+$(if [ -z "${4:-}" ]; then echo "$B_VISIVEL"; fi)
 $(classifica "$2")
 SELECT k FROM pg_temp.res;
-SELECT pg_sleep($4);
+$(if [ -n "${4:-}" ]; then segura_ate_ver_bloqueio "$4"; fi)
 $3;
 SQL
 }
@@ -233,16 +267,13 @@ espera_estado() {
   return 1
 }
 EM_SLEEP="query LIKE '%pg_sleep%' AND wait_event = 'PgSleep'"
-EM_LOCK="wait_event_type = 'Lock'"
-# concorrente ID EXPR_A FIM_A EXPR_B → "marcadorA|marcadorB|B_esperou"
+# concorrente ID EXPR_A FIM_A EXPR_B → "marcadorA|marcadorB|B_esperou" (B_esperou = o que A viu: sim/nao/timeout)
 concorrente() {
-  em_sessao "${1}A" "$2" "$3" 2
+  em_sessao "${1}A" "$2" "$3" "${1}B"
   if ! espera_estado "${1}A" "$EM_SLEEP"; then echo "A_NAO_CHEGOU"; wait; return; fi
-  em_sessao "${1}B" "$4" COMMIT 0
-  local esperou=nao
-  espera_estado "${1}B" "$EM_LOCK" && esperou=sim
+  em_sessao "${1}B" "$4" COMMIT
   wait
-  echo "$(head -1 "$TMPD/${1}A.out")|$(head -1 "$TMPD/${1}B.out")|$esperou"
+  echo "$(head -1 "$TMPD/${1}A.out")|$(head -1 "$TMPD/${1}B.out")|$(sed -n 2p "$TMPD/${1}A.out")"
 }
 md5_de() { Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.$1')"; }
 empresa() { Pq -c "SELECT ja_cliente||'/'||COALESCE(omie_codigo_cliente,'-')||'/'||prospeccao_status||'/'||(SELECT count(*) FROM public.radar_contatos k WHERE k.cnpj=e.cnpj AND k.acao='virou_cliente')||'/'||updated_at FROM public.radar_empresas e WHERE cnpj='$1'"; }
@@ -466,13 +497,13 @@ PY2
 SET application_name = 'conf_travaA';
 BEGIN;
 \\i $TMPD/trava.sql
-SELECT pg_sleep(2);
+$(segura_ate_ver_bloqueio travaB)
 ROLLBACK;
 SQL
 if espera_estado travaA "$EM_SLEEP"; then
-  "$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d prova -v ON_ERROR_STOP=1 -qtA -c "SET application_name = 'conf_travaB'; ALTER FUNCTION public.radar_estado_cadastro_omie(text) VOLATILE" > "$TMPD/travaB.out" 2>&1 &
-  B_ESPEROU=nao; espera_estado travaB "$EM_LOCK" && B_ESPEROU=sim
+  "$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d prova -v ON_ERROR_STOP=1 -qtA -c "SET application_name = 'conf_travaB'; $B_VISIVEL ALTER FUNCTION public.radar_estado_cadastro_omie(text) VOLATILE" > "$TMPD/travaB.out" 2>&1 &
   wait
+  B_ESPEROU="$(tail -1 "$TMPD/travaA.out")"
   eq B10c "recriação concorrente de uma função viva ESPERA a TRAVA da migration" "$B_ESPEROU" "sim"
 else
   wait; bad B10c "a sessão da TRAVA não chegou ao sleep: $(head -c 200 "$TMPD/travaA.out")"
