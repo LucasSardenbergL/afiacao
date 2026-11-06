@@ -17,8 +17,9 @@
 --
 -- ⚠️ ORDEM: edge v2.3 ANTES desta migration. A edge v2.2 IGNORA `cenarios` e calcularia só o
 -- realista — 2 cenários sumiriam por dia, com HTTP 200. Por isso a PRÉ-CONDIÇÃO abaixo exige a
--- v2.3 como a atestação MAIS RECENTE da edge no ledger `deploy_atestacoes` (sonda): sem ela,
--- a migration aborta e nada muda.
+-- v2.3 como a atestação MAIS RECENTE da edge (ledger `deploy_atestacoes` + janela viva): sem ela,
+-- a migration aborta e nada muda. ROLLBACK da edge para a v2.2 depois desta migration exige
+-- reverter ANTES o cron para o FOREACH por cenário (20261020120100) — senão perde 2 cenários/dia.
 --
 -- Idempotente (cron.schedule com o mesmo nome ATUALIZA o job). Postcondição no fim.
 -- Sem BEGIN/COMMIT: aplicada por `bun run db:aplicar` (a transação é do executor).
@@ -28,10 +29,18 @@ DO $pre$
 DECLARE
   v_versao text;
 BEGIN
+  -- Ledger + JANELA VIVA (o que respondeu e o coletor de 15 min ainda não copiou), com desempate por
+  -- request_id — a MESMA leitura de scripts/pendencias-deploy.ts (SQL). Só o ledger aceitaria uma
+  -- v2.3 antiga logo depois de um rollback para a v2.2 ainda não coletado (Codex, 2026-11-05).
+  WITH tudo AS (
+    SELECT request_id, edge, versao, observado_em FROM public.deploy_atestacoes
+    UNION ALL
+    SELECT request_id, edge, versao, observado_em FROM public.deploy_atestacoes_janela_viva()
+  )
   SELECT versao INTO v_versao
-    FROM public.deploy_atestacoes
+    FROM tudo
    WHERE edge = 'fin-cashflow-engine'
-   ORDER BY observado_em DESC
+   ORDER BY observado_em DESC, request_id DESC
    LIMIT 1;
   IF v_versao IS DISTINCT FROM 'v2.3-carga-unica-cenarios' THEN
     RAISE EXCEPTION 'PRE FALHOU: a fin-cashflow-engine atestada é %, não v2.3-carga-unica-cenarios — deploye a edge e rode a sonda antes (a v2.2 ignora cenarios e gravaria só o realista)', v_versao;

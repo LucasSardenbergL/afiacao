@@ -8,6 +8,8 @@
 #   C. v2.2 antiga + v2.3 mais recente      → aplica, POSTCONDICAO_OK, 3 jobs com a chamada única
 #   D. reaplicar                            → idempotente, mesmo estado
 #   E. v2.3 antiga + v2.2 mais recente      → PRE FALHOU (vale a ÚLTIMA atestação, não "alguma")
+#   F. ledger v2.3 + janela viva v2.2 nova  → PRE FALHOU (rollback que o coletor ainda não copiou)
+#   G. empate em observado_em               → vence o maior request_id (v2.2 → PRE FALHOU)
 #
 # --falsificar: roda os casos na migration ORIGINAL (controle, tem de ficar verde NESTA invocação) e
 # depois numa cópia sabotada por vez — cada sabotagem tem de deixar a suíte VERMELHA:
@@ -15,6 +17,8 @@
 #   2. colacor agendada como oben  → P4 da postcondição
 #   3. só 2 cenários no corpo      → P4 da postcondição
 #   4. pré-condição por "existe"   → E (aceita v2.3 antiga com v2.2 por cima)
+#   5. só o ledger, sem janela viva → F
+#   6. desempate invertido          → G
 #
 # Uso: bash db/test-fin-cashflow-cron-carga-unica.sh [--falsificar]
 # Pré-req: brew install postgresql@17.
@@ -68,15 +72,22 @@ CREATE TABLE public.deploy_atestacoes (
   versao text NOT NULL, fonte text NOT NULL, via text NOT NULL, registrado_em timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (request_id, observado_em)
 );
+-- Janela viva: na prod lê net._http_response; aqui, uma tabela com a MESMA assinatura de retorno.
+CREATE TABLE public.janela_viva_stub (request_id bigint, observado_em timestamptz, edge text, versao text, fonte text, via text);
+CREATE FUNCTION public.deploy_atestacoes_janela_viva()
+RETURNS TABLE(request_id bigint, observado_em timestamptz, edge text, versao text, fonte text, via text)
+LANGUAGE sql STABLE AS $$ SELECT * FROM public.janela_viva_stub $$;
 SQL
   # Estado de partida = o da prod: os 3 jobs escalonados com FOREACH por cenário.
   P -v ON_ERROR_STOP=1 -q -f "$MIG_ANTIGA" >/dev/null
 }
 P() { "$PGBIN/psql" -X -p "$PORT" -h "$TMPD" -U postgres -d "$DB" "$@"; }
 
-atestar() { # $1 = versao, $2 = minutos atrás
-  P -v ON_ERROR_STOP=1 -q -c "INSERT INTO deploy_atestacoes (request_id, observado_em, edge, versao, fonte, via)
-    VALUES ((SELECT count(*)+1 FROM deploy_atestacoes), now() - interval '$2 minutes', 'fin-cashflow-engine', '$1', 'f', 'sonda')"
+ATEST_SEQ=0
+atestar() { # $1 = versao, $2 = minutos atrás, $3 = tabela (default: o ledger); request_id crescente
+  ATEST_SEQ=$((ATEST_SEQ + 1))
+  P -v ON_ERROR_STOP=1 -q -c "INSERT INTO ${3:-deploy_atestacoes} (request_id, observado_em, edge, versao, fonte, via)
+    VALUES ($ATEST_SEQ, date_trunc('minute', now()) - interval '$2 minutes', 'fin-cashflow-engine', '$1', 'f', 'sonda')"
 }
 
 # Aplica a migration como o db:aplicar: transação única, ON_ERROR_STOP. Saída em $SAIDA, rc devolvido.
@@ -135,6 +146,18 @@ rodar_casos() { # $1 = migration nova (original ou sabotada); devolve o nº de f
     if [[ "$SAIDA" == *"PRE FALHOU"* ]]; then caso "E v2.2 por cima da v2.3 recusa" ok
     else caso "E v2.2 por cima da v2.3 recusa" falha "${SAIDA:0:200}"; fi
   fi
+
+  novo_banco; atestar v2.3-carga-unica-cenarios 30; atestar v2.2-serie-estoque-snapshot 2 janela_viva_stub
+  if aplicar "$mig"; then caso "F rollback na janela viva recusa" falha "aplicou"; else
+    if [[ "$SAIDA" == *"PRE FALHOU"* ]]; then caso "F rollback na janela viva recusa" ok
+    else caso "F rollback na janela viva recusa" falha "${SAIDA:0:200}"; fi
+  fi
+
+  novo_banco; atestar v2.3-carga-unica-cenarios 10; atestar v2.2-serie-estoque-snapshot 10 janela_viva_stub
+  if aplicar "$mig"; then caso "G empate decide pelo request_id" falha "aplicou"; else
+    if [[ "$SAIDA" == *"PRE FALHOU"* ]]; then caso "G empate decide pelo request_id" ok
+    else caso "G empate decide pelo request_id" falha "${SAIDA:0:200}"; fi
+  fi
   return 0
 }
 
@@ -143,7 +166,7 @@ rodar_casos "$MIG_NOVA"
 CONTROLE=$FALHAS
 
 if [ "${1:-}" != "--falsificar" ]; then
-  if [ "$CONTROLE" -eq 0 ]; then echo "TESTE_OK db/test-fin-cashflow-cron-carga-unica.sh (5 casos)"; exit 0; fi
+  if [ "$CONTROLE" -eq 0 ]; then echo "TESTE_OK db/test-fin-cashflow-cron-carga-unica.sh (7 casos)"; exit 0; fi
   echo "TESTE_FALHOU ($CONTROLE caso(s))"; exit 1
 fi
 
@@ -162,5 +185,7 @@ sabotar "sem o bloco \$pre\$" 's/DO \$pre\$.*?\$pre\$;//s'
 sabotar "colacor agendada como oben" "s/('company', )'colacor'(, 'cenarios')/\$1'oben'\$2/"
 # Sem /g: troca só a 1ª ocorrência (o corpo do job da oben; a postcondição usa aspas dobradas).
 sabotar "só 2 cenários no corpo" "s/jsonb_build_array\('realista', 'otimista', 'pessimista'\)/jsonb_build_array('realista', 'otimista')/"
-sabotar "pré-condição por existência" "s/SELECT versao INTO v_versao\s+FROM public.deploy_atestacoes\s+WHERE edge = 'fin-cashflow-engine'\s+ORDER BY observado_em DESC\s+LIMIT 1;/SELECT versao INTO v_versao FROM public.deploy_atestacoes WHERE edge = 'fin-cashflow-engine' AND versao = 'v2.3-carga-unica-cenarios' LIMIT 1;/"
-echo "FALSIFICACAO_OK: controle verde e as 4 sabotagens vermelhas na mesma invocação"
+sabotar "pré-condição por existência" "s/WHERE edge = 'fin-cashflow-engine'\n   ORDER BY/WHERE edge = 'fin-cashflow-engine' AND versao = 'v2.3-carga-unica-cenarios'\n   ORDER BY/"
+sabotar "só o ledger, sem janela viva" "s/    UNION ALL\n    SELECT request_id, edge, versao, observado_em FROM public.deploy_atestacoes_janela_viva\(\)\n//"
+sabotar "desempate invertido" "s/request_id DESC\n   LIMIT 1;/request_id ASC\n   LIMIT 1;/"
+echo "FALSIFICACAO_OK: controle verde e as 6 sabotagens vermelhas na mesma invocação"

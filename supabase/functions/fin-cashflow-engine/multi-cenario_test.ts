@@ -89,8 +89,8 @@ const DRE = Array.from({ length: 15 }, (_, k) => {
 
 const TABELAS: Record<string, unknown> = {
   fin_contas_correntes: [
-    { saldo_atual: 280000.55, saldo_data: new Date().toISOString() },
-    { saldo_atual: 41000.1, saldo_data: new Date().toISOString() },
+    { saldo_atual: 280000.55, saldo_data: HOJE },
+    { saldo_atual: 41000.1, saldo_data: HOJE },
   ],
   fin_eventos_recorrentes: [
     { id: "rec-folha", descricao: "Folha", valor: 160000, tipo: "saida", categoria_dre: "pessoal", is_folha: true, dia_do_mes: 5, inicio: "2025-01-01", fim: null },
@@ -103,7 +103,6 @@ const TABELAS: Record<string, unknown> = {
   ],
   fin_estoque_valor: [],
   fin_dre_snapshots: DRE,
-  fin_alertas: [],
 };
 const CONFIG = {
   overrides_cenario: {
@@ -158,6 +157,11 @@ h.responderForaDoGate(async (req) => {
     if (caminho === "fin_config_cashflow") {
       const sel = url.searchParams.get("select") ?? "";
       return json([sel.includes("folha_categorias_codigos") ? { folha_categorias_codigos: ["2.10.01"] } : CONFIG]);
+    }
+    // Alertas já ativos para 2 tipos: exercita o ramo UPDATE (além do INSERT e do dismiss).
+    if (caminho === "fin_alertas") {
+      const tipo = url.searchParams.get("tipo")?.replace(/^eq\./, "") ?? "";
+      return json(["caixa_negativo", "concentracao_top1"].includes(tipo) ? [{ id: `al-${tipo}` }] : []);
     }
     if (caminho in TABELAS) return json(TABELAS[caminho]);
   }
@@ -251,6 +255,10 @@ Deno.test("fixture: os 3 cenários de cenário único divergem entre si (a parid
   }
   const alertas = (base.realista.alertas as unknown[]).length;
   if (alertas === 0) throw new Error("FIXTURE_FRACA: nenhum alerta no realista — o ramo de fin_alertas não roda");
+  const metodosAlerta = new Set(baseEscritas.filter((e) => e.tabela === "fin_alertas").map((e) => `${e.metodo}${e.query.includes("id=eq.") ? ":update" : ""}`));
+  if (!metodosAlerta.has("POST") || !metodosAlerta.has("PATCH:update")) {
+    throw new Error(`FIXTURE_FRACA: os ramos INSERT e UPDATE de fin_alertas não rodam os dois (${[...metodosAlerta].join(",")})`);
+  }
   const curvasAlta = Object.values(base.realista.curvas_aging as Record<string, { confianca: string }>)
     .filter((c) => c.confianca === "alta").length;
   if (curvasAlta === 0) throw new Error("FIXTURE_FRACA: nenhuma curva calibrada — o mapa de baixas não pesa no número");

@@ -1413,12 +1413,15 @@ type ResultadoCenario = Awaited<ReturnType<typeof calcularComDados>>;
  * 2026-11-05. O cálculo e a gravação de cada cenário são os MESMOS de `calcular` (paridade provada
  * em `multi-cenario_test.ts`); `calcularComDados` não muta `dados`, então compartilhá-lo é seguro.
  *
- * Isolamento por cenário, como eram as 3 chamadas: um cenário que falha (INSERT recusado, alerta)
- * não impede os outros, e cada um abre o SEU registro em `acoes_execucoes` — a série de cobertura
- * (3 empresas × 3 cenários) continua contando um registro por combo. A carga é preguiçosa e
- * memoizada DENTRO do registro do 1º cenário: se ela falha, os três registram o mesmo erro (antes,
- * as 3 cargas falhariam cada uma). Sem retry: a persistência é INSERT, repetir duplicaria snapshot.
- * Qualquer falha → HTTP 500 com o detalhe por cenário (o `net._http_response` do cron acusa).
+ * Isolamento: a falha DO CÁLCULO OU DA GRAVAÇÃO de um cenário (INSERT recusado, alerta) não impede
+ * os outros, e cada um abre o SEU registro em `acoes_execucoes` — a série de cobertura (3 empresas
+ * × 3 cenários) continua contando um registro por combo. Mas duas falhas passam a ser
+ * COMPARTILHADAS, o preço da carga única: a carga (preguiçosa, memoizada dentro do registro do 1º
+ * cenário) que falha falha os três, onde antes uma das 3 cargas podia passar; e a invocação que
+ * morre (wall-clock/CPU) leva os cenários que ainda não rodaram. Em troca, a carga pesada sai 1×
+ * em vez de 3× concorrentes — a causa medida de 05/11. Sem retry. Qualquer falha → HTTP 500 com
+ * o detalhe por cenário; `cenarios_ok` = cenários que terminaram inteiros (um snapshot gravado
+ * cujo alerta falhou fica fora dela).
  */
 async function calcularCenarios(
   supabase: SupabaseClient,
