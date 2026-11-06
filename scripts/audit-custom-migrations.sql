@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 783
+-- Total de custom migrations: 784
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -851,6 +851,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261105144036', 'radar_drop_muni_cover', '20261105144036_radar_drop_muni_cover.sql'),
   ('20261105150000', 'radar_pipeline_diario_sem_releitura', '20261105150000_radar_pipeline_diario_sem_releitura.sql'),
   ('20261105160000', 'fin_cashflow_cron_carga_unica', '20261105160000_fin_cashflow_cron_carga_unica.sql'),
+  ('20261105180000', 'des_simular_puxar_sem_posicao_recusa', '20261105180000_des_simular_puxar_sem_posicao_recusa.sql'),
   ('20261106022016', 'profiles_origem_omie_import_backfill', '20261106022016_profiles_origem_omie_import_backfill.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -3376,7 +3377,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_pipeline_diario_sem_releitura', 'index', 'public', 'idx_radar_empresas_updated_at', 'radar_empresas'),
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
-  ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', '')
+  ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
+  ('des_simular_puxar_sem_posicao_recusa', 'function', 'public', 'simular_puxar_volume_trimestre', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5949,7 +5951,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_pipeline_diario_sem_releitura', 'index', 'public', 'idx_radar_empresas_updated_at', 'radar_empresas'),
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
-  ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', '')
+  ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
+  ('des_simular_puxar_sem_posicao_recusa', 'function', 'public', 'simular_puxar_volume_trimestre', '')
 )
 SELECT
   e.migration,

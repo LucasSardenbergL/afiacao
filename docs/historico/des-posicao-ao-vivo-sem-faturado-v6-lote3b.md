@@ -33,6 +33,6 @@ Corrigir na **view e no front**. Só na view, a Posição Atual pioraria: o fron
 
 ## Fora deste lote (follow-up)
 
-- A RPC `simular_puxar_volume_trimestre` ainda faz `IF posição IS NULL THEN 0`, uma fabricação anterior a este lote. A tela não a chama mais sem posição, mas uma chamada direta continua desprotegida.
-- O `PerformanceHub` fixa `empresa = 'OBEN'` nas leituras de posição e meta, apesar do seletor OBEN/COLACOR. Também é anterior a este lote.
+- ✅ Resolvido no [lote 3c](des-simulador-sem-posicao-v6-lote3c.md). A RPC `simular_puxar_volume_trimestre` fazia `IF posição IS NULL THEN 0`, uma fabricação anterior a este lote. A tela não a chama mais sem posição, mas uma chamada direta continua desprotegida.
+- ✅ Resolvido no [lote 3c](des-simulador-sem-posicao-v6-lote3c.md). O `PerformanceHub` fixava `empresa = 'OBEN'` nas leituras de posição e meta, apesar do seletor OBEN/COLACOR. Também é anterior a este lote.
 - Aba aberta com build antigo + view nova mostra "R$ 0" e "Meta atingida" até o cliente atualizar (o SW só troca de build com o clique). Por isso a migration só vai depois do Publish **e** de uma janela de adoção.

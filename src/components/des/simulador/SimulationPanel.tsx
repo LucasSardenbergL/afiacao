@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { mensagemDeErro } from "@/lib/erro-mensagem";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -82,7 +83,9 @@ export function SimulationPanel({
       toast.success("Cenário simulado");
     } catch (err) {
       console.error(err);
-      toast.error("Erro ao simular: " + (err instanceof Error ? err.message : "desconhecido"));
+      // O erro do supabase.rpc é objeto PLANO (não `Error`): a recusa da RPC ("DES sem posicao
+      // confirmada…") morreria como "desconhecido". mensagemDeErro lê o `message` dos dois.
+      toast.error("Erro ao simular: " + (mensagemDeErro(err) ?? "desconhecido"));
     } finally {
       setLoading(false);
     }

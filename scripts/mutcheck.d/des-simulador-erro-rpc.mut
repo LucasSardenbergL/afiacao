@@ -1,0 +1,6 @@
+# Simulador: a recusa da RPC (erro do PostgREST = objeto PLANO, não Error) chega ao toast com a mensagem.
+# @src: src/components/des/simulador/SimulationPanel.tsx
+# @test: src/components/des/simulador/__tests__/SimuladorTab.sem-faturado.test.tsx
+# Rode: bash scripts/mutcheck.sh src/components/des/simulador/SimulationPanel.tsx src/components/des/simulador/__tests__/SimuladorTab.sem-faturado.test.tsx scripts/mutcheck.d/des-simulador-erro-rpc.mut
+PEGA | volta ao instanceof Error (a recusa vira 'desconhecido') | s/\(mensagemDeErro\(err\) \?\? "desconhecido"\)/(err instanceof Error ? err.message : "desconhecido")/
+PEGA | erro da RPC ignorado | s/^      if \(error\) throw error;$//

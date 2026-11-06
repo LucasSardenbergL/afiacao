@@ -30,13 +30,17 @@ const cliente = {
 
 /** A leitura de `profiles` por `.maybeSingle()` é a do core; o resto da página lê vazio. */
 let respostaCore: () => Promise<Resposta> = () => ok(cliente);
+/** A leitura de `farmer_client_scores` por `.maybeSingle()` (própria e fallback) — F12. */
+let respostaScore: () => Promise<Resposta> = () => ok(null);
 
 function consulta(tabela: string): unknown {
   let umaLinha = false;
   const proxy: unknown = new Proxy({}, {
     get(_alvo, prop) {
       if (prop === 'then') {
-        const resposta = tabela === 'profiles' && umaLinha ? respostaCore() : ok(umaLinha ? null : []);
+        const resposta = tabela === 'profiles' && umaLinha
+          ? respostaCore()
+          : tabela === 'farmer_client_scores' && umaLinha ? respostaScore() : ok(umaLinha ? null : []);
         return (sim: (v: Resposta) => unknown, nao?: (e: unknown) => unknown) => resposta.then(sim, nao);
       }
       return () => {
@@ -47,7 +51,9 @@ function consulta(tabela: string): unknown {
   });
   return proxy;
 }
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => consulta(t) } }));
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: { from: (t: string) => consulta(t), rpc: (fn: string) => consulta(`rpc:${fn}`) },
+}));
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'staff-1' }, isMaster: false, isGestorComercial: false, isStaff: true }),
 }));
@@ -56,8 +62,10 @@ vi.mock('@/components/ui/page-skeleton', () => ({ PageSkeleton: () => <div data-
 // Os filhos são do MESMO módulo e têm testes próprios; aqui interessa QUAL ramo a página escolhe.
 // O herói stubado mostra o nome — é a prova positiva de que a página abriu com o cliente.
 vi.mock('@/components/customer360/CustomerHero', () => ({
-  CustomerHero: ({ customer, isPj }: { customer: { name: string | null }; isPj: boolean }) => (
-    <h1 data-pj={String(isPj)}>{customer.name}</h1>
+  CustomerHero: ({ customer, isPj, scoreSemLeitura }: {
+    customer: { name: string | null }; isPj: boolean; scoreSemLeitura?: string | null;
+  }) => (
+    <h1 data-pj={String(isPj)} data-score-sem-leitura={scoreSemLeitura ?? 'nenhum'}>{customer.name}</h1>
   ),
 }));
 vi.mock('@/components/customer360/CustomerKpiStrip', () => ({ CustomerKpiStrip: () => null }));
@@ -86,6 +94,7 @@ const assentou = () => waitFor(() => expect(screen.queryByTestId(ESQUELETO)).toB
 
 beforeEach(() => {
   respostaCore = () => ok(cliente);
+  respostaScore = () => ok(null);
   onlineManager.setOnline(true);
 });
 afterEach(() => {
@@ -172,6 +181,24 @@ describe('Customer360 — "não consegui ler" NÃO pode virar "cliente não enco
 
 // `isPj` decide o herói/coluna de identidade (PJ × PF). Era `replace(/\D/g,'').length === 14` — CNPJ
 // alfanumérico (RFB jul/2026, 9 dígitos) abria como PF. Oráculo oficial 12.ABC.345/01DE-35; DV errado = inválido.
+describe('Customer360 — score que não foi lido chega ao hero como FALHA (F12)', () => {
+  const marca = async () => (await screen.findByText(NOME)).getAttribute('data-score-sem-leitura');
+
+  it('leitura do score FALHA → o hero recebe `erro` (antes: descartado, virava "Sem score")', async () => {
+    respostaScore = () => falha('57014', 'canceling statement due to statement timeout');
+    renderPagina();
+    await waitFor(async () => expect(await marca()).toBe('erro'));
+  });
+
+  it('ausência legítima (sucesso sem linha) → nenhum aviso', async () => {
+    renderPagina();
+    await assentou();
+    // Espera o score assentar: própria + fallback sem linha → `null` lido, não falha.
+    await waitFor(() => expect(qc.getQueryState(['c360-score', ID, 'staff-1'])?.status).toBe('success'));
+    expect(await marca()).toBe('nenhum');
+  });
+});
+
 describe('Customer360 — isPj com CNPJ alfanumérico', () => {
   const abrir = async () => {
     renderPagina();
