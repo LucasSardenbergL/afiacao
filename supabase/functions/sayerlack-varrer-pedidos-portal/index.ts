@@ -19,6 +19,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
+import { ABRIR_CONSULTA_PEDIDOS } from "../_shared/sayerlack-portal-navegador.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { fetchAll } from "../_shared/paginate.ts";
@@ -107,65 +108,7 @@ export default async ({ page, context }) => {
     });
 
     // === Login ===
-    trace.push({ step: 'login_start', t: Date.now() - t0 });
-    await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: budgetFor('login-goto', 30000) });
-    await page.waitForSelector('#user', { timeout: budgetFor('login-form', 10000) });
-    await fillInput('#user', user);
-    await fillInput('#password', pass);
-    const navPromise = page.waitForNavigation({ timeout: budgetFor('login-nav', 15000) }).catch(() => null);
-    const clicouEntrar = await page.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll('button')).find((b) => (b.innerText || '').trim().includes('Entrar'));
-      if (btn) { btn.click(); return true; }
-      return false;
-    });
-    if (!clicouEntrar) return await falha('LOGIN_FAILED', 'Botão Entrar não encontrado na tela de login');
-    await navPromise;
-    await sleep(1500);
-
-    await page.evaluate(() => {
-      const app = document.querySelector('#app');
-      if (app && app.classList.contains('app-sidebar-minified')) {
-        const b = document.querySelector('.app-sidebar-minify-btn');
-        if (b) b.click();
-      }
-    });
-    await page.waitForFunction(
-      () => document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link').length > 0,
-      { timeout: budgetFor('pos-login-dashboard', 15000), polling: 250 }
-    ).catch(() => null);
-    const sinais = await page.evaluate(function() {
-      const menu = document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link');
-      const senhas = Array.from(document.querySelectorAll('input[type=password]')).filter(function(el) { return el.offsetParent !== null; });
-      return { url: window.location.href, menuLinks: menu.length, camposSenha: senhas.length, titulo: document.title || '',
-               texto: (document.body ? (document.body.innerText || '') : '').substring(0, 3000) };
-    });
-    sinais.origemEsperada = portalUrl || null;
-    const posLogin = classificarPosLogin(sinais);
-    trace.push({ step: 'pos_login_check', tipo: posLogin.tipo, url: sinais.url, menuLinks: sinais.menuLinks, t: Date.now() - t0 });
-    if (posLogin.tipo !== 'dashboard') {
-      return await falha('POS_LOGIN_NAO_DASHBOARD', 'Login não chegou à área logada do portal (' + posLogin.tipo + ')');
-    }
-
-    // === Consulta Pedidos ===
-    const navConsulta = page.waitForNavigation({ timeout: budgetFor('nav-consulta', 20000) }).catch(() => null);
-    const clicouMenu = await page.evaluate(() => {
-      const a = Array.from(document.querySelectorAll('a[href]')).find((x) => (x.getAttribute('href') || '').endsWith('/order-viewer'));
-      if (a) { a.click(); return true; }
-      return false;
-    });
-    if (clicouMenu) await navConsulta;
-    if (page.url().indexOf('/order-viewer') === -1) {
-      await page.goto(portalUrl + '/order-viewer', { waitUntil: 'domcontentloaded', timeout: budgetFor('goto-consulta', 30000) });
-    }
-    const temForm = await page.waitForSelector('#getFilterData', { timeout: budgetFor('form-consulta', 15000) }).then(() => true).catch(() => false);
-    if (!temForm) return await falha('CONSULTA_INDISPONIVEL', 'Tela Consulta Pedidos sem o botão Filtrar');
-    const pronta = await page.waitForFunction(
-      () => !!window.jQuery && !!document.querySelector('table.dataTable'),
-      { timeout: budgetFor('consulta-pronta', 20000), polling: 250 },
-    ).then(() => true).catch(() => false);
-    trace.push({ step: 'consulta_pronta', pronta, t: Date.now() - t0 });
-    if (!pronta) return await falha('CONSULTA_INDISPONIVEL', 'Tabela da Consulta Pedidos não inicializou (jQuery/DataTables)');
-
+${ABRIR_CONSULTA_PEDIDOS}
     // As situações que o portal oferece (para a lista fechada de importáveis ser decidida com o dado real).
     const situacoes = await page.evaluate(() => Array.from(document.querySelectorAll('#situacao option'))
       .map((o) => ({ valor: String(o.value), texto: (o.textContent || '').trim() })));
@@ -397,14 +340,30 @@ async function encerrarCanceladoNoPortal(
   return error ? { ok: false, mensagem: error.message } : { ok: true, mensagem: "encerrado" };
 }
 
-async function protocolosNoApp(db: Db, protocolos: string[]): Promise<Set<string>> {
-  if (protocolos.length === 0) return new Set();
-  const linhas = await fetchAll<{ portal_protocolo: string | null }>(
-    (de, ate) => db.from("pedido_compra_sugerido").select("id, portal_protocolo").in("portal_protocolo", protocolos)
+interface PedidoNoApp { id: number; status: string | null; temPo: boolean }
+
+/** Status em que o PO ainda pode ser (re)disparado pela importadora (mesma régua de STATUS_REDISPARAVEIS lá). */
+const STATUS_REDISPARAVEIS = new Set(["aprovado_aguardando_disparo", "falha_envio"]);
+
+/**
+ * Pedidos do app por protocolo, COM o estado do PO (revisão Fable+Codex 2026-11, P1): estar no app não é estar
+ * resolvido — gravado sem PO (Omie fora no disparo) precisa de re-disparo, não de "resolvido_em".
+ */
+async function pedidosNoApp(db: Db, protocolos: string[]): Promise<Map<string, PedidoNoApp>> {
+  const m = new Map<string, PedidoNoApp>();
+  if (protocolos.length === 0) return m;
+  const linhas = await fetchAll<{ id: number; portal_protocolo: string | null; status: string | null; omie_pedido_compra_id: string | number | null }>(
+    (de, ate) => db.from("pedido_compra_sugerido").select("id, portal_protocolo, status, omie_pedido_compra_id").in("portal_protocolo", protocolos)
       .order("id", { ascending: true }).range(de, ate),
     "varrer-portal:protocolos-no-app",
   );
-  return new Set(linhas.map((r) => (r.portal_protocolo ?? "").trim()).filter(Boolean));
+  for (const r of linhas) {
+    const prot = (r.portal_protocolo ?? "").trim();
+    if (!prot) continue;
+    const po = r.omie_pedido_compra_id == null ? "" : String(r.omie_pedido_compra_id).trim();
+    m.set(prot, { id: r.id, status: r.status, temPo: po !== "" && po !== "0" });
+  }
+  return m;
 }
 
 async function contratosNoOmie(db: Db, protocolos: string[]): Promise<Set<string>> {
@@ -590,10 +549,10 @@ Deno.serve(async (req: Request) => {
       const lista = lerListaConsulta(envelope.linhas ?? []);
       const protocolos = lista.pedidos.map((p) => p.protocolo);
       const [noApp, noOmie, vistos, syncEm] = await Promise.all([
-        protocolosNoApp(db, protocolos), contratosNoOmie(db, protocolos), vistosAntes(db, protocolos), syncPedidosCompletoEm(db),
+        pedidosNoApp(db, protocolos), contratosNoOmie(db, protocolos), vistosAntes(db, protocolos), syncPedidosCompletoEm(db),
       ]);
       const preCarencia = classificar(lista.pedidos, {
-        protocolosNoApp: noApp, contratosNoOmie: noOmie, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
+        protocolosNoApp: new Set(noApp.keys()), contratosNoOmie: noOmie, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
       });
       // A 1ª vista só conta em rodada de IMPORTAR: "listar" não tem efeito sobre compras futuras (Codex P2).
       if (modo === "importar") {
@@ -610,9 +569,40 @@ Deno.serve(async (req: Request) => {
         // Só o que NÃO está no app nem no Omie — é o que o founder precisa olhar.
         fora_do_app: classificados.filter((p) => p.classe !== "ja_no_app" && p.classe !== "ja_no_omie")
           .map((p) => ({ protocolo: p.protocolo, situacao: p.situacao, emissao: p.emissao, classe: p.classe })),
+        sem_po: classificados.filter((p) => p.classe === "ja_no_app" && noApp.get(p.protocolo)?.temPo === false)
+          .map((p) => ({ protocolo: p.protocolo, pedido_id: noApp.get(p.protocolo)?.id ?? null, status: noApp.get(p.protocolo)?.status ?? null })),
       };
-      // Falha aberta de protocolo que JÁ entrou no app (por timeout indeterminado, botão ou rodada anterior) se resolve.
-      await marcarResolvidos(db, classificados.filter((p) => p.classe === "ja_no_app" || p.classe === "ja_no_omie").map((p) => p.protocolo));
+      // Falha aberta só se resolve com PO CONFIRMADO: no app com PO, ou no espelho do Omie. No app SEM PO segue aberta
+      // e é re-disparada abaixo (antes virava "resolvido" e o pedido ficava parado sem ninguém ver).
+      const semPo = classificados.filter((p) => p.classe === "ja_no_app" && noApp.get(p.protocolo)?.temPo === false);
+      await marcarResolvidos(db, classificados.filter((p) =>
+        (p.classe === "ja_no_app" && noApp.get(p.protocolo)?.temPo === true) || p.classe === "ja_no_omie").map((p) => p.protocolo));
+      const redisparos: unknown[] = [];
+      if (modo === "importar") {
+        for (const p of semPo) {
+          const ped = noApp.get(p.protocolo);
+          if (!ped || !ped.status || !STATUS_REDISPARAVEIS.has(ped.status)) {
+            redisparos.push({ protocolo: p.protocolo, pedido_id: ped?.id ?? null, status: ped?.status ?? null, acao: "nao_redisparavel" });
+            continue;
+          }
+          if (Date.now() - t0 + FOLGA_POR_IMPORTACAO_MS > TETO_EDGE_MS) {
+            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "adiado_tempo" });
+            continue;
+          }
+          // A importadora, com o protocolo já no app, NÃO relê o portal: só re-dispara o PO do MESMO pedido (mesma chave).
+          const r = await importar(p.protocolo, p.situacao_codigo ?? "1")
+            .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
+          const res = resumoImportacao(r.httpStatus, r.corpo);
+          if (res.ok) {
+            await marcarResolvidos(db, [p.protocolo]);
+            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_criado" });
+          } else {
+            const { notificado } = await registrarFalha(db, p.protocolo,
+              `Pedido ${p.protocolo} está no app (#${ped.id}) sem pedido de compra no Omie e o re-disparo não confirmou: ${res.mensagem}`);
+            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "falhou", notificado });
+          }
+        }
+      }
       // Atendido sem PO: e-mail 1 vez por pedido para o founder conferir no Omie (não é falha da rodada).
       const conferir = classificados.filter((p) => p.classe === "atendido_conferir");
       const avisados: unknown[] = [];
@@ -679,7 +669,7 @@ Deno.serve(async (req: Request) => {
         }
       };
       if (modo === "listar" || candidatos.length === 0) {
-        resumoFinal = { ...base, avisados, importados: [], falhas: [], adiados: [] };
+        resumoFinal = { ...base, avisados, redisparos, importados: [], falhas: [], adiados: [] };
         resumoFinal = { ...resumoFinal, reconciliacao: await reconciliar() };
         falhaReconciliacao();
         return resumoFinal;
@@ -697,11 +687,11 @@ Deno.serve(async (req: Request) => {
         }
         const bloq = motivoBloqueio(await pedidosEmVoo(db));
         if (bloq) {
+          // Adiar por pedido do app em voo é LEGÍTIMO — não é falha da rodada (antes virava registro vermelho).
           adiados.push(c.protocolo);
-          falhas.push({ protocolo: c.protocolo, mensagem: `adiado: ${bloq}` });
           break;
         }
-        if ((await protocolosNoApp(db, [c.protocolo])).size > 0) continue; // entrou no app durante a rodada
+        if ((await pedidosNoApp(db, [c.protocolo])).size > 0) continue; // entrou no app durante a rodada
         // A prova de "não está no Omie / NF não lançada" é RELIDA agora, não a do começo da rodada (Codex P1).
         const omieAgora = await contratosNoOmie(db, [c.protocolo]);
         const reclasse = classificar([c], {
@@ -727,7 +717,7 @@ Deno.serve(async (req: Request) => {
           falhas.push({ protocolo: c.protocolo, mensagem: res.mensagem, notificado });
         }
       }
-      resumoFinal = { ...base, avisados, importados, falhas, adiados, indeterminados };
+      resumoFinal = { ...base, avisados, redisparos, importados, falhas, adiados, indeterminados };
       resumoFinal = { ...resumoFinal, reconciliacao: await reconciliar() };
       falhaReconciliacao();
       // Rodada com falha NÃO é sucesso no registro (Codex P2): o ✓ do UltimaExecucao esconderia o pedido que não entrou.

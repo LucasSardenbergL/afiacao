@@ -16,6 +16,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
+import { ABRIR_CONSULTA_PEDIDOS } from "../_shared/sayerlack-portal-navegador.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { lerPedidoPortal, mensagemErroImportacao, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -80,70 +81,7 @@ export default async ({ page, context }) => {
     });
 
     // === Login ===
-    trace.push({ step: 'login_start', t: Date.now() - t0 });
-    await page.goto(portalUrl + '/login', { waitUntil: 'domcontentloaded', timeout: budgetFor('login-goto', 30000) });
-    await page.waitForSelector('#user', { timeout: budgetFor('login-form', 10000) });
-    await fillInput('#user', user);
-    await fillInput('#password', pass);
-    const navPromise = page.waitForNavigation({ timeout: budgetFor('login-nav', 15000) }).catch(() => null);
-    const clicouEntrar = await page.evaluate(() => {
-      const btn = Array.from(document.querySelectorAll('button')).find((b) => (b.innerText || '').trim().includes('Entrar'));
-      if (btn) { btn.click(); return true; }
-      return false;
-    });
-    if (!clicouEntrar) return await falha('LOGIN_FAILED', 'Botão Entrar não encontrado na tela de login');
-    await navPromise;
-    await sleep(1500);
-
-    // Pós-login: confirmação POSITIVA de dashboard (sidebar expandida ANTES de medir — mesma ordem do envio).
-    await page.evaluate(() => {
-      const app = document.querySelector('#app');
-      if (app && app.classList.contains('app-sidebar-minified')) {
-        const b = document.querySelector('.app-sidebar-minify-btn');
-        if (b) b.click();
-      }
-    });
-    await page.waitForFunction(
-      () => document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link').length > 0,
-      { timeout: budgetFor('pos-login-dashboard', 15000), polling: 250 }
-    ).catch(() => null);
-    const sinais = await page.evaluate(function() {
-      const menu = document.querySelectorAll('#sidebar .menu-link, .app-sidebar .menu-link');
-      const senhas = Array.from(document.querySelectorAll('input[type=password]')).filter(function(el) { return el.offsetParent !== null; });
-      return { url: window.location.href, menuLinks: menu.length, camposSenha: senhas.length, titulo: document.title || '',
-               texto: (document.body ? (document.body.innerText || '') : '').substring(0, 3000) };
-    });
-    sinais.origemEsperada = portalUrl || null;
-    const posLogin = classificarPosLogin(sinais);
-    trace.push({ step: 'pos_login_check', tipo: posLogin.tipo, url: sinais.url, menuLinks: sinais.menuLinks, t: Date.now() - t0 });
-    if (posLogin.tipo !== 'dashboard') {
-      return await falha('POS_LOGIN_NAO_DASHBOARD', 'Login não chegou à área logada do portal (' + posLogin.tipo + ')');
-    }
-
-    // === Consulta Pedidos: pelo MENU (goto direto pode cair em /login/...) com fallback de goto ===
-    const navConsulta = page.waitForNavigation({ timeout: budgetFor('nav-consulta', 20000) }).catch(() => null);
-    const clicouMenu = await page.evaluate(() => {
-      const a = Array.from(document.querySelectorAll('a[href]')).find((x) => (x.getAttribute('href') || '').endsWith('/order-viewer'));
-      if (a) { a.click(); return true; }
-      return false;
-    });
-    if (clicouMenu) await navConsulta;
-    if (page.url().indexOf('/order-viewer') === -1) {
-      await page.goto(portalUrl + '/order-viewer', { waitUntil: 'domcontentloaded', timeout: budgetFor('goto-consulta', 30000) });
-    }
-    trace.push({ step: 'consulta_aberta', via_menu: clicouMenu, url: page.url(), t: Date.now() - t0 });
-    const temForm = await page.waitForSelector('#getFilterData', { timeout: budgetFor('form-consulta', 15000) }).then(() => true).catch(() => false);
-    if (!temForm) return await falha('CONSULTA_INDISPONIVEL', 'Tela Consulta Pedidos sem o botão Filtrar');
-    // O botão aparece ANTES de o portal ligar o jQuery e o DataTables: clicar nessa janela não dispara a consulta e a
-    // tabela fica vazia (1º uso real, pedido 2141068, 2026-10-16: "0 linha(s) lida(s)" com o pedido existindo).
-    // Espera a tabela INICIALIZADA (classe dataTable, posta pelo DataTables) antes de filtrar.
-    const pronta = await page.waitForFunction(
-      () => !!window.jQuery && !!document.querySelector('table.dataTable'),
-      { timeout: budgetFor('consulta-pronta', 20000), polling: 250 },
-    ).then(() => true).catch(() => false);
-    trace.push({ step: 'consulta_pronta', pronta, t: Date.now() - t0 });
-    if (!pronta) return await falha('CONSULTA_INDISPONIVEL', 'Tabela da Consulta Pedidos não inicializou (jQuery/DataTables)');
-
+${ABRIR_CONSULTA_PEDIDOS}
     // Filtros: cliente OBEN, nº início = fim, só PEDIDO (não proposta), qualquer situação — o cancelado é LIDO e recusado
     // em Deno (./leitura.ts), para a tela dizer "cancelado" em vez de "não encontrado";
     // datas desde 2020 (o default é só o último mês).
@@ -268,8 +206,26 @@ export default async ({ page, context }) => {
       }
     }
 
+    // Condição de pagamento: só existe na tela de DETALHE (select #condicoes_pagamento, ex. "70 - 7 DIAS"). Carrega a
+    // página (GET, o que o founder faz à mão) se ainda não está nela e LÊ o texto selecionado — nenhum clique, nenhum
+    // envio. Sem condição legível, o Deno recusa: ausente nunca vira "à vista" (revisão Fable+Codex, 2026-11).
+    let condicao = null;
+    if (achouNaConsulta && temItens(itens)) {
+      if (page.url().indexOf('/order-creation-form-edit/') === -1) {
+        await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
+          { waitUntil: 'domcontentloaded', timeout: budgetFor('goto-detalhe-condicao', 30000) });
+      }
+      condicao = await page.waitForFunction(() => {
+        const sel = document.querySelector('#condicoes_pagamento');
+        const opt = sel && sel.selectedOptions && sel.selectedOptions[0];
+        const txt = opt ? String(opt.text || '').trim() : '';
+        return txt && txt.toLowerCase().indexOf('selecione') === -1 ? txt : false;
+      }, { timeout: budgetFor('condicao', 15000), polling: 250 }).then((h) => h.jsonValue()).catch(() => null);
+      trace.push({ step: 'condicao', condicao, t: Date.now() - t0 });
+    }
+
     return {
-      data: { success: true, consulta: { headers: consulta.headers, linhas: consulta.linhas }, itens: itens ? itens.json : null, trace },
+      data: { success: true, consulta: { headers: consulta.headers, linhas: consulta.linhas }, itens: itens ? itens.json : null, condicao, trace },
       type: 'application/json',
     };
   } catch (e) {
@@ -285,6 +241,8 @@ interface BrowserlessData {
   erro?: string;
   consulta?: { headers?: string[]; linhas?: LinhaConsultaRaw[] };
   itens?: unknown;
+  /** Texto da condição de pagamento na tela de detalhe do portal ("70 - 7 DIAS"); null = não lida. */
+  condicao?: string | null;
   trace?: unknown[];
 }
 
@@ -297,19 +255,30 @@ interface PedidoEstado {
   valor_total: number | null;
   num_skus: number | null;
   importado_portal_em: string | null;
+  condicao_pagamento_codigo: string | null;
+  condicao_pagamento_descricao: string | null;
 }
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
+/** Prazo do disparo: o PO costuma sair em segundos; acima disso a resposta vira "não confirmei" — nunca "não importou". */
+const PRAZO_DISPARO_MS = 60_000;
+
+/** Dispara o PO. NÃO lança: rede/prazo viram httpStatus 0 — quem chama já gravou o pedido e precisa responder com ele. */
 async function dispararOmie(pedidoId: number): Promise<{ httpStatus: number; body: string }> {
-  const resp = await fetch(`${SUPABASE_URL}/functions/v1/disparar-pedidos-aprovados`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
-    body: JSON.stringify({ empresa: "OBEN", pedido_id: pedidoId }),
-  });
-  return { httpStatus: resp.status, body: (await resp.text()).slice(0, 800) };
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/disparar-pedidos-aprovados`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
+      body: JSON.stringify({ empresa: "OBEN", pedido_id: pedidoId }),
+      signal: AbortSignal.timeout(PRAZO_DISPARO_MS),
+    });
+    return { httpStatus: resp.status, body: (await resp.text()).slice(0, 800) };
+  } catch (e) {
+    return { httpStatus: 0, body: mensagemDeErro(e) ?? "disparo sem resposta" };
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -354,7 +323,7 @@ Deno.serve(async (req: Request) => {
   const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const estado = async (filtro: { id?: number; protocolo?: string }): Promise<PedidoEstado | null> => {
     let q = db.from("pedido_compra_sugerido")
-      .select("id, status, portal_protocolo, omie_pedido_compra_numero, omie_pedido_compra_id, valor_total, num_skus, importado_portal_em");
+      .select("id, status, portal_protocolo, omie_pedido_compra_numero, omie_pedido_compra_id, valor_total, num_skus, importado_portal_em, condicao_pagamento_codigo, condicao_pagamento_descricao");
     q = filtro.id != null ? q.eq("id", filtro.id) : q.eq("portal_protocolo", filtro.protocolo as string);
     const { data, error } = await q.maybeSingle();
     if (error) throw new Error(`Leitura do pedido: ${error.message}`);
@@ -372,13 +341,16 @@ Deno.serve(async (req: Request) => {
       status: p?.status ?? null,
       omie_numero: p?.omie_pedido_compra_numero ?? null,
       valor_total: p?.valor_total ?? null,
+      condicao: p?.condicao_pagamento_codigo ? `${p.condicao_pagamento_codigo} · ${p.condicao_pagamento_descricao ?? ""}`.trim() : null,
       mensagem: comPo
         ? `Pedido ${protocolo} importado: pedido de compra ${p?.omie_pedido_compra_numero ?? ""} criado no Omie.`
-        : `Pedido ${protocolo} gravado no app, mas o pedido de compra no Omie ainda não saiu (status ${p?.status ?? "?"}). Tente importar de novo para re-disparar.`,
+        : `Pedido ${protocolo} gravado no app (#${pedidoId}), mas não confirmei o pedido de compra no Omie (status ${p?.status ?? "?"}). ` +
+          `Importe de novo daqui a 1 minuto para conferir e re-disparar — não duplica. Não lance à mão no Omie.`,
       ...extra,
     });
   };
 
+  let pedidoGravado: number | null = null;
   try {
     // 0. Já existe no app? Não abre o portal de novo: devolve o estado e, se faltar só o Omie, re-dispara.
     const existente = await estado({ protocolo });
@@ -391,6 +363,7 @@ Deno.serve(async (req: Request) => {
         });
       }
       if (existente.status && STATUS_REDISPARAVEIS.has(existente.status)) {
+        pedidoGravado = existente.id;
         const omie = await dispararOmie(existente.id);
         return await responderComEstado(existente.id, { ja_existia: true, disparo_http: omie.httpStatus });
       }
@@ -461,6 +434,13 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    if (!envelope.condicao || !String(envelope.condicao).trim()) {
+      return json({
+        ok: false, etapa: "leitura", protocolo, motivo: "condicao_ilegivel", trace: envelope.trace ?? null,
+        mensagem: `Não consegui ler a condição de pagamento do pedido ${protocolo} na tela de detalhe do portal. Nada foi gravado — tente de novo.`,
+      });
+    }
+
     // 3. Grava (tudo-ou-nada) com a prova de custo.
     const { data: rpcData, error: rpcErr } = await db.rpc("sayerlack_importar_pedido_portal", {
       p_protocolo: protocolo,
@@ -468,6 +448,7 @@ Deno.serve(async (req: Request) => {
       p_valor_total: lido.cabecalho.valor_total,
       p_itens: lido.itens.map((i) => ({ sku_portal: i.sku_portal, qtde_portal: i.qtde_portal, valor_mercadoria: i.valor_mercadoria })),
       p_operador: operador,
+      p_condicao_portal: String(envelope.condicao).trim(),
     });
     const itensResumo = lido.itens.map((i) => ({ sku_portal: i.sku_portal, descricao: i.descricao, qtde_portal: i.qtde_portal, valor_mercadoria: i.valor_mercadoria }));
     if (rpcErr) {
@@ -482,7 +463,10 @@ Deno.serve(async (req: Request) => {
       return json({ ok: false, etapa: "importacao", protocolo, mensagem: `Resposta inesperada da importação: ${JSON.stringify(rpcData)?.slice(0, 200)}` });
     }
 
-    // 4. PO no Omie pelo caminho de sempre, e a resposta é o que o BANCO diz depois.
+    // 4. PO no Omie pelo caminho de sempre, e a resposta é o que o BANCO diz depois. Daqui em diante o pedido EXISTE:
+    //    qualquer falha responde "gravado, Omie não confirmado" com o #id — nunca "não foi importado" (Codex+Fable P1:
+    //    a mensagem falsa levava o operador a lançar o PO à mão no Omie).
+    pedidoGravado = pedidoId;
     const omie = await dispararOmie(pedidoId);
     console.log(`[importar-portal] ${protocolo}: pedido ${pedidoId} gravado; disparo HTTP ${omie.httpStatus}`);
     return await responderComEstado(pedidoId, {
@@ -490,9 +474,17 @@ Deno.serve(async (req: Request) => {
       disparo_http: omie.httpStatus,
       situacao_portal: lido.cabecalho.situacao,
       valor_total_portal: lido.cabecalho.valor_total,
+      condicao_portal: envelope.condicao ?? null,
       itens: itensResumo,
     });
   } catch (e) {
+    if (pedidoGravado != null) {
+      return json({
+        ok: false, etapa: "omie", pedido_id: pedidoGravado, protocolo,
+        mensagem: `Pedido ${protocolo} gravado no app (#${pedidoGravado}), mas não confirmei o pedido de compra no Omie ` +
+          `(${mensagemDeErro(e) ?? "erro inesperado"}). Importe de novo daqui a 1 minuto — não duplica. Não lance à mão no Omie.`,
+      });
+    }
     return json({ ok: false, etapa: "importacao", protocolo, mensagem: mensagemDeErro(e) ?? "erro inesperado" }, 500);
   }
 });
