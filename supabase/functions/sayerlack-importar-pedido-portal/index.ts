@@ -363,6 +363,20 @@ Deno.serve(async (req: Request) => {
         });
       }
       if (existente.status && STATUS_REDISPARAVEIS.has(existente.status)) {
+        // Antes de re-disparar: PO lançado à mão no Omie com este contrato (inclusive composto "a/b") ⇒ não duplica,
+        // vai para conciliação (Codex P1, 2026-11). Protocolo validado só-dígitos: seguro no LIKE.
+        const { data: pos, error: errPo } = await db.from("purchase_orders_tracking").select("numero_pedido, numero_contrato_fornecedor")
+          .eq("empresa", "OBEN").like("numero_contrato_fornecedor", `%${protocolo}%`).limit(50);
+        if (errPo) throw new Error(`Leitura do espelho de POs do Omie: ${errPo.message}`);
+        const poManual = ((pos ?? []) as { numero_pedido: string | null; numero_contrato_fornecedor: string | null }[])
+          .find((x) => (x.numero_contrato_fornecedor ?? "").split("/").some((c) => c.trim() === protocolo));
+        if (poManual) {
+          return json({
+            ok: false, etapa: "importacao", ja_existia: true, pedido_id: existente.id, protocolo, status: existente.status,
+            mensagem: `O pedido ${protocolo} está no app (#${existente.id}) sem pedido de compra, mas já existe o PO ${poManual.numero_pedido ?? "?"} ` +
+              `no Omie com este contrato. Não re-disparei para não duplicar — concilie o #${existente.id} em Gerir pedidos.`,
+          });
+        }
         pedidoGravado = existente.id;
         const omie = await dispararOmie(existente.id);
         return await responderComEstado(existente.id, { ja_existia: true, disparo_http: omie.httpStatus });

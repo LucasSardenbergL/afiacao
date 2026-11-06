@@ -589,13 +589,33 @@ Deno.serve(async (req: Request) => {
             redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "adiado_tempo" });
             continue;
           }
+          // Reconfere AGORA, como no fluxo de candidatos (Codex P1, 2026-11): situação ainda importável no portal e PO
+          // não lançado à mão no Omie com este contrato. Divergência vai para conciliação humana — nunca re-dispara.
+          if (!(p.situacao_codigo && SITUACOES_IMPORTAVEIS.has(p.situacao_codigo))) {
+            const { notificado } = await registrarFalha(db, p.protocolo,
+              `Pedido ${p.protocolo} está no app (#${ped.id}) sem pedido de compra no Omie, mas está "${p.situacao}" no portal — ` +
+                `o cron não re-dispara. Confira no portal e, se for o caso, cancele o #${ped.id} em Gerir pedidos.`);
+            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "situacao_impeditiva", notificado });
+            continue;
+          }
+          if ((await contratosNoOmie(db, [p.protocolo])).size > 0) {
+            const { notificado } = await registrarFalha(db, p.protocolo,
+              `Pedido ${p.protocolo}: o #${ped.id} do app está sem pedido de compra, mas já existe PO no Omie com este contrato ` +
+                `(lançado à mão?). O cron não re-dispara para não duplicar — concilie o #${ped.id} em Gerir pedidos.`);
+            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_ja_no_omie", notificado });
+            continue;
+          }
           // A importadora, com o protocolo já no app, NÃO relê o portal: só re-dispara o PO do MESMO pedido (mesma chave).
-          const r = await importar(p.protocolo, p.situacao_codigo ?? "1")
+          const r = await importar(p.protocolo, p.situacao_codigo)
             .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
           const res = resumoImportacao(r.httpStatus, r.corpo);
+          // Sem corpo: o PO pode ter saído — INDETERMINADO, sem e-mail "não entrou" (a próxima rodada relê o banco).
+          const semCorpo = r.httpStatus === 0 || !(r.corpo && typeof r.corpo === "object");
           if (res.ok) {
             await marcarResolvidos(db, [p.protocolo]);
             redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_criado" });
+          } else if (semCorpo) {
+            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "indeterminado", http: r.httpStatus });
           } else {
             const { notificado } = await registrarFalha(db, p.protocolo,
               `Pedido ${p.protocolo} está no app (#${ped.id}) sem pedido de compra no Omie e o re-disparo não confirmou: ${res.mensagem}`);

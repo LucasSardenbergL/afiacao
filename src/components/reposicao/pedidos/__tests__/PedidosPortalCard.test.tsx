@@ -93,7 +93,7 @@ describe('ImportarPedidoPortalDialog', () => {
   });
 
   it('durante a importação o X some e o tempo decorrido aparece', async () => {
-    let soltar: (v: unknown) => void = () => {};
+    let soltar: (v: { data: unknown; error: unknown }) => void = () => {};
     invoke.mockImplementationOnce(() => new Promise((r) => { soltar = r; }));
     renderizar(<ImportarPedidoPortalDialog open onOpenChange={() => {}} protocoloInicial="2141068" />);
     expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
