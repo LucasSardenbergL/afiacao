@@ -9,6 +9,7 @@ import type { RadarEmpresa } from '@/queries/useRadarLista';
  */
 const toastMock = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), success: vi.fn(), warning: vi.fn() }));
 vi.mock('sonner', () => ({ toast: toastMock }));
+vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ isImpersonating: false }) }));
 const mutateAsync = vi.fn();
 const lerLead = vi.fn();
@@ -99,5 +100,14 @@ describe('RadarAcoesLead — cadastro no Omie pela ficha', () => {
     soltarCadastro({ codigo: '555', jaExistia: false, recuperado: false });
     await waitFor(() => expect((screen.getByRole('button', { name: /Cadastrar no Omie/ }) as HTMLButtonElement).disabled).toBe(false));
     expect(mutateAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('B6: lead cadastrável ainda sem conversa — a ficha diz o caminho, sem botão; com a conversa salva, o botão aparece', () => {
+    const v = render(<RadarAcoesLead empresa={lead({ prospeccao_status: 'a_contatar' })} />);
+    expect(screen.getByTestId('radar-ficha-cadastro-depois')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Cadastrar no Omie/ })).toBeNull();
+    v.unmount();
+    render(<RadarAcoesLead empresa={lead({ prospeccao_status: 'a_contatar' })} conversaSalva />);
+    expect((screen.getByRole('button', { name: /Cadastrar no Omie/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

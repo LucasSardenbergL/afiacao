@@ -54,7 +54,8 @@ vi.mock('@/queries/useRadarIrmaos', () => ({ useRadarIrmaos: () => ({ dados: new
 vi.mock('@/queries/useRadarVinculosLista', () => ({ useRadarVinculosLista: () => ({ dados: new Map(), estadoDe: () => 'ok' }) }));
 vi.mock('@/queries/useRadarKpis', () => ({ useRadarKpis: () => ({ data: undefined }) }));
 vi.mock('@/queries/useRadarLoteVigente', () => ({ useRadarLoteVigente: () => ({ data: null }) }));
-vi.mock('@/queries/useRadarConflitosCadastro', () => ({ lerEmpresaRadar: vi.fn() }));
+const lerEmpresaRadar = vi.hoisted(() => vi.fn());
+vi.mock('@/queries/useRadarConflitosCadastro', () => ({ lerEmpresaRadar }));
 vi.mock('@/queries/useRadarAcoesLead', () => ({ depsCadastroSupabase: {} }));
 vi.mock('@/queries/useRadarLote', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/queries/useRadarLote')>();
@@ -224,5 +225,27 @@ describe('RadarClientes — fila do vendedor', () => {
     expect(screen.getByTestId('selecionados').textContent).toBe('1');
     expect((screen.getByLabelText('Selecionar A') as HTMLInputElement).checked).toBe(true);
     expect(fonte.leiturasLista).toBe(leituras);
+  });
+
+  it('B5: /radar?cnpj=… abre a ficha — da fila carregada, ou lida pelo CNPJ quando fora dela', async () => {
+    fonte.paginas = [[lead('A'), lead('B')]];
+    const v = montar('/radar?cnpj=B');
+    await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('B'));
+    expect(lerEmpresaRadar).not.toHaveBeenCalled();
+    v.unmount();
+
+    lerEmpresaRadar.mockResolvedValueOnce(lead('Z', { prospeccao_status: 'descartado' }));
+    montar('/radar?cnpj=Z');
+    await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('Z'));
+    expect(lerEmpresaRadar).toHaveBeenCalledWith('Z');
+    expect(cnpjsNaLista()).toEqual(['A', 'B']); // abrir pelo link não mexe na fila
+  });
+
+  it('B5: CNPJ do link que não existe no Radar fecha a ficha e diz por quê', async () => {
+    fonte.paginas = [[lead('A')]];
+    lerEmpresaRadar.mockResolvedValueOnce(null);
+    montar('/radar?cnpj=NAOEXISTE');
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Lead não encontrado no Radar', expect.anything()));
+    expect(screen.queryByTestId('ficha')).toBeNull();
   });
 });

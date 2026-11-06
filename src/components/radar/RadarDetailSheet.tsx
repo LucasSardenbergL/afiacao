@@ -3,6 +3,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useEffect, useState } from 'react';
+import { Textarea } from '@/components/ui/textarea';
+import { cadastravelNoOmie } from '@/lib/radar/sugeridos';
+import type { AcaoContato } from '@/lib/radar/ui-helpers';
 import { MapPin, Mail, MessageSquare, ChevronRight, History, PhoneCall } from 'lucide-react';
 import { RadarOutcomeMenu } from './RadarOutcomeMenu';
 import { RadarAcoesLead } from './RadarAcoesLead';
@@ -82,9 +85,10 @@ function Historico({ cnpj }: { cnpj: string }) {
                 {rotuloStatus(c.acao)}
               </span>
               <div className="min-w-0 flex-1">
-                {c.nota && <div className="truncate">{c.nota}</div>}
+                {c.nota && <div className="whitespace-pre-wrap break-words" data-testid="radar-historico-nota">{c.nota}</div>}
                 <div className="text-xs text-muted-foreground">
                   {new Date(c.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                  {' · '}<span data-testid="radar-historico-autor">{c.autor ?? 'autor não identificado'}</span>
                   {c.status_anterior ? ` · antes: ${rotuloStatus(c.status_anterior)}` : ''}
                 </div>
               </div>
@@ -118,10 +122,14 @@ export function RadarDetailSheet({
   irmaosEstado?: EstadoIrmaos;
 }) {
   const [discagem, setDiscagem] = useState(lerModoDiscagem);
+  // Nota do PRÓXIMO registro (B4) e "acabou de entrar em conversa" (B6), ambos por lead: trocar de ficha zera.
+  const [nota, setNota] = useState('');
+  const [conversaSalva, setConversaSalva] = useState<string | null>(null);
   const compartilhado = useRadarTelefoneCompartilhado(empresa?.cnpj ?? null);
   // Sensor da ficha: 1 chamada por CNPJ aberto (não por render/refetch); o dedup por titular, CNPJ e dia é do banco.
   // Sob a lente "Ver como" o registrarNoLedger retorna cedo — inspeção não infla o 'abriu'.
   const cnpjAberto = empresa?.cnpj ?? null;
+  useEffect(() => { setNota(''); }, [cnpjAberto]);
   useEffect(() => {
     if (cnpjAberto) void registrarNoLedger('radar.ficha_aberta', cnpjAberto, { cnpj: cnpjAberto });
   }, [cnpjAberto]);
@@ -133,6 +141,23 @@ export function RadarDetailSheet({
     track('radar.modo_discagem', { ligado: v });
   };
   const outras = (tel: string) => compartilhado.data?.get(tel);
+  // Depois do registro: "em conversa" num lead cadastrável FICA na ficha — o cadastro no Omie é a próxima ação
+  // dela (B6, sem janela automática); os outros desfechos seguem para o próximo lead.
+  const aposRegistro = (acao: AcaoContato) => {
+    setNota('');
+    if (acao === 'em_conversa' && cadastravelNoOmie(empresa).ok) { setConversaSalva(empresa.cnpj); return; }
+    onProximo?.();
+  };
+  const campoNota = (
+    <Textarea
+      value={nota}
+      onChange={(e) => setNota(e.target.value)}
+      placeholder="Nota da conversa (opcional): quem atendeu, o que precisa, próximo passo"
+      className="min-h-[60px] text-sm"
+      aria-label="Nota da conversa"
+      maxLength={1000}
+    />
+  );
   const telPrincipal = telefonePrincipal(empresa);
   const endereco = [empresa.logradouro, empresa.numero, empresa.bairro, empresa.municipio_nome, empresa.uf, empresa.cep]
     .filter(Boolean)
@@ -173,23 +198,27 @@ export function RadarDetailSheet({
         </div>
         {discagem ? (
           <div className="mt-3">
-            <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data}
+            <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data} nota={nota} campoNota={campoNota}
+              onRegistrado={aposRegistro}
               ligar={telPrincipal ? <RadarTelefoneAcao telefone={telPrincipal} variant="full" /> : null}
               compartilhadoFalhou={compartilhado.isError} onProximo={onProximo} />
           </div>
         ) : (
-          <div className="mt-4 flex items-center justify-between gap-2">
+          <div className="mt-4 space-y-2">
+          {campoNota}
+          <div className="flex items-center justify-between gap-2">
             {onProximo ? (
               <Button variant="ghost" size="sm" onClick={onProximo} title="Pular para o próximo lead da lista">
                 Próximo <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             ) : <span />}
-            <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} onRegistrado={() => onProximo?.()} />
+            <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} onRegistrado={aposRegistro} />
+          </div>
           </div>
         )}
         <div className="mt-3 space-y-2">
           <RadarConflitosDoLead cnpj={empresa.cnpj} />
-          <RadarAcoesLead empresa={empresa} />
+          <RadarAcoesLead empresa={empresa} conversaSalva={conversaSalva === empresa.cnpj} />
         </div>
         <div className="mt-4 divide-y">
           <Linha label="Score">

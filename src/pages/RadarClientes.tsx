@@ -132,9 +132,15 @@ export default function RadarClientes() {
     }
   }, [chaveFiltros]);
 
-  // Ficha aberta por CNPJ; o objeto é relido da lista a cada render (não fica velho).
-  const [abertaCnpj, setAbertaCnpj] = useState<string | null>(null);
+  // Ficha aberta por CNPJ, NA URL (pacote B5): `/radar?cnpj=…` abre a ficha (link do card, do e-mail, do colega).
+  // Instância própria do useUrlState: o CNPJ aberto é navegação, não filtro — fora da chave da fila e dos favoritos
+  // (a mesma lição do A6). O objeto é relido da lista a cada render (não fica velho).
+  const [urlFicha, setUrlFicha] = useUrlState<{ cnpj: string }>({ cnpj: '' });
+  const abertaCnpj = urlFicha.cnpj || null;
+  const setAbertaCnpj = useCallback((c: string | null) => setUrlFicha({ cnpj: c ?? '' }), [setUrlFicha]);
   const abertaSnapshot = useRef<RadarEmpresa | null>(null);
+  // Lead do link que não está na fila carregada (outra página, já-cliente, descartado): lido inteiro, 1× por CNPJ.
+  const [leadDoLink, setLeadDoLink] = useState<RadarEmpresa | null>(null);
   // Posição do lead aberto na última vez em que estava na lista: se ele sair (contato registrado → refetch), o
   // "Próximo" segue de onde o vendedor estava, não do topo.
   const ultimoIndice = useRef<number | null>(null);
@@ -172,12 +178,35 @@ export default function RadarClientes() {
     if (!abertaCnpj) return null;
     const i = empresas.findIndex((e) => e.cnpj === abertaCnpj);
     if (i >= 0) ultimoIndice.current = i;
-    const atual = empresas[i] ?? abertaSnapshot.current;
+    // O snapshot só vale para o MESMO CNPJ: trocar o `cnpj` da URL não pode mostrar a ficha do lead anterior.
+    const snap = abertaSnapshot.current?.cnpj === abertaCnpj ? abertaSnapshot.current : null;
+    const doLink = leadDoLink?.cnpj === abertaCnpj ? leadDoLink : null;
+    const atual = empresas[i] ?? snap ?? doLink;
     abertaSnapshot.current = atual;
     return atual;
-  }, [abertaCnpj, empresas]);
+  }, [abertaCnpj, empresas, leadDoLink]);
+  // Deep link: espera a 1ª leitura da fila (o lead pode estar nela) e, se não estiver, lê o lead pelo CNPJ.
+  const filaLida = !q.isLoading;
+  useEffect(() => {
+    if (!abertaCnpj || aberta || !filaLida) return;
+    let vivo = true;
+    lerEmpresaRadar(abertaCnpj).then(
+      (e) => {
+        if (!vivo) return;
+        if (e) { setLeadDoLink(e); return; }
+        toast.error('Lead não encontrado no Radar', { description: `CNPJ ${abertaCnpj}` });
+        setAbertaCnpj(null);
+      },
+      (err) => {
+        if (!vivo) return;
+        toast.error('Não consegui abrir a ficha do link', { description: mensagemDeErro(err) ?? 'erro de leitura' });
+        setAbertaCnpj(null);
+      },
+    );
+    return () => { vivo = false; };
+  }, [abertaCnpj, aberta, filaLida, setAbertaCnpj]);
 
-  const abrir = useCallback((e: RadarEmpresa) => { abertaSnapshot.current = e; setAbertaCnpj(e.cnpj); }, []);
+  const abrir = useCallback((e: RadarEmpresa) => { abertaSnapshot.current = e; setAbertaCnpj(e.cnpj); }, [setAbertaCnpj]);
   // Ficha de um CNPJ que pode não estar na fila (já-cliente, descartado): lê o lead inteiro antes de abrir.
   const abrirPorCnpj = useCallback(async (cnpj: string) => {
     const e = empresas.find((x) => x.cnpj === cnpj) ?? await lerEmpresaRadar(cnpj);
@@ -201,7 +230,7 @@ export default function RadarClientes() {
     } else {
       toast.info('Role a lista para carregar mais leads');
     }
-  }, [abrir]);
+  }, [abrir, setAbertaCnpj]);
   const proximo = useCallback(async () => {
     const atual = abertaCnpjRef.current;
     if (!atual || buscandoProximo.current) return;
