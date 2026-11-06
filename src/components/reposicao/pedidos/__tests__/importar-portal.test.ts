@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { interpretarRespostaImportacao, PROTOCOLO_PORTAL_RE } from '../importar-portal';
+import { interpretarRespostaImportacao, linkDoPedido, normalizarPainel, PROTOCOLO_PORTAL_RE, respostaIndeterminada } from '../importar-portal';
 
 describe('interpretarRespostaImportacao', () => {
   it('sucesso só com PO confirmado (ok + concluido)', () => {
@@ -47,5 +47,54 @@ describe('PROTOCOLO_PORTAL_RE', () => {
   it('só dígitos, 3 a 12', () => {
     expect(['2140603', '123', '123456789012'].every((s) => PROTOCOLO_PORTAL_RE.test(s))).toBe(true);
     expect(['12', '21406O3', ' 2140603', '1234567890123', ''].some((s) => PROTOCOLO_PORTAL_RE.test(s))).toBe(false);
+  });
+});
+
+describe('revisão Fable+Codex (2026-11)', () => {
+  it('SKU sem de-para (IP002) traz a ação de abrir o Mapeamento de SKU; recusa sem tela não inventa link', () => {
+    const r = interpretarRespostaImportacao({ ok: false, etapa: 'importacao', sqlstate: 'IP002', mensagem: 'x' }, '1');
+    expect(r.acao).toEqual({ rotulo: 'Abrir Mapeamento de SKU', href: '/admin/sku-mapeamento' });
+    expect(interpretarRespostaImportacao({ ok: false, etapa: 'importacao', sqlstate: 'CP006', mensagem: 'x' }, '1').acao).toBeNull();
+  });
+
+  it('condição de pagamento gravada aparece no resultado', () => {
+    const r = interpretarRespostaImportacao({ ok: true, etapa: 'concluido', pedido_id: 1, condicao: 'A07 · Para 7 dias' }, '1');
+    expect(r.condicao).toBe('A07 · Para 7 dias');
+  });
+
+  it('gravado sem PO confirmado continua aviso COM o pedido (nunca "não foi importado")', () => {
+    const r = interpretarRespostaImportacao({ ok: false, etapa: 'omie', pedido_id: 3644, mensagem: 'gravado' }, '2141068');
+    expect([r.tom, r.pedidoId]).toEqual(['aviso', 3644]);
+  });
+
+  it('resposta sem corpo é INDETERMINADA: aviso, manda reimportar, proíbe lançar à mão', () => {
+    const r = respostaIndeterminada('2141068', 'timeout');
+    expect(r.tom).toBe('aviso');
+    expect(r.titulo).toBe('Não sei se o pedido 2141068 entrou');
+    expect(r.mensagem).toContain('Importar de novo');
+    expect(r.mensagem).toContain('Não lance à mão no Omie');
+  });
+
+  it('link do pedido usa o deep link de Gerir pedidos', () => {
+    expect(linkDoPedido(3644)).toBe('/admin/reposicao/pedidos?id=3644');
+  });
+});
+
+describe('normalizarPainel', () => {
+  it('lê as três listas e descarta linha sem identidade', () => {
+    const p = normalizarPainel({
+      pendencias: [{ protocolo: '2140762', mensagem: 'NCM sem alíquota', tentativas: 2, ultima_em: '2026-10-20T15:00:00Z' }, { mensagem: 'sem protocolo' }],
+      sem_po: [{ pedido_id: 3700, protocolo: '2141500', status: 'falha_envio', importado_em: null }, { protocolo: 'x' }],
+      importados: [{ pedido_id: 3644, protocolo: '2141068', omie_numero: '1291', valor_total: 3238.63, origem: 'botao' }],
+    });
+    expect(p.pendencias).toEqual([{ protocolo: '2140762', mensagem: 'NCM sem alíquota', tentativas: 2, ultimaEm: '2026-10-20T15:00:00Z' }]);
+    expect(p.semPo.map((x) => x.pedidoId)).toEqual([3700]);
+    expect(p.importados[0]).toMatchObject({ pedidoId: 3644, omieNumero: '1291', valorTotal: 3238.63, origem: 'botao' });
+  });
+
+  it('listas ausentes viram vazias; resposta que não é objeto LANÇA (ausente ≠ nada pendente)', () => {
+    expect(normalizarPainel({})).toEqual({ pendencias: [], semPo: [], importados: [] });
+    expect(() => normalizarPainel(null)).toThrow(/ilegível/);
+    expect(() => normalizarPainel([])).toThrow(/ilegível/);
   });
 });
