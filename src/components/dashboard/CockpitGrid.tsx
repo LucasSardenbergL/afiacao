@@ -1,5 +1,4 @@
-import { useMemo, useRef } from 'react';
-import { DragDropContext, Droppable, Draggable, type DropResult } from '@hello-pangea/dnd';
+import { Suspense, lazy, useMemo, useRef, useState } from 'react';
 import { Eye, GripVertical, RotateCcw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useRegisterShortcuts, type Shortcut } from '@/components/shell/ShortcutsRegistry';
@@ -24,6 +23,13 @@ const ZONE_COMPONENTS: Record<ZoneId, () => JSX.Element> = {
   tintometrico: TintometricoZone,
   sistema: SistemaZone,
 };
+
+const CLASSE_ZONA = 'rounded-lg transition-shadow relative';
+
+// Sem prefetch especulativo (hover no "Personalizar"): um chunk sumido depois de
+// deploy dispararia o vite:preloadError e o reload global (ver preload-rota.ts)
+// sem o usuário ter pedido nada. Só baixa quando a edição é de fato aberta.
+const CockpitGridArrastavel = lazy(() => import('./CockpitGridArrastavel'));
 
 export function CockpitGrid() {
   const { persona } = useDashboardPersonaContext();
@@ -52,11 +58,58 @@ export function CockpitGrid() {
   }, [isEditMode, exit]);
   useRegisterShortcuts(atalhos);
 
-  const handleDragEnd = (result: DropResult) => {
-    if (!result.destination) return;
-    if (result.source.index === result.destination.index) return;
-    reorder(result.source.index, result.destination.index);
+  const classeSecao = cn(
+    'max-w-7xl mx-auto px-4 lg:px-6 py-6 lg:py-8',
+    'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4',
+    isEditMode && 'ring-2 ring-primary/30 ring-offset-4 rounded-lg',
+  );
+  const registrarRef = (i: number, el: HTMLDivElement | null) => {
+    refs.current[i] = el;
   };
+  const renderZona = (zoneId: ZoneId, alcaProps: Record<string, unknown> | null) => {
+    const Comp = ZONE_COMPONENTS[zoneId];
+    return (
+      <>
+        {isEditMode && (
+          <div className="absolute -top-2 -right-2 z-10 flex gap-1">
+            <button
+              type="button"
+              onClick={() => hide(zoneId)}
+              aria-label={`Esconder ${ZONE_META[zoneId].label}`}
+              className="h-7 w-7 rounded-full bg-destructive text-destructive-foreground shadow-md flex items-center justify-center hover:scale-110 transition-transform"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+            <div
+              {...alcaProps}
+              aria-label={`Arrastar ${ZONE_META[zoneId].label}`}
+              className="h-7 w-7 rounded-full bg-foreground text-background shadow-md flex items-center justify-center cursor-grab active:cursor-grabbing"
+            >
+              <GripVertical className="w-3.5 h-3.5" />
+            </div>
+          </div>
+        )}
+        <Comp />
+      </>
+    );
+  };
+
+  // F13 (plano v7): o @hello-pangea/dnd só é baixado na 1ª entrada no modo
+  // edição. Até lá a grade é estática, com o MESMO DOM visível. Depois de
+  // carregado, fica a variante arrastável (como antes do F13) para não
+  // remontar as zonas a cada entrada/saída da edição.
+  const [usarDnd, setUsarDnd] = useState(isEditMode);
+  if (isEditMode && !usarDnd) setUsarDnd(true);
+
+  const gradeEstatica = (
+    <section id="cockpit-grid" className={classeSecao}>
+      {visibleZones.map((zoneId, i) => (
+        <div key={zoneId} ref={(el) => registrarRef(i, el)} className={CLASSE_ZONA}>
+          {renderZona(zoneId, null)}
+        </div>
+      ))}
+    </section>
+  );
 
   return (
     <>
@@ -69,70 +122,21 @@ export function CockpitGrid() {
           onDone={exit}
         />
       )}
-      <DragDropContext onDragEnd={handleDragEnd}>
-        <Droppable droppableId="cockpit-grid" direction="horizontal" isDropDisabled={!isEditMode}>
-          {(droppableProvided) => (
-            <section
-              id="cockpit-grid"
-              ref={droppableProvided.innerRef}
-              {...droppableProvided.droppableProps}
-              className={cn(
-                'max-w-7xl mx-auto px-4 lg:px-6 py-6 lg:py-8',
-                'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4',
-                isEditMode && 'ring-2 ring-primary/30 ring-offset-4 rounded-lg',
-              )}
-            >
-              {visibleZones.map((zoneId, i) => {
-                const Comp = ZONE_COMPONENTS[zoneId];
-                return (
-                  <Draggable
-                    key={zoneId}
-                    draggableId={zoneId}
-                    index={i}
-                    isDragDisabled={!isEditMode}
-                  >
-                    {(provided, snapshot) => (
-                      <div
-                        ref={(el) => {
-                          provided.innerRef(el);
-                          refs.current[i] = el;
-                        }}
-                        {...provided.draggableProps}
-                        className={cn(
-                          'rounded-lg transition-shadow relative',
-                          snapshot.isDragging && 'shadow-xl ring-2 ring-primary/50 opacity-95',
-                        )}
-                      >
-                        {isEditMode && (
-                          <div className="absolute -top-2 -right-2 z-10 flex gap-1">
-                            <button
-                              type="button"
-                              onClick={() => hide(zoneId)}
-                              aria-label={`Esconder ${ZONE_META[zoneId].label}`}
-                              className="h-7 w-7 rounded-full bg-destructive text-destructive-foreground shadow-md flex items-center justify-center hover:scale-110 transition-transform"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                            <div
-                              {...provided.dragHandleProps}
-                              aria-label={`Arrastar ${ZONE_META[zoneId].label}`}
-                              className="h-7 w-7 rounded-full bg-foreground text-background shadow-md flex items-center justify-center cursor-grab active:cursor-grabbing"
-                            >
-                              <GripVertical className="w-3.5 h-3.5" />
-                            </div>
-                          </div>
-                        )}
-                        <Comp />
-                      </div>
-                    )}
-                  </Draggable>
-                );
-              })}
-              {droppableProvided.placeholder}
-            </section>
-          )}
-        </Droppable>
-      </DragDropContext>
+      {usarDnd ? (
+        <Suspense fallback={gradeEstatica}>
+          <CockpitGridArrastavel
+            zonas={visibleZones}
+            isEditMode={isEditMode}
+            classeSecao={classeSecao}
+            classeZona={CLASSE_ZONA}
+            onReorder={reorder}
+            registrarRef={registrarRef}
+            renderZona={renderZona}
+          />
+        </Suspense>
+      ) : (
+        gradeEstatica
+      )}
     </>
   );
 }

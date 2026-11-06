@@ -3,7 +3,7 @@
  * provas-sql-escopo.ts — ESTE diff alcança alguma coisa que as provas SQL leem?
  * ============================================================================================
  *
- * O job `provas-sql` (ci.yml) roda o núcleo `db/nucleo-ci.txt` em 6 partes de ~16 min cada:
+ * O job `provas-sql` (ci.yml) roda o núcleo `db/nucleo-ci.txt` em 7 partes de ~14 min cada:
  * ≈100 runner-min por run, 73% de todo o runner de um PR (medido no #3583, só `docs/`: 102,9 de
  * 141 min) e o caminho crítico da parede. Nos 100 PRs mergeados até 2026-11-04, 49 tocaram só
  * arquivos que nenhuma prova lê. Este script decide, em segundos e sem `bun install`, se o

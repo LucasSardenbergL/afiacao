@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { addDias, hojeSP } from "@/lib/time/sp-day";
 import { TrendingUp, Tag, ArrowUpRight, Handshake, Sparkles, Building2 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
 import {
@@ -15,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ReposicaoEmpresaProvider, useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
+import { KpiContagem } from "@/components/reposicao/KpiContagem";
 
 // Reaproveita as 4 telas originais — mesmas queries Supabase, sem duplicar.
 //  - v_oportunidade_economica_hoje               → AdminReposicaoOportunidades
@@ -32,28 +32,29 @@ const TabFallback = () => <PageSkeleton variant="auto" />;
 function KpiCards() {
   const { empresa } = useReposicaoEmpresa();
 
+  // Os quatro `queryFn` LANÇAM no erro (plano v7, C9). Antes "Promoções vigentes" fazia
+  // `if (error) return 0`, e os outros três devolviam `{ value: 0, unavailable: true }`, que o
+  // render imprimia como "0" com uma ressalva embaixo: zero com nota de rodapé. Agora quem separa
+  // carregando / falhou / zero medido é o <KpiContagem>, e indisponível vira "—" com o motivo.
+
   // (a) Oportunidades econômicas ativas hoje
-  const { data: oportunidades } = useQuery({
+  const oportunidades = useQuery({
     queryKey: ["mercado-oportunidades", empresa],
     queryFn: async () => {
-      try {
-        const { count, error } = await supabase
-          .from("v_oportunidade_economica_hoje")
-          .select("*", { count: "exact", head: true })
-          .eq("empresa", empresa)
-          .gt("dias_ate_limite", 0);
-        if (error) return { value: 0, unavailable: true };
-        return { value: count ?? 0, unavailable: false };
-      } catch {
-        return { value: 0, unavailable: true };
-      }
+      const { count, error } = await supabase
+        .from("v_oportunidade_economica_hoje")
+        .select("*", { count: "exact", head: true })
+        .eq("empresa", empresa)
+        .gt("dias_ate_limite", 0);
+      if (error) throw error;
+      return count ?? 0;
     },
     refetchInterval: 60000,
     staleTime: 30000,
   });
 
   // (b) Promoções vigentes
-  const { data: promocoes } = useQuery({
+  const promocoes = useQuery({
     queryKey: ["mercado-promocoes-vigentes"],
     queryFn: async () => {
       const today = hojeSP(); // o "hoje" de v_oportunidade_economica_hoje (dia de SP)
@@ -63,7 +64,7 @@ function KpiCards() {
         .lte("data_inicio", today)
         .gte("data_fim", today)
         .eq("estado", "ativa");
-      if (error) return 0;
+      if (error) throw error;
       return count ?? 0;
     },
     refetchInterval: 60000,
@@ -71,105 +72,72 @@ function KpiCards() {
   });
 
   // (c) Aumentos com vigência nos próximos 30 dias
-  const { data: aumentos } = useQuery({
+  const aumentos = useQuery({
     queryKey: ["mercado-aumentos-30d"],
     queryFn: async () => {
-      try {
-        const todayISO = hojeSP();
-        const in30ISO = addDias(todayISO, 30);
-        const { count, error } = await supabase
-          .from("fornecedor_aumento_anunciado")
-          .select("*", { count: "exact", head: true })
-          .gte("data_vigencia", todayISO)
-          .lte("data_vigencia", in30ISO);
-        if (error) return { value: 0, unavailable: true };
-        return { value: count ?? 0, unavailable: false };
-      } catch {
-        return { value: 0, unavailable: true };
-      }
+      const todayISO = hojeSP();
+      const in30ISO = addDias(todayISO, 30);
+      const { count, error } = await supabase
+        .from("fornecedor_aumento_anunciado")
+        .select("*", { count: "exact", head: true })
+        .gte("data_vigencia", todayISO)
+        .lte("data_vigencia", in30ISO);
+      if (error) throw error;
+      return count ?? 0;
     },
     refetchInterval: 60000,
     staleTime: 30000,
   });
 
   // (d) Sugestões de negociação ativas
-  const { data: negociacoes } = useQuery({
+  const negociacoes = useQuery({
     queryKey: ["mercado-negociacoes-ativas", empresa],
     queryFn: async () => {
-      try {
-        const { count, error } = await supabase
-          .from("v_sugestao_negociacao_ativa")
-          .select("*", { count: "exact", head: true })
-          .eq("empresa", empresa);
-        if (error) return { value: 0, unavailable: true };
-        return { value: count ?? 0, unavailable: false };
-      } catch {
-        return { value: 0, unavailable: true };
-      }
+      const { count, error } = await supabase
+        .from("v_sugestao_negociacao_ativa")
+        .select("*", { count: "exact", head: true })
+        .eq("empresa", empresa);
+      if (error) throw error;
+      return count ?? 0;
     },
     refetchInterval: 60000,
     staleTime: 30000,
   });
 
-  const oportunidadesValue = oportunidades?.value ?? 0;
-  const oportunidadesUnavailable = oportunidades?.unavailable ?? false;
-  const aumentosValue = aumentos?.value ?? 0;
-  const aumentosUnavailable = aumentos?.unavailable ?? false;
-  const negociacoesValue = negociacoes?.value ?? 0;
-  const negociacoesUnavailable = negociacoes?.unavailable ?? false;
-  const promocoesValue = promocoes ?? 0;
-
-  const cards = [
-    {
-      label: "Oportunidades ativas hoje",
-      value: oportunidadesValue,
-      unavailable: oportunidadesUnavailable,
-      icon: Sparkles,
-      tone: oportunidadesValue > 0 ? "text-success" : "text-muted-foreground",
-      border: oportunidadesValue > 0 ? "border-success/40" : "border-border",
-    },
-    {
-      label: "Promoções vigentes",
-      value: promocoesValue,
-      unavailable: false,
-      icon: Tag,
-      tone: promocoesValue > 0 ? "text-primary" : "text-muted-foreground",
-      border: promocoesValue > 0 ? "border-primary/40" : "border-border",
-    },
-    {
-      label: "Aumentos próximos 30 dias",
-      value: aumentosValue,
-      unavailable: aumentosUnavailable,
-      icon: ArrowUpRight,
-      tone: aumentosValue > 0 ? "text-warning" : "text-muted-foreground",
-      border: aumentosValue > 0 ? "border-warning/40" : "border-border",
-    },
-    {
-      label: "Negociações sugeridas",
-      value: negociacoesValue,
-      unavailable: negociacoesUnavailable,
-      icon: Handshake,
-      tone: negociacoesValue > 0 ? "text-primary" : "text-muted-foreground",
-      border: negociacoesValue > 0 ? "border-primary/40" : "border-border",
-    },
-  ];
-
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      {cards.map((c) => (
-        <Card key={c.label} className={c.border}>
-          <CardContent className="pt-4 flex items-center justify-between">
-            <div>
-              <div className="text-xs text-muted-foreground">{c.label}</div>
-              <div className={`text-2xl font-bold mt-1 ${c.tone}`}>{c.value}</div>
-              {c.unavailable && (
-                <div className="text-[11px] text-muted-foreground mt-0.5">Sem dados disponíveis</div>
-              )}
-            </div>
-            <c.icon className={`h-8 w-8 ${c.tone} opacity-60`} />
-          </CardContent>
-        </Card>
-      ))}
+      <KpiContagem
+        id="oportunidades-ativas"
+        label="Oportunidades ativas hoje"
+        icon={Sparkles}
+        query={oportunidades}
+        tone="text-status-success"
+        border="border-status-success/40"
+      />
+      <KpiContagem
+        id="promocoes-vigentes"
+        label="Promoções vigentes"
+        icon={Tag}
+        query={promocoes}
+        tone="text-primary"
+        border="border-primary/40"
+      />
+      <KpiContagem
+        id="aumentos-30d"
+        label="Aumentos próximos 30 dias"
+        icon={ArrowUpRight}
+        query={aumentos}
+        tone="text-status-warning"
+        border="border-status-warning/40"
+      />
+      <KpiContagem
+        id="negociacoes-sugeridas"
+        label="Negociações sugeridas"
+        icon={Handshake}
+        query={negociacoes}
+        tone="text-primary"
+        border="border-primary/40"
+      />
     </div>
   );
 }

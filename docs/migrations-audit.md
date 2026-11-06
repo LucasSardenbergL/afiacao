@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **782** custom migrations totais
+- **783** custom migrations totais
 - **2561** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 968
@@ -6399,6 +6399,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.simular_puxar_volume_trimestre` | — |
+
+### `20261106022016_profiles_origem_omie_import_backfill.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
