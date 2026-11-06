@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 790
+-- Total de custom migrations: 791
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -857,6 +857,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106090000', 'des_simular_puxar_config_e_checkin', '20261106090000_des_simular_puxar_config_e_checkin.sql'),
   ('20261106132259', 'radar_abriu_ficha_com_cnpj', '20261106132259_radar_abriu_ficha_com_cnpj.sql'),
   ('20261106140000', 'sayerlack_importar_portal_revisao', '20261106140000_sayerlack_importar_portal_revisao.sql'),
+  ('20261106175800', 'radar_mapa_regiao_cidade_telefone', '20261106175800_radar_mapa_regiao_cidade_telefone.sql'),
   ('20261106181000', 'radar_leads_ao_vendedor', '20261106181000_radar_leads_ao_vendedor.sql'),
   ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql')
 ),
@@ -3396,6 +3397,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_abriu_ficha_com_cnpj', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
   ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
   ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_painel_portal', ''),
+  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_penetracao_por_municipio', ''),
+  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
   ('radar_leads_ao_vendedor', 'function', 'private', 'radar_territorio_do_vendedor', ''),
   ('radar_leads_ao_vendedor', 'function', 'private', 'radar_leads_do_vendedor', ''),
   ('radar_leads_ao_vendedor', 'function', 'public', 'radar_avisar_vendedores', ''),
@@ -5995,6 +5999,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_abriu_ficha_com_cnpj', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
   ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
   ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_painel_portal', ''),
+  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_penetracao_por_municipio', ''),
+  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
   ('radar_leads_ao_vendedor', 'function', 'private', 'radar_territorio_do_vendedor', ''),
   ('radar_leads_ao_vendedor', 'function', 'private', 'radar_leads_do_vendedor', ''),
   ('radar_leads_ao_vendedor', 'function', 'public', 'radar_avisar_vendedores', ''),
@@ -6398,6 +6405,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_contagem_por_municipio', 5, '20261103100000_radar_agregado_municipio.sql', '99020b287d2b32f266e409caca4ab0ae'),
   ('public', 'radar_contagem_por_municipio', 6, '20261103223300_radar_agregado_cnae.sql', 'e894150109ba6adfd8eb5fc6701f7a1f'),
   ('public', 'radar_contagem_por_municipio', 7, '20261104153351_radar_cnae_secundario.sql', '822bb416cf3b4ce2def0a7fa54cf69de'),
+  ('public', 'radar_contagem_por_municipio', 8, '20261106175800_radar_mapa_regiao_cidade_telefone.sql', '2965f0689b5cab87e7fd612b0cd72eaf'),
   ('public', 'radar_atribuir_tarefa', 1, '20260613190000_radar_fatia3.sql', '136df6cdae5d8cbb506c1662789342e8'),
   ('public', 'radar_atribuir_tarefa', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '17278ad16ee09fbae874c91e0d88e6f7'),
   ('public', 'radar_atribuir_tarefa', 3, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '368e5c2082118a81da0d1eeb73501bde'),
@@ -6679,6 +6687,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_placar_uso', 2, '20261106132259_radar_abriu_ficha_com_cnpj.sql', '359ec9e4ceebfecba245d3c89c1fe511'),
   ('public', 'radar_penetracao_por_municipio', 1, '20261029170140_radar_penetracao_e_concorrentes.sql', '87b1e469e8bfcc17b9695574d8ec74f4'),
   ('public', 'radar_penetracao_por_municipio', 2, '20261103100000_radar_agregado_municipio.sql', '973256e21f1dd292103195b896aaae3b'),
+  ('public', 'radar_penetracao_por_municipio', 3, '20261106175800_radar_mapa_regiao_cidade_telefone.sql', '481b6dae1e543232cea9bd4511a3d6cd'),
   ('public', 'cliente_situacao_receita', 1, '20261029200343_cliente_situacao_receita.sql', '0b6f8d4dac462f14b3b417b355085c2f'),
   ('public', 'cliente_situacao_receita', 2, '20261030000642_cliente_situacao_receita_lote_publicado.sql', 'afa87d095ab804309362545e56ad6346'),
   ('public', 'raio_x_planejar', 1, '20261031180000_raio_x_plano_execucao.sql', 'a2bef6dcf7ce233919472dfed0d022c5'),
@@ -6697,6 +6706,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_agregado_recalcular', 3, '20261104153351_radar_cnae_secundario.sql', 'bce4f5981e1491d2df5796b4489aae99'),
   ('public', 'radar_lista', 1, '20261103131500_radar_lista_rpc.sql', '35f2b704bf5d9b3d429156aed6ac4890'),
   ('public', 'radar_lista', 2, '20261104153351_radar_cnae_secundario.sql', 'b514c898e63fe2e0301ba8323cdd2955'),
+  ('public', 'radar_lista', 3, '20261106175800_radar_mapa_regiao_cidade_telefone.sql', '82ba20fd3696c255b455780f32c33dc6'),
   ('public', 'radar_possiveis_vinculos', 1, '20261104201756_radar_possiveis_vinculos.sql', 'effde9346bb799f4b662d37fc89919d1'),
   ('public', 'radar_possiveis_vinculos', 2, '20261106083754_radar_vinculos_em_lote.sql', 'b7ae2cb1304fb4e6e64d626b2a305e42'),
   ('public', 'simular_puxar_volume_trimestre', 1, '20261105180000_des_simular_puxar_sem_posicao_recusa.sql', '9e43c9425748b54d783ca9f4c3737755'),

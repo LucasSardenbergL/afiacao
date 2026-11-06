@@ -25,6 +25,9 @@ export interface RadarFiltros {
   regiao?: RegiaoRadar;        // 'atuacao' = MG e vizinhos (default da TELA); ausente/'brasil' = todas as UFs. UF escolhida vence.
   incluirSemContato?: boolean; // false (default da tela) = esconde quem não tem telefone NEM e-mail
   cnaeSecundario?: string;     // CNAE entre os SECUNDÁRIOS (só código completo filtra); combina com `cnae` (E)
+  // Cidade escolhida no ranking/mapa: o CÓDIGO RFB (4 dígitos), filtro exato. Quando presente vence `municipio`
+  // (que fica só como rótulo): o nome se repete entre UFs — "SANTA LUZIA" de MG trazia a da BA.
+  municipioCodigo?: string;
 }
 
 const PAGE = 50;
@@ -87,8 +90,10 @@ export function parametrosDaLista(
   return {
     p_busca: termo(filtros.busca),
     // Município: o banco guarda em MAIÚSCULAS (dump RFB); ILIKE parcial. Limitação conhecida: não é
-    // acento-insensitive ("sao" não casa "SÃO") — v2 com unaccent.
-    p_municipio: termo(filtros.municipio),
+    // acento-insensitive ("sao" não casa "SÃO") — v2 com unaccent. Cidade escolhida pelo código: exata, e o
+    // nome digitado sai (código mal formado vai assim mesmo: a RPC grita 22023 em vez de contar zero).
+    p_municipio: filtros.municipioCodigo ? undefined : termo(filtros.municipio),
+    p_municipio_codigo: filtros.municipioCodigo || undefined,
     p_uf: recorteUf.tipo === 'uf' ? recorteUf.uf : undefined,
     p_ufs: recorteUf.tipo === 'lista' ? [...recorteUf.ufs] : undefined,
     p_cnae_exato: cnaeDigitos.length === 7 ? cnaeDigitos : undefined,

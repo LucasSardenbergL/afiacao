@@ -12586,6 +12586,106 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_email_vendedor_config: {
+        Row: {
+          ativo: boolean
+          atualizado_em: string
+          email_teste: string | null
+          vendedor_user_id: string
+        }
+        Insert: {
+          ativo?: boolean
+          atualizado_em?: string
+          email_teste?: string | null
+          vendedor_user_id: string
+        }
+        Update: {
+          ativo?: boolean
+          atualizado_em?: string
+          email_teste?: string | null
+          vendedor_user_id?: string
+        }
+        Relationships: []
+      }
+      radar_email_vendedor_envios: {
+        Row: {
+          alerta_id: number
+          criado_em: string
+          destinatario_email: string
+          eh_teste: boolean
+          elegiveis: number
+          id: string
+          n_leads: number
+          semana: string
+          territorio: Json
+          vendedor_user_id: string
+        }
+        Insert: {
+          alerta_id: number
+          criado_em?: string
+          destinatario_email: string
+          eh_teste: boolean
+          elegiveis: number
+          id?: string
+          n_leads: number
+          semana: string
+          territorio: Json
+          vendedor_user_id: string
+        }
+        Update: {
+          alerta_id?: number
+          criado_em?: string
+          destinatario_email?: string
+          eh_teste?: boolean
+          elegiveis?: number
+          id?: string
+          n_leads?: number
+          semana?: string
+          territorio?: Json
+          vendedor_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "radar_email_vendedor_envios_alerta_id_fkey"
+            columns: ["alerta_id"]
+            isOneToOne: true
+            referencedRelation: "fornecedor_alerta"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      radar_email_vendedor_leads: {
+        Row: {
+          cnpj: string
+          envio_id: string
+          municipio_codigo: string
+          posicao: number
+          score: number
+        }
+        Insert: {
+          cnpj: string
+          envio_id: string
+          municipio_codigo: string
+          posicao: number
+          score: number
+        }
+        Update: {
+          cnpj?: string
+          envio_id?: string
+          municipio_codigo?: string
+          posicao?: number
+          score?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "radar_email_vendedor_leads_envio_id_fkey"
+            columns: ["envio_id"]
+            isOneToOne: false
+            referencedRelation: "radar_email_vendedor_envios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       radar_empresas: {
         Row: {
           bairro: string | null
@@ -12820,6 +12920,47 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_lead_aberturas: {
+        Row: {
+          aberto_em: string
+          cnpj: string
+          dia: string
+          do_destinatario: boolean
+          envio_id: string | null
+          id: number
+          origem: string
+          user_id: string
+        }
+        Insert: {
+          aberto_em?: string
+          cnpj: string
+          dia: string
+          do_destinatario: boolean
+          envio_id?: string | null
+          id?: never
+          origem: string
+          user_id: string
+        }
+        Update: {
+          aberto_em?: string
+          cnpj?: string
+          dia?: string
+          do_destinatario?: boolean
+          envio_id?: string | null
+          id?: never
+          origem?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "radar_lead_aberturas_envio_id_fkey"
+            columns: ["envio_id"]
+            isOneToOne: false
+            referencedRelation: "radar_email_vendedor_envios"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       radar_municipios: {
         Row: {
           codigo: string
@@ -12841,6 +12982,27 @@ export type Database = {
           lng?: number | null
           nome?: string
           uf?: string
+        }
+        Relationships: []
+      }
+      radar_prospectar_hoje_servido: {
+        Row: {
+          dia: string
+          n_leads: number
+          servido_em: string
+          user_id: string
+        }
+        Insert: {
+          dia: string
+          n_leads: number
+          servido_em?: string
+          user_id: string
+        }
+        Update: {
+          dia?: string
+          n_leads?: number
+          servido_em?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -24419,6 +24581,7 @@ export type Database = {
         Returns: Json
       }
       radar_avisar_lote: { Args: { p_agora?: string }; Returns: Json }
+      radar_avisar_vendedores: { Args: { p_agora?: string }; Returns: Json }
       radar_cnpjs_conhecidos: {
         Args: { p_apos?: string; p_limite?: number }
         Returns: string[]
@@ -24438,6 +24601,7 @@ export type Database = {
           p_cnae_prefix?: string
           p_cnae_secundario?: string
           p_com_contato?: boolean
+          p_com_telefone?: boolean
           p_data_abertura_max?: string
           p_data_abertura_min?: string
           p_incluir_ja_clientes?: boolean
@@ -24519,6 +24683,7 @@ export type Database = {
           p_incluir_ja_clientes?: boolean
           p_limit?: number
           p_municipio?: string
+          p_municipio_codigo?: string
           p_offset?: number
           p_ordem?: string
           p_primeira_vista_min?: string
@@ -24582,7 +24747,12 @@ export type Database = {
         }
       }
       radar_penetracao_por_municipio: {
-        Args: { p_limit?: number; p_lote: string; p_uf?: string }
+        Args: {
+          p_limit?: number
+          p_lote: string
+          p_uf?: string
+          p_ufs?: string[]
+        }
         Returns: {
           clientes: number
           concorrentes: number
@@ -24678,6 +24848,10 @@ export type Database = {
           p_codigo_cliente: string
           p_ja_existia?: boolean
         }
+        Returns: Json
+      }
+      radar_registrar_card_servido: {
+        Args: { p_n_leads: number }
         Returns: Json
       }
       radar_registrar_conflito_cadastro: {
@@ -25452,6 +25626,7 @@ export type Database = {
       }
       sayerlack_importar_pedido_portal: {
         Args: {
+          p_condicao_portal: string
           p_data_entrega: string
           p_itens: Json
           p_operador: string
@@ -25468,6 +25643,7 @@ export type Database = {
           ncm: string
         }[]
       }
+      sayerlack_painel_portal: { Args: never; Returns: Json }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
       seed_targets_faltantes: {
         Args: never

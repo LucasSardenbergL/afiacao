@@ -29,7 +29,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ROTULO_PRESET, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
+import { ROTULO_PRESET, filtrosDaCidade, type CidadeEscolhida, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { TETO_LOTE } from '@/lib/radar/lote';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -48,6 +48,7 @@ type RadarUrlState = {
   busca: string;
   uf: string;
   municipio: string;
+  municipioCodigo: string;
   cnae: string;
   cnaeSecundario: string;
   status: string;
@@ -67,6 +68,8 @@ const DEFAULTS: RadarUrlState = {
   busca: '',
   uf: '',
   municipio: '',
+  // Cidade escolhida no ranking/mapa: código RFB, filtro EXATO (o nome em `municipio` fica como rótulo).
+  municipioCodigo: '',
   cnae: '',
   cnaeSecundario: '',
   status: '',
@@ -148,12 +151,12 @@ export default function RadarClientes() {
   const amostraQ = useRadarAmostra();
   const amostra = amostraQ.data ?? null;
   const resumoAmostra = useMemo(() => (amostra ? resumirAmostra(amostra.itens) : null), [amostra]);
-  const { busca, uf, municipio, cnae, cnaeSecundario, status } = filtros;
+  const { busca, uf, municipio, municipioCodigo, cnae, cnaeSecundario, status } = filtros;
   const amostraNaFila = useMemo(() => {
     if (!amostra) return [];
-    const f = { busca, uf, municipio, cnae, cnaeSecundario, status };
+    const f = { busca, uf, municipio, municipioCodigo, cnae, cnaeSecundario, status };
     return amostra.itens.flatMap((i) => (i.empresa && pendenteNaAmostra(i.empresa) && casaFiltrosExplicitos(i.empresa, f) ? [i.empresa] : []));
-  }, [amostra, busca, uf, municipio, cnae, cnaeSecundario, status]);
+  }, [amostra, busca, uf, municipio, municipioCodigo, cnae, cnaeSecundario, status]);
   const cnpjsAmostra = useMemo(() => new Set(amostra?.itens.map((i) => i.cnpj) ?? []), [amostra]);
   const filaAcabou = q.isSuccess && !q.hasNextPage;
   const empresas = useMemo(
@@ -247,6 +250,15 @@ export default function RadarClientes() {
   const limparFiltros = () => { track('radar.filtros_limpos', {}); set({ ...PADRAO_FILTROS }); };
   const semPaginas = !q.data?.pages.length;
 
+  // Cidade do ranking/mapa (pacote C, C2): vai o CÓDIGO (exato — o nome tem homônimos em outras UFs) e, se a cidade
+  // cai fora do recorte atual, o recorte é ajustado e a tela DIZ o quê, em vez de abrir uma fila vazia.
+  const escolherCidade = (c: CidadeEscolhida, origem: 'ranking' | 'mapa') => {
+    const { patch, ajuste } = filtrosDaCidade(c, filtros);
+    track('radar.cidade_selecionada', { origem, ajustou: ajuste != null });
+    set(origem === 'mapa' ? { ...patch, vista: 'lista' } : patch);
+    if (ajuste) toast.info(ajuste);
+  };
+
   return (
     <div className="p-4 space-y-4 max-w-6xl mx-auto pb-24">
       <div className="flex items-center gap-2">
@@ -283,7 +295,8 @@ export default function RadarClientes() {
         soSugeridos={filtros.soSugeridos}
         onSoSugeridos={(v) => set({ soSugeridos: v })}
       />
-      <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome }); }} />
+      {/* O território espera a 1ª página da fila (C5): é secundário e não pode disputar a abertura com ela. */}
+      <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} adiar={q.isPending} onPick={(c) => escolherCidade(c, 'ranking')} />
 
       {/* Conflitos Radar×Omie guardados no servidor: alcançáveis mesmo fora da fila e depois de esquecer o lote. */}
       <RadarConflitosIndicador onAbrir={abrirPorCnpj} />
@@ -318,7 +331,7 @@ export default function RadarClientes() {
           <RadarMapa
             filtros={filtros}
             hojeISO={hojeISO}
-            onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome, vista: 'lista' }); }}
+            onPick={(c) => escolherCidade(c, 'mapa')}
           />
         </Suspense>
       ) : (
