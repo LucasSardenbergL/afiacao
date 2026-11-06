@@ -49,7 +49,7 @@ DECLARE
   p record;
 BEGIN
   SELECT * INTO p FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)');
-  IF p.oid IS NULL OR md5(p.prosrc) NOT IN ('fea04a3887c8d0ac809e5588f5b6ee97', '946b934b92c1676570260462b74aa935') THEN
+  IF p.oid IS NULL OR md5(p.prosrc) NOT IN ('fea04a3887c8d0ac809e5588f5b6ee97', '61c51d0feb94f03f4574b116a2730420') THEN
     RAISE EXCEPTION 'PRE FALHOU: simular_puxar_volume_trimestre viva (md5 %) não é a da prod de 2026-11-06 nem esta — outra sessão mudou a função; confira antes de recriar', md5(p.prosrc);
   END IF;
   IF (SELECT md5(pg_catalog.pg_get_viewdef('public.v_des_checkin_atual'::regclass, true))) NOT IN ('cd1c2b4f0b815e35c0ae5540f54443e5', 'cfe9a0e161ceaff70cf710fbc6dbd17d') THEN
@@ -188,9 +188,12 @@ BEGIN
        WHERE empresa = p_empresa AND ano = v_ano AND trimestre = v_trimestre) THEN
     RAISE EXCEPTION 'DES sem configuracao de desconto: o check-in de % T%/% não aparece na v_des_checkin_atual (contrato ou critérios ausentes)', p_empresa, v_trimestre, v_ano;
   END IF;
-  -- Critério atingido sem percentual cadastrado para a faixa sumiria da soma (0 inventado): recusa.
+  -- Critério atingido (do contrato 2026, o universo da v_des_checkin_atual) sem percentual cadastrado para
+  -- a faixa sumiria da soma (0 inventado): recusa.
   IF v_checkin_id IS NOT NULL AND EXISTS (
        SELECT 1 FROM des_checkin_qualitativo_resposta qr
+        JOIN des_criterio_qualitativo cq ON cq.id = qr.criterio_id
+         AND cq.contrato_versao_id = (SELECT id FROM des_contrato_versao WHERE versao = '2026')
         CROSS JOIN (VALUES (v_faixa_atual.faixa_id), (v_faixa_nova.faixa_id)) f(faixa_id)
         WHERE qr.checkin_id = v_checkin_id AND qr.atingido AND f.faixa_id IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM des_criterio_percentual cp
@@ -376,7 +379,7 @@ DECLARE
   v_agora text;
 BEGIN
   SELECT * INTO p FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)');
-  IF md5(p.prosrc) IS DISTINCT FROM '946b934b92c1676570260462b74aa935' THEN
+  IF md5(p.prosrc) IS DISTINCT FROM '61c51d0feb94f03f4574b116a2730420' THEN
     RAISE EXCEPTION 'POS1 FALHOU: simular_puxar_volume_trimestre viva (md5 %) não é a desta migration', md5(p.prosrc);
   END IF;
   v_agora := COALESCE(p.proacl::text, 'NULO') || '|' || COALESCE(p.proconfig::text, 'NULO') || '|' ||

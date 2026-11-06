@@ -41,7 +41,7 @@ FIX_VIEW_PRED="$REPO_ROOT/db/fixtures/des-posicao-ao-vivo-prod-20261105.sql"
 MIG_VIEW="$REPO_ROOT/supabase/migrations/20261105091216_des_posicao_ao_vivo_sem_faturado_e_nula.sql"
 MIG_CHECKIN="$REPO_ROOT/supabase/migrations/20260929002059_des_desconto_total_maximo_por_faixa.sql"
 MD5_PROD_PRED=fea04a3887c8d0ac809e5588f5b6ee97   # md5(prosrc), psql-ro 2026-11-06 (o corpo do lote 3c)
-MD5_ESTE=946b934b92c1676570260462b74aa935
+MD5_ESTE=61c51d0feb94f03f4574b116a2730420
 MD5_VIEW_PROD=cd1c2b4f0b815e35c0ae5540f54443e5   # v_des_checkin_atual, psql-ro 2026-11-06
 MD5_VIEW_ESTE=cfe9a0e161ceaff70cf710fbc6dbd17d
 SIG="public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)"
@@ -67,6 +67,7 @@ TOTAL_ESPERADO=35
 #   sem_guarda_percentual  critério atingido sem percentual volta a sumir da soma
 #   view_sem_desempate  a v_des_checkin_atual volta sem o id DESC (só o md5 o vê: o empate é arbitrário)
 #   sem_pre_view, pos_sem_invoker_view — o envelope da VIEW, 1 camada por vez
+#   percentual_sem_contrato  a guarda de percentual volta a cobrar critério de outro contrato (recusa indevida)
 #   sem_trava, sem_pre, pre_sem_atributo, pos_sem_acl, pos_sem_md5, pre_sem_este — o envelope, 1 camada por vez
 #   trava_escreve_atributo  a trava reescreve a volatilidade (STABLE): apaga a deriva que a PRE devia ver
 # ══════════════════════════════════════════════════════════════════════════════
@@ -91,7 +92,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               sem_guarda_percentual:D2:C1,C2,C3,C4,C5,C6,C7,D1,R1,V1
               view_sem_desempate:P3:P2,C1,R1,V1,D1,D2
               sem_pre_view:KV1:K1,KV0,K2,K3,K4,K5,K6,K7,KV2
-              pos_sem_invoker_view:KV2:K1,KV0,K2,K3,K4,K5,K6,K7,KV1"
+              pos_sem_invoker_view:KV2:K1,KV0,K2,K3,K4,K5,K6,K7,KV1
+              percentual_sem_contrato:R1:C1,D1,D2,V1,T1"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -154,7 +156,7 @@ SABOTAGEM="${SABOTAGEM:-}"
 case "$SABOTAGEM" in
   ""|sem_guarda_prazo|sem_guarda_padrao|volta_frete_25|volta_capital_20|volta_max_id|vizinha_alterada) ;;
   tira_ativo|sem_guarda_dup_padrao|sem_guarda_dup_frete|sem_guarda_orfao|sem_guarda_percentual|view_sem_desempate) ;;
-  sem_pre_view|pos_sem_invoker_view) ;;
+  sem_pre_view|pos_sem_invoker_view|percentual_sem_contrato) ;;
   sem_trava|sem_pre|pre_sem_atributo|pos_sem_acl|pos_sem_md5|pre_sem_este|trava_escreve_atributo) ;;
   *) echo "❌ SABOTAGEM desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
@@ -522,6 +524,12 @@ INSERT INTO public.des_checkin_qualitativo (id, empresa, ano, trimestre, data_av
   (9, 'RETRO', 2026, 2, '2026-05-10', 'projecao', '2026-06-02 10:00+00');
 INSERT INTO public.des_checkin_qualitativo_resposta (id, checkin_id, criterio_id, atingido) VALUES
   (1, 2, 101, true), (2, 5, 101, true), (3, 9, 101, false);
+-- Outro contrato (2027) com 1 critério SEM percentual nas faixas 2026, atingido no check-in VIGENTE do RETRO:
+-- a view (contrato 2026) o ignora; a guarda de percentual também tem de ignorar (R1 segue simulando).
+INSERT INTO public.des_contrato_versao (id, versao) VALUES (2, '2027');
+INSERT INTO public.des_criterio_qualitativo (id, contrato_versao_id, codigo, nome, ordem, tipo) VALUES
+  (201, 2, 'mix_produtos', 'Mix 2027', 1, 'qualitativo');
+INSERT INTO public.des_checkin_qualitativo_resposta (id, checkin_id, criterio_id, atingido) VALUES (30, 5, 201, true);
 -- EMPATE: 2 check-ins com a MESMA data e a MESMA criação (inseridos na mesma transação): vigente = id 21.
 INSERT INTO public.des_checkin_qualitativo (id, empresa, ano, trimestre, data_avaliacao, tipo, criado_em) VALUES
   (20, 'EMPATE', 2026, 2, '2026-05-30', 'projecao', '2026-05-30 10:00+00'),
@@ -713,6 +721,9 @@ case "$SABOTAGEM" in
   sem_guarda_dup_frete)  sabotar "AND tipo = 'frete_perc_valor' AND ativo = true) > 1 THEN" "AND tipo = 'frete_perc_valor' AND ativo = true) > 99 THEN" 1 ;;
   sem_guarda_orfao)      sabotar "  IF v_checkin_id IS NULL AND EXISTS" "  IF false AND EXISTS" 1 ;;
   sem_guarda_percentual) sabotar "  IF v_checkin_id IS NOT NULL AND EXISTS (" "  IF false AND EXISTS (" 1 ;;
+  percentual_sem_contrato) sabotar "        JOIN des_criterio_qualitativo cq ON cq.id = qr.criterio_id
+         AND cq.contrato_versao_id = (SELECT id FROM des_contrato_versao WHERE versao = '2026')
+" "" 1 ;;
   view_sem_desempate)    gerar viewnova "$TMPD/sabv.sql" "des_checkin_qualitativo.criado_em DESC, des_checkin_qualitativo.id DESC" "des_checkin_qualitativo.criado_em DESC" 1
                          P -q -f "$TMPD/sabv.sql" ;;
   *) ;;

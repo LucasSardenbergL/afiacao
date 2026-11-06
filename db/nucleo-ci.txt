@@ -541,7 +541,7 @@ db/test-des-simular-puxar-sem-posicao.sh   29  falsificar=13
 # o envelope do 3c (trava por COST, PRE de md5 e atributo, PÓS de ACL/dono/assinatura).
 # Autocontida: initdb + stubs + a migration + db/fixtures/des-simular-puxar-prod-20261106.sql +
 # db/fixtures/des-checkin-atual-prod-20261106.sql.
-db/test-des-simular-puxar-config-checkin.sh 35  falsificar=21
+db/test-des-simular-puxar-config-checkin.sh 35  falsificar=22
 # O "hoje" de SP no preço de partida (get_ultimos_precos_cliente) e na medição do piso
 # (medir_abaixo_piso_tier): o current_date da sessão UTC era amanhã das 21:00 às 23:59 BRT
 # (20260927172443). Mesmo relógio controlado, borda do DIA cruzada sob as duas sessões; o
