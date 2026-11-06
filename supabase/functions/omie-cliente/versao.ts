@@ -41,8 +41,12 @@ export const respostaSonda = criarRespostaSonda("omie-cliente");
  *
  * `v1.6-import-no-servidor` (2026-11-01): ação `continuar_import_clientes` (cron + lease da
  * `clientes_import_rodada`) e `sync_all_clients` direto recusado com 410.
+ *
+ * `v1.7-perfil-placeholder-com-origem` (2026-11-05, C7 do plano v7): o profile que nasce com o
+ * placeholder (import e `criar_perfil_local`) sai com `prospect_source = 'omie_import'` — fora da
+ * fila de aprovações e do KPI da home. O profile real reaproveitado por documento não muda.
  */
-export const VERSAO = "v1.6-import-no-servidor";
+export const VERSAO = "v1.7-perfil-placeholder-com-origem";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
