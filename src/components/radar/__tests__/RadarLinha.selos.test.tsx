@@ -150,3 +150,35 @@ describe('RadarLinha — selo da amostra de controle', () => {
     expect(screen.queryByTestId('selo-amostra')).toBeNull();
   });
 });
+
+describe('RadarLinha — selo de vínculo com cliente (possível sucessor)', () => {
+  const linha = (props: Partial<Parameters<typeof RadarLinha>[0]>) =>
+    render(<RadarLinha empresa={empresa({})} hojeISO="2026-10-20" selecionada={false} onSelecionar={() => {}} onAbrir={() => {}} lote={LOTE} {...props} />);
+
+  it('vínculo com cliente baixado → chip "possível sucessor", com o cliente e a pista no título', () => {
+    linha({ vinculoEstado: 'ok', vinculo: { forca: 'forte', clientes: 1, nomes: ['C1 ANTIGA LTDA'], situacoes: ['08'] } });
+    const chip = screen.getByTestId('selo-vinculo-sucessor');
+    expect(chip.textContent).toBe('possível sucessor');
+    expect(chip.getAttribute('title')).toMatch(/^Possível sucessor de C1 ANTIGA LTDA \(baixada na Receita\)/);
+  });
+
+  it('vínculo com cliente ativo → chip "possível vínculo"', () => {
+    linha({ vinculoEstado: 'ok', vinculo: { forca: 'media', clientes: 1, nomes: ['C3 LTDA'], situacoes: ['02'] } });
+    expect(screen.getByTestId('selo-vinculo-vinculo').textContent).toBe('possível vínculo');
+  });
+
+  it('página lida sem vínculo → sem chip', () => {
+    linha({ vinculoEstado: 'ok', vinculo: null });
+    expect(screen.queryByTestId(/^selo-vinculo-/)).toBeNull();
+  });
+
+  it('leitura falhou → "vínculo?", não some como se fosse cliente novo', () => {
+    linha({ vinculoEstado: 'falhou', vinculo: null });
+    expect(screen.getByTestId('selo-vinculo-nao-verificado').textContent).toBe('vínculo?');
+  });
+
+  it('sem a prop (outros usos da linha) → sem chip', () => {
+    renderLinha(empresa({}), LOTE);
+    expect(screen.queryByTestId(/^selo-vinculo-/)).toBeNull();
+  });
+});

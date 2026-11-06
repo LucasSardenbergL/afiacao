@@ -6,7 +6,7 @@
 -- inteira (50 leads) numa chamada só, como o selo de filial (`radar_irmaos_por_raiz`).
 --
 -- Por que um NÚCLEO e não "chamar a ficha 50 vezes": medido em prod (2026-11-06, psql-ro), a regra custa ~850 ms
--- POR CNPJ — quase tudo é recalcular a chave de telefone dos ~15 mil `profiles` e o CEP dos ~14,6 mil `addresses`,
+-- POR CNPJ — quase tudo é recalcular a chave de telefone dos ~15 mil `profiles` e o CEP dos ~16,9 mil `addresses`,
 -- trabalho que não depende do lead. Em laço, uma página levaria ~42 s. Em conjunto, essa parte roda uma vez por
 -- página. E as regras não podem existir em duas cópias que divergem, então:
 --

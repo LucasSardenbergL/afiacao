@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
 import { useRadarIrmaos } from '@/queries/useRadarIrmaos';
+import { useRadarVinculosLista } from '@/queries/useRadarVinculosLista';
 import { useRadarKpis } from '@/queries/useRadarKpis';
 import { useRadarLoteOmie } from '@/queries/useRadarLote';
 import { useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
@@ -153,6 +154,8 @@ export default function RadarClientes() {
   // Filiais da mesma raiz de CNPJ, uma consulta por página (só sinaliza; não mexe na ordem). A amostra é uma "página" a mais.
   const paginasIrmaos = useMemo(() => [...(q.data?.pages ?? []), amostraNaFila], [q.data, amostraNaFila]);
   const irmaos = useRadarIrmaos(paginasIrmaos);
+  // Possível sucessor / vínculo com cliente, nas mesmas páginas (mesmo núcleo de regras da ficha; o detalhe fica nela).
+  const vinculos = useRadarVinculosLista(paginasIrmaos);
   const aberta = useMemo(() => {
     if (!abertaCnpj) return null;
     const atual = empresas.find((e) => e.cnpj === abertaCnpj) ?? abertaSnapshot.current;
@@ -308,6 +311,8 @@ export default function RadarClientes() {
                   lote={lote}
                   mostrarMotivos={filtros.soSugeridos}
                   irmaos={irmaos.dados.get(e.cnpj) ?? null}
+                  vinculo={vinculos.dados.get(e.cnpj) ?? null}
+                  vinculoEstado={vinculos.estadoDe(e.cnpj)}
                   amostra={cnpjsAmostra.has(e.cnpj) ? amostra?.sorteio ?? null : null}
                 />
               ))}

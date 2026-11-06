@@ -24681,6 +24681,16 @@ export type Database = {
           telefone: string
         }[]
       }
+      radar_vinculos_por_cnpjs: {
+        Args: { p_cnpjs: string[] }
+        Returns: {
+          clientes: number
+          clientes_nomes: string[]
+          clientes_situacoes: string[]
+          cnpj: string
+          forca: string
+        }[]
+      }
       raio_x_classificar: {
         Args: {
           p_categoria: string
