@@ -14,17 +14,17 @@ import { RadarAtendimentoLead } from './RadarAtendimentoLead';
 import { RadarModoDiscagem } from './RadarModoDiscagem';
 import { RadarVinculosLead } from './RadarVinculosLead';
 import { RadarTelefoneAcao } from './RadarTelefoneAcao';
+import { Selo } from './Selo';
 import { avisoTelefoneCompartilhado, gravarModoDiscagem, lerModoDiscagem } from '@/lib/radar/atendimento';
 import { useRadarTelefoneCompartilhado } from '@/queries/useRadarTelefoneCompartilhado';
 import { track } from '@/lib/analytics';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { isCellphone, whatsappLink } from '@/lib/phone';
-import { cn } from '@/lib/utils';
 import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useRadarContatos, LIMITE_HISTORICO_RADAR } from '@/queries/useRadarContatos';
 import {
-  formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloStatus, tomStatus, CLASSE_TOM, seloRfb, scoreUI,
+  formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloStatus, tomStatus, seloRfb, scoreUI,
   selosFilial, textoFilialFicha, telefonePrincipal, type IrmaosRaiz, type EstadoIrmaos,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
@@ -81,9 +81,7 @@ function Historico({ cnpj }: { cnpj: string }) {
         <ul className="divide-y text-sm">
           {q.data.map((c) => (
             <li key={c.id} className="py-1.5 flex items-start gap-2">
-              <span className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[tomStatus(c.acao)])}>
-                {rotuloStatus(c.acao)}
-              </span>
+              <Selo tom={tomStatus(c.acao)}>{rotuloStatus(c.acao)}</Selo>
               <div className="min-w-0 flex-1">
                 {c.nota && <div className="whitespace-pre-wrap break-words" data-testid="radar-historico-nota">{c.nota}</div>}
                 <div className="text-xs text-muted-foreground">
@@ -174,18 +172,14 @@ export function RadarDetailSheet({
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2 flex-wrap">
             {nome}
-            <span className={cn('rounded border px-1.5 py-px text-[11px] leading-4 font-normal', CLASSE_TOM[tomStatus(empresa.prospeccao_status)])}>
-              {rotuloStatus(empresa.prospeccao_status)}
-            </span>
+            <Selo tom={tomStatus(empresa.prospeccao_status)} className="font-normal">{rotuloStatus(empresa.prospeccao_status)}</Selo>
             {empresa.ja_cliente && <Badge variant="secondary">já é cliente</Badge>}
             {ehInedito(empresa, lote) && <Badge variant="info">inédito</Badge>}
             {saiuDoDump(empresa, lote) && (
               <Badge variant="outline" className="text-muted-foreground font-normal">{rotuloSaiuDoDump(empresa.ultimo_lote)}</Badge>
             )}
             {rfb && (
-              <span className={cn('rounded border px-1.5 py-px text-[11px] leading-4 font-normal', CLASSE_TOM[rfb.tom])} title={rfb.titulo} data-testid="selo-rfb">
-                {rfb.texto}
-              </span>
+              <Selo tom={rfb.tom} title={rfb.titulo} className="font-normal" data-testid="selo-rfb">{rfb.texto}</Selo>
             )}
           </SheetTitle>
         </SheetHeader>
@@ -222,9 +216,9 @@ export function RadarDetailSheet({
         </div>
         <div className="mt-4 divide-y">
           <Linha label="Score">
-            <span className={cn('inline-block rounded border px-1.5 py-px text-[11px] leading-4 font-tabular', CLASSE_TOM[score.tom])} data-testid="radar-score-ficha">
+            <Selo tom={score.tom} className="font-tabular" data-testid="radar-score-ficha">
               {score.texto}{empresa.score != null ? ' / 100' : ''}
-            </span>
+            </Selo>
             {empresa.score != null && empresa.score_motivos && empresa.score_motivos.length > 0 ? (
               <ul className="mt-1 text-xs text-muted-foreground list-disc pl-4">
                 {empresa.score_motivos.map((m) => <li key={m}>{m}</li>)}
@@ -235,12 +229,7 @@ export function RadarDetailSheet({
           </Linha>
           <Linha label="Mesma empresa">
             {selosFilial(irmaosEstado === 'ok' ? irmaos : null).map((s) => (
-              <span
-                key={s.chave}
-                className={cn('mr-1.5 inline-block rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[s.tom])}
-              >
-                {s.texto}
-              </span>
+              <Selo key={s.chave} tom={s.tom} className="mr-1.5">{s.texto}</Selo>
             ))}
             <span className="text-xs text-muted-foreground" data-testid="radar-filial-ficha">
               {textoFilialFicha(irmaosEstado, irmaos)}
