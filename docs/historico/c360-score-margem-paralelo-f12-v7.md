@@ -67,4 +67,4 @@ Suíte do módulo (`src/components/customer360`, `Customer360.estados`, `src/lib
 
 ## Deploy
 
-Só **Publish** (front puro; sem migration, sem edge).
+Só **Publish** (front puro; sem migration, sem edge). Mergeado no #3647 (`32d338f`). **Publish conferido no bundle servido** em 2026-11-06 (`steu.lovable.app`): o `index-B0RdF_Q9.js` carrega o `Customer360-CZ8XI7X-.js`, que contém as três strings que só existem no código novo ("Score indisponível", "Score: sem rede", `aviso-c360-score`). O SW troca de build quando o cliente clica: bytes = disponibilidade, não adoção.
