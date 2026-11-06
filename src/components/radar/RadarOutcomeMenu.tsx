@@ -24,11 +24,11 @@ import {
   useRegistrarContatoRadar,
   useDesfazerContatoRadar,
 } from '@/queries/useRegistrarContatoRadar';
-import { useRadarCadastrarOmie, lerLeadParaCadastro } from '@/queries/useRadarAcoesLead';
+import { lerLeadParaCadastro } from '@/queries/useRadarAcoesLead';
+import { useCadastroOmieComRecuperacao, type ResultadoCadastroUI } from './useCadastroOmieComRecuperacao';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ACOES_CONTATO, type AcaoContato } from '@/lib/radar/ui-helpers';
 import { cadastravelNoOmie } from '@/lib/radar/sugeridos';
-import { DivergenciaCadastro, ehSemConfirmacaoDoServidor, FalhaCadastro, type OpcoesCadastro } from '@/lib/radar/cadastro-omie';
 import { sqlstateDe } from '@/lib/radar/conflito-cadastro';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { track } from '@/lib/analytics';
@@ -48,7 +48,7 @@ const LABEL_OK: Record<AcaoContato, string> = {
   descartado: 'Lead descartado',
 };
 
-type ResultadoPosSinal = 'sucesso' | 'ja_existia' | 'indeterminado' | 'erro' | 'lead_mudou' | 'divergente';
+type ResultadoPosSinal = ResultadoCadastroUI | 'lead_mudou';
 
 /** A oferta aberta: o lead (SNAPSHOT) e o id do toast "Marcado: em conversa" (para tirar o Desfazer). */
 /** `id` correlaciona exposição → resposta → resultado(s) e retries nos sensores (sem PII). */
@@ -86,14 +86,15 @@ export function RadarOutcomeMenu({
 }) {
   const reg = useRegistrarContatoRadar();
   const undo = useDesfazerContatoRadar();
-  const cadastrar = useRadarCadastrarOmie();
+  const cadastro = useCadastroOmieComRecuperacao();
   const { isImpersonating } = useImpersonation();
   const [confirmDescartar, setConfirmDescartar] = useState(false);
   const [motivo, setMotivo] = useState('');
   // State abre/fecha o diálogo; a REF é a verdade de "ainda há oferta a responder" (síncrona).
   const [ofertaAberta, setOfertaAberta] = useState<Oferta | null>(null);
   const ofertaRef = useRef<Oferta | null>(null);
-  const [cadastrando, setCadastrando] = useState(false);
+  const [relendo, setRelendo] = useState(false);
+  const cadastrando = relendo || cadastro.cadastrando;
   // Resposta tardia não pode agir sobre OUTRA ficha (Codex, código 2026-10-20): a ficha avança
   // (`Próximo`) ou fecha enquanto a RPC/cadastro está em voo; sem esta guarda, a oferta de A
   // aparecia sobre B e "Agora não" avançava B sem contato.
@@ -163,79 +164,34 @@ export function RadarOutcomeMenu({
     }
   };
 
-  const executarCadastro = async (alvo: RadarEmpresa, ofertaId: string, opcoes?: OpcoesCadastro) => {
-    const registrarResultado = (resultado: ResultadoPosSinal) =>
-      track('radar.cadastro_pos_sinal_resultado', { resultado, oferta_id: ofertaId, retomada: Boolean(opcoes), origem: 'ficha' });
-    setCadastrando(true);
+  const executarCadastro = async (alvo: RadarEmpresa, ofertaId: string) => {
+    const rastrear = (resultado: ResultadoPosSinal, retomada: boolean) =>
+      track('radar.cadastro_pos_sinal_resultado', { resultado, oferta_id: ofertaId, retomada, origem: 'ficha' });
+    // A releitura barra um cadastro NOVO de quem mudou desde o sinal. As RETOMADAS (código já confirmado pelo
+    // Omie, resposta indeterminada) saem dos toasts do hook e NÃO passam por aqui — barrá-las travaria a
+    // recuperação justo quando o recruzamento já marcou `ja_cliente` (Codex, código 2026-10-20).
+    setRelendo(true);
+    let atual: Awaited<ReturnType<typeof lerLeadParaCadastro>>;
     try {
-      // A releitura barra um cadastro NOVO de quem mudou. Uma RETOMADA (código já confirmado pelo
-      // Omie, ou resposta indeterminada) não cria nada novo: a lib relê o vínculo antes de tocar o
-      // Omie e reconcilia — barrar aqui travaria a recuperação justo quando o recruzamento já
-      // marcou `ja_cliente` ou a RPC gravou e só perdeu a resposta (Codex, código 2026-10-20).
-      const atual = opcoes ? null : await lerLeadParaCadastro(alvo.cnpj);
-      const elegivel = opcoes != null || (atual != null && atual.prospeccao_status === 'em_conversa' && cadastravelNoOmie(atual).ok);
-      if (!elegivel) {
-        registrarResultado('lead_mudou');
-        toast.info('Não cadastrei: o lead mudou desde o sinal', {
-          description: atual == null ? 'Não encontrei mais esta empresa no Radar.'
-            : atual.ja_cliente || atual.omie_codigo_cliente ? 'Já consta como cliente / vinculado ao Omie.'
-            : atual.prospeccao_status !== 'em_conversa' ? `Status atual: ${atual.prospeccao_status ?? '—'} (não é mais "em conversa").`
-            : 'Situação cadastral na RFB não está ativa.',
-        });
-        return;
-      }
-      const r = await cadastrar.mutateAsync({ empresa: alvo, opcoes });
-      registrarResultado(r.jaExistia ? 'ja_existia' : 'sucesso');
-      toast.success(
-        r.jaExistia ? `Já era cliente no Omie (Oben) — reconciliado · cód. ${r.codigo}` : `Cadastrado no Omie (Oben) · cód. ${r.codigo}`,
-        { description: alvo.razao_social ?? alvo.cnpj },
-      );
+      atual = await lerLeadParaCadastro(alvo.cnpj);
     } catch (e) {
-      const msg = mensagemDeErro(e) ?? 'erro desconhecido';
-      if (/OMIE_RESPOSTA_INDETERMINADA/.test(msg)) {
-        // INDETERMINADO ≠ erro: o Omie pode ter criado sem devolver o código. Nada foi gravado no
-        // Radar (o lead segue na fila); a retentativa RELÊ o vínculo antes de tocar o Omie.
-        registrarResultado('indeterminado');
-        toast.warning('Cadastro não confirmado pelo Omie', {
-          description: 'O Omie não devolveu o código do cliente. O lead continua na fila.',
-          action: { label: 'Tentar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { retentativa: true }) },
-        });
-      } else if (e instanceof DivergenciaCadastro) {
-        // Conflito de identidade Radar×Omie (RD001/RD002/lookup divergente): nada foi regravado e repetir não
-        // resolve — sem botão de retentar (ele releria o vínculo antigo e mostraria "reconciliado").
-        registrarResultado('divergente');
-        toast.error('Conflito de vínculo com o Omie — nada foi gravado', {
-          description: `${msg} Confira o cadastro no Omie.`,
-        });
-      } else if (ehSemConfirmacaoDoServidor(e)) {
-        // A RPC não achou a confirmação que a EDGE grava (ledger omie_cliente_confirmacoes) — o lead segue na
-        // fila. A retentativa volta pela edge (o lookup confere o documento e grava), nunca pelo "Gravar de novo".
-        registrarResultado('indeterminado');
-        toast.warning('Cadastro não confirmado pelo servidor', {
-          description: 'O Radar não recebeu a confirmação do Omie para este CNPJ. O lead continua na fila.',
-          // o código que o Omie devolveu vai como EVIDÊNCIA: se o vínculo relido for outro, é conflito
-          action: {
-            label: 'Tentar de novo',
-            onClick: () => void executarCadastro(alvo, ofertaId, {
-              retentativa: true,
-              ...(e instanceof FalhaCadastro && e.codigoVisto ? { codigoVisto: e.codigoVisto } : {}),
-            }),
-          },
-        });
-      } else if (e instanceof FalhaCadastro && e.etapa === 'radar' && e.codigo) {
-        registrarResultado('erro');
-        const codigo = e.codigo;
-        toast.error(`Cadastrado no Omie (cód. ${codigo}), mas o Radar não gravou o vínculo`, {
-          description: msg,
-          action: { label: 'Gravar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { codigoConhecido: codigo }) },
-        });
-      } else {
-        registrarResultado('erro');
-        toast.error('Não foi possível cadastrar', { description: msg });
-      }
+      rastrear('erro', false);
+      toast.error('Não foi possível cadastrar', { description: mensagemDeErro(e) ?? 'não consegui reler o lead no Radar' });
+      return;
     } finally {
-      if (montadoRef.current) setCadastrando(false);
+      if (montadoRef.current) setRelendo(false);
     }
+    if (!(atual != null && atual.prospeccao_status === 'em_conversa' && cadastravelNoOmie(atual).ok)) {
+      rastrear('lead_mudou', false);
+      toast.info('Não cadastrei: o lead mudou desde o sinal', {
+        description: atual == null ? 'Não encontrei mais esta empresa no Radar.'
+          : atual.ja_cliente || atual.omie_codigo_cliente ? 'Já consta como cliente / vinculado ao Omie.'
+          : atual.prospeccao_status !== 'em_conversa' ? `Status atual: ${atual.prospeccao_status ?? '—'} (não é mais "em conversa").`
+          : 'Situação cadastral na RFB não está ativa.',
+      });
+      return;
+    }
+    await cadastro.executar(alvo, rastrear);
   };
 
   /** Consome a oferta UMA vez (clique e fechamento do Radix chegam juntos). */

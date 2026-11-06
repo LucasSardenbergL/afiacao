@@ -306,7 +306,7 @@ export function RadarKpis() {
             hint={`todo o Radar, sem os filtros da tela${contagensEm ? ` · contagem de ${contagensEm}` : ''}`}
           />
         )}
-        <Card label="Viraram cliente (mês)" valor={data.virou_cliente_mes.toLocaleString('pt-BR')} hint="clientes que o Radar criou no Omie neste mês" />
+        <Card label="Cadastros novos no Omie (mês)" valor={data.virou_cliente_mes.toLocaleString('pt-BR')} hint="cadastros que o Radar criou no Omie (Oben) neste mês" />
       </div>
       {velho && <AvisoLeituraFalhou oque="a leitura mais recente" estado={velho} className="mt-2" />}
     </div>

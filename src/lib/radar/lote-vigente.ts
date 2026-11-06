@@ -76,5 +76,5 @@ function rotuloMesLote(mes: string): string {
 }
 
 export function rotuloSaiuDoDump(ultimoLote: string): string {
-  return `saiu do dump em ${rotuloMesLote(ultimoLote)}`;
+  return `última presença: ${rotuloMesLote(ultimoLote)} · ausente no lote atual`;
 }

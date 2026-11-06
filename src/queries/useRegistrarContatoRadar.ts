@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
+import { invalidarRadar } from '@/lib/radar/invalidar-cache';
 import { lerDesfazer, lerRegistroComDedupe } from '@/lib/radar/borda-rpc';
 import type { AcaoContato } from '@/lib/radar/ui-helpers';
 
@@ -21,8 +22,8 @@ export function useRegistrarContatoRadar() {
   return useMutation({
     mutationFn: registrarContatoRadar,
     onSuccess: (_d, v) => {
-      track('radar.contato_registrado', { acao: v.acao });
-      qc.invalidateQueries({ queryKey: ['radar'] });
+      track('radar.contato_registrado', { acao: v.acao, com_nota: Boolean(v.nota?.trim()) });
+      void invalidarRadar(qc);
     },
   });
 }
@@ -35,6 +36,6 @@ export function useDesfazerContatoRadar() {
       if (error) throw error;
       return lerDesfazer(data, 'desfazer_contato_radar');
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['radar'] }),
+    onSuccess: () => { void invalidarRadar(qc); },
   });
 }
