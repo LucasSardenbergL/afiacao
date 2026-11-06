@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 780
+-- Total de custom migrations: 782
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -848,7 +848,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261104192942', 'carteira_visibilidade_por_conjunto', '20261104192942_carteira_visibilidade_por_conjunto.sql'),
   ('20261104201756', 'radar_possiveis_vinculos', '20261104201756_radar_possiveis_vinculos.sql'),
   ('20261105091216', 'des_posicao_ao_vivo_sem_faturado_e_nula', '20261105091216_des_posicao_ao_vivo_sem_faturado_e_nula.sql'),
-  ('20261105144036', 'radar_drop_muni_cover', '20261105144036_radar_drop_muni_cover.sql')
+  ('20261105144036', 'radar_drop_muni_cover', '20261105144036_radar_drop_muni_cover.sql'),
+  ('20261105150000', 'radar_pipeline_diario_sem_releitura', '20261105150000_radar_pipeline_diario_sem_releitura.sql'),
+  ('20261105180000', 'des_simular_puxar_sem_posicao_recusa', '20261105180000_des_simular_puxar_sem_posicao_recusa.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3365,7 +3367,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_socios_arr', 'radar_empresas'),
   ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_titular_mei', 'radar_empresas'),
   ('des_posicao_ao_vivo_sem_faturado_e_nula', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', ''),
-  ('radar_drop_muni_cover', 'index', 'public', 'idx_radar_muni_cover', 'radar_empresas')
+  ('radar_drop_muni_cover', 'index', 'public', 'idx_radar_muni_cover', 'radar_empresas'),
+  ('radar_pipeline_diario_sem_releitura', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
+  ('radar_pipeline_diario_sem_releitura', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_pipeline_diario_sem_releitura', 'table', 'public', 'radar_score_estado', ''),
+  ('radar_pipeline_diario_sem_releitura', 'index', 'public', 'idx_radar_empresas_ja_cliente', 'radar_empresas'),
+  ('radar_pipeline_diario_sem_releitura', 'index', 'public', 'idx_radar_empresas_updated_at', 'radar_empresas'),
+  ('des_simular_puxar_sem_posicao_recusa', 'function', 'public', 'simular_puxar_volume_trimestre', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5930,7 +5938,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_socios_arr', 'radar_empresas'),
   ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_titular_mei', 'radar_empresas'),
   ('des_posicao_ao_vivo_sem_faturado_e_nula', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', ''),
-  ('radar_drop_muni_cover', 'index', 'public', 'idx_radar_muni_cover', 'radar_empresas')
+  ('radar_drop_muni_cover', 'index', 'public', 'idx_radar_muni_cover', 'radar_empresas'),
+  ('radar_pipeline_diario_sem_releitura', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
+  ('radar_pipeline_diario_sem_releitura', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_pipeline_diario_sem_releitura', 'table', 'public', 'radar_score_estado', ''),
+  ('radar_pipeline_diario_sem_releitura', 'index', 'public', 'idx_radar_empresas_ja_cliente', 'radar_empresas'),
+  ('radar_pipeline_diario_sem_releitura', 'index', 'public', 'idx_radar_empresas_updated_at', 'radar_empresas'),
+  ('des_simular_puxar_sem_posicao_recusa', 'function', 'public', 'simular_puxar_volume_trimestre', '')
 )
 SELECT
   e.migration,
@@ -5958,7 +5972,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 172.
+-- Funções redefinidas com corpo extraível: 173.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6569,10 +6583,13 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'raio_x_medicao', 4, '20261103120000_raio_x_unidades.sql', '22d7eb770fe7e85c24736efda016c482'),
   ('public', 'fin_ciclo_cp_empresa', 1, '20261018150000_fin_ciclo_fornecedor.sql', 'c9a75d0bf7181e37762b3a06c4f16416'),
   ('public', 'fin_ciclo_cp_empresa', 2, '20261019090000_fin_ciclo_cp_empresa_perf.sql', 'b83eadabca7f33ec9bc921c243e7db57'),
+  ('public', 'radar_recruzar_ja_cliente_tick', 1, '20261019093000_radar_recruzamento_diario_cron.sql', '3e1801190810210f1230187c10b26383'),
+  ('public', 'radar_recruzar_ja_cliente_tick', 2, '20261105150000_radar_pipeline_diario_sem_releitura.sql', 'a32c5e0fc125294ff68f34e8d5af5e39'),
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
   ('public', 'radar_score_recalcular', 2, '20261020120000_radar_score_lead_v2.sql', '780e4132b90c5f8ce1b4386d8c217f42'),
   ('public', 'radar_score_recalcular', 3, '20261021120000_radar_score_lead_v3_cnae_secundario.sql', '89424a4693b5386e8c48c62b2e12415c'),
   ('public', 'radar_score_recalcular', 4, '20261029150000_radar_score_versao.sql', '67d6f5c1880371b9a2e3d872b6c714a2'),
+  ('public', 'radar_score_recalcular', 5, '20261105150000_radar_pipeline_diario_sem_releitura.sql', '65fdc04b8cbcb16d710a195a0ea67e86'),
   ('public', 'radar_aplicar_situacao', 1, '20261019200000_radar_situacao_cadastral.sql', '695220bdd5e21c77940a09591545c190'),
   ('public', 'radar_aplicar_situacao', 2, '20261031190000_radar_situacao_contato_por_cnpj.sql', '6ce2e3e0f597b1adc8648681419732d6'),
   ('public', 'radar_avisar_lote', 1, '20261020143000_radar_avisar_lote.sql', '64154443f7649f8ef872fd59fde63877'),

@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **780** custom migrations totais
-- **2555** objetos esperados (criados por estas migrations)
+- **782** custom migrations totais
+- **2561** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 965
+  - `function`: 968
   - `rls_policy`: 519
-  - `index`: 367
-  - `table`: 231
+  - `index`: 369
+  - `table`: 232
   - `cron_job`: 210
   - `view`: 134
   - `trigger`: 125
@@ -6383,6 +6383,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `index` | `public.idx_radar_muni_cover` | `radar_empresas` |
+
+### `20261105150000_radar_pipeline_diario_sem_releitura.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_recruzar_ja_cliente_tick` | — |
+| `function` | `public.radar_score_recalcular` | — |
+| `table` | `public.radar_score_estado` | — |
+| `index` | `public.idx_radar_empresas_ja_cliente` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_updated_at` | `radar_empresas` |
+
+### `20261105180000_des_simular_puxar_sem_posicao_recusa.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.simular_puxar_volume_trimestre` | — |
 
 ## Próximos passos por status
 
