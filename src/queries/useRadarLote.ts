@@ -80,7 +80,7 @@ function escreverEstado(uid: string, patch: Partial<EstadoLoteUsuario>) {
   const novo = { ...estadoDe(uid), ...patch };
   estados.set(uid, novo);
   if ('lote' in patch) gravarStorage(uid, novo.lote);
-  for (const f of ouvintes.get(uid) ?? []) f();
+  ouvintes.get(uid)?.forEach((f) => f());
 }
 
 function assinar(uid: string, f: () => void) {
