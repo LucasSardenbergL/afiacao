@@ -42,7 +42,6 @@ MIG_VIEW="$REPO_ROOT/supabase/migrations/20261105091216_des_posicao_ao_vivo_sem_
 MIG_CHECKIN="$REPO_ROOT/supabase/migrations/20260929002059_des_desconto_total_maximo_por_faixa.sql"
 MD5_PROD_PRED=fea04a3887c8d0ac809e5588f5b6ee97   # md5(prosrc), psql-ro 2026-11-06 (o corpo do lote 3c)
 MD5_ESTE=61c51d0feb94f03f4574b116a2730420
-MD5_VIEW_PROD=cd1c2b4f0b815e35c0ae5540f54443e5   # v_des_checkin_atual, psql-ro 2026-11-06
 MD5_VIEW_ESTE=cfe9a0e161ceaff70cf710fbc6dbd17d
 SIG="public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)"
 # Denominador: P1 B0-B4 · K1 KV0 · K2-K7 KV1 KV2 · P2 P3 A1 · C1-C7 · D1 D2 · R1 T1 · V1 · N1 M1 Y1 S3
@@ -701,7 +700,6 @@ eq KV2 "PÓS: a view recriada SEM o WITH (leria como dono, sem RLS) aborta" \
 # ── SABOTAGEM da função (só no modo --falsificar) — no BANCO, recriando a função instalada com o trecho
 # trocado; o repo nunca é tocado. As de envelope já entraram pelo `gerar` (K1-K6).
 sabotar() { gerar funcao "$TMPD/sab.sql" "$@"; P -q -f "$TMPD/sab.sql"; }
-NL=$'\n'
 case "$SABOTAGEM" in
   sem_guarda_prazo)  sabotar "    RAISE EXCEPTION 'DES sem configuracao de custo: % sem o prazo de pagamento % cadastrado e ativo'" \
                              "    NULL; -- 'DES sem configuracao de custo: % sem o prazo de pagamento % cadastrado e ativo'" 1 \
