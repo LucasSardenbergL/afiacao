@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **785** custom migrations totais
-- **2567** objetos esperados (criados por estas migrations)
+- **786** custom migrations totais
+- **2569** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 971
+  - `function`: 972
   - `rls_policy`: 519
   - `index`: 369
   - `table`: 232
   - `cron_job`: 213
-  - `view`: 134
+  - `view`: 135
   - `trigger`: 125
   - `enum_value`: 4
 
@@ -6419,6 +6419,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `private.radar_vinculos_nucleo` | — |
 | `function` | `public.radar_possiveis_vinculos` | — |
 | `function` | `public.radar_vinculos_por_cnpjs` | — |
+
+### `20261106090000_des_simular_puxar_config_e_checkin.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.simular_puxar_volume_trimestre` | — |
+| `view` | `public.v_des_checkin_atual` | — |
 
 ## Próximos passos por status
 

@@ -83,7 +83,8 @@ export function KpiCards({ empresa }: { empresa: string }) {
           },
           0,
         ),
-        Promise.resolve(0),
+        // Ainda não há fonte de score SPIN (a aba Coaching SPIN usa dados de exemplo): ausente, não 0.
+        Promise.resolve(null as number | null),
       ]);
 
       return { posicao: des.posicao, meta: des.meta, ligacoes, spin };
@@ -97,7 +98,7 @@ export function KpiCards({ empresa }: { empresa: string }) {
     { label: "Posição ao Vivo", value: data?.posicao == null ? "—" : brl(data.posicao), icon: Trophy },
     { label: "Meta Pessoal", value: data?.meta == null ? "—" : brl(data.meta), icon: Target },
     { label: "Ligações Hoje", value: data?.ligacoes ?? 0, icon: Phone },
-    { label: "Score SPIN Médio", value: data?.spin ?? 0, icon: MessageSquare },
+    { label: "Score SPIN Médio", value: data?.spin == null ? "—" : data.spin, icon: MessageSquare },
   ];
 
   return (
