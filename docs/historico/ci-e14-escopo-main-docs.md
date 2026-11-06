@@ -87,5 +87,12 @@ Uma 1ª passada da simulação morreu num **HTTP 502** da API de jobs. Por isso 
 
 ## Depois (runs reais pós-merge)
 
-Medido nos dispatches reais depois do merge. A seção é preenchida no PR do E17, que só começa depois desta
-medição, para não misturar os ganhos.
+Medido nos dispatches reais depois do merge (`gh api …/runs/<id>/jobs` e o log dos jobs `provas-sql-escopo` e `validate`).
+
+| run | SHA | o que houve | decisão |
+|---|---|---|---|
+| 42224615265 | `38fb6b067` (merge do #3657) | disparado pelo `auto-merge.yml` ANTIGO, sem o input | `fora de PR roda TUDO` (esperado) |
+| 42225858927 | `42f76d5ea` (#3658, só docs) | base `38fb6b067` achada e verde; mas entre ela e o run entrou o `af0956dc4` (radar, `db/` + `src/` + migration), cujo run foi coalescido (`cancelled`) | **RODA**: 13 arquivos fora de `docs/` no diff cumulativo. O `validate` mostra `escopo_docs=true … roda=true base=<vazio>` |
+
+A 2ª linha é o desenho funcionando pelo lado seguro: um merge de docs não carimba como provado o código de outro
+merge que ainda não foi provado. As amostras de pulo seguem no PR do E17.
