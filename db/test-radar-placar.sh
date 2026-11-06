@@ -97,7 +97,11 @@ cegar_md5_ficha() {
   python3 -I - "$FICHA_USADA" <<'PY2'
 import sys
 p = sys.argv[1]; s = open(p, encoding="utf-8").read()
-for de, para in (("\n  IF v_", "\n  IF false AND v_"), ("\n  IF (SELECT md5(prosrc)", "\n  IF false AND (SELECT md5(prosrc)")):
+# Só as checagens de md5: `false AND a OR b` ainda avaliaria b, e um `IF v_` genérico pegaria o gate de auth do ledger.
+for de, para in (("IF v_led IS NULL OR ", "IF false AND "), ("IF v_ab IS NULL OR ", "IF false AND "),
+                 ("IF v_pl IS NULL OR ", "IF false AND "),
+                 ("IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_",
+                  "IF false AND (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_")):
     if de not in s:
         sys.exit("padrao ausente: " + de)
     s = s.replace(de, para)
