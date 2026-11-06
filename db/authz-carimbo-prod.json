@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-04T22:00:47.404Z",
-  "sourceHead": "d98809a14c496be5381affa0124caabc18a88afd",
+  "medidoEm": "2026-11-06T20:47:16.977Z",
+  "sourceHead": "e7972bd4304d583d6ffac2a3c3f6f9cfd975b3a8",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -29,12 +29,19 @@
     },
     "audit": {
       "script": "authz:audit:prod",
-      "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 33 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 34 definição(ões) lida(s) para 33 chave(s) do manifest.",
-      "contratoFingerprint": "41cc0637505bb8d8e9e4339ef60b86ff31711d99463f5c9b2a3573ca08b866c6",
+      "exit": 1,
+      "resumo": "authz:audit:prod — 1 divergência(s).",
+      "denominador": "🔎 authz:audit:prod — 34 definição(ões) lida(s) para 34 chave(s) do manifest.",
+      "contratoFingerprint": "fefa08d71158c2936ddf36ecc518c0507ded89850eb9cf765ccd7f90b71ce71a",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
-      "achados": []
+      "achados": [
+        {
+          "id": "57f184302b938866",
+          "linha": "❌ AUSENTE_EM_PROD: public.sayerlack_painel_portal está no AUTHZ_MANIFEST e não existe no banco.",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-06"
+        }
+      ]
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
@@ -47,50 +54,69 @@
     },
     "rls": {
       "script": "authz:rls:prod",
-      "exit": 0,
-      "resumo": "✅ audit-rls — 406 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 5 grupo(s) de lacuna conferido(s) — 87 tabela(s) distinta(s) no grafo, 8 ",
+      "exit": 1,
+      "resumo": "audit-rls — 6 divergencia(s) entre a RLS de prod e o contrato (scripts/authz-rls-esperado.ts).",
       "denominador": null,
       "contratoFingerprint": "5782353702c86a00e2ebb5b13b8db291ace51568e93782ad9f28304e7ce5b225",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
-      "achados": []
+      "achados": [
+        {
+          "id": "76565bac7ea470f0",
+          "linha": "❌ [POLICY_ALTERADA] public.farmer_client_scores » fcs_select_carteira: divergente do contrato em 1 campo(s) — USING 184cfe6a578c8f43caae82a675508c5f (contrato: 4ce46ee9bbc5966f54317f7e446a452e).",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-06"
+        },
+        {
+          "id": "3a4f6f1885c01f17",
+          "linha": "❌ [POLICY_ALTERADA] public.farmer_calls » fcall_select_carteira: divergente do contrato em 1 campo(s) — USING 757ca14d46c9690529917c1363fd418a (contrato: 3e6d44046f30e603a5068b5028e53e60).",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-06"
+        },
+        {
+          "id": "6908dfcb6e6c560f",
+          "linha": "❌ [PREDICADO_NAO_DECLARADO] private.carteira_clientes_visiveis: função referenciada DIRETAMENTE por uma policy curada e NÃO declarada em AUTHZ_RLS_PREDICADOS (secdef=true, cfg=search_path=public, md5=8adee7e0f97d8745d5ea56344df4bb3c). É onde a autorização real pode morar sem que o md5 da policy mude — declare a entrada com o md5 medido, ou explique por que ela não precisa ser congelada.",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-06"
+        },
+        {
+          "id": "e89e27fc755addf3",
+          "linha": "❌ [PREDICADO_NAO_DECLARADO] private.carteira_ve_tudo: função referenciada DIRETAMENTE por uma policy curada e NÃO declarada em AUTHZ_RLS_PREDICADOS (secdef=true, cfg=search_path=public, md5=a514d1340b4292afb877748fb270b082). É onde a autorização real pode morar sem que o md5 da policy mude — declare a entrada com o md5 medido, ou explique por que ela não precisa ser congelada.",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-06"
+        },
+        {
+          "id": "2fe6b6ed50d8a922",
+          "linha": "❌ [PREDICADO_SUMIU] private.carteira_visivel_para: declarada em AUTHZ_RLS_PREDICADOS e o fecho das policies curadas não a alcança mais. Ou a policy que a usava mudou de predicado (veja os achados de POLICY_*), ou a função que a CHAMAVA parou de chamá-la (veja PREDICADO_ALTERADO no chamador — sair do grafo é mudança de autorização tanto quanto entrar), ou a entrada envelheceu. Entrada que não vigia nada é cobertura só no papel.",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-06"
+        },
+        {
+          "id": "ca5146a5523c4724",
+          "linha": "❌ [LACUNA_GRUPO_MUDOU] private.carteira_visivel_para: o grupo ENCOLHEU — 0 tabela(s) em prod contra 8 declarada(s) (medido em 2026-08-28). 0 curada(s), 0 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: .",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-06"
+        }
+      ]
     },
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 1,
-      "resumo": "deriva-corpo — 5 divergência(s) em prod (2 AUSENTE, 1 SEM_PAR, 2 OVERLOAD_FORA_DO_REPO) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 481 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@cc4f83977 (fetch ok) · prod 2026-11-04 22:01:52.170677Z",
+      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 CORPO_ANTERIOR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 482 identidade(s) conferida(s) · 24 aposentada(s) · ref origin/main@95815dd61 (fetch ok) · prod 2026-11-06 20:47:44.653597Z",
       "contratoFingerprint": "0292bcdcedcfd4f9492106b01765fdba42819fa21a8088a032d7d5a933ef8ffa",
       "auditorFingerprint": "c34625081a1ed5cf90d66fa67effbdfa872fb15924c15ae6911e4e23c400764e",
       "achados": [
         {
-          "id": "e3cdcbfdb473dac4",
-          "linha": "❌ [AUSENTE] radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone,text[],boolean): viva no repo (último CREATE: 20261103223300_radar_agregado_cnae.sql) e ausente em prod — migration não aplicada ou DROP manual",
-          "primeiraVez": "2026-11-04",
-          "ultimaVez": "2026-11-04"
+          "id": "8528bcf166d8a21a",
+          "linha": "❌ [CORPO_ANTERIOR] analytics_ledger_registrar(text,text,jsonb): prod roda o corpo de 20261103120100_analytics_ledger_raio_x_decisao.sql; o repo commitou 20261106132259_radar_abriu_ficha_com_cnpj.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 13701207)",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-06"
         },
         {
-          "id": "51e349ce972943c3",
-          "linha": "❌ [SEM_PAR] radar_agregado_recalcular(boolean,timestamp with time zone): corpo que nenhuma das 2 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261103223300_radar_agregado_cnae.sql (xmin 13834273)",
-          "primeiraVez": "2026-11-04",
-          "ultimaVez": "2026-11-04"
-        },
-        {
-          "id": "e5b6f9747d57e880",
-          "linha": "❌ [AUSENTE] radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamp with time zone,text,numeric,boolean,boolean,date,date,text,integer,integer): viva no repo (último CREATE: 20261103131500_radar_lista_rpc.sql) e ausente em prod — migration não aplicada ou DROP manual",
-          "primeiraVez": "2026-11-04",
-          "ultimaVez": "2026-11-04"
-        },
-        {
-          "id": "25eff6da34e343ac",
-          "linha": "❌ [OVERLOAD_FORA_DO_REPO] radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone,text[],boolean,text): overload vivo em prod que nenhuma migration declara (xmin 13834273)",
-          "primeiraVez": "2026-11-04",
-          "ultimaVez": "2026-11-04"
-        },
-        {
-          "id": "96d6bd09011dd2e4",
-          "linha": "❌ [OVERLOAD_FORA_DO_REPO] radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamp with time zone,text,numeric,boolean,boolean,date,date,text,integer,integer,text): overload vivo em prod que nenhuma migration declara (xmin 13834273)",
-          "primeiraVez": "2026-11-04",
-          "ultimaVez": "2026-11-04"
+          "id": "ed5b73ff84aa8b7d",
+          "linha": "❌ [CORPO_ANTERIOR] radar_placar_uso(): prod roda o corpo de 20261029150100_radar_eventos_placar.sql; o repo commitou 20261106132259_radar_abriu_ficha_com_cnpj.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 13152573)",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-06"
         }
       ]
     }

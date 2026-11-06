@@ -116,9 +116,9 @@ export function respostaIndeterminada(protocolo: string, detalhe: string | null)
 
 // ---- Painel "Pedidos do portal Sayerlack" (RPC sayerlack_painel_portal) ----
 
-export interface PendenciaPortal { protocolo: string; mensagem: string; tentativas: number; ultimaEm: string | null }
-export interface SemPoPortal { pedidoId: number; protocolo: string; status: string | null; importadoEm: string | null }
-export interface ImportadoPortal {
+interface PendenciaPortal { protocolo: string; mensagem: string; tentativas: number; ultimaEm: string | null }
+interface SemPoPortal { pedidoId: number; protocolo: string; status: string | null; importadoEm: string | null }
+interface ImportadoPortal {
   pedidoId: number; protocolo: string; omieNumero: string | null; valorTotal: number | null;
   importadoEm: string | null; origem: 'cron' | 'botao';
 }
