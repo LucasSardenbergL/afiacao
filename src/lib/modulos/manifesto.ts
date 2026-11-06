@@ -646,6 +646,9 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/pages/__tests__/AdminReposicaoOportunidades.negociacao-leitura.test.tsx",
+      "src/pages/__tests__/AdminReposicaoOportunidades.oportunidades-leitura.test.tsx",
+      "src/pages/__tests__/AdminReposicaoCadastros.leitura-falhou.test.tsx",
+      "src/pages/__tests__/AdminReposicaoMercado.leitura-falhou.test.tsx",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.test.tsx",
       "src/pages/__tests__/AdminReposicaoPedidos.alertas-erro-honesto.test.tsx",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.estados.test.tsx",
@@ -721,6 +724,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/hooks/__tests__/useAuditTrail.test.tsx",
+      "src/hooks/__tests__/useMelhorias.badge-leitura.test.tsx",
       "src/components/des/__tests__/faixa-json.test.ts",
       "src/components/des/simulador/__tests__/sim-result.test.ts",
       "src/components/des/__tests__/posicao-ao-vivo.test.ts",
@@ -999,6 +1003,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/contexts/__tests__/AuthContext.cargo-semeia-cache.test.tsx",
+      "src/components/shell/__tests__/badge-de-contagem.test.tsx",
       "src/__tests__/anthropic-cliente-gate.test.ts",
       "src/__tests__/omie-cliente-gate.test.ts",
       "src/__tests__/edge-import-entre-funcoes-gate.test.ts",

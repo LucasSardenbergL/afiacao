@@ -12,8 +12,9 @@ export function GerarCicloDialog({
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  oportunidadesCount: number;
-  totalEconomia: number;
+  /** `null` = a lista de oportunidades não pôde ser lida (não é "0 SKUs"). */
+  oportunidadesCount: number | null;
+  totalEconomia: number | null;
   executando: boolean;
   onConfirm: () => void;
 }) {
@@ -23,13 +24,28 @@ export function GerarCicloDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Gerar ciclo de oportunidade do dia</AlertDialogTitle>
           <AlertDialogDescription>
-            Vai gerar pedidos de oportunidade para{" "}
-            <strong>{oportunidadesCount} SKUs</strong>, com economia total
-            estimada de{" "}
-            <strong className="text-status-success">
-              {formatBRL(totalEconomia)}
-            </strong>
-            . Continuar?
+            {oportunidadesCount == null || totalEconomia == null ? (
+              // Sem leitura da lista, a tela NÃO sabe quantos SKUs nem quanto — e não diz "0".
+              // O ciclo é calculado no servidor, então gerar continua possível.
+              <>
+                Vai gerar os pedidos de oportunidade do dia.{" "}
+                <span className="text-status-warning">
+                  A lista de oportunidades não pôde ser carregada agora, então a quantidade de SKUs e
+                  a economia estimada não estão disponíveis
+                </span>
+                . Continuar?
+              </>
+            ) : (
+              <>
+                Vai gerar pedidos de oportunidade para{" "}
+                <strong>{oportunidadesCount} SKUs</strong>, com economia total
+                estimada de{" "}
+                <strong className="text-status-success">
+                  {formatBRL(totalEconomia)}
+                </strong>
+                . Continuar?
+              </>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
