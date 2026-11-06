@@ -1,73 +1,78 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Building2, ClipboardPlus, Loader2 } from 'lucide-react';
+import { Building2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { podeGerirRadar } from '@/lib/nav/acesso-radar';
-import { DivergenciaCadastro } from '@/lib/radar/cadastro-omie';
-import { useRadarCadastrarOmie, useRadarAtribuirTarefa } from '@/queries/useRadarAcoesLead';
+import { cadastravelNoOmie, type MotivoNaoCadastravel } from '@/lib/radar/sugeridos';
+import { lerLeadParaCadastro } from '@/queries/useRadarAcoesLead';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
+import { useCadastroOmieComRecuperacao } from './useCadastroOmieComRecuperacao';
 
+const MOTIVO_NAO_CADASTRAVEL: Record<MotivoNaoCadastravel, string> = {
+  ja_cliente: 'Já é cliente do grupo — não precisa de cadastro novo.',
+  ja_vinculado_omie: 'Já vinculado a um cliente no Omie.',
+  rfb_nao_ativa: 'Situação na Receita não está ativa — o Omie não deve receber este cadastro.',
+  cnpj_invalido: 'CNPJ fora do formato que o Omie aceita.',
+};
+
+/**
+ * Cadastro no Omie (Oben) pela ficha. Pacote A4: o botão abria a confirmação mesmo com o lead já no Omie e não
+ * conferia `cadastravelNoOmie` (um lead BAIXADO na RFB ia direto à edge). Agora:
+ *  · já no Omie → só informa o código (nada a clicar);
+ *  · não cadastrável → desabilitado, com o motivo ESCRITO (o `title` não aparece no toque);
+ *  · confirmar → relê o lead (o snapshot da lista identifica o alvo, não prova elegibilidade) e cadastra pelo
+ *    MESMO tratamento de resultado e recuperação do menu de contato (`useCadastroOmieComRecuperacao`).
+ * O "Criar tarefa pra mim" saiu (A7): o módulo de tarefas está congelado até 10/01/2027.
+ */
 export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
   const { isImpersonating } = useImpersonation();
-  const { role, commercialRole } = useAuth();
-  // radar_atribuir_tarefa segue gestor/master (migration 20261029201200): para o vendedor o botão só daria erro.
-  const gestor = podeGerirRadar({ role, commercialRole });
-  const cadastrar = useRadarCadastrarOmie();
-  const tarefa = useRadarAtribuirTarefa();
+  const cadastro = useCadastroOmieComRecuperacao(empresa.cnpj);
   const [confirmOmie, setConfirmOmie] = useState(false);
-  const [dias, setDias] = useState('7');
 
-  const doCadastrar = async () => {
+  if (empresa.omie_codigo_cliente) {
+    return (
+      <p className="inline-flex items-center gap-1 text-xs text-muted-foreground" data-testid="radar-ficha-no-omie">
+        <Building2 className="w-3.5 h-3.5" /> No Omie (Oben) · cód. <span className="font-tabular">{empresa.omie_codigo_cliente}</span>
+      </p>
+    );
+  }
+
+  const veredito = cadastravelNoOmie(empresa);
+  const ocupado = cadastro.cadastrando;
+
+  // A releitura roda DENTRO da trava do cadastro (por CNPJ): confirmar de novo ou o retry de um toast antigo
+  // durante ela não abre uma 2ª tentativa concorrente (Codex, código 2026-11-06, P2).
+  const doCadastrar = () => {
     setConfirmOmie(false);
-    try {
-      const r = await cadastrar.mutateAsync({ empresa });
-      toast.success(r.jaExistia ? `Já era cliente no Omie (Oben) — reconciliado · cód. ${r.codigo}` : `Cadastrado no Omie (Oben) · cód. ${r.codigo}`);
-    } catch (e) {
-      // Conflito de vínculo (RD001/RD002/lookup divergente) é terminal: dizer o que é, nunca "tente de novo".
-      toast.error(e instanceof DivergenciaCadastro ? 'Conflito de vínculo com o Omie — nada foi gravado' : 'Não foi possível cadastrar', {
-        description: e instanceof Error ? e.message : undefined,
-      });
-    }
+    void cadastro.executar(empresa, {
+      verificar: async () => {
+        const atual = await lerLeadParaCadastro(empresa.cnpj);
+        const agora = atual ? cadastravelNoOmie(atual) : null;
+        if (agora?.ok) return true;
+        toast.info('Não cadastrei: o lead mudou', {
+          description: agora ? MOTIVO_NAO_CADASTRAVEL[agora.motivo] : 'Não encontrei mais esta empresa no Radar.',
+        });
+        return false;
+      },
+    });
   };
 
-  const doTarefa = async () => {
-    try {
-      const n = Math.max(1, Math.min(Number(dias) || 7, 90));
-      const r = await tarefa.mutateAsync({ cnpj: empresa.cnpj, diasRetomada: n });
-      if (!r.deduped) toast.success('Tarefa criada pra você', { description: `Retomar em ${n} dia(s)` });
-      else toast.info('Tarefa já existia (criada agora há pouco)');
-    } catch (e) {
-      toast.error('Não foi possível criar a tarefa', { description: e instanceof Error ? e.message : undefined });
-    }
-  };
-
-  const disabled = isImpersonating;
-  const jaNoOmie = !!empresa.omie_codigo_cliente;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button size="sm" variant={jaNoOmie ? 'outline' : 'default'} disabled={disabled || cadastrar.isPending} onClick={() => setConfirmOmie(true)}
-        title={disabled ? 'Indisponível em modo Ver como' : undefined}>
-        {cadastrar.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Building2 className="w-4 h-4 mr-1" />}
-        {jaNoOmie ? `No Omie · cód. ${empresa.omie_codigo_cliente}` : 'Cadastrar no Omie (Oben)'}
+      <Button size="sm" disabled={isImpersonating || ocupado || !veredito.ok} onClick={() => setConfirmOmie(true)}
+        title={isImpersonating ? 'Indisponível em modo Ver como' : undefined}>
+        {ocupado ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Building2 className="w-4 h-4 mr-1" />}
+        Cadastrar no Omie (Oben)
       </Button>
-      {gestor && <div className="flex items-center gap-1">
-        <Button size="sm" variant="outline" disabled={disabled || tarefa.isPending} onClick={doTarefa}
-          title={disabled ? 'Indisponível em modo Ver como' : undefined}>
-          {tarefa.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ClipboardPlus className="w-4 h-4 mr-1" />}
-          Criar tarefa pra mim
-        </Button>
-        <Label htmlFor="radar-dias" className="text-xs text-muted-foreground">retomar em</Label>
-        <Input id="radar-dias" value={dias} onChange={(e) => setDias(e.target.value)} className="w-14 h-8" inputMode="numeric" />
-        <span className="text-xs text-muted-foreground">dias</span>
-      </div>}
+      {!veredito.ok && (
+        <span className="text-xs text-muted-foreground" data-testid="radar-ficha-nao-cadastravel">
+          {MOTIVO_NAO_CADASTRAVEL[veredito.motivo]}
+        </span>
+      )}
 
       <AlertDialog open={confirmOmie} onOpenChange={setConfirmOmie}>
         <AlertDialogContent>

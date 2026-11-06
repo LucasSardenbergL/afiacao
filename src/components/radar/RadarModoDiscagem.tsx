@@ -8,15 +8,15 @@ import type { RadarEmpresa } from '@/queries/useRadarLista';
 
 /**
  * Modo discagem: o telefone grande, Ligar, os desfechos e "Próximo" num painel só — o vendedor percorre a fila
- * sem caçar botão. O Ligar chega PRONTO da ficha (`ligar`, o `BotaoLigar` da telefonia: a ficha já tem essa aresta
- * entre módulos) e se recusa na lente "Ver como" na própria fonte (a ligação não passa pelo Supabase, então o
- * write-guard não a vê); os desfechos são o `RadarOutcomeMenu`, que fica desligado na lente.
+ * sem caçar botão. A ação do telefone chega PRONTA da ficha (`ligar`, o `RadarTelefoneAcao`: `tel:` no celular,
+ * copiar no desktop enquanto a telefonia está congelada) e se recusa na lente "Ver como" na própria fonte (a
+ * ligação não passa pelo Supabase, então o write-guard não a vê); os desfechos são o `RadarOutcomeMenu`.
  */
 export function RadarModoDiscagem({
   empresa, ligar, compartilhado, compartilhadoFalhou = false, onProximo,
 }: {
   empresa: RadarEmpresa;
-  /** O botão Ligar do telefone principal (null sem telefone). */
+  /** A ação do telefone principal — ligar (celular) ou copiar (desktop); null sem telefone. */
   ligar: ReactNode;
   /** Telefone → em quantas OUTRAS raízes ele aparece (undefined = ainda não lido ou falhou). */
   compartilhado: Map<string, number> | undefined;

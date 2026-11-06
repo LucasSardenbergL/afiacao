@@ -168,7 +168,7 @@ export default function RadarMapa({
               track('radar.mapa_concorrentes', { ativo });
             }}
           />
-          <Label htmlFor="radar-mapa-concorrentes" className="text-xs">Concorrentes (revendas de tinta)</Label>
+          <Label htmlFor="radar-mapa-concorrentes" className="text-xs">Revendas de tinta registradas (CNAE)</Label>
         </div>
       </div>
       <div ref={mapRef} className="w-full h-[420px]" style={{ zIndex: 1 }} />
@@ -190,7 +190,7 @@ export default function RadarMapa({
       {(camada === 'penetracao' || mostrarConcorrentes) && !pen.isLoading && (
         <div className="p-2 text-xs text-muted-foreground space-y-1">
           {pen.isError && <p className="text-status-error">{avisoContagem(pen.error, 'Penetração')}</p>}
-          {pen.data === null && <p>Sem lote completo da RFB: penetração e concorrentes indisponíveis até a carga terminar.</p>}
+          {pen.data === null && <p>Sem lote completo da RFB: penetração e revendas de tinta indisponíveis até a carga terminar.</p>}
           {camada === 'penetracao' && pen.data && (
             <p>
               Penetração = clientes ÷ empresas do lote vigente {rotuloRecorteGeo(filtros)} (o mercado, qualquer situação)
@@ -202,15 +202,15 @@ export default function RadarMapa({
             </p>
           )}
           {camada === 'penetracao' && pen.data && (
-            // Medido em prod (2026-10-29): a fonte do ja_cliente só traz o Omie da Oben (MG); 2.676 dos 2.686
-            // clientes do lote estão em MG. Fora dali, 0% pode ser cadastro ausente — o rótulo não pode prometer mais.
+            // Remedido em 2026-10-31 (docs/historico/radar-mapa-penetracao-e-concorrentes.md): a fonte do ja_cliente
+            // cobre as 3 contas Omie (Oben, Colacor, Colacor SC). A carteira segue concentrada em MG; o 0% de SC é real.
             <p>
-              Clientes = CNPJs dos perfis do app e do Omie da Oben. Fora de MG quase não há cliente nessa fonte:
-              0% ali pode ser cadastro ausente, não mercado virgem.
+              Clientes = CNPJs dos perfis do app e dos cadastros Omie das 3 contas (Oben, Colacor e Colacor SC).
+              A carteira está concentrada em MG: 0% fora dali é mercado sem cliente do grupo nesta fonte.
             </p>
           )}
           {mostrarConcorrentes && concorrentesSemCarga && (
-            <p>Concorrentes: a camada ainda não foi carregada para o lote vigente (sem dado, não zero).</p>
+            <p>Revendas de tinta (CNAE): a camada ainda não foi carregada para o lote vigente (sem dado, não zero).</p>
           )}
         </div>
       )}
