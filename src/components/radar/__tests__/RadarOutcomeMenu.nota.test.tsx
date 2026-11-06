@@ -34,7 +34,6 @@ const lead = {
   rfb_situacao: '02',
   score: 40,
 } as unknown as RadarEmpresa;
-const cliente = { ...lead, ja_cliente: true, omie_codigo_cliente: '555', prospeccao_status: 'em_conversa' } as unknown as RadarEmpresa;
 
 class RO { observe() {} unobserve() {} disconnect() {} }
 
@@ -46,8 +45,6 @@ async function abrirMenuEClicar(rotulo: RegExp) {
   await abrirMenu();
   fireEvent.click(await screen.findByText(rotulo));
 }
-/** A ação "Desfazer" do último toast de sucesso (ou undefined, se ele não tem). */
-const acaoDoToast = () => (toast.success.mock.calls.at(-1)?.[1] as { action?: { onClick: () => void } } | undefined)?.action;
 
 beforeEach(() => {
   vi.clearAllMocks();
