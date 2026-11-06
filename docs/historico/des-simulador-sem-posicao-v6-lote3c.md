@@ -24,6 +24,7 @@ Impacto em prod hoje (psql-ro, 2026-11-05): as metas da OBEN são 400.840,02 em 
   - Sem meta do trimestre seguinte nem do corrente, levanta `P0001 'DES sem meta para projetar'`.
   - Em T4, a projeção lê T1 do ano seguinte.
   - Faturado 0 é fato: a posição é o trânsito e a simulação segue.
+  - O ano/trimestre padrão (só sem `p_ano`/`p_trimestre`) usa o dia de São Paulo, não `CURRENT_DATE` em UTC. Foi o gate `relogio-nu-da-sessao` que acusou: o corpo da prod entrou no repo por esta migration.
   - Assinatura, defaults, retorno, ACL, dono, search_path, INVOKER e STABLE ficam iguais. A PÓS confere tudo isso.
   - O `SimulationPanel` já mostra o erro da RPC num toast.
 - **Hub:**
