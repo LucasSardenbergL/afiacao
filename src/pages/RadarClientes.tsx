@@ -282,8 +282,10 @@ export default function RadarClientes() {
   // `null` = o usuário ainda não mexeu: segue o papel (que pode chegar depois do 1º render).
   const [maisEscolhido, setMaisAberto] = useState<boolean | null>(null);
   const maisAberto = maisEscolhido ?? gestor;
+  // Só o que RECORTA a fila conta como filtro (a ordem não recorta; a região aparece no resumo da fila).
   const filtrosAtivos = (Object.keys(PADRAO_FILTROS) as (keyof typeof PADRAO_FILTROS)[])
-    .filter((k) => filtrosAtuais[k] !== PADRAO_FILTROS[k]).length;
+    .filter((k) => k !== 'preset' && k !== 'regiao' && filtrosAtuais[k] !== PADRAO_FILTROS[k]).length;
+  const rotuloRegiao = filtros.uf ? filtros.uf : filtros.regiao === 'brasil' ? 'Brasil' : 'MG e vizinhos';
   const limparFiltros = () => { track('radar.filtros_limpos', {}); set({ ...PADRAO_FILTROS }); };
   const semPaginas = !q.data?.pages.length;
 
@@ -327,7 +329,7 @@ export default function RadarClientes() {
             <h2 className="text-lg font-display leading-tight">Sua fila de hoje</h2>
             <p className="text-xs text-muted-foreground">
               {q.isLoading ? 'Carregando a fila…'
-                : `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} · ordem: ${ROTULO_PRESET[filtros.preset]}`}
+                : `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} · ${rotuloRegiao} · ordem: ${ROTULO_PRESET[filtros.preset]}`}
             </p>
           </div>
           <Button size="touch" className="ml-auto" disabled={empresas.length === 0}

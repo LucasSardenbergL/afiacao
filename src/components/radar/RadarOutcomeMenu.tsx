@@ -60,13 +60,17 @@ export function RadarOutcomeMenu({
   empresa,
   nota,
   onRegistrado,
+  onDesfeito,
 }: {
   cnpj: string;
   /** Dados do lead — "Virou cliente" só aparece habilitado com o vínculo Omie. */
   empresa?: RadarEmpresa;
   /** Nota opcional do contato (B4). */
   nota?: string;
-  onRegistrado?: (acao: AcaoContato) => void;
+  /** `deduped`: o servidor reconheceu o mesmo registro de <2 min e NÃO gravou nada (nem a nota). */
+  onRegistrado?: (acao: AcaoContato, info: { deduped: boolean }) => void;
+  /** O contato foi desfeito (o status voltou): quem guardou estado otimista sobre ele o descarta. */
+  onDesfeito?: () => void;
 }) {
   const reg = useRegistrarContatoRadar();
   const undo = useDesfazerContatoRadar();
@@ -84,9 +88,10 @@ export function RadarOutcomeMenu({
 
   // O servidor só restaura o status quando o contato desfeito ainda é o DONO dele (20261031111000). Removido sem
   // restaurar não é "desfeito": o lead mudou depois (outro vendedor, o cadastro, a RFB) e o status atual ficou.
-  const desfazer = async (id: string) => {
+  const desfazer = async (id: string, alvo: string) => {
     try {
       const u = await undo.mutateAsync(id);
+      if (u.deleted && aindaNoAlvo(alvo)) onDesfeito?.();
       if (!u.deleted) toast.error('Não foi possível desfazer');
       else if (u.statusRestaurado === false) {
         toast.info('Registro removido; status preservado', {
@@ -106,9 +111,15 @@ export function RadarOutcomeMenu({
       if (!r.deduped) {
         // A conversão confirmada não se desfaz (RD006): o cliente continua no Omie.
         if (acao === 'virou_cliente') toast.success(LABEL_OK[acao]);
-        else toast.success(LABEL_OK[acao], { action: { label: 'Desfazer', onClick: () => void desfazer(r.id) } });
+        else toast.success(LABEL_OK[acao], { action: { label: 'Desfazer', onClick: () => void desfazer(r.id, alvo) } });
+      } else if (notaFinal) {
+        // A dedupe (2 min, por lead/autor/ação) devolve o registro anterior SEM gravar nada — a nota também não.
+        // Dizer isso e não deixar a ficha apagar o texto (Codex, código 2026-11-06, P2).
+        toast.warning('A nota não foi gravada', {
+          description: 'Este desfecho já tinha sido registrado agora há pouco. A nota continua no campo.',
+        });
       }
-      if (aindaNoAlvo(alvo)) onRegistrado?.(acao);
+      if (aindaNoAlvo(alvo)) onRegistrado?.(acao, { deduped: r.deduped });
     } catch (e) {
       // Recusas de REGRA (pela SQLSTATE, nunca pela mensagem): nada foi gravado e repetir não muda a resposta.
       const estado = sqlstateDe(e);

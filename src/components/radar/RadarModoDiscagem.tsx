@@ -13,13 +13,14 @@ import type { RadarEmpresa } from '@/queries/useRadarLista';
  * ligação não passa pelo Supabase, então o write-guard não a vê); os desfechos são o `RadarOutcomeMenu`.
  */
 export function RadarModoDiscagem({
-  empresa, ligar, compartilhado, compartilhadoFalhou = false, onProximo, nota, campoNota, onRegistrado,
+  empresa, ligar, compartilhado, compartilhadoFalhou = false, onProximo, nota, campoNota, onRegistrado, onDesfeito,
 }: {
   /** Nota do próximo registro (B4) e o campo que a edita — o estado é da ficha. */
   nota?: string;
   campoNota?: ReactNode;
   /** Quem decide avançar depois do registro é a ficha (B6). Sem ele, avança como antes. */
-  onRegistrado?: (acao: AcaoContato) => void;
+  onRegistrado?: (acao: AcaoContato, info: { deduped: boolean }) => void;
+  onDesfeito?: () => void;
   empresa: RadarEmpresa;
   /** A ação do telefone principal — ligar (celular) ou copiar (desktop); null sem telefone. */
   ligar: ReactNode;
@@ -52,7 +53,8 @@ export function RadarModoDiscagem({
       {campoNota}
       <div className="flex flex-wrap items-center gap-2">
         {tel && ligar}
-        <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} onRegistrado={onRegistrado ?? (() => onProximo?.())} />
+        <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} onDesfeito={onDesfeito}
+          onRegistrado={onRegistrado ?? (() => onProximo?.())} />
         {onProximo && (
           <Button variant="ghost" size="touch" onClick={onProximo} className="ml-auto" title="Pular para o próximo lead da lista">
             Próximo <ChevronRight className="w-4 h-4 ml-1" />

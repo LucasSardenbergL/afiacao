@@ -69,11 +69,15 @@ export function RadarAcoesLead({ empresa, conversaSalva = false }: {
     void cadastro.executar(empresa, {
       rastrear: (resultado, retomada) => track('radar.cadastro_ficha_resultado', { resultado, retomada }),
       verificar: async () => {
+        // O status é relido junto: o cadastro é de quem está EM CONVERSA agora — um "em conversa" desfeito depois
+        // de salvo não pode deixar o botão valendo (Codex, código 2026-11-06, P2; a oferta antiga exigia o mesmo).
         const atual = await lerLeadParaCadastro(empresa.cnpj);
         const agora = atual ? cadastravelNoOmie(atual) : null;
-        if (agora?.ok) return true;
+        if (agora?.ok && atual?.prospeccao_status === 'em_conversa') return true;
         toast.info('Não cadastrei: o lead mudou', {
-          description: agora ? MOTIVO_NAO_CADASTRAVEL[agora.motivo] : 'Não encontrei mais esta empresa no Radar.',
+          description: !atual ? 'Não encontrei mais esta empresa no Radar.'
+            : agora && !agora.ok ? MOTIVO_NAO_CADASTRAVEL[agora.motivo]
+            : `O lead não está mais em conversa (status atual: ${atual.prospeccao_status ?? '—'}).`,
         });
         return false;
       },

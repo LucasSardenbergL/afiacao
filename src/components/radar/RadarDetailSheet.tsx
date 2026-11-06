@@ -141,11 +141,14 @@ export function RadarDetailSheet({
   const outras = (tel: string) => compartilhado.data?.get(tel);
   // Depois do registro: "em conversa" num lead cadastrável FICA na ficha — o cadastro no Omie é a próxima ação
   // dela (B6, sem janela automática); os outros desfechos seguem para o próximo lead.
-  const aposRegistro = (acao: AcaoContato) => {
-    setNota('');
+  const aposRegistro = (acao: AcaoContato, { deduped }: { deduped: boolean }) => {
+    if (!deduped) setNota(''); // dedupe não gravou a nota: ela fica no campo (o menu avisa)
     if (acao === 'em_conversa' && cadastravelNoOmie(empresa).ok) { setConversaSalva(empresa.cnpj); return; }
+    setConversaSalva(null);
     onProximo?.();
   };
+  // Desfazer o contato apaga o sinal otimista: o botão de cadastro volta a depender do status relido.
+  const aposDesfazer = () => setConversaSalva(null);
   const campoNota = (
     <Textarea
       value={nota}
@@ -193,7 +196,7 @@ export function RadarDetailSheet({
         {discagem ? (
           <div className="mt-3">
             <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data} nota={nota} campoNota={campoNota}
-              onRegistrado={aposRegistro}
+              onRegistrado={aposRegistro} onDesfeito={aposDesfazer}
               ligar={telPrincipal ? <RadarTelefoneAcao telefone={telPrincipal} variant="full" /> : null}
               compartilhadoFalhou={compartilhado.isError} onProximo={onProximo} />
           </div>
@@ -206,7 +209,7 @@ export function RadarDetailSheet({
                 Próximo <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             ) : <span />}
-            <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} onRegistrado={aposRegistro} />
+            <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} onRegistrado={aposRegistro} onDesfeito={aposDesfazer} />
           </div>
           </div>
         )}

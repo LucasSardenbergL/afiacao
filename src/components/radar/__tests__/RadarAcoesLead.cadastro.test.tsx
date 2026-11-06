@@ -110,4 +110,14 @@ describe('RadarAcoesLead — cadastro no Omie pela ficha', () => {
     render(<RadarAcoesLead empresa={lead({ prospeccao_status: 'a_contatar' })} conversaSalva />);
     expect((screen.getByRole('button', { name: /Cadastrar no Omie/ }) as HTMLButtonElement).disabled).toBe(false);
   });
+
+  it('conversa salva e depois desfeita: a releitura exige "em conversa" e não cadastra (Codex P2)', async () => {
+    lerLead.mockResolvedValueOnce(lead({ prospeccao_status: 'a_contatar' }));
+    render(<RadarAcoesLead empresa={lead({ prospeccao_status: 'a_contatar' })} conversaSalva />);
+    await confirmar();
+    await waitFor(() => expect(toastMock.info).toHaveBeenCalledWith('Não cadastrei: o lead mudou', expect.objectContaining({
+      description: expect.stringMatching(/não está mais em conversa/),
+    })));
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
 });

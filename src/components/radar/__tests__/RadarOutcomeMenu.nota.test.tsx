@@ -57,7 +57,7 @@ describe('RadarOutcomeMenu — nota e sem oferta automática', () => {
     const onRegistrado = vi.fn();
     render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} nota="  Falei com o João; quer amostra de verniz  " onRegistrado={onRegistrado} />);
     await abrirMenuEClicar(/em conversa/i);
-    await waitFor(() => expect(onRegistrado).toHaveBeenCalledWith('em_conversa'));
+    await waitFor(() => expect(onRegistrado).toHaveBeenCalledWith('em_conversa', { deduped: false }));
     expect(registrar).toHaveBeenCalledWith({ cnpj: lead.cnpj, acao: 'em_conversa', nota: 'Falei com o João; quer amostra de verniz' });
     expect(screen.queryByText(/Cadastrar no Omie \(Oben\) agora/)).toBeNull();
   });
@@ -75,5 +75,14 @@ describe('RadarOutcomeMenu — nota e sem oferta automática', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Descartar' }));
     await waitFor(() => expect(registrar).toHaveBeenCalled());
     expect(registrar.mock.calls[0][0]).toMatchObject({ acao: 'descartado', nota: 'fechou a loja' });
+  });
+
+  it('registro deduplicado (<2 min) com nota: avisa que a nota NÃO foi gravada e diz à ficha que foi dedupe (Codex P2)', async () => {
+    registrar.mockResolvedValueOnce({ id: 'c0', deduped: true });
+    const onRegistrado = vi.fn();
+    render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} nota="quer orçamento" onRegistrado={onRegistrado} />);
+    await abrirMenuEClicar(/em conversa/i);
+    await waitFor(() => expect(onRegistrado).toHaveBeenCalledWith('em_conversa', { deduped: true }));
+    expect(toast.warning).toHaveBeenCalledWith('A nota não foi gravada', expect.anything());
   });
 });
