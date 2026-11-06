@@ -181,6 +181,7 @@ sabotar() { # $1 = rótulo, $2 = programa perl aplicado ao arquivo
   if [ "$FALHAS" -eq 0 ]; then echo "FALSIFICACAO_FALHOU: '$1' passou verde"; exit 1; fi
   echo "  ✓ vermelha ($FALHAS caso(s))"
 }
+# shellcheck disable=SC2016  # o $pre$ é texto literal para o perl, não expansão do shell
 sabotar "sem o bloco \$pre\$" 's/DO \$pre\$.*?\$pre\$;//s'
 sabotar "colacor agendada como oben" "s/('company', )'colacor'(, 'cenarios')/\$1'oben'\$2/"
 # Sem /g: troca só a 1ª ocorrência (o corpo do job da oben; a postcondição usa aspas dobradas).
