@@ -117,7 +117,7 @@ describe('RadarKpis — erro NÃO pode virar "lote vazio"', () => {
     const r = renderKpis();
     expect(await screen.findByText('indisponível')).toBeTruthy();
     expect(screen.queryByText(AVISO), 'null legítimo da RPC virou "não consegui ler"').toBeNull();
-    expect(r.container.textContent).toContain('Viraram cliente (mês)');
+    expect(r.container.textContent).toContain('Cadastros novos no Omie (mês)');
     expect(r.container.textContent).not.toMatch(/A contatar\s*0/);
   });
 
@@ -413,7 +413,7 @@ describe('placar de 3 cards; inéditos e sugeridos viram chips FORA do gate', ()
     const lote = await screen.findByTestId('radar-kpi-lote');
     await waitFor(() => expect(lote.textContent).toMatch(/2026-08/));
     expect(lote.textContent).toMatch(/empresas na foto/);
-    expect(screen.getByText('Viraram cliente (mês)')).toBeTruthy();
+    expect(screen.getByText('Cadastros novos no Omie (mês)')).toBeTruthy();
     expect(screen.queryByText('Em conversa')).toBeNull();
   });
 

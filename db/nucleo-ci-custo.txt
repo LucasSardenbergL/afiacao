@@ -107,6 +107,7 @@ db/test-radar-cadastro-conflitos.sh 69
 db/test-radar-cadastro-omie-confirmacao.sh 19
 db/test-radar-cadastro-omie-idempotente.sh 146
 db/test-radar-cnae-secundario.sh 36
+db/test-radar-mapa-regiao-cidade.sh 40
 db/test-radar-cnpj-alfanumerico.sh 8
 db/test-radar-contagem-lote.sh 16
 db/test-radar-contagem-regiao.sh 16
@@ -134,6 +135,7 @@ db/test-reposicao-logs-insert-cap-compras.sh 1
 db/test-reposicao-po-observado.sh 93
 db/test-resolver-cliente-por-telefone.sh 7
 db/test-retencao-scores-60d.sh 2
+db/test-drop-indices-scores.sh 2
 db/test-retencao-scores-farmer.sh 1
 db/test-rls-carteira-visibilidade-conjunto.sh 12
 db/test-rls-has-role-initplan-classe.sh 230
