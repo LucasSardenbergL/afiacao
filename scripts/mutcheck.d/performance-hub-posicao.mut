@@ -12,3 +12,4 @@ PEGA | erro do PostgREST ignorado | s/^            if \(error\) throw error;$//
 PEGA | empresa fixa OBEN (o seletor volta a ser ignorado) | s/\.eq\("empresa", empresa\)/.eq("empresa", "OBEN")/
 PEGA | meta ausente vira 0 | s/Number\(linha\?\.meta_pessoal \?\? Number\.NaN\)/Number(linha?.meta_pessoal ?? 0)/
 PEGA | card de meta formata ausência como R\$ 0 | s/value: data\?\.meta == null \? "—" : brl\(data\.meta\)/value: brl(Number(data?.meta ?? 0))/
+PEGA | score SPIN volta a 0 fixo | s/value: data\?\.spin == null \? "—" : data\.spin/value: data?.spin ?? 0/
