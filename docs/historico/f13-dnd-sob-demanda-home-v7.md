@@ -57,4 +57,4 @@ O LCP do mobile é o `<p>` do dashboard. Ele pinta quando chegam o chunk do `Sta
 
 - O lab mede o mecanismo, não o usuário real: o campo tem 1 usuário (ver §1 do plano).
 - Com 400 ms fixos por requisição, o auth domina o boot. O ganho é sobre o chunk que vem **depois** do auth.
-- **Deploy:** só front. Falta o **Publish** do founder. O SW troca de build quando o cliente clica (bytes = disponibilidade, não adoção).
+- **Deploy:** só front. Mergeado no #3649 (`4fc3888`). **Publish conferido no bundle servido** em 2026-11-06 (`steu.lovable.app`): o `StaffDashboard-Bq1c6pgY.js` não tem mais `import … from "./dnd.esm-*.js"` e aponta para o `CockpitGridArrastavel-C8YkM9hM.js`, e o prefetch da rota (`app-lib-nav-home-por-persona`) não lista o `dnd.esm`. O SW troca de build quando o cliente clica: bytes = disponibilidade, não adoção.
