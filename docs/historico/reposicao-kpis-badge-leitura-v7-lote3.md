@@ -91,3 +91,16 @@ vez, cada uma **vermelha nos dois locales**, com asserção (não crash) no test
 
 A S1 derrubou só o teste de render, porque o teste "query entra em ERRO" exercita a outra ponta
 (`e1`). Isso confirma que as duas camadas são independentes.
+
+## No ar (2026-11-06)
+
+O #3648 mergeou às 03:59Z (squash `a07930873`), e o founder fez o Publish. A prova é determinística,
+pelo carimbo de SHA do bundle, e não por sentinela:
+`monitor-deploy.sh --pr 3648 https://steu.lovable.app` → **exit 0, `PR_NO_AR`**. O ar serve
+`3dad9809`, que é a ponta da `origin/main`, e não houve `AVISO_REVERT_POSTERIOR`. Antes disso
+conferi na main os 11 marcadores dos arquivos tocados, porque dois commits do sync do Lovable
+("Lovable update", "Work in progress") vieram depois do merge: nenhum os reverteu.
+
+Adoção: o service worker só troca de build quando o cliente recarrega. Bytes no ar provam
+disponibilidade, não adoção.
+

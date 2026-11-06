@@ -25,3 +25,10 @@ Um prompt de revisão que manda "diga 'sem achado' e pare" faz o Codex parar no 
 ## Ordem de aplicação
 
 Primeiro a edge v1.7 (para nenhum fantasma novo nascer sem origem depois do backfill), depois o backfill. A validação vai por fora, com o `psql-ro`: pendentes que a fila e o KPI contam (`is_approved = false` e origem ≠ `omie_import`) → 0.
+
+## Desfecho em prod (2026-11-06)
+
+- **Edge:** a `omie-cliente` serve `v1.7-perfil-placeholder-com-origem`, com fingerprint `CONFERE` pela sonda às 11:37Z (`pendencias:deploy`, commit `22758d717`).
+- **Backfill:** `db_aplicacoes` #916, `aplicada` às 12:17Z pelo `claude_rw`, depois da edge, na ordem prevista.
+- **Validação por fora (`psql-ro`, outra conexão, depois do commit):** fila de aprovações **0** e KPI da home **0**. Antes eram 16.070 e 16.070. Hoje há 16.074 `omie_import`: os 16.070 do backfill mais **4 criados pela v1.7 já com origem**, o que prova o escritor novo em prod. Nenhum `omie_import` está aprovado, é funcionário ou tem papel de staff, e os 4 aprovados seguem com origem nula, sem `updated_at` novo.
+- O deploy e o apply saíram por outra sessão da leva v7 antes de esta aplicar. O `db:aplicar` daqui teria sido recusado por SHA já aplicado, então a 2ª testemunha foi só a validação.
