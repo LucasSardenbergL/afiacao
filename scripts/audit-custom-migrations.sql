@@ -3380,7 +3380,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
   ('des_simular_puxar_sem_posicao_recusa', 'function', 'public', 'simular_puxar_volume_trimestre', ''),
-  ('des_simular_puxar_config_e_checkin', 'function', 'public', 'simular_puxar_volume_trimestre', '')
+  ('des_simular_puxar_config_e_checkin', 'function', 'public', 'simular_puxar_volume_trimestre', ''),
+  ('des_simular_puxar_config_e_checkin', 'view', 'public', 'v_des_checkin_atual', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5955,7 +5956,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
   ('fin_cashflow_cron_carga_unica', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
   ('des_simular_puxar_sem_posicao_recusa', 'function', 'public', 'simular_puxar_volume_trimestre', ''),
-  ('des_simular_puxar_config_e_checkin', 'function', 'public', 'simular_puxar_volume_trimestre', '')
+  ('des_simular_puxar_config_e_checkin', 'function', 'public', 'simular_puxar_volume_trimestre', ''),
+  ('des_simular_puxar_config_e_checkin', 'view', 'public', 'v_des_checkin_atual', '')
 )
 SELECT
   e.migration,
@@ -6639,7 +6641,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_lista', 1, '20261103131500_radar_lista_rpc.sql', '35f2b704bf5d9b3d429156aed6ac4890'),
   ('public', 'radar_lista', 2, '20261104153351_radar_cnae_secundario.sql', 'b514c898e63fe2e0301ba8323cdd2955'),
   ('public', 'simular_puxar_volume_trimestre', 1, '20261105180000_des_simular_puxar_sem_posicao_recusa.sql', '9e43c9425748b54d783ca9f4c3737755'),
-  ('public', 'simular_puxar_volume_trimestre', 2, '20261106090000_des_simular_puxar_config_e_checkin.sql', '60e5c9e4190f1e2a34993c5dec75bf27')
+  ('public', 'simular_puxar_volume_trimestre', 2, '20261106090000_des_simular_puxar_config_e_checkin.sql', 'fefcf8c0890cd3fe21a60efbe2ed6d37')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),
