@@ -28,11 +28,11 @@ MIG_RPC="$MIGS/20261019225545_radar_rpcs_cnpj_alfanumerico.sql"   # corpo de reg
 MIG_DESF="$MIGS/20260612130000_radar_rpcs_contato.sql"            # corpo de desfazer_contato_radar (= prod)
 MIG_LED="$MIGS/20261103120100_analytics_ledger_raio_x_decisao.sql" # corpo do ledger antes da fase B (= prod)
 MIG_FICHA="$MIGS/20261106132259_radar_abriu_ficha_com_cnpj.sql"    # fase B
-SABOTAGENS_B="ficha_sem_cnpj:B1 cnpj_sem_validacao:B4 placar_conta_ficha:B3 reconciliacao_sem_ficha:B4 trigger_sem_ficha:post:P5 allowlist_sem_ficha:post:P2"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> — `post:A3` = a POSTCONDIÇÃO da migration aborta o apply.
-  SABOTAGENS="$SABOTAGENS_B versao_fora_do_update:A1 versao_fora_do_resumo:A2 automatico_grava_nota:A6 confirmacao_mais_recente:A10 conversao_sem_cliente:A5b coorte_sem_cliente_novo:A18b cadastro_fora_da_reconciliacao:A12b backfill_origem_da_sessao:A7 nota_relida_na_conversao:A5 apagado_conta_como_toque:A9 cadastro_vira_toque:A10 outbox_sem_filtro_de_rota:A11 trigger_fail_closed:A12 sorteio_congela_sem_versao:A15 sorteio_nao_deterministico:A16 sorteio_sem_trava:A17 coorte_denominador_por_contato:A18 anon_le_eventos:post:A3 anon_executa_placar:post:A4"
+  # Fase B (20261106132259) primeiro; depois as da fase A.
+  SABOTAGENS="ficha_sem_cnpj:B1 cnpj_sem_validacao:B4 placar_conta_ficha:B3 reconciliacao_sem_ficha:B4 trigger_sem_ficha:post:P5 allowlist_sem_ficha:post:P2 versao_fora_do_update:A1 versao_fora_do_resumo:A2 automatico_grava_nota:A6 confirmacao_mais_recente:A10 conversao_sem_cliente:A5b coorte_sem_cliente_novo:A18b cadastro_fora_da_reconciliacao:A12b backfill_origem_da_sessao:A7 nota_relida_na_conversao:A5 apagado_conta_como_toque:A9 cadastro_vira_toque:A10 outbox_sem_filtro_de_rota:A11 trigger_fail_closed:A12 sorteio_congela_sem_versao:A15 sorteio_nao_deterministico:A16 sorteio_sem_trava:A17 coorte_denominador_por_contato:A18 anon_le_eventos:post:A3 anon_executa_placar:post:A4"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-placar.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
