@@ -85,4 +85,20 @@ describe('useRadarContagemMunicipios — região e contato da fila', () => {
     expect(c).toContainEqual(['in', 'uf', [...UFS_ATUACAO]]);
     expect(c).toContainEqual(['or', 'telefone1.not.is.null,telefone2.not.is.null,email.not.is.null']);
   });
+
+  // C3 (pacote C): "só com telefone" recortava a lista e não o ranking/mapa. Banco: db/test-radar-mapa-regiao-cidade.sh.
+  it('"só com telefone": p_com_telefone true na RPC; desligado vai false dito', async () => {
+    await rodar({ ...FILTROS, comTelefone: true });
+    expect(argsRpc()).toMatchObject({ p_com_telefone: true });
+    rpcs = [];
+    await rodar(FILTROS);
+    expect(argsRpc()).toMatchObject({ p_com_telefone: false });
+  });
+  it('"só com telefone" + "só sugeridos": o filtro de telefone vai na consulta de tabela, no lugar do de contato', async () => {
+    await rodar({ ...FILTROS, soSugeridos: true, comTelefone: true, incluirSemContato: false });
+    const c = chamadas.radar_empresas ?? [];
+    // Telefone ⊂ contato: o de telefone vai, o de contato (redundante) não.
+    expect(c).toContainEqual(['or', 'telefone1.not.is.null,telefone2.not.is.null']);
+    expect(c).not.toContainEqual(['or', 'telefone1.not.is.null,telefone2.not.is.null,email.not.is.null']);
+  });
 });

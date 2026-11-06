@@ -113,6 +113,15 @@ describe('parametrosDaLista — termos, CNAE, ordem e página', () => {
     expect(params({ municipio: '' }).p_municipio).toBeUndefined();
   });
 
+  // C2 (pacote C): a cidade do ranking/mapa vai pelo CÓDIGO, exata; o nome (homônimo em outras UFs) sai.
+  it('cidade escolhida: p_municipio_codigo exato e sem p_municipio; sem código, o nome de antes', () => {
+    expect(params({ municipio: 'SANTA LUZIA', municipioCodigo: '4123' }))
+      .toMatchObject({ p_municipio_codigo: '4123', p_municipio: undefined });
+    expect(params({ municipio: 'SANTA LUZIA', municipioCodigo: '' }))
+      .toMatchObject({ p_municipio_codigo: undefined, p_municipio: 'SANTA LUZIA' });
+    expect(params({ municipio: 'pomerode' }).p_municipio_codigo).toBeUndefined();
+  });
+
   it('CNAE: 7 dígitos = exato; parcial = prefixo; vazio = nada', () => {
     expect(params({ cnae: '3101-2/00' })).toMatchObject({ p_cnae_exato: '3101200', p_cnae_prefixo: undefined });
     expect(params({ cnae: '3101' })).toMatchObject({ p_cnae_exato: undefined, p_cnae_prefixo: '3101' });

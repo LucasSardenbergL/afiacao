@@ -50,6 +50,7 @@ import {
   type RadarMunicipioPenetracao,
 } from '../useRadarContagemMunicipios';
 import type { RadarFiltros } from '../useRadarLista';
+import { UFS_ATUACAO } from '@/lib/radar/ui-helpers';
 
 const FILTROS: RadarFiltros = {
   busca: '', uf: '', municipio: '', cnae: '', status: '', incluirJaClientes: false, comTelefone: false,
@@ -127,25 +128,37 @@ describe('useRadarContagemMunicipios — ranking/mapa contam o universo da fila'
 // Penetração (frente 4 do mapa). O banco — denominador do lote vigente, NULL sem denominador, concorrentes
 // NULL sem publicação — é provado em db/test-radar-penetracao-concorrentes.sh; aqui, o argumento e a leitura.
 describe('useRadarPenetracaoMunicipios — denominador do lote vigente', () => {
-  it('chama a RPC com o lote VIGENTE e a UF dos filtros', async () => {
-    const { result } = renderHook(() => useRadarPenetracaoMunicipios('SC', true), { wrapper });
+  it('chama a RPC com o lote VIGENTE e a UF dos filtros (a UF vence a região)', async () => {
+    const { result } = renderHook(() => useRadarPenetracaoMunicipios({ uf: 'SC', regiao: 'atuacao' }, true), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     const chamadas = rpcs.filter(([fn]) => fn === 'radar_penetracao_por_municipio');
     expect(chamadas).toHaveLength(1);
-    expect(chamadas[0][1]).toEqual({ p_lote: '2026-08', p_uf: 'SC', p_limit: 500 });
+    expect(chamadas[0][1]).toEqual({ p_lote: '2026-08', p_uf: 'SC', p_ufs: null, p_limit: 500 });
     // Pagina (capa de 1.000 do PostgREST vale para .rpc()); página curta encerra na 1ª chamada.
     expect(ranges).toEqual([['radar_penetracao_por_municipio', 0, 999]]);
   });
 
-  it('sem UF: p_uf null dito (o país inteiro)', async () => {
-    const { result } = renderHook(() => useRadarPenetracaoMunicipios(null, true), { wrapper });
+  it('sem UF e região "brasil": p_uf e p_ufs null ditos (o país inteiro)', async () => {
+    const { result } = renderHook(() => useRadarPenetracaoMunicipios({ uf: '', regiao: 'brasil' }, true), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(rpcs.find(([fn]) => fn === 'radar_penetracao_por_municipio')?.[1].p_uf).toBeNull();
+    const args = rpcs.find(([fn]) => fn === 'radar_penetracao_por_municipio')?.[1];
+    expect(args?.p_uf).toBeNull();
+    expect(args?.p_ufs).toBeNull();
+  });
+
+  // C1 (pacote C): o default da tela é a região de atuação com a UF vazia. Antes o hook só via a UF e pedia o
+  // Brasil — a média ~0 (ja_cliente só cobre MG) apontava PR/RS fora da carteira como "pouca penetração".
+  it('sem UF e região "atuacao" (o default da tela): p_ufs = as UFs da região, a MESMA lista da fila', async () => {
+    const { result } = renderHook(() => useRadarPenetracaoMunicipios({ uf: '', regiao: 'atuacao' }, true), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const args = rpcs.find(([fn]) => fn === 'radar_penetracao_por_municipio')?.[1];
+    expect(args?.p_uf).toBeNull();
+    expect(args?.p_ufs).toEqual([...UFS_ATUACAO]);
   });
 
   it('sem lote complete: camada indisponível (null) e a RPC nem é chamada — nunca penetração sobre a foto velha', async () => {
     respostaLotes = { data: [LOTES[0]], error: null };
-    const { result } = renderHook(() => useRadarPenetracaoMunicipios(null, true), { wrapper });
+    const { result } = renderHook(() => useRadarPenetracaoMunicipios({ uf: '' }, true), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toBeNull();
     expect(rpcs).toEqual([]);
@@ -153,7 +166,7 @@ describe('useRadarPenetracaoMunicipios — denominador do lote vigente', () => {
 
   it('leitura do lote FALHOU: erra junto, sem chamar a RPC', async () => {
     respostaLotes = { data: null, error: { message: 'boom' } };
-    const { result } = renderHook(() => useRadarPenetracaoMunicipios(null, true), { wrapper });
+    const { result } = renderHook(() => useRadarPenetracaoMunicipios({ uf: '' }, true), { wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(rpcs).toEqual([]);
   });

@@ -24438,6 +24438,7 @@ export type Database = {
           p_cnae_prefix?: string
           p_cnae_secundario?: string
           p_com_contato?: boolean
+          p_com_telefone?: boolean
           p_data_abertura_max?: string
           p_data_abertura_min?: string
           p_incluir_ja_clientes?: boolean
@@ -24519,6 +24520,7 @@ export type Database = {
           p_incluir_ja_clientes?: boolean
           p_limit?: number
           p_municipio?: string
+          p_municipio_codigo?: string
           p_offset?: number
           p_ordem?: string
           p_primeira_vista_min?: string
@@ -24582,7 +24584,12 @@ export type Database = {
         }
       }
       radar_penetracao_por_municipio: {
-        Args: { p_limit?: number; p_lote: string; p_uf?: string }
+        Args: {
+          p_limit?: number
+          p_lote: string
+          p_uf?: string
+          p_ufs?: string[]
+        }
         Returns: {
           clientes: number
           concorrentes: number

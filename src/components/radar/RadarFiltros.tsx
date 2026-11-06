@@ -52,7 +52,8 @@ export function RadarFiltros({
   const escolherRegiao = (r: 'atuacao' | 'brasil') => {
     if (r === regiao) return;
     track('radar.regiao_trocada', { regiao: r, uf: filtros.uf || null });
-    set({ regiao: r });
+    // Trocar a região solta a cidade exata do ranking/mapa (o nome fica, como filtro por nome).
+    set({ regiao: r, municipioCodigo: '' });
   };
   return (
     <div className="space-y-3">
@@ -120,7 +121,7 @@ export function RadarFiltros({
         {/* Select de UF — usa sentinel para o valor "todas" */}
         <Select
           value={filtros.uf || SENTINEL_UF}
-          onValueChange={(v) => set({ uf: v === SENTINEL_UF ? '' : v })}
+          onValueChange={(v) => set({ uf: v === SENTINEL_UF ? '' : v, municipioCodigo: '' })}
         >
           <SelectTrigger className="w-28">
             <SelectValue placeholder="UF" />
@@ -139,7 +140,9 @@ export function RadarFiltros({
           className="w-36"
           placeholder="Município"
           value={filtros.municipio}
-          onChange={(e) => set({ municipio: e.target.value })}
+          // Digitar volta ao filtro por nome (parcial): a cidade exata do ranking/mapa sai.
+          onChange={(e) => set({ municipio: e.target.value, municipioCodigo: '' })}
+          title={filtros.municipioCodigo ? 'Cidade escolhida no ranking ou no mapa (exata, pelo código)' : undefined}
         />
 
         <RadarBuscaCnae valor={filtros.cnae} onChange={(cnae) => set({ cnae })} />

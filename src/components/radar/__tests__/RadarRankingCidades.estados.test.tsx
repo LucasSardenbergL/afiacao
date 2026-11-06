@@ -8,27 +8,35 @@
  * fabricado (money-path §2, ausente ≠ zero).
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 
 type Q = { data: unknown; isLoading: boolean; isError: boolean; error: unknown };
 let contagem: Q;
 let penetracao: Q;
+let habilitado: boolean[] = [];
 
 vi.mock('@/queries/useRadarContagemMunicipios', () => ({
-  useRadarContagemMunicipios: () => contagem,
+  useRadarContagemMunicipios: (_f: unknown, _h: string, enabled: boolean) => { habilitado.push(enabled); return contagem; },
   useRadarPenetracaoMunicipios: () => penetracao,
   oportunidadesPenetracao: () => [],
   formatarPenetracao: (p: number | null) => (p == null ? '—' : `${p}`),
+  bateuNoTeto: (n: number | null | undefined) => n != null && n >= 500,
+  LIMITE_MUNICIPIOS: 500,
+}));
+vi.mock('@/queries/useRadarLoteVigente', () => ({
+  useRadarLoteVigente: () => ({ data: { mes_referencia: '2026-10' } }),
 }));
 
 import { RadarRankingCidades } from '../RadarRankingCidades';
 import type { RadarFiltros } from '@/queries/useRadarLista';
 
 const filtros = { uf: '' } as RadarFiltros;
-const desenhar = () => render(<RadarRankingCidades filtros={filtros} hojeISO="2026-11-03" onPick={() => {}} />);
+const desenhar = (p: { adiar?: boolean; onPick?: (c: unknown) => void } = {}) =>
+  render(<RadarRankingCidades filtros={filtros} hojeISO="2026-11-03" onPick={p.onPick ?? (() => {})} adiar={p.adiar} />);
 const MUNI = { municipio_codigo: '4123', municipio_nome: 'UBERLÂNDIA', uf: 'MG', lat: null, lng: null, total: 812, com_telefone: 640, a_contatar: 790 };
 
 beforeEach(() => {
+  habilitado = [];
   contagem = { data: [MUNI], isLoading: false, isError: false, error: null };
   penetracao = { data: undefined, isLoading: false, isError: false, error: null };
 });
@@ -64,5 +72,54 @@ describe('RadarRankingCidades — erro e indisponível NÃO são zero', () => {
     const r = desenhar();
     expect(r.container.textContent).toContain('Nenhuma cidade nestes filtros');
     expect(r.container.textContent).toContain('0 empresas');
+  });
+});
+
+// Pacote C: clique por código (C2), soma rotulada com o teto (C4), carga só quando visível e depois da fila (C5).
+describe('RadarRankingCidades — pacote C', () => {
+  it('C2: o clique leva código, nome e UF da cidade (não só o nome)', () => {
+    const onPick = vi.fn();
+    desenhar({ onPick });
+    fireEvent.click(screen.getByText('UBERLÂNDIA'));
+    expect(onPick).toHaveBeenCalledWith({ codigo: '4123', nome: 'UBERLÂNDIA', uf: 'MG' });
+  });
+
+  it('C4: a soma diz "nos N municípios exibidos" e o recorte; abaixo do teto, sem aviso de teto', () => {
+    const soma = desenhar().getByTestId('radar-ranking-soma').textContent ?? '';
+    expect(soma).toContain('nos 1 municípios exibidos no Brasil');
+    expect(soma).not.toContain('teto');
+  });
+
+  it('C4: no teto de 500, avisa que há municípios fora da soma', () => {
+    contagem = { ...contagem, data: Array.from({ length: 500 }, (_, i) => ({ ...MUNI, municipio_codigo: String(1000 + i) })) };
+    const soma = desenhar().getByTestId('radar-ranking-soma').textContent ?? '';
+    expect(soma).toContain('nos 500 municípios exibidos');
+    expect(soma).toContain('teto de 500');
+  });
+
+  it('C5: com a fila ainda carregando (adiar), as agregações ficam desligadas e o card espera', () => {
+    const r = desenhar({ adiar: true });
+    expect(habilitado.every((e) => e === false)).toBe(true);
+    expect(r.container.textContent).not.toContain('812 empresas');
+  });
+
+  it('C5: fora da tela não carrega; ao entrar na tela, liga', () => {
+    let aoCruzar: ((e: Array<{ isIntersecting: boolean }>) => void) | null = null;
+    const Original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class {
+      constructor(cb: (e: Array<{ isIntersecting: boolean }>) => void) { aoCruzar = cb; }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+      takeRecords() { return []; }
+    } as unknown as typeof IntersectionObserver;
+    try {
+      desenhar();
+      expect(habilitado.at(-1)).toBe(false);
+      act(() => aoCruzar?.([{ isIntersecting: true }]));
+      expect(habilitado.at(-1)).toBe(true);
+    } finally {
+      globalThis.IntersectionObserver = Original;
+    }
   });
 });

@@ -12,20 +12,15 @@ import {
   penetracaoMedia,
   faixaPenetracao,
   formatarPenetracao,
+  bateuNoTeto,
+  LIMITE_MUNICIPIOS,
   type FaixaPenetracao,
 } from '@/queries/useRadarContagemMunicipios';
 import { escapeHtml } from '@/lib/escape-html';
 import { track } from '@/lib/analytics';
 import type { RadarFiltros } from '@/queries/useRadarLista';
-import { avisoContagem } from '@/lib/radar/ui-helpers';
-
-// Fix dos ícones padrão do Leaflet com bundler (mesmo do AdminRoutePlanner).
-delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-});
+import { avisoContagem, rotuloRecorteGeo, type CidadeEscolhida } from '@/lib/radar/ui-helpers';
+import { popupCidade } from '@/components/radar/popupCidade';
 
 type Camada = 'leads' | 'penetracao';
 
@@ -54,12 +49,12 @@ export default function RadarMapa({
 }: {
   filtros: RadarFiltros;
   hojeISO: string;
-  onPick: (municipioNome: string) => void;
+  onPick: (cidade: CidadeEscolhida) => void;
 }) {
   const [camada, setCamada] = useState<Camada>('leads');
   const [mostrarConcorrentes, setMostrarConcorrentes] = useState(false);
   const q = useRadarContagemMunicipios(filtros, hojeISO, camada === 'leads');
-  const pen = useRadarPenetracaoMunicipios(filtros.uf || null, camada === 'penetracao' || mostrarConcorrentes);
+  const pen = useRadarPenetracaoMunicipios(filtros, camada === 'penetracao' || mostrarConcorrentes);
   const media = useMemo(() => penetracaoMedia(pen.data ?? []), [pen.data]);
   // Concorrentes NULL em todas as linhas = o lote vigente ainda não tem a camada publicada (≠ zero revendas).
   const concorrentesSemCarga = !!pen.data && pen.data.length > 0 && pen.data.every((m) => m.concorrentes == null);
@@ -97,13 +92,13 @@ export default function RadarMapa({
       pts.forEach((m) => {
         const r = 10 + Math.round(18 * Math.sqrt(m.total / max));
         coords.push([m.lat as number, m.lng as number]);
+        const cidade: CidadeEscolhida = { codigo: m.municipio_codigo, nome: m.municipio_nome, uf: m.uf };
         L.marker([m.lat as number, m.lng as number], { icon: pino(r, 'hsl(var(--primary))', String(m.total)) })
-          .bindPopup(
-            // Leaflet renderiza o popup como HTML cru → escapar dado textual
-            // (nome de município/UF) antes de interpolar (defesa-em-profundidade).
-            `<strong>${escapeHtml(m.municipio_nome)}/${escapeHtml(m.uf)}</strong><br/>${m.total} empresas · ${m.com_telefone} c/ telefone<br/>${m.a_contatar} a contatar`,
-          )
-          .on('click', () => onPickRef.current(m.municipio_nome))
+          .bindPopup(popupCidade(
+            `${m.municipio_nome}/${m.uf}`,
+            [`${m.total} empresas · ${m.com_telefone} c/ telefone`, `${m.a_contatar} a contatar`],
+            () => onPickRef.current(cidade),
+          ))
           .addTo(layer.current!);
       });
     } else {
@@ -117,11 +112,11 @@ export default function RadarMapa({
         L.marker([m.lat as number, m.lng as number], {
           icon: pino(r, COR_FAIXA[faixaPenetracao(m, media)], escapeHtml(formatarPenetracao(m.penetracao))),
         })
-          .bindPopup(
-            `<strong>${escapeHtml(nome)}/${escapeHtml(m.uf)}</strong><br/>` +
-              `${m.clientes ?? '—'} clientes de ${m.empresas_lote ?? '—'} empresas do lote (${escapeHtml(formatarPenetracao(m.penetracao))})`,
-          )
-          .on('click', () => { if (m.municipio_nome) onPickRef.current(m.municipio_nome); })
+          .bindPopup(popupCidade(
+            `${nome}/${m.uf}`,
+            [`${m.clientes ?? '—'} clientes de ${m.empresas_lote ?? '—'} empresas do lote (${formatarPenetracao(m.penetracao)})`],
+            () => onPickRef.current({ codigo: m.municipio_codigo, nome: m.municipio_nome, uf: m.uf }),
+          ))
           .addTo(layer.current!);
       });
     }
@@ -180,6 +175,13 @@ export default function RadarMapa({
       {camada === 'leads' && q.isError && (
         <p className="p-2 text-xs text-status-error">{avisoContagem(q.error, 'Leads do mapa')}</p>
       )}
+      {camada === 'leads' && q.data && (
+        <p className="p-2 text-xs text-muted-foreground" data-testid="radar-mapa-exibidos">
+          {q.data.length.toLocaleString('pt-BR')} municípios exibidos {rotuloRecorteGeo(filtros)}
+          {bateuNoTeto(q.data.length) && <> (teto de {LIMITE_MUNICIPIOS}: os maiores; há municípios fora do mapa)</>}
+          {' '}· toque num pino para ver o resumo e abrir a fila da cidade.
+        </p>
+      )}
       {carregando && (
         <div className="p-2">
           <Skeleton className="h-4 w-40" />
@@ -191,7 +193,8 @@ export default function RadarMapa({
           {pen.data === null && <p>Sem lote completo da RFB: penetração e concorrentes indisponíveis até a carga terminar.</p>}
           {camada === 'penetracao' && pen.data && (
             <p>
-              Penetração = clientes ÷ empresas do lote vigente{filtros.uf ? ` em ${filtros.uf}` : ''} · média{' '}
+              Penetração = clientes ÷ empresas do lote vigente {rotuloRecorteGeo(filtros)} (o mercado, qualquer situação)
+              {bateuNoTeto(pen.data.length) && <>, nos {LIMITE_MUNICIPIOS} maiores mercados</>} · média{' '}
               {formatarPenetracao(media)} ·{' '}
               <span style={{ color: COR_FAIXA.sem_cliente }}>●</span> nenhum cliente{' '}
               <span style={{ color: COR_FAIXA.abaixo }}>●</span> abaixo da média{' '}

@@ -956,6 +956,11 @@ db/test-radar-agregado-cnae.sh             39  falsificar=14
 # GIN. Oráculo em SQL direto na tabela para 8 recortes de contagem e 3 de lista; repetido no array conta 1 vez;
 # 0 leituras de radar_empresas no coberto (controle: não coberto lê); lote novo = indisponível; RLS/ACL; PRE.
 db/test-radar-cnae-secundario.sh           46  falsificar=18
+# Radar pacote C, mapa e ranking de cidades (migration 20261106175800): a penetração recorta pela região (p_ufs;
+# UF vence; concorrente fora da região some), a contagem aplica "só com telefone" nos 4 caminhos (agregado, fino,
+# secundário coberto, vivo; o agregado segue sem ler radar_empresas) e a lista filtra a cidade EXATA pelo código
+# (o nome traz a homônima de outra UF). Oráculo em SQL direto; negativos com SQLSTATE 22023; ACL/sobrecarga; PRE.
+db/test-radar-mapa-regiao-cidade.sh        37  falsificar=13
 # Mini, pipeline diário do Radar (20261105150000): o score das 06:30 sai sem reler radar_empresas quando a impressão
 # digital (lote, fórmula, max(updated_at), nº de já-clientes) não mudou — 0 seq scans medidos em pg_stat_xact — e
 # continua registrando a rodada; recalcula com updated_at novo, já-cliente sem bump, lote novo e na rede de 7 dias;
