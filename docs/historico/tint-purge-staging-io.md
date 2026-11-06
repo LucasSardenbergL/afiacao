@@ -650,3 +650,19 @@ Se o recruzar ainda ler ~730 MB, quem lê é o `UPDATE … EXISTS` de `radar_rec
 
 - **Lição:** janela de controle sem atribuição por minuto esconde evento único. Antes de caçar "a causa do hit", recorte a série por minuto e cruze com `db_aplicacoes`: a média de 6 h de 97,67% era 16 min de 3,5 GB.
 - **Lição:** o `claude_ro` está com `pg_stat_statements.track=none` desde o #3635. O custo das nossas próprias leituras não aparece no `pg_stat_statements`, só na série de `pg_statio`/`pg_stat_io`. O `pg_stat_statements` foi zerado por completo às 14:13:13 UTC de 05/11.
+
+### 2026-11-06 — medida do depois
+
+Ciclo das 06h UTC de 06/11, o 1º depois do `20261105150000` (#903, PR #3638). Leitura por `psql-ro` às 07:11 UTC, sem varrer `radar_empresas`.
+
+| etapa | antes (05/11) | depois (06/11) |
+|---|---|---|
+| recruzar 06:15 | 17,9 s · 1,5 GB · 2 seq scans | **5,5 s** · 0 seq scans · `jc_antes` 3.021 · marcados 0 |
+| score 06:30 | 20,9 s · 2,3 GB + 212 MB temp | **0,8 s** (cron 0,87 s) · `recalculou=false` |
+| agregado 06:35 | 3 min 33 s · 2,6 GB | 3 min 26 s (inalterado) |
+| `radar_empresas` desde a base de 05/11 14:59:20 | — | heap 313.019 blocos (~2,56 GB) · idx 4.763 blocos · **seq_scan +0** |
+
+- O gate do score funcionou: `radar_score_estado` segue com a impressão de 05/11 (lote 2026-10, v3, `max_updated_at` 31/10 18:57, 3.021 já-clientes); nada mudou, então não recalculou.
+- `seq_scan` não andou nenhuma vez, nem pelo agregado: a premissa "1 seq scan por dia" estava errada, ele lê o heap por índice/bitmap. Os ~2,56 GB de heap do dia batem com os 2,6 GB do agregado de antes. Não separo por minuto (sem série de 60 s hoje), então leituras de usuário também entram nesse total. Ainda assim, o dia inteiro leu menos que o agregado sozinho lia antes, e os ~3,8 GB do recruzar+score sumiram.
+- **Veredito:** sucesso no score (milissegundos, sem recalcular). No recruzar, sucesso parcial: caiu de 17,9 s para 5,5 s, mas ficou acima do teto de 5 s. A suspeita é o `UPDATE … EXISTS` de `radar_recruzar_ja_cliente()`, que é a **próxima fatia do recruzar**. Não foi corrigido aqui.
+- **O que ficou:** o agregado das 06:35 (~2,6 GB/dia, 3,5 min) continua sendo a fatia nº 1. Ele depende do relógio, então o caminho segue sendo ajustar só as empresas que cruzam o corte de 5 anos.
