@@ -69,6 +69,16 @@ describe('casaFiltrosExplicitos', () => {
     expect(casaFiltrosExplicitos(e, { ...SEM_FILTRO, status: 'em_conversa' })).toBe(false);
   });
 
+  it('cidade escolhida pelo código: exata, vence o nome (homônima de outra UF fica fora)', () => {
+    const daqui = lead('X', { municipio_nome: 'SANTA LUZIA', municipio_codigo: '4123' });
+    const homonima = lead('Y', { municipio_nome: 'SANTA LUZIA', municipio_codigo: '3851', uf: 'BA' });
+    const f = { ...SEM_FILTRO, municipio: 'SANTA LUZIA', municipioCodigo: '4123' };
+    expect(casaFiltrosExplicitos(daqui, f)).toBe(true);
+    expect(casaFiltrosExplicitos(homonima, f)).toBe(false);
+    // Sem código, o nome de antes (parcial): as duas casam.
+    expect(casaFiltrosExplicitos(homonima, { ...f, municipioCodigo: '' })).toBe(true);
+  });
+
   it('CNAE secundário: só o código completo filtra, contra o array de secundários', () => {
     const e = lead('X', { cnaes_secundarios: ['2391503', '4330404'] });
     expect(casaFiltrosExplicitos(e, { ...SEM_FILTRO, cnaeSecundario: '2391-5/03' })).toBe(true);
