@@ -14,7 +14,9 @@ export const RFB_SHARE_TOKEN = "YggdBLfdninEJX9";
 export const basesCandidatas = (mes: string): string[] => [
   `https://arquivos.receitafederal.gov.br/public.php/webdav/${mes}`,
   `https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/${mes}`,
-  `https://dadosabertos.rfb.gov.br/CNPJ/dados_abertos_cnpj/${mes}`,
+  // `dadosabertos.rfb.gov.br` SAIU em 2026-11-06: timeout (Mac e runner) desde ≥ 2026-11-02 — e timeout é
+  // inconclusivo por desenho em `concluirSonda`, então uma base morta na lista deixa a sonda vermelha para
+  // sempre (runs 41465820397 e 42210922371). Base nova só entra aqui se responder 200/404 de verdade.
 ];
 
 /** WebDAV de share Nextcloud exige basic auth "<token>:" — as outras bases, não. */
