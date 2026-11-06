@@ -19,6 +19,10 @@
 #     | sed -nE 's/.*✅ (test-[A-Za-z0-9_-]+)( --falsificar)? .* ([0-9]+)s[[:space:]]*$/db\/\1.sh \3/p'
 # e some as duas linhas de cada prova; o custo é a mediana entre os runs. Medição e desenho:
 # docs/historico/ci-fila-de-runners.md
+#
+# Exceção pontual (2026-11-06, E17 do plano v7): `test-radar-cadastro-conflitos` 360 → 69 s (4 + 65 no run
+# 42232877105, parte 1), depois de trocar a retenção fixa de 2 s por soltar ao observar o bloqueio.
+# docs/historico/ci-e17-radar-espera-por-bloqueio.md
 db/test-analytics-ledger-financeiro-ciclo.sh 1
 db/test-analytics-ledger-venda-cliente.sh 1
 db/test-analytics-outbox-canonica.sh 18
@@ -99,7 +103,7 @@ db/test-radar-agregado.sh 34
 db/test-radar-pipeline-diario.sh 40
 db/test-radar-amostra-vigente.sh 8
 db/test-radar-avisar-lote.sh 23
-db/test-radar-cadastro-conflitos.sh 360
+db/test-radar-cadastro-conflitos.sh 69
 db/test-radar-cadastro-omie-confirmacao.sh 19
 db/test-radar-cadastro-omie-idempotente.sh 146
 db/test-radar-cnae-secundario.sh 36

@@ -94,5 +94,28 @@ Medido nos dispatches reais depois do merge (`gh api …/runs/<id>/jobs` e o log
 | 42224615265 | `38fb6b067` (merge do #3657) | disparado pelo `auto-merge.yml` ANTIGO, sem o input | `fora de PR roda TUDO` (esperado) |
 | 42225858927 | `42f76d5ea` (#3658, só docs) | base `38fb6b067` achada e verde; mas entre ela e o run entrou o `af0956dc4` (radar, `db/` + `src/` + migration), cujo run foi coalescido (`cancelled`) | **RODA**: 13 arquivos fora de `docs/` no diff cumulativo. O `validate` mostra `escopo_docs=true … roda=true base=<vazio>` |
 
+| 42231088994 | `3dad98093` (#3659, só docs) | base `42f76d5ea` (run 42225858927, verde), nenhum código no meio | **PULA**: `os 1 arquivo(s) do diff cumulativo são todos de docs/`. O `validate` mostra `roda=false base=42f76d5e…` e `⏭️ provas-sql: skipped pelo escopo da main` |
+
 A 2ª linha é o desenho funcionando pelo lado seguro: um merge de docs não carimba como provado o código de outro
-merge que ainda não foi provado. As amostras de pulo seguem no PR do E17.
+merge que ainda não foi provado.
+
+**O pulo, contra o dispatch anterior que rodou tudo** (soma de `completed − started` dos jobs executados; parede do
+`run_started_at` ao fim do `validate`):
+
+| dispatch | runner-min | partes + união | jobs executados | parede até o `validate` | espera antes do 1º job |
+|---|---|---|---|---|---|
+| rodou (42225858927) | 149,9 | 111,2 | 19 | 27,5 min | 8,9 min |
+| **pulou** (42231088994) | **38,9** | **0** | **11** | **6,5 min** | 0,1 min |
+
+O run elegível custa **−111 runner-min (−74%)** e termina ~21 min antes. A "fila do dispatch" do plano é a espera
+no grupo de concorrência: o run que rodou ficou **8,9 min** pendente atrás do anterior antes do 1º job. Um run que
+pula libera o grupo em ~6,5 min, em vez de ~25, então o pendente seguinte espera menos. Com 8 jobs a menos, sobra
+folga nos 20 runners do plano Free para os PRs.
+
+São 2 amostras reais (1 de cada lado), e o runner varia ~45% ([medir-ganho-de-ci-sob-ruido.md](medir-ganho-de-ci-sob-ruido.md)).
+O que elas provam é estrutural: a fiação ponta a ponta (input → escopo → base → `validate`) funciona nos dois
+sentidos, e 8 jobs de ~15 min deixam de existir no run elegível. A frequência (17% dos dispatches) é a da
+simulação. Para conferir depois: `gh run list -w ci.yml -e workflow_dispatch` + o log `escopo das provas SQL:`
+do `validate`.
+
+## Veredito: MANTIDO

@@ -103,7 +103,7 @@ Os cortes do v5 (E6, D2, E2, E8, F6, E4) e do v6 (C3, D7, F10, NF-NULL, NF-CHAVE
 | 5 | ~~E14 restrito — escopo documental cumulativo no dispatch da main~~ ✅ #3657 (Codex APROVAR): simulação sobre 197 dispatches reais dá 34 elegíveis (17%, não ~60%: o diff é cumulativo e a coalescência leva código junto), ~91 runner-min cada. Medição pós-merge em [ci-e14-escopo-main-docs.md](../../../historico/ci-e14-escopo-main-docs.md) | lote 4 medido | sessão + Codex |
 | 6 | ~~F13 — DND sob demanda na home~~ ✅ #3649, **no ar**: `monitor-deploy --pr 3649` → `PR_NO_AR` ([histórico](../../../historico/f13-dnd-sob-demanda-home-v7.md)) | lab antes/depois | sessão + **Publish** |
 | 7 | ~~F12 — score e margem em paralelo no Customer 360~~ ✅ #3647, **no ar**: `monitor-deploy --pr 3647` → `PR_NO_AR` ([histórico](../../../historico/c360-score-margem-paralelo-f12-v7.md)) | lab antes/depois | sessão + **Publish** |
-| — | E17 | lotes 4 e 5 medidos | experimento |
+| — | ~~E17~~ ✅ #3660, **mantido**: a prova do Radar solta A ao observar o bloqueio; no runner 360 → 69 s, LPT 14,5 → 13,8 min por parte, −4,9 runner-min por run com provas ([ci-e17-radar-espera-por-bloqueio.md](../../../historico/ci-e17-radar-espera-por-bloqueio.md)) | lotes 4 e 5 medidos | experimento |
 | — | D11 | — | diagnóstico read-only, sem PR de código |
 | — | D12 | #3638/#3639 | outra sessão |
 | — | ~~#3634 Publish + migration~~ ✅ aplicados em 2026-11-05 (ver §0) | — | — |
