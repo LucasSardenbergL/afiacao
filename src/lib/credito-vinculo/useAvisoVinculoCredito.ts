@@ -34,7 +34,7 @@ export async function registrarSensorVinculo(args: {
   evento: 'servido' | 'conferido';
   superficie: SuperficieAviso;
   cnpj: string;
-  ref?: number;
+  ref?: string;
   veredito?: VereditoConferencia;
 }): Promise<ResultadoRegistro> {
   if (isLensActive()) return { ok: false, erro: 'lente' };

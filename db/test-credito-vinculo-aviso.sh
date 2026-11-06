@@ -27,7 +27,7 @@ MIG="$MIGS/20261106205557_credito_aviso_vinculo_vencido.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> — `post:A3` = a POSTCONDIÇÃO da migration aborta; `pre` = a PRE aborta.
-  SABOTAGENS="aviso_sem_clientes:C2 aviso_corta_10:C3 aviso_sem_carteira:C5 prova_ignorada:C4 titular_duplo:C7 regra_inline:C5 sem_vencido_aparece:C1 incompleto_ignorado:C6 vendedor_ve_tudo:C10 fora_vira_vazio:C8 aviso_sem_gate:G1b registrar_sem_gate:S5 registrar_sem_vigencia:S6 voto_deduplicado:S3 nucleo_corta_11:E1 nucleo_mostra_cliente:E1 aviso_anon:post:A3 base_aberta:post:A2 deriva:pre"
+  SABOTAGENS="aviso_sem_clientes:C2 aviso_corta_10:C3 aviso_sem_carteira:C5 prova_ignorada:C4 titular_duplo:C7 evidencia_nula:C13 sem_frescor:C1 parcial_falso:C1 ref_por_posicao:S10 regra_inline:C5 sem_vencido_aparece:C1 incompleto_ignorado:C6 vendedor_ve_tudo:C10 fora_vira_vazio:C8 aviso_sem_gate:G1b registrar_sem_gate:S5 registrar_sem_vigencia:S6 voto_deduplicado:S3 nucleo_corta_11:E1 nucleo_mostra_cliente:E1 aviso_anon:post:A3 base_aberta:post:A2 deriva:pre"
   LOGDIR="$(mktemp -d "/tmp/falsifica-credito-vinculo.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -88,6 +88,7 @@ cegar_md5() {
   sabotar "    IF r.vivo IS DISTINCT FROM r.esperado THEN" "    IF false AND r.vivo IS DISTINCT FROM r.esperado THEN"
   sabotar "  IF v_bs IS NOT NULL AND v_bs <>" "  IF false AND v_bs <>"
   sabotar "  IF v_av IS NOT NULL AND v_av <>" "  IF false AND v_av <>"
+  sabotar "  IF v_pa IS NOT NULL AND v_pa <>" "  IF false AND v_pa <>"
   sabotar "  IF v_nuc IS NULL OR v_nuc NOT IN" "  IF false AND v_nuc NOT IN"
   sabotar "  IF v_rg IS NOT NULL AND v_rg <>" "  IF false AND v_rg <>"
 }
@@ -103,9 +104,13 @@ case "${SABOTAGEM:-}" in
   aviso_sem_carteira)   cegar_md5; sabotar "$BASE_DO_AVISO" "      FROM private.radar_vinculos_base(ARRAY[p_cnpj], false, true) b
   )," ;;
   prova_ignorada)       cegar_md5; sabotar "            AND m.evidence_document_normalized = t.cliente_cnpj" "            AND true" ;;
-  titular_duplo)        cegar_md5; sabotar "           (t.n_titulares = 1" "           (true" ;;
+  titular_duplo)        cegar_md5; sabotar "COALESCE(t.n_titulares = 1" "COALESCE(true" ;;
+  evidencia_nula)       cegar_md5; sabotar "AND m.updated_at >= now() - interval '7 days', false) AS provado" "AND m.updated_at >= now() - interval '7 days') AS provado" ;;
+  sem_frescor)          cegar_md5; sabotar "AND m.updated_at >= now() - interval '7 days', false) AS provado" "AND true, false) AS provado" ;;
+  parcial_falso)        cegar_md5; sabotar "'parcial', (pv.n_sem_prova > 0 OR pv.incompleto)," "'parcial', false," ;;
+  ref_por_posicao)      cegar_md5; sabotar "'ref', left(md5(p_cnpj || '|' || pv.cliente_cnpj), 16)," "'ref', lpad(pv.ordem::text, 16, '0')," ;;
   incompleto_ignorado)  cegar_md5; sabotar "AND (pv.n_provados = 0 OR pv.n_sem_prova > 0 OR pv.incompleto))" "AND (pv.n_provados = 0))" ;;
-  vendedor_ve_tudo)     cegar_md5; sabotar "'cliente_cnpj', CASE WHEN pv.no_radar OR v_carteira THEN pv.cliente_cnpj END," "'cliente_cnpj', pv.cliente_cnpj," ;;
+  vendedor_ve_tudo)     cegar_md5; sabotar "'cliente_cnpj', CASE WHEN pv.no_radar OR p_ver_carteira THEN pv.cliente_cnpj END," "'cliente_cnpj', pv.cliente_cnpj," ;;
   registrar_sem_gate)   cegar_md5; python3 -I - "$MIG_USADA" <<'PY2'
 import sys
 p = sys.argv[1]; s = open(p, encoding="utf-8").read()
@@ -261,7 +266,10 @@ Pq -c "INSERT INTO public.radar_empresas
   ('52000011000101','P11 LTDA',true,NULL,NULL,NULL,NULL,NULL,NULL,'M1','ANA OMEGA SOUZA','02'),
   -- Q: lead com telefone + e-mail exclusivos de um cliente EM DIA, com código provado → avaliação completa, sem aviso.
   ('61000000000101','Q1 LTDA',false,'(31) 98880061','q@gmail.com',NULL,NULL,NULL,NULL,'M1',NULL,'02'),
-  ('62000000000101','Q2 LTDA',true,'(31) 98880061','q@gmail.com',NULL,NULL,NULL,NULL,'M1',NULL,'02');
+  ('62000000000101','Q2 LTDA',true,'(31) 98880061','q@gmail.com',NULL,NULL,NULL,NULL,'M1',NULL,'02'),
+  -- N: Oben PROVADA e em dia + Colacor com evidência NULA → indeterminado (nunca silêncio) — achado Codex P1.
+  ('63000000000101','N1 LTDA',false,'(31) 98880063','n@gmail.com',NULL,NULL,NULL,NULL,'M1',NULL,'02'),
+  ('64000000000101','N2 LTDA',true,'(31) 98880063','n@gmail.com',NULL,NULL,NULL,NULL,'M1',NULL,'02');
 INSERT INTO public.radar_situacao_cadastral (cnpj, lote, situacao) VALUES
   ('21111111000101','2026-09','02'), ('21111111000101','2026-10','08');
 -- Titulares: u1=C1 · u3=C3 · u6=C6 (o mapa aponta OUTRO documento) · d…=C8 só-profiles · u42=D · u511=P11 ·
@@ -275,7 +283,8 @@ INSERT INTO public.profiles (user_id, document, razao_social, name, phone, email
   ('10000000-0000-0000-0000-000000000511','52000011000101','P11 LTDA',NULL,NULL,NULL),
   ('10000000-0000-0000-0000-00000000010b','30101010000101','C10B LTDA',NULL,NULL,NULL),
   ('10000000-0000-0000-0000-00000000010c','30.101.010/0001-01','C10B DUPLICADO',NULL,NULL,NULL),
-  ('10000000-0000-0000-0000-000000000062','62000000000101','Q2 LTDA',NULL,NULL,NULL);
+  ('10000000-0000-0000-0000-000000000062','62000000000101','Q2 LTDA',NULL,NULL,NULL),
+  ('10000000-0000-0000-0000-000000000064','64000000000101','N2 LTDA',NULL,NULL,NULL);
 INSERT INTO public.addresses (user_id, street, number, complement, zip_code) VALUES
   ('dddddddd-dddd-dddd-dddd-dddddddddddd','Av. Brasil','50','','35500-111');
 INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_cliente, evidence_document_normalized) VALUES
@@ -287,7 +296,11 @@ INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_clie
   ('10000000-0000-0000-0000-000000000511','colacor',511,'52000011000101'),
   ('10000000-0000-0000-0000-00000000010b','oben',110,'30101010000101'),
   ('10000000-0000-0000-0000-00000000010c','colacor',110,'30101010000101'),
-  ('10000000-0000-0000-0000-000000000062','oben',162,'62000000000101');
+  ('10000000-0000-0000-0000-000000000062','oben',162,'62000000000101'),
+  ('10000000-0000-0000-0000-000000000064','oben',164,'64000000000101'),
+  ('10000000-0000-0000-0000-000000000064','colacor',964,NULL);   -- evidência NULA
+-- C1/Colacor: mapa de 8 dias (fora da janela de 7) → sem prova → o aviso de C1 vale, mas é PARCIAL.
+UPDATE public.omie_customer_account_map SET updated_at = now() - interval '8 days' WHERE account = 'colacor' AND omie_codigo_cliente = 201;
 -- Títulos. 'passado' = 30 dias atrás, 'futuro' = +30.
 INSERT INTO public.fin_contas_receber (company, omie_codigo_cliente, status_titulo, saldo, valor_documento, data_emissao, data_vencimento) VALUES
   ('oben',101,'ATRASADO',500,500,current_date - 60,current_date - 30),     -- C1: vencido na Oben
@@ -300,7 +313,8 @@ INSERT INTO public.fin_contas_receber (company, omie_codigo_cliente, status_titu
   ('colacor',511,'ATRASADO',77,77,current_date - 60,current_date - 20),    -- P11: o 11º vínculo de M
   ('oben',110,'ATRASADO',400,400,current_date - 60,current_date - 30),     -- C10B: documento de 2 titulares → nunca
   ('colacor',110,'ATRASADO',400,400,current_date - 60,current_date - 30),
-  ('oben',162,'A VENCER',60,60,current_date - 10,current_date + 30);       -- Q2: em dia, avaliação completa
+  ('oben',162,'A VENCER',60,60,current_date - 10,current_date + 30),       -- Q2: em dia, avaliação completa
+  ('oben',164,'A VENCER',60,60,current_date - 10,current_date + 30);       -- N2: Oben em dia (a Colacor não tem prova)
 INSERT INTO public.fin_sync_log (action, companies, status, completed_at) VALUES
   ('sync_all', ARRAY['oben','colacor'], 'complete', now() - interval '1 hour');   -- colacor_sc sem sync → 'sem_sync'
 " >/dev/null
@@ -321,8 +335,8 @@ if [ "${SABOTAGEM:-}" = "deriva" ]; then
  RETURNS TABLE(lead_cnpj text, ordem integer, cliente_cnpj text, cliente_nome text, cliente_situacao text, forca text, sinais text[])
  LANGUAGE sql STABLE SET search_path TO 'public', 'pg_temp' AS \$f\$ SELECT NULL::text, 1, NULL::text, NULL::text, NULL::text, 'forte', ARRAY['email'] WHERE false \$f\$;"
 fi
-P -q -f "$MIG_USADA" >/dev/null
-P -q -f "$MIG_USADA" >/dev/null   # idempotente (a PRE aceita os corpos que este arquivo já deixou)
+P -q --single-transaction -f "$MIG_USADA" >/dev/null   # o db:aplicar fornece a transação
+P -q --single-transaction -f "$MIG_USADA" >/dev/null   # idempotente (a PRE aceita os corpos que este arquivo já deixou)
 
 PASS=0; FAIL=0
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
@@ -343,6 +357,7 @@ aviso() {
 SELECT (j->>'estado') || '|' || coalesce(j->>'n_vinculos','-') || '|' || coalesce(j->>'n_indeterminados','-') || '|' ||
        coalesce((SELECT string_agg(coalesce(v->>'cliente_cnpj', 'oculto') || '/' || (v->>'forca') || '/' ||
                    (SELECT string_agg(s, '+' ORDER BY s) FROM jsonb_array_elements_text(v->'sinais') s) || '/' ||
+                   CASE WHEN (v->>'parcial')::boolean THEN 'parcial' ELSE 'completo' END || '/' ||
                    (SELECT string_agg((c->>'company') || ':' || (c->>'vencido') || ':' || (c->>'n_titulos') || ':' || (c->>'qualidade'), '+')
                       FROM jsonb_array_elements(v->'credoras') c), ';')
                    FROM jsonb_array_elements(j->'vinculos') v), '-')
@@ -355,21 +370,21 @@ foto_nucleo > "$(dirname "$DATA")/nucleo-depois.txt"
 if diff -q "$(dirname "$DATA")/nucleo-antes.txt" "$(dirname "$DATA")/nucleo-depois.txt" >/dev/null; then r="igual"; else r="MUDOU"; diff "$(dirname "$DATA")/nucleo-antes.txt" "$(dirname "$DATA")/nucleo-depois.txt" | head -10 || true; fi
 eq "E1 núcleo (todos os leads, com e sem carteira) idêntico antes e depois da migration" "$r" "igual"
 eq "E2 a foto tem conteúdo (não é igualdade de vazios): linhas com vínculo" \
-   "$(grep -c . "$(dirname "$DATA")/nucleo-antes.txt")" "33"
+   "$(grep -c . "$(dirname "$DATA")/nucleo-antes.txt")" "35"
 eq "E3 a ficha do lead M segue cortada em 10 e sem o já-cliente K" \
    "$(sql_como "$GESTOR" "SELECT (SELECT count(*) FROM public.radar_possiveis_vinculos('51000000000101'))::text || '/' || (SELECT count(*) FROM public.radar_possiveis_vinculos('41000000000101'))::text;" | tail -1)" "10/0"
 
 # ── C: o aviso ──
-eq "C1 lead → cliente com vencido na Oben; a Colacor em dia NÃO vira credora" \
-   "$(aviso "$VENDEDOR" 11111111000101)" "avaliado|1|0|21111111000101/forte/email+telefone/oben:500:1:ok"
+eq "C1 lead → cliente com vencido na Oben; a Colacor (mapa de 8 dias, sem prova) não é credora e torna o aviso PARCIAL" \
+   "$(aviso "$VENDEDOR" 11111111000101)" "avaliado|1|0|21111111000101/forte/email+telefone/parcial/oben:500:1:ok"
 eq "C2 sujeito JÁ CLIENTE (fora da prospecção) com vínculo a devedor → avisa" \
-   "$(aviso "$VENDEDOR" 41000000000101)" "avaliado|1|0|42000000000101/forte/email+telefone/oben:1000:1:ok"
+   "$(aviso "$VENDEDOR" 41000000000101)" "avaliado|1|0|42000000000101/forte/email+telefone/completo/oben:1000:1:ok"
 eq "C3 o 11º vínculo (além do corte de 10 da ficha) é o devedor → avisa; os 10 sem cadastro ficam indeterminados" \
-   "$(aviso "$VENDEDOR" 51000000000101)" "avaliado|11|10|52000011000101/forte/pessoa/colacor:77:1:ok"
+   "$(aviso "$VENDEDOR" 51000000000101)" "avaliado|11|10|52000011000101/forte/pessoa/completo/colacor:77:1:ok"
 eq "C4 mapa com documento DIVERGENTE do vinculado não prova a dívida → indeterminado, sem aviso" \
    "$(aviso "$VENDEDOR" 16666666000101)" "avaliado|1|1|-"
 eq "C5 cliente só-profiles AVALIADO para o vendedor (sem nome/CNPJ); A VENCER já passado conta; colacor_sc sem sync" \
-   "$(aviso "$VENDEDOR" 18888888000101)" "avaliado|1|0|oculto/forte/endereco+telefone/colacor_sc:80:1:sem_sync"
+   "$(aviso "$VENDEDOR" 18888888000101)" "avaliado|1|0|oculto/forte/endereco+telefone/parcial/colacor_sc:80:1:sem_sync"
 eq "C6 vínculo em dia MAS com título de status incerto → indeterminado (nunca 'sem pendência')" \
    "$(aviso "$VENDEDOR" 13333333000101)" "avaliado|1|1|-"
 eq "C7 sem cadastro (C10A) e documento de 2 titulares (C10B) → os 2 indeterminados, sem aviso" \
@@ -379,9 +394,13 @@ eq "C8 CNPJ fora da base RFB do Radar → 'fora_da_base' (nunca 'sem vínculo')"
 eq "C9 lead sem vínculo nenhum → avaliado, 0" "$(aviso "$VENDEDOR" 12222222000101)" "avaliado|0|0|-"
 eq "C10 o gestor (lê a carteira) vê o CNPJ do cliente só-cadastro; o vendedor não (projeção da ficha)" \
    "$(aviso "$GESTOR" 18888888000101) $(aviso "$VENDEDOR" 18888888000101 | cut -d'|' -f4 | cut -d/ -f1)" \
-   "avaliado|1|0|28888888000101/forte/endereco+telefone/colacor_sc:80:1:sem_sync oculto"
+   "avaliado|1|0|28888888000101/forte/endereco+telefone/parcial/colacor_sc:80:1:sem_sync oculto"
 eq "C11 vínculo em dia com avaliação completa → avaliado, sem aviso e sem indeterminado" \
    "$(aviso "$VENDEDOR" 61000000000101)" "avaliado|1|0|-"
+eq "C13 Oben provada e em dia + Colacor com evidência NULA → indeterminado, nunca silêncio" \
+   "$(aviso "$VENDEDOR" 63000000000101)" "avaliado|1|1|-"
+eq "C14 o CNPJ real do par nunca sai pela API (_cliente_cnpj_real)" \
+   "$(sql_como "$GESTOR" "SELECT count(*) FROM jsonb_array_elements(public.credito_vinculo_aviso('18888888000101')->'vinculos') v WHERE v ? '_cliente_cnpj_real';" | tail -1)" "0"
 eq "C12 o vencido do aviso = venda_prazo_aviso do par (a mesma regra)" \
    "$(sql_como "$VENDEDOR" "SELECT (public.venda_prazo_aviso('colacor_sc', 801)->>'vencido');" | tail -1)" "80"
 
@@ -398,20 +417,21 @@ case "$(sql_como "$GESTOR" "SELECT count(*) FROM private.radar_vinculos_base(ARR
   *"permission denied for function radar_vinculos_base"*) r="negado";; *) r="EXECUTOU";; esac
 eq "G4 a base das regras (sem gate) não é chamável pelo JWT" "$r" "negado"
 eq "G5 anon NÃO executa aviso nem sensor; authenticated executa os 2" \
-   "$(Pq -c "SELECT has_function_privilege('anon','public.credito_vinculo_aviso(text)','EXECUTE')::text||' '||has_function_privilege('anon','public.credito_vinculo_aviso_registrar(text,text,text,integer,text)','EXECUTE')::text||' '||has_function_privilege('authenticated','public.credito_vinculo_aviso(text)','EXECUTE')::text||' '||has_function_privilege('authenticated','public.credito_vinculo_aviso_registrar(text,text,text,integer,text)','EXECUTE')::text;")" \
-   "false false true true"
+   "$(Pq -c "SELECT has_function_privilege('anon','public.credito_vinculo_aviso(text)','EXECUTE')::text||' '||has_function_privilege('anon','public.credito_vinculo_aviso_registrar(text,text,text,text,text)','EXECUTE')::text||' '||has_function_privilege('authenticated','public.credito_vinculo_aviso(text)','EXECUTE')::text||' '||has_function_privilege('authenticated','public.credito_vinculo_aviso_registrar(text,text,text,text,text)','EXECUTE')::text||' '||has_function_privilege('authenticated','private.credito_vinculo_avaliar(text,boolean)','EXECUTE')::text;")" \
+   "false false true true false"
 
 # ── S: o sensor ──
 reg() { sql_como "$1" "SELECT public.credito_vinculo_aviso_registrar($2)->>'registrado';" | tail -1; }
+REF8="$(sql_como "$VENDEDOR" "SELECT public.credito_vinculo_aviso('18888888000101')->'vinculos'->0->>'ref';" | tail -1)"
 eq "S1 'servido' grava para staff com aviso vigente" "$(reg "$VENDEDOR" "'servido', 'pedido', '18888888000101'")" "true"
 eq "S2 'servido' repetido no mesmo dia é deduplicado" "$(reg "$VENDEDOR" "'servido', 'pedido', '18888888000101'")" "false"
-reg "$VENDEDOR" "'conferido', 'pedido', '18888888000101', 1, 'mesmo_grupo'" >/dev/null
-reg "$VENDEDOR" "'conferido', 'pedido', '18888888000101', 1, 'sem_relacao'" >/dev/null
-reg "$VENDEDOR" "'conferido', 'pedido', '18888888000101', 1, 'mesmo_grupo'" >/dev/null
+reg "$VENDEDOR" "'conferido', 'pedido', '18888888000101', '$REF8', 'mesmo_grupo'" >/dev/null
+reg "$VENDEDOR" "'conferido', 'pedido', '18888888000101', '$REF8', 'sem_relacao'" >/dev/null
+reg "$VENDEDOR" "'conferido', 'pedido', '18888888000101', '$REF8', 'mesmo_grupo'" >/dev/null
 eq "S3 todo voto de 'conferido' grava (o último por ocorrido_em é a resposta vigente)" \
    "$(Pq -c "SELECT string_agg(props->>'veredito', ',' ORDER BY id) FROM public.analytics_outbox WHERE evento = 'credito.vinculo_aviso_conferido';")" \
    "mesmo_grupo,sem_relacao,mesmo_grupo"
-case "$(sql_como "$VENDEDOR" "SELECT public.credito_vinculo_aviso_registrar('conferido', 'pedido', '18888888000101', 7, 'mesmo_grupo');")" in
+case "$(sql_como "$VENDEDOR" "SELECT public.credito_vinculo_aviso_registrar('conferido', 'pedido', '18888888000101', 'ffffffffffffffff', 'mesmo_grupo');")" in
   *"não é um vínculo vigente"*) r="recusou";; *) r="ACEITOU";; esac
 eq "S4 'conferido' com ref que não é vínculo vigente → 22023" "$r" "recusou"
 case "$(sql_como "$CLIENTE" "SELECT public.credito_vinculo_aviso_registrar('servido', 'pedido', '18888888000101');")" in
@@ -421,14 +441,31 @@ case "$(sql_como "$VENDEDOR" "SELECT public.credito_vinculo_aviso_registrar('ser
   *"não há aviso vigente"*) r="recusou";; *) r="ACEITOU";; esac
 eq "S6 'servido' para CNPJ sem aviso vigente → 22023 (não se registra o que a tela não podia mostrar)" "$r" "recusou"
 eq "S7 as props levam o CNPJ REAL do vinculado (oculto na tela do vendedor), a força e a versão da regra" \
-   "$(Pq -c "SELECT (props->>'cliente_cnpj')||'/'||(props->>'forca')||'/'||(props->>'regra_versao')||'/'||(props->>'superficie') FROM public.analytics_outbox WHERE evento = 'credito.vinculo_aviso_conferido' ORDER BY id LIMIT 1;")" \
-   "28888888000101/forte/1/pedido"
+   "$(Pq -c "SELECT (props->>'cliente_cnpj')||'/'||(props->>'forca')||'/'||(props->>'regra_versao')||'/'||(props->>'superficie')||'/'||(props->>'ref') FROM public.analytics_outbox WHERE evento = 'credito.vinculo_aviso_conferido' ORDER BY id LIMIT 1;")" \
+   "28888888000101/forte/1/pedido/$REF8"
 eq "S8 'servido' guarda os pares exibidos (ref e credoras)" \
-   "$(Pq -c "SELECT props->'pares'->0->>'ref'||'/'||(props->'pares'->0->'credoras'->>0) FROM public.analytics_outbox WHERE evento = 'credito.vinculo_aviso_servido';")" \
-   "1/colacor_sc"
-case "$(sql_como "$VENDEDOR" "SELECT public.credito_vinculo_aviso_registrar('conferido', 'pedido', '18888888000101', 1, 'talvez');")" in
+   "$(Pq -c "SELECT (props->'pares'->0->>'ref')||'/'||(props->'pares'->0->>'cliente_cnpj')||'/'||(props->'pares'->0->'credoras'->>0) FROM public.analytics_outbox WHERE evento = 'credito.vinculo_aviso_servido';")" \
+   "$REF8/28888888000101/colacor_sc"
+case "$(sql_como "$VENDEDOR" "SELECT public.credito_vinculo_aviso_registrar('conferido', 'pedido', '18888888000101', '$REF8', 'talvez');")" in
   *"veredito válido"*) r="recusou";; *) r="ACEITOU";; esac
 eq "S9 veredito fora do vocabulário → 22023" "$r" "recusou"
+
+# S10: um vínculo NOVO e mais forte (B) entra na FRENTE de C8 depois de a tela mostrar o aviso. O voto com o ref
+# de C8 continua sendo de C8 — por posição, iria para B (achado Codex P1 do código).
+Pq -c "UPDATE public.radar_empresas SET email = 'bb@gmail.com', socios_nomes = 'BRUNO TESTE SILVA' WHERE cnpj = '18888888000101';
+INSERT INTO public.radar_empresas (cnpj, razao_social, ja_cliente, email, municipio_codigo, socios_nomes, rfb_situacao)
+  VALUES ('10000000000191','B NOVO LTDA',true,'bb@gmail.com','M1','BRUNO TESTE SILVA','02');
+INSERT INTO public.profiles (user_id, document, razao_social) VALUES ('10000000-0000-0000-0000-0000000000b1','10000000000191','B NOVO LTDA');
+INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_cliente, evidence_document_normalized)
+  VALUES ('10000000-0000-0000-0000-0000000000b1','oben',191,'10000000000191');
+INSERT INTO public.fin_contas_receber (company, omie_codigo_cliente, status_titulo, saldo, valor_documento, data_emissao, data_vencimento)
+  VALUES ('oben',191,'ATRASADO',33,33,current_date - 60,current_date - 30);" >/dev/null
+eq "S10a B entrou na frente de C8 (pré-condição do cenário)" \
+   "$(sql_como "$GESTOR" "SELECT (public.credito_vinculo_aviso('18888888000101')->'vinculos'->0->>'cliente_cnpj');" | tail -1)" "10000000000191"
+reg "$VENDEDOR" "'conferido', 'pedido', '18888888000101', '$REF8', 'sem_relacao'" >/dev/null
+eq "S10 o voto com o ref de C8 segue gravando C8, mesmo com B na frente" \
+   "$(Pq -c "SELECT props->>'cliente_cnpj' FROM public.analytics_outbox WHERE evento = 'credito.vinculo_aviso_conferido' ORDER BY id DESC LIMIT 1;")" \
+   "28888888000101"
 
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "CREDITO_VINCULO_AVISO_PROVA_OK"

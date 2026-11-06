@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
-import { estadoDeLeitura, naoConsegui, type EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
+import { desatualizado, estadoDeLeitura, naoConsegui, type EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { track } from '@/lib/analytics';
 import {
@@ -48,20 +48,29 @@ export function AvisoVinculoCredito({ documento, superficie }: AvisoVinculoCredi
   const cnpj = cnpjDoDocumento(documento);
   const q = useAvisoVinculoCredito(cnpj);
   const estado = estadoDeLeitura(q);
+  // Cache em mãos mas a revalidação falhou ou está pausada (offline com cache vencido): `estado` diz 'pronta' — sem
+  // isto, um cache negativo velho viraria silêncio (achado Codex P2 do código).
+  const velho = desatualizado(q, q.data !== undefined);
   const exibicao = exibicaoDoAviso({
     cnpj,
     carregando: estado === 'carregando',
     falhou: naoConsegui(estado),
     aviso: estado === 'pronta' ? q.data : null,
   });
+  // Evidência POSITIVA em cache segue na tela (com o aviso de desatualizado); qualquer outro desfecho velho é "não consegui".
+  const exibicaoFinal = velho && exibicao.tipo !== 'aviso' ? ({ tipo: 'nao_consegui' } as const) : exibicao;
   const lente = isLensActive();
-  const [votos, setVotos] = useState<Record<number, EstadoVoto>>({});
+  const [votos, setVotos] = useState<Record<string, EstadoVoto>>({});
   const servidoRef = useRef<string | null>(null);
+  // Geração do cliente na tela: a resposta de um voto que chega DEPOIS da troca de cliente é descartada (senão o voto
+  // pendente de A aparecia como "registrado" em B — achado Codex P2 do código, reproduzido).
+  const cnpjNaTela = useRef(cnpj);
+  cnpjNaTela.current = cnpj;
 
   // Cliente trocou → zera os votos da tela.
   useEffect(() => { setVotos({}); }, [cnpj]);
 
-  const temAviso = exibicao.tipo === 'aviso';
+  const temAviso = exibicaoFinal.tipo === 'aviso';
   useEffect(() => {
     if (!temAviso || !cnpj) return;
     const chave = `${superficie}:${cnpj}`;
@@ -76,9 +85,9 @@ export function AvisoVinculoCredito({ documento, superficie }: AvisoVinculoCredi
     if (naoConsegui(estado)) track('credito.vinculo_aviso_falhou', { superficie, estado: estado === 'sem-rede' ? 'sem_rede' : 'erro' });
   }, [estado, superficie]);
 
-  if (exibicao.tipo === 'nada') return null;
-  if (exibicao.tipo === 'nao_consegui') {
-    const estadoFalha: EstadoSemLeitura = estado === 'sem-rede' ? 'sem-rede' : 'erro';
+  if (exibicaoFinal.tipo === 'nada') return null;
+  if (exibicaoFinal.tipo === 'nao_consegui') {
+    const estadoFalha: EstadoSemLeitura = velho ?? (estado === 'sem-rede' ? 'sem-rede' : 'erro');
     return (
       <AvisoLeituraFalhou
         oque="a verificação de vínculo com cliente que tem títulos vencidos"
@@ -88,23 +97,30 @@ export function AvisoVinculoCredito({ documento, superficie }: AvisoVinculoCredi
       />
     );
   }
-  if (exibicao.tipo === 'nao_verificado') {
+  if (exibicaoFinal.tipo === 'nao_verificado') {
     return (
-      <p className="text-[11px] text-muted-foreground" data-testid="aviso-vinculo-nao-verificado" data-motivo={exibicao.motivo}>
-        {textoNaoVerificado(exibicao.motivo, exibicao.n)}
+      <p className="text-[11px] text-muted-foreground" data-testid="aviso-vinculo-nao-verificado" data-motivo={exibicaoFinal.motivo}>
+        {textoNaoVerificado(exibicaoFinal.motivo, exibicaoFinal.n)}
       </p>
     );
   }
 
   const votar = async (v: VinculoComVencido, veredito: VereditoConferencia) => {
     if (!cnpj) return;
+    const cnpjDoVoto = cnpj;
     setVotos((s) => ({ ...s, [v.ref]: { fase: 'enviando' } }));
-    const r = await registrarSensorVinculo({ evento: 'conferido', superficie, cnpj, ref: v.ref, veredito });
+    const r = await registrarSensorVinculo({ evento: 'conferido', superficie, cnpj: cnpjDoVoto, ref: v.ref, veredito });
+    if (cnpjNaTela.current !== cnpjDoVoto) return;   // o cliente mudou enquanto o voto ia — não é deste card
     setVotos((s) => ({ ...s, [v.ref]: r.ok && r.registrado ? { fase: 'ok', veredito } : { fase: 'erro' } }));
     track('credito.vinculo_aviso_conferido', { superficie, veredito, gravou: r.ok && r.registrado });
   };
 
   return (
+    <>
+    {velho && (
+      <AvisoLeituraFalhou oque="a atualização do aviso de vínculo (o que aparece abaixo pode estar desatualizado)"
+        estado={velho} testId="aviso-vinculo-desatualizado" className="mb-1" />
+    )}
     <div className="bg-status-warning/10 border border-status-warning/30 rounded-md p-2 text-xs" data-testid="aviso-vinculo-credito">
       <div className="flex items-start gap-2">
         <AlertTriangle className="w-4 h-4 text-status-warning flex-shrink-0 mt-0.5" />
@@ -112,7 +128,7 @@ export function AvisoVinculoCredito({ documento, superficie }: AvisoVinculoCredi
           <p className="font-semibold text-status-warning">{FRASE_AVISO}</p>
           <p className="text-[11px] text-muted-foreground">É uma pista, não um veredito: nada foi bloqueado nem mudou no prazo.</p>
           <ul className="space-y-2">
-            {exibicao.vinculos.map((v) => {
+            {exibicaoFinal.vinculos.map((v) => {
               const voto = votos[v.ref];
               return (
                 <li key={v.ref} className="space-y-1" data-testid={`aviso-vinculo-${v.ref}`}>
@@ -160,13 +176,14 @@ export function AvisoVinculoCredito({ documento, superficie }: AvisoVinculoCredi
               );
             })}
           </ul>
-          {exibicao.nIndeterminados > 0 && (
+          {exibicaoFinal.nIndeterminados > 0 && (
             <p className="text-[11px] text-muted-foreground">
-              {textoNaoVerificado('indeterminado', exibicao.nIndeterminados)}
+              {textoNaoVerificado('indeterminado', exibicaoFinal.nIndeterminados)}
             </p>
           )}
         </div>
       </div>
     </div>
+    </>
   );
 }

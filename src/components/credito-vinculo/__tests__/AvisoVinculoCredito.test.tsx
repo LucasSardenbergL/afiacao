@@ -18,11 +18,12 @@ const track = vi.fn();
 vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a) }));
 
 import { AvisoVinculoCredito } from '../AvisoVinculoCredito';
+import { lerAvisoVinculo } from '@/lib/credito-vinculo/aviso';
 
 const comVencido = {
   estado: 'avaliado', regra_versao: 1, n_vinculos: 2, n_indeterminados: 1,
   vinculos: [{
-    ref: 1, cliente_cnpj: null, cliente_nome: null, cliente_situacao: '08', forca: 'forte', sinais: ['endereco', 'telefone'],
+    ref: 'abcdef0123456789', cliente_cnpj: null, cliente_nome: null, cliente_situacao: '08', forca: 'forte', sinais: ['endereco', 'telefone'],
     parcial: true,
     credoras: [{ company: 'colacor_sc', vencido: 80, n_titulos: 1, dias_vencido_max: 30, vencimento_mais_antigo: '2026-10-07',
                  sync_em: null, qualidade: 'sem_sync', n_ambiguos: 0, n_invalidos: 0 }],
@@ -30,13 +31,14 @@ const comVencido = {
 };
 const ok = (data: unknown) => () => Promise.resolve({ data, error: null });
 
-function montar(documento: string | null) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+function montar(documento: string | null, qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  const ui = (d: string | null) => (
     <QueryClientProvider client={qc}>
-      <AvisoVinculoCredito documento={documento} superficie="pedido" />
-    </QueryClientProvider>,
+      <AvisoVinculoCredito documento={d} superficie="pedido" />
+    </QueryClientProvider>
   );
+  const r = render(ui(documento));
+  return { ...r, trocar: (d: string | null) => r.rerender(ui(d)) };
 }
 const chamadas = (fn: string) => rpc.mock.calls.filter((c) => c[0] === fn).map((c) => c[1]);
 
@@ -53,8 +55,8 @@ describe('AvisoVinculoCredito', () => {
     const card = await screen.findByTestId('aviso-vinculo-credito');
     expect(card.textContent).toContain('Possível vínculo com cliente que possui títulos vencidos; requer conferência.');
     expect(card.textContent).toContain('um cliente da carteira — confira com a gestão');
-    expect(screen.getByTestId('aviso-vinculo-1-colacor_sc').textContent).toContain('Colacor SC');
-    expect(screen.getByTestId('aviso-vinculo-1-colacor_sc').textContent).toContain('sem registro de sync');
+    expect(screen.getByTestId('aviso-vinculo-abcdef0123456789-colacor_sc').textContent).toContain('Colacor SC');
+    expect(screen.getByTestId('aviso-vinculo-abcdef0123456789-colacor_sc').textContent).toContain('sem registro de sync');
     expect(card.textContent).toContain('o vencido pode ser maior');
     expect(card.textContent).toContain('1 possível vínculo sem código Omie com prova');
     await waitFor(() => expect(chamadas('credito_vinculo_aviso_registrar')).toHaveLength(1));
@@ -66,9 +68,9 @@ describe('AvisoVinculoCredito', () => {
     aviso = ok(comVencido);
     montar('18888888000101');
     fireEvent.click(await screen.findByText('Não tem relação'));
-    await screen.findByTestId('aviso-vinculo-1-registrado');
+    await screen.findByTestId('aviso-vinculo-abcdef0123456789-registrado');
     expect(chamadas('credito_vinculo_aviso_registrar')).toContainEqual(
-      { p_evento: 'conferido', p_superficie: 'pedido', p_cnpj: '18888888000101', p_ref: 1, p_veredito: 'sem_relacao' });
+      { p_evento: 'conferido', p_superficie: 'pedido', p_cnpj: '18888888000101', p_ref: 'abcdef0123456789', p_veredito: 'sem_relacao' });
   });
 
   it('conferência que o servidor recusa → "não consegui registrar", nunca "registrada"', async () => {
@@ -76,8 +78,8 @@ describe('AvisoVinculoCredito', () => {
     montar('18888888000101');
     registro = () => Promise.resolve({ data: null, error: { message: 'não há aviso vigente' } });
     fireEvent.click(await screen.findByText('É o mesmo dono/grupo'));
-    await screen.findByTestId('aviso-vinculo-1-erro');
-    expect(screen.queryByTestId('aviso-vinculo-1-registrado')).toBeNull();
+    await screen.findByTestId('aviso-vinculo-abcdef0123456789-erro');
+    expect(screen.queryByTestId('aviso-vinculo-abcdef0123456789-registrado')).toBeNull();
   });
 
   it('sob a lente "Ver como": card aparece, botões desabilitados, nada gravado', async () => {
@@ -121,6 +123,41 @@ describe('AvisoVinculoCredito', () => {
     montar('123.456.789-09');
     expect((await screen.findByTestId('aviso-vinculo-nao-verificado')).getAttribute('data-motivo')).toBe('cpf');
     expect(chamadas('credito_vinculo_aviso')).toHaveLength(0);
+  });
+
+  it('voto pendente de A NÃO aparece como registrado em B depois da troca de cliente', async () => {
+    aviso = ok(comVencido);
+    let soltar: (r: Resp) => void = () => {};
+    registro = () => new Promise<Resp>((res) => { soltar = res; });
+    const { trocar } = montar('18888888000101');
+    await screen.findByTestId('aviso-vinculo-credito');
+    await waitFor(() => expect(chamadas('credito_vinculo_aviso_registrar')).toHaveLength(1));   // o 'servido'
+    soltar({ data: { registrado: true }, error: null });
+    fireEvent.click(screen.getByText('Não tem relação'));
+    await waitFor(() => expect(chamadas('credito_vinculo_aviso_registrar')).toHaveLength(2));
+    trocar('28888888000101');   // B tem o MESMO ref no mock: o pior caso
+    await screen.findByTestId('aviso-vinculo-credito');
+    soltar({ data: { registrado: true }, error: null });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId('aviso-vinculo-abcdef0123456789-registrado')).toBeNull();
+  });
+
+  it('offline com cache NEGATIVO vencido → "sem conexão", nunca silêncio', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['credito', 'vinculo-aviso', '13333333000101'],
+      { estado: 'avaliado', nVinculos: 1, nIndeterminados: 0, vinculos: [] }, { updatedAt: Date.now() - 11 * 60_000 });
+    onlineManager.setOnline(false);
+    montar('13333333000101', qc);
+    expect((await screen.findByTestId('aviso-vinculo-leitura-falhou')).getAttribute('data-estado')).toBe('sem-rede');
+  });
+
+  it('offline com cache POSITIVO vencido → o aviso segue, com o alerta de desatualizado', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['credito', 'vinculo-aviso', '18888888000101'], lerAvisoVinculo(comVencido), { updatedAt: Date.now() - 11 * 60_000 });
+    onlineManager.setOnline(false);
+    montar('18888888000101', qc);
+    expect((await screen.findByTestId('aviso-vinculo-desatualizado')).getAttribute('data-estado')).toBe('sem-rede');
+    expect(screen.getByTestId('aviso-vinculo-credito')).toBeTruthy();
   });
 
   it('avaliação completa sem evidência → nada (e nenhum sensor)', async () => {

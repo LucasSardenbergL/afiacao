@@ -32,7 +32,7 @@
 -- igual ao documento do perfil, source='document', mapa < 7 d e 0 documento com 2 titulares — a prova custa 0 de recall.
 -- Molde TRAVA → PRE → CREATE → PÓS. Prova PG17: db/test-credito-vinculo-aviso.sh (e --falsificar).
 --
--- Aplicação: `bun run db:aplicar supabase/migrations/20261106205557_credito_aviso_vinculo_vencido.sql`
+-- Aplicação: `bun run db:aplicar supabase/migrations/20261106193714_credito_aviso_vinculo_vencido.sql`
 -- (sem BEGIN/COMMIT: o executor fornece a transação).
 -- ============================================================
 
@@ -42,6 +42,20 @@ BEGIN
   ALTER FUNCTION private.radar_vinculos_nucleo(text[], boolean) STABLE;
   ALTER FUNCTION public.venda_prazo_aviso(text, bigint) STABLE;
   ALTER FUNCTION public.normalizar_documento(text) IMMUTABLE;
+  -- No RE-apply os objetos novos já existem: prendê-los também, ANTES da PRE (achado Codex P2 do código) — senão
+  -- outro escritor (SQL Editor) mudaria um deles entre a PRE e o CREATE, e a PÓS aprovaria por cima.
+  IF to_regprocedure('private.radar_vinculos_base(text[],boolean,boolean)') IS NOT NULL THEN
+    ALTER FUNCTION private.radar_vinculos_base(text[], boolean, boolean) STABLE;
+  END IF;
+  IF to_regprocedure('private.credito_vinculo_avaliar(text,boolean)') IS NOT NULL THEN
+    ALTER FUNCTION private.credito_vinculo_avaliar(text, boolean) STABLE;
+  END IF;
+  IF to_regprocedure('public.credito_vinculo_aviso(text)') IS NOT NULL THEN
+    ALTER FUNCTION public.credito_vinculo_aviso(text) STABLE;
+  END IF;
+  IF to_regprocedure('public.credito_vinculo_aviso_registrar(text,text,text,text,text)') IS NOT NULL THEN
+    ALTER FUNCTION public.credito_vinculo_aviso_registrar(text, text, text, text, text) VOLATILE;
+  END IF;
 END
 $trava$;
 
@@ -53,17 +67,21 @@ DECLARE
   v_pz  text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.venda_prazo_aviso(text,bigint)'));
   v_nd  text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.normalizar_documento(text)'));
   v_bs  text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('private.radar_vinculos_base(text[],boolean,boolean)'));
+  v_pa  text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('private.credito_vinculo_avaliar(text,boolean)'));
   v_av  text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.credito_vinculo_aviso(text)'));
-  v_rg  text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.credito_vinculo_aviso_registrar(text,text,text,integer,text)'));
+  v_rg  text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.credito_vinculo_aviso_registrar(text,text,text,text,text)'));
 BEGIN
-  -- Os 3 objetos novos: ausentes (1º apply) ou já este corpo (re-apply). Outro corpo = outra sessão no meio.
+  -- Os 4 objetos novos: ausentes (1º apply) ou já este corpo (re-apply). Outro corpo = outra sessão no meio.
   IF v_bs IS NOT NULL AND v_bs <> '91dc715bb76efc00b85c4b86964d50db' THEN
     RAISE EXCEPTION 'PRE FALHOU: private.radar_vinculos_base vivo (md5 %) não é o deste arquivo', v_bs;
   END IF;
-  IF v_av IS NOT NULL AND v_av <> 'f955f304825f3036b28a823f5807f05f' THEN
+  IF v_pa IS NOT NULL AND v_pa <> 'afbc83bfdbe959be21486d19c818d051' THEN
+    RAISE EXCEPTION 'PRE FALHOU: private.credito_vinculo_avaliar vivo (md5 %) não é o deste arquivo', v_pa;
+  END IF;
+  IF v_av IS NOT NULL AND v_av <> 'e7e4c97c787123c82c814f192db361a2' THEN
     RAISE EXCEPTION 'PRE FALHOU: public.credito_vinculo_aviso vivo (md5 %) não é o deste arquivo', v_av;
   END IF;
-  IF v_rg IS NOT NULL AND v_rg <> 'ded37d6ce8da329b7c0fed09646d71dc' THEN
+  IF v_rg IS NOT NULL AND v_rg <> '9e0cfc8bc35dd5bc0784d0821b15918a' THEN
     RAISE EXCEPTION 'PRE FALHOU: public.credito_vinculo_aviso_registrar vivo (md5 %) não é o deste arquivo', v_rg;
   END IF;
   IF v_nuc IS NULL OR v_nuc NOT IN ('bc00b310f4347fde61fee3a6c3b28a30', 'f345a864df438f0b7fba25bf50f6ea43') THEN
@@ -249,38 +267,26 @@ REVOKE ALL ON FUNCTION private.radar_vinculos_nucleo(text[], boolean) FROM PUBLI
 
 -- ------------------------------------------------------------
 -- 2. O AVISO. Leitura, nada persistido. Sujeito = o CNPJ do cliente do pedido ou do lead da ficha.
+--    private.credito_vinculo_avaliar = a avaliação, numa ÚNICA consulta (um snapshot), sem gate — fechada ao JWT.
+--    public.credito_vinculo_aviso = gate staff + projeção de quem chama; o sensor usa a avaliação com a carteira
+--    inteira, para gravar o CNPJ real do par que a tela mostrou.
 -- ------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.credito_vinculo_aviso(p_cnpj text)
+CREATE OR REPLACE FUNCTION private.credito_vinculo_avaliar(p_cnpj text, p_ver_carteira boolean)
  RETURNS jsonb
  LANGUAGE plpgsql
- STABLE SECURITY DEFINER
+ STABLE
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 DECLARE
-  v_uid uuid := (SELECT auth.uid());
-  v_carteira boolean;
   v_out jsonb;
 BEGIN
-  -- SECURITY DEFINER bypassa a RLS de profiles/fin_contas_receber ⇒ o gate vive AQUI, antes de qualquer retorno:
-  -- staff, o mesmo recorte de venda_prazo_aviso.
-  IF v_uid IS NULL OR NOT EXISTS (
-       SELECT 1 FROM public.user_roles ur
-        WHERE ur.user_id = v_uid AND ur.role IN ('employee'::public.app_role, 'master'::public.app_role)) THEN
-    RAISE EXCEPTION 'credito_vinculo_aviso: exige staff' USING ERRCODE = '42501';
-  END IF;
-  IF p_cnpj IS NULL OR p_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}$' THEN
-    RAISE EXCEPTION 'cnpj inválido' USING ERRCODE = '22023';
-  END IF;
-
   -- Fora da base RFB do Radar não há como avaliar: dizer isso, nunca "sem vínculo".
   IF NOT EXISTS (SELECT 1 FROM public.radar_empresas e WHERE e.cnpj = p_cnpj) THEN
     RETURN jsonb_build_object('estado', 'fora_da_base', 'regra_versao', 1);
   END IF;
 
   -- Projeção = a da ficha (decisão do founder, 2026-11-06): o crédito AVALIA a carteira inteira, mas só mostra
-  -- nome/CNPJ de cliente só-cadastro a quem lê a carteira. Valores: todo staff (já lê fin_contas_receber).
-  v_carteira := COALESCE(private.cap_carteira_ler(v_uid), false);
-
+  -- nome/CNPJ de cliente só-cadastro a quem lê a carteira (p_ver_carteira). Valores: todo staff.
   WITH
   -- TODOS os vínculos (já-cliente incluído, sem o corte de 10): o corte de apresentação não esconde devedor.
   v AS (
@@ -300,9 +306,10 @@ BEGIN
   -- evidência documental = o documento do vinculado, titular único, mapa fresco (7 d). Sem prova → não avaliado.
   par AS (
     SELECT t.cliente_cnpj, m.account AS company, m.omie_codigo_cliente AS codigo,
-           (t.n_titulares = 1
-            AND m.evidence_document_normalized = t.cliente_cnpj
-            AND m.updated_at >= now() - interval '7 days') AS provado
+           -- COALESCE: evidência NULA é "sem prova", nunca NULL (NULL some de provado E de NOT provado)
+           COALESCE(t.n_titulares = 1
+                    AND m.evidence_document_normalized = t.cliente_cnpj
+                    AND m.updated_at >= now() - interval '7 days', false) AS provado
       FROM titular t
       JOIN public.omie_customer_account_map m ON m.user_id = t.user_id
      WHERE m.omie_codigo_cliente > 0
@@ -352,16 +359,52 @@ BEGIN
            'n_indeterminados', count(*) FILTER (WHERE pv.credoras IS NULL
                                                   AND (pv.n_provados = 0 OR pv.n_sem_prova > 0 OR pv.incompleto)),
            'vinculos', coalesce(jsonb_agg(jsonb_build_object(
-                         'ref', pv.ordem,
-                         'cliente_cnpj', CASE WHEN pv.no_radar OR v_carteira THEN pv.cliente_cnpj END,
-                         'cliente_nome', CASE WHEN pv.no_radar OR v_carteira THEN pv.cliente_nome END,
+                         -- referência OPACA e ESTÁVEL do par (sujeito, vinculado): não muda se outro vínculo
+                         -- entrar na frente (a posição mudaria e o voto iria para o cliente errado).
+                         'ref', left(md5(p_cnpj || '|' || pv.cliente_cnpj), 16),
+                         'cliente_cnpj', CASE WHEN pv.no_radar OR p_ver_carteira THEN pv.cliente_cnpj END,
+                         'cliente_nome', CASE WHEN pv.no_radar OR p_ver_carteira THEN pv.cliente_nome END,
                          'cliente_situacao', pv.cliente_situacao, 'forca', pv.forca, 'sinais', to_jsonb(pv.sinais),
                          -- parte das contas do vinculado não foi avaliada: o aviso vale, o total pode ser maior
                          'parcial', (pv.n_sem_prova > 0 OR pv.incompleto),
-                         'credoras', pv.credoras) ORDER BY pv.ordem)
+                         'credoras', pv.credoras,
+                         '_cliente_cnpj_real', pv.cliente_cnpj) ORDER BY pv.ordem)
                          FILTER (WHERE pv.credoras IS NOT NULL), '[]'::jsonb))
     INTO v_out
     FROM por_vinculo pv;
+  RETURN v_out;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION private.credito_vinculo_avaliar(text, boolean) FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.credito_vinculo_aviso(p_cnpj text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_out jsonb;
+BEGIN
+  -- SECURITY DEFINER bypassa a RLS de profiles/fin_contas_receber ⇒ o gate vive AQUI, antes de qualquer retorno:
+  -- staff, o mesmo recorte de venda_prazo_aviso.
+  IF v_uid IS NULL OR NOT EXISTS (
+       SELECT 1 FROM public.user_roles ur
+        WHERE ur.user_id = v_uid AND ur.role IN ('employee'::public.app_role, 'master'::public.app_role)) THEN
+    RAISE EXCEPTION 'credito_vinculo_aviso: exige staff' USING ERRCODE = '42501';
+  END IF;
+  IF p_cnpj IS NULL OR p_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}$' THEN
+    RAISE EXCEPTION 'cnpj inválido' USING ERRCODE = '22023';
+  END IF;
+  v_out := private.credito_vinculo_avaliar(p_cnpj, COALESCE(private.cap_carteira_ler(v_uid), false));
+  -- O CNPJ real é só do sensor: nunca sai pela API.
+  IF v_out ? 'vinculos' THEN
+    v_out := jsonb_set(v_out, '{vinculos}',
+               coalesce((SELECT jsonb_agg(x - '_cliente_cnpj_real' ORDER BY o)
+                           FROM jsonb_array_elements(v_out -> 'vinculos') WITH ORDINALITY AS e(x, o)), '[]'::jsonb));
+  END IF;
   RETURN v_out;
 END;
 $function$;
@@ -373,13 +416,13 @@ GRANT EXECUTE ON FUNCTION public.credito_vinculo_aviso(text) TO authenticated, s
 -- 3. O SENSOR: único escritor de 'credito.vinculo_aviso_servido' e 'credito.vinculo_aviso_conferido' no outbox.
 --    Não estende a allowlist de analytics_ledger_registrar (função quente, várias frentes): como
 --    venda_prazo_decisao_registrar, este writer valida o conteúdo no SERVIDOR — staff, superfície, CNPJ, e que o
---    par (sujeito, ref) é um aviso VIGENTE (relê credito_vinculo_aviso) — e grava o CNPJ real do vinculado nas
---    props, mesmo quando a tela o oculta. A lente "Ver como" fica fora na FONTE (o front não chama sob a lente).
+--    par (sujeito, ref opaco) é um aviso VIGENTE (UMA avaliação, com o CNPJ real) — e grava o CNPJ real do
+--    vinculado nas props, mesmo quando a tela o oculta. A lente "Ver como" fica fora na FONTE (o front não chama sob a lente).
 --    'servido': 1 por titular, superfície, sujeito e dia, com os pares exibidos e a versão da regra.
 --    'conferido': TODO voto grava (a chave leva o instante) — o último por ocorrido_em é a resposta vigente.
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.credito_vinculo_aviso_registrar(p_evento text, p_superficie text, p_cnpj text,
-                                                                  p_ref integer DEFAULT NULL, p_veredito text DEFAULT NULL)
+                                                                  p_ref text DEFAULT NULL, p_veredito text DEFAULT NULL)
  RETURNS jsonb
  LANGUAGE plpgsql
  VOLATILE SECURITY DEFINER
@@ -390,7 +433,6 @@ DECLARE
   v_dia text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD');
   v_aviso jsonb;
   v_vinc jsonb;
-  v_cliente text;
   v_chave text;
   v_props jsonb;
   v_n int;
@@ -406,9 +448,19 @@ BEGIN
   IF p_superficie IS NULL OR p_superficie NOT IN ('pedido', 'ficha_radar') THEN
     RAISE EXCEPTION 'credito_vinculo_aviso_registrar: superfície inválida' USING ERRCODE = '22023';
   END IF;
+  IF p_cnpj IS NULL OR p_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}$' THEN
+    RAISE EXCEPTION 'cnpj inválido' USING ERRCODE = '22023';
+  END IF;
   IF p_evento = 'conferido'
-     AND (p_ref IS NULL OR p_veredito IS NULL OR p_veredito NOT IN ('mesmo_grupo', 'sem_relacao', 'nao_confirmei')) THEN
+     AND (p_ref IS NULL OR p_ref !~ '^[0-9a-f]{16}$'
+          OR p_veredito IS NULL OR p_veredito NOT IN ('mesmo_grupo', 'sem_relacao', 'nao_confirmei')) THEN
     RAISE EXCEPTION 'credito_vinculo_aviso_registrar: conferência exige ref e veredito válido' USING ERRCODE = '22023';
+  END IF;
+
+  -- 'servido' já gravado hoje: sai ANTES da avaliação cara (~1 s); o ON CONFLICT segue como guarda concorrente.
+  v_chave := 'credito_vinculo:' || v_uid::text || ':servido:' || p_superficie || ':' || p_cnpj || ':' || v_dia;
+  IF p_evento = 'servido' AND EXISTS (SELECT 1 FROM public.analytics_outbox o WHERE o.chave_dedup = v_chave) THEN
+    RETURN jsonb_build_object('registrado', false, 'motivo', 'ja_registrado');
   END IF;
 
   -- Teto por titular/dia (flood por voto repetido). Silencioso: telemetria nunca quebra a tela.
@@ -418,8 +470,8 @@ BEGIN
     RETURN jsonb_build_object('registrado', false, 'motivo', 'teto');
   END IF;
 
-  -- Relê o aviso (gate, CNPJ e regra dele mesmo): só se registra o que a tela poderia ter mostrado AGORA.
-  v_aviso := public.credito_vinculo_aviso(p_cnpj);
+  -- UMA avaliação (um snapshot), com o CNPJ real de cada par: só se registra o que a tela poderia mostrar AGORA.
+  v_aviso := private.credito_vinculo_avaliar(p_cnpj, true);
   IF v_aviso ->> 'estado' IS DISTINCT FROM 'avaliado' OR jsonb_array_length(v_aviso -> 'vinculos') = 0 THEN
     RAISE EXCEPTION 'credito_vinculo_aviso_registrar: não há aviso vigente para este CNPJ' USING ERRCODE = '22023';
   END IF;
@@ -428,23 +480,21 @@ BEGIN
     v_props := jsonb_build_object(
       'superficie', p_superficie, 'cnpj', p_cnpj, 'regra_versao', v_aviso -> 'regra_versao',
       'n_indeterminados', v_aviso -> 'n_indeterminados',
-      'pares', (SELECT jsonb_agg(jsonb_build_object('ref', x -> 'ref', 'forca', x -> 'forca',
+      'pares', (SELECT jsonb_agg(jsonb_build_object('ref', x -> 'ref', 'cliente_cnpj', x -> '_cliente_cnpj_real',
+                                                    'forca', x -> 'forca',
                                                     'credoras', (SELECT jsonb_agg(c -> 'company') FROM jsonb_array_elements(x -> 'credoras') c)))
                   FROM jsonb_array_elements(v_aviso -> 'vinculos') x));
-    v_chave := 'credito_vinculo:' || v_uid::text || ':servido:' || p_superficie || ':' || p_cnpj || ':' || v_dia;
     INSERT INTO public.analytics_outbox (evento, distinct_id, user_id, props, chave_dedup)
     VALUES ('credito.vinculo_aviso_servido', v_uid::text, v_uid, v_props, v_chave)
     ON CONFLICT (chave_dedup) DO NOTHING;
   ELSE
-    SELECT x INTO v_vinc FROM jsonb_array_elements(v_aviso -> 'vinculos') x WHERE (x ->> 'ref')::integer = p_ref;
+    SELECT x INTO v_vinc FROM jsonb_array_elements(v_aviso -> 'vinculos') x WHERE x ->> 'ref' = p_ref;
     IF v_vinc IS NULL THEN
+      -- ref obsoleta (o par saiu do aviso): recusa — a tela recarrega; NUNCA reassocia a outro cliente.
       RAISE EXCEPTION 'credito_vinculo_aviso_registrar: ref % não é um vínculo vigente deste CNPJ', p_ref USING ERRCODE = '22023';
     END IF;
-    -- O CNPJ real do vinculado (a tela pode tê-lo ocultado): relido da base, pela mesma ordem.
-    SELECT b.cliente_cnpj INTO v_cliente
-      FROM private.radar_vinculos_base(ARRAY[p_cnpj], true, true) b WHERE b.ordem = p_ref;
     v_props := jsonb_build_object(
-      'superficie', p_superficie, 'cnpj', p_cnpj, 'ref', p_ref, 'cliente_cnpj', v_cliente,
+      'superficie', p_superficie, 'cnpj', p_cnpj, 'ref', p_ref, 'cliente_cnpj', v_vinc -> '_cliente_cnpj_real',
       'veredito', p_veredito, 'forca', v_vinc -> 'forca', 'regra_versao', v_aviso -> 'regra_versao');
     v_chave := 'credito_vinculo:' || v_uid::text || ':conferido:' || p_superficie || ':' || p_cnpj || ':' || p_ref
                || ':' || to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS');
@@ -457,8 +507,8 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.credito_vinculo_aviso_registrar(text, text, text, integer, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.credito_vinculo_aviso_registrar(text, text, text, integer, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.credito_vinculo_aviso_registrar(text, text, text, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.credito_vinculo_aviso_registrar(text, text, text, text, text) TO authenticated;
 
 -- ------------------------------------------------------------
 -- PÓS: corpos, ACL, definer — a migration que não pegou aborta aqui, com o motivo.
@@ -467,15 +517,16 @@ DO $post$
 DECLARE
   r record;
   v_av oid := to_regprocedure('public.credito_vinculo_aviso(text)')::oid;
-  v_rg oid := to_regprocedure('public.credito_vinculo_aviso_registrar(text,text,text,integer,text)')::oid;
+  v_rg oid := to_regprocedure('public.credito_vinculo_aviso_registrar(text,text,text,text,text)')::oid;
 BEGIN
   FOR r IN
     SELECT x.alvo, x.esperado,
            (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(x.alvo)) AS vivo
       FROM (VALUES ('private.radar_vinculos_base(text[], boolean, boolean)',                   '91dc715bb76efc00b85c4b86964d50db'),
                    ('private.radar_vinculos_nucleo(text[], boolean)',                           'f345a864df438f0b7fba25bf50f6ea43'),
-                   ('public.credito_vinculo_aviso(text)',                                       'f955f304825f3036b28a823f5807f05f'),
-                   ('public.credito_vinculo_aviso_registrar(text, text, text, integer, text)',  'ded37d6ce8da329b7c0fed09646d71dc'),
+                   ('private.credito_vinculo_avaliar(text, boolean)',                           'afbc83bfdbe959be21486d19c818d051'),
+                   ('public.credito_vinculo_aviso(text)',                                       'e7e4c97c787123c82c814f192db361a2'),
+                   ('public.credito_vinculo_aviso_registrar(text, text, text, text, text)',     '9e0cfc8bc35dd5bc0784d0821b15918a'),
                    ('public.venda_prazo_aviso(text, bigint)',                                   'd2dda7d32d8a6acd34e24aa1cc1f4c96'),
                    ('public.radar_possiveis_vinculos(text)',                                    '2452f463ae9d97860a4514b81f30a3ea'),
                    ('public.radar_vinculos_por_cnpjs(text[])',                                  'a9278dd0c4e9fb025743caa438b9b130')) AS x(alvo, esperado)
@@ -487,8 +538,10 @@ BEGIN
   IF has_function_privilege('anon', 'private.radar_vinculos_base(text[], boolean, boolean)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'private.radar_vinculos_base(text[], boolean, boolean)', 'EXECUTE')
      OR has_function_privilege('anon', 'private.radar_vinculos_nucleo(text[], boolean)', 'EXECUTE')
-     OR has_function_privilege('authenticated', 'private.radar_vinculos_nucleo(text[], boolean)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'A2 FALHOU: base/núcleo das regras (sem gate) executável pelo JWT';
+     OR has_function_privilege('authenticated', 'private.radar_vinculos_nucleo(text[], boolean)', 'EXECUTE')
+     OR has_function_privilege('anon', 'private.credito_vinculo_avaliar(text, boolean)', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'private.credito_vinculo_avaliar(text, boolean)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'A2 FALHOU: base/núcleo/avaliação (sem gate) executável pelo JWT';
   END IF;
   IF has_function_privilege('anon', v_av, 'EXECUTE') OR NOT has_function_privilege('authenticated', v_av, 'EXECUTE')
      OR has_function_privilege('anon', v_rg, 'EXECUTE') OR NOT has_function_privilege('authenticated', v_rg, 'EXECUTE') THEN

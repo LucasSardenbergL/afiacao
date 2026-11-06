@@ -23059,7 +23059,7 @@ export type Database = {
         Args: {
           p_cnpj: string
           p_evento: string
-          p_ref?: number
+          p_ref?: string
           p_superficie: string
           p_veredito?: string
         }

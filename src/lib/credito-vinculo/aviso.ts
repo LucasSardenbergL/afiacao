@@ -29,8 +29,8 @@ interface CredoraVencida {
 }
 
 export interface VinculoComVencido {
-  /** Posição do vínculo na resposta (a ordem da ficha) — é o que o sensor manda de volta, nunca o CNPJ. */
-  ref: number;
+  /** Referência OPACA e estável do par (sujeito, vinculado) — o que o sensor manda de volta, nunca o CNPJ. */
+  ref: string;
   /** null = cliente só no cadastro, oculto para quem não lê a carteira (projeção da ficha). */
   clienteCnpj: string | null;
   clienteNome: string | null;
@@ -62,6 +62,11 @@ function inteiroNaoNegativo(v: unknown): number {
 function textoOuNulo(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   if (typeof v !== 'string') throw new Error(ERRO_FORMA);
+  return v;
+}
+
+function refOpaca(v: unknown): string {
+  if (typeof v !== 'string' || !/^[0-9a-f]{16}$/.test(v)) throw new Error(ERRO_FORMA);
   return v;
 }
 
@@ -99,7 +104,7 @@ function lerVinculoComVencido(l: unknown): VinculoComVencido {
     throw new Error(ERRO_FORMA);
   }
   return {
-    ref: inteiroNaoNegativo(r.ref),
+    ref: refOpaca(r.ref),
     clienteCnpj: textoOuNulo(r.cliente_cnpj),
     clienteNome: textoOuNulo(r.cliente_nome),
     clienteSituacao: textoOuNulo(r.cliente_situacao),

@@ -10,7 +10,7 @@ const credora = (over: Record<string, unknown> = {}) => ({
   sync_em: '2026-11-06T14:28:11Z', qualidade: 'ok', n_ambiguos: 0, n_invalidos: 0, ...over,
 });
 const vinculo = (over: Record<string, unknown> = {}) => ({
-  ref: 1, cliente_cnpj: '21111111000101', cliente_nome: 'C1 ANTIGA LTDA', cliente_situacao: '08',
+  ref: 'abcdef0123456789', cliente_cnpj: '21111111000101', cliente_nome: 'C1 ANTIGA LTDA', cliente_situacao: '08',
   forca: 'forte', sinais: ['email', 'telefone'], parcial: false, credoras: [credora()], ...over,
 });
 const avaliado = (over: Record<string, unknown> = {}) => ({
@@ -22,7 +22,7 @@ describe('lerAvisoVinculo', () => {
     const a = lerAvisoVinculo(avaliado());
     expect(a.estado).toBe('avaliado');
     if (a.estado !== 'avaliado') throw new Error('tipo');
-    expect(a.vinculos[0]).toMatchObject({ ref: 1, forca: 'forte', parcial: false });
+    expect(a.vinculos[0]).toMatchObject({ ref: 'abcdef0123456789', forca: 'forte', parcial: false });
     expect(a.vinculos[0].credoras[0]).toMatchObject({ company: 'oben', vencido: 500, nTitulos: 1, qualidade: 'ok' });
   });
 
@@ -49,6 +49,8 @@ describe('lerAvisoVinculo', () => {
     ['parcial ausente', avaliado({ vinculos: [vinculo({ parcial: undefined })] })],
     ['contagens incoerentes', avaliado({ n_vinculos: 0 })],
     ['n_indeterminados negativo', avaliado({ n_indeterminados: -1 })],
+    ['ref por posição (número), não opaca', avaliado({ vinculos: [vinculo({ ref: 1 })] })],
+    ['ref com CNPJ em claro', avaliado({ vinculos: [vinculo({ ref: '21111111000101' })] })],
   ])('forma errada LANÇA: %s', (_n, j) => {
     expect(() => lerAvisoVinculo(j)).toThrow('credito_vinculo_aviso: resposta fora da forma esperada');
   });
