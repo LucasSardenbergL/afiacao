@@ -24632,6 +24632,10 @@ export type Database = {
           sinais: string[]
         }[]
       }
+      radar_prospectar_hoje: {
+        Args: { p_n?: number; p_vendedor?: string }
+        Returns: Json
+      }
       radar_prospects_para_rota: {
         Args: { p_limit?: number; p_municipio_codigo: string }
         Returns: {
@@ -24656,6 +24660,10 @@ export type Database = {
       }
       radar_recruzar_ja_cliente: { Args: never; Returns: number }
       radar_recruzar_ja_cliente_tick: { Args: never; Returns: number }
+      radar_registrar_abertura_empurrada: {
+        Args: { p_cnpj: string; p_envio?: string; p_origem: string }
+        Returns: Json
+      }
       radar_registrar_cadastro_omie: {
         Args: {
           p_cnpj: string
@@ -24703,6 +24711,7 @@ export type Database = {
         }
         Returns: Json
       }
+      radar_registrar_card_servido: { Args: { p_n_leads: number }; Returns: Json }
       radar_score_recalcular: { Args: never; Returns: Json }
       radar_telefone_compartilhado: {
         Args: { p_cnpj: string }

@@ -34,6 +34,9 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   'radar_possiveis_vinculos',
   // Radar (migration 20261030233200) — SELECT puro da amostra de controle vigente, intercalada na fila.
   'radar_amostra_vigente',
+  // Radar D2 (migration 20261106181000) — STABLE, só lê: os leads do card "Prospectar hoje" (o sensor do card é
+  // outra RPC, radar_registrar_card_servido, que fica BLOQUEADA na lente de propósito).
+  'radar_prospectar_hoje',
   // Cockpit financeiro (migration 20261101210000) — STABLE, SECURITY INVOKER, só agrega saldo de títulos sob a RLS.
   'fin_saldo_titulos_por_status',
 ]);

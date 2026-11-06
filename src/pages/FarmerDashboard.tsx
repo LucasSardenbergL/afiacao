@@ -19,6 +19,7 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CallButton } from '@/components/call/CallButton';
 import { SlaVencidoCard } from '@/components/farmer/SlaVencidoCard';
+import { ProspectarHojeCard } from '@/components/farmer/ProspectarHojeCard';
 import { FAIXA_LABEL } from '@/lib/scoring/faixaMargem';
 import { formatMargemPct } from '@/lib/format';
 
@@ -99,6 +100,9 @@ const FarmerDashboard = () => {
           nomePorCliente={nomePorCliente}
           onClienteClick={(id) => navigate(`/admin/customers/${id}/360`)}
         />
+
+        {/* Radar D2: 3 leads perto da carteira (mesma escolha do e-mail semanal) — some fora do gate do Radar */}
+        <ProspectarHojeCard />
 
         {/* Entrada para o board da carteira (visão 3 colunas: risco/expansão/follow-up) */}
         <Button
