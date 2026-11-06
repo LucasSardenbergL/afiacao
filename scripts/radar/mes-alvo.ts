@@ -57,6 +57,24 @@ export const concluirSonda = (mes: string, respostas: RespostaSonda[]): Disponib
   return "indisponivel";
 };
 
+/** HEAD de uma URL → status HTTP; LANÇA em falha de transporte (timeout, DNS, conexão). Injetável no teste. */
+export type Head = (url: string, headers: Record<string, string>) => Promise<number>;
+
+/** Sonda UM mês em `basesCandidatas` (na ordem, parando no 1º 200) e conclui — lança em transporte ruim sem 200. */
+export const sondarMes = async (mes: string, head: Head): Promise<Disponibilidade> => {
+  const respostas: RespostaSonda[] = [];
+  for (const base of basesCandidatas(mes)) {
+    try {
+      const status = await head(`${base}/${ARQUIVO_SONDA}`, authorizationDe(base));
+      respostas.push({ tipo: "http", status });
+      if (status === 200) break;
+    } catch (e) {
+      respostas.push({ tipo: "erro", detalhe: `${base} → ${mensagemDeErro(e) ?? "falha de rede sem mensagem"}` });
+    }
+  }
+  return concluirSonda(mes, respostas);
+};
+
 const loteVivo = (l: Lote, agora: Date): boolean =>
   l.status === "running" && !!l.iniciado_em && agora.getTime() - new Date(l.iniciado_em).getTime() < HORAS_LOTE_VIVO * 3_600_000;
 
@@ -101,18 +119,10 @@ if (import.meta.main) {
   const SECRET = process.env.RADAR_CRON_SECRET ?? "";
   if (!INGEST_URL || !SECRET) { console.error("RADAR_INGEST_URL e RADAR_CRON_SECRET obrigatórios"); process.exit(1); }
 
+  const headReal: Head = async (url, headers) =>
+    (await fetch(url, { method: "HEAD", headers, signal: AbortSignal.timeout(30_000) })).status;
   const sondar = async (mes: string): Promise<Disponibilidade> => {
-    const respostas: RespostaSonda[] = [];
-    for (const base of basesCandidatas(mes)) {
-      try {
-        const r = await fetch(`${base}/${ARQUIVO_SONDA}`, { method: "HEAD", headers: authorizationDe(base), signal: AbortSignal.timeout(30_000) });
-        respostas.push({ tipo: "http", status: r.status });
-        if (r.status === 200) break;
-      } catch (e) {
-        respostas.push({ tipo: "erro", detalhe: `${base} → ${mensagemDeErro(e) ?? "falha de rede sem mensagem"}` });
-      }
-    }
-    const d = concluirSonda(mes, respostas); // lança em transporte ruim sem nenhum 200
+    const d = await sondarMes(mes, headReal); // lança em transporte ruim sem nenhum 200
     console.log(`   sonda ${mes}: ${d}`);
     return d;
   };

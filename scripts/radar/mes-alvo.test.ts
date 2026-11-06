@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { candidatosDe, concluirSonda, escolherMes, mesBr, type Lote } from "./mes-alvo";
+import { candidatosDe, concluirSonda, escolherMes, mesBr, sondarMes, type Head, type Lote } from "./mes-alvo";
 
 // Relógio CONTROLADO (money-path.md): o dado fica parado e quem anda é o `agora` do teste.
 const AGORA = new Date("2026-10-20T06:00:00Z"); // 03:00 em Brasília, dia 20
@@ -33,6 +33,34 @@ describe("concluirSonda — 404 em todas as bases é 'não publicado'; transport
     expect(() => concluirSonda("2026-10", [{ tipo: "erro", detalhe: "timeout" }, { tipo: "http", status: 404 }])).toThrow(/sem resposta conclusiva/);
     expect(() => concluirSonda("2026-10", [{ tipo: "http", status: 503 }, { tipo: "http", status: 404 }])).toThrow(/HTTP 503/);
     expect(() => concluirSonda("2026-10", [{ tipo: "http", status: 429 }])).toThrow(/HTTP 429/);
+  });
+});
+
+// Mundo MEDIDO em 2026-11-06 (HEAD de Cnaes.zip): webdav 2026-10=200 / 2026-11=404; `dados/cnpj` 404/404;
+// `dadosabertos.rfb.gov.br` timeout/timeout. Base fora deste mapa = "não responde" (timeout), de propósito:
+// base nova só entra em `basesCandidatas` se responder de verdade — senão este teste fica vermelho.
+const mundo = (sobrescrever: Record<string, number | "timeout"> = {}): Head => async (url) => {
+  const regras: Record<string, number | "timeout"> = {
+    "public.php/webdav/2026-10/": 200, "public.php/webdav/2026-11/": 404,
+    "dados/cnpj/dados_abertos_cnpj/2026-10/": 404, "dados/cnpj/dados_abertos_cnpj/2026-11/": 404,
+    ...sobrescrever,
+  };
+  const chave = Object.keys(regras).find((k) => url.includes(k));
+  const r = chave ? regras[chave] : "timeout";
+  if (r === "timeout") throw new Error(`The operation timed out (${url})`);
+  return r;
+};
+
+describe("sondarMes — bases reais da sonda (basesCandidatas) contra o mundo medido em 2026-11-06", () => {
+  it("[B1] mês não publicado com as bases vivas em 404/404 → 'indisponivel' e NÃO lança", async () => {
+    await expect(sondarMes("2026-11", mundo())).resolves.toBe("indisponivel");
+  });
+  it("[B2] mês publicado → 'disponivel' (webdav 200)", async () => {
+    await expect(sondarMes("2026-10", mundo())).resolves.toBe("disponivel");
+  });
+  it("[B3] timeout numa base que CONTINUA na lista ainda lança (timeout ≠ não publicado)", async () => {
+    await expect(sondarMes("2026-11", mundo({ "public.php/webdav/2026-11/": "timeout" })))
+      .rejects.toThrow(/sem resposta conclusiva \(https:\/\/arquivos\.receitafederal\.gov\.br\/public\.php\/webdav\/2026-11 .* The operation timed out/);
   });
 });
 
