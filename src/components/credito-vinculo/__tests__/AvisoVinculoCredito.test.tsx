@@ -127,18 +127,20 @@ describe('AvisoVinculoCredito', () => {
 
   it('voto pendente de A NÃO aparece como registrado em B depois da troca de cliente', async () => {
     aviso = ok(comVencido);
-    let soltar: (r: Resp) => void = () => {};
-    registro = () => new Promise<Resp>((res) => { soltar = res; });
+    const pendentes: Array<(r: Resp) => void> = [];
+    registro = () => new Promise<Resp>((res) => { pendentes.push(res); });
     const { trocar } = montar('18888888000101');
     await screen.findByTestId('aviso-vinculo-credito');
-    await waitFor(() => expect(chamadas('credito_vinculo_aviso_registrar')).toHaveLength(1));   // o 'servido'
-    soltar({ data: { registrado: true }, error: null });
+    await waitFor(() => expect(pendentes).toHaveLength(1));   // o 'servido' de A
+    pendentes[0]({ data: { registrado: true }, error: null });
     fireEvent.click(screen.getByText('Não tem relação'));
-    await waitFor(() => expect(chamadas('credito_vinculo_aviso_registrar')).toHaveLength(2));
+    await waitFor(() => expect(pendentes).toHaveLength(2));   // o VOTO de A, pendente
     trocar('28888888000101');   // B tem o MESMO ref no mock: o pior caso
+    await waitFor(() => expect(chamadas('credito_vinculo_aviso')).toContainEqual({ p_cnpj: '28888888000101' }));
     await screen.findByTestId('aviso-vinculo-credito');
-    soltar({ data: { registrado: true }, error: null });
-    await new Promise((r) => setTimeout(r, 20));
+    pendentes[1]({ data: { registrado: true }, error: null });   // resolve o voto de A DEPOIS da troca
+    await new Promise((r) => setTimeout(r, 30));
+    expect(chamadas('credito_vinculo_aviso_registrar')[1]).toMatchObject({ p_evento: 'conferido', p_cnpj: '18888888000101' });
     expect(screen.queryByTestId('aviso-vinculo-abcdef0123456789-registrado')).toBeNull();
   });
 
