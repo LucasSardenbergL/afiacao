@@ -12,12 +12,12 @@
 
 type SinalVinculo = 'telefone' | 'email' | 'endereco' | 'pessoa';
 export type ForcaVinculo = 'forte' | 'media';
-export type QualidadeSync = 'ok' | 'defasado' | 'sem_sync';
+type QualidadeSync = 'ok' | 'defasado' | 'sem_sync';
 export type ContaCredora = 'oben' | 'colacor' | 'colacor_sc';
 export type SuperficieAviso = 'pedido' | 'ficha_radar';
 export type VereditoConferencia = 'mesmo_grupo' | 'sem_relacao' | 'nao_confirmei';
 
-export interface CredoraVencida {
+interface CredoraVencida {
   company: ContaCredora;
   vencido: number;
   nTitulos: number;
