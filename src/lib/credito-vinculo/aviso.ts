@@ -1,6 +1,6 @@
 /**
  * Aviso de crédito por VÍNCULO: o cliente do pedido (ou o lead da ficha do Radar) tem selo de possível vínculo /
- * sucessor de um cliente nosso com título VENCIDO em aberto (RPC `credito_vinculo_aviso`, migration 20261106193714;
+ * sucessor de um cliente nosso com título VENCIDO em aberto (RPC `credito_vinculo_aviso`, migration 20261106205557;
  * passo 2 do "Radar sucessor", decisão do founder em 2026-11-06).
  *
  * É SÓ AVISO — não bloqueia pedido, não cria exceção, não mexe em prazo. Pista, nunca veredito: a frase manda

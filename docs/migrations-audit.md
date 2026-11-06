@@ -6443,7 +6443,11 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.sayerlack_importar_pedido_portal` | — |
 | `function` | `public.sayerlack_painel_portal` | — |
 
-### `20261106193714_credito_aviso_vinculo_vencido.sql`
+### `20261106205556_drop_indices_ociosos_scores.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261106205557_credito_aviso_vinculo_vencido.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
@@ -6451,10 +6455,6 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `private.radar_vinculos_nucleo` | — |
 | `function` | `public.credito_vinculo_aviso` | — |
 | `function` | `public.credito_vinculo_aviso_registrar` | — |
-
-### `20261106205556_drop_indices_ociosos_scores.sql`
-
-> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

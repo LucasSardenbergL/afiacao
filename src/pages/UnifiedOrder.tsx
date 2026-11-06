@@ -416,7 +416,7 @@ const UnifiedOrder = () => {
           {showCustomerSearch && h.selectedCustomer && (
             <div className="space-y-2">
               <AlertaCreditoCliente cliente={h.selectedCustomer} />
-              {/* Só aviso (migration 20261106193714): possível vínculo com cliente que tem título vencido. */}
+              {/* Só aviso (migration 20261106205557): possível vínculo com cliente que tem título vencido. */}
               <AvisoVinculoCredito documento={h.selectedCustomer.cnpj_cpf} superficie="pedido" />
               {!h.loadingCustomer && <SeloSituacaoReceita customerUserId={h.customerUserId} superficie="pedido" />}
               <TierClienteBadge

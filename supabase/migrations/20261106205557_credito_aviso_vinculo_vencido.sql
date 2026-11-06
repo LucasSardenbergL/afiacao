@@ -32,7 +32,7 @@
 -- igual ao documento do perfil, source='document', mapa < 7 d e 0 documento com 2 titulares — a prova custa 0 de recall.
 -- Molde TRAVA → PRE → CREATE → PÓS. Prova PG17: db/test-credito-vinculo-aviso.sh (e --falsificar).
 --
--- Aplicação: `bun run db:aplicar supabase/migrations/20261106193714_credito_aviso_vinculo_vencido.sql`
+-- Aplicação: `bun run db:aplicar supabase/migrations/20261106205557_credito_aviso_vinculo_vencido.sql`
 -- (sem BEGIN/COMMIT: o executor fornece a transação).
 -- ============================================================
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prova PG17 do AVISO de crédito por vínculo com cliente que tem título vencido (migration 20261106193714).
+# Prova PG17 do AVISO de crédito por vínculo com cliente que tem título vencido (migration 20261106205557).
 #   E*  equivalência: o núcleo da ficha/lista (agora invólucro de private.radar_vinculos_base) devolve, lead a lead e
 #       para gestor E vendedor (p_carteira true/false), EXATAMENTE o que devolvia antes da migration.
 #   C*  credito_vinculo_aviso: já-cliente incluído, sem o corte de 10, carteira inteira avaliada (só-profiles), código
@@ -23,7 +23,7 @@ MIG_V1="$MIGS/20261104201756_radar_possiveis_vinculos.sql"
 MIG_V2="$MIGS/20261106083754_radar_vinculos_em_lote.sql"
 MIG_PRAZO="$MIGS/20261031200000_venda_prazo_decisao.sql"       # corpo de venda_prazo_aviso (= prod)
 MIG_DOC="$MIGS/20261019140000_omie_identidade_cnpj_alfanumerico.sql"  # normalizar_documento (= prod)
-MIG="$MIGS/20261106193714_credito_aviso_vinculo_vencido.sql"
+MIG="$MIGS/20261106205557_credito_aviso_vinculo_vencido.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> — `post:A3` = a POSTCONDIÇÃO da migration aborta; `pre` = a PRE aborta.

@@ -857,8 +857,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106090000', 'des_simular_puxar_config_e_checkin', '20261106090000_des_simular_puxar_config_e_checkin.sql'),
   ('20261106132259', 'radar_abriu_ficha_com_cnpj', '20261106132259_radar_abriu_ficha_com_cnpj.sql'),
   ('20261106140000', 'sayerlack_importar_portal_revisao', '20261106140000_sayerlack_importar_portal_revisao.sql'),
-  ('20261106193714', 'credito_aviso_vinculo_vencido', '20261106193714_credito_aviso_vinculo_vencido.sql'),
-  ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql')
+  ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql'),
+  ('20261106205557', 'credito_aviso_vinculo_vencido', '20261106205557_credito_aviso_vinculo_vencido.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -6682,7 +6682,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'simular_puxar_volume_trimestre', 1, '20261105180000_des_simular_puxar_sem_posicao_recusa.sql', '9e43c9425748b54d783ca9f4c3737755'),
   ('public', 'simular_puxar_volume_trimestre', 2, '20261106090000_des_simular_puxar_config_e_checkin.sql', 'fefcf8c0890cd3fe21a60efbe2ed6d37'),
   ('private', 'radar_vinculos_nucleo', 1, '20261106083754_radar_vinculos_em_lote.sql', '524afca67d271f459a6e4c984725b833'),
-  ('private', 'radar_vinculos_nucleo', 2, '20261106193714_credito_aviso_vinculo_vencido.sql', '150b7d5e1c72ca55f8e58ea321659428')
+  ('private', 'radar_vinculos_nucleo', 2, '20261106205557_credito_aviso_vinculo_vencido.sql', '150b7d5e1c72ca55f8e58ea321659428')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

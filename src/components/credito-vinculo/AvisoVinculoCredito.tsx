@@ -12,7 +12,7 @@ import {
 import { registrarSensorVinculo, useAvisoVinculoCredito } from '@/lib/credito-vinculo/useAvisoVinculoCredito';
 
 /**
- * Aviso de crédito por VÍNCULO com cliente que tem título vencido (migration 20261106193714; passo 2 do "Radar
+ * Aviso de crédito por VÍNCULO com cliente que tem título vencido (migration 20261106205557; passo 2 do "Radar
  * sucessor"). No pedido, no bloco do cliente; na ficha do Radar, antes do cadastro no Omie (a edge cria no Omie
  * ANTES de registrar — o aviso tem de ser leitura prévia). É SÓ aviso: nada bloqueia, nada muda no prazo.
  *
