@@ -118,7 +118,7 @@ case "${SABOTAGEM:-}" in
   v_alvo" "  v_alvo" ;;
   gestor_livre)          sabotar "  IF v_alvo <> v_uid AND NOT COALESCE(private.pode_ver_carteira_completa(v_uid), false) THEN" "  IF false THEN" ;;
   servido_sem_faixa)     sabotar "  IF p_n_leads IS NULL OR p_n_leads NOT BETWEEN 1 AND 5 THEN" "  IF p_n_leads IS NULL THEN" ;;
-  servido_duplica)       sabotar "    ON CONFLICT (user_id, dia) DO NOTHING;" "    ON CONFLICT (user_id, dia) DO UPDATE SET n_leads = EXCLUDED.n_leads, servido_em = clock_timestamp();" ;;
+  servido_duplica)       sabotar "  ON CONFLICT (user_id, dia) DO NOTHING;" "  ON CONFLICT (user_id, dia) DO UPDATE SET n_leads = EXCLUDED.n_leads, servido_em = clock_timestamp();" ;;
   link_sem_validar)      sabotar "      JOIN public.radar_email_vendedor_leads l ON l.envio_id = e.id AND l.cnpj = p_cnpj" "" ;;
   acl_aberta)            sabotar "REVOKE ALL ON FUNCTION public.radar_avisar_vendedores(timestamptz) FROM PUBLIC, anon, authenticated;" "REVOKE ALL ON FUNCTION public.radar_avisar_vendedores(timestamptz) FROM anon;" ;;
   acl_aberta_sem_post)   sabotar "REVOKE ALL ON FUNCTION public.radar_avisar_vendedores(timestamptz) FROM PUBLIC, anon, authenticated;" "REVOKE ALL ON FUNCTION public.radar_avisar_vendedores(timestamptz) FROM anon;"; cegar_post ;;
