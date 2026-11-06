@@ -100,7 +100,7 @@ Os cortes do v5 (E6, D2, E2, E8, F6, E4) e do v6 (C3, D7, F10, NF-NULL, NF-CHAVE
 | 2 | C7 — import marca a origem do perfil criado + backfill por procedência | — | sessão + Codex + **deploy de edge** + **backfill** (envelope ou founder no SQL Editor) |
 | 3 | C8 + C9 + C10 + C11 (+ erro do histórico de ciclos) — estados honestos nos KPIs de reposição e no badge | — | sessão + **Publish** |
 | 4 | ~~E16 — 7 partes no núcleo SQL, medido~~ ✅ #3643, **mantido**: pior parte 16,5 e 15,9 min (base p50 19,3, mín. 18,6 em 17 runs), parede até o `validate` 17,3 e 16,6 (base p50 23,0), runner-min empatado (145,4 e 146,2 sem o mutcheck; base p50 146,1). Fila não medida sob carga ([histórico](../../../historico/ci-e16-nucleo-sql-7-partes.md)) | — | sessão |
-| 5 | E14 restrito — escopo documental cumulativo no dispatch da main | lote 4 medido | sessão + Codex |
+| 5 | ~~E14 restrito — escopo documental cumulativo no dispatch da main~~ ✅ #3657 (Codex APROVAR): simulação sobre 197 dispatches reais dá 34 elegíveis (17%, não ~60%: o diff é cumulativo e a coalescência leva código junto), ~91 runner-min cada. Medição pós-merge em [ci-e14-escopo-main-docs.md](../../../historico/ci-e14-escopo-main-docs.md) | lote 4 medido | sessão + Codex |
 | 6 | F13 — DND sob demanda na home | lab antes/depois | sessão + **Publish** |
 | 7 | F12 — score e margem em paralelo no Customer 360 | lab antes/depois | sessão + **Publish** |
 | — | E17 | lotes 4 e 5 medidos | experimento |
