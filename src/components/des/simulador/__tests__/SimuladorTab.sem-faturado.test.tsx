@@ -6,10 +6,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // simular_puxar_volume_trimestre a trataria como 0 (e a view antiga, como só trânsito): faixa, ganho
 // e recomendação sobre uma base inventada. A aba não simula nem mostra "faltam p/ próxima faixa".
 
-const { estado, rpc } = vi.hoisted(() => ({
-  estado: { posicao: null as Record<string, unknown> | null, posicaoErro: false },
+const { estado, rpc, toastErro } = vi.hoisted(() => ({
+  estado: {
+    posicao: null as Record<string, unknown> | null,
+    posicaoErro: false,
+    /** Erro da RPC como o supabase.rpc o devolve: objeto PLANO { message, code }, não `Error`. */
+    rpcErro: null as Record<string, unknown> | null,
+  },
   rpc: vi.fn(),
+  toastErro: vi.fn(),
 }));
+
+vi.mock("sonner", () => ({ toast: { error: toastErro, success: vi.fn() } }));
 
 // O Slider (Radix) dos controles mede o trilho; o jsdom não tem ResizeObserver.
 globalThis.ResizeObserver ??= class {
@@ -42,7 +50,7 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     rpc: (...args: unknown[]) => {
       rpc(...args);
-      return Promise.resolve({ data: {}, error: null });
+      return Promise.resolve(estado.rpcErro ? { data: null, error: estado.rpcErro } : { data: {}, error: null });
     },
     from: (tabela: string) => {
       let ordens = 0;
@@ -93,7 +101,9 @@ function renderizar() {
 beforeEach(() => {
   estado.posicao = null;
   estado.posicaoErro = false;
+  estado.rpcErro = null;
   rpc.mockClear();
+  toastErro.mockClear();
 });
 
 describe.each([
@@ -135,5 +145,18 @@ describe("SimuladorTab com faturado confirmado (controle)", () => {
     fireEvent.click(botao);
     await waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
     expect(rpc.mock.calls[0][0]).toBe("simular_puxar_volume_trimestre");
+  });
+});
+
+describe("SimuladorTab — a RPC recusa (posição mudou entre a leitura e o clique)", () => {
+  it("o toast mostra a mensagem da recusa, não 'desconhecido' (o erro do PostgREST é objeto plano)", async () => {
+    estado.posicao = COM_FATURADO;
+    estado.rpcErro = { message: "DES sem posicao confirmada: OBEN T4/2026 sem faturado confirmado do GoodData", code: "P0001" };
+    renderizar();
+    fireEvent.click(await screen.findByText("Simular cenário"));
+    await waitFor(() => expect(toastErro).toHaveBeenCalledTimes(1));
+    expect(toastErro.mock.calls[0][0]).toBe(
+      "Erro ao simular: DES sem posicao confirmada: OBEN T4/2026 sem faturado confirmado do GoodData",
+    );
   });
 });

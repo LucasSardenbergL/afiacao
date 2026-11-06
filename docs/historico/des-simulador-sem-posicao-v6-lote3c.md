@@ -32,7 +32,7 @@ Impacto em prod hoje (psql-ro, 2026-11-05): as metas da OBEN são 400.840,02 em 
 
 ## Provas
 
-- **PG17 `db/test-des-simular-puxar-sem-posicao.sh`:** 28 asserts, rodados em `C` e em `pt_BR`, mais `--falsificar` com controle verde e 12 sabotagens (cada camada sozinha). Cobre:
+- **PG17 `db/test-des-simular-puxar-sem-posicao.sh`:** 29 asserts, rodados em `C` e em `pt_BR`, mais `--falsificar` com controle verde e 13 sabotagens (cada camada sozinha). Cobre:
   - o predecessor executado, que mostra os 3 defeitos e a exposição a `anon`;
   - a recusa nos 4 jeitos de não ter faturado e também sobre a view antiga;
   - o JSON idêntico ao da prod em 8 combinações;
@@ -45,6 +45,8 @@ Impacto em prod hoje (psql-ro, 2026-11-05): as metas da OBEN são 400.840,02 em 
 
 - **Corrigir a view não conserta quem lê a coluna.** A RPC tinha seu próprio `COALESCE` (`IF NULL THEN 0`) e continuou fabricando depois do 3b. Ao trocar número por NULL, procure os `?? 0` do front **e** os `IF NULL` das funções SQL que leem a coluna.
 - **Uma guarda que não dá para falsificar é ruído.** A guarda `posição IS NULL` foi tirada: com faturado presente, a posição nunca é NULL em nenhuma das duas views. A guarda que ficou, pelo faturado, é a que a view antiga fura (N5).
+- **A trava não pode reescrever um atributo que a PRE confere.** O molde sugere `ALTER FUNCTION … <volatilidade viva>`, que lê o valor e o reescreve igual. Se outra sessão commitar VOLATILE entre a leitura e o ALTER, a trava regrava STABLE e a PRE aprova a deriva apagada (Codex, estágio 2, por análise estática). Aqui a trava passou a ser `COST 100`: a PRE não confere o custo e o `CREATE OR REPLACE` o redefine. O K7 prova o caso sequencial, e a sabotagem `trava_escreve_atributo` mostra a deriva sumindo.
+- **O erro do `supabase.rpc` é objeto plano, não `Error`.** Com `err instanceof Error ? … : "desconhecido"`, a recusa nova chegaria ao toast como "desconhecido". O painel passou a usar `mensagemDeErro`.
 - **Sabotar uma camada inteira pode cortar outra junto.** O bloco PRE também guarda o ACL de antes para a PÓS. Cortá-lo inteiro fazia o K2 ficar vermelho pela PÓS, não pela PRE. A sabotagem passou a cortar só o md5.
 
 ## Fora deste lote (follow-up)
@@ -52,3 +54,4 @@ Impacto em prod hoje (psql-ro, 2026-11-05): as metas da OBEN são 400.840,02 em 
 - Os fallbacks de custo `2,5%` (frete) e `0,20` (custo de capital) quando a configuração não existe. Não foram observados no recorte atual, porque a OBEN tem as duas configurações.
 - A escolha do check-in: a RPC usa `MAX(id)` e a `v_des_desconto_por_checkin` usa a data. Um check-in retroativo pode comparar descontos de check-ins diferentes. O diferencial deste lote não certifica essa parte.
 - O card "Score SPIN Médio" do Hub mostra 0 fixo (`Promise.resolve(0)`).
+- O molde `.claude/skills/lovable-db-operator/references/sql-house-style.md` §"Recriar objeto VIVO" recomenda a trava pela volatilidade viva, que tem a janela descrita nas lições. Falta medir essa janela em PG17, com duas sessões intercaladas, antes de trocar o molde.
