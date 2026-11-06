@@ -43,7 +43,7 @@ FIX_VIEW_PRED="$REPO_ROOT/db/fixtures/des-posicao-ao-vivo-prod-20261105.sql"
 MIG_VIEW="$REPO_ROOT/supabase/migrations/20261105091216_des_posicao_ao_vivo_sem_faturado_e_nula.sql"
 MIG_CHECKIN="$REPO_ROOT/supabase/migrations/20260929002059_des_desconto_total_maximo_por_faixa.sql"
 MD5_PROD_PRED=50d0f4eaf68eb2aa1616296d3980efed   # md5(prosrc), psql-ro 2026-11-05
-MD5_ESTE=b41e1d3b7cfebcf3f02ddd9edec705d6
+MD5_ESTE=fea04a3887c8d0ac809e5588f5b6ee97
 SIG="public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)"
 # Denominador: P1 B0 B1 B2 B3 · K1 · K2-K7 · P2 A1 · N1-N5 · Z1 Z2 · V1 · Y1 Y2 Y3 · M1 · S1 S2 S3
 TOTAL_ESPERADO=29

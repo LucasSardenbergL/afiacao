@@ -10,7 +10,9 @@
 --     fato: a posição é o trânsito e a simulação segue;
 --   * o "próximo trimestre" de T4 lia a meta de T1 do MESMO ano (um trimestre passado) → T1 do ano seguinte;
 --   * sem meta do próximo trimestre nem do corrente, a projeção caía num 400000 fixo → P0001 'DES sem meta
---     para projetar'.
+--     para projetar';
+--   * o default de ano/trimestre (só sem p_ano/p_trimestre — o front sempre os passa) lia CURRENT_DATE no
+--     fuso da sessão (UTC na prod) → o dia de São Paulo (gate relogio-nu-da-sessao).
 -- Medido na prod (psql-ro, 2026-11-05): metas OBEN 2026 T1..T4 = 400.840,02, nenhuma de 2027; só T2/26 tem
 -- faturado. Com posição, o número de hoje não muda. O único chamador (SimulationPanel) já não chama sem
 -- posição (#3634) e mostra o erro da RPC num toast.
@@ -43,7 +45,7 @@ DECLARE
   p record;
 BEGIN
   SELECT * INTO p FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)');
-  IF p.oid IS NULL OR md5(p.prosrc) NOT IN ('50d0f4eaf68eb2aa1616296d3980efed', 'b41e1d3b7cfebcf3f02ddd9edec705d6') THEN
+  IF p.oid IS NULL OR md5(p.prosrc) NOT IN ('50d0f4eaf68eb2aa1616296d3980efed', 'fea04a3887c8d0ac809e5588f5b6ee97') THEN
     RAISE EXCEPTION 'PRE FALHOU: simular_puxar_volume_trimestre viva (md5 %) não é a da prod de 2026-11-05 nem esta — outra sessão mudou a função; confira antes de recriar', md5(p.prosrc);
   END IF;
   IF p.prosecdef OR p.provolatile <> 's' OR p.proconfig::text IS DISTINCT FROM '{"search_path=public, pg_temp"}' THEN
@@ -88,9 +90,10 @@ DECLARE
   v_fator_inflacao_nominal numeric;
   v_nominal_adicional_na_nf numeric;
 BEGIN
-  -- Defaults: trimestre atual se não especificado
-  v_ano := COALESCE(p_ano, EXTRACT(YEAR FROM CURRENT_DATE)::int);
-  v_trimestre := COALESCE(p_trimestre, EXTRACT(QUARTER FROM CURRENT_DATE)::int);
+  -- Defaults: trimestre atual (de São Paulo) se não especificado. A sessão da prod é UTC: CURRENT_DATE
+  -- das 21h às 24h BRT já é o dia seguinte — e, na virada, o trimestre seguinte.
+  v_ano := COALESCE(p_ano, EXTRACT(YEAR FROM (now() AT TIME ZONE 'America/Sao_Paulo'))::int);
+  v_trimestre := COALESCE(p_trimestre, EXTRACT(QUARTER FROM (now() AT TIME ZONE 'America/Sao_Paulo'))::int);
   
   -- Posição atual. Sem faturado confirmado do GoodData ela é DESCONHECIDA (a view devolve NULL desde
   -- 20261105091216; sem linha na view, idem): simular a partir de 0 inventaria a faixa, o ganho e a
@@ -288,7 +291,7 @@ DECLARE
   v_agora text;
 BEGIN
   SELECT * INTO p FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.simular_puxar_volume_trimestre(text,integer,integer,numeric,text,integer)');
-  IF md5(p.prosrc) IS DISTINCT FROM 'b41e1d3b7cfebcf3f02ddd9edec705d6' THEN
+  IF md5(p.prosrc) IS DISTINCT FROM 'fea04a3887c8d0ac809e5588f5b6ee97' THEN
     RAISE EXCEPTION 'POS1 FALHOU: simular_puxar_volume_trimestre viva (md5 %) não é a desta migration', md5(p.prosrc);
   END IF;
   v_agora := COALESCE(p.proacl::text, 'NULO') || '|' || COALESCE(p.proconfig::text, 'NULO') || '|' ||
