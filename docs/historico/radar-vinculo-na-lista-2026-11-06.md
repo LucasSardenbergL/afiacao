@@ -53,7 +53,16 @@ resultado, porque o núcleo casa por `cnpj = ANY` em `radar_empresas`.
 ## Deploy
 
 1. Migration por `bun run db:aplicar` (ensaio com ROLLBACK antes) e validação por `psql-ro` (md5 dos 3 corpos e ACL).
+   ✅ Aplicada em 06/11 (`db_aplicacoes` tentativa #918). `psql-ro` conferiu: núcleo `bc00b310…` sem DEFINER e
+   fechado ao JWT, ficha `2452f463…` e lista `a9278dd0…` com DEFINER, fechadas a `anon` e abertas ao JWT.
 2. Publish do front pelo founder; conferir o `radar_vinculos_por_cnpjs` no bundle servido em `steu.lovable.app`.
+   ✅ No ar em 06/11. O PR #3656 (squash `af0956dc4`) mergeou às 13:24Z.
+   - `monitor-deploy.sh --pr 3656` voltou `PR_NO_AR`: o ar serve `3dad9809`, que descende do squash.
+   - `verify-frontend.sh --pai af0956dc4^` voltou exit 0: a sentinela é exclusiva (0 ocorrências no pai) e está em
+     `RadarClientes-BHS5WR4l.js`, com o controle negativo OK. No mesmo chunk estão `selo-vinculo-` e
+     `possível sucessor`.
+   - O sync do Lovable não reverteu nada: os símbolos seguem nos 5 arquivos de `src/` em `origin/main`.
+   - Não houve QA visual logado: os bytes provam que o código subiu, não como a linha renderiza.
 
 ## Quando medir ("quando" é query)
 
