@@ -7,7 +7,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
-import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { estadoDeLeitura, estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { ehCnpjDocumento } from '@/lib/omie/documento-cliente';
 import { useCustomerContacts } from '@/hooks/useCustomerContacts';
 import { useSalespeople } from '@/hooks/useCoverage';
@@ -125,6 +125,9 @@ export default function Customer360() {
   }
 
   const s = score.data;
+  // Score que não foi lido (falha/sem rede, sem valor em mãos) FALA — `null` legítimo é "sem score".
+  const estadoScore = estadoDeLeitura(score);
+  const scoreSemLeitura = !s && naoConsegui(estadoScore) ? estadoScore : null;
   const isPj = ehCnpjDocumento(customer.document);
   const podeCriarTarefaPorVoz = isMaster || isGestorComercial;
 
@@ -135,6 +138,7 @@ export default function Customer360() {
           <CustomerHero
             customer={customer}
             score={s}
+            scoreSemLeitura={scoreSemLeitura}
             isPj={isPj}
             onBack={() => navigate('/admin/customers')}
           />
@@ -167,6 +171,7 @@ export default function Customer360() {
             contacts={contacts}
             address={address}
             score={s}
+            scoreSemLeitura={scoreSemLeitura}
           />
 
           <ActivityColumn
