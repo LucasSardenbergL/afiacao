@@ -77,8 +77,8 @@ sabotar() { # $1 = de, $2 = para (literal; tem de existir no arquivo)
 import sys
 p, de, para = sys.argv[1:]
 s = open(p, encoding="utf-8").read()
-if de not in s:
-    sys.exit("padrao ausente: " + de)
+if s.count(de) != 1:
+    sys.exit("padrao deve ocorrer 1 vez, ocorre %d: %s" % (s.count(de), de))
 open(p, "w", encoding="utf-8").write(s.replace(de, para))
 PY
 }
@@ -91,11 +91,17 @@ cegar_md5() {
   sabotar "  IF v_nuc IS NULL OR v_nuc NOT IN" "  IF false AND v_nuc NOT IN"
   sabotar "  IF v_rg IS NOT NULL AND v_rg <>" "  IF false AND v_rg <>"
 }
+# A chamada da base DENTRO do aviso (o sensor tem outra, com WHERE b.ordem = p_ref): contexto que só ela tem.
+BASE_DO_AVISO="      FROM private.radar_vinculos_base(ARRAY[p_cnpj], true, true) b
+  ),"
 case "${SABOTAGEM:-}" in
   "") ;;
-  aviso_sem_clientes)   cegar_md5; sabotar "FROM private.radar_vinculos_base(ARRAY[p_cnpj], true, true) b" "FROM private.radar_vinculos_base(ARRAY[p_cnpj], true, false) b" ;;
-  aviso_corta_10)       cegar_md5; sabotar "FROM private.radar_vinculos_base(ARRAY[p_cnpj], true, true) b" "FROM private.radar_vinculos_base(ARRAY[p_cnpj], true, true) b WHERE b.ordem <= 10" ;;
-  aviso_sem_carteira)   cegar_md5; sabotar "FROM private.radar_vinculos_base(ARRAY[p_cnpj], true, true) b" "FROM private.radar_vinculos_base(ARRAY[p_cnpj], false, true) b" ;;
+  aviso_sem_clientes)   cegar_md5; sabotar "$BASE_DO_AVISO" "      FROM private.radar_vinculos_base(ARRAY[p_cnpj], true, false) b
+  )," ;;
+  aviso_corta_10)       cegar_md5; sabotar "$BASE_DO_AVISO" "      FROM private.radar_vinculos_base(ARRAY[p_cnpj], true, true) b WHERE b.ordem <= 10
+  )," ;;
+  aviso_sem_carteira)   cegar_md5; sabotar "$BASE_DO_AVISO" "      FROM private.radar_vinculos_base(ARRAY[p_cnpj], false, true) b
+  )," ;;
   prova_ignorada)       cegar_md5; sabotar "            AND m.evidence_document_normalized = t.cliente_cnpj" "            AND true" ;;
   titular_duplo)        cegar_md5; sabotar "           (t.n_titulares = 1" "           (true" ;;
   incompleto_ignorado)  cegar_md5; sabotar "AND (pv.n_provados = 0 OR pv.n_sem_prova > 0 OR pv.incompleto))" "AND (pv.n_provados = 0))" ;;
@@ -346,7 +352,7 @@ aviso_cru() { sql_como "$1" "SELECT public.credito_vinculo_aviso('$2') IS NOT NU
 
 # ── E: o núcleo da ficha/lista não mudou ──
 foto_nucleo > "$(dirname "$DATA")/nucleo-depois.txt"
-if diff -q "$(dirname "$DATA")/nucleo-antes.txt" "$(dirname "$DATA")/nucleo-depois.txt" >/dev/null; then r="igual"; else r="MUDOU"; diff "$(dirname "$DATA")/nucleo-antes.txt" "$(dirname "$DATA")/nucleo-depois.txt" | head -10; fi
+if diff -q "$(dirname "$DATA")/nucleo-antes.txt" "$(dirname "$DATA")/nucleo-depois.txt" >/dev/null; then r="igual"; else r="MUDOU"; diff "$(dirname "$DATA")/nucleo-antes.txt" "$(dirname "$DATA")/nucleo-depois.txt" | head -10 || true; fi
 eq "E1 núcleo (todos os leads, com e sem carteira) idêntico antes e depois da migration" "$r" "igual"
 eq "E2 a foto tem conteúdo (não é igualdade de vazios): linhas com vínculo" \
    "$(grep -c . "$(dirname "$DATA")/nucleo-antes.txt")" "33"
