@@ -668,8 +668,10 @@ db/test-radar-score.sh                      24  falsificar=17
 # IS DISTINCT FROM (nota sem versão ou resumo incoerente), contato humano classificado pela sessão e não pela fonte,
 # nota relida do score ATUAL, contato desfeito/apagado contado como toque, cadastro virando toque, abertura de
 # outra rota, ledger que derruba o contato, coorte sorteada sem versão, não determinística, duplicada sob
-# concorrência ou com denominador por contato, e tabela/RPC nova aberta a anon/authenticated.
-db/test-radar-placar.sh                     25  falsificar=19
+# concorrência ou com denominador por contato, e tabela/RPC nova aberta a anon/authenticated. Fase B (20261106132259):
+# ficha aberta gravando 'abriu' sem o CNPJ, CNPJ inválido virando abertura, placar contando ficha como tela,
+# reconciliação só da tela, trigger que não escuta a ficha, allowlist do ledger sem o evento.
+db/test-radar-placar.sh                     31  falsificar=25
 # Radar: a fila lê a AMOSTRA de controle (20261030233200). Defeito aqui = RPC sem o gate do Radar, topo vazando
 # junto com a amostra, sorteio antigo no lugar do vigente, anon executando, RPC sem SECURITY DEFINER (0 linhas
 # sob RLS) e radar_coorte_controle aberta ao front direto.

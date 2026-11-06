@@ -104,8 +104,11 @@ Depois do parecer, o founder escolheu **construir na ficha**. Ficou assim:
 - **Ficha:** linha "Já é cliente?" (`RadarVinculosLead`), com "pista forte" ou "pista média", o título
   "Possível sucessor de X (baixada na Receita)" ou "Possível vínculo com X", e a evidência mais "Confira com
   o cliente". Erro ou forma inesperada da RPC não viram "nenhum vínculo".
-- **Sensor:** nenhum evento novo. Abrir a ficha já grava `radar_eventos.evento='abriu'` com o CNPJ, e o
-  vínculo é determinístico, então "fichas abertas com vínculo" é a query abaixo.
+- **Sensor:** ~~nenhum evento novo. Abrir a ficha já grava `radar_eventos.evento='abriu'` com o CNPJ~~
+  **errado** (medido em 2026-11-06: 4 `abriu` humanos em 30 dias, 0 com `cnpj`). Até a migration
+  `20261106132259` o `abriu` era só a TELA `/radar` servida, sem CNPJ; desde ela a ficha também grava
+  `abriu`, com o CNPJ (ver [radar-abriu-ficha-com-cnpj-2026-11-06.md](radar-abriu-ficha-com-cnpj-2026-11-06.md)).
+  O vínculo é determinístico, então "fichas abertas com vínculo" é a query abaixo.
 - **Ensaio em prod (`db:aplicar --ensaio`):** rodou inteiro, a postcondição passou com os dados reais e
   fez ROLLBACK.
 
@@ -127,10 +130,24 @@ Depois do parecer, o founder escolheu **construir na ficha**. Ficou assim:
 ## Quando medir de novo ("quando" é query)
 
 ```sql
--- A ficha com vínculo é aberta? (denominador: fichas abertas por humano; numerador: as que têm vínculo)
--- Rodar pela RPC exige JWT de quem prospecta; pelo psql-ro, olhe só o denominador e a lista de CNPJs abertos.
-select count(*) abriu, count(distinct cnpj) leads, min(ocorrido_em)::date, max(ocorrido_em)::date
-  from radar_eventos where evento = 'abriu' and origem = 'humano' and ocorrido_em > now() - interval '30 days';
+-- A ficha com vínculo é aberta? Denominador: FICHAS abertas por humano (`abriu` COM cnpj; cnpj NULL é a tela).
+-- 1 linha por titular, CNPJ e dia. Só conta a partir do apply da 20261106132259 (antes, nenhuma ficha gravava).
+select count(*) fichas, count(distinct cnpj) leads, count(distinct user_id) titulares,
+       min(ocorrido_em)::date, max(ocorrido_em)::date
+  from radar_eventos
+ where evento = 'abriu' and origem = 'humano' and cnpj is not null and ocorrido_em > now() - interval '30 days';
+```
+
+```sql
+-- Numerador: quais dessas fichas têm selo de vínculo. O núcleo é private e o claude_ro não o executa: rode pelo
+-- conector do Lovable (mcp__lovable__query_database). p_carteira=true = o que um gestor veria (nome do cliente).
+with abertas as (
+  select distinct cnpj from radar_eventos
+   where evento = 'abriu' and origem = 'humano' and cnpj is not null and ocorrido_em > now() - interval '30 days')
+select (select count(*) from abertas) fichas_abertas,
+       count(distinct n.lead_cnpj) com_vinculo,
+       count(distinct n.lead_cnpj) filter (where n.forca = 'forte') com_vinculo_forte
+  from private.radar_vinculos_nucleo((select array_agg(cnpj) from abertas), true) n;
 ```
 
 

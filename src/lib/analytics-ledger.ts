@@ -89,7 +89,14 @@ export type EventoLedger =
    * lista), `sheet` (painel aberto direto) ou `fila` (painel aberto pela fila do Top 61). Chave = empresa:sku:origem
    * → 1 linha por SKU, origem e dia. É o sensor do pacote de UX de 2026-11: qual atalho gera decisão de verdade.
    */
-  | 'reposicao.raio_x_decisao';
+  | 'reposicao.raio_x_decisao'
+  /**
+   * A ficha de um lead do Radar abriu (RadarDetailSheet). Chave = CNPJ → 1 por titular, CNPJ e dia. O trigger
+   * `private.radar_evento_abertura` copia para `radar_eventos` como 'abriu' COM o cnpj (a tela /radar servida segue
+   * 'abriu' com cnpj NULL). É o que mede quais fichas são abertas — em especial as com selo de vínculo/sucessor.
+   * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
+   */
+  | 'radar.ficha_aberta';
 
 /**
  * Registra um evento decisório no ledger server-side.
