@@ -30,7 +30,6 @@ import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ACOES_CONTATO, type AcaoContato } from '@/lib/radar/ui-helpers';
 import { cadastravelNoOmie } from '@/lib/radar/sugeridos';
 import { sqlstateDe } from '@/lib/radar/conflito-cadastro';
-import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { track } from '@/lib/analytics';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
@@ -48,7 +47,7 @@ const LABEL_OK: Record<AcaoContato, string> = {
   descartado: 'Lead descartado',
 };
 
-type ResultadoPosSinal = ResultadoCadastroUI | 'lead_mudou';
+type ResultadoPosSinal = Exclude<ResultadoCadastroUI, 'nao_elegivel'> | 'lead_mudou';
 
 /** A oferta aberta: o lead (SNAPSHOT) e o id do toast "Marcado: em conversa" (para tirar o Desfazer). */
 /** `id` correlaciona exposição → resposta → resultado(s) e retries nos sensores (sem PII). */
@@ -86,15 +85,14 @@ export function RadarOutcomeMenu({
 }) {
   const reg = useRegistrarContatoRadar();
   const undo = useDesfazerContatoRadar();
-  const cadastro = useCadastroOmieComRecuperacao();
+  const cadastro = useCadastroOmieComRecuperacao(cnpj);
   const { isImpersonating } = useImpersonation();
   const [confirmDescartar, setConfirmDescartar] = useState(false);
   const [motivo, setMotivo] = useState('');
   // State abre/fecha o diálogo; a REF é a verdade de "ainda há oferta a responder" (síncrona).
   const [ofertaAberta, setOfertaAberta] = useState<Oferta | null>(null);
   const ofertaRef = useRef<Oferta | null>(null);
-  const [relendo, setRelendo] = useState(false);
-  const cadastrando = relendo || cadastro.cadastrando;
+  const cadastrando = cadastro.cadastrando;
   // Resposta tardia não pode agir sobre OUTRA ficha (Codex, código 2026-10-20): a ficha avança
   // (`Próximo`) ou fecha enquanto a RPC/cadastro está em voo; sem esta guarda, a oferta de A
   // aparecia sobre B e "Agora não" avançava B sem contato.
@@ -165,33 +163,28 @@ export function RadarOutcomeMenu({
   };
 
   const executarCadastro = async (alvo: RadarEmpresa, ofertaId: string) => {
-    const rastrear = (resultado: ResultadoPosSinal, retomada: boolean) =>
-      track('radar.cadastro_pos_sinal_resultado', { resultado, oferta_id: ofertaId, retomada, origem: 'ficha' });
-    // A releitura barra um cadastro NOVO de quem mudou desde o sinal. As RETOMADAS (código já confirmado pelo
-    // Omie, resposta indeterminada) saem dos toasts do hook e NÃO passam por aqui — barrá-las travaria a
-    // recuperação justo quando o recruzamento já marcou `ja_cliente` (Codex, código 2026-10-20).
-    setRelendo(true);
-    let atual: Awaited<ReturnType<typeof lerLeadParaCadastro>>;
-    try {
-      atual = await lerLeadParaCadastro(alvo.cnpj);
-    } catch (e) {
-      rastrear('erro', false);
-      toast.error('Não foi possível cadastrar', { description: mensagemDeErro(e) ?? 'não consegui reler o lead no Radar' });
-      return;
-    } finally {
-      if (montadoRef.current) setRelendo(false);
-    }
-    if (!(atual != null && atual.prospeccao_status === 'em_conversa' && cadastravelNoOmie(atual).ok)) {
-      rastrear('lead_mudou', false);
-      toast.info('Não cadastrei: o lead mudou desde o sinal', {
-        description: atual == null ? 'Não encontrei mais esta empresa no Radar.'
-          : atual.ja_cliente || atual.omie_codigo_cliente ? 'Já consta como cliente / vinculado ao Omie.'
-          : atual.prospeccao_status !== 'em_conversa' ? `Status atual: ${atual.prospeccao_status ?? '—'} (não é mais "em conversa").`
-          : 'Situação cadastral na RFB não está ativa.',
-      });
-      return;
-    }
-    await cadastro.executar(alvo, rastrear);
+    // `nao_elegivel` (a releitura barrou) segue no sensor com o nome de sempre: `lead_mudou`.
+    const rastrear = (resultado: ResultadoCadastroUI, retomada: boolean) => track('radar.cadastro_pos_sinal_resultado', {
+      resultado: (resultado === 'nao_elegivel' ? 'lead_mudou' : resultado) satisfies ResultadoPosSinal,
+      oferta_id: ofertaId, retomada, origem: 'ficha',
+    });
+    // A releitura barra um cadastro NOVO de quem mudou desde o sinal, DENTRO da trava por CNPJ do hook. As
+    // RETOMADAS (código já confirmado pelo Omie, resposta indeterminada) saem dos toasts e não reverificam —
+    // barrá-las travaria a recuperação justo quando o recruzamento já marcou `ja_cliente` (Codex, 2026-10-20).
+    await cadastro.executar(alvo, {
+      rastrear,
+      verificar: async () => {
+        const atual = await lerLeadParaCadastro(alvo.cnpj);
+        if (atual != null && atual.prospeccao_status === 'em_conversa' && cadastravelNoOmie(atual).ok) return true;
+        toast.info('Não cadastrei: o lead mudou desde o sinal', {
+          description: atual == null ? 'Não encontrei mais esta empresa no Radar.'
+            : atual.ja_cliente || atual.omie_codigo_cliente ? 'Já consta como cliente / vinculado ao Omie.'
+            : atual.prospeccao_status !== 'em_conversa' ? `Status atual: ${atual.prospeccao_status ?? '—'} (não é mais "em conversa").`
+            : 'Situação cadastral na RFB não está ativa.',
+        });
+        return false;
+      },
+    });
   };
 
   /** Consome a oferta UMA vez (clique e fechamento do Radix chegam juntos). */

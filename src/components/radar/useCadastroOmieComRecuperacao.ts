@@ -1,13 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 import { useRadarCadastrarOmie } from '@/queries/useRadarAcoesLead';
 import { DivergenciaCadastro, ehSemConfirmacaoDoServidor, FalhaCadastro, type OpcoesCadastro } from '@/lib/radar/cadastro-omie';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
-/** O desfecho de UMA tentativa de cadastro, para o sensor de quem chama (sem PII). */
-export type ResultadoCadastroUI = 'sucesso' | 'ja_existia' | 'indeterminado' | 'erro' | 'divergente';
+/** O desfecho de UMA tentativa de cadastro, para o sensor de quem chama (sem PII). `em_andamento` = recusada
+ *  porque já há um cadastro deste CNPJ em voo; `nao_elegivel` = a verificação de quem chama barrou. */
+export type ResultadoCadastroUI = 'sucesso' | 'ja_existia' | 'indeterminado' | 'erro' | 'divergente' | 'em_andamento' | 'nao_elegivel';
 type Rastrear = (resultado: ResultadoCadastroUI, retomada: boolean) => void;
+/** Verificação de elegibilidade de quem chama (releitura do lead), rodada DENTRO da trava; false = não cadastra. */
+type Verificar = () => Promise<boolean>;
+
+/**
+ * Exclusão SÍNCRONA por CNPJ, fora do React e compartilhada por todas as instâncias (ficha, oferta pós-sinal e os
+ * retries dos toasts). Codex, código 2026-11-06 (P2, reproduzido): um INDETERMINADO deixava o "Tentar de novo" no
+ * toast; o vendedor confirmava de novo pela ficha e, durante a releitura, clicava o retry antigo — as duas
+ * tentativas chegavam ao `mutateAsync`, e o `finally` da 1ª reabilitava o botão no meio da 2ª. A chave da edge
+ * evita duplicata no ERP; a trava evita a corrida e mantém a tela honesta.
+ */
+const cadastrosEmVoo = new Set<string>();
+const ouvintes = new Set<() => void>();
+const avisar = () => { for (const f of ouvintes) f(); };
+const assinar = (f: () => void) => { ouvintes.add(f); return () => { ouvintes.delete(f); }; };
 
 /**
  * Cadastro de UM lead no Omie (Oben) com o tratamento de resultado e de RECUPERAÇÃO que a ficha e o menu de
@@ -22,21 +37,27 @@ type Rastrear = (resultado: ResultadoCadastroUI, retomada: boolean) => void;
  * antes de uma retomada — barrar a retomada travaria a recuperação justo quando o recruzamento já marcou
  * `ja_cliente` ou a RPC gravou e só perdeu a resposta (Codex, código 2026-10-20).
  */
-export function useCadastroOmieComRecuperacao() {
+export function useCadastroOmieComRecuperacao(cnpj: string) {
   const { mutateAsync } = useRadarCadastrarOmie();
-  const [cadastrando, setCadastrando] = useState(false);
-  const montadoRef = useRef(true);
-  useEffect(() => {
-    montadoRef.current = true;
-    return () => { montadoRef.current = false; };
-  }, []);
+  const leitura = useCallback(() => cadastrosEmVoo.has(cnpj), [cnpj]);
+  const cadastrando = useSyncExternalStore(assinar, leitura, leitura);
 
   const executar = useCallback(
-    async function tentar(alvo: RadarEmpresa, rastrear?: Rastrear, opcoes?: OpcoesCadastro): Promise<ResultadoCadastroUI> {
+    async function tentar(
+      alvo: RadarEmpresa,
+      { rastrear, opcoes, verificar }: { rastrear?: Rastrear; opcoes?: OpcoesCadastro; verificar?: Verificar } = {},
+    ): Promise<ResultadoCadastroUI> {
       const registrar = (r: ResultadoCadastroUI) => { rastrear?.(r, Boolean(opcoes)); return r; };
-      const novamente = (o: OpcoesCadastro) => () => { void tentar(alvo, rastrear, o); };
-      if (montadoRef.current) setCadastrando(true);
+      // Retentativa NUNCA reverifica a elegibilidade (ver o cabeçalho): só a 1ª tentativa leva `verificar`.
+      const novamente = (o: OpcoesCadastro) => () => { void tentar(alvo, { rastrear, opcoes: o }); };
+      if (cadastrosEmVoo.has(alvo.cnpj)) {
+        toast.info('Cadastro deste lead já em andamento', { description: 'Aguarde a resposta do Omie.' });
+        return registrar('em_andamento');
+      }
+      cadastrosEmVoo.add(alvo.cnpj);
+      avisar();
       try {
+        if (verificar && !(await verificar())) return registrar('nao_elegivel');
         const r = await mutateAsync({ empresa: alvo, opcoes });
         toast.success(
           r.jaExistia ? `Já era cliente no Omie (Oben) — reconciliado · cód. ${r.codigo}` : `Cadastrado no Omie (Oben) · cód. ${r.codigo}`,
@@ -88,7 +109,8 @@ export function useCadastroOmieComRecuperacao() {
         toast.error('Não foi possível cadastrar', { description: msg });
         return registrar('erro');
       } finally {
-        if (montadoRef.current) setCadastrando(false);
+        cadastrosEmVoo.delete(alvo.cnpj);
+        avisar();
       }
     },
     [mutateAsync],

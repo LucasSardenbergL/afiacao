@@ -8,7 +8,6 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { cadastravelNoOmie, type MotivoNaoCadastravel } from '@/lib/radar/sugeridos';
-import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { lerLeadParaCadastro } from '@/queries/useRadarAcoesLead';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { useCadastroOmieComRecuperacao } from './useCadastroOmieComRecuperacao';
@@ -31,9 +30,8 @@ const MOTIVO_NAO_CADASTRAVEL: Record<MotivoNaoCadastravel, string> = {
  */
 export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
   const { isImpersonating } = useImpersonation();
-  const cadastro = useCadastroOmieComRecuperacao();
+  const cadastro = useCadastroOmieComRecuperacao(empresa.cnpj);
   const [confirmOmie, setConfirmOmie] = useState(false);
-  const [relendo, setRelendo] = useState(false);
 
   if (empresa.omie_codigo_cliente) {
     return (
@@ -44,28 +42,23 @@ export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
   }
 
   const veredito = cadastravelNoOmie(empresa);
-  const ocupado = relendo || cadastro.cadastrando;
+  const ocupado = cadastro.cadastrando;
 
-  const doCadastrar = async () => {
+  // A releitura roda DENTRO da trava do cadastro (por CNPJ): confirmar de novo ou o retry de um toast antigo
+  // durante ela não abre uma 2ª tentativa concorrente (Codex, código 2026-11-06, P2).
+  const doCadastrar = () => {
     setConfirmOmie(false);
-    setRelendo(true);
-    let atual: Awaited<ReturnType<typeof lerLeadParaCadastro>>;
-    try {
-      atual = await lerLeadParaCadastro(empresa.cnpj);
-    } catch (e) {
-      toast.error('Não foi possível cadastrar', { description: mensagemDeErro(e) ?? 'não consegui reler o lead no Radar' });
-      return;
-    } finally {
-      setRelendo(false);
-    }
-    const agora = atual ? cadastravelNoOmie(atual) : null;
-    if (!agora?.ok) {
-      toast.info('Não cadastrei: o lead mudou', {
-        description: agora ? MOTIVO_NAO_CADASTRAVEL[agora.motivo] : 'Não encontrei mais esta empresa no Radar.',
-      });
-      return;
-    }
-    await cadastro.executar(empresa);
+    void cadastro.executar(empresa, {
+      verificar: async () => {
+        const atual = await lerLeadParaCadastro(empresa.cnpj);
+        const agora = atual ? cadastravelNoOmie(atual) : null;
+        if (agora?.ok) return true;
+        toast.info('Não cadastrei: o lead mudou', {
+          description: agora ? MOTIVO_NAO_CADASTRAVEL[agora.motivo] : 'Não encontrei mais esta empresa no Radar.',
+        });
+        return false;
+      },
+    });
   };
 
   return (
@@ -92,7 +85,7 @@ export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void doCadastrar()}>Cadastrar na Oben</AlertDialogAction>
+            <AlertDialogAction onClick={doCadastrar}>Cadastrar na Oben</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

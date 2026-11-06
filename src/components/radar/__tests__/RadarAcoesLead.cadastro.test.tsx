@@ -73,4 +73,31 @@ describe('RadarAcoesLead — cadastro no Omie pela ficha', () => {
     // A retomada não relê a elegibilidade (barraria a recuperação de quem o recruzamento já marcou cliente).
     expect(lerLead).toHaveBeenCalledTimes(1);
   });
+
+  it('retry de toast antigo durante uma nova confirmação NÃO abre 2º cadastro concorrente (Codex P2)', async () => {
+    lerLead.mockResolvedValueOnce(lead());
+    mutateAsync.mockRejectedValueOnce(new Error('OMIE_RESPOSTA_INDETERMINADA: sem código'));
+    render(<RadarAcoesLead empresa={lead()} />);
+    await confirmar();
+    await waitFor(() => expect(toastMock.warning).toHaveBeenCalled());
+    const retry = (toastMock.warning.mock.calls[0][1] as { action: { onClick: () => void } }).action.onClick;
+
+    // Nova confirmação pela ficha com a releitura PRESA; no meio dela, o retry do toast antigo.
+    let soltarLeitura!: (v: RadarEmpresa) => void;
+    lerLead.mockImplementationOnce(() => new Promise<RadarEmpresa>((r) => { soltarLeitura = r; }));
+    let soltarCadastro!: (v: unknown) => void;
+    mutateAsync.mockImplementationOnce(() => new Promise((r) => { soltarCadastro = r; }));
+    await confirmar();
+    await waitFor(() => expect(lerLead).toHaveBeenCalledTimes(2));
+    retry();
+    expect(toastMock.info).toHaveBeenCalledWith('Cadastro deste lead já em andamento', expect.anything());
+
+    soltarLeitura(lead());
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(2));
+    // O botão segue ocupado até a tentativa em voo terminar (a trava é a fonte do "cadastrando").
+    expect((screen.getByRole('button', { name: /Cadastrar no Omie/ }) as HTMLButtonElement).disabled).toBe(true);
+    soltarCadastro({ codigo: '555', jaExistia: false, recuperado: false });
+    await waitFor(() => expect((screen.getByRole('button', { name: /Cadastrar no Omie/ }) as HTMLButtonElement).disabled).toBe(false));
+    expect(mutateAsync).toHaveBeenCalledTimes(2);
+  });
 });
