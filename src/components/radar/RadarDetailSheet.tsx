@@ -2,7 +2,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MapPin, Mail, MessageSquare, ChevronRight, History, PhoneCall } from 'lucide-react';
 import { RadarOutcomeMenu } from './RadarOutcomeMenu';
 import { RadarAcoesLead } from './RadarAcoesLead';
@@ -13,6 +13,7 @@ import { RadarVinculosLead } from './RadarVinculosLead';
 import { avisoTelefoneCompartilhado, gravarModoDiscagem, lerModoDiscagem } from '@/lib/radar/atendimento';
 import { useRadarTelefoneCompartilhado } from '@/queries/useRadarTelefoneCompartilhado';
 import { track } from '@/lib/analytics';
+import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { isCellphone, whatsappLink } from '@/lib/phone';
 import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
@@ -118,6 +119,12 @@ export function RadarDetailSheet({
 }) {
   const [discagem, setDiscagem] = useState(lerModoDiscagem);
   const compartilhado = useRadarTelefoneCompartilhado(empresa?.cnpj ?? null);
+  // Sensor da ficha: 1 chamada por CNPJ aberto (não por render/refetch); o dedup por titular, CNPJ e dia é do banco.
+  // Sob a lente "Ver como" o registrarNoLedger retorna cedo — inspeção não infla o 'abriu'.
+  const cnpjAberto = empresa?.cnpj ?? null;
+  useEffect(() => {
+    if (cnpjAberto) void registrarNoLedger('radar.ficha_aberta', cnpjAberto, { cnpj: cnpjAberto });
+  }, [cnpjAberto]);
   if (!empresa) return null;
   const alternarDiscagem = () => {
     const v = !discagem;
