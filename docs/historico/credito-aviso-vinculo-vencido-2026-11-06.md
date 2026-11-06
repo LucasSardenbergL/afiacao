@@ -52,8 +52,17 @@ não cria exceção, não encurta prazo e não entra em `vencido_no_momento`. `g
 - **Codex desenho:** gpt-6-astra · max · 350 s · 151.206 tokens. Nenhum P0; 3 P1 adotados: prova documental, card
   antes do cadastro independente da consulta antiga, e avaliação incompleta ≠ silêncio. Os P2 também entraram:
   projeção, sensor com par e versão + voto corrigível + "não consegui confirmar", validação no servidor, lente.
-- **Codex código:** ver o PR.
-- **Prova PG17** `db/test-credito-vinculo-aviso.sh`: 30 asserts e `--falsificar` com 19/19 sabotagens vermelhas no
+- **Codex código:** gpt-6-astra · max · 642 s · 166.333 tokens. Nenhum P0; 2 P1 e 5 P2, todos adotados.
+  - P1: evidência NULA tornava `provado` NULL e o vínculo sumia das contagens, gerando silêncio falso. Corrigido com
+    `COALESCE`.
+  - P1: o `ref` por posição atribuía o voto ao cliente errado quando outro vínculo entrava na frente. Agora o ref é
+    opaco, estável (hash do par) e resolvido numa ÚNICA avaliação, por `private.credito_vinculo_avaliar`.
+  - P2: geração do voto (resposta tardia descartada após troca de cliente); offline com cache vencido ≠ silêncio;
+    TRAVA dos objetos novos no re-apply; `servido` repetido sai antes da consulta cara; fixtures de frescor, `parcial`
+    e evidência nula.
+  - O teste novo de geração passou VERDE com a guarda sabotada (teatro: a promessa do voto nunca resolvia). Foi
+    consertado e agora fica vermelho sem a guarda.
+- **Prova PG17** `db/test-credito-vinculo-aviso.sh`: 34 asserts e `--falsificar` com 24/24 sabotagens vermelhas no
   assert certo, com controle verde, em `LC_ALL=C` e em `pt_BR.UTF-8`. A 1ª falsificação pegou 2 defeitos do PRÓPRIO
   harness. Primeiro, com `pipefail`, o `diff | head` do E1 abortava a suíte antes do assert, e o vermelho caía no lugar
   errado. Segundo, uma sabotagem casava 2 trechos e gerava erro de sintaxe. Agora `sabotar` exige ocorrência ÚNICA.
