@@ -971,3 +971,9 @@ db/test-radar-possiveis-vinculos.sh        19  falsificar=12
 # private.radar_vinculos_nucleo; a ficha mantém os cenários da 20261104201756 sobre ele, e a lista é, lead a lead,
 # o resumo exato da ficha (gestor e vendedor); teto de 200, núcleo fechado ao JWT, PRE anti-deriva com trava.
 db/test-radar-vinculos-em-lote.sh          23  falsificar=14
+
+# Aviso de crédito por vínculo com cliente que tem título vencido (migration 20261106193714): o núcleo da ficha/lista
+# vira invólucro de private.radar_vinculos_base sem mudar a saída (foto antes×depois); o aviso inclui já-cliente,
+# passa do corte de 10, avalia a carteira inteira, exige prova documental do código Omie, usa a regra de
+# venda_prazo_aviso, marca indeterminado em vez de "em dia", projeta como a ficha; sensor validado no servidor.
+db/test-credito-vinculo-aviso.sh           30  falsificar=19

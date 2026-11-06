@@ -1001,6 +1001,10 @@ export const MODULOS: ModuloApp[] = [
       // que os consumidores mostram — usados por vários domínios, logo plataforma.
       "src/lib/leitura/**",
       "src/components/leitura/**",
+      // Aviso de crédito por vínculo com cliente que tem título vencido (migration 20261106193714): o mesmo
+      // card serve o pedido (vendas) e a ficha do Radar (farmer-inteligencia), como o selo da Receita.
+      "src/lib/credito-vinculo/**",
+      "src/components/credito-vinculo/**",
     ],
     testes: [
       "src/contexts/__tests__/AuthContext.cargo-semeia-cache.test.tsx",

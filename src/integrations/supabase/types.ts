@@ -23054,6 +23054,17 @@ export type Database = {
         }
         Returns: Json
       }
+      credito_vinculo_aviso: { Args: { p_cnpj: string }; Returns: Json }
+      credito_vinculo_aviso_registrar: {
+        Args: {
+          p_cnpj: string
+          p_evento: string
+          p_ref?: number
+          p_superficie: string
+          p_veredito?: string
+        }
+        Returns: Json
+      }
       criar_pedidos_com_itens: { Args: { p_pedidos: Json }; Returns: Json }
       criar_plano_tatico: {
         Args: {

@@ -1,4 +1,5 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { AvisoVinculoCredito } from '@/components/credito-vinculo/AvisoVinculoCredito';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -189,6 +190,8 @@ export function RadarDetailSheet({
         )}
         <div className="mt-3 space-y-2">
           <RadarConflitosDoLead cnpj={empresa.cnpj} />
+          {/* Antes do cadastro no Omie: a edge cria no Omie ANTES de registrar, o aviso tem de ser leitura prévia. */}
+          <AvisoVinculoCredito documento={empresa.cnpj} superficie="ficha_radar" />
           <RadarAcoesLead empresa={empresa} />
         </div>
         <div className="mt-4 divide-y">
