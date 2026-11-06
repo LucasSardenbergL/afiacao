@@ -971,3 +971,9 @@ db/test-radar-possiveis-vinculos.sh        19  falsificar=12
 # private.radar_vinculos_nucleo; a ficha mantém os cenários da 20261104201756 sobre ele, e a lista é, lead a lead,
 # o resumo exato da ficha (gestor e vendedor); teto de 200, núcleo fechado ao JWT, PRE anti-deriva com trava.
 db/test-radar-vinculos-em-lote.sh          23  falsificar=14
+
+# Radar pacote D — levar o lead ao vendedor (migration 20261106181000): território por carteira elegível com 1 dono por
+# município, top-N sem já-cliente/descartado/sem score/RFB baixada/dono ativo de outro, e-mail semanal com dedupe por
+# semana e sem repetir lead (teste não queima), cron nascido desligado, RPCs do card e do sensor com SQLSTATE, tabelas
+# fechadas ao JWT e ACL nas duas pontas.
+db/test-radar-leads-vendedor.sh            39  falsificar=29

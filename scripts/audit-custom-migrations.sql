@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 787
+-- Total de custom migrations: 788
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -855,7 +855,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106022016', 'profiles_origem_omie_import_backfill', '20261106022016_profiles_origem_omie_import_backfill.sql'),
   ('20261106083754', 'radar_vinculos_em_lote', '20261106083754_radar_vinculos_em_lote.sql'),
   ('20261106090000', 'des_simular_puxar_config_e_checkin', '20261106090000_des_simular_puxar_config_e_checkin.sql'),
-  ('20261106132259', 'radar_abriu_ficha_com_cnpj', '20261106132259_radar_abriu_ficha_com_cnpj.sql')
+  ('20261106132259', 'radar_abriu_ficha_com_cnpj', '20261106132259_radar_abriu_ficha_com_cnpj.sql'),
+  ('20261106181000', 'radar_leads_ao_vendedor', '20261106181000_radar_leads_ao_vendedor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3390,7 +3391,21 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_abriu_ficha_com_cnpj', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('radar_abriu_ficha_com_cnpj', 'function', 'private', 'radar_evento_abertura', ''),
   ('radar_abriu_ficha_com_cnpj', 'function', 'public', 'radar_placar_uso', ''),
-  ('radar_abriu_ficha_com_cnpj', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox')
+  ('radar_abriu_ficha_com_cnpj', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
+  ('radar_leads_ao_vendedor', 'function', 'private', 'radar_territorio_do_vendedor', ''),
+  ('radar_leads_ao_vendedor', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_registrar_card_servido', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_registrar_abertura_empurrada', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_config', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_envios', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_leads', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_lead_aberturas', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_prospectar_hoje_servido', ''),
+  ('radar_leads_ao_vendedor', 'index', 'public', 'idx_radar_email_vendedor_leads_cnpj', 'radar_email_vendedor_leads'),
+  ('radar_leads_ao_vendedor', 'index', 'public', 'idx_radar_lead_aberturas_envio', 'radar_lead_aberturas'),
+  ('radar_leads_ao_vendedor', 'cron_job', 'cron', 'radar-avisar-vendedores-semanal', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5973,7 +5988,21 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_abriu_ficha_com_cnpj', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('radar_abriu_ficha_com_cnpj', 'function', 'private', 'radar_evento_abertura', ''),
   ('radar_abriu_ficha_com_cnpj', 'function', 'public', 'radar_placar_uso', ''),
-  ('radar_abriu_ficha_com_cnpj', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox')
+  ('radar_abriu_ficha_com_cnpj', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
+  ('radar_leads_ao_vendedor', 'function', 'private', 'radar_territorio_do_vendedor', ''),
+  ('radar_leads_ao_vendedor', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_registrar_card_servido', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_registrar_abertura_empurrada', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_config', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_envios', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_leads', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_lead_aberturas', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_prospectar_hoje_servido', ''),
+  ('radar_leads_ao_vendedor', 'index', 'public', 'idx_radar_email_vendedor_leads_cnpj', 'radar_email_vendedor_leads'),
+  ('radar_leads_ao_vendedor', 'index', 'public', 'idx_radar_lead_aberturas_envio', 'radar_lead_aberturas'),
+  ('radar_leads_ao_vendedor', 'cron_job', 'cron', 'radar-avisar-vendedores-semanal', '')
 )
 SELECT
   e.migration,

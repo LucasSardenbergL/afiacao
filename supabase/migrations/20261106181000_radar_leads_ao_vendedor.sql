@@ -150,37 +150,36 @@ STABLE
 SECURITY DEFINER
 SET search_path = ''
 AS $fn$
+  -- Forma medida em PROD (2026-11-06): com cast ::text nas colunas enum o planejador estimava 1 linha de carteira
+  -- (são 2.842) e casava endereço × município num laço aninhado: > 30 s. Comparando no enum e carregando o dono
+  -- junto do endereço (sem reunir a carteira de novo), com os dois lados normalizados e MATERIALIZED: ~100 ms.
   WITH vendedores AS (
     SELECT cr.user_id
       FROM public.commercial_roles cr
-     WHERE cr.commercial_role::text IN ('farmer', 'hunter', 'closer')
+     WHERE cr.commercial_role IN ('farmer', 'hunter', 'closer')
        AND EXISTS (SELECT 1 FROM public.user_roles ur
-                    WHERE ur.user_id = cr.user_id AND ur.role::text = 'employee')
+                    WHERE ur.user_id = cr.user_id AND ur.role = 'employee')
   ),
-  cart AS (
-    SELECT DISTINCT a.owner_user_id AS dono, a.customer_user_id AS cliente
-      FROM public.carteira_assignments a
-      JOIN vendedores v ON v.user_id = a.owner_user_id
-     WHERE a.eligible IS TRUE
-  ),
-  ende AS (
-    SELECT DISTINCT ON (ad.user_id) ad.user_id,
+  ende AS MATERIALIZED (
+    SELECT DISTINCT ON (a.owner_user_id, a.customer_user_id)
+           a.owner_user_id AS dono, a.customer_user_id AS cliente,
            public.norm_cidade(regexp_replace(ad.city, '\s*\([^)]*\)\s*$', '')) AS nc,
            upper(btrim(ad.state)) AS uf
-      FROM public.addresses ad
-     WHERE ad.user_id IN (SELECT c.cliente FROM cart c)
-     ORDER BY ad.user_id, ad.is_default DESC NULLS LAST, ad.created_at DESC, ad.id
+      FROM public.carteira_assignments a
+      JOIN vendedores v ON v.user_id = a.owner_user_id
+      JOIN public.addresses ad ON ad.user_id = a.customer_user_id
+     WHERE a.eligible IS TRUE
+     ORDER BY a.owner_user_id, a.customer_user_id, ad.is_default DESC NULLS LAST, ad.created_at DESC, ad.id
   ),
-  mun AS (
+  mun AS MATERIALIZED (
     SELECT m.codigo, m.nome, upper(btrim(m.uf)) AS uf, public.norm_cidade(m.nome) AS nc
       FROM public.radar_municipios m
   ),
   por_mun AS (
-    SELECT c.dono, mu.codigo, mu.nome, mu.uf, count(DISTINCT c.cliente)::integer AS n
-      FROM cart c
-      JOIN ende e ON e.user_id = c.cliente
+    SELECT e.dono, mu.codigo, mu.nome, mu.uf, count(DISTINCT e.cliente)::integer AS n
+      FROM ende e
       JOIN mun mu ON mu.nc = e.nc AND mu.uf = e.uf
-     GROUP BY c.dono, mu.codigo, mu.nome, mu.uf
+     GROUP BY e.dono, mu.codigo, mu.nome, mu.uf
   ),
   dono_do_mun AS (
     SELECT DISTINCT ON (pm.codigo) pm.codigo, pm.dono

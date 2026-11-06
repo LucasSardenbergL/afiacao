@@ -30,12 +30,14 @@ export function ProspectarHojeCard() {
   const servidoRegistrado = useRef(false);
 
   const leads = q.data?.leads ?? [];
+  const nLeads = q.data?.leads.length ?? 0;
+  const elegiveis = q.data?.leads[0]?.elegiveis ?? null;
   useEffect(() => {
-    if (!q.isSuccess || leads.length === 0 || isImpersonating || servidoRegistrado.current) return;
+    if (!q.isSuccess || nLeads === 0 || isImpersonating || servidoRegistrado.current) return;
     servidoRegistrado.current = true;
-    registrarCardServido(leads.length);
-    track('radar.prospectar_hoje_visto', { leads: leads.length, elegiveis: leads[0]?.elegiveis ?? null });
-  }, [q.isSuccess, leads, isImpersonating]);
+    registrarCardServido(nLeads);
+    track('radar.prospectar_hoje_visto', { leads: nLeads, elegiveis });
+  }, [q.isSuccess, nLeads, elegiveis, isImpersonating]);
 
   if (!visivel) return null;
   if (q.isLoading) return <div className="h-32 rounded-lg bg-muted/40 animate-pulse" data-testid="prospectar-hoje-carregando" />;

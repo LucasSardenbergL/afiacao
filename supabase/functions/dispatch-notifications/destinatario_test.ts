@@ -34,13 +34,13 @@ Deno.test("leitura do envio: tabela ausente segue; qualquer outra falha aborta o
 Deno.test("corpo do vendedor: escapa HTML e torna o link clicável", () => {
   const html = htmlDoVendedor(
     "Radar: 1 empresa <b>",
-    "1. Marcenaria & Cia\n   Abrir no Radar: https://steu.lovable.app/radar/abrir/abc/00000000000101\n",
+    "1. Marcenaria & Cia\n   Abrir no Radar: https://app.exemplo.com/radar/abrir/abc/00000000000101\n",
   );
   eq(html.includes("Radar: 1 empresa &lt;b&gt;"), true, "título escapado");
   eq(html.includes("Marcenaria &amp; Cia"), true, "corpo escapado");
   eq(
     html.includes(
-      '<a href="https://steu.lovable.app/radar/abrir/abc/00000000000101">https://steu.lovable.app/radar/abrir/abc/00000000000101</a>',
+      '<a href="https://app.exemplo.com/radar/abrir/abc/00000000000101">https://app.exemplo.com/radar/abrir/abc/00000000000101</a>',
     ),
     true,
     "link",

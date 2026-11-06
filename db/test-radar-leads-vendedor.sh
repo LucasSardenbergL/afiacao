@@ -100,10 +100,11 @@ case "${SABOTAGEM:-}" in
   dono_sem_acesso_bloqueia) sabotar "                AND private.cap_radar_prospectar(a.dono_user_id))" "                )" ;;
   territorio_disputado)  sabotar "    JOIN dono_do_mun d ON d.codigo = pm.codigo AND d.dono = pm.dono" "" ;;
   carteira_inelegivel)   sabotar "     WHERE a.eligible IS TRUE
-  )," "  )," ;;
+" "     WHERE true
+" ;;
   vendedor_sem_employee) sabotar "       AND EXISTS (SELECT 1 FROM public.user_roles ur
-                    WHERE ur.user_id = cr.user_id AND ur.role::text = 'employee')" "" ;;
-  endereco_nao_default)  sabotar "ORDER BY ad.user_id, ad.is_default DESC NULLS LAST, ad.created_at DESC, ad.id" "ORDER BY ad.user_id, ad.is_default ASC, ad.created_at DESC, ad.id" ;;
+                    WHERE ur.user_id = cr.user_id AND ur.role = 'employee')" "" ;;
+  endereco_nao_default)  sabotar "ad.is_default DESC NULLS LAST, ad.created_at DESC, ad.id" "ad.is_default ASC, ad.created_at DESC, ad.id" ;;
   repete_lead)           sabotar "       AND (p_nao_repetir_desde IS NULL OR NOT EXISTS (" "       AND (true OR NOT EXISTS (" ;;
   teste_queima_lead)     sabotar "                AND e.eh_teste = false
 " "" ;;
