@@ -24702,6 +24702,7 @@ export type Database = {
           p_offset?: number
           p_ordem?: string
           p_primeira_vista_min?: string
+          p_so_meus?: boolean
           p_status?: string
           p_sugeridos_lote?: string
           p_sugeridos_score_min?: number

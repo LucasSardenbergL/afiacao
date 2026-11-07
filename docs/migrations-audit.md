@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **793** custom migrations totais
-- **2599** objetos esperados (criados por estas migrations)
+- **794** custom migrations totais
+- **2600** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 993
+  - `function`: 994
   - `rls_policy`: 519
   - `index`: 371
   - `table`: 237
@@ -6483,6 +6483,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `private.credito_vinculo_avaliar` | — |
 | `function` | `public.credito_vinculo_aviso` | — |
 | `function` | `public.credito_vinculo_aviso_registrar` | — |
+
+### `20261106212329_radar_lista_meus_atendimentos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_lista` | — |
 
 ### `20261106221000_radar_atribuir_atendimento.sql`
 
