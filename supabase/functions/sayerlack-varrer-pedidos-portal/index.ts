@@ -23,7 +23,6 @@ import { ABRIR_CONSULTA_PEDIDOS } from "../_shared/sayerlack-portal-navegador.ts
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { fetchAll } from "../_shared/paginate.ts";
-import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import {
   classificar,
   ESTADOS_EM_VOO,
@@ -44,6 +43,9 @@ import {
   type PedidoAReconciliar,
   type PedidoDisparadoLido,
   pedidosAReconciliar,
+  provarLeitura,
+  carenciaTravada,
+  reconsultasForaDaJanela,
 } from "./varredura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -145,7 +147,20 @@ ${ABRIR_CONSULTA_PEDIDOS}
       const resp = page.waitForResponse(
         (r) => r.url().indexOf('/order-viewer/form/list') !== -1 && r.request().method() === 'POST',
         { timeout: budgetFor('resposta-' + rotulo, 45000) },
-      ).then((r) => ({ ok: r.status() < 400, status: r.status() })).catch((e) => ({ ok: false, erro: String((e && e.message) || e).substring(0, 120) }));
+      ).then(async (r) => {
+        // Total ANUNCIADO pelo próprio portal (DataTables server-side: recordsFiltered/recordsTotal) — a prova de que a
+        // lista veio inteira (Onda 3: 2 rodadas leram 0 linhas e deram sucesso). Corpo ilegível ⇒ só as chaves no trace.
+        let total = null; let chaves = null;
+        try {
+          const j = await r.json();
+          if (j && typeof j === 'object' && !Array.isArray(j)) {
+            chaves = Object.keys(j).slice(0, 20);
+            const cand = [j.recordsFiltered, j.iTotalDisplayRecords, j.recordsTotal, j.iTotalRecords];
+            for (let k = 0; k < cand.length; k++) { if (cand[k] !== undefined && cand[k] !== null) { total = cand[k]; break; } }
+          }
+        } catch (e) { chaves = null; }
+        return { ok: r.status() < 400, status: r.status(), total, chaves };
+      }).catch((e) => ({ ok: false, erro: String((e && e.message) || e).substring(0, 120) }));
       await page.evaluate(acao);
       return await resp;
     };
@@ -177,7 +192,8 @@ ${ABRIR_CONSULTA_PEDIDOS}
         });
       const proc = document.querySelector('.dataTables_processing');
       const processando = !!proc && window.getComputedStyle(proc).display !== 'none';
-      const infoEl = document.querySelector('.dataTables_info');
+      // '.dataTables_info' nunca casou em 46 rodadas: o portal pode nomear o elemento pelo id da tabela ('<id>_info').
+      const infoEl = document.querySelector('.dataTables_info') || document.querySelector('[id$="_info"]') || document.querySelector('.dt-info');
       const prox = document.querySelector('.paginate_button.next');
       const temProxima = !!prox && !prox.classList.contains('disabled') && !(prox.parentElement && prox.parentElement.classList.contains('disabled'));
       return { ok: true, headers, linhas, processando, info: infoEl ? (infoEl.innerText || '').trim() : null, temProxima };
@@ -213,11 +229,11 @@ ${ABRIR_CONSULTA_PEDIDOS}
       linhas.push(...pagina.linhas);
       paginas++;
     }
-    trace.push({ step: 'consulta_lida', headers, paginas, n_linhas: linhas.length, info: infoInicial, t: Date.now() - t0 });
+    trace.push({ step: 'consulta_lida', headers, paginas, n_linhas: linhas.length, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, t: Date.now() - t0 });
     if (pagina.temProxima) return await falha('PAGINACAO_INCOMPLETA', 'Mais de 30 páginas na consulta — lista não lida inteira', { paginas });
 
     return {
-      data: { success: true, headers, linhas, info: infoInicial, paginas, situacoes, filtro, trace },
+      data: { success: true, headers, linhas, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, paginas, situacoes, filtro, trace },
       type: 'application/json',
     };
   } catch (e) {
@@ -234,6 +250,9 @@ interface BrowserlessData {
   headers?: string[];
   linhas?: LinhaConsultaRaw[];
   info?: string | null;
+  /** Total que o portal anunciou na resposta da consulta (recordsFiltered/recordsTotal). */
+  resposta_total?: unknown;
+  resposta_chaves?: string[] | null;
   paginas?: number;
   situacoes?: { valor: string; texto: string }[];
   trace?: unknown[];
@@ -470,7 +489,7 @@ async function syncPedidosCompletoEm(db: Db): Promise<string | null> {
   return r?.status === "complete" && r.last_sync_at ? r.last_sync_at : null;
 }
 
-async function importar(protocolo: string, situacaoCodigo: string): Promise<{ httpStatus: number; corpo: unknown }> {
+async function importar(protocolo: string, situacoes: string[]): Promise<{ httpStatus: number; corpo: unknown }> {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 240_000);
   try {
@@ -479,7 +498,7 @@ async function importar(protocolo: string, situacaoCodigo: string): Promise<{ ht
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
       // A releitura da importadora tem de achar a MESMA situação que a varredura classificou (Codex P1, 2026-10-16/17):
       // um pedido que passou de Aberto para Atendido no meio da rodada escaparia da trava de NF.
-      body: JSON.stringify({ protocolo, situacoes_permitidas: [situacaoCodigo] }),
+      body: JSON.stringify({ protocolo, situacoes_permitidas: situacoes }),
       signal: ctrl.signal,
     });
     const txt = await resp.text();
@@ -490,6 +509,58 @@ async function importar(protocolo: string, situacaoCodigo: string): Promise<{ ht
     clearTimeout(timeout);
   }
 }
+
+
+// ── Registro da execução (Onda 3, item 3.6) ─────────────────────────────────────────────────────────────────────────
+// Local, em vez de `comRegistro` (_shared, serve 10 edges): rodada que termina em erro guarda o RESUMO PARCIAL junto do
+// erro — antes só `{erro}` sobrava e o "o que a rodada viu" sumia exatamente quando importava. Fail-open (observabilidade).
+async function abrirExecucao(db: Db, auth: { via: string; userId?: string }): Promise<string | null> {
+  try {
+    const manual = auth.via === "staff";
+    const { data, error } = await db.from("acoes_execucoes")
+      .insert({ acao: ACAO_REGISTRO, origem: manual ? "manual" : "automatica", executado_por: manual ? (auth.userId ?? null) : null })
+      .select("id").single();
+    if (error || !data) { console.warn(`[varrer-portal] registro não abriu (fail-open): ${error?.message ?? "sem id"}`); return null; }
+    return (data as { id: string }).id;
+  } catch (e) {
+    console.warn(`[varrer-portal] registro não abriu (fail-open): ${mensagemDeErro(e) ?? "erro"}`);
+    return null;
+  }
+}
+
+async function fecharExecucao(db: Db, id: string | null, status: "sucesso" | "erro", detalhes: Record<string, unknown>): Promise<void> {
+  if (!id) return;
+  try {
+    const { error } = await db.from("acoes_execucoes").update({ status, finalizado_em: new Date().toISOString(), detalhes }).eq("id", id);
+    if (error) console.warn(`[varrer-portal] registro não fechou (fail-open): ${error.message}`);
+  } catch (e) {
+    console.warn(`[varrer-portal] registro não fechou (fail-open): ${mensagemDeErro(e) ?? "erro"}`);
+  }
+}
+
+/** Falhas abertas da varredura (para reconsultar por número as que ficaram fora da janela lida). Erro LANÇA. */
+async function falhasAbertas(db: Db): Promise<{ protocolo: string; primeira_em: string; ultima_em: string }[]> {
+  const { data, error } = await db.from("sayerlack_varredura_falha").select("protocolo, primeira_em, ultima_em")
+    .is("resolvido_em", null).order("primeira_em", { ascending: true }).limit(200);
+  if (error) throw new Error(`Leitura das falhas abertas: ${error.message}`);
+  return (data ?? []) as { protocolo: string; primeira_em: string; ultima_em: string }[];
+}
+
+/** Pedidos do app com protocolo do portal e sem PO, re-disparáveis, gravados há mais de 1 h (o envio normal já teve a
+ *  chance dele). Sem filtro de data de emissão: é o que a janela de 7 dias deixava para trás (item 3.7). Erro LANÇA. */
+async function appSemPoAntigos(db: Db): Promise<{ protocolo: string; pedido_id: number }[]> {
+  const limite = new Date(Date.now() - 3600_000).toISOString();
+  const { data, error } = await db.from("pedido_compra_sugerido").select("id, portal_protocolo, omie_pedido_compra_id, enviado_portal_em")
+    .eq("empresa", "OBEN").eq("status_envio_portal", "sucesso_portal").in("status", [...STATUS_REDISPARAVEIS])
+    .not("portal_protocolo", "is", null).lt("enviado_portal_em", limite).order("id", { ascending: true }).limit(100);
+  if (error) throw new Error(`Leitura dos pedidos do app sem PO: ${error.message}`);
+  return ((data ?? []) as { id: number; portal_protocolo: string | null; omie_pedido_compra_id: string | null }[])
+    .filter((r) => { const po = (r.omie_pedido_compra_id ?? "").trim(); return po === "" || po === "0"; })
+    .map((r) => ({ protocolo: (r.portal_protocolo ?? "").trim(), pedido_id: r.id }));
+}
+
+/** Reconsulta por número a cada no máximo este intervalo (a falha aberta grava `ultima_em` a cada tentativa). */
+const INTERVALO_RECONSULTA_MS = 20 * 3600_000;
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -517,197 +588,109 @@ Deno.serve(async (req: Request) => {
   const modo = body.modo;
   const t0 = Date.now();
   const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-  let resumoFinal: Record<string, unknown> | null = null;
+  // O resumo vai sendo montado AQUI fora: se a rodada lançar no meio, o registro guarda o que ela já tinha visto (3.6).
+  let resumoFinal: Record<string, unknown> = { modo, versao: VERSAO };
+  const registro = await abrirExecucao(db, auth);
+  const falhasReconciliacao: { pedido_id: number; protocolo: string; mensagem: string }[] = [];
 
   try {
-    const resumo = await comRegistro(db as unknown as DbRegistro, ACAO_REGISTRO, auth, async (): Promise<Record<string, unknown>> => {
-      // 0a. Portal fora do ar: não abre o navegador.
-      if (portalSayerlackFechado(new Date())) {
-        return { modo, versao: VERSAO, pulado: "portal_fechado", mensagem: "Portal Sayerlack fora do ar (sábado 12h → segunda 6h): rodada pulada." };
-      }
-      // 0b. Pedido do app em voo/conciliação: pode ser ele o "pedido novo" do portal — a rodada não varre.
-      const bloqueio = motivoBloqueio(await pedidosEmVoo(db));
-      if (bloqueio) return { modo, versao: VERSAO, pulado: "bloqueado", mensagem: `Rodada não importa: ${bloqueio}.` };
+    const resumo = await rodada();
+    await fecharExecucao(db, registro, "sucesso", resumo);
+    return json({ ok: true, ...resumo });
+  } catch (e) {
+    const mensagem = mensagemDeErro(e) ?? "erro inesperado";
+    await fecharExecucao(db, registro, "erro", { ...resumoFinal, erro: mensagem.slice(0, 600) });
+    return json({ ok: false, mensagem, ...resumoFinal }, 500);
+  }
 
-      const faltando = [
-        ["SAYERLACK_PORTAL_USER", SAYERLACK_PORTAL_USER], ["SAYERLACK_PORTAL_PASS", SAYERLACK_PORTAL_PASS],
-        ["SAYERLACK_PORTAL_URL", SAYERLACK_PORTAL_URL], ["SAYERLACK_PORTAL_CLIENTE_CODIGO", SAYERLACK_PORTAL_CLIENTE_CODIGO],
-        ["BROWSERLESS_TOKEN", BROWSERLESS_TOKEN],
-      ].filter(([, v]) => !v).map(([k]) => k);
-      if (faltando.length > 0) throw new Error(`Configuração ausente: ${faltando.join(", ")}`);
+  async function rodada(): Promise<Record<string, unknown>> {
+    // 0a. Portal fora do ar: não abre o navegador.
+    if (portalSayerlackFechado(new Date())) {
+      return { modo, versao: VERSAO, pulado: "portal_fechado", mensagem: "Portal Sayerlack fora do ar (sábado 12h → segunda 6h): rodada pulada." };
+    }
+    // 0b. Pedido do app em voo/conciliação: pode ser ele o "pedido novo" do portal — a rodada não varre.
+    const bloqueio = motivoBloqueio(await pedidosEmVoo(db));
+    if (bloqueio) return { modo, versao: VERSAO, pulado: "bloqueado", mensagem: `Rodada não importa: ${bloqueio}.` };
 
-      // 1. Lê a lista no portal.
-      const hoje = hojeSP();
-      const emissaoDesde = inicioDaJanela(hoje);
-      const envelope = await lerPortal(emissaoDesde);
-      console.log(`[varrer-portal] Browserless ${Date.now() - t0}ms tipo=${envelope.erroTipo ?? "-"} linhas=${envelope.linhas?.length ?? "-"}`);
-      if (envelope.success !== true) {
-        throw new Error(`Leitura do portal falhou (${envelope.erroTipo ?? "?"}): ${envelope.erro ?? "sem detalhe"}`);
-      }
+    const faltando = [
+      ["SAYERLACK_PORTAL_USER", SAYERLACK_PORTAL_USER], ["SAYERLACK_PORTAL_PASS", SAYERLACK_PORTAL_PASS],
+      ["SAYERLACK_PORTAL_URL", SAYERLACK_PORTAL_URL], ["SAYERLACK_PORTAL_CLIENTE_CODIGO", SAYERLACK_PORTAL_CLIENTE_CODIGO],
+      ["BROWSERLESS_TOKEN", BROWSERLESS_TOKEN],
+    ].filter(([, v]) => !v).map(([k]) => k);
+    if (faltando.length > 0) throw new Error(`Configuração ausente: ${faltando.join(", ")}`);
 
-      // 2. Classifica.
-      const lista = lerListaConsulta(envelope.linhas ?? []);
-      const protocolos = lista.pedidos.map((p) => p.protocolo);
-      const [noApp, noOmie, vistos, syncEm] = await Promise.all([
-        pedidosNoApp(db, protocolos), contratosNoOmie(db, protocolos), vistosAntes(db, protocolos), syncPedidosCompletoEm(db),
-      ]);
-      const preCarencia = classificar(lista.pedidos, {
-        protocolosNoApp: new Set(noApp.keys()), contratosNoOmie: noOmie, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
-      });
-      // A 1ª vista só conta em rodada de IMPORTAR: "listar" não tem efeito sobre compras futuras (Codex P2).
-      if (modo === "importar") {
-        await registrarVistos(db, preCarencia.filter((p) => p.classe === "candidato" && !vistos.has(p.protocolo)).map((p) => p.protocolo));
-      }
-      const classificados = aplicarCarencia(preCarencia, vistos, syncEm);
-      const candidatos = classificados.filter((p) => p.classe === "candidato");
-      const contagem: Record<string, number> = {};
-      for (const p of classificados) contagem[p.classe] = (contagem[p.classe] ?? 0) + 1;
-      const base = {
-        modo, versao: VERSAO, emissao_desde: emissaoDesde, paginas: envelope.paginas ?? null, info_portal: envelope.info ?? null,
-        lidos: lista.pedidos.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos, contagem,
-        situacoes_portal: envelope.situacoes ?? [],
-        // Só o que NÃO está no app nem no Omie — é o que o founder precisa olhar.
-        fora_do_app: classificados.filter((p) => p.classe !== "ja_no_app" && p.classe !== "ja_no_omie")
-          .map((p) => ({ protocolo: p.protocolo, situacao: p.situacao, emissao: p.emissao, classe: p.classe })),
-        sem_po: classificados.filter((p) => p.classe === "ja_no_app" && noApp.get(p.protocolo)?.temPo === false)
-          .map((p) => ({ protocolo: p.protocolo, pedido_id: noApp.get(p.protocolo)?.id ?? null, status: noApp.get(p.protocolo)?.status ?? null })),
-      };
-      // Falha aberta só se resolve com PO CONFIRMADO: no app com PO, ou no espelho do Omie. No app SEM PO segue aberta
-      // e é re-disparada abaixo (antes virava "resolvido" e o pedido ficava parado sem ninguém ver).
-      const semPo = classificados.filter((p) => p.classe === "ja_no_app" && noApp.get(p.protocolo)?.temPo === false);
+    // 1. Lê a lista no portal.
+    const hoje = hojeSP();
+    const emissaoDesde = inicioDaJanela(hoje);
+    const envelope = await lerPortal(emissaoDesde);
+    console.log(`[varrer-portal] Browserless ${Date.now() - t0}ms tipo=${envelope.erroTipo ?? "-"} linhas=${envelope.linhas?.length ?? "-"}`);
+    if (envelope.success !== true) {
+      throw new Error(`Leitura do portal falhou (${envelope.erroTipo ?? "?"}): ${envelope.erro ?? "sem detalhe"}`);
+    }
+
+    // 1b. PROVA de leitura completa (Onda 3, 3.1–3.4): colunas certas, total anunciado = linhas lidas (0 só com "0 de
+    //     0"), nenhuma linha ilegível ou repetida. Lista sem prova não decide nada — nem "não há pedido".
+    const lista = lerListaConsulta(envelope.linhas ?? []);
+    const prova = provarLeitura({
+      headers: envelope.headers ?? [], linhasLidas: (envelope.linhas ?? []).length,
+      respostaTotal: envelope.resposta_total, info: envelope.info, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
+    });
+    resumoFinal = {
+      modo, versao: VERSAO, emissao_desde: emissaoDesde, paginas: envelope.paginas ?? null, info_portal: envelope.info ?? null,
+      total_anunciado: prova.ok ? prova.total : (envelope.resposta_total ?? null), resposta_chaves: envelope.resposta_chaves ?? null,
+      linhas_lidas: (envelope.linhas ?? []).length, lidos: lista.pedidos.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
+      cabecalhos: envelope.headers ?? [], prova_leitura: prova.ok ? "ok" : prova.motivo,
+    };
+    // Ilegível/repetido: a rodada segue para o resto (os legíveis são legíveis), mas termina VERMELHA no fim (3.4).
+    // O resto das falhas de prova não deixa decidir nada: erro já.
+    if (!prova.ok && prova.motivo !== "linhas_ilegiveis" && prova.motivo !== "protocolo_repetido") {
+      throw new Error(`Leitura do portal sem prova (${prova.motivo}): ${prova.detalhe}`);
+    }
+
+    // 2. Classifica.
+    const protocolos = lista.pedidos.map((p) => p.protocolo);
+    const [noApp, noOmie, vistos, syncEm] = await Promise.all([
+      pedidosNoApp(db, protocolos), contratosNoOmie(db, protocolos), vistosAntes(db, protocolos), syncPedidosCompletoEm(db),
+    ]);
+    const preCarencia = classificar(lista.pedidos, {
+      protocolosNoApp: new Set(noApp.keys()), contratosNoOmie: noOmie, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
+    });
+    // A 1ª vista só conta em rodada de IMPORTAR: "listar" não tem efeito sobre compras futuras (Codex P2).
+    if (modo === "importar") {
+      await registrarVistos(db, preCarencia.filter((p) => p.classe === "candidato" && !vistos.has(p.protocolo)).map((p) => p.protocolo));
+    }
+    const classificados = aplicarCarencia(preCarencia, vistos, syncEm);
+    const candidatos = classificados.filter((p) => p.classe === "candidato");
+    const contagem: Record<string, number> = {};
+    for (const p of classificados) contagem[p.classe] = (contagem[p.classe] ?? 0) + 1;
+    const semPo = classificados.filter((p) => p.classe === "ja_no_app" && noApp.get(p.protocolo)?.temPo === false);
+    resumoFinal = {
+      ...resumoFinal, contagem, situacoes_portal: envelope.situacoes ?? [],
+      // Só o que NÃO está no app nem no Omie — é o que o founder precisa olhar.
+      fora_do_app: classificados.filter((p) => p.classe !== "ja_no_app" && p.classe !== "ja_no_omie")
+        .map((p) => ({ protocolo: p.protocolo, situacao: p.situacao, emissao: p.emissao, classe: p.classe })),
+      sem_po: semPo.map((p) => ({ protocolo: p.protocolo, pedido_id: noApp.get(p.protocolo)?.id ?? null, status: noApp.get(p.protocolo)?.status ?? null })),
+    };
+    // "listar" é ZERO efeito (3.10): nem marca resolvido, nem grava vista, nem importa, nem avisa.
+    if (modo === "importar") {
+      // Falha aberta só se resolve com PO CONFIRMADO: no app com PO, ou no espelho do Omie.
       await marcarResolvidos(db, classificados.filter((p) =>
         (p.classe === "ja_no_app" && noApp.get(p.protocolo)?.temPo === true) || p.classe === "ja_no_omie").map((p) => p.protocolo));
-      const redisparos: unknown[] = [];
-      if (modo === "importar") {
-        for (const p of semPo) {
-          const ped = noApp.get(p.protocolo);
-          if (!ped || !ped.status || !STATUS_REDISPARAVEIS.has(ped.status)) {
-            redisparos.push({ protocolo: p.protocolo, pedido_id: ped?.id ?? null, status: ped?.status ?? null, acao: "nao_redisparavel" });
-            continue;
-          }
-          if (Date.now() - t0 + FOLGA_POR_IMPORTACAO_MS > TETO_EDGE_MS) {
-            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "adiado_tempo" });
-            continue;
-          }
-          // Reconfere AGORA, como no fluxo de candidatos (Codex P1, 2026-11): situação ainda importável no portal e PO
-          // não lançado à mão no Omie com este contrato. Divergência vai para conciliação humana — nunca re-dispara.
-          if (!(p.situacao_codigo && SITUACOES_IMPORTAVEIS.has(p.situacao_codigo))) {
-            const { notificado } = await registrarFalha(db, p.protocolo,
-              `Pedido ${p.protocolo} está no app (#${ped.id}) sem pedido de compra no Omie, mas está "${p.situacao}" no portal — ` +
-                `o cron não re-dispara. Confira no portal e, se for o caso, cancele o #${ped.id} em Gerir pedidos.`);
-            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "situacao_impeditiva", notificado });
-            continue;
-          }
-          if ((await contratosNoOmie(db, [p.protocolo])).size > 0) {
-            const { notificado } = await registrarFalha(db, p.protocolo,
-              `Pedido ${p.protocolo}: o #${ped.id} do app está sem pedido de compra, mas já existe PO no Omie com este contrato ` +
-                `(lançado à mão?). O cron não re-dispara para não duplicar — concilie o #${ped.id} em Gerir pedidos.`);
-            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_ja_no_omie", notificado });
-            continue;
-          }
-          // A importadora, com o protocolo já no app, NÃO relê o portal: só re-dispara o PO do MESMO pedido (mesma chave).
-          const r = await importar(p.protocolo, p.situacao_codigo)
-            .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
-          const res = resumoImportacao(r.httpStatus, r.corpo);
-          // Sem corpo: o PO pode ter saído — INDETERMINADO, sem e-mail "não entrou" (a próxima rodada relê o banco).
-          const semCorpo = r.httpStatus === 0 || !(r.corpo && typeof r.corpo === "object");
-          if (res.ok) {
-            await marcarResolvidos(db, [p.protocolo]);
-            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_criado" });
-          } else if (semCorpo) {
-            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "indeterminado", http: r.httpStatus });
-          } else {
-            const { notificado } = await registrarFalha(db, p.protocolo,
-              `Pedido ${p.protocolo} está no app (#${ped.id}) sem pedido de compra no Omie e o re-disparo não confirmou: ${res.mensagem}`);
-            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "falhou", notificado });
-          }
-        }
-      }
-      // Atendido sem PO: e-mail 1 vez por pedido para o founder conferir no Omie (não é falha da rodada).
-      const conferir = classificados.filter((p) => p.classe === "atendido_conferir");
-      const avisados: unknown[] = [];
-      if (modo === "importar") {
-        for (const p of conferir) {
-          const { notificado } = await registrarFalha(db, p.protocolo,
-            `Pedido ${p.protocolo} está "${p.situacao}" no portal (emissão ${p.emissao ?? "?"}) e não tem pedido de compra no Omie. ` +
-              `O cron não importa pedido já faturado: confira no Omie se a NF já foi lançada e, se não, use "Importar do portal".`);
-          avisados.push({ protocolo: p.protocolo, notificado });
-        }
-      }
-      // 2b. Reconciliação do "PO a reconciliar": cancelado no portal + PO fora do Omie ⇒ encerra pela porta auditada.
-      //     Roda DEPOIS das importações e com leitura PRÓPRIA quando precisa de emissão além dos 7 dias: ampliar a
-      //     leitura principal poria a importação normal sob o teto de páginas/tempo de um pedido velho (Codex P2).
-      //     Falha da leitura estendida só RELATA (o pedido segue no card); encerramento que falhou é falha ALTA.
-      const falhasReconciliacao: { pedido_id: number; protocolo: string; mensagem: string }[] = [];
-      const reconciliar = async (): Promise<Record<string, unknown>> => {
-        const aRec = await carregarAReconciliar(db);
-        if (aRec.lista.length === 0 || !aRec.marcador) return { a_reconciliar: aRec.lista.length };
-        const resumoRec: Record<string, unknown> = { a_reconciliar: aRec.lista.length, marcador_finalizado_em: aRec.marcador.finalizado_em };
-        if (!marcadorFresco(aRec.marcador, Date.now())) {
-          return { ...resumoRec, adiado: "detector de PO desatualizado (último run válido há mais de 26 h): ausência velha não encerra" };
-        }
-        const janela = janelaDeLeitura(hoje, aRec.lista);
-        resumoRec.fora_do_alcance = janela.foraDoAlcance.map((p) => ({ pedido_id: p.pedido_id, protocolo: p.protocolo, data_ciclo: p.data_ciclo }));
-        if (janela.alcancaveis.length === 0) return resumoRec;
-        let listaRec: { pedidos: typeof lista.pedidos; repetidos: string[] } = lista;
-        if (janela.emissaoDesde < emissaoDesde) {
-          if (Date.now() - t0 + FOLGA_POR_IMPORTACAO_MS > TETO_EDGE_MS) return { ...resumoRec, adiado: "sem tempo na rodada para a leitura estendida" };
-          const env = await lerPortal(janela.emissaoDesde)
-            .catch((e): BrowserlessData => ({ success: false, erroTipo: "REDE", erro: mensagemDeErro(e) ?? "erro de rede" }));
-          console.log(`[varrer-portal] leitura estendida desde ${janela.emissaoDesde}: tipo=${env.erroTipo ?? "-"} linhas=${env.linhas?.length ?? "-"}`);
-          // Lista incompleta NUNCA decide: success=false cobre paginação incompleta e página ilegível.
-          if (env.success !== true) return { ...resumoRec, leitura_falhou: `${env.erroTipo ?? "?"}: ${env.erro ?? "sem detalhe"}` };
-          listaRec = lerListaConsulta(env.linhas ?? []);
-          resumoRec.emissao_leitura = janela.emissaoDesde;
-        }
-        const desfechos = desfechoNoPortal(janela.alcancaveis, listaRec);
-        const encerrados: unknown[] = [];
-        if (modo === "importar") {
-          for (const d of desfechos) {
-            if (d.classe !== "cancelado_no_portal") continue;
-            // Relê o pedido (status + PO ainda fora + marcador fresco): a prova do começo da rodada não basta.
-            const agora = await carregarAReconciliar(db, d.pedido_id);
-            const ainda = agora.lista.find((p) => p.pedido_id === d.pedido_id && p.protocolo === d.protocolo && p.omie_po_id === d.omie_po_id);
-            if (!ainda || !agora.marcador || !marcadorFresco(agora.marcador, Date.now())) continue; // a próxima rodada decide
-            const r = await encerrarCanceladoNoPortal(db, ainda, d.situacao, agora.marcador);
-            console.log(`[varrer-portal] reconciliação #${d.pedido_id} (${d.protocolo}): ${r.mensagem}`);
-            if (r.ok) encerrados.push({ pedido_id: d.pedido_id, protocolo: d.protocolo, situacao: d.situacao });
-            else falhasReconciliacao.push({ pedido_id: d.pedido_id, protocolo: d.protocolo, mensagem: r.mensagem });
-          }
-        }
-        return {
-          ...resumoRec,
-          desfechos: desfechos.map((d) => ({ pedido_id: d.pedido_id, protocolo: d.protocolo, classe: d.classe, situacao: "situacao" in d ? d.situacao : null })),
-          encerrados,
-          falhas: falhasReconciliacao,
-        };
-      };
-      const falhaReconciliacao = () => {
-        if (falhasReconciliacao.length > 0) {
-          throw new Error(`Reconciliação: ${falhasReconciliacao.length} pedido(s) cancelado(s) no portal não encerraram: ` +
-            falhasReconciliacao.map((f) => `#${f.pedido_id} (${f.mensagem})`).join("; "));
-        }
-      };
-      if (modo === "listar" || candidatos.length === 0) {
-        resumoFinal = { ...base, avisados, redisparos, importados: [], falhas: [], adiados: [] };
-        resumoFinal = { ...resumoFinal, reconciliacao: await reconciliar() };
-        falhaReconciliacao();
-        return resumoFinal;
-      }
+    }
+    const semTempo = () => Date.now() - t0 + FOLGA_POR_IMPORTACAO_MS > TETO_EDGE_MS;
 
-      // 3. Importa, um por vez, reconferindo o banco antes de cada um.
-      const importados: unknown[] = [];
-      const falhas: unknown[] = [];
-      const adiados: string[] = [];
-      const indeterminados: unknown[] = [];
+    // 3. Candidatos NOVOS primeiro (Codex P2, 2026-11-07): um re-disparo lento não pode gastar o orçamento da rodada e
+    //    adiar o pedido novo; os re-disparos e as reconsultas vêm depois, com o que sobrar.
+    const importados: unknown[] = [];
+    const falhas: unknown[] = [];
+    const adiados: string[] = [];
+    const indeterminados: unknown[] = [];
+    if (modo === "importar") {
       for (const c of candidatos) {
-        if (Date.now() - t0 + FOLGA_POR_IMPORTACAO_MS > TETO_EDGE_MS) {
-          adiados.push(c.protocolo);
-          continue;
-        }
+        if (semTempo()) { adiados.push(c.protocolo); continue; }
         const bloq = motivoBloqueio(await pedidosEmVoo(db));
         if (bloq) {
-          // Adiar por pedido do app em voo é LEGÍTIMO — não é falha da rodada (antes virava registro vermelho).
+          // Adiar por pedido do app em voo é LEGÍTIMO — não é falha da rodada.
           adiados.push(c.protocolo);
           break;
         }
@@ -717,15 +700,12 @@ Deno.serve(async (req: Request) => {
         const reclasse = classificar([c], {
           protocolosNoApp: new Set(), contratosNoOmie: omieAgora, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
         })[0].classe;
-        if (reclasse !== "candidato") {
-          adiados.push(c.protocolo);
-          continue;
-        }
-        const r = await importar(c.protocolo, c.situacao_codigo as string).catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
+        if (reclasse !== "candidato") { adiados.push(c.protocolo); continue; }
+        const r = await importar(c.protocolo, [c.situacao_codigo as string])
+          .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
         const res = resumoImportacao(r.httpStatus, r.corpo);
         console.log(`[varrer-portal] ${c.protocolo}: importar HTTP ${r.httpStatus} ok=${res.ok}`);
-        // Sem corpo da importadora (timeout de 150 s do gateway, rede): o PO pode ter saído depois. É INDETERMINADO —
-        // nada de e-mail "não entrou"; a próxima rodada vê o protocolo no app (e resolve) ou tenta de novo (idempotente).
+        // Sem corpo da importadora (prazo do gateway, rede): o PO pode ter saído depois. INDETERMINADO, sem e-mail.
         const semCorpo = r.httpStatus === 0 || !(r.corpo && typeof r.corpo === "object");
         if (res.ok) {
           importados.push({ protocolo: c.protocolo, mensagem: res.mensagem });
@@ -737,17 +717,185 @@ Deno.serve(async (req: Request) => {
           falhas.push({ protocolo: c.protocolo, mensagem: res.mensagem, notificado });
         }
       }
-      resumoFinal = { ...base, avisados, redisparos, importados, falhas, adiados, indeterminados };
-      resumoFinal = { ...resumoFinal, reconciliacao: await reconciliar() };
-      falhaReconciliacao();
-      // Rodada com falha NÃO é sucesso no registro (Codex P2): o ✓ do UltimaExecucao esconderia o pedido que não entrou.
-      if (falhas.length > 0) {
-        throw new Error(`${falhas.length} pedido(s) do portal não entraram no Omie: ${falhas.map((f) => (f as { protocolo: string }).protocolo).join(", ")}`);
+    }
+    resumoFinal = { ...resumoFinal, importados, falhas, adiados, indeterminados };
+
+    // 4. Re-disparo de pedido no app SEM PO. A importadora relê a situação no portal antes (v1.5) — cancelado ou fora
+    //    da lista não vira PO. Re-disparo que FALHA deixa a rodada vermelha (3.5).
+    const redisparos: { protocolo: string; pedido_id: number | null; acao: string; [k: string]: unknown }[] = [];
+    if (modo === "importar") {
+      for (const p of semPo) {
+        const ped = noApp.get(p.protocolo);
+        if (!ped || !ped.status || !STATUS_REDISPARAVEIS.has(ped.status)) {
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped?.id ?? null, status: ped?.status ?? null, acao: "nao_redisparavel" });
+          continue;
+        }
+        if (semTempo()) { redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "adiado_tempo" }); continue; }
+        if (!(p.situacao_codigo && SITUACOES_IMPORTAVEIS.has(p.situacao_codigo))) {
+          const { notificado } = await registrarFalha(db, p.protocolo,
+            `Pedido ${p.protocolo} está no app (#${ped.id}) sem pedido de compra no Omie, mas está "${p.situacao}" no portal — ` +
+              `o cron não re-dispara. Confira no portal e abra o pedido #${ped.id} em Gerir pedidos.`);
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "situacao_impeditiva", notificado });
+          continue;
+        }
+        if ((await contratosNoOmie(db, [p.protocolo])).size > 0) {
+          const { notificado } = await registrarFalha(db, p.protocolo,
+            `Pedido ${p.protocolo}: o #${ped.id} do app está sem pedido de compra, mas já existe PO no Omie com este contrato ` +
+              `(lançado à mão?). O cron não re-dispara para não duplicar — não lance outro PO.`);
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_ja_no_omie", notificado });
+          continue;
+        }
+        const r = await importar(p.protocolo, [p.situacao_codigo])
+          .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
+        const res = resumoImportacao(r.httpStatus, r.corpo);
+        const semCorpo = r.httpStatus === 0 || !(r.corpo && typeof r.corpo === "object");
+        if (res.ok) {
+          await marcarResolvidos(db, [p.protocolo]);
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_criado" });
+        } else if (semCorpo) {
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "indeterminado", http: r.httpStatus });
+        } else {
+          const { notificado } = await registrarFalha(db, p.protocolo,
+            `Pedido ${p.protocolo} está no app (#${ped.id}) sem pedido de compra no Omie e o re-disparo não confirmou: ${res.mensagem}`);
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "falhou", notificado, mensagem: res.mensagem });
+        }
       }
-      return resumoFinal;
-    }, (r) => r);
-    return json({ ok: true, ...resumo });
-  } catch (e) {
-    return json({ ok: false, modo, versao: VERSAO, mensagem: mensagemDeErro(e) ?? "erro inesperado", ...(resumoFinal ?? {}) }, 500);
+    }
+    resumoFinal = { ...resumoFinal, redisparos };
+
+    // 5. Pendências ALÉM da janela de 7 dias (3.7): pedido do app sem PO e falha aberta cujo protocolo não apareceu na
+    //    lista lida são reconsultados POR NÚMERO pela importadora (lê o pedido, a situação, e só então grava/re-dispara),
+    //    com teto por rodada e no máximo 1 vez a cada 20 h por protocolo (cada uma é 1 sessão do Browserless).
+    const reconsultas: unknown[] = [];
+    if (modo === "importar") {
+      const [abertas, appSemPo] = await Promise.all([falhasAbertas(db), appSemPoAntigos(db)]);
+      const recentes = new Set(abertas.filter((f) => Date.now() - Date.parse(f.ultima_em) < INTERVALO_RECONSULTA_MS).map((f) => f.protocolo));
+      const fila = reconsultasForaDaJanela({
+        lidos: new Set(protocolos),
+        semPoNoApp: appSemPo.filter((p) => !recentes.has(p.protocolo)),
+        falhasAbertas: abertas.filter((f) => !recentes.has(f.protocolo)),
+      });
+      for (const q of fila) {
+        if (semTempo()) { reconsultas.push({ ...q, acao: "adiado_tempo" }); continue; }
+        if (motivoBloqueio(await pedidosEmVoo(db))) { reconsultas.push({ ...q, acao: "adiado_em_voo" }); break; }
+        const r = await importar(q.protocolo, [...SITUACOES_IMPORTAVEIS])
+          .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
+        const res = resumoImportacao(r.httpStatus, r.corpo);
+        const c = (r.corpo && typeof r.corpo === "object" ? r.corpo : {}) as { motivo?: unknown; pedido_id?: unknown };
+        if (res.ok) {
+          await marcarResolvidos(db, [q.protocolo]);
+          reconsultas.push({ ...q, acao: "po_confirmado" });
+        } else if (r.httpStatus === 0 || !(r.corpo && typeof r.corpo === "object")) {
+          reconsultas.push({ ...q, acao: "indeterminado", http: r.httpStatus });
+        } else if (c.motivo === "pedido_cancelado" && c.pedido_id == null) {
+          // Cancelado no portal e nunca gravado no app: não há compra a fazer — a pendência acabou.
+          await marcarResolvidos(db, [q.protocolo]);
+          reconsultas.push({ ...q, acao: "cancelado_no_portal_resolvido" });
+        } else {
+          const { notificado } = await registrarFalha(db, q.protocolo, `Reconsulta além da janela: ${res.mensagem}`);
+          reconsultas.push({ ...q, acao: "pendente", notificado });
+        }
+      }
+    }
+    resumoFinal = { ...resumoFinal, reconsultas };
+
+    // 6. Carência presa esperando o sync do espelho há mais de 6 h (3.9): o sync de pedidos de compra travou e nada
+    //    importa sozinho — vira pendência visível (e-mail 1 vez por protocolo), não espera eterna em silêncio.
+    const travados = carenciaTravada(classificados, vistos, Date.now());
+    const carenciaPresa: unknown[] = [];
+    if (modo === "importar") {
+      for (const t of travados) {
+        const { notificado } = await registrarFalha(db, t.protocolo,
+          `Pedido ${t.protocolo} está esperando o sync de pedidos de compra do Omie desde ${t.visto_em} (mais de 6 h): a ` +
+            `importação automática não sai enquanto o sync não terminar "complete". Confira o sync ou use "Importar do portal".`);
+        carenciaPresa.push({ ...t, notificado });
+      }
+    } else {
+      carenciaPresa.push(...travados);
+    }
+    // Atendido sem PO: e-mail 1 vez por pedido para o founder conferir no Omie (não é falha da rodada).
+    const avisados: unknown[] = [];
+    if (modo === "importar") {
+      for (const p of classificados.filter((x) => x.classe === "atendido_conferir")) {
+        const { notificado } = await registrarFalha(db, p.protocolo,
+          `Pedido ${p.protocolo} está "${p.situacao}" no portal (emissão ${p.emissao ?? "?"}) e não tem pedido de compra no Omie. ` +
+            `O cron não importa pedido já faturado: confira no Omie se a NF já foi lançada e, se não, use "Importar do portal".`);
+        avisados.push({ protocolo: p.protocolo, notificado });
+      }
+    }
+    resumoFinal = { ...resumoFinal, carencia_presa: carenciaPresa, avisados };
+
+    // 7. Reconciliação do "PO a reconciliar" (v1.3): cancelado no portal + PO fora do Omie ⇒ encerra pela porta auditada.
+    resumoFinal = { ...resumoFinal, reconciliacao: await reconciliar(hoje, emissaoDesde, lista, semTempo) };
+
+    // Rodada com qualquer coisa não resolvida NÃO é sucesso no registro: o ✓ do UltimaExecucao esconderia o pedido.
+    const problemas: string[] = [];
+    if (!prova.ok) problemas.push(`leitura incompleta (${prova.motivo}): ${prova.detalhe}`);
+    if (falhas.length > 0) problemas.push(`${falhas.length} pedido(s) do portal não entraram no Omie: ${falhas.map((f) => (f as { protocolo: string }).protocolo).join(", ")}`);
+    const redisparosFalhos = redisparos.filter((r) => r.acao === "falhou");
+    if (redisparosFalhos.length > 0) problemas.push(`${redisparosFalhos.length} re-disparo(s) sem PO confirmado: ${redisparosFalhos.map((r) => r.protocolo).join(", ")}`);
+    if (falhasReconciliacao.length > 0) {
+      problemas.push(`Reconciliação: ${falhasReconciliacao.length} pedido(s) cancelado(s) no portal não encerraram: ` +
+        falhasReconciliacao.map((f) => `#${f.pedido_id} (${f.mensagem})`).join("; "));
+    }
+    if (problemas.length > 0) throw new Error(problemas.join(" · "));
+    return resumoFinal;
+  }
+
+  // ── Reconciliação (v1.3) ─────────────────────────────────────────────────────────────────────────────────────────
+  // Roda DEPOIS das importações e com leitura PRÓPRIA quando precisa de emissão além dos 7 dias (Codex P2). Falha da
+  // leitura estendida só RELATA (o pedido segue no card); encerramento que falhou é falha ALTA.
+  async function reconciliar(
+    hoje: string, emissaoDesde: string, lista: { pedidos: ReturnType<typeof lerListaConsulta>["pedidos"]; repetidos: string[] },
+    semTempo: () => boolean,
+  ): Promise<Record<string, unknown>> {
+    const aRec = await carregarAReconciliar(db);
+    if (aRec.lista.length === 0 || !aRec.marcador) return { a_reconciliar: aRec.lista.length };
+    const resumoRec: Record<string, unknown> = { a_reconciliar: aRec.lista.length, marcador_finalizado_em: aRec.marcador.finalizado_em };
+    if (!marcadorFresco(aRec.marcador, Date.now())) {
+      return { ...resumoRec, adiado: "detector de PO desatualizado (último run válido há mais de 26 h): ausência velha não encerra" };
+    }
+    const janela = janelaDeLeitura(hoje, aRec.lista);
+    resumoRec.fora_do_alcance = janela.foraDoAlcance.map((p) => ({ pedido_id: p.pedido_id, protocolo: p.protocolo, data_ciclo: p.data_ciclo }));
+    if (janela.alcancaveis.length === 0) return resumoRec;
+    let listaRec = lista;
+    if (janela.emissaoDesde < emissaoDesde) {
+      if (semTempo()) return { ...resumoRec, adiado: "sem tempo na rodada para a leitura estendida" };
+      const env = await lerPortal(janela.emissaoDesde)
+        .catch((e): BrowserlessData => ({ success: false, erroTipo: "REDE", erro: mensagemDeErro(e) ?? "erro de rede" }));
+      console.log(`[varrer-portal] leitura estendida desde ${janela.emissaoDesde}: tipo=${env.erroTipo ?? "-"} linhas=${env.linhas?.length ?? "-"}`);
+      // Lista incompleta NUNCA decide: success=false cobre paginação incompleta e página ilegível; e a prova da Onda 3
+      // vale aqui também — total anunciado = linhas lidas, sem ilegível nem repetido.
+      if (env.success !== true) return { ...resumoRec, leitura_falhou: `${env.erroTipo ?? "?"}: ${env.erro ?? "sem detalhe"}` };
+      const lida = lerListaConsulta(env.linhas ?? []);
+      const provaRec = provarLeitura({
+        headers: env.headers ?? [], linhasLidas: (env.linhas ?? []).length, respostaTotal: env.resposta_total, info: env.info,
+        ilegiveis: lida.ilegiveis, repetidos: lida.repetidos,
+      });
+      if (!provaRec.ok) return { ...resumoRec, leitura_falhou: `sem prova (${provaRec.motivo}): ${provaRec.detalhe}` };
+      listaRec = lida;
+      resumoRec.emissao_leitura = janela.emissaoDesde;
+    }
+    const desfechos = desfechoNoPortal(janela.alcancaveis, listaRec);
+    const encerrados: unknown[] = [];
+    if (modo === "importar") {
+      for (const d of desfechos) {
+        if (d.classe !== "cancelado_no_portal") continue;
+        // Relê o pedido (status + PO ainda fora + marcador fresco): a prova do começo da rodada não basta.
+        const agora = await carregarAReconciliar(db, d.pedido_id);
+        const ainda = agora.lista.find((p) => p.pedido_id === d.pedido_id && p.protocolo === d.protocolo && p.omie_po_id === d.omie_po_id);
+        if (!ainda || !agora.marcador || !marcadorFresco(agora.marcador, Date.now())) continue; // a próxima rodada decide
+        const r = await encerrarCanceladoNoPortal(db, ainda, d.situacao, agora.marcador);
+        console.log(`[varrer-portal] reconciliação #${d.pedido_id} (${d.protocolo}): ${r.mensagem}`);
+        if (r.ok) encerrados.push({ pedido_id: d.pedido_id, protocolo: d.protocolo, situacao: d.situacao });
+        else falhasReconciliacao.push({ pedido_id: d.pedido_id, protocolo: d.protocolo, mensagem: r.mensagem });
+      }
+    }
+    return {
+      ...resumoRec,
+      desfechos: desfechos.map((d) => ({ pedido_id: d.pedido_id, protocolo: d.protocolo, classe: d.classe, situacao: "situacao" in d ? d.situacao : null })),
+      encerrados,
+      falhas: falhasReconciliacao,
+    };
   }
 });

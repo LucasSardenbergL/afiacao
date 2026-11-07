@@ -22,6 +22,11 @@ import {
   marcadorFresco,
   pedidosAReconciliar,
   type PedidoDisparadoLido,
+  provarLeitura,
+  totalAnunciado,
+  carenciaTravada,
+  reconsultasForaDaJanela,
+  type PedidoClassificado,
 } from "./varredura.ts";
 import * as leituraOriginal from "../sayerlack-importar-pedido-portal/leitura.ts";
 import * as janelaOriginal from "../disparar-pedidos-aprovados/janela-portal.ts";
@@ -221,4 +226,67 @@ Deno.test("marcador: só autoriza encerrar até 26 h do fim do run válido", () 
   assertEquals(marcadorFresco(MARCADOR, fim + 26 * 3600_000), true);
   assertEquals(marcadorFresco(MARCADOR, fim + 26 * 3600_000 + 1), false);
   assertEquals(marcadorFresco({ ...MARCADOR, finalizado_em: "lixo" }, fim), false);
+});
+
+// ── Onda 3 (2026-11-07): rodada nunca verde sem prova ──
+const HEADERS = ["Pedido", "Pedido Cliente", "Situação", "Data Emissão", "Vlr Mercadoria", "Vlr Total"];
+const base = { headers: HEADERS, ilegiveis: 0, repetidos: [] as string[] };
+
+Deno.test("prova: 0 linhas SEM total anunciado é erro (incidente 23/10 e 03/11: 0 lidos e sucesso)", () => {
+  const r = provarLeitura({ ...base, linhasLidas: 0 });
+  assertEquals(r.ok ? "ok" : r.motivo, "zero_lidos_sem_prova");
+});
+Deno.test("prova: 0 linhas COM o portal dizendo 0 de 0 é sucesso", () => {
+  assertEquals(provarLeitura({ ...base, linhasLidas: 0, respostaTotal: 0 }), { ok: true, total: 0 });
+  assertEquals(provarLeitura({ ...base, linhasLidas: 0, info: "Mostrando 0 até 0 de 0 registros" }), { ok: true, total: 0 });
+});
+Deno.test("prova: lidos tem de ser o total anunciado (página perdida ⇒ erro)", () => {
+  const r = provarLeitura({ ...base, linhasLidas: 10, respostaTotal: 23 });
+  assertEquals(r.ok ? "ok" : r.motivo, "lidos_diferente_do_total");
+  assertEquals(provarLeitura({ ...base, linhasLidas: 23, respostaTotal: "23" }), { ok: true, total: 23 });
+});
+Deno.test("prova: com linhas e sem total também é erro (não prova lista inteira)", () => {
+  const r = provarLeitura({ ...base, linhasLidas: 22 });
+  assertEquals(r.ok ? "ok" : r.motivo, "total_nao_anunciado");
+});
+Deno.test("prova: coluna obrigatória ausente (DOM mudou) é erro antes de tudo", () => {
+  const r = provarLeitura({ ...base, headers: ["Pedido Cliente", "Situação", "Data Emissão", "Vlr Total"], linhasLidas: 3, respostaTotal: 3 });
+  assertEquals(r.ok ? "ok" : r.motivo, "colunas_ausentes");
+  // "Pedido Cliente" NÃO conta como "Pedido" (exato).
+  assertEquals(!r.ok && r.detalhe.startsWith("colunas ausentes na consulta: Pedido"), true);
+});
+Deno.test("prova: linha ilegível e protocolo repetido são erro, não descarte silencioso", () => {
+  const a = provarLeitura({ ...base, linhasLidas: 3, respostaTotal: 3, ilegiveis: 1 });
+  assertEquals(a.ok ? "ok" : a.motivo, "linhas_ilegiveis");
+  const b = provarLeitura({ ...base, linhasLidas: 3, respostaTotal: 3, repetidos: ["2140603"] });
+  assertEquals(b.ok ? "ok" : b.motivo, "protocolo_repetido");
+});
+Deno.test("total anunciado: JSON do DataTables vence; texto pt/en; lixo é null", () => {
+  assertEquals(totalAnunciado({ respostaTotal: 7, info: "de 9 registros" }), 7);
+  assertEquals(totalAnunciado({ info: "Mostrando de 1 até 10 de 1.234 registros" }), 1234);
+  assertEquals(totalAnunciado({ info: "Showing 1 to 10 of 23 entries" }), 23);
+  assertEquals(totalAnunciado({ respostaTotal: -1 }), null);
+  assertEquals(totalAnunciado({ respostaTotal: 2.5 }), null);
+  assertEquals(totalAnunciado({ info: "Processando..." }), null);
+  assertEquals(totalAnunciado({}), null);
+});
+Deno.test("carência presa: só aguarda_sync com 1ª vista há mais de 6 h", () => {
+  const agora = Date.parse("2026-11-07T12:00:00Z");
+  const cl = [
+    { protocolo: "1", classe: "carencia_aguarda_sync" },
+    { protocolo: "2", classe: "carencia_aguarda_sync" },
+    { protocolo: "3", classe: "candidato" },
+  ] as unknown as PedidoClassificado[];
+  const vistos = new Map([["1", "2026-11-07T05:00:00Z"], ["2", "2026-11-07T07:00:00Z"], ["3", "2026-11-01T00:00:00Z"]]);
+  assertEquals(carenciaTravada(cl, vistos, agora).map((t) => t.protocolo), ["1"]);
+});
+Deno.test("reconsultas além da janela: app sem PO primeiro, depois falhas mais antigas; sem os já lidos; teto", () => {
+  const r = reconsultasForaDaJanela({
+    lidos: new Set(["111"]),
+    semPoNoApp: [{ protocolo: "111", pedido_id: 1 }, { protocolo: "222", pedido_id: 2 }],
+    falhasAbertas: [{ protocolo: "444", primeira_em: "2026-10-20" }, { protocolo: "333", primeira_em: "2026-10-10" }, { protocolo: "222", primeira_em: "2026-10-01" }, { protocolo: "x", primeira_em: "2026-01-01" }],
+    teto: 3,
+  });
+  assertEquals(r.map((q) => q.protocolo + ":" + q.origem), ["222:app_sem_po", "333:falha_aberta", "444:falha_aberta"]);
+  assertEquals(reconsultasForaDaJanela({ lidos: new Set(), semPoNoApp: [], falhasAbertas: [] }), []);
 });
