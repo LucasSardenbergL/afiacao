@@ -27,7 +27,7 @@ export function codigoErroSocios(e: unknown): string {
 /** As 4 RPCs do protocolo. União de LITERAIS: o call-site (`index.ts`) chama cada uma pelo nome literal, que é o que o
  *  pré-flight de deploy (`preflight:rpcs`/`pendencias:pacote`) enxerga — nome por indireção deixa a lista INCOMPLETA
  *  e o gate recusa o pacote (exit 3). */
-export type RpcSocios = "radar_socios_iniciar" | "radar_socios_receber" | "radar_socios_publicar" | "radar_socios_limpar";
+type RpcSocios = "radar_socios_iniciar" | "radar_socios_receber" | "radar_socios_publicar" | "radar_socios_limpar";
 
 type Pedido =
   | { ok: true; rpc: RpcSocios; args: Record<string, unknown> }
