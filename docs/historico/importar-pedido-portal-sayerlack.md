@@ -247,3 +247,28 @@ GROUP BY 1, 2;
   o código quando ela é o padrão do motor (`podeSalvarCondicao`, testado).
 - **Mudança de forma**: o changelog do `VERSAO` do disparo foi para `docs/historico/versao-disparar-pedidos-aprovados.md`
   (o gate `limpeza-fonte` acusou 5 linhas de código em 62).
+
+## Pontos cegos, Onda 3: varredura nunca verde sem prova (2026-11-07, varredura v1.5)
+
+Incidente que justifica a máquina (regra de máquina meta): **2 de 46 rodadas leram 0 linhas e registraram sucesso**
+(23/10 e 03/11, 01:30 UTC); `info_portal` nulo em 46/46.
+
+- **3.1–3.4 prova de leitura** (`provarLeitura`): colunas Pedido (exata)/Situação/Data Emissão/Vlr; total ANUNCIADO por
+  até 3 fontes — `recordsFiltered` do JSON da consulta (nunca `recordsTotal`, que é o universo sem filtro),
+  `page.info().recordsDisplay` da instância DataTables e o texto "… de N" (seletor ampliado para `[id$="_info"]`); fontes
+  que discordam = erro; lidos ≠ total = erro; 0 só com "0 de 0". Sem total nenhum, toda rodada fica vermelha — decisão
+  consciente (fail-closed visível; Codex concordou). Ilegível/repetido seguem para o resto mas deixam a rodada vermelha.
+- **3.5** re-disparo que falha (dentro ou fora da janela) deixa a rodada vermelha.
+- **3.6** registro local em `acoes_execucoes` no lugar de `comRegistro` (o `_shared` não mudou): o erro guarda o resumo
+  parcial, preenchido aos poucos (importados, re-disparos, reconsultas, reconciliação).
+- **3.7** reconsulta por número além da janela: falhas abertas e pedidos do app sem PO (> 1 h), fila pela tentativa mais
+  antiga, teto 4 por rodada, 1×/20 h por protocolo com **reserva condicional no banco** (atômica entre execuções); banco
+  reconferido antes de abrir o navegador (PO no espelho resolve sem sessão); **carência vale também aqui** (sem pedido no
+  app a reconsulta pode criar PO — Codex P1).
+- **3.8** coberto na Onda 2 (a importadora relê a situação).
+- **3.9** carência esperando o sync > 6 h vira pendência com e-mail.
+- **3.10** `listar` sem efeito (nem `marcarResolvidos`).
+- **Orçamento** (P2 da Onda 2): candidatos novos antes dos re-disparos e das reconsultas.
+- **Codex**: 1ª rodada 1 P1 + 5 P2; 2ª 4 P2; 3ª 1 P2 (erro de banco na reserva virava adiamento verde) — todos
+  consertados. Deno `varredura_test.ts` 28 (falsificado: sem a checagem de total e sem a de 0 lidos, vermelho).
+- Changelog do `VERSAO` em `docs/historico/versao-sayerlack-varrer-pedidos-portal.md`.
