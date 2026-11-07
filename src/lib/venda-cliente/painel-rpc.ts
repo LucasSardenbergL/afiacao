@@ -7,7 +7,9 @@
 //   - tipo trocado LANÇA. O lançamento cai no `isError` do react-query: a tela mostra a falha,
 //     nunca um número fabricado.
 import type { Json } from '@/integrations/supabase/types';
-import type { CandidatoRepasse, ContagemDesfecho, LinhaPainel, PainelVenda, SituacaoCompraRepasse } from './painel';
+import type {
+  CandidatoRepasse, ContagemDesfecho, HerdadasLinha, LinhaPainel, PainelVenda, SituacaoCompraRepasse,
+} from './painel';
 
 type Obj = { [k: string]: Json | undefined };
 
@@ -85,6 +87,25 @@ function contagem(v: Json | undefined, onde: string): ContagemDesfecho {
   };
 }
 
+// Sucessor declarado (20261108010000): as duas chaves nascem JUNTAS. Servidor anterior não tem nenhuma das duas
+// (a tela segue sem a fatia herdada); só uma delas é forma desconhecida e LANÇA.
+function herdadasDaLinha(o: Obj, onde: string): Pick<LinhaPainel, 'herdadas' | 'taxa_ativa_propria'> {
+  const temH = o.herdadas !== undefined;
+  const temT = o.taxa_ativa_propria !== undefined;
+  if (!temH && !temT) return { herdadas: null, taxa_ativa_propria: null };
+  if (temH !== temT) throw new Error(`${onde}: "herdadas" e "taxa_ativa_propria" vêm juntas`);
+  const ondeH = `${onde}.herdadas`;
+  const h = obj(campo(o, 'herdadas', onde), ondeH);
+  const herdadas: HerdadasLinha = {
+    ...contagem(h, ondeH),
+    na_lista: num(h, 'na_lista', ondeH),
+    sugestoes: num(h, 'sugestoes', ondeH),
+    receita_realizada: numOuNulo(h, 'receita_realizada', ondeH),
+    receita_incompleta: bool(h, 'receita_incompleta', ondeH),
+  };
+  return { herdadas, taxa_ativa_propria: numOuNulo(o, 'taxa_ativa_propria', onde) };
+}
+
 function linhaPainel(v: Json, i: number): LinhaPainel {
   const onde = `venda_painel.linhas[${i}]`;
   const o = obj(v, onde);
@@ -106,6 +127,7 @@ function linhaPainel(v: Json, i: number): LinhaPainel {
     base_sombra: contagem(campo(o, 'base_sombra', onde), `${onde}.base_sombra`),
     taxa_base_sombra: numOuNulo(o, 'taxa_base_sombra', onde),
     base_confiavel: bool(o, 'base_confiavel', onde),
+    ...herdadasDaLinha(o, onde),
   };
 }
 

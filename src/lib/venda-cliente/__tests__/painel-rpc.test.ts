@@ -168,3 +168,32 @@ describe('lerCandidatos', () => {
     expect(() => lerCandidatos({})).toThrow(/formato inesperado/);
   });
 });
+
+describe('lerPainel — parte herdada (sucessor declarado, 20261108010000)', () => {
+  const herdadas = { na_lista: 2, sugestoes: 4, virou: 1, nao_virou: 1, nao_medivel: 0, pendentes: 1,
+    receita_realizada: 50, receita_incompleta: true };
+  it('lê a fatia herdada e a conversão própria', () => {
+    const l = lerPainel(painel({ linhas: [linha({ herdadas, taxa_ativa_propria: 0.5 })] })).linhas[0];
+    expect(l.herdadas).toEqual(herdadas);
+    expect(l.taxa_ativa_propria).toBe(0.5);
+  });
+  it('servidor anterior (sem as duas chaves): sem fatia, NÃO "zero herdadas"', () => {
+    const l = lerPainel(painel()).linhas[0];
+    expect(l.herdadas).toBeNull();
+    expect(l.taxa_ativa_propria).toBeNull();
+  });
+  it('receita herdada ausente segue null (ausente ≠ zero)', () => {
+    const l = lerPainel(painel({ linhas: [linha({ herdadas: { ...herdadas, receita_realizada: null }, taxa_ativa_propria: null })] })).linhas[0];
+    expect(l.herdadas?.receita_realizada).toBeNull();
+  });
+  it('só uma das chaves, ou forma errada, LANÇA', () => {
+    expect(() => lerPainel(painel({ linhas: [linha({ herdadas })] })))
+      .toThrow('venda_painel.linhas[0]: "herdadas" e "taxa_ativa_propria" vêm juntas');
+    expect(() => lerPainel(painel({ linhas: [linha({ taxa_ativa_propria: 0.5 })] })))
+      .toThrow('venda_painel.linhas[0]: "herdadas" e "taxa_ativa_propria" vêm juntas');
+    expect(() => lerPainel(painel({ linhas: [linha({ herdadas: { ...herdadas, sugestoes: '4' }, taxa_ativa_propria: 0.5 })] })))
+      .toThrow('venda_painel.linhas[0].herdadas: "sugestoes" não é número');
+    expect(() => lerPainel(painel({ linhas: [linha({ herdadas: null, taxa_ativa_propria: null })] })))
+      .toThrow('venda_painel.linhas[0].herdadas: não é objeto');
+  });
+});

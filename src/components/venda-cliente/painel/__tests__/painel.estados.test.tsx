@@ -41,7 +41,7 @@ function linha(over: Partial<LinhaPainel> = {}): LinhaPainel {
     receita_realizada: 1500, receita_incompleta: false, taxa_ativa: 0.25,
     na_lista_sombra: 0, base_historico: { ...vazio, virou: 1, nao_virou: 9 },
     taxa_base_historico_mesma_semana: 0.1, base_sombra: vazio, taxa_base_sombra: null,
-    base_confiavel: true, ...over,
+    base_confiavel: true, herdadas: null, taxa_ativa_propria: null, ...over,
   };
 }
 
@@ -106,6 +106,29 @@ describe('TabelaAdocao', () => {
     render(<TabelaAdocao linhas={[linha({ receita_realizada: null, virou: 0, compraram: 0, taxa_ativa: 0 })]} baseConfiavel />);
     const corpo = screen.getAllByRole('row')[1];
     expect(within(corpo).queryByText(/R\$\s*0/)).not.toBeInTheDocument();
+  });
+  // Sucessor declarado (20261108010000): a fatia herdada aparece sob os números; a conversão própria tira as herdadas.
+  const herdadas = { na_lista: 3, sugestoes: 5, virou: 1, nao_virou: 2, nao_medivel: 0, pendentes: 0,
+    receita_realizada: 400, receita_incompleta: false };
+  it('com herdadas: aviso, quantos herdados, receita herdada e conversão própria', () => {
+    render(<TabelaAdocao linhas={[linha({ herdadas, taxa_ativa_propria: 0.2 })]} baseConfiavel />);
+    expect(screen.getByTestId('painel-herdadas-aviso')).toHaveTextContent('sucessão declarada');
+    expect(screen.getByTestId('painel-herdadas-na-lista')).toHaveTextContent('3 herdados');
+    expect(screen.getByTestId('painel-receita-herdada').textContent?.replace(/\s/g, ' ')).toMatch(/R\$ 400 herdada$/);
+    expect(screen.getByTestId('painel-conversao-propria')).toHaveTextContent('própria 20%');
+  });
+  it('própria sem base fechada diz não consegui medir/aguardando, nunca 0%', () => {
+    render(<TabelaAdocao linhas={[linha({ virou: 1, nao_virou: 2, pendentes: 1,
+      herdadas: { ...herdadas, pendentes: 0 }, taxa_ativa_propria: null })]} baseConfiavel />);
+    expect(screen.getByTestId('painel-conversao-propria')).toHaveTextContent('própria aguardando janela');
+    expect(screen.getByTestId('painel-conversao-propria')).not.toHaveTextContent('0%');
+  });
+  it('sem herdadas (ou servidor anterior): nada da fatia aparece', () => {
+    render(<TabelaAdocao linhas={[linha({ herdadas: { ...herdadas, na_lista: 0, sugestoes: 0, virou: 0, nao_virou: 0,
+      receita_realizada: null }, taxa_ativa_propria: 0.25 }), linha({ semana: '2026-09-28' })]} baseConfiavel />);
+    expect(screen.queryByTestId('painel-herdadas-aviso')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('painel-conversao-propria')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('painel-receita-herdada')).not.toBeInTheDocument();
   });
 });
 

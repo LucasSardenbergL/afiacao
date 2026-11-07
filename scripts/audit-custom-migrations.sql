@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 804
+-- Total de custom migrations: 805
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -872,6 +872,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107220000', 'data_health_sayerlack_varredura_portal', '20261107220000_data_health_sayerlack_varredura_portal.sql'),
   ('20261107220500', 'radar_meu_territorio', '20261107220500_radar_meu_territorio.sql'),
   ('20261108000000', 'cliente_sucessao_consumidores', '20261108000000_cliente_sucessao_consumidores.sql'),
+  ('20261108010000', 'venda_painel_heranca', '20261108010000_venda_painel_heranca.sql'),
   ('20261108120000', 'sayerlack_situacao_portal_no_pedido', '20261108120000_sayerlack_situacao_portal_no_pedido.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -3508,6 +3509,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cliente_sucessao_consumidores', 'function', 'private', '_venda_sugestoes_json', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'venda_heranca_comprador', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'cliente_sucessao_plano_itens', ''),
+  ('venda_painel_heranca', 'function', 'public', 'venda_painel', ''),
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack__situacao_portal_escritor_unico', ''),
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack__trava_protocolo_confirmado', ''),
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack_registrar_situacao_portal', ''),
@@ -6197,6 +6199,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cliente_sucessao_consumidores', 'function', 'private', '_venda_sugestoes_json', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'venda_heranca_comprador', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'cliente_sucessao_plano_itens', ''),
+  ('venda_painel_heranca', 'function', 'public', 'venda_painel', ''),
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack__situacao_portal_escritor_unico', ''),
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack__trava_protocolo_confirmado', ''),
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack_registrar_situacao_portal', ''),
@@ -6230,7 +6233,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 182.
+-- Funções redefinidas com corpo extraível: 183.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6875,6 +6878,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', '_venda_repasse_base', 2, '20261021021500_venda_repasse_base_desempenho.sql', '4cb2e342f09337e03b1f967c3bc0c819'),
   ('public', 'venda_repasse_candidatos', 1, '20261020233000_venda_cliente_repasse.sql', '76ffdad3aae967ca7d12ab4ad923473c'),
   ('public', 'venda_repasse_candidatos', 2, '20261031233000_venda_repasse_substituicao.sql', '056472fcdec0ffb4214bca795678dbc4'),
+  ('public', 'venda_painel', 1, '20261020235000_venda_cliente_painel.sql', '9b0cf8936e6511ec056f4d5cf5666f66'),
+  ('public', 'venda_painel', 2, '20261108010000_venda_painel_heranca.sql', '2da58a5e916d7110956d54695cce85ce'),
   ('private', '_venda_sugestoes_json', 1, '20261021070000_venda_lista_lente.sql', '5db752d23bbe60841b3ccb2275dadfe1'),
   ('private', '_venda_sugestoes_json', 2, '20261108000000_cliente_sucessao_consumidores.sql', '61c33e36e564dfc4d4becba5740e0bbc'),
   ('private', 'radar_evento_abertura', 1, '20261029150100_radar_eventos_placar.sql', '3d146cb7191813f6f45455268c854db2'),
