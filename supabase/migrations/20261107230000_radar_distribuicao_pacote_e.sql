@@ -22,10 +22,12 @@
 --   E4 · Lead que o gestor ATRIBUIU (radar_atribuir_atendimento, atribuido_por NOT NULL, posse ativa) entra primeiro,
 --        mesmo fora do território, com `atribuido = true` (e-mail e card).
 --   E5 · radar_avisar_vendedores isola cada vendedor (BEGIN/EXCEPTION por iteração): o erro de um vai para `erros` no
---        ledger e os outros seguem; o ledger sai com status 'erro' quando houve erro.
+--        ledger e os outros seguem; o ledger sai com status 'erro' quando houve erro. Duas execuções simultâneas
+--        (cron + manual) se serializam por advisory lock: a 2ª espera a 1ª e enxerga os envios dela (parecer Codex).
 --   E6 · Território: quem não é dono de nenhum município (2º em todas as suas cidades) recebe os municípios onde tem
---        clientes, no máximo 3, marcados `compartilhado`; e lead já mandado por e-mail a OUTRO vendedor (na fila ou
---        entregue, 90 dias) fica fora, para o fallback não repetir o e-mail do dono (os donos são processados antes).
+--        clientes, no máximo 3, marcados `compartilhado`. O DONO tem prioridade: no município compartilhado, o lead já
+--        mandado por e-mail a OUTRO vendedor (na fila ou entregue, 90 dias) fica fora para o fallback; o dono nunca
+--        perde lead para o fallback (nem depois de uma falha dele). Os donos são processados antes no laço.
 --        Território vazio ganha motivo: private.radar_territorio_motivo → 'nao_e_vendedor' | 'sem_carteira' |
 --        'carteira_sem_municipio' (no ledger, no card e no painel do master).
 --   E7 · A URL do app no link do e-mail sai do código: company_config.app_url_publica (semeada com o valor de hoje,
@@ -62,6 +64,9 @@ BEGIN
   IF to_regprocedure('private.radar_leads_do_vendedor(uuid,integer,timestamptz)') IS NOT NULL THEN
     ALTER FUNCTION private.radar_leads_do_vendedor(uuid, integer, timestamptz) STABLE;
   END IF;
+  IF to_regprocedure('private.radar_territorio_motivo(uuid)') IS NOT NULL THEN
+    ALTER FUNCTION private.radar_territorio_motivo(uuid) STABLE;
+  END IF;
   ALTER FUNCTION public.radar_avisar_vendedores(timestamptz) VOLATILE;
   ALTER FUNCTION public.radar_prospectar_hoje(uuid, integer) STABLE;
   ALTER FUNCTION public.radar_email_semanal_painel() STABLE;
@@ -82,9 +87,11 @@ BEGIN
         ('private.radar_leads_do_vendedor(uuid,integer,timestamptz,timestamptz)',
          '4d42f984581ffb7071e1a897ea6d40be', NULL, true),   -- some nesta migration (troca de assinatura)
         ('private.radar_leads_do_vendedor(uuid,integer,timestamptz)',
-         NULL, '01b9274b49a34a9e4c37437996bf4586', true),                      -- nasce nesta migration
+         NULL, '09a18fe233086578bea5ce92a82999c3', true),                      -- nasce nesta migration
+        ('private.radar_territorio_motivo(uuid)',
+         NULL, 'bd930b886fff2a9c6f2a4d4da8f0e8ce', true),                                        -- nasce nesta migration
         ('public.radar_avisar_vendedores(timestamptz)',
-         'e382065349b1a3ada1837429b1bbe79a', '587e8f4b93600c10e2196f74f1facfc5', false),
+         'e382065349b1a3ada1837429b1bbe79a', 'b94e689aa55d06036848841204bebea3', false),
         ('public.radar_prospectar_hoje(uuid,integer)',
          '55834328a62408d4565c1847b3fb9bde', 'ab8799c17ac7a8b1078e1a999d3c6ab6', false),
         ('public.radar_email_semanal_painel()',
@@ -111,20 +118,29 @@ $pre$;
 ALTER TABLE public.radar_email_vendedor_envios
   ADD COLUMN IF NOT EXISTS tentativa smallint NOT NULL DEFAULT 1;
 DO $esq$
+DECLARE
+  v_con name;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.radar_email_vendedor_envios'::regclass
                    AND conname = 'radar_email_vendedor_envios_tentativa_chk') THEN
     ALTER TABLE public.radar_email_vendedor_envios
       ADD CONSTRAINT radar_email_vendedor_envios_tentativa_chk CHECK (tentativa BETWEEN 1 AND 20);
   END IF;
-  -- A UNIQUE antiga (1 envio por vendedor e semana) fazia o e-mail que falhou consumir a semana.
-  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.radar_email_vendedor_envios'::regclass
-               AND conname = 'radar_email_vendedor_envios_vendedor_user_id_semana_eh_test_key') THEN
-    ALTER TABLE public.radar_email_vendedor_envios
-      DROP CONSTRAINT radar_email_vendedor_envios_vendedor_user_id_semana_eh_test_key;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.radar_email_vendedor_envios'::regclass
-                   AND conname = 'radar_email_vendedor_envios_semana_tentativa_key') THEN
+  -- A UNIQUE antiga (1 envio por vendedor e semana) fazia o e-mail que falhou consumir a semana. Procurada pelas
+  -- COLUNAS, não pelo nome (parecer Codex): renomeada, ela escaparia de um DROP por nome e seguiria barrando a tentativa 2.
+  FOR v_con IN
+    SELECT c.conname FROM pg_constraint c
+     WHERE c.conrelid = 'public.radar_email_vendedor_envios'::regclass AND c.contype = 'u'
+       AND (SELECT array_agg(a.attname::text ORDER BY a.attname::text) FROM pg_attribute a
+             WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)) = ARRAY['eh_teste', 'semana', 'vendedor_user_id']
+  LOOP
+    EXECUTE format('ALTER TABLE public.radar_email_vendedor_envios DROP CONSTRAINT %I', v_con);
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+                  WHERE c.conrelid = 'public.radar_email_vendedor_envios'::regclass AND c.contype = 'u'
+                    AND (SELECT array_agg(a.attname::text ORDER BY a.attname::text) FROM pg_attribute a
+                          WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey))
+                        = ARRAY['eh_teste', 'semana', 'tentativa', 'vendedor_user_id']) THEN
     ALTER TABLE public.radar_email_vendedor_envios
       ADD CONSTRAINT radar_email_vendedor_envios_semana_tentativa_key UNIQUE (vendedor_user_id, semana, eh_teste, tentativa);
   END IF;
@@ -258,7 +274,7 @@ AS $fn$
              WHERE s.status = 'complete' ORDER BY s.mes_referencia DESC LIMIT 1) AS lote
   ),
   terr AS (
-    SELECT t.municipio_codigo, t.clientes FROM private.radar_territorio_do_vendedor(p_vendedor, 3) t
+    SELECT t.municipio_codigo, t.clientes, t.compartilhado FROM private.radar_territorio_do_vendedor(p_vendedor, 3) t
   ),
   -- E4: lead que o gestor passou a este vendedor e cuja posse segue ativa no relógio de p_agora.
   atrib AS (
@@ -272,7 +288,7 @@ AS $fn$
   -- São os mesmos nos dois ramos: ja_cliente, status, score, RFB, foto vigente (E1) e contato (E1).
   alvo AS (
     SELECT re.cnpj, re.razao_social, re.nome_fantasia, re.municipio_codigo, re.municipio_nome, re.uf,
-           re.score, re.score_motivos, t.clientes, false AS atribuido
+           re.score, re.score_motivos, t.clientes, t.compartilhado, false AS atribuido
       FROM terr t
       JOIN public.radar_empresas re ON re.municipio_codigo = t.municipio_codigo
       CROSS JOIN par
@@ -285,7 +301,7 @@ AS $fn$
             OR NULLIF(btrim(re.email), '') IS NOT NULL)
     UNION ALL
     SELECT re.cnpj, re.razao_social, re.nome_fantasia, re.municipio_codigo, re.municipio_nome, re.uf,
-           re.score, re.score_motivos, 0, true
+           re.score, re.score_motivos, 0, false, true
       FROM atrib ab
       JOIN public.radar_empresas re ON re.cnpj = ab.cnpj
       CROSS JOIN par
@@ -301,7 +317,7 @@ AS $fn$
   um_por_cnpj AS (
     SELECT DISTINCT ON (a.cnpj) a.*, left(a.cnpj, 8) AS raiz
       FROM alvo a
-     ORDER BY a.cnpj, a.atribuido DESC, a.clientes DESC
+     ORDER BY a.cnpj, a.atribuido DESC, a.compartilhado, a.clientes DESC
   ),
   universo AS (
     SELECT u.*
@@ -318,8 +334,9 @@ AS $fn$
                 AND private.radar_atendimento_expira_em(a.cnpj, a.dono_user_id, a.assumido_em, a.renovado_em) > p_agora)
        AND NOT EXISTS (
              -- E2: só e-mail ENTREGUE queima, e só os de semana ANTERIOR (os desta semana seguem no card).
-             -- E6: o de OUTRO vendedor, na fila ou entregue, também tira o lead (o fallback não repete o dono);
-             -- o atribuído pelo gestor passa por cima disso. Envio de teste nunca conta.
+             -- E6: no município COMPARTILHADO, o de OUTRO vendedor (na fila ou entregue) também tira o lead: o
+             -- fallback não repete o dono. No território próprio, não: o dono nunca perde lead para o fallback.
+             -- O atribuído pelo gestor vem com compartilhado = false. Envio de teste nunca conta.
              SELECT 1 FROM public.radar_email_vendedor_leads l
                JOIN public.radar_email_vendedor_envios e ON e.id = l.envio_id
                JOIN public.fornecedor_alerta fa ON fa.id = e.alerta_id
@@ -327,7 +344,7 @@ AS $fn$
                 AND e.eh_teste = false
                 AND e.criado_em >= par.desde
                 AND ((e.vendedor_user_id = p_vendedor AND fa.status = 'notificado' AND e.semana < par.semana)
-                     OR (e.vendedor_user_id <> p_vendedor AND NOT u.atribuido
+                     OR (e.vendedor_user_id <> p_vendedor AND u.compartilhado
                          AND fa.status IN ('notificado', 'pendente_notificacao'))))
   ),
   -- Uma empresa por raiz de CNPJ (a filial de maior score): em prod o top-5 da Regina trazia a mesma metalúrgica 4 vezes.
@@ -384,6 +401,11 @@ DECLARE
   v_pulados     jsonb := '[]'::jsonb;
   v_erros       jsonb := '[]'::jsonb;
 BEGIN
+  -- Uma distribuição por vez (parecer Codex): o SKIP LOCKED sozinho deixava duas execuções simultâneas pegarem
+  -- vendedores diferentes sem enxergar os envios uma da outra (dono numa, fallback na outra → mesmo lead aos dois).
+  -- A 2ª espera a 1ª terminar e então vê os envios dela (ja_enviado_na_semana).
+  PERFORM pg_advisory_xact_lock(hashtext('radar.avisar_vendedores'));
+
   -- E7: a URL do link vem de company_config.app_url_publica (ausente = a de sempre). Valor fora do formato não
   -- manda link quebrado a ninguém: ledger 'erro' e nenhum e-mail.
   SELECT NULLIF(btrim(cc.value), '') INTO v_app FROM public.company_config cc WHERE cc.key = 'app_url_publica';
@@ -706,12 +728,19 @@ BEGIN
   END LOOP;
 
   -- P4: a semana não é mais travada por 1 envio; a unicidade agora inclui a tentativa.
-  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.radar_email_vendedor_envios'::regclass
-               AND conname = 'radar_email_vendedor_envios_vendedor_user_id_semana_eh_test_key') THEN
+  -- Pelas COLUNAS de todo índice único (constraint ou não), não pelo nome.
+  IF EXISTS (SELECT 1 FROM pg_index i
+              WHERE i.indrelid = 'public.radar_email_vendedor_envios'::regclass AND i.indisunique
+                AND (SELECT array_agg(a.attname::text ORDER BY a.attname::text) FROM pg_attribute a
+                      WHERE a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey))
+                    = ARRAY['eh_teste', 'semana', 'vendedor_user_id']) THEN
     RAISE EXCEPTION 'P4 FALHOU: a UNIQUE antiga (vendedor, semana, eh_teste) continua: e-mail que falhou consome a semana';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.radar_email_vendedor_envios'::regclass
-                   AND conname = 'radar_email_vendedor_envios_semana_tentativa_key' AND contype = 'u') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_index i
+                  WHERE i.indrelid = 'public.radar_email_vendedor_envios'::regclass AND i.indisunique AND i.indisvalid
+                    AND (SELECT array_agg(a.attname::text ORDER BY a.attname::text) FROM pg_attribute a
+                          WHERE a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey))
+                        = ARRAY['eh_teste', 'semana', 'tentativa', 'vendedor_user_id']) THEN
     RAISE EXCEPTION 'P4 FALHOU: UNIQUE (vendedor, semana, eh_teste, tentativa) ausente';
   END IF;
 

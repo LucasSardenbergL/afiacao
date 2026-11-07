@@ -22,7 +22,7 @@ MIGE="$REPO_ROOT/supabase/migrations/20261107230000_radar_distribuicao_pacote_e.
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!P2_FALHOU` = a postcondição aborta o apply com a marca exata
   # (`_` vira espaço; grep -F). `_sem_post` cega a postcondição para provar que a suíte pega sozinha.
-  SABOTAGENS="sem_lote:E1a lote_qualquer_status:E1a sem_contato:E1b sem_lote_completo_recorta:E1c queima_registro:E2a falha_consome_semana:E2b semana_corrente_queima:E2d pendente_nao_bloqueia:E2e sem_janela:E2g teste_queima:E2h posse_propria_fica:E3 sem_atribuido:E4a atribuido_sem_prioridade:E4a atribuido_expirado:E4b sem_isolamento:E5a ledger_sucesso:E5b sem_fallback:E6a fallback_com_dono:E6b dono_depois:E6c outro_vendedor_repete:E6c sem_motivo:E6e url_fixa:E7b url_sem_validar:E7c acl_aberta:POST!P2_FALHOU acl_aberta_sem_post:E8a card_volatil:POST!P3_FALHOU card_volatil_sem_post:E8c unique_velha:POST!P4_FALHOU unique_velha_sem_post:E2b pre_cega:E9b"
+  SABOTAGENS="sem_lote:E1a lote_qualquer_status:E1a sem_contato:E1b sem_lote_completo_recorta:E1c queima_registro:E2a falha_consome_semana:E2b semana_corrente_queima:E2d pendente_nao_bloqueia:E2e sem_janela:E2g teste_queima:E2h posse_propria_fica:E3 sem_atribuido:E4a atribuido_sem_prioridade:E4a atribuido_expirado:E4b sem_isolamento:E5a ledger_sucesso:E5b sem_fallback:E6a fallback_com_dono:E6b dono_depois:E6c outro_vendedor_repete:E6c dono_perde_para_fallback:E2c sem_trava:E5c sem_motivo:E6e url_fixa:E7b url_sem_validar:E7c acl_aberta:POST!P2_FALHOU acl_aberta_sem_post:E8a card_volatil:POST!P3_FALHOU card_volatil_sem_post:E8c unique_velha:POST!P4_FALHOU unique_velha_sem_post:E2b pre_cega:E9b este_errado:E9a0"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-distribuicao-e.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -120,8 +120,11 @@ case "${SABOTAGEM:-}" in
   dono_depois)              sabotar "     ORDER BY NOT EXISTS (SELECT 1 FROM private.radar_territorio_do_vendedor(c.vendedor_user_id, 3) t
                            WHERE NOT t.compartilhado),
               c.vendedor_user_id" "     ORDER BY c.vendedor_user_id" ;;
-  outro_vendedor_repete)    sabotar "                     OR (e.vendedor_user_id <> p_vendedor AND NOT u.atribuido
+  outro_vendedor_repete)    sabotar "                     OR (e.vendedor_user_id <> p_vendedor AND u.compartilhado
                          AND fa.status IN ('notificado', 'pendente_notificacao'))))" "                     ))" ;;
+  dono_perde_para_fallback) sabotar "OR (e.vendedor_user_id <> p_vendedor AND u.compartilhado" "OR (e.vendedor_user_id <> p_vendedor" ;;
+  sem_trava)                sabotar "  PERFORM pg_advisory_xact_lock(hashtext('radar.avisar_vendedores'));" "" ;;
+  este_errado)              sabotar "'55834328a62408d4565c1847b3fb9bde', 'ab8799c17ac7a8b1078e1a999d3c6ab6'" "'55834328a62408d4565c1847b3fb9bde', '00000000000000000000000000000000'" ;;
   sem_motivo)               sabotar "                                                     'causa', private.radar_territorio_motivo(r.vendedor));" "                                                     'causa', NULL);" ;;
   url_fixa)                 sabotar "  SELECT NULLIF(btrim(cc.value), '') INTO v_app FROM public.company_config cc WHERE cc.key = 'app_url_publica';" "  v_app := NULL;" ;;
   url_sem_validar)          sabotar "  IF v_app !~ c_url_ok THEN" "  IF false THEN" ;;
@@ -431,7 +434,7 @@ eq "E7a link do e-mail com a URL semeada em company_config; corpo diz o atribuí
 # ── E2: entregue × registro ───────────────────────────────────────────────────────────────────────────────
 P -q -c "UPDATE public.fornecedor_alerta SET status = 'falha_notificacao' WHERE id = (SELECT alerta_id FROM public.radar_email_vendedor_envios WHERE id = '$ENV_V1')"
 eq "E2a e-mail que FALHOU não queima: na semana seguinte V1 recebe os mesmos 5" \
-   "$(leads "$V1" "2026-11-23 11:00+00")" "120*,104,101,107,111|7"
+   "$(leads "$V1" "2026-11-23 11:00+00")" "120*,104,101,107,111|8"
 RB="$(Pq -c "SELECT public.radar_avisar_vendedores('2026-11-18 11:00+00')" 2>&1 || true)"
 eq "E2b e-mail que falhou não consome a semana: V1 ganha a tentativa 2 com os mesmos leads" \
    "$(Pq -c "SELECT string_agg(tentativa::text, ',' ORDER BY tentativa) FROM public.radar_email_vendedor_envios WHERE vendedor_user_id = '$V1' AND semana = '$SEM_A'")|$(envio_leads "$V1" "$SEM_A" 2)" \
@@ -440,10 +443,10 @@ eq "E2e na fila (V4, pendente) bloqueia a semana: sem tentativa 2" \
    "$(Pq -c "SELECT count(*) FROM public.radar_email_vendedor_envios WHERE vendedor_user_id = '$V4'")|$(printf '%s' "$RB" | python3 -I -c "import json,sys; d=json.load(sys.stdin); print(sum(1 for p in d['pulados'] if p['vendedor'].endswith('04') and p['motivo'] == 'ja_enviado_na_semana'))")" \
    "1|1"
 P -q -c "UPDATE public.fornecedor_alerta SET status = 'notificado' WHERE status = 'pendente_notificacao'"
-eq "E2c entregue queima: na semana seguinte V1 não revê os 5 (e o 112, entregue a V4, também fica fora)" \
-   "$(leads "$V1" "2026-11-23 11:00+00")" "113,114|2"
+eq "E2c entregue queima: na semana seguinte V1 não revê os 5; o 112 entregue a V4 (fallback) NÃO sai do dono" \
+   "$(leads "$V1" "2026-11-23 11:00+00")" "113,112,114|3"
 eq "E2d o card desta semana continua com os leads do e-mail desta semana (só semana ANTERIOR queima)" \
-   "$(leads "$V1" "2026-11-20 15:00+00")" "120*,104,101,107,111|7"
+   "$(leads "$V1" "2026-11-20 15:00+00")" "120*,104,101,107,111|8"
 Pq -c "SELECT public.radar_avisar_vendedores('2026-11-19 11:00+00')" >/dev/null
 eq "E2f entregue na semana: re-rodar não gera tentativa 3" \
    "$(Pq -c "SELECT count(*) FROM public.radar_email_vendedor_envios WHERE vendedor_user_id = '$V1'")" "2"
@@ -454,8 +457,8 @@ UPDATE public.radar_email_vendedor_config SET email_teste = 'founder@exemplo.com
 SQL
 Pq -c "SELECT public.radar_avisar_vendedores('2026-11-23 11:00+00')" >/dev/null
 P -q -c "UPDATE public.fornecedor_alerta SET status = 'notificado' WHERE status = 'pendente_notificacao'"
-eq "E2h envio de TESTE entregue não queima: a semana do teste (113, 114) volta para V1 na seguinte (com 105 e 106, posses vencidas em 29/11)" \
-   "$(envio_leads "$V1" "2026-11-23")|$(leads "$V1" "2026-11-30 11:00+00")" "113,114|105,106,113,114|4"
+eq "E2h envio de TESTE entregue não queima: a semana do teste (113, 112, 114) volta para V1 na seguinte (com 105 e 106, posses vencidas em 29/11)" \
+   "$(envio_leads "$V1" "2026-11-23")|$(leads "$V1" "2026-11-30 11:00+00")" "113,112,114|105,106,113,112,114|5"
 
 # ── E7: URL configurável ──────────────────────────────────────────────────────────────────────────────────
 P -q -v v1="$V1" <<'SQL'
@@ -474,6 +477,18 @@ eq "E7c URL fora do formato: nenhum e-mail, ledger com status erro" \
    "$R7|$(Pq -c "SELECT count(*) FROM public.fornecedor_alerta")|$(Pq -c "SELECT status FROM public.acoes_execucoes WHERE acao = 'radar.avisar_vendedores' ORDER BY iniciado_em DESC LIMIT 1")" \
    "app_url_publica_invalida|$ANTES_E7|erro"
 P -q -c "UPDATE public.company_config SET value = 'https://steu.lovable.app' WHERE key = 'app_url_publica'"
+
+# ── E5c: duas execuções simultâneas se serializam (advisory lock) ─────────────────────────────────────────
+# A segura a transação 3 s depois de distribuir; B começa 1 s depois. Com a trava, B espera A e vê os envios dela
+# (V1 já enviado). Sem a trava, B pularia por SKIP LOCKED todas as linhas que A prendeu e sairia sem ver nada.
+( P -q -c "BEGIN" -c "SELECT public.radar_avisar_vendedores('2026-12-14 11:00+00')" -c "SELECT pg_sleep(3)" -c "COMMIT" >/dev/null 2>&1 ) &
+PID_A=$!
+sleep 1
+RC="$(Pq -c "SELECT public.radar_avisar_vendedores('2026-12-14 11:00+00')" 2>&1 || true)"
+wait "$PID_A" || echo "execução A falhou"
+eq "E5c 2ª execução simultânea espera a 1ª e não reenvia: V1 sai como já enviado, 1 envio só na semana" \
+   "$(printf '%s' "$RC" | python3 -I -c "import json,sys; d=json.load(sys.stdin); print(sum(1 for p in d['pulados'] if p['vendedor'].endswith('11') and p['motivo'] == 'ja_enviado_na_semana'))")|$(Pq -c "SELECT count(*) FROM public.radar_email_vendedor_envios WHERE vendedor_user_id = '$V1' AND semana = '2026-12-14'")" \
+   "1|1"
 
 # ── E8: card, painel e fronteira ──────────────────────────────────────────────────────────────────────────
 eq "E8b card de V1: chaves novas (atribuido, compartilhado, territorio_motivo nulo) e nada fora da foto/sem contato" \
@@ -503,10 +518,11 @@ P -q -c "UPDATE public.radar_ingest_state SET status = 'complete' WHERE mes_refe
 
 # ── E9: re-aplicação e anti-deriva ────────────────────────────────────────────────────────────────────────
 P -q -c "UPDATE public.company_config SET value = 'https://outro.exemplo.com' WHERE key = 'app_url_publica'"
-if ! P -q -f "$MIGE_USADA" >> "$APPLY_LOG" 2>&1; then tail -5 "$APPLY_LOG"; echo "RE-APLICAÇÃO FALHOU"; fi
+if P -q -f "$MIGE_USADA" >> "$APPLY_LOG" 2>&1; then REAP=ok; else REAP=falhou; tail -5 "$APPLY_LOG"; fi
+eq "E9a0 re-aplicar a migration sobre ela mesma passa (PRE aceita o corpo 'este' de cada função)" "$REAP" "ok"
 eq "E9a re-aplicar: idempotente, não sobrescreve a URL do founder nem apaga envio" \
    "$(Pq -c "SELECT value FROM public.company_config WHERE key = 'app_url_publica'")|$(Pq -c "SELECT count(*) FROM public.radar_email_vendedor_envios")" \
-   "https://outro.exemplo.com|5"
+   "https://outro.exemplo.com|6"
 P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public.radar_prospectar_hoje(p_vendedor uuid DEFAULT NULL, p_n integer DEFAULT 3)
 RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $fn$ SELECT '{}'::jsonb $fn$;
