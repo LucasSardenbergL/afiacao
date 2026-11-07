@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Radar, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { ChevronDown, MapPin, Radar, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
@@ -8,6 +8,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, FILTROS_MEUS_ATENDIMENTOS, CHAVE_VISAO_MEUS, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
 import { useRadarAtendimentosAtivos } from '@/queries/useRadarAtendimentos';
+import { useRadarMeuTerritorio } from '@/queries/useRadarMeuTerritorio';
+import {
+  PERTO_DESLIGADO, cidadeDoTerritorioAtiva, patchMexeEmLugar, recorteDaCidade, territorioAutomatico,
+} from '@/lib/radar/territorio';
+import { tituloMunicipio } from '@/lib/radar/prospectar-hoje';
 import { diaMes } from '@/lib/radar/atendimento';
 import { useRadarIrmaos } from '@/queries/useRadarIrmaos';
 import { useRadarVinculosLista } from '@/queries/useRadarVinculosLista';
@@ -66,6 +71,7 @@ type RadarUrlState = {
   incluirSemContato: boolean;
   vista: string;
   visao: string;
+  perto: string;
   [k: string]: string | boolean;
 };
 
@@ -91,10 +97,13 @@ const DEFAULTS: RadarUrlState = {
   vista: 'lista',
   // "Fila" | "Meus atendimentos" (pacote B2): qual conjunto de leads a lista mostra. Navegação, não filtro.
   visao: 'fila',
+  // "Perto dos seus clientes" (pacote F): vazio = automático (a cidade nº 1 do território, se houver e a URL não disser
+  // nada de lugar); 'nao' = o vendedor pediu "Toda a região". Navegação, não filtro: fora da chave e dos favoritos.
+  perto: '',
 };
 
-/** O que um favorito guarda: os filtros da URL, sem a vista nem a visão (lista/mapa e fila/meus são navegação, não filtro). */
-const { vista: _vista, visao: _visao, ...PADRAO_FILTROS } = DEFAULTS;
+/** O que um favorito guarda: os filtros da URL, sem a vista, a visão nem o `perto` (navegação, não filtro). */
+const { vista: _vista, visao: _visao, perto: _perto, ...PADRAO_FILTROS } = DEFAULTS;
 const PADRAO_FAVORITO: FiltrosSalvos = PADRAO_FILTROS;
 
 function narrowPreset(v: string): PresetRadar {
@@ -110,9 +119,28 @@ export default function RadarClientes() {
   // trocar Lista↔Mapa mudava a chave da consulta (refetch da fila) e o efeito abaixo apagava a seleção.
   // A visão "Meus atendimentos" (B2) também fica FORA: entrar nela não muda os filtros nem os favoritos, e voltar à
   // fila devolve o recorte de antes.
-  const { vista, visao, ...filtrosAtuais } = raw;
-  const filtros: RadarFiltros = { ...filtrosAtuais, preset: narrowPreset(filtrosAtuais.preset), regiao: narrowRegiao(filtrosAtuais.regiao) };
+  const { vista, visao, perto, ...filtrosAtuais } = raw;
   const meus = visao === 'meus';
+  // Pacote F (achado 2): a fila de hoje é do VENDEDOR — com território, abre perto dos clientes dele (a cidade nº 1,
+  // a mesma escolha do card e do e-mail). O recorte é VIRTUAL: vale enquanto a URL não diz nada de lugar. Staff sem
+  // território (vazio) e leitura que falhou ficam no default de antes; a falha é DITA no resumo.
+  const territorio = useRadarMeuTerritorio();
+  const cidadesTerritorio = territorio.data ?? null;
+  const aguardandoTerritorio = !meus && territorio.isPending && territorio.fetchStatus !== 'idle';
+  const cidadeAuto = territorioAutomatico({ ...filtrosAtuais, perto }, cidadesTerritorio);
+  const lugar = cidadeAuto ? recorteDaCidade(cidadeAuto) : null;
+  const filtros: RadarFiltros = {
+    ...filtrosAtuais,
+    ...(lugar ?? {}),
+    preset: narrowPreset(filtrosAtuais.preset),
+    regiao: lugar ? lugar.regiao : narrowRegiao(filtrosAtuais.regiao),
+  };
+  const cidadeAtiva = cidadeDoTerritorioAtiva(filtros.municipioCodigo, cidadesTerritorio);
+  // Mexer em LUGAR com o automático ligado o desliga — senão limpar o campo "cidade" traria a cidade de volta.
+  const setFiltros = useCallback(
+    (patch: Partial<RadarUrlState>) => set(cidadeAuto && patchMexeEmLugar(patch) ? { ...patch, perto: PERTO_DESLIGADO } : patch),
+    [set, cidadeAuto],
+  );
   // Na visão, filtros NEUTROS (já-clientes, fora da região, lote antigo e sem contato continuam sendo seus) e o
   // recorte "é meu" vai à RPC (p_so_meus), antes da paginação.
   const filtrosDaLista = meus ? FILTROS_MEUS_ATENDIMENTOS : filtros;
@@ -122,7 +150,9 @@ export default function RadarClientes() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }, []);
 
-  const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus });
+  const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus, aguardar: aguardandoTerritorio });
+  // Fila ainda sem recorte (território a caminho) conta como carregando — senão a tela mostraria "nenhuma empresa".
+  const carregandoFila = q.isLoading || aguardandoTerritorio;
   const kpis = useRadarKpis();
   const loteOmie = useRadarLoteOmie();
   // Lote VIGENTE (foto da RFB) — UMA leitura, compartilhada com a fila (que a lê pelo cache),
@@ -155,8 +185,9 @@ export default function RadarClientes() {
   // Lead do link que não está na fila carregada (outra página, já-cliente, descartado): lido inteiro, 1× por CNPJ.
   const [leadDoLink, setLeadDoLink] = useState<RadarEmpresa | null>(null);
   // Posição do lead aberto na última vez em que estava na lista: se ele sair (contato registrado → refetch), o
-  // "Próximo" segue de onde o vendedor estava, não do topo.
-  const ultimoIndice = useRef<number | null>(null);
+  // "Próximo" segue de onde o vendedor estava, não do topo. Presa ao CNPJ (pacote F, achado 6): a posição de OUTRO
+  // lead não vale para a ficha aberta por link — essa nunca esteve na fila, e o "Próximo" dela é o 1º da fila.
+  const ultimoIndice = useRef<{ cnpj: string; indice: number } | null>(null);
 
   // Paginação CONGELADA enquanto um lote roda: a lista é por offset e as cadastradas
   // somem da fila — carregar a página seguinte no meio pularia empresas.
@@ -191,7 +222,7 @@ export default function RadarClientes() {
   const aberta = useMemo(() => {
     if (!abertaCnpj) return null;
     const i = empresas.findIndex((e) => e.cnpj === abertaCnpj);
-    if (i >= 0) ultimoIndice.current = i;
+    if (i >= 0) ultimoIndice.current = { cnpj: abertaCnpj, indice: i };
     // O snapshot só vale para o MESMO CNPJ: trocar o `cnpj` da URL não pode mostrar a ficha do lead anterior.
     const snap = abertaSnapshot.current?.cnpj === abertaCnpj ? abertaSnapshot.current : null;
     const doLink = leadDoLink?.cnpj === abertaCnpj ? leadDoLink : null;
@@ -199,10 +230,11 @@ export default function RadarClientes() {
     abertaSnapshot.current = atual;
     return atual;
   }, [abertaCnpj, empresas, leadDoLink]);
-  // Deep link: espera a 1ª leitura da fila (o lead pode estar nela) e, se não estiver, lê o lead pelo CNPJ.
-  const filaLida = !q.isLoading;
+  // Deep link (link do e-mail, do card): lê o lead pelo CNPJ EM PARALELO com a fila (pacote F, achado 5) — antes
+  // esperava a 1ª página, e a ficha só abria depois dela. Se a fila chegar antes e tiver o lead, ela vence (a leitura
+  // avulsa é descartada pelo `vivo`).
   useEffect(() => {
-    if (!abertaCnpj || aberta || !filaLida) return;
+    if (!abertaCnpj || aberta) return;
     let vivo = true;
     lerEmpresaRadar(abertaCnpj).then(
       (e) => {
@@ -218,7 +250,7 @@ export default function RadarClientes() {
       },
     );
     return () => { vivo = false; };
-  }, [abertaCnpj, aberta, filaLida, setAbertaCnpj]);
+  }, [abertaCnpj, aberta, setAbertaCnpj]);
 
   const abrir = useCallback((e: RadarEmpresa) => { abertaSnapshot.current = e; setAbertaCnpj(e.cnpj); }, [setAbertaCnpj]);
   // Ficha de um CNPJ que pode não estar na fila (já-cliente, descartado): lê o lead inteiro antes de abrir.
@@ -235,7 +267,7 @@ export default function RadarClientes() {
   const aplicarPasso = useCallback((passo: PassoFila<RadarEmpresa>) => {
     if (passo.tipo === 'abrir') {
       track('radar.proximo_lead', {});
-      ultimoIndice.current = passo.indice;
+      ultimoIndice.current = { cnpj: passo.empresa.cnpj, indice: passo.indice };
       abrir(passo.empresa);
     } else if (passo.tipo === 'fim') {
       track('radar.fila_acabou', {});
@@ -248,7 +280,8 @@ export default function RadarClientes() {
   const proximo = useCallback(async () => {
     const atual = abertaCnpjRef.current;
     if (!atual || buscandoProximo.current) return;
-    const passo = proximoDaFila(empresas, atual, ultimoIndice.current, !!q.hasNextPage);
+    const posicao = ultimoIndice.current?.cnpj === atual ? ultimoIndice.current.indice : null;
+    const passo = proximoDaFila(empresas, atual, posicao, !!q.hasNextPage);
     if (passo.tipo !== 'buscar_mais') { aplicarPasso(passo); return; }
     if (loteOmie.rodando) {
       toast.info('Paginação pausada enquanto o lote roda', { description: 'O próximo lead aparece quando o lote de cadastro terminar.' });
@@ -263,7 +296,7 @@ export default function RadarClientes() {
         return;
       }
       const fila = intercalarAmostra(r.data?.pages.flat() ?? [], amostraNaFila, !r.hasNextPage);
-      aplicarPasso(proximoDaFila(fila, atual, ultimoIndice.current, !!r.hasNextPage));
+      aplicarPasso(proximoDaFila(fila, atual, posicao, !!r.hasNextPage));
     } finally {
       buscandoProximo.current = false;
     }

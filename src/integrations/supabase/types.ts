@@ -24951,6 +24951,15 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      radar_meu_territorio: {
+        Args: { p_top?: number; p_vendedor?: string }
+        Returns: {
+          clientes: number
+          municipio_codigo: string
+          municipio_nome: string
+          uf: string
+        }[]
+      }
       radar_penetracao_por_municipio: {
         Args: {
           p_limit?: number
