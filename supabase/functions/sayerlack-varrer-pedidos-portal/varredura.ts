@@ -358,3 +358,132 @@ export function desfechoNoPortal(
       : { ...p, classe: "vivo_ou_outro" as const, situacao: l.situacao };
   });
 }
+
+// ── Onda 3 dos pontos cegos (2026-11-07): rodada nunca verde sem prova ─────────────────────────────────────────────
+// Incidente: 2 de 46 rodadas leram 0 linhas e registraram sucesso (23/10 e 03/11, 01:30 UTC). Ler "nada" e ler "o
+// portal disse 0 de 0" são coisas diferentes — só a segunda prova que não havia pedido.
+
+/** Colunas sem as quais a classificação não tem o que ler (DOM mudou ⇒ erro, nunca "nenhum candidato"). */
+const COLUNAS_OBRIGATORIAS: readonly { rotulo: string; prefixo: string; exato: boolean }[] = [
+  { rotulo: "Pedido", prefixo: "Pedido", exato: true },
+  { rotulo: "Situação", prefixo: "Situa", exato: false },
+  { rotulo: "Data Emissão", prefixo: "Data Emiss", exato: false },
+  { rotulo: "Vlr", prefixo: "Vlr", exato: false },
+];
+
+function inteiroNaoNegativo(n: unknown): number | null {
+  if (typeof n === "number" && Number.isInteger(n) && n >= 0) return n;
+  if (typeof n === "string" && /^\d+$/.test(n.trim())) return Number(n.trim());
+  return null;
+}
+
+/** "Mostrando de 1 até 10 de 23 registros" / "Showing 1 to 10 of 23 entries" / "0 até 0 de 0" → 23. */
+function totalDoTexto(info: unknown): number | null {
+  if (typeof info !== "string") return null;
+  const m = info.replace(/\./g, "").match(/\b(?:de|of)\s+(\d+)\s*(?:registros|entries|itens|pedidos)?\s*(?:\(|$)/i);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Total ANUNCIADO pelo portal, por até 3 fontes: `recordsFiltered` da resposta da consulta (só o FILTRADO — o
+ * `recordsTotal` é o universo antes dos filtros, Codex P2), `page.info().recordsDisplay` da instância DataTables da
+ * tabela lida, e o texto "… de N registros". Fontes que discordam ⇒ `divergente` (nunca escolhe uma).
+ */
+export function totalAnunciado(fonte: { respostaTotal?: unknown; dtTotal?: unknown; info?: unknown }): number | null | "divergente" {
+  const vals = [inteiroNaoNegativo(fonte.respostaTotal), inteiroNaoNegativo(fonte.dtTotal), totalDoTexto(fonte.info)]
+    .filter((v): v is number => v !== null);
+  if (vals.length === 0) return null;
+  return vals.every((v) => v === vals[0]) ? vals[0] : "divergente";
+}
+
+export type ProvaLeitura =
+  | { ok: true; total: number }
+  | { ok: false; motivo: "colunas_ausentes" | "total_nao_anunciado" | "total_divergente" | "zero_lidos_sem_prova" | "lidos_diferente_do_total" | "linhas_ilegiveis" | "protocolo_repetido"; detalhe: string };
+
+/**
+ * A leitura só decide se for COMPLETA e LEGÍVEL: as colunas obrigatórias existem, o portal anunciou o total, o número
+ * de linhas lidas é esse total (0 só com "0 de 0" explícito), e nenhuma linha foi descartada como ilegível ou repetida.
+ */
+export function provarLeitura(entrada: {
+  headers: readonly string[];
+  linhasLidas: number;
+  respostaTotal?: unknown;
+  dtTotal?: unknown;
+  info?: unknown;
+  ilegiveis: number;
+  repetidos: readonly string[];
+}): ProvaLeitura {
+  const faltam = COLUNAS_OBRIGATORIAS.filter((c) =>
+    !entrada.headers.some((h) => (c.exato ? norm(h) === norm(c.prefixo) : norm(h).startsWith(norm(c.prefixo)))));
+  if (faltam.length > 0) {
+    return { ok: false, motivo: "colunas_ausentes", detalhe: `colunas ausentes na consulta: ${faltam.map((c) => c.rotulo).join(", ")} (cabeçalhos lidos: ${entrada.headers.filter(Boolean).join(" | ") || "nenhum"})` };
+  }
+  const total = totalAnunciado({ respostaTotal: entrada.respostaTotal, dtTotal: entrada.dtTotal, info: entrada.info });
+  if (total === "divergente") {
+    return { ok: false, motivo: "total_divergente", detalhe: `o portal anunciou totais diferentes (resposta ${String(entrada.respostaTotal)}, tabela ${String(entrada.dtTotal)}, texto "${String(entrada.info)}")` };
+  }
+  if (total === null) {
+    return entrada.linhasLidas === 0
+      ? { ok: false, motivo: "zero_lidos_sem_prova", detalhe: "0 linhas lidas e o portal não anunciou o total — não prova que não há pedido" }
+      : { ok: false, motivo: "total_nao_anunciado", detalhe: `${entrada.linhasLidas} linha(s) lida(s), mas o portal não anunciou o total — não prova que a lista veio inteira` };
+  }
+  if (entrada.linhasLidas !== total) {
+    return { ok: false, motivo: "lidos_diferente_do_total", detalhe: `${entrada.linhasLidas} linha(s) lida(s) contra ${total} anunciada(s) pelo portal` };
+  }
+  if (entrada.ilegiveis > 0) {
+    return { ok: false, motivo: "linhas_ilegiveis", detalhe: `${entrada.ilegiveis} linha(s) sem nº de pedido legível` };
+  }
+  if (entrada.repetidos.length > 0) {
+    return { ok: false, motivo: "protocolo_repetido", detalhe: `nº de pedido repetido na lista: ${entrada.repetidos.join(", ")}` };
+  }
+  return { ok: true, total };
+}
+
+/** Carência esperando o sync do espelho há mais que isto ⇒ o sync travou: vira pendência visível (item 3.9). */
+const CARENCIA_SYNC_MAX_MS = 6 * 3600_000;
+
+/** Protocolos presos em `carencia_aguarda_sync` desde a 1ª vista há mais de 6 h. */
+export function carenciaTravada(
+  classificados: readonly PedidoClassificado[],
+  vistos: ReadonlyMap<string, string>,
+  agoraMs: number,
+): { protocolo: string; visto_em: string }[] {
+  const out: { protocolo: string; visto_em: string }[] = [];
+  for (const p of classificados) {
+    if (p.classe !== "carencia_aguarda_sync") continue;
+    const visto = vistos.get(p.protocolo);
+    const ms = visto ? Date.parse(visto) : NaN;
+    if (visto && Number.isFinite(ms) && agoraMs - ms > CARENCIA_SYNC_MAX_MS) out.push({ protocolo: p.protocolo, visto_em: visto });
+  }
+  return out;
+}
+
+/** Teto de reconsultas por número numa rodada (cada uma abre 1 sessão do Browserless). */
+const TETO_RECONSULTAS = 4;
+
+/**
+ * Pendências fora da leitura da rodada (item 3.7): pedido do app sem PO e falha aberta cujo protocolo NÃO apareceu na
+ * lista lida (emissão além da janela). Fila pela TENTATIVA MAIS ANTIGA (nunca tentado primeiro; empate: pedido do app
+ * antes) — ordenar por `primeira_em` deixava a 13ª pendência esperando para sempre (Codex P2). Dedup e teto.
+ */
+export function reconsultasForaDaJanela(entrada: {
+  lidos: ReadonlySet<string>;
+  semPoNoApp: readonly { protocolo: string; pedido_id: number; ultima_tentativa?: string | null }[];
+  falhasAbertas: readonly { protocolo: string; ultima_em: string }[];
+  teto?: number;
+}): { protocolo: string; origem: "app_sem_po" | "falha_aberta"; pedido_id: number | null }[] {
+  const teto = entrada.teto ?? TETO_RECONSULTAS;
+  const porProt = new Map<string, { protocolo: string; origem: "app_sem_po" | "falha_aberta"; pedido_id: number | null; quando: string }>();
+  for (const p of entrada.semPoNoApp) {
+    if (!PROTOCOLO_RE.test(p.protocolo) || entrada.lidos.has(p.protocolo) || porProt.has(p.protocolo)) continue;
+    porProt.set(p.protocolo, { protocolo: p.protocolo, origem: "app_sem_po", pedido_id: p.pedido_id, quando: p.ultima_tentativa ?? "" });
+  }
+  for (const f of entrada.falhasAbertas) {
+    if (!PROTOCOLO_RE.test(f.protocolo) || entrada.lidos.has(f.protocolo) || porProt.has(f.protocolo)) continue;
+    porProt.set(f.protocolo, { protocolo: f.protocolo, origem: "falha_aberta", pedido_id: null, quando: f.ultima_em });
+  }
+  return [...porProt.values()]
+    .sort((a, b) => a.quando.localeCompare(b.quando) || (a.origem === b.origem ? 0 : a.origem === "app_sem_po" ? -1 : 1))
+    .slice(0, teto)
+    .map(({ quando: _q, ...q }) => q);
+}
