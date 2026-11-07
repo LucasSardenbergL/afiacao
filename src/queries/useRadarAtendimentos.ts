@@ -65,6 +65,8 @@ export function useRadarVendedoresAtribuiveis(aberto: boolean) {
     queryFn: async (): Promise<VendedorAtribuivel[]> => {
       const { data, error } = await supabase
         .rpc('radar_vendedores_atribuiveis')
+        .order('nome', { ascending: true, nullsFirst: false })
+        .order('user_id', { ascending: true })
         .range(0, TETO_LEITURA_ATENDIMENTOS - 1);
       if (error) throw error;
       return lerVendedoresAtribuiveis(data, 'radar_vendedores_atribuiveis');
