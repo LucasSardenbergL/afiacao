@@ -128,7 +128,7 @@ case "${SABOTAGEM:-}" in
   so_meus_ignorado)   cegar_md5; sabotar '    v_w := array_append(v_w, $w$e.cnpj IN (SELECT a.cnpj FROM public.radar_atendimentos_ativos() a WHERE a.eh_meu)$w$);' '    NULL;' ;;
   sem_eh_meu)         cegar_md5; sabotar 'FROM public.radar_atendimentos_ativos() a WHERE a.eh_meu)$w$' 'FROM public.radar_atendimentos_ativos() a)$w$' ;;
   tabela_crua)        cegar_md5; sabotar 'FROM public.radar_atendimentos_ativos() a WHERE a.eh_meu)$w$' 'FROM public.radar_atendimentos a WHERE a.encerrado_em IS NULL AND a.dono_user_id = (SELECT auth.uid()))$w$' ;;
-  tabela_sem_encerrado) cegar_md5; sabotar 'FROM public.radar_atendimentos_ativos() a WHERE a.eh_meu)$w$' 'FROM public.radar_atendimentos a WHERE a.dono_user_id = (SELECT auth.uid()) AND a.assumido_em > now() - interval ''3 days'')$w$' ;;
+  tabela_sem_encerrado) cegar_md5; sabotar 'FROM public.radar_atendimentos_ativos() a WHERE a.eh_meu)$w$' 'FROM public.radar_atendimentos a WHERE a.dono_user_id = (SELECT auth.uid()) AND a.assumido_em > now() - make_interval(days => 3))$w$' ;;
   default_true)       sabotar "  p_so_meus boolean DEFAULT false)" "  p_so_meus boolean DEFAULT true)" ;;
   lista_anon)         sabotar "GRANT EXECUTE ON FUNCTION public.radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamptz,text,numeric,boolean,boolean,date,date,text,integer,integer,text,text,boolean) TO authenticated, service_role;" \
                               "GRANT EXECUTE ON FUNCTION public.radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamptz,text,numeric,boolean,boolean,date,date,text,integer,integer,text,text,boolean) TO anon, authenticated, service_role;" ;;
