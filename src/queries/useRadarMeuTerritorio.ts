@@ -19,10 +19,13 @@ export function useRadarMeuTerritorio() {
     enabled: podeProspectarRadar({ role, commercialRole }),
     staleTime: 10 * 60_000,
     queryFn: async (): Promise<MunicipioTerritorio[]> => {
-      const { data, error } = await supabase.rpc('radar_meu_territorio', {
-        ...(alvo ? { p_vendedor: alvo } : {}),
-        p_top: 3,
-      });
+      // Set-returning: pagina como manda o gate (a capa de 1.000 do PostgREST vale para .rpc()). O teto real é 10 (a
+      // privada limita p_top a [1,10]); a ordem é a MESMA da RPC (clientes desc, código), então não reordena nada.
+      const { data, error } = await supabase
+        .rpc('radar_meu_territorio', { ...(alvo ? { p_vendedor: alvo } : {}), p_top: 3 })
+        .order('clientes', { ascending: false })
+        .order('municipio_codigo', { ascending: true })
+        .range(0, 9);
       if (error) throw error;
       return lerTerritorio(data, 'radar_meu_territorio');
     },

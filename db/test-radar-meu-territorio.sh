@@ -6,6 +6,7 @@
 #   • gate com SQLSTATE: sem cap_radar_prospectar → 42501 (forbidden); território de OUTRO vendedor só para gestor;
 #     anon não executa (ACL); p_top vai à privada (que o limita a [1,10]).
 #   • PÓS da migration aborta o apply se o ACL abrir para PUBLIC/anon; re-aplicar é idempotente.
+#   • sobrevive ao DROP + CREATE da privada com 5ª coluna (pacote E, migration 20261107230000).
 #
 #   bash db/test-radar-meu-territorio.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   SABOTAGEM=<nome> bash db/test-radar-meu-territorio.sh   # tem de ficar VERMELHA
@@ -297,6 +298,21 @@ eq A9b "$(como authenticated "$V1" "SELECT count(*) FROM public.radar_meu_territ
 eq A10 "$(Pq -c "SELECT has_function_privilege('anon', 'public.radar_meu_territorio(uuid,integer)', 'EXECUTE')::text || ',' || has_function_privilege('authenticated', 'public.radar_meu_territorio(uuid,integer)', 'EXECUTE')::text")" "false,true"
 # A11 — re-aplicar é idempotente (PÓS verde de novo, mesmo resultado).
 if P -q -f "$MIG_USADA" >> "$APPLY_LOG" 2>&1; then eq A11 "$(cods "$V1" "")" "3122306:4,3145208:3,3116907:2"; else eq A11 reaplicar-falhou ok; fi
+
+# A12 — o pacote E faz DROP + CREATE da privada com uma 5ª coluna (`compartilhado`). Esta RPC (plpgsql, corpo em string,
+#        colunas pelo NOME) tem de seguir funcionando depois — e o DROP não pode ser bloqueado por dependência.
+if P -q <<'SQL' >> "$APPLY_LOG" 2>&1
+CREATE TABLE public._terr_antes AS SELECT * FROM private.radar_territorio_do_vendedor('a0000000-0000-0000-0000-000000000001'::uuid, 3);
+DROP FUNCTION private.radar_territorio_do_vendedor(uuid, integer);
+CREATE FUNCTION private.radar_territorio_do_vendedor(p_vendedor uuid, p_top integer DEFAULT 3)
+RETURNS TABLE (municipio_codigo text, municipio_nome text, uf text, clientes integer, compartilhado boolean)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT a.municipio_codigo, a.municipio_nome, a.uf, a.clientes, false FROM public._terr_antes a
+   WHERE p_vendedor = 'a0000000-0000-0000-0000-000000000001'::uuid
+   ORDER BY a.clientes DESC, a.municipio_codigo LIMIT GREATEST(1, LEAST(COALESCE(p_top, 3), 10)) $$;
+REVOKE ALL ON FUNCTION private.radar_territorio_do_vendedor(uuid, integer) FROM PUBLIC, anon, authenticated;
+SQL
+then eq A12 "$(cods "$V1" "")" "3122306:4,3145208:3,3116907:2"; else eq A12 drop-create-da-privada-falhou ok; fi
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

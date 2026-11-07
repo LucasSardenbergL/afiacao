@@ -19,10 +19,8 @@ export interface MunicipioTerritorio {
   compartilhado?: boolean;
 }
 
-/** Pacote E: por que o território veio VAZIO (null quando há território). Código desconhecido fica como texto. */
-export type MotivoSemTerritorio = 'nao_e_vendedor' | 'sem_carteira' | 'carteira_sem_municipio';
-
-/** Copy do card para cada motivo (pacote F). Sem motivo (RPC antiga) cai no texto genérico de antes. */
+/** Copy do card para cada motivo de território VAZIO (`territorio_motivo` do pacote E: 'nao_e_vendedor' |
+ *  'sem_carteira' | 'carteira_sem_municipio'). Sem motivo (RPC antiga) ou código novo: o texto genérico de antes. */
 export function textoSemTerritorio(motivo: string | null): string {
   switch (motivo) {
     case 'nao_e_vendedor': return 'Você não tem papel de vendedor no Radar (farmer, hunter ou closer), então não há carteira para usar de referência.';

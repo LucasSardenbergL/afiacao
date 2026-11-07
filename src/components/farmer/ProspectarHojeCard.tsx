@@ -21,7 +21,7 @@ import { useRadarProspectarHoje } from '@/queries/useRadarProspectarHoje';
 import { registrarAberturaEmpurrada, registrarCardServido } from '@/queries/useRadarRegistroEmpurrado';
 
 /** "Meus atendimentos" no /radar (a visão do pacote B2). */
-export const LINK_MEUS_ATENDIMENTOS = '/radar?visao=meus';
+const LINK_MEUS_ATENDIMENTOS = '/radar?visao=meus';
 
 /**
  * O sensor do card (`registrarCardServido`, da sessão H) muda de "dispara e esquece" (void) para devolver se GRAVOU

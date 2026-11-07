@@ -1020,4 +1020,4 @@ db/test-radar-leads-vendedor.sh            62  falsificar=46
 
 # Radar pacote F — território do usuário logado (migration 20261107220500): RPC fina sobre a privada do pacote D (mesmo
 # resultado), gate cap_radar_prospectar e de gestor para outro vendedor com SQLSTATE, anon fora pelo ACL, PÓS aborta ACL aberto.
-db/test-radar-meu-territorio.sh            15  falsificar=5
+db/test-radar-meu-territorio.sh            16  falsificar=5
