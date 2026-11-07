@@ -982,4 +982,4 @@ db/test-radar-vinculos-em-lote.sh          23  falsificar=14
 # vira invólucro de private.radar_vinculos_base sem mudar a saída (foto antes×depois); o aviso inclui já-cliente,
 # passa do corte de 10, avalia a carteira inteira, exige prova documental do código Omie, usa a regra de
 # venda_prazo_aviso, marca indeterminado em vez de "em dia", projeta como a ficha; sensor validado no servidor.
-db/test-credito-vinculo-aviso.sh           34  falsificar=24
+db/test-credito-vinculo-aviso.sh           34  falsificar=23

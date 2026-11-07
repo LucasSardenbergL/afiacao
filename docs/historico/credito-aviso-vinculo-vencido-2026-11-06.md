@@ -62,7 +62,7 @@ não cria exceção, não encurta prazo e não entra em `vencido_no_momento`. `g
     e evidência nula.
   - O teste novo de geração passou VERDE com a guarda sabotada (teatro: a promessa do voto nunca resolvia). Foi
     consertado e agora fica vermelho sem a guarda.
-- **Prova PG17** `db/test-credito-vinculo-aviso.sh`: 34 asserts e `--falsificar` com 24/24 sabotagens vermelhas no
+- **Prova PG17** `db/test-credito-vinculo-aviso.sh`: 34 asserts e `--falsificar` com 23/23 sabotagens vermelhas no
   assert certo, com controle verde, em `LC_ALL=C` e em `pt_BR.UTF-8`. A 1ª falsificação pegou 2 defeitos do PRÓPRIO
   harness. Primeiro, com `pipefail`, o `diff | head` do E1 abortava a suíte antes do assert, e o vermelho caía no lugar
   errado. Segundo, uma sabotagem casava 2 trechos e gerava erro de sintaxe. Agora `sabotar` exige ocorrência ÚNICA.
