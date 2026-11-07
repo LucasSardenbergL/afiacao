@@ -176,9 +176,12 @@ REVOKE ALL ON TABLE private.venda_sugestoes_reprocesso_fila FROM PUBLIC, anon, a
 GRANT SELECT ON TABLE private.venda_sugestoes_reprocesso_fila TO service_role;
 
 -- O último estado de herança que a drenagem reconciliou, por evento (assinatura de vigentes + revisão vigente).
+-- `farmers` = o escopo que o último reconcilio cobriu: a identidade de um extremo pode mudar (alias), e o farmer da
+-- identidade ANTERIOR tem de entrar no reconcilio seguinte (senão a antiga que deixou de ser encerrada não recupera).
 CREATE TABLE IF NOT EXISTS private.cliente_sucessao_estado_visto (
   evento_id  uuid PRIMARY KEY,
   assinatura text NOT NULL,
+  farmers    uuid[] NOT NULL DEFAULT '{}',
   visto_em   timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE private.cliente_sucessao_estado_visto ENABLE ROW LEVEL SECURITY;
@@ -679,7 +682,7 @@ GRANT EXECUTE ON FUNCTION public.venda_gerar_lista(date, text) TO service_role;
 -- calculada UMA vez pela drenagem: NULL = o gerador ainda não rodou hoje. `p_revisao` = a revisão vigente no MESMO
 -- retrato SQL em que a lista foi calculada (é a que vai para o arquivo).
 CREATE OR REPLACE FUNCTION private.venda_sugestoes_reprocessar_sucessao(p_evento_id uuid, p_motivo text, p_novo jsonb,
-                                                                        p_revisao integer)
+                                                                        p_revisao integer, p_farmers_anteriores uuid[])
  RETURNS jsonb
  LANGUAGE plpgsql
  VOLATILE
@@ -697,6 +700,7 @@ DECLARE
   v_entra integer := 0;
   v_pres integer := 0;
   v_rev integer := p_revisao;
+  v_escopo uuid[];
 BEGIN
   IF p_evento_id IS NULL OR p_motivo IS NULL OR p_motivo NOT IN ('plano_publicado', 'plano_revogado', 'estado_mudou') THEN
     RAISE EXCEPTION 'venda_sugestoes_reprocessar_sucessao: evento e motivo' USING ERRCODE = '22023';
@@ -736,9 +740,14 @@ BEGIN
        WHERE s.dia_referencia = v_dia AND s.tipo = 'recompra' AND s.comprador_id = ANY (v_compradores)
     ) f
    WHERE f.farmer IS NOT NULL;
+  v_escopo := v_farmers;   -- o escopo ATUAL (vai para estado_visto)
+  -- + o escopo do reconcilio anterior: o farmer de uma identidade que saiu do evento
+  SELECT array_agg(DISTINCT x) INTO v_farmers
+    FROM unnest(COALESCE(v_farmers, '{}'::uuid[]) || COALESCE(p_farmers_anteriores, '{}'::uuid[])) AS x;
 
   IF v_farmers IS NULL OR p_novo IS NULL THEN
     RETURN jsonb_build_object('dia', v_dia, 'revisao_aplicada', v_rev, 'farmers', COALESCE(cardinality(v_farmers), 0),
+                              'escopo', to_jsonb(COALESCE(v_escopo, '{}'::uuid[])),
                               'substituidas', 0, 'novas', 0, 'preservadas', 0);
   END IF;
 
@@ -812,14 +821,15 @@ BEGIN
   END LOOP;
 
   RETURN jsonb_build_object('dia', v_dia, 'reprocesso_id', v_reproc, 'revisao_aplicada', v_rev,
-                            'farmers', cardinality(v_farmers),
+                            'farmers', cardinality(v_farmers), 'escopo', to_jsonb(COALESCE(v_escopo, '{}'::uuid[])),
                             'substituidas', v_sai, 'novas', v_entra, 'preservadas', v_pres);
 END
 $function$;
-REVOKE ALL ON FUNCTION private.venda_sugestoes_reprocessar_sucessao(uuid, text, jsonb, integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.venda_sugestoes_reprocessar_sucessao(uuid, text, jsonb, integer, uuid[]) FROM PUBLIC, anon, authenticated;
 
 -- A assinatura do estado de herança por evento: as linhas de vigentes (id, estado, tipo, corte, extremos
--- resolvidos) + a revisão vigente do plano. Muda quando muda qualquer coisa de que a trilha efetiva depende.
+-- resolvidos, os aliases ATIVOS dos extremos — de quem é o histórico físico) + a revisão vigente do plano. Muda quando
+-- muda qualquer coisa de que a trilha efetiva depende.
 CREATE OR REPLACE FUNCTION private.cliente_sucessao_assinaturas(p_hoje date)
  RETURNS TABLE(evento_id uuid, assinatura text, revisao integer)
  LANGUAGE sql
@@ -833,7 +843,10 @@ AS $function$
      ORDER BY r.evento_id, r.revisao DESC
   )
   SELECT e.evento_id,
-         md5(COALESCE((SELECT string_agg(concat_ws(':', v.id, v.estado, v.tipo, v.data_corte, v.antigo_user_id, v.novo_user_id),
+         md5(COALESCE((SELECT string_agg(concat_ws(':', v.id, v.estado, v.tipo, v.data_corte, v.antigo_user_id, v.novo_user_id,
+                                                   (SELECT string_agg(a.alias_user_id::text, '+' ORDER BY a.alias_user_id)
+                                                      FROM public.customer_canonical_alias a
+                                                     WHERE a.status = 'active' AND a.canonical_user_id IN (v.antigo_user_id, v.novo_user_id))),
                                          ',' ORDER BY v.id)
                          FROM v WHERE v.evento_id = e.evento_id), '')
              || '|' || COALESCE((SELECT rev.revisao || ':' || rev.revoga FROM rev WHERE rev.evento_id = e.evento_id), '0')),
@@ -863,6 +876,7 @@ DECLARE
   v_novo jsonb;
   v_estado jsonb;
   v_assin text;
+  v_res jsonb;
 BEGIN
   IF NOT pg_try_advisory_xact_lock(hashtext('venda_gerar_lista')) THEN
     RETURN 0;
@@ -895,14 +909,19 @@ BEGIN
     UPDATE private.venda_sugestoes_reprocesso_fila f
        SET processado_em = clock_timestamp(),
            resultado = private.venda_sugestoes_reprocessar_sucessao(r.evento_id, r.motivo, v_novo,
-                                                                    (v_estado -> r.evento_id::text ->> 'revisao')::integer)
-     WHERE f.id = r.id;
+                         (v_estado -> r.evento_id::text ->> 'revisao')::integer,
+                         (SELECT e.farmers FROM private.cliente_sucessao_estado_visto e WHERE e.evento_id = r.evento_id))
+     WHERE f.id = r.id
+    RETURNING f.resultado INTO v_res;
     UPDATE private.venda_sugestoes_reprocesso_fila f
        SET processado_em = clock_timestamp(), resultado = jsonb_build_object('superado_por', r.id)
      WHERE f.evento_id = r.evento_id AND f.processado_em IS NULL AND f.id < r.id;
-    INSERT INTO private.cliente_sucessao_estado_visto (evento_id, assinatura, visto_em)
-    VALUES (r.evento_id, COALESCE(v_assin, ''), clock_timestamp())
-    ON CONFLICT (evento_id) DO UPDATE SET assinatura = EXCLUDED.assinatura, visto_em = EXCLUDED.visto_em;
+    INSERT INTO private.cliente_sucessao_estado_visto (evento_id, assinatura, farmers, visto_em)
+    VALUES (r.evento_id, COALESCE(v_assin, ''),
+            ARRAY(SELECT x::uuid FROM jsonb_array_elements_text(COALESCE(v_res -> 'escopo', '[]'::jsonb)) AS x),
+            clock_timestamp())
+    ON CONFLICT (evento_id) DO UPDATE
+      SET assinatura = EXCLUDED.assinatura, farmers = EXCLUDED.farmers, visto_em = EXCLUDED.visto_em;
     v_n := v_n + 1;
   END LOOP;
   RETURN v_n;
@@ -1226,7 +1245,7 @@ BEGIN
   FOR r IN SELECT * FROM (VALUES ('private.historico_consumo_efetivo(date)'), ('private.historico_compradores_encerrados(date)'),
                                   ('private.venda_recompra_efetiva_em(date)'), ('private.venda_situacao_efetiva_em(date)'),
                                   ('private.venda_lista_calc_efetiva(date)'),
-                                  ('private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb,integer)'),
+                                  ('private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb,integer,uuid[])'),
                                   ('private.cliente_sucessao_assinaturas(date)'),
                                   ('private.cliente_sucessao_plano_imutavel()'),
                                   ('private.venda_sugestao_substituida_imutavel()')) AS x(sig)

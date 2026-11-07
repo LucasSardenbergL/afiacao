@@ -92,7 +92,7 @@ DADOS; o painel e os consumidores da lista/ficha/complemento são o PR C.
   objeto deles é recriado.
 
 ## Prova
-`db/test-cliente-sucessao-plano.sh` (no núcleo do CI): 112 asserts e 35 sabotagens (inclui concorrência real em duas sessões: a drenagem com o gerador rodando, e cadastro + declaração DURANTE o cálculo da drenagem), todas vermelhas no assert declarado,
+`db/test-cliente-sucessao-plano.sh` (no núcleo do CI): 117 asserts e 37 sabotagens (inclui concorrência real em duas sessões: a drenagem com o gerador rodando, e cadastro + declaração DURANTE o cálculo da drenagem), todas vermelhas no assert declarado,
 com controle verde na mesma invocação. Monta o schema com `corpo-vivo.sh` (a cadeia dinâmica pega o gerador de venda, a
 entrega 2 e esta). Validação do founder: `db/validar-cliente-sucessao-plano.sql` (12 ✅, exercitada pela prova).
 
@@ -117,6 +117,11 @@ entrega 2 e esta). Validação do founder: `db/validar-cliente-sucessao-plano.sq
   (assinatura + revisão de cada evento) e a lista saem do MESMO comando SQL (as funções STABLE usam o retrato do
   chamador), e o que mudar depois volta pela detecção. Prova: cálculo lento por stub e outra sessão mudando o estado
   no meio.
+
+- **A assinatura tem de cobrir o que DECIDE de quem é a linha física, não só os extremos** (Codex, rodada 4): um alias
+  que muda de dono troca o histórico herdado sem mexer em antigo/novo. E o escopo do reconcilio precisa lembrar o
+  farmer da identidade ANTERIOR: quando a antiga muda de identidade, quem deixou de ser encerrada só recupera se o
+  farmer dela entrar no reconcilio (escopo anterior ∪ atual, guardado em `estado_visto.farmers`).
 
 ## Deploy
 🟣 founder: a migration no SQL Editor (depois da `20261107013000`) → conferir com `db/validar-cliente-sucessao-plano.sql`

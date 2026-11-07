@@ -94,28 +94,46 @@ UX2='00000000-0000-0000-0000-0000000c0041'     # a antiga de E4 (vira alias da U
 UN4='00000000-0000-0000-0000-0000000c0042'
 UN5='00000000-0000-0000-0000-0000000c0051'     # nova de E5: cadastra DURANTE o cálculo da drenagem
 U6A='00000000-0000-0000-0000-0000000c0061'     # antiga de E6: declarada DURANTE o cálculo
+FARM2='00000000-0000-0000-0000-00000000a004'; FARM3='00000000-0000-0000-0000-00000000a005'   # outros farmers
+U7A='00000000-0000-0000-0000-0000000c0071'; U7N='00000000-0000-0000-0000-0000000c0072'      # E7 (sucessão)
+X7='00000000-0000-0000-0000-0000000c0073'      # alias da U7A, dono FÍSICO do histórico herdado (muda de dono)
+U8A='00000000-0000-0000-0000-0000000c0081'; U8N='00000000-0000-0000-0000-0000000c0082'      # E8 (sucessão)
+U8C='00000000-0000-0000-0000-0000000c0083'     # para onde o alias X8 passa: a antiga de E8 muda de identidade
+X8='00000000-0000-0000-0000-0000000c0084'
 ANT='03166577000166'; NOV1='69491768000101'; NOV2='22222222000122'
 DB_='33333333000133'; DBN='44444444000144'; DQ='55555555000155'; DX2='66666666000166'; DN4='77777777000177'; DN5='88888888000188'; D6A='99999999000199'; D6N='12121212000112'
+D7A='13131313000113'; D7N='14141414000114'; D7X='15151515000115'; D8A='16161616000116'; D8N='17171717000117'
+D8C='18181818000118'; D8X='19191919000119'
 
 echo "→ seed: papéis, clientes, carteira, produtos, pedidos…"
 P -v ON_ERROR_STOP=1 -q <<SQL
 BEGIN;
 INSERT INTO auth.users (id) VALUES ('$MASTER'),('$GER'),('$FARM'),('$UA'),('$UAL'),('$UN1'),('$UN2'),('$UB'),('$UBN'),
-  ('$UQ'),('$UX2'),('$UN4'),('$UN5'),('$U6A');
-INSERT INTO public.user_roles (user_id, role) VALUES ('$MASTER','master'),('$GER','employee'),('$FARM','employee');
-INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES ('$MASTER','master'),('$GER','gerencial'),('$FARM','farmer');
-INSERT INTO public.profiles (user_id, name) VALUES ('$MASTER','Lucas'),('$GER','Gestor'),('$FARM','Farmer Um');
+  ('$UQ'),('$UX2'),('$UN4'),('$UN5'),('$U6A'),('$FARM2'),('$FARM3'),
+  ('$U7A'),('$U7N'),('$X7'),('$U8A'),('$U8N'),('$U8C'),('$X8');
+INSERT INTO public.user_roles (user_id, role) VALUES ('$MASTER','master'),('$GER','employee'),('$FARM','employee'),
+  ('$FARM2','employee'),('$FARM3','employee');
+INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES ('$MASTER','master'),('$GER','gerencial'),('$FARM','farmer'),
+  ('$FARM2','farmer'),('$FARM3','farmer');
+INSERT INTO public.profiles (user_id, name) VALUES ('$MASTER','Lucas'),('$GER','Gestor'),('$FARM','Farmer Um'),
+  ('$FARM2','Farmer Dois'),('$FARM3','Farmer Tres');
 INSERT INTO public.profiles (user_id, name, document) VALUES
   ('$UA','DIVIMOVEIS','$ANT'), ('$UN2','NOVA DOIS','$NOV2'), ('$UB','ANTIGA B','$DB_'), ('$UBN','SUCESSORA B','$DBN'),
-  ('$UQ','ALHEIO','$DQ'), ('$UX2','ANTIGA X','$DX2'), ('$UN4','NOVA QUATRO','$DN4'), ('$U6A','ANTIGA SEIS','$D6A');
+  ('$UQ','ALHEIO','$DQ'), ('$UX2','ANTIGA X','$DX2'), ('$UN4','NOVA QUATRO','$DN4'), ('$U6A','ANTIGA SEIS','$D6A'),
+  ('$U7A','ANTIGA SETE','$D7A'), ('$U7N','SUCESSORA SETE','$D7N'), ('$U8A','ANTIGA OITO','$D8A'), ('$U8N','SUCESSORA OITO','$D8N'),
+  ('$U8C','OUTRA OITO','$D8C');
 INSERT INTO public.customer_canonical_alias (alias_user_id, canonical_user_id, documento, status) VALUES
-  ('$UAL', '$UA', '$ANT', 'active');
+  ('$UAL', '$UA', '$ANT', 'active'),
+  ('$X7', '$U7A', '$D7X', 'active'),
+  ('$X8', '$U8A', '$D8X', 'active');   -- E8 é declarada pelo documento do ALIAS: resolve para a U8A
 UPDATE public.venda_config SET valor = 'true'::jsonb WHERE chave = 'onda_recompra';
 UPDATE public.venda_config SET valor = 'false'::jsonb WHERE chave IN ('onda_complemento', 'onda_preco');
 ALTER TABLE public.carteira_assignments DISABLE TRIGGER ALL;
 INSERT INTO public.carteira_assignments (owner_user_id, customer_user_id, eligible, source) VALUES
   ('$FARM','$UA',true,'omie'), ('$FARM','$UN1',true,'omie'), ('$FARM','$UN2',true,'omie'), ('$FARM','$UB',true,'omie'),
-  ('$FARM','$UBN',true,'omie'), ('$FARM','$UQ',true,'omie'), ('$FARM','$UX2',true,'omie'), ('$FARM','$UN4',true,'omie'), ('$FARM','$UN5',true,'omie');
+  ('$FARM','$UBN',true,'omie'), ('$FARM','$UQ',true,'omie'), ('$FARM','$UX2',true,'omie'), ('$FARM','$UN4',true,'omie'), ('$FARM','$UN5',true,'omie'),
+  ('$FARM','$U7A',true,'omie'), ('$FARM2','$U7N',true,'omie'), ('$FARM','$U8A',true,'omie'), ('$FARM2','$U8N',true,'omie'),
+  ('$FARM3','$U8C',true,'omie');
 ALTER TABLE public.omie_products DISABLE TRIGGER ALL;
 INSERT INTO public.omie_products (account, codigo, descricao, omie_codigo_produto, familia) VALUES
   ('oben','1001','PROD 1001',1001,'OUTRA'), ('oben','1002','PROD 1002',1002,'OUTRA'), ('colacor','1003','PROD 1003',1003,'OUTRA'),
@@ -160,6 +178,8 @@ SELECT public.t_ped('$UB', o, 2001) FROM unnest(ARRAY[-200,-170,-140]) o;
 SELECT public.t_ped('$UB', o, 2002) FROM unnest(ARRAY[-200,-170,-140]) o;
 SELECT public.t_ped('$UQ', o, 3001) FROM unnest(ARRAY[-200,-170,-140]) o;
 SELECT public.t_ped('$UX2', o, 5001) FROM unnest(ARRAY[-200,-170,-140]) o;
+SELECT public.t_ped('$X7', o, 7001) FROM unnest(ARRAY[-200,-170,-140]) o;     -- pedido no ALIAS da U7A
+SELECT public.t_ped('$U8A', o, 8001) FROM unnest(ARRAY[-200,-170,-140]) o;
 -- prova.msg: como prova.sqlstate, mas com a mensagem (casa o RAMO que recusou, não só o código). Sem WHEN OTHERS
 -- engolindo: o código e a mensagem voltam e o assert os compara EXATOS.
 CREATE FUNCTION prova.msg(p_sql text) RETURNS text LANGUAGE plpgsql AS \$f\$
@@ -293,10 +313,10 @@ cenario() {
   Q "SELECT public.venda_recompra_atualizar()" > /dev/null   # o snapshot do dia, uma vez, antes da base
   BASE="$(factuais)"
   echo "── 1. sem plano: a trilha efetiva = a factual ──"
-  chk P1 "trilha efetiva × venda_linhas_pedido: 0 a mais / 0 a menos / 39 linhas" \
+  chk P1 "trilha efetiva × venda_linhas_pedido: 0 a mais / 0 a menos / 45 linhas" \
     "$(Q "SELECT (SELECT count(*) FROM (SELECT $PROJ FROM $EF EXCEPT ALL SELECT * FROM private.venda_linhas_pedido($H)) a)
               || '/' || (SELECT count(*) FROM (SELECT * FROM private.venda_linhas_pedido($H) EXCEPT ALL SELECT $PROJ FROM $EF) b)
-              || '/' || (SELECT count(*) FROM private.venda_linhas_pedido($H))")" "0/0/39"
+              || '/' || (SELECT count(*) FROM private.venda_linhas_pedido($H))")" "0/0/45"
 
   E1="$(declarar "$ANT" "$NOV1" cisao -60)"
   chk S0a "E1 (cisão) declarada com o novo SEM cadastro" "$(Q "SELECT count(*) FROM public.cliente_sucessoes WHERE evento_id = '$E1'")" "1"
@@ -423,7 +443,7 @@ cenario() {
   chk R1c "reprocesso: substituídas / novas / preservadas" \
     "$(Q "SELECT (resultado ->> 'substituidas') || '/' || (resultado ->> 'novas') || '/' || (resultado ->> 'preservadas')
             FROM private.venda_sugestoes_reprocesso_fila WHERE evento_id = '$E1' AND revisao_pedida = 1")" "2/4/2"
-  chk C1 "conservação (rev 1): linhas / itens distintos / factual / físicas a mais / SKUs com qtd diferente" "$(conserva)" "39/39/39/0/0"
+  chk C1 "conservação (rev 1): linhas / itens distintos / factual / físicas a mais / SKUs com qtd diferente" "$(conserva)" "45/45/45/0/0"
   chk R1d "destino PENDENTE (novo sem cadastro) não recebe: 1001 segue na antiga" \
     "$(lin "omie_codigo_produto = 1001 AND (herdada OR comprador_id <> '$UA')")" "0"
   chk R1e "a linha do DIA do corte fica com a antiga" \
@@ -492,7 +512,7 @@ cenario() {
   Q "SELECT public.venda_recompra_atualizar()" > /dev/null
   chk I1b "e o cron do snapshot (venda_recompra_atualizar) recalcula o MESMO com os planos vigentes" "$(factuais)" "$BASE"
   chk I2 "não-vácuo: linhas, recompra, lista e a TABELA venda_recompra têm conteúdo" \
-    "$(printf '%s' "$BASE" | tr ' ' '\n' | grep -E '^(0|1|3|6)=' | cut -d= -f2 | cut -d: -f1 | tr '\n' ',')" "39,11,10,11,"
+    "$(printf '%s' "$BASE" | tr ' ' '\n' | grep -E '^(0|1|3|6)=' | cut -d= -f2 | cut -d: -f1 | tr '\n' ',')" "45,13,12,13,"
   chk I3 "candidatos do repasse leram (não é erro dos dois lados)" "$(printf '%s' "$BASE" | grep -c 'cand=ERRO' || true)" "0"
 
   echo "── 8. revisão 2 de E1: a 1ª nova cadastra; versão otimista; o que saiu volta ──"
@@ -501,7 +521,7 @@ cenario() {
   chk V8 "versão velha recusada" "$(publicar "$E1" 0 "$REG2" motivo)" "revisao_mudou"
   chk R2a "publicou a revisão 2; o GERADOR roda antes do cron da fila e drena junto (sem duplicata da antiga)" \
     "$(publicar "$E1" 1 "$REG2" revisao)/$(Q "SELECT public.venda_gerar_lista($H, 'ativa')")/$(Q "SELECT count(*) FROM private.venda_sugestoes_reprocesso_fila WHERE processado_em IS NULL")" "2/2/0"
-  chk C5 "conservação (rev 2, dois destinos ativos)" "$(conserva)" "39/39/39/0/0"
+  chk C5 "conservação (rev 2, dois destinos ativos)" "$(conserva)" "45/45/45/0/0"
   chk R2b "1001 → 1ª nova; 1003/1004/1005 voltaram à antiga" \
     "$(lin "omie_codigo_produto = 1001 AND comprador_id = '$UN1' AND plano_revisao = 2")/$(lin "omie_codigo_produto IN (1003, 1004, 1005) AND comprador_id = '$UA' AND NOT herdada")" "3/10"
   chk R2c "recompra efetiva: antiga / 1ª nova / 2ª nova" "$(rec_ef "$UA")|$(rec_ef "$UN1")|$(rec_ef "$UN2")" "1003,1004,1005,1006,1007|1001|1002"
@@ -558,20 +578,36 @@ cenario() {
        EXECUTE format('CREATE FUNCTION public.venda_cidades_alvo(p date) RETURNS %s LANGUAGE plpgsql AS \$f\$ BEGIN PERFORM pg_sleep(2); RETURN QUERY SELECT * FROM public.venda_cidades_alvo_rapida(p); END \$f\$', r);
      END \$s\$" > /dev/null
   Q "INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, motivo) VALUES ('$E5', 'estado_mudou')" > /dev/null
-  P -q -c "SELECT private.venda_sugestoes_drenar_reprocesso()" > /dev/null 2>&1 &
+  P -v ON_ERROR_STOP=1 -tA -q -c "SELECT private.venda_sugestoes_drenar_reprocesso()" > "$TMPD/cc.out" 2>&1 &
   SEGURA_PID=$!
+  PRONTO=0
   for _ in $(seq 1 100); do   # pronto = a OUTRA sessão está DENTRO do cálculo (dormindo no stub)
-    [ "$(Q "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event = 'PgSleep' AND query LIKE '%drenar_reprocesso%'")" = 1 ] && break
+    [ "$(Q "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event = 'PgSleep' AND query LIKE '%drenar_reprocesso%'")" = 1 ] && { PRONTO=1; break; }
     sleep 0.1
   done
   chk CC1 "declarar (trava do grafo) NÃO espera o cálculo da drenagem em curso" \
     "$(q_como authenticated "$GER" "SELECT (r ->> 'ok') || '/' || (extract(epoch FROM clock_timestamp() - now()) < 1)
          FROM (SELECT public.cliente_declarar_sucessao('$D6A', '$D6N', 'cisao', (SELECT hoje - 60 FROM public.t_cfg), $(versao)) AS r) x")" "true/true"
   Q "INSERT INTO public.profiles (user_id, name, document) VALUES ('$UN5', 'NOVA CINCO', '$DN5')" > /dev/null   # cadastra NO MEIO
-  wait "$SEGURA_PID" || true
+  CC_RC=0; wait "$SEGURA_PID" || CC_RC=$?
   Q "DROP FUNCTION public.venda_cidades_alvo(date); ALTER FUNCTION public.venda_cidades_alvo_rapida(date) RENAME TO venda_cidades_alvo" > /dev/null
+  chk CC1c "a 1ª drenagem foi vista DENTRO do cálculo, terminou (exit 0, processou 1) e deixou a assinatura vista ≠ a atual" \
+    "$PRONTO/$CC_RC/$(tr -d '\n' < "$TMPD/cc.out")/$(Q "SELECT (SELECT assinatura FROM private.cliente_sucessao_estado_visto WHERE evento_id = '$E5')
+            IS DISTINCT FROM (SELECT assinatura FROM private.cliente_sucessao_assinaturas($H) WHERE evento_id = '$E5')")" "1/0/1/t"
   chk CC2 "o que mudou durante o cálculo NÃO foi dado como visto: a rodada seguinte reprocessa e a nova recebe 3001" \
     "$(drenar)/$(codigos "$UN5")/$(codigos "$UQ")" "2/3001/"
+  echo "── 11c. alias muda de dono (extremos iguais) e a antiga encerrada muda de identidade ──"
+  E7="$(declarar "$D7A" "$D7N" sucessao -60)"
+  chk AL0 "E7: o histórico do ALIAS da antiga vai para a sucessora (farmer 2)" \
+    "$(publicar "$E7" 0 "[$(item oben 7001 "$D7N")]" ok)/$(drenar)/$(codigos "$U7N")" "true/1/7001"
+  Q "UPDATE public.customer_canonical_alias SET canonical_user_id = '$UQ' WHERE alias_user_id = '$X7'" > /dev/null
+  chk AL1 "o alias passa a outro dono (A/B iguais): detectado; a sucessora perde 7001, o novo dono ganha" \
+    "$(drenar)/$(codigos "$U7N")/$(codigos "$UQ")" "2//7001"
+  E8="$(declarar "$D8X" "$D8N" sucessao -60)"
+  chk BX0 "E8 (declarada pelo documento do alias): a antiga U8A fica encerrada e perde 8001" "$(drenar)/$(codigos "$U8A")" "1/"
+  Q "UPDATE public.customer_canonical_alias SET canonical_user_id = '$U8C' WHERE alias_user_id = '$X8'" > /dev/null
+  chk BX1 "o alias passa a outra empresa (farmer 3): a U8A deixa de ser a antiga e RECUPERA 8001 (o farmer dela entra pelo escopo anterior)" \
+    "$(drenar)/$(codigos "$U8A")" "1/8001"
   echo "── 12. imutabilidade e porta ──"
   chk H1 "UPDATE de revisão → 23001" "$(Q "SELECT prova.sqlstate(\$c\$UPDATE public.cliente_sucessao_plano_revisoes SET motivo = 'x'\$c\$)")" "23001"
   chk H2 "DELETE de regra → 23001" "$(Q "SELECT prova.sqlstate(\$c\$DELETE FROM public.cliente_sucessao_plano_regras\$c\$)")" "23001"
@@ -601,7 +637,7 @@ cenario() {
 GERAR='public.venda_gerar_lista(date,text)'
 PUB='public.cliente_sucessao_plano_publicar(uuid,integer,jsonb,text)'
 TRILHA='private.historico_consumo_efetivo(date)'
-REPRO='private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb,integer)'
+REPRO='private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb,integer,uuid[])'
 IMUT='private.cliente_sucessao_plano_imutavel()'
 ASSIN='private.cliente_sucessao_assinaturas(date)'
 ASSIN_EVENTOS='FROM (SELECT DISTINCT s.evento_id FROM public.cliente_sucessoes s) e'
@@ -647,6 +683,8 @@ sabotagem() {
     publicar_apaga_recompra) cv_sabotar "$PUB" "v_rev := v_atual + 1;" "DELETE FROM public.venda_recompra; v_rev := v_atual + 1;" ;;
     drenar_trava_propria) cv_sabotar 'private.venda_sugestoes_drenar_reprocesso()' \
       "IF NOT pg_try_advisory_xact_lock(hashtext('venda_gerar_lista')) THEN" "IF NOT pg_try_advisory_xact_lock(hashtext('venda_sucessao_reprocesso')) THEN" ;;
+    assinatura_sem_alias) cv_sabotar "$ASSIN" "WHERE a.status = 'active' AND a.canonical_user_id IN (v.antigo_user_id, v.novo_user_id))" "WHERE false)" ;;
+    reprocesso_sem_escopo_anterior) cv_sabotar "$REPRO" "COALESCE(p_farmers_anteriores, '{}'::uuid[])" "'{}'::uuid[]" ;;
     drenar_com_grafo) cv_sabotar 'private.venda_sugestoes_drenar_reprocesso()' \
       "v_hoje := (now() AT TIME ZONE 'America/Sao_Paulo')::date;" \
       "PERFORM pg_advisory_xact_lock(hashtextextended('cliente_sucessoes:grafo', 0)); v_hoje := (now() AT TIME ZONE 'America/Sao_Paulo')::date;" ;;
@@ -692,7 +730,9 @@ deteccao_cega:D4,X2:D1
 publicar_apaga_recompra:I1:I1b
 drenar_trava_propria:CL1:Z1
 drenar_com_grafo:CC1,M8:CC0
-drenar_assinatura_depois:CC2:CC1"
+drenar_assinatura_depois:CC2:CC1
+assinatura_sem_alias:AL1:AL0
+reprocesso_sem_escopo_anterior:BX1:BX0"
 
 rodada() {
   adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4
