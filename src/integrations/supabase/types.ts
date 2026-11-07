@@ -12355,6 +12355,7 @@ export type Database = {
       radar_atendimentos: {
         Row: {
           assumido_em: string
+          atribuido_por: string | null
           cnpj: string
           dono_user_id: string
           encerrado_em: string | null
@@ -12365,6 +12366,7 @@ export type Database = {
         }
         Insert: {
           assumido_em: string
+          atribuido_por?: string | null
           cnpj: string
           dono_user_id: string
           encerrado_em?: string | null
@@ -12375,6 +12377,7 @@ export type Database = {
         }
         Update: {
           assumido_em?: string
+          atribuido_por?: string | null
           cnpj?: string
           dono_user_id?: string
           encerrado_em?: string | null
