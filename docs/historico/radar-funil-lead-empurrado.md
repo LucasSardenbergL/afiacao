@@ -52,10 +52,23 @@ esse sinal.
 
 | Camada | Quem | Estado |
 |---|---|---|
-| Migration `20261107233000` | founder (SQL Editor) | ⏳ |
+| Migration `20261107233000` | founder (SQL Editor, 2026-11-07) | ✅ psql-ro: validação `✅`; 9 sensores com as datas; 3 funções `prosecdef=t` (`radar_funil` `provolatile=s`); anon fora das 3; `claude_ro` só no painel; RLS nas 2 tabelas novas |
 | Publish do front (`/radar/funil`, `RadarAbrirEmail` com 2 momentos) | founder | ⏳ |
 | Declarar `ficha_email` instalado (UPDATE de 1 linha, depois do Publish) | founder (SQL Editor) | ⏳ |
 
-## 1ª leitura do painel em prod
+## 1ª leitura do painel em prod (2026-11-07, `radar_funil(8)` pelo psql-ro como master)
 
-(preenchida depois da aplicação)
+Janela 14/09 a 08/11. **0 vendedor no funil, 0 linha.** Por sensor:
+
+| Sensor | Estado | Registros no período | Observação |
+|---|---|---|---|
+| E-mail gerado / entregue | parcial (instalado 07/11) | 0 | o único envio existente é o de TESTE (Regina → master), que não conta |
+| Clique no e-mail · card servido · clique no card | parcial | 0 | cron semanal desligado e Publish do card ainda sem uso |
+| Ficha entregue (e-mail e card) | nunca gravou | 0 | e-mail: depende do Publish deste PR; card: sem escritor (sessão F) |
+| Contato humano | sem registro no período | 0 | **último contato humano em 15/06/2026** |
+| Cadastro no Omie | sem registro no período | 0 | nenhum cadastro humano desde o nascimento do ledger |
+
+Nenhuma falha registrada. Leitura: o funil está vazio porque **nenhum e-mail real saiu ainda** (config da Regina em modo teste,
+cron desligado); o painel não mede uso, mede que não houve exposição. O "0 contato humano" agora aparece na tela
+com o denominador. Próximo sinal: a 1ª segunda-feira com o e-mail ligado de verdade (decisão do founder).
+Custo: ~270 ms aquecido (8 ou 26 semanas); a 1ª chamada a frio levou 3,6 s.
