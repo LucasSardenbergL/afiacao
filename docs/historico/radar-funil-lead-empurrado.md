@@ -1,6 +1,6 @@
 # Radar, pacote H: o funil do lead empurrado (2026-11-07)
 
-> Sessão `radar-h-painel` (worktree `determined-poincare-7948d9`). Migration `20261107230000_radar_funil_painel`
+> Sessão `radar-h-painel` (worktree `determined-poincare-7948d9`). Migration `20261107233000_radar_funil_painel`
 > (**manual**, SQL Editor), tela `/radar/funil` (**Publish**). Prova PG17: `db/test-radar-funil.sh` (`--falsificar`).
 
 ## Por que
@@ -50,7 +50,7 @@ esse sinal.
 
 | Camada | Quem | Estado |
 |---|---|---|
-| Migration `20261107230000` | founder (SQL Editor) | ⏳ |
+| Migration `20261107233000` | founder (SQL Editor) | ⏳ |
 | Publish do front (`/radar/funil`, `RadarAbrirEmail` com 2 momentos) | founder | ⏳ |
 | Declarar `ficha_email` instalado (UPDATE de 1 linha, depois do Publish) | founder (SQL Editor) | ⏳ |
 

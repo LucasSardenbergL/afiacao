@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prova PG17 do pacote H do Radar (medir o funil do lead empurrado) — migration 20261107230000_radar_funil_painel,
+# Prova PG17 do pacote H do Radar (medir o funil do lead empurrado) — migration 20261107233000_radar_funil_painel,
 # aplicada por cima da REAL do pacote D (20261106181000), como em prod:
 #   • public.radar_funil: só master/gestor (42501 para farmer e anônimo); e-mail em coorte pela semana do envio,
 #     só e-mail REAL (teste fora), clique só do destinatário e só de e-mail ENTREGUE; ficha = 2º momento; card,
@@ -19,7 +19,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG_D="$REPO_ROOT/supabase/migrations/20261106181000_radar_leads_ao_vendedor.sql"
-MIG="$REPO_ROOT/supabase/migrations/20261107230000_radar_funil_painel.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261107233000_radar_funil_painel.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!H2_FALHOU` = a postcondição aborta o apply com a marca exata

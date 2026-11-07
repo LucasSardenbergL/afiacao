@@ -77,7 +77,7 @@ BEGIN
 END
 $chk$;
 COMMENT ON TABLE public.radar_lead_aberturas IS
-  'Radar D1/D2: abertura de lead empurrado (e-mail semanal ou card Prospectar hoje). Numerador do sensor. Linha: radar_registrar_abertura_empurrada() (o clique). ficha_entregue_em: radar_registrar_ficha_entregue() (a ficha chegou ao navegador; se o clique se perdeu, ela cria a linha com clique_registrado = false). Migrations 20261106181000 e 20261107230000.';
+  'Radar D1/D2: abertura de lead empurrado (e-mail semanal ou card Prospectar hoje). Numerador do sensor. Linha: radar_registrar_abertura_empurrada() (o clique). ficha_entregue_em: radar_registrar_ficha_entregue() (a ficha chegou ao navegador; se o clique se perdeu, ela cria a linha com clique_registrado = false). Migrations 20261106181000 e 20261107233000.';
 COMMENT ON COLUMN public.radar_lead_aberturas.ficha_entregue_em IS
   'Quando a ficha do lead chegou ao navegador do vendedor (2º momento). NULL = clique sem ficha, ou sensor não instalado para a origem (ver radar_funil_sensores). Escritor único: radar_registrar_ficha_entregue().';
 COMMENT ON COLUMN public.radar_lead_aberturas.clique_registrado IS
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS public.radar_sensor_falhas (
 );
 CREATE INDEX IF NOT EXISTS idx_radar_sensor_falhas_dia ON public.radar_sensor_falhas (dia);
 COMMENT ON TABLE public.radar_sensor_falhas IS
-  'Radar H: falha de sensor do lead empurrado que o CLIENTE vê (lead não encontrado, ficha não lida, RPC recusou, rede esgotou as tentativas). 1 linha por (sensor, motivo, usuário, dia) com contador. Escritor único: radar_registrar_falha_sensor(). Lido por radar_funil(). Migration 20261107230000.';
+  'Radar H: falha de sensor do lead empurrado que o CLIENTE vê (lead não encontrado, ficha não lida, RPC recusou, rede esgotou as tentativas). 1 linha por (sensor, motivo, usuário, dia) com contador. Escritor único: radar_registrar_falha_sensor(). Lido por radar_funil(). Migration 20261107233000.';
 
 -- ── 3. Registro dos sensores (data de instalação) ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.radar_funil_sensores (
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS public.radar_funil_sensores (
   fonte        text NOT NULL
 );
 COMMENT ON TABLE public.radar_funil_sensores IS
-  'Radar H: sensores do funil e quando cada um passou a existir. Semana antes da instalação = ausente ("—"), nunca 0. instalado_em NULL = não declarada: cobertura a partir do 1º registro. Declarar depois do Publish: UPDATE pelo founder/envelope. Migration 20261107230000.';
+  'Radar H: sensores do funil e quando cada um passou a existir. Semana antes da instalação = ausente ("—"), nunca 0. instalado_em NULL = não declarada: cobertura a partir do 1º registro. Declarar depois do Publish: UPDATE pelo founder/envelope. Migration 20261107233000.';
 -- Datas: pacote D publicado e 1º e-mail (teste) em 2026-11-07 (docs/historico/radar-leads-ao-vendedor-2026-11-06.md);
 -- ledger de contato/cadastro nasceu em 2026-10-29 COM backfill de TODO contato/cadastro já existente: cobre desde o 1º
 -- contato do Radar (calculado no apply — ler min() a cada abertura do painel custava 1 s em prod).

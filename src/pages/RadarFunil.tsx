@@ -1,5 +1,5 @@
 // Radar H — funil do lead empurrado: e-mail semanal e card "Prospectar hoje" até o cadastro no Omie, por vendedor e
-// por semana (RPC radar_funil, migration 20261107230000). Só master e gestor comercial (o servidor confere de novo).
+// por semana (RPC radar_funil, migration 20261107233000). Só master e gestor comercial (o servidor confere de novo).
 // "—" = o sensor não cobria a semana (ausente ≠ zero); 0 = medido e nada aconteceu.
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';

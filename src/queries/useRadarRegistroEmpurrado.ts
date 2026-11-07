@@ -11,7 +11,7 @@ import {
 
 export type { ResultadoSensor, SensorEmpurrado } from '@/lib/radar/sensor-empurrado';
 
-// Escritas dos sensores do Radar D1/D2 (migration 20261106181000) e do 2º momento da abertura (H, 20261107230000),
+// Escritas dos sensores do Radar D1/D2 (migration 20261106181000) e do 2º momento da abertura (H, 20261107233000),
 // separadas da leitura do card: quem decide se grava é o chamador (fora da lente) e o write-guard (na lente, rejeita).
 // Nenhuma delas usa a identidade da lente.
 //

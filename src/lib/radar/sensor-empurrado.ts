@@ -1,7 +1,7 @@
 // Radar H — classificação das respostas dos sensores do lead empurrado (e-mail semanal e card "Prospectar hoje").
 // Puro: o hook (src/queries/useRadarRegistroEmpurrado.ts) faz a chamada, as tentativas e o registro da falha.
 
-/** Os sensores do front, com o MESMO vocabulário de radar_sensor_falhas.sensor (migration 20261107230000). */
+/** Os sensores do front, com o MESMO vocabulário de radar_sensor_falhas.sensor (migration 20261107233000). */
 export type SensorEmpurrado = 'card_servido' | 'abertura_card' | 'abertura_email' | 'ficha_card' | 'ficha_email';
 
 /**

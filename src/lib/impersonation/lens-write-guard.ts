@@ -43,7 +43,7 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // Radar D1 (migration 20261107140001) — STABLE, só lê: o painel do e-mail semanal (só master). As escritas
   // (radar_email_semanal_definir/_cron) ficam BLOQUEADAS na lente.
   'radar_email_semanal_painel',
-  // Radar H (migration 20261107230000) — STABLE, só lê: o funil do lead empurrado (master/gestor). Os registradores
+  // Radar H (migration 20261107233000) — STABLE, só lê: o funil do lead empurrado (master/gestor). Os registradores
   // do 2º momento e das falhas (radar_registrar_ficha_entregue/_falha_sensor) GRAVAM e ficam BLOQUEADOS na lente.
   'radar_funil',
   // Cockpit financeiro (migration 20261101210000) — STABLE, SECURITY INVOKER, só agrega saldo de títulos sob a RLS.

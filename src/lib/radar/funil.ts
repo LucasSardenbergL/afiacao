@@ -1,4 +1,4 @@
-// Radar H — o funil do lead empurrado (RPC radar_funil, migration 20261107230000). Puro: parser estrito da resposta,
+// Radar H — o funil do lead empurrado (RPC radar_funil, migration 20261107233000). Puro: parser estrito da resposta,
 // somas e taxas com "ausente ≠ zero" (NULL = o sensor não cobria a semana → "—"; 0 = medido e nada aconteceu).
 
 export type CoberturaSemana = 'completa' | 'parcial' | 'ausente';

@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { lerPainelFunil, type PainelFunil } from '@/lib/radar/funil';
 
 /**
- * Funil do lead empurrado do Radar (RPC `radar_funil`, migration 20261107230000). Leitura PURA (STABLE), na
+ * Funil do lead empurrado do Radar (RPC `radar_funil`, migration 20261107233000). Leitura PURA (STABLE), na
  * allowlist de leitura da lente; o servidor só responde a master e gestor comercial (42501 para o resto).
  * 1 linha jsonb: sem o teto silencioso de 1.000 linhas do PostgREST. Resposta fora da forma LANÇA (nunca vira 0).
  */

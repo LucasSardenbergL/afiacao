@@ -6600,7 +6600,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
 
-### `20261107230000_radar_funil_painel.sql`
+### `20261107233000_radar_funil_painel.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |

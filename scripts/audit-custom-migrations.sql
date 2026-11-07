@@ -870,7 +870,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107140001', 'radar_email_semanal_toggle', '20261107140001_radar_email_semanal_toggle.sql'),
   ('20261107210000', 'cliente_sucessao_plano_rateio', '20261107210000_cliente_sucessao_plano_rateio.sql'),
   ('20261107220000', 'data_health_sayerlack_varredura_portal', '20261107220000_data_health_sayerlack_varredura_portal.sql'),
-  ('20261107230000', 'radar_funil_painel', '20261107230000_radar_funil_painel.sql')
+  ('20261107233000', 'radar_funil_painel', '20261107233000_radar_funil_painel.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
