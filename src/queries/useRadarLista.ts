@@ -32,6 +32,18 @@ export interface RadarFiltros {
 
 const PAGE = 50;
 
+/**
+ * Filtros da visão "Meus atendimentos" (pacote B2): NEUTROS. A visão é "o que eu assumi", não um recorte da fila —
+ * um lead assumido que é já-cliente, de fora da região, de lote antigo ou sem contato continua sendo meu. Só os
+ * descartados ficam de fora (o default da RPC). O recorte "é meu" vem de `p_so_meus`, NO SERVIDOR.
+ */
+export const FILTROS_MEUS_ATENDIMENTOS: RadarFiltros = {
+  busca: '', uf: '', municipio: '', municipioCodigo: '', cnae: '', cnaeSecundario: '', status: '',
+  incluirJaClientes: true, comTelefone: false, preset: 'score',
+  incluirSaiuDoDump: true, soIneditos: false, soSugeridos: false,
+  regiao: 'brasil', incluirSemContato: true,
+};
+
 /** Id da rodada mais recente do score (ledger `radar.score_recalcular`). Revisado a cada 10 min: a rodada
  *  diária (03:30 BRT) ou uma manual troca a versão da fila e reinicia a paginação. */
 function useRadarRodadaScore() {
@@ -71,6 +83,7 @@ export function parametrosDaLista(
   lote: LoteIngest | null,
   hojeISO: string,
   pagina: number,
+  soMeus = false,
 ): ParametrosLista {
   const p = presetParaParams(filtros.preset, hojeISO);
   // A RPC só ordena DESC NULLS LAST (todos os presets de hoje). Preset novo ascendente tem de mudar a RPC
@@ -113,10 +126,18 @@ export function parametrosDaLista(
     p_ordem: p.orderColumn,
     p_offset: pagina * PAGE,
     p_limit: PAGE,
+    // "Meus atendimentos" (B2, migration 20261106212329): o recorte é do servidor, ANTES da paginação — filtrar os
+    // 50 carregados daria falso vazio. Na fila vai `undefined` (a chave some): a chamada da fila é a de antes e não
+    // depende da migration.
+    p_so_meus: soMeus ? true : undefined,
   };
 }
 
-export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
+/** Chave das páginas da visão "Meus atendimentos" (7º elemento da queryKey da lista). */
+export const CHAVE_VISAO_MEUS = 'meus';
+
+export function useRadarLista(filtros: RadarFiltros, hojeISO: string, opcoes: { soMeus?: boolean } = {}) {
+  const soMeus = opcoes.soMeus === true;
   const qc = useQueryClient();
   const rodada = useRadarRodadaScore();
   const versao = versaoDaFila(filtros.preset, rodada.data);
@@ -126,7 +147,7 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
   const qLote = useRadarLoteVigente();
   const loteDaChave = qLote.data === undefined ? 'sem-leitura' : identidadeDoLote(qLote.data);
   return useInfiniteQuery({
-    queryKey: ['radar', 'lista', filtros, hojeISO, versao, loteDaChave],
+    queryKey: ['radar', 'lista', filtros, hojeISO, versao, loteDaChave, soMeus ? CHAVE_VISAO_MEUS : 'fila'],
     // Fila por score espera a versão (sucesso OU erro) para não buscar duas vezes na abertura; leitura do
     // ledger que falha degrada para 'sem-rodada' — a lista continua, só sem o reinício automático.
     // Idem o lote: espera a 1ª leitura assentar (sucesso OU erro — no erro a própria lista falha ao
@@ -152,7 +173,7 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
         throw new Error('Sem lote completo da RFB: "só sugeridos" fica indisponível até a carga do lote terminar.');
       }
       // A RPC pagina e ordena (preset DESC NULLS LAST, cnpj): um `.order()` aqui REORDENARIA a página.
-      const { data, error } = await supabase.rpc('radar_lista', parametrosDaLista(filtros, lote, hojeISO, pageParam as number));
+      const { data, error } = await supabase.rpc('radar_lista', parametrosDaLista(filtros, lote, hojeISO, pageParam as number, soMeus));
       if (error) throw error;
       return data as RadarEmpresa[];
     },

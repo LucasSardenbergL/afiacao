@@ -21,8 +21,12 @@ export const respostaSonda = criarRespostaSonda("dispatch-notifications");
  * `v1.1-resumo-param-so-no-app` = pedido do founder (2026-09-25): `param_auto_resumo` ("Parâmetros de
  * reposição — resumo do dia") não vira mais e-mail — é encerrado como `ignorado` antes do token do
  * Gmail. Régua em `politica-email.ts`.
+ *
+ * `v1.2-radar-leads-vendedor` = Radar D1 (2026-11-06): o alerta com linha em `radar_email_vendedor_envios` vai para o
+ * vendedor daquele envio, com corpo próprio e links clicáveis; o resto segue no `NOTIFICATION_EMAIL_TO`. Régua em
+ * `destinatario.ts`.
  */
-export const VERSAO = "v1.1-resumo-param-so-no-app";
+export const VERSAO = "v1.2-radar-leads-vendedor";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

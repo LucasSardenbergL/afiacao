@@ -344,6 +344,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/ExecutiveDashboard.tsx",
       "src/pages/PerformanceHub.tsx",
       "src/pages/RadarClientes.tsx",
+      "src/pages/RadarAbrirEmail.tsx",
       "src/pages/CoachingSPIN.tsx",
       "src/hooks/useFarmer*.ts",
       "src/hooks/useCarteira*.ts",
@@ -462,6 +463,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/CarteiraBoard.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerBundles.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerDashboard.erro-honesto.test.tsx",
+      "src/pages/__tests__/RadarAbrirEmail.sensor.test.tsx",
       "src/pages/__tests__/FarmerLOCC.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerRecommendations.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerRecommendations.desfecho-geracao.test.tsx",
@@ -1004,6 +1006,10 @@ export const MODULOS: ModuloApp[] = [
       // que os consumidores mostram — usados por vários domínios, logo plataforma.
       "src/lib/leitura/**",
       "src/components/leitura/**",
+      // Aviso de crédito por vínculo com cliente que tem título vencido (migration 20261106205557): o mesmo
+      // card serve o pedido (vendas) e a ficha do Radar (farmer-inteligencia), como o selo da Receita.
+      "src/lib/credito-vinculo/**",
+      "src/components/credito-vinculo/**",
     ],
     testes: [
       "src/contexts/__tests__/AuthContext.cargo-semeia-cache.test.tsx",

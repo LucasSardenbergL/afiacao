@@ -12355,6 +12355,7 @@ export type Database = {
       radar_atendimentos: {
         Row: {
           assumido_em: string
+          atribuido_por: string | null
           cnpj: string
           dono_user_id: string
           encerrado_em: string | null
@@ -12365,6 +12366,7 @@ export type Database = {
         }
         Insert: {
           assumido_em: string
+          atribuido_por?: string | null
           cnpj: string
           dono_user_id: string
           encerrado_em?: string | null
@@ -12375,6 +12377,7 @@ export type Database = {
         }
         Update: {
           assumido_em?: string
+          atribuido_por?: string | null
           cnpj?: string
           dono_user_id?: string
           encerrado_em?: string | null
@@ -23244,6 +23247,17 @@ export type Database = {
         }
         Returns: Json
       }
+      credito_vinculo_aviso: { Args: { p_cnpj: string }; Returns: Json }
+      credito_vinculo_aviso_registrar: {
+        Args: {
+          p_cnpj: string
+          p_evento: string
+          p_ref?: string
+          p_superficie: string
+          p_veredito?: string
+        }
+        Returns: Json
+      }
       criar_pedidos_com_itens: { Args: { p_pedidos: Json }; Returns: Json }
       criar_plano_tatico: {
         Args: {
@@ -24719,6 +24733,7 @@ export type Database = {
           p_offset?: number
           p_ordem?: string
           p_primeira_vista_min?: string
+          p_so_meus?: boolean
           p_status?: string
           p_sugeridos_lote?: string
           p_sugeridos_score_min?: number

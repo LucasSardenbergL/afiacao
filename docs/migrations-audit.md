@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **792** custom migrations totais
-- **2596** objetos esperados (criados por estas migrations)
+- **796** custom migrations totais
+- **2616** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 991
+  - `function`: 1003
   - `rls_policy`: 519
-  - `index`: 372
-  - `table`: 234
-  - `cron_job`: 213
+  - `index`: 374
+  - `table`: 239
+  - `cron_job`: 214
   - `view`: 135
   - `trigger`: 128
   - `enum_value`: 4
@@ -6451,9 +6451,44 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_contagem_por_municipio` | — |
 | `function` | `public.radar_lista` | — |
 
+### `20261106181000_radar_leads_ao_vendedor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_territorio_do_vendedor` | — |
+| `function` | `private.radar_leads_do_vendedor` | — |
+| `function` | `public.radar_avisar_vendedores` | — |
+| `function` | `public.radar_prospectar_hoje` | — |
+| `function` | `public.radar_registrar_card_servido` | — |
+| `function` | `public.radar_registrar_abertura_empurrada` | — |
+| `table` | `public.radar_email_vendedor_config` | — |
+| `table` | `public.radar_email_vendedor_envios` | — |
+| `table` | `public.radar_email_vendedor_leads` | — |
+| `table` | `public.radar_lead_aberturas` | — |
+| `table` | `public.radar_prospectar_hoje_servido` | — |
+| `index` | `public.idx_radar_email_vendedor_leads_cnpj` | `radar_email_vendedor_leads` |
+| `index` | `public.idx_radar_lead_aberturas_envio` | `radar_lead_aberturas` |
+| `cron_job` | `cron.radar-avisar-vendedores-semanal` | — |
+
 ### `20261106205556_drop_indices_ociosos_scores.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261106205557_credito_aviso_vinculo_vencido.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_vinculos_base` | — |
+| `function` | `private.radar_vinculos_nucleo` | — |
+| `function` | `private.credito_vinculo_avaliar` | — |
+| `function` | `public.credito_vinculo_aviso` | — |
+| `function` | `public.credito_vinculo_aviso_registrar` | — |
+
+### `20261106212329_radar_lista_meus_atendimentos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_lista` | — |
 
 ### `20261106221000_radar_atribuir_atendimento.sql`
 
@@ -6482,6 +6517,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.cliente_sucessoes_evento_idx` | `cliente_sucessoes` |
 | `trigger` | `public.cliente_sucessoes_imutavel_trg` | `cliente_sucessoes` |
 | `trigger` | `public.cliente_sucessoes_sem_truncate_trg` | `cliente_sucessoes` |
+
+### `20261107120000_ipi_aliquota_ncm_seed_nf_onda1.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
