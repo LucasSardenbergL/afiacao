@@ -22,13 +22,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **799** custom migrations totais
-- **2657** objetos esperados (criados por estas migrations)
+- **2663** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1028
+  - `function`: 1030
   - `rls_policy`: 519
-  - `index`: 378
-  - `table`: 245
-  - `cron_job`: 214
+  - `index`: 379
+  - `table`: 247
+  - `cron_job`: 215
   - `view`: 135
   - `trigger`: 134
   - `enum_value`: 4
@@ -6564,19 +6564,25 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `private.venda_lista_calc_efetiva` | — |
 | `function` | `public.venda_gerar_lista` | — |
 | `function` | `private.venda_sugestoes_reprocessar_sucessao` | — |
+| `function` | `private.cliente_sucessao_assinaturas` | — |
+| `function` | `private.venda_sugestoes_drenar_reprocesso` | — |
 | `function` | `public.cliente_sucessao_plano_publicar` | — |
 | `function` | `public.cliente_sucessao_plano_revogar` | — |
 | `function` | `public.cliente_sucessao_plano_do_evento` | — |
 | `table` | `public.cliente_sucessao_plano_revisoes` | — |
 | `table` | `public.cliente_sucessao_plano_regras` | — |
 | `table` | `public.venda_sugestao_substituida` | — |
+| `table` | `private.venda_sugestoes_reprocesso_fila` | — |
+| `table` | `private.cliente_sucessao_estado_visto` | — |
 | `index` | `public.venda_sugestao_substituida_dia_idx` | `venda_sugestao_substituida` |
+| `index` | `private.venda_sugestoes_reprocesso_fila_pendente_idx` | `venda_sugestoes_reprocesso_fila` |
 | `trigger` | `public.cliente_sucessao_plano_revisoes_imutavel_trg` | `cliente_sucessao_plano_revisoes` |
 | `trigger` | `public.cliente_sucessao_plano_revisoes_sem_truncate_trg` | `cliente_sucessao_plano_revisoes` |
 | `trigger` | `public.cliente_sucessao_plano_regras_imutavel_trg` | `cliente_sucessao_plano_regras` |
 | `trigger` | `public.cliente_sucessao_plano_regras_sem_truncate_trg` | `cliente_sucessao_plano_regras` |
 | `trigger` | `public.venda_sugestao_substituida_imutavel_trg` | `venda_sugestao_substituida` |
 | `trigger` | `public.venda_sugestao_substituida_sem_truncate_trg` | `venda_sugestao_substituida` |
+| `cron_job` | `cron.venda-sucessao-reprocesso` | — |
 
 ## Próximos passos por status
 
