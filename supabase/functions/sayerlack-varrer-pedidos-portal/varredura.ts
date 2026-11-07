@@ -371,22 +371,34 @@ export const COLUNAS_OBRIGATORIAS: readonly { rotulo: string; prefixo: string; e
   { rotulo: "Vlr", prefixo: "Vlr", exato: false },
 ];
 
-/** Total ANUNCIADO pelo portal: `recordsFiltered`/`recordsTotal` do JSON do DataTables, ou o texto "… de N registros". */
-export function totalAnunciado(fonte: { respostaTotal?: unknown; info?: unknown }): number | null {
-  const n = fonte.respostaTotal;
+function inteiroNaoNegativo(n: unknown): number | null {
   if (typeof n === "number" && Number.isInteger(n) && n >= 0) return n;
   if (typeof n === "string" && /^\d+$/.test(n.trim())) return Number(n.trim());
-  if (typeof fonte.info === "string") {
-    // "Mostrando de 1 até 10 de 23 registros" / "Showing 1 to 10 of 23 entries" / "0 até 0 de 0".
-    const m = fonte.info.replace(/\./g, "").match(/\b(?:de|of)\s+(\d+)\s*(?:registros|entries|itens|pedidos)?\s*(?:\(|$)/i);
-    if (m) return Number(m[1]);
-  }
   return null;
+}
+
+/** "Mostrando de 1 até 10 de 23 registros" / "Showing 1 to 10 of 23 entries" / "0 até 0 de 0" → 23. */
+function totalDoTexto(info: unknown): number | null {
+  if (typeof info !== "string") return null;
+  const m = info.replace(/\./g, "").match(/\b(?:de|of)\s+(\d+)\s*(?:registros|entries|itens|pedidos)?\s*(?:\(|$)/i);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Total ANUNCIADO pelo portal, por até 3 fontes: `recordsFiltered` da resposta da consulta (só o FILTRADO — o
+ * `recordsTotal` é o universo antes dos filtros, Codex P2), `page.info().recordsDisplay` da instância DataTables da
+ * tabela lida, e o texto "… de N registros". Fontes que discordam ⇒ `divergente` (nunca escolhe uma).
+ */
+export function totalAnunciado(fonte: { respostaTotal?: unknown; dtTotal?: unknown; info?: unknown }): number | null | "divergente" {
+  const vals = [inteiroNaoNegativo(fonte.respostaTotal), inteiroNaoNegativo(fonte.dtTotal), totalDoTexto(fonte.info)]
+    .filter((v): v is number => v !== null);
+  if (vals.length === 0) return null;
+  return vals.every((v) => v === vals[0]) ? vals[0] : "divergente";
 }
 
 export type ProvaLeitura =
   | { ok: true; total: number }
-  | { ok: false; motivo: "colunas_ausentes" | "total_nao_anunciado" | "zero_lidos_sem_prova" | "lidos_diferente_do_total" | "linhas_ilegiveis" | "protocolo_repetido"; detalhe: string };
+  | { ok: false; motivo: "colunas_ausentes" | "total_nao_anunciado" | "total_divergente" | "zero_lidos_sem_prova" | "lidos_diferente_do_total" | "linhas_ilegiveis" | "protocolo_repetido"; detalhe: string };
 
 /**
  * A leitura só decide se for COMPLETA e LEGÍVEL: as colunas obrigatórias existem, o portal anunciou o total, o número
@@ -396,6 +408,7 @@ export function provarLeitura(entrada: {
   headers: readonly string[];
   linhasLidas: number;
   respostaTotal?: unknown;
+  dtTotal?: unknown;
   info?: unknown;
   ilegiveis: number;
   repetidos: readonly string[];
@@ -405,7 +418,10 @@ export function provarLeitura(entrada: {
   if (faltam.length > 0) {
     return { ok: false, motivo: "colunas_ausentes", detalhe: `colunas ausentes na consulta: ${faltam.map((c) => c.rotulo).join(", ")} (cabeçalhos lidos: ${entrada.headers.filter(Boolean).join(" | ") || "nenhum"})` };
   }
-  const total = totalAnunciado({ respostaTotal: entrada.respostaTotal, info: entrada.info });
+  const total = totalAnunciado({ respostaTotal: entrada.respostaTotal, dtTotal: entrada.dtTotal, info: entrada.info });
+  if (total === "divergente") {
+    return { ok: false, motivo: "total_divergente", detalhe: `o portal anunciou totais diferentes (resposta ${String(entrada.respostaTotal)}, tabela ${String(entrada.dtTotal)}, texto "${String(entrada.info)}")` };
+  }
   if (total === null) {
     return entrada.linhasLidas === 0
       ? { ok: false, motivo: "zero_lidos_sem_prova", detalhe: "0 linhas lidas e o portal não anunciou o total — não prova que não há pedido" }
@@ -446,29 +462,28 @@ export function carenciaTravada(
 export const TETO_RECONSULTAS = 4;
 
 /**
- * Pendências fora da leitura da rodada (item 3.7): falha aberta da varredura e pedido do app sem PO cujo protocolo NÃO
- * apareceu na lista lida (emissão além da janela). Ordem: pedido do app sem PO primeiro (pode virar PO), depois falhas
- * abertas mais antigas. Dedup por protocolo, teto por rodada; o resto fica para a próxima.
+ * Pendências fora da leitura da rodada (item 3.7): pedido do app sem PO e falha aberta cujo protocolo NÃO apareceu na
+ * lista lida (emissão além da janela). Fila pela TENTATIVA MAIS ANTIGA (nunca tentado primeiro; empate: pedido do app
+ * antes) — ordenar por `primeira_em` deixava a 13ª pendência esperando para sempre (Codex P2). Dedup e teto.
  */
 export function reconsultasForaDaJanela(entrada: {
   lidos: ReadonlySet<string>;
-  semPoNoApp: readonly { protocolo: string; pedido_id: number }[];
-  falhasAbertas: readonly { protocolo: string; primeira_em: string }[];
+  semPoNoApp: readonly { protocolo: string; pedido_id: number; ultima_tentativa?: string | null }[];
+  falhasAbertas: readonly { protocolo: string; ultima_em: string }[];
   teto?: number;
 }): { protocolo: string; origem: "app_sem_po" | "falha_aberta"; pedido_id: number | null }[] {
   const teto = entrada.teto ?? TETO_RECONSULTAS;
-  const vistos = new Set<string>();
-  const out: { protocolo: string; origem: "app_sem_po" | "falha_aberta"; pedido_id: number | null }[] = [];
-  const pode = (prot: string) => PROTOCOLO_RE.test(prot) && !entrada.lidos.has(prot) && !vistos.has(prot);
+  const porProt = new Map<string, { protocolo: string; origem: "app_sem_po" | "falha_aberta"; pedido_id: number | null; quando: string }>();
   for (const p of entrada.semPoNoApp) {
-    if (!pode(p.protocolo)) continue;
-    vistos.add(p.protocolo);
-    out.push({ protocolo: p.protocolo, origem: "app_sem_po", pedido_id: p.pedido_id });
+    if (!PROTOCOLO_RE.test(p.protocolo) || entrada.lidos.has(p.protocolo) || porProt.has(p.protocolo)) continue;
+    porProt.set(p.protocolo, { protocolo: p.protocolo, origem: "app_sem_po", pedido_id: p.pedido_id, quando: p.ultima_tentativa ?? "" });
   }
-  for (const f of [...entrada.falhasAbertas].sort((a, b) => a.primeira_em.localeCompare(b.primeira_em))) {
-    if (!pode(f.protocolo)) continue;
-    vistos.add(f.protocolo);
-    out.push({ protocolo: f.protocolo, origem: "falha_aberta", pedido_id: null });
+  for (const f of entrada.falhasAbertas) {
+    if (!PROTOCOLO_RE.test(f.protocolo) || entrada.lidos.has(f.protocolo) || porProt.has(f.protocolo)) continue;
+    porProt.set(f.protocolo, { protocolo: f.protocolo, origem: "falha_aberta", pedido_id: null, quando: f.ultima_em });
   }
-  return out.slice(0, teto);
+  return [...porProt.values()]
+    .sort((a, b) => a.quando.localeCompare(b.quando) || (a.origem === b.origem ? 0 : a.origem === "app_sem_po" ? -1 : 1))
+    .slice(0, teto)
+    .map(({ quando: _q, ...q }) => q);
 }

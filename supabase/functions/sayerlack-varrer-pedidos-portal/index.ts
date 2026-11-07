@@ -155,7 +155,8 @@ ${ABRIR_CONSULTA_PEDIDOS}
           const j = await r.json();
           if (j && typeof j === 'object' && !Array.isArray(j)) {
             chaves = Object.keys(j).slice(0, 20);
-            const cand = [j.recordsFiltered, j.iTotalDisplayRecords, j.recordsTotal, j.iTotalRecords];
+            // Só o FILTRADO: recordsTotal é o universo antes dos filtros (Codex P2) e daria erro permanente.
+            const cand = [j.recordsFiltered, j.iTotalDisplayRecords];
             for (let k = 0; k < cand.length; k++) { if (cand[k] !== undefined && cand[k] !== null) { total = cand[k]; break; } }
           }
         } catch (e) { chaves = null; }
@@ -196,7 +197,16 @@ ${ABRIR_CONSULTA_PEDIDOS}
       const infoEl = document.querySelector('.dataTables_info') || document.querySelector('[id$="_info"]') || document.querySelector('.dt-info');
       const prox = document.querySelector('.paginate_button.next');
       const temProxima = !!prox && !prox.classList.contains('disabled') && !(prox.parentElement && prox.parentElement.classList.contains('disabled'));
-      return { ok: true, headers, linhas, processando, info: infoEl ? (infoEl.innerText || '').trim() : null, temProxima };
+      // Total pela API da instância DataTables DESTA tabela (page.info().recordsDisplay), sem depender do elemento visual.
+      let dtTotal = null;
+      try {
+        const jq = window.jQuery;
+        if (jq && jq.fn && jq.fn.dataTable && jq.fn.dataTable.isDataTable(t)) {
+          const pi = jq(t).DataTable().page.info();
+          if (pi && typeof pi.recordsDisplay === 'number') dtTotal = pi.recordsDisplay;
+        }
+      } catch (e) { dtTotal = null; }
+      return { ok: true, headers, linhas, processando, info: infoEl ? (infoEl.innerText || '').trim() : null, temProxima, dtTotal };
     });
     const lerEstavel = async () => {
       let p = { ok: false, headers: [], linhas: [], processando: true, info: null, temProxima: false };
@@ -215,6 +225,7 @@ ${ABRIR_CONSULTA_PEDIDOS}
     if (!pagina) return await falha('CONSULTA_ILEGIVEL', 'Tabela da consulta não estabilizou (ausente ou processando)');
     const headers = pagina.headers;
     const infoInicial = pagina.info;
+    const dtTotalInicial = pagina.dtTotal;
     linhas.push(...pagina.linhas);
     let paginas = 1;
     while (pagina.temProxima && paginas < 30) {
@@ -229,11 +240,11 @@ ${ABRIR_CONSULTA_PEDIDOS}
       linhas.push(...pagina.linhas);
       paginas++;
     }
-    trace.push({ step: 'consulta_lida', headers, paginas, n_linhas: linhas.length, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, t: Date.now() - t0 });
+    trace.push({ step: 'consulta_lida', headers, paginas, n_linhas: linhas.length, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, dt_total: dtTotalInicial, t: Date.now() - t0 });
     if (pagina.temProxima) return await falha('PAGINACAO_INCOMPLETA', 'Mais de 30 páginas na consulta — lista não lida inteira', { paginas });
 
     return {
-      data: { success: true, headers, linhas, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, paginas, situacoes, filtro, trace },
+      data: { success: true, headers, linhas, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, dt_total: dtTotalInicial, paginas, situacoes, filtro, trace },
       type: 'application/json',
     };
   } catch (e) {
@@ -253,6 +264,8 @@ interface BrowserlessData {
   /** Total que o portal anunciou na resposta da consulta (recordsFiltered/recordsTotal). */
   resposta_total?: unknown;
   resposta_chaves?: string[] | null;
+  /** page.info().recordsDisplay da instância DataTables da tabela lida. */
+  dt_total?: unknown;
   paginas?: number;
   situacoes?: { valor: string; texto: string }[];
   trace?: unknown[];
@@ -541,7 +554,7 @@ async function fecharExecucao(db: Db, id: string | null, status: "sucesso" | "er
 /** Falhas abertas da varredura (para reconsultar por número as que ficaram fora da janela lida). Erro LANÇA. */
 async function falhasAbertas(db: Db): Promise<{ protocolo: string; primeira_em: string; ultima_em: string }[]> {
   const { data, error } = await db.from("sayerlack_varredura_falha").select("protocolo, primeira_em, ultima_em")
-    .is("resolvido_em", null).order("primeira_em", { ascending: true }).limit(200);
+    .is("resolvido_em", null).order("ultima_em", { ascending: true }).limit(1000);
   if (error) throw new Error(`Leitura das falhas abertas: ${error.message}`);
   return (data ?? []) as { protocolo: string; primeira_em: string; ultima_em: string }[];
 }
@@ -552,11 +565,26 @@ async function appSemPoAntigos(db: Db): Promise<{ protocolo: string; pedido_id: 
   const limite = new Date(Date.now() - 3600_000).toISOString();
   const { data, error } = await db.from("pedido_compra_sugerido").select("id, portal_protocolo, omie_pedido_compra_id, enviado_portal_em")
     .eq("empresa", "OBEN").eq("status_envio_portal", "sucesso_portal").in("status", [...STATUS_REDISPARAVEIS])
-    .not("portal_protocolo", "is", null).lt("enviado_portal_em", limite).order("id", { ascending: true }).limit(100);
+    .not("portal_protocolo", "is", null).lt("enviado_portal_em", limite).order("id", { ascending: true }).limit(1000);
   if (error) throw new Error(`Leitura dos pedidos do app sem PO: ${error.message}`);
   return ((data ?? []) as { id: number; portal_protocolo: string | null; omie_pedido_compra_id: string | null }[])
     .filter((r) => { const po = (r.omie_pedido_compra_id ?? "").trim(); return po === "" || po === "0"; })
     .map((r) => ({ protocolo: (r.portal_protocolo ?? "").trim(), pedido_id: r.id }));
+}
+
+/**
+ * Grava a TENTATIVA de reconsulta antes de abrir o navegador (`ultima_em` = agora; cria a linha se não houver, sem
+ * e-mail). Devolve false se não gravou — e aí a tentativa cara não acontece (o intervalo de 20 h depende disto).
+ */
+async function registrarTentativa(db: Db, protocolo: string, mensagem: string): Promise<boolean> {
+  const agora = new Date().toISOString();
+  const { data, error } = await db.from("sayerlack_varredura_falha").select("protocolo").eq("protocolo", protocolo).maybeSingle();
+  if (error) { console.warn(`[varrer-portal] tentativa de ${protocolo} não gravada: ${error.message}`); return false; }
+  const { error: e2 } = data
+    ? await db.from("sayerlack_varredura_falha").update({ ultima_em: agora, resolvido_em: null }).eq("protocolo", protocolo)
+    : await db.from("sayerlack_varredura_falha").insert({ protocolo, mensagem, primeira_em: agora, ultima_em: agora, tentativas: 1 });  // CHECK tentativas >= 1
+  if (e2) { console.warn(`[varrer-portal] tentativa de ${protocolo} não gravada: ${e2.message}`); return false; }
+  return true;
 }
 
 /** Reconsulta por número a cada no máximo este intervalo (a falha aberta grava `ultima_em` a cada tentativa). */
@@ -633,11 +661,11 @@ Deno.serve(async (req: Request) => {
     const lista = lerListaConsulta(envelope.linhas ?? []);
     const prova = provarLeitura({
       headers: envelope.headers ?? [], linhasLidas: (envelope.linhas ?? []).length,
-      respostaTotal: envelope.resposta_total, info: envelope.info, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
+      respostaTotal: envelope.resposta_total, dtTotal: envelope.dt_total, info: envelope.info, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
     });
     resumoFinal = {
       modo, versao: VERSAO, emissao_desde: emissaoDesde, paginas: envelope.paginas ?? null, info_portal: envelope.info ?? null,
-      total_anunciado: prova.ok ? prova.total : (envelope.resposta_total ?? null), resposta_chaves: envelope.resposta_chaves ?? null,
+      total_anunciado: prova.ok ? prova.total : (envelope.resposta_total ?? null), dt_total: envelope.dt_total ?? null, resposta_chaves: envelope.resposta_chaves ?? null,
       linhas_lidas: (envelope.linhas ?? []).length, lidos: lista.pedidos.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
       cabecalhos: envelope.headers ?? [], prova_leitura: prova.ok ? "ok" : prova.motivo,
     };
@@ -685,6 +713,7 @@ Deno.serve(async (req: Request) => {
     const falhas: unknown[] = [];
     const adiados: string[] = [];
     const indeterminados: unknown[] = [];
+    resumoFinal = { ...resumoFinal, importados, falhas, adiados, indeterminados };
     if (modo === "importar") {
       for (const c of candidatos) {
         if (semTempo()) { adiados.push(c.protocolo); continue; }
@@ -718,11 +747,11 @@ Deno.serve(async (req: Request) => {
         }
       }
     }
-    resumoFinal = { ...resumoFinal, importados, falhas, adiados, indeterminados };
 
     // 4. Re-disparo de pedido no app SEM PO. A importadora relê a situação no portal antes (v1.5) — cancelado ou fora
     //    da lista não vira PO. Re-disparo que FALHA deixa a rodada vermelha (3.5).
     const redisparos: { protocolo: string; pedido_id: number | null; acao: string; [k: string]: unknown }[] = [];
+    resumoFinal = { ...resumoFinal, redisparos };
     if (modo === "importar") {
       for (const p of semPo) {
         const ped = noApp.get(p.protocolo);
@@ -761,23 +790,47 @@ Deno.serve(async (req: Request) => {
         }
       }
     }
-    resumoFinal = { ...resumoFinal, redisparos };
 
     // 5. Pendências ALÉM da janela de 7 dias (3.7): pedido do app sem PO e falha aberta cujo protocolo não apareceu na
     //    lista lida são reconsultados POR NÚMERO pela importadora (lê o pedido, a situação, e só então grava/re-dispara),
     //    com teto por rodada e no máximo 1 vez a cada 20 h por protocolo (cada uma é 1 sessão do Browserless).
-    const reconsultas: unknown[] = [];
+    const reconsultas: { protocolo: string; acao: string; [k: string]: unknown }[] = [];
+    resumoFinal = { ...resumoFinal, reconsultas };
     if (modo === "importar") {
       const [abertas, appSemPo] = await Promise.all([falhasAbertas(db), appSemPoAntigos(db)]);
+      const ultimaDaFalha = new Map(abertas.map((f) => [f.protocolo, f.ultima_em]));
       const recentes = new Set(abertas.filter((f) => Date.now() - Date.parse(f.ultima_em) < INTERVALO_RECONSULTA_MS).map((f) => f.protocolo));
       const fila = reconsultasForaDaJanela({
         lidos: new Set(protocolos),
-        semPoNoApp: appSemPo.filter((p) => !recentes.has(p.protocolo)),
+        semPoNoApp: appSemPo.filter((p) => !recentes.has(p.protocolo)).map((p) => ({ ...p, ultima_tentativa: ultimaDaFalha.get(p.protocolo) ?? null })),
         falhasAbertas: abertas.filter((f) => !recentes.has(f.protocolo)),
       });
       for (const q of fila) {
         if (semTempo()) { reconsultas.push({ ...q, acao: "adiado_tempo" }); continue; }
         if (motivoBloqueio(await pedidosEmVoo(db))) { reconsultas.push({ ...q, acao: "adiado_em_voo" }); break; }
+        // Reconfere o BANCO antes de abrir o navegador (Codex P2): PO já no Omie resolve sem gastar sessão.
+        const [noAppQ, omieQ] = await Promise.all([pedidosNoApp(db, [q.protocolo]), contratosNoOmie(db, [q.protocolo])]);
+        const pedQ = noAppQ.get(q.protocolo) ?? null;
+        if (!pedQ) {
+          if (omieQ.size > 0) { await marcarResolvidos(db, [q.protocolo]); reconsultas.push({ ...q, acao: "ja_no_omie_resolvido" }); continue; }
+          // Sem pedido no app, a reconsulta pode CRIAR o PO: a carência vale aqui também (Codex P1) — sair da janela
+          // nunca libera uma compra que o sync do espelho ainda não deixou provar que não foi lançada à mão.
+          const vistosQ = await vistosAntes(db, [q.protocolo]);
+          const cl = aplicarCarencia([{ protocolo: q.protocolo, situacao: "", situacao_codigo: null, emissao: null, classe: "candidato" }], vistosQ, syncEm)[0];
+          if (cl.classe !== "candidato") { reconsultas.push({ ...q, acao: cl.classe }); continue; }
+        } else if (pedQ.temPo) {
+          await marcarResolvidos(db, [q.protocolo]); reconsultas.push({ ...q, acao: "po_ja_no_app_resolvido" }); continue;
+        } else if (omieQ.size > 0) {
+          // Pedido no app sem PO e PO manual no Omie: pendência de vinculação (item 7.1), não re-disparo.
+          reconsultas.push({ ...q, acao: "po_manual_no_omie" }); continue;
+        }
+        // A tentativa é GRAVADA antes da chamada cara (Codex P2): timeout também conta para o intervalo de 20 h, e sem
+        // gravar não abre o navegador.
+        if (!(await registrarTentativa(db, q.protocolo, q.origem === "app_sem_po"
+          ? `Pedido ${q.protocolo} (#${q.pedido_id}) no app sem pedido de compra, fora da janela da varredura: reconsulta por número.`
+          : `Reconsulta por número de pendência fora da janela da varredura.`))) {
+          reconsultas.push({ ...q, acao: "tentativa_nao_gravada" }); continue;
+        }
         const r = await importar(q.protocolo, [...SITUACOES_IMPORTAVEIS])
           .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
         const res = resumoImportacao(r.httpStatus, r.corpo);
@@ -792,12 +845,15 @@ Deno.serve(async (req: Request) => {
           await marcarResolvidos(db, [q.protocolo]);
           reconsultas.push({ ...q, acao: "cancelado_no_portal_resolvido" });
         } else {
+          // Situação fora da lista (atendido, pendente) é pendência HUMANA esperada; o resto é falha OPERACIONAL e deixa
+          // a rodada vermelha como o re-disparo dentro da janela (Codex P2).
+          const humana = c.motivo === "situacao_nao_permitida";
           const { notificado } = await registrarFalha(db, q.protocolo, `Reconsulta além da janela: ${res.mensagem}`);
-          reconsultas.push({ ...q, acao: "pendente", notificado });
+          reconsultas.push({ ...q, acao: humana ? "pendente_humano" : "falhou", notificado, mensagem: res.mensagem });
         }
       }
     }
-    resumoFinal = { ...resumoFinal, reconsultas };
+
 
     // 6. Carência presa esperando o sync do espelho há mais de 6 h (3.9): o sync de pedidos de compra travou e nada
     //    importa sozinho — vira pendência visível (e-mail 1 vez por protocolo), não espera eterna em silêncio.
@@ -834,6 +890,8 @@ Deno.serve(async (req: Request) => {
     if (falhas.length > 0) problemas.push(`${falhas.length} pedido(s) do portal não entraram no Omie: ${falhas.map((f) => (f as { protocolo: string }).protocolo).join(", ")}`);
     const redisparosFalhos = redisparos.filter((r) => r.acao === "falhou");
     if (redisparosFalhos.length > 0) problemas.push(`${redisparosFalhos.length} re-disparo(s) sem PO confirmado: ${redisparosFalhos.map((r) => r.protocolo).join(", ")}`);
+    const reconsultasFalhas = reconsultas.filter((r) => r.acao === "falhou" || r.acao === "tentativa_nao_gravada");
+    if (reconsultasFalhas.length > 0) problemas.push(`${reconsultasFalhas.length} reconsulta(s) além da janela falharam: ${reconsultasFalhas.map((r) => r.protocolo).join(", ")}`);
     if (falhasReconciliacao.length > 0) {
       problemas.push(`Reconciliação: ${falhasReconciliacao.length} pedido(s) cancelado(s) no portal não encerraram: ` +
         falhasReconciliacao.map((f) => `#${f.pedido_id} (${f.mensagem})`).join("; "));
@@ -869,7 +927,7 @@ Deno.serve(async (req: Request) => {
       if (env.success !== true) return { ...resumoRec, leitura_falhou: `${env.erroTipo ?? "?"}: ${env.erro ?? "sem detalhe"}` };
       const lida = lerListaConsulta(env.linhas ?? []);
       const provaRec = provarLeitura({
-        headers: env.headers ?? [], linhasLidas: (env.linhas ?? []).length, respostaTotal: env.resposta_total, info: env.info,
+        headers: env.headers ?? [], linhasLidas: (env.linhas ?? []).length, respostaTotal: env.resposta_total, dtTotal: env.dt_total, info: env.info,
         ilegiveis: lida.ilegiveis, repetidos: lida.repetidos,
       });
       if (!provaRec.ok) return { ...resumoRec, leitura_falhou: `sem prova (${provaRec.motivo}): ${provaRec.detalhe}` };

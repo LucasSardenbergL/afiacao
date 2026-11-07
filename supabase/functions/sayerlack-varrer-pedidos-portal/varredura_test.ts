@@ -262,7 +262,7 @@ Deno.test("prova: linha ilegível e protocolo repetido são erro, não descarte 
   assertEquals(b.ok ? "ok" : b.motivo, "protocolo_repetido");
 });
 Deno.test("total anunciado: JSON do DataTables vence; texto pt/en; lixo é null", () => {
-  assertEquals(totalAnunciado({ respostaTotal: 7, info: "de 9 registros" }), 7);
+  assertEquals(totalAnunciado({ respostaTotal: 7, info: "de 7 registros" }), 7);
   assertEquals(totalAnunciado({ info: "Mostrando de 1 até 10 de 1.234 registros" }), 1234);
   assertEquals(totalAnunciado({ info: "Showing 1 to 10 of 23 entries" }), 23);
   assertEquals(totalAnunciado({ respostaTotal: -1 }), null);
@@ -280,13 +280,30 @@ Deno.test("carência presa: só aguarda_sync com 1ª vista há mais de 6 h", () 
   const vistos = new Map([["1", "2026-11-07T05:00:00Z"], ["2", "2026-11-07T07:00:00Z"], ["3", "2026-11-01T00:00:00Z"]]);
   assertEquals(carenciaTravada(cl, vistos, agora).map((t) => t.protocolo), ["1"]);
 });
-Deno.test("reconsultas além da janela: app sem PO primeiro, depois falhas mais antigas; sem os já lidos; teto", () => {
+Deno.test("reconsultas além da janela: tentativa mais antiga primeiro (nunca tentado na frente); sem os já lidos; teto", () => {
   const r = reconsultasForaDaJanela({
     lidos: new Set(["111"]),
-    semPoNoApp: [{ protocolo: "111", pedido_id: 1 }, { protocolo: "222", pedido_id: 2 }],
-    falhasAbertas: [{ protocolo: "444", primeira_em: "2026-10-20" }, { protocolo: "333", primeira_em: "2026-10-10" }, { protocolo: "222", primeira_em: "2026-10-01" }, { protocolo: "x", primeira_em: "2026-01-01" }],
+    semPoNoApp: [{ protocolo: "111", pedido_id: 1 }, { protocolo: "222", pedido_id: 2, ultima_tentativa: "2026-11-05T00:00:00Z" }, { protocolo: "555", pedido_id: 5 }],
+    falhasAbertas: [{ protocolo: "444", ultima_em: "2026-11-01T00:00:00Z" }, { protocolo: "333", ultima_em: "2026-11-06T00:00:00Z" }, { protocolo: "222", ultima_em: "2026-10-01" }, { protocolo: "x", ultima_em: "2026-01-01" }],
     teto: 3,
   });
-  assertEquals(r.map((q) => q.protocolo + ":" + q.origem), ["222:app_sem_po", "333:falha_aberta", "444:falha_aberta"]);
+  assertEquals(r.map((q) => q.protocolo + ":" + q.origem), ["555:app_sem_po", "444:falha_aberta", "222:app_sem_po"]);
   assertEquals(reconsultasForaDaJanela({ lidos: new Set(), semPoNoApp: [], falhasAbertas: [] }), []);
+});
+Deno.test("reconsultas: 13 pendências persistentes — com a tentativa gravada, a 13ª entra em ≤ 4 rodadas (Codex P2)", () => {
+  let falhas = Array.from({ length: 13 }, (_, i) => ({ protocolo: String(9000000 + i), ultima_em: `2026-10-${String(10 + i).padStart(2, "0")}T00:00:00Z` }));
+  const tentados = new Set<string>();
+  for (let rodada = 0; rodada < 4; rodada++) {
+    const fila = reconsultasForaDaJanela({ lidos: new Set(), semPoNoApp: [], falhasAbertas: falhas });
+    for (const q of fila) tentados.add(q.protocolo);
+    falhas = falhas.map((f) => fila.some((q) => q.protocolo === f.protocolo) ? { ...f, ultima_em: `2026-11-0${rodada + 1}T00:00:00Z` } : f);
+  }
+  assertEquals(tentados.size, 13);
+});
+Deno.test("total: recordsFiltered + DataTables + texto; divergência é explícita", () => {
+  assertEquals(totalAnunciado({ respostaTotal: 7, dtTotal: 7, info: "de 7 registros" }), 7);
+  assertEquals(totalAnunciado({ dtTotal: 5 }), 5);
+  assertEquals(totalAnunciado({ respostaTotal: 7, dtTotal: 9 }), "divergente");
+  const r = provarLeitura({ ...base, linhasLidas: 7, respostaTotal: 7, dtTotal: 9 });
+  assertEquals(r.ok ? "ok" : r.motivo, "total_divergente");
 });
