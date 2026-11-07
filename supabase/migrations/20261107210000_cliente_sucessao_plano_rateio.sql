@@ -676,8 +676,10 @@ GRANT EXECUTE ON FUNCTION public.venda_gerar_lista(date, text) TO service_role;
 -- Só as fases que o gerador já rodou hoje (venda_gerador_execucao): antes disso, o cron gera com o plano.
 -- Sai (para o arquivo) a sugestão do escopo cujo cálculo mudou, NUNCA mostrada e SEM desfecho; entra a substituta
 -- (ON CONFLICT DO NOTHING: a preservada, mostrada ou com desfecho, fica). `p_novo` = a lista efetiva de HOJE inteira,
--- calculada UMA vez pela drenagem sob as duas travas (gerador + grafo): NULL = o gerador ainda não rodou hoje.
-CREATE OR REPLACE FUNCTION private.venda_sugestoes_reprocessar_sucessao(p_evento_id uuid, p_motivo text, p_novo jsonb)
+-- calculada UMA vez pela drenagem: NULL = o gerador ainda não rodou hoje. `p_revisao` = a revisão vigente no MESMO
+-- retrato SQL em que a lista foi calculada (é a que vai para o arquivo).
+CREATE OR REPLACE FUNCTION private.venda_sugestoes_reprocessar_sucessao(p_evento_id uuid, p_motivo text, p_novo jsonb,
+                                                                        p_revisao integer)
  RETURNS jsonb
  LANGUAGE plpgsql
  VOLATILE
@@ -694,14 +696,12 @@ DECLARE
   v_sai integer := 0;
   v_entra integer := 0;
   v_pres integer := 0;
-  v_rev integer;
+  v_rev integer := p_revisao;
 BEGIN
   IF p_evento_id IS NULL OR p_motivo IS NULL OR p_motivo NOT IN ('plano_publicado', 'plano_revogado', 'estado_mudou') THEN
     RAISE EXCEPTION 'venda_sugestoes_reprocessar_sucessao: evento e motivo' USING ERRCODE = '22023';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtext('venda_gerar_lista'));
-  -- A revisão que o cálculo de fato usa (a vigente AGORA, sob a trava), não a que pediu o reprocesso.
-  SELECT max(r.revisao) INTO v_rev FROM public.cliente_sucessao_plano_revisoes r WHERE r.evento_id = p_evento_id;
 
   SELECT array_agg(DISTINCT z.uid) INTO v_compradores
     FROM (
@@ -816,12 +816,12 @@ BEGIN
                             'substituidas', v_sai, 'novas', v_entra, 'preservadas', v_pres);
 END
 $function$;
-REVOKE ALL ON FUNCTION private.venda_sugestoes_reprocessar_sucessao(uuid, text, jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.venda_sugestoes_reprocessar_sucessao(uuid, text, jsonb, integer) FROM PUBLIC, anon, authenticated;
 
 -- A assinatura do estado de herança por evento: as linhas de vigentes (id, estado, tipo, corte, extremos
 -- resolvidos) + a revisão vigente do plano. Muda quando muda qualquer coisa de que a trilha efetiva depende.
 CREATE OR REPLACE FUNCTION private.cliente_sucessao_assinaturas(p_hoje date)
- RETURNS TABLE(evento_id uuid, assinatura text)
+ RETURNS TABLE(evento_id uuid, assinatura text, revisao integer)
  LANGUAGE sql
  STABLE
  SET search_path TO 'public', 'pg_temp'
@@ -836,7 +836,8 @@ AS $function$
          md5(COALESCE((SELECT string_agg(concat_ws(':', v.id, v.estado, v.tipo, v.data_corte, v.antigo_user_id, v.novo_user_id),
                                          ',' ORDER BY v.id)
                          FROM v WHERE v.evento_id = e.evento_id), '')
-             || '|' || COALESCE((SELECT rev.revisao || ':' || rev.revoga FROM rev WHERE rev.evento_id = e.evento_id), '0'))
+             || '|' || COALESCE((SELECT rev.revisao || ':' || rev.revoga FROM rev WHERE rev.evento_id = e.evento_id), '0')),
+         (SELECT rev.revisao FROM rev WHERE rev.evento_id = e.evento_id)
     FROM (SELECT DISTINCT s.evento_id FROM public.cliente_sucessoes s) e
 $function$;
 REVOKE ALL ON FUNCTION private.cliente_sucessao_assinaturas(date) FROM PUBLIC, anon, authenticated;
@@ -844,10 +845,11 @@ REVOKE ALL ON FUNCTION private.cliente_sucessao_assinaturas(date) FROM PUBLIC, a
 -- Drena a fila. (1) DETECTA: evento cuja assinatura mudou desde o último reconcilio, sem pedido pendente, ganha um
 -- pedido `estado_mudou` (revogação de declaração, alias, cadastro, corte — nada disso passa pelas RPCs do plano).
 -- (2) Por evento pendente, reprocessa UMA vez (o pedido mais novo; os anteriores ficam `superado_por`) e grava a
--- assinatura vista. TRAVAS: a do GERADOR em try (no cron: se o gerador roda, sai e tenta no minuto seguinte; dentro do
--- gerador é reentrante — uma trava só, sem a corrida de duas) e a do GRAFO da sucessão (a de publicar/revogar/declarar):
--- plano e declarações ficam parados enquanto se lê revisão, assinatura e cálculo. O que muda por fora do grafo (alias,
--- cadastro) depois da captura da assinatura diverge dela e volta na rodada seguinte. O cálculo roda UMA vez por drenagem.
+-- assinatura vista. TRAVA: só a do GERADOR, em try (no cron: se o gerador roda, sai e tenta no minuto seguinte; dentro
+-- do gerador é reentrante). NÃO pega a do grafo: publicar/revogar/declarar nunca esperam o cálculo de 6–9 s (o
+-- statement_timeout=8s do authenticated). Coerência OTIMISTA: as assinaturas e revisões de TODOS os eventos e a lista
+-- efetiva saem do MESMO comando SQL (um retrato só: as funções STABLE usam o do chamador), e é essa assinatura que vai
+-- para estado_visto. O que mudar depois diverge dela e volta pela detecção na rodada seguinte.
 CREATE OR REPLACE FUNCTION private.venda_sugestoes_drenar_reprocesso()
  RETURNS integer
  LANGUAGE plpgsql
@@ -859,12 +861,12 @@ DECLARE
   v_n integer := 0;
   v_hoje date;
   v_novo jsonb;
+  v_estado jsonb;
   v_assin text;
 BEGIN
   IF NOT pg_try_advisory_xact_lock(hashtext('venda_gerar_lista')) THEN
     RETURN 0;
   END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended('cliente_sucessoes:grafo', 0));
   v_hoje := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
   INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, revisao_pedida, motivo)
   SELECT a.evento_id, NULL, 'estado_mudou'
@@ -877,19 +879,23 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM private.venda_sugestoes_reprocesso_fila f WHERE f.processado_em IS NULL) THEN
     RETURN 0;
   END IF;
-  IF EXISTS (SELECT 1 FROM public.venda_gerador_execucao e WHERE e.dia_referencia = v_hoje) THEN
-    SELECT COALESCE(jsonb_agg(to_jsonb(l)), '[]'::jsonb) INTO v_novo FROM private.venda_lista_calc_efetiva(v_hoje) l;
-  END IF;
+  -- UM comando, UM retrato: o estado de cada evento e a lista calculada sobre ele.
+  SELECT (SELECT COALESCE(jsonb_object_agg(a.evento_id::text, jsonb_build_object('assinatura', a.assinatura, 'revisao', a.revisao)), '{}'::jsonb)
+            FROM private.cliente_sucessao_assinaturas(v_hoje) a),
+         CASE WHEN EXISTS (SELECT 1 FROM public.venda_gerador_execucao e WHERE e.dia_referencia = v_hoje)
+              THEN (SELECT COALESCE(jsonb_agg(to_jsonb(l)), '[]'::jsonb) FROM private.venda_lista_calc_efetiva(v_hoje) l) END
+    INTO v_estado, v_novo;
 
   FOR r IN SELECT DISTINCT ON (f.evento_id) f.id, f.evento_id, f.motivo
              FROM private.venda_sugestoes_reprocesso_fila f
             WHERE f.processado_em IS NULL
             ORDER BY f.evento_id, f.id DESC LOOP
-    -- a assinatura do estado que este reprocesso vai calcular, capturada ANTES do cálculo
-    SELECT a.assinatura INTO v_assin FROM private.cliente_sucessao_assinaturas(v_hoje) a WHERE a.evento_id = r.evento_id;
+    -- a assinatura e a revisão do retrato em que v_novo foi calculado
+    v_assin := v_estado -> r.evento_id::text ->> 'assinatura';
     UPDATE private.venda_sugestoes_reprocesso_fila f
        SET processado_em = clock_timestamp(),
-           resultado = private.venda_sugestoes_reprocessar_sucessao(r.evento_id, r.motivo, v_novo)
+           resultado = private.venda_sugestoes_reprocessar_sucessao(r.evento_id, r.motivo, v_novo,
+                                                                    (v_estado -> r.evento_id::text ->> 'revisao')::integer)
      WHERE f.id = r.id;
     UPDATE private.venda_sugestoes_reprocesso_fila f
        SET processado_em = clock_timestamp(), resultado = jsonb_build_object('superado_por', r.id)
@@ -1220,7 +1226,7 @@ BEGIN
   FOR r IN SELECT * FROM (VALUES ('private.historico_consumo_efetivo(date)'), ('private.historico_compradores_encerrados(date)'),
                                   ('private.venda_recompra_efetiva_em(date)'), ('private.venda_situacao_efetiva_em(date)'),
                                   ('private.venda_lista_calc_efetiva(date)'),
-                                  ('private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb)'),
+                                  ('private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb,integer)'),
                                   ('private.cliente_sucessao_assinaturas(date)'),
                                   ('private.cliente_sucessao_plano_imutavel()'),
                                   ('private.venda_sugestao_substituida_imutavel()')) AS x(sig)

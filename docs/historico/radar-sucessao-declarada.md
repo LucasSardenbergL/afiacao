@@ -92,7 +92,7 @@ DADOS; o painel e os consumidores da lista/ficha/complemento são o PR C.
   objeto deles é recriado.
 
 ## Prova
-`db/test-cliente-sucessao-plano.sh` (no núcleo do CI): 108 asserts e 34 sabotagens (inclui concorrência real em duas sessões: a drenagem com o gerador rodando e com o grafo travado), todas vermelhas no assert declarado,
+`db/test-cliente-sucessao-plano.sh` (no núcleo do CI): 112 asserts e 35 sabotagens (inclui concorrência real em duas sessões: a drenagem com o gerador rodando, e cadastro + declaração DURANTE o cálculo da drenagem), todas vermelhas no assert declarado,
 com controle verde na mesma invocação. Monta o schema com `corpo-vivo.sh` (a cadeia dinâmica pega o gerador de venda, a
 entrega 2 e esta). Validação do founder: `db/validar-cliente-sucessao-plano.sql` (12 ✅, exercitada pela prova).
 
@@ -111,6 +111,12 @@ entrega 2 e esta). Validação do founder: `db/validar-cliente-sucessao-plano.sq
   O gatilho certo é o ESTADO de que a trilha depende (assinatura), não a porta por onde a mudança costuma entrar.
 - **Prova de invariância que recalcula o snapshot antes de comparar restaura a adulteração** (Codex, P1): a assinatura
   só LÊ; o recálculo vira um assert à parte (I1b), e a sabotagem que apaga a tabela tem de ficar vermelha no I1.
+
+- **Trava longa para coerência troca um bug por outro** (Codex, rodada 3): segurar a trava do grafo durante o cálculo
+  de 6–9 s fazia declarar/publicar esperarem e estourarem os 8 s do `authenticated`. Coerência OTIMISTA: o estado
+  (assinatura + revisão de cada evento) e a lista saem do MESMO comando SQL (as funções STABLE usam o retrato do
+  chamador), e o que mudar depois volta pela detecção. Prova: cálculo lento por stub e outra sessão mudando o estado
+  no meio.
 
 ## Deploy
 🟣 founder: a migration no SQL Editor (depois da `20261107013000`) → conferir com `db/validar-cliente-sucessao-plano.sql`

@@ -92,20 +92,22 @@ UBN='00000000-0000-0000-0000-0000000c0022'     # a sucessora
 UQ='00000000-0000-0000-0000-0000000c0031'      # cliente alheio, mesma carteira
 UX2='00000000-0000-0000-0000-0000000c0041'     # a antiga de E4 (vira alias da UA no fim: grafo → declarada)
 UN4='00000000-0000-0000-0000-0000000c0042'
+UN5='00000000-0000-0000-0000-0000000c0051'     # nova de E5: cadastra DURANTE o cálculo da drenagem
+U6A='00000000-0000-0000-0000-0000000c0061'     # antiga de E6: declarada DURANTE o cálculo
 ANT='03166577000166'; NOV1='69491768000101'; NOV2='22222222000122'
-DB_='33333333000133'; DBN='44444444000144'; DQ='55555555000155'; DX2='66666666000166'; DN4='77777777000177'
+DB_='33333333000133'; DBN='44444444000144'; DQ='55555555000155'; DX2='66666666000166'; DN4='77777777000177'; DN5='88888888000188'; D6A='99999999000199'; D6N='12121212000112'
 
 echo "→ seed: papéis, clientes, carteira, produtos, pedidos…"
 P -v ON_ERROR_STOP=1 -q <<SQL
 BEGIN;
 INSERT INTO auth.users (id) VALUES ('$MASTER'),('$GER'),('$FARM'),('$UA'),('$UAL'),('$UN1'),('$UN2'),('$UB'),('$UBN'),
-  ('$UQ'),('$UX2'),('$UN4');
+  ('$UQ'),('$UX2'),('$UN4'),('$UN5'),('$U6A');
 INSERT INTO public.user_roles (user_id, role) VALUES ('$MASTER','master'),('$GER','employee'),('$FARM','employee');
 INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES ('$MASTER','master'),('$GER','gerencial'),('$FARM','farmer');
 INSERT INTO public.profiles (user_id, name) VALUES ('$MASTER','Lucas'),('$GER','Gestor'),('$FARM','Farmer Um');
 INSERT INTO public.profiles (user_id, name, document) VALUES
   ('$UA','DIVIMOVEIS','$ANT'), ('$UN2','NOVA DOIS','$NOV2'), ('$UB','ANTIGA B','$DB_'), ('$UBN','SUCESSORA B','$DBN'),
-  ('$UQ','ALHEIO','$DQ'), ('$UX2','ANTIGA X','$DX2'), ('$UN4','NOVA QUATRO','$DN4');
+  ('$UQ','ALHEIO','$DQ'), ('$UX2','ANTIGA X','$DX2'), ('$UN4','NOVA QUATRO','$DN4'), ('$U6A','ANTIGA SEIS','$D6A');
 INSERT INTO public.customer_canonical_alias (alias_user_id, canonical_user_id, documento, status) VALUES
   ('$UAL', '$UA', '$ANT', 'active');
 UPDATE public.venda_config SET valor = 'true'::jsonb WHERE chave = 'onda_recompra';
@@ -113,7 +115,7 @@ UPDATE public.venda_config SET valor = 'false'::jsonb WHERE chave IN ('onda_comp
 ALTER TABLE public.carteira_assignments DISABLE TRIGGER ALL;
 INSERT INTO public.carteira_assignments (owner_user_id, customer_user_id, eligible, source) VALUES
   ('$FARM','$UA',true,'omie'), ('$FARM','$UN1',true,'omie'), ('$FARM','$UN2',true,'omie'), ('$FARM','$UB',true,'omie'),
-  ('$FARM','$UBN',true,'omie'), ('$FARM','$UQ',true,'omie'), ('$FARM','$UX2',true,'omie'), ('$FARM','$UN4',true,'omie');
+  ('$FARM','$UBN',true,'omie'), ('$FARM','$UQ',true,'omie'), ('$FARM','$UX2',true,'omie'), ('$FARM','$UN4',true,'omie'), ('$FARM','$UN5',true,'omie');
 ALTER TABLE public.omie_products DISABLE TRIGGER ALL;
 INSERT INTO public.omie_products (account, codigo, descricao, omie_codigo_produto, familia) VALUES
   ('oben','1001','PROD 1001',1001,'OUTRA'), ('oben','1002','PROD 1002',1002,'OUTRA'), ('colacor','1003','PROD 1003',1003,'OUTRA'),
@@ -282,6 +284,8 @@ cenario() {
     "$(Q "SELECT count(*) FROM pg_proc WHERE proname IN ('cliente_sucessao_plano_publicar','cliente_sucessao_plano_revogar')
            AND prosrc ~ 'reprocessar_sucessao|lista_calc|recompra_efetiva|situacao_efetiva'")/$(Q "SELECT count(*) FROM pg_proc
            WHERE proname IN ('cliente_sucessao_plano_publicar','cliente_sucessao_plano_revogar') AND prosrc ~ 'INSERT INTO private.venda_sugestoes_reprocesso_fila'")" "0/2"
+  chk M8 "a drenagem NÃO pega a trava do grafo (publicar/revogar/declarar nunca esperam o cálculo)" \
+    "$(Q "SELECT count(*) FROM pg_proc WHERE proname = 'venda_sugestoes_drenar_reprocesso' AND prosrc ~ 'cliente_sucessoes:grafo'")" "0"
   chk M6 "o cron que drena a fila existe, ativo, SQL direto" \
     "$(Q "SELECT schedule || '|' || command FROM cron.job WHERE jobname = 'venda-sucessao-reprocesso' AND active")" \
     "* * * * *|SELECT private.venda_sugestoes_drenar_reprocesso();"
@@ -524,10 +528,7 @@ cenario() {
   chk CL1 "concorrência: com o GERADOR rodando em outra sessão, a drenagem do cron sai NA HORA, sem drenar" \
     "$(Q "SELECT private.venda_sugestoes_drenar_reprocesso() || '/' || (extract(epoch FROM clock_timestamp() - now()) < 1)")/$(Q "SELECT count(*) FROM private.venda_sugestoes_reprocesso_fila WHERE processado_em IS NULL")" "0/true/1"
   wait "$SEGURA_PID" || true
-  segurar "pg_advisory_xact_lock(hashtextextended('cliente_sucessoes:grafo', 0))" 2 || true
-  chk CL2 "concorrência: com o GRAFO travado (publicar/declarar em voo), a drenagem ESPERA e só então reprocessa" \
-    "$(Q "SELECT private.venda_sugestoes_drenar_reprocesso() || '/' || (extract(epoch FROM clock_timestamp() - now()) >= 1.5)")" "1/true"
-  wait "$SEGURA_PID" || true
+  chk CL1b "e o pedido drena quando o gerador solta" "$(drenar)" "1"
   chk Z2 "nada herdado de E1" "$(lin "sucessao_evento_id = '$E1'")" "0"
   chk Z3 "a lista: a antiga recupera; a 1ª nova perde (arquivada como plano_revogado)" \
     "$(codigos "$UA")|$(codigos "$UN1")|$(Q "SELECT count(*) FROM public.venda_sugestao_substituida WHERE motivo = 'plano_revogado' AND comprador_id = '$UN1'")" \
@@ -547,6 +548,30 @@ cenario() {
   chk X2 "a troca de alias é detectada: E1 e E4 reprocessados; a nova de E4 perde a sugestão herdada" \
     "$(drenar)/$(codigos "$UN4")" "2/"
 
+  echo "── 11b. concorrência DURANTE o cálculo da drenagem (cálculo lento por stub; outra sessão drena) ──"
+  E5="$(declarar "$DQ" "$DN5" cisao -60)"
+  chk CC0 "E5 (destino sem cadastro) publicado e drenado: o alheio segue com 3001, a nova sem nada" \
+    "$(publicar "$E5" 0 "[$(item oben 3001 "$DN5")]" ok)/$(drenar)/$(codigos "$UQ")/$(codigos "$UN5")" "true/1/3001/"
+  # o cálculo fica lento (2 s) só aqui: a lista é a mesma, a janela da corrida fica larga e determinística
+  Q "DO \$s\$ DECLARE r text := pg_get_function_result('public.venda_cidades_alvo(date)'::regprocedure); BEGIN
+       ALTER FUNCTION public.venda_cidades_alvo(date) RENAME TO venda_cidades_alvo_rapida;
+       EXECUTE format('CREATE FUNCTION public.venda_cidades_alvo(p date) RETURNS %s LANGUAGE plpgsql AS \$f\$ BEGIN PERFORM pg_sleep(2); RETURN QUERY SELECT * FROM public.venda_cidades_alvo_rapida(p); END \$f\$', r);
+     END \$s\$" > /dev/null
+  Q "INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, motivo) VALUES ('$E5', 'estado_mudou')" > /dev/null
+  P -q -c "SELECT private.venda_sugestoes_drenar_reprocesso()" > /dev/null 2>&1 &
+  SEGURA_PID=$!
+  for _ in $(seq 1 100); do   # pronto = a OUTRA sessão está DENTRO do cálculo (dormindo no stub)
+    [ "$(Q "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event = 'PgSleep' AND query LIKE '%drenar_reprocesso%'")" = 1 ] && break
+    sleep 0.1
+  done
+  chk CC1 "declarar (trava do grafo) NÃO espera o cálculo da drenagem em curso" \
+    "$(q_como authenticated "$GER" "SELECT (r ->> 'ok') || '/' || (extract(epoch FROM clock_timestamp() - now()) < 1)
+         FROM (SELECT public.cliente_declarar_sucessao('$D6A', '$D6N', 'cisao', (SELECT hoje - 60 FROM public.t_cfg), $(versao)) AS r) x")" "true/true"
+  Q "INSERT INTO public.profiles (user_id, name, document) VALUES ('$UN5', 'NOVA CINCO', '$DN5')" > /dev/null   # cadastra NO MEIO
+  wait "$SEGURA_PID" || true
+  Q "DROP FUNCTION public.venda_cidades_alvo(date); ALTER FUNCTION public.venda_cidades_alvo_rapida(date) RENAME TO venda_cidades_alvo" > /dev/null
+  chk CC2 "o que mudou durante o cálculo NÃO foi dado como visto: a rodada seguinte reprocessa e a nova recebe 3001" \
+    "$(drenar)/$(codigos "$UN5")/$(codigos "$UQ")" "2/3001/"
   echo "── 12. imutabilidade e porta ──"
   chk H1 "UPDATE de revisão → 23001" "$(Q "SELECT prova.sqlstate(\$c\$UPDATE public.cliente_sucessao_plano_revisoes SET motivo = 'x'\$c\$)")" "23001"
   chk H2 "DELETE de regra → 23001" "$(Q "SELECT prova.sqlstate(\$c\$DELETE FROM public.cliente_sucessao_plano_regras\$c\$)")" "23001"
@@ -576,7 +601,7 @@ cenario() {
 GERAR='public.venda_gerar_lista(date,text)'
 PUB='public.cliente_sucessao_plano_publicar(uuid,integer,jsonb,text)'
 TRILHA='private.historico_consumo_efetivo(date)'
-REPRO='private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb)'
+REPRO='private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb,integer)'
 IMUT='private.cliente_sucessao_plano_imutavel()'
 ASSIN='private.cliente_sucessao_assinaturas(date)'
 ASSIN_EVENTOS='FROM (SELECT DISTINCT s.evento_id FROM public.cliente_sucessoes s) e'
@@ -622,8 +647,12 @@ sabotagem() {
     publicar_apaga_recompra) cv_sabotar "$PUB" "v_rev := v_atual + 1;" "DELETE FROM public.venda_recompra; v_rev := v_atual + 1;" ;;
     drenar_trava_propria) cv_sabotar 'private.venda_sugestoes_drenar_reprocesso()' \
       "IF NOT pg_try_advisory_xact_lock(hashtext('venda_gerar_lista')) THEN" "IF NOT pg_try_advisory_xact_lock(hashtext('venda_sucessao_reprocesso')) THEN" ;;
-    drenar_sem_grafo) cv_sabotar 'private.venda_sugestoes_drenar_reprocesso()' \
-      "PERFORM pg_advisory_xact_lock(hashtextextended('cliente_sucessoes:grafo', 0));" "PERFORM 1;" ;;
+    drenar_com_grafo) cv_sabotar 'private.venda_sugestoes_drenar_reprocesso()' \
+      "v_hoje := (now() AT TIME ZONE 'America/Sao_Paulo')::date;" \
+      "PERFORM pg_advisory_xact_lock(hashtextextended('cliente_sucessoes:grafo', 0)); v_hoje := (now() AT TIME ZONE 'America/Sao_Paulo')::date;" ;;
+    drenar_assinatura_depois) cv_sabotar 'private.venda_sugestoes_drenar_reprocesso()' \
+      "v_assin := v_estado -> r.evento_id::text ->> 'assinatura';" \
+      "v_assin := (SELECT a.assinatura FROM private.cliente_sucessao_assinaturas(v_hoje) a WHERE a.evento_id = r.evento_id);" ;;
     sem_trigger_revisoes) P -v ON_ERROR_STOP=1 -q -c "DROP TRIGGER cliente_sucessao_plano_revisoes_imutavel_trg ON public.cliente_sucessao_plano_revisoes" ;;
     *) echo "SABOTAGEM desconhecida: $1"; return 1 ;;
   esac
@@ -662,7 +691,8 @@ gerador_sem_drenar:R2a,R2d:R2b
 deteccao_cega:D4,X2:D1
 publicar_apaga_recompra:I1:I1b
 drenar_trava_propria:CL1:Z1
-drenar_sem_grafo:CL2:CL1"
+drenar_com_grafo:CC1,M8:CC0
+drenar_assinatura_depois:CC2:CC1"
 
 rodada() {
   adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4
