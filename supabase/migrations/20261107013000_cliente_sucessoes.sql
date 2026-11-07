@@ -330,7 +330,7 @@ BEGIN
   SELECT s.evento_id, s.tipo, s.data_corte INTO v_ev
     FROM private.cliente_sucessoes_chaves() k
     JOIN public.cliente_sucessoes s ON s.id = k.id
-   WHERE k.chave_antigo = v_ka
+   WHERE v_ka = k.chave_antigo
    ORDER BY s.declarado_em, s.id
    LIMIT 1;
   IF FOUND THEN
