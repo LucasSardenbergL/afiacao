@@ -77,3 +77,48 @@ a transação). A PRE aborta se algum índice ganhou scan, e a pós-condição e
 por data válidos. Prova `db/test-drop-indices-scores.sh` (PG17, 12 asserts, 2 falsificações, no núcleo do
 CI). Ganho: ~211 MB. A reversão (4 `CREATE INDEX`) está no cabeçalho da migration. Tirado do escopo da
 sessão `v5-d5-b1-indices` (plano v7, D5), que segue com os índices do Radar e do tintométrico.
+
+**2026-11-07 12:32 UTC: DROP validado por fora** (`psql-ro`, exit 0, marcador `FIM-OK`). Boot
+`2026-10-31 10:33:02 UTC`, `stats_reset` nulo, janela 7 d 01:59. Os 4 têm `to_regclass` nulo. Ficaram
+`health_score_history_pkey` 30 scans, `idx_health_history_calculated_at` 25, `idx_priority_log_score_date` 30 e
+`priority_score_log_pkey` 30. Índices das tabelas: 84 MB e 85 MB.
+
+## Os outros índices com 0 scans (plano v7, D5): reler, não dropar
+
+Conferência de 2026-11-07 12:32 UTC, mesma janela de 7 d 01:59:
+
+| índice | tamanho | scans | veredito |
+|---|---|---|---|
+| `idx_radar_muni_cover` | 150 MB | — | já caiu pelo #3639 |
+| `idx_radar_empresas_titular_mei` | 17 MB | 3.696 | em uso (era 0 em 05/11, com 1 dia de vida) |
+| `idx_radar_empresas_tel2` | 1,5 MB | 4.258 | em uso |
+| `idx_radar_lista_novas` | 43 MB | 0 | **manter; reler depois do lote 2026-11** |
+| `idx_radar_lista_estab` | 58 MB | 0 | **manter; reler depois do lote 2026-11** |
+| `idx_tint_formulas_nome_cor` | 81 MB | 0 | **inalcançável pelos leitores de hoje; DROP ou busca indexável fica com o founder** |
+
+**`lista_novas`/`lista_estab`: 0 scans quer dizer "superado", mais do que "raro".** Os presets "Novas" e
+"Estabelecidas" existem (`src/lib/radar/ui-helpers.ts`, `RadarFiltros.tsx`), mas a `radar_lista` monta
+`ORDER BY e.<col> DESC NULLS LAST, e.cnpj`, e os dois índices são `(<col> DESC, cnpj)`, que é `NULLS FIRST`.
+O irmão `idx_radar_lista_score` é `DESC NULLS LAST` e tem uso (86 scans). Com a ordem que a RPC gera, o planner
+lê o índice inteiro e ordena; com `DESC` puro, para em 50 linhas. Medido sem filtro de lote, `ja_cliente = false`
+(`EXPLAIN ANALYZE`): **15,7 s** contra **2,2 ms**. Nenhuma das duas colunas tem nulo. Na tela real isso nem chega:
+o padrão é `incluirJaClientes: true` (`useRadarLista.ts:42`), e aí o predicado do índice parcial não vale. O
+`p_ultimo_lote` do recorte vigente leva o planner ao `idx_radar_empresas_lote_vista` mais um sort (`EXPLAIN`
+de 07/11). É a mesma história do `muni_cover` (#3639): o filtro de lote tirou o papel do índice. Não decido DROP
+porque o uso do Radar é mensal e a janela não pegou a chegada de lote nenhum (o vigente é `2026-10`).
+**Reler depois que o lote `2026-11` entrar e for trabalhado.** Se continuar 0, o DROP dos dois (~101 MB) segue o
+molde do #3639. Se alguém quiser os presets rápidos, a troca é recriar com `DESC NULLS LAST`, não criar outro.
+
+**`idx_tint_formulas_nome_cor` (gin trigram): os 0 scans são ESTRUTURAIS.** Os dois leitores, a busca global do
+Cmd-K (`src/hooks/useGlobalSearch.ts:112`) e a tela de fórmulas (`src/pages/TintFormulas.tsx:128`), filtram
+`cor_id ILIKE '%x%' OR nome_cor ILIKE '%x%'` (`ilikeOr`). `cor_id` não tem índice trigram, e um OR com um braço
+sem índice não vira BitmapOr. `EXPLAIN` de 07/11: o Cmd-K usa `idx_tint_formulas_ativas` com filtro, e a tela usa
+`uq_tint_formulas_chave` com filtro. O controle, só `nome_cor ILIKE`, usa o gin (Bitmap Index Scan). Nenhuma RPC
+ou edge filtra `nome_cor` por LIKE. Esperar mais não muda o número, então a decisão é de produto: (a) DROP, que
+libera 81 MB e tira a manutenção do gin da escrita em ~1 M fórmulas; ou (b) tornar a busca indexável (trigram em
+`cor_id` também). Até a decisão, fica.
+
+**Contaminação de medição:** o `EXPLAIN ANALYZE` acima rodou em 2026-11-07 ~12:40 UTC e somou ~520 k
+buffers lidos do cache e ~39 k do disco aos contadores de `radar_empresas` (heap e índice). O D12 do v7
+mediu às 12:32 UTC (#3697), antes disso, então o número dele está limpo. Um delta que atravesse essa hora
+precisa descontar essa soma.
