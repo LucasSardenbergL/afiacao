@@ -35,7 +35,7 @@ PRED="$REPO_ROOT/db/fixtures/radar-agregado-predecessoras-prod-20261103.sql"
 if [ "${1:-}" = "--falsificar" ]; then
   # nome:VERMELHOS — asserts (unidos por ',') que TÊM de ficar vermelhos; ou `APPLY!MARCA` quando a
   # postcondição/PRE da própria migration TEM de abortar o apply com aquela marca (`_` vira espaço).
-  SABOTAGENS="so_meus_ignorado:M1,M2,M3,P1 sem_eh_meu:M1,M4,M6 tabela_crua:M1,M2 default_true:E1o,E2o,E3o,E4o lista_anon:APPLY!P2_FALHOU lista_anon_sem_post:C2 sem_drop_antiga:APPLY!P1_FALHOU:_sobrou pre_cega:F1a,F1b pre_sem_ativos:F2"
+  SABOTAGENS="so_meus_ignorado:M1,M2,P1 tabela_sem_encerrado:M3 sem_eh_meu:M1,M4,M6 tabela_crua:M1,M2 default_true:E1o,E2o,E3o,E4o lista_anon:APPLY!P2_FALHOU lista_anon_sem_post:C2 sem_drop_antiga:APPLY!P1_FALHOU:_sobrou pre_cega:F1a,F1b pre_sem_ativos:F2"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-meus.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -128,6 +128,7 @@ case "${SABOTAGEM:-}" in
   so_meus_ignorado)   cegar_md5; sabotar '    v_w := array_append(v_w, $w$e.cnpj IN (SELECT a.cnpj FROM public.radar_atendimentos_ativos() a WHERE a.eh_meu)$w$);' '    NULL;' ;;
   sem_eh_meu)         cegar_md5; sabotar 'FROM public.radar_atendimentos_ativos() a WHERE a.eh_meu)$w$' 'FROM public.radar_atendimentos_ativos() a)$w$' ;;
   tabela_crua)        cegar_md5; sabotar 'FROM public.radar_atendimentos_ativos() a WHERE a.eh_meu)$w$' 'FROM public.radar_atendimentos a WHERE a.encerrado_em IS NULL AND a.dono_user_id = (SELECT auth.uid()))$w$' ;;
+  tabela_sem_encerrado) cegar_md5; sabotar 'FROM public.radar_atendimentos_ativos() a WHERE a.eh_meu)$w$' 'FROM public.radar_atendimentos a WHERE a.dono_user_id = (SELECT auth.uid()) AND a.assumido_em > now() - interval ''3 days'')$w$' ;;
   default_true)       sabotar "  p_so_meus boolean DEFAULT false)" "  p_so_meus boolean DEFAULT true)" ;;
   lista_anon)         sabotar "GRANT EXECUTE ON FUNCTION public.radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamptz,text,numeric,boolean,boolean,date,date,text,integer,integer,text,text,boolean) TO authenticated, service_role;" \
                               "GRANT EXECUTE ON FUNCTION public.radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamptz,text,numeric,boolean,boolean,date,date,text,integer,integer,text,text,boolean) TO anon, authenticated, service_role;" ;;
