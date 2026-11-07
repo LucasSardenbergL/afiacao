@@ -2,10 +2,13 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ChevronDown, Radar, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useAuth } from '@/contexts/AuthContext';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
-import { useRadarLista, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
+import { useRadarLista, FILTROS_MEUS_ATENDIMENTOS, CHAVE_VISAO_MEUS, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
+import { useRadarAtendimentosAtivos } from '@/queries/useRadarAtendimentos';
+import { diaMes } from '@/lib/radar/atendimento';
 import { useRadarIrmaos } from '@/queries/useRadarIrmaos';
 import { useRadarVinculosLista } from '@/queries/useRadarVinculosLista';
 import { useRadarKpis } from '@/queries/useRadarKpis';
@@ -62,6 +65,7 @@ type RadarUrlState = {
   regiao: string;
   incluirSemContato: boolean;
   vista: string;
+  visao: string;
   [k: string]: string | boolean;
 };
 
@@ -85,10 +89,12 @@ const DEFAULTS: RadarUrlState = {
   // Lead sem telefone E sem e-mail fica fora por padrão (o toggle "incluir sem contato" traz de volta).
   incluirSemContato: false,
   vista: 'lista',
+  // "Fila" | "Meus atendimentos" (pacote B2): qual conjunto de leads a lista mostra. Navegação, não filtro.
+  visao: 'fila',
 };
 
-/** O que um favorito guarda: os filtros da URL, sem a vista (lista/mapa é navegação, não filtro). */
-const { vista: _vista, ...PADRAO_FILTROS } = DEFAULTS;
+/** O que um favorito guarda: os filtros da URL, sem a vista nem a visão (lista/mapa e fila/meus são navegação, não filtro). */
+const { vista: _vista, visao: _visao, ...PADRAO_FILTROS } = DEFAULTS;
 const PADRAO_FAVORITO: FiltrosSalvos = PADRAO_FILTROS;
 
 function narrowPreset(v: string): PresetRadar {
@@ -102,15 +108,21 @@ export default function RadarClientes() {
   const [raw, set] = useUrlState<RadarUrlState>(DEFAULTS);
   // Apresentação ≠ dados (pacote A6): `vista` (lista/mapa) fica FORA dos filtros. Ela entrava pelo spread, então
   // trocar Lista↔Mapa mudava a chave da consulta (refetch da fila) e o efeito abaixo apagava a seleção.
-  const { vista, ...filtrosAtuais } = raw;
+  // A visão "Meus atendimentos" (B2) também fica FORA: entrar nela não muda os filtros nem os favoritos, e voltar à
+  // fila devolve o recorte de antes.
+  const { vista, visao, ...filtrosAtuais } = raw;
   const filtros: RadarFiltros = { ...filtrosAtuais, preset: narrowPreset(filtrosAtuais.preset), regiao: narrowRegiao(filtrosAtuais.regiao) };
+  const meus = visao === 'meus';
+  // Na visão, filtros NEUTROS (já-clientes, fora da região, lote antigo e sem contato continuam sendo seus) e o
+  // recorte "é meu" vai à RPC (p_so_meus), antes da paginação.
+  const filtrosDaLista = meus ? FILTROS_MEUS_ATENDIMENTOS : filtros;
 
   const hojeISO = useMemo(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }, []);
 
-  const q = useRadarLista(filtros, hojeISO);
+  const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus });
   const kpis = useRadarKpis();
   const loteOmie = useRadarLoteOmie();
   // Lote VIGENTE (foto da RFB) — UMA leitura, compartilhada com a fila (que a lê pelo cache),
@@ -124,7 +136,7 @@ export default function RadarClientes() {
   // Seleção por CNPJ, com SNAPSHOT de cada empresa: a linha pode sair da lista (virou
   // cliente, refetch) e a ação em lote ainda precisa dos dados dela.
   const [selecao, setSelecao] = useState<Map<string, RadarEmpresa>>(new Map());
-  const chaveFiltros = JSON.stringify(filtros);
+  const chaveFiltros = JSON.stringify([filtrosDaLista, meus]);
   const chaveAnterior = useRef(chaveFiltros);
   useEffect(() => {
     if (chaveAnterior.current !== chaveFiltros) {
@@ -160,10 +172,11 @@ export default function RadarClientes() {
   const resumoAmostra = useMemo(() => (amostra ? resumirAmostra(amostra.itens) : null), [amostra]);
   const { busca, uf, municipio, municipioCodigo, cnae, cnaeSecundario, status } = filtros;
   const amostraNaFila = useMemo(() => {
-    if (!amostra) return [];
+    // A amostra de controle é da FILA; em "Meus atendimentos" só entra o que é seu.
+    if (!amostra || meus) return [];
     const f = { busca, uf, municipio, municipioCodigo, cnae, cnaeSecundario, status };
     return amostra.itens.flatMap((i) => (i.empresa && pendenteNaAmostra(i.empresa) && casaFiltrosExplicitos(i.empresa, f) ? [i.empresa] : []));
-  }, [amostra, busca, uf, municipio, municipioCodigo, cnae, cnaeSecundario, status]);
+  }, [amostra, meus, busca, uf, municipio, municipioCodigo, cnae, cnaeSecundario, status]);
   const cnpjsAmostra = useMemo(() => new Set(amostra?.itens.map((i) => i.cnpj) ?? []), [amostra]);
   const filaAcabou = q.isSuccess && !q.hasNextPage;
   const empresas = useMemo(
@@ -276,6 +289,31 @@ export default function RadarClientes() {
     });
   };
 
+  // Vencimento e frescor de "Meus atendimentos": a posse viva vem de radar_atendimentos_ativos (a mesma leitura do
+  // selo de cada linha). Assumir/liberar/vencer muda o CONJUNTO dos meus → as páginas da visão são relidas.
+  const atendimentos = useRadarAtendimentosAtivos();
+  const qc = useQueryClient();
+  const meusAtivos = useMemo(
+    () => [...(atendimentos.data?.values() ?? [])].filter((a) => a.ehMeu),
+    [atendimentos.data],
+  );
+  const proximoVencimento = meusAtivos.reduce<string | null>((m, a) => (m === null || a.expiraEm < m ? a.expiraEm : m), null);
+  const conjuntoMeus = atendimentos.data ? meusAtivos.map((a) => a.cnpj).sort().join(',') : null;
+  const conjuntoAnterior = useRef<string | null>(null);
+  useEffect(() => {
+    if (conjuntoMeus === null) return;
+    if (conjuntoAnterior.current !== null && conjuntoAnterior.current !== conjuntoMeus) {
+      void qc.invalidateQueries({ queryKey: ['radar', 'lista'], predicate: (x) => x.queryKey[6] === CHAVE_VISAO_MEUS });
+    }
+    conjuntoAnterior.current = conjuntoMeus;
+  }, [conjuntoMeus, qc]);
+  const trocarVisao = (v: 'fila' | 'meus') => {
+    if (v === visao) return;
+    track('radar.visao_trocada', { visao: v });
+    // A visão é da LISTA: o mapa é território da fila, então entrar em "Meus atendimentos" volta para a lista.
+    set(v === 'meus' ? { visao: v, vista: 'lista' } : { visao: v });
+  };
+
   const pendentesDoLote = loteOmie.progresso?.pendentes ?? 0;
   // "Mais filtros e território" (B1): fechado para o vendedor, aberto para o gestor (o analítico continua a 1 clique
   // de cada um). Filtro ativo fica CONTADO no rótulo — fechar a seção não pode esconder que a fila está recortada.
@@ -315,7 +353,7 @@ export default function RadarClientes() {
           <Button
             variant={vista === 'mapa' ? 'default' : 'outline'}
             size="sm"
-            onClick={() => { track('radar.mapa_aberto', {}); set({ vista: 'mapa' }); }}
+            onClick={() => { track('radar.mapa_aberto', {}); set({ vista: 'mapa', visao: 'fila' }); }}
           >
             Mapa
           </Button>
@@ -327,16 +365,33 @@ export default function RadarClientes() {
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-0">
             <h2 className="text-lg font-display leading-tight">Sua fila de hoje</h2>
-            <p className="text-xs text-muted-foreground">
-              {q.isLoading ? 'Carregando a fila…'
-                : `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} · ${rotuloRegiao} · ordem: ${ROTULO_PRESET[filtros.preset]}`}
+            <p className="text-xs text-muted-foreground" data-testid="radar-fila-resumo">
+              {q.isLoading ? (meus ? 'Carregando seus atendimentos…' : 'Carregando a fila…')
+                : meus
+                  ? `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} com você`
+                    + (proximoVencimento ? ` · o próximo vence em ${diaMes(proximoVencimento)}` : '')
+                  : `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} · ${rotuloRegiao} · ordem: ${ROTULO_PRESET[filtros.preset]}`}
             </p>
+          </div>
+          <div className="flex rounded-md border p-0.5" role="group" aria-label="Qual lista ver">
+            <Button size="sm" variant={meus ? 'ghost' : 'secondary'} aria-pressed={!meus} onClick={() => trocarVisao('fila')}>
+              Fila
+            </Button>
+            <Button size="sm" variant={meus ? 'secondary' : 'ghost'} aria-pressed={meus} onClick={() => trocarVisao('meus')}>
+              Meus atendimentos
+            </Button>
           </div>
           <Button size="touch" className="ml-auto" disabled={empresas.length === 0}
             onClick={() => { const primeiro = empresas[0]; if (primeiro) { track('radar.fila_comecar', {}); abrir(primeiro); } }}>
             Começar pelo 1º lead
           </Button>
         </div>
+        {meus ? (
+          <p className="text-xs text-muted-foreground" data-testid="radar-meus-explica">
+            Os leads que você assumiu e ainda estão com você (a posse vence 7 dias depois do último contato). Filtros e
+            território valem para a fila, não aqui.
+          </p>
+        ) : (
         <Collapsible open={maisAberto} onOpenChange={(v) => { setMaisAberto(v); track('radar.mais_filtros', { aberto: v }); }}>
           <CollapsibleTrigger asChild>
             <Button variant="ghost" size="sm" className="px-2 -ml-2" aria-expanded={maisAberto}>
@@ -364,6 +419,7 @@ export default function RadarClientes() {
             <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} adiar={q.isPending} onPick={(c) => escolherCidade(c, 'ranking')} />
           </CollapsibleContent>
         </Collapsible>
+        )}
       </section>
 
       {/* Conflitos Radar×Omie guardados no servidor: alcançáveis mesmo fora da fila e depois de esquecer o lote. */}
@@ -386,7 +442,7 @@ export default function RadarClientes() {
         </div>
       )}
 
-      {vista !== 'mapa' && (
+      {vista !== 'mapa' && !meus && (
         <RadarAmostraRegra
           sorteio={amostra?.sorteio ?? null}
           resumo={resumoAmostra}
@@ -430,6 +486,12 @@ export default function RadarClientes() {
               description={mensagemDeErro(q.error) ?? 'Tente novamente em instantes.'}
               actionLabel="Tentar de novo" onAction={() => void q.refetch()}
             />
+          ) : empresas.length === 0 && meus ? (
+            <EmptyState
+              tone="operational" icon={Radar} title="Nenhum lead com você agora"
+              description="Assuma um lead na ficha para ele aparecer aqui. A posse vence 7 dias depois do último contato."
+              actionLabel="Ver a fila" onAction={() => trocarVisao('fila')}
+            />
           ) : empresas.length === 0 ? (
             <EmptyState
               tone="operational" icon={Radar} title="Nenhuma empresa nesta fila"
@@ -447,7 +509,7 @@ export default function RadarClientes() {
                   onSelecionar={(v) => selecionar(e, v)}
                   onAbrir={() => abrir(e)}
                   lote={lote}
-                  mostrarMotivos={filtros.soSugeridos}
+                  mostrarMotivos={!meus && filtros.soSugeridos}
                   irmaos={irmaos.dados.get(e.cnpj) ?? null}
                   vinculo={vinculos.dados.get(e.cnpj) ?? null}
                   vinculoEstado={vinculos.estadoDe(e.cnpj)}

@@ -18,6 +18,11 @@ const fonte = vi.hoisted(() => ({
   falharPagina: new Set<number>(),
   leiturasLista: 0,
   amostra: [] as { posicao: number; cnpj: string; empresa: RadarEmpresa | null }[],
+  // Visão "Meus atendimentos" (B2): as páginas que a RPC devolve com p_so_meus, e a última chamada da lista.
+  paginasMeus: [] as RadarEmpresa[][],
+  falharMeus: null as string | null,
+  ultimaChamada: null as { filtros: Record<string, unknown>; soMeus: boolean } | null,
+  atendimentos: [] as { cnpj: string; ehMeu: boolean; expiraEm: string }[],
 }));
 const toastMock = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), success: vi.fn(), warning: vi.fn() }));
 vi.mock('sonner', () => ({ toast: toastMock }));
@@ -28,18 +33,41 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 vi.mock('@/hooks/useInfiniteScroll', () => ({ useInfiniteScroll: () => () => {} }));
 
-vi.mock('@/queries/useRadarLista', () => ({
-  useRadarLista: (filtros: unknown) =>
-    useInfiniteQuery({
-      queryKey: ['radar', 'lista', filtros],
-      initialPageParam: 0,
-      queryFn: async ({ pageParam }) => {
-        fonte.leiturasLista += 1;
-        if (fonte.falharPagina.has(pageParam as number)) throw new Error('falha de rede na página');
-        return fonte.paginas[pageParam as number] ?? [];
-      },
-      getNextPageParam: (_last, pages) => (pages.length < fonte.paginas.length ? pages.length : undefined),
-      retry: false,
+vi.mock('@/queries/useRadarLista', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/queries/useRadarLista')>();
+  return {
+    // Os filtros neutros e a chave da visão são os REAIS: o teste confere o que a página manda à RPC.
+    FILTROS_MEUS_ATENDIMENTOS: real.FILTROS_MEUS_ATENDIMENTOS,
+    CHAVE_VISAO_MEUS: real.CHAVE_VISAO_MEUS,
+    useRadarLista: (filtros: Record<string, unknown>, _hoje: string, opcoes: { soMeus?: boolean } = {}) => {
+      const soMeus = opcoes.soMeus === true;
+      fonte.ultimaChamada = { filtros, soMeus };
+      // Mesma posição da chave da visão que a query real (7º elemento): é por ela que a página relê "meus".
+      return useInfiniteQuery({
+        queryKey: ['radar', 'lista', filtros, '', '', '', soMeus ? real.CHAVE_VISAO_MEUS : 'fila'],
+        initialPageParam: 0,
+        queryFn: async ({ pageParam }) => {
+          fonte.leiturasLista += 1;
+          if (soMeus) {
+            if (fonte.falharMeus) throw new Error(fonte.falharMeus);
+            return fonte.paginasMeus[pageParam as number] ?? [];
+          }
+          if (fonte.falharPagina.has(pageParam as number)) throw new Error('falha de rede na página');
+          return fonte.paginas[pageParam as number] ?? [];
+        },
+        getNextPageParam: (_last, pages) => (pages.length < (soMeus ? fonte.paginasMeus : fonte.paginas).length ? pages.length : undefined),
+        retry: false,
+      });
+    },
+  };
+});
+vi.mock('@/queries/useRadarAtendimentos', () => ({
+  useRadarAtendimentosAtivos: () =>
+    useQuery({
+      queryKey: ['radar', 'atendimentos-ativos'],
+      queryFn: async () => new Map(fonte.atendimentos.map((a) => [a.cnpj, {
+        cnpj: a.cnpj, donoUserId: a.ehMeu ? 'u1' : 'u2', donoNome: null, assumidoEm: '2026-11-01T12:00:00Z', expiraEm: a.expiraEm, ehMeu: a.ehMeu,
+      }])),
     }),
 }));
 vi.mock('@/queries/useRadarAmostra', () => ({
@@ -139,6 +167,10 @@ beforeEach(() => {
   fonte.falharPagina = new Set();
   fonte.leiturasLista = 0;
   fonte.amostra = [];
+  fonte.paginasMeus = [];
+  fonte.falharMeus = null;
+  fonte.ultimaChamada = null;
+  fonte.atendimentos = [];
 });
 
 describe('RadarClientes — fila do vendedor', () => {
@@ -260,5 +292,91 @@ describe('RadarClientes — fila do vendedor', () => {
     expect(within(topo).getByText(/1 ativo/)).toBeTruthy();
     fireEvent.click(within(topo).getByText('Começar pelo 1º lead'));
     expect(screen.getByTestId('ficha-cnpj').textContent).toBe('A');
+  });
+});
+
+describe('RadarClientes — Meus atendimentos (B2)', () => {
+  const visao = () => within(screen.getByTestId('radar-fila-de-hoje'));
+
+  it('a visão pede à RPC só os meus (p_so_meus), com filtros NEUTROS, e volta à fila com o recorte de antes', async () => {
+    fonte.paginas = [[lead('A'), lead('B')]];
+    fonte.paginasMeus = [[lead('M1', { ja_cliente: true }), lead('M2', { uf: 'SP' })]];
+    fonte.atendimentos = [
+      { cnpj: 'M1', ehMeu: true, expiraEm: '2026-11-12T15:00:00Z' },
+      { cnpj: 'M2', ehMeu: true, expiraEm: '2026-11-09T15:00:00Z' },
+      { cnpj: 'O1', ehMeu: false, expiraEm: '2026-11-08T15:00:00Z' }, // de outro dono: não é o "próximo vencimento"
+    ];
+    montar('/radar?uf=SP&soSugeridos=1');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B']));
+    expect(fonte.ultimaChamada?.soMeus).toBe(false);
+
+    fireEvent.click(visao().getByRole('button', { name: 'Meus atendimentos' }));
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['M1', 'M2']));
+    expect(fonte.ultimaChamada?.soMeus).toBe(true);
+    // Neutros: o UF=SP e o "só sugeridos" da URL NÃO recortam a visão; já-clientes, Brasil, lote antigo e sem contato entram.
+    expect(fonte.ultimaChamada?.filtros).toMatchObject({
+      uf: '', soSugeridos: false, incluirJaClientes: true, regiao: 'brasil', incluirSaiuDoDump: true, incluirSemContato: true, status: '',
+    });
+    expect(visao().getByRole('button', { name: 'Meus atendimentos' }).getAttribute('aria-pressed')).toBe('true');
+    await waitFor(() => expect(screen.getByTestId('radar-fila-resumo').textContent).toBe('2 leads com você · o próximo vence em 09/11'));
+    // Filtros e território não aparecem (não valem aqui) — e a tela diz por quê.
+    expect(visao().queryByRole('button', { name: /Mais filtros e território/ })).toBeNull();
+    expect(screen.getByTestId('radar-meus-explica')).toBeTruthy();
+
+    fireEvent.click(visao().getByRole('button', { name: 'Fila' }));
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B']));
+    expect(fonte.ultimaChamada).toMatchObject({ soMeus: false, filtros: { uf: 'SP', soSugeridos: true } });
+    expect(visao().getByText(/2 ativos/)).toBeTruthy(); // os filtros da fila seguem contados: a visão não os apagou
+  });
+
+  it('a visão vive na URL (/radar?visao=meus abre nela) e entrar nela a partir do mapa volta para a lista', async () => {
+    fonte.paginasMeus = [[lead('M1')]];
+    const v = montar('/radar?visao=meus');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['M1']));
+    expect(fonte.ultimaChamada?.soMeus).toBe(true);
+    v.unmount();
+
+    fonte.paginas = [[lead('A')]];
+    montar('/radar?vista=mapa');
+    await waitFor(() => expect(screen.getByTestId('mapa')).toBeTruthy());
+    fireEvent.click(visao().getByRole('button', { name: 'Meus atendimentos' }));
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['M1']));
+    expect(screen.queryByTestId('mapa')).toBeNull();
+  });
+
+  it('sem nenhum atendimento: vazio PRÓPRIO com "Ver a fila"; migration ausente: o erro com o motivo, nunca um vazio', async () => {
+    fonte.paginas = [[lead('A')]];
+    fonte.paginasMeus = [[]];
+    const v = montar('/radar?visao=meus');
+    await waitFor(() => expect(screen.getByText('Nenhum lead com você agora')).toBeTruthy());
+    expect(screen.queryByText('Limpar filtros')).toBeNull(); // não manda limpar filtro que nem vale aqui
+    fireEvent.click(screen.getByText('Ver a fila'));
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    v.unmount();
+
+    fonte.falharMeus = 'Could not find the function public.radar_lista(p_so_meus, ...) in the schema cache';
+    montar('/radar?visao=meus');
+    await waitFor(() => expect(screen.getByText('Não foi possível carregar a fila')).toBeTruthy());
+    expect(screen.getByText(/Could not find the function public\.radar_lista/)).toBeTruthy();
+    expect(screen.queryByText('Nenhum lead com você agora')).toBeNull();
+  });
+
+  it('assumir/liberar muda o conjunto dos meus → as páginas da visão são relidas (a lista não fica com a posse velha)', async () => {
+    fonte.paginasMeus = [[lead('M1'), lead('M2')]];
+    fonte.atendimentos = [{ cnpj: 'M1', ehMeu: true, expiraEm: '2026-11-12T15:00:00Z' }, { cnpj: 'M2', ehMeu: true, expiraEm: '2026-11-12T15:00:00Z' }];
+    const { qc } = montar('/radar?visao=meus');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['M1', 'M2']));
+    await waitFor(() => expect(screen.getByTestId('radar-fila-resumo').textContent).toContain('o próximo vence em'));
+    const leituras = fonte.leiturasLista;
+
+    // Releitura dos atendimentos SEM mudança no conjunto: nada a reler.
+    await act(async () => { await qc.invalidateQueries({ queryKey: ['radar', 'atendimentos-ativos'] }); });
+    expect(fonte.leiturasLista).toBe(leituras);
+
+    // O vendedor liberou o M2 (o servidor já não o devolve como meu).
+    fonte.atendimentos = [{ cnpj: 'M1', ehMeu: true, expiraEm: '2026-11-12T15:00:00Z' }];
+    fonte.paginasMeus = [[lead('M1')]];
+    await act(async () => { await qc.invalidateQueries({ queryKey: ['radar', 'atendimentos-ativos'] }); });
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['M1']));
   });
 });
