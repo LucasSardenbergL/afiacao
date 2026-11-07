@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 790
+-- Total de custom migrations: 791
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -858,7 +858,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106132259', 'radar_abriu_ficha_com_cnpj', '20261106132259_radar_abriu_ficha_com_cnpj.sql'),
   ('20261106140000', 'sayerlack_importar_portal_revisao', '20261106140000_sayerlack_importar_portal_revisao.sql'),
   ('20261106175800', 'radar_mapa_regiao_cidade_telefone', '20261106175800_radar_mapa_regiao_cidade_telefone.sql'),
-  ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql')
+  ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql'),
+  ('20261106221000', 'radar_atribuir_atendimento', '20261106221000_radar_atribuir_atendimento.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3398,7 +3399,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_painel_portal', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_penetracao_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
-  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', '')
+  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
+  ('radar_atribuir_atendimento', 'function', 'public', 'radar_atribuir_atendimento', ''),
+  ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5986,7 +5989,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_painel_portal', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_penetracao_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
-  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', '')
+  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
+  ('radar_atribuir_atendimento', 'function', 'public', 'radar_atribuir_atendimento', ''),
+  ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', '')
 )
 SELECT
   e.migration,
