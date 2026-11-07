@@ -20,10 +20,13 @@
 --      `private.venda_situacao_efetiva_em` e `private.venda_lista_calc_efetiva` (espelhos dos factuais, com a
 --      paridade provada quando não há plano). `public.venda_gerar_lista` passa a gerar a recompra daí e MARCA a
 --      origem (`venda_sugestao.sucessao_origem` = [{evento_id, revisao}] e `valor_ref_referencia_origem`).
---   4. Invalidação: publicar ou revogar o plano reprocessa as sugestões de recompra de HOJE dos farmers afetados
---      (`private.venda_sugestoes_reprocessar_sucessao`). Só sai a sugestão que mudou, nunca mostrada e sem
---      desfecho; ela vai para `public.venda_sugestao_substituida` (a linha inteira, imutável) e a substituta entra.
---      `mostrada_em`, os contatos (`venda_contato`) e os desfechos ficam como estão.
+--   4. Invalidação: publicar ou revogar o plano ENFILEIRA, na mesma transação, o reprocesso das sugestões de
+--      recompra de HOJE dos farmers afetados (`private.venda_sugestoes_reprocesso_fila`); o cron
+--      `venda-sucessao-reprocesso` (1/min, SQL direto) drena a fila (`private.venda_sugestoes_drenar_reprocesso`
+--      → `private.venda_sugestoes_reprocessar_sucessao`). Assíncrono porque o cálculo é o MESMO do gerador
+--      (6–9 s em prod) e o `authenticated` tem statement_timeout=8s: dentro da RPC ele derrubaria a publicação.
+--      Só sai a sugestão que mudou, nunca mostrada e sem desfecho; ela vai para `public.venda_sugestao_substituida`
+--      (a linha inteira, imutável) e a substituta entra. `mostrada_em`, contatos (`venda_contato`) e desfechos ficam.
 --   5. RPCs (gestor/master = pode_ver_carteira_completa): `cliente_sucessao_plano_publicar`,
 --      `cliente_sucessao_plano_revogar` e `cliente_sucessao_plano_do_evento` (leitura).
 --
@@ -144,6 +147,24 @@ CREATE INDEX IF NOT EXISTS venda_sugestao_substituida_dia_idx
 COMMENT ON TABLE public.venda_sugestao_substituida IS
   'Sugestões de recompra de HOJE que um reprocesso da sucessão (publicar/revogar o plano) tirou da lista porque o '
   'cálculo mudou. Só sai a nunca mostrada e sem desfecho. Imutável. Escritor: private.venda_sugestoes_reprocessar_sucessao.';
+
+-- A fila do reprocesso: 1 pedido por revisão publicada; o cron drena e grava o resultado. Interna (private).
+CREATE TABLE IF NOT EXISTS private.venda_sugestoes_reprocesso_fila (
+  evento_id     uuid NOT NULL,
+  revisao       integer NOT NULL,
+  motivo        text NOT NULL,
+  pedido_em     timestamptz NOT NULL DEFAULT now(),
+  processado_em timestamptz,
+  resultado     jsonb,
+  PRIMARY KEY (evento_id, revisao),
+  CONSTRAINT venda_sugestoes_reprocesso_fila_motivo_chk CHECK (motivo IN ('plano_publicado', 'plano_revogado')),
+  CONSTRAINT venda_sugestoes_reprocesso_fila_feito_chk CHECK ((processado_em IS NULL) = (resultado IS NULL))
+);
+CREATE INDEX IF NOT EXISTS venda_sugestoes_reprocesso_fila_pendente_idx
+  ON private.venda_sugestoes_reprocesso_fila (pedido_em) WHERE processado_em IS NULL;
+ALTER TABLE private.venda_sugestoes_reprocesso_fila ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE private.venda_sugestoes_reprocesso_fila FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON TABLE private.venda_sugestoes_reprocesso_fila TO service_role;
 
 ALTER TABLE public.cliente_sucessao_plano_revisoes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cliente_sucessao_plano_regras ENABLE ROW LEVEL SECURITY;
@@ -766,6 +787,38 @@ END
 $function$;
 REVOKE ALL ON FUNCTION private.venda_sugestoes_reprocessar_sucessao(uuid, integer, text) FROM PUBLIC, anon, authenticated;
 
+-- Drena a fila: os pedidos pendentes, do mais antigo, cada um reprocessado e marcado com o resultado. Uma
+-- drenagem por vez (try-lock: a rodada seguinte do cron sai na hora). Cada reprocesso relê o plano VIGENTE, então
+-- dois pedidos do mesmo evento convergem (o 2º acha pouco ou nada a trocar).
+CREATE OR REPLACE FUNCTION private.venda_sugestoes_drenar_reprocesso()
+ RETURNS integer
+ LANGUAGE plpgsql
+ VOLATILE
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  r record;
+  v_n integer := 0;
+BEGIN
+  IF NOT pg_try_advisory_xact_lock(hashtext('venda_sucessao_reprocesso')) THEN
+    RETURN 0;
+  END IF;
+  FOR r IN SELECT f.evento_id, f.revisao, f.motivo FROM private.venda_sugestoes_reprocesso_fila f
+            WHERE f.processado_em IS NULL ORDER BY f.pedido_em, f.evento_id, f.revisao LOOP
+    UPDATE private.venda_sugestoes_reprocesso_fila f
+       SET processado_em = clock_timestamp(),
+           resultado = private.venda_sugestoes_reprocessar_sucessao(r.evento_id, r.revisao, r.motivo)
+     WHERE f.evento_id = r.evento_id AND f.revisao = r.revisao;
+    v_n := v_n + 1;
+  END LOOP;
+  RETURN v_n;
+END
+$function$;
+REVOKE ALL ON FUNCTION private.venda_sugestoes_drenar_reprocesso() FROM PUBLIC, anon, authenticated;
+
+-- 1/min, SQL direto (sem net.http_post: nada de timeout HTTP). Fila vazia = um índice parcial vazio.
+SELECT cron.schedule('venda-sucessao-reprocesso', '* * * * *', $$SELECT private.venda_sugestoes_drenar_reprocesso();$$);
+
 -- ── 7. Publicar uma revisão do plano ─────────────────────────────────────────────────────────────────────────
 -- p_regras: array de {empresa, omie_codigo_produto | familia, novo_documento}. A família é expandida nos itens
 -- que a antiga comprou ANTES do corte (private.venda_linhas_pedido, factual) com aquela família no omie_products.
@@ -792,7 +845,6 @@ DECLARE
   v_vazia text;
   v_fora text;
   v_n integer;
-  v_reproc jsonb;
 BEGIN
   IF NOT (COALESCE(public.pode_ver_carteira_completa(v_uid), false)) THEN
     RAISE EXCEPTION 'forbidden: gestor/master only' USING ERRCODE = '42501';
@@ -910,15 +962,17 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
   PERFORM set_config('cliente_sucessao_plano.porta', '', true);
 
-  v_reproc := private.venda_sugestoes_reprocessar_sucessao(p_evento_id, v_rev, 'plano_publicado');
-  RETURN jsonb_build_object('ok', true, 'revisao', v_rev, 'regras', v_n, 'sugestoes', v_reproc);
+  -- O reprocesso das sugestões de hoje vai para a fila (o cron drena em até 1 min), na MESMA transação.
+  INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, revisao, motivo)
+  VALUES (p_evento_id, v_rev, 'plano_publicado');
+  RETURN jsonb_build_object('ok', true, 'revisao', v_rev, 'regras', v_n, 'reprocesso', 'agendado');
 END
 $function$;
 REVOKE ALL ON FUNCTION public.cliente_sucessao_plano_publicar(uuid,integer,jsonb,text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.cliente_sucessao_plano_publicar(uuid,integer,jsonb,text) TO authenticated, service_role;
 COMMENT ON FUNCTION public.cliente_sucessao_plano_publicar(uuid,integer,jsonb,text) IS
   'Gestor/master publica uma revisão NOVA (imutável) do plano de rateio do evento: item inteiro → declaração-destino '
-  'do evento; família expandida nos itens da antiga antes do corte. Versão otimista; reprocessa a recompra de hoje.';
+  'do evento; família expandida nos itens da antiga antes do corte. Versão otimista; enfileira o reprocesso de hoje.';
 
 -- ── 8. Revogar o plano (uma revisão nova, `revoga`, sem regras) ──────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.cliente_sucessao_plano_revogar(p_evento_id uuid, p_revisao_esperada integer, p_motivo text)
@@ -932,7 +986,6 @@ DECLARE
   v_atual integer;
   v_revoga boolean;
   v_rev integer;
-  v_reproc jsonb;
 BEGIN
   IF NOT (COALESCE(public.pode_ver_carteira_completa(v_uid), false)) THEN
     RAISE EXCEPTION 'forbidden: gestor/master only' USING ERRCODE = '42501';
@@ -958,15 +1011,16 @@ BEGIN
   VALUES (p_evento_id, v_rev, true, btrim(p_motivo), v_uid, clock_timestamp());
   PERFORM set_config('cliente_sucessao_plano.porta', '', true);
 
-  v_reproc := private.venda_sugestoes_reprocessar_sucessao(p_evento_id, v_rev, 'plano_revogado');
-  RETURN jsonb_build_object('ok', true, 'revisao', v_rev, 'sugestoes', v_reproc);
+  INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, revisao, motivo)
+  VALUES (p_evento_id, v_rev, 'plano_revogado');
+  RETURN jsonb_build_object('ok', true, 'revisao', v_rev, 'reprocesso', 'agendado');
 END
 $function$;
 REVOKE ALL ON FUNCTION public.cliente_sucessao_plano_revogar(uuid,integer,text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.cliente_sucessao_plano_revogar(uuid,integer,text) TO authenticated, service_role;
 COMMENT ON FUNCTION public.cliente_sucessao_plano_revogar(uuid,integer,text) IS
   'Gestor/master revoga o plano de rateio do evento: revisão nova `revoga`, sem regras (o histórico fica). '
-  'Todo item volta à antiga; reprocessa a recompra de hoje.';
+  'Todo item volta à antiga; enfileira o reprocesso de hoje.';
 
 -- ── 9. Ler o plano do evento (o painel do PR C) ──────────────────────────────────────────────────────────────
 -- Gestor/master. Regras da revisão vigente (com o estado do destino em vigentes) + o histórico das revisões.
@@ -1099,6 +1153,19 @@ BEGIN
       RAISE EXCEPTION 'P8 FALHOU: o factual % mudou', r.sig;
     END IF;
   END LOOP;
-  RAISE NOTICE 'cliente_sucessao_plano: 3 tabelas + marcação + trilha efetiva + gerador + reprocesso + 3 RPCs OK';
+  IF NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = 'private.venda_sugestoes_reprocesso_fila'::regclass)
+     OR has_table_privilege('authenticated', 'private.venda_sugestoes_reprocesso_fila', 'SELECT,INSERT,UPDATE,DELETE')
+     OR has_table_privilege('anon', 'private.venda_sugestoes_reprocesso_fila', 'SELECT,INSERT,UPDATE,DELETE')
+     OR to_regprocedure('private.venda_sugestoes_drenar_reprocesso()') IS NULL
+     OR has_function_privilege('authenticated', 'private.venda_sugestoes_drenar_reprocesso()', 'EXECUTE')
+     OR has_function_privilege('public', 'private.venda_sugestoes_drenar_reprocesso()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'P9 FALHOU: fila do reprocesso sem RLS/aberta, ou drenagem ausente/aberta';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM cron.job j WHERE j.jobname = 'venda-sucessao-reprocesso' AND j.active
+                    AND j.schedule = '* * * * *'
+                    AND j.command = 'SELECT private.venda_sugestoes_drenar_reprocesso();') THEN
+    RAISE EXCEPTION 'P10 FALHOU: cron venda-sucessao-reprocesso ausente, inativo ou com outro comando';
+  END IF;
+  RAISE NOTICE 'cliente_sucessao_plano: 4 tabelas + marcação + trilha efetiva + gerador + fila/cron do reprocesso + 3 RPCs OK';
 END
 $post$;

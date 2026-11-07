@@ -246,6 +246,7 @@ conserva() {  # física: mesmas linhas, cada order_item uma vez, mesma quantidad
                                    EXCEPT SELECT empresa, omie_codigo_produto, sum(quantidade)
                                      FROM private.venda_linhas_pedido($H) GROUP BY 1, 2) q)"
 }
+drenar() { Q "SELECT private.venda_sugestoes_drenar_reprocesso()"; }   # o que o cron faz a cada minuto
 lin() {  # <filtro> → count das linhas da trilha
   Q "SELECT count(*) FROM $EF WHERE $1"
 }
@@ -256,7 +257,7 @@ cenario() {
   echo "── 0. a migration toca só o que diz ──"
   chk M1 "funções criadas/recriadas = as do desenho (gerar_lista é a ÚNICA viva recriada)" \
     "$(grep -oE 'CREATE OR REPLACE FUNCTION [a-z_.]+' "$MIG" | awk '{print $5}' | sort | tr '\n' ' ' | sed 's/ $//')" \
-    "private.cliente_sucessao_plano_imutavel private.historico_compradores_encerrados private.historico_consumo_efetivo private.venda_lista_calc_efetiva private.venda_recompra_efetiva_em private.venda_situacao_efetiva_em private.venda_sugestao_substituida_imutavel private.venda_sugestoes_reprocessar_sucessao public.cliente_sucessao_plano_do_evento public.cliente_sucessao_plano_publicar public.cliente_sucessao_plano_revogar public.venda_gerar_lista"
+    "private.cliente_sucessao_plano_imutavel private.historico_compradores_encerrados private.historico_consumo_efetivo private.venda_lista_calc_efetiva private.venda_recompra_efetiva_em private.venda_situacao_efetiva_em private.venda_sugestao_substituida_imutavel private.venda_sugestoes_drenar_reprocesso private.venda_sugestoes_reprocessar_sucessao public.cliente_sucessao_plano_do_evento public.cliente_sucessao_plano_publicar public.cliente_sucessao_plano_revogar public.venda_gerar_lista"
   chk M2 "ALTER TABLE só em venda_sugestao (marcação) e nas tabelas novas" \
     "$(grep -oE '^ALTER TABLE public\.[a-z_]+' "$MIG" | awk '{print $3}' | sort -u | tr '\n' ' ' | sed 's/ $//')" \
     "public.cliente_sucessao_plano_regras public.cliente_sucessao_plano_revisoes public.venda_sugestao public.venda_sugestao_substituida"
@@ -264,6 +265,14 @@ cenario() {
     "$(Q "SELECT string_agg(md5(p.prosrc), ',' ORDER BY p.proname) FROM pg_proc p
            WHERE p.proname IN ('venda_linhas_pedido','venda_recompra_em','venda_situacao_em','venda_lista_calc')")" \
     "a7ff6d1c894aea2e16483b5084a097a1,cd7a7184e4b07d3665b1c39f70a3ac59,2b43b81254a7c13c019c65fae41ea90a,e96cf9c931a13b209bb3017b8c4743ac"
+
+  chk M5 "publicar/revogar só ENFILEIRAM (o cálculo de 6–9 s não roda sob o statement_timeout=8s do authenticated)" \
+    "$(Q "SELECT count(*) FROM pg_proc WHERE proname IN ('cliente_sucessao_plano_publicar','cliente_sucessao_plano_revogar')
+           AND prosrc ~ 'reprocessar_sucessao|lista_calc|recompra_efetiva|situacao_efetiva'")/$(Q "SELECT count(*) FROM pg_proc
+           WHERE proname IN ('cliente_sucessao_plano_publicar','cliente_sucessao_plano_revogar') AND prosrc ~ 'INSERT INTO private.venda_sugestoes_reprocesso_fila'")" "0/2"
+  chk M6 "o cron que drena a fila existe, ativo, SQL direto" \
+    "$(Q "SELECT schedule || '|' || command FROM cron.job WHERE jobname = 'venda-sucessao-reprocesso' AND active")" \
+    "* * * * *|SELECT private.venda_sugestoes_drenar_reprocesso();"
 
   BASE="$(factuais)"
   echo "── 1. sem plano: a trilha efetiva = a factual ──"
@@ -388,9 +397,13 @@ cenario() {
   chk R1b "regras por item (a família expandida só nos itens de ANTES do corte; o explícito prevalece)" \
     "$(Q "SELECT string_agg(omie_codigo_produto || ':' || origem, ',' ORDER BY omie_codigo_produto) FROM public.cliente_sucessao_plano_regras WHERE evento_id = '$E1'")" \
     "1001:item,1002:item,1003:item,1004:item,1005:familia,1006:item"
+  chk Q1 "a publicação só AGENDA: a lista ainda não mudou antes de o cron drenar" \
+    "$(Q "SELECT \$j\$$R\$j\$::jsonb ->> 'reprocesso'")/$(codigos "$UA")/$(Q "SELECT count(*) FROM private.venda_sugestoes_reprocesso_fila WHERE processado_em IS NULL")" \
+    "agendado/1001,1002,1003,1004,1005,1007/1"
+  chk Q2 "o cron drena 1 pedido; a 2ª rodada não acha nada" "$(drenar)/$(drenar)" "1/0"
   chk R1c "reprocesso: substituídas / novas / preservadas" \
-    "$(Q "SELECT (\$j\$$R\$j\$::jsonb #>> '{sugestoes,substituidas}') || '/' || (\$j\$$R\$j\$::jsonb #>> '{sugestoes,novas}') || '/' ||
-                 (\$j\$$R\$j\$::jsonb #>> '{sugestoes,preservadas}')")" "2/4/2"
+    "$(Q "SELECT (resultado ->> 'substituidas') || '/' || (resultado ->> 'novas') || '/' || (resultado ->> 'preservadas')
+            FROM private.venda_sugestoes_reprocesso_fila WHERE evento_id = '$E1' AND revisao = 1")" "2/4/2"
   chk C1 "conservação (rev 1): linhas / itens distintos / factual / físicas a mais / SKUs com qtd diferente" "$(conserva)" "39/39/39/0/0"
   chk R1d "destino PENDENTE (novo sem cadastro) não recebe: 1001 segue na antiga" \
     "$(lin "omie_codigo_produto = 1001 AND (herdada OR comprador_id <> '$UA')")" "0"
@@ -442,7 +455,7 @@ cenario() {
          FROM (SELECT public.cliente_sucessao_plano_do_evento('$E1') AS r) s")" "1/6/declarada"
 
   echo "── 6. sucessão (E2): a sucessora herda; a antiga segue fora ──"
-  chk E2a "publicou o plano de E2" "$(publicar "$E2" 0 "[$(item oben 2001 "$DBN")]" ok)" "true"
+  chk E2a "publicou o plano de E2" "$(publicar "$E2" 0 "[$(item oben 2001 "$DBN")]" ok)/$(drenar)" "true/1"
   chk E2b "a sucessora ganha 2001; a antiga nada" "$(rec_ef "$UBN")|$(rec_ef "$UB")" "2001|"
   chk E2c "2002 (sem regra) segue na antiga na trilha (conservação), sem sugestão" \
     "$(lin "comprador_id = '$UB' AND omie_codigo_produto = 2002")|$(codigos "$UB")" "3|"
@@ -461,7 +474,7 @@ cenario() {
   Q "INSERT INTO public.profiles (user_id, name, document) VALUES ('$UN1', 'MARQUES', '$NOV1')" > /dev/null
   REG2="[{\"empresa\":\"oben\",\"omie_codigo_produto\":1001,\"novo_documento\":\"$NOV1\"},{\"empresa\":\"oben\",\"omie_codigo_produto\":1002,\"novo_documento\":\"$NOV2\"}]"
   chk V8 "versão velha recusada" "$(publicar "$E1" 0 "$REG2" motivo)" "revisao_mudou"
-  chk R2a "publicou a revisão 2" "$(publicar "$E1" 1 "$REG2" revisao)" "2"
+  chk R2a "publicou a revisão 2" "$(publicar "$E1" 1 "$REG2" revisao)/$(drenar)" "2/1"
   chk C5 "conservação (rev 2, dois destinos ativos)" "$(conserva)" "39/39/39/0/0"
   chk R2b "1001 → 1ª nova; 1003/1004/1005 voltaram à antiga" \
     "$(lin "omie_codigo_produto = 1001 AND comprador_id = '$UN1' AND plano_revisao = 2")/$(lin "omie_codigo_produto IN (1003, 1004, 1005) AND comprador_id = '$UA' AND NOT herdada")" "3/10"
@@ -481,7 +494,7 @@ cenario() {
     "$(publicar "$E1" 2 "[$(item oben 1002 "$NOV2")]" motivo)" "destino_fora_do_evento"
 
   echo "── 10. revogar o plano: tudo volta à antiga ──"
-  chk Z1 "revogou: revisão 3" "$(revogar_plano "$E1" 2 revisao)" "3"
+  chk Z1 "revogou: revisão 3 (e o cron drena)" "$(revogar_plano "$E1" 2 revisao)/$(drenar)" "3/1"
   chk Z2 "nada herdado de E1" "$(lin "sucessao_evento_id = '$E1'")" "0"
   chk Z3 "a lista: a antiga recupera; a 1ª nova perde (arquivada como plano_revogado)" \
     "$(codigos "$UA")|$(codigos "$UN1")|$(Q "SELECT count(*) FROM public.venda_sugestao_substituida WHERE motivo = 'plano_revogado' AND comprador_id = '$UN1'")" \
@@ -493,7 +506,7 @@ cenario() {
 
   echo "── 11. o grafo que vira DECLARADA (alias muda depois) derruba a herança ──"
   chk X0 "E4 publicado: a nova herda 5001" \
-    "$(publicar "$E4" 0 "[$(item oben 5001 "$DN4")]" ok)/$(lin "sucessao_evento_id = '$E4'")" "true/3"
+    "$(publicar "$E4" 0 "[$(item oben 5001 "$DN4")]" ok)/$(drenar)/$(lin "sucessao_evento_id = '$E4'")" "true/1/3"
   Q "INSERT INTO public.customer_canonical_alias (alias_user_id, canonical_user_id, documento, status) VALUES ('$UX2', '$UA', '$DX2', 'active')" > /dev/null
   chk X1 "a antiga de E4 vira a mesma identidade da de E1: evento divergente, nada herdado" \
     "$(Q "SELECT string_agg(DISTINCT impedimento, ',') FROM private.cliente_sucessoes_vigentes($H) WHERE evento_id IN ('$E1', '$E4')")/$(lin "sucessao_evento_id = '$E4'")" \
@@ -558,6 +571,7 @@ sabotagem() {
     porta_aberta) cv_sabotar "$IMUT" "IF current_setting('cliente_sucessao_plano.porta', true) IS DISTINCT FROM 'rpc' THEN" "IF false THEN" ;;
     revisao_qualquer) cv_sabotar "$IMUT" "IF NEW.revisao IS DISTINCT FROM 1 + COALESCE(" "IF false AND NEW.revisao IS DISTINCT FROM 1 + COALESCE(" ;;
     regra_em_revoga) cv_sabotar "$IMUT" "AND NOT r.revoga) THEN" ") THEN" ;;
+    publicar_sem_fila) cv_sabotar "$PUB" "VALUES (p_evento_id, v_rev, 'plano_publicado');" "SELECT p_evento_id, v_rev, 'plano_publicado' WHERE false;" ;;
     sem_trigger_revisoes) P -v ON_ERROR_STOP=1 -q -c "DROP TRIGGER cliente_sucessao_plano_revisoes_imutavel_trg ON public.cliente_sucessao_plano_revisoes" ;;
     *) echo "SABOTAGEM desconhecida: $1"; return 1 ;;
   esac
@@ -568,7 +582,7 @@ sem_gate_revogar:K3:K2
 sem_gate_ler:K4:K2
 anon_executa:K1:K2
 tabela_aberta:K5:K6
-trilha_sem_corte:R1e,R1f:R1g
+trilha_sem_corte:R1e,R1f:R1d
 trilha_destino_qualquer:C5:C1
 trilha_sem_ativa:X1:X0
 trilha_revisao_antiga:R2b:R1g
@@ -589,7 +603,8 @@ familia_apos_corte:R1a:V1
 porta_aberta:H4:H1
 revisao_qualquer:H5:H4
 regra_em_revoga:H6:H4
-sem_trigger_revisoes:H1:H2"
+sem_trigger_revisoes:H1:H2
+publicar_sem_fila:Q1,R1o:R1a"
 
 rodada() {
   adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4
