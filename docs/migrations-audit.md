@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **800** custom migrations totais
-- **2666** objetos esperados (criados por estas migrations)
+- **802** custom migrations totais
+- **2672** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1033
+  - `function`: 1039
   - `rls_policy`: 519
   - `index`: 379
   - `table`: 247
@@ -6591,6 +6591,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.venda_sugestao_substituida_imutavel_trg` | `venda_sugestao_substituida` |
 | `trigger` | `public.venda_sugestao_substituida_sem_truncate_trg` | `venda_sugestao_substituida` |
 | `cron_job` | `cron.venda-sucessao-reprocesso` | — |
+
+### `20261107220000_data_health_sayerlack_varredura_portal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+
+### `20261108000000_cliente_sucessao_consumidores.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private._venda_sugestoes_json` | — |
+| `function` | `public.venda_heranca_comprador` | — |
+| `function` | `public.cliente_sucessao_plano_itens` | — |
 
 ## Próximos passos por status
 

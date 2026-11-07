@@ -1,9 +1,22 @@
-import type { MinhasSugestoesResp } from '@/lib/venda-cliente/sugestoes';
+import type { MinhasSugestoesResp, SugestaoItem } from '@/lib/venda-cliente/sugestoes';
 import { sugestoesDeRecompra } from '@/lib/venda-cliente/sugestoes';
 import type { AcaoSugerida, AcaoPayload } from '../types';
 
 function itensAtrasados(n: number): string {
   return n === 1 ? '1 item atrasado' : `${n} itens atrasados`;
+}
+
+/**
+ * Sucessor declarado: " · 2 herdados de DIVIMOVEIS (valor com preço da antiga)". A nova não herda preço — quando o
+ * valor de referência é o que a antiga pagava, a fila DIZ, em vez de apresentá-lo como preço do cliente.
+ */
+function sufixoHeranca(itens: SugestaoItem[], totalDaAntiga: boolean): string {
+  const herdados = itens.filter((s) => s.heranca);
+  if (herdados.length === 0) return '';
+  const de = [...new Set(herdados.flatMap((s) => s.heranca?.de ?? []))];
+  const quem = de.length > 0 ? de.join(', ') : 'empresa anterior';
+  const n = herdados.length === 1 ? '1 herdado' : `${herdados.length} herdados`;
+  return ` · ${n} de ${quem}${totalDaAntiga ? ' (valor com preço da antiga)' : ''}`;
 }
 
 /**
@@ -33,7 +46,8 @@ export function adaptarRecompra(resp: MinhasSugestoesResp | null): AcaoSugerida[
       telefone: c.telefone,
       acao: 'Ligar',
       titulo: nome,
-      motivo: `${c.motivoEntrada} · ${itensAtrasados(itens.length)}`,
+      motivo: `${c.motivoEntrada} · ${itensAtrasados(itens.length)}${sufixoHeranca(itens, c.valorRefTotalDaAntiga === true
+        || itens.some((s) => s.valorRefDaAntiga))}`,
       categoria: 'esperado',
       // a ordem dentro da categoria vem do valor; o score só desempata (mais itens primeiro).
       score: Math.min(1, itens.length / 10),

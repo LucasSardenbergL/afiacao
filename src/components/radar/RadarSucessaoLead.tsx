@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { GitFork, Loader2 } from 'lucide-react';
+import { GitFork, ListTree, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import {
   useRadarDeclararSucessao, useRadarPreviaSucessao, useRadarRevogarSucessao, useRadarSucessoes,
 } from '@/queries/useRadarSucessoes';
+import { RadarSucessaoPlano } from './RadarSucessaoPlano';
 import { RadarVinculosLead } from './RadarVinculosLead';
 
 /** Prefill da declaração: vazio (manual) ou a partir de uma pista automática ("confirmar" em 1 clique). */
@@ -56,7 +57,8 @@ export function RadarSucessaoLead({ cnpj, dataAbertura }: { cnpj: string; dataAb
       {declaradas.length > 0 && (
         <ul className="space-y-1.5" data-testid="radar-sucessoes">
           {declaradas.map((s) => (
-            <SeloSucessao key={s.id} s={s} versao={q.data!.versao} podeRevogar={gestor && !isImpersonating} />
+            <SeloSucessao key={s.id} s={s} versao={q.data!.versao} podeRevogar={gestor && !isImpersonating}
+              podeVerPlano={gestor && !isImpersonating} />
           ))}
         </ul>
       )}
@@ -86,7 +88,10 @@ export function RadarSucessaoLead({ cnpj, dataAbertura }: { cnpj: string; dataAb
   );
 }
 
-function SeloSucessao({ s, versao, podeRevogar }: { s: SucessaoDeclarada; versao: number; podeRevogar: boolean }) {
+function SeloSucessao({ s, versao, podeRevogar, podeVerPlano }: {
+  s: SucessaoDeclarada; versao: number; podeRevogar: boolean; podeVerPlano: boolean;
+}) {
+  const [planoAberto, setPlanoAberto] = useState(false);
   const tom = s.estado === 'ativa' ? 'success' : s.estado === 'declarada' ? 'info' : 'muted';
   return (
     <li className={cn('text-sm', s.estado === 'revogada' && 'text-muted-foreground')} data-testid="radar-sucessao">
@@ -102,7 +107,14 @@ function SeloSucessao({ s, versao, podeRevogar }: { s: SucessaoDeclarada; versao
           : ''}
       </div>
       {s.observacao && <div className="text-xs text-muted-foreground">{s.observacao}</div>}
+      {podeVerPlano && s.estado !== 'revogada' && (
+        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setPlanoAberto(true)}
+          data-testid="radar-abrir-plano">
+          <ListTree className="w-3.5 h-3.5 mr-1" /> Plano de rateio
+        </Button>
+      )}
       {podeRevogar && s.estado !== 'revogada' && <RevogarSucessao id={s.id} versao={versao} />}
+      {planoAberto && <RadarSucessaoPlano eventoId={s.eventoId} aberto onFechar={() => setPlanoAberto(false)} />}
     </li>
   );
 }
@@ -160,7 +172,7 @@ function DialogDeclarar({ novo, dataAbertura, inicial, versao, onFechar }: {
       if (!r.ok) { toast.info(mensagemRecusaSucessao(r)); if (r.motivo === 'versao_mudou') onFechar(); return; }
       toast.success(`${tipo === 'cisao' ? 'Cisão' : 'Sucessão'} de ${r.antigoNome ?? 'cliente'} declarada`, {
         description: r.novoCadastrado
-          ? 'O rateio do histórico de compras é o próximo passo.'
+          ? 'Próximo passo: o "Plano de rateio", no selo da sucessão.'
           : 'O histórico só passa a valer depois do cadastro deste CNPJ no Omie.',
       });
       onFechar();

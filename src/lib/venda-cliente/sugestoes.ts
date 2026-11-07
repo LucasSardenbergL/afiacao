@@ -21,6 +21,13 @@ export interface SugestaoItem {
   precoAlvo: number | null;
   /** Só recompra: a cada quantos dias o cliente costuma comprar este SKU (null = sem leitura). */
   cadenciaDias: number | null;
+  /**
+   * Sucessor declarado (PR C): o histórico desta sugestão veio de uma empresa antiga pelo plano de rateio. `null` =
+   * histórico próprio (ou servidor anterior à migration 20261108000000, que não manda a origem).
+   */
+  heranca?: { de: string[] } | null;
+  /** O valor de referência é o preço que a ANTIGA pagava (a nova não herda preço): rotular, não esconder. */
+  valorRefDaAntiga?: boolean;
 }
 
 export interface CompradorSugerido {
@@ -30,6 +37,8 @@ export interface CompradorSugerido {
   motivoEntrada: string;
   /** soma dos valores de referência; `null` se QUALQUER sugestão não tem valor (a RPC decide). */
   valorRefTotal: number | null;
+  /** O total soma ao menos um preço de referência da empresa antiga. */
+  valorRefTotalDaAntiga?: boolean;
   sugestoes: SugestaoItem[];
 }
 
@@ -80,6 +89,25 @@ function lerOndas(v: unknown): OndasVenda {
   return { complemento: v.complemento, preco: v.preco };
 }
 
+/**
+ * A origem da herança (migration 20261108000000). Ausente/null = própria. Presente com forma errada LANÇA: uma
+ * herança ilegível não pode virar "própria" calada.
+ */
+function lerHeranca(origem: unknown, nomes: unknown): { de: string[] } | null {
+  if (origem === undefined || origem === null) return null;
+  if (!Array.isArray(origem) || origem.length === 0) throw new Error('venda_minhas_sugestoes: sucessao_origem malformada');
+  if (nomes !== null && nomes !== undefined && (!Array.isArray(nomes) || nomes.some((n) => typeof n !== 'string'))) {
+    throw new Error('venda_minhas_sugestoes: herdada_de malformada');
+  }
+  return { de: Array.isArray(nomes) ? (nomes as string[]) : [] };
+}
+
+function lerBool(v: unknown, campo: string): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v !== 'boolean') throw new Error(`venda_minhas_sugestoes: ${campo} malformado`);
+  return v;
+}
+
 /** Lê a resposta crua da RPC. Lança se a forma não for a esperada (fail-closed). */
 export function lerMinhasSugestoes(raw: unknown): MinhasSugestoesResp {
   if (!ehObjeto(raw) || !Array.isArray(raw.compradores)) {
@@ -98,6 +126,7 @@ export function lerMinhasSugestoes(raw: unknown): MinhasSugestoesResp {
         telefone: textoOuNull(c.telefone),
         motivoEntrada: textoOuNull(c.motivo_entrada) ?? 'recompra atrasada',
         valorRefTotal: numOuNull(c.valor_ref_total),
+        valorRefTotalDaAntiga: lerBool(c.valor_ref_total_referencia_origem, 'valor_ref_total_referencia_origem'),
         sugestoes: c.sugestoes.map((s): SugestaoItem => {
           if (!ehObjeto(s)) throw new Error('venda_minhas_sugestoes: sugestão malformada');
           return {
@@ -111,6 +140,8 @@ export function lerMinhasSugestoes(raw: unknown): MinhasSugestoesResp {
             valorRef: numOuNull(s.valor_ref),
             precoAlvo: numOuNull(s.preco_alvo),
             cadenciaDias: numOuNull(s.cadencia_dias),
+            heranca: lerHeranca(s.sucessao_origem, s.herdada_de),
+            valorRefDaAntiga: lerBool(s.valor_ref_referencia_origem, 'valor_ref_referencia_origem'),
           };
         }),
       };
@@ -131,4 +162,10 @@ export function sugestoesDeComplemento(c: CompradorSugerido): SugestaoItem[] {
 /** "Preço" (Onda 3): só SKU com repasse aprovado e vigente quando a lista foi gerada. */
 export function sugestoesDePreco(c: CompradorSugerido): SugestaoItem[] {
   return c.sugestoes.filter((s) => s.tipo === 'preco' && s.omieCodigoProduto != null);
+}
+
+/** "herdado de DIVIMOVEIS" — o rótulo curto da herança (null = própria). */
+export function rotuloHeranca(s: Pick<SugestaoItem, 'heranca'>): string | null {
+  if (!s.heranca) return null;
+  return s.heranca.de.length > 0 ? `herdado de ${s.heranca.de.join(', ')}` : 'herdado de empresa anterior';
 }
