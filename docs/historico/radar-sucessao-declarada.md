@@ -132,3 +132,9 @@ entrega 2 e esta). Validação do founder: `db/validar-cliente-sucessao-plano.sq
 ## Deploy
 🟣 founder: a migration no SQL Editor (depois da `20261107013000`) → conferir com `db/validar-cliente-sucessao-plano.sql`
 via `psql-ro` (12 ✅) → 🖱️ Publish (este PR não muda front; o Publish entra com o PR C).
+
+**Em prod desde 2026-11-07.** #3701 mergeado às 15:11 UTC. Migration colada pelo founder e conferida pela sessão às
+15:39 UTC via `psql-ro`: `db/validar-cliente-sucessao-plano.sql` deu 12/12 ✅ (`venda_gerar_lista` vivo com md5
+`3b93a5e8…`; os 4 factuais com os corpos de antes). O cron `venda-sucessao-reprocesso` rodou `succeeded` às
+15:39:00 com a fila vazia, porque prod ainda não tem declaração com plano. A migration, a prova e a validação na
+`origin/main` são iguais às do PR, sem reversão do sync. O Publish fica para o PR C, porque este não muda o front.
