@@ -333,11 +333,11 @@ fica parado como hoje: o cron já manda o e-mail de situação impeditiva. A dif
     registra o vínculo e avisa que o PO existe com o pedido cancelado. Se não acha, nada muda.
 - **Front (5.5)**: o `PortalStatusPanel` de Gerir pedidos mostra a situação lida e quando foi lida. Para 6, diz
   "disparo bloqueado" (sem PO) ou "há PO no Omie, confira" (com PO). Se a leitura for de protocolo anterior, avisa.
-- **Prova**: `db/test-sayerlack-situacao-portal.sh`, PG17, 41 asserts verdes em `C` e `pt_BR.UTF-8`. Usa 2 conexões
-  com bloqueio observado nas duas ordens gravar × claim. `--falsificar` com controle verde e 11 sabotagens: 9 de
-  comportamento (uma camada por vez) e 2 da postcondição.
+- **Prova**: `db/test-sayerlack-situacao-portal.sh`, PG17, 42 asserts verdes em `C` e `pt_BR.UTF-8`. Usa 2 conexões
+  com bloqueio observado nas duas ordens gravar × claim. `--falsificar` com controle verde e 13 sabotagens: 10 de
+  comportamento (uma camada por vez) e 3 da postcondição.
 - **Codex**: desenho v3 com 4 P1 (reconsulta sem gravar, B' depois das validações, ordem por início da leitura,
   troca de protocolo), todos fechados no v4. A rodada 2 achou 1 P1: um 2º 6 sobreposto era descartado e uma 3ª
-  leitura liberava. Agora um 6 sobre 6 **estende** o horizonte (W15). A rodada 3 achou que trocar o protocolo furava a ordem temporal. Agora a ordem vale entre protocolos (W17, W18).
+  leitura liberava. Agora um 6 sobre 6 **estende** o horizonte (W15). A rodada 3 achou que trocar o protocolo furava a ordem temporal. A rodada 4 achou uma sequência de ida e volta de protocolo. Com 6 gravado, o protocolo agora é **travado** por trigger (W17, W18). Sem 6, a ordem temporal vale entre protocolos (W19).
 - **Limite declarado**: entre a leitura das 12:30 e a gravação (segundos), um claim concorrente ainda pode criar o PO.
   Esse PO fica com a situação 6 gravada e o painel mostra "há PO no Omie". O aviso por e-mail é da fatia 2.

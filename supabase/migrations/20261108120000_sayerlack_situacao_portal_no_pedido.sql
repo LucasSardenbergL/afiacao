@@ -17,7 +17,7 @@
 --      observação vigente libera.
 -- B) `reposicao_claim_disparo` recusa, NO MESMO WHERE QUE GRAVA, pedido cuja observação aceita é 6 — de
 --    QUALQUER protocolo (Codex v3 P1 #4: staff tem UPDATE e trocar `portal_protocolo` não pode liberar
---    compra). Liberar exige observação estritamente posterior (início > fim da vigente) com outro código.
+--    compra) — e, com 6 gravado, o protocolo nem pode ser trocado (trigger A.2b). Liberar exige observação estritamente posterior (início > fim da vigente) com outro código.
 --    Claim existente não é limpo nem expirado.
 -- Idempotente; sem DROP. `CREATE OR REPLACE` da claim preserva o ACL (pré-voo: prod = repo 20260906190615,
 -- md5(pg_get_functiondef) 2d07026098f94452a3e694f87f6950ef em 2026-11-07).
@@ -99,6 +99,35 @@ CREATE TRIGGER trg_situacao_portal_escritor_unico
                              portal_situacao_protocolo, portal_situacao_gravada_em
   ON public.pedido_compra_sugerido
   FOR EACH ROW EXECUTE FUNCTION public.sayerlack__situacao_portal_escritor_unico();
+
+-- ── A.2b protocolo travado enquanto há cancelamento observado ─────────────────────────────────────
+-- Codex 5A rodadas 3-4: trocar `portal_protocolo` (o staff tem UPDATE) fazia observações do protocolo antigo deixarem
+-- de casar a linha e abria sequências de ida-e-volta que liberavam a compra. Nenhum fluxo legítimo troca o protocolo
+-- de um pedido que já tem um 6 observado (envio e conciliação só preenchem o protocolo de quem ainda não tem). Então:
+-- com situação 6 gravada, o protocolo não muda — encerrar o pedido é o caminho (botão auditado, fatia 2).
+CREATE OR REPLACE FUNCTION public.sayerlack__trava_protocolo_com_cancelado()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path TO 'public', 'pg_temp'
+AS $$
+BEGIN
+  IF OLD.portal_situacao_codigo = '6'
+     AND btrim(COALESCE(NEW.portal_protocolo, '')) IS DISTINCT FROM btrim(COALESCE(OLD.portal_protocolo, '')) THEN
+    RAISE EXCEPTION USING ERRCODE = '42501',
+      MESSAGE = '[SITUACAO-PORTAL-PROTOCOLO-TRAVADO] pedido ' || OLD.id || ' está cancelado no portal (protocolo '
+                || COALESCE(OLD.portal_situacao_protocolo, '?') || '): o protocolo não pode ser trocado';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.sayerlack__trava_protocolo_com_cancelado() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sayerlack__trava_protocolo_com_cancelado() FROM anon;
+REVOKE ALL ON FUNCTION public.sayerlack__trava_protocolo_com_cancelado() FROM authenticated;
+
+DROP TRIGGER IF EXISTS trg_situacao_portal_trava_protocolo ON public.pedido_compra_sugerido;
+CREATE TRIGGER trg_situacao_portal_trava_protocolo
+  BEFORE UPDATE OF portal_protocolo ON public.pedido_compra_sugerido
+  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_com_cancelado();
 
 -- ── A.3 o escritor ───────────────────────────────────────────────────────────────────────────────
 -- p_itens: [{protocolo, codigo, texto}]. Item com protocolo ou código fora da gramática é IGNORADO (nunca
@@ -280,6 +309,10 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_situacao_portal_escritor_unico'
                    AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') THEN
     RAISE EXCEPTION 'S2 FALHOU: trigger do escritor único ausente ou desligado';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_situacao_portal_trava_protocolo'
+                   AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') THEN
+    RAISE EXCEPTION 'S9 FALHOU: trigger que trava o protocolo de pedido cancelado ausente ou desligado';
   END IF;
   f := 'public.sayerlack_registrar_situacao_portal(timestamptz, timestamptz, jsonb)';
   IF has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('authenticated', f, 'EXECUTE') THEN
