@@ -46,4 +46,8 @@ v1.9 (2026-10-14) — pedido Sayerlack COM protocolo (ex.: importado do portal) 
 v1.11 (2026-11-07, pontos cegos Onda 2 / D-1) — pedido do app com protocolo do portal ainda em `default_a_vista`
 (condição real não resolvida) NÃO vira PO: lança antes do Omie com o texto lido. Pré-condição de banco: migration
 20261107140000 (colunas `condicao_portal_lida`) e a edge de envio v1.13 deployadas ANTES desta.
+v1.12 (2026-11-08, pontos cegos Onda 5A fatia 1) — pedido CANCELADO no portal (situação 6 gravada) com pendência
+de disparo aberta é conciliado SÓ POR CONSULTA (ConsultarPedCompra AFI-<id>, nunca IncluirPedCompra), antes das
+validações de criação: PO confirmado ⇒ registra o vínculo e avisa que o PO existe com o pedido cancelado; não achou ⇒
+nada muda. Sem pendência, o claim (migration 20261108120000) recusa e nada vai ao Omie.
 ```
