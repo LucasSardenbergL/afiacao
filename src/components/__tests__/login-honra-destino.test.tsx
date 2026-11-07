@@ -64,6 +64,32 @@ describe('login honra o destino (integrado, começando SEM sessão)', () => {
     expect(signIn).toHaveBeenCalledTimes(1);
   });
 
+  it('ProtectedRoute grava o destino em ?next= (sobrevive a recarregar o /auth)', () => {
+    render(
+      <MemoryRouter initialEntries={['/radar?cnpj=1']}>
+        <Routes>
+          <Route path="/auth" element={<Onde />} />
+          <Route path="/radar" element={<ProtectedRoute><div>RADAR</div></ProtectedRoute>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('onde').textContent).toBe('/auth?next=%2Fradar%3Fcnpj%3D1');
+  });
+
+  it('só state.from (sem ?next=, ex.: navegação antiga em memória) também leva ao destino', async () => {
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/auth', state: { from: { pathname: '/radar', search: '?cnpj=9', hash: '' } } }]}>
+        <Routes>
+          <Route path="/auth" element={<Auth />} />
+          <Route path="/radar" element={<Onde />} />
+          <Route path="/" element={<div>HOME</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByText('ENTRAR'));
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).toBe('/radar?cnpj=9'));
+  });
+
   it('consent OAuth (?next= com query) segue preservado', async () => {
     montar(`/auth?next=${encodeURIComponent('/.lovable/oauth/consent?authorization_id=abc')}`);
     fireEvent.click(await screen.findByText('ENTRAR'));
