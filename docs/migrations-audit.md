@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **802** custom migrations totais
-- **2676** objetos esperados (criados por estas migrations)
+- **804** custom migrations totais
+- **2685** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1039
+  - `function`: 1046
   - `rls_policy`: 519
   - `index`: 381
   - `table`: 249
   - `cron_job`: 215
+  - `trigger`: 136
   - `view`: 135
-  - `trigger`: 134
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -6611,6 +6611,25 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.radar_funil_sensores` | — |
 | `index` | `public.idx_radar_sensor_falhas_dia` | `radar_sensor_falhas` |
 | `index` | `public.idx_radar_empresas_omie_cadastrado_em` | `radar_empresas` |
+
+### `20261108000000_cliente_sucessao_consumidores.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private._venda_sugestoes_json` | — |
+| `function` | `public.venda_heranca_comprador` | — |
+| `function` | `public.cliente_sucessao_plano_itens` | — |
+
+### `20261108120000_sayerlack_situacao_portal_no_pedido.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack__situacao_portal_escritor_unico` | — |
+| `function` | `public.sayerlack__trava_protocolo_confirmado` | — |
+| `function` | `public.sayerlack_registrar_situacao_portal` | — |
+| `function` | `public.reposicao_claim_disparo` | — |
+| `trigger` | `public.trg_situacao_portal_escritor_unico` | `pedido_compra_sugerido` |
+| `trigger` | `public.trg_situacao_portal_trava_protocolo` | `pedido_compra_sugerido` |
 
 ## Próximos passos por status
 
