@@ -83,10 +83,18 @@ describe('RadarLinha — selo "sugerido" e motivos do score (bloco 5)', () => {
     expect(screen.getByText(/CNAE tier 1 \(\+25\)/)).toBeTruthy();
   });
 
-  it('sem `mostrarMotivos`, os motivos ficam só no title do badge', () => {
+  it('sem `mostrarMotivos`, só o 1º motivo aparece como texto (B3: o title é invisível no toque)', () => {
     renderLinha(sugerido(), LOTE, false);
-    expect(screen.queryByText(/CNAE tier 1 \(\+25\)/)).toBeNull();
+    expect(screen.getByTestId('radar-score-motivos').textContent).toBe('CNAE tier 1 (+25)');
+    expect(screen.queryByText(/capital ≥ 1 mi/)).toBeNull();
     expect(screen.getByTestId('radar-score').getAttribute('title')).toMatch(/CNAE tier 1/);
+  });
+
+  it('o nome fica numa linha própria, fora da fila de selos (B3)', () => {
+    renderLinha(sugerido(), LOTE, false);
+    const nome = screen.getByText(/^sugerido/i).closest('button')?.firstElementChild;
+    expect(nome?.textContent).not.toMatch(/sugerido/);
+    expect(nome?.className).toMatch(/truncate/);
   });
 });
 

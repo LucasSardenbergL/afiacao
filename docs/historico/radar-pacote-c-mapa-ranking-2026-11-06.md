@@ -62,6 +62,21 @@ Não há o que consertar no hook. O custo a frio é o mesmo cache frio da instâ
 
 | Camada | Quem | Observação |
 | --- | --- | --- |
-| Migration `20261106175800` | sessão, pelo envelope (`db:aplicar`: idempotente, PRE/PÓS, sem BEGIN/COMMIT) | **antes** do Publish: o front novo manda `p_ufs`, `p_com_telefone` e `p_municipio_codigo`, que a função velha não conhece (PGRST202) |
+| Migration `20261106175800` ✅ aplicada 2026-11-06 (recibo #936) | sessão, pelo envelope (`db:aplicar`: idempotente, PRE/PÓS, sem BEGIN/COMMIT) | **antes** do Publish: o front novo manda `p_ufs`, `p_com_telefone` e `p_municipio_codigo`, que a função velha não conhece (PGRST202) |
 | Publish do Lovable | founder | depois da migration |
 | Edge | nenhuma | |
+
+## Aplicação em prod (2026-11-06)
+
+PR #3676 mergeado antes, com o CI verde. Até a migration entrar, a main tinha o front novo e a prod as RPCs
+velhas, então qualquer Publish nesse intervalo quebraria o `/radar` (PGRST202).
+
+- **Pré-voo (psql-ro):** os 3 corpos vivos eram os predecessores que a PRE espera (`08af5a…`, `a9cdba…`,
+  `7bd102…`). Os bytes do arquivo são idênticos aos da main (sha256 `e46c99f7…`).
+- **Ensaio:** `db:aplicar --ensaio` rodou inteiro, PRE e PÓS, e fez ROLLBACK.
+- **Apply:** `db:aplicar`, tentativa **#936**, que virou recibo na mesma transação.
+- **2ª testemunha (psql-ro, depois do commit):** a query de validação do PR deu `OK pacote C aplicado`. As 3
+  RPCs têm o md5 deste arquivo (`2351fb07…`, `4b3b6f0a…`, `2cb7ad50…`), há uma sobrecarga de cada, são SECURITY
+  DEFINER STABLE, e `authenticated` executa mas `anon` não.
+- **Falta:** o Publish do Lovable (founder). A migration do B2 (`p_so_meus` em `radar_lista`, sessão A/B)
+  encadeia por cima, com predecessor `2cb7ad50…`.
