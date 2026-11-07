@@ -106,7 +106,7 @@ A trava em c1 aparece com mais frequência (6 contra 0 em c2), o que sugere cust
   3. Opcional: ligar `track_io_timing` para medir a latência de leitura direto no `pg_stat_statements`. É mudança de configuração, decisão dele.
 - Qualquer conserto futuro no trio recria juntos `_data_health_compute`, `data_health_watchdog` e `fin_sync_heartbeat`, partindo da migration de maior timestamp (`docs/agent/sync.md`).
 
-## D12 — `radar_empresas` depois do #3638/#3639: **pendente, medir a partir de 2026-11-07**
+## D12 — `radar_empresas` depois do #3638/#3639: **medido em 2026-11-07** (veredito no fim da seção)
 
 O #3639 foi mergeado em 2026-11-05T15:46:21Z e o #3638 em 2026-11-05T15:47:52Z. A janela útil precisa de pelo menos 1 dia inteiro depois deles, com o `pg_stat_statements` acumulando desde o reset de 05/11 14:13 UTC. **Sem veredito até lá.** A conta parcial abaixo é só referência.
 
@@ -149,3 +149,48 @@ A base do plano era 12,3 M em 5,2 d (~2,37 M/dia). Entre ~05/11 15:20 e 06/11 12
    - Se a taxa diária de `heap_blks_read` ficar bem abaixo de 2,37 M/dia **e** `radar_agregado_recalcular` deixar de ser o leitor dominante, o #3638 cumpriu.
    - Senão, o item volta com o leitor que restou.
    - `heap_blks_read` conta leitura do Postgres, não byte físico, porque o cache do SO absorve parte.
+
+### D12 medido (2026-11-07 12:32 UTC) — o #3638 cumpriu a parte dele; o leitor que restou é o agregado diário
+
+Sem restart no meio: `pg_postmaster_start_time()` = `2026-10-31 10:33:02Z`. Os contadores da tabela vieram do `psql-ro` (rc 0, `FIM_OK`). O `pg_stat_statements` veio do conector, com `SET TRANSACTION READ ONLY` e o banco atestando `transaction_read_only = on`, porque o `claude_ro` não tem `USAGE` no schema `extensions`. Reset do `pg_stat_statements` às 05/11 14:13:13Z.
+
+**Delta de `radar_empresas` contra o snapshot de 06/11 12:24Z (~24,1 h):**
+
+| métrica | 06/11 12:24 | 07/11 12:32 | Δ |
+|---|---:|---:|---:|
+| `heap_blks_read` | 13.269.467 | 14.849.133 | **+1.579.666 (~1,57 M/dia)** |
+| `heap_blks_hit` | 5.298.578 | 6.906.237 | +1.607.659 |
+| `idx_blks_read` | 214.264 | 274.020 | +59.756 |
+| `seq_scan` | 169 | 178 | +9 |
+| `seq_tup_read` | 67.507.233 | 70.961.674 | +3.454.441 (~9 varreduras inteiras) |
+| `idx_scan` | 183.159 | 263.684 | +80.525 |
+
+A taxa caiu de **2,37 M para 1,57 M/dia (−34%)**. Pelo comentário da migration do #3638, a economia esperada era de ~3,8 GB/dia, ~0,49 M blocos (1,5 GB do recruzar e 2,3 GB do score), o que levaria a ~1,9 M/dia. Medido, ficou abaixo disso, mesmo com a entrada no ar dos pacotes A–D do Radar em 06/11, que trazem leitura nova de usuário.
+
+**Por job (`cron.job_run_details`):**
+
+| job | antes do #3638 (01–05/11) | 06–07/11 |
+|---|---|---|
+| 213 `radar-recruzar-ja-cliente-diario` (06:15) | 12–18 s | **5,5 / 5,3 s** |
+| 225 `radar-score-recalcular-diario` (06:30) | ~21 s (67 s em 01/11) | **0,9 / 1,0 s** (gate da impressão digital: não recalcula) |
+| 264 `radar-agregado-recalcular` (`35 * * * *`) | média 8,6–9,0 s, máx. 204–213 s | média 8,7 s, máx. 206–208 s |
+
+O job 264 roda **de hora em hora**, não "1×/dia" como diz o comentário da migration do #3638. Mas só uma rodada por dia é pesada (~205 s). As outras 23 somam pouco: a média de 8,7 s em 24 rodadas cabe numa pesada mais ~0,4 s nas demais. O agendamento horário não é o custo.
+
+**`pg_stat_statements` por `shared_blks_read` (desde 05/11 14:13Z):**
+
+| statement | calls | blocos lidos | média |
+|---|---:|---:|---:|
+| `tint_promocao_tick()` | 11.056 | 1.322.523 | 98 ms |
+| `radar_agregado_recalcular()` | 46 | **637.221** (era 319.951 com 22 calls) | 9,1 s |
+| `tint_staging_purge()` | 2 | 346.483 | 14,7 s |
+| `aplicar_sql(…)` | 48 | 301.012 | 2,1 s |
+| `data_health_watchdog()` | 93 | 203.515 | 5,7 s |
+
+Entre os leitores de `radar_*`, o agregado continua **dominante**: +317 k blocos em 24 h, ~2,5 GB, quase tudo na rodada pesada. O 2º leitor de radar (uma RPC do PostgREST com `p_cnpj`) leu 29,6 k blocos em 39 chamadas.
+
+**Veredito pelo critério da receita:**
+- A taxa caiu bem: ✅.
+- O agregado continua sendo o leitor dominante: ❌.
+
+O item volta com o leitor que restou, e esse leitor é exatamente a **"próxima fatia"** que o #3638 declarou fora do escopo. O agregado depende do relógio: o corte de "estabelecida" é hoje − 5 anos, então muda todo dia e não cabe no gate de "nada mudou". **Candidato do v8: RADAR-AGREGADO-IO**, reduzir a releitura diária do `radar_agregado_recalcular` (~2,5 GB/dia). Na mesma instância Mini, o `tint_promocao_tick` (TINT-PROMO-IO, já candidato) segue sendo o maior leitor absoluto, com 2× o agregado. Nenhuma escrita foi feita nesta medição.
