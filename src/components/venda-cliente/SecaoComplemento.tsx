@@ -13,6 +13,8 @@ interface Props {
   familias: FamiliaComplemento[] | null;
   loading: boolean;
   erro: boolean;
+  /** "família|empresa" → nome da antiga: a família que o cliente já compra pela HERANÇA (sucessor declarado). */
+  herdadas?: Map<string, string>;
 }
 
 /**
@@ -20,7 +22,7 @@ interface Props {
  * Seção própria, sem score comum com Recomprar. Nunca mostra estoque/disponibilidade: não há
  * fonte confiável, e "disponível" fabricado é pior que nada.
  */
-export function SecaoComplemento({ ondaLigada, itens, familias, loading, erro }: Props) {
+export function SecaoComplemento({ ondaLigada, itens, familias, loading, erro, herdadas }: Props) {
   if (!ondaLigada || itens.length === 0) return null;
   // Família E empresa: o desfecho casa a compra na empresa GRAVADA na linha (Codex P2).
   const porFamilia = new Map((familias ?? []).map((f) => [`${f.familia}|${f.empresa}`, f]));
@@ -42,6 +44,11 @@ export function SecaoComplemento({ ondaLigada, itens, familias, loading, erro }:
             <li key={s.id} className="px-3 py-2.5">
               <p className="text-sm font-medium leading-snug">{s.familia}</p>
               <p className="text-2xs text-muted-foreground mt-0.5">{EMPRESA[s.empresa] ?? s.empresa}</p>
+              {s.familia != null && herdadas?.has(`${s.familia}|${s.empresa}`) && (
+                <p className="text-2xs text-status-info mt-0.5" data-testid="complemento-herdada">
+                  {herdadas.get(`${s.familia}|${s.empresa}`)} (empresa anterior) já comprava esta família
+                </p>
+              )}
               {loading ? (
                 <Skeleton className="mt-1.5 h-4 w-2/3" />
               ) : f && f.skus.length > 0 ? (

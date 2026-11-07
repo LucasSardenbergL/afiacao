@@ -1,5 +1,5 @@
 import { formatPrecoOuAusente } from '@/lib/format';
-import type { SugestaoItem } from '@/lib/venda-cliente/sugestoes';
+import { rotuloHeranca, type SugestaoItem } from '@/lib/venda-cliente/sugestoes';
 import type { TopProduto } from '@/lib/venda-cliente/historico';
 
 const EMPRESA: Record<string, string> = { oben: 'Oben', colacor: 'Colacor' };
@@ -21,7 +21,8 @@ interface Props {
 /**
  * Recomprar: o que o cliente costuma comprar e está atrasado (decidido no servidor).
  * Último preço e "última compra há N dias" vêm do histórico de pedidos — ausente vira "—",
- * nunca R$ 0,00. Sem custo, sem margem: a farmer nunca vê custo.
+ * nunca R$ 0,00. Sem custo, sem margem: a farmer nunca vê custo. Item HERDADO (sucessor declarado) é rotulado:
+ * a nova não tem histórico próprio dele, então o "último preço" segue "—" (a nova não herda preço).
  */
 export function SecaoRecomprar({ itens, produtos, historicoErro, agora = new Date() }: Props) {
   const porCodigo = new Map((produtos ?? []).map((p) => [p.codigo, p]));
@@ -55,6 +56,13 @@ export function SecaoRecomprar({ itens, produtos, historicoErro, agora = new Dat
                       <span className="tabular-nums"> · compra a cada ~{s.cadenciaDias} {s.cadenciaDias === 1 ? 'dia' : 'dias'}</span>
                     )}
                   </p>
+                  {s.heranca && (
+                    <p className="text-2xs text-status-info mt-0.5" data-testid="recomprar-heranca"
+                      title="O histórico deste item veio da empresa antiga pelo plano de rateio da sucessão">
+                      {rotuloHeranca(s)} — o histórico inclui compras da empresa antiga
+                      {s.valorRefDaAntiga ? '; o valor de referência usa o preço que ela pagava' : ''}
+                    </p>
+                  )}
                 </div>
                 <dl className="shrink-0 text-right">
                   <dt className="sr-only">Quantidade sugerida</dt>

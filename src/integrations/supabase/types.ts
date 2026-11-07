@@ -23372,6 +23372,10 @@ export type Database = {
         Args: { p_evento_id: string }
         Returns: Json
       }
+      cliente_sucessao_plano_itens: {
+        Args: { p_evento_id: string }
+        Returns: Json
+      }
       cliente_sucessao_plano_publicar: {
         Args: {
           p_evento_id: string
@@ -26306,6 +26310,10 @@ export type Database = {
         Returns: Json
       }
       venda_fechar_desfechos: { Args: { p_hoje?: string }; Returns: number }
+      venda_heranca_comprador: {
+        Args: { p_comprador: string }
+        Returns: Json
+      }
       venda_gate_credito: {
         Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
         Returns: Json
