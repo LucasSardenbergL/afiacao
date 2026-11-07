@@ -563,11 +563,14 @@ async function falhasAbertas(db: Db): Promise<{ protocolo: string; primeira_em: 
  *  chance dele). Sem filtro de data de emissão: é o que a janela de 7 dias deixava para trás (item 3.7). Erro LANÇA. */
 async function appSemPoAntigos(db: Db): Promise<{ protocolo: string; pedido_id: number }[]> {
   const limite = new Date(Date.now() - 3600_000).toISOString();
-  const { data, error } = await db.from("pedido_compra_sugerido").select("id, portal_protocolo, omie_pedido_compra_id, enviado_portal_em")
-    .eq("empresa", "OBEN").eq("status_envio_portal", "sucesso_portal").in("status", [...STATUS_REDISPARAVEIS])
-    .not("portal_protocolo", "is", null).lt("enviado_portal_em", limite).order("id", { ascending: true }).limit(1000);
-  if (error) throw new Error(`Leitura dos pedidos do app sem PO: ${error.message}`);
-  return ((data ?? []) as { id: number; portal_protocolo: string | null; omie_pedido_compra_id: string | null }[])
+  // Paginado (o PostgREST capa em 1.000 em silêncio — um corte aqui viraria "não há mais pendência").
+  const linhas = await fetchAll<{ id: number; portal_protocolo: string | null; omie_pedido_compra_id: string | null }>(
+    (de, ate) => db.from("pedido_compra_sugerido").select("id, portal_protocolo, omie_pedido_compra_id")
+      .eq("empresa", "OBEN").eq("status_envio_portal", "sucesso_portal").in("status", [...STATUS_REDISPARAVEIS])
+      .not("portal_protocolo", "is", null).lt("enviado_portal_em", limite).order("id", { ascending: true }).range(de, ate),
+    "varrer-portal:app-sem-po-antigos",
+  );
+  return linhas
     .filter((r) => { const po = (r.omie_pedido_compra_id ?? "").trim(); return po === "" || po === "0"; })
     .map((r) => ({ protocolo: (r.portal_protocolo ?? "").trim(), pedido_id: r.id }));
 }
