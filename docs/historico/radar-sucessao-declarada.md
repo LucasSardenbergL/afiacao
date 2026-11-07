@@ -229,3 +229,38 @@ o merge como edição `pending`. O build seguinte (entry `index-DfaoeAPM`) foi v
 como `dev`, por isso a prova foi pelo conteúdo e não pelo `monitor-deploy.sh --pr`. Lição: **Publish logo
 depois do merge pode publicar a main de antes**; confira o `ar=` do monitor (ou o conteúdo) antes de dar por
 feito.
+
+# Entrega 3, painel de gestão — a parte herdada no `venda_painel` (2026-11-07)
+
+Migration `20261108010000_venda_painel_heranca.sql`. Prova: `db/test-venda-painel-heranca.sh`. Validação:
+`db/validar-venda-painel-heranca.sql`.
+
+## O que mudou
+- `public.venda_painel` recriado do corpo vivo (md5 `78d9e58f…`, o da 20261020235000). Cada linha farmer × semana
+  ganhou duas chaves e nenhuma das antigas mudou:
+  - `herdadas`: compradores distintos, sugestões, desfechos de recompra, receita casada e receita incompleta. São
+    as mesmas réguas da linha, só que restritas a `sucessao_origem IS NOT NULL`. A constraint
+    `venda_sugestao_sucessao_origem_ck` (validada em prod) só aceita NULL ou array não vazio, então o `IS NOT NULL`
+    separa exatamente a herdada.
+  - `taxa_ativa_propria`: a conversão sem as herdadas, calculada por diferença e NULL com denominador 0. O
+    histórico de uma herdada inclui compras da antiga, por isso é a taxa própria que se compara com a linha de base.
+- Tela (`TabelaAdocao`): o aviso aparece quando o farmer tem herdadas. Sob cada número, quantos clientes são
+  herdados, a receita herdada e a conversão "própria". Servidor sem a migration (sem as duas chaves) mantém a tela
+  de antes. Só uma das duas chaves, ou forma errada, lança erro.
+
+## Por que agora, sem sinal
+O roadmap deixava este passo esperando o 1º plano publicado em prod, pela regra "fase N+1 exige sinal". No dia,
+prod tinha 0 sucessões, 0 revisões de plano e 0 sugestões herdadas. O founder decidiu fazer assim mesmo. O
+painel nasce mostrando zero herdadas: a fatia só aparece quando houver sugestão herdada.
+
+## Prova
+13 asserts, verde em `LC_ALL=C` e em `pt_BR.UTF-8`, e 7 de 7 sabotagens vermelhas nos dois locales, cada uma no
+seu assert. O M0 prende que o corpo anterior do repo é o de prod. O H0 prende a invariância: tirando as duas
+chaves, o JSON é o do corpo anterior com os mesmos dados. O M4 roda o validar contra a migration real (4 ✅).
+Lição do arnês: a PÓS confere o md5 do corpo, então a sabotagem tem de recalcular o md5 esperado. Sem isso, as 6
+sabotagens de corpo morriam no catálogo e nunca chegavam aos asserts. Apareceu no 1º `--falsificar`, com 6
+"vermelha, mas NÃO no assert esperado".
+
+## Deploy
+🟣 founder: a migration no SQL Editor, depois conferir `db/validar-venda-painel-heranca.sql` via `psql-ro` (4 ✅).
+Depois, 🖱️ Publish, só quando o Lovable já tiver o merge como edição `completed`.
