@@ -585,9 +585,9 @@ async function reservarTentativa(db: Db, protocolo: string, mensagem: string): P
   if (error) { console.warn(`[varrer-portal] reserva de ${protocolo} não lida: ${error.message}`); return "erro"; }
   if (atual) {
     const { data, error: e2 } = await db.from("sayerlack_varredura_falha").update({ ultima_em: agora, resolvido_em: null })
-      .eq("protocolo", protocolo).lt("ultima_em", limite).select("protocolo");
+      .eq("protocolo", protocolo).lt("ultima_em", limite).select("protocolo").maybeSingle();  // PK: 0 ou 1 linha
     if (e2) { console.warn(`[varrer-portal] reserva de ${protocolo} não gravada: ${e2.message}`); return "erro"; }
-    return Array.isArray(data) && data.length === 1 ? "reservado" : "disputa";
+    return data ? "reservado" : "disputa";
   }
   const { error: e3 } = await db.from("sayerlack_varredura_falha")
     .insert({ protocolo, mensagem, primeira_em: agora, ultima_em: agora, tentativas: 1 });  // CHECK tentativas >= 1
