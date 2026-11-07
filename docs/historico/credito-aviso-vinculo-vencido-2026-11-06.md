@@ -3,6 +3,22 @@
 Plano dos 3 passos aprovado pelo founder: sensor (feito, `radar-abriu-ficha-com-cnpj-2026-11-06.md`), **aviso de crédito**
 (este) e CPF mascarado dos sócios (passo 3, fora daqui). Viabilidade: `radar-sucessor-viabilidade-2026-11-04.md`.
 
+## Estado: NO AR (conferido em 2026-11-07)
+
+| Camada | Evidência |
+|---|---|
+| Código | PR #3679 mergeado (`0c208268b`), CI com 21 checagens verdes |
+| Banco | `20261106205557` aplicada pelo founder (`db:aplicar`, tentativa #937); validada por psql-ro: os 7 corpos com o md5 esperado (base `91dc715b`, núcleo `f345a864`, avaliar `afbc83bf`, aviso `e7e4c97c`, sensor `9e0cfc8b`; ficha e lista intactas), `anon` sem EXECUTE, base/núcleo/avaliar fechados ao JWT, aviso/sensor SECURITY DEFINER |
+| Publish | `steu.lovable.app`: chunk `AvisoVinculoCredito-DBa6_oOn.js` (contém `credito_vinculo_aviso`, `credito_vinculo_aviso_registrar` e "requer conferência"), importado por `UnifiedOrder` e por `RadarClientes` |
+
+Bytes no ar = **disponibilidade, não adoção**: o service worker só troca de build quando o cliente aceita a
+atualização. Uso real na conferência: **0** eventos `credito.vinculo_aviso_*` no outbox. A medição é a query de
+"Quando medir", abaixo.
+
+O PR #3679 também consertou 2 vermelhos que vieram da main. O primeiro foi o `types.ts` que o sync do Lovable
+apagou (`e313f7c55`, parâmetros do pacote C), e o conserto foi reverter esse commit. O segundo foi um `as never`
+velho em `PedidosPortalCard.tsx`, que deixava o `casts:stale` vermelho.
+
 ## O que entrega
 
 Quando o CNPJ do cliente do pedido, ou do lead aberto na ficha do Radar, tem selo de possível vínculo/sucessor de um
