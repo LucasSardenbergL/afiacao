@@ -6,10 +6,10 @@
 // ou `hint` do PostgREST — só o CÓDIGO `RSOC_*` que as RPCs levantam (achado Codex P1 do desenho). E uma falha
 // aqui NUNCA marca o lote da fila de leads como `error`: a camada de sócios roda depois do `finalize`.
 
-export const ACOES_SOCIOS = ["socios_iniciar", "chunk_socios", "publicar_socios", "limpar_socios"] as const;
+const ACOES_SOCIOS = ["socios_iniciar", "chunk_socios", "publicar_socios", "limpar_socios"] as const;
 export type AcaoSocios = (typeof ACOES_SOCIOS)[number];
 
-export const MAX_LINHAS_CHUNK_SOCIOS = 5000;
+const MAX_LINHAS_CHUNK_SOCIOS = 5000;
 
 export function ehAcaoSocios(a: string): a is AcaoSocios {
   return (ACOES_SOCIOS as readonly string[]).includes(a);

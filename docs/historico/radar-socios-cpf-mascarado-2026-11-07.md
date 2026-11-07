@@ -78,4 +78,15 @@ forte e +2 pares de crédito.
   ordem de deploy e adoção. Dos P2 entraram: a exclusividade contada no universo inteiro, independente de
   `p_cnpjs`; a qualificação examinada em todas as linhas; a guarda por nome e par de raízes; a expiração de
   `carregando`.
-- **Prova PG17 `db/test-radar-socios-cpf.sh`:** os asserts e as sabotagens estão no `db/nucleo-ci.txt`.
+- **Codex de código** (gpt-6-astra, high, 207 s): nenhum P0. Os 4 achados foram adotados:
+  - P1: o MEI com acento ficava fora da contagem de exclusividade. Agora o nome é normalizado nesse ramo, com um
+    índice parcial que usa só funções nativas.
+  - P2: a carga dava "sucesso" para lote descartado. Agora o estado é validado e a publicação exige `vigente`.
+  - P2: faltava concorrência na prova. Entrou o P10, com sabotagem que tira o lock.
+  - P2: faltava o registro no núcleo do CI.
+- **Prova PG17 `db/test-radar-socios-cpf.sh`:** 32 asserts. O `--falsificar` derruba 19/19 sabotagens, cada uma
+  vermelha no assert dela, com controle verde, em `LC_ALL=C` e em `pt_BR.UTF-8`.
+  - A 1ª rodada pegou um defeito do PRÓPRIO harness: o 2º apply (idempotência) abortava na PRE antes do assert, e
+    foi preciso cegar a PRE.
+  - O fixture reaproveita o schema da prova do passo 2, lido de lá para não divergir.
+  - Está registrada no `db/nucleo-ci.txt`.

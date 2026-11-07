@@ -28,7 +28,7 @@ MIG="$MIGS/20261107040000_radar_socios_cpf_mascarado.sql"
 PROVA_P2="$REPO_ROOT/db/test-credito-vinculo-aviso.sh"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_filtro_pais:S3 sem_universo:S4 sem_dono:S5 mascara_3a8:S6 sem_guarda:S7 guarda_sem_lote:E1 carregando_conta:S10 nome_perfil_cru:E2 regra_versao_1:C2 reconciliacao_frouxa:P4 manifesto_mutavel:P2 receber_em_vigente:P6 republica:P7 limpa_tudo:P9 tabela_aberta:post:A2 rpc_aberta:post:A3 deriva:pre mei_sem_norm:S11 receber_sem_lock:P10"
+  SABOTAGENS="sem_filtro_pais:S3 sem_universo:S4 sem_dono:S5 mascara_3a8:S6 sem_guarda:S7 guarda_sem_lote:E1 carregando_conta:S10 nome_perfil_cru:E2 regra_versao_1:C2 reconciliacao_frouxa:P4 manifesto_mutavel:P2 receber_em_vigente:P6 republica:P7 limpa_tudo:P9 tabela_aberta:post:A2 rpc_aberta:post:A3 deriva:pre mei_sem_norm:S11 publicar_sem_lock:P10"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-socios.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -123,8 +123,14 @@ s = s[:i] + "       AND btrim(regexp_replace(e.razao_social, ' [0-9]{11}$', ''))
 open(p, "w", encoding="utf-8").write(s)
 PY2
     ;;
-  receber_sem_lock)   sabotar "  PERFORM pg_advisory_xact_lock(hashtext('radar_socios'));
-  SELECT status INTO v_status FROM public.radar_socios_lote WHERE lote = p_lote FOR UPDATE;" "  SELECT status INTO v_status FROM public.radar_socios_lote WHERE lote = p_lote;" ;;
+  # O lock que SERIALIZA receber × publicar é o da PUBLICAÇÃO: a FK de radar_socios já trava a linha do lote
+  # (FOR KEY SHARE) no INSERT do receber, então tirar o lock do receber fica VERDE (redundante — medido em 2026-11-07).
+  publicar_sem_lock)  sabotar "  PERFORM pg_advisory_xact_lock(hashtext('radar_socios'));
+  SELECT * INTO r FROM public.radar_socios_lote WHERE lote = p_lote FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'RSOC_LOTE_INEXISTENTE'; END IF;
+  -- Resposta perdida" "  SELECT * INTO r FROM public.radar_socios_lote WHERE lote = p_lote;
+  IF NOT FOUND THEN RAISE EXCEPTION 'RSOC_LOTE_INEXISTENTE'; END IF;
+  -- Resposta perdida" ;;
   deriva)             ;;  # outra sessão mudou a base viva depois do pré-voo: a PRE tem de abortar o apply
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
