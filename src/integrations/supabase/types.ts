@@ -976,6 +976,81 @@ export type Database = {
           },
         ]
       }
+      cliente_sucessao_plano_regras: {
+        Row: {
+          destino_sucessao_id: string
+          empresa: string
+          evento_id: string
+          familia: string | null
+          novo_documento: string
+          omie_codigo_produto: number
+          origem: string
+          revisao: number
+        }
+        Insert: {
+          destino_sucessao_id: string
+          empresa: string
+          evento_id: string
+          familia?: string | null
+          novo_documento: string
+          omie_codigo_produto: number
+          origem: string
+          revisao: number
+        }
+        Update: {
+          destino_sucessao_id?: string
+          empresa?: string
+          evento_id?: string
+          familia?: string | null
+          novo_documento?: string
+          omie_codigo_produto?: number
+          origem?: string
+          revisao?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cliente_sucessao_plano_regras_destino_sucessao_id_fkey"
+            columns: ["destino_sucessao_id"]
+            isOneToOne: false
+            referencedRelation: "cliente_sucessoes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cliente_sucessao_plano_regras_evento_id_revisao_fkey"
+            columns: ["evento_id", "revisao"]
+            isOneToOne: false
+            referencedRelation: "cliente_sucessao_plano_revisoes"
+            referencedColumns: ["evento_id", "revisao"]
+          },
+        ]
+      }
+      cliente_sucessao_plano_revisoes: {
+        Row: {
+          evento_id: string
+          motivo: string | null
+          publicado_em: string
+          publicado_por: string
+          revisao: number
+          revoga: boolean
+        }
+        Insert: {
+          evento_id: string
+          motivo?: string | null
+          publicado_em?: string
+          publicado_por: string
+          revisao: number
+          revoga: boolean
+        }
+        Update: {
+          evento_id?: string
+          motivo?: string | null
+          publicado_em?: string
+          publicado_por?: string
+          revisao?: number
+          revoga?: boolean
+        }
+        Relationships: []
+      }
       cliente_sucessoes: {
         Row: {
           antigo_documento: string
@@ -19961,9 +20036,11 @@ export type Database = {
           preco_anterior: number | null
           qtd_ref: number | null
           sales_order_id: string | null
+          sucessao_origem: Json | null
           tipo: string
           valor_realizado: number | null
           valor_ref: number | null
+          valor_ref_referencia_origem: boolean
         }
         Insert: {
           avaliado_em?: string | null
@@ -19984,9 +20061,11 @@ export type Database = {
           preco_anterior?: number | null
           qtd_ref?: number | null
           sales_order_id?: string | null
+          sucessao_origem?: Json | null
           tipo: string
           valor_realizado?: number | null
           valor_ref?: number | null
+          valor_ref_referencia_origem?: boolean
         }
         Update: {
           avaliado_em?: string | null
@@ -20007,9 +20086,59 @@ export type Database = {
           preco_anterior?: number | null
           qtd_ref?: number | null
           sales_order_id?: string | null
+          sucessao_origem?: Json | null
           tipo?: string
           valor_realizado?: number | null
           valor_ref?: number | null
+          valor_ref_referencia_origem?: boolean
+        }
+        Relationships: []
+      }
+      venda_sugestao_substituida: {
+        Row: {
+          comprador_id: string
+          dia_referencia: string
+          empresa: string
+          evento_id: string
+          farmer_user_id: string
+          fase: string
+          id: string
+          motivo: string
+          omie_codigo_produto: number | null
+          plano_revisao: number | null
+          reprocesso_id: string
+          substituida_em: string
+          sugestao: Json
+        }
+        Insert: {
+          comprador_id: string
+          dia_referencia: string
+          empresa: string
+          evento_id: string
+          farmer_user_id: string
+          fase: string
+          id: string
+          motivo: string
+          omie_codigo_produto?: number | null
+          plano_revisao?: number | null
+          reprocesso_id: string
+          substituida_em?: string
+          sugestao: Json
+        }
+        Update: {
+          comprador_id?: string
+          dia_referencia?: string
+          empresa?: string
+          evento_id?: string
+          farmer_user_id?: string
+          fase?: string
+          id?: string
+          motivo?: string
+          omie_codigo_produto?: number | null
+          plano_revisao?: number | null
+          reprocesso_id?: string
+          substituida_em?: string
+          sugestao?: Json
         }
         Relationships: []
       }
@@ -23238,6 +23367,27 @@ export type Database = {
           motivo_descricao: string
           situacao: string
         }[]
+      }
+      cliente_sucessao_plano_do_evento: {
+        Args: { p_evento_id: string }
+        Returns: Json
+      }
+      cliente_sucessao_plano_publicar: {
+        Args: {
+          p_evento_id: string
+          p_motivo?: string
+          p_regras: Json
+          p_revisao_esperada: number
+        }
+        Returns: Json
+      }
+      cliente_sucessao_plano_revogar: {
+        Args: {
+          p_evento_id: string
+          p_motivo: string
+          p_revisao_esperada: number
+        }
+        Returns: Json
       }
       cliente_sucessao_previa: {
         Args: {

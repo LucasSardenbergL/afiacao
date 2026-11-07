@@ -632,15 +632,26 @@ Deno.serve(async (req: Request) => {
   let resumoFinal: Record<string, unknown> = { modo, versao: VERSAO };
   const registro = await abrirExecucao(db, auth);
   const falhasReconciliacao: { pedido_id: number; protocolo: string; mensagem: string }[] = [];
+  // 4.3: cada leitura da lista e cada importação abre UMA sessão no Browserless (cota do plano). Conta por rodada.
+  const sessoes = { leitura_portal: 0, importacao: 0 };
+  const lerPortalContado = (desde: string) => { sessoes.leitura_portal += 1; return lerPortal(desde); };
+  const importarContado = (protocolo: string, situacoes: string[]) => { sessoes.importacao += 1; return importar(protocolo, situacoes); };
+  const sessoesBrowserless = () => ({ ...sessoes, total: sessoes.leitura_portal + sessoes.importacao });
+  // 4.2: causa de falha ANTES do protocolo (sem leitura provada não há protocolo a avisar). O vigia do data_health
+  // (`sayerlack_varredura_portal`) lê este campo do registro e manda 1 e-mail por causa.
+  let causaPreProtocolo: string | null = null;
 
   try {
-    const resumo = await rodada();
+    const resumo = { ...(await rodada()), sessoes_browserless: sessoesBrowserless() };
     await fecharExecucao(db, registro, "sucesso", resumo);
     return json({ ok: true, ...resumo });
   } catch (e) {
     const mensagem = mensagemDeErro(e) ?? "erro inesperado";
-    await fecharExecucao(db, registro, "erro", { ...resumoFinal, erro: mensagem.slice(0, 600) });
-    return json({ ok: false, mensagem, ...resumoFinal }, 500);
+    // Sem leitura provada, a falha é anterior ao protocolo: grava a causa (a exceção sem marca vira "excecao").
+    const causa = resumoFinal.prova_leitura === "ok" ? {} : { causa_pre_protocolo: causaPreProtocolo ?? "excecao" };
+    const detalhes = { ...resumoFinal, ...causa, sessoes_browserless: sessoesBrowserless(), erro: mensagem.slice(0, 600) };
+    await fecharExecucao(db, registro, "erro", detalhes);
+    return json({ ok: false, mensagem, ...resumoFinal, ...causa, sessoes_browserless: detalhes.sessoes_browserless }, 500);
   }
 
   async function rodada(): Promise<Record<string, unknown>> {
@@ -657,14 +668,18 @@ Deno.serve(async (req: Request) => {
       ["SAYERLACK_PORTAL_URL", SAYERLACK_PORTAL_URL], ["SAYERLACK_PORTAL_CLIENTE_CODIGO", SAYERLACK_PORTAL_CLIENTE_CODIGO],
       ["BROWSERLESS_TOKEN", BROWSERLESS_TOKEN],
     ].filter(([, v]) => !v).map(([k]) => k);
-    if (faltando.length > 0) throw new Error(`Configuração ausente: ${faltando.join(", ")}`);
+    if (faltando.length > 0) {
+      causaPreProtocolo = "config_ausente";
+      throw new Error(`Configuração ausente: ${faltando.join(", ")}`);
+    }
 
     // 1. Lê a lista no portal.
     const hoje = hojeSP();
     const emissaoDesde = inicioDaJanela(hoje);
-    const envelope = await lerPortal(emissaoDesde);
+    const envelope = await lerPortalContado(emissaoDesde);
     console.log(`[varrer-portal] Browserless ${Date.now() - t0}ms tipo=${envelope.erroTipo ?? "-"} linhas=${envelope.linhas?.length ?? "-"}`);
     if (envelope.success !== true) {
+      causaPreProtocolo = `leitura:${envelope.erroTipo ?? "desconhecido"}`;
       throw new Error(`Leitura do portal falhou (${envelope.erroTipo ?? "?"}): ${envelope.erro ?? "sem detalhe"}`);
     }
 
@@ -681,6 +696,7 @@ Deno.serve(async (req: Request) => {
       linhas_lidas: (envelope.linhas ?? []).length, lidos: lista.pedidos.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
       cabecalhos: envelope.headers ?? [], prova_leitura: prova.ok ? "ok" : prova.motivo,
     };
+    if (!prova.ok) causaPreProtocolo = `prova:${prova.motivo}`;
     // Ilegível/repetido: a rodada segue para o resto (os legíveis são legíveis), mas termina VERMELHA no fim (3.4).
     // O resto das falhas de prova não deixa decidir nada: erro já.
     if (!prova.ok && prova.motivo !== "linhas_ilegiveis" && prova.motivo !== "protocolo_repetido") {
@@ -742,7 +758,7 @@ Deno.serve(async (req: Request) => {
           protocolosNoApp: new Set(), contratosNoOmie: omieAgora, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
         })[0].classe;
         if (reclasse !== "candidato") { adiados.push(c.protocolo); continue; }
-        const r = await importar(c.protocolo, [c.situacao_codigo as string])
+        const r = await importarContado(c.protocolo, [c.situacao_codigo as string])
           .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
         const res = resumoImportacao(r.httpStatus, r.corpo);
         console.log(`[varrer-portal] ${c.protocolo}: importar HTTP ${r.httpStatus} ok=${res.ok}`);
@@ -786,7 +802,7 @@ Deno.serve(async (req: Request) => {
           redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_ja_no_omie", notificado });
           continue;
         }
-        const r = await importar(p.protocolo, [p.situacao_codigo])
+        const r = await importarContado(p.protocolo, [p.situacao_codigo])
           .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
         const res = resumoImportacao(r.httpStatus, r.corpo);
         const semCorpo = r.httpStatus === 0 || !(r.corpo && typeof r.corpo === "object");
@@ -843,7 +859,7 @@ Deno.serve(async (req: Request) => {
           // Pedido no app sem PO e PO manual no Omie: pendência de vinculação (item 7.1), não re-disparo.
           reconsultas.push({ ...q, acao: "po_manual_no_omie" }); continue;
         }
-        const r = await importar(q.protocolo, [...SITUACOES_IMPORTAVEIS])
+        const r = await importarContado(q.protocolo, [...SITUACOES_IMPORTAVEIS])
           .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
         const res = resumoImportacao(r.httpStatus, r.corpo);
         const c = (r.corpo && typeof r.corpo === "object" ? r.corpo : {}) as { motivo?: unknown; pedido_id?: unknown };
@@ -931,7 +947,7 @@ Deno.serve(async (req: Request) => {
     let listaRec = lista;
     if (janela.emissaoDesde < emissaoDesde) {
       if (semTempo()) return { ...resumoRec, adiado: "sem tempo na rodada para a leitura estendida" };
-      const env = await lerPortal(janela.emissaoDesde)
+      const env = await lerPortalContado(janela.emissaoDesde)
         .catch((e): BrowserlessData => ({ success: false, erroTipo: "REDE", erro: mensagemDeErro(e) ?? "erro de rede" }));
       console.log(`[varrer-portal] leitura estendida desde ${janela.emissaoDesde}: tipo=${env.erroTipo ?? "-"} linhas=${env.linhas?.length ?? "-"}`);
       // Lista incompleta NUNCA decide: success=false cobre paginação incompleta e página ilegível; e a prova da Onda 3

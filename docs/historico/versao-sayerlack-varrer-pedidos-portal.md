@@ -25,4 +25,8 @@ v1.5 (2026-11-07, pontos cegos Onda 3) — rodada nunca verde sem prova: total a
 ou texto) = linhas lidas, 0 só com "0 de 0"; colunas obrigatórias; ilegível/repetido = rodada vermelha; re-disparo
 que falha = vermelha; resumo parcial guardado no erro (registro local); `listar` sem efeito; candidatos novos antes
 dos re-disparos; reconsulta por número além da janela (teto 4, 1×/20 h por protocolo); carência presa > 6 h avisa.
+v1.6 (2026-11-07, pontos cegos Onda 4) — o registro diz POR QUE a rodada parou antes do protocolo
+(`causa_pre_protocolo`: config_ausente · leitura:<erroTipo> · prova:<motivo> · excecao), que o vigia
+`sayerlack_varredura_portal` do data_health transforma em 1 e-mail por causa; e conta as sessões do Browserless da
+rodada (`sessoes_browserless`: leitura_portal + importacao = total) no resumo, sucesso ou erro.
 ```
