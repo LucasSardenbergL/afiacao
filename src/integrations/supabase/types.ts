@@ -13123,6 +13123,83 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_socios: {
+        Row: {
+          cpf_mascarado: string
+          data_entrada: string | null
+          lote: string
+          n_raizes_pais: number
+          nome_normalizado: string
+          qualificacao: string
+          raiz: string
+        }
+        Insert: {
+          cpf_mascarado: string
+          data_entrada?: string | null
+          lote: string
+          n_raizes_pais: number
+          nome_normalizado: string
+          qualificacao: string
+          raiz: string
+        }
+        Update: {
+          cpf_mascarado?: string
+          data_entrada?: string | null
+          lote?: string
+          n_raizes_pais?: number
+          nome_normalizado?: string
+          qualificacao?: string
+          raiz?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "radar_socios_lote_fkey"
+            columns: ["lote"]
+            isOneToOne: false
+            referencedRelation: "radar_socios_lote"
+            referencedColumns: ["lote"]
+          },
+        ]
+      }
+      radar_socios_lote: {
+        Row: {
+          criado_em: string
+          digest: string
+          linhas_declaradas: number
+          lote: string
+          mes: string
+          publicado_em: string | null
+          raizes_declaradas: number
+          status: string
+          universo_raizes: number
+          versao_carga: string
+        }
+        Insert: {
+          criado_em?: string
+          digest: string
+          linhas_declaradas: number
+          lote: string
+          mes: string
+          publicado_em?: string | null
+          raizes_declaradas: number
+          status?: string
+          universo_raizes: number
+          versao_carga: string
+        }
+        Update: {
+          criado_em?: string
+          digest?: string
+          linhas_declaradas?: number
+          lote?: string
+          mes?: string
+          publicado_em?: string | null
+          raizes_declaradas?: number
+          status?: string
+          universo_raizes?: number
+          versao_carga?: string
+        }
+        Relationships: []
+      }
       rag_chunks: {
         Row: {
           chunk_index: number
@@ -25005,6 +25082,23 @@ export type Database = {
         Returns: Json
       }
       radar_score_recalcular: { Args: never; Returns: Json }
+      radar_socios_iniciar: {
+        Args: {
+          p_digest: string
+          p_linhas: number
+          p_mes: string
+          p_raizes: number
+          p_universo: number
+          p_versao: string
+        }
+        Returns: Json
+      }
+      radar_socios_limpar: { Args: { p_max?: number }; Returns: Json }
+      radar_socios_publicar: { Args: { p_lote: string }; Returns: Json }
+      radar_socios_receber: {
+        Args: { p_linhas: Json; p_lote: string }
+        Returns: Json
+      }
       radar_telefone_compartilhado: {
         Args: { p_cnpj: string }
         Returns: {
