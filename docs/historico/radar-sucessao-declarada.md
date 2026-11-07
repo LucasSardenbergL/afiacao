@@ -78,7 +78,8 @@ DADOS; o painel e os consumidores da lista/ficha/complemento são o PR C.
   - **`venda_gerar_lista`** (recriado do corpo vivo, TRAVA→PRE→CREATE→PÓS) gera a recompra da lista efetiva e marca
     `venda_sugestao.sucessao_origem` ([{evento_id, revisao}]) e `valor_ref_referencia_origem`.
   - **Invalidação**: publicar/revogar ENFILEIRA o reprocesso (`private.venda_sugestoes_reprocesso_fila`); o cron
-    `venda-sucessao-reprocesso` (1/min, SQL direto) e o FIM do gerador drenam. A drenagem também DETECTA mudança de
+    `venda-sucessao-reprocesso` (1/min, SQL direto) e o FIM do gerador drenam; o reconcilio é GLOBAL (a lista de hoje
+    inteira contra o cálculo efetivo, trocando só a linha que difere). A drenagem também DETECTA mudança de
     estado fora do plano (declaração revogada, alias, cadastro, corte) pela assinatura de `vigentes` + revisão por
     evento (`private.cliente_sucessao_assinaturas` × `private.cliente_sucessao_estado_visto`). Reprocessa o pedido mais
     novo por evento e grava a revisão APLICADA. Por farmer afetado (o ranking "maior atraso" é por farmer):
@@ -92,7 +93,7 @@ DADOS; o painel e os consumidores da lista/ficha/complemento são o PR C.
   objeto deles é recriado.
 
 ## Prova
-`db/test-cliente-sucessao-plano.sh` (no núcleo do CI): 117 asserts e 37 sabotagens (inclui concorrência real em duas sessões: a drenagem com o gerador rodando, e cadastro + declaração DURANTE o cálculo da drenagem), todas vermelhas no assert declarado,
+`db/test-cliente-sucessao-plano.sh` (no núcleo do CI): 120 asserts e 38 sabotagens (inclui concorrência real em duas sessões: a drenagem com o gerador rodando, e cadastro + declaração DURANTE o cálculo da drenagem), todas vermelhas no assert declarado,
 com controle verde na mesma invocação. Monta o schema com `corpo-vivo.sh` (a cadeia dinâmica pega o gerador de venda, a
 entrega 2 e esta). Validação do founder: `db/validar-cliente-sucessao-plano.sql` (12 ✅, exercitada pela prova).
 
@@ -121,7 +122,12 @@ entrega 2 e esta). Validação do founder: `db/validar-cliente-sucessao-plano.sq
 - **A assinatura tem de cobrir o que DECIDE de quem é a linha física, não só os extremos** (Codex, rodada 4): um alias
   que muda de dono troca o histórico herdado sem mexer em antigo/novo. E o escopo do reconcilio precisa lembrar o
   farmer da identidade ANTERIOR: quando a antiga muda de identidade, quem deixou de ser encerrada só recupera se o
-  farmer dela entrar no reconcilio (escopo anterior ∪ atual, guardado em `estado_visto.farmers`).
+  farmer dela entrar no reconcilio. Escopo guardado também falhava (rodada 5: o dono NOVO do alias, de outro farmer,
+  ficava de fora). Raiz: recortar por farmer a partir de identidades que mudam. O cálculo já era global, então o
+  reconcilio virou global (diff da lista inteira), e a assinatura usa PARES `alias>canônico`, não o conjunto.
+- **Residual aceito (P2):** pedido sincronizado tarde com dia anterior ao corte muda a herança sem mudar a assinatura.
+  É a mesma semântica do gerador factual (a lista do dia é retrato da manhã; o dia seguinte recalcula), e qualquer
+  reconcilio do dia já o incorpora.
 
 ## Deploy
 🟣 founder: a migration no SQL Editor (depois da `20261107013000`) → conferir com `db/validar-cliente-sucessao-plano.sql`

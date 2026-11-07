@@ -603,11 +603,19 @@ cenario() {
   Q "UPDATE public.customer_canonical_alias SET canonical_user_id = '$UQ' WHERE alias_user_id = '$X7'" > /dev/null
   chk AL1 "o alias passa a outro dono (A/B iguais): detectado; a sucessora perde 7001, o novo dono ganha" \
     "$(drenar)/$(codigos "$U7N")/$(codigos "$UQ")" "2//7001"
+  Q "UPDATE public.customer_canonical_alias SET canonical_user_id = '$U7A' WHERE alias_user_id = '$X7'" > /dev/null
+  chk AL2 "o alias volta à antiga: detectado (E7 e E5); a sucessora recupera 7001" "$(drenar)/$(codigos "$U7N")" "2/7001"
+  Q "UPDATE public.customer_canonical_alias SET canonical_user_id = '$U7N' WHERE alias_user_id = '$X7'" > /dev/null
+  chk AL3 "o alias passa da antiga para a SUCESSORA (mesmo conjunto de aliases nos extremos): o PAR muda; 7001 vira compra própria" \
+    "$(drenar)/$(Q "SELECT (sucessao_origem IS NULL)::text FROM public.venda_sugestao WHERE comprador_id = '$U7N' AND omie_codigo_produto = 7001")" "1/true"
+  Q "UPDATE public.customer_canonical_alias SET canonical_user_id = '$U8C' WHERE alias_user_id = '$X7'" > /dev/null
+  chk AL4 "o alias passa a um TERCEIRO de outro farmer: o reconcilio global o alcança (ganha 7001; a sucessora perde)" \
+    "$(drenar)/$(codigos "$U8C")/$(codigos "$U7N")" "1/7001/"
   E8="$(declarar "$D8X" "$D8N" sucessao -60)"
   chk BX0 "E8 (declarada pelo documento do alias): a antiga U8A fica encerrada e perde 8001" "$(drenar)/$(codigos "$U8A")" "1/"
   Q "UPDATE public.customer_canonical_alias SET canonical_user_id = '$U8C' WHERE alias_user_id = '$X8'" > /dev/null
   chk BX1 "o alias passa a outra empresa (farmer 3): a U8A deixa de ser a antiga e RECUPERA 8001 (o farmer dela entra pelo escopo anterior)" \
-    "$(drenar)/$(codigos "$U8A")" "1/8001"
+    "$(drenar)/$(codigos "$U8A")/$(codigos "$U8C")" "1/8001/"
   echo "── 12. imutabilidade e porta ──"
   chk H1 "UPDATE de revisão → 23001" "$(Q "SELECT prova.sqlstate(\$c\$UPDATE public.cliente_sucessao_plano_revisoes SET motivo = 'x'\$c\$)")" "23001"
   chk H2 "DELETE de regra → 23001" "$(Q "SELECT prova.sqlstate(\$c\$DELETE FROM public.cliente_sucessao_plano_regras\$c\$)")" "23001"
@@ -637,7 +645,7 @@ cenario() {
 GERAR='public.venda_gerar_lista(date,text)'
 PUB='public.cliente_sucessao_plano_publicar(uuid,integer,jsonb,text)'
 TRILHA='private.historico_consumo_efetivo(date)'
-REPRO='private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb,integer,uuid[])'
+REPRO='private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb,integer)'
 IMUT='private.cliente_sucessao_plano_imutavel()'
 ASSIN='private.cliente_sucessao_assinaturas(date)'
 ASSIN_EVENTOS='FROM (SELECT DISTINCT s.evento_id FROM public.cliente_sucessoes s) e'
@@ -684,7 +692,10 @@ sabotagem() {
     drenar_trava_propria) cv_sabotar 'private.venda_sugestoes_drenar_reprocesso()' \
       "IF NOT pg_try_advisory_xact_lock(hashtext('venda_gerar_lista')) THEN" "IF NOT pg_try_advisory_xact_lock(hashtext('venda_sucessao_reprocesso')) THEN" ;;
     assinatura_sem_alias) cv_sabotar "$ASSIN" "WHERE a.status = 'active' AND a.canonical_user_id IN (v.antigo_user_id, v.novo_user_id))" "WHERE false)" ;;
-    reprocesso_sem_escopo_anterior) cv_sabotar "$REPRO" "COALESCE(p_farmers_anteriores, '{}'::uuid[])" "'{}'::uuid[]" ;;
+    assinatura_sem_par) cv_sabotar "$ASSIN" "(SELECT string_agg(a.alias_user_id || '>' || a.canonical_user_id, '+'" "(SELECT string_agg(a.alias_user_id::text, '+'" ;;
+    # o reconcilio recortado nos farmers da antiga do evento (o desenho que perdia o dono novo do alias)
+    reprocesso_recortado) cv_sabotar "$REPRO" "   WHERE z.f IS NOT NULL;" \
+      "   WHERE z.f IS NOT NULL AND z.f IN (SELECT c.owner_user_id FROM public.carteira_assignments c JOIN public.cliente_sucessoes s ON s.evento_id = p_evento_id CROSS JOIN LATERAL private.cliente_resolver_documento(s.antigo_documento) r WHERE c.customer_user_id = r.user_id);" ;;
     drenar_com_grafo) cv_sabotar 'private.venda_sugestoes_drenar_reprocesso()' \
       "v_hoje := (now() AT TIME ZONE 'America/Sao_Paulo')::date;" \
       "PERFORM pg_advisory_xact_lock(hashtextextended('cliente_sucessoes:grafo', 0)); v_hoje := (now() AT TIME ZONE 'America/Sao_Paulo')::date;" ;;
@@ -732,7 +743,8 @@ drenar_trava_propria:CL1:Z1
 drenar_com_grafo:CC1,M8:CC0
 drenar_assinatura_depois:CC2:CC1
 assinatura_sem_alias:AL1:AL0
-reprocesso_sem_escopo_anterior:BX1:BX0"
+assinatura_sem_par:AL3:AL2
+reprocesso_recortado:AL4:CC0"
 
 rodada() {
   adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4
