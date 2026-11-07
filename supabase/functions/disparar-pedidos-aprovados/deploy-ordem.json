@@ -1,0 +1,2 @@
+{ "formato": "deploy-ordem/1",
+  "depoisDe": [{ "edge": "enviar-pedido-portal-sayerlack", "motivo": "o disparo v1.11 recusa PO de pedido do app com protocolo ainda em default_a_vista; sem o envio v1.13 (que aplica a condição real antes do sucesso_portal) TODO pedido do app seria recusado", "pr": 3691 }] }
