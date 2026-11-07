@@ -78,7 +78,7 @@ import { registerAllOfflineHandlers } from '@/lib/offline-handlers';
 import { useMissedCount } from '@/hooks/useCallLog';
 import { useMinhasTarefas } from '@/hooks/useTarefas';
 import { useWhatsappSlaBadge } from '@/queries/useWhatsappSla';
-import { Star } from 'lucide-react';
+import { Filter, Star } from 'lucide-react';
 import { MODULOS } from '@/lib/modulos/manifesto';
 import { rotaCongelada } from '@/lib/modulos/congelamento';
 import { usePrefetchRota } from '@/lib/preload-rota';
@@ -136,6 +136,8 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Wrench, label: 'Ferramentas de venda', path: '/vendas/ferramentas' },
       // Prospecção é trabalho de VENDA: o vendedor sales-only só vê esta seção (migration 20261029201200).
       { icon: Radar, label: 'Radar de Clientes', path: '/radar', radarProspectar: true },
+      // Funil do lead empurrado (pacote H): uso de cada vendedor — só gestor/master (a RPC confere de novo).
+      { icon: Filter, label: 'Funil do Radar', path: '/radar/funil', gestorComercialOuMaster: true },
       { icon: ClipboardList, label: 'Tarefas', path: '/tarefas', gestorComercialOuMaster: true },
       { icon: ListChecks, label: 'Tarefas recorrentes', path: '/tarefas/templates', gestorComercialOuMaster: true },
       { icon: MessageSquareText, label: 'Preview propostas', path: '/rota/propostas', gestorComercialOuMaster: true },

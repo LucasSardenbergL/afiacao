@@ -24864,6 +24864,10 @@ export type Database = {
       }
       radar_email_semanal_painel: { Args: never; Returns: Json }
       radar_estado_cadastro_omie: { Args: { p_cnpj: string }; Returns: Json }
+      radar_funil: {
+        Args: { p_semanas?: number }
+        Returns: Json
+      }
       radar_irmaos_por_raiz: {
         Args: { p_cnpjs: string[] }
         Returns: {
@@ -25066,6 +25070,14 @@ export type Database = {
           p_detalhe: string
           p_motivo: string
         }
+        Returns: Json
+      }
+      radar_registrar_falha_sensor: {
+        Args: { p_motivo: string; p_sensor: string }
+        Returns: Json
+      }
+      radar_registrar_ficha_entregue: {
+        Args: { p_cnpj: string; p_envio?: string; p_origem: string }
         Returns: Json
       }
       radar_resolver_conflito_cadastro: {
