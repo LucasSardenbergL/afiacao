@@ -13,6 +13,7 @@
 #  H5  sombra/histórico herdados não entram na fatia (só a fase ativa)
 #  H6  o gate continua master (farmer → 42501)
 #  M1  a migration re-aplica (idempotente); M2 ACL (anon/PUBLIC fechados); M3 a PRE recusa corpo alheio
+#  M4  db/validar-venda-painel-heranca.sql dá 4 ✅ contra a migration real
 #
 #   bash db/test-venda-painel-heranca.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   LOCALE_TESTE=pt_BR.UTF-8 bash db/test-venda-painel-heranca.sh   # mesma prova no outro locale (marcas ASCII)
@@ -72,7 +73,14 @@ p, de, para = sys.argv[1:]
 s = open(p, encoding="utf-8").read()
 if s.count(de) != 1:
     sys.exit("padrao ausente ou repetido (%d): %s" % (s.count(de), de))
-open(p, "w", encoding="utf-8").write(s.replace(de, para))
+s = s.replace(de, para)
+# o corpo sabotado tem outro md5: a PÓS (e a PRE, no re-apply) passam a esperar o md5 DELE — a sabotagem tem de
+# chegar aos asserts, não morrer no catálogo
+import hashlib, re
+i = s.index("AS $function$") + len("AS $function$"); j = s.index("$function$;", i)
+novo = hashlib.md5(s[i:j].encode()).hexdigest()
+s = s.replace("e49903054297a4965061a215aff882fd", novo)
+open(p, "w", encoding="utf-8").write(s)
 PYS
 }
 case "${SABOTAGEM:-}" in
@@ -256,6 +264,9 @@ eq "M2 anon fechado, PUBLIC fechado, authenticated aberto" \
    "$(Pq -c "SELECT concat_ws(' ', has_function_privilege('anon', 'public.venda_painel(date,date)', 'EXECUTE'),
                     has_function_privilege('public', 'public.venda_painel(date,date)', 'EXECUTE'),
                     has_function_privilege('authenticated', 'public.venda_painel(date,date)', 'EXECUTE'))")" "f f t"
+# M4 o validar pós-apply dá 4 ✅ contra a migration real (antes do M3, que troca o corpo)
+eq "M4 validar-venda-painel-heranca: 4 linhas, todas OK" \
+   "$(P -qAt -F '|' -f "$REPO_ROOT/db/validar-venda-painel-heranca.sql" | awk -F'|' '$2 == "✅" { n++ } END { print n+0 }')" "4"
 # M3 a PRE recusa corpo alheio: troca o corpo vivo por um terceiro e re-aplica
 P -q -c "CREATE OR REPLACE FUNCTION public.venda_painel(p_de date, p_ate date) RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER
          SET search_path TO 'public', 'pg_temp' AS \$f\$ BEGIN RETURN '{}'::jsonb; END \$f\$;" > /dev/null
