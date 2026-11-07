@@ -160,10 +160,8 @@ SET search_path = ''
 AS \$fn\$
 DECLARE
   v_uid    uuid"; cegar_post ;;
-  unique_velha)             sabotar "    ALTER TABLE public.radar_email_vendedor_envios
-      DROP CONSTRAINT radar_email_vendedor_envios_vendedor_user_id_semana_eh_test_key;" "    NULL;" ;;
-  unique_velha_sem_post)    sabotar "    ALTER TABLE public.radar_email_vendedor_envios
-      DROP CONSTRAINT radar_email_vendedor_envios_vendedor_user_id_semana_eh_test_key;" "    NULL;"; cegar_post ;;
+  unique_velha)             sabotar "    EXECUTE format('ALTER TABLE public.radar_email_vendedor_envios DROP CONSTRAINT %I', v_con);" "    NULL;" ;;
+  unique_velha_sem_post)    sabotar "    EXECUTE format('ALTER TABLE public.radar_email_vendedor_envios DROP CONSTRAINT %I', v_con);" "    NULL;"; cegar_post ;;
   pre_cega)                 sabotar "      RAISE EXCEPTION 'PRE FALHOU: % vivo (md5 %) não é o predecessor revisado nem este — outra sessão mudou; refaça o pré-voo', r.alvo, r.vivo;" "      NULL;" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
