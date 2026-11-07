@@ -55,7 +55,7 @@ export interface SemanaFunil {
   corrente: boolean;
   cobertura: Record<string, CoberturaSemana>;
 }
-export interface FalhaSensor {
+interface FalhaSensor {
   motivo: string;
   n: number;
 }
@@ -71,7 +71,7 @@ export interface SensorFunil {
   falhas: FalhaSensor[];
   estado: EstadoSensor;
 }
-export interface VendedorFunil {
+interface VendedorFunil {
   userId: string;
   nome: string | null;
 }
