@@ -113,7 +113,7 @@ Pedido do founder: ligar o e-mail "para qualquer usuário que eu queira" sem SQL
 | Card | Uma linha por pessoa com o seletor, os municípios, o último envio e o aviso de quando o e-mail seria pulado (sem acesso ao Radar, sem carteira, sem e-mail). "Ligado" e ligar o envio automático pedem confirmação; "Teste" e desligar vão direto. Na lente "Ver como": só leitura. |
 
 Prova: a mesma `db/test-radar-leads-vendedor.sh`, agora com a seção T (62 asserts, 46 sabotagens vermelhas no assert
-certo, nos dois locales). Vitest: `RadarEmailSemanalCard.estados.test.tsx` (10) e `email-semanal.test.ts` (5).
+certo, nos dois locales). Vitest: `RadarEmailSemanalCard.estados.test.tsx` (10) e `radar-email-semanal.test.ts` (5), em `src/components/governanca/` e `src/lib/governanca/` (a tela é da Governança; importar do módulo do Radar seria vazamento de fronteira).
 
 ## Ativação (founder)
 

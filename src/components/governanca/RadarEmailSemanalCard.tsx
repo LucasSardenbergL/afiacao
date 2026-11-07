@@ -18,14 +18,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useCronEmailSemanal, useDefinirEmailSemanal, useRadarEmailSemanalPainel } from '@/queries/useRadarEmailSemanal';
+import { useCronEmailSemanal, useDefinirEmailSemanal, useRadarEmailSemanalPainel } from '@/lib/governanca/useRadarEmailSemanal';
 import {
   impedimentoDoEnvio,
   listaMunicipios,
   resumoUltimoEnvio,
   type ModoEmail,
   type UsuarioEmailSemanal,
-} from '@/lib/radar/email-semanal';
+} from '@/lib/governanca/radar-email-semanal';
 
 const ROTULO_MODO: Record<ModoEmail, string> = {
   desligado: 'Desligado',

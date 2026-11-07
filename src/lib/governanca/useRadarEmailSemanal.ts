@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { lerPainelEmailSemanal, type ModoEmail, type PainelEmailSemanal } from '@/lib/radar/email-semanal';
+import { lerPainelEmailSemanal, type ModoEmail, type PainelEmailSemanal } from '@/lib/governanca/radar-email-semanal';
 
 const CHAVE = ['radar', 'email-semanal', 'painel'] as const;
 

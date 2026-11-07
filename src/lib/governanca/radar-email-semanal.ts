@@ -9,7 +9,7 @@
  * "desligado" — ausente ≠ zero. Cron ausente é `null` (≠ desligado).
  */
 
-export const MODOS_EMAIL = ['desligado', 'teste', 'ligado'] as const;
+const MODOS_EMAIL = ['desligado', 'teste', 'ligado'] as const;
 export type ModoEmail = (typeof MODOS_EMAIL)[number];
 
 export interface UltimoEnvio {

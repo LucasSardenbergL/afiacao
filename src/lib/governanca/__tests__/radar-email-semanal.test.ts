@@ -5,7 +5,7 @@ import {
   listaMunicipios,
   resumoUltimoEnvio,
   type UsuarioEmailSemanal,
-} from '../email-semanal';
+} from '../radar-email-semanal';
 
 const usuario = (extra: Record<string, unknown> = {}) => ({
   user_id: 'u1', nome: 'Regina', email: 'regina@exemplo.com', papel: 'employee', papel_comercial: 'farmer',

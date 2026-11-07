@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { Shield, Users, History } from 'lucide-react';
-import { RadarEmailSemanalCard } from '@/components/radar/RadarEmailSemanalCard';
+import { RadarEmailSemanalCard } from '@/components/governanca/RadarEmailSemanalCard';
 
 const ROLE_LABELS: Record<string, string> = {
   operacional: 'Operacional',
