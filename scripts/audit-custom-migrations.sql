@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 796
+-- Total de custom migrations: 799
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -864,7 +864,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106212329', 'radar_lista_meus_atendimentos', '20261106212329_radar_lista_meus_atendimentos.sql'),
   ('20261106221000', 'radar_atribuir_atendimento', '20261106221000_radar_atribuir_atendimento.sql'),
   ('20261107013000', 'cliente_sucessoes', '20261107013000_cliente_sucessoes.sql'),
-  ('20261107120000', 'ipi_aliquota_ncm_seed_nf_onda1', '20261107120000_ipi_aliquota_ncm_seed_nf_onda1.sql')
+  ('20261107040000', 'radar_socios_cpf_mascarado', '20261107040000_radar_socios_cpf_mascarado.sql'),
+  ('20261107120000', 'ipi_aliquota_ncm_seed_nf_onda1', '20261107120000_ipi_aliquota_ncm_seed_nf_onda1.sql'),
+  ('20261107140000', 'sayerlack_condicao_portal_onda2', '20261107140000_sayerlack_condicao_portal_onda2.sql'),
+  ('20261107210000', 'cliente_sucessao_plano_rateio', '20261107210000_cliente_sucessao_plano_rateio.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3442,7 +3445,48 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_novo_ativo_idx', 'cliente_sucessoes'),
   ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_evento_idx', 'cliente_sucessoes'),
   ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_imutavel_trg', 'cliente_sucessoes'),
-  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_sem_truncate_trg', 'cliente_sucessoes')
+  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_sem_truncate_trg', 'cliente_sucessoes'),
+  ('radar_socios_cpf_mascarado', 'function', 'private', 'radar_nome_norm', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'private', 'radar_mascara_cpf', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'private', 'radar_mascaras_conflitam', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'public', 'radar_socios_iniciar', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'public', 'radar_socios_receber', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'public', 'radar_socios_publicar', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'public', 'radar_socios_limpar', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'private', 'radar_vinculos_base', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'private', 'credito_vinculo_avaliar', ''),
+  ('radar_socios_cpf_mascarado', 'table', 'public', 'radar_socios_lote', ''),
+  ('radar_socios_cpf_mascarado', 'table', 'public', 'radar_socios', ''),
+  ('radar_socios_cpf_mascarado', 'index', 'public', 'radar_socios_lote_um_vigente', 'radar_socios_lote'),
+  ('radar_socios_cpf_mascarado', 'index', 'public', 'radar_socios_chave', 'radar_socios'),
+  ('radar_socios_cpf_mascarado', 'index', 'public', 'idx_radar_empresas_titular_mei_norm', 'radar_empresas'),
+  ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_condicao_portal_normalizar', ''),
+  ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_condicao_portal_para_omie', ''),
+  ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
+  ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_aplicar_condicao_portal', ''),
+  ('sayerlack_condicao_portal_onda2', 'table', 'public', 'sayerlack_condicao_portal_de_para', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'cliente_sucessao_plano_imutavel', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestao_substituida_imutavel', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'historico_compradores_encerrados', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'historico_consumo_efetivo', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_recompra_efetiva_em', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_situacao_efetiva_em', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_lista_calc_efetiva', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'venda_gerar_lista', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestoes_reprocessar_sucessao', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_publicar', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_revogar', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_do_evento', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'cliente_sucessao_plano_revisoes', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'cliente_sucessao_plano_regras', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'venda_sugestao_substituida', ''),
+  ('cliente_sucessao_plano_rateio', 'index', 'public', 'venda_sugestao_substituida_dia_idx', 'venda_sugestao_substituida'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_revisoes_imutavel_trg', 'cliente_sucessao_plano_revisoes'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_revisoes_sem_truncate_trg', 'cliente_sucessao_plano_revisoes'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_regras_imutavel_trg', 'cliente_sucessao_plano_regras'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_regras_sem_truncate_trg', 'cliente_sucessao_plano_regras'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_imutavel_trg', 'venda_sugestao_substituida'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_sem_truncate_trg', 'venda_sugestao_substituida')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6068,7 +6112,48 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_novo_ativo_idx', 'cliente_sucessoes'),
   ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_evento_idx', 'cliente_sucessoes'),
   ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_imutavel_trg', 'cliente_sucessoes'),
-  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_sem_truncate_trg', 'cliente_sucessoes')
+  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_sem_truncate_trg', 'cliente_sucessoes'),
+  ('radar_socios_cpf_mascarado', 'function', 'private', 'radar_nome_norm', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'private', 'radar_mascara_cpf', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'private', 'radar_mascaras_conflitam', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'public', 'radar_socios_iniciar', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'public', 'radar_socios_receber', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'public', 'radar_socios_publicar', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'public', 'radar_socios_limpar', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'private', 'radar_vinculos_base', ''),
+  ('radar_socios_cpf_mascarado', 'function', 'private', 'credito_vinculo_avaliar', ''),
+  ('radar_socios_cpf_mascarado', 'table', 'public', 'radar_socios_lote', ''),
+  ('radar_socios_cpf_mascarado', 'table', 'public', 'radar_socios', ''),
+  ('radar_socios_cpf_mascarado', 'index', 'public', 'radar_socios_lote_um_vigente', 'radar_socios_lote'),
+  ('radar_socios_cpf_mascarado', 'index', 'public', 'radar_socios_chave', 'radar_socios'),
+  ('radar_socios_cpf_mascarado', 'index', 'public', 'idx_radar_empresas_titular_mei_norm', 'radar_empresas'),
+  ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_condicao_portal_normalizar', ''),
+  ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_condicao_portal_para_omie', ''),
+  ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
+  ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_aplicar_condicao_portal', ''),
+  ('sayerlack_condicao_portal_onda2', 'table', 'public', 'sayerlack_condicao_portal_de_para', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'cliente_sucessao_plano_imutavel', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestao_substituida_imutavel', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'historico_compradores_encerrados', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'historico_consumo_efetivo', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_recompra_efetiva_em', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_situacao_efetiva_em', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_lista_calc_efetiva', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'venda_gerar_lista', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestoes_reprocessar_sucessao', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_publicar', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_revogar', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_do_evento', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'cliente_sucessao_plano_revisoes', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'cliente_sucessao_plano_regras', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'venda_sugestao_substituida', ''),
+  ('cliente_sucessao_plano_rateio', 'index', 'public', 'venda_sugestao_substituida_dia_idx', 'venda_sugestao_substituida'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_revisoes_imutavel_trg', 'cliente_sucessao_plano_revisoes'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_revisoes_sem_truncate_trg', 'cliente_sucessao_plano_revisoes'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_regras_imutavel_trg', 'cliente_sucessao_plano_regras'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_regras_sem_truncate_trg', 'cliente_sucessao_plano_regras'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_imutavel_trg', 'venda_sugestao_substituida'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_sem_truncate_trg', 'venda_sugestao_substituida')
 )
 SELECT
   e.migration,
@@ -6096,7 +6181,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 178.
+-- Funções redefinidas com corpo extraível: 180.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6694,6 +6779,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'sayerlack_importar_pedido_portal', 1, '20261014120000_sayerlack_importar_pedido_portal.sql', 'c14ac9f70c17b8b4cdf505f568857517'),
   ('public', 'sayerlack_importar_pedido_portal', 2, '20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql', 'f6fd335ab6cdd75263cefc10539fcca4'),
   ('public', 'sayerlack_importar_pedido_portal', 3, '20261106140000_sayerlack_importar_portal_revisao.sql', '41c5024788a62f9a3b7f02ce74123ec2'),
+  ('public', 'sayerlack_importar_pedido_portal', 4, '20261107140000_sayerlack_condicao_portal_onda2.sql', '986c95a4c1ba5a6b42dc1d2d85666236'),
   ('public', 'vendas_sync_lease_acquire_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '0d0aaef070dfc5a46cdd0964ec5279f3'),
   ('public', 'vendas_sync_lease_acquire_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '8404d00f852bbcac3d5262ffa6bc5170'),
   ('public', 'vendas_sync_heartbeat_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '8e4c883f6fe239a2183a2c1915a8a5ad'),
@@ -6730,6 +6816,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'venda_minhas_sugestoes', 4, '20261028220003_venda_lista_acesso.sql', 'c9836f94bbf7abf50b4f5b574eb919f4'),
   ('public', 'venda_gerar_lista', 1, '20261020181743_venda_cliente_gerador.sql', '31f6e19f23eaa9a43dc45ae2f2b67a5c'),
   ('public', 'venda_gerar_lista', 2, '20261021031000_venda_cliente_ondas23.sql', '2082f4815dec8e16456d325052cbe355'),
+  ('public', 'venda_gerar_lista', 3, '20261107210000_cliente_sucessao_plano_rateio.sql', 'd8486ff35178e1712550239ec37df707'),
   ('private', '_venda_repasse_base', 1, '20261020233000_venda_cliente_repasse.sql', 'db3943ce86f998a42d391fca310d7a0c'),
   ('private', '_venda_repasse_base', 2, '20261021021500_venda_repasse_base_desempenho.sql', '4cb2e342f09337e03b1f967c3bc0c819'),
   ('public', 'venda_repasse_candidatos', 1, '20261020233000_venda_cliente_repasse.sql', '76ffdad3aae967ca7d12ab4ad923473c'),
@@ -6766,7 +6853,11 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'simular_puxar_volume_trimestre', 1, '20261105180000_des_simular_puxar_sem_posicao_recusa.sql', '9e43c9425748b54d783ca9f4c3737755'),
   ('public', 'simular_puxar_volume_trimestre', 2, '20261106090000_des_simular_puxar_config_e_checkin.sql', 'fefcf8c0890cd3fe21a60efbe2ed6d37'),
   ('private', 'radar_vinculos_nucleo', 1, '20261106083754_radar_vinculos_em_lote.sql', '524afca67d271f459a6e4c984725b833'),
-  ('private', 'radar_vinculos_nucleo', 2, '20261106205557_credito_aviso_vinculo_vencido.sql', '150b7d5e1c72ca55f8e58ea321659428')
+  ('private', 'radar_vinculos_nucleo', 2, '20261106205557_credito_aviso_vinculo_vencido.sql', '150b7d5e1c72ca55f8e58ea321659428'),
+  ('private', 'radar_vinculos_base', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', '4a25630577db9bcad6e3630d0b37003c'),
+  ('private', 'radar_vinculos_base', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '4b3f8bddde6efeb2b39bda47b0e0a87b'),
+  ('private', 'credito_vinculo_avaliar', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', 'df92d9af4062d9f7f475c784818effc7'),
+  ('private', 'credito_vinculo_avaliar', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '70406e22429da65e354297271046917b')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

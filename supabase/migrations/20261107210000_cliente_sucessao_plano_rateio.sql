@@ -21,10 +21,13 @@
 --      paridade provada quando não há plano). `public.venda_gerar_lista` passa a gerar a recompra daí e MARCA a
 --      origem (`venda_sugestao.sucessao_origem` = [{evento_id, revisao}] e `valor_ref_referencia_origem`).
 --   4. Invalidação: publicar ou revogar o plano ENFILEIRA, na mesma transação, o reprocesso das sugestões de
---      recompra de HOJE dos farmers afetados (`private.venda_sugestoes_reprocesso_fila`); o cron
---      `venda-sucessao-reprocesso` (1/min, SQL direto) drena a fila (`private.venda_sugestoes_drenar_reprocesso`
---      → `private.venda_sugestoes_reprocessar_sucessao`). Assíncrono porque o cálculo é o MESMO do gerador
---      (6–9 s em prod) e o `authenticated` tem statement_timeout=8s: dentro da RPC ele derrubaria a publicação.
+--      recompra de HOJE dos farmers afetados (`private.venda_sugestoes_reprocesso_fila`). A drenagem
+--      (`private.venda_sugestoes_drenar_reprocesso`) roda no cron `venda-sucessao-reprocesso` (1/min, SQL direto) e
+--      no FIM do gerador (sob a mesma trava: a lista que o cron do gerador grava já sai reconciliada). Ela também
+--      DETECTA mudança de estado fora das RPCs do plano (declaração revogada, alias que muda, novo que cadastra,
+--      corte que chega): assinatura de vigentes + revisão por evento (`private.cliente_sucessao_assinaturas`).
+--      Assíncrono porque o cálculo é o MESMO do gerador (6–9 s em prod) e o `authenticated` tem
+--      statement_timeout=8s: dentro da RPC ele derrubaria a publicação.
 --      Só sai a sugestão que mudou, nunca mostrada e sem desfecho; ela vai para `public.venda_sugestao_substituida`
 --      (a linha inteira, imutável) e a substituta entra. `mostrada_em`, contatos (`venda_contato`) e desfechos ficam.
 --   5. RPCs (gestor/master = pode_ver_carteira_completa): `cliente_sucessao_plano_publicar`,
@@ -38,6 +41,10 @@
 --
 -- Recria UM objeto vivo (`public.venda_gerar_lista`) no molde TRAVA → PRE → CREATE → PÓS. Sem BEGIN/COMMIT: o SQL
 -- Editor roda o script inteiro numa transação implícita. Idempotente.
+
+-- A migration pega ACCESS EXCLUSIVE em venda_sugestao (ADD COLUMN/CHECK) até o commit: não espera atrás de
+-- transação longa formando fila de leitores — sem a trava em 5 s, aborta inteira e se re-roda.
+SET LOCAL lock_timeout = '5s';
 
 -- ── 0. TRAVA (antes de ler): ALTER sem efeito, com a volatilidade VIVA, na função que este arquivo recria ─────
 DO $trava$
@@ -71,7 +78,7 @@ BEGIN
     SELECT v.alvo, v.aceitos,
            (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(v.alvo)) AS vivo
       FROM (VALUES
-        ('public.venda_gerar_lista(date,text)', ARRAY['5abe897dbcaaf3b70351da896e35b566', 'b5320515336793a8f5d149288edd83a3']),
+        ('public.venda_gerar_lista(date,text)', ARRAY['5abe897dbcaaf3b70351da896e35b566', '3b93a5e827ebc78af6dd325c5b5b0c7f']),
         ('private.venda_linhas_pedido(date)', ARRAY['a7ff6d1c894aea2e16483b5084a097a1']),
         ('public.venda_recompra_em(date)', ARRAY['2b43b81254a7c13c019c65fae41ea90a']),
         ('public.venda_situacao_em(date)', ARRAY['e96cf9c931a13b209bb3017b8c4743ac']),
@@ -132,7 +139,7 @@ CREATE TABLE IF NOT EXISTS public.venda_sugestao_substituida (
   substituida_em      timestamptz NOT NULL DEFAULT now(),
   motivo              text NOT NULL,
   evento_id           uuid NOT NULL,
-  plano_revisao       integer NOT NULL,
+  plano_revisao       integer,
   dia_referencia      date NOT NULL,
   fase                text NOT NULL,
   farmer_user_id      uuid NOT NULL,
@@ -140,7 +147,7 @@ CREATE TABLE IF NOT EXISTS public.venda_sugestao_substituida (
   empresa             text NOT NULL,
   omie_codigo_produto bigint,
   sugestao            jsonb NOT NULL,
-  CONSTRAINT venda_sugestao_substituida_motivo_chk CHECK (motivo IN ('plano_publicado', 'plano_revogado'))
+  CONSTRAINT venda_sugestao_substituida_motivo_chk CHECK (motivo IN ('plano_publicado', 'plano_revogado', 'estado_mudou'))
 );
 CREATE INDEX IF NOT EXISTS venda_sugestao_substituida_dia_idx
   ON public.venda_sugestao_substituida (dia_referencia, farmer_user_id);
@@ -148,23 +155,35 @@ COMMENT ON TABLE public.venda_sugestao_substituida IS
   'Sugestões de recompra de HOJE que um reprocesso da sucessão (publicar/revogar o plano) tirou da lista porque o '
   'cálculo mudou. Só sai a nunca mostrada e sem desfecho. Imutável. Escritor: private.venda_sugestoes_reprocessar_sucessao.';
 
--- A fila do reprocesso: 1 pedido por revisão publicada; o cron drena e grava o resultado. Interna (private).
+-- A fila do reprocesso: pedidos por evento (publicação, revogação ou estado que mudou). A drenagem processa o MAIS
+-- NOVO de cada evento e marca os anteriores como superados; `resultado.revisao_aplicada` é a revisão que o cálculo
+-- de fato usou (a vigente na hora), não a pedida. Interna (private).
 CREATE TABLE IF NOT EXISTS private.venda_sugestoes_reprocesso_fila (
-  evento_id     uuid NOT NULL,
-  revisao       integer NOT NULL,
-  motivo        text NOT NULL,
-  pedido_em     timestamptz NOT NULL DEFAULT now(),
-  processado_em timestamptz,
-  resultado     jsonb,
-  PRIMARY KEY (evento_id, revisao),
-  CONSTRAINT venda_sugestoes_reprocesso_fila_motivo_chk CHECK (motivo IN ('plano_publicado', 'plano_revogado')),
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  evento_id      uuid NOT NULL,
+  revisao_pedida integer,
+  motivo         text NOT NULL,
+  pedido_em      timestamptz NOT NULL DEFAULT now(),
+  processado_em  timestamptz,
+  resultado      jsonb,
+  CONSTRAINT venda_sugestoes_reprocesso_fila_motivo_chk CHECK (motivo IN ('plano_publicado', 'plano_revogado', 'estado_mudou')),
   CONSTRAINT venda_sugestoes_reprocesso_fila_feito_chk CHECK ((processado_em IS NULL) = (resultado IS NULL))
 );
 CREATE INDEX IF NOT EXISTS venda_sugestoes_reprocesso_fila_pendente_idx
-  ON private.venda_sugestoes_reprocesso_fila (pedido_em) WHERE processado_em IS NULL;
+  ON private.venda_sugestoes_reprocesso_fila (evento_id, id) WHERE processado_em IS NULL;
 ALTER TABLE private.venda_sugestoes_reprocesso_fila ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE private.venda_sugestoes_reprocesso_fila FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON TABLE private.venda_sugestoes_reprocesso_fila TO service_role;
+
+-- O último estado de herança que a drenagem reconciliou, por evento (assinatura de vigentes + revisão vigente).
+CREATE TABLE IF NOT EXISTS private.cliente_sucessao_estado_visto (
+  evento_id  uuid PRIMARY KEY,
+  assinatura text NOT NULL,
+  visto_em   timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE private.cliente_sucessao_estado_visto ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE private.cliente_sucessao_estado_visto FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON TABLE private.cliente_sucessao_estado_visto TO service_role;
 
 ALTER TABLE public.cliente_sucessao_plano_revisoes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cliente_sucessao_plano_regras ENABLE ROW LEVEL SECURITY;
@@ -386,7 +405,8 @@ AS $function$
            sum(l.quantidade * l.preco_unit_liquido) FILTER (WHERE l.preco_unit_liquido IS NOT NULL)
              / NULLIF(sum(l.quantidade) FILTER (WHERE l.preco_unit_liquido IS NOT NULL), 0) AS preco_dia,
            (array_agg(l.product_id ORDER BY l.product_id) FILTER (WHERE l.product_id IS NOT NULL))[1] AS product_id,
-           bool_or(l.herdada) AS herdada_dia
+           -- proveniência do PREÇO: só as linhas que entram em preco_dia (líquido apurado)
+           bool_or(l.herdada) FILTER (WHERE l.preco_unit_liquido IS NOT NULL) AS herdada_dia
       FROM lin l
      GROUP BY l.comprador_id, l.empresa, l.omie_codigo_produto, l.data_pedido
   ),
@@ -558,8 +578,9 @@ $function$;
 REVOKE ALL ON FUNCTION private.venda_lista_calc_efetiva(date) FROM PUBLIC, anon, authenticated;
 
 -- ── 5. O gerador passa a gerar a recompra da trilha efetiva, com a marcação de origem ──────────────────────
--- Corpo vivo de prod (md5 5abe897d…) com UMA mudança: o 1º INSERT lê private.venda_lista_calc_efetiva e grava
--- sucessao_origem / valor_ref_referencia_origem. As ondas 2 (complemento) e 3 (preço) seguem idênticas.
+-- Corpo vivo de prod (md5 5abe897d…) com DUAS mudanças: o 1º INSERT lê private.venda_lista_calc_efetiva e grava
+-- sucessao_origem / valor_ref_referencia_origem; no fim, a lista de hoje drena a fila do reprocesso da sucessão.
+-- As ondas 2 (complemento) e 3 (preço) seguem idênticas.
 CREATE OR REPLACE FUNCTION public.venda_gerar_lista(p_dia date, p_fase text)
  RETURNS integer
  LANGUAGE plpgsql
@@ -636,6 +657,11 @@ BEGIN
     END IF;
   END IF;
 
+  -- A lista de HOJE sai reconciliada com o plano/estado da sucessão pendente na fila (mesma trava, reentrante).
+  IF p_dia = (now() AT TIME ZONE 'America/Sao_Paulo')::date THEN
+    PERFORM private.venda_sugestoes_drenar_reprocesso();
+  END IF;
+
   RETURN v_n;
 END
 $function$;
@@ -650,7 +676,7 @@ GRANT EXECUTE ON FUNCTION public.venda_gerar_lista(date, text) TO service_role;
 -- Só as fases que o gerador já rodou hoje (venda_gerador_execucao): antes disso, o cron gera com o plano.
 -- Sai (para o arquivo) a sugestão do escopo cujo cálculo mudou, NUNCA mostrada e SEM desfecho; entra a substituta
 -- (ON CONFLICT DO NOTHING: a preservada, mostrada ou com desfecho, fica). Mesma trava do gerador.
-CREATE OR REPLACE FUNCTION private.venda_sugestoes_reprocessar_sucessao(p_evento_id uuid, p_revisao integer, p_motivo text)
+CREATE OR REPLACE FUNCTION private.venda_sugestoes_reprocessar_sucessao(p_evento_id uuid, p_motivo text)
  RETURNS jsonb
  LANGUAGE plpgsql
  VOLATILE
@@ -667,11 +693,14 @@ DECLARE
   v_sai integer := 0;
   v_entra integer := 0;
   v_pres integer := 0;
+  v_rev integer;
 BEGIN
-  IF p_evento_id IS NULL OR p_revisao IS NULL OR p_motivo IS NULL OR p_motivo NOT IN ('plano_publicado', 'plano_revogado') THEN
-    RAISE EXCEPTION 'venda_sugestoes_reprocessar_sucessao: evento, revisão e motivo' USING ERRCODE = '22023';
+  IF p_evento_id IS NULL OR p_motivo IS NULL OR p_motivo NOT IN ('plano_publicado', 'plano_revogado', 'estado_mudou') THEN
+    RAISE EXCEPTION 'venda_sugestoes_reprocessar_sucessao: evento e motivo' USING ERRCODE = '22023';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtext('venda_gerar_lista'));
+  -- A revisão que o cálculo de fato usa (a vigente AGORA, sob a trava), não a que pediu o reprocesso.
+  SELECT max(r.revisao) INTO v_rev FROM public.cliente_sucessao_plano_revisoes r WHERE r.evento_id = p_evento_id;
 
   SELECT array_agg(DISTINCT z.uid) INTO v_compradores
     FROM (
@@ -708,7 +737,7 @@ BEGIN
    WHERE f.farmer IS NOT NULL;
 
   IF v_farmers IS NULL OR NOT EXISTS (SELECT 1 FROM public.venda_gerador_execucao e WHERE e.dia_referencia = v_dia) THEN
-    RETURN jsonb_build_object('dia', v_dia, 'farmers', COALESCE(cardinality(v_farmers), 0),
+    RETURN jsonb_build_object('dia', v_dia, 'revisao_aplicada', v_rev, 'farmers', COALESCE(cardinality(v_farmers), 0),
                               'substituidas', 0, 'novas', 0, 'preservadas', 0);
   END IF;
 
@@ -755,7 +784,7 @@ BEGIN
     INSERT INTO public.venda_sugestao_substituida
            (id, reprocesso_id, substituida_em, motivo, evento_id, plano_revisao, dia_referencia, fase,
             farmer_user_id, comprador_id, empresa, omie_codigo_produto, sugestao)
-    SELECT sai.id, v_reproc, clock_timestamp(), p_motivo, p_evento_id, p_revisao, sai.dia_referencia, sai.fase,
+    SELECT sai.id, v_reproc, clock_timestamp(), p_motivo, p_evento_id, v_rev, sai.dia_referencia, sai.fase,
            sai.farmer_user_id, sai.comprador_id, sai.empresa, sai.omie_codigo_produto, to_jsonb(sai)
       FROM sai;
     GET DIAGNOSTICS v_k = ROW_COUNT;
@@ -781,15 +810,40 @@ BEGIN
      WHERE e.dia_referencia = v_dia AND e.fase = v_fase;
   END LOOP;
 
-  RETURN jsonb_build_object('dia', v_dia, 'reprocesso_id', v_reproc, 'farmers', cardinality(v_farmers),
+  RETURN jsonb_build_object('dia', v_dia, 'reprocesso_id', v_reproc, 'revisao_aplicada', v_rev,
+                            'farmers', cardinality(v_farmers),
                             'substituidas', v_sai, 'novas', v_entra, 'preservadas', v_pres);
 END
 $function$;
-REVOKE ALL ON FUNCTION private.venda_sugestoes_reprocessar_sucessao(uuid, integer, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.venda_sugestoes_reprocessar_sucessao(uuid, text) FROM PUBLIC, anon, authenticated;
 
--- Drena a fila: os pedidos pendentes, do mais antigo, cada um reprocessado e marcado com o resultado. Uma
--- drenagem por vez (try-lock: a rodada seguinte do cron sai na hora). Cada reprocesso relê o plano VIGENTE, então
--- dois pedidos do mesmo evento convergem (o 2º acha pouco ou nada a trocar).
+-- A assinatura do estado de herança por evento: as linhas de vigentes (id, estado, tipo, corte, extremos
+-- resolvidos) + a revisão vigente do plano. Muda quando muda qualquer coisa de que a trilha efetiva depende.
+CREATE OR REPLACE FUNCTION private.cliente_sucessao_assinaturas(p_hoje date)
+ RETURNS TABLE(evento_id uuid, assinatura text)
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  WITH v AS (SELECT * FROM private.cliente_sucessoes_vigentes(p_hoje)),
+  rev AS (
+    SELECT DISTINCT ON (r.evento_id) r.evento_id, r.revisao, r.revoga
+      FROM public.cliente_sucessao_plano_revisoes r
+     ORDER BY r.evento_id, r.revisao DESC
+  )
+  SELECT e.evento_id,
+         md5(COALESCE((SELECT string_agg(concat_ws(':', v.id, v.estado, v.tipo, v.data_corte, v.antigo_user_id, v.novo_user_id),
+                                         ',' ORDER BY v.id)
+                         FROM v WHERE v.evento_id = e.evento_id), '')
+             || '|' || COALESCE((SELECT rev.revisao || ':' || rev.revoga FROM rev WHERE rev.evento_id = e.evento_id), '0'))
+    FROM (SELECT DISTINCT s.evento_id FROM public.cliente_sucessoes s) e
+$function$;
+REVOKE ALL ON FUNCTION private.cliente_sucessao_assinaturas(date) FROM PUBLIC, anon, authenticated;
+
+-- Drena a fila. (1) DETECTA: evento cuja assinatura mudou desde o último reconcilio, sem pedido pendente, ganha um
+-- pedido `estado_mudou` (revogação de declaração, alias, cadastro, corte — nada disso passa pelas RPCs do plano).
+-- (2) Por evento pendente, reprocessa UMA vez (o pedido mais novo; os anteriores ficam `superado_por`) e grava a
+-- assinatura vista. Uma drenagem por vez (try-lock: a rodada seguinte sai na hora).
 CREATE OR REPLACE FUNCTION private.venda_sugestoes_drenar_reprocesso()
  RETURNS integer
  LANGUAGE plpgsql
@@ -799,16 +853,35 @@ AS $function$
 DECLARE
   r record;
   v_n integer := 0;
+  v_hoje date;
 BEGIN
   IF NOT pg_try_advisory_xact_lock(hashtext('venda_sucessao_reprocesso')) THEN
     RETURN 0;
   END IF;
-  FOR r IN SELECT f.evento_id, f.revisao, f.motivo FROM private.venda_sugestoes_reprocesso_fila f
-            WHERE f.processado_em IS NULL ORDER BY f.pedido_em, f.evento_id, f.revisao LOOP
+  v_hoje := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
+  INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, revisao_pedida, motivo)
+  SELECT a.evento_id, NULL, 'estado_mudou'
+    FROM private.cliente_sucessao_assinaturas(v_hoje) a
+    LEFT JOIN private.cliente_sucessao_estado_visto e ON e.evento_id = a.evento_id
+   WHERE e.assinatura IS DISTINCT FROM a.assinatura
+     AND NOT EXISTS (SELECT 1 FROM private.venda_sugestoes_reprocesso_fila f
+                      WHERE f.evento_id = a.evento_id AND f.processado_em IS NULL);
+
+  FOR r IN SELECT DISTINCT ON (f.evento_id) f.id, f.evento_id, f.motivo
+             FROM private.venda_sugestoes_reprocesso_fila f
+            WHERE f.processado_em IS NULL
+            ORDER BY f.evento_id, f.id DESC LOOP
     UPDATE private.venda_sugestoes_reprocesso_fila f
        SET processado_em = clock_timestamp(),
-           resultado = private.venda_sugestoes_reprocessar_sucessao(r.evento_id, r.revisao, r.motivo)
-     WHERE f.evento_id = r.evento_id AND f.revisao = r.revisao;
+           resultado = private.venda_sugestoes_reprocessar_sucessao(r.evento_id, r.motivo)
+     WHERE f.id = r.id;
+    UPDATE private.venda_sugestoes_reprocesso_fila f
+       SET processado_em = clock_timestamp(), resultado = jsonb_build_object('superado_por', r.id)
+     WHERE f.evento_id = r.evento_id AND f.processado_em IS NULL AND f.id < r.id;
+    INSERT INTO private.cliente_sucessao_estado_visto (evento_id, assinatura, visto_em)
+    SELECT a.evento_id, a.assinatura, clock_timestamp()
+      FROM private.cliente_sucessao_assinaturas(v_hoje) a WHERE a.evento_id = r.evento_id
+    ON CONFLICT (evento_id) DO UPDATE SET assinatura = EXCLUDED.assinatura, visto_em = EXCLUDED.visto_em;
     v_n := v_n + 1;
   END LOOP;
   RETURN v_n;
@@ -963,7 +1036,7 @@ BEGIN
   PERFORM set_config('cliente_sucessao_plano.porta', '', true);
 
   -- O reprocesso das sugestões de hoje vai para a fila (o cron drena em até 1 min), na MESMA transação.
-  INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, revisao, motivo)
+  INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, revisao_pedida, motivo)
   VALUES (p_evento_id, v_rev, 'plano_publicado');
   RETURN jsonb_build_object('ok', true, 'revisao', v_rev, 'regras', v_n, 'reprocesso', 'agendado');
 END
@@ -1011,7 +1084,7 @@ BEGIN
   VALUES (p_evento_id, v_rev, true, btrim(p_motivo), v_uid, clock_timestamp());
   PERFORM set_config('cliente_sucessao_plano.porta', '', true);
 
-  INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, revisao, motivo)
+  INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, revisao_pedida, motivo)
   VALUES (p_evento_id, v_rev, 'plano_revogado');
   RETURN jsonb_build_object('ok', true, 'revisao', v_rev, 'reprocesso', 'agendado');
 END
@@ -1109,7 +1182,7 @@ BEGIN
     RAISE EXCEPTION 'P3 FALHOU: marcação de origem em venda_sugestao ausente ou sem as constraints validadas';
   END IF;
   IF (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.venda_gerar_lista(date,text)'))
-       IS DISTINCT FROM 'b5320515336793a8f5d149288edd83a3'
+       IS DISTINCT FROM '3b93a5e827ebc78af6dd325c5b5b0c7f'
      OR has_function_privilege('anon', 'public.venda_gerar_lista(date,text)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.venda_gerar_lista(date,text)', 'EXECUTE')
      OR NOT has_function_privilege('service_role', 'public.venda_gerar_lista(date,text)', 'EXECUTE') THEN
@@ -1132,7 +1205,8 @@ BEGIN
   FOR r IN SELECT * FROM (VALUES ('private.historico_consumo_efetivo(date)'), ('private.historico_compradores_encerrados(date)'),
                                   ('private.venda_recompra_efetiva_em(date)'), ('private.venda_situacao_efetiva_em(date)'),
                                   ('private.venda_lista_calc_efetiva(date)'),
-                                  ('private.venda_sugestoes_reprocessar_sucessao(uuid,integer,text)'),
+                                  ('private.venda_sugestoes_reprocessar_sucessao(uuid,text)'),
+                                  ('private.cliente_sucessao_assinaturas(date)'),
                                   ('private.cliente_sucessao_plano_imutavel()'),
                                   ('private.venda_sugestao_substituida_imutavel()')) AS x(sig)
   LOOP
@@ -1154,8 +1228,11 @@ BEGIN
     END IF;
   END LOOP;
   IF NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = 'private.venda_sugestoes_reprocesso_fila'::regclass)
+     OR NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = 'private.cliente_sucessao_estado_visto'::regclass)
      OR has_table_privilege('authenticated', 'private.venda_sugestoes_reprocesso_fila', 'SELECT,INSERT,UPDATE,DELETE')
      OR has_table_privilege('anon', 'private.venda_sugestoes_reprocesso_fila', 'SELECT,INSERT,UPDATE,DELETE')
+     OR has_table_privilege('authenticated', 'private.cliente_sucessao_estado_visto', 'SELECT,INSERT,UPDATE,DELETE')
+     OR has_table_privilege('anon', 'private.cliente_sucessao_estado_visto', 'SELECT,INSERT,UPDATE,DELETE')
      OR to_regprocedure('private.venda_sugestoes_drenar_reprocesso()') IS NULL
      OR has_function_privilege('authenticated', 'private.venda_sugestoes_drenar_reprocesso()', 'EXECUTE')
      OR has_function_privilege('public', 'private.venda_sugestoes_drenar_reprocesso()', 'EXECUTE') THEN
