@@ -6,6 +6,7 @@ function assertEquals(atual: unknown, esperado: unknown) {
 }
 import {
   classificar,
+  observacoesDaLista,
   dataBRparaISO,
   inicioDaJanela,
   lerListaConsulta,
@@ -306,4 +307,19 @@ Deno.test("total: recordsFiltered + DataTables + texto; divergência é explíci
   assertEquals(totalAnunciado({ respostaTotal: 7, dtTotal: 9 }), "divergente");
   const r = provarLeitura({ ...base, linhasLidas: 7, respostaTotal: 7, dtTotal: 9 });
   assertEquals(r.ok ? "ok" : r.motivo, "total_divergente");
+});
+
+// ── Onda 5A: situação do portal gravada no pedido ──
+Deno.test("observacoesDaLista: só pedido do app com código 1..7", () => {
+  const { pedidos } = lerListaConsulta([
+    { "Pedido": "2141001", "Situação": "6 - Cancelado", "Data Emissão": "01/11/2026", "Vlr": "1,00" },
+    { "Pedido": "2141002", "Situação": "1 - Aberto", "Data Emissão": "01/11/2026", "Vlr": "1,00" },
+    { "Pedido": "2141003", "Situação": "Cancelado", "Data Emissão": "01/11/2026", "Vlr": "1,00" },
+    { "Pedido": "2141004", "Situação": "12 - Novo", "Data Emissão": "01/11/2026", "Vlr": "1,00" },
+    { "Pedido": "2141005", "Situação": "6 - Cancelado", "Data Emissão": "01/11/2026", "Vlr": "1,00" },
+  ]);
+  assertEquals(
+    observacoesDaLista(pedidos, new Set(["2141001", "2141002", "2141003", "2141004"])),
+    [{ protocolo: "2141001", codigo: "6", texto: "6 - Cancelado" }, { protocolo: "2141002", codigo: "1", texto: "1 - Aberto" }],
+  );
 });

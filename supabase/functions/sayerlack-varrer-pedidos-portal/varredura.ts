@@ -487,3 +487,21 @@ export function reconsultasForaDaJanela(entrada: {
     .slice(0, teto)
     .map(({ quando: _q, ...q }) => q);
 }
+
+// ── Onda 5A (2026-11-08): situação do portal gravada no pedido ─────────────────────────────────────────────────────
+// O disparador geral cria PO de pedido `sucesso_portal` sem reler o portal; a situação que esta varredura JÁ lê vai
+// para o pedido pelo escritor único `sayerlack_registrar_situacao_portal`, e o claim de disparo recusa o 6.
+
+export interface ObservacaoSituacao {
+  protocolo: string;
+  codigo: string;
+  texto: string;
+}
+
+/** Pedidos da lista que estão no app, com código de situação RECONHECIDO (1..7). Ilegível fica de fora: nunca
+ *  substitui a observação vigente (o banco recusa também — esta é a 1ª camada). */
+export function observacoesDaLista(pedidos: readonly PedidoListado[], protocolosNoApp: ReadonlySet<string>): ObservacaoSituacao[] {
+  return pedidos
+    .filter((p) => protocolosNoApp.has(p.protocolo) && /^[1-7]$/.test(p.situacao_codigo ?? ""))
+    .map((p) => ({ protocolo: p.protocolo, codigo: p.situacao_codigo as string, texto: p.situacao.slice(0, 200) }));
+}

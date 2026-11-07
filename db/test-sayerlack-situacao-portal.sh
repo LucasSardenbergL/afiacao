@@ -35,7 +35,7 @@ MIG_REAL="$REPO_ROOT/supabase/migrations/20261108120000_sayerlack_situacao_porta
 # ══════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="claim_sem_veto:C1,C4,R2 claim_veto_por_protocolo:C4 sem_trigger:T1,T2 sobreposta_libera:W7
-              ilegivel_grava:W3 sem_ordem:W5 qualquer_empresa:W10 pos_claim_sem_dente:A1 pos_trigger_sem_dente:A1"
+              ilegivel_grava:W3 sem_ordem:W5 qualquer_empresa:W10 seis_nao_estende:W15 pos_claim_sem_dente:POS=S7 pos_trigger_sem_dente:POS=S2"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -61,6 +61,16 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "  ❌ $sab — suíte ficou VERDE com a sabotagem ativa: o assert NÃO tem dente"
       falhas=$((falhas+1)); continue
     fi
+    # Sabotagem da POSTCONDIÇÃO: o vermelho certo é a migration ABORTAR com a marca dela (A1), não um assert.
+    case "$exigidos" in POS=*)
+      marca="${exigidos#POS=}"
+      if grep -q 'SABOTAGEM ATIVA em ' "$log" && grep -q "ERROR:  $marca FALHOU" "$log" && grep -Eq '^  ❌ A1 ' "$log"; then
+        echo "  ✅ $sab — a postcondição abortou a migration com $marca"
+      else
+        echo "  ❌ $sab — a postcondição NÃO abortou com $marca"; falhas=$((falhas+1))
+      fi
+      continue ;;
+    esac
     vermelhos="$(grep -Eo '^  ❌ [A-Z][0-9]+ ' "$log" | grep -Eo '[A-Z][0-9]+' | tr '\n' ' ' || true)"
     erros_sql="$(grep -c 'ERROR:  ' "$log" || true)"
     faltam=""
@@ -175,6 +185,8 @@ ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_es
 " "              OR true
 "
     trocar "$MIG" "  IF v_src NOT LIKE '%OR p_lido_de > portal_situacao_ate%' OR" "  IF false OR" ;;
+  seis_nao_estende)  # o v4 sem o conserto: 2º 6 sobreposto descartado
+    trocar "$MIG" "              OR (r.codigo = '6' AND portal_situacao_codigo = '6' AND p_lido_ate > portal_situacao_ate))" "              )" ;;
   qualquer_empresa)
     trocar "$MIG" "       WHERE empresa = 'OBEN'
          AND btrim(portal_protocolo) = r.protocolo
@@ -269,6 +281,14 @@ eq "W13 leitura que começou DEPOIS do fim da vigente libera (6→1)" "$(SIT 1)"
 W "$NAO_FUTURO 15:00Z" "$NAO_FUTURO 15:01Z" '[{"protocolo":"2141001","codigo":"6","texto":"6 - Cancelado"}]' >/dev/null
 eq "W14 e um 6 posterior volta a bloquear (1→6)" "$(SIT 1)" "6|2141001"
 
+# Codex v4 P1: A=6 [10:00,10:01] · B=6 [10:00:30,10:02] (sobreposta) · C=1 [10:01:30,10:02:30] — C começou depois de A
+# mas se sobrepõe a B: tem de seguir 6. Exige que B ESTENDA o horizonte do cancelamento.
+W "$NAO_FUTURO 10:00:00Z" "$NAO_FUTURO 10:01:00Z" '[{"protocolo":"2141008","codigo":"6","texto":"6 - Cancelado"}]' >/dev/null
+W "$NAO_FUTURO 10:00:30Z" "$NAO_FUTURO 10:02:00Z" '[{"protocolo":"2141008","codigo":"6","texto":"6 - Cancelado"}]' >/dev/null
+W "$NAO_FUTURO 10:01:30Z" "$NAO_FUTURO 10:02:30Z" '[{"protocolo":"2141008","codigo":"1","texto":"1 - Aberto"}]' >/dev/null
+eq "W15 2º 6 sobreposto estende o horizonte: a 3ª leitura (1) não libera" "$(SIT 8)" "6|2141008"
+eq "W16 e o 6 estendido não encurta o início" "$(Pq -c "SELECT to_char(portal_situacao_em AT TIME ZONE 'UTC','HH24:MI:SS') || '-' || to_char(portal_situacao_ate AT TIME ZONE 'UTC','HH24:MI:SS') FROM public.pedido_compra_sugerido WHERE id=8" 2>&1)" "10:00:00-10:02:00"
+
 echo "── T: escritor ÚNICO ──"
 eq "T1 UPDATE direto da situação = 42501" "$(Pq -c "UPDATE public.pedido_compra_sugerido SET portal_situacao_codigo='1' WHERE id=1" 2>&1 | sqlstate)" "42501"
 eq "T2 INSERT com situação = 42501" "$(Pq -c "INSERT INTO public.pedido_compra_sugerido(id, empresa, status, portal_protocolo, portal_situacao_codigo, portal_situacao_texto, portal_situacao_em, portal_situacao_ate, portal_situacao_protocolo, portal_situacao_gravada_em) VALUES (99,'OBEN','aprovado_aguardando_disparo','2141099','1','1',now(),now(),'2141099',now())" 2>&1 | sqlstate)" "42501"
@@ -302,17 +322,17 @@ echo "── R: corrida, 2 conexões ──"
 # Conexão A segura a linha (transação aberta com sleep); B entra e TEM de ficar bloqueada por A
 # (observado em pg_blocking_pids), e o desfecho de B é o da linha que A commitou.
 corrida() { # $1 rótulo, $2 SQL de A (antes do sleep), $3 SQL de B → ecoa a saída de B
-  local rot="$1" sa="$2" sb="$3" saida="$TMP/corrida-$1.out" i bloq=nao
+  local rot="$1" sa="$2" sb="$3" saida="$TMP/corrida-$1.out" bloq=nao
   "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d prove -v ON_ERROR_STOP=1 -tA -q \
     -c "SET application_name='corrida_a_$rot'" -c "BEGIN; $sa; SELECT pg_sleep(3); COMMIT;" >/dev/null 2>&1 &
   local pa=$!; BGPIDS="$BGPIDS $pa"
-  for i in $(seq 1 50); do
+  for _ in $(seq 1 50); do
     [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='corrida_a_$rot' AND query LIKE '%pg_sleep%' AND state='active'")" = 1 ] && break
     sleep 0.1
   done
   PGAPPNAME="corrida_b_$rot" "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d prove -v ON_ERROR_STOP=1 -tA -q -c "$sb" > "$saida" 2>&1 &
   local pb=$!; BGPIDS="$BGPIDS $pb"
-  for i in $(seq 1 25); do
+  for _ in $(seq 1 25); do
     if [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity b WHERE b.application_name='corrida_b_$rot' AND cardinality(pg_blocking_pids(b.pid)) > 0")" = 1 ]; then bloq=sim; break; fi
     sleep 0.1
   done

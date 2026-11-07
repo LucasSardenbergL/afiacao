@@ -148,8 +148,14 @@ BEGIN
       UPDATE pedido_compra_sugerido
          SET portal_situacao_codigo     = r.codigo,
              portal_situacao_texto      = CASE WHEN r.texto = '' THEN r.codigo ELSE r.texto END,
-             portal_situacao_em         = p_lido_de,
-             portal_situacao_ate        = p_lido_ate,
+             -- 6 sobre 6 do mesmo protocolo: ESTENDE o horizonte do cancelamento (o fim mais tardio), nunca o
+             -- encurta — senão uma 3ª leitura sobreposta ao 2º 6 liberaria (Codex 5A v4, P1).
+             portal_situacao_em         = CASE WHEN r.codigo = '6' AND portal_situacao_codigo = '6'
+                                                AND portal_situacao_protocolo = r.protocolo
+                                               THEN portal_situacao_em ELSE p_lido_de END,
+             portal_situacao_ate        = CASE WHEN r.codigo = '6' AND portal_situacao_codigo = '6'
+                                                AND portal_situacao_protocolo = r.protocolo
+                                               THEN GREATEST(portal_situacao_ate, p_lido_ate) ELSE p_lido_ate END,
              portal_situacao_protocolo  = r.protocolo,
              portal_situacao_gravada_em = now()
        WHERE empresa = 'OBEN'
@@ -160,7 +166,9 @@ BEGIN
               -- leitura que começou DEPOIS de a vigente terminar: estritamente mais nova
               OR p_lido_de > portal_situacao_ate
               -- sobreposta (ou posterior) dizendo 6 por cima de não-6: na dúvida, bloqueia
-              OR (r.codigo = '6' AND portal_situacao_codigo <> '6' AND p_lido_ate >= portal_situacao_em))
+              OR (r.codigo = '6' AND portal_situacao_codigo <> '6' AND p_lido_ate >= portal_situacao_em)
+              -- outro 6 que termina depois: o cancelamento vale até o fim dele
+              OR (r.codigo = '6' AND portal_situacao_codigo = '6' AND p_lido_ate > portal_situacao_ate))
       RETURNING id
     )
     SELECT COALESCE(jsonb_agg(id ORDER BY id), '[]'::jsonb) INTO v_ids FROM up;
@@ -291,7 +299,7 @@ BEGIN
     RAISE EXCEPTION 'S7 FALHOU: o veto de cancelado no portal não está no WHERE que grava do claim';
   END IF;
   SELECT prosrc INTO v_src FROM pg_proc WHERE oid = to_regprocedure('public.sayerlack_registrar_situacao_portal(timestamptz, timestamptz, jsonb)');
-  IF v_src NOT LIKE '%OR p_lido_de > portal_situacao_ate%' OR v_src NOT LIKE '%''^[1-7]$''%' THEN
+  IF v_src NOT LIKE '%OR p_lido_de > portal_situacao_ate%' OR v_src NOT LIKE '%GREATEST(portal_situacao_ate, p_lido_ate)%' OR v_src NOT LIKE '%''^[1-7]$''%' THEN
     RAISE EXCEPTION 'S8 FALHOU: o escritor não exige ordem nem código reconhecido';
   END IF;
   RAISE NOTICE 'POSTCONDICAO_OK sayerlack situacao portal no pedido (fatia 1 da onda 5A)';

@@ -46,6 +46,8 @@ import {
   provarLeitura,
   carenciaTravada,
   reconsultasForaDaJanela,
+  observacoesDaLista,
+  type ObservacaoSituacao,
 } from "./varredura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -632,6 +634,7 @@ Deno.serve(async (req: Request) => {
   let resumoFinal: Record<string, unknown> = { modo, versao: VERSAO };
   const registro = await abrirExecucao(db, auth);
   const falhasReconciliacao: { pedido_id: number; protocolo: string; mensagem: string }[] = [];
+  const falhasSituacao: string[] = [];
   // 4.3: cada leitura da lista e cada importação abre UMA sessão no Browserless (cota do plano). Conta por rodada.
   const sessoes = { leitura_portal: 0, importacao: 0 };
   const lerPortalContado = (desde: string) => { sessoes.leitura_portal += 1; return lerPortal(desde); };
@@ -652,6 +655,21 @@ Deno.serve(async (req: Request) => {
     const detalhes = { ...resumoFinal, ...causa, sessoes_browserless: sessoesBrowserless(), erro: mensagem.slice(0, 600) };
     await fecharExecucao(db, registro, "erro", detalhes);
     return json({ ok: false, mensagem, ...resumoFinal, ...causa, sessoes_browserless: detalhes.sessoes_browserless }, 500);
+  }
+
+  /** Escritor único da situação (Onda 5A). Erro não some: vira problema da rodada (vermelha no fim). */
+  async function gravarSituacoes(itens: ObservacaoSituacao[], de: string, ate: string): Promise<Record<string, unknown>> {
+    if (itens.length === 0) return { enviadas: 0 };
+    const { data, error } = await db.rpc("sayerlack_registrar_situacao_portal", { p_lido_de: de, p_lido_ate: ate, p_itens: itens });
+    if (error) {
+      falhasSituacao.push(error.message.slice(0, 200));
+      return { enviadas: itens.length, erro: error.message.slice(0, 200) };
+    }
+    const r = (data ?? {}) as { aceitos?: { pedido_id: number; protocolo: string; codigo: string }[]; ignorados?: number; fora_de_ordem?: number };
+    return {
+      enviadas: itens.length, aceitas: r.aceitos?.length ?? 0, ignoradas: r.ignorados ?? 0, fora_de_ordem: r.fora_de_ordem ?? 0,
+      canceladas: (r.aceitos ?? []).filter((a) => a.codigo === "6").map((a) => ({ pedido_id: a.pedido_id, protocolo: a.protocolo })),
+    };
   }
 
   async function rodada(): Promise<Record<string, unknown>> {
@@ -676,7 +694,11 @@ Deno.serve(async (req: Request) => {
     // 1. Lê a lista no portal.
     const hoje = hojeSP();
     const emissaoDesde = inicioDaJanela(hoje);
+    // [lidoDe, lidoAte] = intervalo da OBSERVAÇÃO das situações (Onda 5A): o banco só deixa uma leitura substituir a
+    // vigente se começou depois de ela terminar.
+    const lidoDe = new Date().toISOString();
     const envelope = await lerPortalContado(emissaoDesde);
+    const lidoAte = new Date().toISOString();
     console.log(`[varrer-portal] Browserless ${Date.now() - t0}ms tipo=${envelope.erroTipo ?? "-"} linhas=${envelope.linhas?.length ?? "-"}`);
     if (envelope.success !== true) {
       causaPreProtocolo = `leitura:${envelope.erroTipo ?? "desconhecido"}`;
@@ -714,6 +736,11 @@ Deno.serve(async (req: Request) => {
     // A 1ª vista só conta em rodada de IMPORTAR: "listar" não tem efeito sobre compras futuras (Codex P2).
     if (modo === "importar") {
       await registrarVistos(db, preCarencia.filter((p) => p.classe === "candidato" && !vistos.has(p.protocolo)).map((p) => p.protocolo));
+    }
+    // 2b. Onda 5A: a situação de cada pedido do app vai para o pedido (escritor único). Só com leitura PROVADA —
+    //     ilegível/repetido seguem a rodada, mas não viram evidência. É o que faz o claim de disparo recusar o 6.
+    if (modo === "importar" && prova.ok) {
+      resumoFinal = { ...resumoFinal, situacoes: await gravarSituacoes(observacoesDaLista(lista.pedidos, new Set(noApp.keys())), lidoDe, lidoAte) };
     }
     const classificados = aplicarCarencia(preCarencia, vistos, syncEm);
     const candidatos = classificados.filter((p) => p.classe === "candidato");
@@ -920,6 +947,7 @@ Deno.serve(async (req: Request) => {
     if (redisparosFalhos.length > 0) problemas.push(`${redisparosFalhos.length} re-disparo(s) sem PO confirmado: ${redisparosFalhos.map((r) => r.protocolo).join(", ")}`);
     const reconsultasFalhas = reconsultas.filter((r) => r.acao === "falhou");
     if (reconsultasFalhas.length > 0) problemas.push(`${reconsultasFalhas.length} reconsulta(s) além da janela falharam: ${reconsultasFalhas.map((r) => r.protocolo).join(", ")}`);
+    if (falhasSituacao.length > 0) problemas.push(`situação do portal não gravada no pedido: ${falhasSituacao.join(" · ")}`);
     if (falhasReconciliacao.length > 0) {
       problemas.push(`Reconciliação: ${falhasReconciliacao.length} pedido(s) cancelado(s) no portal não encerraram: ` +
         falhasReconciliacao.map((f) => `#${f.pedido_id} (${f.mensagem})`).join("; "));
@@ -947,8 +975,10 @@ Deno.serve(async (req: Request) => {
     let listaRec = lista;
     if (janela.emissaoDesde < emissaoDesde) {
       if (semTempo()) return { ...resumoRec, adiado: "sem tempo na rodada para a leitura estendida" };
+      const lidoDeRec = new Date().toISOString();
       const env = await lerPortalContado(janela.emissaoDesde)
         .catch((e): BrowserlessData => ({ success: false, erroTipo: "REDE", erro: mensagemDeErro(e) ?? "erro de rede" }));
+      const lidoAteRec = new Date().toISOString();
       console.log(`[varrer-portal] leitura estendida desde ${janela.emissaoDesde}: tipo=${env.erroTipo ?? "-"} linhas=${env.linhas?.length ?? "-"}`);
       // Lista incompleta NUNCA decide: success=false cobre paginação incompleta e página ilegível; e a prova da Onda 3
       // vale aqui também — total anunciado = linhas lidas, sem ilegível nem repetido.
@@ -961,6 +991,10 @@ Deno.serve(async (req: Request) => {
       if (!provaRec.ok) return { ...resumoRec, leitura_falhou: `sem prova (${provaRec.motivo}): ${provaRec.detalhe}` };
       listaRec = lida;
       resumoRec.emissao_leitura = janela.emissaoDesde;
+      if (modo === "importar") {
+        const noAppRec = await pedidosNoApp(db, lida.pedidos.map((p) => p.protocolo));
+        resumoRec.situacoes = await gravarSituacoes(observacoesDaLista(lida.pedidos, new Set(noAppRec.keys())), lidoDeRec, lidoAteRec);
+      }
     }
     const desfechos = desfechoNoPortal(janela.alcancaveis, listaRec);
     const encerrados: unknown[] = [];

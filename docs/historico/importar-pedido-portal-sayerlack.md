@@ -301,3 +301,42 @@ regenerou `types.ts`. O founder fez o Publish.
 - **Prova**: `db/test-data-health-sayerlack-varredura.sh`, PG17, relógio controlado, 33 asserts verdes em `C` e em
   `pt_BR.UTF-8`, `--falsificar` com 16 sabotagens.
 - **Feriado** não é conhecido pela regra: com o portal fora, aparece como broken pela causa real.
+
+## Pontos cegos, Onda 5A fatia 1: o disparador não compra pedido cancelado no portal (2026-11-08)
+
+**O furo**: o disparador geral cria o PO de pedido `sucesso_portal` com protocolo (`already_sent`) **sem reler o
+portal**. Um pedido cancelado na Sayerlack (situação 6) virava compra real na rodada seguinte. A varredura lia a
+situação, mas a descartava quando o pedido já estava no app.
+
+**Fatiamento (honesto)**: a 5A inteira tinha 5 P1 do Codex em 4 peças. Esta fatia fecha o furo de dinheiro. A
+**fatia 2** (outra sessão) leva o botão auditado "Encerrar — cancelado no fornecedor" (C), os avisos por e-mail com
+reserva e token (D), a cobertura periódica dos protocolos com PO e o painel (E/F). Até lá, o pedido cancelado sem PO
+fica parado como hoje: o cron já manda o e-mail de situação impeditiva. A diferença é que ele não vira mais PO.
+
+- **Migration `20261108120000`** (manual, envelope):
+  - 6 colunas `portal_situacao_*` em `pedido_compra_sugerido`, com CHECK (todas nulas ou todas válidas, código `^[1-7]$`).
+  - **Escritor único** `sayerlack_registrar_situacao_portal(p_lido_de, p_lido_ate, p_itens)`, só service_role. A
+    trigger `trg_situacao_portal_escritor_unico` com GUC local dá 42501 para qualquer outra escrita (o staff tem UPDATE
+    pela RLS).
+  - A observação é o **intervalo** da leitura. Uma leitura só substitui a vigente se começou **depois do fim** dela. Uma
+    leitura sobreposta só entra se disser 6 (na dúvida, bloqueia). Código ilegível nunca grava. Protocolo repetido no
+    lote é ignorado. Só empresa OBEN.
+  - **`reposicao_claim_disparo`** recusa `portal_situacao_codigo='6'` **no WHERE que grava** (EvalPlanQual). Vale para
+    qualquer protocolo: trocar `portal_protocolo` não libera. Só uma leitura do protocolo atual com outro código libera.
+    A recusa devolve `bloqueio='cancelado_no_portal'` e `pendente_desde`.
+- **Edges**:
+  - **varrer v1.7** grava a situação dos pedidos do app que estão na lista provada e na leitura estendida da
+    reconciliação. Se a gravação falha, a rodada fica vermelha.
+  - **importar v1.6** grava a situação lida na reconsulta por número, inclusive quando recusa por cancelado.
+  - **disparar v1.12**: pedido cancelado com **pendência de disparo aberta** é conciliado **só por consulta**
+    (`ConsultarPedCompra AFI-<id>`, nunca `IncluirPedCompra`), antes das validações de criação. Se o PO é confirmado,
+    registra o vínculo e avisa que o PO existe com o pedido cancelado. Se não acha, nada muda.
+- **Front (5.5)**: o `PortalStatusPanel` de Gerir pedidos mostra a situação lida e quando foi lida. Para 6, diz
+  "disparo bloqueado" (sem PO) ou "há PO no Omie, confira" (com PO). Se a leitura for de protocolo anterior, avisa.
+- **Prova**: `db/test-sayerlack-situacao-portal.sh`, PG17, 37 asserts verdes em `C` e `pt_BR.UTF-8`. Usa 2 conexões
+  com bloqueio observado nas duas ordens gravar × claim. `--falsificar` com controle verde e 9 sabotagens: 7 de
+  comportamento (uma camada por vez) e 2 da postcondição.
+- **Codex**: desenho v3 com 4 P1 (reconsulta sem gravar, B' depois das validações, ordem por início da leitura,
+  troca de protocolo), todos fechados no v4.
+- **Limite declarado**: entre a leitura das 12:30 e a gravação (segundos), um claim concorrente ainda pode criar o PO.
+  Esse PO fica com a situação 6 gravada e o painel mostra "há PO no Omie". O aviso por e-mail é da fatia 2.

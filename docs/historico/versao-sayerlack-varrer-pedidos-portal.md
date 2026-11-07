@@ -29,4 +29,8 @@ v1.6 (2026-11-07, pontos cegos Onda 4) — o registro diz POR QUE a rodada parou
 (`causa_pre_protocolo`: config_ausente · leitura:<erroTipo> · prova:<motivo> · excecao), que o vigia
 `sayerlack_varredura_portal` do data_health transforma em 1 e-mail por causa; e conta as sessões do Browserless da
 rodada (`sessoes_browserless`: leitura_portal + importacao = total) no resumo, sucesso ou erro.
+v1.7 (2026-11-08, pontos cegos Onda 5A fatia 1) — a situação de cada pedido do app lida na lista (e na leitura
+estendida da reconciliação) vai para o pedido pelo escritor único `sayerlack_registrar_situacao_portal`, com o
+intervalo [início, fim] da leitura; só com leitura PROVADA e código 1..7. É o que faz o claim de disparo recusar o
+pedido cancelado no portal. Falha da gravação deixa a rodada vermelha. Migration 20261108120000 ANTES.
 ```
