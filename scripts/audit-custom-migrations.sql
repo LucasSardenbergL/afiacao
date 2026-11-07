@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 790
+-- Total de custom migrations: 791
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -858,7 +858,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106132259', 'radar_abriu_ficha_com_cnpj', '20261106132259_radar_abriu_ficha_com_cnpj.sql'),
   ('20261106140000', 'sayerlack_importar_portal_revisao', '20261106140000_sayerlack_importar_portal_revisao.sql'),
   ('20261106175800', 'radar_mapa_regiao_cidade_telefone', '20261106175800_radar_mapa_regiao_cidade_telefone.sql'),
-  ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql')
+  ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql'),
+  ('20261106212329', 'radar_lista_meus_atendimentos', '20261106212329_radar_lista_meus_atendimentos.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3398,7 +3399,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_painel_portal', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_penetracao_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
-  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', '')
+  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
+  ('radar_lista_meus_atendimentos', 'function', 'public', 'radar_lista', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5986,7 +5988,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sayerlack_importar_portal_revisao', 'function', 'public', 'sayerlack_painel_portal', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_penetracao_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
-  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', '')
+  ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
+  ('radar_lista_meus_atendimentos', 'function', 'public', 'radar_lista', '')
 )
 SELECT
   e.migration,
@@ -6678,6 +6681,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_lista', 1, '20261103131500_radar_lista_rpc.sql', '35f2b704bf5d9b3d429156aed6ac4890'),
   ('public', 'radar_lista', 2, '20261104153351_radar_cnae_secundario.sql', 'b514c898e63fe2e0301ba8323cdd2955'),
   ('public', 'radar_lista', 3, '20261106175800_radar_mapa_regiao_cidade_telefone.sql', '82ba20fd3696c255b455780f32c33dc6'),
+  ('public', 'radar_lista', 4, '20261106212329_radar_lista_meus_atendimentos.sql', '7206911e09eeb6e20c15f07124640d0f'),
   ('public', 'radar_possiveis_vinculos', 1, '20261104201756_radar_possiveis_vinculos.sql', 'effde9346bb799f4b662d37fc89919d1'),
   ('public', 'radar_possiveis_vinculos', 2, '20261106083754_radar_vinculos_em_lote.sql', 'b7ae2cb1304fb4e6e64d626b2a305e42'),
   ('public', 'simular_puxar_volume_trimestre', 1, '20261105180000_des_simular_puxar_sem_posicao_recusa.sql', '9e43c9425748b54d783ca9f4c3737755'),

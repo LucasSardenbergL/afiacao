@@ -35,7 +35,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
-import { useRadarLista, parametrosDaLista, type RadarFiltros } from '../useRadarLista';
+import { useRadarLista, parametrosDaLista, FILTROS_MEUS_ATENDIMENTOS, type RadarFiltros } from '../useRadarLista';
 import { UFS_ATUACAO } from '@/lib/radar/ui-helpers';
 
 const FILTROS: RadarFiltros = {
@@ -120,6 +120,22 @@ describe('parametrosDaLista — termos, CNAE, ordem e página', () => {
     expect(params({ municipio: 'SANTA LUZIA', municipioCodigo: '' }))
       .toMatchObject({ p_municipio_codigo: undefined, p_municipio: 'SANTA LUZIA' });
     expect(params({ municipio: 'pomerode' }).p_municipio_codigo).toBeUndefined();
+  });
+
+  // B2: "Meus atendimentos" vai à RPC (p_so_meus), antes da paginação. Na fila a chave NEM vai (o supabase-js a omite):
+  // a chamada da fila é a de antes e não depende da migration 20261106212329.
+  it('p_so_meus: true só na visão; na fila fica ausente (undefined), nunca false', () => {
+    expect(params({}).p_so_meus).toBeUndefined();
+    expect(parametrosDaLista(FILTROS, LOTE, '2026-11-03', 0, false).p_so_meus).toBeUndefined();
+    expect(parametrosDaLista(FILTROS, LOTE, '2026-11-03', 2, true)).toMatchObject({ p_so_meus: true, p_offset: 100, p_limit: 50 });
+  });
+
+  it('filtros neutros da visão: sem lote, sem região, com já-clientes e sem cortar quem não tem contato', () => {
+    expect(parametrosDaLista(FILTROS_MEUS_ATENDIMENTOS, LOTE, '2026-11-03', 0, true)).toMatchObject({
+      p_so_meus: true, p_ultimo_lote: undefined, p_primeira_vista_min: undefined, p_uf: undefined, p_ufs: undefined,
+      p_incluir_ja_clientes: true, p_com_contato: false, p_com_telefone: false, p_status: undefined,
+      p_sugeridos_lote: undefined, p_ordem: 'score',
+    });
   });
 
   it('CNAE: 7 dígitos = exato; parcial = prefixo; vazio = nada', () => {
