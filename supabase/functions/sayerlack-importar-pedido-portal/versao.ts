@@ -33,7 +33,12 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * (`reposicao.importar_portal_sayerlack`); PO confirmado resolve na hora a pendência da varredura; CP006 diz o NCM e o
  * passo; devolve as opções de condição do portal (de-para D-2).
  */
-export const VERSAO = "v1.5-redisparo-relido-ledger";
+/**
+ * v1.6 (2026-11-08, pontos cegos Onda 5A fatia 1) — a situação lida do pedido (código 1..7, linha única da OBEN) vai
+ * para o pedido pelo escritor único `sayerlack_registrar_situacao_portal`, inclusive quando a leitura recusa por
+ * cancelado; a resposta diz `situacao_gravada`. Migration 20261108120000 ANTES.
+ */
+export const VERSAO = "v1.6-situacao-portal-gravada";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

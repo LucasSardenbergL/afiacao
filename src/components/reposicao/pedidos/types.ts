@@ -52,6 +52,14 @@ export interface PedidoSugerido {
   portal_tentativas: number | null;
   portal_proximo_retry_em: string | null;
   portal_erro: string | null;
+  // Onda 5A: situação do pedido NO PORTAL Sayerlack, última observação aceita (escritor único: a varredura e a
+  // importadora). `portal_situacao_protocolo` ≠ `portal_protocolo` ⇒ a leitura é de um protocolo anterior.
+  // Situação 6 bloqueia o disparo no banco (claim). `select('*')` traz; antes da migration, ausentes.
+  portal_situacao_codigo?: string | null;
+  portal_situacao_texto?: string | null;
+  portal_situacao_em?: string | null;
+  portal_situacao_protocolo?: string | null;
+  omie_pedido_compra_id?: string | null;
   // Resposta do disparo (edge disparar-pedidos-aprovados). Em status='falha_envio',
   // resposta_canal.erro carrega o MOTIVO real da falha (ex.: "SKU(s) sem custo (preço
   // unitário 0)..."). Antes só era visível no banco — não aparecia na UI.

@@ -125,6 +125,23 @@ export function lerCabecalho(linhas: LinhaConsultaRaw[], protocolo: string): { o
 }
 
 /**
+ * Situação do pedido OBSERVADA na consulta (Onda 5A, 2026-11-08) — o que vai para o escritor único
+ * `sayerlack_registrar_situacao_portal`. Independe do resto do cabeçalho estar legível (um cancelado nunca chega a
+ * `lerCabecalho` ok), mas exige identidade: exatamente UMA linha com "Pedido" = protocolo, cliente OBEN e código
+ * 1..7 no texto "<código> - <nome>". Qualquer outra coisa ⇒ null (nada a gravar — situação ilegível nunca substitui
+ * a observação vigente).
+ */
+export function situacaoObservada(linhas: LinhaConsultaRaw[], protocolo: string): { protocolo: string; codigo: string; texto: string } | null {
+  const doPedido = linhas.filter((l) => Object.entries(l).some(([k, v]) => norm(k) === "pedido" && v.trim() === protocolo));
+  if (doPedido.length !== 1) return null;
+  const l = doPedido[0];
+  if (!/oben/i.test((coluna(l, "Cliente") ?? "").trim())) return null;
+  const texto = (coluna(l, "Situa") ?? "").trim();
+  const m = texto.match(/^([1-7])\s*-/);
+  return m ? { protocolo, codigo: m[1], texto: texto.slice(0, 200) } : null;
+}
+
+/**
  * Situação "6 - Cancelado" (código 6 do select #situacao do portal): pedido cancelado no fornecedor não vira PO
  * (palavra do founder, 2026-10-16). Casa pelo código E pelo texto — o portal mostra "<código> - <nome>".
  */
