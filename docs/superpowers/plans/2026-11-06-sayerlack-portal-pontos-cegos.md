@@ -4,6 +4,16 @@
 > Regra deste plano: **nenhum achado fica de fora** — cada um tem onda, ou está marcado 🧭 (decisão do founder).
 > Tabela de rastreio no fim: todo ID dos dois pareceres aponta para um item.
 
+## Andamento (checklist das ondas — o item do Rastreio está feito quando a onda dele está ✅)
+
+- ✅ **Onda 1** — #3688; migration `20261107120000` aplicada (envelope #941). 🧭 alíquota de 27101230, 32091010,
+  32099020, 32159000 e 39095012 aguarda o founder (nenhuma NF no banco prova).
+- ✅ **Onda 2** (+ 7.4) — #3691; migration `20261107140000` aplicada (#947); envio v1.13, disparar v1.11, importar v1.5
+  com DEPLOY CONFIRMADO (#950, #952, #954); Publish feito.
+- ✅ **Onda 3** — #3693; varrer v1.5 com DEPLOY CONFIRMADO (#958).
+- 🔄 **Onda 4** — PR desta onda: migration `20261107220000` (sentinela `sayerlack_varredura_portal`) + varrer v1.6.
+- ⏳ Ondas 5, 6, 7 (7.1, 7.2, 7.3, 7.5) e 8.
+
 ## Dados de prod que dimensionam (psql-ro, 2026-11-07)
 
 - 6 importações (5 botão · 1 cron), todas `disparado` com PO, 0 divergência PO × app.
