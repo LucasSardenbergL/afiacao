@@ -12,11 +12,12 @@
 --      de a vigente TERMINAR; leitura sobreposta só entra se disser 6 (falha FECHADA: na dúvida, bloqueia);
 --    · só código RECONHECIDO (lista fechada 1..7) grava: situação ilegível nunca substitui evidência
 --      decisória (Codex 5A rodada 2, P1 #2);
---    · `portal_situacao_protocolo` = o protocolo a que a observação se refere. Observação do protocolo ATUAL
---      substitui a de um protocolo anterior (é a única forma de liberar depois de um re-envio).
+--    · `portal_situacao_protocolo` = o protocolo a que a observação se refere. A ordem temporal vale ENTRE
+--      protocolos também: depois de um re-envio, só uma leitura do protocolo atual iniciada depois do fim da
+--      observação vigente libera.
 -- B) `reposicao_claim_disparo` recusa, NO MESMO WHERE QUE GRAVA, pedido cuja observação aceita é 6 — de
 --    QUALQUER protocolo (Codex v3 P1 #4: staff tem UPDATE e trocar `portal_protocolo` não pode liberar
---    compra). Liberar exige observação estritamente posterior, do protocolo atual, com outro código.
+--    compra). Liberar exige observação estritamente posterior (início > fim da vigente) com outro código.
 --    Claim existente não é limpo nem expirado.
 -- Idempotente; sem DROP. `CREATE OR REPLACE` da claim preserva o ACL (pré-voo: prod = repo 20260906190615,
 -- md5(pg_get_functiondef) 2d07026098f94452a3e694f87f6950ef em 2026-11-07).
@@ -150,23 +151,24 @@ BEGIN
              portal_situacao_texto      = CASE WHEN r.texto = '' THEN r.codigo ELSE r.texto END,
              -- 6 sobre 6 do mesmo protocolo: ESTENDE o horizonte do cancelamento (o fim mais tardio), nunca o
              -- encurta — senão uma 3ª leitura sobreposta ao 2º 6 liberaria (Codex 5A v4, P1).
+             -- 6 sobre 6 (de QUALQUER protocolo): ESTENDE o horizonte do cancelamento, nunca o encurta — senão uma
+             -- leitura sobreposta ao 2º 6 liberaria (Codex 5A v4, P1; rodada 3: idem com troca de protocolo).
              portal_situacao_em         = CASE WHEN r.codigo = '6' AND portal_situacao_codigo = '6'
-                                                AND portal_situacao_protocolo = r.protocolo
-                                               THEN portal_situacao_em ELSE p_lido_de END,
+                                               THEN LEAST(portal_situacao_em, p_lido_de) ELSE p_lido_de END,
              portal_situacao_ate        = CASE WHEN r.codigo = '6' AND portal_situacao_codigo = '6'
-                                                AND portal_situacao_protocolo = r.protocolo
                                                THEN GREATEST(portal_situacao_ate, p_lido_ate) ELSE p_lido_ate END,
              portal_situacao_protocolo  = r.protocolo,
              portal_situacao_gravada_em = now()
        WHERE empresa = 'OBEN'
          AND btrim(portal_protocolo) = r.protocolo
          AND (portal_situacao_em IS NULL
-              -- observação de um protocolo anterior: a do protocolo atual vale mais
-              OR portal_situacao_protocolo IS DISTINCT FROM r.protocolo
-              -- leitura que começou DEPOIS de a vigente terminar: estritamente mais nova
+              -- leitura que começou DEPOIS de a vigente terminar: estritamente mais nova. É a ÚNICA porta de um
+              -- código ≠ 6, inclusive de outro protocolo (Codex 5A rodada 3: trocar o protocolo não fura a ordem).
               OR p_lido_de > portal_situacao_ate
               -- sobreposta (ou posterior) dizendo 6 por cima de não-6: na dúvida, bloqueia
               OR (r.codigo = '6' AND portal_situacao_codigo <> '6' AND p_lido_ate >= portal_situacao_em)
+              -- 6 de OUTRO protocolo por cima de não-6, mesmo mais velho: falha fechada
+              OR (r.codigo = '6' AND portal_situacao_codigo <> '6' AND portal_situacao_protocolo IS DISTINCT FROM r.protocolo)
               -- outro 6 que termina depois: o cancelamento vale até o fim dele
               OR (r.codigo = '6' AND portal_situacao_codigo = '6' AND p_lido_ate > portal_situacao_ate))
       RETURNING id

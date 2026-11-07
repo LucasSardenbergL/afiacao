@@ -35,7 +35,7 @@ MIG_REAL="$REPO_ROOT/supabase/migrations/20261108120000_sayerlack_situacao_porta
 # ══════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="claim_sem_veto:C1,C4,R2 claim_veto_por_protocolo:C4 sem_trigger:T1,T2 sobreposta_libera:W7
-              ilegivel_grava:W3 sem_ordem:W5 qualquer_empresa:W10 seis_nao_estende:W15 pos_claim_sem_dente:POS=S7 pos_trigger_sem_dente:POS=S2"
+              ilegivel_grava:W3 sem_ordem:W5 qualquer_empresa:W10 seis_nao_estende:W15 protocolo_fura_ordem:W17 pos_claim_sem_dente:POS=S7 pos_trigger_sem_dente:POS=S2"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -187,6 +187,10 @@ ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_es
     trocar "$MIG" "  IF v_src NOT LIKE '%OR p_lido_de > portal_situacao_ate%' OR" "  IF false OR" ;;
   seis_nao_estende)  # o v4 sem o conserto: 2º 6 sobreposto descartado
     trocar "$MIG" "              OR (r.codigo = '6' AND portal_situacao_codigo = '6' AND p_lido_ate > portal_situacao_ate))" "              )" ;;
+  protocolo_fura_ordem)  # o v4: observação de protocolo diferente entrava sem olhar o tempo
+    trocar "$MIG" "         AND (portal_situacao_em IS NULL
+" "         AND (portal_situacao_em IS NULL OR portal_situacao_protocolo IS DISTINCT FROM r.protocolo
+" ;;
   qualquer_empresa)
     trocar "$MIG" "       WHERE empresa = 'OBEN'
          AND btrim(portal_protocolo) = r.protocolo
@@ -236,7 +240,8 @@ INSERT INTO public.pedido_compra_sugerido(id, empresa, status, status_envio_port
   (5, 'OBEN',    'aprovado_aguardando_disparo', 'sucesso_portal', '2141005'),
   (6, 'OBEN',    'aprovado_aguardando_disparo', 'sucesso_portal', '2141006'),
   (7, 'OBEN',    'aprovado_aguardando_disparo', 'sucesso_portal', '2141007'),
-  (8, 'OBEN',    'aprovado_aguardando_disparo', 'sucesso_portal', '2141008');
+  (8, 'OBEN',    'aprovado_aguardando_disparo', 'sucesso_portal', '2141008'),
+  (9, 'OBEN',    'aprovado_aguardando_disparo', 'sucesso_portal', '2141009');
 SQL
 
 echo "── A: aplicar ──"
@@ -288,6 +293,15 @@ W "$NAO_FUTURO 10:00:30Z" "$NAO_FUTURO 10:02:00Z" '[{"protocolo":"2141008","codi
 W "$NAO_FUTURO 10:01:30Z" "$NAO_FUTURO 10:02:30Z" '[{"protocolo":"2141008","codigo":"1","texto":"1 - Aberto"}]' >/dev/null
 eq "W15 2º 6 sobreposto estende o horizonte: a 3ª leitura (1) não libera" "$(SIT 8)" "6|2141008"
 eq "W16 e o 6 estendido não encurta o início" "$(Pq -c "SELECT to_char(portal_situacao_em AT TIME ZONE 'UTC','HH24:MI:SS') || '-' || to_char(portal_situacao_ate AT TIME ZONE 'UTC','HH24:MI:SS') FROM public.pedido_compra_sugerido WHERE id=8" 2>&1)" "10:00:00-10:02:00"
+
+# Codex rodada 3 P1: trocar o protocolo não fura a ordem temporal (nem para lá, nem de volta).
+W "$NAO_FUTURO 10:00Z" "$NAO_FUTURO 10:02Z" '[{"protocolo":"2141009","codigo":"6","texto":"6 - Cancelado"}]' >/dev/null
+Pq -c "UPDATE public.pedido_compra_sugerido SET portal_protocolo = '2141909' WHERE id = 9" >/dev/null || true
+W "$NAO_FUTURO 09:00Z" "$NAO_FUTURO 09:01Z" '[{"protocolo":"2141909","codigo":"1","texto":"1 - Aberto"}]' >/dev/null
+eq "W17 troca de protocolo: leitura ANTERIOR do protocolo novo não libera" "$(SIT 9)" "6|2141009"
+Pq -c "UPDATE public.pedido_compra_sugerido SET portal_protocolo = '2141009' WHERE id = 9" >/dev/null || true
+W "$NAO_FUTURO 10:01Z" "$NAO_FUTURO 10:01:30Z" '[{"protocolo":"2141009","codigo":"1","texto":"1 - Aberto"}]' >/dev/null
+eq "W18 e voltando ao protocolo antigo, leitura sobreposta ao 6 não libera" "$(SIT 9)" "6|2141009"
 
 echo "── T: escritor ÚNICO ──"
 eq "T1 UPDATE direto da situação = 42501" "$(Pq -c "UPDATE public.pedido_compra_sugerido SET portal_situacao_codigo='1' WHERE id=1" 2>&1 | sqlstate)" "42501"
