@@ -578,21 +578,22 @@ async function appSemPoAntigos(db: Db): Promise<{ protocolo: string; pedido_id: 
  * execução reservou primeiro). Duas execuções simultâneas nunca abrem o navegador para o mesmo protocolo, e todo item da
  * fila — inclusive o que só "continua" — gira para o fim (Codex P2, 2ª rodada). false = não reservou: pula.
  */
-async function reservarTentativa(db: Db, protocolo: string, mensagem: string): Promise<boolean> {
+async function reservarTentativa(db: Db, protocolo: string, mensagem: string): Promise<"reservado" | "disputa" | "erro"> {
   const agora = new Date().toISOString();
   const limite = new Date(Date.now() - INTERVALO_RECONSULTA_MS).toISOString();
   const { data: atual, error } = await db.from("sayerlack_varredura_falha").select("protocolo").eq("protocolo", protocolo).maybeSingle();
-  if (error) { console.warn(`[varrer-portal] reserva de ${protocolo} não lida: ${error.message}`); return false; }
+  if (error) { console.warn(`[varrer-portal] reserva de ${protocolo} não lida: ${error.message}`); return "erro"; }
   if (atual) {
     const { data, error: e2 } = await db.from("sayerlack_varredura_falha").update({ ultima_em: agora, resolvido_em: null })
       .eq("protocolo", protocolo).lt("ultima_em", limite).select("protocolo");
-    if (e2) { console.warn(`[varrer-portal] reserva de ${protocolo} não gravada: ${e2.message}`); return false; }
-    return Array.isArray(data) && data.length === 1;
+    if (e2) { console.warn(`[varrer-portal] reserva de ${protocolo} não gravada: ${e2.message}`); return "erro"; }
+    return Array.isArray(data) && data.length === 1 ? "reservado" : "disputa";
   }
   const { error: e3 } = await db.from("sayerlack_varredura_falha")
     .insert({ protocolo, mensagem, primeira_em: agora, ultima_em: agora, tentativas: 1 });  // CHECK tentativas >= 1
-  if (e3) { console.warn(`[varrer-portal] reserva de ${protocolo} não gravada (outra execução?): ${e3.message}`); return false; }
-  return true;
+  // PK duplicada = outra execução reservou primeiro (disputa legítima); qualquer outro erro é OPERACIONAL (Codex P2).
+  if (e3) return e3.code === "23505" ? "disputa" : (console.warn(`[varrer-portal] reserva de ${protocolo} não gravada: ${e3.message}`), "erro");
+  return "reservado";
 }
 
 /** Reconsulta por número a cada no máximo este intervalo (a falha aberta grava `ultima_em` a cada tentativa). */
@@ -816,11 +817,10 @@ Deno.serve(async (req: Request) => {
       for (const q of fila) {
         if (semTempo()) { reconsultas.push({ ...q, acao: "adiado_tempo" }); continue; }
         if (motivoBloqueio(await pedidosEmVoo(db))) { reconsultas.push({ ...q, acao: "adiado_em_voo" }); break; }
-        if (!(await reservarTentativa(db, q.protocolo, q.origem === "app_sem_po"
+        const reserva = await reservarTentativa(db, q.protocolo, q.origem === "app_sem_po"
           ? `Pedido ${q.protocolo} (#${q.pedido_id}) no app sem pedido de compra, fora da janela da varredura: reconsulta por número.`
-          : `Reconsulta por número de pendência fora da janela da varredura.`))) {
-          reconsultas.push({ ...q, acao: "nao_reservado" }); continue;
-        }
+          : `Reconsulta por número de pendência fora da janela da varredura.`);
+        if (reserva !== "reservado") { reconsultas.push({ ...q, acao: reserva === "disputa" ? "reservado_por_outra_execucao" : "falhou", mensagem: reserva === "erro" ? "reserva da tentativa não gravou no banco" : undefined }); continue; }
         // Reconfere o BANCO antes de abrir o navegador (Codex P2): PO já no Omie resolve sem gastar sessão.
         const [noAppQ, omieQ] = await Promise.all([pedidosNoApp(db, [q.protocolo]), contratosNoOmie(db, [q.protocolo])]);
         const pedQ = noAppQ.get(q.protocolo) ?? null;
