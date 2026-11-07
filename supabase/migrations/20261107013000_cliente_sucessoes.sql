@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS public.cliente_sucessoes (
   CONSTRAINT cliente_sucessoes_tipo_chk CHECK (tipo IN ('cisao', 'sucessao')),
   CONSTRAINT cliente_sucessoes_revogacao_chk CHECK (
     (revogado_em IS NULL AND revogado_por IS NULL AND revogado_motivo IS NULL)
-    OR (revogado_em IS NOT NULL AND revogado_por IS NOT NULL AND length(btrim(revogado_motivo)) > 0))
+    -- `revogado_motivo IS NOT NULL` explícito: length(btrim(NULL)) > 0 é NULL, e CHECK aceita NULL.
+    OR (revogado_em IS NOT NULL AND revogado_por IS NOT NULL AND revogado_motivo IS NOT NULL
+        AND length(btrim(revogado_motivo)) > 0))
 );
 COMMENT ON TABLE public.cliente_sucessoes IS
   'Sucessão/cisão DECLARADA por gestor/master: o CNPJ novo sucede (sucessao) ou cinde de (cisao) o antigo a partir da '
@@ -78,10 +80,15 @@ CREATE INDEX IF NOT EXISTS cliente_sucessoes_novo_ativo_idx
 CREATE INDEX IF NOT EXISTS cliente_sucessoes_evento_idx ON public.cliente_sucessoes (evento_id);
 
 ALTER TABLE public.cliente_sucessoes ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE public.cliente_sucessoes FROM PUBLIC, anon, authenticated;
-GRANT ALL ON TABLE public.cliente_sucessoes TO service_role;
+-- Escrita SÓ pelas RPCs (que travam o grafo, conferem a versão e aplicam as regras): nem o service_role
+-- escreve direto — ele só LÊ (a entrega 3 lê pelas funções privadas).
+REVOKE ALL ON TABLE public.cliente_sucessoes FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON TABLE public.cliente_sucessoes TO service_role;
 
--- Auditoria: nem o service_role apaga; o único UPDATE é ativa → revogada, sem mexer no resto da linha.
+-- Auditoria + porta: sem DELETE/TRUNCATE; INSERT/UPDATE só com a porta que as RPCs abrem na própria transação
+-- (`cliente_sucessoes.porta` = 'rpc', local) — o dono da tabela (SQL Editor) também não escreve por fora. A porta
+-- é PROTOCOLO, não cofre: quem é dono pode abri-la; por isso `vigentes` revalida o grafo na leitura (fail-closed).
+-- O único UPDATE é ativa → revogada (com quem e por quê), sem mexer no resto da linha; INSERT nasce ativa.
 CREATE OR REPLACE FUNCTION private.cliente_sucessoes_imutavel()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -91,8 +98,19 @@ BEGIN
   IF TG_OP = 'DELETE' OR TG_OP = 'TRUNCATE' THEN
     RAISE EXCEPTION 'cliente_sucessoes: sem DELETE (revogue a declaração)' USING ERRCODE = '23001';
   END IF;
+  IF current_setting('cliente_sucessoes.porta', true) IS DISTINCT FROM 'rpc' THEN
+    RAISE EXCEPTION 'cliente_sucessoes: escrita fora das RPCs (declarar/revogar)' USING ERRCODE = '23001';
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.revogado_em IS NOT NULL OR NEW.revogado_por IS NOT NULL OR NEW.revogado_motivo IS NOT NULL THEN
+      RAISE EXCEPTION 'cliente_sucessoes: a declaração nasce ativa' USING ERRCODE = '23001';
+    END IF;
+    RETURN NEW;
+  END IF;
   IF OLD.revogado_em IS NOT NULL
      OR NEW.revogado_em IS NULL
+     OR NEW.revogado_por IS NULL
+     OR NEW.revogado_motivo IS NULL OR length(btrim(NEW.revogado_motivo)) = 0
      OR (NEW.id, NEW.evento_id, NEW.antigo_documento, NEW.novo_documento, NEW.tipo, NEW.data_corte,
          NEW.data_corte_sugerida, NEW.observacao, NEW.declarado_por, NEW.declarado_em)
         IS DISTINCT FROM
@@ -107,7 +125,7 @@ REVOKE ALL ON FUNCTION private.cliente_sucessoes_imutavel() FROM PUBLIC, anon, a
 
 DROP TRIGGER IF EXISTS cliente_sucessoes_imutavel_trg ON public.cliente_sucessoes;
 CREATE TRIGGER cliente_sucessoes_imutavel_trg
-  BEFORE UPDATE OR DELETE ON public.cliente_sucessoes
+  BEFORE INSERT OR UPDATE OR DELETE ON public.cliente_sucessoes
   FOR EACH ROW EXECUTE FUNCTION private.cliente_sucessoes_imutavel();
 DROP TRIGGER IF EXISTS cliente_sucessoes_sem_truncate_trg ON public.cliente_sucessoes;
 CREATE TRIGGER cliente_sucessoes_sem_truncate_trg
@@ -121,14 +139,16 @@ CREATE TABLE IF NOT EXISTS private.cliente_sucessoes_grafo (
 );
 INSERT INTO private.cliente_sucessoes_grafo (id, versao) VALUES (true, 0) ON CONFLICT (id) DO NOTHING;
 ALTER TABLE private.cliente_sucessoes_grafo ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON TABLE private.cliente_sucessoes_grafo FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE private.cliente_sucessoes_grafo FROM PUBLIC, anon, authenticated, service_role;
 
 -- ── 3. CNPJ → UMA identidade canônica ────────────────────────────────────────────────────────────────────────
 -- Candidatos: o profile com aquele documento (passado pelo alias, se ele próprio for alias) e o canônico de todo
 -- alias ATIVO com aquele documento. Mesmo comprador por dois caminhos conta 1 (UNION). `user_id` só sai com
--- exatamente 1 candidato; 0 = não é cliente; >1 = ambíguo.
+-- exatamente 1 candidato VÁLIDO; 0 = não é cliente; >1 = ambíguo. Válido = tem profile e não é, ele próprio, alias
+-- ativo de outro (alias órfão ou encadeado conta como candidato, mas `invalidos` > 0 e `user_id` fica NULL: um
+-- UUID solto não prova cadastro).
 CREATE OR REPLACE FUNCTION private.cliente_resolver_documento(p_documento text)
- RETURNS TABLE(user_id uuid, candidatos integer, nome text)
+ RETURNS TABLE(user_id uuid, candidatos integer, invalidos integer, nome text)
  LANGUAGE sql
  STABLE
  SET search_path TO 'public', 'pg_temp'
@@ -145,10 +165,20 @@ AS $function$
      WHERE a.status = 'active' AND a.documento IS NOT NULL
        AND regexp_replace(upper(btrim(a.documento)), '[^0-9A-Z]', '', 'g') = p_documento
   ),
+  val AS (
+    SELECT c.uid,
+           EXISTS (SELECT 1 FROM public.profiles p WHERE p.user_id = c.uid)
+           AND NOT EXISTS (SELECT 1 FROM public.customer_canonical_alias x
+                            WHERE x.alias_user_id = c.uid AND x.status = 'active') AS valido
+      FROM cand c
+  ),
   r AS (
-    SELECT CASE WHEN count(*) = 1 THEN (array_agg(c.uid))[1] END AS uid, count(*)::integer AS n FROM cand c
+    SELECT CASE WHEN count(*) = 1 AND bool_and(v.valido) THEN (array_agg(v.uid))[1] END AS uid,
+           count(*)::integer AS n,
+           count(*) FILTER (WHERE NOT v.valido)::integer AS inv
+      FROM val v
   )
-  SELECT r.uid, r.n,
+  SELECT r.uid, r.n, r.inv,
          (SELECT COALESCE(NULLIF(btrim(p.razao_social), ''), NULLIF(btrim(p.name), ''))
             FROM public.profiles p WHERE p.user_id = r.uid)
     FROM r
@@ -160,6 +190,32 @@ REVOKE ALL ON FUNCTION private.cliente_resolver_documento(text) FROM PUBLIC, ano
 -- `ativa` ⇔ antigo e novo resolvem para 1 identidade cada, distintas, e o corte já chegou (`p_hoje` = o dia em
 -- America/Sao_Paulo, passado por quem chama). Fora disso a declaração fica guardada como `declarada`, com o
 -- IMPEDIMENTO concreto. A entrega 3 (rateio) herda SÓ das linhas `ativa` daqui.
+--
+-- O grafo é julgado pela IDENTIDADE dos extremos, não pelo CNPJ: dois documentos do mesmo comprador são o mesmo
+-- nó. A chave de um extremo é o user_id resolvido (ou 'doc:<cnpj>' enquanto não resolve). `chaves` é a base
+-- comum da escrita (declarar) e da leitura (vigentes), para as duas julgarem o MESMO grafo.
+CREATE OR REPLACE FUNCTION private.cliente_sucessoes_chaves()
+ RETURNS TABLE(id uuid, evento_id uuid, antigo_documento text, novo_documento text, tipo text, data_corte date,
+               antigo_user_id uuid, antigo_candidatos integer, novo_user_id uuid, novo_candidatos integer,
+               chave_antigo text, chave_novo text)
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+  SELECT s.id, s.evento_id, s.antigo_documento, s.novo_documento, s.tipo, s.data_corte,
+         a.user_id, a.candidatos, n.user_id, n.candidatos,
+         COALESCE(a.user_id::text, 'doc:' || s.antigo_documento),
+         COALESCE(n.user_id::text, 'doc:' || s.novo_documento)
+    FROM public.cliente_sucessoes s
+   CROSS JOIN LATERAL private.cliente_resolver_documento(s.antigo_documento) a
+   CROSS JOIN LATERAL private.cliente_resolver_documento(s.novo_documento) n
+   WHERE s.revogado_em IS NULL
+$function$;
+REVOKE ALL ON FUNCTION private.cliente_sucessoes_chaves() FROM PUBLIC, anon, authenticated;
+
+-- A leitura REVALIDA o grafo (fail-closed): cadastro/alias muda depois da declaração, e a porta da tabela é
+-- protocolo, não cofre. Cadeia/ciclo, par duplicado (mesmos 2 compradores) e evento divergente (mesma antiga em
+-- 2 eventos, ou tipo/corte diferentes) deixam TODAS as linhas envolvidas `declarada`.
 CREATE OR REPLACE FUNCTION private.cliente_sucessoes_vigentes(p_hoje date)
  RETURNS TABLE(id uuid, evento_id uuid, antigo_documento text, novo_documento text, tipo text, data_corte date,
                antigo_user_id uuid, novo_user_id uuid, estado text, impedimento text)
@@ -167,22 +223,29 @@ CREATE OR REPLACE FUNCTION private.cliente_sucessoes_vigentes(p_hoje date)
  STABLE
  SET search_path TO 'public', 'pg_temp'
 AS $function$
+  WITH k AS (SELECT * FROM private.cliente_sucessoes_chaves())
   SELECT s.id, s.evento_id, s.antigo_documento, s.novo_documento, s.tipo, s.data_corte,
-         a.user_id, n.user_id,
+         s.antigo_user_id, s.novo_user_id,
          CASE WHEN x.impedimento IS NULL THEN 'ativa' ELSE 'declarada' END,
          x.impedimento
-    FROM public.cliente_sucessoes s
-   CROSS JOIN LATERAL private.cliente_resolver_documento(s.antigo_documento) a
-   CROSS JOIN LATERAL private.cliente_resolver_documento(s.novo_documento) n
+    FROM k s
    CROSS JOIN LATERAL (SELECT CASE
-          WHEN a.candidatos = 0 THEN 'antigo_nao_e_cliente'
-          WHEN a.candidatos > 1 THEN 'antigo_ambiguo'
-          WHEN n.candidatos > 1 THEN 'novo_ambiguo'
-          WHEN n.candidatos = 0 THEN 'novo_sem_cadastro'
-          WHEN a.user_id = n.user_id THEN 'mesmo_comprador'
+          WHEN s.antigo_candidatos = 0 THEN 'antigo_nao_e_cliente'
+          WHEN s.antigo_candidatos > 1 THEN 'antigo_ambiguo'
+          WHEN s.antigo_user_id IS NULL THEN 'antigo_cadastro_invalido'
+          WHEN s.novo_candidatos > 1 THEN 'novo_ambiguo'
+          WHEN s.novo_candidatos = 0 THEN 'novo_sem_cadastro'
+          WHEN s.novo_user_id IS NULL THEN 'novo_cadastro_invalido'
+          WHEN s.antigo_user_id = s.novo_user_id THEN 'mesmo_comprador'
+          WHEN EXISTS (SELECT 1 FROM k o WHERE o.id <> s.id
+                          AND (o.chave_novo = s.chave_antigo OR o.chave_antigo = s.chave_novo)) THEN 'cadeia'
+          WHEN EXISTS (SELECT 1 FROM k o WHERE o.id <> s.id
+                          AND o.chave_antigo = s.chave_antigo AND o.chave_novo = s.chave_novo) THEN 'duplicada'
+          WHEN EXISTS (SELECT 1 FROM k o WHERE o.id <> s.id AND o.chave_antigo = s.chave_antigo
+                          AND (o.evento_id, o.tipo, o.data_corte) IS DISTINCT FROM (s.evento_id, s.tipo, s.data_corte))
+               THEN 'evento_divergente'
           WHEN p_hoje IS NULL OR s.data_corte > p_hoje THEN 'corte_futuro'
         END AS impedimento) x
-   WHERE s.revogado_em IS NULL
 $function$;
 REVOKE ALL ON FUNCTION private.cliente_sucessoes_vigentes(date) FROM PUBLIC, anon, authenticated;
 
@@ -207,6 +270,8 @@ DECLARE
   v_ev record;
   v_evento uuid;
   v_id uuid;
+  v_ka text;
+  v_kn text;
 BEGIN
   IF NOT (COALESCE(public.pode_ver_carteira_completa(v_uid), false)) THEN
     RAISE EXCEPTION 'forbidden: gestor/master only' USING ERRCODE = '42501';
@@ -235,30 +300,37 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'motivo', 'antigo_nao_e_cliente');
   ELSIF v_a.candidatos > 1 THEN
     RETURN jsonb_build_object('ok', false, 'motivo', 'antigo_ambiguo', 'candidatos', v_a.candidatos);
+  ELSIF v_a.user_id IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'antigo_cadastro_invalido');
   END IF;
   SELECT * INTO v_n FROM private.cliente_resolver_documento(v_novo);
   IF v_n.candidatos > 1 THEN
     RETURN jsonb_build_object('ok', false, 'motivo', 'novo_ambiguo', 'candidatos', v_n.candidatos);
+  ELSIF v_n.candidatos = 1 AND v_n.user_id IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'novo_cadastro_invalido');
   END IF;
   IF v_n.user_id = v_a.user_id THEN
     RETURN jsonb_build_object('ok', false, 'motivo', 'mesmo_comprador');
   END IF;
+  -- O grafo é de COMPRADORES: as regras abaixo comparam as chaves de identidade (ver private.cliente_sucessoes_chaves).
+  v_ka := v_a.user_id::text;
+  v_kn := COALESCE(v_n.user_id::text, 'doc:' || v_novo);
 
-  IF EXISTS (SELECT 1 FROM public.cliente_sucessoes s
-              WHERE s.revogado_em IS NULL AND s.antigo_documento = v_antigo AND s.novo_documento = v_novo) THEN
+  IF EXISTS (SELECT 1 FROM private.cliente_sucessoes_chaves() k WHERE k.chave_antigo = v_ka AND k.chave_novo = v_kn) THEN
     RETURN jsonb_build_object('ok', false, 'motivo', 'ja_declarada');
   END IF;
   -- Cadeia (inclui o ciclo): o antigo já RECEBE de alguém, ou o novo já PASSA para alguém. Herança transitiva
   -- fica recusada na v1 (cada parcela precisaria carregar a origem física e o percurso).
-  IF EXISTS (SELECT 1 FROM public.cliente_sucessoes s WHERE s.revogado_em IS NULL AND s.novo_documento = v_antigo)
-     OR EXISTS (SELECT 1 FROM public.cliente_sucessoes s WHERE s.revogado_em IS NULL AND s.antigo_documento = v_novo) THEN
+  IF EXISTS (SELECT 1 FROM private.cliente_sucessoes_chaves() k WHERE k.chave_novo = v_ka)
+     OR EXISTS (SELECT 1 FROM private.cliente_sucessoes_chaves() k WHERE k.chave_antigo = v_kn) THEN
     RETURN jsonb_build_object('ok', false, 'motivo', 'cadeia');
   END IF;
 
-  -- 1 evento ativo por antiga: a 2ª nova entra no MESMO evento, com o mesmo tipo e o mesmo corte.
+  -- 1 evento ativo por antiga (por COMPRADOR): a 2ª nova entra no MESMO evento, com o mesmo tipo e o mesmo corte.
   SELECT s.evento_id, s.tipo, s.data_corte INTO v_ev
-    FROM public.cliente_sucessoes s
-   WHERE s.revogado_em IS NULL AND s.antigo_documento = v_antigo
+    FROM private.cliente_sucessoes_chaves() k
+    JOIN public.cliente_sucessoes s ON s.id = k.id
+   WHERE k.chave_antigo = v_ka
    ORDER BY s.declarado_em, s.id
    LIMIT 1;
   IF FOUND THEN
@@ -271,11 +343,13 @@ BEGIN
     v_evento := gen_random_uuid();
   END IF;
 
+  PERFORM set_config('cliente_sucessoes.porta', 'rpc', true);
   INSERT INTO public.cliente_sucessoes (evento_id, antigo_documento, novo_documento, tipo, data_corte,
                                         data_corte_sugerida, observacao, declarado_por, declarado_em)
   VALUES (v_evento, v_antigo, v_novo, p_tipo, p_data_corte, p_data_corte_sugerida,
           NULLIF(btrim(p_observacao), ''), v_uid, clock_timestamp())
   RETURNING id INTO v_id;
+  PERFORM set_config('cliente_sucessoes.porta', '', true);
   UPDATE private.cliente_sucessoes_grafo g SET versao = g.versao + 1 WHERE g.id RETURNING g.versao INTO v_versao;
 
   RETURN jsonb_build_object('ok', true, 'id', v_id, 'evento_id', v_evento, 'versao', v_versao,
@@ -321,9 +395,11 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'motivo', 'ja_revogada');
   END IF;
 
+  PERFORM set_config('cliente_sucessoes.porta', 'rpc', true);
   UPDATE public.cliente_sucessoes s
      SET revogado_em = clock_timestamp(), revogado_por = v_uid, revogado_motivo = btrim(p_motivo)
    WHERE s.id = p_id;
+  PERFORM set_config('cliente_sucessoes.porta', '', true);
   UPDATE private.cliente_sucessoes_grafo g SET versao = g.versao + 1 WHERE g.id RETURNING g.versao INTO v_versao;
   RETURN jsonb_build_object('ok', true, 'versao', v_versao);
 END
@@ -358,6 +434,10 @@ AS $function$
        AND so.deleted_at IS NULL
        AND so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')
        AND so.account IN ('oben', 'colacor', 'colacor_sc')
+       -- O universo que será HERDADO é o de venda_linhas_pedido: só pedido com item que conta (produto Omie e
+       -- quantidade positiva). Recibo do app sem itens, ao lado da gêmea importada, não conta 2 vezes.
+       AND EXISTS (SELECT 1 FROM public.order_items oi
+                    WHERE oi.sales_order_id = so.id AND oi.omie_codigo_produto IS NOT NULL AND oi.quantity > 0)
   )
   SELECT jsonb_build_object(
     'documento', p_documento,
@@ -469,6 +549,10 @@ BEGIN
      OR has_table_privilege('anon', 'public.cliente_sucessoes', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE') THEN
     RAISE EXCEPTION 'P1 FALHOU: cliente_sucessoes sem RLS ou aberta ao JWT';
   END IF;
+  IF has_table_privilege('service_role', 'public.cliente_sucessoes', 'INSERT,UPDATE,DELETE,TRUNCATE')
+     OR has_table_privilege('service_role', 'private.cliente_sucessoes_grafo', 'INSERT,UPDATE,DELETE,TRUNCATE') THEN
+    RAISE EXCEPTION 'P1b FALHOU: service_role escreve direto (a escrita é só pelas RPCs)';
+  END IF;
   IF has_table_privilege('authenticated', 'private.cliente_sucessoes_grafo', 'SELECT,UPDATE')
      OR has_table_privilege('anon', 'private.cliente_sucessoes_grafo', 'SELECT,UPDATE')
      OR (SELECT count(*) FROM private.cliente_sucessoes_grafo) <> 1 THEN
@@ -477,6 +561,11 @@ BEGIN
   IF (SELECT count(*) FROM pg_trigger t WHERE t.tgrelid = 'public.cliente_sucessoes'::regclass AND NOT t.tgisinternal
         AND t.tgname IN ('cliente_sucessoes_imutavel_trg', 'cliente_sucessoes_sem_truncate_trg') AND t.tgenabled = 'O') <> 2 THEN
     RAISE EXCEPTION 'P3 FALHOU: triggers de auditoria (sem DELETE/TRUNCATE, só revogação) ausentes ou desligados';
+  END IF;
+  -- tgtype: 4 = INSERT, 8 = DELETE, 16 = UPDATE — a porta só vale se o trigger de linha pegar os três.
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = 'public.cliente_sucessoes'::regclass
+                    AND t.tgname = 'cliente_sucessoes_imutavel_trg' AND (t.tgtype::int & 28) = 28) THEN
+    RAISE EXCEPTION 'P3b FALHOU: o trigger de auditoria não cobre INSERT/UPDATE/DELETE';
   END IF;
   FOR r IN SELECT * FROM (VALUES
       ('public.cliente_declarar_sucessao(text,text,text,date,bigint,text,date)', 'IF NOT (COALESCE(public.pode_ver_carteira_completa(v_uid), false)) THEN'),
@@ -495,6 +584,7 @@ BEGIN
     END IF;
   END LOOP;
   FOR r IN SELECT * FROM (VALUES ('private.cliente_resolver_documento(text)'), ('private.cliente_sucessoes_vigentes(date)'),
+                                  ('private.cliente_sucessoes_chaves()'),
                                   ('private.cliente_sucessao_previa_lado(text,date)'), ('private.cliente_sucessoes_imutavel()')) AS x(sig)
   LOOP
     IF to_regprocedure(r.sig) IS NULL
