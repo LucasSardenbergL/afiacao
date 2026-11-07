@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 802
+-- Total de custom migrations: 804
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -870,7 +870,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107140001', 'radar_email_semanal_toggle', '20261107140001_radar_email_semanal_toggle.sql'),
   ('20261107210000', 'cliente_sucessao_plano_rateio', '20261107210000_cliente_sucessao_plano_rateio.sql'),
   ('20261107220000', 'data_health_sayerlack_varredura_portal', '20261107220000_data_health_sayerlack_varredura_portal.sql'),
-  ('20261108000000', 'cliente_sucessao_consumidores', '20261108000000_cliente_sucessao_consumidores.sql')
+  ('20261107220500', 'radar_meu_territorio', '20261107220500_radar_meu_territorio.sql'),
+  ('20261108000000', 'cliente_sucessao_consumidores', '20261108000000_cliente_sucessao_consumidores.sql'),
+  ('20261108120000', 'sayerlack_situacao_portal_no_pedido', '20261108120000_sayerlack_situacao_portal_no_pedido.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3502,9 +3504,16 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_sayerlack_varredura_portal', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('radar_meu_territorio', 'function', 'public', 'radar_meu_territorio', ''),
   ('cliente_sucessao_consumidores', 'function', 'private', '_venda_sugestoes_json', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'venda_heranca_comprador', ''),
-  ('cliente_sucessao_consumidores', 'function', 'public', 'cliente_sucessao_plano_itens', '')
+  ('cliente_sucessao_consumidores', 'function', 'public', 'cliente_sucessao_plano_itens', ''),
+  ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack__situacao_portal_escritor_unico', ''),
+  ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack__trava_protocolo_confirmado', ''),
+  ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack_registrar_situacao_portal', ''),
+  ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'reposicao_claim_disparo', ''),
+  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_escritor_unico', 'pedido_compra_sugerido'),
+  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6184,9 +6193,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_sayerlack_varredura_portal', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('radar_meu_territorio', 'function', 'public', 'radar_meu_territorio', ''),
   ('cliente_sucessao_consumidores', 'function', 'private', '_venda_sugestoes_json', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'venda_heranca_comprador', ''),
-  ('cliente_sucessao_consumidores', 'function', 'public', 'cliente_sucessao_plano_itens', '')
+  ('cliente_sucessao_consumidores', 'function', 'public', 'cliente_sucessao_plano_itens', ''),
+  ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack__situacao_portal_escritor_unico', ''),
+  ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack__trava_protocolo_confirmado', ''),
+  ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack_registrar_situacao_portal', ''),
+  ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'reposicao_claim_disparo', ''),
+  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_escritor_unico', 'pedido_compra_sugerido'),
+  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido')
 )
 SELECT
   e.migration,
@@ -6214,7 +6230,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 181.
+-- Funções redefinidas com corpo extraível: 182.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6786,6 +6802,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'corrigir_cancelamento_pos_disparo', 1, '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql', '846b7fd56ccda97c8a53e529a5ff182c'),
   ('public', 'corrigir_cancelamento_pos_disparo', 2, '20260906172718_cancelamento_pos_disparo_gate_canonico.sql', '4ca937b4befd086a05b610e4619db24c'),
   ('public', 'corrigir_cancelamento_pos_disparo', 3, '20260907095841_disparado_simulado_e_estado_pos_disparo.sql', '6cee6f8e6d6bc57286597dd6de9150d7'),
+  ('public', 'reposicao_claim_disparo', 1, '20260906190615_reposicao_claim_disparo_cenario_b.sql', '18e88b55d713dc67d4e3d65d7271a20a'),
+  ('public', 'reposicao_claim_disparo', 2, '20261108120000_sayerlack_situacao_portal_no_pedido.sql', 'c4d790de9b5d84596fc5dc7807fc2530'),
   ('public', 'aplicar_edicao_pedido_omie', 1, '20260907210000_pedido_edicao_omie_atomica.sql', '8531ed39f6bf2c7d5725342bc782c8fb'),
   ('public', 'aplicar_edicao_pedido_omie', 2, '20260908215704_desconto_valor_atravessa_os_escritores.sql', '31c4fce633bf9a7363a45770e4d514c3'),
   ('public', 'desconto_backfill_aplicar', 1, '20260908220625_desconto_backfill_aplicar.sql', '59d9c1e4482bf524c5da1eff2700aa08'),

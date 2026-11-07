@@ -10,6 +10,13 @@ import {
 } from '@/lib/radar/atendimento';
 
 const CHAVE = ['radar', 'atendimentos-ativos'] as const;
+/** Card "Prospectar hoje" (useRadarProspectarHoje): assumir/liberar/atribuir muda quem entra nele (pacote F, achado 3 —
+ *  antes só a posse era relida, e o card seguia oferecendo "Assumir" para o lead que acabou de ser assumido). */
+const CHAVE_CARD = ['radar', 'prospectar-hoje'] as const;
+/** Posse mudou → relê a posse E o card (prefixo: todas as personas da lente). */
+function reler(qc: ReturnType<typeof useQueryClient>) {
+  return Promise.all([qc.invalidateQueries({ queryKey: CHAVE }), qc.invalidateQueries({ queryKey: CHAVE_CARD })]);
+}
 
 /**
  * "Em atendimento por X" de TODOS os leads (RPC `radar_atendimentos_ativos`, migration 20261029201200). Lista e
@@ -48,7 +55,7 @@ export function useRadarDefinirAtendimento() {
         ok: r.ok, motivo: r.ok ? null : r.motivo,
       });
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: CHAVE }),
+    onSettled: () => reler(qc),
   });
 }
 
@@ -88,6 +95,6 @@ export function useRadarAtribuirAtendimento() {
         ok: r.ok, motivo: r.ok ? null : r.motivo, tirou_de_outro: r.ok ? r.tirouDeOutro : null,
       });
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: CHAVE }),
+    onSettled: () => reler(qc),
   });
 }

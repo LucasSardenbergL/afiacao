@@ -10,7 +10,9 @@ const LEADS_DO_CARD = 3;
 /**
  * Leads do card "Prospectar hoje" (RPC `radar_prospectar_hoje`, migration 20261106181000). Leitura PURA — está na
  * allowlist de leitura da lente. Sob a lente "Ver como" pede os leads da persona vista (`p_vendedor`); o servidor só
- * aceita isso de gestor. Chave sob `['radar']`: registrar contato/assumir já invalida o prefixo e o lead trabalhado sai.
+ * aceita isso de gestor. Quem relê: assumir/liberar/atribuir (`useRadarAtendimentos`, que invalida esta chave junto da
+ * posse — pacote F) e o staleTime. O lead que o próprio vendedor assumiu SAI da RPC (pacote E); até o refetch o card o
+ * mostra "com você" pelo estado local da mutação.
  */
 export function useRadarProspectarHoje(habilitado: boolean) {
   const { role, commercialRole } = useAuth();

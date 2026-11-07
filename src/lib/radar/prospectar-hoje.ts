@@ -15,6 +15,19 @@ export interface MunicipioTerritorio {
   municipioNome: string;
   uf: string;
   clientes: number;
+  /** Pacote E: true = fallback — o vendedor não é dono de nenhum município e recebe os em que tem clientes. */
+  compartilhado?: boolean;
+}
+
+/** Copy do card para cada motivo de território VAZIO (`territorio_motivo` do pacote E: 'nao_e_vendedor' |
+ *  'sem_carteira' | 'carteira_sem_municipio'). Sem motivo (RPC antiga) ou código novo: o texto genérico de antes. */
+export function textoSemTerritorio(motivo: string | null): string {
+  switch (motivo) {
+    case 'nao_e_vendedor': return 'Você não tem papel de vendedor no Radar (farmer, hunter ou closer), então não há carteira para usar de referência.';
+    case 'sem_carteira': return 'Sua carteira está vazia — sem clientes, não há onde procurar leads perto deles.';
+    case 'carteira_sem_municipio': return 'Os clientes da sua carteira não têm endereço em um município do Radar, então não há onde procurar leads perto deles.';
+    default: return 'Sua carteira não tem clientes com endereço num município do Radar, então não há onde procurar leads perto dela.';
+  }
 }
 
 export interface LeadProspectarHoje {
@@ -28,11 +41,17 @@ export interface LeadProspectarHoje {
   motivos: string[];
   /** Tamanho do universo elegível no território (denominador "3 de N"). */
   elegiveis: number;
+  /** Pacote E: lead que o gestor passou ao vendedor (vem primeiro, mesmo fora do território). */
+  atribuido: boolean;
+  /** Posse ativa do PRÓPRIO vendedor, se a RPC a devolver marcada (o pacote E a tira do card; aceito os dois). */
+  comVoce: boolean;
 }
 
 export interface ProspectarHoje {
   territorio: MunicipioTerritorio[];
   leads: LeadProspectarHoje[];
+  /** Pacote E: motivo do território vazio; null quando há território ou a RPC é anterior ao campo. */
+  territorioMotivo: string | null;
 }
 
 const ehObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -52,7 +71,7 @@ export function lerProspectarHoje(data: unknown, origem: string): ProspectarHoje
     const nome = texto(t.municipio_nome);
     const clientes = inteiro(t.clientes);
     if (!codigo || !nome || clientes === null || clientes < 1) falha(origem, `territorio[${i}]`);
-    return { municipioCodigo: codigo, municipioNome: nome, uf: texto(t.uf) ?? '', clientes };
+    return { municipioCodigo: codigo, municipioNome: nome, uf: texto(t.uf) ?? '', clientes, compartilhado: t.compartilhado === true };
   });
 
   const leads = (data.leads as unknown[]).map((l, i): LeadProspectarHoje => {
@@ -75,10 +94,12 @@ export function lerProspectarHoje(data: unknown, origem: string): ProspectarHoje
       score,
       motivos,
       elegiveis,
+      atribuido: l.atribuido === true,
+      comVoce: l.com_voce === true,
     };
   });
 
-  return { territorio, leads };
+  return { territorio, leads, territorioMotivo: texto(data.territorio_motivo) };
 }
 
 /** Nome para mostrar: fantasia quando existe, senão razão social, senão o CNPJ. */
