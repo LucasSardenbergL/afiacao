@@ -12,7 +12,7 @@
 
 type EstadoDestino = 'declarada' | 'ativa' | 'revogada';
 
-export interface RegraVigente {
+interface RegraVigente {
   empresa: string;
   omieCodigoProduto: number;
   descricao: string | null;
@@ -24,7 +24,7 @@ export interface RegraVigente {
   destinoImpedimento: string | null;
 }
 
-export interface RevisaoPlano {
+interface RevisaoPlano {
   revisao: number;
   revoga: boolean;
   motivo: string | null;

@@ -34,6 +34,7 @@ export function RadarSucessaoPlano({ eventoId, aberto, onFechar }: {
   const { plano, itens } = useRadarPlanoSucessao(aberto ? eventoId : null);
   const estadoPlano = estadoDeLeitura(plano);
   const estadoItens = estadoDeLeitura(itens);
+  const falhou = naoConsegui(estadoPlano) ? estadoPlano : naoConsegui(estadoItens) ? estadoItens : null;
 
   useEffect(() => {
     if (aberto) track('radar.sucessao_plano_aberto', { lente: isImpersonating });
@@ -54,10 +55,7 @@ export function RadarSucessaoPlano({ eventoId, aberto, onFechar }: {
           {(estadoPlano === 'carregando' || estadoItens === 'carregando') && (
             <div className="space-y-2"><Skeleton className="h-5 w-64" /><Skeleton className="h-40 w-full" /></div>
           )}
-          {(naoConsegui(estadoPlano) || naoConsegui(estadoItens)) && (
-            <AvisoLeituraFalhou oque="o plano de rateio desta sucessão"
-              estado={naoConsegui(estadoPlano) ? estadoPlano : estadoItens} className="mb-0" />
-          )}
+          {falhou && <AvisoLeituraFalhou oque="o plano de rateio desta sucessão" estado={falhou} className="mb-0" />}
           {plano.data && itens.data && !itens.data.ativo && (
             <EmptyState icon={Inbox} title="Sucessão sem declaração ativa"
               description="Todas as declarações deste evento foram revogadas: não há histórico para ratear." />

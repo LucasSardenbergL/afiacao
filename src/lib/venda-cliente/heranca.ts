@@ -4,7 +4,7 @@
  * datas — nenhum valor. Forma inesperada LANÇA: ausente ≠ "sem herança".
  */
 
-export interface ItemHerdado {
+interface ItemHerdado {
   empresa: string;
   omieCodigoProduto: number;
   descricao: string | null;
