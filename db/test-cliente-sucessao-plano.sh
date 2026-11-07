@@ -554,8 +554,10 @@ cenario() {
 GERAR='public.venda_gerar_lista(date,text)'
 PUB='public.cliente_sucessao_plano_publicar(uuid,integer,jsonb,text)'
 TRILHA='private.historico_consumo_efetivo(date)'
-REPRO='private.venda_sugestoes_reprocessar_sucessao(uuid,integer,text)'
+REPRO='private.venda_sugestoes_reprocessar_sucessao(uuid,text)'
 IMUT='private.cliente_sucessao_plano_imutavel()'
+ASSIN='private.cliente_sucessao_assinaturas(date)'
+ASSIN_EVENTOS='FROM (SELECT DISTINCT s.evento_id FROM public.cliente_sucessoes s) e'
 GATE_GESTOR='IF NOT (COALESCE(public.pode_ver_carteira_completa(v_uid), false)) THEN'
 sabotagem() {
   case "$1" in
@@ -590,7 +592,11 @@ sabotagem() {
     regra_em_revoga) cv_sabotar "$IMUT" "AND NOT r.revoga) THEN" ") THEN" ;;
     publicar_sem_fila) cv_sabotar "$PUB" "VALUES (p_evento_id, v_rev, 'plano_publicado');" "SELECT p_evento_id, v_rev, 'plano_publicado' WHERE false;" ;;
     gerador_sem_drenar) cv_sabotar "$GERAR" "PERFORM private.venda_sugestoes_drenar_reprocesso();" "PERFORM 1;" ;;
-    deteccao_cega) cv_sabotar 'private.cliente_sucessao_assinaturas(date)' "SELECT e.evento_id," "SELECT e.evento_id, 'x' AS a, " ;;
+    deteccao_cega) cv_sabotar "$ASSIN" "$ASSIN_EVENTOS" "FROM (SELECT DISTINCT s.evento_id FROM public.cliente_sucessoes s WHERE false) e" ;;
+    # Defesa em profundidade: sem a fila da publicação a DETECÇÃO por assinatura ainda reconcilia (Q1 pega a camada);
+    # tirando as DUAS camadas, a lista tem de ficar velha (R1o).
+    sem_fila_nem_deteccao) cv_sabotar "$PUB" "VALUES (p_evento_id, v_rev, 'plano_publicado');" "SELECT p_evento_id, v_rev, 'plano_publicado' WHERE false;" \
+                             && cv_sabotar "$ASSIN" "$ASSIN_EVENTOS" "FROM (SELECT DISTINCT s.evento_id FROM public.cliente_sucessoes s WHERE false) e" ;;
     publicar_apaga_recompra) cv_sabotar "$PUB" "v_rev := v_atual + 1;" "DELETE FROM public.venda_recompra; v_rev := v_atual + 1;" ;;
     sem_trigger_revisoes) P -v ON_ERROR_STOP=1 -q -c "DROP TRIGGER cliente_sucessao_plano_revisoes_imutavel_trg ON public.cliente_sucessao_plano_revisoes" ;;
     *) echo "SABOTAGEM desconhecida: $1"; return 1 ;;
@@ -616,7 +622,7 @@ recompra_sem_rotulo:R1l,R1q2:R1m
 reprocesso_apaga_mostrada:R1p:R1p2
 reprocesso_apaga_desfecho:R1p2:R1p
 reprocesso_substituta_fora:R1q:R1s
-gerador_factual:G1,M7:G4
+gerador_factual:R1s,M7:G4
 publicar_sem_versao:V8:R1a
 familia_sem_filtro:V6:V1
 familia_apos_corte:R1a:V1
@@ -624,7 +630,8 @@ porta_aberta:H4:H1
 revisao_qualquer:H5:H4
 regra_em_revoga:H6:H4
 sem_trigger_revisoes:H1:H2
-publicar_sem_fila:Q1,R1o:R1a
+publicar_sem_fila:Q1:R1a
+sem_fila_nem_deteccao:R1o:R1a
 gerador_sem_drenar:R2a,R2d:R2b
 deteccao_cega:D4,X2:D1
 publicar_apaga_recompra:I1:I1b"

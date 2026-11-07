@@ -92,7 +92,7 @@ DADOS; o painel e os consumidores da lista/ficha/complemento são o PR C.
   objeto deles é recriado.
 
 ## Prova
-`db/test-cliente-sucessao-plano.sh` (no núcleo do CI): 105 asserts e 31 sabotagens, todas vermelhas no assert declarado,
+`db/test-cliente-sucessao-plano.sh` (no núcleo do CI): 105 asserts e 32 sabotagens, todas vermelhas no assert declarado,
 com controle verde na mesma invocação. Monta o schema com `corpo-vivo.sh` (a cadeia dinâmica pega o gerador de venda, a
 entrega 2 e esta). Validação do founder: `db/validar-cliente-sucessao-plano.sql` (12 ✅, exercitada pela prova).
 
