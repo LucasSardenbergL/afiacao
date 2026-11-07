@@ -217,3 +217,15 @@ cadeia viva, que pega o PR B e esta migration.
 🟣 founder: a migration no SQL Editor (depois da `20261107210000`) → conferir com
 `db/validar-cliente-sucessao-consumidores.sql` via `psql-ro` (6 ✅) → 🖱️ Publish. O front degrada sem a migration:
 sem as chaves novas, a lista lê tudo como "própria", e a herança da ficha só avisa quando há item herdado.
+
+**Em prod desde 2026-11-07.** A migration foi colada pelo founder antes do merge e conferida pela sessão via
+`psql-ro`: `db/validar-cliente-sucessao-consumidores.sql` deu 6/6 ✅ (helper com md5 `6e26a836…`, as RPCs da
+lista com os corpos de antes, as 2 novas STABLE + DEFINER com anon e PUBLIC fechados). O #3709 mergeou às
+22:48:35 UTC (`41f575309`), e a migration na `origin/main` é byte a byte a do PR (md5 igual), sem reversão do
+sync. O 1º Publish saiu ~1 min depois do merge e publicou o commit ANTERIOR (`6eed3725`): o Lovable ainda tinha
+o merge como edição `pending`. O build seguinte (entry `index-DfaoeAPM`) foi verificado pelos bytes:
+`verify-frontend.sh --pai 6eed37254 --novo 41f575309 'radar-abrir-plano'` deu exit 0, com o alvo em
+`RadarClientes-Bg8QHo4G.js`, o controle negativo ok e 392 chunks varridos. Esse build carimba `__BUILD_SHA__`
+como `dev`, por isso a prova foi pelo conteúdo e não pelo `monitor-deploy.sh --pr`. Lição: **Publish logo
+depois do merge pode publicar a main de antes**; confira o `ar=` do monitor (ou o conteúdo) antes de dar por
+feito.
