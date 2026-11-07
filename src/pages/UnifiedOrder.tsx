@@ -24,6 +24,7 @@ import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialo
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { AlertaCreditoCliente } from '@/components/unified-order/AlertaCreditoCliente';
 import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
+import { AvisoVinculoCredito } from '@/components/credito-vinculo/AvisoVinculoCredito';
 import { TierClienteBadge } from '@/components/unified-order/TierClienteBadge';
 import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
 import type { BloqueioCreditoPedido } from '@/services/orderSubmission';
@@ -415,6 +416,8 @@ const UnifiedOrder = () => {
           {showCustomerSearch && h.selectedCustomer && (
             <div className="space-y-2">
               <AlertaCreditoCliente cliente={h.selectedCustomer} />
+              {/* Só aviso (migration 20261106205557): possível vínculo com cliente que tem título vencido. */}
+              <AvisoVinculoCredito documento={h.selectedCustomer.cnpj_cpf} superficie="pedido" />
               {!h.loadingCustomer && <SeloSituacaoReceita customerUserId={h.customerUserId} superficie="pedido" />}
               <TierClienteBadge
                 customerUserId={h.customerUserId}
