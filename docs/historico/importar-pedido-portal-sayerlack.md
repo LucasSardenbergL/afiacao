@@ -161,3 +161,10 @@ Os dois revisores, separados, chegaram aos mesmos P1 (nenhum P0). O que mudou:
 
 Provas: `db/test-sayerlack-importar-pedido-portal.sh` 75/75 nos 2 locales (13 falsificações), testes de tela do card
 e do diálogo, `test:edges` 2403, suíte vitest completa.
+
+### Deploy da revisão (2026-11-06)
+
+Migration `20261106140000` via `db:aplicar` (tentativa #924), validada por psql-ro: assinatura de 5 args removida,
+corpo em prod = arquivo (md5 `5a3b7fef…`), ACL fechado, painel só com gate. Edges em ondas: `disparar` re-sondada
+(prova tinha 455 h, #926) → `sayerlack-importar-pedido-portal` v1.4 → `sayerlack-varrer-pedidos-portal` v1.4, as duas
+DEPLOY CONFIRMADO e SEM_EDICAO. Entre a migration e a edge v1.4 a importação ficou recusada sem gravar (~20 min).
