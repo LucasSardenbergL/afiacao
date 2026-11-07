@@ -6,6 +6,7 @@
 // armadilha que custou uma verificação impossível no #1747. Para diagnóstico use a SONDA
 // (`{"probe":true}`), que responde antes de qualquer IO. Ver versao.ts.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { classificarPosLogin, decidirAlertaPortal, ehFalhaSistemicaDoPortal } from "../_shared/sayerlack-pos-login.ts";
 import {
@@ -1576,7 +1577,7 @@ async function aplicarCondicaoDoPortal(supabase: SupabaseClient, pedidoId: numbe
     }
     console.log(`[envio-portal] Pedido #${pedidoId}: condição do portal "${texto ?? "(não lida)"}" → ${JSON.stringify(data)}`);
   } catch (e) {
-    console.warn(`[envio-portal] Pedido #${pedidoId}: condição do portal não aplicada (${e instanceof Error ? e.message : String(e)})`);
+    console.warn(`[envio-portal] Pedido #${pedidoId}: condição do portal não aplicada (${mensagemDeErro(e) ?? "erro sem mensagem"})`);
   }
 }
 
