@@ -24576,6 +24576,10 @@ export type Database = {
           expira_em: string
         }[]
       }
+      radar_atribuir_atendimento: {
+        Args: { p_cnpj: string; p_dono: string }
+        Returns: Json
+      }
       radar_atribuir_tarefa: {
         Args: { p_cnpj: string; p_dias_retomada?: number }
         Returns: Json
@@ -24884,6 +24888,14 @@ export type Database = {
         Returns: {
           outras_raizes: number
           telefone: string
+        }[]
+      }
+      radar_vendedores_atribuiveis: {
+        Args: never
+        Returns: {
+          nome: string
+          papel: string
+          user_id: string
         }[]
       }
       radar_vinculos_por_cnpjs: {
