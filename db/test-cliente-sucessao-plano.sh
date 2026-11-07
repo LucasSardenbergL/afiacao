@@ -322,6 +322,8 @@ cenario() {
                                         EXCEPT ALL SELECT * FROM private.venda_situacao_efetiva_em($H)) b)")" "0/0"
   chk G8 "pré-condição: a factual tem a encerrada na situação" \
     "$(Q "SELECT count(*) FROM public.venda_situacao_em($H) WHERE comprador_id = '$UB'")" "1"
+  chk G10 "o gerador já grava a lista efetiva: a 1ª drenagem (estado novo dos 3 eventos) não tem o que arquivar" \
+    "$(Q "SELECT count(*) FROM public.venda_sugestao_substituida")/$(Q "SELECT count(*) FROM private.venda_sugestoes_reprocesso_fila WHERE motivo = 'estado_mudou' AND processado_em IS NOT NULL")" "0/3"
   chk G9 "sem plano, nenhuma sugestão marcada com origem" \
     "$(Q "SELECT count(*) FILTER (WHERE sucessao_origem IS NOT NULL OR valor_ref_referencia_origem) FROM public.venda_sugestao")" "0"
 
@@ -622,7 +624,7 @@ recompra_sem_rotulo:R1l,R1q2:R1m
 reprocesso_apaga_mostrada:R1p:R1p2
 reprocesso_apaga_desfecho:R1p2:R1p
 reprocesso_substituta_fora:R1q:R1s
-gerador_factual:R1s,M7:G4
+gerador_factual:G10,M7:G4
 publicar_sem_versao:V8:R1a
 familia_sem_filtro:V6:V1
 familia_apos_corte:R1a:V1

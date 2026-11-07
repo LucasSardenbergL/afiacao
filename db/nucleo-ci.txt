@@ -811,7 +811,7 @@ db/test-cliente-sucessoes.sh  85  falsificar=35
 # pela fila (só a não-mostrada e sem desfecho, arquivada inteira; contato e ids intactos); o FACTUAL antes = depois.
 # 32 sabotagens: gates, ACL, corte, destino, ativa, revisão, alias, universo, encerradas, rótulo, reprocesso, fila,
 # gerador sem drenar, detecção cega, tabela factual adulterada, versão, família, porta, sequência, revoga, trigger.
-db/test-cliente-sucessao-plano.sh  105  falsificar=32
+db/test-cliente-sucessao-plano.sh  106  falsificar=32
 # Integridade das RPCs de contato do Radar (20261031111000): 'virou_cliente' só com o cliente confirmado no ledger (RD005)
 # na porta E no trigger (corpo ANTIGO em voo, INSERT direto), re-marcar é no-op, vendedor não tira cliente confirmado
 # (RD007), a conversão não se desfaz (RD006); desfazer restaura só o DONO do status (autoria explícita + retrato), tira o
