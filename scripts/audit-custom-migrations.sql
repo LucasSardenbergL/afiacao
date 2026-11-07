@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 794
+-- Total de custom migrations: 796
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -862,7 +862,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql'),
   ('20261106205557', 'credito_aviso_vinculo_vencido', '20261106205557_credito_aviso_vinculo_vencido.sql'),
   ('20261106212329', 'radar_lista_meus_atendimentos', '20261106212329_radar_lista_meus_atendimentos.sql'),
-  ('20261106221000', 'radar_atribuir_atendimento', '20261106221000_radar_atribuir_atendimento.sql')
+  ('20261106221000', 'radar_atribuir_atendimento', '20261106221000_radar_atribuir_atendimento.sql'),
+  ('20261107013000', 'cliente_sucessoes', '20261107013000_cliente_sucessoes.sql'),
+  ('20261107120000', 'ipi_aliquota_ncm_seed_nf_onda1', '20261107120000_ipi_aliquota_ncm_seed_nf_onda1.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3424,7 +3426,23 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('credito_aviso_vinculo_vencido', 'function', 'public', 'credito_vinculo_aviso_registrar', ''),
   ('radar_lista_meus_atendimentos', 'function', 'public', 'radar_lista', ''),
   ('radar_atribuir_atendimento', 'function', 'public', 'radar_atribuir_atendimento', ''),
-  ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', '')
+  ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessoes_imutavel', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_resolver_documento', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessoes_chaves', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessoes_vigentes', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_declarar_sucessao', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_revogar_sucessao', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessao_previa_lado', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_sucessao_previa', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_sucessoes_do_documento', ''),
+  ('cliente_sucessoes', 'table', 'public', 'cliente_sucessoes', ''),
+  ('cliente_sucessoes', 'table', 'private', 'cliente_sucessoes_grafo', ''),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_par_ativo_uq', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_novo_ativo_idx', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_evento_idx', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_imutavel_trg', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_sem_truncate_trg', 'cliente_sucessoes')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6034,7 +6052,23 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('credito_aviso_vinculo_vencido', 'function', 'public', 'credito_vinculo_aviso_registrar', ''),
   ('radar_lista_meus_atendimentos', 'function', 'public', 'radar_lista', ''),
   ('radar_atribuir_atendimento', 'function', 'public', 'radar_atribuir_atendimento', ''),
-  ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', '')
+  ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessoes_imutavel', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_resolver_documento', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessoes_chaves', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessoes_vigentes', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_declarar_sucessao', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_revogar_sucessao', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessao_previa_lado', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_sucessao_previa', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_sucessoes_do_documento', ''),
+  ('cliente_sucessoes', 'table', 'public', 'cliente_sucessoes', ''),
+  ('cliente_sucessoes', 'table', 'private', 'cliente_sucessoes_grafo', ''),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_par_ativo_uq', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_novo_ativo_idx', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_evento_idx', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_imutavel_trg', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_sem_truncate_trg', 'cliente_sucessoes')
 )
 SELECT
   e.migration,

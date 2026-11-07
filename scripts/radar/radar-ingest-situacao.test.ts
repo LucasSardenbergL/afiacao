@@ -57,7 +57,7 @@ describe("edge radar-ingest — situação cadastral (texto)", () => {
   });
 
   it("[E5] VERSAO bumpada para a aplicação por cron e EFEITO diz que a edge não aplica", () => {
-    expect(versao).toContain('export const VERSAO = "v1.4-concorrentes";');
+    expect(versao).toContain('export const VERSAO = "v1.5-socios-cpf";');
     expect(versao).toContain("radar-aplicar-situacao-diario");
   });
 

@@ -13,7 +13,7 @@ import { RadarAcoesLead } from './RadarAcoesLead';
 import { RadarConflitosDoLead } from './RadarConflitosCadastro';
 import { RadarAtendimentoLead } from './RadarAtendimentoLead';
 import { RadarModoDiscagem } from './RadarModoDiscagem';
-import { RadarVinculosLead } from './RadarVinculosLead';
+import { RadarSucessaoLead } from './RadarSucessaoLead';
 import { RadarTelefoneAcao } from './RadarTelefoneAcao';
 import { Selo } from './Selo';
 import { avisoTelefoneCompartilhado, gravarModoDiscagem, lerModoDiscagem } from '@/lib/radar/atendimento';
@@ -242,7 +242,7 @@ export function RadarDetailSheet({
             </span>
           </Linha>
           <Linha label="Já é cliente?">
-            <RadarVinculosLead cnpj={empresa.cnpj} />
+            <RadarSucessaoLead cnpj={empresa.cnpj} dataAbertura={empresa.data_abertura ?? null} />
           </Linha>
           {empresa.nome_fantasia && <Linha label="Fantasia">{empresa.nome_fantasia}</Linha>}
           <Linha label="CNPJ"><span className="font-tabular">{formatarCnpj(empresa.cnpj)}</span></Linha>

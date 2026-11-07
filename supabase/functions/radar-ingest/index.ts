@@ -3,6 +3,7 @@ import { authorizeCron } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { motivoDescarte, type MotivoDescarte } from "./cnpj.ts";
 import { validarLinhaSituacao, type LinhaSituacao, type MotivoDescarteSituacao } from "./situacao.ts";
+import { codigoErroSocios, ehAcaoSocios, montarPedidoSocios } from "./socios.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -215,6 +216,21 @@ Deno.serve(async (req) => {
       }
     }
 
+    if (ehAcaoSocios(action)) {
+      // Sócios (QSA PF com CPF mascarado, passo 3 do "Radar sucessor"): o protocolo vive nas RPCs. Fronteira de
+      // erro PRÓPRIA, fora do catch geral — ele ecoaria a mensagem do PostgREST (que pode trazer a linha, com a
+      // máscara) e marcaria o lote da FILA como `error`; esta camada roda depois do finalize e não pode derrubá-la.
+      const pedido = montarPedidoSocios(action, body);
+      if (!pedido.ok) return json({ error: pedido.erro }, 400);
+      const { data, error } = await admin.rpc(pedido.rpc, pedido.args);
+      if (error) {
+        const codigo = codigoErroSocios(error);
+        console.error(`radar-ingest ${action} falhou: ${codigo}`);
+        return json({ error: codigo }, 500);
+      }
+      return json({ ok: true, resultado: data });
+    }
+
     if (action === "status") {
       const { data, error } = await admin.from("radar_ingest_state")
         .select("*").order("mes_referencia", { ascending: false }).limit(3);
@@ -222,7 +238,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, lotes: data });
     }
 
-    return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "cnpjs_conhecidos", "chunk_situacao", "finalize", "publicar_concorrentes", "status"] }, 400);
+    return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "cnpjs_conhecidos", "chunk_situacao", "finalize", "publicar_concorrentes", "socios_iniciar", "chunk_socios", "publicar_socios", "limpar_socios", "status"] }, 400);
   } catch (e) {
     // Erros do PostgREST são objetos planos (não Error) — String(e) viraria
     // "[object Object]" e mascararia o diagnóstico (mordeu na 1ª carga real).
