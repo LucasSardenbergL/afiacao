@@ -41,7 +41,8 @@ function linha(over: Partial<LinhaPainel> = {}): LinhaPainel {
     receita_realizada: 1500, receita_incompleta: false, taxa_ativa: 0.25,
     na_lista_sombra: 0, base_historico: { ...vazio, virou: 1, nao_virou: 9 },
     taxa_base_historico_mesma_semana: 0.1, base_sombra: vazio, taxa_base_sombra: null,
-    base_confiavel: true, herdadas: null, taxa_ativa_propria: null, ...over,
+    base_confiavel: true, herdadas: null, taxa_ativa_propria: null, base_historico_propria: null,
+    taxa_base_historico_propria: null, base_sombra_propria: null, taxa_base_sombra_propria: null, ...over,
   };
 }
 
@@ -111,11 +112,21 @@ describe('TabelaAdocao', () => {
   const herdadas = { na_lista: 3, sugestoes: 5, virou: 1, nao_virou: 2, nao_medivel: 0, pendentes: 0,
     receita_realizada: 400, receita_incompleta: false };
   it('com herdadas: aviso, quantos herdados, receita herdada e conversão própria', () => {
-    render(<TabelaAdocao linhas={[linha({ herdadas, taxa_ativa_propria: 0.2 })]} baseConfiavel />);
+    render(<TabelaAdocao linhas={[linha({ herdadas, taxa_ativa_propria: 0.2,
+      base_historico_propria: { ...vazio, virou: 1, nao_virou: 4 }, taxa_base_historico_propria: 0.2,
+      base_sombra_propria: { ...vazio, virou: 3, nao_virou: 1 }, taxa_base_sombra_propria: 0.75 })]} baseConfiavel />);
     expect(screen.getByTestId('painel-herdadas-aviso')).toHaveTextContent('sucessão declarada');
     expect(screen.getByTestId('painel-herdadas-na-lista')).toHaveTextContent('3 herdados');
     expect(screen.getByTestId('painel-receita-herdada').textContent?.replace(/\s/g, ' ')).toMatch(/R\$ 400 herdada$/);
     expect(screen.getByTestId('painel-conversao-propria')).toHaveTextContent('própria 20%');
+    expect(screen.getByTestId('painel-base-historico-propria')).toHaveTextContent('própria 20%');
+    expect(screen.getByTestId('painel-base-sombra-propria')).toHaveTextContent('própria: 75%');
+  });
+  it('base própria sem base conferida diz não consegui medir, nunca o número', () => {
+    render(<TabelaAdocao linhas={[linha({ herdadas, taxa_ativa_propria: 0.2,
+      base_historico_propria: { ...vazio, virou: 1, nao_virou: 4 }, taxa_base_historico_propria: 0.2,
+      base_sombra_propria: vazio, taxa_base_sombra_propria: null })]} baseConfiavel={false} />);
+    expect(screen.getByTestId('painel-base-historico-propria')).toHaveTextContent('própria não consegui medir');
   });
   it('própria sem base fechada diz não consegui medir/aguardando, nunca 0%', () => {
     render(<TabelaAdocao linhas={[linha({ virou: 1, nao_virou: 2, pendentes: 1,

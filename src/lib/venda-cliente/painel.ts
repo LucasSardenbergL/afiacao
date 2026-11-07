@@ -40,6 +40,14 @@ export interface LinhaPainel extends ContagemDesfecho {
   herdadas: HerdadasLinha | null;
   /** Conversão SEM as herdadas (o histórico delas inclui compras da antiga). `null` = sem base ou servidor anterior. */
   taxa_ativa_propria: number | null;
+  /**
+   * A linha de base com a MESMA régua (sem herdadas): o gerador grava a origem nas três fases, então a base de sempre
+   * também mistura. A conversão própria se compara com estas. `null` = servidor anterior.
+   */
+  base_historico_propria: ContagemDesfecho | null;
+  taxa_base_historico_propria: number | null;
+  base_sombra_propria: ContagemDesfecho | null;
+  taxa_base_sombra_propria: number | null;
 }
 
 export interface HerdadasLinha extends ContagemDesfecho {

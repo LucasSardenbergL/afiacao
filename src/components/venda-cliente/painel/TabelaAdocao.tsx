@@ -55,6 +55,10 @@ export function TabelaAdocao({ linhas, baseConfiavel }: { linhas: LinhaPainel[];
       {grupos.map((g) => {
         const f = g[0];
         const comHerdadas = g.some(temHerdada);
+        const baseSombraPropria =
+          comHerdadas && f.base_sombra_propria
+            ? estadoTaxa(f.base_sombra_propria, f.taxa_base_sombra_propria, { baseConfiavel, exigeBaseConfiavel: true })
+            : null;
         const baseSombra = estadoTaxa(f.base_sombra, f.taxa_base_sombra, {
           baseConfiavel,
           exigeBaseConfiavel: true,
@@ -65,13 +69,18 @@ export function TabelaAdocao({ linhas, baseConfiavel }: { linhas: LinhaPainel[];
               <h3 className="text-base font-semibold">{f.farmer_nome ?? 'Farmer sem nome no cadastro'}</h3>
               <p className="text-xs text-muted-foreground">
                 Linha de base · sombra antes do go-live: <CelulaTaxa estado={baseSombra} className="text-xs" />
+                {baseSombraPropria && (
+                  <span data-testid="painel-base-sombra-propria">
+                    {' '}· própria: <CelulaTaxa estado={baseSombraPropria} className="text-xs" />
+                  </span>
+                )}
               </p>
             </header>
             {comHerdadas && (
               <p className="mb-2 text-xs text-muted-foreground" data-testid="painel-herdadas-aviso">
                 Inclui clientes herdados de sucessão declarada: o histórico deles tem compras da empresa antiga. Abaixo de
-                cada número, quanto veio de herança; a conversão &quot;própria&quot; tira as sugestões herdadas e é a que se
-                compara com a linha de base.
+                cada número, quanto veio de herança. A conversão &quot;própria&quot; tira as sugestões herdadas; compare-a
+                com a base &quot;própria&quot;, que também tira as herdadas.
               </p>
             )}
             <div className="overflow-x-auto rounded-md border">
@@ -101,6 +110,13 @@ export function TabelaAdocao({ linhas, baseConfiavel }: { linhas: LinhaPainel[];
                     const propria = cp
                       ? estadoTaxa(cp, l.taxa_ativa_propria, { baseConfiavel, exigeBaseConfiavel: false })
                       : null;
+                    const histPropria =
+                      h && l.base_historico_propria
+                        ? estadoTaxa(l.base_historico_propria, l.taxa_base_historico_propria, {
+                            baseConfiavel,
+                            exigeBaseConfiavel: true,
+                          })
+                        : null;
                     return (
                       <TableRow key={l.semana}>
                         <TableCell className="tabular-nums text-muted-foreground">{rotuloSemana(l.semana)}</TableCell>
@@ -135,7 +151,15 @@ export function TabelaAdocao({ linhas, baseConfiavel }: { linhas: LinhaPainel[];
                             </span>
                           )}
                         </TableCell>
-                        <TableCell className="text-right"><CelulaTaxa estado={hist} /></TableCell>
+                        <TableCell className="text-right">
+                          <CelulaTaxa estado={hist} />
+                          {histPropria && (
+                            <span className="block text-xs text-muted-foreground" data-testid="painel-base-historico-propria"
+                              title="Base do ano anterior sem as sugestões herdadas">
+                              própria <CelulaTaxa estado={histPropria} className="text-xs" />
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right"><Num v={l.na_lista_sombra} /></TableCell>
                       </TableRow>
                     );

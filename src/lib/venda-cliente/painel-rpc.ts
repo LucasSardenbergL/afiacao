@@ -87,13 +87,23 @@ function contagem(v: Json | undefined, onde: string): ContagemDesfecho {
   };
 }
 
-// Sucessor declarado (20261108010000): as duas chaves nascem JUNTAS. Servidor anterior não tem nenhuma das duas
-// (a tela segue sem a fatia herdada); só uma delas é forma desconhecida e LANÇA.
-function herdadasDaLinha(o: Obj, onde: string): Pick<LinhaPainel, 'herdadas' | 'taxa_ativa_propria'> {
-  const temH = o.herdadas !== undefined;
-  const temT = o.taxa_ativa_propria !== undefined;
-  if (!temH && !temT) return { herdadas: null, taxa_ativa_propria: null };
-  if (temH !== temT) throw new Error(`${onde}: "herdadas" e "taxa_ativa_propria" vêm juntas`);
+// Sucessor declarado (20261108010000): as seis chaves nascem JUNTAS. Servidor anterior não tem nenhuma delas
+// (a tela segue sem a fatia herdada); parte delas é forma desconhecida e LANÇA.
+const CHAVES_HERANCA = [
+  'herdadas', 'taxa_ativa_propria', 'base_historico_propria', 'taxa_base_historico_propria',
+  'base_sombra_propria', 'taxa_base_sombra_propria',
+] as const;
+type DaHeranca = Pick<LinhaPainel, (typeof CHAVES_HERANCA)[number]>;
+
+function herdadasDaLinha(o: Obj, onde: string): DaHeranca {
+  const presentes = CHAVES_HERANCA.filter((k) => o[k] !== undefined).length;
+  if (presentes === 0) {
+    return {
+      herdadas: null, taxa_ativa_propria: null, base_historico_propria: null, taxa_base_historico_propria: null,
+      base_sombra_propria: null, taxa_base_sombra_propria: null,
+    };
+  }
+  if (presentes !== CHAVES_HERANCA.length) throw new Error(`${onde}: as chaves da herança vêm juntas`);
   const ondeH = `${onde}.herdadas`;
   const h = obj(campo(o, 'herdadas', onde), ondeH);
   const herdadas: HerdadasLinha = {
@@ -103,7 +113,14 @@ function herdadasDaLinha(o: Obj, onde: string): Pick<LinhaPainel, 'herdadas' | '
     receita_realizada: numOuNulo(h, 'receita_realizada', ondeH),
     receita_incompleta: bool(h, 'receita_incompleta', ondeH),
   };
-  return { herdadas, taxa_ativa_propria: numOuNulo(o, 'taxa_ativa_propria', onde) };
+  return {
+    herdadas,
+    taxa_ativa_propria: numOuNulo(o, 'taxa_ativa_propria', onde),
+    base_historico_propria: contagem(campo(o, 'base_historico_propria', onde), `${onde}.base_historico_propria`),
+    taxa_base_historico_propria: numOuNulo(o, 'taxa_base_historico_propria', onde),
+    base_sombra_propria: contagem(campo(o, 'base_sombra_propria', onde), `${onde}.base_sombra_propria`),
+    taxa_base_sombra_propria: numOuNulo(o, 'taxa_base_sombra_propria', onde),
+  };
 }
 
 function linhaPainel(v: Json, i: number): LinhaPainel {
