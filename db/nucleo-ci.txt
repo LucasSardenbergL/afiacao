@@ -656,7 +656,7 @@ db/test-watchdog-diario-so-problema.sh      22  falsificar=6
 # Radar pacote E (20261107230000): a escolha de leads do e-mail semanal e do card "Prospectar hoje". Defeito
 # aqui = vendedor recebe lead sem contato/fora da foto, lead queimado por e-mail que não chegou, posse própria
 # sugerida de novo, atribuição do gestor sumida, um vendedor derrubando os outros ou link com URL quebrada.
-db/test-radar-distribuicao-e.sh            35  falsificar=fora-do-ci  # 34 sabotagens × ~6 s ≈ +3 min; roda local nos 2 locales e o recibo vai no PR
+db/test-radar-distribuicao-e.sh            35  falsificar=fora-do-ci  # 33 sabotagens × ~6 s ≈ +3 min; roda local nos 2 locales e o recibo vai no PR
 db/test-radar-recruzamento-diario.sh        12  falsificar=6
 # O byte que o ESCRITOR grava é o byte que o recruzar marca (alfanumérico preservado vs mutilado; #3175 → escritores).
 # Depende da migration 20261019110000 (#3175) estar na main.

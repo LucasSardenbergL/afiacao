@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 800
+-- Total de custom migrations: 802
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -868,7 +868,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107120000', 'ipi_aliquota_ncm_seed_nf_onda1', '20261107120000_ipi_aliquota_ncm_seed_nf_onda1.sql'),
   ('20261107140000', 'sayerlack_condicao_portal_onda2', '20261107140000_sayerlack_condicao_portal_onda2.sql'),
   ('20261107140001', 'radar_email_semanal_toggle', '20261107140001_radar_email_semanal_toggle.sql'),
-  ('20261107210000', 'cliente_sucessao_plano_rateio', '20261107210000_cliente_sucessao_plano_rateio.sql')
+  ('20261107210000', 'cliente_sucessao_plano_rateio', '20261107210000_cliente_sucessao_plano_rateio.sql'),
+  ('20261107220000', 'data_health_sayerlack_varredura_portal', '20261107220000_data_health_sayerlack_varredura_portal.sql'),
+  ('20261107230000', 'radar_distribuicao_pacote_e', '20261107230000_radar_distribuicao_pacote_e.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3496,7 +3498,16 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_regras_sem_truncate_trg', 'cliente_sucessao_plano_regras'),
   ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_imutavel_trg', 'venda_sugestao_substituida'),
   ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_sem_truncate_trg', 'venda_sugestao_substituida'),
-  ('cliente_sucessao_plano_rateio', 'cron_job', 'cron', 'venda-sucessao-reprocesso', '')
+  ('cliente_sucessao_plano_rateio', 'cron_job', 'cron', 'venda-sucessao-reprocesso', ''),
+  ('data_health_sayerlack_varredura_portal', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_sayerlack_varredura_portal', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_sayerlack_varredura_portal', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_territorio_do_vendedor', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_territorio_motivo', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_email_semanal_painel', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6172,7 +6183,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_regras_sem_truncate_trg', 'cliente_sucessao_plano_regras'),
   ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_imutavel_trg', 'venda_sugestao_substituida'),
   ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_sem_truncate_trg', 'venda_sugestao_substituida'),
-  ('cliente_sucessao_plano_rateio', 'cron_job', 'cron', 'venda-sucessao-reprocesso', '')
+  ('cliente_sucessao_plano_rateio', 'cron_job', 'cron', 'venda-sucessao-reprocesso', ''),
+  ('data_health_sayerlack_varredura_portal', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_sayerlack_varredura_portal', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_sayerlack_varredura_portal', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_territorio_do_vendedor', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_territorio_motivo', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_email_semanal_painel', '')
 )
 SELECT
   e.migration,
@@ -6200,7 +6220,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 180.
+-- Funções redefinidas com corpo extraível: 185.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6367,6 +6387,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_sync_heartbeat', 22, '20260918200000_data_health_sync_reprocess_saude.sql', '0df60fab6586dd63777082691be69778'),
   ('public', 'fin_sync_heartbeat', 23, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', '619986fe0010f64f50b58d5922eff7d2'),
   ('public', 'fin_sync_heartbeat', 24, '20261020101636_data_health_radar_lote_e_recruzamento.sql', 'db0c50e56dfd8d59be008ddce86edf0e'),
+  ('public', 'fin_sync_heartbeat', 25, '20261107220000_data_health_sayerlack_varredura_portal.sql', '7bfa4b93501888d689196acb67a8c3d7'),
   ('public', '_carteira_mixgap_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '45590516afa887e06b1f6b6c7e9440b5'),
   ('public', '_carteira_mixgap_for_owner', 2, '20260526230000_mixgap_feedback.sql', '09b8ada4bb8fa3cdb389d6f8257a95f2'),
   ('public', '_carteira_mixgap_for_owner', 3, '20261020143511_venda_cliente_complemento.sql', '5921c2ec1232c856725d049e1392c4ff'),
@@ -6426,6 +6447,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 37, '20261020101636_data_health_radar_lote_e_recruzamento.sql', '20cbe5d9227114a5493d988142607342'),
   ('public', '_data_health_compute', 38, '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql', '784d16c410f90da3d1233a7bafdb7b29'),
   ('public', '_data_health_compute', 39, '20261031191715_data_health_saldo_bancario_conta_a_conta.sql', 'ac1f616de90dcdb17656607b9f0f2458'),
+  ('public', '_data_health_compute', 40, '20261107220000_data_health_sayerlack_varredura_portal.sql', '8faab148e76a96842994b337ac3c26f6'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -6450,6 +6472,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'data_health_watchdog', 22, '20260918200000_data_health_sync_reprocess_saude.sql', 'd972036c52c2a54c0da21fcbef783c63'),
   ('public', 'data_health_watchdog', 23, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', 'b35c43d55f1e7688b913ce6fe0cb2a5b'),
   ('public', 'data_health_watchdog', 24, '20261020101636_data_health_radar_lote_e_recruzamento.sql', '4797193fa8f2b6a1a504e19b79a6fca1'),
+  ('public', 'data_health_watchdog', 25, '20261107220000_data_health_sayerlack_varredura_portal.sql', '4e35396fcaa48a0683f5db46ca16e01f'),
   ('public', 'tarefas_matcher_tick', 1, '20260528133000_tarefas_bloco_d.sql', '1d22a8a6cebe7a7ac1329fc8f98fe20d'),
   ('public', 'tarefas_matcher_tick', 2, '20260528135000_tarefas_matcher_created_at_floor.sql', '99785df6ed7189c49aad580f09b24a1c'),
   ('public', 'tarefas_matcher_tick', 3, '20260615194500_fix_tarefas_matcher_enum.sql', '0bc8eb0402988ad408b80add2df00e56'),
@@ -6873,10 +6896,20 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'simular_puxar_volume_trimestre', 2, '20261106090000_des_simular_puxar_config_e_checkin.sql', 'fefcf8c0890cd3fe21a60efbe2ed6d37'),
   ('private', 'radar_vinculos_nucleo', 1, '20261106083754_radar_vinculos_em_lote.sql', '524afca67d271f459a6e4c984725b833'),
   ('private', 'radar_vinculos_nucleo', 2, '20261106205557_credito_aviso_vinculo_vencido.sql', '150b7d5e1c72ca55f8e58ea321659428'),
+  ('private', 'radar_territorio_do_vendedor', 1, '20261106181000_radar_leads_ao_vendedor.sql', '2bb9436ae4ce0d5f517354edbc931130'),
+  ('private', 'radar_territorio_do_vendedor', 2, '20261107230000_radar_distribuicao_pacote_e.sql', 'fb812a4908eeb34fa12e23f48e06a568'),
+  ('private', 'radar_leads_do_vendedor', 1, '20261106181000_radar_leads_ao_vendedor.sql', '51506ada745f4c91ec5de07a54e06ac0'),
+  ('private', 'radar_leads_do_vendedor', 2, '20261107230000_radar_distribuicao_pacote_e.sql', 'a4a2d893fefd6182d8299300561a2dcc'),
+  ('public', 'radar_avisar_vendedores', 1, '20261106181000_radar_leads_ao_vendedor.sql', 'fdde2726b59b6ba115a465bf3af3a913'),
+  ('public', 'radar_avisar_vendedores', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '43860b5d9d9cdd4e0cdb06b4d6805ddc'),
+  ('public', 'radar_prospectar_hoje', 1, '20261106181000_radar_leads_ao_vendedor.sql', '7290de5f88cbe11f67e01c9379740fda'),
+  ('public', 'radar_prospectar_hoje', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '73151dc24c593ab9b148c0ccb0c1f27d'),
   ('private', 'radar_vinculos_base', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', '4a25630577db9bcad6e3630d0b37003c'),
   ('private', 'radar_vinculos_base', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '4b3f8bddde6efeb2b39bda47b0e0a87b'),
   ('private', 'credito_vinculo_avaliar', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', 'df92d9af4062d9f7f475c784818effc7'),
-  ('private', 'credito_vinculo_avaliar', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '70406e22429da65e354297271046917b')
+  ('private', 'credito_vinculo_avaliar', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '70406e22429da65e354297271046917b'),
+  ('public', 'radar_email_semanal_painel', 1, '20261107140001_radar_email_semanal_toggle.sql', '0b114d404e20198b65a3d1bd3388059f'),
+  ('public', 'radar_email_semanal_painel', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '98e98147155301c10578baeda21f9017')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),
