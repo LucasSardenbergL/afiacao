@@ -18,7 +18,7 @@ export type ModoEmail = (typeof MODOS_EMAIL)[number];
 
 /** Os códigos de private.radar_territorio_motivo, na ordem em que o território os exige. */
 const MOTIVOS_TERRITORIO = ['nao_e_vendedor', 'sem_carteira', 'carteira_sem_municipio'] as const;
-export type MotivoTerritorio = (typeof MOTIVOS_TERRITORIO)[number];
+type MotivoTerritorio = (typeof MOTIVOS_TERRITORIO)[number];
 const ehMotivo = (v: unknown): v is MotivoTerritorio =>
   typeof v === 'string' && (MOTIVOS_TERRITORIO as readonly string[]).includes(v);
 
