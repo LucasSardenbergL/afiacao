@@ -369,7 +369,9 @@ export default function RadarClientes() {
               {q.isLoading ? (meus ? 'Carregando seus atendimentos…' : 'Carregando a fila…')
                 : meus
                   ? `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} com você`
-                    + (proximoVencimento ? ` · o próximo vence em ${diaMes(proximoVencimento)}` : '')
+                    // Leitura da posse falhou: DIZ que o vencimento está indisponível (ausente ≠ "nada vence").
+                    + (atendimentos.isError ? ' · vencimento indisponível'
+                      : proximoVencimento ? ` · o próximo vence em ${diaMes(proximoVencimento)}` : '')
                   : `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} · ${rotuloRegiao} · ordem: ${ROTULO_PRESET[filtros.preset]}`}
             </p>
           </div>

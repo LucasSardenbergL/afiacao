@@ -23,6 +23,7 @@ const fonte = vi.hoisted(() => ({
   falharMeus: null as string | null,
   ultimaChamada: null as { filtros: Record<string, unknown>; soMeus: boolean } | null,
   atendimentos: [] as { cnpj: string; ehMeu: boolean; expiraEm: string }[],
+  falharAtendimentos: false,
 }));
 const toastMock = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), success: vi.fn(), warning: vi.fn() }));
 vi.mock('sonner', () => ({ toast: toastMock }));
@@ -65,9 +66,13 @@ vi.mock('@/queries/useRadarAtendimentos', () => ({
   useRadarAtendimentosAtivos: () =>
     useQuery({
       queryKey: ['radar', 'atendimentos-ativos'],
-      queryFn: async () => new Map(fonte.atendimentos.map((a) => [a.cnpj, {
+      queryFn: async () => {
+        if (fonte.falharAtendimentos) throw new Error('falha ao ler atendimentos');
+        return new Map(fonte.atendimentos.map((a) => [a.cnpj, {
         cnpj: a.cnpj, donoUserId: a.ehMeu ? 'u1' : 'u2', donoNome: null, assumidoEm: '2026-11-01T12:00:00Z', expiraEm: a.expiraEm, ehMeu: a.ehMeu,
-      }])),
+      }]));
+      },
+      retry: false,
     }),
 }));
 vi.mock('@/queries/useRadarAmostra', () => ({
@@ -171,6 +176,7 @@ beforeEach(() => {
   fonte.falharMeus = null;
   fonte.ultimaChamada = null;
   fonte.atendimentos = [];
+  fonte.falharAtendimentos = false;
 });
 
 describe('RadarClientes — fila do vendedor', () => {
@@ -359,6 +365,14 @@ describe('RadarClientes — Meus atendimentos (B2)', () => {
     await waitFor(() => expect(screen.getByText('Não foi possível carregar a fila')).toBeTruthy());
     expect(screen.getByText(/Could not find the function public\.radar_lista/)).toBeTruthy();
     expect(screen.queryByText('Nenhum lead com você agora')).toBeNull();
+  });
+
+  it('leitura da posse falhou: o resumo DIZ "vencimento indisponível" (ausente ≠ nada vence) e a lista segue', async () => {
+    fonte.paginasMeus = [[lead('M1')]];
+    fonte.falharAtendimentos = true;
+    montar('/radar?visao=meus');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['M1']));
+    await waitFor(() => expect(screen.getByTestId('radar-fila-resumo').textContent).toBe('1 lead com você · vencimento indisponível'));
   });
 
   it('assumir/liberar muda o conjunto dos meus → as páginas da visão são relidas (a lista não fica com a posse velha)', async () => {
