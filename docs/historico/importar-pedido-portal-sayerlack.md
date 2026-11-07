@@ -217,3 +217,8 @@ GROUP BY 1, 2;
   todos os pedidos do app).
 - **P2 HTTP 500 perdia o #id**: o diálogo lê o corpo estruturado do erro (`corpoDoErroEdge`), não só a mensagem.
 - **P2 re-disparos lentos estouram o orçamento da varredura**: vai na Onda 3 (candidatos novos antes, teto por rodada).
+- **2ª rodada (58 s)**: os 3 consertos fechados; 1 P1 novo — em `falha_envio` a tela não deixava escolher a condição, e o
+  pedido recusado ficaria preso. Agora a condição é editável em `falha_envio` e dá para **Confirmar** a condição sem trocar
+  o código quando ela é o padrão do motor (`podeSalvarCondicao`, testado).
+- **Mudança de forma**: o changelog do `VERSAO` do disparo foi para `docs/historico/versao-disparar-pedidos-aprovados.md`
+  (o gate `limpeza-fonte` acusou 5 linhas de código em 62).
