@@ -46,6 +46,7 @@ db/test-data-health-carteira-rebuild.sh 24
 db/test-data-health-familia-ausente.sh 32
 db/test-data-health-radar.sh 98
 db/test-data-health-saldo-bancario-conta-a-conta.sh 88
+db/test-data-health-sayerlack-varredura.sh 110
 db/test-data-health-sync-reprocess.sh 75
 db/test-data-health-venda-empurrada-conta-pelo-app.sh 12
 db/test-data-health-vendas-empurradas.sh 110
