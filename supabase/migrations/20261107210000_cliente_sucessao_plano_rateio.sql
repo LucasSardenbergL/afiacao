@@ -675,8 +675,9 @@ GRANT EXECUTE ON FUNCTION public.venda_gerar_lista(date, text) TO service_role;
 -- sugestões deles (o ranking "maior atraso" é POR FARMER, então a lista inteira do farmer depende do plano).
 -- Só as fases que o gerador já rodou hoje (venda_gerador_execucao): antes disso, o cron gera com o plano.
 -- Sai (para o arquivo) a sugestão do escopo cujo cálculo mudou, NUNCA mostrada e SEM desfecho; entra a substituta
--- (ON CONFLICT DO NOTHING: a preservada, mostrada ou com desfecho, fica). Mesma trava do gerador.
-CREATE OR REPLACE FUNCTION private.venda_sugestoes_reprocessar_sucessao(p_evento_id uuid, p_motivo text)
+-- (ON CONFLICT DO NOTHING: a preservada, mostrada ou com desfecho, fica). `p_novo` = a lista efetiva de HOJE inteira,
+-- calculada UMA vez pela drenagem sob as duas travas (gerador + grafo): NULL = o gerador ainda não rodou hoje.
+CREATE OR REPLACE FUNCTION private.venda_sugestoes_reprocessar_sucessao(p_evento_id uuid, p_motivo text, p_novo jsonb)
  RETURNS jsonb
  LANGUAGE plpgsql
  VOLATILE
@@ -736,15 +737,15 @@ BEGIN
     ) f
    WHERE f.farmer IS NOT NULL;
 
-  IF v_farmers IS NULL OR NOT EXISTS (SELECT 1 FROM public.venda_gerador_execucao e WHERE e.dia_referencia = v_dia) THEN
+  IF v_farmers IS NULL OR p_novo IS NULL THEN
     RETURN jsonb_build_object('dia', v_dia, 'revisao_aplicada', v_rev, 'farmers', COALESCE(cardinality(v_farmers), 0),
                               'substituidas', 0, 'novas', 0, 'preservadas', 0);
   END IF;
 
-  -- O cálculo de hoje, uma vez (é o mesmo que o gerador roda), só dos farmers do escopo.
-  SELECT COALESCE(jsonb_agg(to_jsonb(l)), '[]'::jsonb) INTO v_novo
-    FROM private.venda_lista_calc_efetiva(v_dia) l
-   WHERE l.farmer_user_id = ANY (v_farmers);
+  -- A lista efetiva de hoje (o mesmo cálculo do gerador), recortada nos farmers do escopo.
+  SELECT COALESCE(jsonb_agg(x.l), '[]'::jsonb) INTO v_novo
+    FROM jsonb_array_elements(p_novo) AS x(l)
+   WHERE (x.l ->> 'farmer_user_id')::uuid = ANY (v_farmers);
 
   FOR v_fase IN SELECT e.fase FROM public.venda_gerador_execucao e WHERE e.dia_referencia = v_dia ORDER BY e.fase LOOP
     -- Preservadas: mudaram, mas foram mostradas ou já têm desfecho (ficam como estão).
@@ -815,7 +816,7 @@ BEGIN
                             'substituidas', v_sai, 'novas', v_entra, 'preservadas', v_pres);
 END
 $function$;
-REVOKE ALL ON FUNCTION private.venda_sugestoes_reprocessar_sucessao(uuid, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION private.venda_sugestoes_reprocessar_sucessao(uuid, text, jsonb) FROM PUBLIC, anon, authenticated;
 
 -- A assinatura do estado de herança por evento: as linhas de vigentes (id, estado, tipo, corte, extremos
 -- resolvidos) + a revisão vigente do plano. Muda quando muda qualquer coisa de que a trilha efetiva depende.
@@ -843,7 +844,10 @@ REVOKE ALL ON FUNCTION private.cliente_sucessao_assinaturas(date) FROM PUBLIC, a
 -- Drena a fila. (1) DETECTA: evento cuja assinatura mudou desde o último reconcilio, sem pedido pendente, ganha um
 -- pedido `estado_mudou` (revogação de declaração, alias, cadastro, corte — nada disso passa pelas RPCs do plano).
 -- (2) Por evento pendente, reprocessa UMA vez (o pedido mais novo; os anteriores ficam `superado_por`) e grava a
--- assinatura vista. Uma drenagem por vez (try-lock: a rodada seguinte sai na hora).
+-- assinatura vista. TRAVAS: a do GERADOR em try (no cron: se o gerador roda, sai e tenta no minuto seguinte; dentro do
+-- gerador é reentrante — uma trava só, sem a corrida de duas) e a do GRAFO da sucessão (a de publicar/revogar/declarar):
+-- plano e declarações ficam parados enquanto se lê revisão, assinatura e cálculo. O que muda por fora do grafo (alias,
+-- cadastro) depois da captura da assinatura diverge dela e volta na rodada seguinte. O cálculo roda UMA vez por drenagem.
 CREATE OR REPLACE FUNCTION private.venda_sugestoes_drenar_reprocesso()
  RETURNS integer
  LANGUAGE plpgsql
@@ -854,10 +858,13 @@ DECLARE
   r record;
   v_n integer := 0;
   v_hoje date;
+  v_novo jsonb;
+  v_assin text;
 BEGIN
-  IF NOT pg_try_advisory_xact_lock(hashtext('venda_sucessao_reprocesso')) THEN
+  IF NOT pg_try_advisory_xact_lock(hashtext('venda_gerar_lista')) THEN
     RETURN 0;
   END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('cliente_sucessoes:grafo', 0));
   v_hoje := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
   INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, revisao_pedida, motivo)
   SELECT a.evento_id, NULL, 'estado_mudou'
@@ -867,20 +874,28 @@ BEGIN
      AND NOT EXISTS (SELECT 1 FROM private.venda_sugestoes_reprocesso_fila f
                       WHERE f.evento_id = a.evento_id AND f.processado_em IS NULL);
 
+  IF NOT EXISTS (SELECT 1 FROM private.venda_sugestoes_reprocesso_fila f WHERE f.processado_em IS NULL) THEN
+    RETURN 0;
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.venda_gerador_execucao e WHERE e.dia_referencia = v_hoje) THEN
+    SELECT COALESCE(jsonb_agg(to_jsonb(l)), '[]'::jsonb) INTO v_novo FROM private.venda_lista_calc_efetiva(v_hoje) l;
+  END IF;
+
   FOR r IN SELECT DISTINCT ON (f.evento_id) f.id, f.evento_id, f.motivo
              FROM private.venda_sugestoes_reprocesso_fila f
             WHERE f.processado_em IS NULL
             ORDER BY f.evento_id, f.id DESC LOOP
+    -- a assinatura do estado que este reprocesso vai calcular, capturada ANTES do cálculo
+    SELECT a.assinatura INTO v_assin FROM private.cliente_sucessao_assinaturas(v_hoje) a WHERE a.evento_id = r.evento_id;
     UPDATE private.venda_sugestoes_reprocesso_fila f
        SET processado_em = clock_timestamp(),
-           resultado = private.venda_sugestoes_reprocessar_sucessao(r.evento_id, r.motivo)
+           resultado = private.venda_sugestoes_reprocessar_sucessao(r.evento_id, r.motivo, v_novo)
      WHERE f.id = r.id;
     UPDATE private.venda_sugestoes_reprocesso_fila f
        SET processado_em = clock_timestamp(), resultado = jsonb_build_object('superado_por', r.id)
      WHERE f.evento_id = r.evento_id AND f.processado_em IS NULL AND f.id < r.id;
     INSERT INTO private.cliente_sucessao_estado_visto (evento_id, assinatura, visto_em)
-    SELECT a.evento_id, a.assinatura, clock_timestamp()
-      FROM private.cliente_sucessao_assinaturas(v_hoje) a WHERE a.evento_id = r.evento_id
+    VALUES (r.evento_id, COALESCE(v_assin, ''), clock_timestamp())
     ON CONFLICT (evento_id) DO UPDATE SET assinatura = EXCLUDED.assinatura, visto_em = EXCLUDED.visto_em;
     v_n := v_n + 1;
   END LOOP;
@@ -1205,7 +1220,7 @@ BEGIN
   FOR r IN SELECT * FROM (VALUES ('private.historico_consumo_efetivo(date)'), ('private.historico_compradores_encerrados(date)'),
                                   ('private.venda_recompra_efetiva_em(date)'), ('private.venda_situacao_efetiva_em(date)'),
                                   ('private.venda_lista_calc_efetiva(date)'),
-                                  ('private.venda_sugestoes_reprocessar_sucessao(uuid,text)'),
+                                  ('private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb)'),
                                   ('private.cliente_sucessao_assinaturas(date)'),
                                   ('private.cliente_sucessao_plano_imutavel()'),
                                   ('private.venda_sugestao_substituida_imutavel()')) AS x(sig)

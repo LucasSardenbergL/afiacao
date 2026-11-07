@@ -247,6 +247,18 @@ conserva() {  # física: mesmas linhas, cada order_item uma vez, mesma quantidad
                                      FROM private.venda_linhas_pedido($H) GROUP BY 1, 2) q)"
 }
 drenar() { Q "SELECT private.venda_sugestoes_drenar_reprocesso()"; }   # o que o cron faz a cada minuto
+# segurar <trava sql> <segundos> — OUTRA sessão prende a trava e dorme; volta quando ela JÁ está no pg_sleep (a
+# prontidão é medida pela sessão, não pela trava sob teste: senão a sabotagem da trava ficaria verde).
+segurar() {
+  P -q -c "BEGIN; SELECT $1; SELECT pg_sleep($2); COMMIT;" > /dev/null 2>&1 &
+  SEGURA_PID=$!
+  local i
+  for i in $(seq 1 100); do
+    [ "$(Q "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND state = 'active' AND query LIKE '%pg_sleep($2)%'")" = 1 ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
 lin() {  # <filtro> → count das linhas da trilha
   Q "SELECT count(*) FROM $EF WHERE $1"
 }
@@ -507,7 +519,15 @@ cenario() {
     "$(publicar "$E1" 2 "[$(item oben 1002 "$NOV2")]" motivo)" "destino_fora_do_evento"
 
   echo "── 10. revogar o plano: tudo volta à antiga ──"
-  chk Z1 "revogou: revisão 3 (e o cron drena)" "$(revogar_plano "$E1" 2 revisao)/$(drenar)" "3/1"
+  chk Z1 "revogou: revisão 3 (pedido pendente na fila)" "$(revogar_plano "$E1" 2 revisao)/$(Q "SELECT count(*) FROM private.venda_sugestoes_reprocesso_fila WHERE processado_em IS NULL")" "3/1"
+  segurar "pg_advisory_xact_lock(hashtext('venda_gerar_lista'))" 3 || true
+  chk CL1 "concorrência: com o GERADOR rodando em outra sessão, a drenagem do cron sai NA HORA, sem drenar" \
+    "$(Q "SELECT private.venda_sugestoes_drenar_reprocesso() || '/' || (extract(epoch FROM clock_timestamp() - now()) < 1)")/$(Q "SELECT count(*) FROM private.venda_sugestoes_reprocesso_fila WHERE processado_em IS NULL")" "0/true/1"
+  wait "$SEGURA_PID" || true
+  segurar "pg_advisory_xact_lock(hashtextextended('cliente_sucessoes:grafo', 0))" 2 || true
+  chk CL2 "concorrência: com o GRAFO travado (publicar/declarar em voo), a drenagem ESPERA e só então reprocessa" \
+    "$(Q "SELECT private.venda_sugestoes_drenar_reprocesso() || '/' || (extract(epoch FROM clock_timestamp() - now()) >= 1.5)")" "1/true"
+  wait "$SEGURA_PID" || true
   chk Z2 "nada herdado de E1" "$(lin "sucessao_evento_id = '$E1'")" "0"
   chk Z3 "a lista: a antiga recupera; a 1ª nova perde (arquivada como plano_revogado)" \
     "$(codigos "$UA")|$(codigos "$UN1")|$(Q "SELECT count(*) FROM public.venda_sugestao_substituida WHERE motivo = 'plano_revogado' AND comprador_id = '$UN1'")" \
@@ -556,7 +576,7 @@ cenario() {
 GERAR='public.venda_gerar_lista(date,text)'
 PUB='public.cliente_sucessao_plano_publicar(uuid,integer,jsonb,text)'
 TRILHA='private.historico_consumo_efetivo(date)'
-REPRO='private.venda_sugestoes_reprocessar_sucessao(uuid,text)'
+REPRO='private.venda_sugestoes_reprocessar_sucessao(uuid,text,jsonb)'
 IMUT='private.cliente_sucessao_plano_imutavel()'
 ASSIN='private.cliente_sucessao_assinaturas(date)'
 ASSIN_EVENTOS='FROM (SELECT DISTINCT s.evento_id FROM public.cliente_sucessoes s) e'
@@ -600,6 +620,10 @@ sabotagem() {
     sem_fila_nem_deteccao) cv_sabotar "$PUB" "VALUES (p_evento_id, v_rev, 'plano_publicado');" "SELECT p_evento_id, v_rev, 'plano_publicado' WHERE false;" \
                              && cv_sabotar "$ASSIN" "$ASSIN_EVENTOS" "FROM (SELECT DISTINCT s.evento_id FROM public.cliente_sucessoes s WHERE false) e" ;;
     publicar_apaga_recompra) cv_sabotar "$PUB" "v_rev := v_atual + 1;" "DELETE FROM public.venda_recompra; v_rev := v_atual + 1;" ;;
+    drenar_trava_propria) cv_sabotar 'private.venda_sugestoes_drenar_reprocesso()' \
+      "IF NOT pg_try_advisory_xact_lock(hashtext('venda_gerar_lista')) THEN" "IF NOT pg_try_advisory_xact_lock(hashtext('venda_sucessao_reprocesso')) THEN" ;;
+    drenar_sem_grafo) cv_sabotar 'private.venda_sugestoes_drenar_reprocesso()' \
+      "PERFORM pg_advisory_xact_lock(hashtextextended('cliente_sucessoes:grafo', 0));" "PERFORM 1;" ;;
     sem_trigger_revisoes) P -v ON_ERROR_STOP=1 -q -c "DROP TRIGGER cliente_sucessao_plano_revisoes_imutavel_trg ON public.cliente_sucessao_plano_revisoes" ;;
     *) echo "SABOTAGEM desconhecida: $1"; return 1 ;;
   esac
@@ -636,7 +660,9 @@ publicar_sem_fila:Q1:R1a
 sem_fila_nem_deteccao:R1o:R1a
 gerador_sem_drenar:R2a,R2d:R2b
 deteccao_cega:D4,X2:D1
-publicar_apaga_recompra:I1:I1b"
+publicar_apaga_recompra:I1:I1b
+drenar_trava_propria:CL1:Z1
+drenar_sem_grafo:CL2:CL1"
 
 rodada() {
   adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4
