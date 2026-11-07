@@ -47,6 +47,10 @@ interface PedidoRow {
   num_skus: number;
   status: string;
   condicao_pagamento_codigo?: string | null;
+  /** Origem da condição (default_a_vista = padrão do motor, nunca confirmado). */
+  condicao_origem?: string | null;
+  /** Texto da condição que o portal Sayerlack mostrou (D-1). */
+  condicao_portal_lida?: string | null;
   condicao_pagamento_descricao?: string | null;
   num_parcelas?: number | null;
   canal_pedido?: string | null;
@@ -559,7 +563,7 @@ async function dividirPedidosGrandesSayerlack(
 
     const { data: filhoRows, error: fetchErr } = await db
       .from("pedido_compra_sugerido")
-      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, condicao_origem, condicao_portal_lida, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total")
       .in("id", filhoIds)
       .order("split_lote", { ascending: true });
 
@@ -1184,6 +1188,17 @@ async function processarPedido(
         `Pedido sem condição de pagamento. Selecione uma condição antes de disparar.`,
       );
     }
+    // D-1 (pontos cegos Onda 2, 2026-11-07): pedido do app que foi ao portal Sayerlack leva a condição REAL que o portal
+    // aplicou (a edge de envio grava antes do sucesso_portal). Se ela não resolveu, o pedido segue no padrão do motor
+    // ("000 À Vista", nunca confirmado) — e PO à vista sem prova é fabricar condição: recusa (Codex P1). O pedido JÁ está
+    // no portal; o caminho é escolher a condição no pedido (vira manual_humano) e disparar de novo, nunca reenviar.
+    if (protocoloPortal && pedido.condicao_origem === "default_a_vista") {
+      throw new Error(
+        `Condição de pagamento do portal não resolvida (o portal mostrou "${pedido.condicao_portal_lida ?? "nada legível"}"). ` +
+          `O pedido JÁ está no portal Sayerlack com o protocolo ${protocoloPortal} — não reenvie: escolha a condição de ` +
+          `pagamento no pedido e dispare de novo.`,
+      );
+    }
     // Normaliza para string de até 3 chars, mantendo zeros à esquerda (ex: "000")
     const cCodParc = String(condRaw).trim().slice(0, 3);
     const nQtdeParc = Math.max(1, Number(pedido.num_parcelas ?? 1) || 1);
@@ -1803,7 +1818,7 @@ Deno.serve(async (req: Request) => {
     // 2. Pedidos aprovados (com dados do fornecedor)
     let aprovadosQuery = db
       .from("pedido_compra_sugerido")
-      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total, portal_protocolo, status_envio_portal")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, condicao_origem, condicao_portal_lida, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total, portal_protocolo, status_envio_portal")
       .eq("empresa", empresa);
 
     aprovadosQuery = pedidoId
@@ -1824,7 +1839,7 @@ Deno.serve(async (req: Request) => {
       const cutoff72h = new Date(Date.now() - 72 * 3600 * 1000).toISOString();
       const { data: backlogRaw, error: backErr } = await db
         .from("pedido_compra_sugerido")
-        .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total, portal_protocolo, status_envio_portal")
+        .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, condicao_origem, condicao_portal_lida, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total, portal_protocolo, status_envio_portal")
         .eq("empresa", empresa)
         .eq("status", "aprovado_aguardando_disparo")
         .lt("data_ciclo", dataCiclo)            // < hoje (não <=): o lote do dia já foi pego acima

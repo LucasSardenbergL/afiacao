@@ -12,7 +12,7 @@ import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import { track } from '@/lib/analytics';
 import { formatBRL } from '@/components/reposicao/pedidos/shared';
 import {
-  interpretarRespostaImportacao, linkDoPedido, PROTOCOLO_PORTAL_RE, respostaIndeterminada, type ResultadoTela,
+  corpoDoErroEdge, interpretarRespostaImportacao, linkDoPedido, PROTOCOLO_PORTAL_RE, respostaIndeterminada, type ResultadoTela,
 } from './importar-portal';
 
 /** Chaves que o painel do portal e a lista do ciclo leem — a importação muda as duas. */
@@ -52,6 +52,11 @@ export function ImportarPedidoPortalDialog({
       if (error) {
         // Com corpo, a edge disse o motivo (recusa antes de gravar). Sem corpo (prazo do gateway, rede) o PO PODE ter
         // saído depois: é "não sei", nunca "não foi importado" (revisão Fable+Codex 2026-11).
+        // O corpo estruturado vale também em 500: carrega o #id do pedido já gravado (Codex P2, 2026-11-07).
+        const corpo = await corpoDoErroEdge(error);
+        if (corpo && (typeof corpo.etapa === 'string' || Number.isInteger(corpo.pedido_id))) {
+          return interpretarRespostaImportacao({ ok: false, etapa: 'importacao', ...corpo }, numero);
+        }
         const msg = await mensagemDoErroEdge(error);
         return msg
           ? interpretarRespostaImportacao({ ok: false, etapa: 'importacao', mensagem: msg }, numero)

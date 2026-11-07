@@ -56,8 +56,11 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * pendente e a edge respondia "envio iniciado". Nenhuma pré-condição de banco (a migration
  * 20261011150000 fecha a mesma porta na RPC, de forma independente).
  * v1.9 (2026-10-14) — pedido Sayerlack COM protocolo (ex.: importado do portal) não é dividido em lotes de 20.
+ * v1.11 (2026-11-07, pontos cegos Onda 2 / D-1) — pedido do app com protocolo do portal ainda em `default_a_vista`
+ * (condição real não resolvida) NÃO vira PO: lança antes do Omie com o texto lido. Pré-condição de banco: migration
+ * 20261107140000 (colunas `condicao_portal_lida`) e a edge de envio v1.13 deployadas ANTES desta.
  */
-export const VERSAO = "v1.10-gate-auth-canonico";
+export const VERSAO = "v1.11-condicao-real-obrigatoria";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";

@@ -125,6 +125,22 @@ export function respostaIndeterminada(protocolo: string, detalhe: string | null)
   };
 }
 
+/**
+ * Corpo JSON de um erro não-2xx do `supabase.functions.invoke` (fica em `error.context`, um Response). A edge manda o
+ * mesmo contrato em 500 — inclusive `pedido_id` de pedido JÁ gravado; reconstruir só com a mensagem apagava o #id e a
+ * tela dizia "não foi importado" (Codex P2, 2026-11-07). `null` = sem corpo legível.
+ */
+export async function corpoDoErroEdge(err: unknown): Promise<Record<string, unknown> | null> {
+  const ctx = (err as { context?: unknown } | null)?.context;
+  if (!ctx || typeof (ctx as Response).clone !== 'function') return null;
+  try {
+    const parsed: unknown = await (ctx as Response).clone().json();
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---- Painel "Pedidos do portal Sayerlack" (RPC sayerlack_painel_portal) ----
 
 interface PendenciaPortal { protocolo: string; mensagem: string; tentativas: number; ultimaEm: string | null }

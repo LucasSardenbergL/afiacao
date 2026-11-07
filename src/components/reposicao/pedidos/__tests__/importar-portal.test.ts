@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { interpretarRespostaImportacao, linkDoPedido, normalizarPainel, PROTOCOLO_PORTAL_RE, respostaIndeterminada } from '../importar-portal';
+import { corpoDoErroEdge, interpretarRespostaImportacao, linkDoPedido, normalizarPainel, PROTOCOLO_PORTAL_RE, respostaIndeterminada } from '../importar-portal';
 
 describe('interpretarRespostaImportacao', () => {
   it('sucesso só com PO confirmado (ok + concluido)', () => {
@@ -122,5 +122,21 @@ describe('normalizarPainel', () => {
     expect(normalizarPainel({})).toEqual({ pendencias: [], semPo: [], importados: [] });
     expect(() => normalizarPainel(null)).toThrow(/ilegível/);
     expect(() => normalizarPainel([])).toThrow(/ilegível/);
+  });
+});
+
+describe('corpoDoErroEdge (Codex P2, 2026-11-07)', () => {
+  it('lê o corpo de um 500 com pedido_id; a tela mostra o pedido, não "não foi importado"', async () => {
+    const err = { context: new Response(JSON.stringify({ ok: false, etapa: 'leitura', pedido_id: 12, ja_existia: true, mensagem: 'Configuração ausente' }), { status: 500 }) };
+    const corpo = await corpoDoErroEdge(err);
+    expect(corpo?.pedido_id).toBe(12);
+    const r = interpretarRespostaImportacao({ ok: false, etapa: 'importacao', ...corpo }, '2140603');
+    expect(r.tom).toBe('aviso');
+    expect(r.pedidoId).toBe(12);
+  });
+  it('sem contexto, corpo não-JSON ou lista: null', async () => {
+    expect(await corpoDoErroEdge(new Error('x'))).toBeNull();
+    expect(await corpoDoErroEdge({ context: new Response('<html>', { status: 502 }) })).toBeNull();
+    expect(await corpoDoErroEdge({ context: new Response('[1]', { status: 500 }) })).toBeNull();
   });
 });

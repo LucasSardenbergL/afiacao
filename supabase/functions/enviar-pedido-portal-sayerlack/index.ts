@@ -1565,8 +1565,9 @@ async function uploadScreenshot(
 /**
  * D-1 (2026-11-07): o pedido do app aceito no portal leva ao PO a condição que o PORTAL aplicou. A RPC traduz pela
  * mesma função da importação (de-para D-2 + regra exata), só troca o padrão "000 À Vista" (nunca escolha humana), só
- * antes do PO, e devolve o motivo quando não aplica. Fail-open de propósito: o pedido JÁ está no portal — travar o PO
- * por causa da condição seria pior que a condição padrão de hoje; o texto lido fica gravado para o sensor.
+ * antes do PO, e devolve o motivo quando não aplica. Não lança: o pedido JÁ está no portal e a transição tem de sair.
+ * Não resolvida ⇒ o pedido segue `default_a_vista` e o `disparar-pedidos-aprovados` RECUSA o PO até alguém escolher a
+ * condição (Codex P1: sucesso no portal não prova pagamento à vista). O texto lido fica gravado para o sensor.
  */
 async function aplicarCondicaoDoPortal(supabase: SupabaseClient, pedidoId: number, texto: string | null) {
   try {
@@ -2134,6 +2135,9 @@ async function processarPedido(
 
   // Maquina de estados guiada pelo envelope.
   if (envStatus === "sucesso_portal") {
+    // Condição REAL antes da transição (Codex P1, 2026-11-07): com o pedido ainda em enviando_portal nenhum disparo cria
+    // o PO, então quem enxerga sucesso_portal já enxerga a condição aplicada (ou a recusa do disparo, se não resolveu).
+    await aplicarCondicaoDoPortal(supabase, pedido.id, envelope?.portal_condicao?.texto ?? null);
     const r = await aplicarTransicao("sucesso_portal", {
       erro: null,
       protocolo: envelope.protocolo ?? null,
@@ -2235,7 +2239,6 @@ async function processarPedido(
     } catch (e) {
       console.error(`[envio-portal] Pedido #${pedido.id}: falha best-effort na captura de custo:`, e instanceof Error ? e.message : String(e));
     }
-    await aplicarCondicaoDoPortal(supabase, pedido.id, envelope?.portal_condicao?.texto ?? null);
     await registrarPedidoOmieAposPortal(pedido);
     return r;
   }
