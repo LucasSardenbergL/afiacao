@@ -3,6 +3,11 @@
 -- O envio sai marcado eh_teste: não entra no denominador e não queima lead (a Regina recebe os mesmos 5 quando for
 -- ligada de verdade). O cron radar-avisar-vendedores-semanal continua DESLIGADO: isto é 1 chamada, não um agendamento.
 -- Idempotente: na mesma semana a 2ª chamada pula com 'ja_enviado_na_semana'. Rodar por `bun run db:aplicar`.
+--
+-- JÁ APLICADO em 2026-11-07 (db:aplicar, recibo #945): sha256 450b56f4a4e34edfd69511333149c7e076df996c698b377c1f847dcb75d31b11,
+-- commit 5315cea6a (branch claude/radar-d1-aplicados-2026-11-07). Aquela versão tinha `IF v_n <> 1` na pós-condição;
+-- esta troca por IS DISTINCT FROM (gate assert-verde-por-ausencia; v_n vem de count(*), o efeito é o mesmo).
+-- NÃO reaplicar: em outra semana geraria um novo e-mail de teste.
 
 INSERT INTO public.radar_email_vendedor_config (vendedor_user_id, ativo, email_teste)
 VALUES ('700657a1-d75d-4c72-99b1-0a0f2065fa29', true, 'lucascoelhosardenberg@gmail.com')
@@ -23,7 +28,7 @@ BEGIN
    WHERE e.vendedor_user_id = '700657a1-d75d-4c72-99b1-0a0f2065fa29'
      AND e.semana = v_semana AND e.eh_teste
      AND e.destinatario_email = 'lucascoelhosardenberg@gmail.com';
-  IF v_n <> 1 THEN
+  IF v_n IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'POS FALHOU: esperava 1 envio de teste da Regina na semana %, achei %', v_semana, v_n;
   END IF;
   IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'radar-avisar-vendedores-semanal' AND active) THEN
