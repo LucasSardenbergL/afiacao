@@ -337,7 +337,7 @@ fica parado como hoje: o cron já manda o e-mail de situação impeditiva. A dif
     registra o vínculo e avisa que o PO existe com o pedido cancelado. Se não acha, nada muda.
 - **Front (5.5)**: o `PortalStatusPanel` de Gerir pedidos mostra a situação lida e quando foi lida. Para 6, diz
   "disparo bloqueado" (sem PO) ou "há PO no Omie, confira" (com PO). Se a leitura for de protocolo anterior, avisa.
-- **Prova**: `db/test-sayerlack-situacao-portal.sh`, PG17, 50 asserts verdes em `C` e `pt_BR.UTF-8`. Usa 2 conexões
+- **Prova**: `db/test-sayerlack-situacao-portal.sh`, PG17, 51 asserts verdes em `C` e `pt_BR.UTF-8`. Usa 2 conexões
   com bloqueio observado nas duas ordens gravar × claim. Os 3 dentes da postcondição (S7, S2, S9) são asserts do
   modo normal. `--falsificar` com controle verde e 13 sabotagens de comportamento, uma camada por vez.
 - **Codex**: desenho v3 com 4 P1 (reconsulta sem gravar, B' depois das validações, ordem por início da leitura,

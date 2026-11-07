@@ -34,7 +34,7 @@ MIG_REAL="$REPO_ROOT/supabase/migrations/20261108120000_sayerlack_situacao_porta
 # sabotagens de COMPORTAMENTO desligam também a postcondição que as pegaria (senão mediriam a POS).
 # ══════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="claim_sem_veto:C1,C4,R2 claim_veto_por_protocolo:C4 sem_trigger:T1,T2 sobreposta_libera:W7
+  SABOTAGENS="claim_sem_veto:C1,C4,R2 claim_veto_por_protocolo:C4b sem_trigger:T1,T2 sobreposta_libera:W7
               ilegivel_grava:W3 sem_ordem:W5 qualquer_empresa:W10 seis_nao_estende:W15 sem_trava_protocolo:W17,W18,W19 trava_so_com_seis:W19 trava_com_btrim:W19b trava_sem_empresa:W19c sem_formato_protocolo:W19d"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
@@ -159,8 +159,7 @@ case "$SAB" in
     trocar "$MIG" "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__situacao_portal_escritor_unico();" \
       "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__situacao_portal_escritor_unico();
 ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_escritor_unico_desligado;"
-    trocar "$MIG" "                   AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') THEN" \
-      "                   AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') AND false THEN" ;;
+    trocar "$MIG" "    RAISE EXCEPTION 'S2 FALHOU: trigger do escritor único ausente ou desligado';" "    NULL;" ;;
   sobreposta_libera)  # compara INÍCIOS (o desenho v3): leitura sobreposta mais curta liberaria o 6
     trocar "$MIG" "              OR p_lido_de > portal_situacao_ate
 " "              OR p_lido_de > portal_situacao_em
@@ -195,8 +194,8 @@ ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_tr
     trocar "$MIG" "     AND NEW.portal_protocolo IS DISTINCT FROM OLD.portal_protocolo" "     AND btrim(COALESCE(NEW.portal_protocolo, '')) IS DISTINCT FROM btrim(OLD.portal_protocolo)" ;;
   trava_so_com_seis)  # o v5: só travava com 6 gravado — a ida e volta a partir de um 1 passava
     trocar "$MIG" "  IF btrim(COALESCE(OLD.portal_protocolo, '')) <> ''
-" "  IF OLD.portal_situacao_codigo = '6' AND btrim(COALESCE(OLD.portal_protocolo, '')) <> ''
-" ;;
+     AND NEW.portal_protocolo IS DISTINCT FROM OLD.portal_protocolo" "  IF OLD.portal_situacao_codigo = '6' AND btrim(COALESCE(OLD.portal_protocolo, '')) <> ''
+     AND NEW.portal_protocolo IS DISTINCT FROM OLD.portal_protocolo" ;;
   qualquer_empresa)
     trocar "$MIG" "       WHERE empresa = 'OBEN'
          AND btrim(portal_protocolo) = r.protocolo
@@ -342,8 +341,11 @@ eq "C2 sem pendência aberta, pendente_desde é null" "$(printf '%s' "$r" | camp
 eq "C3 e o claim NÃO foi gravado" "$(Pq -c "SELECT disparo_claim_em IS NULL FROM public.pedido_compra_sugerido WHERE id=1")" "t"
 Pq -c "UPDATE public.pedido_compra_sugerido SET portal_protocolo = '2141901' WHERE id = 1" >/dev/null 2>&1 || true
 eq "C4 tentar trocar o protocolo NÃO libera a compra" "$(CL 1 | campo claimed)" "false"
-W "$NAO_FUTURO 17:00Z" "$NAO_FUTURO 17:01Z" '[{"protocolo":"2141001","codigo":"1","texto":"1 - Aberto"}]' >/dev/null
-eq "C5 leitura posterior com outro código libera" "$(SIT 1)|$(CL 1 | campo claimed)" "1|2141001|true"
+# Correção excepcional do protocolo (SQL Editor, GUC): o 6 do protocolo anterior SEGUE bloqueando.
+Pq -c "BEGIN; SET LOCAL app.sayerlack_protocolo_correcao = 'on'; UPDATE public.pedido_compra_sugerido SET portal_protocolo = '2141901' WHERE id = 1; COMMIT;" >/dev/null 2>&1 || true
+eq "C4b protocolo corrigido no SQL Editor: o 6 do protocolo anterior segue bloqueando" "$(Pq -c "SELECT portal_protocolo FROM public.pedido_compra_sugerido WHERE id=1")|$(CL 1 | campo claimed)" "2141901|false"
+W "$NAO_FUTURO 17:00Z" "$NAO_FUTURO 17:01Z" '[{"protocolo":"2141901","codigo":"1","texto":"1 - Aberto"}]' >/dev/null
+eq "C5 leitura posterior do protocolo atual com outro código libera" "$(SIT 1)|$(CL 1 | campo claimed)" "1|2141901|true"
 eq "C6 sem observação dispara" "$(CL 7 | campo claimed)" "true"
 eq "C7 código ≠ 6 dispara" "$(CL 6 | campo claimed)" "true"
 eq "C8 status fora da allowlist segue recusado" "$(Pq -c "UPDATE public.pedido_compra_sugerido SET status='disparado' WHERE id=8 RETURNING id" >/dev/null; CL 8 | campo claimed)" "false"
