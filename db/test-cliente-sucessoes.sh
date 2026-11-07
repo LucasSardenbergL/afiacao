@@ -189,10 +189,10 @@ cenario() {
   chk B4 "mesmo documento" "$(declarar "$MASTER" "$ANT" "$ANT" cisao 2026-10-06 0 motivo)" "mesmo_documento"
 
   echo "── C. resolução para UMA identidade canônica ──"
-  chk C1 "antigo que não é cliente (o lead)" "$(declarar "$MASTER" "$NOV1" "$DX" cisao 2026-10-06 0 motivo)" "antigo_nao_e_cliente"
-  chk C2 "antigo ambíguo (profile + alias de outro canônico)" "$(declarar "$MASTER" "$AMB" "$NOV1" cisao 2026-10-06 0 motivo)" "antigo_ambiguo"
-  chk C3 "novo ambíguo" "$(declarar "$MASTER" "$DX" "$AMB" cisao 2026-10-06 0 motivo)" "novo_ambiguo"
-  chk C4 "dois documentos do MESMO comprador (alias)" "$(declarar "$MASTER" "$ANT" "$MESMO" cisao 2026-10-06 0 motivo)" "mesmo_comprador"
+  chk C1 "antigo que não é cliente (o lead)" "$(declarar "$MASTER" "$NOV1" "$DX" cisao 2026-10-06 "$(versao)" motivo)" "antigo_nao_e_cliente"
+  chk C2 "antigo ambíguo (profile + alias de outro canônico)" "$(declarar "$MASTER" "$AMB" "$NOV1" cisao 2026-10-06 "$(versao)" motivo)" "antigo_ambiguo"
+  chk C3 "novo ambíguo" "$(declarar "$MASTER" "$DX" "$AMB" cisao 2026-10-06 "$(versao)" motivo)" "novo_ambiguo"
+  chk C4 "dois documentos do MESMO comprador (alias)" "$(declarar "$MASTER" "$ANT" "$MESMO" cisao 2026-10-06 "$(versao)" motivo)" "mesmo_comprador"
   chk C5 "resolvedor: documento mascarado no profile casa o normalizado" \
     "$(P -tA -q -c "SELECT user_id || '/' || candidatos || '/' || nome FROM private.cliente_resolver_documento('$ANT')")" "$UA/1/DIVIMOVEIS"
   chk C6 "nenhuma recusa escreveu" "$(ativas true)/$(versao)" "0/0"
@@ -203,9 +203,9 @@ cenario() {
   chk D2 "versão do grafo subiu para 1" "$(versao)" "1"
   chk D3 "versão velha é recusada (outro gestor gravou antes)" "$(declarar "$GER" "$ANT" "$NOV2" cisao 2026-10-06 0 motivo)" "versao_mudou"
   chk D4 "gestor, com a versão atual, põe a 2ª nova no MESMO evento" \
-    "$(declarar "$GER" "$ANT" "$NOV2" cisao 2026-10-06 1 ok)/$(P -tA -q -c "SELECT count(DISTINCT evento_id) FROM public.cliente_sucessoes WHERE antigo_documento='$ANT'")" "true/1"
-  chk D5 "tipo/corte divergente do evento da antiga" "$(declarar "$MASTER" "$ANT" "$DX" sucessao 2026-10-06 2 motivo)" "evento_divergente"
-  chk D6 "par já declarado" "$(declarar "$MASTER" "$ANT" "$NOV1" cisao 2026-10-06 2 motivo)" "ja_declarada"
+    "$(declarar "$GER" "$ANT" "$NOV2" cisao 2026-10-06 "$(versao)" ok)/$(P -tA -q -c "SELECT count(DISTINCT evento_id) FROM public.cliente_sucessoes WHERE antigo_documento='$ANT'")" "true/1"
+  chk D5 "tipo/corte divergente do evento da antiga" "$(declarar "$MASTER" "$ANT" "$DX" sucessao 2026-10-06 "$(versao)" motivo)" "evento_divergente"
+  chk D6 "par já declarado" "$(declarar "$MASTER" "$ANT" "$NOV1" cisao 2026-10-06 "$(versao)" motivo)" "ja_declarada"
   chk D7 "não marca ja_cliente no Radar" "$(P -tA -q -c "SELECT ja_cliente FROM public.radar_empresas WHERE cnpj='$NOV1'")" "f"
   chk D8 "gravou o documento normalizado e quem declarou" \
     "$(P -tA -q -c "SELECT antigo_documento || '/' || declarado_por FROM public.cliente_sucessoes WHERE novo_documento='$NOV1'")" "$ANT/$MASTER"
@@ -228,10 +228,10 @@ cenario() {
     "$(P -tA -q -c "SELECT antigo_user_id || '/' || novo_user_id FROM private.cliente_sucessoes_vigentes('2026-11-01') WHERE novo_documento='$NOV1'")" "$UA/$UN1"
 
   echo "── F. cadeia e ciclo recusados; fusão permitida ──"
-  chk F1 "a nova não passa adiante (A→B→C)" "$(declarar "$MASTER" "$NOV2" "$DX" cisao 2026-10-10 2 motivo)" "cadeia"
-  chk F2 "quem já passou não recebe (X→A com A→B)" "$(declarar "$MASTER" "$DX" "$ANT" cisao 2026-10-10 2 motivo)" "cadeia"
-  chk F3 "ciclo B→A" "$(declarar "$MASTER" "$NOV1" "$ANT" sucessao 2026-10-10 2 motivo)" "cadeia"
-  chk F4 "fusão: outra antiga também sucede para MARQUES" "$(declarar "$MASTER" "$DY" "$NOV1" sucessao 2026-10-01 2 ok)" "true"
+  chk F1 "a nova não passa adiante (A→B→C)" "$(declarar "$MASTER" "$NOV2" "$DX" cisao 2026-10-10 "$(versao)" motivo)" "cadeia"
+  chk F2 "quem já passou não recebe (X→A com A→B)" "$(declarar "$MASTER" "$DX" "$ANT" cisao 2026-10-10 "$(versao)" motivo)" "cadeia"
+  chk F3 "ciclo B→A" "$(declarar "$MASTER" "$NOV1" "$ANT" sucessao 2026-10-10 "$(versao)" motivo)" "cadeia"
+  chk F4 "fusão: outra antiga também sucede para MARQUES" "$(declarar "$MASTER" "$DY" "$NOV1" sucessao 2026-10-01 "$(versao)" ok)" "true"
   chk F5 "cadeia não escreveu" "$(ativas "antigo_documento IN ('$NOV2','$DX','$NOV1')")" "0"
 
   echo "── G. revogar (auditado) ──"
@@ -242,17 +242,17 @@ cenario() {
   chk G2 "id inexistente: P0002" \
     "$(erro_como "$MASTER" "SELECT public.cliente_revogar_sucessao('00000000-0000-0000-0000-000000000000','x',3)" | cut -d: -f1)" "P0002"
   chk G3 "versão velha não revoga" \
-    "$(q_como authenticated "$MASTER" "SELECT public.cliente_revogar_sucessao('$id2','nao era cisao',2)->>'motivo'")" "versao_mudou"
+    "$(q_como authenticated "$MASTER" "SELECT public.cliente_revogar_sucessao('$id2','nao era cisao',$(( $(versao) - 1 )))->>'motivo'")" "versao_mudou"
   chk G4 "gestor revoga a 2ª nova" \
-    "$(q_como authenticated "$GER" "SELECT public.cliente_revogar_sucessao('$id2','nao era cisao',3)->>'ok'")" "true"
+    "$(q_como authenticated "$GER" "SELECT public.cliente_revogar_sucessao('$id2','nao era cisao',$(versao))->>'ok'")" "true"
   chk G5 "a linha fica: revogada, por quem, por quê" \
     "$(selo "$FARM" "$NOV2" estado)/$(selo "$FARM" "$NOV2" revogado_por_nome)/$(selo "$FARM" "$NOV2" revogado_motivo)" "revogada/Gestor/nao era cisao"
   chk G6 "revogar de novo: ja_revogada" \
-    "$(q_como authenticated "$GER" "SELECT public.cliente_revogar_sucessao('$id2','de novo',4)->>'motivo'")" "ja_revogada"
+    "$(q_como authenticated "$GER" "SELECT public.cliente_revogar_sucessao('$id2','de novo',$(versao))->>'motivo'")" "ja_revogada"
   chk G7 "revogada sai das vigentes" \
     "$(P -tA -q -c "SELECT count(*) FROM private.cliente_sucessoes_vigentes('2026-11-01') WHERE novo_documento='$NOV2'")" "0"
   chk G8 "re-declarar depois de revogar é permitido (nova linha)" \
-    "$(declarar "$MASTER" "$ANT" "$NOV2" cisao 2026-10-06 4 ok)/$(P -tA -q -c "SELECT count(*) FROM public.cliente_sucessoes WHERE novo_documento='$NOV2'")" "true/2"
+    "$(declarar "$MASTER" "$ANT" "$NOV2" cisao 2026-10-06 "$(versao)" ok)/$(P -tA -q -c "SELECT count(*) FROM public.cliente_sucessoes WHERE novo_documento='$NOV2'")" "true/2"
 
   echo "── H. auditoria: sem DELETE/TRUNCATE, só a revogação altera ──"
   chk H1 "DELETE direto (até o dono da tabela)" \
@@ -305,7 +305,7 @@ cenario() {
 # da 1ª tomada (confirmada em pg_locks), declara W2→W1. Resultados em s1.out / s2.out.
 concorrer() {
   local claims="{\"sub\":\"$MASTER\",\"role\":\"authenticated\"}" i
-  P -tA -q -v ON_ERROR_STOP=1 > "$TMPD/s1.out" 2>&1 <<SQL &
+  PGAPPNAME=prova_s1 P -tA -q -v ON_ERROR_STOP=1 > "$TMPD/s1.out" 2>&1 <<SQL &
 BEGIN;
 SET ROLE authenticated;
 SET request.jwt.claims = '$claims';
@@ -315,7 +315,9 @@ COMMIT;
 SQL
   local pid=$!
   for i in $(seq 1 100); do
-    [ "$(P -tA -q -c "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND granted")" -ge 1 ] && break
+    # Prontidão pela SESSÃO (já no pg_sleep, transação aberta com a escrita feita), não pela trava: a sabotagem
+    # sem_trava tira a trava, e esperar por ela adiaria a 2ª sessão para depois do COMMIT (teatro).
+    [ "$(P -tA -q -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='prova_s1' AND state='active' AND query LIKE 'SELECT pg_sleep%'")" -ge 1 ] && break
     sleep 0.05
   done
   q_como authenticated "$MASTER" "SELECT public.cliente_declarar_sucessao('$DW2', '$DW1', 'cisao', '2026-10-01', $2)->>'motivo'" > "$TMPD/s2.raw" || true
@@ -342,6 +344,8 @@ sabotagem() {
       "IF NOT (COALESCE(private.cap_radar_prospectar(v_uid), false) OR COALESCE(public.pode_ver_carteira_completa(v_uid), false)) THEN" "IF false THEN" ;;
     sem_trava) cv_sabotar "$DECL" "PERFORM pg_advisory_xact_lock(hashtextextended('cliente_sucessoes:grafo', 0));" "PERFORM 1;" ;;
     sem_versao) cv_sabotar "$DECL" "IF v_versao IS DISTINCT FROM p_versao_esperada THEN" "IF false THEN" ;;
+    sem_versao_revogar) cv_sabotar 'public.cliente_revogar_sucessao(uuid,text,bigint)' \
+      "IF v_versao IS DISTINCT FROM p_versao_esperada THEN" "IF false THEN" ;;
     sem_cadeia) cv_sabotar "$DECL" "OR EXISTS (SELECT 1 FROM public.cliente_sucessoes s WHERE s.revogado_em IS NULL AND s.antigo_documento = v_novo) THEN" "THEN" ;;
     sem_ambiguo) cv_sabotar "$DECL" "ELSIF v_a.candidatos > 1 THEN" "ELSIF false THEN" ;;
     sem_mesmo_comprador) cv_sabotar "$DECL" "IF v_n.user_id = v_a.user_id THEN" "IF false THEN" ;;
@@ -369,7 +373,8 @@ SABOTAGENS="sem_gate_declarar:A1,A2:A4
 sem_gate_previa:A4:A1
 selo_aberto:A5,A6:A7
 sem_trava:J1:D3
-sem_versao:D3,G3:D1
+sem_versao:D3:D1
+sem_versao_revogar:G3:A8
 sem_cadeia:F2:F1
 sem_cadeia_recebe:F1:F2
 sem_ambiguo:C2:C3
