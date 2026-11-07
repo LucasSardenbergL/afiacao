@@ -248,11 +248,6 @@ SQL
 
 P -q -f "$PRED"
 FPEN_ANT="public.radar_penetracao_por_municipio(text,text,integer)"
-FPEN="public.radar_penetracao_por_municipio(text,text,integer,text[])"
-FCONT_ANT="public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamptz,text[],boolean,text)"
-FCONT="public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamptz,text[],boolean,text,boolean)"
-FLISTA_ANT="public.radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamptz,text,numeric,boolean,boolean,date,date,text,integer,integer,text)"
-FLISTA="public.radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamptz,text,numeric,boolean,boolean,date,date,text,integer,integer,text,text)"
 for f in "public.radar_kpis()" "public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamptz,text[],boolean)" "$FPEN_ANT"; do
   Pq -c "REVOKE ALL ON FUNCTION $f FROM PUBLIC, anon; GRANT EXECUTE ON FUNCTION $f TO authenticated, service_role;" >/dev/null
 done
