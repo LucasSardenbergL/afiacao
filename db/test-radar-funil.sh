@@ -62,7 +62,10 @@ export PGVER=17
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 PORT="${PGPORT_TEST:-5498}"
 DATA="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-radar-funil.XXXXXX")/data"
-export LC_ALL="${LC_ALL_TESTE:-C}" LANG="${LC_ALL_TESTE:-C}"
+# Matriz: HARNESS_LC=C|pt_BR.UTF-8 (lc_messages do servidor) · HARNESS_TZ=UTC|America/Sao_Paulo (TimeZone do servidor).
+# O processo fica em C; os asserts casam marca ASCII de caixa fixa (SQLSTATE + texto do RAISE), nunca a severidade.
+export LC_ALL=C LANG=C
+HARNESS_LC="${HARNESS_LC:-C}"; HARNESS_TZ="${HARNESS_TZ:-UTC}"
 MIG_USADA="$(dirname "$DATA")/mig.sql"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
@@ -130,6 +133,9 @@ esac
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$(dirname "$DATA")/pg.log" -w start >/dev/null
 P()  { "$PGBIN/psql" -X -v ON_ERROR_STOP=1 -p "$PORT" -h /tmp -U postgres -d postgres "$@"; }
 Pq() { P -qAt "$@"; }
+P -q -c "ALTER DATABASE postgres SET lc_messages = '$HARNESS_LC'" -c "ALTER DATABASE postgres SET timezone = '$HARNESS_TZ'" \
+  || { echo "INFRA: lc_messages='$HARNESS_LC'/timezone='$HARNESS_TZ' indisponivel"; exit 1; }
+echo "═══ PG17 :$PORT · lc_messages=$HARNESS_LC · TimeZone=$HARNESS_TZ ═══"
 
 # ── Esquema mínimo (o mesmo de db/test-radar-leads-vendedor.sh, que reproduz prod; + o que o pacote H lê) ──────
 P -q <<'SQL'
@@ -261,7 +267,7 @@ erro_como() {
   if out="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE $1" -c "SET request.jwt.claims = '$claims'" -c "$3" 2>&1)"; then
     echo "SEM_ERRO"; return 0
   fi
-  printf '%s\n' "$out" | sed -n 's/^ERROR:  \([0-9A-Z]\{5\}\): \(.*\)$/\1 \2/p' | head -1
+  printf '%s\n' "$out" | sed -n 's/^[A-Z]\{4,5\}:  \([0-9A-Z]\{5\}\): \(.*\)$/\1 \2/p' | head -1
 }
 prefixo() { case "$2" in "$3"*) eq "$1" "ok" "ok" ;; *) eq "$1" "$2" "$3…" ;; esac; }
 # funil <campo da linha> <vendedor> <semana: 0 = corrente, 1 = anterior> — lido COMO o gestor
