@@ -115,6 +115,14 @@ Pedido do founder: ligar o e-mail "para qualquer usuário que eu queira" sem SQL
 Prova: a mesma `db/test-radar-leads-vendedor.sh`, agora com a seção T (62 asserts, 46 sabotagens vermelhas no assert
 certo, nos dois locales). Vitest: `RadarEmailSemanalCard.estados.test.tsx` (10) e `radar-email-semanal.test.ts` (5), em `src/components/governanca/` e `src/lib/governanca/` (a tela é da Governança; importar do módulo do Radar seria vazamento de fronteira).
 
+**No ar (2026-11-07)**, PR #3700 (squash `ff357ce18`):
+
+| Camada | Quem | Evidência |
+| --- | --- | --- |
+| Migration `20261107140001` | founder (SQL Editor) | psql-ro: as 3 funções `prosecdef=t`, `anon=false`, `authenticated=true`; painel `provolatile=s`; coluna `atualizado_por` existe |
+| Publish | founder | `monitor-deploy.sh --pr 3700`: `PR_NO_AR`, ar `ff357ce1`; o card segue na `origin/main` sem commit posterior nos arquivos |
+| Estado | nada ligado | cron `radar-avisar-vendedores-semanal` `active=false`; quem liga é o founder, pela tela |
+
 ## Ativação (founder)
 
 **Pela tela** (depois da migration `20261107140001` e do Publish): Governança → Usuários → card "E-mail semanal de
