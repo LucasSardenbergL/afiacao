@@ -976,6 +976,54 @@ export type Database = {
           },
         ]
       }
+      cliente_sucessoes: {
+        Row: {
+          antigo_documento: string
+          data_corte: string
+          data_corte_sugerida: string | null
+          declarado_em: string
+          declarado_por: string
+          evento_id: string
+          id: string
+          novo_documento: string
+          observacao: string | null
+          revogado_em: string | null
+          revogado_motivo: string | null
+          revogado_por: string | null
+          tipo: string
+        }
+        Insert: {
+          antigo_documento: string
+          data_corte: string
+          data_corte_sugerida?: string | null
+          declarado_em?: string
+          declarado_por: string
+          evento_id: string
+          id?: string
+          novo_documento: string
+          observacao?: string | null
+          revogado_em?: string | null
+          revogado_motivo?: string | null
+          revogado_por?: string | null
+          tipo: string
+        }
+        Update: {
+          antigo_documento?: string
+          data_corte?: string
+          data_corte_sugerida?: string | null
+          declarado_em?: string
+          declarado_por?: string
+          evento_id?: string
+          id?: string
+          novo_documento?: string
+          observacao?: string | null
+          revogado_em?: string | null
+          revogado_motivo?: string | null
+          revogado_por?: string | null
+          tipo?: string
+        }
+        Relationships: []
+      }
       cliente_tier_preco: {
         Row: {
           company: string
@@ -10101,6 +10149,7 @@ export type Database = {
           condicao_origem: string | null
           condicao_pagamento_codigo: string | null
           condicao_pagamento_descricao: string | null
+          condicao_portal_lida: string | null
           criado_em: string | null
           data_ciclo: string
           delta_vs_anterior_perc: number | null
@@ -10166,6 +10215,7 @@ export type Database = {
           condicao_origem?: string | null
           condicao_pagamento_codigo?: string | null
           condicao_pagamento_descricao?: string | null
+          condicao_portal_lida?: string | null
           criado_em?: string | null
           data_ciclo?: string
           delta_vs_anterior_perc?: number | null
@@ -10231,6 +10281,7 @@ export type Database = {
           condicao_origem?: string | null
           condicao_pagamento_codigo?: string | null
           condicao_pagamento_descricao?: string | null
+          condicao_portal_lida?: string | null
           criado_em?: string | null
           data_ciclo?: string
           delta_vs_anterior_perc?: number | null
@@ -13075,6 +13126,83 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_socios: {
+        Row: {
+          cpf_mascarado: string
+          data_entrada: string | null
+          lote: string
+          n_raizes_pais: number
+          nome_normalizado: string
+          qualificacao: string
+          raiz: string
+        }
+        Insert: {
+          cpf_mascarado: string
+          data_entrada?: string | null
+          lote: string
+          n_raizes_pais: number
+          nome_normalizado: string
+          qualificacao: string
+          raiz: string
+        }
+        Update: {
+          cpf_mascarado?: string
+          data_entrada?: string | null
+          lote?: string
+          n_raizes_pais?: number
+          nome_normalizado?: string
+          qualificacao?: string
+          raiz?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "radar_socios_lote_fkey"
+            columns: ["lote"]
+            isOneToOne: false
+            referencedRelation: "radar_socios_lote"
+            referencedColumns: ["lote"]
+          },
+        ]
+      }
+      radar_socios_lote: {
+        Row: {
+          criado_em: string
+          digest: string
+          linhas_declaradas: number
+          lote: string
+          mes: string
+          publicado_em: string | null
+          raizes_declaradas: number
+          status: string
+          universo_raizes: number
+          versao_carga: string
+        }
+        Insert: {
+          criado_em?: string
+          digest: string
+          linhas_declaradas: number
+          lote: string
+          mes: string
+          publicado_em?: string | null
+          raizes_declaradas: number
+          status?: string
+          universo_raizes: number
+          versao_carga: string
+        }
+        Update: {
+          criado_em?: string
+          digest?: string
+          linhas_declaradas?: number
+          lote?: string
+          mes?: string
+          publicado_em?: string | null
+          raizes_declaradas?: number
+          status?: string
+          universo_raizes?: number
+          versao_carga?: string
+        }
+        Relationships: []
+      }
       rag_chunks: {
         Row: {
           chunk_index: number
@@ -15202,6 +15330,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sayerlack_condicao_portal_de_para: {
+        Row: {
+          codigo_omie: string
+          condicao_portal: string
+          criado_em: string
+          evidencia: string
+        }
+        Insert: {
+          codigo_omie: string
+          condicao_portal: string
+          criado_em?: string
+          evidencia: string
+        }
+        Update: {
+          codigo_omie?: string
+          condicao_portal?: string
+          criado_em?: string
+          evidencia?: string
+        }
+        Relationships: []
       }
       sayerlack_retry_motor_log: {
         Row: {
@@ -24942,6 +25091,23 @@ export type Database = {
         Returns: Json
       }
       radar_score_recalcular: { Args: never; Returns: Json }
+      radar_socios_iniciar: {
+        Args: {
+          p_digest: string
+          p_linhas: number
+          p_mes: string
+          p_raizes: number
+          p_universo: number
+          p_versao: string
+        }
+        Returns: Json
+      }
+      radar_socios_limpar: { Args: { p_max?: number }; Returns: Json }
+      radar_socios_publicar: { Args: { p_lote: string }; Returns: Json }
+      radar_socios_receber: {
+        Args: { p_linhas: Json; p_lote: string }
+        Returns: Json
+      }
       radar_telefone_compartilhado: {
         Args: { p_cnpj: string }
         Returns: {
@@ -25683,9 +25849,25 @@ export type Database = {
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
       sales_orders_instante_envio: { Args: never; Returns: string }
+      sayerlack_aplicar_condicao_portal: {
+        Args: { p_condicao_portal: string; p_pedido_id: number }
+        Returns: Json
+      }
       sayerlack_aplicar_custo_portal: {
         Args: { p_itens: Json; p_pedido_id: number; p_valor_total: number }
         Returns: number
+      }
+      sayerlack_condicao_portal_normalizar: {
+        Args: { p_texto: string }
+        Returns: string
+      }
+      sayerlack_condicao_portal_para_omie: {
+        Args: { p_condicao_portal: string }
+        Returns: {
+          codigo: string
+          descricao: string
+          num_parcelas: number
+        }[]
       }
       sayerlack_importar_pedido_portal: {
         Args: {

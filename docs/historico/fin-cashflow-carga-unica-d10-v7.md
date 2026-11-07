@@ -84,5 +84,18 @@ select status_code, content::jsonb->>'versao', content::jsonb ? 'resultados', le
    and content::text like '%"versao":"v2.%' order by created;
 ```
 
+## 1º ciclo pelo caminho novo — 07/11 ✅ (conferido por `psql-ro` às 12:30Z, exit 0)
+
+- `fin_projecao_snapshots`: 3 empresas × 3 cenários (`otimista,pessimista,realista`, 3 cada).
+- `acoes_execucoes`: 9 `sucesso`, 0 `erro`, um registro por combo como antes.
+- `net._http_response`: **3** respostas (eram 9), HTTP 200, `v2.3-carga-unica-cenarios`, com
+  `resultados`. O `cron.job_run_details` dos 3 jobs: `succeeded`.
+- Coerência: NCG e tesouraria IGUAIS nos 3 cenários de cada empresa (não dependem de cenário). O
+  saldo da semana 13 fica em otimista > realista > pessimista nas 3. O NCG contra 06/11:
+  colacor −0,2%, colacor_sc +4,5%, oben +5,2%.
+- A carga única medida: o 1º cenário de cada empresa leva a carga (colacor **6,9 s**, oben 1,8 s,
+  colacor_sc 0,9 s) e os outros dois, ~0,1 s cada. Antes eram 3 cargas concorrentes de ~7 s por
+  empresa.
+
 **Pendente fora desta entrega:** o realista da colacor de 05/11 segue ausente. Pelo plano, ele é
 refeito só para o cenário que falta, sem re-rodar o cron em lote.
