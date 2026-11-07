@@ -4,7 +4,7 @@ function assertEquals(atual: unknown, esperado: unknown) {
   const e = JSON.stringify(esperado);
   if (a !== e) throw new Error(`esperado ${e}, veio ${a}`);
 }
-import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, ncmsDoCp006, numeroBR, situacaoCancelada, situacaoPermitida } from "./leitura.ts";
+import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, ncmsDoCp006, numeroBR, situacaoCancelada, situacaoObservada, situacaoPermitida } from "./leitura.ts";
 
 // Resposta REAL do portal (pedido 2140603, 2026-10-14) — consulta e busca-itens-pedido.
 const LINHA_REAL = {
@@ -134,4 +134,19 @@ Deno.test("CP006 diz o NCM e o passo, sem 'peça ao administrador' (Fable C4)", 
   // Sem NCM legível na mensagem: não inventa um.
   assertEquals(ncmsDoCp006("sem detalhe"), []);
   assertEquals(mensagemErroImportacao("CP006", null).startsWith("Um item tem NCM sem alíquota"), true);
+});
+
+// ── Onda 5A: situação observada → escritor único ──
+Deno.test("situacaoObservada: linha única da OBEN com código 1..7, inclusive cancelado", () => {
+  const l = (situacao: string, cliente = "OBEN COMERCIO", pedido = "2141001") => ({ "Pedido": pedido, "Cliente": cliente, "Situação": situacao });
+  assertEquals(situacaoObservada([l("6 - Cancelado")], "2141001"), { protocolo: "2141001", codigo: "6", texto: "6 - Cancelado" });
+  assertEquals(situacaoObservada([l("1 - Aberto")], "2141001")?.codigo, "1");
+  // ilegível, código fora da lista fechada, outro cliente, ausente, ambíguo ⇒ nada a gravar
+  assertEquals(situacaoObservada([l("Cancelado")], "2141001"), null);
+  assertEquals(situacaoObservada([l("8 - Novo")], "2141001"), null);
+  assertEquals(situacaoObservada([l("6 - Cancelado", "OUTRA LTDA")], "2141001"), null);
+  assertEquals(situacaoObservada([l("6 - Cancelado", "OBEN", "2141002")], "2141001"), null);
+  assertEquals(situacaoObservada([l("6 - Cancelado"), l("1 - Aberto")], "2141001"), null);
+  // "Pedido Clien[te]" não é a coluna Pedido
+  assertEquals(situacaoObservada([{ "Pedido Cliente": "2141001", "Cliente": "OBEN", "Situação": "6 - Cancelado" }], "2141001"), null);
 });

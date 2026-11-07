@@ -18,7 +18,7 @@ import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
 import { ABRIR_CONSULTA_PEDIDOS } from "../_shared/sayerlack-portal-navegador.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
-import { lerPedidoPortal, mensagemErroImportacao, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
+import { lerPedidoPortal, mensagemErroImportacao, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -267,6 +267,30 @@ interface PedidoEstado {
   condicao_pagamento_descricao: string | null;
 }
 
+/**
+ * Grava a situação lida pelo escritor único. NUNCA lança: não gravar só pode deixar uma observação velha valendo — um
+ * 6 velho segue bloqueando (falha fechada) e um 1 velho é o mesmo estado de antes desta leitura. O desfecho vai na
+ * resposta (`situacao_gravada`) e no log — não some.
+ */
+async function gravarSituacaoObservada(
+  db: ReturnType<typeof criarCliente>, linhas: LinhaConsultaRaw[], protocolo: string, lidoDe: string, lidoAte: string,
+): Promise<"aceita" | "nao_aceita" | "ilegivel" | "erro"> {
+  const obs = situacaoObservada(linhas, protocolo);
+  if (!obs) return "ilegivel";
+  try {
+    const { data, error } = await db.rpc("sayerlack_registrar_situacao_portal", { p_lido_de: lidoDe, p_lido_ate: lidoAte, p_itens: [obs] });
+    if (error) {
+      console.error(`[importar-portal] ${protocolo}: situação ${obs.codigo} NÃO gravada: ${error.message}`);
+      return "erro";
+    }
+    const aceitos = (data as { aceitos?: unknown[] } | null)?.aceitos;
+    return Array.isArray(aceitos) && aceitos.length > 0 ? "aceita" : "nao_aceita";
+  } catch (e) {
+    console.error(`[importar-portal] ${protocolo}: situação ${obs.codigo} NÃO gravada: ${mensagemDeErro(e) ?? "erro"}`);
+    return "erro";
+  }
+}
+
 function criarCliente() {
   return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 }
@@ -446,8 +470,9 @@ async function tratar(
       }, 500);
     }
 
-    // 1. Lê o pedido no portal.
+    // 1. Lê o pedido no portal. O intervalo [lidoDe, lidoAte] é o da OBSERVAÇÃO da situação (Onda 5A).
     const t0 = Date.now();
+    const lidoDe = new Date(t0).toISOString();
     let envelope: BrowserlessData = {};
     let httpStatus = 0;
     let httpErr: string | null = null;
@@ -477,6 +502,7 @@ async function tratar(
     } catch (e) {
       httpErr = mensagemDeErro(e) ?? "erro sem mensagem";
     }
+    const lidoAte = new Date().toISOString();
     console.log(`[importar-portal] ${protocolo}: Browserless ${Date.now() - t0}ms http=${httpStatus}${httpErr ? ` erro=${httpErr}` : ""} tipo=${envelope.erroTipo ?? "-"}`);
 
     // Pedido já gravado: toda recusa daqui em diante carrega o #id e diz que NÃO re-disparou (o pedido existe).
@@ -498,11 +524,15 @@ async function tratar(
       });
     }
 
+    // 1b. Situação observada → escritor único (Onda 5A): é o que faz o disparador geral recusar um pedido que só a
+    //     reconsulta por número viu cancelado (fora dos 7 dias da varredura) — e o que libera um que voltou a valer.
+    const situacaoGravada = await gravarSituacaoObservada(db, envelope.consulta?.linhas ?? [], protocolo, lidoDe, lidoAte);
+
     // 2. Prova a leitura.
     const lido = lerPedidoPortal(envelope.consulta?.linhas ?? [], envelope.itens, protocolo);
     if (!lido.ok) {
       return json({
-        ok: false, etapa: "leitura", protocolo, motivo: lido.motivo, ...doExistente,
+        ok: false, etapa: "leitura", protocolo, motivo: lido.motivo, ...doExistente, situacao_gravada: situacaoGravada,
         mensagem: redisparar ? naoRedisparei(lido.detalhe) : lido.detalhe,
         trace: envelope.trace ?? null,
       });
@@ -522,7 +552,7 @@ async function tratar(
       pedidoGravado = redisparar.id;
       const omie = await dispararOmie(redisparar.id);
       return await responderComEstado(redisparar.id, {
-        ja_existia: true, disparo_http: omie.httpStatus, situacao_portal: lido.cabecalho.situacao,
+        ja_existia: true, disparo_http: omie.httpStatus, situacao_portal: lido.cabecalho.situacao, situacao_gravada: situacaoGravada,
       });
     }
 

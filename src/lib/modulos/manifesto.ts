@@ -390,6 +390,8 @@ export const MODULOS: ModuloApp[] = [
       // Ondas 2–3 da ficha (Task 9): SKUs de referência do complemento e preço alvo de repasse aprovado.
       "src/hooks/useComplementoComprador.ts",
       "src/hooks/usePrecoAlvoComprador.ts",
+      // Sucessor declarado PR C: o que o cliente herdou/repassou pelo plano de rateio (venda_heranca_comprador).
+      "src/hooks/useHerancaComprador.ts",
       "src/hooks/useDashboardCompany.ts",
       "src/hooks/useDashboardLayout.ts",
     ],

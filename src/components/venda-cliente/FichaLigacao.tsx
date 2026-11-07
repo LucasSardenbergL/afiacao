@@ -16,12 +16,14 @@ import { useMunicaoLigacao } from '@/hooks/useMunicaoLigacao';
 import { useHistoricoCompras } from '@/hooks/useHistoricoCompras';
 import { useOndasVenda, useSugestoesDoComprador } from '@/hooks/useMinhasSugestoes';
 import { useComplementoComprador } from '@/hooks/useComplementoComprador';
+import { useHerancaComprador } from '@/hooks/useHerancaComprador';
 import { usePrecoAlvoComprador } from '@/hooks/usePrecoAlvoComprador';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { logger } from '@/lib/logger';
 import { formatPrecoOuAusente } from '@/lib/format';
 import { sugestoesDeComplemento, sugestoesDePreco, sugestoesDeRecompra } from '@/lib/venda-cliente/sugestoes';
 import { alvoDaSugestao } from '@/lib/venda-cliente/preco';
+import { familiasHerdadas, textoHeranca } from '@/lib/venda-cliente/heranca';
 import { LinkTelefone } from './LinkTelefone';
 import { SecaoRecomprar } from './SecaoRecomprar';
 import { SecaoComplemento } from './SecaoComplemento';
@@ -73,6 +75,9 @@ export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: P
   const precos = useMemo(() => (comprador && ondas.preco ? sugestoesDePreco(comprador) : []), [comprador, ondas.preco]);
   const complemento = useComplementoComprador(compradorId, complementos.length > 0 && !isImpersonating);
   const preco = usePrecoAlvoComprador(compradorId, precos.length > 0 && !isImpersonating);
+  const heranca = useHerancaComprador(compradorId);
+  const nHerdadas = itens.filter((s) => s.heranca).length;
+  const herdadasComplemento = useMemo(() => familiasHerdadas(heranca.herancas ?? []), [heranca.herancas]);
   const nomeExibido = comprador?.nome ?? nome ?? 'Cliente';
   const telExibido = comprador?.telefone ?? telefone ?? null;
   const motivoExibido = comprador ? comprador.motivoEntrada : motivo ?? null;
@@ -95,8 +100,9 @@ export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: P
     }
     if (aberturaRef.current.compradorId === compradorId) return;
     aberturaRef.current = { compradorId, marcados: new Set() };
-    void registrarNoLedger('venda.ficha_aberta', compradorId, { n_sugestoes: itens.length });
-  }, [compradorId, itens.length]);
+    // n_herdadas (sucessor declarado): o sinal de uso da herança, com o denominador n_sugestoes ao lado.
+    void registrarNoLedger('venda.ficha_aberta', compradorId, { n_sugestoes: itens.length, n_herdadas: nHerdadas });
+  }, [compradorId, itens.length, nHerdadas]);
 
   useEffect(() => {
     // Na lente o uid é o do master (não é dono de nada) e o write-guard bloquearia: não chama.
@@ -124,6 +130,20 @@ export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: P
 
               <Municao compradorId={compradorId} />
 
+              {heranca.herancas && heranca.herancas.length > 0 && (
+                <div className="rounded-md border px-3 py-2 text-2xs space-y-0.5" data-testid="ficha-heranca">
+                  {heranca.herancas.map((h) => (
+                    <p key={`${h.eventoId}-${h.outroDocumento}`} className="text-status-info">{textoHeranca(h)}</p>
+                  ))}
+                  <p className="text-muted-foreground">
+                    O histórico desses itens conta para quem herdou nas sugestões de venda. Pedidos e preços não mudam.
+                  </p>
+                </div>
+              )}
+              {heranca.erro && nHerdadas > 0 && (
+                <p className="text-2xs text-status-warning">Não consegui ler de onde vem o histórico herdado deste cliente.</p>
+              )}
+
               {itens.length > 0 && (
                 <SecaoRecomprar itens={itens} produtos={historico.historico?.produtos ?? null} historicoErro={historico.erro} />
               )}
@@ -134,6 +154,7 @@ export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: P
                 familias={complemento.familias}
                 loading={complemento.loading}
                 erro={complemento.erro}
+                herdadas={herdadasComplemento}
               />
 
               <SecaoPreco
