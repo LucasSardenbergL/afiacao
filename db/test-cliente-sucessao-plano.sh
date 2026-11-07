@@ -286,7 +286,7 @@ lin() {  # <filtro> → count das linhas da trilha
 }
 
 cenario() {
-  local BASE E1 E2 E4 ID_UA1001 ID_UA1007 ID_UQ ID_UA1003 ID_UA1004 CONTATO R J REG1 REG2 SUC_NOV2 FATO1 FATO2
+  local BASE E1 E2 E4 E5 E7 ID_UA1001 ID_UA1007 ID_UQ ID_UA1003 ID_UA1004 CONTATO R REG1 REG2 SUC_NOV2 FATO1
 
   echo "── 0. a migration toca só o que diz ──"
   chk M1 "funções criadas/recriadas = as do desenho (gerar_lista é a ÚNICA viva recriada)" \
@@ -611,7 +611,7 @@ cenario() {
   Q "UPDATE public.customer_canonical_alias SET canonical_user_id = '$U8C' WHERE alias_user_id = '$X7'" > /dev/null
   chk AL4 "o alias passa a um TERCEIRO de outro farmer: o reconcilio global o alcança (ganha 7001; a sucessora perde)" \
     "$(drenar)/$(codigos "$U8C")/$(codigos "$U7N")" "1/7001/"
-  E8="$(declarar "$D8X" "$D8N" sucessao -60)"
+  declarar "$D8X" "$D8N" sucessao -60 > /dev/null
   chk BX0 "E8 (declarada pelo documento do alias): a antiga U8A fica encerrada e perde 8001" "$(drenar)/$(codigos "$U8A")" "1/"
   Q "UPDATE public.customer_canonical_alias SET canonical_user_id = '$U8C' WHERE alias_user_id = '$X8'" > /dev/null
   chk BX1 "o alias passa a outra empresa (farmer 3): a U8A deixa de ser a antiga e RECUPERA 8001 (o farmer dela entra pelo escopo anterior)" \
