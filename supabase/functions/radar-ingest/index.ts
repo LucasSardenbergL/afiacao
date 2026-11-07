@@ -222,7 +222,12 @@ Deno.serve(async (req) => {
       // máscara) e marcaria o lote da FILA como `error`; esta camada roda depois do finalize e não pode derrubá-la.
       const pedido = montarPedidoSocios(action, body);
       if (!pedido.ok) return json({ error: pedido.erro }, 400);
-      const { data, error } = await admin.rpc(pedido.rpc, pedido.args);
+      // Nome LITERAL em cada ramo (não `admin.rpc(pedido.rpc, …)`): é o que o pré-flight de deploy enxerga.
+      const chamada = pedido.rpc === "radar_socios_iniciar" ? admin.rpc("radar_socios_iniciar", pedido.args)
+        : pedido.rpc === "radar_socios_receber" ? admin.rpc("radar_socios_receber", pedido.args)
+        : pedido.rpc === "radar_socios_publicar" ? admin.rpc("radar_socios_publicar", pedido.args)
+        : admin.rpc("radar_socios_limpar", pedido.args);
+      const { data, error } = await chamada;
       if (error) {
         const codigo = codigoErroSocios(error);
         console.error(`radar-ingest ${action} falhou: ${codigo}`);
