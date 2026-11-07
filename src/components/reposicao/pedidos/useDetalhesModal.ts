@@ -440,7 +440,9 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
 
   const podeEditar =
     pedido?.status === 'pendente_aprovacao' || pedido?.status === 'bloqueado_guardrail';
-  const podeEditarCondicao = podeEditar || pedido?.status === 'aprovado_aguardando_disparo';
+  // falha_envio também: o disparo recusa o PO de pedido do portal sem condição real (D-1) e a saída é escolher aqui
+  // (vira manual_humano) e disparar de novo — sem isso o pedido ficava preso (Codex P1, 2026-11-07).
+  const podeEditarCondicao = podeEditar || pedido?.status === 'aprovado_aguardando_disparo' || pedido?.status === 'falha_envio';
   // Custo de primeira compra (preço 0): definível na tela tb em falha_envio
   // (recupera o pedido sem flip de status no SQL). Ver preco-edit.ts.
   const podeEditarPreco = podeEditarPrecoPedido(pedido?.status);

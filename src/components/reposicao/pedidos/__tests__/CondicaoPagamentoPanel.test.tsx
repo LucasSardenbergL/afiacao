@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { CondicaoPagamentoPanel } from '../CondicaoPagamentoPanel';
+import { CondicaoPagamentoPanel, podeSalvarCondicao } from '../CondicaoPagamentoPanel';
 import type { PedidoSugerido, CondicaoPagamento } from '../types';
 
 const condicoes: CondicaoPagamento[] = [
@@ -58,5 +58,21 @@ describe('CondicaoPagamentoPanel', () => {
   it('mostra a origem como badge quando presente', () => {
     setup({ pedido: ped({ status: 'pendente_aprovacao', condicao_origem: 'ia_sugerida' }) });
     expect(screen.getByText(/origem: ia_sugerida/)).toBeTruthy();
+  });
+});
+
+describe('podeSalvarCondicao (D-1, Codex P1 2026-11-07)', () => {
+  it('em falha_envio dá para salvar — o pedido do portal sem condição real não fica preso', () => {
+    expect(podeSalvarCondicao('falha_envio', 'default_a_vista', true)).toBe(true);
+  });
+  it('Confirmar sem trocar o código vale só sobre o padrão do motor (default_a_vista)', () => {
+    expect(podeSalvarCondicao('falha_envio', 'default_a_vista', false)).toBe(true);
+    expect(podeSalvarCondicao('aprovado_aguardando_disparo', 'default_a_vista', false)).toBe(true);
+    expect(podeSalvarCondicao('aprovado_aguardando_disparo', 'manual_humano', false)).toBe(false);
+    expect(podeSalvarCondicao('aprovado_aguardando_disparo', 'portal_sayerlack', false)).toBe(false);
+  });
+  it('depois do disparo, nunca', () => {
+    expect(podeSalvarCondicao('disparado', 'default_a_vista', true)).toBe(false);
+    expect(podeSalvarCondicao(null, 'default_a_vista', true)).toBe(false);
   });
 });
