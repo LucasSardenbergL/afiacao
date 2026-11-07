@@ -168,3 +168,29 @@ Migration `20261106140000` via `db:aplicar` (tentativa #924), validada por psql-
 corpo em prod = arquivo (md5 `5a3b7fef…`), ACL fechado, painel só com gate. Edges em ondas: `disparar` re-sondada
 (prova tinha 455 h, #926) → `sayerlack-importar-pedido-portal` v1.4 → `sayerlack-varrer-pedidos-portal` v1.4, as duas
 DEPLOY CONFIRMADO e SEM_EDICAO. Entre a migration e a edge v1.4 a importação ficou recusada sem gravar (~20 min).
+
+## Pontos cegos, Onda 1: alíquota de IPI dos NCMs sem cadastro (2026-11-07)
+
+Plano: `docs/superpowers/plans/2026-11-06-sayerlack-portal-pontos-cegos.md`. A única falha real das importações foi o
+CP006 (NCM sem alíquota).
+
+- **De onde sai a prova**: as NFs Sayerlack em `nfe_recebimentos` não guardam XML (56 de 56 sem `xml_completo`), mas
+  `nfe_recebimento_itens.valor_total` = `round2(quantidade_nfe × valor_unitario)` + IPI. Então alíquota =
+  (valor_total − vProd) ÷ vProd, linha a linha. O método reproduz os NCMs já semeados com fonte `nf` (NF 000953881).
+  O espelho de PO não serve: PO lançado à mão traz `nValorIpi` 0 sempre, e PO do app traz o IPI que a própria
+  `ipi_aliquota_ncm` deu (circular).
+- **Migration `20261107120000`** (tentativa **#941**, ensaio antes): 29209090 = 0% (2 NFs), 32041920 = 0% (4 NFs, 5
+  linhas, a maior de R$ 476,20; é o NCM dos 10 tingidores/mordentes), 32110000 = 6,5% (2 NFs, 12,50 → 13,31). Conferido
+  por psql-ro depois do commit.
+- **Sem NF que prove**: 27101230, 32091010, 32099020, 32159000, 39095012 (6 SKUs). Nenhuma das 90 NFs gravadas
+  (desde 04/01/2026) tem esses NCMs. Perguntado ao founder; até lá a importação segue recusando com CP006.
+- **Sensor (1.4)**: SKUs Sayerlack ativos no de-para sem alíquota. Em 07/11, depois da migration: 13 SKUs em 9 NCMs
+  (os 5 acima e 39073022, 49111090, 29163990, 32071090, que não tiveram compra em 180 dias). A query vai virar número
+  no card na Onda 6 (item 6.8):
+
+```sql
+SELECT count(*) FROM sku_fornecedor_externo s
+JOIN omie_products op ON op.omie_codigo_produto::text = s.sku_omie AND op.account = lower(s.empresa)
+LEFT JOIN ipi_aliquota_ncm a ON a.ncm = regexp_replace(op.ncm, '[^0-9]', '', 'g')
+WHERE s.ativo AND s.fornecedor_nome ILIKE '%sayer%' AND a.ncm IS NULL;
+```
