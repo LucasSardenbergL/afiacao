@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 799
+-- Total de custom migrations: 800
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -867,6 +867,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107040000', 'radar_socios_cpf_mascarado', '20261107040000_radar_socios_cpf_mascarado.sql'),
   ('20261107120000', 'ipi_aliquota_ncm_seed_nf_onda1', '20261107120000_ipi_aliquota_ncm_seed_nf_onda1.sql'),
   ('20261107140000', 'sayerlack_condicao_portal_onda2', '20261107140000_sayerlack_condicao_portal_onda2.sql'),
+  ('20261107140001', 'radar_email_semanal_toggle', '20261107140001_radar_email_semanal_toggle.sql'),
   ('20261107210000', 'cliente_sucessao_plano_rateio', '20261107210000_cliente_sucessao_plano_rateio.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -3465,6 +3466,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
   ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_aplicar_condicao_portal', ''),
   ('sayerlack_condicao_portal_onda2', 'table', 'public', 'sayerlack_condicao_portal_de_para', ''),
+  ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_painel', ''),
+  ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_definir', ''),
+  ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_cron', ''),
   ('cliente_sucessao_plano_rateio', 'function', 'private', 'cliente_sucessao_plano_imutavel', ''),
   ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestao_substituida_imutavel', ''),
   ('cliente_sucessao_plano_rateio', 'function', 'private', 'historico_compradores_encerrados', ''),
@@ -6138,6 +6142,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
   ('sayerlack_condicao_portal_onda2', 'function', 'public', 'sayerlack_aplicar_condicao_portal', ''),
   ('sayerlack_condicao_portal_onda2', 'table', 'public', 'sayerlack_condicao_portal_de_para', ''),
+  ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_painel', ''),
+  ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_definir', ''),
+  ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_cron', ''),
   ('cliente_sucessao_plano_rateio', 'function', 'private', 'cliente_sucessao_plano_imutavel', ''),
   ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestao_substituida_imutavel', ''),
   ('cliente_sucessao_plano_rateio', 'function', 'private', 'historico_compradores_encerrados', ''),

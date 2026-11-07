@@ -39,7 +39,7 @@ forte e +2 pares de crédito.
   (raízes do recorte ∪ dos CNPJs conhecidos) e o `n_raizes_pais` contado no país. A publicação roda **depois** do
   `finalize` e, como a de concorrentes, uma falha só deixa a carga com `exitCode 6`. A normalização do nome usa o
   MESMO mapa de `private.radar_nome_norm`, e o `socios.test.ts` lê a migration para conferir.
-- **Edge `radar-ingest` v1.5-socios-cpf:** ações `socios_iniciar`, `chunk_socios` (até 5 mil linhas),
+- **Edge `radar-ingest` v1.6-socios-rpc-literal** (a v1.5 do #3689 nunca subiu, ver abaixo)**:** ações `socios_iniciar`, `chunk_socios` (até 5 mil linhas),
   `publicar_socios` e `limpar_socios`. A fronteira de erro é própria: só sai código `RSOC_*`, nunca a linha nem o
   `details` do PostgREST, e a fila não é marcada `error`.
 - **Front:** `socio_cpf` entrou nos parsers estritos `src/lib/radar/vinculos.ts` e `src/lib/credito-vinculo/aviso.ts`.
@@ -49,7 +49,7 @@ forte e +2 pares de crédito.
 1. **Publish** do front e conferência no bundle. Abas abertas no build velho, ao receber `socio_cpf`, mostram "não
    consegui verificar", e o erro é fechado (fail-closed, nunca "sem vínculo"). Hoje há 1 titular ativo.
 2. **Migration** (`db:aplicar`). Sem lote vigente a regra nova não contribui, e a saída é a de antes (prova E1/E3).
-3. **Deploy da edge** `radar-ingest` (v1.5). Os sócios só entram na **próxima carga mensal**. Até lá, o selo segue
+3. **Deploy da edge** `radar-ingest` (v1.6). Os sócios só entram na **próxima carga mensal**. Até lá, o selo segue
    como antes.
 
 ## LGPD: registro da atividade (formato `lgpd-data-mapping`)
@@ -93,3 +93,29 @@ forte e +2 pares de crédito.
     lock da **publicação**, e aí o P10 fica vermelho, porque a publicação lê o lote incompleto e reprova.
   - O fixture reaproveita o schema da prova do passo 2, lido de lá para não divergir.
   - Está registrada no `db/nucleo-ci.txt`.
+
+## Achado no deploy: RPC por indireção trava o pacote (2026-11-07)
+
+A v1.5 chamava `admin.rpc(pedido.rpc, …)`. O `preflight:rpcs` não enxerga nome por indireção e sai com exit 3, e aí o
+`pendencias:pacote` recusa liberar a edge: a lista de RPCs de pré-condição fica INCOMPLETA. Correção na v1.6: cada uma
+das 4 RPCs é chamada pelo nome literal, e `RpcSocios` virou união de literais. O extrator passou a listar as 7 RPCs da
+edge, com exit 0. A lição: na edge, o nome da RPC é sempre literal no call-site, mesmo quando o pedido é montado em
+outro arquivo.
+
+## Deploy (2026-11-07): as 3 camadas no ar
+
+| Camada | Evidência |
+|---|---|
+| **Migration** `20261107040000` | `db:aplicar`, recibo #948. Validação por psql-ro: base `568af84d…` e `avaliar` `19301287…`; as herdeiras (`possiveis` `2452f463…`, `por_cnpjs` `a9278dd0…`, `aviso` `e7e4c97c…`) inalteradas; RLS ligada e nada para `anon`/`authenticated`; RPCs só `service_role`, SECURITY DEFINER; base não executável por `authenticated`; 3 índices válidos; 0 lotes. `deriva:corpo:prod` exit 0. |
+| **Publish** | Clique do founder (o classificador barrou o `deploy_project` da sessão). Entrada `index-DK_6gyHX.js` → `index-Cai8tJP4.js`, e `socio_cpf:"mesmo sócio (CPF parcial igual)"` aparece nos chunks `AvisoVinculoCredito-*` e `RadarClientes-*`. |
+| **Edge** `radar-ingest` | PR #3695 (v1.6, RPC literal), `pendencias:pacote` exit 0 e 8/8 hashes conferidos pelo Lovable. Sonda `db/sonda-radar-ingest-2026-11-07.sql` (recibo #956): **DEPLOY CONFIRMADO**, `v1.6-socios-rpc-literal`. Ledger: `CONFERE`. |
+
+**Ordem real:** migration, depois Publish, depois edge. Foi o contrário do planejado (Publish antes da migration), e é
+seguro porque sem lote vigente a regra nova não contribui (provas E1/E3), e o front não lê `regra_versao`. O que de
+fato precisava vir antes do primeiro `socio_cpf` era o Publish, e ele veio antes de qualquer carga com sócios.
+
+**Adoção:** o sinal só aparece depois da **próxima carga mensal** (`scripts/radar/carga.ts`), que publica o 1º lote
+de `radar_socios`. Quando medir, por query:
+`SELECT lote, status, linhas_declaradas, publicado_em FROM radar_socios_lote ORDER BY criado_em DESC LIMIT 3;`. Um lote
+`vigente` prova que a carga publicou. O sinal em uso se mede chamando `radar_possiveis_vinculos` num lead cujo par
+venha só por `socio_cpf`.

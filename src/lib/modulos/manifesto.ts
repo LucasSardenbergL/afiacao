@@ -742,6 +742,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/GrupoCliente360.estados.test.tsx",
       "src/pages/__tests__/GovernanceAudit.margem-leitura-falhou.test.tsx",
       "src/queries/__tests__/useClienteGrupos.documento.test.ts",
+      "src/components/governanca/__tests__/RadarEmailSemanalCard.estados.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
