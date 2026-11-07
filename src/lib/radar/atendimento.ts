@@ -70,6 +70,72 @@ export function lerResultadoAtendimento(v: unknown, fonte: string): ResultadoAte
   }
 }
 
+/** Resultado de `radar_atribuir_atendimento` (migration 20261106221000): o gestor/master passa o lead a um vendedor. */
+export type ResultadoAtribuicao =
+  | { ok: true; jaEraDono: boolean; tirouDeOutro: boolean; donoNome: string | null; anteriorNome: string | null; expiraEm: string | null }
+  | { ok: false; motivo: 'destino_sem_acesso' | 'ja_cliente' }
+  | { ok: false; motivo: 'limite'; limite: number; donoNome: string | null };
+
+export function lerResultadoAtribuicao(v: unknown, fonte: string): ResultadoAtribuicao {
+  if (!ehObj(v) || typeof v.ok !== 'boolean') forma(fonte, '{ok, …}');
+  if (!textoOuNulo(v.dono_nome)) forma(fonte, 'dono_nome');
+  const donoNome = (v.dono_nome as string | null | undefined) ?? null;
+  if (v.ok) {
+    if (!textoOuNulo(v.expira_em) || !textoOuNulo(v.anterior_nome)) forma(fonte, 'expira_em/anterior_nome');
+    return {
+      ok: true, jaEraDono: v.ja_era_dono === true, tirouDeOutro: v.tirou_de_outro === true, donoNome,
+      anteriorNome: (v.anterior_nome as string | null | undefined) ?? null,
+      expiraEm: (v.expira_em as string | null | undefined) ?? null,
+    };
+  }
+  switch (v.motivo) {
+    case 'destino_sem_acesso':
+    case 'ja_cliente':
+      return { ok: false, motivo: v.motivo };
+    case 'limite':
+      if (typeof v.limite !== 'number') forma(fonte, 'limite');
+      return { ok: false, motivo: 'limite', limite: v.limite, donoNome };
+    default:
+      return forma(fonte, 'motivo conhecido');
+  }
+}
+
+/** Mensagem do toast quando a atribuição não aconteceu. */
+export function mensagemRecusaAtribuicao(r: Exclude<ResultadoAtribuicao, { ok: true }>, destino: string): string {
+  switch (r.motivo) {
+    case 'destino_sem_acesso':
+      return `${destino} não tem acesso ao Radar: escolha um vendedor (farmer, hunter ou closer) ou gestor`;
+    case 'ja_cliente':
+      return 'Esta empresa já é cliente: não há o que prospectar';
+    case 'limite':
+      return `${r.donoNome ?? destino} já tem ${r.limite} leads em atendimento. Libere algum dele antes de atribuir outro`;
+  }
+}
+
+/** Quem pode receber um lead (RPC `radar_vendedores_atribuiveis`, só gestor/master lê). */
+export interface VendedorAtribuivel {
+  userId: string;
+  nome: string | null;
+  papel: string | null;
+}
+
+export function lerVendedoresAtribuiveis(data: unknown, fonte: string): VendedorAtribuivel[] {
+  if (!Array.isArray(data)) forma(fonte, 'lista');
+  if (data.length >= TETO_LEITURA_ATENDIMENTOS) {
+    throw new Error(`${fonte}: ${data.length} linhas — no teto da leitura; a lista pode estar cortada`);
+  }
+  return data.map((l) => {
+    if (!ehObj(l) || !texto(l.user_id) || !textoOuNulo(l.nome) || !textoOuNulo(l.papel)) {
+      forma(fonte, '{user_id, nome, papel}');
+    }
+    return {
+      userId: l.user_id,
+      nome: (l.nome as string | null | undefined) ?? null,
+      papel: (l.papel as string | null | undefined) ?? null,
+    };
+  });
+}
+
 /** "dd/mm" no fuso de São Paulo (a data que o vendedor lê). */
 export function diaMes(iso: string): string {
   return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' });

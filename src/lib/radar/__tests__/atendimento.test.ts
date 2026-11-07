@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  avisoTelefoneCompartilhado, lerAtendimentosAtivos, lerResultadoAtendimento, mensagemRecusa, rotuloAtendimento,
+  avisoTelefoneCompartilhado, lerAtendimentosAtivos, lerResultadoAtendimento, lerResultadoAtribuicao,
+  lerVendedoresAtribuiveis, mensagemRecusa, mensagemRecusaAtribuicao, rotuloAtendimento,
   TETO_LEITURA_ATENDIMENTOS,
 } from '@/lib/radar/atendimento';
 
@@ -60,5 +61,38 @@ describe('textos', () => {
     expect(avisoTelefoneCompartilhado(0)).toBeNull();
     expect(avisoTelefoneCompartilhado(1)).toBe('Este número também aparece em 1 empresa de outra raiz de CNPJ');
     expect(avisoTelefoneCompartilhado(23)).toBe('Este número aparece em 23 empresas de raízes diferentes');
+  });
+});
+
+describe('atribuição (gestor/master passa o lead)', () => {
+  it('atribuiu tirando de outro', () => {
+    expect(lerResultadoAtribuicao({
+      ok: true, ja_era_dono: false, tirou_de_outro: true, dono_nome: 'Vendedor Dois',
+      anterior_nome: 'Vendedor Um', expira_em: '2026-11-13T12:00:00Z',
+    }, 't')).toEqual({
+      ok: true, jaEraDono: false, tirouDeOutro: true, donoNome: 'Vendedor Dois',
+      anteriorNome: 'Vendedor Um', expiraEm: '2026-11-13T12:00:00Z',
+    });
+  });
+  it('recusas conhecidas', () => {
+    expect(lerResultadoAtribuicao({ ok: false, motivo: 'destino_sem_acesso' }, 't')).toEqual({ ok: false, motivo: 'destino_sem_acesso' });
+    expect(lerResultadoAtribuicao({ ok: false, motivo: 'limite', limite: 100, dono_nome: 'V' }, 't'))
+      .toEqual({ ok: false, motivo: 'limite', limite: 100, donoNome: 'V' });
+  });
+  it('motivo desconhecido LANÇA com a marca do ramo', () => {
+    expect(() => lerResultadoAtribuicao({ ok: false, motivo: 'xyz' }, 'radar_atribuir_atendimento'))
+      .toThrow('radar_atribuir_atendimento: resposta fora da forma esperada (motivo conhecido)');
+  });
+  it('mensagens nomeiam o destino', () => {
+    expect(mensagemRecusaAtribuicao({ ok: false, motivo: 'limite', limite: 100, donoNome: null }, 'Ana'))
+      .toBe('Ana já tem 100 leads em atendimento. Libere algum dele antes de atribuir outro');
+    expect(mensagemRecusaAtribuicao({ ok: false, motivo: 'destino_sem_acesso' }, 'Ana')).toMatch(/^Ana não tem acesso ao Radar/);
+  });
+  it('lista de vendedores: forma estrita e teto', () => {
+    expect(lerVendedoresAtribuiveis([{ user_id: 'u1', nome: null, papel: 'farmer' }], 't'))
+      .toEqual([{ userId: 'u1', nome: null, papel: 'farmer' }]);
+    expect(() => lerVendedoresAtribuiveis([{ nome: 'x' }], 't')).toThrow('t: resposta fora da forma esperada ({user_id, nome, papel})');
+    expect(() => lerVendedoresAtribuiveis(Array.from({ length: TETO_LEITURA_ATENDIMENTOS }, (_, i) => ({ user_id: `u${i}`, nome: null, papel: null })), 't'))
+      .toThrow('no teto da leitura');
   });
 });
