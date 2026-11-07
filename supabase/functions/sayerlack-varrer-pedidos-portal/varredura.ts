@@ -364,7 +364,7 @@ export function desfechoNoPortal(
 // portal disse 0 de 0" são coisas diferentes — só a segunda prova que não havia pedido.
 
 /** Colunas sem as quais a classificação não tem o que ler (DOM mudou ⇒ erro, nunca "nenhum candidato"). */
-export const COLUNAS_OBRIGATORIAS: readonly { rotulo: string; prefixo: string; exato: boolean }[] = [
+const COLUNAS_OBRIGATORIAS: readonly { rotulo: string; prefixo: string; exato: boolean }[] = [
   { rotulo: "Pedido", prefixo: "Pedido", exato: true },
   { rotulo: "Situação", prefixo: "Situa", exato: false },
   { rotulo: "Data Emissão", prefixo: "Data Emiss", exato: false },
@@ -440,7 +440,7 @@ export function provarLeitura(entrada: {
 }
 
 /** Carência esperando o sync do espelho há mais que isto ⇒ o sync travou: vira pendência visível (item 3.9). */
-export const CARENCIA_SYNC_MAX_MS = 6 * 3600_000;
+const CARENCIA_SYNC_MAX_MS = 6 * 3600_000;
 
 /** Protocolos presos em `carencia_aguarda_sync` desde a 1ª vista há mais de 6 h. */
 export function carenciaTravada(
@@ -459,7 +459,7 @@ export function carenciaTravada(
 }
 
 /** Teto de reconsultas por número numa rodada (cada uma abre 1 sessão do Browserless). */
-export const TETO_RECONSULTAS = 4;
+const TETO_RECONSULTAS = 4;
 
 /**
  * Pendências fora da leitura da rodada (item 3.7): pedido do app sem PO e falha aberta cujo protocolo NÃO apareceu na
