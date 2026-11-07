@@ -189,13 +189,20 @@ mix e o sensor. A camada de dados é o PR B (#3701).
 ## Prova
 `db/test-cliente-sucessao-consumidores.sh`, no núcleo do CI. Monta o mesmo schema da prova do PR B: o snapshot e a
 cadeia viva, que pega o PR B e esta migration.
-- São 38 asserts e 21 sabotagens. Todas ficam vermelhas no assert declarado, com controle verde na mesma invocação.
+- São 38 asserts e 22 sabotagens. Todas ficam vermelhas no assert declarado, com controle verde na mesma invocação.
 - Invariância forte: com herança no ar, o JSON novo sem as chaves novas é IGUAL ao do corpo anterior. O corpo anterior
   é recriado verbatim da migration de 21/10, com md5 conferido contra o de prod.
 - Paridade dos itens da tela com `venda_linhas_pedido(corte)` da antiga: universo, alias e corte.
 - `db/validar-cliente-sucessao-consumidores.sql`: 6 ✅, exercitada pela prova.
 
 ## Lições
+- **"Herdou" é o que a trilha TRANSFERE, não o que o plano DIZ** (Codex `-r max`, P2; veredito "aprovar com P2", sem
+  P0/P1). O publicar aceita regra explícita de SKU que a antiga nunca comprou, e a ficha diria "herdou" sem herança.
+  A leitura para o vendedor exige compra da antiga antes do corte, o mesmo critério da trilha. Os outros dois P2
+  eram de UI:
+  - o destino revogado sumia do seletor, mas seguia no payload; agora aparece como "(saiu da sucessão)" e trava a
+    publicação;
+  - a cadência mostrada é a factual da nova, então o rótulo virou "o histórico inclui compras da antiga".
 - **A camada que fica verde na sabotagem é redundante, e vale dizer qual.** Tirar o `NOT rev.revoga` da herança não
   mudou nada: a revisão que revoga não tem regra, por causa do trigger do PR B. O que discrimina é ler a revisão
   VIGENTE, e a sabotagem passou a ler a menor.
