@@ -7,7 +7,7 @@
  * informa) — por isso "mesmo endereço", nunca "parente". O selo de força vem do servidor; aqui só se lê e se escreve.
  */
 
-type SinalVinculo = 'telefone' | 'email' | 'endereco' | 'pessoa';
+type SinalVinculo = 'telefone' | 'email' | 'endereco' | 'pessoa' | 'socio_cpf';
 export type ForcaVinculo = 'forte' | 'media';
 
 export interface VinculoCliente {
@@ -20,7 +20,7 @@ export interface VinculoCliente {
   sinais: SinalVinculo[];
 }
 
-const SINAIS: readonly SinalVinculo[] = ['telefone', 'email', 'endereco', 'pessoa'];
+const SINAIS: readonly SinalVinculo[] = ['telefone', 'email', 'endereco', 'pessoa', 'socio_cpf'];
 const FORCAS: readonly ForcaVinculo[] = ['forte', 'media'];
 
 /** Valida a linha crua da RPC. Forma inesperada LANÇA: ausente ≠ "sem vínculo" (a ficha diz que não conseguiu verificar). */
@@ -55,6 +55,8 @@ const TEXTO_SINAL: Record<SinalVinculo, string> = {
   email: 'mesmo e-mail',
   endereco: 'mesmo endereço completo',
   pessoa: 'mesmo sócio ou titular, no mesmo município',
+  // Nome + CPF parcial (o que a Receita publica) iguais: a MESMA pessoa provável, nunca parente nem sucessão de fato.
+  socio_cpf: 'mesmo sócio (CPF parcial igual)',
 };
 
 export function evidenciaVinculo(v: VinculoCliente): string {

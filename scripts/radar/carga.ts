@@ -24,6 +24,7 @@ import { mapaDeMotivos, normalizarSituacao } from "./situacao";
 import { RFB_SHARE_TOKEN, basesCandidatas, precisaDeAuth } from "./rfb";
 import { CNAES_CONCORRENTES, montarPublicacao } from "./concorrentes";
 import { coordenadaDoMunicipio, indexarCoordenadasIbge } from "./municipios";
+import { digestSocios, emChunks, MAX_LINHAS_CHUNK_SOCIOS, sqlLinhasSocios, VERSAO_CARGA_SOCIOS, type LinhaSocio } from "./socios";
 
 const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i++) {
@@ -305,6 +306,15 @@ duck(`
                  LEFT JOIN mun ON mun.cod = est.mun)
   TO '${WORK}/final.jsonl' (FORMAT json)`);
 
+// ── 4b. Sócios PF com CPF MASCARADO → radar_socios (passo 3 do "Radar sucessor", migration 20261107040000) ────
+// Universo = raízes do recorte ∪ raízes dos CNPJs conhecidos (clientes FORA do recorte entram aqui). A contagem
+// nacional (`n_raizes_pais`) é sobre o QSA do PAÍS inteiro — é ela que tira diretor/conselheiro de S.A. grande.
+const universoSociosSql = `SELECT DISTINCT lpad(b, 8, '0') AS b FROM read_parquet('${WORK}/est_filtrado_*.parquet') WHERE cnae1 IN (${inList})`
+  + (temConhecidos ? ` UNION SELECT DISTINCT left(cnpj, 8) FROM read_csv('${CONHECIDOS}', delim=',', header=true, all_varchar=true, names=['cnpj'])` : "");
+const SOCIOS_JSONL = `${WORK}/socios.jsonl`;
+duck(sqlLinhasSocios(`${WORK}/soc/*`, universoSociosSql, SOCIOS_JSONL));
+const universoSocios = (JSON.parse(duck(`SELECT count(*)::INTEGER AS n FROM (${universoSociosSql})`)) as { n: number }[])[0]?.n ?? 0;
+
 // ── 5. Normalizar (helpers TDD) + relatório por CNAE ──────────────────────────
 const brutas = readFileSync(`${WORK}/final.jsonl`, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 const porCnae = new Map<string, number>();
@@ -380,10 +390,57 @@ const municipios: RadarMunicipioRow[] = municipiosRfb.map((m) => {
 }).filter((m) => m.uf); // só municípios que aparecem no nosso universo
 console.log(`🗺️  municípios do universo: ${municipios.length} (${semLatLng} sem lat/lng — mapa os ignora)`);
 
+// ── 7c. Sócios: manifesto → chunks → publicação (troca de ponteiro) → limpeza. Como os concorrentes: DEPOIS do
+// finalize, e uma falha só pinta o job de vermelho (exitCode 6) — nunca deixa a fila sem foto vigente.
+async function publicarSocios(): Promise<boolean> {
+  const linhas: LinhaSocio[] = readFileSync(SOCIOS_JSONL, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const raizes = new Set(linhas.map((l) => l.raiz)).size;
+  const digest = digestSocios(linhas);
+  console.log(`👥 sócios PF com CPF mascarado: ${linhas.length} linhas em ${raizes} raízes (universo ${universoSocios}) · digest ${digest.slice(0, 8)}`);
+  // Vazio é defeito da carga (o QSA do país não some), não "ninguém tem sócio" — e a RPC recusa manifesto vazio.
+  if (linhas.length === 0 || universoSocios === 0) { console.error("❌ sócios: recorte vazio — nada publicado"); return false; }
+  if (DRY) { console.log("🏁 dry-run: sócios não publicados"); return true; }
+  try {
+    const ini = (await post({ action: "socios_iniciar", mes: MES, digest, versao: VERSAO_CARGA_SOCIOS,
+      linhas: linhas.length, raizes, universo: universoSocios })) as { resultado?: { lote?: string; status?: string } } | undefined;
+    const lote = ini?.resultado?.lote;
+    if (!lote) throw new Error("socios_iniciar: resposta sem `lote` (edge antiga?)");
+    const status = ini?.resultado?.status;
+    // Estado explícito (achado Codex P2): só 'carregando' recebe; 'vigente'/'anterior' = já publicado (retomada);
+    // qualquer outro ('descartado', ausente) é falha, nunca "deu certo sem enviar".
+    if (status !== "carregando" && status !== "vigente" && status !== "anterior") {
+      throw new Error(`socios_iniciar: lote ${lote} em estado ${status ?? "ausente"} — não publicado`);
+    }
+    if (status === "carregando") {
+      let invalidas = 0;
+      for (const chunk of emChunks(linhas, MAX_LINHAS_CHUNK_SOCIOS)) {
+        const r = (await post({ action: "chunk_socios", lote, linhas: chunk })) as { resultado?: { invalidas?: number } } | undefined;
+        if (typeof r?.resultado?.invalidas !== "number") throw new Error("chunk_socios: resposta sem `invalidas` — ausente ≠ zero");
+        invalidas += r.resultado.invalidas;
+      }
+      if (invalidas > 0) console.warn(`⚠️ sócios: ${invalidas} linha(s) recusada(s) pela RPC — a publicação vai reprovar na reconciliação`);
+      const pub = (await post({ action: "publicar_socios", lote })) as { resultado?: { status?: string } } | undefined;
+      if (pub?.resultado?.status !== "vigente") throw new Error(`publicar_socios: resposta sem status 'vigente' (${JSON.stringify(pub)})`);
+      console.log("👥 sócios publicados:", JSON.stringify(pub));
+    } else {
+      console.log(`👥 sócios: lote ${lote} já está ${status} — nada a reenviar`);
+    }
+    for (let i = 0; i < 100; i++) {
+      const r = (await post({ action: "limpar_socios", max: 20000 })) as { resultado?: { linhas_apagadas?: number; restam?: number } } | undefined;
+      if (!r?.resultado || (r.resultado.linhas_apagadas ?? 0) === 0 && (r.resultado.restam ?? 0) === 0) break;
+    }
+    return true;
+  } catch (e) {
+    console.error(`❌ sócios NÃO publicados (a fila de leads não é afetada): ${e instanceof Error ? e.message : e}`);
+    return false;
+  }
+}
+
 if (DRY) {
   // Relatório LOCAL também no dry-run: a simulação é justamente onde se quer ver o que o dump rejeitaria.
   console.log(`${rejeitadasLocal.cnpj + rejeitadasLocal.cnae > 0 ? "⚠️" : "📋"} rejeições locais: ${JSON.stringify(rejeitadasLocal)}`);
   if (concorrentesAtivos) await publicarConcorrentes();
+  await publicarSocios();
   console.log("🏁 dry-run: nada enviado"); process.exit(0);
 }
 
@@ -435,4 +492,6 @@ if (temConhecidos && fin?.situacao_aplicacao === "cron") {
 }
 // Concorrentes DEPOIS do finalize: o lote de leads já está `complete` e uma falha da camada só pinta o job
 // de vermelho (exitCode 6, e-mail do GitHub) — nunca deixa a fila sem foto vigente.
-if (!concorrentesAtivos || !(await publicarConcorrentes())) process.exitCode = 6;
+const concorrentesOk = concorrentesAtivos && (await publicarConcorrentes());
+const sociosOk = await publicarSocios();
+if (!concorrentesOk || !sociosOk) process.exitCode = 6;

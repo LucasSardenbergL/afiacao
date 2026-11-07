@@ -28,7 +28,7 @@ MIG="$MIGS/20261107040000_radar_socios_cpf_mascarado.sql"
 PROVA_P2="$REPO_ROOT/db/test-credito-vinculo-aviso.sh"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_filtro_pais:S3 sem_universo:S4 sem_dono:S5 mascara_3a8:S6 sem_guarda:S7 guarda_sem_lote:E1 carregando_conta:S10 nome_perfil_cru:E2 regra_versao_1:C2 reconciliacao_frouxa:P4 manifesto_mutavel:P2 receber_em_vigente:P6 republica:P7 limpa_tudo:P9 tabela_aberta:post:A2 rpc_aberta:post:A3 deriva:pre"
+  SABOTAGENS="sem_filtro_pais:S3 sem_universo:S4 sem_dono:S5 mascara_3a8:S6 sem_guarda:S7 guarda_sem_lote:E1 carregando_conta:S10 nome_perfil_cru:E2 regra_versao_1:C2 reconciliacao_frouxa:P4 manifesto_mutavel:P2 receber_em_vigente:P6 republica:P7 limpa_tudo:P9 tabela_aberta:post:A2 rpc_aberta:post:A3 deriva:pre mei_sem_norm:S11 receber_sem_lock:P10"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-socios.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -113,6 +113,18 @@ case "${SABOTAGEM:-}" in
   limpa_tudo)         sabotar "WHERE x.lote IN (SELECT l.lote FROM public.radar_socios_lote l WHERE l.status = 'descartado')" "WHERE true" ;;
   tabela_aberta)      sabotar "REVOKE ALL ON TABLE public.radar_socios FROM PUBLIC, anon, authenticated;" "GRANT SELECT ON TABLE public.radar_socios TO authenticated;" ;;
   rpc_aberta)         sabotar "GRANT EXECUTE ON FUNCTION public.radar_socios_publicar(text) TO service_role;" "GRANT EXECUTE ON FUNCTION public.radar_socios_publicar(text) TO service_role, authenticated;" ;;
+  mei_sem_norm)       cegar_md5; python3 -I - "$MIG_USADA" <<'PY2'
+import re, sys
+p = sys.argv[1]; s = open(p, encoding="utf-8").read()
+# volta ao nome CRU no ramo MEI de `ocorr` (o defeito que o Codex achou): só o 1º `AND btrim(...) = c.nome`
+i = s.index("       AND btrim(regexp_replace(upper(translate(regexp_replace(e.razao_social")
+j = s.index("= c.nome", i)
+s = s[:i] + "       AND btrim(regexp_replace(e.razao_social, ' [0-9]{11}$', '')) " + s[j:]
+open(p, "w", encoding="utf-8").write(s)
+PY2
+    ;;
+  receber_sem_lock)   sabotar "  PERFORM pg_advisory_xact_lock(hashtext('radar_socios'));
+  SELECT status INTO v_status FROM public.radar_socios_lote WHERE lote = p_lote FOR UPDATE;" "  SELECT status INTO v_status FROM public.radar_socios_lote WHERE lote = p_lote;" ;;
   deriva)             ;;  # outra sessão mudou a base viva depois do pré-voo: a PRE tem de abortar o apply
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
@@ -178,7 +190,10 @@ Pq -c "INSERT INTO public.radar_empresas (cnpj, razao_social, ja_cliente, telefo
   ('31000013000101','LUIZ GOMES PRADO 11111111111',false,NULL,'M1',NULL,'02'),
   ('41000013000101','LUIZ GOMES PRADO 22222222222',true,NULL,'M1',NULL,'04'),
   ('31000012000101','A12 LTDA',false,'(37) 99990012','M1',NULL,'02'),
-  ('31000009000101','A9 LTDA',false,NULL,'M1',NULL,'02');
+  ('31000009000101','A9 LTDA',false,NULL,'M1',NULL,'02'),
+  ('31000011000101','A11 LTDA',false,NULL,'M1',NULL,'02'),
+  ('41000011000101','CA11 LTDA',true,NULL,'M2',NULL,'02'),
+  ('39000011000101','JOÃO DA SILVA 99945678901',false,NULL,'M2',NULL,'02');
 UPDATE public.radar_empresas SET email = 'ze.mei@gmail.com' WHERE cnpj = '31000012000101';
 INSERT INTO public.profiles (user_id, document, razao_social, name, phone, email) VALUES
   ('00000000-0000-0000-0000-000000000001','41.000.001/0001-01','CA1 VELHA LTDA',NULL,NULL,NULL),
@@ -267,9 +282,11 @@ LINHAS='[
  {"raiz":"41000007","nome_normalizado":"ANA PAULA REIS","cpf_mascarado":"***777700**","qualificacao":"49","data_entrada":null,"n_raizes_pais":1},
  {"raiz":"31000017","nome_normalizado":"BETO LUIZ MOTA","cpf_mascarado":"***171717**","qualificacao":"49","data_entrada":null,"n_raizes_pais":1},
  {"raiz":"31000009","nome_normalizado":"GIL ROSA PINTO","cpf_mascarado":"***909090**","qualificacao":"49","data_entrada":null,"n_raizes_pais":2},
- {"raiz":"51000009","nome_normalizado":"GIL ROSA PINTO","cpf_mascarado":"***909090**","qualificacao":"22","data_entrada":null,"n_raizes_pais":2}
+ {"raiz":"51000009","nome_normalizado":"GIL ROSA PINTO","cpf_mascarado":"***909090**","qualificacao":"22","data_entrada":null,"n_raizes_pais":2},
+ {"raiz":"31000011","nome_normalizado":"JOAO DA SILVA","cpf_mascarado":"***456789**","qualificacao":"49","data_entrada":null,"n_raizes_pais":2},
+ {"raiz":"41000011","nome_normalizado":"JOAO DA SILVA","cpf_mascarado":"***456789**","qualificacao":"49","data_entrada":null,"n_raizes_pais":2}
 ]'
-N_LINHAS=21; N_RAIZES=20
+N_LINHAS=23; N_RAIZES=22
 # P1: manifesto criado em 'carregando'; o mesmo manifesto de novo é retomada (idempotente).
 INI=$(SR "SELECT public.radar_socios_iniciar('2026-10', '$DIG1', 'v1', $N_LINHAS, $N_RAIZES, 40) ->> 'status';")
 INI2=$(SR "SELECT public.radar_socios_iniciar('2026-10', '$DIG1', 'v1', $N_LINHAS, $N_RAIZES, 40) ->> 'lote';")
@@ -284,7 +301,7 @@ P -qAt -c "SET ROLE service_role; SELECT public.radar_socios_receber('2026-10-11
 tem P4 "$(SR "SELECT public.radar_socios_publicar('2026-10-11111111');")" "RSOC_RECONCILIACAO"
 # O resto (o chunk inteiro de novo: retentativa não duplica).
 R5=$(SR "SELECT public.radar_socios_receber('2026-10-11111111', '$LINHAS'::jsonb) ->> 'inseridas';")
-eq P5 "$R5" "11"
+eq P5 "$R5" "13"
 # S10: lote ainda 'carregando' não contribui.
 eq S10 "$(Pq -c "SELECT count(*) FROM private.radar_vinculos_base(ARRAY['31000001000101'], true, true) WHERE 'socio_cpf' = ANY (sinais);")" "0"
 PUB=$(SR "SELECT public.radar_socios_publicar('2026-10-11111111') ->> 'status';")
@@ -313,6 +330,8 @@ eq S6 "$(v 31000006000101 true false)|$(v 31000016000101 true false)" "410000060
 # S7: regra antiga por nome no mesmo município: máscaras dos 2 lados e diferentes → não casa; cliente sem máscara
 #     para esse nome → a regra antiga segue; MEI × MEI com CPFs diferentes → não casa.
 eq S7 "$(v 31000007000101 true false)|$(v 31000017000101 true false)|$(v 31000013000101 true false)" "-|41000017000101:forte:pessoa|-"
+# S11: o titular de MEI com ACENTO ('JOÃO DA SILVA', mesma máscara) é a 3ª raiz da chave → não é exclusiva → não.
+eq S11 "$(v 31000011000101 true false)" "-"
 # S8: as RPCs públicas herdam — ficha (radar_possiveis_vinculos) do gestor traz o socio_cpf.
 tem S8 "$(sql_como "$GESTOR" "SELECT public.radar_possiveis_vinculos('31000001000101')::text;" | tail -1)" "socio_cpf"
 # S9: a lista em lote também (o selo forte dos 2 leads que só o CPF parcial liga).
@@ -333,9 +352,21 @@ done
 eq P8 "$(Pq -c "SELECT string_agg(lote || '=' || status, ',' ORDER BY lote) FROM public.radar_socios_lote;")" "2026-10-11111111=descartado,2026-11-22222222=anterior,2026-11-33333333=vigente"
 # P9: a limpeza apaga em fatias SÓ o descartado; vigente e anterior ficam.
 SR "SELECT public.radar_socios_limpar(5);" >/dev/null
-eq P9a "$(Pq -c "SELECT count(*) FROM public.radar_socios WHERE lote = '2026-10-11111111';")|$(Pq -c "SELECT count(*) FROM public.radar_socios WHERE lote <> '2026-10-11111111';")" "16|2"
+eq P9a "$(Pq -c "SELECT count(*) FROM public.radar_socios WHERE lote = '2026-10-11111111';")|$(Pq -c "SELECT count(*) FROM public.radar_socios WHERE lote <> '2026-10-11111111';")" "18|2"
 for _ in 1 2 3 4; do SR "SELECT public.radar_socios_limpar(5);" >/dev/null; done
 eq P9 "$(Pq -c "SELECT string_agg(lote || '=' || status, ',' ORDER BY lote) FROM public.radar_socios_lote;")|$(Pq -c "SELECT count(*) FROM public.radar_socios;")" "2026-11-22222222=anterior,2026-11-33333333=vigente|2"
+
+# P10: concorrência — um chunk em transação aberta (sessão A) e a publicação (sessão B) ao mesmo tempo: B ESPERA o
+#      commit de A e reconcilia com as linhas dele (sem o lock, B leria o lote incompleto e reprovaria).
+DIG4=$(printf '4%.0s' $(seq 64))
+DOIS='[{"raiz":"31000001","nome_normalizado":"MARIA SOUZA LIMA","cpf_mascarado":"***111111**","qualificacao":"49","data_entrada":null,"n_raizes_pais":2},{"raiz":"41000001","nome_normalizado":"MARIA SOUZA LIMA","cpf_mascarado":"***111111**","qualificacao":"22","data_entrada":null,"n_raizes_pais":2}]'
+SR "SELECT public.radar_socios_iniciar('2026-12', '$DIG4', 'v1', 2, 2, 40);" >/dev/null
+P -qAt -c "BEGIN; SET LOCAL ROLE service_role; SELECT public.radar_socios_receber('2026-12-44444444', '$DOIS'::jsonb); SELECT pg_sleep(2); COMMIT;" > /dev/null 2>&1 &
+PID_A=$!
+sleep 0.7
+P10=$(SR "SELECT public.radar_socios_publicar('2026-12-44444444') ->> 'status';")
+wait "$PID_A" || true
+eq P10 "$P10" "vigente"
 
 # G1-G3: o JWT não lê as tabelas nem chama as RPCs da carga (42501).
 tem G1 "$(sql_como "$GESTOR" "SELECT count(*) FROM public.radar_socios;")" "42501"

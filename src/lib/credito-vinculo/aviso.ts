@@ -10,7 +10,7 @@
  *   · silêncio só quando a avaliação foi completa e não achou evidência positiva.
  */
 
-type SinalVinculo = 'telefone' | 'email' | 'endereco' | 'pessoa';
+type SinalVinculo = 'telefone' | 'email' | 'endereco' | 'pessoa' | 'socio_cpf';
 export type ForcaVinculo = 'forte' | 'media';
 type QualidadeSync = 'ok' | 'defasado' | 'sem_sync';
 export type ContaCredora = 'oben' | 'colacor' | 'colacor_sc';
@@ -46,7 +46,7 @@ export type AvisoVinculo =
   | { estado: 'fora_da_base' }
   | { estado: 'avaliado'; nVinculos: number; nIndeterminados: number; vinculos: VinculoComVencido[] };
 
-const SINAIS: readonly SinalVinculo[] = ['telefone', 'email', 'endereco', 'pessoa'];
+const SINAIS: readonly SinalVinculo[] = ['telefone', 'email', 'endereco', 'pessoa', 'socio_cpf'];
 const FORCAS: readonly ForcaVinculo[] = ['forte', 'media'];
 const QUALIDADES: readonly QualidadeSync[] = ['ok', 'defasado', 'sem_sync'];
 const CONTAS: readonly ContaCredora[] = ['oben', 'colacor', 'colacor_sc'];
@@ -167,6 +167,8 @@ const TEXTO_SINAL: Record<SinalVinculo, string> = {
   email: 'mesmo e-mail',
   endereco: 'mesmo endereço completo',
   pessoa: 'mesmo sócio ou titular, no mesmo município',
+  // Nome + CPF parcial (o que a Receita publica) iguais: a MESMA pessoa provável, nunca parente nem sucessão de fato.
+  socio_cpf: 'mesmo sócio (CPF parcial igual)',
 };
 const FORA_DE_OPERACAO: Record<string, string> = { '01': 'nula', '03': 'suspensa', '04': 'inapta', '08': 'baixada' };
 export const ROTULO_CONTA: Record<ContaCredora, string> = { oben: 'Oben', colacor: 'Colacor', colacor_sc: 'Colacor SC' };

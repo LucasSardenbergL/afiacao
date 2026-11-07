@@ -49,7 +49,7 @@ DECLARE
   v_bs  text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('private.radar_vinculos_base(text[],boolean,boolean)'));
   v_pa  text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('private.credito_vinculo_avaliar(text,boolean)'));
 BEGIN
-  IF v_bs IS NULL OR v_bs NOT IN ('91dc715bb76efc00b85c4b86964d50db', '1ac303c64102deb4bb6e10b4e7619b6f') THEN
+  IF v_bs IS NULL OR v_bs NOT IN ('91dc715bb76efc00b85c4b86964d50db', '568af84dec25450e8970bd3d6918e4bb') THEN
     RAISE EXCEPTION 'PRE FALHOU: private.radar_vinculos_base vivo (md5 %) não é o da 20261106205557 nem este — outra sessão mexeu nas regras; reconcilie antes', v_bs;
   END IF;
   IF v_pa IS NULL OR v_pa NOT IN ('afbc83bfdbe959be21486d19c818d051', '19301287d9f89478c79692d39cc114f1') THEN
@@ -95,6 +95,11 @@ REVOKE ALL ON TABLE public.radar_socios_lote FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON TABLE public.radar_socios FROM PUBLIC, anon, authenticated;
 COMMENT ON TABLE public.radar_socios IS
   'QSA RFB (só PF com CPF mascarado) das raízes do Radar ∪ clientes. Dado pessoal: só servidor; finalidade = vínculo societário com cliente (nunca parentesco). Ver docs/historico/radar-socios-cpf-mascarado-2026-11-07.md.';
+
+-- Índice do titular de MEI pelo nome NORMALIZADO (só funções nativas; ~122 mil razões com CPF no fim, em 2026-11).
+CREATE INDEX IF NOT EXISTS idx_radar_empresas_titular_mei_norm ON public.radar_empresas
+  (btrim(regexp_replace(upper(translate(regexp_replace(razao_social, ' [0-9]{11}$', ''), 'áàâãäåéèêëíìîïóòôõöúùûüçñýÁÀÂÃÄÅÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑÝ', 'aaaaaaeeeeiiiiooooouuuucnyAAAAAAEEEEIIIIOOOOOUUUUCNY')), '\s+', ' ', 'g')))
+  WHERE razao_social ~ ' [0-9]{11}$';
 
 -- ------------------------------------------------------------
 -- 2. Helpers de chave (a carga em TS replica os MESMOS mapas — scripts/radar/socios.ts, teste que lê este arquivo)
@@ -401,9 +406,12 @@ AS $function$
         ON s.lote = (SELECT v.lote FROM vig v) AND s.nome_normalizado = c.nome AND s.cpf_mascarado = c.mask
     UNION ALL
     SELECT c.nome, c.mask, left(e.cnpj, 8), NULL::text, NULL::integer
+      -- Nome do titular NORMALIZADO como a chave (achado Codex P1: o nome cru deixava 'JOÃO' fora da contagem de
+      -- exclusividade). A expressão é a de private.radar_nome_norm só com funções nativas: é a do índice parcial
+      -- idx_radar_empresas_titular_mei_norm (função própria em índice exigiria EXECUTE de quem grava).
       FROM chave c JOIN public.radar_empresas e
-        ON (e.razao_social ~ ' [0-9]{11}$' OR e.razao_social ~ '^[0-9]{2}\.[0-9]{3}\.[0-9]{3} ')
-       AND btrim(regexp_replace(regexp_replace(e.razao_social, '^[0-9]{2}\.[0-9]{3}\.[0-9]{3} ', ''), ' [0-9]{11}$', '')) = c.nome
+        ON e.razao_social ~ ' [0-9]{11}$'
+       AND btrim(regexp_replace(upper(translate(regexp_replace(e.razao_social, ' [0-9]{11}$', ''), 'áàâãäåéèêëíìîïóòôõöúùûüçñýÁÀÂÃÄÅÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑÝ', 'aaaaaaeeeeiiiiooooouuuucnyAAAAAAEEEEIIIIOOOOOUUUUCNY')), '\s+', ' ', 'g')) = c.nome
      WHERE private.radar_mascara_cpf(substring(e.razao_social FROM ' ([0-9]{11})$')) = c.mask
     UNION ALL
     SELECT c.nome, c.mask, left(pf.doc, 8), NULL::text, NULL::integer
@@ -622,7 +630,7 @@ BEGIN
   FOR r IN
     SELECT x.alvo, x.esperado,
            (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(x.alvo)) AS vivo
-      FROM (VALUES ('private.radar_vinculos_base(text[], boolean, boolean)',               '1ac303c64102deb4bb6e10b4e7619b6f'),
+      FROM (VALUES ('private.radar_vinculos_base(text[], boolean, boolean)',               '568af84dec25450e8970bd3d6918e4bb'),
                    ('private.credito_vinculo_avaliar(text, boolean)',                       '19301287d9f89478c79692d39cc114f1'),
                    ('private.radar_vinculos_nucleo(text[], boolean)',                       'f345a864df438f0b7fba25bf50f6ea43'),
                    ('public.credito_vinculo_aviso(text)',                                   'e7e4c97c787123c82c814f192db361a2'),
@@ -655,6 +663,9 @@ BEGIN
      OR has_function_privilege('authenticated', 'private.radar_mascaras_conflitam(text, text, text)', 'EXECUTE')
      OR has_function_privilege('anon', 'private.radar_vinculos_base(text[], boolean, boolean)', 'EXECUTE') THEN
     RAISE EXCEPTION 'A4 FALHOU: base/guarda executável pelo JWT';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index i WHERE i.indexrelid = to_regclass('public.idx_radar_empresas_titular_mei_norm') AND i.indisvalid) THEN
+    RAISE EXCEPTION 'A5 FALHOU: índice do titular de MEI normalizado ausente ou inválido';
   END IF;
   -- A base RODA (late-bound): uma chamada real, com o lote vigente que houver (ou nenhum).
   PERFORM count(*) FROM private.radar_vinculos_base(ARRAY(SELECT e.cnpj FROM public.radar_empresas e ORDER BY e.cnpj LIMIT 3), true, true);

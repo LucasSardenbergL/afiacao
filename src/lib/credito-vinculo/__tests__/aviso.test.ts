@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cnpjDoDocumento, exibicaoDoAviso, lerAvisoVinculo, nomeVinculado, textoNaoVerificado } from '../aviso';
+import { cnpjDoDocumento, evidencia, exibicaoDoAviso, lerAvisoVinculo, nomeVinculado, textoNaoVerificado } from '../aviso';
 
 /**
  * Aviso de vínculo com devedor — borda pura. Money-path: forma errada LANÇA (nunca "sem pendência"), nenhum estado
@@ -18,6 +18,12 @@ const avaliado = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('lerAvisoVinculo', () => {
+  it('regra 2: vínculo só pelo CPF parcial do sócio é lido e dito como pista', () => {
+    const a = lerAvisoVinculo(avaliado({ regra_versao: 2, vinculos: [vinculo({ sinais: ['socio_cpf'] })] }));
+    if (a.estado !== 'avaliado') throw new Error('tipo');
+    expect(a.vinculos[0].sinais).toEqual(['socio_cpf']);
+    expect(evidencia(a.vinculos[0])).toBe('mesmo sócio (CPF parcial igual)');
+  });
   it('lê o aviso avaliado com credora', () => {
     const a = lerAvisoVinculo(avaliado());
     expect(a.estado).toBe('avaliado');
