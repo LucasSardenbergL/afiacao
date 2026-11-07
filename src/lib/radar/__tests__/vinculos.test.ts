@@ -44,6 +44,13 @@ describe('textos do selo', () => {
     expect(t).not.toMatch(/parente|c[oô]njuge|filho/);
   });
 
+  it('socio_cpf (nome + CPF parcial): lido e dito como pista, sem CPF e sem parentesco', () => {
+    expect(lerVinculo({ cliente_cnpj: '51111111000101', cliente_nome: null, cliente_situacao: null, forca: 'forte', sinais: ['socio_cpf'] }).sinais).toEqual(['socio_cpf']);
+    const t = evidenciaVinculo(v({ sinais: ['socio_cpf'] }));
+    expect(t).toBe('mesmo sócio (CPF parcial igual)');
+    expect(t).not.toMatch(/parente|c[oô]njuge|filho|\*\*\*|[0-9]{3}/);
+  });
+
   it('força é rotulada como pista', () => {
     expect(rotuloForca('forte')).toBe('pista forte');
     expect(rotuloForca('media')).toBe('pista média');

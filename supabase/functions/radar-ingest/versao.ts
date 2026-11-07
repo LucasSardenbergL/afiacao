@@ -15,7 +15,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("radar-ingest");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.4-concorrentes";
+export const VERSAO = "v1.5-socios-cpf";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
@@ -23,4 +23,5 @@ export const EFEITO =
   " situação cadastral RFB (radar_situacao_cadastral) e recruza quem já é cliente (radar_recruzar_ja_cliente) no" +
   " finalize; a situação (descarte de leads baixados e alerta ao gestor) é aplicada depois pelo job" +
   " radar-aplicar-situacao-diario, não por esta edge; e publica a camada de concorrentes do mapa" +
-  " (radar_concorrentes_publicar, lote inteiro numa transação)";
+  " (radar_concorrentes_publicar, lote inteiro numa transação) e a camada de sócios PF com CPF mascarado" +
+  " (radar_socios_*: manifesto, chunks, publicação por troca de ponteiro, limpeza)";
