@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 799
+-- Total de custom migrations: 800
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -867,7 +867,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107040000', 'radar_socios_cpf_mascarado', '20261107040000_radar_socios_cpf_mascarado.sql'),
   ('20261107120000', 'ipi_aliquota_ncm_seed_nf_onda1', '20261107120000_ipi_aliquota_ncm_seed_nf_onda1.sql'),
   ('20261107140000', 'sayerlack_condicao_portal_onda2', '20261107140000_sayerlack_condicao_portal_onda2.sql'),
-  ('20261107140001', 'radar_email_semanal_toggle', '20261107140001_radar_email_semanal_toggle.sql')
+  ('20261107140001', 'radar_email_semanal_toggle', '20261107140001_radar_email_semanal_toggle.sql'),
+  ('20261107210000', 'cliente_sucessao_plano_rateio', '20261107210000_cliente_sucessao_plano_rateio.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3467,7 +3468,35 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sayerlack_condicao_portal_onda2', 'table', 'public', 'sayerlack_condicao_portal_de_para', ''),
   ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_painel', ''),
   ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_definir', ''),
-  ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_cron', '')
+  ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_cron', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'cliente_sucessao_plano_imutavel', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestao_substituida_imutavel', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'historico_compradores_encerrados', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'historico_consumo_efetivo', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_recompra_efetiva_em', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_situacao_efetiva_em', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_lista_calc_efetiva', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'venda_gerar_lista', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestoes_reprocessar_sucessao', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'cliente_sucessao_assinaturas', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestoes_drenar_reprocesso', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_publicar', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_revogar', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_do_evento', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'cliente_sucessao_plano_revisoes', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'cliente_sucessao_plano_regras', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'venda_sugestao_substituida', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'private', 'venda_sugestoes_reprocesso_fila', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'private', 'cliente_sucessao_estado_visto', ''),
+  ('cliente_sucessao_plano_rateio', 'index', 'public', 'venda_sugestao_substituida_dia_idx', 'venda_sugestao_substituida'),
+  ('cliente_sucessao_plano_rateio', 'index', 'private', 'venda_sugestoes_reprocesso_fila_pendente_idx', 'venda_sugestoes_reprocesso_fila'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_revisoes_imutavel_trg', 'cliente_sucessao_plano_revisoes'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_revisoes_sem_truncate_trg', 'cliente_sucessao_plano_revisoes'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_regras_imutavel_trg', 'cliente_sucessao_plano_regras'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_regras_sem_truncate_trg', 'cliente_sucessao_plano_regras'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_imutavel_trg', 'venda_sugestao_substituida'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_sem_truncate_trg', 'venda_sugestao_substituida'),
+  ('cliente_sucessao_plano_rateio', 'cron_job', 'cron', 'venda-sucessao-reprocesso', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6115,7 +6144,35 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sayerlack_condicao_portal_onda2', 'table', 'public', 'sayerlack_condicao_portal_de_para', ''),
   ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_painel', ''),
   ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_definir', ''),
-  ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_cron', '')
+  ('radar_email_semanal_toggle', 'function', 'public', 'radar_email_semanal_cron', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'cliente_sucessao_plano_imutavel', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestao_substituida_imutavel', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'historico_compradores_encerrados', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'historico_consumo_efetivo', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_recompra_efetiva_em', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_situacao_efetiva_em', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_lista_calc_efetiva', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'venda_gerar_lista', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestoes_reprocessar_sucessao', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'cliente_sucessao_assinaturas', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'private', 'venda_sugestoes_drenar_reprocesso', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_publicar', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_revogar', ''),
+  ('cliente_sucessao_plano_rateio', 'function', 'public', 'cliente_sucessao_plano_do_evento', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'cliente_sucessao_plano_revisoes', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'cliente_sucessao_plano_regras', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'public', 'venda_sugestao_substituida', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'private', 'venda_sugestoes_reprocesso_fila', ''),
+  ('cliente_sucessao_plano_rateio', 'table', 'private', 'cliente_sucessao_estado_visto', ''),
+  ('cliente_sucessao_plano_rateio', 'index', 'public', 'venda_sugestao_substituida_dia_idx', 'venda_sugestao_substituida'),
+  ('cliente_sucessao_plano_rateio', 'index', 'private', 'venda_sugestoes_reprocesso_fila_pendente_idx', 'venda_sugestoes_reprocesso_fila'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_revisoes_imutavel_trg', 'cliente_sucessao_plano_revisoes'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_revisoes_sem_truncate_trg', 'cliente_sucessao_plano_revisoes'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_regras_imutavel_trg', 'cliente_sucessao_plano_regras'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'cliente_sucessao_plano_regras_sem_truncate_trg', 'cliente_sucessao_plano_regras'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_imutavel_trg', 'venda_sugestao_substituida'),
+  ('cliente_sucessao_plano_rateio', 'trigger', 'public', 'venda_sugestao_substituida_sem_truncate_trg', 'venda_sugestao_substituida'),
+  ('cliente_sucessao_plano_rateio', 'cron_job', 'cron', 'venda-sucessao-reprocesso', '')
 )
 SELECT
   e.migration,
@@ -6778,6 +6835,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'venda_minhas_sugestoes', 4, '20261028220003_venda_lista_acesso.sql', 'c9836f94bbf7abf50b4f5b574eb919f4'),
   ('public', 'venda_gerar_lista', 1, '20261020181743_venda_cliente_gerador.sql', '31f6e19f23eaa9a43dc45ae2f2b67a5c'),
   ('public', 'venda_gerar_lista', 2, '20261021031000_venda_cliente_ondas23.sql', '2082f4815dec8e16456d325052cbe355'),
+  ('public', 'venda_gerar_lista', 3, '20261107210000_cliente_sucessao_plano_rateio.sql', 'fc0226e6c945c4772f37a8209381707b'),
   ('private', '_venda_repasse_base', 1, '20261020233000_venda_cliente_repasse.sql', 'db3943ce86f998a42d391fca310d7a0c'),
   ('private', '_venda_repasse_base', 2, '20261021021500_venda_repasse_base_desempenho.sql', '4cb2e342f09337e03b1f967c3bc0c819'),
   ('public', 'venda_repasse_candidatos', 1, '20261020233000_venda_cliente_repasse.sql', '76ffdad3aae967ca7d12ab4ad923473c'),

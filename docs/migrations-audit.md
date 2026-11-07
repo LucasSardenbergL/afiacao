@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **799** custom migrations totais
-- **2638** objetos esperados (criados por estas migrations)
+- **800** custom migrations totais
+- **2666** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1019
+  - `function`: 1033
   - `rls_policy`: 519
-  - `index`: 377
-  - `table`: 242
-  - `cron_job`: 214
+  - `index`: 379
+  - `table`: 247
+  - `cron_job`: 215
   - `view`: 135
-  - `trigger`: 128
+  - `trigger`: 134
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -6558,6 +6558,39 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_email_semanal_painel` | — |
 | `function` | `public.radar_email_semanal_definir` | — |
 | `function` | `public.radar_email_semanal_cron` | — |
+
+### `20261107210000_cliente_sucessao_plano_rateio.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cliente_sucessao_plano_imutavel` | — |
+| `function` | `private.venda_sugestao_substituida_imutavel` | — |
+| `function` | `private.historico_compradores_encerrados` | — |
+| `function` | `private.historico_consumo_efetivo` | — |
+| `function` | `private.venda_recompra_efetiva_em` | — |
+| `function` | `private.venda_situacao_efetiva_em` | — |
+| `function` | `private.venda_lista_calc_efetiva` | — |
+| `function` | `public.venda_gerar_lista` | — |
+| `function` | `private.venda_sugestoes_reprocessar_sucessao` | — |
+| `function` | `private.cliente_sucessao_assinaturas` | — |
+| `function` | `private.venda_sugestoes_drenar_reprocesso` | — |
+| `function` | `public.cliente_sucessao_plano_publicar` | — |
+| `function` | `public.cliente_sucessao_plano_revogar` | — |
+| `function` | `public.cliente_sucessao_plano_do_evento` | — |
+| `table` | `public.cliente_sucessao_plano_revisoes` | — |
+| `table` | `public.cliente_sucessao_plano_regras` | — |
+| `table` | `public.venda_sugestao_substituida` | — |
+| `table` | `private.venda_sugestoes_reprocesso_fila` | — |
+| `table` | `private.cliente_sucessao_estado_visto` | — |
+| `index` | `public.venda_sugestao_substituida_dia_idx` | `venda_sugestao_substituida` |
+| `index` | `private.venda_sugestoes_reprocesso_fila_pendente_idx` | `venda_sugestoes_reprocesso_fila` |
+| `trigger` | `public.cliente_sucessao_plano_revisoes_imutavel_trg` | `cliente_sucessao_plano_revisoes` |
+| `trigger` | `public.cliente_sucessao_plano_revisoes_sem_truncate_trg` | `cliente_sucessao_plano_revisoes` |
+| `trigger` | `public.cliente_sucessao_plano_regras_imutavel_trg` | `cliente_sucessao_plano_regras` |
+| `trigger` | `public.cliente_sucessao_plano_regras_sem_truncate_trg` | `cliente_sucessao_plano_regras` |
+| `trigger` | `public.venda_sugestao_substituida_imutavel_trg` | `venda_sugestao_substituida` |
+| `trigger` | `public.venda_sugestao_substituida_sem_truncate_trg` | `venda_sugestao_substituida` |
+| `cron_job` | `cron.venda-sucessao-reprocesso` | — |
 
 ## Próximos passos por status
 

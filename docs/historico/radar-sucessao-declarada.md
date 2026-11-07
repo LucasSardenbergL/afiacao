@@ -57,3 +57,78 @@ prova o dia do pedido no fuso de SP com a sessão em UTC.
 
 ## Deploy
 🟣 founder: a migration no SQL Editor (depois da `20261106221000` do #3684) → 🖱️ Publish.
+
+# Entrega 3, PR B — o plano de rateio e a trilha efetiva (2026-11-07)
+
+Desenho aprovado pelo founder ("Aprovo o desenho") depois do Codex `-r max` (9 P1, nenhum P0). Esta é a camada de
+DADOS; o painel e os consumidores da lista/ficha/complemento são o PR C.
+
+## O que mudou
+- **Migration `20261107210000_cliente_sucessao_plano_rateio.sql`** (manual, no SQL Editor, depois da `20261107013000`):
+  - **Plano versionado**: `public.cliente_sucessao_plano_revisoes` (revisão IMUTÁVEL por evento da antiga; a vigente é a
+    maior; revogar = revisão nova `revoga`, sem regras) e `public.cliente_sucessao_plano_regras` (ITEM INTEIRO
+    (empresa, omie_codigo_produto) → uma declaração do MESMO evento). Família expandida em itens na publicação, só nos
+    itens que a antiga comprou ANTES do corte. Item sem regra fica com a antiga; destino `declarada` ou revogado volta à
+    origem, sem renormalizar. Sem UPDATE/DELETE/TRUNCATE (trigger) e INSERT só pela porta das RPCs.
+  - **`private.historico_consumo_efetivo(p_ate)`**: trilha SEPARADA de `venda_linhas_pedido` (que não muda), mesmo
+    universo e dia, com `order_item_id`. Herda só de `vigentes(hoje SP)` `ativa`, linha com dia < corte e visão a partir
+    do corte. A nova não herda preço: o líquido é o físico, NULL preservado, `herdada` = referência da origem.
+  - **Espelhos ao vivo**: `venda_recompra_efetiva_em`, `venda_situacao_efetiva_em`, `venda_lista_calc_efetiva`. A antiga de
+    uma `sucessao` (não cisão) sai da recompra e da situação a partir do corte (`historico_compradores_encerrados`).
+  - **`venda_gerar_lista`** (recriado do corpo vivo, TRAVA→PRE→CREATE→PÓS) gera a recompra da lista efetiva e marca
+    `venda_sugestao.sucessao_origem` ([{evento_id, revisao}]) e `valor_ref_referencia_origem`.
+  - **Invalidação**: publicar/revogar ENFILEIRA o reprocesso (`private.venda_sugestoes_reprocesso_fila`); o cron
+    `venda-sucessao-reprocesso` (1/min, SQL direto) e o FIM do gerador drenam; o reconcilio é GLOBAL (a lista de hoje
+    inteira contra o cálculo efetivo, trocando só a linha que difere). A drenagem também DETECTA mudança de
+    estado fora do plano (declaração revogada, alias, cadastro, corte) pela assinatura de `vigentes` + revisão por
+    evento (`private.cliente_sucessao_assinaturas` × `private.cliente_sucessao_estado_visto`). Reprocessa o pedido mais
+    novo por evento e grava a revisão APLICADA. Por farmer afetado (o ranking "maior atraso" é por farmer):
+    sai só a sugestão de HOJE que mudou, nunca mostrada e sem desfecho, para `public.venda_sugestao_substituida` (linha
+    inteira, imutável); a substituta entra. `mostrada_em`, `venda_contato` e desfecho ficam.
+  - RPCs (gestor/master): `cliente_sucessao_plano_publicar`, `cliente_sucessao_plano_revogar`,
+    `cliente_sucessao_plano_do_evento`. RLS ligada nas 4 tabelas novas, REVOKE de PUBLIC e anon.
+- **Não muda (provado antes = depois)**: `venda_linhas_pedido`, `venda_recompra_em`, `venda_situacao_em`,
+  `venda_lista_calc`, `venda_lista_preco`, `_venda_repasse_base`, `venda_repasse_candidatos`, a TABELA `venda_recompra`
+  (o repasse lê a tabela; a herança entra só pelo cálculo ao vivo). Margem/DRE, métricas, crédito, reposição: nenhum
+  objeto deles é recriado.
+
+## Prova
+`db/test-cliente-sucessao-plano.sh` (no núcleo do CI): 120 asserts e 38 sabotagens (inclui concorrência real em duas sessões: a drenagem com o gerador rodando, e cadastro + declaração DURANTE o cálculo da drenagem), todas vermelhas no assert declarado,
+com controle verde na mesma invocação. Monta o schema com `corpo-vivo.sh` (a cadeia dinâmica pega o gerador de venda, a
+entrega 2 e esta). Validação do founder: `db/validar-cliente-sucessao-plano.sql` (12 ✅, exercitada pela prova).
+
+## Lições
+- **Cálculo pesado dentro de RPC do app morre no `statement_timeout=8s` do `authenticated`** (medido em prod:
+  `pg_roles.rolconfig`). O reprocesso é o mesmo cálculo do cron do gerador (6–9 s em `cron.job_run_details`); dentro da
+  publicação ele reverteria a transação inteira. Restringir ao farmer não barateia (o maior tem 12.694 clientes na
+  carteira). Fila na mesma transação + cron SQL-direto drenando como `postgres`.
+- **`{a,b}` dentro de `"$(…)"` sofre brace expansion no bash**, e o JSON de regra virou três argumentos. As chaves do
+  JSON da prova saem de `printf` (dado), nunca do texto do script.
+- **Controle verde de sabotagem tem de ser um assert que a sabotagem NÃO toca.** Tirar o corte da trilha também move a
+  linha do dia do corte, então o "13 linhas herdadas" ficou vermelho junto. O controle passou a ser o destino pendente.
+
+- **Invalidar só pelas RPCs do plano deixa de fora quem muda o estado por outro caminho** (Codex, P1): revogar a
+  declaração-destino, trocar alias, cadastrar o novo e o corte que chega mudam a herança sem passar pela publicação.
+  O gatilho certo é o ESTADO de que a trilha depende (assinatura), não a porta por onde a mudança costuma entrar.
+- **Prova de invariância que recalcula o snapshot antes de comparar restaura a adulteração** (Codex, P1): a assinatura
+  só LÊ; o recálculo vira um assert à parte (I1b), e a sabotagem que apaga a tabela tem de ficar vermelha no I1.
+
+- **Trava longa para coerência troca um bug por outro** (Codex, rodada 3): segurar a trava do grafo durante o cálculo
+  de 6–9 s fazia declarar/publicar esperarem e estourarem os 8 s do `authenticated`. Coerência OTIMISTA: o estado
+  (assinatura + revisão de cada evento) e a lista saem do MESMO comando SQL (as funções STABLE usam o retrato do
+  chamador), e o que mudar depois volta pela detecção. Prova: cálculo lento por stub e outra sessão mudando o estado
+  no meio.
+
+- **A assinatura tem de cobrir o que DECIDE de quem é a linha física, não só os extremos** (Codex, rodada 4): um alias
+  que muda de dono troca o histórico herdado sem mexer em antigo/novo. E o escopo do reconcilio precisa lembrar o
+  farmer da identidade ANTERIOR: quando a antiga muda de identidade, quem deixou de ser encerrada só recupera se o
+  farmer dela entrar no reconcilio. Escopo guardado também falhava (rodada 5: o dono NOVO do alias, de outro farmer,
+  ficava de fora). Raiz: recortar por farmer a partir de identidades que mudam. O cálculo já era global, então o
+  reconcilio virou global (diff da lista inteira), e a assinatura usa PARES `alias>canônico`, não o conjunto.
+- **Residual aceito (P2):** pedido sincronizado tarde com dia anterior ao corte muda a herança sem mudar a assinatura.
+  É a mesma semântica do gerador factual (a lista do dia é retrato da manhã; o dia seguinte recalcula), e qualquer
+  reconcilio do dia já o incorpora.
+
+## Deploy
+🟣 founder: a migration no SQL Editor (depois da `20261107013000`) → conferir com `db/validar-cliente-sucessao-plano.sql`
+via `psql-ro` (12 ✅) → 🖱️ Publish (este PR não muda front; o Publish entra com o PR C).
