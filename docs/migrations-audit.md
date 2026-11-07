@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **796** custom migrations totais
-- **2616** objetos esperados (criados por estas migrations)
+- **799** custom migrations totais
+- **2638** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1003
+  - `function`: 1019
   - `rls_policy`: 519
-  - `index`: 374
-  - `table`: 239
+  - `index`: 377
+  - `table`: 242
   - `cron_job`: 214
   - `view`: 135
   - `trigger`: 128
@@ -6518,9 +6518,46 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.cliente_sucessoes_imutavel_trg` | `cliente_sucessoes` |
 | `trigger` | `public.cliente_sucessoes_sem_truncate_trg` | `cliente_sucessoes` |
 
+### `20261107040000_radar_socios_cpf_mascarado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_nome_norm` | — |
+| `function` | `private.radar_mascara_cpf` | — |
+| `function` | `private.radar_mascaras_conflitam` | — |
+| `function` | `public.radar_socios_iniciar` | — |
+| `function` | `public.radar_socios_receber` | — |
+| `function` | `public.radar_socios_publicar` | — |
+| `function` | `public.radar_socios_limpar` | — |
+| `function` | `private.radar_vinculos_base` | — |
+| `function` | `private.credito_vinculo_avaliar` | — |
+| `table` | `public.radar_socios_lote` | — |
+| `table` | `public.radar_socios` | — |
+| `index` | `public.radar_socios_lote_um_vigente` | `radar_socios_lote` |
+| `index` | `public.radar_socios_chave` | `radar_socios` |
+| `index` | `public.idx_radar_empresas_titular_mei_norm` | `radar_empresas` |
+
 ### `20261107120000_ipi_aliquota_ncm_seed_nf_onda1.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261107140000_sayerlack_condicao_portal_onda2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_condicao_portal_normalizar` | — |
+| `function` | `public.sayerlack_condicao_portal_para_omie` | — |
+| `function` | `public.sayerlack_importar_pedido_portal` | — |
+| `function` | `public.sayerlack_aplicar_condicao_portal` | — |
+| `table` | `public.sayerlack_condicao_portal_de_para` | — |
+
+### `20261107140001_radar_email_semanal_toggle.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_email_semanal_painel` | — |
+| `function` | `public.radar_email_semanal_definir` | — |
+| `function` | `public.radar_email_semanal_cron` | — |
 
 ## Próximos passos por status
 

@@ -99,7 +99,26 @@ Fase seguinte (mais leads, outra cadência, WhatsApp depois de 10/01/2027) só c
 O envio de teste não entra no denominador e não queima lead: quando a Regina for ligada de verdade, ela recebe a lista
 calculada naquela semana.
 
+## Ligar pela tela (2026-11-07)
+
+Pedido do founder: ligar o e-mail "para qualquer usuário que eu queira" sem SQL Editor. Migration
+`20261107140001_radar_email_semanal_toggle.sql` (**manual**) e o card `RadarEmailSemanalCard` na página
+**Governança → Usuários** (`/governance/users`, **Publish**).
+
+| Peça | O quê |
+| --- | --- |
+| `public.radar_email_semanal_painel()` | Leitura pura (`STABLE`, na allowlist da lente), só master (42501). Estado do cron (`null` = o job não existe, ≠ desligado) e, por pessoa da equipe (employee/master, mais quem já tem config): modo, acesso ao Radar, os 3 municípios do e-mail e o último envio. |
+| `public.radar_email_semanal_definir(p_usuario, p_modo)` | `desligado` · `teste` · `ligado`, só master. `teste` manda para o e-mail do **próprio master**, lido do perfil dele (nunca de parâmetro: a função não vira relay para endereço livre). Ligar exige alguém da equipe (22023); desligar nunca é bloqueado. Grava `atualizado_por` e 1 linha `radar.email_semanal_definir` no ledger. |
+| `public.radar_email_semanal_cron(p_ativo)` | Liga/desliga o job `radar-avisar-vendedores-semanal`, só master; confere que o job mudou antes de responder; job ausente = P0002. Ledger `radar.email_semanal_cron`. |
+| Card | Uma linha por pessoa com o seletor, os municípios, o último envio e o aviso de quando o e-mail seria pulado (sem acesso ao Radar, sem carteira, sem e-mail). "Ligado" e ligar o envio automático pedem confirmação; "Teste" e desligar vão direto. Na lente "Ver como": só leitura. |
+
+Prova: a mesma `db/test-radar-leads-vendedor.sh`, agora com a seção T (62 asserts, 46 sabotagens vermelhas no assert
+certo, nos dois locales). Vitest: `RadarEmailSemanalCard.estados.test.tsx` (10) e `email-semanal.test.ts` (5).
+
 ## Ativação (founder)
+
+**Pela tela** (depois da migration `20261107140001` e do Publish): Governança → Usuários → card "E-mail semanal de
+leads do Radar" — seletor por pessoa e o interruptor do envio automático. Os SQLs abaixo continuam valendo.
 
 Pré-requisitos: migration aplicada, edge v1.2 publicada (sonda), **B5 (deep link) mergeado e publicado** (sem ele o
 link grava a abertura e cai na lista do Radar, sem abrir a ficha).
