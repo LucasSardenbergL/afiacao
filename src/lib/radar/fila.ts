@@ -4,8 +4,10 @@
  * re-ligava para quem já tinha falado. Agora a decisão é explícita:
  *  · há um lead depois do aberto → ele;
  *  · o aberto SAIU da lista (contato registrado, refetch) → o que ocupou a posição dele;
- *  · acabou o carregado → `buscar_mais` se há página seguinte, `fim` se a fila acabou de verdade.
- * Nunca volta ao começo.
+ *  · acabou o carregado → `buscar_mais` se há página seguinte, `fim` se a fila acabou de verdade;
+ *  · o aberto NUNCA esteve na fila (ficha de link/e-mail/card, `ultimoIndice` null) → o 1º da fila (pacote F, achado
+ *    6: antes caía em `fila.length` e dizia "fim da fila" com a fila inteira por fazer).
+ * Nunca volta ao começo de uma fila que o vendedor já estava percorrendo.
  */
 export type PassoFila<T> =
   | { tipo: 'abrir'; empresa: T; indice: number }
@@ -20,7 +22,7 @@ export function proximoDaFila<T extends { cnpj: string }>(
   temMais: boolean,
 ): PassoFila<T> {
   const i = fila.findIndex((e) => e.cnpj === cnpjAberto);
-  const alvo = i >= 0 ? i + 1 : ultimoIndice ?? fila.length;
+  const alvo = i >= 0 ? i + 1 : ultimoIndice ?? 0;
   const empresa = fila[alvo];
   if (empresa && empresa.cnpj !== cnpjAberto) return { tipo: 'abrir', empresa, indice: alvo };
   return temMais ? { tipo: 'buscar_mais' } : { tipo: 'fim' };

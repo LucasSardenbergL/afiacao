@@ -136,8 +136,15 @@ export function parametrosDaLista(
 /** Chave das páginas da visão "Meus atendimentos" (7º elemento da queryKey da lista). */
 export const CHAVE_VISAO_MEUS = 'meus';
 
-export function useRadarLista(filtros: RadarFiltros, hojeISO: string, opcoes: { soMeus?: boolean } = {}) {
+export function useRadarLista(
+  filtros: RadarFiltros,
+  hojeISO: string,
+  opcoes: { soMeus?: boolean; aguardar?: boolean } = {},
+) {
   const soMeus = opcoes.soMeus === true;
+  // `aguardar`: o chamador ainda não sabe o recorte (ex.: o território do vendedor, pacote F) — buscar agora seria
+  // buscar a fila ERRADA e jogá-la fora em seguida.
+  const aguardar = opcoes.aguardar === true;
   const qc = useQueryClient();
   const rodada = useRadarRodadaScore();
   const versao = versaoDaFila(filtros.preset, rodada.data);
@@ -152,7 +159,7 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string, opcoes: { 
     // ledger que falha degrada para 'sem-rodada' — a lista continua, só sem o reinício automático.
     // Idem o lote: espera a 1ª leitura assentar (sucesso OU erro — no erro a própria lista falha ao
     // reler, como antes), senão a abertura buscaria a página 0 duas vezes.
-    enabled: (filtros.preset !== 'score' || !rodada.isPending) && !qLote.isPending,
+    enabled: !aguardar && (filtros.preset !== 'score' || !rodada.isPending) && !qLote.isPending,
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
       // Lote vigente ANTES de montar a query: mesma chave/cache do `useRadarLoteVigente`

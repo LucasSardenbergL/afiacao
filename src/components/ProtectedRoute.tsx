@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useSaidaComFilaPendente } from '@/components/shell/SaidaComFilaPendente';
+import { rotaDeLogin } from '@/lib/destino-pos-login';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -20,7 +21,10 @@ export const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   }
 
   if (!user) {
-    return <Navigate to="/auth" state={{ from: location }} replace />;
+    // O destino vai em `?next=` (sobrevive a recarregar a aba; o /auth honra) e em `state.from`. Sem isso, quem
+    // abre o link do e-mail do Radar sem sessão loga e cai na home, não na ficha.
+    const destino = `${location.pathname}${location.search}${location.hash}`;
+    return <Navigate to={rotaDeLogin(destino)} state={{ from: location }} replace />;
   }
 
   if (!isApproved) {

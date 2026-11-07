@@ -6,6 +6,7 @@ import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { PedidosSemNotaBanner } from './PedidosSemNotaBanner';
 import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
+import { ProspectarHojeCard } from '@/components/farmer/ProspectarHojeCard';
 
 /**
  * Meu Dia da farmer — placar do mês (positivação) + a FILA única de quem ligar.
@@ -52,6 +53,9 @@ export function FarmerDashboardV2() {
 
       {/* A fila É o dia. */}
       <FilaDoDia />
+
+      {/* Radar: 3 leads perto da carteira. O /meu-dia (home da farmer) não tinha o card — só o /farmer (pacote F). */}
+      <ProspectarHojeCard />
     </div>
   );
 }

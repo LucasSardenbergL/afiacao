@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 804
+-- Total de custom migrations: 805
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -870,6 +870,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107140001', 'radar_email_semanal_toggle', '20261107140001_radar_email_semanal_toggle.sql'),
   ('20261107210000', 'cliente_sucessao_plano_rateio', '20261107210000_cliente_sucessao_plano_rateio.sql'),
   ('20261107220000', 'data_health_sayerlack_varredura_portal', '20261107220000_data_health_sayerlack_varredura_portal.sql'),
+  ('20261107220500', 'radar_meu_territorio', '20261107220500_radar_meu_territorio.sql'),
   ('20261107233000', 'radar_funil_painel', '20261107233000_radar_funil_painel.sql'),
   ('20261108000000', 'cliente_sucessao_consumidores', '20261108000000_cliente_sucessao_consumidores.sql'),
   ('20261108120000', 'sayerlack_situacao_portal_no_pedido', '20261108120000_sayerlack_situacao_portal_no_pedido.sql')
@@ -3504,6 +3505,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_sayerlack_varredura_portal', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('radar_meu_territorio', 'function', 'public', 'radar_meu_territorio', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_registrar_ficha_entregue', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_registrar_falha_sensor', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_funil', ''),
@@ -6199,6 +6201,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_sayerlack_varredura_portal', 'function', 'public', '_data_health_compute', ''),
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('radar_meu_territorio', 'function', 'public', 'radar_meu_territorio', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_registrar_ficha_entregue', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_registrar_falha_sensor', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_funil', ''),

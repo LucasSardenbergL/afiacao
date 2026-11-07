@@ -7,6 +7,7 @@ import { useSinalPositivacao } from '@/hooks/useSinalPositivacao';
 import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { PedidosSemNotaBanner } from './PedidosSemNotaBanner';
+import { ProspectarHojeCard } from '@/components/farmer/ProspectarHojeCard';
 
 /**
  * Dashboard Hunter (aquisição) — Meu Dia do hunter.
@@ -52,6 +53,10 @@ export function HunterDashboard() {
 
       {/* nudge condicional: ligações registradas sem cliente vinculado (era item do menu Vendas) */}
       <ChamadasPendentesNudge />
+
+      {/* Radar: 3 leads perto da carteira (a mesma escolha do e-mail semanal) — o hunter recebe o e-mail, então tem o
+          card também (pacote F, achado 8). Some fora do gate do Radar. */}
+      <ProspectarHojeCard />
 
       {/* Fila de caça — look-alike dos melhores que ainda não compram (Frente B) — a ação do dia */}
       <CacaConteudo />
