@@ -84,7 +84,13 @@ if s.count(de) != 1:
 open(p, "w", encoding="utf-8").write(s.replace(de, para))
 PY
 }
-cegar_md5() { sabotar "    IF r.vivo IS DISTINCT FROM r.esperado THEN" "    IF false AND r.vivo IS DISTINCT FROM r.esperado THEN"; }
+# Sabotagem de COMPORTAMENTO muda o corpo: sem cegar o md5 da PÓS e o da PRE (que o 2º apply roda), elas abortariam
+# antes do assert que a sabotagem deve acender. A deriva (PRE) e as de ACL/protocolo não cegam.
+cegar_md5() {
+  sabotar "    IF r.vivo IS DISTINCT FROM r.esperado THEN" "    IF false AND r.vivo IS DISTINCT FROM r.esperado THEN"
+  sabotar "  IF v_bs IS NULL OR v_bs NOT IN" "  IF false AND v_bs NOT IN"
+  sabotar "  IF v_pa IS NULL OR v_pa NOT IN" "  IF false AND v_pa NOT IN"
+}
 case "${SABOTAGEM:-}" in
   "") ;;
   sem_filtro_pais)    cegar_md5; sabotar "AND coalesce(max(o.n_pais), 0) <= 3" "AND coalesce(max(o.n_pais), 0) <= 99" ;;
