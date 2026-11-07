@@ -135,7 +135,7 @@ export default function RadarClientes() {
     preset: narrowPreset(filtrosAtuais.preset),
     regiao: lugar ? lugar.regiao : narrowRegiao(filtrosAtuais.regiao),
   };
-  const cidadeAtiva = cidadeDoTerritorioAtiva(filtros.municipioCodigo, cidadesTerritorio);
+  const cidadeAtiva = cidadeDoTerritorioAtiva(filtros.municipioCodigo ?? '', cidadesTerritorio);
   // Mexer em LUGAR com o automático ligado o desliga — senão limpar o campo "cidade" traria a cidade de volta.
   const setFiltros = useCallback(
     (patch: Partial<RadarUrlState>) => set(cidadeAuto && patchMexeEmLugar(patch) ? { ...patch, perto: PERTO_DESLIGADO } : patch),
@@ -354,10 +354,21 @@ export default function RadarClientes() {
   const [maisEscolhido, setMaisAberto] = useState<boolean | null>(null);
   const maisAberto = maisEscolhido ?? gestor;
   // Só o que RECORTA a fila conta como filtro (a ordem não recorta; a região aparece no resumo da fila).
+  // O recorte AUTOMÁTICO do território é o default do vendedor, não filtro: conta só o que veio da URL.
   const filtrosAtivos = (Object.keys(PADRAO_FILTROS) as (keyof typeof PADRAO_FILTROS)[])
     .filter((k) => k !== 'preset' && k !== 'regiao' && filtrosAtuais[k] !== PADRAO_FILTROS[k]).length;
-  const rotuloRegiao = filtros.uf ? filtros.uf : filtros.regiao === 'brasil' ? 'Brasil' : 'MG e vizinhos';
-  const limparFiltros = () => { track('radar.filtros_limpos', {}); set({ ...PADRAO_FILTROS }); };
+  const rotuloRegiao = cidadeAtiva
+    ? `perto dos seus clientes · ${tituloMunicipio(cidadeAtiva.municipioNome)}${cidadeAtiva.uf ? `/${cidadeAtiva.uf}` : ''}`
+    : filtros.municipioCodigo ? `${tituloMunicipio(filtros.municipio)}${filtros.uf ? `/${filtros.uf}` : ''}`
+    : filtros.uf ? filtros.uf : filtros.regiao === 'brasil' ? 'Brasil' : 'MG e vizinhos';
+  // Limpar volta ao default DO VENDEDOR (o território, se houver), não a "MG e vizinhos".
+  const limparFiltros = () => { track('radar.filtros_limpos', {}); set({ ...PADRAO_FILTROS, perto: '' }); };
+  const escolherCidadeDoTerritorio = (c: { municipioCodigo: string } | null) => {
+    track('radar.territorio_escolhido', { cidade: c ? 'sim' : 'toda_regiao', automatica: !!cidadeAuto });
+    if (!c) { set({ perto: PERTO_DESLIGADO, municipio: '', municipioCodigo: '', uf: '' }); return; }
+    const cidade = cidadesTerritorio?.find((t) => t.municipioCodigo === c.municipioCodigo);
+    if (cidade) set({ ...recorteDaCidade(cidade), perto: '' });
+  };
   const semPaginas = !q.data?.pages.length;
 
   // Cidade do ranking/mapa (pacote C, C2): vai o CÓDIGO (exato — o nome tem homônimos em outras UFs) e, se a cidade
@@ -365,7 +376,7 @@ export default function RadarClientes() {
   const escolherCidade = (c: CidadeEscolhida, origem: 'ranking' | 'mapa') => {
     const { patch, ajuste } = filtrosDaCidade(c, filtros);
     track('radar.cidade_selecionada', { origem, ajustou: ajuste != null });
-    set(origem === 'mapa' ? { ...patch, vista: 'lista' } : patch);
+    setFiltros(origem === 'mapa' ? { ...patch, vista: 'lista' } : patch);
     if (ajuste) toast.info(ajuste);
   };
 
@@ -397,15 +408,19 @@ export default function RadarClientes() {
       <section className="rounded-md border p-3 space-y-2" data-testid="radar-fila-de-hoje">
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-0">
-            <h2 className="text-lg font-display leading-tight">Sua fila de hoje</h2>
+            <h2 className="text-lg font-display leading-tight" data-testid="radar-fila-titulo">
+              {meus ? 'Seus atendimentos' : 'Sua fila de hoje'}
+            </h2>
             <p className="text-xs text-muted-foreground" data-testid="radar-fila-resumo">
-              {q.isLoading ? (meus ? 'Carregando seus atendimentos…' : 'Carregando a fila…')
+              {carregandoFila ? (meus ? 'Carregando seus atendimentos…' : 'Carregando a fila…')
                 : meus
                   ? `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} com você`
                     // Leitura da posse falhou: DIZ que o vencimento está indisponível (ausente ≠ "nada vence").
                     + (atendimentos.isError ? ' · vencimento indisponível'
                       : proximoVencimento ? ` · o próximo vence em ${diaMes(proximoVencimento)}` : '')
-                  : `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} · ${rotuloRegiao} · ordem: ${ROTULO_PRESET[filtros.preset]}`}
+                  : `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} · ${rotuloRegiao} · ordem: ${ROTULO_PRESET[filtros.preset]}`
+                    // Território que não deu para ler: o default é o de antes, e a tela DIZ (ausente ≠ "sem território").
+                    + (territorio.isError ? ' · não consegui ler seu território' : '')}
             </p>
           </div>
           <div className="flex rounded-md border p-0.5" role="group" aria-label="Qual lista ver">
@@ -417,10 +432,32 @@ export default function RadarClientes() {
             </Button>
           </div>
           <Button size="touch" className="ml-auto" disabled={empresas.length === 0}
-            onClick={() => { const primeiro = empresas[0]; if (primeiro) { track('radar.fila_comecar', {}); abrir(primeiro); } }}>
-            Começar pelo 1º lead
+            onClick={() => { const primeiro = empresas[0]; if (primeiro) { track('radar.fila_comecar', { visao }); abrir(primeiro); } }}>
+            {meus ? 'Abrir o 1º atendimento' : 'Começar pelo 1º lead'}
           </Button>
         </div>
+        {!meus && cidadesTerritorio && cidadesTerritorio.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Perto dos seus clientes" data-testid="radar-territorio">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <MapPin className="w-3 h-3 shrink-0" /> Perto dos seus clientes:
+            </span>
+            {cidadesTerritorio.map((c) => {
+              const ativa = cidadeAtiva?.municipioCodigo === c.municipioCodigo;
+              return (
+                <Button key={c.municipioCodigo} size="sm" variant={ativa ? 'secondary' : 'outline'} aria-pressed={ativa}
+                  className="h-7 px-2 text-xs" onClick={() => escolherCidadeDoTerritorio(c)}
+                  title={`${c.clientes} cliente${c.clientes === 1 ? '' : 's'} seu${c.clientes === 1 ? '' : 's'} nesta cidade`}>
+                  {tituloMunicipio(c.municipioNome)}{c.uf ? `/${c.uf}` : ''}
+                  <span className="ml-1 text-muted-foreground font-tabular">{c.clientes}</span>
+                </Button>
+              );
+            })}
+            <Button size="sm" variant={cidadeAtiva ? 'ghost' : 'secondary'} aria-pressed={!cidadeAtiva}
+              className="h-7 px-2 text-xs" onClick={() => escolherCidadeDoTerritorio(null)}>
+              Toda a região
+            </Button>
+          </div>
+        )}
         {meus ? (
           <p className="text-xs text-muted-foreground" data-testid="radar-meus-explica">
             Os leads que você assumiu e ainda estão com você (a posse vence 7 dias depois do último contato). Filtros e
@@ -439,7 +476,7 @@ export default function RadarClientes() {
           <CollapsibleContent className="space-y-4 pt-2">
             <Filtros
               filtros={filtros}
-              set={set}
+              set={setFiltros}
               lote={lote}
               acoes={<RadarFavoritos atuais={filtrosAtuais} padrao={PADRAO_FAVORITO} onAplicar={(f) => set({ ...PADRAO_FAVORITO, ...f })} />}
             />
@@ -451,7 +488,7 @@ export default function RadarClientes() {
             />
             <RadarKpis />
             {/* O território espera a 1ª página da fila (C5): é secundário e não pode disputar a abertura com ela. */}
-            <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} adiar={q.isPending} onPick={(c) => escolherCidade(c, 'ranking')} />
+            <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} adiar={q.isPending || aguardandoTerritorio} onPick={(c) => escolherCidade(c, 'ranking')} />
           </CollapsibleContent>
         </Collapsible>
         )}
@@ -510,7 +547,7 @@ export default function RadarClientes() {
               {selecao.size > 0 && <span className="ml-auto tabular-nums">{selecao.size} selecionado{selecao.size === 1 ? '' : 's'}</span>}
             </div>
           )}
-          {q.isLoading ? (
+          {carregandoFila ? (
             <div className="p-3 space-y-2">
               {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
             </div>

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 /**
@@ -10,7 +11,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 type Resposta = { data: unknown; error: { message: string } | null };
 const respostas: Record<string, Resposta> = {};
-const rpc = vi.fn((nome: string, _args?: unknown) => Promise.resolve(respostas[nome] ?? { data: null, error: { message: `sem mock: ${nome}` } }));
+// Encadeável como o cliente real (`.rpc().order().range()` — a leitura da posse usa).
+const rpc = vi.fn((nome: string, _args?: unknown) => {
+  const r = Promise.resolve(respostas[nome] ?? { data: null, error: { message: `sem mock: ${nome}` } });
+  return Object.assign(r, { order() { return this; }, range() { return this; } });
+});
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: (n: string, a?: unknown) => rpc(n, a) } }));
 
 let auth = { role: 'employee', commercialRole: 'farmer' as string | null };
@@ -20,7 +25,18 @@ vi.mock('@/hooks/useDisplayAccess', () => ({ useDisplayAccess: () => display }))
 let lente = { isImpersonating: false, effectiveUserId: 'eu' };
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => lente }));
 const navigate = vi.fn();
-vi.mock('react-router-dom', () => ({ useNavigate: () => navigate }));
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => navigate,
+  Link: ({ to, children, ...p }: { to: string; children: ReactNode }) => <a href={to} {...p}>{children}</a>,
+}));
+// O sensor é da sessão H: aqui ele é controlável, para provar o contrato (só marca "registrado" com confirmação).
+const sensor = vi.fn((_n: number): unknown => undefined);
+vi.mock('@/queries/useRadarRegistroEmpurrado', () => ({
+  registrarCardServido: (n: number) => sensor(n),
+  registrarAberturaEmpurrada: (a: unknown) => rpc('radar_registrar_abertura_empurrada', {
+    p_origem: (a as { origem: string }).origem, p_cnpj: (a as { cnpj: string }).cnpj,
+  }),
+}));
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 const track = vi.fn();
 vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a) }));
@@ -37,14 +53,14 @@ const lead = (posicao: number, cnpj: string, nome: string) => ({
 });
 const TRES = [lead(1, '00000000000101', 'Marcenaria Um'), lead(2, '00000000000108', 'Moveis Oito'), lead(3, '00000000000109', 'Lead Nove')];
 
-function renderCard() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}><ProspectarHojeCard /></QueryClientProvider>);
+function renderCard(qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  return { qc, ...render(<QueryClientProvider client={qc}><ProspectarHojeCard /></QueryClientProvider>) };
 }
 const chamadas = (nome: string) => rpc.mock.calls.filter((c) => c[0] === nome);
 
 beforeEach(() => {
   rpc.mockClear(); navigate.mockClear(); track.mockClear();
+  sensor.mockReset(); sensor.mockImplementation((n: number) => rpc('radar_registrar_card_servido', { p_n_leads: n }));
   for (const k of Object.keys(respostas)) delete respostas[k];
   auth = { role: 'employee', commercialRole: 'farmer' };
   display = { displayRole: 'employee', displayCommercialRole: 'farmer' };
@@ -53,6 +69,7 @@ beforeEach(() => {
   respostas.radar_registrar_card_servido = { data: { ok: true, registrado: true }, error: null };
   respostas.radar_registrar_abertura_empurrada = { data: { ok: true, registrado: true, do_destinatario: true }, error: null };
   respostas.radar_definir_atendimento = { data: { ok: true, renovado: false, ja_livre: false, expira_em: '2026-11-13T12:00:00Z' }, error: null };
+  respostas.radar_atendimentos_ativos = { data: [], error: null };
 });
 
 describe('ProspectarHojeCard', () => {
@@ -81,6 +98,71 @@ describe('ProspectarHojeCard', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Assumir/ })[0]);
     await waitFor(() => expect(chamadas('radar_definir_atendimento')).toHaveLength(1));
     expect(chamadas('radar_definir_atendimento')[0][1]).toEqual({ p_cnpj: '00000000000101', p_acao: 'assumir' });
+  });
+
+  it('depois de Assumir: a linha vira "com você" (link p/ Meus atendimentos), sem 2º Assumir, e o card é relido', async () => {
+    const { qc } = renderCard();
+    await screen.findByText('Marcenaria Um');
+    const invalidar = vi.spyOn(qc, 'invalidateQueries');
+    fireEvent.click(screen.getAllByRole('button', { name: /Assumir/ })[0]);
+    const chip = await screen.findByTestId('prospectar-hoje-com-voce');
+    expect(chip).toHaveAttribute('href', '/radar?visao=meus');
+    expect(screen.getAllByRole('button', { name: /Assumir/ })).toHaveLength(2);
+    await waitFor(() => expect(invalidar).toHaveBeenCalledWith({ queryKey: ['radar', 'prospectar-hoje'] }));
+    await waitFor(() => expect(chamadas('radar_prospectar_hoje').length).toBeGreaterThanOrEqual(2));
+    expect(screen.getByTestId('prospectar-hoje-meus')).toHaveTextContent('(1 assumido agora)');
+  });
+
+  it('lead que JÁ é meu (posse viva ou marcado com_voce pela RPC) nasce "com você", nunca "Assumir"', async () => {
+    respostas.radar_atendimentos_ativos = { data: [{ cnpj: '00000000000108', dono_user_id: 'eu', dono_nome: 'Eu',
+      assumido_em: '2026-11-06T12:00:00Z', expira_em: '2026-11-13T12:00:00Z', eh_meu: true }], error: null };
+    respostas.radar_prospectar_hoje = { data: { territorio: TERRITORIO, leads: [TRES[0], TRES[1], { ...TRES[2], com_voce: true }] }, error: null };
+    renderCard();
+    await waitFor(() => expect(screen.getAllByTestId('prospectar-hoje-com-voce')).toHaveLength(2));
+    expect(screen.getAllByRole('button', { name: /Assumir/ })).toHaveLength(1);
+  });
+
+  it('lead passado pelo gestor (atribuido) leva o selo', async () => {
+    respostas.radar_prospectar_hoje = { data: { territorio: TERRITORIO, leads: [{ ...TRES[0], atribuido: true }, TRES[1]] }, error: null };
+    renderCard();
+    expect(await screen.findByTestId('prospectar-hoje-atribuido')).toHaveTextContent('passado pelo gestor');
+    expect(screen.getAllByTestId('prospectar-hoje-atribuido')).toHaveLength(1);
+  });
+
+  it('sensor que FALHOU não marca "registrado": a próxima leitura tenta de novo', async () => {
+    sensor.mockImplementation(() => Promise.resolve(false));
+    const { qc } = renderCard();
+    await screen.findByText('Marcenaria Um');
+    await waitFor(() => expect(sensor).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(track).toHaveBeenCalledWith('radar.prospectar_hoje_sensor_falhou', {}));
+    sensor.mockImplementation(() => Promise.resolve({ ok: true }));
+    respostas.radar_prospectar_hoje = { data: { territorio: TERRITORIO, leads: TRES.slice(0, 2) }, error: null };
+    await qc.invalidateQueries({ queryKey: ['radar', 'prospectar-hoje'] });
+    await waitFor(() => expect(sensor).toHaveBeenCalledTimes(2));
+    expect(sensor).toHaveBeenLastCalledWith(2);
+  });
+
+  it('sensor confirmado (true) não registra de novo na releitura', async () => {
+    sensor.mockImplementation(() => Promise.resolve(true));
+    const { qc } = renderCard();
+    await screen.findByText('Marcenaria Um');
+    await waitFor(() => expect(sensor).toHaveBeenCalledTimes(1));
+    respostas.radar_prospectar_hoje = { data: { territorio: TERRITORIO, leads: TRES.slice(0, 2) }, error: null };
+    await qc.invalidateQueries({ queryKey: ['radar', 'prospectar-hoje'] });
+    await screen.findByText('Moveis Oito');
+    await waitFor(() => expect(screen.getAllByTestId('prospectar-hoje-lead')).toHaveLength(2));
+    expect(sensor).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['nao_e_vendedor', /papel de vendedor/],
+    ['sem_carteira', /carteira está vazia/],
+    ['carteira_sem_municipio', /não têm endereço em um município do Radar/],
+  ])('sem território com motivo %s: a copy diz o porquê', async (motivo, texto) => {
+    respostas.radar_prospectar_hoje = { data: { territorio: [], leads: [], territorio_motivo: motivo }, error: null };
+    renderCard();
+    expect(await screen.findByText('Sem território no Radar')).toBeInTheDocument();
+    expect(screen.getByText(texto)).toBeInTheDocument();
   });
 
   it('leitura que FALHOU mostra erro honesto, nunca o vazio "sem leads"', async () => {

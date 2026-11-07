@@ -6,6 +6,7 @@ import { FollowupsSugeridosCard } from './FollowupsSugeridosCard';
 import { MinhasVisitasResultadoCard } from './MinhasVisitasResultadoCard';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 import { ChamadasPendentesNudge } from '@/components/farmer/ChamadasPendentesNudge';
+import { ProspectarHojeCard } from '@/components/farmer/ProspectarHojeCard';
 
 /**
  * Dashboard Closer (visitas / outbound presencial) — lidera com o PLACAR DO MÊS
@@ -41,6 +42,9 @@ export function CloserDashboard() {
 
       {/* Follow-ups pós-visita: visitas mornas que pedem retorno (read-only, deep-link) */}
       <FollowupsSugeridosCard />
+
+      {/* Radar: 3 leads perto da carteira (a mesma escolha do e-mail semanal; pacote F, achado 8). */}
+      <ProspectarHojeCard />
 
       {/* Breakdown histórico por resultado (90d) */}
       <MinhasVisitasResultadoCard />

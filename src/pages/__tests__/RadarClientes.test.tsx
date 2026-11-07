@@ -24,6 +24,10 @@ const fonte = vi.hoisted(() => ({
   ultimaChamada: null as { filtros: Record<string, unknown>; soMeus: boolean } | null,
   atendimentos: [] as { cnpj: string; ehMeu: boolean; expiraEm: string }[],
   falharAtendimentos: false,
+  // Pacote F: território do vendedor (radar_meu_territorio) e uma trava para segurar a 1ª página da fila.
+  territorio: [] as { municipioCodigo: string; municipioNome: string; uf: string; clientes: number }[],
+  falharTerritorio: false,
+  travaLista: null as Promise<void> | null,
 }));
 const toastMock = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), success: vi.fn(), warning: vi.fn() }));
 vi.mock('sonner', () => ({ toast: toastMock }));
@@ -40,15 +44,17 @@ vi.mock('@/queries/useRadarLista', async (importOriginal) => {
     // Os filtros neutros e a chave da visão são os REAIS: o teste confere o que a página manda à RPC.
     FILTROS_MEUS_ATENDIMENTOS: real.FILTROS_MEUS_ATENDIMENTOS,
     CHAVE_VISAO_MEUS: real.CHAVE_VISAO_MEUS,
-    useRadarLista: (filtros: Record<string, unknown>, _hoje: string, opcoes: { soMeus?: boolean } = {}) => {
+    useRadarLista: (filtros: Record<string, unknown>, _hoje: string, opcoes: { soMeus?: boolean; aguardar?: boolean } = {}) => {
       const soMeus = opcoes.soMeus === true;
-      fonte.ultimaChamada = { filtros, soMeus };
+      if (!opcoes.aguardar) fonte.ultimaChamada = { filtros, soMeus };
       // Mesma posição da chave da visão que a query real (7º elemento): é por ela que a página relê "meus".
       return useInfiniteQuery({
         queryKey: ['radar', 'lista', filtros, '', '', '', soMeus ? real.CHAVE_VISAO_MEUS : 'fila'],
+        enabled: !opcoes.aguardar,
         initialPageParam: 0,
         queryFn: async ({ pageParam }) => {
           fonte.leiturasLista += 1;
+          if (fonte.travaLista) await fonte.travaLista;
           if (soMeus) {
             if (fonte.falharMeus) throw new Error(fonte.falharMeus);
             return fonte.paginasMeus[pageParam as number] ?? [];
@@ -71,6 +77,17 @@ vi.mock('@/queries/useRadarAtendimentos', () => ({
         return new Map(fonte.atendimentos.map((a) => [a.cnpj, {
         cnpj: a.cnpj, donoUserId: a.ehMeu ? 'u1' : 'u2', donoNome: null, assumidoEm: '2026-11-01T12:00:00Z', expiraEm: a.expiraEm, ehMeu: a.ehMeu,
       }]));
+      },
+      retry: false,
+    }),
+}));
+vi.mock('@/queries/useRadarMeuTerritorio', () => ({
+  useRadarMeuTerritorio: () =>
+    useQuery({
+      queryKey: ['radar', 'meu-territorio', 'eu'],
+      queryFn: async () => {
+        if (fonte.falharTerritorio) throw new Error('falha ao ler território');
+        return fonte.territorio;
       },
       retry: false,
     }),
@@ -101,7 +118,12 @@ vi.mock('@/components/radar/RadarFavoritos', () => ({ RadarFavoritos: () => null
 vi.mock('@/components/radar/RadarFiltros', () => ({ RadarFiltros: () => null }));
 vi.mock('@/components/radar/RadarAmostraRegra', () => ({ RadarAmostraRegra: () => null }));
 vi.mock('@/components/radar/RadarRankingCidades', () => ({ RadarRankingCidades: () => null }));
-vi.mock('@/components/radar/RadarConflitosCadastro', () => ({ RadarConflitosIndicador: () => null }));
+vi.mock('@/components/radar/RadarConflitosCadastro', () => ({
+  // Porta para abrir uma ficha FORA da fila pela própria página (abrirPorCnpj) — usada no F6.
+  RadarConflitosIndicador: ({ onAbrir }: { onAbrir: (cnpj: string) => Promise<void> }) => (
+    <button onClick={() => void onAbrir('Z')}>abrir conflito Z</button>
+  ),
+}));
 vi.mock('@/components/radar/RadarLoteDialog', () => ({ RadarLoteDialog: () => null }));
 vi.mock('@/components/radar/RadarMapa', () => ({ default: () => <div data-testid="mapa">mapa</div> }));
 vi.mock('@/components/radar/RadarLinha', () => ({
@@ -177,6 +199,9 @@ beforeEach(() => {
   fonte.ultimaChamada = null;
   fonte.atendimentos = [];
   fonte.falharAtendimentos = false;
+  fonte.territorio = [];
+  fonte.falharTerritorio = false;
+  fonte.travaLista = null;
 });
 
 describe('RadarClientes — fila do vendedor', () => {
@@ -267,16 +292,18 @@ describe('RadarClientes — fila do vendedor', () => {
 
   it('B5: /radar?cnpj=… abre a ficha — da fila carregada, ou lida pelo CNPJ quando fora dela', async () => {
     fonte.paginas = [[lead('A'), lead('B')]];
+    // Pacote F: a leitura pelo CNPJ sai em PARALELO com a fila, mesmo quando o lead está nela (a fila, se chegar
+    // antes, vence); antes a página esperava a 1ª página e só então decidia.
+    lerEmpresaRadar.mockResolvedValueOnce(lead('B'));
     const v = montar('/radar?cnpj=B');
     await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('B'));
-    expect(lerEmpresaRadar).not.toHaveBeenCalled();
     v.unmount();
 
     lerEmpresaRadar.mockResolvedValueOnce(lead('Z', { prospeccao_status: 'descartado' }));
     montar('/radar?cnpj=Z');
     await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('Z'));
     expect(lerEmpresaRadar).toHaveBeenCalledWith('Z');
-    expect(cnpjsNaLista()).toEqual(['A', 'B']); // abrir pelo link não mexe na fila
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B'])); // abrir pelo link não mexe na fila
   });
 
   it('B5: CNPJ do link que não existe no Radar fecha a ficha e diz por quê', async () => {
@@ -299,10 +326,125 @@ describe('RadarClientes — fila do vendedor', () => {
     fireEvent.click(within(topo).getByText('Começar pelo 1º lead'));
     expect(screen.getByTestId('ficha-cnpj').textContent).toBe('A');
   });
+
+  it('F5: o lead do link é lido EM PARALELO com a fila — a ficha abre antes da 1ª página chegar', async () => {
+    let soltar: () => void = () => {};
+    fonte.travaLista = new Promise<void>((r) => { soltar = r; });
+    fonte.paginas = [[lead('A'), lead('B')]];
+    lerEmpresaRadar.mockResolvedValueOnce(lead('Z'));
+    montar('/radar?cnpj=Z');
+    await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('Z'));
+    expect(cnpjsNaLista()).toEqual([]); // a fila ainda não chegou
+    await act(async () => { soltar(); });
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B']));
+  });
+
+  it('F6: "Próximo" na ficha do link (fora da fila) vai para o 1º da fila, não diz "fim"', async () => {
+    fonte.paginas = [[lead('A'), lead('B')]];
+    lerEmpresaRadar.mockResolvedValueOnce(lead('Z'));
+    montar('/radar?cnpj=Z');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B']));
+    await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('Z'));
+    fireEvent.click(screen.getByText('Próximo'));
+    await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('A'));
+    expect(toastMock.info).not.toHaveBeenCalledWith('Fim da fila', expect.anything());
+  });
+
+  it('F6: a posição de OUTRO lead não vale para a ficha do link (abri B, depois o link Z → Próximo = A)', async () => {
+    fonte.paginas = [[lead('A'), lead('B'), lead('C')]];
+    lerEmpresaRadar.mockResolvedValue(lead('Z'));
+    montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B', 'C']));
+    fireEvent.click(screen.getByText('abrir B'));
+    expect(screen.getByTestId('ficha-cnpj').textContent).toBe('B');
+    // Z fora da fila, aberto pela mesma página (indicador de conflitos → abrirPorCnpj)
+    fireEvent.click(screen.getByText('abrir conflito Z'));
+    await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('Z'));
+    fireEvent.click(screen.getByText('Próximo'));
+    // com a posição de B (1) valendo para Z, reabriria B — o certo é o 1º da fila
+    await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('A'));
+  });
+});
+
+describe('RadarClientes — "Perto dos seus clientes" (pacote F)', () => {
+  const T = [
+    { municipioCodigo: '4123', municipioNome: 'DIVINOPOLIS', uf: 'MG', clientes: 12 },
+    { municipioCodigo: '4567', municipioNome: 'NOVA SERRANA', uf: 'MG', clientes: 5 },
+  ];
+  const topo = () => within(screen.getByTestId('radar-fila-de-hoje'));
+
+  it('vendedor com território: a fila abre na cidade nº 1 (código exato + UF), com chips e o resumo dizendo', async () => {
+    fonte.territorio = T;
+    fonte.paginas = [[lead('A')]];
+    montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    expect(fonte.ultimaChamada?.filtros).toMatchObject({ municipioCodigo: '4123', municipio: 'DIVINOPOLIS', uf: 'MG' });
+    expect(screen.getByTestId('radar-fila-resumo').textContent).toMatch(/perto dos seus clientes · Divinopolis\/MG/);
+    const chip = topo().getByRole('button', { name: /Divinopolis\/MG/ });
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    // o automático é o default do vendedor, não "filtro ativo"
+    expect(topo().queryByText(/ativo/)).toBeNull();
+  });
+
+  it('chip de outra cidade troca o recorte; "Toda a região" volta ao default de antes e fica', async () => {
+    fonte.territorio = T;
+    fonte.paginas = [[lead('A')]];
+    montar();
+    await waitFor(() => expect(fonte.ultimaChamada?.filtros).toMatchObject({ municipioCodigo: '4123' }));
+    fireEvent.click(topo().getByRole('button', { name: /Nova Serrana\/MG/ }));
+    await waitFor(() => expect(fonte.ultimaChamada?.filtros).toMatchObject({ municipioCodigo: '4567', uf: 'MG' }));
+    fireEvent.click(topo().getByRole('button', { name: 'Toda a região' }));
+    await waitFor(() => expect(fonte.ultimaChamada?.filtros).toMatchObject({ municipioCodigo: '', uf: '', regiao: 'atuacao' }));
+    expect(screen.getByTestId('radar-fila-resumo').textContent).toMatch(/MG e vizinhos/);
+  });
+
+  it('a fila NÃO busca antes de saber o território (nada de buscar a fila errada e jogar fora)', async () => {
+    fonte.territorio = T;
+    fonte.paginas = [[lead('A')]];
+    montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    expect(fonte.leiturasLista).toBe(1);
+  });
+
+  it('staff sem território: o default de antes (MG e vizinhos), sem chips', async () => {
+    fonte.paginas = [[lead('A')]];
+    montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    expect(fonte.ultimaChamada?.filtros).toMatchObject({ municipioCodigo: '', uf: '', regiao: 'atuacao' });
+    expect(screen.queryByTestId('radar-territorio')).toBeNull();
+  });
+
+  it('lugar explícito na URL vence o território', async () => {
+    fonte.territorio = T;
+    fonte.paginas = [[lead('A')]];
+    montar('/radar?uf=SP');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    expect(fonte.ultimaChamada?.filtros).toMatchObject({ uf: 'SP', municipioCodigo: '' });
+  });
+
+  it('território que não deu para ler: default de antes e a tela DIZ (ausente ≠ sem território)', async () => {
+    fonte.falharTerritorio = true;
+    fonte.paginas = [[lead('A')]];
+    montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    expect(screen.getByTestId('radar-fila-resumo').textContent).toMatch(/não consegui ler seu território/);
+    expect(fonte.ultimaChamada?.filtros).toMatchObject({ municipioCodigo: '' });
+  });
 });
 
 describe('RadarClientes — Meus atendimentos (B2)', () => {
   const visao = () => within(screen.getByTestId('radar-fila-de-hoje'));
+
+  it('F4: o cabeçalho e o botão falam da visão — "Seus atendimentos", não "Sua fila de hoje"', async () => {
+    fonte.paginasMeus = [[lead('M1')]];
+    montar('/radar?visao=meus');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['M1']));
+    expect(screen.getByTestId('radar-fila-titulo').textContent).toBe('Seus atendimentos');
+    expect(visao().queryByText('Sua fila de hoje')).toBeNull();
+    expect(visao().queryByText('Começar pelo 1º lead')).toBeNull();
+    fireEvent.click(visao().getByText('Abrir o 1º atendimento'));
+    expect(screen.getByTestId('ficha-cnpj').textContent).toBe('M1');
+  });
 
   it('a visão pede à RPC só os meus (p_so_meus), com filtros NEUTROS, e volta à fila com o recorte de antes', async () => {
     fonte.paginas = [[lead('A'), lead('B')]];

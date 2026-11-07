@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  lerLinkDoEmail, lerProspectarHoje, linkFichaRadar, nomeDoLead, resumoTerritorio, tituloMunicipio,
+  lerLinkDoEmail, lerProspectarHoje, linkFichaRadar, nomeDoLead, resumoTerritorio, textoSemTerritorio, tituloMunicipio,
 } from '../prospectar-hoje';
 
 const RESPOSTA = {
@@ -18,14 +18,34 @@ describe('lerProspectarHoje', () => {
   it('lê território e leads e descarta motivo vazio/não-texto', () => {
     const r = lerProspectarHoje(RESPOSTA, 'teste');
     expect(r.territorio).toEqual([
-      { municipioCodigo: '3122306', municipioNome: 'DIVINOPOLIS', uf: 'MG', clientes: 358 },
-      { municipioCodigo: '3147105', municipioNome: 'PARA DE MINAS', uf: 'MG', clientes: 114 },
+      { municipioCodigo: '3122306', municipioNome: 'DIVINOPOLIS', uf: 'MG', clientes: 358, compartilhado: false },
+      { municipioCodigo: '3147105', municipioNome: 'PARA DE MINAS', uf: 'MG', clientes: 114, compartilhado: false },
     ]);
     expect(r.leads[0]).toMatchObject({ posicao: 1, cnpj: '00000000000101', score: 95, motivos: ['CNAE 3101'], elegiveis: 8 });
   });
 
   it('listas vazias são um resultado legítimo (sem território / sem leads)', () => {
-    expect(lerProspectarHoje({ territorio: [], leads: [] }, 'teste')).toEqual({ territorio: [], leads: [] });
+    expect(lerProspectarHoje({ territorio: [], leads: [] }, 'teste')).toEqual({ territorio: [], leads: [], territorioMotivo: null });
+  });
+
+  it('campos do pacote E: atribuido, com_voce, compartilhado e territorio_motivo (ausentes → false/null)', () => {
+    const r = lerProspectarHoje({
+      territorio: [{ ...RESPOSTA.territorio[0], compartilhado: true }],
+      leads: [{ ...RESPOSTA.leads[0], atribuido: true, com_voce: true }],
+      territorio_motivo: null,
+    }, 'teste');
+    expect(r.territorio[0].compartilhado).toBe(true);
+    expect(r.leads[0]).toMatchObject({ atribuido: true, comVoce: true });
+    expect(lerProspectarHoje(RESPOSTA, 'teste').leads[0]).toMatchObject({ atribuido: false, comVoce: false });
+    expect(lerProspectarHoje({ territorio: [], leads: [], territorio_motivo: 'sem_carteira' }, 'teste').territorioMotivo).toBe('sem_carteira');
+  });
+
+  it('textoSemTerritorio: uma copy por motivo, e a genérica para RPC antiga/código novo', () => {
+    expect(textoSemTerritorio('nao_e_vendedor')).toMatch(/papel de vendedor/);
+    expect(textoSemTerritorio('sem_carteira')).toMatch(/carteira está vazia/);
+    expect(textoSemTerritorio('carteira_sem_municipio')).toMatch(/não têm endereço em um município do Radar/);
+    expect(textoSemTerritorio(null)).toMatch(/Sua carteira não tem clientes/);
+    expect(textoSemTerritorio('codigo_futuro')).toBe(textoSemTerritorio(null));
   });
 
   it.each([

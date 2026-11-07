@@ -73,14 +73,20 @@ export function RadarAtendimentoLead({ cnpj, jaCliente }: { cnpj: string; jaClie
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="radar-atendimento-lead">
       {q.isError ? (
-        <span className="text-xs text-status-error">Não consegui ver se alguém está atendendo este lead.</span>
+        <span className="text-xs text-status-error" data-testid="radar-atendimento-lead-erro">
+          Não consegui ver se alguém está atendendo este lead.{' '}
+          <button type="button" className="underline" onClick={() => void q.refetch()}>Tentar de novo</button>
+        </span>
       ) : a ? (
         <ChipAtendimento cnpj={cnpj} />
       ) : q.isSuccess ? (
         <span className="text-xs text-muted-foreground">Ninguém está atendendo este lead.</span>
       ) : null}
       {!jaCliente && (!a || a.ehMeu) && (
-        <Button size="sm" variant="outline" disabled={ocupado || q.isLoading} onClick={() => agir('assumir')} title={titulo}>
+        // Posse DESCONHECIDA (leitura falhou) não é "livre": assumir às cegas pode passar por cima de um colega (pacote F,
+        // achado 7). O botão fica, desligado e com o motivo.
+        <Button size="sm" variant="outline" disabled={ocupado || q.isLoading || q.isError} onClick={() => agir('assumir')}
+          title={q.isError ? 'Indisponível: não consegui ver se alguém está atendendo este lead' : titulo}>
           {definir.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Hand className="w-4 h-4 mr-1" />}
           {a?.ehMeu ? 'Renovar' : 'Assumir'}
         </Button>
