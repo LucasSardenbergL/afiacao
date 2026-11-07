@@ -40,7 +40,7 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // Radar D2 (migration 20261106181000) — STABLE, só lê: os leads do card "Prospectar hoje" (o sensor do card é
   // outra RPC, radar_registrar_card_servido, que fica BLOQUEADA na lente de propósito).
   'radar_prospectar_hoje',
-  // Radar pacote F (migration 20261107220000) — STABLE, só lê: o território que vira o recorte "Perto dos seus
+  // Radar pacote F (migration 20261107220500) — STABLE, só lê: o território que vira o recorte "Perto dos seus
   // clientes" da fila do /radar (na lente, o da persona vista).
   'radar_meu_territorio',
   // Radar D1 (migration 20261107140001) — STABLE, só lê: o painel do e-mail semanal (só master). As escritas

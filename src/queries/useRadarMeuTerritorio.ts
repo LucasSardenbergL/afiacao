@@ -6,7 +6,7 @@ import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 import { lerTerritorio, type MunicipioTerritorio } from '@/lib/radar/territorio';
 
 /**
- * Território do vendedor (RPC `radar_meu_territorio`, migration 20261107220000) — vira o recorte "Perto dos seus
+ * Território do vendedor (RPC `radar_meu_territorio`, migration 20261107220500) — vira o recorte "Perto dos seus
  * clientes" da fila do /radar (pacote F). Leitura PURA, na allowlist da lente: sob "Ver como" pede o da persona vista
  * (`p_vendedor`; o servidor só aceita de gestor). O território muda devagar (carteira), então fica 10 min em cache.
  */

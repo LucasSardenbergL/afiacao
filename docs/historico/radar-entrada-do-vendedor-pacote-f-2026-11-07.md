@@ -4,7 +4,7 @@
 > **0 contatos humanos de vendedores em 60 dias**, e a farmer mais ativa não abre o app. Roda em paralelo com o
 > pacote E (SQL de distribuição, dono de `private.radar_leads_do_vendedor`/`radar_territorio_do_vendedor` e da edge do
 > e-mail) e o H (sensores e painel do funil, dono de `useRadarRegistroEmpurrado`/`RadarAbrirEmail`).
-> Camadas: migration `20261107220000_radar_meu_territorio.sql` (**manual**) · front (**Publish**). Sem edge.
+> Camadas: migration `20261107220500_radar_meu_territorio.sql` (**manual**) · front (**Publish**). Sem edge.
 
 ## O que estava errado e o que mudou
 
@@ -45,7 +45,7 @@ chips dão as 3 a 1 clique. Se o sinal de uso pedir a união, ela é o próximo 
 
 ## Deploy
 
-1. Migration `20261107220000_radar_meu_territorio.sql` — aplicada pela sessão no envelope (`db:aplicar`, PÓS com
+1. Migration `20261107220500_radar_meu_territorio.sql` — aplicada pela sessão no envelope (`db:aplicar`, PÓS com
    marcador positivo) e conferida por `psql-ro` (ver o PR).
 2. **Publish** no Lovable (front). Sem ele, o login segue perdendo o destino e o card segue fora do `/meu-dia`.
 

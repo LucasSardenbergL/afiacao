@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prova PG17 do Radar pacote F (achado 2) — migration 20261107220000_radar_meu_territorio:
+# Prova PG17 do Radar pacote F (achado 2) — migration 20261107220500_radar_meu_territorio:
 #   • public.radar_meu_territorio é FINA: devolve exatamente private.radar_territorio_do_vendedor do usuário logado
 #     (a regra do território — carteira elegível, endereço padrão, um dono por município — é da migration
 #     20261106181000 e é aplicada AQUI sem alteração, como base).
@@ -14,7 +14,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG_D="$REPO_ROOT/supabase/migrations/20261106181000_radar_leads_ao_vendedor.sql"
-MIG="$REPO_ROOT/supabase/migrations/20261107220000_radar_meu_territorio.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261107220500_radar_meu_territorio.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!texto_da_marca` = a PÓS aborta o apply com a marca (`_` = espaço).
