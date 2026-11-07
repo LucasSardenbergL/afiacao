@@ -1,16 +1,23 @@
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { cn } from '@/lib/utils';
 import { CLASSE_TOM } from '@/lib/radar/ui-helpers';
-import { evidenciaVinculo, rotuloForca, tituloVinculo } from '@/lib/radar/vinculos';
+import { evidenciaVinculo, rotuloForca, tituloVinculo, type VinculoCliente } from '@/lib/radar/vinculos';
 import { useRadarPossiveisVinculos } from '@/queries/useRadarPossiveisVinculos';
 
 /**
  * "Já é cliente?" na ficha: o lead parece suceder (ou ser da mesma pessoa que) um cliente nosso. Mostra a EVIDÊNCIA
  * que casou e manda conferir — é pista, nunca veredito. Erro de leitura não vira "cliente novo".
+ * `onConfirmar` (só gestor/master, fora da lente) transforma a pista em declaração de sucessão em 1 clique — o fato
+ * vira o selo de `RadarSucessaoLead`, separado daqui. Pista já declarada não oferece o botão de novo.
  */
-export function RadarVinculosLead({ cnpj }: { cnpj: string }) {
+export function RadarVinculosLead({ cnpj, onConfirmar, jaConfirmados }: {
+  cnpj: string;
+  onConfirmar?: (v: VinculoCliente) => void;
+  jaConfirmados?: ReadonlySet<string>;
+}) {
   const q = useRadarPossiveisVinculos(cnpj);
   const estado = estadoDeLeitura(q);
   if (estado === 'carregando') return <Skeleton className="h-5 w-40" />;
@@ -41,6 +48,12 @@ export function RadarVinculosLead({ cnpj }: { cnpj: string }) {
           <div className="text-xs text-muted-foreground">
             {evidenciaVinculo(v)}. Confira com o cliente antes de tratar como cliente novo.
           </div>
+          {onConfirmar && !jaConfirmados?.has(v.clienteCnpj) && (
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => onConfirmar(v)}
+              data-testid="radar-vinculo-confirmar">
+              Confirmar sucessão
+            </Button>
+          )}
         </li>
       ))}
     </ul>

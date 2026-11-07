@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 791
+-- Total de custom migrations: 792
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -859,7 +859,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106140000', 'sayerlack_importar_portal_revisao', '20261106140000_sayerlack_importar_portal_revisao.sql'),
   ('20261106175800', 'radar_mapa_regiao_cidade_telefone', '20261106175800_radar_mapa_regiao_cidade_telefone.sql'),
   ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql'),
-  ('20261106221000', 'radar_atribuir_atendimento', '20261106221000_radar_atribuir_atendimento.sql')
+  ('20261106221000', 'radar_atribuir_atendimento', '20261106221000_radar_atribuir_atendimento.sql'),
+  ('20261107013000', 'cliente_sucessoes', '20261107013000_cliente_sucessoes.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3401,7 +3402,22 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
   ('radar_atribuir_atendimento', 'function', 'public', 'radar_atribuir_atendimento', ''),
-  ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', '')
+  ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessoes_imutavel', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_resolver_documento', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessoes_vigentes', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_declarar_sucessao', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_revogar_sucessao', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessao_previa_lado', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_sucessao_previa', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_sucessoes_do_documento', ''),
+  ('cliente_sucessoes', 'table', 'public', 'cliente_sucessoes', ''),
+  ('cliente_sucessoes', 'table', 'private', 'cliente_sucessoes_grafo', ''),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_par_ativo_uq', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_novo_ativo_idx', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_evento_idx', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_imutavel_trg', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_sem_truncate_trg', 'cliente_sucessoes')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5991,7 +6007,22 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
   ('radar_atribuir_atendimento', 'function', 'public', 'radar_atribuir_atendimento', ''),
-  ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', '')
+  ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessoes_imutavel', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_resolver_documento', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessoes_vigentes', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_declarar_sucessao', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_revogar_sucessao', ''),
+  ('cliente_sucessoes', 'function', 'private', 'cliente_sucessao_previa_lado', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_sucessao_previa', ''),
+  ('cliente_sucessoes', 'function', 'public', 'cliente_sucessoes_do_documento', ''),
+  ('cliente_sucessoes', 'table', 'public', 'cliente_sucessoes', ''),
+  ('cliente_sucessoes', 'table', 'private', 'cliente_sucessoes_grafo', ''),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_par_ativo_uq', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_novo_ativo_idx', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'index', 'public', 'cliente_sucessoes_evento_idx', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_imutavel_trg', 'cliente_sucessoes'),
+  ('cliente_sucessoes', 'trigger', 'public', 'cliente_sucessoes_sem_truncate_trg', 'cliente_sucessoes')
 )
 SELECT
   e.migration,

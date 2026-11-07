@@ -25,6 +25,7 @@ vi.mock('../RadarConflitosCadastro', () => ({ RadarConflitosDoLead: Nada }));
 vi.mock('../RadarAtendimentoLead', () => ({ RadarAtendimentoLead: Nada }));
 vi.mock('../RadarModoDiscagem', () => ({ RadarModoDiscagem: Nada }));
 vi.mock('../RadarVinculosLead', () => ({ RadarVinculosLead: Nada }));
+vi.mock('../RadarSucessaoLead', () => ({ RadarSucessaoLead: Nada }));
 
 import { RadarDetailSheet } from '../RadarDetailSheet';
 

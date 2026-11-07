@@ -23055,6 +23055,22 @@ export type Database = {
       }
       classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
+      cliente_declarar_sucessao: {
+        Args: {
+          p_antigo_documento: string
+          p_data_corte: string
+          p_data_corte_sugerida?: string
+          p_novo_documento: string
+          p_observacao?: string
+          p_tipo: string
+          p_versao_esperada: number
+        }
+        Returns: Json
+      }
+      cliente_revogar_sucessao: {
+        Args: { p_id: string; p_motivo: string; p_versao_esperada: number }
+        Returns: Json
+      }
       cliente_situacao_receita: {
         Args: { p_customer_user_id: string }
         Returns: {
@@ -23067,6 +23083,18 @@ export type Database = {
           motivo_descricao: string
           situacao: string
         }[]
+      }
+      cliente_sucessao_previa: {
+        Args: {
+          p_antigo_documento: string
+          p_data_corte: string
+          p_novo_documento: string
+        }
+        Returns: Json
+      }
+      cliente_sucessoes_do_documento: {
+        Args: { p_documento: string }
+        Returns: Json
       }
       clientes_import_avancar: {
         Args: {
