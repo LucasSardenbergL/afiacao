@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **792** custom migrations totais
-- **2581** objetos esperados (criados por estas migrations)
+- **793** custom migrations totais
+- **2586** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 983
+  - `function`: 988
   - `rls_policy`: 519
   - `index`: 369
   - `table`: 232
@@ -6454,6 +6454,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261106205556_drop_indices_ociosos_scores.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261106205557_credito_aviso_vinculo_vencido.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_vinculos_base` | — |
+| `function` | `private.radar_vinculos_nucleo` | — |
+| `function` | `private.credito_vinculo_avaliar` | — |
+| `function` | `public.credito_vinculo_aviso` | — |
+| `function` | `public.credito_vinculo_aviso_registrar` | — |
 
 ### `20261106212329_radar_lista_meus_atendimentos.sql`
 

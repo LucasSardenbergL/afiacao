@@ -36,6 +36,9 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   'radar_amostra_vigente',
   // Cockpit financeiro (migration 20261101210000) — STABLE, SECURITY INVOKER, só agrega saldo de títulos sob a RLS.
   'fin_saldo_titulos_por_status',
+  // Crédito (migration 20261106205557) — STABLE, só lê: o aviso de vínculo com cliente que tem título vencido.
+  // O sensor (credito_vinculo_aviso_registrar) GRAVA e fica de fora de propósito.
+  'credito_vinculo_aviso',
 ]);
 function isReadOnlyRpc(name: string): boolean {
   return name.startsWith('get_') || name.startsWith('list_') || RPC_READONLY_ALLOWLIST.has(name);

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 792
+-- Total de custom migrations: 793
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -859,6 +859,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106140000', 'sayerlack_importar_portal_revisao', '20261106140000_sayerlack_importar_portal_revisao.sql'),
   ('20261106175800', 'radar_mapa_regiao_cidade_telefone', '20261106175800_radar_mapa_regiao_cidade_telefone.sql'),
   ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql'),
+  ('20261106205557', 'credito_aviso_vinculo_vencido', '20261106205557_credito_aviso_vinculo_vencido.sql'),
   ('20261106212329', 'radar_lista_meus_atendimentos', '20261106212329_radar_lista_meus_atendimentos.sql'),
   ('20261106221000', 'radar_atribuir_atendimento', '20261106221000_radar_atribuir_atendimento.sql')
 ),
@@ -3401,6 +3402,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_penetracao_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
+  ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_base', ''),
+  ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_nucleo', ''),
+  ('credito_aviso_vinculo_vencido', 'function', 'private', 'credito_vinculo_avaliar', ''),
+  ('credito_aviso_vinculo_vencido', 'function', 'public', 'credito_vinculo_aviso', ''),
+  ('credito_aviso_vinculo_vencido', 'function', 'public', 'credito_vinculo_aviso_registrar', ''),
   ('radar_lista_meus_atendimentos', 'function', 'public', 'radar_lista', ''),
   ('radar_atribuir_atendimento', 'function', 'public', 'radar_atribuir_atendimento', ''),
   ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', '')
@@ -5992,6 +5998,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_penetracao_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
+  ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_base', ''),
+  ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_nucleo', ''),
+  ('credito_aviso_vinculo_vencido', 'function', 'private', 'credito_vinculo_avaliar', ''),
+  ('credito_aviso_vinculo_vencido', 'function', 'public', 'credito_vinculo_aviso', ''),
+  ('credito_aviso_vinculo_vencido', 'function', 'public', 'credito_vinculo_aviso_registrar', ''),
   ('radar_lista_meus_atendimentos', 'function', 'public', 'radar_lista', ''),
   ('radar_atribuir_atendimento', 'function', 'public', 'radar_atribuir_atendimento', ''),
   ('radar_atribuir_atendimento', 'function', 'public', 'radar_vendedores_atribuiveis', '')
@@ -6022,7 +6033,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 177.
+-- Funções redefinidas com corpo extraível: 178.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6690,7 +6701,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_possiveis_vinculos', 1, '20261104201756_radar_possiveis_vinculos.sql', 'effde9346bb799f4b662d37fc89919d1'),
   ('public', 'radar_possiveis_vinculos', 2, '20261106083754_radar_vinculos_em_lote.sql', 'b7ae2cb1304fb4e6e64d626b2a305e42'),
   ('public', 'simular_puxar_volume_trimestre', 1, '20261105180000_des_simular_puxar_sem_posicao_recusa.sql', '9e43c9425748b54d783ca9f4c3737755'),
-  ('public', 'simular_puxar_volume_trimestre', 2, '20261106090000_des_simular_puxar_config_e_checkin.sql', 'fefcf8c0890cd3fe21a60efbe2ed6d37')
+  ('public', 'simular_puxar_volume_trimestre', 2, '20261106090000_des_simular_puxar_config_e_checkin.sql', 'fefcf8c0890cd3fe21a60efbe2ed6d37'),
+  ('private', 'radar_vinculos_nucleo', 1, '20261106083754_radar_vinculos_em_lote.sql', '524afca67d271f459a6e4c984725b833'),
+  ('private', 'radar_vinculos_nucleo', 2, '20261106205557_credito_aviso_vinculo_vencido.sql', '150b7d5e1c72ca55f8e58ea321659428')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),
