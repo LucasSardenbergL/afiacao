@@ -49,3 +49,11 @@ a não ser procurando na fila.
 Migration manual `20261106212329_radar_lista_meus_atendimentos.sql` (o founder cola no SQL Editor e a validação
 roda por psql-ro), depois o **Publish**. Ordem: a migration antes do Publish. Com o Publish antes, a fila funciona,
 mas a visão nova mostra o erro de função até a migration entrar.
+
+## Aplicada em prod (2026-11-06)
+
+Pedido do founder ("cole você a migration"). Pelo `bun run db:aplicar` (commit `b5f20a5e7`, sha256 `eebc4fb9…`):
+primeiro o ensaio, que rodou inteiro e fez ROLLBACK, depois o apply, **recibo #939**. A 2ª testemunha foi o psql-ro,
+em outra conexão: ✅ md5 `c824ce104b6513307b6b027622c8fd50`, uma sobrecarga de `radar_lista`, ACL igual ao de antes
+(authenticated e service_role executam; anon e PUBLIC não). No apply havia 0 atendimentos abertos em prod, então a
+visão abre vazia até o vendedor do piloto assumir um lead. Falta só o **Publish**.
