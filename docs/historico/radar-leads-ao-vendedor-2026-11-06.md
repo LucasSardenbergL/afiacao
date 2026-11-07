@@ -86,6 +86,19 @@ SELECT (SELECT count(*) FROM public.radar_prospectar_hoje_servido)              
 
 Fase seguinte (mais leads, outra cadência, WhatsApp depois de 10/01/2027) só com ≥ 1 envio aberto nesse placar.
 
+## Deploy (2026-11-07)
+
+| Camada | Estado | Evidência |
+| --- | --- | --- |
+| Migration `20261106181000` | ✅ aplicada pelo founder (SQL Editor) | validação via psql-ro: 5 tabelas com RLS, 6 funções, cron **desligado** |
+| Edge `dispatch-notifications` v1.2 | ✅ deployada pela sessão (MCP do Lovable, pacote `666525a8657d`, 7/7 sha256 contra `76a10cdb`) | sonda `db/sonda-dispatch-notifications-2026-11-07.sql` (recibo #943): **DEPLOY CONFIRMADO**, fingerprint `ec5f06b8…`; `pendencias:deploy` exit 0 |
+| 1º e-mail em modo TESTE | ✅ `db/radar-d1-teste-email-regina-2026-11-07.sql` (recibo #945): config da Regina ligada com `email_teste` = founder; 5 de 972 elegíveis | alerta 614 `notificado` às 00:30 BRT; `net._http_response` 200 com `sucesso: 1` |
+| Publish do front (card, rota `/radar/abrir`) | ⏳ founder | — |
+| Envio à vendedora real + cron | 🧭 decisão do founder | os passos 2 e 3 abaixo |
+
+O envio de teste não entra no denominador e não queima lead: quando a Regina for ligada de verdade, ela recebe a lista
+calculada naquela semana.
+
 ## Ativação (founder)
 
 Pré-requisitos: migration aplicada, edge v1.2 publicada (sonda), **B5 (deep link) mergeado e publicado** (sem ele o
