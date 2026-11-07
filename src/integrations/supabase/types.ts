@@ -976,6 +976,54 @@ export type Database = {
           },
         ]
       }
+      cliente_sucessoes: {
+        Row: {
+          antigo_documento: string
+          data_corte: string
+          data_corte_sugerida: string | null
+          declarado_em: string
+          declarado_por: string
+          evento_id: string
+          id: string
+          novo_documento: string
+          observacao: string | null
+          revogado_em: string | null
+          revogado_motivo: string | null
+          revogado_por: string | null
+          tipo: string
+        }
+        Insert: {
+          antigo_documento: string
+          data_corte: string
+          data_corte_sugerida?: string | null
+          declarado_em?: string
+          declarado_por: string
+          evento_id: string
+          id?: string
+          novo_documento: string
+          observacao?: string | null
+          revogado_em?: string | null
+          revogado_motivo?: string | null
+          revogado_por?: string | null
+          tipo: string
+        }
+        Update: {
+          antigo_documento?: string
+          data_corte?: string
+          data_corte_sugerida?: string | null
+          declarado_em?: string
+          declarado_por?: string
+          evento_id?: string
+          id?: string
+          novo_documento?: string
+          observacao?: string | null
+          revogado_em?: string | null
+          revogado_motivo?: string | null
+          revogado_por?: string | null
+          tipo?: string
+        }
+        Relationships: []
+      }
       cliente_tier_preco: {
         Row: {
           company: string
@@ -10101,6 +10149,7 @@ export type Database = {
           condicao_origem: string | null
           condicao_pagamento_codigo: string | null
           condicao_pagamento_descricao: string | null
+          condicao_portal_lida: string | null
           criado_em: string | null
           data_ciclo: string
           delta_vs_anterior_perc: number | null
@@ -10166,6 +10215,7 @@ export type Database = {
           condicao_origem?: string | null
           condicao_pagamento_codigo?: string | null
           condicao_pagamento_descricao?: string | null
+          condicao_portal_lida?: string | null
           criado_em?: string | null
           data_ciclo?: string
           delta_vs_anterior_perc?: number | null
@@ -10231,6 +10281,7 @@ export type Database = {
           condicao_origem?: string | null
           condicao_pagamento_codigo?: string | null
           condicao_pagamento_descricao?: string | null
+          condicao_portal_lida?: string | null
           criado_em?: string | null
           data_ciclo?: string
           delta_vs_anterior_perc?: number | null
@@ -15199,6 +15250,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sayerlack_condicao_portal_de_para: {
+        Row: {
+          codigo_omie: string
+          condicao_portal: string
+          criado_em: string
+          evidencia: string
+        }
+        Insert: {
+          codigo_omie: string
+          condicao_portal: string
+          criado_em?: string
+          evidencia: string
+        }
+        Update: {
+          codigo_omie?: string
+          condicao_portal?: string
+          criado_em?: string
+          evidencia?: string
+        }
+        Relationships: []
       }
       sayerlack_retry_motor_log: {
         Row: {
@@ -25674,9 +25746,25 @@ export type Database = {
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
       sales_orders_instante_envio: { Args: never; Returns: string }
+      sayerlack_aplicar_condicao_portal: {
+        Args: { p_condicao_portal: string; p_pedido_id: number }
+        Returns: Json
+      }
       sayerlack_aplicar_custo_portal: {
         Args: { p_itens: Json; p_pedido_id: number; p_valor_total: number }
         Returns: number
+      }
+      sayerlack_condicao_portal_normalizar: {
+        Args: { p_texto: string }
+        Returns: string
+      }
+      sayerlack_condicao_portal_para_omie: {
+        Args: { p_condicao_portal: string }
+        Returns: {
+          codigo: string
+          descricao: string
+          num_parcelas: number
+        }[]
       }
       sayerlack_importar_pedido_portal: {
         Args: {
