@@ -15,7 +15,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("radar-ingest");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.5-socios-cpf";
+export const VERSAO = "v1.6-socios-rpc-literal";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
