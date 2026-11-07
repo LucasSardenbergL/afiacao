@@ -103,7 +103,7 @@ describe('FichaLigacao — sucessor declarado (herança)', () => {
     renderFicha();
     expect(screen.getByTestId('ficha-heranca').textContent).toContain('Herdou 1 item de DIVIMOVEIS (cisão, corte em 06/10/2026)');
     expect(screen.getByTestId('recomprar-heranca').textContent).toBe(
-      'herdado de DIVIMOVEIS — o ritmo de compra é o da empresa antiga; o valor de referência é o preço que ela pagava');
+      'herdado de DIVIMOVEIS — o histórico inclui compras da empresa antiga; o valor de referência usa o preço que ela pagava');
     expect(herancaMock).toHaveBeenCalledWith('c1');
     expect(ledgerMock).toHaveBeenCalledWith('venda.ficha_aberta', 'c1', { n_sugestoes: 2, n_herdadas: 1 });
   });

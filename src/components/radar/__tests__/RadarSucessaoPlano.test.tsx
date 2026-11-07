@@ -167,6 +167,20 @@ describe('RadarSucessaoPlano', () => {
     expect(screen.queryByTestId('radar-plano-revogar')).toBeNull();
   });
 
+  it('destino que saiu da sucessão: o seletor mostra o valor REAL e a publicação trava até escolher outro', () => {
+    plano = { ...vigente(), regras: [{ ...vigente().regras[0], novoDocumento: '99999999000199', destinoEstado: 'revogada' }] };
+    tela();
+    const sel = screen.getByLabelText('Destino de VERNIZ A') as HTMLSelectElement;
+    expect(sel.value).toBe('99999999000199');
+    expect(sel.selectedOptions[0].textContent).toBe('99999999000199 (saiu da sucessão)');
+    escolher('Destino de PROD 1001', NOV2);   // mudou algo, mas o inválido segue
+    expect(screen.getByTestId('radar-plano-invalidos').textContent).toContain('1 item(ns) apontam para uma empresa que saiu');
+    expect((screen.getByTestId('radar-plano-publicar') as HTMLButtonElement).disabled).toBe(true);
+    escolher('Destino de VERNIZ A', '');
+    expect(screen.queryByTestId('radar-plano-invalidos')).toBeNull();
+    expect((screen.getByTestId('radar-plano-publicar') as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('evento sem declaração ativa: estado vazio, sem editor', () => {
     itens = { ...baseItens(), ativo: false, destinos: [], itens: [] };
     tela();

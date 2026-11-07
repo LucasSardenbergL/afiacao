@@ -208,7 +208,7 @@ BEGIN
        ORDER BY r.evento_id, r.revisao DESC
     ),
     d AS (
-      SELECT v.id, v.evento_id, v.tipo, v.data_corte, rev.revisao,
+      SELECT v.id, v.evento_id, v.tipo, v.data_corte, v.antigo_user_id, rev.revisao,
              CASE WHEN v.novo_user_id = v_comprador THEN 'novo' ELSE 'antigo' END AS papel,
              CASE WHEN v.novo_user_id = v_comprador THEN v.antigo_documento ELSE v.novo_documento END AS outro_documento
         FROM v JOIN rev ON rev.evento_id = v.evento_id AND NOT rev.revoga
@@ -232,6 +232,25 @@ BEGIN
              WHERE o.account = g.empresa AND o.omie_codigo_produto = g.omie_codigo_produto
              ORDER BY o.descricao LIMIT 1) op ON true
          WHERE g.evento_id = d.evento_id AND g.revisao = d.revisao AND g.destino_sucessao_id = d.id
+           -- Só o item que a trilha efetiva de fato transfere: a antiga comprou antes do corte (o universo e o dia de
+           -- private.venda_linhas_pedido, recortado pelos cadastros dela). Regra explícita de SKU que ela nunca comprou
+           -- não é "herdou" (Codex, P2).
+           AND EXISTS (
+             SELECT 1 FROM public.order_items oi
+               JOIN public.sales_orders so ON so.id = oi.sales_order_id
+               LEFT JOIN public.customer_canonical_alias a
+                      ON a.alias_user_id = so.customer_user_id AND a.status = 'active'
+              WHERE so.customer_user_id IN (SELECT d.antigo_user_id
+                                            UNION ALL
+                                            SELECT x.alias_user_id FROM public.customer_canonical_alias x
+                                             WHERE x.canonical_user_id = d.antigo_user_id AND x.status = 'active')
+                AND COALESCE(a.canonical_user_id, so.customer_user_id) = d.antigo_user_id
+                AND so.account = g.empresa AND oi.omie_codigo_produto = g.omie_codigo_produto
+                AND so.deleted_at IS NULL
+                AND so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')
+                AND so.account IN ('oben', 'colacor', 'colacor_sc')
+                AND oi.quantity > 0
+                AND COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date) < d.data_corte)
       ) i ON i.itens IS NOT NULL
   ), '[]'::jsonb));
 END

@@ -322,14 +322,15 @@ cenario() {
     "$(estado_como anon '' "SELECT public.cliente_sucessao_plano_itens('$E1')")" "42501/acl-funcao:cliente_sucessao_plano_itens"
   chk H0 "sem plano publicado: ninguém herdou" "$(her "$FARM" "$UN2")/$(her "$FARM" "$UA")" "/"
 
-  R="[$(item oben 1001 "$NOV2"),$(fam oben VERNIZ "$NOV2"),$(item oben 1007 "$NOV1")]"
-  chk S2 "publica E1 (1001 + VERNIZ → NOV2; 1007 → NOV1 pendente) e E2 (2001 → DBN)" \
+  # 9999: regra EXPLÍCITA de um SKU que a antiga nunca comprou (o publicar aceita) — não pode aparecer como herdado.
+  R="[$(item oben 1001 "$NOV2"),$(fam oben VERNIZ "$NOV2"),$(item oben 1007 "$NOV1"),$(item oben 9999 "$NOV2")]"
+  chk S2 "publica E1 (1001 + VERNIZ + 9999 → NOV2; 1007 → NOV1 pendente) e E2 (2001 → DBN)" \
     "$(publicar "$E1" 0 "$R" revisao)/$(publicar "$E2" 0 "[$(item oben 2001 "$DBN")]" revisao)" "1/1"
   Q "SELECT public.venda_gerar_lista($H, 'ativa')" > /dev/null
   drenar > /dev/null
 
   echo "── 3. a herança na ficha/complemento (venda_heranca_comprador) ──"
-  chk H1 "a nova herda do plano vigente: 1001 + a família expandida (1004, 1005)" "$(her "$FARM" "$UN2")" "novo:DIVIMOVEIS:1001,1004,1005"
+  chk H1 "a nova herda do plano vigente: 1001 + a família expandida (1004, 1005); o 9999 nunca comprado, não" "$(her "$FARM" "$UN2")" "novo:DIVIMOVEIS:1001,1004,1005"
   chk H2 "a antiga vê o que repassou, só para o destino ATIVO (1007 → NOV1 pendente não conta)" \
     "$(her "$FARM" "$UA")" "antigo:NOVA DOIS:1001,1004,1005"
   chk H3 "pelo ALIAS fiscal da antiga, o mesmo comprador" "$(her "$FARM" "$UAL")" "antigo:NOVA DOIS:1001,1004,1005"
@@ -418,6 +419,7 @@ sabotagem() {
     heranca_destino_qualquer) cv_sabotar "$HER" "AND g.destino_sucessao_id = d.id" "" ;;
     heranca_declarada) cv_sabotar "$HER" "WHERE s.estado = 'ativa' AND (" "WHERE (" ;;
     heranca_sem_alias) cv_sabotar "$HER" "v_comprador := COALESCE(v_comprador, p_comprador);" "v_comprador := p_comprador;" ;;
+    heranca_sem_compra) cv_sabotar "$HER" "< d.data_corte)" "< d.data_corte OR true)" ;;
     itens_sem_corte) cv_sabotar "$ITENS" "WHERE x.comprador_id = v_antigo AND x.data_pedido < v_corte" "WHERE x.comprador_id = v_antigo" ;;
     itens_sem_alias) cv_sabotar "$ITENS" "WHERE so.customer_user_id = ANY (v_cadastros)" "WHERE so.customer_user_id = v_antigo" ;;
     itens_universo) cv_sabotar "$ITENS" "AND oi.quantity > 0" "" ;;
@@ -443,6 +445,7 @@ heranca_revisao_velha:H4:H1
 heranca_destino_qualquer:H2:H7
 heranca_declarada:H2:H1
 heranca_sem_alias:H3:H2
+heranca_sem_compra:H1:H7
 itens_sem_corte:P1:P0
 itens_sem_alias:P2:P0
 itens_universo:P2:P0

@@ -59,8 +59,8 @@ export function SecaoRecomprar({ itens, produtos, historicoErro, agora = new Dat
                   {s.heranca && (
                     <p className="text-2xs text-status-info mt-0.5" data-testid="recomprar-heranca"
                       title="O histórico deste item veio da empresa antiga pelo plano de rateio da sucessão">
-                      {rotuloHeranca(s)} — o ritmo de compra é o da empresa antiga
-                      {s.valorRefDaAntiga ? '; o valor de referência é o preço que ela pagava' : ''}
+                      {rotuloHeranca(s)} — o histórico inclui compras da empresa antiga
+                      {s.valorRefDaAntiga ? '; o valor de referência usa o preço que ela pagava' : ''}
                     </p>
                   )}
                 </div>

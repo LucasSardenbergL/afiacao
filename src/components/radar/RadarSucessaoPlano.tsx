@@ -88,6 +88,11 @@ function Editor({ plano, itens, destinos, antigoNome, tipo, dataCorte, antigoRes
     [itens],
   );
   const mudou = !mesmoRascunho(rascunho, inicial);
+  // Destino que saiu da sucessão (declaração revogada depois do plano): o rascunho ainda o tem, e o servidor recusaria
+  // (destino_fora_do_evento). A tela MOSTRA o valor real e trava a publicação até o gestor escolher outro (Codex, P2).
+  const validos = new Set(destinos.map((d) => d.novoDocumento));
+  const invalidos = itens.filter((i) => rascunho[chaveItem(i)] && !validos.has(rascunho[chaveItem(i)])).length
+    + Object.keys(rascunho).filter((k) => !itens.some((i) => chaveItem(i) === k) && !validos.has(rascunho[k])).length;
   const vazio = Object.keys(rascunho).length === 0;
   const vigente = plano.revisao > 0 && !plano.revogado;
   const ultima = plano.revisoes[0] ?? null;
@@ -183,6 +188,9 @@ function Editor({ plano, itens, destinos, antigoNome, tipo, dataCorte, antigoRes
                       setRascunho(n);
                     }}>
                     <option value={FICA}>Fica com a antiga</option>
+                    {rascunho[k] && !validos.has(rascunho[k]) && (
+                      <option value={rascunho[k]}>{rascunho[k]} (saiu da sucessão)</option>
+                    )}
                     {destinos.map((d) => (
                       <option key={d.novoDocumento} value={d.novoDocumento}>
                         {d.novoNome ?? d.novoDocumento}{d.estado !== 'ativa' ? ' (pendente)' : ''}
@@ -193,6 +201,12 @@ function Editor({ plano, itens, destinos, antigoNome, tipo, dataCorte, antigoRes
               );
             })}
           </ul>
+          {invalidos > 0 && (
+            <p className="text-xs text-status-error" data-testid="radar-plano-invalidos">
+              {invalidos} item(ns) apontam para uma empresa que saiu da sucessão: escolha outro destino ou
+              "Fica com a antiga" antes de publicar.
+            </p>
+          )}
           <p className="text-xs text-muted-foreground" data-testid="radar-plano-resumo">
             {resumoRascunho(rascunho, itens, destinos)}
           </p>
@@ -208,7 +222,8 @@ function Editor({ plano, itens, destinos, antigoNome, tipo, dataCorte, antigoRes
           <Label htmlFor="plano-motivo">Motivo desta revisão (opcional)</Label>
           <Textarea id="plano-motivo" rows={2} value={motivo} onChange={(e) => setMotivo(e.target.value)} />
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" disabled={!mudou || vazio || !antigoResolvido || publicar.isPending} onClick={enviar}
+            <Button size="sm" disabled={!mudou || vazio || !antigoResolvido || invalidos > 0 || publicar.isPending}
+              onClick={enviar}
               data-testid="radar-plano-publicar">
               {publicar.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />} Publicar revisão {plano.revisao + 1}
             </Button>
