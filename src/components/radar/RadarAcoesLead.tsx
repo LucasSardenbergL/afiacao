@@ -9,6 +9,7 @@ import {
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { cadastravelNoOmie, type MotivoNaoCadastravel } from '@/lib/radar/sugeridos';
 import { lerLeadParaCadastro } from '@/queries/useRadarAcoesLead';
+import { track } from '@/lib/analytics';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { useCadastroOmieComRecuperacao } from './useCadastroOmieComRecuperacao';
 
@@ -27,8 +28,16 @@ const MOTIVO_NAO_CADASTRAVEL: Record<MotivoNaoCadastravel, string> = {
  *  · confirmar → relê o lead (o snapshot da lista identifica o alvo, não prova elegibilidade) e cadastra pelo
  *    MESMO tratamento de resultado e recuperação do menu de contato (`useCadastroOmieComRecuperacao`).
  * O "Criar tarefa pra mim" saiu (A7): o módulo de tarefas está congelado até 10/01/2027.
+ *
+ * Pacote B6: o cadastro é a ação CONTEXTUAL de quem já está em conversa. Antes, a janela "Cadastrar agora?" abria
+ * sozinha depois de cada "em conversa"; agora o botão aparece na ficha quando o contato está salvo, com a mesma
+ * confirmação manual. Antes disso, a ficha diz o caminho em vez de oferecer o cadastro a frio.
  */
-export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
+export function RadarAcoesLead({ empresa, conversaSalva = false }: {
+  empresa: RadarEmpresa;
+  /** A ficha acabou de registrar "em conversa" neste lead (a lista ainda pode não ter relido o status). */
+  conversaSalva?: boolean;
+}) {
   const { isImpersonating } = useImpersonation();
   const cadastro = useCadastroOmieComRecuperacao(empresa.cnpj);
   const [confirmOmie, setConfirmOmie] = useState(false);
@@ -43,18 +52,32 @@ export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
 
   const veredito = cadastravelNoOmie(empresa);
   const ocupado = cadastro.cadastrando;
+  const emConversa = conversaSalva || empresa.prospeccao_status === 'em_conversa';
+
+  if (veredito.ok && !emConversa) {
+    return (
+      <p className="text-xs text-muted-foreground" data-testid="radar-ficha-cadastro-depois">
+        Registre “em conversa” para cadastrar no Omie (Oben).
+      </p>
+    );
+  }
 
   // A releitura roda DENTRO da trava do cadastro (por CNPJ): confirmar de novo ou o retry de um toast antigo
   // durante ela não abre uma 2ª tentativa concorrente (Codex, código 2026-11-06, P2).
   const doCadastrar = () => {
     setConfirmOmie(false);
     void cadastro.executar(empresa, {
+      rastrear: (resultado, retomada) => track('radar.cadastro_ficha_resultado', { resultado, retomada }),
       verificar: async () => {
+        // O status é relido junto: o cadastro é de quem está EM CONVERSA agora — um "em conversa" desfeito depois
+        // de salvo não pode deixar o botão valendo (Codex, código 2026-11-06, P2; a oferta antiga exigia o mesmo).
         const atual = await lerLeadParaCadastro(empresa.cnpj);
         const agora = atual ? cadastravelNoOmie(atual) : null;
-        if (agora?.ok) return true;
+        if (agora?.ok && atual?.prospeccao_status === 'em_conversa') return true;
         toast.info('Não cadastrei: o lead mudou', {
-          description: agora ? MOTIVO_NAO_CADASTRAVEL[agora.motivo] : 'Não encontrei mais esta empresa no Radar.',
+          description: !atual ? 'Não encontrei mais esta empresa no Radar.'
+            : agora && !agora.ok ? MOTIVO_NAO_CADASTRAVEL[agora.motivo]
+            : `O lead não está mais em conversa (status atual: ${atual.prospeccao_status ?? '—'}).`,
         });
         return false;
       },

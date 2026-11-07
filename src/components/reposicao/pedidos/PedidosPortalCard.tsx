@@ -23,7 +23,7 @@ export function PedidosPortalCard() {
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['portal-sayerlack-painel'],
     queryFn: async (): Promise<PainelPortal> => {
-      const { data: bruto, error: e } = await supabase.rpc('sayerlack_painel_portal' as never);
+      const { data: bruto, error: e } = await supabase.rpc('sayerlack_painel_portal');
       if (e) throw e;
       return normalizarPainel(bruto);
     },
