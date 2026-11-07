@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **794** custom migrations totais
-- **2600** objetos esperados (criados por estas migrations)
+- **796** custom migrations totais
+- **2616** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 994
+  - `function`: 1003
   - `rls_policy`: 519
-  - `index`: 371
-  - `table`: 237
+  - `index`: 374
+  - `table`: 239
   - `cron_job`: 214
   - `view`: 135
-  - `trigger`: 126
+  - `trigger`: 128
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -6496,6 +6496,31 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.radar_atribuir_atendimento` | — |
 | `function` | `public.radar_vendedores_atribuiveis` | — |
+
+### `20261107013000_cliente_sucessoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cliente_sucessoes_imutavel` | — |
+| `function` | `private.cliente_resolver_documento` | — |
+| `function` | `private.cliente_sucessoes_chaves` | — |
+| `function` | `private.cliente_sucessoes_vigentes` | — |
+| `function` | `public.cliente_declarar_sucessao` | — |
+| `function` | `public.cliente_revogar_sucessao` | — |
+| `function` | `private.cliente_sucessao_previa_lado` | — |
+| `function` | `public.cliente_sucessao_previa` | — |
+| `function` | `public.cliente_sucessoes_do_documento` | — |
+| `table` | `public.cliente_sucessoes` | — |
+| `table` | `private.cliente_sucessoes_grafo` | — |
+| `index` | `public.cliente_sucessoes_par_ativo_uq` | `cliente_sucessoes` |
+| `index` | `public.cliente_sucessoes_novo_ativo_idx` | `cliente_sucessoes` |
+| `index` | `public.cliente_sucessoes_evento_idx` | `cliente_sucessoes` |
+| `trigger` | `public.cliente_sucessoes_imutavel_trg` | `cliente_sucessoes` |
+| `trigger` | `public.cliente_sucessoes_sem_truncate_trg` | `cliente_sucessoes` |
+
+### `20261107120000_ipi_aliquota_ncm_seed_nf_onda1.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

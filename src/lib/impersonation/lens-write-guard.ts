@@ -32,6 +32,9 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   'radar_estado_cadastro_omie',
   // Radar (migration 20261104201756) — STABLE, só lê: o "possível vínculo/sucessor de cliente" da ficha.
   'radar_possiveis_vinculos',
+  // Sucessão declarada (migration 20261107013000) — STABLE, só leem: o selo da ficha e a prévia dos pedidos.
+  'cliente_sucessoes_do_documento',
+  'cliente_sucessao_previa',
   // Radar (migration 20261030233200) — SELECT puro da amostra de controle vigente, intercalada na fila.
   'radar_amostra_vigente',
   // Radar D2 (migration 20261106181000) — STABLE, só lê: os leads do card "Prospectar hoje" (o sensor do card é
