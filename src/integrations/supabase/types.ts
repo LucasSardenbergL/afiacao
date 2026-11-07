@@ -24885,7 +24885,6 @@ export type Database = {
         }
         Returns: Json
       }
-      radar_registrar_card_servido: { Args: { p_n_leads: number }; Returns: Json }
       radar_score_recalcular: { Args: never; Returns: Json }
       radar_telefone_compartilhado: {
         Args: { p_cnpj: string }
