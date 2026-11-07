@@ -57,6 +57,20 @@ BEGIN
 END
 $c$;
 
+-- ── A.1b protocolo em forma canônica ───────────────────────────────────────────────────────────────
+-- Codex 5A rodada 8: ' 2141001 ' no 1º preenchimento some da busca exata da varredura (`.in('portal_protocolo', …)`)
+-- e o 6 nunca chega ao pedido. Os dois escritores (envio e conciliação) já só produzem `^\d{3,12}$`; a prod tem 0 de
+-- 218 fora disso (psql-ro 2026-11-08) — o CHECK valida a tabela inteira ao nascer.
+DO $c$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pedido_compra_sugerido_portal_protocolo_formato_check'
+                   AND conrelid = 'public.pedido_compra_sugerido'::regclass) THEN
+    ALTER TABLE public.pedido_compra_sugerido ADD CONSTRAINT pedido_compra_sugerido_portal_protocolo_formato_check
+      CHECK (portal_protocolo IS NULL OR portal_protocolo ~ '^\d{3,12}$');
+  END IF;
+END
+$c$;
+
 -- ── A.2 escritor único: trigger + GUC local ──────────────────────────────────────────────────────
 -- Staff (master|employee) tem UPDATE nesta tabela pela RLS: sem isto, qualquer um fabricaria um "6"
 -- (bloqueando compra) ou apagaria um (liberando compra de pedido cancelado). O PostgREST não expõe
@@ -322,6 +336,10 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_situacao_portal_escritor_unico'
                    AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') THEN
     RAISE EXCEPTION 'S2 FALHOU: trigger do escritor único ausente ou desligado';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'pedido_compra_sugerido_portal_protocolo_formato_check'
+                   AND conrelid = 'public.pedido_compra_sugerido'::regclass AND convalidated) THEN
+    RAISE EXCEPTION 'S10 FALHOU: CHECK de formato do protocolo ausente ou não validado';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_situacao_portal_trava_protocolo'
                    AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') THEN

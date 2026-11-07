@@ -499,9 +499,15 @@ export interface ObservacaoSituacao {
 }
 
 /** Pedidos da lista que estão no app, com código de situação RECONHECIDO (1..7). Ilegível fica de fora: nunca
- *  substitui a observação vigente (o banco recusa também — esta é a 1ª camada). */
-export function observacoesDaLista(pedidos: readonly PedidoListado[], protocolosNoApp: ReadonlySet<string>): ObservacaoSituacao[] {
+ *  substitui a observação vigente (o banco recusa também — esta é a 1ª camada). `soCancelados`: leitura com outra
+ *  linha ilegível/repetida — o 6 de uma linha única e legível ainda BLOQUEIA (falha fechada), mas nada libera. */
+export function observacoesDaLista(
+  pedidos: readonly PedidoListado[],
+  protocolosNoApp: ReadonlySet<string>,
+  opcoes: { soCancelados?: boolean } = {},
+): ObservacaoSituacao[] {
   return pedidos
     .filter((p) => protocolosNoApp.has(p.protocolo) && /^[1-7]$/.test(p.situacao_codigo ?? ""))
+    .filter((p) => !opcoes.soCancelados || p.situacao_codigo === "6")
     .map((p) => ({ protocolo: p.protocolo, codigo: p.situacao_codigo as string, texto: p.situacao.slice(0, 200) }));
 }

@@ -322,4 +322,9 @@ Deno.test("observacoesDaLista: só pedido do app com código 1..7", () => {
     observacoesDaLista(pedidos, new Set(["2141001", "2141002", "2141003", "2141004"])),
     [{ protocolo: "2141001", codigo: "6", texto: "6 - Cancelado" }, { protocolo: "2141002", codigo: "1", texto: "1 - Aberto" }],
   );
+  // leitura imperfeita (outra linha ilegível/repetida): só o 6 bloqueia, nada libera
+  assertEquals(
+    observacoesDaLista(pedidos, new Set(["2141001", "2141002"]), { soCancelados: true }),
+    [{ protocolo: "2141001", codigo: "6", texto: "6 - Cancelado" }],
+  );
 });

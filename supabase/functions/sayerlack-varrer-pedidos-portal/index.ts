@@ -739,8 +739,13 @@ Deno.serve(async (req: Request) => {
     }
     // 2b. Onda 5A: a situação de cada pedido do app vai para o pedido (escritor único). Só com leitura PROVADA —
     //     ilegível/repetido seguem a rodada, mas não viram evidência. É o que faz o claim de disparo recusar o 6.
-    if (modo === "importar" && prova.ok) {
-      resumoFinal = { ...resumoFinal, situacoes: await gravarSituacoes(observacoesDaLista(lista.pedidos, new Set(noApp.keys())), lidoDe, lidoAte) };
+    //     Com linha ilegível/repetida (a rodada segue, vermelha no fim), só os 6 de linhas únicas entram: bloquear com
+    //     leitura imperfeita é seguro, liberar não (Codex 5A rodada 8).
+    if (modo === "importar") {
+      resumoFinal = {
+        ...resumoFinal,
+        situacoes: await gravarSituacoes(observacoesDaLista(lista.pedidos, new Set(noApp.keys()), { soCancelados: !prova.ok }), lidoDe, lidoAte),
+      };
     }
     const classificados = aplicarCarencia(preCarencia, vistos, syncEm);
     const candidatos = classificados.filter((p) => p.classe === "candidato");
