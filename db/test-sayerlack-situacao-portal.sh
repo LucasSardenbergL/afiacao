@@ -35,7 +35,7 @@ MIG_REAL="$REPO_ROOT/supabase/migrations/20261108120000_sayerlack_situacao_porta
 # ══════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="claim_sem_veto:C1,C4,R2 claim_veto_por_protocolo:C4 sem_trigger:T1,T2 sobreposta_libera:W7
-              ilegivel_grava:W3 sem_ordem:W5 qualquer_empresa:W10 seis_nao_estende:W15 sem_trava_protocolo:W17,W18,W19 trava_so_com_seis:W19 trava_com_btrim:W19b trava_sem_empresa:W19c sem_formato_protocolo:W19d pos_claim_sem_dente:POS=S7 pos_trigger_sem_dente:POS=S2 pos_trava_sem_dente:POS=S9"
+              ilegivel_grava:W3 sem_ordem:W5 qualquer_empresa:W10 seis_nao_estende:W15 sem_trava_protocolo:W17,W18,W19 trava_so_com_seis:W19 trava_com_btrim:W19b trava_sem_empresa:W19c sem_formato_protocolo:W19d"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -61,16 +61,6 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "  ❌ $sab — suíte ficou VERDE com a sabotagem ativa: o assert NÃO tem dente"
       falhas=$((falhas+1)); continue
     fi
-    # Sabotagem da POSTCONDIÇÃO: o vermelho certo é a migration ABORTAR com a marca dela (A1), não um assert.
-    case "$exigidos" in POS=*)
-      marca="${exigidos#POS=}"
-      if grep -q 'SABOTAGEM ATIVA em ' "$log" && grep -q "ERROR:  $marca FALHOU" "$log" && grep -Eq '^  ❌ A1 ' "$log"; then
-        echo "  ✅ $sab — a postcondição abortou a migration com $marca"
-      else
-        echo "  ❌ $sab — a postcondição NÃO abortou com $marca"; falhas=$((falhas+1))
-      fi
-      continue ;;
-    esac
     vermelhos="$(grep -Eo '^  ❌ [A-Z][0-9]+ ' "$log" | grep -Eo '[A-Z][0-9]+' | tr '\n' ' ' || true)"
     erros_sql="$(grep -c 'ERROR:  ' "$log" || true)"
     faltam=""
@@ -195,11 +185,6 @@ ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_tr
     trocar "$MIG" "                   AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') THEN
     RAISE EXCEPTION 'S9" "                   AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') AND false THEN
     RAISE EXCEPTION 'S9" ;;
-  pos_trava_sem_dente)
-    trocar "$MIG" "  BEFORE UPDATE OF portal_protocolo, empresa ON public.pedido_compra_sugerido
-  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();" "  BEFORE UPDATE OF portal_protocolo, empresa ON public.pedido_compra_sugerido
-  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();
-ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_trava_protocolo;" ;;
   trava_sem_empresa)
     trocar "$MIG" "     AND NEW.empresa IS DISTINCT FROM OLD.empresa
 " "     AND false
@@ -217,14 +202,6 @@ ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_tr
          AND btrim(portal_protocolo) = r.protocolo
          AND (" "       WHERE btrim(portal_protocolo) = r.protocolo
          AND (" ;;
-  pos_claim_sem_dente)  # a POS tem de pegar o veto ausente SOZINHA (A1 vermelho = a migration não aplicou)
-    trocar "$MIG" "     AND portal_situacao_codigo IS DISTINCT FROM '6'
-  RETURNING status" "  RETURNING status" ;;
-  pos_trigger_sem_dente)
-    trocar "$MIG" "CREATE TRIGGER trg_situacao_portal_escritor_unico" "CREATE TRIGGER trg_situacao_portal_escritor_unico_desligado"
-    trocar "$MIG" "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__situacao_portal_escritor_unico();" \
-      "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__situacao_portal_escritor_unico();
-ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_escritor_unico_desligado;" ;;
   *) echo "INFRA: sabotagem desconhecida: $SAB"; exit 1 ;;
 esac
 if [ -n "$SAB" ]; then
@@ -233,7 +210,8 @@ if [ -n "$SAB" ]; then
 fi
 
 # ── Banco: papéis do Supabase + o recorte da tabela que a migration toca ──
-P -q <<'SQL' >/dev/null
+fixture() { # $1 banco: papéis do Supabase + o recorte da tabela
+  "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d "$1" -v ON_ERROR_STOP=1 -q <<'SQL' >/dev/null
 DO $r$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
@@ -265,6 +243,8 @@ INSERT INTO public.pedido_compra_sugerido(id, empresa, status, status_envio_port
   (9, 'OBEN',    'aprovado_aguardando_disparo', 'sucesso_portal', '2141009'),
   (10, 'OBEN',   'aprovado_aguardando_disparo', 'enviando_portal', NULL);
 SQL
+}
+fixture prove
 
 echo "── A: aplicar ──"
 if out="$(P -1 -f "$MIG" 2>&1)"; then
@@ -272,6 +252,24 @@ if out="$(P -1 -f "$MIG" 2>&1)"; then
 else bad "A1 migration NÃO aplicou: $(printf '%s' "$out" | grep -m1 -E 'ERROR|FALHOU' || true)"; fi
 if P -1 -q -f "$MIG" >/dev/null 2>&1; then ok "A2 re-aplicar é idempotente"; else bad "A2 re-aplicar falhou"; fi
 eq "A3 escritor fechado p/ anon+authenticated" "$(Pq -c "SELECT has_function_privilege('anon','public.sayerlack_registrar_situacao_portal(timestamptz,timestamptz,jsonb)','EXECUTE')::text || has_function_privilege('authenticated','public.sayerlack_registrar_situacao_portal(timestamptz,timestamptz,jsonb)','EXECUTE')::text" 2>&1)" "falsefalse"
+# Dentes da POSTCONDIÇÃO (uma camada por vez): a cópia sabotada, num banco à parte, tem de ABORTAR com a marca dela.
+pos_dente() { # $1 rótulo, $2 marca, $3 de, $4 para
+  local f="$TMP/pos-$1.sql" db="pos_$1" out
+  cp "$MIG" "$f"
+  if ! trocar "$f" "$3" "$4"; then bad "$1 sabotagem da POS não aplicou (padrão derivou?)"; return; fi
+  "$PGBIN/createdb" -p "$PORT" -h "$SOCK" -U postgres "$db"; fixture "$db"
+  if out="$("$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d "$db" -v ON_ERROR_STOP=1 -1 -q -f "$f" 2>&1)"; then
+    bad "$1 a migration SEM a camada aplicou — a postcondição não tem dente"
+  else case "$out" in *"$2 FALHOU"*) ok "$1 a postcondição aborta com $2";; *) bad "$1 abortou por outro motivo: $(printf '%s' "$out" | grep -m1 ERROR | sed 's/ERROR:  //' || true)";; esac; fi
+}
+pos_dente A6 S7 "     AND portal_situacao_codigo IS DISTINCT FROM '6'
+  RETURNING status" "  RETURNING status"
+pos_dente A7 S2 "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__situacao_portal_escritor_unico();" \
+  "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__situacao_portal_escritor_unico();
+ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_escritor_unico;"
+pos_dente A8 S9 "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();" \
+  "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();
+ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_trava_protocolo;"
 eq "A4 escritor aberto p/ service_role" "$(Pq -c "SELECT has_function_privilege('service_role','public.sayerlack_registrar_situacao_portal(timestamptz,timestamptz,jsonb)','EXECUTE')" 2>&1)" "t"
 
 # Chamada do escritor: $1 início, $2 fim, $3 itens jsonb → jsonb devolvido

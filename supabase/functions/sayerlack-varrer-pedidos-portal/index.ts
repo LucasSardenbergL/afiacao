@@ -993,13 +993,17 @@ Deno.serve(async (req: Request) => {
         headers: env.headers ?? [], linhasLidas: (env.linhas ?? []).length, respostaTotal: env.resposta_total, dtTotal: env.dt_total, info: env.info,
         ilegiveis: lida.ilegiveis, repetidos: lida.repetidos,
       });
+      // Onda 5A: a situação vai ao pedido ANTES de decidir a reconciliação. Leitura provada grava tudo; com linha
+      // ilegível/repetida (o resto é legível), só os 6 — bloquear é seguro, liberar não (Codex 5A rodadas 8-9).
+      const parcial = !provaRec.ok && (provaRec.motivo === "linhas_ilegiveis" || provaRec.motivo === "protocolo_repetido");
+      if (modo === "importar" && (provaRec.ok || parcial)) {
+        const noAppRec = await pedidosNoApp(db, lida.pedidos.map((p) => p.protocolo));
+        resumoRec.situacoes = await gravarSituacoes(
+          observacoesDaLista(lida.pedidos, new Set(noAppRec.keys()), { soCancelados: !provaRec.ok }), lidoDeRec, lidoAteRec);
+      }
       if (!provaRec.ok) return { ...resumoRec, leitura_falhou: `sem prova (${provaRec.motivo}): ${provaRec.detalhe}` };
       listaRec = lida;
       resumoRec.emissao_leitura = janela.emissaoDesde;
-      if (modo === "importar") {
-        const noAppRec = await pedidosNoApp(db, lida.pedidos.map((p) => p.protocolo));
-        resumoRec.situacoes = await gravarSituacoes(observacoesDaLista(lida.pedidos, new Set(noAppRec.keys())), lidoDeRec, lidoAteRec);
-      }
     }
     const desfechos = desfechoNoPortal(janela.alcancaveis, listaRec);
     const encerrados: unknown[] = [];
