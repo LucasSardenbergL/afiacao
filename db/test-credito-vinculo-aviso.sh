@@ -27,7 +27,7 @@ MIG="$MIGS/20261106205557_credito_aviso_vinculo_vencido.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> — `post:A3` = a POSTCONDIÇÃO da migration aborta; `pre` = a PRE aborta.
-  SABOTAGENS="aviso_sem_clientes:C2 aviso_corta_10:C3 aviso_sem_carteira:C5 prova_ignorada:C4 titular_duplo:C7 evidencia_nula:C13 sem_frescor:C1 parcial_falso:C1 ref_por_posicao:S10 regra_inline:C5 sem_vencido_aparece:C1 incompleto_ignorado:C6 vendedor_ve_tudo:C10 fora_vira_vazio:C8 aviso_sem_gate:G1b registrar_sem_gate:S5 registrar_sem_vigencia:S6 voto_deduplicado:S3 nucleo_corta_11:E1 nucleo_mostra_cliente:E1 aviso_anon:post:A3 base_aberta:post:A2 deriva:pre"
+  SABOTAGENS="aviso_sem_clientes:C2 aviso_corta_10:C3 aviso_sem_carteira:C5 prova_ignorada:C4 titular_duplo:C7 evidencia_nula:C13 sem_frescor:C1 parcial_falso:C1 ref_por_posicao:S10 regra_inline:C5 sem_vencido_aparece:C11 incompleto_ignorado:C6 vendedor_ve_tudo:C10 fora_vira_vazio:C8 aviso_sem_gate:G1b registrar_sem_gate:S5 registrar_sem_vigencia:S6 voto_deduplicado:S3 nucleo_corta_11:E1 nucleo_mostra_cliente:E1 aviso_anon:post:A3 base_aberta:post:A2 deriva:pre"
   LOGDIR="$(mktemp -d "/tmp/falsifica-credito-vinculo.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
