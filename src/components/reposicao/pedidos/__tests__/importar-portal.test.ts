@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { interpretarRespostaImportacao, linkDoPedido, normalizarPainel, PROTOCOLO_PORTAL_RE, respostaIndeterminada } from '../importar-portal';
+import { corpoDoErroEdge, interpretarRespostaImportacao, linkDoPedido, normalizarPainel, PROTOCOLO_PORTAL_RE, respostaIndeterminada } from '../importar-portal';
 
 describe('interpretarRespostaImportacao', () => {
   it('sucesso só com PO confirmado (ok + concluido)', () => {
@@ -37,9 +37,35 @@ describe('interpretarRespostaImportacao', () => {
     expect(interpretarRespostaImportacao({ ok: true, etapa: 'concluido', pedido_id: 1 }, '1').detalheTecnico).toBeNull();
   });
 
-  it('resposta nula/lixo é erro', () => {
-    expect(interpretarRespostaImportacao(null, '1').tom).toBe('erro');
-    expect(interpretarRespostaImportacao('x', '1').tom).toBe('erro');
+  it('resposta 2xx nula/lixo é INDETERMINADA (pode ter gravado), não erro (Codex C1)', () => {
+    for (const lixo of [null, 'x', [], 42]) {
+      const r = interpretarRespostaImportacao(lixo, '1');
+      expect(r.tom).toBe('aviso');
+      expect(r.titulo).toBe('Não sei se o pedido 1 entrou');
+    }
+  });
+});
+
+describe('pontos cegos Onda 2 (2026-11-07)', () => {
+  it('pedido gravado + recusa no re-disparo: aviso "está no app — falta resolver", nunca "não foi importado"', () => {
+    for (const etapa of ['leitura', 'importacao'] as const) {
+      const r = interpretarRespostaImportacao({ ok: false, etapa, ja_existia: true, pedido_id: 77, mensagem: 'cancelado no portal' }, '2140501');
+      expect(r.tom).toBe('aviso');
+      expect(r.titulo).toBe('Pedido 2140501 está no app (#77) — falta resolver');
+      expect(r.titulo).not.toMatch(/não foi importado/);
+      expect(r.pedidoId).toBe(77);
+      expect(r.mensagem).toBe('cancelado no portal');
+    }
+  });
+  it('PO lançado à mão no Omie: aviso com o pedido (abre pelo link), não erro', () => {
+    const r = interpretarRespostaImportacao({ ok: false, etapa: 'importacao', ja_existia: true, pedido_id: 9, motivo: 'po_manual_no_omie', omie_numero: '1278' }, '7000001');
+    expect(r.tom).toBe('aviso');
+    expect(r.pedidoId).toBe(9);
+  });
+  it('controle: recusa SEM pedido gravado continua erro "não foi importado"', () => {
+    const r = interpretarRespostaImportacao({ ok: false, etapa: 'importacao', sqlstate: 'CP006', mensagem: 'x' }, '5');
+    expect(r.tom).toBe('erro');
+    expect(r.titulo).toBe('Pedido 5 não foi importado');
   });
 });
 
@@ -96,5 +122,21 @@ describe('normalizarPainel', () => {
     expect(normalizarPainel({})).toEqual({ pendencias: [], semPo: [], importados: [] });
     expect(() => normalizarPainel(null)).toThrow(/ilegível/);
     expect(() => normalizarPainel([])).toThrow(/ilegível/);
+  });
+});
+
+describe('corpoDoErroEdge (Codex P2, 2026-11-07)', () => {
+  it('lê o corpo de um 500 com pedido_id; a tela mostra o pedido, não "não foi importado"', async () => {
+    const err = { context: new Response(JSON.stringify({ ok: false, etapa: 'leitura', pedido_id: 12, ja_existia: true, mensagem: 'Configuração ausente' }), { status: 500 }) };
+    const corpo = await corpoDoErroEdge(err);
+    expect(corpo?.pedido_id).toBe(12);
+    const r = interpretarRespostaImportacao({ ok: false, etapa: 'importacao', ...corpo }, '2140603');
+    expect(r.tom).toBe('aviso');
+    expect(r.pedidoId).toBe(12);
+  });
+  it('sem contexto, corpo não-JSON ou lista: null', async () => {
+    expect(await corpoDoErroEdge(new Error('x'))).toBeNull();
+    expect(await corpoDoErroEdge({ context: new Response('<html>', { status: 502 }) })).toBeNull();
+    expect(await corpoDoErroEdge({ context: new Response('[1]', { status: 500 }) })).toBeNull();
   });
 });

@@ -6,6 +6,7 @@
 // armadilha que custou uma verificação impossível no #1747. Para diagnóstico use a SONDA
 // (`{"probe":true}`), que responde antes de qualquer IO. Ver versao.ts.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { classificarPosLogin, decidirAlertaPortal, ehFalhaSistemicaDoPortal } from "../_shared/sayerlack-pos-login.ts";
 import {
@@ -407,6 +408,8 @@ export default async ({ page, context }) => {
         status,
         protocolo,
         portal_data_entrega: data.portal_data_entrega || null,
+        // Condição de pagamento lida no formulário antes do Efetivar ({presente, texto, opcoes}); null = não lida.
+        portal_condicao: data.portal_condicao || null,
         // Totais capturados do #datatable_itens (custo). Propaga o que o runFlow
         // anexou em raw.data.itens_capturados pro Deno casar com os itens.
         itens_capturados: Array.isArray(data.itens_capturados) ? data.itens_capturados : [],
@@ -1091,6 +1094,19 @@ export default async ({ page, context }) => {
     trace.push({ step: 'scrape_datatable', n: (scrape.rows || []).length, przIdx: scrape.przIdx, idx: scrape.idx || {}, skus_identificados: (scrape.rows || []).filter(function(r){ return !!r.sku_portal; }).length, t: Date.now() - t0 });
     var linhasPortal = scrape.rows || [];
 
+    // === Condição de pagamento que o PORTAL aplicou (D-1, 2026-11-07) — SÓ LEITURA, nenhum clique ===
+    // O pedido do app vai ao Omie com a condição real do contrato, não com o "000 À Vista" fixo. Lê o texto da opção
+    // selecionada de #condicoes_pagamento e, para o de-para D-2, a lista de opções. Falha aqui nunca trava o envio.
+    var condicaoPortal = await page.evaluate(function() {
+      var sel = document.querySelector('#condicoes_pagamento');
+      if (!sel) return { presente: false, texto: null, opcoes: [] };
+      var opt = sel.selectedOptions && sel.selectedOptions[0];
+      var txt = opt ? String(opt.text || '').trim() : '';
+      var opcoes = Array.prototype.slice.call(sel.options || []).map(function(o) { return String(o.text || '').trim(); }).slice(0, 80);
+      return { presente: true, texto: (txt && txt.toLowerCase().indexOf('selecione') === -1) ? txt : null, opcoes: opcoes };
+    }).catch(function() { return { presente: false, texto: null, opcoes: [], erro: true }; });
+    trace.push({ step: 'condicao_portal', condicao: condicaoPortal.texto, presente: condicaoPortal.presente, n_opcoes: condicaoPortal.opcoes.length, t: Date.now() - t0 });
+
     // === Gate de grupo: Prz Ent (inteiro) === ltEsperado, EXATO. Fail-OPEN na incerteza (bug de seletor/sem config NÃO trava). ===
     if (typeof ltEsperado === 'number' && Number.isInteger(ltEsperado) && scrape.ok && scrape.przIdx >= 0 && linhasPortal.length > 0) {
       var mismatches = [];
@@ -1350,6 +1366,7 @@ export default async ({ page, context }) => {
           protocolo,
           protocoloSource,
           portal_data_entrega: portalDataEntrega,
+          portal_condicao: condicaoPortal,
           itens_capturados: linhasPortal,
           portal_add_json: portalAddJson,
           scrape_debug: scrapeDebug,
@@ -1497,6 +1514,8 @@ interface BrowserlessEnvelope {
   elapsedMs?: number;
   preLoginScreenshotUrl?: string | null;
   portal_data_entrega?: string;
+  /** Condição lida no formulário do portal antes do Efetivar (D-1). */
+  portal_condicao?: { presente?: boolean; texto?: string | null; opcoes?: string[] } | null;
   [key: string]: unknown;
 }
 
@@ -1540,6 +1559,26 @@ async function uploadScreenshot(
   } catch (e) {
     console.error(`[envio-portal] Excecao upload screenshot pedido ${pedidoId}:`, e);
     return null;
+  }
+}
+
+/**
+ * D-1 (2026-11-07): o pedido do app aceito no portal leva ao PO a condição que o PORTAL aplicou. A RPC traduz pela
+ * mesma função da importação (de-para D-2 + regra exata), só troca o padrão "000 À Vista" (nunca escolha humana), só
+ * antes do PO, e devolve o motivo quando não aplica. Não lança: o pedido JÁ está no portal e a transição tem de sair.
+ * Não resolvida ⇒ o pedido segue `default_a_vista` e o `disparar-pedidos-aprovados` RECUSA o PO até alguém escolher a
+ * condição (Codex P1: sucesso no portal não prova pagamento à vista). O texto lido fica gravado para o sensor.
+ */
+async function aplicarCondicaoDoPortal(supabase: SupabaseClient, pedidoId: number, texto: string | null) {
+  try {
+    const { data, error } = await supabase.rpc("sayerlack_aplicar_condicao_portal", { p_pedido_id: pedidoId, p_condicao_portal: texto });
+    if (error) {
+      console.warn(`[envio-portal] Pedido #${pedidoId}: condição do portal não aplicada (RPC: ${error.code ?? "?"} ${error.message})`);
+      return;
+    }
+    console.log(`[envio-portal] Pedido #${pedidoId}: condição do portal "${texto ?? "(não lida)"}" → ${JSON.stringify(data)}`);
+  } catch (e) {
+    console.warn(`[envio-portal] Pedido #${pedidoId}: condição do portal não aplicada (${mensagemDeErro(e) ?? "erro sem mensagem"})`);
   }
 }
 
@@ -2096,6 +2135,9 @@ async function processarPedido(
 
   // Maquina de estados guiada pelo envelope.
   if (envStatus === "sucesso_portal") {
+    // Condição REAL antes da transição (Codex P1, 2026-11-07): com o pedido ainda em enviando_portal nenhum disparo cria
+    // o PO, então quem enxerga sucesso_portal já enxerga a condição aplicada (ou a recusa do disparo, se não resolveu).
+    await aplicarCondicaoDoPortal(supabase, pedido.id, envelope?.portal_condicao?.texto ?? null);
     const r = await aplicarTransicao("sucesso_portal", {
       erro: null,
       protocolo: envelope.protocolo ?? null,

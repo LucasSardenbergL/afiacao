@@ -66,7 +66,9 @@ export function linkDoPedido(pedidoId: number): string {
  * (ausente ≠ sucesso).
  */
 export function interpretarRespostaImportacao(data: unknown, protocolo: string): ResultadoTela {
-  const r = (data && typeof data === 'object' ? data : {}) as RespostaImportacao;
+  // 2xx sem corpo legível: a importação pode ter gravado — é "não sei", nunca "não importado" (Codex C1).
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return respostaIndeterminada(protocolo, 'resposta vazia ou ilegível');
+  const r = data as RespostaImportacao;
   const base = {
     pedidoId: Number.isInteger(r.pedido_id) ? (r.pedido_id as number) : null,
     omieNumero: r.omie_numero ?? null,
@@ -93,6 +95,15 @@ export function interpretarRespostaImportacao(data: unknown, protocolo: string):
       mensagem: r.mensagem ?? 'O pedido de compra no Omie ainda não saiu. Importe de novo para re-disparar.',
     };
   }
+  // O pedido EXISTE no app (gravado agora ou antes) mas algo travou: nunca "não foi importado" (Codex C1).
+  if (base.pedidoId != null) {
+    return {
+      ...base,
+      tom: 'aviso',
+      titulo: `Pedido ${protocolo} está no app (#${base.pedidoId}) — falta resolver`,
+      mensagem: r.mensagem ?? `O pedido está gravado no app (#${base.pedidoId}) sem pedido de compra no Omie. Abra o pedido para ver o que falta.`,
+    };
+  }
   const titulo = r.etapa === 'leitura'
     ? `Não consegui ler o pedido ${protocolo} no portal`
     : `Pedido ${protocolo} não foi importado`;
@@ -112,6 +123,22 @@ export function respostaIndeterminada(protocolo: string, detalhe: string | null)
     pedidoId: null, omieNumero: null, itens: [], situacaoPortal: null, valorTotal: null,
     detalheTecnico: null, condicao: null, acao: null,
   };
+}
+
+/**
+ * Corpo JSON de um erro não-2xx do `supabase.functions.invoke` (fica em `error.context`, um Response). A edge manda o
+ * mesmo contrato em 500 — inclusive `pedido_id` de pedido JÁ gravado; reconstruir só com a mensagem apagava o #id e a
+ * tela dizia "não foi importado" (Codex P2, 2026-11-07). `null` = sem corpo legível.
+ */
+export async function corpoDoErroEdge(err: unknown): Promise<Record<string, unknown> | null> {
+  const ctx = (err as { context?: unknown } | null)?.context;
+  if (!ctx || typeof (ctx as Response).clone !== 'function') return null;
+  try {
+    const parsed: unknown = await (ctx as Response).clone().json();
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---- Painel "Pedidos do portal Sayerlack" (RPC sayerlack_painel_portal) ----

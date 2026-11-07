@@ -22,8 +22,10 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * v1.7 enviado = aprovado na quantidade (NULL lê-se 1:1; qtde fora do múltiplo recusa; normalização sai) ·
  * v1.8 itens+de-para por caminho único (a RPC inexistente e a instrumentação `[DEBUG_*]` saíram) · v1.9 prova sem mudança e sensor do unitário · v1.10 IPI por NCM: a prova soma o IPI e a RPC grava a decomposição.
  * v1.12: gate de auth canônico (`_shared/auth.ts`) no lugar da cópia local; teste negativo de handler (lote H).
+ * v1.13: lê a condição de pagamento do formulário do portal (só leitura) e a aplica ao pedido pela RPC
+ * `sayerlack_aplicar_condicao_portal` antes do PO (D-1, pontos cegos Onda 2).
  */
-export const VERSAO = "v1.12-gate-auth-canonico";
+export const VERSAO = "v1.13-condicao-real-do-portal";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

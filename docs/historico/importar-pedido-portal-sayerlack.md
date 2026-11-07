@@ -194,3 +194,56 @@ JOIN omie_products op ON op.omie_codigo_produto::text = s.sku_omie AND op.accoun
 LEFT JOIN ipi_aliquota_ncm a ON a.ncm = regexp_replace(op.ncm, '[^0-9]', '', 'g')
 WHERE s.ativo AND s.fornecedor_nome ILIKE '%sayer%' AND a.ncm IS NULL;
 ```
+## Pontos cegos, Onda 2 + 7.4: re-disparo relido, respostas honestas, condição real (2026-11-07)
+
+- **2.1 / 3.8 re-disparo relê o portal**: pedido já no app sem PO não é mais re-disparado às cegas. A importadora abre o
+  portal, exige a leitura provada (cancelado é recusado por `leitura.ts`) e, vindo do cron, a situação na lista fechada;
+  ilegível ⇒ "não re-disparei", com o #id. Como a varredura chama a MESMA edge para re-disparar, o 3.8 vem junto.
+- **2.2**: resposta com `pedido_id` nunca vira "não foi importado" (tom aviso, "está no app (#id) — falta resolver");
+  2xx sem corpo legível vira "não sei se entrou".
+- **2.3**: PO lançado à mão diz qual PO vale, que não se lança outro e que o #id fica sem PO até a vinculação (7.1);
+  o botão "Abrir pedido" já aparece com o `pedido_id`.
+- **2.4**: CP006 diz o NCM e o passo (runbook `docs/runbooks/sayerlack-pedido-portal-nao-entrou.md`, Onda 8).
+- **2.5 ledger**: decisão pela leitura do schema — `acoes_execucoes` (slug `reposicao.importar_portal_sayerlack`,
+  origem `manual` = botão, `automatica` = varredura), não `sayerlack_varredura_falha` (1 linha por protocolo, sem
+  histórico). Toda tentativa abre linha e fecha com o que a resposta disse (`ok:true` = sucesso; resto = erro), com
+  etapa, motivo, sqlstate, pedido, PO, condição e duração. Escritor único: a edge.
+- **2.7**: PO confirmado marca `resolvido_em` da pendência aberta do protocolo na hora.
+- **2.6 / D-2**: `sayerlack_condicao_portal_de_para` (texto normalizado → código OBEN) vence a regra exata; semente
+  `30 DIAS → A30 "Para 30 dias (C)"` (a regra daria T54). Tradução ÚNICA em `sayerlack_condicao_portal_para_omie`, usada
+  pela importação e pelo envio. As duas edges passam a guardar a lista de opções do `#condicoes_pagamento` (importadora
+  na resposta e no IP007; envio em `portal_resposta.portal_condicao.opcoes`): é a "lista real" para completar o de-para.
+  Caso ambíguo vai ao founder com a lista.
+- **7.4 / D-1 condição real no pedido do app**: `enviar-pedido-portal-sayerlack` v1.13 lê a condição do formulário
+  (só leitura, antes do Efetivar) e, depois de `sucesso_portal` e antes de pedir o PO, chama
+  `sayerlack_aplicar_condicao_portal`. Só troca o padrão `default_a_vista`, nunca escolha humana nem pedido com PO; sem
+  correspondente mantém a de hoje e grava `condicao_portal_lida` (sensor: lida e não aplicada). Fail-open de propósito: o
+  pedido já está no portal.
+- **Provas**: harness PG17 105/105 nos 2 locales (18 falsificações; as da importação passaram a mirar o corpo VIVO, o da
+  migration nova); Deno `leitura_test.ts` 17; vitest da tela com falsificação (2 vermelhos com o ramo novo sabotado).
+
+Sensor da condição real (denominador = pedidos do app aceitos no portal):
+
+```sql
+SELECT condicao_origem, (condicao_portal_lida IS NOT NULL) AS lida, count(*)
+FROM pedido_compra_sugerido
+WHERE fornecedor_nome ILIKE '%sayerlack%' AND status_envio_portal = 'sucesso_portal' AND enviado_portal_em > now() - interval '30 days'
+GROUP BY 1, 2;
+```
+
+### Codex na Onda 2 (gpt-6-astra high, 1ª rodada 106 s): 2 P1 + 2 P2, todos procedentes
+
+- **P1 corrida**: aplicar a condição DEPOIS do `sucesso_portal` deixava outro disparo criar o PO com 000 no meio. Agora a
+  edge de envio aplica com o pedido ainda em `enviando_portal` (o claim dela), e só então grava `sucesso_portal`.
+- **P1 fail-open**: condição não resolvida virava PO à vista ("sucesso no portal não prova pagamento à vista"). Agora o
+  `disparar-pedidos-aprovados` v1.11 RECUSA o PO de pedido do app com protocolo ainda em `default_a_vista` (cai em
+  `falha_envio` com o texto lido); a saída é escolher a condição no pedido (vira `manual_humano`) e disparar de novo.
+  Ordem de deploy obrigatória: migration → envio v1.13 → disparo v1.11 (o disparo novo antes do envio novo recusaria
+  todos os pedidos do app).
+- **P2 HTTP 500 perdia o #id**: o diálogo lê o corpo estruturado do erro (`corpoDoErroEdge`), não só a mensagem.
+- **P2 re-disparos lentos estouram o orçamento da varredura**: vai na Onda 3 (candidatos novos antes, teto por rodada).
+- **2ª rodada (58 s)**: os 3 consertos fechados; 1 P1 novo — em `falha_envio` a tela não deixava escolher a condição, e o
+  pedido recusado ficaria preso. Agora a condição é editável em `falha_envio` e dá para **Confirmar** a condição sem trocar
+  o código quando ela é o padrão do motor (`podeSalvarCondicao`, testado).
+- **Mudança de forma**: o changelog do `VERSAO` do disparo foi para `docs/historico/versao-disparar-pedidos-aprovados.md`
+  (o gate `limpeza-fonte` acusou 5 linhas de código em 62).

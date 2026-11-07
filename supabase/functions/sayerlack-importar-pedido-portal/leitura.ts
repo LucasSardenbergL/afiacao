@@ -213,14 +213,28 @@ const MENSAGEM_SQLSTATE: Readonly<Record<string, string>> = {
   IP006: "Já existe pedido de compra no Omie com este número do portal no contrato (lançado direto no Omie).",
   IP007: "A condição de pagamento do portal não tem correspondente único no cadastro de condições do Omie.",
   IP008: "Há pedido do próprio app sendo enviado ao portal agora; espere ele terminar (ou concilie) e importe de novo.",
-  CP006: "Um item tem NCM sem alíquota de IPI cadastrada no app. Esse cadastro não tem tela: peça ao administrador para cadastrar a alíquota do NCM (o NCM vem no detalhe abaixo) e importe de novo.",
   CP007: "O total com IPI calculado não bate com o Vlr Total do portal.",
   CP004: "Itens divergentes ao aplicar o custo.",
   CP002: "Este pedido já tem pedido de compra no Omie.",
   "42501": "Acesso negado.",
 };
 
+/** NCMs (8 dígitos) citados na mensagem do CP006 ("… (NCM: 32091020, 32110000) — nada gravado"). */
+export function ncmsDoCp006(message: string | null | undefined): string[] {
+  const m = /NCM:\s*([0-9,\s]+)/.exec(message ?? "");
+  return m ? [...new Set(m[1].split(/[,\s]+/).filter((x) => /^\d{8}$/.test(x)))] : [];
+}
+
 export function mensagemErroImportacao(code: string | null | undefined, message: string | null | undefined): string {
+  if (code === "CP006") {
+    // Diz QUAL NCM e o PASSO (Fable C4) — "peça ao administrador" não destravava ninguém: o founder é o administrador.
+    const ncms = ncmsDoCp006(message);
+    const quais = ncms.length > 0 ? `O NCM ${ncms.join(", ")} não tem` : "Um item tem NCM sem";
+    return `${quais} alíquota de IPI cadastrada no app, então não consigo provar o custo com IPI. Nada foi gravado. ` +
+      "Passo: ler a alíquota numa NF de entrada desse produto e cadastrar em ipi_aliquota_ncm (runbook " +
+      "docs/runbooks/sayerlack-pedido-portal-nao-entrou.md, seção CP006); depois importe de novo." +
+      (message ? ` Detalhe: ${message}` : "");
+  }
   const base = (code && MENSAGEM_SQLSTATE[code]) ?? "Falha ao gravar a importação.";
   return message ? `${base} Detalhe: ${message}` : base;
 }

@@ -210,6 +210,7 @@ ${ABRIR_CONSULTA_PEDIDOS}
     // página (GET, o que o founder faz à mão) se ainda não está nela e LÊ o texto selecionado — nenhum clique, nenhum
     // envio. Sem condição legível, o Deno recusa: ausente nunca vira "à vista" (revisão Fable+Codex, 2026-11).
     let condicao = null;
+    let condicoesOpcoes = [];
     if (achouNaConsulta && temItens(itens)) {
       if (page.url().indexOf('/order-creation-form-edit/') === -1) {
         await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
@@ -222,10 +223,15 @@ ${ABRIR_CONSULTA_PEDIDOS}
         return txt && txt.toLowerCase().indexOf('selecione') === -1 ? txt : false;
       }, { timeout: budgetFor('condicao', 15000), polling: 250 }).then((h) => h.jsonValue()).catch(() => null);
       trace.push({ step: 'condicao', condicao, t: Date.now() - t0 });
+      // Lista de opções do select (só leitura): insumo do de-para condição do portal → Omie (D-2).
+      condicoesOpcoes = await page.evaluate(() => {
+        const sel = document.querySelector('#condicoes_pagamento');
+        return sel ? Array.from(sel.options).map((o) => String(o.text || '').trim()).slice(0, 80) : [];
+      }).catch(() => []);
     }
 
     return {
-      data: { success: true, consulta: { headers: consulta.headers, linhas: consulta.linhas }, itens: itens ? itens.json : null, condicao, trace },
+      data: { success: true, consulta: { headers: consulta.headers, linhas: consulta.linhas }, itens: itens ? itens.json : null, condicao, condicoes_opcoes: condicoesOpcoes, trace },
       type: 'application/json',
     };
   } catch (e) {
@@ -243,6 +249,8 @@ interface BrowserlessData {
   itens?: unknown;
   /** Texto da condição de pagamento na tela de detalhe do portal ("70 - 7 DIAS"); null = não lida. */
   condicao?: string | null;
+  /** Textos de todas as opções do select de condição (insumo do de-para D-2). */
+  condicoes_opcoes?: string[];
   trace?: unknown[];
 }
 
@@ -258,6 +266,11 @@ interface PedidoEstado {
   condicao_pagamento_codigo: string | null;
   condicao_pagamento_descricao: string | null;
 }
+
+function criarCliente() {
+  return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+type Db = ReturnType<typeof criarCliente>;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -320,7 +333,23 @@ Deno.serve(async (req: Request) => {
     situacoesPermitidas = v as string[];
   }
 
-  const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  const db = criarCliente();
+  // Ledger de TODA tentativa (botão = manual, varredura = automatica): sucesso e recusa, com sqlstate, motivo e
+  // duração (item 2.5 — substitui depender do PostHog, que é bloqueado no navegador do founder).
+  const registro = await abrirRegistro(db, auth.via === "staff" ? "manual" : "automatica", operador);
+  const t0Registro = Date.now();
+  const resposta = await tratar(db, protocolo, situacoesPermitidas, operador);
+  await fecharRegistro(db, registro, resposta, protocolo, Date.now() - t0Registro);
+  return resposta;
+});
+
+/** O corpo da importação. Toda saída é uma Response; o chamador registra o resultado no ledger. */
+async function tratar(
+  db: Db,
+  protocolo: string,
+  situacoesPermitidas: string[] | null,
+  operador: string | null,
+): Promise<Response> {
   const estado = async (filtro: { id?: number; protocolo?: string }): Promise<PedidoEstado | null> => {
     let q = db.from("pedido_compra_sugerido")
       .select("id, status, portal_protocolo, omie_pedido_compra_numero, omie_pedido_compra_id, valor_total, num_skus, importado_portal_em, condicao_pagamento_codigo, condicao_pagamento_descricao");
@@ -330,9 +359,19 @@ Deno.serve(async (req: Request) => {
     return (data as PedidoEstado | null) ?? null;
   };
   const temPo = (p: PedidoEstado) => p.omie_pedido_compra_id != null && String(p.omie_pedido_compra_id).trim() !== "" && String(p.omie_pedido_compra_id).trim() !== "0";
+  /**
+   * Pedido com PO ⇒ a pendência aberta da varredura para este protocolo está resolvida AGORA, sem esperar a próxima
+   * rodada (item 2.7). Fail-open: é a fila de avisos, não o pedido — a rodada seguinte resolve se isto falhar.
+   */
+  const resolverPendenciaVarredura = async (proto: string) => {
+    const { error } = await db.from("sayerlack_varredura_falha").update({ resolvido_em: new Date().toISOString() })
+      .eq("protocolo", proto).is("resolvido_em", null);
+    if (error) console.warn(`[importar-portal] ${proto}: pendência da varredura não resolvida (fail-open): ${error.message}`);
+  };
   const responderComEstado = async (pedidoId: number, extra: Record<string, unknown>) => {
     const p = await estado({ id: pedidoId });
     const comPo = !!p && temPo(p);
+    if (comPo) await resolverPendenciaVarredura(protocolo);
     return json({
       ok: comPo,
       etapa: comPo ? "concluido" : "omie",
@@ -351,40 +390,47 @@ Deno.serve(async (req: Request) => {
   };
 
   let pedidoGravado: number | null = null;
+  /** Pedido já gravado sem PO que pode ser re-disparado — SÓ depois de reler a situação no portal (item 2.1). */
+  let redisparar: PedidoEstado | null = null;
   try {
-    // 0. Já existe no app? Não abre o portal de novo: devolve o estado e, se faltar só o Omie, re-dispara.
+    // 0. Já existe no app? Com PO: devolve o estado. Sem PO e re-disparável: relê o portal ANTES de re-disparar
+    //    (cancelado no portal não pode virar PO; Codex A1/D1, 2026-11-06).
     const existente = await estado({ protocolo });
     if (existente) {
       if (temPo(existente)) {
+        await resolverPendenciaVarredura(protocolo);
         return json({
           ok: true, etapa: "concluido", ja_existia: true, pedido_id: existente.id, protocolo,
           status: existente.status, omie_numero: existente.omie_pedido_compra_numero, valor_total: existente.valor_total,
           mensagem: `O pedido ${protocolo} já está no app (#${existente.id}) com pedido de compra ${existente.omie_pedido_compra_numero ?? ""} no Omie.`,
         });
       }
-      if (existente.status && STATUS_REDISPARAVEIS.has(existente.status)) {
-        // Antes de re-disparar: PO lançado à mão no Omie com este contrato (inclusive composto "a/b") ⇒ não duplica,
-        // vai para conciliação (Codex P1, 2026-11). Protocolo validado só-dígitos: seguro no LIKE.
-        const { data: pos, error: errPo } = await db.from("purchase_orders_tracking").select("numero_pedido, numero_contrato_fornecedor")
-          .eq("empresa", "OBEN").like("numero_contrato_fornecedor", `%${protocolo}%`).limit(50);
-        if (errPo) throw new Error(`Leitura do espelho de POs do Omie: ${errPo.message}`);
-        const poManual = ((pos ?? []) as { numero_pedido: string | null; numero_contrato_fornecedor: string | null }[])
-          .find((x) => (x.numero_contrato_fornecedor ?? "").split("/").some((c) => c.trim() === protocolo));
-        if (poManual) {
-          return json({
-            ok: false, etapa: "importacao", ja_existia: true, pedido_id: existente.id, protocolo, status: existente.status,
-            mensagem: `O pedido ${protocolo} está no app (#${existente.id}) sem pedido de compra, mas já existe o PO ${poManual.numero_pedido ?? "?"} ` +
-              `no Omie com este contrato. Não re-disparei para não duplicar — concilie o #${existente.id} em Gerir pedidos.`,
-          });
-        }
-        pedidoGravado = existente.id;
-        const omie = await dispararOmie(existente.id);
-        return await responderComEstado(existente.id, { ja_existia: true, disparo_http: omie.httpStatus });
+      if (!existente.status || !STATUS_REDISPARAVEIS.has(existente.status)) {
+        return json({
+          ok: false, etapa: "importacao", ja_existia: true, pedido_id: existente.id, protocolo, status: existente.status,
+          mensagem: `O pedido ${protocolo} está no app (#${existente.id}) sem pedido de compra no Omie, no status ` +
+            `"${existente.status ?? "?"}", que não deixa re-disparar daqui. Abra o pedido #${existente.id} para ver o que ` +
+            `aconteceu com ele. Não lance à mão no Omie.`,
+        });
       }
-      return json({
-        ok: false, etapa: "importacao", ja_existia: true, pedido_id: existente.id, protocolo, status: existente.status,
-        mensagem: `O pedido ${protocolo} já está no app (#${existente.id}, status ${existente.status}) sem pedido de compra no Omie — resolva por Gerir pedidos.`,
-      });
+      // PO lançado à mão no Omie com este contrato (inclusive composto "a/b") ⇒ não duplica (Codex P1, 2026-11).
+      // Protocolo validado só-dígitos: seguro no LIKE.
+      const { data: pos, error: errPo } = await db.from("purchase_orders_tracking").select("numero_pedido, numero_contrato_fornecedor")
+        .eq("empresa", "OBEN").like("numero_contrato_fornecedor", `%${protocolo}%`).limit(50);
+      if (errPo) throw new Error(`Leitura do espelho de POs do Omie: ${errPo.message}`);
+      const poManual = ((pos ?? []) as { numero_pedido: string | null; numero_contrato_fornecedor: string | null }[])
+        .find((x) => (x.numero_contrato_fornecedor ?? "").split("/").some((c) => c.trim() === protocolo));
+      if (poManual) {
+        return json({
+          ok: false, etapa: "importacao", ja_existia: true, pedido_id: existente.id, protocolo, status: existente.status,
+          motivo: "po_manual_no_omie", omie_numero: poManual.numero_pedido ?? null,
+          mensagem: `O pedido ${protocolo} está no app (#${existente.id}) sem pedido de compra, mas o Omie já tem o PO ` +
+            `${poManual.numero_pedido ?? "?"} com este número no contrato (lançado à mão). Não re-disparei para não duplicar: ` +
+            `o PO ${poManual.numero_pedido ?? "?"} é o que vale. Não lance outro no Omie. O #${existente.id} fica sem PO no ` +
+            `app até existir a vinculação de PO manual.`,
+        });
+      }
+      redisparar = existente;
     }
 
     const faltando = [
@@ -392,7 +438,13 @@ Deno.serve(async (req: Request) => {
       ["SAYERLACK_PORTAL_URL", SAYERLACK_PORTAL_URL], ["SAYERLACK_PORTAL_CLIENTE_CODIGO", SAYERLACK_PORTAL_CLIENTE_CODIGO],
       ["BROWSERLESS_TOKEN", BROWSERLESS_TOKEN],
     ].filter(([, v]) => !v).map(([k]) => k);
-    if (faltando.length > 0) return json({ ok: false, etapa: "leitura", mensagem: `Configuração ausente: ${faltando.join(", ")}` }, 500);
+    if (faltando.length > 0) {
+      return json({
+        ok: false, etapa: "leitura", protocolo,
+        ...(redisparar ? { ja_existia: true, pedido_id: redisparar.id, status: redisparar.status } : {}),
+        mensagem: `Configuração ausente: ${faltando.join(", ")}` + (redisparar ? ` — não re-disparei o pedido #${redisparar.id}.` : ""),
+      }, 500);
+    }
 
     // 1. Lê o pedido no portal.
     const t0 = Date.now();
@@ -427,11 +479,21 @@ Deno.serve(async (req: Request) => {
     }
     console.log(`[importar-portal] ${protocolo}: Browserless ${Date.now() - t0}ms http=${httpStatus}${httpErr ? ` erro=${httpErr}` : ""} tipo=${envelope.erroTipo ?? "-"}`);
 
+    // Pedido já gravado: toda recusa daqui em diante carrega o #id e diz que NÃO re-disparou (o pedido existe).
+    const doExistente = redisparar
+      ? { ja_existia: true, pedido_id: redisparar.id, status: redisparar.status }
+      : {};
+    const naoRedisparei = (porque: string) =>
+      `O pedido ${protocolo} está no app (#${redisparar?.id}) sem pedido de compra. ${porque} ` +
+      `Por isso não re-disparei o pedido de compra. Não lance à mão no Omie.`;
+
     if (httpErr || httpStatus < 200 || httpStatus >= 300 || envelope.success !== true) {
       const causa = httpErr ? `navegador remoto: ${httpErr}` : envelope.erro ?? `HTTP ${httpStatus}`;
       return json({
-        ok: false, etapa: "leitura", protocolo, erro_tipo: envelope.erroTipo ?? null,
-        mensagem: `Não consegui ler o portal Sayerlack (${causa}). Lembre: o portal fica fora do ar de sábado 12h a segunda 6h.`,
+        ok: false, etapa: "leitura", protocolo, erro_tipo: envelope.erroTipo ?? null, ...doExistente,
+        mensagem: redisparar
+          ? naoRedisparei(`Não consegui reler a situação dele no portal (${causa}), então não sei se segue valendo. Tente de novo mais tarde.`)
+          : `Não consegui ler o portal Sayerlack (${causa}). Lembre: o portal fica fora do ar de sábado 12h a segunda 6h.`,
         trace: envelope.trace ?? null,
       });
     }
@@ -439,12 +501,28 @@ Deno.serve(async (req: Request) => {
     // 2. Prova a leitura.
     const lido = lerPedidoPortal(envelope.consulta?.linhas ?? [], envelope.itens, protocolo);
     if (!lido.ok) {
-      return json({ ok: false, etapa: "leitura", protocolo, motivo: lido.motivo, mensagem: lido.detalhe, trace: envelope.trace ?? null });
+      return json({
+        ok: false, etapa: "leitura", protocolo, motivo: lido.motivo, ...doExistente,
+        mensagem: redisparar ? naoRedisparei(lido.detalhe) : lido.detalhe,
+        trace: envelope.trace ?? null,
+      });
     }
     if (situacoesPermitidas && !situacaoPermitida(lido.cabecalho.situacao, situacoesPermitidas)) {
       return json({
-        ok: false, etapa: "leitura", protocolo, motivo: "situacao_nao_permitida", situacao_portal: lido.cabecalho.situacao,
-        mensagem: `O pedido ${protocolo} está "${lido.cabecalho.situacao}" no portal — fora das situações que a varredura importa.`,
+        ok: false, etapa: "leitura", protocolo, motivo: "situacao_nao_permitida", situacao_portal: lido.cabecalho.situacao, ...doExistente,
+        mensagem: redisparar
+          ? naoRedisparei(`No portal ele está "${lido.cabecalho.situacao}", fora das situações que a varredura re-dispara sozinha.`)
+          : `O pedido ${protocolo} está "${lido.cabecalho.situacao}" no portal — fora das situações que a varredura importa.`,
+      });
+    }
+
+    // 2b. Re-disparo: a situação relida é importável (cancelado já foi recusado pela leitura) ⇒ o PO pelo caminho
+    //     de sempre. Não grava de novo: o pedido e o custo já estão no app.
+    if (redisparar) {
+      pedidoGravado = redisparar.id;
+      const omie = await dispararOmie(redisparar.id);
+      return await responderComEstado(redisparar.id, {
+        ja_existia: true, disparo_http: omie.httpStatus, situacao_portal: lido.cabecalho.situacao,
       });
     }
 
@@ -469,6 +547,8 @@ Deno.serve(async (req: Request) => {
       return json({
         ok: false, etapa: "importacao", protocolo, sqlstate: rpcErr.code ?? null,
         mensagem: mensagemErroImportacao(rpcErr.code, rpcErr.message),
+        condicao_portal: envelope.condicao ?? null,
+        condicoes_opcoes_portal: rpcErr.code === "IP007" && Array.isArray(envelope.condicoes_opcoes) ? envelope.condicoes_opcoes : null,
         situacao_portal: lido.cabecalho.situacao, valor_total_portal: lido.cabecalho.valor_total, itens: itensResumo,
       });
     }
@@ -489,6 +569,7 @@ Deno.serve(async (req: Request) => {
       situacao_portal: lido.cabecalho.situacao,
       valor_total_portal: lido.cabecalho.valor_total,
       condicao_portal: envelope.condicao ?? null,
+      condicoes_opcoes_portal: Array.isArray(envelope.condicoes_opcoes) ? envelope.condicoes_opcoes : null,
       itens: itensResumo,
     });
   } catch (e) {
@@ -501,4 +582,67 @@ Deno.serve(async (req: Request) => {
     }
     return json({ ok: false, etapa: "importacao", protocolo, mensagem: mensagemDeErro(e) ?? "erro inesperado" }, 500);
   }
-});
+}
+
+const ACAO_REGISTRO = "reposicao.importar_portal_sayerlack";
+
+/** Abre a linha do ledger. Fail-open: o registro é observabilidade, nunca derruba a importação. */
+async function abrirRegistro(
+  db: Db,
+  origem: "manual" | "automatica",
+  operador: string | null,
+): Promise<string | null> {
+  try {
+    let nome: string | null = null;
+    if (origem === "manual" && operador) {
+      const { data } = await db.from("profiles").select("name").eq("user_id", operador).maybeSingle();
+      nome = (data as { name?: string } | null)?.name ?? null;
+    }
+    const { data, error } = await db.from("acoes_execucoes")
+      .insert({ acao: ACAO_REGISTRO, origem, executado_por: origem === "manual" ? operador : null, executado_por_nome: nome })
+      .select("id").single();
+    if (error || !data) {
+      console.warn(`[importar-portal] ledger não abriu (fail-open): ${error?.message ?? "sem id"}`);
+      return null;
+    }
+    return (data as { id: string }).id;
+  } catch (e) {
+    console.warn(`[importar-portal] ledger não abriu (fail-open): ${mensagemDeErro(e) ?? "erro"}`);
+    return null;
+  }
+}
+
+/** Fecha a linha com o que a RESPOSTA disse: `ok: true` é sucesso, qualquer outra coisa é erro (ausente ≠ sucesso). */
+async function fecharRegistro(
+  db: Db,
+  registroId: string | null,
+  resposta: Response,
+  protocolo: string,
+  duracaoMs: number,
+): Promise<void> {
+  if (!registroId) return;
+  try {
+    const corpo = (await resposta.clone().json().catch(() => null)) as Record<string, unknown> | null;
+    const ok = corpo?.ok === true;
+    const detalhes = {
+      protocolo,
+      http: resposta.status,
+      etapa: corpo?.etapa ?? null,
+      motivo: corpo?.motivo ?? null,
+      sqlstate: corpo?.sqlstate ?? null,
+      pedido_id: corpo?.pedido_id ?? null,
+      omie_numero: corpo?.omie_numero ?? null,
+      ja_existia: corpo?.ja_existia ?? null,
+      disparo_http: corpo?.disparo_http ?? null,
+      condicao_portal: corpo?.condicao_portal ?? null,
+      mensagem: typeof corpo?.mensagem === "string" ? corpo.mensagem.slice(0, 300) : null,
+      duracao_ms: duracaoMs,
+    };
+    const { error } = await db.from("acoes_execucoes")
+      .update({ status: ok ? "sucesso" : "erro", finalizado_em: new Date().toISOString(), detalhes })
+      .eq("id", registroId);
+    if (error) console.warn(`[importar-portal] ledger não fechou (fail-open): ${error.message}`);
+  } catch (e) {
+    console.warn(`[importar-portal] ledger não fechou (fail-open): ${mensagemDeErro(e) ?? "erro"}`);
+  }
+}

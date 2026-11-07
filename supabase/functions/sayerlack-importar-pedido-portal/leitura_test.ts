@@ -4,7 +4,7 @@ function assertEquals(atual: unknown, esperado: unknown) {
   const e = JSON.stringify(esperado);
   if (a !== e) throw new Error(`esperado ${e}, veio ${a}`);
 }
-import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, numeroBR, situacaoCancelada, situacaoPermitida } from "./leitura.ts";
+import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, ncmsDoCp006, numeroBR, situacaoCancelada, situacaoPermitida } from "./leitura.ts";
 
 // Resposta REAL do portal (pedido 2140603, 2026-10-14) — consulta e busca-itens-pedido.
 const LINHA_REAL = {
@@ -122,4 +122,16 @@ Deno.test("situacaoPermitida: só código da lista; sem código ou lista vazia =
      situacaoPermitida("1 - Aberto", []), situacaoPermitida("11 - Outro", ["1"])],
     [true, false, false, false, false],
   );
+});
+
+Deno.test("CP006 diz o NCM e o passo, sem 'peça ao administrador' (Fable C4)", () => {
+  const rpc = "custo_portal: item sem alíquota de IPI conhecida no pedido 3751 (NCM: 32091020, 32110000) — nada gravado";
+  assertEquals(ncmsDoCp006(rpc), ["32091020", "32110000"]);
+  const m = mensagemErroImportacao("CP006", rpc);
+  assertEquals(m.startsWith("O NCM 32091020, 32110000 não tem alíquota de IPI cadastrada no app"), true);
+  assertEquals(m.includes("docs/runbooks/sayerlack-pedido-portal-nao-entrou.md"), true);
+  assertEquals(m.includes("administrador"), false);
+  // Sem NCM legível na mensagem: não inventa um.
+  assertEquals(ncmsDoCp006("sem detalhe"), []);
+  assertEquals(mensagemErroImportacao("CP006", null).startsWith("Um item tem NCM sem alíquota"), true);
 });
