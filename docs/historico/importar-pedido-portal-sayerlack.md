@@ -335,11 +335,11 @@ fica parado como hoje: o cron já manda o e-mail de situação impeditiva. A dif
     registra o vínculo e avisa que o PO existe com o pedido cancelado. Se não acha, nada muda.
 - **Front (5.5)**: o `PortalStatusPanel` de Gerir pedidos mostra a situação lida e quando foi lida. Para 6, diz
   "disparo bloqueado" (sem PO) ou "há PO no Omie, confira" (com PO). Se a leitura for de protocolo anterior, avisa.
-- **Prova**: `db/test-sayerlack-situacao-portal.sh`, PG17, 45 asserts verdes em `C` e `pt_BR.UTF-8`. Usa 2 conexões
-  com bloqueio observado nas duas ordens gravar × claim. `--falsificar` com controle verde e 14 sabotagens: 11 de
+- **Prova**: `db/test-sayerlack-situacao-portal.sh`, PG17, 46 asserts verdes em `C` e `pt_BR.UTF-8`. Usa 2 conexões
+  com bloqueio observado nas duas ordens gravar × claim. `--falsificar` com controle verde e 15 sabotagens: 12 de
   comportamento (uma camada por vez) e 3 da postcondição.
 - **Codex**: desenho v3 com 4 P1 (reconsulta sem gravar, B' depois das validações, ordem por início da leitura,
   troca de protocolo), todos fechados no v4. A rodada 2 achou 1 P1: um 2º 6 sobreposto era descartado e uma 3ª
-  leitura liberava. Agora um 6 sobre 6 **estende** o horizonte (W15). A rodada 3 achou que trocar o protocolo furava a ordem temporal. As rodadas 4 e 5 acharam sequências de ida e volta de protocolo (A→B→A). Agora o **protocolo preenchido é imutável** (trigger `trg_situacao_portal_trava_protocolo`, W17–W21). Preencher um vazio segue livre. A correção é só no SQL Editor, com `SET LOCAL app.sayerlack_protocolo_correcao='on'`.
+  leitura liberava. Agora um 6 sobre 6 **estende** o horizonte (W15). A rodada 3 achou que trocar o protocolo furava a ordem temporal. As rodadas 4 e 5 acharam sequências de ida e volta de protocolo (A→B→A). Agora o **protocolo preenchido é imutável**, assim como a empresa (rodada 7) (trigger `trg_situacao_portal_trava_protocolo`, W17–W21). Preencher um vazio segue livre. A correção é só no SQL Editor, com `SET LOCAL app.sayerlack_protocolo_correcao='on'`.
 - **Limite declarado**: entre a leitura das 12:30 e a gravação (segundos), um claim concorrente ainda pode criar o PO.
   Esse PO fica com a situação 6 gravada e o painel mostra "há PO no Omie". O aviso por e-mail é da fatia 2.

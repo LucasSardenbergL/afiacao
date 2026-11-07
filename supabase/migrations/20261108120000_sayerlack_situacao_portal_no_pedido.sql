@@ -122,6 +122,14 @@ BEGIN
       MESSAGE = '[PORTAL-PROTOCOLO-IMUTAVEL] pedido ' || OLD.id || ' já tem o protocolo ' || btrim(OLD.portal_protocolo)
                 || ' do portal: ele não é trocado nem limpo (correção só no SQL Editor, com SET LOCAL app.sayerlack_protocolo_correcao = ''on'')';
   END IF;
+  -- A identidade que o escritor usa é (empresa, protocolo): trocar a empresa também tiraria o pedido do alcance das
+  -- observações (Codex 5A rodada 7).
+  IF btrim(COALESCE(OLD.portal_protocolo, '')) <> ''
+     AND NEW.empresa IS DISTINCT FROM OLD.empresa
+     AND current_setting('app.sayerlack_protocolo_correcao', true) IS DISTINCT FROM 'on' THEN
+    RAISE EXCEPTION USING ERRCODE = '42501',
+      MESSAGE = '[PORTAL-PROTOCOLO-IMUTAVEL] pedido ' || OLD.id || ' já tem protocolo do portal: a empresa não muda';
+  END IF;
   RETURN NEW;
 END;
 $$;
@@ -131,7 +139,7 @@ REVOKE ALL ON FUNCTION public.sayerlack__trava_protocolo_confirmado() FROM authe
 
 DROP TRIGGER IF EXISTS trg_situacao_portal_trava_protocolo ON public.pedido_compra_sugerido;
 CREATE TRIGGER trg_situacao_portal_trava_protocolo
-  BEFORE UPDATE OF portal_protocolo ON public.pedido_compra_sugerido
+  BEFORE UPDATE OF portal_protocolo, empresa ON public.pedido_compra_sugerido
   FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();
 
 -- ── A.3 o escritor ───────────────────────────────────────────────────────────────────────────────

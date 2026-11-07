@@ -35,7 +35,7 @@ MIG_REAL="$REPO_ROOT/supabase/migrations/20261108120000_sayerlack_situacao_porta
 # ══════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="claim_sem_veto:C1,C4,R2 claim_veto_por_protocolo:C4 sem_trigger:T1,T2 sobreposta_libera:W7
-              ilegivel_grava:W3 sem_ordem:W5 qualquer_empresa:W10 seis_nao_estende:W15 sem_trava_protocolo:W17,W18,W19 trava_so_com_seis:W19 trava_com_btrim:W19b pos_claim_sem_dente:POS=S7 pos_trigger_sem_dente:POS=S2 pos_trava_sem_dente:POS=S9"
+              ilegivel_grava:W3 sem_ordem:W5 qualquer_empresa:W10 seis_nao_estende:W15 sem_trava_protocolo:W17,W18,W19 trava_so_com_seis:W19 trava_com_btrim:W19b trava_sem_empresa:W19c pos_claim_sem_dente:POS=S7 pos_trigger_sem_dente:POS=S2 pos_trava_sem_dente:POS=S9"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -188,18 +188,22 @@ ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_es
   seis_nao_estende)  # o v4 sem o conserto: 2º 6 sobreposto descartado
     trocar "$MIG" "              OR (r.codigo = '6' AND portal_situacao_codigo = '6' AND p_lido_ate > portal_situacao_ate))" "              )" ;;
   sem_trava_protocolo)
-    trocar "$MIG" "  BEFORE UPDATE OF portal_protocolo ON public.pedido_compra_sugerido
-  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();" "  BEFORE UPDATE OF portal_protocolo ON public.pedido_compra_sugerido
+    trocar "$MIG" "  BEFORE UPDATE OF portal_protocolo, empresa ON public.pedido_compra_sugerido
+  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();" "  BEFORE UPDATE OF portal_protocolo, empresa ON public.pedido_compra_sugerido
   FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();
 ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_trava_protocolo;"
     trocar "$MIG" "                   AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') THEN
     RAISE EXCEPTION 'S9" "                   AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') AND false THEN
     RAISE EXCEPTION 'S9" ;;
   pos_trava_sem_dente)
-    trocar "$MIG" "  BEFORE UPDATE OF portal_protocolo ON public.pedido_compra_sugerido
-  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();" "  BEFORE UPDATE OF portal_protocolo ON public.pedido_compra_sugerido
+    trocar "$MIG" "  BEFORE UPDATE OF portal_protocolo, empresa ON public.pedido_compra_sugerido
+  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();" "  BEFORE UPDATE OF portal_protocolo, empresa ON public.pedido_compra_sugerido
   FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();
 ALTER TABLE public.pedido_compra_sugerido DISABLE TRIGGER trg_situacao_portal_trava_protocolo;" ;;
+  trava_sem_empresa)
+    trocar "$MIG" "     AND NEW.empresa IS DISTINCT FROM OLD.empresa
+" "     AND false
+" ;;
   trava_com_btrim)  # o v6: comparava com btrim — espaço furava a trava
     trocar "$MIG" "     AND NEW.portal_protocolo IS DISTINCT FROM OLD.portal_protocolo" "     AND btrim(COALESCE(NEW.portal_protocolo, '')) IS DISTINCT FROM btrim(OLD.portal_protocolo)" ;;
   trava_so_com_seis)  # o v5: só travava com 6 gravado — a ida e volta a partir de um 1 passava
@@ -317,6 +321,7 @@ eq "W17 trocar o protocolo de pedido com 6 gravado = 42501" "$(Pq -c "UPDATE pub
 eq "W18 limpar o protocolo de pedido com 6 também = 42501" "$(Pq -c "UPDATE public.pedido_compra_sugerido SET portal_protocolo = NULL WHERE id = 9" 2>&1 | sqlstate)" "42501"
 eq "W19 trocar o protocolo de pedido SEM 6 (situação 1) também = 42501 (a ida e volta da rodada 5)" "$(Pq -c "UPDATE public.pedido_compra_sugerido SET portal_protocolo = '2141906' WHERE id = 6" 2>&1 | sqlstate)" "42501"
 eq "W19b acrescentar espaço ao protocolo também = 42501 (a busca exata da varredura o perderia)" "$(Pq -c "UPDATE public.pedido_compra_sugerido SET portal_protocolo = ' 2141006 ' WHERE id = 6" 2>&1 | sqlstate)" "42501"
+eq "W19c trocar a empresa de pedido com protocolo = 42501 (o escritor casa por empresa+protocolo)" "$(Pq -c "UPDATE public.pedido_compra_sugerido SET empresa = 'COLACOR' WHERE id = 6" 2>&1 | sqlstate)" "42501"
 eq "W20 preencher protocolo vazio segue livre (envio/conciliação)" "$(Pq -c "UPDATE public.pedido_compra_sugerido SET portal_protocolo = '2141010' WHERE id = 10 RETURNING portal_protocolo" 2>&1)" "2141010"
 eq "W21 correção excepcional com a GUC na mesma transação (SQL Editor)" "$(Pq -c "BEGIN; SET LOCAL app.sayerlack_protocolo_correcao = 'on'; UPDATE public.pedido_compra_sugerido SET portal_protocolo = '2141110' WHERE id = 10; COMMIT; SELECT portal_protocolo FROM public.pedido_compra_sugerido WHERE id = 10;" 2>&1 | tail -1)" "2141110"
 
