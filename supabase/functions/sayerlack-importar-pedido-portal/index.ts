@@ -210,6 +210,7 @@ ${ABRIR_CONSULTA_PEDIDOS}
     // página (GET, o que o founder faz à mão) se ainda não está nela e LÊ o texto selecionado — nenhum clique, nenhum
     // envio. Sem condição legível, o Deno recusa: ausente nunca vira "à vista" (revisão Fable+Codex, 2026-11).
     let condicao = null;
+    let condicoesOpcoes = [];
     if (achouNaConsulta && temItens(itens)) {
       if (page.url().indexOf('/order-creation-form-edit/') === -1) {
         await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
@@ -222,10 +223,15 @@ ${ABRIR_CONSULTA_PEDIDOS}
         return txt && txt.toLowerCase().indexOf('selecione') === -1 ? txt : false;
       }, { timeout: budgetFor('condicao', 15000), polling: 250 }).then((h) => h.jsonValue()).catch(() => null);
       trace.push({ step: 'condicao', condicao, t: Date.now() - t0 });
+      // Lista de opções do select (só leitura): insumo do de-para condição do portal → Omie (D-2).
+      condicoesOpcoes = await page.evaluate(() => {
+        const sel = document.querySelector('#condicoes_pagamento');
+        return sel ? Array.from(sel.options).map((o) => String(o.text || '').trim()).slice(0, 80) : [];
+      }).catch(() => []);
     }
 
     return {
-      data: { success: true, consulta: { headers: consulta.headers, linhas: consulta.linhas }, itens: itens ? itens.json : null, condicao, trace },
+      data: { success: true, consulta: { headers: consulta.headers, linhas: consulta.linhas }, itens: itens ? itens.json : null, condicao, condicoes_opcoes: condicoesOpcoes, trace },
       type: 'application/json',
     };
   } catch (e) {
@@ -243,6 +249,8 @@ interface BrowserlessData {
   itens?: unknown;
   /** Texto da condição de pagamento na tela de detalhe do portal ("70 - 7 DIAS"); null = não lida. */
   condicao?: string | null;
+  /** Textos de todas as opções do select de condição (insumo do de-para D-2). */
+  condicoes_opcoes?: string[];
   trace?: unknown[];
 }
 
@@ -539,6 +547,8 @@ async function tratar(
       return json({
         ok: false, etapa: "importacao", protocolo, sqlstate: rpcErr.code ?? null,
         mensagem: mensagemErroImportacao(rpcErr.code, rpcErr.message),
+        condicao_portal: envelope.condicao ?? null,
+        condicoes_opcoes_portal: rpcErr.code === "IP007" && Array.isArray(envelope.condicoes_opcoes) ? envelope.condicoes_opcoes : null,
         situacao_portal: lido.cabecalho.situacao, valor_total_portal: lido.cabecalho.valor_total, itens: itensResumo,
       });
     }
@@ -559,6 +569,7 @@ async function tratar(
       situacao_portal: lido.cabecalho.situacao,
       valor_total_portal: lido.cabecalho.valor_total,
       condicao_portal: envelope.condicao ?? null,
+      condicoes_opcoes_portal: Array.isArray(envelope.condicoes_opcoes) ? envelope.condicoes_opcoes : null,
       itens: itensResumo,
     });
   } catch (e) {
@@ -623,6 +634,7 @@ async function fecharRegistro(
       omie_numero: corpo?.omie_numero ?? null,
       ja_existia: corpo?.ja_existia ?? null,
       disparo_http: corpo?.disparo_http ?? null,
+      condicao_portal: corpo?.condicao_portal ?? null,
       mensagem: typeof corpo?.mensagem === "string" ? corpo.mensagem.slice(0, 300) : null,
       duracao_ms: duracaoMs,
     };

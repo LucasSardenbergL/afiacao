@@ -142,6 +142,9 @@ CREATE TABLE IF NOT EXISTS public.sayerlack_varredura_falha (
   tentativas integer DEFAULT 1, notificado_em timestamptz, resolvido_em timestamptz
 );
 GRANT SELECT ON public.pedido_compra_sugerido, public.pedido_compra_item, public.omie_products TO service_role;
+-- A postcondição da Onda 2 EXECUTA a tradução contra o catálogo (em prod: A07 e A30 ativas, psql-ro 2026-11-07).
+INSERT INTO public.omie_condicao_pagamento_catalogo (empresa, codigo, descricao, num_parcelas, ativo) VALUES
+  ('OBEN', 'A07', 'Para 7 dias', 1, true), ('OBEN', 'A30', 'Para 30 dias (C)', 1, true);
 SQL
 
 # ZONA 2 — o caminho REAL do SQL Editor: as versões da RPC de custo e, por cima, a migration sob prova.

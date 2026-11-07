@@ -407,6 +407,8 @@ export default async ({ page, context }) => {
         status,
         protocolo,
         portal_data_entrega: data.portal_data_entrega || null,
+        // Condição de pagamento lida no formulário antes do Efetivar ({presente, texto, opcoes}); null = não lida.
+        portal_condicao: data.portal_condicao || null,
         // Totais capturados do #datatable_itens (custo). Propaga o que o runFlow
         // anexou em raw.data.itens_capturados pro Deno casar com os itens.
         itens_capturados: Array.isArray(data.itens_capturados) ? data.itens_capturados : [],
@@ -1091,6 +1093,19 @@ export default async ({ page, context }) => {
     trace.push({ step: 'scrape_datatable', n: (scrape.rows || []).length, przIdx: scrape.przIdx, idx: scrape.idx || {}, skus_identificados: (scrape.rows || []).filter(function(r){ return !!r.sku_portal; }).length, t: Date.now() - t0 });
     var linhasPortal = scrape.rows || [];
 
+    // === Condição de pagamento que o PORTAL aplicou (D-1, 2026-11-07) — SÓ LEITURA, nenhum clique ===
+    // O pedido do app vai ao Omie com a condição real do contrato, não com o "000 À Vista" fixo. Lê o texto da opção
+    // selecionada de #condicoes_pagamento e, para o de-para D-2, a lista de opções. Falha aqui nunca trava o envio.
+    var condicaoPortal = await page.evaluate(function() {
+      var sel = document.querySelector('#condicoes_pagamento');
+      if (!sel) return { presente: false, texto: null, opcoes: [] };
+      var opt = sel.selectedOptions && sel.selectedOptions[0];
+      var txt = opt ? String(opt.text || '').trim() : '';
+      var opcoes = Array.prototype.slice.call(sel.options || []).map(function(o) { return String(o.text || '').trim(); }).slice(0, 80);
+      return { presente: true, texto: (txt && txt.toLowerCase().indexOf('selecione') === -1) ? txt : null, opcoes: opcoes };
+    }).catch(function() { return { presente: false, texto: null, opcoes: [], erro: true }; });
+    trace.push({ step: 'condicao_portal', condicao: condicaoPortal.texto, presente: condicaoPortal.presente, n_opcoes: condicaoPortal.opcoes.length, t: Date.now() - t0 });
+
     // === Gate de grupo: Prz Ent (inteiro) === ltEsperado, EXATO. Fail-OPEN na incerteza (bug de seletor/sem config NÃO trava). ===
     if (typeof ltEsperado === 'number' && Number.isInteger(ltEsperado) && scrape.ok && scrape.przIdx >= 0 && linhasPortal.length > 0) {
       var mismatches = [];
@@ -1350,6 +1365,7 @@ export default async ({ page, context }) => {
           protocolo,
           protocoloSource,
           portal_data_entrega: portalDataEntrega,
+          portal_condicao: condicaoPortal,
           itens_capturados: linhasPortal,
           portal_add_json: portalAddJson,
           scrape_debug: scrapeDebug,
@@ -1497,6 +1513,8 @@ interface BrowserlessEnvelope {
   elapsedMs?: number;
   preLoginScreenshotUrl?: string | null;
   portal_data_entrega?: string;
+  /** Condição lida no formulário do portal antes do Efetivar (D-1). */
+  portal_condicao?: { presente?: boolean; texto?: string | null; opcoes?: string[] } | null;
   [key: string]: unknown;
 }
 
@@ -1540,6 +1558,25 @@ async function uploadScreenshot(
   } catch (e) {
     console.error(`[envio-portal] Excecao upload screenshot pedido ${pedidoId}:`, e);
     return null;
+  }
+}
+
+/**
+ * D-1 (2026-11-07): o pedido do app aceito no portal leva ao PO a condição que o PORTAL aplicou. A RPC traduz pela
+ * mesma função da importação (de-para D-2 + regra exata), só troca o padrão "000 À Vista" (nunca escolha humana), só
+ * antes do PO, e devolve o motivo quando não aplica. Fail-open de propósito: o pedido JÁ está no portal — travar o PO
+ * por causa da condição seria pior que a condição padrão de hoje; o texto lido fica gravado para o sensor.
+ */
+async function aplicarCondicaoDoPortal(supabase: SupabaseClient, pedidoId: number, texto: string | null) {
+  try {
+    const { data, error } = await supabase.rpc("sayerlack_aplicar_condicao_portal", { p_pedido_id: pedidoId, p_condicao_portal: texto });
+    if (error) {
+      console.warn(`[envio-portal] Pedido #${pedidoId}: condição do portal não aplicada (RPC: ${error.code ?? "?"} ${error.message})`);
+      return;
+    }
+    console.log(`[envio-portal] Pedido #${pedidoId}: condição do portal "${texto ?? "(não lida)"}" → ${JSON.stringify(data)}`);
+  } catch (e) {
+    console.warn(`[envio-portal] Pedido #${pedidoId}: condição do portal não aplicada (${e instanceof Error ? e.message : String(e)})`);
   }
 }
 
@@ -2197,6 +2234,7 @@ async function processarPedido(
     } catch (e) {
       console.error(`[envio-portal] Pedido #${pedido.id}: falha best-effort na captura de custo:`, e instanceof Error ? e.message : String(e));
     }
+    await aplicarCondicaoDoPortal(supabase, pedido.id, envelope?.portal_condicao?.texto ?? null);
     await registrarPedidoOmieAposPortal(pedido);
     return r;
   }

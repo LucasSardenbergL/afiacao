@@ -27,7 +27,13 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * tem de estar nela antes da RPC (pedido que faturou no meio da rodada não vira PO; Codex P1).
  * v1.4 (2026-11) — lê a condição de pagamento na tela de detalhe e passa à RPC (6 args); disparo com prazo; após gravar, nunca "não importado".
  */
-export const VERSAO = "v1.4-condicao-do-portal";
+/**
+ * v1.5 (2026-11-07, pontos cegos Onda 2) — re-disparo de pedido já gravado RELÊ a situação no portal antes de pedir o
+ * PO (cancelado/ilegível/fora da lista ⇒ não re-dispara); toda tentativa vai ao ledger `acoes_execucoes`
+ * (`reposicao.importar_portal_sayerlack`); PO confirmado resolve na hora a pendência da varredura; CP006 diz o NCM e o
+ * passo; devolve as opções de condição do portal (de-para D-2).
+ */
+export const VERSAO = "v1.5-redisparo-relido-ledger";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
