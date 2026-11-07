@@ -397,7 +397,7 @@ cenario() {
 # concorrer <versao da 1ª> <versao da 2ª> — sessão 1 declara W1→W2 e SEGURA a transação; a 2ª, já com a trava
 # da 1ª tomada (confirmada em pg_locks), declara W2→W1. Resultados em s1.out / s2.out.
 concorrer() {
-  local claims="{\"sub\":\"$MASTER\",\"role\":\"authenticated\"}" i
+  local claims="{\"sub\":\"$MASTER\",\"role\":\"authenticated\"}"
   PGAPPNAME=prova_s1 P -tA -q -v ON_ERROR_STOP=1 > "$TMPD/s1.out" 2>&1 <<SQL &
 BEGIN;
 SET ROLE authenticated;
@@ -407,7 +407,7 @@ SELECT pg_sleep(1.5) \g /dev/null
 COMMIT;
 SQL
   local pid=$!
-  for i in $(seq 1 100); do
+  for _ in $(seq 1 100); do
     # Prontidão pela SESSÃO (já no pg_sleep, transação aberta com a escrita feita), não pela trava: a sabotagem
     # sem_trava tira a trava, e esperar por ela adiaria a 2ª sessão para depois do COMMIT (teatro).
     [ "$(P -tA -q -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='prova_s1' AND state='active' AND query LIKE 'SELECT pg_sleep%'")" -ge 1 ] && break
