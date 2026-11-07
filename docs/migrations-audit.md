@@ -22,9 +22,9 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **792** custom migrations totais
-- **2595** objetos esperados (criados por estas migrations)
+- **2596** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 990
+  - `function`: 991
   - `rls_policy`: 519
   - `index`: 372
   - `table`: 234
@@ -6468,6 +6468,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `private.cliente_sucessoes_imutavel` | — |
 | `function` | `private.cliente_resolver_documento` | — |
+| `function` | `private.cliente_sucessoes_chaves` | — |
 | `function` | `private.cliente_sucessoes_vigentes` | — |
 | `function` | `public.cliente_declarar_sucessao` | — |
 | `function` | `public.cliente_revogar_sucessao` | — |

@@ -10,9 +10,12 @@
  */
 
 export type TipoSucessao = 'cisao' | 'sucessao';
-export type EstadoSucessao = 'declarada' | 'ativa' | 'revogada';
-export type ImpedimentoSucessao =
-  | 'antigo_nao_e_cliente' | 'antigo_ambiguo' | 'novo_ambiguo' | 'novo_sem_cadastro' | 'mesmo_comprador' | 'corte_futuro';
+type EstadoSucessao = 'declarada' | 'ativa' | 'revogada';
+/** O impedimento concreto de `private.cliente_sucessoes_vigentes` (a leitura revalida o grafo por identidade). */
+type ImpedimentoSucessao =
+  | 'antigo_nao_e_cliente' | 'antigo_ambiguo' | 'antigo_cadastro_invalido'
+  | 'novo_ambiguo' | 'novo_sem_cadastro' | 'novo_cadastro_invalido'
+  | 'mesmo_comprador' | 'cadeia' | 'duplicada' | 'evento_divergente' | 'corte_futuro';
 
 export interface SucessaoDeclarada {
   id: string;
@@ -45,7 +48,8 @@ export interface SucessoesDoDocumento {
 const TIPOS: readonly TipoSucessao[] = ['cisao', 'sucessao'];
 const ESTADOS: readonly EstadoSucessao[] = ['declarada', 'ativa', 'revogada'];
 const IMPEDIMENTOS: readonly ImpedimentoSucessao[] = [
-  'antigo_nao_e_cliente', 'antigo_ambiguo', 'novo_ambiguo', 'novo_sem_cadastro', 'mesmo_comprador', 'corte_futuro',
+  'antigo_nao_e_cliente', 'antigo_ambiguo', 'antigo_cadastro_invalido', 'novo_ambiguo', 'novo_sem_cadastro',
+  'novo_cadastro_invalido', 'mesmo_comprador', 'cadeia', 'duplicada', 'evento_divergente', 'corte_futuro',
 ];
 
 const ehTexto = (v: unknown): v is string => typeof v === 'string';
@@ -116,7 +120,7 @@ export function dataBr(iso: string | null): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 }
 
-export const ROTULO_TIPO: Record<TipoSucessao, string> = { cisao: 'Cisão', sucessao: 'Sucessão' };
+const ROTULO_TIPO: Record<TipoSucessao, string> = { cisao: 'Cisão', sucessao: 'Sucessão' };
 
 /** "Cisão confirmada de DIVIMOVEIS" (papel novo) / "Cindiu para MARQUES" (papel antigo). */
 export function tituloSucessao(s: Pick<SucessaoDeclarada, 'papel' | 'tipo' | 'antigoNome' | 'novoNome' | 'estado'>): string {
@@ -134,6 +138,11 @@ const TEXTO_IMPEDIMENTO: Record<ImpedimentoSucessao, string> = {
   antigo_ambiguo: 'O CNPJ antigo aponta para mais de um cliente: confira o cadastro',
   novo_ambiguo: 'O CNPJ novo aponta para mais de um cliente: confira o cadastro',
   mesmo_comprador: 'Os dois CNPJs são o mesmo cliente no cadastro',
+  antigo_cadastro_invalido: 'O cadastro do CNPJ antigo está inconsistente (alias sem cliente válido)',
+  novo_cadastro_invalido: 'O cadastro do CNPJ novo está inconsistente (alias sem cliente válido)',
+  cadeia: 'Virou cadeia com outra sucessão (A→B→C): revogue uma das duas',
+  duplicada: 'Os mesmos dois clientes já estão em outra declaração: revogue uma das duas',
+  evento_divergente: 'O cliente antigo está em duas sucessões com tipo ou corte diferentes: revogue uma',
 };
 
 /** O estado em uma linha: ativa / o impedimento concreto / revogada. */
@@ -150,6 +159,8 @@ const TEXTO_RECUSA: Record<string, string> = {
   antigo_ambiguo: 'O CNPJ antigo aponta para mais de um cliente no cadastro: resolva o cadastro antes.',
   novo_ambiguo: 'O CNPJ novo aponta para mais de um cliente no cadastro: resolva o cadastro antes.',
   mesmo_comprador: 'Os dois CNPJs já são o mesmo cliente no cadastro.',
+  antigo_cadastro_invalido: 'O cadastro do CNPJ antigo está inconsistente (alias sem cliente válido): corrija o cadastro antes.',
+  novo_cadastro_invalido: 'O cadastro do CNPJ novo está inconsistente (alias sem cliente válido): corrija o cadastro antes.',
   ja_declarada: 'Essa sucessão já está declarada.',
   cadeia: 'Não dá para encadear sucessões (A→B→C): um dos CNPJs já está em outra sucessão ativa.',
   ja_revogada: 'Essa declaração já tinha sido revogada.',
@@ -223,7 +234,8 @@ export function lerPreviaSucessao(data: unknown): PreviaSucessao {
 /** "12 pedidos antes do corte · 3 a partir dele (1 com data estimada)" / "sem cadastro". */
 export function resumoLado(l: PreviaLado): string {
   if (!l.cadastrado || l.pedidosAntes === null || l.pedidosAPartir === null) {
-    return l.candidatos > 1 ? 'aponta para mais de um cliente no cadastro' : 'ainda sem cadastro de cliente';
+    if (l.candidatos > 1) return 'aponta para mais de um cliente no cadastro';
+    return l.candidatos === 1 ? 'cadastro inconsistente (alias sem cliente válido)' : 'ainda sem cadastro de cliente';
   }
   const est = l.datasEstimadas ? ` (${l.datasEstimadas} com data estimada)` : '';
   return `${l.pedidosAntes} pedido(s) antes do corte · ${l.pedidosAPartir} a partir dele${est}`;

@@ -46,6 +46,9 @@ describe('títulos e estado', () => {
       .toBe('A data de corte ainda não chegou');
     expect(textoEstadoSucessao({ estado: 'ativa', impedimento: null, dataCorte: '2026-10-06' })).toBe('Vale a partir de 06/10/2026');
     expect(textoEstadoSucessao({ estado: 'revogada', impedimento: null, dataCorte: '2026-10-06' })).toBe('Revogada');
+    // A leitura revalida o grafo: cadeia que nasceu de cadastro/alias posterior chega como impedimento conhecido.
+    const s = lerSucessoesDoDocumento({ versao: 1, sucessoes: [linha({ impedimento: 'cadeia' })] }).sucessoes[0];
+    expect(textoEstadoSucessao(s)).toBe('Virou cadeia com outra sucessão (A→B→C): revogue uma das duas');
   });
 });
 
@@ -84,6 +87,8 @@ describe('prévia', () => {
     });
     expect(resumoLado(p.antigo)).toBe('3 pedido(s) antes do corte · 1 a partir dele (1 com data estimada)');
     expect(resumoLado(p.novo)).toBe('ainda sem cadastro de cliente');
+    // 1 candidato sem user_id = alias órfão/encadeado: não é "sem cadastro", é cadastro inconsistente.
+    expect(resumoLado({ ...p.novo, candidatos: 1 })).toBe('cadastro inconsistente (alias sem cliente válido)');
   });
   it('pedido fora da forma LANÇA', () => {
     expect(() => lerPreviaSucessao({ data_corte: '2026-10-06', abertura_novo: null, antigo: lado({ recentes: [{ dia: 1 }] }), novo: lado() }))

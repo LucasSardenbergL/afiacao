@@ -803,7 +803,7 @@ db/test-radar-atribuir-atendimento.sh  36  falsificar=8
 # ativo antes da hora, dia do pedido no fuso da sessão (≠ venda_linhas_pedido), lado sem cadastro contado como 0.
 # 19 sabotagens: gates (declarar/prévia/selo/revogar), trava, versão (declarar/revogar), cadeia (2 ramos), ambíguo,
 # mesmo comprador, resolvedor sem alias, prévia sem alias, evento único, auditoria, corte, fuso, ausente≠zero, anon.
-db/test-cliente-sucessoes.sh  65  falsificar=19
+db/test-cliente-sucessoes.sh  85  falsificar=35
 # Integridade das RPCs de contato do Radar (20261031111000): 'virou_cliente' só com o cliente confirmado no ledger (RD005)
 # na porta E no trigger (corpo ANTIGO em voo, INSERT direto), re-marcar é no-op, vendedor não tira cliente confirmado
 # (RD007), a conversão não se desfaz (RD006); desfazer restaura só o DONO do status (autoria explícita + retrato), tira o
