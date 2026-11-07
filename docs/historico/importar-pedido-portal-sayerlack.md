@@ -272,3 +272,32 @@ Incidente que justifica a máquina (regra de máquina meta): **2 de 46 rodadas l
 - **Codex**: 1ª rodada 1 P1 + 5 P2; 2ª 4 P2; 3ª 1 P2 (erro de banco na reserva virava adiamento verde) — todos
   consertados. Deno `varredura_test.ts` 28 (falsificado: sem a checagem de total e sem a de 0 lidos, vermelho).
 - Changelog do `VERSAO` em `docs/historico/versao-sayerlack-varrer-pedidos-portal.md`.
+
+## Deploy das Ondas 2 e 3 (2026-11-07)
+
+Ordem real das levas: envio → disparar → importar → varrer (`deploy-ordem.json`), com 8 min de assentamento entre elas.
+Todas coladas pelo pacote `pendencias-pacote` e provadas pela sonda no envelope, com veredito **DEPLOY CONFIRMADO**:
+`enviar-pedido-portal-sayerlack` v1.13 (tentativa #950), `disparar-pedidos-aprovados` v1.11 (#952),
+`sayerlack-importar-pedido-portal` v1.5 (#954) e `sayerlack-varrer-pedidos-portal` v1.5 (#958). O bot do Lovable só
+regenerou `types.ts`. O founder fez o Publish.
+
+## Pontos cegos, Onda 4: vigia do cron (2026-11-07, varredura v1.6)
+
+- **Incidente** (psql-ro): 2 de 46 rodadas leram 0 linhas e gravaram `sucesso` (23/10 e 03/11, 01:30 UTC), e nenhum
+  sinal saiu. Uma falha **antes do protocolo** (login, configuração, Browserless, leitura sem prova) só virava `erro` em
+  `acoes_execucoes`: o aviso por e-mail (`sayerlack_varredura_falha`) é **por protocolo**, e sem leitura não há protocolo.
+- **4.1 + 4.2: um source no `data_health`**, `sayerlack_varredura_portal` (34º do compute, 26º do watchdog), migration
+  `20261107220000`. O trio foi recriado junto, a partir de prod (md5 conferido). Os três estados:
+  - **broken**: a última rodada decidida falhou antes de ler os pedidos. A message leva a causa, então a mesma causa
+    manda 1 e-mail e uma causa nova reemite. `executando` e rodada pulada não contam como desfecho. Um erro **depois**
+    da prova (falha por protocolo, que já é avisada) não conta como broken.
+  - **stale**: sem rodada efetiva desde o início do dia útil exigido em SP. De segunda a sexta, a partir das 14:00,
+    exige uma de hoje; antes disso e no fim de semana, exige o dia útil anterior. Efetiva = `prova_leitura='ok'`, ou
+    rodada legada com `lidos>0` (0 lidos sem prova é o incidente e não conta).
+  - O e-mail sai pelo canal existente (watchdog → `_data_health_episodio`). Nenhuma tabela nova.
+- **Edge v1.6**: grava `causa_pre_protocolo` (`config_ausente` · `leitura:<erroTipo>` · `prova:<motivo>` · `excecao`)
+  e `sessoes_browserless` (leitura_portal + importacao = total) no registro da rodada (**4.3**, só contagem: alerta
+  apenas se a série mostrar risco).
+- **Prova**: `db/test-data-health-sayerlack-varredura.sh`, PG17, relógio controlado, 33 asserts verdes em `C` e em
+  `pt_BR.UTF-8`, `--falsificar` com 16 sabotagens.
+- **Feriado** não é conhecido pela regra: com o portal fora, aparece como broken pela causa real.

@@ -437,8 +437,8 @@ eq "A3 1 linha por source no compute INTEIRO" \
 # 20261001011500 (vendas_empurradas_sem_gemeo) a 31 e a 20261020101636 (radar_lote_idade +
 # radar_recruzamento_tick) a 33. Fonte nova no trio muda este número — no PR que a acrescenta, que é
 # onde o vermelho tem de aparecer.
-eq "A4 o compute tem 33 sources (a 0918 trouxe este; a 20261001011500, o 31º; a 20261020101636, 32º e 33º)" \
-   "$(Pq -c "SELECT count(DISTINCT source)::text FROM public._data_health_compute();")" "33"
+eq "A4 o compute tem 34 sources (a 0918 trouxe este; a 20261001011500, o 31º; a 20261020101636, 32º e 33º; a 20261107220000, o 34º)" \
+   "$(Pq -c "SELECT count(DISTINCT source)::text FROM public._data_health_compute();")" "34"
 eq "A5 status dentro do vocabulário que o watchdog aceita" \
    "$(Pq -c "SELECT (status IN ('ok','stale','broken','unknown'))::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "true"
 
@@ -608,11 +608,11 @@ echo "── as outras 2 pernas do trio EXECUTAM (late-bound: CREATE não prova 
 semear_saudavel
 P -q -c "UPDATE public.sync_reprocess_log SET status='error' WHERE account='oben' AND reprocess_type='operational' AND entity_type='orders';"
 P -q -c "SELECT public.data_health_watchdog();" >/dev/null
-# 25 = tamanho do v_sources na versão viva (a 0918 levou a 22; a 20261001011500, a 23; a
-# 20261020101636, a 25). O compute produz 33 sources; o watchdog avalia os do array e ignora o resto —
+# 26 = tamanho do v_sources na versão viva (a 0918 levou a 22; a 20261001011500, a 23; a
+# 20261020101636, a 25; a 20261107220000, a 26). O compute produz 34 sources; o watchdog avalia os do array e ignora o resto —
 # por isso os dois números são diferentes DE PROPÓSITO.
-eq "A26 watchdog avalia 25 checks (o v_sources, não os 33 do compute)" \
-   "$(Pq -c "SELECT checks_avaliados::text FROM public.data_health_watchdog_estado WHERE id;")" "25"
+eq "A26 watchdog avalia 26 checks (o v_sources, não os 34 do compute)" \
+   "$(Pq -c "SELECT checks_avaliados::text FROM public.data_health_watchdog_estado WHERE id;")" "26"
 # ⚠️ checks_falhos conta EXCECAO DE EXECUCAO do check, nunca status de negocio: o laco so o
 # incrementa no EXCEPTION. Com o check novo em `broken`, o certo e ZERO — ele avaliou bem, o
 # resultado e que e ruim. Foi por isso que o estado de 14/09 (checks_avaliados=21, checks_falhos=0)
