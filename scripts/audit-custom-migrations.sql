@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 804
+-- Total de custom migrations: 805
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -872,7 +872,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107220000', 'data_health_sayerlack_varredura_portal', '20261107220000_data_health_sayerlack_varredura_portal.sql'),
   ('20261107220500', 'radar_meu_territorio', '20261107220500_radar_meu_territorio.sql'),
   ('20261108000000', 'cliente_sucessao_consumidores', '20261108000000_cliente_sucessao_consumidores.sql'),
-  ('20261108120000', 'sayerlack_situacao_portal_no_pedido', '20261108120000_sayerlack_situacao_portal_no_pedido.sql')
+  ('20261108120000', 'sayerlack_situacao_portal_no_pedido', '20261108120000_sayerlack_situacao_portal_no_pedido.sql'),
+  ('20261108120001', 'tint_drop_idx_nome_cor', '20261108120001_tint_drop_idx_nome_cor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3513,7 +3514,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack_registrar_situacao_portal', ''),
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'reposicao_claim_disparo', ''),
   ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_escritor_unico', 'pedido_compra_sugerido'),
-  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido')
+  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido'),
+  ('tint_drop_idx_nome_cor', 'index', 'public', 'idx_tint_formulas_nome_cor', 'tint_formulas')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6202,7 +6204,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack_registrar_situacao_portal', ''),
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'reposicao_claim_disparo', ''),
   ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_escritor_unico', 'pedido_compra_sugerido'),
-  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido')
+  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido'),
+  ('tint_drop_idx_nome_cor', 'index', 'public', 'idx_tint_formulas_nome_cor', 'tint_formulas')
 )
 SELECT
   e.migration,
