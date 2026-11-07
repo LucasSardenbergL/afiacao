@@ -573,17 +573,25 @@ async function appSemPoAntigos(db: Db): Promise<{ protocolo: string; pedido_id: 
 }
 
 /**
- * Grava a TENTATIVA de reconsulta antes de abrir o navegador (`ultima_em` = agora; cria a linha se não houver, sem
- * e-mail). Devolve false se não gravou — e aí a tentativa cara não acontece (o intervalo de 20 h depende disto).
+ * RESERVA a tentativa de reconsulta antes de qualquer decisão sobre ela (`ultima_em` = agora), de forma CONDICIONAL no
+ * banco: só reserva se a última tentativa foi há mais de 20 h (ou se não há linha — o INSERT falha por PK se outra
+ * execução reservou primeiro). Duas execuções simultâneas nunca abrem o navegador para o mesmo protocolo, e todo item da
+ * fila — inclusive o que só "continua" — gira para o fim (Codex P2, 2ª rodada). false = não reservou: pula.
  */
-async function registrarTentativa(db: Db, protocolo: string, mensagem: string): Promise<boolean> {
+async function reservarTentativa(db: Db, protocolo: string, mensagem: string): Promise<boolean> {
   const agora = new Date().toISOString();
-  const { data, error } = await db.from("sayerlack_varredura_falha").select("protocolo").eq("protocolo", protocolo).maybeSingle();
-  if (error) { console.warn(`[varrer-portal] tentativa de ${protocolo} não gravada: ${error.message}`); return false; }
-  const { error: e2 } = data
-    ? await db.from("sayerlack_varredura_falha").update({ ultima_em: agora, resolvido_em: null }).eq("protocolo", protocolo)
-    : await db.from("sayerlack_varredura_falha").insert({ protocolo, mensagem, primeira_em: agora, ultima_em: agora, tentativas: 1 });  // CHECK tentativas >= 1
-  if (e2) { console.warn(`[varrer-portal] tentativa de ${protocolo} não gravada: ${e2.message}`); return false; }
+  const limite = new Date(Date.now() - INTERVALO_RECONSULTA_MS).toISOString();
+  const { data: atual, error } = await db.from("sayerlack_varredura_falha").select("protocolo").eq("protocolo", protocolo).maybeSingle();
+  if (error) { console.warn(`[varrer-portal] reserva de ${protocolo} não lida: ${error.message}`); return false; }
+  if (atual) {
+    const { data, error: e2 } = await db.from("sayerlack_varredura_falha").update({ ultima_em: agora, resolvido_em: null })
+      .eq("protocolo", protocolo).lt("ultima_em", limite).select("protocolo");
+    if (e2) { console.warn(`[varrer-portal] reserva de ${protocolo} não gravada: ${e2.message}`); return false; }
+    return Array.isArray(data) && data.length === 1;
+  }
+  const { error: e3 } = await db.from("sayerlack_varredura_falha")
+    .insert({ protocolo, mensagem, primeira_em: agora, ultima_em: agora, tentativas: 1 });  // CHECK tentativas >= 1
+  if (e3) { console.warn(`[varrer-portal] reserva de ${protocolo} não gravada (outra execução?): ${e3.message}`); return false; }
   return true;
 }
 
@@ -808,6 +816,11 @@ Deno.serve(async (req: Request) => {
       for (const q of fila) {
         if (semTempo()) { reconsultas.push({ ...q, acao: "adiado_tempo" }); continue; }
         if (motivoBloqueio(await pedidosEmVoo(db))) { reconsultas.push({ ...q, acao: "adiado_em_voo" }); break; }
+        if (!(await reservarTentativa(db, q.protocolo, q.origem === "app_sem_po"
+          ? `Pedido ${q.protocolo} (#${q.pedido_id}) no app sem pedido de compra, fora da janela da varredura: reconsulta por número.`
+          : `Reconsulta por número de pendência fora da janela da varredura.`))) {
+          reconsultas.push({ ...q, acao: "nao_reservado" }); continue;
+        }
         // Reconfere o BANCO antes de abrir o navegador (Codex P2): PO já no Omie resolve sem gastar sessão.
         const [noAppQ, omieQ] = await Promise.all([pedidosNoApp(db, [q.protocolo]), contratosNoOmie(db, [q.protocolo])]);
         const pedQ = noAppQ.get(q.protocolo) ?? null;
@@ -816,6 +829,9 @@ Deno.serve(async (req: Request) => {
           // Sem pedido no app, a reconsulta pode CRIAR o PO: a carência vale aqui também (Codex P1) — sair da janela
           // nunca libera uma compra que o sync do espelho ainda não deixou provar que não foi lançada à mão.
           const vistosQ = await vistosAntes(db, [q.protocolo]);
+          // Sem 1ª vista (ex.: virou falha como "atendido", nunca foi candidato): grava agora — sem isto a carência nunca
+          // venceria (Codex P2, 2ª rodada).
+          if (!vistosQ.has(q.protocolo)) await registrarVistos(db, [q.protocolo]);
           const cl = aplicarCarencia([{ protocolo: q.protocolo, situacao: "", situacao_codigo: null, emissao: null, classe: "candidato" }], vistosQ, syncEm)[0];
           if (cl.classe !== "candidato") { reconsultas.push({ ...q, acao: cl.classe }); continue; }
         } else if (pedQ.temPo) {
@@ -823,13 +839,6 @@ Deno.serve(async (req: Request) => {
         } else if (omieQ.size > 0) {
           // Pedido no app sem PO e PO manual no Omie: pendência de vinculação (item 7.1), não re-disparo.
           reconsultas.push({ ...q, acao: "po_manual_no_omie" }); continue;
-        }
-        // A tentativa é GRAVADA antes da chamada cara (Codex P2): timeout também conta para o intervalo de 20 h, e sem
-        // gravar não abre o navegador.
-        if (!(await registrarTentativa(db, q.protocolo, q.origem === "app_sem_po"
-          ? `Pedido ${q.protocolo} (#${q.pedido_id}) no app sem pedido de compra, fora da janela da varredura: reconsulta por número.`
-          : `Reconsulta por número de pendência fora da janela da varredura.`))) {
-          reconsultas.push({ ...q, acao: "tentativa_nao_gravada" }); continue;
         }
         const r = await importar(q.protocolo, [...SITUACOES_IMPORTAVEIS])
           .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
@@ -890,7 +899,7 @@ Deno.serve(async (req: Request) => {
     if (falhas.length > 0) problemas.push(`${falhas.length} pedido(s) do portal não entraram no Omie: ${falhas.map((f) => (f as { protocolo: string }).protocolo).join(", ")}`);
     const redisparosFalhos = redisparos.filter((r) => r.acao === "falhou");
     if (redisparosFalhos.length > 0) problemas.push(`${redisparosFalhos.length} re-disparo(s) sem PO confirmado: ${redisparosFalhos.map((r) => r.protocolo).join(", ")}`);
-    const reconsultasFalhas = reconsultas.filter((r) => r.acao === "falhou" || r.acao === "tentativa_nao_gravada");
+    const reconsultasFalhas = reconsultas.filter((r) => r.acao === "falhou");
     if (reconsultasFalhas.length > 0) problemas.push(`${reconsultasFalhas.length} reconsulta(s) além da janela falharam: ${reconsultasFalhas.map((r) => r.protocolo).join(", ")}`);
     if (falhasReconciliacao.length > 0) {
       problemas.push(`Reconciliação: ${falhasReconciliacao.length} pedido(s) cancelado(s) no portal não encerraram: ` +
@@ -936,6 +945,8 @@ Deno.serve(async (req: Request) => {
     }
     const desfechos = desfechoNoPortal(janela.alcancaveis, listaRec);
     const encerrados: unknown[] = [];
+    // No resumo ANTES do laço: se a releitura do 2º lançar, o 1º encerramento não some do registro (Codex P2).
+    resumoFinal = { ...resumoFinal, reconciliacao: { ...resumoRec, encerrados, falhas: falhasReconciliacao } };
     if (modo === "importar") {
       for (const d of desfechos) {
         if (d.classe !== "cancelado_no_portal") continue;
