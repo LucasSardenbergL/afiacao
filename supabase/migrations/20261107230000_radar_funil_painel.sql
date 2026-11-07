@@ -513,6 +513,15 @@ END
 $fn$;
 REVOKE ALL ON FUNCTION public.radar_funil(integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.radar_funil(integer) TO authenticated;
+-- O diagnóstico read-only (psql-ro) lê o mesmo painel que a tela, como radar_placar_uso (20261029150100). O gate da
+-- função continua valendo: sem JWT de master/gestor na sessão, 42501. Os registradores NÃO entram (gravam).
+DO $ro$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'claude_ro') THEN
+    GRANT EXECUTE ON FUNCTION public.radar_funil(integer) TO claude_ro;
+  END IF;
+END
+$ro$;
 
 -- ── Postcondição ────────────────────────────────────────────────────────────────────────────────────────
 DO $post$

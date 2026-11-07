@@ -1017,3 +1017,8 @@ db/test-radar-socios-cpf.sh                32  falsificar=19
 # semana e sem repetir lead (teste não queima), cron nascido desligado, RPCs do card e do sensor com SQLSTATE, tabelas
 # fechadas ao JWT e ACL nas duas pontas.
 db/test-radar-leads-vendedor.sh            62  falsificar=46
+# Radar pacote H — funil do lead empurrado (migration 20261107230000, por cima da REAL do pacote D): radar_funil só
+# master/gestor, e-mail em coorte pela semana do envio (só real, só destinatário, só entregue), ficha como 2º momento,
+# contato humano válido e "empurrado", NULL fora da cobertura do sensor (ausente ≠ zero), saúde dos sensores com falhas
+# por motivo, registradores com SQLSTATE e idempotentes, ledger de falha só staff com contador, ACL nas duas pontas.
+db/test-radar-funil.sh                     45  falsificar=21

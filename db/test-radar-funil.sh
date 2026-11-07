@@ -140,6 +140,7 @@ echo "═══ PG17 :$PORT · lc_messages=$HARNESS_LC · TimeZone=$HARNESS_TZ �
 # ── Esquema mínimo (o mesmo de db/test-radar-leads-vendedor.sh, que reproduz prod; + o que o pacote H lê) ──────
 P -q <<'SQL'
 CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS;
+CREATE ROLE claude_ro NOLOGIN;  -- o diagnóstico read-only de prod (psql-ro)
 CREATE SCHEMA auth; CREATE SCHEMA private; CREATE SCHEMA cron;
 -- Pior caso: o JWT alcança os dois schemas; quem fecha é o ACL da função (é isso que a prova mede).
 GRANT USAGE ON SCHEMA public, private, auth TO anon, authenticated, service_role;
@@ -294,6 +295,10 @@ eq "A2a anon não executa radar_funil" \
 eq "A2b anon não executa os registradores" \
    "$(Pq -c "SELECT has_function_privilege('anon', 'public.radar_registrar_ficha_entregue(text,text,uuid)', 'EXECUTE')
               OR has_function_privilege('anon', 'public.radar_registrar_falha_sensor(text,text)', 'EXECUTE')")" "f"
+eq "A2d claude_ro lê o painel e NÃO executa os registradores" \
+   "$(Pq -c "SELECT has_function_privilege('claude_ro', 'public.radar_funil(integer)', 'EXECUTE')
+              AND NOT has_function_privilege('claude_ro', 'public.radar_registrar_ficha_entregue(text,text,uuid)', 'EXECUTE')
+              AND NOT has_function_privilege('claude_ro', 'public.radar_registrar_falha_sensor(text,text)', 'EXECUTE')")" "t"
 eq "A2c tabelas novas fechadas ao JWT (authenticated não lê)" \
    "$(Pq -c "SELECT has_table_privilege('authenticated', 'public.radar_sensor_falhas', 'SELECT')
               OR has_table_privilege('authenticated', 'public.radar_funil_sensores', 'SELECT')")" "f"
@@ -309,7 +314,7 @@ eq "A16 p_semanas limitado a 1..26 (100 → 26, NULL → 8)" \
 # ── Cenário: e-mails ──────────────────────────────────────────────────────────────────────────────────────
 # Leads: L1..L3 no e-mail REAL de V1 desta semana (entregue); L5 no de V1 da semana passada (FALHOU); L1 também no
 # e-mail de TESTE de V1; L6 no e-mail de V2 desta semana (pendente há 3 h).
-L1=10000000000001; L2=10000000000002; L3=10000000000003; L4=10000000000004; L5=10000000000005; L6=10000000000006
+L1=10000000000001; L2=10000000000002; L3=10000000000003; L4=10000000000004; L5=10000000000005
 L9=10000000000009; L8=10000000000008
 P -q -v v1="$V1" -v v2="$V2" <<'SQL'
 CREATE TEMP TABLE w AS SELECT date_trunc('week', now() AT TIME ZONE 'America/Sao_Paulo')::date AS w0;
