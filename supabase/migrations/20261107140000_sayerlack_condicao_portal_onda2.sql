@@ -5,6 +5,8 @@
 --    enviar-pedido-portal-sayerlack (a edge de envio chama sayerlack_aplicar_condicao_portal; sem a migration a chamada
 --    falha e o pedido segue com a condição de hoje — fail-open de propósito, nunca trava o envio).
 --
+-- ⚠️ Ordem: esta migration → enviar-pedido-portal-sayerlack v1.13 → disparar-pedidos-aprovados (que passa a recusar
+--    PO de pedido do app ainda em default_a_vista; antes do envio novo, recusaria todos).
 -- 1. sayerlack_condicao_portal_de_para — de-para EXPLÍCITO condição do portal → código do catálogo Omie OBEN (D-2).
 --    Semente: "30 DIAS" → A30 "Para 30 dias (C)" (pela regra exata de texto daria T54 "Para 30 dias").
 -- 2. sayerlack_condicao_portal_para_omie(texto) — a ÚNICA tradução (de-para primeiro, regra exata depois), IP007 sem
@@ -14,7 +16,8 @@
 -- 4. sayerlack_importar_pedido_portal passa a usar a função (mesma assinatura ⇒ REPLACE preserva o ACL; reemitido).
 -- 5. sayerlack_aplicar_condicao_portal(pedido, texto) — D-1: o pedido do APP aceito no portal passa a levar ao PO a
 --    condição que o portal aplicou, em vez de "000 À Vista" fixo. Só sobre condicao_origem = 'default_a_vista',
---    só com sucesso_portal e sem PO no Omie; sem correspondente ⇒ mantém a de hoje e registra o texto lido.
+--    só durante/depois do envio e sem PO no Omie; sem correspondente ⇒ segue default_a_vista com o texto lido, e o
+--    disparo (disparar-pedidos-aprovados) recusa o PO até alguém escolher a condição.
 -- Sem BEGIN/COMMIT: a transação é do executor (db:aplicar). Todo UPDATE com WHERE (pg-safeupdate).
 -- ============================================================================================
 
@@ -326,9 +329,11 @@ REVOKE ALL ON FUNCTION public.sayerlack_importar_pedido_portal(text, date, numer
 GRANT EXECUTE ON FUNCTION public.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid, text) TO service_role;
 
 -- 5) ── D-1: condição REAL no pedido do app aceito no portal ───────────────────────────────
--- Chamada pela edge enviar-pedido-portal-sayerlack DEPOIS de gravar sucesso_portal e ANTES de pedir o PO: o disparo
--- relê a linha e monta cCodParc/nQtdeParc com o que estiver nela. Nunca lança por "não deu": devolve o motivo, e o
--- pedido segue com a condição de hoje (o envio já aconteceu; travar o PO aqui seria pior que a condição padrão).
+-- Chamada pela edge enviar-pedido-portal-sayerlack com o pedido ainda em `enviando_portal` (o claim DESTA execução),
+-- ANTES de gravar sucesso_portal: nenhum disparo cria PO de pedido em envio, então quem vê sucesso_portal já vê a
+-- condição (Codex P1, 2026-11-07: aplicar depois deixava outro disparo criar o PO com 000 no meio). Nunca lança por
+-- "não deu": devolve o motivo e o pedido fica em `default_a_vista` — e o disparo RECUSA o PO de pedido do app com
+-- protocolo nessa origem (fail-closed: sucesso no portal não prova pagamento à vista; Codex P1).
 CREATE OR REPLACE FUNCTION public.sayerlack_aplicar_condicao_portal(p_pedido_id bigint, p_condicao_portal text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -354,8 +359,8 @@ BEGIN
   IF v_p.empresa <> 'OBEN' OR v_p.fornecedor_nome NOT ILIKE '%sayerlack%' THEN
     RETURN jsonb_build_object('aplicado', false, 'motivo', 'nao_e_sayerlack_oben');
   END IF;
-  IF v_p.status_envio_portal IS DISTINCT FROM 'sucesso_portal' THEN
-    RETURN jsonb_build_object('aplicado', false, 'motivo', 'sem_sucesso_portal');
+  IF v_p.status_envio_portal IS NULL OR v_p.status_envio_portal NOT IN ('enviando_portal', 'sucesso_portal') THEN
+    RETURN jsonb_build_object('aplicado', false, 'motivo', 'fora_do_envio_portal');
   END IF;
   IF nullif(btrim(coalesce(v_p.omie_pedido_compra_id, '')), '') IS NOT NULL AND btrim(v_p.omie_pedido_compra_id) <> '0' THEN
     RETURN jsonb_build_object('aplicado', false, 'motivo', 'po_ja_existe');

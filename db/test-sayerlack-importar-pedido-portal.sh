@@ -371,7 +371,9 @@ eq "D8 escolha humana não é sobrescrita" "$(apl 1003 "'70 - 7 DIAS'")|$(Pq -c 
 pedido_app 1004 OBEN sucesso_portal "'default_a_vista'" "'555'"
 eq "D9 PO já criado no Omie ⇒ não mexe" "$(apl 1004 "'70 - 7 DIAS'")|$(Pq -c "SELECT condicao_pagamento_codigo||'|'||coalesce(condicao_portal_lida,'nula') FROM public.pedido_compra_sugerido WHERE id=1004")" "NAO_po_ja_existe|000|nula"
 pedido_app 1005 OBEN nao_aplicavel "'default_a_vista'" NULL
-eq "D10 sem sucesso_portal ⇒ não mexe" "$(apl 1005 "'70 - 7 DIAS'")" "NAO_sem_sucesso_portal"
+eq "D10 fora do envio ao portal ⇒ não mexe" "$(apl 1005 "'70 - 7 DIAS'")" "NAO_fora_do_envio_portal"
+pedido_app 1009 OBEN enviando_portal "'default_a_vista'" NULL
+eq "D15 durante o envio (claim desta execução, ANTES do sucesso_portal) aplica" "$(apl 1009 "'70 - 7 DIAS'")" "APLICADO_A07"
 pedido_app 1006 OBEN sucesso_portal "'default_a_vista'" NULL
 eq "D11 condição não lida ⇒ não mexe (ausente ≠ à vista)" "$(apl 1006 "NULL")|$(apl 1006 "'  '")" "NAO_condicao_nao_lida|NAO_condicao_nao_lida"
 pedido_app 1007 COLACOR sucesso_portal "'default_a_vista'" NULL
@@ -380,7 +382,7 @@ eq "D13 pedido inexistente ⇒ motivo, sem lançar" "$(apl 999999 "'70 - 7 DIAS'
 pedido_app 1008 OBEN sucesso_portal "'default_a_vista'" NULL
 eq "D14 pedido do app com \"30 DIAS\" usa o de-para (A30)" "$(apl 1008 "'30 DIAS'")" "APLICADO_A30"
 eq "S2 nenhum UPDATE sem WHERE na RPC de aplicar" "$(Pq -c "SELECT count(*) FROM pg_proc p, regexp_matches(p.prosrc, '\mUPDATE\s[^;]*;', 'gi') AS m(x) WHERE p.oid = 'public.sayerlack_aplicar_condicao_portal(bigint,text)'::regprocedure AND m.x[1] !~* '\mWHERE\M'")" "0"
-P -q -c "DELETE FROM public.pedido_compra_sugerido WHERE id BETWEEN 1001 AND 1008; DELETE FROM public.sayerlack_condicao_portal_de_para WHERE condicao_portal IN ('BOLETO 21','BOLETO 99')"
+P -q -c "DELETE FROM public.pedido_compra_sugerido WHERE id BETWEEN 1001 AND 1009; DELETE FROM public.sayerlack_condicao_portal_de_para WHERE condicao_portal IN ('BOLETO 21','BOLETO 99')"
 
 # ZONA 5 — FALSIFICAÇÃO: uma camada por vez, o vermelho CERTO, restaura com a migration REAL.
 echo "── falsificação ──"
@@ -491,9 +493,9 @@ sabota "s/^  EXCEPTION WHEN SQLSTATE 'IP007' THEN$/  EXCEPTION WHEN SQLSTATE 'XX
 pedido_app 1105 OBEN sucesso_portal "'default_a_vista'" NULL
 dente "F17 sem capturar o IP007, a condição sem correspondente derruba o envio" "$(apl 1105 "'BOLETO BANCARIO'")" "APLICAR_ERR_IP007"
 restaura
-sabota "s/^  IF v_p.status_envio_portal IS DISTINCT FROM 'sucesso_portal' THEN$/  IF false THEN/"
+sabota "s/^  IF v_p.status_envio_portal IS NULL OR v_p.status_envio_portal NOT IN ('enviando_portal', 'sucesso_portal') THEN$/  IF false THEN/"
 pedido_app 1106 OBEN nao_aplicavel "'default_a_vista'" NULL
-dente "F18 sem a guarda de sucesso_portal, pedido não enviado muda de condição" "$(apl 1106 "'70 - 7 DIAS'")" "APLICADO_A07"
+dente "F18 sem a guarda de envio, pedido não enviado muda de condição" "$(apl 1106 "'70 - 7 DIAS'")" "APLICADO_A07"
 restaura
 P -q -c "DELETE FROM public.pedido_compra_sugerido WHERE id BETWEEN 1101 AND 1110"
 eq "FC controle: aplicar volta a respeitar a escolha humana" "$(pedido_app 1103 OBEN sucesso_portal "'manual_humano'" NULL; apl 1103 "'70 - 7 DIAS'")" "NAO_origem_manual_humano"
