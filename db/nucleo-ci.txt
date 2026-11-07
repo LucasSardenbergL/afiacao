@@ -909,9 +909,10 @@ db/test-venda-gerador.sh                   66  falsificar=19
 db/test-venda-painel.sh                    19  falsificar=8
 # Sucessor declarado, entrega 3 — o painel de gestão separa a parte HERDADA (20261108010000): invariância contra o corpo
 # anterior (o de prod, md5 78d9e58f), herdadas por farmer × semana (compradores distintos, desfecho só de recompra,
-# só fase ativa), taxa própria por diferença, receita herdada com ausente ≠ zero, gate master, idempotente, PRE recusa
-# corpo alheio, o validar dá 4 ✅. 7 sabotagens.
-db/test-venda-painel-heranca.sh            13  falsificar=7
+# só fase ativa), taxa própria por diferença (linha só herdada = NULL, não 0%), base própria (histórico e sombra sem
+# herdadas), receita herdada com ausente ≠ zero, gate master, idempotente, PRE recusa corpo alheio, PÓS quebrada faz
+# rollback, o validar dá 4 ✅. 10 sabotagens.
+db/test-venda-painel-heranca.sh            16  falsificar=10
 
 # Venda por cliente, Task 9 — Ondas 2 e 3 (20261021031000): o gerador põe `complemento` (top-3 por família,
 # feedback da própria farmer, só na lista ativa de hoje) e `preco` (só repasse vigente, SKU Oben não-tinta,

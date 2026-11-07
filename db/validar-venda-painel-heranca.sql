@@ -4,8 +4,8 @@
 -- "permission denied", um falso "não aplicou"). Esperado: 4 linhas, todas ✅.
 WITH f AS (SELECT p.* FROM pg_proc p WHERE p.oid = to_regprocedure('public.venda_painel(date,date)')),
 c(n, nome, ok) AS (
-  SELECT 1, 'public.venda_painel é o corpo NOVO (separa as herdadas) — md5 e4990305…',
-         (SELECT md5(prosrc) FROM f) = 'e49903054297a4965061a215aff882fd'
+  SELECT 1, 'public.venda_painel é o corpo NOVO (separa as herdadas) — md5 2b3f2c1b…',
+         (SELECT md5(prosrc) FROM f) = '2b3f2c1b9af99c6dcc34f413f9534c54'
   UNION ALL SELECT 2, 'continua STABLE SECURITY DEFINER com o gate master',
          (SELECT prosecdef AND provolatile = 's' AND prosrc LIKE '%has_role(v_uid, ''master''::public.app_role)%' FROM f)
   UNION ALL SELECT 3, 'ACL: anon e PUBLIC fechados, authenticated aberto',

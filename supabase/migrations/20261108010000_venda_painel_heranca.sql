@@ -3,14 +3,17 @@
 -- (20261108000000, os consumidores do vendedor), ambos em prod desde 2026-11-07.
 --
 -- O que esta migration faz: RECRIA `public.venda_painel(p_de, p_ate)` do corpo VIVO (md5 78d9e58f…, lido em prod
--- via psql-ro em 2026-11-07 — o mesmo da 20261020235000), só ACRESCENTANDO duas chaves a cada linha
+-- via psql-ro em 2026-11-07 — o mesmo da 20261020235000), só ACRESCENTANDO seis chaves a cada linha
 -- farmer × semana:
 --   - `herdadas`: {na_lista, sugestoes, virou, nao_virou, nao_medivel, pendentes, receita_realizada,
 --     receita_incompleta} — as MESMAS réguas da linha (fase ativa; desfecho e receita só de recompra), restritas às
 --     sugestões com `sucessao_origem`. Ausente ≠ zero: `receita_realizada` NULL sem venda casada herdada.
 --   - `taxa_ativa_propria`: virou ÷ (virou + não virou) SEM as herdadas (NULL com denominador 0). O histórico de
---     uma sugestão herdada inclui compras da antiga — a taxa própria é a que compara com a linha de base da farmer.
--- Nada sai, nada muda de valor: tirando as duas chaves, o JSON é o do corpo anterior (provado em PG17).
+--     uma sugestão herdada inclui compras da antiga.
+--   - `base_historico_propria` / `taxa_base_historico_propria` e `base_sombra_propria` / `taxa_base_sombra_propria`:
+--     a linha de base com a mesma régua (sem herdadas). O gerador grava a origem nas TRÊS fases, então a base antiga
+--     também mistura: própria se compara com própria (P2 do Codex).
+-- Nada sai, nada muda de valor: tirando as seis chaves, o JSON é o do corpo anterior (provado em PG17).
 --
 -- Não muda: o gate (master), o período, as ondas, a linha de base, o ACL, nenhuma outra função.
 -- Prova PG17: db/test-venda-painel-heranca.sh (controle + sabotagens, os dois locales).
@@ -41,7 +44,7 @@ BEGIN
                   WHERE table_schema = 'public' AND table_name = 'venda_sugestao' AND column_name = 'sucessao_origem') THEN
     RAISE EXCEPTION 'PRE FALHOU: falta venda_sugestao.sucessao_origem (PR B do plano de rateio, 20261107210000)';
   END IF;
-  IF v_vivo IS NULL OR NOT (v_vivo = ANY (ARRAY['78d9e58f73c7fb3a902f864a2e131993', 'e49903054297a4965061a215aff882fd'])) THEN
+  IF v_vivo IS NULL OR NOT (v_vivo = ANY (ARRAY['78d9e58f73c7fb3a902f864a2e131993', '2b3f2c1b9af99c6dcc34f413f9534c54'])) THEN
     RAISE EXCEPTION 'PRE FALHOU: public.venda_painel vivo (md5 %) não é o corpo revisado', v_vivo;
   END IF;
 END
@@ -166,7 +169,12 @@ BEGIN
            count(*) FILTER (WHERE s.desfecho = 'virou_pedido') AS virou,
            count(*) FILTER (WHERE s.desfecho = 'nao_virou')    AS nao_virou,
            count(*) FILTER (WHERE s.desfecho = 'nao_medivel')  AS nao_medivel,
-           count(*) FILTER (WHERE s.desfecho IS NULL)          AS pendentes
+           count(*) FILTER (WHERE s.desfecho IS NULL)          AS pendentes,
+           -- a base PRÓPRIA (sem herdadas): o gerador grava a origem nas três fases, então a base também mistura
+           count(*) FILTER (WHERE s.desfecho = 'virou_pedido' AND s.sucessao_origem IS NULL) AS p_virou,
+           count(*) FILTER (WHERE s.desfecho = 'nao_virou'    AND s.sucessao_origem IS NULL) AS p_nao_virou,
+           count(*) FILTER (WHERE s.desfecho = 'nao_medivel'  AND s.sucessao_origem IS NULL) AS p_nao_medivel,
+           count(*) FILTER (WHERE s.desfecho IS NULL          AND s.sucessao_origem IS NULL) AS p_pendentes
       FROM public.venda_sugestao s
      WHERE s.fase = 'historico' AND s.tipo = 'recompra'
        AND s.dia_referencia >= v_ini - 364 AND s.dia_referencia < v_fim - 364
@@ -178,7 +186,11 @@ BEGIN
            count(*) FILTER (WHERE s.desfecho = 'virou_pedido') AS virou,
            count(*) FILTER (WHERE s.desfecho = 'nao_virou')    AS nao_virou,
            count(*) FILTER (WHERE s.desfecho = 'nao_medivel')  AS nao_medivel,
-           count(*) FILTER (WHERE s.desfecho IS NULL)          AS pendentes
+           count(*) FILTER (WHERE s.desfecho IS NULL)          AS pendentes,
+           count(*) FILTER (WHERE s.desfecho = 'virou_pedido' AND s.sucessao_origem IS NULL) AS p_virou,
+           count(*) FILTER (WHERE s.desfecho = 'nao_virou'    AND s.sucessao_origem IS NULL) AS p_nao_virou,
+           count(*) FILTER (WHERE s.desfecho = 'nao_medivel'  AND s.sucessao_origem IS NULL) AS p_nao_medivel,
+           count(*) FILTER (WHERE s.desfecho IS NULL          AND s.sucessao_origem IS NULL) AS p_pendentes
       FROM public.venda_sugestao s
      WHERE s.fase = 'sombra' AND s.tipo = 'recompra'
      GROUP BY 1
@@ -218,7 +230,16 @@ BEGIN
                                  'receita_incompleta', COALESCE(a.h_receita_incompleta, false)),
            -- a conversão SEM as herdadas: o histórico delas inclui compras da antiga, a própria não
            'taxa_ativa_propria', round((a.virou - a.h_virou)::numeric
-                                       / NULLIF((a.virou - a.h_virou) + (a.nao_virou - a.h_nao_virou), 0), 4)
+                                       / NULLIF((a.virou - a.h_virou) + (a.nao_virou - a.h_nao_virou), 0), 4),
+           -- e a linha de base com a MESMA régua (sem herdadas): própria × própria, nunca própria × mistura
+           'base_historico_propria', jsonb_build_object(
+                                 'virou', COALESCE(h.p_virou, 0), 'nao_virou', COALESCE(h.p_nao_virou, 0),
+                                 'nao_medivel', COALESCE(h.p_nao_medivel, 0), 'pendentes', COALESCE(h.p_pendentes, 0)),
+           'taxa_base_historico_propria', round(h.p_virou::numeric / NULLIF(h.p_virou + h.p_nao_virou, 0), 4),
+           'base_sombra_propria', jsonb_build_object(
+                                 'virou', COALESCE(bs.p_virou, 0), 'nao_virou', COALESCE(bs.p_nao_virou, 0),
+                                 'nao_medivel', COALESCE(bs.p_nao_medivel, 0), 'pendentes', COALESCE(bs.p_pendentes, 0)),
+           'taxa_base_sombra_propria', round(bs.p_virou::numeric / NULLIF(bs.p_virou + bs.p_nao_virou, 0), 4)
          ) ORDER BY p.name NULLS LAST, f.farmer_user_id, sm.semana DESC), '[]'::jsonb)
     INTO v_linhas
     FROM farmers f
@@ -319,7 +340,7 @@ DO $pos$
 DECLARE
   v_oid regprocedure := to_regprocedure('public.venda_painel(date,date)');
 BEGIN
-  IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) IS DISTINCT FROM 'e49903054297a4965061a215aff882fd' THEN
+  IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) IS DISTINCT FROM '2b3f2c1b9af99c6dcc34f413f9534c54' THEN
     RAISE EXCEPTION 'PÓS FALHOU: public.venda_painel não ficou com o corpo deste arquivo';
   END IF;
   IF NOT (SELECT p.prosecdef AND p.provolatile = 's' FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) THEN

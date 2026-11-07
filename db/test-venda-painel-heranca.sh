@@ -9,11 +9,13 @@
 #  H2  taxa_ativa_propria = (virou − herdadas) ÷ (virou + não virou − herdadas); a taxa total segue a de antes
 #  H3  receita herdada: soma das vendas casadas herdadas, `receita_incompleta` com venda sem valor
 #  H4  ausente ≠ zero: farmer só com lista própria → herdadas zeradas, receita herdada NULL, própria = total;
-#      semana sem lista ativa → taxa_ativa_propria NULL
+#      linha ativa SÓ herdada → própria NULL (denominador 0, não 0%); semana sem lista ativa → própria NULL
+#  H7  a linha de base própria (histórico e sombra sem herdadas): a base antiga mistura, a própria não
 #  H5  sombra/histórico herdados não entram na fatia (só a fase ativa)
 #  H6  o gate continua master (farmer → 42501)
 #  M1  a migration re-aplica (idempotente); M2 ACL (anon/PUBLIC fechados); M3 a PRE recusa corpo alheio
 #  M4  db/validar-venda-painel-heranca.sql dá 4 ✅ contra a migration real
+#  M5  PÓS que falha desfaz tudo (psql -1, como o SQL Editor): o corpo anterior fica
 #
 #   bash db/test-venda-painel-heranca.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   LOCALE_TESTE=pt_BR.UTF-8 bash db/test-venda-painel-heranca.sh   # mesma prova no outro locale (marcas ASCII)
@@ -27,7 +29,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261108010000_venda_painel_heranca.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
-  SABOTAGENS="herd_sem_distinct:H1 herd_desfecho_com_complemento:H1 propria_sem_subtrair:H2 receita_herdada_zero:H4 herd_sem_filtro_origem:H1 muda_chave_antiga:H0 pre_aberta:M3"
+  SABOTAGENS="propria_sem_nullif:H4b base_hist_mistura:H7 base_sombra_mistura:H7 herd_sem_distinct:H1 herd_desfecho_com_complemento:H1 propria_sem_subtrair:H2 receita_herdada_zero:H4 herd_sem_filtro_origem:H1 muda_chave_antiga:H0 pre_aberta:M3"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-painel-heranca.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -79,7 +81,7 @@ s = s.replace(de, para)
 import hashlib, re
 i = s.index("AS $function$") + len("AS $function$"); j = s.index("$function$;", i)
 novo = hashlib.md5(s[i:j].encode()).hexdigest()
-s = s.replace("e49903054297a4965061a215aff882fd", novo)
+s = s.replace("2b3f2c1b9af99c6dcc34f413f9534c54", novo)
 open(p, "w", encoding="utf-8").write(s)
 PYS
 }
@@ -96,6 +98,12 @@ case "${SABOTAGEM:-}" in
   receita_herdada_zero) sabotar "'receita_realizada', a.h_receita," "'receita_realizada', COALESCE(a.h_receita, 0)," ;;
   herd_sem_filtro_origem) sabotar "count(*) FILTER (WHERE s.sucessao_origem IS NOT NULL)                         AS h_sugestoes," \
                                   "count(*)                                                                    AS h_sugestoes," ;;
+  propria_sem_nullif)  sabotar "/ NULLIF((a.virou - a.h_virou) + (a.nao_virou - a.h_nao_virou), 0), 4)," \
+                               "/ GREATEST((a.virou - a.h_virou) + (a.nao_virou - a.h_nao_virou), 1), 4)," ;;
+  base_hist_mistura)   sabotar "'taxa_base_historico_propria', round(h.p_virou::numeric / NULLIF(h.p_virou + h.p_nao_virou, 0), 4)," \
+                               "'taxa_base_historico_propria', round(h.virou::numeric / NULLIF(h.virou + h.nao_virou, 0), 4)," ;;
+  base_sombra_mistura) sabotar "'taxa_base_sombra_propria', round(bs.p_virou::numeric / NULLIF(bs.p_virou + bs.p_nao_virou, 0), 4)" \
+                               "'taxa_base_sombra_propria', round(bs.virou::numeric / NULLIF(bs.virou + bs.nao_virou, 0), 4)" ;;
   muda_chave_antiga)   sabotar "'mostradas',        COALESCE(a.mostradas, 0)," "'mostradas',        COALESCE(a.mostradas, 0) + COALESCE(a.h_na_lista, 0)," ;;
   pre_aberta)          sabotar "IF v_vivo IS NULL OR NOT (v_vivo = ANY" "IF false AND NOT (v_vivo = ANY" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
@@ -203,7 +211,9 @@ INSERT INTO public.venda_sugestao (tipo, fase, dia_referencia, farmer_user_id, c
  -- F2 em W: só própria (H4)
  ('recompra',   'ativa', '$W'::date,     '$F2','$C2','oben',    111, NULL,      NULL,  'virou_pedido', 20,   NULL),
  -- F1 na semana W+7: só sombra (a linha existe, sem lista ativa → própria NULL)
- ('recompra',   'sombra', '$W'::date + 7, '$F1','$C1','oben',   111, NULL,      NULL,  'nao_virou',    NULL, NULL);
+ ('recompra',   'sombra', '$W'::date + 7, '$F1','$C1','oben',   111, NULL,      NULL,  'nao_virou',    NULL, NULL),
+ -- F1 na semana W+7, lista ativa SÓ herdada: total 0/(0+1), própria sem denominador (H4b)
+ ('recompra',   'ativa',  '$W'::date + 7, '$F1','$C4','oben',   444, NULL,      NULL,  'nao_virou',    NULL, '$H');
 INSERT INTO public.venda_contato (farmer_user_id, comprador_id, dia, resultado) VALUES ('$F1','$C4','$W'::date + 3, 'vai_pedir');
 SQL
 
@@ -221,9 +231,10 @@ linha() { # $1 = farmer, $2 = semana, $3 = expressão sobre a linha r
 }
 
 # H0 invariância
-eq "H0 sem as 2 chaves novas, o JSON e o do corpo anterior" \
+eq "H0 sem as 6 chaves novas, o JSON e o do corpo anterior" \
    "$(Pq -c "$(como "$M" "SELECT (n.j - 'linhas') = (a.j - 'linhas')
-       AND (SELECT jsonb_agg(e.r - 'herdadas' - 'taxa_ativa_propria' ORDER BY e.o)
+       AND (SELECT jsonb_agg(e.r - 'herdadas' - 'taxa_ativa_propria' - 'base_historico_propria' - 'taxa_base_historico_propria'
+                                 - 'base_sombra_propria' - 'taxa_base_sombra_propria' ORDER BY e.o)
               FROM jsonb_array_elements(n.j->'linhas') WITH ORDINALITY e(r, o)) = a.j->'linhas'
        AND jsonb_array_length(n.j->'linhas') = 4
      FROM (SELECT public.venda_painel('$W'::date, '$W'::date + 13) AS j) n, public.prova_antes a;")")" "t"
@@ -247,15 +258,32 @@ eq "H4 F2 so propria: herdadas zeradas, receita herdada null, propria = total" \
         jsonb_typeof(r->'herdadas'->'receita_realizada'), r->'herdadas'->>'receita_incompleta', r->>'taxa_ativa', r->>'taxa_ativa_propria')")" \
    "0 0 0 null false 1.0000 1.0000"
 W7="$(Pq -c "SELECT ('$W'::date + 7)::text")"
-eq "H4b semana sem lista ativa: taxa propria null, herdadas zeradas" \
-   "$(linha "$F1" "$W7" "concat_ws(' ', jsonb_typeof(r->'taxa_ativa_propria'), r->'herdadas'->>'sugestoes', jsonb_typeof(r->'herdadas'->'receita_realizada'))")" \
-   "null 0 null"
+eq "H4b linha ativa so herdada: total 0/(0+1), propria null (nao 0%), 1 sugestao herdada" \
+   "$(linha "$F1" "$W7" "concat_ws(' ', r->>'taxa_ativa', jsonb_typeof(r->'taxa_ativa_propria'), r->'herdadas'->>'sugestoes', jsonb_typeof(r->'herdadas'->'receita_realizada'))")" \
+   "0.0000 null 1 null"
+eq "H4c semana sem lista ativa: propria null, herdadas zeradas" \
+   "$(linha "$F2" "$W7" "concat_ws(' ', jsonb_typeof(r->'taxa_ativa_propria'), r->'herdadas'->>'sugestoes')")" "null 0"
+
+# H7 a base própria: histórico de W só tem a herdada (total 1/1, própria sem base); sombra 1 herdada virou + 1 própria não
+eq "H7 base historico total 1.0000 propria null; sombra total 0.5000 propria 0.0000 (0/1)" \
+   "$(linha "$F1" "$W" "concat_ws(' ', r->>'taxa_base_historico_mesma_semana', jsonb_typeof(r->'taxa_base_historico_propria'),
+        r->'base_historico_propria'->>'virou', r->>'taxa_base_sombra', r->>'taxa_base_sombra_propria', r->'base_sombra_propria'->>'nao_virou')")" \
+   "1.0000 null 0 0.5000 0.0000 1"
 
 # H5 sombra e histórico herdados fora da fatia (a semana W+7 da sombra não tem herdada ativa; a sombra de W não somou)
 eq "H5 sombra/historico herdados nao entram: virou herdado continua 2" "$(linha "$F1" "$W" "r->'herdadas'->>'virou'")" "2"
 
 # H6 gate
 eq "H6 farmer -> 42501" "$(estado "$(como "$F1" "SELECT public.venda_painel('$W'::date, '$W'::date + 6);")")" "42501"
+
+# M5 PÓS que falha desfaz o CREATE (psql -1 = uma transação, como o SQL Editor): volta ao corpo anterior e reaplica
+P -q -f "$MIG_ANTES" > /dev/null
+MD5_NOVO="$(grep -oE "IS DISTINCT FROM '[0-9a-f]{32}'" "$MIG_USADA" | head -1 | grep -oE '[0-9a-f]{32}')"
+sed "s/IS DISTINCT FROM '$MD5_NOVO'/IS DISTINCT FROM 'pos-quebrada'/" "$MIG_USADA" > "$(dirname "$DATA")/mig-pos-quebrada.sql"
+SAIDA_M5="$(P -1 -q -f "$(dirname "$DATA")/mig-pos-quebrada.sql" 2>&1 || true)"
+eq "M5 POS quebrada aborta e o corpo anterior fica (rollback)" \
+   "$(printf '%s' "$SAIDA_M5" | grep -c 'não ficou com o corpo deste arquivo') $(md5_vivo)" "1 78d9e58f73c7fb3a902f864a2e131993"
+P -q -f "$MIG_USADA" > /dev/null
 
 # M1 idempotente
 eq "M1 re-aplica" "$(estado "$(cat "$MIG_USADA")")" "verde"
