@@ -1031,3 +1031,7 @@ db/test-radar-socios-cpf.sh                32  falsificar=19
 # semana e sem repetir lead (teste não queima), cron nascido desligado, RPCs do card e do sensor com SQLSTATE, tabelas
 # fechadas ao JWT e ACL nas duas pontas.
 db/test-radar-leads-vendedor.sh            62  falsificar=46
+
+# Radar pacote F — território do usuário logado (migration 20261107220500): RPC fina sobre a privada do pacote D (mesmo
+# resultado), gate cap_radar_prospectar e de gestor para outro vendedor com SQLSTATE, anon fora pelo ACL, PÓS aborta ACL aberto.
+db/test-radar-meu-territorio.sh            16  falsificar=5

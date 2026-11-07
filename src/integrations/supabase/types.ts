@@ -10260,6 +10260,12 @@ export type Database = {
           portal_recusa_motivo: string | null
           portal_resposta: Json | null
           portal_screenshot_url: string | null
+          portal_situacao_ate: string | null
+          portal_situacao_codigo: string | null
+          portal_situacao_em: string | null
+          portal_situacao_gravada_em: string | null
+          portal_situacao_protocolo: string | null
+          portal_situacao_texto: string | null
           portal_tentativas: number | null
           resposta_canal: Json | null
           split_lote: number | null
@@ -10326,6 +10332,12 @@ export type Database = {
           portal_recusa_motivo?: string | null
           portal_resposta?: Json | null
           portal_screenshot_url?: string | null
+          portal_situacao_ate?: string | null
+          portal_situacao_codigo?: string | null
+          portal_situacao_em?: string | null
+          portal_situacao_gravada_em?: string | null
+          portal_situacao_protocolo?: string | null
+          portal_situacao_texto?: string | null
           portal_tentativas?: number | null
           resposta_canal?: Json | null
           split_lote?: number | null
@@ -10392,6 +10404,12 @@ export type Database = {
           portal_recusa_motivo?: string | null
           portal_resposta?: Json | null
           portal_screenshot_url?: string | null
+          portal_situacao_ate?: string | null
+          portal_situacao_codigo?: string | null
+          portal_situacao_em?: string | null
+          portal_situacao_gravada_em?: string | null
+          portal_situacao_protocolo?: string | null
+          portal_situacao_texto?: string | null
           portal_tentativas?: number | null
           resposta_canal?: Json | null
           split_lote?: number | null
@@ -13010,6 +13028,30 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_funil_sensores: {
+        Row: {
+          fonte: string
+          instalado_em: string | null
+          ordem: number
+          rotulo: string
+          sensor: string
+        }
+        Insert: {
+          fonte: string
+          instalado_em?: string | null
+          ordem: number
+          rotulo: string
+          sensor: string
+        }
+        Update: {
+          fonte?: string
+          instalado_em?: string | null
+          ordem?: number
+          rotulo?: string
+          sensor?: string
+        }
+        Relationships: []
+      }
       radar_ingest_state: {
         Row: {
           avisado_em: string | null
@@ -13055,30 +13097,36 @@ export type Database = {
       radar_lead_aberturas: {
         Row: {
           aberto_em: string
+          clique_registrado: boolean
           cnpj: string
           dia: string
           do_destinatario: boolean
           envio_id: string | null
+          ficha_entregue_em: string | null
           id: number
           origem: string
           user_id: string
         }
         Insert: {
           aberto_em?: string
+          clique_registrado?: boolean
           cnpj: string
           dia: string
           do_destinatario: boolean
           envio_id?: string | null
+          ficha_entregue_em?: string | null
           id?: never
           origem: string
           user_id: string
         }
         Update: {
           aberto_em?: string
+          clique_registrado?: boolean
           cnpj?: string
           dia?: string
           do_destinatario?: boolean
           envio_id?: string | null
+          ficha_entregue_em?: string | null
           id?: never
           origem?: string
           user_id?: string
@@ -13165,6 +13213,36 @@ export type Database = {
           lote_iniciado_em?: string | null
           max_updated_at?: string | null
           versao_formula?: string | null
+        }
+        Relationships: []
+      }
+      radar_sensor_falhas: {
+        Row: {
+          dia: string
+          motivo: string
+          n: number
+          primeiro_em: string
+          sensor: string
+          ultimo_em: string
+          user_id: string
+        }
+        Insert: {
+          dia: string
+          motivo: string
+          n?: number
+          primeiro_em?: string
+          sensor: string
+          ultimo_em?: string
+          user_id: string
+        }
+        Update: {
+          dia?: string
+          motivo?: string
+          n?: number
+          primeiro_em?: string
+          sensor?: string
+          ultimo_em?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -25018,6 +25096,7 @@ export type Database = {
       }
       radar_email_semanal_painel: { Args: never; Returns: Json }
       radar_estado_cadastro_omie: { Args: { p_cnpj: string }; Returns: Json }
+      radar_funil: { Args: { p_semanas?: number }; Returns: Json }
       radar_irmaos_por_raiz: {
         Args: { p_cnpjs: string[] }
         Returns: {
@@ -25104,6 +25183,15 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      radar_meu_territorio: {
+        Args: { p_top?: number; p_vendedor?: string }
+        Returns: {
+          clientes: number
+          municipio_codigo: string
+          municipio_nome: string
+          uf: string
+        }[]
       }
       radar_penetracao_por_municipio: {
         Args: {
@@ -25220,6 +25308,14 @@ export type Database = {
           p_detalhe: string
           p_motivo: string
         }
+        Returns: Json
+      }
+      radar_registrar_falha_sensor: {
+        Args: { p_motivo: string; p_sensor: string }
+        Returns: Json
+      }
+      radar_registrar_ficha_entregue: {
+        Args: { p_cnpj: string; p_envio?: string; p_origem: string }
         Returns: Json
       }
       radar_resolver_conflito_cadastro: {
@@ -26043,6 +26139,10 @@ export type Database = {
         }[]
       }
       sayerlack_painel_portal: { Args: never; Returns: Json }
+      sayerlack_registrar_situacao_portal: {
+        Args: { p_itens: Json; p_lido_ate: string; p_lido_de: string }
+        Returns: Json
+      }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
       seed_targets_faltantes: {
         Args: never
@@ -26301,10 +26401,6 @@ export type Database = {
         Returns: Json
       }
       venda_fechar_desfechos: { Args: { p_hoje?: string }; Returns: number }
-      venda_heranca_comprador: {
-        Args: { p_comprador: string }
-        Returns: Json
-      }
       venda_gate_credito: {
         Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
         Returns: Json
@@ -26313,6 +26409,7 @@ export type Database = {
         Args: { p_dia: string; p_fase: string }
         Returns: number
       }
+      venda_heranca_comprador: { Args: { p_comprador: string }; Returns: Json }
       venda_marcar_mostrada: { Args: { p_ids: string[] }; Returns: number }
       venda_minhas_sugestoes: { Args: { p_dia?: string }; Returns: Json }
       venda_painel: { Args: { p_ate: string; p_de: string }; Returns: Json }
