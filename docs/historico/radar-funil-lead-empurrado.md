@@ -35,6 +35,8 @@ esse sinal.
   (0,4 s e 1,2 s); a que sobra vai para `track('radar.sensor_falhou')`, `console.warn` e o ledger
   `radar_sensor_falhas`. Na lente "Ver como" nada é chamado (`motivo: 'lente'`).
 
+- **Com o pacote E (#3706)** a semana pode ter mais de uma tentativa de e-mail (nova tentativa só depois de falha). O funil conta cada tentativa como e-mail gerado: "1 entregue de 2" com "1 falho" é a semana em que a 1ª falhou e a 2ª chegou, e o sensor de entrega fica `falhou` porque houve falha real. A migration roda depois da do E (`20261107233000` > `20261107230000`); as duas são independentes.
+
 ## Contrato para a sessão F (`ProspectarHojeCard.tsx`)
 
 - `registrarCardServido(n)` e `registrarAberturaEmpurrada({ origem: 'card', cnpj })` agora devolvem
