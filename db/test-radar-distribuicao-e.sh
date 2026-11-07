@@ -22,7 +22,7 @@ MIGE="$REPO_ROOT/supabase/migrations/20261107230000_radar_distribuicao_pacote_e.
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!P2_FALHOU` = a postcondição aborta o apply com a marca exata
   # (`_` vira espaço; grep -F). `_sem_post` cega a postcondição para provar que a suíte pega sozinha.
-  SABOTAGENS="sem_lote:E1a lote_qualquer_status:E1a sem_contato:E1b sem_lote_completo_recorta:E1c queima_registro:E2a falha_consome_semana:E2b semana_corrente_queima:E2d pendente_nao_bloqueia:E2e sem_janela:E2g teste_queima:E2h posse_propria_fica:E3 sem_atribuido:E4a atribuido_sem_prioridade:E4a atribuido_expirado:E4b sem_isolamento:E5a ledger_sucesso:E5b sem_fallback:E6a fallback_com_dono:E6b dono_depois:E6c outro_vendedor_repete:E6c sem_motivo:E6d url_fixa:E7b url_sem_validar:E7c acl_aberta:POST!P2_FALHOU acl_aberta_sem_post:E8a card_volatil:POST!P3_FALHOU card_volatil_sem_post:E8c unique_velha:POST!P4_FALHOU unique_velha_sem_post:E2b pre_cega:E9b"
+  SABOTAGENS="sem_lote:E1a lote_qualquer_status:E1a sem_contato:E1b sem_lote_completo_recorta:E1c queima_registro:E2a falha_consome_semana:E2b semana_corrente_queima:E2d pendente_nao_bloqueia:E2e sem_janela:E2g teste_queima:E2h posse_propria_fica:E3 sem_atribuido:E4a atribuido_sem_prioridade:E4a atribuido_expirado:E4b sem_isolamento:E5a ledger_sucesso:E5b sem_fallback:E6a fallback_com_dono:E6b dono_depois:E6c outro_vendedor_repete:E6c sem_motivo:E6e url_fixa:E7b url_sem_validar:E7c acl_aberta:POST!P2_FALHOU acl_aberta_sem_post:E8a card_volatil:POST!P3_FALHOU card_volatil_sem_post:E8c unique_velha:POST!P4_FALHOU unique_velha_sem_post:E2b pre_cega:E9b"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-distribuicao-e.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -102,13 +102,7 @@ case "${SABOTAGEM:-}" in
   teste_queima)             sabotar "                AND e.eh_teste = false
                 AND e.criado_em >= par.desde" "                AND e.criado_em >= par.desde" ;;
   posse_propria_fica)       sabotar "                     OR (a.dono_user_id = p_vendedor AND a.atribuido_por IS NULL))" "                     )" ;;
-  sem_atribuido)            sabotar "    UNION ALL
-    SELECT re.cnpj, re.razao_social, re.nome_fantasia, re.municipio_codigo, re.municipio_nome, re.uf,
-           re.score, re.score_motivos, 0, true
-      FROM atrib ab" "    UNION ALL
-    SELECT re.cnpj, re.razao_social, re.nome_fantasia, re.municipio_codigo, re.municipio_nome, re.uf,
-           re.score, re.score_motivos, 0, true
-      FROM atrib ab WHERE false AND" ;;
+  sem_atribuido)            sabotar "      JOIN public.radar_empresas re ON re.cnpj = ab.cnpj" "      JOIN public.radar_empresas re ON re.cnpj = ab.cnpj AND false" ;;
   atribuido_sem_prioridade) sabotar "OVER (ORDER BY u.atribuido DESC, u.score DESC" "OVER (ORDER BY u.score DESC" && \
                             sabotar "   ORDER BY u.atribuido DESC, u.score DESC, u.clientes DESC, u.cnpj
    LIMIT" "   ORDER BY u.score DESC, u.clientes DESC, u.cnpj
@@ -282,7 +276,7 @@ SQL
 # ── Atores ────────────────────────────────────────────────────────────────────────────────────────────────
 # V4 tem o MENOR uuid de propósito: por uuid ele iria antes do dono (V1) e levaria os leads dele.
 V1=a0000000-0000-0000-0000-000000000011   # farmer dono: DIV 4 · NS 3 · CLA 2
-V2=a0000000-0000-0000-0000-000000000012   # farmer dono de CAJ; o envio dele QUEBRA (gatilho de teste) → E5
+V2=a0000000-0000-0000-0000-000000000012   # farmer dono de CAJ (+1 cliente em DIV); o envio dele QUEBRA (gatilho de teste) → E5
 V3=a0000000-0000-0000-0000-000000000013   # farmer sem carteira → sem_carteira
 V4=a0000000-0000-0000-0000-000000000004   # farmer 2º em tudo: DIV 2 · NS 1 → território compartilhado
 V5=a0000000-0000-0000-0000-000000000015   # farmer com carteira só em cidade fora do Radar → carteira_sem_municipio
@@ -308,7 +302,7 @@ INSERT INTO public.radar_ingest_state VALUES
 CREATE TEMP TABLE semente (dono uuid, cidade text, uf text, n int);
 INSERT INTO semente VALUES
   (:'v1','Divinopolis','MG',4), (:'v1','Nova Serrana','MG',3), (:'v1','Claudio','MG',2),
-  (:'v2','Carmo do Cajuru','MG',3),
+  (:'v2','Carmo do Cajuru','MG',3), (:'v2','Divinopolis','MG',1),   -- V2 tem 1 cliente em DIV (dono é V1): fica fora
   (:'v4','Divinopolis','MG',2), (:'v4','Nova Serrana','MG',1),
   (:'v5','Cidade Que Nao Existe','MG',2);
 DO $$
@@ -392,15 +386,15 @@ SEM_A=2026-11-16
 
 # ── E1/E3/E4: a escolha ───────────────────────────────────────────────────────────────────────────────────
 eq "E1a fora quem saiu do dump (102, lote 2026-09) e o lote em voo (2026-11 running) não vira a foto" \
-   "$(leads "$V1" "$SEM_A 11:00+00" | grep -o '102' || echo fora)" "fora"
+   "$(leads "$V1" "$SEM_A 11:00+00" | grep -o '10[12]' | tr '\n' ' ')" "101 "
 eq "E1b fora quem não tem contato (103: telefone em branco, sem e-mail); só e-mail (104) basta" \
    "$(leads "$V1" "$SEM_A 11:00+00" | grep -o '103\|104' | tr '\n' ' ')" "104 "
 eq "E3 fora a posse que o PRÓPRIO V1 assumiu (105); a de outro vendedor (106) segue fora" \
-   "$(leads "$V1" "$SEM_A 11:00+00" | grep -o '105\|106' || echo fora)" "fora"
+   "$(leads "$V1" "$SEM_A 11:00+00" | grep -o '10[567]' | tr '\n' ' ')" "107 "
 eq "E4a top de V1: o atribuído pelo gestor (120, BH, fora do território) em 1º; depois score; elegíveis = 8" \
    "$(leads "$V1" "$SEM_A 11:00+00")" "120*,104,101,107,111|8"
 eq "E4b atribuído com posse vencida (121) não entra" \
-   "$(leads "$V1" "$SEM_A 11:00+00" | grep -o '121' || echo fora)" "fora"
+   "$(leads "$V1" "$SEM_A 11:00+00" | grep -o '12[01]' | tr '\n' ' ')" "120 "
 
 # ── E6: território ────────────────────────────────────────────────────────────────────────────────────────
 eq "E6a território: V1 dono (DIV, NS, CLA); V4, 2º em tudo, recebe os dele marcados compartilhado (~)" \
@@ -416,7 +410,7 @@ P -q -v v1="$V1" -v v2="$V2" -v v3="$V3" -v v4="$V4" -v v5="$V5" <<'SQL'
 INSERT INTO public.radar_email_vendedor_config (vendedor_user_id, ativo) VALUES
   (:'v1', true), (:'v2', true), (:'v3', true), (:'v4', true), (:'v5', true);
 SQL
-RA="$(Pq -c "SELECT public.radar_avisar_vendedores('$SEM_A 11:00+00')")"
+RA="$(Pq -c "SELECT public.radar_avisar_vendedores('$SEM_A 11:00+00')" 2>&1 || true)"
 eq "E5a o erro de V2 não derruba os outros: V1 e V4 avisados, V2 em erros (com SQLSTATE), sem alerta órfão de V2" \
    "$(printf '%s' "$RA" | python3 -I -c "import json,sys; d=json.load(sys.stdin); print(','.join(sorted(a['vendedor'][-2:] for a in d['avisados']))+'|'+','.join(e['vendedor'][-2:]+':'+e['sqlstate'] for e in d['erros']))")|$(Pq -c "SELECT count(*) FROM public.fornecedor_alerta")" \
    "04,11|12:P0001|2"
@@ -438,7 +432,7 @@ eq "E7a link do e-mail com a URL semeada em company_config; corpo diz o atribuí
 P -q -c "UPDATE public.fornecedor_alerta SET status = 'falha_notificacao' WHERE id = (SELECT alerta_id FROM public.radar_email_vendedor_envios WHERE id = '$ENV_V1')"
 eq "E2a e-mail que FALHOU não queima: na semana seguinte V1 recebe os mesmos 5" \
    "$(leads "$V1" "2026-11-23 11:00+00")" "120*,104,101,107,111|7"
-RB="$(Pq -c "SELECT public.radar_avisar_vendedores('2026-11-18 11:00+00')")"
+RB="$(Pq -c "SELECT public.radar_avisar_vendedores('2026-11-18 11:00+00')" 2>&1 || true)"
 eq "E2b e-mail que falhou não consome a semana: V1 ganha a tentativa 2 com os mesmos leads" \
    "$(Pq -c "SELECT string_agg(tentativa::text, ',' ORDER BY tentativa) FROM public.radar_email_vendedor_envios WHERE vendedor_user_id = '$V1' AND semana = '$SEM_A'")|$(envio_leads "$V1" "$SEM_A" 2)" \
    "1,2|120*,104,101,107,111"
