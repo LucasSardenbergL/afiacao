@@ -408,7 +408,9 @@ sabotagem() {
     anon_heranca) P -v ON_ERROR_STOP=1 -q -c "GRANT EXECUTE ON FUNCTION $HER TO anon" ;;
     sem_gate_staff) cv_sabotar "$HER" "RAISE EXCEPTION 'venda_heranca_comprador: requer perfil staff' USING ERRCODE = '42501';" "NULL;" ;;
     sem_gate_carteira) cv_sabotar "$HER" "IF NOT private.cap_carteira_ler(v_uid) AND NOT (v_uid = ANY (v_donos)) THEN" "IF false THEN" ;;
-    heranca_revogado) cv_sabotar "$HER" "AND NOT rev.revoga" "" ;;
+    # O "AND NOT rev.revoga" é redundante com o trigger do PR B (revisão que revoga não tem regra): tirá-lo fica
+    # verde. O que discrimina é ler a revisão VIGENTE (a maior) — a sabotagem lê a menor.
+    heranca_revisao_velha) cv_sabotar "$HER" "ORDER BY r.evento_id, r.revisao DESC" "ORDER BY r.evento_id, r.revisao ASC" ;;
     heranca_destino_qualquer) cv_sabotar "$HER" "AND g.destino_sucessao_id = d.id" "" ;;
     heranca_declarada) cv_sabotar "$HER" "WHERE s.estado = 'ativa' AND (" "WHERE (" ;;
     heranca_sem_alias) cv_sabotar "$HER" "v_comprador := COALESCE(v_comprador, p_comprador);" "v_comprador := p_comprador;" ;;
@@ -433,8 +435,8 @@ anon_itens:P4a:P4
 anon_heranca:H6a:H6b
 sem_gate_staff:H6b:H6c
 sem_gate_carteira:H6c:H6b
-heranca_revogado:H4:H1
-heranca_destino_qualquer:H2:H1
+heranca_revisao_velha:H4:H1
+heranca_destino_qualquer:H2:H7
 heranca_declarada:H2:H1
 heranca_sem_alias:H3:H2
 itens_sem_corte:P1:P0
