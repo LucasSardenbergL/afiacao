@@ -17,7 +17,7 @@
 --      observação vigente libera.
 -- B) `reposicao_claim_disparo` recusa, NO MESMO WHERE QUE GRAVA, pedido cuja observação aceita é 6 — de
 --    QUALQUER protocolo (Codex v3 P1 #4: staff tem UPDATE e trocar `portal_protocolo` não pode liberar
---    compra) — e, com 6 gravado, o protocolo nem pode ser trocado (trigger A.2b). Liberar exige observação estritamente posterior (início > fim da vigente) com outro código.
+--    compra) — e protocolo preenchido nem pode ser trocado (trigger A.2b). Liberar exige observação estritamente posterior (início > fim da vigente) com outro código.
 --    Claim existente não é limpo nem expirado.
 -- Idempotente; sem DROP. `CREATE OR REPLACE` da claim preserva o ACL (pré-voo: prod = repo 20260906190615,
 -- md5(pg_get_functiondef) 2d07026098f94452a3e694f87f6950ef em 2026-11-07).
@@ -100,34 +100,37 @@ CREATE TRIGGER trg_situacao_portal_escritor_unico
   ON public.pedido_compra_sugerido
   FOR EACH ROW EXECUTE FUNCTION public.sayerlack__situacao_portal_escritor_unico();
 
--- ── A.2b protocolo travado enquanto há cancelamento observado ─────────────────────────────────────
--- Codex 5A rodadas 3-4: trocar `portal_protocolo` (o staff tem UPDATE) fazia observações do protocolo antigo deixarem
--- de casar a linha e abria sequências de ida-e-volta que liberavam a compra. Nenhum fluxo legítimo troca o protocolo
--- de um pedido que já tem um 6 observado (envio e conciliação só preenchem o protocolo de quem ainda não tem). Então:
--- com situação 6 gravada, o protocolo não muda — encerrar o pedido é o caminho (botão auditado, fatia 2).
-CREATE OR REPLACE FUNCTION public.sayerlack__trava_protocolo_com_cancelado()
+-- ── A.2b protocolo confirmado é imutável ─────────────────────────────────────────────────────────
+-- Codex 5A rodadas 3-5: trocar `portal_protocolo` (o staff tem UPDATE) faz as observações do protocolo antigo
+-- deixarem de casar a linha, e as sequências de ida e volta (A→B→A) liberavam a compra com um 6 descartado no meio.
+-- Nenhum fluxo legítimo troca um protocolo já preenchido: o envio pula `sucesso_portal` com protocolo, a conciliação
+-- recusa protocolo diferente, o split insere filhos (conferido no repo e pelo Codex). Então um protocolo preenchido
+-- não muda nem é limpo. Preencher um vazio segue livre. Correção excepcional: o founder no SQL Editor, numa transação
+-- com `SET LOCAL app.sayerlack_protocolo_correcao = 'on'` (o PostgREST não expõe `set_config`).
+CREATE OR REPLACE FUNCTION public.sayerlack__trava_protocolo_confirmado()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path TO 'public', 'pg_temp'
 AS $$
 BEGIN
-  IF OLD.portal_situacao_codigo = '6'
-     AND btrim(COALESCE(NEW.portal_protocolo, '')) IS DISTINCT FROM btrim(COALESCE(OLD.portal_protocolo, '')) THEN
+  IF btrim(COALESCE(OLD.portal_protocolo, '')) <> ''
+     AND btrim(COALESCE(NEW.portal_protocolo, '')) IS DISTINCT FROM btrim(OLD.portal_protocolo)
+     AND current_setting('app.sayerlack_protocolo_correcao', true) IS DISTINCT FROM 'on' THEN
     RAISE EXCEPTION USING ERRCODE = '42501',
-      MESSAGE = '[SITUACAO-PORTAL-PROTOCOLO-TRAVADO] pedido ' || OLD.id || ' está cancelado no portal (protocolo '
-                || COALESCE(OLD.portal_situacao_protocolo, '?') || '): o protocolo não pode ser trocado';
+      MESSAGE = '[PORTAL-PROTOCOLO-IMUTAVEL] pedido ' || OLD.id || ' já tem o protocolo ' || btrim(OLD.portal_protocolo)
+                || ' do portal: ele não é trocado nem limpo (correção só no SQL Editor, com SET LOCAL app.sayerlack_protocolo_correcao = ''on'')';
   END IF;
   RETURN NEW;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.sayerlack__trava_protocolo_com_cancelado() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.sayerlack__trava_protocolo_com_cancelado() FROM anon;
-REVOKE ALL ON FUNCTION public.sayerlack__trava_protocolo_com_cancelado() FROM authenticated;
+REVOKE ALL ON FUNCTION public.sayerlack__trava_protocolo_confirmado() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sayerlack__trava_protocolo_confirmado() FROM anon;
+REVOKE ALL ON FUNCTION public.sayerlack__trava_protocolo_confirmado() FROM authenticated;
 
 DROP TRIGGER IF EXISTS trg_situacao_portal_trava_protocolo ON public.pedido_compra_sugerido;
 CREATE TRIGGER trg_situacao_portal_trava_protocolo
   BEFORE UPDATE OF portal_protocolo ON public.pedido_compra_sugerido
-  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_com_cancelado();
+  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__trava_protocolo_confirmado();
 
 -- ── A.3 o escritor ───────────────────────────────────────────────────────────────────────────────
 -- p_itens: [{protocolo, codigo, texto}]. Item com protocolo ou código fora da gramática é IGNORADO (nunca
@@ -312,7 +315,7 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_situacao_portal_trava_protocolo'
                    AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') THEN
-    RAISE EXCEPTION 'S9 FALHOU: trigger que trava o protocolo de pedido cancelado ausente ou desligado';
+    RAISE EXCEPTION 'S9 FALHOU: trigger que trava o protocolo confirmado ausente ou desligado';
   END IF;
   f := 'public.sayerlack_registrar_situacao_portal(timestamptz, timestamptz, jsonb)';
   IF has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('authenticated', f, 'EXECUTE') THEN
