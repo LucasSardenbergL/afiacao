@@ -45,8 +45,11 @@ chips dão as 3 a 1 clique. Se o sinal de uso pedir a união, ela é o próximo 
 
 ## Deploy
 
-1. Migration `20261107220500_radar_meu_territorio.sql` — aplicada pela sessão no envelope (`db:aplicar`, PÓS com
-   marcador positivo) e conferida por `psql-ro` (ver o PR).
+1. Migration `20261107220500_radar_meu_territorio.sql` — **aplicada** pela sessão em 07/11 no envelope (`db:aplicar`:
+   ensaio com ROLLBACK verde, depois tentativa #964 → recibo, sha256 `6e3b1140…1f88`) e conferida por `psql-ro` em outra
+   conexão: SECURITY DEFINER, STABLE, uma sobrecarga, ACL fechado para PUBLIC e anon, `authenticated` executa. (O
+   timestamp original `20261107220000` colidiu com uma migration do Sayerlack que chegou na main; renomeada antes do
+   merge.)
 2. **Publish** no Lovable (front). Sem ele, o login segue perdendo o destino e o card segue fora do `/meu-dia`.
 
 ## Sinal da fase (quando medir)
