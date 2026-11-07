@@ -113,8 +113,10 @@ LANGUAGE plpgsql
 SET search_path TO 'public', 'pg_temp'
 AS $$
 BEGIN
+  -- Valor CRU, não btrim: '2141001' → ' 2141001 ' some da busca exata da varredura (`.in('portal_protocolo', …)`)
+  -- e o 6 deixaria de chegar ao pedido (Codex 5A rodada 6).
   IF btrim(COALESCE(OLD.portal_protocolo, '')) <> ''
-     AND btrim(COALESCE(NEW.portal_protocolo, '')) IS DISTINCT FROM btrim(OLD.portal_protocolo)
+     AND NEW.portal_protocolo IS DISTINCT FROM OLD.portal_protocolo
      AND current_setting('app.sayerlack_protocolo_correcao', true) IS DISTINCT FROM 'on' THEN
     RAISE EXCEPTION USING ERRCODE = '42501',
       MESSAGE = '[PORTAL-PROTOCOLO-IMUTAVEL] pedido ' || OLD.id || ' já tem o protocolo ' || btrim(OLD.portal_protocolo)
