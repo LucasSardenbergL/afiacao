@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 793
+-- Total de custom migrations: 794
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -858,6 +858,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261106132259', 'radar_abriu_ficha_com_cnpj', '20261106132259_radar_abriu_ficha_com_cnpj.sql'),
   ('20261106140000', 'sayerlack_importar_portal_revisao', '20261106140000_sayerlack_importar_portal_revisao.sql'),
   ('20261106175800', 'radar_mapa_regiao_cidade_telefone', '20261106175800_radar_mapa_regiao_cidade_telefone.sql'),
+  ('20261106181000', 'radar_leads_ao_vendedor', '20261106181000_radar_leads_ao_vendedor.sql'),
   ('20261106205556', 'drop_indices_ociosos_scores', '20261106205556_drop_indices_ociosos_scores.sql'),
   ('20261106205557', 'credito_aviso_vinculo_vencido', '20261106205557_credito_aviso_vinculo_vencido.sql'),
   ('20261106212329', 'radar_lista_meus_atendimentos', '20261106212329_radar_lista_meus_atendimentos.sql'),
@@ -3402,6 +3403,20 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_penetracao_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
+  ('radar_leads_ao_vendedor', 'function', 'private', 'radar_territorio_do_vendedor', ''),
+  ('radar_leads_ao_vendedor', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_registrar_card_servido', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_registrar_abertura_empurrada', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_config', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_envios', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_leads', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_lead_aberturas', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_prospectar_hoje_servido', ''),
+  ('radar_leads_ao_vendedor', 'index', 'public', 'idx_radar_email_vendedor_leads_cnpj', 'radar_email_vendedor_leads'),
+  ('radar_leads_ao_vendedor', 'index', 'public', 'idx_radar_lead_aberturas_envio', 'radar_lead_aberturas'),
+  ('radar_leads_ao_vendedor', 'cron_job', 'cron', 'radar-avisar-vendedores-semanal', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_base', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_nucleo', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'private', 'credito_vinculo_avaliar', ''),
@@ -5998,6 +6013,20 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_penetracao_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_contagem_por_municipio', ''),
   ('radar_mapa_regiao_cidade_telefone', 'function', 'public', 'radar_lista', ''),
+  ('radar_leads_ao_vendedor', 'function', 'private', 'radar_territorio_do_vendedor', ''),
+  ('radar_leads_ao_vendedor', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_registrar_card_servido', ''),
+  ('radar_leads_ao_vendedor', 'function', 'public', 'radar_registrar_abertura_empurrada', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_config', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_envios', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_email_vendedor_leads', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_lead_aberturas', ''),
+  ('radar_leads_ao_vendedor', 'table', 'public', 'radar_prospectar_hoje_servido', ''),
+  ('radar_leads_ao_vendedor', 'index', 'public', 'idx_radar_email_vendedor_leads_cnpj', 'radar_email_vendedor_leads'),
+  ('radar_leads_ao_vendedor', 'index', 'public', 'idx_radar_lead_aberturas_envio', 'radar_lead_aberturas'),
+  ('radar_leads_ao_vendedor', 'cron_job', 'cron', 'radar-avisar-vendedores-semanal', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_base', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'private', 'radar_vinculos_nucleo', ''),
   ('credito_aviso_vinculo_vencido', 'function', 'private', 'credito_vinculo_avaliar', ''),

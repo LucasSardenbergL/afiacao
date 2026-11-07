@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **793** custom migrations totais
-- **2586** objetos esperados (criados por estas migrations)
+- **794** custom migrations totais
+- **2600** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 988
+  - `function`: 994
   - `rls_policy`: 519
-  - `index`: 369
-  - `table`: 232
-  - `cron_job`: 213
+  - `index`: 371
+  - `table`: 237
+  - `cron_job`: 214
   - `view`: 135
   - `trigger`: 126
   - `enum_value`: 4
@@ -6450,6 +6450,25 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_penetracao_por_municipio` | — |
 | `function` | `public.radar_contagem_por_municipio` | — |
 | `function` | `public.radar_lista` | — |
+
+### `20261106181000_radar_leads_ao_vendedor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_territorio_do_vendedor` | — |
+| `function` | `private.radar_leads_do_vendedor` | — |
+| `function` | `public.radar_avisar_vendedores` | — |
+| `function` | `public.radar_prospectar_hoje` | — |
+| `function` | `public.radar_registrar_card_servido` | — |
+| `function` | `public.radar_registrar_abertura_empurrada` | — |
+| `table` | `public.radar_email_vendedor_config` | — |
+| `table` | `public.radar_email_vendedor_envios` | — |
+| `table` | `public.radar_email_vendedor_leads` | — |
+| `table` | `public.radar_lead_aberturas` | — |
+| `table` | `public.radar_prospectar_hoje_servido` | — |
+| `index` | `public.idx_radar_email_vendedor_leads_cnpj` | `radar_email_vendedor_leads` |
+| `index` | `public.idx_radar_lead_aberturas_envio` | `radar_lead_aberturas` |
+| `cron_job` | `cron.radar-avisar-vendedores-semanal` | — |
 
 ### `20261106205556_drop_indices_ociosos_scores.sql`
 

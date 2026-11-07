@@ -989,3 +989,9 @@ db/test-radar-vinculos-em-lote.sh          23  falsificar=14
 # passa do corte de 10, avalia a carteira inteira, exige prova documental do código Omie, usa a regra de
 # venda_prazo_aviso, marca indeterminado em vez de "em dia", projeta como a ficha; sensor validado no servidor.
 db/test-credito-vinculo-aviso.sh           34  falsificar=23
+
+# Radar pacote D — levar o lead ao vendedor (migration 20261106181000): território por carteira elegível com 1 dono por
+# município, top-N 1 por raiz de CNPJ sem já-cliente/descartado/sem score/RFB baixada/dono ativo de outro, e-mail com dedupe por
+# semana e sem repetir lead (teste não queima), cron nascido desligado, RPCs do card e do sensor com SQLSTATE, tabelas
+# fechadas ao JWT e ACL nas duas pontas.
+db/test-radar-leads-vendedor.sh            39  falsificar=31

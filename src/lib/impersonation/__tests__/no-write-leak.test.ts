@@ -112,6 +112,9 @@ const ALLOWED = new Set([
   'src/components/adminCustomers/useClientesScope.ts',
   'src/components/adminCustomers/useAdminCustomers.ts',
   'src/lib/carteira/escopo-clientes.ts',
+  // Radar D2: useRadarProspectarHoje usa effectiveUserId SÓ como `p_vendedor` da leitura STABLE do card (o servidor
+  // exige gestor para ler outro vendedor). As escritas do sensor vivem em useRadarRegistroEmpurrado.ts, sem a lente.
+  'src/queries/useRadarProspectarHoje.ts',
 ]);
 
 describe('anti write-leak: effectiveUserId só em leitura', () => {
