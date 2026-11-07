@@ -392,7 +392,11 @@ cenario() {
   chk H4 "plano revogado: nem a nova nem a antiga mostram herança; E2 segue" \
     "$(revogar_plano "$E1" 1 revisao)/$(her "$FARM" "$UN2")/$(her "$FARM" "$UA")/$(her "$FARM" "$UBN")" "2///novo:ANTIGA B:2001"
 
-  echo "── 7. re-aplicar a migration; a PRE recusa corpo alheio ──"
+  echo "── 7. a query de validação do founder dá 6 ✅ contra a migration real ──"
+  chk M7 "db/validar-cliente-sucessao-consumidores.sql: ✅ / ❌" \
+    "$(P -v ON_ERROR_STOP=1 -tA -q -F'|' -f "$REPO_ROOT/db/validar-cliente-sucessao-consumidores.sql" 2>&1 | awk -F'|' '{print $2}' | sort | uniq -c | tr -s ' ' | sed 's/^ //' | tr '\n' ',')" \
+    "6 ✅,"
+  echo "── 8. re-aplicar a migration; a PRE recusa corpo alheio ──"
   chk M4 "re-aplicar passa (idempotente; a PRE aceita este corpo)" \
     "$(P --single-transaction -v ON_ERROR_STOP=1 -q -f "$MIG" > /dev/null 2>&1 && echo ok || echo falhou)" "ok"
   cv_sabotar "$HELPER" "'dia', p_dia," "'dia', p_dia, 'alheio', 1,"

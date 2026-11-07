@@ -138,3 +138,75 @@ via `psql-ro` (12 ✅) → 🖱️ Publish (este PR não muda front; o Publish e
 `3b93a5e8…`; os 4 factuais com os corpos de antes). O cron `venda-sucessao-reprocesso` rodou `succeeded` às
 15:39:00 com a fila vazia, porque prod ainda não tem declaração com plano. A migration, a prova e a validação na
 `origin/main` são iguais às do PR, sem reversão do sync. O Publish fica para o PR C, porque este não muda o front.
+
+# Entrega 3, PR C — a tela do plano e os consumidores (2026-11-08)
+
+O pedido do founder foi "quero que façamos tudo dele": a tela do plano, a lista do vendedor, a ficha, o complemento de
+mix e o sensor. A camada de dados é o PR B (#3701).
+
+## O que mudou
+- **Migration `20261108000000_cliente_sucessao_consumidores.sql`** (manual, no SQL Editor, depois da `20261107210000`).
+  Segue o molde TRAVA → PRE (md5 do corpo VIVO, lido via `psql-ro`) → CREATE → PÓS.
+  - **Recria `private._venda_sugestoes_json`**, o helper de `venda_minhas_sugestoes` e `get_venda_sugestoes_for`.
+    As duas RPCs públicas não mudam.
+    - O helper só ACRESCENTA chaves: por sugestão, `sucessao_origem`, `herdada_de` (os nomes das antigas) e
+      `valor_ref_referencia_origem`; por comprador, `valor_ref_total_referencia_origem`.
+  - **`public.venda_heranca_comprador(p_comprador)`**: o que o comprador herdou (`novo`) ou repassou (`antigo`) pelo
+    plano VIGENTE.
+    - Só entra declaração `ativa` em `vigentes(hoje SP)`, e cada item vai para a SUA declaração.
+    - Devolve itens e datas, sem valor.
+    - O gate é o do `venda_complemento_comprador`: staff + carteira.
+  - **`public.cliente_sucessao_plano_itens(p_evento_id)`** (gestor/master), para a tela do plano. Devolve:
+    - os destinos, com o estado;
+    - os itens que a antiga comprou antes do corte, com nº de pedidos e última data, sem valor;
+    - o sensor do dia: as sugestões de HOJE que herdam do evento e quantas já foram mostradas.
+- **Tela do plano** (`RadarSucessaoPlano.tsx`): um sheet aberto pelo botão "Plano de rateio" no selo da sucessão,
+  visível para gestor/master fora da lente.
+  - Edita o destino item a item, com atalho por família. A família já vira itens no front, então o publicar recebe
+    só itens explícitos.
+  - Mostra o estado (sem plano, vigente com autor e data, revogado), o histórico das revisões, o destino pendente e o
+    sensor do dia.
+  - Publica com a revisão esperada LIDA. Revogar pede motivo.
+  - As recusas viram aviso (`revisao_mudou`, `regra_conflitante` etc.) e a tela diz "as sugestões de hoje se
+    atualizam em até 1 minuto".
+  - Na lente "Ver como" é só leitura. As 3 RPCs de leitura entraram na allowlist do write-guard.
+- **Consumidores do vendedor:**
+  - **Fila** (`adapters/recompra.ts`): "· 1 herdado de DIVIMOVEIS (valor com preço da antiga)".
+  - **Ficha**, que ganha três coisas:
+    - o aviso "Herdou N itens de X (cisão, corte em …)";
+    - o rótulo no item herdado do Recomprar, dizendo que o ritmo e o preço de referência são da antiga;
+    - no Oferecer também, o rótulo "X já comprava esta família".
+  - O "último preço" do item herdado segue "—", porque a nova não herda preço.
+- **Sensor:**
+  - `track('radar.sucessao_plano_{aberto,publicado,revogado,recusado}')`.
+  - No ledger, `venda.ficha_aberta` ganhou `n_herdadas`, ao lado do denominador `n_sugestoes`. Não estende a allowlist
+    quente do `analytics_ledger_registrar`.
+  - A publicação já é durável em `cliente_sucessao_plano_revisoes`, com autor e data.
+- **Não muda:** o `venda_complemento_comprador` (o rótulo é cruzado no front com a herança) e o `venda_painel`. O
+  sensor por evento vive na tela do plano; levá-lo ao painel agregado só vale depois de haver plano publicado em
+  prod.
+
+## Prova
+`db/test-cliente-sucessao-consumidores.sh`, no núcleo do CI. Monta o mesmo schema da prova do PR B: o snapshot e a
+cadeia viva, que pega o PR B e esta migration.
+- São 38 asserts e 21 sabotagens. Todas ficam vermelhas no assert declarado, com controle verde na mesma invocação.
+- Invariância forte: com herança no ar, o JSON novo sem as chaves novas é IGUAL ao do corpo anterior. O corpo anterior
+  é recriado verbatim da migration de 21/10, com md5 conferido contra o de prod.
+- Paridade dos itens da tela com `venda_linhas_pedido(corte)` da antiga: universo, alias e corte.
+- `db/validar-cliente-sucessao-consumidores.sql`: 6 ✅, exercitada pela prova.
+
+## Lições
+- **A camada que fica verde na sabotagem é redundante, e vale dizer qual.** Tirar o `NOT rev.revoga` da herança não
+  mudou nada: a revisão que revoga não tem regra, por causa do trigger do PR B. O que discrimina é ler a revisão
+  VIGENTE, e a sabotagem passou a ler a menor.
+- **Mexer num helper puxa a cadeia inteira das migrations dele para a prova.** A pós-condição da 20261021070000
+  executa a RPC como um master de `user_roles`, então o `cv_antes_da_cadeia` semeia um master só da cadeia.
+- **Cálculo de histórico dentro de RPC do app: recorte pelo cadastro, com o mesmo predicado.** A trilha
+  (`venda_linhas_pedido`) não é inlinável, porque tem `SET search_path`. A varredura do universo levou 3,25 s em
+  prod, perto do teto de 8 s. A tela recorta por `customer_user_id = ANY(cadastros)` e mantém o MESMO `COALESCE` do
+  comprador, com a paridade provada.
+
+## Deploy
+🟣 founder: a migration no SQL Editor (depois da `20261107210000`) → conferir com
+`db/validar-cliente-sucessao-consumidores.sql` via `psql-ro` (6 ✅) → 🖱️ Publish. O front degrada sem a migration:
+sem as chaves novas, a lista lê tudo como "própria", e a herança da ficha só avisa quando há item herdado.

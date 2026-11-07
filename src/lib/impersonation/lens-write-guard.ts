@@ -35,6 +35,11 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // Sucessão declarada (migration 20261107013000) — STABLE, só leem: o selo da ficha e a prévia dos pedidos.
   'cliente_sucessoes_do_documento',
   'cliente_sucessao_previa',
+  // Plano de rateio (migration 20261108000000 + a leitura do 20261107210000) — STABLE, só leem: o plano vigente, os
+  // itens/destinos da tela do plano e a herança na ficha do vendedor. Publicar/revogar o plano ficam BLOQUEADOS.
+  'cliente_sucessao_plano_do_evento',
+  'cliente_sucessao_plano_itens',
+  'venda_heranca_comprador',
   // Radar (migration 20261030233200) — SELECT puro da amostra de controle vigente, intercalada na fila.
   'radar_amostra_vigente',
   // Radar D2 (migration 20261106181000) — STABLE, só lê: os leads do card "Prospectar hoje" (o sensor do card é

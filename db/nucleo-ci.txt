@@ -813,6 +813,12 @@ db/test-cliente-sucessoes.sh  85  falsificar=35
 # 38 sabotagens: gates, ACL, corte, destino, ativa, revisão, alias, universo, encerradas, rótulo, reprocesso, fila,
 # gerador sem drenar, detecção cega, a trava da drenagem e o retrato único (concorrência real durante o cálculo), alias (par) na assinatura, reconcilio global, tabela factual adulterada, versão, família, porta, sequência, revoga, trigger.
 db/test-cliente-sucessao-plano.sh  120  falsificar=38
+# Consumidores do plano de rateio (20261108000000, sucessor declarado PR C): o helper da lista só ACRESCENTA chaves (sem
+# elas, o JSON é igual ao do corpo anterior com herança no ar); a herdada carrega origem, nome da antiga e "preço da
+# antiga"; venda_heranca_comprador só de declaração ativa, plano vigente, destino próprio, alias→canônico, gate staff +
+# carteira; cliente_sucessao_plano_itens com paridade com venda_linhas_pedido (universo, alias, corte), o sensor do dia
+# por evento e gate de gestor; nenhuma chave de valor; idempotente, a PRE recusa corpo alheio. 21 sabotagens.
+db/test-cliente-sucessao-consumidores.sh  38  falsificar=21
 # Integridade das RPCs de contato do Radar (20261031111000): 'virou_cliente' só com o cliente confirmado no ledger (RD005)
 # na porta E no trigger (corpo ANTIGO em voo, INSERT direto), re-marcar é no-op, vendedor não tira cliente confirmado
 # (RD007), a conversão não se desfaz (RD006); desfazer restaura só o DONO do status (autoria explícita + retrato), tira o

@@ -37,6 +37,11 @@ vi.mock('@/queries/useRadarPossiveisVinculos', () => ({
   ]),
 }));
 
+const plano = vi.fn();
+vi.mock('../RadarSucessaoPlano', () => ({
+  RadarSucessaoPlano: (p: { eventoId: string; aberto: boolean }) => { plano({ eventoId: p.eventoId, aberto: p.aberto }); return null; },
+}));
+
 import { RadarSucessaoLead } from '../RadarSucessaoLead';
 
 const declarada = (o: Partial<SucessaoDeclarada> = {}): SucessaoDeclarada => ({
@@ -73,6 +78,28 @@ describe('RadarSucessaoLead', () => {
     expect(screen.getByTestId('radar-sucessao').textContent).toContain('Vale a partir de 06/10/2026');
     expect(screen.getByText('Revogar')).toBeTruthy();
     expect(screen.queryByTestId('radar-vinculo-confirmar')).toBeNull();
+  });
+
+  it('o "Plano de rateio" (entrega 3) é do gestor, na declaração não revogada, e abre a tela do evento', () => {
+    leitura = { versao: 1, sucessoes: [declarada({ estado: 'ativa', impedimento: null }),
+      declarada({ id: 'id2', estado: 'revogada', revogadoEm: '2026-11-07T02:00:00Z' })] };
+    ficha();
+    const botoes = screen.getAllByTestId('radar-abrir-plano');
+    expect(botoes).toHaveLength(1);
+    fireEvent.click(botoes[0]);
+    expect(plano).toHaveBeenCalledWith({ eventoId: 'ev1', aberto: true });
+  });
+
+  it('vendedor e a lente "Ver como" não veem o "Plano de rateio"', () => {
+    leitura = { versao: 1, sucessoes: [declarada({ estado: 'ativa', impedimento: null })] };
+    auth = { role: 'employee', commercialRole: 'farmer' };
+    const { unmount } = ficha();
+    expect(screen.queryByTestId('radar-abrir-plano')).toBeNull();
+    unmount();
+    auth = { role: 'master', commercialRole: null };
+    lente = true;
+    ficha();
+    expect(screen.queryByTestId('radar-abrir-plano')).toBeNull();
   });
 
   it('na lente "Ver como" o master não declara, não confirma nem revoga', () => {
