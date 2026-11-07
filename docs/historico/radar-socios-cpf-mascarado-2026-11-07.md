@@ -88,5 +88,8 @@ forte e +2 pares de crédito.
   vermelha no assert dela, com controle verde, em `LC_ALL=C` e em `pt_BR.UTF-8`.
   - A 1ª rodada pegou um defeito do PRÓPRIO harness: o 2º apply (idempotência) abortava na PRE antes do assert, e
     foi preciso cegar a PRE.
+  - Tirar o lock do **receber** ficou VERDE, e é redundante: a FK de `radar_socios` para o lote já trava a linha
+    (`FOR KEY SHARE`) contra o `FOR UPDATE` da publicação. A sabotagem passou para a camada que serializa de fato, o
+    lock da **publicação**, e aí o P10 fica vermelho, porque a publicação lê o lote incompleto e reprova.
   - O fixture reaproveita o schema da prova do passo 2, lido de lá para não divergir.
   - Está registrada no `db/nucleo-ci.txt`.
