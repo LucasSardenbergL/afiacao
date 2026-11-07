@@ -24,9 +24,10 @@ import { registrarAberturaEmpurrada, registrarCardServido } from '@/queries/useR
 const LINK_MEUS_ATENDIMENTOS = '/radar?visao=meus';
 
 /**
- * O sensor do card (`registrarCardServido`, da sessão H) muda de "dispara e esquece" (void) para devolver se GRAVOU
- * (boolean ou `{ ok }`). Aceito os três: void = não sei (marca como antes, para não registrar em laço); false/`ok:
- * false`/rejeição = não gravou, libera nova tentativa na próxima leitura (pacote F, achado 9).
+ * O sensor do card (`registrarCardServido`, da sessão H) muda de "dispara e esquece" (void) para
+ * `Promise<ResultadoSensor>` = `{ ok: true; registrado } | { ok: false; motivo; transitorio }`. Aceito também o void de
+ * hoje (não sei → marca, para não registrar em laço) e boolean. `ok: false`/rejeição = não gravou: libera nova tentativa
+ * na próxima leitura (pacote F, achado 9).
  */
 async function sensorConfirmou(r: unknown): Promise<boolean> {
   try {
@@ -63,8 +64,9 @@ export function ProspectarHojeCard() {
     servido.current = 'enviando';
     track('radar.prospectar_hoje_visto', { leads: nLeads, elegiveis });
     void sensorConfirmou(registrarCardServido(nLeads)).then((ok) => {
+      // Falha já foi reportada pelo próprio hook (track 'radar.sensor_falhou' + ledger, contrato da sessão H): aqui só
+      // libera a nova tentativa na próxima leitura. `{ ok: true, registrado: false }` = já gravado hoje → conta como feito.
       servido.current = ok ? 'feito' : 'nao';
-      if (!ok) track('radar.prospectar_hoje_sensor_falhou', {});
     });
   }, [q.isSuccess, nLeads, elegiveis, isImpersonating]);
 

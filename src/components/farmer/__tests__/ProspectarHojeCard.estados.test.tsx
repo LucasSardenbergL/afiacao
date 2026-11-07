@@ -130,12 +130,12 @@ describe('ProspectarHojeCard', () => {
   });
 
   it('sensor que FALHOU não marca "registrado": a próxima leitura tenta de novo', async () => {
-    sensor.mockImplementation(() => Promise.resolve(false));
+    // Contrato da sessão H: falha = { ok: false, motivo, transitorio } (o hook já reportou; o card não reporta de novo).
+    sensor.mockImplementation(() => Promise.resolve({ ok: false, motivo: 'rede', transitorio: true }));
     const { qc } = renderCard();
     await screen.findByText('Marcenaria Um');
     await waitFor(() => expect(sensor).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(track).toHaveBeenCalledWith('radar.prospectar_hoje_sensor_falhou', {}));
-    sensor.mockImplementation(() => Promise.resolve({ ok: true }));
+    sensor.mockImplementation(() => Promise.resolve({ ok: true, registrado: false })); // já gravado hoje = feito
     respostas.radar_prospectar_hoje = { data: { territorio: TERRITORIO, leads: TRES.slice(0, 2) }, error: null };
     await qc.invalidateQueries({ queryKey: ['radar', 'prospectar-hoje'] });
     await waitFor(() => expect(sensor).toHaveBeenCalledTimes(2));
@@ -143,7 +143,7 @@ describe('ProspectarHojeCard', () => {
   });
 
   it('sensor confirmado (true) não registra de novo na releitura', async () => {
-    sensor.mockImplementation(() => Promise.resolve(true));
+    sensor.mockImplementation(() => Promise.resolve({ ok: true, registrado: true }));
     const { qc } = renderCard();
     await screen.findByText('Marcenaria Um');
     await waitFor(() => expect(sensor).toHaveBeenCalledTimes(1));
