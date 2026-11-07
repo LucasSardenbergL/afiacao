@@ -530,6 +530,10 @@ cenario() {
   chk H8 "controle da porta: com ela, a revisão SEGUINTE entra (a recusa do H5 é a sequência)" \
     "$(porta "INSERT INTO public.cliente_sucessao_plano_revisoes (evento_id, revisao, revoga, publicado_por) VALUES ('$E2', 2, false, '$GER')")" "OK"
 
+  echo "── 13. a query de validação do founder dá 12 ✅ contra a migration real ──"
+  chk M7 "db/validar-cliente-sucessao-plano.sql: ✅ / ❌" \
+    "$(P -v ON_ERROR_STOP=1 -tA -q -F'|' -f "$REPO_ROOT/db/validar-cliente-sucessao-plano.sql" 2>&1 | awk -F'|' '{print $2}' | sort | uniq -c | tr -s ' ' | sed 's/^ //' | tr '\n' ',')" \
+    "12 ✅,"
   echo "── 13. re-aplicar a migration (idempotente; a PRE aceita este corpo) ──"
   chk M4 "re-aplicar passa" "$(P --single-transaction -v ON_ERROR_STOP=1 -q -f "$MIG" > /dev/null 2>&1 && echo ok || echo falhou)" "ok"
 }
@@ -596,7 +600,7 @@ recompra_sem_rotulo:R1l,R1q2:R1m
 reprocesso_apaga_mostrada:R1p:R1p2
 reprocesso_apaga_desfecho:R1p2:R1p
 reprocesso_substituta_fora:R1q:R1s
-gerador_factual:G1:G4
+gerador_factual:G1,M7:G4
 publicar_sem_versao:V8:R1a
 familia_sem_filtro:R1a:V1
 familia_apos_corte:R1a:V1
