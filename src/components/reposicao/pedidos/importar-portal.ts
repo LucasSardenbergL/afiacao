@@ -66,7 +66,9 @@ export function linkDoPedido(pedidoId: number): string {
  * (ausente ≠ sucesso).
  */
 export function interpretarRespostaImportacao(data: unknown, protocolo: string): ResultadoTela {
-  const r = (data && typeof data === 'object' ? data : {}) as RespostaImportacao;
+  // 2xx sem corpo legível: a importação pode ter gravado — é "não sei", nunca "não importado" (Codex C1).
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return respostaIndeterminada(protocolo, 'resposta vazia ou ilegível');
+  const r = data as RespostaImportacao;
   const base = {
     pedidoId: Number.isInteger(r.pedido_id) ? (r.pedido_id as number) : null,
     omieNumero: r.omie_numero ?? null,
@@ -91,6 +93,15 @@ export function interpretarRespostaImportacao(data: unknown, protocolo: string):
       tom: 'aviso',
       titulo: `Pedido ${protocolo} gravado — falta o Omie`,
       mensagem: r.mensagem ?? 'O pedido de compra no Omie ainda não saiu. Importe de novo para re-disparar.',
+    };
+  }
+  // O pedido EXISTE no app (gravado agora ou antes) mas algo travou: nunca "não foi importado" (Codex C1).
+  if (base.pedidoId != null) {
+    return {
+      ...base,
+      tom: 'aviso',
+      titulo: `Pedido ${protocolo} está no app (#${base.pedidoId}) — falta resolver`,
+      mensagem: r.mensagem ?? `O pedido está gravado no app (#${base.pedidoId}) sem pedido de compra no Omie. Abra o pedido para ver o que falta.`,
     };
   }
   const titulo = r.etapa === 'leitura'
