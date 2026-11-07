@@ -200,4 +200,4 @@ db/test-watchdog-diario-so-problema.sh 9
 db/test-whatsapp-funil.sh 19
 db/test-whatsapp-hsm.sh 15
 db/test-whatsapp-proposta.sh 19
-db/test-radar-leads-vendedor.sh 140
+db/test-radar-leads-vendedor.sh 200

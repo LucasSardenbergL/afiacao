@@ -40,6 +40,9 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // Radar D2 (migration 20261106181000) — STABLE, só lê: os leads do card "Prospectar hoje" (o sensor do card é
   // outra RPC, radar_registrar_card_servido, que fica BLOQUEADA na lente de propósito).
   'radar_prospectar_hoje',
+  // Radar D1 (migration 20261107140001) — STABLE, só lê: o painel do e-mail semanal (só master). As escritas
+  // (radar_email_semanal_definir/_cron) ficam BLOQUEADAS na lente.
+  'radar_email_semanal_painel',
   // Cockpit financeiro (migration 20261101210000) — STABLE, SECURITY INVOKER, só agrega saldo de títulos sob a RLS.
   'fin_saldo_titulos_por_status',
   // Crédito (migration 20261106205557) — STABLE, só lê: o aviso de vínculo com cliente que tem título vencido.

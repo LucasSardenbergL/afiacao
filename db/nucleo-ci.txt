@@ -1007,4 +1007,4 @@ db/test-radar-socios-cpf.sh                32  falsificar=19
 # município, top-N 1 por raiz de CNPJ sem já-cliente/descartado/sem score/RFB baixada/dono ativo de outro, e-mail com dedupe por
 # semana e sem repetir lead (teste não queima), cron nascido desligado, RPCs do card e do sensor com SQLSTATE, tabelas
 # fechadas ao JWT e ACL nas duas pontas.
-db/test-radar-leads-vendedor.sh            39  falsificar=31
+db/test-radar-leads-vendedor.sh            62  falsificar=46

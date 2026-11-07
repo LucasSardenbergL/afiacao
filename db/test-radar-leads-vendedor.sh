@@ -9,6 +9,8 @@
 #     desvia e não conta; pulados com motivo no ledger; semana sem config ativa não suja o ledger.
 #   • public.radar_prospectar_hoje (card D2) e public.radar_registrar_abertura_empurrada (sensor): gates com SQLSTATE.
 #   • cron nasce DESLIGADO; re-aplicar não religa nem desliga; tabelas fechadas ao JWT; ACL nas duas pontas.
+#   • migration 20261107140001_radar_email_semanal_toggle (seção T): painel/definir/cron só para master (42501),
+#     modo desligado/teste/ligado, 'teste' vai para o e-mail do próprio master, desligar nunca é bloqueado, ledger.
 #
 #   bash db/test-radar-leads-vendedor.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   SABOTAGEM=<nome> bash db/test-radar-leads-vendedor.sh   # tem de ficar VERMELHA
@@ -17,11 +19,12 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261106181000_radar_leads_ao_vendedor.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20261107140001_radar_email_semanal_toggle.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!A3_FALHOU` = a postcondição da migration aborta o apply com a
   # marca exata (`_` vira espaço; grep -F). `_sem_post` cega a postcondição para provar que a suíte pega sozinha.
-  SABOTAGENS="sem_ja_cliente:A3 status_qualquer:A3 score_nulo:A3 rfb_baixada:A3 atendimento_ignorado:A3 atendimento_nao_expira:A3 dono_proprio_bloqueia:A3 dono_sem_acesso_bloqueia:A3 territorio_disputado:A2 carteira_inelegivel:A1 vendedor_sem_employee:A2 endereco_nao_default:A1 repete_lead:A13a teste_queima_lead:A13b sem_dedupe_semana:A12 teste_conta:A10b sem_ledger:A10d ledger_sujo:A9 gate_cap:A6b gestor_livre:A6c servido_duplica:A6f servido_sem_faixa:A6g link_sem_validar:A14d acl_aberta:POST!A3_FALHOU acl_aberta_sem_post:A16 tabela_aberta:POST!A2_FALHOU tabela_aberta_sem_post:A17 cron_ligado:A8a cron_religa:A18 sem_dedupe_raiz:A3 repete_filial:A13a"
+  SABOTAGENS="sem_ja_cliente:A3 status_qualquer:A3 score_nulo:A3 rfb_baixada:A3 atendimento_ignorado:A3 atendimento_nao_expira:A3 dono_proprio_bloqueia:A3 dono_sem_acesso_bloqueia:A3 territorio_disputado:A2 carteira_inelegivel:A1 vendedor_sem_employee:A2 endereco_nao_default:A1 repete_lead:A13a teste_queima_lead:A13b sem_dedupe_semana:A12 teste_conta:A10b sem_ledger:A10d ledger_sujo:A9 gate_cap:A6b gestor_livre:A6c servido_duplica:A6f servido_sem_faixa:A6g link_sem_validar:A14d acl_aberta:POST!A3_FALHOU acl_aberta_sem_post:A16 tabela_aberta:POST!A2_FALHOU tabela_aberta_sem_post:A17 cron_ligado:A8a cron_religa:A18 sem_dedupe_raiz:A3 repete_filial:A13a tg_gate_painel:T1b tg_gate_definir:T3a tg_gate_cron:T4a tg_desligar_bloqueado:T3d tg_liga_cliente:T3c tg_teste_nao_limpa:T3g tg_sem_atualizado_por:T3f tg_sem_registro:T3h tg_cron_nao_altera:T4b tg_painel_volatil:POST!T3_FALHOU tg_painel_volatil_sem_post:T2c tg_acl_aberta:POST!T2_FALHOU tg_acl_aberta_sem_post:T3a0 tg_painel_sem_config:T2a tg_modo_teste:T2a"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-leads-vendedor.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -64,7 +67,9 @@ MIG_USADA="$(dirname "$DATA")/mig.sql"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 
+MIG2_USADA="$(dirname "$DATA")/mig2.sql"
 cp "$MIG" "$MIG_USADA"
+cp "$MIG2" "$MIG2_USADA"
 sabotar() { # $1 = de, $2 = para (literal; substitui TODAS as ocorrências)
   python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
 import sys
@@ -75,6 +80,24 @@ if de not in s:
 open(p, "w", encoding="utf-8").write(s.replace(de, para))
 PY
 }
+sabotar2() { # idem, na migration do toggle (seção T)
+  python3 -I - "$MIG2_USADA" "$1" "$2" <<'PY'
+import sys
+p, de, para = sys.argv[1:]
+s = open(p, encoding="utf-8").read()
+if de not in s:
+    sys.exit("padrao ausente: " + de)
+open(p, "w", encoding="utf-8").write(s.replace(de, para))
+PY
+}
+cegar_post2() { sabotar2 "DECLARE
+  f text;
+BEGIN
+" "DECLARE
+  f text;
+BEGIN
+  RETURN;
+"; }
 cegar_post() { sabotar "  t text;
   f text;
 BEGIN
@@ -129,6 +152,59 @@ case "${SABOTAGEM:-}" in
   cron_religa)           sabotar "  IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'radar-avisar-vendedores-semanal') THEN" "  IF true THEN" ;;
   sem_dedupe_raiz)       sabotar "    SELECT DISTINCT ON (u.raiz) u.*" "    SELECT u.*" ;;
   repete_filial)         sabotar "WHERE left(l.cnpj, 8) = left(re.cnpj, 8)" "WHERE l.cnpj = re.cnpj" ;;
+  tg_gate_painel)        sabotar2 "  v_usuarios jsonb;
+BEGIN
+  IF v_uid IS NULL OR NOT COALESCE(public.has_role(v_uid, 'master'::public.app_role), false) THEN" "  v_usuarios jsonb;
+BEGIN
+  IF false THEN" ;;
+  tg_gate_definir)       sabotar2 "  v_email text;
+  v_nome  text;
+BEGIN
+  IF v_uid IS NULL OR NOT COALESCE(public.has_role(v_uid, 'master'::public.app_role), false) THEN" "  v_email text;
+  v_nome  text;
+BEGIN
+  IF false THEN" ;;
+  tg_gate_cron)          sabotar2 "  v_ativo boolean;
+  v_nome  text;
+BEGIN
+  IF v_uid IS NULL OR NOT COALESCE(public.has_role(v_uid, 'master'::public.app_role), false) THEN" "  v_ativo boolean;
+  v_nome  text;
+BEGIN
+  IF false THEN" ;;
+  tg_desligar_bloqueado) sabotar2 "  IF p_modo <> 'desligado' AND NOT EXISTS (" "  IF NOT EXISTS (" ;;
+  tg_liga_cliente)       sabotar2 "  IF p_modo <> 'desligado' AND NOT EXISTS (" "  IF false AND NOT EXISTS (" ;;
+  tg_teste_nao_limpa)    sabotar2 "    SET ativo = EXCLUDED.ativo, email_teste = EXCLUDED.email_teste," "    SET ativo = EXCLUDED.ativo," ;;
+  tg_sem_atualizado_por) sabotar2 "        atualizado_em = EXCLUDED.atualizado_em, atualizado_por = EXCLUDED.atualizado_por;" "        atualizado_em = EXCLUDED.atualizado_em;" ;;
+  tg_sem_registro)       sabotar2 "  VALUES ('radar.email_semanal_definir', 'manual'," "  VALUES ('radar.outra_acao', 'manual'," ;;
+  tg_cron_nao_altera)    sabotar2 "  PERFORM cron.alter_job(job_id := v_job, active := p_ativo);" "" ;;
+  tg_painel_volatil)     sabotar2 "STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS \$fn\$
+DECLARE
+  v_uid      uuid" "VOLATILE
+SECURITY DEFINER
+SET search_path = ''
+AS \$fn\$
+DECLARE
+  v_uid      uuid" ;;
+  tg_painel_volatil_sem_post) sabotar2 "STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS \$fn\$
+DECLARE
+  v_uid      uuid" "VOLATILE
+SECURITY DEFINER
+SET search_path = ''
+AS \$fn\$
+DECLARE
+  v_uid      uuid"; cegar_post2 ;;
+  tg_acl_aberta)         sabotar2 "REVOKE ALL ON FUNCTION public.radar_email_semanal_definir(uuid, text) FROM PUBLIC, anon;" "REVOKE ALL ON FUNCTION public.radar_email_semanal_definir(uuid, text) FROM PUBLIC;" ;;
+  tg_acl_aberta_sem_post) sabotar2 "REVOKE ALL ON FUNCTION public.radar_email_semanal_definir(uuid, text) FROM PUBLIC, anon;" "REVOKE ALL ON FUNCTION public.radar_email_semanal_definir(uuid, text) FROM PUBLIC;"; cegar_post2 ;;
+  tg_painel_sem_config)  sabotar2 "    UNION
+    SELECT c.vendedor_user_id FROM public.radar_email_vendedor_config c
+" "" ;;
+  tg_modo_teste)         sabotar2 "                WHEN c.email_teste IS NOT NULL THEN 'teste'" "                WHEN false THEN 'teste'" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
@@ -325,6 +401,9 @@ APPLY_LOG="$(dirname "$DATA")/apply.log"
 if ! P -q -f "$MIG_USADA" > "$APPLY_LOG" 2>&1; then
   cat "$APPLY_LOG"; echo "APLICAÇÃO DA MIGRATION FALHOU"; exit 1
 fi
+if ! P -q -f "$MIG2_USADA" >> "$APPLY_LOG" 2>&1; then
+  cat "$APPLY_LOG"; echo "APLICAÇÃO DA MIGRATION DO TOGGLE FALHOU"; exit 1
+fi
 
 PASS=0; FAIL=0
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
@@ -475,6 +554,80 @@ P -q -c "DELETE FROM public.user_roles WHERE user_id = '$V1'" >/dev/null
 eq "A19 vendedor que perdeu o acesso é pulado com o motivo (não recebe lead)" \
    "$(Pq -c "SELECT public.radar_avisar_vendedores('2026-11-23 11:00+00')->'pulados'" | grep -o 'sem_acesso_ao_radar' | wc -l | tr -d ' ')" \
    "1"
+
+
+# ── T: toggle do e-mail semanal pela tela (migration 20261107140001) ──────────────────────────────────────────
+# Estado herdado: config V1 ligado (mas V1 perdeu o papel no A19) · V2 teste · V3 ligado · G desligado; M sem config
+# e SEM perfil; cron ligado (A18).
+prefixo "T1a anon não executa o painel (ACL)" \
+   "$(erro_como anon '' "SELECT public.radar_email_semanal_painel()")" "42501 permission denied for function radar_email_semanal_painel"
+prefixo "T1b gestor (employee gerencial) não abre o painel: só master" \
+   "$(erro_como authenticated "$G" "SELECT public.radar_email_semanal_painel()")" "42501 forbidden: so master"
+prefixo "T1c vendedor não abre o painel" \
+   "$(erro_como authenticated "$V2" "SELECT public.radar_email_semanal_painel()")" "42501 forbidden: so master"
+eq "T2a painel: cron e usuários (equipe + quem tem config, ligados primeiro), com modo e acesso ao Radar" \
+   "$(como authenticated "$M" "SELECT (x->'cron'->>'ativo')||'|'||(x->'cron'->>'agenda')||'|'||(SELECT string_agg(right(u->>'user_id',1)||':'||(u->>'modo')||':'||(u->>'acesso_radar'), ',' ORDER BY o) FROM jsonb_array_elements(x->'usuarios') WITH ORDINALITY t(u, o)) FROM public.radar_email_semanal_painel() x" | tail -1)" \
+   "true|0 11 * * 1|1:ligado:false,3:ligado:true,2:teste:true,8:desligado:true,9:desligado:true"
+eq "T2b painel de V2: território (os 3 municípios do e-mail; Divinópolis passou a V2 quando V1 perdeu o papel) e o último envio (teste da semana 23/11, ainda pendente)" \
+   "$(como authenticated "$M" "SELECT (SELECT string_agg(left(t->>'municipio',3)||':'||(t->>'clientes'), ',' ORDER BY o) FROM jsonb_array_elements(u->'territorio') WITH ORDINALITY z(t, o))||'|'||(u->'ultimo_envio'->>'semana')||':'||(u->'ultimo_envio'->>'eh_teste')||':'||(u->'ultimo_envio'->>'status')||':'||(u->>'email_teste') FROM jsonb_array_elements((SELECT public.radar_email_semanal_painel())->'usuarios') u WHERE u->>'user_id' = '$V2'" | tail -1)" \
+   "CAR:3,DIV:2,ITA:2|2026-11-23:true:pendente_notificacao:founder@exemplo.com"
+ANTES_T2C="$(Pq -c "SELECT count(*) FROM public.acoes_execucoes")"
+como authenticated "$M" "SELECT public.radar_email_semanal_painel()" >/dev/null
+eq "T2c painel é leitura PURA (STABLE, não grava ledger): cabe na allowlist da lente" \
+   "$(Pq -c "SELECT provolatile FROM pg_proc WHERE oid = 'public.radar_email_semanal_painel()'::regprocedure")|$(Pq -c "SELECT count(*) FROM public.acoes_execucoes")" \
+   "s|$ANTES_T2C"
+
+prefixo "T3a0 anon não executa o definir (ACL)" \
+   "$(erro_como anon '' "SELECT public.radar_email_semanal_definir('$V2', 'ligado')")" "42501 permission denied for function radar_email_semanal_definir"
+prefixo "T3a gestor não liga e-mail de ninguém: só master" \
+   "$(erro_como authenticated "$G" "SELECT public.radar_email_semanal_definir('$V2', 'ligado')")" "42501 forbidden: so master"
+prefixo "T3b modo fora da lista: 22023" \
+   "$(erro_como authenticated "$M" "SELECT public.radar_email_semanal_definir('$V2', 'sempre')")" "22023 modo invalido"
+prefixo "T3c ligar para quem não é da equipe (customer): 22023" \
+   "$(erro_como authenticated "$M" "SELECT public.radar_email_semanal_definir('$C', 'ligado')")" "22023 usuario nao e da equipe"
+eq "T3d desligar quem saiu da equipe (V1) é permitido e desliga" \
+   "$(como authenticated "$M" "SELECT (public.radar_email_semanal_definir('$V1', 'desligado'))->>'modo'" | tail -1)|$(Pq -c "SELECT ativo||':'||COALESCE(email_teste, '-') FROM public.radar_email_vendedor_config WHERE vendedor_user_id = '$V1'")" \
+   "desligado|false:-"
+prefixo "T3e modo teste com o master sem e-mail no perfil: 22023 (o teste nunca vai para endereço livre)" \
+   "$(erro_como authenticated "$M" "SELECT public.radar_email_semanal_definir('$V3', 'teste')")" "22023 seu perfil nao tem e-mail valido"
+P -q -c "INSERT INTO public.profiles (user_id, name, email) VALUES ('$M', 'Founder', ' founder@exemplo.com ')" >/dev/null
+eq "T3f modo teste: e-mail do PRÓPRIO master (aparado), com quem mudou" \
+   "$(como authenticated "$M" "SELECT (public.radar_email_semanal_definir('$V3', 'teste'))->>'email_teste'" | tail -1)|$(Pq -c "SELECT ativo||':'||COALESCE(email_teste, '-')||':'||COALESCE(right(atualizado_por::text, 1), '-') FROM public.radar_email_vendedor_config WHERE vendedor_user_id = '$V3'")" \
+   "founder@exemplo.com|true:founder@exemplo.com:9"
+eq "T3g teste → ligado limpa o destinatário de teste (passa a ir para a pessoa)" \
+   "$(como authenticated "$M" "SELECT (public.radar_email_semanal_definir('$V2', 'ligado'))->>'modo'" | tail -1)|$(Pq -c "SELECT ativo||':'||COALESCE(email_teste, '-') FROM public.radar_email_vendedor_config WHERE vendedor_user_id = '$V2'")" \
+   "ligado|true:-"
+eq "T3h cada mudança deixa 1 linha no ledger (as recusadas não)" \
+   "$(Pq -c "SELECT count(*)||':'||string_agg(detalhes->>'modo', ',' ORDER BY iniciado_em, detalhes->>'modo')||':'||count(*) FILTER (WHERE executado_por = '$M' AND status = 'sucesso') FROM public.acoes_execucoes WHERE acao = 'radar.email_semanal_definir'")" \
+   "3:desligado,teste,ligado:3"
+
+prefixo "T4a gestor não liga o cron: só master" \
+   "$(erro_como authenticated "$G" "SELECT public.radar_email_semanal_cron(true)")" "42501 forbidden: so master"
+eq "T4b master desliga o cron: o job muda de verdade e o ledger registra" \
+   "$(como authenticated "$M" "SELECT public.radar_email_semanal_cron(false)" | tail -1)|$(Pq -c "SELECT active FROM cron.job WHERE jobname = 'radar-avisar-vendedores-semanal'")|$(Pq -c "SELECT count(*) FROM public.acoes_execucoes WHERE acao = 'radar.email_semanal_cron' AND detalhes->>'ativo' = 'false'")" \
+   '{"ok": true, "ativo": false}|f|1'
+prefixo "T4c cron sem valor: 22023" \
+   "$(erro_como authenticated "$M" "SELECT public.radar_email_semanal_cron(NULL)")" "22023 p_ativo obrigatorio"
+eq "T4d master religa o cron" \
+   "$(como authenticated "$M" "SELECT public.radar_email_semanal_cron(true)->>'ativo'" | tail -1)|$(Pq -c "SELECT active FROM cron.job WHERE jobname = 'radar-avisar-vendedores-semanal'")" \
+   "true|t"
+
+Pq -c "SELECT public.radar_avisar_vendedores('2026-11-30 11:00+00')" >/dev/null
+eq "T5 a tela governa o envio: V2 ligado recebe de verdade, V3 (teste, sem carteira) fica sem território, V1 desligado nem é tentado" \
+   "$(Pq -c "SELECT string_agg(right(vendedor_user_id::text,1)||':'||destinatario_email||':'||eh_teste, ',' ORDER BY vendedor_user_id) FROM public.radar_email_vendedor_envios WHERE semana = '2026-11-30'")|$(Pq -c "SELECT count(*) FROM public.acoes_execucoes WHERE acao = 'radar.avisar_vendedores' AND detalhes::text LIKE '%$V1%' AND iniciado_em = (SELECT max(iniciado_em) FROM public.acoes_execucoes WHERE acao = 'radar.avisar_vendedores')")" \
+   "2:taty@exemplo.com:false|0"
+
+if ! P -q -f "$MIG2_USADA" >> "$APPLY_LOG" 2>&1; then tail -5 "$APPLY_LOG"; echo "RE-APLICAÇÃO DO TOGGLE FALHOU"; fi
+eq "T6 re-aplicar a migration do toggle não mexe na config nem no cron" \
+   "$(Pq -c "SELECT string_agg(right(vendedor_user_id::text,1)||':'||ativo||':'||COALESCE(email_teste, '-'), ',' ORDER BY vendedor_user_id) FROM public.radar_email_vendedor_config")|$(Pq -c "SELECT active FROM cron.job WHERE jobname = 'radar-avisar-vendedores-semanal'")" \
+   "1:false:-,2:true:-,3:true:founder@exemplo.com,8:false:-|t"
+
+P -q -c "DELETE FROM cron.job WHERE jobname = 'radar-avisar-vendedores-semanal'" >/dev/null
+prefixo "T7a cron ausente: ligar responde P0002, nunca 'ok'" \
+   "$(erro_como authenticated "$M" "SELECT public.radar_email_semanal_cron(true)")" "P0002 cron radar-avisar-vendedores-semanal nao existe"
+eq "T7b painel com cron ausente: cron = null (a tela diz 'não encontrado', não 'desligado')" \
+   "$(como authenticated "$M" "SELECT COALESCE(jsonb_typeof(x->'cron'), 'AUSENTE') FROM public.radar_email_semanal_painel() x" | tail -1)" \
+   "null"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

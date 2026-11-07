@@ -12644,18 +12644,21 @@ export type Database = {
         Row: {
           ativo: boolean
           atualizado_em: string
+          atualizado_por: string | null
           email_teste: string | null
           vendedor_user_id: string
         }
         Insert: {
           ativo?: boolean
           atualizado_em?: string
+          atualizado_por?: string | null
           email_teste?: string | null
           vendedor_user_id: string
         }
         Update: {
           ativo?: boolean
           atualizado_em?: string
+          atualizado_por?: string | null
           email_teste?: string | null
           vendedor_user_id?: string
         }
@@ -24854,6 +24857,12 @@ export type Database = {
           nome: string
         }[]
       }
+      radar_email_semanal_cron: { Args: { p_ativo: boolean }; Returns: Json }
+      radar_email_semanal_definir: {
+        Args: { p_modo: string; p_usuario: string }
+        Returns: Json
+      }
+      radar_email_semanal_painel: { Args: never; Returns: Json }
       radar_estado_cadastro_omie: { Args: { p_cnpj: string }; Returns: Json }
       radar_irmaos_por_raiz: {
         Args: { p_cnpjs: string[] }
