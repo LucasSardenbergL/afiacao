@@ -97,15 +97,33 @@ export interface PedidoListado {
   emissao: string | null; // ISO
 }
 
-/** Linhas da datatable → pedidos (coluna "Pedido" EXATA; "Pedido Clien[te]" é o nº digitado pelo cliente). */
-export function lerListaConsulta(linhas: LinhaConsultaRaw[]): { pedidos: PedidoListado[]; ilegiveis: number; repetidos: string[] } {
+/** Código de situação RECONHECIDO no texto "<código> - <nome>" do portal (select real: 1..7). Outro ⇒ null. */
+export function codigoSituacao(situacao: string): string | null {
+  const m = situacao.match(/^\s*([1-7])\s*-/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Linhas da datatable → pedidos (coluna "Pedido" EXATA; "Pedido Clien[te]" é o nº digitado pelo cliente).
+ *
+ * Ilegível (revisão 2, B1): nº de pedido ilegível, OU nº legível com situação sem código reconhecido (1..7), OU data
+ * de emissão ilegível. Sem isso, "situação vazia" virava `situacao_nao_importavel` e "emissão ??" virava
+ * `fora_da_janela` — o pedido sumia dos candidatos com a leitura "provada". O pedido de nº legível segue na lista
+ * (o relatório e a reconciliação o veem; sem código ele nunca é candidato nem bloqueia/libera), mas a prova reprova.
+ */
+export function lerListaConsulta(linhas: LinhaConsultaRaw[]): {
+  pedidos: PedidoListado[];
+  ilegiveis: number;
+  repetidos: string[];
+  ilegiveis_detalhe: { protocolo: string | null; campo: "pedido" | "situacao" | "emissao" }[];
+} {
   const vistos = new Map<string, PedidoListado>();
   const repetidos = new Set<string>();
-  let ilegiveis = 0;
+  const ilegiveisDetalhe: { protocolo: string | null; campo: "pedido" | "situacao" | "emissao" }[] = [];
   for (const l of linhas) {
     const protocolo = (coluna(l, "Pedido", true) ?? "").trim();
     if (!PROTOCOLO_RE.test(protocolo)) {
-      ilegiveis++;
+      ilegiveisDetalhe.push({ protocolo: null, campo: "pedido" });
       continue;
     }
     if (vistos.has(protocolo)) {
@@ -113,17 +131,17 @@ export function lerListaConsulta(linhas: LinhaConsultaRaw[]): { pedidos: PedidoL
       continue;
     }
     const situacao = (coluna(l, "Situa") ?? "").trim();
-    const m = situacao.match(/^\s*(\d+)\s*-/);
-    vistos.set(protocolo, {
-      protocolo,
-      situacao,
-      situacao_codigo: m ? m[1] : null,
-      emissao: dataBRparaISO(coluna(l, "Data Emiss")),
-    });
+    const codigo = codigoSituacao(situacao);
+    const emissao = dataBRparaISO(coluna(l, "Data Emiss"));
+    if (!codigo) ilegiveisDetalhe.push({ protocolo, campo: "situacao" });
+    if (!emissao) ilegiveisDetalhe.push({ protocolo, campo: "emissao" });
+    vistos.set(protocolo, { protocolo, situacao, situacao_codigo: codigo, emissao });
   }
   // Nº repetido na lista (proposta + pedido, ou paginação que repetiu) = ambíguo: fica de fora.
   for (const r of repetidos) vistos.delete(r);
-  return { pedidos: [...vistos.values()], ilegiveis, repetidos: [...repetidos] };
+  // Conta LINHAS ilegíveis (uma linha com situação e emissão ilegíveis conta 1).
+  const linhasIlegiveis = new Set(ilegiveisDetalhe.map((d, i) => d.protocolo ?? `#${i}`)).size;
+  return { pedidos: [...vistos.values()], ilegiveis: linhasIlegiveis, repetidos: [...repetidos], ilegiveis_detalhe: ilegiveisDetalhe };
 }
 
 type Classe =
@@ -215,7 +233,11 @@ export function contratosDoTexto(v: unknown): string[] {
 /** Resultado da edge de importar → falha a notificar? (ok=true com PO criado é sucesso; o resto é falha.) */
 export function resumoImportacao(httpStatus: number, corpo: unknown): { ok: boolean; mensagem: string } {
   const b = corpo && typeof corpo === "object" ? (corpo as { ok?: unknown; mensagem?: unknown }) : null;
-  const mensagem = typeof b?.mensagem === "string" ? b.mensagem : `resposta HTTP ${httpStatus} sem mensagem`;
+  const base = typeof b?.mensagem === "string" ? b.mensagem : `resposta HTTP ${httpStatus} sem mensagem`;
+  // B3: a importadora leu a situação e NÃO conseguiu gravá-la (2 tentativas) — se for um 6, a compra segue liberada
+  // pelo estado antigo. O aviso vai junto da mensagem (e-mail da pendência), não some no log da outra edge.
+  const naoGravada = (corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada === "erro";
+  const mensagem = naoGravada ? `${base} ATENÇÃO: a situação lida no portal NÃO foi gravada no pedido do app.` : base;
   return { ok: httpStatus >= 200 && httpStatus < 300 && b?.ok === true, mensagem };
 }
 
@@ -510,4 +532,43 @@ export function observacoesDaLista(
     .filter((p) => protocolosNoApp.has(p.protocolo) && /^[1-7]$/.test(p.situacao_codigo ?? ""))
     .filter((p) => !opcoes.soCancelados || p.situacao_codigo === "6")
     .map((p) => ({ protocolo: p.protocolo, codigo: p.situacao_codigo as string, texto: p.situacao.slice(0, 200) }));
+}
+
+// ── Revisão 2 (2026-11-08): brechas B5–B7 ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Desfecho de uma chamada à importadora (B6/B7). Só é RESPOSTA da importadora o objeto com `ok` booleano e `mensagem`
+ * texto (o contrato dela). Rede/prazo (HTTP 0), corpo que não é objeto, `{}` ou `{"msg": …}` do gateway são
+ * INDETERMINADOS: o pedido pode ter sido gravado e o PO criado depois — nunca "falhou", nunca "não entrou".
+ */
+export function desfechoImportacao(httpStatus: number, corpo: unknown): "ok" | "falha" | "indeterminado" {
+  if (httpStatus === 0 || !corpo || typeof corpo !== "object" || Array.isArray(corpo)) return "indeterminado";
+  const b = corpo as { ok?: unknown; mensagem?: unknown };
+  if (typeof b.ok !== "boolean" || typeof b.mensagem !== "string") return "indeterminado";
+  return resumoImportacao(httpStatus, corpo).ok ? "ok" : "falha";
+}
+
+/**
+ * Carência do RE-DISPARO de pedido do app sem PO (B5): o disparo falhou (ou nunca rodou) e alguém pode ter lançado o
+ * PO à mão no Omie depois — o espelho só o vê no próximo sync. Re-dispara só se o sync de pedidos de compra terminou
+ * `complete` depois da última mudança do pedido (+ a mesma folga da carência de importação). Sem marcador ⇒ espera;
+ * esperando há mais de 6 h ⇒ `travado` (vira pendência visível, como a 3.9).
+ */
+export function carenciaRedisparo(
+  ultimaMudancaISO: string | null,
+  syncCompletoEm: string | null,
+  agoraMs: number,
+): "pode" | "aguarda_sync" | "aguarda_sync_travado" {
+  const mudanca = ultimaMudancaISO ? Date.parse(ultimaMudancaISO) : NaN;
+  const fimSync = syncCompletoEm ? Date.parse(syncCompletoEm) : NaN;
+  if (Number.isFinite(mudanca) && Number.isFinite(fimSync) && fimSync > mudanca + FOLGA_SYNC_MS) return "pode";
+  // Sem a data da mudança não há como medir a espera: trava visível já (fail-closed e visível).
+  if (!Number.isFinite(mudanca)) return "aguarda_sync_travado";
+  return agoraMs - mudanca > CARENCIA_SYNC_MAX_MS ? "aguarda_sync_travado" : "aguarda_sync";
+}
+
+/** A mais recente de duas datas ISO (nula some); as duas nulas ⇒ null. */
+export function maisRecente(a: string | null | undefined, b: string | null | undefined): string | null {
+  const ms = [a, b].map((x) => (x ? Date.parse(x) : NaN)).filter((n) => Number.isFinite(n));
+  return ms.length === 0 ? null : new Date(Math.max(...ms)).toISOString();
 }

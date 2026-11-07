@@ -41,6 +41,7 @@ export type MotivoLeitura =
   | "consulta_ambigua"
   | "consulta_incompleta"
   | "pedido_cancelado"
+  | "situacao_ilegivel"
   | "itens_ausentes"
   | "item_malformado"
   | "item_incoerente"
@@ -118,6 +119,12 @@ export function lerCabecalho(linhas: LinhaConsultaRaw[], protocolo: string): { o
   if (situacaoCancelada(situacao)) {
     return { ok: false, motivo: "pedido_cancelado", detalhe: `O pedido ${protocolo} está cancelado no portal ("${situacao}") — pedido cancelado não vira pedido de compra no Omie.` };
   }
+  // Situação RECONHECIDA (revisão 2, B1): o portal mostra "<código> - <nome>" com código 1..7 (select real). Texto
+  // sem código — vazio, "???", renomeado — não prova que o pedido segue valendo: nem o botão (que aceita qualquer
+  // situação, decisão do founder) importa ou re-dispara com situação ilegível.
+  if (!/^\s*[1-7]\s*-/.test(situacao)) {
+    return { ok: false, motivo: "situacao_ilegivel", detalhe: `A situação do pedido ${protocolo} no portal ("${situacao.slice(0, 60)}") não tem código reconhecido (1 a 7) — não sei se ele segue valendo. Nada foi gravado.` };
+  }
   return {
     ok: true,
     cab: { protocolo, cliente, situacao, data_entrega: dataEntrega as string, valor_mercadoria: vlrMerc as number, valor_total: vlrTotal as number },
@@ -147,6 +154,15 @@ export function situacaoObservada(linhas: LinhaConsultaRaw[], protocolo: string)
  */
 export function situacaoCancelada(situacao: string): boolean {
   return /^\s*6\s*-/.test(situacao) || norm(situacao).includes("cancelad");
+}
+
+/**
+ * "3 - Atendido Total" / "7 - Fatur Balcão": a Sayerlack já faturou o pedido inteiro (revisão 2, B2). Re-disparar o PO
+ * de um pedido do app nessa situação arrisca o 2º PO por cima da NF já lançada — o botão recusa o RE-DISPARO (a
+ * importação NOVA segue aceitando qualquer situação, decisão do founder).
+ */
+export function situacaoFaturada(situacao: string): boolean {
+  return /^\s*[37]\s*-/.test(situacao);
 }
 
 /**

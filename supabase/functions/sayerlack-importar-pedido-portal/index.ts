@@ -18,7 +18,7 @@ import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
 import { ABRIR_CONSULTA_PEDIDOS } from "../_shared/sayerlack-portal-navegador.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
-import { lerPedidoPortal, mensagemErroImportacao, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
+import { lerPedidoPortal, mensagemErroImportacao, situacaoFaturada, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -268,11 +268,19 @@ interface PedidoEstado {
 }
 
 /**
- * Grava a situação lida pelo escritor único. NUNCA lança: não gravar só pode deixar uma observação velha valendo — um
- * 6 velho segue bloqueando (falha fechada) e um 1 velho é o mesmo estado de antes desta leitura. O desfecho vai na
- * resposta (`situacao_gravada`) e no log — não some.
+ * Grava a situação lida pelo escritor único, com 1 nova tentativa se a 1ª der erro (revisão 2, B3: um 6 lido e não
+ * gravado deixa a compra liberada pelo estado antigo até outra leitura). NUNCA lança: o desfecho vai na resposta
+ * (`situacao_gravada`), no ledger (`detalhes.situacao_gravada`) e no log; a varredura trata `erro` com código 6 como
+ * falha da rodada com aviso.
  */
 async function gravarSituacaoObservada(
+  db: ReturnType<typeof criarCliente>, linhas: LinhaConsultaRaw[], protocolo: string, lidoDe: string, lidoAte: string,
+): Promise<"aceita" | "nao_aceita" | "ilegivel" | "erro"> {
+  const r = await gravarSituacaoUmaVez(db, linhas, protocolo, lidoDe, lidoAte);
+  return r === "erro" ? await gravarSituacaoUmaVez(db, linhas, protocolo, lidoDe, lidoAte) : r;
+}
+
+async function gravarSituacaoUmaVez(
   db: ReturnType<typeof criarCliente>, linhas: LinhaConsultaRaw[], protocolo: string, lidoDe: string, lidoAte: string,
 ): Promise<"aceita" | "nao_aceita" | "ilegivel" | "erro"> {
   const obs = situacaoObservada(linhas, protocolo);
@@ -414,6 +422,11 @@ async function tratar(
   };
 
   let pedidoGravado: number | null = null;
+  /**
+   * Pedido do app JÁ ACHADO por protocolo (revisão 2, B7): guardado no instante em que é achado, para que uma falha
+   * depois (espelho de POs, Browserless, leitura) nunca responda sem o #id — a tela diria "não foi importado".
+   */
+  let pedidoConhecido: { id: number; status: string | null } | null = null;
   /** Pedido já gravado sem PO que pode ser re-disparado — SÓ depois de reler a situação no portal (item 2.1). */
   let redisparar: PedidoEstado | null = null;
   try {
@@ -421,6 +434,7 @@ async function tratar(
     //    (cancelado no portal não pode virar PO; Codex A1/D1, 2026-11-06).
     const existente = await estado({ protocolo });
     if (existente) {
+      pedidoConhecido = { id: existente.id, status: existente.status };
       if (temPo(existente)) {
         await resolverPendenciaVarredura(protocolo);
         return json({
@@ -540,9 +554,20 @@ async function tratar(
     if (situacoesPermitidas && !situacaoPermitida(lido.cabecalho.situacao, situacoesPermitidas)) {
       return json({
         ok: false, etapa: "leitura", protocolo, motivo: "situacao_nao_permitida", situacao_portal: lido.cabecalho.situacao, ...doExistente,
+        situacao_gravada: situacaoGravada,
         mensagem: redisparar
           ? naoRedisparei(`No portal ele está "${lido.cabecalho.situacao}", fora das situações que a varredura re-dispara sozinha.`)
           : `O pedido ${protocolo} está "${lido.cabecalho.situacao}" no portal — fora das situações que a varredura importa.`,
+      });
+    }
+
+    // 2a. Re-disparo de pedido FATURADO no portal (3 Atendido Total / 7 Fatur Balcão; revisão 2, B2): a NF pode já
+    //     estar no Omie — re-disparar arrisca o 2º PO. A importação NOVA segue aceitando (decisão do founder).
+    if (redisparar && situacaoFaturada(lido.cabecalho.situacao)) {
+      return json({
+        ok: false, etapa: "leitura", protocolo, motivo: "faturado_no_portal", situacao_portal: lido.cabecalho.situacao,
+        ...doExistente, situacao_gravada: situacaoGravada,
+        mensagem: naoRedisparei(`No portal ele está "${lido.cabecalho.situacao}": faturado no portal — confira a NF no Omie antes de qualquer pedido de compra.`),
       });
     }
 
@@ -574,11 +599,27 @@ async function tratar(
     });
     const itensResumo = lido.itens.map((i) => ({ sku_portal: i.sku_portal, descricao: i.descricao, qtde_portal: i.qtde_portal, valor_mercadoria: i.valor_mercadoria }));
     if (rpcErr) {
+      // Erro SEM sqlstate da casa (rede, gateway): a RPC pode ter COMMITADO antes de a resposta se perder (B7). Relê
+      // pelo protocolo — achou ⇒ o pedido existe e a resposta carrega o #id; não dispara daqui (importe de novo).
+      if (!/^(IP|CP)\d{3}$/.test(rpcErr.code ?? "") && rpcErr.code !== "42501") {
+        const talvez = await estado({ protocolo }).catch(() => null);
+        if (talvez) {
+          pedidoConhecido = { id: talvez.id, status: talvez.status };
+          return json({
+            ok: false, etapa: "importacao", protocolo, ja_existia: false, pedido_id: talvez.id, status: talvez.status,
+            sqlstate: rpcErr.code ?? null,
+            mensagem: `A gravação do pedido ${protocolo} respondeu com erro (${rpcErr.message}), mas o pedido está no app ` +
+              `(#${talvez.id}). Não disparei o pedido de compra daqui: importe de novo daqui a 1 minuto — não duplica. Não lance à mão no Omie.`,
+          });
+        }
+      }
       return json({
         ok: false, etapa: "importacao", protocolo, sqlstate: rpcErr.code ?? null,
         mensagem: mensagemErroImportacao(rpcErr.code, rpcErr.message),
         condicao_portal: envelope.condicao ?? null,
-        condicoes_opcoes_portal: rpcErr.code === "IP007" && Array.isArray(envelope.condicoes_opcoes) ? envelope.condicoes_opcoes : null,
+        // Sempre (B11): a lista real de opções é o insumo do de-para e vai ao ledger em toda tentativa, não só no IP007.
+        condicoes_opcoes_portal: Array.isArray(envelope.condicoes_opcoes) ? envelope.condicoes_opcoes : null,
+        situacao_gravada: situacaoGravada,
         situacao_portal: lido.cabecalho.situacao, valor_total_portal: lido.cabecalho.valor_total, itens: itensResumo,
       });
     }
@@ -591,6 +632,11 @@ async function tratar(
     //    qualquer falha responde "gravado, Omie não confirmado" com o #id — nunca "não foi importado" (Codex+Fable P1:
     //    a mensagem falsa levava o operador a lançar o PO à mão no Omie).
     pedidoGravado = pedidoId;
+    // 3b. 1ª importação: o escritor só faz UPDATE e o pedido não existia na gravação de 1b (revisão 2, B10). Grava a
+    //     MESMA observação agora — antes do disparo, para o claim já ver o código. Sem vigente, a ordem temporal aceita.
+    const situacaoGravadaPosCriar = (rpcData as { ja_existia?: unknown } | null)?.ja_existia === true
+      ? situacaoGravada
+      : await gravarSituacaoObservada(db, envelope.consulta?.linhas ?? [], protocolo, lidoDe, lidoAte);
     const omie = await dispararOmie(pedidoId);
     console.log(`[importar-portal] ${protocolo}: pedido ${pedidoId} gravado; disparo HTTP ${omie.httpStatus}`);
     return await responderComEstado(pedidoId, {
@@ -600,6 +646,7 @@ async function tratar(
       valor_total_portal: lido.cabecalho.valor_total,
       condicao_portal: envelope.condicao ?? null,
       condicoes_opcoes_portal: Array.isArray(envelope.condicoes_opcoes) ? envelope.condicoes_opcoes : null,
+      situacao_gravada: situacaoGravadaPosCriar,
       itens: itensResumo,
     });
   } catch (e) {
@@ -609,6 +656,13 @@ async function tratar(
         mensagem: `Pedido ${protocolo} gravado no app (#${pedidoGravado}), mas não confirmei o pedido de compra no Omie ` +
           `(${mensagemDeErro(e) ?? "erro inesperado"}). Importe de novo daqui a 1 minuto — não duplica. Não lance à mão no Omie.`,
       });
+    }
+    if (pedidoConhecido != null) {
+      return json({
+        ok: false, etapa: "importacao", ja_existia: true, pedido_id: pedidoConhecido.id, status: pedidoConhecido.status, protocolo,
+        mensagem: `O pedido ${protocolo} está no app (#${pedidoConhecido.id}), mas a conferência falhou ` +
+          `(${mensagemDeErro(e) ?? "erro inesperado"}). Não re-disparei o pedido de compra. Tente de novo daqui a 1 minuto. Não lance à mão no Omie.`,
+      }, 500);
     }
     return json({ ok: false, etapa: "importacao", protocolo, mensagem: mensagemDeErro(e) ?? "erro inesperado" }, 500);
   }
@@ -665,6 +719,10 @@ async function fecharRegistro(
       ja_existia: corpo?.ja_existia ?? null,
       disparo_http: corpo?.disparo_http ?? null,
       condicao_portal: corpo?.condicao_portal ?? null,
+      // Revisão 2: B11 (lista real de condições do portal → de-para D-2) e B3 (o veto de cancelamento persistiu?).
+      condicoes_opcoes: Array.isArray(corpo?.condicoes_opcoes_portal) ? corpo.condicoes_opcoes_portal : null,
+      situacao_portal: corpo?.situacao_portal ?? null,
+      situacao_gravada: corpo?.situacao_gravada ?? null,
       mensagem: typeof corpo?.mensagem === "string" ? corpo.mensagem.slice(0, 300) : null,
       duracao_ms: duracaoMs,
     };
