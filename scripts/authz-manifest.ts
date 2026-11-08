@@ -563,6 +563,8 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.reposicao_encerrar_recusas_definitivas', // encerra recusa definitiva do portal após 3 dias (#3169) — cron `reposicao-encerrar-recusas-definitivas`; REVOKE PUBLIC/anon/authenticated + postcondição has_function_privilege na migration 20261011150000
   'public.reposicao_persistir_qtde_inteira', // arredonda/persiste qtde inteira do pedido — edge `disparar-pedidos-aprovados`
   'public.reposicao_claim_disparo', // claim antes do IncluirPedCompra (Cenário B do TOCTOU) — edge `disparar-pedidos-aprovados`, service_role
+  'public.sayerlack__incidente_pelo_pedido', // trigger da 5.4 (RETURNS trigger): abre/fecha o incidente de cancelado com PO no estado do pedido; REVOKE PUBLIC/anon/authenticated (20261110120000)
+  'public.sayerlack_cobertura_situacao_portal', // cobertura da 5.4 (pedidos com PO não faturado) — edge `sayerlack-varrer-pedidos-portal` e o compute do data_health, service_role; REVOKE PUBLIC/anon/authenticated (20261110120000)
   // Observação do conjunto aberto (PR0 da baixa de PO, migration 20261005131331): lê
   // `sku_estoque_atual.estoque_pendente_entrada` só para CONFERIR, na mesma transação, que o pendente
   // gravado bate com o que a observação contou (grava `skus_divergentes`); não projeta dado — devolve a
