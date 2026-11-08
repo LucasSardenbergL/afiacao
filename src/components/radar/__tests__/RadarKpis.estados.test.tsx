@@ -31,7 +31,7 @@ function builder(tabela: string) {
   chamadas[tabela] = chamadas[tabela] ?? [];
   const cadeia: unknown[][] = [];
   const b: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'gte', 'order', 'limit', 'is', 'or', 'filter', 'not']) {
+  for (const m of ['select', 'eq', 'in', 'gte', 'order', 'limit', 'is', 'or', 'filter', 'not']) {
     b[m] = (...args: unknown[]) => { chamadas[tabela].push([m, ...args]); cadeia.push([m, ...args]); return b; };
   }
   // `radar_empresas` recebe DUAS leituras (count de inéditos e count de sugeridos): a resposta é
@@ -272,7 +272,8 @@ describe('RadarKpis — card "Inéditos do lote"', () => {
     expect(screen.getByTestId('radar-kpi-ineditos').textContent).toMatch(/de 501\.380/);
     expect(screen.getByText(/Inéditos do lote 2026-08/)).toBeTruthy();
     const c = chamadas.radar_empresas;
-    expect(c).toContainEqual(['eq', 'ultimo_lote', '2026-08']);
+    // Foto vigente via `fotoPostgrest`: sem publicação em passos, só o rótulo vigente (sem `.or` extra).
+    expect(c).toContainEqual(['in', 'ultimo_lote', ['2026-08']]);
     expect(c).toContainEqual(['gte', 'primeira_vista_em', LOTE_VIGENTE.iniciado_em]);
     expect(c.find((x) => x[0] === 'select')?.[2], 'count precisa ser exact + head (PostgREST capa em 1.000 linhas)').toMatchObject({ count: 'exact', head: true });
   });
@@ -335,7 +336,7 @@ describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
     expect(sugeridos()).toHaveLength(1);
     const c = chamadas.radar_empresas;
     for (const esperado of [
-      ['eq', 'ultimo_lote', '2026-08'], ['eq', 'ja_cliente', false], ['is', 'omie_codigo_cliente', null],
+      ['in', 'ultimo_lote', ['2026-08']], ['eq', 'ja_cliente', false], ['is', 'omie_codigo_cliente', null],
       ['or', 'rfb_situacao.is.null,rfb_situacao.eq.02'], ['filter', 'cnpj', 'match', '^[0-9A-Z]{12}[0-9]{2}$'], ['gte', 'score', 70],
     ]) expect(c, `faltou ${JSON.stringify(esperado)}`).toContainEqual(esperado);
   });

@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
+import { fotoPostgrest, type LoteIngest } from '@/lib/radar/lote-vigente';
 
 /** O mínimo de builder PostgREST que o predicado usa — a lista e o count passam o deles. */
 export interface BuilderSugeridos<T> {
   eq(coluna: string, valor: string | number | boolean): T;
+  in(coluna: string, valores: readonly string[]): T;
   gte(coluna: string, valor: number): T;
   is(coluna: string, valor: null): T;
   or(filtros: string): T;
@@ -27,9 +29,11 @@ export interface BuilderSugeridos<T> {
  * de fora quem ainda não foi cruzado — e hoje (2026-10-20) isso é 100 % da foto 2026-08
  * (501.380 linhas com `rfb_situacao` NULL): exigir `02` deixaria o card morto em zero.
  */
-export function filtrarSugeridos<T extends BuilderSugeridos<T>>(q: T, lote: { mes_referencia: string }): T {
-  return q
-    .eq('ultimo_lote', lote.mes_referencia)
+export function filtrarSugeridos<T extends BuilderSugeridos<T>>(q: T, lote: Pick<LoteIngest, 'mes_referencia' | 'publicando'>): T {
+  // Foto vigente: `ultimo_lote IN (V, P)` + (havendo publicação em passos) `ultimo_lote = V OU lote_anterior = V`.
+  const foto = fotoPostgrest(lote);
+  const naFoto = q.in('ultimo_lote', foto.rotulos);
+  return (foto.ou ? naFoto.or(foto.ou) : naFoto)
     .eq('prospeccao_status', 'em_conversa')
     .eq('ja_cliente', false)
     .is('omie_codigo_cliente', null)

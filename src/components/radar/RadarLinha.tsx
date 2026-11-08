@@ -5,7 +5,7 @@ import {
   type EstadoIrmaos, type IrmaosRaiz,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
-import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
+import { ehInedito, saiuDoDump, rotuloEfetivo, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
 import { ehSugerido, LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
 import { seloVinculo, type EstadoVinculos, type ResumoVinculoLista } from '@/lib/radar/vinculos';
 import { ChipAtendimento } from './RadarAtendimentoLead';
@@ -86,7 +86,7 @@ export function RadarLinha({
             </Selo>
           )}
           {ehInedito(empresa, lote) && <Selo tom="info">inédito</Selo>}
-          {saiuDoDump(empresa, lote) && <Selo tom="muted">{rotuloSaiuDoDump(empresa.ultimo_lote)}</Selo>}
+          {saiuDoDump(empresa, lote) && <Selo tom="muted">{rotuloSaiuDoDump(rotuloEfetivo(empresa, lote) ?? empresa.ultimo_lote)}</Selo>}
           {sugerido && (
             <Selo tom="success"
               title={`Sugerido para cadastro: em conversa, não cliente, score ≥ ${LIMIAR_SUGERIDO}${empresa.rfb_situacao == null ? ' (RFB ainda não cruzada)' : ''}`}>
