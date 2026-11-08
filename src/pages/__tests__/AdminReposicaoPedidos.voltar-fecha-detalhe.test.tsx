@@ -119,6 +119,15 @@ function renderPaginaHistoricoReal(entradas: string[]) {
 const url = () => screen.getByTestId('url').textContent;
 const modalAberto = () => screen.queryByRole('dialog', { name: TITULO }) !== null;
 
+// O dialog entra no DOM antes de o Radix ligar o ouvinte de Esc e mover o foco (efeito pós-mount): num
+// runner carregado, um Esc logo após o `findByRole` chegava antes e o modal não fechava (testes (1) do #3725).
+// Espera a CONDIÇÃO de que o Esc depende — o foco dentro do dialog — em vez de torcer pelo tempo.
+async function prontoParaEsc() {
+  await waitFor(() =>
+    expect(screen.getByRole('dialog', { name: TITULO }).contains(document.activeElement)).toBe(true),
+  );
+}
+
 async function abrirPorClique() {
   const botoes = await screen.findAllByRole('button', { name: /Detalhes/ });
   fireEvent.click(botoes[0]);
@@ -152,6 +161,7 @@ describe('Gerir pedidos — o "voltar" fecha o detalhe aberto', () => {
     const go = vi.spyOn(window.history, 'go');
 
     // duplo Esc antes do popstate não pode virar DOIS passos para trás
+    await prontoParaEsc();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
@@ -175,6 +185,7 @@ describe('Gerir pedidos — deep link cross-ciclo continua abrindo', () => {
   it('deep link de fora + Esc: fecha, limpa o ?id por replace e NÃO sai da tela', async () => {
     renderPagina(['/inicio', `${ROTA}?id=41`]);
     expect(await screen.findByRole('dialog', { name: TITULO })).toBeTruthy();
+    await prontoParaEsc();
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
