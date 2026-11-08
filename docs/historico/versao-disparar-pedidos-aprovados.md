@@ -50,4 +50,7 @@ v1.12 (2026-11-08, pontos cegos Onda 5A fatia 1) — pedido CANCELADO no portal 
 de disparo aberta é conciliado SÓ POR CONSULTA (ConsultarPedCompra AFI-<id>, nunca IncluirPedCompra), antes das
 validações de criação: PO confirmado ⇒ registra o vínculo e avisa que o PO existe com o pedido cancelado; não achou ⇒
 nada muda. Sem pendência, o claim (migration 20261108120000) recusa e nada vai ao Omie.
+v1.13 (2026-11-08, revisão 2, 7.3) — o cObs do PO Sayerlack/OBEN ganha "Transportadora (portal Sayerlack): <nome>",
+lida da evidência mais recente e legível do protocolo (`sayerlack_portal_evidencia.itens_brutos.data_pedido`, 7.2).
+Fail-open com prazo de 3 s: sem evidência ou sem nome, a linha não entra (nunca inventada). Frete não entra.
 ```
