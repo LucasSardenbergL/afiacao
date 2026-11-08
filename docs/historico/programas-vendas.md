@@ -244,6 +244,13 @@ com a Onda 2 ligada o Mix/Gap sai da fila (vive na ficha).
   do cache na tela (Codex código P1).
 - **Gerar complemento/preço para outro dia olharia o futuro**: o núcleo do Mix/Gap e o último preço ao vivo leem `now()`.
   Por isso sombra e histórico ficam só com recompra.
+- **Depois do go-live (medido em 2026-11-08, psql-ro):** a Onda 1 ligou sozinha em 24/10 (3 sombras idênticas à
+  reconstrução); a Onda 2 foi ligada à mão pelo founder em 31/10 (`venda_onda_log`, `manual: true`). Até 08/11 a lista
+  saiu todo dia (36–77 compradores por farmer) e as farmers não abriram o app: 0 linhas em `venda_lista_acesso`, 0 em
+  `venda_contato`, 0 `mostrada_em`. Os primeiros desfechos (listas de 24/10) mediram a lista sem ligação: 39 virou_pedido
+  em 655. O gargalo é de rollout (aviso + rotina das farmers), não de código; a Onda 3 liga sozinha no 1º repasse aprovado.
+- **A validação das ondas confere REGRA, não md5** (#3723): três entregas posteriores recriaram as funções e o md5
+  fixo dava ❌ com as regras de pé.
 
 ## Venda por cliente — a lista da farmer na lente "Ver como" (2026-10-21)
 
