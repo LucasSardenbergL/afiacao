@@ -403,6 +403,7 @@ BEGIN;
 SET ROLE authenticated;
 SET request.jwt.claims = '$claims';
 SELECT public.cliente_declarar_sucessao('$DW1', '$DW2', 'cisao', '2026-10-01', $1)->>'ok';
+RESET ROLE;   -- sob authenticated o pg_stat_activity esconde a query das outras sessões e o laço nunca veria a 2ª
 DO \$segura_s1\$
 DECLARE t0 timestamptz := clock_timestamp();
 BEGIN
