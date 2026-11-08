@@ -650,3 +650,17 @@ ativos sem alíquota = **0**.
 Omie guarda as NF-e de entrada desde 2023. Para NCM sem alíquota, a 1ª fonte é o `ConsultarRecebimento` sobre todo o
 histórico, não a janela do banco. O CP006 só volta com NCM **nunca comprado**, e é aí que a 7.5 (IPI no portal) ainda
 teria valor.
+
+## 7.5 — veredito: o portal NÃO expõe NCM/IPI por item (2026-11-08)
+
+Fecha a rodada 1 acima. **O portal não mostra o valor com IPI por item: o IPI só aparece quando a NF é faturada**
+(founder, que opera o portal todo dia). Isso bate com tudo que foi lido: nenhum campo de IPI/NCM nas 257 tentativas de
+envio gravadas, `form/add` devolve só item e valor sem IPI, e a Consulta Pedidos só tem os totais. As posições de
+`busca-itens-pedido` além da `[13]` não foram catalogadas (portal fora no dia), mas a resposta do founder torna
+improvável que alguma delas seja a alíquota. Se um dia precisar reabrir, o roteiro da rodada 1 continua válido.
+
+**Consequência para o desenho:** a fonte da alíquota continua sendo a NF-e de entrada no Omie
+(`ConsultarRecebimento` sobre o histórico inteiro). Com o #3744 o sensor de SKUs Sayerlack ativos sem alíquota está
+em **0**. O CP006 só volta com NCM que a OBEN nunca comprou; aí o passo é esperar a 1ª NF e medir nela. A conferência
+de alíquota que mudou já existe: o CP007 recusa quando o total com IPI calculado não bate o Vlr Total do portal.
+Nada a implementar nas edges.

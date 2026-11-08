@@ -41,7 +41,7 @@
   `_shared/sayerlack-portal-dom.ts`; importar v1.8 e varrer v1.10 (deploy das 2 edges depois do merge).
 - 🔄 **7.2 + 4.3** — evidência imutável de cada leitura (`sayerlack_portal_evidencia`, migration `20261111090000`) e
   sessão do Browserless contada pela importadora; importar v1.9 e varrer v1.11 (migration → importar → varrer).
-- ⏳ Depois: 7.3, 7.1, 5.2 (botão "aceitar o portal", decisão do founder) (7.5 numa sessão própria).
+- ⏳ Depois: 7.3, 5.2 (botão "aceitar o portal", decisão do founder), 7.1 (7.5 encerrada: o portal não expõe IPI por item).
 
 ## Andamento da Sessão B (tela e painel)
 
@@ -284,7 +284,7 @@ Não reapresentei como novidades os contratos compostos, o bloqueio do default �
 | **7.2** Evidência durável completa | **PARCIAL** | Ledger por tentativa existe, mas só resumo: `I:657`. Não guarda cabeçalho, itens brutos e conjunto de opções; não existe snapshot completo por tentativa. | P1/M |
 | **7.3** Transportadora/observações/frete | **FALTA** | Fixture já contém transportadora (`leitura_test.ts:24`), parser não a retorna (`L:220`); PO usa observação genérica (`D:1320`). | P2/M |
 | **7.4** Condição real unificada | **FEITO** | Tradução comum em `M2:60`; aplicação antes de sucesso em `supabase/functions/enviar-pedido-portal-sayerlack/index.ts:2140`; bloqueio do default em `D:1288`. | — |
-| **7.5** Investigar IPI por linha | **EM ANDAMENTO** | Rodada 1 (2026-11-08) inconclusiva: portal fora; nenhuma fonte gravada (257 tentativas, `form/add`, consulta) traz NCM/IPI, mas o array de `busca-itens-pedido` tem posições > [13] nunca catalogadas. Fecho e desenho: histórico §"7.5". | P2/M |
+| **7.5** Investigar IPI por linha | **FEITO** | Veredito (2026-11-08): o portal **não expõe** NCM nem IPI por item; o IPI só aparece na NF faturada (founder + 257 tentativas, `form/add` e consulta sem campo de IPI). A alíquota vem das NF-e do Omie: sensor = 0 (#3717, #3744). Histórico §"7.5". | P2/M |
 | **8.1** Handlers reais | **FALTA** | Importar/varrer têm testes dos módulos puros, não dos fluxos de seus `index.ts`. O teste do disparador cobre autorização: `supabase/functions/disparar-pedidos-aprovados/index_test.ts:1`. | P1/M |
 | **8.2** Fixtures DOM executáveis | **FALTA** | Scripts continuam embutidos (`I:39`, `V:72`); fixtures existentes são objetos já extraídos (`leitura_test.ts:9`), não HTML exercitando seletores/paginação. | P1/M |
 | **8.3** QA browser/celular | **FALTA** | Não encontrei comprovação do roteiro exigido no plano. Classes responsivas e testes de componente não comprovam esse QA. | P2/M |
