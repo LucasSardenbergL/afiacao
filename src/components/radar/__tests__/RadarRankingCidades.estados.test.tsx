@@ -123,3 +123,46 @@ describe('RadarRankingCidades — pacote C', () => {
     }
   });
 });
+
+// Pacote I, item 2: contagem e penetração são leituras INDEPENDENTES — uma falhar e a outra não é falha PARCIAL, e o
+// card tem que dizer (antes a coluna "cli." e as oportunidades sumiam caladas, e o card parecia completo).
+describe('RadarRankingCidades — falha parcial da penetração (pacote I)', () => {
+  const PEN = { municipio_codigo: '4123', municipio_nome: 'UBERLÂNDIA', uf: 'MG', empresas_lote: 900, clientes: 9, penetracao: 1, concorrentes: null };
+
+  it('penetração OK: a coluna "cli." aparece e não há aviso', () => {
+    penetracao = { data: [PEN], isLoading: false, isError: false, error: null };
+    const r = desenhar();
+    expect(r.container.textContent).toContain('1 cli.');
+    expect(screen.queryByTestId('radar-ranking-penetracao-aviso')).toBeNull();
+  });
+
+  it('contagem OK e penetração FALHOU: as cidades ficam e o card DIZ que a penetração faltou', () => {
+    penetracao = { data: undefined, isLoading: false, isError: true, error: { message: 'connection failure' } };
+    const r = desenhar();
+    expect(r.container.textContent).toContain('812 empresas');
+    expect(screen.getByTestId('radar-ranking-penetracao-aviso').textContent)
+      .toContain('Não foi possível carregar penetração por cidade.');
+    expect(screen.getByTestId('radar-ranking-penetracao-aviso').textContent).toContain('não é falta de cliente');
+    expect(r.container.textContent, 'falha virou "0% cli."').not.toMatch(/0(,0)?% cli\./);
+  });
+
+  it('sem lote completo (o hook devolve null): diz por que não há penetração', () => {
+    penetracao = { data: null, isLoading: false, isError: false, error: null };
+    desenhar();
+    expect(screen.getByTestId('radar-ranking-penetracao-aviso').textContent).toContain('ainda não há lote completo');
+  });
+
+  it('releitura falhou sobre dado anterior: mostra o dado e avisa que está desatualizado', () => {
+    penetracao = { data: [PEN], isLoading: false, isError: true, error: { message: 'connection failure' } };
+    const r = desenhar();
+    expect(r.container.textContent).toContain('1 cli.');
+    expect(screen.getByTestId('radar-ranking-penetracao-aviso').textContent).toContain('Penetração desatualizada');
+  });
+
+  it('penetração ainda carregando: "… cli." na linha, sem aviso de falha', () => {
+    penetracao = { data: undefined, isLoading: true, isError: false, error: null };
+    const r = desenhar();
+    expect(r.container.textContent).toContain('… cli.');
+    expect(screen.queryByTestId('radar-ranking-penetracao-aviso')).toBeNull();
+  });
+});

@@ -112,6 +112,11 @@ vi.mock('@/queries/useRadarLoteVigente', () => ({ useRadarLoteVigente: () => ({ 
 const lerEmpresaRadar = vi.hoisted(() => vi.fn());
 vi.mock('@/queries/useRadarConflitosCadastro', () => ({ lerEmpresaRadar }));
 vi.mock('@/queries/useRadarAcoesLead', () => ({ depsCadastroSupabase: {} }));
+// Pacote I: o sensor da ficha entregue pelo card e a lente "Ver como".
+const registrarFichaEntregue = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
+vi.mock('@/queries/useRadarRegistroEmpurrado', () => ({ registrarFichaEntregue }));
+const lente = vi.hoisted(() => ({ isImpersonating: false }));
+vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => lente }));
 vi.mock('@/queries/useRadarLote', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/queries/useRadarLote')>();
   return { ...real, useRadarLoteOmie: () => ({ lote: null, rodando: false, progresso: null }) };
@@ -146,6 +151,7 @@ vi.mock('@/components/radar/RadarDetailSheet', () => ({
     empresa ? (
       <div data-testid="ficha">
         <span data-testid="ficha-cnpj">{empresa.cnpj}</span>
+        <span data-testid="ficha-estado">{`${empresa.prospeccao_status}|${empresa.ja_cliente ? 'cliente' : 'lead'}`}</span>
         <button onClick={onProximo}>Próximo</button>
       </div>
     ) : null,
@@ -207,6 +213,7 @@ beforeEach(() => {
   fonte.territorio = [];
   fonte.falharTerritorio = false;
   fonte.travaLista = null;
+  lente.isImpersonating = false;
 });
 
 describe('RadarClientes — fila do vendedor', () => {
@@ -550,5 +557,124 @@ describe('RadarClientes — Meus atendimentos (B2)', () => {
     fonte.paginasMeus = [[lead('M1')]];
     await act(async () => { await qc.invalidateQueries({ queryKey: ['radar', 'atendimentos-ativos'] }); });
     await waitFor(() => expect(cnpjsNaLista()).toEqual(['M1']));
+  });
+});
+
+// Pacote I, item 1: a ficha fora da fila vivia num snapshot (ref/state) que a invalidação não alcançava.
+describe('RadarClientes — ficha fresca depois de cadastrar (pacote I)', () => {
+  const estadoFicha = () => screen.getByTestId('ficha-estado').textContent;
+
+  it('o lead vira cliente e SAI da fila: a ficha relê e mostra "cliente", sem recarregar', async () => {
+    fonte.paginas = [[lead('A'), lead('B')]];
+    const { qc } = montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B']));
+    fireEvent.click(screen.getByText('abrir A'));
+    expect(estadoFicha()).toBe('a_contatar|lead');
+
+    // O cadastro no Omie: no servidor A virou cliente e saiu da fila; a mutação chama invalidarRadar.
+    fonte.paginas = [[lead('B')]];
+    lerEmpresaRadar.mockResolvedValue(lead('A', { ja_cliente: true, prospeccao_status: 'convertido' }));
+    const { invalidarRadar } = await import('@/lib/radar/invalidar-cache');
+    await act(async () => { await invalidarRadar(qc); });
+
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['B']));
+    await waitFor(() => expect(estadoFicha()).toBe('convertido|cliente'));
+    expect(screen.getByTestId('ficha-cnpj').textContent).toBe('A');
+  });
+
+  it('o lead fica na fila (já-clientes incluídos): a LINHA e a ficha mostram o estado novo', async () => {
+    fonte.paginas = [[lead('A')]];
+    const { qc } = montar('/radar?incluirJaClientes=1');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    fireEvent.click(screen.getByText('abrir A'));
+    fonte.paginas = [[lead('A', { ja_cliente: true, prospeccao_status: 'convertido' })]];
+    const { invalidarRadar } = await import('@/lib/radar/invalidar-cache');
+    await act(async () => { await invalidarRadar(qc); });
+    await waitFor(() => expect(estadoFicha()).toBe('convertido|cliente'));
+    expect(lerEmpresaRadar).not.toHaveBeenCalled(); // na fila, a linha da fila é a fonte
+  });
+
+  it('ficha do link (fora da fila) também é relida pela invalidação', async () => {
+    fonte.paginas = [[lead('A')]];
+    lerEmpresaRadar.mockResolvedValue(lead('Z'));
+    const { qc } = montar('/radar?cnpj=Z');
+    await waitFor(() => expect(estadoFicha()).toBe('a_contatar|lead'));
+    lerEmpresaRadar.mockResolvedValue(lead('Z', { ja_cliente: true, prospeccao_status: 'convertido' }));
+    const { invalidarRadar } = await import('@/lib/radar/invalidar-cache');
+    await act(async () => { await invalidarRadar(qc); });
+    await waitFor(() => expect(estadoFicha()).toBe('convertido|cliente'));
+  });
+
+  it('releitura que FALHA com a ficha na tela: a ficha fica e a tela DIZ que pode estar velha', async () => {
+    fonte.paginas = [[lead('A')]];
+    lerEmpresaRadar.mockResolvedValue(lead('Z'));
+    const { qc } = montar('/radar?cnpj=Z');
+    await waitFor(() => expect(estadoFicha()).toBe('a_contatar|lead'));
+    lerEmpresaRadar.mockRejectedValue(new Error('falha de rede'));
+    const { invalidarRadar } = await import('@/lib/radar/invalidar-cache');
+    await act(async () => { await invalidarRadar(qc); });
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Não consegui atualizar a ficha', expect.anything()));
+    expect(screen.getByTestId('ficha-cnpj').textContent).toBe('Z');
+    expect(toastMock.error).not.toHaveBeenCalledWith('Não consegui abrir a ficha do link', expect.anything());
+  });
+
+  it('link que não abre (leitura falhou, nada na tela): fecha e diz por quê', async () => {
+    fonte.paginas = [[lead('A')]];
+    lerEmpresaRadar.mockRejectedValue(new Error('falha de rede'));
+    montar('/radar?cnpj=Z');
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Não consegui abrir a ficha do link', expect.anything()));
+    expect(screen.queryByTestId('ficha')).toBeNull();
+  });
+});
+
+// Pacote I, item 3 (sobra do F): a ficha aberta pelo card grava o 2º momento do funil (`ficha_card`).
+describe('RadarClientes — ficha entregue pelo card (pacote I)', () => {
+  it('origem=card: grava UMA vez quando a ficha abre, e a origem sai da URL', async () => {
+    fonte.paginas = [[lead('A')]];
+    lerEmpresaRadar.mockResolvedValue(lead('Z'));
+    montar('/radar?cnpj=Z&origem=card');
+    await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('Z'));
+    await waitFor(() => expect(registrarFichaEntregue).toHaveBeenCalledTimes(1));
+    expect(registrarFichaEntregue).toHaveBeenCalledWith({ origem: 'card', cnpj: 'Z' });
+    // Fila chega, outra ficha abre: nada de gravar de novo (a origem era do link, não da página).
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    fireEvent.click(screen.getByText('abrir A'));
+    expect(screen.getByTestId('ficha-cnpj').textContent).toBe('A');
+    expect(registrarFichaEntregue).toHaveBeenCalledTimes(1);
+  });
+
+  it('lead do card que está na fila: grava com a linha da fila', async () => {
+    fonte.paginas = [[lead('A'), lead('B')]];
+    lerEmpresaRadar.mockResolvedValue(lead('B'));
+    montar('/radar?cnpj=B&origem=card');
+    await waitFor(() => expect(registrarFichaEntregue).toHaveBeenCalledWith({ origem: 'card', cnpj: 'B' }));
+    expect(registrarFichaEntregue).toHaveBeenCalledTimes(1);
+  });
+
+  it('sem origem=card (link do e-mail, colega): não grava ficha do card', async () => {
+    fonte.paginas = [[lead('A')]];
+    lerEmpresaRadar.mockResolvedValue(lead('Z'));
+    montar('/radar?cnpj=Z');
+    await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('Z'));
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    expect(registrarFichaEntregue).not.toHaveBeenCalled();
+  });
+
+  it('lente "Ver como": a ficha abre, nada é gravado', async () => {
+    lente.isImpersonating = true;
+    fonte.paginas = [[lead('A')]];
+    lerEmpresaRadar.mockResolvedValue(lead('Z'));
+    montar('/radar?cnpj=Z&origem=card');
+    await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('Z'));
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    expect(registrarFichaEntregue).not.toHaveBeenCalled();
+  });
+
+  it('lead do card que não existe: fecha e não grava ficha entregue', async () => {
+    fonte.paginas = [[lead('A')]];
+    lerEmpresaRadar.mockResolvedValue(null);
+    montar('/radar?cnpj=NAOEXISTE&origem=card');
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Lead não encontrado no Radar', expect.anything()));
+    expect(registrarFichaEntregue).not.toHaveBeenCalled();
   });
 });

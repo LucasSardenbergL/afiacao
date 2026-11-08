@@ -84,12 +84,12 @@ describe('ProspectarHojeCard', () => {
     expect(chamadas('radar_registrar_card_servido')[0][1]).toEqual({ p_n_leads: 3 });
   });
 
-  it('Abrir ficha: grava a abertura (origem card) e vai para /radar?cnpj=', async () => {
+  it('Abrir ficha: grava a abertura (origem card) e vai para /radar?cnpj=…&origem=card', async () => {
     renderCard();
     await screen.findByText('Moveis Oito');
     fireEvent.click(screen.getAllByRole('button', { name: 'Abrir ficha' })[1]);
     expect(chamadas('radar_registrar_abertura_empurrada')[0][1]).toEqual({ p_origem: 'card', p_cnpj: '00000000000108' });
-    expect(navigate).toHaveBeenCalledWith('/radar?cnpj=00000000000108');
+    expect(navigate).toHaveBeenCalledWith('/radar?cnpj=00000000000108&origem=card');
   });
 
   it('Assumir (ação principal) chama radar_definir_atendimento com o lead da linha', async () => {
@@ -195,7 +195,7 @@ describe('ProspectarHojeCard', () => {
     expect(chamadas('radar_prospectar_hoje')[0][1]).toEqual({ p_vendedor: 'vendedora-x', p_n: 3 });
     expect(screen.getAllByRole('button', { name: /Assumir/ })[0]).toBeDisabled();
     fireEvent.click(screen.getAllByRole('button', { name: 'Abrir ficha' })[0]);
-    expect(navigate).toHaveBeenCalledWith('/radar?cnpj=00000000000101');
+    expect(navigate).toHaveBeenCalledWith('/radar?cnpj=00000000000101&origem=card');
     expect(chamadas('radar_registrar_abertura_empurrada')).toHaveLength(0);
     expect(chamadas('radar_registrar_card_servido')).toHaveLength(0);
   });

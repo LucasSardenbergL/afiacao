@@ -139,14 +139,23 @@ export interface IrmaosRaiz {
   irmaos_clientes: number;      // clientes da mesma raiz (profiles · Omie · radar.ja_cliente), sem o próprio
   cliente_nome: string | null;  // um nome de cliente da raiz
 }
-export interface SeloFilial { texto: string; tom: TomStatus; titulo: string; chave: 'cliente' | 'fila' }
+export interface SeloFilial { texto: string; tom: TomStatus; titulo: string; chave: 'cliente' | 'fila' | 'nao-verificado' }
 export type EstadoIrmaos = 'carregando' | 'falhou' | 'ok';
 
 const plural = (n: number, s: string, p: string) => (n === 1 ? s : p);
 
 /** Selos da linha. Sem dado (carregando/falhou) não há selo: a FICHA é quem diz "não consegui verificar".
  *  Só SINALIZA — não esconde lead nem mexe em score/ordem (decisão do founder, 2026-10-21). */
-export function selosFilial(i: IrmaosRaiz | null | undefined): SeloFilial[] {
+/** `estado` (pacote I, item 2): a página dos irmãos que FALHOU vira o selo "filial?" — antes a linha ficava sem selo,
+ *  igual a "nenhuma filial", enquanto o vínculo da mesma linha dizia "vínculo?". Ausente ≠ zero. */
+export function selosFilial(i: IrmaosRaiz | null | undefined, estado: EstadoIrmaos = 'ok'): SeloFilial[] {
+  // Com dado em mãos (releitura que falhou sobre leitura anterior), o dado é resposta real e vale.
+  if (estado === 'falhou' && !i) {
+    return [{
+      chave: 'nao-verificado', texto: 'filial?', tom: 'muted',
+      titulo: 'Não consegui verificar se este CNPJ é filial de um cliente. Abra a ficha para tentar de novo.',
+    }];
+  }
   if (!i) return [];
   const selos: SeloFilial[] = [];
   if (i.irmaos_clientes > 0) {

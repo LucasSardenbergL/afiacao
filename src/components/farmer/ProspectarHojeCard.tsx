@@ -76,7 +76,7 @@ export function ProspectarHojeCard() {
   const abrirFicha = (l: LeadProspectarHoje) => {
     if (!isImpersonating) void registrarAberturaEmpurrada({ origem: 'card', cnpj: l.cnpj });
     track('radar.prospectar_hoje_ficha', { posicao: l.posicao });
-    navigate(linkFichaRadar(l.cnpj));
+    navigate(linkFichaRadar(l.cnpj, 'card'));
   };
 
   const assumir = async (l: LeadProspectarHoje) => {
