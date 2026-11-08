@@ -29,6 +29,9 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // de telefone compartilhado e os conflitos ABERTOS do lead (a RPC só lê, sob FOR SHARE).
   'radar_atendimentos_ativos',
   'radar_telefone_compartilhado',
+  // Contato provável da contabilidade (migration 20261109140000): leitura STABLE. A correção
+  // (radar_contato_contabil_corrigir) fica BLOQUEADA na lente.
+  'radar_contato_contabil_da_empresa',
   'radar_estado_cadastro_omie',
   // Radar (migration 20261104201756) — STABLE, só lê: o "possível vínculo/sucessor de cliente" da ficha.
   'radar_possiveis_vinculos',

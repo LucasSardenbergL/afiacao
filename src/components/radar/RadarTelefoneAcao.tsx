@@ -18,16 +18,21 @@ export function RadarTelefoneAcao({
   telefone,
   variant = 'icon',
   className,
+  discreto = false,
 }: {
   telefone: string | null | undefined;
   /** 'icon' = ícone compacto (linha, telefone da ficha); 'full' = botão com texto (modo discagem). */
   variant?: 'icon' | 'full';
   className?: string;
+  /** O número parece ser da contabilidade (migration 20261109140000): a ação continua, mas sem destaque. */
+  discreto?: boolean;
 }) {
   const isTouch = useIsTouchDevice();
   const digitos = normalizeBrPhone(telefone);
   if (!telefone || digitos.length < 10) return null; // sem DDD+número: não fabrica ação quebrada
   const icone = variant === 'icon';
+  const tomCheio = discreto ? 'outline' : 'default';
+  const classeDiscreta = discreto ? 'text-muted-foreground' : undefined;
 
   if (isTouch) {
     const conteudo = (
@@ -46,7 +51,7 @@ export function RadarTelefoneAcao({
       );
     }
     return (
-      <Button asChild size={icone ? 'icon' : 'sm'} variant={icone ? 'ghost' : 'default'} className={cn(icone && 'h-8 w-8', className)}>
+      <Button asChild size={icone ? 'icon' : 'sm'} variant={icone ? 'ghost' : tomCheio} className={cn(icone && 'h-8 w-8', classeDiscreta, className)}>
         <a href={`tel:${digitos}`} aria-label="Ligar pelo celular" title="Abre o discador do seu celular"
           onClick={() => track('radar.telefone_acao', { acao: 'ligar_celular' })}>
           {conteudo}
@@ -66,8 +71,8 @@ export function RadarTelefoneAcao({
     }
   };
   return (
-    <Button size={icone ? 'icon' : 'sm'} variant={icone ? 'ghost' : 'default'} onClick={() => void copiar()}
-      className={cn(icone && 'h-8 w-8', className)} aria-label={`Copiar telefone ${telefone}`}
+    <Button size={icone ? 'icon' : 'sm'} variant={icone ? 'ghost' : tomCheio} onClick={() => void copiar()}
+      className={cn(icone && 'h-8 w-8', classeDiscreta, className)} aria-label={`Copiar telefone ${telefone}`}
       title="Copiar o telefone (ligue pelo seu aparelho)">
       <Copy className={icone ? 'w-4 h-4' : 'w-4 h-4 mr-1'} />
       {!icone && 'Copiar telefone'}
