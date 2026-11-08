@@ -644,19 +644,29 @@ Deno.serve(async (req: Request) => {
   const falhasReconciliacao: { pedido_id: number; protocolo: string; mensagem: string }[] = [];
   const falhasSituacao: string[] = [];
   const falhasCobertura: string[] = [];
-  // 4.3: cada leitura da lista e cada importação abre UMA sessão no Browserless (cota do plano). Conta por rodada.
-  const sessoes = { leitura_portal: 0, importacao: 0 };
+  // 4.3: sessões do Browserless (cota do plano) por rodada. Cada leitura da lista abre uma. A importação conta pelo que
+  // a importadora DIZ (`sessao_browserless`): já com PO, recusa antes do portal e config ausente não abrem sessão.
+  // Sem o campo (importadora antiga, corpo não-JSON, timeout) é INDETERMINADO — nunca zero, nunca um fabricado.
+  const sessoes = { leitura_portal: 0, importacao: 0, importacao_sem_sessao: 0, importacao_indeterminada: 0 };
   const lerPortalContado = (desde: string) => { sessoes.leitura_portal += 1; return lerPortal(desde); };
   const importarContado = async (protocolo: string, situacoes: string[], somenteSituacao = false) => {
-    sessoes.importacao += 1;
     const r = await importar(protocolo, situacoes, somenteSituacao);
+    const sessao = (r.corpo as { sessao_browserless?: unknown } | null)?.sessao_browserless;
+    if (sessao === true) sessoes.importacao += 1;
+    else if (sessao === false) sessoes.importacao_sem_sessao += 1;
+    else sessoes.importacao_indeterminada += 1;
     // B3: situação lida pela importadora e não gravada é problema DA RODADA (vermelha), não só do e-mail.
     if ((r.corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada === "erro") {
       falhasSituacao.push(`importadora não gravou a situação de ${protocolo}`);
     }
     return r;
   };
-  const sessoesBrowserless = () => ({ ...sessoes, total: sessoes.leitura_portal + sessoes.importacao });
+  const sessoesBrowserless = () => {
+    const minimo = sessoes.leitura_portal + sessoes.importacao;
+    const maximo = minimo + sessoes.importacao_indeterminada;
+    // `total` só quando é sabido: com indeterminada, null + a faixa [total_minimo, total_maximo].
+    return { ...sessoes, total: maximo === minimo ? minimo : null, total_minimo: minimo, total_maximo: maximo };
+  };
   // 4.2: causa de falha ANTES do protocolo (sem leitura provada não há protocolo a avisar). O vigia do data_health
   // (`sayerlack_varredura_portal`) lê este campo do registro e manda 1 e-mail por causa.
   let causaPreProtocolo: string | null = null;

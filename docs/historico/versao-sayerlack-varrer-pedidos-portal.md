@@ -54,3 +54,8 @@ v1.10 (2026-11-08) — revisão 2, 8.2: funções de PÁGINA (filtros, situaçõ
 laço de paginação saem do template para _shared/sayerlack-portal-dom.ts, testados contra HTML real
 (scripts/sayerlack-portal-dom.test.ts). Comportamento igual.
 ```
+
+v1.11 (2026-11-08) — revisão 2, 4.3: `sessoes_browserless.importacao` conta só a importação em que a importadora
+(v1.9+) respondeu `sessao_browserless: true`. `false` vai para `importacao_sem_sessao` (já com PO, recusa antes do
+portal). Sem o campo vai para `importacao_indeterminada`, e então `total` é null, com a faixa
+`total_minimo`/`total_maximo`. Ausente nunca vira zero. Deploy da importadora antes.
