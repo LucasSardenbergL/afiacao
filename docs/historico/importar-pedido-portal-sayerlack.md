@@ -410,3 +410,6 @@ Adendo `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Só front + d
   posterior, contagem pela soma das listas (este último sobreviveu à 1ª rodada — o teste ganhou a asserção).
 - **QA 8.3** (navegador do app, desktop e 375×812, dados de prod): verde no roteiro do card e do diálogo, sem disparar
   importação real. Achado fora da fronteira: o "voltar" do celular não fecha o detalhe do pedido em Gerir pedidos.
+- **Rodada bloqueada (contrato da varredura v1.8, Sessão A)**: rodada com `pulado='bloqueado'` (pedido do app em envio
+  ou conciliação, IP008) depois da última efetiva deixa o card em "não posso afirmar", com o motivo e o que fazer.
+  A RPC já não contava `prova_leitura='ok_bloqueado'` como efetiva. Teste falsificado com controle.
