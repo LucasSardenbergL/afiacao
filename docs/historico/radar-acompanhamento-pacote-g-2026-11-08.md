@@ -104,4 +104,9 @@ Ordem recomendada: migration → Publish. As duas ordens são seguras:
   tudo; authenticated só no registro e no card; o cron `radar-posses-vencer-diario` (`0 9 * * *`, dono postgres)
   ativo; as 3 colunas novas existem.
 - Os 3 acompanhamentos legados da prod (do master) entram com responsável.
-- Falta o Publish.
+- **Publish feito (2026-11-08), provado nos bytes:**
+  - O ar carimba `5b2afbf1`, o squash do #3740 = `origin/main`: `monitor-deploy.sh --pr 3740` → `PR_NO_AR`, exit 0.
+  - A sentinela exclusiva "Quando retomar a conversa" está em `RadarOutcomeMenu-7EVYfHBw.js`, entre os 398 chunks
+    (closure ∪ precache): `verify-frontend.sh --pai 5b2afbf12^`, exit 0, com o controle negativo ok.
+- Nenhuma edge mudou. O pacote está no ar nas três camadas.
+- Próximo passo: o sinal de uso por `db/medir-radar-acompanhamento.sql`, depois de ~1 semana.
