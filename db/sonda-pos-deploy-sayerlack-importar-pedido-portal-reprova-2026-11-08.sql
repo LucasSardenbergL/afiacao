@@ -362,3 +362,4 @@ SELECT l.edge,
        END AS veredito
 FROM lidas l CROSS JOIN controle_credencial c CROSS JOIN controle_ativo a
 ORDER BY l.edge;
+-- reprova 2026-11-08 (leva da varrer v1.9): sha distinto da sonda anterior idêntica
