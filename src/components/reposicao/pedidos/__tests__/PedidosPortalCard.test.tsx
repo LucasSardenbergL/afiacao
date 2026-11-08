@@ -94,6 +94,8 @@ describe('PedidosPortalCard', () => {
     }), error: null };
     renderizar(<PedidosPortalCard />);
     expect(await screen.findByText('Mostrando 1 de 61.')).toBeTruthy();
+    // 6.4: o cabeçalho conta protocolos DISTINTOS da RPC (62), não a soma das listas (61 + 0 + 1).
+    expect(screen.getByText(/62 pendentes/)).toBeTruthy();
     expect(screen.getByTestId('pedidos-portal-sem-aliquota').textContent).toContain('13 SKUs Sayerlack sem alíquota de IPI (NCM 27101230, 32091010)');
     expect(screen.getByText('Cancelado no portal, mas com pedido de compra no Omie')).toBeTruthy();
     expect(screen.getByText(/pedido de compra 1291/)).toBeTruthy();
