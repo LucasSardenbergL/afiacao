@@ -11,7 +11,7 @@
 // Contrato de saída IGUAL ao que o script tinha embutido (consumido em Deno por `leitura.ts` e `varredura.ts`).
 
 /** Linha da tabela de consulta: nome da coluna → texto da célula. */
-export type LinhaConsultaDom = Record<string, string>;
+type LinhaConsultaDom = Record<string, string>;
 
 export interface PaginaConsultaDom {
   ok: boolean;
