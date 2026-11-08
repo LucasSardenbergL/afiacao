@@ -363,6 +363,12 @@ export function vereditoPainel(p: PainelPortal): { tom: 'ok' | 'atencao' | 'sem_
   if (p.pendentesUnicos > 0) return { tom: 'atencao', motivo: null };
   if (!ef) return { tom: 'sem_prova', motivo: 'Nenhuma rodada automática leu o portal com prova até agora.' };
   if (falhouDepois) return { tom: 'sem_prova', motivo: 'A última rodada automática falhou — pode haver pedido que eu ainda não vi.' };
+  // Varredura v1.8: pedido do app em envio/conciliação trava a importação; a rodada lê (prova 'ok_bloqueado') mas não
+  // importa nada — não é efetiva, e o card não pode ficar verde por uma efetiva de antes dela.
+  const bloqueadaDepois = ul?.pulado === 'bloqueado' && (!ef || Date.parse(ul.em) > Date.parse(ef.em));
+  if (bloqueadaDepois) {
+    return { tom: 'sem_prova', motivo: 'A última rodada automática leu o portal mas não importou: um pedido do app está em envio ou conciliação (IP008). Resolva-o em Gerir pedidos.' };
+  }
   if (!p.rodada.emDia) return { tom: 'sem_prova', motivo: 'Sem rodada automática com prova desde o último dia útil.' };
   const espera = esperaDaRodada(p);
   if (espera.total == null) return { tom: 'sem_prova', motivo: 'A última rodada não informou o que ficou em espera.' };

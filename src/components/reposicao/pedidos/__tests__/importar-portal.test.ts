@@ -229,6 +229,11 @@ describe('vereditoPainel (6.1: "nada pendente" só com prova)', () => {
     expect(v({ rodada: { ...painelV2().rodada as object, em_dia: false } }).tom).toBe('sem_prova');
     const falhou = v({ rodada: { ...painelV2().rodada as object, ultima: { em: '2026-11-09T20:30:00Z', status: 'erro', erro: 'login recusado' } } });
     expect([falhou.tom, falhou.motivo]).toEqual(['sem_prova', expect.stringContaining('falhou')]);
+    // varredura v1.8: rodada bloqueada (pedido do app em voo) depois da efetiva não deixa o card verde
+    const bloq = v({ rodada: { ...painelV2().rodada as object, ultima: { em: '2026-11-09T20:30:00Z', status: 'sucesso', pulado: 'bloqueado' } } });
+    expect([bloq.tom, bloq.motivo]).toEqual(['sem_prova', expect.stringContaining('IP008')]);
+    // controle: rodada pulada por portal fechado não é bloqueio
+    expect(v({ rodada: { ...painelV2().rodada as object, ultima: { em: '2026-11-09T20:30:00Z', status: 'sucesso', pulado: 'portal_fechado' } } }).tom).toBe('ok');
     // controle: erro ANTES da efetiva não derruba o veredito
     expect(v({ rodada: { ...painelV2().rodada as object, ultima: { em: '2026-11-07T20:30:00Z', status: 'erro' } } }).tom).toBe('ok');
   });
