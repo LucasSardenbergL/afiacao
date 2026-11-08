@@ -280,3 +280,13 @@ cenário dele virou teste de tela. Esse último ajuste de tela não passou por u
 ## Deploy
 🟣 founder: a migration no SQL Editor, depois conferir `db/validar-venda-painel-heranca.sql` via `psql-ro` (4 ✅).
 Depois, 🖱️ Publish, só quando o Lovable já tiver o merge como edição `completed`.
+
+**Em prod desde 2026-11-08.** A migration foi colada pelo founder antes do merge e conferida pela sessão via
+`psql-ro`: `db/validar-venda-painel-heranca.sql` deu 4/4 ✅ (corpo md5 `2b3f2c1b…`, STABLE DEFINER com o gate
+master, ACL igual ao de antes). O #3714 mergeou às 00:44:21 UTC (`6bcbb888`), e a migration na `origin/main` é
+idêntica à do merge (md5 igual), sem reversão. O 1º Publish saiu ~1 min depois do merge e voltou a pegar o
+commit anterior (`db9c900f`), com a edição ainda `pending` no Lovable: é a mesma armadilha do PR C, agora vista
+duas vezes no mesmo dia. O Publish seguinte, com a edição já `completed`, foi provado de duas formas:
+`monitor-deploy.sh --pr 3714` deu `PR_NO_AR` (o ar carimba `6bcbb888`), e
+`verify-frontend.sh --pai 6bcbb888b^ 'painel-base-sombra-propria'` deu exit 0, com o alvo em
+`VendaClientePainel-YJVvrdGY.js`, o controle negativo ok e 395 chunks varridos.

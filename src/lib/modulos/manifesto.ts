@@ -662,6 +662,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/AdminReposicaoMercado.leitura-falhou.test.tsx",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.test.tsx",
       "src/pages/__tests__/AdminReposicaoPedidos.alertas-erro-honesto.test.tsx",
+      "src/pages/__tests__/AdminReposicaoPedidos.voltar-fecha-detalhe.test.tsx",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.estados.test.tsx",
       "src/pages/__tests__/AdminReposicaoPromocaoDetail.gravacao.test.tsx",
       "src/pages/__tests__/AdminReposicaoBaixoGiro.erro-honesto.test.tsx",
