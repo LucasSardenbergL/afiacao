@@ -48,6 +48,7 @@ db/test-data-health-familia-ausente.sh 35
 db/test-data-health-radar.sh 96
 db/test-data-health-saldo-bancario-conta-a-conta.sh 76
 db/test-data-health-sayerlack-varredura.sh 130
+db/test-sayerlack-cancelado-com-compra-viva.sh 150
 db/test-data-health-sync-reprocess.sh 74
 db/test-data-health-venda-empurrada-conta-pelo-app.sh 11
 db/test-data-health-vendas-empurradas.sh 98
