@@ -25136,32 +25136,6 @@ export type Database = {
         }
         Returns: Json
       }
-      radar_contato_contabil_corrigir: {
-        Args: {
-          p_campo: string
-          p_cnpj: string
-          p_correcao_vista?: number | null
-          p_veredito: boolean | null
-        }
-        Returns: Json
-      }
-      radar_contato_contabil_da_empresa: {
-        Args: { p_cnpj: string }
-        Returns: {
-          calculado_em: string | null
-          campo: string
-          automatico: boolean | null
-          correcao_id: number | null
-          corroborado: boolean | null
-          efetivo: boolean | null
-          grupos: number | null
-          motivos: string[] | null
-          tipo: string
-          valor: string
-          veredito: boolean | null
-          visitar: boolean
-        }[]
-      }
       radar_contagem_por_municipio: {
         Args: {
           p_cnae_exato?: string

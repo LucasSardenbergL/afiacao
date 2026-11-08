@@ -62,7 +62,11 @@ export function useCorrigirContatoContabil() {
   return useMutation({
     mutationFn: async (v: CorrecaoContabil): Promise<RespostaCorrecao> => {
       const { data, error } = await supabase.rpc('radar_contato_contabil_corrigir', {
-        p_cnpj: v.cnpj, p_campo: v.campo, p_veredito: v.veredito, p_correcao_vista: v.correcaoVista,
+        p_cnpj: v.cnpj, p_campo: v.campo,
+        // O tipo gerado diz `boolean`, mas o SQL aceita NULL de propósito: NULL = "desfazer", volta ao automático.
+        p_veredito: v.veredito as boolean,
+        // Omitir = DEFAULT NULL (nenhuma correção vista) — o mesmo que mandar null.
+        p_correcao_vista: v.correcaoVista ?? undefined,
       });
       if (error) throw error;
       return lerRespostaCorrecao(data);
