@@ -292,7 +292,7 @@ export function useRaioXMutacoes(empresa: Empresa) {
     }
     if (!atualizadoEm) {
       // decisão gravada sem devolver a linha: sem a versão, o plano não vai às cegas
-      if (args) toast.warning('Decisão salva, mas a execução não: recarregue o item para completar responsável e prazo.');
+      if (args) toast.warning('Decisão salva, mas a execução não. Confira os campos e salve de novo.');
       else toast.error('Sem a versão da decisão — recarregue antes de salvar a execução.');
       return args ? 'parcial' : 'falhou';
     }
@@ -301,7 +301,7 @@ export function useRaioXMutacoes(empresa: Empresa) {
     } catch (e) {
       const motivo = textoDoErro(e, 'erro ao salvar a execução');
       if (args) {
-        toast.warning(`Decisão salva, mas a execução NÃO: ${motivo}. Abra o item de novo para completar.`);
+        toast.warning(`Decisão salva, mas a execução NÃO: ${motivo}. Confira os campos e salve de novo.`);
         return 'parcial';
       }
       toast.error(motivo);
@@ -312,7 +312,7 @@ export function useRaioXMutacoes(empresa: Empresa) {
         // mesmo destino (decidido_em não muda), motor já resolvido na 1ª chamada: só acrescenta o crédito
         await mDecidir.mutateAsync({ empresa, args: { ...args, tirarDoMotor: false }, acao: 'credito_troca', silencioso: true });
       } catch (e) {
-        toast.warning(`Decisão e contrapartida salvas, mas o crédito de troca NÃO: ${textoDoErro(e, 'erro ao salvar o crédito')}. Abra o item de novo para informar.`);
+        toast.warning(`Decisão e contrapartida salvas, mas o crédito de troca NÃO: ${textoDoErro(e, 'erro ao salvar o crédito')}. Salve de novo para informar.`);
         return 'parcial';
       }
     }

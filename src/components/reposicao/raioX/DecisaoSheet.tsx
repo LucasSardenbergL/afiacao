@@ -78,12 +78,31 @@ interface Props {
   origem?: OrigemDecisao;
 }
 
+/**
+ * Rascunho de quem acabou de salvar com SUCESSO PARCIAL (decisão gravada, execução não). Sobrevive à remontagem do
+ * formulário: sem ele, o painel avançava a fila e o piso/canal/responsável digitados se perdiam (Codex, 3ª revisão).
+ */
+type RascunhoParcial = {
+  sku: number;
+  destino: Destino;
+  responsavel: string;
+  prazo: string;
+  concluido: boolean;
+  piso: string;
+  canal: CanalLiquidacao | '';
+  frete: string;
+  contrapartida: TrocaContrapartida | '';
+  credito: string;
+};
+
 export function DecisaoSheet({ empresa, item, decisao, onClose, onSalvo, taxa = null, equipe = [], userId = null, fila = null, origem }: Props) {
   const { empresa: empresaCtx } = useReposicaoEmpresa();
   const empresaDoSeletor = empresaDoRaioX(empresaCtx);
   const custoMes = custoEsperarMensal(item.valor, taxa);
   // "Recarregar" (S9) remonta o formulário com as props novas.
   const [versao, setVersao] = useState(0);
+  const [rascunhoTodos, setRascunho] = useState<RascunhoParcial | null>(null);
+  const rascunho = rascunhoTodos?.sku === item.sku_codigo_omie ? rascunhoTodos : null;
 
   // Trocar a empresa no seletor com o Sheet aberto fecha: o item é de outra empresa (Review Focus 4).
   useEffect(() => {
@@ -112,13 +131,17 @@ export function DecisaoSheet({ empresa, item, decisao, onClose, onSalvo, taxa = 
         </SheetHeader>
         {/* remonta ao trocar de item ou recarregar: estado local (sujo, campos) nunca vaza entre SKUs nem sobrevive a refetch */}
         <FormDecisao
-          key={`${empresa}-${item.sku_codigo_omie}-${versao}`}
+          // com rascunho parcial, a versão gravada que chega no refetch remonta o formulário (com o rascunho), em vez
+          // de acusar "mudou enquanto o painel estava aberto" — quem mudou fomos nós
+          key={`${empresa}-${item.sku_codigo_omie}-${versao}-${rascunho ? (decisao?.atualizado_em ?? '') : ''}`}
           empresa={empresa}
           item={item}
           decisao={decisao}
           onClose={onClose}
           onSalvo={onSalvo ?? onClose}
           onRecarregar={() => setVersao((v) => v + 1)}
+          rascunho={rascunho}
+          onParcial={(r) => { setRascunho(r); setVersao((v) => v + 1); }}
           equipe={equipe}
           userId={userId}
           origem={origem ?? (fila ? 'fila' : 'sheet')}
@@ -131,9 +154,11 @@ export function DecisaoSheet({ empresa, item, decisao, onClose, onSalvo, taxa = 
 /** Converte número do banco para o campo pt-BR ("12,5"); null → vazio. */
 const paraCampo = (n: number | null) => (n === null ? '' : String(n).replace('.', ','));
 
-function FormDecisao({ empresa, item, decisao, onClose, onSalvo, onRecarregar, equipe = [], userId = null, origem }: Omit<Props, 'fila' | 'origem'> & {
+function FormDecisao({ empresa, item, decisao, onClose, onSalvo, onRecarregar, equipe = [], userId = null, origem, rascunho, onParcial }: Omit<Props, 'fila' | 'origem'> & {
   onSalvo: () => void;
   onRecarregar: () => void;
+  rascunho: RascunhoParcial | null;
+  onParcial: (r: RascunhoParcial) => void;
   origem: OrigemDecisao;
 }) {
   const m = useRaioXMutacoes(empresa);
@@ -143,7 +168,7 @@ function FormDecisao({ empresa, item, decisao, onClose, onSalvo, onRecarregar, e
   // S8: "tirar do motor" só nasce marcado sem decisão gravada; com decisão gravada, só ao escolher um destino
   // DIFERENTE do gravado (ou marcar à mão). Re-salvar uma decisão nunca desliga o motor por padrão.
   const tirarPadrao = (d: Destino | null) => gravado === null || d !== gravado;
-  const [destino, setDestino] = useState<Destino | null>(gravado ?? sugerido);
+  const [destino, setDestino] = useState<Destino | null>(rascunho?.destino ?? gravado ?? sugerido);
   const [tirar, setTirar] = useState(() => tirarPadrao(gravado ?? sugerido));
   // S9: assinatura do servidor ao abrir. Se mudar com o painel aberto (outro operador, restaurar, refetch),
   // o rascunho está velho: gravar apagaria campos ou religaria/desligaria o motor sem querer.
@@ -151,12 +176,14 @@ function FormDecisao({ empresa, item, decisao, onClose, onSalvo, onRecarregar, e
   const velho = assinaturaAoAbrir !== assinaturaServidor(item, decisao);
   const [observacao, setObservacao] = useState(decisao?.observacao ?? '');
   const [fornecedor, setFornecedor] = useState(decisao?.fornecedor_informado ?? '');
-  const [credito, setCredito] = useState(
+  const [credito, setCredito] = useState(rascunho ? rascunho.credito : 
     decisao?.credito_troca != null ? String(decisao.credito_troca).replace('.', ',') : '',
   );
   const [erroCredito, setErroCredito] = useState(false);
   // A pré-seleção sozinha não é decisão: "Salvar" só depois de um toque (ou o toque em "Confirmar: <sugestão>").
-  const [sujo, setSujo] = useState(false);
+  const [sujo, setSujo] = useState(() => !!rascunho
+    // a decisão ainda não chegou no refetch (gravado nulo) ou o crédito de troca ficou para trás → reenviar a decisão
+    && (gravado === null || (rascunho.destino === 'trocar' && rascunho.credito.trim() !== '')));
 
   // ── Plano de execução (pacote 2), no MESMO formulário ──
   // Plano NUNCA gravado: os padrões (responsável = quem decide, prazo = min(hoje + 14, meta)) são a proposta e vão no
@@ -164,21 +191,21 @@ function FormDecisao({ empresa, item, decisao, onClose, onSalvo, onRecarregar, e
   const semPlano = !decisao || (decisao.responsavel === null && decisao.prazo === null && decisao.preco_piso === null
     && decisao.canal_liquidacao === null && decisao.concluido_em === null && decisao.frete_estimado === null && decisao.troca_contrapartida === null);
   // "quem decide": numa decisão já gravada é quem a gravou; numa nova, quem está decidindo agora
-  const [responsavel, setResponsavel] = useState(semPlano
+  const [responsavel, setResponsavel] = useState(rascunho ? rascunho.responsavel : semPlano
     ? ((gravado ? decisao?.decidido_por : null) ?? userId ?? '')
     : (decisao?.responsavel ?? ''));
-  const [prazo, setPrazo] = useState(semPlano ? prazoPadrao(hojeSP()) : (decisao?.prazo ?? ''));
+  const [prazo, setPrazo] = useState(rascunho ? rascunho.prazo : semPlano ? prazoPadrao(hojeSP()) : (decisao?.prazo ?? ''));
   // A versão que o formulário edita (o Sheet remonta ao recarregar): vai como p_atualizado_em → RX003 se mudou.
   const [atualizadoEm] = useState(decisao?.atualizado_em ?? null);
   const concluidoGravado = decisao ? concluidoVigente(decisao) : false;
-  const [concluido, setConcluido] = useState(concluidoGravado);
-  const [piso, setPiso] = useState(gravado === 'liquidar' ? paraCampo(decisao?.preco_piso ?? null) : '');
-  const [canal, setCanal] = useState<CanalLiquidacao | ''>(gravado === 'liquidar' ? (decisao?.canal_liquidacao ?? '') : '');
-  const [frete, setFrete] = useState(gravado === 'liquidar' ? paraCampo(decisao?.frete_estimado ?? null) : '');
-  const [contrapartida, setContrapartida] = useState<TrocaContrapartida | ''>(gravado === 'trocar' ? (decisao?.troca_contrapartida ?? '') : '');
+  const [concluido, setConcluido] = useState(rascunho ? rascunho.concluido : concluidoGravado);
+  const [piso, setPiso] = useState(rascunho ? rascunho.piso : gravado === 'liquidar' ? paraCampo(decisao?.preco_piso ?? null) : '');
+  const [canal, setCanal] = useState<CanalLiquidacao | ''>(rascunho ? rascunho.canal : gravado === 'liquidar' ? (decisao?.canal_liquidacao ?? '') : '');
+  const [frete, setFrete] = useState(rascunho ? rascunho.frete : gravado === 'liquidar' ? paraCampo(decisao?.frete_estimado ?? null) : '');
+  const [contrapartida, setContrapartida] = useState<TrocaContrapartida | ''>(rascunho ? rascunho.contrapartida : gravado === 'trocar' ? (decisao?.troca_contrapartida ?? '') : '');
   const [erroPiso, setErroPiso] = useState(false);
   const [erroFrete, setErroFrete] = useState(false);
-  const [planoSujo, setPlanoSujo] = useState(false);
+  const [planoSujo, setPlanoSujo] = useState(!!rascunho);
   const tocarPlano = () => setPlanoSujo(true);
 
   // Item fora do estoque (linha histórica da coorte): o motor não foi lido — nada é desligado daqui.
@@ -282,7 +309,11 @@ function FormDecisao({ empresa, item, decisao, onClose, onSalvo, onRecarregar, e
     }
     if (!args && !plano) return;
     const res = await m.salvar(args, plano, { sku: item.sku_codigo_omie, atualizadoEm, origem });
-    if (res !== 'falhou') onSalvo();
+    if (res === 'parcial') {
+      onParcial({ sku: item.sku_codigo_omie, destino, responsavel, prazo, concluido, piso, canal, frete, contrapartida, credito });
+      return;
+    }
+    if (res === 'ok') onSalvo();
   };
 
   const restaurar = async () => {
@@ -311,6 +342,11 @@ function FormDecisao({ empresa, item, decisao, onClose, onSalvo, onRecarregar, e
 
   return (
     <div className="mt-4 space-y-5 text-sm">
+      {rascunho && !velho && (
+        <p role="status" className="rounded-md border border-status-warning/40 bg-status-warning/5 p-3 text-status-warning">
+          A decisão foi salva, mas a execução não. Confira os campos abaixo e salve de novo.
+        </p>
+      )}
       {velho && (
         <div role="alert" className="space-y-2 rounded-md border border-status-error/40 bg-status-error/5 p-3">
           <p className="text-status-error">Esta decisão mudou enquanto o painel estava aberto — recarregue</p>
