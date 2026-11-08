@@ -224,3 +224,31 @@ Deno.test("script do Browserless parseia e embute as funções de página do _sh
       igual(code.includes(`function ${nome}(`), true, `embute ${nome}`);
     }
   }));
+
+// 4.3: a cota conta a importação pelo que a importadora DIZ; sem o campo é indeterminado (faixa), nunca zero.
+for (const [rotulo, resposta, esperado] of [
+  ["importadora abriu sessão", { corpo: { ok: false, mensagem: "x", sessao_browserless: true } },
+    { importacao: 1, importacao_sem_sessao: 0, importacao_indeterminada: 0, total: 2, total_minimo: 2, total_maximo: 2 }],
+  ["importadora recusou antes do portal", { corpo: { ok: false, mensagem: "x", sessao_browserless: false } },
+    { importacao: 0, importacao_sem_sessao: 1, importacao_indeterminada: 0, total: 1, total_minimo: 1, total_maximo: 1 }],
+  ["importadora sem o campo (HTTP 504)", { status: 504, corpo: "gateway timeout" },
+    { importacao: 0, importacao_sem_sessao: 0, importacao_indeterminada: 1, total: null, total_minimo: 1, total_maximo: 2 }],
+  ["importadora caiu na rede (lança)", "rede",
+    { importacao: 0, importacao_sem_sessao: 0, importacao_indeterminada: 1, total: null, total_minimo: 1, total_maximo: 2 }],
+] as const) {
+  Deno.test(`4.3: sessões do Browserless — ${rotulo}`, () =>
+    comRelogio(QUARTA, async () => {
+      const falso = montar({
+        browserless: () => portal([]),
+        falhasAbertas: [{ protocolo: "2130000", mensagem: "x", ultima_em: "2026-11-09T10:00:00Z", primeira_em: "2026-11-09T10:00:00Z", tentativas: 1, resolvido_em: null }],
+        vistos: [{ protocolo: "2130000", primeira_vez_em: "2026-11-01T10:00:00Z" }],
+        sync: [{ status: "complete", last_sync_at: "2026-11-11T12:50:00Z" }],
+        importadora: () => resposta,
+      });
+      const r = await varrer("importar");
+      igual(falso.de(IMPORTADORA).length, 1, "uma chamada à importadora");
+      igual(r.corpo.sessoes_browserless, { leitura_portal: 1, ...esperado }, "contagem da resposta");
+      const fecho = falso.de("rest:acoes_execucoes", "PATCH")[0].corpo as { detalhes: Record<string, unknown> };
+      igual(fecho.detalhes.sessoes_browserless, { leitura_portal: 1, ...esperado }, "contagem no ledger");
+    }));
+}

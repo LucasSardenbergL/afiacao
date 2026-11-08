@@ -47,7 +47,12 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * v1.8 (2026-11-08, revisão 2, 8.2) — funções de PÁGINA (filtros, tabela da consulta, condição) saem do template para
  * `_shared/sayerlack-portal-dom.ts`, testadas contra HTML real; comportamento igual.
  */
-export const VERSAO = "v1.8-seletores-testados";
+/**
+ * v1.9 (2026-11-08, revisão 2, 7.2 + 4.3) — cada leitura do portal grava a EVIDÊNCIA imutável em
+ * `sayerlack_portal_evidencia` (fail-open; `evidencia_id` no ledger) e toda resposta diz `sessao_browserless`.
+ * Migration 20261111090000 antes.
+ */
+export const VERSAO = "v1.9-evidencia-portal";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

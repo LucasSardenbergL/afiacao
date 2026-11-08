@@ -71,6 +71,7 @@ interface Cenario {
   importar?: () => Resposta;
   disparo?: () => Resposta;
   pendencia?: () => Resposta;
+  evidencia?: () => Resposta;
 }
 
 function montar(c: Cenario) {
@@ -90,6 +91,7 @@ function montar(c: Cenario) {
     "GET rest:sayerlack_varredura_falha": () => ({ corpo: [] }),
     "POST rest:sayerlack_varredura_falha": () => c.pendencia?.() ?? { status: 201, corpo: null },
     [BROWSERLESS]: () => c.browserless?.() ?? portal("5 - Suspenso"),
+    "POST rest:sayerlack_portal_evidencia": () => c.evidencia?.() ?? { status: 201, corpo: [{ id: 42 }] },
     "rpc:sayerlack_registrar_situacao_portal": () => c.registrar?.() ?? { corpo: { aceitos: [{ protocolo: PROTOCOLO }] } },
     "rpc:sayerlack_importar_pedido_portal": () => c.importar?.() ?? { corpo: { pedido_id: 777, ja_existia: false } },
     [DISPARO]: () => c.disparo?.() ?? { corpo: { ok: true } },
@@ -291,4 +293,100 @@ Deno.test("script do Browserless parseia e embute as funções de página do _sh
   for (const nome of ["aplicarFiltrosConsultaDom", "clicarFiltrarDom", "lerTabelaConsultaDom", "lerCondicaoSelecionadaDom", "lerCondicoesOpcoesDom"]) {
     igual(code.includes(`function ${nome}(`), true, `embute ${nome}`);
   }
+});
+
+// ── 7.2 (evidência imutável) e 4.3 (sessão do Browserless) ──────────────────────────────────────────────────────────
+function evidencias(falso: ReturnType<typeof montar>): Record<string, unknown>[] {
+  return falso.de("rest:sayerlack_portal_evidencia", "POST").map((c) => {
+    const corpo = c.corpo as Record<string, unknown> | Record<string, unknown>[];
+    return Array.isArray(corpo) ? corpo[0] : corpo;
+  });
+}
+
+Deno.test("7.2: a leitura do portal vira 1 evidência com o envelope cru, correlacionada ao ledger", async () => {
+  const falso = montar({ porProtocolo: () => null });
+  const r = await importar();
+  const ev = evidencias(falso);
+  igual(ev.length, 1, "uma evidência por leitura");
+  const e = ev[0];
+  igual([e.execucao_id, e.protocolo, e.origem, e.somente_situacao, e.leitura_ok, e.http_status, e.pedido_id],
+    ["reg-1", PROTOCOLO, "manual", false, true, 200, null], "identidade e desfecho");
+  igual([e.itens_brutos, e.consulta_linhas, e.condicao, e.condicoes_opcoes],
+    [ITENS, [linha("5 - Suspenso")], "70 - 7 DIAS", ["70 - 7 DIAS", "30 DIAS"]], "o que o portal mostrou");
+  igual(typeof e.lido_de === "string" && typeof e.lido_ate === "string" && String(e.lido_ate) >= String(e.lido_de), true, "intervalo");
+  const l = ledger(falso);
+  igual([l.evidencia_id, l.evidencia_gravada, l.sessao_browserless], [42, true, true], "ledger aponta a evidência");
+  igual(r.corpo.sessao_browserless, true, "resposta diz que abriu sessão");
+});
+
+Deno.test("7.2: pedido já no app — a evidência leva o #id; somente_situacao também é evidência", async () => {
+  const falso = montar({ porProtocolo: () => pedido({ status: "enviado", omie_pedido_compra_id: "9001" }), browserless: () => portal("6 - Cancelado") });
+  await importar({ protocolo: PROTOCOLO, somente_situacao: true });
+  const e = evidencias(falso)[0];
+  igual([e.pedido_id, e.somente_situacao, e.leitura_ok], [501, true, true], "evidência do pedido conhecido");
+});
+
+Deno.test("7.2: Browserless fora também é evidência (leitura_ok=false, status e erro)", async () => {
+  const falso = montar({ porProtocolo: () => null, browserless: () => ({ status: 502, corpo: "bad gateway" }) });
+  const r = await importar();
+  const e = evidencias(falso)[0];
+  igual([e.leitura_ok, e.http_status, e.itens_brutos], [false, 502, null], "falha registrada");
+  igual(r.corpo.sessao_browserless, true, "o fetch foi tentado: a sessão conta");
+});
+
+Deno.test("7.2: evidência que não grava é fail-open — a importação segue e o ledger diz que não gravou", async () => {
+  let criado = false;
+  const falso = montar({
+    porProtocolo: () => null,
+    porId: () => (criado ? pedido({ id: 777, status: "enviado", omie_pedido_compra_id: "9001", omie_pedido_compra_numero: "PO-9001" }) : null),
+    disparo: () => { criado = true; return { corpo: { ok: true } }; },
+    evidencia: () => erroBanco("23514", "new row violates check constraint"),
+  });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.etapa], [true, "concluido"], "importação não muda");
+  const l = ledger(falso);
+  igual([l.evidencia_id, l.evidencia_gravada], [null, false], "ledger: evidência não gravada");
+});
+
+Deno.test("4.3: recusa antes do portal (PO manual) responde sessao_browserless=false e não grava evidência", async () => {
+  const falso = montar({
+    porProtocolo: () => pedido(),
+    pos: () => ({ corpo: [{ numero_pedido: "PO-77", numero_contrato_fornecedor: `2140000 / ${PROTOCOLO}` }] }),
+  });
+  const r = await importar();
+  igual([r.corpo.motivo, r.corpo.sessao_browserless], ["po_manual_no_omie", false], "sem sessão");
+  igual(evidencias(falso).length, 0, "sem leitura, sem evidência");
+  igual(ledger(falso).sessao_browserless, false, "ledger sem sessão");
+});
+
+Deno.test("4.3: já com PO responde sessao_browserless=false", async () => {
+  montar({ porProtocolo: () => pedido({ status: "enviado", omie_pedido_compra_id: "9001", omie_pedido_compra_numero: "PO-9001" }) });
+  const r = await importar();
+  igual([r.corpo.ja_existia, r.corpo.sessao_browserless], [true, false], "sem sessão");
+});
+
+Deno.test("7.2 (Codex P1): INSERT da evidência pendurado não segura a situação nem o disparo", async () => {
+  let criado = false;
+  const falso = montar({
+    porProtocolo: () => null,
+    porId: () => (criado ? pedido({ id: 777, status: "enviado", omie_pedido_compra_id: "9001", omie_pedido_compra_numero: "PO-9001" }) : null),
+    disparo: () => { criado = true; return { corpo: { ok: true } }; },
+    evidencia: () => new Promise<Resposta>(() => {}) as unknown as Resposta,
+  });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.etapa], [true, "concluido"], "importação segue");
+  igual(falso.de("rpc:sayerlack_registrar_situacao_portal").length, 2, "a situação foi gravada");
+  igual([ledger(falso).evidencia_gravada, ledger(falso).evidencia_id], [false, null], "ledger: sem evidência confirmada");
+});
+
+Deno.test("4.3 (Codex P2): saídas antecipadas também dizem sessao_browserless=false", async () => {
+  montar({ porProtocolo: () => null });
+  const invalido = await importar({ protocolo: "12a" });
+  igual([invalido.status, invalido.corpo.sessao_browserless], [400, false], "protocolo inválido");
+  const cron = await handler(new Request("https://edge.invalid/", {
+    method: "POST",
+    headers: { "x-cron-secret": ENV_TESTE.CRON_SECRET, "Content-Type": "application/json" },
+    body: JSON.stringify({ protocolo: PROTOCOLO }),
+  }));
+  igual([cron.status, (await cron.json() as Record<string, unknown>).sessao_browserless], [403, false], "cron");
 });

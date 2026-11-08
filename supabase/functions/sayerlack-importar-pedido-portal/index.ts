@@ -26,6 +26,7 @@ import {
 } from "../_shared/sayerlack-portal-dom.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { lerPedidoPortal, mensagemErroImportacao, situacaoFaturada, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
+import { comPrazo, cortarTrace, PRAZO_EVIDENCIA_MS } from "./evidencia.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -317,7 +318,13 @@ async function dispararOmie(pedidoId: number): Promise<{ httpStatus: number; bod
   }
 }
 
+// 4.3 (Codex P2): o enriquecimento vale para TODA saída, inclusive as antecipadas (sonda, gate, 400, 403).
 Deno.serve(async (req: Request) => {
+  const evid: Evidencia = {};
+  return await comSessaoBrowserless(await atender(req, evid), evid);
+});
+
+async function atender(req: Request, evid: Evidencia): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const auth = await authorizeCronOrStaff(req);
@@ -363,19 +370,44 @@ Deno.serve(async (req: Request) => {
   const t0Registro = Date.now();
   // Evidência da tentativa acumulada FORA da resposta (Codex revisão 2, P2 de B11): toda saída — re-disparo, recusa,
   // catch — leva ao ledger as opções de condição e o desfecho da situação que esta tentativa observou.
-  const evid: Evidencia = {};
   // Só a varredura manda (B3/B5): reler e GRAVAR a situação, sem gravar pedido nem disparar PO.
   const somenteSituacao = body?.somente_situacao === true;
-  const resposta = await tratar(db, protocolo, situacoesPermitidas, operador, evid, somenteSituacao);
+  const origem = auth.via === "staff" ? "manual" : "automatica";
+  const resposta = await tratar(db, protocolo, situacoesPermitidas, operador, evid, somenteSituacao, { execucaoId: registro, origem });
   await fecharRegistro(db, registro, resposta, protocolo, Date.now() - t0Registro, evid);
   return resposta;
-});
+}
+
+/**
+ * 4.3: toda resposta diz se ESTA tentativa abriu sessão no Browserless (`sessao_browserless`), para a varredura contar a
+ * cota pelo que aconteceu, não pela chamada (já com PO, recusa antes do portal e config ausente não abrem sessão).
+ * `true` é marcado no instante antes do fetch: uma sessão que o fetch abriu e não respondeu ainda conta.
+ * Corpo não-JSON passa intacto (a varredura lê a falta do campo como indeterminado, nunca como zero).
+ */
+async function comSessaoBrowserless(resposta: Response, evid: Evidencia): Promise<Response> {
+  const corpo = await resposta.clone().json().catch(() => null);
+  if (!corpo || typeof corpo !== "object" || Array.isArray(corpo)) return resposta;
+  return new Response(JSON.stringify({ ...corpo, sessao_browserless: evid.sessao_browserless === true }), {
+    status: resposta.status,
+    headers: resposta.headers,
+  });
+}
 
 /** O corpo da importação. Toda saída é uma Response; o chamador registra o resultado no ledger. */
 interface Evidencia {
   condicoes_opcoes?: string[] | null;
   situacao_portal?: string | null;
   situacao_gravada?: string | null;
+  /** 4.3: esta tentativa abriu sessão no Browserless (marcado antes do fetch). Ausente = não abriu. */
+  sessao_browserless?: boolean;
+  /** 7.2: id da linha em `sayerlack_portal_evidencia` (null = não gravou; fail-open). */
+  evidencia_id?: number | null;
+}
+
+/** Correlação da evidência (7.2): a linha do ledger desta tentativa e quem a pediu. */
+interface ContextoEvidencia {
+  execucaoId: string | null;
+  origem: "manual" | "automatica";
 }
 
 /** Desfecho indeterminado (B7): o contrato diz explicitamente "não sei" — nunca falha reconhecida, nunca sqlstate. */
@@ -388,6 +420,7 @@ async function tratar(
   operador: string | null,
   evid: Evidencia,
   somenteSituacao: boolean,
+  ctxEvid: ContextoEvidencia,
 ): Promise<Response> {
   const estado = async (filtro: { id?: number; protocolo?: string }): Promise<PedidoEstado | null> => {
     let q = db.from("pedido_compra_sugerido")
@@ -498,6 +531,7 @@ async function tratar(
     let envelope: BrowserlessData = {};
     let httpStatus = 0;
     let httpErr: string | null = null;
+    evid.sessao_browserless = true;
     try {
       const ctrl = new AbortController();
       const timeout = setTimeout(() => ctrl.abort(), 185_000);
@@ -525,6 +559,26 @@ async function tratar(
       httpErr = mensagemDeErro(e) ?? "erro sem mensagem";
     }
     const lidoAte = new Date().toISOString();
+    // 7.2: o que o portal mostrou fica gravado ANTES de qualquer decisão (sucesso, recusa ou falha de leitura).
+    evid.evidencia_id = await gravarEvidencia(db, {
+      execucao_id: ctxEvid.execucaoId,
+      protocolo,
+      pedido_id: pedidoConhecido?.id ?? null,
+      origem: ctxEvid.origem,
+      somente_situacao: somenteSituacao,
+      lido_de: lidoDe,
+      lido_ate: lidoAte,
+      http_status: httpStatus || null,
+      leitura_ok: !httpErr && httpStatus >= 200 && httpStatus < 300 && envelope.success === true,
+      erro_tipo: envelope.erroTipo ?? null,
+      erro: httpErr ?? envelope.erro ?? null,
+      consulta_headers: envelope.consulta?.headers ?? null,
+      consulta_linhas: envelope.consulta?.linhas ?? null,
+      itens_brutos: envelope.itens ?? null,
+      condicao: typeof envelope.condicao === "string" ? envelope.condicao : null,
+      condicoes_opcoes: Array.isArray(envelope.condicoes_opcoes) ? envelope.condicoes_opcoes : null,
+      trace: cortarTrace(envelope.trace),
+    });
     console.log(`[importar-portal] ${protocolo}: Browserless ${Date.now() - t0}ms http=${httpStatus}${httpErr ? ` erro=${httpErr}` : ""} tipo=${envelope.erroTipo ?? "-"}`);
 
     // Pedido já gravado: toda recusa daqui em diante carrega o #id e diz que NÃO re-disparou (o pedido existe).
@@ -764,6 +818,10 @@ async function fecharRegistro(
       // A resposta da 1ª importação traz a gravação pós-criar (B10); senão vale a da leitura.
       situacao_gravada: corpo?.situacao_gravada ?? evid.situacao_gravada ?? null,
       desfecho: corpo?.desfecho ?? null,
+      // 4.3 e 7.2: a sessão do Browserless desta tentativa e a linha da evidência (null = não gravou).
+      sessao_browserless: evid.sessao_browserless === true,
+      evidencia_id: evid.evidencia_id ?? null,
+      evidencia_gravada: evid.evidencia_id != null,
       mensagem: typeof corpo?.mensagem === "string" ? corpo.mensagem.slice(0, 300) : null,
       duracao_ms: duracaoMs,
     };
@@ -773,5 +831,29 @@ async function fecharRegistro(
     if (error) console.warn(`[importar-portal] ledger não fechou (fail-open): ${error.message}`);
   } catch (e) {
     console.warn(`[importar-portal] ledger não fechou (fail-open): ${mensagemDeErro(e) ?? "erro"}`);
+  }
+}
+
+/**
+ * Grava a evidência (7.2) — INSERT-only na tabela imutável. Fail-open: a evidência é auditoria, nunca derruba nem
+ * muda a importação; a falha fica no ledger (`evidencia_gravada: false`) e no log.
+ */
+async function gravarEvidencia(db: Db, linha: Record<string, unknown>): Promise<number | null> {
+  try {
+    // Codex P1: a evidência está ANTES da gravação da situação e do disparo — um INSERT pendurado não pode segurá-los.
+    const r = await comPrazo(db.from("sayerlack_portal_evidencia").insert(linha).select("id").single(), PRAZO_EVIDENCIA_MS);
+    if (r === "prazo") {
+      console.warn(`[importar-portal] ${linha.protocolo}: evidência sem resposta em ${PRAZO_EVIDENCIA_MS}ms (fail-open; pode ter gravado)`);
+      return null;
+    }
+    const { data, error } = r;
+    if (error || !data) {
+      console.warn(`[importar-portal] ${linha.protocolo}: evidência não gravada (fail-open): ${error?.message ?? "sem id"}`);
+      return null;
+    }
+    return (data as { id: number }).id;
+  } catch (e) {
+    console.warn(`[importar-portal] ${linha.protocolo}: evidência não gravada (fail-open): ${mensagemDeErro(e) ?? "erro"}`);
+    return null;
   }
 }

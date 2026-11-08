@@ -553,6 +553,21 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
 - Falsificação (commitado antes; controle verde antes e depois, na mesma invocação): 11 sabotagens no `index.ts` da
   importar e 10 no da varrer, uma camada por vez — todas vermelhas.
 
+## 7.2 + 4.3 — evidência imutável de cada leitura e sessão do Browserless pela importadora (2026-11-08)
+
+- **7.2.** A migration `20261111090000` cria a tabela `sayerlack_portal_evidencia`, que só aceita INSERT. Triggers
+  ALWAYS recusam UPDATE, DELETE e TRUNCATE (42501). RLS: só staff lê; 1 escritor (`service_role`).
+- A importadora (v1.9) grava 1 linha por chamada ao Browserless, logo depois da leitura: consulta, itens brutos,
+  condição e opções, e trace cortado em ~100 KB.
+- Correlação: `execucao_id` = `acoes_execucoes.id`; o ledger guarda `evidencia_id` e `evidencia_gravada`.
+- Fail-open com prazo de 3 s: a evidência nunca segura nem muda a importação.
+- **4.3.** Toda resposta da importadora diz `sessao_browserless`.
+- A varredura (v1.11) conta `importacao` só com `true`. `false` vira `importacao_sem_sessao`.
+- Campo ausente ou rede vira `importacao_indeterminada`; então `total` vem null, com a faixa `total_minimo`/`total_maximo`.
+- **Lição (Codex).** O PostgREST falso devolvia 204 COM corpo, e o `Response` lançava. O fecho do ledger falhava mudo
+  em todos os testes de handler, e as asserções liam o PATCH tentado. Corrigido no `_shared`.
+- **Deploy:** migration → importar → varrer.
+
 ## 8.2 — seletores e paginação testados contra HTML (2026-11-08)
 
 - **O que mudou:** as funções que rodam NA PÁGINA do portal (filtros, situações, tabela da consulta por nome de coluna,
@@ -575,6 +590,11 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
   sem teste; testes Deno só provavam sintaxe → agora executam o texto serializado).
 - **Resta (declarado):** o `innerText` com layout real, o redesenho assíncrono do DataTables e a execução no Chrome
   remoto só se provam na rodada real (leitura de segunda, `modo=listar`).
+- **Deploy (2026-11-08):** #3742 mergeado às 15:05Z. A ordem entre edges reteve a leva até a predecessora
+  `disparar-pedidos-aprovados` ser sondada de novo: DEPLOY CONFIRMADO, tentativa #1009. Depois foram duas ondas pelo
+  pacote. O importar v1.8 bateu 10/10 hashes, e a sonda (#1011) deu DEPLOY CONFIRMADO. O sensor achou o `edit_id`
+  da regeneração do `types.ts` (`d97eb3234`, tolerado), e nenhuma edge mudou. O varrer v1.10 bateu 14/14 hashes, a
+  resposta veio sem `edit_id` e a sonda deu DEPLOY CONFIRMADO. `pendencias:deploy` em exit 0.
 
 ## 7.5 — o portal expõe NCM/IPI por item? Rodada 1: INCONCLUSIVO (2026-11-08)
 
