@@ -164,6 +164,14 @@ describe("paginação da varredura", () => {
     expect(prova).toMatchObject({ ok: false, motivo: "lidos_diferente_do_total" });
   });
 
+  it("marcação sem bootstrap: <a class='paginate_button next'> com o disabled no <li> pai = sem próxima", async () => {
+    document.querySelector("#tabela_paginate ul")!.innerHTML =
+      '<li class="page-item next disabled"><a href="#" class="paginate_button next">Próximo</a></li>';
+    expect(lerTabelaConsultaDom().temProxima).toBe(false);
+    (document.querySelector("#tabela_paginate li") as HTMLElement).classList.remove("disabled");
+    expect(lerTabelaConsultaDom().temProxima).toBe(true);
+  });
+
   it("mais páginas que o teto: PAGINACAO_INCOMPLETA, nunca sucesso parcial", async () => {
     paginacao([fixture("consulta-pagina-2.tbody.html"), fixture("consulta-pagina-2.tbody.html")]);
     const r = await lerTodasAsPaginas(lerEstavel, avancar, 2);
