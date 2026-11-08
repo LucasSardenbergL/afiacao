@@ -39,7 +39,9 @@
   sabotagens vermelhas. Só testes: nada a deployar.
 - 🔄 **8.2** — seletores e paginação testados contra HTML (vitest + jsdom), funções de página em
   `_shared/sayerlack-portal-dom.ts`; importar v1.8 e varrer v1.10 (deploy das 2 edges depois do merge).
-- ⏳ Depois: 5.2, 7.1, 7.2, 7.3, 4.3 (7.5 numa sessão própria).
+- 🔄 **7.2 + 4.3** — evidência imutável de cada leitura (`sayerlack_portal_evidencia`, migration `20261111090000`) e
+  sessão do Browserless contada pela importadora; importar v1.9 e varrer v1.11 (migration → importar → varrer).
+- ⏳ Depois: 7.3, 7.1, 5.2 (botão "aceitar o portal", decisão do founder) (7.5 numa sessão própria).
 
 ## Andamento da Sessão B (tela e painel)
 
