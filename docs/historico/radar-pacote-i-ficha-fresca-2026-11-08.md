@@ -19,7 +19,7 @@ Esta entrega fecha três achados da 2ª revisão do Radar. Ela é só front: sem
   - Agora há um aviso para cada estado: falhou (diz que não é falta de cliente), sem lote completo (o hook devolve `null`) e desatualizada (a releitura falhou sobre um dado anterior). Enquanto carrega, a linha mostra "… cli.".
   - `empresas_lote ?? 0` virou "—" (ausente ≠ zero).
 - **Linha da fila** (`RadarLinha`). Na mesma linha, o vínculo que falhava já dizia "vínculo?", mas os irmãos que falhavam sumiam como se o lead não fosse filial de cliente. Agora `irmaosEstado` chega à linha, e `selosFilial(i, 'falhou')` sem dado vira o selo "filial?". Com dado em mãos (releitura que falhou), o dado vale.
-- **Ponto aberto.** O brief citava `RadarClientes.tsx:~484`. Na main, essa linha é a contagem do chip "Para visitar", que já mostra "?" quando dá erro. A falha parcial que achei na página foi a dos irmãos, descrita acima. Perguntei à sessão-mãe se o alvo era outro.
+- **Fila com páginas na tela** (Codex, achado 13; o `~484` do brief era a numeração da main da época). O erro só aparecia sem nenhuma página carregada, e o rodapé tratava só a falha da página seguinte. Um refetch comum que falhasse (a invalidação depois de um contato ou cadastro) deixava as linhas velhas sem aviso. Agora `q.isError && !q.isFetchNextPageError` com páginas carregadas mostra "Não consegui atualizar a fila: as linhas abaixo são da leitura anterior", com "Tentar de novo".
 
 ## 3. Ficha entregue pelo card (sobra do pacote F)
 
@@ -31,7 +31,7 @@ Esta entrega fecha três achados da 2ª revisão do Radar. Ela é só front: sem
 ## Provas
 
 - Vitest:
-  - `RadarClientes.test.tsx`: 10 casos novos (ficha fresca e ficha do card).
+  - `RadarClientes.test.tsx`: 12 casos novos (ficha fresca, ficha do card e fila desatualizada).
   - `RadarRankingCidades.estados.test.tsx`: 5 casos.
   - `RadarLinha.selos.test.tsx`: 2 casos.
   - `ficha-aberta.test.ts`: 6 casos.

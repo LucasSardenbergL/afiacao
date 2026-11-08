@@ -683,3 +683,37 @@ describe('RadarClientes — ficha entregue pelo card (pacote I)', () => {
     expect(registrarFichaEntregue).not.toHaveBeenCalled();
   });
 });
+
+// Pacote I, item 2 (Codex, achado 13): o erro só aparecia sem NENHUMA página; refetch que falha com páginas na tela
+// deixava as linhas velhas sem aviso.
+describe('RadarClientes — releitura da fila que falha com páginas na tela (pacote I)', () => {
+  it('as linhas ficam, a tela DIZ que estão desatualizadas, e "Tentar de novo" relê', async () => {
+    fonte.paginas = [[lead('A'), lead('B')]];
+    const { qc } = montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B']));
+    expect(screen.queryByTestId('radar-fila-desatualizada')).toBeNull();
+
+    fonte.falharPagina = new Set([0]);
+    await act(async () => { await qc.invalidateQueries({ queryKey: ['radar', 'lista'] }); });
+    await waitFor(() => expect(screen.getByTestId('radar-fila-desatualizada')).toBeTruthy());
+    expect(cnpjsNaLista()).toEqual(['A', 'B']);
+    expect(screen.queryByText('Não foi possível carregar a fila')).toBeNull();
+
+    fonte.falharPagina = new Set();
+    fonte.paginas = [[lead('B')]];
+    fireEvent.click(within(screen.getByTestId('radar-fila-desatualizada')).getByText('Tentar de novo'));
+    await waitFor(() => expect(screen.queryByTestId('radar-fila-desatualizada')).toBeNull());
+    expect(cnpjsNaLista()).toEqual(['B']);
+  });
+
+  it('falha só da página SEGUINTE: o rodapé trata, sem o aviso de fila desatualizada', async () => {
+    fonte.paginas = [[lead('A')], [lead('B')]];
+    fonte.falharPagina = new Set([1]);
+    montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    fireEvent.click(screen.getByText('abrir A'));
+    fireEvent.click(within(screen.getByTestId('ficha')).getByText('Próximo'));
+    await waitFor(() => expect(screen.getByTestId('radar-erro-pagina')).toBeTruthy());
+    expect(screen.queryByTestId('radar-fila-desatualizada')).toBeNull();
+  });
+});

@@ -626,6 +626,17 @@ export default function RadarClientes() {
             />
           ) : (
             <>
+              {/* Pacote I (Codex, achado 13): releitura que FALHOU com páginas já na tela (invalidação depois de um
+                  contato/cadastro, refetch comum) — as linhas são da leitura anterior e a tela DIZ. A falha da página
+                  SEGUINTE tem o próprio rodapé, abaixo. */}
+              {q.isError && !q.isFetchNextPageError && (
+                <div className="flex items-center gap-2 border-b border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs" data-testid="radar-fila-desatualizada">
+                  <span className="flex-1 text-status-warning">
+                    Não consegui atualizar a fila: as linhas abaixo são da leitura anterior e podem estar desatualizadas.
+                  </span>
+                  <Button size="sm" variant="outline" disabled={q.isFetching} onClick={() => void q.refetch()}>Tentar de novo</Button>
+                </div>
+              )}
               {empresas.map((e) => (
                 <RadarLinha
                   key={e.cnpj}
