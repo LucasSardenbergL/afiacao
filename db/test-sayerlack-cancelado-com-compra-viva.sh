@@ -26,7 +26,7 @@ export LC_ALL=C LANG=C          # o CLIENTE fica em C (o postmaster aborta sem i
 
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sem_incidente_no_trigger:B2,B4 leitura_posterior_fecha:B3 fecha_sem_porta:B6 so_resolve_off:B8
-              cobertura_ignora_faturado:C4 cobertura_ignora_protocolo:C5 sem_espelho_pos_encerrar:B9
+              cobertura_ignora_faturado:C4 cobertura_ignora_protocolo:C5 sem_espelho_pos_encerrar:B11b
               mais_recente_errado:B4b stale_sem_regua:C3 sem_claim_no_trigger:B10 espelho_sem_trigger:B9b
               espelho_fail_closed:B11 fora_do_v_sources:A41,A43 fora_do_heartbeat:A42
               pre_sem_identidade:A25 pos_sem_dente:A26 sem_revoke:A27 pos_v_sources_sem_dente:A30
