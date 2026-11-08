@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-08T00:18:41.148Z",
-  "sourceHead": "c36d9bccfb7b9529522923a669463fe80dd47b68",
+  "medidoEm": "2026-11-08T04:28:52.675Z",
+  "sourceHead": "049782c97f9e5c348d4bffc035e5b8224afe8441",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,31 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 78 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 79 definição(ões) lida(s) para 78 chave(s) da allowlist.",
-      "contratoFingerprint": "7a7f4db66112658677353c0c708989d6cd5a2fc1fc9f555743a3358875902d3a",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 3 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 79 definição(ões) lida(s) para 81 chave(s) da allowlist.",
+      "contratoFingerprint": "deda952aead59eaa43f5e367eccefd2c8994012fff2c87ed150778f0aefd3f3a",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": []
+      "achados": [
+        {
+          "id": "02f211b23e25276b",
+          "linha": "❌ public.sayerlack__incidente_pelo_pedido — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack__incidente_pelo_pedido está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-11-08",
+          "ultimaVez": "2026-11-08"
+        },
+        {
+          "id": "1af02940ca0e5ff0",
+          "linha": "❌ public.sayerlack__incidente_pelo_espelho — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack__incidente_pelo_espelho está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-11-08",
+          "ultimaVez": "2026-11-08"
+        },
+        {
+          "id": "d68c4178cc912fe6",
+          "linha": "❌ public.sayerlack_cobertura_situacao_portal — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack_cobertura_situacao_portal está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-11-08",
+          "ultimaVez": "2026-11-08"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -93,37 +112,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 4 divergência(s) em prod (1 SEM_PAR, 3 CORPO_ANTERIOR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 514 identidade(s) conferida(s) · 29 aposentada(s) · ref origin/main@db9c900f0 (fetch ok) · prod 2026-11-08 00:19:06.519805Z",
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 520 identidade(s) batem com o repo (442 em dia, 65 só cosméticas, 12 aceitas na baseline) e 30 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 520 identidade(s) conferida(s) · 30 aposentada(s) · ref origin/main@09cd65198 (fetch ok) · prod 2026-11-08 04:29:19.615342Z",
       "contratoFingerprint": "0292bcdcedcfd4f9492106b01765fdba42819fa21a8088a032d7d5a933ef8ffa",
       "auditorFingerprint": "c34625081a1ed5cf90d66fa67effbdfa872fb15924c15ae6911e4e23c400764e",
-      "achados": [
-        {
-          "id": "8038bd4c0c3068d6",
-          "linha": "❌ [SEM_PAR] sayerlack_painel_portal(): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261106140000_sayerlack_importar_portal_revisao.sql (xmin 14182009)",
-          "primeiraVez": "2026-11-08",
-          "ultimaVez": "2026-11-08"
-        },
-        {
-          "id": "30cc2ba3ec038f26",
-          "linha": "❌ [CORPO_ANTERIOR] radar_avisar_vendedores(timestamp with time zone): prod roda o corpo de 20261106181000_radar_leads_ao_vendedor.sql; o repo commitou 20261107230000_radar_distribuicao_pacote_e.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 14063943)",
-          "primeiraVez": "2026-11-08",
-          "ultimaVez": "2026-11-08"
-        },
-        {
-          "id": "c6ae2418204b4cb2",
-          "linha": "❌ [CORPO_ANTERIOR] radar_prospectar_hoje(uuid,integer): prod roda o corpo de 20261106181000_radar_leads_ao_vendedor.sql; o repo commitou 20261107230000_radar_distribuicao_pacote_e.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 14063943)",
-          "primeiraVez": "2026-11-08",
-          "ultimaVez": "2026-11-08"
-        },
-        {
-          "id": "1679f33a5cda4827",
-          "linha": "❌ [CORPO_ANTERIOR] radar_email_semanal_painel(): prod roda o corpo de 20261107140001_radar_email_semanal_toggle.sql; o repo commitou 20261107230000_radar_distribuicao_pacote_e.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 14137435)",
-          "primeiraVez": "2026-11-08",
-          "ultimaVez": "2026-11-08"
-        }
-      ]
+      "achados": []
     }
   }
 }

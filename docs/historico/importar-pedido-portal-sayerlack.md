@@ -507,3 +507,25 @@ para sempre aguardando disparo: o claim recusa o 6, `cancelar_pedido_sugerido` r
   10 sabotagens vermelhas no assert certo; Deno 14 (handler com o harness + decisão).
 - Fora (follow-up): staff gravar PO falso numa instrução e cancelar na seguinte (resíduo aceito); 5.4 + cobertura no
   PR seguinte (incidente persistido por pedido, cobertura dos pedidos não faturados no espelho).
+
+## Onda 5A fatia 2 — 5.4 + cobertura: cancelado no portal com compra viva (2026-11-08)
+
+Pedido com PO que a Sayerlack cancela no portal: o detalhe avisava, mas ninguém abre o detalhe; e a varredura só lia a
+situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, cancelado hoje, nunca era observado.
+
+- **Migration `20261110120000`** (depende da `20261110100000` da 5.3 aplicada antes: o compute lê a trilha dela):
+  incidente persistido `sayerlack_incidente_cancelado_com_po` (1 aberto por pedido; trava só-resolve), aberto por
+  TRIGGER no pedido — 6 sobre PO, PO sobre 6 e 6 sobre **pendência de disparo** (o PO pode existir com a resposta
+  perdida) — e no espelho do Omie (PO que aparece depois de um encerramento da 5.3; fail-open para o sync). Uma leitura
+  posterior com outro código não fecha: só a porta `corrigir_cancelamento_pos_disparo` (GUC) ou
+  `sayerlack_resolver_incidente_cancelado_com_po` (master, justificativa). Cobertura
+  `sayerlack_cobertura_situacao_portal()` = pedidos com protocolo e PO não faturado nem encerrado no espelho (10 em
+  prod, 29/10–05/11). Source **`sayerlack_cancelado_com_po`** (35º) no trio: broken com incidente aberto (message cita
+  o mais recente → e-mail por incidente novo), stale se algum pedido da cobertura não tem leitura do protocolo no dia
+  útil exigido (régua da Onda 4).
+- **Varredura v1.9**: passo 8 relê 1×/dia a situação da cobertura (leitura estendida desde a emissão mais antiga − 3
+  dias, teto 90), também na rodada bloqueada; qualquer falha deixa a rodada vermelha.
+- **Codex**: desenho + 2 rodadas de código (P1: pendência de disparo, espelho só calculado, rodada bloqueada pulando a
+  cobertura) — aplicados; P2 aceito: dois incidentes entre execuções do watchdog dão 1 e-mail (o probable_cause lista
+  todos). Prova PG17 `db/test-sayerlack-cancelado-com-compra-viva.sh`: 47 asserts nos dois locales, 20 sabotagens
+  vermelhas; vizinhos do trio (10 provas de data_health/tint/fin) verdes.

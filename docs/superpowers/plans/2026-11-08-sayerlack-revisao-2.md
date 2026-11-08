@@ -27,8 +27,13 @@
 - ✅ **Bloco 1** (#3718) — B1, B2, B3, B4, B5, B6, B7 (edge), B9, B10, B11, B13. Migration `20261109120000` aplicada
   (#984); importar v1.7 e varrer v1.8 com DEPLOY CONFIRMADO (sondas #986/#988, 2026-11-08).
 - ✅ **IPI dos 5 NCMs** (#3717) — migration `20261109130000` aplicada (#979).
-- ⏳ Leitura operacional de segunda 09/11 (`modo=listar`, antes das 12:30 SP).
-- ⏳ 5A fatia 2 (5.3 → 5.4 → cobertura dos protocolos com PO) e depois 5.2, 8.1, 8.2, 7.1, 7.2, 7.3, 7.5, 4.3.
+- ⏳ Leitura operacional de segunda 09/11 (`modo=listar`, antes das 12:30 SP) — SQL pronto em
+  `db/varredura-portal-leitura-segunda-listar-20261109.sql` (aplicar pelo envelope e ler `acoes_execucoes`).
+- ✅ **5.3** (#3727) — botão auditado "Encerrar — cancelado no fornecedor": migration `20261110100000` aplicada (#990),
+  edge nova `sayerlack-encerrar-cancelado-portal` v1.0 DEPLOY CONFIRMADO (sonda #993). Publish do botão: founder.
+- 🔄 **5.4 + cobertura** (#3731) — incidente persistido, cobertura dos pedidos com PO não faturado, source
+  `sayerlack_cancelado_com_po` no data_health, varrer v1.9. Migration `20261110120000` e edge depois do merge.
+- ⏳ Depois: 5.2, 8.1, 8.2, 7.1, 7.2, 7.3, 7.5, 4.3.
 
 ## Andamento da Sessão B (tela e painel)
 
