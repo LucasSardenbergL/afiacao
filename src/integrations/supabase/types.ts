@@ -12653,6 +12653,108 @@ export type Database = {
           },
         ]
       }
+      radar_contato_contabil: {
+        Row: {
+          calculado_em: string
+          cnpj: string
+          corroborado: boolean | null
+          grupos: number | null
+          motivos: string[]
+          tipo: string
+          valor: string
+          versao_regra: number
+        }
+        Insert: {
+          calculado_em: string
+          cnpj: string
+          corroborado?: boolean | null
+          grupos?: number | null
+          motivos: string[]
+          tipo: string
+          valor: string
+          versao_regra: number
+        }
+        Update: {
+          calculado_em?: string
+          cnpj?: string
+          corroborado?: boolean | null
+          grupos?: number | null
+          motivos?: string[]
+          tipo?: string
+          valor?: string
+          versao_regra?: number
+        }
+        Relationships: []
+      }
+      radar_contato_contabil_correcoes: {
+        Row: {
+          automatico: boolean | null
+          autor_user_id: string
+          campo: string
+          cnpj: string
+          criado_em: string
+          id: number
+          substitui_id: number | null
+          tipo: string
+          valor: string
+          veredito: boolean | null
+        }
+        Insert: {
+          automatico?: boolean | null
+          autor_user_id: string
+          campo: string
+          cnpj: string
+          criado_em?: string
+          id?: never
+          substitui_id?: number | null
+          tipo: string
+          valor: string
+          veredito?: boolean | null
+        }
+        Update: {
+          automatico?: boolean | null
+          autor_user_id?: string
+          campo?: string
+          cnpj?: string
+          criado_em?: string
+          id?: never
+          substitui_id?: number | null
+          tipo?: string
+          valor?: string
+          veredito?: boolean | null
+        }
+        Relationships: []
+      }
+      radar_contato_contabil_estado: {
+        Row: {
+          calculado_em: string
+          contatos: number
+          detalhes: Json
+          duracao_ms: number
+          id: boolean
+          impressao: string
+          versao_regra: number
+        }
+        Insert: {
+          calculado_em: string
+          contatos: number
+          detalhes?: Json
+          duracao_ms: number
+          id?: boolean
+          impressao: string
+          versao_regra: number
+        }
+        Update: {
+          calculado_em?: string
+          contatos?: number
+          detalhes?: Json
+          duracao_ms?: number
+          id?: boolean
+          impressao?: string
+          versao_regra?: number
+        }
+        Relationships: []
+      }
       radar_contatos: {
         Row: {
           acao: string
@@ -12767,6 +12869,7 @@ export type Database = {
           id: string
           n_leads: number
           semana: string
+          tentativa: number
           territorio: Json
           vendedor_user_id: string
         }
@@ -12779,6 +12882,7 @@ export type Database = {
           id?: string
           n_leads: number
           semana: string
+          tentativa?: number
           territorio: Json
           vendedor_user_id: string
         }
@@ -12791,6 +12895,7 @@ export type Database = {
           id?: string
           n_leads?: number
           semana?: string
+          tentativa?: number
           territorio?: Json
           vendedor_user_id?: string
         }
@@ -12806,25 +12911,31 @@ export type Database = {
       }
       radar_email_vendedor_leads: {
         Row: {
+          atribuido: boolean
           cnpj: string
           envio_id: string
           municipio_codigo: string
           posicao: number
           score: number
+          visitar: boolean | null
         }
         Insert: {
+          atribuido?: boolean
           cnpj: string
           envio_id: string
           municipio_codigo: string
           posicao: number
           score: number
+          visitar?: boolean | null
         }
         Update: {
+          atribuido?: boolean
           cnpj?: string
           envio_id?: string
           municipio_codigo?: string
           posicao?: number
           score?: number
+          visitar?: boolean | null
         }
         Relationships: [
           {
@@ -25053,6 +25164,36 @@ export type Database = {
           uf: string
         }[]
       }
+      radar_contato_contabil_corrigir: {
+        Args: {
+          p_campo: string
+          p_cnpj: string
+          p_correcao_vista?: number
+          p_veredito: boolean
+        }
+        Returns: Json
+      }
+      radar_contato_contabil_da_empresa: {
+        Args: { p_cnpj: string }
+        Returns: {
+          automatico: boolean
+          calculado_em: string
+          campo: string
+          correcao_id: number
+          corroborado: boolean
+          efetivo: boolean
+          grupos: number
+          motivos: string[]
+          tipo: string
+          valor: string
+          veredito: boolean
+          visitar: boolean
+        }[]
+      }
+      radar_contato_contabil_recalcular: {
+        Args: { p_forcar?: boolean }
+        Returns: Json
+      }
       radar_conversao_por_faixa: {
         Args: never
         Returns: {
@@ -25125,6 +25266,7 @@ export type Database = {
           p_ordem?: string
           p_primeira_vista_min?: string
           p_so_meus?: boolean
+          p_so_visitar?: boolean
           p_status?: string
           p_sugeridos_lote?: string
           p_sugeridos_score_min?: number

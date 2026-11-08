@@ -1397,6 +1397,46 @@ jobs:
           esac
           echo "LOCALE_PT_BR_OK"
 
+      # Cluster de prova é DESCARTÁVEL: nenhum sobrevive ao job, e nenhuma prova do núcleo testa
+      # recuperação de crash do SO. Cada prova faz `initdb` próprio, e o `--falsificar` refaz
+      # initdb + snapshot 1× por sabotagem (~1.700 por PR), e todos pagavam fsync. Este step põe
+      # um `initdb` na frente do PGDG (via `PGBIN_OVERRIDE`, que o db/lib/pg-harness.sh já honra
+      # e cuja major ele ainda confere) com `--no-sync -c fsync=off -c full_page_writes=off`.
+      # As 15 provas que já ligavam o trio à mão continuam iguais.
+      # `synchronous_commit` fica ON DE PROPÓSITO: com fsync=off ele quase não rende, e OFF
+      # perderia commit num `pg_ctl stop -m immediate` seguido de restart.
+      # Opção de linha de comando (`pg_ctl -o "-c fsync=on"`) continua vencendo o postgresql.conf:
+      # a prova que precisar de durabilidade pede e recebe.
+      # Conferência POSITIVA: o harness resolve o shim e o servidor diz `off`/`off`/`on`.
+      # Medição: docs/historico/ci-provas-sql-durabilidade-off.md
+      - name: Cluster de prova sem fsync — shim do initdb e conferência
+        run: |
+          set -euo pipefail
+          real=/usr/lib/postgresql/17/bin
+          shim="$RUNNER_TEMP/pgbin-sem-fsync"
+          mkdir -p "$shim"
+          for b in "$real"/*; do ln -s "$b" "$shim/$(basename "$b")"; done
+          rm "$shim/initdb"
+          # As flags vão DEPOIS de "$@": o initdb só reconhece `--version` como 1º argumento,
+          # e o pg-harness confere a major por `initdb --version`.
+          printf '#!/bin/sh\nexec %s/initdb "$@" --no-sync -c fsync=off -c full_page_writes=off\n' "$real" > "$shim/initdb"
+          chmod +x "$shim/initdb"
+          echo "PGBIN_OVERRIDE=$shim" >> "$GITHUB_ENV"
+          resolvido="$(PGBIN_OVERRIDE="$shim" PGVER=17 bash -c '. db/lib/pg-harness.sh; printf %s "$PGBIN"')"
+          [ "$resolvido" = "$shim" ] \
+            || { echo "::error::o pg-harness resolveu '$resolvido', não o shim '$shim'"; exit 1; }
+          d="$(mktemp -d)"
+          "$shim/initdb" -D "$d/data" -U postgres -E UTF8 --locale=C > "$d/initdb.log" 2>&1 \
+            || { tail -c 600 "$d/initdb.log"; echo "::error::initdb pelo shim falhou"; exit 1; }
+          "$shim/pg_ctl" -D "$d/data" -l "$d/pg.log" -w start -o "-p 5808 -k $d -c listen_addresses=''" > /dev/null \
+            || { tail -c 800 "$d/pg.log"; echo "::error::cluster do shim não subiu"; exit 1; }
+          v="$("$shim/psql" -X -A -t -h "$d" -p 5808 -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c "SELECT current_setting('fsync')||'/'||current_setting('full_page_writes')||'/'||current_setting('synchronous_commit')")"
+          "$shim/pg_ctl" -D "$d/data" -m immediate stop > /dev/null
+          [ "$v" = "off/off/on" ] \
+            || { echo "::error::fsync/full_page_writes/synchronous_commit = '$v', esperado off/off/on"; exit 1; }
+          echo "DURABILIDADE_OFF_OK pgbin=$shim fsync/fpw/sync_commit=$v"
+
       # O runner (db/roda-nucleo-ci.sh) começa por uma SONDA: sobe um cluster e pergunta
       # `server_version_num` ao servidor. Sem ela, "Postgres ausente" e "todas as provas
       # passaram" produziriam o mesmo verde — `ausente ≠ zero` aplicado ao CI.
