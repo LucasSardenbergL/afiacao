@@ -16,8 +16,11 @@ export function transportadoraDosItensBrutos(itensBrutos: unknown): string | nul
   const dp = (itensBrutos as { data_pedido?: unknown }).data_pedido as { transportadora?: unknown } | null | undefined;
   const t = dp?.transportadora;
   if (typeof t !== "string") return null;
-  // deno-lint-ignore no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(t)) return null;
+  // Caractere de controle no nome = ilegível (não é transportadora; não vai ao Omie).
+  for (let i = 0; i < t.length; i++) {
+    const c = t.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return null;
+  }
   const limpo = t.replace(/\s+/g, " ").trim();
   if (limpo === "" || limpo.length > TETO_NOME) return null;
   return limpo;
