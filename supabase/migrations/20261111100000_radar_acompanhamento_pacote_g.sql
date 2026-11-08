@@ -25,10 +25,9 @@
 --    Conteúdo diferente é registro novo. A resposta diz nota_gravada.
 --
 -- Revisão Codex do desenho (2026-11-08, high): ver docs/historico/radar-acompanhamento-pacote-g-2026-11-08.md.
--- Molde TRAVA → PRE → CREATE → PÓS. Envelope BEGIN/COMMIT.
+-- Molde TRAVA → PRE → CREATE → PÓS. Sem BEGIN/COMMIT no arquivo: a transação é do executor (`bun run db:aplicar`,
+-- que grava tentativa e recibo); no SQL Editor, cole entre BEGIN; e COMMIT;.
 -- =============================================================================
-
-BEGIN;
 
 -- ── TRAVA ────────────────────────────────────────────────────────────────────────────────────────────────
 DO $trava$
@@ -961,14 +960,13 @@ BEGIN
     RAISE EXCEPTION 'P3 FALHOU: registrar_contato_radar perdeu o SECURITY DEFINER';
   END IF;
 
-  -- P4: o cron do tick existe, ativo, no horário.
-  IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'radar-posses-vencer-diario' AND active
+  -- P4: o cron do tick existe, ativo, no horário, e roda como postgres (o dono das funções; pelo db:aplicar o
+  -- cron.schedule nasce com o dono do aplicar_sql, que é o postgres).
+  IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'radar-posses-vencer-diario' AND active AND username = 'postgres'
                    AND schedule = '0 9 * * *' AND command = 'SELECT public.radar_posses_vencer_tick()') THEN
-    RAISE EXCEPTION 'P4 FALHOU: cron radar-posses-vencer-diario ausente, inativo ou divergente';
+    RAISE EXCEPTION 'P4 FALHOU: cron radar-posses-vencer-diario ausente, inativo, divergente ou sem dono postgres';
   END IF;
 END
 $post$;
 
 NOTIFY pgrst, 'reload schema';
-
-COMMIT;

@@ -134,7 +134,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA private GRANT EXECUTE ON FU
 CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
   SELECT NULLIF(current_setting('request.jwt.claims', true)::jsonb ->> 'sub', '')::uuid $$;
 
-CREATE TABLE cron.job (jobid bigint PRIMARY KEY, jobname text, schedule text, command text, active boolean DEFAULT true);
+CREATE TABLE cron.job (jobid bigint PRIMARY KEY, jobname text, schedule text, command text, active boolean DEFAULT true,
+  username text NOT NULL DEFAULT current_user);
 CREATE FUNCTION cron.schedule(p_jobname text, p_schedule text, p_command text) RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE v bigint;
 BEGIN
@@ -258,7 +259,8 @@ eq "G0 o fixture carrega exatamente os corpos da PROD que a PRE da migration ace
    "$(Pq -c "SELECT string_agg(md5(prosrc), ',' ORDER BY oid::regprocedure::text) FROM pg_proc WHERE oid IN ('public.registrar_contato_radar(text,text,text)'::regprocedure, 'private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz)'::regprocedure, 'private.radar_leads_do_vendedor(uuid,integer,timestamptz)'::regprocedure, 'public.radar_prospectar_hoje(uuid,integer)'::regprocedure, 'public.radar_avisar_vendedores(timestamptz)'::regprocedure)")" \
    "fefd503925f5feaa33057895894f8b3c,09a18fe233086578bea5ce92a82999c3,6c5c9fd0423301f9e835008cb621019f,d35f8f19e9b3612de3454c306f77a52d,26c486a156b0fd90d5187bfa377daae5"
 
-if ! P -q -f "$MIGG_USADA" >> "$APPLY_LOG" 2>&1; then
+# -1: uma transação só, como o `db:aplicar` (que abre a dele; o arquivo não leva BEGIN/COMMIT).
+if ! P -q -1 -f "$MIGG_USADA" >> "$APPLY_LOG" 2>&1; then
   tail -20 "$APPLY_LOG"; echo "APLICAÇÃO DA MIGRATION DO PACOTE G FALHOU"; exit 1
 fi
 # Recibo dos corpos aplicados (o 'este' da PRE): diagnóstico quando a re-aplicação (G5e) acusar deriva.
@@ -479,7 +481,7 @@ prefixo "G5c authenticated não roda o tick nem o e-mail" \
 eq "G5d uma só assinatura do registro (a de 3 args sumiu) e o cron do tick ativo" \
    "$(Pq -c "SELECT count(*) FROM pg_proc WHERE proname = 'registrar_contato_radar'")|$(Pq -c "SELECT schedule||':'||active FROM cron.job WHERE jobname = 'radar-posses-vencer-diario'")" \
    "1|0 9 * * *:true"
-if P -q -f "$MIGG_USADA" >> "$APPLY_LOG" 2>&1; then REAP=ok; else REAP=falhou; tail -5 "$APPLY_LOG"; fi
+if P -q -1 -f "$MIGG_USADA" >> "$APPLY_LOG" 2>&1; then REAP=ok; else REAP=falhou; tail -5 "$APPLY_LOG"; fi
 eq "G5e re-aplicar a migration sobre ela mesma passa (PRE aceita o corpo 'este') e não apaga contato nem envio" \
    "$REAP|$(Pq -c "SELECT count(*) > 0 FROM public.radar_contatos WHERE retorno_em IS NOT NULL")|$(Pq -c "SELECT count(*) FROM public.radar_email_vendedor_envios")" \
    "ok|t|2"
@@ -491,7 +493,7 @@ P -q <<'SQL'
 CREATE OR REPLACE FUNCTION public.radar_prospectar_hoje(p_vendedor uuid DEFAULT NULL, p_n integer DEFAULT 3)
 RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $fn$ SELECT '{}'::jsonb $fn$;
 SQL
-DERIVA_OUT="$(P -q -f "$MIGG_USADA" 2>&1 || true)"
+DERIVA_OUT="$(P -q -1 -f "$MIGG_USADA" 2>&1 || true)"
 eq "G5f anti-deriva: corpo vivo que não é o predecessor nem este aborta a re-aplicação (e não apaga a outra sessão)" \
    "$(printf '%s' "$DERIVA_OUT" | grep -c 'PRE FALHOU: public.radar_prospectar_hoje')|$(Pq -c "SELECT prosrc LIKE '%{}%' FROM pg_proc WHERE oid = 'public.radar_prospectar_hoje(uuid,integer)'::regprocedure")" \
    "1|t"
