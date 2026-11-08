@@ -8,7 +8,7 @@ import type { RadarEmpresa } from '@/queries/useRadarLista';
  * `invalidarRadar` de toda mutação (cadastro no Omie, contato, descarte) relê a ficha junto com a fila, em vez de ela
  * ficar num snapshot que nenhuma invalidação alcança (pacote I, item 1). `null` = o lead não existe no Radar.
  */
-export const chaveEmpresaRadar = (cnpj: string) => ['radar', 'empresa', cnpj] as const;
+const chaveEmpresaRadar = (cnpj: string) => ['radar', 'empresa', cnpj] as const;
 
 export function useRadarEmpresa(cnpj: string | null, opcoes: { ativo: boolean }) {
   return useQuery({
