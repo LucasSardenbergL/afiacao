@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- DOM e jQuery da página do portal sem tipos (o Deno não tem lib DOM); o comportamento é provado contra HTML */
 // 8.2 (Codex P2): as funções de página vão ao Chrome pelo TEXTO do `.toString()` que o DENO produz (a transpilação do
 // edge runtime). Aqui cada uma é reavaliada a partir desse texto, sem o escopo do módulo, e EXECUTADA contra um
 // documento mínimo: um helper injetado ou uma referência externa vira ReferenceError. O comportamento contra HTML real

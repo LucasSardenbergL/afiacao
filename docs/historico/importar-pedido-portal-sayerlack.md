@@ -547,6 +547,29 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
 - Falsificação (commitado antes; controle verde antes e depois, na mesma invocação): 11 sabotagens no `index.ts` da
   importar e 10 no da varrer, uma camada por vez — todas vermelhas.
 
+## 8.2 — seletores e paginação testados contra HTML (2026-11-08)
+
+- **O que mudou:** as funções que rodam NA PÁGINA do portal (filtros, situações, tabela da consulta por nome de coluna,
+  "Filtrar", "Próximo", condição selecionada e opções) e o laço de paginação da varredura saíram do template
+  `BROWSERLESS_FUNCTION` para `supabase/functions/_shared/sayerlack-portal-dom.ts`, e voltam ao script por
+  `${fn.toString()}` (o molde do `classificarPosLogin`). Comportamento igual (Codex conferiu ordem dos filtros,
+  mensagens, `erroTipo`, o trace `consulta_lida` antes do `PAGINACAO_INCOMPLETA`). importar **v1.8**, varrer **v1.10**.
+- **Testes:** `scripts/sayerlack-portal-dom.test.ts` (vitest + jsdom, fixtures em `scripts/__fixtures__/sayerlack-portal/`):
+  HTML → função de página → leitor REAL de Deno (`lerPedidoPortal`, `lerListaConsulta` + `provarLeitura`), sem objeto
+  já extraído no meio — 2 páginas pelo "Próximo" provam a leitura (3 = 3 anunciados); 1 página com 3 anunciados reprova.
+  As funções são testadas pelo TEXTO serializado (sem o escopo do módulo), no vitest e no Deno
+  (`_shared/sayerlack-portal-dom_test.ts`); o `index_test.ts` de cada edge captura o `code` enviado ao Browserless e
+  prova que parseia e embute as funções.
+- **Falsificação:** 21 sabotagens no módulo (seletor da tabela, placeholder, quebra de linha, `dataTables_empty`,
+  "Processando", info pelo id, "Próximo" e o `disabled` no `<li>` pai, `recordsDisplay`, clique no `<a>`, situações,
+  filtros, entrega 2020, "Selecione", teto, incompleta, sem resposta, "Filtrar", `bubbles`, `trigger`, `globalThis`),
+  todas vermelhas com controle verde na mesma invocação; mais 4 no embutimento das duas edges (tipo TS no texto, função
+  não embutida).
+- **Codex (gpt-6-astra high, 144 s):** sem P0/P1; 2 P2 de cobertura, ambos fechados no PR ("Filtrar"/eventos/jQuery
+  sem teste; testes Deno só provavam sintaxe → agora executam o texto serializado).
+- **Resta (declarado):** o `innerText` com layout real, o redesenho assíncrono do DataTables e a execução no Chrome
+  remoto só se provam na rodada real (leitura de segunda, `modo=listar`).
+
 ## 7.5 — o portal expõe NCM/IPI por item? Rodada 1: INCONCLUSIVO (2026-11-08)
 
 Pergunta do adendo `2026-11-08-sayerlack-revisao-2.md` (7.5). Investigação só leitura; nada implementado.

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- DOM e jQuery da página do portal sem tipos (o Deno não tem lib DOM); o comportamento é provado contra HTML */
 // Funções que RODAM NA PÁGINA do portal Sayerlack (dentro de `page.evaluate` / `page.waitForFunction` no Chrome do
 // Browserless) e o laço de paginação da consulta. Vivem aqui, e não escritas dentro do template do script, para serem
 // EXECUTADAS contra HTML de verdade nos testes (8.2: `scripts/sayerlack-portal-dom.test.ts`, vitest + jsdom). Antes, os
