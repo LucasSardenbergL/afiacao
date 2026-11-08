@@ -12,8 +12,8 @@
   com DEPLOY CONFIRMADO (#950, #952, #954); Publish feito.
 - ✅ **Onda 3** — #3693; varrer v1.5 com DEPLOY CONFIRMADO (#958).
 - ✅ **Onda 4** — #3703; migration `20261107220000` aplicada (#960); varrer v1.6 DEPLOY CONFIRMADO (#962).
-- 🔄 **Onda 5A fatia 1** (5.1 + claim recusa o 6 + 5.5) — migration `20261108120000` + varrer v1.7, importar v1.6,
-  disparar v1.12 + front. ⏳ **5A fatia 2**: botão auditado (5.3), avisos (5.4), cobertura dos protocolos com PO,
+- ✅ **Onda 5A fatia 1** (5.1 + claim recusa o 6 + 5.5) — #3708; migration `20261108120000` aplicada (#966);
+  disparar v1.12 (#971), importar v1.6 (#973), varrer v1.7 (#975) com DEPLOY CONFIRMADO; Publish feito. ⏳ **5A fatia 2**: botão auditado (5.3), avisos (5.4), cobertura dos protocolos com PO,
   painel. ⏳ **5B**: pedido alterado no portal (5.2).
 - ⏳ Ondas 6, 7 (7.1, 7.2, 7.3, 7.5) e 8.
 

@@ -50,7 +50,9 @@ chips dão as 3 a 1 clique. Se o sinal de uso pedir a união, ela é o próximo 
    conexão: SECURITY DEFINER, STABLE, uma sobrecarga, ACL fechado para PUBLIC e anon, `authenticated` executa. (O
    timestamp original `20261107220000` colidiu com uma migration do Sayerlack que chegou na main; renomeada antes do
    merge.)
-2. **Publish** no Lovable (front). Sem ele, o login segue perdendo o destino e o card segue fora do `/meu-dia`.
+2. **Publish** no Lovable (front) — **feito pelo founder em 07/11 e provado pelo carimbo do bundle**: `monitor-deploy.sh
+   --pr 3705` → `PR_NO_AR`, ar = main = squash `d8a7d28c` (entry `index-B0RdF_Q9` → `index-C-LLj-Zo`). O SW só troca
+   de build quando o cliente recarrega: bytes no ar = disponibilidade, não adoção.
 
 ## Sinal da fase (quando medir)
 

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 805
+-- Total de custom migrations: 806
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -871,6 +871,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107210000', 'cliente_sucessao_plano_rateio', '20261107210000_cliente_sucessao_plano_rateio.sql'),
   ('20261107220000', 'data_health_sayerlack_varredura_portal', '20261107220000_data_health_sayerlack_varredura_portal.sql'),
   ('20261107220500', 'radar_meu_territorio', '20261107220500_radar_meu_territorio.sql'),
+  ('20261107230000', 'radar_distribuicao_pacote_e', '20261107230000_radar_distribuicao_pacote_e.sql'),
   ('20261107233000', 'radar_funil_painel', '20261107233000_radar_funil_painel.sql'),
   ('20261108000000', 'cliente_sucessao_consumidores', '20261108000000_cliente_sucessao_consumidores.sql'),
   ('20261108120000', 'sayerlack_situacao_portal_no_pedido', '20261108120000_sayerlack_situacao_portal_no_pedido.sql')
@@ -3506,6 +3507,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('radar_meu_territorio', 'function', 'public', 'radar_meu_territorio', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_territorio_do_vendedor', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_territorio_motivo', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_email_semanal_painel', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_registrar_ficha_entregue', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_registrar_falha_sensor', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_funil', ''),
@@ -6202,6 +6209,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_sayerlack_varredura_portal', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('radar_meu_territorio', 'function', 'public', 'radar_meu_territorio', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_territorio_do_vendedor', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_territorio_motivo', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_email_semanal_painel', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_registrar_ficha_entregue', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_registrar_falha_sensor', ''),
   ('radar_funil_painel', 'function', 'public', 'radar_funil', ''),
@@ -6245,7 +6258,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 182.
+-- Funções redefinidas com corpo extraível: 187.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6925,10 +6938,20 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'simular_puxar_volume_trimestre', 2, '20261106090000_des_simular_puxar_config_e_checkin.sql', 'fefcf8c0890cd3fe21a60efbe2ed6d37'),
   ('private', 'radar_vinculos_nucleo', 1, '20261106083754_radar_vinculos_em_lote.sql', '524afca67d271f459a6e4c984725b833'),
   ('private', 'radar_vinculos_nucleo', 2, '20261106205557_credito_aviso_vinculo_vencido.sql', '150b7d5e1c72ca55f8e58ea321659428'),
+  ('private', 'radar_territorio_do_vendedor', 1, '20261106181000_radar_leads_ao_vendedor.sql', '2bb9436ae4ce0d5f517354edbc931130'),
+  ('private', 'radar_territorio_do_vendedor', 2, '20261107230000_radar_distribuicao_pacote_e.sql', 'fb812a4908eeb34fa12e23f48e06a568'),
+  ('private', 'radar_leads_do_vendedor', 1, '20261106181000_radar_leads_ao_vendedor.sql', '51506ada745f4c91ec5de07a54e06ac0'),
+  ('private', 'radar_leads_do_vendedor', 2, '20261107230000_radar_distribuicao_pacote_e.sql', 'a4a2d893fefd6182d8299300561a2dcc'),
+  ('public', 'radar_avisar_vendedores', 1, '20261106181000_radar_leads_ao_vendedor.sql', 'fdde2726b59b6ba115a465bf3af3a913'),
+  ('public', 'radar_avisar_vendedores', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '43860b5d9d9cdd4e0cdb06b4d6805ddc'),
+  ('public', 'radar_prospectar_hoje', 1, '20261106181000_radar_leads_ao_vendedor.sql', '7290de5f88cbe11f67e01c9379740fda'),
+  ('public', 'radar_prospectar_hoje', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '73151dc24c593ab9b148c0ccb0c1f27d'),
   ('private', 'radar_vinculos_base', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', '4a25630577db9bcad6e3630d0b37003c'),
   ('private', 'radar_vinculos_base', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '4b3f8bddde6efeb2b39bda47b0e0a87b'),
   ('private', 'credito_vinculo_avaliar', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', 'df92d9af4062d9f7f475c784818effc7'),
-  ('private', 'credito_vinculo_avaliar', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '70406e22429da65e354297271046917b')
+  ('private', 'credito_vinculo_avaliar', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '70406e22429da65e354297271046917b'),
+  ('public', 'radar_email_semanal_painel', 1, '20261107140001_radar_email_semanal_toggle.sql', '0b114d404e20198b65a3d1bd3388059f'),
+  ('public', 'radar_email_semanal_painel', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '98e98147155301c10578baeda21f9017')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **805** custom migrations totais
-- **2686** objetos esperados (criados por estas migrations)
+- **806** custom migrations totais
+- **2692** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1047
+  - `function`: 1053
   - `rls_policy`: 519
   - `index`: 381
   - `table`: 249
@@ -6605,6 +6605,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.radar_meu_territorio` | — |
+
+### `20261107230000_radar_distribuicao_pacote_e.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_territorio_do_vendedor` | — |
+| `function` | `private.radar_territorio_motivo` | — |
+| `function` | `private.radar_leads_do_vendedor` | — |
+| `function` | `public.radar_avisar_vendedores` | — |
+| `function` | `public.radar_prospectar_hoje` | — |
+| `function` | `public.radar_email_semanal_painel` | — |
 
 ### `20261107233000_radar_funil_painel.sql`
 
