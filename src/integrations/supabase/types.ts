@@ -12766,6 +12766,8 @@ export type Database = {
           descarte_motivo_anterior: string | null
           id: string
           nota: string | null
+          retorno_em: string | null
+          retorno_origem: string | null
           status_anterior: string | null
         }
         Insert: {
@@ -12778,6 +12780,8 @@ export type Database = {
           descarte_motivo_anterior?: string | null
           id?: string
           nota?: string | null
+          retorno_em?: string | null
+          retorno_origem?: string | null
           status_anterior?: string | null
         }
         Update: {
@@ -12790,6 +12794,8 @@ export type Database = {
           descarte_motivo_anterior?: string | null
           id?: string
           nota?: string | null
+          retorno_em?: string | null
+          retorno_origem?: string | null
           status_anterior?: string | null
         }
         Relationships: [
@@ -12861,6 +12867,7 @@ export type Database = {
       }
       radar_email_vendedor_envios: {
         Row: {
+          acompanhamento: Json | null
           alerta_id: number
           criado_em: string
           destinatario_email: string
@@ -12874,6 +12881,7 @@ export type Database = {
           vendedor_user_id: string
         }
         Insert: {
+          acompanhamento?: Json | null
           alerta_id: number
           criado_em?: string
           destinatario_email: string
@@ -12887,6 +12895,7 @@ export type Database = {
           vendedor_user_id: string
         }
         Update: {
+          acompanhamento?: Json | null
           alerta_id?: number
           criado_em?: string
           destinatario_email?: string
@@ -25581,6 +25590,7 @@ export type Database = {
           vinculos_existentes: number
         }[]
       }
+      radar_posses_vencer_tick: { Args: { p_agora?: string }; Returns: Json }
       radar_possiveis_vinculos: {
         Args: { p_cnpj: string }
         Returns: {
@@ -26041,7 +26051,12 @@ export type Database = {
         Returns: number
       }
       registrar_contato_radar: {
-        Args: { p_acao: string; p_cnpj: string; p_nota?: string; p_retorno?: string }
+        Args: {
+          p_acao: string
+          p_cnpj: string
+          p_nota?: string
+          p_retorno?: string
+        }
         Returns: Json
       }
       registrar_contato_rota: {
