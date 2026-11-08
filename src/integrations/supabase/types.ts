@@ -13085,6 +13085,84 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_empresas_carga: {
+        Row: {
+          bairro: string | null
+          capital_social: number | null
+          cep: string | null
+          cnae_descricao: string | null
+          cnae_principal: string
+          cnaes_secundarios: string[]
+          cnpj: string
+          complemento: string | null
+          data_abertura: string | null
+          email: string | null
+          logradouro: string | null
+          lote: string
+          municipio_codigo: string | null
+          municipio_nome: string | null
+          nome_fantasia: string | null
+          numero: string | null
+          porte: string | null
+          razao_social: string | null
+          recebido_em: string
+          socios_nomes: string | null
+          telefone1: string | null
+          telefone2: string | null
+          uf: string | null
+        }
+        Insert: {
+          bairro?: string | null
+          capital_social?: number | null
+          cep?: string | null
+          cnae_descricao?: string | null
+          cnae_principal: string
+          cnaes_secundarios?: string[]
+          cnpj: string
+          complemento?: string | null
+          data_abertura?: string | null
+          email?: string | null
+          logradouro?: string | null
+          lote: string
+          municipio_codigo?: string | null
+          municipio_nome?: string | null
+          nome_fantasia?: string | null
+          numero?: string | null
+          porte?: string | null
+          razao_social?: string | null
+          recebido_em?: string
+          socios_nomes?: string | null
+          telefone1?: string | null
+          telefone2?: string | null
+          uf?: string | null
+        }
+        Update: {
+          bairro?: string | null
+          capital_social?: number | null
+          cep?: string | null
+          cnae_descricao?: string | null
+          cnae_principal?: string
+          cnaes_secundarios?: string[]
+          cnpj?: string
+          complemento?: string | null
+          data_abertura?: string | null
+          email?: string | null
+          logradouro?: string | null
+          lote?: string
+          municipio_codigo?: string | null
+          municipio_nome?: string | null
+          nome_fantasia?: string | null
+          numero?: string | null
+          porte?: string | null
+          razao_social?: string | null
+          recebido_em?: string
+          socios_nomes?: string | null
+          telefone1?: string | null
+          telefone2?: string | null
+          uf?: string | null
+        }
+        Relationships: []
+      }
       radar_eventos: {
         Row: {
           acao: string | null
@@ -13166,6 +13244,12 @@ export type Database = {
       radar_ingest_state: {
         Row: {
           avisado_em: string | null
+          carga_erro: string | null
+          carga_esperado: number | null
+          carga_fase: string | null
+          carga_iniciada_em: string | null
+          carga_publicada_em: string | null
+          carga_validada_em: string | null
           erro: string | null
           finalizado_em: string | null
           iniciado_em: string
@@ -13179,6 +13263,12 @@ export type Database = {
         }
         Insert: {
           avisado_em?: string | null
+          carga_erro?: string | null
+          carga_esperado?: number | null
+          carga_fase?: string | null
+          carga_iniciada_em?: string | null
+          carga_publicada_em?: string | null
+          carga_validada_em?: string | null
           erro?: string | null
           finalizado_em?: string | null
           iniciado_em?: string
@@ -13192,6 +13282,12 @@ export type Database = {
         }
         Update: {
           avisado_em?: string | null
+          carga_erro?: string | null
+          carga_esperado?: number | null
+          carga_fase?: string | null
+          carga_iniciada_em?: string | null
+          carga_publicada_em?: string | null
+          carga_validada_em?: string | null
           erro?: string | null
           finalizado_em?: string | null
           iniciado_em?: string
@@ -25213,6 +25309,20 @@ export type Database = {
       }
       radar_avisar_lote: { Args: { p_agora?: string }; Returns: Json }
       radar_avisar_vendedores: { Args: { p_agora?: string }; Returns: Json }
+      radar_carga_falhar: {
+        Args: { p_erro: string; p_lote: string }
+        Returns: boolean
+      }
+      radar_carga_iniciar: { Args: { p_lote: string }; Returns: Json }
+      radar_carga_publicar_pendente: { Args: never; Returns: Json }
+      radar_carga_receber: {
+        Args: { p_linhas: Json; p_lote: string }
+        Returns: number
+      }
+      radar_carga_validar: {
+        Args: { p_aceitar_queda?: boolean; p_esperado: number; p_lote: string }
+        Returns: Json
+      }
       radar_cnpjs_conhecidos: {
         Args: { p_apos?: string; p_limite?: number }
         Returns: string[]
