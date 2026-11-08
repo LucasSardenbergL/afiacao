@@ -53,12 +53,20 @@ export function criarPostgrestFalso(baseSupabase: string, rotas: Record<string, 
       const c: Chamada = { metodo: r.method, rota, params: url.searchParams, corpo };
       chamadas.push(c);
       const chave = Object.keys(rotas).find((k) => k === `${r.method} ${rota}`) ??
-        Object.keys(rotas).find((k) => k === rota);
+        Object.keys(rotas).find((k) => k === rota) ??
+        // Coringa opt-in ("*", só para PostgREST): edge que toca muitas tabelas declara só as que o teste afirma.
+        (rota.startsWith("rest:") || rota.startsWith("rpc:") ? Object.keys(rotas).find((k) => k === "*") : undefined);
       if (!chave) throw new Error(`postgrest-falso: rota não prevista ${r.method} ${rota}`);
       const resp = await rotas[chave](c);
       if (resp === "rede") throw new TypeError("falha de rede simulada");
       const status = resp.status ?? 200;
       let saida = resp.corpo ?? null;
+      // `.range(de, ate)` vira `offset`/`limit`: sem respeitar, a paginação até a página vazia nunca termina.
+      if (r.method === "GET" && Array.isArray(saida) && url.searchParams.has("offset")) {
+        const de = Number(url.searchParams.get("offset"));
+        const lim = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : saida.length;
+        saida = saida.slice(de, de + lim);
+      }
       const querObjeto = (r.headers.get("Accept") ?? "").includes("vnd.pgrst.object");
       if (querObjeto && Array.isArray(saida)) {
         if (saida.length !== 1) {
