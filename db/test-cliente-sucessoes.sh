@@ -403,14 +403,27 @@ BEGIN;
 SET ROLE authenticated;
 SET request.jwt.claims = '$claims';
 SELECT public.cliente_declarar_sucessao('$DW1', '$DW2', 'cisao', '2026-10-01', $1)->>'ok';
-SELECT pg_sleep(1.5) \g /dev/null
+DO \$segura_s1\$
+DECLARE t0 timestamptz := clock_timestamp();
+BEGIN
+  -- Segura a transação até VER a 2ª sessão parada atrás dela (Lock), com teto de 1,5 s — o que antes era
+  -- \`pg_sleep(1.5)\` fixo (receita do E17, docs/historico/ci-e17-radar-espera-por-bloqueio.md). Na
+  -- sabotagem sem_trava a 2ª não bloqueia e esta sai no teto, como antes.
+  LOOP
+    PERFORM pg_stat_clear_snapshot();
+    EXIT WHEN EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock'
+                        AND query LIKE '%cliente_declarar_sucessao%');
+    EXIT WHEN clock_timestamp() - t0 > interval '1.5 seconds';
+    PERFORM pg_sleep(0.01);
+  END LOOP;
+END \$segura_s1\$;
 COMMIT;
 SQL
   local pid=$!
   for _ in $(seq 1 100); do
-    # Prontidão pela SESSÃO (já no pg_sleep, transação aberta com a escrita feita), não pela trava: a sabotagem
-    # sem_trava tira a trava, e esperar por ela adiaria a 2ª sessão para depois do COMMIT (teatro).
-    [ "$(P -tA -q -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='prova_s1' AND state='active' AND query LIKE 'SELECT pg_sleep%'")" -ge 1 ] && break
+    # Prontidão pela SESSÃO (já no laço de espera, transação aberta com a escrita feita), não pela trava: a
+    # sabotagem sem_trava tira a trava, e esperar por ela adiaria a 2ª sessão para depois do COMMIT (teatro).
+    [ "$(P -tA -q -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='prova_s1' AND state='active' AND query LIKE 'DO \$segura_s1\$%'")" -ge 1 ] && break
     sleep 0.05
   done
   q_como authenticated "$MASTER" "SELECT public.cliente_declarar_sucessao('$DW2', '$DW1', 'cisao', '2026-10-01', $2)->>'motivo'" > "$TMPD/s2.raw" || true
