@@ -529,3 +529,9 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
   cobertura) — aplicados; P2 aceito: dois incidentes entre execuções do watchdog dão 1 e-mail (o probable_cause lista
   todos). Prova PG17 `db/test-sayerlack-cancelado-com-compra-viva.sh`: 47 asserts nos dois locales, 20 sabotagens
   vermelhas; vizinhos do trio (10 provas de data_health/tint/fin) verdes.
+- **No ar (2026-11-08, #3731)**: migration `20261110120000` aplicada pelo envelope (ensaio ok → tentativa #996),
+  validada por fora no psql-ro (tabela, os 2 triggers, resolver só `authenticated`, cobertura só `service_role`, source
+  no `_data_health_compute`; 0 incidentes abertos). Varrer v1.9 com DEPLOY CONFIRMADO (sonda #999, na mesma leva do
+  `gerar-pedidos-diario` do #3726), depois de reprovar a predecessora importar (#998 — prova velha de 9,4 h).
+  Sensor do Lovable: `EDICAO_DETECTADA` só pelo `edit_id` da resposta — os commits do bot (`af018bcb1` e, na 5.3,
+  `0053e934c`) são a regeração do `types.ts` com os tipos destas migrations, só acréscimos, arquivo tolerado. Nada a reverter.
