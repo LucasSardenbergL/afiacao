@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { PackageSearch } from 'lucide-react';
 import { useReposicaoEmpresa } from '@/contexts/ReposicaoEmpresaContext';
 import { useUrlState } from '@/hooks/useUrlState';
@@ -10,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { DESTINOS, ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import { argsConfirmarSugestao, destinoEfetivo, empresaDoRaioX, fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
 import { concluidoVigente, custoEsperarMensal, ehExecutavel, planoPadrao, resumoExecucao } from '@/lib/reposicao/raio-x/execucao';
-import { filaTop, proximoDaFila } from '@/lib/reposicao/raio-x/fila';
+import { filaTop, origemDaVisita, proximoDaFila } from '@/lib/reposicao/raio-x/fila';
 import { medir } from '@/lib/reposicao/raio-x/medir';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { toast } from 'sonner';
@@ -69,13 +70,22 @@ export function RaioXTab() {
   }, [aberto, chave]);
   // Sensor de visita (ledger server-side; o PostHog é censurado no Chrome do founder): 1x por empresa e montagem,
   // só com a leitura PRONTA. O dedup de verdade é da RPC (titular × empresa × dia UTC).
+  // `origem` (da URL, allowlist): de onde a visita veio — o link do e-mail diário leva `origem=email`. Com origem,
+  // a chave do dedup ganha o sufixo (1 linha por titular × empresa × origem × dia), senão a visita do e-mail some
+  // atrás de uma visita direta do mesmo dia. Sem origem, chave e props seguem as de antes.
+  const [params] = useSearchParams();
+  const origemVisita = origemDaVisita(params.get('origem'));
   const registradas = useRef<Set<Empresa>>(new Set());
   const pronta = chave !== null && !rx.isLoading && !rx.erro;
   useEffect(() => {
     if (!pronta || !chave || registradas.current.has(chave)) return;
     registradas.current.add(chave);
-    void registrarNoLedger('reposicao.raio_x_aberta', chave, { empresa: chave });
-  }, [pronta, chave]);
+    void registrarNoLedger(
+      'reposicao.raio_x_aberta',
+      origemVisita ? `${chave}:${origemVisita}` : chave,
+      origemVisita ? { empresa: chave, origem: origemVisita } : { empresa: chave },
+    );
+  }, [pronta, chave, origemVisita]);
   const qc = useQueryClient();
   // Abrir relê o servidor (FI1): sem refetch-on-focus, o formulário nasceria do cache velho e a assinatura do S9
   // nunca mudaria — salvar apagaria o que outro operador gravou. Quando o refetch chegar com outra assinatura,

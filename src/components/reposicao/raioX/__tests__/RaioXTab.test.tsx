@@ -75,6 +75,21 @@ describe('RaioXTab — sensor de visita (ledger)', () => {
     expect(registrarNoLedger).toHaveBeenCalledTimes(1);
     expect(registrarNoLedger).toHaveBeenCalledWith('reposicao.raio_x_aberta', 'oben', { empresa: 'oben' });
   });
+
+  it('vindo do e-mail (?origem=email) grava a origem e separa o dedup por origem', () => {
+    const qc = new QueryClient();
+    vi.mocked(registrarNoLedger).mockClear();
+    render(<QueryClientProvider client={qc}><MemoryRouter initialEntries={['/x?aba=raio-x&origem=email']}><RaioXTab /></MemoryRouter></QueryClientProvider>);
+    expect(registrarNoLedger).toHaveBeenCalledTimes(1);
+    expect(registrarNoLedger).toHaveBeenCalledWith('reposicao.raio_x_aberta', 'oben:email', { empresa: 'oben', origem: 'email' });
+  });
+
+  it('origem fora da allowlist não vai ao ledger (visita sem origem, como antes)', () => {
+    const qc = new QueryClient();
+    vi.mocked(registrarNoLedger).mockClear();
+    render(<QueryClientProvider client={qc}><MemoryRouter initialEntries={['/x?origem=lixo']}><RaioXTab /></MemoryRouter></QueryClientProvider>);
+    expect(registrarNoLedger).toHaveBeenCalledWith('reposicao.raio_x_aberta', 'oben', { empresa: 'oben' });
+  });
 });
 
 const montar = () => {

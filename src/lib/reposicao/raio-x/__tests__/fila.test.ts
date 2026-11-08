@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filaTop, linhasForaDoEstoque, proximoDaFila } from '../fila';
+import { filaTop, linhasForaDoEstoque, origemDaVisita, proximoDaFila } from '../fila';
 import { classificar } from '../classificar';
 import type { CoorteTop, ItemRaioX } from '../tipos';
 import { decisao, fato, HOJE, mapaDecisoes } from './fixtures';
@@ -58,4 +58,14 @@ describe('linhasForaDoEstoque (bug 2)', () => {
     expect(linhasForaDoEstoque(coorte([7, null]), new Set(), new Map())[0]).toMatchObject({ codigo: '7', descricao: null, valor_coorte: null });
   });
   it('sem coorte congelada: nada', () => expect(linhasForaDoEstoque(null, new Set(), new Map())).toEqual([]));
+});
+
+describe('origemDaVisita (sensor reposicao.raio_x_aberta)', () => {
+  it('aceita só a allowlist; ausente/desconhecida → null (texto livre da URL nunca vai ao ledger)', () => {
+    expect(origemDaVisita('email')).toBe('email');
+    expect(origemDaVisita(null)).toBeNull();
+    expect(origemDaVisita('')).toBeNull();
+    expect(origemDaVisita('EMAIL')).toBeNull();
+    expect(origemDaVisita('email<script>')).toBeNull();
+  });
 });
