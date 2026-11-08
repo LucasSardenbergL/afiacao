@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  corpoDoErroEdge, interpretarErroEdge, interpretarRespostaImportacao, lerNumerosPortal, linkDoPedido, MAX_NUMEROS_POR_VEZ, normalizarPainel,
-  PROTOCOLO_PORTAL_RE, respostaIndeterminada, statusDoErroEdge,
+  corpoDoErroEdge, esperaDaRodada, interpretarErroEdge, interpretarRespostaImportacao, lerNumerosPortal, linkDoPedido, MAX_NUMEROS_POR_VEZ, msAteReleituraPosCron, normalizarPainel,
+  PROTOCOLO_PORTAL_RE, respostaIndeterminada, statusDoErroEdge, vereditoPainel,
 } from '../importar-portal';
+import { painelV2 } from './painel-portal-fixture';
 
 describe('interpretarRespostaImportacao', () => {
   it('sucesso só com PO confirmado (ok + concluido)', () => {
@@ -111,25 +112,6 @@ describe('revisão Fable+Codex (2026-11)', () => {
   });
 });
 
-describe('normalizarPainel', () => {
-  it('lê as três listas e descarta linha sem identidade', () => {
-    const p = normalizarPainel({
-      pendencias: [{ protocolo: '2140762', mensagem: 'NCM sem alíquota', tentativas: 2, ultima_em: '2026-10-20T15:00:00Z' }, { mensagem: 'sem protocolo' }],
-      sem_po: [{ pedido_id: 3700, protocolo: '2141500', status: 'falha_envio', importado_em: null }, { protocolo: 'x' }],
-      importados: [{ pedido_id: 3644, protocolo: '2141068', omie_numero: '1291', valor_total: 3238.63, origem: 'botao' }],
-    });
-    expect(p.pendencias).toEqual([{ protocolo: '2140762', mensagem: 'NCM sem alíquota', tentativas: 2, ultimaEm: '2026-10-20T15:00:00Z' }]);
-    expect(p.semPo.map((x) => x.pedidoId)).toEqual([3700]);
-    expect(p.importados[0]).toMatchObject({ pedidoId: 3644, omieNumero: '1291', valorTotal: 3238.63, origem: 'botao' });
-  });
-
-  it('listas ausentes viram vazias; resposta que não é objeto LANÇA (ausente ≠ nada pendente)', () => {
-    expect(normalizarPainel({})).toEqual({ pendencias: [], semPo: [], importados: [] });
-    expect(() => normalizarPainel(null)).toThrow(/ilegível/);
-    expect(() => normalizarPainel([])).toThrow(/ilegível/);
-  });
-});
-
 describe('corpoDoErroEdge (Codex P2, 2026-11-07)', () => {
   it('lê o corpo de um 500 com pedido_id; a tela mostra o pedido, não "não foi importado"', async () => {
     const err = { context: new Response(JSON.stringify({ ok: false, etapa: 'leitura', pedido_id: 12, ja_existia: true, mensagem: 'Configuração ausente' }), { status: 500 }) };
@@ -209,5 +191,71 @@ describe('8.5: vários números de uma vez', () => {
   });
   it('vazio: nada', () => {
     expect(lerNumerosPortal('  \n ')).toEqual({ validos: [], invalidos: [], excedentes: [] });
+  });
+});
+
+describe('normalizarPainel v2 (6.2: contrato rígido)', () => {
+  it('lê listas, totais e rodada; descarta linha sem identidade', () => {
+    const p = normalizarPainel(painelV2({
+      pendencias: [{ protocolo: '2140762', mensagem: 'NCM sem alíquota', tentativas: 2, ultima_em: '2026-10-20T15:00:00Z' }, { mensagem: 'sem protocolo' }],
+      total_pendencias: 1,
+      sem_po: [{ pedido_id: 3700, protocolo: '2141500', status: 'falha_envio', origem: 'app', desde: '2026-11-07T10:00:00Z', pendencia_mensagem: 'disparo falhou', pendencia_tentativas: 3 }, { protocolo: 'x' }],
+      total_sem_po: 1,
+    }));
+    expect(p.pendencias).toEqual([{ protocolo: '2140762', mensagem: 'NCM sem alíquota', tentativas: 2, ultimaEm: '2026-10-20T15:00:00Z' }]);
+    expect(p.semPo).toEqual([expect.objectContaining({ pedidoId: 3700, origem: 'app', pendenciaMensagem: 'disparo falhou', pendenciaTentativas: 3 })]);
+    expect(p.rodada.efetiva?.lidos).toBe(7);
+  });
+  it('{} , versão 1 (só as 3 listas), total ausente e não-objeto LANÇAM — nunca "nada pendente"', () => {
+    expect(() => normalizarPainel({})).toThrow(/ilegível/);
+    expect(() => normalizarPainel({ pendencias: [], sem_po: [], importados: [] })).toThrow(/versão/);
+    const semTotal = painelV2(); delete (semTotal as Record<string, unknown>).total_sem_po;
+    expect(() => normalizarPainel(semTotal)).toThrow(/total_sem_po/);
+    const semLista = painelV2(); delete (semLista as Record<string, unknown>).cancelado_com_po;
+    expect(() => normalizarPainel(semLista)).toThrow(/cancelado_com_po/);
+    expect(() => normalizarPainel(painelV2({ rodada: {} }))).toThrow(/rodada/);
+    expect(() => normalizarPainel(null)).toThrow(/ilegível/);
+    expect(() => normalizarPainel([])).toThrow(/ilegível/);
+  });
+});
+
+describe('vereditoPainel (6.1: "nada pendente" só com prova)', () => {
+  const v = (over: Record<string, unknown> = {}) => vereditoPainel(normalizarPainel(painelV2(over)));
+  it('rodada efetiva em dia, sem espera, sem pendência: ok', () => {
+    expect(v().tom).toBe('ok');
+  });
+  it('sem rodada efetiva, fora do dia ou com a última falhando depois: sem_prova (nunca ok)', () => {
+    expect(v({ rodada: { em_dia: false, ultima_efetiva: null, ultima: null } }).tom).toBe('sem_prova');
+    expect(v({ rodada: { ...painelV2().rodada as object, em_dia: false } }).tom).toBe('sem_prova');
+    const falhou = v({ rodada: { ...painelV2().rodada as object, ultima: { em: '2026-11-09T20:30:00Z', status: 'erro', erro: 'login recusado' } } });
+    expect([falhou.tom, falhou.motivo]).toEqual(['sem_prova', expect.stringContaining('falhou')]);
+    // controle: erro ANTES da efetiva não derruba o veredito
+    expect(v({ rodada: { ...painelV2().rodada as object, ultima: { em: '2026-11-07T20:30:00Z', status: 'erro' } } }).tom).toBe('ok');
+  });
+  it('rodada que não informou a espera (null) não vira zero: sem_prova', () => {
+    const ef = { ...(painelV2().rodada as { ultima_efetiva: object }).ultima_efetiva, indeterminados: null };
+    expect(v({ rodada: { ...painelV2().rodada as object, ultima_efetiva: ef } }).tom).toBe('sem_prova');
+  });
+  it('espera conhecida, aguardando disparo ou pendência: atenção', () => {
+    const ef = { ...(painelV2().rodada as { ultima_efetiva: object }).ultima_efetiva, adiados: 2 };
+    expect(v({ rodada: { ...painelV2().rodada as object, ultima_efetiva: ef } }).tom).toBe('atencao');
+    expect(v({ aguardando_disparo: { total: 1, mais_antigo_em: null } }).tom).toBe('atencao');
+    expect(v({ pendentes_unicos: 1 }).tom).toBe('atencao');
+  });
+  it('esperaDaRodada descreve só o que é > 0', () => {
+    const ef = { ...(painelV2().rodada as { ultima_efetiva: object }).ultima_efetiva, adiados: 2, carencia: 1 };
+    const e = esperaDaRodada(normalizarPainel(painelV2({ rodada: { ...painelV2().rodada as object, ultima_efetiva: ef } })));
+    expect(e.total).toBe(3);
+    expect(e.partes).toEqual(['1 em carência (esperando o espelho do Omie)', '2 adiado(s) por tempo']);
+  });
+});
+
+describe('msAteReleituraPosCron (6.7)', () => {
+  // SP = UTC−3. 12:30 SP = 15:30 UTC; a releitura é 7 min depois.
+  it('antes do cron do meio-dia: relê às 12:37 SP', () => {
+    expect(msAteReleituraPosCron(new Date('2026-11-09T15:00:00Z'))).toBe(37 * 60_000);
+  });
+  it('depois da última do dia (22:37 SP): a próxima é 12:37 do dia seguinte', () => {
+    expect(msAteReleituraPosCron(new Date('2026-11-10T02:00:00Z'))).toBe((13 * 60 + 37) * 60_000);
   });
 });
