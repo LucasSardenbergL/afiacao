@@ -604,6 +604,10 @@ Nenhuma dessas NFs tem `vTotalIPI` zero (há outros itens a 6,5% e 3,25%), entã
 postcondição exige o **sensor inteiro em 0**: nenhum SKU Sayerlack ativo sem alíquota. Ensaio pelo `db:aplicar`: ok,
 `POSTCONDICAO_OK`, ROLLBACK.
 
+**Deploy (2026-11-08):** migration `20261110140000` aplicada pelo envelope (ensaio ok → tentativa **#1007**, recibo na
+mesma transação). Validação por psql-ro: os 4 NCMs com a alíquota medida (`fonte = nf`); sensor de SKUs Sayerlack
+ativos sem alíquota = **0**.
+
 **Lição**: "sem compra em 180 dias" não quer dizer "sem NF". O `nfe_recebimentos` do app só começa em jan/2026, e o
 Omie guarda as NF-e de entrada desde 2023. Para NCM sem alíquota, a 1ª fonte é o `ConsultarRecebimento` sobre todo o
 histórico, não a janela do banco. O CP006 só volta com NCM **nunca comprado**, e é aí que a 7.5 (IPI no portal) ainda
