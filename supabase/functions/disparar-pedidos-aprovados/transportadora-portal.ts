@@ -13,9 +13,8 @@ const TETO_NOME = 60;
 /** `data_pedido.transportadora` do retorno cru do busca-itens, limpo; null quando não há nome legível. */
 export function transportadoraDosItensBrutos(itensBrutos: unknown): string | null {
   if (!itensBrutos || typeof itensBrutos !== "object" || Array.isArray(itensBrutos)) return null;
-  const dp = (itensBrutos as { data_pedido?: unknown }).data_pedido;
-  if (!dp || typeof dp !== "object" || Array.isArray(dp)) return null;
-  const t = (dp as { transportadora?: unknown }).transportadora;
+  const dp = (itensBrutos as { data_pedido?: unknown }).data_pedido as { transportadora?: unknown } | null | undefined;
+  const t = dp?.transportadora;
   if (typeof t !== "string") return null;
   // deno-lint-ignore no-control-regex
   if (/[\u0000-\u001f\u007f]/.test(t)) return null;
