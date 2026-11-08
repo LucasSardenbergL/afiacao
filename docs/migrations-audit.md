@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **811** custom migrations totais
-- **2705** objetos esperados (criados por estas migrations)
+- **812** custom migrations totais
+- **2712** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1064
+  - `function`: 1067
   - `rls_policy`: 519
-  - `index`: 381
-  - `table`: 250
+  - `index`: 383
+  - `table`: 252
   - `cron_job`: 216
   - `trigger`: 136
   - `view`: 135
@@ -6616,6 +6616,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_avisar_vendedores` | — |
 | `function` | `public.radar_prospectar_hoje` | — |
 | `function` | `public.radar_email_semanal_painel` | — |
+
+### `20261107233000_radar_funil_painel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_registrar_ficha_entregue` | — |
+| `function` | `public.radar_registrar_falha_sensor` | — |
+| `function` | `public.radar_funil` | — |
+| `table` | `public.radar_sensor_falhas` | — |
+| `table` | `public.radar_funil_sensores` | — |
+| `index` | `public.idx_radar_sensor_falhas_dia` | `radar_sensor_falhas` |
+| `index` | `public.idx_radar_empresas_omie_cadastrado_em` | `radar_empresas` |
 
 ### `20261108000000_cliente_sucessao_consumidores.sql`
 

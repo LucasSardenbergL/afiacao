@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 811
+-- Total de custom migrations: 812
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -872,6 +872,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107220000', 'data_health_sayerlack_varredura_portal', '20261107220000_data_health_sayerlack_varredura_portal.sql'),
   ('20261107220500', 'radar_meu_territorio', '20261107220500_radar_meu_territorio.sql'),
   ('20261107230000', 'radar_distribuicao_pacote_e', '20261107230000_radar_distribuicao_pacote_e.sql'),
+  ('20261107233000', 'radar_funil_painel', '20261107233000_radar_funil_painel.sql'),
   ('20261108000000', 'cliente_sucessao_consumidores', '20261108000000_cliente_sucessao_consumidores.sql'),
   ('20261108010000', 'venda_painel_heranca', '20261108010000_venda_painel_heranca.sql'),
   ('20261108120000', 'sayerlack_situacao_portal_no_pedido', '20261108120000_sayerlack_situacao_portal_no_pedido.sql'),
@@ -3518,6 +3519,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_avisar_vendedores', ''),
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_prospectar_hoje', ''),
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_email_semanal_painel', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_registrar_ficha_entregue', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_registrar_falha_sensor', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_funil', ''),
+  ('radar_funil_painel', 'table', 'public', 'radar_sensor_falhas', ''),
+  ('radar_funil_painel', 'table', 'public', 'radar_funil_sensores', ''),
+  ('radar_funil_painel', 'index', 'public', 'idx_radar_sensor_falhas_dia', 'radar_sensor_falhas'),
+  ('radar_funil_painel', 'index', 'public', 'idx_radar_empresas_omie_cadastrado_em', 'radar_empresas'),
   ('cliente_sucessao_consumidores', 'function', 'private', '_venda_sugestoes_json', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'venda_heranca_comprador', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'cliente_sucessao_plano_itens', ''),
@@ -6233,6 +6241,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_avisar_vendedores', ''),
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_prospectar_hoje', ''),
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_email_semanal_painel', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_registrar_ficha_entregue', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_registrar_falha_sensor', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_funil', ''),
+  ('radar_funil_painel', 'table', 'public', 'radar_sensor_falhas', ''),
+  ('radar_funil_painel', 'table', 'public', 'radar_funil_sensores', ''),
+  ('radar_funil_painel', 'index', 'public', 'idx_radar_sensor_falhas_dia', 'radar_sensor_falhas'),
+  ('radar_funil_painel', 'index', 'public', 'idx_radar_empresas_omie_cadastrado_em', 'radar_empresas'),
   ('cliente_sucessao_consumidores', 'function', 'private', '_venda_sugestoes_json', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'venda_heranca_comprador', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'cliente_sucessao_plano_itens', ''),

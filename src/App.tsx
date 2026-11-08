@@ -187,6 +187,7 @@ const Melhorias = lazyRota(() => import("./pages/Melhorias"));
 const GestaoMelhorias = lazyRota(() => import("./pages/GestaoMelhorias"));
 const RadarClientes = lazyRota(() => import("./pages/RadarClientes"));
 const RadarAbrirEmail = lazyRota(() => import("./pages/RadarAbrirEmail"));
+const RadarFunil = lazyRota(() => import("./pages/RadarFunil"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
 
@@ -387,6 +388,7 @@ const arvoreDeRotas = (
         <Route path="radar" element={<RadarClientes />} />
         {/* Link do e-mail semanal de leads (Radar D1): grava a abertura e segue para /radar?cnpj=. */}
         <Route path="radar/abrir/:envio/:cnpj" element={<RadarAbrirEmail />} />
+        <Route path="radar/funil" element={<RadarFunil />} />
         <Route path="admin/ajuda" element={<AdminAjuda />} />
         <Route path="admin/des/trimestre-atual" element={<AdminDesTrimestreAtual />} />
         <Route path="admin/des/configuracao" element={<AdminDesTrimestreAtual />} />
