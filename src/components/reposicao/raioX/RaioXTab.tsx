@@ -227,6 +227,10 @@ export function RaioXTab() {
   const liberado = useMemo(() => (medicao.linhas && chave ? medir(medicao.linhas, chave).meta_liberado : null), [medicao.linhas, chave]);
   const pendenteTop = rx.placar.topTotal - rx.placar.topDecidido;
   const filtrosAtivos = !!(f.rxDestino || f.rxForn || f.rxStatus || f.rxExec || f.rxTop || f.rxBusca || f.rxSku || f.rxIneq);
+  // Celular: a fila é a vista padrão. O "Avançado" abre sozinho só quando a URL pede algo além dela (outro segmento ou
+  // filtro); o link do e-mail/Cmd-K (rxTop=1&rxStatus=pendente) É a fila e não abre o Avançado.
+  const avancadoAtivo = segmento !== 'mercadoria'
+    || !!(f.rxDestino || f.rxForn || f.rxExec || f.rxBusca || f.rxSku || f.rxIneq || (f.rxStatus && f.rxStatus !== 'pendente'));
   const limparFiltros = () => setF({ rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false, rxBusca: '', rxSku: '', rxIneq: '' });
 
   if (chave === null) {
@@ -244,80 +248,30 @@ export function RaioXTab() {
     );
   }
 
-  return (
-    <div className="space-y-4">
-      {rx.inequivocoIndisponivel && (
-        <p role="status" className="text-xs text-status-warning">
-          veredito "inequívoco" indisponível (migration ainda não aplicada ou sem acesso) — nenhum SKU é tratado como inequívoco por omissão
-        </p>
-      )}
-      {rx.syncedHoras !== null && rx.syncedHoras >= 24 && (
-        <p role="status" className="text-xs text-status-warning">
-          estoque sincronizado há {Math.floor(rx.syncedHoras)} h — números podem estar defasados
-        </p>
-      )}
-      {rx.placar.topN > 0 && rx.placar.topDecididoN === rx.placar.topN ? (
-        <EmptyState
-          tone="operational"
-          icon={PackageSearch}
-          title="Top 61 decidido"
-          description={`Os ${rx.placar.topN} itens da meta têm decisão. Agora é executar e medir o liberado.`}
-        />
-      ) : fila.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="touch" onClick={abrirFila}>Decidir Top 61 ({fila.length} pendentes)</Button>
-        </div>
-      )}
-      {isMobile ? (
-        <>
-          <p data-testid="placar-linha" className="text-sm">
-            Top 61: {rx.placar.topDecididoN}/{rx.placar.topN} · liberado {liberado === null ? 'R$ —' : fmtReais(liberado)} de 60 mil
-            {execucao.vencidas > 0 && <> · <span className="text-status-error">{execucao.vencidas} vencidas</span></>}
-            {execucao.semResponsavel > 0 && <> · <span className="text-status-warning">{execucao.semResponsavel} sem responsável</span></>}
-          </p>
-          <details className="rounded-md border p-2 text-sm">
-            <summary className="min-h-11 cursor-pointer py-2">Placar e medição completos</summary>
-            <div className="mt-2 space-y-4">
-              <RaioXPlacar
-                placar={rx.placar}
-                coorteIndisponivel={rx.coorteEstado === 'indisponivel'}
-                custoPendenteMes={custoEsperarMensal(rx.placar.pendente, taxa)}
-                execucao={execucao}
-              />
-              <RaioXCaixaLiberado
-                linhas={medicao.linhas}
-                isLoading={medicao.isLoading}
-                erro={medicao.erro}
-                empresa={chave}
-                codigos={codigos}
-                onFiltrarSku={filtrarSku}
-                decisoes={rx.decisoes}
-                unidadesVenda={unidadesVenda}
-              />
-            </div>
-          </details>
-        </>
-      ) : (
-        <>
-          <RaioXPlacar
-            placar={rx.placar}
-            coorteIndisponivel={rx.coorteEstado === 'indisponivel'}
-            custoPendenteMes={custoEsperarMensal(rx.placar.pendente, taxa)}
-            execucao={execucao}
-          />
-          <RaioXCaixaLiberado
-            linhas={medicao.linhas}
-            isLoading={medicao.isLoading}
-            erro={medicao.erro}
-            empresa={chave}
-            codigos={codigos}
-            onFiltrarSku={filtrarSku}
-            decisoes={rx.decisoes}
-            unidadesVenda={unidadesVenda}
-          />
-        </>
-      )}
-
+  // Placar completo + medição (no celular, dentro do "Avançado").
+  const placarCompleto = (
+    <>
+      <RaioXPlacar
+        placar={rx.placar}
+        coorteIndisponivel={rx.coorteEstado === 'indisponivel'}
+        custoPendenteMes={custoEsperarMensal(rx.placar.pendente, taxa)}
+        execucao={execucao}
+      />
+      <RaioXCaixaLiberado
+        linhas={medicao.linhas}
+        isLoading={medicao.isLoading}
+        erro={medicao.erro}
+        empresa={chave}
+        codigos={codigos}
+        onFiltrarSku={filtrarSku}
+        decisoes={rx.decisoes}
+        unidadesVenda={unidadesVenda}
+      />
+    </>
+  );
+  // Segmentos, filtros e a lista/segmento escolhido (no celular, dentro do "Avançado").
+  const segmentosEConteudo = (
+    <>
       <div role="group" aria-label="Segmento" className="flex flex-wrap gap-2">
         {SEGMENTOS.map((s) => (
           <Button key={s.id} size="touch" variant={segmento === s.id ? 'default' : 'outline'} aria-pressed={segmento === s.id} onClick={() => setF({ rx: s.id })}>
@@ -388,6 +342,61 @@ export function RaioXTab() {
         <EmptyState tone="operational" icon={PackageSearch} title="Nada neste segmento" description="Nenhum item nesta categoria." />
       ) : (
         <RaioXContagem empresa={chave} categoria={segmento === 'uso' ? 'uso_consumo' : 'nao_mercadoria'} itens={contagem} decisoes={rx.decisoes} onDecidir={abrir} />
+      )}
+    </>
+  );
+
+  return (
+    <div className="space-y-4">
+      {rx.placar.topN > 0 && rx.placar.topDecididoN === rx.placar.topN ? (
+        <EmptyState
+          tone="operational"
+          icon={PackageSearch}
+          title="Top 61 decidido"
+          description={`Os ${rx.placar.topN} itens da meta têm decisão. Agora é executar e medir o liberado.`}
+        />
+      ) : fila.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="touch" onClick={abrirFila}>Decidir Top 61 ({fila.length} pendentes)</Button>
+        </div>
+      )}
+      {/* Avisos amarelos ABAIXO do botão da fila: o 1º toque da tela é decidir, não ler aviso. */}
+      {rx.inequivocoIndisponivel && (
+        <p role="status" className="text-xs text-status-warning">
+          veredito "inequívoco" indisponível (migration ainda não aplicada ou sem acesso) — nenhum SKU é tratado como inequívoco por omissão
+        </p>
+      )}
+      {rx.syncedHoras !== null && rx.syncedHoras >= 24 && (
+        <p role="status" className="text-xs text-status-warning">
+          estoque sincronizado há {Math.floor(rx.syncedHoras)} h — números podem estar defasados
+        </p>
+      )}
+      {isMobile ? (
+        <>
+          <p data-testid="placar-linha" className="text-sm">
+            Top 61: {rx.placar.topDecididoN}/{rx.placar.topN} · liberado {liberado === null ? 'R$ —' : fmtReais(liberado)} de 60 mil
+            {execucao.vencidas > 0 && <> · <span className="text-status-error">{execucao.vencidas} vencidas</span></>}
+            {execucao.semResponsavel > 0 && <> · <span className="text-status-warning">{execucao.semResponsavel} sem responsável</span></>}
+          </p>
+          {/* Celular abre direto na fila do Top 61 (pendentes, na ordem da fila); o resto vai para o "Avançado". */}
+          {!avancadoAtivo && fila.length > 0 && (
+            <section aria-label="Fila do Top 61" className="space-y-2">
+              <RaioXMercadoria itens={fila} decisoes={rx.decisoes} onDecidir={abrir} taxa={taxa} hoje={hoje} nomes={nomes} confirmar={confirmar} />
+            </section>
+          )}
+          <details data-testid="avancado" open={avancadoAtivo} className="rounded-md border p-2 text-sm">
+            <summary className="min-h-11 cursor-pointer py-2">Avançado: placar, segmentos e filtros</summary>
+            <div className="mt-2 space-y-4">
+              {placarCompleto}
+              {segmentosEConteudo}
+            </div>
+          </details>
+        </>
+      ) : (
+        <>
+          {placarCompleto}
+          {segmentosEConteudo}
+        </>
       )}
       {itemAberto && aberto && (
         <DecisaoSheet

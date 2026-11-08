@@ -130,12 +130,22 @@ export function sugestaoInicial(i: ItemRaioX): Destino | null {
  * histórico — inclusive o liquidar que o servidor ainda recusa, já rebaixado a "revisar"). Um item por toque: nada em lote.
  * Observação/fornecedor de uma linha sem destino (ex.: só contagem) são preservados — a RPC apaga campo omitido.
  */
-export function argsConfirmarSugestao(empresa: Empresa, item: ItemRaioX, d: DecisaoRow | undefined): DecidirArgs | null {
+/**
+ * Destino que o "Confirmar: <sugestão>" gravaria em 1 toque, ou `null` (já decidido, linha histórica, sem sugestão, ou
+ * liquidar sem o veredito inequívoco). Independe da empresa — é a mesma regra do `argsConfirmarSugestao`.
+ */
+export function sugestaoConfirmavel(item: ItemRaioX, d: DecisaoRow | undefined): Destino | null {
   if (d?.destino || item.fora_do_estoque) return null;
   const s = sugestaoInicial(item);
   if (!s) return null;
   // 2ª camada do bug 5: liquidar só com o veredito "inequívoco" do servidor (o RX004 recusaria) — nunca por omissão
   if (s === 'liquidar' && item.inequivoco !== true) return null;
+  return s;
+}
+
+export function argsConfirmarSugestao(empresa: Empresa, item: ItemRaioX, d: DecisaoRow | undefined): DecidirArgs | null {
+  const s = sugestaoConfirmavel(item, d);
+  if (!s) return null;
   return {
     ...argsEstadoSalvo(item, d),
     destino: s,
