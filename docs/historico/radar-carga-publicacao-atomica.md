@@ -165,3 +165,23 @@ tick retoma no seguinte.
   processar nada (`G1/G2` vermelhos antes do conserto em `radar_carga_iniciar`).
 - **"Maior transação" se mede por xid, não por `xact_start`:** a parte só-leitura de um passo (contagens da virada)
   não trava linha nem Realtime; o que trava é o tempo com xid vivo. O amostrador separa as duas.
+
+### No ar (2026-11-08, PR #3752)
+
+- **Migration aplicada pela sessão** com `bun run db:aplicar db/2026-11-08-radar-publicacao-curta.sql`, a cópia sem
+  envelope da migration (o executor lê os bytes commitados; nada transcrito no chat). Ensaio com ROLLBACK verde,
+  recibo #1021, reaplicado como #1025 com a postcondição P2 em `IS DISTINCT FROM` (fiscal
+  `assert-verde-por-ausencia`). Os corpos não mudaram. A 2ª testemunha, por psql-ro, conferiu o md5(prosrc) dos 11
+  corpos igual ao do arquivo, `lote_anterior` presente, ACL (passo/procedure só do owner; P para authenticated e
+  não para anon) e o cron 279 com `CALL public.radar_carga_publicar()`.
+- **Religado** com `db/2026-11-08-radar-publicacao-religar.sql` (recibo #1023): o 2026-10 marcado `falhou` pela
+  contenção voltou a `validada` (staging intacto, 0 diferenças de cadastro, mesma membresia = re-run) e
+  `cron.alter_job(279, active := true)`.
+- **1ª publicação real:** o tick das 22:00 reivindicou às 22:00:10 e virou às 22:01:23 (73 s). Examinou 503.929
+  linhas, regravou 0, deixou `complete/publicada`, total 503.929, novos 8.587, foto 503.929, staging vazio e ledger
+  `radar.publicar_lote` com `sucesso`. Em `cron.job_run_details` ficou `succeeded`, e nenhuma sessão esperou atrás
+  do cron (`pg_blocking_pids`, amostrado a cada 15 s).
+- **Falta medir:** a 1ª publicação de um MÊS NOVO em prod (rótulo trocado em ~490k linhas). Ela vem com a carga
+  mensal de segunda. Conferir `carga_gravadas`, `carga_tentativas`, o tempo entre `carga_publicacao_iniciada_em`
+  e `carga_publicada_em` e o ledger.
+- **Publish do front** (rótulo efetivo nas 3 leituras diretas) pela sessão, via MCP, depois do merge.
