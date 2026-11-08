@@ -529,3 +529,36 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
   cobertura) — aplicados; P2 aceito: dois incidentes entre execuções do watchdog dão 1 e-mail (o probable_cause lista
   todos). Prova PG17 `db/test-sayerlack-cancelado-com-compra-viva.sh`: 47 asserts nos dois locales, 20 sabotagens
   vermelhas; vizinhos do trio (10 provas de data_health/tint/fin) verdes.
+
+## 7.5 — o portal expõe NCM/IPI por item? Rodada 1: INCONCLUSIVO (2026-11-08)
+
+Pergunta do adendo `2026-11-08-sayerlack-revisao-2.md` (7.5). Investigação só leitura; nada implementado.
+
+- **Bloqueio**: o portal estava fora no dia (confirmado pelo founder; `portal.sayerlack.com.br/order-viewer` não
+  carregou no Chrome). As telas de detalhe, impressão/espelho e downloads (XML/PDF) **não foram vistas**. O veredito
+  "não expõe" **não** pode sair daqui: ausência nas fontes abaixo é ausência de dado, não prova.
+- **O que já se sabe (evidência indireta)**:
+  - `GET /order-creation/busca-itens-pedido/<nº>` devolve um array posicional **mais longo que 14** — a amostra do
+    spike (pedido 2140603) foi registrada truncada em `[13]` ("…") e **nunca** foi catalogada além disso (busca em
+    repo, histórico git e transcrições de sessão: nenhuma cópia completa). O parser (`leitura.ts`) só lê `[0]..[13]`.
+  - Posições não usadas com valor: `[2]` = "" · `[7]` = 19,8637 (= preço UN ÷ cap. 18, preço por L) · `[9]` =
+    357,5466 (= `[8]`) · `[10]` = 5. Esse pedido tem IPI de 6,5% (316,26 ÷ 4.865,56), então `[10]` **não** é a
+    alíquota de IPI desse item.
+  - 257 linhas de `pedidos_portal_tentativas.evidence` (trace + network + DOM do formulário de criação): **0**
+    ocorrências de `ipi|ncm|aliq|imposto|tribut` (regex sem caixa no JSON inteiro). A resposta de
+    `POST /order-creation/form/add` traz só `itens[{item, value}]` e o total `value` (pedido 2147222: 15.929,24 contra
+    `valor_total` 15.929,28 no app — mercadoria, sem IPI). O formulário de criação não mostra NCM/IPI nos campos
+    gravados (`it_codigo`, `btnGravarItem`…).
+  - A Consulta Pedidos (`/order-viewer`) só tem Vlr Mercadoria e Vlr Total: dá o IPI **do pedido**, não por linha.
+- **Fecho (rodada 2, quando o portal voltar — 1 leitura, ~5 min no Chrome do founder logado)**, num pedido já
+  faturado com ≥2 NCMs diferentes:
+  1. `fetch('/order-creation/busca-itens-pedido/<nº>')` e catalogar **todas** as posições do 1º item (comprimento,
+     tipo, valor). Procurar NCM (8 dígitos) e um % que reproduza `(Vlr Total − Vlr Mercadoria)` quando somado por linha.
+  2. Abrir `/order-creation-form-edit/<nº>/route/order-viewer` (só GET, sem clicar em gravar) e ler colunas/inputs
+     do grid de itens.
+  3. Procurar no `/order-viewer` ação de imprimir/espelho/XML/PDF do pedido e ler o conteúdo.
+  4. Comparar o IPI por linha (se houver) com `nfe_recebimento_itens` da NF do pedido e com `ipi_aliquota_ncm`.
+- **Desenho proposto se expuser** (para a sessão dona das edges; não implementado): ler NCM/IPI% na MESMA prova
+  posicional do parser (falhou a prova ⇒ recusa) e usá-los como **2ª fonte** contra `ipi_aliquota_ncm` — divergência
+  vira recusa com motivo, nunca sobrescreve a tabela (que é provada na NF-e). Σ(mercadoria × (1+IPI%)) da linha deve
+  bater o Vlr Total da consulta.
