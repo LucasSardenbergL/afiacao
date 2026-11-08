@@ -42,7 +42,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "fin-valor-engine": "77b634c566f212a6b8b584519ca04d49e4b4fbf3a77b1c729b54cd4d2c11e487",
   "generate-bundle-argument": "4844fc382ff2708fb0c9e351a47eb2c48bb0f57bd24d9f46fdd705221a158f15",
   "generate-tactical-plan": "bba99a973472ad11bb710827eeba74a33f6d3e85ee53da174126552b9aa8521b",
-  "gerar-pedidos-diario": "4b7f14f43ccd8e73403ba3e6a77993fdc7cfb2b876445a7332032f4dba5d77d2",
+  "gerar-pedidos-diario": "401276be3ec6435b8ecf677827ea5c279c8d980260dfb9ca1fd1afb540e43ca2",
   "gmail-webhook-receiver": "cc47dc5aa76bccfc02e124d260967e5c6cf10ee1958b5e460c152b110f7f333b",
   "identify-tool": "953b25d2551d44bd9a7898ca2b2c8c7c7aa981eabfd882e3defc4bfbe269fc85",
   "melhoria-triagem": "35cbe72aa5011af552a1d0f8bc2771983dc2a13161f454f9d3d2c3537aa7ad8d",

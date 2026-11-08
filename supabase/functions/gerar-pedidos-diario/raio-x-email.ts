@@ -115,7 +115,8 @@ export function blocoRaioXHtml(r: ResumoRaioX, appUrl: string): string {
 }
 
 /** Cliente mínimo que o leitor usa (o supabase-js real satisfaz). */
-// deno-lint-ignore no-explicit-any
+// Cliente estrutural de propósito: tipar pelo `npm:@supabase/supabase-js` arrastaria o npm para o `deno test --no-remote`.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- cliente estrutural (ver acima)
 type Db = { from: (t: string) => any };
 
 /**
