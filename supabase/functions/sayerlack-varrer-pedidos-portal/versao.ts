@@ -16,7 +16,12 @@ export const respostaSonda = criarRespostaSonda("sayerlack-varrer-pedidos-portal
  * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
  * O CHANGELOG de cada versão vive em `docs/historico/versao-sayerlack-varrer-pedidos-portal.md`.
  */
-export const VERSAO = "v1.11-sessoes-pela-importadora";
+/**
+ * v1.12 (2026-11-08, revisão 2, 7.1) — reconsulta de pedido do app sem PO com PO manual no Omie chama a RPC
+ * `sayerlack_vincular_po_manual`: casou ⇒ vincula, audita e resolve a pendência (`po_manual_vinculado`); não casou ou
+ * erro ⇒ a pendência fica com `vinculo_motivo`. Nunca re-dispara. Migration 20261111110000 antes.
+ */
+export const VERSAO = "v1.12-vincula-po-manual";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

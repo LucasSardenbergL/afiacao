@@ -73,6 +73,10 @@ interface Cenario {
   falhasAbertas?: Record<string, unknown>[];
   vistos?: Record<string, unknown>[];
   sync?: Record<string, unknown>[];
+  /** Espelho de POs do Omie (contratos). */
+  pos?: Record<string, unknown>[];
+  /** RPC do 7.1 (default do "*": corpo null ⇒ a edge trata como erro, sem vínculo). */
+  vincular?: () => Resposta;
 }
 
 function montar(c: Cenario) {
@@ -89,6 +93,8 @@ function montar(c: Cenario) {
     "GET rest:sync_state": () => ({ corpo: c.sync ?? [] }),
     "rpc:sayerlack_registrar_situacao_portal": () => c.registrar?.() ?? { corpo: { aceitos: [], ignorados: 0 } },
     "rpc:sayerlack_cobertura_situacao_portal": () => ({ corpo: [] }),
+    "GET rest:purchase_orders_tracking": () => ({ corpo: c.pos ?? [] }),
+    ...(c.vincular ? { "rpc:sayerlack_vincular_po_manual": c.vincular } : {}),
     [BROWSERLESS]: () => c.browserless?.() ?? portal([]),
     [IMPORTADORA]: () => c.importadora?.() ?? { corpo: { ok: true, mensagem: "importado" } },
     // o resto (espelho, configuração, runs do detector, escritas de pendência/vista): vazio / aceito
@@ -208,6 +214,34 @@ Deno.test("pendência fora da janela com importação sem resposta: indeterminad
     if (!String(r.corpo.mensagem).includes("não sei se entraram")) throw new Error(`mensagem: ${r.corpo.mensagem}`);
     igual(falso.de(IMPORTADORA).length, 1, "uma sessão de importação");
   }));
+
+// 7.1: a reconsulta de pedido do app sem PO com PO manual no Omie chama a RPC de vinculação e NUNCA re-dispara.
+const PENDENCIA_71 = [{ protocolo: "2130071", mensagem: "x", ultima_em: "2026-11-09T10:00:00Z", primeira_em: "2026-11-09T10:00:00Z", tentativas: 1, resolvido_em: null }];
+const NO_APP_SEM_PO_71 = [{ id: 771, portal_protocolo: "2130071", status: "aprovado_aguardando_disparo", omie_pedido_compra_id: null, atualizado_em: "2026-11-09T10:00:00Z", enviado_portal_em: null, portal_data_entrega: "2026-11-26" }];
+for (const [rotulo, vincular, acao, motivo] of [
+  ["casou: vincula e resolve", () => ({ corpo: { vinculado: true, motivo: "vinculado", po_numero: "PO-71" } }), "po_manual_vinculado", "vinculado"],
+  ["não casou: pendência fica com o motivo", () => ({ corpo: { vinculado: false, motivo: "conteudo_divergente", diferencas: [] } }), "po_manual_no_omie", "conteudo_divergente"],
+  ["RPC sem resposta válida: pendência fica (erro)", undefined, "po_manual_no_omie", "erro"],
+] as const) {
+  Deno.test(`7.1: reconsulta com PO manual — ${rotulo}`, () =>
+    comRelogio(QUARTA, async () => {
+      const falso = montar({
+        browserless: () => portal([]),
+        falhasAbertas: PENDENCIA_71,
+        pedidosNoApp: NO_APP_SEM_PO_71,
+        pos: [{ id: "po-71", numero_contrato_fornecedor: "2130070 / 2130071" }],
+        sync: [{ status: "complete", last_sync_at: "2026-11-11T12:50:00Z" }],
+        ...(vincular ? { vincular } : {}),
+      });
+      const r = await varrer("importar");
+      const rec = (r.corpo.reconsultas as { protocolo: string; acao: string; vinculo_motivo?: string }[]);
+      igual(rec.map((q) => `${q.protocolo}:${q.acao}:${q.vinculo_motivo}`), [`2130071:${acao}:${motivo}`], "reconsulta");
+      const args = falso.de("rpc:sayerlack_vincular_po_manual")[0]?.corpo as Record<string, unknown> | undefined;
+      igual([args?.p_pedido_id, args?.p_ator, args?.p_origem], [771, null, "varredura"], "RPC com o pedido, sem ator, origem varredura");
+      const imp = falso.de(IMPORTADORA).map((c) => (c.corpo as { somente_situacao?: boolean }).somente_situacao);
+      igual(imp, [true], "a importadora só relê a situação — nunca re-dispara");
+    }));
+}
 
 // 8.2: o script que VAI ao Browserless é JS válido e carrega as funções de página e o laço de paginação testados
 // contra HTML real (`scripts/sayerlack-portal-dom.test.ts`).

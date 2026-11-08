@@ -31,6 +31,7 @@ import {
   lerTodasAsPaginas,
 } from "../_shared/sayerlack-portal-dom.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { type ResultadoVinculo, vincularPoManual } from "../_shared/sayerlack-vincular-po-manual.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import {
@@ -930,10 +931,24 @@ Deno.serve(async (req: Request) => {
           continue;
         }
         if ((await contratosNoOmie(db, [p.protocolo])).size > 0) {
+          // 7.1: o mesmo PO manual da reconsulta — vincula se a RPC provar o conteúdo; erro ou recusa mantêm o aviso.
+          // Nunca re-dispara neste ramo.
+          let vinculo: ResultadoVinculo | null = null;
+          try {
+            vinculo = await vincularPoManual(db, ped.id, null, "varredura");
+          } catch (e) {
+            console.warn(`[varrer-portal] ${p.protocolo}: vinculação do PO manual falhou: ${mensagemDeErro(e) ?? "erro sem mensagem"}`);
+          }
+          if (vinculo?.vinculado) {
+            await marcarResolvidos(db, [p.protocolo]);
+            redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_manual_vinculado", po_numero: vinculo.po_numero ?? null });
+            continue;
+          }
           const { notificado } = await registrarFalha(db, p.protocolo,
             `Pedido ${p.protocolo}: o #${ped.id} do app está sem pedido de compra, mas já existe PO no Omie com este contrato ` +
-              `(lançado à mão?). O cron não re-dispara para não duplicar — não lance outro PO.`);
-          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_ja_no_omie", notificado });
+              `(lançado à mão?). O cron não re-dispara para não duplicar — não lance outro PO.` +
+              ` Vinculação automática: ${vinculo ? `recusada (${vinculo.motivo})` : "não conferida (erro)"}.`);
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_ja_no_omie", vinculo_motivo: vinculo?.motivo ?? "erro", notificado });
           continue;
         }
         const r = await importarContado(p.protocolo, [p.situacao_codigo])
@@ -992,11 +1007,25 @@ Deno.serve(async (req: Request) => {
         } else if (pedQ.temPo) {
           await marcarResolvidos(db, [q.protocolo]); reconsultas.push({ ...q, acao: "po_ja_no_app_resolvido" }); continue;
         } else if (omieQ.size > 0) {
-          // Pedido no app sem PO e PO manual no Omie: pendência de vinculação (item 7.1), não re-disparo. A situação é
-          // relida mesmo assim (só situação): a pendência pode ser um 6 que o botão leu e não gravou (Codex rodada 2).
+          // Pedido no app sem PO e PO manual no Omie: NUNCA re-disparo. 7.1: vincula se a RPC provar que o PO é a compra
+          // deste pedido (contrato por token, dono, conteúdo); senão a pendência fica, com o motivo. Erro da RPC também
+          // mantém a pendência — o ramo não re-dispara em caso algum. A situação é relida mesmo assim (só situação): a
+          // pendência pode ser um 6 que o botão leu e não gravou (Codex rodada 2).
+          let vinculo: ResultadoVinculo | null = null;
+          let vinculoErro: string | null = null;
+          try {
+            vinculo = await vincularPoManual(db, pedQ.id, null, "varredura");
+          } catch (e) {
+            vinculoErro = mensagemDeErro(e) ?? "erro sem mensagem";
+          }
+          if (vinculo?.vinculado) await marcarResolvidos(db, [q.protocolo]);
           const rs = await importarContado(q.protocolo, [...SITUACOES_IMPORTAVEIS], true)
             .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
-          reconsultas.push({ ...q, acao: "po_manual_no_omie", situacao_relida: (rs.corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada ?? null });
+          reconsultas.push({
+            ...q, acao: vinculo?.vinculado ? "po_manual_vinculado" : "po_manual_no_omie",
+            vinculo_motivo: vinculo?.motivo ?? "erro", ...(vinculoErro ? { mensagem: `vinculação: ${vinculoErro}` } : {}),
+            situacao_relida: (rs.corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada ?? null,
+          });
           continue;
         } else {
           // B5: pedido do app sem PO — a reconsulta RE-DISPARA; mesma carência e cobertura do re-disparo da janela.
