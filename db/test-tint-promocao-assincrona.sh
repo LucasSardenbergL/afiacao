@@ -127,15 +127,23 @@ CREATE TABLE _t_res (ord serial, nome text NOT NULL, ok boolean NOT NULL, detalh
 CREATE FUNCTION _t_assert(p_nome text, p_ok boolean, p_detalhe text DEFAULT '')
 RETURNS void LANGUAGE sql AS $$ INSERT INTO _t_res (nome, ok, detalhe) VALUES (p_nome, COALESCE(p_ok, false), p_detalhe) $$;
 CREATE TABLE _t_ticks (n serial, r jsonb);
--- Injeção de falha por run: 'erro' (RAISE) ou 'lento' (sleep 3s só no INSERT) no registro de
+-- Injeção de falha por run: 'erro' (RAISE) ou 'lento' (até 3s só no INSERT — solta antes se o shell
+-- levantar a bandeira _t_solta do run, i.e. o tick concorrente da T4 já voltou) no registro de
 -- importação que o promote grava logo no início (AFTER → a linha existe e precisa ser DESFEITA).
 CREATE TABLE _t_veneno (run_id uuid PRIMARY KEY, modo text NOT NULL);
+CREATE TABLE _t_solta (run_id uuid PRIMARY KEY);
 CREATE FUNCTION _t_veneno_trg() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE v_modo text;
+DECLARE v_modo text; v_t0 timestamptz := clock_timestamp();
 BEGIN
   SELECT modo INTO v_modo FROM _t_veneno WHERE run_id::text = NEW.arquivo_hash;
   IF v_modo = 'erro' THEN RAISE EXCEPTION 'VENENO_TESTE run %', NEW.arquivo_hash; END IF;
-  IF v_modo = 'lento' AND TG_OP = 'INSERT' THEN PERFORM pg_sleep(3); END IF;
+  IF v_modo = 'lento' AND TG_OP = 'INSERT' THEN
+    -- Cada volta é um comando novo: em READ COMMITTED enxerga a bandeira que o shell commitou.
+    WHILE clock_timestamp() - v_t0 < interval '3 seconds'
+          AND NOT EXISTS (SELECT 1 FROM _t_solta WHERE run_id::text = NEW.arquivo_hash) LOOP
+      PERFORM pg_sleep(0.01);
+    END LOOP;
+  END IF;
   RETURN NEW;
 END $$;
 CREATE TRIGGER _t_veneno AFTER INSERT OR UPDATE ON tint_importacoes
@@ -339,6 +347,8 @@ for i in $(seq 1 50); do
   sleep 0.1
 done
 if [ "$visto" = 1 ]; then PA -d "$db" -q -c "$TICK"; fi
+# O tick concorrente já voltou (pulou ou não): o lento pode terminar — antes ele dormia 3 s fixos.
+PA -d "$db" -q -c "INSERT INTO _t_solta VALUES ('a4000000-0000-0000-0000-00000000000a')"
 wait "$bg" || true
 bgrc="$(cat "$TMP/$db.bgrc" 2>/dev/null || echo ausente)"
 PA -d "$db" -q <<SQL

@@ -17,6 +17,9 @@
 # cliente-sucessao-plano vêm do run 42442800702 (#3725), em que a espera fixa delas virou espera por
 # condição (862 → 309 s). Com o peso velho, as partes delas fechavam em 13 min e as outras em 18.
 # Antes/depois: docs/historico/ci-provas-sql-espera-por-condicao.md
+# Exceção (2026-11-08, lote 2): radar-acesso-vendedor, radar-contato-integridade, radar-placar,
+# radar-socios-cpf, sayerlack-situacao-portal e tint-promocao-assincrona vêm do run 42487970899 (#3743),
+# o da conversão delas (674 → 287 s). Mesmo motivo da exceção acima.
 # Re-meça quando a pior parte destoar das outras ou entrar prova cara nova (o `comm` de
 # docs/historico/ci-fila-de-runners.md lista as provas sem custo): para cada job `provas-sql (i)` de
 # um run verde,
@@ -108,7 +111,7 @@ db/test-pre-anti-deriva-concorrencia.sh 84
 db/test-preco-ausente-nao-e-zero.sh 2
 db/test-projecao-13s-saldo-fresco.sh 26
 db/test-promocao-descricao-fornecedor.sh 119
-db/test-radar-acesso-vendedor.sh 84
+db/test-radar-acesso-vendedor.sh 27
 db/test-radar-agregado-cnae.sh 30
 db/test-radar-agregado.sh 32
 db/test-radar-amostra-vigente.sh 8
@@ -121,7 +124,7 @@ db/test-radar-cnae-secundario.sh 37
 db/test-radar-cnpj-alfanumerico.sh 8
 db/test-radar-contagem-lote.sh 15
 db/test-radar-contagem-regiao.sh 16
-db/test-radar-contato-integridade.sh 200
+db/test-radar-contato-integridade.sh 87
 db/test-radar-distribuicao-e.sh 6
 db/test-radar-funil.sh 140
 db/test-radar-irmaos-por-raiz.sh 13
@@ -132,7 +135,7 @@ db/test-radar-mapa-regiao-cidade.sh 26
 db/test-radar-meu-territorio.sh 7
 db/test-radar-penetracao-concorrentes.sh 27
 db/test-radar-pipeline-diario.sh 25
-db/test-radar-placar.sh 84
+db/test-radar-placar.sh 42
 db/test-radar-possiveis-vinculos.sh 16
 db/test-radar-recruzamento-diario.sh 10
 db/test-radar-recruzar-origem-omie.sh 4
@@ -141,7 +144,7 @@ db/test-radar-score.sh 22
 db/test-radar-situacao-cadastral.sh 15
 db/test-radar-situacao-contato-por-cnpj.sh 18
 db/test-radar-situacao-por-cron.sh 19
-db/test-radar-socios-cpf.sh 92
+db/test-radar-socios-cpf.sh 48
 db/test-radar-vinculos-em-lote.sh 21
 db/test-raio-x-inequivoco.sh 17
 db/test-raio-x-unidades.sh 5
@@ -161,7 +164,7 @@ db/test-sales-price-history-created-at-futuro.sh 1
 db/test-sales_orders_omie_hash_unique.sh 1
 db/test-sayerlack-importar-pedido-portal.sh 5
 db/test-sayerlack-ipi-po.sh 4
-db/test-sayerlack-situacao-portal.sh 120
+db/test-sayerlack-situacao-portal.sh 24
 db/test-sayerlack-encerrar-cancelado-portal.sh 60
 db/test-security-invoker-views.sh 1
 db/test-sku-items-fila-parada.sh 14
@@ -183,7 +186,7 @@ db/test-tint-gate-revalida.sh 5
 db/test-tint-get-price.sh 2
 db/test-tint-get-prices.sh 1
 db/test-tint-grants-escrita-staff.sh 8
-db/test-tint-promocao-assincrona.sh 94
+db/test-tint-promocao-assincrona.sh 59
 db/test-tint-promote-dedup-itens.sh 3
 db/test-tint-promote-e4.sh 3
 db/test-tint-promote-fantasma.sh 5

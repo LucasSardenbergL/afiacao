@@ -358,24 +358,20 @@ eq "C10 e a pendência não é limpa" "$(Pq -c "SELECT disparo_claim_por FROM pu
 eq "A5 claim fechado p/ anon+authenticated (REPLACE preserva o ACL)" "$(Pq -c "SELECT has_function_privilege('anon','public.reposicao_claim_disparo(bigint,text)','EXECUTE')::text || has_function_privilege('authenticated','public.reposicao_claim_disparo(bigint,text)','EXECUTE')::text")" "falsefalse"
 
 echo "── R: corrida, 2 conexões ──"
-# Conexão A segura a linha (transação aberta com sleep); B entra e TEM de ficar bloqueada por A
-# (observado em pg_blocking_pids), e o desfecho de B é o da linha que A commitou.
-corrida() { # $1 rótulo, $2 SQL de A (antes do sleep), $3 SQL de B → ecoa a saída de B
+# Conexão A segura a linha (transação aberta); B entra e TEM de ficar bloqueada por A, e o desfecho de B é o
+# da linha que A commitou. A segura até VER B esperando Lock (pgh_segura_sql, teto 3 s = o sleep fixo de
+# antes) e é ela quem diz se viu: quem solta na hora não deixa janela para o shell observar o bloqueio.
+corrida() { # $1 rótulo, $2 SQL de A (antes de segurar), $3 SQL de B → ecoa a saída de B
   local rot="$1" sa="$2" sb="$3" saida="$TMP/corrida-$1.out" bloq=nao
-  "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d prove -v ON_ERROR_STOP=1 -tA -q \
-    -c "SET application_name='corrida_a_$rot'" -c "BEGIN; $sa; SELECT pg_sleep(3); COMMIT;" >/dev/null 2>&1 &
+  PGAPPNAME="corrida_a_$rot" "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d prove -v ON_ERROR_STOP=1 -tA -q \
+    -c "BEGIN" -c "$sa" -c "$(pgh_segura_sql "corrida_b_$rot" 1 3)" -c "SELECT 'VIU=' || n FROM pg_temp.pgh_espera" -c "COMMIT" \
+    > "$TMP/corrida-a-$rot.out" 2>&1 &
   local pa=$!; BGPIDS="$BGPIDS $pa"
-  for _ in $(seq 1 50); do
-    [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='corrida_a_$rot' AND query LIKE '%pg_sleep%' AND state='active'")" = 1 ] && break
-    sleep 0.1
-  done
+  pgh_espera_segurar "corrida_a_$rot" "$pa" Pq
   PGAPPNAME="corrida_b_$rot" "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -d prove -v ON_ERROR_STOP=1 -tA -q -c "$sb" > "$saida" 2>&1 &
   local pb=$!; BGPIDS="$BGPIDS $pb"
-  for _ in $(seq 1 25); do
-    if [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity b WHERE b.application_name='corrida_b_$rot' AND cardinality(pg_blocking_pids(b.pid)) > 0")" = 1 ]; then bloq=sim; break; fi
-    sleep 0.1
-  done
   wait "$pa" || true; wait "$pb" || true
+  grep -qx 'VIU=1' "$TMP/corrida-a-$rot.out" && bloq=sim
   printf '%s|%s' "$bloq" "$(tr -d '\n' < "$saida")"
 }
 # Ordem 1: a gravação do 6 vence (A grava e segura) → o claim de B reavalia a linha commitada e recusa.

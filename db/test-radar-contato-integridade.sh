@@ -165,16 +165,9 @@ estado() { P -tA -q -c "SELECT prospeccao_status || '|' || COALESCE(descarte_mot
 ultimo() { P -tA -q -c "SELECT id FROM public.radar_contatos WHERE cnpj = '$1' AND criado_por = '$2' ORDER BY created_at DESC, id DESC LIMIT 1"; }
 dono()   { P -tA -q -c "SELECT COALESCE(prospeccao_contato_id::text, '∅') FROM public.radar_empresas WHERE cnpj = '$1'"; }
 contatos() { P -tA -q -c "SELECT count(*) FROM public.radar_contatos WHERE cnpj = '$1'"; }
-# esperar_bloqueio <n> <trecho da query> — até <n> sessões esperando LOCK com aquela chamada (máx. 4 s).
-esperar_bloqueio() {
-  local i n=0
-  for i in $(seq 1 40); do
-    n="$(P -tA -q -c "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%$2%' AND pid <> pg_backend_pid()")"
-    [ "$n" -ge "$1" ] && break
-    sleep 0.1; : "$i"
-  done
-  printf '%s' "$n"
-}
+# viu <saída da sessão que segura> — quantas sessões ela VIU esperando Lock na hora de soltar (pgh_segura_sql;
+# a linha VIU=n). Sem a linha (a sessão falhou), devolve o que houver — o chk fica vermelho com o texto.
+viu() { local v; if v="$(grep -x 'VIU=[0-9]*' "$1")"; then printf '%s' "${v#VIU=}"; else tr '\n' ' ' < "$1"; fi; }
 em_fundo() {  # <arquivo de saída> <uid ou '' = postgres> <-c sql…> — uma sessão em background
   local out="$1" uid="$2"; shift 2
   if [ -n "$uid" ]; then
@@ -258,52 +251,64 @@ SQL
 
   echo "── C. corridas (bloqueio observado) ──"
   reg "$FARM" "$L3" em_conversa >/dev/null; local c3; c3="$(ultimo "$L3" "$FARM")"
-  em_fundo "$TMPD/c-reg.out" "$FARM2" -c "BEGIN" -c "SELECT public.registrar_contato_radar('$L3','contatado_sem_resposta',NULL)->>'deduped'" -c "SELECT pg_sleep(1.5)" -c "COMMIT"
+  # Quem segura (B) solta ao VER o desfazer esperando Lock (teto 1,5 s = o sleep fixo de antes) e diz quantos
+  # viu: soltando na hora, não sobra janela para o shell observar o bloqueio (pgh_segura_sql).
+  PGAPPNAME=c1_trava em_fundo "$TMPD/c-reg.out" "$FARM2" -c "BEGIN" -c "SELECT public.registrar_contato_radar('$L3','contatado_sem_resposta',NULL)->>'deduped'" \
+    -c "$(pgh_segura_sql c1_espera 1 1.5)" -c "SELECT 'VIU=' || n FROM pg_temp.pgh_espera" -c "COMMIT"
   local pid_reg=$!
-  sleep 0.4
-  em_fundo "$TMPD/c-desf.out" "$FARM" -c "SELECT d->>'deleted' || '|' || (d->>'status_restaurado') FROM public.desfazer_contato_radar('$c3') d"
+  pgh_espera_segurar c1_trava "$pid_reg" P -tA -q
+  PGAPPNAME=c1_espera em_fundo "$TMPD/c-desf.out" "$FARM" -c "SELECT d->>'deleted' || '|' || (d->>'status_restaurado') FROM public.desfazer_contato_radar('$c3') d"
   local pid_desf=$!
-  chk C1 "o desfazer de A espera a trava de B"     "$(esperar_bloqueio 1 desfazer_contato_radar)" "1"
   wait "$pid_reg" || true; wait "$pid_desf" || true
+  chk C1 "o desfazer de A espera a trava de B"     "$(viu "$TMPD/c-reg.out")" "1"
   chk C2 "A desfaz depois de B: status de B fica"  "$(tr -d '\n ' < "$TMPD/c-desf.out")|$(estado "$L3")" "true|false|contatado_sem_resposta|∅"
   chk C3 "…e o contato de B herda o retrato de A"  "$(P -tA -q -c "SELECT status_anterior || '|' || COALESCE(contato_anterior_id::text, '∅') FROM public.radar_contatos WHERE cnpj = '$L3' AND criado_por = '$FARM2'")" "a_contatar|∅"
 
   local c6; c6="$(ultimo "$L6" "$FARM")"
-  em_fundo "$TMPD/c-trava.out" "" -c "BEGIN" -c "SELECT 1 FROM public.radar_empresas WHERE cnpj = '$L6' FOR UPDATE" -c "SELECT pg_sleep(1.5)" -c "COMMIT"
+  PGAPPNAME=c4_trava em_fundo "$TMPD/c-trava.out" "" -c "BEGIN" -c "SELECT 1 FROM public.radar_empresas WHERE cnpj = '$L6' FOR UPDATE" \
+    -c "$(pgh_segura_sql c4_espera 2 1.5)" -c "SELECT 'VIU=' || n FROM pg_temp.pgh_espera" -c "COMMIT"
   local pid_trava=$!
-  sleep 0.3
-  em_fundo "$TMPD/c-d1.out" "$FARM" -c "SELECT public.desfazer_contato_radar('$c6')->>'deleted'"
+  pgh_espera_segurar c4_trava "$pid_trava" P -tA -q
+  PGAPPNAME=c4_espera1 em_fundo "$TMPD/c-d1.out" "$FARM" -c "SELECT public.desfazer_contato_radar('$c6')->>'deleted'"
   local pid_d1=$!
-  em_fundo "$TMPD/c-d2.out" "$FARM" -c "SELECT public.desfazer_contato_radar('$c6')->>'deleted'"
+  PGAPPNAME=c4_espera2 em_fundo "$TMPD/c-d2.out" "$FARM" -c "SELECT public.desfazer_contato_radar('$c6')->>'deleted'"
   local pid_d2=$!
-  chk C4 "os dois desfazer esperam a trava"        "$(esperar_bloqueio 2 desfazer_contato_radar)" "2"
   wait "$pid_trava" || true; wait "$pid_d1" || true; wait "$pid_d2" || true
+  chk C4 "os dois desfazer esperam a trava"        "$(viu "$TMPD/c-trava.out")" "2"
   chk C5 "só UM dos dois apaga"                     "$(cat "$TMPD/c-d1.out" "$TMPD/c-d2.out" | tr -d ' ' | sort | tr '\n' ',')" "false,true,"
   chk C6 "…e o status volta uma vez só"             "$(estado "$L6")|$(contatos "$L6")" "a_contatar|∅|0"
 
   echo "── D. janelas medidas DEPOIS da espera pela trava ──"
-  # Contato com 4m59s; a linha fica presa 2,5 s; o desfazer só lê o relógio depois → já passou de 5 min.
+  # Contato com 4m59s; a linha fica presa até o desfazer estar ESPERANDO e o contato já ter passado de 5 min
+  # (+0,2 s) — teto de 2,5 s, o sleep fixo de antes; o desfazer só lê o relógio depois → já passou de 5 min.
+  # Equivale ao sleep fixo: o que a prova pede é "o desfazer começou DENTRO da janela e só mediu DEPOIS de
+  # soltar"; quem solta é a trava, e ela só solta com a janela vencida no relógio do banco.
   P -v ON_ERROR_STOP=1 -q -c "INSERT INTO public.radar_contatos (cnpj, acao, criado_por, status_anterior, created_at) VALUES ('$L9','em_conversa','$FARM','a_contatar', clock_timestamp() - interval '299 seconds')" \
     -c "UPDATE public.radar_empresas SET prospeccao_status = 'em_conversa', prospeccao_contato_id = (SELECT id FROM public.radar_contatos WHERE cnpj = '$L9') WHERE cnpj = '$L9'"
   local j9; j9="$(ultimo "$L9" "$FARM")"
-  em_fundo "$TMPD/d-trava9.out" "" -c "BEGIN" -c "SELECT 1 FROM public.radar_empresas WHERE cnpj = '$L9' FOR UPDATE" -c "SELECT pg_sleep(2.5)" -c "COMMIT"
+  PGAPPNAME=d1_trava em_fundo "$TMPD/d-trava9.out" "" -c "BEGIN" -c "SELECT 1 FROM public.radar_empresas WHERE cnpj = '$L9' FOR UPDATE" \
+    -c "$(pgh_segura_sql d1_espera 1 2.5 "clock_timestamp() > (SELECT created_at FROM public.radar_contatos WHERE id = '$j9') + interval '300.2 seconds'")" \
+    -c "SELECT 'VIU=' || n FROM pg_temp.pgh_espera" -c "COMMIT"
   local pt9=$!
-  sleep 0.3
-  em_fundo "$TMPD/d-desf9.out" "$FARM" -c "SELECT d->>'deleted' || '|' || (d->>'status_restaurado') FROM public.desfazer_contato_radar('$j9') d"
+  pgh_espera_segurar d1_trava "$pt9" P -tA -q
+  PGAPPNAME=d1_espera em_fundo "$TMPD/d-desf9.out" "$FARM" -c "SELECT d->>'deleted' || '|' || (d->>'status_restaurado') FROM public.desfazer_contato_radar('$j9') d"
   local pd9=$!
-  chk D1 "o desfazer espera a trava"               "$(esperar_bloqueio 1 desfazer_contato_radar)" "1"
   wait "$pt9" || true; wait "$pd9" || true
+  chk D1 "o desfazer espera a trava"               "$(viu "$TMPD/d-trava9.out")" "1"
   chk D2 "a janela de 5 min venceu na espera: não desfaz" "$(tr -d '\n ' < "$TMPD/d-desf9.out")|$(estado "$L9")" "false|false|em_conversa|∅"
-  # Dono com 1m59s; mesma espera; o dedupe mede a janela depois dela → registro novo.
+  # Dono com 1m59s; mesma espera (solta com 2 min + 0,2 s vencidos); o dedupe mede a janela depois dela → registro novo.
   P -v ON_ERROR_STOP=1 -q -c "INSERT INTO public.radar_contatos (cnpj, acao, criado_por, status_anterior, created_at) VALUES ('$L10','em_conversa','$FARM','a_contatar', clock_timestamp() - interval '119 seconds')" \
     -c "UPDATE public.radar_empresas SET prospeccao_status = 'em_conversa', prospeccao_contato_id = (SELECT id FROM public.radar_contatos WHERE cnpj = '$L10') WHERE cnpj = '$L10'"
-  em_fundo "$TMPD/d-trava10.out" "" -c "BEGIN" -c "SELECT 1 FROM public.radar_empresas WHERE cnpj = '$L10' FOR UPDATE" -c "SELECT pg_sleep(2.5)" -c "COMMIT"
+  local j10; j10="$(ultimo "$L10" "$FARM")"
+  PGAPPNAME=d3_trava em_fundo "$TMPD/d-trava10.out" "" -c "BEGIN" -c "SELECT 1 FROM public.radar_empresas WHERE cnpj = '$L10' FOR UPDATE" \
+    -c "$(pgh_segura_sql d3_espera 1 2.5 "clock_timestamp() > (SELECT created_at FROM public.radar_contatos WHERE id = '$j10') + interval '120.2 seconds'")" \
+    -c "SELECT 'VIU=' || n FROM pg_temp.pgh_espera" -c "COMMIT"
   local pt10=$!
-  sleep 0.3
-  em_fundo "$TMPD/d-reg10.out" "$FARM" -c "SELECT public.registrar_contato_radar('$L10','em_conversa',NULL)->>'deduped'"
+  pgh_espera_segurar d3_trava "$pt10" P -tA -q
+  PGAPPNAME=d3_espera em_fundo "$TMPD/d-reg10.out" "$FARM" -c "SELECT public.registrar_contato_radar('$L10','em_conversa',NULL)->>'deduped'"
   local pr10=$!
-  chk D3 "o registrar espera a trava"              "$(esperar_bloqueio 1 registrar_contato_radar)" "1"
   wait "$pt10" || true; wait "$pr10" || true
+  chk D3 "o registrar espera a trava"              "$(viu "$TMPD/d-trava10.out")" "1"
   chk D4 "a janela de 2 min venceu na espera: registro novo" "$(tr -d '\n ' < "$TMPD/d-reg10.out")|$(contatos "$L10")" "false|2"
 
   echo "── G. catálogo ──"
