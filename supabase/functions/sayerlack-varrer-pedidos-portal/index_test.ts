@@ -240,6 +240,9 @@ for (const [rotulo, vincular, acao, motivo] of [
       igual([args?.p_pedido_id, args?.p_ator, args?.p_origem], [771, null, "varredura"], "RPC com o pedido, sem ator, origem varredura");
       const imp = falso.de(IMPORTADORA).map((c) => (c.corpo as { somente_situacao?: boolean }).somente_situacao);
       igual(imp, [true], "a importadora só relê a situação — nunca re-dispara");
+      const resolvidos = falso.de("rest:sayerlack_varredura_falha", "PATCH")
+        .filter((c) => (c.corpo as { resolvido_em?: unknown }).resolvido_em != null && c.params.get("protocolo") == null).length;
+      igual(resolvidos, acao === "po_manual_vinculado" ? 1 : 0, "pendência resolvida só quando vinculou");
     }));
 }
 
