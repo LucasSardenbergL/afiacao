@@ -310,8 +310,8 @@ BEGIN
     RETURN;
   END IF;
   LOOP
-    v_r := public.radar_carga_publicar_passo(v_k);
-    COMMIT;
+    -- COMMIT na mesma linha: o db:aplicar recusa a linha `COMMIT;` solta (lê como envelope do arquivo).
+    v_r := public.radar_carga_publicar_passo(v_k); COMMIT;
     EXIT WHEN v_r->>'estado' IS DISTINCT FROM 'avancou';
     -- Lote adaptativo: mira ~1 s por transação (o lock de linha e o xid seguram só isso). Medido em PG17 com
     -- a DDL de prod: lote de 5.000 chegou a 4,1 s (flush do pending list dos GIN), por isso o teto é 3.000.
@@ -1479,7 +1479,7 @@ DECLARE
     ARRAY['public.radar_carga_iniciar(text)', '9df1991252c249b3b09b8d866f09f706'],
     ARRAY['public.radar_lote_publicando()', '9c541c8c517d1b9d2b8c8aa89a6e3d78'],
     ARRAY['public.radar_carga_publicar_passo(integer)', '3ac182511586437c423f40514b4fa2f7'],
-    ARRAY['public.radar_carga_publicar(interval)', '8d1a10e5a1c86bf270cbef99b69ab5ff'],
+    ARRAY['public.radar_carga_publicar(interval)', 'd79f5fa74443ba2b966ec18c70b83d49'],
     ARRAY['public.radar_carga_publicar_pendente()', 'b78114585c3fbc89745a7aa690b8bc97'],
     ARRAY['public.radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamp with time zone,text,numeric,boolean,boolean,date,date,text,integer,integer,text,text,boolean,boolean)', '829e547135cecdd67d7af0c9c777a99f'],
     ARRAY['public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone,text[],boolean,text,boolean)', 'f79e5a814b622248b8d2845ef27edb65'],
