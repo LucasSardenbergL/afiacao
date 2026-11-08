@@ -416,3 +416,23 @@ Adendo: `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Importar **v
 - **Provas**: harness `db/test-sayerlack-importar-pedido-portal.sh` 117/117 em `C` e `pt_BR.UTF-8` (9 asserts B13 +
   falsificação F19: de-para de volta em (C) ⇒ a postcondição aborta e "30 DIAS" vai para A30); Deno 55 (6 sabotagens vermelhas com
   controle verde antes e depois); `test:edges` 2429.
+
+
+## Alíquota de IPI dos 5 NCMs pendentes, provada no Omie (2026-11-08)
+
+A onda 1 só achou NF no banco para 3 dos 8 NCMs. Os outros 5 ficaram com o founder. A pedido dele ("você não consegue
+acessar essas NFes pelo Omie e descobrir o IPI?"), a prova veio do Omie OBEN, só leitura:
+`produtos/recebimentonfe/ConsultarRecebimento` (itens com cNCM, CST, nAliqIPI, nBCIPI, nValIPI; Σ nValIPI =
+vTotalIPI em cada NF). `contador/xml/ListarDocumentos` não serve: lista só documentos de emissão própria.
+Migration `20261109130000`:
+
+| NCM | Alíquota | Prova |
+|---|---|---|
+| 39095012 | 3,25% | CST 50, 2,31 ÷ 71,02 (NF 000937352, 21/05/2026, YC.1400FP) e mais 2 NFs |
+| 32099020 | 0% | CST 51 (NFs 000938767 e 000935816, YO20.1464.00BB) |
+| 32091010 | 0% | CST 51 (NF 000923676; 257/259VQT na 000909541) |
+| 32159000 | 0% | CST 51 (NF 000915792, TY.1480.00BB) |
+| 27101230 | 0% | CST 51 (NF 000909354 de 26/09/2025, DS.451LT, a última entrada do SKU) |
+
+As mesmas NFs têm itens a 6,5% e 3,25% (CST 50), então a alíquota zero não é artefato de importação. Achado lateral: nas
+764 NF-e de entrada do Omie OBEN não há compra de DS.451, TY.1480 nem YTS.1284 257/259 nos últimos 180 dias.

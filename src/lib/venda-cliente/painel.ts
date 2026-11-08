@@ -33,6 +33,41 @@ export interface LinhaPainel extends ContagemDesfecho {
   base_sombra: ContagemDesfecho;
   taxa_base_sombra: number | null;
   base_confiavel: boolean;
+  /**
+   * Sucessor declarado (20261108010000): a parte HERDADA da linha — as mesmas réguas, só das sugestões com origem
+   * de sucessão. `null` = servidor anterior à migration (não sei, ≠ nenhuma herdada).
+   */
+  herdadas: HerdadasLinha | null;
+  /** Conversão SEM as herdadas (o histórico delas inclui compras da antiga). `null` = sem base ou servidor anterior. */
+  taxa_ativa_propria: number | null;
+  /**
+   * A linha de base com a MESMA régua (sem herdadas): o gerador grava a origem nas três fases, então a base de sempre
+   * também mistura. A conversão própria se compara com estas. `null` = servidor anterior.
+   */
+  base_historico_propria: ContagemDesfecho | null;
+  taxa_base_historico_propria: number | null;
+  base_sombra_propria: ContagemDesfecho | null;
+  taxa_base_sombra_propria: number | null;
+}
+
+export interface HerdadasLinha extends ContagemDesfecho {
+  /** compradores distintos com ao menos uma sugestão herdada */
+  na_lista: number;
+  /** sugestões herdadas na semana (todos os tipos) */
+  sugestoes: number;
+  receita_realizada: number | null;
+  receita_incompleta: boolean;
+}
+
+/** Os desfechos da linha SEM as herdadas (para o estado da conversão própria). Sem a fatia, não há o que tirar. */
+export function contagemPropria(l: LinhaPainel): ContagemDesfecho | null {
+  if (!l.herdadas) return null;
+  return {
+    virou: l.virou - l.herdadas.virou,
+    nao_virou: l.nao_virou - l.herdadas.nao_virou,
+    nao_medivel: l.nao_medivel - l.herdadas.nao_medivel,
+    pendentes: l.pendentes - l.herdadas.pendentes,
+  };
 }
 
 interface OndaBase {
