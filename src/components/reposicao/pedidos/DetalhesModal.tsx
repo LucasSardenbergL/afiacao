@@ -9,6 +9,8 @@ import { formatBRL, formatTime } from './shared';
 import { StatusBadge, SplitInfo } from './badges';
 import { useDetalhesModal } from './useDetalhesModal';
 import { PortalStatusPanel } from './PortalStatusPanel';
+import { EncerrarCanceladoPortal } from './EncerrarCanceladoPortal';
+import { podeOferecerEncerrar } from './encerrar-cancelado-portal';
 import { HistoricoAcoesPanel } from './HistoricoAcoesPanel';
 import { CondicaoPagamentoPanel } from './CondicaoPagamentoPanel';
 import { ItensTable } from './ItensTable';
@@ -195,6 +197,8 @@ export function DetalhesModal({
           <PortalStatusPanel pedido={pedido} />
           <HistoricoAcoesPanel pedido={pedido} />
         </div>
+        {/* Só monta (e só lê useAuth) no caso da 5.3 — o resto do detalhe não depende do AuthProvider. */}
+        {podeOferecerEncerrar(pedido) && <EncerrarCanceladoPortal pedido={pedido} />}
 
 
         {podeEditar && (
