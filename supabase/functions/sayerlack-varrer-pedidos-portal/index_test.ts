@@ -241,7 +241,7 @@ for (const [rotulo, vincular, acao, motivo] of [
       const imp = falso.de(IMPORTADORA).map((c) => (c.corpo as { somente_situacao?: boolean }).somente_situacao);
       igual(imp, [true], "a importadora só relê a situação — nunca re-dispara");
       const resolvidos = falso.de("rest:sayerlack_varredura_falha", "PATCH")
-        .filter((c) => (c.corpo as { resolvido_em?: unknown }).resolvido_em != null && c.params.get("protocolo") == null).length;
+        .filter((c) => (c.corpo as { resolvido_em?: unknown }).resolvido_em != null && (c.params.get("protocolo") ?? "").startsWith("in.")).length;
       igual(resolvidos, acao === "po_manual_vinculado" ? 1 : 0, "pendência resolvida só quando vinculou");
     }));
 }
