@@ -102,8 +102,14 @@ BEGIN
   -- resposta perdida; se uma leitura posterior trocar o 6 antes de a conciliação gravar o PO, o aviso já existe.
   IF NEW.empresa = 'OBEN' AND NEW.portal_situacao_codigo = '6' AND (v_po IS NOT NULL OR NEW.disparo_claim_em IS NOT NULL)
      AND btrim(COALESCE(NEW.portal_protocolo, '')) <> '' AND COALESCE(NEW.status, '') NOT LIKE 'cancelad%' THEN
+    -- A MESMA ocorrência (pedido + PO + motivo) que um master já resolveu não reabre (Codex 5.4 rodada 2, P1: senão a
+    -- resolução "reaberto/ajustado" seria impossível — qualquer UPDATE do pedido traria o incidente de volta).
     INSERT INTO public.sayerlack_incidente_cancelado_com_po (pedido_id, protocolo, po_omie, motivo)
-    VALUES (NEW.id, btrim(NEW.portal_protocolo), v_po, CASE WHEN v_po IS NOT NULL THEN 'po_no_app' ELSE 'disparo_pendente' END)
+    SELECT NEW.id, btrim(NEW.portal_protocolo), v_po, m.motivo
+      FROM (SELECT CASE WHEN v_po IS NOT NULL THEN 'po_no_app' ELSE 'disparo_pendente' END AS motivo) m
+     WHERE NOT EXISTS (SELECT 1 FROM public.sayerlack_incidente_cancelado_com_po r
+                        WHERE r.pedido_id = NEW.id AND r.resolucao = 'humano' AND r.motivo = m.motivo
+                          AND r.po_omie IS NOT DISTINCT FROM v_po)
     ON CONFLICT (pedido_id) WHERE resolvido_em IS NULL DO NOTHING;
   END IF;
   -- Fecha SÓ pela porta auditada do cancelamento pós-disparo (a GUC dela carrega o id deste pedido).
@@ -159,8 +165,11 @@ BEGIN
     INSERT INTO public.sayerlack_incidente_cancelado_com_po (pedido_id, protocolo, po_omie, motivo)
     SELECT e.pedido_id, e.protocolo, NEW.omie_codigo_pedido::text, 'po_no_espelho_apos_encerrar'
       FROM public.sayerlack_encerramento_cancelado_portal e
-     WHERE btrim(COALESCE(NEW.omie_codigo_integracao, '')) = 'AFI-' || e.pedido_id
-        OR e.protocolo IN (SELECT btrim(c.n) FROM unnest(string_to_array(NEW.numero_contrato_fornecedor, '/')) AS c(n))
+     WHERE (btrim(COALESCE(NEW.omie_codigo_integracao, '')) = 'AFI-' || e.pedido_id
+            OR e.protocolo IN (SELECT btrim(c.n) FROM unnest(string_to_array(NEW.numero_contrato_fornecedor, '/')) AS c(n)))
+       AND NOT EXISTS (SELECT 1 FROM public.sayerlack_incidente_cancelado_com_po r
+                        WHERE r.pedido_id = e.pedido_id AND r.resolucao = 'humano'
+                          AND r.motivo = 'po_no_espelho_apos_encerrar' AND r.po_omie = NEW.omie_codigo_pedido::text)
     ON CONFLICT (pedido_id) WHERE resolvido_em IS NULL DO NOTHING;
   EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'sayerlack__incidente_pelo_espelho: incidente não gravado para o PO % (%: %)',
@@ -264,7 +273,7 @@ BEGIN
         ('_data_health_compute()',
          (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public._data_health_compute()')),
          ARRAY['0590d3aa400d44f5d6e3924e5e3eab78',   -- PROD 2026-11-08 = 20261107220000
-               '4e36f65e8b882a0437ef65a30be4dbd9']),                  -- este arquivo (re-apply = no-op)
+               '3fe9b3ab92e202ae09ec21b19ddad54a']),                  -- este arquivo (re-apply = no-op)
         ('data_health_watchdog()',
          (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.data_health_watchdog()')),
          ARRAY['01bdb4df838d9d51d3aa1f69a728b6a7',   -- PROD 2026-11-08 = 20261107220000
@@ -1931,6 +1940,10 @@ AS $function$
                AND EXISTS (
                SELECT 1 FROM public.purchase_orders_tracking t
                 WHERE t.empresa::text = 'OBEN' AND t.status::text IS DISTINCT FROM 'CANCELADO'
+                  -- o PO que um master já resolveu (reaberto/ajustado) não volta pela rede calculada
+                  AND NOT EXISTS (SELECT 1 FROM public.sayerlack_incidente_cancelado_com_po r
+                                   WHERE r.pedido_id = e.pedido_id AND r.resolucao = 'humano'
+                                     AND r.motivo = 'po_no_espelho_apos_encerrar' AND r.po_omie = t.omie_codigo_pedido::text)
                   AND (btrim(COALESCE(t.omie_codigo_integracao, '')) = 'AFI-' || e.pedido_id
                        OR EXISTS (SELECT 1 FROM unnest(string_to_array(t.numero_contrato_fornecedor, '/')) AS c(n)
                                    WHERE btrim(c.n) = e.protocolo)))
@@ -2327,8 +2340,8 @@ BEGIN
 
   -- (5) identidade: os 3 corpos vivos sao os deste arquivo, com o search_path medido em prod.
   SELECT md5(p.prosrc) INTO v_md5 FROM pg_proc p WHERE p.oid = to_regprocedure('public._data_health_compute()');
-  IF v_md5 IS DISTINCT FROM '4e36f65e8b882a0437ef65a30be4dbd9' THEN
-    RAISE EXCEPTION 'POSTCONDICAO FALHOU md5: public._data_health_compute() com md5 % (esperado 4e36f65e8b882a0437ef65a30be4dbd9).', COALESCE(v_md5, '<ausente>');
+  IF v_md5 IS DISTINCT FROM '3fe9b3ab92e202ae09ec21b19ddad54a' THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU md5: public._data_health_compute() com md5 % (esperado 3fe9b3ab92e202ae09ec21b19ddad54a).', COALESCE(v_md5, '<ausente>');
   END IF;
   SELECT md5(p.prosrc) INTO v_md5 FROM pg_proc p WHERE p.oid = to_regprocedure('public.data_health_watchdog()');
   IF v_md5 IS DISTINCT FROM '76597ff0ec6efd712229d7ac75974708' THEN

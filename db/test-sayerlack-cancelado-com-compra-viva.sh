@@ -28,7 +28,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sem_incidente_no_trigger:B2,B4 leitura_posterior_fecha:B3 fecha_sem_porta:B6 so_resolve_off:B8
               cobertura_ignora_faturado:C4 cobertura_ignora_protocolo:C5 sem_espelho_pos_encerrar:B11b
               mais_recente_errado:B4b stale_sem_regua:C3 sem_claim_no_trigger:B10 espelho_sem_trigger:B9b
-              espelho_fail_closed:B11 fora_do_v_sources:A41,A43 fora_do_heartbeat:A42
+              espelho_fail_closed:B11 reabre_resolvido:B9d fora_do_v_sources:A41,A43 fora_do_heartbeat:A42
               pre_sem_identidade:A25 pos_sem_dente:A26 sem_revoke:A27 pos_v_sources_sem_dente:A30
               pos_heartbeat_sem_dente:A31 pos_acl_sem_dente:A32"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
@@ -301,6 +301,9 @@ ALTER TABLE public.purchase_orders_tracking DISABLE TRIGGER trg_incidente_pelo_e
   espelho_fail_closed) sab_fora "  EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'sayerlack__incidente_pelo_espelho" "  EXCEPTION WHEN division_by_zero THEN
     RAISE WARNING 'sayerlack__incidente_pelo_espelho" "erro do trigger derruba o sync" ;;
+  reabre_resolvido) sab_fora "       AND NOT EXISTS (SELECT 1 FROM public.sayerlack_incidente_cancelado_com_po r
+                        WHERE r.pedido_id = e.pedido_id AND r.resolucao = 'humano'
+                          AND r.motivo = 'po_no_espelho_apos_encerrar' AND r.po_omie = NEW.omie_codigo_pedido::text)" "" "o sync reabre o que o master resolveu" ;;
   mais_recente_errado) sab_compute "ORDER BY b.desde DESC, b.pedido_id DESC))[1] AS mais_recente" "ORDER BY b.desde ASC, b.pedido_id ASC))[1] AS mais_recente" "message cita o incidente MAIS ANTIGO" ;;
   stale_sem_regua) sab_compute "count(*) FILTER (WHERE c.observado_ate IS NULL OR c.observado_ate < ex.exigido_desde) AS n_sem_leitura" \
                                "count(*) FILTER (WHERE c.observado_ate IS NULL) AS n_sem_leitura" "leitura velha conta como em dia" ;;
@@ -402,6 +405,12 @@ P -q -c "UPDATE public.purchase_orders_tracking SET status = 'CANCELADO' WHERE o
 eq "B9b o espelho mudar depois NÃO apaga o incidente (só a porta resolve)" "$(abertos)|$(cc status)" "103|broken"
 P -q -c "BEGIN; SET LOCAL test.uid = '00000000-0000-0000-0000-0000000000aa'; SELECT public.sayerlack_resolver_incidente_cancelado_com_po((SELECT id FROM public.sayerlack_incidente_cancelado_com_po WHERE pedido_id = 103 AND resolvido_em IS NULL), 'PO cancelado no Omie em 09/11'); COMMIT;" >/dev/null
 eq "B9c resolvido por master ⇒ ok" "$(abertos)|$(cc status)" "-|ok"
+# Codex 5.4 rodada 2 P1: resolver com o PO AINDA VIVO (reaberto/ajustado) e o sync regravar o mesmo PO não reabre.
+P -q -c "INSERT INTO public.purchase_orders_tracking (empresa, status, omie_codigo_pedido, omie_codigo_integracao) VALUES ('OBEN', 'CRIADO', 4, 'AFI-103');"
+P -q -c "BEGIN; SET LOCAL test.uid = '00000000-0000-0000-0000-0000000000aa'; SELECT public.sayerlack_resolver_incidente_cancelado_com_po((SELECT id FROM public.sayerlack_incidente_cancelado_com_po WHERE pedido_id = 103 AND resolvido_em IS NULL), 'pedido reaberto, PO 4 vale'); COMMIT;" >/dev/null
+P -q -c "UPDATE public.purchase_orders_tracking SET status = 'CRIADO', numero_contrato_fornecedor = NULL WHERE omie_codigo_pedido = 4;"
+eq "B9d resolvido por master com o PO vivo: upsert idêntico do sync não reabre e a rede calculada respeita" "$(abertos)|$(cc status)" "-|ok"
+P -q -c "DELETE FROM public.purchase_orders_tracking WHERE omie_codigo_pedido = 4;"
 # Codex 5.4 P1: 6 sobre PENDÊNCIA DE DISPARO (PO pode existir com a resposta perdida) abre já
 ped 104 2141104 aprovado_aguardando_disparo '' 2026-11-05
 P -q -c "UPDATE public.pedido_compra_sugerido SET disparo_claim_em = now() WHERE id = 104;"

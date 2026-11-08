@@ -225,7 +225,7 @@ db/test-projecao-13s-saldo-fresco.sh       46  falsificar=16
 # upsert do omie-financeiro com conta nova sem extrato nascendo NULL (docs/historico/saldo-cc-fresco-e-ncg-leitura-pontual.md).
 db/test-data-health-saldo-bancario-conta-a-conta.sh  29  falsificar=10
 db/test-data-health-sayerlack-varredura.sh            33  falsificar=16
-db/test-sayerlack-cancelado-com-compra-viva.sh 47  falsificar=20
+db/test-sayerlack-cancelado-com-compra-viva.sh 48  falsificar=21
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
