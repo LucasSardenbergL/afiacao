@@ -204,3 +204,4 @@ db/test-whatsapp-proposta.sh 19
 db/test-radar-leads-vendedor.sh 200
 db/test-radar-meu-territorio.sh 25
 db/test-sayerlack-situacao-portal.sh 150
+db/test-radar-funil.sh 140

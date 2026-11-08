@@ -229,3 +229,54 @@ o merge como edição `pending`. O build seguinte (entry `index-DfaoeAPM`) foi v
 como `dev`, por isso a prova foi pelo conteúdo e não pelo `monitor-deploy.sh --pr`. Lição: **Publish logo
 depois do merge pode publicar a main de antes**; confira o `ar=` do monitor (ou o conteúdo) antes de dar por
 feito.
+
+# Entrega 3, painel de gestão — a parte herdada no `venda_painel` (2026-11-07)
+
+Migration `20261108010000_venda_painel_heranca.sql`. Prova: `db/test-venda-painel-heranca.sh`. Validação:
+`db/validar-venda-painel-heranca.sql`.
+
+## O que mudou
+- `public.venda_painel` recriado do corpo vivo (md5 `78d9e58f…`, o da 20261020235000). Cada linha farmer × semana
+  ganhou seis chaves e nenhuma das antigas mudou:
+  - `herdadas`: compradores distintos, sugestões, desfechos de recompra, receita casada e receita incompleta. São
+    as mesmas réguas da linha, só que restritas a `sucessao_origem IS NOT NULL`. A constraint
+    `venda_sugestao_sucessao_origem_ck` (validada em prod) só aceita NULL ou array não vazio, então o `IS NOT NULL`
+    separa exatamente a herdada.
+  - `taxa_ativa_propria`: a conversão sem as herdadas, calculada por diferença e NULL com denominador 0. O
+    histórico de uma herdada inclui compras da antiga.
+  - `base_historico_propria`/`taxa_base_historico_propria` e `base_sombra_propria`/`taxa_base_sombra_propria`: a
+    linha de base com a mesma régua. O gerador grava a origem nas três fases, então a base de sempre também mistura:
+    a conversão própria se compara com a base própria.
+- Tela (`TabelaAdocao`): o aviso aparece quando o farmer tem herdadas. Sob cada número, quantos clientes são
+  herdados, a receita herdada, a conversão "própria" e a base "própria" (do ano anterior e da sombra). Servidor
+  sem a migration (sem nenhuma das seis chaves) mantém a tela de antes. Parte das chaves, ou forma errada, lança
+  erro.
+
+## Por que agora, sem sinal
+O roadmap deixava este passo esperando o 1º plano publicado em prod, pela regra "fase N+1 exige sinal". No dia,
+prod tinha 0 sucessões, 0 revisões de plano e 0 sugestões herdadas. O founder decidiu fazer assim mesmo. O
+painel nasce mostrando zero herdadas: a fatia só aparece quando houver sugestão herdada.
+
+## Prova
+16 asserts, verde em `LC_ALL=C` e em `pt_BR.UTF-8`, e 10 de 10 sabotagens vermelhas nos dois locales, cada uma no
+seu assert. O M5 prova que uma PÓS que falha desfaz o CREATE (`psql -1`, como o SQL Editor). O M0 prende que o corpo anterior do repo é o de prod. O H0 prende a invariância: tirando as duas
+chaves, o JSON é o do corpo anterior com os mesmos dados. O M4 roda o validar contra a migration real (4 ✅).
+Lição do arnês: a PÓS confere o md5 do corpo, então a sabotagem tem de recalcular o md5 esperado. Sem isso, as 6
+sabotagens de corpo morriam no catálogo e nunca chegavam aos asserts. Apareceu no 1º `--falsificar`, com 6
+"vermelha, mas NÃO no assert esperado".
+
+## Lição (Codex, P2)
+**A linha de base tem a mesma mistura que a taxa.** A 1ª versão tirava as herdadas só da conversão ativa, e a
+tela mandava comparar essa conversão "própria" com a linha de base. Só que o gerador grava a origem também nas
+fases `historico` e `sombra`. Exemplo do Codex: base com 1 sucesso e 1 fracasso próprios e 9 sucessos herdados
+dá 91%; contra uma conversão própria de 50%, a tela sugeriria queda onde não houve. Separar uma fatia vale para
+o numerador **e** para cada régua com que ele é comparado. O Codex também apontou duas lacunas na prova: a linha
+ativa só herdada (denominador próprio 0, testado antes só com linha ausente) e o rollback da PÓS. Viraram H4b,
+com sabotagem do `NULLIF`, e M5. Na 2ª rodada (também "aprovar com P2", sem P1) sobrou o mesmo erro um nível acima: a tela só
+mostrava as bases próprias quando havia herdada **ativa**. Com herança só no histórico ou na sombra, a comparação
+voltava a ser 50% × 91%. Agora a fatia aparece com herdada em qualquer régua (a base própria difere da total), e o
+cenário dele virou teste de tela. Esse último ajuste de tela não passou por uma 3ª rodada do Codex.
+
+## Deploy
+🟣 founder: a migration no SQL Editor, depois conferir `db/validar-venda-painel-heranca.sql` via `psql-ro` (4 ✅).
+Depois, 🖱️ Publish, só quando o Lovable já tiver o merge como edição `completed`.

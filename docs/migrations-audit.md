@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **806** custom migrations totais
-- **2692** objetos esperados (criados por estas migrations)
+- **807** custom migrations totais
+- **2693** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1053
+  - `function`: 1054
   - `rls_policy`: 519
   - `index`: 381
   - `table`: 249
@@ -6636,6 +6636,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `private._venda_sugestoes_json` | — |
 | `function` | `public.venda_heranca_comprador` | — |
 | `function` | `public.cliente_sucessao_plano_itens` | — |
+
+### `20261108010000_venda_painel_heranca.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_painel` | — |
 
 ### `20261108120000_sayerlack_situacao_portal_no_pedido.sql`
 

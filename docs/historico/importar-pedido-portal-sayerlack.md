@@ -357,3 +357,25 @@ fica parado como hoje: o cron já manda o e-mail de situação impeditiva. A dif
 - O SQL da sonda é determinístico: a mesma edge e a mesma janela dão o mesmo sha, e o `db:aplicar` recusa por "já
   aplicado". Variar `--janela` gera um sha novo.
 - Publish feito pelo founder depois do merge.
+
+## Revisão 2, Sessão B parte 1: tela honesta, vários números e runbook (2026-11-08)
+
+Adendo `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Só front + doc; nenhuma edge, nenhuma migration.
+
+- **B7 (parte da tela)**: "não foi importado" só com desfecho RECONHECIDO de que nada foi gravado — falha de leitura,
+  recusa da RPC com SQLSTATE (a transação voltou) ou recusa de entrada 4xx. `{}`, `{ok:false}`, `etapa` desconhecida,
+  `etapa:'importacao'` sem SQLSTATE ("Resposta inesperada", exceção 500) e `{"error":…}` viram "não sei se entrou".
+  O diálogo deixou de INVENTAR `etapa:'importacao'` no corpo do erro (era isso que transformava 500 sem contrato em
+  recusa). Lógica pura em `interpretarErroEdge`/`statusDoErroEdge`, testada com objeto incompleto.
+- **B8**: `situacao_gravada:'erro'` vira aviso próprio no resultado, em qualquer tom.
+- **8.5 / D-3**: o campo aceita vários números (linha, vírgula, espaço, ponto e vírgula; até 20; repetido conta 1×;
+  inválido bloqueia e é mostrado). Laço SEQUENCIAL (teste prova que o 2º só sai depois do 1º responder), um resultado
+  e um "Importar de novo" por número, "Parar depois deste" (o que não foi chamado diz que não foi chamado).
+- **6.10**: Cmd-K "Importar pedido do portal Sayerlack" (registrado pelo card, enquanto Gerir pedidos está aberta).
+- **6.7 (parte)**: a chave do card passou para `['pedidos-ciclo', 'portal-sayerlack-painel']` — o realtime e toda ação
+  de Gerir pedidos já invalidam o prefixo `pedidos-ciclo`, então o card acompanha a página sem tocar nas outras telas.
+- **B12 / 8.4**: `docs/runbooks/sayerlack-pedido-portal-nao-entrou.md` (CP006, IP002/IP003, IP006, IP007, IP008, "não
+  consegui ler", "não sei se entrou", situação não gravada, senha do portal, cota Browserless, cron parado, backlog
+  antigo), com as queries conferidas contra prod via psql-ro.
+- **Provas**: vitest 41 (card + interpretação). Falsificação com controle verde antes e depois na mesma invocação:
+  etapa inventada, B8 desligado, recusa sem SQLSTATE e laço paralelo → cada um vermelho.

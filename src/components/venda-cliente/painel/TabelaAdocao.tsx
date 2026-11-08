@@ -1,10 +1,12 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import {
+  contagemPropria,
   estadoTaxa,
   formatarPct,
   formatarReais,
   rotuloSemana,
+  type ContagemDesfecho,
   type LinhaPainel,
 } from '@/lib/venda-cliente/painel';
 import { CelulaTaxa } from './CelulaTaxa';
@@ -40,6 +42,15 @@ function Contatados({ l }: { l: LinhaPainel }) {
   );
 }
 
+/** A linha tem sugestão herdada na lista ATIVA (servidor com a migration). */
+const temHerdada = (l: LinhaPainel) => (l.herdadas?.sugestoes ?? 0) > 0;
+
+/** A base tem herdada: a contagem própria difere da total (a herança pode existir SÓ na base — P2 do Codex). */
+const baseMistura = (total: ContagemDesfecho, propria: ContagemDesfecho | null) =>
+  propria !== null &&
+  (total.virou !== propria.virou || total.nao_virou !== propria.nao_virou ||
+    total.nao_medivel !== propria.nao_medivel || total.pendentes !== propria.pendentes);
+
 function Num({ v }: { v: number }) {
   return <span className={cn('tabular-nums', v === 0 && 'text-muted-foreground')}>{v}</span>;
 }
@@ -50,6 +61,14 @@ export function TabelaAdocao({ linhas, baseConfiavel }: { linhas: LinhaPainel[];
     <div className="space-y-6">
       {grupos.map((g) => {
         const f = g[0];
+        // a fatia aparece quando há herdada em QUALQUER régua (ativa, base do ano anterior ou sombra)
+        const comHerdadas =
+          g.some((l) => temHerdada(l) || baseMistura(l.base_historico, l.base_historico_propria)) ||
+          baseMistura(f.base_sombra, f.base_sombra_propria);
+        const baseSombraPropria =
+          comHerdadas && f.base_sombra_propria
+            ? estadoTaxa(f.base_sombra_propria, f.taxa_base_sombra_propria, { baseConfiavel, exigeBaseConfiavel: true })
+            : null;
         const baseSombra = estadoTaxa(f.base_sombra, f.taxa_base_sombra, {
           baseConfiavel,
           exigeBaseConfiavel: true,
@@ -60,8 +79,20 @@ export function TabelaAdocao({ linhas, baseConfiavel }: { linhas: LinhaPainel[];
               <h3 className="text-base font-semibold">{f.farmer_nome ?? 'Farmer sem nome no cadastro'}</h3>
               <p className="text-xs text-muted-foreground">
                 Linha de base · sombra antes do go-live: <CelulaTaxa estado={baseSombra} className="text-xs" />
+                {baseSombraPropria && (
+                  <span data-testid="painel-base-sombra-propria">
+                    {' '}· própria: <CelulaTaxa estado={baseSombraPropria} className="text-xs" />
+                  </span>
+                )}
               </p>
             </header>
+            {comHerdadas && (
+              <p className="mb-2 text-xs text-muted-foreground" data-testid="painel-herdadas-aviso">
+                Inclui clientes herdados de sucessão declarada: o histórico deles tem compras da empresa antiga. Abaixo de
+                cada número, quanto veio de herança. A conversão &quot;própria&quot; tira as sugestões herdadas; compare-a
+                com a base &quot;própria&quot;, que também tira as herdadas.
+              </p>
+            )}
             <div className="overflow-x-auto rounded-md border">
               <Table>
                 <TableHeader>
@@ -84,10 +115,29 @@ export function TabelaAdocao({ linhas, baseConfiavel }: { linhas: LinhaPainel[];
                       baseConfiavel,
                       exigeBaseConfiavel: true,
                     });
+                    const h = temHerdada(l) ? l.herdadas : null;
+                    const cp = comHerdadas ? contagemPropria(l) : null;
+                    const propria = cp
+                      ? estadoTaxa(cp, l.taxa_ativa_propria, { baseConfiavel, exigeBaseConfiavel: false })
+                      : null;
+                    const histPropria =
+                      comHerdadas && l.base_historico_propria
+                        ? estadoTaxa(l.base_historico_propria, l.taxa_base_historico_propria, {
+                            baseConfiavel,
+                            exigeBaseConfiavel: true,
+                          })
+                        : null;
                     return (
                       <TableRow key={l.semana}>
                         <TableCell className="tabular-nums text-muted-foreground">{rotuloSemana(l.semana)}</TableCell>
-                        <TableCell className="text-right"><Num v={l.na_lista} /></TableCell>
+                        <TableCell className="text-right">
+                          <Num v={l.na_lista} />
+                          {h && (
+                            <span className="block text-xs text-muted-foreground" data-testid="painel-herdadas-na-lista">
+                              {h.na_lista} herdado{h.na_lista === 1 ? '' : 's'}
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right"><Num v={l.mostradas} /></TableCell>
                         <TableCell className="text-right"><Contatados l={l} /></TableCell>
                         <TableCell className="text-right"><Num v={l.compraram} /></TableCell>
@@ -96,9 +146,30 @@ export function TabelaAdocao({ linhas, baseConfiavel }: { linhas: LinhaPainel[];
                           {l.receita_incompleta && (
                             <span className="ml-1 text-status-warning" title="Há venda casada sem valor apurado: a soma é parcial">*</span>
                           )}
+                          {h && (
+                            <span className="block text-xs text-muted-foreground" data-testid="painel-receita-herdada">
+                              {formatarReais(h.receita_realizada)} herdada{h.receita_incompleta ? '*' : ''}
+                            </span>
+                          )}
                         </TableCell>
-                        <TableCell className="text-right"><CelulaTaxa estado={ativa} /></TableCell>
-                        <TableCell className="text-right"><CelulaTaxa estado={hist} /></TableCell>
+                        <TableCell className="text-right">
+                          <CelulaTaxa estado={ativa} />
+                          {propria && (
+                            <span className="block text-xs text-muted-foreground" data-testid="painel-conversao-propria"
+                              title="Conversão sem as sugestões herdadas">
+                              própria <CelulaTaxa estado={propria} className="text-xs" />
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <CelulaTaxa estado={hist} />
+                          {histPropria && (
+                            <span className="block text-xs text-muted-foreground" data-testid="painel-base-historico-propria"
+                              title="Base do ano anterior sem as sugestões herdadas">
+                              própria <CelulaTaxa estado={histPropria} className="text-xs" />
+                            </span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right"><Num v={l.na_lista_sombra} /></TableCell>
                       </TableRow>
                     );
