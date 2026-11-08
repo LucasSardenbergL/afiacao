@@ -67,3 +67,40 @@ Origem: 2ª revisão do Radar (Fable + Codex); era follow-up do Codex no bloco 1
 2. ✅ Edge `radar-ingest` v1.7 (DEPLOY CONFIRMADO pela sonda, 2026-11-08).
 3. Publish: não há mudança de front (só comentário em `lote-vigente.ts`).
 4. 1ª carga real (próxima segunda, 03:00 BRT): conferir `carga_fase = 'publicada'` e o ledger `radar.publicar_lote`.
+
+## ⚠️ 1ª carga real: a publicação não cabe numa transação (2026-11-08, cron PAUSADO)
+
+**O que aconteceu.** Re-run do 2026-10 (503.929 linhas) validou às 16:57Z. O job `radar-publicar-lote`
+das 17:00 rodou o upsert staging→viva numa transação só e morreu no `statement_timeout` de 30 min
+(17:30:01, `57014`); a execução seguinte (enfileirada pelo pg_cron) repetiu. A foto vigente ficou
+**intacta** (rollback — a garantia (a) do desenho se cumpriu em prod), mas apareceram dois defeitos:
+
+1. **Laço.** `57014` (`query_canceled`) **não** é capturado por `WHEN OTHERS` → o lote não virava
+   `falhou`, ficava `validada`, e o cron retentava sem fim (30 min ligado a cada ~45).
+2. **Dano colateral da transação longa.** Enquanto ela roda, segura row lock em ~500k linhas de
+   `radar_empresas` (edição de prospecção espera) **e trava o Supabase Realtime**: medido
+   `realtime_replication_connection` e `realtime_rls` em `ShareLock` com `pg_blocking_pids = {pid do cron}`.
+
+**Por que é estrutural, não ajuste de timeout.** A foto é um RÓTULO por linha (`ultimo_lote = vigente`).
+Trocar a foto = reescrever ~500k linhas, e `radar_empresas` tem **27 índices** (3 GIN, trigram,
+expressões com regexp) com `ultimo_lote`/`updated_at` indexados → todo UPDATE é não-HOT e reinsere em
+todos. Em pedaços isso já custava 9–61 min (cargas 2026-08/09/10); numa transação passa de 30.
+Subir o timeout só aumenta o tempo com Realtime travado.
+
+**Contenção aplicada (envelope, validada por psql-ro às 17:41–17:43Z):**
+- `pg_cancel_backend` da execução condenada + `radar_ingest_state` 2026-10 → `carga_fase='falhou'`
+  (`status` segue `complete`; staging fica até o próximo `begin_lote`).
+- `cron.alter_job(279, active := false)` — o job `radar-publicar-lote` está **inativo**. Com ele
+  pausado, uma carga nova **valida e espera**; a foto vigente não muda (modo de falha seguro). O
+  `begin_lote` seguinte recusa enquanto houver lote `validada` → o workflow fica vermelho (sinal).
+
+**Pendente (redesenho — decisão de arquitetura):** publicar em transações CURTAS sem expor foto
+parcial. Candidatos: (i) refresh cadastral em lotes sem mexer no rótulo + inserção dos CNPJs novos e
+troca de ponteiro no fim, com leitores lendo `ultimo_lote IN (vigente, em_publicacao)` durante a
+troca; (ii) foto por ponteiro (tabela de membresia/partição) em vez de rótulo por linha. Em qualquer
+um: capturar `query_canceled` explicitamente, e **não religar o cron** antes da prova.
+Religar (só depois do fix): `SELECT cron.alter_job((SELECT jobid FROM cron.job WHERE jobname='radar-publicar-lote'), active := true);`
+
+**Lição.** A prova em PG17 tinha 37 asserts de CORREÇÃO e nenhum de CUSTO: rodou com centenas de
+linhas e 2 índices. Desenho "uma transação" precisa ser medido no volume e nos índices REAIS (aqui,
+27 índices × 500k) antes de ir ao ar, e a falha por timeout precisa de ramo próprio (`57014` ≠ OTHERS).
