@@ -29,7 +29,8 @@ MIGC="$REPO_ROOT/supabase/migrations/20261109140000_radar_contato_contabil.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!P3_FALHOU` = a postcondição aborta o apply com a marca exata
-  # (`_` vira espaço; grep -F). `_sem_post` cega a postcondição para provar que a suíte pega sozinha.
+  # (`_` vira espaço; grep -F). `_sem_post` cega a postcondição para provar que a suíte pega sozinha. As sabotagens
+  # de corpo VIVO (radar_lista, e-mail, card) cegam a PÓS sempre: o md5 dela já as barraria no apply.
   SABOTAGENS="sem_v2:C1b sem_corroboracao:C1c socio_ignorado:C1d socio_so_nome:C1e filial_conta:C1f nove_digito:C1g
     palavra_fraca_forte:C2b cnae_ignorado:C2f gate_cego:C3b merge_sem_delete:C3c veredito_ignorado:C4a sem_versao:C4c
     correcao_herda:C4e ausente_vira_zero:C4f autor_do_cliente:C4g visitar_sem_endereco:C5c visitar_algum:C5b
@@ -120,16 +121,16 @@ case "${SABOTAGEM:-}" in
   autor_do_cliente)     sabotar "VALUES (p_cnpj, v_tipo, v_valor, p_campo, p_veredito, v_auto, v_ult, v_uid)" "VALUES (p_cnpj, v_tipo, v_valor, p_campo, p_veredito, v_auto, v_ult, '00000000-0000-0000-0000-000000000000')" ;;
   visitar_sem_endereco) sabotar "SELECT NULLIF(btrim(coalesce(p_logradouro, '')), '') IS NOT NULL AND count(*) > 0" "SELECT count(*) > 0" ;;
   visitar_algum)        sabotar "bool_and(a.efetivo IS TRUE)" "bool_or(a.efetivo IS TRUE)" ;;
-  lista_sem_filtro)     sabotar "  IF COALESCE(p_so_visitar, false) THEN" "  IF false THEN" ;;
+  lista_sem_filtro)     sabotar "  IF COALESCE(p_so_visitar, false) THEN" "  IF false THEN"; cegar_post ;;
   lista_sem_correcao)   sabotar "
-                                           UNION SELECT k.cnpj FROM public.radar_contato_contabil_correcoes k WHERE k.veredito)" ")" ;;
+                                           UNION SELECT k.cnpj FROM public.radar_contato_contabil_correcoes k WHERE k.veredito)" ")"; cegar_post ;;
   card_sem_marca)       sabotar "'visitar', COALESCE(ct.visitar, false), 'endereco', ct.endereco)
                             ORDER BY x.posicao)" "'visitar', false, 'endereco', ct.endereco)
-                            ORDER BY x.posicao)" ;;
-  email_promete_telefone) sabotar "CASE WHEN l.visitar THEN '   VISITAR:" "CASE WHEN false THEN '   VISITAR:" ;;
+                            ORDER BY x.posicao)"; cegar_post ;;
+  email_promete_telefone) sabotar "CASE WHEN l.visitar THEN '   VISITAR:" "CASE WHEN false THEN '   VISITAR:"; cegar_post ;;
   email_sem_registro)   sabotar "x.municipio_codigo, x.atribuido, x.visitar
           FROM jsonb_to_recordset" "x.municipio_codigo, x.atribuido, NULL
-          FROM jsonb_to_recordset" ;;
+          FROM jsonb_to_recordset"; cegar_post ;;
   acl_aberta)           sabotar "REVOKE ALL ON FUNCTION private.radar_contato_contabil_avaliar(text, text, text, text) FROM PUBLIC, anon, authenticated;" "" ;;
   acl_aberta_sem_post)  sabotar "REVOKE ALL ON FUNCTION private.radar_contato_contabil_avaliar(text, text, text, text) FROM PUBLIC, anon, authenticated;" ""; cegar_post ;;
   pre_cega)             sabotar "      RAISE EXCEPTION 'PRE FALHOU: % vivo (md5 %) não é o predecessor revisado nem este — outra sessão mudou; refaça o pré-voo', r.alvo, r.vivo;" "      NULL;" ;;

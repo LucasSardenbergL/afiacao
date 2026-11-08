@@ -264,6 +264,10 @@ BEGIN
            private.radar_email_valor(e.email) AS em,
            coalesce(starts_with(e.cnae_principal, '6920'), false) AS eh_contabil
       FROM public.radar_empresas e;
+  -- Os motivos próprios do e-mail (regex) saem UMA vez por linha: a corroboração e o resultado reusam.
+  ALTER TABLE pg_temp.rcc_emp ADD COLUMN mp text[];
+  UPDATE pg_temp.rcc_emp e SET mp = private.radar_email_motivos_proprios(e.em) WHERE e.em IS NOT NULL;
+  ANALYZE pg_temp.rcc_emp;
 
   -- Membros (chave, raiz) só das chaves com 3+ raízes. Telefone agrupa por DDD + últimos 8 dígitos.
   CREATE TEMP TABLE rcc_mem ON COMMIT DROP AS
@@ -278,6 +282,7 @@ BEGIN
     )
     SELECT m.tipo, m.chave, m.raiz FROM m JOIN c ON c.tipo = m.tipo AND c.chave = m.chave;
   CREATE INDEX ON pg_temp.rcc_mem (raiz);
+  ANALYZE pg_temp.rcc_mem;
 
   -- Vínculo entre raízes da MESMA chave: sócio em comum por nome normalizado + CPF mascarado, lote vigente.
   CREATE TEMP TABLE rcc_aresta ON COMMIT DROP AS
@@ -321,15 +326,16 @@ BEGIN
       FROM pg_temp.rcc_emp e
       LEFT JOIN pg_temp.rcc_grupo g ON g.tipo = 'email' AND g.chave = e.em
      WHERE e.em IS NOT NULL AND NOT e.eh_contabil
-       AND (private.radar_email_motivos_proprios(e.em) && ARRAY['email_palavra', 'dominio_servico']::text[]
-            OR coalesce(g.grupos, 0) >= 3);
+       AND (e.mp && ARRAY['email_palavra', 'dominio_servico']::text[] OR coalesce(g.grupos, 0) >= 3);
 
+  -- Junção agregada (não EXISTS por chave: sem índice em (tipo, chave), seria chaves × membros).
   CREATE TEMP TABLE rcc_tel ON COMMIT DROP AS
-    SELECT g.chave, g.grupos,
-           EXISTS (SELECT 1 FROM pg_temp.rcc_mem m JOIN pg_temp.rcc_forte f ON f.raiz = m.raiz
-                    WHERE m.tipo = 'telefone' AND m.chave = g.chave) AS corroborado
+    SELECT g.chave, g.grupos, bool_or(f.raiz IS NOT NULL) AS corroborado
       FROM pg_temp.rcc_grupo g
-     WHERE g.tipo = 'telefone' AND g.grupos >= 3;
+      JOIN pg_temp.rcc_mem m ON m.tipo = 'telefone' AND m.chave = g.chave
+      LEFT JOIN pg_temp.rcc_forte f ON f.raiz = m.raiz
+     WHERE g.tipo = 'telefone' AND g.grupos >= 3
+     GROUP BY g.chave, g.grupos;
 
   CREATE TEMP TABLE rcc_novo ON COMMIT DROP AS
     SELECT DISTINCT e.cnpj, 'telefone'::text AS tipo, x.v AS valor, ARRAY['telefone_compartilhado']::text[] AS motivos,
@@ -342,7 +348,7 @@ BEGIN
     SELECT e.cnpj, 'email'::text, e.em, mo.motivos, g.grupos, NULL::boolean
       FROM pg_temp.rcc_emp e
       LEFT JOIN pg_temp.rcc_grupo g ON g.tipo = 'email' AND g.chave = e.em AND g.grupos >= 3
-      CROSS JOIN LATERAL (SELECT private.radar_email_motivos_proprios(e.em)
+      CROSS JOIN LATERAL (SELECT coalesce(e.mp, ARRAY[]::text[])
                                  || CASE WHEN g.grupos IS NOT NULL THEN ARRAY['email_compartilhado']::text[]
                                          ELSE ARRAY[]::text[] END AS motivos) mo
      WHERE e.em IS NOT NULL AND NOT e.eh_contabil AND cardinality(mo.motivos) > 0;
