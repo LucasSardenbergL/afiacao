@@ -117,6 +117,7 @@ cv_cadeia() {
     [[ "$v" =~ ^[0-9]{14}$ ]] || { echo "cv_cadeia: versão fora do formato: $base" >&2; return 1; }
     [ "$v" = "$CV_INICIO" ] && achou_inicio=1
     [ "$v" -lt "$CV_INICIO" ] && continue
+    _cv_fora "$base" && continue
     if sed -E 's/--.*$//' "$f" | tr '\n' ' ' | grep -qiE "$padrao"; then
       printf '%s\n' "$f"
     else
@@ -149,6 +150,26 @@ CV_PREDECESSORAS=(
   "20261018160000_fcs_ftp_fecha_escrita_default.sql:20261014120100_fcs_margem_fecha_coluna.sql"
   "20261018160000_fcs_ftp_fecha_escrita_default.sql:20261015120100_tactical_plans_margem_fecha_coluna.sql"
 )
+
+# CV_FORA — migrations que tocam objeto guardado mas NÃO cabem em nenhuma cadeia montada sobre este snapshot: dependem
+# de objetos que o snapshot não tem e que nenhum objeto guardado puxa (nem CV_PREDECESSORAS resolve sem levar junto a
+# cadeia inteira de outro domínio). A cadeia as pula e diz isso na saída. Cada entrada leva o motivo e a prova que cobre
+# o comportamento dela. Sai quando um re-dump a absorver (avançar CV_INICIO).
+#   · 20261111100000 (Radar pacote G) recria radar_atendimento_expira_em (proteção da posse pelo retorno marcado), mas
+#     a TRAVA/corpo exigem as tabelas do e-mail semanal (20261106181000/20261107230000), radar_contato_do_lead
+#     (20261109140000) e radar_empresas.prospeccao_contato_id (20261031111000) — nada disso está no snapshot de 10-15.
+#     Nas provas que guardam a posse, sem retorno_em a proteção é NULL e o vencimento é o mesmo; o comportamento novo é
+#     provado em db/test-radar-acompanhamento-g.sh sobre os corpos vivos da PROD.
+CV_FORA=(
+  "20261111100000_radar_acompanhamento_pacote_g.sql"
+)
+_cv_fora() {
+  local x
+  for x in "${CV_FORA[@]}"; do
+    [ "$x" = "$1" ] && { echo "    (fora da cadeia por CV_FORA: $1)" >&2; return 0; }
+  done
+  return 1
+}
 
 # cv_aplicar_cadeia <dir de migrations> — aplica a cadeia no banco de `P`, em ordem, e conta.
 cv_aplicar_cadeia() {

@@ -1,7 +1,7 @@
 import { ChevronRight, PhoneOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { ReactNode } from 'react';
-import { RadarOutcomeMenu } from './RadarOutcomeMenu';
+import { RadarOutcomeMenu, type RegistroInfo } from './RadarOutcomeMenu';
 import { avisoTelefoneCompartilhado } from '@/lib/radar/atendimento';
 import { telefonePrincipal, type AcaoContato } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
@@ -20,7 +20,7 @@ export function RadarModoDiscagem({
   nota?: string;
   campoNota?: ReactNode;
   /** Quem decide avançar depois do registro é a ficha (B6). Sem ele, avança como antes. */
-  onRegistrado?: (acao: AcaoContato, info: { deduped: boolean }) => void;
+  onRegistrado?: (acao: AcaoContato, info: RegistroInfo) => void;
   onDesfeito?: () => void;
   empresa: RadarEmpresa;
   /** A ação do telefone principal — ligar (celular) ou copiar (desktop); null sem telefone. */

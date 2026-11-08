@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Check, Hand, Loader2, MapPin, Radar } from 'lucide-react';
+import { AlarmClock, Check, Hand, Loader2, MapPin, Radar, TimerOff } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,9 @@ import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 import { diaMes, mensagemRecusa } from '@/lib/radar/atendimento';
 import {
   linkFichaRadar, nomeDoLead, resumoTerritorio, textoSemTerritorio, tituloMunicipio, type LeadProspectarHoje,
+  type ProspectarHoje, type RetornoHoje,
 } from '@/lib/radar/prospectar-hoje';
+import { diaMesData } from '@/lib/radar/retorno';
 import { useRadarAtendimentosAtivos, useRadarDefinirAtendimento } from '@/queries/useRadarAtendimentos';
 import { useRadarProspectarHoje } from '@/queries/useRadarProspectarHoje';
 import { registrarAberturaEmpurrada, registrarCardServido } from '@/queries/useRadarRegistroEmpurrado';
@@ -38,6 +40,97 @@ async function sensorConfirmou(r: unknown): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Quantos retornos o card mostra antes do "ver todos". */
+const RETORNOS_VISIVEIS = 3;
+
+/**
+ * Pacote G: o acompanhamento do vendedor — retornos vencidos até hoje (a agenda, à parte do top de leads novos) e as
+ * posses que vencem em 48 h. Aparece mesmo sem lead novo e sem território: a posse não vence calada.
+ * `null` (RPC anterior ao campo) não renderiza nada — nunca "zero".
+ */
+function Acompanhamento({ dados, onAbrir }: { dados: ProspectarHoje; onAbrir: (cnpj: string) => void }) {
+  const [todos, setTodos] = useState(false);
+  const retornos = dados.retornos;
+  const posses = dados.posses;
+  const nVencendo = posses?.vencendo.length ?? 0;
+  const nRetornos = retornos?.total ?? 0;
+  // Sensor do aviso (client, censurável): o registro server-side do aviso é o do e-mail (envios.acompanhamento).
+  useEffect(() => {
+    if (nVencendo > 0) track('radar.posse_aviso_exibido', { vencendo: nVencendo, vencidas_7d: posses?.vencidas7d ?? 0 });
+  }, [nVencendo, posses?.vencidas7d]);
+  useEffect(() => {
+    if (nRetornos > 0) track('radar.retornos_exibidos', { total: nRetornos });
+  }, [nRetornos]);
+  if (nRetornos === 0 && nVencendo === 0 && !posses?.vencidas7d) return null;
+  const itens = retornos ? (todos ? retornos.itens : retornos.itens.slice(0, RETORNOS_VISIVEIS)) : [];
+  const nomeR = (r: RetornoHoje) => r.nomeFantasia ?? r.razaoSocial ?? r.cnpj;
+  return (
+    <div className="mb-3 space-y-2" data-testid="prospectar-hoje-acompanhamento">
+      {nRetornos > 0 && retornos && (
+        <div>
+          <p className="text-xs font-medium flex items-center gap-1">
+            <AlarmClock className="w-3 h-3 text-status-info" /> Retornos para hoje ({retornos.total})
+          </p>
+          <ul className="divide-y divide-border">
+            {itens.map((r) => (
+              <li key={r.cnpj} className="py-1.5 flex items-center gap-2" data-testid="prospectar-hoje-retorno">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm truncate">{nomeR(r)}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {r.tipo === 'conversa' ? 'Em conversa' : 'Não atendeu, tentar de novo'}
+                    {' · '}
+                    <span className={r.atrasado ? 'text-status-warning' : undefined}>
+                      {r.atrasado ? `atrasado (era ${diaMesData(r.retornoEm)})` : `marcado p/ ${diaMesData(r.retornoEm)}`}
+                    </span>
+                    {r.nota ? ` · ${r.nota}` : ''}
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => onAbrir(r.cnpj)}>Abrir ficha</Button>
+              </li>
+            ))}
+          </ul>
+          {retornos.itens.length > RETORNOS_VISIVEIS && (
+            <button type="button" className="text-xs text-primary hover:underline" onClick={() => setTodos((t) => !t)}
+              data-testid="prospectar-hoje-retornos-todos">
+              {todos ? 'Mostrar menos' : `Ver todos (${retornos.total})`}
+            </button>
+          )}
+          {todos && retornos.total > retornos.itens.length && (
+            <p className="text-[11px] text-muted-foreground">
+              Mostrando os {retornos.itens.length} mais antigos de {retornos.total}.
+            </p>
+          )}
+        </div>
+      )}
+      {nVencendo > 0 && posses && (
+        <div role="status" className="rounded border border-status-warning/40 px-2 py-1.5" data-testid="prospectar-hoje-posses">
+          <p className="text-xs text-status-warning flex items-center gap-1">
+            <TimerOff className="w-3 h-3 shrink-0" />
+            {nVencendo === 1 ? '1 atendimento seu vence' : `${nVencendo} atendimentos seus vencem`} em até 48 h:
+            registre um contato para continuar com {nVencendo === 1 ? 'ele' : 'eles'}.
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {posses.vencendo.map((p) => (
+              <li key={p.atendimentoId} className="text-xs flex items-center gap-2">
+                <button type="button" className="truncate underline" onClick={() => onAbrir(p.cnpj)}>
+                  {p.nomeFantasia ?? p.razaoSocial ?? p.cnpj}
+                </button>
+                <span className="text-muted-foreground shrink-0">vence {diaMes(p.expiraEm)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {!!posses?.vencidas7d && (
+        <p className="text-[11px] text-muted-foreground" data-testid="prospectar-hoje-posses-vencidas">
+          {posses.vencidas7d === 1 ? '1 atendimento seu venceu' : `${posses.vencidas7d} atendimentos seus venceram`} nos
+          últimos 7 dias sem contato e {posses.vencidas7d === 1 ? 'voltou' : 'voltaram'} para a distribuição.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function ProspectarHojeCard() {
@@ -113,6 +206,12 @@ export function ProspectarHojeCard() {
         )}
       </CardHeader>
       <CardContent>
+        {q.isSuccess && (
+          <Acompanhamento dados={q.data} onAbrir={(cnpj) => {
+            track('radar.acompanhamento_ficha', {});
+            navigate(linkFichaRadar(cnpj));
+          }} />
+        )}
         {q.isError ? (
           <div role="alert" className="space-y-2" data-testid="prospectar-hoje-erro">
             <p className="text-sm text-status-error">

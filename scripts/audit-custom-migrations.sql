@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 816
+-- Total de custom migrations: 817
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -884,7 +884,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261110100000', 'raio_x_inequivoco_unidade_desconhecida', '20261110100000_raio_x_inequivoco_unidade_desconhecida.sql'),
   ('20261110100000', 'sayerlack_encerrar_cancelado_no_portal', '20261110100000_sayerlack_encerrar_cancelado_no_portal.sql'),
   ('20261110120000', 'sayerlack_cancelado_com_compra_viva', '20261110120000_sayerlack_cancelado_com_compra_viva.sql'),
-  ('20261110130000', 'radar_carga_publicacao_atomica', '20261110130000_radar_carga_publicacao_atomica.sql')
+  ('20261110130000', 'radar_carga_publicacao_atomica', '20261110130000_radar_carga_publicacao_atomica.sql'),
+  ('20261111100000', 'radar_acompanhamento_pacote_g', '20261111100000_radar_acompanhamento_pacote_g.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3589,7 +3590,19 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_falhar', ''),
   ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_publicar_pendente', ''),
   ('radar_carga_publicacao_atomica', 'table', 'public', 'radar_empresas_carga', ''),
-  ('radar_carga_publicacao_atomica', 'cron_job', 'cron', 'radar-publicar-lote', '')
+  ('radar_carga_publicacao_atomica', 'cron_job', 'cron', 'radar-publicar-lote', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_dia_util', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_atendimento_expira_em', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_acompanhamentos', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_retornos_do_vendedor', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_posses_do_vendedor', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'public', 'registrar_contato_radar', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'public', 'radar_posses_vencer_tick', ''),
+  ('radar_acompanhamento_pacote_g', 'index', 'public', 'idx_radar_empresas_acompanhamento', 'radar_empresas'),
+  ('radar_acompanhamento_pacote_g', 'cron_job', 'cron', 'radar-posses-vencer-diario', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6342,7 +6355,19 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_falhar', ''),
   ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_publicar_pendente', ''),
   ('radar_carga_publicacao_atomica', 'table', 'public', 'radar_empresas_carga', ''),
-  ('radar_carga_publicacao_atomica', 'cron_job', 'cron', 'radar-publicar-lote', '')
+  ('radar_carga_publicacao_atomica', 'cron_job', 'cron', 'radar-publicar-lote', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_dia_util', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_atendimento_expira_em', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_acompanhamentos', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_retornos_do_vendedor', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_posses_do_vendedor', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'public', 'registrar_contato_radar', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_acompanhamento_pacote_g', 'function', 'public', 'radar_posses_vencer_tick', ''),
+  ('radar_acompanhamento_pacote_g', 'index', 'public', 'idx_radar_empresas_acompanhamento', 'radar_empresas'),
+  ('radar_acompanhamento_pacote_g', 'cron_job', 'cron', 'radar-posses-vencer-diario', '')
 )
 SELECT
   e.migration,
@@ -6370,7 +6395,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 189.
+-- Funções redefinidas com corpo extraível: 190.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6721,6 +6746,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'registrar_contato_radar', 1, '20260612130000_radar_rpcs_contato.sql', 'debfb2b1df4a40dde8949e17da4bd865'),
   ('public', 'registrar_contato_radar', 2, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '97d0726906cfd8499c5128b99371589d'),
   ('public', 'registrar_contato_radar', 3, '20261031111000_radar_contato_integridade.sql', '64bba71156a8b5377aea8e165301ec0d'),
+  ('public', 'registrar_contato_radar', 4, '20261111100000_radar_acompanhamento_pacote_g.sql', '332b4531d9eed04a21ed01319ed04529'),
   ('public', 'desfazer_contato_radar', 1, '20260612130000_radar_rpcs_contato.sql', '79613aaa8d7db719e90ec74bdb28e57f'),
   ('public', 'desfazer_contato_radar', 2, '20261031111000_radar_contato_integridade.sql', '567058be0caa267a0f53df59afb5f11f'),
   ('public', 'radar_kpis', 1, '20260612130000_radar_rpcs_contato.sql', 'd880343a76c717903aaf8c070286042c'),
@@ -7031,6 +7057,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_penetracao_por_municipio', 3, '20261106175800_radar_mapa_regiao_cidade_telefone.sql', '481b6dae1e543232cea9bd4511a3d6cd'),
   ('public', 'cliente_situacao_receita', 1, '20261029200343_cliente_situacao_receita.sql', '0b6f8d4dac462f14b3b417b355085c2f'),
   ('public', 'cliente_situacao_receita', 2, '20261030000642_cliente_situacao_receita_lote_publicado.sql', 'afa87d095ab804309362545e56ad6346'),
+  ('private', 'radar_atendimento_expira_em', 1, '20261029201200_radar_acesso_vendedor.sql', '69210a8bafa4f4be6ecaa002dc13b350'),
+  ('private', 'radar_atendimento_expira_em', 2, '20261111100000_radar_acompanhamento_pacote_g.sql', 'bf6f396f5d3b4fdcaeac97fe047eaab3'),
   ('public', 'raio_x_planejar', 1, '20261031180000_raio_x_plano_execucao.sql', 'a2bef6dcf7ce233919472dfed0d022c5'),
   ('public', 'raio_x_planejar', 2, '20261101120000_raio_x_inequivoco.sql', 'c04b148eaa1de55ab67b75e347eb6f35'),
   ('public', 'raio_x_planejar', 3, '20261103120000_raio_x_unidades.sql', '7231d6bced9841e379e0ffb3aa7d9c0b'),
@@ -7063,12 +7091,15 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'radar_territorio_do_vendedor', 2, '20261107230000_radar_distribuicao_pacote_e.sql', 'fb812a4908eeb34fa12e23f48e06a568'),
   ('private', 'radar_leads_do_vendedor', 1, '20261106181000_radar_leads_ao_vendedor.sql', '51506ada745f4c91ec5de07a54e06ac0'),
   ('private', 'radar_leads_do_vendedor', 2, '20261107230000_radar_distribuicao_pacote_e.sql', 'a4a2d893fefd6182d8299300561a2dcc'),
+  ('private', 'radar_leads_do_vendedor', 3, '20261111100000_radar_acompanhamento_pacote_g.sql', '8fe003f34f6f422ac2587571074353d2'),
   ('public', 'radar_avisar_vendedores', 1, '20261106181000_radar_leads_ao_vendedor.sql', 'fdde2726b59b6ba115a465bf3af3a913'),
   ('public', 'radar_avisar_vendedores', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '43860b5d9d9cdd4e0cdb06b4d6805ddc'),
   ('public', 'radar_avisar_vendedores', 3, '20261109140000_radar_contato_contabil.sql', '14ac99777dac60b887d29f1418cb9aa9'),
+  ('public', 'radar_avisar_vendedores', 4, '20261111100000_radar_acompanhamento_pacote_g.sql', '9d20ea87b375d731e969cd396ee2aa9c'),
   ('public', 'radar_prospectar_hoje', 1, '20261106181000_radar_leads_ao_vendedor.sql', '7290de5f88cbe11f67e01c9379740fda'),
   ('public', 'radar_prospectar_hoje', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '73151dc24c593ab9b148c0ccb0c1f27d'),
   ('public', 'radar_prospectar_hoje', 3, '20261109140000_radar_contato_contabil.sql', '3d9f581f4959d4b9a7e0f45c0c31e3f3'),
+  ('public', 'radar_prospectar_hoje', 4, '20261111100000_radar_acompanhamento_pacote_g.sql', '374fc5082e714d9bbd14cb2bee8f9f09'),
   ('private', 'radar_vinculos_base', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', '4a25630577db9bcad6e3630d0b37003c'),
   ('private', 'radar_vinculos_base', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '4b3f8bddde6efeb2b39bda47b0e0a87b'),
   ('private', 'credito_vinculo_avaliar', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', 'df92d9af4062d9f7f475c784818effc7'),
