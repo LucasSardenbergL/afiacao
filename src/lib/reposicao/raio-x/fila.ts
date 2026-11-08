@@ -33,7 +33,7 @@ export function proximoDaFila(fila: Pick<ItemRaioX, 'sku_codigo_omie'>[], atual:
 }
 
 /** Origens de visita aceitas no sensor `reposicao.raio_x_aberta` (allowlist: texto livre da URL nunca vai ao ledger). */
-export const ORIGENS_VISITA = ['email'] as const;
+const ORIGENS_VISITA = ['email'] as const;
 export type OrigemVisita = (typeof ORIGENS_VISITA)[number];
 
 /** `?origem=` da URL → origem conhecida, ou `null` (ausente/desconhecida = visita sem origem, como antes). */
