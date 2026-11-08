@@ -7,7 +7,7 @@
  */
 
 export const RETORNO_MAX_DIAS = 60;
-export const RETORNO_PADRAO_DIAS = 7;
+const RETORNO_PADRAO_DIAS = 7;
 
 const RE_DIA = /^(\d{4})-(\d{2})-(\d{2})$/;
 

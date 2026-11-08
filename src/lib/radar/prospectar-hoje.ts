@@ -68,7 +68,7 @@ export interface RetornoHoje {
 }
 
 /** Pacote G3: posse do vendedor que vence nas próximas 48 h. */
-export interface PosseVencendo {
+interface PosseVencendo {
   atendimentoId: number;
   cnpj: string;
   razaoSocial: string | null;
