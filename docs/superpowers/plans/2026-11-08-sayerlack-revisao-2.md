@@ -33,7 +33,9 @@
   edge nova `sayerlack-encerrar-cancelado-portal` v1.0 DEPLOY CONFIRMADO (sonda #993). Publish do botão: founder.
 - 🔄 **5.4 + cobertura** (#3731) — incidente persistido, cobertura dos pedidos com PO não faturado, source
   `sayerlack_cancelado_com_po` no data_health, varrer v1.9. Migration `20261110120000` e edge depois do merge.
-- ⏳ Depois: 5.2, 8.1, 8.2, 7.1, 7.2, 7.3, 7.5, 4.3.
+- 🔄 **8.1** — testes dos handlers reais da importar e da varrer (harness + PostgREST falso por rota), 21 sabotagens
+  vermelhas. Só testes: nada a deployar.
+- ⏳ Depois: 5.2, 8.2, 7.1, 7.2, 7.3, 4.3 (7.5 numa sessão própria).
 
 ## Andamento da Sessão B (tela e painel)
 

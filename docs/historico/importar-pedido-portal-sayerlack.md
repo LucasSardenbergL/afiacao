@@ -530,6 +530,23 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
   todos). Prova PG17 `db/test-sayerlack-cancelado-com-compra-viva.sh`: 47 asserts nos dois locales, 20 sabotagens
   vermelhas; vizinhos do trio (10 provas de data_health/tint/fin) verdes.
 
+## 8.1 — testes dos handlers reais (2026-11-08)
+
+- `sayerlack-importar-pedido-portal/index_test.ts` (24 testes, 7 de gate) e `sayerlack-varrer-pedidos-portal/index_test.ts`
+  (15, 7 de gate) rodam o `index.ts` DE VERDADE pelo `_shared/harness-handler_test.ts`, com o PostgREST, o Browserless,
+  o disparo do PO e a importadora simulados por rota em `_shared/postgrest-falso_test.ts` (rota não prevista LANÇA;
+  `.range()` respeitado; coringa `*` opt-in só para PostgREST). A varrer roda com o relógio FIXO (quarta 10h SP; domingo
+  para o portal fechado) — sem isso a rodada pula no fim de semana e o teste passaria vazio.
+- Ramos cobertos (plano: Codex D1 + revisão 2): importar — 1ª importação com a situação regravada pós-criar (B10),
+  existente cancelado no portal, PO manual (contrato composto; contrato que só CONTÉM o nº não vale), re-disparo que falha,
+  faturado no portal (B2), resposta da gravação perdida com e sem o pedido na releitura (B7), sqlstate da casa, RPC sem
+  `pedido_id`, espelho falhando depois de achar o pedido, 6 não gravado pelo botão × pela varredura (B3), só-situação, cron
+  403. Varrer — `listar` com ZERO escrita e o slug próprio (B9), 0 lidos sem prova, lidos ≠ total, 6 não gravado (2
+  tentativas, pendência, vermelha), 6 gravado (verde), pendência fora da janela sem resposta da importadora (indeterminado
+  durável, vermelha — B6), portal fechado, modo inválido.
+- Falsificação (commitado antes; controle verde antes e depois, na mesma invocação): 11 sabotagens no `index.ts` da
+  importar e 10 no da varrer, uma camada por vez — todas vermelhas.
+
 ## 7.5 — o portal expõe NCM/IPI por item? Rodada 1: INCONCLUSIVO (2026-11-08)
 
 Pergunta do adendo `2026-11-08-sayerlack-revisao-2.md` (7.5). Investigação só leitura; nada implementado.
