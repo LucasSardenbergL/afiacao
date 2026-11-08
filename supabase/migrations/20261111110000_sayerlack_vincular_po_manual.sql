@@ -30,6 +30,8 @@ DECLARE
   v_n         int;
   v_po        public.purchase_orders_tracking%ROWTYPE;
   v_ids       uuid[];
+  v_sync_st   text;
+  v_sync_em   timestamptz;
   v_cod       text;
   v_composto  boolean;
   v_prod      jsonb;
@@ -81,7 +83,22 @@ BEGIN
   IF v_n > 1 THEN
     RETURN jsonb_build_object('vinculado', false, 'motivo', 'po_ambiguo', 'candidatos', v_n);
   END IF;
-  SELECT t.* INTO v_po FROM public.purchase_orders_tracking t WHERE t.id = v_ids[1];
+  -- Trava a LINHA do PO (Codex 7.1 P1): serializa dois pedidos disputando o mesmo PO (o 2º, ao destravar, vê o dono
+  -- no passo 2) e impede o sync de cancelar/editar o PO entre a escolha e a gravação. Revalida sob a trava.
+  SELECT t.* INTO v_po FROM public.purchase_orders_tracking t WHERE t.id = v_ids[1] FOR UPDATE;
+  IF NOT FOUND OR v_po.status::text = 'CANCELADO'
+     OR NOT (btrim(COALESCE(v_po.omie_codigo_integracao, '')) = 'AFI-' || r.id
+             OR v_proto = ANY (SELECT btrim(x) FROM unnest(string_to_array(v_po.numero_contrato_fornecedor, '/')) AS x)) THEN
+    RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = '[VINCULAR-CORRIDA] o PO mudou no espelho durante a vinculação';
+  END IF;
+  -- Espelho velho prova só a cópia velha (Codex 7.1 P2): o sync incremental do OBEN roda a cada poucos minutos;
+  -- parado há mais de 2 h (ou sem estado), não vincula.
+  SELECT s.status, s.last_sync_at INTO v_sync_st, v_sync_em
+    FROM public.sync_state s WHERE s.entity_type = 'pedidos_compra' AND s.account = 'oben';
+  IF v_sync_em IS NULL OR v_sync_st IS DISTINCT FROM 'complete' OR v_sync_em < now() - interval '2 hours' THEN
+    RETURN jsonb_build_object('vinculado', false, 'motivo', 'espelho_desatualizado', 'po_numero', v_po.numero_pedido,
+                              'espelho_sync_status', v_sync_st, 'espelho_sync_em', v_sync_em);
+  END IF;
   v_cod := NULLIF(NULLIF(v_po.omie_codigo_pedido::text, ''), '0');
   IF v_cod IS NULL THEN
     RETURN jsonb_build_object('vinculado', false, 'motivo', 'conteudo_ausente', 'detalhe', 'PO sem código no espelho');
@@ -175,6 +192,7 @@ BEGIN
             'po_codigo', v_cod, 'po_numero', v_po.numero_pedido, 'contrato', v_po.numero_contrato_fornecedor,
             'contrato_composto', v_composto, 'codigo_integracao', v_po.omie_codigo_integracao,
             'po_status_espelho', v_po.status::text, 'espelho_atualizado_em', v_po.updated_at,
+            'espelho_sync_status', v_sync_st, 'espelho_sync_em', v_sync_em,
             'antes', v_antes,
             'depois', jsonb_build_object('status', 'disparado', 'omie_pedido_compra_id', v_cod,
                                          'omie_pedido_compra_numero', v_po.numero_pedido)))

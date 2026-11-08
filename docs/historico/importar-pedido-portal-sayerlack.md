@@ -669,3 +669,34 @@ improvável que alguma delas seja a alíquota. Se um dia precisar reabrir, o rot
 em **0**. O CP006 só volta com NCM que a OBEN nunca comprou; aí o passo é esperar a 1ª NF e medir nela. A conferência
 de alíquota que mudou já existe: o CP007 recusa quando o total com IPI calculado não bate o Vlr Total do portal.
 Nada a implementar nas edges.
+
+## 7.1 — vincular o PO lançado à mão no Omie (2026-11-08)
+
+**Antes:** a importadora (pedido existente sem PO) e a varredura (reconsulta e re-disparo da janela) detectavam o PO
+manual pelo contrato e só avisavam: o pedido ficava sem PO no app para sempre. **Agora** os três pontos chamam a RPC
+`sayerlack_vincular_po_manual` (migration `20261111110000`), que vincula só quando o espelho do Omie prova que o PO
+é a compra daquele pedido:
+
+1. **Contrato:** o protocolo é um TOKEN EXATO do `numero_contrato_fornecedor` (split `/` + `btrim`, a mesma gramática
+   da varredura e do 5.3; o composto `a / b` vale), ou o código de integração é o `AFI-<id>` do próprio pedido.
+   Substring nunca vale. Mais de um PO vivo candidato = `po_ambiguo`. PO `CANCELADO` e de outra empresa não contam.
+2. **Dono:** recusa o PO com `AFI-<outro id>` ou já vinculado a outro pedido (`po_de_outro_pedido`).
+3. **Conteúdo:** conjunto de SKUs igual, quantidade por SKU igual, valor por SKU (`nValTot`, com IPI) a no máximo
+   max(R$ 0,01; 0,5 centavo por unidade) de `qtde_final × preco_unitario`. **Calibrado em prod:** dos 213 POs que o
+   próprio app criou para pedidos do portal, 206 casam ao centavo; os 7 que não casam são edições reais (SKU
+   acrescentado no Omie, quantidade dobrada e o composto 2130311/2130322, cujo PO traz o item do outro protocolo).
+   Assim, o composto cujo PO carrega os itens do outro protocolo diverge por conteúdo, e esse é o comportamento
+   desejado.
+4. **Ausente ≠ zero:** PO sem `produtos_consulta` legível, item sem número ou pedido com item sem SKU, quantidade ou
+   preço ⇒ `conteudo_ausente`. A recusa traz as diferenças por SKU na resposta da importadora.
+5. **Claim aberto, de qualquer idade, recusa** (`disparo_pendente`): uma tentativa pode ter criado o `AFI-<id>` com a
+   resposta perdida, e quem resolve é a conciliação do disparador. O vínculo grava os mesmos campos da conciliação
+   (`omie_pedido_compra_*`, status `disparado`, claim limpo) e a trilha em `acoes_execucoes` (`acao =
+   sayerlack_vincular_po_manual`) com o antes e o depois.
+
+Nas edges (importar v1.10, varrer v1.12): o erro da RPC **lança** na importadora (cai no catch, sem re-disparo) e, na
+varredura, mantém a pendência com `vinculo_motivo: "erro"`. Nenhum dos ramos re-dispara.
+
+**Provas:** `db/test-sayerlack-vincular-po-manual.sh` (PG17, 30 asserts, nos 2 locales; `--falsificar` com 12
+sabotagens vermelhas nos dois). Handlers em Deno: importar (vinculou, não casou com diferenças, RPC com erro) e
+varrer (reconsulta: casou, não casou, erro), com 4 sabotagens das edges vermelhas.

@@ -46,6 +46,7 @@ const MOTIVOS: Record<string, string> = {
   disparo_pendente: "há uma tentativa de disparo em aberto para este pedido",
   status_nao_vinculavel: "o status do pedido não permite vincular",
   tem_po: "o pedido já tem PO no app",
+  espelho_desatualizado: "o espelho de POs do Omie está desatualizado (sincronização parada)",
 };
 
 /** Resumo legível das diferenças (no máximo 5 SKUs), para a mensagem ao humano. */

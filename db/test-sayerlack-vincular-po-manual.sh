@@ -31,7 +31,7 @@ MIG_REAL="$REPO_ROOT/supabase/migrations/20261111110000_sayerlack_vincular_po_ma
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sem_veto_claim:V4 contrato_por_substring:V3 sem_ambiguo:V7 sem_dono_afi:V8 sem_dono_vinculado:V9
               sem_qtde:V10 sem_full_join:V11 tolerancia_frouxa:V13 ausente_vira_zero:V15,V16 sem_trilha:V1c
-              cancelado_vale:V18 sem_status:V6"
+              cancelado_vale:V18 sem_status:V6 sem_trava:V26 sem_frescor:V25"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -174,6 +174,10 @@ case "$SAB" in
   cancelado_vale)
     trocar "$MIG" "     AND t.status::text IS DISTINCT FROM 'CANCELADO'
 " "" ;;
+  sem_trava)
+    trocar "$MIG" "WHERE t.id = v_ids[1] FOR UPDATE;" "WHERE t.id = v_ids[1];" ;;
+  sem_frescor)
+    trocar "$MIG" "  IF v_sync_em IS NULL OR v_sync_st IS DISTINCT FROM 'complete' OR v_sync_em < now() - interval '2 hours' THEN" "  IF v_sync_em IS NULL THEN" ;;
   sem_status)
     trocar "$MIG" "  IF r.status IS NULL OR r.status NOT IN ('aprovado_aguardando_disparo', 'falha_envio') THEN" "  IF r.status IS NULL THEN" ;;
   *) echo "INFRA: sabotagem desconhecida: $SAB"; exit 1 ;;
@@ -204,6 +208,9 @@ CREATE TABLE public.pedido_compra_sugerido (
   omie_pedido_compra_id text, omie_pedido_compra_numero text, omie_registrado_em timestamptz,
   disparo_claim_em timestamptz, disparo_claim_por text, atualizado_em timestamptz
 );
+CREATE TABLE public.sync_state (entity_type text, account text, status text, last_sync_at timestamptz);
+INSERT INTO public.sync_state VALUES ('pedidos_compra', 'oben', 'complete', now() - interval '5 minutes'),
+                                     ('pedidos_compra', 'colacor', 'complete', now() - interval '90 days');
 CREATE TABLE public.pedido_compra_item (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, pedido_id bigint NOT NULL, sku_codigo_omie text,
   qtde_final numeric, preco_unitario numeric
@@ -239,6 +246,9 @@ SELECT v.id, v.emp, v.st, v.prot, v.po, v.claim FROM (VALUES
   (19, 'OBEN', 'aprovado_aguardando_disparo', '2142019', NULL,   NULL),               -- PO de outra empresa
   (20, 'OBEN', 'aprovado_aguardando_disparo', '2142020', NULL,   NULL),               -- AFI-20 sem contrato, casa
   (21, 'COLACOR', 'aprovado_aguardando_disparo', '2142021', NULL, NULL),              -- pedido de outra empresa
+  (22, 'OBEN', 'aprovado_aguardando_disparo', '2142022', NULL,   NULL),               -- casa, mas espelho velho
+  (23, 'OBEN', 'aprovado_aguardando_disparo', '2142023', NULL,   NULL),               -- A: disputa o PO 7023 com B
+  (24, 'OBEN', 'aprovado_aguardando_disparo', '2142024', NULL,   NULL),               -- B: mesmo conteúdo de A
   (50, 'OBEN', 'disparado',                   '2142050', '7009', NULL)                -- dono do PO 7009
 ) AS v(id, emp, st, prot, po, claim);
 
@@ -276,7 +286,9 @@ SELECT v.emp::public.empresa_reposicao, v.st::public.status_pedido_compra, v.cod
   ('OBEN', 'CANCELADO', 7018, 'M18', NULL,      '2142018',            NULL),
   ('COLACOR', 'CRIADO', 7019, 'M19', NULL,      '2142019',            NULL),
   ('OBEN', 'CRIADO',    7020, 'M20', 'AFI-20',  NULL,                 NULL),
-  ('OBEN', 'CRIADO',    7021, 'M21', NULL,      '2142021',            NULL)
+  ('OBEN', 'CRIADO',    7021, 'M21', NULL,      '2142021',            NULL),
+  ('OBEN', 'CRIADO',    7022, 'M22', NULL,      '2142022',            NULL),
+  ('OBEN', 'CRIADO',    7023, 'M23', NULL,      '2142023 / 2142024',  NULL)
   ) AS v(emp, st, cod, num, integ, contrato, rd);
 SQL
 
@@ -327,7 +339,18 @@ eq "V20 PO com o próprio AFI-<id> (resposta perdida), sem contrato: vincula" "$
 eq "V21 inexistente recusa" "$(V 999 | campo motivo)" "pedido_nao_encontrado"
 eq "V22 origem desconhecida = 22023" "$(Pq -c "SELECT public.sayerlack_vincular_po_manual(1, NULL, 'tela')" 2>&1 | sqlstate)" "22023"
 eq "V23 authenticated não executa = 42501" "$(Pq -c "SET ROLE authenticated; SELECT public.sayerlack_vincular_po_manual(1, NULL, 'importar')" 2>&1 | sqlstate)" "42501"
-eq "V24 uma trilha por vínculo (1, 2, 12, 14, 20)" "$(Pq -c "SELECT string_agg(detalhes->>'pedido_id', ',' ORDER BY (detalhes->>'pedido_id')::int) FROM public.acoes_execucoes")" "1,2,12,14,20"
+Pq -c "UPDATE public.sync_state SET last_sync_at = now() - interval '3 hours' WHERE account = 'oben'" >/dev/null
+eq "V25 espelho parado há 3 h: não vincula" "$(V 22 | campo motivo)|$(ST 22)" "espelho_desatualizado|aprovado_aguardando_disparo|-|-|-"
+Pq -c "UPDATE public.sync_state SET last_sync_at = now() - interval '5 minutes' WHERE account = 'oben'" >/dev/null
+# V26: 2 conexões. A trava o PO e segura a transação; B, no mesmo PO (contrato "A / B", mesmo conteúdo), espera e,
+# ao destravar, vê o dono. Sem a trava do PO, os dois vinculam o mesmo PO.
+( Pq -c "BEGIN; SELECT public.sayerlack_vincular_po_manual(23, NULL, 'varredura'); SELECT pg_sleep(1.5); COMMIT;" > "$TMP/a.out" 2>&1 ) &
+pid_a=$!
+sleep 0.6
+rb="$(V 24 NULL varredura)"
+wait "$pid_a" || true
+eq "V26 dois pedidos no mesmo PO: só o 1º vincula, o 2º vê o dono" "$(grep -o '"vinculado": [a-z]*' "$TMP/a.out" | head -1)|$(printf '%s' "$rb" | campo motivo)|$(Pq -c "SELECT count(*) FROM public.pedido_compra_sugerido WHERE omie_pedido_compra_id = '7023'")" '"vinculado": true|po_de_outro_pedido|1'
+eq "V24 uma trilha por vínculo (1, 2, 12, 14, 20, 23)" "$(Pq -c "SELECT string_agg(detalhes->>'pedido_id', ',' ORDER BY (detalhes->>'pedido_id')::int) FROM public.acoes_execucoes")" "1,2,12,14,20,23"
 
 echo
 echo "PASS=$PASS  FAIL=$FAIL"
