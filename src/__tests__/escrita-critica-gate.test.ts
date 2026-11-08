@@ -145,7 +145,6 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/pedido-programado-enviar/index.ts', 2],
   ['supabase/functions/pedido-programado-extrair/index.ts', 1],
   ['supabase/functions/process-recurring-orders/index.ts', 1],
-  ['supabase/functions/radar-ingest/index.ts', 1],
   ['supabase/functions/rag-reindex/index.ts', 3],
   ['supabase/functions/recommend/index.ts', 2],
   ['supabase/functions/sayerlack-captura-precos/index.ts', 1],

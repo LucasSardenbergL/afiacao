@@ -451,9 +451,18 @@ for (let i = 0; i < municipios.length; i += 1000)
 // Soma o que a edge descartou (por motivo) e deduplicou — o retorno dos chunks era ignorado.
 const descartadasEdge: Record<string, number> = {};
 let duplicadasNoChunk = 0;
-for (let i = 0; i < linhas.length; i += 1000) {
-  const resp = (await post({ action: "chunk", mes: MES, linhas: linhas.slice(i, i + 1000) })) as
-    { descartadas?: number; descartadas_por_motivo?: Record<string, number>; duplicadas_no_chunk?: number } | undefined;
+// Publicação atômica (edge v1.7): os chunks vão para o STAGING e o finalize valida a contagem dele contra
+// `esperado` = soma do `upserted` dos chunks. Uma linha por CNPJ na carga INTEIRA — CNPJ repetido em chunks
+// diferentes contaria duas vezes na soma e reprovaria o lote.
+const unicas = [...new Map(linhas.map((l) => [l.cnpj, l])).values()];
+if (unicas.length < linhas.length) console.warn(`⚠️ ${linhas.length - unicas.length} CNPJ(s) repetido(s) no dump — mantida a última linha`);
+let entreguesStaging = 0;
+for (let i = 0; i < unicas.length; i += 1000) {
+  const resp = (await post({ action: "chunk", mes: MES, linhas: unicas.slice(i, i + 1000) })) as
+    { upserted?: number; descartadas?: number; descartadas_por_motivo?: Record<string, number>; duplicadas_no_chunk?: number } | undefined;
+  // Ausente ≠ zero: sem `upserted` não há como declarar o esperado, e o lote não seria validado.
+  if (typeof resp?.upserted !== "number") throw new Error("chunk: resposta sem `upserted` — abortando (a foto vigente fica intacta)");
+  entreguesStaging += resp.upserted;
   if (resp?.descartadas_por_motivo) {
     for (const [motivo, n] of Object.entries(resp.descartadas_por_motivo)) {
       descartadasEdge[motivo] = (descartadasEdge[motivo] ?? 0) + n;
@@ -463,7 +472,7 @@ for (let i = 0; i < linhas.length; i += 1000) {
     descartadasEdge.nao_classificado = (descartadasEdge.nao_classificado ?? 0) + resp.descartadas;
   }
   duplicadasNoChunk += resp?.duplicadas_no_chunk ?? 0;
-  if ((i / 1000) % 25 === 0) console.log(`… ${i}/${linhas.length}`);
+  if ((i / 1000) % 25 === 0) console.log(`… ${i}/${unicas.length}`);
 }
 const totalRejeitadas = rejeitadasLocal.cnpj + rejeitadasLocal.cnae
   + Object.values(descartadasEdge).reduce((a, b) => a + b, 0);
@@ -483,14 +492,22 @@ if (temConhecidos) {
   const rej = Object.values(descartadasSituacao).reduce((a, b) => a + b, 0);
   console.log(`${rej > 0 ? "⚠️" : "📋"} situação cadastral enviada: ${situacoes.length} linhas · descartadas pela edge: ${JSON.stringify(descartadasSituacao)}`);
 }
-const fin = (await post({ action: "finalize", mes: MES })) as { situacao_aplicacao?: unknown; situacao?: unknown } | undefined;
+// O finalize VALIDA (staging = esperado, sem queda > 15% contra a foto vigente); quem troca a foto é o job
+// radar-publicar-lote, numa transação, em até ~15 min. Reprovado → 422 (post lança) e a foto vigente fica intacta.
+const fin = (await post({ action: "finalize", mes: MES, esperado: entreguesStaging })) as
+  { situacao_aplicacao?: unknown; situacao?: unknown; publicacao?: unknown } | undefined;
 console.log(`\n🏁 finalize:`, JSON.stringify(fin));
+if (fin?.publicacao === "cron") {
+  console.log(`📦 lote ${MES} validado (${entreguesStaging} empresas no staging) — vira vigente quando o job radar-publicar-lote publicar (≤ 15 min, fora da hora 06 UTC)`);
+} else {
+  console.warn("⚠️ finalize sem `publicacao`: edge antiga (≤ v1.6) — os chunks escreveram direto na fila, sem publicação atômica");
+}
 if (temConhecidos && fin?.situacao_aplicacao === "cron") {
   console.log("📅 situação cadastral: aplicada pelo job radar-aplicar-situacao-diario (06:05 UTC) — descartes e alerta ao gestor saem na próxima manhã, o aviso do lote às 06:45 depois disso");
 } else if (temConhecidos && fin && !("situacao" in fin)) {
   console.warn("⚠️ finalize sem `situacao_aplicacao` nem `situacao`: edge antiga (v1.1) — a situação cadastral deste lote NÃO será aplicada");
 }
-// Concorrentes DEPOIS do finalize: o lote de leads já está `complete` e uma falha da camada só pinta o job
+// Concorrentes DEPOIS do finalize: o lote de leads já está validado e uma falha da camada só pinta o job
 // de vermelho (exitCode 6, e-mail do GitHub) — nunca deixa a fila sem foto vigente.
 const concorrentesOk = concorrentesAtivos && (await publicarConcorrentes());
 const sociosOk = await publicarSocios();

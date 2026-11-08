@@ -17,7 +17,10 @@ export interface LoteIngest {
 }
 
 /** O maior `mes_referencia` com status `complete`. Running/error no meio são ignorados
- *  (um lote em voo ou falhado NÃO é a foto). Sem lote completo → `null` — e null é "não sei",
+ *  (um lote em voo ou falhado NÃO é a foto). Desde a publicação atômica (migration 20261110130000)
+ *  `complete` tem UM escritor — o job `radar-publicar-lote`, que troca a foto inteira numa transação —,
+ *  e os chunks de um lote `running` vão para o staging: enquanto ele não é publicado, nenhuma empresa
+ *  carrega o `ultimo_lote` dele. Sem lote completo → `null` — e null é "não sei",
  *  nunca "zero": o card diz "sem dado" e a fila não filtra por lote. */
 export function loteVigente(lotes: readonly LoteIngest[]): LoteIngest | null {
   let vigente: LoteIngest | null = null;
