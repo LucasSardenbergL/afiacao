@@ -78,3 +78,13 @@ A partir deste PR, "visitas" por dia pode contar 2 linhas da mesma pessoa (diret
 | 1 — e-mail | `gerar-pedidos-diario` (`bun run pendencias:deploy`) | — | sim (origem do sensor) |
 | 2 — dinheiro | — | `20261110100000` manual (envelope) | sim |
 | 3 — celular | — | — | sim |
+
+## Correção posterior — sucesso parcial não avança a fila
+
+Achado do Codex na 3ª revisão e confirmado na main: quando a decisão gravava e a execução falhava (`'parcial'`), o
+`DecisaoSheet` chamava `onSalvo`. Na fila, isso pulava para o próximo item e perdia o que tinha sido digitado em piso,
+canal, responsável, prazo e crédito. Agora o painel fica no item, mostra "A decisão foi salva, mas a execução não" e
+mantém um rascunho (`RascunhoParcial`, no nível do Sheet). Quando o refetch traz a versão gravada, o formulário
+remonta com o rascunho, em vez do falso aviso "mudou enquanto o painel estava aberto". O crédito de troca por encalhe
+que ficou para trás continua sendo enviado só depois do plano. Prova: 3 testes, com controle verde e a sabotagem
+(voltar a chamar `onSalvo` no parcial) deixando os 3 vermelhos. Deploy: só Publish.
