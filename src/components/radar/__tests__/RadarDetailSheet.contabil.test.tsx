@@ -16,6 +16,8 @@ const { Nada } = vi.hoisted(() => ({ Nada: () => null }));
 let leitura: LeituraContatoContabil | undefined;
 let lente = false;
 const mutate = vi.fn();
+const track = vi.fn();
+vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a) }));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: () => Promise.resolve({ data: null, error: null }) } }));
 vi.mock('@/lib/impersonation/lens-write-guard', () => ({ isLensActive: () => lente }));
 vi.mock('@/hooks/useIsTouchDevice', () => ({ useIsTouchDevice: () => false }));
@@ -53,7 +55,19 @@ const TEL1_CONTABIL = { automatico: true, efetivo: true, motivos: ['telefone_com
 function abrir() { return render(<RadarDetailSheet empresa={EMPRESA} hojeISO="2026-11-08" onClose={() => {}} />); }
 
 describe('RadarDetailSheet — contato provável da contabilidade', () => {
-  beforeEach(() => { mutate.mockClear(); lente = false; leitura = undefined; });
+  beforeEach(() => { mutate.mockClear(); track.mockClear(); lente = false; leitura = undefined; });
+
+  it('Maps: endereço como "Rua Número, Cidade - UF" e a busca pela empresa, cada clique com o seu track', () => {
+    abrir();
+    const endereco = screen.getByTestId('radar-mapa-endereco');
+    expect(decodeURIComponent(endereco.getAttribute('href') ?? '')).toContain('query=Rua A 10, Divinopolis - MG');
+    const empresa = screen.getByTestId('radar-mapa-empresa');
+    expect(decodeURIComponent(empresa.getAttribute('href') ?? '')).toContain('query=Marcenaria Um, Divinopolis - MG');
+    fireEvent.click(empresa);
+    fireEvent.click(endereco);
+    expect(track.mock.calls.filter((c) => c[0] === 'radar.mapa_ficha').map((c) => (c[1] as { link: string }).link))
+      .toEqual(['empresa', 'endereco']);
+  });
 
   it('telefone1 da contabilidade: selo + motivo SÓ nele; o copiar perde o destaque; o telefone2 direto, não', () => {
     leitura = lerContatoContabil([contato('telefone1', TEL1_CONTABIL), contato('telefone2'), contato('email')]);
@@ -79,6 +93,7 @@ describe('RadarDetailSheet — contato provável da contabilidade', () => {
     expect(bloco.textContent).toContain('O telefone e o e-mail que a Receita tem parecem ser da contabilidade');
     expect(bloco.textContent).toContain('Rua A, 10, Centro, DIVINOPOLIS, MG, 35500000');
     expect(within(bloco).getByRole('link', { name: /Abrir no mapa/ }).getAttribute('href')).toContain('google.com/maps');
+    expect(within(bloco).getByRole('link', { name: /Procurar a empresa no Maps/ })).toBeTruthy();
   });
 
   it('"Não é da contabilidade" manda o campo, o veredito e a versão vista (sem sobrescrita cega)', () => {

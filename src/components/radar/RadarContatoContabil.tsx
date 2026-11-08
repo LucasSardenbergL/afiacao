@@ -75,7 +75,13 @@ export function RadarContatoContabil({ cnpj, campo, contato }: {
 }
 
 /** O endereço em destaque quando o contato é (ou parece ser) da contabilidade: a próxima ação é a visita. */
-export function RadarPrefiraVisita({ endereco, mapsUrl, todos }: { endereco: string; mapsUrl: string; todos: boolean }) {
+export function RadarPrefiraVisita({ endereco, mapsUrl, mapsEmpresaUrl, todos, onAbrir }: {
+  endereco: string;
+  mapsUrl: string | null;
+  mapsEmpresaUrl: string | null;
+  todos: boolean;
+  onAbrir?: (link: 'endereco' | 'empresa') => void;
+}) {
   return (
     <div className="rounded-md border border-status-warning/40 bg-status-warning/5 p-2.5 text-sm" data-testid="radar-prefira-visita">
       <p className="font-medium flex items-center gap-1.5">
@@ -87,9 +93,22 @@ export function RadarPrefiraVisita({ endereco, mapsUrl, todos }: { endereco: str
           : 'Um dos telefones parece ser da contabilidade da empresa. Se não houver outro contato direto, vá ao endereço.'}
       </p>
       <p className="mt-1">{endereco}</p>
-      <Button asChild size="sm" className="mt-2">
-        <a href={mapsUrl} target="_blank" rel="noreferrer"><MapPin className="w-4 h-4 mr-1" /> Abrir no mapa</a>
-      </Button>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {mapsUrl && (
+          <Button asChild size="sm">
+            <a href={mapsUrl} target="_blank" rel="noreferrer" onClick={() => onAbrir?.('endereco')}>
+              <MapPin className="w-4 h-4 mr-1" /> Abrir no mapa
+            </a>
+          </Button>
+        )}
+        {mapsEmpresaUrl && (
+          <Button asChild size="sm" variant="outline">
+            <a href={mapsEmpresaUrl} target="_blank" rel="noreferrer" onClick={() => onAbrir?.('empresa')}>
+              Procurar a empresa no Maps
+            </a>
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

@@ -20,6 +20,7 @@ import { Selo } from './Selo';
 import { avisoTelefoneCompartilhado, gravarModoDiscagem, lerModoDiscagem } from '@/lib/radar/atendimento';
 import { useRadarTelefoneCompartilhado } from '@/queries/useRadarTelefoneCompartilhado';
 import { useRadarContatoContabil } from '@/queries/useRadarContatoContabil';
+import { urlMapsEmpresa, urlMapsEndereco } from '@/lib/radar/mapa-link';
 import {
   algumTelefoneContabil, contabilDoCampo, SELO_CONTABIL, type CampoContato, type ContatoContabil,
 } from '@/lib/radar/contato-contabil';
@@ -184,7 +185,10 @@ export function RadarDetailSheet({
   const endereco = [empresa.logradouro, empresa.numero, empresa.bairro, empresa.municipio_nome, empresa.uf, empresa.cep]
     .filter(Boolean)
     .join(', ');
-  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(endereco || empresa.cnpj)}`;
+  // Busca que o Maps resolve como ENDEREÇO ("Rua X 75, Cidade - UF") e, à parte, a busca pela EMPRESA (src/lib/radar/mapa-link.ts).
+  const mapsUrl = urlMapsEndereco(empresa);
+  const mapsEmpresaUrl = urlMapsEmpresa(empresa);
+  const abriuMapa = (link: 'endereco' | 'empresa', origem: 'linha' | 'visita') => track('radar.mapa_ficha', { link, origem });
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.razao_social || empresa.cnpj;
   const rfb = seloRfb(empresa);
@@ -243,7 +247,8 @@ export function RadarDetailSheet({
           <AvisoVinculoCredito documento={empresa.cnpj} superficie="ficha_radar" />
           <RadarAcoesLead empresa={empresa} conversaSalva={conversaSalva === empresa.cnpj} />
           {prefiraVisita && endereco && (
-            <RadarPrefiraVisita endereco={endereco} mapsUrl={mapsUrl} todos={leituraContabil?.visitar === true} />
+            <RadarPrefiraVisita endereco={endereco} mapsUrl={mapsUrl} mapsEmpresaUrl={mapsEmpresaUrl}
+              todos={leituraContabil?.visitar === true} onAbrir={(link) => abriuMapa(link, 'visita')} />
           )}
         </div>
         <div className="mt-4 divide-y">
@@ -315,9 +320,16 @@ export function RadarDetailSheet({
           )}
           <Linha label="Endereço">
             {endereco || '—'}
-            {endereco && (
-              <a className="ml-2 inline-flex items-center gap-1 text-xs underline" href={mapsUrl} target="_blank" rel="noreferrer">
+            {mapsUrl && (
+              <a className="ml-2 inline-flex items-center gap-1 text-xs underline" href={mapsUrl} target="_blank" rel="noreferrer"
+                data-testid="radar-mapa-endereco" onClick={() => abriuMapa('endereco', 'linha')}>
                 <MapPin className="w-3 h-3" /> mapa
+              </a>
+            )}
+            {mapsEmpresaUrl && (
+              <a className="ml-2 inline-flex items-center gap-1 text-xs underline" href={mapsEmpresaUrl} target="_blank" rel="noreferrer"
+                data-testid="radar-mapa-empresa" onClick={() => abriuMapa('empresa', 'linha')}>
+                procurar a empresa no Maps
               </a>
             )}
           </Linha>
