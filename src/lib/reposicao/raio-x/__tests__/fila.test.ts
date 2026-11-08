@@ -14,6 +14,25 @@ const coorte = (...ms: Array<[number, number | null]>): CoorteTop => ({
 });
 
 describe('filaTop', () => {
+  it('sugestões fáceis de confirmar primeiro, depois R$ desc; liquidar sem inequívoco NÃO é fácil; ordem estável', () => {
+    const facil = { parado: true, destino_sugerido: 'trocar' as const };
+    const itens = [
+      item(1, 900),                                                                  // sem sugestão confirmável (alto R$)
+      item(2, 100, facil),
+      item(3, 500, facil),
+      item(4, 800, { parado: true, destino_sugerido: 'liquidar', inequivoco: null }), // liquidar sem veredito: não é fácil
+      item(5, 300, { parado: true, destino_sugerido: 'liquidar', inequivoco: true }), // liquidar inequívoco: fácil
+      item(6, null, facil),                                                         // fácil sem custo: fim do bloco fácil
+      item(7, 500, facil),                                                          // empate de R$ com o 3: por SKU
+    ];
+    const ordem = (xs: ItemRaioX[]) => filaTop(xs, new Map()).map((i) => i.sku_codigo_omie);
+    expect(ordem(itens)).toEqual([3, 7, 5, 2, 6, 1, 4]);
+    // estável: a ordem de entrada não muda a saída
+    expect(ordem([...itens].reverse())).toEqual([3, 7, 5, 2, 6, 1, 4]);
+    // linha com decisão sem destino segue pendente e fácil; com destino sai da fila
+    expect(filaTop(itens, mapaDecisoes(decisao(3, { destino: null }), decisao(7, { destino: 'trocar' }))).map((i) => i.sku_codigo_omie))
+      .toEqual([3, 5, 2, 6, 1, 4]);
+  });
   it('só pendentes do Top, por R$ desc; sem custo no fim; fora do Top fica de fora', () => {
     const f = filaTop(
       [item(1, 100), item(2, 300), item(3, null), item(4, 200, { top: false }), item(5, 250)],

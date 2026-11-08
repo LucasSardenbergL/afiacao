@@ -264,6 +264,8 @@ describe('DecisaoSheet — execução', () => {
     const onSalvo = vi.fn();
     const { onClose } = abrir(undefined, itemRX({ inequivoco: true }), 0.18, { fila: { decididos: 12, total: 61, pendente: 250000, onPular }, onSalvo });
     expect(screen.getByTestId('fila-cabecalho').textContent).toMatch(/12 de 61 decididos · R\$\s?250\.000 pendente/);
+    // alvo de toque de 44px (size="touch"): o "Pular" é o botão mais tocado da fila no celular
+    expect(screen.getByRole('button', { name: 'Pular' }).className).toContain('h-11');
     fireEvent.click(screen.getByRole('button', { name: 'Pular' }));
     expect(onPular).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar: Liquidar' }));

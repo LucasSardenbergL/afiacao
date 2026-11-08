@@ -15667,6 +15667,45 @@ export type Database = {
         }
         Relationships: []
       }
+      sayerlack_incidente_cancelado_com_po: {
+        Row: {
+          aberto_em: string
+          id: number
+          justificativa: string | null
+          motivo: string
+          pedido_id: number
+          po_omie: string | null
+          protocolo: string
+          resolucao: string | null
+          resolvido_em: string | null
+          resolvido_por: string | null
+        }
+        Insert: {
+          aberto_em?: string
+          id?: never
+          justificativa?: string | null
+          motivo: string
+          pedido_id: number
+          po_omie?: string | null
+          protocolo: string
+          resolucao?: string | null
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+        }
+        Update: {
+          aberto_em?: string
+          id?: never
+          justificativa?: string | null
+          motivo?: string
+          pedido_id?: number
+          po_omie?: string | null
+          protocolo?: string
+          resolucao?: string | null
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+        }
+        Relationships: []
+      }
       sayerlack_retry_motor_log: {
         Row: {
           aprovado_em: string | null
@@ -26300,6 +26339,15 @@ export type Database = {
         Args: { p_itens: Json; p_pedido_id: number; p_valor_total: number }
         Returns: number
       }
+      sayerlack_cobertura_situacao_portal: {
+        Args: never
+        Returns: {
+          enviado_em: string
+          observado_ate: string
+          pedido_id: number
+          protocolo: string
+        }[]
+      }
       sayerlack_condicao_portal_normalizar: {
         Args: { p_texto: string }
         Returns: string
@@ -26344,6 +26392,10 @@ export type Database = {
       sayerlack_painel_portal: { Args: never; Returns: Json }
       sayerlack_registrar_situacao_portal: {
         Args: { p_itens: Json; p_lido_ate: string; p_lido_de: string }
+        Returns: Json
+      }
+      sayerlack_resolver_incidente_cancelado_com_po: {
+        Args: { p_incidente_id: number; p_justificativa: string }
         Returns: Json
       }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
