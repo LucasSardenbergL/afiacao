@@ -79,6 +79,7 @@ beforeEach(() => {
   rpc.mockImplementation(() => Promise.resolve({ data: {}, error: null }));
   toast.error.mockReset();
   toast.success.mockReset();
+  toast.warning.mockReset();
   track.mockReset();
 });
 
@@ -186,19 +187,70 @@ describe('DecisaoSheet — execução', () => {
     }]);
   });
 
-  it('sucesso parcial: decisão gravou, plano falhou → aviso que diz isso e o painel segue (a decisão conta)', async () => {
+  it('sucesso parcial: decisão gravou, plano falhou → aviso, NÃO avança a fila e o rascunho do plano fica', async () => {
+    let planejarFalha = true;
     rpc.mockImplementation((nome: string) => Promise.resolve(
       nome === 'raio_x_decidir'
         ? { data: { atualizado_em: VERSAO_NOVA }, error: null }
-        : { data: null, error: { code: '22023', message: 'raio_x: responsavel nao e da equipe' } },
+        : planejarFalha
+          ? { data: null, error: { code: '22023', message: 'raio_x: responsavel nao e da equipe' } }
+          : { data: {}, error: null },
     ));
     const onSalvo = vi.fn();
-    abrir(undefined, itemRX({ inequivoco: true }), 0.18, { onSalvo });
+    abrir(undefined, itemRX({ inequivoco: true }), 0.18, { onSalvo, fila: { decididos: 0, total: 61, pendente: 1000, onPular: vi.fn() } });
     fireEvent.click(screen.getByRole('button', { name: 'Liquidar' }));
+    fireEvent.change(screen.getByLabelText(/Preço piso/), { target: { value: '7,5' } });
+    fireEvent.change(screen.getByLabelText('Canal'), { target: { value: 'outlet_queima' } });
     fireEvent.click(salvarDec());
-    await waitFor(() => expect(onSalvo).toHaveBeenCalled());
-    expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/^Decisão salva, mas a execução NÃO: raio_x: responsavel nao e da equipe/));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/^Decisão salva, mas a execução NÃO: raio_x: responsavel nao e da equipe/)));
     expect(toast.error).not.toHaveBeenCalled();
+    // a fila NÃO avança: o piso/canal digitados seguem no painel, com o aviso de que falta a execução
+    expect(onSalvo).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText(/A decisão foi salva, mas a execução não/)).toBeTruthy());
+    expect((screen.getByLabelText(/Preço piso/) as HTMLInputElement).value).toBe('7,5');
+    expect((screen.getByLabelText('Canal') as HTMLSelectElement).value).toBe('outlet_queima');
+    // 2ª tentativa: o plano grava e só então a fila anda
+    planejarFalha = false;
+    fireEvent.click(salvarDec());
+    await waitFor(() => expect(onSalvo).toHaveBeenCalledTimes(1));
+    const planos = argsDe('raio_x_planejar');
+    expect(planos).toHaveLength(2);
+    expect(planos[1]).toMatchObject({ p_preco_piso: 7.5, p_canal: 'outlet_queima', p_atualizado_em: VERSAO_NOVA });
+  });
+
+  it('sucesso parcial + refetch com a decisão gravada: remonta com o rascunho, sem acusar "mudou" e só a execução vai', async () => {
+    rpc.mockImplementation((nome: string) => Promise.resolve(
+      nome === 'raio_x_decidir'
+        ? { data: { atualizado_em: VERSAO_NOVA }, error: null }
+        : { data: null, error: { code: '22023', message: 'raio_x: falhou' } },
+    ));
+    viva.v = null;
+    const onSalvo = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const item = itemRX({ inequivoco: true });
+    const arvore = (d: DecisaoRow | undefined) => (
+      <QueryClientProvider client={qc}>
+        <ReposicaoEmpresaProvider value={{ empresa: 'OBEN', setEmpresa: () => {} }}>
+          <DecisaoSheet empresa="oben" item={item} decisao={d} onClose={vi.fn()} onSalvo={onSalvo} taxa={0.18} equipe={EQUIPE} userId="u-eu" />
+        </ReposicaoEmpresaProvider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(arvore(undefined));
+    fireEvent.click(screen.getByRole('button', { name: 'Liquidar' }));
+    fireEvent.change(screen.getByLabelText(/Preço piso/), { target: { value: '7,5' } });
+    fireEvent.click(salvarDec());
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
+    // o refetch traz a decisão que NÓS gravamos (versão nova)
+    const gravada = decisao(1, { destino: 'liquidar', decidido_por: 'u-eu', decidido_em: '2026-11-02T10:00:00Z', atualizado_em: VERSAO_NOVA });
+    viva.v = VERSAO_NOVA;
+    rerender(arvore(gravada));
+    expect(screen.queryByText(/mudou enquanto o painel estava aberto/)).toBeNull();
+    expect((screen.getByLabelText(/Preço piso/) as HTMLInputElement).value).toBe('7,5');
+    rpc.mockImplementation(() => Promise.resolve({ data: {}, error: null }));
+    fireEvent.click(salvarExec());
+    await waitFor(() => expect(onSalvo).toHaveBeenCalledTimes(1));
+    expect(argsDe('raio_x_decidir')).toHaveLength(1);
+    expect(argsDe('raio_x_planejar').at(-1)).toMatchObject({ p_preco_piso: 7.5, p_atualizado_em: VERSAO_NOVA });
   });
 
   it('decisão recusada (RX004): nada de plano, painel aberto', async () => {
@@ -330,11 +382,13 @@ describe('DecisaoSheet — execução', () => {
     fireEvent.change(screen.getByLabelText('Crédito de troca (R$)'), { target: { value: '60.000' } });
     fireEvent.change(screen.getByLabelText('O que entra no lugar'), { target: { value: 'encalhe' } });
     fireEvent.click(salvarDec());
-    await waitFor(() => expect(onSalvo).toHaveBeenCalled());
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/^Decisão salva, mas a execução NÃO/)));
     // 1ª decidir SEM crédito; planejar falhou; o crédito nunca foi gravado
     expect(argsDe('raio_x_decidir')).toHaveLength(1);
     expect(argsDe('raio_x_decidir')[0]).toEqual(expect.objectContaining({ p_destino: 'trocar', p_credito_troca: null }));
-    expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/^Decisão salva, mas a execução NÃO/));
+    // sucesso parcial não avança a fila: o crédito digitado fica no painel para o próximo salvar
+    expect(onSalvo).not.toHaveBeenCalled();
+    await waitFor(() => expect((screen.getByLabelText('Crédito de troca (R$)') as HTMLInputElement).value).toBe('60.000'));
   });
 
   it('troca por encalhe com tudo certo: decidir sem crédito → plano → crédito (mesmo destino, motor intocado na 3ª)', async () => {
