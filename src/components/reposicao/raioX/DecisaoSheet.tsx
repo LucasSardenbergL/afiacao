@@ -100,7 +100,7 @@ export function DecisaoSheet({ empresa, item, decisao, onClose, onSalvo, taxa = 
               <span>
                 {fila.decididos} de {fila.total} decididos · {fila.pendente === null ? 'R$ —' : fmtReais(fila.pendente)} pendente
               </span>
-              <Button size="sm" variant="ghost" onClick={fila.onPular}>Pular</Button>
+              <Button size="touch" variant="ghost" onClick={fila.onPular}>Pular</Button>
             </div>
           )}
           <SheetTitle>{item.descricao ?? item.codigo}</SheetTitle>

@@ -1,22 +1,33 @@
 // Fila de decisão do Top 61 (UX 3 da 2ª revisão) e a linha histórica do membro da coorte que zerou (bug 2).
 // Lógica pura. A fila só ORDENA e escolhe o próximo — decidir continua sendo um toque humano por item, nunca lote.
+import { sugestaoConfirmavel } from './decisao';
 import type { CoorteTop, DecisaoRow, ItemRaioX } from './tipos';
 
 /** Valor que ordena a fila: o de hoje; na linha histórica (saiu do estoque), o congelado na coorte. */
 const valorDaFila = (i: ItemRaioX): number | null => (i.fora_do_estoque ? (i.valor_coorte ?? null) : i.valor);
 
-/** Pendentes do Top 61 (coorte) por R$ desc; sem custo vão ao fim, por SKU (ordem estável). */
+/**
+ * Pendentes do Top 61 (coorte). Primeiro as sugestões fáceis de confirmar (1 toque — `sugestaoConfirmavel`), depois o
+ * resto; dentro de cada bloco, R$ desc, sem custo ao fim, desempate por SKU (ordem estável). Só ORDENA: a regra de
+ * quem pode ser confirmado é a mesma do botão, e liquidar sem veredito inequívoco nunca entra no 1º bloco.
+ */
 export function filaTop(itens: ItemRaioX[], decisoes: Map<number, DecisaoRow>): ItemRaioX[] {
+  const facil = (i: ItemRaioX) => sugestaoConfirmavel(i, decisoes.get(i.sku_codigo_omie)) !== null;
   return itens
     .filter((i) => i.top && !decisoes.get(i.sku_codigo_omie)?.destino)
-    .sort((a, b) => {
+    .map((i) => ({ i, f: facil(i) }))
+    .sort((x, y) => {
+      if (x.f !== y.f) return x.f ? -1 : 1;
+      const a = x.i;
+      const b = y.i;
       const va = valorDaFila(a);
       const vb = valorDaFila(b);
       if (va === null && vb === null) return a.sku_codigo_omie - b.sku_codigo_omie;
       if (va === null) return 1;
       if (vb === null) return -1;
       return vb - va || a.sku_codigo_omie - b.sku_codigo_omie;
-    });
+    })
+    .map((x) => x.i);
 }
 
 /**

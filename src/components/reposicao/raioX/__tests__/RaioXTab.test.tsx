@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { classificar } from '@/lib/reposicao/raio-x/classificar';
@@ -22,11 +22,13 @@ const linhas: LinhaMedicao[] = [{
   troca_contrapartida: null, unidade_estoque: 'UN', unidades_venda_periodo: [],
 }];
 
+const ambiente = vi.hoisted(() => ({ mobile: false, syncedHoras: null as number | null }));
+vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => ambiente.mobile }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-eu' } }) }));
 vi.mock('@/contexts/ReposicaoEmpresaContext', () => ({ useReposicaoEmpresa: () => ({ empresa: 'OBEN', setEmpresa: () => {} }) }));
 vi.mock('../useRaioX', () => ({
   useRaioX: () => ({
-    itens, historicos: [], decisoes: new Map(), syncedHoras: null, isLoading: false, erro: null, coorteEstado: 'congelada',
+    itens, historicos: [], decisoes: new Map(), syncedHoras: ambiente.syncedHoras, isLoading: false, erro: null, coorteEstado: 'congelada',
     placar: placar(itens, new Map()),
   }),
   useRaioXMedicao: () => ({ linhas, isLoading: false, erro: null }),
@@ -146,5 +148,63 @@ describe('RaioXTab — vazio filtrado (UX 4)', () => {
     expect(screen.getByText('Nenhum item com esses filtros')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }));
     expect(screen.getAllByText(/A100/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('RaioXTab — celular: fila leve (3ª revisão)', () => {
+  const abrirEm = (url: string) => {
+    const qc = new QueryClient();
+    return render(<QueryClientProvider client={qc}><MemoryRouter initialEntries={[url]}><RaioXTab /></MemoryRouter></QueryClientProvider>);
+  };
+  const comMobile = (fn: () => void) => {
+    ambiente.mobile = true;
+    try { fn(); } finally { ambiente.mobile = false; ambiente.syncedHoras = null; }
+  };
+
+  it('abre direto na fila do Top 61; segmentos, filtros e placar completo ficam no Avançado recolhido', () => comMobile(() => {
+    abrirEm('/x');
+    const fila = screen.getByRole('region', { name: 'Fila do Top 61' });
+    expect(within(fila).getAllByText(/A100/).length).toBeGreaterThan(0);
+    const avancado = screen.getByTestId('avancado');
+    expect(avancado.hasAttribute('open')).toBe(false);
+    // tudo que é "avançado" mora DENTRO do details recolhido, não fora
+    expect(within(avancado).getByRole('group', { name: 'Segmento' })).toBeTruthy();
+    expect(within(avancado).getByLabelText('Destino')).toBeTruthy();
+    expect(within(avancado).getByRole('button', { name: 'Saídas' })).toBeTruthy();
+    expect(fila.contains(screen.getByLabelText('Destino'))).toBe(false);
+  }));
+
+  it('o link do e-mail/Cmd-K (rxTop=1&rxStatus=pendente) é a fila: Avançado segue recolhido', () => comMobile(() => {
+    abrirEm('/x?aba=raio-x&rxTop=1&rxStatus=pendente&origem=email');
+    expect(screen.getByRole('region', { name: 'Fila do Top 61' })).toBeTruthy();
+    expect(screen.getByTestId('avancado').hasAttribute('open')).toBe(false);
+  }));
+
+  it('filtro ou segmento na URL abre o Avançado (e a fila sai da frente)', () => comMobile(() => {
+    abrirEm('/x?rxDestino=liquidar');
+    expect(screen.getByTestId('avancado').hasAttribute('open')).toBe(true);
+    expect(screen.queryByRole('region', { name: 'Fila do Top 61' })).toBeNull();
+  }));
+
+  it('avisos amarelos ficam ABAIXO do botão da fila', () => comMobile(() => {
+    ambiente.syncedHoras = 30;
+    abrirEm('/x');
+    const botao = screen.getByRole('button', { name: 'Decidir Top 61 (3 pendentes)' });
+    const aviso = screen.getByText(/estoque sincronizado há 30 h/);
+    expect(botao.compareDocumentPosition(aviso) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }));
+});
+
+describe('RaioXTab — desktop: avisos abaixo do botão, sem Avançado', () => {
+  it('aviso depois do botão; nada de details "Avançado" no desktop', () => {
+    ambiente.syncedHoras = 30;
+    try {
+      const qc = new QueryClient();
+      render(<QueryClientProvider client={qc}><MemoryRouter><RaioXTab /></MemoryRouter></QueryClientProvider>);
+      const botao = screen.getByRole('button', { name: 'Decidir Top 61 (3 pendentes)' });
+      const aviso = screen.getByText(/estoque sincronizado há 30 h/);
+      expect(botao.compareDocumentPosition(aviso) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.queryByTestId('avancado')).toBeNull();
+    } finally { ambiente.syncedHoras = null; }
   });
 });
