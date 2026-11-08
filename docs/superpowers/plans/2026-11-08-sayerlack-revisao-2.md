@@ -16,16 +16,23 @@
 ## Decisões
 
 - ✅ Founder: seguir com B1–B12 e depois o resto do plano.
-- 🧭 Founder: alíquota dos 5 NCMs (27101230 · 32091010 · 32099020 · 32159000 · 39095012).
+- ✅ Alíquota dos 5 NCMs provada nas NF-e do Omie (39095012 = 3,25%; os outros 4 = 0%, CST 51) — PR #3717.
+- ✅ B13 (decisão delegada pelo founder): SEMPRE a variante sem "(C)"; de-para "30 DIAS" A30 → T54 (nenhum PO usou "(C)").
 - 🧭 Founder: significado do "(C)". **Até decidir (decisão de engenharia, fail-closed):** portal "4/6/13 DIAS",
   e qualquer N em que o catálogo tenha as duas variantes, viram **ambíguos → IP007** (recusa com a lista), em vez
   de gravar a variante sem "(C)" em silêncio. Implementar em B-sessão A, item B13.
 
 ## Andamento da Sessão B (tela e painel)
 
-- 🔄 **PR B1** — B7 (tela), B8, 8.5, 6.10, 6.7 (chave sob `pedidos-ciclo`), B12/8.4 runbook.
-- ⏳ **PR B2** — RPC `sayerlack_painel_portal` v2 + card (6.1–6.6, 6.8, 6.9, 6.11) + prova PG17.
-- ⏳ **8.3** — QA no navegador e no celular.
+- ✅ **PR B1** (#3715) — B7 (tela), B8, 8.5, 6.10, 6.7 (chave sob `pedidos-ciclo`), B12/8.4 runbook. Publish: founder.
+- 🔄 **PR B2** — RPC `sayerlack_painel_portal` v2 (migration `20261109100000` APLICADA, #977) + card (6.1–6.9, 6.11 sem
+  "alterado no portal", que espera a 5.2) + prova PG17.
+- ✅ **8.3** — QA no navegador do app (app local com o código do B2, dados de prod, usuário master), desktop e
+  375×812: card com horário, sensor de alíquota (13 SKUs) e "não posso afirmar" (correto: a última efetiva é v1.4);
+  importados com "pedido de compra"; Cmd-K abre o diálogo; vários números com inválido mostrado e botão travado (sem
+  enviar importação real); Esc fecha e devolve o foco; sem rolagem horizontal; alvos de toque com 44px; abrir pedido
+  pelo card funciona. Achado fora da fronteira: em Gerir pedidos o "voltar" do celular não fecha o detalhe do pedido
+  (ele é estado da página, não da URL) — vale para a página inteira, follow-up.
 
 ## Brechas novas (B1–B13)
 

@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **809** custom migrations totais
-- **2694** objetos esperados (criados por estas migrations)
+- **811** custom migrations totais
+- **2695** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1054
+  - `function`: 1055
   - `rls_policy`: 519
   - `index`: 382
   - `table`: 249
@@ -6659,6 +6659,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `index` | `public.idx_tint_formulas_nome_cor` | `tint_formulas` |
+
+### `20261109100000_sayerlack_painel_portal_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_painel_portal` | — |
+
+### `20261109120000_sayerlack_condicao_sem_c.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20261109130000_ipi_aliquota_ncm_seed_nf_omie.sql`
 

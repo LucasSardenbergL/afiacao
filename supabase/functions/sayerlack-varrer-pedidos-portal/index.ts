@@ -48,6 +48,10 @@ import {
   reconsultasForaDaJanela,
   observacoesDaLista,
   type ObservacaoSituacao,
+  desfechoImportacao,
+  carenciaRedisparo,
+  maisRecente,
+  entregaCobertaPeloSync,
 } from "./varredura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -61,6 +65,11 @@ const BROWSERLESS_TOKEN = Deno.env.get("BROWSERLESS_TOKEN");
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 
 const ACAO_REGISTRO = "reposicao.varrer_portal_sayerlack";
+/**
+ * `modo=listar` grava em slug PRÓPRIO (revisão 2, B9): o vigia `sayerlack_varredura_portal` do data_health lê só
+ * ACAO_REGISTRO — uma leitura manual de diagnóstico não pode passar por "a automação de importação rodou".
+ */
+const ACAO_REGISTRO_LISTAR = "reposicao.listar_portal_sayerlack";
 const FROM_EMAIL = "Reposicao OBEN <onboarding@resend.dev>";
 /** Só começa uma importação se ainda houver este tempo de folga até o teto da edge (cada uma leva ~1–3 min). */
 const TETO_EDGE_MS = 380_000;
@@ -374,7 +383,7 @@ async function encerrarCanceladoNoPortal(
   return error ? { ok: false, mensagem: error.message } : { ok: true, mensagem: "encerrado" };
 }
 
-interface PedidoNoApp { id: number; status: string | null; temPo: boolean }
+interface PedidoNoApp { id: number; status: string | null; temPo: boolean; ultimaMudanca: string | null; dataEntrega: string | null }
 
 /** Status em que o PO ainda pode ser (re)disparado pela importadora (mesma régua de STATUS_REDISPARAVEIS lá). */
 const STATUS_REDISPARAVEIS = new Set(["aprovado_aguardando_disparo", "falha_envio"]);
@@ -386,8 +395,8 @@ const STATUS_REDISPARAVEIS = new Set(["aprovado_aguardando_disparo", "falha_envi
 async function pedidosNoApp(db: Db, protocolos: string[]): Promise<Map<string, PedidoNoApp>> {
   const m = new Map<string, PedidoNoApp>();
   if (protocolos.length === 0) return m;
-  const linhas = await fetchAll<{ id: number; portal_protocolo: string | null; status: string | null; omie_pedido_compra_id: string | number | null }>(
-    (de, ate) => db.from("pedido_compra_sugerido").select("id, portal_protocolo, status, omie_pedido_compra_id").in("portal_protocolo", protocolos)
+  const linhas = await fetchAll<{ id: number; portal_protocolo: string | null; status: string | null; omie_pedido_compra_id: string | number | null; atualizado_em: string | null; enviado_portal_em: string | null; portal_data_entrega: string | null }>(
+    (de, ate) => db.from("pedido_compra_sugerido").select("id, portal_protocolo, status, omie_pedido_compra_id, atualizado_em, enviado_portal_em, portal_data_entrega").in("portal_protocolo", protocolos)
       .order("id", { ascending: true }).range(de, ate),
     "varrer-portal:protocolos-no-app",
   );
@@ -395,7 +404,8 @@ async function pedidosNoApp(db: Db, protocolos: string[]): Promise<Map<string, P
     const prot = (r.portal_protocolo ?? "").trim();
     if (!prot) continue;
     const po = r.omie_pedido_compra_id == null ? "" : String(r.omie_pedido_compra_id).trim();
-    m.set(prot, { id: r.id, status: r.status, temPo: po !== "" && po !== "0" });
+    // Última mudança do pedido (falha do disparo grava `atualizado_em`): base da carência do re-disparo (B5).
+    m.set(prot, { id: r.id, status: r.status, temPo: po !== "" && po !== "0", ultimaMudanca: maisRecente(r.atualizado_em, r.enviado_portal_em), dataEntrega: r.portal_data_entrega });
   }
   return m;
 }
@@ -467,6 +477,30 @@ async function registrarFalha(db: Db, protocolo: string, mensagem: string): Prom
   }
 }
 
+/**
+ * "Não sei se entrou" vira trabalho DURÁVEL (revisão 2, B6): linha aberta em `sayerlack_varredura_falha` SEM e-mail e
+ * sem afirmar falha — a próxima rodada (na janela) ou a reconsulta por número (fora dela, ≤ 1×/20 h) confere. Sem
+ * isto, o indeterminado da última rodada em que o pedido cabia nos 7 dias saía da fila para sempre. false = não gravou.
+ */
+async function registrarIndeterminado(db: Db, protocolo: string, mensagem: string): Promise<boolean> {
+  try {
+    const agora = new Date().toISOString();
+    const { data: atual, error: errSel } = await db.from("sayerlack_varredura_falha")
+      .select("protocolo, tentativas").eq("protocolo", protocolo).maybeSingle();
+    if (errSel) throw new Error(errSel.message);
+    const linha = atual as { tentativas: number } | null;
+    const { error } = linha
+      ? await db.from("sayerlack_varredura_falha")
+        .update({ mensagem, ultima_em: agora, tentativas: (linha.tentativas ?? 0) + 1, resolvido_em: null }).eq("protocolo", protocolo)
+      : await db.from("sayerlack_varredura_falha").insert({ protocolo, mensagem, primeira_em: agora, ultima_em: agora, tentativas: 1 });
+    if (error) throw new Error(error.message);
+    return true;
+  } catch (e) {
+    console.warn(`[varrer-portal] indeterminado de ${protocolo} NÃO registrado: ${mensagemDeErro(e)}`);
+    return false;
+  }
+}
+
 async function marcarResolvidos(db: Db, protocolos: string[]): Promise<void> {
   if (protocolos.length === 0) return;
   const { error } = await db.from("sayerlack_varredura_falha")
@@ -504,7 +538,7 @@ async function syncPedidosCompletoEm(db: Db): Promise<string | null> {
   return r?.status === "complete" && r.last_sync_at ? r.last_sync_at : null;
 }
 
-async function importar(protocolo: string, situacoes: string[]): Promise<{ httpStatus: number; corpo: unknown }> {
+async function importar(protocolo: string, situacoes: string[], somenteSituacao = false): Promise<{ httpStatus: number; corpo: unknown }> {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 240_000);
   try {
@@ -513,7 +547,7 @@ async function importar(protocolo: string, situacoes: string[]): Promise<{ httpS
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
       // A releitura da importadora tem de achar a MESMA situação que a varredura classificou (Codex P1, 2026-10-16/17):
       // um pedido que passou de Aberto para Atendido no meio da rodada escaparia da trava de NF.
-      body: JSON.stringify({ protocolo, situacoes_permitidas: situacoes }),
+      body: JSON.stringify(somenteSituacao ? { protocolo, situacoes_permitidas: situacoes, somente_situacao: true } : { protocolo, situacoes_permitidas: situacoes }),
       signal: ctrl.signal,
     });
     const txt = await resp.text();
@@ -529,11 +563,11 @@ async function importar(protocolo: string, situacoes: string[]): Promise<{ httpS
 // ── Registro da execução (Onda 3, item 3.6) ─────────────────────────────────────────────────────────────────────────
 // Local, em vez de `comRegistro` (_shared, serve 10 edges): rodada que termina em erro guarda o RESUMO PARCIAL junto do
 // erro — antes só `{erro}` sobrava e o "o que a rodada viu" sumia exatamente quando importava. Fail-open (observabilidade).
-async function abrirExecucao(db: Db, auth: { via: string; userId?: string }): Promise<string | null> {
+async function abrirExecucao(db: Db, auth: { via: string; userId?: string }, acao: string): Promise<string | null> {
   try {
     const manual = auth.via === "staff";
     const { data, error } = await db.from("acoes_execucoes")
-      .insert({ acao: ACAO_REGISTRO, origem: manual ? "manual" : "automatica", executado_por: manual ? (auth.userId ?? null) : null })
+      .insert({ acao, origem: manual ? "manual" : "automatica", executado_por: manual ? (auth.userId ?? null) : null })
       .select("id").single();
     if (error || !data) { console.warn(`[varrer-portal] registro não abriu (fail-open): ${error?.message ?? "sem id"}`); return null; }
     return (data as { id: string }).id;
@@ -601,6 +635,21 @@ async function reservarTentativa(db: Db, protocolo: string, mensagem: string): P
   return "reservado";
 }
 
+/** Re-disparo de pedido cuja entrega está fora da janela que o sync de pedidos de compra cobre (B5, Codex revisão 2). */
+function mensagemForaDaCobertura(protocolo: string, pedidoId: number, entrega: string | null): string {
+  return `Pedido ${protocolo} está no app (#${pedidoId}) sem pedido de compra, mas a entrega dele (${entrega ?? "sem data"}) ` +
+    `está fora da janela que o sync de pedidos de compra do Omie confere: o espelho não prova que ninguém lançou o PO à ` +
+    `mão. O cron não re-dispara — confira no Omie e use "Importar do portal".`;
+}
+
+/** Re-disparo esperando o sync do espelho há mais de 6 h (B5): pendência visível, como a carência presa (3.9). */
+function mensagemRedisparoTravado(protocolo: string, pedidoId: number, desde: string | null): string {
+  return `Pedido ${protocolo} está no app (#${pedidoId}) sem pedido de compra e o re-disparo automático espera o sync de ` +
+    `pedidos de compra do Omie terminar "complete" depois da última tentativa (${desde ?? "data desconhecida"}), há mais de 6 h. ` +
+    `Sem isso, um PO lançado à mão no Omie depois da falha não aparece no espelho e o re-disparo duplicaria. Confira o ` +
+    `sync, ou o Omie, e use "Importar do portal".`;
+}
+
 /** Reconsulta por número a cada no máximo este intervalo (a falha aberta grava `ultima_em` a cada tentativa). */
 const INTERVALO_RECONSULTA_MS = 20 * 3600_000;
 
@@ -632,13 +681,21 @@ Deno.serve(async (req: Request) => {
   const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   // O resumo vai sendo montado AQUI fora: se a rodada lançar no meio, o registro guarda o que ela já tinha visto (3.6).
   let resumoFinal: Record<string, unknown> = { modo, versao: VERSAO };
-  const registro = await abrirExecucao(db, auth);
+  const registro = await abrirExecucao(db, auth, modo === "listar" ? ACAO_REGISTRO_LISTAR : ACAO_REGISTRO);
   const falhasReconciliacao: { pedido_id: number; protocolo: string; mensagem: string }[] = [];
   const falhasSituacao: string[] = [];
   // 4.3: cada leitura da lista e cada importação abre UMA sessão no Browserless (cota do plano). Conta por rodada.
   const sessoes = { leitura_portal: 0, importacao: 0 };
   const lerPortalContado = (desde: string) => { sessoes.leitura_portal += 1; return lerPortal(desde); };
-  const importarContado = (protocolo: string, situacoes: string[]) => { sessoes.importacao += 1; return importar(protocolo, situacoes); };
+  const importarContado = async (protocolo: string, situacoes: string[], somenteSituacao = false) => {
+    sessoes.importacao += 1;
+    const r = await importar(protocolo, situacoes, somenteSituacao);
+    // B3: situação lida pela importadora e não gravada é problema DA RODADA (vermelha), não só do e-mail.
+    if ((r.corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada === "erro") {
+      falhasSituacao.push(`importadora não gravou a situação de ${protocolo}`);
+    }
+    return r;
+  };
   const sessoesBrowserless = () => ({ ...sessoes, total: sessoes.leitura_portal + sessoes.importacao });
   // 4.2: causa de falha ANTES do protocolo (sem leitura provada não há protocolo a avisar). O vigia do data_health
   // (`sayerlack_varredura_portal`) lê este campo do registro e manda 1 e-mail por causa.
@@ -660,10 +717,22 @@ Deno.serve(async (req: Request) => {
   /** Escritor único da situação (Onda 5A). Erro não some: vira problema da rodada (vermelha no fim). */
   async function gravarSituacoes(itens: ObservacaoSituacao[], de: string, ate: string): Promise<Record<string, unknown>> {
     if (itens.length === 0) return { enviadas: 0 };
-    const { data, error } = await db.rpc("sayerlack_registrar_situacao_portal", { p_lido_de: de, p_lido_ate: ate, p_itens: itens });
+    const chamar = () => db.rpc("sayerlack_registrar_situacao_portal", { p_lido_de: de, p_lido_ate: ate, p_itens: itens });
+    let { data, error } = await chamar();
+    // 1 nova tentativa (revisão 2, B3): o 6 lido e não gravado deixa a compra liberada pelo estado antigo.
+    if (error) ({ data, error } = await chamar());
     if (error) {
       falhasSituacao.push(error.message.slice(0, 200));
-      return { enviadas: itens.length, erro: error.message.slice(0, 200) };
+      // Persistir o VETO é dinheiro, não telemetria: cada 6 não gravado vira pendência com e-mail (o vigia do
+      // data_health ignora falha depois da prova de leitura — o aviso é por protocolo).
+      const cancelados = itens.filter((i) => i.codigo === "6");
+      for (const c of cancelados) {
+        await registrarFalha(db, c.protocolo,
+          `Pedido ${c.protocolo} está "${c.texto}" no portal, mas o bloqueio NÃO foi gravado no pedido do app ` +
+            `(${error.message.slice(0, 120)}). Até a próxima leitura gravar, o disparo automático ainda pode criar o pedido ` +
+            `de compra: confira o pedido em Gerir pedidos.`);
+      }
+      return { enviadas: itens.length, erro: error.message.slice(0, 200), cancelados_nao_gravados: cancelados.map((c) => c.protocolo) };
     }
     const r = (data ?? {}) as { aceitos?: { pedido_id: number; protocolo: string; codigo: string }[]; ignorados?: number; fora_de_ordem?: number };
     return {
@@ -677,9 +746,10 @@ Deno.serve(async (req: Request) => {
     if (portalSayerlackFechado(new Date())) {
       return { modo, versao: VERSAO, pulado: "portal_fechado", mensagem: "Portal Sayerlack fora do ar (sábado 12h → segunda 6h): rodada pulada." };
     }
-    // 0b. Pedido do app em voo/conciliação: pode ser ele o "pedido novo" do portal — a rodada não varre.
+    // 0b. Pedido do app em voo/conciliação: pode ser ele o "pedido novo" do portal — a rodada NÃO IMPORTA nem
+    //     re-dispara nada. Mas LÊ e grava as situações (revisão 2, B4): um pedido em conciliação não pode desligar a
+    //     observação dos cancelamentos dos demais (o claim de disparo só recusa o 6 persistido).
     const bloqueio = motivoBloqueio(await pedidosEmVoo(db));
-    if (bloqueio) return { modo, versao: VERSAO, pulado: "bloqueado", mensagem: `Rodada não importa: ${bloqueio}.` };
 
     const faltando = [
       ["SAYERLACK_PORTAL_USER", SAYERLACK_PORTAL_USER], ["SAYERLACK_PORTAL_PASS", SAYERLACK_PORTAL_PASS],
@@ -716,7 +786,9 @@ Deno.serve(async (req: Request) => {
       modo, versao: VERSAO, emissao_desde: emissaoDesde, paginas: envelope.paginas ?? null, info_portal: envelope.info ?? null,
       total_anunciado: prova.ok ? prova.total : (envelope.resposta_total ?? null), dt_total: envelope.dt_total ?? null, resposta_chaves: envelope.resposta_chaves ?? null,
       linhas_lidas: (envelope.linhas ?? []).length, lidos: lista.pedidos.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
-      cabecalhos: envelope.headers ?? [], prova_leitura: prova.ok ? "ok" : prova.motivo,
+      cabecalhos: envelope.headers ?? [], ilegiveis_detalhe: lista.ilegiveis_detalhe.slice(0, 20),
+      // Rodada bloqueada não é "efetiva": o vigia exige prova_leitura='ok' e ela NÃO importou — o nome é outro.
+      prova_leitura: prova.ok ? (bloqueio ? "ok_bloqueado" : "ok") : prova.motivo,
     };
     if (!prova.ok) causaPreProtocolo = `prova:${prova.motivo}`;
     // Ilegível/repetido: a rodada segue para o resto (os legíveis são legíveis), mas termina VERMELHA no fim (3.4).
@@ -727,17 +799,27 @@ Deno.serve(async (req: Request) => {
 
     // 2. Classifica.
     const protocolos = lista.pedidos.map((p) => p.protocolo);
-    const [noApp, noOmie, vistos, syncEm] = await Promise.all([
-      pedidosNoApp(db, protocolos), contratosNoOmie(db, protocolos), vistosAntes(db, protocolos), syncPedidosCompletoEm(db),
-    ]);
-    const preCarencia = classificar(lista.pedidos, {
-      protocolosNoApp: new Set(noApp.keys()), contratosNoOmie: noOmie, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
-    });
-    // A 1ª vista só conta em rodada de IMPORTAR: "listar" não tem efeito sobre compras futuras (Codex P2).
-    if (modo === "importar") {
-      await registrarVistos(db, preCarencia.filter((p) => p.classe === "candidato" && !vistos.has(p.protocolo)).map((p) => p.protocolo));
+    // Observar situações só precisa dos pedidos do app (Codex revisão 2, B4): espelho/vistas/sync vêm DEPOIS, para
+    // uma falha neles nunca impedir a gravação de um cancelamento já lido.
+    const noApp = await pedidosNoApp(db, protocolos);
+    if (bloqueio) {
+      if (modo === "importar") {
+        resumoFinal = {
+          ...resumoFinal,
+          situacoes: await gravarSituacoes(observacoesDaLista(lista.pedidos, new Set(noApp.keys()), { soCancelados: !prova.ok }), lidoDe, lidoAte),
+        };
+      }
+      if (falhasSituacao.length > 0) {
+        causaPreProtocolo = "bloqueado:situacao_nao_gravada";
+        throw new Error(`Rodada bloqueada (${bloqueio}) e a situação do portal não foi gravada: ${falhasSituacao.join(" · ")}`);
+      }
+      if (!prova.ok) {
+        causaPreProtocolo = `prova:${prova.motivo}`;
+        throw new Error(`Rodada bloqueada (${bloqueio}) e leitura incompleta (${prova.motivo}): ${prova.detalhe}`);
+      }
+      return { ...resumoFinal, pulado: "bloqueado", mensagem: `Rodada não importa: ${bloqueio}. Situações do portal lidas e gravadas.` };
     }
-    // 2b. Onda 5A: a situação de cada pedido do app vai para o pedido (escritor único). Só com leitura PROVADA —
+    // 2b. Onda 5A (ANTES do espelho/vistas/sync — Codex revisão 2, B4): a situação de cada pedido do app vai para o pedido (escritor único). Só com leitura PROVADA —
     //     ilegível/repetido seguem a rodada, mas não viram evidência. É o que faz o claim de disparo recusar o 6.
     //     Com linha ilegível/repetida (a rodada segue, vermelha no fim), só os 6 de linhas únicas entram: bloquear com
     //     leitura imperfeita é seguro, liberar não (Codex 5A rodada 8).
@@ -746,6 +828,16 @@ Deno.serve(async (req: Request) => {
         ...resumoFinal,
         situacoes: await gravarSituacoes(observacoesDaLista(lista.pedidos, new Set(noApp.keys()), { soCancelados: !prova.ok }), lidoDe, lidoAte),
       };
+    }
+    const [noOmie, vistos, syncEm] = await Promise.all([
+      contratosNoOmie(db, protocolos), vistosAntes(db, protocolos), syncPedidosCompletoEm(db),
+    ]);
+    const preCarencia = classificar(lista.pedidos, {
+      protocolosNoApp: new Set(noApp.keys()), contratosNoOmie: noOmie, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
+    });
+    // A 1ª vista só conta em rodada de IMPORTAR: "listar" não tem efeito sobre compras futuras (Codex P2).
+    if (modo === "importar") {
+      await registrarVistos(db, preCarencia.filter((p) => p.classe === "candidato" && !vistos.has(p.protocolo)).map((p) => p.protocolo));
     }
     const classificados = aplicarCarencia(preCarencia, vistos, syncEm);
     const candidatos = classificados.filter((p) => p.classe === "candidato");
@@ -793,14 +885,17 @@ Deno.serve(async (req: Request) => {
         const r = await importarContado(c.protocolo, [c.situacao_codigo as string])
           .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
         const res = resumoImportacao(r.httpStatus, r.corpo);
-        console.log(`[varrer-portal] ${c.protocolo}: importar HTTP ${r.httpStatus} ok=${res.ok}`);
-        // Sem corpo da importadora (prazo do gateway, rede): o PO pode ter saído depois. INDETERMINADO, sem e-mail.
-        const semCorpo = r.httpStatus === 0 || !(r.corpo && typeof r.corpo === "object");
-        if (res.ok) {
+        const desfecho = desfechoImportacao(r.httpStatus, r.corpo);
+        console.log(`[varrer-portal] ${c.protocolo}: importar HTTP ${r.httpStatus} desfecho=${desfecho}`);
+        // Sem RESPOSTA da importadora (prazo do gateway, rede, corpo sem o contrato dela): o PO pode ter saído depois.
+        // INDETERMINADO, sem e-mail — mas durável (B6): a pendência aberta faz a próxima rodada/reconsulta conferir.
+        if (desfecho === "ok") {
           importados.push({ protocolo: c.protocolo, mensagem: res.mensagem });
           await marcarResolvidos(db, [c.protocolo]);
-        } else if (semCorpo) {
-          indeterminados.push({ protocolo: c.protocolo, http: r.httpStatus });
+        } else if (desfecho === "indeterminado") {
+          const registrado = await registrarIndeterminado(db, c.protocolo,
+            `Não sei se o pedido ${c.protocolo} entrou (importação sem resposta, HTTP ${r.httpStatus}): a próxima rodada confere.`);
+          indeterminados.push({ protocolo: c.protocolo, http: r.httpStatus, registrado });
         } else {
           const { notificado } = await registrarFalha(db, c.protocolo, res.mensagem);
           falhas.push({ protocolo: c.protocolo, mensagem: res.mensagem, notificado });
@@ -827,6 +922,27 @@ Deno.serve(async (req: Request) => {
           redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "situacao_impeditiva", notificado });
           continue;
         }
+        // B5: carência do re-disparo — o sync do espelho tem de ter terminado depois da última mudança do pedido, que é
+        // RELIDA agora (outro disparo pode ter falhado durante a rodada; Codex revisão 2) — e a entrega do pedido tem
+        // de cair na janela que o sync cobre.
+        const pedAgora = (await pedidosNoApp(db, [p.protocolo])).get(p.protocolo);
+        if (!pedAgora || pedAgora.id !== ped.id || pedAgora.temPo || !pedAgora.status || !STATUS_REDISPARAVEIS.has(pedAgora.status)) {
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "mudou_durante_a_rodada" });
+          continue;
+        }
+        if (!entregaCobertaPeloSync(pedAgora.dataEntrega, hoje)) {
+          const { notificado } = await registrarFalha(db, p.protocolo, mensagemForaDaCobertura(p.protocolo, ped.id, pedAgora.dataEntrega));
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "fora_da_cobertura_do_sync", notificado });
+          continue;
+        }
+        const car = carenciaRedisparo(pedAgora.ultimaMudanca, syncEm, Date.now());
+        if (car !== "pode") {
+          const notificado = car === "aguarda_sync_travado"
+            ? (await registrarFalha(db, p.protocolo, mensagemRedisparoTravado(p.protocolo, ped.id, ped.ultimaMudanca))).notificado
+            : undefined;
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: car, notificado });
+          continue;
+        }
         if ((await contratosNoOmie(db, [p.protocolo])).size > 0) {
           const { notificado } = await registrarFalha(db, p.protocolo,
             `Pedido ${p.protocolo}: o #${ped.id} do app está sem pedido de compra, mas já existe PO no Omie com este contrato ` +
@@ -837,12 +953,14 @@ Deno.serve(async (req: Request) => {
         const r = await importarContado(p.protocolo, [p.situacao_codigo])
           .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
         const res = resumoImportacao(r.httpStatus, r.corpo);
-        const semCorpo = r.httpStatus === 0 || !(r.corpo && typeof r.corpo === "object");
-        if (res.ok) {
+        const desfecho = desfechoImportacao(r.httpStatus, r.corpo);
+        if (desfecho === "ok") {
           await marcarResolvidos(db, [p.protocolo]);
           redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "po_criado" });
-        } else if (semCorpo) {
-          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "indeterminado", http: r.httpStatus });
+        } else if (desfecho === "indeterminado") {
+          const registrado = await registrarIndeterminado(db, p.protocolo,
+            `Não sei se o re-disparo do pedido ${p.protocolo} (#${ped.id}) criou o pedido de compra (sem resposta, HTTP ${r.httpStatus}): a próxima rodada confere.`);
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "indeterminado", http: r.httpStatus, registrado });
         } else {
           const { notificado } = await registrarFalha(db, p.protocolo,
             `Pedido ${p.protocolo} está no app (#${ped.id}) sem pedido de compra no Omie e o re-disparo não confirmou: ${res.mensagem}`);
@@ -888,17 +1006,39 @@ Deno.serve(async (req: Request) => {
         } else if (pedQ.temPo) {
           await marcarResolvidos(db, [q.protocolo]); reconsultas.push({ ...q, acao: "po_ja_no_app_resolvido" }); continue;
         } else if (omieQ.size > 0) {
-          // Pedido no app sem PO e PO manual no Omie: pendência de vinculação (item 7.1), não re-disparo.
-          reconsultas.push({ ...q, acao: "po_manual_no_omie" }); continue;
+          // Pedido no app sem PO e PO manual no Omie: pendência de vinculação (item 7.1), não re-disparo. A situação é
+          // relida mesmo assim (só situação): a pendência pode ser um 6 que o botão leu e não gravou (Codex rodada 2).
+          const rs = await importarContado(q.protocolo, [...SITUACOES_IMPORTAVEIS], true)
+            .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
+          reconsultas.push({ ...q, acao: "po_manual_no_omie", situacao_relida: (rs.corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada ?? null });
+          continue;
+        } else {
+          // B5: pedido do app sem PO — a reconsulta RE-DISPARA; mesma carência e cobertura do re-disparo da janela.
+          // Sem elas, a reconsulta ainda RELÊ e GRAVA a situação (só situação, sem disparo): é o que persiste um 6 que
+          // a importadora leu e não conseguiu gravar (B3, Codex revisão 2).
+          const coberta = entregaCobertaPeloSync(pedQ.dataEntrega, hoje);
+          const car = carenciaRedisparo(pedQ.ultimaMudanca, syncEm, Date.now());
+          if (!coberta || car !== "pode") {
+            const msg = !coberta ? mensagemForaDaCobertura(q.protocolo, pedQ.id, pedQ.dataEntrega)
+              : car === "aguarda_sync_travado" ? mensagemRedisparoTravado(q.protocolo, pedQ.id, pedQ.ultimaMudanca) : null;
+            const notificado = msg ? (await registrarFalha(db, q.protocolo, msg)).notificado : undefined;
+            const rs = await importarContado(q.protocolo, [...SITUACOES_IMPORTAVEIS], true)
+              .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
+            const sg = (rs.corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada ?? null;
+            reconsultas.push({ ...q, acao: !coberta ? "fora_da_cobertura_do_sync" : car, notificado, situacao_relida: sg });
+            continue;
+          }
         }
         const r = await importarContado(q.protocolo, [...SITUACOES_IMPORTAVEIS])
           .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
         const res = resumoImportacao(r.httpStatus, r.corpo);
+        const desfecho = desfechoImportacao(r.httpStatus, r.corpo);
         const c = (r.corpo && typeof r.corpo === "object" ? r.corpo : {}) as { motivo?: unknown; pedido_id?: unknown };
-        if (res.ok) {
+        if (desfecho === "ok") {
           await marcarResolvidos(db, [q.protocolo]);
           reconsultas.push({ ...q, acao: "po_confirmado" });
-        } else if (r.httpStatus === 0 || !(r.corpo && typeof r.corpo === "object")) {
+        } else if (desfecho === "indeterminado") {
+          // A reserva já deixou a linha aberta com `ultima_em` = agora: a próxima reconsulta (≥ 20 h) confere (B6).
           reconsultas.push({ ...q, acao: "indeterminado", http: r.httpStatus });
         } else if (c.motivo === "pedido_cancelado" && c.pedido_id == null) {
           // Cancelado no portal e nunca gravado no app: não há compra a fazer — a pendência acabou.
@@ -953,6 +1093,18 @@ Deno.serve(async (req: Request) => {
     const reconsultasFalhas = reconsultas.filter((r) => r.acao === "falhou");
     if (reconsultasFalhas.length > 0) problemas.push(`${reconsultasFalhas.length} reconsulta(s) além da janela falharam: ${reconsultasFalhas.map((r) => r.protocolo).join(", ")}`);
     if (falhasSituacao.length > 0) problemas.push(`situação do portal não gravada no pedido: ${falhasSituacao.join(" · ")}`);
+    // B6: "não sei" não é sucesso — a rodada fica vermelha até a conferência (a pendência durável já está aberta).
+    const naoSei = [
+      ...indeterminados.map((i) => (i as { protocolo: string }).protocolo),
+      ...redisparos.filter((r) => r.acao === "indeterminado").map((r) => r.protocolo),
+      ...reconsultas.filter((r) => r.acao === "indeterminado").map((r) => r.protocolo),
+    ];
+    if (naoSei.length > 0) problemas.push(`${naoSei.length} importação(ões) sem resposta — não sei se entraram (a próxima rodada confere): ${naoSei.join(", ")}`);
+    // Releitura só-situação que não gravou (timeout, HTTP de erro, ilegível): o 6 pode seguir sem bloqueio (Codex rodada 2).
+    const naoRelidas = reconsultas.filter((r) => "situacao_relida" in r && r.situacao_relida !== "aceita" && r.situacao_relida !== "nao_aceita");
+    if (naoRelidas.length > 0) problemas.push(`${naoRelidas.length} releitura(s) da situação além da janela não gravaram: ${naoRelidas.map((r) => `${r.protocolo} (${String(r.situacao_relida)})`).join(", ")}`);
+    const naoRegistrados = [...indeterminados, ...redisparos].filter((x) => (x as { registrado?: boolean }).registrado === false);
+    if (naoRegistrados.length > 0) problemas.push(`${naoRegistrados.length} indeterminado(s) sem pendência gravada no banco`);
     if (falhasReconciliacao.length > 0) {
       problemas.push(`Reconciliação: ${falhasReconciliacao.length} pedido(s) cancelado(s) no portal não encerraram: ` +
         falhasReconciliacao.map((f) => `#${f.pedido_id} (${f.mensagem})`).join("; "));

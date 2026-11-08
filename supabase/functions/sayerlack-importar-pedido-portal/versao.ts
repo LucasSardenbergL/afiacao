@@ -38,7 +38,12 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * para o pedido pelo escritor único `sayerlack_registrar_situacao_portal`, inclusive quando a leitura recusa por
  * cancelado; a resposta diz `situacao_gravada`. Migration 20261108120000 ANTES.
  */
-export const VERSAO = "v1.6-situacao-portal-gravada";
+/**
+ * v1.7 (2026-11-08, revisão 2) — situação sem código 1..7 recusa (B1); re-disparo de faturado 3/7 recusa (B2); situação
+ * regravada 1× se falhar e no ledger (B3); #id nunca se perde (B7); 1ª importação grava a situação (B10); opções de
+ * condição no ledger (B11). Migration 20261109120000 (B13) antes.
+ */
+export const VERSAO = "v1.7-revisao-2-situacao-reconhecida";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

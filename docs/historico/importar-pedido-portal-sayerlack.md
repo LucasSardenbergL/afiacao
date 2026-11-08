@@ -379,6 +379,78 @@ Adendo `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Só front + d
   antigo), com as queries conferidas contra prod via psql-ro.
 - **Provas**: vitest 41 (card + interpretação). Falsificação com controle verde antes e depois na mesma invocação:
   etapa inventada, B8 desligado, recusa sem SQLSTATE e laço paralelo → cada um vermelho.
+## Revisão 2, bloco 1 (Sessão A): brechas B1–B7 (edge), B9–B11, B13 (2026-11-08)
+
+Adendo: `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Importar **v1.7**, varrer **v1.8**, migration
+`20261109120000` (manual, envelope). Sem mudança de tela (B7 tela, B8, B12 são da Sessão B).
+
+- **B1 situação reconhecida**: a importadora recusa situação sem código 1..7 (`situacao_ilegivel`, botão e cron). A
+  varredura conta situação sem código e emissão ilegível como linha ilegível (`ilegiveis_detalhe`) — a prova reprova,
+  em vez de o pedido sumir como `situacao_nao_importavel`/`fora_da_janela`. O teste produz o contador a partir das linhas.
+- **B2**: re-disparo de pedido 3 Atendido Total / 7 Fatur Balcão recusa (`faturado_no_portal`, "confira a NF no Omie").
+- **B3**: a gravação da situação tenta 2×; na varredura, um 6 não gravado vira pendência com e-mail e a rodada fica
+  vermelha; `situacao_gravada` vai ao ledger da importação, e a resposta da importadora com `erro` deixa a rodada vermelha.
+- **B4**: pedido em voo/conciliação bloqueia só a importação: a rodada lê, prova e grava as situações, e fecha
+  `pulado: bloqueado` com `prova_leitura: ok_bloqueado` (não é "efetiva" para o vigia; bloqueio longo segue stale).
+- **B5**: re-disparo de pedido do app sem PO (janela e reconsulta) espera `sync_state(pedidos_compra, oben)` complete
+  terminar > última mudança do pedido (`max(atualizado_em, enviado_portal_em)`) + 5 min; > 6 h vira pendência com e-mail.
+- **B6/B7 (edge)**: só é resposta da importadora o objeto com `ok` booleano e `mensagem`; o resto é indeterminado, que vira
+  linha aberta em `sayerlack_varredura_falha` sem e-mail e deixa a rodada vermelha. A importadora guarda o pedido achado
+  por protocolo na hora (500 com `pedido_id`), e erro de RPC sem SQLSTATE da casa relê o pedido.
+- **B9**: `modo=listar` grava em `reposicao.listar_portal_sayerlack` — o vigia lê só o slug da importação (sem recriar o
+  trio do data_health).
+- **B10**: 1ª importação grava a situação lida logo após criar o pedido, antes do disparo.
+- **B11**: `detalhes.condicoes_opcoes` (+ `situacao_portal`, `situacao_gravada`) no ledger de toda tentativa.
+- **B13 — regra "sem (C)"** (decisão delegada pelo founder: "pode escolher você se mantém ou tira, quero apenas que
+  funcione"): a condição do portal vai SEMPRE para a variante sem "(C)" do catálogo. Medida que decidiu: os POs Sayerlack
+  no Omie (`purchase_orders_tracking.raw_data` cCodParc, abr–nov/2026) usaram 000 ×396, A15 ×26, A07 ×7, 001 ×3, A10 ×1 —
+  **nenhum** usou variante "(C)" (A30, A84, B23, D43, V06), e nenhum pedido do app gravou uma delas. O de-para
+  `30 DIAS → A30 "Para 30 dias (C)"` **não foi escolha do founder** (o "(C)" entrou como exemplo no plano, D-2) e passa a
+  T54 "Para 30 dias" (migration `20261109120000`, só o UPDATE do de-para). A função de tradução não muda: a regra exata
+  de texto já escolhe a sem "(C)" (4 → A04, 6 → U89, 13 → A13) e dá IP007 só quando não há par nenhum.
+- **Codex** (gpt-6-astra high): rodada 1 com 5 P1 + 1 P2, todos procedentes e fechados — B5 relê o pedido logo antes do
+  re-disparo e exige a entrega dentro da janela do sync incremental (−50..+110 d); B7 a importadora declara
+  `desfecho: "indeterminado"` quando a gravação pode ter acontecido; B3 pelo botão abre pendência vencida e a reconsulta
+  relê só a situação (`somente_situacao`); B4 grava as situações antes das consultas ao espelho; B11 evidência acumulada
+  fora da resposta.
+- **Provas**: harness `db/test-sayerlack-importar-pedido-portal.sh` 117/117 em `C` e `pt_BR.UTF-8` (9 asserts B13 +
+  falsificação F19: de-para de volta em (C) ⇒ a postcondição aborta e "30 DIAS" vai para A30); Deno 55 (6 sabotagens vermelhas com
+  controle verde antes e depois); `test:edges` 2429.
+
+
+## Revisão 2, Sessão B parte 2: card do portal só verde com prova (Onda 6, 2026-11-08)
+
+- **Migration `20261109100000`** (envelope, tentativa **#977**, ensaio antes; pré-voo psql-ro: o corpo executou nos
+  dados de prod; 2ª testemunha: md5 do corpo vivo = repo, ACL preservado, anon fechado). `sayerlack_painel_portal`
+  v2 é SUPERCONJUNTO do v1 (as 3 listas continuam), então o front antigo seguiu lendo até o Publish.
+  - **6.1** `rodada`: última rodada EFETIVA do modo importar (prova ok; legado com lidos>0), a última decidida e
+    `em_dia` pela mesma régua do vigia (dia útil SP, 14:00). `modo=listar` não conta (o B9 da Sessão A, no vigia).
+    Espera da efetiva: carência (1ª vista + aguardando sync), adiados, indeterminados, carência presa — lista ausente
+    vira `null`, não 0.
+  - **6.4** a falha do protocolo que também é pedido sem pedido de compra vai DENTRO da linha; `pendentes_unicos`.
+  - **6.5** teto 50 por lista e `total_*`. **6.6** `cancelado_humano` fora.
+  - Pedidos **originados no app** com protocolo e sem pedido de compra entram (o v1 exigia `importado_portal_em`), com
+    1 h em `aguardando_disparo` antes de virar pendência.
+  - **6.8** `sem_aliquota` (SKUs Sayerlack ativos OBEN sem alíquota = CP006). Em prod: 13 SKUs, 9 NCMs.
+  - **6.11** `cancelado_sem_po` / `cancelado_com_po` pela situação 6 gravada (Onda 5A). "Alterado no portal" fica para
+    quando a 5.2 (Sessão A) criar a coluna.
+- **Card**: contrato RÍGIDO (`{}`, v1, total ou lista ausente → "não consegui ler"); "Nada pendente" só com rodada
+  efetiva em dia, espera conhecida e zero, nada aguardando e sem falha depois da efetiva — senão "não posso afirmar
+  que não há" com o motivo; "Consultado às HH:MM"; falha de refetch com dado velho avisa e esconde o verde (6.3);
+  atualizar sempre visível e releitura sozinha 7 min depois de cada horário do cron (6.7); "pedido de compra" em todo
+  o card (6.9).
+- **Estado em prod no apply** (sábado à noite): última efetiva = 07/11 01:30 UTC, legado v1.4 (sem `indeterminados`
+  nem `carencia_presa`) → o card mostrará "não posso afirmar" até a 1ª rodada v1.7 de segunda. É o comportamento
+  certo (ausente ≠ zero), não defeito.
+- **Provas**: `db/test-sayerlack-painel-portal-v2.sh` PG17 36/36 em `C` e `pt_BR.UTF-8`, 5 sabotagens inline com
+  controle antes/depois (filtro de modo, `cancelado_humano`, dedupe, gate, chave do contrato na postcondição); no núcleo
+  do CI. vitest 51; falsificação do front com controle: sem versão, sem `em_dia`, `null` virando 0, ignorar falha
+  posterior, contagem pela soma das listas (este último sobreviveu à 1ª rodada — o teste ganhou a asserção).
+- **QA 8.3** (navegador do app, desktop e 375×812, dados de prod): verde no roteiro do card e do diálogo, sem disparar
+  importação real. Achado fora da fronteira: o "voltar" do celular não fecha o detalhe do pedido em Gerir pedidos.
+- **Rodada bloqueada (contrato da varredura v1.8, Sessão A)**: rodada com `pulado='bloqueado'` (pedido do app em envio
+  ou conciliação, IP008) depois da última efetiva deixa o card em "não posso afirmar", com o motivo e o que fazer.
+  A RPC já não contava `prova_leitura='ok_bloqueado'` como efetiva. Teste falsificado com controle.
 
 ## Alíquota de IPI dos 5 NCMs pendentes, provada no Omie (2026-11-08)
 
@@ -398,3 +470,7 @@ Migration `20261109130000`:
 
 As mesmas NFs têm itens a 6,5% e 3,25% (CST 50), então a alíquota zero não é artefato de importação. Achado lateral: nas
 764 NF-e de entrada do Omie OBEN não há compra de DS.451, TY.1480 nem YTS.1284 257/259 nos últimos 180 dias.
+
+**Deploy (2026-11-08):** #3717 mergeado; migration `20261109130000` aplicada pelo envelope (ensaio ok → tentativa
+**#979**, recibo na mesma transação). Validação por psql-ro: os 5 NCMs com a alíquota medida (`fonte = nf`); o sensor de
+SKUs Sayerlack ativos sem alíquota caiu de 13 para **4** (39073022, 49111090, 29163990, 32071090, sem compra em 180 d).

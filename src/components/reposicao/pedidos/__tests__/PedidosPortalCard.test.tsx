@@ -22,6 +22,7 @@ vi.mock('@/components/execucoes/UltimaExecucao', () => ({ UltimaExecucao: () => 
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
 
 import { PedidosPortalCard } from '../PedidosPortalCard';
+import { painelV2 } from './painel-portal-fixture';
 import { ImportarPedidoPortalDialog } from '../ImportarPedidoPortalDialog';
 
 function renderizar(ui: JSX.Element) {
@@ -33,7 +34,7 @@ beforeEach(() => { rpc.mockClear(); invoke.mockReset(); invoke.mockImplementatio
 
 describe('PedidosPortalCard', () => {
   it('mostra a pendência do cron com o motivo e o botão de importar de novo, que abre o diálogo já com o número', async () => {
-    respostaRpc = { data: { pendencias: [{ protocolo: '2140762', mensagem: 'NCM 32091020 sem alíquota', tentativas: 2 }], sem_po: [], importados: [] }, error: null };
+    respostaRpc = { data: painelV2({ pendencias: [{ protocolo: '2140762', mensagem: 'NCM 32091020 sem alíquota', tentativas: 2 }], total_pendencias: 1, pendentes_unicos: 1 }), error: null };
     renderizar(<PedidosPortalCard />);
     expect(await screen.findByText('Pedido 2140762')).toBeTruthy();
     expect(screen.getByText('NCM 32091020 sem alíquota')).toBeTruthy();
@@ -42,22 +43,63 @@ describe('PedidosPortalCard', () => {
     expect(((await screen.findByLabelText('Nº do pedido no portal')) as HTMLInputElement).value).toBe('2140762');
   });
 
-  it('pedido no app sem PO aparece com link para o pedido', async () => {
-    respostaRpc = { data: { pendencias: [], sem_po: [{ pedido_id: 3700, protocolo: '2141500', status: 'falha_envio' }], importados: [] }, error: null };
+  it('pedido no app sem pedido de compra aparece com link e com a falha do mesmo protocolo DENTRO da linha', async () => {
+    respostaRpc = { data: painelV2({
+      sem_po: [{ pedido_id: 3700, protocolo: '2141500', status: 'falha_envio', origem: 'app', desde: '2026-11-09T10:00:00Z', pendencia_mensagem: 'disparo falhou', pendencia_tentativas: 2 }],
+      total_sem_po: 1, pendentes_unicos: 1,
+    }), error: null };
     renderizar(<PedidosPortalCard />);
     const link = await screen.findByRole('link', { name: '#3700' });
     expect(link.getAttribute('href')).toBe('/admin/reposicao/pedidos?id=3700');
+    expect(screen.getByText(/Enviado pelo app/)).toBeTruthy();
+    expect(screen.getByText(/disparo falhou · 2 tentativas/)).toBeTruthy();
+    expect(screen.getByText(/1 pendente$/)).toBeTruthy();
   });
 
-  it('sem pendência diz "Nada pendente"; leitura falha NUNCA diz isso', async () => {
-    respostaRpc = { data: { pendencias: [], sem_po: [], importados: [] }, error: null };
+  it('"Nada pendente" só com rodada efetiva em dia; sem prova diz que não pode afirmar', async () => {
+    respostaRpc = { data: painelV2(), error: null };
     const { unmount } = renderizar(<PedidosPortalCard />);
     expect(await screen.findByText('Nada pendente do portal.')).toBeTruthy();
+    expect(screen.getByTestId('pedidos-portal-consultado').textContent).toMatch(/Consultado às/);
     unmount();
-    respostaRpc = { data: null, error: { message: 'permission denied' } };
+    respostaRpc = { data: painelV2({ rodada: { em_dia: false, ultima_efetiva: null, ultima: null } }), error: null };
     renderizar(<PedidosPortalCard />);
-    expect(await screen.findByText(/Não consegui ler os pedidos do portal/)).toBeTruthy();
+    expect((await screen.findByTestId('pedidos-portal-veredito')).getAttribute('data-tom')).toBe('sem_prova');
     expect(screen.queryByText('Nada pendente do portal.')).toBeNull();
+  });
+
+  it('leitura falha, {} ou contrato v1 NUNCA dizem "nada pendente"', async () => {
+    for (const r of [{ data: null, error: { message: 'permission denied' } }, { data: {}, error: null }, { data: { pendencias: [], sem_po: [], importados: [] }, error: null }]) {
+      respostaRpc = r;
+      const { unmount } = renderizar(<PedidosPortalCard />);
+      expect(await screen.findByText(/Não consegui ler os pedidos do portal/)).toBeTruthy();
+      expect(screen.queryByText('Nada pendente do portal.')).toBeNull();
+      unmount();
+    }
+  });
+
+  it('última rodada falhou depois da efetiva: alerta e sem "nada pendente"', async () => {
+    const rodada = { ...(painelV2().rodada as object), ultima: { id: 'b', em: '2026-11-09T20:31:00Z', status: 'erro', erro: 'login recusado' } };
+    respostaRpc = { data: painelV2({ rodada }), error: null };
+    renderizar(<PedidosPortalCard />);
+    expect((await screen.findByTestId('pedidos-portal-ultima-falhou')).textContent).toContain('login recusado');
+    expect(screen.queryByText('Nada pendente do portal.')).toBeNull();
+  });
+
+  it('6.5/6.8/6.11: corte visível, sensor de alíquota e cancelado com pedido de compra', async () => {
+    respostaRpc = { data: painelV2({
+      pendencias: [{ protocolo: '1', mensagem: 'x' }], total_pendencias: 61, pendentes_unicos: 62,
+      cancelado_com_po: [{ pedido_id: 9, protocolo: '7000006', omie_numero: '1291', situacao_em: '2026-11-09T15:30:00Z' }], total_cancelado_com_po: 1,
+      sem_aliquota: { skus: 13, ncms: ['27101230', '32091010'] },
+    }), error: null };
+    renderizar(<PedidosPortalCard />);
+    expect(await screen.findByText('Mostrando 1 de 61.')).toBeTruthy();
+    // 6.4: o cabeçalho conta protocolos DISTINTOS da RPC (62), não a soma das listas (61 + 0 + 1).
+    expect(screen.getByText(/62 pendentes/)).toBeTruthy();
+    expect(screen.getByTestId('pedidos-portal-sem-aliquota').textContent).toContain('13 SKUs Sayerlack sem alíquota de IPI (NCM 27101230, 32091010)');
+    expect(screen.getByText('Cancelado no portal, mas com pedido de compra no Omie')).toBeTruthy();
+    expect(screen.getByText(/pedido de compra 1291/)).toBeTruthy();
+    expect(screen.queryByText(/\bPO\b/)).toBeNull(); // 6.9: vocabulário único
   });
 });
 
