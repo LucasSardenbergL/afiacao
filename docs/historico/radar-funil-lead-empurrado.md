@@ -44,17 +44,25 @@ esse sinal.
   de hoje continua compilando e funcionando; a falha já é registrada dentro do hook.
 - O card ainda **não** grava a ficha entregue: o sensor `ficha_card` aparece como "nunca gravou" e a coluna
   "Fichas (card)" fica "—". Para ligar, chame `registrarFichaEntregue({ origem: 'card', cnpj })` quando a ficha do
-  lead tiver chegado (por exemplo, no `RadarClientes` quando o lead do deep link vier de um clique no card) e
-  declare a instalação: `UPDATE public.radar_funil_sensores SET instalado_em = now() WHERE sensor = 'ficha_card'`
-  depois do Publish.
+  lead tiver chegado (por exemplo, no `RadarClientes` quando o lead do deep link vier de um clique no card).
+  Não declare `instalado_em`: a cobertura começa no 1º registro (ver "Por que o `ficha_email` fica sem data").
 
 ## Camadas de deploy
 
 | Camada | Quem | Estado |
 |---|---|---|
 | Migration `20261107233000` | founder (SQL Editor, 2026-11-07) | ✅ psql-ro: validação `✅`; 9 sensores com as datas; 3 funções `prosecdef=t` (`radar_funil` `provolatile=s`); anon fora das 3; `claude_ro` só no painel; RLS nas 2 tabelas novas |
-| Publish do front (`/radar/funil`, `RadarAbrirEmail` com 2 momentos) | founder | ⏳ |
-| Declarar `ficha_email` instalado (UPDATE de 1 linha, depois do Publish) | founder (SQL Editor) | ⏳ |
+| Publish do front (`/radar/funil`, `RadarAbrirEmail` com 2 momentos) | founder | ✅ 2026-11-08: `monitor-deploy.sh --pr 3707` exit 0 (`PR_NO_AR`, ar `7e5b823c` = main, squash `2d898d85f` na história) |
+| Data de instalação do `ficha_email` | — | **não declarada, de propósito** (ver abaixo) |
+
+**Por que o `ficha_email` fica sem data.** O Publish põe o código no ar, mas o cliente só passa a usá-lo quando
+o service worker troca de build, e isso depende de ele clicar em atualizar. Um vendedor com o app antigo que
+clica no e-mail grava o clique e não grava a ficha. Com `instalado_em = now()`, o painel leria isso como
+"clique sem ficha" na semana coberta: um zero que vem da versão antiga do app, não do lead. Com a data vazia,
+`radar_funil` usa `LEAST(instalado_em, 1º registro)`, e a cobertura começa na 1ª ficha gravada de verdade, que
+é quando há prova de que o código novo chegou a alguém. No dia do Publish: 0 envio real, 0 abertura, 0 ficha,
+0 falha. Vale o mesmo para o `ficha_card` quando a sessão F ligar o escritor: não declare a data, deixe o 1º
+registro abrir a cobertura.
 
 ## 1ª leitura do painel em prod (2026-11-07, `radar_funil(8)` pelo psql-ro como master)
 
