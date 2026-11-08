@@ -11,7 +11,7 @@
  */
 
 export type CampoContato = 'telefone1' | 'telefone2' | 'email';
-export type MotivoContabil =
+type MotivoContabil =
   | 'telefone_compartilhado'
   | 'email_compartilhado'
   | 'email_palavra'
