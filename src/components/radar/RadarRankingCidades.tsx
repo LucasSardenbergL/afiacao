@@ -62,6 +62,10 @@ export function RadarRankingCidades({
   // ainda não calculado) ou falha de leitura — e a tela diz qual.
   const semDado = q.isError && q.data === undefined;
   const aguardando = !carregar || q.isLoading;
+  // Pacote I, item 2: as DUAS leituras são independentes. Com a contagem OK e a penetração falhando, a coluna "cli." e
+  // o bloco de oportunidades sumiam calados, e o card parecia completo (só sem clientes). Agora a falha parcial é DITA.
+  const penEstado = estadoPenetracao(pen);
+  const penAviso = avisoPenetracao(penEstado, pen.error);
 
   return (
     <Card className="p-3" ref={ref}>
@@ -97,12 +101,16 @@ export function RadarRankingCidades({
                 <span className="truncate">{m.municipio_nome} <span className="text-muted-foreground">/{m.uf}</span></span>
                 <span className="tabular-nums text-xs text-muted-foreground shrink-0 ml-2">
                   {m.total.toLocaleString('pt-BR')} · {m.com_telefone} 📞 · {m.a_contatar} a contatar
-                  {pen.data && <> · {formatarPenetracao(penPorCodigo.get(m.municipio_codigo)?.penetracao ?? null)} cli.</>}
+                  {pen.data ? <> · {formatarPenetracao(penPorCodigo.get(m.municipio_codigo)?.penetracao ?? null)} cli.</>
+                    : penEstado === 'carregando' ? <> · … cli.</> : null}
                 </span>
               </button>
             </li>
           ))}
         </ul>
+      )}
+      {penAviso && (
+        <p className="mt-2 text-xs text-status-warning" data-testid="radar-ranking-penetracao-aviso">{penAviso}</p>
       )}
       {oportunidades.length > 0 && (
         <div className="mt-3 pt-2 border-t">
@@ -122,7 +130,7 @@ export function RadarRankingCidades({
                 >
                   <span className="truncate">{m.municipio_nome ?? m.municipio_codigo} <span className="text-muted-foreground">/{m.uf}</span></span>
                   <span className="tabular-nums text-xs text-muted-foreground shrink-0 ml-2">
-                    {(m.empresas_lote ?? 0).toLocaleString('pt-BR')} empresas · {formatarPenetracao(m.penetracao)} cli.
+                    {m.empresas_lote != null ? m.empresas_lote.toLocaleString('pt-BR') : '—'} empresas · {formatarPenetracao(m.penetracao)} cli.
                     {m.concorrentes != null && <> · {m.concorrentes} revendas</>}
                   </span>
                 </button>
@@ -133,4 +141,23 @@ export function RadarRankingCidades({
       )}
     </Card>
   );
+}
+
+type EstadoPenetracao = 'carregando' | 'ok' | 'desatualizada' | 'falhou' | 'sem_lote';
+
+/** Estado da leitura da penetração, separado do da contagem (pacote I). `null` do hook = nenhum lote completo. */
+function estadoPenetracao(pen: { data: unknown; isError: boolean }): EstadoPenetracao {
+  if (pen.data === null) return 'sem_lote';
+  if (Array.isArray(pen.data)) return pen.isError ? 'desatualizada' : 'ok';
+  return pen.isError ? 'falhou' : 'carregando';
+}
+
+/** O que o card DIZ quando a penetração não está completa; null = nada a dizer (carregando ou ok). */
+function avisoPenetracao(estado: EstadoPenetracao, erro: unknown): string | null {
+  if (estado === 'falhou') {
+    return `${avisoContagem(erro, 'Penetração por cidade')} A coluna "cli." e as oportunidades ficam de fora até a leitura voltar; não é falta de cliente.`;
+  }
+  if (estado === 'sem_lote') return 'Penetração indisponível: ainda não há lote completo da Receita para medir o mercado.';
+  if (estado === 'desatualizada') return 'Penetração desatualizada: a última leitura falhou; os números de clientes são da leitura anterior.';
+  return null;
 }

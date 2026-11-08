@@ -35,7 +35,9 @@
 - ✅ **5.4 + cobertura** (#3731) — incidente persistido, cobertura dos pedidos com PO não faturado, source
   `sayerlack_cancelado_com_po` no data_health. Migration `20261110120000` aplicada (#996); varrer v1.9 DEPLOY
   CONFIRMADO (sonda #999, 2026-11-08).
-- ⏳ Depois: 5.2, 8.1, 8.2, 7.1, 7.2, 7.3, 7.5, 4.3.
+- ✅ **8.1** (#3737) — testes dos handlers reais da importar e da varrer (harness + PostgREST falso por rota), 21
+  sabotagens vermelhas. Só testes: nada a deployar.
+- ⏳ Depois: 5.2, 8.2, 7.1, 7.2, 7.3, 4.3 (7.5 numa sessão própria).
 
 ## Andamento da Sessão B (tela e painel)
 

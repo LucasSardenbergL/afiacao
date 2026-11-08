@@ -34,7 +34,10 @@ import { RadarRankingCidades } from '@/components/radar/RadarRankingCidades';
 import { RadarAcoesLote } from '@/components/radar/RadarAcoesLote';
 import { RadarLoteDialog } from '@/components/radar/RadarLoteDialog';
 import { RadarConflitosIndicador } from '@/components/radar/RadarConflitosCadastro';
-import { lerEmpresaRadar } from '@/queries/useRadarConflitosCadastro';
+import { buscarEmpresaRadar, useRadarEmpresa } from '@/queries/useRadarEmpresa';
+import { registrarFichaEntregue } from '@/queries/useRadarRegistroEmpurrado';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { escolherFichaAberta } from '@/lib/radar/ficha-aberta';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -120,6 +123,7 @@ function narrowRegiao(v: string): RegiaoRadar {
 
 export default function RadarClientes() {
   const [raw, set] = useUrlState<RadarUrlState>(DEFAULTS);
+  const qc = useQueryClient();
   // Apresentação ≠ dados (pacote A6): `vista` (lista/mapa) fica FORA dos filtros. Ela entrava pelo spread, então
   // trocar Lista↔Mapa mudava a chave da consulta (refetch da fila) e o efeito abaixo apagava a seleção.
   // A visão "Meus atendimentos" (B2) também fica FORA: entrar nela não muda os filtros nem os favoritos, e voltar à
@@ -188,12 +192,12 @@ export default function RadarClientes() {
   // Ficha aberta por CNPJ, NA URL (pacote B5): `/radar?cnpj=…` abre a ficha (link do card, do e-mail, do colega).
   // Instância própria do useUrlState: o CNPJ aberto é navegação, não filtro — fora da chave da fila e dos favoritos
   // (a mesma lição do A6). O objeto é relido da lista a cada render (não fica velho).
-  const [urlFicha, setUrlFicha] = useUrlState<{ cnpj: string }>({ cnpj: '' });
+  // `origem=card` (pacote I): a ficha veio do card "prospectar hoje" — também navegação, fora da chave e dos favoritos.
+  // Qualquer troca de ficha a apaga: só a ficha aberta PELO link conta como entregue pelo card.
+  const [urlFicha, setUrlFicha] = useUrlState<{ cnpj: string; origem: string }>({ cnpj: '', origem: '' });
   const abertaCnpj = urlFicha.cnpj || null;
-  const setAbertaCnpj = useCallback((c: string | null) => setUrlFicha({ cnpj: c ?? '' }), [setUrlFicha]);
+  const setAbertaCnpj = useCallback((c: string | null) => setUrlFicha({ cnpj: c ?? '', origem: '' }), [setUrlFicha]);
   const abertaSnapshot = useRef<RadarEmpresa | null>(null);
-  // Lead do link que não está na fila carregada (outra página, já-cliente, descartado): lido inteiro, 1× por CNPJ.
-  const [leadDoLink, setLeadDoLink] = useState<RadarEmpresa | null>(null);
   // Posição do lead aberto na última vez em que estava na lista: se ele sair (contato registrado → refetch), o
   // "Próximo" segue de onde o vendedor estava, não do topo. Presa ao CNPJ (pacote F, achado 6): a posição de OUTRO
   // lead não vale para a ficha aberta por link — essa nunca esteve na fila, e o "Próximo" dela é o 1º da fila.
@@ -229,46 +233,70 @@ export default function RadarClientes() {
   const irmaos = useRadarIrmaos(paginasIrmaos);
   // Possível sucessor / vínculo com cliente, nas mesmas páginas (mesmo núcleo de regras da ficha; o detalhe fica nela).
   const vinculos = useRadarVinculosLista(paginasIrmaos);
+  // Lead aberto FORA da fila carregada (link do card/e-mail, já-cliente, descartado, ou o lead que acabou de virar
+  // cliente e saiu da fila): lido pelo CNPJ numa query sob ['radar'] — a invalidação de toda mutação a relê (pacote I,
+  // item 1: antes era um snapshot num ref, e a ficha seguia sem "já é cliente" depois do cadastro no Omie). No deep
+  // link ela sai EM PARALELO com a fila (pacote F, achado 5); se a fila chegar com o lead, a linha dela vence.
+  const naFila = abertaCnpj ? empresas.some((e) => e.cnpj === abertaCnpj) : false;
+  const empresaQ = useRadarEmpresa(abertaCnpj, { ativo: !naFila });
   const aberta = useMemo(() => {
     if (!abertaCnpj) return null;
     const i = empresas.findIndex((e) => e.cnpj === abertaCnpj);
     if (i >= 0) ultimoIndice.current = { cnpj: abertaCnpj, indice: i };
-    // O snapshot só vale para o MESMO CNPJ: trocar o `cnpj` da URL não pode mostrar a ficha do lead anterior.
-    const snap = abertaSnapshot.current?.cnpj === abertaCnpj ? abertaSnapshot.current : null;
-    const doLink = leadDoLink?.cnpj === abertaCnpj ? leadDoLink : null;
-    const atual = empresas[i] ?? snap ?? doLink;
+    const atual = escolherFichaAberta({
+      cnpj: abertaCnpj,
+      daLista: empresas[i] ?? null,
+      doServidor: empresaQ.data,
+      servidorRelendo: empresaQ.isFetching,
+      // O snapshot só vale para o MESMO CNPJ (a regra confere): trocar o `cnpj` da URL não mostra o lead anterior.
+      snapshot: abertaSnapshot.current,
+    });
     abertaSnapshot.current = atual;
     return atual;
-  }, [abertaCnpj, empresas, leadDoLink]);
-  // Deep link (link do e-mail, do card): lê o lead pelo CNPJ EM PARALELO com a fila (pacote F, achado 5) — antes
-  // esperava a 1ª página, e a ficha só abria depois dela. Se a fila chegar antes e tiver o lead, ela vence (a leitura
-  // avulsa é descartada pelo `vivo`).
+  }, [abertaCnpj, empresas, empresaQ.data, empresaQ.isFetching]);
+  // Nada para mostrar e a leitura avulsa respondeu: o lead não existe, ou a leitura falhou → fecha e DIZ. Com a ficha
+  // já na tela, uma RELEITURA que falha não fecha nada, mas avisa que o que está ali pode estar velho.
+  const fichaVisivel = aberta != null;
+  const erroReleitura = useRef<number>(0);
   useEffect(() => {
-    if (!abertaCnpj || aberta) return;
-    let vivo = true;
-    lerEmpresaRadar(abertaCnpj).then(
-      (e) => {
-        if (!vivo) return;
-        if (e) { setLeadDoLink(e); return; }
-        toast.error('Lead não encontrado no Radar', { description: `CNPJ ${abertaCnpj}` });
+    if (!abertaCnpj || naFila) return;
+    if (empresaQ.isError) {
+      if (!fichaVisivel) {
+        toast.error('Não consegui abrir a ficha do link', { description: mensagemDeErro(empresaQ.error) ?? 'erro de leitura' });
         setAbertaCnpj(null);
-      },
-      (err) => {
-        if (!vivo) return;
-        toast.error('Não consegui abrir a ficha do link', { description: mensagemDeErro(err) ?? 'erro de leitura' });
-        setAbertaCnpj(null);
-      },
-    );
-    return () => { vivo = false; };
-  }, [abertaCnpj, aberta, setAbertaCnpj]);
+      } else if (erroReleitura.current !== empresaQ.errorUpdatedAt) {
+        erroReleitura.current = empresaQ.errorUpdatedAt;
+        toast.error('Não consegui atualizar a ficha', { description: 'O que está na tela pode estar desatualizado. Feche e abra de novo.' });
+      }
+      return;
+    }
+    if (empresaQ.isSuccess && empresaQ.data === null && !fichaVisivel) {
+      toast.error('Lead não encontrado no Radar', { description: `CNPJ ${abertaCnpj}` });
+      setAbertaCnpj(null);
+    }
+  }, [abertaCnpj, naFila, fichaVisivel, empresaQ.isError, empresaQ.isSuccess, empresaQ.data, empresaQ.error, empresaQ.errorUpdatedAt, setAbertaCnpj]);
+
+  // Pacote I (sobra do F): a ficha aberta pelo card "prospectar hoje" CHEGOU — o 2º momento do funil (`ficha_card`).
+  // Uma vez por abertura: o `origem` sai da URL logo depois (recarregar não grava de novo). Sob a lente "Ver como"
+  // não grava (a lente não é o vendedor; o hook também recusa com motivo 'lente').
+  const { isImpersonating } = useImpersonation();
+  const fichaCardGravada = useRef<string | null>(null);
+  useEffect(() => {
+    if (urlFicha.origem !== 'card' || !abertaCnpj || aberta?.cnpj !== abertaCnpj) return;
+    if (fichaCardGravada.current === abertaCnpj) return;
+    fichaCardGravada.current = abertaCnpj;
+    if (!isImpersonating) void registrarFichaEntregue({ origem: 'card', cnpj: abertaCnpj });
+    setUrlFicha({ origem: '' });
+  }, [urlFicha.origem, abertaCnpj, aberta, isImpersonating, setUrlFicha]);
 
   const abrir = useCallback((e: RadarEmpresa) => { abertaSnapshot.current = e; setAbertaCnpj(e.cnpj); }, [setAbertaCnpj]);
-  // Ficha de um CNPJ que pode não estar na fila (já-cliente, descartado): lê o lead inteiro antes de abrir.
+  // Ficha de um CNPJ que pode não estar na fila (já-cliente, descartado): lê o lead inteiro antes de abrir, pela MESMA
+  // query da ficha (a leitura fica no cache e é relida pelas invalidações).
   const abrirPorCnpj = useCallback(async (cnpj: string) => {
-    const e = empresas.find((x) => x.cnpj === cnpj) ?? await lerEmpresaRadar(cnpj);
+    const e = empresas.find((x) => x.cnpj === cnpj) ?? await buscarEmpresaRadar(qc, cnpj);
     if (!e) throw new Error('lead não encontrado no Radar');
     abrir(e);
-  }, [empresas, abrir]);
+  }, [empresas, abrir, qc]);
   // "Próximo" (pacote A1): no fim do carregado BUSCA a página seguinte; no fim de verdade fecha a ficha e DIZ que a
   // fila acabou. Nunca volta ao 1º lead (o vendedor re-ligaria para quem já falou). Decisão em src/lib/radar/fila.ts.
   const abertaCnpjRef = useRef(abertaCnpj);
@@ -335,7 +363,6 @@ export default function RadarClientes() {
   // Vencimento e frescor de "Meus atendimentos": a posse viva vem de radar_atendimentos_ativos (a mesma leitura do
   // selo de cada linha). Assumir/liberar/vencer muda o CONJUNTO dos meus → as páginas da visão são relidas.
   const atendimentos = useRadarAtendimentosAtivos();
-  const qc = useQueryClient();
   const meusAtivos = useMemo(
     () => [...(atendimentos.data?.values() ?? [])].filter((a) => a.ehMeu),
     [atendimentos.data],
@@ -599,6 +626,17 @@ export default function RadarClientes() {
             />
           ) : (
             <>
+              {/* Pacote I (Codex, achado 13): releitura que FALHOU com páginas já na tela (invalidação depois de um
+                  contato/cadastro, refetch comum) — as linhas são da leitura anterior e a tela DIZ. A falha da página
+                  SEGUINTE tem o próprio rodapé, abaixo. */}
+              {q.isError && !q.isFetchNextPageError && (
+                <div className="flex items-center gap-2 border-b border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs" data-testid="radar-fila-desatualizada">
+                  <span className="flex-1 text-status-warning">
+                    Não consegui atualizar a fila: as linhas abaixo são da leitura anterior e podem estar desatualizadas.
+                  </span>
+                  <Button size="sm" variant="outline" disabled={q.isFetching} onClick={() => void q.refetch()}>Tentar de novo</Button>
+                </div>
+              )}
               {empresas.map((e) => (
                 <RadarLinha
                   key={e.cnpj}
@@ -610,6 +648,7 @@ export default function RadarClientes() {
                   lote={lote}
                   mostrarMotivos={!meus && filtros.soSugeridos}
                   irmaos={irmaos.dados.get(e.cnpj) ?? null}
+                  irmaosEstado={irmaos.estadoDe(e.cnpj)}
                   vinculo={vinculos.dados.get(e.cnpj) ?? null}
                   vinculoEstado={vinculos.estadoDe(e.cnpj)}
                   amostra={cnpjsAmostra.has(e.cnpj) ? amostra?.sorteio ?? null : null}

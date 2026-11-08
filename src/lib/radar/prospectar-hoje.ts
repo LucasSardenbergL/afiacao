@@ -114,9 +114,11 @@ export function nomeDoLead(l: Pick<LeadProspectarHoje, 'nomeFantasia' | 'razaoSo
   return l.nomeFantasia ?? l.razaoSocial ?? l.cnpj;
 }
 
-/** Deep link da ficha no Radar (formato do pacote B5: `/radar?cnpj=`). */
-export function linkFichaRadar(cnpj: string): string {
-  return `/radar?cnpj=${encodeURIComponent(cnpj)}`;
+/** Deep link da ficha no Radar (formato do pacote B5: `/radar?cnpj=`). `origem: 'card'` marca a ficha aberta pelo card
+ *  "prospectar hoje": o /radar grava a ficha entregue no funil (`ficha_card`) quando ela abre. O link do e-mail não
+ *  leva origem (a página dele grava a própria ficha antes do redirect). */
+export function linkFichaRadar(cnpj: string, origem?: 'card'): string {
+  return `/radar?cnpj=${encodeURIComponent(cnpj)}${origem ? `&origem=${origem}` : ''}`;
 }
 
 /** "Divinópolis (358) · Nova Serrana (266)" — o porquê do território, com a contagem que o decide. */
