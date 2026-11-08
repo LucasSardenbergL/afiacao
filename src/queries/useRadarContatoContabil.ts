@@ -108,7 +108,9 @@ export function useRadarParaVisitarContagem(filtros: RadarFiltros, hojeISO: stri
       const lote = await lerLoteVigente(qc);
       if (base.soSugeridos && !lote) throw new Error('Sem lote completo da RFB: "só sugeridos" fica indisponível.');
       const p = { ...parametrosDaLista({ ...base, paraVisitar: true }, lote, hojeISO, 0), p_limit: TETO_CONTAGEM_VISITAR };
-      const { data, error } = await supabase.rpc('radar_lista', p).select('cnpj');
+      // Ordem estável + teto explícito: a função já devolve no máximo p_limit; o range diz isso ao gate de paginação.
+      const { data, error } = await supabase.rpc('radar_lista', p).select('cnpj')
+        .order('cnpj', { ascending: true }).range(0, TETO_CONTAGEM_VISITAR - 1);
       if (error) throw error;
       if (!Array.isArray(data)) throw new Error('radar_lista: resposta fora da forma esperada (lista)');
       return data.length;
