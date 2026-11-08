@@ -590,6 +590,11 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
   sem teste; testes Deno só provavam sintaxe → agora executam o texto serializado).
 - **Resta (declarado):** o `innerText` com layout real, o redesenho assíncrono do DataTables e a execução no Chrome
   remoto só se provam na rodada real (leitura de segunda, `modo=listar`).
+- **Deploy (2026-11-08):** #3742 mergeado às 15:05Z. A ordem entre edges reteve a leva até a predecessora
+  `disparar-pedidos-aprovados` ser sondada de novo: DEPLOY CONFIRMADO, tentativa #1009. Depois foram duas ondas pelo
+  pacote. O importar v1.8 bateu 10/10 hashes, e a sonda (#1011) deu DEPLOY CONFIRMADO. O sensor achou o `edit_id`
+  da regeneração do `types.ts` (`d97eb3234`, tolerado), e nenhuma edge mudou. O varrer v1.10 bateu 14/14 hashes, a
+  resposta veio sem `edit_id` e a sonda deu DEPLOY CONFIRMADO. `pendencias:deploy` em exit 0.
 
 ## 7.5 — o portal expõe NCM/IPI por item? Rodada 1: INCONCLUSIVO (2026-11-08)
 

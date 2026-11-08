@@ -37,8 +37,8 @@
   CONFIRMADO (sonda #999, 2026-11-08).
 - ✅ **8.1** (#3737) — testes dos handlers reais da importar e da varrer (harness + PostgREST falso por rota), 21
   sabotagens vermelhas. Só testes: nada a deployar.
-- 🔄 **8.2** — seletores e paginação testados contra HTML (vitest + jsdom), funções de página em
-  `_shared/sayerlack-portal-dom.ts`; importar v1.8 e varrer v1.10 (deploy das 2 edges depois do merge).
+- ✅ **8.2** (#3742) — seletores e paginação testados contra HTML (vitest + jsdom), funções de página em
+  `_shared/sayerlack-portal-dom.ts`; importar v1.8 e varrer v1.10, as 2 com DEPLOY CONFIRMADO.
 - 🔄 **7.2 + 4.3** — evidência imutável de cada leitura (`sayerlack_portal_evidencia`, migration `20261111090000`) e
   sessão do Browserless contada pela importadora; importar v1.9 e varrer v1.11 (migration → importar → varrer).
 - ⏳ Depois: 7.3, 5.2 (botão "aceitar o portal", decisão do founder), 7.1 (7.5 encerrada: o portal não expõe IPI por item).
