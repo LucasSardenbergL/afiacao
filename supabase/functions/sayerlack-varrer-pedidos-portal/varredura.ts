@@ -21,6 +21,7 @@
 // com as originais em cada entrada — divergir quebra o teste.
 
 import { somarDias } from "../_shared/hoje-sp.ts";
+import { JANELA_FUTURO_DIAS, JANELA_PASSADO_INCREMENTAL_DIAS } from "../_shared/janela-pedidos-compra.ts";
 
 export interface LinhaConsultaRaw {
   [coluna: string]: string;
@@ -543,8 +544,10 @@ export function observacoesDaLista(
  */
 export function desfechoImportacao(httpStatus: number, corpo: unknown): "ok" | "falha" | "indeterminado" {
   if (httpStatus === 0 || !corpo || typeof corpo !== "object" || Array.isArray(corpo)) return "indeterminado";
-  const b = corpo as { ok?: unknown; mensagem?: unknown };
+  const b = corpo as { ok?: unknown; mensagem?: unknown; desfecho?: unknown };
   if (typeof b.ok !== "boolean" || typeof b.mensagem !== "string") return "indeterminado";
+  // A importadora declara "não sei" explicitamente quando a gravação pode ter acontecido (Codex revisão 2, B7).
+  if (b.desfecho === "indeterminado") return "indeterminado";
   return resumoImportacao(httpStatus, corpo).ok ? "ok" : "falha";
 }
 
@@ -571,4 +574,20 @@ export function carenciaRedisparo(
 export function maisRecente(a: string | null | undefined, b: string | null | undefined): string | null {
   const ms = [a, b].map((x) => (x ? Date.parse(x) : NaN)).filter((n) => Number.isFinite(n));
   return ms.length === 0 ? null : new Date(Math.max(...ms)).toISOString();
+}
+
+/** Folga dentro da janela do sync incremental: a previsão do PO lançado à mão pode diferir da entrega do portal. */
+const FOLGA_COBERTURA_DIAS = 10;
+
+/**
+ * O sync de pedidos de compra só coleta PO com previsão de entrega em [hoje − 60, hoje + 120] dias (incremental —
+ * `_shared/janela-pedidos-compra.ts`). "Complete depois da falha" só prova ausência de PO manual para pedido cuja
+ * entrega cai DENTRO dessa cobertura (Codex revisão 2, B5). Fora dela (ou sem data) o re-disparo automático não sai:
+ * vira pendência humana.
+ */
+export function entregaCobertaPeloSync(dataEntregaISO: string | null, hojeISO: string): boolean {
+  if (!dataEntregaISO || !/^\d{4}-\d{2}-\d{2}/.test(dataEntregaISO)) return false;
+  const d = dataEntregaISO.slice(0, 10);
+  return d >= somarDias(hojeISO, -(JANELA_PASSADO_INCREMENTAL_DIAS - FOLGA_COBERTURA_DIAS)) &&
+    d <= somarDias(hojeISO, JANELA_FUTURO_DIAS - FOLGA_COBERTURA_DIAS);
 }

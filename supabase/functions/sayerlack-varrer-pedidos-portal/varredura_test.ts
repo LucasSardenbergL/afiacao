@@ -31,6 +31,7 @@ import {
   desfechoImportacao,
   carenciaRedisparo,
   maisRecente,
+  entregaCobertaPeloSync,
 } from "./varredura.ts";
 import * as leituraOriginal from "../sayerlack-importar-pedido-portal/leitura.ts";
 import * as janelaOriginal from "../disparar-pedidos-aprovados/janela-portal.ts";
@@ -391,4 +392,20 @@ Deno.test("B5: carência do re-disparo — sync complete depois da última mudan
   assertEquals(maisRecente("2026-11-09T12:00:00Z", "2026-11-09T13:00:00Z"), "2026-11-09T13:00:00.000Z");
   assertEquals(maisRecente(null, "2026-11-09T13:00:00Z"), "2026-11-09T13:00:00.000Z");
   assertEquals(maisRecente(null, undefined), null);
+});
+
+Deno.test("B7 (Codex rev. 2): a importadora que declara desfecho indeterminado nunca vira falha reconhecida", () => {
+  assertEquals(desfechoImportacao(200, { ok: false, etapa: "importacao", desfecho: "indeterminado", mensagem: "não sei" }), "indeterminado");
+  assertEquals(desfechoImportacao(500, { ok: false, etapa: "importacao", desfecho: "indeterminado", mensagem: "não sei" }), "indeterminado");
+});
+
+Deno.test("B5 (Codex rev. 2): re-disparo só com a entrega dentro da janela que o sync cobre (−50..+110 d)", () => {
+  const hoje = "2026-11-09";
+  assertEquals(entregaCobertaPeloSync("2026-11-20", hoje), true);
+  assertEquals(entregaCobertaPeloSync("2026-09-20", hoje), true);   // −50
+  assertEquals(entregaCobertaPeloSync("2026-09-19", hoje), false);  // −51
+  assertEquals(entregaCobertaPeloSync("2027-02-27", hoje), true);   // +110
+  assertEquals(entregaCobertaPeloSync("2027-02-28", hoje), false);  // +111
+  assertEquals(entregaCobertaPeloSync(null, hoje), false);
+  assertEquals(entregaCobertaPeloSync("lixo", hoje), false);
 });

@@ -51,6 +51,7 @@ import {
   desfechoImportacao,
   carenciaRedisparo,
   maisRecente,
+  entregaCobertaPeloSync,
 } from "./varredura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -382,7 +383,7 @@ async function encerrarCanceladoNoPortal(
   return error ? { ok: false, mensagem: error.message } : { ok: true, mensagem: "encerrado" };
 }
 
-interface PedidoNoApp { id: number; status: string | null; temPo: boolean; ultimaMudanca: string | null }
+interface PedidoNoApp { id: number; status: string | null; temPo: boolean; ultimaMudanca: string | null; dataEntrega: string | null }
 
 /** Status em que o PO ainda pode ser (re)disparado pela importadora (mesma régua de STATUS_REDISPARAVEIS lá). */
 const STATUS_REDISPARAVEIS = new Set(["aprovado_aguardando_disparo", "falha_envio"]);
@@ -394,8 +395,8 @@ const STATUS_REDISPARAVEIS = new Set(["aprovado_aguardando_disparo", "falha_envi
 async function pedidosNoApp(db: Db, protocolos: string[]): Promise<Map<string, PedidoNoApp>> {
   const m = new Map<string, PedidoNoApp>();
   if (protocolos.length === 0) return m;
-  const linhas = await fetchAll<{ id: number; portal_protocolo: string | null; status: string | null; omie_pedido_compra_id: string | number | null; atualizado_em: string | null; enviado_portal_em: string | null }>(
-    (de, ate) => db.from("pedido_compra_sugerido").select("id, portal_protocolo, status, omie_pedido_compra_id, atualizado_em, enviado_portal_em").in("portal_protocolo", protocolos)
+  const linhas = await fetchAll<{ id: number; portal_protocolo: string | null; status: string | null; omie_pedido_compra_id: string | number | null; atualizado_em: string | null; enviado_portal_em: string | null; portal_data_entrega: string | null }>(
+    (de, ate) => db.from("pedido_compra_sugerido").select("id, portal_protocolo, status, omie_pedido_compra_id, atualizado_em, enviado_portal_em, portal_data_entrega").in("portal_protocolo", protocolos)
       .order("id", { ascending: true }).range(de, ate),
     "varrer-portal:protocolos-no-app",
   );
@@ -404,7 +405,7 @@ async function pedidosNoApp(db: Db, protocolos: string[]): Promise<Map<string, P
     if (!prot) continue;
     const po = r.omie_pedido_compra_id == null ? "" : String(r.omie_pedido_compra_id).trim();
     // Última mudança do pedido (falha do disparo grava `atualizado_em`): base da carência do re-disparo (B5).
-    m.set(prot, { id: r.id, status: r.status, temPo: po !== "" && po !== "0", ultimaMudanca: maisRecente(r.atualizado_em, r.enviado_portal_em) });
+    m.set(prot, { id: r.id, status: r.status, temPo: po !== "" && po !== "0", ultimaMudanca: maisRecente(r.atualizado_em, r.enviado_portal_em), dataEntrega: r.portal_data_entrega });
   }
   return m;
 }
@@ -537,7 +538,7 @@ async function syncPedidosCompletoEm(db: Db): Promise<string | null> {
   return r?.status === "complete" && r.last_sync_at ? r.last_sync_at : null;
 }
 
-async function importar(protocolo: string, situacoes: string[]): Promise<{ httpStatus: number; corpo: unknown }> {
+async function importar(protocolo: string, situacoes: string[], somenteSituacao = false): Promise<{ httpStatus: number; corpo: unknown }> {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 240_000);
   try {
@@ -546,7 +547,7 @@ async function importar(protocolo: string, situacoes: string[]): Promise<{ httpS
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
       // A releitura da importadora tem de achar a MESMA situação que a varredura classificou (Codex P1, 2026-10-16/17):
       // um pedido que passou de Aberto para Atendido no meio da rodada escaparia da trava de NF.
-      body: JSON.stringify({ protocolo, situacoes_permitidas: situacoes }),
+      body: JSON.stringify(somenteSituacao ? { protocolo, situacoes_permitidas: situacoes, somente_situacao: true } : { protocolo, situacoes_permitidas: situacoes }),
       signal: ctrl.signal,
     });
     const txt = await resp.text();
@@ -634,6 +635,13 @@ async function reservarTentativa(db: Db, protocolo: string, mensagem: string): P
   return "reservado";
 }
 
+/** Re-disparo de pedido cuja entrega está fora da janela que o sync de pedidos de compra cobre (B5, Codex revisão 2). */
+function mensagemForaDaCobertura(protocolo: string, pedidoId: number, entrega: string | null): string {
+  return `Pedido ${protocolo} está no app (#${pedidoId}) sem pedido de compra, mas a entrega dele (${entrega ?? "sem data"}) ` +
+    `está fora da janela que o sync de pedidos de compra do Omie confere: o espelho não prova que ninguém lançou o PO à ` +
+    `mão. O cron não re-dispara — confira no Omie e use "Importar do portal".`;
+}
+
 /** Re-disparo esperando o sync do espelho há mais de 6 h (B5): pendência visível, como a carência presa (3.9). */
 function mensagemRedisparoTravado(protocolo: string, pedidoId: number, desde: string | null): string {
   return `Pedido ${protocolo} está no app (#${pedidoId}) sem pedido de compra e o re-disparo automático espera o sync de ` +
@@ -679,9 +687,9 @@ Deno.serve(async (req: Request) => {
   // 4.3: cada leitura da lista e cada importação abre UMA sessão no Browserless (cota do plano). Conta por rodada.
   const sessoes = { leitura_portal: 0, importacao: 0 };
   const lerPortalContado = (desde: string) => { sessoes.leitura_portal += 1; return lerPortal(desde); };
-  const importarContado = async (protocolo: string, situacoes: string[]) => {
+  const importarContado = async (protocolo: string, situacoes: string[], somenteSituacao = false) => {
     sessoes.importacao += 1;
-    const r = await importar(protocolo, situacoes);
+    const r = await importar(protocolo, situacoes, somenteSituacao);
     // B3: situação lida pela importadora e não gravada é problema DA RODADA (vermelha), não só do e-mail.
     if ((r.corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada === "erro") {
       falhasSituacao.push(`importadora não gravou a situação de ${protocolo}`);
@@ -791,14 +799,34 @@ Deno.serve(async (req: Request) => {
 
     // 2. Classifica.
     const protocolos = lista.pedidos.map((p) => p.protocolo);
-    const [noApp, noOmie, vistos, syncEm] = await Promise.all([
-      pedidosNoApp(db, protocolos), contratosNoOmie(db, protocolos), vistosAntes(db, protocolos), syncPedidosCompletoEm(db),
+    // Observar situações só precisa dos pedidos do app (Codex revisão 2, B4): espelho/vistas/sync vêm DEPOIS, para
+    // uma falha neles nunca impedir a gravação de um cancelamento já lido.
+    const noApp = await pedidosNoApp(db, protocolos);
+    if (bloqueio) {
+      if (modo === "importar") {
+        resumoFinal = {
+          ...resumoFinal,
+          situacoes: await gravarSituacoes(observacoesDaLista(lista.pedidos, new Set(noApp.keys()), { soCancelados: !prova.ok }), lidoDe, lidoAte),
+        };
+      }
+      if (falhasSituacao.length > 0) {
+        causaPreProtocolo = "bloqueado:situacao_nao_gravada";
+        throw new Error(`Rodada bloqueada (${bloqueio}) e a situação do portal não foi gravada: ${falhasSituacao.join(" · ")}`);
+      }
+      if (!prova.ok) {
+        causaPreProtocolo = `prova:${prova.motivo}`;
+        throw new Error(`Rodada bloqueada (${bloqueio}) e leitura incompleta (${prova.motivo}): ${prova.detalhe}`);
+      }
+      return { ...resumoFinal, pulado: "bloqueado", mensagem: `Rodada não importa: ${bloqueio}. Situações do portal lidas e gravadas.` };
+    }
+    const [noOmie, vistos, syncEm] = await Promise.all([
+      contratosNoOmie(db, protocolos), vistosAntes(db, protocolos), syncPedidosCompletoEm(db),
     ]);
     const preCarencia = classificar(lista.pedidos, {
       protocolosNoApp: new Set(noApp.keys()), contratosNoOmie: noOmie, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
     });
     // A 1ª vista só conta em rodada de IMPORTAR: "listar" não tem efeito sobre compras futuras (Codex P2).
-    if (modo === "importar" && !bloqueio) {
+    if (modo === "importar") {
       await registrarVistos(db, preCarencia.filter((p) => p.classe === "candidato" && !vistos.has(p.protocolo)).map((p) => p.protocolo));
     }
     // 2b. Onda 5A: a situação de cada pedido do app vai para o pedido (escritor único). Só com leitura PROVADA —
@@ -810,19 +838,6 @@ Deno.serve(async (req: Request) => {
         ...resumoFinal,
         situacoes: await gravarSituacoes(observacoesDaLista(lista.pedidos, new Set(noApp.keys()), { soCancelados: !prova.ok }), lidoDe, lidoAte),
       };
-    }
-    // Bloqueada (B4): situações gravadas acima; nada de vista, importação, re-disparo, reconsulta ou reconciliação.
-    if (bloqueio) {
-      if (falhasSituacao.length > 0) {
-        causaPreProtocolo = "bloqueado:situacao_nao_gravada";
-        throw new Error(`Rodada bloqueada (${bloqueio}) e a situação do portal não foi gravada: ${falhasSituacao.join(" · ")}`);
-      }
-      if (!prova.ok) {
-        // ilegível/repetido: leitura imperfeita (só os 6 foram gravados) — vermelha, com a causa no registro.
-        causaPreProtocolo = `prova:${prova.motivo}`;
-        throw new Error(`Rodada bloqueada (${bloqueio}) e leitura incompleta (${prova.motivo}): ${prova.detalhe}`);
-      }
-      return { ...resumoFinal, pulado: "bloqueado", mensagem: `Rodada não importa: ${bloqueio}. Situações do portal lidas e gravadas.` };
     }
     const classificados = aplicarCarencia(preCarencia, vistos, syncEm);
     const candidatos = classificados.filter((p) => p.classe === "candidato");
@@ -907,8 +922,20 @@ Deno.serve(async (req: Request) => {
           redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "situacao_impeditiva", notificado });
           continue;
         }
-        // B5: carência do re-disparo — o sync do espelho tem de ter terminado depois da última mudança do pedido.
-        const car = carenciaRedisparo(ped.ultimaMudanca, syncEm, Date.now());
+        // B5: carência do re-disparo — o sync do espelho tem de ter terminado depois da última mudança do pedido, que é
+        // RELIDA agora (outro disparo pode ter falhado durante a rodada; Codex revisão 2) — e a entrega do pedido tem
+        // de cair na janela que o sync cobre.
+        const pedAgora = (await pedidosNoApp(db, [p.protocolo])).get(p.protocolo);
+        if (!pedAgora || pedAgora.id !== ped.id || pedAgora.temPo || !pedAgora.status || !STATUS_REDISPARAVEIS.has(pedAgora.status)) {
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "mudou_durante_a_rodada" });
+          continue;
+        }
+        if (!entregaCobertaPeloSync(pedAgora.dataEntrega, hoje)) {
+          const { notificado } = await registrarFalha(db, p.protocolo, mensagemForaDaCobertura(p.protocolo, ped.id, pedAgora.dataEntrega));
+          redisparos.push({ protocolo: p.protocolo, pedido_id: ped.id, acao: "fora_da_cobertura_do_sync", notificado });
+          continue;
+        }
+        const car = carenciaRedisparo(pedAgora.ultimaMudanca, syncEm, Date.now());
         if (car !== "pode") {
           const notificado = car === "aguarda_sync_travado"
             ? (await registrarFalha(db, p.protocolo, mensagemRedisparoTravado(p.protocolo, ped.id, ped.ultimaMudanca))).notificado
@@ -982,13 +1009,20 @@ Deno.serve(async (req: Request) => {
           // Pedido no app sem PO e PO manual no Omie: pendência de vinculação (item 7.1), não re-disparo.
           reconsultas.push({ ...q, acao: "po_manual_no_omie" }); continue;
         } else {
-          // B5: pedido do app sem PO — a reconsulta RE-DISPARA; mesma carência do re-disparo da janela.
+          // B5: pedido do app sem PO — a reconsulta RE-DISPARA; mesma carência e cobertura do re-disparo da janela.
+          // Sem elas, a reconsulta ainda RELÊ e GRAVA a situação (só situação, sem disparo): é o que persiste um 6 que
+          // a importadora leu e não conseguiu gravar (B3, Codex revisão 2).
+          const coberta = entregaCobertaPeloSync(pedQ.dataEntrega, hoje);
           const car = carenciaRedisparo(pedQ.ultimaMudanca, syncEm, Date.now());
-          if (car !== "pode") {
-            const notificado = car === "aguarda_sync_travado"
-              ? (await registrarFalha(db, q.protocolo, mensagemRedisparoTravado(q.protocolo, pedQ.id, pedQ.ultimaMudanca))).notificado
-              : undefined;
-            reconsultas.push({ ...q, acao: car, notificado }); continue;
+          if (!coberta || car !== "pode") {
+            const msg = !coberta ? mensagemForaDaCobertura(q.protocolo, pedQ.id, pedQ.dataEntrega)
+              : car === "aguarda_sync_travado" ? mensagemRedisparoTravado(q.protocolo, pedQ.id, pedQ.ultimaMudanca) : null;
+            const notificado = msg ? (await registrarFalha(db, q.protocolo, msg)).notificado : undefined;
+            const rs = await importarContado(q.protocolo, [...SITUACOES_IMPORTAVEIS], true)
+              .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
+            const sg = (rs.corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada ?? null;
+            reconsultas.push({ ...q, acao: !coberta ? "fora_da_cobertura_do_sync" : car, notificado, situacao_relida: sg });
+            continue;
           }
         }
         const r = await importarContado(q.protocolo, [...SITUACOES_IMPORTAVEIS])
