@@ -107,8 +107,28 @@ SELECT coalesce(CASE WHEN uf='MG' THEN 'MG' ELSE 'outras' END, 'total') recorte,
 FROM m GROUP BY ROLLUP (CASE WHEN uf='MG' THEN 'MG' ELSE 'outras' END) ORDER BY 1;
 ```
 
-**Re-medir** quando `radar_socios` carregar (o grupo passa a unir raízes por sócio e o selo deve cair um pouco), e o
-acerto pela query do sensor abaixo.
+### Re-medição com sócios (PROD, 2026-11-08 17:52 UTC)
+
+A recarga forçada de 2026-10 (run `42487332055`) publicou o 1º lote de sócios: `2026-10-c179e567`, com 203.048
+linhas de 139.578 raízes, vigente desde 16:58 UTC. Pedi o recálculo na hora em vez de esperar o cron das 06:50:
+`radar_contato_contabil_recalcular()` sem forçar, `pulado=false` (a impressão mudou pelo lote de sócios), 3 iterações e
+49 s. Conferido por `psql-ro`: `detalhes.socios_lote = 2026-10-c179e567`, 82.154 contatos (22.172 telefones, 59.982
+e-mails), contra 83.709 (23.115 / 60.594) sem sócios.
+
+A republicação atômica de `radar_empresas` desse lote **falhou**: o cron `radar-publicar-lote` estourou os 30 min e o
+disparo seguinte foi cancelado. A tabela ficou intacta (573.021 linhas, o mesmo 2026-10). A re-medição lê a mesma base
+de empresas, então o que mudou foi **só o grupo por sócio**. A falha é da carga atômica (#3739), não deste sinal.
+
+| Recorte | Com selo (≥ 1 contato) | Telefone marcado | Só contabilidade | Visitar | A contatar com selo | A contatar para visitar |
+|---|---:|---:|---:|---:|---:|---:|
+| MG | 14.110 (−80) | 4.235 (−92) | 3.213 (−67) | 3.213 | 12.744 | 2.885 (−64) |
+| Total | 67.043 (−850) | 21.223 (−888) | 15.383 (−660) | 15.383 | 60.058 | 13.824 (−607) |
+
+Como o previsto, o selo caiu pouco: −0,6% em MG e −1,3% no total. Quem mais caiu foi o telefone marcado (−4% no
+total): 3 ou 4 empresas que dividiam o mesmo número eram do mesmo dono e agora contam como um grupo só. Mesma query
+acima.
+
+**Falta:** ler o acerto pela query do sensor abaixo, quando houver correções de vendedor.
 
 ## Sensor de uso e de acerto
 
