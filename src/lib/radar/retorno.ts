@@ -6,16 +6,16 @@
  * fuso de São Paulo — nunca `new Date('YYYY-MM-DD')`, que é meia-noite UTC e cai no dia ANTERIOR em BRT.
  */
 
+import { addDias, hojeSP } from '@/lib/time/sp-day';
+
 export const RETORNO_MAX_DIAS = 60;
 const RETORNO_PADRAO_DIAS = 7;
 
 const RE_DIA = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-/** Hoje no fuso de São Paulo, 'YYYY-MM-DD'. */
+/** Hoje no fuso de São Paulo, 'YYYY-MM-DD' (o helper da plataforma, não o dia UTC de `toISOString()`). */
 export function hojeBRT(agora: Date = new Date()): string {
-  // en-CA formata como YYYY-MM-DD.
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' })
-    .format(agora);
+  return hojeSP(agora);
 }
 
 function paraUTC(dia: string): Date {
@@ -24,14 +24,9 @@ function paraUTC(dia: string): Date {
   return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
 }
 
-function deUTC(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
+/** Aritmética de calendário (sem relógio, sem fuso): o `addDias` da plataforma. */
 export function somarDias(dia: string, n: number): string {
-  const d = paraUTC(dia);
-  d.setUTCDate(d.getUTCDate() + n);
-  return deUTC(d);
+  return addDias(dia, n);
 }
 
 /** Sábado e domingo vão para a segunda — a mesma regra de `private.radar_dia_util`. */
