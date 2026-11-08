@@ -584,7 +584,15 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
 - Campo ausente ou rede vira `importacao_indeterminada`; então `total` vem null, com a faixa `total_minimo`/`total_maximo`.
 - **Lição (Codex).** O PostgREST falso devolvia 204 COM corpo, e o `Response` lançava. O fecho do ledger falhava mudo
   em todos os testes de handler, e as asserções liam o PATCH tentado. Corrigido no `_shared`.
-- **Deploy:** migration → importar → varrer.
+- **Deploy (2026-11-08):** #3747 mergeado às 21:01Z, depois de um rerun: o 1º CI caiu na rede do runner, com o curl da
+  chave PGDG em exit 56, antes de qualquer prova. A migration `20261111090000` foi aplicada pelo envelope (ensaio ok,
+  tentativa **#1015**). Validação em psql-ro: RLS ligada, os 2 triggers em `A`, `service_role` com INSERT e SELECT,
+  `anon` e `authenticated` sem acesso.
+  - **importar v1.9:** 11/11 hashes, sonda #1017 DEPLOY CONFIRMADO. O 401 já traz `sessao_browserless:false`. O
+    sensor achou `edit_id`/`commit_sha` do `types.ts` regenerado com a tabela nova (`4e801f49`, tolerado), e nenhuma
+    edge mudou.
+  - **varrer v1.11:** 14/14 hashes, sem `edit_id`, sonda #1019 DEPLOY CONFIRMADO.
+  - `pendencias:deploy` em exit 0.
 
 ## 8.2 — seletores e paginação testados contra HTML (2026-11-08)
 
