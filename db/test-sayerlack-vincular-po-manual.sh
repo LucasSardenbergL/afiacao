@@ -227,7 +227,7 @@ SELECT v.id, v.emp, v.st, v.prot, v.po, v.claim FROM (VALUES
   (7,  'OBEN', 'aprovado_aguardando_disparo', '2142007', NULL,   NULL),               -- 2 POs com o protocolo
   (8,  'OBEN', 'aprovado_aguardando_disparo', '2142008', NULL,   NULL),               -- PO com AFI-999
   (9,  'OBEN', 'aprovado_aguardando_disparo', '2142009', NULL,   NULL),               -- PO já do pedido 50
-  (10, 'OBEN', 'aprovado_aguardando_disparo', '2142010', NULL,   NULL),               -- quantidade diverge
+  (10, 'OBEN', 'aprovado_aguardando_disparo', '2142010', NULL,   NULL),               -- quantidade diverge, valor igual
   (11, 'OBEN', 'aprovado_aguardando_disparo', '2142011', NULL,   NULL),               -- PO com SKU a mais
   (12, 'OBEN', 'aprovado_aguardando_disparo', '2142012', NULL,   NULL),               -- valor: 1 centavo (tolera)
   (13, 'OBEN', 'aprovado_aguardando_disparo', '2142013', NULL,   NULL),               -- valor: 6 centavos em 2 un.
@@ -265,7 +265,7 @@ SELECT v.emp::public.empresa_reposicao, v.st::public.status_pedido_compra, v.cod
   ('OBEN', 'CRIADO',    7072, 'M72', NULL,      '2142007/2142099',    NULL),
   ('OBEN', 'CRIADO',    7008, 'M8',  'AFI-999', '2142008',            NULL),
   ('OBEN', 'CRIADO',    7009, 'M9',  NULL,      '2142009',            NULL),
-  ('OBEN', 'CRIADO',    7010, 'M10', NULL,      '2142010',            pg_temp.prod('{"nCodProd":111,"nQtde":4,"nValTot":40.00}', '{"nCodProd":222,"nQtde":1,"nValTot":5.50}')),
+  ('OBEN', 'CRIADO',    7010, 'M10', NULL,      '2142010',            pg_temp.prod('{"nCodProd":111,"nQtde":4,"nValTot":20.00}', '{"nCodProd":222,"nQtde":1,"nValTot":5.50}')),  -- mesmo total, outra qtde
   ('OBEN', 'CRIADO',    7011, 'M11', NULL,      '2142011/2142098',    pg_temp.prod('{"nCodProd":111,"nQtde":2,"nValTot":20.00}', '{"nCodProd":222,"nQtde":1,"nValTot":5.50}', '{"nCodProd":333,"nQtde":1,"nValTot":7.00}')),
   ('OBEN', 'CRIADO',    7012, 'M12', NULL,      '2142012',            pg_temp.prod('{"nCodProd":111,"nQtde":2,"nValTot":20.01}', '{"nCodProd":222,"nQtde":1,"nValTot":5.50}')),
   ('OBEN', 'CRIADO',    7013, 'M13', NULL,      '2142013',            pg_temp.prod('{"nCodProd":111,"nQtde":2,"nValTot":20.06}', '{"nCodProd":222,"nQtde":1,"nValTot":5.50}')),
