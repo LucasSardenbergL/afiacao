@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **816** custom migrations totais
-- **2743** objetos esperados (criados por estas migrations)
+- **817** custom migrations totais
+- **2755** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1084
+  - `function`: 1094
   - `rls_policy`: 521
-  - `index`: 386
+  - `index`: 387
   - `table`: 255
-  - `cron_job`: 217
+  - `cron_job`: 218
   - `trigger`: 141
   - `view`: 135
   - `enum_value`: 4
@@ -6746,6 +6746,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_carga_publicar_pendente` | — |
 | `table` | `public.radar_empresas_carga` | — |
 | `cron_job` | `cron.radar-publicar-lote` | — |
+
+### `20261111100000_radar_acompanhamento_pacote_g.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_dia_util` | — |
+| `function` | `private.radar_atendimento_expira_em` | — |
+| `function` | `private.radar_acompanhamentos` | — |
+| `function` | `private.radar_retornos_do_vendedor` | — |
+| `function` | `private.radar_posses_do_vendedor` | — |
+| `function` | `public.registrar_contato_radar` | — |
+| `function` | `private.radar_leads_do_vendedor` | — |
+| `function` | `public.radar_prospectar_hoje` | — |
+| `function` | `public.radar_avisar_vendedores` | — |
+| `function` | `public.radar_posses_vencer_tick` | — |
+| `index` | `public.idx_radar_empresas_acompanhamento` | `radar_empresas` |
+| `cron_job` | `cron.radar-posses-vencer-diario` | — |
 
 ## Próximos passos por status
 
