@@ -553,6 +553,24 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
 - Falsificação (commitado antes; controle verde antes e depois, na mesma invocação): 11 sabotagens no `index.ts` da
   importar e 10 no da varrer, uma camada por vez — todas vermelhas.
 
+## 7.3 — transportadora do portal no `cObs` do PO (2026-11-08)
+
+- **O quê:** o `disparar-pedidos-aprovados` v1.13 põe no `cObs` do PO a transportadora que o portal mostrou
+  (`data_pedido.transportadora` do `busca-itens-pedido`). A fonte é a evidência imutável do 7.2: a leitura mais recente
+  com `leitura_ok`, sob prazo de 3 s.
+- **Fail-open por desenho:** é observação, nunca segura nem muda o disparo. Sem evidência, sem o campo, com caractere de
+  controle, vazio ou acima de 60 caracteres, a linha não entra. Ausente ≠ inventada.
+- **Sem 2º escritor:** o valor é lido da evidência e não é gravado no pedido; a RPC de importação fica intacta. O frete
+  não entra, porque nenhuma leitura real mostrou ainda onde o portal o informa.
+- **Provas:** 3 testes Deno das funções puras. Falsificação 6/6 vermelha, com controle verde; uma guarda redundante
+  ficou verde e foi removida.
+- **Codex:** Caminho B (`sem-codex: cota no teto local (79)`), por decisão do founder de guardar a reserva para o 5.2 e
+  o 7.1. REVISÃO INDEPENDENTE PENDENTE; o Codex retroativo roda quando a janela reabrir.
+- **Resta (declarado):**
+  - a fiação no `index.ts` não tem teste de handler;
+  - caracteres C1 e bidi passam pelo filtro;
+  - o teto do `cObs` no Omie não está provado.
+
 ## 7.2 + 4.3 — evidência imutável de cada leitura e sessão do Browserless pela importadora (2026-11-08)
 
 - **7.2.** A migration `20261111090000` cria a tabela `sayerlack_portal_evidencia`, que só aceita INSERT. Triggers
