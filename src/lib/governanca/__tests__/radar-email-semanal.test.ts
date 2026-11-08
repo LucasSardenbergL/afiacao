@@ -20,6 +20,29 @@ describe('lerPainelEmailSemanal', () => {
     expect(p.usuarios[0]).toMatchObject({ userId: 'u1', modo: 'ligado', acessoRadar: true, ultimoEnvio: null });
   });
 
+  it('pacote E: território compartilhado e motivo do vazio; campos ausentes (front antes da migration) não quebram', () => {
+    const p = lerPainelEmailSemanal(
+      {
+        cron: null,
+        usuarios: [
+          usuario({ territorio: [{ municipio: 'DIVINÓPOLIS', uf: 'MG', clientes: 2, compartilhado: true }] }),
+          usuario({ user_id: 'u2', territorio: [], territorio_motivo: 'carteira_sem_municipio' }),
+          usuario({ user_id: 'u3', territorio: [], territorio_motivo: 'codigo_do_futuro' }),
+        ],
+      },
+      'x',
+    );
+    expect(p.usuarios.map((x) => [x.territorio[0]?.compartilhado ?? null, x.territorioMotivo])).toEqual([
+      [true, null],
+      [null, 'carteira_sem_municipio'],
+      [null, null],
+    ]);
+    expect(lerPainelEmailSemanal({ cron: null, usuarios: [usuario()] }, 'x').usuarios[0].territorio[0].compartilhado).toBe(false);
+    expect(() =>
+      lerPainelEmailSemanal({ cron: null, usuarios: [usuario({ territorio: [{ municipio: 'A', clientes: 1, compartilhado: 'sim' }] })] }, 'rpc'),
+    ).toThrow('rpc: resposta fora do formato (usuarios[0].territorio[0])');
+  });
+
   it('cron null é "não existe" (≠ desligado)', () => {
     expect(lerPainelEmailSemanal({ cron: null, usuarios: [] }, 'x').cron).toBeNull();
   });
@@ -50,14 +73,27 @@ describe('textos da tela', () => {
   it('impedimento: o mesmo motivo com que o envio pularia a pessoa', () => {
     expect(impedimentoDoEnvio(u({}))).toBeNull();
     expect(impedimentoDoEnvio(u({ acessoRadar: false }))).toBe('Sem acesso ao Radar: o e-mail seria pulado.');
-    expect(impedimentoDoEnvio(u({ territorio: [] }))).toMatch(/^Sem carteira com endereço/);
+    // Território vazio: a copy segue o motivo do banco (a antiga "Sem carteira com endereço" mentia para quem tem
+    // carteira e é 2º em todas as cidades); sem motivo (front antes da migration), a genérica.
+    expect(impedimentoDoEnvio(u({ territorio: [], territorioMotivo: 'sem_carteira' }))).toMatch(/^Sem carteira atribuída/);
+    expect(impedimentoDoEnvio(u({ territorio: [], territorioMotivo: 'nao_e_vendedor' }))).toMatch(/^Sem papel de vendedor/);
+    expect(impedimentoDoEnvio(u({ territorio: [], territorioMotivo: 'carteira_sem_municipio' }))).toMatch(
+      /^Os clientes da carteira não têm endereço em um município do Radar/,
+    );
+    expect(impedimentoDoEnvio(u({ territorio: [], territorioMotivo: null }))).toMatch(/^Sem território: /);
+    expect(impedimentoDoEnvio(u({ territorio: [] }))).toMatch(/Só sai e-mail se o gestor passar leads/);
     expect(impedimentoDoEnvio(u({ email: null }))).toMatch(/^Sem e-mail no cadastro/);
     expect(impedimentoDoEnvio(u({ email: null, modo: 'teste' }))).toBeNull();
   });
 
   it('lista de municípios e resumo do envio', () => {
     expect(listaMunicipios([])).toBe('—');
-    expect(listaMunicipios([{ municipio: 'A', uf: 'MG', clientes: 1 }, { municipio: 'B', uf: 'MG', clientes: 1 }])).toBe('A e B');
+    expect(
+      listaMunicipios([{ municipio: 'A', uf: 'MG', clientes: 1, compartilhado: false }, { municipio: 'B', uf: 'MG', clientes: 1, compartilhado: false }]),
+    ).toBe('A e B');
+    expect(listaMunicipios([{ municipio: 'A', uf: 'MG', clientes: 2, compartilhado: true }])).toBe(
+      'A (sem município próprio: divide com o dono)',
+    );
     expect(resumoUltimoEnvio(null)).toBe('Nenhum envio ainda');
     expect(
       resumoUltimoEnvio({ semana: '2026-11-02', ehTeste: false, nLeads: 5, elegiveis: 972, destinatario: 'r@x.com', status: 'pendente_notificacao' }),
