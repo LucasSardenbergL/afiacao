@@ -133,9 +133,12 @@ esac
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$(dirname "$DATA")/pg.log" -w start >/dev/null
 P()  { "$PGBIN/psql" -X -v ON_ERROR_STOP=1 -p "$PORT" -h /tmp -U postgres -d postgres "$@"; }
 Pq() { P -qAt "$@"; }
-P -q -c "ALTER DATABASE postgres SET lc_messages = '$HARNESS_LC'" -c "ALTER DATABASE postgres SET timezone = '$HARNESS_TZ'" \
+# jit = off como em PROD (`SHOW jit` = off, psql-ro 2026-11-08). O PG17 do PGDG no runner vem com JIT ligado e
+# compilava o radar_funil (custo estimado > jit_above_cost) a cada uma das ~40 chamadas: 133 s no CI contra 4 s
+# sem LLVM, e a falsificação estourava o teto de 25 min da parte (run 42439666293).
+P -q -c "ALTER DATABASE postgres SET jit = off" -c "ALTER DATABASE postgres SET lc_messages = '$HARNESS_LC'" -c "ALTER DATABASE postgres SET timezone = '$HARNESS_TZ'" \
   || { echo "INFRA: lc_messages='$HARNESS_LC'/timezone='$HARNESS_TZ' indisponivel"; exit 1; }
-echo "═══ PG17 :$PORT · lc_messages=$HARNESS_LC · TimeZone=$HARNESS_TZ ═══"
+echo "═══ PG17 :$PORT · lc_messages=$HARNESS_LC · TimeZone=$HARNESS_TZ · jit=$(Pq -c 'SHOW jit') ═══"
 
 # ── Esquema mínimo (o mesmo de db/test-radar-leads-vendedor.sh, que reproduz prod; + o que o pacote H lê) ──────
 P -q <<'SQL'
