@@ -64,7 +64,51 @@ Contexto do pedido (medição da sessão de origem, MG): 68 mil com telefone, 64
 
 ## Medição DEPOIS (PROD, após o apply)
 
-_Preenchido depois do apply — ver a seção abaixo._
+Apply em 2026-11-08 02:25 UTC (`db:aplicar`, tentativa #981, sha256 `5ac7ebee…`). 1º cálculo: **83.709 contatos**
+(23.115 telefones, 60.594 e-mails) em 62 s no banco; `socios_lote` nulo (`radar_socios` vazia: grupo = raiz de CNPJ
+até a próxima carga). Conferido por `psql-ro`: `radar_lista` só na forma de 23 argumentos; md5 de `radar_lista`,
+`radar_avisar_vendedores` e `radar_prospectar_hoje` iguais aos da PÓS; RLS ligada e sem SELECT para `anon` ou
+`authenticated` nas 3 tabelas; o cron existe.
+
+| Recorte | Com selo (≥ 1 contato) | Telefone marcado | Só contabilidade | Visitar (só contabilidade + endereço) | A contatar com selo | A contatar para visitar |
+|---|---:|---:|---:|---:|---:|---:|
+| MG | 14.190 | 4.327 | 3.280 | 3.280 | 12.818 | 2.949 |
+| Total | 67.893 | 22.111 | 16.043 | 16.043 | 60.840 | 14.431 |
+
+A previsão ficou a menos de 3% em MG (14.335 → 14.190 com selo; 3.301 → 3.280 só contabilidade) e a ~11% no telefone
+total (24.873 → 22.111); a base andou desde o export. Todo lead só-contabilidade tem logradouro. "A contatar" é
+`prospeccao_status = 'a_contatar'`, mais largo que a elegibilidade do e-mail (score e foto vigente).
+
+Query (psql-ro; normalização inline, porque `claude_ro` não executa `private.*`):
+
+```sql
+WITH ag AS (
+  SELECT cnpj, array_agg(valor) FILTER (WHERE tipo='telefone') tels, array_agg(valor) FILTER (WHERE tipo='email') ems
+  FROM public.radar_contato_contabil GROUP BY cnpj
+), tv AS (
+  SELECT ag.tels, ag.ems, e.uf, e.logradouro, e.prospeccao_status,
+    (SELECT CASE WHEN length(d) IN (10,11) AND right(d,8) !~ '^(.)\1{7}$' THEN d END FROM (SELECT CASE WHEN length(x) IN (12,13) AND left(x,2)='55' THEN substr(x,3) ELSE x END d FROM (SELECT ltrim(regexp_replace(coalesce(e.telefone1,''),'[^0-9]','','g'),'0') x) a) b) t1,
+    (SELECT CASE WHEN length(d) IN (10,11) AND right(d,8) !~ '^(.)\1{7}$' THEN d END FROM (SELECT CASE WHEN length(x) IN (12,13) AND left(x,2)='55' THEN substr(x,3) ELSE x END d FROM (SELECT ltrim(regexp_replace(coalesce(e.telefone2,''),'[^0-9]','','g'),'0') x) a) b) t2,
+    (SELECT CASE WHEN v ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' THEN v END FROM (SELECT lower(btrim(e.email)) v) a) em
+  FROM ag JOIN public.radar_empresas e ON e.cnpj = ag.cnpj
+), m AS (
+  SELECT uf, logradouro, prospeccao_status,
+    (t1 = ANY(coalesce(tels,'{}')) OR t2 = ANY(coalesce(tels,'{}'))) IS TRUE tel_m,
+    (t1 IS NULL OR t1 = ANY(coalesce(tels,'{}'))) AND (t2 IS NULL OR t2 = ANY(coalesce(tels,'{}')))
+      AND (em IS NULL OR em = ANY(coalesce(ems,'{}'))) AND coalesce(t1,t2,em) IS NOT NULL so_contab
+  FROM tv
+)
+SELECT coalesce(CASE WHEN uf='MG' THEN 'MG' ELSE 'outras' END, 'total') recorte,
+  count(*) com_selo, count(*) FILTER (WHERE tel_m) tel_marcado,
+  count(*) FILTER (WHERE so_contab) so_contab,
+  count(*) FILTER (WHERE so_contab AND nullif(btrim(logradouro),'') IS NOT NULL) visitar,
+  count(*) FILTER (WHERE prospeccao_status='a_contatar') a_contatar_com_selo,
+  count(*) FILTER (WHERE prospeccao_status='a_contatar' AND so_contab AND nullif(btrim(logradouro),'') IS NOT NULL) a_contatar_visitar
+FROM m GROUP BY ROLLUP (CASE WHEN uf='MG' THEN 'MG' ELSE 'outras' END) ORDER BY 1;
+```
+
+**Re-medir** quando `radar_socios` carregar (o grupo passa a unir raízes por sócio e o selo deve cair um pouco), e o
+acerto pela query do sensor abaixo.
 
 ## Sensor de uso e de acerto
 
