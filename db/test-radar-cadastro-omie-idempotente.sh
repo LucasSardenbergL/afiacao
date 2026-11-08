@@ -167,17 +167,51 @@ $(classifica "public.radar_registrar_cadastro_omie('$1', '$2', false)")
 SELECT k FROM pg_temp.res;
 SQL
 }
-# em_sessao NOME CNPJ CODIGO FIM SEGUNDOS — chama a RPC numa transação que fica ABERTA por SEGUNDOS e termina
-# em COMMIT ou ROLLBACK (FIM). Roda em background; o marcador sai em $TMPD/NOME.out.
+# segura_ate_ver_bloqueio NOME_B — bloco SQL da sessão A: segura a transação ABERTA até OBSERVAR a sessão
+# idem_NOME_B esperando Lock em pg_stat_activity ('sim'), ou ela terminar sem esperar ('nao'), ou o timeout
+# de 10 s ('timeout'). Mesma receita da irmã db/test-radar-cadastro-conflitos.sh (E17 do plano v7,
+# docs/historico/ci-e17-radar-espera-por-bloqueio.md): substitui a retenção FIXA de 2 s, e quem afirma "B
+# esperou" é a própria A. `pg_stat_clear_snapshot()` a cada volta: sem ele, a foto é a mesma a transação inteira.
+segura_ate_ver_bloqueio() {
+  sed "s/@B@/idem_$1/g" <<'SQL'
+CREATE TEMP TABLE espera_b (v text);
+DO $segura$
+DECLARE t0 timestamptz := clock_timestamp(); viu boolean := false; v text;
+BEGIN
+  LOOP
+    PERFORM pg_stat_clear_snapshot();
+    IF EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = '@B@' AND wait_event_type = 'Lock') THEN
+      v := 'sim'; EXIT;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = '@B@') THEN viu := true;
+    ELSIF viu THEN v := 'nao'; EXIT;
+    END IF;
+    IF clock_timestamp() - t0 > interval '10 seconds' THEN v := 'timeout'; EXIT; END IF;
+    PERFORM pg_sleep(0.01);
+  END LOOP;
+  INSERT INTO pg_temp.espera_b VALUES (v);
+END $segura$;
+SELECT v FROM pg_temp.espera_b;
+SQL
+}
+# Janela mínima de 50 ms em que B aparece em pg_stat_activity ANTES da chamada: sem ela, uma B que não
+# bloqueia (sabotagem `sem_trava`) pode nascer e morrer entre duas voltas de A, e A só sairia no timeout.
+# Zero linhas; o filtro é VOLÁTIL de propósito (`WHERE false` o planner dobra e o sleep nem roda).
+B_VISIVEL="SELECT 1 FROM pg_sleep(0.05) WHERE random() < 0;"
+# em_sessao NOME CNPJ CODIGO FIM [VIGIA] — chama a RPC numa transação que termina em COMMIT ou ROLLBACK (FIM).
+# Com VIGIA (a sessão A), segura a transação até ver idem_VIGIA bloqueada e escreve o veredito na 2ª linha.
+# Sem VIGIA (a sessão B), só abre a janela de visibilidade. Roda em background; o marcador sai na 1ª linha
+# de $TMPD/NOME.out.
 em_sessao() {
   "$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d prova -v ON_ERROR_STOP=1 -qtA > "$TMPD/$1.out" 2> "$TMPD/$1.err" <<SQL &
 SET application_name = 'idem_$1';
 SET test.uid = '$GESTOR';
 CREATE TEMP TABLE res (k text);
 BEGIN;
+$(if [ -z "${5:-}" ]; then echo "$B_VISIVEL"; fi)
 $(classifica "public.radar_registrar_cadastro_omie('$2', '$3', false)")
 SELECT k FROM pg_temp.res;
-SELECT pg_sleep($5);
+$(if [ -n "${5:-}" ]; then segura_ate_ver_bloqueio "$5"; fi)
 $4;
 SQL
 }
@@ -190,7 +224,6 @@ espera_estado() {
   return 1
 }
 EM_SLEEP="query LIKE '%pg_sleep%' AND wait_event = 'PgSleep'"
-EM_LOCK="wait_event_type = 'Lock'"
 md5_de() { Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.$1')"; }
 # vínculo/status/ja_cliente/histórico/data — o retrato inteiro, não só a contagem (Codex 2026-10-21).
 empresa() { Pq -c "SELECT ja_cliente||'/'||COALESCE(omie_codigo_cliente,'∅')||'/'||prospeccao_status||'/'||(SELECT count(*) FROM public.radar_contatos k WHERE k.cnpj=e.cnpj AND k.acao='virou_cliente')||'/'||COALESCE(omie_cadastrado_em::text,'∅')||'/'||updated_at FROM public.radar_empresas e WHERE cnpj='$1'"; }
@@ -319,13 +352,11 @@ eq A4c "nota vem do ledger: 'incluir' → 'Cadastrado…'" "$(Pq -c "SELECT nota
 echo "── A5 duas sessões concorrentes (o bloqueio é OBSERVADO antes de soltar A)"
 # concorrente ID CNPJ_A COD_A FIM_A CNPJ_B COD_B → "marcadorA|marcadorB|B_esperou"
 concorrente() {
-  em_sessao "${1}A" "$2" "$3" "$4" 2
+  em_sessao "${1}A" "$2" "$3" "$4" "${1}B"
   if ! espera_estado "${1}A" "$EM_SLEEP"; then echo "A_NAO_CHEGOU"; wait; return; fi
-  em_sessao "${1}B" "$5" "$6" COMMIT 0
-  local esperou=nao
-  espera_estado "${1}B" "$EM_LOCK" && esperou=sim
+  em_sessao "${1}B" "$5" "$6" COMMIT
   wait
-  echo "$(head -1 "$TMPD/${1}A.out")|$(head -1 "$TMPD/${1}B.out")|$esperou"
+  echo "$(head -1 "$TMPD/${1}A.out")|$(head -1 "$TMPD/${1}B.out")|$(sed -n 2p "$TMPD/${1}A.out")"
 }
 confirma 22222222000122 700 incluir
 eq A5a "X/X: A grava, B (mesmo CNPJ e código) ESPERA a trava e vira no-op" "$(concorrente xx 22222222000122 700 COMMIT 22222222000122 700)" "OK:false|OK:true|sim"
