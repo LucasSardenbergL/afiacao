@@ -528,6 +528,19 @@ else
   dente "F19 com o de-para em (C), \"30 DIAS\" vai para A30" "$(cond "'30 DIAS'")" "COND_A30_1"
 fi
 restaura
+# F20 — T54 inativo no catálogo: a postcondição da 20261109120000 tem de abortar pela TRADUÇÃO (não pela checagem textual).
+P -q -c "UPDATE public.omie_condicao_pagamento_catalogo SET ativo = false WHERE empresa = 'OBEN' AND codigo = 'T54'"
+if P -q -f "$MIG3" >/dev/null 2>"$SAB.err"; then
+  bad "F20 postcondição NÃO abortou com T54 inativo"
+else
+  F20="$(linhas_error "$SAB.err")"
+  case "$F20" in
+    "ERROR:  B13 FALHOU: \"30 DIAS\" não traduz (T54 ausente ou inativo no catálogo OBEN?)"|"ERRO:  B13 FALHOU: \"30 DIAS\" não traduz (T54 ausente ou inativo no catálogo OBEN?)")
+      ok "F20 postcondição aborta o apply com T54 inativo" ;;
+    *) bad "F20 ERRO ALHEIO à postcondição — veio [${F20:-<nenhuma linha ERROR>}]" ;;
+  esac
+fi
+restaura
 sabota "s/^  IF v_p.condicao_origem IS DISTINCT FROM 'default_a_vista' THEN$/  IF false THEN/"
 pedido_app 1103 OBEN sucesso_portal "'manual_humano'" NULL
 dente "F15 sem a guarda de origem, a escolha humana é sobrescrita" "$(apl 1103 "'70 - 7 DIAS'")" "APLICADO_A07"
