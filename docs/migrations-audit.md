@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **812** custom migrations totais
-- **2712** objetos esperados (criados por estas migrations)
+- **816** custom migrations totais
+- **2743** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1067
-  - `rls_policy`: 519
-  - `index`: 383
-  - `table`: 252
-  - `cron_job`: 216
-  - `trigger`: 136
+  - `function`: 1084
+  - `rls_policy`: 521
+  - `index`: 386
+  - `table`: 255
+  - `cron_job`: 217
+  - `trigger`: 141
   - `view`: 135
   - `enum_value`: 4
 
@@ -6695,6 +6695,57 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.radar_contato_contabil_correcoes` | — |
 | `index` | `public.idx_radar_contato_contabil_correcoes_contato` | `radar_contato_contabil_correcoes` |
 | `cron_job` | `cron.radar-contato-contabil-diario` | — |
+
+### `20261110100000_raio_x_inequivoco_unidade_desconhecida.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.raio_x_inequivoco` | — |
+
+### `20261110100000_sayerlack_encerrar_cancelado_no_portal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack__trilha_encerramento_imutavel` | — |
+| `function` | `public.sayerlack__veta_encerrar_aceito_no_portal` | — |
+| `function` | `public.sayerlack_encerrar_cancelado_no_portal` | — |
+| `table` | `public.sayerlack_encerramento_cancelado_portal` | — |
+| `index` | `public.sayerlack_encerramento_cancelado_portal_pedido_idx` | `sayerlack_encerramento_cancelado_portal` |
+| `trigger` | `public.trg_trilha_encerramento_imutavel` | `sayerlack_encerramento_cancelado_portal` |
+| `trigger` | `public.trg_veta_encerrar_aceito_no_portal` | `pedido_compra_sugerido` |
+| `rls_policy` | `public.staff_le_encerramento_cancelado_portal` | `sayerlack_encerramento_cancelado_portal` |
+
+### `20261110120000_sayerlack_cancelado_com_compra_viva.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack__incidente_so_resolve` | — |
+| `function` | `public.sayerlack__incidente_pelo_pedido` | — |
+| `function` | `public.sayerlack__incidente_pelo_espelho` | — |
+| `function` | `public.sayerlack_resolver_incidente_cancelado_com_po` | — |
+| `function` | `public.sayerlack_cobertura_situacao_portal` | — |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
+| `table` | `public.sayerlack_incidente_cancelado_com_po` | — |
+| `index` | `public.sayerlack_incidente_cancelado_com_po_aberto_uq` | `sayerlack_incidente_cancelado_com_po` |
+| `index` | `public.sayerlack_encerramento_cancelado_portal_protocolo_idx` | `sayerlack_encerramento_cancelado_portal` |
+| `trigger` | `public.trg_incidente_so_resolve` | `sayerlack_incidente_cancelado_com_po` |
+| `trigger` | `public.trg_incidente_cancelado_com_po` | `pedido_compra_sugerido` |
+| `trigger` | `public.trg_incidente_pelo_espelho` | `purchase_orders_tracking` |
+| `rls_policy` | `public.staff_le_incidente_cancelado_com_po` | `sayerlack_incidente_cancelado_com_po` |
+
+### `20261110130000_radar_carga_publicacao_atomica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_carga_iniciar` | — |
+| `function` | `public.radar_carga_receber` | — |
+| `function` | `public.radar_carga_validar` | — |
+| `function` | `public.radar_carga_falhar` | — |
+| `function` | `public.radar_carga_publicar_pendente` | — |
+| `table` | `public.radar_empresas_carga` | — |
+| `cron_job` | `cron.radar-publicar-lote` | — |
 
 ## Próximos passos por status
 

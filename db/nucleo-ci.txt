@@ -1059,3 +1059,9 @@ db/test-radar-meu-territorio.sh            16  falsificar=5
 # contato humano válido e "empurrado", NULL fora da cobertura do sensor (ausente ≠ zero), saúde dos sensores com falhas
 # por motivo, registradores com SQLSTATE e idempotentes, ledger de falha só staff com contador, ACL nas duas pontas.
 db/test-radar-funil.sh                     45  falsificar=21
+
+# Radar — publicação atômica da carga mensal (migration 20261110130000): carga parcial não vira vigente (foto intacta
+# durante os chunks e depois de falha, chunk tardio recusado, contagem divergente reprova), carga completa troca de uma
+# vez (validada ≠ vigente, job publica rótulo+cadastro+recruzar+complete+staging vazio), falha dentro da publicação
+# desfaz tudo, re-run de lote complete não rebaixa a foto, queda > 15% reprova, ACL nas duas pontas, cron fora da hora 06.
+db/test-radar-carga-atomica.sh             37  falsificar=12

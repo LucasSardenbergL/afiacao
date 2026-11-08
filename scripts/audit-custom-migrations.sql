@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 812
+-- Total de custom migrations: 816
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -880,7 +880,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261109100000', 'sayerlack_painel_portal_v2', '20261109100000_sayerlack_painel_portal_v2.sql'),
   ('20261109120000', 'sayerlack_condicao_sem_c', '20261109120000_sayerlack_condicao_sem_c.sql'),
   ('20261109130000', 'ipi_aliquota_ncm_seed_nf_omie', '20261109130000_ipi_aliquota_ncm_seed_nf_omie.sql'),
-  ('20261109140000', 'radar_contato_contabil', '20261109140000_radar_contato_contabil.sql')
+  ('20261109140000', 'radar_contato_contabil', '20261109140000_radar_contato_contabil.sql'),
+  ('20261110100000', 'raio_x_inequivoco_unidade_desconhecida', '20261110100000_raio_x_inequivoco_unidade_desconhecida.sql'),
+  ('20261110100000', 'sayerlack_encerrar_cancelado_no_portal', '20261110100000_sayerlack_encerrar_cancelado_no_portal.sql'),
+  ('20261110120000', 'sayerlack_cancelado_com_compra_viva', '20261110120000_sayerlack_cancelado_com_compra_viva.sql'),
+  ('20261110130000', 'radar_carga_publicacao_atomica', '20261110130000_radar_carga_publicacao_atomica.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3554,7 +3558,38 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_contato_contabil', 'table', 'public', 'radar_contato_contabil_estado', ''),
   ('radar_contato_contabil', 'table', 'public', 'radar_contato_contabil_correcoes', ''),
   ('radar_contato_contabil', 'index', 'public', 'idx_radar_contato_contabil_correcoes_contato', 'radar_contato_contabil_correcoes'),
-  ('radar_contato_contabil', 'cron_job', 'cron', 'radar-contato-contabil-diario', '')
+  ('radar_contato_contabil', 'cron_job', 'cron', 'radar-contato-contabil-diario', ''),
+  ('raio_x_inequivoco_unidade_desconhecida', 'function', 'public', 'raio_x_inequivoco', ''),
+  ('sayerlack_encerrar_cancelado_no_portal', 'function', 'public', 'sayerlack__trilha_encerramento_imutavel', ''),
+  ('sayerlack_encerrar_cancelado_no_portal', 'function', 'public', 'sayerlack__veta_encerrar_aceito_no_portal', ''),
+  ('sayerlack_encerrar_cancelado_no_portal', 'function', 'public', 'sayerlack_encerrar_cancelado_no_portal', ''),
+  ('sayerlack_encerrar_cancelado_no_portal', 'table', 'public', 'sayerlack_encerramento_cancelado_portal', ''),
+  ('sayerlack_encerrar_cancelado_no_portal', 'index', 'public', 'sayerlack_encerramento_cancelado_portal_pedido_idx', 'sayerlack_encerramento_cancelado_portal'),
+  ('sayerlack_encerrar_cancelado_no_portal', 'trigger', 'public', 'trg_trilha_encerramento_imutavel', 'sayerlack_encerramento_cancelado_portal'),
+  ('sayerlack_encerrar_cancelado_no_portal', 'trigger', 'public', 'trg_veta_encerrar_aceito_no_portal', 'pedido_compra_sugerido'),
+  ('sayerlack_encerrar_cancelado_no_portal', 'rls_policy', 'public', 'staff_le_encerramento_cancelado_portal', 'sayerlack_encerramento_cancelado_portal'),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'sayerlack__incidente_so_resolve', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'sayerlack__incidente_pelo_pedido', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'sayerlack__incidente_pelo_espelho', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'sayerlack_resolver_incidente_cancelado_com_po', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'sayerlack_cobertura_situacao_portal', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', '_data_health_compute', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'data_health_watchdog', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'table', 'public', 'sayerlack_incidente_cancelado_com_po', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'index', 'public', 'sayerlack_incidente_cancelado_com_po_aberto_uq', 'sayerlack_incidente_cancelado_com_po'),
+  ('sayerlack_cancelado_com_compra_viva', 'index', 'public', 'sayerlack_encerramento_cancelado_portal_protocolo_idx', 'sayerlack_encerramento_cancelado_portal'),
+  ('sayerlack_cancelado_com_compra_viva', 'trigger', 'public', 'trg_incidente_so_resolve', 'sayerlack_incidente_cancelado_com_po'),
+  ('sayerlack_cancelado_com_compra_viva', 'trigger', 'public', 'trg_incidente_cancelado_com_po', 'pedido_compra_sugerido'),
+  ('sayerlack_cancelado_com_compra_viva', 'trigger', 'public', 'trg_incidente_pelo_espelho', 'purchase_orders_tracking'),
+  ('sayerlack_cancelado_com_compra_viva', 'rls_policy', 'public', 'staff_le_incidente_cancelado_com_po', 'sayerlack_incidente_cancelado_com_po'),
+  ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_iniciar', ''),
+  ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_receber', ''),
+  ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_validar', ''),
+  ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_falhar', ''),
+  ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_publicar_pendente', ''),
+  ('radar_carga_publicacao_atomica', 'table', 'public', 'radar_empresas_carga', ''),
+  ('radar_carga_publicacao_atomica', 'cron_job', 'cron', 'radar-publicar-lote', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6276,7 +6311,38 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_contato_contabil', 'table', 'public', 'radar_contato_contabil_estado', ''),
   ('radar_contato_contabil', 'table', 'public', 'radar_contato_contabil_correcoes', ''),
   ('radar_contato_contabil', 'index', 'public', 'idx_radar_contato_contabil_correcoes_contato', 'radar_contato_contabil_correcoes'),
-  ('radar_contato_contabil', 'cron_job', 'cron', 'radar-contato-contabil-diario', '')
+  ('radar_contato_contabil', 'cron_job', 'cron', 'radar-contato-contabil-diario', ''),
+  ('raio_x_inequivoco_unidade_desconhecida', 'function', 'public', 'raio_x_inequivoco', ''),
+  ('sayerlack_encerrar_cancelado_no_portal', 'function', 'public', 'sayerlack__trilha_encerramento_imutavel', ''),
+  ('sayerlack_encerrar_cancelado_no_portal', 'function', 'public', 'sayerlack__veta_encerrar_aceito_no_portal', ''),
+  ('sayerlack_encerrar_cancelado_no_portal', 'function', 'public', 'sayerlack_encerrar_cancelado_no_portal', ''),
+  ('sayerlack_encerrar_cancelado_no_portal', 'table', 'public', 'sayerlack_encerramento_cancelado_portal', ''),
+  ('sayerlack_encerrar_cancelado_no_portal', 'index', 'public', 'sayerlack_encerramento_cancelado_portal_pedido_idx', 'sayerlack_encerramento_cancelado_portal'),
+  ('sayerlack_encerrar_cancelado_no_portal', 'trigger', 'public', 'trg_trilha_encerramento_imutavel', 'sayerlack_encerramento_cancelado_portal'),
+  ('sayerlack_encerrar_cancelado_no_portal', 'trigger', 'public', 'trg_veta_encerrar_aceito_no_portal', 'pedido_compra_sugerido'),
+  ('sayerlack_encerrar_cancelado_no_portal', 'rls_policy', 'public', 'staff_le_encerramento_cancelado_portal', 'sayerlack_encerramento_cancelado_portal'),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'sayerlack__incidente_so_resolve', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'sayerlack__incidente_pelo_pedido', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'sayerlack__incidente_pelo_espelho', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'sayerlack_resolver_incidente_cancelado_com_po', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'sayerlack_cobertura_situacao_portal', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', '_data_health_compute', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'data_health_watchdog', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'function', 'public', 'fin_sync_heartbeat', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'table', 'public', 'sayerlack_incidente_cancelado_com_po', ''),
+  ('sayerlack_cancelado_com_compra_viva', 'index', 'public', 'sayerlack_incidente_cancelado_com_po_aberto_uq', 'sayerlack_incidente_cancelado_com_po'),
+  ('sayerlack_cancelado_com_compra_viva', 'index', 'public', 'sayerlack_encerramento_cancelado_portal_protocolo_idx', 'sayerlack_encerramento_cancelado_portal'),
+  ('sayerlack_cancelado_com_compra_viva', 'trigger', 'public', 'trg_incidente_so_resolve', 'sayerlack_incidente_cancelado_com_po'),
+  ('sayerlack_cancelado_com_compra_viva', 'trigger', 'public', 'trg_incidente_cancelado_com_po', 'pedido_compra_sugerido'),
+  ('sayerlack_cancelado_com_compra_viva', 'trigger', 'public', 'trg_incidente_pelo_espelho', 'purchase_orders_tracking'),
+  ('sayerlack_cancelado_com_compra_viva', 'rls_policy', 'public', 'staff_le_incidente_cancelado_com_po', 'sayerlack_incidente_cancelado_com_po'),
+  ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_iniciar', ''),
+  ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_receber', ''),
+  ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_validar', ''),
+  ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_falhar', ''),
+  ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_publicar_pendente', ''),
+  ('radar_carga_publicacao_atomica', 'table', 'public', 'radar_empresas_carga', ''),
+  ('radar_carga_publicacao_atomica', 'cron_job', 'cron', 'radar-publicar-lote', '')
 )
 SELECT
   e.migration,
@@ -6472,6 +6538,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_sync_heartbeat', 23, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', '619986fe0010f64f50b58d5922eff7d2'),
   ('public', 'fin_sync_heartbeat', 24, '20261020101636_data_health_radar_lote_e_recruzamento.sql', 'db0c50e56dfd8d59be008ddce86edf0e'),
   ('public', 'fin_sync_heartbeat', 25, '20261107220000_data_health_sayerlack_varredura_portal.sql', '7bfa4b93501888d689196acb67a8c3d7'),
+  ('public', 'fin_sync_heartbeat', 26, '20261110120000_sayerlack_cancelado_com_compra_viva.sql', 'fbccc7e66034b8b8ae712ad6ddd63ebf'),
   ('public', '_carteira_mixgap_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '45590516afa887e06b1f6b6c7e9440b5'),
   ('public', '_carteira_mixgap_for_owner', 2, '20260526230000_mixgap_feedback.sql', '09b8ada4bb8fa3cdb389d6f8257a95f2'),
   ('public', '_carteira_mixgap_for_owner', 3, '20261020143511_venda_cliente_complemento.sql', '5921c2ec1232c856725d049e1392c4ff'),
@@ -6532,6 +6599,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 38, '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql', '784d16c410f90da3d1233a7bafdb7b29'),
   ('public', '_data_health_compute', 39, '20261031191715_data_health_saldo_bancario_conta_a_conta.sql', 'ac1f616de90dcdb17656607b9f0f2458'),
   ('public', '_data_health_compute', 40, '20261107220000_data_health_sayerlack_varredura_portal.sql', '8faab148e76a96842994b337ac3c26f6'),
+  ('public', '_data_health_compute', 41, '20261110120000_sayerlack_cancelado_com_compra_viva.sql', '16b30fbe018fb0126a1b6a0bedadf5c6'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -6557,6 +6625,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'data_health_watchdog', 23, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', 'b35c43d55f1e7688b913ce6fe0cb2a5b'),
   ('public', 'data_health_watchdog', 24, '20261020101636_data_health_radar_lote_e_recruzamento.sql', '4797193fa8f2b6a1a504e19b79a6fca1'),
   ('public', 'data_health_watchdog', 25, '20261107220000_data_health_sayerlack_varredura_portal.sql', '4e35396fcaa48a0683f5db46ca16e01f'),
+  ('public', 'data_health_watchdog', 26, '20261110120000_sayerlack_cancelado_com_compra_viva.sql', 'd03a9cf29afd5074cbec80fcf1e725fc'),
   ('public', 'tarefas_matcher_tick', 1, '20260528133000_tarefas_bloco_d.sql', '1d22a8a6cebe7a7ac1329fc8f98fe20d'),
   ('public', 'tarefas_matcher_tick', 2, '20260528135000_tarefas_matcher_created_at_floor.sql', '99785df6ed7189c49aad580f09b24a1c'),
   ('public', 'tarefas_matcher_tick', 3, '20260615194500_fix_tarefas_matcher_enum.sql', '0bc8eb0402988ad408b80add2df00e56'),
@@ -6971,6 +7040,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'cobranca_regua_hoje', 2, '20261101120000_cobranca_regua_nome_cliente.sql', 'c0c4a95b8c7612262e56b4db3dbb7b03'),
   ('public', 'raio_x_inequivoco', 1, '20261101120000_raio_x_inequivoco.sql', '038d24f0c4fb85a84e8dc2572cc3361a'),
   ('public', 'raio_x_inequivoco', 2, '20261101190000_raio_x_inequivoco_definer.sql', '038d24f0c4fb85a84e8dc2572cc3361a'),
+  ('public', 'raio_x_inequivoco', 3, '20261110100000_raio_x_inequivoco_unidade_desconhecida.sql', '5ec5caca95b1c946ba5517de3bc566d1'),
   ('private', 'clientes_import_semear_interno', 1, '20261101200000_clientes_import_servidor.sql', 'c9a6eaa2a248d59c9a7d8152d3e5dd6a'),
   ('private', 'clientes_import_semear_interno', 2, '20261102005510_clientes_import_varredura_diaria.sql', '77405cf54b1588b4b2968f473eb6d573'),
   ('public', 'radar_agregado_recalcular', 1, '20261103100000_radar_agregado_municipio.sql', '486f25635979b302ded0f60a476a0a85'),
