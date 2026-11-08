@@ -15,9 +15,15 @@ import { RadarAtendimentoLead } from './RadarAtendimentoLead';
 import { RadarModoDiscagem } from './RadarModoDiscagem';
 import { RadarSucessaoLead } from './RadarSucessaoLead';
 import { RadarTelefoneAcao } from './RadarTelefoneAcao';
+import { RadarContatoContabil, RadarPrefiraVisita } from './RadarContatoContabil';
 import { Selo } from './Selo';
 import { avisoTelefoneCompartilhado, gravarModoDiscagem, lerModoDiscagem } from '@/lib/radar/atendimento';
 import { useRadarTelefoneCompartilhado } from '@/queries/useRadarTelefoneCompartilhado';
+import { useRadarContatoContabil } from '@/queries/useRadarContatoContabil';
+import { urlMapsEmpresa, urlMapsEndereco } from '@/lib/radar/mapa-link';
+import {
+  algumTelefoneContabil, contabilDoCampo, SELO_CONTABIL, type CampoContato, type ContatoContabil,
+} from '@/lib/radar/contato-contabil';
 import { track } from '@/lib/analytics';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { isCellphone, whatsappLink } from '@/lib/phone';
@@ -40,20 +46,30 @@ function Linha({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-/** `outras`: em quantas OUTRAS raízes de CNPJ o número aparece; undefined = não consegui verificar (sem aviso). */
-function Telefone({ numero, outras }: { numero: string; outras?: number }) {
+/**
+ * `outras`: em quantas OUTRAS raízes de CNPJ o número aparece; undefined = não consegui verificar (sem aviso).
+ * `contato`: a classificação "é da contabilidade?" deste campo (migration 20261109140000). Da contabilidade no efetivo,
+ * ligar e WhatsApp continuam, mas SEM destaque — a ação da ficha passa a ser a visita.
+ */
+function Telefone({ numero, outras, cnpj, campo, contato }: {
+  numero: string; outras?: number; cnpj: string; campo: CampoContato; contato?: ContatoContabil | null;
+}) {
+  const contabil = contato?.efetivo === true;
   const wa = isCellphone(numero) ? whatsappLink(numero) : null;
-  const aviso = outras != null ? avisoTelefoneCompartilhado(outras) : null;
+  // O aviso genérico de "aparece em N empresas" sai quando o selo já explica (o motivo traz a contagem).
+  const aviso = outras != null && !contabil ? avisoTelefoneCompartilhado(outras) : null;
   return (
     <span className="inline-flex items-center gap-1.5 flex-wrap">
-      <span className="font-tabular">{numero}</span>
-      <RadarTelefoneAcao telefone={numero} />
+      <span className={contabil ? 'font-tabular text-muted-foreground' : 'font-tabular'}>{numero}</span>
+      <RadarTelefoneAcao telefone={numero} discreto={contabil} />
       {wa && (
-        <a className="inline-flex items-center gap-1 text-xs text-status-success-bold" href={wa} target="_blank" rel="noreferrer">
+        <a className={contabil ? 'inline-flex items-center gap-1 text-xs text-muted-foreground' : 'inline-flex items-center gap-1 text-xs text-status-success-bold'}
+          href={wa} target="_blank" rel="noreferrer">
           <MessageSquare className="w-3 h-3" /> WhatsApp
         </a>
       )}
       {aviso && <span className="basis-full text-xs text-status-warning" data-testid="radar-telefone-compartilhado">{aviso}</span>}
+      <RadarContatoContabil cnpj={cnpj} campo={campo} contato={contato} />
     </span>
   );
 }
@@ -125,6 +141,7 @@ export function RadarDetailSheet({
   const [nota, setNota] = useState('');
   const [conversaSalva, setConversaSalva] = useState<string | null>(null);
   const compartilhado = useRadarTelefoneCompartilhado(empresa?.cnpj ?? null);
+  const contabil = useRadarContatoContabil(empresa?.cnpj ?? null);
   // Sensor da ficha: 1 chamada por CNPJ aberto (não por render/refetch); o dedup por titular, CNPJ e dia é do banco.
   // Sob a lente "Ver como" o registrarNoLedger retorna cedo — inspeção não infla o 'abriu'.
   const cnpjAberto = empresa?.cnpj ?? null;
@@ -161,10 +178,17 @@ export function RadarDetailSheet({
     />
   );
   const telPrincipal = telefonePrincipal(empresa);
+  const leituraContabil = contabil.data ?? null;
+  const campoPrincipal: CampoContato = empresa.telefone1 ? 'telefone1' : 'telefone2';
+  const principalContabil = telPrincipal ? contabilDoCampo(leituraContabil, campoPrincipal) : null;
+  const prefiraVisita = !!leituraContabil && (leituraContabil.visitar || algumTelefoneContabil(leituraContabil));
   const endereco = [empresa.logradouro, empresa.numero, empresa.bairro, empresa.municipio_nome, empresa.uf, empresa.cep]
     .filter(Boolean)
     .join(', ');
-  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(endereco || empresa.cnpj)}`;
+  // Busca que o Maps resolve como ENDEREÇO ("Rua X 75, Cidade - UF") e, à parte, a busca pela EMPRESA (src/lib/radar/mapa-link.ts).
+  const mapsUrl = urlMapsEndereco(empresa);
+  const mapsEmpresaUrl = urlMapsEmpresa(empresa);
+  const abriuMapa = (link: 'endereco' | 'empresa', origem: 'linha' | 'visita') => track('radar.mapa_ficha', { link, origem });
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.razao_social || empresa.cnpj;
   const rfb = seloRfb(empresa);
@@ -198,7 +222,10 @@ export function RadarDetailSheet({
           <div className="mt-3">
             <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data} nota={nota} campoNota={campoNota}
               onRegistrado={aposRegistro} onDesfeito={aposDesfazer}
-              ligar={telPrincipal ? <RadarTelefoneAcao telefone={telPrincipal} variant="full" /> : null}
+              ligar={telPrincipal ? <RadarTelefoneAcao telefone={telPrincipal} variant="full" discreto={!!principalContabil} /> : null}
+              avisoContabil={principalContabil ? (
+                <p className="text-xs text-status-warning" data-testid="radar-discagem-contabil">{SELO_CONTABIL}</p>
+              ) : null}
               compartilhadoFalhou={compartilhado.isError} onProximo={onProximo} />
           </div>
         ) : (
@@ -219,6 +246,10 @@ export function RadarDetailSheet({
           {/* Antes do cadastro no Omie: a edge cria no Omie ANTES de registrar, o aviso tem de ser leitura prévia. */}
           <AvisoVinculoCredito documento={empresa.cnpj} superficie="ficha_radar" />
           <RadarAcoesLead empresa={empresa} conversaSalva={conversaSalva === empresa.cnpj} />
+          {prefiraVisita && endereco && (
+            <RadarPrefiraVisita endereco={endereco} mapsUrl={mapsUrl} mapsEmpresaUrl={mapsEmpresaUrl}
+              todos={leituraContabil?.visitar === true} onAbrir={(link) => abriuMapa(link, 'visita')} />
+          )}
         </div>
         <div className="mt-4 divide-y">
           <Linha label="Score">
@@ -256,7 +287,10 @@ export function RadarDetailSheet({
           <Linha label="Porte">{rotuloPorte(empresa.porte)}</Linha>
           <Linha label="Capital">{formatarCapital(empresa.capital_social)}</Linha>
           <Linha label="Telefone">
-            {empresa.telefone1 ? <Telefone numero={empresa.telefone1} outras={outras(empresa.telefone1)} /> : '—'}
+            {empresa.telefone1 ? (
+              <Telefone numero={empresa.telefone1} outras={outras(empresa.telefone1)} cnpj={empresa.cnpj} campo="telefone1"
+                contato={leituraContabil?.contatos.get('telefone1')} />
+            ) : '—'}
           </Linha>
           {compartilhado.isError && (empresa.telefone1 || empresa.telefone2) && (
             <p className="py-1 text-xs text-muted-foreground" data-testid="radar-telefone-compartilhado-erro">
@@ -264,20 +298,38 @@ export function RadarDetailSheet({
             </p>
           )}
           {empresa.telefone2 && (
-            <Linha label="Telefone 2"><Telefone numero={empresa.telefone2} outras={outras(empresa.telefone2)} /></Linha>
+            <Linha label="Telefone 2">
+              <Telefone numero={empresa.telefone2} outras={outras(empresa.telefone2)} cnpj={empresa.cnpj} campo="telefone2"
+                contato={leituraContabil?.contatos.get('telefone2')} />
+            </Linha>
           )}
           <Linha label="E-mail">
             {empresa.email ? (
-              <a className="inline-flex items-center gap-1 underline truncate" href={`mailto:${empresa.email}`}>
-                <Mail className="w-3 h-3" />{empresa.email}
-              </a>
+              <span className="inline-flex items-center gap-1.5 flex-wrap min-w-0">
+                <a className="inline-flex items-center gap-1 underline truncate" href={`mailto:${empresa.email}`}>
+                  <Mail className="w-3 h-3" />{empresa.email}
+                </a>
+                <RadarContatoContabil cnpj={empresa.cnpj} campo="email" contato={leituraContabil?.contatos.get('email')} />
+              </span>
             ) : '—'}
           </Linha>
+          {contabil.isError && (empresa.telefone1 || empresa.telefone2 || empresa.email) && (
+            <p className="py-1 text-xs text-muted-foreground" data-testid="radar-contabil-erro">
+              Não consegui verificar se o contato é da contabilidade.
+            </p>
+          )}
           <Linha label="Endereço">
             {endereco || '—'}
-            {endereco && (
-              <a className="ml-2 inline-flex items-center gap-1 text-xs underline" href={mapsUrl} target="_blank" rel="noreferrer">
+            {mapsUrl && (
+              <a className="ml-2 inline-flex items-center gap-1 text-xs underline" href={mapsUrl} target="_blank" rel="noreferrer"
+                data-testid="radar-mapa-endereco" onClick={() => abriuMapa('endereco', 'linha')}>
                 <MapPin className="w-3 h-3" /> mapa
+              </a>
+            )}
+            {mapsEmpresaUrl && (
+              <a className="ml-2 inline-flex items-center gap-1 text-xs underline" href={mapsEmpresaUrl} target="_blank" rel="noreferrer"
+                data-testid="radar-mapa-empresa" onClick={() => abriuMapa('empresa', 'linha')}>
+                procurar a empresa no Maps
               </a>
             )}
           </Linha>

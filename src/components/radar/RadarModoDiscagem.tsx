@@ -13,7 +13,8 @@ import type { RadarEmpresa } from '@/queries/useRadarLista';
  * ligação não passa pelo Supabase, então o write-guard não a vê); os desfechos são o `RadarOutcomeMenu`.
  */
 export function RadarModoDiscagem({
-  empresa, ligar, compartilhado, compartilhadoFalhou = false, onProximo, nota, campoNota, onRegistrado, onDesfeito,
+  empresa, ligar, compartilhado, compartilhadoFalhou = false, avisoContabil = null, onProximo, nota, campoNota, onRegistrado,
+  onDesfeito,
 }: {
   /** Nota do próximo registro (B4) e o campo que a edita — o estado é da ficha. */
   nota?: string;
@@ -28,6 +29,8 @@ export function RadarModoDiscagem({
   compartilhado: Map<string, number> | undefined;
   /** A leitura do aviso de telefone FALHOU: diz que não verificou, em vez de calar. */
   compartilhadoFalhou?: boolean;
+  /** O telefone principal parece ser da contabilidade (migration 20261109140000): o aviso fica sob o número. */
+  avisoContabil?: ReactNode;
   onProximo?: () => void;
 }) {
   const tel = telefonePrincipal(empresa);
@@ -37,6 +40,7 @@ export function RadarModoDiscagem({
       {tel ? (
         <div className="space-y-1">
           <div className="text-2xl font-tabular tracking-wide" data-testid="radar-discagem-telefone">{tel}</div>
+          {avisoContabil}
           {aviso && <p className="text-xs text-status-warning">{aviso}</p>}
           {compartilhadoFalhou && (
             <p className="text-xs text-muted-foreground">Não consegui verificar se este número aparece em outras empresas.</p>

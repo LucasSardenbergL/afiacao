@@ -24,6 +24,18 @@ describe('lerProspectarHoje', () => {
     expect(r.leads[0]).toMatchObject({ posicao: 1, cnpj: '00000000000101', score: 95, motivos: ['CNAE 3101'], elegiveis: 8 });
   });
 
+  it('lead "visitar" (todo contato da contabilidade) vem com o endereço; sem o campo, o card de antes', () => {
+    const lead = RESPOSTA.leads[0];
+    const r = lerProspectarHoje({ ...RESPOSTA, leads: [
+      { ...lead, visitar: true, endereco: 'Rua A 10, Centro, Divinopolis/MG' },
+      { ...lead, cnpj: '00000000000202', posicao: 2, visitar: false, endereco: 'Rua B 20' },
+      { ...lead, cnpj: '00000000000303', posicao: 3 },
+    ] }, 'teste');
+    expect(r.leads.map((l) => [l.visitar, l.endereco])).toEqual([
+      [true, 'Rua A 10, Centro, Divinopolis/MG'], [false, null], [false, null],
+    ]);
+  });
+
   it('listas vazias são um resultado legítimo (sem território / sem leads)', () => {
     expect(lerProspectarHoje({ territorio: [], leads: [] }, 'teste')).toEqual({ territorio: [], leads: [], territorioMotivo: null });
   });

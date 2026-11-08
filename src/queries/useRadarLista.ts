@@ -28,6 +28,9 @@ export interface RadarFiltros {
   // Cidade escolhida no ranking/mapa: o CÓDIGO RFB (4 dígitos), filtro exato. Quando presente vence `municipio`
   // (que fica só como rótulo): o nome se repete entre UFs — "SANTA LUZIA" de MG trazia a da BA.
   municipioCodigo?: string;
+  // "Para visitar" (migration 20261109140000): todo contato do lead tem indício de contabilidade e há endereço. O
+  // recorte é do SERVIDOR (p_so_visitar), antes da paginação. Ausente = a fila de antes.
+  paraVisitar?: boolean;
 }
 
 const PAGE = 50;
@@ -66,7 +69,7 @@ function useRadarRodadaScore() {
 }
 
 /** Identidade de um lote para a paginação: mês E início da carga (recarga do mesmo mês é outra foto). */
-const identidadeDoLote = (l: { mes_referencia: string; iniciado_em: string } | null) =>
+export const identidadeDoLote = (l: { mes_referencia: string; iniciado_em: string } | null) =>
   l ? `${l.mes_referencia}@${l.iniciado_em}` : 'sem-lote';
 
 type ParametrosLista = Database['public']['Functions']['radar_lista']['Args'];
@@ -130,6 +133,8 @@ export function parametrosDaLista(
     // 50 carregados daria falso vazio. Na fila vai `undefined` (a chave some): a chamada da fila é a de antes e não
     // depende da migration.
     p_so_meus: soMeus ? true : undefined,
+    // Idem "para visitar": fora do chip, a chave some e a chamada é a de antes.
+    p_so_visitar: filtros.paraVisitar ? true : undefined,
   };
 }
 
