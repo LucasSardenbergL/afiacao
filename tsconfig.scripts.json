@@ -46,6 +46,8 @@
     "isolatedModules": true,
     "noEmit": true,
     "skipLibCheck": true,
+    // Testes de `scripts/` que importam módulos de edge (Deno importa com `.ts` no caminho; noEmit permite).
+    "allowImportingTsExtensions": true,
 
     // Mesmo rigor do `tsconfig.app.json` — a convergência strict do src/ concluiu em 2026-05-30 e
     // não há razão para `scripts/` viver num regime mais frouxo: são eles que barram os PRs.

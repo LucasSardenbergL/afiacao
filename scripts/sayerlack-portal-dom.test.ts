@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 /* eslint-disable @typescript-eslint/no-explicit-any -- DOM e jQuery da página do portal sem tipos (o Deno não tem lib DOM); o comportamento é provado contra HTML */
+/// <reference lib="dom" />
 //
 // 8.2 do plano Sayerlack (revisão 2): os SELETORES e a PAGINAÇÃO dos scripts do navegador, executados contra HTML.
 // As funções testadas são as MESMAS que vão ao Browserless (interpoladas por `.toString()` em
