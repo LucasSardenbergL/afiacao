@@ -38,6 +38,11 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 vi.mock('@/hooks/useInfiniteScroll', () => ({ useInfiniteScroll: () => () => {} }));
 
+// Contagem do chip "para visitar" (migration 20261109140000): número fixo; o recorte da fila é o que importa aqui.
+vi.mock('@/queries/useRadarContatoContabil', () => ({
+  TETO_CONTAGEM_VISITAR: 200,
+  useRadarParaVisitarContagem: () => ({ isPending: false, isError: false, data: 37 }),
+}));
 vi.mock('@/queries/useRadarLista', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/queries/useRadarLista')>();
   return {
@@ -205,6 +210,17 @@ beforeEach(() => {
 });
 
 describe('RadarClientes — fila do vendedor', () => {
+  it('"Para visitar": o chip mostra a contagem do recorte, vai para a URL e pede o recorte à RPC (p_so_visitar)', async () => {
+    fonte.paginas = [[lead('A')]];
+    montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    expect(screen.getByTestId('radar-chip-visitar-contagem').textContent).toBe('37');
+    expect(fonte.ultimaChamada?.filtros.paraVisitar).toBe(false);
+    fireEvent.click(screen.getByTestId('radar-chip-visitar'));
+    await waitFor(() => expect(fonte.ultimaChamada?.filtros.paraVisitar).toBe(true));
+    expect(screen.getByTestId('radar-chip-visitar').getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('A1: "Próximo" no fim da página carrega a seguinte; no fim de verdade fecha a ficha e avisa (nunca volta ao 1º)', async () => {
     fonte.paginas = [[lead('A'), lead('B')], [lead('C')]];
     montar();
