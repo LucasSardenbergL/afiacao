@@ -481,3 +481,29 @@ As mesmas NFs têm itens a 6,5% e 3,25% (CST 50), então a alíquota zero não �
 **Deploy (2026-11-08):** #3717 mergeado; migration `20261109130000` aplicada pelo envelope (ensaio ok → tentativa
 **#979**, recibo na mesma transação). Validação por psql-ro: os 5 NCMs com a alíquota medida (`fonte = nf`); o sensor de
 SKUs Sayerlack ativos sem alíquota caiu de 13 para **4** (39073022, 49111090, 29163990, 32071090, sem compra em 180 d).
+
+## Onda 5A fatia 2 — 5.3: "Encerrar — cancelado no fornecedor" (2026-11-08)
+
+Pedido aceito no portal (`sucesso_portal`, protocolo), sem PO, que a Sayerlack cancelou (6 gravado pela fatia 1) ficava
+para sempre aguardando disparo: o claim recusa o 6, `cancelar_pedido_sugerido` recusa `sucesso_portal` e
+`corrigir_cancelamento_pos_disparo` só aceita `disparado`. Sobrava o UPDATE cru de staff, sem trilha.
+
+- **Migration `20261110100000`**: porta única `sayerlack_encerrar_cancelado_no_portal` (service_role; master pelo
+  `has_role`; revalida sob FOR UPDATE: OBEN, protocolo, `sucesso_portal`, sem PO, 6 do protocolo atual, **nenhuma
+  pendência de disparo, de qualquer idade**, nada no espelho do Omie por `AFI-<id>` ou contrato; exige a prova
+  `ausente` do `AFI-<id>`), trilha imutável `sayerlack_encerramento_cancelado_portal` e guarda na TABELA: pedido com
+  protocolo e sem PO não vira `cancelad%` nem é apagado fora da porta (predicado pelo protocolo, imutável — trocar
+  `status`/`status_envio_portal` antes não fura). Medido: nenhum escritor legítimo fazia essa transição/DELETE.
+- **Edge nova `sayerlack-encerrar-cancelado-portal` v1.0** (não uma ação no disparador: um bundle velho do disparador
+  que recebesse `{acao, pedido_id}` cairia no fluxo de DISPARO). Gate canônico para a sonda; a ação exige JWT de master.
+  Consulta dirigida `ConsultarPedCompra` por `AFI-<id>`: só fault em formato ESTRITO e ancorado que nega o pedido e cita
+  o código vira "ausente" (sem amostra real no banco — o fault cru vai para a trilha); PO devolvido = recusa; o resto =
+  indeterminado, nada muda. Registro em `acoes_execucoes` (`reposicao.encerrar_cancelado_portal`).
+- **Front**: botão no detalhe do pedido, só master e só no caso exato; justificativa obrigatória; resposta sem contrato
+  = "reabra para conferir", nunca "encerrado".
+- **Codex**: desenho (6 achados: claim velho com retry em voo, contorno do trigger em 2 instruções, regex frouxa,
+  cobertura e aviso persistente da 5.4) + código (P1 fault frouxo; P2 prova truncada, mensagem do PO existente) —
+  todos aplicados. Prova PG17 `db/test-sayerlack-encerrar-cancelado-portal.sh`: 34 asserts nos dois locales,
+  10 sabotagens vermelhas no assert certo; Deno 14 (handler com o harness + decisão).
+- Fora (follow-up): staff gravar PO falso numa instrução e cancelar na seguinte (resíduo aceito); 5.4 + cobertura no
+  PR seguinte (incidente persistido por pedido, cobertura dos pedidos não faturados no espelho).
