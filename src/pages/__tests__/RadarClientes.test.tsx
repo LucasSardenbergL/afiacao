@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
@@ -190,10 +190,13 @@ function lead(cnpj: string, extra: Partial<RadarEmpresa> = {}): RadarEmpresa {
   } as unknown as RadarEmpresa;
 }
 
+function Onde() {
+  return <span data-testid="onde">{useLocation().search}</span>;
+}
 function montar(rota = '/radar') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={qc}><MemoryRouter initialEntries={[rota]}>{children}</MemoryRouter></QueryClientProvider>
+    <QueryClientProvider client={qc}><MemoryRouter initialEntries={[rota]}>{children}<Onde /></MemoryRouter></QueryClientProvider>
   );
   return { qc, ...render(<RadarClientes />, { wrapper }) };
 }
@@ -636,6 +639,8 @@ describe('RadarClientes — ficha entregue pelo card (pacote I)', () => {
     await waitFor(() => expect(screen.getByTestId('ficha-cnpj').textContent).toBe('Z'));
     await waitFor(() => expect(registrarFichaEntregue).toHaveBeenCalledTimes(1));
     expect(registrarFichaEntregue).toHaveBeenCalledWith({ origem: 'card', cnpj: 'Z' });
+    // Recarregar a página não grava de novo: a origem sai da URL, o CNPJ fica.
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).toBe('?cnpj=Z'));
     // Fila chega, outra ficha abre: nada de gravar de novo (a origem era do link, não da página).
     await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
     fireEvent.click(screen.getByText('abrir A'));
