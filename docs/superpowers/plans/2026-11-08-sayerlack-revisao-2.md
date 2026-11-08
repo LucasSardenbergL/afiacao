@@ -22,6 +22,14 @@
   e qualquer N em que o catálogo tenha as duas variantes, viram **ambíguos → IP007** (recusa com a lista), em vez
   de gravar a variante sem "(C)" em silêncio. Implementar em B-sessão A, item B13.
 
+## Andamento da Sessão A (edges e banco)
+
+- ✅ **Bloco 1** (#3718) — B1, B2, B3, B4, B5, B6, B7 (edge), B9, B10, B11, B13. Migration `20261109120000` aplicada
+  (#984); importar v1.7 e varrer v1.8 com DEPLOY CONFIRMADO (sondas #986/#988, 2026-11-08).
+- ✅ **IPI dos 5 NCMs** (#3717) — migration `20261109130000` aplicada (#979).
+- ⏳ Leitura operacional de segunda 09/11 (`modo=listar`, antes das 12:30 SP).
+- ⏳ 5A fatia 2 (5.3 → 5.4 → cobertura dos protocolos com PO) e depois 5.2, 8.1, 8.2, 7.1, 7.2, 7.3, 7.5, 4.3.
+
 ## Andamento da Sessão B (tela e painel)
 
 - ✅ **PR B1** (#3715) — B7 (tela), B8, 8.5, 6.10, 6.7 (chave sob `pedidos-ciclo`), B12/8.4 runbook. Publish: founder.

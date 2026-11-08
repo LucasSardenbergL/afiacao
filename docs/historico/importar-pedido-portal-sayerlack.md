@@ -416,6 +416,13 @@ Adendo: `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Importar **v
 - **Provas**: harness `db/test-sayerlack-importar-pedido-portal.sh` 117/117 em `C` e `pt_BR.UTF-8` (9 asserts B13 +
   falsificação F19: de-para de volta em (C) ⇒ a postcondição aborta e "30 DIAS" vai para A30); Deno 55 (6 sabotagens vermelhas com
   controle verde antes e depois); `test:edges` 2429.
+- **No ar (2026-11-08):** #3718 mergeado 02:11Z. Migration `20261109120000` pelo envelope (tentativa #984, sha256
+  `068721db…`; psql-ro: "30 DIAS" → T54 "Para 30 dias" ativo, 0 de-para em "(C)"). Edges em 2 ondas pelo pacote
+  (`deploy-ordem.json`): importar **v1.7** (sonda #986, DEPLOY CONFIRMADO, fonte `0eca00d2…`) e, com a observação
+  envelhecida, varrer **v1.8** (sonda #988, DEPLOY CONFIRMADO, fonte `1251919f…`). Custo 0,8 + 0,9 crédito. O sensor de
+  edição deu `EDICAO_DETECTADA` na 1ª onda só porque a resposta trouxe `commit_sha` = o commit TOLERADO do bot
+  (`5e197ea43`, `types.ts` regenerado com as tabelas `radar_contato_*` de outra sessão; 0 arquivo fora dos gerados) —
+  falso positivo, nada revertido.
 
 
 ## Revisão 2, Sessão B parte 2: card do portal só verde com prova (Onda 6, 2026-11-08)
