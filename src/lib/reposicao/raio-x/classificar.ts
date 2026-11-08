@@ -158,6 +158,7 @@ export const ROTULOS_ESPERA: Record<string, string> = {
   sem_nf: 'sem NF de venda', fonte_consumo_desatualizada: 'fonte de consumo desatualizada', cadastro_incompleto: 'cadastro incompleto',
   nao_mercadoria: 'não é mercadoria', cobertura_abaixo_365: 'cobertura ≤ 365d', corante: 'corante (consumo dosado não medido)',
   entrada_recente: 'entrada de compra em 90d', cold_start: 'cold-start', substituido: 'substituído', cadastro_recente: 'cadastro < 90d',
+  unidade_divergente: 'unidade da venda ≠ do estoque', unidade_desconhecida: 'unidade da venda ou do estoque desconhecida',
 };
 
 /**
