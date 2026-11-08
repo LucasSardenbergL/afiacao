@@ -11,18 +11,27 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  aplicarFiltrosConsultaDom,
-  clicarProximaPaginaDom,
-  lerCondicaoSelecionadaDom,
-  lerCondicoesOpcoesDom,
-  lerSituacoesDom,
-  lerTabelaConsultaDom,
-  lerTodasAsPaginas,
-  type PaginaConsultaDom,
-} from "../supabase/functions/_shared/sayerlack-portal-dom";
+import * as dom from "../supabase/functions/_shared/sayerlack-portal-dom";
+import type { PaginaConsultaDom } from "../supabase/functions/_shared/sayerlack-portal-dom";
 import { lerPedidoPortal } from "../supabase/functions/sayerlack-importar-pedido-portal/leitura";
 import { lerListaConsulta, provarLeitura } from "../supabase/functions/sayerlack-varrer-pedidos-portal/varredura";
+
+/**
+ * Cada função é testada na forma em que VAI ao Chrome: o texto do `.toString()` reavaliado sem o escopo do módulo
+ * (Codex, 8.2: uma referência externa introduzida pela transformação passaria testando a função original).
+ */
+// deno-lint-ignore no-explicit-any
+function viaTexto<F extends (...a: any[]) => any>(fn: F): F {
+  return new Function(`return (${fn.toString()});`)() as F;
+}
+const aplicarFiltrosConsultaDom = viaTexto(dom.aplicarFiltrosConsultaDom);
+const clicarFiltrarDom = viaTexto(dom.clicarFiltrarDom);
+const clicarProximaPaginaDom = viaTexto(dom.clicarProximaPaginaDom);
+const lerCondicaoSelecionadaDom = viaTexto(dom.lerCondicaoSelecionadaDom);
+const lerCondicoesOpcoesDom = viaTexto(dom.lerCondicoesOpcoesDom);
+const lerSituacoesDom = viaTexto(dom.lerSituacoesDom);
+const lerTabelaConsultaDom = viaTexto(dom.lerTabelaConsultaDom);
+const lerTodasAsPaginas = viaTexto(dom.lerTodasAsPaginas);
 
 const DIR = join(__dirname, "__fixtures__", "sayerlack-portal");
 const fixture = (nome: string) => readFileSync(join(DIR, nome), "utf8");
@@ -220,6 +229,38 @@ describe("filtros e situações", () => {
     document.querySelector("#num_ped_fim")!.remove();
     const f = aplicarFiltrosConsultaDom("2059", "", "", "2026-11-01");
     expect([f.set.fim, f.fim]).toEqual([false, null]);
+  });
+
+  it("sem jQuery: dispara 'change' nativo (borbulhando) em cada campo", () => {
+    const vistos: string[] = [];
+    document.addEventListener("change", (e) => vistos.push((e.target as HTMLElement).id));
+    aplicarFiltrosConsultaDom("2059", "1", "2", "2026-11-01");
+    expect(vistos).toEqual(["cliente", "situacao", "exibir", "num_ped_ini", "num_ped_fim", "data_emissao_ini", "data_entrega_ini"]);
+  });
+
+  it("com jQuery: usa .val(v).trigger('change') no elemento certo (o select2 do portal escuta o jQuery)", () => {
+    const chamadas: string[] = [];
+    (window as unknown as { jQuery: unknown }).jQuery = (el: HTMLInputElement) => ({
+      val(v: string) {
+        el.value = v;
+        return { trigger: (ev: string) => chamadas.push(`${el.id}=${v}:${ev}`) };
+      },
+    });
+    const f = aplicarFiltrosConsultaDom("2059", "2140603", "2140603", "2020-01-01");
+    expect(chamadas).toEqual([
+      "cliente=2059:change", "situacao=todos:change", "exibir=1:change", "num_ped_ini=2140603:change",
+      "num_ped_fim=2140603:change", "data_emissao_ini=2020-01-01:change", "data_entrega_ini=2020-01-01:change",
+    ]);
+    expect([f.cliente, f.ini]).toEqual(["2059", "2140603"]);
+  });
+
+  it("clica em 'Filtrar' (#getFilterData) — e sem o botão não quebra", () => {
+    let cliques = 0;
+    document.querySelector("#getFilterData")!.addEventListener("click", () => cliques++);
+    clicarFiltrarDom();
+    expect(cliques).toBe(1);
+    document.querySelector("#getFilterData")!.remove();
+    expect(() => clicarFiltrarDom()).not.toThrow();
   });
 
   it("lê as situações oferecidas pelo portal (valor + texto)", () => {

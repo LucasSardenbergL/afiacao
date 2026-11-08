@@ -5,7 +5,7 @@
 //
 // ⚠️ Cada função é INTERPOLADA no script via `${fn.toString()}` (mesmo molde de `classificarPosLogin`). Por isso:
 //  - SELF-CONTAINED: não referencia nada do módulo (nem outra função daqui, nem import, nem constante);
-//  - na página: só `document`/`window` globais; o laço de paginação recebe tudo por parâmetro;
+//  - na página: `document`/`window` lidos de `globalThis` DENTRO da função; o laço recebe tudo por parâmetro;
 //  - sem crase (template literal) e sem cifrão-chave no corpo — o texto entra num template.
 // Contrato de saída IGUAL ao que o script tinha embutido (consumido em Deno por `leitura.ts` e `varredura.ts`).
 
@@ -28,7 +28,9 @@ export interface PaginaConsultaDom {
  */
 export function lerTabelaConsultaDom(): PaginaConsultaDom {
   // deno-lint-ignore no-explicit-any
-  const w = window as any;
+  const g: any = globalThis;
+  const document = g.document;
+  const w = g;
   // deno-lint-ignore no-explicit-any
   const texto = (el: any): string => (typeof el.innerText === "string" ? el.innerText : (el.textContent || ""));
   // deno-lint-ignore no-explicit-any
@@ -38,7 +40,8 @@ export function lerTabelaConsultaDom(): PaginaConsultaDom {
       (th.getAttribute("aria-label") || "").split(":")[0].trim());
   };
   // deno-lint-ignore no-explicit-any
-  const t: any = Array.from(document.querySelectorAll("table")).find((tb) =>
+  // deno-lint-ignore no-explicit-any
+  const t: any = Array.from(document.querySelectorAll("table")).find((tb: any) =>
     Array.from(tb.querySelectorAll("thead th")).some((th) => nomeTh(th).toLowerCase().indexOf("situa") !== -1)
   );
   if (!t) return { ok: false, headers: [], linhas: [], processando: false, info: null, temProxima: false };
@@ -85,6 +88,9 @@ export function lerTabelaConsultaDom(): PaginaConsultaDom {
 /** Clica em "próxima página" da tabela (o `.paginate_button.next` pode ser o `<a>` ou o `<li>` que o contém). */
 export function clicarProximaPaginaDom(): void {
   // deno-lint-ignore no-explicit-any
+  const g: any = globalThis;
+  const document = g.document;
+  // deno-lint-ignore no-explicit-any
   const b: any = document.querySelector(".paginate_button.next");
   const a = b && (b.tagName === "A" ? b : (b.querySelector("a") || b));
   if (a) a.click();
@@ -93,12 +99,18 @@ export function clicarProximaPaginaDom(): void {
 /** Clica em "Filtrar" da consulta. */
 export function clicarFiltrarDom(): void {
   // deno-lint-ignore no-explicit-any
+  const g: any = globalThis;
+  const document = g.document;
+  // deno-lint-ignore no-explicit-any
   const b: any = document.querySelector("#getFilterData");
   if (b) b.click();
 }
 
 /** As situações que o portal oferece no filtro (valor + texto). */
 export function lerSituacoesDom(): Array<{ valor: string; texto: string }> {
+  // deno-lint-ignore no-explicit-any
+  const g: any = globalThis;
+  const document = g.document;
   // deno-lint-ignore no-explicit-any
   return Array.from(document.querySelectorAll("#situacao option")).map((o: any) => ({
     valor: String(o.value),
@@ -129,7 +141,9 @@ export function aplicarFiltrosConsultaDom(
   emissaoDesde: string,
 ): FiltroConsultaDom {
   // deno-lint-ignore no-explicit-any
-  const w = window as any;
+  const g: any = globalThis;
+  const document = g.document;
+  const w = g;
   const jq = w.jQuery;
   const set = (sel: string, v: string): boolean => {
     // deno-lint-ignore no-explicit-any
@@ -174,6 +188,9 @@ export function aplicarFiltrosConsultaDom(
  */
 export function lerCondicaoSelecionadaDom(): string | false {
   // deno-lint-ignore no-explicit-any
+  const g: any = globalThis;
+  const document = g.document;
+  // deno-lint-ignore no-explicit-any
   const sel: any = document.querySelector("#condicoes_pagamento");
   const opt = sel && sel.selectedOptions && sel.selectedOptions[0];
   const txt = opt ? String(opt.text || "").trim() : "";
@@ -182,6 +199,9 @@ export function lerCondicaoSelecionadaDom(): string | false {
 
 /** Todas as opções do `#condicoes_pagamento` (só leitura; insumo do de-para condição do portal → Omie). */
 export function lerCondicoesOpcoesDom(): string[] {
+  // deno-lint-ignore no-explicit-any
+  const g: any = globalThis;
+  const document = g.document;
   // deno-lint-ignore no-explicit-any
   const sel: any = document.querySelector("#condicoes_pagamento");
   // deno-lint-ignore no-explicit-any
