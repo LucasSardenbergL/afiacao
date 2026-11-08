@@ -116,7 +116,11 @@ sem índice não vira BitmapOr. `EXPLAIN` de 07/11: o Cmd-K usa `idx_tint_formul
 `uq_tint_formulas_chave` com filtro. O controle, só `nome_cor ILIKE`, usa o gin (Bitmap Index Scan). Nenhuma RPC
 ou edge filtra `nome_cor` por LIKE. Esperar mais não muda o número, então a decisão é de produto: (a) DROP, que
 libera 81 MB e tira a manutenção do gin da escrita em ~1 M fórmulas; ou (b) tornar a busca indexável (trigram em
-`cor_id` também). Até a decisão, fica.
+`cor_id` também). **Decisão do founder em 07/11: DROP (a).** Migration
+`supabase/migrations/20261108120001_tint_drop_idx_nome_cor.sql` (#3713), aplicada no SQL Editor. A PRE normaliza
+a opclass, porque o `postgres` tem `extensions` no `search_path` e `pg_get_indexdef` sai sem o prefixo. Prova PG17
+18/18 em `C` e `pt_BR.UTF-8`, com 3 falsificações. **Validado por fora em 2026-11-07 23:43 UTC** (`psql-ro`, exit 0,
+`FIM-OK`): `to_regclass` nulo, os 6 índices que ficam válidos, e os índices de `tint_formulas` passaram de 634 MB para 553 MB.
 
 **Contaminação de medição:** o `EXPLAIN ANALYZE` acima rodou em 2026-11-07 ~12:40 UTC e somou ~520 k
 buffers lidos do cache e ~39 k do disco aos contadores de `radar_empresas` (heap e índice). O D12 do v7

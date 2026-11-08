@@ -1,7 +1,7 @@
 import type { Tables } from '@/integrations/supabase/types';
 import { linhasCom, type ComColunas } from '@/lib/reposicao/linha-view';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -97,6 +97,9 @@ function FrescorEstoqueLive({ ultimaSync }: { ultimaSync: string | null | undefi
   );
 }
 
+/** Marca no `history.state` da entrada que ESTA tela empurrou ao abrir o detalhe. */
+const DETALHE_EMPILHADO = 'detalhePedidoEmpilhado';
+
 /* ─── Página principal ─── */
 export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
@@ -105,6 +108,8 @@ export default function AdminReposicaoPedidos() {
   const { isMaster, isGestorComercial, user } = useAuth();
   const podeOverride = isMaster || isGestorComercial;
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
   const [cancelarPedido, setCancelarPedido] = useState<PedidoSugerido | null>(null);
   const [portalPedido, setPortalPedido] = useState<PedidoSugerido | null>(null);
@@ -230,7 +235,19 @@ export default function AdminReposicaoPedidos() {
   const abrirDetalhes = useCallback((p: PedidoSugerido, origem: 'fila' | 'historico_hoje' | 'atencao' | 'abaixo_minimo') => {
     track('reposicao.pedido_detalhes_aberto', { pedido_id: p.id, status: p.status, origem });
     setDetalhesPedido(p);
-  }, []);
+    // O detalhe aberto MORA na URL (?id=N), empurrado como entrada nova de histórico: o "voltar"
+    // do celular tira o ?id e o efeito abaixo fecha o modal (QA 8.3, 375×812). A marca no state
+    // diz ao fechar-pelo-X que a entrada é nossa → navigate(-1) em vez de deixar um "voltar" morto.
+    setSearchParams(
+      (atual) => {
+        const next = new URLSearchParams(atual);
+        next.delete('pedido');
+        next.set('id', String(p.id));
+        return next;
+      },
+      { state: { [DETALHE_EMPILHADO]: true } },
+    );
+  }, [setSearchParams]);
   const abrirDetalhesFila = useCallback((p: PedidoSugerido) => abrirDetalhes(p, 'fila'), [abrirDetalhes]);
   const abrirDetalhesHistorico = useCallback((p: PedidoSugerido) => abrirDetalhes(p, 'historico_hoje'), [abrirDetalhes]);
 
@@ -309,11 +326,31 @@ export default function AdminReposicaoPedidos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkId, pedidoLocalDoLink, pedidoPorId, carregandoPedidoPorId, detalhesPedido?.id]);
 
+  // "Voltar" (popstate) tirou o ?id/?pedido da URL → fecha o detalhe aberto.
+  // `voltandoRef` segura um 2º fechar (duplo Esc/X) entre o navigate(-1) e o popstate — senão
+  // seriam DOIS passos para trás e o usuário sairia da tela.
+  const voltandoRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkId !== null) return;
+    voltandoRef.current = false;
+    if (detalhesPedido !== null) setDetalhesPedido(null);
+  }, [deepLinkId, detalhesPedido]);
+
   const handleCloseDetalhes = (open: boolean) => {
-    if (!open) {
-      setDetalhesPedido(null);
-      limparDeepLink();
+    if (open) return;
+    const empilhadoPorNos =
+      (location.state as Record<string, unknown> | null)?.[DETALHE_EMPILHADO] === true;
+    if (empilhadoPorNos && deepLinkId !== null) {
+      // A entrada é nossa: desfaz o push. NÃO zera o estado aqui — o ?id ainda está na URL até o
+      // popstate, e o efeito do deep link reabriria; o efeito acima fecha quando a URL mudar.
+      if (voltandoRef.current) return;
+      voltandoRef.current = true;
+      navigate(-1);
+      return;
     }
+    // Deep link vindo de fora (1ª entrada da aba, link do portal): voltar sairia da tela → replace.
+    setDetalhesPedido(null);
+    limparDeepLink();
   };
 
   // [GATE estoque-não-confirmado] fila de exceção PÓS-geração: o que o motor EFETIVAMENTE suprimiu, gravado em
