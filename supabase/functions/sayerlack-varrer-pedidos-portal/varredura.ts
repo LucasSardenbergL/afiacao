@@ -99,7 +99,7 @@ export interface PedidoListado {
 }
 
 /** Código de situação RECONHECIDO no texto "<código> - <nome>" do portal (select real: 1..7). Outro ⇒ null. */
-export function codigoSituacao(situacao: string): string | null {
+function codigoSituacao(situacao: string): string | null {
   const m = situacao.match(/^\s*([1-7])\s*-/);
   return m ? m[1] : null;
 }
