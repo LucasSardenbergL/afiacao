@@ -192,7 +192,7 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     motivo: 'coorte do lote "segurar compra" (saldo×cmc, fornecedor); gate private.cap_compras_ler',
   },
   'public.sayerlack_painel_portal': {
-    fechadaPor: '20261106140000_sayerlack_importar_portal_revisao.sql',
+    fechadaPor: '20261109100000_sayerlack_painel_portal_v2.sql',
     permitido: PORTA_GATE,
     motivo: 'card "Pedidos do portal Sayerlack": pendências da varredura, importados e sem PO; gate private.cap_compras_ler',
   },

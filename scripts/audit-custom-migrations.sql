@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 805
+-- Total de custom migrations: 806
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -873,7 +873,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107220500', 'radar_meu_territorio', '20261107220500_radar_meu_territorio.sql'),
   ('20261107230000', 'radar_distribuicao_pacote_e', '20261107230000_radar_distribuicao_pacote_e.sql'),
   ('20261108000000', 'cliente_sucessao_consumidores', '20261108000000_cliente_sucessao_consumidores.sql'),
-  ('20261108120000', 'sayerlack_situacao_portal_no_pedido', '20261108120000_sayerlack_situacao_portal_no_pedido.sql')
+  ('20261108120000', 'sayerlack_situacao_portal_no_pedido', '20261108120000_sayerlack_situacao_portal_no_pedido.sql'),
+  ('20261109100000', 'sayerlack_painel_portal_v2', '20261109100000_sayerlack_painel_portal_v2.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3520,7 +3521,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack_registrar_situacao_portal', ''),
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'reposicao_claim_disparo', ''),
   ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_escritor_unico', 'pedido_compra_sugerido'),
-  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido')
+  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido'),
+  ('sayerlack_painel_portal_v2', 'function', 'public', 'sayerlack_painel_portal', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6215,7 +6217,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'sayerlack_registrar_situacao_portal', ''),
   ('sayerlack_situacao_portal_no_pedido', 'function', 'public', 'reposicao_claim_disparo', ''),
   ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_escritor_unico', 'pedido_compra_sugerido'),
-  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido')
+  ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido'),
+  ('sayerlack_painel_portal_v2', 'function', 'public', 'sayerlack_painel_portal', '')
 )
 SELECT
   e.migration,
@@ -6243,7 +6246,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 187.
+-- Funções redefinidas com corpo extraível: 188.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6923,6 +6926,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'simular_puxar_volume_trimestre', 2, '20261106090000_des_simular_puxar_config_e_checkin.sql', 'fefcf8c0890cd3fe21a60efbe2ed6d37'),
   ('private', 'radar_vinculos_nucleo', 1, '20261106083754_radar_vinculos_em_lote.sql', '524afca67d271f459a6e4c984725b833'),
   ('private', 'radar_vinculos_nucleo', 2, '20261106205557_credito_aviso_vinculo_vencido.sql', '150b7d5e1c72ca55f8e58ea321659428'),
+  ('public', 'sayerlack_painel_portal', 1, '20261106140000_sayerlack_importar_portal_revisao.sql', '400f7a1ffbd31d4d52e474a074672afe'),
+  ('public', 'sayerlack_painel_portal', 2, '20261109100000_sayerlack_painel_portal_v2.sql', 'e249cb3f4fc21f6780bfd09ce20fec0d'),
   ('private', 'radar_territorio_do_vendedor', 1, '20261106181000_radar_leads_ao_vendedor.sql', '2bb9436ae4ce0d5f517354edbc931130'),
   ('private', 'radar_territorio_do_vendedor', 2, '20261107230000_radar_distribuicao_pacote_e.sql', 'fb812a4908eeb34fa12e23f48e06a568'),
   ('private', 'radar_leads_do_vendedor', 1, '20261106181000_radar_leads_ao_vendedor.sql', '51506ada745f4c91ec5de07a54e06ac0'),
