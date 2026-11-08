@@ -819,6 +819,16 @@ Deno.serve(async (req: Request) => {
       }
       return { ...resumoFinal, pulado: "bloqueado", mensagem: `Rodada não importa: ${bloqueio}. Situações do portal lidas e gravadas.` };
     }
+    // 2b. Onda 5A (ANTES do espelho/vistas/sync — Codex revisão 2, B4): a situação de cada pedido do app vai para o pedido (escritor único). Só com leitura PROVADA —
+    //     ilegível/repetido seguem a rodada, mas não viram evidência. É o que faz o claim de disparo recusar o 6.
+    //     Com linha ilegível/repetida (a rodada segue, vermelha no fim), só os 6 de linhas únicas entram: bloquear com
+    //     leitura imperfeita é seguro, liberar não (Codex 5A rodada 8).
+    if (modo === "importar") {
+      resumoFinal = {
+        ...resumoFinal,
+        situacoes: await gravarSituacoes(observacoesDaLista(lista.pedidos, new Set(noApp.keys()), { soCancelados: !prova.ok }), lidoDe, lidoAte),
+      };
+    }
     const [noOmie, vistos, syncEm] = await Promise.all([
       contratosNoOmie(db, protocolos), vistosAntes(db, protocolos), syncPedidosCompletoEm(db),
     ]);
@@ -828,16 +838,6 @@ Deno.serve(async (req: Request) => {
     // A 1ª vista só conta em rodada de IMPORTAR: "listar" não tem efeito sobre compras futuras (Codex P2).
     if (modo === "importar") {
       await registrarVistos(db, preCarencia.filter((p) => p.classe === "candidato" && !vistos.has(p.protocolo)).map((p) => p.protocolo));
-    }
-    // 2b. Onda 5A: a situação de cada pedido do app vai para o pedido (escritor único). Só com leitura PROVADA —
-    //     ilegível/repetido seguem a rodada, mas não viram evidência. É o que faz o claim de disparo recusar o 6.
-    //     Com linha ilegível/repetida (a rodada segue, vermelha no fim), só os 6 de linhas únicas entram: bloquear com
-    //     leitura imperfeita é seguro, liberar não (Codex 5A rodada 8).
-    if (modo === "importar") {
-      resumoFinal = {
-        ...resumoFinal,
-        situacoes: await gravarSituacoes(observacoesDaLista(lista.pedidos, new Set(noApp.keys()), { soCancelados: !prova.ok }), lidoDe, lidoAte),
-      };
     }
     const classificados = aplicarCarencia(preCarencia, vistos, syncEm);
     const candidatos = classificados.filter((p) => p.classe === "candidato");
@@ -1006,8 +1006,12 @@ Deno.serve(async (req: Request) => {
         } else if (pedQ.temPo) {
           await marcarResolvidos(db, [q.protocolo]); reconsultas.push({ ...q, acao: "po_ja_no_app_resolvido" }); continue;
         } else if (omieQ.size > 0) {
-          // Pedido no app sem PO e PO manual no Omie: pendência de vinculação (item 7.1), não re-disparo.
-          reconsultas.push({ ...q, acao: "po_manual_no_omie" }); continue;
+          // Pedido no app sem PO e PO manual no Omie: pendência de vinculação (item 7.1), não re-disparo. A situação é
+          // relida mesmo assim (só situação): a pendência pode ser um 6 que o botão leu e não gravou (Codex rodada 2).
+          const rs = await importarContado(q.protocolo, [...SITUACOES_IMPORTAVEIS], true)
+            .catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
+          reconsultas.push({ ...q, acao: "po_manual_no_omie", situacao_relida: (rs.corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada ?? null });
+          continue;
         } else {
           // B5: pedido do app sem PO — a reconsulta RE-DISPARA; mesma carência e cobertura do re-disparo da janela.
           // Sem elas, a reconsulta ainda RELÊ e GRAVA a situação (só situação, sem disparo): é o que persiste um 6 que
@@ -1096,6 +1100,9 @@ Deno.serve(async (req: Request) => {
       ...reconsultas.filter((r) => r.acao === "indeterminado").map((r) => r.protocolo),
     ];
     if (naoSei.length > 0) problemas.push(`${naoSei.length} importação(ões) sem resposta — não sei se entraram (a próxima rodada confere): ${naoSei.join(", ")}`);
+    // Releitura só-situação que não gravou (timeout, HTTP de erro, ilegível): o 6 pode seguir sem bloqueio (Codex rodada 2).
+    const naoRelidas = reconsultas.filter((r) => "situacao_relida" in r && r.situacao_relida !== "aceita" && r.situacao_relida !== "nao_aceita");
+    if (naoRelidas.length > 0) problemas.push(`${naoRelidas.length} releitura(s) da situação além da janela não gravaram: ${naoRelidas.map((r) => `${r.protocolo} (${String(r.situacao_relida)})`).join(", ")}`);
     const naoRegistrados = [...indeterminados, ...redisparos].filter((x) => (x as { registrado?: boolean }).registrado === false);
     if (naoRegistrados.length > 0) problemas.push(`${naoRegistrados.length} indeterminado(s) sem pendência gravada no banco`);
     if (falhasReconciliacao.length > 0) {

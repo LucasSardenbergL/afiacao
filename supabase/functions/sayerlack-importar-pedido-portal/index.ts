@@ -38,7 +38,7 @@ const STATUS_REDISPARAVEIS = new Set(["aprovado_aguardando_disparo", "falha_envi
 // regex com barra invertida dobrada.
 const BROWSERLESS_FUNCTION = `
 export default async ({ page, context }) => {
-  const { user, pass, portalUrl, clienteCodigo, protocolo } = context;
+  const { user, pass, portalUrl, clienteCodigo, protocolo, somenteSituacao } = context;
   const trace = [];
   const t0 = Date.now();
   const classificarPosLogin = ${classificarPosLogin.toString()};
@@ -174,6 +174,10 @@ ${ABRIR_CONSULTA_PEDIDOS}
       if (Date.now() - tFiltro > 4000 && !consulta.processando && consulta.linhas.length === 0) break;
     }
     trace.push({ step: 'consulta_lida', headers: consulta.headers, n_linhas: consulta.linhas.length, t: Date.now() - t0 });
+    // Só situação (varredura, B3): a consulta basta — itens e detalhe não podem derrubar a gravação de um 6 já lido.
+    if (somenteSituacao) {
+      return { data: { success: true, consulta: { headers: consulta.headers, linhas: consulta.linhas }, itens: null, condicao: null, condicoes_opcoes: [], trace }, type: 'application/json' };
+    }
 
     // Itens: GET de leitura do próprio portal. Se vier vazio sem o pedido aberto, carrega a página de detalhe
     // (só GET — o que o founder faz à mão) e lê de novo. Nenhum clique na tela de detalhe.
@@ -539,7 +543,7 @@ async function tratar(
           code: BROWSERLESS_FUNCTION,
           context: {
             user: SAYERLACK_PORTAL_USER, pass: SAYERLACK_PORTAL_PASS, portalUrl: SAYERLACK_PORTAL_URL,
-            clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO, protocolo,
+            clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO, protocolo, somenteSituacao,
           },
         }),
       });
@@ -585,7 +589,10 @@ async function tratar(
     // B3 (Codex revisão 2): um 6 lido e NÃO gravado (2 tentativas) não pode ficar só na resposta — vira pendência
     // aberta "vencida" na fila da varredura, que na próxima rodada relê o pedido por número (só situação) e, se a
     // gravação ainda falhar, manda o e-mail (a varredura é quem avisa).
-    if (situacaoGravada === "erro" && situacaoObservada(envelope.consulta?.linhas ?? [], protocolo)?.codigo === "6") {
+    // Só pelo BOTÃO: chamada da varredura já deixa a rodada vermelha e o e-mail é dela — regravar `ultima_em` vencida
+    // aqui desfaria a reserva da reconsulta e monopolizaria a fila (Codex revisão 2, rodada 2).
+    if (situacaoGravada === "erro" && situacoesPermitidas === null && !somenteSituacao &&
+        situacaoObservada(envelope.consulta?.linhas ?? [], protocolo)?.codigo === "6") {
       await abrirPendenciaSituacaoNaoGravada(db, protocolo);
     }
     if (somenteSituacao) {

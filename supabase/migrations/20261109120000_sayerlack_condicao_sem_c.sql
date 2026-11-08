@@ -32,6 +32,15 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.sayerlack_condicao_portal_de_para WHERE condicao_portal = '30 DIAS' AND codigo_omie <> 'T54') THEN
     RAISE EXCEPTION 'B13 FALHOU: de-para "30 DIAS" não é T54';
   END IF;
+  -- Traduz EXECUTANDO (Codex rodada 2: T54 inativo/ausente passaria na checagem textual e "30 DIAS" daria IP007).
+  BEGIN
+    SELECT x.codigo INTO v_cod FROM public.sayerlack_condicao_portal_para_omie('30 DIAS') x;
+  EXCEPTION WHEN SQLSTATE 'IP007' THEN
+    RAISE EXCEPTION 'B13 FALHOU: "30 DIAS" não traduz (T54 ausente ou inativo no catálogo OBEN?)';
+  END;
+  IF v_cod IS DISTINCT FROM 'T54' THEN
+    RAISE EXCEPTION 'B13 FALHOU: "30 DIAS" deveria dar T54, deu %', v_cod;
+  END IF;
   FOR r IN
     SELECT s.codigo AS sem_c, substring(lower(btrim(s.descricao)) from '^para ([0-9]+) dias$') AS n
       FROM public.omie_condicao_pagamento_catalogo s
