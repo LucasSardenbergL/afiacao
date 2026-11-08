@@ -379,3 +379,33 @@ Adendo `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Só front + d
   antigo), com as queries conferidas contra prod via psql-ro.
 - **Provas**: vitest 41 (card + interpretação). Falsificação com controle verde antes e depois na mesma invocação:
   etapa inventada, B8 desligado, recusa sem SQLSTATE e laço paralelo → cada um vermelho.
+
+## Revisão 2, Sessão B parte 2: card do portal só verde com prova (Onda 6, 2026-11-08)
+
+- **Migration `20261109100000`** (envelope, tentativa **#977**, ensaio antes; pré-voo psql-ro: o corpo executou nos
+  dados de prod; 2ª testemunha: md5 do corpo vivo = repo, ACL preservado, anon fechado). `sayerlack_painel_portal`
+  v2 é SUPERCONJUNTO do v1 (as 3 listas continuam), então o front antigo seguiu lendo até o Publish.
+  - **6.1** `rodada`: última rodada EFETIVA do modo importar (prova ok; legado com lidos>0), a última decidida e
+    `em_dia` pela mesma régua do vigia (dia útil SP, 14:00). `modo=listar` não conta (o B9 da Sessão A, no vigia).
+    Espera da efetiva: carência (1ª vista + aguardando sync), adiados, indeterminados, carência presa — lista ausente
+    vira `null`, não 0.
+  - **6.4** a falha do protocolo que também é pedido sem pedido de compra vai DENTRO da linha; `pendentes_unicos`.
+  - **6.5** teto 50 por lista e `total_*`. **6.6** `cancelado_humano` fora.
+  - Pedidos **originados no app** com protocolo e sem pedido de compra entram (o v1 exigia `importado_portal_em`), com
+    1 h em `aguardando_disparo` antes de virar pendência.
+  - **6.8** `sem_aliquota` (SKUs Sayerlack ativos OBEN sem alíquota = CP006). Em prod: 13 SKUs, 9 NCMs.
+  - **6.11** `cancelado_sem_po` / `cancelado_com_po` pela situação 6 gravada (Onda 5A). "Alterado no portal" fica para
+    quando a 5.2 (Sessão A) criar a coluna.
+- **Card**: contrato RÍGIDO (`{}`, v1, total ou lista ausente → "não consegui ler"); "Nada pendente" só com rodada
+  efetiva em dia, espera conhecida e zero, nada aguardando e sem falha depois da efetiva — senão "não posso afirmar
+  que não há" com o motivo; "Consultado às HH:MM"; falha de refetch com dado velho avisa e esconde o verde (6.3);
+  atualizar sempre visível e releitura sozinha 7 min depois de cada horário do cron (6.7); "pedido de compra" em todo
+  o card (6.9).
+- **Estado em prod no apply** (sábado à noite): última efetiva = 07/11 01:30 UTC, legado v1.4 (sem `indeterminados`
+  nem `carencia_presa`) → o card mostrará "não posso afirmar" até a 1ª rodada v1.7 de segunda. É o comportamento
+  certo (ausente ≠ zero), não defeito.
+- **Provas**: `db/test-sayerlack-painel-portal-v2.sh` PG17 36/36 em `C` e `pt_BR.UTF-8`, 5 sabotagens inline com
+  controle antes/depois (filtro de modo, `cancelado_humano`, dedupe, gate, chave do contrato na postcondição); no núcleo
+  do CI. vitest 51; falsificação do front com controle: sem versão, sem `em_dia`, `null` virando 0, ignorar falha
+  posterior, contagem pela soma das listas (este último sobreviveu à 1ª rodada — o teste ganhou a asserção).
+
