@@ -142,6 +142,10 @@ SELECT p.id, btrim(p.portal_protocolo), NULLIF(NULLIF(btrim(COALESCE(p.omie_pedi
  WHERE p.empresa = 'OBEN' AND p.portal_situacao_codigo = '6'
    AND (NULLIF(NULLIF(btrim(COALESCE(p.omie_pedido_compra_id, '')), ''), '0') IS NOT NULL OR p.disparo_claim_em IS NOT NULL)
    AND btrim(COALESCE(p.portal_protocolo, '')) <> '' AND COALESCE(p.status, '') NOT LIKE 'cancelad%'
+   -- reaplicar não reabre o que um master resolveu (mesmo filtro do trigger — Codex rodada 3, P2)
+   AND NOT EXISTS (SELECT 1 FROM public.sayerlack_incidente_cancelado_com_po r
+                    WHERE r.pedido_id = p.id AND r.resolucao = 'humano'
+                      AND r.po_omie IS NOT DISTINCT FROM NULLIF(NULLIF(btrim(COALESCE(p.omie_pedido_compra_id, '')), ''), '0'))
 ON CONFLICT (pedido_id) WHERE resolvido_em IS NULL DO NOTHING;
 
 -- ── B2. PO que aparece no espelho DEPOIS de um encerramento da 5.3 também vira incidente persistido ────────────
@@ -192,6 +196,9 @@ SELECT DISTINCT ON (e.pedido_id) e.pedido_id, e.protocolo, t.omie_codigo_pedido:
     ON t.empresa::text = 'OBEN' AND t.status::text IS DISTINCT FROM 'CANCELADO'
    AND (btrim(COALESCE(t.omie_codigo_integracao, '')) = 'AFI-' || e.pedido_id
         OR e.protocolo IN (SELECT btrim(c.n) FROM unnest(string_to_array(t.numero_contrato_fornecedor, '/')) AS c(n)))
+ WHERE NOT EXISTS (SELECT 1 FROM public.sayerlack_incidente_cancelado_com_po r
+                    WHERE r.pedido_id = e.pedido_id AND r.resolucao = 'humano'
+                      AND r.motivo = 'po_no_espelho_apos_encerrar' AND r.po_omie = t.omie_codigo_pedido::text)
  ORDER BY e.pedido_id, t.omie_codigo_pedido
 ON CONFLICT (pedido_id) WHERE resolvido_em IS NULL DO NOTHING;
 
