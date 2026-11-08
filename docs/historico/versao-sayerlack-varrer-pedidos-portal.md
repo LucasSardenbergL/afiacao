@@ -33,4 +33,10 @@ v1.7 (2026-11-08, pontos cegos Onda 5A fatia 1) — a situação de cada pedido 
 estendida da reconciliação) vai para o pedido pelo escritor único `sayerlack_registrar_situacao_portal`, com o
 intervalo [início, fim] da leitura; só com leitura PROVADA e código 1..7. É o que faz o claim de disparo recusar o
 pedido cancelado no portal. Falha da gravação deixa a rodada vermelha. Migration 20261108120000 ANTES.
+v1.8 (2026-11-08, revisão 2) — situação sem código 1..7 ou emissão ilegível contam como linha ilegível (B1); 6 não
+gravado é regravado 1× e vira pendência com e-mail (B3); pedido do app em voo/conciliação bloqueia só a importação: a
+rodada lê e grava as situações e termina `pulado: bloqueado` com `prova_leitura: ok_bloqueado` (B4); re-disparo de
+pedido sem PO espera o sync do espelho terminar depois da última mudança (+5 min; > 6 h vira pendência) (B5);
+importação sem resposta com contrato vira pendência durável sem e-mail e deixa a rodada vermelha (B6/B7); `modo=listar`
+registra em `reposicao.listar_portal_sayerlack`, fora do vigia do data_health (B9).
 ```

@@ -28,6 +28,10 @@ import {
   carenciaTravada,
   reconsultasForaDaJanela,
   type PedidoClassificado,
+  desfechoImportacao,
+  carenciaRedisparo,
+  maisRecente,
+  entregaCobertaPeloSync,
 } from "./varredura.ts";
 import * as leituraOriginal from "../sayerlack-importar-pedido-portal/leitura.ts";
 import * as janelaOriginal from "../disparar-pedidos-aprovados/janela-portal.ts";
@@ -327,4 +331,81 @@ Deno.test("observacoesDaLista: só pedido do app com código 1..7", () => {
     observacoesDaLista(pedidos, new Set(["2141001", "2141002"]), { soCancelados: true }),
     [{ protocolo: "2141001", codigo: "6", texto: "6 - Cancelado" }],
   );
+});
+
+// ── Revisão 2 (2026-11-08) ──
+const CAB = ["Estab", "Pedido", "Pedido Clien", "Cliente", "Situação", "Data Emissão", "Data Entrega", "Vlr Mercadori", "Vlr Total"];
+
+Deno.test("B1: situação/data ilegíveis são PRODUZIDAS como ilegíveis pela leitura da lista e reprovam a prova", () => {
+  // As linhas cruas, como o navegador devolve: a contagem sai de lerListaConsulta, não é injetada.
+  const linhas = [
+    linha("2141100", "1 - Aberto", "16/10/2026"),
+    linha("2141101", "", "16/10/2026"),            // situação vazia (antes: situacao_nao_importavel, prova ok)
+    linha("2141102", "1 - Aberto", "??"),          // emissão ilegível (antes: fora_da_janela, prova ok)
+    linha("2141103", "Suspenso", "31/02/2026"),     // as duas ilegíveis na MESMA linha: conta 1
+    linha("2141104", "8 - Novo", "16/10/2026"),     // código fora do select real
+  ];
+  const lista = lerListaConsulta(linhas);
+  assertEquals(lista.ilegiveis, 4);
+  assertEquals(lista.ilegiveis_detalhe.map((d) => `${d.protocolo}:${d.campo}`),
+    ["2141101:situacao", "2141102:emissao", "2141103:situacao", "2141103:emissao", "2141104:situacao"]);
+  // O pedido de nº legível segue na lista, sem código (nunca candidato, nunca observação de situação).
+  assertEquals(lista.pedidos.map((p) => `${p.protocolo}:${p.situacao_codigo}`), ["2141100:1", "2141101:null", "2141102:1", "2141103:null", "2141104:null"]);
+  const prova = provarLeitura({ headers: CAB, linhasLidas: linhas.length, respostaTotal: linhas.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos });
+  assertEquals(prova.ok ? "ok" : prova.motivo, "linhas_ilegiveis");
+  // E a lista toda legível prova ok (controle: a reprovação acima é DA ilegibilidade).
+  const boa = lerListaConsulta([linhas[0]]);
+  const provaBoa = provarLeitura({ headers: CAB, linhasLidas: 1, respostaTotal: 1, ilegiveis: boa.ilegiveis, repetidos: boa.repetidos });
+  assertEquals(provaBoa.ok ? "ok" : provaBoa.motivo, "ok");
+});
+
+Deno.test("B6/B7: desfecho da importadora — só o CONTRATO dela (ok booleano + mensagem) é resposta", () => {
+  assertEquals(desfechoImportacao(200, { ok: true, mensagem: "importado" }), "ok");
+  assertEquals(desfechoImportacao(200, { ok: false, mensagem: "IP002" }), "falha");
+  assertEquals(desfechoImportacao(500, { ok: false, etapa: "importacao", mensagem: "erro" }), "falha");
+  // Sem contrato: indeterminado (o pedido pode ter entrado).
+  assertEquals(desfechoImportacao(0, { ok: false, mensagem: "rede" }), "indeterminado");
+  assertEquals(desfechoImportacao(200, {}), "indeterminado");
+  assertEquals(desfechoImportacao(504, { msg: "gateway timeout" }), "indeterminado");
+  assertEquals(desfechoImportacao(200, { ok: "true", mensagem: "x" }), "indeterminado");
+  assertEquals(desfechoImportacao(200, { ok: true }), "indeterminado");
+  assertEquals(desfechoImportacao(200, "texto"), "indeterminado");
+  assertEquals(desfechoImportacao(200, null), "indeterminado");
+  assertEquals(desfechoImportacao(200, [{ ok: true, mensagem: "x" }]), "indeterminado");
+  // ok:true em HTTP de erro não é sucesso.
+  assertEquals(desfechoImportacao(500, { ok: true, mensagem: "x" }), "falha");
+});
+
+Deno.test("B3: situação lida e NÃO gravada pela importadora vai junto da mensagem da pendência", () => {
+  const r = resumoImportacao(200, { ok: false, motivo: "pedido_cancelado", situacao_gravada: "erro", mensagem: "cancelado" });
+  assertEquals(r.mensagem.includes("NÃO foi gravada"), true);
+  assertEquals(resumoImportacao(200, { ok: false, situacao_gravada: "aceita", mensagem: "cancelado" }).mensagem, "cancelado");
+});
+
+Deno.test("B5: carência do re-disparo — sync complete depois da última mudança + 5 min", () => {
+  const agora = Date.parse("2026-11-09T15:00:00Z");
+  assertEquals(carenciaRedisparo("2026-11-09T12:00:00Z", "2026-11-09T12:06:00Z", agora), "pode");
+  assertEquals(carenciaRedisparo("2026-11-09T12:00:00Z", "2026-11-09T12:04:59Z", agora), "aguarda_sync");
+  assertEquals(carenciaRedisparo("2026-11-09T12:00:00Z", null, agora), "aguarda_sync");
+  assertEquals(carenciaRedisparo("2026-11-09T08:00:00Z", "2026-11-09T07:00:00Z", agora), "aguarda_sync_travado");
+  assertEquals(carenciaRedisparo(null, "2026-11-09T14:00:00Z", agora), "aguarda_sync_travado");
+  assertEquals(maisRecente("2026-11-09T12:00:00Z", "2026-11-09T13:00:00Z"), "2026-11-09T13:00:00.000Z");
+  assertEquals(maisRecente(null, "2026-11-09T13:00:00Z"), "2026-11-09T13:00:00.000Z");
+  assertEquals(maisRecente(null, undefined), null);
+});
+
+Deno.test("B7 (Codex rev. 2): a importadora que declara desfecho indeterminado nunca vira falha reconhecida", () => {
+  assertEquals(desfechoImportacao(200, { ok: false, etapa: "importacao", desfecho: "indeterminado", mensagem: "não sei" }), "indeterminado");
+  assertEquals(desfechoImportacao(500, { ok: false, etapa: "importacao", desfecho: "indeterminado", mensagem: "não sei" }), "indeterminado");
+});
+
+Deno.test("B5 (Codex rev. 2): re-disparo só com a entrega dentro da janela que o sync cobre (−50..+110 d)", () => {
+  const hoje = "2026-11-09";
+  assertEquals(entregaCobertaPeloSync("2026-11-20", hoje), true);
+  assertEquals(entregaCobertaPeloSync("2026-09-20", hoje), true);   // −50
+  assertEquals(entregaCobertaPeloSync("2026-09-19", hoje), false);  // −51
+  assertEquals(entregaCobertaPeloSync("2027-02-27", hoje), true);   // +110
+  assertEquals(entregaCobertaPeloSync("2027-02-28", hoje), false);  // +111
+  assertEquals(entregaCobertaPeloSync(null, hoje), false);
+  assertEquals(entregaCobertaPeloSync("lixo", hoje), false);
 });

@@ -4,7 +4,7 @@ function assertEquals(atual: unknown, esperado: unknown) {
   const e = JSON.stringify(esperado);
   if (a !== e) throw new Error(`esperado ${e}, veio ${a}`);
 }
-import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, ncmsDoCp006, numeroBR, situacaoCancelada, situacaoObservada, situacaoPermitida } from "./leitura.ts";
+import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, ncmsDoCp006, numeroBR, situacaoCancelada, situacaoFaturada, situacaoObservada, situacaoPermitida } from "./leitura.ts";
 
 // Resposta REAL do portal (pedido 2140603, 2026-10-14) — consulta e busca-itens-pedido.
 const LINHA_REAL = {
@@ -149,4 +149,25 @@ Deno.test("situacaoObservada: linha única da OBEN com código 1..7, inclusive c
   assertEquals(situacaoObservada([l("6 - Cancelado"), l("1 - Aberto")], "2141001"), null);
   // "Pedido Clien[te]" não é a coluna Pedido
   assertEquals(situacaoObservada([{ "Pedido Cliente": "2141001", "Cliente": "OBEN", "Situação": "6 - Cancelado" }], "2141001"), null);
+});
+
+// ── Revisão 2 (2026-11-08) ──
+Deno.test("B1: situação sem código reconhecido (1..7) é recusada — o botão também não importa/re-dispara '???'", () => {
+  for (const sit of ["???", "Suspenso", "8 - Novo", "0 - Rascunho", "- Aberto"]) {
+    const r = lerPedidoPortal([{ ...LINHA_REAL, "Situação": sit }], ITENS_REAL, "2140603");
+    assertEquals(`${sit}:${r.ok ? "ok" : r.motivo}`, `${sit}:situacao_ilegivel`);
+  }
+  // Reconhecida segue lendo (todas as 7 do select real, menos o 6 que tem motivo próprio).
+  for (const sit of ["1 - Aberto", "2 - Atendido Parcial", "3 - Atendido Total", "4 - Pendentes", "5 - Suspenso", "7 - Fatur Balcão"]) {
+    const r = lerPedidoPortal([{ ...LINHA_REAL, "Situação": sit }], ITENS_REAL, "2140603");
+    assertEquals(`${sit}:${r.ok ? "ok" : r.motivo}`, `${sit}:ok`);
+  }
+  // Cancelado sem código (só o texto) continua cancelado, não "ilegível".
+  const c = lerPedidoPortal([{ ...LINHA_REAL, "Situação": "Cancelado" }], ITENS_REAL, "2140603");
+  assertEquals(c.ok ? "ok" : c.motivo, "pedido_cancelado");
+});
+
+Deno.test("B2: situacaoFaturada só para 3 (Atendido Total) e 7 (Fatur Balcão)", () => {
+  assertEquals(["1 - Aberto", "2 - Atendido Parcial", "3 - Atendido Total", "4 - Pendentes", "5 - Suspenso", "6 - Cancelado", "7 - Fatur Balcão", "37 - X", ""].map(situacaoFaturada),
+    [false, false, true, false, false, false, true, false, false]);
 });
