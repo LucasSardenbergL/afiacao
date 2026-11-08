@@ -367,10 +367,12 @@ eq P9 "$(Pq -c "SELECT string_agg(lote || '=' || status, ',' ORDER BY lote) FROM
 DIG4=$(printf '4%.0s' $(seq 64))
 DOIS='[{"raiz":"31000001","nome_normalizado":"MARIA SOUZA LIMA","cpf_mascarado":"***111111**","qualificacao":"49","data_entrada":null,"n_raizes_pais":2},{"raiz":"41000001","nome_normalizado":"MARIA SOUZA LIMA","cpf_mascarado":"***111111**","qualificacao":"22","data_entrada":null,"n_raizes_pais":2}]'
 SR "SELECT public.radar_socios_iniciar('2026-12', '$DIG4', 'v1', 2, 2, 40);" >/dev/null
-P -qAt -c "BEGIN; SET LOCAL ROLE service_role; SELECT public.radar_socios_receber('2026-12-44444444', '$DOIS'::jsonb); SELECT pg_sleep(2); COMMIT;" > /dev/null 2>&1 &
+# A segura até ver B esperando a trava (teto 2 s, o sleep fixo de antes); B entra assim que A está no laço.
+PGAPPNAME=p10_a P -qAt -c "BEGIN" -c "SET LOCAL ROLE service_role" -c "SELECT public.radar_socios_receber('2026-12-44444444', '$DOIS'::jsonb)" \
+  -c "$(pgh_segura_sql p10_b 1 2)" -c "COMMIT" > /dev/null 2>&1 &
 PID_A=$!
-sleep 0.7
-P10=$(SR "SELECT public.radar_socios_publicar('2026-12-44444444') ->> 'status';")
+pgh_espera_segurar p10_a "$PID_A" Pq
+P10=$(PGAPPNAME=p10_b SR "SELECT public.radar_socios_publicar('2026-12-44444444') ->> 'status';")
 wait "$PID_A" || true
 eq P10 "$P10" "vigente"
 

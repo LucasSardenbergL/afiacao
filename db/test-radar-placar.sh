@@ -429,9 +429,10 @@ eq "A16b re-chamar não re-sorteia" \
 # Duas PRIMEIRAS chamadas simultâneas (outro lote): uma espera a outra e encontra o registro.
 Pq -c "INSERT INTO public.radar_ingest_state VALUES ('2026-11','complete','2026-11-20 16:00+00'); UPDATE public.radar_empresas SET ultimo_lote = '2026-11';" >/dev/null
 Pq -c "SELECT public.radar_score_recalcular();" >/dev/null
-( P -qAt -c "BEGIN; SELECT public.radar_coorte_sortear(5); SELECT pg_sleep(1.5); COMMIT;" > "$(dirname "$DATA")/s1.out" 2>&1 ) &
-sleep 0.4
-S17="$(Pq -c "SELECT public.radar_coorte_sortear(5) ->> 'novo';" 2>&1 || true)"
+# A segura até ver B esperando a trava (teto 1,5 s, o sleep fixo de antes); B entra assim que A está no laço.
+( PGAPPNAME=a17_a P -qAt -c "BEGIN" -c "SELECT public.radar_coorte_sortear(5)" -c "$(pgh_segura_sql a17_b 1 1.5)" -c "COMMIT" > "$(dirname "$DATA")/s1.out" 2>&1 ) &
+pgh_espera_segurar a17_a "$!" Pq
+S17="$(PGAPPNAME=a17_b Pq -c "SELECT public.radar_coorte_sortear(5) ->> 'novo';" 2>&1 || true)"
 wait
 eq "A17 sorteio concorrente: a 2ª chamada vê o 1º registro (novo=false), um só conjunto" \
    "$S17/$(Pq -c "SELECT count(*) FROM public.radar_coorte_controle WHERE sorteio='coorte-2026-11' AND grupo='amostra';")" "false/5"

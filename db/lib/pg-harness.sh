@@ -95,3 +95,46 @@ if [ "$(uname -s)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
   fi
   unset _pgh_cellar
 fi
+
+# ── Espera por CONDIÇÃO entre duas sessões (receita E17; docs/historico/ci-provas-sql-espera-por-condicao.md) ──
+# pgh_segura_sql APP_B N TETO [CONDIÇÃO] — bloco SQL para a sessão A, dentro da transação que segura a trava:
+# em vez de `pg_sleep(fixo)`, A segura até ver N sessões com application_name LIKE 'APP_B%' esperando
+# Lock (e, se dada, CONDIÇÃO SQL verdadeira), ou até todas as B que ela viu terem saído sem esperar, ou o
+# TETO (segundos — o sleep fixo de antes). O veredito (quantas B ela viu em Lock na saída) fica em
+# pg_temp.pgh_espera, para a prova que quiser afirmar "B esperou" pela boca de quem segurou a trava.
+# `RESET ROLE` antes do laço: sob um papel sem pg_read_all_stats o pg_stat_activity esconde o estado das
+# outras sessões, o laço só sairia no teto e a prova ficaria verde sem ganho (a ARMADILHA do lote 1).
+# `pg_stat_clear_snapshot()` a cada volta: sem ele a transação vê a MESMA foto do pg_stat_activity.
+pgh_segura_sql() {
+  local cond="${4:-true}"
+  cat <<SQL
+RESET ROLE;
+CREATE TEMP TABLE IF NOT EXISTS pgh_espera (n int);
+DO \$pgh_segura\$
+DECLARE t0 timestamptz := clock_timestamp(); viu boolean := false; n int; tem int;
+BEGIN
+  LOOP
+    PERFORM pg_stat_clear_snapshot();
+    SELECT count(*) FILTER (WHERE wait_event_type = 'Lock'), count(*) INTO n, tem
+      FROM pg_stat_activity WHERE application_name LIKE '$1%' AND pid <> pg_backend_pid();
+    EXIT WHEN n >= $2 AND ($cond);
+    IF tem > 0 THEN viu := true; ELSIF viu THEN EXIT; END IF;
+    EXIT WHEN clock_timestamp() - t0 > interval '$3 seconds';
+    PERFORM pg_sleep(0.01);
+  END LOOP;
+  INSERT INTO pg_temp.pgh_espera VALUES (n);
+END \$pgh_segura\$;
+SQL
+}
+# pgh_espera_segurar APP_A PID_A CMD… — o shell espera (teto 5 s) a sessão A (application_name APP_A)
+# ENTRAR no laço de pgh_segura_sql, i.e. já com a trava na mão, antes de soltar a B. Substitui o
+# `sleep 0.3..0.7` fixo entre lançar A e lançar B. CMD… é o psql da prova (ex.: P -tA -q). Sai cedo se A
+# morreu (PID_A). Sem efeito no veredito: se A nunca chegar, B entra como entrava depois do sleep.
+pgh_espera_segurar() {
+  local app="$1" pid="$2" i; shift 2
+  for i in $(seq 1 250); do
+    [ "$("$@" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name = '$app' AND state = 'active' AND query LIKE '%pgh_segura%'")" = 1 ] && return 0
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.02; : "$i"
+  done
+}
