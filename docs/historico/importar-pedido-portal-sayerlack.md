@@ -379,3 +379,30 @@ Adendo `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Só front + d
   antigo), com as queries conferidas contra prod via psql-ro.
 - **Provas**: vitest 41 (card + interpretação). Falsificação com controle verde antes e depois na mesma invocação:
   etapa inventada, B8 desligado, recusa sem SQLSTATE e laço paralelo → cada um vermelho.
+## Revisão 2, bloco 1 (Sessão A): brechas B1–B7 (edge), B9–B11, B13 (2026-11-08)
+
+Adendo: `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Importar **v1.7**, varrer **v1.8**, migration
+`20261109120000` (manual, envelope). Sem mudança de tela (B7 tela, B8, B12 são da Sessão B).
+
+- **B1 situação reconhecida**: a importadora recusa situação sem código 1..7 (`situacao_ilegivel`, botão e cron). A
+  varredura conta situação sem código e emissão ilegível como linha ilegível (`ilegiveis_detalhe`) — a prova reprova,
+  em vez de o pedido sumir como `situacao_nao_importavel`/`fora_da_janela`. O teste produz o contador a partir das linhas.
+- **B2**: re-disparo de pedido 3 Atendido Total / 7 Fatur Balcão recusa (`faturado_no_portal`, "confira a NF no Omie").
+- **B3**: a gravação da situação tenta 2×; na varredura, um 6 não gravado vira pendência com e-mail e a rodada fica
+  vermelha; `situacao_gravada` vai ao ledger da importação, e a resposta da importadora com `erro` deixa a rodada vermelha.
+- **B4**: pedido em voo/conciliação bloqueia só a importação: a rodada lê, prova e grava as situações, e fecha
+  `pulado: bloqueado` com `prova_leitura: ok_bloqueado` (não é "efetiva" para o vigia; bloqueio longo segue stale).
+- **B5**: re-disparo de pedido do app sem PO (janela e reconsulta) espera `sync_state(pedidos_compra, oben)` complete
+  terminar > última mudança do pedido (`max(atualizado_em, enviado_portal_em)`) + 5 min; > 6 h vira pendência com e-mail.
+- **B6/B7 (edge)**: só é resposta da importadora o objeto com `ok` booleano e `mensagem`; o resto é indeterminado, que vira
+  linha aberta em `sayerlack_varredura_falha` sem e-mail e deixa a rodada vermelha. A importadora guarda o pedido achado
+  por protocolo na hora (500 com `pedido_id`), e erro de RPC sem SQLSTATE da casa relê o pedido.
+- **B9**: `modo=listar` grava em `reposicao.listar_portal_sayerlack` — o vigia lê só o slug da importação (sem recriar o
+  trio do data_health).
+- **B10**: 1ª importação grava a situação lida logo após criar o pedido, antes do disparo.
+- **B11**: `detalhes.condicoes_opcoes` (+ `situacao_portal`, `situacao_gravada`) no ledger de toda tentativa.
+- **B13**: variante "(C)" ATIVA do mesmo texto que a regra casaria ⇒ IP007 (prod: 4, 6, 13 dias e 30/60/75); de-para
+  explícito vence. Fica até o founder dizer o que é o "(C)".
+- **Provas**: harness `db/test-sayerlack-importar-pedido-portal.sh` 119/119 em `C` e `pt_BR.UTF-8` (11 asserts B13 +
+  falsificação F19 que exige a postcondição abortar e a função escolher A04); Deno 53 (6 sabotagens vermelhas com
+  controle verde antes e depois); `test:edges` 2429.
