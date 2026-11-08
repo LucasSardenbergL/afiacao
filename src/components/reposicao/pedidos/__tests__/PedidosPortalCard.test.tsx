@@ -29,7 +29,7 @@ function renderizar(ui: JSX.Element) {
   return render(<QueryClientProvider client={qc}><MemoryRouter>{ui}</MemoryRouter></QueryClientProvider>);
 }
 
-beforeEach(() => { rpc.mockClear(); invoke.mockClear(); });
+beforeEach(() => { rpc.mockClear(); invoke.mockReset(); invoke.mockImplementation(() => Promise.resolve(respostaInvoke)); });
 
 describe('PedidosPortalCard', () => {
   it('mostra a pendência do cron com o motivo e o botão de importar de novo, que abre o diálogo já com o número', async () => {
@@ -102,5 +102,45 @@ describe('ImportarPedidoPortalDialog', () => {
     expect(screen.getByText(/Não feche esta janela/)).toBeTruthy();
     soltar({ data: { ok: true, etapa: 'concluido', pedido_id: 1 }, error: null });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy());
+  });
+
+  it('8.5: vários números rodam UM POR VEZ, cada um com o seu resultado e o seu "Importar de novo"', async () => {
+    const soltar: Record<string, (v: { data: unknown; error: unknown }) => void> = {};
+    invoke.mockImplementation(((_nome: string, opts: { body: { protocolo: string } }) =>
+      new Promise((r) => { soltar[opts.body.protocolo] = r; })) as never);
+    renderizar(<ImportarPedidoPortalDialog open onOpenChange={() => {}} />);
+    fireEvent.change(screen.getByLabelText('Nº do pedido no portal'), { target: { value: '2141068, 2141069' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Importar 2' }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    expect(Object.keys(soltar)).toEqual(['2141068']); // o 2º só sai depois do 1º responder
+    soltar['2141068']({ data: { ok: true, etapa: 'concluido', pedido_id: 1, omie_numero: '9' }, error: null });
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+    soltar['2141069']({ data: {}, error: null });
+    await waitFor(() => expect(screen.getAllByTestId('importar-portal-resultado')).toHaveLength(2));
+    const tons = screen.getAllByTestId('importar-portal-resultado').map((el) => el.getAttribute('data-tom'));
+    expect(tons).toEqual(['sucesso', 'aviso']);
+    expect(screen.getByText('Não sei se o pedido 2141069 entrou')).toBeTruthy();
+    // recuperação só do número que não fechou
+    const repetir = screen.getAllByRole('button', { name: /Importar de novo/ });
+    expect(repetir).toHaveLength(1);
+    fireEvent.click(repetir[0]);
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(3));
+    expect((invoke.mock.calls[2] as unknown as [string, { body: { protocolo: string } }])[1].body.protocolo).toBe('2141069');
+    soltar['2141069']({ data: { ok: true, etapa: 'concluido', pedido_id: 2 }, error: null });
+    await waitFor(() => expect(screen.getAllByTestId('importar-portal-resultado').map((el) => el.getAttribute('data-tom'))).toEqual(['sucesso', 'sucesso']));
+  });
+
+  it('número inválido na lista bloqueia o envio e é mostrado', async () => {
+    renderizar(<ImportarPedidoPortalDialog open onOpenChange={() => {}} />);
+    fireEvent.change(screen.getByLabelText('Nº do pedido no portal'), { target: { value: '2141068 12' } });
+    expect(screen.getByText(/Não é número do portal .*: 12/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: /^Importar/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('B8: situação lida e não gravada aparece no resultado', async () => {
+    invoke.mockImplementation(() => Promise.resolve({ data: { ok: true, etapa: 'concluido', pedido_id: 1, situacao_portal: 'Cancelado', situacao_gravada: 'erro' }, error: null }));
+    renderizar(<ImportarPedidoPortalDialog open onOpenChange={() => {}} protocoloInicial="2141068" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Importar' }));
+    expect((await screen.findByTestId('importar-portal-aviso-situacao')).textContent).toContain('não foi gravada');
   });
 });

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, FileInput, RefreshCw } from 'lucide-react';
+import { useRegisterCommands, type Command } from '@/components/shell/CommandsRegistry';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +10,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
 import { formatBRL } from '@/components/reposicao/pedidos/shared';
 import { ImportarPedidoPortalDialog } from './ImportarPedidoPortalDialog';
-import { linkDoPedido, normalizarPainel, type PainelPortal } from './importar-portal';
+import { CHAVE_PAINEL_PORTAL, linkDoPedido, normalizarPainel, type PainelPortal } from './importar-portal';
 
 const quando = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -21,7 +22,8 @@ const quando = (iso: string | null) =>
  */
 export function PedidosPortalCard() {
   const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ['portal-sayerlack-painel'],
+    // Sob o prefixo `pedidos-ciclo` de propósito (6.7): o realtime e toda ação de Gerir pedidos invalidam esse prefixo.
+    queryKey: CHAVE_PAINEL_PORTAL,
     queryFn: async (): Promise<PainelPortal> => {
       const { data: bruto, error: e } = await supabase.rpc('sayerlack_painel_portal');
       if (e) throw e;
@@ -30,6 +32,17 @@ export function PedidosPortalCard() {
   });
   const [importarProtocolo, setImportarProtocolo] = useState<string | null>(null);
   const [verImportados, setVerImportados] = useState(false);
+
+  // 6.10: Cmd-K "Importar pedido do portal" enquanto Gerir pedidos está aberta.
+  const comandos = useMemo<Command[]>(() => [{
+    id: 'reposicao.importar-pedido-portal',
+    label: 'Importar pedido do portal Sayerlack',
+    keywords: ['importar', 'portal', 'sayerlack', 'pedido de compra', 'omie', 'protocolo'],
+    group: 'Ações',
+    icon: FileInput,
+    perform: (close) => { close(); setImportarProtocolo(''); },
+  }], []);
+  useRegisterCommands(comandos);
 
   const pendentes = (data?.pendencias.length ?? 0) + (data?.semPo.length ?? 0);
 
