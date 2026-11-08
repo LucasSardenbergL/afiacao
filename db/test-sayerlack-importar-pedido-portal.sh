@@ -517,21 +517,21 @@ else
   esac
 fi
 restaura
-# F15 — sem a recusa da variante "(C)" (B13): a postcondição da 20261109120000 aborta o apply — e o aborto é DELA —, e
+# F19 — sem a recusa da variante "(C)" (B13): a postcondição da 20261109120000 aborta o apply — e o aborto é DELA —, e
 # a função (já recriada, autocommit) passa a escolher a variante sem "(C)" em silêncio.
 sed -e 's/^    IF v_c IS NOT NULL THEN$/    IF false THEN/' "$MIG3" > "$SAB"
 if cmp -s "$MIG3" "$SAB"; then
-  bad "F15 sabotagem NÃO casou a recusa do (C) — falsificação seria teatro"
+  bad "F19 sabotagem NÃO casou a recusa do (C) — falsificação seria teatro"
 elif P -q -f "$SAB" >/dev/null 2>"$SAB.err"; then
-  bad "F15 postcondição NÃO abortou sem a recusa do (C)"
+  bad "F19 postcondição NÃO abortou sem a recusa do (C)"
 else
-  F15="$(linhas_error "$SAB.err")"
-  case "$F15" in
+  F19="$(linhas_error "$SAB.err")"
+  case "$F19" in
     "ERROR:  B13 FALHOU: \"4 DIAS\" tem variante (C) e deu A04"|"ERRO:  B13 FALHOU: \"4 DIAS\" tem variante (C) e deu A04")
-      ok "F15 postcondição aborta o apply sem a recusa do (C)" ;;
-    *) bad "F15 ERRO ALHEIO à postcondição — veio [${F15:-<nenhuma linha ERROR>}]" ;;
+      ok "F19 postcondição aborta o apply sem a recusa do (C)" ;;
+    *) bad "F19 ERRO ALHEIO à postcondição — veio [${F19:-<nenhuma linha ERROR>}]" ;;
   esac
-  dente "F15 sem a recusa do (C), \"4 DIAS\" escolhe A04 em silêncio" "$(cond "'4 DIAS'")" "COND_A04_1"
+  dente "F19 sem a recusa do (C), \"4 DIAS\" escolhe A04 em silêncio" "$(cond "'4 DIAS'")" "COND_A04_1"
 fi
 restaura
 sabota "s/^  IF v_p.condicao_origem IS DISTINCT FROM 'default_a_vista' THEN$/  IF false THEN/"
