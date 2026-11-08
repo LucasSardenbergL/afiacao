@@ -25931,7 +25931,7 @@ export type Database = {
         Returns: number
       }
       registrar_contato_radar: {
-        Args: { p_acao: string; p_cnpj: string; p_nota?: string }
+        Args: { p_acao: string; p_cnpj: string; p_nota?: string; p_retorno?: string }
         Returns: Json
       }
       registrar_contato_rota: {

@@ -3,12 +3,14 @@ import { AvisoVinculoCredito } from '@/components/credito-vinculo/AvisoVinculoCr
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Textarea } from '@/components/ui/textarea';
 import { cadastravelNoOmie } from '@/lib/radar/sugeridos';
 import type { AcaoContato } from '@/lib/radar/ui-helpers';
 import { MapPin, Mail, MessageSquare, ChevronRight, History, PhoneCall } from 'lucide-react';
-import { RadarOutcomeMenu } from './RadarOutcomeMenu';
+import { RadarOutcomeMenu, type RegistroInfo } from './RadarOutcomeMenu';
+import { useAuth } from '@/contexts/AuthContext';
+import { gravarRascunhoNota, lerRascunhoNota, limparRascunhoNota } from '@/lib/radar/rascunho-nota';
 import { RadarAcoesLead } from './RadarAcoesLead';
 import { RadarConflitosDoLead } from './RadarConflitosCadastro';
 import { RadarAtendimentoLead } from './RadarAtendimentoLead';
@@ -137,15 +139,27 @@ export function RadarDetailSheet({
   irmaosEstado?: EstadoIrmaos;
 }) {
   const [discagem, setDiscagem] = useState(lerModoDiscagem);
-  // Nota do PRÓXIMO registro (B4) e "acabou de entrar em conversa" (B6), ambos por lead: trocar de ficha zera.
-  const [nota, setNota] = useState('');
+  // Nota do PRÓXIMO registro (B4), por lead. Pacote G4: o texto do vendedor nunca se perde — trocar de ficha GUARDA o
+  // rascunho (por usuário + CNPJ) e voltar o restaura; só some quando o servidor confirma que gravou.
+  const { user } = useAuth();
+  const dono = user?.id ?? 'anon';
+  const [nota, setNotaEstado] = useState('');
+  const notaRef = useRef('');
+  const setNota = (v: string) => {
+    notaRef.current = v;
+    setNotaEstado(v);
+  };
   const [conversaSalva, setConversaSalva] = useState<string | null>(null);
   const compartilhado = useRadarTelefoneCompartilhado(empresa?.cnpj ?? null);
   const contabil = useRadarContatoContabil(empresa?.cnpj ?? null);
   // Sensor da ficha: 1 chamada por CNPJ aberto (não por render/refetch); o dedup por titular, CNPJ e dia é do banco.
   // Sob a lente "Ver como" o registrarNoLedger retorna cedo — inspeção não infla o 'abriu'.
   const cnpjAberto = empresa?.cnpj ?? null;
-  useEffect(() => { setNota(''); }, [cnpjAberto]);
+  useEffect(() => {
+    const v = cnpjAberto ? lerRascunhoNota(`${dono}:${cnpjAberto}`) : '';
+    notaRef.current = v;
+    setNotaEstado(v);
+  }, [cnpjAberto, dono]);
   useEffect(() => {
     if (cnpjAberto) void registrarNoLedger('radar.ficha_aberta', cnpjAberto, { cnpj: cnpjAberto });
   }, [cnpjAberto]);
@@ -159,8 +173,16 @@ export function RadarDetailSheet({
   const outras = (tel: string) => compartilhado.data?.get(tel);
   // Depois do registro: "em conversa" num lead cadastrável FICA na ficha — o cadastro no Omie é a próxima ação
   // dela (B6, sem janela automática); os outros desfechos seguem para o próximo lead.
-  const aposRegistro = (acao: AcaoContato, { deduped }: { deduped: boolean }) => {
-    if (!deduped) setNota(''); // dedupe não gravou a nota: ela fica no campo (o menu avisa)
+  const chaveRascunho = `${dono}:${empresa.cnpj}`;
+  const aposRegistro = (acao: AcaoContato, { notaGravada, notaEnviada }: RegistroInfo) => {
+    // Nota NÃO gravada (dedupe no banco anterior, ou já cliente): fica no campo e a ficha não avança — avançar trocava
+    // de CNPJ e apagava o texto (o bug que o pacote G4 fecha). O menu já avisou.
+    if (!notaGravada) return;
+    // Só apaga o que foi ENVIADO: se o vendedor continuou digitando durante a resposta, o texto novo fica.
+    if ((notaRef.current.trim() || undefined) === notaEnviada) {
+      setNota('');
+      limparRascunhoNota(chaveRascunho);
+    }
     if (acao === 'em_conversa' && cadastravelNoOmie(empresa).ok) { setConversaSalva(empresa.cnpj); return; }
     setConversaSalva(null);
     onProximo?.();
@@ -170,7 +192,7 @@ export function RadarDetailSheet({
   const campoNota = (
     <Textarea
       value={nota}
-      onChange={(e) => setNota(e.target.value)}
+      onChange={(e) => { setNota(e.target.value); gravarRascunhoNota(chaveRascunho, e.target.value); }}
       placeholder="Nota da conversa (opcional): quem atendeu, o que precisa, próximo passo"
       className="min-h-[60px] text-sm"
       aria-label="Nota da conversa"

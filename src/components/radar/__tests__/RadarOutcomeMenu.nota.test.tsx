@@ -23,6 +23,7 @@ vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a) }));
 vi.mock('sonner', () => ({ toast }));
 
 import { RadarOutcomeMenu } from '../RadarOutcomeMenu';
+import { hojeBRT, retornoPadrao, somarDias } from '@/lib/radar/retorno';
 
 const lead = {
   cnpj: '12345678000195',
@@ -53,13 +54,50 @@ beforeEach(() => {
 });
 
 describe('RadarOutcomeMenu — nota e sem oferta automática', () => {
-  it('"em conversa" num lead cadastrável: registra com a nota, sem janela de cadastro, e avisa a ficha', async () => {
+  it('"em conversa": pede a data de retorno (sugestão marcada), registra com nota e data, sem janela de cadastro (G1)', async () => {
     const onRegistrado = vi.fn();
     render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} nota="  Falei com o João; quer amostra de verniz  " onRegistrado={onRegistrado} />);
     await abrirMenuEClicar(/em conversa/i);
-    await waitFor(() => expect(onRegistrado).toHaveBeenCalledWith('em_conversa', { deduped: false }));
-    expect(registrar).toHaveBeenCalledWith({ cnpj: lead.cnpj, acao: 'em_conversa', nota: 'Falei com o João; quer amostra de verniz' });
+    expect(registrar).not.toHaveBeenCalled();
+    expect(await screen.findByText('Quando retomar a conversa?')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Em 1 semana/ }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Marcar em conversa' }));
+    const padrao = retornoPadrao(hojeBRT());
+    await waitFor(() => expect(onRegistrado).toHaveBeenCalledWith('em_conversa',
+      { deduped: false, notaGravada: true, notaEnviada: 'Falei com o João; quer amostra de verniz' }));
+    expect(registrar).toHaveBeenCalledWith({ cnpj: lead.cnpj, acao: 'em_conversa', nota: 'Falei com o João; quer amostra de verniz', retorno: padrao });
+    expect(track).toHaveBeenCalledWith('radar.retorno_definido', { dias: expect.any(Number), sugestao_aceita: true });
     expect(screen.queryByText(/Cadastrar no Omie \(Oben\) agora/)).toBeNull();
+  });
+
+  it('"em conversa": o chip escolhido vai como data; data fora da faixa desabilita o confirmar', async () => {
+    render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} nota="" />);
+    await abrirMenuEClicar(/em conversa/i);
+    fireEvent.click(await screen.findByRole('button', { name: /^Hoje/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Marcar em conversa' }));
+    await waitFor(() => expect(registrar).toHaveBeenCalledWith(expect.objectContaining({ acao: 'em_conversa', retorno: hojeBRT() })));
+    expect(track).toHaveBeenCalledWith('radar.retorno_definido', { dias: 0, sugestao_aceita: false });
+    await abrirMenuEClicar(/em conversa/i);
+    fireEvent.change(await screen.findByLabelText('Data de retorno'), { target: { value: somarDias(hojeBRT(), 61) } });
+    expect(screen.getByTestId('radar-retorno-invalido')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Marcar em conversa' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('o toast diz quando o lead volta (data que o servidor devolveu)', async () => {
+    registrar.mockResolvedValueOnce({ id: 'c1', deduped: false, notaGravada: true, retornoEm: '2026-11-12' });
+    render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} nota="" />);
+    await abrirMenuEClicar(/não atendeu/i);
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Marcado: não atendeu · volta para você em 12/11', expect.anything()));
+  });
+
+  it('data recusada pelo servidor (RD008): avisa, nada é gravado e a ficha não avança', async () => {
+    registrar.mockRejectedValueOnce(Object.assign(new Error('x'), { code: 'RD008' }));
+    const onRegistrado = vi.fn();
+    render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} nota="n" onRegistrado={onRegistrado} />);
+    await abrirMenuEClicar(/em conversa/i);
+    fireEvent.click(await screen.findByRole('button', { name: 'Marcar em conversa' }));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith('Data de retorno fora do prazo', expect.anything()));
+    expect(onRegistrado).not.toHaveBeenCalled();
   });
 
   it('nota vazia (só espaço) não vira texto gravado', async () => {
@@ -77,12 +115,23 @@ describe('RadarOutcomeMenu — nota e sem oferta automática', () => {
     expect(registrar.mock.calls[0][0]).toMatchObject({ acao: 'descartado', nota: 'fechou a loja' });
   });
 
-  it('registro deduplicado (<2 min) com nota: avisa que a nota NÃO foi gravada e diz à ficha que foi dedupe (Codex P2)', async () => {
-    registrar.mockResolvedValueOnce({ id: 'c0', deduped: true });
+  it('banco anterior: dedupe com nota = nota NÃO gravada — avisa e diz à ficha para não apagar nem avançar (Codex P2, G4)', async () => {
+    registrar.mockResolvedValueOnce({ id: 'c0', deduped: true, notaGravada: null, retornoEm: null });
     const onRegistrado = vi.fn();
     render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} nota="quer orçamento" onRegistrado={onRegistrado} />);
-    await abrirMenuEClicar(/em conversa/i);
-    await waitFor(() => expect(onRegistrado).toHaveBeenCalledWith('em_conversa', { deduped: true }));
+    await abrirMenuEClicar(/não atendeu/i);
+    await waitFor(() => expect(onRegistrado).toHaveBeenCalledWith('contatado_sem_resposta',
+      { deduped: true, notaGravada: false, notaEnviada: 'quer orçamento' }));
     expect(toast.warning).toHaveBeenCalledWith('A nota não foi gravada', expect.anything());
+  });
+
+  it('pacote G: dedupe do MESMO conteúdo (nota_gravada) não avisa perda — a nota já está gravada', async () => {
+    registrar.mockResolvedValueOnce({ id: 'c0', deduped: true, notaGravada: true, retornoEm: null });
+    const onRegistrado = vi.fn();
+    render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} nota="quer orçamento" onRegistrado={onRegistrado} />);
+    await abrirMenuEClicar(/não atendeu/i);
+    await waitFor(() => expect(onRegistrado).toHaveBeenCalledWith('contatado_sem_resposta',
+      { deduped: true, notaGravada: true, notaEnviada: 'quer orçamento' }));
+    expect(toast.warning).not.toHaveBeenCalled();
   });
 });

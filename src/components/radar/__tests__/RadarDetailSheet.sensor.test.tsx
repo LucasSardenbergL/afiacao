@@ -12,6 +12,8 @@ import type { RadarEmpresa } from '@/queries/useRadarLista';
 const { Nada } = vi.hoisted(() => ({ Nada: () => null }));
 const rpc = vi.fn((..._a: unknown[]) => Promise.resolve({ data: null, error: null }));
 let lente = false;
+// A ficha lê o usuário real só para a chave do rascunho da nota (pacote G4).
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-teste' } }) }));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
 vi.mock('@/lib/impersonation/lens-write-guard', () => ({ isLensActive: () => lente }));
 vi.mock('@/queries/useRadarTelefoneCompartilhado', () => ({ useRadarTelefoneCompartilhado: () => ({ data: undefined }) }));

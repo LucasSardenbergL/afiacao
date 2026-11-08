@@ -17,6 +17,8 @@ let leitura: LeituraContatoContabil | undefined;
 let lente = false;
 const mutate = vi.fn();
 const track = vi.fn();
+// A ficha lê o usuário real só para a chave do rascunho da nota (pacote G4).
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-teste' } }) }));
 vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a) }));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: () => Promise.resolve({ data: null, error: null }) } }));
 vi.mock('@/lib/impersonation/lens-write-guard', () => ({ isLensActive: () => lente }));
