@@ -1,6 +1,6 @@
 # Provas SQL: espera fixa vira espera por condição (2026-11-07)
 
-Continuação do PR #3721 (fsync=off + tabela de custo re-medida), item (e) da fase 1.
+Continuação de [ci-provas-sql-durabilidade-off.md](ci-provas-sql-durabilidade-off.md) (#3721: fsync=off + tabela de custo re-medida), item (e) da fase 1.
 Precedente: [ci-e17-radar-espera-por-bloqueio.md](ci-e17-radar-espera-por-bloqueio.md) (360 → 69 s).
 
 ## Levantamento
