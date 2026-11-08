@@ -63,7 +63,7 @@ describe('ProspectarHojeCard — acompanhamento (pacote G)', () => {
     renderCard();
     expect(await screen.findByText('Retornos para hoje (1)')).toBeTruthy();
     expect(screen.getAllByTestId('prospectar-hoje-lead')).toHaveLength(1);
-    expect(screen.getByText(/atrasado \(era 06\/11\) · quer amostra/)).toBeTruthy();
+    expect(screen.getByTestId('prospectar-hoje-retorno').textContent).toMatch(/Em conversa · atrasado \(era 06\/11\) · quer amostra/);
     fireEvent.click(screen.getAllByRole('button', { name: 'Abrir ficha' })[0]);
     expect(navigate).toHaveBeenCalledWith('/radar?cnpj=10100000000001');
     expect(rpc.mock.calls.some((c) => c[0] === 'radar_registrar_abertura_empurrada')).toBe(false);
