@@ -15,6 +15,10 @@ let lente = false;
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: (...a: unknown[]) => rpc(...a) } }));
 vi.mock('@/lib/impersonation/lens-write-guard', () => ({ isLensActive: () => lente }));
 vi.mock('@/queries/useRadarTelefoneCompartilhado', () => ({ useRadarTelefoneCompartilhado: () => ({ data: undefined }) }));
+vi.mock('@/queries/useRadarContatoContabil', () => ({
+  useRadarContatoContabil: () => ({ data: undefined, isError: false }),
+  useCorrigirContatoContabil: () => ({ mutate: () => {}, isPending: false }),
+}));
 vi.mock('@/queries/useRadarContatos', () => ({
   LIMITE_HISTORICO_RADAR: 20,
   useRadarContatos: () => ({ data: [], isPending: false, isError: false, isFetching: false, error: null, status: 'success', fetchStatus: 'idle', dataUpdatedAt: 1, refetch: vi.fn() }),

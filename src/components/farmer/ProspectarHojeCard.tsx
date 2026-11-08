@@ -149,6 +149,14 @@ export function ProspectarHojeCard() {
                     {tituloMunicipio(l.municipioNome)}{l.uf ? `/${l.uf}` : ''} · score {l.score}
                     {l.motivos.length > 0 ? ` · ${l.motivos.slice(0, 2).join('; ')}` : ''}
                   </p>
+                  {/* Todo contato parece ser da contabilidade (migration 20261109140000): não promete telefone, manda ao endereço. */}
+                  {l.visitar && (
+                    <p className="text-xs text-status-warning flex items-start gap-1" data-testid="prospectar-hoje-visitar"
+                      title="O telefone e o e-mail que a Receita tem parecem ser da contabilidade da empresa">
+                      <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span className="min-w-0"><strong className="font-medium">Visitar</strong>{l.endereco ? ` · ${l.endereco}` : ' · endereço na ficha'}</span>
+                    </p>
+                  )}
                 </div>
                 {comVoce(l) ? (
                   <Link to={LINK_MEUS_ATENDIMENTOS} data-testid="prospectar-hoje-com-voce"

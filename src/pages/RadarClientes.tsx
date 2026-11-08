@@ -7,6 +7,7 @@ import { useUrlState } from '@/hooks/useUrlState';
 import { useAuth } from '@/contexts/AuthContext';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, FILTROS_MEUS_ATENDIMENTOS, CHAVE_VISAO_MEUS, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
+import { useRadarParaVisitarContagem, TETO_CONTAGEM_VISITAR } from '@/queries/useRadarContatoContabil';
 import { useRadarAtendimentosAtivos } from '@/queries/useRadarAtendimentos';
 import { useRadarMeuTerritorio } from '@/queries/useRadarMeuTerritorio';
 import {
@@ -69,6 +70,7 @@ type RadarUrlState = {
   preset: string;
   regiao: string;
   incluirSemContato: boolean;
+  paraVisitar: boolean;
   vista: string;
   visao: string;
   perto: string;
@@ -94,6 +96,9 @@ const DEFAULTS: RadarUrlState = {
   regiao: 'atuacao',
   // Lead sem telefone E sem e-mail fica fora por padrão (o toggle "incluir sem contato" traz de volta).
   incluirSemContato: false,
+  // "Para visitar" (migration 20261109140000): só leads cujo contato todo parece ser da contabilidade. Filtro (entra
+  // na chave e nos favoritos); o recorte é do servidor.
+  paraVisitar: false,
   vista: 'lista',
   // "Fila" | "Meus atendimentos" (pacote B2): qual conjunto de leads a lista mostra. Navegação, não filtro.
   visao: 'fila',
@@ -151,6 +156,11 @@ export default function RadarClientes() {
   }, []);
 
   const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus, aguardar: aguardandoTerritorio });
+  // Quantos do recorte são "para visitar" (a mesma radar_lista, até 200) — o número do chip, ligado ou não.
+  const contagemVisitar = useRadarParaVisitarContagem(filtros, hojeISO, { desligado: meus || aguardandoTerritorio });
+  const rotuloContagemVisitar = contagemVisitar.isPending ? '…'
+    : contagemVisitar.isError ? '?'
+    : contagemVisitar.data >= TETO_CONTAGEM_VISITAR ? `${TETO_CONTAGEM_VISITAR}+` : String(contagemVisitar.data);
   // Fila ainda sem recorte (território a caminho) conta como carregando — senão a tela mostraria "nenhuma empresa".
   const carregandoFila = q.isLoading || aguardandoTerritorio;
   const kpis = useRadarKpis();
@@ -455,6 +465,23 @@ export default function RadarClientes() {
             <Button size="sm" variant={cidadeAtiva ? 'ghost' : 'secondary'} aria-pressed={!cidadeAtiva}
               className="h-7 px-2 text-xs" onClick={() => escolherCidadeDoTerritorio(null)}>
               Toda a região
+            </Button>
+          </div>
+        )}
+        {!meus && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button size="sm" variant={filtros.paraVisitar ? 'secondary' : 'outline'} aria-pressed={!!filtros.paraVisitar}
+              className="h-7 px-2 text-xs" data-testid="radar-chip-visitar"
+              title={contagemVisitar.isError
+                ? 'Não consegui contar os leads para visitar neste recorte'
+                : 'Leads cujo telefone e e-mail da Receita parecem ser da contabilidade: vá ao endereço em vez de ligar'}
+              onClick={() => {
+                const v = !filtros.paraVisitar;
+                track('radar.filtro_para_visitar', { ligado: v, contagem: contagemVisitar.data ?? null });
+                setFiltros({ paraVisitar: v });
+              }}>
+              <MapPin className="w-3 h-3 mr-1" /> Para visitar
+              <span className="ml-1 font-tabular text-muted-foreground" data-testid="radar-chip-visitar-contagem">{rotuloContagemVisitar}</span>
             </Button>
           </div>
         )}
