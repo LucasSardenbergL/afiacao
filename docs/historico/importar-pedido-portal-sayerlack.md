@@ -585,3 +585,26 @@ Pergunta do adendo `2026-11-08-sayerlack-revisao-2.md` (7.5). Investigação só
   posicional do parser (falhou a prova ⇒ recusa) e usá-los como **2ª fonte** contra `ipi_aliquota_ncm` — divergência
   vira recusa com motivo, nunca sobrescreve a tabela (que é provada na NF-e). Σ(mercadoria × (1+IPI%)) da linha deve
   bater o Vlr Total da consulta.
+
+## Alíquota de IPI dos 4 últimos NCMs, provada no Omie (2026-11-08)
+
+Pedido do founder ("por que você não busca os IPI pelas NFes antigas?"). O #3717 deixou 4 NCMs no sensor, todos sem
+compra recente. Desta vez a varredura pegou **todos** os 1.223 recebimentos do Omie OBEN
+(`produtos/recebimentonfe/ListarRecebimentos` até página vazia), sendo 835 da Renner Sayerlack (nov/2023 → out/2026), e
+`ConsultarRecebimento` em cada um, só leitura. Migration `20261110140000`:
+
+| NCM | Alíquota | Prova |
+|---|---|---|
+| 39073022 | 3,25% | CST 50 nas 3 NFs: 1,52 ÷ 46,82 (000923122, 21/01/2026, KB.7820.00FG), 000897969, 000838822 |
+| 49111090 | 0% | CST 51 em 27 linhas de 19 NFs (cartelas de cores), a última 000954165 de 06/10/2026 |
+| 32071090 | 0% | CST 51 (000938767 de 02/06/2026 e 000885575, GG.3842QT) |
+| 29163990 | 0% | CST 51 (000928889 de 11/03/2026, 000899121 e 000831532, YG.1045FG) |
+
+Nenhuma dessas NFs tem `vTotalIPI` zero (há outros itens a 6,5% e 3,25%), então a alíquota zero não é artefato. A
+postcondição exige o **sensor inteiro em 0**: nenhum SKU Sayerlack ativo sem alíquota. Ensaio pelo `db:aplicar`: ok,
+`POSTCONDICAO_OK`, ROLLBACK.
+
+**Lição**: "sem compra em 180 dias" não quer dizer "sem NF". O `nfe_recebimentos` do app só começa em jan/2026, e o
+Omie guarda as NF-e de entrada desde 2023. Para NCM sem alíquota, a 1ª fonte é o `ConsultarRecebimento` sobre todo o
+histórico, não a janela do banco. O CP006 só volta com NCM **nunca comprado**, e é aí que a 7.5 (IPI no portal) ainda
+teria valor.
