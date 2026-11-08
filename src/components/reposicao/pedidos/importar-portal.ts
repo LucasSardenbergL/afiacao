@@ -215,6 +215,9 @@ export async function corpoDoErroEdge(err: unknown): Promise<Record<string, unkn
 
 // ---- Painel "Pedidos do portal Sayerlack" (RPC sayerlack_painel_portal) ----
 
+/** Chave do painel: sob `pedidos-ciclo` (6.7), então o realtime e toda ação de Gerir pedidos o atualizam junto. */
+export const CHAVE_PAINEL_PORTAL = ['pedidos-ciclo', 'portal-sayerlack-painel'] as const;
+
 interface PendenciaPortal { protocolo: string; mensagem: string; tentativas: number; ultimaEm: string | null }
 interface SemPoPortal { pedidoId: number; protocolo: string; status: string | null; importadoEm: string | null }
 interface ImportadoPortal {

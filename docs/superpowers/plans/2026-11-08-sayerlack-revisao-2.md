@@ -21,6 +21,12 @@
   e qualquer N em que o catálogo tenha as duas variantes, viram **ambíguos → IP007** (recusa com a lista), em vez
   de gravar a variante sem "(C)" em silêncio. Implementar em B-sessão A, item B13.
 
+## Andamento da Sessão B (tela e painel)
+
+- 🔄 **PR B1** — B7 (tela), B8, 8.5, 6.10, 6.7 (chave sob `pedidos-ciclo`), B12/8.4 runbook.
+- ⏳ **PR B2** — RPC `sayerlack_painel_portal` v2 + card (6.1–6.6, 6.8, 6.9, 6.11) + prova PG17.
+- ⏳ **8.3** — QA no navegador e no celular.
+
 ## Brechas novas (B1–B13)
 
 Dinheiro:

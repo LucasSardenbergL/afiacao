@@ -10,10 +10,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
 import { formatBRL } from '@/components/reposicao/pedidos/shared';
 import { ImportarPedidoPortalDialog } from './ImportarPedidoPortalDialog';
-import { linkDoPedido, normalizarPainel, type PainelPortal } from './importar-portal';
-
-/** Chave do painel: sob `pedidos-ciclo`, então toda invalidação da página o atualiza junto. */
-export const CHAVE_PAINEL_PORTAL = ['pedidos-ciclo', 'portal-sayerlack-painel'] as const;
+import { CHAVE_PAINEL_PORTAL, linkDoPedido, normalizarPainel, type PainelPortal } from './importar-portal';
 
 const quando = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
