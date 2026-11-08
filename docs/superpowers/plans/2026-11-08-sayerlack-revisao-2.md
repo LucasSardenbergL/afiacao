@@ -16,7 +16,8 @@
 ## Decisões
 
 - ✅ Founder: seguir com B1–B12 e depois o resto do plano.
-- 🧭 Founder: alíquota dos 5 NCMs (27101230 · 32091010 · 32099020 · 32159000 · 39095012).
+- ✅ Alíquota dos 5 NCMs provada nas NF-e do Omie (39095012 = 3,25%; os outros 4 = 0%, CST 51) — PR #3717.
+- ✅ B13 (decisão delegada pelo founder): SEMPRE a variante sem "(C)"; de-para "30 DIAS" A30 → T54 (nenhum PO usou "(C)").
 - 🧭 Founder: significado do "(C)". **Até decidir (decisão de engenharia, fail-closed):** portal "4/6/13 DIAS",
   e qualquer N em que o catálogo tenha as duas variantes, viram **ambíguos → IP007** (recusa com a lista), em vez
   de gravar a variante sem "(C)" em silêncio. Implementar em B-sessão A, item B13.
