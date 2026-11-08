@@ -401,8 +401,18 @@ Adendo: `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Importar **v
   trio do data_health).
 - **B10**: 1ª importação grava a situação lida logo após criar o pedido, antes do disparo.
 - **B11**: `detalhes.condicoes_opcoes` (+ `situacao_portal`, `situacao_gravada`) no ledger de toda tentativa.
-- **B13**: variante "(C)" ATIVA do mesmo texto que a regra casaria ⇒ IP007 (prod: 4, 6, 13 dias e 30/60/75); de-para
-  explícito vence. Fica até o founder dizer o que é o "(C)".
-- **Provas**: harness `db/test-sayerlack-importar-pedido-portal.sh` 119/119 em `C` e `pt_BR.UTF-8` (11 asserts B13 +
-  falsificação F19 que exige a postcondição abortar e a função escolher A04); Deno 53 (6 sabotagens vermelhas com
+- **B13 — regra "sem (C)"** (decisão delegada pelo founder: "pode escolher você se mantém ou tira, quero apenas que
+  funcione"): a condição do portal vai SEMPRE para a variante sem "(C)" do catálogo. Medida que decidiu: os POs Sayerlack
+  no Omie (`purchase_orders_tracking.raw_data` cCodParc, abr–nov/2026) usaram 000 ×396, A15 ×26, A07 ×7, 001 ×3, A10 ×1 —
+  **nenhum** usou variante "(C)" (A30, A84, B23, D43, V06), e nenhum pedido do app gravou uma delas. O de-para
+  `30 DIAS → A30 "Para 30 dias (C)"` **não foi escolha do founder** (o "(C)" entrou como exemplo no plano, D-2) e passa a
+  T54 "Para 30 dias" (migration `20261109120000`, só o UPDATE do de-para). A função de tradução não muda: a regra exata
+  de texto já escolhe a sem "(C)" (4 → A04, 6 → U89, 13 → A13) e dá IP007 só quando não há par nenhum.
+- **Codex** (gpt-6-astra high): rodada 1 com 5 P1 + 1 P2, todos procedentes e fechados — B5 relê o pedido logo antes do
+  re-disparo e exige a entrega dentro da janela do sync incremental (−50..+110 d); B7 a importadora declara
+  `desfecho: "indeterminado"` quando a gravação pode ter acontecido; B3 pelo botão abre pendência vencida e a reconsulta
+  relê só a situação (`somente_situacao`); B4 grava as situações antes das consultas ao espelho; B11 evidência acumulada
+  fora da resposta.
+- **Provas**: harness `db/test-sayerlack-importar-pedido-portal.sh` 117/117 em `C` e `pt_BR.UTF-8` (9 asserts B13 +
+  falsificação F19: de-para de volta em (C) ⇒ a postcondição aborta e "30 DIAS" vai para A30); Deno 55 (6 sabotagens vermelhas com
   controle verde antes e depois); `test:edges` 2429.
