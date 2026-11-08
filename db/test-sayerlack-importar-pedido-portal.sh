@@ -489,7 +489,7 @@ sabota 's/^  IF v_em_voo IS NOT NULL THEN$/  IF false THEN/'
 P -q -c "INSERT INTO public.pedido_compra_sugerido (id, empresa, fornecedor_nome, status, status_envio_portal) VALUES (900, 'OBEN', 'RENNER SAYERLACK S/A', 'aprovado_aguardando_disparo', 'enviando_portal')"
 dente "F11 sem a trava em voo, o pedido em envio não barra" "$(imp "'7200002', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_OK_novo_7200002"
 restaura
-sabota 's/^  IF coalesce(v_matches, 0) <> 1 OR v_codigo IS NULL OR coalesce(v_parc, 0) < 1 THEN$/  IF false THEN/' "$MIG3"
+sabota 's/^  IF coalesce(v_matches, 0) <> 1 OR v_codigo IS NULL OR coalesce(v_parc, 0) < 1 THEN$/  IF false THEN/'
 dente "F12 sem a exigência de correspondência ÚNICA, condição ambígua grava" "$(imp "'4100013', $ENT, 5181.82, '$DFA'::jsonb, '70 - 14 DIAS'")" "IMP_OK_novo_4100013"
 restaura
 sabota 's/^  IF auth\.uid() IS NULL OR NOT private\.cap_compras_ler(auth\.uid()) THEN$/  IF false THEN/' "$MIG"
