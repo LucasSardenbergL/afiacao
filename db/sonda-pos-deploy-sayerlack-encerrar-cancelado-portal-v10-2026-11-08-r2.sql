@@ -1,3 +1,4 @@
+-- 2ª sonda: depois do deploy pelo Lovable (edt-fdfd190f, 2026-11-08); a 1ª (#992) respondeu 404 antes do deploy.
 -- PASSO 1 — dispara as 1 edge(s) baratas da leva. Exige ESCRITA: lê o vault e
 --          faz INSERT, e o wrapper read-only recusa os dois — o que NÃO é o mesmo que
 --          "só o founder consegue". Caminho da SESSÃO: commite este .sql em db/ e rode
