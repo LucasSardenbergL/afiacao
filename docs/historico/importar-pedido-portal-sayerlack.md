@@ -345,3 +345,15 @@ fica parado como hoje: o cron já manda o e-mail de situação impeditiva. A dif
   leitura liberava. Agora um 6 sobre 6 **estende** o horizonte (W15). A rodada 3 achou que trocar o protocolo furava a ordem temporal. As rodadas 4 e 5 acharam sequências de ida e volta de protocolo (A→B→A). Agora o **protocolo preenchido é imutável**, assim como a empresa (rodada 7). A rodada 8, uma varredura exaustiva de colunas, achou o protocolo não canônico e o 6 descartado em leitura imperfeita; os dois foram fechados (trigger `trg_situacao_portal_trava_protocolo`, W17–W21). Preencher um vazio segue livre. A correção é só no SQL Editor, com `SET LOCAL app.sayerlack_protocolo_correcao='on'`.
 - **Limite declarado**: entre a leitura das 12:30 e a gravação (segundos), um claim concorrente ainda pode criar o PO.
   Esse PO fica com a situação 6 gravada e o painel mostra "há PO no Omie". O aviso por e-mail é da fatia 2.
+
+**Deploy da Onda 5A fatia 1 (2026-11-07, noite):**
+- Migration `20261108120000` aplicada pelo envelope (tentativa #966). A 2ª testemunha (psql-ro) conferiu as colunas,
+  os triggers, o claim com o veto, o ACL e o CHECK validado.
+- A predecessora `enviar` v1.13 foi reconfirmada antes da leva (#969). As edges subiram em 3 ondas, com 10 min entre
+  elas: disparar v1.12 (#971) → importar v1.6 (#973) → varrer v1.7 (#975), todas com DEPLOY CONFIRMADO. O bot do
+  Lovable só tocou em `types.ts`.
+- A chamada da importar ao Lovable estourou 300 s no MCP sem resposta. A sonda provou que o deploy tinha saído, então
+  não houve reenvio às cegas.
+- O SQL da sonda é determinístico: a mesma edge e a mesma janela dão o mesmo sha, e o `db:aplicar` recusa por "já
+  aplicado". Variar `--janela` gera um sha novo.
+- Publish feito pelo founder depois do merge.
