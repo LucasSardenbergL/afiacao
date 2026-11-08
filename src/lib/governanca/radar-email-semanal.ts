@@ -7,10 +7,20 @@
  *
  * O leitor é estrito: resposta fora do formato LANÇA (a tela mostra "não consegui ler"), nunca vira lista vazia ou
  * "desligado" — ausente ≠ zero. Cron ausente é `null` (≠ desligado).
+ *
+ * Pacote E (migration 20261107230000): cada município do território diz se é `compartilhado` (a pessoa não é dona de
+ * nenhum município e recebe os municípios onde tem clientes) e o território vazio vem com `territorio_motivo`. Os dois
+ * campos são opcionais na leitura: o front pode ir ao ar antes da migration, e aí cai na copy genérica.
  */
 
 const MODOS_EMAIL = ['desligado', 'teste', 'ligado'] as const;
 export type ModoEmail = (typeof MODOS_EMAIL)[number];
+
+/** Os códigos de private.radar_territorio_motivo, na ordem em que o território os exige. */
+const MOTIVOS_TERRITORIO = ['nao_e_vendedor', 'sem_carteira', 'carteira_sem_municipio'] as const;
+type MotivoTerritorio = (typeof MOTIVOS_TERRITORIO)[number];
+const ehMotivo = (v: unknown): v is MotivoTerritorio =>
+  typeof v === 'string' && (MOTIVOS_TERRITORIO as readonly string[]).includes(v);
 
 export interface UltimoEnvio {
   semana: string;
@@ -31,7 +41,9 @@ export interface UsuarioEmailSemanal {
   acessoRadar: boolean;
   modo: ModoEmail;
   emailTeste: string | null;
-  territorio: { municipio: string; uf: string; clientes: number }[];
+  territorio: { municipio: string; uf: string; clientes: number; compartilhado: boolean }[];
+  /** Por que o território está vazio (null = há território, ou o banco ainda não diz). */
+  territorioMotivo: MotivoTerritorio | null;
   ultimoEnvio: UltimoEnvio | null;
 }
 
@@ -83,8 +95,11 @@ export function lerPainelEmailSemanal(data: unknown, origem: string): PainelEmai
       const municipio = texto(t.municipio);
       const clientes = inteiro(t.clientes);
       if (!municipio || clientes === null) falha(origem, `usuarios[${i}].territorio[${j}]`);
-      return { municipio, uf: texto(t.uf) ?? '', clientes };
+      if (t.compartilhado !== undefined && typeof t.compartilhado !== 'boolean') falha(origem, `usuarios[${i}].territorio[${j}]`);
+      return { municipio, uf: texto(t.uf) ?? '', clientes, compartilhado: t.compartilhado === true };
     });
+    // Código desconhecido (banco à frente do front) não derruba a tela: cai na copy genérica.
+    const territorioMotivo = ehMotivo(u.territorio_motivo) ? u.territorio_motivo : null;
     return {
       userId,
       nome: texto(u.nome),
@@ -95,6 +110,7 @@ export function lerPainelEmailSemanal(data: unknown, origem: string): PainelEmai
       modo: u.modo,
       emailTeste: texto(u.email_teste),
       territorio,
+      territorioMotivo,
       ultimoEnvio: lerUltimoEnvio(u.ultimo_envio, origem, i),
     };
   });
@@ -102,23 +118,30 @@ export function lerPainelEmailSemanal(data: unknown, origem: string): PainelEmai
   return { cron, usuarios };
 }
 
+const COPY_SEM_TERRITORIO: Record<MotivoTerritorio | 'desconhecido', string> = {
+  nao_e_vendedor: 'Sem papel de vendedor (farmer, hunter ou closer): não há território para escolher leads.',
+  sem_carteira: 'Sem carteira atribuída: não há municípios para escolher leads.',
+  carteira_sem_municipio: 'Os clientes da carteira não têm endereço em um município do Radar: não há onde escolher leads.',
+  desconhecido: 'Sem território: não há municípios para escolher leads.',
+};
+
 /**
  * Por que o e-mail desta pessoa NÃO sairia mesmo ligado — o mesmo motivo com que `radar_avisar_vendedores` a pula.
  * null = nada impede.
  */
 export function impedimentoDoEnvio(u: UsuarioEmailSemanal): string | null {
   if (!u.acessoRadar) return 'Sem acesso ao Radar: o e-mail seria pulado.';
-  if (u.territorio.length === 0) return 'Sem carteira com endereço: não há municípios para escolher leads.';
+  if (u.territorio.length === 0) return `${COPY_SEM_TERRITORIO[u.territorioMotivo ?? 'desconhecido']} Só sai e-mail se o gestor passar leads a esta pessoa.`;
   if (u.modo === 'ligado' && !u.email) return 'Sem e-mail no cadastro: o envio real seria pulado.';
   return null;
 }
 
-/** "DIVINÓPOLIS, NOVA SERRANA e CLÁUDIO" — vazio vira "—". */
+/** "DIVINÓPOLIS, NOVA SERRANA e CLÁUDIO" — vazio vira "—"; território de fallback diz que é dividido com o dono. */
 export function listaMunicipios(territorio: UsuarioEmailSemanal['territorio']): string {
   const nomes = territorio.map((t) => t.municipio);
   if (nomes.length === 0) return '—';
-  if (nomes.length === 1) return nomes[0];
-  return `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`;
+  const lista = nomes.length === 1 ? nomes[0] : `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`;
+  return territorio.some((t) => t.compartilhado) ? `${lista} (sem município próprio: divide com o dono)` : lista;
 }
 
 /** "semana de 23/11 · 5 de 972 · teste · enviado" */
