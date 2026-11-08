@@ -7,7 +7,9 @@
 //   - tipo trocado LANÇA. O lançamento cai no `isError` do react-query: a tela mostra a falha,
 //     nunca um número fabricado.
 import type { Json } from '@/integrations/supabase/types';
-import type { CandidatoRepasse, ContagemDesfecho, LinhaPainel, PainelVenda, SituacaoCompraRepasse } from './painel';
+import type {
+  CandidatoRepasse, ContagemDesfecho, HerdadasLinha, LinhaPainel, PainelVenda, SituacaoCompraRepasse,
+} from './painel';
 
 type Obj = { [k: string]: Json | undefined };
 
@@ -85,6 +87,42 @@ function contagem(v: Json | undefined, onde: string): ContagemDesfecho {
   };
 }
 
+// Sucessor declarado (20261108010000): as seis chaves nascem JUNTAS. Servidor anterior não tem nenhuma delas
+// (a tela segue sem a fatia herdada); parte delas é forma desconhecida e LANÇA.
+const CHAVES_HERANCA = [
+  'herdadas', 'taxa_ativa_propria', 'base_historico_propria', 'taxa_base_historico_propria',
+  'base_sombra_propria', 'taxa_base_sombra_propria',
+] as const;
+type DaHeranca = Pick<LinhaPainel, (typeof CHAVES_HERANCA)[number]>;
+
+function herdadasDaLinha(o: Obj, onde: string): DaHeranca {
+  const presentes = CHAVES_HERANCA.filter((k) => o[k] !== undefined).length;
+  if (presentes === 0) {
+    return {
+      herdadas: null, taxa_ativa_propria: null, base_historico_propria: null, taxa_base_historico_propria: null,
+      base_sombra_propria: null, taxa_base_sombra_propria: null,
+    };
+  }
+  if (presentes !== CHAVES_HERANCA.length) throw new Error(`${onde}: as chaves da herança vêm juntas`);
+  const ondeH = `${onde}.herdadas`;
+  const h = obj(campo(o, 'herdadas', onde), ondeH);
+  const herdadas: HerdadasLinha = {
+    ...contagem(h, ondeH),
+    na_lista: num(h, 'na_lista', ondeH),
+    sugestoes: num(h, 'sugestoes', ondeH),
+    receita_realizada: numOuNulo(h, 'receita_realizada', ondeH),
+    receita_incompleta: bool(h, 'receita_incompleta', ondeH),
+  };
+  return {
+    herdadas,
+    taxa_ativa_propria: numOuNulo(o, 'taxa_ativa_propria', onde),
+    base_historico_propria: contagem(campo(o, 'base_historico_propria', onde), `${onde}.base_historico_propria`),
+    taxa_base_historico_propria: numOuNulo(o, 'taxa_base_historico_propria', onde),
+    base_sombra_propria: contagem(campo(o, 'base_sombra_propria', onde), `${onde}.base_sombra_propria`),
+    taxa_base_sombra_propria: numOuNulo(o, 'taxa_base_sombra_propria', onde),
+  };
+}
+
 function linhaPainel(v: Json, i: number): LinhaPainel {
   const onde = `venda_painel.linhas[${i}]`;
   const o = obj(v, onde);
@@ -106,6 +144,7 @@ function linhaPainel(v: Json, i: number): LinhaPainel {
     base_sombra: contagem(campo(o, 'base_sombra', onde), `${onde}.base_sombra`),
     taxa_base_sombra: numOuNulo(o, 'taxa_base_sombra', onde),
     base_confiavel: bool(o, 'base_confiavel', onde),
+    ...herdadasDaLinha(o, onde),
   };
 }
 
