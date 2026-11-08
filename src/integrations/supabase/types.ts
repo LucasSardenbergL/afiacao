@@ -15616,6 +15616,57 @@ export type Database = {
         }
         Relationships: []
       }
+      sayerlack_encerramento_cancelado_portal: {
+        Row: {
+          ator: string
+          criado_em: string
+          espelho_sync_em: string | null
+          espelho_sync_status: string | null
+          execucao_id: string | null
+          id: number
+          justificativa: string
+          pedido_id: number
+          protocolo: string
+          prova_omie: Json
+          situacao_lida_ate: string
+          situacao_lida_de: string
+          situacao_texto: string
+          status_antes: string
+        }
+        Insert: {
+          ator: string
+          criado_em?: string
+          espelho_sync_em?: string | null
+          espelho_sync_status?: string | null
+          execucao_id?: string | null
+          id?: never
+          justificativa: string
+          pedido_id: number
+          protocolo: string
+          prova_omie: Json
+          situacao_lida_ate: string
+          situacao_lida_de: string
+          situacao_texto: string
+          status_antes: string
+        }
+        Update: {
+          ator?: string
+          criado_em?: string
+          espelho_sync_em?: string | null
+          espelho_sync_status?: string | null
+          execucao_id?: string | null
+          id?: never
+          justificativa?: string
+          pedido_id?: number
+          protocolo?: string
+          prova_omie?: Json
+          situacao_lida_ate?: string
+          situacao_lida_de?: string
+          situacao_texto?: string
+          status_antes?: string
+        }
+        Relationships: []
+      }
       sayerlack_retry_motor_log: {
         Row: {
           aprovado_em: string | null
@@ -26260,6 +26311,16 @@ export type Database = {
           descricao: string
           num_parcelas: number
         }[]
+      }
+      sayerlack_encerrar_cancelado_no_portal: {
+        Args: {
+          p_ator: string
+          p_execucao_id: string
+          p_justificativa: string
+          p_pedido_id: number
+          p_prova_omie: Json
+        }
+        Returns: Json
       }
       sayerlack_importar_pedido_portal: {
         Args: {
