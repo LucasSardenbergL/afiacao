@@ -1494,7 +1494,7 @@ BEGIN
   IF (SELECT count(*) FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'radar_ingest_state'
          AND column_name IN ('carga_publicacao_iniciada_em', 'carga_cursor', 'carga_examinadas', 'carga_gravadas',
-                             'carga_tentativas', 'carga_varrida_em', 'carga_recruzada_em')) <> 7 THEN
+                             'carga_tentativas', 'carga_varrida_em', 'carga_recruzada_em')) IS DISTINCT FROM 7 THEN
     RAISE EXCEPTION 'P2 FALHOU: colunas de progresso da publicação incompletas';
   END IF;
   FOR i IN 1 .. array_length(c_corpos, 1) LOOP
