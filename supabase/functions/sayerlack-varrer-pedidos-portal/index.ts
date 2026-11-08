@@ -814,6 +814,11 @@ Deno.serve(async (req: Request) => {
           situacoes: await gravarSituacoes(observacoesDaLista(lista.pedidos, new Set(noApp.keys()), { soCancelados: !prova.ok }), lidoDe, lidoAte),
         };
       }
+      // A cobertura (5.4) é só OBSERVAÇÃO: roda também bloqueada — senão um pedido em conciliação deixaria os demais,
+      // fora dos 7 dias, sem leitura e a rodada sairia verde (Codex 5.4 P1). Falha dela deixa a rodada vermelha.
+      if (modo === "importar") {
+        resumoFinal = { ...resumoFinal, cobertura: await cobrir(hoje, () => Date.now() - t0 + FOLGA_POR_IMPORTACAO_MS > TETO_EDGE_MS) };
+      }
       if (falhasSituacao.length > 0) {
         causaPreProtocolo = "bloqueado:situacao_nao_gravada";
         throw new Error(`Rodada bloqueada (${bloqueio}) e a situação do portal não foi gravada: ${falhasSituacao.join(" · ")}`);
@@ -821,6 +826,10 @@ Deno.serve(async (req: Request) => {
       if (!prova.ok) {
         causaPreProtocolo = `prova:${prova.motivo}`;
         throw new Error(`Rodada bloqueada (${bloqueio}) e leitura incompleta (${prova.motivo}): ${prova.detalhe}`);
+      }
+      if (falhasCobertura.length > 0) {
+        causaPreProtocolo = "bloqueado:cobertura";
+        throw new Error(`Rodada bloqueada (${bloqueio}); cobertura da situação dos pedidos com compra em aberto: ${falhasCobertura.join(" · ")}`);
       }
       return { ...resumoFinal, pulado: "bloqueado", mensagem: `Rodada não importa: ${bloqueio}. Situações do portal lidas e gravadas.` };
     }

@@ -27,7 +27,8 @@ export LC_ALL=C LANG=C          # o CLIENTE fica em C (o postmaster aborta sem i
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sem_incidente_no_trigger:B2,B4 leitura_posterior_fecha:B3 fecha_sem_porta:B6 so_resolve_off:B8
               cobertura_ignora_faturado:C4 cobertura_ignora_protocolo:C5 sem_espelho_pos_encerrar:B9
-              mais_recente_errado:B4b stale_sem_regua:C3 fora_do_v_sources:A41,A43 fora_do_heartbeat:A42
+              mais_recente_errado:B4b stale_sem_regua:C3 sem_claim_no_trigger:B10 espelho_sem_trigger:B9b
+              espelho_fail_closed:B11 fora_do_v_sources:A41,A43 fora_do_heartbeat:A42
               pre_sem_identidade:A25 pos_sem_dente:A26 sem_revoke:A27 pos_v_sources_sem_dente:A30
               pos_heartbeat_sem_dente:A31 pos_acl_sem_dente:A32"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
@@ -296,6 +297,16 @@ ALTER TABLE public.sayerlack_incidente_cancelado_com_po DISABLE TRIGGER trg_inci
   sem_espelho_pos_encerrar) sab_compute "             WHERE EXISTS (
                SELECT 1 FROM public.purchase_orders_tracking t" "             WHERE false AND EXISTS (
                SELECT 1 FROM public.purchase_orders_tracking t" "PO no espelho depois do encerramento ignorado" ;;
+  sem_claim_no_trigger) sab_fora "  IF NEW.empresa = 'OBEN' AND NEW.portal_situacao_codigo = '6' AND (v_po IS NOT NULL OR NEW.disparo_claim_em IS NOT NULL)" \
+                                 "  IF NEW.empresa = 'OBEN' AND NEW.portal_situacao_codigo = '6' AND (v_po IS NOT NULL)" "6 sobre pendência de disparo não abre" ;;
+  espelho_sem_trigger) sab_fora "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__incidente_pelo_espelho();" \
+                                "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__incidente_pelo_espelho();
+ALTER TABLE public.purchase_orders_tracking DISABLE TRIGGER trg_incidente_pelo_espelho;" "espelho só no broken calculado"
+    trocar "$TMP/mig.sql" "                   AND tgrelid = 'public.purchase_orders_tracking'::regclass AND tgenabled <> 'D') THEN" \
+      "                   AND tgrelid = 'public.purchase_orders_tracking'::regclass AND tgenabled <> 'D') AND false THEN" || exit 9 ;;
+  espelho_fail_closed) sab_fora "  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'sayerlack__incidente_pelo_espelho" "  EXCEPTION WHEN division_by_zero THEN
+    RAISE WARNING 'sayerlack__incidente_pelo_espelho" "erro do trigger derruba o sync" ;;
   mais_recente_errado) sab_compute "ORDER BY b.desde DESC, b.pedido_id DESC))[1] AS mais_recente" "ORDER BY b.desde ASC, b.pedido_id ASC))[1] AS mais_recente" "message cita o incidente MAIS ANTIGO" ;;
   stale_sem_regua) sab_compute "count(*) FILTER (WHERE c.observado_ate IS NULL OR c.observado_ate < ex.exigido_desde) AS n_sem_leitura" \
                                "count(*) FILTER (WHERE c.observado_ate IS NULL) AS n_sem_leitura" "leitura velha conta como em dia" ;;
@@ -392,11 +403,23 @@ P -q -c "INSERT INTO public.sayerlack_encerramento_cancelado_portal (pedido_id, 
 P -q -c "INSERT INTO public.purchase_orders_tracking (empresa, status, omie_codigo_pedido, omie_codigo_integracao, numero_contrato_fornecedor) VALUES ('OBEN', 'CANCELADO', 1, 'AFI-103', NULL);"
 eq "B9a PO CANCELADO no espelho depois do encerramento não alerta" "$(cc status)" "ok"
 P -q -c "INSERT INTO public.purchase_orders_tracking (empresa, status, omie_codigo_pedido, omie_codigo_integracao, numero_contrato_fornecedor) VALUES ('OBEN', 'CRIADO', 2, 'MANUAL-1', '2140000 / 2141103');"
-eq "B9 PO vivo no espelho (contrato) depois do encerramento da 5.3 ⇒ broken" "$(cc status)|$(cc "(probable_cause LIKE '%PO no espelho depois de encerrado%')::text")" "broken|true"
+eq "B9 PO vivo no espelho (contrato) depois do encerramento da 5.3 ⇒ incidente PERSISTIDO e broken" "$(abertos)|$(cc status)|$(cc "(probable_cause LIKE '%PO 2 no espelho depois de encerrado%')::text")" "103|broken|true"
 P -q -c "UPDATE public.purchase_orders_tracking SET status = 'CANCELADO' WHERE omie_codigo_pedido = 2;"
+eq "B9b o espelho mudar depois NÃO apaga o incidente (só a porta resolve)" "$(abertos)|$(cc status)" "103|broken"
+P -q -c "BEGIN; SET LOCAL test.uid = '00000000-0000-0000-0000-0000000000aa'; SELECT public.sayerlack_resolver_incidente_cancelado_com_po((SELECT id FROM public.sayerlack_incidente_cancelado_com_po WHERE pedido_id = 103 AND resolvido_em IS NULL), 'PO cancelado no Omie em 09/11'); COMMIT;" >/dev/null
+eq "B9c resolvido por master ⇒ ok" "$(abertos)|$(cc status)" "-|ok"
+# Codex 5.4 P1: 6 sobre PENDÊNCIA DE DISPARO (PO pode existir com a resposta perdida) abre já
+ped 104 2141104 aprovado_aguardando_disparo '' 2026-11-05
+P -q -c "UPDATE public.pedido_compra_sugerido SET disparo_claim_em = now() WHERE id = 104;"
+sit 104 6 '2026-11-09 12:35-03'
+sit 104 1 '2026-11-09 17:35-03'
+P -q -c "UPDATE public.pedido_compra_sugerido SET omie_pedido_compra_id = '9104', status = 'disparado' WHERE id = 104;"
+eq "B10 6 sobre pendência de disparo abre o incidente, que sobrevive à leitura 1 e à conciliação que grava o PO" "$(abertos)|$(Pq -c "SELECT motivo || '|' || COALESCE(po_omie, 'NULL') FROM public.sayerlack_incidente_cancelado_com_po WHERE pedido_id = 104;")" "104|disparo_pendente|NULL"
+eq "B11 o trigger do espelho é fail-open: erro nele não derruba a escrita do sync" "$(Pq -c "ALTER TABLE public.sayerlack_incidente_cancelado_com_po ADD CONSTRAINT quebra CHECK (pedido_id < 0) NOT VALID;" >/dev/null; Pv -c "INSERT INTO public.purchase_orders_tracking (empresa, status, omie_codigo_pedido, omie_codigo_integracao) VALUES ('OBEN', 'CRIADO', 3, 'AFI-103') RETURNING omie_codigo_pedido;" 2>&1 | grep -E '^[0-9]+$'; Pq -c "ALTER TABLE public.sayerlack_incidente_cancelado_com_po DROP CONSTRAINT quebra;" >/dev/null)" "3"
 
 echo "═══ cobertura: pedido com compra em aberto precisa de leitura no dia útil ═══"
-P -q -c "TRUNCATE public.pedido_compra_sugerido; TRUNCATE public.purchase_orders_tracking;"
+# TRUNCATE não dispara o trigger só-resolve (é de linha): limpa o B para a C medir só a cobertura.
+P -q -c "TRUNCATE public.pedido_compra_sugerido; TRUNCATE public.purchase_orders_tracking; TRUNCATE public.sayerlack_incidente_cancelado_com_po; TRUNCATE public.sayerlack_encerramento_cancelado_portal;"
 ped 201 2141201 disparado 9201 2026-10-29
 eq "C1 pedido com PO (sem linha no espelho) e nunca lido ⇒ stale 'sem nenhuma leitura', age NULL" "$(cc "status || '|' || COALESCE(age_seconds::text, 'NULL') || '|' || (message LIKE '%sem nenhuma leitura%')::text")" "stale|NULL|true"
 sit 201 1 '2026-11-09 12:35-03'

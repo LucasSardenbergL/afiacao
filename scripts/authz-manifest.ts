@@ -564,6 +564,7 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.reposicao_persistir_qtde_inteira', // arredonda/persiste qtde inteira do pedido — edge `disparar-pedidos-aprovados`
   'public.reposicao_claim_disparo', // claim antes do IncluirPedCompra (Cenário B do TOCTOU) — edge `disparar-pedidos-aprovados`, service_role
   'public.sayerlack__incidente_pelo_pedido', // trigger da 5.4 (RETURNS trigger): abre/fecha o incidente de cancelado com PO no estado do pedido; REVOKE PUBLIC/anon/authenticated (20261110120000)
+  'public.sayerlack__incidente_pelo_espelho', // trigger da 5.4 no espelho (RETURNS trigger): PO que aparece depois de um encerramento da 5.3 vira incidente; fail-open para o sync; REVOKE PUBLIC/anon/authenticated (20261110120000)
   'public.sayerlack_cobertura_situacao_portal', // cobertura da 5.4 (pedidos com PO não faturado) — edge `sayerlack-varrer-pedidos-portal` e o compute do data_health, service_role; REVOKE PUBLIC/anon/authenticated (20261110120000)
   // Observação do conjunto aberto (PR0 da baixa de PO, migration 20261005131331): lê
   // `sku_estoque_atual.estoque_pendente_entrada` só para CONFERIR, na mesma transação, que o pendente

@@ -29,12 +29,16 @@ CREATE TABLE IF NOT EXISTS public.sayerlack_incidente_cancelado_com_po (
   id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   pedido_id       bigint      NOT NULL,
   protocolo       text        NOT NULL,
-  po_omie         text        NOT NULL,
+  -- PO no app/espelho; NULL = pendência de disparo aberta (o PO pode existir com a resposta perdida — Codex 5.4 P1)
+  po_omie         text,
+  motivo          text        NOT NULL,
   aberto_em       timestamptz NOT NULL DEFAULT now(),
   resolvido_em    timestamptz,
   resolucao       text,
   resolvido_por   text,
   justificativa   text,
+  CONSTRAINT sayerlack_incidente_motivo_check CHECK (
+    motivo IN ('po_no_app', 'disparo_pendente', 'po_no_espelho_apos_encerrar')),
   CONSTRAINT sayerlack_incidente_resolucao_check CHECK (
     (resolvido_em IS NULL AND resolucao IS NULL AND resolvido_por IS NULL)
     OR (resolvido_em IS NOT NULL AND resolucao IN ('cancelado_pos_disparo', 'humano') AND resolvido_por IS NOT NULL))
@@ -66,8 +70,8 @@ BEGIN
   IF TG_OP = 'UPDATE'
      AND NULLIF(current_setting('app.sayerlack_incidente_resolver', true), '') IS NOT DISTINCT FROM OLD.id::text
      AND OLD.resolvido_em IS NULL AND NEW.resolvido_em IS NOT NULL
-     AND (NEW.id, NEW.pedido_id, NEW.protocolo, NEW.po_omie, NEW.aberto_em)
-         IS NOT DISTINCT FROM (OLD.id, OLD.pedido_id, OLD.protocolo, OLD.po_omie, OLD.aberto_em) THEN
+     AND (NEW.id, NEW.pedido_id, NEW.protocolo, NEW.po_omie, NEW.motivo, NEW.aberto_em)
+         IS NOT DISTINCT FROM (OLD.id, OLD.pedido_id, OLD.protocolo, OLD.po_omie, OLD.motivo, OLD.aberto_em) THEN
     RETURN NEW;
   END IF;
   RAISE EXCEPTION USING ERRCODE = '42501',
@@ -94,10 +98,12 @@ AS $$
 DECLARE
   v_po text := NULLIF(NULLIF(btrim(COALESCE(NEW.omie_pedido_compra_id, '')), ''), '0');
 BEGIN
-  IF NEW.empresa = 'OBEN' AND NEW.portal_situacao_codigo = '6' AND v_po IS NOT NULL
+  -- 6 sobre PO, PO sobre 6 — e 6 sobre PENDÊNCIA DE DISPARO aberta: a tentativa pode ter criado o PO no Omie com a
+  -- resposta perdida; se uma leitura posterior trocar o 6 antes de a conciliação gravar o PO, o aviso já existe.
+  IF NEW.empresa = 'OBEN' AND NEW.portal_situacao_codigo = '6' AND (v_po IS NOT NULL OR NEW.disparo_claim_em IS NOT NULL)
      AND btrim(COALESCE(NEW.portal_protocolo, '')) <> '' AND COALESCE(NEW.status, '') NOT LIKE 'cancelad%' THEN
-    INSERT INTO public.sayerlack_incidente_cancelado_com_po (pedido_id, protocolo, po_omie)
-    VALUES (NEW.id, btrim(NEW.portal_protocolo), v_po)
+    INSERT INTO public.sayerlack_incidente_cancelado_com_po (pedido_id, protocolo, po_omie, motivo)
+    VALUES (NEW.id, btrim(NEW.portal_protocolo), v_po, CASE WHEN v_po IS NOT NULL THEN 'po_no_app' ELSE 'disparo_pendente' END)
     ON CONFLICT (pedido_id) WHERE resolvido_em IS NULL DO NOTHING;
   END IF;
   -- Fecha SÓ pela porta auditada do cancelamento pós-disparo (a GUC dela carrega o id deste pedido).
@@ -123,12 +129,61 @@ CREATE TRIGGER trg_incidente_cancelado_com_po
   FOR EACH ROW EXECUTE FUNCTION public.sayerlack__incidente_pelo_pedido();
 
 -- Retroativo: o que JÁ está no estado do incidente nasce aberto (medido 2026-11-08: 0 linhas com 6 — idempotente).
-INSERT INTO public.sayerlack_incidente_cancelado_com_po (pedido_id, protocolo, po_omie)
-SELECT p.id, btrim(p.portal_protocolo), btrim(p.omie_pedido_compra_id)
+INSERT INTO public.sayerlack_incidente_cancelado_com_po (pedido_id, protocolo, po_omie, motivo)
+SELECT p.id, btrim(p.portal_protocolo), NULLIF(NULLIF(btrim(COALESCE(p.omie_pedido_compra_id, '')), ''), '0'),
+       CASE WHEN NULLIF(NULLIF(btrim(COALESCE(p.omie_pedido_compra_id, '')), ''), '0') IS NOT NULL THEN 'po_no_app' ELSE 'disparo_pendente' END
   FROM public.pedido_compra_sugerido p
  WHERE p.empresa = 'OBEN' AND p.portal_situacao_codigo = '6'
-   AND NULLIF(NULLIF(btrim(COALESCE(p.omie_pedido_compra_id, '')), ''), '0') IS NOT NULL
+   AND (NULLIF(NULLIF(btrim(COALESCE(p.omie_pedido_compra_id, '')), ''), '0') IS NOT NULL OR p.disparo_claim_em IS NOT NULL)
    AND btrim(COALESCE(p.portal_protocolo, '')) <> '' AND COALESCE(p.status, '') NOT LIKE 'cancelad%'
+ON CONFLICT (pedido_id) WHERE resolvido_em IS NULL DO NOTHING;
+
+-- ── B2. PO que aparece no espelho DEPOIS de um encerramento da 5.3 também vira incidente persistido ────────────
+-- (Codex 5.4 P1: o broken só calculado sumia se o espelho mudasse, e a RPC de master não tinha o que resolver.)
+-- ⚠️ Roda no caminho do SYNC de pedidos de compra: filtro barato primeiro, e erro aqui NUNCA derruba o sync (fail-open
+-- com WARNING — o compute mantém o broken calculado como rede).
+CREATE INDEX IF NOT EXISTS sayerlack_encerramento_cancelado_portal_protocolo_idx
+  ON public.sayerlack_encerramento_cancelado_portal (protocolo);
+CREATE OR REPLACE FUNCTION public.sayerlack__incidente_pelo_espelho()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+BEGIN
+  IF NEW.empresa::text IS DISTINCT FROM 'OBEN' OR NEW.status::text = 'CANCELADO'
+     OR (COALESCE(NEW.omie_codigo_integracao, '') NOT LIKE 'AFI-%' AND NEW.numero_contrato_fornecedor IS NULL) THEN
+    RETURN NULL;
+  END IF;
+  BEGIN
+    INSERT INTO public.sayerlack_incidente_cancelado_com_po (pedido_id, protocolo, po_omie, motivo)
+    SELECT e.pedido_id, e.protocolo, NEW.omie_codigo_pedido::text, 'po_no_espelho_apos_encerrar'
+      FROM public.sayerlack_encerramento_cancelado_portal e
+     WHERE btrim(COALESCE(NEW.omie_codigo_integracao, '')) = 'AFI-' || e.pedido_id
+        OR e.protocolo IN (SELECT btrim(c.n) FROM unnest(string_to_array(NEW.numero_contrato_fornecedor, '/')) AS c(n))
+    ON CONFLICT (pedido_id) WHERE resolvido_em IS NULL DO NOTHING;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'sayerlack__incidente_pelo_espelho: incidente não gravado para o PO % (%: %)',
+      NEW.omie_codigo_pedido, SQLSTATE, SQLERRM;
+  END;
+  RETURN NULL;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.sayerlack__incidente_pelo_espelho() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.sayerlack__incidente_pelo_espelho() FROM anon;
+REVOKE ALL ON FUNCTION public.sayerlack__incidente_pelo_espelho() FROM authenticated;
+DROP TRIGGER IF EXISTS trg_incidente_pelo_espelho ON public.purchase_orders_tracking;
+CREATE TRIGGER trg_incidente_pelo_espelho
+  AFTER INSERT OR UPDATE OF status, omie_codigo_integracao, numero_contrato_fornecedor ON public.purchase_orders_tracking
+  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__incidente_pelo_espelho();
+INSERT INTO public.sayerlack_incidente_cancelado_com_po (pedido_id, protocolo, po_omie, motivo)
+SELECT DISTINCT ON (e.pedido_id) e.pedido_id, e.protocolo, t.omie_codigo_pedido::text, 'po_no_espelho_apos_encerrar'
+  FROM public.sayerlack_encerramento_cancelado_portal e
+  JOIN public.purchase_orders_tracking t
+    ON t.empresa::text = 'OBEN' AND t.status::text IS DISTINCT FROM 'CANCELADO'
+   AND (btrim(COALESCE(t.omie_codigo_integracao, '')) = 'AFI-' || e.pedido_id
+        OR e.protocolo IN (SELECT btrim(c.n) FROM unnest(string_to_array(t.numero_contrato_fornecedor, '/')) AS c(n)))
+ ORDER BY e.pedido_id, t.omie_codigo_pedido
 ON CONFLICT (pedido_id) WHERE resolvido_em IS NULL DO NOTHING;
 
 -- ── C. resolução humana (master), para o que não passa pela porta pós-disparo ─────────────────────
@@ -209,7 +264,7 @@ BEGIN
         ('_data_health_compute()',
          (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public._data_health_compute()')),
          ARRAY['0590d3aa400d44f5d6e3924e5e3eab78',   -- PROD 2026-11-08 = 20261107220000
-               'b0b9d61e06f752eba5fa3fa3503320bb']),                  -- este arquivo (re-apply = no-op)
+               '4e36f65e8b882a0437ef65a30be4dbd9']),                  -- este arquivo (re-apply = no-op)
         ('data_health_watchdog()',
          (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.data_health_watchdog()')),
          ARRAY['01bdb4df838d9d51d3aa1f69a728b6a7',   -- PROD 2026-11-08 = 20261107220000
@@ -1862,13 +1917,18 @@ AS $function$
                (array_agg('protocolo ' || b.protocolo || ', pedido #' || b.pedido_id ORDER BY b.desde DESC, b.pedido_id DESC))[1] AS mais_recente,
                left(string_agg(b.protocolo || ' (#' || b.pedido_id || ', ' || b.origem || ')', '; ' ORDER BY b.desde DESC, b.pedido_id DESC), 600) AS lista
           FROM (
-            SELECT i.pedido_id, i.protocolo, i.aberto_em AS desde, 'PO ' || i.po_omie AS origem
+            SELECT i.pedido_id, i.protocolo, i.aberto_em AS desde,
+                   CASE i.motivo WHEN 'disparo_pendente' THEN 'disparo pendente, PO pode existir'
+                                 WHEN 'po_no_espelho_apos_encerrar' THEN 'PO ' || COALESCE(i.po_omie, '?') || ' no espelho depois de encerrado'
+                                 ELSE 'PO ' || COALESCE(i.po_omie, '?') END AS origem
               FROM public.sayerlack_incidente_cancelado_com_po i
              WHERE i.resolvido_em IS NULL
             UNION ALL
             SELECT e.pedido_id, e.protocolo, e.criado_em AS desde, 'PO no espelho depois de encerrado' AS origem
               FROM public.sayerlack_encerramento_cancelado_portal e
-             WHERE EXISTS (
+             WHERE NOT EXISTS (SELECT 1 FROM public.sayerlack_incidente_cancelado_com_po i2
+                                WHERE i2.pedido_id = e.pedido_id AND i2.resolvido_em IS NULL)
+               AND EXISTS (
                SELECT 1 FROM public.purchase_orders_tracking t
                 WHERE t.empresa::text = 'OBEN' AND t.status::text IS DISTINCT FROM 'CANCELADO'
                   AND (btrim(COALESCE(t.omie_codigo_integracao, '')) = 'AFI-' || e.pedido_id
@@ -2267,8 +2327,8 @@ BEGIN
 
   -- (5) identidade: os 3 corpos vivos sao os deste arquivo, com o search_path medido em prod.
   SELECT md5(p.prosrc) INTO v_md5 FROM pg_proc p WHERE p.oid = to_regprocedure('public._data_health_compute()');
-  IF v_md5 IS DISTINCT FROM 'b0b9d61e06f752eba5fa3fa3503320bb' THEN
-    RAISE EXCEPTION 'POSTCONDICAO FALHOU md5: public._data_health_compute() com md5 % (esperado b0b9d61e06f752eba5fa3fa3503320bb).', COALESCE(v_md5, '<ausente>');
+  IF v_md5 IS DISTINCT FROM '4e36f65e8b882a0437ef65a30be4dbd9' THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU md5: public._data_health_compute() com md5 % (esperado 4e36f65e8b882a0437ef65a30be4dbd9).', COALESCE(v_md5, '<ausente>');
   END IF;
   SELECT md5(p.prosrc) INTO v_md5 FROM pg_proc p WHERE p.oid = to_regprocedure('public.data_health_watchdog()');
   IF v_md5 IS DISTINCT FROM '76597ff0ec6efd712229d7ac75974708' THEN
@@ -2291,6 +2351,10 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_incidente_cancelado_com_po'
                    AND tgrelid = 'public.pedido_compra_sugerido'::regclass AND tgenabled <> 'D') THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: trigger do incidente no pedido ausente ou desligado';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_incidente_pelo_espelho'
+                   AND tgrelid = 'public.purchase_orders_tracking'::regclass AND tgenabled <> 'D') THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU: trigger do incidente no espelho ausente ou desligado';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_incidente_so_resolve'
                    AND tgrelid = 'public.sayerlack_incidente_cancelado_com_po'::regclass AND tgenabled <> 'D') THEN
