@@ -408,4 +408,5 @@ Adendo `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Só front + d
   controle antes/depois (filtro de modo, `cancelado_humano`, dedupe, gate, chave do contrato na postcondição); no núcleo
   do CI. vitest 51; falsificação do front com controle: sem versão, sem `em_dia`, `null` virando 0, ignorar falha
   posterior, contagem pela soma das listas (este último sobreviveu à 1ª rodada — o teste ganhou a asserção).
-
+- **QA 8.3** (navegador do app, desktop e 375×812, dados de prod): verde no roteiro do card e do diálogo, sem disparar
+  importação real. Achado fora da fronteira: o "voltar" do celular não fecha o detalhe do pedido em Gerir pedidos.

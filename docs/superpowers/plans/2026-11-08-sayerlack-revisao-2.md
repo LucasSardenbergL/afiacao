@@ -26,7 +26,12 @@
 - ✅ **PR B1** (#3715) — B7 (tela), B8, 8.5, 6.10, 6.7 (chave sob `pedidos-ciclo`), B12/8.4 runbook. Publish: founder.
 - 🔄 **PR B2** — RPC `sayerlack_painel_portal` v2 (migration `20261109100000` APLICADA, #977) + card (6.1–6.9, 6.11 sem
   "alterado no portal", que espera a 5.2) + prova PG17.
-- ⏳ **8.3** — QA no navegador e no celular.
+- ✅ **8.3** — QA no navegador do app (app local com o código do B2, dados de prod, usuário master), desktop e
+  375×812: card com horário, sensor de alíquota (13 SKUs) e "não posso afirmar" (correto: a última efetiva é v1.4);
+  importados com "pedido de compra"; Cmd-K abre o diálogo; vários números com inválido mostrado e botão travado (sem
+  enviar importação real); Esc fecha e devolve o foco; sem rolagem horizontal; alvos de toque com 44px; abrir pedido
+  pelo card funciona. Achado fora da fronteira: em Gerir pedidos o "voltar" do celular não fecha o detalhe do pedido
+  (ele é estado da página, não da URL) — vale para a página inteira, follow-up.
 
 ## Brechas novas (B1–B13)
 
