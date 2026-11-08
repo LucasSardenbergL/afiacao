@@ -96,6 +96,12 @@ Ordem recomendada: migration → Publish. As duas ordens são seguras:
   `p_retorno` para a função de 3 args e toma PGRST202. O cliente repete **sem a data**, então o contato é gravado sem
   retorno e o toast não promete data (`src/queries/useRegistrarContatoRadar.ts`).
 
-**Estado em 2026-11-08:** o `db:aplicar --ensaio` rodou inteiro na PROD e fez ROLLBACK (sha256 `52cdb8c2…`), com
-pré-voo 🟢 (os 5 corpos vivos = predecessores). A aplicação real foi **negada pelo classificador do modo automático**
-da sessão e ficou com o founder (comando no PR).
+**Estado em 2026-11-08:** a migration está **APLICADA**.
+- Pré-voo 🟢: os 5 corpos vivos eram os predecessores. O `db:aplicar --ensaio` rodou inteiro e fez ROLLBACK.
+- O classificador do modo automático negou a aplicação à sessão. O founder aplicou pelo `db:aplicar`: tentativa
+  #1004, sha256 `52cdb8c2…`, a mesma do ensaio.
+- 2ª testemunha pelo psql-ro, noutra conexão: os 5 md5 = "este" da PRE; só a assinatura de 4 args; anon fora de
+  tudo; authenticated só no registro e no card; o cron `radar-posses-vencer-diario` (`0 9 * * *`, dono postgres)
+  ativo; as 3 colunas novas existem.
+- Os 3 acompanhamentos legados da prod (do master) entram com responsável.
+- Falta o Publish.
