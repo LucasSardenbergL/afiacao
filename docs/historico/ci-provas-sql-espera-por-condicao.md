@@ -32,7 +32,10 @@ Local (Mac, 1 passagem normal): `cliente-sucessoes` 10,5 → 8,3 s, `cliente-suc
 `radar-score` 3 s. `--falsificar` nos dois locales (`C` e `pt_BR.UTF-8`), todas as sabotagens vermelhas no
 assert declarado: radar-score 17/17, omie-idempotente 10/10, cliente-sucessoes 35/35, cliente-sucessao-plano 38/38 (inclusive `drenar_trava_propria`→CL1, `drenar_com_grafo`→CC1 e `drenar_assinatura_depois`→CC2).
 
-CI: comparação pareada por prova no PR.
+CI (run 42442800702 contra o do #3721, normal + `--falsificar`): radar-score 164 → 22 s, omie-idempotente
+142 → 27, cliente-sucessoes 194 → 78, cliente-sucessao-plano 362 → 182 — **862 → 309 s (−64%)**. A pior
+parte do `provas-sql` foi de 21 para 18 min, mas desequilibrada: as partes com essas provas fecharam em
+13 min, porque a tabela de custo ainda tinha os pesos velhos. Re-pesadas no PR seguinte (só essas 4 linhas).
 
 ## Próximos da fila
 

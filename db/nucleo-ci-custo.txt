@@ -13,6 +13,10 @@
 # deixava 12 provas no default de 30 s — a `cliente-sucessao-plano` custa ~370 s, a `cliente-sucessoes`
 # ~190 — e a pior parte real chegava a 20,7–22,9 min contra 10,9 da melhor. Com esta tabela, nos
 # mesmos 6 runs, a pior parte fica em 16,3–17,6 min. Antes/depois: docs/historico/ci-provas-sql-durabilidade-off.md
+# Exceção (2026-11-08): radar-score, radar-cadastro-omie-idempotente, cliente-sucessoes e
+# cliente-sucessao-plano vêm do run 42442800702 (#3725), em que a espera fixa delas virou espera por
+# condição (862 → 309 s). Com o peso velho, as partes delas fechavam em 13 min e as outras em 18.
+# Antes/depois: docs/historico/ci-provas-sql-espera-por-condicao.md
 # Re-meça quando a pior parte destoar das outras ou entrar prova cara nova (o `comm` de
 # docs/historico/ci-fila-de-runners.md lista as provas sem custo): para cada job `provas-sql (i)` de
 # um run verde,
@@ -36,8 +40,8 @@ db/test-check-finitude-money-path.sh 1
 db/test-claim-disparo-cenario-b.sh 4
 db/test-cliente-situacao-receita.sh 33
 db/test-cliente-sucessao-consumidores.sh 32
-db/test-cliente-sucessao-plano.sh 372
-db/test-cliente-sucessoes.sh 189
+db/test-cliente-sucessao-plano.sh 182
+db/test-cliente-sucessoes.sh 78
 db/test-clientes-import-servidor.sh 25
 db/test-cobranca-fila.sh 33
 db/test-converter-campanha-flat.sh 30
@@ -112,7 +116,7 @@ db/test-radar-atribuir-atendimento.sh 12
 db/test-radar-avisar-lote.sh 24
 db/test-radar-cadastro-conflitos.sh 63
 db/test-radar-cadastro-omie-confirmacao.sh 18
-db/test-radar-cadastro-omie-idempotente.sh 146
+db/test-radar-cadastro-omie-idempotente.sh 27
 db/test-radar-cnae-secundario.sh 37
 db/test-radar-cnpj-alfanumerico.sh 8
 db/test-radar-contagem-lote.sh 15
@@ -133,7 +137,7 @@ db/test-radar-possiveis-vinculos.sh 16
 db/test-radar-recruzamento-diario.sh 10
 db/test-radar-recruzar-origem-omie.sh 4
 db/test-radar-rpcs-cnpj-alfanumerico.sh 14
-db/test-radar-score.sh 164
+db/test-radar-score.sh 22
 db/test-radar-situacao-cadastral.sh 15
 db/test-radar-situacao-contato-por-cnpj.sh 18
 db/test-radar-situacao-por-cron.sh 19
