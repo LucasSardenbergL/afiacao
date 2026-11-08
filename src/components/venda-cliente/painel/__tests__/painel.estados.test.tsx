@@ -134,12 +134,35 @@ describe('TabelaAdocao', () => {
     expect(screen.getByTestId('painel-conversao-propria')).toHaveTextContent('própria aguardando janela');
     expect(screen.getByTestId('painel-conversao-propria')).not.toHaveTextContent('0%');
   });
+  it('herança SÓ na base (nenhuma herdada ativa): mostra as bases próprias e o aviso (P2 do Codex)', () => {
+    // ativa 1/2 própria; histórico e sombra com os mesmos desfechos próprios + 9 sucessos herdados (total 91%)
+    render(<TabelaAdocao linhas={[linha({ virou: 1, nao_virou: 1, taxa_ativa: 0.5,
+      herdadas: { ...herdadas, na_lista: 0, sugestoes: 0, virou: 0, nao_virou: 0, nao_medivel: 0, pendentes: 0,
+        receita_realizada: null },
+      taxa_ativa_propria: 0.5,
+      base_historico: { ...vazio, virou: 10, nao_virou: 1 }, taxa_base_historico_mesma_semana: 0.9091,
+      base_historico_propria: { ...vazio, virou: 1, nao_virou: 1 }, taxa_base_historico_propria: 0.5,
+      base_sombra: { ...vazio, virou: 10, nao_virou: 1 }, taxa_base_sombra: 0.9091,
+      base_sombra_propria: { ...vazio, virou: 1, nao_virou: 1 }, taxa_base_sombra_propria: 0.5 })]} baseConfiavel />);
+    expect(screen.getByTestId('painel-herdadas-aviso')).toBeInTheDocument();
+    expect(screen.getByTestId('painel-base-historico-propria')).toHaveTextContent('própria 50%');
+    expect(screen.getByTestId('painel-base-sombra-propria')).toHaveTextContent('própria: 50%');
+    expect(screen.getByTestId('painel-conversao-propria')).toHaveTextContent('própria 50%');
+    // nenhuma herdada ATIVA: sem contagem de herdados nem receita herdada
+    expect(screen.queryByTestId('painel-herdadas-na-lista')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('painel-receita-herdada')).not.toBeInTheDocument();
+  });
   it('sem herdadas (ou servidor anterior): nada da fatia aparece', () => {
     render(<TabelaAdocao linhas={[linha({ herdadas: { ...herdadas, na_lista: 0, sugestoes: 0, virou: 0, nao_virou: 0,
-      receita_realizada: null }, taxa_ativa_propria: 0.25 }), linha({ semana: '2026-09-28' })]} baseConfiavel />);
+      receita_realizada: null }, taxa_ativa_propria: 0.25,
+      // servidor novo, sem herança em régua nenhuma: as bases próprias são iguais às totais
+      base_historico_propria: { ...vazio, virou: 1, nao_virou: 9 }, taxa_base_historico_propria: 0.1,
+      base_sombra_propria: vazio, taxa_base_sombra_propria: null }), linha({ semana: '2026-09-28' })]} baseConfiavel />);
     expect(screen.queryByTestId('painel-herdadas-aviso')).not.toBeInTheDocument();
     expect(screen.queryByTestId('painel-conversao-propria')).not.toBeInTheDocument();
     expect(screen.queryByTestId('painel-receita-herdada')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('painel-base-historico-propria')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('painel-base-sombra-propria')).not.toBeInTheDocument();
   });
 });
 

@@ -6,6 +6,7 @@ import {
   formatarPct,
   formatarReais,
   rotuloSemana,
+  type ContagemDesfecho,
   type LinhaPainel,
 } from '@/lib/venda-cliente/painel';
 import { CelulaTaxa } from './CelulaTaxa';
@@ -41,8 +42,14 @@ function Contatados({ l }: { l: LinhaPainel }) {
   );
 }
 
-/** A linha tem fatia herdada para mostrar (servidor com a migration e ao menos uma sugestão herdada). */
+/** A linha tem sugestão herdada na lista ATIVA (servidor com a migration). */
 const temHerdada = (l: LinhaPainel) => (l.herdadas?.sugestoes ?? 0) > 0;
+
+/** A base tem herdada: a contagem própria difere da total (a herança pode existir SÓ na base — P2 do Codex). */
+const baseMistura = (total: ContagemDesfecho, propria: ContagemDesfecho | null) =>
+  propria !== null &&
+  (total.virou !== propria.virou || total.nao_virou !== propria.nao_virou ||
+    total.nao_medivel !== propria.nao_medivel || total.pendentes !== propria.pendentes);
 
 function Num({ v }: { v: number }) {
   return <span className={cn('tabular-nums', v === 0 && 'text-muted-foreground')}>{v}</span>;
@@ -54,7 +61,10 @@ export function TabelaAdocao({ linhas, baseConfiavel }: { linhas: LinhaPainel[];
     <div className="space-y-6">
       {grupos.map((g) => {
         const f = g[0];
-        const comHerdadas = g.some(temHerdada);
+        // a fatia aparece quando há herdada em QUALQUER régua (ativa, base do ano anterior ou sombra)
+        const comHerdadas =
+          g.some((l) => temHerdada(l) || baseMistura(l.base_historico, l.base_historico_propria)) ||
+          baseMistura(f.base_sombra, f.base_sombra_propria);
         const baseSombraPropria =
           comHerdadas && f.base_sombra_propria
             ? estadoTaxa(f.base_sombra_propria, f.taxa_base_sombra_propria, { baseConfiavel, exigeBaseConfiavel: true })
@@ -106,12 +116,12 @@ export function TabelaAdocao({ linhas, baseConfiavel }: { linhas: LinhaPainel[];
                       exigeBaseConfiavel: true,
                     });
                     const h = temHerdada(l) ? l.herdadas : null;
-                    const cp = h ? contagemPropria(l) : null;
+                    const cp = comHerdadas ? contagemPropria(l) : null;
                     const propria = cp
                       ? estadoTaxa(cp, l.taxa_ativa_propria, { baseConfiavel, exigeBaseConfiavel: false })
                       : null;
                     const histPropria =
-                      h && l.base_historico_propria
+                      comHerdadas && l.base_historico_propria
                         ? estadoTaxa(l.base_historico_propria, l.taxa_base_historico_propria, {
                             baseConfiavel,
                             exigeBaseConfiavel: true,

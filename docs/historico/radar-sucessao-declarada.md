@@ -272,7 +272,10 @@ fases `historico` e `sombra`. Exemplo do Codex: base com 1 sucesso e 1 fracasso 
 dá 91%; contra uma conversão própria de 50%, a tela sugeriria queda onde não houve. Separar uma fatia vale para
 o numerador **e** para cada régua com que ele é comparado. O Codex também apontou duas lacunas na prova: a linha
 ativa só herdada (denominador próprio 0, testado antes só com linha ausente) e o rollback da PÓS. Viraram H4b,
-com sabotagem do `NULLIF`, e M5.
+com sabotagem do `NULLIF`, e M5. Na 2ª rodada (também "aprovar com P2", sem P1) sobrou o mesmo erro um nível acima: a tela só
+mostrava as bases próprias quando havia herdada **ativa**. Com herança só no histórico ou na sombra, a comparação
+voltava a ser 50% × 91%. Agora a fatia aparece com herdada em qualquer régua (a base própria difere da total), e o
+cenário dele virou teste de tela. Esse último ajuste de tela não passou por uma 3ª rodada do Codex.
 
 ## Deploy
 🟣 founder: a migration no SQL Editor, depois conferir `db/validar-venda-painel-heranca.sql` via `psql-ro` (4 ✅).
