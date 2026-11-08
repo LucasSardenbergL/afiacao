@@ -17,6 +17,13 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
 import { ABRIR_CONSULTA_PEDIDOS } from "../_shared/sayerlack-portal-navegador.ts";
+import {
+  aplicarFiltrosConsultaDom,
+  clicarFiltrarDom,
+  lerCondicaoSelecionadaDom,
+  lerCondicoesOpcoesDom,
+  lerTabelaConsultaDom,
+} from "../_shared/sayerlack-portal-dom.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { lerPedidoPortal, mensagemErroImportacao, situacaoFaturada, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -42,6 +49,12 @@ export default async ({ page, context }) => {
   const trace = [];
   const t0 = Date.now();
   const classificarPosLogin = ${classificarPosLogin.toString()};
+  // Funções de PÁGINA (seletores) testadas contra HTML real: ../_shared/sayerlack-portal-dom.ts (8.2).
+  const aplicarFiltrosConsultaDom = ${aplicarFiltrosConsultaDom.toString()};
+  const clicarFiltrarDom = ${clicarFiltrarDom.toString()};
+  const lerTabelaConsultaDom = ${lerTabelaConsultaDom.toString()};
+  const lerCondicaoSelecionadaDom = ${lerCondicaoSelecionadaDom.toString()};
+  const lerCondicoesOpcoesDom = ${lerCondicoesOpcoesDom.toString()};
 
   const HARD_CEILING_MS = 150000;
   const RETURN_GUARD_MS = 2000;
@@ -85,22 +98,7 @@ ${ABRIR_CONSULTA_PEDIDOS}
     // Filtros: cliente OBEN, nº início = fim, só PEDIDO (não proposta), qualquer situação — o cancelado é LIDO e recusado
     // em Deno (./leitura.ts), para a tela dizer "cancelado" em vez de "não encontrado";
     // datas desde 2020 (o default é só o último mês).
-    const filtro = await page.evaluate((cod, nr) => {
-      const jq = window.jQuery;
-      const set = (sel, v) => {
-        const el = document.querySelector(sel);
-        if (!el) return false;
-        if (jq) { jq(el).val(v).trigger('change'); } else { el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); }
-        return true;
-      };
-      const r = {
-        cliente: set('#cliente', String(cod)), situacao: set('#situacao', 'todos'), exibir: set('#exibir', '1'),
-        ini: set('#num_ped_ini', String(nr)), fim: set('#num_ped_fim', String(nr)),
-        emissao: set('#data_emissao_ini', '2020-01-01'), entrega: set('#data_entrega_ini', '2020-01-01'),
-      };
-      const val = (sel) => { const el = document.querySelector(sel); return el ? String(el.value) : null; };
-      return { set: r, cliente: val('#cliente'), exibir: val('#exibir'), ini: val('#num_ped_ini'), fim: val('#num_ped_fim') };
-    }, clienteCodigo, protocolo);
+    const filtro = await page.evaluate(aplicarFiltrosConsultaDom, String(clienteCodigo), String(protocolo), String(protocolo), '2020-01-01');
     trace.push({ step: 'filtros', filtro, t: Date.now() - t0 });
     if (filtro.cliente !== String(clienteCodigo)) {
       return await falha('CLIENTE_INDISPONIVEL', 'Cliente ' + clienteCodigo + ' não está disponível no filtro da consulta', { filtro });
@@ -122,7 +120,7 @@ ${ABRIR_CONSULTA_PEDIDOS}
         (r) => r.url().indexOf('/order-viewer/form/list') !== -1 && r.request().method() === 'POST',
         { timeout: budgetFor('resposta-' + rotulo, 60000) },
       ).then((r) => ({ ok: true, status: r.status() })).catch((e) => ({ ok: false, erro: String((e && e.message) || e).substring(0, 120) }));
-      await page.evaluate(() => { const b = document.querySelector('#getFilterData'); if (b) b.click(); });
+      await page.evaluate(clicarFiltrarDom);
       return await resp;
     };
     let respConsulta = await clicarEsperar('1');
@@ -136,31 +134,7 @@ ${ABRIR_CONSULTA_PEDIDOS}
     }
 
     // Lê a tabela de resultado por NOME de coluna. Os cabeçalhos são campos de filtro: o nome mora no placeholder.
-    const lerConsulta = () => page.evaluate(() => {
-      const nomeTh = (th) => {
-        const inp = th.querySelector('input');
-        return ((th.innerText || '').trim() || (inp && inp.placeholder ? inp.placeholder.trim() : '') || (th.getAttribute('aria-label') || '').split(':')[0].trim());
-      };
-      const tabelas = Array.from(document.querySelectorAll('table'));
-      const t = tabelas.find((tb) => Array.from(tb.querySelectorAll('thead th')).some((th) => nomeTh(th).toLowerCase().indexOf('situa') !== -1));
-      if (!t) return { ok: false, headers: [], linhas: [], processando: false };
-      let headers = [];
-      Array.from(t.querySelectorAll('thead tr')).forEach((tr) => {
-        const hs = Array.from(tr.children).map(nomeTh);
-        if (hs.filter(Boolean).length > headers.filter(Boolean).length) headers = hs;
-      });
-      const linhas = Array.from(t.querySelectorAll('tbody tr'))
-        .filter((tr) => !tr.querySelector('td.dataTables_empty'))
-        .map((tr) => {
-          const tds = Array.from(tr.children);
-          const o = {};
-          headers.forEach((h, i) => { if (h && tds[i]) o[h] = (tds[i].innerText || '').split(String.fromCharCode(10)).join(' ').trim(); });
-          return o;
-        });
-      const proc = document.querySelector('.dataTables_processing');
-      const processando = !!proc && window.getComputedStyle(proc).display !== 'none';
-      return { ok: true, headers, linhas, processando };
-    });
+    const lerConsulta = () => page.evaluate(lerTabelaConsultaDom);
 
     let consulta = { ok: false, headers: [], linhas: [], processando: false };
     const tFiltro = Date.now();
@@ -220,18 +194,10 @@ ${ABRIR_CONSULTA_PEDIDOS}
         await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
           { waitUntil: 'domcontentloaded', timeout: budgetFor('goto-detalhe-condicao', 30000) });
       }
-      condicao = await page.waitForFunction(() => {
-        const sel = document.querySelector('#condicoes_pagamento');
-        const opt = sel && sel.selectedOptions && sel.selectedOptions[0];
-        const txt = opt ? String(opt.text || '').trim() : '';
-        return txt && txt.toLowerCase().indexOf('selecione') === -1 ? txt : false;
-      }, { timeout: budgetFor('condicao', 15000), polling: 250 }).then((h) => h.jsonValue()).catch(() => null);
+      condicao = await page.waitForFunction(lerCondicaoSelecionadaDom, { timeout: budgetFor('condicao', 15000), polling: 250 }).then((h) => h.jsonValue()).catch(() => null);
       trace.push({ step: 'condicao', condicao, t: Date.now() - t0 });
       // Lista de opções do select (só leitura): insumo do de-para condição do portal → Omie (D-2).
-      condicoesOpcoes = await page.evaluate(() => {
-        const sel = document.querySelector('#condicoes_pagamento');
-        return sel ? Array.from(sel.options).map((o) => String(o.text || '').trim()).slice(0, 80) : [];
-      }).catch(() => []);
+      condicoesOpcoes = await page.evaluate(lerCondicoesOpcoesDom).catch(() => []);
     }
 
     return {

@@ -208,3 +208,19 @@ Deno.test("pendência fora da janela com importação sem resposta: indeterminad
     if (!String(r.corpo.mensagem).includes("não sei se entraram")) throw new Error(`mensagem: ${r.corpo.mensagem}`);
     igual(falso.de(IMPORTADORA).length, 1, "uma sessão de importação");
   }));
+
+// 8.2: o script que VAI ao Browserless é JS válido e carrega as funções de página e o laço de paginação testados
+// contra HTML real (`scripts/sayerlack-portal-dom.test.ts`).
+Deno.test("script do Browserless parseia e embute as funções de página do _shared (8.2)", () =>
+  comRelogio(QUARTA, async () => {
+    const falso = montar({});
+    await varrer("listar");
+    const envios = falso.de(BROWSERLESS);
+    igual(envios.length >= 1, true, "chamou o Browserless");
+    const code = String((envios[0].corpo as { code: string }).code);
+    const fn = new Function(code.trim().replace(/^export default /, "return "))();
+    igual(typeof fn, "function", "o módulo exporta a função");
+    for (const nome of ["aplicarFiltrosConsultaDom", "clicarFiltrarDom", "clicarProximaPaginaDom", "lerSituacoesDom", "lerTabelaConsultaDom", "lerTodasAsPaginas"]) {
+      igual(code.includes(`function ${nome}(`), true, `embute ${nome}`);
+    }
+  }));

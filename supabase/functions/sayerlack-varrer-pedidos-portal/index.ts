@@ -22,6 +22,14 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
 import { ABRIR_CONSULTA_PEDIDOS } from "../_shared/sayerlack-portal-navegador.ts";
+import {
+  aplicarFiltrosConsultaDom,
+  clicarFiltrarDom,
+  clicarProximaPaginaDom,
+  lerSituacoesDom,
+  lerTabelaConsultaDom,
+  lerTodasAsPaginas,
+} from "../_shared/sayerlack-portal-dom.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { fetchAll } from "../_shared/paginate.ts";
@@ -88,6 +96,13 @@ export default async ({ page, context }) => {
   const trace = [];
   const t0 = Date.now();
   const classificarPosLogin = ${classificarPosLogin.toString()};
+  // Funções de PÁGINA (seletores) e o laço de paginação, testados contra HTML real: ../_shared/sayerlack-portal-dom.ts (8.2).
+  const aplicarFiltrosConsultaDom = ${aplicarFiltrosConsultaDom.toString()};
+  const clicarFiltrarDom = ${clicarFiltrarDom.toString()};
+  const clicarProximaPaginaDom = ${clicarProximaPaginaDom.toString()};
+  const lerSituacoesDom = ${lerSituacoesDom.toString()};
+  const lerTabelaConsultaDom = ${lerTabelaConsultaDom.toString()};
+  const lerTodasAsPaginas = ${lerTodasAsPaginas.toString()};
 
   const HARD_CEILING_MS = 150000;
   const RETURN_GUARD_MS = 2000;
@@ -127,28 +142,11 @@ export default async ({ page, context }) => {
     // === Login ===
 ${ABRIR_CONSULTA_PEDIDOS}
     // As situações que o portal oferece (para a lista fechada de importáveis ser decidida com o dado real).
-    const situacoes = await page.evaluate(() => Array.from(document.querySelectorAll('#situacao option'))
-      .map((o) => ({ valor: String(o.value), texto: (o.textContent || '').trim() })));
+    const situacoes = await page.evaluate(lerSituacoesDom);
 
     // Filtros: cliente OBEN, só PEDIDO (não proposta), qualquer situação (o cancelado é LIDO e descartado em Deno),
     // nº do pedido em branco, emissão desde o início da janela, entrega desde 2020 (o default é só o último mês).
-    const filtro = await page.evaluate((cod, desde) => {
-      const jq = window.jQuery;
-      const set = (sel, v) => {
-        const el = document.querySelector(sel);
-        if (!el) return false;
-        if (jq) { jq(el).val(v).trigger('change'); } else { el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); }
-        return true;
-      };
-      const r = {
-        cliente: set('#cliente', String(cod)), situacao: set('#situacao', 'todos'), exibir: set('#exibir', '1'),
-        ini: set('#num_ped_ini', ''), fim: set('#num_ped_fim', ''),
-        emissao: set('#data_emissao_ini', desde), entrega: set('#data_entrega_ini', '2020-01-01'),
-      };
-      const val = (sel) => { const el = document.querySelector(sel); return el ? String(el.value) : null; };
-      return { set: r, cliente: val('#cliente'), exibir: val('#exibir'), situacao: val('#situacao'),
-               emissao: val('#data_emissao_ini'), emissaoFim: val('#data_emissao_fim'), ini: val('#num_ped_ini') };
-    }, clienteCodigo, emissaoDesde);
+    const filtro = await page.evaluate(aplicarFiltrosConsultaDom, String(clienteCodigo), '', '', emissaoDesde);
     trace.push({ step: 'filtros', filtro, t: Date.now() - t0 });
     if (filtro.cliente !== String(clienteCodigo)) {
       return await falha('CLIENTE_INDISPONIVEL', 'Cliente ' + clienteCodigo + ' não está disponível no filtro da consulta', { filtro });
@@ -181,48 +179,12 @@ ${ABRIR_CONSULTA_PEDIDOS}
       return await resp;
     };
     const clicarFiltrar = () => { const b = document.querySelector('#getFilterData'); if (b) b.click(); };
-    let resp = await esperarConsulta('filtrar-1', clicarFiltrar);
-    if (!resp.ok) resp = await esperarConsulta('filtrar-2', clicarFiltrar);
+    let resp = await esperarConsulta('filtrar-1', clicarFiltrarDom);
+    if (!resp.ok) resp = await esperarConsulta('filtrar-2', clicarFiltrarDom);
     trace.push({ step: 'consulta_resposta', resp, t: Date.now() - t0 });
     if (!resp.ok) return await falha('CONSULTA_SEM_RESPOSTA', 'O portal não respondeu à consulta (2 tentativas)');
 
-    const lerPagina = () => page.evaluate(() => {
-      const nomeTh = (th) => {
-        const inp = th.querySelector('input');
-        return ((th.innerText || '').trim() || (inp && inp.placeholder ? inp.placeholder.trim() : '') || (th.getAttribute('aria-label') || '').split(':')[0].trim());
-      };
-      const t = Array.from(document.querySelectorAll('table')).find((tb) => Array.from(tb.querySelectorAll('thead th')).some((th) => nomeTh(th).toLowerCase().indexOf('situa') !== -1));
-      if (!t) return { ok: false, headers: [], linhas: [], processando: false, info: null, temProxima: false };
-      let headers = [];
-      Array.from(t.querySelectorAll('thead tr')).forEach((tr) => {
-        const hs = Array.from(tr.children).map(nomeTh);
-        if (hs.filter(Boolean).length > headers.filter(Boolean).length) headers = hs;
-      });
-      const linhas = Array.from(t.querySelectorAll('tbody tr'))
-        .filter((tr) => !tr.querySelector('td.dataTables_empty'))
-        .map((tr) => {
-          const tds = Array.from(tr.children);
-          const o = {};
-          headers.forEach((h, i) => { if (h && tds[i]) o[h] = (tds[i].innerText || '').split(String.fromCharCode(10)).join(' ').trim(); });
-          return o;
-        });
-      const proc = document.querySelector('.dataTables_processing');
-      const processando = !!proc && window.getComputedStyle(proc).display !== 'none';
-      // '.dataTables_info' nunca casou em 46 rodadas: o portal pode nomear o elemento pelo id da tabela ('<id>_info').
-      const infoEl = document.querySelector('.dataTables_info') || document.querySelector('[id$="_info"]') || document.querySelector('.dt-info');
-      const prox = document.querySelector('.paginate_button.next');
-      const temProxima = !!prox && !prox.classList.contains('disabled') && !(prox.parentElement && prox.parentElement.classList.contains('disabled'));
-      // Total pela API da instância DataTables DESTA tabela (page.info().recordsDisplay), sem depender do elemento visual.
-      let dtTotal = null;
-      try {
-        const jq = window.jQuery;
-        if (jq && jq.fn && jq.fn.dataTable && jq.fn.dataTable.isDataTable(t)) {
-          const pi = jq(t).DataTable().page.info();
-          if (pi && typeof pi.recordsDisplay === 'number') dtTotal = pi.recordsDisplay;
-        }
-      } catch (e) { dtTotal = null; }
-      return { ok: true, headers, linhas, processando, info: infoEl ? (infoEl.innerText || '').trim() : null, temProxima, dtTotal };
-    });
+    const lerPagina = () => page.evaluate(lerTabelaConsultaDom);
     const lerEstavel = async () => {
       let p = { ok: false, headers: [], linhas: [], processando: true, info: null, temProxima: false };
       for (let i = 0; i < 20; i++) {
@@ -235,28 +197,21 @@ ${ABRIR_CONSULTA_PEDIDOS}
       return null;
     };
 
-    const linhas = [];
-    let pagina = await lerEstavel();
-    if (!pagina) return await falha('CONSULTA_ILEGIVEL', 'Tabela da consulta não estabilizou (ausente ou processando)');
-    const headers = pagina.headers;
-    const infoInicial = pagina.info;
-    const dtTotalInicial = pagina.dtTotal;
-    linhas.push(...pagina.linhas);
-    let paginas = 1;
-    while (pagina.temProxima && paginas < 30) {
-      const r = await esperarConsulta('pagina-' + (paginas + 1), () => {
-        const b = document.querySelector('.paginate_button.next');
-        const a = b && (b.tagName === 'A' ? b : (b.querySelector('a') || b));
-        if (a) a.click();
-      });
-      if (!r.ok) return await falha('PAGINACAO_SEM_RESPOSTA', 'O portal não respondeu à página ' + (paginas + 1), { paginas, n_linhas: linhas.length });
-      pagina = await lerEstavel();
-      if (!pagina) return await falha('PAGINACAO_ILEGIVEL', 'Página ' + (paginas + 1) + ' da consulta não estabilizou', { paginas, n_linhas: linhas.length });
-      linhas.push(...pagina.linhas);
-      paginas++;
-    }
+    const lida = await lerTodasAsPaginas(
+      lerEstavel,
+      (n) => esperarConsulta('pagina-' + n, clicarProximaPaginaDom),
+      30,
+    );
+    if (!lida.ok && lida.erroTipo === 'CONSULTA_ILEGIVEL') return await falha('CONSULTA_ILEGIVEL', 'Tabela da consulta não estabilizou (ausente ou processando)');
+    const linhas = lida.linhas;
+    const paginas = lida.paginas;
+    if (!lida.ok && lida.erroTipo === 'PAGINACAO_SEM_RESPOSTA') return await falha('PAGINACAO_SEM_RESPOSTA', 'O portal não respondeu à página ' + (paginas + 1), { paginas, n_linhas: linhas.length });
+    if (!lida.ok && lida.erroTipo === 'PAGINACAO_ILEGIVEL') return await falha('PAGINACAO_ILEGIVEL', 'Página ' + (paginas + 1) + ' da consulta não estabilizou', { paginas, n_linhas: linhas.length });
+    const headers = lida.primeira.headers;
+    const infoInicial = lida.primeira.info;
+    const dtTotalInicial = lida.primeira.dtTotal;
     trace.push({ step: 'consulta_lida', headers, paginas, n_linhas: linhas.length, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, dt_total: dtTotalInicial, t: Date.now() - t0 });
-    if (pagina.temProxima) return await falha('PAGINACAO_INCOMPLETA', 'Mais de 30 páginas na consulta — lista não lida inteira', { paginas });
+    if (!lida.ok) return await falha('PAGINACAO_INCOMPLETA', 'Mais de 30 páginas na consulta — lista não lida inteira', { paginas });
 
     return {
       data: { success: true, headers, linhas, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, dt_total: dtTotalInicial, paginas, situacoes, filtro, trace },
