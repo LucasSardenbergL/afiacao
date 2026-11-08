@@ -417,6 +417,8 @@ sabota() { # $1 = sed · $2 = arquivo (padrão: a migration do corpo VIVO, $MIG2
   local alvo="${2:-$MIG2}"
   sed -e "$1" "$alvo" > "$SAB"
   if cmp -s "$alvo" "$SAB"; then echo "  ❌ sabotagem NÃO casou o padrão ($1) — falsificação seria teatro"; FAIL=$((FAIL+1)); return 1; fi
+  # A postcondição da MIG2 exige o "30 DIAS → A30" de antes da MIG3 (que o troca por T54).
+  if [ "$alvo" = "$MIG2" ]; then P -q -c "DELETE FROM public.sayerlack_condicao_portal_de_para WHERE condicao_portal = '30 DIAS'"; fi
   P -q -f "$SAB"
 }
 # A postcondição da MIG2 exige o "30 DIAS → A30" de então: a linha volta ao estado de antes da MIG3 para reaplicá-las.
