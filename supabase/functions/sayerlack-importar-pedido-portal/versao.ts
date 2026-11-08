@@ -43,7 +43,11 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * regravada 1× se falhar e no ledger (B3); #id nunca se perde (B7); 1ª importação grava a situação (B10); opções de
  * condição no ledger (B11). Migration 20261109120000 (B13) antes.
  */
-export const VERSAO = "v1.7-revisao-2-situacao-reconhecida";
+/**
+ * v1.8 (2026-11-08, revisão 2, 8.2) — funções de PÁGINA (filtros, tabela da consulta, condição) saem do template para
+ * `_shared/sayerlack-portal-dom.ts`, testadas contra HTML real; comportamento igual.
+ */
+export const VERSAO = "v1.8-seletores-testados";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
