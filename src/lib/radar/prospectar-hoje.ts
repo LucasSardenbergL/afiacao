@@ -45,6 +45,11 @@ export interface LeadProspectarHoje {
   atribuido: boolean;
   /** Posse ativa do PRÓPRIO vendedor, se a RPC a devolver marcada (o pacote E a tira do card; aceito os dois). */
   comVoce: boolean;
+  /** Todo contato do lead parece ser da contabilidade (migration 20261109140000): o card manda VISITAR, não ligar.
+   *  RPC anterior ao campo = false (o card de antes). */
+  visitar: boolean;
+  /** Endereço para a visita — só quando `visitar`. */
+  endereco: string | null;
 }
 
 export interface ProspectarHoje {
@@ -96,6 +101,8 @@ export function lerProspectarHoje(data: unknown, origem: string): ProspectarHoje
       elegiveis,
       atribuido: l.atribuido === true,
       comVoce: l.com_voce === true,
+      visitar: l.visitar === true,
+      endereco: l.visitar === true ? texto(l.endereco) : null,
     };
   });
 

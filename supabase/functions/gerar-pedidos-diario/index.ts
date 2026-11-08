@@ -9,6 +9,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { hojeSP } from "../_shared/hoje-sp.ts";
 import { digestSuprimidoNoDia } from "./digest-dia.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { blocoRaioXHtml, lerResumoRaioX, type ResumoRaioX } from "./raio-x-email.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -70,6 +71,7 @@ function buildEmailHtml(
   dataCiclo: string,
   rpc: RpcResult,
   pedidos: PedidoResumo[],
+  raioX: ResumoRaioX,
 ): string {
   const bloqueados = pedidos.filter((p) => p.status === "bloqueado_guardrail");
   const pendentes = pedidos.filter((p) => p.status === "pendente_aprovacao");
@@ -158,6 +160,8 @@ function buildEmailHtml(
     <p style="margin:0 0 20px;color:#6b7280;font-size:13px;">Empresa: <strong>${empresa}</strong> · Janela de override até 09:30 BRT</p>
 
     ${banner}
+
+    ${blocoRaioXHtml(raioX, APP_URL)}
 
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:separate;border-spacing:6px 0;margin-bottom:24px;">
       <tr>
@@ -361,8 +365,11 @@ Deno.serve(async (req: Request) => {
 
     const domingo = digestSuprimidoNoDia(dataCiclo);
 
+    // Bloco do Raio-X (adoção): só lido quando o digest vai sair. Nunca derruba o e-mail (degrada para "indisponível").
+    let raioX: ResumoRaioX | null = null;
     if (recipient && resendKey && !intraday && !domingo) {
-      const html = buildEmailHtml(empresa, dataCiclo, rpc, pedidosList);
+      raioX = await lerResumoRaioX(db, empresa);
+      const html = buildEmailHtml(empresa, dataCiclo, rpc, pedidosList, raioX);
       const subject = rpc.bloqueados > 0
         ? `⚠ ${empresa} — ${rpc.pedidos_gerados} pedidos (${rpc.bloqueados} bloqueados) — ${dataCiclo}`
         : `${empresa} — ${rpc.pedidos_gerados} pedidos sugeridos — ${dataCiclo}`;
@@ -422,6 +429,7 @@ Deno.serve(async (req: Request) => {
         email_recipient: recipient ?? null,
         email_detail: emailDetail,
         promocoes: promoSummary,
+        raio_x: raioX,
       },
     });
 

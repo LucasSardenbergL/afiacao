@@ -591,3 +591,44 @@ export function entregaCobertaPeloSync(dataEntregaISO: string | null, hojeISO: s
   return d >= somarDias(hojeISO, -(JANELA_PASSADO_INCREMENTAL_DIAS - FOLGA_COBERTURA_DIAS)) &&
     d <= somarDias(hojeISO, JANELA_FUTURO_DIAS - FOLGA_COBERTURA_DIAS);
 }
+
+// ── Onda 5A fatia 2 (2026-11-08): cobertura da situação dos pedidos com compra em aberto ───────────────────────────
+
+/** Linha de `sayerlack_cobertura_situacao_portal()`: pedido com PO ainda não faturado nem encerrado no espelho. */
+export interface PedidoACobrir {
+  pedido_id: number;
+  protocolo: string;
+  enviado_em: string | null;
+  observado_ate: string | null;
+}
+
+/** Folga antes do envio: a emissão no portal pode ser do dia anterior ao carimbo do app. */
+const FOLGA_EMISSAO_COBERTURA_DIAS = 3;
+/** Teto da leitura estendida da cobertura: PO sem faturar há mais que isso vira pendência do vigia, não leitura infinita. */
+const COBERTURA_MAX_DIAS = 90;
+
+/**
+ * O que a cobertura precisa reler hoje (Codex desenho P1 #3): os pedidos sem leitura do SEU protocolo desde o início do
+ * dia em SP. A 1ª rodada do dia (12:30) relê; as seguintes só se algo ficou para trás. A emissão mais antiga define a
+ * leitura estendida (sem data ⇒ o teto); além do teto (90 dias), o pedido fica de fora e o vigia cobra.
+ */
+export function coberturaPendente(
+  linhas: readonly PedidoACobrir[],
+  inicioDoDiaISO: string,
+  hojeISO: string,
+): { emissaoDesde: string | null; pendentes: PedidoACobrir[]; foraDoAlcance: PedidoACobrir[] } {
+  const limite = inicioDaJanela(hojeISO, COBERTURA_MAX_DIAS);
+  const inicio = Date.parse(inicioDoDiaISO);
+  const pendentes: PedidoACobrir[] = [];
+  const foraDoAlcance: PedidoACobrir[] = [];
+  let emissaoDesde: string | null = null;
+  for (const l of linhas) {
+    const lido = l.observado_ate ? Date.parse(l.observado_ate) : NaN;
+    if (Number.isFinite(lido) && lido >= inicio) continue;
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(l.enviado_em ?? "") ? somarDias(l.enviado_em as string, -FOLGA_EMISSAO_COBERTURA_DIAS) : limite;
+    if (desde < limite) { foraDoAlcance.push(l); continue; }
+    pendentes.push(l);
+    if (emissaoDesde === null || desde < emissaoDesde) emissaoDesde = desde;
+  }
+  return { emissaoDesde, pendentes, foraDoAlcance };
+}

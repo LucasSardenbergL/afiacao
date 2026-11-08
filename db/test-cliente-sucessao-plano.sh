@@ -547,6 +547,9 @@ cenario() {
   segurar "pg_advisory_xact_lock(hashtext('venda_gerar_lista'))" 3 || true
   chk CL1 "concorrência: com o GERADOR rodando em outra sessão, a drenagem do cron sai NA HORA, sem drenar" \
     "$(Q "SELECT private.venda_sugestoes_drenar_reprocesso() || '/' || (extract(epoch FROM clock_timestamp() - now()) < 1)")/$(Q "SELECT count(*) FROM private.venda_sugestoes_reprocesso_fila WHERE processado_em IS NULL")" "0/true/1"
+  # O CL1 já provou o que importa; segurar os 3 s inteiros só parava o relógio. Encerra a sessão da trava
+  # (o advisory xact lock sai com ela) e espera o fim dela — mesmo efeito do COMMIT para o CL1b.
+  Q "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND query LIKE '%pg_sleep(3)%'" > /dev/null
   wait "$SEGURA_PID" || true
   chk CL1b "e o pedido drena quando o gerador solta" "$(drenar)" "1"
   chk Z2 "nada herdado de E1" "$(lin "sucessao_evento_id = '$E1'")" "0"
@@ -572,10 +575,17 @@ cenario() {
   E5="$(declarar "$DQ" "$DN5" cisao -60)"
   chk CC0 "E5 (destino sem cadastro) publicado e drenado: o alheio segue com 3001, a nova sem nada" \
     "$(publicar "$E5" 0 "[$(item oben 3001 "$DN5")]" ok)/$(drenar)/$(codigos "$UQ")/$(codigos "$UN5")" "true/1/3001/"
-  # o cálculo fica lento (2 s) só aqui: a lista é a mesma, a janela da corrida fica larga e determinística
-  Q "DO \$s\$ DECLARE r text := pg_get_function_result('public.venda_cidades_alvo(date)'::regprocedure); BEGIN
+  # o cálculo fica PARADO só aqui: a lista é a mesma, e a janela da corrida fica aberta até o shell levantar a
+  # bandeira (depois do cadastro no meio), com teto de 2 s — antes era `pg_sleep(2)` fixo por passagem.
+  Q "DROP TABLE IF EXISTS public._t_bandeira_cc; CREATE TABLE public._t_bandeira_cc (x int);
+     DO \$s\$ DECLARE r text := pg_get_function_result('public.venda_cidades_alvo(date)'::regprocedure); BEGIN
        ALTER FUNCTION public.venda_cidades_alvo(date) RENAME TO venda_cidades_alvo_rapida;
-       EXECUTE format('CREATE FUNCTION public.venda_cidades_alvo(p date) RETURNS %s LANGUAGE plpgsql AS \$f\$ BEGIN PERFORM pg_sleep(2); RETURN QUERY SELECT * FROM public.venda_cidades_alvo_rapida(p); END \$f\$', r);
+       EXECUTE format('CREATE FUNCTION public.venda_cidades_alvo(p date) RETURNS %s LANGUAGE plpgsql AS \$f\$
+         DECLARE t0 timestamptz := clock_timestamp(); BEGIN
+           WHILE NOT EXISTS (SELECT 1 FROM public._t_bandeira_cc) AND clock_timestamp() - t0 < interval ''2 seconds'' LOOP
+             PERFORM pg_sleep(0.01);
+           END LOOP;
+           RETURN QUERY SELECT * FROM public.venda_cidades_alvo_rapida(p); END \$f\$', r);
      END \$s\$" > /dev/null
   Q "INSERT INTO private.venda_sugestoes_reprocesso_fila (evento_id, motivo) VALUES ('$E5', 'estado_mudou')" > /dev/null
   P -v ON_ERROR_STOP=1 -tA -q -c "SELECT private.venda_sugestoes_drenar_reprocesso()" > "$TMPD/cc.out" 2>&1 &
@@ -589,8 +599,9 @@ cenario() {
     "$(q_como authenticated "$GER" "SELECT (r ->> 'ok') || '/' || (extract(epoch FROM clock_timestamp() - now()) < 1)
          FROM (SELECT public.cliente_declarar_sucessao('$D6A', '$D6N', 'cisao', (SELECT hoje - 60 FROM public.t_cfg), $(versao)) AS r) x")" "true/true"
   Q "INSERT INTO public.profiles (user_id, name, document) VALUES ('$UN5', 'NOVA CINCO', '$DN5')" > /dev/null   # cadastra NO MEIO
+  Q "INSERT INTO public._t_bandeira_cc VALUES (1)" > /dev/null   # só agora o cálculo segue
   CC_RC=0; wait "$SEGURA_PID" || CC_RC=$?
-  Q "DROP FUNCTION public.venda_cidades_alvo(date); ALTER FUNCTION public.venda_cidades_alvo_rapida(date) RENAME TO venda_cidades_alvo" > /dev/null
+  Q "DROP FUNCTION public.venda_cidades_alvo(date); ALTER FUNCTION public.venda_cidades_alvo_rapida(date) RENAME TO venda_cidades_alvo; DROP TABLE public._t_bandeira_cc" > /dev/null
   chk CC1c "a 1ª drenagem foi vista DENTRO do cálculo, terminou (exit 0, processou 1) e deixou a assinatura vista ≠ a atual" \
     "$PRONTO/$CC_RC/$(tr -d '\n' < "$TMPD/cc.out")/$(Q "SELECT (SELECT assinatura FROM private.cliente_sucessao_estado_visto WHERE evento_id = '$E5')
             IS DISTINCT FROM (SELECT assinatura FROM private.cliente_sucessao_assinaturas($H) WHERE evento_id = '$E5')")" "1/0/1/t"

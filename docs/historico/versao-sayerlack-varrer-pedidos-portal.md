@@ -40,3 +40,11 @@ pedido sem PO espera o sync do espelho terminar depois da última mudança (+5 m
 importação sem resposta com contrato vira pendência durável sem e-mail e deixa a rodada vermelha (B6/B7); `modo=listar`
 registra em `reposicao.listar_portal_sayerlack`, fora do vigia do data_health (B9).
 ```
+
+```text
+v1.9 (2026-11-08) — Onda 5A fatia 2, 5.4 + cobertura: passo 8 relê, 1×/dia, a situação dos pedidos com PO ainda não
+faturado nem encerrado no espelho (sayerlack_cobertura_situacao_portal — a mesma fonte que o vigia
+sayerlack_cancelado_com_po cobra), com leitura estendida desde a emissão mais antiga − 3 dias (teto 90). O 6 gravado
+num pedido com PO abre o incidente da 5.4 (trigger). Toda falha da cobertura (sem tempo, leitura sem prova, protocolo
+que não apareceu, fora do alcance) deixa a rodada vermelha.
+```

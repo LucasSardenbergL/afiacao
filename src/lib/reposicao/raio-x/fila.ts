@@ -32,6 +32,15 @@ export function proximoDaFila(fila: Pick<ItemRaioX, 'sku_codigo_omie'>[], atual:
   return depois ? depois.sku_codigo_omie : skus[0];
 }
 
+/** Origens de visita aceitas no sensor `reposicao.raio_x_aberta` (allowlist: texto livre da URL nunca vai ao ledger). */
+const ORIGENS_VISITA = ['email'] as const;
+export type OrigemVisita = (typeof ORIGENS_VISITA)[number];
+
+/** `?origem=` da URL → origem conhecida, ou `null` (ausente/desconhecida = visita sem origem, como antes). */
+export function origemDaVisita(bruto: string | null): OrigemVisita | null {
+  return (ORIGENS_VISITA as readonly string[]).includes(bruto ?? '') ? (bruto as OrigemVisita) : null;
+}
+
 export interface ProdutoCadastro {
   codigo: string | null;
   descricao: string | null;

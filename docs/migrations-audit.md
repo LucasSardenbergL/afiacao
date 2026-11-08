@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **809** custom migrations totais
-- **2688** objetos esperados (criados por estas migrations)
+- **812** custom migrations totais
+- **2712** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1052
+  - `function`: 1067
   - `rls_policy`: 519
-  - `index`: 380
-  - `table`: 247
-  - `cron_job`: 215
+  - `index`: 383
+  - `table`: 252
+  - `cron_job`: 216
   - `trigger`: 136
   - `view`: 135
   - `enum_value`: 4
@@ -6617,6 +6617,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_prospectar_hoje` | — |
 | `function` | `public.radar_email_semanal_painel` | — |
 
+### `20261107233000_radar_funil_painel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_registrar_ficha_entregue` | — |
+| `function` | `public.radar_registrar_falha_sensor` | — |
+| `function` | `public.radar_funil` | — |
+| `table` | `public.radar_sensor_falhas` | — |
+| `table` | `public.radar_funil_sensores` | — |
+| `index` | `public.idx_radar_sensor_falhas_dia` | `radar_sensor_falhas` |
+| `index` | `public.idx_radar_empresas_omie_cadastrado_em` | `radar_empresas` |
+
 ### `20261108000000_cliente_sucessao_consumidores.sql`
 
 | Tipo | Objeto | Parent |
@@ -6654,9 +6666,35 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.sayerlack_painel_portal` | — |
 
+### `20261109120000_sayerlack_condicao_sem_c.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20261109130000_ipi_aliquota_ncm_seed_nf_omie.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261109140000_radar_contato_contabil.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_tel_valor` | — |
+| `function` | `private.radar_email_valor` | — |
+| `function` | `private.radar_email_motivos_proprios` | — |
+| `function` | `public.radar_contato_contabil_recalcular` | — |
+| `function` | `private.radar_contato_contabil_avaliar` | — |
+| `function` | `private.radar_contato_visitar` | — |
+| `function` | `private.radar_contato_do_lead` | — |
+| `function` | `public.radar_contato_contabil_da_empresa` | — |
+| `function` | `public.radar_contato_contabil_corrigir` | — |
+| `function` | `public.radar_lista` | — |
+| `function` | `public.radar_avisar_vendedores` | — |
+| `function` | `public.radar_prospectar_hoje` | — |
+| `table` | `public.radar_contato_contabil` | — |
+| `table` | `public.radar_contato_contabil_estado` | — |
+| `table` | `public.radar_contato_contabil_correcoes` | — |
+| `index` | `public.idx_radar_contato_contabil_correcoes_contato` | `radar_contato_contabil_correcoes` |
+| `cron_job` | `cron.radar-contato-contabil-diario` | — |
 
 ## Próximos passos por status
 

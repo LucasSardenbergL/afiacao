@@ -416,6 +416,13 @@ Adendo: `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Importar **v
 - **Provas**: harness `db/test-sayerlack-importar-pedido-portal.sh` 117/117 em `C` e `pt_BR.UTF-8` (9 asserts B13 +
   falsificação F19: de-para de volta em (C) ⇒ a postcondição aborta e "30 DIAS" vai para A30); Deno 55 (6 sabotagens vermelhas com
   controle verde antes e depois); `test:edges` 2429.
+- **No ar (2026-11-08):** #3718 mergeado 02:11Z. Migration `20261109120000` pelo envelope (tentativa #984, sha256
+  `068721db…`; psql-ro: "30 DIAS" → T54 "Para 30 dias" ativo, 0 de-para em "(C)"). Edges em 2 ondas pelo pacote
+  (`deploy-ordem.json`): importar **v1.7** (sonda #986, DEPLOY CONFIRMADO, fonte `0eca00d2…`) e, com a observação
+  envelhecida, varrer **v1.8** (sonda #988, DEPLOY CONFIRMADO, fonte `1251919f…`). Custo 0,8 + 0,9 crédito. O sensor de
+  edição deu `EDICAO_DETECTADA` na 1ª onda só porque a resposta trouxe `commit_sha` = o commit TOLERADO do bot
+  (`5e197ea43`, `types.ts` regenerado com as tabelas `radar_contato_*` de outra sessão; 0 arquivo fora dos gerados) —
+  falso positivo, nada revertido.
 
 
 ## Revisão 2, Sessão B parte 2: card do portal só verde com prova (Onda 6, 2026-11-08)
@@ -474,3 +481,51 @@ As mesmas NFs têm itens a 6,5% e 3,25% (CST 50), então a alíquota zero não �
 **Deploy (2026-11-08):** #3717 mergeado; migration `20261109130000` aplicada pelo envelope (ensaio ok → tentativa
 **#979**, recibo na mesma transação). Validação por psql-ro: os 5 NCMs com a alíquota medida (`fonte = nf`); o sensor de
 SKUs Sayerlack ativos sem alíquota caiu de 13 para **4** (39073022, 49111090, 29163990, 32071090, sem compra em 180 d).
+
+## Onda 5A fatia 2 — 5.3: "Encerrar — cancelado no fornecedor" (2026-11-08)
+
+Pedido aceito no portal (`sucesso_portal`, protocolo), sem PO, que a Sayerlack cancelou (6 gravado pela fatia 1) ficava
+para sempre aguardando disparo: o claim recusa o 6, `cancelar_pedido_sugerido` recusa `sucesso_portal` e
+`corrigir_cancelamento_pos_disparo` só aceita `disparado`. Sobrava o UPDATE cru de staff, sem trilha.
+
+- **Migration `20261110100000`**: porta única `sayerlack_encerrar_cancelado_no_portal` (service_role; master pelo
+  `has_role`; revalida sob FOR UPDATE: OBEN, protocolo, `sucesso_portal`, sem PO, 6 do protocolo atual, **nenhuma
+  pendência de disparo, de qualquer idade**, nada no espelho do Omie por `AFI-<id>` ou contrato; exige a prova
+  `ausente` do `AFI-<id>`), trilha imutável `sayerlack_encerramento_cancelado_portal` e guarda na TABELA: pedido com
+  protocolo e sem PO não vira `cancelad%` nem é apagado fora da porta (predicado pelo protocolo, imutável — trocar
+  `status`/`status_envio_portal` antes não fura). Medido: nenhum escritor legítimo fazia essa transição/DELETE.
+- **Edge nova `sayerlack-encerrar-cancelado-portal` v1.0** (não uma ação no disparador: um bundle velho do disparador
+  que recebesse `{acao, pedido_id}` cairia no fluxo de DISPARO). Gate canônico para a sonda; a ação exige JWT de master.
+  Consulta dirigida `ConsultarPedCompra` por `AFI-<id>`: só fault em formato ESTRITO e ancorado que nega o pedido e cita
+  o código vira "ausente" (sem amostra real no banco — o fault cru vai para a trilha); PO devolvido = recusa; o resto =
+  indeterminado, nada muda. Registro em `acoes_execucoes` (`reposicao.encerrar_cancelado_portal`).
+- **Front**: botão no detalhe do pedido, só master e só no caso exato; justificativa obrigatória; resposta sem contrato
+  = "reabra para conferir", nunca "encerrado".
+- **Codex**: desenho (6 achados: claim velho com retry em voo, contorno do trigger em 2 instruções, regex frouxa,
+  cobertura e aviso persistente da 5.4) + código (P1 fault frouxo; P2 prova truncada, mensagem do PO existente) —
+  todos aplicados. Prova PG17 `db/test-sayerlack-encerrar-cancelado-portal.sh`: 34 asserts nos dois locales,
+  10 sabotagens vermelhas no assert certo; Deno 14 (handler com o harness + decisão).
+- Fora (follow-up): staff gravar PO falso numa instrução e cancelar na seguinte (resíduo aceito); 5.4 + cobertura no
+  PR seguinte (incidente persistido por pedido, cobertura dos pedidos não faturados no espelho).
+
+## Onda 5A fatia 2 — 5.4 + cobertura: cancelado no portal com compra viva (2026-11-08)
+
+Pedido com PO que a Sayerlack cancela no portal: o detalhe avisava, mas ninguém abre o detalhe; e a varredura só lia a
+situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, cancelado hoje, nunca era observado.
+
+- **Migration `20261110120000`** (depende da `20261110100000` da 5.3 aplicada antes: o compute lê a trilha dela):
+  incidente persistido `sayerlack_incidente_cancelado_com_po` (1 aberto por pedido; trava só-resolve), aberto por
+  TRIGGER no pedido — 6 sobre PO, PO sobre 6 e 6 sobre **pendência de disparo** (o PO pode existir com a resposta
+  perdida) — e no espelho do Omie (PO que aparece depois de um encerramento da 5.3; fail-open para o sync). Uma leitura
+  posterior com outro código não fecha: só a porta `corrigir_cancelamento_pos_disparo` (GUC) ou
+  `sayerlack_resolver_incidente_cancelado_com_po` (master, justificativa). Cobertura
+  `sayerlack_cobertura_situacao_portal()` = pedidos com protocolo e PO não faturado nem encerrado no espelho (10 em
+  prod, 29/10–05/11). Source **`sayerlack_cancelado_com_po`** (35º) no trio: broken com incidente aberto (message cita
+  o mais recente → e-mail por incidente novo), stale se algum pedido da cobertura não tem leitura do protocolo no dia
+  útil exigido (régua da Onda 4).
+- **Varredura v1.9**: passo 8 relê 1×/dia a situação da cobertura (leitura estendida desde a emissão mais antiga − 3
+  dias, teto 90), também na rodada bloqueada; qualquer falha deixa a rodada vermelha.
+- **Codex**: desenho + 2 rodadas de código (P1: pendência de disparo, espelho só calculado, rodada bloqueada pulando a
+  cobertura) — aplicados; P2 aceito: dois incidentes entre execuções do watchdog dão 1 e-mail (o probable_cause lista
+  todos). Prova PG17 `db/test-sayerlack-cancelado-com-compra-viva.sh`: 47 asserts nos dois locales, 20 sabotagens
+  vermelhas; vizinhos do trio (10 provas de data_health/tint/fin) verdes.

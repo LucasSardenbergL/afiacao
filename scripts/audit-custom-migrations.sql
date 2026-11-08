@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 809
+-- Total de custom migrations: 812
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -872,12 +872,15 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261107220000', 'data_health_sayerlack_varredura_portal', '20261107220000_data_health_sayerlack_varredura_portal.sql'),
   ('20261107220500', 'radar_meu_territorio', '20261107220500_radar_meu_territorio.sql'),
   ('20261107230000', 'radar_distribuicao_pacote_e', '20261107230000_radar_distribuicao_pacote_e.sql'),
+  ('20261107233000', 'radar_funil_painel', '20261107233000_radar_funil_painel.sql'),
   ('20261108000000', 'cliente_sucessao_consumidores', '20261108000000_cliente_sucessao_consumidores.sql'),
   ('20261108010000', 'venda_painel_heranca', '20261108010000_venda_painel_heranca.sql'),
   ('20261108120000', 'sayerlack_situacao_portal_no_pedido', '20261108120000_sayerlack_situacao_portal_no_pedido.sql'),
   ('20261108120001', 'tint_drop_idx_nome_cor', '20261108120001_tint_drop_idx_nome_cor.sql'),
   ('20261109100000', 'sayerlack_painel_portal_v2', '20261109100000_sayerlack_painel_portal_v2.sql'),
-  ('20261109130000', 'ipi_aliquota_ncm_seed_nf_omie', '20261109130000_ipi_aliquota_ncm_seed_nf_omie.sql')
+  ('20261109120000', 'sayerlack_condicao_sem_c', '20261109120000_sayerlack_condicao_sem_c.sql'),
+  ('20261109130000', 'ipi_aliquota_ncm_seed_nf_omie', '20261109130000_ipi_aliquota_ncm_seed_nf_omie.sql'),
+  ('20261109140000', 'radar_contato_contabil', '20261109140000_radar_contato_contabil.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3516,6 +3519,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_avisar_vendedores', ''),
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_prospectar_hoje', ''),
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_email_semanal_painel', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_registrar_ficha_entregue', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_registrar_falha_sensor', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_funil', ''),
+  ('radar_funil_painel', 'table', 'public', 'radar_sensor_falhas', ''),
+  ('radar_funil_painel', 'table', 'public', 'radar_funil_sensores', ''),
+  ('radar_funil_painel', 'index', 'public', 'idx_radar_sensor_falhas_dia', 'radar_sensor_falhas'),
+  ('radar_funil_painel', 'index', 'public', 'idx_radar_empresas_omie_cadastrado_em', 'radar_empresas'),
   ('cliente_sucessao_consumidores', 'function', 'private', '_venda_sugestoes_json', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'venda_heranca_comprador', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'cliente_sucessao_plano_itens', ''),
@@ -3527,7 +3537,24 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_escritor_unico', 'pedido_compra_sugerido'),
   ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido'),
   ('tint_drop_idx_nome_cor', 'index', 'public', 'idx_tint_formulas_nome_cor', 'tint_formulas'),
-  ('sayerlack_painel_portal_v2', 'function', 'public', 'sayerlack_painel_portal', '')
+  ('sayerlack_painel_portal_v2', 'function', 'public', 'sayerlack_painel_portal', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_tel_valor', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_email_valor', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_email_motivos_proprios', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_contato_contabil_recalcular', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_contato_contabil_avaliar', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_contato_visitar', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_contato_do_lead', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_contato_contabil_da_empresa', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_contato_contabil_corrigir', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_lista', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_contato_contabil', 'table', 'public', 'radar_contato_contabil', ''),
+  ('radar_contato_contabil', 'table', 'public', 'radar_contato_contabil_estado', ''),
+  ('radar_contato_contabil', 'table', 'public', 'radar_contato_contabil_correcoes', ''),
+  ('radar_contato_contabil', 'index', 'public', 'idx_radar_contato_contabil_correcoes_contato', 'radar_contato_contabil_correcoes'),
+  ('radar_contato_contabil', 'cron_job', 'cron', 'radar-contato-contabil-diario', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6214,6 +6241,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_avisar_vendedores', ''),
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_prospectar_hoje', ''),
   ('radar_distribuicao_pacote_e', 'function', 'public', 'radar_email_semanal_painel', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_registrar_ficha_entregue', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_registrar_falha_sensor', ''),
+  ('radar_funil_painel', 'function', 'public', 'radar_funil', ''),
+  ('radar_funil_painel', 'table', 'public', 'radar_sensor_falhas', ''),
+  ('radar_funil_painel', 'table', 'public', 'radar_funil_sensores', ''),
+  ('radar_funil_painel', 'index', 'public', 'idx_radar_sensor_falhas_dia', 'radar_sensor_falhas'),
+  ('radar_funil_painel', 'index', 'public', 'idx_radar_empresas_omie_cadastrado_em', 'radar_empresas'),
   ('cliente_sucessao_consumidores', 'function', 'private', '_venda_sugestoes_json', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'venda_heranca_comprador', ''),
   ('cliente_sucessao_consumidores', 'function', 'public', 'cliente_sucessao_plano_itens', ''),
@@ -6225,7 +6259,24 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_escritor_unico', 'pedido_compra_sugerido'),
   ('sayerlack_situacao_portal_no_pedido', 'trigger', 'public', 'trg_situacao_portal_trava_protocolo', 'pedido_compra_sugerido'),
   ('tint_drop_idx_nome_cor', 'index', 'public', 'idx_tint_formulas_nome_cor', 'tint_formulas'),
-  ('sayerlack_painel_portal_v2', 'function', 'public', 'sayerlack_painel_portal', '')
+  ('sayerlack_painel_portal_v2', 'function', 'public', 'sayerlack_painel_portal', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_tel_valor', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_email_valor', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_email_motivos_proprios', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_contato_contabil_recalcular', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_contato_contabil_avaliar', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_contato_visitar', ''),
+  ('radar_contato_contabil', 'function', 'private', 'radar_contato_do_lead', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_contato_contabil_da_empresa', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_contato_contabil_corrigir', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_lista', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_avisar_vendedores', ''),
+  ('radar_contato_contabil', 'function', 'public', 'radar_prospectar_hoje', ''),
+  ('radar_contato_contabil', 'table', 'public', 'radar_contato_contabil', ''),
+  ('radar_contato_contabil', 'table', 'public', 'radar_contato_contabil_estado', ''),
+  ('radar_contato_contabil', 'table', 'public', 'radar_contato_contabil_correcoes', ''),
+  ('radar_contato_contabil', 'index', 'public', 'idx_radar_contato_contabil_correcoes_contato', 'radar_contato_contabil_correcoes'),
+  ('radar_contato_contabil', 'cron_job', 'cron', 'radar-contato-contabil-diario', '')
 )
 SELECT
   e.migration,
@@ -6929,6 +6980,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_lista', 2, '20261104153351_radar_cnae_secundario.sql', 'b514c898e63fe2e0301ba8323cdd2955'),
   ('public', 'radar_lista', 3, '20261106175800_radar_mapa_regiao_cidade_telefone.sql', '82ba20fd3696c255b455780f32c33dc6'),
   ('public', 'radar_lista', 4, '20261106212329_radar_lista_meus_atendimentos.sql', '7206911e09eeb6e20c15f07124640d0f'),
+  ('public', 'radar_lista', 5, '20261109140000_radar_contato_contabil.sql', '4905ae7feb5c6f81c7540e97d1d2a9ea'),
   ('public', 'radar_possiveis_vinculos', 1, '20261104201756_radar_possiveis_vinculos.sql', 'effde9346bb799f4b662d37fc89919d1'),
   ('public', 'radar_possiveis_vinculos', 2, '20261106083754_radar_vinculos_em_lote.sql', 'b7ae2cb1304fb4e6e64d626b2a305e42'),
   ('public', 'simular_puxar_volume_trimestre', 1, '20261105180000_des_simular_puxar_sem_posicao_recusa.sql', '9e43c9425748b54d783ca9f4c3737755'),
@@ -6943,8 +6995,10 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'radar_leads_do_vendedor', 2, '20261107230000_radar_distribuicao_pacote_e.sql', 'a4a2d893fefd6182d8299300561a2dcc'),
   ('public', 'radar_avisar_vendedores', 1, '20261106181000_radar_leads_ao_vendedor.sql', 'fdde2726b59b6ba115a465bf3af3a913'),
   ('public', 'radar_avisar_vendedores', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '43860b5d9d9cdd4e0cdb06b4d6805ddc'),
+  ('public', 'radar_avisar_vendedores', 3, '20261109140000_radar_contato_contabil.sql', '14ac99777dac60b887d29f1418cb9aa9'),
   ('public', 'radar_prospectar_hoje', 1, '20261106181000_radar_leads_ao_vendedor.sql', '7290de5f88cbe11f67e01c9379740fda'),
   ('public', 'radar_prospectar_hoje', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '73151dc24c593ab9b148c0ccb0c1f27d'),
+  ('public', 'radar_prospectar_hoje', 3, '20261109140000_radar_contato_contabil.sql', '3d9f581f4959d4b9a7e0f45c0c31e3f3'),
   ('private', 'radar_vinculos_base', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', '4a25630577db9bcad6e3630d0b37003c'),
   ('private', 'radar_vinculos_base', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '4b3f8bddde6efeb2b39bda47b0e0a87b'),
   ('private', 'credito_vinculo_avaliar', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', 'df92d9af4062d9f7f475c784818effc7'),

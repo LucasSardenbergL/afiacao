@@ -5,6 +5,7 @@ function assertEquals(atual: unknown, esperado: unknown) {
   if (a !== e) throw new Error(`esperado ${e}, veio ${a}`);
 }
 import {
+  coberturaPendente,
   classificar,
   observacoesDaLista,
   dataBRparaISO,
@@ -408,4 +409,27 @@ Deno.test("B5 (Codex rev. 2): re-disparo só com a entrega dentro da janela que 
   assertEquals(entregaCobertaPeloSync("2027-02-28", hoje), false);  // +111
   assertEquals(entregaCobertaPeloSync(null, hoje), false);
   assertEquals(entregaCobertaPeloSync("lixo", hoje), false);
+});
+
+Deno.test("cobertura: só relê quem não tem leitura do protocolo desde o início do dia; emissão mais antiga − 3 dias", () => {
+  const inicio = "2026-11-09T00:00:00-03:00";
+  const r = coberturaPendente([
+    { pedido_id: 1, protocolo: "2145852", enviado_em: "2026-10-29", observado_ate: null },
+    { pedido_id: 2, protocolo: "2146313", enviado_em: "2026-11-03", observado_ate: "2026-11-06T20:35:00Z" },
+    { pedido_id: 3, protocolo: "2147222", enviado_em: "2026-11-05", observado_ate: "2026-11-09T15:35:00Z" },
+  ], inicio, "2026-11-09");
+  assertEquals(r.pendentes.map((p) => p.pedido_id), [1, 2]);
+  assertEquals(r.emissaoDesde, "2026-10-26");
+  assertEquals(r.foraDoAlcance, []);
+});
+
+Deno.test("cobertura: nada pendente ⇒ sem leitura; além de 90 dias ⇒ fora do alcance (o vigia cobra); sem data ⇒ o teto", () => {
+  const inicio = "2026-11-09T00:00:00-03:00";
+  assertEquals(coberturaPendente([{ pedido_id: 3, protocolo: "1", enviado_em: "2026-11-05", observado_ate: "2026-11-09T03:00:01Z" }], inicio, "2026-11-09").emissaoDesde, null);
+  const velho = coberturaPendente([{ pedido_id: 4, protocolo: "2", enviado_em: "2026-07-01", observado_ate: null }], inicio, "2026-11-09");
+  assertEquals([velho.pendentes.length, velho.foraDoAlcance.length, velho.emissaoDesde], [0, 1, null]);
+  const semData = coberturaPendente([{ pedido_id: 5, protocolo: "3", enviado_em: null, observado_ate: "lixo" }], inicio, "2026-11-09");
+  assertEquals([semData.pendentes.length, semData.emissaoDesde], [1, "2026-08-12"]);
+  // leitura ANTES do início do dia (23:59 de ontem em SP) não vale para hoje
+  assertEquals(coberturaPendente([{ pedido_id: 6, protocolo: "4", enviado_em: "2026-11-05", observado_ate: "2026-11-09T02:59:00Z" }], inicio, "2026-11-09").pendentes.length, 1);
 });

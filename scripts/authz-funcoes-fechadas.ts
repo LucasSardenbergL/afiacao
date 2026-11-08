@@ -558,6 +558,21 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     motivo:
       'publica a observação do conjunto aberto que o motor contou (lê sku_estoque_atual só para conferir o pendente gravado) — edge omie-sync-estoque, service_role. Aberta a authenticated, qualquer sessão gravaria observação falsa que os PRs da baixa de PO leriam como "o que o motor contou".',
   },
+  'public.sayerlack__incidente_pelo_pedido': {
+    fechadaPor: '20261110120000_sayerlack_cancelado_com_compra_viva.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'trigger da 5.4 (RETURNS trigger, SECURITY DEFINER): abre o incidente de cancelado no portal com compra viva e o fecha só pela porta pós-disparo — o EXECUTE nem é o que o dispara; fechado como 2ª tranca',
+  },
+  'public.sayerlack__incidente_pelo_espelho': {
+    fechadaPor: '20261110120000_sayerlack_cancelado_com_compra_viva.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'trigger da 5.4 no espelho do Omie (RETURNS trigger, SECURITY DEFINER): PO que aparece depois de um encerramento da 5.3 vira incidente; fechado como 2ª tranca',
+  },
+  'public.sayerlack_cobertura_situacao_portal': {
+    fechadaPor: '20261110120000_sayerlack_cancelado_com_compra_viva.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'cobertura da 5.4 (pedidos com PO não faturado, protocolo e leitura) — edge sayerlack-varrer-pedidos-portal e o compute do data_health, service_role; lê pedido e espelho do Omie como definer',
+  },
   'public.reposicao_claim_disparo': {
     fechadaPor: '20260906190615_reposicao_claim_disparo_cenario_b.sql',
     permitido: PORTA_FECHADA,

@@ -87,6 +87,10 @@ dhv_cadeia() {
 dhv_aplicar_cadeia() {
   local dir="$1" lista f n=0
   lista="$(dhv_cadeia "$dir")" || return 1
+  # O que prod ganhou DEPOIS do snapshot e o trio lê (colunas/tabelas de migrations que não redefinem o trio e, por
+  # isso, não entram na cadeia): sem isto a 1ª migration do trio que os cita quebra as provas vizinhas (#3731).
+  P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/db/fixtures/data-health-prod-depois-do-snapshot.sql" > /dev/null \
+    || { echo "dhv_aplicar_cadeia: não aplicou o recorte de prod posterior ao snapshot" >&2; return 1; }
   while IFS= read -r f; do
     P -v ON_ERROR_STOP=1 -q -f "$f" > /dev/null || { echo "dhv_aplicar_cadeia: não aplicou $(basename "$f")" >&2; return 1; }
     echo "    · $(basename "$f")"

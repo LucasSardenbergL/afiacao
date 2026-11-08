@@ -87,6 +87,16 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
       }
     }
 
+    // Contradição ANTES do "sem medição": recompra de item decidido é alerta mesmo sem valorização em dinheiro (3ª revisão).
+    // Segue por decidido_em do destino VIGENTE (de propósito): comprar antes de decidir tirar do estoque não contradiz a
+    // decisão; comprar depois, sim. A janela de venda (abaixo) é a da foto. O alerta não carrega valor.
+    if (comprasVisiveis && CONTRADICAO.includes(l.destino) && l.decidido_em) {
+      const t0 = Date.parse(l.decidido_em);
+      for (const p of l.compras_apos ?? []) {
+        if (Date.parse(p) > t0) contradicoes.push({ sku_codigo_omie: l.sku_codigo_omie, destino: l.destino, pedido_em: p });
+      }
+    }
+
     const { foto_saldo: fs, foto_cmc: fc, saldo_atual: sa } = l;
     if (fs === null || fc === null || sa === null || (comNf && (l.qtd_vendida === null || !unidadeEquivalente(l)))) {
       semMedicao.push(l.sku_codigo_omie);
@@ -113,14 +123,6 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
       saiuSemNf += saiu * fc; // sem NF: só sabemos que saiu, não por quê nem a que preço
     }
     parado += Math.max(0, Math.min(sa, fs)) * fc;
-    // Contradição segue por decidido_em do destino VIGENTE (de propósito): comprar antes de decidir tirar do
-    // estoque não contradiz a decisão; comprar depois, sim. A janela de venda (acima) é a da foto.
-    if (comprasVisiveis && CONTRADICAO.includes(l.destino) && l.decidido_em) {
-      const t0 = Date.parse(l.decidido_em);
-      for (const p of l.compras_apos ?? []) {
-        if (Date.parse(p) > t0) contradicoes.push({ sku_codigo_omie: l.sku_codigo_omie, destino: l.destino, pedido_em: p });
-      }
-    }
   }
 
   // Critério da meta: estoque reduzido a custo + crédito informado. NUNCA reclassificação nem saída sem NF.

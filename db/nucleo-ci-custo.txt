@@ -48,6 +48,7 @@ db/test-data-health-familia-ausente.sh 35
 db/test-data-health-radar.sh 96
 db/test-data-health-saldo-bancario-conta-a-conta.sh 76
 db/test-data-health-sayerlack-varredura.sh 130
+db/test-sayerlack-cancelado-com-compra-viva.sh 150
 db/test-data-health-sync-reprocess.sh 74
 db/test-data-health-venda-empurrada-conta-pelo-app.sh 11
 db/test-data-health-vendas-empurradas.sh 98
@@ -157,6 +158,7 @@ db/test-sales_orders_omie_hash_unique.sh 1
 db/test-sayerlack-importar-pedido-portal.sh 5
 db/test-sayerlack-ipi-po.sh 4
 db/test-sayerlack-situacao-portal.sh 120
+db/test-sayerlack-encerrar-cancelado-portal.sh 60
 db/test-security-invoker-views.sh 1
 db/test-sku-items-fila-parada.sh 14
 db/test-sonda-passo-pelo-db-aplicar.sh 11

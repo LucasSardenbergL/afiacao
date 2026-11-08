@@ -36,6 +36,29 @@ describe('medir (oben)', () => {
     const n = medir([linha({ decidido_em: '2026-10-20T16:00:00Z', compras_apos: ['2026-10-20T15:00:00-03:00'] })], 'oben');
     expect(n.contradicoes).toHaveLength(1);
   });
+  it('recompra é acusada mesmo SEM medição (sem foto/cmc/saldo/unidade); o valor segue ausente, nunca fabricado', () => {
+    const compra = { decidido_em: '2026-10-20T10:00:00Z', compras_apos: ['2026-11-02T00:00:00Z'] };
+    const casos: Partial<LinhaMedicao>[] = [
+      { foto_cmc: null, foto_valor: null },            // sem custo na foto
+      { saldo_atual: null },                            // saldo de hoje ilegível
+      { qtd_vendida: null },                            // venda desde a foto ilegível
+      { qtd_vendida: 2, receita: 20, unidades_venda_periodo: ['CX'] }, // vendido em outra unidade
+    ];
+    for (const c of casos) {
+      const m = medir([linha({ ...compra, ...c })], 'oben');
+      expect(m.sem_medicao).toEqual([1]);
+      expect(m.contradicoes).toEqual([{ sku_codigo_omie: 1, destino: 'liquidar', pedido_em: '2026-11-02T00:00:00Z' }]);
+      expect(m.vendido).toBe(0);
+      expect(m.liquidado).toBe(0);
+      expect(m.parado).toBe(0);
+    }
+    // sem custo na foto: o "sem medição" conta a linha à parte, sem R$ 0 inventado
+    const semCusto = medir([linha({ ...compra, foto_cmc: null, foto_valor: null })], 'oben');
+    expect(semCusto.sem_medicao_valor).toBe(0);
+    expect(semCusto.sem_medicao_sem_custo_n).toBe(1);
+    // colacor (sem NF) com foto incompleta também acusa
+    expect(medir([linha({ ...compra, foto_saldo: null })], 'colacor').contradicoes).toHaveLength(1);
+  });
   it('destino sem contradição (venda_dirigida) não acusa', () => {
     const m = medir([linha({ destino: 'venda_dirigida', decidido_em: '2026-10-20T10:00:00Z', compras_apos: ['2026-11-02T00:00:00Z'] })], 'oben');
     expect(m.contradicoes).toEqual([]);
