@@ -52,11 +52,39 @@ export interface LeadProspectarHoje {
   endereco: string | null;
 }
 
+/** Pacote G: um compromisso de retorno vencido até hoje (a agenda do vendedor, à parte do top de leads novos). */
+export interface RetornoHoje {
+  cnpj: string;
+  razaoSocial: string | null;
+  nomeFantasia: string | null;
+  municipioNome: string | null;
+  uf: string | null;
+  /** 'conversa' = "em conversa" com data marcada; 'nao_atendeu' = tentar de novo depois do prazo. */
+  tipo: 'conversa' | 'nao_atendeu';
+  /** Dia civil BRT 'YYYY-MM-DD'. */
+  retornoEm: string;
+  atrasado: boolean;
+  nota: string | null;
+}
+
+/** Pacote G3: posse do vendedor que vence nas próximas 48 h. */
+interface PosseVencendo {
+  atendimentoId: number;
+  cnpj: string;
+  razaoSocial: string | null;
+  nomeFantasia: string | null;
+  expiraEm: string;
+}
+
 export interface ProspectarHoje {
   territorio: MunicipioTerritorio[];
   leads: LeadProspectarHoje[];
   /** Pacote E: motivo do território vazio; null quando há território ou a RPC é anterior ao campo. */
   territorioMotivo: string | null;
+  /** Pacote G: null = RPC anterior ao campo (não sei) — nunca "zero retornos". */
+  retornos: { total: number; itens: RetornoHoje[] } | null;
+  /** Pacote G3: null = RPC anterior ao campo (não sei) — nunca "nenhuma posse vencendo". */
+  posses: { vencendo: PosseVencendo[]; vencidas7d: number } | null;
 }
 
 const ehObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -106,7 +134,50 @@ export function lerProspectarHoje(data: unknown, origem: string): ProspectarHoje
     };
   });
 
-  return { territorio, leads, territorioMotivo: texto(data.territorio_motivo) };
+  return {
+    territorio, leads, territorioMotivo: texto(data.territorio_motivo),
+    retornos: lerRetornos(data.retornos, origem),
+    posses: lerPosses(data.posses, origem),
+  };
+}
+
+const RE_DIA = /^\d{4}-\d{2}-\d{2}$/;
+
+function lerRetornos(v: unknown, origem: string): ProspectarHoje['retornos'] {
+  if (v === undefined || v === null) return null;
+  if (!ehObj(v) || !Array.isArray(v.itens)) falha(origem, 'retornos');
+  const total = inteiro(v.total);
+  if (total === null || total < 0) falha(origem, 'retornos.total');
+  const itens = (v.itens as unknown[]).map((r, i): RetornoHoje => {
+    if (!ehObj(r)) falha(origem, `retornos.itens[${i}]`);
+    const cnpj = texto(r.cnpj);
+    const dia = texto(r.retorno_em);
+    if (!cnpj || !dia || !RE_DIA.test(dia) || (r.retorno_tipo !== 'conversa' && r.retorno_tipo !== 'nao_atendeu')) {
+      falha(origem, `retornos.itens[${i}]`);
+    }
+    return {
+      cnpj, razaoSocial: texto(r.razao_social), nomeFantasia: texto(r.nome_fantasia), municipioNome: texto(r.municipio_nome),
+      uf: texto(r.uf), tipo: r.retorno_tipo, retornoEm: dia, atrasado: r.atrasado === true, nota: texto(r.nota),
+    };
+  });
+  if (itens.length > total) falha(origem, 'retornos.total');
+  return { total, itens };
+}
+
+function lerPosses(v: unknown, origem: string): ProspectarHoje['posses'] {
+  if (v === undefined || v === null) return null;
+  if (!ehObj(v) || !Array.isArray(v.vencendo)) falha(origem, 'posses');
+  const vencidas7d = inteiro(v.vencidas_7d);
+  if (vencidas7d === null || vencidas7d < 0) falha(origem, 'posses.vencidas_7d');
+  const vencendo = (v.vencendo as unknown[]).map((p, i): PosseVencendo => {
+    if (!ehObj(p)) falha(origem, `posses.vencendo[${i}]`);
+    const cnpj = texto(p.cnpj);
+    const id = inteiro(p.atendimento_id);
+    const expira = texto(p.expira_em);
+    if (!cnpj || id === null || !expira || Number.isNaN(Date.parse(expira))) falha(origem, `posses.vencendo[${i}]`);
+    return { atendimentoId: id, cnpj, razaoSocial: texto(p.razao_social), nomeFantasia: texto(p.nome_fantasia), expiraEm: expira };
+  });
+  return { vencendo, vencidas7d };
 }
 
 /** Nome para mostrar: fantasia quando existe, senão razão social, senão o CNPJ. */

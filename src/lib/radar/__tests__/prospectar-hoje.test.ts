@@ -37,7 +37,7 @@ describe('lerProspectarHoje', () => {
   });
 
   it('listas vazias são um resultado legítimo (sem território / sem leads)', () => {
-    expect(lerProspectarHoje({ territorio: [], leads: [] }, 'teste')).toEqual({ territorio: [], leads: [], territorioMotivo: null });
+    expect(lerProspectarHoje({ territorio: [], leads: [] }, 'teste')).toEqual({ territorio: [], leads: [], territorioMotivo: null, retornos: null, posses: null });
   });
 
   it('campos do pacote E: atribuido, com_voce, compartilhado e territorio_motivo (ausentes → false/null)', () => {

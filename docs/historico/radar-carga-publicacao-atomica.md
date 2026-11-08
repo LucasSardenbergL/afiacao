@@ -46,10 +46,24 @@ Origem: 2ª revisão do Radar (Fable + Codex); era follow-up do Codex no bloco 1
 - **Sabotagem de ACL que troca o `REVOKE` inteiro acende a camada ERRADA** (default privileges abrem para anon e o
   P6 grita antes do P7): sabote ACRESCENTANDO o grant, mantendo o resto — uma camada por vez.
 
+## No ar (2026-11-08, PR #3739 mergeado em `4f70daf95`)
+
+- **Migration aplicada pela sessão** (envelope via MCP `query_database`, 13:4xZ): ensaio `ENSAIO_OK` com P1–P9 +
+  md5 dos 5 corpos (= md5 do arquivo, conferido em PG17 local) e prod intacta conferida; apply com `COMMIT`; 2ª
+  testemunha por psql-ro: staging com RLS e sem grant a anon/authenticated, 6 colunas `carga_*`, CHECK
+  `convalidated`, os 5 `md5(prosrc)` iguais ao arquivo, ACL (4 RPCs só service_role, publicação só owner), cron
+  `radar-publicar-lote` jobid 279 ativo como `postgres`. Lotes existentes intactos (`carga_fase` NULL = legado).
+- **Edge `radar-ingest` v1.7 deployada pela sessão** (MCP `send_message`, colagem do `pendencias-pacote`, 0,8
+  crédito, 9/9 sha256 conferidos pelo agente contra `4f70daf95`). Sonda `db/sonda-radar-ingest-2026-11-08.sql`
+  (db:aplicar recibo #1005) → **DEPLOY CONFIRMADO** (`v1.7-carga-staging-atomica`); `pendencias:deploy` exit 0.
+- Sensor de edição: exit 1 (`EDICAO_DETECTADA`) só pelo `edit_id`/`commit_sha` da resposta — o único commit do bot
+  (`2ab3f8dcf`) é o `src/integrations/supabase/types.ts` regenerado (+110 linhas = exatamente a tabela, as colunas e
+  as 5 RPCs desta migration), que o próprio sensor lista como tolerado. Nada a reverter.
+
 ## Camadas de deploy (merge ≠ produção)
 
-1. Migration (SQL Editor / MCP) — **antes** da edge. A v1.6 segue funcionando com a migration aplicada; a v1.7
+1. ✅ Migration (aplicada 2026-11-08) — **antes** da edge. A v1.6 segue funcionando com a migration aplicada; a v1.7
    sem a migration falha no `begin_lote` sem tocar a fila.
-2. Edge `radar-ingest` v1.7 (decidido por `bun run pendencias:deploy`).
+2. ✅ Edge `radar-ingest` v1.7 (DEPLOY CONFIRMADO pela sonda, 2026-11-08).
 3. Publish: não há mudança de front (só comentário em `lote-vigente.ts`).
 4. 1ª carga real (próxima segunda, 03:00 BRT): conferir `carga_fase = 'publicada'` e o ledger `radar.publicar_lote`.

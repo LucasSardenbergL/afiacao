@@ -674,6 +674,10 @@ db/test-radar-distribuicao-e.sh            35  falsificar=fora-do-ci  # 33 sabot
 # que divide telefone (V2, sócio por CPF, filial), selo herdado por número novo, correção sobrescrita às cegas ou que
 # não prevalece, "não calculado" lido como "contato direto", lista/card/e-mail prometendo telefone da contabilidade.
 db/test-radar-contato-contabil.sh          42  falsificar=fora-do-ci  # 25 sabotagens × 2 locales ≈ +5 min; recibo no PR
+# Radar pacote G (20261111100000): acompanhamento depois da ligação. Defeito aqui = "em conversa" sem retorno,
+# "não atendeu" que some para sempre ou volta pela filial, retorno órfão, posse que vence antes do compromisso (ou
+# ressuscita), posse vencida sem registro, e-mail que cala sem lead novo, dedupe que engole nota ou data diferente.
+db/test-radar-acompanhamento-g.sh          35  falsificar=fora-do-ci  # 18 sabotagens × ~7 s ≈ +2 min; controle + 18/18 nos locales C e pt_BR no PR (2026-11-08)
 db/test-radar-recruzamento-diario.sh        12  falsificar=6
 # O byte que o ESCRITOR grava é o byte que o recruzar marca (alfanumérico preservado vs mutilado; #3175 → escritores).
 # Depende da migration 20261019110000 (#3175) estar na main.
