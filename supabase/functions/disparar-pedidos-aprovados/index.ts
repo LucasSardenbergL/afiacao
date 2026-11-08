@@ -11,6 +11,7 @@ import { hojeSP } from "../_shared/hoje-sp.ts";
 import { dataPrevisaoOmie } from "./previsao.ts";
 import { abririaEnvioNovoAoPortal, ehRecusaDefinitivaPortal, MENSAGEM_PORTAL_FECHADO, mensagemRecusaDefinitiva, portalSayerlackFechado } from "./janela-portal.ts";
 import { montarProdutosIncluir } from "./produto-po.ts";
+import { montarObservacaoPo, transportadoraDosItensBrutos } from "./transportadora-portal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   assuntoImplantado,
@@ -294,6 +295,8 @@ interface ProcessResult {
   // Nº do pedido no sistema da Sayerlack (protocolo do portal), quando o portal JÁ aceitou o pedido
   // antes deste run ir ao Omie. É o que o e-mail de "implantado" mostra (ver email-politica.ts).
   protocolo_portal?: string | null;
+  /** 7.3: transportadora que o portal mostrou (null = sem evidência legível; nunca inventada). */
+  transportadora_portal?: string | null;
   portal_data_entrega?: string | null;
   split_parent_id?: number | null;
   split_lote?: number | null;
@@ -1201,6 +1204,7 @@ async function processarPedido(
     // Caso contrário, apenas enfileira o portal e finaliza sem marcar falha.
     let cContratoFinal = numeroPedido;
     let protocoloPortal: string | null = null;
+    let transportadoraPortal: string | null = null;
     if (isSayerlackOben(pedido) && modo === "producao") {
       const portal = await iniciarEnvioPortalSayerlack(db, pedido.id);
       if (portal.state === "queued") {
@@ -1264,6 +1268,9 @@ async function processarPedido(
       // que o pedido já está na fábrica (e com que número) — reenviar ao portal duplicaria a compra.
       result.protocolo_portal = protocoloPortal;
       result.portal_data_entrega = pedido.portal_data_entrega ?? null;
+      // 7.3: transportadora que o portal mostrou (evidência da leitura); ausente = a linha não entra no cObs.
+      transportadoraPortal = await lerTransportadoraPortal(db, protocoloPortal);
+      result.transportadora_portal = transportadoraPortal;
     }
 
     // Preço exato (spec 2026-10-05): com o pedido inteiro decomposto pelo portal e coerente, nValUnit sem IPI +
@@ -1317,10 +1324,12 @@ async function processarPedido(
       cContrato: cContratoFinal,
       cCodParc,
       nQtdeParc,
-      cObs:
+      cObs: montarObservacaoPo(
         `Pedido gerado automaticamente pelo Afiação em ${new Date().toISOString()}${
           modo === "dry_run" ? " [DRY-RUN]" : ""
         }`,
+        transportadoraPortal,
+      ),
       cObsInt: modo === "dry_run" ? "DRY-RUN Afiação" : "Disparo Afiação",
     };
 
@@ -2337,3 +2346,26 @@ Deno.serve(async (req: Request) => {
     });
   }
 });
+
+/**
+ * 7.3: a transportadora da leitura mais recente e legível do protocolo na evidência do portal (7.2). Fail-open com
+ * prazo: é observação do PO, nunca segura nem muda o disparo; qualquer falha = null (a linha não entra no cObs).
+ */
+async function lerTransportadoraPortal(db: SupabaseClient, protocolo: string | null): Promise<string | null> {
+  if (!protocolo) return null;
+  try {
+    const { data, error } = await db.from("sayerlack_portal_evidencia")
+      .select("itens_brutos")
+      .eq("protocolo", protocolo).eq("leitura_ok", true).not("itens_brutos", "is", null)
+      .order("lido_ate", { ascending: false }).limit(1)
+      .abortSignal(AbortSignal.timeout(3_000));
+    if (error) {
+      console.warn(`[disparar-pedidos] transportadora do portal ${protocolo} não lida (fail-open): ${error.message}`);
+      return null;
+    }
+    return transportadoraDosItensBrutos((data as { itens_brutos: unknown }[] | null)?.[0]?.itens_brutos);
+  } catch (e) {
+    console.warn(`[disparar-pedidos] transportadora do portal ${protocolo} não lida (fail-open): ${mensagemDeErro(e) ?? "erro"}`);
+    return null;
+  }
+}

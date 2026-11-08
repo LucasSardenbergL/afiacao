@@ -21,7 +21,7 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * O CHANGELOG de cada versão vive em `docs/historico/versao-disparar-pedidos-aprovados.md`.
  * Última: v1.11 — pedido do app com protocolo do portal ainda em `default_a_vista` não vira PO (D-1, Onda 2).
  */
-export const VERSAO = "v1.12-cancelado-portal-so-consulta";
+export const VERSAO = "v1.13-transportadora-portal";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";
