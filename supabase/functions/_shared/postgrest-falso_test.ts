@@ -74,6 +74,8 @@ export function criarPostgrestFalso(baseSupabase: string, rotas: Record<string, 
         }
         saida = saida[0];
       }
+      // 204/205/304 não têm corpo (o `Response` LANÇA com corpo): era o fecho do ledger falhando mudo nos testes.
+      if (status === 204 || status === 205 || status === 304) return new Response(null, { status });
       return new Response(JSON.stringify(saida), { status, headers: { "content-type": "application/json" } });
     },
   };

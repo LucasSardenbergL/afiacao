@@ -364,3 +364,29 @@ Deno.test("4.3: já com PO responde sessao_browserless=false", async () => {
   const r = await importar();
   igual([r.corpo.ja_existia, r.corpo.sessao_browserless], [true, false], "sem sessão");
 });
+
+Deno.test("7.2 (Codex P1): INSERT da evidência pendurado não segura a situação nem o disparo", async () => {
+  let criado = false;
+  const falso = montar({
+    porProtocolo: () => null,
+    porId: () => (criado ? pedido({ id: 777, status: "enviado", omie_pedido_compra_id: "9001", omie_pedido_compra_numero: "PO-9001" }) : null),
+    disparo: () => { criado = true; return { corpo: { ok: true } }; },
+    evidencia: () => new Promise<Resposta>(() => {}) as unknown as Resposta,
+  });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.etapa], [true, "concluido"], "importação segue");
+  igual(falso.de("rpc:sayerlack_registrar_situacao_portal").length, 2, "a situação foi gravada");
+  igual([ledger(falso).evidencia_gravada, ledger(falso).evidencia_id], [false, null], "ledger: sem evidência confirmada");
+});
+
+Deno.test("4.3 (Codex P2): saídas antecipadas também dizem sessao_browserless=false", async () => {
+  montar({ porProtocolo: () => null });
+  const invalido = await importar({ protocolo: "12a" });
+  igual([invalido.status, invalido.corpo.sessao_browserless], [400, false], "protocolo inválido");
+  const cron = await handler(new Request("https://edge.invalid/", {
+    method: "POST",
+    headers: { "x-cron-secret": ENV_TESTE.CRON_SECRET, "Content-Type": "application/json" },
+    body: JSON.stringify({ protocolo: PROTOCOLO }),
+  }));
+  igual([cron.status, (await cron.json() as Record<string, unknown>).sessao_browserless], [403, false], "cron");
+});

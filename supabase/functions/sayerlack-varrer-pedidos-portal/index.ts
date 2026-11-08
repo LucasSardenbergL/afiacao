@@ -650,7 +650,14 @@ Deno.serve(async (req: Request) => {
   const sessoes = { leitura_portal: 0, importacao: 0, importacao_sem_sessao: 0, importacao_indeterminada: 0 };
   const lerPortalContado = (desde: string) => { sessoes.leitura_portal += 1; return lerPortal(desde); };
   const importarContado = async (protocolo: string, situacoes: string[], somenteSituacao = false) => {
-    const r = await importar(protocolo, situacoes, somenteSituacao);
+    let r: Awaited<ReturnType<typeof importar>>;
+    try {
+      r = await importar(protocolo, situacoes, somenteSituacao);
+    } catch (e) {
+      // Codex P2: rede/timeout LANÇA — a chamada saiu, então é indeterminada (nunca some da contagem).
+      sessoes.importacao_indeterminada += 1;
+      throw e;
+    }
     const sessao = (r.corpo as { sessao_browserless?: unknown } | null)?.sessao_browserless;
     if (sessao === true) sessoes.importacao += 1;
     else if (sessao === false) sessoes.importacao_sem_sessao += 1;

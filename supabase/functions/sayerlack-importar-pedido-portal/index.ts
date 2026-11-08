@@ -26,7 +26,7 @@ import {
 } from "../_shared/sayerlack-portal-dom.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { lerPedidoPortal, mensagemErroImportacao, situacaoFaturada, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
-import { cortarTrace } from "./evidencia.ts";
+import { comPrazo, cortarTrace, PRAZO_EVIDENCIA_MS } from "./evidencia.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -318,7 +318,13 @@ async function dispararOmie(pedidoId: number): Promise<{ httpStatus: number; bod
   }
 }
 
+// 4.3 (Codex P2): o enriquecimento vale para TODA saída, inclusive as antecipadas (sonda, gate, 400, 403).
 Deno.serve(async (req: Request) => {
+  const evid: Evidencia = {};
+  return await comSessaoBrowserless(await atender(req, evid), evid);
+});
+
+async function atender(req: Request, evid: Evidencia): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const auth = await authorizeCronOrStaff(req);
@@ -364,17 +370,13 @@ Deno.serve(async (req: Request) => {
   const t0Registro = Date.now();
   // Evidência da tentativa acumulada FORA da resposta (Codex revisão 2, P2 de B11): toda saída — re-disparo, recusa,
   // catch — leva ao ledger as opções de condição e o desfecho da situação que esta tentativa observou.
-  const evid: Evidencia = {};
   // Só a varredura manda (B3/B5): reler e GRAVAR a situação, sem gravar pedido nem disparar PO.
   const somenteSituacao = body?.somente_situacao === true;
   const origem = auth.via === "staff" ? "manual" : "automatica";
-  const resposta = await comSessaoBrowserless(
-    await tratar(db, protocolo, situacoesPermitidas, operador, evid, somenteSituacao, { execucaoId: registro, origem }),
-    evid,
-  );
+  const resposta = await tratar(db, protocolo, situacoesPermitidas, operador, evid, somenteSituacao, { execucaoId: registro, origem });
   await fecharRegistro(db, registro, resposta, protocolo, Date.now() - t0Registro, evid);
   return resposta;
-});
+}
 
 /**
  * 4.3: toda resposta diz se ESTA tentativa abriu sessão no Browserless (`sessao_browserless`), para a varredura contar a
@@ -838,7 +840,13 @@ async function fecharRegistro(
  */
 async function gravarEvidencia(db: Db, linha: Record<string, unknown>): Promise<number | null> {
   try {
-    const { data, error } = await db.from("sayerlack_portal_evidencia").insert(linha).select("id").single();
+    // Codex P1: a evidência está ANTES da gravação da situação e do disparo — um INSERT pendurado não pode segurá-los.
+    const r = await comPrazo(db.from("sayerlack_portal_evidencia").insert(linha).select("id").single(), PRAZO_EVIDENCIA_MS);
+    if (r === "prazo") {
+      console.warn(`[importar-portal] ${linha.protocolo}: evidência sem resposta em ${PRAZO_EVIDENCIA_MS}ms (fail-open; pode ter gravado)`);
+      return null;
+    }
+    const { data, error } = r;
     if (error || !data) {
       console.warn(`[importar-portal] ${linha.protocolo}: evidência não gravada (fail-open): ${error?.message ?? "sem id"}`);
       return null;

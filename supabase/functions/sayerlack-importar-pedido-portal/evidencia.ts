@@ -20,3 +20,19 @@ export function cortarTrace(trace: unknown): unknown[] | null {
   }
   return [{ step: "trace_cortado", passos_omitidos: trace.length - fica.length, teto_bytes: TETO_TRACE_BYTES }, ...fica];
 }
+
+/** Prazo do INSERT da evidência (7.2, Codex P1): passou disso, a importação segue sem esperar. */
+export const PRAZO_EVIDENCIA_MS = 3_000;
+
+/** Resolve com o resultado, ou com "prazo" se não vier em `ms` (o timer é limpo nos dois casos). */
+export async function comPrazo<T>(p: PromiseLike<T>, ms: number): Promise<T | "prazo"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(p),
+      new Promise<"prazo">((resolve) => { timer = setTimeout(() => resolve("prazo"), ms); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

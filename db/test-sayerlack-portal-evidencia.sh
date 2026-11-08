@@ -100,6 +100,9 @@ igual "C1 UPDATE pelo escritor = 42501" "$(SQLSTATE prova "SET ROLE service_role
 igual "C2 UPDATE pelo dono = 42501 (trigger, não só GRANT)" "$(SQLSTATE prova "UPDATE public.sayerlack_portal_evidencia SET condicao='x' WHERE id=1")" "42501"
 igual "C3 DELETE pelo dono = 42501" "$(SQLSTATE prova "DELETE FROM public.sayerlack_portal_evidencia WHERE id=1")" "42501"
 igual "C4 TRUNCATE pelo dono = 42501" "$(SQLSTATE prova "TRUNCATE public.sayerlack_portal_evidencia")" "42501"
+# Codex P2: `session_replication_role = replica` pula trigger comum; o ALWAYS dispara mesmo assim.
+igual "C6 UPDATE em modo replica = 42501 (trigger ALWAYS)" "$(SQLSTATE prova "SET session_replication_role = replica; UPDATE public.sayerlack_portal_evidencia SET condicao='x' WHERE id=1")" "42501"
+igual "C7 DELETE em modo replica = 42501" "$(SQLSTATE prova "SET session_replication_role = replica; DELETE FROM public.sayerlack_portal_evidencia WHERE id=1")" "42501"
 igual "C5 a linha segue intacta" "$(Q prova "SELECT count(*) || ':' || condicao FROM public.sayerlack_portal_evidencia GROUP BY condicao")" "1:70 - 7 DIAS"
 
 # Ninguém além do escritor escreve.
@@ -121,6 +124,12 @@ igual "F3 origem fora da lista = 23514" "$(SQLSTATE prova "SET ROLE service_role
 igual "F4 evidência acima de 512 KB = 23514" \
   "$(SQLSTATE prova "SET ROLE service_role; INSERT INTO public.sayerlack_portal_evidencia(protocolo, origem, lido_de, lido_ate, leitura_ok, erro) VALUES ('2140603','manual',now(),now(),false, repeat('x', 600000))")" "23514"
 
+# Codex P3: o teto cobre também condicao e erro_tipo.
+igual "F5 condicao acima de 512 KB = 23514" \
+  "$(SQLSTATE prova "SET ROLE service_role; INSERT INTO public.sayerlack_portal_evidencia(protocolo, origem, lido_de, lido_ate, leitura_ok, condicao) VALUES ('2140603','manual',now(),now(),false, repeat('x', 600000))")" "23514"
+igual "F6 erro_tipo acima de 512 KB = 23514" \
+  "$(SQLSTATE prova "SET ROLE service_role; INSERT INTO public.sayerlack_portal_evidencia(protocolo, origem, lido_de, lido_ate, leitura_ok, erro_tipo) VALUES ('2140603','manual',now(),now(),false, repeat('x', 600000))")" "23514"
+
 # ── Falsificação: cada sabotagem tem de dar o vermelho DA SUA postcondição (controle verde acima) ─────
 sabotar() { # $1 rótulo, $2 marcador esperado, $3.. expressão sed
   local rot="$1" marca="$2"; shift 2
@@ -135,8 +144,10 @@ sabotar sem_rls        "E1 FALHOU" -e '/ENABLE ROW LEVEL SECURITY/d'
 sabotar sem_revoke_aut "E2 FALHOU" -e '/^REVOKE ALL ON TABLE public.sayerlack_portal_evidencia FROM authenticated;/d'
 sabotar sem_revoke_srv "E2 FALHOU" -e '/^REVOKE ALL ON TABLE public.sayerlack_portal_evidencia FROM service_role;/d'
 sabotar sem_insert     "E3 FALHOU" -e 's/^GRANT SELECT, INSERT ON TABLE public.sayerlack_portal_evidencia TO service_role;/GRANT SELECT ON TABLE public.sayerlack_portal_evidencia TO service_role;/'
-sabotar sem_trava      "E4 FALHOU" -e '/^CREATE TRIGGER trg_evidencia_imutavel$/,/EXECUTE FUNCTION/d'
-sabotar sem_trava_trunc "E4 FALHOU" -e '/^CREATE TRIGGER trg_evidencia_imutavel_truncate$/,/EXECUTE FUNCTION/d'
+sabotar sem_trava      "E4 FALHOU" -e '/^CREATE TRIGGER trg_evidencia_imutavel$/,/EXECUTE FUNCTION/d' -e '/ENABLE ALWAYS TRIGGER trg_evidencia_imutavel;/d'
+sabotar sem_trava_trunc "E4 FALHOU" -e '/^CREATE TRIGGER trg_evidencia_imutavel_truncate$/,/EXECUTE FUNCTION/d' -e '/ENABLE ALWAYS TRIGGER trg_evidencia_imutavel_truncate;/d'
+sabotar sem_always     "E4 FALHOU" -e '/ENABLE ALWAYS TRIGGER trg_evidencia_imutavel;/d'
+sabotar sem_select_srv "E3 FALHOU" -e 's/^GRANT SELECT, INSERT ON TABLE public.sayerlack_portal_evidencia TO service_role;/GRANT INSERT ON TABLE public.sayerlack_portal_evidencia TO service_role;/'
 
 echo "---"
 if [ "$FALHOU" -eq 0 ]; then echo "PROVA_OK $SLUG (lc=$HARNESS_LC)"; else echo "PROVA_FALHOU $SLUG (lc=$HARNESS_LC)"; exit 1; fi

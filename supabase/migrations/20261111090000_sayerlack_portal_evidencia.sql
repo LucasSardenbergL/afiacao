@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS public.sayerlack_portal_evidencia (
   CONSTRAINT sayerlack_portal_evidencia_tamanho CHECK (
     octet_length(coalesce(consulta_linhas::text, '') || coalesce(itens_brutos::text, '') ||
                  coalesce(condicoes_opcoes::text, '') || coalesce(trace::text, '') ||
-                 coalesce(consulta_headers::text, '') || coalesce(erro, '')) <= 524288
+                 coalesce(consulta_headers::text, '') || coalesce(erro, '') || coalesce(erro_tipo, '') ||
+                 coalesce(condicao, '')) <= 524288
   )
 );
 COMMENT ON TABLE public.sayerlack_portal_evidencia IS
@@ -91,6 +92,9 @@ DROP TRIGGER IF EXISTS trg_evidencia_imutavel_truncate ON public.sayerlack_porta
 CREATE TRIGGER trg_evidencia_imutavel_truncate
   BEFORE TRUNCATE ON public.sayerlack_portal_evidencia
   FOR EACH STATEMENT EXECUTE FUNCTION public.sayerlack__evidencia_imutavel();
+-- ALWAYS (Codex P2): dispara também sob `session_replication_role = replica`, que pula trigger comum.
+ALTER TABLE public.sayerlack_portal_evidencia ENABLE ALWAYS TRIGGER trg_evidencia_imutavel;
+ALTER TABLE public.sayerlack_portal_evidencia ENABLE ALWAYS TRIGGER trg_evidencia_imutavel_truncate;
 
 -- ── Postcondição (marcador positivo no fim) ────────────────────────────────────────────────
 DO $pos$
@@ -106,13 +110,15 @@ BEGIN
      OR has_table_privilege('service_role', 'public.sayerlack_portal_evidencia', 'DELETE') THEN
     RAISE EXCEPTION 'POSTCONDICAO E2 FALHOU: escrita aberta fora do escritor (ou UPDATE/DELETE concedido)';
   END IF;
-  IF NOT has_table_privilege('service_role', 'public.sayerlack_portal_evidencia', 'INSERT') THEN
-    RAISE EXCEPTION 'POSTCONDICAO E3 FALHOU: o escritor (service_role) não insere';
+  -- O escritor faz INSERT ... RETURNING id (`.select("id")`): precisa dos dois.
+  IF NOT (has_table_privilege('service_role', 'public.sayerlack_portal_evidencia', 'INSERT')
+          AND has_table_privilege('service_role', 'public.sayerlack_portal_evidencia', 'SELECT')) THEN
+    RAISE EXCEPTION 'POSTCONDICAO E3 FALHOU: o escritor (service_role) não insere com RETURNING';
   END IF;
   IF (SELECT count(*) FROM pg_trigger
        WHERE tgrelid = 'public.sayerlack_portal_evidencia'::regclass
-         AND tgname IN ('trg_evidencia_imutavel', 'trg_evidencia_imutavel_truncate') AND tgenabled = 'O') <> 2 THEN
-    RAISE EXCEPTION 'POSTCONDICAO E4 FALHOU: evidência sem a trava de imutabilidade (UPDATE/DELETE/TRUNCATE)';
+         AND tgname IN ('trg_evidencia_imutavel', 'trg_evidencia_imutavel_truncate') AND tgenabled = 'A') <> 2 THEN
+    RAISE EXCEPTION 'POSTCONDICAO E4 FALHOU: evidência sem a trava de imutabilidade ALWAYS (UPDATE/DELETE/TRUNCATE)';
   END IF;
   RAISE NOTICE 'EVIDENCIA_PORTAL_OK: tabela imutável, RLS de leitura staff, 1 escritor (service_role INSERT)';
 END

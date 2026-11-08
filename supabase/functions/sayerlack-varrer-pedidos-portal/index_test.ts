@@ -231,7 +231,9 @@ for (const [rotulo, resposta, esperado] of [
     { importacao: 1, importacao_sem_sessao: 0, importacao_indeterminada: 0, total: 2, total_minimo: 2, total_maximo: 2 }],
   ["importadora recusou antes do portal", { corpo: { ok: false, mensagem: "x", sessao_browserless: false } },
     { importacao: 0, importacao_sem_sessao: 1, importacao_indeterminada: 0, total: 1, total_minimo: 1, total_maximo: 1 }],
-  ["importadora sem o campo (timeout)", { status: 504, corpo: "gateway timeout" },
+  ["importadora sem o campo (HTTP 504)", { status: 504, corpo: "gateway timeout" },
+    { importacao: 0, importacao_sem_sessao: 0, importacao_indeterminada: 1, total: null, total_minimo: 1, total_maximo: 2 }],
+  ["importadora caiu na rede (lança)", "rede",
     { importacao: 0, importacao_sem_sessao: 0, importacao_indeterminada: 1, total: null, total_minimo: 1, total_maximo: 2 }],
 ] as const) {
   Deno.test(`4.3: sessões do Browserless — ${rotulo}`, () =>
