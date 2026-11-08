@@ -68,7 +68,10 @@ acesso-vendedor 16/16, socios-cpf 19/19, placar 25/25, sayerlack 13/13, contato-
 **Local** (Mac, passagem normal, antes → depois): acesso-vendedor 9 → 7,3 s, socios-cpf 6 → 4,0, placar 6,1 → 4,2,
 tint 18,0 → 13,5, sayerlack 10 → 5,8, contato-integridade 13 → 10,9.
 
-**CI:** antes, os pesos da tabela (normal + `--falsificar`). Depois: a medir no run do PR, que re-pesa as 6 linhas em `db/nucleo-ci-custo.txt`.
+**CI** (run 42487970899 do #3743 contra os pesos da tabela, normal + `--falsificar`): acesso-vendedor 84 → 27 s,
+contato-integridade 200 → 87, placar 84 → 42, socios-cpf 92 → 48, sayerlack 120 → 24, tint 94 → 59: **674 → 287 s (−57%)**.
+As 6 linhas de `db/nucleo-ci-custo.txt` foram re-pesadas no próprio PR, antes de sair do draft, para não repetir o
+desequilíbrio do lote 1.
 
 ## Próximos da fila
 
