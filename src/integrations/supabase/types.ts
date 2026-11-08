@@ -15811,6 +15811,72 @@ export type Database = {
         }
         Relationships: []
       }
+      sayerlack_portal_evidencia: {
+        Row: {
+          condicao: string | null
+          condicoes_opcoes: Json | null
+          consulta_headers: Json | null
+          consulta_linhas: Json | null
+          erro: string | null
+          erro_tipo: string | null
+          execucao_id: string | null
+          gravado_em: string
+          http_status: number | null
+          id: number
+          itens_brutos: Json | null
+          leitura_ok: boolean
+          lido_ate: string
+          lido_de: string
+          origem: string
+          pedido_id: number | null
+          protocolo: string
+          somente_situacao: boolean
+          trace: Json | null
+        }
+        Insert: {
+          condicao?: string | null
+          condicoes_opcoes?: Json | null
+          consulta_headers?: Json | null
+          consulta_linhas?: Json | null
+          erro?: string | null
+          erro_tipo?: string | null
+          execucao_id?: string | null
+          gravado_em?: string
+          http_status?: number | null
+          id?: never
+          itens_brutos?: Json | null
+          leitura_ok: boolean
+          lido_ate: string
+          lido_de: string
+          origem: string
+          pedido_id?: number | null
+          protocolo: string
+          somente_situacao?: boolean
+          trace?: Json | null
+        }
+        Update: {
+          condicao?: string | null
+          condicoes_opcoes?: Json | null
+          consulta_headers?: Json | null
+          consulta_linhas?: Json | null
+          erro?: string | null
+          erro_tipo?: string | null
+          execucao_id?: string | null
+          gravado_em?: string
+          http_status?: number | null
+          id?: never
+          itens_brutos?: Json | null
+          leitura_ok?: boolean
+          lido_ate?: string
+          lido_de?: string
+          origem?: string
+          pedido_id?: number | null
+          protocolo?: string
+          somente_situacao?: boolean
+          trace?: Json | null
+        }
+        Relationships: []
+      }
       sayerlack_retry_motor_log: {
         Row: {
           aprovado_em: string | null
