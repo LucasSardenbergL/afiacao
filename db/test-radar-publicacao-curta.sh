@@ -89,6 +89,7 @@ PY
 # A postcondição confere o md5 dos corpos: a sabotagem de CORPO desliga só esse laço (P3), para o comportamento
 # sabotado chegar aos asserts — as de atributo/cron (post:P4/P6) mantêm o P3 e caem na postcondição.
 sem_md5() { sabotar "    IF v_md5 IS DISTINCT FROM c_corpos[i][2] THEN" "    IF false THEN"; }
+# shellcheck disable=SC2016  # $9/$21/$w$ nas sabotagens são do SQL dinâmico, não do shell
 case "${SABOTAGEM:-}" in
   "") ;;
   lista_sem_anterior)    sem_md5; sabotar 'v_w := array_append(v_w, $w$e.ultimo_lote = ANY (ARRAY[$9, $21]) AND (e.ultimo_lote = $9 OR e.lote_anterior = $9)$w$);' 'v_w := array_append(v_w, $w$e.ultimo_lote = $9$w$);' ;;

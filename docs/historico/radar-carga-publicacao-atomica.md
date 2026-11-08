@@ -104,3 +104,64 @@ Religar (só depois do fix): `SELECT cron.alter_job((SELECT jobid FROM cron.job 
 **Lição.** A prova em PG17 tinha 37 asserts de CORREÇÃO e nenhum de CUSTO: rodou com centenas de
 linhas e 2 índices. Desenho "uma transação" precisa ser medido no volume e nos índices REAIS (aqui,
 27 índices × 500k) antes de ir ao ar, e a falha por timeout precisa de ramo próprio (`57014` ≠ OTHERS).
+
+## ✅ Redesenho: publicação em PASSOS curtos (migration `20261111120000`)
+
+**O que mudou.** A troca da foto deixou de ser um UPSERT de 500k linhas numa transação. Cada linha ganhou
+`lote_anterior` (o rótulo que tinha antes de a publicação trocá-lo, gravado no MESMO UPDATE), e o "lote em
+publicação" P é `public.radar_lote_publicando()` (validado, publicação começada, MAIS NOVO que o vigente V).
+A foto de V passa a ser `ultimo_lote = ANY(ARRAY[V, P]) AND (ultimo_lote = V OR lote_anterior = V)`: durante a
+publicação isso é exatamente a foto velha (rótulo V intocado + rótulo P vindo de V), sem a empresa nova
+(rótulo P, anterior NULL) nem a que volta ao dump (rótulo P, anterior < V). A virada é UMA linha de
+`radar_ingest_state` (`complete`): no mesmo snapshot V := P, P := NULL, e a foto vira B inteira.
+
+| Peça | O que faz |
+|---|---|
+| `CALL public.radar_carga_publicar()` (cron `radar-publicar-lote`, `*/15 0-5,7-23`) | procedure INVOKER sem `SET` (as duas coisas proíbem COMMIT), trava advisory de SESSÃO, laço de passos com COMMIT, orçamento 8 min/tick, lote adaptativo (começa em 500, mira ~1 s, teto 3.000) |
+| `radar_carga_publicar_passo()` | reivindicar (espera score/agregado em voo; re-run só com membresia IGUAL) → lotes (cursor = último CNPJ examinado; UPDATE só do que difere + INSERT dos novos) → recruzar ja_cliente → virar (conferências só-leitura + a linha `complete`) |
+| erros | antes de escrever → `falhou`; depois → segue em publicação com `carga_erro`/`carga_tentativas` e o tick seguinte retoma (a foto segue coerente porque P continua valendo); `query_canceled` em ramo próprio; lock/deadlock → adiado |
+| leitores | `radar_lista` e `radar_contagem_por_municipio` (STABLE = 1 snapshot) usam o predicado e escondem a nova sem filtro de lote; `radar_agregado_recalcular`, `radar_score_recalcular`, `radar_avisar_lote` esperam a virada; `radar_coorte_sortear` recusa; `radar_carga_iniciar` zera o progresso da publicação anterior do mesmo lote |
+| front | `rotuloEfetivo`/`fotoPostgrest`/`lotePublicando` (`src/lib/radar/lote-vigente.ts`) nas 3 leituras diretas (inéditos, sugeridos, ranking de sugeridos) e nos selos |
+
+- `publicando` não é valor novo de `carga_fase` (alargar o CHECK pediria DROP CONSTRAINT): é `validada` +
+  `carga_publicacao_iniciada_em`. Por isso `radar_carga_iniciar` já recusa carga nova no meio — o staging fica imutável.
+- 2ª opinião Codex (desenho, 2026-11-08, gpt-6-astra high, 159 s): aprovou o núcleo do mês novo; os ALTOs viraram
+  desenho — re-run só com membresia igual (3), `publicando` bloqueia tudo com trava de SESSÃO (4), predicado e P no
+  mesmo snapshot (2), claim espera score/agregado (MÉDIO 5). Recomendou trocar para membresia por geração + view
+  compatível; **não adotado**: a view no lugar da tabela muda o que PostgREST, Realtime, `SETOF radar_empresas` e
+  as escritas do vendedor enxergam, e nem ela resolve o V em cache do cliente.
+- **Residual aceito (Codex ALTO 1):** build ANTIGO do PWA nas 3 leituras diretas (`.eq('ultimo_lote', V)`) vê a foto
+  encolher durante a publicação (só enquanto P existe; segunda ~04:00 BRT; RPCs corrigem até o build antigo,
+  porque recebem V e expandem no servidor). O front novo usa o rótulo efetivo.
+
+**Prova de correção** `db/test-radar-publicacao-curta.sh` (núcleo do CI): 41 asserts — a cada passo comitado a
+lista/contagem devolvem exatamente a foto A, sem filtro a nova não aparece, jobs esperam, erro e 57014 no meio não
+viram `falhou`, CALL vira de uma vez, re-run só com membresia igual, ACL. `--falsificar` 12/12 vermelhas, verde
+em `C` e `pt_BR.UTF-8`.
+
+**Prova de CUSTO** `db/test-radar-publicacao-curta-custo.sh` (à mão, fora do CI): DDL real de prod
+(`db/fixtures/radar-empresas-ddl-prod-20261108.sql`, 24 índices — 4 GIN) × distribuição real de rótulos, mês
+novo com 506.049 linhas (494k que ficam, 10k novas, 2k que voltam), CALL real com vendedor concorrente:
+
+| medida (PG17 na M2, 2026-11-08) | 1ª rodada (teto 5.000) | final (500 → ~1 s, teto 3.000) |
+|---|---|---|
+| publicação inteira (1 tick) | 91 s | **56 s** (antes: > 30 min sem terminar, numa transação) |
+| maior transação COM xid (lock de linha / Realtime) | 4,1 s | **1,54 s** (171 transações; 1 acima de 1,5 s) |
+| espera do vendedor concorrente (UPDATE de 1 linha, 20/s) | máx 1,05 s | p99 0,027 s · **máx 0,17 s** · 0 erro |
+| foto vigente amostrada NO MEIO da publicação | 25 × 503.929 | **16 × 503.929** (nunca encolheu) |
+| WAL · tabela+índices | 3,9 GB · 628 → 1.038 MB | 3,9 GB · 628 → 1.037 MB |
+
+O WAL (~7,7 KB por linha reescrita, 24 índices) e o inchaço são o custo do rótulo por linha — iguais ao
+desenho antigo, só que espalhados em ~170 transações curtas. A prod é mais lenta que o Mac (o UPSERT de uma
+transação passou de 30 min lá): o lote adaptativo encolhe sozinho até 50 linhas, e o orçamento de 8 min por
+tick retoma no seguinte.
+
+**Lições.**
+- **Foto por rótulo + publicação fatiada pede o rótulo de ORIGEM na própria linha** — fatiar com o predicado
+  antigo tiraria empresas da foto a cada lote comitado; o `lote_anterior` gravado no mesmo UPDATE é o que deixa a
+  troca ser incremental e a virada continuar sendo uma linha.
+- **Progresso persistido precisa ser zerado por quem RECOMEÇA, não só por quem termina:** a prova pegou que um
+  re-run do mesmo lote herdava `varrida/recruzada` da publicação anterior e o passo ia direto à virada sem
+  processar nada (`G1/G2` vermelhos antes do conserto em `radar_carga_iniciar`).
+- **"Maior transação" se mede por xid, não por `xact_start`:** a parte só-leitura de um passo (contagens da virada)
+  não trava linha nem Realtime; o que trava é o tempo com xid vivo. O amostrador separa as duas.

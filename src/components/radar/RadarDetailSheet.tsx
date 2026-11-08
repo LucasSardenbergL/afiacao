@@ -37,7 +37,7 @@ import {
   selosFilial, textoFilialFicha, telefonePrincipal, type IrmaosRaiz, type EstadoIrmaos,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
-import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
+import { ehInedito, saiuDoDump, rotuloEfetivo, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
 
 function Linha({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -226,7 +226,7 @@ export function RadarDetailSheet({
             {empresa.ja_cliente && <Badge variant="secondary">já é cliente</Badge>}
             {ehInedito(empresa, lote) && <Badge variant="info">inédito</Badge>}
             {saiuDoDump(empresa, lote) && (
-              <Badge variant="outline" className="text-muted-foreground font-normal">{rotuloSaiuDoDump(empresa.ultimo_lote)}</Badge>
+              <Badge variant="outline" className="text-muted-foreground font-normal">{rotuloSaiuDoDump(rotuloEfetivo(empresa, lote) ?? empresa.ultimo_lote)}</Badge>
             )}
             {rfb && (
               <Selo tom={rfb.tom} title={rfb.titulo} className="font-normal" data-testid="selo-rfb">{rfb.texto}</Selo>

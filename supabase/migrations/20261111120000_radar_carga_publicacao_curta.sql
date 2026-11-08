@@ -299,7 +299,7 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   v_ini timestamptz := clock_timestamp();
-  v_k   integer := 2000;
+  v_k   integer := 500;   -- começa pequeno: a prod pode ser bem mais lenta que a prova local
   v_r   jsonb;
   v_ms  numeric;
 BEGIN
@@ -311,12 +311,13 @@ BEGIN
     v_r := public.radar_carga_publicar_passo(v_k);
     COMMIT;
     EXIT WHEN v_r->>'estado' IS DISTINCT FROM 'avancou';
-    -- Lote adaptativo: cada transação fica perto de 1–2 s (o lock de linha e o xid seguram só isso).
+    -- Lote adaptativo: mira ~1 s por transação (o lock de linha e o xid seguram só isso). Medido em PG17 com
+    -- a DDL de prod: lote de 5.000 chegou a 4,1 s (flush do pending list dos GIN), por isso o teto é 3.000.
     v_ms := (v_r->>'ms')::numeric;
-    IF v_ms > 2000 THEN
-      v_k := GREATEST(100, v_k / 2);
-    ELSIF v_ms < 600 THEN
-      v_k := LEAST(5000, v_k + v_k / 2);
+    IF v_ms > 1500 THEN
+      v_k := GREATEST(50, v_k / 2);
+    ELSIF v_ms < 500 THEN
+      v_k := LEAST(3000, v_k + v_k / 2);
     END IF;
     EXIT WHEN clock_timestamp() - v_ini > p_orcamento;
   END LOOP;
@@ -1476,7 +1477,7 @@ DECLARE
     ARRAY['public.radar_carga_iniciar(text)', '9df1991252c249b3b09b8d866f09f706'],
     ARRAY['public.radar_lote_publicando()', '9c541c8c517d1b9d2b8c8aa89a6e3d78'],
     ARRAY['public.radar_carga_publicar_passo(integer)', '3ac182511586437c423f40514b4fa2f7'],
-    ARRAY['public.radar_carga_publicar(interval)', 'd69d699bbd3acf07a270a132e0bfb9d0'],
+    ARRAY['public.radar_carga_publicar(interval)', '8d1a10e5a1c86bf270cbef99b69ab5ff'],
     ARRAY['public.radar_carga_publicar_pendente()', 'b78114585c3fbc89745a7aa690b8bc97'],
     ARRAY['public.radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamp with time zone,text,numeric,boolean,boolean,date,date,text,integer,integer,text,text,boolean,boolean)', '829e547135cecdd67d7af0c9c777a99f'],
     ARRAY['public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone,text[],boolean,text,boolean)', 'f79e5a814b622248b8d2845ef27edb65'],

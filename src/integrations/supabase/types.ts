@@ -12976,6 +12976,7 @@ export type Database = {
           lat: number | null
           lng: number | null
           logradouro: string | null
+          lote_anterior: string | null
           municipio_codigo: string | null
           municipio_nome: string | null
           nome_fantasia: string | null
@@ -13021,6 +13022,7 @@ export type Database = {
           lat?: number | null
           lng?: number | null
           logradouro?: string | null
+          lote_anterior?: string | null
           municipio_codigo?: string | null
           municipio_nome?: string | null
           nome_fantasia?: string | null
@@ -13066,6 +13068,7 @@ export type Database = {
           lat?: number | null
           lng?: number | null
           logradouro?: string | null
+          lote_anterior?: string | null
           municipio_codigo?: string | null
           municipio_nome?: string | null
           nome_fantasia?: string | null
@@ -13257,6 +13260,13 @@ export type Database = {
           carga_esperado: number | null
           carga_fase: string | null
           carga_iniciada_em: string | null
+          carga_cursor: string | null
+          carga_examinadas: number | null
+          carga_gravadas: number | null
+          carga_publicacao_iniciada_em: string | null
+          carga_recruzada_em: string | null
+          carga_tentativas: number | null
+          carga_varrida_em: string | null
           carga_publicada_em: string | null
           carga_validada_em: string | null
           erro: string | null
@@ -13276,6 +13286,13 @@ export type Database = {
           carga_esperado?: number | null
           carga_fase?: string | null
           carga_iniciada_em?: string | null
+          carga_cursor?: string | null
+          carga_examinadas?: number | null
+          carga_gravadas?: number | null
+          carga_publicacao_iniciada_em?: string | null
+          carga_recruzada_em?: string | null
+          carga_tentativas?: number | null
+          carga_varrida_em?: string | null
           carga_publicada_em?: string | null
           carga_validada_em?: string | null
           erro?: string | null
@@ -13295,6 +13312,13 @@ export type Database = {
           carga_esperado?: number | null
           carga_fase?: string | null
           carga_iniciada_em?: string | null
+          carga_cursor?: string | null
+          carga_examinadas?: number | null
+          carga_gravadas?: number | null
+          carga_publicacao_iniciada_em?: string | null
+          carga_recruzada_em?: string | null
+          carga_tentativas?: number | null
+          carga_varrida_em?: string | null
           carga_publicada_em?: string | null
           carga_validada_em?: string | null
           erro?: string | null
@@ -25568,6 +25592,7 @@ export type Database = {
           lat: number | null
           lng: number | null
           logradouro: string | null
+          lote_anterior: string | null
           municipio_codigo: string | null
           municipio_nome: string | null
           nome_fantasia: string | null
