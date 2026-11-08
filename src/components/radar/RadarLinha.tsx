@@ -2,7 +2,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import {
   idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, telefonePrincipal, seloRfb, scoreUI, selosFilial,
-  type IrmaosRaiz,
+  type EstadoIrmaos, type IrmaosRaiz,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
@@ -25,6 +25,7 @@ export function RadarLinha({
   lote = null,
   mostrarMotivos = false,
   irmaos = null,
+  irmaosEstado = 'ok',
   amostra = null,
   vinculo = null,
   vinculoEstado = 'carregando',
@@ -40,6 +41,8 @@ export function RadarLinha({
   mostrarMotivos?: boolean;
   /** Outros estabelecimentos da mesma raiz de CNPJ (selo "filial de cliente" / "+N da mesma empresa"); sem dado, sem selo. */
   irmaos?: IrmaosRaiz | null;
+  /** Estado da página dos irmãos: 'falhou' vira o selo "filial?" (não consegui verificar ≠ não é filial). */
+  irmaosEstado?: EstadoIrmaos;
   /** Sorteio da amostra de controle a que o lead pertence (selo "amostra"); null = não sorteado. */
   amostra?: string | null;
   /** Resumo do vínculo com cliente (selo "possível sucessor" / "possível vínculo"); null = sem vínculo na página lida. */
@@ -53,7 +56,7 @@ export function RadarLinha({
   const rfb = seloRfb(empresa);
   const score = scoreUI(empresa.score, empresa.score_motivos);
   const sugerido = ehSugerido(empresa, lote);
-  const filial = selosFilial(irmaos);
+  const filial = selosFilial(irmaos, irmaosEstado);
   const vinc = seloVinculo(vinculoEstado, vinculo);
   const motivos = empresa.score != null ? empresa.score_motivos ?? [] : [];
   return (

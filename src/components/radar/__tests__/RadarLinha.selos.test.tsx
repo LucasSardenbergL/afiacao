@@ -190,3 +190,21 @@ describe('RadarLinha — selo de vínculo com cliente (possível sucessor)', () 
     expect(screen.queryByTestId(/^selo-vinculo-/)).toBeNull();
   });
 });
+
+// Pacote I, item 2: na MESMA linha, o vínculo falhado dizia "vínculo?" e os irmãos falhados sumiam calados (pareciam
+// "não é filial de cliente"). Falha parcial agora é dita nas duas leituras.
+describe('RadarLinha — irmãos (filial de cliente) com leitura falhada', () => {
+  const linha = (props: Partial<Parameters<typeof RadarLinha>[0]>) =>
+    render(<RadarLinha empresa={empresa({})} hojeISO="2026-10-20" selecionada={false} onSelecionar={() => {}} onAbrir={() => {}} lote={LOTE} {...props} />);
+
+  it('página dos irmãos falhou e a dos vínculos não → "filial?" ao lado do vínculo lido', () => {
+    linha({ irmaos: null, irmaosEstado: 'falhou', vinculoEstado: 'ok', vinculo: null });
+    expect(screen.getByTestId('selo-filial-nao-verificado').textContent).toBe('filial?');
+    expect(screen.queryByTestId(/^selo-vinculo-/)).toBeNull();
+  });
+
+  it('página lida sem irmãos → sem selo (zero legítimo)', () => {
+    linha({ irmaos: null, irmaosEstado: 'ok' });
+    expect(screen.queryByTestId(/^selo-filial-/)).toBeNull();
+  });
+});

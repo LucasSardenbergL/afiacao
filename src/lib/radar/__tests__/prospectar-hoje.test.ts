@@ -91,6 +91,8 @@ describe('apresentação', () => {
 
   it('deep link da ficha no formato /radar?cnpj=', () => {
     expect(linkFichaRadar('00000000000101')).toBe('/radar?cnpj=00000000000101');
+    // O card marca a origem (o /radar grava a ficha entregue); o e-mail não (a página dele grava antes do redirect).
+    expect(linkFichaRadar('00000000000101', 'card')).toBe('/radar?cnpj=00000000000101&origem=card');
   });
 });
 

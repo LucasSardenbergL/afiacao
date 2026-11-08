@@ -159,6 +159,11 @@ describe('selosFilial / textoFilialFicha (mesma raiz de CNPJ)', () => {
   const sem = { irmaos_na_fila: 0, irmaos_clientes: 0, cliente_nome: null };
   it('sem dado (carregando/falhou) não fabrica selo', () => {
     expect(selosFilial(null)).toEqual([]);
+    // Pacote I: a página dos irmãos que FALHOU não é "sem filial" — vira o selo "filial?" (ausente ≠ zero).
+    expect(selosFilial(null, 'falhou').map((x) => `${x.chave}:${x.texto}`)).toEqual(['nao-verificado:filial?']);
+    expect(selosFilial(null, 'carregando')).toEqual([]);
+    // Com dado em mãos (releitura falhou), o dado vale.
+    expect(selosFilial({ irmaos_na_fila: 0, irmaos_clientes: 1, cliente_nome: null }, 'falhou').map((x) => x.chave)).toEqual(['cliente']);
     expect(selosFilial(undefined)).toEqual([]);
   });
   it('sem irmãos: nenhum selo, e a ficha diz que verificou', () => {

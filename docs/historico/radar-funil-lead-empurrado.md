@@ -42,6 +42,8 @@ esse sinal.
 - `registrarCardServido(n)` e `registrarAberturaEmpurrada({ origem: 'card', cnpj })` agora devolvem
   `Promise<ResultadoSensor>` (`{ ok: true, registrado } | { ok: false, motivo, transitorio }`). A chamada solta
   de hoje continua compilando e funcionando; a falha já é registrada dentro do hook.
+- **Ligado no pacote I** (ver `radar-pacote-i-ficha-fresca-2026-11-08.md`): o card manda `/radar?cnpj=…&origem=card` e
+  o `/radar` grava a ficha entregue quando ela abre. O texto abaixo é o contrato de antes.
 - O card ainda **não** grava a ficha entregue: o sensor `ficha_card` aparece como "nunca gravou" e a coluna
   "Fichas (card)" fica "—". Para ligar, chame `registrarFichaEntregue({ origem: 'card', cnpj })` quando a ficha do
   lead tiver chegado (por exemplo, no `RadarClientes` quando o lead do deep link vier de um clique no card).
