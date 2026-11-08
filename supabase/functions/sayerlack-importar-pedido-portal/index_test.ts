@@ -277,3 +277,18 @@ Deno.test("cron não importa pedido (403) e não toca o banco", async () => {
   await resp.body?.cancel();
   igual(falso.chamadas.length, 0, "zero efeito");
 });
+
+// 8.2: o script que VAI ao Browserless é JS válido e carrega as funções de página testadas contra HTML real
+// (`scripts/sayerlack-portal-dom.test.ts`). Pega um `.toString()` que saia com tipo TS, crase ou cifrão-chave.
+Deno.test("script do Browserless parseia e embute as funções de página do _shared (8.2)", async () => {
+  const falso = montar({ porProtocolo: () => null });
+  await importar();
+  const envios = falso.de(BROWSERLESS);
+  igual(envios.length >= 1, true, "chamou o Browserless");
+  const code = String((envios[0].corpo as { code: string }).code);
+  const fn = new Function(code.trim().replace(/^export default /, "return "))();
+  igual(typeof fn, "function", "o módulo exporta a função");
+  for (const nome of ["aplicarFiltrosConsultaDom", "clicarFiltrarDom", "lerTabelaConsultaDom", "lerCondicaoSelecionadaDom", "lerCondicoesOpcoesDom"]) {
+    igual(code.includes(`function ${nome}(`), true, `embute ${nome}`);
+  }
+});

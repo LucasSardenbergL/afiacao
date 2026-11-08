@@ -37,7 +37,9 @@
   CONFIRMADO (sonda #999, 2026-11-08).
 - ✅ **8.1** (#3737) — testes dos handlers reais da importar e da varrer (harness + PostgREST falso por rota), 21
   sabotagens vermelhas. Só testes: nada a deployar.
-- ⏳ Depois: 5.2, 8.2, 7.1, 7.2, 7.3, 4.3 (7.5 numa sessão própria).
+- 🔄 **8.2** — seletores e paginação testados contra HTML (vitest + jsdom), funções de página em
+  `_shared/sayerlack-portal-dom.ts`; importar v1.8 e varrer v1.10 (deploy das 2 edges depois do merge).
+- ⏳ Depois: 5.2, 7.1, 7.2, 7.3, 4.3 (7.5 numa sessão própria).
 
 ## Andamento da Sessão B (tela e painel)
 

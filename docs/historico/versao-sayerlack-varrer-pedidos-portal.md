@@ -48,3 +48,9 @@ sayerlack_cancelado_com_po cobra), com leitura estendida desde a emissão mais a
 num pedido com PO abre o incidente da 5.4 (trigger). Toda falha da cobertura (sem tempo, leitura sem prova, protocolo
 que não apareceu, fora do alcance) deixa a rodada vermelha.
 ```
+
+```text
+v1.10 (2026-11-08) — revisão 2, 8.2: funções de PÁGINA (filtros, situações, tabela da consulta, próxima página) e o
+laço de paginação saem do template para _shared/sayerlack-portal-dom.ts, testados contra HTML real
+(scripts/sayerlack-portal-dom.test.ts). Comportamento igual.
+```
