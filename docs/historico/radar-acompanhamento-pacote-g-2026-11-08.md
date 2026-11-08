@@ -88,7 +88,14 @@ instalação.
 
 ## Deploy
 
-Ordem: migration → Publish. App velho com banco novo funciona: chamada de 3 args cai no DEFAULT do 4º, os campos novos
-do card são ignorados, e na dedupe "mesmo conteúdo" a regra de antes vale. **App novo com banco velho**: o card ignora
-os campos ausentes (null ≠ zero), o registro manda `p_retorno` para uma função de 3 args e o PostgREST recusa com
-PGRST202. Por isso a migration vai ANTES do Publish.
+Ordem recomendada: migration → Publish. As duas ordens são seguras:
+
+- **App velho com banco novo**: a chamada de 3 args cai no DEFAULT do 4º e os campos novos do card são ignorados. Na
+  dedupe de "mesmo conteúdo", a regra de antes vale.
+- **App novo com banco velho**: o card não mostra acompanhamento (ausente = `null`, nunca zero). O "em conversa" manda
+  `p_retorno` para a função de 3 args e toma PGRST202. O cliente repete **sem a data**, então o contato é gravado sem
+  retorno e o toast não promete data (`src/queries/useRegistrarContatoRadar.ts`).
+
+**Estado em 2026-11-08:** o `db:aplicar --ensaio` rodou inteiro na PROD e fez ROLLBACK (sha256 `52cdb8c2…`), com
+pré-voo 🟢 (os 5 corpos vivos = predecessores). A aplicação real foi **negada pelo classificador do modo automático**
+da sessão e ficou com o founder (comando no PR).
