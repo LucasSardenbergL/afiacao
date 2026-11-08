@@ -24,6 +24,35 @@ do SO (grep em 2026-11-07). Opção `-c` na linha de comando do `pg_ctl` continu
 (fsync e full_page_writes são do servidor). Os riscos maiores ficam para depois: paralelizar dentro da
 parte (o `executa()` retorna 0 mesmo quando falha) e template compartilhado (vaza roles e extensões entre provas).
 
+## Descartado: juntar a união ao `validate`
+
+O Codex sugeriu fundir o job `provas-sql-uniao` ao `validate` para tirar uma aquisição de runner do
+caminho crítico. Medido em 25 runs verdes (2026-11-07), do fim da última parte ao fim da união: mediana
+de **1,3 min**, p80 3,2, máx. 7,9. O `validate` tem uma guarda explícita contra tirar a união do `needs`
+(`viu_uniao`), e `scripts/provas-sql-escopo.ts` (`provasVerdes`) usa o nome do job para achar a base verde
+da main. Ganho de ~1 min não paga desmontar um agregador fail-closed. Não fazer.
+
 ## Medição
 
-Comparação pareada por prova (duração `✅ test-… Ns` do log), antes × depois: preenchida no PR.
+Comparação pareada por prova (duração `✅ test-… Ns` do log): mediana de 5 runs verdes de 2026-11-07
+antes (42428151698, 42425104187, 42422400248, 42418191928, 42418085702) × o run do PR depois (42434251233),
+as mesmas 299 unidades (prova × modo) nos dois lados. Marcador `DURABILIDADE_OFF_OK … off/off/on` nas 7 partes.
+
+| | antes | depois | ganho |
+|---|---|---|---|
+| soma das provas, normal | 26,1 min | 24,3 min | 7,0% |
+| soma das provas, `--falsificar` | 91,0 min | 84,4 min | 7,3% |
+| total | 117,1 min | 108,7 min | 7,2% |
+
+O total das 5 bases variou de 112,4 a 118,4 min; o depois ficou abaixo da menor. A razão mediana
+depois/antes por prova (≥ 20 s) é 0,93: o ganho é pequeno e igual em todas, sem nenhuma prova que
+dependesse da escrita em disco. Leitura honesta: o fsync não era o gargalo. O custo está no `initdb` e na
+carga do snapshot, que é CPU.
+
+**O ganho maior veio da tabela de custo.** O `db/nucleo-ci-custo.txt` (2026-11-05) deixava 12 provas do
+manifesto no default de 30 s: a `cliente-sucessao-plano` custa ~370 s e a `cliente-sucessoes` ~190. No run
+do PR, com a tabela velha, as partes levaram de 10,9 a 20,7 min de provas. Regenerada com a mediana dos
+6 runs, a partição real do runner (`NUCLEO_PARTE=i/7 … --lista`, 193 provas) dá de 14,9 a 16,3 min nos
+mesmos dados. Nas 5 bases, a pior parte cai de 20,5–22,9 para 16,6–17,6 min, ~5 min a menos no caminho
+crítico de todo PR que roda o núcleo inteiro. A tabela envelhece a cada prova cara nova; o procedimento
+de re-medição está no cabeçalho dela.
