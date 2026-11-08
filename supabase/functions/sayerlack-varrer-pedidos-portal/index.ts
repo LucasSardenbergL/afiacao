@@ -12,6 +12,8 @@
 //   4. falha de importação ⇒ `sayerlack_varredura_falha` + e-mail na 1ª vez do protocolo.
 //   5. (v1.3) pedido do APP com PO fora do Omie cujo protocolo está "6 - Cancelado" no portal ⇒ encerrado pela porta
 //      auditada `corrigir_cancelamento_pos_disparo` (é a pergunta que o card "PO a reconciliar" fazia ao founder).
+//   6. (v1.9) COBERTURA: os pedidos com PO ainda não faturado (`sayerlack_cobertura_situacao_portal`) têm a situação
+//      relida 1×/dia, com leitura estendida se a emissão é anterior aos 7 dias — o 6 deles abre o incidente da 5.4.
 //
 // ⚠️ LEITURA PURA NO PORTAL: o script do navegador só usa menu, filtros, "Filtrar" e a paginação da tabela; recusa todo
 // diálogo nativo (dismiss — nunca confirma). Nada aqui grava no portal.
@@ -52,6 +54,8 @@ import {
   carenciaRedisparo,
   maisRecente,
   entregaCobertaPeloSync,
+  coberturaPendente,
+  type PedidoACobrir,
 } from "./varredura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -684,6 +688,7 @@ Deno.serve(async (req: Request) => {
   const registro = await abrirExecucao(db, auth, modo === "listar" ? ACAO_REGISTRO_LISTAR : ACAO_REGISTRO);
   const falhasReconciliacao: { pedido_id: number; protocolo: string; mensagem: string }[] = [];
   const falhasSituacao: string[] = [];
+  const falhasCobertura: string[] = [];
   // 4.3: cada leitura da lista e cada importação abre UMA sessão no Browserless (cota do plano). Conta por rodada.
   const sessoes = { leitura_portal: 0, importacao: 0 };
   const lerPortalContado = (desde: string) => { sessoes.leitura_portal += 1; return lerPortal(desde); };
@@ -1084,6 +1089,9 @@ Deno.serve(async (req: Request) => {
     // 7. Reconciliação do "PO a reconciliar" (v1.3): cancelado no portal + PO fora do Omie ⇒ encerra pela porta auditada.
     resumoFinal = { ...resumoFinal, reconciliacao: await reconciliar(hoje, emissaoDesde, lista, semTempo) };
 
+    // 8. Cobertura (v1.9, 5.4): situação relida dos pedidos com compra em aberto além da janela de 7 dias.
+    if (modo === "importar") resumoFinal = { ...resumoFinal, cobertura: await cobrir(hoje, semTempo) };
+
     // Rodada com qualquer coisa não resolvida NÃO é sucesso no registro: o ✓ do UltimaExecucao esconderia o pedido.
     const problemas: string[] = [];
     if (!prova.ok) problemas.push(`leitura incompleta (${prova.motivo}): ${prova.detalhe}`);
@@ -1109,8 +1117,69 @@ Deno.serve(async (req: Request) => {
       problemas.push(`Reconciliação: ${falhasReconciliacao.length} pedido(s) cancelado(s) no portal não encerraram: ` +
         falhasReconciliacao.map((f) => `#${f.pedido_id} (${f.mensagem})`).join("; "));
     }
+    if (falhasCobertura.length > 0) problemas.push(`cobertura da situação dos pedidos com compra em aberto: ${falhasCobertura.join(" · ")}`);
     if (problemas.length > 0) throw new Error(problemas.join(" · "));
     return resumoFinal;
+  }
+
+  // ── Cobertura (v1.9, item 5.4) ───────────────────────────────────────────────────────────────────────────────────
+  // Lê de `sayerlack_cobertura_situacao_portal()` (a MESMA fonte que o vigia do data_health cobra) quem não tem leitura
+  // do seu protocolo desde o início do dia e relê a lista do portal desde a emissão mais antiga. Toda falha é da RODADA
+  // (vermelha): leitura sem prova, sem tempo, protocolo que não apareceu ou não gravou — e o vigia fica stale.
+  async function cobrir(hoje: string, semTempo: () => boolean): Promise<Record<string, unknown>> {
+    const inicioDoDia = `${hoje}T00:00:00-03:00`;
+    const ler = async (): Promise<PedidoACobrir[]> => {
+      const { data, error } = await db.rpc("sayerlack_cobertura_situacao_portal");
+      if (error) throw new Error(`cobertura: ${error.message}`);
+      return (Array.isArray(data) ? data : []) as PedidoACobrir[];
+    };
+    let linhas: PedidoACobrir[];
+    try {
+      linhas = await ler();
+    } catch (e) {
+      falhasCobertura.push(mensagemDeErro(e) ?? "leitura da cobertura falhou");
+      return { erro: "leitura da cobertura falhou" };
+    }
+    const alvo = coberturaPendente(linhas, inicioDoDia, hoje);
+    const resumo: Record<string, unknown> = {
+      pedidos: linhas.length, pendentes: alvo.pendentes.map((p) => p.protocolo),
+      fora_do_alcance: alvo.foraDoAlcance.map((p) => p.protocolo),
+    };
+    if (alvo.foraDoAlcance.length > 0) falhasCobertura.push(`fora do alcance da leitura (> 90 dias): ${alvo.foraDoAlcance.map((p) => p.protocolo).join(", ")}`);
+    if (alvo.pendentes.length === 0 || !alvo.emissaoDesde) return resumo;
+    if (semTempo()) { falhasCobertura.push("adiada: sem tempo na rodada"); return { ...resumo, adiado: "sem tempo" }; }
+    const lidoDe = new Date().toISOString();
+    const env = await lerPortalContado(alvo.emissaoDesde)
+      .catch((e): BrowserlessData => ({ success: false, erroTipo: "REDE", erro: mensagemDeErro(e) ?? "erro de rede" }));
+    const lidoAte = new Date().toISOString();
+    resumo.emissao_leitura = alvo.emissaoDesde;
+    if (env.success !== true) {
+      falhasCobertura.push(`leitura estendida falhou (${env.erroTipo ?? "?"})`);
+      return { ...resumo, leitura_falhou: `${env.erroTipo ?? "?"}: ${env.erro ?? "sem detalhe"}` };
+    }
+    const lida = lerListaConsulta(env.linhas ?? []);
+    const prova = provarLeitura({
+      headers: env.headers ?? [], linhasLidas: (env.linhas ?? []).length, respostaTotal: env.resposta_total, dtTotal: env.dt_total, info: env.info,
+      ilegiveis: lida.ilegiveis, repetidos: lida.repetidos,
+    });
+    const parcial = !prova.ok && (prova.motivo === "linhas_ilegiveis" || prova.motivo === "protocolo_repetido");
+    if (!prova.ok && !parcial) {
+      falhasCobertura.push(`leitura estendida sem prova (${prova.motivo})`);
+      return { ...resumo, leitura_falhou: `sem prova (${prova.motivo}): ${prova.detalhe}` };
+    }
+    // Com linha ilegível/repetida, só os 6 entram (bloquear é seguro, liberar não) — e a rodada fica vermelha.
+    if (parcial) falhasCobertura.push(`leitura estendida incompleta (${prova.motivo})`);
+    const noAppCob = await pedidosNoApp(db, lida.pedidos.map((p) => p.protocolo));
+    resumo.situacoes = await gravarSituacoes(observacoesDaLista(lida.pedidos, new Set(noAppCob.keys()), { soCancelados: !prova.ok }), lidoDe, lidoAte);
+    // Relê a fonte: quem segue sem leitura de hoje não apareceu na lista ou não gravou (ordem temporal) — vermelho.
+    try {
+      const ainda = coberturaPendente(await ler(), inicioDoDia, hoje).pendentes.map((p) => p.protocolo);
+      resumo.sem_leitura_depois = ainda;
+      if (ainda.length > 0 && !parcial) falhasCobertura.push(`sem leitura depois da leitura estendida: ${ainda.join(", ")}`);
+    } catch (e) {
+      falhasCobertura.push(mensagemDeErro(e) ?? "releitura da cobertura falhou");
+    }
+    return resumo;
   }
 
   // ── Reconciliação (v1.3) ─────────────────────────────────────────────────────────────────────────────────────────
