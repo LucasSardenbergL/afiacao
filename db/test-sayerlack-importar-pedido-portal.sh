@@ -31,8 +31,8 @@ MIG="$REPO_ROOT/supabase/migrations/20261106140000_sayerlack_importar_portal_rev
 # A RPC VIVA de importar é a da 20261107140000 (Onda 2: tradução única da condição + de-para D-2) — e ela traz a
 # RPC de aplicar a condição real no pedido do app (D-1). As sabotagens da importação miram ESTE arquivo.
 MIG2="$REPO_ROOT/supabase/migrations/20261107140000_sayerlack_condicao_portal_onda2.sql"
-# A TRADUÇÃO VIVA da condição é a da 20261109120000 (revisão 2, B13: variante "(C)" coexistindo ⇒ IP007).
-MIG3="$REPO_ROOT/supabase/migrations/20261109120000_sayerlack_condicao_c_ambigua.sql"
+# O DE-PARA VIVO é o da 20261109120000 (revisão 2, B13: sempre a variante SEM "(C)"; "30 DIAS" → T54).
+MIG3="$REPO_ROOT/supabase/migrations/20261109120000_sayerlack_condicao_sem_c.sql"
 for f in "$MIG_BASE1" "$MIG_BASE2" "$MIG_BASE3" "$MIG0" "$MIG_SAFE" "$MIG" "$MIG2" "$MIG3"; do [ -f "$f" ] || { echo "INFRA: ausente: $f"; exit 1; }; done
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
@@ -151,7 +151,6 @@ SQL
 
 # ZONA 2 — o caminho REAL do SQL Editor: as versões da RPC de custo e, por cima, a migration sob prova.
 for m in "$MIG_BASE1" "$MIG_BASE2" "$MIG_BASE3" "$MIG0" "$MIG_SAFE" "$MIG" "$MIG2"; do P -q -f "$m"; done
-# MIG3 depois do seed do catálogo com pares "(C)": a postcondição dela tem de achar o que provar.
 echo "migrations aplicadas: base1 + base2 + base3 + $(basename "$MIG0") + $(basename "$MIG_SAFE") + $(basename "$MIG") + $(basename "$MIG2")"
 eq "M0 a migration é re-aplicável (idempotente, postcondição verde na 2ª colada)" "$(P -q -f "$MIG" >/dev/null 2>&1 && P -q -f "$MIG2" >/dev/null 2>&1 && echo ok || echo falhou)" "ok"
 eq "M1 a Onda 2 é re-aplicável sozinha (idempotente)" "$(P -q -f "$MIG2" >/dev/null 2>&1 && echo ok || echo falhou)" "ok"
@@ -178,6 +177,8 @@ INSERT INTO public.omie_condicao_pagamento_catalogo (empresa, codigo, descricao,
   ('OBEN', 'A04', 'Para 4 dias', 1, true),       -- B13: par com e sem "(C)" (como em prod)
   ('OBEN', 'B23', 'Para 4 dias (C)', 1, true),
   ('OBEN', 'A13', 'Para 13 dias', 1, true),
+  ('OBEN', 'U89', 'Para 6 dias', 1, true),
+  ('OBEN', 'D43', 'Para 6 dias (C)', 1, true),
   ('OBEN', 'A84', 'Para  13 dias (C)', 1, true), -- espaço duplo: a comparação normaliza
   ('OBEN', 'S20', '30/60', 2, true),
   ('OBEN', 'V20', '30/60 (C)', 2, true),
@@ -397,29 +398,18 @@ eq "S2 nenhum UPDATE sem WHERE na RPC de aplicar" "$(Pq -c "SELECT count(*) FROM
 P -q -c "DELETE FROM public.pedido_compra_sugerido WHERE id BETWEEN 1001 AND 1009; DELETE FROM public.sayerlack_condicao_portal_de_para WHERE condicao_portal IN ('BOLETO 21','BOLETO 99')"
 
 # ZONA 5 — FALSIFICAÇÃO: uma camada por vez, o vermelho CERTO, restaura com a migration REAL.
-# ── Revisão 2, B13 (2026-11-08): variante "(C)" do mesmo texto ⇒ ambíguo ⇒ IP007 (o "(C)" aguarda o founder) ──
+# ── Revisão 2, B13 (2026-11-08): sempre a variante SEM "(C)"; o de-para "30 DIAS" passa a T54 ──
 P -q -f "$MIG3" >/dev/null 2>&1 || bad "B13 a migration 20261109120000 não aplicou (postcondição?)"
 seed
-eq "B13 \"4 DIAS\" com A04 e B23 (C) recusa IP007" "$(cond "'70 - 4 DIAS'")" "COND_ERR_IP007"
-eq "B13 \"13 DIAS\" com variante (C) de espaço duplo recusa IP007" "$(cond "'13 DIAS'")" "COND_ERR_IP007"
-eq "B13 \"30/60\" com \"30/60 (C)\" recusa IP007" "$(cond "'30/60'")" "COND_ERR_IP007"
-eq "B13 \"9 DIAS\" só com a variante (C) segue IP007" "$(cond "'9 DIAS'")" "COND_ERR_IP007"
-eq "B13 \"44 DIAS\" com a (C) INATIVA resolve X44" "$(cond "'44 DIAS'")" "COND_X44_1"
-eq "B13 \"7 DIAS\" sem variante (C) segue A07" "$(cond "'70 - 7 DIAS'")" "COND_A07_1"
-eq "B13 \"28/56\" sem variante (C) segue S10/2" "$(cond "'28/56'")" "COND_S10_2"
-eq "B13 de-para \"30 DIAS\" → A30 vence a ambiguidade" "$(cond "'70 - 30 DIAS'")" "COND_A30_1"
-eq "B13 importar \"4 DIAS\" recusa IP007 e nada grava" "$(imp "'4300001', $ENT, 5181.82, '$DFA'::jsonb, '4 DIAS'")|$(Pq -c "SELECT count(*) FROM public.pedido_compra_sugerido WHERE portal_protocolo='4300001'")" "IMP_ERR_IP007|0"
-P -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.tentar_cond_msg(p_txt text) RETURNS text LANGUAGE plpgsql AS $f$
-BEGIN
-  PERFORM * FROM public.sayerlack_condicao_portal_para_omie(p_txt);
-  RETURN 'SEM_ERRO';
-EXCEPTION WHEN SQLSTATE 'IP007' THEN
-  RETURN CASE WHEN SQLERRM LIKE '%Para 4 dias (C)%' THEN 'CITA_C' ELSE 'NAO_CITA' END;
-END $f$;
-SQL
-eq "B13 a mensagem cita a variante (C)" "$(Pq -c "SELECT public.tentar_cond_msg('4 DIAS')")" "CITA_C"
-eq "B13 ACL: anon/authenticated sem EXECUTE" "$(Pq -c "SELECT has_function_privilege('anon','public.sayerlack_condicao_portal_para_omie(text)','EXECUTE')||'|'||has_function_privilege('authenticated','public.sayerlack_condicao_portal_para_omie(text)','EXECUTE')")" "false|false"
+eq "B13 \"4 DIAS\" com A04 e B23 (C) escolhe A04" "$(cond "'70 - 4 DIAS'")" "COND_A04_1"
+eq "B13 \"13 DIAS\" com variante (C) de espaço duplo escolhe A13" "$(cond "'13 DIAS'")" "COND_A13_1"
+eq "B13 \"6 DIAS\" com U89 e D43 (C) escolhe U89" "$(cond "'6 DIAS'")" "COND_U89_1"
+eq "B13 \"30 DIAS\" (de-para corrigido) dá T54, não A30 (C)" "$(cond "'70 - 30 DIAS'")" "COND_T54_1"
+eq "B13 \"30/60\" com \"30/60 (C)\" escolhe S20" "$(cond "'30/60'")" "COND_S20_2"
+eq "B13 \"9 DIAS\" só com a variante (C) (sem par) segue IP007" "$(cond "'9 DIAS'")" "COND_ERR_IP007"
+eq "B13 \"7 DIAS\" segue A07" "$(cond "'70 - 7 DIAS'")" "COND_A07_1"
+eq "B13 de-para não aponta para variante (C)" "$(Pq -c "SELECT count(*) FROM public.sayerlack_condicao_portal_de_para d JOIN public.omie_condicao_pagamento_catalogo c ON c.empresa='OBEN' AND c.codigo=d.codigo_omie WHERE c.descricao ~* '\(c\)\s*\$'")" "0"
+eq "B13 importar \"30 DIAS\" grava T54" "$(imp "'4300001', $ENT, 5181.82, '$DFA'::jsonb, '30 DIAS'")|$(Pq -c "SELECT condicao_pagamento_codigo FROM public.pedido_compra_sugerido WHERE portal_protocolo='4300001'")" "IMP_OK_novo_4300001|T54"
 
 echo "── falsificação ──"
 SAB="$(dirname "$DATA")/sab.sql"
@@ -429,7 +419,8 @@ sabota() { # $1 = sed · $2 = arquivo (padrão: a migration do corpo VIVO, $MIG2
   if cmp -s "$alvo" "$SAB"; then echo "  ❌ sabotagem NÃO casou o padrão ($1) — falsificação seria teatro"; FAIL=$((FAIL+1)); return 1; fi
   P -q -f "$SAB"
 }
-restaura() { seed; P -q -f "$MIG0"; P -q -f "$MIG_SAFE"; P -q -f "$MIG"; P -q -f "$MIG2"; P -q -f "$MIG3"; seed; }
+# A postcondição da MIG2 exige o "30 DIAS → A30" de então: a linha volta ao estado de antes da MIG3 para reaplicá-las.
+restaura() { seed; P -q -f "$MIG0"; P -q -f "$MIG_SAFE"; P -q -f "$MIG"; P -q -c "DELETE FROM public.sayerlack_condicao_portal_de_para WHERE condicao_portal = '30 DIAS'"; P -q -f "$MIG2"; P -q -f "$MIG3"; seed; }
 dente() { if [ "$2" = "$3" ]; then ok "$1 (sabotado ⇒ $2)"; else bad "$1 — sabotado devia dar [$3], veio [$2]"; fi; }
 
 seed; sabota 's/WHERE n_map <> 1;/WHERE n_map = 0;/'
@@ -517,21 +508,22 @@ else
   esac
 fi
 restaura
-# F19 — sem a recusa da variante "(C)" (B13): a postcondição da 20261109120000 aborta o apply — e o aborto é DELA —, e
-# a função (já recriada, autocommit) passa a escolher a variante sem "(C)" em silêncio.
-sed -e 's/^    IF v_c IS NOT NULL THEN$/    IF false THEN/' "$MIG3" > "$SAB"
+# F19 — de-para de volta para a variante (C): a postcondição da 20261109120000 aborta — e o aborto é DELA —, e o
+# assert do "30 DIAS" vira A30.
+sed -e "s/   SET codigo_omie = 'T54',/   SET codigo_omie = 'A30',/" -e "s/ WHERE condicao_portal = '30 DIAS' AND codigo_omie = 'A30';/ WHERE condicao_portal = '30 DIAS';/" "$MIG3" > "$SAB"
 if cmp -s "$MIG3" "$SAB"; then
-  bad "F19 sabotagem NÃO casou a recusa do (C) — falsificação seria teatro"
+  bad "F19 sabotagem NÃO casou o UPDATE do de-para — falsificação seria teatro"
 elif P -q -f "$SAB" >/dev/null 2>"$SAB.err"; then
-  bad "F19 postcondição NÃO abortou sem a recusa do (C)"
+  bad "F19 postcondição NÃO abortou com o de-para em (C)"
 else
   F19="$(linhas_error "$SAB.err")"
   case "$F19" in
-    "ERROR:  B13 FALHOU: \"4 DIAS\" tem variante (C) e deu A04"|"ERRO:  B13 FALHOU: \"4 DIAS\" tem variante (C) e deu A04")
-      ok "F19 postcondição aborta o apply sem a recusa do (C)" ;;
+    "ERROR:  B13 FALHOU: de-para aponta para variante (C)"|"ERRO:  B13 FALHOU: de-para aponta para variante (C)")
+      ok "F19 postcondição aborta o apply com o de-para em variante (C)" ;;
     *) bad "F19 ERRO ALHEIO à postcondição — veio [${F19:-<nenhuma linha ERROR>}]" ;;
   esac
-  dente "F19 sem a recusa do (C), \"4 DIAS\" escolhe A04 em silêncio" "$(cond "'4 DIAS'")" "COND_A04_1"
+  P -q -c "UPDATE public.sayerlack_condicao_portal_de_para SET codigo_omie='A30' WHERE condicao_portal='30 DIAS'"
+  dente "F19 com o de-para em (C), \"30 DIAS\" vai para A30" "$(cond "'30 DIAS'")" "COND_A30_1"
 fi
 restaura
 sabota "s/^  IF v_p.condicao_origem IS DISTINCT FROM 'default_a_vista' THEN$/  IF false THEN/"
