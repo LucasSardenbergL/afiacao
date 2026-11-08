@@ -270,14 +270,8 @@ sab_fora() {  # sabotagem FORA do trio (objetos da 5.4): o md5 do trio não muda
 }
 case "${SABOTAGEM:-}" in
   "") ;;
-  sem_incidente_no_trigger) sab_fora "    INSERT INTO public.sayerlack_incidente_cancelado_com_po (pedido_id, protocolo, po_omie)
-    VALUES (NEW.id, btrim(NEW.portal_protocolo), v_po)" "    PERFORM 1 WHERE false AND NEW.id = 0 AND v_po = ''
-    -- sabotado" "trigger que não abre o incidente"
-    trocar "$TMP/mig.sql" "    ON CONFLICT (pedido_id) WHERE resolvido_em IS NULL DO NOTHING;
-  END IF;
-  -- Fecha SÓ" "    ;
-  END IF;
-  -- Fecha SÓ" || exit 9 ;;
+  sem_incidente_no_trigger) sab_fora "  IF NEW.empresa = 'OBEN' AND NEW.portal_situacao_codigo = '6' AND (v_po IS NOT NULL OR NEW.disparo_claim_em IS NOT NULL)" \
+                                     "  IF false AND NEW.empresa = 'OBEN'" "trigger que não abre o incidente" ;;
   leitura_posterior_fecha)  # o desenho v1: o source lia a situação ATUAL (o 6 trocado por 1 apagava o aviso)
     sab_compute "             WHERE i.resolvido_em IS NULL
             UNION ALL" "             WHERE i.resolvido_em IS NULL
@@ -294,9 +288,9 @@ ALTER TABLE public.sayerlack_incidente_cancelado_com_po DISABLE TRIGGER trg_inci
                OR t.status::text IN ('FATURADO', 'RECEBIDO', 'CANCELADO')))" "          AND false)" "cobertura cobra pedido já faturado" ;;
   cobertura_ignora_protocolo) sab_fora "         CASE WHEN p.portal_situacao_protocolo = btrim(p.portal_protocolo) THEN p.portal_situacao_ate END" \
                                        "         p.portal_situacao_ate" "leitura de outro protocolo conta" ;;
-  sem_espelho_pos_encerrar) sab_compute "             WHERE EXISTS (
-               SELECT 1 FROM public.purchase_orders_tracking t" "             WHERE false AND EXISTS (
-               SELECT 1 FROM public.purchase_orders_tracking t" "PO no espelho depois do encerramento ignorado" ;;
+  sem_espelho_pos_encerrar) sab_compute "               AND EXISTS (
+               SELECT 1 FROM public.purchase_orders_tracking t" "               AND false AND EXISTS (
+               SELECT 1 FROM public.purchase_orders_tracking t" "rede calculada do espelho desligada" ;;
   sem_claim_no_trigger) sab_fora "  IF NEW.empresa = 'OBEN' AND NEW.portal_situacao_codigo = '6' AND (v_po IS NOT NULL OR NEW.disparo_claim_em IS NOT NULL)" \
                                  "  IF NEW.empresa = 'OBEN' AND NEW.portal_situacao_codigo = '6' AND (v_po IS NOT NULL)" "6 sobre pendência de disparo não abre" ;;
   espelho_sem_trigger) sab_fora "  FOR EACH ROW EXECUTE FUNCTION public.sayerlack__incidente_pelo_espelho();" \
@@ -416,6 +410,7 @@ sit 104 1 '2026-11-09 17:35-03'
 P -q -c "UPDATE public.pedido_compra_sugerido SET omie_pedido_compra_id = '9104', status = 'disparado' WHERE id = 104;"
 eq "B10 6 sobre pendência de disparo abre o incidente, que sobrevive à leitura 1 e à conciliação que grava o PO" "$(abertos)|$(Pq -c "SELECT motivo || '|' || COALESCE(po_omie, 'NULL') FROM public.sayerlack_incidente_cancelado_com_po WHERE pedido_id = 104;")" "104|disparo_pendente|NULL"
 eq "B11 o trigger do espelho é fail-open: erro nele não derruba a escrita do sync" "$(Pq -c "ALTER TABLE public.sayerlack_incidente_cancelado_com_po ADD CONSTRAINT quebra CHECK (pedido_id < 0) NOT VALID;" >/dev/null; Pv -c "INSERT INTO public.purchase_orders_tracking (empresa, status, omie_codigo_pedido, omie_codigo_integracao) VALUES ('OBEN', 'CRIADO', 3, 'AFI-103') RETURNING omie_codigo_pedido;" 2>&1 | grep -E '^[0-9]+$'; Pq -c "ALTER TABLE public.sayerlack_incidente_cancelado_com_po DROP CONSTRAINT quebra;" >/dev/null)" "3"
+eq "B11b e a rede calculada do compute mostra o PO no espelho que o trigger não gravou" "$(cc "(probable_cause LIKE '%2141103 (#103, PO no espelho depois de encerrado)%')::text")" "true"
 
 echo "═══ cobertura: pedido com compra em aberto precisa de leitura no dia útil ═══"
 # TRUNCATE não dispara o trigger só-resolve (é de linha): limpa o B para a C medir só a cobertura.
