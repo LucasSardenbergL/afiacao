@@ -693,10 +693,15 @@ manual pelo contrato e só avisavam: o pedido ficava sem PO no app para sempre. 
    resposta perdida, e quem resolve é a conciliação do disparador. O vínculo grava os mesmos campos da conciliação
    (`omie_pedido_compra_*`, status `disparado`, claim limpo) e a trilha em `acoes_execucoes` (`acao =
    sayerlack_vincular_po_manual`) com o antes e o depois.
+6. **Corrida e frescor (Codex rodada 1: 2 P1 + 1 P2):** o PO candidato é relido com `FOR UPDATE` e revalidado sob
+   a trava (status, contrato, `AFI-`); se mudou, a RPC aborta com `40001`. Assim, dois pedidos nunca pegam o mesmo
+   PO. O espelho tem de estar fresco: `sync_state` `pedidos_compra/oben` em `complete` há menos de 2 h, senão
+   `espelho_desatualizado`. Na rodada 2 do Codex, nada P0/P1. O risco de deadlock que ela levantou foi descartado,
+   porque o gatilho do espelho só insere no incidente e o sync escreve por HTTP em transação própria.
 
 Nas edges (importar v1.10, varrer v1.12): o erro da RPC **lança** na importadora (cai no catch, sem re-disparo) e, na
 varredura, mantém a pendência com `vinculo_motivo: "erro"`. Nenhum dos ramos re-dispara.
 
-**Provas:** `db/test-sayerlack-vincular-po-manual.sh` (PG17, 30 asserts, nos 2 locales; `--falsificar` com 12
-sabotagens vermelhas nos dois). Handlers em Deno: importar (vinculou, não casou com diferenças, RPC com erro) e
+**Provas:** `db/test-sayerlack-vincular-po-manual.sh` (PG17, 32 asserts, nos 2 locales; `--falsificar` com 14
+sabotagens vermelhas nos dois, incluindo a trava com 2 conexões A/B e o espelho velho). Handlers em Deno: importar (vinculou, não casou com diferenças, RPC com erro) e
 varrer (reconsulta: casou, não casou, erro), com 4 sabotagens das edges vermelhas.
