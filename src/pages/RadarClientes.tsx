@@ -7,7 +7,7 @@ import { useUrlState } from '@/hooks/useUrlState';
 import { useAuth } from '@/contexts/AuthContext';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, FILTROS_MEUS_ATENDIMENTOS, CHAVE_VISAO_MEUS, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
-import { useRadarParaVisitarContagem } from '@/queries/useRadarContatoContabil';
+import { dicaDoChip, useRadarParaVisitarContagem } from '@/queries/useRadarContatoContabil';
 import { useRadarAtendimentosAtivos } from '@/queries/useRadarAtendimentos';
 import { useRadarMeuTerritorio } from '@/queries/useRadarMeuTerritorio';
 import {
@@ -161,7 +161,7 @@ export default function RadarClientes() {
   const hojeISO = useHojeBRT();
 
   const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus, aguardar: aguardandoTerritorio });
-  // Quantos do recorte são "para visitar" — sob demanda: só com o chip ligado, contado na própria fila (pacote N).
+  // Quantos do recorte são "para visitar": desligado, do agregado (quando o recorte cabe nele); ligado, da própria fila.
   const contagemVisitar = useRadarParaVisitarContagem(filtros, hojeISO, { desligado: meus || aguardandoTerritorio });
   const rotuloContagemVisitar = contagemVisitar.rotulo;
   // Fila ainda sem recorte (território a caminho) conta como carregando — senão a tela mostraria "nenhuma empresa".
@@ -505,10 +505,7 @@ export default function RadarClientes() {
           <div className="flex flex-wrap items-center gap-1.5">
             <Button size="sm" variant={filtros.paraVisitar ? 'secondary' : 'outline'} aria-pressed={!!filtros.paraVisitar}
               className="h-7 px-2 text-xs" data-testid="radar-chip-visitar"
-              title={contagemVisitar.isError
-                ? 'Não consegui contar os leads para visitar neste recorte'
-                : 'Leads cujo telefone e e-mail da Receita parecem ser da contabilidade: vá ao endereço em vez de ligar.'
-                  + (filtros.paraVisitar ? '' : ' Ligue para ver quantos há neste recorte.')}
+              title={dicaDoChip(!!filtros.paraVisitar, contagemVisitar)}
               onClick={() => {
                 const v = !filtros.paraVisitar;
                 track('radar.filtro_para_visitar', { ligado: v, contagem: contagemVisitar.data ?? null });

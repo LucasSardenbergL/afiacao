@@ -9,6 +9,8 @@ import {
   formatarPenetracao,
   bateuNoTeto,
   LIMITE_MUNICIPIOS,
+  visitarAplicado,
+  formatarContadoEm,
   type RadarMunicipioContagem,
 } from '@/queries/useRadarContagemMunicipios';
 import { useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
@@ -84,13 +86,18 @@ export function RadarRankingCidades({
           )}
         </span>
       </div>
-      {/* "Para visitar" filtra a FILA, não o ranking (pacote N): a regra é por lead (contabilidade × contato) e não
-          cabe no agregado por município — no caminho vivo o recorte custa ~5,5 s só no pré-corte (prod 2026-11-08). */}
-      {filtros.paraVisitar && (
-        <p className="text-xs text-muted-foreground mb-2" data-testid="radar-ranking-sem-visitar">
-          O ranking não aplica o “Para visitar”: conta todos os leads do recorte.
+      {/* "Para visitar" no ranking: dimensão pré-calculada do agregado (migration 20261111160000). No caminho vivo a
+          regra por lead custaria ~5,5 s só no pré-corte (prod 2026-11-08): ali a resposta vem SEM o recorte — e a tela diz. */}
+      {filtros.paraVisitar && !aguardando && q.data && q.data.length > 0 && (visitarAplicado(q.data) ? (
+        <p className="text-xs text-muted-foreground mb-2" data-testid="radar-ranking-visitar-contado">
+          Só os “Para visitar”, na contagem de {formatarContadoEm(q.data[0].visitar_contado_em as string)} (correções
+          feitas depois entram no próximo cálculo).
         </p>
-      )}
+      ) : (
+        <p className="text-xs text-muted-foreground mb-2" data-testid="radar-ranking-sem-visitar">
+          O ranking não aplica o “Para visitar” neste recorte: conta todos os leads.
+        </p>
+      ))}
       {aguardando ? (
         <div className="space-y-1">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
       ) : semDado ? (

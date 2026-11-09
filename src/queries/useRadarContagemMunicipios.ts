@@ -26,24 +26,38 @@ export interface RadarMunicipioContagem {
   total: number;
   com_telefone: number;
   a_contatar: number;
+  /** Leads "para visitar" do município (dimensão do agregado). null = dimensão indisponível neste recorte (caminho
+   *  vivo, "só sugeridos", ou agregado ainda sem ela) — nunca 0. */
+  para_visitar: number | null;
+  /** Os "para visitar" do recorte INTEIRO (antes do teto de municípios), repetido em toda linha. null = idem. */
+  para_visitar_total: number | null;
+  /** Quando a dimensão foi calculada (cron horário depois da carga e da contabilidade). null = a resposta NÃO
+   *  aplicou o "para visitar" (mesmo com p_so_visitar): a tela avisa. */
+  visitar_contado_em: string | null;
 }
 
-// Agrega por município respeitando os filtros ESTRUTURAIS (não a busca textual livre —
-// busca por nome é p/ achar 1 empresa, não p/ ranking geográfico; omitir evita o ILIKE '%%' full-scan).
-// Alimenta ranking ("onde caçar") + totalizador + mapa — um backend, três usos.
-//
-// Universo = o da FILA: o recorte de lote (foto vigente / só inéditos / incluir quem saiu) é o
-// mesmo `recorteDeLote` de `useRadarLista`, sobre o lote lido por `lerLoteVigente` (mesma chave
-// e cache) — ranking e mapa não recomputam "qual é o lote". Sem isto o totalizador contava os
-// 52.011 que saíram do dump de 2026-08 (São Paulo 26.794 no ranking × 24.910 na fila).
-export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: string, enabled: boolean) {
-  const qc = useQueryClient();
+/** A resposta aplicou o recorte "para visitar"? Só quando TODA linha diz de quando é a dimensão. Resposta vazia
+ *  não diz nada (false): a tela não afirma que recortou. */
+export function visitarAplicado(dados: readonly RadarMunicipioContagem[] | undefined): boolean {
+  return !!dados && dados.length > 0 && dados.every((m) => m.visitar_contado_em != null);
+}
+
+/** "09/11 07:35" — de quando é a contagem "para visitar" (horário de São Paulo). */
+export function formatarContadoEm(iso: string): string {
+  return new Date(iso).toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+/** Os filtros ESTRUTURAIS da fila como parâmetros de `radar_contagem_por_municipio` (sem o recorte de lote, que
+ *  depende do lote lido). Um builder só: o mapa, o ranking e o número do chip pedem o MESMO recorte. */
+export function paramsDaContagem(filtros: RadarFiltros, hojeISO: string) {
   const p = presetParaParams(filtros.preset, hojeISO);
   const cnae = digitosCnae(filtros.cnae);
   // Região e contato: o MESMO recorte da fila (`recorteDeUf`, `incluirSemContato`). UF escolhida vence a
   // região; campo ausente (roteirizador, testes antigos) = Brasil e com sem-contato, como antes.
   const recorteUf = recorteDeUf(filtros);
-  const params = {
+  return {
     p_uf: recorteUf.tipo === 'uf' ? recorteUf.uf : null,
     p_ufs: recorteUf.tipo === 'lista' ? [...recorteUf.ufs] : null,
     p_com_contato: filtros.incluirSemContato === false,
@@ -56,7 +70,31 @@ export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: strin
     p_incluir_ja_clientes: filtros.incluirJaClientes,
     p_data_abertura_min: p.dataAberturaMin,
     p_data_abertura_max: p.dataAberturaMax,
+  };
+}
+
+/** NULL explícito em todo filtro ausente (os testes do lote vigente fixam esse contrato: o recorte "sem lote" é
+ *  NULL dito, não default implícito). Os args têm DEFAULT NULL na prod. */
+export type FiltroNuloContagem =
+  | 'p_uf' | 'p_ufs' | 'p_cnae_exato' | 'p_cnae_prefix' | 'p_cnae_secundario' | 'p_status'
+  | 'p_data_abertura_min' | 'p_data_abertura_max' | 'p_lote' | 'p_primeira_vista_min';
+
+// Agrega por município respeitando os filtros ESTRUTURAIS (não a busca textual livre —
+// busca por nome é p/ achar 1 empresa, não p/ ranking geográfico; omitir evita o ILIKE '%%' full-scan).
+// Alimenta ranking ("onde caçar") + totalizador + mapa — um backend, três usos.
+//
+// Universo = o da FILA: o recorte de lote (foto vigente / só inéditos / incluir quem saiu) é o
+// mesmo `recorteDeLote` de `useRadarLista`, sobre o lote lido por `lerLoteVigente` (mesma chave
+// e cache) — ranking e mapa não recomputam "qual é o lote". Sem isto o totalizador contava os
+// 52.011 que saíram do dump de 2026-08 (São Paulo 26.794 no ranking × 24.910 na fila).
+export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: string, enabled: boolean) {
+  const qc = useQueryClient();
+  const params = {
+    ...paramsDaContagem(filtros, hojeISO),
     p_limit: LIMITE_MUNICIPIOS,
+    // "Para visitar" (dimensão do agregado, migration 20261111160000): o mapa e o ranking recortam como a fila
+    // quando o recorte cabe no agregado; fora dele a resposta vem SEM o recorte e com visitar_contado_em null.
+    p_so_visitar: filtros.paraVisitar === true,
   };
   const modoLote = { incluirSaiuDoDump: filtros.incluirSaiuDoDump, soIneditos: filtros.soIneditos };
   return useQuery({
@@ -79,14 +117,9 @@ export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: strin
           dataAberturaMin: params.p_data_abertura_min, dataAberturaMax: params.p_data_abertura_max,
         });
       }
-      // NULL explícito em todo filtro ausente (os testes do lote vigente fixam esse contrato: o
-      // recorte "sem lote" é NULL dito, não default implícito). Os args têm DEFAULT NULL na prod.
-      type FiltroNulo =
-        | 'p_uf' | 'p_ufs' | 'p_cnae_exato' | 'p_cnae_prefix' | 'p_cnae_secundario' | 'p_status'
-        | 'p_data_abertura_min' | 'p_data_abertura_max' | 'p_lote' | 'p_primeira_vista_min';
       const { data, error } = await supabase.rpc(
         'radar_contagem_por_municipio',
-        comNulo<'radar_contagem_por_municipio', FiltroNulo>({
+        comNulo<'radar_contagem_por_municipio', FiltroNuloContagem>({
           ...params,
           p_lote: recorte.ultimoLote,
           p_primeira_vista_min: recorte.primeiraVistaMin,
@@ -245,6 +278,8 @@ async function contarSugeridosPorMunicipio(
     const atual = porMunicipio.get(chave) ?? {
       municipio_codigo: codigo, municipio_nome: l.municipio_nome ?? '', uf: l.uf ?? '',
       lat: null, lng: null, total: 0, com_telefone: 0, a_contatar: 0,
+      // A dimensão "para visitar" é do agregado; esta contagem é viva: indisponível, nunca 0.
+      para_visitar: null, para_visitar_total: null, visitar_contado_em: null,
     };
     atual.total += 1;
     if (l.telefone1 != null || l.telefone2 != null) atual.com_telefone += 1;

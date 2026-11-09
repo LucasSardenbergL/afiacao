@@ -5,6 +5,12 @@ import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { lerContatoContabil, type CampoContato, type LeituraContatoContabil } from '@/lib/radar/contato-contabil';
 import { useRadarLista, type RadarFiltros } from '@/queries/useRadarLista';
+import {
+  formatarContadoEm, paramsDaContagem, type FiltroNuloContagem, type RadarMunicipioContagem,
+} from '@/queries/useRadarContagemMunicipios';
+import { recorteDeLote } from '@/lib/radar/lote-vigente';
+import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
+import { comNulo } from '@/lib/rpc-args';
 
 const chave = (cnpj: string | null) => ['radar', 'contato-contabil', cnpj] as const;
 /** O que muda quando o vendedor corrige: a ficha, o card e — só sob o chip "para visitar" — a fila. */
@@ -94,21 +100,25 @@ export function useCorrigirContatoContabil() {
 }
 
 /**
- * Quantos leads do recorte atual são "para visitar" — SOB DEMANDA (pacote N). Antes era uma 2ª `radar_lista`
- * (`p_so_visitar`, até 200) a cada troca de filtro, com o chip ligado ou não: medido em prod 2026-11-08, só o
- * pré-corte dela (≈67 mil CNPJs com sinal × o recorte) custa ~5,5 s de seq scan em `radar_empresas`, antes da regra
- * por linha — contra o `statement_timeout` de 8 s do `authenticated`. Agora:
- *   - chip DESLIGADO: nenhuma leitura, nenhum número (o chip só convida);
- *   - chip LIGADO: o número sai da PRÓPRIA fila, que já é o recorte "para visitar" (mesma chave da lista da
- *     página — nenhuma chamada a mais): exato quando a fila acabou, "N+" enquanto há página seguinte.
+ * Quantos leads do recorte atual são "para visitar". Pacote N: era uma 2ª `radar_lista` (`p_so_visitar`) a cada troca
+ * de filtro — medido em prod 2026-11-08, ~5,5 s só de pré-corte em `radar_empresas`, contra o `statement_timeout` de
+ * 8 s do `authenticated`. Agora (migration 20261111160000, dimensão "visitar" no agregado por município):
+ *   - chip DESLIGADO: o número sai do AGREGADO (`radar_contagem_por_municipio`, `p_so_agregado` — recorte que cairia
+ *     no caminho vivo devolve 0 linhas, nunca o seq scan), só quando o recorte da fila cabe nele (`cabeNoAgregado`).
+ *     É a contagem do último cálculo (`contadoEm`): correção feita depois entra no próximo. Fora do agregado, ou sem a
+ *     dimensão calculada: sem número (ausente ≠ zero) — o chip só convida;
+ *   - chip LIGADO: o número sai da PRÓPRIA fila, que já é o recorte (mesma chave da lista da página — nenhuma chamada
+ *     a mais): exato quando a fila acabou, "N+" enquanto há página seguinte.
  * `desligado`: visão "Meus atendimentos" (o chip não existe lá).
  */
 export interface ContagemParaVisitar {
   isError: boolean;
-  /** null = não contado (chip desligado, ou a fila ainda não chegou). */
+  /** null = não contado (fora do agregado, dimensão indisponível, ou a fila ainda não chegou). */
   data: number | null;
-  /** O que o chip mostra ao lado do rótulo: '' (desligado), '…', '?', 'N' ou 'N+'. */
+  /** O que o chip mostra ao lado do rótulo: '' (sem número), '…', '?', 'N' ou 'N+'. */
   rotulo: string;
+  /** Quando o número do agregado foi contado (ISO); null = o número é da fila ao vivo, ou não há número. */
+  contadoEm?: string | null;
 }
 
 export function rotuloDaContagem(
@@ -122,13 +132,84 @@ export function rotuloDaContagem(
   return { isError: false, data: n, rotulo: lista.hasNextPage ? `${n}+` : String(n) };
 }
 
+/** O recorte da FILA cabe no agregado por município? A `radar_lista` aplica também a busca textual, o nome de cidade
+ *  digitado (sem código) e "só sugeridos" — que o agregado não conhece. Com eles o número do agregado seria de OUTRO
+ *  recorte: sem número. (Data/CNAE fora dos agregados quem decide é o servidor: `p_so_agregado` → 0 linhas.) */
+export function cabeNoAgregado(filtros: RadarFiltros): boolean {
+  if (filtros.busca.trim() !== '') return false;
+  if (filtros.soSugeridos) return false;
+  if (filtros.municipio.trim() !== '' && !filtros.municipioCodigo) return false;
+  return true;
+}
+
+/** O número do agregado na resposta (`p_limit` 1): o total do recorte inteiro, se a dimensão serviu. Resposta vazia
+ *  = recorte fora dos agregados (ou vazio): sem número, nunca 0. */
+export function totalVisitarDoAgregado(
+  linhas: readonly Pick<RadarMunicipioContagem, 'para_visitar_total' | 'visitar_contado_em'>[],
+): { n: number; contadoEm: string } | null {
+  const l = linhas[0];
+  if (!l || l.para_visitar_total == null || l.visitar_contado_em == null) return null;
+  return { n: l.para_visitar_total, contadoEm: l.visitar_contado_em };
+}
+
+export function rotuloDoAgregado(q: {
+  isError: boolean;
+  data?: { n: number; contadoEm: string } | null;
+}): ContagemParaVisitar {
+  // Chip desligado é convite: falha ou ausência não vira "?" nem 0 — só some o número.
+  if (q.isError || !q.data) return { isError: q.isError, data: null, rotulo: '', contadoEm: null };
+  return { isError: false, data: q.data.n, rotulo: q.data.n.toLocaleString('pt-BR'), contadoEm: q.data.contadoEm };
+}
+
+/** Texto do `title` do chip (o número desligado é do último cálculo; o ligado é da fila ao vivo). */
+export function dicaDoChip(ligado: boolean, c: ContagemParaVisitar): string {
+  const base = 'Leads cujo telefone e e-mail da Receita parecem ser da contabilidade: vá ao endereço em vez de ligar.';
+  if (c.isError && ligado) return 'Não consegui contar os leads para visitar neste recorte';
+  if (ligado) return base;
+  if (c.data != null && c.contadoEm) {
+    return `${base} ${c.data.toLocaleString('pt-BR')} neste recorte na contagem de ${formatarContadoEm(c.contadoEm)}`
+      + ' (correções feitas depois entram no próximo cálculo). Ligue para ver a lista.';
+  }
+  return `${base} Ligue para ver quantos há neste recorte.`;
+}
+
 export function useRadarParaVisitarContagem(
   filtros: RadarFiltros,
   hojeISO: string,
   opcoes: { desligado?: boolean } = {},
 ): ContagemParaVisitar {
+  const qc = useQueryClient();
   const ligado = !opcoes.desligado && filtros.paraVisitar === true;
   // Observa a MESMA query da fila da página (mesmos filtros, visão 'fila'): o react-query deduplica pela chave.
   const lista = useRadarLista(filtros, hojeISO, { aguardar: !ligado });
-  return rotuloDaContagem(ligado, lista);
+  const params = {
+    ...paramsDaContagem(filtros, hojeISO),
+    p_municipio_codigo: filtros.municipioCodigo || null,
+    p_limit: 1,
+    p_so_agregado: true,
+  };
+  const modoLote = { incluirSaiuDoDump: filtros.incluirSaiuDoDump, soIneditos: filtros.soIneditos };
+  const agregado = useQuery({
+    queryKey: ['radar', 'contagem-municipios', 'para-visitar', params, modoLote],
+    enabled: !opcoes.desligado && !ligado && cabeNoAgregado(filtros),
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: async () => {
+      const lote = await lerLoteVigente(qc);
+      const recorte = recorteDeLote(lote, modoLote);
+      const { data, error } = await supabase.rpc(
+        'radar_contagem_por_municipio',
+        comNulo<'radar_contagem_por_municipio', FiltroNuloContagem | 'p_municipio_codigo'>({
+          ...params, p_lote: recorte.ultimoLote, p_primeira_vista_min: recorte.primeiraVistaMin,
+        }),
+      )
+        // p_limit 1 + a janela do total: no máximo 1 linha — o range explicita o teto (gate de paginação).
+        .range(0, 0);
+      if (error) throw error;
+      return totalVisitarDoAgregado(data ?? []);
+    },
+  });
+  if (ligado) return rotuloDaContagem(true, lista);
+  if (opcoes.desligado || !cabeNoAgregado(filtros)) return rotuloDaContagem(false, lista);
+  return rotuloDoAgregado(agregado);
 }

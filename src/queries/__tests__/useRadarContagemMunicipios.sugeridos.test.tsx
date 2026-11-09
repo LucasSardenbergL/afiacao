@@ -81,8 +81,10 @@ describe('useRadarContagemMunicipios — "só sugeridos" usa o predicado da fila
     const { result } = renderHook(() => useRadarContagemMunicipios(FILTROS, '2026-10-21', true), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual([
-      { municipio_codigo: 'M1', municipio_nome: 'JOINVILLE', uf: 'SC', lat: -26.3, lng: -48.8, total: 2, com_telefone: 1, a_contatar: 0 },
-      { municipio_codigo: 'M2', municipio_nome: 'BETIM', uf: 'MG', lat: -19.9, lng: -44.2, total: 1, com_telefone: 0, a_contatar: 0 },
+      { municipio_codigo: 'M1', municipio_nome: 'JOINVILLE', uf: 'SC', lat: -26.3, lng: -48.8, total: 2, com_telefone: 1, a_contatar: 0,
+        para_visitar: null, para_visitar_total: null, visitar_contado_em: null },
+      { municipio_codigo: 'M2', municipio_nome: 'BETIM', uf: 'MG', lat: -19.9, lng: -44.2, total: 1, com_telefone: 0, a_contatar: 0,
+        para_visitar: null, para_visitar_total: null, visitar_contado_em: null },
     ]);
   });
 
