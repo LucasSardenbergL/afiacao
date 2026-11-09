@@ -388,9 +388,9 @@ printf '%s 5 falsificar=3\ndb/test-fake-falsificavel-2.sh 5 falsificar=3\n' "$FA
 if python3 - "$ESPELHO/db/roda-nucleo-ci.sh" "$ESPELHO/db/roda-nucleo-ci-pula.sh" > "$LOGS/sabotagem.log" 2>&1 <<'PY'
 import sys, pathlib
 t = pathlib.Path(sys.argv[1]).read_text()
-a = '*)    executa "${scripts[$i]}" falsificar "${falsifs[$i]}" ;;'
+a = '*)    enfileira "${scripts[$i]}" falsificar "${falsifs[$i]}" 0 "$c" "$i" ;;'
 assert t.count(a) == 1, f"esperava 1 chamada da falsificacao no laco, achei {t.count(a)}"
-pathlib.Path(sys.argv[2]).write_text(t.replace(a, '*)    [ "$i" -eq 1 ] || executa "${scripts[$i]}" falsificar "${falsifs[$i]}" ;;', 1))
+pathlib.Path(sys.argv[2]).write_text(t.replace(a, '*)    [ "$i" -eq 1 ] || enfileira "${scripts[$i]}" falsificar "${falsifs[$i]}" 0 "$c" "$i" ;;', 1))
 PY
 then
   exec_exige "falsificação OMITIDA entre duas declaradas REPROVA pelo recibo de identidade" \
@@ -605,6 +605,47 @@ else
 fi
 rm -f "$ESPELHO/$FALSO" "$ESPELHO/db/test-fake-falsificavel-2.sh" "$ESPELHO/db/test-fake-falsificavel-3.sh" \
   "$ESPELHO/db/roda-nucleo-ci-perde.sh" "$MPR"
+
+# ── WORKERS: unidades simultâneas na parte (2026-11-09, fatia 2) ────────────────────────────────
+# O veredito de cada unidade volta do subshell por ARQUIVO. O que pode dar errado sem ninguém ver:
+# "2 workers" que na verdade rodam em série (ganho nenhum, custo de leitura), subshell que morre e
+# some do conjunto, e vermelho de um worker que se perde na colheita. O controle positivo vem 1º,
+# porque um runner que reprovasse tudo com 2 workers passaria nos casos de recusa.
+# Só com bash ≥ 5.1 (`wait -n -p`), que é o do CI; no laptop (bash 3.2) a seção avisa e não conta.
+echo
+echo "=== o EXECUTOR com 2 workers roda junto, colhe tudo e reprova o subshell morto? ==="
+if [ "${BASH_VERSINFO[0]}" -gt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+  W2="$ESPELHO/w2"; rm -rf "$W2"; mkdir -p "$W2"
+  # par que só passa JUNTO: cada um marca presença e espera a do outro por até 20 s.
+  for par in a:b b:a; do
+    eu="${par%:*}"; outro="${par#*:}"
+    # shellcheck disable=SC2016  # o $(seq) é do script GERADO, não deste
+    { printf '#!/usr/bin/env bash\n'
+      printf 'touch "%s/%s"\n' "$W2" "$eu"
+      printf 'for _ in $(seq 1 200); do [ -f "%s/%s" ] && { echo "RESULTADO: 5 ok / 0 fail"; exit 0; }; sleep 0.1; done\n' "$W2" "$outro"
+      printf 'echo "RESULTADO: 0 ok / 1 fail"; exit 1\n'
+    } > "$ESPELHO/db/test-w2-par-$eu.sh"
+  done
+  printf '#!/usr/bin/env bash\necho "RESULTADO: 5 ok / 0 fail"\n' > "$ESPELHO/db/test-w2-solo.sh"
+  printf 'db/test-w2-par-a.sh 5\ndb/test-w2-par-b.sh 5\ndb/test-w2-solo.sh 5\n' > "$ESPELHO/manifesto-w2.txt"
+  exec_verde "2 workers: as 3 unidades verdes, o par SIMULTÂNEO incluso (controle)" "provas=3/3" \
+    env MANIFESTO="$ESPELHO/manifesto-w2.txt" NUCLEO_WORKERS=2 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+  rm -f "$W2/a" "$W2/b"
+  exec_exige "1 worker roda o mesmo par em SÉRIE (o controle acima mediu simultaneidade)" "exit=1" \
+    env MANIFESTO="$ESPELHO/manifesto-w2.txt" NUCLEO_WORKERS=1 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+  # subshell da unidade morto no meio (kill -9 no pai da prova): sem arquivo de veredito.
+  # shellcheck disable=SC2016  # o $PPID é da prova GERADA (o subshell da unidade), não deste
+  printf '#!/usr/bin/env bash\nkill -9 "$PPID"\nsleep 1\necho "RESULTADO: 5 ok / 0 fail"\n' > "$ESPELHO/db/test-w2-orfa.sh"
+  printf 'db/test-w2-solo.sh 5\ndb/test-w2-orfa.sh 5\n' > "$ESPELHO/manifesto-w2-orfa.txt"
+  exec_exige "2 workers: unidade cujo subshell morreu REPROVA (ausência de veredito)" "sem veredito" \
+    env MANIFESTO="$ESPELHO/manifesto-w2-orfa.txt" NUCLEO_WORKERS=2 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+  printf '#!/usr/bin/env bash\necho "RESULTADO: 4 ok / 1 fail"\n' > "$ESPELHO/db/test-w2-vermelha.sh"
+  printf 'db/test-w2-solo.sh 5\ndb/test-w2-vermelha.sh 5\n' > "$ESPELHO/manifesto-w2-verm.txt"
+  exec_exige "2 workers: assert vermelho num worker REPROVA a parte" "assert(s) vermelhos" \
+    env MANIFESTO="$ESPELHO/manifesto-w2-verm.txt" NUCLEO_WORKERS=2 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+else
+  echo "  ⚠️  bash $BASH_VERSION < 5.1: casos de 2 workers NÃO rodaram aqui (ausência de dado; rodam no CI)"
+fi
 
 # ── CONTROLE FINAL ──────────────────────────────────────────────────────────────
 echo
