@@ -764,7 +764,7 @@ varrer (reconsulta: casou, não casou, erro), com 4 sabotagens das edges vermelh
 
 **Antes:** a importadora relia o portal e, sem PO, re-disparava o pedido ANTIGO do app. Não comparava nada e não havia
 diff persistido. Se o fornecedor tivesse trocado SKU, quantidade, preço ou condição no portal, o PO saía errado.
-**Agora** (migration `20261111140000`, importar v1.11, disparar v1.14):
+**Agora** (migration `20261111150000`, importar v1.11, disparar v1.14):
 
 1. **Retrato inicial durável:** `sayerlack_portal_retrato`, versionado e imutável, guarda os itens com valor, o total
    e a condição. No pedido importado, ele nasce **dentro** da RPC de importar, na mesma transação do pedido (Codex P1):

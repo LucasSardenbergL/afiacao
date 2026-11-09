@@ -62,7 +62,7 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * v1.11 (2026-11-09, revisão 2, 5.2 fatia 1) — antes de re-disparar pedido sem PO, confere o pedido do app com a
  * leitura (RPC `sayerlack_conferir_portal`: SKU/quantidade contra os itens, valor por item/total/condição contra o
  * retrato); divergiu ⇒ `alterado_no_portal` com as diferenças, sem disparo. Condição ilegível no re-disparo também
- * recusa. A RPC achando o pedido já gravado (outra aba) passa pelas mesmas recusas. Migration 20261111140000 antes.
+ * recusa. A RPC achando o pedido já gravado (outra aba) passa pelas mesmas recusas. Migration 20261111150000 antes.
  */
 export const VERSAO = "v1.11-confere-portal";
 

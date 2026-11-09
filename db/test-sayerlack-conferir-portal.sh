@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔═════════════════════════════════════════════════════════════════════════════════════════════
-# ║  PROVA PG17 — 20261111140000_sayerlack_conferir_portal.sql (revisão 2, item 5.2 / 5B, fatia 1)
+# ║  PROVA PG17 — 20261111150000_sayerlack_conferir_portal.sql (revisão 2, item 5.2 / 5B, fatia 1)
 # ║      bash db/test-sayerlack-conferir-portal.sh > /tmp/t.log 2>&1; echo "exit=$?"
 # ║      bash db/test-sayerlack-conferir-portal.sh --falsificar > /tmp/f.log 2>&1; echo "exit=$?"
 # ║      HARNESS_LOCALE=pt_BR.UTF-8 bash db/test-sayerlack-conferir-portal.sh   (2º idioma)
@@ -25,7 +25,7 @@ SLUG="sayerlack-conferir-portal"
 LOC="${HARNESS_LOCALE:-C}"
 export LC_ALL=C LANG=C          # o CLIENTE fica em C; o idioma do SERVIDOR vem de $LOC
 M="$REPO_ROOT/supabase/migrations"
-MIG_REAL="$M/20261111140000_sayerlack_conferir_portal.sql"
+MIG_REAL="$M/20261111150000_sayerlack_conferir_portal.sql"
 CADEIA="$M/20260905090000_sayerlack_custo_portal_cas.sql $M/20260906193522_valor_total_portal_provado.sql
         $M/20261006120000_preco_exato_po_sayerlack_ipi.sql $M/20261014120000_sayerlack_importar_pedido_portal.sql
         $M/20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql $M/20261106140000_sayerlack_importar_portal_revisao.sql

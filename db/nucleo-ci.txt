@@ -243,7 +243,7 @@ db/test-sayerlack-encerrar-cancelado-portal.sh 34  falsificar=10
 # dono do PO, claim aberto recusa, conteúdo SKU/qtde/valor com tolerância por unidade, ausente ≠ zero, trilha em
 # acoes_execucoes com antes/depois (docs/historico/importar-pedido-portal-sayerlack.md).
 db/test-sayerlack-vincular-po-manual.sh    32  falsificar=14
-# Portal Sayerlack 5.2 fatia 1 (20261111140000): retrato do portal na MESMA transação da importação, conferência
+# Portal Sayerlack 5.2 fatia 1 (20261111150000): retrato do portal na MESMA transação da importação, conferência
 # SKU/qtde × itens do pedido (qtde_final × fator) e valor/total/condição × retrato, ausente ≠ zero, leitura antiga não
 # fecha a aberta, claim recusa a divergência no WHERE que grava — 2 conexões (docs/historico/importar-pedido-portal-sayerlack.md).
 db/test-sayerlack-conferir-portal.sh       39  falsificar=17
