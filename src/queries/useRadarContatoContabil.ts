@@ -202,7 +202,9 @@ export function useRadarParaVisitarContagem(
         comNulo<'radar_contagem_por_municipio', FiltroNuloContagem | 'p_municipio_codigo'>({
           ...params, p_lote: recorte.ultimoLote, p_primeira_vista_min: recorte.primeiraVistaMin,
         }),
-      );
+      )
+        // p_limit 1 + a janela do total: no máximo 1 linha — o range explicita o teto (gate de paginação).
+        .range(0, 0);
       if (error) throw error;
       return totalVisitarDoAgregado(data ?? []);
     },
