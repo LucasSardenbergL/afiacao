@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **826** custom migrations totais
+- **827** custom migrations totais
 - **2811** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 1129
@@ -6801,6 +6801,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_score_recalcular` | — |
 | `function` | `public.radar_avisar_lote` | — |
 | `function` | `public.radar_coorte_sortear` | — |
+
+### `20261111120100_radar_drop_salvar_geocode.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20261111132000_radar_foto_do_card_e_contato_avaliado.sql`
 
