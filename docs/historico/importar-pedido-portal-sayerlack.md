@@ -745,3 +745,17 @@ varrer (reconsulta: casou, não casou, erro), com 4 sabotagens das edges vermelh
 - **Sensor de edição:**
   - 1ª onda: `EDICAO_DETECTADA` só pelo `edit_id`, que era a regeneração do `types.ts` com a RPC nova (`0b2f1211`, tolerado). Nada em `supabase/` mudou.
   - 2ª onda: `SEM_EDICAO`.
+
+## Leitura operacional de segunda 09/11 — a prova do total observada em prod pela 1ª vez (2026-11-09)
+
+- **O quê:** a prova de leitura (o total anunciado pelo portal precisa bater com as linhas lidas) nunca tinha sido
+  observada em prod. Rodamos a varredura em `modo=listar` antes da rodada das 12:30, por uma tarefa agendada no Mac
+  do founder, às 06:30. O portal fecha de sábado 12h a segunda 6h, então domingo não servia.
+- **Resultado** (execução `9a391148`, 06:38 SP, varrer `v1.12-vincula-po-manual`):
+  - `status=sucesso` e `prova_leitura=ok`, numa página só.
+  - 6 linhas lidas e `total_anunciado` 6. A fonte que casou foi o `recordsFiltered` do JSON
+    (`resposta_chaves`: success, message, data, recordsTotal, recordsFiltered); `dt_total` e `info_portal` vieram
+    nulos.
+  - Os 6 pedidos já estavam no app, sem ilegível, falha ou indeterminado; 1 sessão do Browserless.
+- **Lição:** a fonte que segura a prova hoje é a resposta JSON do DataTables, não o DOM. Se o portal mudar o
+  endpoint, `dt_total`/`info_portal` são o fallback, e eles ainda não foram vistos com valor em prod.

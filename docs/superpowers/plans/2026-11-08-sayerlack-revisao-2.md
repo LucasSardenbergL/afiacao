@@ -27,9 +27,10 @@
 - ✅ **Bloco 1** (#3718) — B1, B2, B3, B4, B5, B6, B7 (edge), B9, B10, B11, B13. Migration `20261109120000` aplicada
   (#984); importar v1.7 e varrer v1.8 com DEPLOY CONFIRMADO (sondas #986/#988, 2026-11-08).
 - ✅ **IPI dos 5 NCMs** (#3717) — migration `20261109130000` aplicada (#979).
-- ⏳ Leitura operacional de segunda 09/11 (`modo=listar`, antes das 12:30 SP) — SQL pronto em
-  `db/varredura-portal-leitura-segunda-listar-20261109.sql` (aplicar pelo envelope e ler `acoes_execucoes`);
-  tarefa agendada no Mac do founder para segunda (portal fechado sáb 12h → seg 6h).
+- ✅ **Leitura operacional de segunda 09/11** (`modo=listar`, 06:38 SP, execução `9a391148`) — varrer v1.12,
+  `prova_leitura=ok`: 6 linhas lidas = `total_anunciado` 6, vindo do `recordsFiltered` da resposta
+  (`dt_total` e `info_portal` nulos). 0 ilegíveis/falhas/indeterminados. A rodada das 12:30 não fica vermelha
+  pela prova do total; o 8.2 não virou urgente.
 - ✅ **5.3** (#3727) — botão auditado "Encerrar — cancelado no fornecedor": migration `20261110100000` aplicada (#990),
   edge nova `sayerlack-encerrar-cancelado-portal` v1.0 DEPLOY CONFIRMADO (sonda #993). Publish do botão: founder.
 - ✅ **5.4 + cobertura** (#3731) — incidente persistido, cobertura dos pedidos com PO não faturado, source
