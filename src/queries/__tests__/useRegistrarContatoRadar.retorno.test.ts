@@ -17,7 +17,7 @@ describe('registrarContatoRadar — p_retorno e banco anterior', () => {
     rpc.mockResolvedValueOnce({ data: { id: 'c1', deduped: false, nota_gravada: true, retorno_em: '2026-11-16' }, error: null });
     const r = await registrarContatoRadar({ cnpj: '10100000000101', acao: 'em_conversa', nota: 'x', retorno: '2026-11-16' });
     expect(rpc).toHaveBeenCalledWith('registrar_contato_radar', { p_cnpj: '10100000000101', p_acao: 'em_conversa', p_nota: 'x', p_retorno: '2026-11-16' });
-    expect(r).toEqual({ id: 'c1', deduped: false, notaGravada: true, retornoEm: '2026-11-16' });
+    expect(r).toEqual({ id: 'c1', deduped: false, notaGravada: true, retornoEm: '2026-11-16', posse: null });
   });
 
   it('PGRST202 com data (banco anterior): repete SEM a data e o contato é gravado', async () => {
@@ -26,7 +26,7 @@ describe('registrarContatoRadar — p_retorno e banco anterior', () => {
     const r = await registrarContatoRadar({ cnpj: '10100000000101', acao: 'em_conversa', retorno: '2026-11-16' });
     expect(rpc).toHaveBeenCalledTimes(2);
     expect(rpc.mock.calls[1][1]).toEqual({ p_cnpj: '10100000000101', p_acao: 'em_conversa', p_nota: undefined, p_retorno: undefined });
-    expect(r).toEqual({ id: 'c2', deduped: false, notaGravada: null, retornoEm: null });
+    expect(r).toEqual({ id: 'c2', deduped: false, notaGravada: null, retornoEm: null, posse: null });
   });
 
   it('PGRST202 sem data enviada não repete (não é o caso do banco anterior) e o erro sobe', async () => {

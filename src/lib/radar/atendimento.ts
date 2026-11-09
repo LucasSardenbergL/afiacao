@@ -4,6 +4,8 @@
  * "sem dono": um lead que parece livre e não está é o retrabalho que o recurso existe para evitar.
  */
 
+import type { PosseDoContato } from '@/lib/radar/borda-rpc';
+
 /** O PostgREST corta em 1.000 linhas calado; o servidor limita a 100 posses por dono. Bater no teto é ERRO. */
 export const TETO_LEITURA_ATENDIMENTOS = 1000;
 
@@ -180,4 +182,21 @@ export function lerModoDiscagem(): boolean {
 }
 export function gravarModoDiscagem(v: boolean): void {
   try { localStorage.setItem(CHAVE_MODO_DISCAGEM, v ? '1' : '0'); } catch { /* sem storage: só não persiste */ }
+}
+
+/**
+ * Pacote L: a frase do toast sobre o que o registro do contato fez com a posse. `null` = nada a dizer (não mexeu,
+ * banco anterior, ou já-cliente — onde não há o que prospectar).
+ */
+export function textoPosseDoContato(p: PosseDoContato | null): string | null {
+  if (!p) return null;
+  if (p.ok) {
+    const ate = p.expiraEm ? ` até ${diaMes(p.expiraEm)}` : '';
+    return p.renovado ? `Segue com você${ate}.` : `O lead ficou com você${ate}.`;
+  }
+  switch (p.motivo) {
+    case 'em_atendimento': return `O lead segue em atendimento por ${p.donoNome ?? 'outro vendedor'}: o contato foi registrado, a posse não mudou.`;
+    case 'limite': return 'Você já tem 100 leads em atendimento: o contato foi registrado, mas este lead não ficou com você.';
+    default: return null;
+  }
 }
