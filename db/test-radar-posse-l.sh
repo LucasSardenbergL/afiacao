@@ -26,7 +26,7 @@ MIGL="$REPO_ROOT/supabase/migrations/20261111130000_radar_posse_pacote_l.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!P2_FALHOU` = a postcondição aborta o apply com a marca exata.
-  SABOTAGENS="sem_auto_assumir:L1a sem_origem:L1a dedupe_assume:L1f outro_mexe_posse:L2e sem_protecao_no_laco:L2b laco_sem_exit:L2d protecao_inicial_cega:L2f desfazer_nao_libera:L1h desfazer_ignora_posterior:L1i acl_aberta:POST!P2_FALHOU pre_cega:L3c"
+  SABOTAGENS="sem_auto_assumir:L1a sem_origem:L1a dedupe_assume:L1f outro_mexe_posse:L2e sem_protecao_no_laco:L2b laco_sem_exit:L2d protecao_inicial_cega:L2f desfazer_nao_libera:L1h desfazer_ignora_posterior:L1i acl_aberta:POST!P2_FALHOU pre_cega:L3c agenda_vazia_conta:L4c agenda_sobrescreve:L4a"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-posse-l.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -98,6 +98,8 @@ case "${SABOTAGEM:-}" in
   desfazer_ignora_posterior) sabotar "     AND NOT EXISTS (SELECT 1 FROM public.radar_contatos o
                       WHERE o.cnpj = v_cnpj AND o.criado_por = v_uid AND o.id <> p_id AND o.created_at >= v_criado);" ";" ;;
   acl_aberta)                sabotar "REVOKE ALL ON FUNCTION private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz) FROM PUBLIC, anon, authenticated;" "GRANT EXECUTE ON FUNCTION private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz) TO authenticated;" ;;
+  agenda_vazia_conta)        sabotar "                             OR p_n_retornos + p_n_posses = 0) THEN" "                             OR false) THEN" ;;
+  agenda_sobrescreve)        sabotar "  ON CONFLICT (user_id, dia, evento, cnpj) DO NOTHING;" "  ON CONFLICT (user_id, dia, evento, cnpj) DO UPDATE SET n_retornos = EXCLUDED.n_retornos, n_posses = EXCLUDED.n_posses;" ;;
   pre_cega)                  sabotar "      RAISE EXCEPTION 'PRE FALHOU: % vivo (md5 %) não é o predecessor revisado nem este — outra sessão mudou; refaça o pré-voo', r.alvo, r.vivo;" "      NULL;" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
@@ -399,6 +401,29 @@ HOJE="$(Pq -c "SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date")"
 R="$(reg "$V1" 32400000000101 em_conversa 'retorno longe' "$(Pq -c "SELECT '$HOJE'::date + 30")")"
 eq "L2i 'em conversa' com retorno em 30 dias pela RPC: a posse criada vale até retorno+3 (não 7 dias)" \
    "$(expira 32400000000101)" "$(Pq -c "SELECT ('$HOJE'::date + 33)::timestamp::text")"
+
+# ── L4: sensor da agenda "Hoje" (ledger) ─────────────────────────────────────────────────────────────────
+ag() { como authenticated "$1" "SELECT public.radar_registrar_agenda_uso($2)" | tail -1; }
+A1="$(ag "$V1" "'vista', NULL, 2, 1")"; A2="$(ag "$V1" "'vista', NULL, 3, 0")"
+eq "L4a 'vista' grava 1 por vendedor por dia com o denominador (a 2ª do dia é idempotente e não sobrescreve)" \
+   "$(campo "$A1" registrado):$(campo "$A2" registrado)|$(Pq -c "SELECT n_retornos||'/'||n_posses FROM public.radar_agenda_uso WHERE user_id = '$V1' AND evento = 'vista'")" \
+   "true:false|2/1"
+B1="$(ag "$V1" "'aberta', '32400000000101'")"; B2="$(ag "$V1" "'aberta', '32400000000101'")"; B3="$(ag "$V1" "'aberta', '30100000000101'")"
+eq "L4b 'aberta' grava 1 por CNPJ por dia" \
+   "$(campo "$B1" registrado):$(campo "$B2" registrado):$(campo "$B3" registrado)|$(Pq -c "SELECT count(*) FROM public.radar_agenda_uso WHERE evento = 'aberta'")" \
+   "true:false:true|2"
+prefixo "L4c agenda vazia não é 'vista' (sem denominador não há dia de uso)" \
+   "$(erro_como authenticated "$V1" "SELECT public.radar_registrar_agenda_uso('vista', NULL, 0, 0)")" "22023 vista exige"
+prefixo "L4d quem não prospecta no Radar não escreve no ledger" \
+   "$(erro_como authenticated "a0000000-0000-0000-0000-0000000000ff" "SELECT public.radar_registrar_agenda_uso('vista', NULL, 1, 0)")" "42501 forbidden"
+prefixo "L4e o JWT não lê o ledger direto (só a RPC escreve)" \
+   "$(erro_como authenticated "$V1" "SELECT count(*) FROM public.radar_agenda_uso")" "42501 permission denied for table radar_agenda_uso"
+
+MEDIR="$REPO_ROOT/db/medir-radar-agenda.sql"
+MED="$(P -qAt -v ON_ERROR_STOP=1 -v desde="'2000-01-01'" -f "$MEDIR" 2>&1 || echo MEDIR_FALHOU)"
+eq "L4f a medição roda: agenda (1 vista, 2 aberturas, contato depois da abertura) e posses por semana (as de 1/11 e as de hoje)" \
+   "$(printf '%s\n' "$MED" | grep '^agenda|' | cut -d'|' -f3-)|$(printf '%s\n' "$MED" | grep -c '^posses|' || true)|$(printf '%s' "$MED" | grep -c 'FIM_MEDICAO' || true)" \
+   "1|1|1|2|0|2|1"
 
 # ── L3: fronteira, re-aplicação, anti-deriva ──────────────────────────────────────────────────────────────
 prefixo "L3a authenticated não executa o vencimento interno" \
