@@ -6,6 +6,7 @@ import { invalidarRadar } from '@/lib/radar/invalidar-cache';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import {
   cadastrarEmpresaNoOmie,
+  escolherRazaoFiscal,
   type DepsCadastro,
   type OpcoesCadastro,
   type ResultadoCadastro,
@@ -19,13 +20,16 @@ import { parsearConflito, parsearEstadoCadastro, parsearRegistroV2 } from '@/lib
  */
 export type EmpresaParaCadastro = RadarEmpresa & { telefoneCadastro?: string | null };
 
-/** Payload da edge `omie-vendas-sync` action `criar_cliente` (conta Oben). */
-export function montarPayloadCriarCliente(e: EmpresaParaCadastro) {
+/**
+ * Payload da edge `omie-vendas-sync` action `criar_cliente` (conta Oben). `razaoFiscal` = a da Receita (a de MEI tem o
+ * CPF, que o Radar guarda mascarado — pacote J); ausente = a razão da linha.
+ */
+export function montarPayloadCriarCliente(e: EmpresaParaCadastro, razaoFiscal?: string | null) {
   return {
     action: 'criar_cliente',
     account: 'oben',
     document: e.cnpj,
-    razao_social: e.razao_social || e.nome_fantasia || e.cnpj,
+    razao_social: (razaoFiscal === undefined ? e.razao_social : razaoFiscal) || e.nome_fantasia || e.cnpj,
     nome_fantasia: e.nome_fantasia || undefined,
     endereco: e.logradouro || undefined,
     endereco_numero: e.numero || undefined,
@@ -47,7 +51,12 @@ export const depsCadastroSupabase: DepsCadastro<RadarEmpresa> = {
   // invokeFunction (não `supabase.functions.invoke` cru): em HTTP 500 o `error.message` do
   // supabase-js é o genérico "non-2xx"; o motivo real (ex.: `OMIE_TRANSIENT … rate limit`,
   // que PARA o lote) vem no corpo, e só o helper o lê (P1 do review Codex).
-  criarNoOmie: (e) => invokeFunction<unknown>('omie-vendas-sync', montarPayloadCriarCliente(e)),
+  criarNoOmie: async (e) => {
+    // A razão que a ficha mostra é a mascarada (LGPD, pacote J): a fiscal vem só desta RPC, logo antes do envio.
+    const { data, error } = await supabase.rpc('radar_razao_social_para_cadastro', { p_cnpj: e.cnpj });
+    const razao = escolherRazaoFiscal(e.razao_social, { data, erroCodigo: error ? (error.code ?? 'desconhecido') : null, erro: error });
+    return invokeFunction<unknown>('omie-vendas-sync', montarPayloadCriarCliente(e, razao));
+  },
   registrarNoRadar: async (cnpj, codigo, jaExistia) => {
     const { data, error } = await supabase.rpc('radar_registrar_cadastro_omie_v2', {
       p_cnpj: cnpj,

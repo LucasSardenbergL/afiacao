@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -21,6 +22,7 @@ import {
   julgarRegistro,
   lerCorpoDoRepo,
   lerFalsificacao,
+  lerManifestoEfetivo,
   lerNucleo,
   veredito,
   type Analise,
@@ -229,6 +231,42 @@ describe('R3 — cada falsificar=<n> do núcleo tem juiz, e o juiz tem as âncor
       'db/c.sh     8   falsificar=fora-do-ci',
     ].join('\n');
     expect(lerNucleo(manifesto)).toEqual([{ arquivo: 'db/a.sh', linha: 2 }]);
+  });
+
+  it('lerNucleo com fragmento: a linha volta com a FONTE e o número DENTRO dela', () => {
+    const manifesto = [
+      'db/a.sh 12 falsificar=4',
+      '#== db/nucleo-ci.d/b.txt',
+      '# comentário do fragmento',
+      'db/b.sh 3 falsificar=2',
+    ].join('\n');
+    expect(lerNucleo(manifesto)).toEqual([
+      { arquivo: 'db/a.sh', linha: 1 },
+      { arquivo: 'db/b.sh', linha: 2, fonte: 'db/nucleo-ci.d/b.txt' },
+    ]);
+    expect(julgarNucleo(lerNucleo(manifesto), limpos, {})).toEqual([
+      expect.objectContaining({ regra: 'R3', arquivo: 'db/nucleo-ci.txt', linha: 1 }),
+      expect.objectContaining({ regra: 'R3', arquivo: 'db/nucleo-ci.d/b.txt', linha: 2 }),
+    ]);
+  });
+
+  it('lerManifestoEfetivo: principal + fragmentos .txt em ordem de BYTES; sem principal é null', () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'nucleo-efetivo-'));
+    try {
+      expect(lerManifestoEfetivo(raiz)).toBeNull();
+      mkdirSync(join(raiz, 'db', 'nucleo-ci.d'), { recursive: true });
+      writeFileSync(join(raiz, 'db', 'nucleo-ci.txt'), 'db/a.sh 1 falsificar=1');
+      writeFileSync(join(raiz, 'db', 'nucleo-ci.d', 'a.txt'), 'db/b.sh 1 falsificar=1\n');
+      writeFileSync(join(raiz, 'db', 'nucleo-ci.d', 'Z.txt'), 'db/z.sh 1 falsificar=1');
+      writeFileSync(join(raiz, 'db', 'nucleo-ci.d', 'LEIA.md'), 'db/md.sh 1 falsificar=1');
+      expect(lerNucleo(lerManifestoEfetivo(raiz) ?? '').map((n) => n.fonte ?? 'principal')).toEqual([
+        'principal',
+        'db/nucleo-ci.d/Z.txt',
+        'db/nucleo-ci.d/a.txt',
+      ]);
+    } finally {
+      rmSync(raiz, { recursive: true, force: true });
+    }
   });
 
   it('com juiz e âncoras presentes, limpo', () => {

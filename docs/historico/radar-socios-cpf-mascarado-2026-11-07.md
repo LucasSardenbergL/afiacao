@@ -67,7 +67,7 @@ forte e +2 pares de crédito.
 | Acesso | Só o servidor: RLS ligada sem policy, nada para `anon`/`authenticated`, RPCs da carga só para `service_role`. As RPCs de leitura (ficha, lista, crédito) devolvem só o **sinal** `socio_cpf`, **nunca** nome de sócio nem máscara. Nenhum CPF em UI, log, analytics ou resposta de erro da edge. |
 | Compartilhamento | Nenhum novo. Processamento no Supabase (já operador) e no runner do GitHub (já operador da carga). |
 | Retenção | O lote vigente + 1 anterior, para rollback curto. O que sai disso é apagado pela limpeza da própria carga, e lote abandonado em `carregando` expira em 3 dias. |
-| Direitos do titular | A correção vem da fonte: a RFB atualiza o QSA e a próxima carga substitui o lote. Pedido de oposição ou eliminação: o Encarregado tira a raiz do universo (o dado é público, mas o tratamento aqui é nosso). |
+| Direitos do titular | A correção vem da fonte: a RFB atualiza o QSA e a próxima carga substitui o lote. Pedido de oposição ou eliminação: `radar_exclusao_registrar` (exclusão persistente, que resiste à recarga — [pacote J](radar-privacidade-pacote-j-2026-11-09.md)). O "tirar a raiz do universo" original não sobrevivia à carga mensal. |
 | Alto risco? | Não pela Res. CD/ANPD 2/2022, art. 4º: não é dado sensível, não decide sozinho (é aviso, não bloqueio) e não monitora o titular. |
 | Owner | Founder (Lucas) / Encarregado. |
 

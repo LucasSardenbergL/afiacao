@@ -12325,6 +12325,39 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_agenda_uso: {
+        Row: {
+          cnpj: string
+          criado_em: string
+          dia: string
+          evento: string
+          id: number
+          n_posses: number | null
+          n_retornos: number | null
+          user_id: string
+        }
+        Insert: {
+          cnpj?: string
+          criado_em?: string
+          dia: string
+          evento: string
+          id?: number
+          n_posses?: number | null
+          n_retornos?: number | null
+          user_id: string
+        }
+        Update: {
+          cnpj?: string
+          criado_em?: string
+          dia?: string
+          evento?: string
+          id?: number
+          n_posses?: number | null
+          n_retornos?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       radar_agregado_cnae: {
         Row: {
           cnae_principal: string
@@ -12501,6 +12534,7 @@ export type Database = {
           assumido_em: string
           atribuido_por: string | null
           cnpj: string
+          contato_origem_id: string | null
           dono_user_id: string
           encerrado_em: string | null
           encerrado_por: string | null
@@ -12512,6 +12546,7 @@ export type Database = {
           assumido_em: string
           atribuido_por?: string | null
           cnpj: string
+          contato_origem_id?: string | null
           dono_user_id: string
           encerrado_em?: string | null
           encerrado_por?: string | null
@@ -12523,6 +12558,7 @@ export type Database = {
           assumido_em?: string
           atribuido_por?: string | null
           cnpj?: string
+          contato_origem_id?: string | null
           dono_user_id?: string
           encerrado_em?: string | null
           encerrado_por?: string | null
@@ -12594,6 +12630,30 @@ export type Database = {
           ultima_em?: string
           ultimo_por?: string
           versao?: number
+        }
+        Relationships: []
+      }
+      radar_card_exibicoes: {
+        Row: {
+          cnpj: string
+          dia: string
+          exibido_em: string
+          posicao: number
+          user_id: string
+        }
+        Insert: {
+          cnpj: string
+          dia: string
+          exibido_em?: string
+          posicao: number
+          user_id: string
+        }
+        Update: {
+          cnpj?: string
+          dia?: string
+          exibido_em?: string
+          posicao?: number
+          user_id?: string
         }
         Relationships: []
       }
@@ -25697,10 +25757,23 @@ export type Database = {
           uf: string
         }[]
       }
+      radar_razao_social_para_cadastro: {
+        Args: { p_cnpj: string }
+        Returns: string
+      }
       radar_recruzar_ja_cliente: { Args: never; Returns: number }
       radar_recruzar_ja_cliente_tick: { Args: never; Returns: number }
       radar_registrar_abertura_empurrada: {
         Args: { p_cnpj: string; p_envio?: string; p_origem: string }
+        Returns: Json
+      }
+      radar_registrar_agenda_uso: {
+        Args: {
+          p_cnpj?: string
+          p_evento: string
+          p_n_posses?: number
+          p_n_retornos?: number
+        }
         Returns: Json
       }
       radar_registrar_cadastro_omie: {
@@ -25716,15 +25789,6 @@ export type Database = {
           p_cnpj: string
           p_codigo_cliente: string
           p_ja_existia?: boolean
-        }
-        Returns: Json
-      }
-      radar_registrar_agenda_uso: {
-        Args: {
-          p_cnpj?: string
-          p_evento: string
-          p_n_posses?: number
-          p_n_retornos?: number
         }
         Returns: Json
       }
@@ -25769,15 +25833,6 @@ export type Database = {
           p_situacao: string
         }
         Returns: string
-      }
-      radar_salvar_geocode: {
-        Args: {
-          p_cnpj: string
-          p_lat?: number
-          p_lng?: number
-          p_status?: string
-        }
-        Returns: Json
       }
       radar_score_recalcular: { Args: never; Returns: Json }
       radar_socios_iniciar: {

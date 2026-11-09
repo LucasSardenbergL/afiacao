@@ -148,8 +148,8 @@
 
 **Auditoria de quais custom migrations estão aplicadas no banco**:
 
-- Inventário completo em [`docs/migrations-audit.md`](../migrations-audit.md) (38 custom migrations, 262 objetos esperados — tables, indexes, functions, triggers, cron jobs, enum values, RLS policies)
-- Script SQL pronto pra colar no Supabase SQL Editor em [`scripts/audit-custom-migrations.sql`](scripts/audit-custom-migrations.sql) — read-only, retorna duas tabelas: (a) `supabase_migrations.schema_migrations` cross-reference, (b) existência objeto-a-objeto via `pg_catalog`/`information_schema`. Linha com `❌` = precisa apply manual
+- Inventário completo: `bun run audit:migrations` gera `.audit-migrations/migrations-audit.md` (fora do git desde 2026-11-09; na época: 38 custom migrations, 262 objetos esperados — tables, indexes, functions, triggers, cron jobs, enum values, RLS policies)
+- Script SQL pronto pra colar no Supabase SQL Editor: `.audit-migrations/audit-custom-migrations.sql`, gerado pelo mesmo comando — read-only, retorna duas tabelas: (a) `supabase_migrations.schema_migrations` cross-reference, (b) existência objeto-a-objeto via `pg_catalog`/`information_schema`. Linha com `❌` = precisa apply manual
 - Regenerar quando adicionar migration nova: `bun run audit:migrations` (parser regex em `scripts/audit-custom-migrations.ts`, idempotente)
 - **Audit de 2026-05-19**: 262 objetos checados, 2 gaps (`standard_processes` nunca aplicada + `idx_customer_contacts_birthday` partial). Fechados via `scripts/apply-missing-migrations-2026-05-19.sql` (verificado ok=true).
 - **Audit de 2026-05-20**: 40 custom migrations / 274 objetos (re-gerado após PRs paralelos). Nova migration `20260520010000_scoring_visit_p1_fixes.sql` — **rodar `scripts/audit-custom-migrations.sql` no Studio pra confirmar apply**.

@@ -42,3 +42,7 @@ deno.lock
 # Cache local do tsc incremental (`typecheck`/`typecheck:app`) — por worktree, nunca commitar
 /.cache/
 *.tsbuildinfo
+
+# Audit de custom migrations: gerado NA HORA por `bun run audit:migrations`, nunca versionado
+# (era ímã de conflito entre PRs — docs/historico/ci-arquivos-gerados-sem-conflito.md).
+/.audit-migrations/

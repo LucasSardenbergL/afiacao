@@ -1,5 +1,12 @@
 # nucleo-ci.txt — as provas SQL EXECUTADAS que rodam no caminho obrigatório do merge.
 # =====================================================================================
+# ⚠️ PROVA NOVA NÃO ENTRA AQUI (desde 2026-11-09): crie `db/nucleo-ci.d/<prova>.txt` com a(s)
+# linha(s) dela, no MESMO formato abaixo (comentário à vontade). O manifesto EFETIVO é este arquivo
+# seguido dos fragmentos em ordem LC_ALL=C, com o mesmo parse estrito (duplicata ENTRE fontes aborta;
+# no diretório só entra `<prova>.txt` regular). Acrescentar no fim deste arquivo fazia todo PR
+# conflitar com o irmão e re-sincronizar a main (docs/historico/ci-arquivos-gerados-sem-conflito.md).
+# Editar linha EXISTENTE (subir o mínimo, o falsificar=<n>) continua sendo aqui.
+#
 # Consumido por `db/roda-nucleo-ci.sh` (job `provas-sql` do ci.yml). Uma linha por
 # script; `#` comenta; linha vazia ignorada. O runner EXIGE que todo caminho aqui
 # exista e que o total executado bata com o total lido — lista vazia é ERRO, não
@@ -1060,6 +1067,12 @@ db/test-credito-vinculo-aviso.sh           34  falsificar=23
 # salvo o nome de perfil-MEI agora sem CPF); socio_cpf exige ≤2 raízes no universo, ≤3 empresas no país e dono nos 2
 # lados; guarda de máscara conflitante; protocolo de lote (manifesto imutável, reconciliação, ponteiro, concorrência).
 db/test-radar-socios-cpf.sh                32  falsificar=19
+
+# Radar pacote J — privacidade (migration 20261111150000): a razão de MEI GRAVADA mascarada por qualquer escritor (staging,
+# passo da publicação que não reescreve MEI igual, upsert com EXCLUDED); updated_at intocado; vínculo, aviso de crédito e guarda de homônimo IDÊNTICOS com a razão crua, com
+# a migration sobre a crua e depois do backfill; o cru só no private e só a RPC do cadastro Omie o lê (varredura de
+# catálogo); exclusão de titular resiste à recarga e a lote novo de sócios; retenção das notas livres; ACL.
+db/test-radar-privacidade-j.sh             30  falsificar=14
 
 # Radar pacote D — levar o lead ao vendedor (migration 20261106181000): território por carteira elegível com 1 dono por
 # município, top-N 1 por raiz de CNPJ sem já-cliente/descartado/sem score/RFB baixada/dono ativo de outro, e-mail com dedupe por

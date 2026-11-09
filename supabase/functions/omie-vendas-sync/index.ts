@@ -4,6 +4,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "./lookup-cliente-estrito.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
+import { exigirRazaoFiscal } from "./razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
@@ -2931,6 +2932,7 @@ Deno.serve(async (req) => {
       case "criar_cliente": {
         const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato } = params;
         if (!docCriar || !razao_social) throw new Error("Documento e razão social são obrigatórios");
+        exigirRazaoFiscal(razao_social); // razão do Radar mascarada (aba em build velho) nunca vira cadastro no ERP
         const docClean = documentoParaCadastro(docCriar);
         // Lookup anti-duplicação ESTRITO (retroativo Codex): com o null
         // ambíguo, um flake do Omie pós-retries era lido como "não existe" e
