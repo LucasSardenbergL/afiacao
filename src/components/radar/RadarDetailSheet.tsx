@@ -28,6 +28,7 @@ import {
 } from '@/lib/radar/contato-contabil';
 import { track } from '@/lib/analytics';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
+import { registrarIntencaoContato } from '@/queries/useRadarRegistroEmpurrado';
 import { isCellphone, whatsappLink } from '@/lib/phone';
 import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
@@ -63,10 +64,15 @@ function Telefone({ numero, outras, cnpj, campo, contato }: {
   return (
     <span className="inline-flex items-center gap-1.5 flex-wrap">
       <span className={contabil ? 'font-tabular text-muted-foreground' : 'font-tabular'}>{numero}</span>
-      <RadarTelefoneAcao telefone={numero} discreto={contabil} />
+      <RadarTelefoneAcao telefone={numero} discreto={contabil} cnpj={cnpj} />
       {wa && (
         <a className={contabil ? 'inline-flex items-center gap-1 text-xs text-muted-foreground' : 'inline-flex items-center gap-1 text-xs text-status-success-bold'}
-          href={wa} target="_blank" rel="noreferrer">
+          href={wa} target="_blank" rel="noreferrer" data-testid="radar-whatsapp"
+          onClick={() => {
+            // Intenção de contato no ledger (pacote M): antes o WhatsApp não deixava rastro nenhum.
+            track('radar.telefone_acao', { acao: 'whatsapp' });
+            void registrarIntencaoContato(cnpj, 'whatsapp');
+          }}>
           <MessageSquare className="w-3 h-3" /> WhatsApp
         </a>
       )}
@@ -244,7 +250,7 @@ export function RadarDetailSheet({
           <div className="mt-3">
             <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data} nota={nota} campoNota={campoNota}
               onRegistrado={aposRegistro} onDesfeito={aposDesfazer}
-              ligar={telPrincipal ? <RadarTelefoneAcao telefone={telPrincipal} variant="full" discreto={!!principalContabil} /> : null}
+              ligar={telPrincipal ? <RadarTelefoneAcao telefone={telPrincipal} variant="full" discreto={!!principalContabil} cnpj={empresa.cnpj} /> : null}
               avisoContabil={principalContabil ? (
                 <p className="text-xs text-status-warning" data-testid="radar-discagem-contabil">{SELO_CONTABIL}</p>
               ) : null}

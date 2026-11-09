@@ -57,6 +57,7 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // Radar H (migration 20261107233000) — STABLE, só lê: o funil do lead empurrado (master/gestor). Os registradores
   // do 2º momento e das falhas (radar_registrar_ficha_entregue/_falha_sensor) GRAVAM e ficam BLOQUEADOS na lente.
   'radar_funil',
+  'radar_funil_experimento', // pacote M (20261111134500): STABLE, só lê o experimento da coorte (mesmo gate do funil)
   // Cockpit financeiro (migration 20261101210000) — STABLE, SECURITY INVOKER, só agrega saldo de títulos sob a RLS.
   'fin_saldo_titulos_por_status',
   // Crédito (migration 20261106205557) — STABLE, só lê: o aviso de vínculo com cliente que tem título vencido.

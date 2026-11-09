@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **822** custom migrations totais
-- **2774** objetos esperados (criados por estas migrations)
+- **823** custom migrations totais
+- **2783** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1106
+  - `function`: 1112
   - `rls_policy`: 522
-  - `index`: 390
-  - `table`: 256
-  - `cron_job`: 218
+  - `index`: 391
+  - `table`: 257
+  - `cron_job`: 219
   - `trigger`: 143
   - `view`: 135
   - `enum_value`: 4
@@ -6805,6 +6805,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261111120100_radar_drop_salvar_geocode.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261111134500_radar_medicao_pacote_m.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_evento_contato` | — |
+| `function` | `public.radar_registrar_card_exibido` | — |
+| `function` | `public.radar_registrar_intencao` | — |
+| `function` | `public.radar_funil` | — |
+| `function` | `public.radar_funil_experimento` | — |
+| `function` | `private.radar_expurgar_medicao` | — |
+| `table` | `public.radar_card_exibicoes` | — |
+| `index` | `public.idx_radar_card_exibicoes_dia` | `radar_card_exibicoes` |
+| `cron_job` | `cron.radar-expurgo-medicao-diario` | — |
 
 ## Próximos passos por status
 

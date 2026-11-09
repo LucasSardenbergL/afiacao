@@ -1067,6 +1067,7 @@ db/test-radar-meu-territorio.sh            16  falsificar=5
 # contato humano válido e "empurrado", NULL fora da cobertura do sensor (ausente ≠ zero), saúde dos sensores com falhas
 # por motivo, registradores com SQLSTATE e idempotentes, ledger de falha só staff com contador, ACL nas duas pontas.
 db/test-radar-funil.sh                     45  falsificar=21
+db/test-radar-medicao.sh                   48  falsificar=fora-do-ci  # 10 sabotagens × ~9 s ≈ +1,5 min; controle + 10/10 nos locales C e pt_BR no PR (2026-11-09)
 
 # Radar — publicação atômica da carga mensal (migration 20261110130000): carga parcial não vira vigente (foto intacta
 # durante os chunks e depois de falha, chunk tardio recusado, contagem divergente reprova), carga completa troca de uma

@@ -25541,6 +25541,7 @@ export type Database = {
       radar_email_semanal_painel: { Args: never; Returns: Json }
       radar_estado_cadastro_omie: { Args: { p_cnpj: string }; Returns: Json }
       radar_funil: { Args: { p_semanas?: number }; Returns: Json }
+      radar_funil_experimento: { Args: never; Returns: Json }
       radar_irmaos_por_raiz: {
         Args: { p_cnpjs: string[] }
         Returns: {
@@ -25659,33 +25660,6 @@ export type Database = {
           uf: string
         }[]
       }
-      radar_placar_uso: {
-        Args: never
-        Returns: {
-          aberturas: number
-          aberturas_cobertas_desde: string
-          aberturas_janela_completa: boolean
-          aberturas_outbox_sem_evento: number
-          abriram: number
-          apagados_sem_desfeito: number
-          autorizados_agora: number
-          autorizados_motivo: string
-          cadastraram: number
-          cadastros_novos: number
-          cadastros_sem_evento: number
-          contatos_sem_evento: number
-          descartes: number
-          desde: string
-          desfeitos: number
-          devolvidos: number
-          em_conversa: number
-          eventos_automaticos: number
-          janela: string
-          tocaram: number
-          toques: number
-          vinculos_existentes: number
-        }[]
-      }
       radar_posses_vencer_tick: { Args: { p_agora?: string }; Returns: Json }
       radar_possiveis_vinculos: {
         Args: { p_cnpj: string }
@@ -25745,6 +25719,10 @@ export type Database = {
         }
         Returns: Json
       }
+      radar_registrar_card_exibido: {
+        Args: { p_cnpjs: string[] }
+        Returns: Json
+      }
       radar_registrar_card_servido: {
         Args: { p_n_leads: number }
         Returns: Json
@@ -25764,6 +25742,10 @@ export type Database = {
       }
       radar_registrar_ficha_entregue: {
         Args: { p_cnpj: string; p_envio?: string; p_origem: string }
+        Returns: Json
+      }
+      radar_registrar_intencao: {
+        Args: { p_canal: string; p_cnpj: string }
         Returns: Json
       }
       radar_resolver_conflito_cadastro: {
