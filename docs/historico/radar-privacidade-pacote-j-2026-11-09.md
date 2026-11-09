@@ -103,6 +103,11 @@ tabela continuaria legível crua pelo PostgREST. E toda RPC futura nasceria vaza
 
 A carga (`scripts/radar/carga.ts`) não muda.
 
+**Medido no deploy da edge (2026-11-09 16:36Z):**
+- A v1.33 subiu verbatim: 34/34 sha256 conferem e a sonda deu 401, ou seja, Active.
+- Logo depois, o bot do Lovable regenerou o `types.ts` **a partir de prod** (commit `0b5287a44`). A migration ainda não estava aplicada, então a assinatura de `radar_razao_social_para_cadastro` sumiu e a main ganhou um TS2345 em `useRadarAcoesLead.ts`. A restauração veio por PR.
+- Lição: com a edge à frente da migration, a regeneração apaga do `types.ts` a RPC que só existe no repo. Isso continua acontecendo até a migration ser aplicada. Depois de cada deploy, confira o `git diff` do commit do bot, não só o `--stat`.
+
 ## LGPD: registro e prazos (formato `lgpd-data-mapping`)
 
 | Dado | Finalidade | Base legal | Quem vê | Prazo |
