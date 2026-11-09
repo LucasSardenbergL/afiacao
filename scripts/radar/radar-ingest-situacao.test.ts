@@ -62,9 +62,25 @@ describe("edge radar-ingest — situação cadastral (texto)", () => {
   });
 
   it("[E5] VERSAO bumpada para a carga em staging e EFEITO diz que a edge não aplica a situação", () => {
-    expect(versao).toContain('export const VERSAO = "v1.7-carga-staging-atomica";');
+    expect(versao).toContain('export const VERSAO = "v1.8-chunk-recuperavel";');
     expect(versao).toContain("radar-aplicar-situacao-diario");
     expect(versao).toContain("radar-publicar-lote");
+  });
+
+  it("[E7] o catch geral NÃO marca a carga `falhou` (erro é recuperável); só a ação `falhar` chama radar_carga_falhar", () => {
+    const catchGeral = edge.slice(edge.lastIndexOf("} catch (e) {"));
+    expect(catchGeral).toContain("return json({ error: msg }, 500);");
+    expect(catchGeral).not.toContain("radar_carga_falhar");
+    expect(edge.split('admin.rpc("radar_carga_falhar"').length - 1).toBe(1);
+    const bloco = entre(edge, 'if (action === "falhar")', 'if (action === "status")');
+    expect(bloco).toContain('admin.rpc("radar_carga_falhar"');
+    expect(bloco).toContain("lerMotivoFalha(body.erro)");
+    // A carga declara o fim pelo cliente: abre o lote depois do begin e fecha depois do finalize.
+    expect(carga).toContain("criarClienteIngest(");
+    const iBegin = carga.indexOf('action: "begin_lote"');
+    expect(iBegin).toBeLessThan(carga.indexOf("cliente.abrirLote(MES)"));
+    expect(carga.indexOf("cliente.abrirLote(MES)")).toBeLessThan(carga.indexOf('action: "chunk"'));
+    expect(carga.indexOf('action: "finalize"')).toBeLessThan(carga.indexOf("cliente.fecharLote()"));
   });
 
   it("[E6] carga: pede a lista à edge ANTES dos zips, aborta em resposta sem cnpjs (ausente ≠ vazio) e envia chunk_situacao antes do finalize", () => {

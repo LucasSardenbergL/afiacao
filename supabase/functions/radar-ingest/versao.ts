@@ -15,7 +15,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("radar-ingest");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.7-carga-staging-atomica";
+export const VERSAO = "v1.8-chunk-recuperavel";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

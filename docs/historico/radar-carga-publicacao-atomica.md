@@ -185,3 +185,20 @@ tick retoma no seguinte.
   mensal de segunda. Conferir `carga_gravadas`, `carga_tentativas`, o tempo entre `carga_publicacao_iniciada_em`
   e `carga_publicada_em` e o ledger.
 - **Publish do front** (rótulo efetivo nas 3 leituras diretas) pela sessão, via MCP, depois do merge.
+
+## Pacote K1 — erro transitório num chunk não derruba mais a carga (edge `v1.8-chunk-recuperavel`, 2026-11-08)
+
+- **O bug (3ª revisão Codex+Fable):** o catch geral da edge chamava `radar_carga_falhar` para QUALQUER ação com
+  `mes`, inclusive `chunk`. Um 5xx transitório num chunk punha a carga em `falhou`, `radar_carga_receber` passava a
+  recusar o lote (`RCARGA_LOTE_FECHADO`) e as 4 tentativas do loader morriam a partir da 2ª — a carga inteira caía
+  por um soluço de rede.
+- **Desenho:** todo erro da edge é RECUPERÁVEL para o chamador (chunk = upsert por `(lote, cnpj)`; finalize repetido
+  devolve o veredito gravado). Quem sabe que desistiu é a CARGA: `scripts/radar/ingest-cliente.ts` re-tenta e, ao
+  esgotar as tentativas com o lote aberto (entre `begin_lote` e o `finalize`), declara a nova ação `falhar`
+  (best-effort, uma vez) e relança o erro original. Depois do finalize, falha de concorrentes/sócios não toca o lote.
+  Carga que morre sem declarar (processo morto) fica `recebendo` — é o caso do sensor de carga parada (K3).
+- **Prova:** `scripts/radar/ingest-cliente.test.ts` (edge falsa com o protocolo da staging): transitório → repetição
+  → lote validado [K1]; o controle [K2] reproduz a v1.7 e a MESMA carga morre em `RCARGA_LOTE_FECHADO`; desistência
+  declara `falhar` uma vez [K3]. Texto da edge: `[E7]` em `radar-ingest-situacao.test.ts`. Falsificado (cliente sem
+  declarar → K3 vermelho; catch voltando a marcar → E7 vermelho; sem `fecharLote` → E7 vermelho).
+- **Sem migration:** `radar_carga_falhar` já existia e já só fecha lote `recebendo`.

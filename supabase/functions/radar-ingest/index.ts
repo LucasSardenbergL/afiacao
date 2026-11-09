@@ -4,7 +4,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { motivoDescarte, type MotivoDescarte } from "./cnpj.ts";
 import { validarLinhaSituacao, type LinhaSituacao, type MotivoDescarteSituacao } from "./situacao.ts";
 import { codigoErroSocios, ehAcaoSocios, montarPedidoSocios } from "./socios.ts";
-import { dedupPorCnpj, lerEsperado, montarLinhaStaging } from "./carga.ts";
+import { dedupPorCnpj, lerEsperado, lerMotivoFalha, montarLinhaStaging } from "./carga.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -203,6 +203,17 @@ Deno.serve(async (req) => {
       return json({ ok: true, resultado: data });
     }
 
+    if (action === "falhar") {
+      // A CARGA declara que desistiu do lote (esgotou as tentativas ou abortou). Só uma carga `recebendo` vira
+      // `falhou` (e `error`, se o lote nunca foi publicado): lote validado/complete não é rebaixado — no-op.
+      if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
+      const motivo = lerMotivoFalha(body.erro);
+      if (!motivo.ok) return json({ error: motivo.erro }, 400);
+      const { data, error } = await admin.rpc("radar_carga_falhar", { p_lote: mes, p_erro: motivo.motivo });
+      if (error) throw error;
+      return json({ ok: true, mes, marcada: data === true });
+    }
+
     if (action === "status") {
       const { data, error } = await admin.from("radar_ingest_state")
         .select("*").order("mes_referencia", { ascending: false }).limit(3);
@@ -210,20 +221,15 @@ Deno.serve(async (req) => {
       return json({ ok: true, lotes: data });
     }
 
-    return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "cnpjs_conhecidos", "chunk_situacao", "finalize", "publicar_concorrentes", "socios_iniciar", "chunk_socios", "publicar_socios", "limpar_socios", "status"] }, 400);
+    return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "cnpjs_conhecidos", "chunk_situacao", "finalize", "falhar", "publicar_concorrentes", "socios_iniciar", "chunk_socios", "publicar_socios", "limpar_socios", "status"] }, 400);
   } catch (e) {
     // Erros do PostgREST são objetos planos (não Error) — String(e) viraria
     // "[object Object]" e mascararia o diagnóstico (mordeu na 1ª carga real).
     const msg = e instanceof Error ? e.message : JSON.stringify(e);
     console.error(`radar-ingest ${action} falhou:`, msg);
-    if (MES_RE.test(mes)) {
-      // Só uma carga `recebendo` vira `falhou` (e `error`, se o lote nunca foi publicado): um lote `complete`
-      // continua vigente, e erro de begin recusado não rebaixa o lote validado de outra carga.
-      await admin.rpc("radar_carga_falhar", { p_lote: mes, p_erro: msg }).then(
-        ({ error: eF }) => { if (eF) console.error(`radar-ingest: marcar falha de ${mes} falhou:`, JSON.stringify(eF)); },
-        (eF) => console.error(`radar-ingest: marcar falha de ${mes} falhou:`, eF instanceof Error ? eF.message : JSON.stringify(eF)),
-      );
-    }
+    // NÃO marca a carga `falhou` aqui: todo erro desta edge é RECUPERÁVEL para o chamador (chunk é upsert por
+    // (lote, cnpj); finalize repetido devolve o veredito gravado). Marcar aqui fazia um 5xx transitório num
+    // chunk fechar o lote e a 2ª tentativa morrer em RCARGA_LOTE_FECHADO. Quem desiste declara: ação `falhar`.
     return json({ error: msg }, 500);
   }
 });

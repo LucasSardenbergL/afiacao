@@ -35,3 +35,14 @@ export function lerEsperado(v: unknown): Esperado {
   }
   return { ok: true, valor: v };
 }
+
+export type MotivoFalha = { ok: true; motivo: string } | { ok: false; erro: string };
+
+/** Motivo da ação `falhar` — a CARGA declara que desistiu do lote (esgotou as tentativas ou abortou).
+ *  Erro de chunk/finalize na edge é RECUPERÁVEL (o chamador re-tenta; replay é upsert por (lote, cnpj)),
+ *  então a edge NUNCA marca `falhou` sozinha: um 5xx transitório num chunk punha a carga em `falhou` e a
+ *  2ª tentativa morria em RCARGA_LOTE_FECHADO. Só quem sabe que não vai mais tentar declara o fim. */
+export function lerMotivoFalha(v: unknown): MotivoFalha {
+  if (typeof v !== "string" || v.trim() === "") return { ok: false, erro: "erro obrigatório (texto): por que a carga desistiu do lote" };
+  return { ok: true, motivo: `RCARGA_ABORTADA_PELA_CARGA: ${v.trim()}`.slice(0, 500) };
+}
