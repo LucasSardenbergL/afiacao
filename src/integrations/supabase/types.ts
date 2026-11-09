@@ -10253,6 +10253,7 @@ export type Database = {
           origem_evento_tipo: string | null
           pedido_anterior_valor: number | null
           portal_data_entrega: string | null
+          portal_divergencia_aberta_id: number | null
           portal_erro: string | null
           portal_protocolo: string | null
           portal_proximo_retry_em: string | null
@@ -10325,6 +10326,7 @@ export type Database = {
           origem_evento_tipo?: string | null
           pedido_anterior_valor?: number | null
           portal_data_entrega?: string | null
+          portal_divergencia_aberta_id?: number | null
           portal_erro?: string | null
           portal_protocolo?: string | null
           portal_proximo_retry_em?: string | null
@@ -10397,6 +10399,7 @@ export type Database = {
           origem_evento_tipo?: string | null
           pedido_anterior_valor?: number | null
           portal_data_entrega?: string | null
+          portal_divergencia_aberta_id?: number | null
           portal_erro?: string | null
           portal_protocolo?: string | null
           portal_proximo_retry_em?: string | null
@@ -12373,6 +12376,7 @@ export type Database = {
           tem_contato: boolean
           tem_telefone: boolean
           uf: string | null
+          visitar: boolean | null
         }
         Insert: {
           cnae_principal: string
@@ -12388,6 +12392,7 @@ export type Database = {
           tem_contato: boolean
           tem_telefone: boolean
           uf?: string | null
+          visitar?: boolean | null
         }
         Update: {
           cnae_principal?: string
@@ -12403,6 +12408,7 @@ export type Database = {
           tem_contato?: boolean
           tem_telefone?: boolean
           uf?: string | null
+          visitar?: boolean | null
         }
         Relationships: []
       }
@@ -12422,6 +12428,7 @@ export type Database = {
           tem_contato: boolean
           tem_telefone: boolean
           uf: string | null
+          visitar: boolean | null
         }
         Insert: {
           cnae_principal: string
@@ -12438,6 +12445,7 @@ export type Database = {
           tem_contato: boolean
           tem_telefone: boolean
           uf?: string | null
+          visitar?: boolean | null
         }
         Update: {
           cnae_principal?: string
@@ -12454,6 +12462,7 @@ export type Database = {
           tem_contato?: boolean
           tem_telefone?: boolean
           uf?: string | null
+          visitar?: boolean | null
         }
         Relationships: []
       }
@@ -12467,6 +12476,8 @@ export type Database = {
           empresas: number
           grupos: number
           id: number
+          visitar_base_contabil: string | null
+          visitar_calculado_em: string | null
         }
         Insert: {
           base_iniciado_em?: string | null
@@ -12477,6 +12488,8 @@ export type Database = {
           empresas: number
           grupos: number
           id?: number
+          visitar_base_contabil?: string | null
+          visitar_calculado_em?: string | null
         }
         Update: {
           base_iniciado_em?: string | null
@@ -12487,6 +12500,8 @@ export type Database = {
           empresas?: number
           grupos?: number
           id?: number
+          visitar_base_contabil?: string | null
+          visitar_calculado_em?: string | null
         }
         Relationships: []
       }
@@ -12502,6 +12517,7 @@ export type Database = {
           tem_contato: boolean
           tem_telefone: boolean
           uf: string | null
+          visitar: boolean | null
         }
         Insert: {
           inedito: boolean
@@ -12514,6 +12530,7 @@ export type Database = {
           tem_contato: boolean
           tem_telefone: boolean
           uf?: string | null
+          visitar?: boolean | null
         }
         Update: {
           inedito?: boolean
@@ -12526,6 +12543,7 @@ export type Database = {
           tem_contato?: boolean
           tem_telefone?: boolean
           uf?: string | null
+          visitar?: boolean | null
         }
         Relationships: []
       }
@@ -13286,6 +13304,36 @@ export type Database = {
           score_em?: string | null
           score_versao?: string | null
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      radar_exclusoes_titular: {
+        Row: {
+          escopo: string
+          finalidade: string
+          pedidos: Json
+          protocolo: string | null
+          raiz: string
+          registrado_em: string
+          registrado_por: string | null
+        }
+        Insert: {
+          escopo: string
+          finalidade: string
+          pedidos?: Json
+          protocolo?: string | null
+          raiz: string
+          registrado_em?: string
+          registrado_por?: string | null
+        }
+        Update: {
+          escopo?: string
+          finalidade?: string
+          pedidos?: Json
+          protocolo?: string | null
+          raiz?: string
+          registrado_em?: string
+          registrado_por?: string | null
         }
         Relationships: []
       }
@@ -15895,6 +15943,96 @@ export type Database = {
         }
         Relationships: []
       }
+      sayerlack_portal_divergencia: {
+        Row: {
+          detectada_em: string
+          diferencas: Json
+          evidencia_id: number | null
+          id: number
+          leitura: Json
+          lido_ate: string
+          lido_de: string
+          pedido_id: number
+          protocolo: string
+          resolucao: string | null
+          resolvida_em: string | null
+          resolvida_por: string | null
+          retrato_versao: number | null
+          ultima_evidencia_id: number | null
+          ultima_lido_ate: string | null
+        }
+        Insert: {
+          detectada_em?: string
+          diferencas: Json
+          evidencia_id?: number | null
+          id?: never
+          leitura: Json
+          lido_ate: string
+          lido_de: string
+          pedido_id: number
+          protocolo: string
+          resolucao?: string | null
+          resolvida_em?: string | null
+          resolvida_por?: string | null
+          retrato_versao?: number | null
+          ultima_evidencia_id?: number | null
+          ultima_lido_ate?: string | null
+        }
+        Update: {
+          detectada_em?: string
+          diferencas?: Json
+          evidencia_id?: number | null
+          id?: never
+          leitura?: Json
+          lido_ate?: string
+          lido_de?: string
+          pedido_id?: number
+          protocolo?: string
+          resolucao?: string | null
+          resolvida_em?: string | null
+          resolvida_por?: string | null
+          retrato_versao?: number | null
+          ultima_evidencia_id?: number | null
+          ultima_lido_ate?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sayerlack_portal_divergencia_evidencia_id_fkey"
+            columns: ["evidencia_id"]
+            isOneToOne: false
+            referencedRelation: "sayerlack_portal_evidencia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sayerlack_portal_divergencia_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "pedido_compra_sugerido"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sayerlack_portal_divergencia_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "v_des_pedidos_em_transito"
+            referencedColumns: ["pedido_id"]
+          },
+          {
+            foreignKeyName: "sayerlack_portal_divergencia_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "vw_cancelamento_pos_disparo_sem_evidencia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sayerlack_portal_divergencia_ultima_evidencia_id_fkey"
+            columns: ["ultima_evidencia_id"]
+            isOneToOne: false
+            referencedRelation: "sayerlack_portal_evidencia"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sayerlack_portal_evidencia: {
         Row: {
           condicao: string | null
@@ -15960,6 +16098,74 @@ export type Database = {
           trace?: Json | null
         }
         Relationships: []
+      }
+      sayerlack_portal_retrato: {
+        Row: {
+          condicao_normalizada: string
+          condicao_portal: string
+          criado_em: string
+          evidencia_id: number | null
+          itens: Json
+          origem: string
+          pedido_id: number
+          protocolo: string
+          valor_total: number
+          versao: number
+        }
+        Insert: {
+          condicao_normalizada: string
+          condicao_portal: string
+          criado_em?: string
+          evidencia_id?: number | null
+          itens: Json
+          origem: string
+          pedido_id: number
+          protocolo: string
+          valor_total: number
+          versao: number
+        }
+        Update: {
+          condicao_normalizada?: string
+          condicao_portal?: string
+          criado_em?: string
+          evidencia_id?: number | null
+          itens?: Json
+          origem?: string
+          pedido_id?: number
+          protocolo?: string
+          valor_total?: number
+          versao?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sayerlack_portal_retrato_evidencia_id_fkey"
+            columns: ["evidencia_id"]
+            isOneToOne: false
+            referencedRelation: "sayerlack_portal_evidencia"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sayerlack_portal_retrato_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "pedido_compra_sugerido"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sayerlack_portal_retrato_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "v_des_pedidos_em_transito"
+            referencedColumns: ["pedido_id"]
+          },
+          {
+            foreignKeyName: "sayerlack_portal_retrato_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "vw_cancelamento_pos_disparo_sem_evidencia"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       sayerlack_retry_motor_log: {
         Row: {
@@ -25606,6 +25812,15 @@ export type Database = {
       }
       radar_email_semanal_painel: { Args: never; Returns: Json }
       radar_estado_cadastro_omie: { Args: { p_cnpj: string }; Returns: Json }
+      radar_exclusao_registrar: {
+        Args: {
+          p_escopo: string
+          p_finalidade: string
+          p_protocolo?: string
+          p_raiz: string
+        }
+        Returns: Json
+      }
       radar_funil: { Args: { p_semanas?: number }; Returns: Json }
       radar_funil_experimento: { Args: never; Returns: Json }
       radar_irmaos_por_raiz: {
@@ -25736,6 +25951,10 @@ export type Database = {
           forca: string
           sinais: string[]
         }[]
+      }
+      radar_privacidade_expurgo: {
+        Args: { p_lote?: number; p_meses?: number }
+        Returns: Json
       }
       radar_prospectar_hoje: {
         Args: { p_n?: number; p_vendedor?: string }
@@ -26632,6 +26851,15 @@ export type Database = {
           descricao: string
           num_parcelas: number
         }[]
+      }
+      sayerlack_conferir_portal: {
+        Args: {
+          p_evidencia_id: number
+          p_leitura: Json
+          p_origem: string
+          p_pedido_id: number
+        }
+        Returns: Json
       }
       sayerlack_encerrar_cancelado_no_portal: {
         Args: {
