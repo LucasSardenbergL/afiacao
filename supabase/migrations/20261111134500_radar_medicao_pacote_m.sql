@@ -98,7 +98,7 @@ BEGIN
            (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(v.alvo)) AS vivo
       FROM (VALUES
         ('public.radar_funil(integer)',
-         '05a8d54a7f86de4a43c3f1f7414ae0d9', 'ebad7d7bf9ee1f75a01116b3d4246aef', false),
+         '05a8d54a7f86de4a43c3f1f7414ae0d9', 'fb09ceea1ad40a78dc471b3a5e4ec95d', false),
         ('private.radar_evento_contato()',
          'a2a62eada5b026bc5bf2c3a8cb83df3d', '3c500687d276fbb1cfea19ebcaa9a316', false),
         ('public.radar_placar_uso()',
@@ -334,8 +334,11 @@ BEGIN
        AND e.ocorrido_em >= v_ini_ts AND e.user_id IS NOT NULL
   ),
   -- M1: o universo. Elegível AGORA (a autorização histórica não é reconstruída): todo staff com a capability.
+  -- Customer nunca prospecta: o pré-filtro evita chamar a capability ~16 mil vezes (as linhas de customer de
+  -- user_roles, medido em 2026-11-09) a cada abertura do painel. A decisão continua sendo a da capability.
   elig AS (
-    SELECT DISTINCT ur.user_id AS uid FROM public.user_roles ur WHERE private.cap_radar_prospectar(ur.user_id)
+    SELECT DISTINCT ur.user_id AS uid FROM public.user_roles ur
+     WHERE ur.role <> 'customer'::public.app_role AND private.cap_radar_prospectar(ur.user_id)
   ),
   -- M2: cada CNPJ exibido no card, inclusive a reposição depois de um Assumir.
   exib AS (
@@ -725,7 +728,7 @@ BEGIN
   FOR r IN
     SELECT v.alvo, v.este, (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(v.alvo)) AS vivo
       FROM (VALUES
-        ('public.radar_funil(integer)', 'ebad7d7bf9ee1f75a01116b3d4246aef'),
+        ('public.radar_funil(integer)', 'fb09ceea1ad40a78dc471b3a5e4ec95d'),
         ('private.radar_evento_contato()', '3c500687d276fbb1cfea19ebcaa9a316'),
         ('public.radar_registrar_card_exibido(text[])', 'd98067fa9baededff8af98de6cb4001d'),
         ('public.radar_registrar_intencao(text,text)', '108d88bad7b3dac38074748f76cede99'),

@@ -7176,7 +7176,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_email_semanal_painel', 1, '20261107140001_radar_email_semanal_toggle.sql', '0b114d404e20198b65a3d1bd3388059f'),
   ('public', 'radar_email_semanal_painel', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '98e98147155301c10578baeda21f9017'),
   ('public', 'radar_funil', 1, '20261107233000_radar_funil_painel.sql', '21c2491359cd9eb3dc05346454cdb628'),
-  ('public', 'radar_funil', 2, '20261111134500_radar_medicao_pacote_m.sql', 'c33fe248ec4b4a0fb79cf6f88bc486ca'),
+  ('public', 'radar_funil', 2, '20261111134500_radar_medicao_pacote_m.sql', 'd35d568af043c3e68f74dd4a61cb6025'),
   ('public', 'radar_carga_iniciar', 1, '20261110130000_radar_carga_publicacao_atomica.sql', '2d9d3627a08c7e296a461ad7369f56da'),
   ('public', 'radar_carga_iniciar', 2, '20261111120000_radar_carga_publicacao_curta.sql', '45a57f016c56325de0688914f7919092'),
   ('public', 'radar_carga_publicar_pendente', 1, '20261110130000_radar_carga_publicacao_atomica.sql', '9e83faf4d066efeb88a5ee90a60e8e47'),
