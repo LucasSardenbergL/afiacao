@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **822** custom migrations totais
-- **2793** objetos esperados (criados por estas migrations)
+- **823** custom migrations totais
+- **2802** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1116
+  - `function`: 1122
   - `rls_policy`: 522
-  - `index`: 393
-  - `table`: 259
-  - `cron_job`: 219
+  - `index`: 394
+  - `table`: 260
+  - `cron_job`: 220
   - `trigger`: 145
   - `view`: 135
   - `enum_value`: 4
@@ -6801,6 +6801,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_score_recalcular` | — |
 | `function` | `public.radar_avisar_lote` | — |
 | `function` | `public.radar_coorte_sortear` | — |
+
+### `20261111134500_radar_medicao_pacote_m.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_evento_contato` | — |
+| `function` | `public.radar_registrar_card_exibido` | — |
+| `function` | `public.radar_registrar_intencao` | — |
+| `function` | `public.radar_funil` | — |
+| `function` | `public.radar_funil_experimento` | — |
+| `function` | `private.radar_expurgar_medicao` | — |
+| `table` | `public.radar_card_exibicoes` | — |
+| `index` | `public.idx_radar_card_exibicoes_dia` | `radar_card_exibicoes` |
+| `cron_job` | `cron.radar-expurgo-medicao-diario` | — |
 
 ### `20261111150000_radar_privacidade_titular_mei.sql`
 

@@ -27,7 +27,11 @@ const esperar = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 type Chamada = () => PromiseLike<{ data: unknown; error: unknown }>;
 
-async function comTentativas(sensor: SensorEmpurrado, chamar: Chamada): Promise<ResultadoSensor> {
+async function comTentativas(
+  sensor: SensorEmpurrado,
+  chamar: Chamada,
+  naoReportar: (r: ResultadoSensor) => boolean = () => false,
+): Promise<ResultadoSensor> {
   if (isLensActive()) return { ok: false, motivo: 'lente', transitorio: false };
   let r: ResultadoSensor = { ok: false, motivo: 'desconhecido', transitorio: false };
   let tentativas = 0;
@@ -42,7 +46,7 @@ async function comTentativas(sensor: SensorEmpurrado, chamar: Chamada): Promise<
     if (r.ok || !r.transitorio || tentativas > ESPERAS_MS.length) break;
     await esperar(ESPERAS_MS[tentativas - 1]);
   }
-  if (!r.ok && r.motivo !== 'lente') reportarFalhaSensor(sensor, r.motivo, tentativas);
+  if (!r.ok && r.motivo !== 'lente' && !naoReportar(r)) reportarFalhaSensor(sensor, r.motivo, tentativas);
   return r;
 }
 
@@ -63,6 +67,45 @@ export function reportarFalhaSensor(sensor: SensorEmpurrado, motivo: string, ten
 /** Sensor do D2 no LEDGER: o card mostrou leads ao próprio vendedor (1 por dia; o resto é idempotente). */
 export function registrarCardServido(nLeads: number): Promise<ResultadoSensor> {
   return comTentativas('card_servido', () => supabase.rpc('radar_registrar_card_servido', { p_n_leads: nLeads }));
+}
+
+/**
+ * Sensor do denominador do card (pacote M, migration 20261111134500): CADA CNPJ exibido, inclusive a reposição que
+ * entra depois de um Assumir (1 por vendedor, dia e CNPJ; o resto é idempotente). Banco anterior ao pacote M (RPC
+ * ausente) cai no sensor antigo do dia, sem registrar falha: é ordem de deploy, não perda.
+ */
+export async function registrarCardExibido(cnpjs: readonly string[]): Promise<ResultadoSensor> {
+  const r = await comTentativas(
+    'card_servido',
+    () => supabase.rpc('radar_registrar_card_exibido', { p_cnpjs: [...cnpjs].slice(0, 20) }),
+    (x) => !x.ok && x.motivo === 'rpc_ausente',
+  );
+  if (!r.ok && r.motivo === 'rpc_ausente') return registrarCardServido(Math.min(5, Math.max(1, cnpjs.length)));
+  return r;
+}
+
+export type CanalIntencao = 'ligar' | 'whatsapp' | 'copiar';
+
+/**
+ * Intenção de contato na ficha (pacote M): tocar em Ligar (celular), WhatsApp ou Copiar telefone. Vai ao ledger do
+ * Radar (radar_eventos 'intencao', 1 por vendedor, CNPJ, canal e dia), fora do PostHog censurado. Uma tentativa,
+ * nunca rejeita, nunca bloqueia o clique; sob a lente não grava. Falha fica no track() e no console (o ledger de
+ * falhas de sensor é do lead empurrado e não tem este sensor).
+ */
+export async function registrarIntencaoContato(cnpj: string, canal: CanalIntencao): Promise<ResultadoSensor> {
+  if (isLensActive()) return { ok: false, motivo: 'lente', transitorio: false };
+  let r: ResultadoSensor;
+  try {
+    const { data, error } = await supabase.rpc('radar_registrar_intencao', { p_cnpj: cnpj, p_canal: canal });
+    r = classificarResposta(data, error);
+  } catch (e) {
+    r = classificarErro(e);
+  }
+  if (!r.ok && r.motivo !== 'lente') {
+    track('radar.sensor_falhou', { sensor: 'intencao', motivo: r.motivo, tentativas: 1 });
+    console.warn(`[radar] intenção de contato não gravou (${r.motivo})`);
+  }
+  return r;
 }
 
 type LeadEmpurrado = { origem: 'card'; cnpj: string } | { origem: 'email'; cnpj: string; envio: string };

@@ -5,6 +5,7 @@ import { useIsTouchDevice } from '@/hooks/useIsTouchDevice';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { normalizeBrPhone } from '@/lib/phone';
 import { track } from '@/lib/analytics';
+import { registrarIntencaoContato } from '@/queries/useRadarRegistroEmpurrado';
 import { cn } from '@/lib/utils';
 
 /**
@@ -13,12 +14,16 @@ import { cn } from '@/lib/utils';
  * dele) e o celular mantém o `tel:` (discador do aparelho, pela operadora). Não toca o módulo de telefonia.
  *
  * Sob a lente "Ver como" o `tel:` fica bloqueado (furaria o write-guard); copiar é leitura e continua.
+ *
+ * Com `cnpj` (a ficha do lead), ligar e copiar gravam a INTENÇÃO de contato no ledger do Radar (pacote M): o
+ * track() do PostHog é cego no navegador do founder. A gravação nunca segura nem desfaz o clique.
  */
 export function RadarTelefoneAcao({
   telefone,
   variant = 'icon',
   className,
   discreto = false,
+  cnpj,
 }: {
   telefone: string | null | undefined;
   /** 'icon' = ícone compacto (linha, telefone da ficha); 'full' = botão com texto (modo discagem). */
@@ -26,6 +31,8 @@ export function RadarTelefoneAcao({
   className?: string;
   /** O número parece ser da contabilidade (migration 20261109140000): a ação continua, mas sem destaque. */
   discreto?: boolean;
+  /** O lead do telefone: com ele, o toque vira intenção de contato no ledger (radar_eventos). */
+  cnpj?: string;
 }) {
   const isTouch = useIsTouchDevice();
   const digitos = normalizeBrPhone(telefone);
@@ -53,7 +60,10 @@ export function RadarTelefoneAcao({
     return (
       <Button asChild size={icone ? 'icon' : 'sm'} variant={icone ? 'ghost' : tomCheio} className={cn(icone && 'h-8 w-8', classeDiscreta, className)}>
         <a href={`tel:${digitos}`} aria-label="Ligar pelo celular" title="Abre o discador do seu celular"
-          onClick={() => track('radar.telefone_acao', { acao: 'ligar_celular' })}>
+          onClick={() => {
+            track('radar.telefone_acao', { acao: 'ligar_celular' });
+            if (cnpj) void registrarIntencaoContato(cnpj, 'ligar');
+          }}>
           {conteudo}
         </a>
       </Button>
@@ -64,6 +74,7 @@ export function RadarTelefoneAcao({
     try {
       await navigator.clipboard.writeText(telefone);
       track('radar.telefone_acao', { acao: 'copiar' });
+      if (cnpj) void registrarIntencaoContato(cnpj, 'copiar');
       toast.success('Telefone copiado', { description: telefone });
     } catch {
       // Sem permissão de área de transferência: o número continua visível para digitar.

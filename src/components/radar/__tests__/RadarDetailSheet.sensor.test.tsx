@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
 /**
@@ -72,5 +72,31 @@ describe('RadarDetailSheet — sensor da ficha aberta', () => {
     lente = true;
     render(ficha(lead('11222333000181')));
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  // Pacote M: ligar/WhatsApp/copiar viram INTENÇÃO de contato no ledger (radar_eventos), fora do PostHog censurado.
+  describe('intenção de contato', () => {
+    const comCelular = () => ({ ...lead('11222333000181'), telefone1: '(37) 99999-1234' }) as unknown as RadarEmpresa;
+    const intencoes = () => rpc.mock.calls.filter((c) => c[0] === 'radar_registrar_intencao').map((c) => c[1]);
+
+    it('WhatsApp grava a intenção com o CNPJ da ficha', () => {
+      render(ficha(comCelular()));
+      fireEvent.click(screen.getByTestId('radar-whatsapp'));
+      expect(intencoes()).toEqual([{ p_cnpj: '11222333000181', p_canal: 'whatsapp' }]);
+    });
+
+    it('Copiar telefone (desktop) grava a intenção depois de copiar', async () => {
+      Object.assign(navigator, { clipboard: { writeText: vi.fn(() => Promise.resolve()) } });
+      render(ficha(comCelular()));
+      fireEvent.click(screen.getByRole('button', { name: /Copiar telefone/ }));
+      await waitFor(() => expect(intencoes()).toEqual([{ p_cnpj: '11222333000181', p_canal: 'copiar' }]));
+    });
+
+    it('sob a lente "Ver como" o WhatsApp não grava intenção', () => {
+      lente = true;
+      render(ficha(comCelular()));
+      fireEvent.click(screen.getByTestId('radar-whatsapp'));
+      expect(intencoes()).toHaveLength(0);
+    });
   });
 });
