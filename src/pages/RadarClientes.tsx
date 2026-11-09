@@ -7,7 +7,7 @@ import { useUrlState } from '@/hooks/useUrlState';
 import { useAuth } from '@/contexts/AuthContext';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, FILTROS_MEUS_ATENDIMENTOS, CHAVE_VISAO_MEUS, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
-import { useRadarParaVisitarContagem, TETO_CONTAGEM_VISITAR } from '@/queries/useRadarContatoContabil';
+import { useRadarParaVisitarContagem } from '@/queries/useRadarContatoContabil';
 import { useRadarAtendimentosAtivos } from '@/queries/useRadarAtendimentos';
 import { useRadarMeuTerritorio } from '@/queries/useRadarMeuTerritorio';
 import {
@@ -161,11 +161,9 @@ export default function RadarClientes() {
   const hojeISO = useHojeBRT();
 
   const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus, aguardar: aguardandoTerritorio });
-  // Quantos do recorte são "para visitar" (a mesma radar_lista, até 200) — o número do chip, ligado ou não.
+  // Quantos do recorte são "para visitar" — sob demanda: só com o chip ligado, contado na própria fila (pacote N).
   const contagemVisitar = useRadarParaVisitarContagem(filtros, hojeISO, { desligado: meus || aguardandoTerritorio });
-  const rotuloContagemVisitar = contagemVisitar.isPending ? '…'
-    : contagemVisitar.isError ? '?'
-    : contagemVisitar.data >= TETO_CONTAGEM_VISITAR ? `${TETO_CONTAGEM_VISITAR}+` : String(contagemVisitar.data);
+  const rotuloContagemVisitar = contagemVisitar.rotulo;
   // Fila ainda sem recorte (território a caminho) conta como carregando — senão a tela mostraria "nenhuma empresa".
   const carregandoFila = q.isLoading || aguardandoTerritorio;
   const kpis = useRadarKpis();
@@ -509,7 +507,8 @@ export default function RadarClientes() {
               className="h-7 px-2 text-xs" data-testid="radar-chip-visitar"
               title={contagemVisitar.isError
                 ? 'Não consegui contar os leads para visitar neste recorte'
-                : 'Leads cujo telefone e e-mail da Receita parecem ser da contabilidade: vá ao endereço em vez de ligar'}
+                : 'Leads cujo telefone e e-mail da Receita parecem ser da contabilidade: vá ao endereço em vez de ligar.'
+                  + (filtros.paraVisitar ? '' : ' Ligue para ver quantos há neste recorte.')}
               onClick={() => {
                 const v = !filtros.paraVisitar;
                 track('radar.filtro_para_visitar', { ligado: v, contagem: contagemVisitar.data ?? null });

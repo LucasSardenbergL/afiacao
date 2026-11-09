@@ -100,9 +100,10 @@ export function useRadarCadastrarOmie() {
   return useMutation({
     mutationFn: async (v: { empresa: RadarEmpresa; opcoes?: OpcoesCadastro }): Promise<ResultadoCadastro> =>
       cadastrarEmpresaNoOmie(v.empresa, depsCadastroSupabase, v.opcoes),
-    onSuccess: (r) => {
+    onSuccess: (r, v) => {
       track('radar.lead_cadastrado_omie', { ja_existia: r.jaExistia, recuperado: r.recuperado });
-      void invalidarRadar(qc);
+      // Cirúrgica (pacote N): o lead virou cliente — sai da fila no lugar (ou fica, com já-clientes), sem reler tudo.
+      void invalidarRadar(qc, { cnpj: v.empresa.cnpj });
     },
     // A v2 grava o conflito e a lib LANÇA DivergenciaCadastro: sem isto a ficha e o indicador seguiriam em zero
     // com 1 conflito no servidor (Codex, código P2-2).

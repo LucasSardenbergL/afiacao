@@ -4,12 +4,13 @@ import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { lerContatoContabil, type CampoContato, type LeituraContatoContabil } from '@/lib/radar/contato-contabil';
-import { identidadeDoLote, parametrosDaLista, type RadarFiltros } from '@/queries/useRadarLista';
-import { lerLoteVigente, useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
+import { useRadarLista, type RadarFiltros } from '@/queries/useRadarLista';
 
 const chave = (cnpj: string | null) => ['radar', 'contato-contabil', cnpj] as const;
-/** O que muda quando o vendedor corrige: a ficha, a contagem "para visitar", a fila filtrada e o card. */
-const PREFIXOS_RELER = [['radar', 'para-visitar'], ['radar', 'lista'], ['radar', 'prospectar-hoje']] as const;
+/** O que muda quando o vendedor corrige: a ficha, o card e — só sob o chip "para visitar" — a fila. */
+const PREFIXOS_RELER = [['radar', 'prospectar-hoje']] as const;
+/** A correção muda quem é "para visitar"; as outras filas não dependem dela (a linha não muda): não relê. */
+const ehFilaParaVisitar = (k: readonly unknown[]) => (k[2] as RadarFiltros | undefined)?.paraVisitar === true;
 
 /**
  * Por contato ATUAL do lead (telefone1, telefone2, e-mail): é da contabilidade? (RPC
@@ -87,37 +88,47 @@ export function useCorrigirContatoContabil() {
     onSettled: (_r, _e, v) => Promise.all([
       qc.invalidateQueries({ queryKey: chave(v.cnpj) }),
       ...PREFIXOS_RELER.map((p) => qc.invalidateQueries({ queryKey: p })),
+      qc.invalidateQueries({ queryKey: ['radar', 'lista'], predicate: (q) => ehFilaParaVisitar(q.queryKey) }),
     ]),
   });
 }
 
 /**
- * Quantos leads do recorte atual são "para visitar" — a MESMA `radar_lista` da fila, com os MESMOS parâmetros
- * (`parametrosDaLista`) e `p_so_visitar`: o recorte é idêntico por construção. Só os CNPJs, até 200: `200` lê-se
- * "200 ou mais" (a fila pagina; contar além disso seria outra RPC). `desligado`: visão "Meus atendimentos".
+ * Quantos leads do recorte atual são "para visitar" — SOB DEMANDA (pacote N). Antes era uma 2ª `radar_lista`
+ * (`p_so_visitar`, até 200) a cada troca de filtro, com o chip ligado ou não: medido em prod 2026-11-08, só o
+ * pré-corte dela (≈67 mil CNPJs com sinal × o recorte) custa ~5,5 s de seq scan em `radar_empresas`, antes da regra
+ * por linha — contra o `statement_timeout` de 8 s do `authenticated`. Agora:
+ *   - chip DESLIGADO: nenhuma leitura, nenhum número (o chip só convida);
+ *   - chip LIGADO: o número sai da PRÓPRIA fila, que já é o recorte "para visitar" (mesma chave da lista da
+ *     página — nenhuma chamada a mais): exato quando a fila acabou, "N+" enquanto há página seguinte.
+ * `desligado`: visão "Meus atendimentos" (o chip não existe lá).
  */
-export const TETO_CONTAGEM_VISITAR = 200;
-export function useRadarParaVisitarContagem(filtros: RadarFiltros, hojeISO: string, opcoes: { desligado?: boolean } = {}) {
-  const qc = useQueryClient();
-  const qLote = useRadarLoteVigente();
-  const loteDaChave = qLote.data === undefined ? 'sem-leitura' : identidadeDoLote(qLote.data);
-  // A contagem é do recorte SEM o chip (ligado ou não, o número é o mesmo): trocar o chip não relê.
-  const base: RadarFiltros = { ...filtros, paraVisitar: false };
-  return useQuery({
-    queryKey: ['radar', 'para-visitar', base, hojeISO, loteDaChave] as const,
-    enabled: !opcoes.desligado && !qLote.isPending,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: async (): Promise<number> => {
-      const lote = await lerLoteVigente(qc);
-      if (base.soSugeridos && !lote) throw new Error('Sem lote completo da RFB: "só sugeridos" fica indisponível.');
-      const p = { ...parametrosDaLista({ ...base, paraVisitar: true }, lote, hojeISO, 0), p_limit: TETO_CONTAGEM_VISITAR };
-      // Ordem estável + teto explícito: a função já devolve no máximo p_limit; o range diz isso ao gate de paginação.
-      const { data, error } = await supabase.rpc('radar_lista', p).select('cnpj')
-        .order('cnpj', { ascending: true }).range(0, TETO_CONTAGEM_VISITAR - 1);
-      if (error) throw error;
-      if (!Array.isArray(data)) throw new Error('radar_lista: resposta fora da forma esperada (lista)');
-      return data.length;
-    },
-  });
+export interface ContagemParaVisitar {
+  isError: boolean;
+  /** null = não contado (chip desligado, ou a fila ainda não chegou). */
+  data: number | null;
+  /** O que o chip mostra ao lado do rótulo: '' (desligado), '…', '?', 'N' ou 'N+'. */
+  rotulo: string;
+}
+
+export function rotuloDaContagem(
+  ligado: boolean,
+  lista: { isPending: boolean; isError: boolean; data?: { pages: unknown[][] }; hasNextPage: boolean },
+): ContagemParaVisitar {
+  if (!ligado) return { isError: false, data: null, rotulo: '' };
+  if (lista.isError) return { isError: true, data: null, rotulo: '?' };
+  if (lista.isPending || !lista.data) return { isError: false, data: null, rotulo: '…' };
+  const n = lista.data.pages.reduce((t, p) => t + p.length, 0);
+  return { isError: false, data: n, rotulo: lista.hasNextPage ? `${n}+` : String(n) };
+}
+
+export function useRadarParaVisitarContagem(
+  filtros: RadarFiltros,
+  hojeISO: string,
+  opcoes: { desligado?: boolean } = {},
+): ContagemParaVisitar {
+  const ligado = !opcoes.desligado && filtros.paraVisitar === true;
+  // Observa a MESMA query da fila da página (mesmos filtros, visão 'fila'): o react-query deduplica pela chave.
+  const lista = useRadarLista(filtros, hojeISO, { aguardar: !ligado });
+  return rotuloDaContagem(ligado, lista);
 }
