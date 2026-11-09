@@ -799,9 +799,19 @@ diff persistido. Se o fornecedor tivesse trocado SKU, quantidade, preço ou cond
 segue com o pedido antigo. O disparador geral não lê o portal. Fechar essa janela exige autorização por conferência
 consumida no claim, o que fica fora da fatia 1.
 
+**Codex na revisão do código:** foram 2 rodadas, todas corrigidas.
+- 1ª rodada (2 P1 e 2 P2):
+  - o mesmo diff carimba a ÚLTIMA observação (`ultima_lido_ate`), e fechar exige leitura posterior a ela;
+  - o retrato só nasce quando SKU e quantidade batem, porque uma 1ª leitura já divergente não pode virar a
+    referência de valor;
+  - divergência exige o intervalo da leitura; infinito e fuso inválido dão 22023.
+- 2ª rodada (2 P1):
+  - a ordem é checada ANTES de semear o retrato;
+  - a origem `importacao` (instante da gravação, não da captura) nunca fecha nem substitui uma aberta.
+
 **Provas:** `db/test-sayerlack-conferir-portal.sh`, em PG17 sobre a cadeia REAL da RPC de importar:
-- 32 asserts, verdes nos 2 locales;
-- `--falsificar` com 13 sabotagens vermelhas no assert declarado;
+- 39 asserts, verdes nos 2 locales;
+- `--falsificar` com 17 sabotagens vermelhas no assert declarado, nos 2 locales;
 - o POS C4 pega o claim sem gate já ao aplicar.
 
 Na edge importar, os handlers em Deno cobrem: bate e dispara, alterado, erro ou leitura antiga, fora do contrato,
