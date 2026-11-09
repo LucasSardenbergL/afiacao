@@ -37,8 +37,22 @@ Merge ≠ produção: migration e Publish são do founder.
 - A regra nos candidatos, com o corpo de `radar_contato_visitar`/`avaliar` copiado (o `claude_ro` não executa
   `private.*`): **67.043 candidatos → 15.383 para visitar, 16,5 s** (EXPLAIN ANALYZE, hash join com 1 seq scan).
 - Contagem: os agregados têm 21,7 mil / 108 mil / 138 mil linhas. O número do chip lê o agregado, não `radar_empresas`.
-- **Pós-apply (a confirmar):** a duração real do 1º recálculo com a função de verdade sai de `cron.job_run_details`
-  no tick :35 seguinte (query no PR).
+- **Pós-apply, medido em prod (psql-ro, 09/11):** 1º recálculo com a função de verdade (tick 22:35Z) `succeeded` em
+  **2 min 27 s**; `para_visitar_total` = **15.383**, o mesmo número da simulação com a regra copiada.
+
+## No ar (2026-11-09)
+
+- PR #3769 mergeado às 17:58Z (`32ae4139a`).
+- Migration aplicada pelo founder no SQL Editor, por volta das 22:25Z. A validação pelo psql-ro deu 7/7 ✅: colunas, assinatura
+  nova (a velha caiu), md5 da contagem e do recálculo, ACL, `private.radar_agregado_visitar_em`, e a dimensão
+  calculada no tick 22:35Z (`visitar_calculado_em = calculado_em`).
+- Publish feito, conferido nos bytes de `steu.lovable.app`: `RadarClientes-KKe6YopJ.js` (antes `Ba2nq4St`) com
+  `p_so_agregado` e "visitar-contado"; `RadarMapa-Bf0DUIDh.js` com "visitar-contado". Isso é disponibilidade, não
+  adoção: o SW só troca quando o cliente clica.
+- Ordem real: o Publish veio ~1 min antes do tick. Nesse intervalo a tela mostrou o aviso "não aplica" e o chip
+  ficou sem número, como desenhado (ausente ≠ zero).
+- No caminho, o `types.ts` regenerado pelo bot do Lovable (`0b5287a44`) quebrou o typecheck da main. A #3770
+  consertou; este PR só precisou de rebase.
 
 ## Provas
 
