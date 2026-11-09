@@ -49,10 +49,13 @@ CREATE TABLE IF NOT EXISTS public.sayerlack_portal_divergencia (
   pedido_id      bigint NOT NULL REFERENCES public.pedido_compra_sugerido(id) ON DELETE CASCADE,
   protocolo      text NOT NULL,
   evidencia_id   bigint REFERENCES public.sayerlack_portal_evidencia(id),
-  retrato_versao integer NOT NULL,
+  retrato_versao integer,          -- nulo: a 1ª leitura já divergia em SKU/quantidade (não virou retrato)
   leitura        jsonb NOT NULL CHECK (jsonb_typeof(leitura) = 'object'),
-  lido_de        timestamptz,
-  lido_ate       timestamptz,
+  lido_de        timestamptz NOT NULL,
+  lido_ate       timestamptz NOT NULL,
+  -- A ÚLTIMA leitura que viu o MESMO diff (Codex 5.2 P1): fechar exige leitura posterior a ela, não só à 1ª.
+  ultima_lido_ate      timestamptz,
+  ultima_evidencia_id  bigint REFERENCES public.sayerlack_portal_evidencia(id),
   diferencas     jsonb NOT NULL CHECK (jsonb_typeof(diferencas) = 'array' AND jsonb_array_length(diferencas) > 0),
   detectada_em   timestamptz NOT NULL DEFAULT now(),
   resolvida_em   timestamptz,
@@ -139,10 +142,10 @@ BEGIN
   BEGIN
     v_de  := NULLIF(p_leitura->>'lido_de', '')::timestamptz;
     v_ate := NULLIF(p_leitura->>'lido_ate', '')::timestamptz;
-  EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN
+  EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow OR invalid_time_zone_displacement_value THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = '[CONFERIR-ENTRADA] intervalo da leitura ilegível';
   END;
-  IF (v_de IS NULL) <> (v_ate IS NULL) OR v_ate < v_de THEN
+  IF (v_de IS NULL) <> (v_ate IS NULL) OR v_ate < v_de OR NOT isfinite(v_de) OR NOT isfinite(v_ate) THEN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = '[CONFERIR-ENTRADA] intervalo da leitura incompleto ou invertido';
   END IF;
 
@@ -161,21 +164,7 @@ BEGIN
     RETURN jsonb_build_object('conferido', false, 'motivo', 'status_nao_conferivel', 'pedido_id', r.id, 'status', r.status);
   END IF;
 
-  -- Retrato vigente (a maior versão). Sem retrato: ESTA leitura é o retrato inicial.
-  SELECT * INTO v_ret FROM public.sayerlack_portal_retrato WHERE pedido_id = r.id ORDER BY versao DESC LIMIT 1;
-  IF NOT FOUND THEN
-    INSERT INTO public.sayerlack_portal_retrato (pedido_id, versao, protocolo, origem, evidencia_id, itens,
-                                                 valor_total, condicao_portal, condicao_normalizada)
-    SELECT r.id, 1, v_proto, p_origem, p_evidencia_id,
-           (SELECT jsonb_agg(jsonb_build_object('sku_portal', upper(btrim(x.e->>'sku_portal')),
-                                                'qtde_portal', (x.e->>'qtde_portal')::numeric,
-                                                'valor_mercadoria', (x.e->>'valor_mercadoria')::numeric) ORDER BY x.o)
-              FROM jsonb_array_elements(p_leitura->'itens') WITH ORDINALITY AS x(e, o)),
-           (p_leitura->>'valor_total')::numeric, v_cond, v_norm
-    RETURNING * INTO v_ret;
-    v_criado := true;
-  END IF;
-
+  -- 1. SKU e quantidade contra os itens do PRÓPRIO pedido (não dependem do retrato).
   WITH app_item AS (
     SELECT i.id, upper(btrim(i.sku_portal_aprovado)) AS sku, i.qtde_final * i.fator_portal_aprovado AS q,
            (NULLIF(btrim(COALESCE(i.sku_portal_aprovado, '')), '') IS NULL
@@ -185,12 +174,8 @@ BEGIN
   ), app AS (
     SELECT sku, trim_scale(sum(q)) AS q FROM app_item WHERE NOT ausente GROUP BY 1
   ), portal AS (
-    SELECT upper(btrim(e->>'sku_portal')) AS sku, trim_scale(sum((e->>'qtde_portal')::numeric)) AS q,
-           sum((e->>'valor_mercadoria')::numeric) AS v
+    SELECT upper(btrim(e->>'sku_portal')) AS sku, trim_scale(sum((e->>'qtde_portal')::numeric)) AS q
       FROM jsonb_array_elements(p_leitura->'itens') e GROUP BY 1
-  ), ret AS (
-    SELECT e->>'sku_portal' AS sku, sum((e->>'valor_mercadoria')::numeric) AS v
-      FROM jsonb_array_elements(v_ret.itens) e GROUP BY 1
   ), d AS (
     -- Ausente ≠ zero: pedido sem item, ou item sem SKU do portal/fator/quantidade, é diferença.
     SELECT 'pedido_sem_itens' AS tipo, NULL::text AS sku, NULL::numeric AS app, NULL::numeric AS portal
@@ -203,37 +188,78 @@ BEGIN
            COALESCE(a.sku, p.sku), a.q, p.q
       FROM app a FULL JOIN portal p ON p.sku = a.sku
      WHERE a.sku IS NULL OR p.sku IS NULL OR a.q <> p.q
-    UNION ALL
-    -- Valor por SKU contra o retrato (FULL JOIN: SKU que entrou/saiu desde o retrato também conta).
-    SELECT 'valor_item', COALESCE(p.sku, t.sku), t.v, p.v
-      FROM portal p FULL JOIN ret t ON t.sku = p.sku
-     WHERE p.sku IS NULL OR t.sku IS NULL OR abs(p.v - t.v) > 0.005
-    UNION ALL
-    SELECT 'valor_total', NULL, v_ret.valor_total, (p_leitura->>'valor_total')::numeric
-     WHERE abs(v_ret.valor_total - (p_leitura->>'valor_total')::numeric) > 0.005
-    UNION ALL
-    SELECT 'condicao', NULL, NULL, NULL WHERE v_ret.condicao_normalizada IS DISTINCT FROM v_norm
   )
-  SELECT jsonb_agg(CASE WHEN d.tipo = 'condicao'
-                        THEN jsonb_build_object('tipo', d.tipo, 'sku', NULL, 'app', v_ret.condicao_portal, 'portal', v_cond)
-                        ELSE jsonb_build_object('tipo', d.tipo, 'sku', d.sku, 'app', d.app, 'portal', d.portal) END
-                   ORDER BY d.tipo, d.sku)
+  SELECT jsonb_agg(jsonb_build_object('tipo', d.tipo, 'sku', d.sku, 'app', d.app, 'portal', d.portal))
     INTO v_diff FROM d;
+
+  -- 2. Retrato vigente (a maior versão). Sem retrato, ESTA leitura vira o retrato — SÓ se SKU e quantidade bateram
+  --    (Codex 5.2 P1): uma 1ª leitura já divergente não pode virar a referência de valor e condição; quando o portal
+  --    voltar ao pedido, a leitura que bater semeia.
+  SELECT * INTO v_ret FROM public.sayerlack_portal_retrato WHERE pedido_id = r.id ORDER BY versao DESC LIMIT 1;
+  IF NOT FOUND AND v_diff IS NULL THEN
+    INSERT INTO public.sayerlack_portal_retrato (pedido_id, versao, protocolo, origem, evidencia_id, itens,
+                                                 valor_total, condicao_portal, condicao_normalizada)
+    SELECT r.id, 1, v_proto, p_origem, p_evidencia_id,
+           (SELECT jsonb_agg(jsonb_build_object('sku_portal', upper(btrim(x.e->>'sku_portal')),
+                                                'qtde_portal', (x.e->>'qtde_portal')::numeric,
+                                                'valor_mercadoria', (x.e->>'valor_mercadoria')::numeric) ORDER BY x.o)
+              FROM jsonb_array_elements(p_leitura->'itens') WITH ORDINALITY AS x(e, o)),
+           (p_leitura->>'valor_total')::numeric, v_cond, v_norm
+    RETURNING * INTO v_ret;
+    v_criado := true;
+  END IF;
+
+  -- 3. Valor por SKU, total e condição contra o retrato (sem retrato não há referência: só SKU/quantidade valem).
+  IF v_ret.pedido_id IS NOT NULL THEN
+    WITH portal AS (
+      SELECT upper(btrim(e->>'sku_portal')) AS sku, sum((e->>'valor_mercadoria')::numeric) AS v
+        FROM jsonb_array_elements(p_leitura->'itens') e GROUP BY 1
+    ), ret AS (
+      SELECT e->>'sku_portal' AS sku, sum((e->>'valor_mercadoria')::numeric) AS v
+        FROM jsonb_array_elements(v_ret.itens) e GROUP BY 1
+    ), d AS (
+      -- Valor por SKU contra o retrato (FULL JOIN: SKU que entrou/saiu desde o retrato também conta).
+      SELECT 'valor_item' AS tipo, COALESCE(p.sku, t.sku) AS sku, t.v AS app, p.v AS portal
+        FROM portal p FULL JOIN ret t ON t.sku = p.sku
+       WHERE p.sku IS NULL OR t.sku IS NULL OR abs(p.v - t.v) > 0.005
+      UNION ALL
+      SELECT 'valor_total', NULL, v_ret.valor_total, (p_leitura->>'valor_total')::numeric
+       WHERE abs(v_ret.valor_total - (p_leitura->>'valor_total')::numeric) > 0.005
+    )
+    SELECT COALESCE(v_diff, '[]'::jsonb)
+           || COALESCE(jsonb_agg(jsonb_build_object('tipo', d.tipo, 'sku', d.sku, 'app', d.app, 'portal', d.portal)), '[]'::jsonb)
+      INTO v_diff FROM d;
+    IF v_ret.condicao_normalizada IS DISTINCT FROM v_norm THEN
+      v_diff := v_diff || jsonb_build_array(jsonb_build_object(
+        'tipo', 'condicao', 'sku', NULL, 'app', v_ret.condicao_portal, 'portal', v_cond));
+    END IF;
+  END IF;
+  -- Ordem estável (o "mesmo diff" compara jsonb); vazio = NULL.
+  SELECT jsonb_agg(e ORDER BY e->>'tipo', e->>'sku') INTO v_diff FROM jsonb_array_elements(COALESCE(v_diff, '[]'::jsonb)) e;
+  IF v_diff IS NOT NULL AND v_de IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = '[CONFERIR-ENTRADA] divergência exige o intervalo da leitura (lido_de/lido_ate)';
+  END IF;
 
   SELECT * INTO v_aberta FROM public.sayerlack_portal_divergencia
    WHERE pedido_id = r.id AND resolvida_em IS NULL FOR UPDATE;
 
   -- O mesmo diff: a aberta segue valendo (não empilha linha a cada importação, e a ordem não importa).
   IF v_diff IS NOT NULL AND v_aberta.id IS NOT NULL AND v_aberta.diferencas = v_diff
-     AND v_aberta.retrato_versao = v_ret.versao THEN
+     AND v_aberta.retrato_versao IS NOT DISTINCT FROM v_ret.versao THEN
+    -- Carimba a ÚLTIMA observação do mesmo diff (Codex 5.2 P1): uma leitura mais velha que ESTA não pode fechá-la.
+    UPDATE public.sayerlack_portal_divergencia
+       SET ultima_lido_ate = v_ate, ultima_evidencia_id = p_evidencia_id
+     WHERE id = v_aberta.id AND v_ate > GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate);
     RETURN jsonb_build_object('conferido', true, 'divergente', true, 'pedido_id', r.id, 'divergencia_id', v_aberta.id,
                               'retrato_criado', v_criado, 'retrato_versao', v_ret.versao, 'diferencas', v_diff,
                               'pendente_desde', r.disparo_claim_em);
   END IF;
   -- Fechar ou substituir a aberta exige leitura provadamente POSTERIOR à dela.
-  IF v_aberta.id IS NOT NULL AND (v_de IS NULL OR v_aberta.lido_ate IS NULL OR v_de <= v_aberta.lido_ate) THEN
+  IF v_aberta.id IS NOT NULL
+     AND (v_de IS NULL OR v_de <= GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate)) THEN
     RETURN jsonb_build_object('conferido', false, 'motivo', 'leitura_antiga', 'pedido_id', r.id,
-                              'divergencia_id', v_aberta.id, 'divergencia_lido_ate', v_aberta.lido_ate);
+                              'divergencia_id', v_aberta.id,
+                              'divergencia_lido_ate', GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate));
   END IF;
 
   IF v_diff IS NULL THEN
@@ -482,6 +508,7 @@ BEGIN
     v_pedido_id,
     jsonb_build_object(
       'protocolo', p_protocolo, 'condicao', btrim(p_condicao_portal), 'valor_total', p_valor_total,
+      'lido_de', now(), 'lido_ate', now(),
       'itens', (SELECT jsonb_agg(jsonb_build_object('sku_portal', e->'sku_portal', 'qtde_portal', e->'qtde_portal',
                                                     'valor_mercadoria', e->'valor_mercadoria') ORDER BY o)
                   FROM jsonb_array_elements(p_itens) WITH ORDINALITY AS x(e, o))),

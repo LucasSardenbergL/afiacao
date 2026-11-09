@@ -39,7 +39,8 @@ for f in $CADEIA "$MIG_REAL"; do [ -f "$f" ] || { echo "INFRA: ausente: $f"; exi
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sem_gate_claim:K1,K3 gate_por_not_exists:K3 sem_retrato_importacao:I1 sem_ordem:C9
               ausente_vira_bateu:C7 sem_full_join:C5 sem_valor_item:C3 tolerancia_frouxa:C3b sem_condicao:C4
-              sem_total:C4b mesmo_diff_empilha:C2b sem_status:C11 pendente_nao_grava:C12"
+              sem_total:C4b mesmo_diff_empilha:C2b sem_status:C11 pendente_nao_grava:C12
+              mesmo_diff_sem_carimbo:C13 retrato_da_divergente:C14 intervalo_opcional:E7"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -160,7 +161,16 @@ case "$SAB" in
     trocar "$MIG" "  v_conf := public.sayerlack_conferir_portal(" "  v_conf := '{\"conferido\":true,\"divergente\":false}'::jsonb; PERFORM jsonb_build_array("
     trocar "$MIG" "    RAISE EXCEPTION 'C7 FALHOU: a importação não grava o retrato';" "    NULL;" ;;
   sem_ordem)
-    trocar "$MIG" "  IF v_aberta.id IS NOT NULL AND (v_de IS NULL OR v_aberta.lido_ate IS NULL OR v_de <= v_aberta.lido_ate) THEN" "  IF false THEN" ;;
+    trocar "$MIG" "     AND (v_de IS NULL OR v_de <= GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate)) THEN" "     AND false THEN" ;;
+  mesmo_diff_sem_carimbo)  # o código da 1ª rodada: o mesmo diff não atualizava a última observação (Codex P1)
+    trocar "$MIG" "     WHERE id = v_aberta.id AND v_ate > GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate);" "     WHERE false;" ;;
+  retrato_da_divergente)   # a 1ª leitura vira retrato mesmo com SKU/quantidade divergente (Codex P1)
+    trocar "$MIG" "  IF NOT FOUND AND v_diff IS NULL THEN" "  IF NOT FOUND THEN" ;;
+  intervalo_opcional)      # divergência sem intervalo (nenhuma leitura posterior consegue fechar; Codex P2)
+    trocar "$MIG" "  IF v_diff IS NOT NULL AND v_de IS NULL THEN" "  IF false THEN"
+    trocar "$MIG" "  lido_de        timestamptz NOT NULL,
+  lido_ate       timestamptz NOT NULL," "  lido_de        timestamptz,
+  lido_ate       timestamptz," ;;
   ausente_vira_bateu)
     trocar "$MIG" "    SELECT 'item_sem_mapa_portal', 'item ' || a.id, NULL, NULL FROM app_item a WHERE a.ausente" "    SELECT 'item_sem_mapa_portal', 'item ' || a.id, NULL, NULL FROM app_item a WHERE false" ;;
   sem_full_join)
@@ -333,12 +343,34 @@ eq "C12 claim aberto não impede: a divergência grava o gate e volta a pendênc
 r="$(K 106)"
 eq "K2 claim com pendência + divergência: recusa 'alterado_no_portal' COM pendente_desde (a edge concilia só por consulta)" "$(printf '%s' "$r" | campo claimed)|$(printf '%s' "$r" | campo bloqueio)|$([ "$(printf '%s' "$r" | campo pendente_desde)" != "null" ] && echo pendente || echo sem-pendente)" "false|alterado_no_portal|pendente"
 
+# Codex rodada de código: a ordem vale contra a ÚLTIMA observação do mesmo diff; e a 1ª leitura divergente não vira
+# a referência de valor.
+P -q <<'SQL' >/dev/null
+INSERT INTO public.pedido_compra_sugerido (id, empresa, status, portal_protocolo) VALUES
+  (108, 'OBEN', 'aprovado_aguardando_disparo', '2150108'), (109, 'OBEN', 'aprovado_aguardando_disparo', '2150109');
+INSERT INTO public.pedido_compra_item (pedido_id, sku_codigo_omie, qtde_sugerida, qtde_final, sku_portal_aprovado, fator_portal_aprovado) VALUES
+  (108, '1', 10, 10, 'CX.CINCO', 0.2), (109, '1', 12, 12, 'UN.DOZE', 1);
+SQL
+UM='[{"sku_portal":"CX.CINCO","qtde_portal":2,"valor_mercadoria":100.00}]'
+TRES='[{"sku_portal":"CX.CINCO","qtde_portal":3,"valor_mercadoria":100.00}]'
+C 108 "$(L 2150108 "$UM" 100.00 "70 - 7 DIAS" 10)" >/dev/null
+C 108 "$(L 2150108 "$TRES" 100.00 "70 - 7 DIAS" 11)" >/dev/null   # A abre a divergência em 10:11
+C 108 "$(L 2150108 "$TRES" 100.00 "70 - 7 DIAS" 14)" >/dev/null   # C vê o MESMO diff em 10:14
+r="$(C 108 "$(L 2150108 "$UM" 100.00 "70 - 7 DIAS" 12)")"         # B (bate, lida em 10:12) chega depois
+eq "C13 leitura que bate, mas mais velha que a ÚLTIMA observação do mesmo diff, não fecha" "$(printf '%s' "$r" | campo motivo)|$([ "$(GATE 108)" != "-" ] && echo gate || echo sem-gate)" "leitura_antiga|gate"
+r="$(C 109 "$(L 2150109 '[{"sku_portal":"UN.DOZE","qtde_portal":24,"valor_mercadoria":240.00}]' 240.00 "70 - 7 DIAS" 1)")"
+r2="$(C 109 "$(L 2150109 '[{"sku_portal":"UN.DOZE","qtde_portal":12,"valor_mercadoria":120.00}]' 120.00 "70 - 7 DIAS" 2)")"
+eq "C14 1ª leitura divergente (24 un.) NÃO vira retrato; o portal volta a 12 un.: bate e semeia" "$(printf '%s' "$r" | campo retrato_criado)|$(printf '%s' "$r2" | campo divergente)|$(printf '%s' "$r2" | campo retrato_criado)|$(GATE 109)" "false|false|true|-"
+
 echo "── E: entrada ──"
 eq "E1 leitura sem condição = 22023" "$(C 101 '{"protocolo":"2150101","itens":[{"sku_portal":"X","qtde_portal":1,"valor_mercadoria":1}],"valor_total":1}' | sqlstate)" "22023"
 eq "E2 leitura de outro protocolo = 22023" "$(C 101 "$(L 2150199 "$IT" 160.00 "70 - 7 DIAS" 9)" | sqlstate)" "22023"
 eq "E3 quantidade em texto = 22023 (sem 22P02)" "$(C 101 '{"protocolo":"2150101","itens":[{"sku_portal":"X","qtde_portal":"1","valor_mercadoria":1}],"valor_total":1,"condicao":"70 - 7 DIAS"}' | sqlstate)" "22023"
 eq "E4 intervalo invertido = 22023" "$(C 101 '{"protocolo":"2150101","itens":[{"sku_portal":"X","qtde_portal":1,"valor_mercadoria":1}],"valor_total":1,"condicao":"70 - 7 DIAS","lido_de":"2026-11-09T11:00:00Z","lido_ate":"2026-11-09T10:00:00Z"}' | sqlstate)" "22023"
 eq "E5 origem desconhecida = 22023" "$(C 101 "$(L 2150101 "$IT" 160.00 "70 - 7 DIAS" 9)" NULL tela | sqlstate)" "22023"
+eq "E7 divergência sem o intervalo da leitura = 22023 (nenhuma leitura posterior a fecharia)" "$(C 103 '{"protocolo":"2150103","itens":[{"sku_portal":"X","qtde_portal":1,"valor_mercadoria":1}],"valor_total":1,"condicao":"70 - 7 DIAS"}' | sqlstate)|$(NDIV 103)" "22023|2/1"
+eq "E8 intervalo infinito = 22023" "$(C 101 '{"protocolo":"2150101","itens":[{"sku_portal":"X","qtde_portal":1,"valor_mercadoria":1}],"valor_total":1,"condicao":"70 - 7 DIAS","lido_de":"2026-11-09T10:00:00Z","lido_ate":"infinity"}' | sqlstate)" "22023"
+eq "E9 fuso inválido (+16:00) = 22023" "$(C 101 '{"protocolo":"2150101","itens":[{"sku_portal":"X","qtde_portal":1,"valor_mercadoria":1}],"valor_total":1,"condicao":"70 - 7 DIAS","lido_de":"2026-11-09T10:00:00+16:00","lido_ate":"2026-11-09T10:00:00+16:00"}' | sqlstate)" "22023"
 eq "E6 authenticated não executa = 42501" "$(Pq -c "SET ROLE authenticated; SELECT public.sayerlack_conferir_portal(101, '{}'::jsonb, NULL, 'redisparo')" 2>&1 | sqlstate)" "42501"
 
 echo "── K: claim × conferência em 2 conexões ──"
