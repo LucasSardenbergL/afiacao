@@ -88,6 +88,11 @@ queries de [radar-piloto-acompanhado-roteiro.md](radar-piloto-acompanhado-roteir
   400 dias. Só `CREATE OR REPLACE` (PRE nos md5 do M, `fb09ceea…` e `398268b3…`), dentro do envelope: aplica a sessão.
   A falsificação pegou um assert fraco: com `PERFORM 1` no lugar do DELETE, o `ROW_COUNT` ainda dava 1. Agora quem
   decide é o estado da tabela.
+  **No ar em 2026-11-09:** PR #3777 (squash `de771ae51`). A sessão aplicou com `db:aplicar` (tentativa #1062), depois de
+  refazer o pré-voo em psql-ro (vivos `fb09ceea…` e `398268b3…`). Conferido em psql-ro: funil `5783aa6c…` STABLE e
+  expurgo `10eb3f11…`, os dois SECURITY DEFINER com `search_path=""`; anon e PUBLIC fora das duas; `authenticated`
+  executa o funil e não o expurgo; cron `radar-expurgo-medicao-diario` ativo. `radar_agenda_uso` com 0 linha no
+  apply. Não há front, então não precisa de Publish.
 - **Piloto acompanhado:** decisão do founder.
 
 ## Provas
