@@ -517,6 +517,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'condição REAL do portal no pedido do app antes do sucesso_portal (D-1; só sobre default_a_vista, sem PO) — edge enviar-pedido-portal-sayerlack, service_role',
   },
+  'public.sayerlack_conferir_portal': {
+    fechadaPor: '20261111140000_sayerlack_conferir_portal.sql',
+    permitido: PORTA_FECHADA,
+    motivo: '5.2: pedido do app × leitura do portal; escritor único do retrato, da divergência e do gate do claim — edge sayerlack-importar-pedido-portal e a RPC de importar, service_role',
+  },
   'public.sayerlack_aplicar_custo_portal': {
     fechadaPor: '20261006120000_preco_exato_po_sayerlack_ipi.sql',
     permitido: PORTA_FECHADA,
