@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 826
+-- Total de custom migrations: 827
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -894,7 +894,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261111132000', 'radar_foto_do_card_e_contato_avaliado', '20261111132000_radar_foto_do_card_e_contato_avaliado.sql'),
   ('20261111134000', 'radar_posse_pacote_l', '20261111134000_radar_posse_pacote_l.sql'),
   ('20261111134500', 'radar_medicao_pacote_m', '20261111134500_radar_medicao_pacote_m.sql'),
-  ('20261111140000', 'data_health_radar_carga_em_voo', '20261111140000_data_health_radar_carga_em_voo.sql')
+  ('20261111140000', 'data_health_radar_carga_em_voo', '20261111140000_data_health_radar_carga_em_voo.sql'),
+  ('20261111150000', 'radar_privacidade_titular_mei', '20261111150000_radar_privacidade_titular_mei.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3648,7 +3649,26 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_medicao_pacote_m', 'table', 'public', 'radar_card_exibicoes', ''),
   ('radar_medicao_pacote_m', 'index', 'public', 'idx_radar_card_exibicoes_dia', 'radar_card_exibicoes'),
   ('radar_medicao_pacote_m', 'cron_job', 'cron', 'radar-expurgo-medicao-diario', ''),
-  ('data_health_radar_carga_em_voo', 'function', 'public', '_data_health_compute', '')
+  ('data_health_radar_carga_em_voo', 'function', 'public', '_data_health_compute', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_razao_mascarada', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_titular_mascara', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_carga_privacidade', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_empresas_privacidade', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_mascaras_conflitam', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_vinculos_base', ''),
+  ('radar_privacidade_titular_mei', 'function', 'public', 'radar_razao_social_para_cadastro', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_exclusoes_aplicar', ''),
+  ('radar_privacidade_titular_mei', 'function', 'public', 'radar_exclusao_registrar', ''),
+  ('radar_privacidade_titular_mei', 'function', 'public', 'radar_privacidade_expurgo', ''),
+  ('radar_privacidade_titular_mei', 'table', 'public', 'radar_exclusoes_titular', ''),
+  ('radar_privacidade_titular_mei', 'table', 'private', 'radar_razao_receita', ''),
+  ('radar_privacidade_titular_mei', 'table', 'private', 'radar_razao_receita_acessos', ''),
+  ('radar_privacidade_titular_mei', 'index', 'public', 'idx_radar_empresas_razao_crua', 'radar_empresas'),
+  ('radar_privacidade_titular_mei', 'index', 'public', 'idx_radar_empresas_titular_mei_norm_j', 'radar_empresas'),
+  ('radar_privacidade_titular_mei', 'index', 'public', 'idx_radar_empresas_titular_mei_j', 'radar_empresas'),
+  ('radar_privacidade_titular_mei', 'trigger', 'public', 'trg_radar_carga_privacidade', 'radar_empresas_carga'),
+  ('radar_privacidade_titular_mei', 'trigger', 'public', 'trg_radar_privacidade', 'radar_empresas'),
+  ('radar_privacidade_titular_mei', 'cron_job', 'cron', 'radar-privacidade-expurgo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6450,7 +6470,26 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_medicao_pacote_m', 'table', 'public', 'radar_card_exibicoes', ''),
   ('radar_medicao_pacote_m', 'index', 'public', 'idx_radar_card_exibicoes_dia', 'radar_card_exibicoes'),
   ('radar_medicao_pacote_m', 'cron_job', 'cron', 'radar-expurgo-medicao-diario', ''),
-  ('data_health_radar_carga_em_voo', 'function', 'public', '_data_health_compute', '')
+  ('data_health_radar_carga_em_voo', 'function', 'public', '_data_health_compute', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_razao_mascarada', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_titular_mascara', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_carga_privacidade', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_empresas_privacidade', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_mascaras_conflitam', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_vinculos_base', ''),
+  ('radar_privacidade_titular_mei', 'function', 'public', 'radar_razao_social_para_cadastro', ''),
+  ('radar_privacidade_titular_mei', 'function', 'private', 'radar_exclusoes_aplicar', ''),
+  ('radar_privacidade_titular_mei', 'function', 'public', 'radar_exclusao_registrar', ''),
+  ('radar_privacidade_titular_mei', 'function', 'public', 'radar_privacidade_expurgo', ''),
+  ('radar_privacidade_titular_mei', 'table', 'public', 'radar_exclusoes_titular', ''),
+  ('radar_privacidade_titular_mei', 'table', 'private', 'radar_razao_receita', ''),
+  ('radar_privacidade_titular_mei', 'table', 'private', 'radar_razao_receita_acessos', ''),
+  ('radar_privacidade_titular_mei', 'index', 'public', 'idx_radar_empresas_razao_crua', 'radar_empresas'),
+  ('radar_privacidade_titular_mei', 'index', 'public', 'idx_radar_empresas_titular_mei_norm_j', 'radar_empresas'),
+  ('radar_privacidade_titular_mei', 'index', 'public', 'idx_radar_empresas_titular_mei_j', 'radar_empresas'),
+  ('radar_privacidade_titular_mei', 'trigger', 'public', 'trg_radar_carga_privacidade', 'radar_empresas_carga'),
+  ('radar_privacidade_titular_mei', 'trigger', 'public', 'trg_radar_privacidade', 'radar_empresas'),
+  ('radar_privacidade_titular_mei', 'cron_job', 'cron', 'radar-privacidade-expurgo', '')
 )
 SELECT
   e.migration,
@@ -6478,7 +6517,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 195.
+-- Funções redefinidas com corpo extraível: 196.
 -- Fora da seção (5) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -7198,8 +7237,11 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_prospectar_hoje', 4, '20261111100000_radar_acompanhamento_pacote_g.sql', '374fc5082e714d9bbd14cb2bee8f9f09'),
   ('private', 'radar_vinculos_base', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', '4a25630577db9bcad6e3630d0b37003c'),
   ('private', 'radar_vinculos_base', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '4b3f8bddde6efeb2b39bda47b0e0a87b'),
+  ('private', 'radar_vinculos_base', 3, '20261111150000_radar_privacidade_titular_mei.sql', '3ac7d76d40a1a9cd77d278ad64424402'),
   ('private', 'credito_vinculo_avaliar', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', 'df92d9af4062d9f7f475c784818effc7'),
   ('private', 'credito_vinculo_avaliar', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '70406e22429da65e354297271046917b'),
+  ('private', 'radar_mascaras_conflitam', 1, '20261107040000_radar_socios_cpf_mascarado.sql', '8e200e58d3143a3e7544f1dfff12c66a'),
+  ('private', 'radar_mascaras_conflitam', 2, '20261111150000_radar_privacidade_titular_mei.sql', 'cdf39c5bfa0bc456f0f46592f8781ac1'),
   ('public', 'radar_email_semanal_painel', 1, '20261107140001_radar_email_semanal_toggle.sql', '0b114d404e20198b65a3d1bd3388059f'),
   ('public', 'radar_email_semanal_painel', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '98e98147155301c10578baeda21f9017'),
   ('public', 'radar_funil', 1, '20261107233000_radar_funil_painel.sql', '21c2491359cd9eb3dc05346454cdb628'),

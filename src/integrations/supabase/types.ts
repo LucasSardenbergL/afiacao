@@ -25697,6 +25697,10 @@ export type Database = {
           uf: string
         }[]
       }
+      radar_razao_social_para_cadastro: {
+        Args: { p_cnpj: string }
+        Returns: string
+      }
       radar_recruzar_ja_cliente: { Args: never; Returns: number }
       radar_recruzar_ja_cliente_tick: { Args: never; Returns: number }
       radar_registrar_abertura_empurrada: {

@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **826** custom migrations totais
-- **2792** objetos esperados (criados por estas migrations)
+- **827** custom migrations totais
+- **2811** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1119
+  - `function`: 1129
   - `rls_policy`: 522
-  - `index`: 392
-  - `table`: 258
-  - `cron_job`: 219
-  - `trigger`: 143
+  - `index`: 395
+  - `table`: 261
+  - `cron_job`: 220
+  - `trigger`: 145
   - `view`: 135
   - `enum_value`: 4
 
@@ -6843,6 +6843,30 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public._data_health_compute` | — |
+
+### `20261111150000_radar_privacidade_titular_mei.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_razao_mascarada` | — |
+| `function` | `private.radar_titular_mascara` | — |
+| `function` | `private.radar_carga_privacidade` | — |
+| `function` | `private.radar_empresas_privacidade` | — |
+| `function` | `private.radar_mascaras_conflitam` | — |
+| `function` | `private.radar_vinculos_base` | — |
+| `function` | `public.radar_razao_social_para_cadastro` | — |
+| `function` | `private.radar_exclusoes_aplicar` | — |
+| `function` | `public.radar_exclusao_registrar` | — |
+| `function` | `public.radar_privacidade_expurgo` | — |
+| `table` | `public.radar_exclusoes_titular` | — |
+| `table` | `private.radar_razao_receita` | — |
+| `table` | `private.radar_razao_receita_acessos` | — |
+| `index` | `public.idx_radar_empresas_razao_crua` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_titular_mei_norm_j` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_titular_mei_j` | `radar_empresas` |
+| `trigger` | `public.trg_radar_carga_privacidade` | `radar_empresas_carga` |
+| `trigger` | `public.trg_radar_privacidade` | `radar_empresas` |
+| `cron_job` | `cron.radar-privacidade-expurgo` | — |
 
 ## Próximos passos por status
 
