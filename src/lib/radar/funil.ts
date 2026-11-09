@@ -1,5 +1,7 @@
 // Radar H — o funil do lead empurrado (RPC radar_funil, migration 20261107233000). Puro: parser estrito da resposta,
 // somas e taxas com "ausente ≠ zero" (NULL = o sensor não cobria a semana → "—"; 0 = medido e nada aconteceu).
+// Pacote M (20261111134500): o universo de elegíveis e a adoção, as exibições do card (reposição incluída), a intenção
+// de contato e o experimento da coorte (RPC radar_funil_experimento).
 
 export type CoberturaSemana = 'completa' | 'parcial' | 'ausente';
 export type EstadoSensor = 'ok' | 'falhou' | 'parcial' | 'sem_dado_no_periodo' | 'sem_registro';
@@ -22,6 +24,9 @@ export const COLUNAS = [
   'cadastros_novos',
   'cadastros_novos_empurrados',
   'cadastros_vinculo',
+  'card_leads_exibidos',
+  'card_leads_clicados_exibidos',
+  'intencoes',
 ] as const;
 export type Coluna = (typeof COLUNAS)[number];
 export type Contagens = Record<Coluna, number | null>;
@@ -44,7 +49,16 @@ export const SENSOR_DA_COLUNA: Record<Coluna, string> = {
   cadastros_novos: 'cadastro',
   cadastros_novos_empurrados: 'cadastro',
   cadastros_vinculo: 'cadastro',
+  card_leads_exibidos: 'card_exibido',
+  card_leads_clicados_exibidos: 'card_exibido',
+  intencoes: 'intencao',
 };
+
+/**
+ * Colunas do pacote M: um banco anterior a ele não as manda (o Publish pode chegar antes da migration). Chave AUSENTE
+ * vira NULL (o sensor não existe ali → "—"); chave presente segue o parser estrito.
+ */
+const COLUNAS_PACOTE_M: ReadonlySet<Coluna> = new Set(['card_leads_exibidos', 'card_leads_clicados_exibidos', 'intencoes']);
 
 export interface LinhaFunil extends Contagens {
   semana: string;
@@ -75,6 +89,21 @@ interface VendedorFunil {
   userId: string;
   nome: string | null;
 }
+/** Adoção de um vendedor no período (pacote M). Datas ISO; NULL = não aconteceu no período. */
+export interface AdocaoVendedor {
+  userId: string;
+  /** Tem a capability do Radar AGORA (a autorização histórica não é reconstruída). */
+  elegivel: boolean;
+  expostoEm: string | null;
+  primeiraAcaoEm: string | null;
+  ultimaAcaoEm: string | null;
+  diasComAcao: number;
+  acoes: number;
+}
+export interface AdocaoFunil {
+  elegiveisAgora: number;
+  vendedores: AdocaoVendedor[];
+}
 export interface PainelFunil {
   geradoEm: string;
   semanasPedidas: number;
@@ -84,6 +113,8 @@ export interface PainelFunil {
   sensores: SensorFunil[];
   vendedores: VendedorFunil[];
   linhas: LinhaFunil[];
+  /** NULL = banco anterior ao pacote M (sem o universo de elegíveis): a tela diz isso, não mostra 0. */
+  adocao: AdocaoFunil | null;
 }
 
 class FormaInvalida extends Error {
@@ -161,7 +192,9 @@ export function lerPainelFunil(data: unknown): PainelFunil {
   const linhas = arr(d.linhas, 'linhas').map((x, i) => {
     const l = obj(x, `linhas[${i}]`);
     const c = {} as Contagens;
-    for (const col of COLUNAS) c[col] = inteiroOuNull(l[col], `linhas[${i}].${col}`);
+    for (const col of COLUNAS) {
+      c[col] = COLUNAS_PACOTE_M.has(col) && l[col] === undefined ? null : inteiroOuNull(l[col], `linhas[${i}].${col}`);
+    }
     return { semana: texto(l.semana, `linhas[${i}].semana`), vendedorUserId: texto(l.vendedor_user_id, `linhas[${i}].vendedor_user_id`), ...c };
   });
   return {
@@ -173,6 +206,112 @@ export function lerPainelFunil(data: unknown): PainelFunil {
     sensores,
     vendedores,
     linhas,
+    adocao: d.adocao === undefined ? null : lerAdocao(d.adocao),
+  };
+}
+
+function booleano(v: unknown, onde: string): boolean {
+  if (typeof v !== 'boolean') throw new FormaInvalida(onde);
+  return v;
+}
+
+function lerAdocao(v: unknown): AdocaoFunil {
+  const a = obj(v, 'adocao');
+  return {
+    elegiveisAgora: inteiro(a.elegiveis_agora, 'adocao.elegiveis_agora'),
+    vendedores: arr(a.vendedores, 'adocao.vendedores').map((x, i) => {
+      const o = obj(x, `adocao.vendedores[${i}]`);
+      const onde = (k: string) => `adocao.vendedores[${i}].${k}`;
+      return {
+        userId: texto(o.user_id, onde('user_id')),
+        elegivel: booleano(o.elegivel, onde('elegivel')),
+        expostoEm: textoOuNull(o.exposto_em, onde('exposto_em')),
+        primeiraAcaoEm: textoOuNull(o.primeira_acao_em, onde('primeira_acao_em')),
+        ultimaAcaoEm: textoOuNull(o.ultima_acao_em, onde('ultima_acao_em')),
+        diasComAcao: inteiro(o.dias_com_acao, onde('dias_com_acao')),
+        acoes: inteiro(o.acoes, onde('acoes')),
+      };
+    }),
+  };
+}
+
+/**
+ * As 4 etapas da adoção, todas sobre o MESMO denominador (os elegíveis agora): elegível → exposto → 1ª ação humana
+ * → uso em outro dia (ação em 2 dias ou mais). Quem agiu sem ser elegível hoje (perdeu o acesso) fica à parte.
+ */
+export interface EtapasAdocao {
+  elegiveis: number;
+  expostos: number;
+  comAcao: number;
+  voltaram: number;
+  foraDoUniverso: number;
+}
+export function etapasAdocao(a: AdocaoFunil, vendedor: string | null = null): EtapasAdocao {
+  const vs = a.vendedores.filter((v) => vendedor === null || v.userId === vendedor);
+  const el = vs.filter((v) => v.elegivel);
+  return {
+    elegiveis: vendedor === null ? a.elegiveisAgora : el.length,
+    expostos: el.filter((v) => v.expostoEm !== null).length,
+    comAcao: el.filter((v) => v.primeiraAcaoEm !== null).length,
+    voltaram: el.filter((v) => v.diasComAcao >= 2).length,
+    foraDoUniverso: vs.filter((v) => !v.elegivel && v.primeiraAcaoEm !== null).length,
+  };
+}
+
+/** Experimento da coorte (RPC radar_funil_experimento, pacote M): as leituras de 20261029150100, sem mudança. */
+export interface CoorteResultado {
+  sorteio: string;
+  grupo: string;
+  sorteados: number;
+  tocados: number;
+  emConversa: number;
+  virouCliente: number;
+  cadastrosNovos: number;
+  sorteadaEm: string | null;
+  diasDeAcompanhamento: number | null;
+}
+export interface FaixaConversao {
+  faixa: string;
+  leadsTocados: number;
+  emConversa: number;
+  virouCliente: number;
+  cadastrosNovos: number;
+}
+export interface ExperimentoFunil {
+  geradoEm: string;
+  coortes: CoorteResultado[];
+  faixas: FaixaConversao[];
+}
+export function lerExperimento(data: unknown): ExperimentoFunil {
+  const d = obj(data, 'experimento');
+  return {
+    geradoEm: texto(d.gerado_em, 'experimento.gerado_em'),
+    coortes: arr(d.coortes, 'coortes').map((x, i) => {
+      const c = obj(x, `coortes[${i}]`);
+      const onde = (k: string) => `coortes[${i}].${k}`;
+      return {
+        sorteio: texto(c.sorteio, onde('sorteio')),
+        grupo: texto(c.grupo, onde('grupo')),
+        sorteados: inteiro(c.sorteados, onde('sorteados')),
+        tocados: inteiro(c.tocados, onde('tocados')),
+        emConversa: inteiro(c.em_conversa, onde('em_conversa')),
+        virouCliente: inteiro(c.virou_cliente, onde('virou_cliente')),
+        cadastrosNovos: inteiro(c.cadastros_novos, onde('cadastros_novos')),
+        sorteadaEm: textoOuNull(c.sorteada_em, onde('sorteada_em')),
+        diasDeAcompanhamento: inteiroOuNull(c.dias_de_acompanhamento ?? null, onde('dias_de_acompanhamento')),
+      };
+    }),
+    faixas: arr(d.faixas, 'faixas').map((x, i) => {
+      const f = obj(x, `faixas[${i}]`);
+      const onde = (k: string) => `faixas[${i}].${k}`;
+      return {
+        faixa: texto(f.faixa, onde('faixa')),
+        leadsTocados: inteiro(f.leads_tocados, onde('leads_tocados')),
+        emConversa: inteiro(f.em_conversa, onde('em_conversa')),
+        virouCliente: inteiro(f.virou_cliente, onde('virou_cliente')),
+        cadastrosNovos: inteiro(f.cadastros_novos, onde('cadastros_novos')),
+      };
+    }),
   };
 }
 
@@ -237,10 +376,15 @@ export interface Inconsistencia {
 export function inconsistencias(c: Contagens): Inconsistencia[] {
   const out: Inconsistencia[] = [];
   const maior = (a: number | null, b: number | null) => a !== null && b !== null && a > b;
-  if (maior(c.card_leads_clicados, c.card_leads_servidos)) {
+  if (c.card_leads_exibidos !== null) {
+    // Pacote M: clicado ⊂ exibido por construção (mesmo CNPJ, mesmo dia). Maior = defeito do painel, não do uso.
+    if (maior(c.card_leads_clicados_exibidos, c.card_leads_exibidos)) {
+      out.push({ etapa: 'card', detalhe: 'mais leads clicados do que exibidos no card: defeito da leitura, avise' });
+    }
+  } else if (maior(c.card_leads_clicados, c.card_leads_servidos)) {
     out.push({
       etapa: 'card',
-      detalhe: `${c.card_leads_clicados} clique(s) no card com só ${c.card_leads_servidos} lead(s) servido(s): o registro do card servido se perdeu`,
+      detalhe: `${c.card_leads_clicados} clique(s) no card com só ${c.card_leads_servidos} lead(s) da 1ª exibição do dia: antes do sensor de exibição, o lead que entra depois de um Assumir não contava no denominador (não é perda do sensor)`,
     });
   }
   if (maior(c.email_fichas, c.email_leads_clicados)) {

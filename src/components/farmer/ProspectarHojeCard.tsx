@@ -20,16 +20,15 @@ import {
 import { diaMesData } from '@/lib/radar/retorno';
 import { useRadarAtendimentosAtivos, useRadarDefinirAtendimento } from '@/queries/useRadarAtendimentos';
 import { useRadarProspectarHoje } from '@/queries/useRadarProspectarHoje';
-import { registrarAberturaEmpurrada, registrarCardServido } from '@/queries/useRadarRegistroEmpurrado';
+import { registrarAberturaEmpurrada, registrarCardExibido } from '@/queries/useRadarRegistroEmpurrado';
 
 /** "Meus atendimentos" no /radar (a visão do pacote B2). */
 const LINK_MEUS_ATENDIMENTOS = '/radar?visao=meus';
 
 /**
- * O sensor do card (`registrarCardServido`, da sessão H) muda de "dispara e esquece" (void) para
- * `Promise<ResultadoSensor>` = `{ ok: true; registrado } | { ok: false; motivo; transitorio }`. Aceito também o void de
- * hoje (não sei → marca, para não registrar em laço) e boolean. `ok: false`/rejeição = não gravou: libera nova tentativa
- * na próxima leitura (pacote F, achado 9).
+ * O sensor do card devolve `Promise<ResultadoSensor>` = `{ ok: true; registrado } | { ok: false; motivo; transitorio }`.
+ * Aceito também void (não sei → marca, para não registrar em laço) e boolean. `ok: false`/rejeição = não gravou: libera
+ * nova tentativa na próxima leitura (pacote F, achado 9).
  */
 async function sensorConfirmou(r: unknown): Promise<boolean> {
   try {
@@ -87,7 +86,9 @@ function Acompanhamento({ dados, onAbrir }: { dados: ProspectarHoje; onAbrir: (c
                     {r.nota ? ` · ${r.nota}` : ''}
                   </p>
                 </div>
-                <Button size="sm" variant="outline" onClick={() => onAbrir(r.cnpj)}>Abrir ficha</Button>
+                <Button size="sm" variant="outline" onClick={() => onAbrir(r.cnpj)} aria-label={`Abrir ficha de ${nomeR(r)}`}>
+                  Abrir ficha
+                </Button>
               </li>
             ))}
           </ul>
@@ -146,22 +147,30 @@ export function ProspectarHojeCard() {
   const posse = useRadarAtendimentosAtivos();
   const [assumidosAqui, setAssumidosAqui] = useState<ReadonlySet<string>>(new Set());
   const comVoce = (l: LeadProspectarHoje) => l.comVoce || assumidosAqui.has(l.cnpj) || posse.data?.get(l.cnpj)?.ehMeu === true;
-  // 'enviando' segura o efeito enquanto o sensor não responde; 'feito' só depois da confirmação.
-  const servido = useRef<'nao' | 'enviando' | 'feito'>('nao');
+  // Sensor do denominador (pacote M): CADA CNPJ exibido, inclusive o que entra depois de um Assumir — antes só a 1ª
+  // quantidade do dia ia ao banco, e 3 servidos com 6 cliques davam 200 %. `exibidos` = confirmados ou em voo; falha
+  // devolve os CNPJs para a próxima leitura tentar de novo. Vai a lista INTEIRA exibida (a posição de cada um); o
+  // banco grava só o que é novo no dia.
+  const exibidos = useRef<Set<string>>(new Set());
+  const visto = useRef(false);
 
   const leads = q.data?.leads ?? [];
-  const nLeads = q.data?.leads.length ?? 0;
-  const elegiveis = q.data?.leads[0]?.elegiveis ?? null;
   useEffect(() => {
-    if (!q.isSuccess || nLeads === 0 || isImpersonating || servido.current !== 'nao') return;
-    servido.current = 'enviando';
-    track('radar.prospectar_hoje_visto', { leads: nLeads, elegiveis });
-    void sensorConfirmou(registrarCardServido(nLeads)).then((ok) => {
-      // Falha já foi reportada pelo próprio hook (track 'radar.sensor_falhou' + ledger, contrato da sessão H): aqui só
-      // libera a nova tentativa na próxima leitura. `{ ok: true, registrado: false }` = já gravado hoje → conta como feito.
-      servido.current = ok ? 'feito' : 'nao';
+    const lista = q.data?.leads ?? [];
+    if (!q.isSuccess || lista.length === 0 || isImpersonating) return;
+    const novos = lista.map((l) => l.cnpj).filter((c) => !exibidos.current.has(c));
+    if (novos.length === 0) return;
+    if (!visto.current) {
+      visto.current = true;
+      track('radar.prospectar_hoje_visto', { leads: lista.length, elegiveis: lista[0]?.elegiveis ?? null });
+    }
+    for (const c of novos) exibidos.current.add(c);
+    void sensorConfirmou(registrarCardExibido(lista.map((l) => l.cnpj))).then((ok) => {
+      // Falha já foi reportada pelo próprio hook (track 'radar.sensor_falhou' + ledger): aqui só libera a nova
+      // tentativa. `{ ok: true, registrado: false }` = já gravado hoje → conta como feito.
+      if (!ok) for (const c of novos) exibidos.current.delete(c);
     });
-  }, [q.isSuccess, nLeads, elegiveis, isImpersonating]);
+  }, [q.isSuccess, q.data, isImpersonating]);
 
   if (!visivel) return null;
   if (q.isLoading) return <div className="h-32 rounded-lg bg-muted/40 animate-pulse" data-testid="prospectar-hoje-carregando" />;
@@ -268,6 +277,7 @@ export function ProspectarHojeCard() {
                     size="sm"
                     disabled={definir.isPending || isImpersonating}
                     title={isImpersonating ? 'Indisponível em modo Ver como' : undefined}
+                    aria-label={`Assumir ${nomeDoLead(l)}`}
                     onClick={() => void assumir(l)}
                   >
                     {definir.isPending && definir.variables?.cnpj === l.cnpj
@@ -275,7 +285,7 @@ export function ProspectarHojeCard() {
                     Assumir
                   </Button>
                 )}
-                <Button size="sm" variant="outline" onClick={() => abrirFicha(l)}>
+                <Button size="sm" variant="outline" onClick={() => abrirFicha(l)} aria-label={`Abrir ficha de ${nomeDoLead(l)}`}>
                   Abrir ficha
                 </Button>
               </li>

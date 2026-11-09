@@ -18,8 +18,10 @@ vi.mock('@/lib/impersonation/lens-write-guard', () => ({ isLensActive: () => len
 
 import {
   registrarAberturaEmpurrada,
+  registrarCardExibido,
   registrarCardServido,
   registrarFichaEntregue,
+  registrarIntencaoContato,
 } from '../useRadarRegistroEmpurrado';
 
 const chamadas = (nome: string) => rpc.mock.calls.filter((c) => c[0] === nome);
@@ -97,5 +99,44 @@ describe('useRadarRegistroEmpurrado — contrato', () => {
     await expect(registrarCardServido(9)).resolves.toMatchObject({ ok: false, motivo: 'parametro_invalido' });
     await Promise.resolve();
     expect(chamadas('radar_registrar_falha_sensor')).toHaveLength(1);
+  });
+
+  describe('pacote M', () => {
+    it('exibidos: manda a lista de CNPJs; sucesso não registra falha', async () => {
+      const r = await registrarCardExibido(['a', 'b', 'c']);
+      expect(r).toEqual({ ok: true, registrado: true });
+      expect(chamadas('radar_registrar_card_exibido')[0][1]).toEqual({ p_cnpjs: ['a', 'b', 'c'] });
+      expect(chamadas('radar_registrar_falha_sensor')).toHaveLength(0);
+    });
+
+    it('exibidos com banco anterior ao pacote M (PGRST202): cai no sensor do dia, SEM registrar falha', async () => {
+      respostas.push({ data: null, error: { code: 'PGRST202', message: 'not found' } });
+      const r = await registrarCardExibido(['a', 'b', 'c', 'd', 'e', 'f']);
+      expect(r).toEqual({ ok: true, registrado: true });
+      expect(chamadas('radar_registrar_card_servido')[0][1]).toEqual({ p_n_leads: 5 });
+      expect(chamadas('radar_registrar_falha_sensor')).toHaveLength(0);
+    });
+
+    it('exibidos: outra falha definitiva vai ao ledger de falhas do sensor do card', async () => {
+      respostas.push({ data: null, error: { code: '42501', message: 'forbidden' } });
+      const r = await registrarCardExibido(['a']);
+      expect(r).toEqual({ ok: false, motivo: 'sem_acesso', transitorio: false });
+      expect(chamadas('radar_registrar_falha_sensor')[0][1]).toEqual({ p_sensor: 'card_servido', p_motivo: 'sem_acesso' });
+    });
+
+    it('intenção: grava canal e CNPJ; falha não rejeita e não chama o ledger de falhas', async () => {
+      expect(await registrarIntencaoContato('123', 'whatsapp')).toEqual({ ok: true, registrado: true });
+      expect(chamadas('radar_registrar_intencao')[0][1]).toEqual({ p_cnpj: '123', p_canal: 'whatsapp' });
+      respostas.push(new Error('fetch failed'));
+      expect(await registrarIntencaoContato('123', 'ligar')).toEqual({ ok: false, motivo: 'rede', transitorio: true });
+      expect(track).toHaveBeenCalledWith('radar.sensor_falhou', { sensor: 'intencao', motivo: 'rede', tentativas: 1 });
+      expect(chamadas('radar_registrar_falha_sensor')).toHaveLength(0);
+    });
+
+    it('intenção sob a lente "Ver como": nada é chamado', async () => {
+      lente = true;
+      expect(await registrarIntencaoContato('123', 'copiar')).toEqual({ ok: false, motivo: 'lente', transitorio: false });
+      expect(rpc).not.toHaveBeenCalled();
+    });
   });
 });
