@@ -633,6 +633,13 @@ if [ "${BASH_VERSINFO[0]}" -gt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${
   rm -f "$W2/a" "$W2/b"
   exec_exige "1 worker roda o mesmo par em SÉRIE (o controle acima mediu simultaneidade)" "exit=1" \
     env MANIFESTO="$ESPELHO/manifesto-w2.txt" NUCLEO_WORKERS=1 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+  # FAIXA SERIAL: o MESMO par, com um `lock_timeout` de 200 ms no fonte de um deles, tem de rodar
+  # em série mesmo com 2 workers (a unidade da faixa roda sozinha). O controle acima prova que sem a
+  # marca o par roda junto; aqui o vermelho só vem da faixa.
+  rm -f "$W2/a" "$W2/b"
+  printf "# SET lock_timeout = '200ms' (marca da faixa serial)\n" >> "$ESPELHO/db/test-w2-par-a.sh"
+  exec_exige "2 workers: prova com lock_timeout de 200 ms roda SOZINHA (faixa serial)" "exit=1" \
+    env MANIFESTO="$ESPELHO/manifesto-w2.txt" NUCLEO_WORKERS=2 bash "$ESPELHO/db/roda-nucleo-ci.sh"
   # subshell da unidade morto no meio (kill -9 no pai da prova): sem arquivo de veredito.
   # shellcheck disable=SC2016  # o $PPID é da prova GERADA (o subshell da unidade), não deste
   printf '#!/usr/bin/env bash\nkill -9 "$PPID"\nsleep 1\necho "RESULTADO: 5 ok / 0 fail"\n' > "$ESPELHO/db/test-w2-orfa.sh"

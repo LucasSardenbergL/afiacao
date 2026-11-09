@@ -1183,11 +1183,12 @@ jobs:
         # runner (~0,7 min, p50 de 17 runs), que o LPT não pesa: some no ruído de máquina (±45%) e não
         # justifica constante nova no balanceador. Medição e veredito no PR e em
         # docs/historico/ci-e16-nucleo-sql-7-partes.md (pior parte 16,5 e 15,9 contra p50 de 19,3).
-        # 7 partes seriais -> 4 partes × 2 workers (2026-11-09, fatia 2): a parte serial ocupa ~1 núcleo
+        # 7 partes seriais -> 5 partes × 2 workers (2026-11-09, fatia 2): a parte serial ocupa ~1 núcleo
         # de 4 do runner (p90 1,2; iowait ≈ 0), medido em docs/historico/ci-provas-sql-medicao-preparacao.md.
-        # O runner roda NUCLEO_WORKERS unidades ao mesmo tempo (step do núcleo, abaixo). Minutos de
-        # runner caem ~pela metade; resultado medido em docs/historico/ci-provas-sql-2-workers.md.
-        parte: [1, 2, 3, 4]
+        # O runner roda NUCLEO_WORKERS unidades ao mesmo tempo (step do núcleo, abaixo), menos a FAIXA
+        # SERIAL (timeout ≤ 2 s, 23% do tempo), que roda sozinha. Ganho estimado de 1,4–1,6× (5 partes,
+        # não 4); resultado medido em docs/historico/ci-provas-sql-2-workers.md.
+        parte: [1, 2, 3, 4, 5]
     permissions:
       contents: read
 
@@ -1472,7 +1473,7 @@ jobs:
       - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
         if: ${{ strategy.job-index == 0 }}
         env:
-          HARNESS_OK_MINIMO: "67"
+          HARNESS_OK_MINIMO: "72"
         run: |
           log="$RUNNER_TEMP/falsifica-nucleo.log"
           bash db/falsifica-nucleo-ci.sh > "$log" 2>&1 && rc=0 || rc=$?

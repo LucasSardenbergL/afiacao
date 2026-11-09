@@ -601,7 +601,7 @@ colhe() {
 # Unidades da parte: (caminho, modo, mínimo). Ordem de LANÇAMENTO = LPT aproximado: falsificações
 # antes (são as longas), cada grupo por custo DESC (db/nucleo-ci-custo.txt; ausente pesa
 # CUSTO_DEFAULT), empate pela posição no manifesto. Com 1 worker a ordem não muda o tempo total.
-u_cam=(); u_modo=(); u_min=(); u_rot=(); u_chave=()
+u_cam=(); u_modo=(); u_min=(); u_rot=(); u_chave=(); u_serial=()
 for i in "${!scripts[@]}"; do
   case "${falsifs[$i]}" in
     fora) printf '  ⚠️  %-44s --falsificar FORA DO CI — ausência de dado, não aprovação: %s\n' \
@@ -614,9 +614,29 @@ custo_de() {
   printf '%s' "${c:-${CUSTO_DEFAULT:-30}}"
 }
 CUSTO="${CUSTO:-${NUCLEO_CUSTO:-$REPO_ROOT/db/nucleo-ci-custo.txt}}"
+# FAIXA SERIAL: prova com `lock_timeout`/`statement_timeout` ≤ 2 s (número puro = ms, a unidade
+# dessas GUCs), ou que cita uma delas sem valor legível (conservador), roda SOZINHA: a vizinha
+# disputaria CPU no meio de uma espera de 200 ms. Derivada do FONTE a cada execução, então prova
+# nova com timeout curto já nasce serial. Em 2026-11-09 eram 21 provas, 23% do tempo do núcleo.
+timeout_curto() {
+  LC_ALL=C awk '
+    { linha = $0
+      while (match(linha, /(lock|statement)_timeout/)) {
+        achou = 1; resto = substr(linha, RSTART + RLENGTH); linha = resto
+        if (match(resto, /^[[:space:]]*(=|TO|to)[[:space:]]*\047?[0-9]+[[:space:]]*(ms|s|min)?/)) {
+          v = substr(resto, RSTART, RLENGTH); sub(/^[^0-9]*/, "", v); gsub(/[^0-9a-z]/, "", v)
+          n = v + 0; u = v; gsub(/[0-9]/, "", u)
+          ms = (u == "s") ? n * 1000 : (u == "min") ? n * 60000 : n
+          lido = 1; if (ms > 0 && ms <= 2000) curto = 1
+        }
+      } }
+    END { exit !(curto || (achou && !lido)) }' "$REPO_ROOT/$1"
+}
+
 # enfileira <caminho> <modo> <mínimo> <grupo 0=falsificar|1=normal> <custo> <posição>
 enfileira() {
-  u_cam+=("$1"); u_modo+=("$2"); u_min+=("$3"); u_chave+=("$4 $5 $6")
+  local faixa=1; timeout_curto "$1" && faixa=0
+  u_cam+=("$1"); u_modo+=("$2"); u_min+=("$3"); u_chave+=("$faixa $4 $5 $6")
   if [ "$2" = falsificar ]; then u_rot+=("$(basename "$1" .sh) --falsificar"); else u_rot+=("$(basename "$1" .sh)"); fi
 }
 for i in "${!scripts[@]}"; do
@@ -627,26 +647,31 @@ for i in "${!scripts[@]}"; do
   esac
   enfileira "${scripts[$i]}" normal "${minimos[$i]}" 1 "$c" "$i"
 done
-ordem=()
-while read -r _ _ _ k; do ordem+=("$k"); done < <(
-  for k in "${!u_chave[@]}"; do printf '%s %s\n' "${u_chave[$k]}" "$k"; done | LC_ALL=C sort -k1,1n -k2,2nr -k3,3n -k4,4n)
+# Ordem: faixa serial (0) antes do pool (1); dentro de cada faixa, falsificações antes, custo DESC.
+ordem=(); n_serial=0
+while read -r f _ _ _ k; do
+  ordem+=("$k"); u_serial[k]="$f"; [ "$f" = 0 ] && n_serial=$((n_serial + 1))
+done < <(
+  for k in "${!u_chave[@]}"; do printf '%s %s\n' "${u_chave[$k]}" "$k"; done | LC_ALL=C sort -k1,1n -k2,2n -k3,3nr -k4,4n -k5,5n)
 if [ "${#ordem[@]}" -ne "${#u_cam[@]}" ]; then
   echo "::error::ordem de lançamento com ${#ordem[@]} de ${#u_cam[@]} unidades"; exit 1
 fi
 
 echo
-echo "=== núcleo: $esperados prova(s) + $n_falsif falsificação(ões), workers=$WORKERS${parte:+ — $parte} ==="
+echo "=== núcleo: $esperados prova(s) + $n_falsif falsificação(ões), workers=$WORKERS, faixa serial=$n_serial unidade(s)${parte:+ — $parte} ==="
 seq_u=0
-if [ "$WORKERS" -eq 1 ]; then
-  for k in "${ordem[@]}"; do
-    seq_u=$((seq_u + 1))
-    roda_unidade "$k" 0 "$seq_u" "${u_cam[$k]}" "${u_modo[$k]}" "${u_min[$k]}"
-    colhe "$k"
-  done
-else
+# A faixa serial vem primeiro na ordem e roda em primeiro plano, com o pool ainda vazio.
+for k in "${ordem[@]}"; do
+  [ "${u_serial[$k]}" = 0 ] || [ "$WORKERS" -eq 1 ] || continue
+  seq_u=$((seq_u + 1))
+  roda_unidade "$k" 0 "$seq_u" "${u_cam[$k]}" "${u_modo[$k]}" "${u_min[$k]}"
+  colhe "$k"
+done
+if [ "$WORKERS" -gt 1 ]; then
   declare -A pid_slot=() pid_idx=()
   livres=(); for ((w = 0; w < WORKERS; w++)); do livres+=("$w"); done
   for k in "${ordem[@]}"; do
+    [ "${u_serial[$k]}" = 1 ] || continue
     if [ "${#livres[@]}" -eq 0 ]; then
       wait -n -p pid_fim || true
       livres+=("${pid_slot[$pid_fim]}"); colhe "${pid_idx[$pid_fim]}"
