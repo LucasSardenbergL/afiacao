@@ -735,3 +735,13 @@ varredura, mantém a pendência com `vinculo_motivo: "erro"`. Nenhum dos ramos r
 **Provas:** `db/test-sayerlack-vincular-po-manual.sh` (PG17, 32 asserts, nos 2 locales; `--falsificar` com 14
 sabotagens vermelhas nos dois, incluindo a trava com 2 conexões A/B e o espelho velho). Handlers em Deno: importar (vinculou, não casou com diferenças, RPC com erro) e
 varrer (reconsulta: casou, não casou, erro), com 4 sabotagens das edges vermelhas.
+
+**No ar (2026-11-09, #3754):**
+- **Migration `20261111110000`:** aplicada pelo envelope (ensaio ok, depois a tentativa #1031, com o marcador `VINCULAR_PO_MANUAL_POS_OK`). Conferida no psql-ro: fechada a anon e authenticated, aberta só ao service_role.
+- **Edges:** subiram em 2 ondas pelo pacote.
+  - A importar v1.10 foi colada às 01:29Z, e nenhuma das sessões da família assumiu o envio. Os hashes eram os do pacote (12/12), e a sonda #1033 deu DEPLOY CONFIRMADO.
+  - A varrer v1.12 subiu às 02:10Z, com 15/15 hashes, e a sonda #1035 deu DEPLOY CONFIRMADO.
+  - No ledger, as duas ficaram em `CONFERE`.
+- **Sensor de edição:**
+  - 1ª onda: `EDICAO_DETECTADA` só pelo `edit_id`, que era a regeneração do `types.ts` com a RPC nova (`0b2f1211`, tolerado). Nada em `supabase/` mudou.
+  - 2ª onda: `SEM_EDICAO`.
