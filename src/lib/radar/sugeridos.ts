@@ -14,6 +14,7 @@
 // de qualificação; 60 (12 mil) é a fila inteira de novo; 80 (33) só o topo.
 
 import { documentoCadastravelNoOmie } from '@/lib/radar/cadastro-omie';
+import { rotuloEfetivo } from '@/lib/radar/lote-vigente';
 
 /** Score mínimo para o Radar SUGERIR o cadastro. Mudar = re-medir (comentário acima) + diário. */
 export const LIMIAR_SUGERIDO = 70;
@@ -29,6 +30,7 @@ export interface LeadSugerivel {
   omie_codigo_cliente: string | null;
   prospeccao_status: string | null;
   ultimo_lote: string | null;
+  lote_anterior?: string | null;
   rfb_situacao: string | null;
   score: number | null;
 }
@@ -66,12 +68,12 @@ export function elegivelCadastroPosSinal(e: LeadSugerivel): boolean {
  */
 export function sugeridoParaCadastro(
   e: LeadSugerivel,
-  lote: { mes_referencia: string } | null,
+  lote: { mes_referencia: string; publicando?: string | null } | null,
 ): Veredito<MotivoNaoSugerido> {
   const c = cadastravelNoOmie(e);
   if (!c.ok) return c;
   if (!lote) return { ok: false, motivo: 'sem_lote' };
-  if (e.ultimo_lote !== lote.mes_referencia) return { ok: false, motivo: 'saiu_do_dump' };
+  if (rotuloEfetivo(e, lote) !== lote.mes_referencia) return { ok: false, motivo: 'saiu_do_dump' };
   if (e.prospeccao_status !== STATUS_SINAL) return { ok: false, motivo: 'sem_sinal' };
   if (e.score == null || !Number.isFinite(e.score)) return { ok: false, motivo: 'sem_score' };
   if (e.score < LIMIAR_SUGERIDO) return { ok: false, motivo: 'score_abaixo' };

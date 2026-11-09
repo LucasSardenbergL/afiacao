@@ -39,12 +39,14 @@
   sabotagens vermelhas. Só testes: nada a deployar.
 - ✅ **8.2** (#3742) — seletores e paginação testados contra HTML (vitest + jsdom), funções de página em
   `_shared/sayerlack-portal-dom.ts`; importar v1.8 e varrer v1.10, as 2 com DEPLOY CONFIRMADO.
-- 🔄 **7.2 + 4.3** — evidência imutável de cada leitura (`sayerlack_portal_evidencia`, migration `20261111090000`) e
-  sessão do Browserless contada pela importadora; importar v1.9 e varrer v1.11 (migration → importar → varrer).
+- ✅ **7.2 + 4.3** (#3747) — evidência imutável de cada leitura (`sayerlack_portal_evidencia`, migration `20261111090000`) e
+  sessão do Browserless contada pela importadora; migration aplicada (#1015), importar v1.9 e varrer v1.11 com DEPLOY CONFIRMADO.
+- 🔄 **7.3** — transportadora do portal no `cObs` do PO, lida da evidência do 7.2; disparar v1.13 (Caminho B, Codex
+  retroativo pendente).
 - 🔄 **7.1** — vincular o PO lançado à mão no Omie: RPC `sayerlack_vincular_po_manual` (migration `20261111110000`;
   contrato por token, dono, SKU/quantidade/valor calibrados em prod, trilha em `acoes_execucoes`) chamada pela
   importar v1.10 e pela varrer v1.12 (migration → importar → varrer).
-- ⏳ Depois: 7.3, 5.2 (botão "aceitar o portal", decisão do founder) (7.5 encerrada: o portal não expõe IPI por item).
+- ⏳ Depois: 5.2 (botão "aceitar o portal", decisão do founder) (7.5 encerrada: o portal não expõe IPI por item).
 
 ## Andamento da Sessão B (tela e painel)
 

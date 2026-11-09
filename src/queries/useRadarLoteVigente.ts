@@ -1,6 +1,6 @@
 import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { loteVigente, type LoteIngest } from '@/lib/radar/lote-vigente';
+import { lotePublicando, loteVigente, type LoteIngest, type LoteIngestComFase } from '@/lib/radar/lote-vigente';
 
 /**
  * Lote VIGENTE do Radar — UMA query compartilhada (`['radar','lote-vigente']`).
@@ -22,11 +22,17 @@ const LOTE_VIGENTE_KEY = ['radar', 'lote-vigente'] as const;
 async function buscarLoteVigente(): Promise<LoteIngest | null> {
   const { data, error } = await supabase
     .from('radar_ingest_state')
-    .select('mes_referencia,status,total_recebido,novos,iniciado_em')
+    .select('mes_referencia,status,total_recebido,novos,iniciado_em,carga_fase,carga_publicacao_iniciada_em')
     .order('mes_referencia', { ascending: false })
     .limit(36); // 3 anos de lotes mensais — a tabela tem um punhado de linhas
   if (error) throw error;
-  return loteVigente((data ?? []) as LoteIngest[]);
+  const lotes = (data ?? []) as LoteIngestComFase[];
+  const vigente = loteVigente(lotes);
+  // Publicação em passos (20261111120000): o lote em publicação viaja junto do vigente — todo predicado
+  // de foto do front usa o rótulo EFETIVO (`rotuloEfetivo`/`fotoPostgrest`). Mesma leitura, mesmo snapshot.
+  if (!vigente) return null;
+  const { carga_fase: _f, carga_publicacao_iniciada_em: _p, ...v } = vigente as LoteIngestComFase;
+  return { ...v, publicando: lotePublicando(lotes, vigente) };
 }
 
 const opcoes = () => ({ queryKey: LOTE_VIGENTE_KEY, queryFn: buscarLoteVigente, staleTime: 60_000 });

@@ -945,7 +945,7 @@ db/test-venda-painel-heranca.sh            16  falsificar=10
 # desfecho de preço exige alta sobre o preço anterior (alvo a < 1%: o preço velho é nao_virou); a lista da
 # farmer expõe as ondas, total/motivo só da recompra e nunca custo; o pedido é a unidade do preço; dono único
 # = a farmer; complemento/preço não exibidos = nao_medivel. 18 sabotagens (md5 reassinado).
-db/test-venda-ondas23.sh                   44  falsificar=18
+db/test-venda-ondas23.sh                   46  falsificar=18
 # DRE consolidado intercompany (20261021120000 → 20261021190000): par CR↔CP — receita e CMV caem pelo MESMO
 # valor, resultado intacto, só par PROVADO pela composição do snapshot (receita_bruta/cmv, mesmo mês, mesmo
 # valor, sem cancelado/sem status, uso único, teto, snapshot fiel aos títulos atuais); venda intragrupo SEM
@@ -1073,3 +1073,10 @@ db/test-radar-funil.sh                     45  falsificar=21
 # vez (validada ≠ vigente, job publica rótulo+cadastro+recruzar+complete+staging vazio), falha dentro da publicação
 # desfaz tudo, re-run de lote complete não rebaixa a foto, queda > 15% reprova, ACL nas duas pontas, cron fora da hora 06.
 db/test-radar-carga-atomica.sh             37  falsificar=12
+
+# Radar — publicação EM PASSOS da carga mensal (migration 20261111120000; incidente 2026-11-08: a troca numa transação
+# estourou 30 min e travou o Realtime): a cada passo comitado a foto do leitor é exatamente a velha (lista, contagem,
+# sem filtro sem a nova), jobs em massa esperam a virada, erro no meio não vira `falhou`, 57014 com ramo próprio,
+# CALL vira de uma vez, re-run só com membresia igual, ACL. O CUSTO (24 índices de prod × 506k) é
+# db/test-radar-publicacao-curta-custo.sh, fora do CI (pesado).
+db/test-radar-publicacao-curta.sh          41  falsificar=12

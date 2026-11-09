@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import type { LoteIngest } from '@/lib/radar/lote-vigente';
+import { fotoPostgrest, type LoteIngest } from '@/lib/radar/lote-vigente';
 
 /**
  * N do card "Inéditos do lote YYYY-MM: N de T" — quantas empresas ENTRARAM no universo neste
@@ -16,16 +16,20 @@ import type { LoteIngest } from '@/lib/radar/lote-vigente';
  */
 export function useRadarIneditos(lote: LoteIngest | null) {
   return useQuery({
-    queryKey: ['radar', 'ineditos', lote?.mes_referencia ?? null, lote?.iniciado_em ?? null],
+    queryKey: ['radar', 'ineditos', lote?.mes_referencia ?? null, lote?.iniciado_em ?? null, lote?.publicando ?? null],
     enabled: lote != null,
     staleTime: 60_000,
     queryFn: async (): Promise<number> => {
       if (!lote) throw new Error('useRadarIneditos sem lote vigente');
-      const { count, error } = await supabase
+      // Foto vigente como em `radar_lista`: durante a publicação em passos inclui quem já ganhou o
+      // rótulo novo vindo do vigente (lote_anterior) — senão o card encolheria a cada passo.
+      const foto = fotoPostgrest(lote);
+      const base = supabase
         .from('radar_empresas')
         .select('cnpj', { count: 'exact', head: true })
-        .eq('ultimo_lote', lote.mes_referencia)
+        .in('ultimo_lote', foto.rotulos)
         .gte('primeira_vista_em', lote.iniciado_em);
+      const { count, error } = await (foto.ou ? base.or(foto.ou) : base);
       if (error) throw error;
       if (count == null) throw new Error('count de inéditos ausente na resposta');
       return count;

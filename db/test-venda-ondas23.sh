@@ -542,6 +542,18 @@ VALIDA="$(Pq -f "$REPO_ROOT/db/validar-venda-ondas23.sql")"
 case "$VALIDA" in ✅*) VALIDA_OK=ok ;; *) VALIDA_OK="$VALIDA" ;; esac
 eq "MIG3 validar-venda-ondas23.sql dá ✅" "$VALIDA_OK" "ok"
 
+# A validação confere a REGRA no corpo vivo (não o md5): um desfecho recriado sem a alta sobre o anterior
+# tem de dar ❌, mesmo com tudo o mais no lugar. Controle: o corpo deste arquivo volta e ela volta a ✅.
+DEF_FECHAR="$(Pq -c "SELECT pg_get_functiondef('public.venda_fechar_desfechos(date)'::regprocedure)")"
+P -q -c "$(printf '%s' "$DEF_FECHAR" | python3 -I -c 'import sys; s=sys.stdin.read(); a="AND pp.preco_medio_liq > pp.preco_anterior"; assert s.count(a)==1, "ancora ausente"; print(s.replace(a, ""))')"
+VALIDA_SEM_ALTA="$(Pq -f "$REPO_ROOT/db/validar-venda-ondas23.sql")"
+case "$VALIDA_SEM_ALTA" in *"desfecho de preço/complemento perdeu a alta"*) SEM_ALTA_OK=ok ;; *) SEM_ALTA_OK="$VALIDA_SEM_ALTA" ;; esac
+eq "MIG4 validar acusa desfecho sem a alta sobre o anterior (por regra, não por md5)" "$SEM_ALTA_OK" "ok"
+P -q -c "$DEF_FECHAR"
+VALIDA="$(Pq -f "$REPO_ROOT/db/validar-venda-ondas23.sql")"
+case "$VALIDA" in ✅*) VALIDA_OK=ok ;; *) VALIDA_OK="$VALIDA" ;; esac
+eq "MIG4 controle: corpo de volta → validar ✅" "$VALIDA_OK" "ok"
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "FIM-OK venda-ondas23 (locale $LOC)"
