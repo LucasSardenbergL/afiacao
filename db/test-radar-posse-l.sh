@@ -342,7 +342,7 @@ eq "L1h desfazer o contato que CRIOU a posse fecha a posse como 'liberado' (e di
    "$(campo "$D" deleted):$(campo "$D" posse_desfeita)|$(posse 30400000000101)|$(Pq -c "SELECT encerrado_por = '$V1' FROM public.radar_atendimentos WHERE cnpj = '30400000000101'")" \
    "true:true|V1:liberado|t"
 R1="$(reg "$V1" 30500000000101 em_conversa 'primeiro')"
-R2="$(reg "$V1" 30500000000101 descartado 'mudou de ideia')"   # não renova: só o NOT EXISTS segura a posse
+reg "$V1" 30500000000101 descartado 'mudou de ideia' >/dev/null   # não renova: só o NOT EXISTS segura a posse
 D="$(como authenticated "$V1" "SELECT public.desfazer_contato_radar('$(campo "$R1" id)')" | tail -1)"
 eq "L1i desfazer o contato de origem com outro contato do dono DEPOIS (um descarte, que não renova): a posse fica" \
    "$(campo "$D" deleted):$(campo "$D" posse_desfeita)|$(posse 30500000000101)" "true:false|V1:aberta"
