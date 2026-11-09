@@ -108,6 +108,15 @@ A carga (`scripts/radar/carga.ts`) não muda.
 - Logo depois, o bot do Lovable regenerou o `types.ts` **a partir de prod** (commit `0b5287a44`). A migration ainda não estava aplicada, então a assinatura de `radar_razao_social_para_cadastro` sumiu e a main ganhou um TS2345 em `useRadarAcoesLead.ts`. A restauração veio por PR.
 - Lição: com a edge à frente da migration, a regeneração apaga do `types.ts` a RPC que só existe no repo. Isso continua acontecendo até a migration ser aplicada. Depois de cada deploy, confira o `git diff` do commit do bot, não só o `--stat`.
 
+**Estado em prod (2026-11-09 22:42Z, psql-ro):**
+- As 3 camadas estão no ar: edge v1.33, Publish e migration.
+- A migration foi aplicada à mão antes das 22:35Z e não ficou registrada em `schema_migrations`. Na conferência:
+  - os md5 batem: `0de269fa…` (base) e `9989b503…` (conflitam);
+  - há 2 triggers e 3 índices;
+  - o job `41 * * * *` está ativo.
+- O `claude_ro` recebe `permission denied` em `private.radar_razao_mascarada`, sinal de que o REVOKE vale.
+- 1ª rodada do cron (22:41Z): `sucesso` em 53 s, com `razoes_mascaradas=10000` e `razoes_cruas_restantes=112065`. Os 10.000 pares cru↔mascarado conferem, e há 0 cru fora do formato. O backfill termina sozinho em ~12 rodadas.
+
 ## LGPD: registro e prazos (formato `lgpd-data-mapping`)
 
 | Dado | Finalidade | Base legal | Quem vê | Prazo |
