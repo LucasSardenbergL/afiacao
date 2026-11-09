@@ -471,6 +471,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/RadarAbrirEmail.sensor.test.tsx",
       "src/pages/__tests__/RadarFunil.estados.test.tsx",
       "src/queries/__tests__/useRadarRegistroEmpurrado.contrato.test.ts",
+      "src/queries/__tests__/useRadarContatos.autor.test.tsx",
       "src/pages/__tests__/FarmerLOCC.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerRecommendations.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerRecommendations.desfecho-geracao.test.tsx",

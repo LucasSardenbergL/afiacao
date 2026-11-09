@@ -30,9 +30,9 @@ vi.mock('react-router-dom', () => ({
   Link: ({ to, children, ...p }: { to: string; children: ReactNode }) => <a href={to} {...p}>{children}</a>,
 }));
 // O sensor é da sessão H: aqui ele é controlável, para provar o contrato (só marca "registrado" com confirmação).
-const sensor = vi.fn((_n: number): unknown => undefined);
+const sensor = vi.fn((_c: string[]): unknown => undefined);
 vi.mock('@/queries/useRadarRegistroEmpurrado', () => ({
-  registrarCardServido: (n: number) => sensor(n),
+  registrarCardExibido: (c: string[]) => sensor(c),
   registrarAberturaEmpurrada: (a: unknown) => rpc('radar_registrar_abertura_empurrada', {
     p_origem: (a as { origem: string }).origem, p_cnpj: (a as { cnpj: string }).cnpj,
   }),
@@ -60,34 +60,54 @@ const chamadas = (nome: string) => rpc.mock.calls.filter((c) => c[0] === nome);
 
 beforeEach(() => {
   rpc.mockClear(); navigate.mockClear(); track.mockClear();
-  sensor.mockReset(); sensor.mockImplementation((n: number) => rpc('radar_registrar_card_servido', { p_n_leads: n }));
+  sensor.mockReset(); sensor.mockImplementation((c: string[]) => rpc('radar_registrar_card_exibido', { p_cnpjs: c }));
   for (const k of Object.keys(respostas)) delete respostas[k];
   auth = { role: 'employee', commercialRole: 'farmer' };
   display = { displayRole: 'employee', displayCommercialRole: 'farmer' };
   lente = { isImpersonating: false, effectiveUserId: 'eu' };
   respostas.radar_prospectar_hoje = { data: { territorio: TERRITORIO, leads: TRES }, error: null };
-  respostas.radar_registrar_card_servido = { data: { ok: true, registrado: true }, error: null };
+  respostas.radar_registrar_card_exibido = { data: { ok: true, registrado: true, novos: 3 }, error: null };
   respostas.radar_registrar_abertura_empurrada = { data: { ok: true, registrado: true, do_destinatario: true }, error: null };
   respostas.radar_definir_atendimento = { data: { ok: true, renovado: false, ja_livre: false, expira_em: '2026-11-13T12:00:00Z' }, error: null };
   respostas.radar_atendimentos_ativos = { data: [], error: null };
 });
 
 describe('ProspectarHojeCard', () => {
-  it('mostra os 3 leads com o denominador e o território que os decidiu; grava "servido" 1 vez', async () => {
+  it('mostra os 3 leads com o denominador e o território que os decidiu; grava os CNPJs exibidos 1 vez', async () => {
     renderCard();
     expect(await screen.findByText('Marcenaria Um')).toBeInTheDocument();
     expect(screen.getAllByTestId('prospectar-hoje-lead')).toHaveLength(3);
     expect(screen.getByText('3 de 8')).toBeInTheDocument();
     expect(screen.getByText(/Perto dos seus clientes: Divinopolis \(358\) · Nova Serrana \(266\)/)).toBeInTheDocument();
     expect(chamadas('radar_prospectar_hoje')[0][1]).toEqual({ p_n: 3 });
-    await waitFor(() => expect(chamadas('radar_registrar_card_servido')).toHaveLength(1));
-    expect(chamadas('radar_registrar_card_servido')[0][1]).toEqual({ p_n_leads: 3 });
+    await waitFor(() => expect(chamadas('radar_registrar_card_exibido')).toHaveLength(1));
+    expect(chamadas('radar_registrar_card_exibido')[0][1]).toEqual({ p_cnpjs: TRES.map((l) => l.cnpj) });
+  });
+
+  it('reposição depois de Assumir: o lead que ENTRA no card também é registrado como exibido (pacote M)', async () => {
+    const { qc } = renderCard();
+    await screen.findByText('Marcenaria Um');
+    await waitFor(() => expect(sensor).toHaveBeenCalledTimes(1));
+    const novo = lead(4, '00000000000110', 'Reposto Dez');
+    respostas.radar_prospectar_hoje = { data: { territorio: TERRITORIO, leads: [TRES[1], TRES[2], novo] }, error: null };
+    await qc.invalidateQueries({ queryKey: ['radar', 'prospectar-hoje'] });
+    await screen.findByText('Reposto Dez');
+    await waitFor(() => expect(sensor).toHaveBeenCalledTimes(2));
+    // A lista inteira exibida (a posição de cada um); o banco grava só o novo no dia.
+    expect(sensor).toHaveBeenLastCalledWith([TRES[1].cnpj, TRES[2].cnpj, novo.cnpj]);
+  });
+
+  it('botões com o nome do lead para leitor de tela (Assumir / Abrir ficha repetidos)', async () => {
+    renderCard();
+    await screen.findByText('Marcenaria Um');
+    expect(screen.getByRole('button', { name: 'Assumir Marcenaria Um' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Abrir ficha de Moveis Oito' })).toBeInTheDocument();
   });
 
   it('Abrir ficha: grava a abertura (origem card) e vai para /radar?cnpj=…&origem=card', async () => {
     renderCard();
     await screen.findByText('Moveis Oito');
-    fireEvent.click(screen.getAllByRole('button', { name: 'Abrir ficha' })[1]);
+    fireEvent.click(screen.getAllByRole('button', { name: /^Abrir ficha/ })[1]);
     expect(chamadas('radar_registrar_abertura_empurrada')[0][1]).toEqual({ p_origem: 'card', p_cnpj: '00000000000108' });
     expect(navigate).toHaveBeenCalledWith('/radar?cnpj=00000000000108&origem=card');
   });
@@ -139,7 +159,7 @@ describe('ProspectarHojeCard', () => {
     respostas.radar_prospectar_hoje = { data: { territorio: TERRITORIO, leads: TRES.slice(0, 2) }, error: null };
     await qc.invalidateQueries({ queryKey: ['radar', 'prospectar-hoje'] });
     await waitFor(() => expect(sensor).toHaveBeenCalledTimes(2));
-    expect(sensor).toHaveBeenLastCalledWith(2);
+    expect(sensor).toHaveBeenLastCalledWith(TRES.slice(0, 2).map((l) => l.cnpj));
   });
 
   it('sensor confirmado (true) não registra de novo na releitura', async () => {
@@ -170,7 +190,7 @@ describe('ProspectarHojeCard', () => {
     renderCard();
     expect(await screen.findByTestId('prospectar-hoje-erro')).toBeInTheDocument();
     expect(screen.queryByText(/Nenhum lead a contatar/)).toBeNull();
-    expect(chamadas('radar_registrar_card_servido')).toHaveLength(0);
+    expect(chamadas('radar_registrar_card_exibido')).toHaveLength(0);
   });
 
   it('sem território (carteira sem município do Radar) é estado distinto de "sem leads"', async () => {
@@ -184,7 +204,7 @@ describe('ProspectarHojeCard', () => {
     respostas.radar_prospectar_hoje = { data: { territorio: TERRITORIO, leads: [] }, error: null };
     renderCard();
     expect(await screen.findByText('Nenhum lead a contatar perto da sua carteira')).toBeInTheDocument();
-    expect(chamadas('radar_registrar_card_servido')).toHaveLength(0);
+    expect(chamadas('radar_registrar_card_exibido')).toHaveLength(0);
   });
 
   it('lente "Ver como": lê os leads da persona, Assumir desligado, nada gravado no ledger', async () => {
@@ -194,10 +214,10 @@ describe('ProspectarHojeCard', () => {
     await screen.findByText('Marcenaria Um');
     expect(chamadas('radar_prospectar_hoje')[0][1]).toEqual({ p_vendedor: 'vendedora-x', p_n: 3 });
     expect(screen.getAllByRole('button', { name: /Assumir/ })[0]).toBeDisabled();
-    fireEvent.click(screen.getAllByRole('button', { name: 'Abrir ficha' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: /^Abrir ficha/ })[0]);
     expect(navigate).toHaveBeenCalledWith('/radar?cnpj=00000000000101&origem=card');
     expect(chamadas('radar_registrar_abertura_empurrada')).toHaveLength(0);
-    expect(chamadas('radar_registrar_card_servido')).toHaveLength(0);
+    expect(chamadas('radar_registrar_card_exibido')).toHaveLength(0);
   });
 
   it('fora do gate do Radar (employee sem cargo de venda): não renderiza nem consulta', () => {
