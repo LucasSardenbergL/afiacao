@@ -48,7 +48,10 @@ PEGA | arquivo SEM lista conta como idioma limpo                              | 
 PEGA | âncora sumida passa                                                    | s/if \(achados\.length === 0\) \{/if (false) {/
 PEGA | juiz de arquivo não lido passa calado                                  | s/acusa\(1, 'juiz registrado para arquivo/void (1, 'juiz registrado para arquivo/
 PEGA | falsificar=fora-do-ci vira linha julgada                               | s/falsificar=\\d\+\(\?:\\s\|\$\)/falsificar=\\S+(?:\\s|\$)/
-PEGA | linha COMENTADA do manifesto vira linha julgada                        | s/\.filter\(\(\{ l \}\) => !l\.startsWith\('\x23'\)\)/.filter(() => true)/
+PEGA | linha COMENTADA do manifesto vira linha julgada                        | s/if \(l\.startsWith\('\x23'\)\) return;/if (false) return;/
+PEGA | violação de fragmento aponta o nucleo-ci.txt (perde a fonte)          | s/arquivo: fonte \?\? MANIFESTO_NUCLEO,/arquivo: MANIFESTO_NUCLEO,/
+PEGA | não-.txt do db/nucleo-ci.d entra no manifesto efetivo                  | s/\.filter\(\(n\) => n\.endsWith\('\.txt'\)\)/.filter(() => true)/
+PEGA | fragmentos em ordem de LOCALE, não de bytes (diverge do runner)        | s/\.sort\(\(a, b\) => Buffer\.compare\(Buffer\.from\(a\), Buffer\.from\(b\)\)\)/.sort((a, b) => a.localeCompare(b))/
 
 # Os alarmes do stripper e o denominador.
 PEGA | analisar deixa de consultar o stripper                                 | s/r\.alarmes\.push\(\.\.\.alarmesDoStripper\(a\.caminho, diagnosticarShell\(a\.fonte\)\)\);//

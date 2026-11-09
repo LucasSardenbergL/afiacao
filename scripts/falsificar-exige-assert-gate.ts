@@ -60,7 +60,7 @@
  * arquivo de caminho literal ficam fora — e o juiz-helper chamado em N pontos declara `semLigacao`.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
 import { maiorBlocoDescartado, removerComentarios } from '@/lib/gates/limpeza-fonte';
@@ -1404,15 +1404,32 @@ function detectarLimpo(caminho: string, limpo: string): Deteccao {
   return { listas, entradas, lacos, violacoes };
 }
 
+/**
+ * Marca de fronteira que o `lerCorpoDoRepo` põe antes de cada fragmento de `db/nucleo-ci.d/`: o texto
+ * do manifesto EFETIVO é o nucleo-ci.txt seguido dos fragmentos (mesma ordem do db/roda-nucleo-ci.sh),
+ * e a marca devolve a cada linha a sua FONTE e o número dentro dela. Começa com `#`: o runner a
+ * leria como comentário.
+ */
+export const MARCA_FRAGMENTO = '#== ';
+
 /** As linhas `falsificar=<n>` do manifesto (fora-do-ci não entra: o CI não lê recibo nenhum dali). */
-export function lerNucleo(manifesto: string): { arquivo: string; linha: number }[] {
-  return manifesto
-    .split('\n')
-    .map((l, i) => ({ l: l.trim(), linha: i + 1 }))
-    .filter(({ l }) => !l.startsWith('#'))
-    .map(({ l, linha }) => ({ m: /^(\S+)\s+\d+\s+falsificar=\d+(?:\s|$)/.exec(l), linha }))
-    .filter((x): x is { m: RegExpExecArray; linha: number } => x.m !== null)
-    .map(({ m, linha }) => ({ arquivo: m[1], linha }));
+export function lerNucleo(manifesto: string): { arquivo: string; linha: number; fonte?: string }[] {
+  const saida: { arquivo: string; linha: number; fonte?: string }[] = [];
+  let fonte: string | undefined;
+  let base = 0;
+  manifesto.split('\n').forEach((bruta, i) => {
+    if (bruta.startsWith(MARCA_FRAGMENTO)) {
+      fonte = bruta.slice(MARCA_FRAGMENTO.length).trim();
+      base = i + 1;
+      return;
+    }
+    const l = bruta.trim();
+    if (l.startsWith('#')) return;
+    const m = /^(\S+)\s+\d+\s+falsificar=\d+(?:\s|$)/.exec(l);
+    if (m === null) return;
+    saida.push(fonte === undefined ? { arquivo: m[1], linha: i + 1 } : { arquivo: m[1], linha: i + 1 - base, fonte });
+  });
+  return saida;
 }
 
 /**
@@ -1420,18 +1437,18 @@ export function lerNucleo(manifesto: string): { arquivo: string; linha: number }
  * registrado foi lido e tem TODAS as âncoras no código.
  */
 export function julgarNucleo(
-  nucleo: { arquivo: string; linha: number }[],
+  nucleo: { arquivo: string; linha: number; fonte?: string }[],
   limpos: ReadonlyMap<string, string>,
   juizes: Readonly<Record<string, Juiz>>,
   idiomaLimpo: ReadonlySet<string> = new Set(),
   regraDaAncora: (arquivo: string) => Regra = () => 'R3',
 ): Violacao[] {
   const v: Violacao[] = [];
-  for (const { arquivo, linha } of nucleo) {
+  for (const { arquivo, linha, fonte } of nucleo) {
     if (!(arquivo in juizes) && !idiomaLimpo.has(arquivo)) {
       v.push({
         regra: 'R3',
-        arquivo: MANIFESTO_NUCLEO,
+        arquivo: fonte ?? MANIFESTO_NUCLEO,
         linha,
         detalhe: `${arquivo} tem falsificar=<n> sem o idioma SABOTAGENS limpo e sem JUIZ registrado: o CI confiaria no recibo sem saber se o vermelho é do assert`,
       });
@@ -1903,6 +1920,31 @@ const lerOuNulo = (caminho: string): string | null => {
   }
 };
 
+/** O diretório de fragmentos do manifesto (um `<prova>.txt` por prova nova; ver db/roda-nucleo-ci.sh). */
+export const FRAGMENTOS_NUCLEO = 'db/nucleo-ci.d';
+
+/**
+ * O manifesto EFETIVO: nucleo-ci.txt + cada `db/nucleo-ci.d/*.txt` em ordem de bytes (a do `LC_ALL=C
+ * sort` do runner), cada um precedido da MARCA_FRAGMENTO. `null` se o nucleo-ci.txt não foi lido — e
+ * o veredito trata isso como furo, não como "nada a julgar". Fragmento ilegível também é `null`.
+ */
+export function lerManifestoEfetivo(base: string): string | null {
+  const principal = lerOuNulo(join(base, MANIFESTO_NUCLEO));
+  if (principal === null) return null;
+  const dir = join(base, FRAGMENTOS_NUCLEO);
+  if (!existsSync(dir)) return principal;
+  const nomes = readdirSync(dir)
+    .filter((n) => n.endsWith('.txt'))
+    .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  let texto = principal.endsWith('\n') ? principal : `${principal}\n`;
+  for (const n of nomes) {
+    const fonte = lerOuNulo(join(dir, n));
+    if (fonte === null) return null;
+    texto += `${MARCA_FRAGMENTO}${FRAGMENTOS_NUCLEO}/${n}\n${fonte.endsWith('\n') ? fonte : `${fonte}\n`}`;
+  }
+  return texto;
+}
+
 /**
  * O corpo que o CI julga: todo shell das raízes padrão, o manifesto do núcleo, o package.json e os
  * alvos do `test:falsificacao` que não são shell (o `.ts` do fim do roteiro). O teste lê por AQUI.
@@ -1913,7 +1955,7 @@ export function lerCorpoDoRepo(base: string): {
   pacote: string | null;
 } {
   const arquivos = enumerar(RAIZES_PADRAO, base).map((c) => ({ caminho: relative(base, c), fonte: readFileSync(c, 'utf8') }));
-  const manifesto = lerOuNulo(join(base, MANIFESTO_NUCLEO));
+  const manifesto = lerManifestoEfetivo(base);
   const pacote = lerOuNulo(join(base, PACOTE));
   const lidos = new Set(arquivos.map((a) => a.caminho));
   for (const alvo of lerFalsificacao(pacote ?? '')?.alvos ?? []) {
