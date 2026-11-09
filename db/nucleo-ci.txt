@@ -1108,3 +1108,7 @@ db/test-radar-k2-foto-e-contato.sh         21  falsificar=18
 # Radar K3 (20261111140000): radar_lote_idade acusa a carga EM VOO parada (recebendo > 12 h, validada > 6 h, publicação
 # com 3+ erros seguidos, falhou num lote mais novo), sobre a cadeia viva do trio no md5 de PROD (A1).
 db/test-data-health-radar-carga-em-voo.sh  19  falsificar=11
+# Radar — "para visitar" no agregado (20261111160000): a dimensão visitar dos 3 agregados é a MESMA regra da fila
+# (oráculo linha a linha em 14 recortes), indisponível ≠ 0 (antes do tick e depois de código velho), recálculo quando a
+# contabilidade é mais nova, p_so_agregado sem ler radar_empresas, total antes do LIMIT, PRE anti-deriva e ACL.
+db/test-radar-agregado-visitar.sh          55  falsificar=11
