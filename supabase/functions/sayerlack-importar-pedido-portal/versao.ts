@@ -58,7 +58,13 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * audita em `acoes_execucoes`; não casou ⇒ recusa com o motivo e as diferenças, sem re-disparo. Migration
  * 20261111110000 antes.
  */
-export const VERSAO = "v1.10-vincula-po-manual";
+/**
+ * v1.11 (2026-11-09, revisão 2, 5.2 fatia 1) — antes de re-disparar pedido sem PO, confere o pedido do app com a
+ * leitura (RPC `sayerlack_conferir_portal`: SKU/quantidade contra os itens, valor por item/total/condição contra o
+ * retrato); divergiu ⇒ `alterado_no_portal` com as diferenças, sem disparo. Condição ilegível no re-disparo também
+ * recusa. A RPC achando o pedido já gravado (outra aba) passa pelas mesmas recusas. Migration 20261111140000 antes.
+ */
+export const VERSAO = "v1.11-confere-portal";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

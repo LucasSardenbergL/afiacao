@@ -246,6 +246,7 @@ const MENSAGEM_SQLSTATE: Readonly<Record<string, string>> = {
   IP006: "Já existe pedido de compra no Omie com este número do portal no contrato (lançado direto no Omie).",
   IP007: "A condição de pagamento do portal não tem correspondente único no cadastro de condições do Omie.",
   IP008: "Há pedido do próprio app sendo enviado ao portal agora; espere ele terminar (ou concilie) e importe de novo.",
+  IP009: "O pedido gravado não bateu com a leitura do portal na conferência — nada foi gravado. Importe de novo.",
   CP007: "O total com IPI calculado não bate com o Vlr Total do portal.",
   CP004: "Itens divergentes ao aplicar o custo.",
   CP002: "Este pedido já tem pedido de compra no Omie.",

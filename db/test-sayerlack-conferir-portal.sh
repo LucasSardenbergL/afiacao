@@ -146,9 +146,10 @@ cp "$MIG_REAL" "$MIG"
 SAB="${SABOTAGEM:-}"
 case "$SAB" in
   "") ;;
-  sem_gate_claim)
+  sem_gate_claim)  # o POS C4 pega isto ao aplicar; neutralizado para provar a camada do assert (uma por vez)
     trocar "$MIG" "     AND portal_divergencia_aberta_id IS NULL
-  RETURNING" "  RETURNING" ;;
+  RETURNING" "  RETURNING"
+    trocar "$MIG" "    RAISE EXCEPTION 'C4 FALHOU: o claim não recusa a divergência aberta';" "    NULL;" ;;
   gate_por_not_exists)  # o desenho ingênuo: o veto lê a OUTRA tabela (snapshot velho no EvalPlanQual)
     trocar "$MIG" "     AND portal_divergencia_aberta_id IS NULL
   RETURNING" "     AND NOT EXISTS (SELECT 1 FROM public.sayerlack_portal_divergencia d
