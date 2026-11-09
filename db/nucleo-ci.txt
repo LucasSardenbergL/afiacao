@@ -239,6 +239,10 @@ db/test-cancelar-pedido-guard-atomico.sh   48
 # 2 conexões nas duas ordens gravar × claim (docs/historico/importar-pedido-portal-sayerlack.md).
 db/test-sayerlack-situacao-portal.sh       51  falsificar=13
 db/test-sayerlack-encerrar-cancelado-portal.sh 34  falsificar=10
+# Portal Sayerlack 7.1 (20261111110000): vincular PO manual — contrato por token exato (composto vale, substring não),
+# dono do PO, claim aberto recusa, conteúdo SKU/qtde/valor com tolerância por unidade, ausente ≠ zero, trilha em
+# acoes_execucoes com antes/depois (docs/historico/importar-pedido-portal-sayerlack.md).
+db/test-sayerlack-vincular-po-manual.sh    32  falsificar=14
 # Portal Sayerlack, Onda 6 (20261109100000): o painel só tem rodada efetiva com modo importar + prova; espera da
 # rodada; dedupe por protocolo; cancelado_humano fora; pedidos do app sem PO (1 h de espera); totais; sensor de
 # alíquota; cancelados no portal. 5 sabotagens INLINE com controle antes/depois (docs/historico/importar-pedido-portal-sayerlack.md).

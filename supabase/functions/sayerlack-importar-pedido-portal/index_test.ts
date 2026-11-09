@@ -72,6 +72,8 @@ interface Cenario {
   disparo?: () => Resposta;
   pendencia?: () => Resposta;
   evidencia?: () => Resposta;
+  /** RPC do 7.1 (default: recusa por conteúdo — o comportamento de antes, sem vínculo). */
+  vincular?: () => Resposta | "rede";
 }
 
 function montar(c: Cenario) {
@@ -93,6 +95,7 @@ function montar(c: Cenario) {
     [BROWSERLESS]: () => c.browserless?.() ?? portal("5 - Suspenso"),
     "POST rest:sayerlack_portal_evidencia": () => c.evidencia?.() ?? { status: 201, corpo: [{ id: 42 }] },
     "rpc:sayerlack_registrar_situacao_portal": () => c.registrar?.() ?? { corpo: { aceitos: [{ protocolo: PROTOCOLO }] } },
+    "rpc:sayerlack_vincular_po_manual": () => c.vincular?.() ?? { corpo: { vinculado: false, motivo: "conteudo_divergente", diferencas: [{ sku: "111", qtde_app: 2, qtde_po: 4, valor_app: 20, valor_po: 40 }] } },
     "rpc:sayerlack_importar_pedido_portal": () => c.importar?.() ?? { corpo: { pedido_id: 777, ja_existia: false } },
     [DISPARO]: () => c.disparo?.() ?? { corpo: { ok: true } },
   };
@@ -149,6 +152,43 @@ Deno.test("PO lançado à mão no Omie (contrato composto): não abre o portal n
   });
   const r = await importar();
   igual([r.corpo.ok, r.corpo.motivo, r.corpo.omie_numero, r.corpo.pedido_id], [false, "po_manual_no_omie", "PO-77", 501], "resposta");
+  igual(falso.de(BROWSERLESS).length + falso.de(DISPARO).length, 0, "zero portal e zero disparo");
+});
+
+Deno.test("7.1: PO manual que casa é VINCULADO pela RPC — sem portal, sem disparo, pendência resolvida", async () => {
+  const falso = montar({
+    porProtocolo: () => pedido(),
+    pos: () => ({ corpo: [{ numero_pedido: "PO-77", numero_contrato_fornecedor: `2140000 / ${PROTOCOLO}` }] }),
+    vincular: () => ({ corpo: { vinculado: true, motivo: "vinculado", po_numero: "PO-77", po_codigo: "9077", contrato_composto: true } }),
+  });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.motivo, r.corpo.omie_numero, r.corpo.status, r.corpo.contrato_composto], [true, "po_manual_vinculado", "PO-77", "disparado", true], "resposta");
+  const args = falso.de("rpc:sayerlack_vincular_po_manual")[0]?.corpo as Record<string, unknown>;
+  igual([args?.p_pedido_id, args?.p_ator, args?.p_origem], [501, "u-employee", "importar"], "RPC com o pedido, o operador e a origem");
+  igual(falso.de(BROWSERLESS).length + falso.de(DISPARO).length, 0, "zero portal e zero disparo");
+  igual(falso.de("rest:sayerlack_varredura_falha", "PATCH").length, 1, "pendência da varredura resolvida");
+});
+
+Deno.test("7.1: PO manual que NÃO casa: recusa com motivo e diferenças, sem portal nem disparo", async () => {
+  const falso = montar({
+    porProtocolo: () => pedido(),
+    pos: () => ({ corpo: [{ numero_pedido: "PO-77", numero_contrato_fornecedor: PROTOCOLO }] }),
+  });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.motivo, r.corpo.vinculo_motivo], [false, "po_manual_no_omie", "conteudo_divergente"], "resposta");
+  igual((r.corpo.diferencas as unknown[]).length, 1, "diferenças na resposta");
+  if (!String(r.corpo.mensagem).includes("SKU 111: app 2 un.")) throw new Error(`mensagem sem o diff: ${r.corpo.mensagem}`);
+  igual(falso.de(BROWSERLESS).length + falso.de(DISPARO).length, 0, "zero portal e zero disparo");
+});
+
+Deno.test("7.1: RPC de vinculação com ERRO não vira re-disparo (fail-closed)", async () => {
+  const falso = montar({
+    porProtocolo: () => pedido(),
+    pos: () => ({ corpo: [{ numero_pedido: "PO-77", numero_contrato_fornecedor: PROTOCOLO }] }),
+    vincular: () => "rede",
+  });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.pedido_id], [false, 501], "falha com o #id");
   igual(falso.de(BROWSERLESS).length + falso.de(DISPARO).length, 0, "zero portal e zero disparo");
 });
 

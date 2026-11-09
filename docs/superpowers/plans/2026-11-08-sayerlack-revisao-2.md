@@ -43,7 +43,10 @@
   sessão do Browserless contada pela importadora; migration aplicada (#1015), importar v1.9 e varrer v1.11 com DEPLOY CONFIRMADO.
 - ✅ **7.3** (#3751) — transportadora do portal no `cObs` do PO, lida da evidência do 7.2; disparar v1.13 com DEPLOY CONFIRMADO (Caminho B, Codex
   retroativo pendente).
-- ⏳ Depois (numa sessão nova, em série): 7.1, 5.2 (botão "aceitar o portal", decisão do founder) (7.5 encerrada: o portal não expõe IPI por item).
+- 🔄 **7.1** — vincular o PO lançado à mão no Omie: RPC `sayerlack_vincular_po_manual` (migration `20261111110000`;
+  contrato por token, dono, SKU/quantidade/valor calibrados em prod, trilha em `acoes_execucoes`) chamada pela
+  importar v1.10 e pela varrer v1.12 (migration → importar → varrer).
+- ⏳ Depois: 5.2 (botão "aceitar o portal", decisão do founder) (7.5 encerrada: o portal não expõe IPI por item).
 
 ## Andamento da Sessão B (tela e painel)
 
@@ -282,7 +285,7 @@ Não reapresentei como novidades os contratos compostos, o bloqueio do default �
 | **6.9** Vocabulário único | **FALTA** | Mistura “pedido de compra”, “PO” e “sem PO”: `UI/PedidosPortalCard.tsx:91`, `UI/PedidosPortalCard.tsx:128`. | P2/P |
 | **6.10** Cmd-K | **FALTA** | Não existe registro do comando de importação. Entrada atual: `UI/ImportarPedidoPortalDialog.tsx:103`. | P2/P |
 | **6.11** Linhas de alteração/cancelamento | **FALTA** | Não existem no contrato `MP:269` nem no card. | P1/M |
-| **7.1** Vincular PO manual | **FALTA** | A própria resposta declara indisponibilidade: `I:453`; reconsulta apenas mantém pendência: `V:890`. | P2/G |
+| **7.1** Vincular PO manual | **EM VOO** (RPC `sayerlack_vincular_po_manual`) | A própria resposta declara indisponibilidade: `I:453`; reconsulta apenas mantém pendência: `V:890`. | P2/G |
 | **7.2** Evidência durável completa | **PARCIAL** | Ledger por tentativa existe, mas só resumo: `I:657`. Não guarda cabeçalho, itens brutos e conjunto de opções; não existe snapshot completo por tentativa. | P1/M |
 | **7.3** Transportadora/observações/frete | **FALTA** | Fixture já contém transportadora (`leitura_test.ts:24`), parser não a retorna (`L:220`); PO usa observação genérica (`D:1320`). | P2/M |
 | **7.4** Condição real unificada | **FEITO** | Tradução comum em `M2:60`; aplicação antes de sucesso em `supabase/functions/enviar-pedido-portal-sayerlack/index.ts:2140`; bloqueio do default em `D:1288`. | — |

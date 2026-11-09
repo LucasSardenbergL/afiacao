@@ -25,6 +25,7 @@ import {
   lerTabelaConsultaDom,
 } from "../_shared/sayerlack-portal-dom.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { mensagemNaoVinculado, mensagemVinculado, vincularPoManual } from "../_shared/sayerlack-vincular-po-manual.ts";
 import { lerPedidoPortal, mensagemErroImportacao, situacaoFaturada, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
 import { comPrazo, cortarTrace, PRAZO_EVIDENCIA_MS } from "./evidencia.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -500,13 +501,23 @@ async function tratar(
       const poManual = ((pos ?? []) as { numero_pedido: string | null; numero_contrato_fornecedor: string | null }[])
         .find((x) => (x.numero_contrato_fornecedor ?? "").split("/").some((c) => c.trim() === protocolo));
       if (poManual) {
+        // 7.1: vincula SÓ se a RPC provar que o PO é a compra deste pedido (contrato por token, dono, conteúdo). Erro
+        // da RPC lança (cai no catch, sem re-disparo) — nunca "não conferi" vira "pode re-disparar".
+        const vinculo = await vincularPoManual(db, existente.id, operador, "importar");
+        if (vinculo.vinculado) {
+          await resolverPendenciaVarredura(protocolo);
+          return json({
+            ok: true, etapa: "concluido", ja_existia: true, pedido_id: existente.id, protocolo, status: "disparado",
+            motivo: "po_manual_vinculado", omie_numero: vinculo.po_numero ?? null, valor_total: existente.valor_total,
+            contrato_composto: vinculo.contrato_composto ?? false,
+            mensagem: mensagemVinculado(protocolo, existente.id, vinculo),
+          });
+        }
         return json({
           ok: false, etapa: "importacao", ja_existia: true, pedido_id: existente.id, protocolo, status: existente.status,
-          motivo: "po_manual_no_omie", omie_numero: poManual.numero_pedido ?? null,
-          mensagem: `O pedido ${protocolo} está no app (#${existente.id}) sem pedido de compra, mas o Omie já tem o PO ` +
-            `${poManual.numero_pedido ?? "?"} com este número no contrato (lançado à mão). Não re-disparei para não duplicar: ` +
-            `o PO ${poManual.numero_pedido ?? "?"} é o que vale. Não lance outro no Omie. O #${existente.id} fica sem PO no ` +
-            `app até existir a vinculação de PO manual.`,
+          motivo: "po_manual_no_omie", vinculo_motivo: vinculo.motivo, omie_numero: poManual.numero_pedido ?? null,
+          ...(vinculo.diferencas ? { diferencas: vinculo.diferencas } : {}),
+          mensagem: mensagemNaoVinculado(protocolo, existente.id, poManual.numero_pedido ?? null, vinculo),
         });
       }
       redisparar = existente;

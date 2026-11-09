@@ -52,7 +52,13 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * `sayerlack_portal_evidencia` (fail-open; `evidencia_id` no ledger) e toda resposta diz `sessao_browserless`.
  * Migration 20261111090000 antes.
  */
-export const VERSAO = "v1.9-evidencia-portal";
+/**
+ * v1.10 (2026-11-08, revisão 2, 7.1) — pedido existente sem PO com PO lançado à mão no Omie: em vez de só avisar,
+ * chama a RPC `sayerlack_vincular_po_manual` (contrato por token, dono do PO, SKU/quantidade/valor), que vincula e
+ * audita em `acoes_execucoes`; não casou ⇒ recusa com o motivo e as diferenças, sem re-disparo. Migration
+ * 20261111110000 antes.
+ */
+export const VERSAO = "v1.10-vincula-po-manual";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
