@@ -49,7 +49,7 @@ const MOTIVOS: Record<string, string> = {
 };
 
 /** Resumo legível das diferenças (no máximo 5 SKUs), para a mensagem ao humano. */
-export function resumirDiferencas(d: ResultadoVinculo["diferencas"]): string {
+function resumirDiferencas(d: ResultadoVinculo["diferencas"]): string {
   if (!d || d.length === 0) return "";
   const fmt = (x: number | null) => (x == null ? "—" : String(x));
   const linhas = d.slice(0, 5).map((x) =>
