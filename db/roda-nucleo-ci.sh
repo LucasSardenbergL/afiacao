@@ -462,7 +462,21 @@ echo "  PGBIN=$PGBIN"
 # ── 3. Execução ─────────────────────────────────────────────────────────────────
 LOGS="$(mktemp -d "/tmp/pgnucleo-logs.XXXXXX")"
 concluidas=(); falhas=()
-porta=$((PORTA_BASE + 1))
+
+# Workers (NUCLEO_WORKERS, default 1): quantas unidades rodam AO MESMO TEMPO nesta parte. Medido em
+# 2026-11-08 (docs/historico/ci-provas-sql-medicao-preparacao.md): a parte serial ocupa ~1 núcleo de
+# 4 (p90 1,2), iowait ≈ 0. Cada unidade roda num subshell e entrega saída e veredito em ARQUIVO; o
+# pai só lê os arquivos depois. Unidade sem arquivo de veredito completo (subshell morto no meio)
+# REPROVA: ausência de veredito não é verde. A porta é do SLOT do worker (faixas de PORTA_STRIDE
+# disjuntas), porque prova usa PGPORT_TEST+i nas sabotagens e PGPORT_TEST+1 em cluster irmão.
+WORKERS="${NUCLEO_WORKERS:-1}"
+if ! printf '%s' "$WORKERS" | grep -qE '^[1-8]$'; then
+  echo "::error::NUCLEO_WORKERS inválido: '$WORKERS' (1 a 8)"; exit 1
+fi
+if [ "$WORKERS" -gt 1 ] && { [ "${BASH_VERSINFO[0]}" -lt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -lt 1 ]; }; }; then
+  echo "::error::NUCLEO_WORKERS=$WORKERS exige bash ≥ 5.1 (wait -n -p); este é $BASH_VERSION"; exit 1
+fi
+PORTA_STRIDE=5000
 
 # executa <caminho> <modo: normal|falsificar> <mínimo> — roda a prova UMA vez no modo pedido e
 # valida o recibo DAQUELE modo. Só com tudo batendo acrescenta "<caminho> <modo>" a `concluidas`:
@@ -472,7 +486,6 @@ executa() {
   nome="$(basename "$caminho" .sh)"
   rotulo="$nome"; [ "$modo" = falsificar ] && rotulo="$nome --falsificar"
   log="$LOGS/$nome.$modo.log"
-  porta=$((porta + 1))
 
   inicio=$(date +%s)
   # rc capturado ANTES de qualquer recorte da saída: `| tail` devolveria o status
@@ -549,17 +562,132 @@ executa() {
   printf '  ✅ %-44s asserts=%-4s (≥%s) %ss\n' "$rotulo" "$n_pass" "$minimo" "$dur"
 }
 
-echo
-echo "=== núcleo: $esperados prova(s) + $n_falsif falsificação(ões), serial${parte:+ — $parte} ==="
+# roda_unidade <idx> <slot> <seq> <caminho> <modo> <mínimo> — executa a unidade num subshell com
+# arrays próprios e grava: u<idx>.saida (o que ela imprimiu) e u<idx>.veredito (C/F por linha + FIM).
+roda_unidade() {
+  local idx="$1" slot="$2" seq="$3"; shift 3
+  # shellcheck disable=SC2030  # arrays PRÓPRIOS do subshell, de propósito: o pai lê o arquivo, não a variável
+  (
+    concluidas=(); falhas=()
+    porta=$((PORTA_BASE + 1 + seq + slot * PORTA_STRIDE))
+    executa "$@"
+    { for c in ${concluidas[@]+"${concluidas[@]}"}; do printf 'C\t%s\n' "$c"; done
+      for f in ${falhas[@]+"${falhas[@]}"}; do printf 'F\t%s\n' "$f"; done
+      echo FIM
+    } > "$LOGS/u$idx.veredito.tmp" && mv "$LOGS/u$idx.veredito.tmp" "$LOGS/u$idx.veredito"
+  ) > "$LOGS/u$idx.saida" 2>&1 || true   # subshell morto não aborta o runner: quem julga é `colhe`
+}
+
+# colhe <idx> — imprime a saída da unidade e incorpora o veredito; sem veredito completo, REPROVA.
+colhe() {
+  local idx="$1" tipo resto fim=0
+  cat "$LOGS/u$idx.saida" 2>/dev/null || true
+  if [ -f "$LOGS/u$idx.veredito" ]; then
+    # shellcheck disable=SC2031  # o pai incorpora o veredito pelo ARQUIVO do subshell
+    while IFS=$'\t' read -r tipo resto; do
+      case "$tipo" in
+        C) concluidas+=("$resto") ;;
+        F) falhas+=("$resto") ;;
+        FIM) fim=1 ;;
+      esac
+    done < "$LOGS/u$idx.veredito"
+  fi
+  if [ "$fim" -ne 1 ]; then
+    falhas+=("${u_rot[$idx]}: unidade terminou SEM veredito completo (subshell morto?)")
+    printf '  ❌ %-44s sem veredito — logs em %s\n' "${u_rot[$idx]}" "$LOGS"
+  fi
+}
+
+# Unidades da parte: (caminho, modo, mínimo). Ordem de LANÇAMENTO = LPT aproximado: falsificações
+# antes (são as longas), cada grupo por custo DESC (db/nucleo-ci-custo.txt; ausente pesa
+# CUSTO_DEFAULT), empate pela posição no manifesto. Com 1 worker a ordem não muda o tempo total.
+u_cam=(); u_modo=(); u_min=(); u_rot=(); u_chave=(); u_serial=()
 for i in "${!scripts[@]}"; do
-  executa "${scripts[$i]}" normal "${minimos[$i]}"
   case "${falsifs[$i]}" in
-    '')   ;;
     fora) printf '  ⚠️  %-44s --falsificar FORA DO CI — ausência de dado, não aprovação: %s\n' \
             "$(basename "${scripts[$i]}" .sh)" "${motivos_fora[$i]}" ;;
-    *)    executa "${scripts[$i]}" falsificar "${falsifs[$i]}" ;;
   esac
 done
+custo_de() {
+  local c=''
+  [ -f "${CUSTO:-}" ] && c="$(awk -v k="$1" '$1 == k { print $2; exit }' "$CUSTO")"
+  printf '%s' "${c:-${CUSTO_DEFAULT:-30}}"
+}
+CUSTO="${CUSTO:-${NUCLEO_CUSTO:-$REPO_ROOT/db/nucleo-ci-custo.txt}}"
+# FAIXA SERIAL: prova com `lock_timeout`/`statement_timeout` ≤ 2 s (número puro = ms, a unidade
+# dessas GUCs), ou que cita uma delas sem valor legível (conservador), roda SOZINHA: a vizinha
+# disputaria CPU no meio de uma espera de 200 ms. Derivada do FONTE a cada execução, então prova
+# nova com timeout curto já nasce serial. Em 2026-11-09 eram 21 provas, 23% do tempo do núcleo.
+timeout_curto() {
+  LC_ALL=C awk '
+    { linha = $0
+      while (match(linha, /(lock|statement)_timeout/)) {
+        achou = 1; resto = substr(linha, RSTART + RLENGTH); linha = resto
+        if (match(resto, /^[[:space:]]*(=|TO|to)[[:space:]]*\047?[0-9]+[[:space:]]*(ms|s|min)?/)) {
+          v = substr(resto, RSTART, RLENGTH); sub(/^[^0-9]*/, "", v); gsub(/[^0-9a-z]/, "", v)
+          n = v + 0; u = v; gsub(/[0-9]/, "", u)
+          ms = (u == "s") ? n * 1000 : (u == "min") ? n * 60000 : n
+          lido = 1; if (ms > 0 && ms <= 2000) curto = 1
+        }
+      } }
+    END { exit !(curto || (achou && !lido)) }' "$REPO_ROOT/$1"
+}
+
+# enfileira <caminho> <modo> <mínimo> <grupo 0=falsificar|1=normal> <custo> <posição>
+enfileira() {
+  local faixa=1; timeout_curto "$1" && faixa=0
+  u_cam+=("$1"); u_modo+=("$2"); u_min+=("$3"); u_chave+=("$faixa $4 $5 $6")
+  if [ "$2" = falsificar ]; then u_rot+=("$(basename "$1" .sh) --falsificar"); else u_rot+=("$(basename "$1" .sh)"); fi
+}
+for i in "${!scripts[@]}"; do
+  c="$(custo_de "${scripts[$i]}")"
+  case "${falsifs[$i]}" in
+    ''|fora) ;;
+    *)    enfileira "${scripts[$i]}" falsificar "${falsifs[$i]}" 0 "$c" "$i" ;;
+  esac
+  enfileira "${scripts[$i]}" normal "${minimos[$i]}" 1 "$c" "$i"
+done
+# Ordem: faixa serial (0) antes do pool (1); dentro de cada faixa, falsificações antes, custo DESC.
+ordem=(); n_serial=0
+while read -r f _ _ _ k; do
+  ordem+=("$k"); u_serial[k]="$f"; [ "$f" = 0 ] && n_serial=$((n_serial + 1))
+done < <(
+  for k in "${!u_chave[@]}"; do printf '%s %s\n' "${u_chave[$k]}" "$k"; done | LC_ALL=C sort -k1,1n -k2,2n -k3,3nr -k4,4n -k5,5n)
+if [ "${#ordem[@]}" -ne "${#u_cam[@]}" ]; then
+  echo "::error::ordem de lançamento com ${#ordem[@]} de ${#u_cam[@]} unidades"; exit 1
+fi
+
+echo
+echo "=== núcleo: $esperados prova(s) + $n_falsif falsificação(ões), workers=$WORKERS, faixa serial=$n_serial unidade(s)${parte:+ — $parte} ==="
+seq_u=0
+# A faixa serial vem primeiro na ordem e roda em primeiro plano, com o pool ainda vazio.
+for k in "${ordem[@]}"; do
+  [ "${u_serial[$k]}" = 0 ] || [ "$WORKERS" -eq 1 ] || continue
+  seq_u=$((seq_u + 1))
+  roda_unidade "$k" 0 "$seq_u" "${u_cam[$k]}" "${u_modo[$k]}" "${u_min[$k]}"
+  colhe "$k"
+done
+if [ "$WORKERS" -gt 1 ]; then
+  declare -A pid_slot=() pid_idx=()
+  livres=(); for ((w = 0; w < WORKERS; w++)); do livres+=("$w"); done
+  for k in "${ordem[@]}"; do
+    [ "${u_serial[$k]}" = 1 ] || continue
+    if [ "${#livres[@]}" -eq 0 ]; then
+      wait -n -p pid_fim || true
+      livres+=("${pid_slot[$pid_fim]}"); colhe "${pid_idx[$pid_fim]}"
+      unset "pid_slot[$pid_fim]" "pid_idx[$pid_fim]"
+    fi
+    slot="${livres[0]}"; livres=("${livres[@]:1}")
+    seq_u=$((seq_u + 1))
+    roda_unidade "$k" "$slot" "$seq_u" "${u_cam[$k]}" "${u_modo[$k]}" "${u_min[$k]}" &
+    pid_slot[$!]="$slot"; pid_idx[$!]="$k"
+  done
+  while [ "${#pid_slot[@]}" -gt 0 ]; do
+    wait -n -p pid_fim || true
+    colhe "${pid_idx[$pid_fim]}"
+    unset "pid_slot[$pid_fim]" "pid_idx[$pid_fim]"
+  done
+fi
 
 # ── 4. Recibo — CONJUNTO, não contagem ──────────────────────────────────────────
 # "Cinco de cinco" não prova que foram ESTAS cinco: uma prova rodada duas vezes e
