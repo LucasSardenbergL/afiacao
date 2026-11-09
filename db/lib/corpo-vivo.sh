@@ -160,8 +160,12 @@ CV_PREDECESSORAS=(
 #     (20261109140000) e radar_empresas.prospeccao_contato_id (20261031111000) — nada disso está no snapshot de 10-15.
 #     Nas provas que guardam a posse, sem retorno_em a proteção é NULL e o vencimento é o mesmo; o comportamento novo é
 #     provado em db/test-radar-acompanhamento-g.sh sobre os corpos vivos da PROD.
+#   · 20261111134000 (Radar pacote L) recria radar_atendimento_expira_em, registrar_contato_radar e desfazer_contato_radar
+#     (posse pelo contato, vencimento cronológico) e a TRAVA exige o pacote G (fora, acima). Prova que cobre:
+#     db/test-radar-posse-l.sh (sobre os corpos vivos da PROD de 2026-11-08, com --falsificar).
 CV_FORA=(
   "20261111100000_radar_acompanhamento_pacote_g.sql"
+  "20261111134000_radar_posse_pacote_l.sql"
 )
 _cv_fora() {
   local x

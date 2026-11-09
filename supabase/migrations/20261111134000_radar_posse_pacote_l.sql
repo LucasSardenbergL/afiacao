@@ -406,7 +406,7 @@ GRANT SELECT ON TABLE public.radar_agenda_uso TO service_role;
 COMMENT ON TABLE public.radar_agenda_uso IS
   'Radar pacote L: uso da agenda "Hoje" do /radar. vista = o bloco apareceu com itens (1/vendedor/dia, n_retornos e '
   'n_posses = o que havia); aberta = um item foi aberto (1/CNPJ/dia). Escritor único: radar_registrar_agenda_uso(). '
-  'Medição: db/medir-radar-agenda.sql. Migration 20261111130000.';
+  'Medição: db/medir-radar-agenda.sql. Migration 20261111134000.';
 
 CREATE OR REPLACE FUNCTION public.radar_registrar_agenda_uso(p_evento text, p_cnpj text DEFAULT NULL,
                                                             p_n_retornos integer DEFAULT NULL, p_n_posses integer DEFAULT NULL)

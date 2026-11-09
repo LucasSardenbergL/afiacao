@@ -1,4 +1,4 @@
--- Medição do pacote L do Radar (migration 20261111130000): a agenda "Hoje" do /radar e a posse que nasce do contato.
+-- Medição do pacote L do Radar (migration 20261111134000): a agenda "Hoje" do /radar e a posse que nasce do contato.
 -- Somente leitura. Rode pelo psql-ro:
 --   ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1 -v desde="'2026-11-09'" -f db/medir-radar-agenda.sql
 -- Saída em linhas `bloco|...` (uma por semana BRT), para ler sem o PostHog (cego para o founder):

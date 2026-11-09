@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prova PG17 do pacote L do Radar — migration 20261111130000_radar_posse_pacote_l, aplicada sobre a cadeia do pacote G
+# Prova PG17 do pacote L do Radar — migration 20261111134000_radar_posse_pacote_l, aplicada sobre a cadeia do pacote G
 # (20261106181000 → 20261107140001 → 20261107230000 → fixture G → 20261111100000) e sobre as definições VIVAS da PROD de
 # radar_definir_atendimento e desfazer_contato_radar (db/fixtures/radar-l-predecessora-prod-20261108.sql):
 #   L1 registrar "em conversa"/"não atendeu" assume o lead livre, renova o próprio, nunca toma o de outro; já-cliente e
@@ -22,7 +22,7 @@ MIGE="$REPO_ROOT/supabase/migrations/20261107230000_radar_distribuicao_pacote_e.
 FIX="$REPO_ROOT/db/fixtures/radar-g-predecessora-prod-20261108.sql"
 MIGG="$REPO_ROOT/supabase/migrations/20261111100000_radar_acompanhamento_pacote_g.sql"
 FIXL="$REPO_ROOT/db/fixtures/radar-l-predecessora-prod-20261108.sql"
-MIGL="$REPO_ROOT/supabase/migrations/20261111130000_radar_posse_pacote_l.sql"
+MIGL="$REPO_ROOT/supabase/migrations/20261111134000_radar_posse_pacote_l.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!P2_FALHOU` = a postcondição aborta o apply com a marca exata.
