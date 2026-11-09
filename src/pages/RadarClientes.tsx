@@ -16,6 +16,8 @@ import {
 import { tituloMunicipio } from '@/lib/radar/prospectar-hoje';
 import { diaMes } from '@/lib/radar/atendimento';
 import { useRadarIrmaos } from '@/queries/useRadarIrmaos';
+import { useHojeBRT } from '@/lib/radar/useHojeBRT';
+import { RadarAgendaHoje } from '@/components/radar/RadarAgendaHoje';
 import { useRadarVinculosLista } from '@/queries/useRadarVinculosLista';
 import { useRadarKpis } from '@/queries/useRadarKpis';
 import { useRadarLoteOmie } from '@/queries/useRadarLote';
@@ -154,10 +156,9 @@ export default function RadarClientes() {
   // recorte "é meu" vai à RPC (p_so_meus), antes da paginação.
   const filtrosDaLista = meus ? FILTROS_MEUS_ATENDIMENTOS : filtros;
 
-  const hojeISO = useMemo(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  }, []);
+  // Pacote L (item 6): o dia do SERVIDOR (America/Sao_Paulo), não o do aparelho, e relido na virada — a aba aberta de
+  // um dia para o outro não fica pedindo a fila de ontem.
+  const hojeISO = useHojeBRT();
 
   const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus, aguardar: aguardandoTerritorio });
   // Quantos do recorte são "para visitar" — sob demanda: só com o chip ligado, contado na própria fila (pacote N).
@@ -226,16 +227,21 @@ export default function RadarClientes() {
     () => intercalarAmostra(q.data?.pages.flat() ?? [], amostraNaFila, filaAcabou),
     [q.data, amostraNaFila, filaAcabou],
   );
-  // Filiais da mesma raiz de CNPJ, uma consulta por página (só sinaliza; não mexe na ordem). A amostra é uma "página" a mais.
-  const paginasIrmaos = useMemo(() => [...(q.data?.pages ?? []), amostraNaFila], [q.data, amostraNaFila]);
-  const irmaos = useRadarIrmaos(paginasIrmaos);
-  // Possível sucessor / vínculo com cliente, nas mesmas páginas (mesmo núcleo de regras da ficha; o detalhe fica nela).
-  const vinculos = useRadarVinculosLista(paginasIrmaos);
   // Lead aberto FORA da fila carregada (link do card/e-mail, já-cliente, descartado, ou o lead que acabou de virar
   // cliente e saiu da fila): lido pelo CNPJ numa query sob ['radar'] — a invalidação de toda mutação a relê (pacote I,
   // item 1: antes era um snapshot num ref, e a ficha seguia sem "já é cliente" depois do cadastro no Omie). No deep
   // link ela sai EM PARALELO com a fila (pacote F, achado 5); se a fila chegar com o lead, a linha dela vence.
   const naFila = abertaCnpj ? empresas.some((e) => e.cnpj === abertaCnpj) : false;
+  // Filiais da mesma raiz de CNPJ, uma consulta por página (só sinaliza; não mexe na ordem). A amostra é uma "página" a
+  // mais — e o lead aberto FORA da fila (link do card/e-mail/agenda) também: sem ela, a ficha dele ficava eternamente em
+  // "verificando…" na "mesma empresa" (pacote L, item 5). Página própria: abrir/fechar a ficha não refaz as outras.
+  const paginasIrmaos = useMemo(
+    () => [...(q.data?.pages ?? []), amostraNaFila, ...(abertaCnpj && !naFila ? [[{ cnpj: abertaCnpj }]] : [])],
+    [q.data, amostraNaFila, abertaCnpj, naFila],
+  );
+  const irmaos = useRadarIrmaos(paginasIrmaos);
+  // Possível sucessor / vínculo com cliente, nas mesmas páginas (mesmo núcleo de regras da ficha; o detalhe fica nela).
+  const vinculos = useRadarVinculosLista(paginasIrmaos);
   const empresaQ = useRadarEmpresa(abertaCnpj, { ativo: !naFila });
   const aberta = useMemo(() => {
     if (!abertaCnpj) return null;
@@ -438,6 +444,8 @@ export default function RadarClientes() {
           </Button>
         </div>
       </div>
+      {/* Pacote L (item 3): o que o vendedor combinou para hoje, acima da fila — retornos e posses vencendo. */}
+      {vista !== 'mapa' && <RadarAgendaHoje hojeISO={hojeISO} onAbrir={abrirPorCnpj} />}
       {/* Pacote B1: a ENTRADA do vendedor é a fila, não o painel. Antes havia ~16 controles acima da lista, o 1º lead
           ficava abaixo da dobra no celular e o número de destaque era "A contatar 508.719". */}
       <section className="rounded-md border p-3 space-y-2" data-testid="radar-fila-de-hoje">

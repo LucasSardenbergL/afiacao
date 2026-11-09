@@ -30,6 +30,7 @@ import {
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ACOES_CONTATO, type AcaoContato } from '@/lib/radar/ui-helpers';
 import { sqlstateDe } from '@/lib/radar/conflito-cadastro';
+import { textoPosseDoContato } from '@/lib/radar/atendimento';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
 const ICON_MAP = {
@@ -118,7 +119,8 @@ export function RadarOutcomeMenu({
         toast.info('Registro removido; status preservado', {
           description: 'O lead mudou depois deste registro, e o status atual foi mantido.',
         });
-      } else toast.success('Desfeito');
+      } else if (u.posseDesfeita) toast.success('Desfeito', { description: 'O lead voltou a ficar livre.' });
+      else toast.success('Desfeito');
     } catch {
       toast.error('Não foi possível desfazer');
     }
@@ -142,7 +144,11 @@ export function RadarOutcomeMenu({
       if (!r.deduped) {
         // A conversão confirmada não se desfaz (RD006): o cliente continua no Omie.
         if (acao === 'virou_cliente') toast.success(LABEL_OK[acao]);
-        else toast.success(LABEL_OK[acao] + volta, { action: { label: 'Desfazer', onClick: () => void desfazer(r.id, alvo) } });
+        else toast.success(LABEL_OK[acao] + volta, {
+          // Pacote L: o "em conversa"/"não atendeu" também dá a posse — e a tela DIZ o que aconteceu com ela.
+          description: textoPosseDoContato(r.posse) ?? undefined,
+          action: { label: 'Desfazer', onClick: () => void desfazer(r.id, alvo) },
+        });
       }
       if (!notaGravada && notaFinal) {
         // Nada se perde: a ficha não apaga o texto nem avança (Codex, código 2026-11-06, P2; pacote G4).

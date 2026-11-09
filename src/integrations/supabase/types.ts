@@ -25719,6 +25719,15 @@ export type Database = {
         }
         Returns: Json
       }
+      radar_registrar_agenda_uso: {
+        Args: {
+          p_cnpj?: string
+          p_evento: string
+          p_n_posses?: number
+          p_n_retornos?: number
+        }
+        Returns: Json
+      }
       radar_registrar_card_exibido: {
         Args: { p_cnpjs: string[] }
         Returns: Json

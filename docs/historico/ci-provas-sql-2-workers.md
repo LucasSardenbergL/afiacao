@@ -68,3 +68,31 @@ Comparação com a main de mesmo `db/` (run 42545964493):
   série. Com 2 workers isso vira ~4 min, então ela fica como ajuste fino a reavaliar.
 - **Re-medir a tabela de custo** (`db/nucleo-ci-custo.txt`) com 2 workers não muda o LPT entre
   partes: a duração por unidade não inflou.
+
+## Programa encerrado (2026-11-09)
+
+Na main pós-merge, 2 runs (`workflow_dispatch`, mesmo commit) deram 73 e 79 min de runner, pior
+parte de 18 min, e um push→`validate` de 19 min. Segunda opinião (Fable; o Codex não foi consultado,
+cota a 90%) e a sessão concordaram em **encerrar**:
+
+- **Runner ≤ 80:** batida, mas com folga fina (a variação histórica de ±12% põe um run ruim acima
+  de 80).
+- **Mediana push→`validate` ≤ 25:** ainda **não provada**. 1 run de dispatch, com a fila vazia, é
+  ausência de dado.
+- **Cobertura:** intacta (315 unidades e contagens idênticas).
+- As fatias que sobraram não pagam o risco de mexer de novo no runner: separar as unidades pesadas
+  daria ~3 min de espera e zero de runner, e a fatia 1 daria ~4 min de runner.
+
+**Reabrir se**, nos PRs da semana seguinte, a mediana passar de 25 min, o p90 piorar em relação ao
+de antes da fatia 2 (~31 de mediana), houver re-run por flake no `provas-sql` ou alguma parte
+passar de 20 min. A consulta (duração do run inteiro, um pouco acima do tempo até o `validate`):
+
+```bash
+gh run list --workflow ci.yml --event pull_request --status success --limit 40 --json createdAt,updatedAt --jq '[.[]|((.updatedAt|fromdate)-(.createdAt|fromdate))/60|floor]|sort|"n=\(length) mediana=\(.[length/2|floor]) p90=\(.[length*0.9|floor])"'
+```
+
+**Primeira ação se reabrir** (ideia do Fable, ainda não conferida no código): pesar a faixa serial na
+partição entre partes. Hoje o LPT soma o custo serial de cada prova, mas a prova da faixa serial
+ocupa a parte inteira, enquanto a do pool divide o tempo com outra. Uma parte com muitas provas de
+timeout curto fica mais lenta com a mesma soma. Pesar a prova serial ×2 muda só a função de peso,
+não o laço do pool, e vem antes da separação das unidades pesadas e da fatia 1.

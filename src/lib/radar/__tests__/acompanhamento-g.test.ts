@@ -61,10 +61,10 @@ describe('rascunho da nota — nunca perder o texto do vendedor', () => {
 describe('borda de registrar_contato_radar (pacote G)', () => {
   it('lê nota_gravada e retorno_em', () => {
     expect(lerRegistroContato({ id: 'c1', deduped: false, nota_gravada: true, retorno_em: '2026-11-16' }, 'r'))
-      .toEqual({ id: 'c1', deduped: false, notaGravada: true, retornoEm: '2026-11-16' });
+      .toEqual({ id: 'c1', deduped: false, notaGravada: true, retornoEm: '2026-11-16', posse: null });
   });
   it('banco anterior (só {id, deduped}): null nos campos novos — nunca um true fabricado', () => {
-    expect(lerRegistroContato({ id: 'c1', deduped: true }, 'r')).toEqual({ id: 'c1', deduped: true, notaGravada: null, retornoEm: null });
+    expect(lerRegistroContato({ id: 'c1', deduped: true }, 'r')).toEqual({ id: 'c1', deduped: true, notaGravada: null, retornoEm: null, posse: null });
   });
   it('forma errada lança (nunca "registrado" sem a resposta que o prova)', () => {
     expect(() => lerRegistroContato({ id: 'c1', deduped: false, nota_gravada: 'sim' }, 'r')).toThrow('{nota_gravada}');

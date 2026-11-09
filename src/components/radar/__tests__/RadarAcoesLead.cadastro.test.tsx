@@ -10,6 +10,8 @@ import type { RadarEmpresa } from '@/queries/useRadarLista';
 const toastMock = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), success: vi.fn(), warning: vi.fn() }));
 vi.mock('sonner', () => ({ toast: toastMock }));
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
+// Pacote L: a confirmação lê a contabilidade do lead (escolha do telefone); aqui sem leitura — fora do assunto.
+vi.mock('@/queries/useRadarContatoContabil', () => ({ useRadarContatoContabil: () => ({ data: undefined, isError: false }) }));
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ isImpersonating: false }) }));
 const mutateAsync = vi.fn();
 const lerLead = vi.fn();
