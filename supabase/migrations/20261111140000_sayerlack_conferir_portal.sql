@@ -112,6 +112,7 @@ DECLARE
   v_diff     jsonb;
   v_aberta   public.sayerlack_portal_divergencia%ROWTYPE;
   v_div_id   bigint;
+  v_posterior boolean;
 BEGIN
   -- Entrada: a leitura inteira, ou nada. `IS DISTINCT FROM`, nunca `<>`: chave ausente dá NULL.
   IF p_pedido_id IS NULL OR p_origem IS NULL OR p_origem NOT IN ('importacao', 'redisparo')
@@ -164,6 +165,14 @@ BEGIN
     RETURN jsonb_build_object('conferido', false, 'motivo', 'status_nao_conferivel', 'pedido_id', r.id, 'status', r.status);
   END IF;
 
+  -- 0. A divergência aberta e a ORDEM das observações, ANTES de qualquer escrita (Codex 5.2 rodada 2): só uma leitura
+  --    provadamente posterior à última que viu a aberta pode semear retrato, fechar ou substituir. A importação
+  --    (instante da gravação, não da captura) nunca é posterior a uma aberta.
+  SELECT * INTO v_aberta FROM public.sayerlack_portal_divergencia
+   WHERE pedido_id = r.id AND resolvida_em IS NULL FOR UPDATE;
+  v_posterior := v_aberta.id IS NULL
+    OR (p_origem = 'redisparo' AND v_de IS NOT NULL AND v_de > GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate));
+
   -- 1. SKU e quantidade contra os itens do PRÓPRIO pedido (não dependem do retrato).
   WITH app_item AS (
     SELECT i.id, upper(btrim(i.sku_portal_aprovado)) AS sku, i.qtde_final * i.fator_portal_aprovado AS q,
@@ -196,7 +205,7 @@ BEGIN
   --    (Codex 5.2 P1): uma 1ª leitura já divergente não pode virar a referência de valor e condição; quando o portal
   --    voltar ao pedido, a leitura que bater semeia.
   SELECT * INTO v_ret FROM public.sayerlack_portal_retrato WHERE pedido_id = r.id ORDER BY versao DESC LIMIT 1;
-  IF NOT FOUND AND v_diff IS NULL THEN
+  IF NOT FOUND AND v_diff IS NULL AND v_posterior THEN
     INSERT INTO public.sayerlack_portal_retrato (pedido_id, versao, protocolo, origem, evidencia_id, itens,
                                                  valor_total, condicao_portal, condicao_normalizada)
     SELECT r.id, 1, v_proto, p_origem, p_evidencia_id,
@@ -240,9 +249,6 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = '[CONFERIR-ENTRADA] divergência exige o intervalo da leitura (lido_de/lido_ate)';
   END IF;
 
-  SELECT * INTO v_aberta FROM public.sayerlack_portal_divergencia
-   WHERE pedido_id = r.id AND resolvida_em IS NULL FOR UPDATE;
-
   -- O mesmo diff: a aberta segue valendo (não empilha linha a cada importação, e a ordem não importa).
   IF v_diff IS NOT NULL AND v_aberta.id IS NOT NULL AND v_aberta.diferencas = v_diff
      AND v_aberta.retrato_versao IS NOT DISTINCT FROM v_ret.versao THEN
@@ -255,8 +261,7 @@ BEGIN
                               'pendente_desde', r.disparo_claim_em);
   END IF;
   -- Fechar ou substituir a aberta exige leitura provadamente POSTERIOR à dela.
-  IF v_aberta.id IS NOT NULL
-     AND (v_de IS NULL OR v_de <= GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate)) THEN
+  IF NOT v_posterior THEN
     RETURN jsonb_build_object('conferido', false, 'motivo', 'leitura_antiga', 'pedido_id', r.id,
                               'divergencia_id', v_aberta.id,
                               'divergencia_lido_ate', GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate));

@@ -40,7 +40,8 @@ if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sem_gate_claim:K1,K3 gate_por_not_exists:K3 sem_retrato_importacao:I1 sem_ordem:C9
               ausente_vira_bateu:C7 sem_full_join:C5 sem_valor_item:C3 tolerancia_frouxa:C3b sem_condicao:C4
               sem_total:C4b mesmo_diff_empilha:C2b sem_status:C11 pendente_nao_grava:C12
-              mesmo_diff_sem_carimbo:C13 retrato_da_divergente:C14 intervalo_opcional:E7"
+              mesmo_diff_sem_carimbo:C13 retrato_da_divergente:C14 intervalo_opcional:E7
+              retrato_de_leitura_antiga:C15"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -161,11 +162,13 @@ case "$SAB" in
     trocar "$MIG" "  v_conf := public.sayerlack_conferir_portal(" "  v_conf := '{\"conferido\":true,\"divergente\":false}'::jsonb; PERFORM jsonb_build_array("
     trocar "$MIG" "    RAISE EXCEPTION 'C7 FALHOU: a importação não grava o retrato';" "    NULL;" ;;
   sem_ordem)
-    trocar "$MIG" "     AND (v_de IS NULL OR v_de <= GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate)) THEN" "     AND false THEN" ;;
+    trocar "$MIG" "  IF NOT v_posterior THEN" "  IF false THEN" ;;
+  retrato_de_leitura_antiga)  # a ordem só era checada DEPOIS de semear (Codex rodada 2)
+    trocar "$MIG" "  IF NOT FOUND AND v_diff IS NULL AND v_posterior THEN" "  IF NOT FOUND AND v_diff IS NULL THEN" ;;
   mesmo_diff_sem_carimbo)  # o código da 1ª rodada: o mesmo diff não atualizava a última observação (Codex P1)
     trocar "$MIG" "     WHERE id = v_aberta.id AND v_ate > GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate);" "     WHERE false;" ;;
   retrato_da_divergente)   # a 1ª leitura vira retrato mesmo com SKU/quantidade divergente (Codex P1)
-    trocar "$MIG" "  IF NOT FOUND AND v_diff IS NULL THEN" "  IF NOT FOUND THEN" ;;
+    trocar "$MIG" "  IF NOT FOUND AND v_diff IS NULL AND v_posterior THEN" "  IF NOT FOUND AND v_posterior THEN" ;;
   intervalo_opcional)      # divergência sem intervalo (nenhuma leitura posterior consegue fechar; Codex P2)
     trocar "$MIG" "  IF v_diff IS NOT NULL AND v_de IS NULL THEN" "  IF false THEN"
     trocar "$MIG" "  lido_de        timestamptz NOT NULL,
@@ -361,6 +364,15 @@ eq "C13 leitura que bate, mas mais velha que a ÚLTIMA observação do mesmo dif
 r="$(C 109 "$(L 2150109 '[{"sku_portal":"UN.DOZE","qtde_portal":24,"valor_mercadoria":240.00}]' 240.00 "70 - 7 DIAS" 1)")"
 r2="$(C 109 "$(L 2150109 '[{"sku_portal":"UN.DOZE","qtde_portal":12,"valor_mercadoria":120.00}]' 120.00 "70 - 7 DIAS" 2)")"
 eq "C14 1ª leitura divergente (24 un.) NÃO vira retrato; o portal volta a 12 un.: bate e semeia" "$(printf '%s' "$r" | campo retrato_criado)|$(printf '%s' "$r2" | campo divergente)|$(printf '%s' "$r2" | campo retrato_criado)|$(GATE 109)" "false|false|true|-"
+
+# Codex rodada 2: com uma aberta das 10:10 e SEM retrato, uma leitura das 10:00 que bate não semeia o retrato.
+P -q -c "INSERT INTO public.pedido_compra_sugerido (id, empresa, status, portal_protocolo) VALUES (110, 'OBEN', 'aprovado_aguardando_disparo', '2150110');
+         INSERT INTO public.pedido_compra_item (pedido_id, sku_codigo_omie, qtde_sugerida, qtde_final, sku_portal_aprovado, fator_portal_aprovado) VALUES (110, '1', 12, 12, 'UN.DOZE', 1);" >/dev/null
+C 110 "$(L 2150110 '[{"sku_portal":"UN.DOZE","qtde_portal":24,"valor_mercadoria":240.00}]' 240.00 "70 - 7 DIAS" 10)" >/dev/null
+r="$(C 110 "$(L 2150110 '[{"sku_portal":"UN.DOZE","qtde_portal":12,"valor_mercadoria":999.00}]' 999.00 "70 - 7 DIAS" 0)")"
+eq "C15 leitura antiga (10:00) que bate em SKU/qtde não semeia retrato e não fecha a aberta (10:10)" "$(printf '%s' "$r" | campo motivo)|$(Pq -c "SELECT count(*) FROM public.sayerlack_portal_retrato WHERE pedido_id = 110")|$([ "$(GATE 110)" != "-" ] && echo gate || echo sem-gate)" "leitura_antiga|0|gate"
+r="$(Pq -c "SELECT public.sayerlack_conferir_portal(110, '$(L 2150110 '[{"sku_portal":"UN.DOZE","qtde_portal":12,"valor_mercadoria":120.00}]' 120.00 "70 - 7 DIAS" 30)'::jsonb, NULL, 'importacao')" 2>&1 || true)"
+eq "C16 origem importacao nunca fecha a aberta (o instante é o da gravação)" "$(printf '%s' "$r" | campo motivo)|$([ "$(GATE 110)" != "-" ] && echo gate || echo sem-gate)" "leitura_antiga|gate"
 
 echo "── E: entrada ──"
 eq "E1 leitura sem condição = 22023" "$(C 101 '{"protocolo":"2150101","itens":[{"sku_portal":"X","qtde_portal":1,"valor_mercadoria":1}],"valor_total":1}' | sqlstate)" "22023"
