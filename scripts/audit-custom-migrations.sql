@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 817
+-- Total de custom migrations: 823
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -885,7 +885,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261110100000', 'sayerlack_encerrar_cancelado_no_portal', '20261110100000_sayerlack_encerrar_cancelado_no_portal.sql'),
   ('20261110120000', 'sayerlack_cancelado_com_compra_viva', '20261110120000_sayerlack_cancelado_com_compra_viva.sql'),
   ('20261110130000', 'radar_carga_publicacao_atomica', '20261110130000_radar_carga_publicacao_atomica.sql'),
-  ('20261111100000', 'radar_acompanhamento_pacote_g', '20261111100000_radar_acompanhamento_pacote_g.sql')
+  ('20261110140000', 'ipi_aliquota_ncm_seed_4_pendentes_omie', '20261110140000_ipi_aliquota_ncm_seed_4_pendentes_omie.sql'),
+  ('20261111090000', 'sayerlack_portal_evidencia', '20261111090000_sayerlack_portal_evidencia.sql'),
+  ('20261111100000', 'radar_acompanhamento_pacote_g', '20261111100000_radar_acompanhamento_pacote_g.sql'),
+  ('20261111110000', 'sayerlack_vincular_po_manual', '20261111110000_sayerlack_vincular_po_manual.sql'),
+  ('20261111120000', 'radar_carga_publicacao_curta', '20261111120000_radar_carga_publicacao_curta.sql'),
+  ('20261111132000', 'radar_foto_do_card_e_contato_avaliado', '20261111132000_radar_foto_do_card_e_contato_avaliado.sql'),
+  ('20261111140000', 'data_health_radar_carga_em_voo', '20261111140000_data_health_radar_carga_em_voo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3591,6 +3597,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_publicar_pendente', ''),
   ('radar_carga_publicacao_atomica', 'table', 'public', 'radar_empresas_carga', ''),
   ('radar_carga_publicacao_atomica', 'cron_job', 'cron', 'radar-publicar-lote', ''),
+  ('sayerlack_portal_evidencia', 'function', 'public', 'sayerlack__evidencia_imutavel', ''),
+  ('sayerlack_portal_evidencia', 'table', 'public', 'sayerlack_portal_evidencia', ''),
+  ('sayerlack_portal_evidencia', 'index', 'public', 'sayerlack_portal_evidencia_protocolo_idx', 'sayerlack_portal_evidencia'),
+  ('sayerlack_portal_evidencia', 'index', 'public', 'sayerlack_portal_evidencia_execucao_idx', 'sayerlack_portal_evidencia'),
+  ('sayerlack_portal_evidencia', 'index', 'public', 'sayerlack_portal_evidencia_pedido_idx', 'sayerlack_portal_evidencia'),
+  ('sayerlack_portal_evidencia', 'trigger', 'public', 'trg_evidencia_imutavel', 'sayerlack_portal_evidencia'),
+  ('sayerlack_portal_evidencia', 'trigger', 'public', 'trg_evidencia_imutavel_truncate', 'sayerlack_portal_evidencia'),
+  ('sayerlack_portal_evidencia', 'rls_policy', 'public', 'staff_le_portal_evidencia', 'sayerlack_portal_evidencia'),
   ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_dia_util', ''),
   ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_atendimento_expira_em', ''),
   ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_acompanhamentos', ''),
@@ -3602,7 +3616,21 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_acompanhamento_pacote_g', 'function', 'public', 'radar_avisar_vendedores', ''),
   ('radar_acompanhamento_pacote_g', 'function', 'public', 'radar_posses_vencer_tick', ''),
   ('radar_acompanhamento_pacote_g', 'index', 'public', 'idx_radar_empresas_acompanhamento', 'radar_empresas'),
-  ('radar_acompanhamento_pacote_g', 'cron_job', 'cron', 'radar-posses-vencer-diario', '')
+  ('radar_acompanhamento_pacote_g', 'cron_job', 'cron', 'radar-posses-vencer-diario', ''),
+  ('sayerlack_vincular_po_manual', 'function', 'public', 'sayerlack_vincular_po_manual', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_lote_publicando', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_carga_publicar_passo', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_carga_publicar_pendente', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_carga_iniciar', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_lista', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_agregado_recalcular', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_avisar_lote', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_coorte_sortear', ''),
+  ('radar_foto_do_card_e_contato_avaliado', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_foto_do_card_e_contato_avaliado', 'function', 'private', 'radar_contato_contabil_avaliar', ''),
+  ('data_health_radar_carga_em_voo', 'function', 'public', '_data_health_compute', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6356,6 +6384,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_carga_publicacao_atomica', 'function', 'public', 'radar_carga_publicar_pendente', ''),
   ('radar_carga_publicacao_atomica', 'table', 'public', 'radar_empresas_carga', ''),
   ('radar_carga_publicacao_atomica', 'cron_job', 'cron', 'radar-publicar-lote', ''),
+  ('sayerlack_portal_evidencia', 'function', 'public', 'sayerlack__evidencia_imutavel', ''),
+  ('sayerlack_portal_evidencia', 'table', 'public', 'sayerlack_portal_evidencia', ''),
+  ('sayerlack_portal_evidencia', 'index', 'public', 'sayerlack_portal_evidencia_protocolo_idx', 'sayerlack_portal_evidencia'),
+  ('sayerlack_portal_evidencia', 'index', 'public', 'sayerlack_portal_evidencia_execucao_idx', 'sayerlack_portal_evidencia'),
+  ('sayerlack_portal_evidencia', 'index', 'public', 'sayerlack_portal_evidencia_pedido_idx', 'sayerlack_portal_evidencia'),
+  ('sayerlack_portal_evidencia', 'trigger', 'public', 'trg_evidencia_imutavel', 'sayerlack_portal_evidencia'),
+  ('sayerlack_portal_evidencia', 'trigger', 'public', 'trg_evidencia_imutavel_truncate', 'sayerlack_portal_evidencia'),
+  ('sayerlack_portal_evidencia', 'rls_policy', 'public', 'staff_le_portal_evidencia', 'sayerlack_portal_evidencia'),
   ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_dia_util', ''),
   ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_atendimento_expira_em', ''),
   ('radar_acompanhamento_pacote_g', 'function', 'private', 'radar_acompanhamentos', ''),
@@ -6367,7 +6403,21 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_acompanhamento_pacote_g', 'function', 'public', 'radar_avisar_vendedores', ''),
   ('radar_acompanhamento_pacote_g', 'function', 'public', 'radar_posses_vencer_tick', ''),
   ('radar_acompanhamento_pacote_g', 'index', 'public', 'idx_radar_empresas_acompanhamento', 'radar_empresas'),
-  ('radar_acompanhamento_pacote_g', 'cron_job', 'cron', 'radar-posses-vencer-diario', '')
+  ('radar_acompanhamento_pacote_g', 'cron_job', 'cron', 'radar-posses-vencer-diario', ''),
+  ('sayerlack_vincular_po_manual', 'function', 'public', 'sayerlack_vincular_po_manual', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_lote_publicando', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_carga_publicar_passo', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_carga_publicar_pendente', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_carga_iniciar', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_lista', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_agregado_recalcular', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_avisar_lote', ''),
+  ('radar_carga_publicacao_curta', 'function', 'public', 'radar_coorte_sortear', ''),
+  ('radar_foto_do_card_e_contato_avaliado', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_foto_do_card_e_contato_avaliado', 'function', 'private', 'radar_contato_contabil_avaliar', ''),
+  ('data_health_radar_carga_em_voo', 'function', 'public', '_data_health_compute', '')
 )
 SELECT
   e.migration,
@@ -6395,7 +6445,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 190.
+-- Funções redefinidas com corpo extraível: 194.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6625,6 +6675,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 39, '20261031191715_data_health_saldo_bancario_conta_a_conta.sql', 'ac1f616de90dcdb17656607b9f0f2458'),
   ('public', '_data_health_compute', 40, '20261107220000_data_health_sayerlack_varredura_portal.sql', '8faab148e76a96842994b337ac3c26f6'),
   ('public', '_data_health_compute', 41, '20261110120000_sayerlack_cancelado_com_compra_viva.sql', '16b30fbe018fb0126a1b6a0bedadf5c6'),
+  ('public', '_data_health_compute', 42, '20261111140000_data_health_radar_carga_em_voo.sql', 'bcdbedf94d94c26fc4c33069abbfa9ec'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -6765,6 +6816,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_contagem_por_municipio', 6, '20261103223300_radar_agregado_cnae.sql', 'e894150109ba6adfd8eb5fc6701f7a1f'),
   ('public', 'radar_contagem_por_municipio', 7, '20261104153351_radar_cnae_secundario.sql', '822bb416cf3b4ce2def0a7fa54cf69de'),
   ('public', 'radar_contagem_por_municipio', 8, '20261106175800_radar_mapa_regiao_cidade_telefone.sql', '2965f0689b5cab87e7fd612b0cd72eaf'),
+  ('public', 'radar_contagem_por_municipio', 9, '20261111120000_radar_carga_publicacao_curta.sql', '4eb24dbf5e169a0d011108ebe5d45c08'),
   ('public', 'radar_atribuir_tarefa', 1, '20260613190000_radar_fatia3.sql', '136df6cdae5d8cbb506c1662789342e8'),
   ('public', 'radar_atribuir_tarefa', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '17278ad16ee09fbae874c91e0d88e6f7'),
   ('public', 'radar_atribuir_tarefa', 3, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '368e5c2082118a81da0d1eeb73501bde'),
@@ -7026,10 +7078,12 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_score_recalcular', 3, '20261021120000_radar_score_lead_v3_cnae_secundario.sql', '89424a4693b5386e8c48c62b2e12415c'),
   ('public', 'radar_score_recalcular', 4, '20261029150000_radar_score_versao.sql', '67d6f5c1880371b9a2e3d872b6c714a2'),
   ('public', 'radar_score_recalcular', 5, '20261105150000_radar_pipeline_diario_sem_releitura.sql', '65fdc04b8cbcb16d710a195a0ea67e86'),
+  ('public', 'radar_score_recalcular', 6, '20261111120000_radar_carga_publicacao_curta.sql', 'c647b26ec67a84dcbf7c0c801dbefc90'),
   ('public', 'radar_aplicar_situacao', 1, '20261019200000_radar_situacao_cadastral.sql', '695220bdd5e21c77940a09591545c190'),
   ('public', 'radar_aplicar_situacao', 2, '20261031190000_radar_situacao_contato_por_cnpj.sql', '6ce2e3e0f597b1adc8648681419732d6'),
   ('public', 'radar_avisar_lote', 1, '20261020143000_radar_avisar_lote.sql', '64154443f7649f8ef872fd59fde63877'),
   ('public', 'radar_avisar_lote', 2, '20261027010000_radar_situacao_por_cron.sql', '3c01eb3957d21e7501eb3ade2e08757b'),
+  ('public', 'radar_avisar_lote', 3, '20261111120000_radar_carga_publicacao_curta.sql', '088a5c5e8ab0614dc35fcfd343903ecc'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
   ('public', 'venda_fechar_desfechos', 2, '20261020194332_venda_cliente_historico_prova_dados.sql', '937c0dbb6bfb3428fcdbd64b25382f85'),
   ('public', 'venda_fechar_desfechos', 3, '20261021031000_venda_cliente_ondas23.sql', 'b054bddb2e0a53e18c2a6c19f6d2727c'),
@@ -7050,6 +7104,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', '_venda_sugestoes_json', 2, '20261108000000_cliente_sucessao_consumidores.sql', '61c33e36e564dfc4d4becba5740e0bbc'),
   ('private', 'radar_evento_abertura', 1, '20261029150100_radar_eventos_placar.sql', '3d146cb7191813f6f45455268c854db2'),
   ('private', 'radar_evento_abertura', 2, '20261106132259_radar_abriu_ficha_com_cnpj.sql', '7334260396d6d5f3064cdf1e86df5b4b'),
+  ('public', 'radar_coorte_sortear', 1, '20261029150100_radar_eventos_placar.sql', 'e3383fb72a4d6d7cf9f9050c76d56fa3'),
+  ('public', 'radar_coorte_sortear', 2, '20261111120000_radar_carga_publicacao_curta.sql', 'e7c3787268d7f965b9d18b051d94755a'),
   ('public', 'radar_placar_uso', 1, '20261029150100_radar_eventos_placar.sql', 'd70dfbeccd70b95e9f8bc0a46fc7ccd7'),
   ('public', 'radar_placar_uso', 2, '20261106132259_radar_abriu_ficha_com_cnpj.sql', '359ec9e4ceebfecba245d3c89c1fe511'),
   ('public', 'radar_penetracao_por_municipio', 1, '20261029170140_radar_penetracao_e_concorrentes.sql', '87b1e469e8bfcc17b9695574d8ec74f4'),
@@ -7074,11 +7130,13 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_agregado_recalcular', 1, '20261103100000_radar_agregado_municipio.sql', '486f25635979b302ded0f60a476a0a85'),
   ('public', 'radar_agregado_recalcular', 2, '20261103223300_radar_agregado_cnae.sql', 'e1ad69fe29525103fe4158b0671b8cfe'),
   ('public', 'radar_agregado_recalcular', 3, '20261104153351_radar_cnae_secundario.sql', 'bce4f5981e1491d2df5796b4489aae99'),
+  ('public', 'radar_agregado_recalcular', 4, '20261111120000_radar_carga_publicacao_curta.sql', '7b85d41f8e1afd1765844913375f0f32'),
   ('public', 'radar_lista', 1, '20261103131500_radar_lista_rpc.sql', '35f2b704bf5d9b3d429156aed6ac4890'),
   ('public', 'radar_lista', 2, '20261104153351_radar_cnae_secundario.sql', 'b514c898e63fe2e0301ba8323cdd2955'),
   ('public', 'radar_lista', 3, '20261106175800_radar_mapa_regiao_cidade_telefone.sql', '82ba20fd3696c255b455780f32c33dc6'),
   ('public', 'radar_lista', 4, '20261106212329_radar_lista_meus_atendimentos.sql', '7206911e09eeb6e20c15f07124640d0f'),
   ('public', 'radar_lista', 5, '20261109140000_radar_contato_contabil.sql', '4905ae7feb5c6f81c7540e97d1d2a9ea'),
+  ('public', 'radar_lista', 6, '20261111120000_radar_carga_publicacao_curta.sql', 'b27e294c7be73b49bedd2f7588e86127'),
   ('public', 'radar_possiveis_vinculos', 1, '20261104201756_radar_possiveis_vinculos.sql', 'effde9346bb799f4b662d37fc89919d1'),
   ('public', 'radar_possiveis_vinculos', 2, '20261106083754_radar_vinculos_em_lote.sql', 'b7ae2cb1304fb4e6e64d626b2a305e42'),
   ('public', 'simular_puxar_volume_trimestre', 1, '20261105180000_des_simular_puxar_sem_posicao_recusa.sql', '9e43c9425748b54d783ca9f4c3737755'),
@@ -7092,6 +7150,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'radar_leads_do_vendedor', 1, '20261106181000_radar_leads_ao_vendedor.sql', '51506ada745f4c91ec5de07a54e06ac0'),
   ('private', 'radar_leads_do_vendedor', 2, '20261107230000_radar_distribuicao_pacote_e.sql', 'a4a2d893fefd6182d8299300561a2dcc'),
   ('private', 'radar_leads_do_vendedor', 3, '20261111100000_radar_acompanhamento_pacote_g.sql', '8fe003f34f6f422ac2587571074353d2'),
+  ('private', 'radar_leads_do_vendedor', 4, '20261111132000_radar_foto_do_card_e_contato_avaliado.sql', 'a7ffe7e7f71d4f7ca552c4f68e52b396'),
   ('public', 'radar_avisar_vendedores', 1, '20261106181000_radar_leads_ao_vendedor.sql', 'fdde2726b59b6ba115a465bf3af3a913'),
   ('public', 'radar_avisar_vendedores', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '43860b5d9d9cdd4e0cdb06b4d6805ddc'),
   ('public', 'radar_avisar_vendedores', 3, '20261109140000_radar_contato_contabil.sql', '14ac99777dac60b887d29f1418cb9aa9'),
@@ -7105,7 +7164,13 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'credito_vinculo_avaliar', 1, '20261106205557_credito_aviso_vinculo_vencido.sql', 'df92d9af4062d9f7f475c784818effc7'),
   ('private', 'credito_vinculo_avaliar', 2, '20261107040000_radar_socios_cpf_mascarado.sql', '70406e22429da65e354297271046917b'),
   ('public', 'radar_email_semanal_painel', 1, '20261107140001_radar_email_semanal_toggle.sql', '0b114d404e20198b65a3d1bd3388059f'),
-  ('public', 'radar_email_semanal_painel', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '98e98147155301c10578baeda21f9017')
+  ('public', 'radar_email_semanal_painel', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '98e98147155301c10578baeda21f9017'),
+  ('private', 'radar_contato_contabil_avaliar', 1, '20261109140000_radar_contato_contabil.sql', '75273a7db8bd46bf1f3c3651e53c28c4'),
+  ('private', 'radar_contato_contabil_avaliar', 2, '20261111132000_radar_foto_do_card_e_contato_avaliado.sql', 'db61f0acae8588f9eb7fcfc317232c65'),
+  ('public', 'radar_carga_iniciar', 1, '20261110130000_radar_carga_publicacao_atomica.sql', '2d9d3627a08c7e296a461ad7369f56da'),
+  ('public', 'radar_carga_iniciar', 2, '20261111120000_radar_carga_publicacao_curta.sql', '45a57f016c56325de0688914f7919092'),
+  ('public', 'radar_carga_publicar_pendente', 1, '20261110130000_radar_carga_publicacao_atomica.sql', '9e83faf4d066efeb88a5ee90a60e8e47'),
+  ('public', 'radar_carga_publicar_pendente', 2, '20261111120000_radar_carga_publicacao_curta.sql', '09dee2c06514d638920dca7bc4cad43a')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

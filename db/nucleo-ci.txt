@@ -1080,3 +1080,9 @@ db/test-radar-carga-atomica.sh             37  falsificar=12
 # CALL vira de uma vez, re-run só com membresia igual, ACL. O CUSTO (24 índices de prod × 506k) é
 # db/test-radar-publicacao-curta-custo.sh, fora do CI (pesado).
 db/test-radar-publicacao-curta.sh          41  falsificar=12
+# Radar K2 (20261111132000): card/e-mail cruzando a publicação em passos (os 3 ramos de radar_leads_do_vendedor,
+# empresa só de P fora até a virada) e "não é contabilidade" só para o contato que o cálculo leu (ausente ≠ zero).
+db/test-radar-k2-foto-e-contato.sh         21  falsificar=18
+# Radar K3 (20261111140000): radar_lote_idade acusa a carga EM VOO parada (recebendo > 12 h, validada > 6 h, publicação
+# com 3+ erros seguidos, falhou num lote mais novo), sobre a cadeia viva do trio no md5 de PROD (A1).
+db/test-data-health-radar-carga-em-voo.sh  19  falsificar=11

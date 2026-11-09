@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **817** custom migrations totais
-- **2755** objetos esperados (criados por estas migrations)
+- **823** custom migrations totais
+- **2777** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1094
-  - `rls_policy`: 521
-  - `index`: 387
-  - `table`: 255
+  - `function`: 1109
+  - `rls_policy`: 522
+  - `index`: 390
+  - `table`: 256
   - `cron_job`: 218
-  - `trigger`: 141
+  - `trigger`: 143
   - `view`: 135
   - `enum_value`: 4
 
@@ -6747,6 +6747,23 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.radar_empresas_carga` | — |
 | `cron_job` | `cron.radar-publicar-lote` | — |
 
+### `20261110140000_ipi_aliquota_ncm_seed_4_pendentes_omie.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261111090000_sayerlack_portal_evidencia.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack__evidencia_imutavel` | — |
+| `table` | `public.sayerlack_portal_evidencia` | — |
+| `index` | `public.sayerlack_portal_evidencia_protocolo_idx` | `sayerlack_portal_evidencia` |
+| `index` | `public.sayerlack_portal_evidencia_execucao_idx` | `sayerlack_portal_evidencia` |
+| `index` | `public.sayerlack_portal_evidencia_pedido_idx` | `sayerlack_portal_evidencia` |
+| `trigger` | `public.trg_evidencia_imutavel` | `sayerlack_portal_evidencia` |
+| `trigger` | `public.trg_evidencia_imutavel_truncate` | `sayerlack_portal_evidencia` |
+| `rls_policy` | `public.staff_le_portal_evidencia` | `sayerlack_portal_evidencia` |
+
 ### `20261111100000_radar_acompanhamento_pacote_g.sql`
 
 | Tipo | Objeto | Parent |
@@ -6763,6 +6780,40 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_posses_vencer_tick` | — |
 | `index` | `public.idx_radar_empresas_acompanhamento` | `radar_empresas` |
 | `cron_job` | `cron.radar-posses-vencer-diario` | — |
+
+### `20261111110000_sayerlack_vincular_po_manual.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_vincular_po_manual` | — |
+
+### `20261111120000_radar_carga_publicacao_curta.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_lote_publicando` | — |
+| `function` | `public.radar_carga_publicar_passo` | — |
+| `function` | `public.radar_carga_publicar_pendente` | — |
+| `function` | `public.radar_carga_iniciar` | — |
+| `function` | `public.radar_lista` | — |
+| `function` | `public.radar_contagem_por_municipio` | — |
+| `function` | `public.radar_agregado_recalcular` | — |
+| `function` | `public.radar_score_recalcular` | — |
+| `function` | `public.radar_avisar_lote` | — |
+| `function` | `public.radar_coorte_sortear` | — |
+
+### `20261111132000_radar_foto_do_card_e_contato_avaliado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_leads_do_vendedor` | — |
+| `function` | `private.radar_contato_contabil_avaliar` | — |
+
+### `20261111140000_data_health_radar_carga_em_voo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ## Próximos passos por status
 
