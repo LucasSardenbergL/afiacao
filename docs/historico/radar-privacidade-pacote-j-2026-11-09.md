@@ -41,7 +41,7 @@ edge `omie-vendas-sync` v1.33 (guarda no `criar_cliente`) e uma mudança pequena
   O escopo `qsa` tira os nomes dos sócios da ficha e da prospecção. O `contato` faz isso e também registra a oposição
   à prospecção: zera e-mail e telefone, descarta o lead com `descarte_motivo = 'lgpd_oposicao'`, apaga as notas livres
   e não deixa o lead ser "reaberto". Um 2º pedido só amplia o escopo, nunca devolve dado.
-- **🧭 Decisão do founder: a exclusão NÃO toca o vínculo societário nem o aviso de crédito.** O QSA mascarado em
+- **✅ Decidido pelo founder (2026-11-09, "manter conservador"): a exclusão NÃO toca o vínculo societário nem o aviso de crédito.** O QSA mascarado em
   `radar_socios` e a máscara do titular na razão continuam, só no servidor. A revisão provou que filtrar a raiz no
   vínculo apagava o aviso de um devedor (R$ 70 vencidos), e a proteção do crédito é base legal própria (LGPD art.
   7º X), que a oposição ao legítimo interesse não alcança. Foi o padrão conservador do money-path. Para estender a
