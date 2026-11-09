@@ -249,8 +249,7 @@ G=a0000000-0000-0000-0000-000000000008    # gestor (employee + gerencial): eleg�
 M=a0000000-0000-0000-0000-000000000009    # master
 C=a0000000-0000-0000-0000-000000000007    # customer
 X=a0000000-0000-0000-0000-00000000000e    # employee sem cargo comercial: staff, sem acesso ao Radar
-SIS=00000000-0000-0000-0000-00000000ad0f  # Radar · RFB (contato automático)
-L1=11111111000101; L2=11111111000202; L3=11111111000303; L4=11111111000404; L9=11111111000909
+L1=11111111000101; L2=11111111000202; L3=11111111000303; L4=11111111000404
 P -q -v v1="$V1" -v v2="$V2" -v g="$G" -v m="$M" -v c="$C" -v x="$X" <<'SQL'
 INSERT INTO public.user_roles (user_id, role) VALUES
   (:'v1','employee'), (:'v2','employee'), (:'g','employee'), (:'m','master'), (:'c','customer'), (:'x','employee');
