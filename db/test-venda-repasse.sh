@@ -85,7 +85,7 @@ if [ "${1:-}" = "--falsificar" ]; then
               trava_larga:TR2:TR1,TR3
               sem_cad_irma:SUB18:SUB19,SUB10
               cad_irma_max:SUB19:SUB18,SUB9
-              janela_const:SUB20:SUB9,SUB10
+              janela_const:SUB20,PERF:SUB9,SUB10
               janela_floor:SUB21:SUB10
               pre_trava_helper:H4:H3"
   falhas=0; sab_falhas=0
@@ -571,6 +571,8 @@ case "${SABOTAGEM:-}" in
   # ── substituição (20261031233000) ──
   sem_convive)     sabotar_s 's/COALESCE\(irm\.ultima_antes >= cp\.data_ancora$/COALESCE(irm.ultima_antes >= cp.data_ancora + 100000/' ;;
   janela_cad)      sabotar_s 's/least\(ceil\(3 \* greatest\(cp\.cadencia_dias, coalesce\(irm\.cad_irma, 0\)\)\), 3650\)/least(ceil(3 * greatest(cp.cadencia_dias, coalesce(irm.cad_irma, 0))) + 1, 3650)/' ;;
+  # janela_const derruba também o PERF: com a constante literal o planejador escolhe outro plano e estoura os 8 s
+  # (a versão real roda em ~0,7 s — linha ⏱ do PERF); o vermelho que interessa é o SUB20
   janela_const)    sabotar_s 's/least\(ceil\(3 \* greatest\(cp\.cadencia_dias, coalesce\(irm\.cad_irma, 0\)\)\), 3650\)/42/' ;;
   janela_floor)    sabotar_s 's/least\(ceil\(3 \* greatest/least(floor(3 * greatest/' ;;
   sem_cad_irma)    sabotar_s 's/coalesce\(irm\.cad_irma, 0\)/0/' ;;
@@ -841,6 +843,10 @@ PERF="$(Pq -c "SET test.uid='$MST'; SET ROLE authenticated; SET statement_timeou
            -c "SELECT CASE WHEN jsonb_array_length(public.venda_repasse_candidatos()) >= 0 THEN 'PERF-OK' END" 2>&1 \
         | grep -oE 'PERF-OK|statement timeout' | head -1 || true)"
 eq PERF "candidatos com volume de prod cabem no statement_timeout de 8 s da prod" "$PERF" "PERF-OK"
+# informativo (não é assert): a folga até o teto de 8 s — psql \timing, número em ms nos dois locales
+PERF_MS="$(printf '\\timing on\nSET test.uid = %s;\nSET ROLE authenticated;\nSELECT jsonb_array_length(public.venda_repasse_candidatos());\n' "'$MST'" \
+  | P -tA 2>&1 | grep -oE '[0-9]+[.,][0-9]+ ms' | tail -1 || true)"
+echo "   ⏱ PERF candidatos: ${PERF_MS:-(não medi)} (teto 8000 ms)"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
