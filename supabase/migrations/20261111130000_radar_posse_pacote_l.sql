@@ -57,11 +57,11 @@ BEGIN
            (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(v.alvo)) AS vivo
       FROM (VALUES
         ('public.registrar_contato_radar(text,text,text,date)',
-         '6d7138c65159a00dd2066a4a15b6583b', '641ef8187924b7f658e0156cd121ce13'),
+         '6d7138c65159a00dd2066a4a15b6583b', '634415bf5bb1f12565ecdea7fb3c8ac0'),
         ('private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz)',
          '0ded55f382a8c3d5aaa4ea8372912479', '9ba83e9f13a980df9c25508da713a187'),
         ('public.desfazer_contato_radar(uuid)',
-         'b2f4de64f1110150c4c66905cfe3c542', '04bfe8609883415c83eef43f263c161a'),
+         'b2f4de64f1110150c4c66905cfe3c542', '840f992e82c6904309642f336ded2244'),
         -- Não é recriada aqui: o auto-assumir depende das regras DELA (lidas na revisão). Mudou → refaça o pré-voo.
         ('public.radar_definir_atendimento(text,text)',
          '0b64fb7ec8d8700e2183af484675a7d7', '0b64fb7ec8d8700e2183af484675a7d7')
@@ -96,6 +96,9 @@ COMMENT ON TABLE public.radar_atendimentos IS
 -- sempre o maior entre a cadeia e o compromisso vigente: como a cadeia só cresce e cada contato é anterior ao limite de
 -- então, o limite nunca cai para antes de um instante em que a posse já estava viva (sem vencimento retroativo).
 -- Compromisso = (retorno_em + 3 dias) à meia-noite BRT, só do "em conversa" com retorno; outro desfecho zera.
+-- Trade-off aceito (revisão independente, P3-d): o compromisso inicial é o do último contato do dono ATÉ o início, sem
+-- limite de idade — quem reassume um lead com "em conversa" seu de antes (retorno ainda futuro, no máximo 60 dias)
+-- volta protegido até ele. Só estende a posse de quem tem o compromisso; nunca toma de ninguém.
 CREATE OR REPLACE FUNCTION private.radar_atendimento_expira_em(p_cnpj text, p_dono uuid, p_assumido_em timestamptz, p_renovado_em timestamptz)
 RETURNS timestamptz
 LANGUAGE plpgsql
@@ -211,6 +214,10 @@ BEGIN
     END IF;
   END IF;
 
+  -- L1 (revisão independente, P3-a): o advisory do CNPJ ANTES do relógio. Sem ele, um "Assumir" de colega (ou o tick)
+  -- entre o INSERT deste contato e o COMMIT não o enxerga, acha a posse vencida e a toma — com o contato feito em dia.
+  -- Reentrante: o definir chamado abaixo pega o mesmo. Ordem: linha da empresa → CNPJ → registro → dono (a do desfazer).
+  PERFORM pg_advisory_xact_lock(hashtextextended('radar_atendimento:' || p_cnpj, 0));
   PERFORM pg_advisory_xact_lock(hashtextextended(v_uid::text||':'||p_cnpj||':'||p_acao||':radar', 0));
   -- Instante lido DEPOIS das travas: now() é o início da transação, e quem esperou não pode medir janela nem carimbar
   -- com o relógio de antes da espera.
@@ -351,6 +358,8 @@ BEGIN
   UPDATE public.radar_atendimentos a
      SET encerrado_em = GREATEST(v_agora, a.assumido_em), encerrado_por = v_uid, motivo_encerramento = 'liberado'
    WHERE a.cnpj = v_cnpj AND a.encerrado_em IS NULL AND a.contato_origem_id = p_id AND a.dono_user_id = v_uid
+     -- Renovada depois (botão "Renovar"; a renovação por outro contato já cai no NOT EXISTS): o dono a confirmou.
+     AND a.renovado_em IS NULL
      AND NOT EXISTS (SELECT 1 FROM public.radar_contatos o
                       WHERE o.cnpj = v_cnpj AND o.criado_por = v_uid AND o.id <> p_id AND o.created_at >= v_criado);
   v_posse_desfeita := FOUND;
@@ -420,7 +429,10 @@ BEGIN
   IF p_evento = 'aberta' AND (p_cnpj IS NULL OR p_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}$') THEN
     RAISE EXCEPTION 'cnpj invalido' USING ERRCODE = '22023';
   END IF;
+  -- Tetos: o card devolve no máximo 100 posses (o teto por dono) e os retornos são contados pelo servidor; número
+  -- fora disso é cliente com defeito, não uso.
   IF p_evento = 'vista' AND (p_n_retornos IS NULL OR p_n_posses IS NULL OR p_n_retornos < 0 OR p_n_posses < 0
+                             OR p_n_retornos > 10000 OR p_n_posses > 100
                              OR p_n_retornos + p_n_posses = 0) THEN
     -- Agenda vazia não é "vista": o denominador é o dia em que havia o que fazer.
     RAISE EXCEPTION 'vista exige n_retornos e n_posses (soma >= 1)' USING ERRCODE = '22023';

@@ -26,7 +26,7 @@ MIGL="$REPO_ROOT/supabase/migrations/20261111130000_radar_posse_pacote_l.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `POST!P2_FALHOU` = a postcondição aborta o apply com a marca exata.
-  SABOTAGENS="sem_auto_assumir:L1a sem_origem:L1a dedupe_assume:L1f outro_mexe_posse:L2e sem_protecao_no_laco:L2b laco_sem_exit:L2d protecao_inicial_cega:L2f desfazer_nao_libera:L1h desfazer_ignora_posterior:L1i acl_aberta:POST!P2_FALHOU pre_cega:L3c agenda_vazia_conta:L4c agenda_sobrescreve:L4a"
+  SABOTAGENS="sem_auto_assumir:L1a sem_origem:L1a dedupe_assume:L1f outro_mexe_posse:L2e sem_protecao_no_laco:L2b laco_sem_exit:L2d protecao_inicial_cega:L2f desfazer_nao_libera:L1h desfazer_ignora_posterior:L1i desfazer_ignora_renovacao:L1k agenda_sem_teto:L4c2 acl_aberta:POST!P2_FALHOU pre_cega:L3c agenda_vazia_conta:L4c agenda_sobrescreve:L4a"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-posse-l.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -97,6 +97,10 @@ case "${SABOTAGEM:-}" in
   desfazer_nao_libera)       sabotar "AND a.contato_origem_id = p_id AND a.dono_user_id = v_uid" "AND false" ;;
   desfazer_ignora_posterior) sabotar "     AND NOT EXISTS (SELECT 1 FROM public.radar_contatos o
                       WHERE o.cnpj = v_cnpj AND o.criado_por = v_uid AND o.id <> p_id AND o.created_at >= v_criado);" ";" ;;
+  desfazer_ignora_renovacao) sabotar "     AND a.renovado_em IS NULL
+" "" ;;
+  agenda_sem_teto)           sabotar "                             OR p_n_retornos > 10000 OR p_n_posses > 100
+" "" ;;
   acl_aberta)                sabotar "REVOKE ALL ON FUNCTION private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz) FROM PUBLIC, anon, authenticated;" "GRANT EXECUTE ON FUNCTION private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz) TO authenticated;" ;;
   agenda_vazia_conta)        sabotar "                             OR p_n_retornos + p_n_posses = 0) THEN" "                             OR false) THEN" ;;
   agenda_sobrescreve)        sabotar "  ON CONFLICT (user_id, dia, evento, cnpj) DO NOTHING;" "  ON CONFLICT (user_id, dia, evento, cnpj) DO UPDATE SET n_retornos = EXCLUDED.n_retornos, n_posses = EXCLUDED.n_posses;" ;;
@@ -346,6 +350,13 @@ D="$(como authenticated "$V2" "SELECT public.desfazer_contato_radar('$(Pq -c "SE
 eq "L1j o colega desfaz o contato dele no lead de V1: a posse de V1 fica" \
    "$(campo "$D" deleted):$(campo "$D" posse_desfeita)|$(posse 30100000000101)" "true:false|V1:aberta"
 
+R="$(reg "$V1" 30600000000101 em_conversa 'assumo e confirmo')"
+P -q -c "UPDATE public.radar_contatos SET created_at = created_at - interval '1 minute' WHERE cnpj = '30600000000101'"
+como authenticated "$V1" "SELECT public.radar_definir_atendimento('30600000000101', 'assumir')" >/dev/null
+D="$(como authenticated "$V1" "SELECT public.desfazer_contato_radar('$(campo "$R" id)')" | tail -1)"
+eq "L1k posse auto-assumida e depois RENOVADA no botão: desfazer o contato não a fecha (o dono a confirmou)" \
+   "$(campo "$D" deleted):$(campo "$D" posse_desfeita)|$(posse 30600000000101)" "true:false|V1:aberta"
+
 # ── L2: vencimento por reconstrução cronológica ──────────────────────────────────────────────────────────
 # O caso do Codex, em datas fixas: assume 1/11, conversa 2/11 com retorno 30/11, nova conversa 20/11 com retorno 27/11.
 P -q -v v1="$V1" <<'SQL'
@@ -412,6 +423,8 @@ B1="$(ag "$V1" "'aberta', '32400000000101'")"; B2="$(ag "$V1" "'aberta', '324000
 eq "L4b 'aberta' grava 1 por CNPJ por dia" \
    "$(campo "$B1" registrado):$(campo "$B2" registrado):$(campo "$B3" registrado)|$(Pq -c "SELECT count(*) FROM public.radar_agenda_uso WHERE evento = 'aberta'")" \
    "true:false:true|2"
+prefixo "L4c2 número fora do teto não é uso (cliente com defeito)" \
+   "$(erro_como authenticated "$V1" "SELECT public.radar_registrar_agenda_uso('vista', NULL, 1, 101)")" "22023 vista exige"
 prefixo "L4c agenda vazia não é 'vista' (sem denominador não há dia de uso)" \
    "$(erro_como authenticated "$V1" "SELECT public.radar_registrar_agenda_uso('vista', NULL, 0, 0)")" "22023 vista exige"
 prefixo "L4d quem não prospecta no Radar não escreve no ledger" \
