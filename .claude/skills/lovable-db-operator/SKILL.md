@@ -50,7 +50,7 @@ Quando a tarefa exigir mudança de banco, crie estes 6 todos (TodoWrite) e siga 
 3. **Empacotar** — o bloco de handoff "🟣 Lovable → SQL Editor → cola → Run"
 4. **Validar** — a query read-only de confirmação pós-apply
 5. **Documentar** — a nota pro PR description ("ATENÇÃO: migration manual")
-6. **Auditar** — rodar `bun run audit:migrations` e commitar os artefatos
+6. **Auditar** — rodar `bun run audit:migrations` e conferir que a sua migration entrou (os artefatos NÃO se commitam)
 
 ---
 
@@ -265,15 +265,15 @@ Validação pós-apply:
 ```
 ````
 
-### Passo 6 — Regenerar o audit e commitar
+### Passo 6 — Gerar o audit (sem commitar)
 
-O repo tem infra de auditoria que rastreia quais custom migrations estão aplicadas (`docs/migrations-audit.md` + `scripts/audit-custom-migrations.sql`). Sua migration nova precisa entrar nesse inventário. **Você** (não o usuário) roda isso localmente — é só leitura/escrita de arquivos do repo, não toca o banco:
+O repo tem infra de auditoria que rastreia quais custom migrations estão aplicadas (`.audit-migrations/migrations-audit.md` + `.audit-migrations/audit-custom-migrations.sql`, **gerados na hora e ignorados pelo git**). O inventário é função pura de `supabase/migrations/` — a sua migration entra nele sozinha. **Você** (não o usuário) roda isso localmente — só lê o repo e escreve na pasta ignorada, não toca o banco:
 
 ```bash
 bun run audit:migrations
 ```
 
-Isso reescreve `docs/migrations-audit.md` e `scripts/audit-custom-migrations.sql` incluindo os objetos da sua migration. Commite os dois junto com o `.sql`. Assim o próximo audit (rodado no SQL Editor) já checa o seu objeto.
+Confira no `.audit-migrations/migrations-audit.md` que os objetos da sua migration foram extraídos. **Não commite** os artefatos (estão no `.gitignore`): até 2026-11-09 eram versionados e eram o ímã de conflito entre PRs paralelos — cada migration irmã que mergeava deixava o seu PR DIRTY e o CI recomeçava (`docs/historico/ci-arquivos-gerados-sem-conflito.md`). Para o SQL Editor ou o `psql-ro`, gere na hora e use o arquivo da pasta.
 
 > Se `bun run audit:migrations` falhar, o regex parser pode não ter reconhecido seu SQL (ele cobre `CREATE TABLE/INDEX/FUNCTION/TRIGGER`, `cron.schedule`, `ALTER TYPE … ADD VALUE`, `CREATE POLICY`). Migrations só de `ALTER TABLE`/`UPDATE` aparecem como "nenhum objeto extraído" — normal; valide manualmente via passo 4.
 
@@ -281,7 +281,7 @@ Isso reescreve `docs/migrations-audit.md` e `scripts/audit-custom-migrations.sql
 
 ## Depois que o usuário aplicar: registrar no histórico (opcional, recomendado)
 
-Quando o usuário cola SQL cru no SQL Editor, o Supabase **não** registra a migration em `supabase_migrations.schema_migrations` (essa tabela só é escrita pelo runner de migrations). Consequência: a **Section 1** do audit (`scripts/audit-custom-migrations.sql`) vai mostrar `❌ MISSING` pro timestamp, mesmo com os objetos existindo (Section 2 = `✅`).
+Quando o usuário cola SQL cru no SQL Editor, o Supabase **não** registra a migration em `supabase_migrations.schema_migrations` (essa tabela só é escrita pelo runner de migrations). Consequência: a **Section 1** do audit (`.audit-migrations/audit-custom-migrations.sql`, gerado por `bun run audit:migrations`) vai mostrar `❌ MISSING` pro timestamp, mesmo com os objetos existindo (Section 2 = `✅`).
 
 Pra deixar o audit 100% verde, ofereça ao usuário este `INSERT` opcional no fim do handoff:
 
@@ -301,7 +301,7 @@ Ao final, sua mensagem ao usuário tem sempre estes elementos, nesta ordem, num 
 1. O arquivo de migration criado (caminho) + resultado do pré-voo PROD (Passo 2.7).
 2. O **bloco de handoff** completo (SQL + validação) — pronto pra colar.
 3. A **nota de PR** — pronta pra colar no description.
-4. Confirmação de que você rodou `bun run audit:migrations` e o que commitar.
+4. Confirmação de que você rodou `bun run audit:migrations` e que os objetos da migration foram extraídos (nada a commitar dele).
 5. Um lembrete honesto: *"Isto ainda NÃO está no banco. Cola no Lovable, roda e me avisa — a validação eu rodo daqui (psql-ro)."*
 
 Nunca encerre dizendo que a mudança "está pronta" sem esse lembrete — porque até o Run acontecer, ela não está.
@@ -310,8 +310,8 @@ Nunca encerre dizendo que a mudança "está pronta" sem esse lembrete — porque
 
 - `supabase/migrations/` — onde o `.sql` vai (formato `YYYYMMDDHHMMSS_slug.sql`)
 - `scripts/audit-custom-migrations.ts` — gera o audit; rode via `bun run audit:migrations`
-- `scripts/audit-custom-migrations.sql` — audit pronto pra colar no SQL Editor (cross-check completo)
-- `docs/migrations-audit.md` — inventário humano-legível das custom migrations
+- `.audit-migrations/audit-custom-migrations.sql` — audit pronto pra colar no SQL Editor (cross-check completo; gerado, fora do git)
+- `.audit-migrations/migrations-audit.md` — inventário humano-legível das custom migrations (gerado, fora do git)
 - `docs/agent/database.md` §2 — a fonte da verdade sobre a restrição do Lovable
 - Project ref Supabase: `fzvklzpomgnyikkfkzai`
 
