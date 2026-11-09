@@ -10,30 +10,35 @@
 -- private.radar_mascaras_conflitam (+ 2 índices de expressão). O CPF completo nunca é comparado.
 --
 -- O QUE MUDA:
---   1. A razão de MEI passa a ser GRAVADA mascarada: 'FULANO DE TAL ***456789**'. Um trigger BEFORE em
---      radar_empresas (private.radar_empresas_privacidade) reescreve na entrada — a carga, a publicação e qualquer
---      escritor futuro — e guarda o valor da Receita em private.radar_razao_receita, que só o cadastro no Omie lê
---      (RPC radar_razao_social_para_cadastro: a razão fiscal do MEI tem o CPF). Assim TODA saída (RPC de hoje e de
---      amanhã, PostgREST, e-mail, tarefa, CSV) já nasce sem o CPF, sem recriar nenhuma RPC de leitura. Contagem da
---      publicação (ROW_COUNT, RCARGA_*) não muda: o trigger altera o VALOR, nunca descarta linha.
+--   1. A razão de MEI passa a ser GRAVADA mascarada: 'FULANO DE TAL ***456789**'. Triggers BEFORE no staging da
+--      carga (radar_empresas_carga) e em radar_empresas reescrevem na entrada — qualquer escritor — e guardam o
+--      valor da Receita em private.radar_razao_receita, que só o cadastro no Omie lê (RPC
+--      radar_razao_social_para_cadastro, gestor/master como o cadastro, com registro de cada acesso). Assim TODA
+--      saída (RPC de hoje e de amanhã, PostgREST, e-mail, tarefa, CSV) já nasce sem o CPF, sem recriar nenhuma RPC
+--      de leitura. Mascarar JÁ no staging mantém o "só o que difere" da publicação em passos (staging e foto
+--      comparam a mesma forma); a contagem da publicação não muda — o trigger altera o VALOR, nunca descarta linha.
 --   2. As 2 funções de vínculo e os 2 índices aceitam AS DUAS formas (crua e mascarada) por substituição textual
---      mínima do corpo de prod (md5 conferido): regex ' ([0-9]{11}|\*\*\*[0-9]{6}\*\*)$' e a máscara por
---      private.radar_titular_mascara. Mesma máscara ⇒ mesmas decisões de vínculo e de aviso de crédito, antes,
---      durante e depois do backfill (prova db/test-radar-privacidade-j.sh, E*).
---   3. Exclusão persistente de titular: public.radar_exclusoes_titular (raiz, escopo, finalidade). Aplicada na
---      INGESTÃO (o mesmo trigger zera sócios/contato da raiz a cada carga), nas LEITURAS (o vínculo ignora o QSA da
---      raiz) e por expurgo (as linhas de radar_socios da raiz são apagadas). Escopos: 'qsa' (sócio/titular fora do
---      vínculo e da ficha) e 'contato' (além disso, oposição à prospecção: contato zerado e lead descartado).
+--      mínima do corpo de prod (md5 conferido), e SÓ isso: regex ' ([0-9]{11}|\*\*\*[0-9]{6}\*\*)$' e a máscara
+--      por private.radar_titular_mascara. Mesma máscara ⇒ mesmas decisões de vínculo e de aviso de crédito,
+--      antes, durante e depois do backfill (prova db/test-radar-privacidade-j.sh, E*).
+--   3. Exclusão persistente de titular: public.radar_exclusoes_titular (raiz, escopo, finalidade, histórico dos
+--      pedidos). Aplicada na INGESTÃO (os mesmos triggers zeram a cada carga) e reaplicada pelo job. Escopos:
+--      'qsa' (nomes dos sócios fora da ficha/prospecção) e 'contato' (além disso, oposição à prospecção: e-mail e
+--      telefone zerados, lead descartado com motivo 'lgpd_oposicao', notas livres apagadas). ⚠️ NÃO toca o vínculo
+--      societário nem o aviso de crédito (QSA mascarado, só no servidor): proteção do crédito é base legal própria
+--      (LGPD art. 7º X) — estender a exclusão a ele é decisão do founder (docs/historico/radar-privacidade-pacote-j).
 --   4. Expurgo de retenção (cron radar-privacidade-expurgo, de hora em hora): nota livre de lead descartado há
---      > 12 meses vira NULL (o evento fica, o texto sai); a nota automática da RFB fica. O mesmo job termina o
---      backfill da máscara em fatias de 10 mil (FOR UPDATE SKIP LOCKED) e reaplica as exclusões.
+--      > 12 meses vira NULL (o evento fica, o texto sai); a nota automática (autor = usuário de sistema) fica. O
+--      mesmo job termina o backfill da máscara em fatias de 10 mil (FOR UPDATE SKIP LOCKED), limpa o cru órfão e o
+--      registro de acesso com mais de 12 meses, e reaplica as exclusões.
 --
 -- LGPD: base legal e prazos em docs/historico/radar-privacidade-pacote-j-2026-11-09.md.
--- ⚠️ ORDEM DE DEPLOY: Publish do front ANTES (o cadastro no Omie passa a buscar a razão fiscal pela RPC nova; aba
---    velha cadastraria MEI com a razão mascarada). Depois esta migration; o backfill corre sozinho pelo cron.
+-- ⚠️ ORDEM DE DEPLOY: (1) edge omie-vendas-sync v1.33 (recusa razão mascarada no criar_cliente — protege a aba
+--    velha); (2) Publish do front (o cadastro busca a razão fiscal pela RPC nova); (3) esta migration, FORA do
+--    horário comercial (os CREATE INDEX seguram escrita em radar_empresas por alguns segundos).
 -- Corpos de prod lidos em 2026-11-08 (psql-ro), iguais aos da 20261107040000: base 568af84d…, conflitam b2c9922a….
 -- Molde TRAVA → PRE → CREATE → PÓS. Prova PG17: db/test-radar-privacidade-j.sh (e --falsificar).
--- Aplicação: `bun run db:aplicar supabase/migrations/20261111130000_radar_privacidade_titular_mei.sql`
+-- Aplicação: `bun run db:aplicar supabase/migrations/20261111150000_radar_privacidade_titular_mei.sql`
 -- (sem BEGIN/COMMIT: o executor fornece a transação).
 -- ============================================================
 
@@ -51,15 +56,16 @@ DECLARE
   v_bs text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('private.radar_vinculos_base(text[],boolean,boolean)'));
   v_mc text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('private.radar_mascaras_conflitam(text,text,text)'));
 BEGIN
-  IF v_bs IS NULL OR v_bs NOT IN ('568af84dec25450e8970bd3d6918e4bb', 'b57e91ea6d82e81ce4c517edac0697c6') THEN
+  IF v_bs IS NULL OR v_bs NOT IN ('568af84dec25450e8970bd3d6918e4bb', '0de269faec15688b274b9085b49dfb53') THEN
     RAISE EXCEPTION 'PRE FALHOU: private.radar_vinculos_base vivo (md5 %) não é o da 20261107040000 nem este — outra sessão mexeu nas regras; reconcilie antes', v_bs;
   END IF;
   IF v_mc IS NULL OR v_mc NOT IN ('b2c9922a1d5d0fb767e9050c872822cf', '9989b503992ae3afc8ef7a4c1af3cb4b') THEN
     RAISE EXCEPTION 'PRE FALHOU: private.radar_mascaras_conflitam vivo (md5 %) não é o da 20261107040000 nem este', v_mc;
   END IF;
-  IF to_regclass('public.radar_empresas') IS NULL OR to_regclass('public.radar_contatos') IS NULL
-     OR to_regclass('public.radar_socios') IS NULL OR to_regclass('public.acoes_execucoes') IS NULL THEN
-    RAISE EXCEPTION 'PRE FALHOU: tabela do Radar ausente (radar_empresas/radar_contatos/radar_socios/acoes_execucoes)';
+  IF to_regclass('public.radar_empresas') IS NULL OR to_regclass('public.radar_empresas_carga') IS NULL
+     OR to_regclass('public.radar_contatos') IS NULL OR to_regclass('public.acoes_execucoes') IS NULL
+     OR to_regprocedure('public.pode_ver_carteira_completa(uuid)') IS NULL THEN
+    RAISE EXCEPTION 'PRE FALHOU: objeto do Radar ausente (radar_empresas/_carga/radar_contatos/acoes_execucoes/pode_ver_carteira_completa)';
   END IF;
 END
 $pre$;
@@ -73,27 +79,36 @@ CREATE TABLE IF NOT EXISTS public.radar_exclusoes_titular (
   finalidade     text NOT NULL CHECK (length(btrim(finalidade)) BETWEEN 10 AND 500),
   protocolo      text CHECK (protocolo IS NULL OR length(protocolo) <= 120),
   registrado_por uuid,
-  registrado_em  timestamptz NOT NULL DEFAULT now()
+  registrado_em  timestamptz NOT NULL DEFAULT now(),
+  pedidos        jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(pedidos) = 'array')
 );
 ALTER TABLE public.radar_exclusoes_titular ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.radar_exclusoes_titular FROM PUBLIC, anon, authenticated;
 COMMENT ON TABLE public.radar_exclusoes_titular IS
-  'LGPD art. 18: raízes de CNPJ cujo titular/sócio pediu oposição ou eliminação. Só servidor (RLS sem policy). escopo qsa = QSA e titular fora do vínculo e da ficha; contato = além disso, fora da prospecção. Aplicada na ingestão (trigger em radar_empresas), nas leituras (vínculo) e pelo expurgo. Registrar por radar_exclusao_registrar. Ver docs/historico/radar-privacidade-pacote-j-2026-11-09.md.';
+  'LGPD art. 18: raízes de CNPJ cujo titular/sócio pediu oposição ou eliminação. Só servidor (RLS sem policy). escopo qsa = nomes dos sócios fora da ficha/prospecção; contato = além disso, fora da prospecção (contato zerado, descartado). Não toca o vínculo/aviso de crédito (art. 7º X). pedidos = histórico de cada pedido. Registrar por radar_exclusao_registrar. Ver docs/historico/radar-privacidade-pacote-j-2026-11-09.md.';
 
 -- Razão social da Receita (com o CPF) de quem é MEI. Finalidade ÚNICA: o cadastro do cliente no Omie (a razão fiscal
--- do MEI tem o CPF). Schema private: nenhum JWT lê. FK diferida: o trigger BEFORE INSERT grava antes de a linha-mãe
--- existir; a checagem é no COMMIT.
+-- do MEI tem o CPF). Schema private: nenhum JWT lê. Sem FK: o staging grava antes de a empresa existir; o cru de
+-- CNPJ que saiu do Radar é apagado pelo job.
 CREATE TABLE IF NOT EXISTS private.radar_razao_receita (
-  cnpj          text PRIMARY KEY REFERENCES public.radar_empresas (cnpj) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+  cnpj          text PRIMARY KEY,
   razao_social  text NOT NULL,
   atualizado_em timestamptz NOT NULL DEFAULT now()
 );
 REVOKE ALL ON TABLE private.radar_razao_receita FROM PUBLIC, anon, authenticated;
 COMMENT ON TABLE private.radar_razao_receita IS
-  'Razão social da RFB (com CPF) dos MEI do Radar. Só para o cadastro no Omie (radar_razao_social_para_cadastro). radar_empresas guarda a forma mascarada. Apaga junto com a empresa e na exclusão de titular.';
+  'Razão social da RFB (com CPF) dos MEI do Radar. Só para o cadastro no Omie (radar_razao_social_para_cadastro). radar_empresas guarda a forma mascarada. Órfão (CNPJ fora do Radar) apagado pelo job radar-privacidade-expurgo.';
+-- Quem leu a razão fiscal de quem (o cru só sai 1 CNPJ por vez e fica rastreado). Retenção: 12 meses.
+CREATE TABLE IF NOT EXISTS private.radar_razao_receita_acessos (
+  id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id uuid,
+  cnpj    text NOT NULL,
+  lido_em timestamptz NOT NULL DEFAULT now()
+);
+REVOKE ALL ON TABLE private.radar_razao_receita_acessos FROM PUBLIC, anon, authenticated;
 
 -- ------------------------------------------------------------
--- 2. Helpers (sem acesso de JWT, salvo o de exibição, que é puro)
+-- 2. Helpers (sem acesso de JWT)
 -- ------------------------------------------------------------
 -- 'FULANO 12345678901' → 'FULANO ***456789**' (dígitos 4 a 9, como a RFB publica o QSA). Outras formas: intactas.
 CREATE OR REPLACE FUNCTION private.radar_razao_mascarada(p text)
@@ -114,8 +129,33 @@ REVOKE ALL ON FUNCTION private.radar_razao_mascarada(text) FROM PUBLIC, anon, au
 REVOKE ALL ON FUNCTION private.radar_titular_mascara(text) FROM PUBLIC, anon, authenticated;
 
 -- ------------------------------------------------------------
--- 3. O trigger de entrada: máscara + exclusão, para QUALQUER escritor de radar_empresas
+-- 3. Os triggers de entrada: máscara + exclusão, para QUALQUER escritor (staging da carga e a foto)
 -- ------------------------------------------------------------
+-- Staging: a MESMA forma que a foto terá, para a publicação em passos comparar igual com igual.
+CREATE OR REPLACE FUNCTION private.radar_carga_privacidade()
+ RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $f$
+DECLARE
+  v_escopo text;
+BEGIN
+  IF NEW.razao_social ~ ' [0-9]{11}$' THEN
+    INSERT INTO private.radar_razao_receita AS r (cnpj, razao_social) VALUES (NEW.cnpj, NEW.razao_social)
+    ON CONFLICT (cnpj) DO UPDATE SET razao_social = EXCLUDED.razao_social, atualizado_em = now()
+      WHERE r.razao_social IS DISTINCT FROM EXCLUDED.razao_social;
+    NEW.razao_social := private.radar_razao_mascarada(NEW.razao_social);
+  END IF;
+  SELECT x.escopo INTO v_escopo FROM public.radar_exclusoes_titular x WHERE x.raiz = left(NEW.cnpj, 8);
+  IF v_escopo IS NOT NULL THEN
+    NEW.socios_nomes := NULL;
+    IF v_escopo = 'contato' THEN
+      NEW.email := NULL; NEW.telefone1 := NULL; NEW.telefone2 := NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END
+$f$;
+-- A foto: o mesmo, mais o status do lead em oposição ao contato.
 CREATE OR REPLACE FUNCTION private.radar_empresas_privacidade()
  RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
  SET search_path TO 'public', 'pg_temp'
@@ -123,36 +163,39 @@ AS $f$
 DECLARE
   v_escopo text;
 BEGIN
-  SELECT x.escopo INTO v_escopo FROM public.radar_exclusoes_titular x WHERE x.raiz = left(NEW.cnpj, 8);
-  IF v_escopo IS NOT NULL THEN
-    -- Titular excluído: nada dele fica — nem o cru, nem a máscara na razão (sem o sufixo, o vínculo não o usa).
-    DELETE FROM private.radar_razao_receita WHERE cnpj = NEW.cnpj;
-    NEW.razao_social := btrim(regexp_replace(NEW.razao_social, ' ([0-9]{11}|\*\*\*[0-9]{6}\*\*)$', ''));
-    NEW.socios_nomes := NULL;
-    IF v_escopo = 'contato' THEN
-      NEW.email := NULL; NEW.telefone1 := NULL; NEW.telefone2 := NULL;
-      IF NEW.prospeccao_status IS DISTINCT FROM 'virou_cliente' THEN
-        NEW.prospeccao_status := 'descartado';
-        NEW.descarte_motivo := 'lgpd_oposicao';
-      END IF;
-    END IF;
-    RETURN NEW;
-  END IF;
   IF NEW.razao_social ~ ' [0-9]{11}$' THEN
     INSERT INTO private.radar_razao_receita AS r (cnpj, razao_social) VALUES (NEW.cnpj, NEW.razao_social)
     ON CONFLICT (cnpj) DO UPDATE SET razao_social = EXCLUDED.razao_social, atualizado_em = now()
       WHERE r.razao_social IS DISTINCT FROM EXCLUDED.razao_social;
     NEW.razao_social := private.radar_razao_mascarada(NEW.razao_social);
   END IF;
+  SELECT x.escopo INTO v_escopo FROM public.radar_exclusoes_titular x WHERE x.raiz = left(NEW.cnpj, 8);
+  IF v_escopo IS NOT NULL THEN
+    NEW.socios_nomes := NULL;
+    IF v_escopo = 'contato' THEN
+      NEW.email := NULL; NEW.telefone1 := NULL; NEW.telefone2 := NULL;
+      -- Reabrir o lead (registrar contato) também passa por aqui: a oposição não volta para a fila.
+      IF NEW.prospeccao_status IS DISTINCT FROM 'virou_cliente' THEN
+        NEW.prospeccao_status := 'descartado';
+        NEW.descarte_motivo := 'lgpd_oposicao';
+      END IF;
+    END IF;
+  END IF;
   RETURN NEW;
 END
 $f$;
+REVOKE ALL ON FUNCTION private.radar_carga_privacidade() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION private.radar_empresas_privacidade() FROM PUBLIC, anon, authenticated;
 
+DROP TRIGGER IF EXISTS trg_radar_carga_privacidade ON public.radar_empresas_carga;
+CREATE TRIGGER trg_radar_carga_privacidade
+  BEFORE INSERT OR UPDATE OF razao_social, socios_nomes, email, telefone1, telefone2 ON public.radar_empresas_carga
+  FOR EACH ROW EXECUTE FUNCTION private.radar_carga_privacidade();
 DROP TRIGGER IF EXISTS trg_radar_privacidade ON public.radar_empresas;
 -- Nome < 'trg_radar_status_guard_*': roda ANTES da guarda de status (que vê o 'descartado' do escopo contato).
 CREATE TRIGGER trg_radar_privacidade
-  BEFORE INSERT OR UPDATE OF razao_social, socios_nomes, email, telefone1, telefone2 ON public.radar_empresas
+  BEFORE INSERT OR UPDATE OF razao_social, socios_nomes, email, telefone1, telefone2, prospeccao_status
+  ON public.radar_empresas
   FOR EACH ROW EXECUTE FUNCTION private.radar_empresas_privacidade();
 
 -- Fila do backfill: só as razões ainda cruas (depois do backfill, fica vazia — o trigger não deixa entrar nova).
@@ -160,7 +203,7 @@ CREATE INDEX IF NOT EXISTS idx_radar_empresas_razao_crua ON public.radar_empresa
   WHERE razao_social ~ ' [0-9]{11}$';
 
 -- ------------------------------------------------------------
--- 4. As regras de vínculo aceitam as duas formas (substituição textual do corpo de prod) + ignoram o QSA excluído
+-- 4. As regras de vínculo aceitam as duas formas (substituição textual do corpo de prod; nenhuma outra mudança)
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION private.radar_mascaras_conflitam(p_raiz_a text, p_raiz_b text, p_nome text)
  RETURNS boolean LANGUAGE sql STABLE
@@ -293,7 +336,6 @@ AS $function$
     SELECT c.nome, c.mask, s.raiz, s.qualificacao AS qualif, s.n_raizes_pais AS n_pais
       FROM chave c JOIN public.radar_socios s
         ON s.lote = (SELECT v.lote FROM vig v) AND s.nome_normalizado = c.nome AND s.cpf_mascarado = c.mask
-       AND NOT EXISTS (SELECT 1 FROM public.radar_exclusoes_titular xt WHERE xt.raiz = s.raiz)
     UNION ALL
     SELECT c.nome, c.mask, left(e.cnpj, 8), NULL::text, NULL::integer
       -- Nome do titular NORMALIZADO como a chave (achado Codex P1: o nome cru deixava 'JOÃO' fora da contagem de
@@ -413,18 +455,26 @@ CREATE INDEX idx_radar_empresas_titular_mei_j ON public.radar_empresas
 -- ------------------------------------------------------------
 -- 5. RPCs
 -- ------------------------------------------------------------
--- Razão FISCAL para o cadastro no Omie (única leitura do cru). Mesmo gate da lista. NULL = CNPJ fora do Radar.
+-- Razão FISCAL para o cadastro no Omie (única leitura do cru). Mesmo gate do cadastro (gestor/master); cada leitura
+-- fica registrada. NULL = CNPJ fora do Radar.
 CREATE OR REPLACE FUNCTION public.radar_razao_social_para_cadastro(p_cnpj text)
- RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER
+ RETURNS text LANGUAGE plpgsql VOLATILE SECURITY DEFINER
  SET search_path TO 'public', 'pg_temp'
 AS $f$
+DECLARE
+  v_uid uuid := (SELECT auth.uid());
+  v_razao text;
 BEGIN
-  IF NOT (COALESCE(private.cap_radar_prospectar((SELECT auth.uid())), false)) THEN
-    RAISE EXCEPTION 'forbidden: radar_prospectar' USING ERRCODE = '42501';
+  IF NOT COALESCE(public.pode_ver_carteira_completa(v_uid), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only' USING ERRCODE = '42501';
   END IF;
-  RETURN (SELECT COALESCE(r.razao_social, e.razao_social)
-            FROM public.radar_empresas e LEFT JOIN private.radar_razao_receita r ON r.cnpj = e.cnpj
-           WHERE e.cnpj = p_cnpj);
+  SELECT COALESCE(r.razao_social, e.razao_social) INTO v_razao
+    FROM public.radar_empresas e LEFT JOIN private.radar_razao_receita r ON r.cnpj = e.cnpj
+   WHERE e.cnpj = p_cnpj;
+  IF FOUND THEN
+    INSERT INTO private.radar_razao_receita_acessos (user_id, cnpj) VALUES (v_uid, p_cnpj);
+  END IF;
+  RETURN v_razao;
 END
 $f$;
 REVOKE ALL ON FUNCTION public.radar_razao_social_para_cadastro(text) FROM PUBLIC, anon;
@@ -436,22 +486,19 @@ CREATE OR REPLACE FUNCTION private.radar_exclusoes_aplicar(p_raiz text DEFAULT N
  SET search_path TO 'public', 'pg_temp'
 AS $f$
 DECLARE
-  v_soc integer;
-  v_emp integer;
-  v_not integer;
+  v_emp integer := 0;
+  v_not integer := 0;
 BEGIN
-  DELETE FROM public.radar_socios s
-   USING public.radar_exclusoes_titular x
-   WHERE x.raiz = s.raiz AND (p_raiz IS NULL OR x.raiz = p_raiz);
-  GET DIAGNOSTICS v_soc = ROW_COUNT;
+  IF NOT EXISTS (SELECT 1 FROM public.radar_exclusoes_titular x WHERE p_raiz IS NULL OR x.raiz = p_raiz) THEN
+    RETURN jsonb_build_object('empresas_reaplicadas', 0, 'notas_apagadas', 0);
+  END IF;
   -- Reescrever a coluna dispara o trigger de entrada, que é quem sabe o que zerar (uma só cópia da regra).
   UPDATE public.radar_empresas e SET socios_nomes = e.socios_nomes
     FROM public.radar_exclusoes_titular x
    WHERE x.raiz = left(e.cnpj, 8) AND (p_raiz IS NULL OR x.raiz = p_raiz)
-     AND (e.socios_nomes IS NOT NULL OR e.razao_social ~ ' ([0-9]{11}|\*\*\*[0-9]{6}\*\*)$'
+     AND (e.socios_nomes IS NOT NULL
           OR (x.escopo = 'contato' AND (e.email IS NOT NULL OR e.telefone1 IS NOT NULL OR e.telefone2 IS NOT NULL
-                                         OR e.prospeccao_status NOT IN ('descartado', 'virou_cliente')))
-          OR EXISTS (SELECT 1 FROM private.radar_razao_receita r WHERE r.cnpj = e.cnpj));
+                                         OR e.prospeccao_status NOT IN ('descartado', 'virou_cliente'))));
   GET DIAGNOSTICS v_emp = ROW_COUNT;
   -- Oposição ao contato: o texto livre que o vendedor escreveu sobre a pessoa sai já (o evento fica).
   UPDATE public.radar_contatos c SET nota = NULL
@@ -459,12 +506,13 @@ BEGIN
    WHERE x.escopo = 'contato' AND x.raiz = left(c.cnpj, 8) AND (p_raiz IS NULL OR x.raiz = p_raiz)
      AND c.nota IS NOT NULL;
   GET DIAGNOSTICS v_not = ROW_COUNT;
-  RETURN jsonb_build_object('socios_apagados', v_soc, 'empresas_reaplicadas', v_emp, 'notas_apagadas', v_not);
+  RETURN jsonb_build_object('empresas_reaplicadas', v_emp, 'notas_apagadas', v_not);
 END
 $f$;
 REVOKE ALL ON FUNCTION private.radar_exclusoes_aplicar(text) FROM PUBLIC, anon, authenticated;
 
--- Registro pelo Encarregado (master ou servidor/SQL Editor). Aplica na hora; a ingestão e o expurgo mantêm.
+-- Registro pelo Encarregado (master pelo app, ou o servidor/SQL Editor — sem JWT). Aplica na hora; a ingestão e o
+-- job mantêm. Cada pedido entra no histórico.
 CREATE OR REPLACE FUNCTION public.radar_exclusao_registrar(p_raiz text, p_escopo text, p_finalidade text,
                                                           p_protocolo text DEFAULT NULL)
  RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
@@ -472,7 +520,10 @@ CREATE OR REPLACE FUNCTION public.radar_exclusao_registrar(p_raiz text, p_escopo
 AS $f$
 DECLARE
   v_uid uuid := (SELECT auth.uid());
+  v_pedido jsonb;
 BEGIN
+  -- Sem JWT só chega quem não passa pelo PostgREST como authenticated/anon (anon não tem EXECUTE; todo JWT
+  -- authenticated tem sub): o service_role e o dono, no SQL Editor.
   IF v_uid IS NOT NULL AND NOT public.has_role(v_uid, 'master'::public.app_role) THEN
     RAISE EXCEPTION 'forbidden: só o master registra exclusão de titular' USING ERRCODE = '42501';
   END IF;
@@ -485,13 +536,16 @@ BEGIN
   IF p_finalidade IS NULL OR length(btrim(p_finalidade)) NOT BETWEEN 10 AND 500 THEN
     RAISE EXCEPTION 'finalidade obrigatória (10 a 500 caracteres)' USING ERRCODE = '22023';
   END IF;
-  INSERT INTO public.radar_exclusoes_titular AS x (raiz, escopo, finalidade, protocolo, registrado_por)
-  VALUES (p_raiz, p_escopo, btrim(p_finalidade), p_protocolo, v_uid)
+  v_pedido := jsonb_build_object('escopo', p_escopo, 'finalidade', btrim(p_finalidade), 'protocolo', p_protocolo,
+                                 'por', v_uid, 'em', now());
+  INSERT INTO public.radar_exclusoes_titular AS x (raiz, escopo, finalidade, protocolo, registrado_por, pedidos)
+  VALUES (p_raiz, p_escopo, btrim(p_finalidade), p_protocolo, v_uid, jsonb_build_array(v_pedido))
   ON CONFLICT (raiz) DO UPDATE
-    -- Escopo só AMPLIA (qsa → contato): um 2º pedido nunca devolve dado que o 1º tirou.
+    -- Escopo só AMPLIA (qsa → contato): um 2º pedido nunca devolve dado que o 1º tirou. O 1º registro fica; o
+    -- histórico guarda todos.
     SET escopo = CASE WHEN x.escopo = 'contato' THEN 'contato' ELSE EXCLUDED.escopo END,
-        finalidade = EXCLUDED.finalidade, protocolo = COALESCE(EXCLUDED.protocolo, x.protocolo),
-        registrado_por = EXCLUDED.registrado_por, registrado_em = now();
+        protocolo = COALESCE(x.protocolo, EXCLUDED.protocolo),
+        pedidos = x.pedidos || v_pedido;
   RETURN jsonb_build_object('raiz', p_raiz,
                             'escopo', (SELECT escopo FROM public.radar_exclusoes_titular WHERE raiz = p_raiz))
          || private.radar_exclusoes_aplicar(p_raiz);
@@ -500,7 +554,7 @@ $f$;
 REVOKE ALL ON FUNCTION public.radar_exclusao_registrar(text, text, text, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.radar_exclusao_registrar(text, text, text, text) TO authenticated, service_role;
 
--- O job: retenção das notas + fim do backfill da máscara + reaplicação das exclusões. Entrypoint de cron.
+-- O job: retenção das notas + fim do backfill da máscara + higiene do cru + reaplicação das exclusões.
 CREATE OR REPLACE FUNCTION public.radar_privacidade_expurgo(p_lote integer DEFAULT 10000, p_meses integer DEFAULT 12)
  RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
  SET search_path TO 'public', 'pg_temp'
@@ -509,33 +563,53 @@ DECLARE
   v_ini timestamptz := clock_timestamp();
   v_masc integer;
   v_notas integer;
+  v_orfaos integer;
+  v_acessos integer;
   v_exc jsonb;
   v_res jsonb;
+  v_status text := 'sucesso';
 BEGIN
   IF p_lote IS NULL OR p_lote < 1 OR p_lote > 50000 OR p_meses IS NULL OR p_meses < 6 THEN
     RAISE EXCEPTION 'parâmetro inválido (lote 1..50000, meses ≥ 6)' USING ERRCODE = '22023';
   END IF;
-  -- (a) backfill: razão ainda crua → o trigger mascara e guarda o cru. Linha em edição fica para a próxima.
-  UPDATE public.radar_empresas e SET razao_social = e.razao_social
-   WHERE e.cnpj IN (SELECT c.cnpj FROM public.radar_empresas c WHERE c.razao_social ~ ' [0-9]{11}$'
-                     ORDER BY c.cnpj LIMIT p_lote FOR UPDATE SKIP LOCKED);
-  GET DIAGNOSTICS v_masc = ROW_COUNT;
-  -- (b) retenção: texto livre de lead descartado há mais de p_meses. A nota automática da situação RFB fica.
-  UPDATE public.radar_contatos c SET nota = NULL
-    FROM public.radar_empresas e
-   WHERE e.cnpj = c.cnpj AND e.prospeccao_status = 'descartado'
-     AND e.prospeccao_atualizado_em < now() - make_interval(months => p_meses)
-     AND c.nota IS NOT NULL
-     AND c.nota !~ '^RFB: [A-Z]+ em [0-9]{2}/[0-9]{2}/[0-9]{4}';
-  GET DIAGNOSTICS v_notas = ROW_COUNT;
-  -- (c) exclusões: o que a carga do mês trouxe de volta sai de novo.
-  v_exc := private.radar_exclusoes_aplicar(NULL);
-  v_res := jsonb_build_object('razoes_mascaradas', v_masc,
-                              'razoes_cruas_restantes', (SELECT count(*) FROM public.radar_empresas WHERE razao_social ~ ' [0-9]{11}$'),
-                              'notas_expurgadas', v_notas) || v_exc;
+  BEGIN
+    -- (a) backfill: razão ainda crua → o trigger mascara e guarda o cru. Linha em edição fica para a próxima.
+    UPDATE public.radar_empresas e SET razao_social = e.razao_social
+     WHERE e.cnpj IN (SELECT c.cnpj FROM public.radar_empresas c WHERE c.razao_social ~ ' [0-9]{11}$'
+                       ORDER BY c.cnpj LIMIT p_lote FOR UPDATE SKIP LOCKED);
+    GET DIAGNOSTICS v_masc = ROW_COUNT;
+    -- (b) retenção: texto livre de lead descartado há mais de p_meses. A nota automática (autor = usuário de
+    --     sistema, a da situação RFB) fica.
+    UPDATE public.radar_contatos c SET nota = NULL
+      FROM public.radar_empresas e
+     WHERE e.cnpj = c.cnpj AND e.prospeccao_status = 'descartado'
+       AND COALESCE(e.prospeccao_atualizado_em, c.created_at) < now() - make_interval(months => p_meses)
+       AND c.nota IS NOT NULL
+       AND c.criado_por IS DISTINCT FROM '00000000-0000-0000-0000-00000000ad0f'::uuid;
+    GET DIAGNOSTICS v_notas = ROW_COUNT;
+    -- (c) higiene: o cru de CNPJ que não está no Radar nem no staging (carga abortada, empresa que saiu).
+    DELETE FROM private.radar_razao_receita r
+     WHERE NOT EXISTS (SELECT 1 FROM public.radar_empresas e WHERE e.cnpj = r.cnpj)
+       AND NOT EXISTS (SELECT 1 FROM public.radar_empresas_carga k WHERE k.cnpj = r.cnpj);
+    GET DIAGNOSTICS v_orfaos = ROW_COUNT;
+    DELETE FROM private.radar_razao_receita_acessos WHERE lido_em < now() - make_interval(months => p_meses);
+    GET DIAGNOSTICS v_acessos = ROW_COUNT;
+    -- (d) exclusões: o que a carga do mês trouxe de volta sai de novo.
+    v_exc := private.radar_exclusoes_aplicar(NULL);
+    v_res := jsonb_build_object('razoes_mascaradas', v_masc,
+                                'razoes_cruas_restantes', (SELECT count(*) FROM public.radar_empresas WHERE razao_social ~ ' [0-9]{11}$'),
+                                'notas_expurgadas', v_notas, 'cru_orfao_apagado', v_orfaos, 'acessos_expirados', v_acessos) || v_exc;
+  EXCEPTION
+    WHEN lock_not_available OR deadlock_detected THEN
+      v_status := 'erro';
+      v_res := jsonb_build_object('adiado', SQLSTATE, 'motivo', left(SQLERRM, 300));
+    WHEN OTHERS THEN
+      v_status := 'erro';
+      v_res := jsonb_build_object('falhou', left(SQLSTATE || ': ' || SQLERRM, 500));
+  END;
   INSERT INTO public.acoes_execucoes (acao, origem, iniciado_em, finalizado_em, status, detalhes)
-  VALUES ('radar.privacidade_expurgo', 'automatica', v_ini, clock_timestamp(), 'sucesso', v_res);
-  RETURN v_res;
+  VALUES ('radar.privacidade_expurgo', 'automatica', v_ini, clock_timestamp(), v_status, v_res);
+  RETURN v_res || jsonb_build_object('status', v_status);
 END
 $f$;
 REVOKE ALL ON FUNCTION public.radar_privacidade_expurgo(integer, integer) FROM PUBLIC, anon, authenticated;
@@ -550,7 +624,7 @@ BEGIN
     PERFORM cron.unschedule('radar-privacidade-expurgo');
   END IF;
   PERFORM cron.schedule('radar-privacidade-expurgo', '41 * * * *',
-    $$SET statement_timeout = '10min'; SELECT public.radar_privacidade_expurgo();$$);
+    $$SET statement_timeout = '10min'; SET lock_timeout = '30s'; SELECT public.radar_privacidade_expurgo();$$);
 END
 $cron$;
 
@@ -559,6 +633,8 @@ DROP INDEX IF EXISTS public.idx_radar_empresas_titular_mei_norm;
 DROP INDEX IF EXISTS public.idx_radar_empresas_titular_mei;
 ALTER INDEX public.idx_radar_empresas_titular_mei_norm_j RENAME TO idx_radar_empresas_titular_mei_norm;
 ALTER INDEX public.idx_radar_empresas_titular_mei_j RENAME TO idx_radar_empresas_titular_mei;
+-- Índice de expressão nasce sem estatística: sem ANALYZE, o plano do vínculo pode errar até o autovacuum.
+ANALYZE public.radar_empresas;
 
 -- ------------------------------------------------------------
 -- 7. Postcondição
@@ -568,19 +644,22 @@ DECLARE
   v_bs text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('private.radar_vinculos_base(text[],boolean,boolean)'));
   v_mc text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('private.radar_mascaras_conflitam(text,text,text)'));
 BEGIN
-  IF v_bs IS DISTINCT FROM 'b57e91ea6d82e81ce4c517edac0697c6' OR v_mc IS DISTINCT FROM '9989b503992ae3afc8ef7a4c1af3cb4b' THEN
+  IF v_bs IS DISTINCT FROM '0de269faec15688b274b9085b49dfb53' OR v_mc IS DISTINCT FROM '9989b503992ae3afc8ef7a4c1af3cb4b' THEN
     RAISE EXCEPTION 'P1 FALHOU: corpo das regras de vínculo não é o desta migration (base %, conflitam %)', v_bs, v_mc;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_radar_privacidade'
-                    AND tgrelid = 'public.radar_empresas'::regclass AND tgenabled = 'O') THEN
-    RAISE EXCEPTION 'P2 FALHOU: trigger trg_radar_privacidade ausente/desligado — a razão de MEI seguiria crua';
+  IF (SELECT count(*) FROM pg_trigger
+       WHERE (tgname, tgrelid) IN (('trg_radar_privacidade', 'public.radar_empresas'::regclass),
+                                   ('trg_radar_carga_privacidade', 'public.radar_empresas_carga'::regclass))
+         AND tgenabled = 'O') <> 2 THEN
+    RAISE EXCEPTION 'P2 FALHOU: trigger de privacidade ausente/desligado (foto ou staging) — a razão de MEI seguiria crua';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                   WHERE n.nspname = 'public' AND c.relname = 'radar_exclusoes_titular' AND c.relrowsecurity)
      OR has_table_privilege('authenticated', 'public.radar_exclusoes_titular', 'SELECT')
      OR has_table_privilege('authenticated', 'private.radar_razao_receita', 'SELECT')
-     OR has_table_privilege('anon', 'private.radar_razao_receita', 'SELECT') THEN
-    RAISE EXCEPTION 'P3 FALHOU: exclusões/razão fiscal abertas ao JWT';
+     OR has_table_privilege('anon', 'private.radar_razao_receita', 'SELECT')
+     OR has_table_privilege('authenticated', 'private.radar_razao_receita_acessos', 'SELECT') THEN
+    RAISE EXCEPTION 'P3 FALHOU: exclusões/razão fiscal/registro de acesso abertos ao JWT';
   END IF;
   IF has_function_privilege('anon', 'public.radar_razao_social_para_cadastro(text)', 'EXECUTE')
      OR has_function_privilege('anon', 'public.radar_exclusao_registrar(text,text,text,text)', 'EXECUTE')

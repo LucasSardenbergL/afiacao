@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Prova PG17 do pacote J do Radar (privacidade/LGPD), migration 20261111130000:
+# Prova PG17 do pacote J do Radar (privacidade/LGPD), migration 20261111150000:
 #   E*  o vínculo e o aviso de crédito decidem EXATAMENTE o mesmo com a razão crua (antes), com a migration sobre a
 #       razão crua (durante) e depois do backfill da máscara — o CPF completo nunca foi insumo, só a máscara.
 #   M*  a razão de MEI é GRAVADA mascarada por qualquer escritor (INSERT, upsert da publicação com EXCLUDED, UPDATE),
 #       a contagem da publicação não muda, nenhuma linha de radar_empresas fica com o CPF, o cru só existe no
 #       private e só o cadastro Omie o lê; buscar pelos 11 dígitos não acha mais o MEI.
-#   X*  exclusão de titular: registro (gate, escopo que só amplia), efeito imediato, resiste à recarga (upsert cru de
-#       novo, lote novo de sócios com a raiz) e o vínculo ignora a raiz antes mesmo do expurgo.
+#   P*  a publicação EM PASSOS (UPDATE … IS DISTINCT FROM staging × foto, como a 20261111120000): o staging também
+#       mascara, então MEI que não mudou não é reescrito (0 linhas) e o MEI novo entra mascarado.
+#   X*  exclusão de titular: registro (gate, escopo que só amplia, histórico), efeito imediato, resiste à recarga
+#       (staging e upsert crus de novo) e ao "reabrir" o lead; NÃO mexe no vínculo/aviso de crédito (art. 7º X).
 #   R*  retenção: nota livre de lead descartado há > 12 meses sai; a nota automática da RFB e a recente ficam.
 #   G*  ACL: nada novo aberto ao JWT além do previsto.
 # Aplica as migrations REAIS da cadeia do vínculo (20261104201756 → 20261106083754 → 20261106205557 → 20261107040000)
@@ -25,11 +27,11 @@ MIG_P2="$MIGS/20261106205557_credito_aviso_vinculo_vencido.sql"
 MIG_PRAZO="$MIGS/20261031200000_venda_prazo_decisao.sql"
 MIG_DOC="$MIGS/20261019140000_omie_identidade_cnpj_alfanumerico.sql"
 MIG_SOC="$MIGS/20261107040000_radar_socios_cpf_mascarado.sql"
-MIG="$MIGS/20261111130000_radar_privacidade_titular_mei.sql"
+MIG="$MIGS/20261111150000_radar_privacidade_titular_mei.sql"
 PROVA_P2="$REPO_ROOT/db/test-credito-vinculo-aviso.sh"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_trigger:M1 mascara_errada:E2 regra_so_crua:E2 sem_filtro_exclusao:X3 exclusao_sem_ingestao:X4 reter_tudo:R1 apaga_rfb:R2 cadastro_aberto:G3 escopo_regride:X6 deriva:pre"
+  SABOTAGENS="sem_trigger:M1 mascara_errada:E2 regra_so_crua:E2 nome_final_cru:E2 staging_cru:P1 exclusao_sem_ingestao:X4 status_fora_do_trigger:X6b reter_tudo:R1 apaga_rfb:R2 cadastro_aberto:M5v acesso_sem_registro:M5 escopo_regride:X6 bump_updated_at:U1 deriva:pre"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-privacidade.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -99,16 +101,25 @@ case "${SABOTAGEM:-}" in
            private.radar_mascara_cpf(substring(l.razao_social FROM ' ([0-9]{11})\$'))
       FROM lead l
      WHERE l.razao_social ~ ' [0-9]{11}\$'" ;;
-  sem_filtro_exclusao)  cegar_md5; sabotar "
-       AND NOT EXISTS (SELECT 1 FROM public.radar_exclusoes_titular xt WHERE xt.raiz = s.raiz)" "" ;;
-  exclusao_sem_ingestao) sabotar "  SELECT x.escopo INTO v_escopo FROM public.radar_exclusoes_titular x WHERE x.raiz = left(NEW.cnpj, 8);" "  v_escopo := NULL;" ;;
-  reter_tudo)           sabotar "     AND e.prospeccao_atualizado_em < now() - make_interval(months => p_meses)" "     AND false" ;;
-  apaga_rfb)            sabotar "     AND c.nota !~ '^RFB: [A-Z]+ em [0-9]{2}/[0-9]{2}/[0-9]{4}';" "     ;" ;;
-  cadastro_aberto)      sabotar "  IF NOT (COALESCE(private.cap_radar_prospectar((SELECT auth.uid())), false)) THEN
-    RAISE EXCEPTION 'forbidden: radar_prospectar' USING ERRCODE = '42501';
-  END IF;
-  RETURN (SELECT COALESCE(r.razao_social" "  RETURN (SELECT COALESCE(r.razao_social" ;;
+  nome_final_cru)       cegar_md5; sabotar "regexp_replace(COALESCE(v.nome_radar, v.nome_perfil), ' ([0-9]{11}|\*\*\*[0-9]{6}\*\*)\$', '') AS nome," "regexp_replace(COALESCE(v.nome_radar, v.nome_perfil), ' [0-9]{11}\$', '') AS nome," ;;
+  staging_cru)          sabotar "  FOR EACH ROW EXECUTE FUNCTION private.radar_carga_privacidade();" "  FOR EACH ROW WHEN (false) EXECUTE FUNCTION private.radar_carga_privacidade();" ;;
+  status_fora_do_trigger) sabotar "  BEFORE INSERT OR UPDATE OF razao_social, socios_nomes, email, telefone1, telefone2, prospeccao_status" "  BEFORE INSERT OR UPDATE OF razao_social, socios_nomes, email, telefone1, telefone2" ;;
+  acesso_sem_registro)  sabotar "    INSERT INTO private.radar_razao_receita_acessos (user_id, cnpj) VALUES (v_uid, p_cnpj);" "    NULL;" ;;
+  exclusao_sem_ingestao) python3 -I - "$MIG_USADA" <<'PY2'
+import sys
+p = sys.argv[1]; s = open(p, encoding="utf-8").read()
+a = "  SELECT x.escopo INTO v_escopo FROM public.radar_exclusoes_titular x WHERE x.raiz = left(NEW.cnpj, 8);"
+assert s.count(a) == 2
+open(p, "w", encoding="utf-8").write(s.replace(a, "  v_escopo := NULL;"))
+PY2
+    ;;
+  reter_tudo)           sabotar "       AND COALESCE(e.prospeccao_atualizado_em, c.created_at) < now() - make_interval(months => p_meses)" "       AND false" ;;
+  apaga_rfb)            sabotar "       AND c.criado_por IS DISTINCT FROM '00000000-0000-0000-0000-00000000ad0f'::uuid;" "       ;" ;;
+  cadastro_aberto)      sabotar "  IF NOT COALESCE(public.pode_ver_carteira_completa(v_uid), false) THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only' USING ERRCODE = '42501';" "  IF false THEN
+    RAISE EXCEPTION 'forbidden: gestor/master only' USING ERRCODE = '42501';" ;;
   escopo_regride)       sabotar "SET escopo = CASE WHEN x.escopo = 'contato' THEN 'contato' ELSE EXCLUDED.escopo END," "SET escopo = EXCLUDED.escopo," ;;
+  bump_updated_at)      sabotar "      -- Reabrir o lead (registrar contato) também passa por aqui: a oposição não volta para a fila." "      NEW.updated_at := now();" ;;
   deriva)               ;;  # outra sessão mudou a base viva depois do pré-voo: a PRE tem de abortar o apply
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
@@ -151,6 +162,7 @@ eq_pre 'private.radar_mascaras_conflitam(text,text,text)' b2c9922a1d5d0fb767e905
 # O que a migration toca e a prova do passo 2 não tinha (colunas reais de prod; cron e ledger como em prod).
 P -q <<'SQL' >/dev/null
 ALTER TABLE public.radar_empresas ADD COLUMN nome_fantasia text, ADD COLUMN prospeccao_atualizado_em timestamptz,
+  ADD COLUMN updated_at timestamptz NOT NULL DEFAULT '2026-11-01 06:00:00+00',
   ADD COLUMN descarte_motivo text, ADD COLUMN ultimo_lote text;
 CREATE TABLE public.radar_contatos (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   cnpj text NOT NULL REFERENCES public.radar_empresas (cnpj) ON DELETE CASCADE, acao text NOT NULL, nota text,
@@ -158,6 +170,10 @@ CREATE TABLE public.radar_contatos (id uuid PRIMARY KEY DEFAULT gen_random_uuid(
 CREATE TABLE public.acoes_execucoes (id bigserial PRIMARY KEY, acao text NOT NULL,
   origem text NOT NULL CHECK (origem IN ('manual', 'automatica')), iniciado_em timestamptz, finalizado_em timestamptz,
   status text NOT NULL CHECK (status IN ('executando', 'sucesso', 'erro')), detalhes jsonb);
+CREATE TABLE public.radar_empresas_carga (lote text NOT NULL, cnpj text NOT NULL, razao_social text, nome_fantasia text,
+  telefone1 text, telefone2 text, email text, socios_nomes text, PRIMARY KEY (lote, cnpj));
+CREATE FUNCTION public.pode_ver_carteira_completa(p uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS
+  $$ SELECT p = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid $$;
 CREATE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS
   $$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role) $$;
 CREATE SCHEMA cron;
@@ -199,7 +215,9 @@ Pq -c "INSERT INTO public.radar_empresas (cnpj, razao_social, ja_cliente, telefo
   ('31000011000101','A11 LTDA',false,NULL,'M1',NULL,'02'),
   ('41000011000101','CA11 LTDA',true,NULL,'M2',NULL,'02'),
   ('39000011000101','JOÃO DA SILVA 99945678901',false,NULL,'M2',NULL,'02'),
-  ('41000021000101','TITULAR CLIENTE MEI 55566677788',true,NULL,'M1','OUTRO SOCIO NOME','02');
+  ('41000021000101','TITULAR CLIENTE MEI 55566677788',true,'(37) 99990021','M1','OUTRO SOCIO NOME','02'),
+  ('31000021000101','LIGADO AO MEI LTDA',false,'(37) 99990021','M1',NULL,'02');
+UPDATE public.radar_empresas SET email = 'titular.mei@empresa.com.br' WHERE cnpj IN ('41000021000101', '31000021000101');
 UPDATE public.radar_empresas SET email = 'ze.mei@gmail.com' WHERE cnpj = '31000012000101';
 INSERT INTO public.profiles (user_id, document, razao_social, name, phone, email) VALUES
   ('00000000-0000-0000-0000-000000000001','41.000.001/0001-01','CA1 VELHA LTDA',NULL,NULL,NULL),
@@ -278,6 +296,7 @@ foto_conflito() { # a guarda da regra por nome, para todo par de raízes × nome
 }
 foto_base > "$DIR/base-antes.txt"; foto_aviso > "$DIR/aviso-antes.txt"; foto_conflito > "$DIR/conf-antes.txt"
 [ "$(grep -c socio_cpf "$DIR/base-antes.txt")" -gt 0 ] || { echo "FAIL X0 harness: a foto de antes não tem socio_cpf (fixture morta)"; exit 1; }
+grep -q '|TITULAR CLIENTE MEI|' "$DIR/base-antes.txt" || { echo "FAIL X0 harness: sem vínculo com cliente MEI na foto (o nome de saída ficaria sem prova)"; exit 1; }
 
 if [ "${SABOTAGEM:-}" = "deriva" ]; then
   P -q -c "CREATE OR REPLACE FUNCTION private.radar_mascaras_conflitam(p_raiz_a text, p_raiz_b text, p_nome text)
@@ -289,6 +308,10 @@ P -q -1 -f "$MIG_USADA" > "$DIR/apply.log" 2>&1 || { cat "$DIR/apply.log"; exit 
 P -q -1 -f "$MIG_USADA" > "$DIR/apply2.log" 2>&1 || { echo "FAIL X1 re-apply"; cat "$DIR/apply2.log"; exit 1; }
 
 PASS=0; FAIL=0
+# A fotografia do updated_at de quem já existia: o contato contábil (K2) lê "updated_at > calculado_em" como "não sei".
+CNPJS_FIXTURE=$(Pq -c "SELECT string_agg(quote_literal(cnpj), ',') FROM public.radar_empresas")
+upd_foto() { Pq -c "SELECT md5(string_agg(cnpj || '@' || updated_at::text, ',' ORDER BY cnpj)) FROM public.radar_empresas WHERE cnpj IN ($CNPJS_FIXTURE)"; }
+UPD_ANTES=$(upd_foto)
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
 tem() { if printf '%s' "$2" | grep -qF -- "$3"; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — [$3] ausente em [$2]"; FAIL=$((FAIL+1)); fi; }
 igual() { diff "$1" "$2" > /dev/null && echo igual || { diff "$1" "$2" | head -6 >&2; echo diferente; }; }
@@ -308,22 +331,58 @@ eq E2 "$(igual "$DIR/base-antes.txt" "$DIR/base-depois.txt")|$(igual "$DIR/aviso
 eq E3 "$(Pq -c "SELECT string_agg(cliente_cnpj || ':' || array_to_string(sinais, '+'), ',') FROM private.radar_vinculos_base(ARRAY['31000006000101'], true, false)")" "41000006000101:socio_cpf"
 # M2: o cru está no private (só ele) e o job registrou no ledger.
 eq M2 "$(Pq -c "SELECT razao_social FROM private.radar_razao_receita WHERE cnpj = '31000006000101'")|$(Pq -c "SELECT count(*) FROM public.acoes_execucoes WHERE acao = 'radar.privacidade_expurgo' AND status = 'sucesso'")" "PEDRO ALVES COSTA 12345678901|5"
-# M3: o upsert da PUBLICAÇÃO (EXCLUDED do ON CONFLICT, conta exata) grava mascarado — linha nova e linha existente.
+
+# ── Publicação em passos (o formato da 20261111120000): staging cru → foto, "só o que difere" ──
+# O staging recebe como radar_carga_receber (upsert por lote+cnpj): 1 MEI que não mudou, 1 MEI novo, 1 não-MEI.
+Pq -c "INSERT INTO public.radar_empresas_carga AS c (lote, cnpj, razao_social, socios_nomes, email, telefone1, telefone2) VALUES
+         ('2026-12', '31000006000101', 'PEDRO ALVES COSTA 12345678901', NULL, NULL, NULL, NULL),
+         ('2026-12', '32000001000101', 'NOVA MEI SILVA 98765432100', NULL, NULL, NULL, NULL),
+         ('2026-12', '31000002000101', 'A2 LTDA', 'JOSE CARLOS NUNES', NULL, NULL, NULL)
+       ON CONFLICT (lote, cnpj) DO UPDATE SET razao_social = EXCLUDED.razao_social;" >/dev/null
+P1=$(Pq <<'SQL'
+WITH u AS (
+  UPDATE public.radar_empresas e SET razao_social = c.razao_social, socios_nomes = c.socios_nomes, email = c.email,
+         telefone1 = c.telefone1, telefone2 = c.telefone2
+    FROM public.radar_empresas_carga c
+   WHERE c.lote = '2026-12' AND e.cnpj = c.cnpj
+     AND (e.razao_social, e.socios_nomes, e.email, e.telefone1, e.telefone2)
+         IS DISTINCT FROM (c.razao_social, c.socios_nomes, c.email, c.telefone1, c.telefone2)
+  RETURNING 1)
+SELECT count(*) FROM u;
+SQL
+)
+P1i=$(Pq <<'SQL'
+WITH i AS (
+  INSERT INTO public.radar_empresas (cnpj, razao_social, socios_nomes)
+  SELECT c.cnpj, c.razao_social, c.socios_nomes FROM public.radar_empresas_carga c WHERE c.lote = '2026-12'
+  ON CONFLICT (cnpj) DO NOTHING RETURNING 1)
+SELECT count(*) FROM i;
+SQL
+)
+# P1: o staging guarda a forma mascarada; o MEI que não mudou NÃO é reescrito (0); o novo entra (1), mascarado.
+eq P1 "$(Pq -c "SELECT razao_social FROM public.radar_empresas_carga WHERE cnpj = '31000006000101'")|$P1|$P1i|$(Pq -c "SELECT razao_social FROM public.radar_empresas WHERE cnpj = '32000001000101'")|$(Pq -c "SELECT razao_social FROM private.radar_razao_receita WHERE cnpj = '32000001000101'")" \
+  "PEDRO ALVES COSTA ***456789**|0|1|NOVA MEI SILVA ***654321**|NOVA MEI SILVA 98765432100"
+# M3: o upsert clássico (EXCLUDED do ON CONFLICT, como a publicação atômica) também grava mascarado, conta exata.
 M3=$(Pq <<'SQL'
-WITH c(cnpj, razao_social) AS (VALUES ('31000006000101', 'PEDRO ALVES COSTA 12345678901'), ('32000001000101', 'NOVA MEI SILVA 98765432100'))
+WITH c(cnpj, razao_social) AS (VALUES ('31000016000101', 'RITA MELO DIAS 11122233344'), ('32000002000101', 'OUTRA MEI LIMA 12312312312'))
 , ins AS (
   INSERT INTO public.radar_empresas AS e (cnpj, razao_social) SELECT cnpj, razao_social FROM c
   ON CONFLICT (cnpj) DO UPDATE SET razao_social = EXCLUDED.razao_social RETURNING 1)
 SELECT count(*) FROM ins;
 SQL
 )
-eq M3 "$M3|$(Pq -c "SELECT string_agg(razao_social, ',' ORDER BY cnpj) FROM public.radar_empresas WHERE cnpj IN ('31000006000101', '32000001000101')")|$(Pq -c "SELECT razao_social FROM private.radar_razao_receita WHERE cnpj = '32000001000101'")" \
-  "2|PEDRO ALVES COSTA ***456789**,NOVA MEI SILVA ***654321**|NOVA MEI SILVA 98765432100"
+eq M3 "$M3|$(Pq -c "SELECT string_agg(razao_social, ',' ORDER BY cnpj) FROM public.radar_empresas WHERE cnpj IN ('31000016000101', '32000002000101')")" \
+  "2|RITA MELO DIAS ***222333**,OUTRA MEI LIMA ***123123**"
 # M4: buscar pelos 11 dígitos não acha mais o MEI; pelo nome acha (a busca da lista é ILIKE na razão).
 eq M4 "$(Pq -c "SELECT count(*) FROM public.radar_empresas WHERE razao_social ILIKE '%12345678901%'")|$(Pq -c "SELECT count(*) FROM public.radar_empresas WHERE razao_social ILIKE '%PEDRO ALVES%'")" "0|1"
-# M5: a razão FISCAL para o cadastro no Omie: o vendedor do Radar recebe o cru (só por aqui); não-MEI vem como está.
-eq M5 "$(sql_como "$VENDEDOR" "SELECT public.radar_razao_social_para_cadastro('31000006000101');" | tail -1)|$(sql_como "$VENDEDOR" "SELECT public.radar_razao_social_para_cadastro('31000001000101');" | tail -1)" \
-  "PEDRO ALVES COSTA 12345678901|A1 NOVA LTDA"
+# M5: a razão FISCAL para o cadastro no Omie: o gestor (o gate do cadastro) recebe o cru, e a leitura fica registrada;
+#     o vendedor e o customer não (42501); não-MEI vem como está.
+M5g=$(sql_como "$GESTOR" "SELECT public.radar_razao_social_para_cadastro('31000006000101');" | tail -1)
+M5n=$(sql_como "$GESTOR" "SELECT public.radar_razao_social_para_cadastro('31000001000101');" | tail -1)
+eq M5 "$M5g|$M5n|$(Pq -c "SELECT count(*) FROM private.radar_razao_receita_acessos WHERE user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' AND cnpj = '31000006000101'")" \
+  "PEDRO ALVES COSTA 12345678901|A1 NOVA LTDA|1"
+tem M5v "$(sql_como "$VENDEDOR" "SELECT public.radar_razao_social_para_cadastro('31000006000101');")" "42501"
+tem M5c "$(sql_como "$CUSTOMER" "SELECT public.radar_razao_social_para_cadastro('31000006000101');")" "42501"
 # M6: nenhuma função que o JWT executa lê o cru, salvo a do cadastro (varredura de catálogo).
 eq M6 "$(Pq -c "SELECT coalesce(string_agg(p.oid::regprocedure::text, ','), '-') FROM pg_proc p
                  WHERE p.prosrc LIKE '%radar_razao_receita%' AND has_function_privilege('authenticated', p.oid, 'EXECUTE')")" \
@@ -331,60 +390,77 @@ eq M6 "$(Pq -c "SELECT coalesce(string_agg(p.oid::regprocedure::text, ','), '-')
 
 # ── Exclusão de titular ──
 # X1: só o master registra; escopo e finalidade validados.
-tem X1 "$(sql_como "$VENDEDOR" "SELECT public.radar_exclusao_registrar('31000001', 'qsa', 'pedido de oposição do titular');")|$(sql_como "$GESTOR" "SELECT public.radar_exclusao_registrar('31000001', 'tudo', 'pedido de oposição do titular');")" "42501"
+tem X1 "$(sql_como "$VENDEDOR" "SELECT public.radar_exclusao_registrar('31000001', 'qsa', 'pedido de oposição do titular');")" "42501"
 tem X1b "$(sql_como "$GESTOR" "SELECT public.radar_exclusao_registrar('31000001', 'tudo', 'pedido de oposição do titular');")" "22023"
-# X2: sócio de A1 (S1: mesmo sócio por CPF parcial) pede oposição → o vínculo some, o QSA e os nomes da raiz saem.
-eq X2pre "$(Pq -c "SELECT string_agg(cliente_cnpj, ',') FROM private.radar_vinculos_base(ARRAY['31000001000101'], false, false) WHERE 'socio_cpf' = ANY (sinais)")" "41000001000101"
+tem X1c "$(sql_como "$GESTOR" "SELECT public.radar_exclusao_registrar('31000001', 'qsa', 'curta');")" "22023"
+# X2: sócio de A1 pede oposição (qsa): os nomes dos sócios saem da ficha na hora; o vínculo e o aviso de crédito
+#     (QSA mascarado, só no servidor, art. 7º X) seguem iguais.
+VINC_ANTES=$(Pq -c "SELECT string_agg(cliente_cnpj || ':' || array_to_string(sinais, '+'), ',') FROM private.radar_vinculos_base(ARRAY['31000001000101'], true, true)")
 sql_como "$GESTOR" "SELECT public.radar_exclusao_registrar('31000001', 'qsa', 'oposição art. 18 §2º — protocolo de teste', 'T-1');" >/dev/null
-eq X2 "$(Pq -c "SELECT count(*) FROM private.radar_vinculos_base(ARRAY['31000001000101'], true, true) WHERE 'socio_cpf' = ANY (sinais)")|$(Pq -c "SELECT count(*) FROM public.radar_socios WHERE raiz = '31000001'")|$(Pq -c "SELECT coalesce(socios_nomes, 'NULL') FROM public.radar_empresas WHERE cnpj = '31000001000101'")" "0|0|NULL"
-# X3: um lote NOVO de sócios traz a raiz de volta (a carga não sabe da exclusão): o vínculo ignora antes do expurgo.
-DIG2=$(printf '2%.0s' $(seq 64))
-SR "SELECT public.radar_socios_iniciar('2026-11', '$DIG2', 'v1', 23, 22, 40);
-    SELECT public.radar_socios_receber('2026-11-22222222', '$LINHAS'::jsonb);
-    SELECT public.radar_socios_publicar('2026-11-22222222');" >/dev/null
-eq X3 "$(Pq -c "SELECT count(*) FROM public.radar_socios s JOIN public.radar_socios_lote l USING (lote) WHERE l.status = 'vigente' AND s.raiz = '31000001'")|$(Pq -c "SELECT count(*) FROM private.radar_vinculos_base(ARRAY['31000001000101','41000001000101'], true, true) WHERE 'socio_cpf' = ANY (sinais)")" "1|0"
-# X4: a recarga de radar_empresas (upsert cru, como a publicação) não devolve os nomes dos sócios da raiz.
+eq X2 "$(Pq -c "SELECT coalesce(socios_nomes, 'NULL') FROM public.radar_empresas WHERE cnpj = '31000001000101'")|$(Pq -c "SELECT string_agg(cliente_cnpj || ':' || array_to_string(sinais, '+'), ',') FROM private.radar_vinculos_base(ARRAY['31000001000101'], true, true)")" \
+  "NULL|$VINC_ANTES"
+# X3: o staging da carga seguinte traz os nomes de volta: o staging já os zera, e a foto não é reescrita.
+Pq -c "INSERT INTO public.radar_empresas_carga (lote, cnpj, razao_social, socios_nomes) VALUES ('2026-12', '31000001000101', 'A1 NOVA LTDA', 'MARIA SOUZA LIMA');" >/dev/null
+eq X3 "$(Pq -c "SELECT coalesce(socios_nomes, 'NULL') FROM public.radar_empresas_carga WHERE cnpj = '31000001000101'")" "NULL"
+# X4: e o upsert cru direto na foto (a publicação atômica) também não os devolve.
 Pq -c "INSERT INTO public.radar_empresas AS e (cnpj, razao_social, socios_nomes) VALUES ('31000001000101', 'A1 NOVA LTDA', 'MARIA SOUZA LIMA')
        ON CONFLICT (cnpj) DO UPDATE SET razao_social = EXCLUDED.razao_social, socios_nomes = EXCLUDED.socios_nomes;" >/dev/null
 eq X4 "$(Pq -c "SELECT coalesce(socios_nomes, 'NULL') FROM public.radar_empresas WHERE cnpj = '31000001000101'")" "NULL"
-# X5: o expurgo apaga o que o lote novo trouxe; os outros seguem.
-Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
-eq X5 "$(Pq -c "SELECT count(*) FROM public.radar_socios WHERE raiz = '31000001'")|$(Pq -c "SELECT count(*) > 0 FROM public.radar_socios WHERE raiz = '41000001'")" "0|t"
-# X6: titular de MEI (PEDRO) se opõe ao CONTATO: some do vínculo, a razão perde até a máscara, o cru sai, o contato
-#     zera, o lead é descartado com o motivo LGPD e a nota livre sai já. Um 2º pedido 'qsa' não regride o escopo.
+# X6: titular de MEI (PEDRO) se opõe ao CONTATO: contato zerado, lead descartado com o motivo LGPD, nota livre apagada
+#     já; a razão segue com a máscara da RFB, o cru do cadastro fica (contrato) e o vínculo de crédito também.
+#     Um 2º pedido 'qsa' não regride o escopo, e o histórico guarda os 2.
 Pq -c "INSERT INTO public.radar_contatos (cnpj, acao, nota) VALUES ('31000006000101', 'em_conversa', 'falei com o Pedro, filha estuda fora');
        UPDATE public.radar_empresas SET telefone1 = '(37) 91234567', email = 'pedro@gmail.com' WHERE cnpj = '31000006000101';" >/dev/null
 sql_como "$GESTOR" "SELECT public.radar_exclusao_registrar('31000006', 'contato', 'oposição à prospecção — protocolo de teste');" >/dev/null
 sql_como "$GESTOR" "SELECT public.radar_exclusao_registrar('31000006', 'qsa', 'segundo pedido, só do QSA');" >/dev/null
-eq X6 "$(Pq -c "SELECT razao_social || '|' || coalesce(email, 'NULL') || '|' || coalesce(telefone1, 'NULL') || '|' || prospeccao_status || '|' || descarte_motivo FROM public.radar_empresas WHERE cnpj = '31000006000101'")|$(Pq -c "SELECT count(*) FROM private.radar_razao_receita WHERE cnpj = '31000006000101'")|$(Pq -c "SELECT count(*) FROM private.radar_vinculos_base(ARRAY['31000006000101'], true, true)")|$(Pq -c "SELECT count(nota) FROM public.radar_contatos WHERE cnpj = '31000006000101'")|$(Pq -c "SELECT escopo FROM public.radar_exclusoes_titular WHERE raiz = '31000006'")" \
-  "PEDRO ALVES COSTA|NULL|NULL|descartado|lgpd_oposicao|0|0|0|contato"
-# X7: e a recarga crua do mês seguinte não traz o CPF, o contato nem o cru de volta.
+eq X6 "$(Pq -c "SELECT razao_social || '|' || coalesce(email, 'NULL') || '|' || coalesce(telefone1, 'NULL') || '|' || prospeccao_status || '|' || descarte_motivo FROM public.radar_empresas WHERE cnpj = '31000006000101'")|$(Pq -c "SELECT count(*) FROM private.radar_razao_receita WHERE cnpj = '31000006000101'")|$(Pq -c "SELECT string_agg(cliente_cnpj || ':' || array_to_string(sinais, '+'), ',') FROM private.radar_vinculos_base(ARRAY['31000006000101'], true, false)")|$(Pq -c "SELECT count(nota) FROM public.radar_contatos WHERE cnpj = '31000006000101'")|$(Pq -c "SELECT escopo || ':' || jsonb_array_length(pedidos) FROM public.radar_exclusoes_titular WHERE raiz = '31000006'")" \
+  "PEDRO ALVES COSTA ***456789**|NULL|NULL|descartado|lgpd_oposicao|1|41000006000101:socio_cpf|0|contato:2"
+# X6b: o vendedor "reabre" o lead (registrar contato muda o status): a oposição não volta para a fila.
+Pq -c "UPDATE public.radar_empresas SET prospeccao_status = 'em_conversa' WHERE cnpj = '31000006000101';" >/dev/null
+eq X6b "$(Pq -c "SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj = '31000006000101'")" "descartado"
+# U1: nem o trigger, nem o backfill, nem a exclusão, nem o "reabrir" mexem em updated_at.
+eq U1 "$(upd_foto)" "$UPD_ANTES"
+# X7: e a recarga crua do mês seguinte não traz o CPF nem o contato de volta.
 Pq -c "INSERT INTO public.radar_empresas AS e (cnpj, razao_social, email, telefone1) VALUES ('31000006000101', 'PEDRO ALVES COSTA 12345678901', 'pedro@gmail.com', '(37) 91234567')
        ON CONFLICT (cnpj) DO UPDATE SET razao_social = EXCLUDED.razao_social, email = EXCLUDED.email, telefone1 = EXCLUDED.telefone1;" >/dev/null
-eq X7 "$(Pq -c "SELECT razao_social || '|' || coalesce(email, 'NULL') || '|' || coalesce(telefone1, 'NULL') FROM public.radar_empresas WHERE cnpj = '31000006000101'")|$(Pq -c "SELECT count(*) FROM private.radar_razao_receita WHERE cnpj = '31000006000101'")" \
-  "PEDRO ALVES COSTA|NULL|NULL|0"
+eq X7 "$(Pq -c "SELECT razao_social || '|' || coalesce(email, 'NULL') || '|' || coalesce(telefone1, 'NULL') FROM public.radar_empresas WHERE cnpj = '31000006000101'")" \
+  "PEDRO ALVES COSTA ***456789**|NULL|NULL"
 
 # ── Retenção das notas ──
 Pq <<'SQL' >/dev/null
 UPDATE public.radar_empresas SET prospeccao_status = 'descartado', prospeccao_atualizado_em = now() - interval '13 months' WHERE cnpj = '31000003000101';
 UPDATE public.radar_empresas SET prospeccao_status = 'descartado', prospeccao_atualizado_em = now() - interval '2 months' WHERE cnpj = '31000004000101';
 UPDATE public.radar_empresas SET prospeccao_atualizado_em = now() - interval '13 months' WHERE cnpj = '31000005000101';
-INSERT INTO public.radar_contatos (cnpj, acao, nota, created_at) VALUES
-  ('31000003000101', 'em_conversa', 'dono separado, ligar depois das 18h', now() - interval '14 months'),
-  ('31000003000101', 'descartado', 'RFB: INAPTA em 15/05/2025 (63 — OMISSAO DE DECLARACOES)', now() - interval '13 months'),
-  ('31000004000101', 'descartado', 'não quis, disse que compra do concorrente', now() - interval '2 months'),
-  ('31000005000101', 'em_conversa', 'ativo, conversa boa', now() - interval '13 months');
+UPDATE public.radar_empresas SET prospeccao_status = 'descartado', prospeccao_atualizado_em = NULL WHERE cnpj = '31000009000101';
+INSERT INTO public.radar_contatos (cnpj, acao, nota, criado_por, created_at) VALUES
+  ('31000003000101', 'em_conversa', 'dono separado, ligar depois das 18h', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', now() - interval '14 months'),
+  ('31000003000101', 'descartado', 'RFB: situação 05 em data não informada (motivo não informado)', '00000000-0000-0000-0000-00000000ad0f', now() - interval '13 months'),
+  ('31000003000101', 'descartado', 'RFB: ATIVA em 01/01/2025 — mas o vendedor escreveu sobre a esposa', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', now() - interval '13 months'),
+  ('31000004000101', 'descartado', 'não quis, disse que compra do concorrente', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', now() - interval '2 months'),
+  ('31000005000101', 'em_conversa', 'ativo, conversa boa', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', now() - interval '13 months'),
+  ('31000009000101', 'descartado', 'descartado sem data no lead', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', now() - interval '13 months');
 SQL
 Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
-# R1: a nota livre do lead descartado há 13 meses sai (o evento fica).
-eq R1 "$(Pq -c "SELECT count(*) || '/' || count(nota) FILTER (WHERE nota NOT LIKE 'RFB:%') FROM public.radar_contatos WHERE cnpj = '31000003000101'")" "2/0"
-# R2: a nota automática da RFB fica; o descartado recente e o lead ativo antigo ficam intactos.
-eq R2 "$(Pq -c "SELECT count(*) FROM public.radar_contatos WHERE nota LIKE 'RFB: INAPTA%'")|$(Pq -c "SELECT count(nota) FROM public.radar_contatos WHERE cnpj IN ('31000004000101', '31000005000101')")" "1|2"
+# R1: as notas livres (do vendedor) do lead descartado há 13 meses saem — inclusive a que imita o prefixo da RFB — e
+#     a do descartado sem data no lead também (vale a data do evento). O evento fica.
+eq R1 "$(Pq -c "SELECT count(*) || '/' || count(nota) FILTER (WHERE criado_por <> '00000000-0000-0000-0000-00000000ad0f') FROM public.radar_contatos WHERE cnpj = '31000003000101'")|$(Pq -c "SELECT count(nota) FROM public.radar_contatos WHERE cnpj = '31000009000101'")" "3/0|0"
+# R2: a nota automática (autor = sistema) fica, em qualquer formato; o descartado recente e o lead ativo antigo ficam.
+eq R2 "$(Pq -c "SELECT count(*) FROM public.radar_contatos WHERE nota LIKE 'RFB: situação 05%'")|$(Pq -c "SELECT count(nota) FROM public.radar_contatos WHERE cnpj IN ('31000004000101', '31000005000101')")" "1|2"
+# R3: o cru órfão (CNPJ que saiu do Radar e do staging) sai; o do Radar fica.
+Pq -c "INSERT INTO private.radar_razao_receita (cnpj, razao_social) VALUES ('39999999000101', 'SAIU DO RADAR 11111111111');
+       DELETE FROM public.radar_empresas_carga;" >/dev/null
+Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
+eq R3 "$(Pq -c "SELECT count(*) FROM private.radar_razao_receita WHERE cnpj = '39999999000101'")|$(Pq -c "SELECT count(*) FROM private.radar_razao_receita WHERE cnpj = '32000001000101'")" "0|1"
+# R4: erro no meio do job não some: o ledger registra 'erro' (o job não aborta mudo).
+Pq -c "ALTER TABLE public.radar_contatos RENAME COLUMN nota TO nota_x;" >/dev/null
+Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
+Pq -c "ALTER TABLE public.radar_contatos RENAME COLUMN nota_x TO nota;" >/dev/null
+eq R4 "$(Pq -c "SELECT status FROM public.acoes_execucoes WHERE acao = 'radar.privacidade_expurgo' ORDER BY id DESC LIMIT 1")" "erro"
 
 # ── ACL ──
-tem G1 "$(sql_como "$GESTOR" "SELECT count(*) FROM public.radar_exclusoes_titular;")|$(sql_como "$GESTOR" "SELECT count(*) FROM private.radar_razao_receita;")" "42501"
+tem G1 "$(sql_como "$GESTOR" "SELECT count(*) FROM public.radar_exclusoes_titular;")" "42501"
+tem G1b "$(sql_como "$GESTOR" "SELECT count(*) FROM private.radar_razao_receita;")" "42501"
 tem G2 "$(sql_como "$GESTOR" "SELECT public.radar_privacidade_expurgo();")" "42501"
-tem G3 "$(sql_como "$CUSTOMER" "SELECT public.radar_razao_social_para_cadastro('32000001000101');")" "42501"
 eq G4 "$(Pq -c "SELECT has_function_privilege('anon', 'public.radar_razao_social_para_cadastro(text)', 'EXECUTE')::text || has_function_privilege('anon', 'public.radar_exclusao_registrar(text,text,text,text)', 'EXECUTE')::text")" "falsefalse"
 
 echo "PASS=$PASS FAIL=$FAIL"

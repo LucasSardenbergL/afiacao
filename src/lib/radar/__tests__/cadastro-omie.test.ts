@@ -8,6 +8,8 @@ import {
   ehSemConfirmacaoDoServidor,
   DivergenciaCadastro,
   divergenciaDaRpc,
+  escolherRazaoFiscal,
+  RAZAO_MASCARADA,
   type DepsCadastro,
 } from '../cadastro-omie';
 import type { ConflitoCadastro, EstadoCadastro } from '../conflito-cadastro';
@@ -396,5 +398,29 @@ describe('cadastrarEmpresaNoOmie — conflito registrado no servidor', () => {
     const d = deps({ criarNoOmie: vi.fn(async () => { throw new Error('Failed to fetch'); }) });
     await cadastrarEmpresaNoOmie(empresa, d).catch(() => undefined);
     expect(d.registrarConflito).not.toHaveBeenCalled();
+  });
+});
+
+describe('escolherRazaoFiscal (pacote J: a razão de MEI é guardada mascarada)', () => {
+  const MASC = 'PEDRO ALVES COSTA ***456789**';
+  it('usa a razão fiscal que a RPC devolve (o cru do MEI)', () => {
+    expect(escolherRazaoFiscal(MASC, { data: 'PEDRO ALVES COSTA 12345678901', erroCodigo: null })).toBe('PEDRO ALVES COSTA 12345678901');
+  });
+  it('RPC sem texto (fora do Radar): a exibida, se não for a mascarada', () => {
+    expect(escolherRazaoFiscal('A1 NOVA LTDA', { data: null, erroCodigo: null })).toBe('A1 NOVA LTDA');
+    expect(() => escolherRazaoFiscal(MASC, { data: null, erroCodigo: null })).toThrow(/RADAR_RAZAO_FISCAL_INDISPONIVEL: a razão do MEI veio mascarada/);
+  });
+  it('RPC inexistente (migration não aplicada, PGRST202): a exibida crua serve; a mascarada não', () => {
+    expect(escolherRazaoFiscal('PEDRO ALVES COSTA 12345678901', { data: null, erroCodigo: 'PGRST202' })).toBe('PEDRO ALVES COSTA 12345678901');
+    expect(() => escolherRazaoFiscal(MASC, { data: null, erroCodigo: 'PGRST202' })).toThrow(/a razão do MEI veio mascarada/);
+  });
+  it('outro erro da RPC (ex.: 42501): não cadastra', () => {
+    expect(() => escolherRazaoFiscal('A1 NOVA LTDA', { data: null, erroCodigo: '42501' })).toThrow(/RADAR_RAZAO_FISCAL_INDISPONIVEL: 42501/);
+    const erro = new Error('forbidden: radar_prospectar');
+    expect(() => escolherRazaoFiscal('A1 NOVA LTDA', { data: null, erroCodigo: '42501', erro })).toThrow(/^forbidden: radar_prospectar$/);
+  });
+  it('a máscara reconhecida é a da migration (sufixo ***dddddd**), não 11 dígitos', () => {
+    expect(RAZAO_MASCARADA.test(MASC)).toBe(true);
+    expect(RAZAO_MASCARADA.test('PEDRO ALVES COSTA 12345678901')).toBe(false);
   });
 });
