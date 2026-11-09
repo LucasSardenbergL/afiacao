@@ -936,6 +936,8 @@ async function reivindicarDisparo(
  *     pendência) e devolve que o PO existe com o pedido cancelado no portal — o humano cancela/ajusta o PO;
  *   · não achou / erro ⇒ NADA muda: consulta negativa isolada não limpa pendência (pode haver execução em voo).
  * Nunca chama IncluirPedCompra.
+ * 5.2 (revisão 2, fatia 1): o mesmo vale para o pedido ALTERADO no portal (divergência portal × app aberta) com
+ * pendência: repetir o IncluirPedCompra mandaria ao Omie o pedido antigo — só consulta, com a mesma régua.
  */
 async function conciliarCanceladoNoPortalPorConsulta(
   db: SupabaseClient,
@@ -945,8 +947,10 @@ async function conciliarCanceladoNoPortalPorConsulta(
   result: ProcessResult,
   overrideTag: Record<string, unknown>,
   pendenteDesde: string | null,
+  causa: "cancelado_no_portal" | "alterado_no_portal" = "cancelado_no_portal",
 ): Promise<ProcessResult> {
-  const base = `pedido cancelado no portal Sayerlack com pendência de disparo aberta desde ${pendenteDesde ?? "?"}`;
+  const oQue = causa === "alterado_no_portal" ? "alterado no portal Sayerlack (divergência com o app)" : "cancelado no portal Sayerlack";
+  const base = `pedido ${oQue} com pendência de disparo aberta desde ${pendenteDesde ?? "?"}`;
   if (modo !== "producao") {
     result.status_final = "nao_disparado";
     result.erro = `${base} — dry_run não concilia.`;
@@ -980,7 +984,7 @@ async function conciliarCanceladoNoPortalPorConsulta(
       resposta_canal: {
         ...overrideTag,
         reconciliado: true,
-        motivo: "conciliado_por_consulta_cancelado_no_portal",
+        motivo: `conciliado_por_consulta_${causa}`,
         pendente_desde: pendenteDesde,
         ts: new Date().toISOString(),
       },
@@ -997,8 +1001,11 @@ async function conciliarCanceladoNoPortalPorConsulta(
     return result;
   }
   result.status_final = "disparado";
-  result.erro = `ATENÇÃO: o PO ${existente.numero || existente.id} existe no Omie, mas o pedido está CANCELADO no portal ` +
-    `Sayerlack — confira com o fornecedor e cancele/ajuste o PO.`;
+  result.erro = causa === "alterado_no_portal"
+    ? `ATENÇÃO: o PO ${existente.numero || existente.id} existe no Omie com o pedido ANTIGO do app, mas o pedido foi ` +
+      `ALTERADO no portal Sayerlack — confira com o fornecedor e ajuste o PO.`
+    : `ATENÇÃO: o PO ${existente.numero || existente.id} existe no Omie, mas o pedido está CANCELADO no portal ` +
+      `Sayerlack — confira com o fornecedor e cancele/ajuste o PO.`;
   return result;
 }
 
@@ -1350,9 +1357,11 @@ async function processarPedido(
     // dry_run, que só troca cObs/cObsInt e grava `disparado_simulado`).
     const claim = await reivindicarDisparo(db, pedido.id, origemRun);
     if (!claim.claimed) {
-      if (claim.bloqueio === "cancelado_no_portal" && claim.pendente_desde) {
+      if ((claim.bloqueio === "cancelado_no_portal" || claim.bloqueio === "alterado_no_portal") && claim.pendente_desde) {
         console.warn(`[disparar-pedidos] Pedido ${pedido.id}: ${claim.motivo} — pendência aberta: conciliação SÓ por consulta.`);
-        return await conciliarCanceladoNoPortalPorConsulta(db, pedido.id, modo, creds, result, overrideTag, claim.pendente_desde);
+        return await conciliarCanceladoNoPortalPorConsulta(
+          db, pedido.id, modo, creds, result, overrideTag, claim.pendente_desde, claim.bloqueio,
+        );
       }
       console.warn(
         `[disparar-pedidos] Pedido ${pedido.id}: NÃO disparado — ${claim.motivo}. Nenhuma chamada ao Omie foi feita.`,

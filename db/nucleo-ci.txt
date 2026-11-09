@@ -243,6 +243,10 @@ db/test-sayerlack-encerrar-cancelado-portal.sh 34  falsificar=10
 # dono do PO, claim aberto recusa, conteúdo SKU/qtde/valor com tolerância por unidade, ausente ≠ zero, trilha em
 # acoes_execucoes com antes/depois (docs/historico/importar-pedido-portal-sayerlack.md).
 db/test-sayerlack-vincular-po-manual.sh    32  falsificar=14
+# Portal Sayerlack 5.2 fatia 1 (20261111150000): retrato do portal na MESMA transação da importação, conferência
+# SKU/qtde × itens do pedido (qtde_final × fator) e valor/total/condição × retrato, ausente ≠ zero, leitura antiga não
+# fecha a aberta, claim recusa a divergência no WHERE que grava — 2 conexões (docs/historico/importar-pedido-portal-sayerlack.md).
+db/test-sayerlack-conferir-portal.sh       39  falsificar=17
 # Portal Sayerlack, Onda 6 (20261109100000): o painel só tem rodada efetiva com modo importar + prova; espera da
 # rodada; dedupe por protocolo; cancelado_humano fora; pedidos do app sem PO (1 h de espera); totais; sensor de
 # alíquota; cancelados no portal. 5 sabotagens INLINE com controle antes/depois (docs/historico/importar-pedido-portal-sayerlack.md).

@@ -53,4 +53,8 @@ nada muda. Sem pendência, o claim (migration 20261108120000) recusa e nada vai 
 v1.13 (2026-11-08, revisão 2, 7.3) — o cObs do PO Sayerlack/OBEN ganha "Transportadora (portal Sayerlack): <nome>",
 lida da evidência mais recente e legível do protocolo (`sayerlack_portal_evidencia.itens_brutos.data_pedido`, 7.2).
 Fail-open com prazo de 3 s: sem evidência ou sem nome, a linha não entra (nunca inventada). Frete não entra.
+v1.14 (2026-11-09, revisão 2, 5.2 fatia 1) — o claim (migration 20261111150000) recusa pedido com divergência portal ×
+app aberta (`bloqueio: alterado_no_portal`). Com pendência de disparo aberta, a régua é a do cancelado no portal:
+conciliação SÓ POR CONSULTA (PO confirmado ⇒ registra e avisa que o PO saiu com o pedido antigo; não achou ⇒ nada
+muda). Sem pendência, nada vai ao Omie.
 ```

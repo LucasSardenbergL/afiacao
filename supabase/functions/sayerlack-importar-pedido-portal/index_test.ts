@@ -74,6 +74,8 @@ interface Cenario {
   evidencia?: () => Resposta;
   /** RPC do 7.1 (default: recusa por conteúdo — o comportamento de antes, sem vínculo). */
   vincular?: () => Resposta | "rede";
+  /** RPC do 5.2 (default: o pedido do app bate com a leitura). */
+  conferir?: () => Resposta | "rede";
 }
 
 function montar(c: Cenario) {
@@ -97,6 +99,7 @@ function montar(c: Cenario) {
     "rpc:sayerlack_registrar_situacao_portal": () => c.registrar?.() ?? { corpo: { aceitos: [{ protocolo: PROTOCOLO }] } },
     "rpc:sayerlack_vincular_po_manual": () => c.vincular?.() ?? { corpo: { vinculado: false, motivo: "conteudo_divergente", diferencas: [{ sku: "111", qtde_app: 2, qtde_po: 4, valor_app: 20, valor_po: 40 }] } },
     "rpc:sayerlack_importar_pedido_portal": () => c.importar?.() ?? { corpo: { pedido_id: 777, ja_existia: false } },
+    "rpc:sayerlack_conferir_portal": () => c.conferir?.() ?? { corpo: { conferido: true, divergente: false, pedido_id: 501 } },
     [DISPARO]: () => c.disparo?.() ?? { corpo: { ok: true } },
   };
   const falso = criarPostgrestFalso(ENV_TESTE.SUPABASE_URL, rotas);
@@ -429,4 +432,90 @@ Deno.test("4.3 (Codex P2): saídas antecipadas também dizem sessao_browserless=
     body: JSON.stringify({ protocolo: PROTOCOLO }),
   }));
   igual([cron.status, (await cron.json() as Record<string, unknown>).sessao_browserless], [403, false], "cron");
+});
+
+// ── 5.2 fatia 1: conferência pedido do app × leitura do portal ANTES de qualquer re-disparo ─────────────────────
+const DIVERGENTE: Resposta = {
+  corpo: {
+    conferido: true, divergente: true, pedido_id: 501, divergencia_id: 9,
+    diferencas: [{ tipo: "quantidade", sku: "DFA.4080LT", app: 16, portal: 17 }],
+  },
+};
+
+Deno.test("5.2: re-disparo confere a leitura inteira (itens, total, condição, intervalo, evidência) e só então dispara", async () => {
+  const falso = montar({ porProtocolo: () => pedido() });
+  await importar();
+  const args = falso.de("rpc:sayerlack_conferir_portal")[0]?.corpo as Record<string, unknown>;
+  const l = args?.p_leitura as Record<string, unknown>;
+  igual([args?.p_pedido_id, args?.p_evidencia_id, args?.p_origem], [501, 42, "redisparo"], "pedido, evidência 7.2 e origem");
+  igual([l?.protocolo, l?.valor_total, l?.condicao, typeof l?.lido_de, typeof l?.lido_ate], [PROTOCOLO, 5181.82, "70 - 7 DIAS", "string", "string"], "leitura");
+  igual(l?.itens, [{ sku_portal: "DFA.4080LT", qtde_portal: 16, valor_mercadoria: 4865.5584 }], "itens lidos");
+  igual(falso.de(DISPARO).length, 1, "bateu ⇒ um disparo");
+});
+
+Deno.test("5.2: pedido alterado no portal NÃO re-dispara — alterado_no_portal com as diferenças e o #id", async () => {
+  const falso = montar({ porProtocolo: () => pedido(), conferir: () => DIVERGENTE });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.motivo, r.corpo.pedido_id, r.corpo.divergencia_id], [false, "alterado_no_portal", 501, 9], "resposta");
+  igual((r.corpo.diferencas as unknown[]).length, 1, "diferenças na resposta");
+  if (!String(r.corpo.mensagem).includes("quantidade DFA.4080LT: app 16 → portal 17")) throw new Error(`mensagem sem o diff: ${r.corpo.mensagem}`);
+  igual(falso.de(DISPARO).length, 0, "zero disparo");
+  igual(ledger(falso).divergencia_id, 9, "a divergência vai ao ledger");
+});
+
+Deno.test("5.2: conferência com ERRO ou recusa (leitura antiga) não vira re-disparo (fail-closed)", async () => {
+  for (const conferir of [() => "rede" as const, () => ({ corpo: { conferido: false, motivo: "leitura_antiga" } })]) {
+    const falso = montar({ porProtocolo: () => pedido(), conferir });
+    const r = await importar();
+    igual([r.corpo.ok, r.corpo.pedido_id], [false, 501], "falha com o #id");
+    if (!String(r.corpo.mensagem).includes("re-disparei")) throw new Error(`mensagem sem o 'não re-disparei': ${r.corpo.mensagem}`);
+    igual(falso.de(DISPARO).length, 0, "zero disparo");
+  }
+});
+
+Deno.test("5.2: resposta da conferência fora do contrato (sem 'divergente') não vira re-disparo", async () => {
+  const falso = montar({ porProtocolo: () => pedido(), conferir: () => ({ corpo: { conferido: true } }) });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.pedido_id], [false, 501], "falha com o #id");
+  igual(falso.de(DISPARO).length, 0, "zero disparo");
+});
+
+Deno.test("5.2: re-disparo com a condição ilegível no portal recusa sem conferir nem disparar", async () => {
+  const semCondicao: Resposta = {
+    corpo: { data: { success: true, consulta: { linhas: [linha("5 - Suspenso")] }, itens: ITENS, condicao: "  " } },
+  };
+  const falso = montar({ porProtocolo: () => pedido(), browserless: () => semCondicao });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.motivo, r.corpo.pedido_id], [false, "condicao_ilegivel", 501], "resposta");
+  igual(falso.de("rpc:sayerlack_conferir_portal").length + falso.de(DISPARO).length, 0, "zero conferência e zero disparo");
+});
+
+Deno.test("5.2: 1ª importação não confere pela edge (o retrato nasce dentro da RPC de importar)", async () => {
+  const falso = montar({ porProtocolo: () => null });
+  await importar();
+  igual(falso.de("rpc:sayerlack_conferir_portal").length, 0, "nenhuma conferência pela edge");
+  igual(falso.de(DISPARO).length, 1, "um disparo");
+});
+
+Deno.test("5.2: a RPC achou o pedido JÁ gravado (outra aba): confere antes de disparar e recusa o divergente", async () => {
+  const falso = montar({
+    porProtocolo: () => null,
+    importar: () => ({ corpo: { pedido_id: 501, ja_existia: true } }),
+    conferir: () => DIVERGENTE,
+  });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.motivo, r.corpo.pedido_id], [false, "alterado_no_portal", 501], "resposta");
+  igual(falso.de("rpc:sayerlack_conferir_portal").length, 1, "conferiu");
+  igual(falso.de(DISPARO).length, 0, "zero disparo");
+});
+
+Deno.test("5.2: a RPC achou o pedido JÁ gravado e o portal diz faturado: recusa como re-disparo (B2)", async () => {
+  const falso = montar({
+    porProtocolo: () => null,
+    browserless: () => portal("3 - Atendido Total"),
+    importar: () => ({ corpo: { pedido_id: 501, ja_existia: true } }),
+  });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.motivo, r.corpo.pedido_id], [false, "faturado_no_portal", 501], "resposta");
+  igual(falso.de(DISPARO).length, 0, "zero disparo");
 });

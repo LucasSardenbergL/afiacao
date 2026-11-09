@@ -28,6 +28,7 @@ import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { mensagemNaoVinculado, mensagemVinculado, vincularPoManual } from "../_shared/sayerlack-vincular-po-manual.ts";
 import { lerPedidoPortal, mensagemErroImportacao, situacaoFaturada, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
 import { comPrazo, cortarTrace, PRAZO_EVIDENCIA_MS } from "./evidencia.ts";
+import { conferirPortal, mensagemRecusa, montarLeitura, resumoDiferencas } from "./conferencia.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -596,8 +597,8 @@ async function tratar(
     const doExistente = redisparar
       ? { ja_existia: true, pedido_id: redisparar.id, status: redisparar.status }
       : {};
-    const naoRedisparei = (porque: string) =>
-      `O pedido ${protocolo} está no app (#${redisparar?.id}) sem pedido de compra. ${porque} ` +
+    const naoRedisparei = (porque: string, pedidoId: number | undefined = redisparar?.id) =>
+      `O pedido ${protocolo} está no app (#${pedidoId}) sem pedido de compra. ${porque} ` +
       `Por isso não re-disparei o pedido de compra. Não lance à mão no Omie.`;
 
     if (httpErr || httpStatus < 200 || httpStatus >= 300 || envelope.success !== true) {
@@ -664,9 +665,48 @@ async function tratar(
       });
     }
 
-    // 2b. Re-disparo: a situação relida é importável (cancelado já foi recusado pela leitura) ⇒ o PO pelo caminho
-    //     de sempre. Não grava de novo: o pedido e o custo já estão no app.
+    // 2b. 5.2 (revisão 2, fatia 1): antes de QUALQUER re-disparo, o pedido do app × ESTA leitura (SKU, quantidade,
+    //     valor por item, total e condição) pela RPC que é a escritora única do retrato e da divergência. Divergiu
+    //     ⇒ não dispara (e o claim do disparador também recusa, pelo gate na linha do pedido). Condição ilegível,
+    //     recusa ou erro da conferência ⇒ também não (fail-closed: "não conferi" nunca vira "pode disparar").
+    const condicaoLida = typeof envelope.condicao === "string" ? envelope.condicao.trim() : "";
+    const conferirOuRecusar = async (pedidoId: number, status: string | null): Promise<Response | null> => {
+      const doPedido = { ja_existia: true, pedido_id: pedidoId, status, situacao_gravada: situacaoGravada };
+      if (!condicaoLida) {
+        return json({
+          ok: false, etapa: "leitura", protocolo, motivo: "condicao_ilegivel", ...doPedido, trace: envelope.trace ?? null,
+          mensagem: naoRedisparei("Não consegui ler a condição de pagamento dele no portal, então não sei se o pedido mudou. Tente de novo.", pedidoId),
+        });
+      }
+      const conf = await conferirPortal(
+        db, pedidoId,
+        montarLeitura(protocolo, lido.itens, lido.cabecalho.valor_total, condicaoLida, lidoDe, lidoAte),
+        evid.evidencia_id ?? null,
+      );
+      if (conf.tipo === "bate") return null;
+      if (conf.tipo === "divergente") {
+        return json({
+          ok: false, etapa: "leitura", protocolo, motivo: "alterado_no_portal", ...doPedido,
+          divergencia_id: conf.divergenciaId, diferencas: conf.diferencas, situacao_portal: lido.cabecalho.situacao,
+          mensagem: naoRedisparei(
+            `O pedido mudou no portal desde que entrou no app (${resumoDiferencas(conf.diferencas)}). Confira com o ` +
+              `fornecedor: o pedido de compra só sai depois de aceitar o portal ou de o portal voltar ao que está no app.`,
+            pedidoId,
+          ),
+        });
+      }
+      if (conf.motivo === "tem_po") return await responderComEstado(pedidoId, { ja_existia: true });
+      return json({
+        ok: false, etapa: "importacao", protocolo, motivo: conf.motivo, ...doPedido,
+        mensagem: naoRedisparei(mensagemRecusa(conf.motivo), pedidoId),
+      });
+    };
+
+    // 2c. Re-disparo: a situação relida é importável (cancelado já foi recusado pela leitura) e o conteúdo bate ⇒ o PO
+    //     pelo caminho de sempre. Não grava de novo: o pedido e o custo já estão no app.
     if (redisparar) {
+      const recusa = await conferirOuRecusar(redisparar.id, redisparar.status);
+      if (recusa) return recusa;
       pedidoGravado = redisparar.id;
       const omie = await dispararOmie(redisparar.id);
       return await responderComEstado(redisparar.id, {
@@ -734,16 +774,32 @@ async function tratar(
     // 4. PO no Omie pelo caminho de sempre, e a resposta é o que o BANCO diz depois. Daqui em diante o pedido EXISTE:
     //    qualquer falha responde "gravado, Omie não confirmado" com o #id — nunca "não foi importado" (Codex+Fable P1:
     //    a mensagem falsa levava o operador a lançar o PO à mão no Omie).
+    // 3a. A RPC achou o pedido JÁ gravado (outra aba importou durante esta leitura; Codex 5.2 P1): esta chamada vira
+    //     um re-disparo — valem as mesmas recusas (faturado no portal) e a mesma conferência antes do disparo. Na
+    //     importação nova, o retrato desta leitura já nasceu dentro da RPC (mesma transação do pedido).
+    const jaExistia = (rpcData as { ja_existia?: unknown } | null)?.ja_existia === true;
+    if (jaExistia) {
+      pedidoConhecido = { id: pedidoId, status: null };
+      if (situacaoFaturada(lido.cabecalho.situacao)) {
+        return json({
+          ok: false, etapa: "leitura", protocolo, motivo: "faturado_no_portal", situacao_portal: lido.cabecalho.situacao,
+          ja_existia: true, pedido_id: pedidoId, situacao_gravada: situacaoGravada,
+          mensagem: naoRedisparei(`No portal ele está "${lido.cabecalho.situacao}": faturado no portal — confira a NF no Omie antes de qualquer pedido de compra.`, pedidoId),
+        });
+      }
+      const recusa = await conferirOuRecusar(pedidoId, null);
+      if (recusa) return recusa;
+    }
     pedidoGravado = pedidoId;
     // 3b. 1ª importação: o escritor só faz UPDATE e o pedido não existia na gravação de 1b (revisão 2, B10). Grava a
     //     MESMA observação agora — antes do disparo, para o claim já ver o código. Sem vigente, a ordem temporal aceita.
-    const situacaoGravadaPosCriar = (rpcData as { ja_existia?: unknown } | null)?.ja_existia === true
+    const situacaoGravadaPosCriar = jaExistia
       ? situacaoGravada
       : await gravarSituacaoObservada(db, envelope.consulta?.linhas ?? [], protocolo, lidoDe, lidoAte);
     const omie = await dispararOmie(pedidoId);
     console.log(`[importar-portal] ${protocolo}: pedido ${pedidoId} gravado; disparo HTTP ${omie.httpStatus}`);
     return await responderComEstado(pedidoId, {
-      ja_existia: (rpcData as { ja_existia?: unknown } | null)?.ja_existia === true,
+      ja_existia: jaExistia,
       disparo_http: omie.httpStatus,
       situacao_portal: lido.cabecalho.situacao,
       valor_total_portal: lido.cabecalho.valor_total,
@@ -829,6 +885,8 @@ async function fecharRegistro(
       // A resposta da 1ª importação traz a gravação pós-criar (B10); senão vale a da leitura.
       situacao_gravada: corpo?.situacao_gravada ?? evid.situacao_gravada ?? null,
       desfecho: corpo?.desfecho ?? null,
+      // 5.2: a divergência portal × app que impediu o re-disparo (a linha da tabela tem o diff inteiro).
+      divergencia_id: corpo?.divergencia_id ?? null,
       // 4.3 e 7.2: a sessão do Browserless desta tentativa e a linha da evidência (null = não gravou).
       sessao_browserless: evid.sessao_browserless === true,
       evidencia_id: evid.evidencia_id ?? null,

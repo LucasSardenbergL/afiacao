@@ -759,3 +759,60 @@ varrer (reconsulta: casou, não casou, erro), com 4 sabotagens das edges vermelh
   - Os 6 pedidos já estavam no app, sem ilegível, falha ou indeterminado; 1 sessão do Browserless.
 - **Lição:** a fonte que segura a prova hoje é a resposta JSON do DataTables, não o DOM. Se o portal mudar o
   endpoint, `dt_total`/`info_portal` são o fallback, e eles ainda não foram vistos com valor em prod.
+
+## 5.2 fatia 1 — pedido alterado no portal não re-dispara o pedido antigo (2026-11-09)
+
+**Antes:** a importadora relia o portal e, sem PO, re-disparava o pedido ANTIGO do app. Não comparava nada e não havia
+diff persistido. Se o fornecedor tivesse trocado SKU, quantidade, preço ou condição no portal, o PO saía errado.
+**Agora** (migration `20261111150000`, importar v1.11, disparar v1.14):
+
+1. **Retrato inicial durável:** `sayerlack_portal_retrato`, versionado e imutável, guarda os itens com valor, o total
+   e a condição. No pedido importado, ele nasce **dentro** da RPC de importar, na mesma transação do pedido (Codex P1):
+   uma resposta perdida não deixa o pedido sem referência. No pedido nascido no app, o retrato é a 1ª leitura.
+   - Não dá para tirar o retrato do `resposta_canal`: o `falha_envio` do disparador sobrescreve esse campo
+     (`disparar:1523`), justamente no caso que importa.
+2. **Conferência** (`sayerlack_conferir_portal`, escritor único, SECURITY DEFINER):
+   - SKU e quantidade se comparam com os itens do próprio pedido, por `sku_portal_aprovado` e `qtde_final ×
+     fator_portal_aprovado`, com FULL JOIN;
+   - valor por SKU, total e condição normalizada se comparam com o retrato. O total carrega o IPI, que o portal não
+     expõe por item;
+   - item sem selo do portal é diferença, nunca "bateu";
+   - leitura sem total, condição ou item legível é 22023.
+3. **Divergência:** `sayerlack_portal_divergencia` guarda o diff, a leitura parseada (o insumo da fatia 2), o
+   intervalo e a evidência 7.2. Fica no máximo 1 aberta por pedido, e o mesmo diff não empilha linha.
+   - Uma leitura só fecha (`portal_voltou`) ou substitui a aberta se for **provadamente posterior** a ela (`lido_de`
+     > `lido_ate`); senão volta `leitura_antiga`, sem escrever (Codex P1).
+4. **Gate na linha do pedido:** a coluna `portal_divergencia_aberta_id` vai no MESMO WHERE do UPDATE do claim.
+   - Com o veto lendo a outra tabela (NOT EXISTS), o EvalPlanQual usa o snapshot velho e o claim que esperou a trava
+     passa. A sabotagem `gate_por_not_exists` prova isso com 2 conexões.
+   - Um claim aberto não impede a conferência de gravar o gate. Daí em diante, o claim devolve `alterado_no_portal`
+     com `pendente_desde`, e o disparador concilia **só por consulta**, com o mesmo helper do cancelado no portal.
+
+**Nas edges:**
+- **Importar:** antes de qualquer re-disparo, confere a leitura inteira (itens, total, condição, intervalo e
+  evidência). Divergente, recusa, erro ou resposta fora do contrato ⇒ não dispara (fail-closed). Condição ilegível no
+  re-disparo também recusa.
+- **RPC de importar com `ja_existia:true`** (outra aba importou durante a leitura): agora passa pela recusa de
+  faturado e pela conferência (Codex P1).
+
+**Risco residual (documentado):** se o claim do cron passar ANTES de a conferência gravar o gate, o disparo em voo
+segue com o pedido antigo. O disparador geral não lê o portal. Fechar essa janela exige autorização por conferência
+consumida no claim, o que fica fora da fatia 1.
+
+**Codex na revisão do código:** foram 2 rodadas, todas corrigidas.
+- 1ª rodada (2 P1 e 2 P2):
+  - o mesmo diff carimba a ÚLTIMA observação (`ultima_lido_ate`), e fechar exige leitura posterior a ela;
+  - o retrato só nasce quando SKU e quantidade batem, porque uma 1ª leitura já divergente não pode virar a
+    referência de valor;
+  - divergência exige o intervalo da leitura; infinito e fuso inválido dão 22023.
+- 2ª rodada (2 P1):
+  - a ordem é checada ANTES de semear o retrato;
+  - a origem `importacao` (instante da gravação, não da captura) nunca fecha nem substitui uma aberta.
+
+**Provas:** `db/test-sayerlack-conferir-portal.sh`, em PG17 sobre a cadeia REAL da RPC de importar:
+- 39 asserts, verdes nos 2 locales;
+- `--falsificar` com 17 sabotagens vermelhas no assert declarado, nos 2 locales;
+- o POS C4 pega o claim sem gate já ao aplicar.
+
+Na edge importar, os handlers em Deno cobrem: bate e dispara, alterado, erro ou leitura antiga, fora do contrato,
+condição ilegível, 1ª importação sem conferência pela edge, e `ja_existia` divergente ou faturado.
