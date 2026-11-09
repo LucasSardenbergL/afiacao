@@ -268,7 +268,7 @@ BEGIN
     IF r.oid IS NULL OR r.vivo IS DISTINCT FROM r.este THEN
       RAISE EXCEPTION 'P1_FALHOU: % vivo (md5 %) não é este (%)', r.alvo, r.vivo, r.este;
     END IF;
-    IF r.provolatile <> 's' OR NOT r.prosecdef OR r.proconfig IS DISTINCT FROM ARRAY['search_path=""'] THEN
+    IF r.provolatile IS DISTINCT FROM 's' OR r.prosecdef IS NOT TRUE OR r.proconfig IS DISTINCT FROM ARRAY['search_path=""'] THEN
       RAISE EXCEPTION 'P2_FALHOU: % perdeu STABLE/SECURITY DEFINER/search_path vazio', r.alvo;
     END IF;
     IF has_function_privilege('anon', r.oid, 'EXECUTE') OR has_function_privilege('authenticated', r.oid, 'EXECUTE')

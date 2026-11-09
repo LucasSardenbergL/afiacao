@@ -62,3 +62,8 @@ posterior ao snapshot, #3731). Sem isso, as 10 provas que montam a cadeia aplica
 **Prova:** `db/test-data-health-radar-carga-em-voo.sh` — A1 (a cadeia chega ao md5 de PROD `3fe9b3ab…`), R0 (o
 predecessor ficava verde com a carga parada há 13 h), R1–R12, G1–G4. 19 asserts; `--falsificar` 11 sabotagens de corpo
 (md5 'este' recalculado: só o comportamento pega). No núcleo do CI.
+
+**Depois do apply (gate `assert-verde-por-ausencia`):** as PRE/PÓS aplicadas (#1040, #1042) usavam `provolatile <> 's'`
+e `count(*) <> 5` — NULL-blind no texto. Em PROD não houve verde falso (`provolatile` é NOT NULL e `count(*)` nunca é
+NULL), mas o `.sql` novo nasce limpo: o repo passou a `IS DISTINCT FROM` / `IS NOT TRUE`. Só os blocos `DO` mudaram; os
+corpos das funções (e os md5 `52e1543d…`, `9d21d6ed…`, `1262b632…` em PROD) são os mesmos — não há o que reaplicar.

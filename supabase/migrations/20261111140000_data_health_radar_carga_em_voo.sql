@@ -38,7 +38,7 @@ DECLARE
   v_vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public._data_health_compute()'));
 BEGIN
   IF (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'radar_ingest_state'
-         AND column_name IN ('carga_fase', 'carga_erro', 'carga_tentativas', 'carga_iniciada_em', 'carga_validada_em')) <> 5 THEN
+         AND column_name IN ('carga_fase', 'carga_erro', 'carga_tentativas', 'carga_iniciada_em', 'carga_validada_em')) IS DISTINCT FROM 5 THEN
     RAISE EXCEPTION 'PRE FALHOU: radar_ingest_state sem as 5 colunas carga_* (aplique 20261110130000 e 20261111120000 antes)';
   END IF;
   IF v_vivo IS NULL OR v_vivo NOT IN ('3fe9b3ab92e202ae09ec21b19ddad54a', '1262b63277d50a475949800d1cde15cd') THEN
@@ -1782,7 +1782,7 @@ BEGIN
   IF r.oid IS NULL OR r.vivo IS DISTINCT FROM '1262b63277d50a475949800d1cde15cd' THEN
     RAISE EXCEPTION 'P1_FALHOU: _data_health_compute vivo (md5 %) nao e este', r.vivo;
   END IF;
-  IF r.provolatile <> 's' OR NOT r.prosecdef OR r.proconfig IS DISTINCT FROM ARRAY['search_path=public, pg_temp'] THEN
+  IF r.provolatile IS DISTINCT FROM 's' OR r.prosecdef IS NOT TRUE OR r.proconfig IS DISTINCT FROM ARRAY['search_path=public, pg_temp'] THEN
     RAISE EXCEPTION 'P2_FALHOU: _data_health_compute perdeu STABLE/SECURITY DEFINER/search_path';
   END IF;
   IF has_function_privilege('anon', r.oid, 'EXECUTE') OR has_function_privilege('authenticated', r.oid, 'EXECUTE')
