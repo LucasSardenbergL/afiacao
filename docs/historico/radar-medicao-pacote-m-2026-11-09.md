@@ -64,13 +64,28 @@ chamadas no app, e o trigger do ledger gravava ~64 mil eventos `automatica` por 
   ([radar-piloto-acompanhado-roteiro.md](radar-piloto-acompanhado-roteiro.md)) — é query, não recado.
 - O e-mail semanal continua desligado (decisão do founder, fora deste pacote).
 
-## Camadas de deploy
+## Camadas de deploy — no ar em 2026-11-09
 
-1. Migration `20261111134500` — **founder**, `bun run db:aplicar` (ou SQL Editor entre `BEGIN;`/`COMMIT;`). A PRE
-   aborta se o `radar_funil`, o `radar_evento_contato` ou o `radar_placar_uso` vivos não forem os de 2026-11-08.
-2. **Publish** — founder. O front tolera a ordem: sem a migration, colunas novas viram `—` e a aba Uso diz que a
-   adoção ainda não tem leitura.
-3. Sem edge.
+| Camada | Quem | Estado e evidência |
+|---|---|---|
+| Merge | auto-merge | ✅ #3759, squash `e28b6f275` (10:46Z). |
+| Publish | founder | ✅ `monitor-deploy --pr 3759`: o ar serve `e28b6f27`. `verify-frontend` com sentinela exclusiva ("Usaram em outro dia": 0 em `e4dcdd5a4`, 1 em `e28b6f275`) em `RadarFunil-C7kclVaM.js`, controle negativo ok. |
+| Migration `20261111134500` | founder (`db:aplicar`, tentativa #1043) | ✅ psql-ro: os 6 `md5(prosrc)` = os do arquivo (funil `fb09ceea…`); `radar_placar_uso` ausente; anon e PUBLIC fora das 5 funções, `authenticated` fora do expurgo; `radar_card_exibicoes` com RLS e fechada ao JWT; `radar_eventos_evento_check` e `radar_eventos_intencao_forma` validados; sensores `card_exibido` (10) e `intencao` (11); cron `radar-expurgo-medicao-diario` ativo como `postgres`. Re-rodar o `db:aplicar` dá `exit 3` "já aplicado" (benigno). |
+| Edge | — | não há. |
+
+A sessão não aplicou a migration: ela tem `DROP FUNCTION` e expurgo por cron, escrita destrutiva que
+`docs/agent/database.md` §1 deixa com o founder. Isso vale mesmo quando outra sessão pede para a sessão aplicar.
+
+Estado no apply (psql-ro): 0 exibição, 0 intenção, 64.299 automáticos ainda no ledger (o cron os tira em ~4 dias).
+**Zero aqui é falta de uso, não de sensor:** o 1º sinal é o 1º toque de vendedor, na aba Uso. Quando medir: as
+queries de [radar-piloto-acompanhado-roteiro.md](radar-piloto-acompanhado-roteiro.md).
+
+## Pendências que ficam fora deste pacote
+
+- **Uso da agenda do pacote L na adoção.** O pacote L (#3762, aberto em 2026-11-09) cria `radar_agenda_uso`. Quando
+  ela estiver no ar, o CTE `acao` do `radar_funil` pode contá-la como ação humana: recriar com a PRE no md5
+  `fb09ceea1ad40a78dc471b3a5e4ec95d`.
+- **Piloto acompanhado:** decisão do founder.
 
 ## Provas
 
