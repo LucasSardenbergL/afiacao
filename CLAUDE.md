@@ -62,7 +62,7 @@ Diário de PR/entregas: `docs/historico/` (`bugs-resolvidos.md`, `programas-vend
 
 ## Merge (auto)
 
-Todo PR não-draft **auto-mergeia (squash) quando o CI `validate` passa** (`.github/workflows/auto-merge.yml`, zero clique do founder). Para **segurar**, deixe-o **DRAFT**; nunca `gh pr merge --admin` de rotina. **No app, ao criar PR: ligue o Auto-fix** (`set_monitor`, `auto_fix`+`address_comments`) — o `<ci-monitor-event>` já autoriza consertar, commitar e push, e substitui o `pr-watch`. **Sem o app:** `scripts/pr-watch.sh <nº>` em background (cloud: `subscribe_pr_activity`, sem perguntar) e PushNotification no desfecho; **exit 6 = NÃO consultei** (≠ 5): `gh pr view` antes de avisar. Detalhe e conflito: `worktrees.md`.
+Todo PR não-draft **auto-mergeia (squash) quando o CI `validate` passa** (`.github/workflows/auto-merge.yml`, zero clique do founder). Para **segurar**, deixe-o **DRAFT**; nunca `gh pr merge --admin` de rotina. **No app, ao criar PR: ligue o Auto-fix** (`set_monitor`, `auto_fix`+`address_comments`) — o `<ci-monitor-event>` já autoriza consertar, commitar e push, e substitui o `pr-watch`. **Sem o app:** `scripts/pr-watch.sh <nº>` em background (cloud: `subscribe_pr_activity`, sem perguntar) e PushNotification no desfecho; **exit 6 = NÃO consultei** (≠ 5): `gh pr view` antes de avisar. Detalhe e conflito: `worktrees.md`. **Push cancela o CI em voo:** junte commits, reproduza o vermelho local, docs só após o verde.
 
 ## Stack
 
