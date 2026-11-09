@@ -14,13 +14,22 @@ import {
 import { parsearConflito, parsearEstadoCadastro, parsearRegistroV2 } from '@/lib/radar/conflito-cadastro';
 
 
-/** Payload da edge `omie-vendas-sync` action `criar_cliente` (conta Oben). `razaoFiscal` = a da Receita (MEI com CPF). */
-function montarPayloadCriarCliente(e: RadarEmpresa, razaoFiscal: string | null) {
+/**
+ * O alvo do cadastro pode levar o telefone ESCOLHIDO na confirmação (pacote L, item 4): `telefoneCadastro` presente
+ * vale como está (`null` = não enviar telefone); ausente (lote, retentativa antiga) = o 1º número da Receita.
+ */
+export type EmpresaParaCadastro = RadarEmpresa & { telefoneCadastro?: string | null };
+
+/**
+ * Payload da edge `omie-vendas-sync` action `criar_cliente` (conta Oben). `razaoFiscal` = a da Receita (a de MEI tem o
+ * CPF, que o Radar guarda mascarado — pacote J); ausente = a razão da linha.
+ */
+export function montarPayloadCriarCliente(e: EmpresaParaCadastro, razaoFiscal?: string | null) {
   return {
     action: 'criar_cliente',
     account: 'oben',
     document: e.cnpj,
-    razao_social: razaoFiscal || e.nome_fantasia || e.cnpj,
+    razao_social: (razaoFiscal === undefined ? e.razao_social : razaoFiscal) || e.nome_fantasia || e.cnpj,
     nome_fantasia: e.nome_fantasia || undefined,
     endereco: e.logradouro || undefined,
     endereco_numero: e.numero || undefined,
@@ -28,7 +37,7 @@ function montarPayloadCriarCliente(e: RadarEmpresa, razaoFiscal: string | null) 
     cidade: e.municipio_nome || undefined,
     estado: e.uf || undefined,
     cep: e.cep || undefined,
-    telefone: e.telefone1 || e.telefone2 || undefined,
+    telefone: e.telefoneCadastro !== undefined ? e.telefoneCadastro || undefined : e.telefone1 || e.telefone2 || undefined,
   };
 }
 

@@ -46,6 +46,8 @@ export function ChipAtendimento({ cnpj, className }: { cnpj: string; className?:
 /**
  * Bloco da ficha: quem está atendendo + Assumir/Renovar/Liberar. A escrita decide com o usuário REAL (`useAuth`) e
  * fica desligada na lente "Ver como"; a fronteira é a RPC `radar_definir_atendimento` (gate + dono + gestor).
+ * Pacote L (migration 20261111134000): o registro de "em conversa"/"não atendeu" chama a mesma RPC por dentro — livre
+ * vira seu, o seu renova, o de outro não muda. O botão continua para reservar o lead ANTES do contato.
  */
 export function RadarAtendimentoLead({ cnpj, jaCliente }: { cnpj: string; jaCliente: boolean }) {
   const { role, commercialRole } = useAuth();
@@ -80,7 +82,10 @@ export function RadarAtendimentoLead({ cnpj, jaCliente }: { cnpj: string; jaClie
       ) : a ? (
         <ChipAtendimento cnpj={cnpj} />
       ) : q.isSuccess ? (
-        <span className="text-xs text-muted-foreground">Ninguém está atendendo este lead.</span>
+        // Pacote L: registrar "em conversa" ou "não atendeu" já assume (o "Assumir" fica para reservar antes de ligar).
+        <span className="text-xs text-muted-foreground" data-testid="radar-atendimento-livre">
+          Ninguém está atendendo este lead. Registrar “em conversa” ou “não atendeu” já deixa o lead com você.
+        </span>
       ) : null}
       {!jaCliente && (!a || a.ehMeu) && (
         // Posse DESCONHECIDA (leitura falhou) não é "livre": assumir às cegas pode passar por cima de um colega (pacote F,
