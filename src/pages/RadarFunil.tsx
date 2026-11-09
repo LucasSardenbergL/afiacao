@@ -1,6 +1,7 @@
 // Radar H — funil do lead empurrado: e-mail semanal e card "Prospectar hoje" até o cadastro no Omie, por vendedor e
 // por semana (RPC radar_funil, migration 20261107233000). Só master e gestor comercial (o servidor confere de novo).
 // "—" = o sensor não cobria a semana (ausente ≠ zero); 0 = medido e nada aconteceu.
+// Pacote M (20261111134500): aba "Uso" — a adoção sobre o universo de elegíveis e o experimento da coorte.
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, Lock, RefreshCw } from 'lucide-react';
@@ -11,11 +12,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUrlState } from '@/hooks/useUrlState';
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
   coberturaDoPeriodo,
+  etapasAdocao,
   fmtContagem,
   fmtTaxa,
   inconsistencias,
@@ -29,14 +33,16 @@ import {
   type Coluna,
   type Contagens,
   type EstadoSensor,
+  type ExperimentoFunil,
   type PainelFunil,
   type SemanaFunil,
   type SensorFunil,
 } from '@/lib/radar/funil';
-import { useRadarFunil } from '@/queries/useRadarFunil';
+import { useRadarFunil, useRadarFunilExperimento } from '@/queries/useRadarFunil';
 
 const PERIODOS = [4, 8, 12, 26] as const;
 const TODOS = '';
+const ABAS = ['funil', 'uso'] as const;
 
 const ESTADO_UI: Record<EstadoSensor, { rotulo: string; classe: string; dica: string }> = {
   ok: { rotulo: 'ok', classe: 'text-status-success border-status-success/40', dica: 'Gravou no período, sem falha registrada.' },
@@ -117,12 +123,23 @@ function ResumoFunil({ t, painel }: { t: Contagens; painel: PainelFunil }) {
         <div>
           <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Card “Prospectar hoje”</div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <Etapa titulo="Dias com o card servido" nota={`${fmtContagem(t.card_leads_servidos)} lead(s) mostrados`}>
+            <Etapa titulo="Dias com o card servido"
+              nota={t.card_leads_exibidos !== null
+                ? `${fmtContagem(t.card_leads_exibidos)} lead(s) exibidos, reposição incluída`
+                : `${fmtContagem(t.card_leads_servidos)} lead(s) na 1ª exibição do dia`}>
               <Num n={t.card_dias} cobertura={cob('card_dias')} />
             </Etapa>
-            <Etapa titulo="Leads clicados (dos mostrados)">
-              <DeX num={t.card_leads_clicados} den={t.card_leads_servidos} cobNum={cob('card_leads_clicados')} cobDen={cob('card_leads_servidos')} />
-            </Etapa>
+            {t.card_leads_exibidos !== null ? (
+              <Etapa titulo="Leads clicados (dos exibidos)" nota="Cada lead exibido conta, inclusive o que entra depois de um Assumir.">
+                <DeX num={t.card_leads_clicados_exibidos} den={t.card_leads_exibidos}
+                  cobNum={cob('card_leads_clicados_exibidos')} cobDen={cob('card_leads_exibidos')} />
+              </Etapa>
+            ) : (
+              <Etapa titulo="Leads clicados (da 1ª exibição do dia)"
+                nota="Sem o sensor de exibição: o lead que entra depois de um Assumir não está no denominador.">
+                <DeX num={t.card_leads_clicados} den={t.card_leads_servidos} cobNum={cob('card_leads_clicados')} cobDen={cob('card_leads_servidos')} />
+              </Etapa>
+            )}
             <Etapa titulo="Fichas entregues (dos cliques no card)">
               <DeX num={t.card_fichas} den={t.card_leads_clicados} cobNum={cob('card_fichas')} cobDen={cob('card_leads_clicados')} />
             </Etapa>
@@ -131,6 +148,9 @@ function ResumoFunil({ t, painel }: { t: Contagens; painel: PainelFunil }) {
         <div>
           <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Depois da ficha</div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <Etapa titulo="Intenções de contato" nota="Tocou em Ligar (celular), WhatsApp ou Copiar telefone na ficha: 1 por lead, canal e dia.">
+              <Num n={t.intencoes} cobertura={cob('intencoes')} />
+            </Etapa>
             <Etapa titulo="Contatos humanos em lead empurrado (do total de contatos)" nota="Toque registrado: sem resposta ou em conversa.">
               <DeX num={t.contatos_empurrados} den={t.contatos} cobNum={cob('contatos_empurrados')} cobDen={cob('contatos')} />
             </Etapa>
@@ -215,8 +235,13 @@ function CelulasFunil({ c, cob }: { c: Contagens; cob: (col: Coluna) => Cobertur
       <TableCell className="text-right"><DeX num={c.email_entregues} den={c.email_enviados} cobNum={cob('email_entregues')} cobDen={cob('email_enviados')} /></TableCell>
       <TableCell className="text-right"><DeX num={c.email_leads_clicados} den={c.email_leads_entregues} cobNum={cob('email_leads_clicados')} cobDen={cob('email_leads_entregues')} /></TableCell>
       <TableCell className="text-right"><Num n={c.email_fichas} cobertura={cob('email_fichas')} /></TableCell>
-      <TableCell className="text-right"><DeX num={c.card_leads_clicados} den={c.card_leads_servidos} cobNum={cob('card_leads_clicados')} cobDen={cob('card_leads_servidos')} /></TableCell>
+      <TableCell className="text-right">
+        {c.card_leads_exibidos !== null
+          ? <DeX num={c.card_leads_clicados_exibidos} den={c.card_leads_exibidos} cobNum={cob('card_leads_clicados_exibidos')} cobDen={cob('card_leads_exibidos')} />
+          : <DeX num={c.card_leads_clicados} den={c.card_leads_servidos} cobNum={cob('card_leads_clicados')} cobDen={cob('card_leads_servidos')} />}
+      </TableCell>
       <TableCell className="text-right"><Num n={c.card_fichas} cobertura={cob('card_fichas')} /></TableCell>
+      <TableCell className="text-right"><Num n={c.intencoes} cobertura={cob('intencoes')} /></TableCell>
       <TableCell className="text-right"><DeX num={c.contatos_empurrados} den={c.contatos} cobNum={cob('contatos_empurrados')} cobDen={cob('contatos')} /></TableCell>
       <TableCell className="text-right"><DeX num={c.cadastros_novos_empurrados} den={c.cadastros_novos} cobNum={cob('cadastros_novos_empurrados')} cobDen={cob('cadastros_novos')} /></TableCell>
     </>
@@ -233,6 +258,7 @@ function CabecalhoFunil({ primeira }: { primeira: string }) {
         <TableHead className="text-right">Fichas (e-mail)</TableHead>
         <TableHead className="text-right">Clicados (card)</TableHead>
         <TableHead className="text-right">Fichas (card)</TableHead>
+        <TableHead className="text-right">Intenções de contato</TableHead>
         <TableHead className="text-right">Contatos em empurrado</TableHead>
         <TableHead className="text-right">Novos no Omie de empurrado</TableHead>
       </TableRow>
@@ -274,7 +300,7 @@ function PorVendedor({ painel }: { painel: PainelFunil }) {
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Por vendedor (período inteiro)</CardTitle>
-        <CardDescription>Quem recebeu e-mail, viu o card ou registrou contato/cadastro no período.</CardDescription>
+        <CardDescription>Todo vendedor elegível agora, mesmo sem atividade (zero é zero), e quem teve atividade no período.</CardDescription>
       </CardHeader>
       <CardContent className="overflow-x-auto">
         <Table>
@@ -293,12 +319,162 @@ function PorVendedor({ painel }: { painel: PainelFunil }) {
   );
 }
 
+/** Adoção sobre o universo (pacote M): todas as etapas com o MESMO denominador, os elegíveis agora. */
+function Adocao({ painel, vendedor }: { painel: PainelFunil; vendedor: string | null }) {
+  const a = painel.adocao;
+  if (!a) {
+    return (
+      <EmptyState icon={AlertTriangle} tone="operational" title="Adoção ainda sem leitura"
+        description="O banco ainda não tem o pacote M (migration 20261111134500): sem o universo de elegíveis, a adoção não é mostrada (nada de 0 inventado)." />
+    );
+  }
+  const e = etapasAdocao(a, vendedor);
+  const nome = new Map(painel.vendedores.map((v) => [v.userId, v.nome]));
+  const linhas = a.vendedores.filter((v) => vendedor === null || v.userId === vendedor);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Adoção no período</CardTitle>
+        <CardDescription>
+          Denominador = quem pode usar o Radar AGORA (a autorização de semanas passadas não é reconstruída). Exposto: o
+          Radar chegou a ele (card, e-mail entregue, tela ou ficha aberta). Ação humana: clique em lead, ficha aberta,
+          intenção de contato, contato registrado, cadastro ou assumir um lead.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <Etapa titulo="Elegíveis agora"><Num n={e.elegiveis} /></Etapa>
+          <Etapa titulo="Expostos ao Radar"><DeX num={e.expostos} den={e.elegiveis} /></Etapa>
+          <Etapa titulo="Com 1ª ação humana"><DeX num={e.comAcao} den={e.elegiveis} /></Etapa>
+          <Etapa titulo="Usaram em outro dia" nota="Ação em 2 dias ou mais no período.">
+            <DeX num={e.voltaram} den={e.elegiveis} />
+          </Etapa>
+        </div>
+        {e.foraDoUniverso > 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {fmtContagem(e.foraDoUniverso)} pessoa(s) agiram no período sem ser elegíveis hoje (perderam o acesso): fora do denominador.
+          </p>
+        ) : null}
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Vendedor</TableHead>
+                <TableHead>Elegível agora</TableHead>
+                <TableHead>Exposto em</TableHead>
+                <TableHead>1ª ação</TableHead>
+                <TableHead>Última ação</TableHead>
+                <TableHead className="text-right">Dias com ação</TableHead>
+                <TableHead className="text-right">Ações</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {linhas.map((v) => (
+                <TableRow key={v.userId} data-testid="radar-adocao-linha">
+                  <TableCell className="whitespace-nowrap font-medium">{nome.get(v.userId) ?? <span className="text-muted-foreground">sem nome</span>}</TableCell>
+                  <TableCell>{v.elegivel ? 'sim' : <span className="text-muted-foreground">não</span>}</TableCell>
+                  <TableCell className="whitespace-nowrap">{fmtData(v.expostoEm)}</TableCell>
+                  <TableCell className="whitespace-nowrap">{fmtData(v.primeiraAcaoEm)}</TableCell>
+                  <TableCell className="whitespace-nowrap">{fmtData(v.ultimaAcaoEm)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtContagem(v.diasComAcao)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtContagem(v.acoes)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** O experimento da coorte (topo × amostra) e a conversão por faixa: leitura, nunca conclusão. */
+function Experimento({ q }: { q: { data?: ExperimentoFunil; isLoading: boolean; isError: boolean; error: unknown; refetch: () => unknown } }) {
+  if (q.isLoading) return <PageSkeleton variant="cockpit" />;
+  if (q.isError || !q.data) {
+    return (
+      <EmptyState icon={AlertTriangle} tone="operational" title="Não consegui ler o experimento"
+        description={mensagemDeErro(q.error) ?? 'A leitura falhou. Nenhum número é mostrado no lugar.'}
+        actionLabel="Tentar de novo" onAction={() => void q.refetch()} />
+    );
+  }
+  const x = q.data;
+  const tocados = x.coortes.reduce((s, c) => s + c.tocados, 0);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Experimento da coorte (em aberto)</CardTitle>
+        <CardDescription>
+          Em cada lote, todos os leads do topo (nota ≥ 70) e uma amostra fora dele foram registrados no mesmo instante.
+          Conta só o que aconteceu depois do sorteio. Com {fmtContagem(tocados)} lead(s) tocado(s) nas coortes, não há
+          base para comparar os grupos: o experimento segue aberto.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4 overflow-x-auto">
+        {x.coortes.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nenhuma coorte sorteada.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Sorteio</TableHead>
+                <TableHead>Grupo</TableHead>
+                <TableHead className="text-right">Tocados</TableHead>
+                <TableHead className="text-right">Em conversa</TableHead>
+                <TableHead className="text-right">Viraram cliente</TableHead>
+                <TableHead className="text-right">Dias</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {x.coortes.map((c) => (
+                <TableRow key={`${c.sorteio}:${c.grupo}`} data-testid="radar-coorte-linha">
+                  <TableCell className="whitespace-nowrap">{c.sorteio}</TableCell>
+                  <TableCell>{c.grupo === 'topo' ? 'topo (≥ 70)' : 'amostra (40–69)'}</TableCell>
+                  <TableCell className="text-right"><DeX num={c.tocados} den={c.sorteados} /></TableCell>
+                  <TableCell className="text-right"><DeX num={c.emConversa} den={c.sorteados} /></TableCell>
+                  <TableCell className="text-right"><DeX num={c.virouCliente} den={c.sorteados} /></TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtContagem(c.diasDeAcompanhamento)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        <div>
+          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Conversão pela nota no 1º toque</div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Faixa</TableHead>
+                <TableHead className="text-right">Leads tocados</TableHead>
+                <TableHead className="text-right">Em conversa</TableHead>
+                <TableHead className="text-right">Viraram cliente</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {x.faixas.map((f) => (
+                <TableRow key={f.faixa}>
+                  <TableCell>{f.faixa}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtContagem(f.leadsTocados)}</TableCell>
+                  <TableCell className="text-right"><DeX num={f.emConversa} den={f.leadsTocados} /></TableCell>
+                  <TableCell className="text-right"><DeX num={f.virouCliente} den={f.leadsTocados} /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function RadarFunil() {
   const { isMaster, isGestorComercial, loading } = useAuth();
   const pode = isMaster || isGestorComercial;
-  const [f, setF] = useUrlState({ semanas: 8, vendedor: TODOS });
+  const [f, setF] = useUrlState({ semanas: 8, vendedor: TODOS, aba: 'funil' });
   const semanas = (PERIODOS as readonly number[]).includes(f.semanas) ? f.semanas : 8;
+  const aba = (ABAS as readonly string[]).includes(f.aba) ? f.aba : 'funil';
   const q = useRadarFunil(semanas, pode);
+  const qx = useRadarFunilExperimento(pode && aba === 'uso');
 
   useEffect(() => {
     if (pode) track('radar.funil_aberto', { semanas });
@@ -375,13 +551,25 @@ export default function RadarFunil() {
       ) : (
         <>
           <p className="text-xs text-muted-foreground">
-            {rotuloSemana(painel.inicio)} a {rotuloSemana(painel.fim)} · {painel.vendedores.length} vendedor(es) com
-            atividade · lido em {fmtData(painel.geradoEm)}
+            {rotuloSemana(painel.inicio)} a {rotuloSemana(painel.fim)} · {painel.vendedores.length} vendedor(es) no
+            painel{painel.adocao ? ` (${painel.adocao.elegiveisAgora} elegível(is) agora)` : ''} · lido em {fmtData(painel.geradoEm)}
           </p>
-          <ResumoFunil t={total} painel={painel} />
-          <SaudeSensores sensores={painel.sensores} />
-          <PorSemana painel={painel} vendedor={vendedor} />
-          {vendedor === null && painel.vendedores.length > 0 ? <PorVendedor painel={painel} /> : null}
+          <Tabs value={aba} onValueChange={(v) => { setF({ aba: v }); track('radar.funil_aba', { aba: v }); }}>
+            <TabsList>
+              <TabsTrigger value="funil">Funil</TabsTrigger>
+              <TabsTrigger value="uso">Uso</TabsTrigger>
+            </TabsList>
+            <TabsContent value="funil" className="space-y-4">
+              <ResumoFunil t={total} painel={painel} />
+              <SaudeSensores sensores={painel.sensores} />
+              <PorSemana painel={painel} vendedor={vendedor} />
+              {vendedor === null && painel.vendedores.length > 0 ? <PorVendedor painel={painel} /> : null}
+            </TabsContent>
+            <TabsContent value="uso" className="space-y-4">
+              <Adocao painel={painel} vendedor={vendedor} />
+              <Experimento q={qx} />
+            </TabsContent>
+          </Tabs>
         </>
       )}
     </div>

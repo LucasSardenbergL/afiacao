@@ -25,7 +25,7 @@ vi.mock('react-router-dom', () => ({
   Link: ({ to, children, ...p }: { to: string; children: ReactNode }) => <a href={to} {...p}>{children}</a>,
 }));
 vi.mock('@/queries/useRadarRegistroEmpurrado', () => ({
-  registrarCardServido: () => Promise.resolve({ ok: true, registrado: true }),
+  registrarCardExibido: () => Promise.resolve({ ok: true, registrado: true }),
   registrarAberturaEmpurrada: vi.fn(),
 }));
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
@@ -64,7 +64,7 @@ describe('ProspectarHojeCard — acompanhamento (pacote G)', () => {
     expect(await screen.findByText('Retornos para hoje (1)')).toBeTruthy();
     expect(screen.getAllByTestId('prospectar-hoje-lead')).toHaveLength(1);
     expect(screen.getByTestId('prospectar-hoje-retorno').textContent).toMatch(/Em conversa · atrasado \(era 06\/11\) · quer amostra/);
-    fireEvent.click(screen.getAllByRole('button', { name: 'Abrir ficha' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: /^Abrir ficha/ })[0]);
     expect(navigate).toHaveBeenCalledWith('/radar?cnpj=10100000000001');
     expect(rpc.mock.calls.some((c) => c[0] === 'radar_registrar_abertura_empurrada')).toBe(false);
   });
