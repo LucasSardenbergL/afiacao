@@ -431,15 +431,6 @@
       "desde": "2026-10-30"
     },
     {
-      "funcao": "radar_salvar_geocode",
-      "identidade": "text,double precision,double precision,text",
-      "classe": "PATCH",
-      "patch": "20261029201200_radar_acesso_vendedor.sql",
-      "efeito": "SO_CITA",
-      "motivo": "pós-condição B5 confere que ela SEGUE gestor/master; o laço de troca não a reescreve.",
-      "desde": "2026-10-30"
-    },
-    {
       "funcao": "radar_registrar_conflito_cadastro",
       "identidade": "text,text,text,text",
       "classe": "PATCH",
