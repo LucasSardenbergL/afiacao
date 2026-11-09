@@ -6,7 +6,7 @@
 // cadastro gravaria dado fiscal errado no ERP. Esta guarda fecha isso no servidor, para qualquer cliente.
 
 /** O sufixo que o Radar grava no lugar do CPF do titular de MEI. */
-export const SUFIXO_MASCARADO = / \*\*\*[0-9]{6}\*\*$/;
+const SUFIXO_MASCARADO = / \*\*\*[0-9]{6}\*\*$/;
 
 /** Lança se a razão social chegou na forma mascarada (nunca é a razão de verdade de ninguém). */
 export function exigirRazaoFiscal(razao: unknown): void {
