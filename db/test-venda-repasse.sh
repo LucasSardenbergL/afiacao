@@ -621,6 +621,7 @@ if P -q -f "$MIGC" >"$TMPD/mig2.out" 2>&1 && P -q -f "$MIGD" >>"$TMPD/mig2.out" 
 else bad "MIG2 re-colar falhou: $(grep -m1 ERROR "$TMPD/mig2.out" | cut -c1-200)"; fi
 # H4 deriva do HELPER depois do 1º deploy (parecer Codex): re-colar a trava tem de recusar, não sobrescrever.
 # Cópia ÍNTEGRA da migration (as sabotagens de corpo desligam o md5 só no MIGT), numa transação desfeita.
+# shellcheck disable=SC2016  # $d$ é o delimitador de dólar do Postgres, literal de propósito
 printf 'BEGIN;\nDO $d$ BEGIN EXECUTE replace(pg_get_functiondef(%s::regprocedure), %s, %s); END $d$;\n\\i %s\nROLLBACK;\n' \
   "'private._venda_repasse_situacao(uuid[],bigint[],date[],numeric[])'" "'SELECT it.comprador_id, it.omie_codigo_produto,'" \
   "'SELECT /* deriva */ it.comprador_id, it.omie_codigo_produto,'" "$MIGH" > "$TMPD/h4.sql"
