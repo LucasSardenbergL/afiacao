@@ -1,0 +1,4 @@
+# Índice que só ganha linhas (uma por entrega): append concorrente de duas worktrees não conflita.
+# Edição da MESMA linha nos dois ramos vira duplicata, que o docs-indice-gate-check reprova.
+# NÃO estender a db/nucleo-ci.txt: contratos editáveis, e a duplicata é rejeitada pelo runner.
+docs/historico/README.md merge=union

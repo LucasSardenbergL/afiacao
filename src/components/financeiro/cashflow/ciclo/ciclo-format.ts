@@ -41,11 +41,6 @@ export function coberturaPorValor(resumo: ResumoCliente[], company: Company, hoj
   return den > 0 ? { ok: true, pct: (num / den) * 100 } : { ok: false, motivo: 'sem valor pago em 12 meses' };
 }
 
-/** Chave de URL do custo do dinheiro, uma por empresa (nunca um c único para todas). */
-export const CHAVE_CUSTO: Record<Company, 'cicloCustoOben' | 'cicloCustoColacor' | 'cicloCustoColacorSc'> = {
-  oben: 'cicloCustoOben', colacor: 'cicloCustoColacor', colacor_sc: 'cicloCustoColacorSc',
-};
-
 /** Nome do cliente para a tela: o cadastro do Omie traz entidade HTML ("MOVEIS &amp; CIA");
  *  sem nome em nenhuma fonte, mostra o código (nunca um nome inventado). */
 export function nomeExibido(c: Pick<ResumoCliente, 'nomeCliente' | 'omieCodigoCliente'>): string {

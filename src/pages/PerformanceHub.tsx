@@ -37,9 +37,8 @@ const safeQuery = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {
   }
 };
 
-function KpiCards({ empresa }: { empresa: string }) {
-  void empresa;
-
+/** Exportado para o teste da posição ao vivo (src/pages/__tests__/PerformanceHub.posicao.test.tsx). */
+export function KpiCards({ empresa }: { empresa: string }) {
   const { data } = useQuery({
     queryKey: ["performance-hub-kpis", empresa],
     queryFn: async () => {
@@ -50,34 +49,29 @@ function KpiCards({ empresa }: { empresa: string }) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const client = supabase as any;
 
-      const [posicao, meta, ligacoes, spin] = await Promise.all([
+      const [des, ligacoes, spin] = await Promise.all([
         safeQuery(
           async () => {
-            const { data } = await client
+            // A empresa do seletor (antes fixava OBEN: com COLACOR o card mostrava a posição da OBEN).
+            const { data: linha, error } = await client
               .from("v_des_posicao_trimestre_ao_vivo")
-              .select("posicao_ao_vivo_otimista")
-              .eq("empresa", "OBEN")
+              .select("fat_bruto_confirmado, posicao_ao_vivo_otimista, meta_pessoal")
+              .eq("empresa", empresa)
               .eq("trimestre", trimestre)
               .eq("ano", ano)
               .limit(1)
               .maybeSingle();
-            return Number(data?.posicao_ao_vivo_otimista ?? 0);
+            // Leitura que falhou ≠ sem faturado: lança, e o safeQuery cai no null ("—"), nunca R$ 0.
+            if (error) throw error;
+            // Sem faturado confirmado do GoodData, a "posição" da view antiga era só trânsito (e a
+            // nova devolve NULL): ausente ≠ zero — o card mostra "—", nunca R$ 0 nem o trânsito.
+            const semFaturado = linha?.fat_bruto_confirmado == null;
+            const n = semFaturado ? Number.NaN : Number(linha?.posicao_ao_vivo_otimista ?? Number.NaN);
+            // Meta não cadastrada também é ausência: "—", não "R$ 0".
+            const m = Number(linha?.meta_pessoal ?? Number.NaN);
+            return { posicao: Number.isFinite(n) ? n : null, meta: Number.isFinite(m) ? m : null };
           },
-          0,
-        ),
-        safeQuery(
-          async () => {
-            const { data } = await client
-              .from("v_des_posicao_trimestre_ao_vivo")
-              .select("meta_pessoal")
-              .eq("empresa", "OBEN")
-              .eq("trimestre", trimestre)
-              .eq("ano", ano)
-              .limit(1)
-              .maybeSingle();
-            return Number(data?.meta_pessoal ?? 0);
-          },
-          0,
+          { posicao: null, meta: null } as { posicao: number | null; meta: number | null },
         ),
         safeQuery(
           async () => {
@@ -89,10 +83,11 @@ function KpiCards({ empresa }: { empresa: string }) {
           },
           0,
         ),
-        Promise.resolve(0),
+        // Ainda não há fonte de score SPIN (a aba Coaching SPIN usa dados de exemplo): ausente, não 0.
+        Promise.resolve(null as number | null),
       ]);
 
-      return { posicao, meta, ligacoes, spin };
+      return { posicao: des.posicao, meta: des.meta, ligacoes, spin };
     },
   });
 
@@ -100,10 +95,10 @@ function KpiCards({ empresa }: { empresa: string }) {
     n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
   const cards = [
-    { label: "Posição ao Vivo", value: brl(Number(data?.posicao ?? 0)), icon: Trophy },
-    { label: "Meta Pessoal", value: brl(Number(data?.meta ?? 0)), icon: Target },
+    { label: "Posição ao Vivo", value: data?.posicao == null ? "—" : brl(data.posicao), icon: Trophy },
+    { label: "Meta Pessoal", value: data?.meta == null ? "—" : brl(data.meta), icon: Target },
     { label: "Ligações Hoje", value: data?.ligacoes ?? 0, icon: Phone },
-    { label: "Score SPIN Médio", value: data?.spin ?? 0, icon: MessageSquare },
+    { label: "Score SPIN Médio", value: data?.spin == null ? "—" : data.spin, icon: MessageSquare },
   ];
 
   return (

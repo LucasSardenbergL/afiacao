@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Button } from '@/components/ui/button';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { ChevronDown, ChevronRight, Eye, Loader2, XCircle, Zap } from 'lucide-react';
@@ -9,7 +10,9 @@ import { OverrideMinimoButton } from './OverrideMinimoButton';
 import { podeCancelarPeloHumano } from './rejeitar-pedido';
 import { ItensPreviewLinha } from './ItensPreviewLinha';
 
-export function PedidoRow({
+// memo (plano v4, lote 10 — C8): abrir a prévia de itens de UMA linha, ou o histórico, re-renderizava
+// todas as linhas. Os callbacks recebem o pedido para a página passar a MESMA função a todas as linhas.
+export const PedidoRow = memo(function PedidoRow({
   p,
   onVerDetalhes,
   onCancelar,
@@ -22,21 +25,22 @@ export function PedidoRow({
   colunas = 7,
 }: {
   p: PedidoSugerido;
-  onVerDetalhes: () => void;
-  onCancelar: () => void;
-  onVerPortal: () => void;
-  onDisparar: () => void;
+  onVerDetalhes: (p: PedidoSugerido) => void;
+  onCancelar: (p: PedidoSugerido) => void;
+  onVerPortal: (p: PedidoSugerido) => void;
+  onDisparar: (p: PedidoSugerido) => void;
   // Override do gate de mínimo de faturamento. A página só passa este callback p/
   // gestor/master (isMaster||isGestorComercial) — quando ausente, o botão "Disparar
   // mesmo assim" nem aparece (não-gestor cai no "Re-disparar" normal, que re-bate no gate).
-  onDispararIgnorandoMinimo?: () => void;
+  onDispararIgnorandoMinimo?: (p: PedidoSugerido) => void;
   disparando: boolean;
   /** Prévia dos itens aberta na própria linha (só-leitura). Sem `onAlternarItens`, não há chevron. */
   expandido?: boolean;
-  onAlternarItens?: () => void;
+  onAlternarItens?: (id: number) => void;
   /** Nº de colunas da tabela, para a linha da prévia ocupar a largura toda. */
   colunas?: number;
 }) {
+  const verDetalhes = () => onVerDetalhes(p);
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
   const podeCancelar = podeCancelarPeloHumano(p.status);
   // Pedido preso ESPECIFICAMENTE pelo gate de mínimo de faturamento + caller pode overridar
@@ -68,7 +72,7 @@ export function PedidoRow({
               size="icon"
               variant="ghost"
               className="h-6 w-6 -ml-1"
-              onClick={onAlternarItens}
+              onClick={() => onAlternarItens(p.id)}
               aria-expanded={expandido}
               aria-label={expandido ? 'Esconder itens' : 'Ver itens'}
               title={expandido ? 'Esconder itens' : 'Ver itens sem abrir os detalhes'}
@@ -87,7 +91,7 @@ export function PedidoRow({
       <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
       <TableCell className="text-right tabular-nums font-medium">{formatBRL(p.valor_total)}</TableCell>
       <TableCell>
-        <PortalBadge pedido={p} onClick={onVerPortal} />
+        <PortalBadge pedido={p} onClick={() => onVerPortal(p)} />
       </TableCell>
       <TableCell className="text-xs">
         {showAprovacao && p.aprovado_em ? (
@@ -98,14 +102,14 @@ export function PedidoRow({
       </TableCell>
       <TableCell>
         <div className="flex justify-end gap-1">
-          <Button size="sm" variant="ghost" onClick={onVerDetalhes}>
+          <Button size="sm" variant="ghost" onClick={verDetalhes}>
             <Eye className="w-4 h-4 mr-1" />Detalhes
           </Button>
           {podeAprovar && (
-            <Button size="sm" variant="default" onClick={onVerDetalhes}>Aprovar</Button>
+            <Button size="sm" variant="default" onClick={verDetalhes}>Aprovar</Button>
           )}
           {podeDisparar && (
-            <Button size="sm" variant={podeReDisparar ? 'outline' : 'default'} onClick={onDisparar} disabled={disparando || enviandoPortal}>
+            <Button size="sm" variant={podeReDisparar ? 'outline' : 'default'} onClick={() => onDisparar(p)} disabled={disparando || enviandoPortal}>
               {(disparando || enviandoPortal) ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
               {enviandoPortal ? 'Enviando…' : (podeReDisparar ? 'Re-disparar' : 'Disparar')}
             </Button>
@@ -114,12 +118,12 @@ export function PedidoRow({
             <OverrideMinimoButton
               fornecedorNome={p.fornecedor_nome}
               valorTotal={p.valor_total}
-              onConfirm={() => onDispararIgnorandoMinimo?.()}
+              onConfirm={() => onDispararIgnorandoMinimo?.(p)}
               disabled={disparando || enviandoPortal}
             />
           )}
           {podeCancelar && (
-            <Button size="sm" variant="outline" onClick={onCancelar} aria-label="Cancelar pedido" title="Cancelar pedido">
+            <Button size="sm" variant="outline" onClick={() => onCancelar(p)} aria-label="Cancelar pedido" title="Cancelar pedido">
               <XCircle className="w-4 h-4" />
             </Button>
           )}
@@ -132,7 +136,7 @@ export function PedidoRow({
         </div>
       </TableCell>
     </TableRow>
-    {expandido && <ItensPreviewLinha pedidoId={p.id} colunas={colunas} onAbrirDetalhes={onVerDetalhes} />}
+    {expandido && <ItensPreviewLinha pedidoId={p.id} colunas={colunas} onAbrirDetalhes={verDetalhes} />}
     </>
   );
-}
+});

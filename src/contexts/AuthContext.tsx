@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 import { limparPushDoDevice } from '@/lib/push/device';
+import { semearMeuCargoComercial } from '@/lib/cargo-comercial-cache';
 
 export type AppRole = 'employee' | 'customer' | 'master';
 
@@ -103,6 +104,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isApproved, setIsApproved] = useState(false);
   const [commercialRole, setCommercialRole] = useState<string | null>(null);
   const bootstrapResolvedRef = useRef(false);
+  // Geração do auth (lote 6c): cada evento de auth, logout e refetch a incrementa. A semente do
+  // cache do cargo só vale se a geração capturada no início do fetch ainda é a atual — senão um
+  // fetch atrasado reintroduziria o cargo de quem saiu ou atropelaria um refresh mais novo.
+  const geracaoAuthRef = useRef(0);
 
   const finishLoading = () => {
     bootstrapResolvedRef.current = true;
@@ -134,13 +139,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     );
   }, []);
 
-  const fetchUserRoleAndApproval = useCallback(async (userId: string) => {
+  /**
+   * Lê papel/aprovação/cargo e escreve no estado. Devolve `true` se escreveu e `false` se a
+   * geração do auth mudou no caminho (logout, evento mais novo, refetch, desmontagem): aí a
+   * leitura é de outra época e NÃO escreve nada. Sem isso, um fetch que resolvia depois do
+   * `SIGNED_OUT` devolvia o `role` de quem saiu, com `user` já `null`; e um `TOKEN_REFRESHED`
+   * mais novo era sobrescrito pela leitura velha. Quem decide é a geração mais nova.
+   */
+  const fetchUserRoleAndApproval = useCallback(async (userId: string, geracao: number): Promise<boolean> => {
+    const vigente = () => geracao === geracaoAuthRef.current;
     for (let attempt = 0; attempt < ROLE_FETCH_RETRY_DELAYS_MS.length; attempt += 1) {
       const delayMs = ROLE_FETCH_RETRY_DELAYS_MS[attempt];
       if (delayMs > 0) await wait(delayMs);
+      if (!vigente()) return false;
 
       try {
         const [roleResult, profileResult, commercialResult] = await fetchUserRoleAndApprovalOnce(userId);
+        // Daqui até o fim do `try` não há `await`: uma checagem cobre todos os setters abaixo.
+        if (!vigente()) return false;
 
         if (roleResult.error) {
           if (attempt < ROLE_FETCH_RETRY_DELAYS_MS.length - 1 && isTransientBackendError(roleResult.error)) {
@@ -162,7 +178,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setRole(null);
           setIsApproved(false);
           setCommercialRole(null);
-          return;
+          return true;
         }
 
         const fetchedRole = (roleResult.data?.role as AppRole) || 'customer';
@@ -209,8 +225,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           }
         }
 
-        return;
+        // Lote 6c: a MESMA leitura alimenta o cache do cargo (`useMyCommercialRole` e
+        // `useCommercialRole`), que não refazem o REST. Só a tentativa que venceu os retries, só a
+        // geração vigente (checada acima), e leitura com erro não semeia (o hook consulta sozinho).
+        semearMeuCargoComercial(queryClient, userId, commercialResult);
+        return true;
       } catch (error) {
+        if (!vigente()) return false;
         if (attempt < ROLE_FETCH_RETRY_DELAYS_MS.length - 1 && isTransientBackendError(error)) {
           logger.warn('Transient role/approval fetch exception — retrying', {
             stage: 'role_fetch_retry',
@@ -230,10 +251,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setRole(null);
         setIsApproved(false);
         setCommercialRole(null);
-        return;
+        return true;
       }
     }
-  }, [fetchUserRoleAndApprovalOnce]);
+    return false; // inalcançável: a última tentativa nunca dá `continue`
+  }, [fetchUserRoleAndApprovalOnce, queryClient]);
 
   useEffect(() => {
     let isMounted = true;
@@ -256,6 +278,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (!isMounted) return;
+        // Síncrono, ANTES do setTimeout: um SIGNED_OUT entre este evento e o fetch já invalida a semente.
+        const geracao = ++geracaoAuthRef.current;
         setSession(session);
         setUser(session?.user ?? null);
 
@@ -280,8 +304,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             if (event === 'SIGNED_IN') {
               createProfileIfNotExists(session.user.id, session.user.email);
             }
-            await fetchUserRoleAndApproval(session.user.id);
-            if (isMounted) finishLoading();
+            // Leitura de geração vencida não termina o loading: a mais nova (ou o SIGNED_OUT)
+            // termina. Senão o boot liberaria a tela com `user` setado e `role` ainda null.
+            const escreveu = await fetchUserRoleAndApproval(session.user.id, geracao);
+            if (isMounted && escreveu) finishLoading();
           }, 0);
         } else {
           // No session — safe to stop loading immediately
@@ -307,6 +333,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     return () => {
       isMounted = false;
+      geracaoAuthRef.current += 1;
       clearTimeout(loadingFailsafe);
       subscription.unsubscribe();
     };
@@ -387,6 +414,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const signOut = useCallback(async () => {
+    geracaoAuthRef.current += 1; // fetch em voo de quem está saindo não semeia mais o cache
     // ANTES do signOut (a RPC precisa da sessão): desinscreve o Web Push do
     // device — senão quem logar depois neste navegador recebe os pushes de
     // quem saiu. Best-effort (nunca lança, não trava o logout).
@@ -412,11 +440,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setRole(null);
     setIsApproved(false);
     setCommercialRole(null);
+    // O incremento acima vence o fetch do boot em voo, que então não termina o loading. Sem o
+    // `SIGNED_OUT` (as duas revogações falharam), quem termina é este logout.
+    finishLoading();
   }, [queryClient]);
 
   const refetchRole = useCallback(async () => {
     if (user) {
-      await fetchUserRoleAndApproval(user.id);
+      // Vence o fetch do boot em voo (que então não termina o loading): se escreveu, termina aqui.
+      if (await fetchUserRoleAndApproval(user.id, ++geracaoAuthRef.current)) finishLoading();
     }
   }, [user, fetchUserRoleAndApproval]);
 

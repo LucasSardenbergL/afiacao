@@ -1,4 +1,4 @@
-import { useWebRTCCall } from '@/hooks/useWebRTCCall';
+import { useWebRTCCall, useWebRTCCallOpcional } from '@/hooks/useWebRTCCall';
 
 /**
  * Dispatcher do backend de telefonia.
@@ -18,4 +18,28 @@ import { useWebRTCCall } from '@/hooks/useWebRTCCall';
 export function useCallBackend() {
   const webrtc = useWebRTCCall();
   return { ...webrtc, backend: 'webrtc' as const };
+}
+
+const SEM_TELEFONIA = {
+  callState: 'idle' as const,
+  callDuration: 0,
+  error: null,
+  isActive: false,
+  isConnecting: false,
+  isRinging: false,
+  isEstablished: false,
+  isFinished: false,
+  makeCall: async (_phoneNumber: string) => {},
+  endCall: async () => {},
+  backend: 'indisponivel' as const,
+};
+
+/**
+ * Para telas FORA do módulo Telefonia (FarmerCalls): sem Provider — módulo
+ * congelado ou cold-load do lazy — devolve backend 'indisponivel' em vez de
+ * lançar, e a tela cai no cronômetro manual.
+ */
+export function useCallBackendOpcional() {
+  const webrtc = useWebRTCCallOpcional();
+  return webrtc ? { ...webrtc, backend: 'webrtc' as const } : SEM_TELEFONIA;
 }

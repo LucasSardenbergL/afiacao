@@ -23,6 +23,9 @@ import {
   type EstadoFormasUI,
 } from '@/services/orderSubmission/formasDegradacao';
 import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
+import { AvisoPrazoCliente } from '@/components/unified-order/AvisoPrazoCliente';
+import type { ClienteComCodigos } from '@/hooks/useAlertaCreditoCliente';
+import type { ContaPedido, PrazoDecisaoEstado } from '@/services/orderSubmission/prazoDecisao';
 
 interface CartSummaryBarProps {
   cart: { length: number };
@@ -46,6 +49,9 @@ interface CartSummaryBarProps {
   estadoFormasOben?: EstadoFormasUI;
   estadoFormasColacor?: EstadoFormasUI;
   onRecarregarFormas?: () => void;
+  /** Frente B (PR1): aviso + sugestão de prazo para cliente com vencido, por conta. Ausente = sem aviso
+   *  (autoatendimento não escolhe condição; a RPC exige staff). */
+  avisoPrazo?: { cliente: (ClienteComCodigos & { razao_social?: string | null }) | null; onEstado: (conta: ContaPedido, estado: PrazoDecisaoEstado | null) => void };
   notes: string;
   setNotes: (v: string) => void;
   // Volumes (auto-calculated)
@@ -164,7 +170,7 @@ export function CartSummaryBar({
   loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
   estadoFormasOben = ESTADO_FORMAS_UI_OK,
   estadoFormasColacor = ESTADO_FORMAS_UI_OK,
-  onRecarregarFormas,
+  onRecarregarFormas, avisoPrazo,
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
   readyByDate, setReadyByDate,
   onSubmit, onSubmitQuote, offline = false,
@@ -229,6 +235,14 @@ export function CartSummaryBar({
                   onRecarregar={onRecarregarFormas}
                 />
               )}
+              {!loadingFormas && avisoPrazo && (
+                <AvisoPrazoCliente
+                  company="oben" codigo={avisoPrazo.cliente?.codigo_cliente ?? null}
+                  nomeCliente={avisoPrazo.cliente?.razao_social ?? null}
+                  formas={sortedFormasPagamentoOben} selected={selectedParcelaOben} onSelect={setSelectedParcelaOben}
+                  onEstado={avisoPrazo.onEstado}
+                />
+              )}
             </div>
           )}
           {colacorProductItems.length > 0 && (
@@ -248,6 +262,14 @@ export function CartSummaryBar({
                   motivo={estadoFormasColacor.motivo}
                   condicoesAusentes={estadoFormasColacor.condicoesAusentes}
                   onRecarregar={onRecarregarFormas}
+                />
+              )}
+              {!loadingFormas && avisoPrazo && (
+                <AvisoPrazoCliente
+                  company="colacor" codigo={avisoPrazo.cliente?.codigo_cliente_colacor ?? null}
+                  nomeCliente={avisoPrazo.cliente?.razao_social ?? null}
+                  formas={sortedFormasPagamentoColacor} selected={selectedParcelaColacor} onSelect={setSelectedParcelaColacor}
+                  onEstado={avisoPrazo.onEstado}
                 />
               )}
             </div>

@@ -20,6 +20,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ReposicaoEmpresaProvider, useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
+import { KpiContagem } from "@/components/reposicao/KpiContagem";
+import { AvisoLeituraFalhou } from "@/components/leitura/AvisoLeituraFalhou";
+import { desatualizado, estadoDeLeitura, naoConsegui } from "@/lib/leitura/estado-de-leitura";
 
 // Reaproveita as telas originais para tabs auxiliares — mesmas queries Supabase.
 const AdminReposicaoCadeiaLogistica = lazy(() => import("./AdminReposicaoCadeiaLogistica"));
@@ -32,8 +35,12 @@ const TabFallback = () => <PageSkeleton variant="auto" />;
 function KpiCards() {
   const { empresa } = useReposicaoEmpresa();
 
+  // Os três `queryFn` LANÇAM no erro (plano v7, C8): com `if (error) return 0` a query ficava
+  // `success` e "SKUs sem cadeia logística: 0" afirmava "tudo mapeado" quando a leitura caiu.
+  // Quem separa carregando / falhou / zero medido é o <KpiContagem>.
+
   // (a) Pedidos de compra abertos (sugeridos/em edição)
-  const { data: pedidosAbertos } = useQuery({
+  const pedidosAbertos = useQuery({
     queryKey: ["cadastros-pedidos-abertos", empresa],
     queryFn: async () => {
       const { count, error } = await supabase
@@ -41,22 +48,24 @@ function KpiCards() {
         .select("*", { count: "exact", head: true })
         .eq("empresa", empresa)
         .in("status", ["sugerido", "em_edicao", "rascunho"]);
-      if (error) return 0;
+      if (error) throw error;
       return count ?? 0;
     },
     refetchInterval: 60000,
     staleTime: 30000,
   });
 
-  // (b) SKUs sem cadeia logística mapeada — sku_parametros ativos sem grupo de produção
-  const { data: skusSemCadeia } = useQuery({
+  // (b) SKUs sem cadeia logística mapeada — sku_parametros ativos sem grupo de produção.
+  // Anti-join no cliente sobre duas leituras: se QUALQUER uma falha, a diferença é desconhecida
+  // (com a lista de grupos vazia por erro, todo SKU ativo viraria "sem cadeia").
+  const skusSemCadeia = useQuery({
     queryKey: ["cadastros-skus-sem-cadeia", empresa],
     queryFn: async () => {
       const { data: comGrupo, error: e1 } = await supabase
         .from("sku_grupo_producao")
         .select("sku_codigo_omie")
         .eq("empresa", empresa);
-      if (e1) return 0;
+      if (e1) throw e1;
       const grupoRows = (comGrupo ?? []);
       const setComGrupo = new Set(grupoRows.map((r) => String(r.sku_codigo_omie)));
 
@@ -65,7 +74,7 @@ function KpiCards() {
         .select("sku_codigo_omie")
         .eq("empresa", empresa)
         .eq("ativo", true);
-      if (e2) return 0;
+      if (e2) throw e2;
 
       const ativosRows = (ativos ?? []);
       return ativosRows.filter((r) => !setComGrupo.has(String(r.sku_codigo_omie))).length;
@@ -75,57 +84,46 @@ function KpiCards() {
   });
 
   // (c) Grupos de produção ativos
-  const { data: gruposAtivos } = useQuery({
+  const gruposAtivos = useQuery({
     queryKey: ["cadastros-grupos-ativos", empresa],
     queryFn: async () => {
       const { count, error } = await supabase
         .from("fornecedor_grupo_producao")
         .select("*", { count: "exact", head: true })
         .eq("empresa", empresa);
-      if (error) return 0;
+      if (error) throw error;
       return count ?? 0;
     },
     refetchInterval: 60000,
     staleTime: 30000,
   });
 
-  const cards = [
-    {
-      label: "Pedidos de compra abertos",
-      value: pedidosAbertos ?? 0,
-      icon: ShoppingCart,
-      tone: pedidosAbertos && pedidosAbertos > 0 ? "text-primary" : "text-muted-foreground",
-      border: pedidosAbertos && pedidosAbertos > 0 ? "border-primary/40" : "border-border",
-    },
-    {
-      label: "SKUs sem cadeia logística",
-      value: skusSemCadeia ?? 0,
-      icon: AlertTriangle,
-      tone: skusSemCadeia && skusSemCadeia > 0 ? "text-warning" : "text-muted-foreground",
-      border: skusSemCadeia && skusSemCadeia > 0 ? "border-warning/40" : "border-border",
-    },
-    {
-      label: "Grupos de produção",
-      value: gruposAtivos ?? 0,
-      icon: Layers,
-      tone: gruposAtivos && gruposAtivos > 0 ? "text-primary" : "text-muted-foreground",
-      border: gruposAtivos && gruposAtivos > 0 ? "border-primary/40" : "border-border",
-    },
-  ];
-
   return (
     <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-      {cards.map((c) => (
-        <Card key={c.label} className={c.border}>
-          <CardContent className="pt-4 flex items-center justify-between">
-            <div>
-              <div className="text-xs text-muted-foreground">{c.label}</div>
-              <div className={`text-2xl font-bold mt-1 ${c.tone}`}>{c.value}</div>
-            </div>
-            <c.icon className={`h-8 w-8 ${c.tone} opacity-60`} />
-          </CardContent>
-        </Card>
-      ))}
+      <KpiContagem
+        id="pedidos-abertos"
+        label="Pedidos de compra abertos"
+        icon={ShoppingCart}
+        query={pedidosAbertos}
+        tone="text-primary"
+        border="border-primary/40"
+      />
+      <KpiContagem
+        id="skus-sem-cadeia"
+        label="SKUs sem cadeia logística"
+        icon={AlertTriangle}
+        query={skusSemCadeia}
+        tone="text-status-warning"
+        border="border-status-warning/40"
+      />
+      <KpiContagem
+        id="grupos-producao"
+        label="Grupos de produção"
+        icon={Layers}
+        query={gruposAtivos}
+        tone="text-primary"
+        border="border-primary/40"
+      />
     </div>
   );
 }
@@ -239,7 +237,7 @@ function HistoricoPedidosCiclos() {
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
-  const { data, isLoading } = useQuery({
+  const historico = useQuery({
     queryKey: ["historico-ciclos", empresa, de, ate],
     queryFn: async (): Promise<CicloRow[]> => {
       const { data, error } = await supabase
@@ -250,13 +248,17 @@ function HistoricoPedidosCiclos() {
         .lte("data_ciclo", ate)
         .order("data_ciclo", { ascending: false })
         .limit(2000);
-      if (error) return [];
+      // Lança: com `return []` a falha virava "Nenhum ciclo encontrado para o período".
+      if (error) throw error;
       return (data ?? []) as CicloRow[];
     },
     staleTime: 30000,
   });
 
-  const rows = data ?? [];
+  const estadoHistorico = estadoDeLeitura(historico);
+  const temHistorico = historico.data !== undefined;
+  const historicoVelho = desatualizado(historico, temHistorico);
+  const rows = useMemo(() => historico.data ?? [], [historico.data]);
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const pageRows = useMemo(
     () => rows.slice(page * pageSize, page * pageSize + pageSize),
@@ -293,7 +295,21 @@ function HistoricoPedidosCiclos() {
           </div>
         </div>
 
-        {isLoading ? (
+        {historicoVelho && (
+          <AvisoLeituraFalhou
+            oque="a atualização do histórico de ciclos (a lista abaixo é da leitura anterior)"
+            estado={historicoVelho}
+            testId="aviso-historico-ciclos-desatualizado"
+          />
+        )}
+        {!temHistorico && naoConsegui(estadoHistorico) ? (
+          <AvisoLeituraFalhou
+            oque="o histórico de ciclos"
+            estado={estadoHistorico}
+            variante="bloco"
+            testId="aviso-historico-ciclos"
+          />
+        ) : !temHistorico ? (
           <PageSkeleton variant="list" />
         ) : rows.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
@@ -322,12 +338,15 @@ function HistoricoPedidosCiclos() {
                       <TableCell>
                         <Badge variant={statusVariant(r.status)}>{r.status ?? "—"}</Badge>
                       </TableCell>
-                      <TableCell className="text-right">{r.num_skus ?? 0}</TableCell>
+                      {/* ausente ≠ zero: sem valor na linha, "—" (não "0" nem "R$ 0,00") */}
+                      <TableCell className="text-right">{r.num_skus ?? "—"}</TableCell>
                       <TableCell className="text-right">
-                        {(r.valor_total ?? 0).toLocaleString("pt-BR", {
-                          style: "currency",
-                          currency: "BRL",
-                        })}
+                        {r.valor_total == null
+                          ? "—"
+                          : r.valor_total.toLocaleString("pt-BR", {
+                              style: "currency",
+                              currency: "BRL",
+                            })}
                       </TableCell>
                     </TableRow>
                   ))}

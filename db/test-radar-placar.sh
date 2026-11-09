@@ -10,6 +10,11 @@
 #   bash db/test-radar-placar.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   SABOTAGEM=<nome> bash db/test-radar-placar.sh   # tem de ficar VERMELHA
 #   bash db/test-radar-placar.sh --falsificar        # controle verde + cada sabotagem vermelha no assert dela
+#
+# FASE B (20261106132259): por cima do estado acima, aplica a migration que faz a FICHA aberta virar 'abriu' COM
+# cnpj ('radar.ficha_aberta' pelo ledger REAL analytics_ledger_registrar, corpo da 20261103120100 = prod). Roda no
+# controle e nas sabotagens da fase B; as da fase A a pulam (a PRE da nova recusaria o corpo sabotado — certo, mas
+# o vermelho que importa ali é o do assert A).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,10 +26,13 @@ MIG_VER="$MIGS/20261029150000_radar_score_versao.sql"
 MIG_EVT="$MIGS/20261029150100_radar_eventos_placar.sql"
 MIG_RPC="$MIGS/20261019225545_radar_rpcs_cnpj_alfanumerico.sql"   # corpo de registrar_contato_radar (= prod)
 MIG_DESF="$MIGS/20260612130000_radar_rpcs_contato.sql"            # corpo de desfazer_contato_radar (= prod)
+MIG_LED="$MIGS/20261103120100_analytics_ledger_raio_x_decisao.sql" # corpo do ledger antes da fase B (= prod)
+MIG_FICHA="$MIGS/20261106132259_radar_abriu_ficha_com_cnpj.sql"    # fase B
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> — `post:A3` = a POSTCONDIÇÃO da migration aborta o apply.
-  SABOTAGENS="versao_fora_do_update:A1 versao_fora_do_resumo:A2 automatico_grava_nota:A6 confirmacao_mais_recente:A10 conversao_sem_cliente:A5b coorte_sem_cliente_novo:A18b cadastro_fora_da_reconciliacao:A12b backfill_origem_da_sessao:A7 nota_relida_na_conversao:A5 apagado_conta_como_toque:A9 cadastro_vira_toque:A10 outbox_sem_filtro_de_rota:A11 trigger_fail_closed:A12 sorteio_congela_sem_versao:A15 sorteio_nao_deterministico:A16 sorteio_sem_trava:A17 coorte_denominador_por_contato:A18 anon_le_eventos:post:A3 anon_executa_placar:post:A4"
+  # Fase B (20261106132259) primeiro; depois as da fase A.
+  SABOTAGENS="ficha_sem_cnpj:B1 cnpj_sem_validacao:B4 placar_conta_ficha:B3 reconciliacao_sem_ficha:B4 trigger_sem_ficha:post:P5 allowlist_sem_ficha:post:P2 versao_fora_do_update:A1 versao_fora_do_resumo:A2 automatico_grava_nota:A6 confirmacao_mais_recente:A10 conversao_sem_cliente:A5b coorte_sem_cliente_novo:A18b cadastro_fora_da_reconciliacao:A12b backfill_origem_da_sessao:A7 nota_relida_na_conversao:A5 apagado_conta_como_toque:A9 cadastro_vira_toque:A10 outbox_sem_filtro_de_rota:A11 trigger_fail_closed:A12 sorteio_congela_sem_versao:A15 sorteio_nao_deterministico:A16 sorteio_sem_trava:A17 coorte_denominador_por_contato:A18 anon_le_eventos:post:A3 anon_executa_placar:post:A4"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-placar.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -62,11 +70,13 @@ DATA="$(mktemp -d "/tmp/pgtest-radar-placar.XXXXXX")/data"
 export LC_ALL="${LC_ALL:-C}" LANG="${LANG:-C}"
 VER_USADA="$(dirname "$DATA")/mig-versao.sql"
 EVT_USADA="$(dirname "$DATA")/mig-eventos.sql"
+FICHA_USADA="$(dirname "$DATA")/mig-ficha.sql"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 
 cp "$MIG_VER" "$VER_USADA"
 cp "$MIG_EVT" "$EVT_USADA"
+cp "$MIG_FICHA" "$FICHA_USADA"
 sabotar() { # $1 = arquivo, $2 = de, $3 = para (literal)
   python3 -I - "$1" "$2" "$3" <<'PY'
 import sys
@@ -82,8 +92,36 @@ cegar_md5() {
   sabotar "$VER_USADA" "  IF v_md5 IS DISTINCT FROM '" "  IF false AND v_md5 IS DISTINCT FROM '"
   sabotar "$VER_USADA" "  IF v_vivo IS NULL OR v_vivo NOT IN (" "  IF false AND v_vivo NOT IN ("
 }
+# Fase B: sabotagem no corpo muda o md5 — cega as checagens de md5 da PRE e da PÓS (as de ACL/trigger/allowlist ficam).
+cegar_md5_ficha() {
+  python3 -I - "$FICHA_USADA" <<'PY2'
+import sys
+p = sys.argv[1]; s = open(p, encoding="utf-8").read()
+# Só as checagens de md5: `false AND a OR b` ainda avaliaria b, e um `IF v_` genérico pegaria o gate de auth do ledger.
+for de, para in (("IF v_led IS NULL OR ", "IF false AND "), ("IF v_ab IS NULL OR ", "IF false AND "),
+                 ("IF v_pl IS NULL OR ", "IF false AND "),
+                 ("IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_",
+                  "IF false AND (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_")):
+    if de not in s:
+        sys.exit("padrao ausente: " + de)
+    s = s.replace(de, para)
+open(p, "w", encoding="utf-8").write(s)
+PY2
+}
+FASE_B=1
 case "${SABOTAGEM:-}" in
   "") ;;
+  ficha_sem_cnpj)          cegar_md5_ficha; sabotar "$FICHA_USADA" "NEW.user_id, v_cnpj, 'outbox:'" "NEW.user_id, NULL, 'outbox:'" ;;
+  cnpj_sem_validacao)      cegar_md5_ficha; sabotar "$FICHA_USADA" "IF v_cnpj IS NULL OR v_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}\$' THEN" "IF false THEN" ;;
+  placar_conta_ficha)      cegar_md5_ficha; sabotar "$FICHA_USADA" " AND ev.origem = 'humano' AND ev.cnpj IS NULL))::integer," " AND ev.origem = 'humano'))::integer," ;;
+  reconciliacao_sem_ficha) cegar_md5_ficha; sabotar "$FICHA_USADA" " OR o.evento = 'radar.ficha_aberta')" ")" ;;
+  trigger_sem_ficha)       sabotar "$FICHA_USADA" "
+                     OR NEW.evento = 'radar.ficha_aberta')" ")" ;;
+  allowlist_sem_ficha)     cegar_md5_ficha; sabotar "$FICHA_USADA" "'reposicao.raio_x_decisao', 'radar.ficha_aberta') THEN" "'reposicao.raio_x_decisao') THEN" ;;
+  *) FASE_B=0 ;;
+esac
+case "${SABOTAGEM:-}" in
+  ""|ficha_sem_cnpj|cnpj_sem_validacao|placar_conta_ficha|reconciliacao_sem_ficha|trigger_sem_ficha|allowlist_sem_ficha) ;;
   versao_fora_do_update)
     cegar_md5
     sabotar "$VER_USADA" "       AND (c.score_novo, c.motivos_novos, c.versao_formula_nova) IS DISTINCT FROM (c.score_atual, c.motivos_atuais, c.versao_formula_atual)
@@ -391,9 +429,10 @@ eq "A16b re-chamar não re-sorteia" \
 # Duas PRIMEIRAS chamadas simultâneas (outro lote): uma espera a outra e encontra o registro.
 Pq -c "INSERT INTO public.radar_ingest_state VALUES ('2026-11','complete','2026-11-20 16:00+00'); UPDATE public.radar_empresas SET ultimo_lote = '2026-11';" >/dev/null
 Pq -c "SELECT public.radar_score_recalcular();" >/dev/null
-( P -qAt -c "BEGIN; SELECT public.radar_coorte_sortear(5); SELECT pg_sleep(1.5); COMMIT;" > "$(dirname "$DATA")/s1.out" 2>&1 ) &
-sleep 0.4
-S17="$(Pq -c "SELECT public.radar_coorte_sortear(5) ->> 'novo';" 2>&1 || true)"
+# A segura até ver B esperando a trava (teto 1,5 s, o sleep fixo de antes); B entra assim que A está no laço.
+( PGAPPNAME=a17_a P -qAt -c "BEGIN" -c "SELECT public.radar_coorte_sortear(5)" -c "$(pgh_segura_sql a17_b 1 1.5)" -c "COMMIT" > "$(dirname "$DATA")/s1.out" 2>&1 ) &
+pgh_espera_segurar a17_a "$!" Pq
+S17="$(PGAPPNAME=a17_b Pq -c "SELECT public.radar_coorte_sortear(5) ->> 'novo';" 2>&1 || true)"
 wait
 eq "A17 sorteio concorrente: a 2ª chamada vê o 1º registro (novo=false), um só conjunto" \
    "$S17/$(Pq -c "SELECT count(*) FROM public.radar_coorte_controle WHERE sorteio='coorte-2026-11' AND grupo='amostra';")" "false/5"
@@ -416,6 +455,41 @@ eq "A19 nenhum papel de API escreve/trunca as tabelas novas; anon/authenticated 
 S20="$(como "$GESTOR" "SELECT count(*) FROM public.radar_eventos;" | tail -1)"
 case "$S20" in *"permission denied"*|*"42501"*|*"permissão negada"*) M20="negado";; *) M20="LEU:$S20";; esac
 eq "A20 o PostgREST (authenticated) não lê o ledger direto" "$M20" "negado"
+
+# ══ FASE B: a ficha aberta vira 'abriu' COM cnpj (20261106132259) ══
+if [ "$FASE_B" = 1 ]; then
+  {
+    extrair "$MIG_LED" "CREATE OR REPLACE FUNCTION public.analytics_ledger_registrar(" "\$fn\$;"
+    echo "REVOKE ALL ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) FROM PUBLIC, anon;"
+    echo "GRANT EXECUTE ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) TO authenticated;"
+  } > "$(dirname "$DATA")/ledger.sql"
+  P -q -f "$(dirname "$DATA")/ledger.sql" >/dev/null
+  P -q -f "$FICHA_USADA" >/dev/null
+  P -q -f "$FICHA_USADA" >/dev/null   # idempotente (PRE aceita a própria)
+  OUTRO='{"sub":"cccccccc-cccc-cccc-cccc-cccccccccccc","role":"authenticated"}'
+  ficha() { # $1 = claims, $2 = cnpj — o que o front chama: registrarNoLedger('radar.ficha_aberta', cnpj, { cnpj })
+    como "$1" "SELECT public.analytics_ledger_registrar('radar.ficha_aberta', '$2', '{\"cnpj\":\"$2\"}');" >/dev/null
+  }
+  ficha "$GESTOR" MD000000000101
+  ficha "$GESTOR" MD000000000101      # mesma ficha no mesmo dia: o dedup do ledger segura
+  ficha "$OUTRO"  MD000000000201
+  eq "B1 a ficha aberta vira 'abriu' humano COM o cnpj do lead e o titular; a tela segue com cnpj NULL" \
+     "$(Pq -c "SELECT string_agg(cnpj||':'||user_id, ' ' ORDER BY cnpj) FROM public.radar_eventos WHERE evento='abriu' AND cnpj IS NOT NULL;")/$(Pq -c "SELECT count(*) FROM public.radar_eventos WHERE evento='abriu' AND cnpj IS NULL;")" \
+     "MD000000000101:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa MD000000000201:cccccccc-cccc-cccc-cccc-cccccccccccc/2"
+  eq "B2 1 'abriu' por titular, CNPJ e dia (a 2ª abertura da mesma ficha não duplica)" \
+     "$(Pq -c "SELECT count(*) FROM public.analytics_outbox WHERE evento='radar.ficha_aberta';")/$(Pq -c "SELECT count(*) FROM public.radar_eventos WHERE evento='abriu' AND cnpj='MD000000000101';")" "2/1"
+  eq "B3 placar: 'aberturas' segue sendo só a TELA (2), 'abriram' = 2 titulares, reconciliação zerada" \
+     "$(placar aberturas 7d)/$(placar abriram 7d)/$(placar aberturas_outbox_sem_evento)" "2/2/0"
+  ficha "$GESTOR" abc
+  eq "B4 ficha sem CNPJ válido não vira 'abriu' (nem conta como tela) e a perda aparece na reconciliação" \
+     "$(Pq -c "SELECT count(*) FROM public.radar_eventos WHERE evento='abriu';")/$(placar aberturas 7d)/$(placar aberturas_outbox_sem_evento)" "4/2/1"
+  como "$GESTOR" "SELECT public.analytics_ledger_registrar('venda.ficha_aberta', 'MD000000000301', '{\"cnpj\":\"MD000000000301\"}');" >/dev/null
+  eq "B5 outro evento do ledger com cnpj nas props não vira 'abriu'" \
+     "$(Pq -c "SELECT count(*) FROM public.radar_eventos WHERE evento='abriu';")" "4"
+  eq "B6 ACL depois do REPLACE: service_role segue lendo o placar; anon não executa ledger nem placar; o ledger segue do authenticated" \
+     "$(Pq -c "SELECT has_function_privilege('service_role','public.radar_placar_uso()','EXECUTE')::text||' '||has_function_privilege('anon','public.analytics_ledger_registrar(text,text,jsonb)','EXECUTE')::text||' '||has_function_privilege('anon','public.radar_placar_uso()','EXECUTE')::text||' '||has_function_privilege('authenticated','public.analytics_ledger_registrar(text,text,jsonb)','EXECUTE')::text;")" \
+     "true false false true"
+fi
 
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "RADAR_PLACAR_PROVA_OK"

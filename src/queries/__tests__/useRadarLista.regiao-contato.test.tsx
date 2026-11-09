@@ -5,10 +5,14 @@ import type { ReactNode } from 'react';
 
 /**
  * A tela abre na região de atuação (MG e vizinhos) e esconde quem não tem telefone NEM e-mail.
- * O supabase é um builder FALSO que grava a cadeia de filtros — prova a FORMA da query, não o banco.
+ * O supabase é FALSO: o `.rpc()` grava os argumentos da `radar_lista` (a lista lê pela RPC desde
+ * 20261103131500) — prova a FORMA da chamada; a prova PG17 `db/test-radar-lista-rpc.sh` prova que a RPC
+ * aplica cada recorte como a consulta de antes.
  */
 type Chamada = [string, ...unknown[]];
+type Args = Record<string, unknown>;
 const chamadas: Record<string, Chamada[]> = {};
+let lista: Args[] = [];
 let respostas: Record<string, { data: unknown; error: { message: string } | null }> = {};
 
 function builder(tabela: string) {
@@ -20,9 +24,20 @@ function builder(tabela: string) {
   b.then = (res: (v: unknown) => void, rej: (e: unknown) => void) => Promise.resolve(respostas[tabela]).then(res, rej);
   return b;
 }
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => builder(t) } }));
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: {
+    from: (t: string) => builder(t),
+    rpc: (fn: string, args: Args) => {
+      if (fn !== 'radar_lista') throw new Error(`rpc inesperada: ${fn}`);
+      lista.push(args);
+      // A lista encadeia `.abortSignal(signal)` (pacote N): a promessa responde por ele também.
+      const r = Promise.resolve({ data: [], error: null });
+      return Object.assign(r, { abortSignal: () => r });
+    },
+  },
+}));
 
-import { useRadarLista, type RadarFiltros } from '../useRadarLista';
+import { useRadarLista, parametrosDaLista, FILTROS_MEUS_ATENDIMENTOS, type RadarFiltros } from '../useRadarLista';
 import { UFS_ATUACAO } from '@/lib/radar/ui-helpers';
 
 const FILTROS: RadarFiltros = {
@@ -35,9 +50,8 @@ function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
 }
-const doUf = () => chamadas.radar_empresas.filter((c) => (c[0] === 'eq' || c[0] === 'in') && c[1] === 'uf');
-const CONTATO = 'telefone1.not.is.null,telefone2.not.is.null,email.not.is.null';
-const doContato = () => chamadas.radar_empresas.filter((c) => c[0] === 'or' && c[1] === CONTATO);
+const doUf = () => lista.map((a) => [a.p_uf, a.p_ufs]);
+const doContato = () => lista.map((a) => a.p_com_contato);
 
 async function rodar(f: RadarFiltros) {
   const { result } = renderHook(() => useRadarLista(f, '2026-10-29'), { wrapper });
@@ -46,39 +60,115 @@ async function rodar(f: RadarFiltros) {
 
 beforeEach(() => {
   for (const k of Object.keys(chamadas)) delete chamadas[k];
-  respostas = { radar_ingest_state: { data: LOTES, error: null }, radar_empresas: { data: [], error: null } };
+  lista = [];
+  respostas = { radar_ingest_state: { data: LOTES, error: null } };
 });
 
 describe('useRadarLista — região de atuação', () => {
   it('regiao=atuacao sem UF: uf IN (MG e vizinhos)', async () => {
     await rodar({ ...FILTROS, regiao: 'atuacao' });
-    expect(doUf()).toEqual([['in', 'uf', [...UFS_ATUACAO]]]);
+    expect(doUf()).toEqual([[undefined, [...UFS_ATUACAO]]]);
   });
   it('UF escolhida vence a região', async () => {
     await rodar({ ...FILTROS, regiao: 'atuacao', uf: 'PR' });
-    expect(doUf()).toEqual([['eq', 'uf', 'PR']]);
+    expect(doUf()).toEqual([['PR', undefined]]);
   });
   it('Brasil: nenhum filtro de UF', async () => {
     await rodar({ ...FILTROS, regiao: 'brasil' });
-    expect(doUf()).toEqual([]);
+    expect(doUf()).toEqual([[undefined, undefined]]);
   });
   it('chamador sem o campo (ranking/mapa/testes antigos): recorte de antes, Brasil', async () => {
     await rodar(FILTROS);
-    expect(doUf()).toEqual([]);
+    expect(doUf()).toEqual([[undefined, undefined]]);
   });
 });
 
 describe('useRadarLista — sem contato', () => {
   it('incluirSemContato=false: exige telefone OU e-mail (filtro positivo)', async () => {
     await rodar({ ...FILTROS, incluirSemContato: false });
-    expect(doContato()).toHaveLength(1);
+    expect(doContato()).toEqual([true]);
   });
   it('incluirSemContato=true: sem o filtro', async () => {
     await rodar({ ...FILTROS, incluirSemContato: true });
-    expect(doContato()).toEqual([]);
+    expect(doContato()).toEqual([false]);
   });
   it('ausente: sem o filtro (recorte de antes)', async () => {
     await rodar(FILTROS);
-    expect(doContato()).toEqual([]);
+    expect(doContato()).toEqual([false]);
+  });
+});
+
+/**
+ * Busca e município: o termo vai SANITIZADO (o mesmo `sanitizeForPostgrestOr` do `.or()` de antes) — a RPC
+ * casa por ILIKE com o curinga escapado; só-curinga = sem filtro (#1062). Era o seq scan que motivou a RPC.
+ */
+describe('parametrosDaLista — termos, CNAE, ordem e página', () => {
+  const LOTE = LOTES[0];
+  const params = (f: Partial<RadarFiltros>, pagina = 0) => parametrosDaLista({ ...FILTROS, ...f }, LOTE, '2026-11-03', pagina);
+
+  it('busca e município: aparados e sanitizados; só-curinga ou vazio = sem filtro', () => {
+    expect(params({ busca: '  Marcenaria (SC), ' }).p_busca).toBe('Marcenaria SC');
+    expect(params({ municipio: ' pomerode ' }).p_municipio).toBe('pomerode');
+    expect(params({ busca: '%%' }).p_busca).toBeUndefined();
+    expect(params({ busca: '*' }).p_busca).toBeUndefined();
+    expect(params({ busca: '   ', municipio: '' }).p_busca).toBeUndefined();
+    expect(params({ municipio: '' }).p_municipio).toBeUndefined();
+  });
+
+  // C2 (pacote C): a cidade do ranking/mapa vai pelo CÓDIGO, exata; o nome (homônimo em outras UFs) sai.
+  it('cidade escolhida: p_municipio_codigo exato e sem p_municipio; sem código, o nome de antes', () => {
+    expect(params({ municipio: 'SANTA LUZIA', municipioCodigo: '4123' }))
+      .toMatchObject({ p_municipio_codigo: '4123', p_municipio: undefined });
+    expect(params({ municipio: 'SANTA LUZIA', municipioCodigo: '' }))
+      .toMatchObject({ p_municipio_codigo: undefined, p_municipio: 'SANTA LUZIA' });
+    expect(params({ municipio: 'pomerode' }).p_municipio_codigo).toBeUndefined();
+  });
+
+  // B2: "Meus atendimentos" vai à RPC (p_so_meus), antes da paginação. Na fila a chave NEM vai (o supabase-js a omite):
+  // a chamada da fila é a de antes e não depende da migration 20261106212329.
+  it('p_so_meus: true só na visão; na fila fica ausente (undefined), nunca false', () => {
+    expect(params({}).p_so_meus).toBeUndefined();
+    expect(parametrosDaLista(FILTROS, LOTE, '2026-11-03', 0, false).p_so_meus).toBeUndefined();
+    expect(parametrosDaLista(FILTROS, LOTE, '2026-11-03', 2, true)).toMatchObject({ p_so_meus: true, p_offset: 100, p_limit: 50 });
+  });
+
+  it('filtros neutros da visão: sem lote, sem região, com já-clientes e sem cortar quem não tem contato', () => {
+    expect(parametrosDaLista(FILTROS_MEUS_ATENDIMENTOS, LOTE, '2026-11-03', 0, true)).toMatchObject({
+      p_so_meus: true, p_ultimo_lote: undefined, p_primeira_vista_min: undefined, p_uf: undefined, p_ufs: undefined,
+      p_incluir_ja_clientes: true, p_com_contato: false, p_com_telefone: false, p_status: undefined,
+      p_sugeridos_lote: undefined, p_ordem: 'score',
+    });
+  });
+
+  it('CNAE: 7 dígitos = exato; parcial = prefixo; vazio = nada', () => {
+    expect(params({ cnae: '3101-2/00' })).toMatchObject({ p_cnae_exato: '3101200', p_cnae_prefixo: undefined });
+    expect(params({ cnae: '3101' })).toMatchObject({ p_cnae_exato: undefined, p_cnae_prefixo: '3101' });
+    expect(params({ cnae: '' })).toMatchObject({ p_cnae_exato: undefined, p_cnae_prefixo: undefined });
+  });
+
+  it('CNAE secundário: só o código completo filtra, e combina com o principal', () => {
+    expect(params({ cnae: '3101-2/00', cnaeSecundario: '2391-5/03' }))
+      .toMatchObject({ p_cnae_exato: '3101200', p_cnae_secundario: '2391503' });
+    expect(params({ cnaeSecundario: '2391' }).p_cnae_secundario).toBeUndefined();
+    expect(params({ cnaeSecundario: '' }).p_cnae_secundario).toBeUndefined();
+    expect(params({}).p_cnae_secundario).toBeUndefined();
+  });
+
+  it('preset vira a coluna de ordem; "estabelecidas" leva o corte de idade', () => {
+    expect(params({ preset: 'score' }).p_ordem).toBe('score');
+    expect(params({ preset: 'novas' }).p_ordem).toBe('data_abertura');
+    const est = params({ preset: 'estabelecidas' });
+    expect(est.p_ordem).toBe('capital_social');
+    expect(est.p_data_abertura_max).toBe('2021-11-03');
+  });
+
+  it('página N = offset N×50, limite 50', () => {
+    expect(params({}, 0)).toMatchObject({ p_offset: 0, p_limit: 50 });
+    expect(params({}, 3)).toMatchObject({ p_offset: 150, p_limit: 50 });
+  });
+
+  it('status escolhido vai; vazio deixa a RPC esconder os descartados', () => {
+    expect(params({ status: 'em_conversa' }).p_status).toBe('em_conversa');
+    expect(params({ status: '' }).p_status).toBeUndefined();
   });
 });

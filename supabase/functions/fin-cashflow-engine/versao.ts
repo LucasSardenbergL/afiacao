@@ -44,7 +44,17 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // NULL; o DEFAULT 0 a fazia "R$ 0") LANÇA em vez de somar zero; conta cujo saldo não é de hoje
 // (das 04h SP em diante — o sync de base roda às 03h) entra datada, até 7 dias, com motivo em
 // confianca_dados (motivos + saldo_inicial) e em premissas.saldo_cc_parcial (plano v3, item 2).
-export const VERSAO = "v2.0-saldo-cc-fresco";
+// v2.0 → v2.1: os fin_alertas que partem do saldo (caixa_negativo, ncg_deficit, cobertura_baixa)
+// levam o saldo datado — frase curta na mensagem + motivo em contexto.saldo_cc_parcial — como o
+// snapshot já levava; com o saldo fresco, o próximo run reescreve sem a marca (plano v3, item 2).
+// v2.1 → v2.2: o snapshot diário grava estoque_valor/estoque_fonte/estoque_cobertura_ok/cmv_ttm em
+// colunas dedicadas (migration 20261031210000) — nasce a série de estoque de giro que o PME por
+// estoque MÉDIO dos 90 d lê (Oben PME/PMR, Frente A, item 3). Exige a migration aplicada ANTES.
+// v2.2 → v2.3: aceita `cenarios: [...]` — UMA carga de dados para os cenários da execução (D10 do
+// plano v7; o mapa de baixas relido 3× derrubou o realista da colacor em 2026-11-05). Cálculo e
+// gravação por cenário idênticos aos de `cenario` (paridade em multi-cenario_test.ts). A migration
+// do cron que passa a mandar `cenarios` EXIGE esta versão atestada no ledger ANTES de aplicar.
+export const VERSAO = "v2.3-carga-unica-cenarios";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

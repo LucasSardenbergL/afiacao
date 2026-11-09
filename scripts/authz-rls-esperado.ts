@@ -122,8 +122,13 @@ export interface TabelaRls {
  * Estado medido em prod (psql-ro, 2026-08-27 + 2026-08-28 + 2026-10-12; PG 17.6). 30 tabelas · 71 policies
  * (5ª rodada, M-31: +9 · +17; 1ª rodada: 7 · 19; 2ª: +10 · +19; 3ª: +3 · +12 — cada rodada marcada pelos separadores abaixo).
  *
+ * 2026-11-03 (#3549, migration 20261102204836): `has_role(auth.uid(), …)` cru virou InitPlan
+ * `( SELECT has_role(auth.uid(), …) AS has_role)` — 3 md5 regravados em 10 policies / 16 campos
+ * (8ddd30b6→819c3bd5, 45ad0946→0a9f0d62, f0bb0ea3→f85963d3). Prova: o texto VIVO desembrulhado
+ * tem EXATAMENTE o md5 antigo, e cmd/permissive/roles não se moveram (#3393).
+ *
  * ⚠️ Os md5 se REPETEM entre tabelas quando o predicado é literalmente o mesmo texto — p.ex.
- * `8ddd30b6…` é `has_role(auth.uid(), 'master'::app_role)` em `profiles` E em `user_roles`. O md5
+ * `819c3bd5…` é `( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role)` em `profiles` E em `user_roles`. O md5
  * é da EXPRESSÃO, não do par (tabela, policy); a comparação é que é por tabela+policy.
  */
 export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
@@ -142,8 +147,8 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         cmd: '*',
         permissiva: true,
         roles: ['PUBLIC'],
-        qualMd5: '8ddd30b6b5137ea748cd7a8508a16675',
-        withCheckMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        qualMd5: '819c3bd5c25f88fbf998154b9048662b',
+        withCheckMd5: '819c3bd5c25f88fbf998154b9048662b',
         motivo:
           '`has_role(auth.uid(),master)` nos DOIS lados. É um FOR ALL, a forma que o §4 do ' +
           'database.md marca como latente — mas aqui `USING` e `WITH CHECK` são o MESMO md5, então ' +
@@ -154,7 +159,7 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         cmd: 'r',
         permissiva: true,
         roles: ['PUBLIC'],
-        qualMd5: '45ad0946ce322aefa63a18a15417ba0c',
+        qualMd5: '0a9f0d62d53097527a30f9ba4966a0de',
         withCheckMd5: null,
         motivo: 'leitura broad-staff (`master OR employee`) — assimetria leitura>escrita do §4.',
       },
@@ -366,7 +371,7 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         cmd: 'r',
         permissiva: true,
         roles: ['PUBLIC'],
-        qualMd5: '45ad0946ce322aefa63a18a15417ba0c',
+        qualMd5: '0a9f0d62d53097527a30f9ba4966a0de',
         withCheckMd5: null,
         motivo: 'broad-staff de LEITURA — a decisão medida de 2026-07-20 (4 grants, 3 pessoas).',
       },
@@ -374,15 +379,15 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         cmd: 'w',
         permissiva: true,
         roles: ['PUBLIC'],
-        qualMd5: '8ddd30b6b5137ea748cd7a8508a16675',
-        withCheckMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        qualMd5: '819c3bd5c25f88fbf998154b9048662b',
+        withCheckMd5: '819c3bd5c25f88fbf998154b9048662b',
         motivo: '`has_role(master)` nos dois lados — é por aqui que a aprovação de customer é dada.',
       },
       'Admins can delete profiles': {
         cmd: 'd',
         permissiva: true,
         roles: ['PUBLIC'],
-        qualMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        qualMd5: '819c3bd5c25f88fbf998154b9048662b',
         withCheckMd5: null,
         motivo: '`has_role(master)` no `USING`, que é o lado que o DELETE consulta.',
       },
@@ -407,8 +412,8 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         cmd: '*',
         permissiva: true,
         roles: ['authenticated'],
-        qualMd5: '8ddd30b6b5137ea748cd7a8508a16675',
-        withCheckMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        qualMd5: '819c3bd5c25f88fbf998154b9048662b',
+        withCheckMd5: '819c3bd5c25f88fbf998154b9048662b',
         motivo:
           '`has_role(auth.uid(), master)` nos dois lados — mesmo texto (e mesmo md5) da policy que ' +
           'guarda `user_roles`. É a porta pela qual o master concede papel comercial.',
@@ -686,8 +691,8 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         cmd: '*',
         permissiva: true,
         roles: ['authenticated'],
-        qualMd5: '8ddd30b6b5137ea748cd7a8508a16675',
-        withCheckMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        qualMd5: '819c3bd5c25f88fbf998154b9048662b',
+        withCheckMd5: '819c3bd5c25f88fbf998154b9048662b',
         motivo:
           '`has_role(master)` nos dois lados, simétrico. Assimetria aqui deixaria quem só lê custo ' +
           'APAGANDO o piso de margem — e piso apagado não é erro visível, é venda no prejuízo.',
@@ -974,8 +979,8 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         cmd: '*',
         permissiva: true,
         roles: ['authenticated'],
-        qualMd5: '45ad0946ce322aefa63a18a15417ba0c',
-        withCheckMd5: '45ad0946ce322aefa63a18a15417ba0c',
+        qualMd5: '0a9f0d62d53097527a30f9ba4966a0de',
+        withCheckMd5: '0a9f0d62d53097527a30f9ba4966a0de',
         motivo:
           '`master OR employee` nos DOIS lados, mesmo md5 — FOR ALL simétrico. Customer não lê nem ' +
           'escreve a receita.',
@@ -993,15 +998,15 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         cmd: '*',
         permissiva: true,
         roles: ['PUBLIC'],
-        qualMd5: '8ddd30b6b5137ea748cd7a8508a16675',
-        withCheckMd5: '8ddd30b6b5137ea748cd7a8508a16675',
+        qualMd5: '819c3bd5c25f88fbf998154b9048662b',
+        withCheckMd5: '819c3bd5c25f88fbf998154b9048662b',
         motivo: '`has_role(auth.uid(),master)` nos dois lados — o mesmo md5 da raiz `user_roles`.',
       },
       company_config_staff_select: {
         cmd: 'r',
         permissiva: true,
         roles: ['authenticated'],
-        qualMd5: 'f0bb0ea348b482004bccf4646c00cead',
+        qualMd5: 'f85963d3cc093d56a882d09dd15bb2e1',
         withCheckMd5: null,
         motivo: 'leitura broad-staff (`employee OR master`); customer não lê a config.',
       },
@@ -1335,9 +1340,15 @@ export const LACUNAS_POR_GRUPO: LacunaGrupo[] = [
   },
   {
     def: { tipo: 'prefixo', prefixo: 'fin_' },
-    tabelasNoGrafo: 41,
-    tabelasMd5: '2c1c3e68bfad4855870195ef496792b6',
-    medidoEm: '2026-08-28',
+    // 2026-11-03: 41 → 44, nenhuma curada (#3393). As 3 novas não têm policy nem grant para anon/authenticated
+    // (RLS ligada, só service_role lê — has_table_privilege medido), então nem o gate comum as alcança:
+    // fin_ic_contrapartes (5 linhas, mapa cliente→empresa do grupo, sem número) e fin_ic_reconcile_rodadas
+    // (8 linhas, timestamps de rodada), ambas de 20261021190000; fin_contas_receber_excluidos (0 linhas, lápide
+    // de CR sumido do Omie, 20261102020000) — cópia derivada de fin_contas_receber, já curada. Gatilho de
+    // reentrada: aparecer policy ou grant para authenticated em qualquer uma.
+    tabelasNoGrafo: 44,
+    tabelasMd5: '259e68874867ba8cb34ccf39b8910989',
+    medidoEm: '2026-11-03',
     motivo:
       'O domínio financeiro inteiro por NOME, do qual 5 estão curadas (as fontes: contas a ' +
       'receber/pagar, movimentações, contas correntes, e a raiz `fin_permissoes`). As demais são ' +
@@ -1348,14 +1359,18 @@ export const LACUNAS_POR_GRUPO: LacunaGrupo[] = [
   },
   {
     def: { tipo: 'predicado', predicado: 'private.cap_compras_ler' },
-    tabelasNoGrafo: 14,
-    tabelasMd5: 'daf8a7a22f7ea9958dcf76928758a59c',
-    medidoEm: '2026-08-28',
+    // 2026-11-03: 14 → 16, nenhuma curada (#3393). Entraram reposicao_compra_suspensa (156 linhas, SELECT-only
+    // para authenticated) e reposicao_compra_suspensa_log (19 linhas, SELECT+INSERT), de 20261101090000. Os
+    // números delas (foto_cmc/foto_valor, preco_unitario/valor_evitado) são FOTO do custo cuja fonte
+    // (cmc_*/product_costs) já está curada — derivado, não fonte; e o gate é o predicado já congelado.
+    tabelasNoGrafo: 16,
+    tabelasMd5: '6aa2a2b512d2451202c4f0ea6944f3c2',
+    medidoEm: '2026-11-03',
     motivo:
-      'Reposição/compras: parâmetro, log e run do motor. UMA delas (`pedido_compra_item`) foi ' +
+      'Reposição/compras: parâmetro, log, run e suspensão do motor. UMA delas (`pedido_compra_item`) foi ' +
       'curada na 3ª rodada porque ARRASTA o predicado para o eixo 3 — congelar o corpo de ' +
-      '`cap_compras_ler` cobre as outras 13 sem curar o conteúdo delas, que é o melhor retorno ' +
-      'por entrada do arquivo inteiro. As 13 restantes são derivadas do motor, não a fonte do ' +
+      '`cap_compras_ler` cobre as outras 15 sem curar o conteúdo delas, que é o melhor retorno ' +
+      'por entrada do arquivo inteiro. As 15 restantes são derivadas do motor, não a fonte do ' +
       'número; o custo/preço que elas consomem mora em `product_costs`/`cmc_*`, já curadas.',
   },
 ];

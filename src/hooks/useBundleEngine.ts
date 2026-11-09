@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { comNulo } from '@/lib/rpc-args';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -14,7 +15,8 @@ import {
 } from '@/lib/farmer/completude-snapshot';
 import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
 import { indexarCatalogoAtivo, resolverItemNoCatalogo } from '@/lib/farmer/identidade-item';
-import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
+import { buscarUniversoPedidos } from '@/lib/farmer/universo-pedidos-query';
+import { useAuth } from '@/contexts/AuthContext';
 import { medirBundlesDeContaUnica } from '@/lib/farmer/cobertura-conta-oferta';
 import {
   montarCelulaIndividual,
@@ -166,6 +168,11 @@ export const useBundleEngine = () => {
   // regrava a carteira do alvo. Fora da lente effectiveUserId === user.id (byte-
   // equivalente, zero regressão).
   const { effectiveUserId, isImpersonating } = useImpersonation();
+  // A leitura de `sales_orders` é sob a RLS do usuário REAL (não do alvo da lente) — é ele a
+  // chave do universo de pedidos em cache.
+  const { user } = useAuth();
+  const userIdReal = user?.id ?? null;
+  const queryClient = useQueryClient();
   const [customerBundles, setCustomerBundles] = useState<CustomerBundles[]>([]);
   const [rules, setRules] = useState<AssociationRule[]>([]);
   const [loading, setLoading] = useState(false);
@@ -456,27 +463,13 @@ export const useBundleEngine = () => {
         return;
       }
 
-      // Load ALL sales orders (avoid huge .in() URL)
-      // Mesmo defeito do loop manual acima — aqui a perda é do HISTÓRICO que alimenta as regras
-      // de associação do bundle. `.order('id')` (PK) é a ordem estável; a coluna não precisa
-      // estar no `select`.
-      const salesOrders = await fetchAllPages(
-        (de, ate) =>
-          supabase
-            .from('sales_orders')
-            .select('customer_user_id, items, total, created_at, account')
-            // DENYLIST + `deleted_at IS NULL`: o MESMO universo de
-            // `private.margem_cliente_agregada()` e do `useFarmerScoring` (#1738). A allowlist que
-            // estava aqui citava DOIS status que nunca existiram nesta tabela (`confirmado`,
-            // `entregue`) e resolvia para só `faturado`: 10.281 pedidos reais — `importado` 5.455,
-            // `separacao` 2.817, `enviado` 2.009 — ficavam fora das cestas que alimentam o Apriori. Ver
-            // `@/lib/farmer/universo-pedidos` (inclusive o efeito no denominador do support).
-            .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
-            .is('deleted_at', null)
-            .order('id', { ascending: true })
-            .range(de, ate),
-        'sales_orders/bundle',
-      );
+      // O histórico INTEIRO de pedidos (o universo denylist + `deleted_at`, o MESMO de
+      // `private.margem_cliente_agregada()`), compartilhado com scoring e cross-sell e lido em
+      // paralelo por keyset — `@/lib/farmer/universo-pedidos-query`. Perder página aqui seria
+      // perder as cestas do Apriori: a leitura é inteira ou LANÇA. `fresco`: este motor PUBLICA
+      // a geração, então não reusa cache. A ordem das cestas (por `id`) é a de sempre.
+      if (!userIdReal) throw new Error('Sessão sem usuário — não há como ler os pedidos.');
+      const salesOrders = await buscarUniversoPedidos(queryClient, userIdReal, { fresco: true });
 
       // Build maps
       const productMap = new Map<string, ProductRow>();
@@ -627,20 +620,6 @@ export const useBundleEngine = () => {
           for (let j = i + 1; j < unique.length; j++) {
             const key = [unique[i], unique[j]].sort().join('|');
             pairFreq.set(key, (pairFreq.get(key) || 0) + 1);
-          }
-        }
-      }
-
-      // Count triples
-      const tripleFreq = new Map<string, number>();
-      for (const basket of baskets) {
-        const unique = [...new Set(basket)].filter(id => frequentItems.includes(id));
-        for (let i = 0; i < unique.length; i++) {
-          for (let j = i + 1; j < unique.length; j++) {
-            for (let k = j + 1; k < unique.length; k++) {
-              const key = [unique[i], unique[j], unique[k]].sort().join('|');
-              tripleFreq.set(key, (tripleFreq.get(key) || 0) + 1);
-            }
           }
         }
       }
@@ -1316,7 +1295,7 @@ export const useBundleEngine = () => {
       setCalculating(false);
       setLoading(false);
     }
-  }, [effectiveUserId, isImpersonating]);
+  }, [effectiveUserId, isImpersonating, userIdReal, queryClient]);
 
   // ─── Actions ─────────────────────────────────────────────────────────
   // `markBundleOffered` / `markBundleAccepted` / `markBundleRejected` e o

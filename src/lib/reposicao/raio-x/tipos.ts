@@ -13,6 +13,24 @@ export type Destino =
   | 'estrategico'
   | 'erro_cadastro';
 export type Sugestao = Destino | 'novo_aguarde' | 'revisar' | 'sem_historico';
+/** Canal de liquidação (CHECK de `raio_x_decisao.canal_liquidacao`). */
+export type CanalLiquidacao = 'cliente_especifico' | 'promocao_carteira' | 'outlet_queima' | 'outro';
+/** Contrapartida da troca (CHECK de `raio_x_decisao.troca_contrapartida`): o que entra no lugar. Encalhe não libera nada. */
+export type TrocaContrapartida = 'giro' | 'encalhe';
+/**
+ * Linha de `raio_x_inequivoco(p_empresa)`. A regra do "liquidar só o inequívoco" é do SERVIDOR (o decidir recusa
+ * com RX004); aqui só se exibe. `inequivoco=false` traz TODOS os motivos que seguram (nunca só o primeiro).
+ */
+export interface InequivocoSku {
+  sku_codigo_omie: number;
+  inequivoco: boolean;
+  motivos_espera: string[];
+  cobertura_dias: number | null;
+  /** saldo − 90 dias de consumo; null quando não é inequívoco. */
+  qtd_liquidavel: number | null;
+  ultima_entrada: string | null;
+  revisar_em: string | null;
+}
 
 export interface ClienteComprador {
   nome: string;
@@ -60,7 +78,38 @@ export interface ItemRaioX extends FatoSku {
   parado: boolean;
   destino_sugerido: Sugestao | null;
   motivo_destino: string;
+  /** Item parado com entrada < 90 dias: recompra recente de item parado (alerta, não imunidade). */
+  alerta_recompra: string | null;
+  /** Na coorte da meta (congelada); sem coorte congelada, = `top_atual`. */
   top: boolean;
+  /** No Top 61 recalculado hoje. */
+  top_atual: boolean;
+  /** Entraria no Top hoje, mas não está na coorte congelada: aparece, não mexe no denominador. */
+  entrou_no_top: boolean;
+  /** Veredito do servidor (`raio_x_inequivoco`); null = leitura indisponível (nunca "inequívoco" por omissão). */
+  inequivoco: boolean | null;
+  motivos_espera: string[];
+  qtd_liquidavel: number | null;
+  ultima_entrada: string | null;
+  /**
+   * Membro da coorte congelada que SAIU dos fatos (saldo zerado) sem decisão: linha histórica sintetizada só para
+   * a decisão humana explícita (bug 2 da 2ª revisão) — o SKU segue no denominador, nunca sai da coorte.
+   */
+  fora_do_estoque?: true;
+  /** valor congelado na coorte (só na linha histórica; null = sem custo no congelamento). */
+  valor_coorte?: number | null;
+}
+
+/** Linha de `raio_x_coorte_top`: valor congelado pelo SERVIDOR (saldo × cmc no congelamento; null = sem custo). */
+interface MembroCoorte {
+  posicao: number;
+  valor: number | null;
+}
+
+/** Coorte do Top 61 congelada uma vez por empresa — o denominador da meta. */
+export interface CoorteTop {
+  congelada_em: string;
+  itens: Map<number, MembroCoorte>;
 }
 
 /** Linha da tabela `raio_x_decisao`. */
@@ -85,6 +134,24 @@ export interface DecisaoRow {
   contado_em: string | null;
   origem: 'app' | 'artifact_fase_a';
   atualizado_em: string;
+  // Plano de execução (pacote 2; escritor único `raio_x_planejar`). Re-decidir não apaga: a leitura filtra
+  // (piso/canal só com destino liquidar; concluido_em < decidido_em = destino mudou depois).
+  /** R$ por unidade de VENDA. */
+  preco_piso: number | null;
+  canal_liquidacao: CanalLiquidacao | null;
+  responsavel: string | null;
+  /** 'YYYY-MM-DD' */
+  prazo: string | null;
+  concluido_em: string | null;
+  concluido_por: string | null;
+  // PR 2 (inequívoco): frete do liquidar, desconto COMERCIAL sobre o médio 12m e margem por unidade com as bases
+  // CONGELADAS ao planejar; contrapartida da troca. `?? null` na borda (bundle pode ir ao ar antes da migration).
+  frete_estimado: number | null;
+  desconto_sobre_medio_pct: number | null;
+  margem_unit: number | null;
+  preco_medio_base: number | null;
+  cmc_base: number | null;
+  troca_contrapartida: TrocaContrapartida | null;
 }
 
 /**
@@ -106,4 +173,11 @@ export interface LinhaMedicao {
   receita: number | null;
   preco_medio_12m: number | null;
   compras_apos: string[] | null;
+  troca_contrapartida: TrocaContrapartida | null;
+  /**
+   * Unidade do estoque (cadastro) e unidades das NFs de venda DESDE A FOTO. A quantidade vendida só se compara com o
+   * saldo quando as duas batem; sem prova de equivalência → sem medição (ausente ≠ zero). null = RPC antiga/sem dado.
+   */
+  unidade_estoque: string | null;
+  unidades_venda_periodo: string[] | null;
 }

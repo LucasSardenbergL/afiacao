@@ -73,7 +73,7 @@ Dentro de SECURITY DEFINER (dona `postgres`) o wrapper funciona, porque o EXECUT
 
 ## Pendências fora desta frente (pré-existentes, agora alcançáveis pelo vendedor)
 
-- `registrar_contato_radar` aceita `virou_cliente` sem a confirmação Omie que a v1 exige (frente 3 é dona da RPC).
-- `desfazer_contato_radar` restaura o status só porque ele "continua igual à ação desfeita": A e B registram a mesma
-  ação, A desfaz e apaga o efeito de B.
+- ~~`registrar_contato_radar` aceita `virou_cliente` sem a confirmação Omie que a v1 exige (frente 3 é dona da RPC).~~
+- ~~`desfazer_contato_radar` restaura o status só porque ele "continua igual à ação desfeita": A e B registram a mesma
+  ação, A desfaz e apaga o efeito de B.~~ → as duas feitas em [radar-contato-integridade.md](radar-contato-integridade.md).
 - `radar_salvar_geocode` usa regex só-numérica de CNPJ (fica de fora o alfanumérico).

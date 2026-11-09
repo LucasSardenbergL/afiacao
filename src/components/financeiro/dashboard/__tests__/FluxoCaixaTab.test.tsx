@@ -75,6 +75,22 @@ describe('FluxoCaixaTab — saldo projetado na tela', () => {
     expect(screen.queryByText('R$ -10.0k')).toBeNull();
   });
 
+  // Follow-up do lote 13 (parecer Codex P1): o resumo agora devolve o CC mesmo sem os títulos de
+  // uma empresa — e o previsto, sem a carteira dela, somado ao CC inteiro daria um projetado parcial
+  // com cara de total. Sem títulos completos, não há âncora; o saldo atual segue visível.
+  it('títulos indisponíveis → sem saldo projetado (nem a partir do CC), aviso com o motivo, CC atual visível', () => {
+    congelarEm9Set();
+    render(
+      <FluxoCaixaTab data={comPassadoEFuturo} loading={false} saldoCC={500_000}
+        titulosIndisponiveis="saldo de títulos indisponível (oben): desconhecida" />,
+    );
+    expect(screen.getByRole('alert').textContent).toContain('saldo de títulos indisponível (oben): desconhecida');
+    expect(screen.getByText('R$ 500.0k')).toBeTruthy();
+    expect(screen.queryByText('R$ 505.0k')).toBeNull();
+    expect(screen.queryByText('R$ 490.0k')).toBeNull();
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+
   it('saldo zero CONHECIDO continua sendo número, não "—"', () => {
     congelarEm9Set();
     render(<FluxoCaixaTab data={comPassadoEFuturo} loading={false} saldoCC={0} />);

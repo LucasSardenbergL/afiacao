@@ -643,7 +643,7 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        `fin-valor-cockpit` (738 linhas) se provou BARATA: zero `.upsert/.insert/.update/.rpc`, os
        três `fetch` são GETs de `/auth/v1/user` + `user_roles` + `commercial_roles`, e o único
        `.delete(` é
-       `supabase/functions/fin-valor-cockpit/index.ts:602`<!--cita: custoBaixaConfianca.delete(-->,
+       `supabase/functions/fin-valor-cockpit/index.ts:615`<!--cita: custoBaixaConfianca.delete(-->,
        um `Set` de JS. Pior caso de sondá-la com bundle pré-sensor: **computar e devolver** — NULO.
     2. **Se escreve: o efeito é REVERSÍVEL, e qual o ALCANCE?** "Cara" não é binário, e o que a trava
        compra varia em ordens de grandeza. `carteira-positivacao-snapshot` faz **UM upsert
@@ -659,7 +659,7 @@ Passo 4b** — o maior sinal sem o founder continua sendo este, pelos bytes.
        **mês ANTERIOR**, fechado
        (`supabase/functions/carteira-positivacao-snapshot/index.ts:70`<!--cita: nowBrt.getMonth() - 1-->),
        não o corrente. A distinção não é cosmética: o consumidor é o UTI de contas
-       (`src/hooks/useUtiContas.ts:239`<!--cita: .from('carteira_positivacao_snapshot')-->), que lê
+       (`src/hooks/useUtiContas.ts:354`<!--cita: .from('carteira_positivacao_snapshot')-->), que lê
        os 2 meses mais recentes com snapshot para decidir entrada — um parcial do mês CORRENTE teria
        custo money-path; reescrever o anterior, fechado, não. Empírico: o probe (`request_id` 69358)
        voltou `{"ok":true,"probe":true,"versao":"v1.1-pedidos-do-mes-keyset",…}` **sem** os campos

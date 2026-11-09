@@ -1,4 +1,4 @@
-import { useWebRTCCallContext, type WebRTCCallContextValue } from '@/contexts/webrtc-call-context';
+import { useWebRTCCallContext, useWebRTCCallContextOptional, type WebRTCCallContextValue } from '@/contexts/webrtc-call-context';
 
 /**
  * Hook fino que delega TODO o state pro WebRTCCallContext.
@@ -10,4 +10,9 @@ import { useWebRTCCallContext, type WebRTCCallContextValue } from '@/contexts/we
  */
 export function useWebRTCCall(): WebRTCCallContextValue {
   return useWebRTCCallContext();
+}
+
+/** Variante que NÃO lança: null sem Provider (módulo Telefonia congelado, ou cold-load do lazy). */
+export function useWebRTCCallOpcional(): WebRTCCallContextValue | null {
+  return useWebRTCCallContextOptional();
 }

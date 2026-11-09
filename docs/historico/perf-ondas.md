@@ -41,3 +41,22 @@ Maior chunk do app era a página `FarmerCopilot` (478,77 kB raw / 126,31 kB gzip
 **Medido nos bytes**: FarmerCopilot 478,77→23,72 kB raw (−95%; gzip 126,31→7,52); RecebimentoConferencia 34,79→21,44 kB; `vendor-elevenlabs` 455,53 kB (só no clique); `vendor-tesseract` 16,33 kB (só no 1º scan); precache 5.486→5.474 KiB. Provas estruturais: 0 import estático do vendor no chunk da página (única menção = array de deps do `__vitePreload`), 0 `modulepreload` no boot, 0 menção no `sw.js`.
 
 **Codex pegou de novo (3 achados em 3 rodadas, todos corrigidos)**: (1) erros fatais por EVENTO pós-`connect()` (auth/quota) deixavam a sessão de voz "surda" sem fallback → handlers fatais específicos; o agregador `onError` do SDK foi deliberadamente evitado (dispara também para transientes — throttle/silêncio derrubariam a sessão à toa); (2) toast "Copiloto ativado" saía no `connect()` resolvido, que pode preceder o OPEN real → sucesso sinalizado só por evento (`onConnect`/`onSessionStarted`, single-fire); (3) troca de token com o motor montado vazaria guards entre conexões → `key={token}` no call-site (1 instância = 1 conexão). Lição repetida das Ondas 3/4: **em ciclo de vida de conexão, a review independente paga**.
+
+## Plano v4, lote 3 (C1): recharts fora da home staff (2026-11-01)
+
+O `@hello-pangea/dnd` (CockpitGrid da home staff, KanbanBoard do Admin) importava do `vendor-charts` (recharts+d3, 111 KB gzip) só dois helpers: `_extends` (`@babel/runtime`) e `invariant` (`tiny-invariant`, via `css-box-model`; o recharts também depende dele). Sem bucket no `vendorChunk`, o Rollup alojava os dois no vendor-charts, e o hoist de imports transitivos levava `import"./vendor-charts…"` para o chunk de cada tela que usa o dnd. Correção: os dois pacotes vão para o `vendor-utils`, como o `clsx` em 2026-06-09.
+
+O diagnóstico do plano citava só o `@babel/runtime`. Com essa regra sozinha o build não mudou: o `invariant` vinha de outro pacote. A conferência pelo `import{…}from"./vendor-charts"` do chunk do dnd, antes e depois, foi o que achou. Lição: ao mexer em bucket, meça no chunk importador quais símbolos ele ainda importa de lá, não só o tamanho dos vendors.
+
+Medido (fecho de imports estáticos via `vite build --manifest`, gzip -9): home staff 165,1 → 53,8 KB além do entry; Admin 154,6 → 43,4 KB; entry 283,7 → 283,9 KB; `vendor-utils` 6,9 → 7,1 KB; chunks com vendor-charts no fecho 13 → 10, e os 10 importam componentes de gráfico.
+
+## Plano v4, lote 8 (C3): Pedidos busca no servidor (2026-11-01)
+
+A tela `/sales` drenava 5 × 1.000 linhas de `order_feed` a cada abertura e buscava em JS. Com 32.159 pedidos, a busca só via um recorte de 5 mil e não achava pedido fora dele. Agora a tela abre com uma página de 50 (ordem estável `created_at desc, origin, id`), carrega mais ao rolar (`useInfiniteQuery` + `useInfiniteScroll`) e manda aba e busca como filtro ao servidor. A busca compara com uma coluna nova da view, `busca` (migration `20261101221452`): nome com entidades HTML decodificadas, nº do pedido, itens e total em "250.50" e "250,50", em minúsculas e sem acento por `translate` (a prod não tem `unaccent`).
+
+Duas lições:
+
+- **Medir a view como a tela a consulta, não o corpo solto.** Mover `item_names` da UNION para a projeção final deu 370 → 54 ms com o corpo rodado como consulta de topo, e esse foi o número da 1ª migration. Aplicada, a página continuou em ~390 ms: o corpo tinha `WITH feed AS (…)`, e o Postgres não achata uma subconsulta com CTE, então a view virou `Subquery Scan` e as subconsultas rodaram nas 32 k linhas (`loops=32159`) antes do Sort. Sem a CTE (UNION direto no FROM, migration `20261102160821`), medido como subconsulta: 42 ms. A prova PG17 agora lê o plano e exige que não haja `Subquery Scan on order_feed`. A equivalência foi provada na prod com `EXCEPT ALL` nos dois sentidos: 0 linhas diferentes em 32.159.
+- **A PÓS por md5 do corpo deixa as asserções de conteúdo inalcançadas.** Sabotar o corpo da migration dava vermelho na PÓS, antes de qualquer assert de conteúdo da prova PG17. Para falsificar as asserções, a sabotagem tira a PRE/PÓS, e um controle com a mesma remoção e sem sabotagem precisa ficar verde.
+
+Medido na prod (JSON da resposta): abertura 5.000 linhas / 2,07 MB em 5 requests → 50 linhas / 21 kB em 1 request. A busca custa um scan dos ~32 k (~0,6 s). Por isso ela vai sem `count`, que seria um segundo scan, e o rodapé mostra quantos pedidos foram carregados até ali.

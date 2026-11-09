@@ -83,8 +83,14 @@ export const respostaSonda = criarRespostaSonda("omie-analytics-sync");
  * por `normalizar_documento()` (letras preservadas), então os dois são donos distintos e o laço só
  * tirava o vínculo do dono certo. Atestada em prod em 2026-10-19 (psql-ro). Canária
  * `doc-ambiguo-mutilacao-nao-e-ambiguidade-v3`.
+ *
+ * v1.15 (2026-10-31) — `start_nao_vinculados` aceita as 3 contas (`vendas`, `servicos`,
+ * `colacor_vendas`), não só a Oben: o guard de "já em andamento" e o `syncNaoVinculados` passam a
+ * usar a conta pedida. Motivo: o `ja_cliente` do Radar lê `omie_clientes_nao_vinculados` sem filtro de
+ * empresa, e cliente da Colacor sem usuário nunca era lido. A tela de não-vinculados segue só `oben`.
+ * Leitura em prod após o deploy: `omie_nao_vinculados_state` ganha linhas `colacor_sc`/`colacor`.
  */
-export const VERSAO = "v1.14-mutilacao-nao-e-ambiguidade";
+export const VERSAO = "v1.15-nao-vinculados-tres-contas";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

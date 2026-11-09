@@ -169,6 +169,48 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'decisão do Raio-X (foto de custo + tirar do motor); gate private.cap_custo_ler',
   },
+  'public.raio_x_congelar_coorte': {
+    fechadaPor: '20261031130000_raio_x_correcoes_pos_revisao.sql',
+    permitido: PORTA_GATE,
+    motivo: 'congela a coorte do Top 61 do Raio-X (foto de custo por SKU); gate private.cap_custo_ler',
+  },
+  'public.raio_x_planejar': {
+    fechadaPor: '20261031180000_raio_x_plano_execucao.sql',
+    permitido: PORTA_GATE,
+    motivo: 'plano de execução da decisão do Raio-X (piso, canal, responsável, prazo); gate private.cap_custo_ler',
+  },
+  'public.raio_x_inequivoco': {
+    fechadaPor: '20261101190000_raio_x_inequivoco_definer.sql',
+    permitido: PORTA_GATE,
+    motivo: 'veredito "liquidar só o inequívoco" do Raio-X (DEFINER desde 20261101190000); gate private.cap_custo_ler',
+  },
+  // 2026-11-01 — "segurar compra" escreve no motor (migration 20261101090000): gate cap_compras_ler (leituras) /
+  // cap_compras_escrever (writer) INLINE; a foto interna fecha por PRIVILÉGIO (postcondição mede anon/authenticated).
+  'public.reposicao_compra_suspensa_candidatos': {
+    fechadaPor: '20261101090000_reposicao_compra_suspensa.sql',
+    permitido: PORTA_GATE,
+    motivo: 'coorte do lote "segurar compra" (saldo×cmc, fornecedor); gate private.cap_compras_ler',
+  },
+  'public.sayerlack_painel_portal': {
+    fechadaPor: '20261109100000_sayerlack_painel_portal_v2.sql',
+    permitido: PORTA_GATE,
+    motivo: 'card "Pedidos do portal Sayerlack": pendências da varredura, importados e sem PO; gate private.cap_compras_ler',
+  },
+  'public.reposicao_compra_suspensa_listar': {
+    fechadaPor: '20261101090000_reposicao_compra_suspensa.sql',
+    permitido: PORTA_GATE,
+    motivo: 'suspensões ativas com foto e situação ao vivo; gate private.cap_compras_ler',
+  },
+  'public.reposicao_compra_suspender': {
+    fechadaPor: '20261101090000_reposicao_compra_suspensa.sql',
+    permitido: PORTA_GATE,
+    motivo: 'único writer de reposicao_compra_suspensa; gate private.cap_compras_escrever (master)',
+  },
+  'public._reposicao_compra_foto': {
+    fechadaPor: '20261101090000_reposicao_compra_suspensa.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'foto interna (saldo×cmc, fornecedor, cobertura) só pelas RPCs gateadas — REVOKE de anon/authenticated',
+  },
   'public.fin_estoque_giro_valor': {
     fechadaPor: '20261018200000_fin_ciclo_giro_sku.sql',
     permitido: PORTA_GATE,
@@ -331,6 +373,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'job de desfecho da venda por cliente (lê unit_price/desconto) — só cron/service_role',
   },
+  'public._reposicao_ruptura_saldo_oben': {
+    fechadaPor: '20261031200000_reposicao_ruptura_sensor.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'helper do sensor de ruptura da Oben (lê inventory_position/sku_estoque_atual como DEFINER) — só o trigger de order_items e o cron da prateleira',
+  },
   'private.margem_cliente_agregada': {
     fechadaPor: '20260726160000_margem_reconciliacao_universo_unico.sql',
     permitido: PORTA_FECHADA,
@@ -465,6 +512,16 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'lock dos candidatos a envio — edge enviar-pedido-portal-sayerlack',
   },
+  'public.sayerlack_aplicar_condicao_portal': {
+    fechadaPor: '20261107140000_sayerlack_condicao_portal_onda2.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'condição REAL do portal no pedido do app antes do sucesso_portal (D-1; só sobre default_a_vista, sem PO) — edge enviar-pedido-portal-sayerlack, service_role',
+  },
+  'public.sayerlack_conferir_portal': {
+    fechadaPor: '20261111150000_sayerlack_conferir_portal.sql',
+    permitido: PORTA_FECHADA,
+    motivo: '5.2: pedido do app × leitura do portal; escritor único do retrato, da divergência e do gate do claim — edge sayerlack-importar-pedido-portal e a RPC de importar, service_role',
+  },
   'public.sayerlack_aplicar_custo_portal': {
     fechadaPor: '20261006120000_preco_exato_po_sayerlack_ipi.sql',
     permitido: PORTA_FECHADA,
@@ -505,6 +562,21 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo:
       'publica a observação do conjunto aberto que o motor contou (lê sku_estoque_atual só para conferir o pendente gravado) — edge omie-sync-estoque, service_role. Aberta a authenticated, qualquer sessão gravaria observação falsa que os PRs da baixa de PO leriam como "o que o motor contou".',
+  },
+  'public.sayerlack__incidente_pelo_pedido': {
+    fechadaPor: '20261110120000_sayerlack_cancelado_com_compra_viva.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'trigger da 5.4 (RETURNS trigger, SECURITY DEFINER): abre o incidente de cancelado no portal com compra viva e o fecha só pela porta pós-disparo — o EXECUTE nem é o que o dispara; fechado como 2ª tranca',
+  },
+  'public.sayerlack__incidente_pelo_espelho': {
+    fechadaPor: '20261110120000_sayerlack_cancelado_com_compra_viva.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'trigger da 5.4 no espelho do Omie (RETURNS trigger, SECURITY DEFINER): PO que aparece depois de um encerramento da 5.3 vira incidente; fechado como 2ª tranca',
+  },
+  'public.sayerlack_cobertura_situacao_portal': {
+    fechadaPor: '20261110120000_sayerlack_cancelado_com_compra_viva.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'cobertura da 5.4 (pedidos com PO não faturado, protocolo e leitura) — edge sayerlack-varrer-pedidos-portal e o compute do data_health, service_role; lê pedido e espelho do Omie como definer',
   },
   'public.reposicao_claim_disparo': {
     fechadaPor: '20260906190615_reposicao_claim_disparo_cenario_b.sql',

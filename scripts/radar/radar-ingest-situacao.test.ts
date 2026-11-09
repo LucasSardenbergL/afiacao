@@ -5,7 +5,7 @@ import { removerComentarios } from "../../src/lib/gates/limpeza-fonte";
 
 // Invariantes da edge `radar-ingest` lidas como TEXTO (a edge roda em Deno, fora do vitest; o deploy pelo
 // chat do Lovable pode reverter um merge e commitar a reversão — docs/agent/deploy.md). Vigia o WIRING da
-// situação cadastral: as duas ações existem, o finalize recruza e NÃO aplica a situação (o job pg_cron
+// situação cadastral: as duas ações existem, o finalize só VALIDA o staging e NÃO aplica a situação (o job pg_cron
 // radar-aplicar-situacao-diario aplica — o PostgREST corta em 8s, 57014 no lote 2026-09),
 // o upsert do chunk_situacao conflita em (cnpj, lote) e NÃO manda `alertado_em` (1 escritor: a função SQL),
 // e a versão servida pela sonda mudou junto com o comportamento.
@@ -45,20 +45,42 @@ describe("edge radar-ingest — situação cadastral (texto)", () => {
     expect(bloco).toContain("descartadas_por_motivo");
   });
 
-  it("[E4] finalize recruza (propagando o erro), NÃO chama radar_aplicar_situacao e anuncia a aplicação pelo cron", () => {
+  it("[E4] finalize VALIDA o staging (sem recruzar nem publicar), NÃO chama radar_aplicar_situacao e anuncia o cron", () => {
     const bloco = entre(edge, 'action === "finalize"', 'action === "status"');
-    expect(bloco).toContain('admin.rpc("radar_recruzar_ja_cliente")');
-    expect(bloco).toContain("if (eRe) throw eRe;");
+    // Publicação atômica (20261110130000): recruzar e `complete` são do job radar-publicar-lote, numa transação.
+    expect(bloco).toContain('admin.rpc("radar_carga_validar"');
+    expect(bloco).toContain("lerEsperado(body.esperado)");
+    expect(bloco).not.toContain("radar_recruzar_ja_cliente");
+    expect(bloco).not.toContain('status: "complete"');
     // Request da edge = 8s do PostgREST; a aplicação (minutos) é do job. Nenhuma chamada, em lugar nenhum da edge.
     expect(edge).not.toContain("radar_aplicar_situacao");
     expect(bloco).toContain('situacao_aplicacao: "cron"');
-    // O job lê a pendência pelo finalizado_em: o finalize continua gravando-o junto com o complete.
-    expect(bloco).toMatch(/status: "complete"[^}]*finalizado_em: new Date\(\)\.toISOString\(\)/);
+    expect(bloco).toContain('publicacao: "cron"');
+    // O chunk não escreve mais na tabela viva: nenhum upsert em radar_empresas em lugar nenhum da edge.
+    expect(edge).not.toContain('.from("radar_empresas")');
+    expect(edge).toContain('admin.rpc("radar_carga_receber"');
   });
 
-  it("[E5] VERSAO bumpada para a aplicação por cron e EFEITO diz que a edge não aplica", () => {
-    expect(versao).toContain('export const VERSAO = "v1.4-concorrentes";');
+  it("[E5] VERSAO bumpada para a carga em staging e EFEITO diz que a edge não aplica a situação", () => {
+    expect(versao).toContain('export const VERSAO = "v1.8-chunk-recuperavel";');
     expect(versao).toContain("radar-aplicar-situacao-diario");
+    expect(versao).toContain("radar-publicar-lote");
+  });
+
+  it("[E7] o catch geral NÃO marca a carga `falhou` (erro é recuperável); só a ação `falhar` chama radar_carga_falhar", () => {
+    const catchGeral = edge.slice(edge.lastIndexOf("} catch (e) {"));
+    expect(catchGeral).toContain("return json({ error: msg }, 500);");
+    expect(catchGeral).not.toContain("radar_carga_falhar");
+    expect(edge.split('admin.rpc("radar_carga_falhar"').length - 1).toBe(1);
+    const bloco = entre(edge, 'if (action === "falhar")', 'if (action === "status")');
+    expect(bloco).toContain('admin.rpc("radar_carga_falhar"');
+    expect(bloco).toContain("lerMotivoFalha(body.erro)");
+    // A carga declara o fim pelo cliente: abre o lote depois do begin e fecha depois do finalize.
+    expect(carga).toContain("criarClienteIngest(");
+    const iBegin = carga.indexOf('action: "begin_lote"');
+    expect(iBegin).toBeLessThan(carga.indexOf("cliente.abrirLote(MES)"));
+    expect(carga.indexOf("cliente.abrirLote(MES)")).toBeLessThan(carga.indexOf('action: "chunk"'));
+    expect(carga.indexOf('action: "finalize"')).toBeLessThan(carga.indexOf("cliente.fecharLote()"));
   });
 
   it("[E6] carga: pede a lista à edge ANTES dos zips, aborta em resposta sem cnpjs (ausente ≠ vazio) e envia chunk_situacao antes do finalize", () => {
@@ -74,6 +96,8 @@ describe("edge radar-ingest — situação cadastral (texto)", () => {
     expect(carga).toContain("if (!resp?.descartadas_por_motivo) throw new Error(");
     // Contrato novo do finalize: a carga reconhece a aplicação pelo cron e só acusa edge antiga sem nenhum dos dois.
     expect(carga).toContain('fin?.situacao_aplicacao === "cron"');
+    // O finalize declara o que entregou ao staging — é a contagem contra a qual a publicação é validada.
+    expect(carga).toContain('action: "finalize", mes: MES, esperado: entreguesStaging');
     // Um scan só por zip: as três condições (universo, conhecidos, concorrentes) no mesmo read_csv, nunca uma segunda passada.
     expect(carga).toContain("WHERE (${filtroUniverso}) OR ${filtroConhecidos} OR ${filtroConcorrentes};");
     expect((carga.match(/read_csv\('\$\{WORK\}\/est\/\*'/g) ?? []).length).toBe(1);

@@ -34,6 +34,20 @@ export type DescontoCheckin = ComColunas<
   "checkin_id" | "data_avaliacao" | "tipo"
 > & { avaliado_por?: string | null };
 
+/**
+ * Um check-in do trimestre na lista de anteriores: a existência vem de `des_checkin_qualitativo`; os
+ * percentuais, da `v_des_desconto_por_checkin` — `null` quando a faixa é desconhecida (sem faturado
+ * confirmado do GoodData), nunca 0.
+ */
+export interface LinhaHistoricoCheckin {
+  checkin_id: number;
+  data_avaliacao: string;
+  tipo: string;
+  avaliado_por: string | null;
+  qualitativos_atingidos_perc: number | null;
+  desconto_total_projetado: number | null;
+}
+
 export interface Resposta {
   atingido: boolean;
   observacao: string;

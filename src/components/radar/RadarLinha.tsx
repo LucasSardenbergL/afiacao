@@ -1,15 +1,16 @@
-import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
 import {
-  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal, seloRfb, scoreUI, selosFilial,
-  type IrmaosRaiz,
+  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, telefonePrincipal, seloRfb, scoreUI, selosFilial,
+  type EstadoIrmaos, type IrmaosRaiz,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
-import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
+import { ehInedito, saiuDoDump, rotuloEfetivo, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
 import { ehSugerido, LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
+import { seloVinculo, type EstadoVinculos, type ResumoVinculoLista } from '@/lib/radar/vinculos';
 import { ChipAtendimento } from './RadarAtendimentoLead';
+import { Selo } from './Selo';
+import { RadarTelefoneAcao } from './RadarTelefoneAcao';
 
 /**
  * Linha da lista. Checkbox e botão de abrir são IRMÃOS (não aninhados): a linha inteira
@@ -24,7 +25,10 @@ export function RadarLinha({
   lote = null,
   mostrarMotivos = false,
   irmaos = null,
+  irmaosEstado = 'ok',
   amostra = null,
+  vinculo = null,
+  vinculoEstado = 'carregando',
 }: {
   empresa: RadarEmpresa;
   hojeISO: string;
@@ -37,8 +41,14 @@ export function RadarLinha({
   mostrarMotivos?: boolean;
   /** Outros estabelecimentos da mesma raiz de CNPJ (selo "filial de cliente" / "+N da mesma empresa"); sem dado, sem selo. */
   irmaos?: IrmaosRaiz | null;
+  /** Estado da página dos irmãos: 'falhou' vira o selo "filial?" (não consegui verificar ≠ não é filial). */
+  irmaosEstado?: EstadoIrmaos;
   /** Sorteio da amostra de controle a que o lead pertence (selo "amostra"); null = não sorteado. */
   amostra?: string | null;
+  /** Resumo do vínculo com cliente (selo "possível sucessor" / "possível vínculo"); null = sem vínculo na página lida. */
+  vinculo?: ResumoVinculoLista | null;
+  /** Estado da leitura do vínculo desta linha: 'falhou' mostra "vínculo?" — nunca vira "sem vínculo". */
+  vinculoEstado?: EstadoVinculos;
 }) {
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.nome_fantasia || empresa.razao_social || empresa.cnpj;
@@ -46,7 +56,9 @@ export function RadarLinha({
   const rfb = seloRfb(empresa);
   const score = scoreUI(empresa.score, empresa.score_motivos);
   const sugerido = ehSugerido(empresa, lote);
-  const filial = selosFilial(irmaos);
+  const filial = selosFilial(irmaos, irmaosEstado);
+  const vinc = seloVinculo(vinculoEstado, vinculo);
+  const motivos = empresa.score != null ? empresa.score_motivos ?? [] : [];
   return (
     <div
       className={cn(
@@ -62,54 +74,30 @@ export function RadarLinha({
         className="ml-1"
       />
       <button onClick={onAbrir} className="min-w-0 text-left py-0.5">
-        <div className="flex items-center gap-2">
-          <span className="font-medium truncate">{nome}</span>
-          {empresa.ja_cliente && (
-            <Badge variant="secondary" className="shrink-0">já é cliente</Badge>
-          )}
+        {/* Pacote B3: o nome fica SOZINHO na 1ª linha. Antes ele dividia um flex com até 8 selos `shrink-0` e, no
+            celular, o `truncate` o apagava — o vendedor via selos e não via a empresa. */}
+        <div className="font-medium truncate">{nome}</div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-1">
+          {empresa.ja_cliente && <Selo tom="muted">já é cliente</Selo>}
           {amostra && (
-            <span
-              className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM.info)}
-              title={`Amostra de controle (${amostra}): lead fora do topo, sorteado para comparar a conversão com a do topo. Contate como qualquer outro.`}
-              data-testid="selo-amostra"
-            >
+            <Selo tom="info" data-testid="selo-amostra"
+              title={`Amostra de controle (${amostra}): lead fora do topo, sorteado para comparar a conversão com a do topo. Contate como qualquer outro.`}>
               amostra
-            </span>
+            </Selo>
           )}
-          {ehInedito(empresa, lote) && (
-            <Badge variant="info" className="shrink-0">inédito</Badge>
-          )}
-          {saiuDoDump(empresa, lote) && (
-            <Badge variant="outline" className="shrink-0 text-muted-foreground font-normal">{rotuloSaiuDoDump(empresa.ultimo_lote)}</Badge>
-          )}
+          {ehInedito(empresa, lote) && <Selo tom="info">inédito</Selo>}
+          {saiuDoDump(empresa, lote) && <Selo tom="muted">{rotuloSaiuDoDump(rotuloEfetivo(empresa, lote) ?? empresa.ultimo_lote)}</Selo>}
           {sugerido && (
-            <Badge
-              variant="success"
-              className="shrink-0"
-              title={`Sugerido para cadastro: em conversa, não cliente, score ≥ ${LIMIAR_SUGERIDO}${empresa.rfb_situacao == null ? ' (RFB ainda não cruzada)' : ''}`}
-            >
+            <Selo tom="success"
+              title={`Sugerido para cadastro: em conversa, não cliente, score ≥ ${LIMIAR_SUGERIDO}${empresa.rfb_situacao == null ? ' (RFB ainda não cruzada)' : ''}`}>
               sugerido p/ cadastro
-            </Badge>
+            </Selo>
           )}
           {filial.map((s) => (
-            <span
-              key={s.chave}
-              className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[s.tom])}
-              title={s.titulo}
-              data-testid={`selo-filial-${s.chave}`}
-            >
-              {s.texto}
-            </span>
+            <Selo key={s.chave} tom={s.tom} title={s.titulo} data-testid={`selo-filial-${s.chave}`}>{s.texto}</Selo>
           ))}
-          {rfb && (
-            <span
-              className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[rfb.tom])}
-              title={rfb.titulo}
-              data-testid="selo-rfb"
-            >
-              {rfb.texto}
-            </span>
-          )}
+          {vinc && <Selo tom={vinc.tom} title={vinc.titulo} data-testid={`selo-vinculo-${vinc.chave}`}>{vinc.texto}</Selo>}
+          {rfb && <Selo tom={rfb.tom} title={rfb.titulo} data-testid="selo-rfb">{rfb.texto}</Selo>}
           <ChipAtendimento cnpj={empresa.cnpj} />
         </div>
         <div className="text-xs text-muted-foreground truncate">
@@ -117,29 +105,23 @@ export function RadarLinha({
           {empresa.cnae_descricao ? ` · ${empresa.cnae_descricao}` : ''}
           {tel ? <span className="font-tabular"> · {tel}</span> : ''}
         </div>
-        {mostrarMotivos && empresa.score != null && empresa.score_motivos && empresa.score_motivos.length > 0 && (
+        {/* Por que este lead (B3): o 1º motivo do score sempre visível — o `title` não aparece no toque. Na fila de
+            qualificação ("só sugeridos") vão TODOS, para justificar o cadastro. */}
+        {motivos.length > 0 && (
           <div className="text-xs text-muted-foreground truncate" data-testid="radar-score-motivos">
-            {empresa.score_motivos.join(' · ')}
+            {mostrarMotivos ? motivos.join(' · ') : motivos[0]}
           </div>
         )}
       </button>
       <div className="text-right text-xs text-muted-foreground shrink-0">
         <div className="flex items-center justify-end gap-1.5">
-          <span
-            className={cn('inline-block rounded border px-1.5 py-px text-[11px] leading-4 font-tabular', CLASSE_TOM[score.tom])}
-            title={score.detalhe}
-            data-testid="radar-score"
-          >
-            {score.texto}
-          </span>
+          <Selo tom={score.tom} title={score.detalhe} className="font-tabular" data-testid="radar-score">{score.texto}</Selo>
           <span>{idade != null ? `${idade} anos` : '—'} · {rotuloPorte(empresa.porte)}</span>
         </div>
-        <span className={cn('inline-block mt-0.5 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[tomStatus(empresa.prospeccao_status)])}>
-          {rotuloStatus(empresa.prospeccao_status)}
-        </span>
+        <Selo tom={tomStatus(empresa.prospeccao_status)} className="mt-0.5">{rotuloStatus(empresa.prospeccao_status)}</Selo>
       </div>
       <div className="w-8 flex justify-center">
-        {tel && <BotaoLigar telefone={tel} nomeCliente={empresa.razao_social || nome} variant="icon" />}
+        {tel && <RadarTelefoneAcao telefone={tel} />}
       </div>
     </div>
   );

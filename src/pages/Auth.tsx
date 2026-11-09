@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Wrench } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
+import { destinoPosLogin } from '@/lib/destino-pos-login';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { LoginForm } from '@/components/auth/LoginForm';
 import { SignupForm } from '@/components/auth/SignupForm';
@@ -15,12 +16,12 @@ import type { AuthMode, AuthFormData, OmieClienteData, ToolCategory } from '@/co
 const Auth = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const { user, loading: authLoading, signIn } = useAuth();
 
-  // `?next=` preserva o destino pós-login (usado pelo fluxo de consent OAuth do MCP).
-  // Só aceita path relativo same-origin — nada de URL absoluta (open-redirect).
-  const rawNext = searchParams.get('next') ?? '';
-  const nextPath = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/';
+  // Destino pós-login: `?next=` (consent OAuth do MCP; o ProtectedRoute também grava) ou `state.from`. Só caminho
+  // interno — nada de URL absoluta, `//host` nem `/\host` (open redirect). Regra em `@/lib/destino-pos-login`.
+  const nextPath = destinoPosLogin(searchParams.get('next'), location.state);
 
   const [mode, setMode] = useState<AuthMode>('login');
   const [isLoading, setIsLoading] = useState(false);

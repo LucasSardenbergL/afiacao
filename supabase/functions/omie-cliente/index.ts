@@ -2,7 +2,19 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { deveReporTelefone, telefoneCompleto, telefoneOmie } from "./telefone.ts";
+import { deveInterromperPagina, podeIniciarPagina } from "./orcamento.ts";
+import { linhaPerfilPlaceholder } from "./perfil-placeholder.ts";
+import {
+  type AvancoRodada,
+  type CursorRodada,
+  interpretarAcquire,
+  MAX_PAGINAS_LOTE_SERVIDOR,
+  planejarAvanco,
+  resolverConta,
+} from "./import-servidor.ts";
 import { fetchAll } from "../_shared/paginate.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
   avaliarPagina,
   desfechoContaListagem,
@@ -55,6 +67,7 @@ interface OmieCliente {
   nome_fantasia?: string;
   cnpj_cpf?: string;
   email?: string;
+  telefone1_ddd?: string;
   telefone1_numero?: string;
   endereco?: string;
   endereco_numero?: string;
@@ -434,14 +447,14 @@ async function upsertAddressFromOmie(
  */
 async function* paginarProfilesComDocumento(
   adminClient: SupabaseClient,
-): AsyncGenerator<Array<{ user_id: string; document: string }>> {
+): AsyncGenerator<Array<{ user_id: string; document: string; phone: string | null }>> {
   const pageSize = 1000;
   let cursor: string | null = null;
 
   while (true) {
     let query = adminClient
       .from("profiles")
-      .select("user_id, document")
+      .select("user_id, document, phone")
       .not("document", "is", null)
       .order("user_id")
       .limit(pageSize);
@@ -455,8 +468,8 @@ async function* paginarProfilesComDocumento(
     if (data == null) throw new Error("Falha ao paginar profiles: data null sem error — resposta malformada, não é fim");
     if (data.length === 0) return;
 
-    const rows = data as Array<{ user_id: string; document: string | null }>;
-    yield rows.filter((r): r is { user_id: string; document: string } => !!r.document);
+    const rows = data as Array<{ user_id: string; document: string | null; phone: string | null }>;
+    yield rows.filter((r): r is { user_id: string; document: string; phone: string | null } => !!r.document);
 
     cursor = rows[rows.length - 1].user_id;
     if (rows.length < pageSize) return;
@@ -650,6 +663,11 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // Rodada do import NO SERVIDOR (migration 20261101200000): preenchida só pela ação
+  // `continuar_import_clientes`, depois de reivindicar o lease. Fora do try para o catch externo
+  // conseguir devolver o lease com erro (senão a rodada esperaria os 7 min do lease vencer).
+  let rodada: (CursorRodada & { admin: SupabaseClient; contas: string[]; avancada: boolean }) | null = null;
+
   try {
     const body = await req.json();
 
@@ -673,6 +691,36 @@ Deno.serve(async (req) => {
       return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
     }
 
+    // ── Import de clientes no SERVIDOR (migration 20261101200000_clientes_import_servidor) ──
+    // O laço do navegador morria no meio (aba recarregada, rede) e cada clique recomeçava da página 1.
+    // Agora o cron de 1 min chama esta ação com x-cron-secret: ela reivindica o lease da rodada
+    // aberta, injeta o cursor PERSISTIDO e cai no MESMO bloco `sync_all_clients` abaixo (sem duplicar
+    // a lógica que os guardrails money-path leem como texto); depois do bloco, avança o cursor.
+    // O `sync_all_clients` direto deixou de ser aceito: seria um 2º escritor de identidade fora do
+    // lease — o dedup é carregado no início de cada invocação, e duas simultâneas criariam o mesmo
+    // cliente duas vezes (achado Codex P1).
+    if (body.action === "continuar_import_clientes") {
+      const authCron = await authorizeCronOrStaff(req);
+      if (!authCron.ok) return authCron.response;
+      const adminRodada = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const { data: leaseData, error: leaseErr } = await adminRodada.rpc("clientes_import_lease_acquire");
+      if (leaseErr) return jsonRes({ error: `clientes_import_lease_acquire: ${leaseErr.message}` }, 500);
+      const cursor = interpretarAcquire(leaseData);
+      if (!cursor) return jsonRes({ skipped: "sem_rodada_aberta_ou_lease_ocupado" }, 200);
+      const contas = getOmieAccounts().map((c) => c.account);
+      rodada = { ...cursor, admin: adminRodada, contas, avancada: false };
+      const conta = resolverConta(cursor.conta_slug, contas, CONTAS_ESPERADAS.map((c) => c.account));
+      body.account_index = conta.indice;
+      // Credencial da conta do cursor sumiu → a varredura segue na próxima conta, do começo dela.
+      body.start_page = conta.mesmaConta ? cursor.start_page : 1;
+      body.total_paginas = conta.mesmaConta ? cursor.total_paginas : 0;
+      body.action = "sync_all_clients";
+    } else if (body.action === "sync_all_clients") {
+      return jsonRes({
+        error: "O import de clientes agora roda no servidor. Recarregue a página e clique em Importar Todos de novo.",
+      }, 410);
+    }
+
     const { action, documento, query, codigo_cliente } = body;
 
     // Input validation
@@ -682,7 +730,9 @@ Deno.serve(async (req) => {
 
     // buscar_por_documento is allowed without auth (used during signup)
     // All other actions require authentication
-    if (action !== "buscar_por_documento") {
+    if (rodada) {
+      // Autenticada acima pelo cron (authorizeCronOrStaff) e dona do lease — não passa pelo gate de JWT.
+    } else if (action !== "buscar_por_documento") {
       const authHeader = req.headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {
         return jsonRes({ error: "Não autorizado" }, 401);
@@ -770,7 +820,7 @@ Deno.serve(async (req) => {
             nome_fantasia: c.nome_fantasia,
             cnpj_cpf: c.cnpj_cpf,
             email: c.email,
-            telefone: c.telefone1_numero,
+            telefone: telefoneOmie(c.telefone1_ddd, c.telefone1_numero),
             cidade: c.cidade,
             estado: c.estado,
             codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
@@ -795,7 +845,7 @@ Deno.serve(async (req) => {
               nome_fantasia: clienteCompleto.nome_fantasia,
               cnpj_cpf: clienteCompleto.cnpj_cpf,
               email: clienteCompleto.email,
-              telefone: clienteCompleto.telefone1_numero,
+              telefone: telefoneOmie(clienteCompleto.telefone1_ddd, clienteCompleto.telefone1_numero),
               endereco: clienteCompleto.endereco,
               endereco_numero: clienteCompleto.endereco_numero,
               complemento: clienteCompleto.complemento,
@@ -937,15 +987,17 @@ Deno.serve(async (req) => {
         const newUserId = authData.user.id;
 
         // Create profile (trigger auto_assign_user_role will assign 'customer')
+        // Origem `omie_import`: o placeholder não pediu conta, então fica fora da fila de aprovações (C7).
         const { error: profileError } = await adminClient
           .from("profiles")
-          .insert({
-            user_id: newUserId,
-            name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
-            email: cliente.email || null,
-            phone: cliente.telefone || null,
+          .insert(linhaPerfilPlaceholder({
+            userId: newUserId,
+            nomeFantasia: cliente.nome_fantasia,
+            razaoSocial: cliente.razao_social,
+            email: cliente.email,
+            phone: telefoneCompleto(cliente.telefone),
             document: cliente.cnpj_cpf ? normalizarDocumento(cliente.cnpj_cpf) : null,
-          });
+          }));
 
         if (profileError) {
           console.error("[criar_perfil_local] Profile error:", profileError);
@@ -986,6 +1038,9 @@ Deno.serve(async (req) => {
       case "sync_all_clients": {
         // Bulk import clients from one Omie account at a time (to avoid timeout)
         // Pass account_index: 0, 1, 2 and start_page (default 1)
+        // Relógio do orçamento de tempo (`orcamento.ts`): conta desde a entrada, porque o setup
+        // (códigos mapeados + perfis com documento) também consome os 150 s do gateway.
+        const inicioInvocacaoMs = Date.now();
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
         const adminClient = createClient(supabaseUrl, supabaseServiceKey);
@@ -993,7 +1048,9 @@ Deno.serve(async (req) => {
         const accounts = getOmieAccounts();
         const accountIndex = body.account_index ?? 0;
         const startPage = body.start_page ?? 1;
-        const maxPages = 3; // Process max 3 pages per call (~150 clients) to stay within timeout
+        // 3 páginas por chamada no caminho antigo; no servidor quem limita é o orçamento de tempo
+        // (orcamento.ts: sem página nova após 60 s, corte em 110 s) — o teto só evita varredura sem fim.
+        const maxPages = rodada ? MAX_PAGINAS_LOTE_SERVIDOR : 3;
 
         if (accountIndex >= accounts.length) {
           // Fim da varredura. As contas SEM credencial nunca entraram no laço — sem este campo
@@ -1028,7 +1085,16 @@ Deno.serve(async (req) => {
         let accImported = 0;
         let accSkipped = 0;
         let accErrors = 0;
+        // Reposição de telefone (DDD) nos perfis JÁ mapeados — ver `telefone.ts` e o ramo abaixo.
+        let accTelefonesRepostos = 0;
         let pagesProcessed = 0;
+        // true = esta invocação parou por tempo e devolve o cursor na página onde parou.
+        let orcamentoEsgotado = false;
+        const progresso = () => ({
+          decorridoMs: Date.now() - inicioInvocacaoMs,
+          paginasConcluidas: pagesProcessed,
+          clientesImportados: accImported,
+        });
 
         // Teto de tentativas da MESMA página, DENTRO desta invocação. Mora aqui — e não no cursor
         // — de propósito: um contador transportado degradaria para "sem teto" com qualquer caller
@@ -1059,6 +1125,8 @@ Deno.serve(async (req) => {
         // enxergava 1/7 dos códigos e o loop reprocessava o resto. A fresca dá os códigos DESTA
         // conta, paginados com .order estável.
         const existingCodes = new Set<number>();
+        // codigo Omie → user_id do map (o MESMO que `cobranca_regua_hoje` resolve para o telefone).
+        const userByCode = new Map<number, string>();
         let codeCursor: number | null = null;
         const codePageSize = 1000;
         while (true) {
@@ -1067,7 +1135,7 @@ Deno.serve(async (req) => {
           // e código pulado aqui vira cliente RECRIADO no laço de importação abaixo.
           let codeQuery = adminClient
             .from("omie_customer_account_map_fresco")
-            .select("omie_codigo_cliente")
+            .select("omie_codigo_cliente, user_id")
             .eq("account", account.account)
             .order("omie_codigo_cliente")
             .limit(codePageSize);
@@ -1081,7 +1149,10 @@ Deno.serve(async (req) => {
           // com o MESMO efeito do erro engolido acima (dedup cego recria clientes) — money-path §9.
           if (codePage == null) throw new Error(`Falha ao carregar códigos já mapeados (${account.account}): data null sem error — resposta malformada, não é fim`);
           if (codePage.length === 0) break;
-          for (const row of codePage) existingCodes.add(row.omie_codigo_cliente as number);
+          for (const row of codePage) {
+            existingCodes.add(row.omie_codigo_cliente as number);
+            if (typeof row.user_id === "string") userByCode.set(row.omie_codigo_cliente as number, row.user_id);
+          }
           codeCursor = codePage[codePage.length - 1].omie_codigo_cliente as number;
           if (codePage.length < codePageSize) break;
         }
@@ -1095,13 +1166,24 @@ Deno.serve(async (req) => {
         // (19%): para os outros 81%, `profileByDoc.get()` devolvia undefined e o laço abaixo criava
         // um usuário Auth NOVO para cliente que já tinha cadastro. Esta é a fábrica dos clones.
         const profileByDoc = new Map<string, string>();
+        // phone atual por user_id: a régua de reposição decide em memória, sem SELECT por cliente.
+        const phoneByUser = new Map<string, string | null>();
         for await (const pagina of paginarProfilesComDocumento(adminClient)) {
-          for (const p of pagina) profileByDoc.set(normalizarDocumento(p.document), p.user_id);
+          for (const p of pagina) {
+            profileByDoc.set(normalizarDocumento(p.document), p.user_id);
+            phoneByUser.set(p.user_id, p.phone);
+          }
         }
 
         console.log(`[sync_all_clients] Starting ${account.name} from page ${startPage}...`);
 
         while (page <= totalPages && pagesProcessed < maxPages) {
+          // Página nova só se ela cabe antes do corte de 150 s. `page` ainda não foi pedida, então
+          // o cursor já aponta para ela — o desfecho abaixo devolve hasMore com esta página.
+          if (!podeIniciarPagina(progresso())) {
+            orcamentoEsgotado = true;
+            break;
+          }
           try {
             const listResult = await callOmieApiWithCredentials(
               "geral/clientes/",
@@ -1187,6 +1269,12 @@ Deno.serve(async (req) => {
             }
 
             for (const cliente of clientes) {
+              // Corte no meio da página: os já gravados entraram em `existingCodes` (e no map), então
+              // a próxima invocação refaz esta página só com SKIPs até o primeiro não processado.
+              if (deveInterromperPagina(progresso())) {
+                orcamentoEsgotado = true;
+                break;
+              }
               const codigoCliente = cliente.codigo_cliente_omie || cliente.codigo_cliente;
               const cnpjCpf = normalizarDocumento(cliente.cnpj_cpf);
 
@@ -1196,6 +1284,28 @@ Deno.serve(async (req) => {
               }
 
               if (existingCodes.has(codigoCliente)) {
+                // Cliente já mapeado: o import pula, mas a REPOSIÇÃO do telefone passa por aqui.
+                // Até 2026-11-01 o insert gravava só `telefone1_numero` (sem DDD) e este ramo nunca
+                // revisitava o perfil — 5.378/5.668 perfis mapeados sem DDD, régua de cobrança sem
+                // WhatsApp. Idempotente: só escreve quando o atual NÃO tem DDD e o Omie fornece um
+                // completo; nunca sobrescreve telefone já completo (pode ter sido corrigido à mão).
+                // Alvo = user do map por (conta, código) — o mesmo que `cobranca_regua_hoje` lê;
+                // o doc é fallback (aliases fiscais compartilham doc entre contas).
+                const userAlvo = userByCode.get(codigoCliente) ?? profileByDoc.get(cnpjCpf);
+                const telefoneNovo = telefoneOmie(cliente.telefone1_ddd, cliente.telefone1_numero);
+                if (userAlvo && phoneByUser.has(userAlvo) && deveReporTelefone(phoneByUser.get(userAlvo), telefoneNovo)) {
+                  const { error: foneErr } = await adminClient
+                    .from("profiles")
+                    .update({ phone: telefoneNovo })
+                    .eq("user_id", userAlvo);
+                  if (foneErr) {
+                    console.error(`[sync_all_clients] reposição de telefone falhou (user ${userAlvo}, código ${codigoCliente}):`, foneErr.message);
+                    accErrors++;
+                  } else {
+                    phoneByUser.set(userAlvo, telefoneNovo);
+                    accTelefonesRepostos++;
+                  }
+                }
                 accSkipped++;
                 continue;
               }
@@ -1221,19 +1331,22 @@ Deno.serve(async (req) => {
                   // O supabase-js NÃO lança em falha de escrita: devolve { error }. Ignorá-lo
                   // deixava o usuário Auth recém-criado SEM profile — órfão — e o laço seguia
                   // contando "importado". Nenhum UNIQUE segura: o user_id acabou de nascer.
-                  const { error: profileError } = await adminClient.from("profiles").insert({
-                    user_id: userId,
-                    name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
-                    email: cliente.email || null,
-                    phone: cliente.telefone1_numero || null,
+                  // A origem `omie_import` tira este fantasma da fila de aprovações e do KPI da home (C7).
+                  const { error: profileError } = await adminClient.from("profiles").insert(linhaPerfilPlaceholder({
+                    userId,
+                    nomeFantasia: cliente.nome_fantasia,
+                    razaoSocial: cliente.razao_social,
+                    email: cliente.email,
+                    phone: telefoneOmie(cliente.telefone1_ddd, cliente.telefone1_numero),
                     document: cnpjCpf,
-                  });
+                  }));
                   if (profileError) {
                     console.error(`[sync_all_clients] profile insert falhou (user ${userId}, código ${codigoCliente}):`, profileError);
                     accErrors++;
                     continue;
                   }
                   profileByDoc.set(cnpjCpf, userId);
+                  phoneByUser.set(userId, telefoneOmie(cliente.telefone1_ddd, cliente.telefone1_numero));
                 }
 
                 const codigoVendedor = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
@@ -1269,6 +1382,14 @@ Deno.serve(async (req) => {
               }
             }
 
+            if (orcamentoEsgotado) {
+              // NÃO avança `page`: o cursor volta nesta mesma página. A busca dela deu certo, então
+              // um soluço anterior (retentativa) já foi superado — não é "o que interrompeu a conta".
+              console.log(`[sync_all_clients] ${account.name} page ${page}/${totalPages}: orçamento de tempo esgotado — retoma nesta página`);
+              tentativasNaPagina = 0;
+              falhaConta = null;
+              break;
+            }
             console.log(`[sync_all_clients] ${account.name} page ${page}/${totalPages}: +${clientes.length} clientes`);
             page++;
             pagesProcessed++;
@@ -1336,6 +1457,9 @@ Deno.serve(async (req) => {
           imported: accImported,
           skipped: accSkipped,
           errors: accErrors,
+          telefones_repostos: accTelefonesRepostos,
+          // true = parou antes do corte de 150 s do gateway; `next` aponta a página onde parou.
+          orcamento_esgotado: orcamentoEsgotado,
           totalPages,
           lastPage: page - 1,
           hasMore: cursor.hasMore || nextAccountIndex < accounts.length,
@@ -1624,9 +1748,43 @@ Deno.serve(async (req) => {
         return jsonRes({ error: "Ação não reconhecida" }, 400);
     }
 
+    if (rodada) {
+      // Lança se o resultado do bloco sair do contrato → o catch abaixo devolve o lease com erro.
+      const avanco: AvancoRodada = planejarAvanco(result, rodada.contas);
+      const { data: aplicado, error: avancoErr } = await rodada.admin.rpc("clientes_import_avancar", {
+        p_rodada_id: rodada.rodada_id,
+        p_lease_token: rodada.lease_token,
+        p_conta_slug: avanco.conta_slug,
+        p_start_page: avanco.start_page,
+        p_total_paginas: avanco.total_paginas,
+        p_importados: avanco.importados,
+        p_pulados: avanco.pulados,
+        p_erros: avanco.erros,
+        p_telefones: avanco.telefones_repostos,
+        p_falha: avanco.falha,
+        p_contas_sem_credencial: avanco.contas_sem_credencial,
+        p_concluida: avanco.concluida,
+      });
+      if (avancoErr) throw new Error(`clientes_import_avancar: ${avancoErr.message}`);
+      rodada.avancada = true;
+      // false = o lease não era mais desta invocação: os clientes gravados estão no banco (o próximo
+      // lote os pula), mas o cursor/acumulados deste lote não entram — nunca presumir que entraram.
+      if (aplicado !== true) console.error(`[continuar_import_clientes] lease perdido na rodada ${rodada.rodada_id}: avanço recusado`);
+      return jsonRes({ ...result, rodada: { id: rodada.rodada_id, avanco_aplicado: aplicado === true, ...avanco } }, 200);
+    }
+
     return jsonRes(result, 200);
   } catch (error) {
     console.error("[Omie Cliente] Erro:", error);
+    if (rodada && !rodada.avancada) {
+      const motivo = redigirSegredo(mensagemDeErro(error) ?? "erro sem mensagem");
+      const { error: libErr } = await rodada.admin.rpc("clientes_import_liberar_erro", {
+        p_rodada_id: rodada.rodada_id,
+        p_lease_token: rodada.lease_token,
+        p_motivo: motivo,
+      });
+      if (libErr) console.error(`[continuar_import_clientes] liberar_erro falhou na rodada ${rodada.rodada_id}:`, libErr.message);
+    }
     return jsonRes({ error: "Erro ao processar solicitação" }, 500);
   }
 });

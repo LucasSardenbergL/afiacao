@@ -131,3 +131,688 @@ caso algum pedido esteja lançado no portal da Sayerlack e não exista no Omie, 
   22:30 sem candidatos (`importados: []`, `falhas: []`).
 - **Lição**: o 1º pedido "novo" do portal travou na alíquota de IPI do NCM, não na varredura — NCM novo de item
   Sayerlack ainda depende de cadastro manual; o e-mail é o aviso.
+- **21/10 22:30 — 1ª importação 100% pelo cron**: 2142771 (visto, carência cumprida, sync `complete` depois) →
+  PO Omie **1306**, espelho com uma linha só para o contrato. De 21/10 a 05/11: 49 rodadas `sucesso`, 0 `erro`, 0
+  falha nova em `sayerlack_varredura_falha`.
+
+## Revisão Fable + Codex (2026-11)
+
+Os dois revisores, separados, chegaram aos mesmos P1 (nenhum P0). O que mudou:
+
+- **Contrato composto** ("1998739/1998740", 15 POs em prod): o IP006 do botão comparava o contrato inteiro e criava
+  2º PO; agora compara cada número (o cron já fazia).
+- **Trava "pedido do app em voo"** (IP008) também no botão — antes só o cron tinha.
+- **Condição de pagamento lida do portal** (decisão do founder: regra exata). A tela de detalhe tem
+  `#condicoes_pagamento` ("70 - 7 DIAS"); a RPC casa com o catálogo `omie_condicao_pagamento_catalogo` por texto exato
+  ("N DIAS"→"Para N dias", "28/56"→"28/56", "A VISTA"→000) e exige 1 linha única — senão **IP007** (nunca chuta, nunca
+  cai em à vista). Antes TODO importado ia como "000 À Vista".
+- **Depois de gravar, nunca "não importado"**: o disparo tem prazo de 60 s e a resposta sempre carrega o #id; na tela,
+  chamada sem corpo vira "Não sei se entrou — importe de novo, não duplica; não lance à mão no Omie".
+- **Cron**: pedido no app SEM PO não é mais "resolvido" — é re-disparado pela importadora; adiado por pedido em voo
+  deixou de contar como falha.
+- **Tela**: card "Pedidos do portal Sayerlack" em Gerir pedidos (RPC `sayerlack_painel_portal`, gate
+  `cap_compras_ler`): pendências abertas do cron (com "Importar de novo" já preenchido), gravados sem PO e importados
+  dos últimos 14 dias, com link para o pedido. Diálogo: link "Abrir pedido", copiar nº do PO, condição exibida, X e
+  Esc travados durante a espera com tempo decorrido, `role=status`/`alert`, rolagem no celular. `mensagemDoErroEdge`
+  passou a ler `mensagem` além de `error`.
+- **Código**: trecho login → Consulta Pedidos das duas edges em `_shared/sayerlack-portal-navegador.ts`.
+- Fica de fora (sem tela, decisão consciente): cadastrar alíquota de IPI por NCM continua por SQL — a mensagem do
+  CP006 agora diz isso em vez de "cadastre o NCM".
+
+Provas: `db/test-sayerlack-importar-pedido-portal.sh` 75/75 nos 2 locales (13 falsificações), testes de tela do card
+e do diálogo, `test:edges` 2403, suíte vitest completa.
+
+### Deploy da revisão (2026-11-06)
+
+Migration `20261106140000` via `db:aplicar` (tentativa #924), validada por psql-ro: assinatura de 5 args removida,
+corpo em prod = arquivo (md5 `5a3b7fef…`), ACL fechado, painel só com gate. Edges em ondas: `disparar` re-sondada
+(prova tinha 455 h, #926) → `sayerlack-importar-pedido-portal` v1.4 → `sayerlack-varrer-pedidos-portal` v1.4, as duas
+DEPLOY CONFIRMADO e SEM_EDICAO. Entre a migration e a edge v1.4 a importação ficou recusada sem gravar (~20 min).
+
+## Pontos cegos, Onda 1: alíquota de IPI dos NCMs sem cadastro (2026-11-07)
+
+Plano: `docs/superpowers/plans/2026-11-06-sayerlack-portal-pontos-cegos.md`. A única falha real das importações foi o
+CP006 (NCM sem alíquota).
+
+- **De onde sai a prova**: as NFs Sayerlack em `nfe_recebimentos` não guardam XML (56 de 56 sem `xml_completo`), mas
+  `nfe_recebimento_itens.valor_total` = `round2(quantidade_nfe × valor_unitario)` + IPI. Então alíquota =
+  (valor_total − vProd) ÷ vProd, linha a linha. O método reproduz os NCMs já semeados com fonte `nf` (NF 000953881).
+  O espelho de PO não serve: PO lançado à mão traz `nValorIpi` 0 sempre, e PO do app traz o IPI que a própria
+  `ipi_aliquota_ncm` deu (circular).
+- **Migration `20261107120000`** (tentativa **#941**, ensaio antes): 29209090 = 0% (2 NFs), 32041920 = 0% (4 NFs, 5
+  linhas, a maior de R$ 476,20; é o NCM dos 10 tingidores/mordentes), 32110000 = 6,5% (2 NFs, 12,50 → 13,31). Conferido
+  por psql-ro depois do commit.
+- **Sem NF que prove**: 27101230, 32091010, 32099020, 32159000, 39095012 (6 SKUs). Nenhuma das 90 NFs gravadas
+  (desde 04/01/2026) tem esses NCMs. Perguntado ao founder; até lá a importação segue recusando com CP006.
+- **Sensor (1.4)**: SKUs Sayerlack ativos no de-para sem alíquota. Em 07/11, depois da migration: 13 SKUs em 9 NCMs
+  (os 5 acima e 39073022, 49111090, 29163990, 32071090, que não tiveram compra em 180 dias). A query vai virar número
+  no card na Onda 6 (item 6.8):
+
+```sql
+SELECT count(*) FROM sku_fornecedor_externo s
+JOIN omie_products op ON op.omie_codigo_produto::text = s.sku_omie AND op.account = lower(s.empresa)
+LEFT JOIN ipi_aliquota_ncm a ON a.ncm = regexp_replace(op.ncm, '[^0-9]', '', 'g')
+WHERE s.ativo AND s.fornecedor_nome ILIKE '%sayer%' AND a.ncm IS NULL;
+```
+## Pontos cegos, Onda 2 + 7.4: re-disparo relido, respostas honestas, condição real (2026-11-07)
+
+- **2.1 / 3.8 re-disparo relê o portal**: pedido já no app sem PO não é mais re-disparado às cegas. A importadora abre o
+  portal, exige a leitura provada (cancelado é recusado por `leitura.ts`) e, vindo do cron, a situação na lista fechada;
+  ilegível ⇒ "não re-disparei", com o #id. Como a varredura chama a MESMA edge para re-disparar, o 3.8 vem junto.
+- **2.2**: resposta com `pedido_id` nunca vira "não foi importado" (tom aviso, "está no app (#id) — falta resolver");
+  2xx sem corpo legível vira "não sei se entrou".
+- **2.3**: PO lançado à mão diz qual PO vale, que não se lança outro e que o #id fica sem PO até a vinculação (7.1);
+  o botão "Abrir pedido" já aparece com o `pedido_id`.
+- **2.4**: CP006 diz o NCM e o passo (runbook `docs/runbooks/sayerlack-pedido-portal-nao-entrou.md`, Onda 8).
+- **2.5 ledger**: decisão pela leitura do schema — `acoes_execucoes` (slug `reposicao.importar_portal_sayerlack`,
+  origem `manual` = botão, `automatica` = varredura), não `sayerlack_varredura_falha` (1 linha por protocolo, sem
+  histórico). Toda tentativa abre linha e fecha com o que a resposta disse (`ok:true` = sucesso; resto = erro), com
+  etapa, motivo, sqlstate, pedido, PO, condição e duração. Escritor único: a edge.
+- **2.7**: PO confirmado marca `resolvido_em` da pendência aberta do protocolo na hora.
+- **2.6 / D-2**: `sayerlack_condicao_portal_de_para` (texto normalizado → código OBEN) vence a regra exata; semente
+  `30 DIAS → A30 "Para 30 dias (C)"` (a regra daria T54). Tradução ÚNICA em `sayerlack_condicao_portal_para_omie`, usada
+  pela importação e pelo envio. As duas edges passam a guardar a lista de opções do `#condicoes_pagamento` (importadora
+  na resposta e no IP007; envio em `portal_resposta.portal_condicao.opcoes`): é a "lista real" para completar o de-para.
+  Caso ambíguo vai ao founder com a lista.
+- **7.4 / D-1 condição real no pedido do app**: `enviar-pedido-portal-sayerlack` v1.13 lê a condição do formulário
+  (só leitura, antes do Efetivar) e, depois de `sucesso_portal` e antes de pedir o PO, chama
+  `sayerlack_aplicar_condicao_portal`. Só troca o padrão `default_a_vista`, nunca escolha humana nem pedido com PO; sem
+  correspondente mantém a de hoje e grava `condicao_portal_lida` (sensor: lida e não aplicada). Fail-open de propósito: o
+  pedido já está no portal.
+- **Provas**: harness PG17 105/105 nos 2 locales (18 falsificações; as da importação passaram a mirar o corpo VIVO, o da
+  migration nova); Deno `leitura_test.ts` 17; vitest da tela com falsificação (2 vermelhos com o ramo novo sabotado).
+
+Sensor da condição real (denominador = pedidos do app aceitos no portal):
+
+```sql
+SELECT condicao_origem, (condicao_portal_lida IS NOT NULL) AS lida, count(*)
+FROM pedido_compra_sugerido
+WHERE fornecedor_nome ILIKE '%sayerlack%' AND status_envio_portal = 'sucesso_portal' AND enviado_portal_em > now() - interval '30 days'
+GROUP BY 1, 2;
+```
+
+### Codex na Onda 2 (gpt-6-astra high, 1ª rodada 106 s): 2 P1 + 2 P2, todos procedentes
+
+- **P1 corrida**: aplicar a condição DEPOIS do `sucesso_portal` deixava outro disparo criar o PO com 000 no meio. Agora a
+  edge de envio aplica com o pedido ainda em `enviando_portal` (o claim dela), e só então grava `sucesso_portal`.
+- **P1 fail-open**: condição não resolvida virava PO à vista ("sucesso no portal não prova pagamento à vista"). Agora o
+  `disparar-pedidos-aprovados` v1.11 RECUSA o PO de pedido do app com protocolo ainda em `default_a_vista` (cai em
+  `falha_envio` com o texto lido); a saída é escolher a condição no pedido (vira `manual_humano`) e disparar de novo.
+  Ordem de deploy obrigatória: migration → envio v1.13 → disparo v1.11 (o disparo novo antes do envio novo recusaria
+  todos os pedidos do app).
+- **P2 HTTP 500 perdia o #id**: o diálogo lê o corpo estruturado do erro (`corpoDoErroEdge`), não só a mensagem.
+- **P2 re-disparos lentos estouram o orçamento da varredura**: vai na Onda 3 (candidatos novos antes, teto por rodada).
+- **2ª rodada (58 s)**: os 3 consertos fechados; 1 P1 novo — em `falha_envio` a tela não deixava escolher a condição, e o
+  pedido recusado ficaria preso. Agora a condição é editável em `falha_envio` e dá para **Confirmar** a condição sem trocar
+  o código quando ela é o padrão do motor (`podeSalvarCondicao`, testado).
+- **Mudança de forma**: o changelog do `VERSAO` do disparo foi para `docs/historico/versao-disparar-pedidos-aprovados.md`
+  (o gate `limpeza-fonte` acusou 5 linhas de código em 62).
+
+## Pontos cegos, Onda 3: varredura nunca verde sem prova (2026-11-07, varredura v1.5)
+
+Incidente que justifica a máquina (regra de máquina meta): **2 de 46 rodadas leram 0 linhas e registraram sucesso**
+(23/10 e 03/11, 01:30 UTC); `info_portal` nulo em 46/46.
+
+- **3.1–3.4 prova de leitura** (`provarLeitura`): colunas Pedido (exata)/Situação/Data Emissão/Vlr; total ANUNCIADO por
+  até 3 fontes — `recordsFiltered` do JSON da consulta (nunca `recordsTotal`, que é o universo sem filtro),
+  `page.info().recordsDisplay` da instância DataTables e o texto "… de N" (seletor ampliado para `[id$="_info"]`); fontes
+  que discordam = erro; lidos ≠ total = erro; 0 só com "0 de 0". Sem total nenhum, toda rodada fica vermelha — decisão
+  consciente (fail-closed visível; Codex concordou). Ilegível/repetido seguem para o resto mas deixam a rodada vermelha.
+- **3.5** re-disparo que falha (dentro ou fora da janela) deixa a rodada vermelha.
+- **3.6** registro local em `acoes_execucoes` no lugar de `comRegistro` (o `_shared` não mudou): o erro guarda o resumo
+  parcial, preenchido aos poucos (importados, re-disparos, reconsultas, reconciliação).
+- **3.7** reconsulta por número além da janela: falhas abertas e pedidos do app sem PO (> 1 h), fila pela tentativa mais
+  antiga, teto 4 por rodada, 1×/20 h por protocolo com **reserva condicional no banco** (atômica entre execuções); banco
+  reconferido antes de abrir o navegador (PO no espelho resolve sem sessão); **carência vale também aqui** (sem pedido no
+  app a reconsulta pode criar PO — Codex P1).
+- **3.8** coberto na Onda 2 (a importadora relê a situação).
+- **3.9** carência esperando o sync > 6 h vira pendência com e-mail.
+- **3.10** `listar` sem efeito (nem `marcarResolvidos`).
+- **Orçamento** (P2 da Onda 2): candidatos novos antes dos re-disparos e das reconsultas.
+- **Codex**: 1ª rodada 1 P1 + 5 P2; 2ª 4 P2; 3ª 1 P2 (erro de banco na reserva virava adiamento verde) — todos
+  consertados. Deno `varredura_test.ts` 28 (falsificado: sem a checagem de total e sem a de 0 lidos, vermelho).
+- Changelog do `VERSAO` em `docs/historico/versao-sayerlack-varrer-pedidos-portal.md`.
+
+## Deploy das Ondas 2 e 3 (2026-11-07)
+
+Ordem real das levas: envio → disparar → importar → varrer (`deploy-ordem.json`), com 8 min de assentamento entre elas.
+Todas coladas pelo pacote `pendencias-pacote` e provadas pela sonda no envelope, com veredito **DEPLOY CONFIRMADO**:
+`enviar-pedido-portal-sayerlack` v1.13 (tentativa #950), `disparar-pedidos-aprovados` v1.11 (#952),
+`sayerlack-importar-pedido-portal` v1.5 (#954) e `sayerlack-varrer-pedidos-portal` v1.5 (#958). O bot do Lovable só
+regenerou `types.ts`. O founder fez o Publish.
+
+## Pontos cegos, Onda 4: vigia do cron (2026-11-07, varredura v1.6)
+
+- **Incidente** (psql-ro): 2 de 46 rodadas leram 0 linhas e gravaram `sucesso` (23/10 e 03/11, 01:30 UTC), e nenhum
+  sinal saiu. Uma falha **antes do protocolo** (login, configuração, Browserless, leitura sem prova) só virava `erro` em
+  `acoes_execucoes`: o aviso por e-mail (`sayerlack_varredura_falha`) é **por protocolo**, e sem leitura não há protocolo.
+- **4.1 + 4.2: um source no `data_health`**, `sayerlack_varredura_portal` (34º do compute, 26º do watchdog), migration
+  `20261107220000`. O trio foi recriado junto, a partir de prod (md5 conferido). Os três estados:
+  - **broken**: a última rodada decidida falhou antes de ler os pedidos. A message leva a causa, então a mesma causa
+    manda 1 e-mail e uma causa nova reemite. `executando` e rodada pulada não contam como desfecho. Um erro **depois**
+    da prova (falha por protocolo, que já é avisada) não conta como broken.
+  - **stale**: sem rodada efetiva desde o início do dia útil exigido em SP. De segunda a sexta, a partir das 14:00,
+    exige uma de hoje; antes disso e no fim de semana, exige o dia útil anterior. Efetiva = `prova_leitura='ok'`, ou
+    rodada legada com `lidos>0` (0 lidos sem prova é o incidente e não conta).
+  - O e-mail sai pelo canal existente (watchdog → `_data_health_episodio`). Nenhuma tabela nova.
+- **Edge v1.6**: grava `causa_pre_protocolo` (`config_ausente` · `leitura:<erroTipo>` · `prova:<motivo>` · `excecao`)
+  e `sessoes_browserless` (leitura_portal + importacao = total) no registro da rodada (**4.3**, só contagem: alerta
+  apenas se a série mostrar risco).
+- **Prova**: `db/test-data-health-sayerlack-varredura.sh`, PG17, relógio controlado, 33 asserts verdes em `C` e em
+  `pt_BR.UTF-8`, `--falsificar` com 16 sabotagens.
+- **Feriado** não é conhecido pela regra: com o portal fora, aparece como broken pela causa real.
+
+## Pontos cegos, Onda 5A fatia 1: o disparador não compra pedido cancelado no portal (2026-11-08)
+
+**O furo**: o disparador geral cria o PO de pedido `sucesso_portal` com protocolo (`already_sent`) **sem reler o
+portal**. Um pedido cancelado na Sayerlack (situação 6) virava compra real na rodada seguinte. A varredura lia a
+situação, mas a descartava quando o pedido já estava no app.
+
+**Fatiamento (honesto)**: a 5A inteira tinha 5 P1 do Codex em 4 peças. Esta fatia fecha o furo de dinheiro. A
+**fatia 2** (outra sessão) leva o botão auditado "Encerrar — cancelado no fornecedor" (C), os avisos por e-mail com
+reserva e token (D), a cobertura periódica dos protocolos com PO e o painel (E/F). Até lá, o pedido cancelado sem PO
+fica parado como hoje: o cron já manda o e-mail de situação impeditiva. A diferença é que ele não vira mais PO.
+
+- **Migration `20261108120000`** (manual, envelope):
+  - 6 colunas `portal_situacao_*` em `pedido_compra_sugerido`, com CHECK (todas nulas ou todas válidas, código `^[1-7]$`).
+  - **Escritor único** `sayerlack_registrar_situacao_portal(p_lido_de, p_lido_ate, p_itens)`, só service_role. A
+    trigger `trg_situacao_portal_escritor_unico` com GUC local dá 42501 para qualquer outra escrita (o staff tem UPDATE
+    pela RLS).
+  - A observação é o **intervalo** da leitura. Uma leitura só substitui a vigente se começou **depois do fim** dela. Uma
+    leitura sobreposta só entra se disser 6 (na dúvida, bloqueia). Código ilegível nunca grava. Protocolo repetido no
+    lote é ignorado. Só empresa OBEN.
+  - **`reposicao_claim_disparo`** recusa `portal_situacao_codigo='6'` **no WHERE que grava** (EvalPlanQual). Vale para
+    qualquer protocolo: trocar `portal_protocolo` não libera. Só uma leitura do protocolo atual com outro código libera.
+    A recusa devolve `bloqueio='cancelado_no_portal'` e `pendente_desde`.
+  - **Protocolo em forma canônica** (CHECK `^\d{3,12}$`, com 0 de 218 fora na prod): um protocolo com espaço sumiria
+    da busca exata da varredura.
+  - **Protocolo preenchido é imutável** (trigger): nenhum fluxo o troca. Sem isso, a ida e volta de protocolo pelo
+    staff descartava observações e liberava a compra.
+- **Edges**:
+  - **varrer v1.7** grava a situação dos pedidos do app que estão na lista provada e na leitura estendida da
+    reconciliação. Com uma linha ilegível ou repetida na lista, grava só os 6 (bloquear é seguro, liberar não). Se a gravação falha, a rodada fica vermelha.
+  - **importar v1.6** grava a situação lida na reconsulta por número, inclusive quando recusa por cancelado.
+  - **disparar v1.12**: pedido cancelado com **pendência de disparo aberta** é conciliado **só por consulta**
+    (`ConsultarPedCompra AFI-<id>`, nunca `IncluirPedCompra`), antes das validações de criação. Se o PO é confirmado,
+    registra o vínculo e avisa que o PO existe com o pedido cancelado. Se não acha, nada muda.
+- **Front (5.5)**: o `PortalStatusPanel` de Gerir pedidos mostra a situação lida e quando foi lida. Para 6, diz
+  "disparo bloqueado" (sem PO) ou "há PO no Omie, confira" (com PO). Se a leitura for de protocolo anterior, avisa.
+- **Prova**: `db/test-sayerlack-situacao-portal.sh`, PG17, 51 asserts verdes em `C` e `pt_BR.UTF-8`. Usa 2 conexões
+  com bloqueio observado nas duas ordens gravar × claim. Os 3 dentes da postcondição (S7, S2, S9) são asserts do
+  modo normal. `--falsificar` com controle verde e 13 sabotagens de comportamento, uma camada por vez.
+- **Codex**: desenho v3 com 4 P1 (reconsulta sem gravar, B' depois das validações, ordem por início da leitura,
+  troca de protocolo), todos fechados no v4. A rodada 2 achou 1 P1: um 2º 6 sobreposto era descartado e uma 3ª
+  leitura liberava. Agora um 6 sobre 6 **estende** o horizonte (W15). A rodada 3 achou que trocar o protocolo furava a ordem temporal. As rodadas 4 e 5 acharam sequências de ida e volta de protocolo (A→B→A). Agora o **protocolo preenchido é imutável**, assim como a empresa (rodada 7). A rodada 8, uma varredura exaustiva de colunas, achou o protocolo não canônico e o 6 descartado em leitura imperfeita; os dois foram fechados (trigger `trg_situacao_portal_trava_protocolo`, W17–W21). Preencher um vazio segue livre. A correção é só no SQL Editor, com `SET LOCAL app.sayerlack_protocolo_correcao='on'`.
+- **Limite declarado**: entre a leitura das 12:30 e a gravação (segundos), um claim concorrente ainda pode criar o PO.
+  Esse PO fica com a situação 6 gravada e o painel mostra "há PO no Omie". O aviso por e-mail é da fatia 2.
+
+**Deploy da Onda 5A fatia 1 (2026-11-07, noite):**
+- Migration `20261108120000` aplicada pelo envelope (tentativa #966). A 2ª testemunha (psql-ro) conferiu as colunas,
+  os triggers, o claim com o veto, o ACL e o CHECK validado.
+- A predecessora `enviar` v1.13 foi reconfirmada antes da leva (#969). As edges subiram em 3 ondas, com 10 min entre
+  elas: disparar v1.12 (#971) → importar v1.6 (#973) → varrer v1.7 (#975), todas com DEPLOY CONFIRMADO. O bot do
+  Lovable só tocou em `types.ts`.
+- A chamada da importar ao Lovable estourou 300 s no MCP sem resposta. A sonda provou que o deploy tinha saído, então
+  não houve reenvio às cegas.
+- O SQL da sonda é determinístico: a mesma edge e a mesma janela dão o mesmo sha, e o `db:aplicar` recusa por "já
+  aplicado". Variar `--janela` gera um sha novo.
+- Publish feito pelo founder depois do merge.
+
+## Revisão 2, Sessão B parte 1: tela honesta, vários números e runbook (2026-11-08)
+
+Adendo `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Só front + doc; nenhuma edge, nenhuma migration.
+
+- **B7 (parte da tela)**: "não foi importado" só com desfecho RECONHECIDO de que nada foi gravado — falha de leitura,
+  recusa da RPC com SQLSTATE (a transação voltou) ou recusa de entrada 4xx. `{}`, `{ok:false}`, `etapa` desconhecida,
+  `etapa:'importacao'` sem SQLSTATE ("Resposta inesperada", exceção 500) e `{"error":…}` viram "não sei se entrou".
+  O diálogo deixou de INVENTAR `etapa:'importacao'` no corpo do erro (era isso que transformava 500 sem contrato em
+  recusa). Lógica pura em `interpretarErroEdge`/`statusDoErroEdge`, testada com objeto incompleto.
+- **B8**: `situacao_gravada:'erro'` vira aviso próprio no resultado, em qualquer tom.
+- **8.5 / D-3**: o campo aceita vários números (linha, vírgula, espaço, ponto e vírgula; até 20; repetido conta 1×;
+  inválido bloqueia e é mostrado). Laço SEQUENCIAL (teste prova que o 2º só sai depois do 1º responder), um resultado
+  e um "Importar de novo" por número, "Parar depois deste" (o que não foi chamado diz que não foi chamado).
+- **6.10**: Cmd-K "Importar pedido do portal Sayerlack" (registrado pelo card, enquanto Gerir pedidos está aberta).
+- **6.7 (parte)**: a chave do card passou para `['pedidos-ciclo', 'portal-sayerlack-painel']` — o realtime e toda ação
+  de Gerir pedidos já invalidam o prefixo `pedidos-ciclo`, então o card acompanha a página sem tocar nas outras telas.
+- **B12 / 8.4**: `docs/runbooks/sayerlack-pedido-portal-nao-entrou.md` (CP006, IP002/IP003, IP006, IP007, IP008, "não
+  consegui ler", "não sei se entrou", situação não gravada, senha do portal, cota Browserless, cron parado, backlog
+  antigo), com as queries conferidas contra prod via psql-ro.
+- **Provas**: vitest 41 (card + interpretação). Falsificação com controle verde antes e depois na mesma invocação:
+  etapa inventada, B8 desligado, recusa sem SQLSTATE e laço paralelo → cada um vermelho.
+## Revisão 2, bloco 1 (Sessão A): brechas B1–B7 (edge), B9–B11, B13 (2026-11-08)
+
+Adendo: `docs/superpowers/plans/2026-11-08-sayerlack-revisao-2.md`. Importar **v1.7**, varrer **v1.8**, migration
+`20261109120000` (manual, envelope). Sem mudança de tela (B7 tela, B8, B12 são da Sessão B).
+
+- **B1 situação reconhecida**: a importadora recusa situação sem código 1..7 (`situacao_ilegivel`, botão e cron). A
+  varredura conta situação sem código e emissão ilegível como linha ilegível (`ilegiveis_detalhe`) — a prova reprova,
+  em vez de o pedido sumir como `situacao_nao_importavel`/`fora_da_janela`. O teste produz o contador a partir das linhas.
+- **B2**: re-disparo de pedido 3 Atendido Total / 7 Fatur Balcão recusa (`faturado_no_portal`, "confira a NF no Omie").
+- **B3**: a gravação da situação tenta 2×; na varredura, um 6 não gravado vira pendência com e-mail e a rodada fica
+  vermelha; `situacao_gravada` vai ao ledger da importação, e a resposta da importadora com `erro` deixa a rodada vermelha.
+- **B4**: pedido em voo/conciliação bloqueia só a importação: a rodada lê, prova e grava as situações, e fecha
+  `pulado: bloqueado` com `prova_leitura: ok_bloqueado` (não é "efetiva" para o vigia; bloqueio longo segue stale).
+- **B5**: re-disparo de pedido do app sem PO (janela e reconsulta) espera `sync_state(pedidos_compra, oben)` complete
+  terminar > última mudança do pedido (`max(atualizado_em, enviado_portal_em)`) + 5 min; > 6 h vira pendência com e-mail.
+- **B6/B7 (edge)**: só é resposta da importadora o objeto com `ok` booleano e `mensagem`; o resto é indeterminado, que vira
+  linha aberta em `sayerlack_varredura_falha` sem e-mail e deixa a rodada vermelha. A importadora guarda o pedido achado
+  por protocolo na hora (500 com `pedido_id`), e erro de RPC sem SQLSTATE da casa relê o pedido.
+- **B9**: `modo=listar` grava em `reposicao.listar_portal_sayerlack` — o vigia lê só o slug da importação (sem recriar o
+  trio do data_health).
+- **B10**: 1ª importação grava a situação lida logo após criar o pedido, antes do disparo.
+- **B11**: `detalhes.condicoes_opcoes` (+ `situacao_portal`, `situacao_gravada`) no ledger de toda tentativa.
+- **B13 — regra "sem (C)"** (decisão delegada pelo founder: "pode escolher você se mantém ou tira, quero apenas que
+  funcione"): a condição do portal vai SEMPRE para a variante sem "(C)" do catálogo. Medida que decidiu: os POs Sayerlack
+  no Omie (`purchase_orders_tracking.raw_data` cCodParc, abr–nov/2026) usaram 000 ×396, A15 ×26, A07 ×7, 001 ×3, A10 ×1 —
+  **nenhum** usou variante "(C)" (A30, A84, B23, D43, V06), e nenhum pedido do app gravou uma delas. O de-para
+  `30 DIAS → A30 "Para 30 dias (C)"` **não foi escolha do founder** (o "(C)" entrou como exemplo no plano, D-2) e passa a
+  T54 "Para 30 dias" (migration `20261109120000`, só o UPDATE do de-para). A função de tradução não muda: a regra exata
+  de texto já escolhe a sem "(C)" (4 → A04, 6 → U89, 13 → A13) e dá IP007 só quando não há par nenhum.
+- **Codex** (gpt-6-astra high): rodada 1 com 5 P1 + 1 P2, todos procedentes e fechados — B5 relê o pedido logo antes do
+  re-disparo e exige a entrega dentro da janela do sync incremental (−50..+110 d); B7 a importadora declara
+  `desfecho: "indeterminado"` quando a gravação pode ter acontecido; B3 pelo botão abre pendência vencida e a reconsulta
+  relê só a situação (`somente_situacao`); B4 grava as situações antes das consultas ao espelho; B11 evidência acumulada
+  fora da resposta.
+- **Provas**: harness `db/test-sayerlack-importar-pedido-portal.sh` 117/117 em `C` e `pt_BR.UTF-8` (9 asserts B13 +
+  falsificação F19: de-para de volta em (C) ⇒ a postcondição aborta e "30 DIAS" vai para A30); Deno 55 (6 sabotagens vermelhas com
+  controle verde antes e depois); `test:edges` 2429.
+- **No ar (2026-11-08):** #3718 mergeado 02:11Z. Migration `20261109120000` pelo envelope (tentativa #984, sha256
+  `068721db…`; psql-ro: "30 DIAS" → T54 "Para 30 dias" ativo, 0 de-para em "(C)"). Edges em 2 ondas pelo pacote
+  (`deploy-ordem.json`): importar **v1.7** (sonda #986, DEPLOY CONFIRMADO, fonte `0eca00d2…`) e, com a observação
+  envelhecida, varrer **v1.8** (sonda #988, DEPLOY CONFIRMADO, fonte `1251919f…`). Custo 0,8 + 0,9 crédito. O sensor de
+  edição deu `EDICAO_DETECTADA` na 1ª onda só porque a resposta trouxe `commit_sha` = o commit TOLERADO do bot
+  (`5e197ea43`, `types.ts` regenerado com as tabelas `radar_contato_*` de outra sessão; 0 arquivo fora dos gerados) —
+  falso positivo, nada revertido.
+
+
+## Revisão 2, Sessão B parte 2: card do portal só verde com prova (Onda 6, 2026-11-08)
+
+- **Migration `20261109100000`** (envelope, tentativa **#977**, ensaio antes; pré-voo psql-ro: o corpo executou nos
+  dados de prod; 2ª testemunha: md5 do corpo vivo = repo, ACL preservado, anon fechado). `sayerlack_painel_portal`
+  v2 é SUPERCONJUNTO do v1 (as 3 listas continuam), então o front antigo seguiu lendo até o Publish.
+  - **6.1** `rodada`: última rodada EFETIVA do modo importar (prova ok; legado com lidos>0), a última decidida e
+    `em_dia` pela mesma régua do vigia (dia útil SP, 14:00). `modo=listar` não conta (o B9 da Sessão A, no vigia).
+    Espera da efetiva: carência (1ª vista + aguardando sync), adiados, indeterminados, carência presa — lista ausente
+    vira `null`, não 0.
+  - **6.4** a falha do protocolo que também é pedido sem pedido de compra vai DENTRO da linha; `pendentes_unicos`.
+  - **6.5** teto 50 por lista e `total_*`. **6.6** `cancelado_humano` fora.
+  - Pedidos **originados no app** com protocolo e sem pedido de compra entram (o v1 exigia `importado_portal_em`), com
+    1 h em `aguardando_disparo` antes de virar pendência.
+  - **6.8** `sem_aliquota` (SKUs Sayerlack ativos OBEN sem alíquota = CP006). Em prod: 13 SKUs, 9 NCMs.
+  - **6.11** `cancelado_sem_po` / `cancelado_com_po` pela situação 6 gravada (Onda 5A). "Alterado no portal" fica para
+    quando a 5.2 (Sessão A) criar a coluna.
+- **Card**: contrato RÍGIDO (`{}`, v1, total ou lista ausente → "não consegui ler"); "Nada pendente" só com rodada
+  efetiva em dia, espera conhecida e zero, nada aguardando e sem falha depois da efetiva — senão "não posso afirmar
+  que não há" com o motivo; "Consultado às HH:MM"; falha de refetch com dado velho avisa e esconde o verde (6.3);
+  atualizar sempre visível e releitura sozinha 7 min depois de cada horário do cron (6.7); "pedido de compra" em todo
+  o card (6.9).
+- **Estado em prod no apply** (sábado à noite): última efetiva = 07/11 01:30 UTC, legado v1.4 (sem `indeterminados`
+  nem `carencia_presa`) → o card mostrará "não posso afirmar" até a 1ª rodada v1.7 de segunda. É o comportamento
+  certo (ausente ≠ zero), não defeito.
+- **Provas**: `db/test-sayerlack-painel-portal-v2.sh` PG17 36/36 em `C` e `pt_BR.UTF-8`, 5 sabotagens inline com
+  controle antes/depois (filtro de modo, `cancelado_humano`, dedupe, gate, chave do contrato na postcondição); no núcleo
+  do CI. vitest 51; falsificação do front com controle: sem versão, sem `em_dia`, `null` virando 0, ignorar falha
+  posterior, contagem pela soma das listas (este último sobreviveu à 1ª rodada — o teste ganhou a asserção).
+- **QA 8.3** (navegador do app, desktop e 375×812, dados de prod): verde no roteiro do card e do diálogo, sem disparar
+  importação real. Achado fora da fronteira: o "voltar" do celular não fecha o detalhe do pedido em Gerir pedidos.
+- **Rodada bloqueada (contrato da varredura v1.8, Sessão A)**: rodada com `pulado='bloqueado'` (pedido do app em envio
+  ou conciliação, IP008) depois da última efetiva deixa o card em "não posso afirmar", com o motivo e o que fazer.
+  A RPC já não contava `prova_leitura='ok_bloqueado'` como efetiva. Teste falsificado com controle.
+
+## Alíquota de IPI dos 5 NCMs pendentes, provada no Omie (2026-11-08)
+
+A onda 1 só achou NF no banco para 3 dos 8 NCMs. Os outros 5 ficaram com o founder. A pedido dele ("você não consegue
+acessar essas NFes pelo Omie e descobrir o IPI?"), a prova veio do Omie OBEN, só leitura:
+`produtos/recebimentonfe/ConsultarRecebimento` (itens com cNCM, CST, nAliqIPI, nBCIPI, nValIPI; Σ nValIPI =
+vTotalIPI em cada NF). `contador/xml/ListarDocumentos` não serve: lista só documentos de emissão própria.
+Migration `20261109130000`:
+
+| NCM | Alíquota | Prova |
+|---|---|---|
+| 39095012 | 3,25% | CST 50, 2,31 ÷ 71,02 (NF 000937352, 21/05/2026, YC.1400FP) e mais 2 NFs |
+| 32099020 | 0% | CST 51 (NFs 000938767 e 000935816, YO20.1464.00BB) |
+| 32091010 | 0% | CST 51 (NF 000923676; 257/259VQT na 000909541) |
+| 32159000 | 0% | CST 51 (NF 000915792, TY.1480.00BB) |
+| 27101230 | 0% | CST 51 (NF 000909354 de 26/09/2025, DS.451LT, a última entrada do SKU) |
+
+As mesmas NFs têm itens a 6,5% e 3,25% (CST 50), então a alíquota zero não é artefato de importação. Achado lateral: nas
+764 NF-e de entrada do Omie OBEN não há compra de DS.451, TY.1480 nem YTS.1284 257/259 nos últimos 180 dias.
+
+**Deploy (2026-11-08):** #3717 mergeado; migration `20261109130000` aplicada pelo envelope (ensaio ok → tentativa
+**#979**, recibo na mesma transação). Validação por psql-ro: os 5 NCMs com a alíquota medida (`fonte = nf`); o sensor de
+SKUs Sayerlack ativos sem alíquota caiu de 13 para **4** (39073022, 49111090, 29163990, 32071090, sem compra em 180 d).
+
+## Onda 5A fatia 2 — 5.3: "Encerrar — cancelado no fornecedor" (2026-11-08)
+
+Pedido aceito no portal (`sucesso_portal`, protocolo), sem PO, que a Sayerlack cancelou (6 gravado pela fatia 1) ficava
+para sempre aguardando disparo: o claim recusa o 6, `cancelar_pedido_sugerido` recusa `sucesso_portal` e
+`corrigir_cancelamento_pos_disparo` só aceita `disparado`. Sobrava o UPDATE cru de staff, sem trilha.
+
+- **Migration `20261110100000`**: porta única `sayerlack_encerrar_cancelado_no_portal` (service_role; master pelo
+  `has_role`; revalida sob FOR UPDATE: OBEN, protocolo, `sucesso_portal`, sem PO, 6 do protocolo atual, **nenhuma
+  pendência de disparo, de qualquer idade**, nada no espelho do Omie por `AFI-<id>` ou contrato; exige a prova
+  `ausente` do `AFI-<id>`), trilha imutável `sayerlack_encerramento_cancelado_portal` e guarda na TABELA: pedido com
+  protocolo e sem PO não vira `cancelad%` nem é apagado fora da porta (predicado pelo protocolo, imutável — trocar
+  `status`/`status_envio_portal` antes não fura). Medido: nenhum escritor legítimo fazia essa transição/DELETE.
+- **Edge nova `sayerlack-encerrar-cancelado-portal` v1.0** (não uma ação no disparador: um bundle velho do disparador
+  que recebesse `{acao, pedido_id}` cairia no fluxo de DISPARO). Gate canônico para a sonda; a ação exige JWT de master.
+  Consulta dirigida `ConsultarPedCompra` por `AFI-<id>`: só fault em formato ESTRITO e ancorado que nega o pedido e cita
+  o código vira "ausente" (sem amostra real no banco — o fault cru vai para a trilha); PO devolvido = recusa; o resto =
+  indeterminado, nada muda. Registro em `acoes_execucoes` (`reposicao.encerrar_cancelado_portal`).
+- **Front**: botão no detalhe do pedido, só master e só no caso exato; justificativa obrigatória; resposta sem contrato
+  = "reabra para conferir", nunca "encerrado".
+- **Codex**: desenho (6 achados: claim velho com retry em voo, contorno do trigger em 2 instruções, regex frouxa,
+  cobertura e aviso persistente da 5.4) + código (P1 fault frouxo; P2 prova truncada, mensagem do PO existente) —
+  todos aplicados. Prova PG17 `db/test-sayerlack-encerrar-cancelado-portal.sh`: 34 asserts nos dois locales,
+  10 sabotagens vermelhas no assert certo; Deno 14 (handler com o harness + decisão).
+- Fora (follow-up): staff gravar PO falso numa instrução e cancelar na seguinte (resíduo aceito); 5.4 + cobertura no
+  PR seguinte (incidente persistido por pedido, cobertura dos pedidos não faturados no espelho).
+
+## Onda 5A fatia 2 — 5.4 + cobertura: cancelado no portal com compra viva (2026-11-08)
+
+Pedido com PO que a Sayerlack cancela no portal: o detalhe avisava, mas ninguém abre o detalhe; e a varredura só lia a
+situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, cancelado hoje, nunca era observado.
+
+- **Migration `20261110120000`** (depende da `20261110100000` da 5.3 aplicada antes: o compute lê a trilha dela):
+  incidente persistido `sayerlack_incidente_cancelado_com_po` (1 aberto por pedido; trava só-resolve), aberto por
+  TRIGGER no pedido — 6 sobre PO, PO sobre 6 e 6 sobre **pendência de disparo** (o PO pode existir com a resposta
+  perdida) — e no espelho do Omie (PO que aparece depois de um encerramento da 5.3; fail-open para o sync). Uma leitura
+  posterior com outro código não fecha: só a porta `corrigir_cancelamento_pos_disparo` (GUC) ou
+  `sayerlack_resolver_incidente_cancelado_com_po` (master, justificativa). Cobertura
+  `sayerlack_cobertura_situacao_portal()` = pedidos com protocolo e PO não faturado nem encerrado no espelho (10 em
+  prod, 29/10–05/11). Source **`sayerlack_cancelado_com_po`** (35º) no trio: broken com incidente aberto (message cita
+  o mais recente → e-mail por incidente novo), stale se algum pedido da cobertura não tem leitura do protocolo no dia
+  útil exigido (régua da Onda 4).
+- **Varredura v1.9**: passo 8 relê 1×/dia a situação da cobertura (leitura estendida desde a emissão mais antiga − 3
+  dias, teto 90), também na rodada bloqueada; qualquer falha deixa a rodada vermelha.
+- **Codex**: desenho + 2 rodadas de código (P1: pendência de disparo, espelho só calculado, rodada bloqueada pulando a
+  cobertura) — aplicados; P2 aceito: dois incidentes entre execuções do watchdog dão 1 e-mail (o probable_cause lista
+  todos). Prova PG17 `db/test-sayerlack-cancelado-com-compra-viva.sh`: 47 asserts nos dois locales, 20 sabotagens
+  vermelhas; vizinhos do trio (10 provas de data_health/tint/fin) verdes.
+- **No ar (2026-11-08, #3731)**: migration `20261110120000` aplicada pelo envelope (ensaio ok → tentativa #996),
+  validada por fora no psql-ro (tabela, os 2 triggers, resolver só `authenticated`, cobertura só `service_role`, source
+  no `_data_health_compute`; 0 incidentes abertos). Varrer v1.9 com DEPLOY CONFIRMADO (sonda #999, na mesma leva do
+  `gerar-pedidos-diario` do #3726), depois de reprovar a predecessora importar (#998 — prova velha de 9,4 h).
+  Sensor do Lovable: `EDICAO_DETECTADA` só pelo `edit_id` da resposta — os commits do bot (`af018bcb1` e, na 5.3,
+  `0053e934c`) são a regeração do `types.ts` com os tipos destas migrations, só acréscimos, arquivo tolerado. Nada a reverter.
+
+## 8.1 — testes dos handlers reais (2026-11-08)
+
+- `sayerlack-importar-pedido-portal/index_test.ts` (24 testes, 7 de gate) e `sayerlack-varrer-pedidos-portal/index_test.ts`
+  (15, 7 de gate) rodam o `index.ts` DE VERDADE pelo `_shared/harness-handler_test.ts`, com o PostgREST, o Browserless,
+  o disparo do PO e a importadora simulados por rota em `_shared/postgrest-falso_test.ts` (rota não prevista LANÇA;
+  `.range()` respeitado; coringa `*` opt-in só para PostgREST). A varrer roda com o relógio FIXO (quarta 10h SP; domingo
+  para o portal fechado) — sem isso a rodada pula no fim de semana e o teste passaria vazio.
+- Ramos cobertos (plano: Codex D1 + revisão 2): importar — 1ª importação com a situação regravada pós-criar (B10),
+  existente cancelado no portal, PO manual (contrato composto; contrato que só CONTÉM o nº não vale), re-disparo que falha,
+  faturado no portal (B2), resposta da gravação perdida com e sem o pedido na releitura (B7), sqlstate da casa, RPC sem
+  `pedido_id`, espelho falhando depois de achar o pedido, 6 não gravado pelo botão × pela varredura (B3), só-situação, cron
+  403. Varrer — `listar` com ZERO escrita e o slug próprio (B9), 0 lidos sem prova, lidos ≠ total, 6 não gravado (2
+  tentativas, pendência, vermelha), 6 gravado (verde), pendência fora da janela sem resposta da importadora (indeterminado
+  durável, vermelha — B6), portal fechado, modo inválido.
+- Falsificação (commitado antes; controle verde antes e depois, na mesma invocação): 11 sabotagens no `index.ts` da
+  importar e 10 no da varrer, uma camada por vez — todas vermelhas.
+
+## 7.3 — transportadora do portal no `cObs` do PO (2026-11-08)
+
+- **O quê:** o `disparar-pedidos-aprovados` v1.13 põe no `cObs` do PO a transportadora que o portal mostrou
+  (`data_pedido.transportadora` do `busca-itens-pedido`). A fonte é a evidência imutável do 7.2: a leitura mais recente
+  com `leitura_ok`, sob prazo de 3 s.
+- **Fail-open por desenho:** é observação, nunca segura nem muda o disparo. Sem evidência, sem o campo, com caractere de
+  controle, vazio ou acima de 60 caracteres, a linha não entra. Ausente ≠ inventada.
+- **Sem 2º escritor:** o valor é lido da evidência e não é gravado no pedido; a RPC de importação fica intacta. O frete
+  não entra, porque nenhuma leitura real mostrou ainda onde o portal o informa.
+- **Provas:** 3 testes Deno das funções puras. Falsificação 6/6 vermelha, com controle verde; uma guarda redundante
+  ficou verde e foi removida.
+- **Codex:** Caminho B (`sem-codex: cota no teto local (79)`), por decisão do founder de guardar a reserva para o 5.2 e
+  o 7.1. REVISÃO INDEPENDENTE PENDENTE; o Codex retroativo roda quando a janela reabrir.
+- **Resta (declarado):**
+  - a fiação no `index.ts` não tem teste de handler;
+  - caracteres C1 e bidi passam pelo filtro;
+  - o teto do `cObs` no Omie não está provado.
+- **Deploy (2026-11-09):** #3751 mergeado às 21:55Z. A ordem entre edges reteve o disparador até a predecessora
+  `enviar-pedido-portal-sayerlack` ser sondada de novo (DEPLOY CONFIRMADO, #1027). Depois:
+  - disparar v1.13: 17/17 hashes, sonda #1029 DEPLOY CONFIRMADO;
+  - o `commit_sha` da resposta foi só o `types.ts` regenerado (`d7792da1`, tolerado), e nenhuma edge mudou.
+
+## 7.2 + 4.3 — evidência imutável de cada leitura e sessão do Browserless pela importadora (2026-11-08)
+
+- **7.2.** A migration `20261111090000` cria a tabela `sayerlack_portal_evidencia`, que só aceita INSERT. Triggers
+  ALWAYS recusam UPDATE, DELETE e TRUNCATE (42501). RLS: só staff lê; 1 escritor (`service_role`).
+- A importadora (v1.9) grava 1 linha por chamada ao Browserless, logo depois da leitura: consulta, itens brutos,
+  condição e opções, e trace cortado em ~100 KB.
+- Correlação: `execucao_id` = `acoes_execucoes.id`; o ledger guarda `evidencia_id` e `evidencia_gravada`.
+- Fail-open com prazo de 3 s: a evidência nunca segura nem muda a importação.
+- **4.3.** Toda resposta da importadora diz `sessao_browserless`.
+- A varredura (v1.11) conta `importacao` só com `true`. `false` vira `importacao_sem_sessao`.
+- Campo ausente ou rede vira `importacao_indeterminada`; então `total` vem null, com a faixa `total_minimo`/`total_maximo`.
+- **Lição (Codex).** O PostgREST falso devolvia 204 COM corpo, e o `Response` lançava. O fecho do ledger falhava mudo
+  em todos os testes de handler, e as asserções liam o PATCH tentado. Corrigido no `_shared`.
+- **Deploy (2026-11-08):** #3747 mergeado às 21:01Z, depois de um rerun: o 1º CI caiu na rede do runner, com o curl da
+  chave PGDG em exit 56, antes de qualquer prova. A migration `20261111090000` foi aplicada pelo envelope (ensaio ok,
+  tentativa **#1015**). Validação em psql-ro: RLS ligada, os 2 triggers em `A`, `service_role` com INSERT e SELECT,
+  `anon` e `authenticated` sem acesso.
+  - **importar v1.9:** 11/11 hashes, sonda #1017 DEPLOY CONFIRMADO. O 401 já traz `sessao_browserless:false`. O
+    sensor achou `edit_id`/`commit_sha` do `types.ts` regenerado com a tabela nova (`4e801f49`, tolerado), e nenhuma
+    edge mudou.
+  - **varrer v1.11:** 14/14 hashes, sem `edit_id`, sonda #1019 DEPLOY CONFIRMADO.
+  - `pendencias:deploy` em exit 0.
+
+## 8.2 — seletores e paginação testados contra HTML (2026-11-08)
+
+- **O que mudou:** as funções que rodam NA PÁGINA do portal (filtros, situações, tabela da consulta por nome de coluna,
+  "Filtrar", "Próximo", condição selecionada e opções) e o laço de paginação da varredura saíram do template
+  `BROWSERLESS_FUNCTION` para `supabase/functions/_shared/sayerlack-portal-dom.ts`, e voltam ao script por
+  `${fn.toString()}` (o molde do `classificarPosLogin`). Comportamento igual (Codex conferiu ordem dos filtros,
+  mensagens, `erroTipo`, o trace `consulta_lida` antes do `PAGINACAO_INCOMPLETA`). importar **v1.8**, varrer **v1.10**.
+- **Testes:** `scripts/sayerlack-portal-dom.test.ts` (vitest + jsdom, fixtures em `scripts/__fixtures__/sayerlack-portal/`):
+  HTML → função de página → leitor REAL de Deno (`lerPedidoPortal`, `lerListaConsulta` + `provarLeitura`), sem objeto
+  já extraído no meio — 2 páginas pelo "Próximo" provam a leitura (3 = 3 anunciados); 1 página com 3 anunciados reprova.
+  As funções são testadas pelo TEXTO serializado (sem o escopo do módulo), no vitest e no Deno
+  (`_shared/sayerlack-portal-dom_test.ts`); o `index_test.ts` de cada edge captura o `code` enviado ao Browserless e
+  prova que parseia e embute as funções.
+- **Falsificação:** 21 sabotagens no módulo (seletor da tabela, placeholder, quebra de linha, `dataTables_empty`,
+  "Processando", info pelo id, "Próximo" e o `disabled` no `<li>` pai, `recordsDisplay`, clique no `<a>`, situações,
+  filtros, entrega 2020, "Selecione", teto, incompleta, sem resposta, "Filtrar", `bubbles`, `trigger`, `globalThis`),
+  todas vermelhas com controle verde na mesma invocação; mais 4 no embutimento das duas edges (tipo TS no texto, função
+  não embutida).
+- **Codex (gpt-6-astra high, 144 s):** sem P0/P1; 2 P2 de cobertura, ambos fechados no PR ("Filtrar"/eventos/jQuery
+  sem teste; testes Deno só provavam sintaxe → agora executam o texto serializado).
+- **Resta (declarado):** o `innerText` com layout real, o redesenho assíncrono do DataTables e a execução no Chrome
+  remoto só se provam na rodada real (leitura de segunda, `modo=listar`).
+- **Deploy (2026-11-08):** #3742 mergeado às 15:05Z. A ordem entre edges reteve a leva até a predecessora
+  `disparar-pedidos-aprovados` ser sondada de novo: DEPLOY CONFIRMADO, tentativa #1009. Depois foram duas ondas pelo
+  pacote. O importar v1.8 bateu 10/10 hashes, e a sonda (#1011) deu DEPLOY CONFIRMADO. O sensor achou o `edit_id`
+  da regeneração do `types.ts` (`d97eb3234`, tolerado), e nenhuma edge mudou. O varrer v1.10 bateu 14/14 hashes, a
+  resposta veio sem `edit_id` e a sonda deu DEPLOY CONFIRMADO. `pendencias:deploy` em exit 0.
+
+## 7.5 — o portal expõe NCM/IPI por item? Rodada 1: INCONCLUSIVO (2026-11-08)
+
+Pergunta do adendo `2026-11-08-sayerlack-revisao-2.md` (7.5). Investigação só leitura; nada implementado.
+
+- **Bloqueio**: o portal estava fora no dia (confirmado pelo founder; `portal.sayerlack.com.br/order-viewer` não
+  carregou no Chrome). As telas de detalhe, impressão/espelho e downloads (XML/PDF) **não foram vistas**. O veredito
+  "não expõe" **não** pode sair daqui: ausência nas fontes abaixo é ausência de dado, não prova.
+- **O que já se sabe (evidência indireta)**:
+  - `GET /order-creation/busca-itens-pedido/<nº>` devolve um array posicional **mais longo que 14** — a amostra do
+    spike (pedido 2140603) foi registrada truncada em `[13]` ("…") e **nunca** foi catalogada além disso (busca em
+    repo, histórico git e transcrições de sessão: nenhuma cópia completa). O parser (`leitura.ts`) só lê `[0]..[13]`.
+  - Posições não usadas com valor: `[2]` = "" · `[7]` = 19,8637 (= preço UN ÷ cap. 18, preço por L) · `[9]` =
+    357,5466 (= `[8]`) · `[10]` = 5. Esse pedido tem IPI de 6,5% (316,26 ÷ 4.865,56), então `[10]` **não** é a
+    alíquota de IPI desse item.
+  - 257 linhas de `pedidos_portal_tentativas.evidence` (trace + network + DOM do formulário de criação): **0**
+    ocorrências de `ipi|ncm|aliq|imposto|tribut` (regex sem caixa no JSON inteiro). A resposta de
+    `POST /order-creation/form/add` traz só `itens[{item, value}]` e o total `value` (pedido 2147222: 15.929,24 contra
+    `valor_total` 15.929,28 no app — mercadoria, sem IPI). O formulário de criação não mostra NCM/IPI nos campos
+    gravados (`it_codigo`, `btnGravarItem`…).
+  - A Consulta Pedidos (`/order-viewer`) só tem Vlr Mercadoria e Vlr Total: dá o IPI **do pedido**, não por linha.
+- **Fecho (rodada 2, quando o portal voltar — 1 leitura, ~5 min no Chrome do founder logado)**, num pedido já
+  faturado com ≥2 NCMs diferentes:
+  1. `fetch('/order-creation/busca-itens-pedido/<nº>')` e catalogar **todas** as posições do 1º item (comprimento,
+     tipo, valor). Procurar NCM (8 dígitos) e um % que reproduza `(Vlr Total − Vlr Mercadoria)` quando somado por linha.
+  2. Abrir `/order-creation-form-edit/<nº>/route/order-viewer` (só GET, sem clicar em gravar) e ler colunas/inputs
+     do grid de itens.
+  3. Procurar no `/order-viewer` ação de imprimir/espelho/XML/PDF do pedido e ler o conteúdo.
+  4. Comparar o IPI por linha (se houver) com `nfe_recebimento_itens` da NF do pedido e com `ipi_aliquota_ncm`.
+- **Desenho proposto se expuser** (para a sessão dona das edges; não implementado): ler NCM/IPI% na MESMA prova
+  posicional do parser (falhou a prova ⇒ recusa) e usá-los como **2ª fonte** contra `ipi_aliquota_ncm` — divergência
+  vira recusa com motivo, nunca sobrescreve a tabela (que é provada na NF-e). Σ(mercadoria × (1+IPI%)) da linha deve
+  bater o Vlr Total da consulta.
+
+## Alíquota de IPI dos 4 últimos NCMs, provada no Omie (2026-11-08)
+
+Pedido do founder ("por que você não busca os IPI pelas NFes antigas?"). O #3717 deixou 4 NCMs no sensor, todos sem
+compra recente. Desta vez a varredura pegou **todos** os 1.223 recebimentos do Omie OBEN
+(`produtos/recebimentonfe/ListarRecebimentos` até página vazia), sendo 835 da Renner Sayerlack (nov/2023 → out/2026), e
+`ConsultarRecebimento` em cada um, só leitura. Migration `20261110140000`:
+
+| NCM | Alíquota | Prova |
+|---|---|---|
+| 39073022 | 3,25% | CST 50 nas 3 NFs: 1,52 ÷ 46,82 (000923122, 21/01/2026, KB.7820.00FG), 000897969, 000838822 |
+| 49111090 | 0% | CST 51 em 27 linhas de 19 NFs (cartelas de cores), a última 000954165 de 06/10/2026 |
+| 32071090 | 0% | CST 51 (000938767 de 02/06/2026 e 000885575, GG.3842QT) |
+| 29163990 | 0% | CST 51 (000928889 de 11/03/2026, 000899121 e 000831532, YG.1045FG) |
+
+Nenhuma dessas NFs tem `vTotalIPI` zero (há outros itens a 6,5% e 3,25%), então a alíquota zero não é artefato. A
+postcondição exige o **sensor inteiro em 0**: nenhum SKU Sayerlack ativo sem alíquota. Ensaio pelo `db:aplicar`: ok,
+`POSTCONDICAO_OK`, ROLLBACK.
+
+**Deploy (2026-11-08):** migration `20261110140000` aplicada pelo envelope (ensaio ok → tentativa **#1007**, recibo na
+mesma transação). Validação por psql-ro: os 4 NCMs com a alíquota medida (`fonte = nf`); sensor de SKUs Sayerlack
+ativos sem alíquota = **0**.
+
+**Lição**: "sem compra em 180 dias" não quer dizer "sem NF". O `nfe_recebimentos` do app só começa em jan/2026, e o
+Omie guarda as NF-e de entrada desde 2023. Para NCM sem alíquota, a 1ª fonte é o `ConsultarRecebimento` sobre todo o
+histórico, não a janela do banco. O CP006 só volta com NCM **nunca comprado**, e é aí que a 7.5 (IPI no portal) ainda
+teria valor.
+
+## 7.5 — veredito: o portal NÃO expõe NCM/IPI por item (2026-11-08)
+
+Fecha a rodada 1 acima. **O portal não mostra o valor com IPI por item: o IPI só aparece quando a NF é faturada**
+(founder, que opera o portal todo dia). Isso bate com tudo que foi lido: nenhum campo de IPI/NCM nas 257 tentativas de
+envio gravadas, `form/add` devolve só item e valor sem IPI, e a Consulta Pedidos só tem os totais. As posições de
+`busca-itens-pedido` além da `[13]` não foram catalogadas (portal fora no dia), mas a resposta do founder torna
+improvável que alguma delas seja a alíquota. Se um dia precisar reabrir, o roteiro da rodada 1 continua válido.
+
+**Consequência para o desenho:** a fonte da alíquota continua sendo a NF-e de entrada no Omie
+(`ConsultarRecebimento` sobre o histórico inteiro). Com o #3744 o sensor de SKUs Sayerlack ativos sem alíquota está
+em **0**. O CP006 só volta com NCM que a OBEN nunca comprou; aí o passo é esperar a 1ª NF e medir nela. A conferência
+de alíquota que mudou já existe: o CP007 recusa quando o total com IPI calculado não bate o Vlr Total do portal.
+Nada a implementar nas edges.
+
+## 7.1 — vincular o PO lançado à mão no Omie (2026-11-08)
+
+**Antes:** a importadora (pedido existente sem PO) e a varredura (reconsulta e re-disparo da janela) detectavam o PO
+manual pelo contrato e só avisavam: o pedido ficava sem PO no app para sempre. **Agora** os três pontos chamam a RPC
+`sayerlack_vincular_po_manual` (migration `20261111110000`), que vincula só quando o espelho do Omie prova que o PO
+é a compra daquele pedido:
+
+1. **Contrato:** o protocolo é um TOKEN EXATO do `numero_contrato_fornecedor` (split `/` + `btrim`, a mesma gramática
+   da varredura e do 5.3; o composto `a / b` vale), ou o código de integração é o `AFI-<id>` do próprio pedido.
+   Substring nunca vale. Mais de um PO vivo candidato = `po_ambiguo`. PO `CANCELADO` e de outra empresa não contam.
+2. **Dono:** recusa o PO com `AFI-<outro id>` ou já vinculado a outro pedido (`po_de_outro_pedido`).
+3. **Conteúdo:** conjunto de SKUs igual, quantidade por SKU igual, valor por SKU (`nValTot`, com IPI) a no máximo
+   max(R$ 0,01; 0,5 centavo por unidade) de `qtde_final × preco_unitario`. **Calibrado em prod:** dos 213 POs que o
+   próprio app criou para pedidos do portal, 206 casam ao centavo; os 7 que não casam são edições reais (SKU
+   acrescentado no Omie, quantidade dobrada e o composto 2130311/2130322, cujo PO traz o item do outro protocolo).
+   Assim, o composto cujo PO carrega os itens do outro protocolo diverge por conteúdo, e esse é o comportamento
+   desejado.
+4. **Ausente ≠ zero:** PO sem `produtos_consulta` legível, item sem número ou pedido com item sem SKU, quantidade ou
+   preço ⇒ `conteudo_ausente`. A recusa traz as diferenças por SKU na resposta da importadora.
+5. **Claim aberto, de qualquer idade, recusa** (`disparo_pendente`): uma tentativa pode ter criado o `AFI-<id>` com a
+   resposta perdida, e quem resolve é a conciliação do disparador. O vínculo grava os mesmos campos da conciliação
+   (`omie_pedido_compra_*`, status `disparado`, claim limpo) e a trilha em `acoes_execucoes` (`acao =
+   sayerlack_vincular_po_manual`) com o antes e o depois.
+6. **Corrida e frescor (Codex rodada 1: 2 P1 + 1 P2):** o PO candidato é relido com `FOR UPDATE` e revalidado sob
+   a trava (status, contrato, `AFI-`); se mudou, a RPC aborta com `40001`. Assim, dois pedidos nunca pegam o mesmo
+   PO. O espelho tem de estar fresco: `sync_state` `pedidos_compra/oben` em `complete` há menos de 2 h, senão
+   `espelho_desatualizado`. Na rodada 2 do Codex, nada P0/P1. O risco de deadlock que ela levantou foi descartado,
+   porque o gatilho do espelho só insere no incidente e o sync escreve por HTTP em transação própria.
+
+Nas edges (importar v1.10, varrer v1.12): o erro da RPC **lança** na importadora (cai no catch, sem re-disparo) e, na
+varredura, mantém a pendência com `vinculo_motivo: "erro"`. Nenhum dos ramos re-dispara.
+
+**Provas:** `db/test-sayerlack-vincular-po-manual.sh` (PG17, 32 asserts, nos 2 locales; `--falsificar` com 14
+sabotagens vermelhas nos dois, incluindo a trava com 2 conexões A/B e o espelho velho). Handlers em Deno: importar (vinculou, não casou com diferenças, RPC com erro) e
+varrer (reconsulta: casou, não casou, erro), com 4 sabotagens das edges vermelhas.
+
+**No ar (2026-11-09, #3754):**
+- **Migration `20261111110000`:** aplicada pelo envelope (ensaio ok, depois a tentativa #1031, com o marcador `VINCULAR_PO_MANUAL_POS_OK`). Conferida no psql-ro: fechada a anon e authenticated, aberta só ao service_role.
+- **Edges:** subiram em 2 ondas pelo pacote.
+  - A importar v1.10 foi colada às 01:29Z, e nenhuma das sessões da família assumiu o envio. Os hashes eram os do pacote (12/12), e a sonda #1033 deu DEPLOY CONFIRMADO.
+  - A varrer v1.12 subiu às 02:10Z, com 15/15 hashes, e a sonda #1035 deu DEPLOY CONFIRMADO.
+  - No ledger, as duas ficaram em `CONFERE`.
+- **Sensor de edição:**
+  - 1ª onda: `EDICAO_DETECTADA` só pelo `edit_id`, que era a regeneração do `types.ts` com a RPC nova (`0b2f1211`, tolerado). Nada em `supabase/` mudou.
+  - 2ª onda: `SEM_EDICAO`.
+
+## Leitura operacional de segunda 09/11 — a prova do total observada em prod pela 1ª vez (2026-11-09)
+
+- **O quê:** a prova de leitura (o total anunciado pelo portal precisa bater com as linhas lidas) nunca tinha sido
+  observada em prod. Rodamos a varredura em `modo=listar` antes da rodada das 12:30, por uma tarefa agendada no Mac
+  do founder, às 06:30. O portal fecha de sábado 12h a segunda 6h, então domingo não servia.
+- **Resultado** (execução `9a391148`, 06:38 SP, varrer `v1.12-vincula-po-manual`):
+  - `status=sucesso` e `prova_leitura=ok`, numa página só.
+  - 6 linhas lidas e `total_anunciado` 6. A fonte que casou foi o `recordsFiltered` do JSON
+    (`resposta_chaves`: success, message, data, recordsTotal, recordsFiltered); `dt_total` e `info_portal` vieram
+    nulos.
+  - Os 6 pedidos já estavam no app, sem ilegível, falha ou indeterminado; 1 sessão do Browserless.
+- **Lição:** a fonte que segura a prova hoje é a resposta JSON do DataTables, não o DOM. Se o portal mudar o
+  endpoint, `dt_total`/`info_portal` são o fallback, e eles ainda não foram vistos com valor em prod.
+
+## 5.2 fatia 1 — pedido alterado no portal não re-dispara o pedido antigo (2026-11-09)
+
+**Antes:** a importadora relia o portal e, sem PO, re-disparava o pedido ANTIGO do app. Não comparava nada e não havia
+diff persistido. Se o fornecedor tivesse trocado SKU, quantidade, preço ou condição no portal, o PO saía errado.
+**Agora** (migration `20261111150000`, importar v1.11, disparar v1.14):
+
+1. **Retrato inicial durável:** `sayerlack_portal_retrato`, versionado e imutável, guarda os itens com valor, o total
+   e a condição. No pedido importado, ele nasce **dentro** da RPC de importar, na mesma transação do pedido (Codex P1):
+   uma resposta perdida não deixa o pedido sem referência. No pedido nascido no app, o retrato é a 1ª leitura.
+   - Não dá para tirar o retrato do `resposta_canal`: o `falha_envio` do disparador sobrescreve esse campo
+     (`disparar:1523`), justamente no caso que importa.
+2. **Conferência** (`sayerlack_conferir_portal`, escritor único, SECURITY DEFINER):
+   - SKU e quantidade se comparam com os itens do próprio pedido, por `sku_portal_aprovado` e `qtde_final ×
+     fator_portal_aprovado`, com FULL JOIN;
+   - valor por SKU, total e condição normalizada se comparam com o retrato. O total carrega o IPI, que o portal não
+     expõe por item;
+   - item sem selo do portal é diferença, nunca "bateu";
+   - leitura sem total, condição ou item legível é 22023.
+3. **Divergência:** `sayerlack_portal_divergencia` guarda o diff, a leitura parseada (o insumo da fatia 2), o
+   intervalo e a evidência 7.2. Fica no máximo 1 aberta por pedido, e o mesmo diff não empilha linha.
+   - Uma leitura só fecha (`portal_voltou`) ou substitui a aberta se for **provadamente posterior** a ela (`lido_de`
+     > `lido_ate`); senão volta `leitura_antiga`, sem escrever (Codex P1).
+4. **Gate na linha do pedido:** a coluna `portal_divergencia_aberta_id` vai no MESMO WHERE do UPDATE do claim.
+   - Com o veto lendo a outra tabela (NOT EXISTS), o EvalPlanQual usa o snapshot velho e o claim que esperou a trava
+     passa. A sabotagem `gate_por_not_exists` prova isso com 2 conexões.
+   - Um claim aberto não impede a conferência de gravar o gate. Daí em diante, o claim devolve `alterado_no_portal`
+     com `pendente_desde`, e o disparador concilia **só por consulta**, com o mesmo helper do cancelado no portal.
+
+**Nas edges:**
+- **Importar:** antes de qualquer re-disparo, confere a leitura inteira (itens, total, condição, intervalo e
+  evidência). Divergente, recusa, erro ou resposta fora do contrato ⇒ não dispara (fail-closed). Condição ilegível no
+  re-disparo também recusa.
+- **RPC de importar com `ja_existia:true`** (outra aba importou durante a leitura): agora passa pela recusa de
+  faturado e pela conferência (Codex P1).
+
+**Risco residual (documentado):** se o claim do cron passar ANTES de a conferência gravar o gate, o disparo em voo
+segue com o pedido antigo. O disparador geral não lê o portal. Fechar essa janela exige autorização por conferência
+consumida no claim, o que fica fora da fatia 1.
+
+**Codex na revisão do código:** foram 2 rodadas, todas corrigidas.
+- 1ª rodada (2 P1 e 2 P2):
+  - o mesmo diff carimba a ÚLTIMA observação (`ultima_lido_ate`), e fechar exige leitura posterior a ela;
+  - o retrato só nasce quando SKU e quantidade batem, porque uma 1ª leitura já divergente não pode virar a
+    referência de valor;
+  - divergência exige o intervalo da leitura; infinito e fuso inválido dão 22023.
+- 2ª rodada (2 P1):
+  - a ordem é checada ANTES de semear o retrato;
+  - a origem `importacao` (instante da gravação, não da captura) nunca fecha nem substitui uma aberta.
+
+**Provas:** `db/test-sayerlack-conferir-portal.sh`, em PG17 sobre a cadeia REAL da RPC de importar:
+- 39 asserts, verdes nos 2 locales;
+- `--falsificar` com 17 sabotagens vermelhas no assert declarado, nos 2 locales;
+- o POS C4 pega o claim sem gate já ao aplicar.
+
+Na edge importar, os handlers em Deno cobrem: bate e dispara, alterado, erro ou leitura antiga, fora do contrato,
+condição ilegível, 1ª importação sem conferência pela edge, e `ja_existia` divergente ou faturado.

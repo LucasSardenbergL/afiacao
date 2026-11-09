@@ -1,10 +1,10 @@
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { replaceEqualDeep, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
-import { presetParaParams, digitosCnae, versaoDaFila, recorteDeUf, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
+import { isSearchablePostgrestTerm, sanitizeForPostgrestOr } from '@/lib/postgrest';
+import { presetParaParams, digitosCnae, cnaeSecundarioCompleto, versaoDaFila, recorteDeUf, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { lerLoteVigente, useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
-import { recorteDeLote } from '@/lib/radar/lote-vigente';
-import { filtrarSugeridos } from '@/queries/useRadarSugeridos';
+import { recorteDeLote, type LoteIngest } from '@/lib/radar/lote-vigente';
+import { LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
 import type { Database } from '@/integrations/supabase/types';
 
 export type RadarEmpresa = Database['public']['Tables']['radar_empresas']['Row'];
@@ -13,7 +13,7 @@ export interface RadarFiltros {
   busca: string;
   uf: string;            // '' = todas
   municipio: string;     // '' = todos
-  cnae: string;          // '' = todos (1 código por enquanto)
+  cnae: string;          // '' = todos — CNAE PRINCIPAL (código completo = exato; parcial = família)
   status: string;        // '' = qualquer; senão um prospeccao_status
   incluirJaClientes: boolean;
   comTelefone: boolean;  // só empresas com telefone1 OU telefone2
@@ -24,9 +24,28 @@ export interface RadarFiltros {
   // Opcionais: quem monta RadarFiltros sem eles (ranking, mapa, testes antigos) recebe o recorte de antes.
   regiao?: RegiaoRadar;        // 'atuacao' = MG e vizinhos (default da TELA); ausente/'brasil' = todas as UFs. UF escolhida vence.
   incluirSemContato?: boolean; // false (default da tela) = esconde quem não tem telefone NEM e-mail
+  cnaeSecundario?: string;     // CNAE entre os SECUNDÁRIOS (só código completo filtra); combina com `cnae` (E)
+  // Cidade escolhida no ranking/mapa: o CÓDIGO RFB (4 dígitos), filtro exato. Quando presente vence `municipio`
+  // (que fica só como rótulo): o nome se repete entre UFs — "SANTA LUZIA" de MG trazia a da BA.
+  municipioCodigo?: string;
+  // "Para visitar" (migration 20261109140000): todo contato do lead tem indício de contabilidade e há endereço. O
+  // recorte é do SERVIDOR (p_so_visitar), antes da paginação. Ausente = a fila de antes.
+  paraVisitar?: boolean;
 }
 
 const PAGE = 50;
+
+/**
+ * Filtros da visão "Meus atendimentos" (pacote B2): NEUTROS. A visão é "o que eu assumi", não um recorte da fila —
+ * um lead assumido que é já-cliente, de fora da região, de lote antigo ou sem contato continua sendo meu. Só os
+ * descartados ficam de fora (o default da RPC). O recorte "é meu" vem de `p_so_meus`, NO SERVIDOR.
+ */
+export const FILTROS_MEUS_ATENDIMENTOS: RadarFiltros = {
+  busca: '', uf: '', municipio: '', municipioCodigo: '', cnae: '', cnaeSecundario: '', status: '',
+  incluirJaClientes: true, comTelefone: false, preset: 'score',
+  incluirSaiuDoDump: true, soIneditos: false, soSugeridos: false,
+  regiao: 'brasil', incluirSemContato: true,
+};
 
 /** Id da rodada mais recente do score (ledger `radar.score_recalcular`). Revisado a cada 10 min: a rodada
  *  diária (03:30 BRT) ou uma manual troca a versão da fila e reinicia a paginação. */
@@ -53,7 +72,84 @@ function useRadarRodadaScore() {
 const identidadeDoLote = (l: { mes_referencia: string; iniciado_em: string } | null) =>
   l ? `${l.mes_referencia}@${l.iniciado_em}` : 'sem-lote';
 
-export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
+type ParametrosLista = Database['public']['Functions']['radar_lista']['Args'];
+
+/**
+ * Os filtros da tela → argumentos da RPC `radar_lista` (migration 20261103131500). A lista lia
+ * `radar_empresas` pelo PostgREST; sob o RLS da tabela o ILIKE da busca (não-leakproof) não vira
+ * condição de índice e cada busca era seq scan dos 731 MB (medido em prod 2026-11-03). A RPC roda
+ * como dono, com o mesmo gate da policy, e aplica estes mesmos recortes — `undefined` = sem filtro
+ * (o supabase-js omite a chave e o parâmetro cai no DEFAULT NULL).
+ */
+export function parametrosDaLista(
+  filtros: RadarFiltros,
+  lote: LoteIngest | null,
+  hojeISO: string,
+  pagina: number,
+  soMeus = false,
+): ParametrosLista {
+  const p = presetParaParams(filtros.preset, hojeISO);
+  // A RPC só ordena DESC NULLS LAST (todos os presets de hoje). Preset novo ascendente tem de mudar a RPC
+  // antes — virar a fila em silêncio seria pior que falhar.
+  if (p.orderAsc) throw new Error(`radar_lista não ordena ascendente (preset ${filtros.preset})`);
+  // Termo: o mesmo sanitizador do `.or()` de antes; só-wildcard (`*`/`%%`) sanitiza pra vazio = lista base (#1062).
+  const termo = (t: string) => (isSearchablePostgrestTerm(t.trim()) ? sanitizeForPostgrestOr(t.trim()) : undefined);
+  const recorteUf = recorteDeUf(filtros);
+  // CNAE: o banco guarda 7 dígitos puros; o usuário digita o formato oficial (3101-2/00). Completo (7) =
+  // match exato; parcial = a família (prefixo).
+  const cnaeDigitos = digitosCnae(filtros.cnae);
+  // "Só sugeridos" é o predicado do card "Sugeridos para cadastro" (`filtrarSugeridos`): fixa
+  // status/ja_cliente/lote na RPC e vence os filtros de status. Sem lote completo o hook já falhou antes.
+  const sugeridos = lote && filtros.soSugeridos ? lote : null;
+  // Foto VIGENTE / só inéditos / incluir quem saiu: o MESMO recorte do ranking e do mapa (`recorteDeLote`).
+  const recorte = recorteDeLote(lote, filtros);
+  return {
+    p_busca: termo(filtros.busca),
+    // Município: o banco guarda em MAIÚSCULAS (dump RFB); ILIKE parcial. Limitação conhecida: não é
+    // acento-insensitive ("sao" não casa "SÃO") — v2 com unaccent. Cidade escolhida pelo código: exata, e o
+    // nome digitado sai (código mal formado vai assim mesmo: a RPC grita 22023 em vez de contar zero).
+    p_municipio: filtros.municipioCodigo ? undefined : termo(filtros.municipio),
+    p_municipio_codigo: filtros.municipioCodigo || undefined,
+    p_uf: recorteUf.tipo === 'uf' ? recorteUf.uf : undefined,
+    p_ufs: recorteUf.tipo === 'lista' ? [...recorteUf.ufs] : undefined,
+    p_cnae_exato: cnaeDigitos.length === 7 ? cnaeDigitos : undefined,
+    p_cnae_prefixo: cnaeDigitos.length > 0 && cnaeDigitos.length < 7 ? cnaeDigitos : undefined,
+    p_cnae_secundario: cnaeSecundarioCompleto(filtros.cnaeSecundario) ?? undefined,
+    p_status: !sugeridos && filtros.status ? filtros.status : undefined,
+    p_incluir_ja_clientes: !sugeridos && filtros.incluirJaClientes,
+    p_ultimo_lote: !sugeridos && recorte.ultimoLote ? recorte.ultimoLote : undefined,
+    p_primeira_vista_min: recorte.primeiraVistaMin ?? undefined,
+    p_sugeridos_lote: sugeridos ? sugeridos.mes_referencia : undefined,
+    p_sugeridos_score_min: sugeridos ? LIMIAR_SUGERIDO : undefined,
+    // "com telefone" / "sem contato" escondido (só `false` explícito esconde; ausente = recorte antigo).
+    p_com_telefone: filtros.comTelefone,
+    p_com_contato: filtros.incluirSemContato === false,
+    p_data_abertura_min: p.dataAberturaMin ?? undefined,
+    p_data_abertura_max: p.dataAberturaMax ?? undefined,
+    p_ordem: p.orderColumn,
+    p_offset: pagina * PAGE,
+    p_limit: PAGE,
+    // "Meus atendimentos" (B2, migration 20261106212329): o recorte é do servidor, ANTES da paginação — filtrar os
+    // 50 carregados daria falso vazio. Na fila vai `undefined` (a chave some): a chamada da fila é a de antes e não
+    // depende da migration.
+    p_so_meus: soMeus ? true : undefined,
+    // Idem "para visitar": fora do chip, a chave some e a chamada é a de antes.
+    p_so_visitar: filtros.paraVisitar ? true : undefined,
+  };
+}
+
+/** Chave das páginas da visão "Meus atendimentos" (7º elemento da queryKey da lista). */
+export const CHAVE_VISAO_MEUS = 'meus';
+
+export function useRadarLista(
+  filtros: RadarFiltros,
+  hojeISO: string,
+  opcoes: { soMeus?: boolean; aguardar?: boolean } = {},
+) {
+  const soMeus = opcoes.soMeus === true;
+  // `aguardar`: o chamador ainda não sabe o recorte (ex.: o território do vendedor, pacote F) — buscar agora seria
+  // buscar a fila ERRADA e jogá-la fora em seguida.
+  const aguardar = opcoes.aguardar === true;
   const qc = useQueryClient();
   const rodada = useRadarRodadaScore();
   const versao = versaoDaFila(filtros.preset, rodada.data);
@@ -63,14 +159,16 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
   const qLote = useRadarLoteVigente();
   const loteDaChave = qLote.data === undefined ? 'sem-leitura' : identidadeDoLote(qLote.data);
   return useInfiniteQuery({
-    queryKey: ['radar', 'lista', filtros, hojeISO, versao, loteDaChave],
+    queryKey: ['radar', 'lista', filtros, hojeISO, versao, loteDaChave, soMeus ? CHAVE_VISAO_MEUS : 'fila'],
     // Fila por score espera a versão (sucesso OU erro) para não buscar duas vezes na abertura; leitura do
     // ledger que falha degrada para 'sem-rodada' — a lista continua, só sem o reinício automático.
     // Idem o lote: espera a 1ª leitura assentar (sucesso OU erro — no erro a própria lista falha ao
     // reler, como antes), senão a abertura buscaria a página 0 duas vezes.
-    enabled: (filtros.preset !== 'score' || !rodada.isPending) && !qLote.isPending,
-    initialPageParam: 0,
-    queryFn: async ({ pageParam }) => {
+    enabled: !aguardar && (filtros.preset !== 'score' || !rodada.isPending) && !qLote.isPending,
+    // pageParam = OFFSET no servidor (não o nº da página): depois que um lead sai da fila no lugar
+    // (`aplicarLeadNasPaginas`), a próxima página começa no total de linhas EM CACHE — o recorte do servidor
+    // encolheu uma linha antes dali, e o offset por página pularia uma empresa.
+    queryFn: async ({ pageParam, signal }) => {
       // Lote vigente ANTES de montar a query: mesma chave/cache do `useRadarLoteVigente`
       // (lido uma vez, não por componente). Se a leitura do lote falha, a lista falha junto —
       // mostrar a fila sem saber o lote seria mostrar a foto velha de novo (52.011 leads com
@@ -88,59 +186,104 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       if (filtros.soSugeridos && !lote) {
         throw new Error('Sem lote completo da RFB: "só sugeridos" fica indisponível até a carga do lote terminar.');
       }
-      const p = presetParaParams(filtros.preset, hojeISO);
-      let q = supabase.from('radar_empresas').select('*');
-
-      // só-wildcard (`*`/`%%`) sanitiza pra vazio → `.or()` match-all (#1062); pula o filtro (lista base)
-      if (isSearchablePostgrestTerm(filtros.busca.trim())) q = q.or(ilikeOr(['razao_social', 'nome_fantasia'], filtros.busca.trim()));
-      const recorteUf = recorteDeUf(filtros);
-      if (recorteUf.tipo === 'uf') q = q.eq('uf', recorteUf.uf);
-      else if (recorteUf.tipo === 'lista') q = q.in('uf', [...recorteUf.ufs]);
-      // Município: o banco guarda em MAIÚSCULAS (dump RFB, "BELO HORIZONTE"); o usuário
-      // digita como quiser → ilike (case-insensitive + parcial, sanitizado). Limitação
-      // conhecida: ilike não é acento-insensitive ("sao" não casa "SÃO") — v2 com unaccent.
-      if (isSearchablePostgrestTerm(filtros.municipio.trim())) q = q.or(ilike('municipio_nome', filtros.municipio.trim()));
-      // CNAE: o banco guarda 7 dígitos puros; o usuário digita o formato oficial
-      // (3101-2/00). Normaliza p/ dígitos. Completo (7) = match exato pelo índice;
-      // parcial = prefix match (a família do CNAE). Vazio = sem filtro (null do helper).
-      const cnaeDigitos = digitosCnae(filtros.cnae);
-      const cnaePrefixo = likePrefixPattern(cnaeDigitos);
-      if (cnaeDigitos.length === 7) q = q.eq('cnae_principal', cnaeDigitos);
-      else if (cnaePrefixo) q = q.like('cnae_principal', cnaePrefixo);
-      // "Só sugeridos" é o predicado do card "Sugeridos para cadastro" (`filtrarSugeridos`, o mesmo
-      // count): ele já fixa status/ja_cliente/lote, então vence os filtros abaixo. Sem lote completo
-      // não há foto: a falha honesta já saiu lá em cima, logo após ler o lote.
-      const sugeridos = Boolean(lote && filtros.soSugeridos);
-      if (sugeridos && lote) q = filtrarSugeridos(q, lote);
-      if (!sugeridos) {
-        if (filtros.status) q = q.eq('prospeccao_status', filtros.status);
-        else q = q.neq('prospeccao_status', 'descartado'); // fila default esconde descartados
-        if (!filtros.incluirJaClientes) q = q.eq('ja_cliente', false);
-      }
-      // Foto VIGENTE / só inéditos / incluir quem saiu: o MESMO recorte que o ranking de cidades
-      // e o mapa passam à RPC `radar_contagem_por_municipio` (`recorteDeLote`). Com "só sugeridos"
-      // o lote já foi fixado por `filtrarSugeridos`; só o recorte de inéditos ainda pode somar.
-      const recorte = recorteDeLote(lote, filtros);
-      if (!sugeridos && recorte.ultimoLote) q = q.eq('ultimo_lote', recorte.ultimoLote);
-      if (recorte.primeiraVistaMin) q = q.gte('primeira_vista_em', recorte.primeiraVistaMin);
-      // "com telefone" = positivo (linha sem telefone não casa o OR; sem footgun NULL-blind)
-      if (filtros.comTelefone) q = q.or('telefone1.not.is.null,telefone2.not.is.null');
-      // "sem contato" = sem telefone E sem e-mail. Esconder é o default da tela (só `false` explícito
-      // esconde; ausente = recorte antigo). Positivo pelo mesmo motivo do de cima. Medido em prod
-      // (2026-10-29, nas 8 UFs da região): 0 strings vazias nessas colunas — NULL é a ausência.
-      if (filtros.incluirSemContato === false) q = q.or('telefone1.not.is.null,telefone2.not.is.null,email.not.is.null');
-      if (p.dataAberturaMax) q = q.lte('data_abertura', p.dataAberturaMax);
-      if (p.dataAberturaMin) q = q.gte('data_abertura', p.dataAberturaMin);
-
-      const from = (pageParam as number) * PAGE;
-      const { data, error } = await q
-        .order(p.orderColumn, { ascending: p.orderAsc, nullsFirst: false }) // preset 'score': score DESC NULLS LAST (idx_radar_lista_score)
-        .order('cnpj', { ascending: true }) // tie-break estável p/ paginação
-        .range(from, from + PAGE - 1);
+      // A RPC pagina e ordena (preset DESC NULLS LAST, cnpj): um `.order()` aqui REORDENARIA a página.
+      // `signal`: trocar o filtro (ou desmontar) CANCELA a leitura em voo — a busca digitada não enfileira
+      // uma radar_lista por tecla que ninguém vai ler.
+      const { data, error } = await supabase
+        .rpc('radar_lista', { ...parametrosDaLista(filtros, lote, hojeISO, 0, soMeus), p_offset: pageParam as number })
+        .abortSignal(signal);
       if (error) throw error;
       return data as RadarEmpresa[];
     },
-    getNextPageParam: (last, pages) => (last.length === PAGE ? pages.length : undefined),
+    ...PAGINACAO_DA_FILA,
     staleTime: 30_000,
   });
 }
+
+/**
+ * Quantas linhas o SERVIDOR devolveu numa página, quando ela foi encolhida no lugar (um lead saiu da fila). A
+ * pergunta "tem mais?" é sobre o que o servidor mandou (página cheia = talvez haja mais), não sobre o que sobrou.
+ */
+const RECEBIDAS = new WeakMap<RadarEmpresa[], number>();
+
+/**
+ * O `structuralSharing` padrão copia a página encolhida (array novo) e a marca do WeakMap se perderia — a fila
+ * diria "acabou" com a última página de 49. Compartilha como sempre e leva a marca para a cópia.
+ */
+export function compartilharPaginas(antigo: unknown, novo: unknown): unknown {
+  const r = replaceEqualDeep(antigo, novo) as InfiniteData<RadarEmpresa[], unknown> | undefined;
+  const n = novo as InfiniteData<RadarEmpresa[], unknown> | undefined;
+  n?.pages?.forEach((p, i) => {
+    const recebidas = RECEBIDAS.get(p);
+    const copia = r?.pages?.[i];
+    if (recebidas !== undefined && copia) RECEBIDAS.set(copia, recebidas);
+  });
+  return r;
+}
+
+/** Próximo offset: o total de linhas em cache, se a última página veio cheia; senão acabou. */
+export function proximoOffset(ultima: RadarEmpresa[], paginas: RadarEmpresa[][]): number | undefined {
+  if ((RECEBIDAS.get(ultima) ?? ultima.length) !== PAGE) return undefined;
+  return paginas.reduce((n, p) => n + p.length, 0);
+}
+
+/**
+ * O lead ainda pertence ao recorte da fila? Só o que UMA ação do vendedor sobre um lead muda: o status
+ * (descartar, registrar contato) e o virar cliente (cadastro no Omie). É o mesmo predicado da `radar_lista`
+ * (status pedido, senão "não descartado"; `ja_cliente = false` sem o toggle). Recorte que depende de outra
+ * tabela — "meus atendimentos" (posse), "para visitar" (contabilidade), "só sugeridos" (score/lote) — não se
+ * decide aqui: `null` = não sei, relê do servidor.
+ */
+export function leadSegueNaFila(filtros: RadarFiltros, visao: string, lead: RadarEmpresa): boolean | null {
+  if (visao !== 'fila' || filtros.paraVisitar || filtros.soSugeridos) return null;
+  const statusOk = filtros.status ? lead.prospeccao_status === filtros.status : lead.prospeccao_status !== 'descartado';
+  return statusOk && (filtros.incluirJaClientes || !lead.ja_cliente);
+}
+
+export type ResultadoNaFila =
+  | { tipo: 'nada' }
+  | { tipo: 'reler' }
+  | { tipo: 'trocar'; data: InfiniteData<RadarEmpresa[], unknown> };
+
+/**
+ * Invalidação cirúrgica (pacote N): depois de uma ação sobre UM lead, em vez de reler as N páginas carregadas
+ * (10 páginas = 10 `radar_lista` e a lista reordenando sob o dedo), a linha é trocada pela leitura fresca do
+ * lead — ou sai, se deixou o recorte. Pura: quem aplica é `invalidarRadar`.
+ *   - `trocar`: a linha foi atualizada ou removida no lugar (a ordem das outras não muda);
+ *   - `reler`: não dá para decidir daqui (recorte que depende de outra tabela, ou o lead fora das páginas
+ *     carregadas mas dentro do recorte — pode ter (re)entrado no meio): a fila relê como antes;
+ *   - `nada`: o lead não está nas páginas e não pertence ao recorte.
+ * `lead` null = o lead não existe mais no Radar: sai.
+ */
+export function aplicarLeadNasPaginas(
+  data: InfiniteData<RadarEmpresa[], unknown> | undefined,
+  filtros: RadarFiltros,
+  visao: string,
+  cnpj: string,
+  lead: RadarEmpresa | null,
+): ResultadoNaFila {
+  if (!data) return { tipo: 'nada' };
+  const segue = lead ? leadSegueNaFila(filtros, visao, lead) : false;
+  if (segue === null) return { tipo: 'reler' };
+  const iPagina = data.pages.findIndex((p) => p.some((e) => e.cnpj === cnpj));
+  if (iPagina < 0) return segue ? { tipo: 'reler' } : { tipo: 'nada' };
+  const antiga = data.pages[iPagina];
+  const nova = segue && lead
+    ? antiga.map((e) => (e.cnpj === cnpj ? lead : e))
+    : antiga.filter((e) => e.cnpj !== cnpj);
+  RECEBIDAS.set(nova, RECEBIDAS.get(antiga) ?? antiga.length);
+  const pages = data.pages.slice();
+  pages[iPagina] = nova;
+  return { tipo: 'trocar', data: { ...data, pages } };
+}
+
+/** A paginação da fila (offset por linhas em cache + a marca das páginas encolhidas). Exportada para os testes. */
+export const PAGINACAO_DA_FILA: {
+  initialPageParam: number;
+  getNextPageParam: typeof proximoOffset;
+  structuralSharing: typeof compartilharPaginas;
+} = {
+  initialPageParam: 0,
+  getNextPageParam: proximoOffset,
+  structuralSharing: compartilharPaginas,
+};

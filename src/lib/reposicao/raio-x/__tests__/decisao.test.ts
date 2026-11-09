@@ -11,6 +11,7 @@ import {
   lerNumero,
   seloFaseA,
   sugestaoInicial,
+  argsConfirmarSugestao,
 } from '../decisao';
 import { decisao, fato, HOJE } from './fixtures';
 
@@ -135,5 +136,34 @@ describe('assinaturaServidor (Ruling S9)', () => {
     expect(assinaturaServidor({ ...i, tipo_reposicao: 'descontinuado' }, d)).not.toBe(base);
     expect(assinaturaServidor({ ...i, habilitado_reposicao_automatica: false }, d)).not.toBe(base);
     expect(assinaturaServidor(i, undefined)).not.toBe(base);
+  });
+});
+
+describe('argsConfirmarSugestao (UX 2 — 1 toque)', () => {
+  const sayer = (o = {}) => classificar([fato({ sku_codigo_omie: 7, q12: 0, fornecedor: 'Sayerlack', no_motor: true, tipo_reposicao: 'automatica', habilitado_reposicao_automatica: true, ...o })], new Map(), 'oben', HOJE)[0];
+  it('pendente com sugestão que é destino: decide a sugestão e tira do motor quando há o que tirar', () => {
+    expect(argsConfirmarSugestao('oben', sayer(), undefined)).toEqual({
+      sku: 7, destino: 'trocar', categoria: 'mercadoria', observacao: null, fornecedor: null, creditoTroca: null,
+      tirarDoMotor: true, restaurarMotor: false,
+    });
+  });
+  it('sem parâmetro no motor: não tenta tirar (RX001)', () => {
+    expect(argsConfirmarSugestao('oben', sayer({ no_motor: false }), undefined)?.tirarDoMotor).toBe(false);
+  });
+  it('já decidido, linha histórica ou sugestão que não é destino: nada a confirmar', () => {
+    expect(argsConfirmarSugestao('oben', sayer(), decisao(7, { destino: 'liquidar' }))).toBeNull();
+    expect(argsConfirmarSugestao('oben', { ...sayer(), fora_do_estoque: true }, undefined)).toBeNull();
+    expect(argsConfirmarSugestao('oben', { ...sayer(), destino_sugerido: 'revisar' }, undefined)).toBeNull();
+  });
+  it('linha sem destino (só contagem) preserva observação/fornecedor — a RPC apaga campo omitido', () => {
+    const a = argsConfirmarSugestao('oben', sayer(), decisao(7, { observacao: 'conferido', fornecedor_informado: 'F', qtd_contada: 2 }));
+    expect(a).toMatchObject({ destino: 'trocar', observacao: 'conferido', fornecedor: 'F' });
+  });
+  it('liquidar sem veredito inequívoco do servidor: nada a confirmar (2ª camada do bug 5)', () => {
+    const liq = classificar([fato({ sku_codigo_omie: 8, q12: 0, fornecedor: 'Forn X' })], new Map(), 'oben', HOJE)[0];
+    expect(liq.destino_sugerido).toBe('liquidar');
+    expect(argsConfirmarSugestao('oben', liq, undefined)).toBeNull();
+    expect(argsConfirmarSugestao('oben', { ...liq, inequivoco: false }, undefined)).toBeNull();
+    expect(argsConfirmarSugestao('oben', { ...liq, inequivoco: true }, undefined)?.destino).toBe('liquidar');
   });
 });

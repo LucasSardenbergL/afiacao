@@ -138,9 +138,9 @@ const backendIdle = {
   isMuted: false,
   remoteStream: null,
 };
-vi.mock('@/hooks/useCallBackend', () => ({ useCallBackend: () => backendIdle }));
+vi.mock('@/hooks/useCallBackend', () => ({ useCallBackendOpcional: () => backendIdle }));
 vi.mock('@/hooks/useWebRTCCall', () => ({
-  useWebRTCCall: () => ({
+  useWebRTCCallOpcional: () => ({
     callState: 'idle',
     transcriptionStatus: 'idle',
     transcriptionTurns: [],

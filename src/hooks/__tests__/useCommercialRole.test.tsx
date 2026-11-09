@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import React from 'react';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 
@@ -185,5 +185,39 @@ describe('useCommercialRole — contrato v2 (matriz aplicada): capability conced
 
     expect(result.current.commercialRole).toBeNull();
     expect(result.current.canViewManagerial).toBe(false);
+  });
+});
+
+describe('useCommercialRole — cache antigo e offline', () => {
+  it('a revalidação PAUSA offline: nega pelo cache antigo em vez de conceder (isSuccess continua true)', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['my-commercial-role', 'u-1'], 'estrategico', { updatedAt: Date.now() - 120_000 });
+    const comCache = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: qc }, children);
+    onlineManager.setOnline(false);
+    try {
+      const { result } = renderHook(() => useCommercialRole(), { wrapper: comCache });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(qc.getQueryState(['my-commercial-role', 'u-1'])?.fetchStatus).toBe('paused');
+      expect(result.current).toMatchObject({ commercialRole: null, isEstrategico: false, canViewStrategic: false });
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it('cache FRESCO não revalida e vale mesmo offline', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['my-commercial-role', 'u-1'], 'estrategico');
+    const comCache = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: qc }, children);
+    onlineManager.setOnline(false);
+    try {
+      const { result } = renderHook(() => useCommercialRole(), { wrapper: comCache });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(result.current).toMatchObject({ commercialRole: 'estrategico', isEstrategico: true });
+      expect(maybeSingleMock).not.toHaveBeenCalled();
+    } finally {
+      onlineManager.setOnline(true);
+    }
   });
 });

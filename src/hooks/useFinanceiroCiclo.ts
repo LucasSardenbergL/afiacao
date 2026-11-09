@@ -4,10 +4,18 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPages } from '@/lib/postgrest';
+import { erroComCausa } from '@/lib/erro-mensagem';
 import { normalizarResumo, num, type ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { normalizarGiro, type GiroSku } from '@/lib/financeiro/ciclo-giro-helpers';
+import { normalizarCustoCapital, type CustoCapital } from '@/lib/financeiro/ciclo-desconto-helpers';
+import { normalizarCoorteMaturacao, type CoorteMaturacao } from '@/lib/financeiro/coorte-maturacao-helpers';
 import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
+import {
+  normalizarSemanaPedidos, normalizarSemanaPrateleira, type SemanaPedidos, type SemanaPrateleira,
+} from '@/lib/financeiro/ruptura-sensor-helpers';
+import { ESTOQUE_ACCOUNT, cmvTtmFechado, diaSp, somarDias, type PontoEstoque } from '@/lib/financeiro/regua-ciclo-helpers';
+import { somarSaldoAberto } from '@/services/financeiroService';
 
 export function hojeSp(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
@@ -179,6 +187,183 @@ export function useCicloGiroSku(company: Company) {
         'fin_ciclo_giro_sku',
       );
       return linhas.map(normalizarGiro).filter((l): l is GiroSku => l !== null);
+    }),
+  });
+}
+
+export type RupturaSensor = { pedidos: SemanaPedidos[]; prateleira: SemanaPrateleira[] };
+
+/** Sensor de ruptura da Oben (migration 20261031200000): as duas views semanais, ordem estável por semana.
+ *  Erro de leitura LANÇA; linha ilegível é descartada (ausente ≠ zero). Só a Oben tem o sensor. */
+export function useRupturaSensor() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'ruptura-sensor'],
+    retryDelay: retryDelayCiclo,
+    // Cada view toma a PRÓPRIA vaga da fila (uma vaga com 2 leituras dentro furava o teto de 2 RPCs em voo —
+    // o `CicloTab.carga.test` mede o pico).
+    queryFn: async (): Promise<RupturaSensor> => {
+      const [pedidos, prateleira] = await Promise.all([
+        filaCiclo(() => fetchAllPages(
+          (de, ate) =>
+            supabase.from('v_reposicao_ruptura_pedidos_semana').select('*')
+              .eq('empresa', 'oben').order('semana', { ascending: true }).range(de, ate),
+          'v_reposicao_ruptura_pedidos_semana',
+        )),
+        filaCiclo(() => fetchAllPages(
+          (de, ate) =>
+            supabase.from('v_reposicao_ruptura_prateleira_semana').select('*')
+              .eq('empresa', 'oben').order('semana', { ascending: true }).range(de, ate),
+          'v_reposicao_ruptura_prateleira_semana',
+        )),
+      ]);
+      return {
+        pedidos: pedidos.map((r) => normalizarSemanaPedidos(r as Record<string, unknown>)).filter((s): s is SemanaPedidos => s !== null),
+        prateleira: prateleira.map((r) => normalizarSemanaPrateleira(r as Record<string, unknown>)).filter((s): s is SemanaPrateleira => s !== null),
+      };
+    },
+  });
+}
+
+// ── Régua honesta do card da empresa (Frente A, itens 2 e 3) ───────────────────────────────────────────
+// Insumos do DSO point-in-time, do R$/dia do PME e do PME por estoque MÉDIO dos 90 d. Ausente ≠ zero em
+// todos: insumo que falta vira null + motivo no helper puro (`regua-ciclo-helpers.ts`), nunca número.
+
+export type ReguaEmpresa = {
+  /** Σ CMV dos 12 meses fechados (DRE competência) — espelho do que a edge usa no PME. */
+  cmvTtm: { valor: number | null; meses: number; motivo: string | null };
+  /** Série diária (dia de SP) do estoque de giro gravada pelo snapshot do motor (engine v2.2+). */
+  estoqueSerie: PontoEstoque[];
+  /** Último sync da posição de estoque (inventory_position da conta da empresa); null = sem linha. */
+  estoqueSyncEm: string | null;
+  /** Cobertura de custo do estoque de giro (fin_estoque_giro_valor): % dos SKUs de giro com CMC. */
+  custoCobertura: { pct: number | null; skusGiro: number | null; skusComCusto: number | null };
+};
+
+const JANELA_SERIE_DIAS = 90;
+
+/** 4 leituras por empresa, em SÉRIE dentro de uma vaga da filaCiclo (pico de 1 leitura por vaga). */
+export function useReguaCiclo() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'regua', hojeSp()],
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<Record<Company, ReguaEmpresa>> => filaCiclo(async () => {
+      const hoje = hojeSp();
+      const [anoHoje] = hoje.split('-').map(Number);
+      const dre = await fetchAllPages(
+        (de, ate) =>
+          supabase.from('fin_dre_snapshots').select('company, ano, mes, cmv')
+            .eq('regime', 'competencia').gte('ano', anoHoje - 2)
+            .order('company', { ascending: true }).order('ano', { ascending: true }).order('mes', { ascending: true })
+            .range(de, ate),
+        'fin_dre_snapshots/ciclo-regua',
+      );
+      const inicioSerie = `${somarDias(hoje, -(JANELA_SERIE_DIAS - 1))}T00:00:00-03:00`; // 90 datas, hoje inclusive
+      const snaps = await fetchAllPages(
+        (de, ate) =>
+          supabase.from('fin_projecao_snapshots').select('company, snapshot_at, estoque_valor, estoque_fonte, estoque_cobertura_ok')
+            .eq('cenario', 'realista').gte('snapshot_at', inicioSerie)
+            .order('snapshot_at', { ascending: true }).order('id', { ascending: true })
+            .range(de, ate),
+        'fin_projecao_snapshots/ciclo-regua',
+      );
+      const out = {} as Record<Company, ReguaEmpresa>;
+      for (const c of ALL_COMPANIES) {
+        const linhasDre = dre
+          .filter((l) => l.company === c)
+          .map((l) => ({ ano: num(l.ano) ?? -1, mes: num(l.mes) ?? -1, cmv: num(l.cmv) }))
+          .filter((l) => l.ano > 0 && l.mes > 0);
+        // O ÚLTIMO snapshot do dia (de SP) decide o dia — inclusive quando ele veio SEM fonte: um snapshot das 20h
+        // sem estoque não pode ser "ressuscitado" pelo das 10h (Codex, 2026-10-31). Dia cujo último não tem
+        // fonte/valor fica descoberto (ausente ≠ zero).
+        const ultimoDoDia = new Map<string, (typeof snaps)[number]>();
+        for (const r of snaps) {
+          if (r.company !== c || typeof r.snapshot_at !== 'string') continue;
+          ultimoDoDia.set(diaSp(r.snapshot_at), r); // snaps vêm ascendentes por (snapshot_at, id)
+        }
+        const serie: PontoEstoque[] = [];
+        for (const [dia, r] of ultimoDoDia) {
+          if (r.estoque_fonte == null) continue;
+          const valor = num(r.estoque_valor);
+          if (valor === null) continue;
+          serie.push({ dia, valor, coberturaOk: r.estoque_cobertura_ok === true });
+        }
+        const sync = await supabase.from('inventory_position').select('synced_at')
+          .eq('account', ESTOQUE_ACCOUNT[c]).order('synced_at', { ascending: false }).limit(1);
+        if (sync.error) throw new Error(`inventory_position/${c}: ${sync.error.message}`);
+        const syncEm = sync.data?.[0]?.synced_at;
+        // Set-returning (1 linha agregada por empresa): paginado mesmo assim — a capa de 1.000 do PostgREST vale
+        // para .rpc() e o gate exige o canônico (fetchAllPages LANÇA com telemetria na página perdida).
+        const giroLinhas = await fetchAllPages(
+          (de, ate) => supabase.rpc('fin_estoque_giro_valor', { p_company: c })
+            .order('valor_giro', { ascending: true }).range(de, ate),
+          `fin_estoque_giro_valor/${c}`,
+        ).catch((e: unknown) => { throw erroComCausa(`fin_estoque_giro_valor/${c}`, e); });
+        const g = giroLinhas[0];
+        out[c] = {
+          cmvTtm: cmvTtmFechado(linhasDre, hoje),
+          estoqueSerie: serie,
+          estoqueSyncEm: typeof syncEm === 'string' ? syncEm : null,
+          custoCobertura: {
+            pct: g ? num(g.cobertura_pct) : null, skusGiro: g ? num(g.skus_giro) : null, skusComCusto: g ? num(g.skus_giro_com_custo) : null,
+          },
+        };
+      }
+      return out;
+    }),
+  });
+}
+
+/** Carteira ABERTA de CR (a vencer + vencido, saldo) por empresa — a base do DSO. Lê em série numa vaga. */
+export function useCrAbertoTotal() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'cr-aberto', hojeSp()],
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<Record<Company, number>> => filaCiclo(async () => {
+      const out = {} as Record<Company, number>;
+      for (const c of ALL_COMPANIES) out[c] = await somarSaldoAberto('fin_contas_receber', c);
+      return out;
+    }),
+  });
+}
+
+/**
+ * Custo do dinheiro por empresa (Frente B, PR3): `fin_funding_inputs.custo_capital_mensal` pela RPC gateada
+ * (master). Erro LANÇA; empresa sem CET vem com `custoMensal: null` — o painel mostra "—", nunca 0.
+ */
+export function useCicloCustoCapital() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'custo-capital'],
+    retryDelay: retryDelayCiclo,
+    // RPC set-returning pagina pelo canônico (3 linhas hoje, mas a capa de 1.000 do PostgREST é silenciosa).
+    queryFn: (): Promise<CustoCapital[]> => filaCiclo(async () => {
+      const linhas = await fetchAllPages(
+        (de, ate) => supabase.rpc('fin_ciclo_custo_capital').select('*').order('company', { ascending: true }).range(de, ate),
+        'fin_ciclo_custo_capital',
+      );
+      return linhas.map((r) => normalizarCustoCapital(r as Record<string, unknown>)).filter((c): c is CustoCapital => c !== null);
+    }),
+  });
+}
+
+/**
+ * Coortes de recebimento com maturação FIXA (Frente A, item 4): % do valor vencido no mês pago até
+ * D+15/30/60 após o VENCIMENTO, só quando a coorte está madura para a janela (senão null + flag).
+ * Erro LANÇA; linha ilegível é descartada (ausente ≠ zero). Uma vaga da fila para a leitura inteira.
+ */
+export function useCicloCoorteMaturacao() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'coorte-maturacao'],
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<CoorteMaturacao[]> => filaCiclo(async () => {
+      // .rpc() set-returning também é capado em 1.000 linhas pelo PostgREST → paginar sempre.
+      const linhas = await fetchAllPages(
+        (de, ate) =>
+          supabase.rpc('fin_ciclo_empresa_coorte_maturacao').select('*')
+            .order('company', { ascending: true }).order('mes_vencimento', { ascending: true })
+            .range(de, ate),
+        'fin_ciclo_empresa_coorte_maturacao',
+      );
+      return linhas.map((r) => normalizarCoorteMaturacao(r as Record<string, unknown>)).filter((c): c is CoorteMaturacao => c !== null);
     }),
   });
 }

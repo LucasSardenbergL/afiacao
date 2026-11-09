@@ -1,7 +1,7 @@
 import type { Tables } from '@/integrations/supabase/types';
 import { linhasCom, type ComColunas } from '@/lib/reposicao/linha-view';
-import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -44,7 +44,7 @@ import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMin
 import { acaoLinhaAtencao, particionarAtencao } from '@/components/reposicao/pedidos/shared';
 import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
 import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
-import { ImportarPedidoPortalDialog } from '@/components/reposicao/pedidos/ImportarPedidoPortalDialog';
+import { PedidosPortalCard } from '@/components/reposicao/pedidos/PedidosPortalCard';
 import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarcador, ordenarCandidatos, type Frescor, type MarcadorPos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
@@ -97,6 +97,9 @@ function FrescorEstoqueLive({ ultimaSync }: { ultimaSync: string | null | undefi
   );
 }
 
+/** Marca no `history.state` da entrada que ESTA tela empurrou ao abrir o detalhe. */
+const DETALHE_EMPILHADO = 'detalhePedidoEmpilhado';
+
 /* ─── Página principal ─── */
 export default function AdminReposicaoPedidos() {
   const queryClient = useQueryClient();
@@ -105,13 +108,17 @@ export default function AdminReposicaoPedidos() {
   const { isMaster, isGestorComercial, user } = useAuth();
   const podeOverride = isMaster || isGestorComercial;
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [detalhesPedido, setDetalhesPedido] = useState<PedidoSugerido | null>(null);
   const [cancelarPedido, setCancelarPedido] = useState<PedidoSugerido | null>(null);
   const [portalPedido, setPortalPedido] = useState<PedidoSugerido | null>(null);
   const [historicoData, setHistoricoData] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
   // Prévia de itens aberta na linha (só-leitura), por pedido.
   const [itensAbertos, setItensAbertos] = useState<ReadonlySet<number>>(() => new Set());
-  const alternarItens = (id: number) => {
+  // useCallback (e os demais callbacks das linhas): o `PedidoRow` é `memo` — com função nova a cada
+  // render, abrir a prévia de UMA linha re-renderizava todas (plano v4, lote 10 — C8).
+  const alternarItens = useCallback((id: number) => {
     setItensAbertos((atual) => {
       const novo = new Set(atual);
       const abrir = !novo.has(id);
@@ -120,7 +127,7 @@ export default function AdminReposicaoPedidos() {
       track('reposicao.itens_inline_toggle', { pedido_id: id, abrir });
       return novo;
     });
-  };
+  }, []);
   const [histAberto, setHistAberto] = useState(false);
 
   // Vira a queryKey na meia-noite SEM re-render por minuto: setState com a MESMA
@@ -225,10 +232,24 @@ export default function AdminReposicaoPedidos() {
     };
   }, [queryClient]);
 
-  const abrirDetalhes = (p: PedidoSugerido, origem: 'fila' | 'historico_hoje' | 'atencao' | 'abaixo_minimo') => {
+  const abrirDetalhes = useCallback((p: PedidoSugerido, origem: 'fila' | 'historico_hoje' | 'atencao' | 'abaixo_minimo') => {
     track('reposicao.pedido_detalhes_aberto', { pedido_id: p.id, status: p.status, origem });
     setDetalhesPedido(p);
-  };
+    // O detalhe aberto MORA na URL (?id=N), empurrado como entrada nova de histórico: o "voltar"
+    // do celular tira o ?id e o efeito abaixo fecha o modal (QA 8.3, 375×812). A marca no state
+    // diz ao fechar-pelo-X que a entrada é nossa → navigate(-1) em vez de deixar um "voltar" morto.
+    setSearchParams(
+      (atual) => {
+        const next = new URLSearchParams(atual);
+        next.delete('pedido');
+        next.set('id', String(p.id));
+        return next;
+      },
+      { state: { [DETALHE_EMPILHADO]: true } },
+    );
+  }, [setSearchParams]);
+  const abrirDetalhesFila = useCallback((p: PedidoSugerido) => abrirDetalhes(p, 'fila'), [abrirDetalhes]);
+  const abrirDetalhesHistorico = useCallback((p: PedidoSugerido) => abrirDetalhes(p, 'historico_hoje'), [abrirDetalhes]);
 
   // A fila de atenção é cross-ciclo; o pai split (status='split_em_filhos') por
   // construção nunca entra (pedidoPrecisaAtencao só dispara em falha_envio/portal),
@@ -305,11 +326,31 @@ export default function AdminReposicaoPedidos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkId, pedidoLocalDoLink, pedidoPorId, carregandoPedidoPorId, detalhesPedido?.id]);
 
+  // "Voltar" (popstate) tirou o ?id/?pedido da URL → fecha o detalhe aberto.
+  // `voltandoRef` segura um 2º fechar (duplo Esc/X) entre o navigate(-1) e o popstate — senão
+  // seriam DOIS passos para trás e o usuário sairia da tela.
+  const voltandoRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkId !== null) return;
+    voltandoRef.current = false;
+    if (detalhesPedido !== null) setDetalhesPedido(null);
+  }, [deepLinkId, detalhesPedido]);
+
   const handleCloseDetalhes = (open: boolean) => {
-    if (!open) {
-      setDetalhesPedido(null);
-      limparDeepLink();
+    if (open) return;
+    const empilhadoPorNos =
+      (location.state as Record<string, unknown> | null)?.[DETALHE_EMPILHADO] === true;
+    if (empilhadoPorNos && deepLinkId !== null) {
+      // A entrada é nossa: desfaz o push. NÃO zera o estado aqui — o ?id ainda está na URL até o
+      // popstate, e o efeito do deep link reabriria; o efeito acima fecha quando a URL mudar.
+      if (voltandoRef.current) return;
+      voltandoRef.current = true;
+      navigate(-1);
+      return;
     }
+    // Deep link vindo de fora (1ª entrada da aba, link do portal): voltar sairia da tela → replace.
+    setDetalhesPedido(null);
+    limparDeepLink();
   };
 
   // [GATE estoque-não-confirmado] fila de exceção PÓS-geração: o que o motor EFETIVAMENTE suprimiu, gravado em
@@ -594,6 +635,12 @@ export default function AdminReposicaoPedidos() {
     (dispararMutation.isPending && dispararMutation.variables === pedidoId) ||
     (dispararOverrideMutation.isPending && dispararOverrideMutation.variables === pedidoId);
 
+  // `mutate` é estável no TanStack Query v5 — o objeto da mutação, não.
+  const { mutate: dispararPedido } = dispararMutation;
+  const { mutate: dispararPedidoOverride } = dispararOverrideMutation;
+  const disparar = useCallback((p: PedidoSugerido) => dispararPedido(p.id), [dispararPedido]);
+  const dispararIgnorandoMinimo = useCallback((p: PedidoSugerido) => dispararPedidoOverride(p.id), [dispararPedidoOverride]);
+
   const bloqueados = (pedidos ?? []).filter((p) => p.status === 'bloqueado_guardrail');
 
   // [erro-colapsado-em-vazio] O `?? []` acima é o que converte "não consegui ler" em
@@ -759,11 +806,11 @@ export default function AdminReposicaoPedidos() {
             </AlertDialogContent>
           </AlertDialog>
           <UltimaExecucao acao="reposicao.sincronizar_recalcular" />
-          <ImportarPedidoPortalDialog />
-          {/* Varredura automática do portal (cron 12:30 · 17:30 · 22:30) — registro server-side da edge. */}
-          <UltimaExecucao acao="reposicao.varrer_portal_sayerlack" />
         </div>
       </div>
+
+      {/* Portal Sayerlack: importar pelo número, o que a varredura importou e o que ficou pendente. */}
+      <PedidosPortalCard />
 
       {/* Vindos do cockpit "Ciclo diário" (aposentado): frescor das fontes + SKUs que o motor não vê. */}
       <DataHealthBanner source="reposicao_sugestoes" />
@@ -968,14 +1015,14 @@ export default function AdminReposicaoPedidos() {
                       <PedidoRow
                         key={p.id}
                         p={p}
-                        onVerDetalhes={() => abrirDetalhes(p, 'fila')}
-                        onCancelar={() => setCancelarPedido(p)}
-                        onVerPortal={() => setPortalPedido(p)}
-                        onDisparar={() => dispararMutation.mutate(p.id)}
-                        onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                        onVerDetalhes={abrirDetalhesFila}
+                        onCancelar={setCancelarPedido}
+                        onVerPortal={setPortalPedido}
+                        onDisparar={disparar}
+                        onDispararIgnorandoMinimo={podeOverride ? dispararIgnorandoMinimo : undefined}
                         disparando={disparandoLinha(p.id)}
                         expandido={itensAbertos.has(p.id)}
-                        onAlternarItens={() => alternarItens(p.id)}
+                        onAlternarItens={alternarItens}
                         colunas={7}
                       />
                     ))}
@@ -1022,11 +1069,11 @@ export default function AdminReposicaoPedidos() {
                           <PedidoRow
                             key={p.id}
                             p={p}
-                            onVerDetalhes={() => abrirDetalhes(p, 'historico_hoje')}
-                            onCancelar={() => setCancelarPedido(p)}
-                            onVerPortal={() => setPortalPedido(p)}
-                            onDisparar={() => dispararMutation.mutate(p.id)}
-                            onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                            onVerDetalhes={abrirDetalhesHistorico}
+                            onCancelar={setCancelarPedido}
+                            onVerPortal={setPortalPedido}
+                            onDisparar={disparar}
+                            onDispararIgnorandoMinimo={podeOverride ? dispararIgnorandoMinimo : undefined}
                             disparando={disparandoLinha(p.id)}
                           />
                         ))}

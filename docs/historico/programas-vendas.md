@@ -244,6 +244,13 @@ com a Onda 2 ligada o Mix/Gap sai da fila (vive na ficha).
   do cache na tela (Codex código P1).
 - **Gerar complemento/preço para outro dia olharia o futuro**: o núcleo do Mix/Gap e o último preço ao vivo leem `now()`.
   Por isso sombra e histórico ficam só com recompra.
+- **Depois do go-live (medido em 2026-11-08, psql-ro):** a Onda 1 ligou sozinha em 24/10 (3 sombras idênticas à
+  reconstrução); a Onda 2 foi ligada à mão pelo founder em 31/10 (`venda_onda_log`, `manual: true`). Até 08/11 a lista
+  saiu todo dia (36–77 compradores por farmer) e as farmers não abriram o app: 0 linhas em `venda_lista_acesso`, 0 em
+  `venda_contato`, 0 `mostrada_em`. Os primeiros desfechos (listas de 24/10) mediram a lista sem ligação: 39 virou_pedido
+  em 655. O gargalo é de rollout (aviso + rotina das farmers), não de código; a Onda 3 liga sozinha no 1º repasse aprovado.
+- **A validação das ondas confere REGRA, não md5** (#3723): três entregas posteriores recriaram as funções e o md5
+  fixo dava ❌ com as regras de pé.
 
 ## Venda por cliente — a lista da farmer na lente "Ver como" (2026-10-21)
 
@@ -293,3 +300,43 @@ não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor únic
   master que também é employee (o da prod é só-master e já cai no filtro employee) — a P5 passa a preferir esse.
 - **Medição** (psql-ro; `claude_ro` tem BYPASSRLS, então 0 é 0): a query está no PR; sem linha = não leu; `n_compradores
   = 0` = leu lista vazia.
+
+## Venda por cliente — Onda 2 ligada por decisão do founder, antes da adoção (2026-10-31)
+
+- **Decisão do founder** ("Comece a onda 2"): ligar `onda_complemento` sem esperar a condição automática do
+  `venda_avaliar_ondas` (≥ 80% de contatados por farmer em 2 semanas). Na decisão: `venda_contato` = 0 e
+  `venda_lista_acesso` = 0 desde 24/10 — as farmers ainda não abriram a lista.
+- **Envelope** `db/2026-10-31-venda-ligar-onda2.sql` (recibo #788): PRE exige Onda 1 ligada; UPDATE idempotente;
+  `venda_onda_log` com `condicao.manual = true` (o painel distingue de uma ligação automática); gera o complemento
+  da lista ativa de hoje (o cron das 08:15 UTC já tinha rodado sem ele); POS confere chave, log e Onda 3 intocada.
+- **Resultado em 31/10**: Regina 12 linhas / 8 compradores, Tatyana 14 / 8 de complemento, ao lado de 306 e 348
+  de recompra. A resposta da lista da farmer já traz `ondas.complemento = true` e os itens.
+- **Onda 3 continua automática**: liga sozinha no 1º cron depois de existir repasse aprovado vigente (hoje 0).
+  Aprovar um repasse no painel = ligar a Onda 3 na manhã seguinte.
+- **Leitura do desfecho**: complemento antes da adoção mede a lista, não a ação da farmer — comparar só a partir
+  da 1ª semana com `venda_lista_acesso` > 0.
+
+## Venda por cliente — repasse não sugere SKU que o cliente substituiu (2026-10-31)
+
+- **Regra do founder**: repasse faz sentido quando o cliente segue comprando o item e nenhum outro entrou para
+  substituí-lo (ex.: a Oben passou o cliente do DFA.4128 para o DFA.4080, mais barato, mantendo o preço de venda).
+  Quem compra vários da mesma função ao mesmo tempo (há compradores de 10+ diluentes) não é descartado.
+- **`venda_repasse_candidatos`** (migration `20261031233000`) ganha `situacao_compra`: `comprando` (≤ 2× a
+  cadência sem comprar) · `parado` (> 2×, sem substituto — sinal; o sugerido fica) · `substituido` (parado e
+  um SKU de OUTRA base da mesma família entrou depois, sem ter sido comprado nos 365 d até a última compra do
+  candidato; sai da sugestão: sem `preco_sugerido`/valor anual, com `substituto`) · `NULL` (sem cadência).
+  Base = código Sayerlack sem a embalagem (DFA.4128LT/QT/L5 → DFA.4128). Só famílias de função única
+  (diluente, retardador, seladora nitro, thinners): catalisador/verniz/fundo/mordente/tingidor trocam por
+  cor ou sistema, não por substituto.
+- **Prod depois do apply (31/10, recibo #802; 94 candidatos, R$ 54.822/ano antes)**: comprando 22 (R$ 1.848) ·
+  parado 61 (R$ 33.195, sugerido mantido) · substituído 11 (R$ 19.779 que deixam de ser sugeridos). Casos-ouro:
+  os três (inclusive o nº 1 do ranking) → substituído pelo DFA.4080.
+  O retardador de um deles (DEA.4014 até out/25 → DEZ.8014 → DEA de novo em ago/26) fica `parado`: a base DEA
+  foi comprada nos 365 d antes da última DEZ, então a regra conservadora a lê como convivência.
+  **Lição**: só 3% do "recuperável/ano" estava em SKU que o cliente ainda compra na cadência — o ranking por
+  valor anual premiava justamente o que parou. Tempo da RPC em prod: 491 → ~540 ms.
+- **Tela**: a aba Repasses agrupa em "Segue comprando", "Parou de comprar" e "Substituído — não é repasse"
+  (sem Aprovar; Revogar continua para um repasse vigente). Aprovar segue decisão do founder; Onda 3 intocada.
+- **Desempenho**: a 2ª leitura de `venda_linhas_pedido` (só compradores com candidato parado em família
+  substituível) agrega as datas num array por comprador × SKU — a versão por linha de dia passava dos 8 s no
+  volume de prova (1.400 candidatos parados).

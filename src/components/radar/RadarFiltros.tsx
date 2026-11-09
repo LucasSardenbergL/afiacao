@@ -2,7 +2,7 @@
 // Usamos sentinels '__todas_ufs__' e '__fila__' para os valores "vazio"
 // e convertemos de volta para '' na lógica de set().
 
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -35,6 +35,51 @@ const STATUS_OPTIONS = [
   { v: 'descartado', label: 'Descartados' },
 ];
 
+/** Espera depois da última tecla antes de mandar o texto à fila (e à URL). */
+export const ATRASO_DIGITACAO_MS = 400;
+
+/**
+ * Campo de texto que só confirma o valor depois de uma pausa na digitação (pacote N): antes cada tecla trocava o
+ * filtro, e cada troca era uma `radar_lista` nova (a anterior, sem `signal`, seguia até o fim). Enter e sair do campo
+ * confirmam na hora. Valor trocado POR FORA (favorito, limpar filtros, cidade do ranking) entra no campo.
+ */
+function CampoTextoAdiado({
+  valor,
+  onConfirmar,
+  ...props
+}: { valor: string; onConfirmar: (v: string) => void } & Omit<ComponentProps<typeof Input>, 'value' | 'onChange'>) {
+  const [rascunho, setRascunho] = useState(valor);
+  const confirmado = useRef(valor);
+  const confirmar = useRef(onConfirmar);
+  confirmar.current = onConfirmar;
+  // De fora: o valor mudou e não fui eu que o mandei → adota.
+  useEffect(() => {
+    if (valor !== confirmado.current) {
+      confirmado.current = valor;
+      setRascunho(valor);
+    }
+  }, [valor]);
+  const enviar = useCallback((v: string) => {
+    if (v === confirmado.current) return;
+    confirmado.current = v;
+    confirmar.current(v);
+  }, []);
+  useEffect(() => {
+    if (rascunho === confirmado.current) return;
+    const t = setTimeout(() => enviar(rascunho), ATRASO_DIGITACAO_MS);
+    return () => clearTimeout(t);
+  }, [rascunho, enviar]);
+  return (
+    <Input
+      {...props}
+      value={rascunho}
+      onChange={(e) => setRascunho(e.target.value)}
+      onBlur={(e) => { enviar(rascunho); props.onBlur?.(e); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') enviar(rascunho); props.onKeyDown?.(e); }}
+    />
+  );
+}
+
 export function RadarFiltros({
   filtros,
   set,
@@ -52,7 +97,8 @@ export function RadarFiltros({
   const escolherRegiao = (r: 'atuacao' | 'brasil') => {
     if (r === regiao) return;
     track('radar.regiao_trocada', { regiao: r, uf: filtros.uf || null });
-    set({ regiao: r });
+    // Trocar a região solta a cidade exata do ranking/mapa (o nome fica, como filtro por nome).
+    set({ regiao: r, municipioCodigo: '' });
   };
   return (
     <div className="space-y-3">
@@ -87,11 +133,13 @@ export function RadarFiltros({
 
       {/* Filtros principais */}
       <div className="flex flex-wrap gap-2 items-center">
-        <Input
+        <CampoTextoAdiado
           className="max-w-xs"
+          type="search"
+          aria-label="Buscar por razão social ou nome fantasia"
           placeholder="Buscar razão social / fantasia…"
-          value={filtros.busca}
-          onChange={(e) => set({ busca: e.target.value })}
+          valor={filtros.busca}
+          onConfirmar={(busca) => set({ busca })}
         />
 
         {/* Região: abre em MG e vizinhos (onde está a carteira); Brasil a 1 clique. UF escolhida vence. */}
@@ -120,9 +168,9 @@ export function RadarFiltros({
         {/* Select de UF — usa sentinel para o valor "todas" */}
         <Select
           value={filtros.uf || SENTINEL_UF}
-          onValueChange={(v) => set({ uf: v === SENTINEL_UF ? '' : v })}
+          onValueChange={(v) => set({ uf: v === SENTINEL_UF ? '' : v, municipioCodigo: '' })}
         >
-          <SelectTrigger className="w-28">
+          <SelectTrigger className="w-28" aria-label="UF">
             <SelectValue placeholder="UF" />
           </SelectTrigger>
           <SelectContent>
@@ -135,21 +183,26 @@ export function RadarFiltros({
           </SelectContent>
         </Select>
 
-        <Input
+        <CampoTextoAdiado
           className="w-36"
+          aria-label="Município"
           placeholder="Município"
-          value={filtros.municipio}
-          onChange={(e) => set({ municipio: e.target.value })}
+          valor={filtros.municipio}
+          // Digitar volta ao filtro por nome (parcial): a cidade exata do ranking/mapa sai.
+          onConfirmar={(municipio) => set({ municipio, municipioCodigo: '' })}
+          title={filtros.municipioCodigo ? 'Cidade escolhida no ranking ou no mapa (exata, pelo código)' : undefined}
         />
 
         <RadarBuscaCnae valor={filtros.cnae} onChange={(cnae) => set({ cnae })} />
+        {/* Combina com o principal (E): ex. principal "móveis de madeira" + secundário "marmoraria". */}
+        <RadarBuscaCnae campo="secundario" valor={filtros.cnaeSecundario ?? ''} onChange={(cnaeSecundario) => set({ cnaeSecundario })} />
 
         {/* Select de status — usa sentinel para o valor "fila" */}
         <Select
           value={filtros.status || SENTINEL_STATUS}
           onValueChange={(v) => set({ status: v === SENTINEL_STATUS ? '' : v })}
         >
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-40" aria-label="Status do lead">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

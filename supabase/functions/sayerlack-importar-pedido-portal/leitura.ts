@@ -41,6 +41,7 @@ export type MotivoLeitura =
   | "consulta_ambigua"
   | "consulta_incompleta"
   | "pedido_cancelado"
+  | "situacao_ilegivel"
   | "itens_ausentes"
   | "item_malformado"
   | "item_incoerente"
@@ -118,10 +119,33 @@ export function lerCabecalho(linhas: LinhaConsultaRaw[], protocolo: string): { o
   if (situacaoCancelada(situacao)) {
     return { ok: false, motivo: "pedido_cancelado", detalhe: `O pedido ${protocolo} está cancelado no portal ("${situacao}") — pedido cancelado não vira pedido de compra no Omie.` };
   }
+  // Situação RECONHECIDA (revisão 2, B1): o portal mostra "<código> - <nome>" com código 1..7 (select real). Texto
+  // sem código — vazio, "???", renomeado — não prova que o pedido segue valendo: nem o botão (que aceita qualquer
+  // situação, decisão do founder) importa ou re-dispara com situação ilegível.
+  if (!/^\s*[1-7]\s*-/.test(situacao)) {
+    return { ok: false, motivo: "situacao_ilegivel", detalhe: `A situação do pedido ${protocolo} no portal ("${situacao.slice(0, 60)}") não tem código reconhecido (1 a 7) — não sei se ele segue valendo. Nada foi gravado.` };
+  }
   return {
     ok: true,
     cab: { protocolo, cliente, situacao, data_entrega: dataEntrega as string, valor_mercadoria: vlrMerc as number, valor_total: vlrTotal as number },
   };
+}
+
+/**
+ * Situação do pedido OBSERVADA na consulta (Onda 5A, 2026-11-08) — o que vai para o escritor único
+ * `sayerlack_registrar_situacao_portal`. Independe do resto do cabeçalho estar legível (um cancelado nunca chega a
+ * `lerCabecalho` ok), mas exige identidade: exatamente UMA linha com "Pedido" = protocolo, cliente OBEN e código
+ * 1..7 no texto "<código> - <nome>". Qualquer outra coisa ⇒ null (nada a gravar — situação ilegível nunca substitui
+ * a observação vigente).
+ */
+export function situacaoObservada(linhas: LinhaConsultaRaw[], protocolo: string): { protocolo: string; codigo: string; texto: string } | null {
+  const doPedido = linhas.filter((l) => Object.entries(l).some(([k, v]) => norm(k) === "pedido" && v.trim() === protocolo));
+  if (doPedido.length !== 1) return null;
+  const l = doPedido[0];
+  if (!/oben/i.test((coluna(l, "Cliente") ?? "").trim())) return null;
+  const texto = (coluna(l, "Situa") ?? "").trim();
+  const m = texto.match(/^([1-7])\s*-/);
+  return m ? { protocolo, codigo: m[1], texto: texto.slice(0, 200) } : null;
 }
 
 /**
@@ -130,6 +154,15 @@ export function lerCabecalho(linhas: LinhaConsultaRaw[], protocolo: string): { o
  */
 export function situacaoCancelada(situacao: string): boolean {
   return /^\s*6\s*-/.test(situacao) || norm(situacao).includes("cancelad");
+}
+
+/**
+ * "3 - Atendido Total" / "7 - Fatur Balcão": a Sayerlack já faturou o pedido inteiro (revisão 2, B2). Re-disparar o PO
+ * de um pedido do app nessa situação arrisca o 2º PO por cima da NF já lançada — o botão recusa o RE-DISPARO (a
+ * importação NOVA segue aceitando qualquer situação, decisão do founder).
+ */
+export function situacaoFaturada(situacao: string): boolean {
+  return /^\s*[37]\s*-/.test(situacao);
 }
 
 /**
@@ -211,14 +244,31 @@ const MENSAGEM_SQLSTATE: Readonly<Record<string, string>> = {
   IP004: "O de-para aponta para um fornecedor que não é a Sayerlack.",
   IP005: "O mesmo SKU aparece duas vezes no pedido do portal.",
   IP006: "Já existe pedido de compra no Omie com este número do portal no contrato (lançado direto no Omie).",
-  CP006: "Item sem alíquota de IPI conhecida para o NCM (cadastre o NCM e importe de novo).",
+  IP007: "A condição de pagamento do portal não tem correspondente único no cadastro de condições do Omie.",
+  IP008: "Há pedido do próprio app sendo enviado ao portal agora; espere ele terminar (ou concilie) e importe de novo.",
+  IP009: "O pedido gravado não bateu com a leitura do portal na conferência — nada foi gravado. Importe de novo.",
   CP007: "O total com IPI calculado não bate com o Vlr Total do portal.",
   CP004: "Itens divergentes ao aplicar o custo.",
   CP002: "Este pedido já tem pedido de compra no Omie.",
   "42501": "Acesso negado.",
 };
 
+/** NCMs (8 dígitos) citados na mensagem do CP006 ("… (NCM: 32091020, 32110000) — nada gravado"). */
+export function ncmsDoCp006(message: string | null | undefined): string[] {
+  const m = /NCM:\s*([0-9,\s]+)/.exec(message ?? "");
+  return m ? [...new Set(m[1].split(/[,\s]+/).filter((x) => /^\d{8}$/.test(x)))] : [];
+}
+
 export function mensagemErroImportacao(code: string | null | undefined, message: string | null | undefined): string {
+  if (code === "CP006") {
+    // Diz QUAL NCM e o PASSO (Fable C4) — "peça ao administrador" não destravava ninguém: o founder é o administrador.
+    const ncms = ncmsDoCp006(message);
+    const quais = ncms.length > 0 ? `O NCM ${ncms.join(", ")} não tem` : "Um item tem NCM sem";
+    return `${quais} alíquota de IPI cadastrada no app, então não consigo provar o custo com IPI. Nada foi gravado. ` +
+      "Passo: ler a alíquota numa NF de entrada desse produto e cadastrar em ipi_aliquota_ncm (runbook " +
+      "docs/runbooks/sayerlack-pedido-portal-nao-entrou.md, seção CP006); depois importe de novo." +
+      (message ? ` Detalhe: ${message}` : "");
+  }
   const base = (code && MENSAGEM_SQLSTATE[code]) ?? "Falha ao gravar a importação.";
   return message ? `${base} Detalhe: ${message}` : base;
 }

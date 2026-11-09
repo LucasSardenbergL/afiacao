@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loteVigente, ehInedito, saiuDoDump, rotuloSaiuDoDump, recorteDeLote, type LoteIngest } from '../lote-vigente';
+import { loteVigente, ehInedito, saiuDoDump, rotuloSaiuDoDump, recorteDeLote, lotePublicando, rotuloEfetivo, fotoPostgrest, type LoteIngest } from '../lote-vigente';
 
 /**
  * Lote VIGENTE = a foto mais recente que TERMINOU (max(mes_referencia) com status='complete').
@@ -83,12 +83,12 @@ describe('saiuDoDump + rótulo', () => {
   });
 
   it('rótulo diz O MÊS em que foi visto pela última vez — sem motivo (baixa é outra entrega)', () => {
-    expect(rotuloSaiuDoDump('2026-05')).toBe('saiu do dump em mai/2026');
-    expect(rotuloSaiuDoDump('2026-12')).toBe('saiu do dump em dez/2026');
+    expect(rotuloSaiuDoDump('2026-05')).toBe('última presença: mai/2026 · ausente no lote atual');
+    expect(rotuloSaiuDoDump('2026-12')).toBe('última presença: dez/2026 · ausente no lote atual');
   });
 
   it('rótulo não inventa mês para lote fora do formato', () => {
-    expect(rotuloSaiuDoDump('lixo')).toBe('saiu do dump em lixo');
+    expect(rotuloSaiuDoDump('lixo')).toBe('última presença: lixo · ausente no lote atual');
   });
 });
 
@@ -114,5 +114,48 @@ describe('recorteDeLote — o predicado único de fila e ranking/mapa', () => {
     for (const m of [modo(false, false), modo(true, false), modo(false, true)]) {
       expect(recorteDeLote(null, m)).toEqual({ ultimoLote: null, primeiraVistaMin: null });
     }
+  });
+});
+
+/**
+ * Publicação EM PASSOS (migration 20261111120000; incidente de 2026-11-08: a troca numa transação estourou
+ * 30 min e travou o Realtime). Durante a publicação de P sobre o vigente V, quem já ganhou o rótulo P vindo
+ * de V ainda é da foto V (lote_anterior); a empresa nova (anterior null) ainda não é de foto nenhuma.
+ * Mesmo predicado de `public.radar_lote_publicando()` e de `radar_lista`.
+ */
+describe('publicação em passos — rótulo efetivo', () => {
+  const V = lote({ mes_referencia: '2026-10', status: 'complete', iniciado_em: '2026-10-27T16:20:00Z' });
+  const durante = { ...V, publicando: '2026-11' };
+
+  it('lotePublicando: validada + publicação começada + mais novo que o vigente', () => {
+    const p = (o: object) => ({ ...lote({ mes_referencia: '2026-11', status: 'running' }), ...o });
+    expect(lotePublicando([V, p({ carga_fase: 'validada', carga_publicacao_iniciada_em: '2026-11-09T07:00Z' })], V)).toBe('2026-11');
+    expect(lotePublicando([V, p({ carga_fase: 'validada', carga_publicacao_iniciada_em: null })], V), 'validada sem começar').toBeNull();
+    expect(lotePublicando([V, p({ carga_fase: 'publicada', carga_publicacao_iniciada_em: '2026-11-09T07:00Z' })], V)).toBeNull();
+    // Re-run do mês vigente nunca troca rótulo: não há P.
+    const rerun = { ...V, carga_fase: 'validada', carga_publicacao_iniciada_em: '2026-11-09T07:00Z' };
+    expect(lotePublicando([rerun], V)).toBeNull();
+  });
+
+  it('rotuloEfetivo: rótulo novo vindo do vigente = vigente; nova = null; fora da publicação = físico', () => {
+    expect(rotuloEfetivo({ ultimo_lote: '2026-11', lote_anterior: '2026-10' }, durante)).toBe('2026-10');
+    expect(rotuloEfetivo({ ultimo_lote: '2026-11', lote_anterior: null }, durante)).toBeNull();
+    expect(rotuloEfetivo({ ultimo_lote: '2026-11', lote_anterior: '2026-05' }, durante), 'volta ao dump').toBe('2026-05');
+    expect(rotuloEfetivo({ ultimo_lote: '2026-10', lote_anterior: '2026-09' }, durante)).toBe('2026-10');
+    expect(rotuloEfetivo({ ultimo_lote: '2026-11', lote_anterior: '2026-10' }, V), 'sem publicação').toBe('2026-11');
+  });
+
+  it('selos durante a publicação: já trocada segue inédita/na foto; a que volta segue "saiu do dump"', () => {
+    const trocada = { ultimo_lote: '2026-11', lote_anterior: '2026-10', primeira_vista_em: '2026-10-27T17:00:00Z' };
+    expect(ehInedito(trocada, durante)).toBe(true);
+    expect(saiuDoDump(trocada, durante)).toBe(false);
+    const volta = { ultimo_lote: '2026-11', lote_anterior: '2026-05' };
+    expect(saiuDoDump(volta, durante)).toBe(true);
+    expect(saiuDoDump({ ultimo_lote: '2026-11', lote_anterior: null }, durante), 'nova: não é de foto nenhuma').toBe(false);
+  });
+
+  it('fotoPostgrest: só o vigente fora da publicação; IN (V,P) + OU anterior = V durante', () => {
+    expect(fotoPostgrest(V)).toEqual({ rotulos: ['2026-10'], ou: null });
+    expect(fotoPostgrest(durante)).toEqual({ rotulos: ['2026-10', '2026-11'], ou: 'ultimo_lote.eq.2026-10,lote_anterior.eq.2026-10' });
   });
 });

@@ -741,3 +741,27 @@ trata dollar-quote**. Um `REVOKE` embrulhado em `DO $$ … $$` deixa de ser stat
 banco fecharia igual, a âncora ficaria **muda**, e a migration não cumpriria o que se propõe sem
 nada ficar vermelho. É a razão de os 3 REVOKE serem top-level, e A12 é o que impede alguém de
 "melhorar" isso depois com um guard de existência.
+
+# 10. Reescrita mecânica de policy em massa: provar por DESEMBRULHO, regravar no MESMO PR (2026-11-03)
+
+O #3549 (migration `20261102204836`) trocou `has_role(auth.uid(), …)` cru por
+`( SELECT has_role(auth.uid(), …) AS has_role)` (InitPlan) em 308 policies. Dez delas estão no
+contrato curado: o md5 de USING/WITH CHECK mudou e `authz:rls:prod` saiu 1 por um dia na #3393
+(10 `POLICY_ALTERADA`), sem que nenhuma regra de acesso tivesse mudado.
+
+**A prova que basta é executável e barata:** retirar o embrulho do texto VIVO (`pg_get_expr`
+normalizado) e exigir o md5 ANTIGO do contrato, byte a byte. Os 3 textos distintos bateram
+(`8ddd30b6`, `45ad0946`, `f0bb0ea3`), e `cmd`/`permissive`/`roles` não se moveram (o achado
+listava só os campos de expressão). Semanticamente, `(SELECT f(x))` sem `FROM` devolve uma linha
+com o mesmo valor de `f(x)`, inclusive `NULL`, e o corpo de `has_role` segue congelado no eixo 3.
+
+**A regra que fica:** migration que reescreve policy em massa e alcança tabela curada regrava o
+`qualMd5`/`withCheckMd5` do contrato **no mesmo PR**, com a prova de desembrulho no corpo. Senão,
+o alarme vira ruído de um dia que treina a gente a renovar hash sem ler.
+
+Nesta mesma rodada, `LACUNA_GRUPO_MUDOU` foi resolvida por **força bruta contra o `tabelasMd5`
+declarado**: retirar k tabelas da lista viva até o md5 de 28/08 bater. Uma única combinação bateu
+em cada grupo, e isso dá o conjunto exato do que entrou, não um palpite por data de migration.
+Entraram `fin_contas_receber_excluidos`, `fin_ic_contrapartes` e `fin_ic_reconcile_rodadas` (sem
+policy nem grant para `authenticated`), além de `reposicao_compra_suspensa` e `_log` (foto de
+custo, derivada). As cinco ficaram como lacuna, com a razão em `LACUNAS_POR_GRUPO`.

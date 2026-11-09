@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { caixaDisponivel, hurdleEfetivo, classificarStatus, montarFilaAcoes } from '../next-best-action-helpers';
+import { caixaDisponivel, caixaDaA1, hurdleEfetivo, classificarStatus, montarFilaAcoes, type CaixaEmpresa } from '../next-best-action-helpers';
+
+const cx = (disponivel: number | null, confianca: CaixaEmpresa['confianca']): CaixaEmpresa => ({ disponivel, confianca, saldo_tesouraria: null, dias_cobertura: null, motivos: [] });
 
 describe('caixaDisponivel', () => {
   it('saldo − reserva proporcional aos dias de cobertura', () => {
@@ -12,8 +14,67 @@ describe('caixaDisponivel', () => {
   it('confiança baixa → haircut de 50%', () => {
     expect(caixaDisponivel({ saldo_tesouraria: 120000, dias_cobertura: 60, reserva_dias_min: 30, confianca_baixa: true })).toBeCloseTo(30000, 0);
   });
-  it('dias_cobertura 0/desconhecido → reserva tudo (0 disponível)', () => {
+  it('dias_cobertura 0 CONHECIDO (saldo ≤ 0) → 0 disponível', () => {
     expect(caixaDisponivel({ saldo_tesouraria: 100000, dias_cobertura: 0, reserva_dias_min: 30, confianca_baixa: false })).toBe(0);
+  });
+  it('plano v6 C1: cobertura ou saldo DESCONHECIDO (null/NaN) → null, nunca 0', () => {
+    expect(caixaDisponivel({ saldo_tesouraria: 10000, dias_cobertura: null, reserva_dias_min: 21, confianca_baixa: false })).toBeNull();
+    expect(caixaDisponivel({ saldo_tesouraria: null, dias_cobertura: 60, reserva_dias_min: 21, confianca_baixa: false })).toBeNull();
+    expect(caixaDisponivel({ saldo_tesouraria: Number.NaN, dias_cobertura: 60, reserva_dias_min: 21, confianca_baixa: false })).toBeNull();
+  });
+});
+
+describe('caixaDaA1 (transporte A1 → A4, plano v6 C1)', () => {
+  it('reprodução do Codex: cobertura null + saldo 10.000 → disponível null, baixa, saldo preservado', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 10000, dias_cobertura: null }, confianca_dados: { motivos: [], saldo_inicial: null } }, 21);
+    expect(r).toMatchObject({ disponivel: null, confianca: 'baixa', saldo_tesouraria: 10000, dias_cobertura: null });
+    expect(r.motivos).toHaveLength(1);
+    expect(r.motivos[0]).toContain('sem base de saída');
+  });
+  it('saldo datado → haircut + baixa + motivo da A1', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: ['x'], saldo_inicial: 'Saldo datado.' } }, 21);
+    expect(r.disponivel).toBeCloseTo(32500, 6);
+    expect(r.confianca).toBe('baixa');
+    expect(r.motivos).toEqual(['Saldo inicial datado: Saldo datado.']);
+  });
+  it('degradação de PMR/PMP/CCC não toca o caixa', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: ['… PMR/PMP/CCC ficam indisponíveis.'], saldo_inicial: null } }, 21);
+    expect(r).toEqual({ disponivel: 65000, confianca: 'alta', saldo_tesouraria: 100000, dias_cobertura: 60, motivos: [] });
+  });
+  it('formato legado da A1 ({ motivos } sem saldo_inicial) → média, frescor não atestado (Codex, revisão do código)', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [] } }, 21);
+    expect(r).toMatchObject({ disponivel: 65000, confianca: 'media' });
+    expect(r.motivos[0]).toContain('frescor do saldo não atestado');
+  });
+  it('A1 null → disponível null, baixa', () => {
+    expect(caixaDaA1(null, 21)).toMatchObject({ disponivel: null, confianca: 'baixa' });
+  });
+});
+
+describe('montarFilaAcoes com caixa desconhecido (plano v6 C1)', () => {
+  it('crescer dimensionado com caixa null → falta_dado, e o motivo da empresa chega à confiança da fila', () => {
+    const caixa = caixaDaA1({ indicadores: { saldo_tesouraria: 10000, dias_cobertura: null }, confianca_dados: { motivos: [], saldo_inicial: null } }, 21);
+    const r = montarFilaAcoes({
+      candidatos: [{ empresa: 'oben', descricao: 'c', tipo: 'crescer', impacto_eva: 1000, caixa_consumido: 5000, payback_meses: 6, spread_positivo: true, confianca: 'alta' }],
+      caixaPorEmpresa: { oben: caixa },
+      hurdlePorEmpresa: { oben: 0.15 },
+    });
+    expect(r.fila.find((a) => a.tipo === 'crescer')!.status).toBe('falta_dado');
+    expect(r.confianca.nivel).toBe('baixa');
+    expect(r.confianca.motivos.join(' | ')).toContain('Caixa (oben): Cobertura de caixa desconhecida');
+  });
+  it('saldo datado: a ESTIMATA (baixa) segue no card mas não aprova financiar_ja (contraexemplo do Codex)', () => {
+    const caixa = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: 'Saldo datado.' } }, 21);
+    const r = montarFilaAcoes({
+      candidatos: [{ empresa: 'oben', descricao: 'c', tipo: 'crescer', impacto_eva: 1000, caixa_consumido: 30000, payback_meses: 6, spread_positivo: true, confianca: 'alta' }],
+      caixaPorEmpresa: { oben: caixa },
+      hurdlePorEmpresa: { oben: 0.15 },
+    });
+    expect(r.fila.find((a) => a.tipo === 'crescer')!.status).toBe('falta_dado');
+    expect(r.caixa_por_empresa.oben.disponivel).toBeCloseTo(32500, 6);
+  });
+  it('classificarStatus: caixa null não decide financiar_ja/condicional', () => {
+    expect(classificarStatus({ tipo: 'crescer', impacto_eva: 1, spread_positivo: true, caixa_consumido: 1, caixa_disponivel: null, hurdle: 0.1, tem_dado: true })).toBe('falta_dado');
   });
 });
 
@@ -78,7 +139,7 @@ describe('montarFilaAcoes', () => {
         cand({ tipo: 'crescer', descricao: 'crescer A' }),
         cand({ tipo: 'consertar_valor', descricao: 'cortar desconto', impacto_eva: 500, caixa_consumido: 0 }),
       ],
-      caixaPorEmpresa: { oben: { disponivel: 100000, confianca: 'alta' } },
+      caixaPorEmpresa: { oben: cx(100000, 'alta') },
       hurdlePorEmpresa: { oben: 0.2 },
     });
     expect(r.fila[0].tipo).toBe('consertar_valor');
@@ -92,7 +153,7 @@ describe('montarFilaAcoes', () => {
         cand({ tipo: 'crescer', descricao: 'cresce caro', impacto_eva: 10000, caixa_consumido: 100000 }),
         cand({ tipo: 'crescer', descricao: 'cresce barato', impacto_eva: 5000, caixa_consumido: 10000 }),
       ],
-      caixaPorEmpresa: { oben: { disponivel: 200000, confianca: 'alta' } },
+      caixaPorEmpresa: { oben: cx(200000, 'alta') },
       hurdlePorEmpresa: { oben: 0.2 },
     });
     const crescer = r.fila.filter((a) => a.tipo === 'crescer');
@@ -102,7 +163,7 @@ describe('montarFilaAcoes', () => {
   it('hurdle ausente p/ empresa → status falta_dado nas ações de crescer dela', () => {
     const r = montarFilaAcoes({
       candidatos: [cand({ empresa: 'colacor', tipo: 'crescer', spread_positivo: null })],
-      caixaPorEmpresa: { colacor: { disponivel: 50000, confianca: 'media' } },
+      caixaPorEmpresa: { colacor: cx(50000, 'media') },
       hurdlePorEmpresa: {}, // sem hurdle p/ colacor
     });
     const a = r.fila.find((x) => x.empresa === 'colacor')!;
@@ -113,7 +174,7 @@ describe('montarFilaAcoes', () => {
   it('caixa de uma empresa não financia ação de outra', () => {
     const r = montarFilaAcoes({
       candidatos: [cand({ empresa: 'oben', tipo: 'crescer', caixa_consumido: 40000, spread_positivo: true })],
-      caixaPorEmpresa: { oben: { disponivel: 10000, confianca: 'alta' }, colacor: { disponivel: 999999, confianca: 'alta' } },
+      caixaPorEmpresa: { oben: cx(10000, 'alta'), colacor: cx(999999, 'alta') },
       hurdlePorEmpresa: { oben: 0.2 },
     });
     // caixa da Oben (10k) < custo (40k) → condicional, ignora o caixa enorme da Colacor
@@ -149,7 +210,7 @@ describe('A4 — invariantes (revisão adversarial Codex)', () => {
   it('#7b hurdle ≤0 vindo do engine é tratado como ausente → crescer cai em falta_dado', () => {
     const r = montarFilaAcoes({
       candidatos: [cand({ empresa: 'oben', tipo: 'crescer', spread_positivo: true, caixa_consumido: 10000 })],
-      caixaPorEmpresa: { oben: { disponivel: 100000, confianca: 'alta' } },
+      caixaPorEmpresa: { oben: cx(100000, 'alta') },
       hurdlePorEmpresa: { oben: 0 },
     });
     const a = r.fila.find((x) => x.empresa === 'oben' && x.tipo === 'crescer')!;
@@ -164,7 +225,7 @@ describe('A4 — invariantes (revisão adversarial Codex)', () => {
         cand({ tipo: 'crescer', descricao: 'custo desconhecido', impacto_eva: null, caixa_consumido: null, spread_positivo: true }),
         cand({ tipo: 'crescer', descricao: 'dimensionado', impacto_eva: 5000, caixa_consumido: 10000, spread_positivo: true }),
       ],
-      caixaPorEmpresa: { oben: { disponivel: 200000, confianca: 'alta' } },
+      caixaPorEmpresa: { oben: cx(200000, 'alta') },
       hurdlePorEmpresa: { oben: 0.2 },
     });
     const crescer = r.fila.filter((a) => a.tipo === 'crescer');
@@ -179,7 +240,7 @@ describe('A4 — invariantes (revisão adversarial Codex)', () => {
         cand({ tipo: 'crescer', descricao: 'eva desconhecido', impacto_eva: null, caixa_consumido: 10000, spread_positivo: false }),
         cand({ tipo: 'crescer', descricao: 'eva negativo', impacto_eva: -1000, caixa_consumido: 10000, spread_positivo: false }),
       ],
-      caixaPorEmpresa: { oben: { disponivel: 200000, confianca: 'alta' } },
+      caixaPorEmpresa: { oben: cx(200000, 'alta') },
       hurdlePorEmpresa: { oben: 0.2 },
     });
     const crescer = r.fila.filter((a) => a.tipo === 'crescer');
@@ -192,7 +253,7 @@ describe('A4 — invariantes (revisão adversarial Codex)', () => {
   it('#9 candidato de confiança baixa rebaixa o rollup da fila (não fica "alta")', () => {
     const r = montarFilaAcoes({
       candidatos: [cand({ empresa: 'oben', tipo: 'consertar_valor', descricao: 'sleeve incerto', impacto_eva: 1000, caixa_consumido: 0, confianca: 'baixa' })],
-      caixaPorEmpresa: { oben: { disponivel: 100000, confianca: 'alta' } },
+      caixaPorEmpresa: { oben: cx(100000, 'alta') },
       hurdlePorEmpresa: { oben: 0.2 },
     });
     expect(r.confianca.nivel).not.toBe('alta');

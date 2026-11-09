@@ -47,6 +47,10 @@ const precoMock = vi.fn();
 vi.mock('@/hooks/usePrecoAlvoComprador', () => ({
   usePrecoAlvoComprador: (...a: unknown[]) => precoMock(...a),
 }));
+const herancaMock = vi.fn();
+vi.mock('@/hooks/useHerancaComprador', () => ({
+  useHerancaComprador: (...a: unknown[]) => herancaMock(...a),
+}));
 const mutateMock = vi.fn();
 vi.mock('@/hooks/useRegistrarContato', async (orig) => ({
   ...(await orig<typeof import('@/hooks/useRegistrarContato')>()),
@@ -73,6 +77,60 @@ beforeEach(() => {
   ondasMock.mockReturnValue({ complemento: false, preco: false });
   complementoMock.mockReturnValue({ familias: null, loading: false, erro: false });
   precoMock.mockReturnValue({ alvos: null, loading: false, erro: false });
+  herancaMock.mockReturnValue({ herancas: [], loading: false, erro: false });
+});
+
+describe('FichaLigacao — sucessor declarado (herança)', () => {
+  const herdado: CompradorSugerido = {
+    ...comprador,
+    valorRefTotalDaAntiga: true,
+    sugestoes: [
+      { ...comprador.sugestoes[0], heranca: { de: ['DIVIMOVEIS'] }, valorRefDaAntiga: true },
+      comprador.sugestoes[1],
+      { id: 's9', tipo: 'complemento', empresa: 'oben', omieCodigoProduto: null, descricao: null, familia: 'VERNIZ',
+        qtdRef: null, valorRef: null, precoAlvo: null, cadenciaDias: null },
+    ],
+  };
+  const heranca = {
+    papel: 'novo', eventoId: 'ev1', tipo: 'cisao', dataCorte: '2026-10-06', revisao: 1,
+    outroDocumento: '03166577000166', outroNome: 'DIVIMOVEIS',
+    itens: [{ empresa: 'oben', omieCodigoProduto: 10, descricao: 'Verniz PU', familia: 'VERNIZ' }],
+  };
+
+  it('mostra de quem herdou, rotula o item herdado e o preço de referência da antiga; o ledger conta as herdadas', () => {
+    compradorMock.mockReturnValue(herdado);
+    herancaMock.mockReturnValue({ herancas: [heranca], loading: false, erro: false });
+    renderFicha();
+    expect(screen.getByTestId('ficha-heranca').textContent).toContain('Herdou 1 item de DIVIMOVEIS (cisão, corte em 06/10/2026)');
+    expect(screen.getByTestId('recomprar-heranca').textContent).toBe(
+      'herdado de DIVIMOVEIS — o histórico inclui compras da empresa antiga; o valor de referência usa o preço que ela pagava');
+    expect(herancaMock).toHaveBeenCalledWith('c1');
+    expect(ledgerMock).toHaveBeenCalledWith('venda.ficha_aberta', 'c1', { n_sugestoes: 2, n_herdadas: 1 });
+  });
+
+  it('no complemento, a família que já vem pela herança é rotulada (não escondida)', () => {
+    compradorMock.mockReturnValue(herdado);
+    ondasMock.mockReturnValue({ complemento: true, preco: false });
+    herancaMock.mockReturnValue({ herancas: [heranca], loading: false, erro: false });
+    renderFicha();
+    expect(screen.getByTestId('complemento-herdada').textContent).toBe('DIVIMOVEIS (empresa anterior) já comprava esta família');
+  });
+
+  it('sem herança: nem o aviso nem os rótulos; o ledger registra n_herdadas 0', () => {
+    renderFicha();
+    expect(screen.queryByTestId('ficha-heranca')).toBeNull();
+    expect(screen.queryByTestId('recomprar-heranca')).toBeNull();
+    expect(ledgerMock).toHaveBeenCalledWith('venda.ficha_aberta', 'c1', { n_sugestoes: 2, n_herdadas: 0 });
+  });
+
+  it('a leitura da herança falhou e há item herdado: avisa (ausente ≠ "sem herança")', () => {
+    compradorMock.mockReturnValue(herdado);
+    herancaMock.mockReturnValue({ herancas: null, loading: false, erro: true });
+    renderFicha();
+    expect(screen.getByText('Não consegui ler de onde vem o histórico herdado deste cliente.')).toBeInTheDocument();
+    // o rótulo do item vem da lista (outra fonte) e continua
+    expect(screen.getByTestId('recomprar-heranca')).toBeInTheDocument();
+  });
 });
 
 describe('FichaLigacao', () => {

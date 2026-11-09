@@ -99,6 +99,8 @@ export function CommandPalette() {
       // Reposição
             { id: 'nav.repo-pedidos', label: 'Pedidos de compra sugeridos', group: 'Reposição', icon: Truck, keywords: ['compras', 'comprador', 'cockpit'], perform: go('/admin/reposicao/pedidos') },
       { id: 'nav.repo-alertas', label: 'Alertas de reposição', group: 'Reposição', icon: BarChart3, perform: go('/admin/reposicao/alertas') },
+      // Fila do Top 61 do Raio-X: abre a aba já em mercadoria + Top 61 + pendentes e o 1º item (meta de 25/11).
+      { id: 'nav.repo-raio-x-top61', label: 'Raio-X: decidir Top 61', group: 'Reposição', icon: BarChart3, keywords: ['estoque parado', 'encalhe', 'liquidar', 'baixo giro'], perform: go('/admin/reposicao/baixo-giro?aba=raio-x&rxTop=1&rxStatus=pendente&rxFila=1') },
       { id: 'nav.repo-venda-perdida', label: 'Registrar venda perdida', group: 'Reposição', icon: BarChart3, keywords: ['faltou', 'sem estoque', 'ruptura'], perform: go('/admin/reposicao/venda-perdida') },
       // Financeiro
       { id: 'nav.fin-cockpit', label: 'Cockpit CFO', group: 'Financeiro', icon: Shield, keywords: ['CFO', 'caixa'], perform: go('/financeiro/cockpit') },

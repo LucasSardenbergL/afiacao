@@ -1,0 +1,73 @@
+<!doctype html>
+<!-- Consulta Pedidos do portal Sayerlack (/order-viewer), recortada no que o script lê: filtros, a tabela DataTables
+     (cabeçalho duplo: o NOME da coluna mora no placeholder do campo de filtro), o "Processando", o texto de info e a
+     paginação. Linhas no molde do pedido real 2140603 (2026-10-14). A tbody é trocada pelo teste a cada "próxima". -->
+<html lang="pt-BR">
+<body>
+  <form id="filtros">
+    <select id="cliente">
+      <option value="">Selecione</option>
+      <option value="2059">2059 - OBEN COMERCIO LTDA</option>
+    </select>
+    <select id="situacao">
+      <option value="todos">Todos</option>
+      <option value="1">1 - Aberto</option>
+      <option value="3">3 - Atendido Total</option>
+      <option value="5">5 - Suspenso</option>
+      <option value="6">6 - Cancelado</option>
+    </select>
+    <select id="exibir">
+      <option value="0">Proposta</option>
+      <option value="1">Pedido</option>
+    </select>
+    <input id="num_ped_ini" value="">
+    <input id="num_ped_fim" value="">
+    <input id="data_emissao_ini" value="2026-10-08">
+    <input id="data_emissao_fim" value="2026-11-08">
+    <input id="data_entrega_ini" value="2026-10-08">
+    <button type="button" id="getFilterData">Filtrar</button>
+  </form>
+
+  <!-- tabela de navegação do layout (sem coluna de situação): o leitor NÃO pode escolher esta -->
+  <table id="menu"><thead><tr><th>Menu</th></tr></thead><tbody><tr><td>Consulta Pedidos</td></tr></tbody></table>
+
+  <div id="tabela_wrapper" class="dataTables_wrapper">
+    <div id="tabela_processing" class="dataTables_processing" style="display: none;">Processando...</div>
+    <table id="tabela" class="table dataTable">
+      <thead>
+        <tr>
+          <th><input type="text" placeholder="Estab"></th>
+          <th><input type="text" placeholder="Pedido"></th>
+          <th><input type="text" placeholder="Pedido Clien"></th>
+          <th><input type="text" placeholder="Cliente"></th>
+          <th><input type="text" placeholder="Situação"></th>
+          <th><input type="text" placeholder="Data Emissão"></th>
+          <th><input type="text" placeholder="Data Entrega"></th>
+          <th><input type="text" placeholder="Vlr Mercadori"></th>
+          <th><input type="text" placeholder="Vlr Total"></th>
+        </tr>
+        <tr><th></th><th></th><th></th><th></th><th></th><th></th><th></th><th></th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>CAJ</td><td>2140603</td><td>2140603</td><td>OBEN COMERCIO<br>LTDA</td><td>5 - Suspenso</td>
+          <td>14/10/2026</td><td>26/10/2026</td><td>4865,5600</td><td>5181,8200</td>
+        </tr>
+        <tr>
+          <td>CAJ</td><td>2141200</td><td>2141200</td><td>OBEN COMERCIO LTDA</td><td>6 - Cancelado</td>
+          <td>20/10/2026</td><td>30/10/2026</td><td>1200,0000</td><td>1278,0000</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="dataTables_info" id="tabela_info" role="status">Mostrando 1 até 2 de 3 registros</div>
+    <div class="dataTables_paginate paging_simple_numbers" id="tabela_paginate">
+      <ul class="pagination">
+        <li class="paginate_button page-item previous disabled" id="tabela_previous"><a href="#" class="page-link">Anterior</a></li>
+        <li class="paginate_button page-item active"><a href="#" class="page-link">1</a></li>
+        <li class="paginate_button page-item"><a href="#" class="page-link">2</a></li>
+        <li class="paginate_button page-item next" id="tabela_next"><a href="#" class="page-link">Próximo</a></li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

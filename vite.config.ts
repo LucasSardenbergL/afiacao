@@ -253,7 +253,7 @@ export default defineConfig(({ mode }) => ({
           // chunk manual que depende deles; mandá-los pra app-core criava
           // "Circular chunk: vendor-react -> app-core -> vendor-react".
           if (id.includes('node_modules')) {
-            return vendorChunk(id);
+            return vendorChunk(id, getModuleInfo);
           }
           if (id.includes('vite/preload-helper')) return 'app-core';
           if (id.startsWith(SRC_DIR) && !id.endsWith('.css')) {
@@ -293,24 +293,35 @@ const LAZY_MIN_APP_CORE = 20;
 // Calculado uma vez por build: o manualChunks roda com o grafo já completo.
 type ModuleInfoMinima = { importedIds: readonly string[]; dynamicallyImportedIds: readonly string[] };
 type GetModuleInfo = (id: string) => ModuleInfoMinima | null;
+const ENTRY_ID = path.resolve(__dirname, "src/main.tsx");
+function fechoDeImports(getModuleInfo: GetModuleInfo, raizes: Iterable<string>, comDinamicos: boolean): Set<string> {
+  const seen = new Set<string>();
+  const pilha = [...raizes];
+  while (pilha.length) {
+    const id = pilha.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const info = getModuleInfo(id);
+    for (const dep of info?.importedIds ?? []) pilha.push(dep);
+    if (comDinamicos) for (const dep of info?.dynamicallyImportedIds ?? []) pilha.push(dep);
+  }
+  return seen;
+}
+
+// Tudo que o entry carrega por import ESTÁTICO (= o boot), node_modules inclusive.
+const estaticoDoEntryCache = new WeakMap<GetModuleInfo, Set<string>>();
+function estaticoDoEntry(getModuleInfo: GetModuleInfo): Set<string> {
+  let s = estaticoDoEntryCache.get(getModuleInfo);
+  if (!s) estaticoDoEntryCache.set(getModuleInfo, (s = fechoDeImports(getModuleInfo, [ENTRY_ID], false)));
+  return s;
+}
+
 const chunkCompartilhadoCache = new WeakMap<GetModuleInfo, Map<string, string>>();
 function chunkCompartilhado(getModuleInfo: GetModuleInfo): Map<string, string> {
   const emCache = chunkCompartilhadoCache.get(getModuleInfo);
   if (emCache) return emCache;
-  const fecho = (raizes: Iterable<string>, comDinamicos: boolean) => {
-    const seen = new Set<string>();
-    const pilha = [...raizes];
-    while (pilha.length) {
-      const id = pilha.pop()!;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const info = getModuleInfo(id);
-      for (const dep of info?.importedIds ?? []) pilha.push(dep);
-      if (comDinamicos) for (const dep of info?.dynamicallyImportedIds ?? []) pilha.push(dep);
-    }
-    return seen;
-  };
-  const entryId = path.resolve(__dirname, "src/main.tsx");
+  const fecho = (raizes: Iterable<string>, comDinamicos: boolean) => fechoDeImports(getModuleInfo, raizes, comDinamicos);
+  const entryId = ENTRY_ID;
   const estaticoDoEntry = fecho([entryId], false);
   estaticoDoEntry.delete(entryId);
   estaticoDoEntry.delete(path.resolve(__dirname, "src/App.tsx"));
@@ -345,12 +356,18 @@ function chunkCompartilhado(getModuleInfo: GetModuleInfo): Map<string, string> {
 }
 
 // Buckets de VENDOR (node_modules) cacheáveis. undefined = Rollup decide.
-function vendorChunk(id: string): string | undefined {
+function vendorChunk(id: string, getModuleInfo: GetModuleInfo): string | undefined {
   // Utilitários de classe usados pelo cn() do shell. SEM esta regra o
   // Rollup alocava o clsx DENTRO do vendor-charts (recharts depende
   // dele) e o entry passava a importar recharts+d3 inteiros (~114KB
   // gzip) só pra obter o clsx — medido no build de 2026-06-09.
   if (/node_modules[\\/](clsx|tailwind-merge|class-variance-authority)[\\/]/.test(id)) return 'vendor-utils';
+  // Mesmo padrão do clsx: o @hello-pangea/dnd (CockpitGrid da home staff,
+  // KanbanBoard do Admin) só precisa de _extends (@babel/runtime) e de
+  // invariant (tiny-invariant, via css-box-model; o recharts também usa), e
+  // sem bucket o Rollup alojava os dois no vendor-charts — a home pagava
+  // recharts+d3 (~111KB gzip) sem ter gráfico. Medido em 2026-11-01.
+  if (/node_modules[\\/](@babel[\\/]runtime|tiny-invariant)[\\/]/.test(id)) return 'vendor-utils';
   // Ancorado em node_modules: a regex antiga sem âncora casava
   // QUALQUER segmento "react" no caminho — capturava @elevenlabs/react
   // (SDK de voz, ~100KB gzip, usado só pelo FarmerCopilot lazy) pra
@@ -371,7 +388,13 @@ function vendorChunk(id: string): string | undefined {
   if (/node_modules[\\/]@elevenlabs[\\/]/.test(id)) return 'vendor-elevenlabs';
   if (/node_modules[\\/]tesseract\.js[\\/]/.test(id)) return 'vendor-tesseract';
   if (id.includes('framer-motion')) return 'vendor-motion';
-  if (id.includes('@radix-ui/')) return 'vendor-ui';
+  // Radix por ALCANCE: o que o boot importa estaticamente fica no vendor-ui
+  // (vai no modulepreload); o resto vai pro vendor-ui-rotas, que só as telas
+  // lazy que o usam baixam. Calculado pelo grafo, não por lista de pacotes:
+  // se o shell passar a usar outro Radix ele volta sozinho pro vendor-ui.
+  // Acíclico: se um módulo do vendor-ui importasse um do vendor-ui-rotas,
+  // este seria estático a partir do entry e estaria no vendor-ui.
+  if (id.includes('@radix-ui/')) return estaticoDoEntry(getModuleInfo).has(id) ? 'vendor-ui' : 'vendor-ui-rotas';
   // next-themes: o ThemeProvider é do shell (fica no entry), mas telas lazy
   // usam useTheme. Sem bucket, o Rollup o deixava DENTRO do entry e a tela
   // importava ./index-<hash>.js (cascata, ver app-core). Só depende de react.

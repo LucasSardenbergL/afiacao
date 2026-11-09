@@ -16,6 +16,7 @@ import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoPartida } from '@/lib/pricing/precoPartida';
 import { submitOrder as submitOrderService, submitQuote as submitQuoteService } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
+import type { ContaPedido, PrazoDecisaoEstado, PrazoDecisaoPorConta } from '@/services/orderSubmission/prazoDecisao';
 import { track } from '@/lib/analytics';
 import type { RecommendationItem } from '@/hooks/useRecommendationEngine';
 import { DeliveryOption } from '@/types';
@@ -376,8 +377,23 @@ export function useUnifiedOrder() {
   // A fp amarra o checkout ao pedido; reseta só no clearCustomer e no sucesso TOTAL.
   const checkoutEnvRef = useRef<CheckoutEnvelope | null>(loadCheckoutEnv());
 
+  // Frente B (PR1): o que o aviso de prazo mostrou por conta (congelado na tela). Ref, não state:
+  // só o ENVIO lê, e a tela já re-renderiza pelo próprio componente. Zera ao trocar/limpar cliente.
+  const prazoDecisaoRef = useRef<PrazoDecisaoPorConta>({});
+  const registrarEstadoPrazo = useCallback((conta: ContaPedido, estado: PrazoDecisaoEstado | null) => {
+    if (estado) prazoDecisaoRef.current = { ...prazoDecisaoRef.current, [conta]: estado };
+    else {
+      const { [conta]: _descartado, ...resto } = prazoDecisaoRef.current;
+      prazoDecisaoRef.current = resto;
+    }
+  }, []);
+  // Invalida POR CONTA: resolver o código da Colacor não pode apagar a decisão já publicada da Oben (Codex P2 #7).
+  useEffect(() => { const { oben: _o, ...resto } = prazoDecisaoRef.current; prazoDecisaoRef.current = resto; }, [selectedCustomer?.codigo_cliente]);
+  useEffect(() => { const { colacor: _c, ...resto } = prazoDecisaoRef.current; prazoDecisaoRef.current = resto; }, [selectedCustomer?.codigo_cliente_colacor]);
+
   // Wrap clearCustomer to also clear cart + ordem de compra
   const clearCustomer = useCallback(() => {
+    prazoDecisaoRef.current = {};
     clearCustomerInternal();
     setCart([]);
     setOrdemCompra('');
@@ -906,6 +922,7 @@ export function useUnifiedOrder() {
         origem: checkoutEnvRef.current.origem ?? (isCustomerMode ? 'web_customer' : 'web_staff'),
         atendimentoId: checkoutEnvRef.current.atendimentoId ?? null,
         atpBackorder: opts?.atpBackorder,
+        prazoDecisao: prazoDecisaoRef.current,
       });
       if (result.success && result.lastOrderData) {
         setLastOrderData(result.lastOrderData);
@@ -1037,6 +1054,7 @@ export function useUnifiedOrder() {
     sortedFormasPagamentoOben, sortedFormasPagamentoColacor,
     selectedParcelaOben, setSelectedParcelaOben,
     selectedParcelaColacor, setSelectedParcelaColacor,
+    registrarEstadoPrazo,
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
     estadoFormasOben, estadoFormasColacor, recarregarFormas,
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,

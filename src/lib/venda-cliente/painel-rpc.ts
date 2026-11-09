@@ -7,7 +7,9 @@
 //   - tipo trocado LANÇA. O lançamento cai no `isError` do react-query: a tela mostra a falha,
 //     nunca um número fabricado.
 import type { Json } from '@/integrations/supabase/types';
-import type { CandidatoRepasse, ContagemDesfecho, LinhaPainel, PainelVenda } from './painel';
+import type {
+  CandidatoRepasse, ContagemDesfecho, HerdadasLinha, LinhaPainel, PainelVenda, SituacaoCompraRepasse,
+} from './painel';
 
 type Obj = { [k: string]: Json | undefined };
 
@@ -85,6 +87,42 @@ function contagem(v: Json | undefined, onde: string): ContagemDesfecho {
   };
 }
 
+// Sucessor declarado (20261108010000): as seis chaves nascem JUNTAS. Servidor anterior não tem nenhuma delas
+// (a tela segue sem a fatia herdada); parte delas é forma desconhecida e LANÇA.
+const CHAVES_HERANCA = [
+  'herdadas', 'taxa_ativa_propria', 'base_historico_propria', 'taxa_base_historico_propria',
+  'base_sombra_propria', 'taxa_base_sombra_propria',
+] as const;
+type DaHeranca = Pick<LinhaPainel, (typeof CHAVES_HERANCA)[number]>;
+
+function herdadasDaLinha(o: Obj, onde: string): DaHeranca {
+  const presentes = CHAVES_HERANCA.filter((k) => o[k] !== undefined).length;
+  if (presentes === 0) {
+    return {
+      herdadas: null, taxa_ativa_propria: null, base_historico_propria: null, taxa_base_historico_propria: null,
+      base_sombra_propria: null, taxa_base_sombra_propria: null,
+    };
+  }
+  if (presentes !== CHAVES_HERANCA.length) throw new Error(`${onde}: as chaves da herança vêm juntas`);
+  const ondeH = `${onde}.herdadas`;
+  const h = obj(campo(o, 'herdadas', onde), ondeH);
+  const herdadas: HerdadasLinha = {
+    ...contagem(h, ondeH),
+    na_lista: num(h, 'na_lista', ondeH),
+    sugestoes: num(h, 'sugestoes', ondeH),
+    receita_realizada: numOuNulo(h, 'receita_realizada', ondeH),
+    receita_incompleta: bool(h, 'receita_incompleta', ondeH),
+  };
+  return {
+    herdadas,
+    taxa_ativa_propria: numOuNulo(o, 'taxa_ativa_propria', onde),
+    base_historico_propria: contagem(campo(o, 'base_historico_propria', onde), `${onde}.base_historico_propria`),
+    taxa_base_historico_propria: numOuNulo(o, 'taxa_base_historico_propria', onde),
+    base_sombra_propria: contagem(campo(o, 'base_sombra_propria', onde), `${onde}.base_sombra_propria`),
+    taxa_base_sombra_propria: numOuNulo(o, 'taxa_base_sombra_propria', onde),
+  };
+}
+
 function linhaPainel(v: Json, i: number): LinhaPainel {
   const onde = `venda_painel.linhas[${i}]`;
   const o = obj(v, onde);
@@ -106,6 +144,7 @@ function linhaPainel(v: Json, i: number): LinhaPainel {
     base_sombra: contagem(campo(o, 'base_sombra', onde), `${onde}.base_sombra`),
     taxa_base_sombra: numOuNulo(o, 'taxa_base_sombra', onde),
     base_confiavel: bool(o, 'base_confiavel', onde),
+    ...herdadasDaLinha(o, onde),
   };
 }
 
@@ -180,6 +219,8 @@ export function lerPainel(data: Json | null): PainelVenda {
 
 // ── venda_repasse_candidatos ──────────────────────────────────────────────────────────────────
 
+const SITUACOES: readonly SituacaoCompraRepasse[] = ['comprando', 'parado', 'substituido'];
+
 function candidato(v: Json, i: number): CandidatoRepasse {
   const onde = `venda_repasse_candidatos[${i}]`;
   const o = obj(v, onde);
@@ -187,6 +228,16 @@ function candidato(v: Json, i: number): CandidatoRepasse {
   if (empresa !== 'oben') throw new Error(`${onde}: empresa "${empresa}" fora do repasse v1 (só oben)`);
   const ra = objOuNulo(o, 'repasse_atual', onde);
   const ondeRa = `${onde}.repasse_atual`;
+  const situacao = strOuNulo(o, 'situacao_compra', onde);
+  if (situacao !== null && !SITUACOES.includes(situacao as SituacaoCompraRepasse)) {
+    throw new Error(`${onde}: situacao_compra "${situacao}" desconhecida`);
+  }
+  const sub = objOuNulo(o, 'substituto', onde);
+  const ondeSub = `${onde}.substituto`;
+  // substituído sem substituto (ou o inverso) é forma que a função não produz
+  if ((situacao === 'substituido') !== (sub !== null)) {
+    throw new Error(`${onde}: situacao_compra "${situacao}" incoerente com o substituto`);
+  }
   return {
     comprador_id: str(o, 'comprador_id', onde),
     empresa,
@@ -203,6 +254,16 @@ function candidato(v: Json, i: number): CandidatoRepasse {
     n_pedidos: numOuNulo(o, 'n_pedidos', onde),
     cadencia_dias: numOuNulo(o, 'cadencia_dias', onde),
     qtd_sugerida: numOuNulo(o, 'qtd_sugerida', onde),
+    situacao_compra: situacao as SituacaoCompraRepasse | null,
+    dias_sem_comprar: numOuNulo(o, 'dias_sem_comprar', onde),
+    substituto: sub && {
+      omie_codigo_produto: num(sub, 'omie_codigo_produto', ondeSub),
+      codigo: strOuNulo(sub, 'codigo', ondeSub),
+      descricao: strOuNulo(sub, 'descricao', ondeSub),
+      primeira_compra: str(sub, 'primeira_compra', ondeSub),
+      ultima_compra: str(sub, 'ultima_compra', ondeSub),
+      dias_com_compra: num(sub, 'dias_com_compra', ondeSub),
+    },
     repasse_atual: ra && {
       id: str(ra, 'id', ondeRa),
       preco_alvo: num(ra, 'preco_alvo', ondeRa),

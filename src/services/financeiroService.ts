@@ -4,6 +4,9 @@ import { linhasCom } from "@/lib/linha-view";
 import { agregarRealizadoPorDia } from "@/lib/financeiro/fluxo-realizado-helpers";
 import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/dso-dpo-helpers";
 import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
+import { comporSaldoTitulos } from "@/lib/financeiro/saldo-titulos-agregado";
+import { TITULOS_INDISPONIVEIS, type TotaisTitulos } from "@/lib/financeiro/resumo-titulos";
+import { mensagemDeErro } from "@/lib/erro-mensagem";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
 import { referenciaFrescorSaldo, resumirSaldoContas, saldoExibivelDaConta } from "@/lib/financeiro/saldo-contas";
@@ -17,7 +20,11 @@ import type {
 
 // ═══════════════ TYPES ═══════════════
 
-export interface FinResumo {
+/**
+ * Os totais de títulos (`total_*`, `posicao_liquida`, `titulos_motivo`) vêm de `TotaisTitulos` e têm
+ * disponibilidade PRÓPRIA: `null` + motivo quando CR/CP não puderam ser lidos, sem apagar o saldo CC.
+ */
+export interface FinResumo extends TotaisTitulos {
   /**
    * Lista por conta. `saldo_atual` é `null` quando a conta não tem saldo FRESCO do extrato
    * (`saldoExibivelDaConta`): ausente ou velho ≠ R$ 0. `saldo_motivo` diz qual dos dois.
@@ -31,11 +38,6 @@ export interface FinResumo {
    * `fin-cashflow-engine` já aplica com `exigirLinhas` no caminho dela.
    */
   saldo_total_cc: number | null;
-  total_a_receber: number;
-  total_a_pagar: number;
-  total_vencido_receber: number;
-  total_vencido_pagar: number;
-  posicao_liquida: number;
 }
 
 export interface FinContaPagar {
@@ -230,29 +232,71 @@ async function lerTodasAsPaginas<T>(
   return fetchAllPagesComMensagem(buscarPagina, contexto, `Falha ao carregar ${contexto}`);
 }
 
+/**
+ * Totais de CR/CP abertos e vencidos por empresa, somados NO BANCO pela RPC
+ * `fin_saldo_titulos_por_status` (plano v4, lote 13): 1 request para todas as empresas, no lugar
+ * das 4 leituras paginadas de `saldo` por empresa (3.428 linhas em 12 requests por abertura do
+ * cockpit, medido em 2026-11-01). Os conjuntos de status continuam sendo os do TS; a RPC é chamada
+ * com o aberto e o vencido sai dos grupos 'ATRASADO'.
+ *
+ * Não lança: erro da RPC, empresa sem acesso/desconhecida, saldo NULL ou resposta fora do envelope
+ * viram títulos INDISPONÍVEIS (null + motivo) — nunca R$ 0 — da empresa afetada, compostos uma a
+ * uma, para que a falha de uma não derrube as outras nem o saldo CC lido em paralelo.
+ */
+async function lerSaldoTitulos(companies: readonly Company[]): Promise<Record<string, TotaisTitulos>> {
+  let envelope: unknown = null;
+  let falha: string | null = null;
+  try {
+    const { data, error } = await supabase.rpc("fin_saldo_titulos_por_status", {
+      p_companies: [...companies],
+      p_statuses: [...OPEN_TITLE_STATUSES],
+    });
+    if (error) falha = `Falha ao carregar saldo de títulos: ${error.message}`;
+    else envelope = data;
+  } catch (e) {
+    falha = `Falha ao carregar saldo de títulos: ${mensagemDeErro(e) ?? "erro sem mensagem"}`;
+  }
+
+  const out: Record<string, TotaisTitulos> = {};
+  for (const co of companies) {
+    if (falha !== null) {
+      out[co] = TITULOS_INDISPONIVEIS(falha, true);
+      continue;
+    }
+    try {
+      const t = comporSaldoTitulos(envelope, [co], OPEN_TITLE_STATUSES, VENCIDO_TITLE_STATUSES)[co];
+      out[co] = { ...t, posicao_liquida: t.total_a_receber - t.total_a_pagar, titulos_motivo: null };
+    } catch (e) {
+      out[co] = TITULOS_INDISPONIVEIS(mensagemDeErro(e) ?? `saldo de títulos indisponível (${co})`);
+    }
+  }
+  return out;
+}
+
+async function lerContasCorrentesAtivas(company: Company) {
+  // Erro LANÇA: caixa R$0 falso engana tanto quanto total truncado
+  const { data, error } = await supabase
+    .from("fin_contas_correntes")
+    .select("descricao, saldo_atual, saldo_data, banco")
+    .eq("company", company)
+    .eq("ativo", true);
+  if (error) throw new Error(`Falha ao carregar contas correntes (${company}): ${error.message}`);
+  return data ?? [];
+}
+
 export async function getResumoFinanceiro(companies: Company[]): Promise<Record<string, FinResumo>> {
   const resumo: Record<string, FinResumo> = {};
+  if (companies.length === 0) return resumo;
 
-  for (const company of companies) {
-    // Saldos CC — erro LANÇA: caixa R$0 falso engana tanto quanto total truncado
-    const { data: contas, error: ccError } = await supabase
-      .from("fin_contas_correntes")
-      .select("descricao, saldo_atual, saldo_data, banco")
-      .eq("company", company)
-      .eq("ativo", true);
-    if (ccError) throw new Error(`Falha ao carregar contas correntes (${company}): ${ccError.message}`);
+  // Títulos (1 RPC) e contas correntes (1 leitura por empresa) em paralelo. Títulos não lançam (cada
+  // empresa sai com totais ou null + motivo); só a falha do CC derruba o resumo.
+  const [titulos, contasPorEmpresa] = await Promise.all([
+    lerSaldoTitulos(companies),
+    Promise.all(companies.map(lerContasCorrentesAtivas)),
+  ]);
 
-    // Abertos + vencidos: soma paginada do `saldo` — o reduce client-side sem
-    // .range() somava só a 1ª página de 1000 do PostgREST (oben tem ~11k títulos
-    // de CR aberto → totais truncados; mesmo bug do KPI de /financeiro/gestao, #719).
-    const [totalAReceber, totalAPagar, vencidoReceber, vencidoPagar] = await Promise.all([
-      somarSaldoAberto("fin_contas_receber", company),
-      somarSaldoAberto("fin_contas_pagar", company),
-      somarSaldoPorStatus("fin_contas_receber", company, VENCIDO_TITLE_STATUSES),
-      somarSaldoPorStatus("fin_contas_pagar", company, VENCIDO_TITLE_STATUSES),
-    ]);
-
-    const contasBrutas = contas ?? [];
+  companies.forEach((company, i) => {
+    const contasBrutas = contasPorEmpresa[i];
 
     // Ausente ≠ zero. O `reduce` cru devolvia `0` em dois estados que NÃO são o mesmo fato:
     // "nenhuma conta ativa" (a leitura não errou — RLS ou flag `ativo` podem devolver lista
@@ -279,13 +323,9 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
     resumo[company] = {
       contas_correntes: contasNorm,
       saldo_total_cc: saldoContas.total,
-      total_a_receber: totalAReceber,
-      total_a_pagar: totalAPagar,
-      total_vencido_receber: vencidoReceber,
-      total_vencido_pagar: vencidoPagar,
-      posicao_liquida: totalAReceber - totalAPagar,
+      ...titulos[company],
     };
-  }
+  });
 
   return resumo;
 }
@@ -1052,27 +1092,32 @@ export function downloadCSV(content: string, filename: string): void {
  * `updated_at` mais recente entre as tabelas financeiras. LANÇA se qualquer leitura falhar:
  * ignorar o `error` devolvia o máximo só das tabelas que responderam (um "último sync" mais
  * velho que o real) ou `null`, em silêncio. `null` aqui significa só "tabelas vazias".
+ *
+ * As 3 leituras saem JUNTAS: o `useFinanceiro` espera esta função antes de mostrar o resumo, e
+ * fin_movimentacoes (147 k linhas) e fin_contas_pagar (desde o lote 11 do v5) não têm índice no
+ * carimbo — o top-1 é seq scan com a RLS `fin_user_can_access` avaliada por linha. Em série a
+ * latência era a SOMA; em paralelo é a da mais lenta. NÃO recriar índice em updated_at para
+ * acelerar isto: ele zera o HOT do sync (docs/historico/hot-contas-pagar-lote11.md).
  */
 export async function getLastSyncTime(): Promise<string | null> {
   const tables = ['fin_contas_receber', 'fin_contas_pagar', 'fin_movimentacoes'] as const;
+
+  const carimbos = await Promise.all(
+    tables.map(async (table) => {
+      const { data, error } = await supabase
+        .from(table)
+        .select('updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (error) throw new Error(`Falha ao ler o último sync (${table}): ${error.message}`);
+      return data?.[0]?.updated_at ?? null;
+    }),
+  );
+
   let latest: string | null = null;
-
-  for (const table of tables) {
-    const { data, error } = await supabase
-      .from(table)
-      .select('updated_at')
-      .order('updated_at', { ascending: false })
-      .limit(1);
-    if (error) throw new Error(`Falha ao ler o último sync (${table}): ${error.message}`);
-
-    const updatedAt = data?.[0]?.updated_at;
-    if (updatedAt) {
-      if (!latest || updatedAt > latest) {
-        latest = updatedAt;
-      }
-    }
+  for (const updatedAt of carimbos) {
+    if (updatedAt && (!latest || updatedAt > latest)) latest = updatedAt;
   }
-
   return latest;
 }
 
@@ -1350,7 +1395,14 @@ export interface AcaoFila {
 }
 export interface ProximaAcaoResult {
   fila: AcaoFila[];
-  caixa_por_empresa: Record<string, { disponivel: number; confianca: 'alta' | 'media' | 'baixa' }>;
+  // disponivel null = DESCONHECIDO (≠ R$0). Campos novos opcionais: bundle de edge anterior à v1.1 não os manda.
+  caixa_por_empresa: Record<string, {
+    disponivel: number | null;
+    confianca: 'alta' | 'media' | 'baixa';
+    saldo_tesouraria?: number | null;
+    dias_cobertura?: number | null;
+    motivos?: string[];
+  }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
   gerado_em: string;
 }

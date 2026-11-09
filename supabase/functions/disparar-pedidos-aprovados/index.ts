@@ -11,6 +11,7 @@ import { hojeSP } from "../_shared/hoje-sp.ts";
 import { dataPrevisaoOmie } from "./previsao.ts";
 import { abririaEnvioNovoAoPortal, ehRecusaDefinitivaPortal, MENSAGEM_PORTAL_FECHADO, mensagemRecusaDefinitiva, portalSayerlackFechado } from "./janela-portal.ts";
 import { montarProdutosIncluir } from "./produto-po.ts";
+import { montarObservacaoPo, transportadoraDosItensBrutos } from "./transportadora-portal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   assuntoImplantado,
@@ -47,6 +48,10 @@ interface PedidoRow {
   num_skus: number;
   status: string;
   condicao_pagamento_codigo?: string | null;
+  /** Origem da condição (default_a_vista = padrão do motor, nunca confirmado). */
+  condicao_origem?: string | null;
+  /** Texto da condição que o portal Sayerlack mostrou (D-1). */
+  condicao_portal_lida?: string | null;
   condicao_pagamento_descricao?: string | null;
   num_parcelas?: number | null;
   canal_pedido?: string | null;
@@ -290,6 +295,8 @@ interface ProcessResult {
   // Nº do pedido no sistema da Sayerlack (protocolo do portal), quando o portal JÁ aceitou o pedido
   // antes deste run ir ao Omie. É o que o e-mail de "implantado" mostra (ver email-politica.ts).
   protocolo_portal?: string | null;
+  /** 7.3: transportadora que o portal mostrou (null = sem evidência legível; nunca inventada). */
+  transportadora_portal?: string | null;
   portal_data_entrega?: string | null;
   split_parent_id?: number | null;
   split_lote?: number | null;
@@ -559,7 +566,7 @@ async function dividirPedidosGrandesSayerlack(
 
     const { data: filhoRows, error: fetchErr } = await db
       .from("pedido_compra_sugerido")
-      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, condicao_origem, condicao_portal_lida, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total")
       .in("id", filhoIds)
       .order("split_lote", { ascending: true });
 
@@ -887,7 +894,7 @@ async function reivindicarDisparo(
   db: SupabaseClient,
   pedidoId: number,
   origem: string,
-): Promise<{ claimed: boolean; motivo: string; desde: string | null }> {
+): Promise<{ claimed: boolean; motivo: string; desde: string | null; bloqueio?: string | null; pendente_desde?: string | null }> {
   const { data, error } = await db.rpc("reposicao_claim_disparo", {
     p_pedido_id: pedidoId,
     p_origem: origem,
@@ -902,7 +909,7 @@ async function reivindicarDisparo(
     };
   }
   const r = (data ?? null) as
-    | { claimed?: boolean; motivo?: string; desde?: string | null }
+    | { claimed?: boolean; motivo?: string; desde?: string | null; bloqueio?: string | null; pendente_desde?: string | null }
     | null;
   if (!r || typeof r.claimed !== "boolean") {
     return {
@@ -915,7 +922,91 @@ async function reivindicarDisparo(
     claimed: r.claimed,
     motivo: r.motivo ?? (r.claimed ? "reivindicado" : "claim negado sem motivo"),
     desde: r.desde ?? null,
+    bloqueio: r.bloqueio ?? null,
+    pendente_desde: r.pendente_desde ?? null,
   };
+}
+
+/**
+ * Onda 5A (2026-11-08): pedido CANCELADO no portal Sayerlack com pendência de disparo ABERTA (uma tentativa anterior
+ * reivindicou e não chegou ao desfecho — pode existir PO no Omie com a resposta perdida). O claim agora recusa o 6, e a
+ * recuperação de sempre (repetir IncluirPedCompra e cair no "já cadastrado") compraria o cancelado se a 1ª tentativa
+ * NÃO tivesse criado nada. Então aqui é SÓ CONSULTA (Codex 5A rodada 2, ponto 6):
+ *   · ConsultarPedCompra por `AFI-<id>` confirma o PO ⇒ registra o vínculo (o desfecho de sempre, que limpa a
+ *     pendência) e devolve que o PO existe com o pedido cancelado no portal — o humano cancela/ajusta o PO;
+ *   · não achou / erro ⇒ NADA muda: consulta negativa isolada não limpa pendência (pode haver execução em voo).
+ * Nunca chama IncluirPedCompra.
+ * 5.2 (revisão 2, fatia 1): o mesmo vale para o pedido ALTERADO no portal (divergência portal × app aberta) com
+ * pendência: repetir o IncluirPedCompra mandaria ao Omie o pedido antigo — só consulta, com a mesma régua.
+ */
+async function conciliarCanceladoNoPortalPorConsulta(
+  db: SupabaseClient,
+  pedidoId: number,
+  modo: "dry_run" | "producao",
+  creds: { app_key: string; app_secret: string },
+  result: ProcessResult,
+  overrideTag: Record<string, unknown>,
+  pendenteDesde: string | null,
+  causa: "cancelado_no_portal" | "alterado_no_portal" = "cancelado_no_portal",
+): Promise<ProcessResult> {
+  const oQue = causa === "alterado_no_portal" ? "alterado no portal Sayerlack (divergência com o app)" : "cancelado no portal Sayerlack";
+  const base = `pedido ${oQue} com pendência de disparo aberta desde ${pendenteDesde ?? "?"}`;
+  if (modo !== "producao") {
+    result.status_final = "nao_disparado";
+    result.erro = `${base} — dry_run não concilia.`;
+    return result;
+  }
+  let existente: { id: string; numero: string } | null = null;
+  let consultaErro: string | null = null;
+  try {
+    existente = extrairPedidoOmie(
+      await chamadaOmie(OMIE_PEDIDO_COMPRA_URL, "ConsultarPedCompra", { cCodIntPed: `AFI-${pedidoId}` }, creds),
+    );
+  } catch (e) {
+    consultaErro = mensagemDeErro(e) ?? "erro sem mensagem";
+  }
+  if (!existente) {
+    result.status_final = "nao_disparado";
+    result.erro = `${base}: a consulta ao Omie não confirmou PO (${consultaErro ?? "não encontrado"}). ` +
+      `Nenhum PO foi criado; a pendência continua aberta para conciliação.`;
+    return result;
+  }
+  const desfecho = await persistirDesfechoDoOmie(
+    db,
+    pedidoId,
+    {
+      omie_pedido_compra_id: existente.id,
+      omie_pedido_compra_numero: existente.numero,
+      omie_registrado_em: new Date().toISOString(),
+      // Sem `omie_po_inexistente_antes_de`: o PO nasceu numa tentativa anterior (mesma razão da reconciliação
+      // por "já cadastrado").
+      status: "disparado",
+      resposta_canal: {
+        ...overrideTag,
+        reconciliado: true,
+        motivo: `conciliado_por_consulta_${causa}`,
+        pendente_desde: pendenteDesde,
+        ts: new Date().toISOString(),
+      },
+      atualizado_em: new Date().toISOString(),
+    },
+    existente.id,
+  );
+  result.omie_id = existente.id;
+  result.omie_numero = existente.numero;
+  result.reconciliado = true;
+  if (!desfecho.persistido) {
+    result.status_final = "disparado_sem_registro";
+    result.erro = `PO ${existente.id} existe no Omie e não foi gravado (${desfecho.detalhe}); ${base}.`;
+    return result;
+  }
+  result.status_final = "disparado";
+  result.erro = causa === "alterado_no_portal"
+    ? `ATENÇÃO: o PO ${existente.numero || existente.id} existe no Omie com o pedido ANTIGO do app, mas o pedido foi ` +
+      `ALTERADO no portal Sayerlack — confira com o fornecedor e ajuste o PO.`
+    : `ATENÇÃO: o PO ${existente.numero || existente.id} existe no Omie, mas o pedido está CANCELADO no portal ` +
+      `Sayerlack — confira com o fornecedor e cancele/ajuste o PO.`;
+  return result;
 }
 
 /**
@@ -1013,6 +1104,22 @@ async function processarPedido(
     : {};
 
   try {
+    // a.0 Onda 5A: cancelado no portal + pendência de disparo aberta ⇒ conciliação SÓ por consulta, ANTES das
+    // validações de CRIAÇÃO (produto desativado, itens, pagamento) — elas valem para criar compra, não para descobrir
+    // se uma compra anterior existe (Codex 5A v3, P1 #2). Retrato não decide criação: se ele estiver velho, o claim
+    // abaixo recusa sozinho, no WHERE que grava. Erro na leitura ⇒ segue o fluxo normal (o claim continua decidindo).
+    if (isSayerlackOben(pedido)) {
+      const { data: pend, error: pendErr } = await db
+        .from("pedido_compra_sugerido")
+        .select("disparo_claim_em, portal_situacao_codigo")
+        .eq("id", pedido.id)
+        .maybeSingle();
+      if (!pendErr && pend?.disparo_claim_em && pend?.portal_situacao_codigo === "6") {
+        console.warn(`[disparar-pedidos] Pedido ${pedido.id}: cancelado no portal com pendência de disparo aberta — conciliação SÓ por consulta.`);
+        return await conciliarCanceladoNoPortalPorConsulta(db, pedido.id, modo, creds, result, overrideTag, String(pend.disparo_claim_em));
+      }
+    }
+
     // a. Items
     // `*` de propósito: as colunas da decomposição (preço exato do PO) nascem na migration 20261006120000. Listá-las
     // explicitamente faria o disparo de TODO fornecedor falhar se a edge subisse antes do banco; com `*`, sem a
@@ -1104,6 +1211,7 @@ async function processarPedido(
     // Caso contrário, apenas enfileira o portal e finaliza sem marcar falha.
     let cContratoFinal = numeroPedido;
     let protocoloPortal: string | null = null;
+    let transportadoraPortal: string | null = null;
     if (isSayerlackOben(pedido) && modo === "producao") {
       const portal = await iniciarEnvioPortalSayerlack(db, pedido.id);
       if (portal.state === "queued") {
@@ -1167,6 +1275,9 @@ async function processarPedido(
       // que o pedido já está na fábrica (e com que número) — reenviar ao portal duplicaria a compra.
       result.protocolo_portal = protocoloPortal;
       result.portal_data_entrega = pedido.portal_data_entrega ?? null;
+      // 7.3: transportadora que o portal mostrou (evidência da leitura); ausente = a linha não entra no cObs.
+      transportadoraPortal = await lerTransportadoraPortal(db, protocoloPortal);
+      result.transportadora_portal = transportadoraPortal;
     }
 
     // Preço exato (spec 2026-10-05): com o pedido inteiro decomposto pelo portal e coerente, nValUnit sem IPI +
@@ -1182,6 +1293,17 @@ async function processarPedido(
     if (condRaw === null || condRaw === undefined || String(condRaw).trim() === "") {
       throw new Error(
         `Pedido sem condição de pagamento. Selecione uma condição antes de disparar.`,
+      );
+    }
+    // D-1 (pontos cegos Onda 2, 2026-11-07): pedido do app que foi ao portal Sayerlack leva a condição REAL que o portal
+    // aplicou (a edge de envio grava antes do sucesso_portal). Se ela não resolveu, o pedido segue no padrão do motor
+    // ("000 À Vista", nunca confirmado) — e PO à vista sem prova é fabricar condição: recusa (Codex P1). O pedido JÁ está
+    // no portal; o caminho é escolher a condição no pedido (vira manual_humano) e disparar de novo, nunca reenviar.
+    if (protocoloPortal && pedido.condicao_origem === "default_a_vista") {
+      throw new Error(
+        `Condição de pagamento do portal não resolvida (o portal mostrou "${pedido.condicao_portal_lida ?? "nada legível"}"). ` +
+          `O pedido JÁ está no portal Sayerlack com o protocolo ${protocoloPortal} — não reenvie: escolha a condição de ` +
+          `pagamento no pedido e dispare de novo.`,
       );
     }
     // Normaliza para string de até 3 chars, mantendo zeros à esquerda (ex: "000")
@@ -1209,10 +1331,12 @@ async function processarPedido(
       cContrato: cContratoFinal,
       cCodParc,
       nQtdeParc,
-      cObs:
+      cObs: montarObservacaoPo(
         `Pedido gerado automaticamente pelo Afiação em ${new Date().toISOString()}${
           modo === "dry_run" ? " [DRY-RUN]" : ""
         }`,
+        transportadoraPortal,
+      ),
       cObsInt: modo === "dry_run" ? "DRY-RUN Afiação" : "Disparo Afiação",
     };
 
@@ -1233,6 +1357,12 @@ async function processarPedido(
     // dry_run, que só troca cObs/cObsInt e grava `disparado_simulado`).
     const claim = await reivindicarDisparo(db, pedido.id, origemRun);
     if (!claim.claimed) {
+      if ((claim.bloqueio === "cancelado_no_portal" || claim.bloqueio === "alterado_no_portal") && claim.pendente_desde) {
+        console.warn(`[disparar-pedidos] Pedido ${pedido.id}: ${claim.motivo} — pendência aberta: conciliação SÓ por consulta.`);
+        return await conciliarCanceladoNoPortalPorConsulta(
+          db, pedido.id, modo, creds, result, overrideTag, claim.pendente_desde, claim.bloqueio,
+        );
+      }
       console.warn(
         `[disparar-pedidos] Pedido ${pedido.id}: NÃO disparado — ${claim.motivo}. Nenhuma chamada ao Omie foi feita.`,
       );
@@ -1803,7 +1933,7 @@ Deno.serve(async (req: Request) => {
     // 2. Pedidos aprovados (com dados do fornecedor)
     let aprovadosQuery = db
       .from("pedido_compra_sugerido")
-      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total, portal_protocolo, status_envio_portal")
+      .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, condicao_origem, condicao_portal_lida, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total, portal_protocolo, status_envio_portal")
       .eq("empresa", empresa);
 
     aprovadosQuery = pedidoId
@@ -1824,7 +1954,7 @@ Deno.serve(async (req: Request) => {
       const cutoff72h = new Date(Date.now() - 72 * 3600 * 1000).toISOString();
       const { data: backlogRaw, error: backErr } = await db
         .from("pedido_compra_sugerido")
-        .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total, portal_protocolo, status_envio_portal")
+        .select("id, empresa, fornecedor_nome, grupo_codigo, data_ciclo, valor_total, num_skus, status, condicao_pagamento_codigo, condicao_pagamento_descricao, condicao_origem, condicao_portal_lida, num_parcelas, portal_data_entrega, split_parent_id, split_lote, split_total, portal_protocolo, status_envio_portal")
         .eq("empresa", empresa)
         .eq("status", "aprovado_aguardando_disparo")
         .lt("data_ciclo", dataCiclo)            // < hoje (não <=): o lote do dia já foi pego acima
@@ -2225,3 +2355,26 @@ Deno.serve(async (req: Request) => {
     });
   }
 });
+
+/**
+ * 7.3: a transportadora da leitura mais recente e legível do protocolo na evidência do portal (7.2). Fail-open com
+ * prazo: é observação do PO, nunca segura nem muda o disparo; qualquer falha = null (a linha não entra no cObs).
+ */
+async function lerTransportadoraPortal(db: SupabaseClient, protocolo: string | null): Promise<string | null> {
+  if (!protocolo) return null;
+  try {
+    const { data, error } = await db.from("sayerlack_portal_evidencia")
+      .select("itens_brutos")
+      .eq("protocolo", protocolo).eq("leitura_ok", true).not("itens_brutos", "is", null)
+      .order("lido_ate", { ascending: false }).limit(1)
+      .abortSignal(AbortSignal.timeout(3_000));
+    if (error) {
+      console.warn(`[disparar-pedidos] transportadora do portal ${protocolo} não lida (fail-open): ${error.message}`);
+      return null;
+    }
+    return transportadoraDosItensBrutos((data as { itens_brutos: unknown }[] | null)?.[0]?.itens_brutos);
+  } catch (e) {
+    console.warn(`[disparar-pedidos] transportadora do portal ${protocolo} não lida (fail-open): ${mensagemDeErro(e) ?? "erro"}`);
+    return null;
+  }
+}

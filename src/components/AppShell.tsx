@@ -36,6 +36,8 @@ import { CompanySwitcher } from '@/components/shell/CompanySwitcher';
 import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicator';
 import { useSaidaComFilaPendente } from '@/components/shell/SaidaComFilaPendente';
 import { DataHealthBadge } from '@/components/shell/DataHealthBadge';
+import { BadgeIndisponivel } from '@/components/shell/BadgeDeContagem';
+import { faceDoBadge, motivoDoBadgeIndisponivel } from '@/components/shell/badge-de-contagem';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
 import { VersaoDoApp } from '@/components/shell/VersaoDoApp';
 import { IndicadorAtualizacao } from '@/components/shell/IndicadorAtualizacao';
@@ -76,9 +78,10 @@ import { registerAllOfflineHandlers } from '@/lib/offline-handlers';
 import { useMissedCount } from '@/hooks/useCallLog';
 import { useMinhasTarefas } from '@/hooks/useTarefas';
 import { useWhatsappSlaBadge } from '@/queries/useWhatsappSla';
-import { Star } from 'lucide-react';
+import { Filter, Star } from 'lucide-react';
 import { MODULOS } from '@/lib/modulos/manifesto';
 import { rotaCongelada } from '@/lib/modulos/congelamento';
+import { usePrefetchRota } from '@/lib/preload-rota';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -87,6 +90,8 @@ interface NavItem {
   path: string;
   badge?: number;
   badgeVariant?: 'default' | 'destructive';
+  /** A contagem do badge NÃO pôde ser lida — desenha "?" com este motivo (BadgeDeContagem). */
+  badgeIndisponivel?: string;
   /** Visível a QUALQUER staff (employee/master). Era `managerOnly` — nome mentiroso. */
   staffOnly?: boolean;
   masterOnly?: boolean;
@@ -131,6 +136,8 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Wrench, label: 'Ferramentas de venda', path: '/vendas/ferramentas' },
       // Prospecção é trabalho de VENDA: o vendedor sales-only só vê esta seção (migration 20261029201200).
       { icon: Radar, label: 'Radar de Clientes', path: '/radar', radarProspectar: true },
+      // Funil do lead empurrado (pacote H): uso de cada vendedor — só gestor/master (a RPC confere de novo).
+      { icon: Filter, label: 'Funil do Radar', path: '/radar/funil', gestorComercialOuMaster: true },
       { icon: ClipboardList, label: 'Tarefas', path: '/tarefas', gestorComercialOuMaster: true },
       { icon: ListChecks, label: 'Tarefas recorrentes', path: '/tarefas/templates', gestorComercialOuMaster: true },
       { icon: MessageSquareText, label: 'Preview propostas', path: '/rota/propostas', gestorComercialOuMaster: true },
@@ -259,7 +266,7 @@ function SidebarSection({
   collapsed: boolean;
   defaultOpen: boolean;
   isActive: (path: string) => boolean;
-  navigate: ReturnType<typeof useNavigate>;
+  navigate: (path: string) => void;
   items: NavItem[];
   onToggleFavorite?: (path: string) => void;
   isFavorite?: (path: string) => boolean;
@@ -333,7 +340,10 @@ function SidebarSection({
   );
 }
 
-function SidebarItem({
+// memo (plano v4, lote 10 — C8): cada navegação re-renderizava TODOS os itens visíveis da nav; com
+// props estáveis (`item` do useMemo de badges, `navigate` estável do AppSidebar) só os 2 itens cujo
+// `active` muda re-renderizam.
+const SidebarItem = React.memo(function SidebarItem({
   item,
   active,
   navigate,
@@ -343,13 +353,15 @@ function SidebarItem({
 }: {
   item: NavItem;
   active: boolean;
-  navigate: ReturnType<typeof useNavigate>;
+  navigate: (path: string) => void;
   collapsed: boolean;
   onToggleFavorite?: (path: string) => void;
   isFavorite?: boolean;
 }) {
   const Icon = item.icon;
   const showStar = !collapsed && onToggleFavorite;
+  // F5 (plano v5): apontar/focar o item já baixa o chunk da rota; o clique só navega.
+  const prefetch = usePrefetchRota(item.path);
   const button = (
     <div
       className={cn(
@@ -359,6 +371,7 @@ function SidebarItem({
     >
       <button
         onClick={() => navigate(item.path)}
+        {...prefetch}
         className={cn(
           'flex items-center gap-2.5 w-full rounded-md text-sm font-medium transition-colors',
           collapsed ? 'justify-center px-2 py-2' : 'px-3 py-1.5',
@@ -369,7 +382,8 @@ function SidebarItem({
       >
         <Icon className={cn('shrink-0', collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
         {!collapsed && <span className="truncate">{item.label}</span>}
-        {!collapsed && item.badge && item.badge > 0 && (
+        {!collapsed && item.badgeIndisponivel && <BadgeIndisponivel motivo={item.badgeIndisponivel} />}
+        {!collapsed && !item.badgeIndisponivel && item.badge && item.badge > 0 && (
           <span className={cn(
             'ml-auto text-2xs rounded-full px-1.5 py-0.5 min-w-[18px] text-center tabular-nums',
             item.badgeVariant === 'destructive'
@@ -409,14 +423,21 @@ function SidebarItem({
     );
   }
   return button;
-}
+});
 
 // memo: com props estáveis (onToggle é useCallback no AppShell), re-renders do
 // shell (mobileOpen, lente, contexts) não re-renderizam os 80+ itens da nav.
 // Navegação e badges continuam re-renderizando por dentro (useLocation/queries).
 const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
+  // `useNavigate` troca de identidade a cada rota (react-router 6): passado direto aos itens,
+  // derrubaria o memo do SidebarItem justamente na navegação. A ref guarda o atual; `irPara` é estável.
   const navigate = useNavigate();
+  const navigateRef = React.useRef(navigate);
+  React.useLayoutEffect(() => {
+    navigateRef.current = navigate;
+  });
+  const irPara = React.useCallback((path: string) => navigateRef.current(path), []);
   const { isStaff, isMaster, user } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
   const { displayRole, displayCommercialRole, displayIsStaff, displayIsMaster, displayIsGestorComercial, displayIsSalesOnly, displayLoading } = useDisplayAccess();
@@ -433,22 +454,9 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   // clara e evitar mudança silenciosa se algum dia alguém ligar pra true.
   const enableStaffPolls = isStaff && !isSalesOnly;
 
-  // Contador de alertas de outlier pendentes (críticos + atenção)
-  const { data: outlierPendentes } = useQuery({
-    queryKey: ['outlier-pendentes-count'],
-    queryFn: async () => {
-      const { count } = await supabase
-        .from('eventos_outlier')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pendente')
-        .in('severidade', ['critico', 'atencao']);
-      return count ?? 0;
-    },
-    enabled: enableStaffPolls,
-    refetchInterval: 60000,
-    refetchIntervalInBackground: false,
-    staleTime: 30000,
-  });
+  // Contador de alertas de outlier pendentes (críticos + atenção) — UMA query alimenta os dois
+  // badges (/alertas e o destrutivo de /sessao/parametros); erro → null esconde o badge.
+  const { data: alertasCriticos } = useAlertasCriticos(enableStaffPolls);
 
   // Contador de pedidos pendentes/bloqueados do dia atual
   const { data: pedidosPendentes } = useQuery({
@@ -523,7 +531,6 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
     staleTime: 30000,
   });
 
-  const { data: alertasCriticos } = useAlertasCriticos(enableStaffPolls);
   const { data: financeiroAtrasados } = useFinanceiroAlertas(enableStaffPolls);
   const { data: tintErros } = useTintAlertas(enableStaffPolls);
 
@@ -549,15 +556,24 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   // Badge de melhorias abertas: a fila é master-only (item de nav masterOnly),
   // então o poll só roda pro master REAL — um employee polando contaria só os
   // PRÓPRIOS abertos (RLS) e mostraria badge errado.
-  const { data: melhoriasAbertas } = useMelhoriasBadge(enableStaffPolls && isMaster);
+  // Contrato de 3 faces (plano v7, C11): número / oculto / "?" quando a leitura falhou.
+  const melhoriasQuery = useMelhoriasBadge(enableStaffPolls && isMaster);
+  const melhoriasFace = faceDoBadge(melhoriasQuery);
+  // Primitivos para o useMemo abaixo: o objeto da face é novo a cada render e invalidaria o memo
+  // dos itens da nav (plano v4, lote 10 — C8).
+  const melhoriasAbertas = melhoriasFace.tipo === 'numero' ? melhoriasFace.valor : undefined;
+  const melhoriasIndisponivel =
+    melhoriasFace.tipo === 'indisponivel'
+      ? motivoDoBadgeIndisponivel('as melhorias abertas', melhoriasFace.estado, melhoriasFace.ultimo)
+      : undefined;
 
   const sectionsWithBadges = React.useMemo(
     () => navSections.map((s) => ({
       ...s,
       items: s.items.map((it) => {
         if (isImpersonating) return it; // na lente, sem badges (refletiriam dado do master)
-        if (it.path === '/admin/reposicao/alertas' && outlierPendentes) {
-          return { ...it, badge: outlierPendentes };
+        if (it.path === '/admin/reposicao/alertas' && alertasCriticos) {
+          return { ...it, badge: alertasCriticos };
         }
         if (it.path === '/admin/reposicao/pedidos' && pedidosPendentes) {
           return { ...it, badge: pedidosPendentes };
@@ -592,13 +608,16 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
         if (it.path === '/whatsapp' && waSlaMeusVermelhos && waSlaMeusVermelhos > 0) {
           return { ...it, badge: waSlaMeusVermelhos, badgeVariant: 'destructive' as const };
         }
-        if (it.path === '/gestao/melhorias' && melhoriasAbertas && melhoriasAbertas > 0) {
+        if (it.path === '/gestao/melhorias' && melhoriasIndisponivel) {
+          return { ...it, badgeIndisponivel: melhoriasIndisponivel };
+        }
+        if (it.path === '/gestao/melhorias' && melhoriasAbertas) {
           return { ...it, badge: melhoriasAbertas };
         }
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, isImpersonating],
+    [pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, melhoriasIndisponivel, isImpersonating],
   );
 
   const isActive = (path: string) => {
@@ -670,7 +689,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
             collapsed={false}
             defaultOpen={true}
             isActive={isActive}
-            navigate={navigate}
+            navigate={irPara}
             items={
               sectionsWithBadges
                 .flatMap((s) => s.items)
@@ -699,7 +718,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
               collapsed={collapsed}
               defaultOpen={!isSecondary}
               isActive={isActive}
-              navigate={navigate}
+              navigate={irPara}
               items={visibleItems}
               onToggleFavorite={toggleFavorite}
               isFavorite={isFavorite}
@@ -732,6 +751,9 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
   const { pedirSaida, dialogoSaida } = useSaidaComFilaPendente();
   const { isImpersonating } = useImpersonation();
   const { displayIsStaff } = useDisplayAccess();
+  // Poll de 30 s do override: identidade REAL (como os polls de badge do shell), porque a RLS
+  // só deixa staff ler. Sem o gate, todo cliente polava a tabela para receber vazio (lab F11).
+  const { isStaff } = useAuth();
 
   return (
     <header
@@ -758,7 +780,7 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
 
       <div className="flex items-center gap-1">
         <Suspense fallback={null}>
-          <ActiveOverrideBadge />
+          <ActiveOverrideBadge habilitado={isStaff} />
           <PersonaSwitcherChip />
         </Suspense>
         <CompanySwitcher />

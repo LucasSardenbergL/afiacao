@@ -8,14 +8,27 @@ const coorteMock = vi.fn();
 const receitaMock = vi.fn();
 const projMock = vi.fn();
 const titulosMock = vi.fn();
+const custoMock = vi.fn();
+const maturacaoMock = vi.fn();
 
 vi.mock('@/hooks/useFinanceiroCiclo', () => ({
   hojeSp: () => '2026-10-14',
   useCicloResumo: () => resumoMock(),
   useCicloCoorte: () => coorteMock(),
+  useCicloCoorteMaturacao: () => maturacaoMock(),
   useReceitaDiariaTtm: () => receitaMock(),
   useCicloTitulosCliente: () => titulosMock(),
   useCicloGiroSku: () => ({ data: [], isLoading: false, error: null }),
+  useRupturaSensor: () => ({ data: { pedidos: [], prateleira: [] }, isLoading: false, error: null }),
+  useReguaCiclo: () => ({ data: undefined, isLoading: false, error: null }),
+  useCrAbertoTotal: () => ({ data: undefined, isLoading: false, error: null }),
+  useCicloCustoCapital: () => custoMock(),
+}));
+vi.mock('@/hooks/useFinanceiroCompraSuspensa', () => ({
+  useCompraSuspensaListar: () => ({ data: [], isLoading: false, error: null, isError: false }),
+  useCompraSuspensaRuns: () => ({ data: [], isLoading: false, error: null, isError: false }),
+  useCompraSuspensaCandidatos: () => ({ data: [], isLoading: false, error: null, isError: false, isSuccess: true, isFetching: false }),
+  useCompraSuspensaMutacoes: () => ({ suspender: { mutate: vi.fn(), isPending: false }, reativar: { mutate: vi.fn(), isPending: false } }),
 }));
 vi.mock('@/hooks/useFinanceiroCicloFornecedor', () => ({
   useCicloCpTitulos: () => ({ data: [], isLoading: false, error: null }),
@@ -46,9 +59,16 @@ const renderTab = (url = '/') => render(<MemoryRouter initialEntries={[url]}><Ci
 
 beforeEach(() => {
   coorteMock.mockReturnValue(ok([]));
+  maturacaoMock.mockReturnValue(ok([]));
   receitaMock.mockReturnValue(ok({ oben: { porDia: 11300, mesesComDado: 12 }, colacor: { porDia: 2100, mesesComDado: 9 }, colacor_sc: { porDia: null, mesesComDado: 0 } }));
   titulosMock.mockReturnValue({ data: [], isLoading: false, error: null });
   projMock.mockImplementation(() => ok({ indicadores: proj, confianca_dados: { motivos: [] } }));
+  // CET do banco (PR3): oben cadastrada (2,5% a.m.), colacor/colacor_sc sem CET.
+  custoMock.mockReturnValue(ok([
+    { company: 'oben', custoMensal: 0.025, fonte: 'founder 2026-10-31', em: '2026-10-31T18:00:00Z' },
+    { company: 'colacor', custoMensal: null, fonte: null, em: null },
+    { company: 'colacor_sc', custoMensal: null, fonte: null, em: null },
+  ]));
 });
 
 describe('CicloTab', () => {
@@ -138,17 +158,27 @@ describe('CicloTab', () => {
     expect(screen.getByText(/Todo R\$ é cenário, não previsão/)).toBeInTheDocument();
   });
 
-  it('custo acima do teto mostra o motivo no input; custo válido mostra desconto', () => {
+  it('CET vem do banco: oben (2,5% a.m.) calcula o desconto máximo; a URL não manda mais', () => {
     resumoMock.mockReturnValue(ok([]));
     renderTab('/?cicloCustoOben=35');
-    expect(screen.getByText(/até 20% a\.m\./)).toBeInTheDocument();
+    expect(screen.getByTestId('ciclo-desconto-oben')).toHaveTextContent('2,5% a.m.');
+    expect(screen.getByTestId('ciclo-desconto-oben')).toHaveTextContent('30 dias');
+    expect(screen.getByTestId('ciclo-desconto-oben')).toHaveTextContent('fonte: founder 2026-10-31');
+    expect(screen.queryByRole('textbox', { name: /custo/i })).not.toBeInTheDocument();
   });
 
-  it('custo válido calcula o desconto máximo', () => {
+  it('alerta fixo: 1% por 7 dias ≈ 68,9% a.a.', () => {
     resumoMock.mockReturnValue(ok([]));
-    renderTab('/?cicloCustoOben=2,5');
-    expect(screen.getByText('30 dias')).toBeInTheDocument();
-    expect(screen.queryByText(/até 20% a\.m\./)).not.toBeInTheDocument();
+    renderTab();
+    expect(screen.getByTestId('ciclo-desconto-alerta-anual')).toHaveTextContent('68,9% a.a.');
+  });
+
+  it('erro de leitura do CET: sem número e com o motivo (nunca 0)', () => {
+    resumoMock.mockReturnValue(ok([]));
+    custoMock.mockReturnValue({ data: undefined, isLoading: false, error: new Error('boom') });
+    renderTab();
+    expect(screen.getByText(/Não foi possível ler o custo do dinheiro/)).toBeInTheDocument();
+    expect(screen.queryByTestId('ciclo-desconto-oben')).not.toBeInTheDocument();
   });
 
   it('tendência marca os meses parciais (rótulo com "*" e flag), sem preencher ausente', () => {
@@ -229,21 +259,27 @@ describe('CicloTab', () => {
     expect(screen.getByTestId('ciclo-card-oben')).not.toHaveTextContent('sem receita TTM');
   });
 
-  it('custo é por empresa: em "Todas" há um input por empresa e cada c vale só para a sua', () => {
+  it('custo é por empresa: em "Todas" a oben calcula e as sem CET mostram "—" sem número', () => {
     resumoMock.mockReturnValue(ok([]));
-    renderTab('/?cicloEmpresa=all&cicloCustoColacor=2,5');
-    expect(screen.getByTestId('ciclo-desconto-oben')).toHaveTextContent('Informe o custo');
-    expect(screen.getByTestId('ciclo-desconto-colacor')).toHaveTextContent('30 dias');
-    expect(screen.getByTestId('ciclo-desconto-colacor_sc')).toHaveTextContent('Informe o custo');
+    renderTab('/?cicloEmpresa=all');
+    expect(screen.getByTestId('ciclo-desconto-oben')).toHaveTextContent('30 dias');
+    expect(screen.getByTestId('ciclo-desconto-colacor')).toHaveTextContent('CET não cadastrado');
+    expect(screen.getByTestId('ciclo-desconto-colacor')).not.toHaveTextContent('30 dias');
+    expect(screen.getByTestId('ciclo-desconto-colacor_sc')).toHaveTextContent('CET não cadastrado');
   });
 
-  it('input de custo inválido tem aria-invalid e aria-describedby para a mensagem', () => {
-    resumoMock.mockReturnValue(ok([]));
-    renderTab('/?cicloCustoOben=35');
-    const input = within(screen.getByTestId('ciclo-desconto-oben')).getByRole('textbox');
-    expect(input).toHaveAttribute('aria-invalid', 'true');
-    const id = input.getAttribute('aria-describedby') as string;
-    expect(document.getElementById(id)).toHaveTextContent(/até 20% a\.m\./);
+  it('elegibilidade: quem já antecipa não conta como elegível; vencido e atraso contam', () => {
+    resumoMock.mockReturnValue(ok([
+      cli({ omieCodigoCliente: 1, atrasoP80: -5, atrasoP80Valor: -6 }),
+      cli({ omieCodigoCliente: 2, atrasoP80: 10, atrasoP80Valor: 12 }),
+      cli({ omieCodigoCliente: 3, atrasoP80: null, atrasoP80Valor: null, nVencidas: 1, saldoVencido: 100 }),
+      cli({ omieCodigoCliente: 4, atrasoP80: null, atrasoP80Valor: null }),
+    ]));
+    renderTab('/?cicloEmpresa=oben');
+    const t = screen.getByTestId('ciclo-desconto-oben-elegiveis').textContent ?? '';
+    expect(t).toMatch(/Elegíveis.*: 2/);
+    expect(t).toMatch(/já antecipam.*: 1/);
+    expect(t).toMatch(/sem histórico: 1/);
   });
 
   it('"Todas": fila agrupada por empresa, uma seção cada', () => {
@@ -291,21 +327,6 @@ describe('CicloTab', () => {
     expect(screen.getByTestId('ciclo-card-colacor_sc')).not.toHaveTextContent('base:');
   });
 
-  it('track de desconto simulado dispara no blur, não a cada tecla, e só se o valor mudou', async () => {
-    const { track } = await import('@/lib/analytics');
-    (track as ReturnType<typeof vi.fn>).mockClear();
-    resumoMock.mockReturnValue(ok([]));
-    renderTab('/?cicloEmpresa=oben');
-    const input = within(screen.getByTestId('ciclo-desconto-oben')).getByRole('textbox');
-    fireEvent.change(input, { target: { value: '2' } });
-    fireEvent.change(input, { target: { value: '2,5' } });
-    expect(track).not.toHaveBeenCalledWith('financeiro.ciclo_desconto_simulado', expect.anything());
-    fireEvent.blur(input);
-    expect(vi.mocked(track).mock.calls.filter((c) => c[0] === 'financeiro.ciclo_desconto_simulado')).toHaveLength(1);
-    fireEvent.blur(input);
-    expect(vi.mocked(track).mock.calls.filter((c) => c[0] === 'financeiro.ciclo_desconto_simulado')).toHaveLength(1);
-  });
-
   it('drill: descrição cobre as 4 situações e a conta aberta do cenário de cobrança', () => {
     resumoMock.mockReturnValue(ok([cli({ prazoRealPond: 45, atrasoPond: 15, atrasoP80: 20, atrasoP80Valor: 20, excessoCarenciaPond: 10, pctValorAtrasado: 0.8, volumeEmitido12m: 36500 })]));
     renderTab();
@@ -319,5 +340,40 @@ describe('nomeExibido', () => {
   it('decodifica entidade HTML do Omie e cai no código sem nome', () => {
     expect(nomeExibido({ nomeCliente: 'MOVEIS &amp; CIA', omieCodigoCliente: 1 })).toBe('MOVEIS & CIA');
     expect(nomeExibido({ nomeCliente: null, omieCodigoCliente: 42 })).toBe('#42');
+  });
+});
+
+describe('coortes com maturação fixa (Frente A, item 4)', () => {
+  const coorteMat = (mes: string, maduro: boolean) => ({
+    company: 'oben' as const, mes, titulos: 9, valorVencido: 1800, valorAntecipado: 100, valorPagoNoDia: 80, valorPagoComAtraso: 1400,
+    valorPagoSemData: maduro ? 120 : 0, valorEmAberto: 60, diasAntecipacaoPond: 5, diasAtrasoPond: 43.57,
+    pct: maduro ? { 15: 0.2111, 30: 0.3778, 60: 0.6 } : { 15: null, 30: null, 60: null },
+    maduro: { 15: maduro, 30: maduro, 60: maduro },
+    mesParcial: !maduro,
+  });
+
+  it('coorte madura publica D+15/30/60 em %; imatura mostra "—" (nunca número parcial); sem-data marca o piso', () => {
+    maturacaoMock.mockReturnValue(ok([coorteMat('2026-07-01', true), coorteMat('2026-10-01', false)]));
+    renderTab();
+    const tabela = screen.getByTestId('ciclo-maturacao-oben');
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-07-d15')).toHaveTextContent('21.1%');
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-07-d60')).toHaveTextContent('60.0%');
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-10-d15')).toHaveTextContent('—');
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-10-d60')).toHaveTextContent('—');
+    // Mais recente primeiro.
+    const linhas = within(tabela).getAllByRole('row').slice(1).map((r) => r.getAttribute('data-testid'));
+    expect(linhas).toEqual(['ciclo-maturacao-oben-2026-10', 'ciclo-maturacao-oben-2026-07']);
+    expect(screen.getByText(/os D\+N são piso/)).toBeInTheDocument();
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-07-piso')).toBeInTheDocument();
+    // Mês cortado pela janela leva a marca *, com o motivo no title.
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-10-parcial')).toHaveTextContent('*');
+    expect(within(tabela).queryByTestId('ciclo-maturacao-oben-2026-07-parcial')).toBeNull();
+  });
+
+  it('erro na leitura da maturação aparece como erro, não como tabela vazia', () => {
+    maturacaoMock.mockReturnValue({ data: undefined, isLoading: false, error: new Error('boom') });
+    renderTab();
+    expect(screen.getByTestId('ciclo-maturacao-erro-oben')).toBeInTheDocument();
+    expect(screen.queryByTestId('ciclo-maturacao-oben')).toBeNull();
   });
 });

@@ -100,6 +100,13 @@ on:
         description: 'Rodar o mutation-check (todos os contratos .mut)'
         type: boolean
         default: true
+      # O pós-merge passa `true` (E14 do plano v7, 2026-11-06): as provas SQL pulam só se o diff
+      # CUMULATIVO desde a última base com provas e união verdes for todo de `docs/`. Default `false`:
+      # o dispatch manual segue rodando tudo. Desenho: job `provas-sql-escopo`.
+      provas_escopo_docs:
+        description: 'Pular as provas SQL se, desde a última base com provas verdes, só docs/ mudou'
+        type: boolean
+        default: false
 
 # ┌─ FAN-OUT (2026-09-07) ─────────────────────────────────────────────────────────────────────────┐
 # O `validate` era UM job serial de ~40 steps, com `timeout-minutes: 15`. Medido em 2026-09-07 sobre
@@ -179,14 +186,15 @@ jobs:
       contents: read
 
     steps:
-      # `fetch-depth: 0` é o que dá merge-base ao gate `sonda:bump` (lá embaixo): sem histórico o
-      # checkout é shallow (depth 1) e `git merge-base origin/main HEAD` não resolve — e esse gate
-      # é fail-CLOSED, então ele reprovaria o repo inteiro em vez de degradar. Custo medido: ~118 MB
-      # de clone. A alternativa (`git diff HEAD^1 HEAD` sobre o merge commit de `refs/pull/N/merge`)
-      # é mais barata mas amarra o gate à mecânica de checkout do Actions e não roda igual local.
+      # Checkout RASO aqui (2026-11-04, lote 8 do plano v5): este job só instala e roda os 2 `tsc`,
+      # e nenhum dos dois lê histórico git. O `fetch-depth: 0` dos OUTROS jobs é o que dá merge-base
+      # ao gate `sonda:bump` (no `edges-e-build` desde o fan-out): sem histórico o checkout é shallow
+      # (depth 1) e `git merge-base origin/main HEAD` não resolve — e esse gate é fail-CLOSED, então
+      # reprovaria o repo inteiro em vez de degradar. Custo medido: ~118 MB de clone. A alternativa
+      # (`git diff HEAD^1 HEAD` sobre o merge commit de `refs/pull/N/merge`) é mais barata mas amarra
+      # o gate à mecânica de checkout do Actions e não roda igual local. Step novo aqui que leia git
+      # (merge-base, log, diff) precisa devolver o `fetch-depth: 0`.
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       # ⚠️ bun-version tem que ser semver ESTRITO (x.y.z) — NÃO `latest`, `1.3`,
       # `^1.3.14` nem `1.3.x` (o exemplo da doc do input!). Só o estrito casa o
@@ -243,11 +251,20 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # 2 shards do vitest (E10 do plano v6, 2026-11-05). O `pool: forks` e o resto do
+        # vitest.config.ts ficam iguais; só a lista de arquivos é dividida. O `validate` lê
+        # `needs.testes.result`, que a matriz agrega (success só se os 2 shards passarem). Medido: job
+        # 7,2 min (p50, 120 runs; mín. 4,8) → 4,4 / 4,28 (575 + 575 arquivos) por +1% de runner. Tira
+        # o `testes` do caminho crítico nos runs sem provas SQL (docs/historico/ci-lote6-v6-lpt-remedido-e-shard-vitest.md).
+        shard: [1, 2]
 
     steps:
-      # Preâmbulo comum aos 4 jobs de trabalho. O PORQUÊ de cada escolha (`fetch-depth: 0`
+      # Preâmbulo comum aos jobs de trabalho. O PORQUÊ de cada escolha (`fetch-depth: 0`
       # para o merge-base do `sonda:bump`; `bun-version` semver ESTRITO) está comentado por
-      # extenso no job `typecheck` — não repetido aqui para não quadruplicar o texto.
+      # extenso no job `typecheck` (que, sozinho, faz checkout raso) — não repetido aqui.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -260,8 +277,15 @@ jobs:
       - name: Install deps
         run: bun install --frozen-lockfile
 
-      - name: Tests
-        run: bun run test
+      # Um step ESTÁTICO por shard (e não `--shard=${{ matrix.shard }}`): o `exclusividade` assina o
+      # argv literal de cada gate bloqueante e recusa interpolação — o mesmo desenho do job
+      # `falsificacao` com `test:falsificacao:1..3`.
+      - name: Tests (shard 1/2)
+        if: matrix.shard == 1
+        run: bun run test:shard:1
+      - name: Tests (shard 2/2)
+        if: matrix.shard == 2
+        run: bun run test:shard:2
 
       # O vitest procura `@vitest-environment` com REGEX NO ARQUIVO INTEIRO e aceita o alias
       # `jest` (coverage.DfSpMS-b.js:2403). Num repo de gates textuais, um teste que CITE o
@@ -959,6 +983,58 @@ jobs:
         if: matrix.parte == 3
         run: bun run test:falsificacao:3
 
+  # Escopo do `provas-sql` (ver o bloco ESCOPO logo abaixo). `fetch-depth: 2` pelo mesmo motivo do
+  # `mutcheck-escopo`: com os dois pais do merge commit na árvore, `pai 1 → HEAD` é o que o PR muda.
+  #
+  # No dispatch pós-merge da main (E14 do plano v7) o histórico vem INTEIRO: o escopo procura, pela API,
+  # o último run da main com provas e união `success` e exige que o SHA dele seja ANCESTRAL do
+  # `github.sha` deste run (`git merge-base --is-ancestor`), com o diff cumulativo entre os dois. Em
+  # PR fica o raso, que é o caminho crítico quando as provas rodam. `actions: read` é para essa busca.
+  provas-sql-escopo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      roda: ${{ steps.escopo.outputs.roda }}
+      base: ${{ steps.escopo.outputs.base }}
+    steps:
+      - uses: actions/checkout@v5
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        with:
+          fetch-depth: 2
+      - uses: actions/checkout@v5
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        with:
+          fetch-depth: 0
+
+      # Semver estrito, mesmo motivo do job `typecheck` (o `bunpin:check` cobra a convergência).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # O evento entra por `env:`, nunca `${{ }}` cru no `run:` (script injection).
+      # Step OPACO de propósito (`bun ./scripts/…`, sem nome de script no package.json): ele não é
+      # gate — decide escopo e nunca reprova conteúdo —, então não entra no censo de gates nem na
+      # matriz do `exclusividade`, que mediria "o que só ele pega" de algo que não pega nada. Fica
+      # VISÍVEL nos contadores de bloqueantes sem script dos dois (`gates:frescura`, `exclusividade`),
+      # como o `bash db/roda-nucleo-ci.sh` do núcleo.
+      - name: ESTE diff alcança o que as provas SQL leem?
+        id: escopo
+        env:
+          EVENTO: ${{ github.event_name }}
+          ESCOPO_DOCS: ${{ inputs.provas_escopo_docs }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          bun ./scripts/provas-sql-escopo.ts --evento "$EVENTO" --escopo-docs "$ESCOPO_DOCS"
+          --ref "$REF" --sha "$SHA" --repo "$REPO" --run-id "$RUN_ID" --github-output
+
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
   # success. Existe porque é o único context exigido pela branch protection da main e o que
@@ -1050,9 +1126,30 @@ jobs:
   # maior. A espera por runner NÃO conta no teto: na 36831464837 as partes 2 e 3 ficaram 30m31s e
   # 31m39s na fila, sob teto 20, e passaram. Antes de devolver ao CI uma falsificação `fora-do-ci`,
   # veja em que parte ela cai (`NUCLEO_PARTE=i/3 bash db/roda-nucleo-ci.sh --lista`) e meça de novo.
+  #
+  # Teto 20 → 25 em 2026-11-01 (lote 1 do plano v4), JUNTO com a re-medição do
+  # db/nucleo-ci-custo.txt — o conserto é a tabela, o teto é a guarda. Em 15 runs verdes de PR a
+  # parte mais lenta levou p50 18,9 / máx 19,9 min de job contra o teto de 20, e 2 de 15 runs foram
+  # cancelados no teto e re-rodados: a tabela de 10-28 previa 846–852 s por parte, e 17 provas
+  # novas pesavam o default de 30 s (uma delas custa ~204 s). Com a tabela re-medida, as mesmas
+  # durações dão pior parte p50 15,4 / máx 16,0 min de núcleo (fora da amostra: 15,2–16,3). Teto 25
+  # = ~1,5× sobre isso; quando a pior parte destoar, re-meça a tabela (receita no cabeçalho dela).
+  #
+  # ESCOPO (2026-11-04, E1 do plano v5): no `pull_request`, o núcleo só roda quando o diff toca algo
+  # que alguma prova LÊ. `provas-sql-escopo` decide em segundos (`scripts/provas-sql-escopo.ts`, uma
+  # ALLOWLIST DO INERTE: só pula se TODO arquivo mudado cai em `docs/`/`src/`/`public/`/`.claude/` e
+  # fora do que as provas leem lá dentro). Fora de PR roda TUDO — é a rede da main —, com UMA exceção
+  # estreita (E14 do plano v7): o dispatch pós-merge pula se o diff CUMULATIVO desde a última base com
+  # provas e união verdes for só de `docs/` (sem a allowlist do PR). Fail-closed nas
+  # três pontas: o script nunca sai ≠ 0 e erra para `roda=true`; este job só pula com `roda`
+  # EXPLICITAMENTE 'false' (job de escopo vermelho = saída vazia = roda); e o `validate` só aceita o
+  # SKIPPED daqui e da união com o `success` do escopo e o `roda=false` dele. Mapa de leitura e
+  # medição: docs/historico/ci-provas-sql-escopo.md
   provas-sql:
+    needs: [provas-sql-escopo]
+    if: ${{ !cancelled() && needs.provas-sql-escopo.outputs.roda != 'false' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -1079,7 +1176,19 @@ jobs:
         # 6 partes: com o preâmbulo medido em 29 s (p50, 1.283 jobs), 4 partes balanceadas (~14,3 min)
         # poupariam ~1 min de runner por run e devolveriam o caminho crítico de hoje. Prova cara nova
         # entra no default (30 s) até a tabela ser re-medida — receita no cabeçalho dela.
-        parte: [1, 2, 3, 4, 5, 6]
+        # Re-medida em 2026-11-05 (lote 6 do plano v6, 20 runs): a parte 5 somava 19,4 min de núcleo
+        # contra 14,9–17,6 nas outras (9 provas no default); com a tabela nova, 16,4 min cada.
+        # 6 -> 7 partes (2026-11-05, E16 do plano v7, MEDIDO e mantido): mesma tabela e mesmo LPT, 14,3 min
+        # de núcleo por parte (eram 16,6 com as provas novas). A 1ª parte carrega ainda o harness do
+        # runner (~0,7 min, p50 de 17 runs), que o LPT não pesa: some no ruído de máquina (±45%) e não
+        # justifica constante nova no balanceador. Medição e veredito no PR e em
+        # docs/historico/ci-e16-nucleo-sql-7-partes.md (pior parte 16,5 e 15,9 contra p50 de 19,3).
+        # 7 partes seriais -> 5 partes × 2 workers (2026-11-09, fatia 2): a parte serial ocupa ~1 núcleo
+        # de 4 do runner (p90 1,2; iowait ≈ 0), medido em docs/historico/ci-provas-sql-medicao-preparacao.md.
+        # O runner roda NUCLEO_WORKERS unidades ao mesmo tempo (step do núcleo, abaixo), menos a FAIXA
+        # SERIAL (timeout ≤ 2 s, 23% do tempo), que roda sozinha. Ganho estimado de 1,4–1,6× (5 partes,
+        # não 4); resultado medido em docs/historico/ci-provas-sql-2-workers.md.
+        parte: [1, 2, 3, 4, 5]
     permissions:
       contents: read
 
@@ -1293,6 +1402,46 @@ jobs:
           esac
           echo "LOCALE_PT_BR_OK"
 
+      # Cluster de prova é DESCARTÁVEL: nenhum sobrevive ao job, e nenhuma prova do núcleo testa
+      # recuperação de crash do SO. Cada prova faz `initdb` próprio, e o `--falsificar` refaz
+      # initdb + snapshot 1× por sabotagem (~1.700 por PR), e todos pagavam fsync. Este step põe
+      # um `initdb` na frente do PGDG (via `PGBIN_OVERRIDE`, que o db/lib/pg-harness.sh já honra
+      # e cuja major ele ainda confere) com `--no-sync -c fsync=off -c full_page_writes=off`.
+      # As 15 provas que já ligavam o trio à mão continuam iguais.
+      # `synchronous_commit` fica ON DE PROPÓSITO: com fsync=off ele quase não rende, e OFF
+      # perderia commit num `pg_ctl stop -m immediate` seguido de restart.
+      # Opção de linha de comando (`pg_ctl -o "-c fsync=on"`) continua vencendo o postgresql.conf:
+      # a prova que precisar de durabilidade pede e recebe.
+      # Conferência POSITIVA: o harness resolve o shim e o servidor diz `off`/`off`/`on`.
+      # Medição: docs/historico/ci-provas-sql-durabilidade-off.md
+      - name: Cluster de prova sem fsync — shim do initdb e conferência
+        run: |
+          set -euo pipefail
+          real=/usr/lib/postgresql/17/bin
+          shim="$RUNNER_TEMP/pgbin-sem-fsync"
+          mkdir -p "$shim"
+          for b in "$real"/*; do ln -s "$b" "$shim/$(basename "$b")"; done
+          rm "$shim/initdb"
+          # As flags vão DEPOIS de "$@": o initdb só reconhece `--version` como 1º argumento,
+          # e o pg-harness confere a major por `initdb --version`.
+          printf '#!/bin/sh\nexec %s/initdb "$@" --no-sync -c fsync=off -c full_page_writes=off\n' "$real" > "$shim/initdb"
+          chmod +x "$shim/initdb"
+          echo "PGBIN_OVERRIDE=$shim" >> "$GITHUB_ENV"
+          resolvido="$(PGBIN_OVERRIDE="$shim" PGVER=17 bash -c '. db/lib/pg-harness.sh; printf %s "$PGBIN"')"
+          [ "$resolvido" = "$shim" ] \
+            || { echo "::error::o pg-harness resolveu '$resolvido', não o shim '$shim'"; exit 1; }
+          d="$(mktemp -d)"
+          "$shim/initdb" -D "$d/data" -U postgres -E UTF8 --locale=C > "$d/initdb.log" 2>&1 \
+            || { tail -c 600 "$d/initdb.log"; echo "::error::initdb pelo shim falhou"; exit 1; }
+          "$shim/pg_ctl" -D "$d/data" -l "$d/pg.log" -w start -o "-p 5808 -k $d -c listen_addresses=''" > /dev/null \
+            || { tail -c 800 "$d/pg.log"; echo "::error::cluster do shim não subiu"; exit 1; }
+          v="$("$shim/psql" -X -A -t -h "$d" -p 5808 -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c "SELECT current_setting('fsync')||'/'||current_setting('full_page_writes')||'/'||current_setting('synchronous_commit')")"
+          "$shim/pg_ctl" -D "$d/data" -m immediate stop > /dev/null
+          [ "$v" = "off/off/on" ] \
+            || { echo "::error::fsync/full_page_writes/synchronous_commit = '$v', esperado off/off/on"; exit 1; }
+          echo "DURABILIDADE_OFF_OK pgbin=$shim fsync/fpw/sync_commit=$v"
+
       # O runner (db/roda-nucleo-ci.sh) começa por uma SONDA: sobe um cluster e pergunta
       # `server_version_num` ao servidor. Sem ela, "Postgres ausente" e "todas as provas
       # passaram" produziriam o mesmo verde — `ausente ≠ zero` aplicado ao CI.
@@ -1304,6 +1453,7 @@ jobs:
         env:
           NUCLEO_PARTE: ${{ strategy.job-index }}/${{ strategy.job-total }}
           NUCLEO_RECIBO: ${{ runner.temp }}/nucleo-recibo/parte-${{ strategy.job-index }}.txt
+          NUCLEO_WORKERS: "2"
         run: bash db/roda-nucleo-ci.sh
 
       # O dente do RUNNER, provado onde o runner vale. `db/falsifica-nucleo-ci.sh` restaura
@@ -1323,7 +1473,7 @@ jobs:
       - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
         if: ${{ strategy.job-index == 0 }}
         env:
-          HARNESS_OK_MINIMO: "67"
+          HARNESS_OK_MINIMO: "83"
         run: |
           log="$RUNNER_TEMP/falsifica-nucleo.log"
           bash db/falsifica-nucleo-ci.sh > "$log" 2>&1 && rc=0 || rc=$?
@@ -1354,9 +1504,11 @@ jobs:
   # manifesto (`db/roda-nucleo-ci.sh --uniao`; cada regra tem caso no db/falsifica-nucleo-ci.sh), e o
   # recibo do harness da 1ª parte. `!cancelled()` em vez do default: com uma parte vermelha ele roda
   # mesmo assim e diz o porquê — o default o pularia, e o `validate` só leria "skipped".
+  # Pula JUNTO com as partes, pela MESMA condição (escopo com `roda` explicitamente 'false'): rodar
+  # sobre partes puladas reprovaria por "terminou skipped". O `validate` confere os dois pulos.
   provas-sql-uniao:
-    needs: [provas-sql]
-    if: ${{ !cancelled() }}
+    needs: [provas-sql-escopo, provas-sql]
+    if: ${{ !cancelled() && needs.provas-sql-escopo.outputs.roda != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1401,7 +1553,7 @@ jobs:
 
   validate:
     if: always()
-    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, falsificacao, provas-sql, provas-sql-uniao]
+    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, falsificacao, provas-sql-escopo, provas-sql, provas-sql-uniao]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue.
@@ -1413,17 +1565,49 @@ jobs:
       - name: Todos os jobs passaram? (exige 'success' POSITIVO de cada um)
         env:
           RESULTADOS: ${{ toJSON(needs) }}
+          EVENTO: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          ESCOPO_DOCS: ${{ inputs.provas_escopo_docs }}
         run: |
           set -euo pipefail
-          esperados=7
-          total=0; falhou=0; viu_provas_sql=0; viu_uniao=0; viu_falsificacao=0
+          esperados=8
+          total=0; falhou=0; viu_provas_sql=0; viu_uniao=0; viu_falsificacao=0; viu_escopo=0
+          # O ÚNICO skipped aceito: `provas-sql` e `provas-sql-uniao` pulados porque o escopo DISSE que
+          # o diff não alcança nada que as provas leem. Sempre com o escopo em `success` e `roda`
+          # exatamente 'false', e em UM de dois eventos:
+          #  - `pull_request` (E1 do plano v5, 2026-11-04);
+          #  - o dispatch pós-merge da main (E14 do plano v7, 2026-11-06): `workflow_dispatch` na ref
+          #    main, com o input `provas_escopo_docs` true e a `base` verde (40 hex) que o escopo achou.
+          # Push, cron e dispatch manual nunca pulam. Escopo vermelho, saída vazia ou qualquer outro
+          # valor = o skipped é ausência de dado e reprova, como sempre.
+          escopo_pulou=0
+          escopo_resultado="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].result // ""')"
+          escopo_roda="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.roda // ""')"
+          escopo_base="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.base // ""')"
+          if [ "$escopo_resultado" = success ] && [ "$escopo_roda" = false ]; then
+            if [ "$EVENTO" = pull_request ]; then
+              escopo_pulou=1
+            elif [ "$EVENTO" = workflow_dispatch ] && [ "$REF" = refs/heads/main ] && [ "$ESCOPO_DOCS" = true ] \
+                 && [[ "$escopo_base" =~ ^[0-9a-f]{40}$ ]]; then
+              escopo_pulou=1
+            fi
+          fi
+          echo "  escopo das provas SQL: evento=$EVENTO ref=$REF escopo_docs=${ESCOPO_DOCS:-<vazio>} resultado=${escopo_resultado:-<vazio>} roda=${escopo_roda:-<vazio>} base=${escopo_base:-<vazio>}"
           while IFS="$(printf '\t')" read -r job resultado; do
             total=$((total + 1))
             [ "$job" = "provas-sql" ] && viu_provas_sql=1
             [ "$job" = "provas-sql-uniao" ] && viu_uniao=1
             [ "$job" = "falsificacao" ] && viu_falsificacao=1
+            [ "$job" = "provas-sql-escopo" ] && viu_escopo=1
             if [ "$resultado" = "success" ]; then
               echo "  ✅ $job: success"
+            elif [ "$resultado" = skipped ] && [ "$escopo_pulou" -eq 1 ] \
+                 && { [ "$job" = provas-sql ] || [ "$job" = provas-sql-uniao ]; }; then
+              if [ "$EVENTO" = pull_request ]; then
+                echo "  ⏭️ $job: skipped pelo escopo (o diff não toca o que as provas leem)"
+              else
+                echo "  ⏭️ $job: skipped pelo escopo da main (só docs/ desde a base verde $escopo_base)"
+              fi
             else
               echo "  ❌ $job: ${resultado:-<vazio>}"
               falhou=$((falhou + 1))
@@ -1457,11 +1641,21 @@ jobs:
             echo "::error::o job 'falsificacao' não está entre os $total lidos — a falsificação saiu do caminho obrigatório."
             exit 1
           fi
+          # E para o escopo das provas: sem ele no `needs`, o `escopo_pulou` acima leria saída vazia — e
+          # reprovaria, que é o lado seguro; a guarda dá o nome certo ao defeito.
+          if [ "$viu_escopo" -ne 1 ]; then
+            echo "::error::o job 'provas-sql-escopo' não está entre os $total lidos — ninguém justifica um provas-sql pulado."
+            exit 1
+          fi
           if [ "$falhou" -ne 0 ]; then
             echo "::error::$falhou de $total job(s) não terminaram em success (cancelled = estouro de timeout-minutes)."
             exit 1
           fi
-          echo "✅ os $total jobs do fan-out terminaram em success"
+          if [ "$escopo_pulou" -eq 1 ]; then
+            echo "✅ os $total jobs do fan-out terminaram em success ou foram pulados pelo escopo das provas SQL"
+          else
+            echo "✅ os $total jobs do fan-out terminaram em success"
+          fi
 
       # ─── Alerta de regressão (Componente 1 — mitigação de reversão Lovable) ──
       # O bot do Lovable commita DIRETO na main sem PR/CI; quando quebra build/

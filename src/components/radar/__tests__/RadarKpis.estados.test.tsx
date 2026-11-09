@@ -31,7 +31,7 @@ function builder(tabela: string) {
   chamadas[tabela] = chamadas[tabela] ?? [];
   const cadeia: unknown[][] = [];
   const b: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'gte', 'order', 'limit', 'is', 'or', 'filter', 'not']) {
+  for (const m of ['select', 'eq', 'in', 'gte', 'order', 'limit', 'is', 'or', 'filter', 'not']) {
     b[m] = (...args: unknown[]) => { chamadas[tabela].push([m, ...args]); cadeia.push([m, ...args]); return b; };
   }
   // `radar_empresas` recebe DUAS leituras (count de inéditos e count de sugeridos): a resposta é
@@ -108,6 +108,30 @@ describe('RadarKpis — erro NÃO pode virar "lote vazio"', () => {
     renderKpis();
     expect(await screen.findByText(A_CONTATAR)).toBeTruthy();
     expect(screen.queryByText(AVISO)).toBeNull();
+  });
+
+  it('agregado do lote ainda não calculado (a_contatar null): "indisponível" — nunca 0 — e o placar fica', async () => {
+    // radar_kpis lê a_contatar de radar_agregado_municipio (migration 20261103100000); na hora seguinte à
+    // carga o agregado ainda é do lote anterior e a RPC devolve null. Ler isso como 0 seria a fabricação.
+    resposta = { data: kpis({ a_contatar: null, contagens_em: null }), error: null };
+    const r = renderKpis();
+    expect(await screen.findByText('indisponível')).toBeTruthy();
+    expect(screen.queryByText(AVISO), 'null legítimo da RPC virou "não consegui ler"').toBeNull();
+    expect(r.container.textContent).toContain('Cadastros novos no Omie (mês)');
+    expect(r.container.textContent).not.toMatch(/A contatar\s*0/);
+  });
+
+  it('com agregado calculado: o hint diz de quando é a contagem (fuso da loja)', async () => {
+    resposta = { data: kpis({ contagens_em: '2026-11-03T06:35:12.4+00:00' }), error: null };
+    renderKpis();
+    expect(await screen.findByText(A_CONTATAR)).toBeTruthy();
+    expect(screen.getByText(/contagem de 03\/11,? 03:35/)).toBeTruthy();
+  });
+
+  it('a_contatar que não é número NEM null (forma errada) continua sendo falha de leitura', async () => {
+    resposta = { data: kpis({ a_contatar: '523180' }), error: null };
+    renderKpis();
+    expect(await screen.findByText(AVISO)).toBeTruthy();
   });
 
   it('ERRO de leitura: avisa, não some — este é o defeito da classe', async () => {
@@ -248,7 +272,8 @@ describe('RadarKpis — card "Inéditos do lote"', () => {
     expect(screen.getByTestId('radar-kpi-ineditos').textContent).toMatch(/de 501\.380/);
     expect(screen.getByText(/Inéditos do lote 2026-08/)).toBeTruthy();
     const c = chamadas.radar_empresas;
-    expect(c).toContainEqual(['eq', 'ultimo_lote', '2026-08']);
+    // Foto vigente via `fotoPostgrest`: sem publicação em passos, só o rótulo vigente (sem `.or` extra).
+    expect(c).toContainEqual(['in', 'ultimo_lote', ['2026-08']]);
     expect(c).toContainEqual(['gte', 'primeira_vista_em', LOTE_VIGENTE.iniciado_em]);
     expect(c.find((x) => x[0] === 'select')?.[2], 'count precisa ser exact + head (PostgREST capa em 1.000 linhas)').toMatchObject({ count: 'exact', head: true });
   });
@@ -311,7 +336,7 @@ describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
     expect(sugeridos()).toHaveLength(1);
     const c = chamadas.radar_empresas;
     for (const esperado of [
-      ['eq', 'ultimo_lote', '2026-08'], ['eq', 'ja_cliente', false], ['is', 'omie_codigo_cliente', null],
+      ['in', 'ultimo_lote', ['2026-08']], ['eq', 'ja_cliente', false], ['is', 'omie_codigo_cliente', null],
       ['or', 'rfb_situacao.is.null,rfb_situacao.eq.02'], ['filter', 'cnpj', 'match', '^[0-9A-Z]{12}[0-9]{2}$'], ['gte', 'score', 70],
     ]) expect(c, `faltou ${JSON.stringify(esperado)}`).toContainEqual(esperado);
   });
@@ -389,7 +414,7 @@ describe('placar de 3 cards; inéditos e sugeridos viram chips FORA do gate', ()
     const lote = await screen.findByTestId('radar-kpi-lote');
     await waitFor(() => expect(lote.textContent).toMatch(/2026-08/));
     expect(lote.textContent).toMatch(/empresas na foto/);
-    expect(screen.getByText('Viraram cliente (mês)')).toBeTruthy();
+    expect(screen.getByText('Cadastros novos no Omie (mês)')).toBeTruthy();
     expect(screen.queryByText('Em conversa')).toBeNull();
   });
 

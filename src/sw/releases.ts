@@ -130,7 +130,9 @@ export function reaproveitavel(e: EntradaManifesto): boolean {
  * entregou o `sw.js`. O modo de cache segue por tipo: arquivo com hash pode vir do HTTP
  * cache; com revisão (index.html, ícones) revalida.
  */
-export function opcoesDeBusca(e: EntradaManifesto): { cache: RequestCache; credentials: RequestCredentials } {
+// Uniões literais em vez de `RequestCache`/`RequestCredentials`: o checker do Lovable não carrega a
+// lib que os declara (TS2304 no build de lá), e estes são os únicos valores emitidos.
+export function opcoesDeBusca(e: EntradaManifesto): { cache: 'default' | 'no-cache'; credentials: 'omit' } {
   return { cache: reaproveitavel(e) ? 'default' : 'no-cache', credentials: 'omit' };
 }
 

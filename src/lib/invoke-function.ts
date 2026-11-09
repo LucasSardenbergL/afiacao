@@ -98,8 +98,11 @@ export async function mensagemDoErroEdge(err: unknown): Promise<string | null> {
   if (!ctx || typeof (ctx as Response).clone !== 'function') return null;
   try {
     const parsed: unknown = await (ctx as Response).clone().json();
-    if (parsed && typeof parsed === 'object' && typeof (parsed as { error?: unknown }).error === 'string') {
-      return (parsed as { error: string }).error;
+    if (parsed && typeof parsed === 'object') {
+      // `error` é o contrato antigo; edges novas (ex.: importar do portal) mandam `mensagem` — as duas valem.
+      const { error, mensagem } = parsed as { error?: unknown; mensagem?: unknown };
+      if (typeof error === 'string') return error;
+      if (typeof mensagem === 'string') return mensagem;
     }
   } catch {
     /* corpo não-JSON ou já consumido */

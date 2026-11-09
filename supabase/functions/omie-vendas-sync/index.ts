@@ -4,8 +4,11 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "./lookup-cliente-estrito.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
+import { exigirRazaoFiscal } from "./razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
+import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
+import { concluirSyncPedidosIncremental } from "./desfecho-pedidos.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
@@ -410,6 +413,23 @@ function getOmieItemIntegrationCode(index: number): number {
 
 // Sincronizar todos os produtos da empresa de vendas
 async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 12, account: Account = "oben") {
+  const falhas = novasFalhasCatalogo();
+  try {
+    return await syncProductsPaginas(supabase, startPage, maxPages, account, falhas);
+  } catch (e) {
+    // Exceção (Omie transitório, página anômala) DEPOIS de uma falha de gravação: a contagem das
+    // linhas não gravadas viaja na mensagem que o catch global grava no fin_sync_log.
+    throw erroComFalhasAcumuladas(e, falhas);
+  }
+}
+
+async function syncProductsPaginas(
+  supabase: SupabaseClient,
+  startPage: number,
+  maxPages: number,
+  account: Account,
+  falhas: FalhasCatalogo,
+) {
   let pagina = startPage;
   let totalPaginas = 1;
   // Fim REAL declarado por avaliarPagina (página vazia NA/apos a última declarada) — distingue
@@ -505,14 +525,13 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
         updated_at: new Date().toISOString(),
       }));
 
-    if (rows.length > 0) {
-      const { error } = await supabase.from("omie_products").upsert(rows, { onConflict: "omie_codigo_produto,account" });
-      if (error) {
-        console.error(`[Omie Vendas][${account}] Erro batch upsert página ${pagina}:`, error);
-      } else {
-        totalSynced += rows.length;
-      }
+    // N2: falha do upsert é CONTADA (não só logada) e decide o desfecho da action — ver
+    // catalogo-gravacao.ts. As páginas seguintes seguem sendo gravadas.
+    const gravacao = await gravarPaginaCatalogo(supabase, rows, pagina, falhas);
+    if (gravacao.erro !== null) {
+      console.error(`[Omie Vendas][${account}] Erro batch upsert página ${pagina}:`, gravacao.erro);
     }
+    totalSynced += gravacao.gravadas;
 
     console.log(`[Omie Vendas][${account}] Página ${pagina}/${totalPaginas} - ${produtos.length} produtos processados`);
     pagina++;
@@ -520,7 +539,10 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
   }
 
   const complete = fimReal || pagina > totalPaginas;
-  return { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
+  return {
+    resultado: { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete },
+    falhas,
+  };
 }
 
 // Sincronizar estoque real dos produtos via ListarPosEstoque (paginado)
@@ -2733,8 +2755,21 @@ Deno.serve(async (req) => {
     switch (action) {
       case "sync_products": {
         const startPage = params.start_page || 1;
-        const syncResult = await syncProducts(supabaseAdmin, startPage, 12, account);
-        result = { success: true, ...syncResult };
+        const execucao = await syncProducts(supabaseAdmin, startPage, 12, account);
+        // N2: linha não gravada em omie_products (preço) ⇒ o run NÃO é sucesso. fin_sync_log
+        // vira 'error' com os contadores (watchdog + data_health enxergam) e a resposta é 500 —
+        // o único sinal que o front (res.error do supabase-js) enxerga.
+        const saida = await concluirSyncProdutos(execucao, async (corpo, erro) => {
+          await completeVendaSync(supabaseAdmin, vendaLogId, corpo, erro);
+          vendaSyncFinalized = true;
+        });
+        if (saida.status !== 200) {
+          return new Response(JSON.stringify(saida.corpo), {
+            status: saida.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        result = saida.corpo;
         break;
       }
 
@@ -2897,6 +2932,7 @@ Deno.serve(async (req) => {
       case "criar_cliente": {
         const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato } = params;
         if (!docCriar || !razao_social) throw new Error("Documento e razão social são obrigatórios");
+        exigirRazaoFiscal(razao_social); // razão do Radar mascarada (aba em build velho) nunca vira cadastro no ERP
         const docClean = documentoParaCadastro(docCriar);
         // Lookup anti-duplicação ESTRITO (retroativo Codex): com o null
         // ambíguo, um flake do Omie pós-retries era lido como "não existe" e
@@ -4010,10 +4046,22 @@ Deno.serve(async (req) => {
           break;
         }
 
-        // Modo INCREMENTAL (rolante, sem cursor) — inalterado: cron 2h, start_page=1, janela today-5..today.
+        // Modo INCREMENTAL (rolante, sem cursor): cron 2h, start_page=1, janela today-5..today.
+        // Sem cursor para retomar, parar antes do fim real (transitório esgotado, página anômala,
+        // orçamento de páginas) NÃO é sucesso — 500 + fin_sync_log 'error' (./desfecho-pedidos.ts).
         const startPagePedidos = params.start_page || 1;
         const syncPedidosResult = await syncPedidos(supabaseAdmin, startPagePedidos, maxPagesPedidos, account, dateFrom, dateTo);
-        result = { success: true, ...syncPedidosResult };
+        const saidaPedidos = await concluirSyncPedidosIncremental(syncPedidosResult, async (corpo, erro) => {
+          await completeVendaSync(supabaseAdmin, vendaLogId, corpo, erro);
+          vendaSyncFinalized = true;
+        });
+        if (saidaPedidos.status !== 200) {
+          return new Response(JSON.stringify(saidaPedidos.corpo), {
+            status: saidaPedidos.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        result = saidaPedidos.corpo;
         break;
       }
 
@@ -4271,85 +4319,6 @@ Deno.serve(async (req) => {
         break;
       }
 
-      case "historico_produtos_cliente": {
-        const { codigo_cliente: codCliHist } = params;
-        if (!codCliHist) throw new Error("Código do cliente é obrigatório");
-        // Fetch last 5 pages of orders for this client from Omie
-        const productHistory: Record<string, string> = {}; // omie_codigo_produto -> last date
-        try {
-          // Piso do total ao longo das ≤5 páginas — ver o comentário no uso abaixo.
-          let histTotal = 1;
-          for (let page = 1; page <= 5; page++) {
-            const pedidos = await callOmieVendasApi(
-              "produtos/pedido/",
-              "ListarPedidos",
-              {
-                pagina: page,
-                registros_por_pagina: 50,
-                filtrar_por_cliente: codCliHist,
-                ordenar_por: "DATA_INCLUSAO",
-              },
-              account
-            );
-            if (!pedidos) break; // null = fim real ("Não existem registros") ou transiente esgotado — para sem fabricar total
-            const lista = ((pedidos as { pedido_venda_produto?: OmiePedidoVendaProduto[] }).pedido_venda_produto) || [];
-            for (const pedido of lista) {
-              const dataPedido = pedido?.cabecalho?.data_previsao || pedido?.infoCadastro?.dInc || '';
-              const itens = pedido?.det || [];
-              for (const item of itens) {
-                const codProd = item?.produto?.codigo_produto || 0;
-                if (codProd && !productHistory[String(codProd)]) {
-                  productHistory[String(codProd)] = dataPedido;
-                }
-              }
-            }
-            // Piso monotônico (money-path §9): o `|| 1` POR RESPOSTA truncava o histórico na 1ª
-            // resposta sem o campo (efeito só de recall — menos itens preferidos —, mas é a mesma
-            // forma da classe; o teto de 5 páginas segue no `for`).
-            histTotal = proximoTotalPaginas(histTotal, (pedidos as { total_de_paginas?: number }).total_de_paginas, MAX_PAGINAS_PEDIDOS);
-            if (page >= histTotal) break;
-          }
-        } catch (e) {
-          console.log("[Omie Vendas] Erro ao buscar histórico de pedidos:", e);
-        }
-        // Also save preferred items to DB
-        if (Object.keys(productHistory).length > 0) {
-          try {
-            // Get product details from omie_products
-            const omieCodes = Object.keys(productHistory).map(Number);
-            const { data: prods } = await supabaseAdmin
-              .from('omie_products')
-              .select('omie_codigo_produto, codigo, descricao, familia')
-              .in('omie_codigo_produto', omieCodes)
-              .eq('account', account);
-            
-            const prodMap = new Map((prods || []).map(p => [p.omie_codigo_produto, p]));
-            
-            for (const [omieCod, dateStr] of Object.entries(productHistory)) {
-              const prod = prodMap.get(Number(omieCod));
-              const parts = dateStr.split('/');
-              const isoDate = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : dateStr;
-              
-              await supabaseAdmin.from('customer_preferred_items').upsert({
-                omie_codigo_cliente: codCliHist,
-                omie_codigo_produto: Number(omieCod),
-                product_codigo: prod?.codigo || null,
-                product_descricao: prod?.descricao || null,
-                familia: prod?.familia || null,
-                account,
-                last_ordered_at: isoDate,
-                added_manually: false,
-              }, { onConflict: 'omie_codigo_cliente,omie_codigo_produto,account' });
-            }
-          } catch (saveErr) {
-            console.log("[Omie Vendas] Erro ao salvar itens preferidos:", saveErr);
-          }
-        }
-        
-        result = { success: true, history: productHistory };
-        break;
-      }
-
       case "salvar_segmento_cliente": {
         const { codigo_cliente: codCliSeg, tags: clientTags, atividade: clientAtividade, segment: clientSegment } = params;
         if (!codCliSeg) throw new Error("Código do cliente é obrigatório");
@@ -4363,28 +4332,6 @@ Deno.serve(async (req) => {
         }, { onConflict: 'omie_codigo_cliente,account' });
         
         result = { success: true };
-        break;
-      }
-
-      case "buscar_itens_preferidos": {
-        const { codigo_cliente: codCliPref } = params;
-        if (!codCliPref) throw new Error("Código do cliente é obrigatório");
-        
-        const { data: items } = await supabaseAdmin
-          .from('customer_preferred_items')
-          .select('*')
-          .eq('omie_codigo_cliente', codCliPref)
-          .eq('account', account)
-          .order('last_ordered_at', { ascending: false });
-        
-        const { data: seg } = await supabaseAdmin
-          .from('customer_segments')
-          .select('*')
-          .eq('omie_codigo_cliente', codCliPref)
-          .eq('account', account)
-          .maybeSingle();
-        
-        result = { success: true, items: items || [], segment: seg };
         break;
       }
 

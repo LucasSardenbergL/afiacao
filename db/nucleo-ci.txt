@@ -1,5 +1,12 @@
 # nucleo-ci.txt — as provas SQL EXECUTADAS que rodam no caminho obrigatório do merge.
 # =====================================================================================
+# ⚠️ PROVA NOVA NÃO ENTRA AQUI (desde 2026-11-09): crie `db/nucleo-ci.d/<prova>.txt` com a(s)
+# linha(s) dela, no MESMO formato abaixo (comentário à vontade). O manifesto EFETIVO é este arquivo
+# seguido dos fragmentos em ordem LC_ALL=C, com o mesmo parse estrito (duplicata ENTRE fontes aborta;
+# no diretório só entra `<prova>.txt` regular). Acrescentar no fim deste arquivo fazia todo PR
+# conflitar com o irmão e re-sincronizar a main (docs/historico/ci-arquivos-gerados-sem-conflito.md).
+# Editar linha EXISTENTE (subir o mínimo, o falsificar=<n>) continua sendo aqui.
+#
 # Consumido por `db/roda-nucleo-ci.sh` (job `provas-sql` do ci.yml). Uma linha por
 # script; `#` comenta; linha vazia ignorada. O runner EXIGE que todo caminho aqui
 # exista e que o total executado bata com o total lido — lista vazia é ERRO, não
@@ -40,11 +47,24 @@ db/test-security-invoker-views.sh          27
 db/test-views-invoker-off-p0.sh            25
 db/test-authz-revoke-anon-rpc.sh           19
 db/test-retencao-scores-farmer.sh          14
+db/test-retencao-scores-60d.sh             26
+db/test-drop-indices-scores.sh             12
+db/test-expurgo-logs-tint.sh               27
 db/test-sales-price-history-created-at-futuro.sh 13
 db/test-drop-quarentena-omie-clientes.sh    11
 db/test-wa-owner-efetivo-gate-staff.sh     25
 db/test-reposicao-logs-insert-cap-compras.sh 15
 db/test-authz-is-not-true-escritas.sh      24
+# Raio-X "liquidar só o inequívoco" (#3470/#3495): o veredito nasceu INVOKER chamando um helper fechado para
+# authenticated e deu 403 em prod (2026-11-01). A prova roda o stub com a ACL de PROD, exige o 42501 sem a correção
+# DEFINER (controle negativo) e 13 sabotagens inline da regra (sem modo --falsificar: cada uma exige o seu vermelho).
+db/test-raio-x-inequivoco.sh               55
+# Raio-X "unidade comprovada" (2ª revisão, bug 3): margem/desconto do plano e médio 12m da medição só com unidade
+# de venda única = a do estoque; 7 sabotagens inline (sem modo --falsificar: cada uma exige o seu vermelho).
+db/test-raio-x-unidades.sh                 25
+# Raio-X inequivoco com unidade DESCONHECIDA (3ª revisão): venda ou estoque sem unidade com consumo a comparar bloqueia
+# o veredito e o liquidar (RX004); PRE/PÓS provadas no controle e 7 sabotagens inline (sem modo --falsificar).
+db/test-raio-x-inequivoco-unidade.sh       19
 # FU4-F: a margem por cliente (farmer_client_scores.gross_margin_pct) fechada por privilégio de COLUNA para
 # authenticated/anon, com get_scores_margem como via (gate de projeção por cap_custo_ler). Linha de base com o
 # ACL de prod prova o furo; as 7 sabotagens rodam inline (sem modo --falsificar) e cada uma exige o seu vermelho.
@@ -54,6 +74,10 @@ db/test-cliente-situacao-receita.sh        20  falsificar=21  # selo RFB fora do
 # de tabela + GRANT de 38) e por TEXTO (saneador + trigger + backup privado). Linha de base prova os dois furos;
 # writers de prod (fixture) seguem gravando; 15 sabotagens inline, cada uma exige o seu vermelho exato.
 db/test-tactical-plans-margem.sh           116
+# Plano v4 lote 13 (C6): a soma de saldo de CR/CP do cockpit sai do navegador para a RPC INVOKER. Estado de acesso
+# por empresa (sem_acesso/desconhecida, nunca R$ 0 de RLS), saldo em string decimal, ACL fora de anon/service_role/
+# PUBLIC; paridade com o oráculo exato e com o laço float8 do JS; 7 sabotagens inline + 2 da postcondição, cada uma exige o seu vermelho.
+db/test-fin-saldo-titulos-por-status.sh   74
 # FU4-F (pós-B): a ESCRITA default do Supabase fechada nas duas tabelas (REVOKE INSERT/UPDATE/DELETE/TRUNCATE/
 # REFERENCES/TRIGGER/MAINTAIN). fcs mantém UPDATE só de (updated_at) + policy de UPDATE com WITH CHECK (false):
 # o FOR SHARE das RPCs invoker de recomendação exige as duas, e a prova mostra a trava BLOQUEANDO a troca de dono
@@ -70,6 +94,14 @@ db/test-resolver-cliente-por-telefone.sh   15  falsificar=5
 # corantes só sai para staff: customer e anon recebem NULL e mantêm o preço final.
 db/test-tint-formulas-rls-initplan.sh      26
 db/test-tint-gate-custo-staff.sh           25
+# RLS has_role por linha → InitPlan na CLASSE do public (308 policies / 185 tabelas, fixture verbatim
+# da prod): o conjunto que cada papel lê/insere/atualiza/apaga é o mesmo antes e depois, cada cláusula é
+# igual ponto a ponto, travar-antes-de-ler fecha a corrida (A8) e lock_timeout faz a migration desistir.
+db/test-rls-has-role-initplan-classe.sh   44
+# Visibilidade da carteira por CONJUNTO (D4 do v5): carteira_visivel_para saiu do caminho por linha das 8
+# policies; o conjunto que 15 chamadores leem e inserem (master, dono, cobertura ativa/expirada/inativa,
+# customer, uid nulo, anon…) é o mesmo antes e depois, ponto a ponto; 9 sabotagens vermelhas e 8 PRE/pós-condições da migration mordendo.
+db/test-rls-carteira-visibilidade-conjunto.sh 67
 # Canal WhatsApp, núcleo HSM: o log de envio só a edge escreve (authenticated leva 42501 do GRANT, e a
 # camada que nega é DECLARADA), o catálogo só o master; a idempotência e os CHECKs são do banco. Monta o
 # schema por db/lib/corpo-vivo.sh — snapshot + o ACL MEDIDO em prod + a cadeia dinâmica — porque a
@@ -96,7 +128,9 @@ db/test-melhorias-rpcs.sh                  39  falsificar=57
 # fundos fechada (o employee não escreve a exceção direto), o ACL de prod (classificar/aplicar só do
 # service_role) e o trigger que deriva is_fornecedor sem decidir a exclusão. Morreu no seed em 06-25: o gatilho
 # da carteira CRIA o score de farmer e o seed o reinseria (docs/historico/provas-carteira-revividas.md).
-db/test-fornecedores-classificacao.sh      26  falsificar=55
+# Lote 10 do v5: o diff-before-write (só a linha que mudou é escrita, medido por xmin) e a guarda de corrida
+# com o upsert de tags (2 sessões de verdade) — docs/historico/classificacao-diff-before-write.md.
+db/test-fornecedores-classificacao.sh      32  falsificar=62
 # Observação do conjunto aberto que o motor contou (PR0 da baixa de PO, 2026-10-05): só staff LÊ (RLS sob
 # SET ROLE + GUC; anon barrado no GRANT), só a RPC ESCREVE (nem service_role, que tem BYPASSRLS, escreve direto) e
 # só service_role a executa — com o ACL default de prod (ALL/EXECUTE para anon/authenticated) dando trabalho real
@@ -108,6 +142,11 @@ db/test-reposicao-po-observado.sh          39  falsificar=33
 # Sombra da associação NF↔PO (20261017040000): só a RPC escreve, com compare-and-set por observado_em (run atrasado
 # não sobrescreve evidência nova); CHECK impede "associável" com motivo e proposta fora do associável; RLS staff.
 db/test-recebimento-associacao-sombra.sh    20  falsificar=13
+# Web-vitals pelo nosso banco (20261102093527, plano v4 lote 0b): o UPSERT do cliente (1 linha por instância
+# de métrica, último valor) só toca a PRÓPRIA linha. Cada policy falsificada sozinha: a de INSERT pelo INSERT
+# puro (no UPSERT a de SELECT barra a linha alheia sozinha), a de UPDATE pelo UPDATE sem WHERE (que não passa
+# pela de SELECT), a de SELECT pelo próprio UPSERT; trigger que segura criado_em; postcondição que aborta.
+db/test-telemetria-vitals.sh                27
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -129,6 +168,10 @@ db/test-fin-encargos-titulo.sh             47
 # (empresa, código), pontualidade só por dDtPagamento, parcial pelo vencimento, nome sem multiplicar) e 3 RPCs
 # com gate master + views sem leitura direta. 9 sabotagens INLINE (controle verde antes); ~40 s local.
 db/test-fin-ciclo-fornecedor.sh            42
+# Ciclo — Frente A item 4 (2026-11-01): coortes de CR com maturação FIXA D+15/30/60 pelo VENCIMENTO, massas
+# separadas (antecipado/no dia/com atraso/sem data/em aberto), coorte imatura = NULL + flag; RPC com o gate
+# master do ciclo. Controle verde + 16 sabotagens (postcondição em 2 camadas); ~60 s local.
+db/test-fin-ciclo-coorte-maturacao.sh        29
 # DRE fase 2 (2026-10-13): CHECK do mapa ampliado (impostos em linha própria + fora_dre), fora_dre
 # proibido em _default (provado pelo COMPORTAMENTO na postcondição), colunas fora_dre/provisório SEM
 # default (ausente ≠ 0), e o script do mapa colacor só entra com a omie-financeiro v1.5 servida (ledger +
@@ -182,16 +225,39 @@ db/test-sayerlack-ipi-po.sh                95
 # Importar pedido digitado direto no portal Sayerlack: de-para inverso (ambíguo/inativo/outra empresa = sem de-para),
 # qtde inteira no Omie (÷ fator), custo pela MESMA prova da RPC acima na MESMA transação (recusa = nada gravado),
 # idempotência por protocolo (lock + UNIQUE), authz, falsificação por camada.
-db/test-sayerlack-importar-pedido-portal.sh 51
+db/test-sayerlack-importar-pedido-portal.sh 75
 # Saldo inicial da projeção de 13 semanas (20261028014827): conta ausente/velha/NaN ou lista vazia → saldo_projetado
 # NULL, nunca R$ 0 nem soma parcial; régua de frescor = classificarSaldoConta (04h SP), sob sessão UTC e SP; relógio
 # controlado; PRE recusa deriva; 16 sabotagens num espelho (docs/historico/saldo-cc-fresco-e-ncg-leitura-pontual.md).
 db/test-projecao-13s-saldo-fresco.sh       46  falsificar=16
+# Sensor saldo_bancario conta a conta (20261031191715) e saldo_atual sem DEFAULT 0 (20261031191716): a mesma régua,
+# 03:59:59 × 04:00:00 SP em sessão UTC e SP, broken > stale, o defeito de antes reproduzido no corpo de prod, e o
+# upsert do omie-financeiro com conta nova sem extrato nascendo NULL (docs/historico/saldo-cc-fresco-e-ncg-leitura-pontual.md).
+db/test-data-health-saldo-bancario-conta-a-conta.sh  29  falsificar=10
+db/test-data-health-sayerlack-varredura.sh            33  falsificar=16
+db/test-sayerlack-cancelado-com-compra-viva.sh 48  falsificar=21
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
 # que grava (ou no trigger), nunca num SELECT anterior.
 db/test-cancelar-pedido-guard-atomico.sh   48
+# Portal Sayerlack onda 5A fatia 1 (20261108120000): situação do portal no pedido com escritor ÚNICO (trigger+GUC),
+# só código 1..7, leitura sobreposta só entra dizendo 6, e o claim de disparo recusando o 6 no WHERE que grava —
+# 2 conexões nas duas ordens gravar × claim (docs/historico/importar-pedido-portal-sayerlack.md).
+db/test-sayerlack-situacao-portal.sh       51  falsificar=13
+db/test-sayerlack-encerrar-cancelado-portal.sh 34  falsificar=10
+# Portal Sayerlack 7.1 (20261111110000): vincular PO manual — contrato por token exato (composto vale, substring não),
+# dono do PO, claim aberto recusa, conteúdo SKU/qtde/valor com tolerância por unidade, ausente ≠ zero, trilha em
+# acoes_execucoes com antes/depois (docs/historico/importar-pedido-portal-sayerlack.md).
+db/test-sayerlack-vincular-po-manual.sh    32  falsificar=14
+# Portal Sayerlack 5.2 fatia 1 (20261111150000): retrato do portal na MESMA transação da importação, conferência
+# SKU/qtde × itens do pedido (qtde_final × fator) e valor/total/condição × retrato, ausente ≠ zero, leitura antiga não
+# fecha a aberta, claim recusa a divergência no WHERE que grava — 2 conexões (docs/historico/importar-pedido-portal-sayerlack.md).
+db/test-sayerlack-conferir-portal.sh       39  falsificar=17
+# Portal Sayerlack, Onda 6 (20261109100000): o painel só tem rodada efetiva com modo importar + prova; espera da
+# rodada; dedupe por protocolo; cancelado_humano fora; pedidos do app sem PO (1 h de espera); totais; sensor de
+# alíquota; cancelados no portal. 5 sabotagens INLINE com controle antes/depois (docs/historico/importar-pedido-portal-sayerlack.md).
+db/test-sayerlack-painel-portal-v2.sh      36
 # Recusa definitiva do portal (#3169): o pré-claim não reabre erro_nao_retentavel/conciliáveis e o
 # encerramento automático só toca o pedido PROVADAMENTE não-efetivado (7 condições, cada uma
 # sabotada inline com controle verde na mesma invocação; baseline do corpo velho reabrindo o terminal).
@@ -267,6 +333,13 @@ db/test-vendas-sync-cursor-fencing.sh      47
 # 16 sabotagens inline, cada uma com o seu vermelho; o validador pós-apply reprova 13 delas.
 db/test-vendas-sync-cursor-falha-honesta.sh 72
 db/test-fin-sync-kick-skipped-busy.sh      18
+# CR incremental (plano v4, lote 15): título ABERTO excluído no Omie só sai do espelho com PROVA da edge
+# (ausência em 2 runs = candidato; DELETE só com a listagem de 1 página do cliente sem o código), com
+# tombstone na mesma transação; retry do mesmo run, observação positiva no run, não-marcado e fechado nunca
+# se apagam; teto sem escrita; corrida com writer de linha travada durante o C3 (2 sessões). 7 sabotagens
+# inline (defesas duplas neutralizadas juntas; a da corrida, uma camada por vez), cada uma reprovando o SEU
+# rótulo, com controle verde antes e depois.
+db/test-fin-cr-reconciliacao.sh            82
 db/test-pedido-venda-coerencia.sh          31
 # Tintométrico: a promoção saiu do HTTP para uma fila — tick concorrente PULA (try-lock), FIFO
 # estrito com backoff, statement_timeout capturado desfaz o parcial. O `--falsificar` (12
@@ -477,6 +550,28 @@ db/test-fuso-sp-relogio-sessao.sh          53  falsificar=16
 # (trava, PRÉ, as 2 metades da PÓS, reaplicar). `sem_invoker` deixa o md5 VERDE — só S1/S2 o pegam.
 # Autocontida: initdb + stubs + a migration + db/fixtures/des-views-predecessoras-prod-20260927.sql.
 db/test-des-desconto-total-maximo.sh       19  falsificar=12
+# A posição ao vivo do DES sem faturado confirmado (20261105091216): sem snapshot do GoodData a
+# v_des_posicao_trimestre_ao_vivo somava COALESCE(fat, 0) + trânsito — a posição, a faixa e o gap
+# saíam só do trânsito. Agora as 5 derivadas são NULL (uma por assert, cada guarda falsifica sozinha);
+# faturado 0 segue fato; meta NULL ⇒ gap NULL; as 18 colunas de fato idênticas; a dependente
+# v_des_desconto_por_checkin (corpo da prod) perde a linha sem faixa; RLS sob SET ROLE; o envelope.
+# Autocontida: initdb + stubs + a migration + db/fixtures/des-posicao-ao-vivo-prod-20261105.sql.
+db/test-des-posicao-ao-vivo-sem-faturado.sh 32  falsificar=14
+# O simulador DES sem posição ou meta confirmada (20261105180000): a RPC fazia IF posição NULL THEN 0
+# (faixa, ganho e recomendação inventados; anon recebia uma simulação inteira), lia em T4 a meta de T1
+# do MESMO ano e caía num 400000 fixo. Agora recusa com P0001 + marca (4 jeitos de não ter faturado,
+# e sobre a view antiga); faturado 0 simula a partir do trânsito; JSON idêntico ao da prod em 8
+# combinações; trava em 2 sessões, PRÉ de md5 e de atributo, PÓS de ACL/dono/assinatura.
+# Autocontida: initdb + stubs + a migration + db/fixtures/des-simular-puxar-prod-20261105.sql.
+db/test-des-simular-puxar-sem-posicao.sh   29  falsificar=13
+# O simulador DES sem configuração de custo e com o check-in vigente (20261106090000): prazo escolhido/
+# padrão, frete ativo e custos ausentes viravam 1,0/0/2,5%/20% inventados — agora recusam (P0001 + marca);
+# o desconto novo lia o check-in MAX(id) e o atual o vigente da v_des_checkin_atual (corpo da prod):
+# com check-in retroativo o delta saía 0,10 em vez de 0,85. JSON idêntico ao da prod em 8 combinações;
+# o envelope do 3c (trava por COST, PRE de md5 e atributo, PÓS de ACL/dono/assinatura).
+# Autocontida: initdb + stubs + a migration + db/fixtures/des-simular-puxar-prod-20261106.sql +
+# db/fixtures/des-checkin-atual-prod-20261106.sql.
+db/test-des-simular-puxar-config-checkin.sh 35  falsificar=22
 # O "hoje" de SP no preço de partida (get_ultimos_precos_cliente) e na medição do piso
 # (medir_abaixo_piso_tier): o current_date da sessão UTC era amanhã das 21:00 às 23:59 BRT
 # (20260927172443). Mesmo relógio controlado, borda do DIA cruzada sob as duas sessões; o
@@ -586,6 +681,22 @@ db/test-watchdog-diario-so-problema.sh      22  falsificar=6
 # Radar: recruzamento DIÁRIO de ja_cliente (20261019093000). Defeito aqui = lead que já é cliente do Omie
 # continua na fila de prospecção (duplicado no ERP) ou tick que qualquer authenticated dispara. Prova
 # em sessão limpa (sem JWT, como o pg_cron), ledger com denominador, erro propagando. Esquema mínimo.
+# Radar pacote E (20261107230000): a escolha de leads do e-mail semanal e do card "Prospectar hoje". Defeito
+# aqui = vendedor recebe lead sem contato/fora da foto, lead queimado por e-mail que não chegou, posse própria
+# sugerida de novo, atribuição do gestor sumida, um vendedor derrubando os outros ou link com URL quebrada.
+db/test-radar-distribuicao-e.sh            35  falsificar=fora-do-ci  # 33 sabotagens × ~6 s ≈ +3 min; roda local nos 2 locales e o recibo vai no PR
+# Radar: contato provável da CONTABILIDADE (20261109140000). Defeito aqui = vendedor mandado à visita por família
+# que divide telefone (V2, sócio por CPF, filial), selo herdado por número novo, correção sobrescrita às cegas ou que
+# não prevalece, "não calculado" lido como "contato direto", lista/card/e-mail prometendo telefone da contabilidade.
+db/test-radar-contato-contabil.sh          42  falsificar=fora-do-ci  # 25 sabotagens × 2 locales ≈ +5 min; recibo no PR
+# Radar pacote G (20261111100000): acompanhamento depois da ligação. Defeito aqui = "em conversa" sem retorno,
+# "não atendeu" que some para sempre ou volta pela filial, retorno órfão, posse que vence antes do compromisso (ou
+# ressuscita), posse vencida sem registro, e-mail que cala sem lead novo, dedupe que engole nota ou data diferente.
+db/test-radar-acompanhamento-g.sh          35  falsificar=fora-do-ci  # 18 sabotagens × ~7 s ≈ +2 min; controle + 18/18 nos locales C e pt_BR no PR (2026-11-08)
+# Radar pacote L (20261111134000): o contato dá a posse e a posse não vence para trás. Defeito aqui = contato que não
+# assume lead livre, que toma o de outro vendedor, posse que "venceu" numa data em que estava protegida pelo retorno,
+# contato tardio que ressuscita, desfazer que deixa o lead preso (ou solta o confirmado), sensor da agenda que infla.
+db/test-radar-posse-l.sh                   33  falsificar=fora-do-ci  # 15 sabotagens × ~8 s ≈ +2 min; controle + 15/15 nos locales C e pt_BR no PR (2026-11-09)
 db/test-radar-recruzamento-diario.sh        12  falsificar=6
 # O byte que o ESCRITOR grava é o byte que o recruzar marca (alfanumérico preservado vs mutilado; #3175 → escritores).
 # Depende da migration 20261019110000 (#3175) estar na main.
@@ -603,8 +714,10 @@ db/test-radar-score.sh                      24  falsificar=17
 # IS DISTINCT FROM (nota sem versão ou resumo incoerente), contato humano classificado pela sessão e não pela fonte,
 # nota relida do score ATUAL, contato desfeito/apagado contado como toque, cadastro virando toque, abertura de
 # outra rota, ledger que derruba o contato, coorte sorteada sem versão, não determinística, duplicada sob
-# concorrência ou com denominador por contato, e tabela/RPC nova aberta a anon/authenticated.
-db/test-radar-placar.sh                     25  falsificar=19
+# concorrência ou com denominador por contato, e tabela/RPC nova aberta a anon/authenticated. Fase B (20261106132259):
+# ficha aberta gravando 'abriu' sem o CNPJ, CNPJ inválido virando abertura, placar contando ficha como tela,
+# reconciliação só da tela, trigger que não escuta a ficha, allowlist do ledger sem o evento.
+db/test-radar-placar.sh                     31  falsificar=25
 # Radar: a fila lê a AMOSTRA de controle (20261030233200). Defeito aqui = RPC sem o gate do Radar, topo vazando
 # junto com a amostra, sorteio antigo no lugar do vigente, anon executando, RPC sem SECURITY DEFINER (0 linhas
 # sob RLS) e radar_coorte_controle aberta ao front direto.
@@ -649,6 +762,18 @@ db/test-radar-situacao-por-cron.sh          31  falsificar=14
 # (5%/20% inteiros), ~8 s no modo normal e ~54 s no --falsificar (controle verde + 21 sabotagens de
 # conjunto exato, 3 delas de pós-condição que exigem o apply ABORTAR), medido no laptop.
 db/test-tint-fase5-watchdog-v4.sh           41  falsificar=21
+# v5 (20261101050000): o MESMO watchdog com universo e oráculo do S1 em passada única + config do plano
+# na função — no Mini a v4 lia 8,1 GB/execução e estourou o timeout. Roda a suíte da v4 contra a v5 e
+# compara os CTEs extraídos da migration com a VIEW REAL numa fixture de 600 chaves (9 estados de
+# corante), o guard da view em runtime e o limiar do S1. ~5 s normal, ~105 s no --falsificar (controle
+# verde + 39 sabotagens de conjunto exato, 7 delas de pós-condição que exigem o apply ABORTAR).
+db/test-tint-fase5-watchdog-v5.sh           47  falsificar=39
+# Watchdog Fase 5 v6 (20261104020000) + v6.1 (20261104040000, a suíte roda contra ela) — money-path. O ciclo passa a ler 5 índices parciais em vez de
+# varrer tint_formulas/itens/staging (bancada em escala de prod: 1,37 GB → 114 MB, temp 260 MB → 0). Roda a
+# suíte da v5 contra a v6 + PARIDADE das 11 colunas do statement v5×v6 em 11 estados + equivalência contra
+# a VIEW REAL + PL1 (forma do plano num banco de ESCALA a ~5% de prod, com o planner de prod) + PRE1.
+# --falsificar: controle verde + 54 sabotagens de conjunto exato (12 de pós-condição que abortam o apply).
+db/test-tint-fase5-watchdog-v6.sh           65  falsificar=fora-do-ci  # cada sabotagem roda a suíte inteira (~20 s no runner): estourou o job de 25 min no PR #3580 (cancelado aos 17 min); controle 65 + 56/56 sabotagens exatas nos locales C e pt_BR rodados no PR do Codex retroativo (2026-11-04)
 # O promote para de ressuscitar fórmula de cor que a FONTE retirou (20261013150000) — money-path. Em
 # 13/10, 26.180 fórmulas de 6.545 cores ausentes do snapshot de chaves estavam ATIVAS, canônicas e
 # com receita válida (9.164 com preço final no balcão): o promote reexpandia o staging antigo do par
@@ -710,6 +835,56 @@ db/test-radar-cadastro-conflitos.sh  56  falsificar=15
 # expiração ressuscita, sem trava, liberar de qualquer um, definir sem gate, já-cliente assume, telefone mesma raiz,
 # ativos sem cap do dono, sem trava por dono (teto sob corrida), escrita ignora dono sem acesso, renovação ignorada, renovação como toque (o algoritmo antigo).
 db/test-radar-acesso-vendedor.sh     81  falsificar=16
+# Radar: gestor/master ATRIBUI o lead a um vendedor (20261106221000). Defeito aqui = vendedor atribui (gate de gestor
+# só na UI), lead preso em quem não vê o Radar, posse de outro some sem rastro (reatribuido + encerrado_por), não se
+# sabe quem atribuiu, destino passa do teto de 100, já-cliente vira lead, a lista de vendedores vaza para o vendedor.
+# 8 sabotagens: sem gate de gestor, destino sem capability, motivo errado, sem atribuido_por, sem teto, já-cliente,
+# lista aberta, anon com EXECUTE.
+db/test-radar-atribuir-atendimento.sh  36  falsificar=8
+# Sucessão/cisão DECLARADA entre clientes (20261107013000, entrega 2 do sucessor declarado). Defeito aqui = vendedor
+# declara (gate de gestor só na UI), prévia vaza o histórico da antiga, selo lido por customer, duas declarações
+# concorrentes A→B × B→A passam (sem trava comum do grafo / sem versão otimista), cadeia A→B→C ou ciclo aceitos,
+# CNPJ ambíguo ou dois documentos do mesmo comprador aceitos, declaração apagada/editada sem rastro, corte futuro
+# ativo antes da hora, dia do pedido no fuso da sessão (≠ venda_linhas_pedido), lado sem cadastro contado como 0.
+# 19 sabotagens: gates (declarar/prévia/selo/revogar), trava, versão (declarar/revogar), cadeia (2 ramos), ambíguo,
+# mesmo comprador, resolvedor sem alias, prévia sem alias, evento único, auditoria, corte, fuso, ausente≠zero, anon.
+db/test-cliente-sucessoes.sh  85  falsificar=35
+# Radar "sucessor declarado", entrega 3 PR B (migration 20261107210000): o plano de rateio por item inteiro, versionado e
+# imutável; a trilha efetiva com paridade com venda_linhas_pedido sem plano e conservação por linha física com plano;
+# corte, destino pendente/revogado, revisão vigente, grafo que vira declarada; antiga encerrada fora da recompra e da
+# situação; a nova sem preço herdado (referência da origem, NULL preservado); o gerador marcando a origem; o reprocesso
+# pela fila (só a não-mostrada e sem desfecho, arquivada inteira; contato e ids intactos); o FACTUAL antes = depois.
+# 38 sabotagens: gates, ACL, corte, destino, ativa, revisão, alias, universo, encerradas, rótulo, reprocesso, fila,
+# gerador sem drenar, detecção cega, a trava da drenagem e o retrato único (concorrência real durante o cálculo), alias (par) na assinatura, reconcilio global, tabela factual adulterada, versão, família, porta, sequência, revoga, trigger.
+db/test-cliente-sucessao-plano.sh  120  falsificar=38
+# Consumidores do plano de rateio (20261108000000, sucessor declarado PR C): o helper da lista só ACRESCENTA chaves (sem
+# elas, o JSON é igual ao do corpo anterior com herança no ar); a herdada carrega origem, nome da antiga e "preço da
+# antiga"; venda_heranca_comprador só de declaração ativa, plano vigente, destino próprio, alias→canônico, gate staff +
+# carteira; cliente_sucessao_plano_itens com paridade com venda_linhas_pedido (universo, alias, corte), o sensor do dia
+# por evento e gate de gestor; nenhuma chave de valor; regra de SKU nunca comprado não é "herdou"; idempotente, a PRE recusa corpo alheio. 22 sabotagens.
+db/test-cliente-sucessao-consumidores.sh  38  falsificar=22
+# Integridade das RPCs de contato do Radar (20261031111000): 'virou_cliente' só com o cliente confirmado no ledger (RD005)
+# na porta E no trigger (corpo ANTIGO em voo, INSERT direto), re-marcar é no-op, vendedor não tira cliente confirmado
+# (RD007), a conversão não se desfaz (RD006); desfazer restaura só o DONO do status (autoria explícita + retrato), tira o
+# contato da cadeia, e o traço do Codex (A descarta, B conversa, cron da RFB, desfazeres) preserva o descarte da RFB. Duas
+# corridas com o bloqueio observado em pg_stat_activity. 15 sabotagens: porta e classe sem RD005, autoria mantida, regra
+# antiga (status = ação), sem tirar da cadeia, cadeia sem dono, sem motivo, sem releitura, janela larga, conversão
+# desfeita, vendedor tira cliente, re-marcar conta, dedupe sem dono, desfazer e registrar sem gate.
+db/test-radar-contato-integridade.sh 43  falsificar=19
+# Radar: o card "Viraram cliente (mês)" (radar_kpis.virou_cliente_mes) conta quem AINDA está em virou_cliente, foi
+# cadastrado no mês de SP pela data imutável omie_cadastrado_em e foi CRIADO pelo Radar no Omie (ledger origem
+# 'incluir', mesmo CNPJ e código). Tirar e devolver num mês novo não reconta; vínculo a cliente que já existia não conta.
+# Mês com piso e teto em SP; duas linhas 'incluir' iguais contam uma vez. 10 sabotagens: carimbo móvel, lookup conta,
+# sem status, outro código, fuso UTC, limite aberto, sem teto, JOIN multiplica, sem gate, anon com EXECUTE.
+db/test-radar-kpis-conversao.sh      19  falsificar=10
+# Radar: o cron da RFB (radar_aplicar_situacao, 20261031190000) casa contato ↔ status POR CNPJ sob a trava da linha.
+# O contato `descartado` nasce do que o UPDATE devolveu (status_anterior = o da linha travada); reaplicar o lote = 0.
+# Duas corridas observadas em pg_stat_activity: o vendedor escreve entre o retrato e o descarte (X vira cliente, Y é
+# reaberto, W vira ja_cliente) e segura a linha durante o descarte. Contato desviado para outro CNPJ (mesmos totais):
+# a postcondição aborta com 25000 e desfaz. 10 sabotagens: contato do retrato (com e sem a postcondição), postcondição
+# por totais, status do retrato, sem trava, ja_cliente do retrato, sem status vivo, cliente das fontes descartado,
+# mudança fora do (b), anon com EXECUTE.
+db/test-radar-situacao-contato-por-cnpj.sh  28  falsificar=10
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
@@ -756,7 +931,7 @@ db/test-venda-recompra.sh                  49  falsificar=15
 # revalidar, CMC infinito, ressuscita revogado, retry da substituição, média→MAX, alvo como texto, markup do cockpit,
 # gate de candidatos, POS ACL anon, POS RLS, autojunção (PERF: volume de prod sob o statement_timeout de 8 s — incidente
 # 2026-10-21, candidatos 500 na prod), POS janela, PRE config (search_path derivado).
-db/test-venda-repasse.sh                   54  falsificar=18
+db/test-venda-repasse.sh                   72  falsificar=30
 
 # Venda por cliente — GERADOR D-1 (migration 20261020181743, Task 4 do plano 2026-10-20): lista do dia = UNIÃO de
 # atrasados das cidades de amanhã (porta de resolvePrepForWorkday, paridade SQL × TS via `bun` sobre
@@ -772,6 +947,12 @@ db/test-venda-gerador.sh                   66  falsificar=19
 # taxa, ausente ≠ zero, base da mesma semana do ano anterior, base_confiavel só pelo log da Onda 1,
 # sem chave de custo.
 db/test-venda-painel.sh                    19  falsificar=8
+# Sucessor declarado, entrega 3 — o painel de gestão separa a parte HERDADA (20261108010000): invariância contra o corpo
+# anterior (o de prod, md5 78d9e58f), herdadas por farmer × semana (compradores distintos, desfecho só de recompra,
+# só fase ativa), taxa própria por diferença (linha só herdada = NULL, não 0%), base própria (histórico e sombra sem
+# herdadas), receita herdada com ausente ≠ zero, gate master, idempotente, PRE recusa corpo alheio, PÓS quebrada faz
+# rollback, o validar dá 4 ✅. 10 sabotagens.
+db/test-venda-painel-heranca.sh            16  falsificar=10
 
 # Venda por cliente, Task 9 — Ondas 2 e 3 (20261021031000): o gerador põe `complemento` (top-3 por família,
 # feedback da própria farmer, só na lista ativa de hoje) e `preco` (só repasse vigente, SKU Oben não-tinta,
@@ -779,7 +960,7 @@ db/test-venda-painel.sh                    19  falsificar=8
 # desfecho de preço exige alta sobre o preço anterior (alvo a < 1%: o preço velho é nao_virou); a lista da
 # farmer expõe as ondas, total/motivo só da recompra e nunca custo; o pedido é a unidade do preço; dono único
 # = a farmer; complemento/preço não exibidos = nao_medivel. 18 sabotagens (md5 reassinado).
-db/test-venda-ondas23.sh                   44  falsificar=18
+db/test-venda-ondas23.sh                   46  falsificar=18
 # DRE consolidado intercompany (20261021120000 → 20261021190000): par CR↔CP — receita e CMV caem pelo MESMO
 # valor, resultado intacto, só par PROVADO pela composição do snapshot (receita_bruta/cmv, mesmo mês, mesmo
 # valor, sem cancelado/sem status, uso único, teto, snapshot fiel aos títulos atuais); venda intragrupo SEM
@@ -800,6 +981,18 @@ db/test-venda-lista-lente.sh               26  falsificar=8
 # n_compradores = a última leitura; READ ONLY não derruba a lista (só 25006 é engolido; 23514 sobe); RLS só
 # master; saída byte-idêntica ao oráculo das Ondas 2–3; a PÓS prova a escrita na prod em subtransação desfeita.
 db/test-venda-lista-acesso.sh              38  falsificar=11
+# Aviso + decisão de prazo no pedido (20261031200000, Frente B Oben PME/PMR PR1): venda_prazo_aviso espelha a regra
+# `vencida_aberta` da view do Ciclo (paridade EXECUTADA com a migration real das views), gate staff; a decisão tem 1
+# writer (RPC) que confere pedido↔conta↔cliente no servidor, relê o vencido, deduplica por (pedido, conta) e grava
+# `venda.prazo_sugerido` no outbox com chave = id da decisão; RLS: vendedora só lê a sua, master tudo.
+db/test-venda-prazo-decisao.sh             60  falsificar=15
+# Fila de cobrança com estado e dona + coorte congelada por TÍTULO (20261031210000, Frente B Oben PME/PMR PR2): selagem única por
+# empresa a partir da view real; fila visível por dona ATUAL/gestão; writer único de caso/promessa/evento; contato não muda
+# estado; quitado só com evidência positiva; `cobranca.estado_mudou` só em mudança de estado; dona NULL não é fail-open.
+db/test-cobranca-fila.sh                   60  falsificar=16
+# CET persistido (20261031220000, Frente B PR3): coluna tipada em fin_funding_inputs (o upsert do Funding não a apaga),
+# oben 2,5% a.m. sem sobrescrever ajuste, CHECK da faixa, RPC gateada master com filtro de empresa.
+db/test-fin-funding-cet.sh                 13  falsificar=5
 # Purge de staging tint fora do promote (20261021203000): os 9 DELETEs do bloco PURGE saem de cada promoção
 # (98% da leitura de disco do banco, medido 2026-10-21) para tint_staging_purge() + cron diário. Template =
 # corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o
@@ -819,3 +1012,99 @@ db/test-tint-promote-latest-indexado.sh      8
 db/test-tint-consumo-corante.sh           170  falsificar=fora-do-ci  # 15 sabotagens × suíte de ~40 s (simulação P19) ≈ 10 min; rodado local em C e pt_BR no PR
 db/test-tint-corante-giro.sh               34  falsificar=fora-do-ci  # 8 sabotagens × suíte de ~140 s no runner (medido: controle 141 s) estoura a parte; rodado local em C e pt_BR no PR
 db/test-reconciliacao-corante.sh           11  falsificar=fora-do-ci  # 7 sabotagens × suíte inteira (9 bancos clonados do snapshot); rodado local em C e pt_BR no PR
+# Import de clientes NO SERVIDOR (20261101200000): rodada com cursor no banco (slug da conta), 1 aberta por vez (índice único),
+# lease cercado de 7 min (> 400 s de parede da edge), terminal sem_progresso/erro_persistente re-armável, só falha que
+# ABANDONOU a conta entra no relatório, cron de 1 min só com rodada aberta + varredura diária (20261102005510, o semanal saiu); ACL service_role nas operacionais.
+db/test-clientes-import-servidor.sh        36  falsificar=14
+# Radar leitor 4 do Mini (20261103100000): radar_kpis/radar_contagem_por_municipio/radar_penetracao_por_municipio leem
+# radar_agregado_municipio (1 escritor, cron :35) em vez de radar_empresas inteira. Equivalência com o corpo vivo de prod em
+# 17 contagens + 4 penetrações + KPIs; lote novo sem recálculo = 'agregado indisponível' (a_contatar NULL), nunca 0;
+# o escritor sai sem ler a tabela fora do marco (0 scans medidos em pg_stat_xact); RLS/ACL fechados; cron; PRE.
+db/test-radar-agregado.sh                  50  falsificar=17
+# Radar leitor 4, parte 3 (20261103131500): a lista do /radar pela RPC SECURITY DEFINER radar_lista — sob o RLS de
+# radar_empresas o ILIKE (não-leakproof) não usa o GIN trigrama e cada busca era seq scan. Medido SOB SET ROLE authenticated:
+# 19 recortes iguais à consulta de antes (sob RLS), a busca e o município lendo o trigrama sem seq scan, o controle reproduzindo
+# o seq scan, gate/ACL, entrada mal formada 22023, curinga literal, PRE.
+db/test-radar-lista-rpc.sh                 34  falsificar=15
+# Radar leitor 4, parte 4 (20261103223300): CNAE e o preset "estabelecidas" da contagem por município leem o
+# agregado fino (grão + CNAE + estabelecida no corte e no corte + 1), que o mesmo escritor calcula e de onde deriva o
+# agregado por município. 16 chamadas iguais à contagem de antes; 0 leituras de radar_empresas medidas em pg_stat_xact
+# (controle: data fora do corte lê); lote novo = indisponível; RLS/ACL; corte em São Paulo; PRE.
+db/test-radar-agregado-cnae.sh             39  falsificar=14
+# CNAE secundário no /radar (migration 20261104153351): contagem e lista ganham p_cnae_secundario (E com o
+# principal); o ranking lê radar_agregado_cnae_sec (secundário coberto = CNAE principal da base) e a lista usa o
+# GIN. Oráculo em SQL direto na tabela para 8 recortes de contagem e 3 de lista; repetido no array conta 1 vez;
+# 0 leituras de radar_empresas no coberto (controle: não coberto lê); lote novo = indisponível; RLS/ACL; PRE.
+db/test-radar-cnae-secundario.sh           46  falsificar=18
+# Radar pacote C, mapa e ranking de cidades (migration 20261106175800): a penetração recorta pela região (p_ufs;
+# UF vence; concorrente fora da região some), a contagem aplica "só com telefone" nos 4 caminhos (agregado, fino,
+# secundário coberto, vivo; o agregado segue sem ler radar_empresas) e a lista filtra a cidade EXATA pelo código
+# (o nome traz a homônima de outra UF). Oráculo em SQL direto; negativos com SQLSTATE 22023; ACL/sobrecarga; PRE.
+db/test-radar-mapa-regiao-cidade.sh        37  falsificar=13
+# Mini, pipeline diário do Radar (20261105150000): o score das 06:30 sai sem reler radar_empresas quando a impressão
+# digital (lote, fórmula, max(updated_at), nº de já-clientes) não mudou — 0 seq scans medidos em pg_stat_xact — e
+# continua registrando a rodada; recalcula com updated_at novo, já-cliente sem bump, lote novo e na rede de 7 dias;
+# rodada com pulado não grava o estado; 1º cálculo = predecessora de prod; tick conta pelo índice parcial; RLS/ACL; PRE.
+db/test-radar-pipeline-diario.sh           36  falsificar=12
+
+# Possível vínculo/sucessor de cliente na ficha do Radar (migration 20261104201756): chave exclusiva (≤ 2 raízes),
+# telefone/e-mail sozinhos ocultos, contador derruba telefone/e-mail, pessoa só no mesmo município, cliente
+# só-profiles só com carteira, mesma raiz fora; os 4 índices casam por Index Cond; gate/ACL/helpers fechados.
+db/test-radar-possiveis-vinculos.sh        19  falsificar=12
+
+# Selo de vínculo em LOTE para a lista do Radar (migration 20261106083754): as regras vivem só no núcleo
+# private.radar_vinculos_nucleo; a ficha mantém os cenários da 20261104201756 sobre ele, e a lista é, lead a lead,
+# o resumo exato da ficha (gestor e vendedor); teto de 200, núcleo fechado ao JWT, PRE anti-deriva com trava.
+db/test-radar-vinculos-em-lote.sh          23  falsificar=14
+
+# Aviso de crédito por vínculo com cliente que tem título vencido (migration 20261106205557): o núcleo da ficha/lista
+# vira invólucro de private.radar_vinculos_base sem mudar a saída (foto antes×depois); o aviso inclui já-cliente,
+# passa do corte de 10, avalia a carteira inteira, exige prova documental do código Omie, usa a regra de
+# venda_prazo_aviso, marca indeterminado em vez de "em dia", projeta como a ficha; sensor validado no servidor.
+db/test-credito-vinculo-aviso.sh           34  falsificar=23
+
+# Mesmo sócio pelo CPF mascarado (migration 20261107040000): sem lote vigente a base é a de antes (foto antes×depois,
+# salvo o nome de perfil-MEI agora sem CPF); socio_cpf exige ≤2 raízes no universo, ≤3 empresas no país e dono nos 2
+# lados; guarda de máscara conflitante; protocolo de lote (manifesto imutável, reconciliação, ponteiro, concorrência).
+db/test-radar-socios-cpf.sh                32  falsificar=19
+
+# Radar pacote J — privacidade (migration 20261111150000): a razão de MEI GRAVADA mascarada por qualquer escritor (staging,
+# passo da publicação que não reescreve MEI igual, upsert com EXCLUDED); updated_at intocado; vínculo, aviso de crédito e guarda de homônimo IDÊNTICOS com a razão crua, com
+# a migration sobre a crua e depois do backfill; o cru só no private e só a RPC do cadastro Omie o lê (varredura de
+# catálogo); exclusão de titular resiste à recarga e a lote novo de sócios; retenção das notas livres; ACL.
+db/test-radar-privacidade-j.sh             30  falsificar=14
+
+# Radar pacote D — levar o lead ao vendedor (migration 20261106181000): território por carteira elegível com 1 dono por
+# município, top-N 1 por raiz de CNPJ sem já-cliente/descartado/sem score/RFB baixada/dono ativo de outro, e-mail com dedupe por
+# semana e sem repetir lead (teste não queima), cron nascido desligado, RPCs do card e do sensor com SQLSTATE, tabelas
+# fechadas ao JWT e ACL nas duas pontas.
+db/test-radar-leads-vendedor.sh            62  falsificar=46
+
+# Radar pacote F — território do usuário logado (migration 20261107220500): RPC fina sobre a privada do pacote D (mesmo
+# resultado), gate cap_radar_prospectar e de gestor para outro vendedor com SQLSTATE, anon fora pelo ACL, PÓS aborta ACL aberto.
+db/test-radar-meu-territorio.sh            16  falsificar=5
+# Radar pacote H — funil do lead empurrado (migration 20261107233000, por cima da REAL do pacote D): radar_funil só
+# master/gestor, e-mail em coorte pela semana do envio (só real, só destinatário, só entregue), ficha como 2º momento,
+# contato humano válido e "empurrado", NULL fora da cobertura do sensor (ausente ≠ zero), saúde dos sensores com falhas
+# por motivo, registradores com SQLSTATE e idempotentes, ledger de falha só staff com contador, ACL nas duas pontas.
+db/test-radar-funil.sh                     45  falsificar=21
+db/test-radar-medicao.sh                   48  falsificar=fora-do-ci  # 10 sabotagens × ~9 s ≈ +1,5 min; controle + 10/10 nos locales C e pt_BR no PR (2026-11-09)
+
+# Radar — publicação atômica da carga mensal (migration 20261110130000): carga parcial não vira vigente (foto intacta
+# durante os chunks e depois de falha, chunk tardio recusado, contagem divergente reprova), carga completa troca de uma
+# vez (validada ≠ vigente, job publica rótulo+cadastro+recruzar+complete+staging vazio), falha dentro da publicação
+# desfaz tudo, re-run de lote complete não rebaixa a foto, queda > 15% reprova, ACL nas duas pontas, cron fora da hora 06.
+db/test-radar-carga-atomica.sh             37  falsificar=12
+
+# Radar — publicação EM PASSOS da carga mensal (migration 20261111120000; incidente 2026-11-08: a troca numa transação
+# estourou 30 min e travou o Realtime): a cada passo comitado a foto do leitor é exatamente a velha (lista, contagem,
+# sem filtro sem a nova), jobs em massa esperam a virada, erro no meio não vira `falhou`, 57014 com ramo próprio,
+# CALL vira de uma vez, re-run só com membresia igual, ACL. O CUSTO (24 índices de prod × 506k) é
+# db/test-radar-publicacao-curta-custo.sh, fora do CI (pesado).
+db/test-radar-publicacao-curta.sh          41  falsificar=12
+# Radar K2 (20261111132000): card/e-mail cruzando a publicação em passos (os 3 ramos de radar_leads_do_vendedor,
+# empresa só de P fora até a virada) e "não é contabilidade" só para o contato que o cálculo leu (ausente ≠ zero).
+db/test-radar-k2-foto-e-contato.sh         21  falsificar=18
+# Radar K3 (20261111140000): radar_lote_idade acusa a carga EM VOO parada (recebendo > 12 h, validada > 6 h, publicação
+# com 3+ erros seguidos, falhou num lote mais novo), sobre a cadeia viva do trio no md5 de PROD (A1).
+db/test-data-health-radar-carga-em-voo.sh  19  falsificar=11

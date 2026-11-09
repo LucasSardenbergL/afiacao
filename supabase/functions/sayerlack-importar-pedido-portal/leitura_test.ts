@@ -4,7 +4,7 @@ function assertEquals(atual: unknown, esperado: unknown) {
   const e = JSON.stringify(esperado);
   if (a !== e) throw new Error(`esperado ${e}, veio ${a}`);
 }
-import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, numeroBR, situacaoCancelada, situacaoPermitida } from "./leitura.ts";
+import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, ncmsDoCp006, numeroBR, situacaoCancelada, situacaoFaturada, situacaoObservada, situacaoPermitida } from "./leitura.ts";
 
 // Resposta REAL do portal (pedido 2140603, 2026-10-14) — consulta e busca-itens-pedido.
 const LINHA_REAL = {
@@ -122,4 +122,52 @@ Deno.test("situacaoPermitida: só código da lista; sem código ou lista vazia =
      situacaoPermitida("1 - Aberto", []), situacaoPermitida("11 - Outro", ["1"])],
     [true, false, false, false, false],
   );
+});
+
+Deno.test("CP006 diz o NCM e o passo, sem 'peça ao administrador' (Fable C4)", () => {
+  const rpc = "custo_portal: item sem alíquota de IPI conhecida no pedido 3751 (NCM: 32091020, 32110000) — nada gravado";
+  assertEquals(ncmsDoCp006(rpc), ["32091020", "32110000"]);
+  const m = mensagemErroImportacao("CP006", rpc);
+  assertEquals(m.startsWith("O NCM 32091020, 32110000 não tem alíquota de IPI cadastrada no app"), true);
+  assertEquals(m.includes("docs/runbooks/sayerlack-pedido-portal-nao-entrou.md"), true);
+  assertEquals(m.includes("administrador"), false);
+  // Sem NCM legível na mensagem: não inventa um.
+  assertEquals(ncmsDoCp006("sem detalhe"), []);
+  assertEquals(mensagemErroImportacao("CP006", null).startsWith("Um item tem NCM sem alíquota"), true);
+});
+
+// ── Onda 5A: situação observada → escritor único ──
+Deno.test("situacaoObservada: linha única da OBEN com código 1..7, inclusive cancelado", () => {
+  const l = (situacao: string, cliente = "OBEN COMERCIO", pedido = "2141001") => ({ "Pedido": pedido, "Cliente": cliente, "Situação": situacao });
+  assertEquals(situacaoObservada([l("6 - Cancelado")], "2141001"), { protocolo: "2141001", codigo: "6", texto: "6 - Cancelado" });
+  assertEquals(situacaoObservada([l("1 - Aberto")], "2141001")?.codigo, "1");
+  // ilegível, código fora da lista fechada, outro cliente, ausente, ambíguo ⇒ nada a gravar
+  assertEquals(situacaoObservada([l("Cancelado")], "2141001"), null);
+  assertEquals(situacaoObservada([l("8 - Novo")], "2141001"), null);
+  assertEquals(situacaoObservada([l("6 - Cancelado", "OUTRA LTDA")], "2141001"), null);
+  assertEquals(situacaoObservada([l("6 - Cancelado", "OBEN", "2141002")], "2141001"), null);
+  assertEquals(situacaoObservada([l("6 - Cancelado"), l("1 - Aberto")], "2141001"), null);
+  // "Pedido Clien[te]" não é a coluna Pedido
+  assertEquals(situacaoObservada([{ "Pedido Cliente": "2141001", "Cliente": "OBEN", "Situação": "6 - Cancelado" }], "2141001"), null);
+});
+
+// ── Revisão 2 (2026-11-08) ──
+Deno.test("B1: situação sem código reconhecido (1..7) é recusada — o botão também não importa/re-dispara '???'", () => {
+  for (const sit of ["???", "Suspenso", "8 - Novo", "0 - Rascunho", "- Aberto"]) {
+    const r = lerPedidoPortal([{ ...LINHA_REAL, "Situação": sit }], ITENS_REAL, "2140603");
+    assertEquals(`${sit}:${r.ok ? "ok" : r.motivo}`, `${sit}:situacao_ilegivel`);
+  }
+  // Reconhecida segue lendo (todas as 7 do select real, menos o 6 que tem motivo próprio).
+  for (const sit of ["1 - Aberto", "2 - Atendido Parcial", "3 - Atendido Total", "4 - Pendentes", "5 - Suspenso", "7 - Fatur Balcão"]) {
+    const r = lerPedidoPortal([{ ...LINHA_REAL, "Situação": sit }], ITENS_REAL, "2140603");
+    assertEquals(`${sit}:${r.ok ? "ok" : r.motivo}`, `${sit}:ok`);
+  }
+  // Cancelado sem código (só o texto) continua cancelado, não "ilegível".
+  const c = lerPedidoPortal([{ ...LINHA_REAL, "Situação": "Cancelado" }], ITENS_REAL, "2140603");
+  assertEquals(c.ok ? "ok" : c.motivo, "pedido_cancelado");
+});
+
+Deno.test("B2: situacaoFaturada só para 3 (Atendido Total) e 7 (Fatur Balcão)", () => {
+  assertEquals(["1 - Aberto", "2 - Atendido Parcial", "3 - Atendido Total", "4 - Pendentes", "5 - Suspenso", "6 - Cancelado", "7 - Fatur Balcão", "37 - X", ""].map(situacaoFaturada),
+    [false, false, true, false, false, false, true, false, false]);
 });

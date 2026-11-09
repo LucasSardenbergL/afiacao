@@ -5,7 +5,9 @@ function assertEquals(atual: unknown, esperado: unknown) {
   if (a !== e) throw new Error(`esperado ${e}, veio ${a}`);
 }
 import {
+  coberturaPendente,
   classificar,
+  observacoesDaLista,
   dataBRparaISO,
   inicioDaJanela,
   lerListaConsulta,
@@ -22,6 +24,15 @@ import {
   marcadorFresco,
   pedidosAReconciliar,
   type PedidoDisparadoLido,
+  provarLeitura,
+  totalAnunciado,
+  carenciaTravada,
+  reconsultasForaDaJanela,
+  type PedidoClassificado,
+  desfechoImportacao,
+  carenciaRedisparo,
+  maisRecente,
+  entregaCobertaPeloSync,
 } from "./varredura.ts";
 import * as leituraOriginal from "../sayerlack-importar-pedido-portal/leitura.ts";
 import * as janelaOriginal from "../disparar-pedidos-aprovados/janela-portal.ts";
@@ -221,4 +232,204 @@ Deno.test("marcador: só autoriza encerrar até 26 h do fim do run válido", () 
   assertEquals(marcadorFresco(MARCADOR, fim + 26 * 3600_000), true);
   assertEquals(marcadorFresco(MARCADOR, fim + 26 * 3600_000 + 1), false);
   assertEquals(marcadorFresco({ ...MARCADOR, finalizado_em: "lixo" }, fim), false);
+});
+
+// ── Onda 3 (2026-11-07): rodada nunca verde sem prova ──
+const HEADERS = ["Pedido", "Pedido Cliente", "Situação", "Data Emissão", "Vlr Mercadoria", "Vlr Total"];
+const base = { headers: HEADERS, ilegiveis: 0, repetidos: [] as string[] };
+
+Deno.test("prova: 0 linhas SEM total anunciado é erro (incidente 23/10 e 03/11: 0 lidos e sucesso)", () => {
+  const r = provarLeitura({ ...base, linhasLidas: 0 });
+  assertEquals(r.ok ? "ok" : r.motivo, "zero_lidos_sem_prova");
+});
+Deno.test("prova: 0 linhas COM o portal dizendo 0 de 0 é sucesso", () => {
+  assertEquals(provarLeitura({ ...base, linhasLidas: 0, respostaTotal: 0 }), { ok: true, total: 0 });
+  assertEquals(provarLeitura({ ...base, linhasLidas: 0, info: "Mostrando 0 até 0 de 0 registros" }), { ok: true, total: 0 });
+});
+Deno.test("prova: lidos tem de ser o total anunciado (página perdida ⇒ erro)", () => {
+  const r = provarLeitura({ ...base, linhasLidas: 10, respostaTotal: 23 });
+  assertEquals(r.ok ? "ok" : r.motivo, "lidos_diferente_do_total");
+  assertEquals(provarLeitura({ ...base, linhasLidas: 23, respostaTotal: "23" }), { ok: true, total: 23 });
+});
+Deno.test("prova: com linhas e sem total também é erro (não prova lista inteira)", () => {
+  const r = provarLeitura({ ...base, linhasLidas: 22 });
+  assertEquals(r.ok ? "ok" : r.motivo, "total_nao_anunciado");
+});
+Deno.test("prova: coluna obrigatória ausente (DOM mudou) é erro antes de tudo", () => {
+  const r = provarLeitura({ ...base, headers: ["Pedido Cliente", "Situação", "Data Emissão", "Vlr Total"], linhasLidas: 3, respostaTotal: 3 });
+  assertEquals(r.ok ? "ok" : r.motivo, "colunas_ausentes");
+  // "Pedido Cliente" NÃO conta como "Pedido" (exato).
+  assertEquals(!r.ok && r.detalhe.startsWith("colunas ausentes na consulta: Pedido"), true);
+});
+Deno.test("prova: linha ilegível e protocolo repetido são erro, não descarte silencioso", () => {
+  const a = provarLeitura({ ...base, linhasLidas: 3, respostaTotal: 3, ilegiveis: 1 });
+  assertEquals(a.ok ? "ok" : a.motivo, "linhas_ilegiveis");
+  const b = provarLeitura({ ...base, linhasLidas: 3, respostaTotal: 3, repetidos: ["2140603"] });
+  assertEquals(b.ok ? "ok" : b.motivo, "protocolo_repetido");
+});
+Deno.test("total anunciado: JSON do DataTables vence; texto pt/en; lixo é null", () => {
+  assertEquals(totalAnunciado({ respostaTotal: 7, info: "de 7 registros" }), 7);
+  assertEquals(totalAnunciado({ info: "Mostrando de 1 até 10 de 1.234 registros" }), 1234);
+  assertEquals(totalAnunciado({ info: "Showing 1 to 10 of 23 entries" }), 23);
+  assertEquals(totalAnunciado({ respostaTotal: -1 }), null);
+  assertEquals(totalAnunciado({ respostaTotal: 2.5 }), null);
+  assertEquals(totalAnunciado({ info: "Processando..." }), null);
+  assertEquals(totalAnunciado({}), null);
+});
+Deno.test("carência presa: só aguarda_sync com 1ª vista há mais de 6 h", () => {
+  const agora = Date.parse("2026-11-07T12:00:00Z");
+  const cl = [
+    { protocolo: "1", classe: "carencia_aguarda_sync" },
+    { protocolo: "2", classe: "carencia_aguarda_sync" },
+    { protocolo: "3", classe: "candidato" },
+  ] as unknown as PedidoClassificado[];
+  const vistos = new Map([["1", "2026-11-07T05:00:00Z"], ["2", "2026-11-07T07:00:00Z"], ["3", "2026-11-01T00:00:00Z"]]);
+  assertEquals(carenciaTravada(cl, vistos, agora).map((t) => t.protocolo), ["1"]);
+});
+Deno.test("reconsultas além da janela: tentativa mais antiga primeiro (nunca tentado na frente); sem os já lidos; teto", () => {
+  const r = reconsultasForaDaJanela({
+    lidos: new Set(["111"]),
+    semPoNoApp: [{ protocolo: "111", pedido_id: 1 }, { protocolo: "222", pedido_id: 2, ultima_tentativa: "2026-11-05T00:00:00Z" }, { protocolo: "555", pedido_id: 5 }],
+    falhasAbertas: [{ protocolo: "444", ultima_em: "2026-11-01T00:00:00Z" }, { protocolo: "333", ultima_em: "2026-11-06T00:00:00Z" }, { protocolo: "222", ultima_em: "2026-10-01" }, { protocolo: "x", ultima_em: "2026-01-01" }],
+    teto: 3,
+  });
+  assertEquals(r.map((q) => q.protocolo + ":" + q.origem), ["555:app_sem_po", "444:falha_aberta", "222:app_sem_po"]);
+  assertEquals(reconsultasForaDaJanela({ lidos: new Set(), semPoNoApp: [], falhasAbertas: [] }), []);
+});
+Deno.test("reconsultas: 13 pendências persistentes — com a tentativa gravada, a 13ª entra em ≤ 4 rodadas (Codex P2)", () => {
+  let falhas = Array.from({ length: 13 }, (_, i) => ({ protocolo: String(9000000 + i), ultima_em: `2026-10-${String(10 + i).padStart(2, "0")}T00:00:00Z` }));
+  const tentados = new Set<string>();
+  for (let rodada = 0; rodada < 4; rodada++) {
+    const fila = reconsultasForaDaJanela({ lidos: new Set(), semPoNoApp: [], falhasAbertas: falhas });
+    for (const q of fila) tentados.add(q.protocolo);
+    falhas = falhas.map((f) => fila.some((q) => q.protocolo === f.protocolo) ? { ...f, ultima_em: `2026-11-0${rodada + 1}T00:00:00Z` } : f);
+  }
+  assertEquals(tentados.size, 13);
+});
+Deno.test("total: recordsFiltered + DataTables + texto; divergência é explícita", () => {
+  assertEquals(totalAnunciado({ respostaTotal: 7, dtTotal: 7, info: "de 7 registros" }), 7);
+  assertEquals(totalAnunciado({ dtTotal: 5 }), 5);
+  assertEquals(totalAnunciado({ respostaTotal: 7, dtTotal: 9 }), "divergente");
+  const r = provarLeitura({ ...base, linhasLidas: 7, respostaTotal: 7, dtTotal: 9 });
+  assertEquals(r.ok ? "ok" : r.motivo, "total_divergente");
+});
+
+// ── Onda 5A: situação do portal gravada no pedido ──
+Deno.test("observacoesDaLista: só pedido do app com código 1..7", () => {
+  const { pedidos } = lerListaConsulta([
+    { "Pedido": "2141001", "Situação": "6 - Cancelado", "Data Emissão": "01/11/2026", "Vlr": "1,00" },
+    { "Pedido": "2141002", "Situação": "1 - Aberto", "Data Emissão": "01/11/2026", "Vlr": "1,00" },
+    { "Pedido": "2141003", "Situação": "Cancelado", "Data Emissão": "01/11/2026", "Vlr": "1,00" },
+    { "Pedido": "2141004", "Situação": "12 - Novo", "Data Emissão": "01/11/2026", "Vlr": "1,00" },
+    { "Pedido": "2141005", "Situação": "6 - Cancelado", "Data Emissão": "01/11/2026", "Vlr": "1,00" },
+  ]);
+  assertEquals(
+    observacoesDaLista(pedidos, new Set(["2141001", "2141002", "2141003", "2141004"])),
+    [{ protocolo: "2141001", codigo: "6", texto: "6 - Cancelado" }, { protocolo: "2141002", codigo: "1", texto: "1 - Aberto" }],
+  );
+  // leitura imperfeita (outra linha ilegível/repetida): só o 6 bloqueia, nada libera
+  assertEquals(
+    observacoesDaLista(pedidos, new Set(["2141001", "2141002"]), { soCancelados: true }),
+    [{ protocolo: "2141001", codigo: "6", texto: "6 - Cancelado" }],
+  );
+});
+
+// ── Revisão 2 (2026-11-08) ──
+const CAB = ["Estab", "Pedido", "Pedido Clien", "Cliente", "Situação", "Data Emissão", "Data Entrega", "Vlr Mercadori", "Vlr Total"];
+
+Deno.test("B1: situação/data ilegíveis são PRODUZIDAS como ilegíveis pela leitura da lista e reprovam a prova", () => {
+  // As linhas cruas, como o navegador devolve: a contagem sai de lerListaConsulta, não é injetada.
+  const linhas = [
+    linha("2141100", "1 - Aberto", "16/10/2026"),
+    linha("2141101", "", "16/10/2026"),            // situação vazia (antes: situacao_nao_importavel, prova ok)
+    linha("2141102", "1 - Aberto", "??"),          // emissão ilegível (antes: fora_da_janela, prova ok)
+    linha("2141103", "Suspenso", "31/02/2026"),     // as duas ilegíveis na MESMA linha: conta 1
+    linha("2141104", "8 - Novo", "16/10/2026"),     // código fora do select real
+  ];
+  const lista = lerListaConsulta(linhas);
+  assertEquals(lista.ilegiveis, 4);
+  assertEquals(lista.ilegiveis_detalhe.map((d) => `${d.protocolo}:${d.campo}`),
+    ["2141101:situacao", "2141102:emissao", "2141103:situacao", "2141103:emissao", "2141104:situacao"]);
+  // O pedido de nº legível segue na lista, sem código (nunca candidato, nunca observação de situação).
+  assertEquals(lista.pedidos.map((p) => `${p.protocolo}:${p.situacao_codigo}`), ["2141100:1", "2141101:null", "2141102:1", "2141103:null", "2141104:null"]);
+  const prova = provarLeitura({ headers: CAB, linhasLidas: linhas.length, respostaTotal: linhas.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos });
+  assertEquals(prova.ok ? "ok" : prova.motivo, "linhas_ilegiveis");
+  // E a lista toda legível prova ok (controle: a reprovação acima é DA ilegibilidade).
+  const boa = lerListaConsulta([linhas[0]]);
+  const provaBoa = provarLeitura({ headers: CAB, linhasLidas: 1, respostaTotal: 1, ilegiveis: boa.ilegiveis, repetidos: boa.repetidos });
+  assertEquals(provaBoa.ok ? "ok" : provaBoa.motivo, "ok");
+});
+
+Deno.test("B6/B7: desfecho da importadora — só o CONTRATO dela (ok booleano + mensagem) é resposta", () => {
+  assertEquals(desfechoImportacao(200, { ok: true, mensagem: "importado" }), "ok");
+  assertEquals(desfechoImportacao(200, { ok: false, mensagem: "IP002" }), "falha");
+  assertEquals(desfechoImportacao(500, { ok: false, etapa: "importacao", mensagem: "erro" }), "falha");
+  // Sem contrato: indeterminado (o pedido pode ter entrado).
+  assertEquals(desfechoImportacao(0, { ok: false, mensagem: "rede" }), "indeterminado");
+  assertEquals(desfechoImportacao(200, {}), "indeterminado");
+  assertEquals(desfechoImportacao(504, { msg: "gateway timeout" }), "indeterminado");
+  assertEquals(desfechoImportacao(200, { ok: "true", mensagem: "x" }), "indeterminado");
+  assertEquals(desfechoImportacao(200, { ok: true }), "indeterminado");
+  assertEquals(desfechoImportacao(200, "texto"), "indeterminado");
+  assertEquals(desfechoImportacao(200, null), "indeterminado");
+  assertEquals(desfechoImportacao(200, [{ ok: true, mensagem: "x" }]), "indeterminado");
+  // ok:true em HTTP de erro não é sucesso.
+  assertEquals(desfechoImportacao(500, { ok: true, mensagem: "x" }), "falha");
+});
+
+Deno.test("B3: situação lida e NÃO gravada pela importadora vai junto da mensagem da pendência", () => {
+  const r = resumoImportacao(200, { ok: false, motivo: "pedido_cancelado", situacao_gravada: "erro", mensagem: "cancelado" });
+  assertEquals(r.mensagem.includes("NÃO foi gravada"), true);
+  assertEquals(resumoImportacao(200, { ok: false, situacao_gravada: "aceita", mensagem: "cancelado" }).mensagem, "cancelado");
+});
+
+Deno.test("B5: carência do re-disparo — sync complete depois da última mudança + 5 min", () => {
+  const agora = Date.parse("2026-11-09T15:00:00Z");
+  assertEquals(carenciaRedisparo("2026-11-09T12:00:00Z", "2026-11-09T12:06:00Z", agora), "pode");
+  assertEquals(carenciaRedisparo("2026-11-09T12:00:00Z", "2026-11-09T12:04:59Z", agora), "aguarda_sync");
+  assertEquals(carenciaRedisparo("2026-11-09T12:00:00Z", null, agora), "aguarda_sync");
+  assertEquals(carenciaRedisparo("2026-11-09T08:00:00Z", "2026-11-09T07:00:00Z", agora), "aguarda_sync_travado");
+  assertEquals(carenciaRedisparo(null, "2026-11-09T14:00:00Z", agora), "aguarda_sync_travado");
+  assertEquals(maisRecente("2026-11-09T12:00:00Z", "2026-11-09T13:00:00Z"), "2026-11-09T13:00:00.000Z");
+  assertEquals(maisRecente(null, "2026-11-09T13:00:00Z"), "2026-11-09T13:00:00.000Z");
+  assertEquals(maisRecente(null, undefined), null);
+});
+
+Deno.test("B7 (Codex rev. 2): a importadora que declara desfecho indeterminado nunca vira falha reconhecida", () => {
+  assertEquals(desfechoImportacao(200, { ok: false, etapa: "importacao", desfecho: "indeterminado", mensagem: "não sei" }), "indeterminado");
+  assertEquals(desfechoImportacao(500, { ok: false, etapa: "importacao", desfecho: "indeterminado", mensagem: "não sei" }), "indeterminado");
+});
+
+Deno.test("B5 (Codex rev. 2): re-disparo só com a entrega dentro da janela que o sync cobre (−50..+110 d)", () => {
+  const hoje = "2026-11-09";
+  assertEquals(entregaCobertaPeloSync("2026-11-20", hoje), true);
+  assertEquals(entregaCobertaPeloSync("2026-09-20", hoje), true);   // −50
+  assertEquals(entregaCobertaPeloSync("2026-09-19", hoje), false);  // −51
+  assertEquals(entregaCobertaPeloSync("2027-02-27", hoje), true);   // +110
+  assertEquals(entregaCobertaPeloSync("2027-02-28", hoje), false);  // +111
+  assertEquals(entregaCobertaPeloSync(null, hoje), false);
+  assertEquals(entregaCobertaPeloSync("lixo", hoje), false);
+});
+
+Deno.test("cobertura: só relê quem não tem leitura do protocolo desde o início do dia; emissão mais antiga − 3 dias", () => {
+  const inicio = "2026-11-09T00:00:00-03:00";
+  const r = coberturaPendente([
+    { pedido_id: 1, protocolo: "2145852", enviado_em: "2026-10-29", observado_ate: null },
+    { pedido_id: 2, protocolo: "2146313", enviado_em: "2026-11-03", observado_ate: "2026-11-06T20:35:00Z" },
+    { pedido_id: 3, protocolo: "2147222", enviado_em: "2026-11-05", observado_ate: "2026-11-09T15:35:00Z" },
+  ], inicio, "2026-11-09");
+  assertEquals(r.pendentes.map((p) => p.pedido_id), [1, 2]);
+  assertEquals(r.emissaoDesde, "2026-10-26");
+  assertEquals(r.foraDoAlcance, []);
+});
+
+Deno.test("cobertura: nada pendente ⇒ sem leitura; além de 90 dias ⇒ fora do alcance (o vigia cobra); sem data ⇒ o teto", () => {
+  const inicio = "2026-11-09T00:00:00-03:00";
+  assertEquals(coberturaPendente([{ pedido_id: 3, protocolo: "1", enviado_em: "2026-11-05", observado_ate: "2026-11-09T03:00:01Z" }], inicio, "2026-11-09").emissaoDesde, null);
+  const velho = coberturaPendente([{ pedido_id: 4, protocolo: "2", enviado_em: "2026-07-01", observado_ate: null }], inicio, "2026-11-09");
+  assertEquals([velho.pendentes.length, velho.foraDoAlcance.length, velho.emissaoDesde], [0, 1, null]);
+  const semData = coberturaPendente([{ pedido_id: 5, protocolo: "3", enviado_em: null, observado_ate: "lixo" }], inicio, "2026-11-09");
+  assertEquals([semData.pendentes.length, semData.emissaoDesde], [1, "2026-08-12"]);
+  // leitura ANTES do início do dia (23:59 de ontem em SP) não vale para hoje
+  assertEquals(coberturaPendente([{ pedido_id: 6, protocolo: "4", enviado_em: "2026-11-05", observado_ate: "2026-11-09T02:59:00Z" }], inicio, "2026-11-09").pendentes.length, 1);
 });

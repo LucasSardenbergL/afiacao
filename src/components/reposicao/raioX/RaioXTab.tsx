@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { PackageSearch } from 'lucide-react';
 import { useReposicaoEmpresa } from '@/contexts/ReposicaoEmpresaContext';
 import { useUrlState } from '@/hooks/useUrlState';
@@ -8,15 +9,27 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DESTINOS, ROTULOS } from '@/lib/reposicao/raio-x/classificar';
-import { destinoEfetivo, empresaDoRaioX, fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
-import type { Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
+import { argsConfirmarSugestao, destinoEfetivo, empresaDoRaioX, fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
+import { concluidoVigente, custoEsperarMensal, ehExecutavel, planoPadrao, resumoExecucao } from '@/lib/reposicao/raio-x/execucao';
+import { filaTop, origemDaVisita, proximoDaFila } from '@/lib/reposicao/raio-x/fila';
+import { medir } from '@/lib/reposicao/raio-x/medir';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { toast } from 'sonner';
+import { hojeSP } from '@/lib/time/sp-day';
+import { useAuth } from '@/contexts/AuthContext';
+import type { DecisaoRow, Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
+import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { useRaioX, useRaioXMedicao } from './useRaioX';
+import { fmtReais } from './formato';
 import { RaioXPlacar } from './RaioXPlacar';
 import { RaioXCaixaLiberado } from './RaioXCaixaLiberado';
 import { RaioXMercadoria } from './RaioXMercadoria';
 import { RaioXContagem } from './RaioXContagem';
 import { RaioXSaidas } from './RaioXSaidas';
 import { DecisaoSheet } from './DecisaoSheet';
+import { useRaioXMutacoes, type OrigemDecisao } from './useRaioXMutacoes';
+import type { Confirmacao } from './RaioXLinha';
+import { useEquipeRaioX, useTaxaCustoCapital } from './useExecucaoRaioX';
 
 type Segmento = 'mercadoria' | 'uso' | 'nao' | 'saidas';
 const SEGMENTOS: { id: Segmento; rotulo: string }[] = [
@@ -29,41 +42,130 @@ const SEGMENTOS: { id: Segmento; rotulo: string }[] = [
 /** Filtro de destino (Ruling S4): os 6 destinos + as 3 sugestões que não são destino. */
 const OPCOES_DESTINO = [...DESTINOS, 'novo_aguarde', 'revisar', 'sem_historico'] as const;
 
-const porValorDesc = (a: ItemRaioX, b: ItemRaioX) => (b.valor ?? -Infinity) - (a.valor ?? -Infinity);
+const porValorDesc = (a: ItemRaioX, b: ItemRaioX) => (b.valor ?? b.valor_coorte ?? -Infinity) - (a.valor ?? a.valor_coorte ?? -Infinity);
+
 
 export function RaioXTab() {
   const { empresa } = useReposicaoEmpresa();
   const chave = empresaDoRaioX(empresa);
   const rx = useRaioX(chave);
   const medicao = useRaioXMedicao(chave);
+  const taxa = useTaxaCustoCapital(chave);
+  const equipe = useEquipeRaioX();
+  const nomes = useMemo(() => new Map(equipe.map((e) => [e.user_id, e.nome])), [equipe]);
+  // Identidade REAL (useAuth), não a da lente: "minhas" é sobre quem executa.
+  const { user } = useAuth();
+  const hoje = hojeSP();
   // Sheet: guarda sku + empresa de quem abriu; item e decisão são relidos do cache (vivos após invalidar).
-  const [aberto, setAberto] = useState<{ sku: number; empresa: Empresa } | null>(null);
+  // `origem`: de onde veio o toque (sensor); o painel aberto num item do Top 61 pendente segue para o próximo ao salvar.
+  const [aberto, setAberto] = useState<{ sku: number; empresa: Empresa; origem: OrigemDecisao } | null>(null);
   const fechar = useCallback(() => setAberto(null), []);
+  // SKUs gravados nesta montagem: a fila não os reoferece enquanto o refetch das decisões não volta.
+  const salvos = useRef<Set<number>>(new Set());
+  const isMobile = useIsMobile();
+  const m = useRaioXMutacoes(chave ?? 'oben'); // empresa só é lida ao gravar, e só se grava com `chave` não-nula
   // Trocou a empresa no seletor → descarta o Sheet (senão reabriria ao voltar para a empresa original).
   useEffect(() => {
     if (aberto && aberto.empresa !== chave) setAberto(null);
   }, [aberto, chave]);
+  // Sensor de visita (ledger server-side; o PostHog é censurado no Chrome do founder): 1x por empresa e montagem,
+  // só com a leitura PRONTA. O dedup de verdade é da RPC (titular × empresa × dia UTC).
+  // `origem` (da URL, allowlist): de onde a visita veio — o link do e-mail diário leva `origem=email`. Com origem,
+  // a chave do dedup ganha o sufixo (1 linha por titular × empresa × origem × dia), senão a visita do e-mail some
+  // atrás de uma visita direta do mesmo dia. Sem origem, chave e props seguem as de antes.
+  const [params] = useSearchParams();
+  const origemVisita = origemDaVisita(params.get('origem'));
+  const registradas = useRef<Set<Empresa>>(new Set());
+  const pronta = chave !== null && !rx.isLoading && !rx.erro;
+  useEffect(() => {
+    if (!pronta || !chave || registradas.current.has(chave)) return;
+    registradas.current.add(chave);
+    void registrarNoLedger(
+      'reposicao.raio_x_aberta',
+      origemVisita ? `${chave}:${origemVisita}` : chave,
+      origemVisita ? { empresa: chave, origem: origemVisita } : { empresa: chave },
+    );
+  }, [pronta, chave, origemVisita]);
   const qc = useQueryClient();
   // Abrir relê o servidor (FI1): sem refetch-on-focus, o formulário nasceria do cache velho e a assinatura do S9
   // nunca mudaria — salvar apagaria o que outro operador gravou. Quando o refetch chegar com outra assinatura,
   // o Sheet bloqueia e oferece "Recarregar".
-  const abrir = useCallback((i: ItemRaioX) => {
+  const abrirSku = useCallback((sku: number, origem: OrigemDecisao) => {
     if (!chave) return;
-    setAberto({ sku: i.sku_codigo_omie, empresa: chave });
+    setAberto({ sku, empresa: chave, origem });
     void qc.invalidateQueries({ queryKey: ['raio-x', chave] });
   }, [chave, qc]);
-  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false as boolean, rxBusca: '', rxSku: '' });
+  const abrir = useCallback((i: ItemRaioX) => abrirSku(i.sku_codigo_omie, 'sheet'), [abrirSku]);
+  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false as boolean, rxBusca: '', rxSku: '', rxIneq: '', rxFila: false as boolean });
 
   const codigos = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.codigo])), [rx.itens]);
   // Contradição clicável: lista de mercadoria filtrada pelo SKU exato (`rxSku` na URL — nunca a busca por código, que é substring).
   const filtrarSku = useCallback(
-    (sku: number) => setF({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false, rxBusca: '', rxSku: String(sku) }),
+    (sku: number) => setF({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false, rxBusca: '', rxSku: String(sku) }),
     [setF],
   );
 
   const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' || f.rx === 'saidas' ? f.rx : 'mercadoria';
 
-  const mercadoria = useMemo(() => rx.itens.filter((i) => i.categoria === 'mercadoria' && i.parado), [rx.itens]);
+  // Membro da coorte que voltou a girar segue decidível (senão a meta de 100% ficaria inalcançável pela tela).
+  // + linhas históricas: membro da coorte que zerou o saldo segue decidível (bug 2 — nunca sai da coorte).
+  const mercadoria = useMemo(
+    () => [...rx.itens.filter((i) => i.categoria === 'mercadoria' && (i.parado || i.top)), ...rx.historicos],
+    [rx.itens, rx.historicos],
+  );
+  // Fila do Top 61: pendentes da coorte por R$ (UX 3). Independe dos filtros da lista.
+  const fila = useMemo(() => filaTop(mercadoria, rx.decisoes), [mercadoria, rx.decisoes]);
+  const filaSkus = useMemo(() => new Set(fila.map((i) => i.sku_codigo_omie)), [fila]);
+  const abrirFila = useCallback(() => {
+    const prox = proximoDaFila(fila, null, salvos.current);
+    if (prox !== null) abrirSku(prox, 'fila');
+  }, [fila, abrirSku]);
+  // Link direto/Cmd-K (`rxFila=1`): com a leitura pronta, abre o 1º pendente do Top 61 e limpa o parâmetro.
+  useEffect(() => {
+    if (!f.rxFila || !pronta) return;
+    setF({ rxFila: false });
+    abrirFila();
+  }, [f.rxFila, pronta, setF, abrirFila]);
+
+  // Salvou no painel: item do Top 61 → próximo pendente (fila encadeada); fora do Top → fecha.
+  const aoSalvar = useCallback(() => {
+    if (!aberto) return;
+    salvos.current.add(aberto.sku);
+    if (!filaSkus.has(aberto.sku)) return setAberto(null);
+    const prox = proximoDaFila(fila, aberto.sku, salvos.current);
+    if (prox === null) {
+      setAberto(null);
+      toast.success('Top 61 todo decidido nesta passagem');
+      return;
+    }
+    setAberto({ sku: prox, empresa: aberto.empresa, origem: 'fila' });
+  }, [aberto, fila, filaSkus]);
+  const pular = useCallback(() => {
+    if (!aberto) return;
+    const prox = proximoDaFila(fila, aberto.sku, salvos.current);
+    if (prox === null) return setAberto(null);
+    setAberto({ sku: prox, empresa: aberto.empresa, origem: 'fila' });
+  }, [aberto, fila]);
+
+  // "Confirmar: <sugestão>" no card (UX 2): 1 toque = a decisão, com o plano padrão se o destino tem execução.
+  const confirmacaoDe = useCallback((i: ItemRaioX, d: DecisaoRow | undefined): Confirmacao | null => {
+    if (!chave) return null;
+    const a = argsConfirmarSugestao(chave, i, d);
+    return a && a.destino ? { destino: a.destino, tiraDoMotor: a.tirarDoMotor } : null;
+  }, [chave]);
+  const confirmarCard = useCallback(async (i: ItemRaioX) => {
+    if (!chave) return;
+    const d = rx.decisoes.get(i.sku_codigo_omie);
+    const args = argsConfirmarSugestao(chave, i, d);
+    if (!args || !args.destino) return;
+    const plano = ehExecutavel(args.destino) ? planoPadrao(user?.id ?? null, hoje) : null;
+    const res = await m.salvar(args, plano, { sku: i.sku_codigo_omie, atualizadoEm: d?.atualizado_em ?? null, origem: 'card' });
+    if (res !== 'falhou') salvos.current.add(i.sku_codigo_omie);
+  }, [chave, rx.decisoes, user, hoje, m]);
+  const confirmar = useMemo(
+    () => ({ de: confirmacaoDe, onConfirmar: (i: ItemRaioX) => void confirmarCard(i), pendente: m.pendente }),
+    [confirmacaoDe, confirmarCard, m.pendente],
+  );
   const fornecedores = useMemo(
     () =>
       [...new Set(mercadoria.map((i) => fornecedorEfetivo(i, rx.decisoes.get(i.sku_codigo_omie))).filter((x): x is string => !!x))].sort(),
@@ -77,16 +179,39 @@ export function RaioXTab() {
         const d = rx.decisoes.get(i.sku_codigo_omie);
         if (f.rxDestino && destinoEfetivo(i, d) !== f.rxDestino) return false;
         if (f.rxForn && fornecedorEfetivo(i, d) !== f.rxForn) return false;
+        // Inequívoco é veredito do SERVIDOR (null = indisponível, nunca entra em "inequívoco")
+        if (f.rxIneq === 'inequivoco' && i.inequivoco !== true) return false;
+        if (f.rxIneq === 'aguarda' && i.inequivoco !== false) return false;
         const decidido = !!d?.destino;
         if (f.rxStatus === 'pendente' && decidido) return false;
         if (f.rxStatus === 'decidido' && !decidido) return false;
+        if (f.rxExec) {
+          // Filtros de execução: só decisões executáveis ainda não concluídas.
+          if (!d || !ehExecutavel(d.destino) || concluidoVigente(d)) return false;
+          if (f.rxExec === 'vencidas' && !(d.prazo && d.prazo < hoje)) return false;
+          if (f.rxExec === 'sem_responsavel' && d.responsavel) return false;
+          if (f.rxExec === 'minhas' && (!user || d.responsavel !== user.id)) return false;
+        }
         if (f.rxTop && !i.top) return false;
         if (f.rxSku && String(i.sku_codigo_omie) !== f.rxSku) return false;
         if (busca && !`${i.codigo} ${i.descricao ?? ''}`.toLowerCase().includes(busca)) return false;
         return true;
       })
       .sort(porValorDesc);
-  }, [mercadoria, f, rx.decisoes]);
+  }, [mercadoria, f, rx.decisoes, hoje, user]);
+
+  const execucao = useMemo(() => resumoExecucao(rx.decisoes.values(), hoje), [rx.decisoes, hoje]);
+  // Denominador do "liquidar só o inequívoco": quantos (e quanto R$) a regra do servidor libera hoje, entre a mercadoria parada.
+  const ineq = useMemo(() => {
+    const sim = mercadoria.filter((i) => i.inequivoco === true);
+    // ausente ≠ zero: SKU inequívoco sem CMC fica FORA da soma e é contado à parte (Codex P2-8)
+    const comValor = sim.filter((i) => i.valor !== null);
+    return {
+      n: sim.length, valor: comValor.length ? comValor.reduce((s, i) => s + (i.valor as number), 0) : null, semCusto: sim.length - comValor.length,
+      aguardaN: mercadoria.filter((i) => i.inequivoco === false).length,
+    };
+  }, [mercadoria]);
+  const unidadesVenda = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.unidades_venda])), [rx.itens]);
 
   const categoriaSeg = segmento === 'uso' ? 'uso_consumo' : segmento === 'nao' ? 'nao_mercadoria' : null;
   const contagem = useMemo(
@@ -95,7 +220,18 @@ export function RaioXTab() {
   );
 
   // Item sumiu do cache (reclassificado/fora do recorte) → nada a mostrar; o Sheet não abre com item velho.
-  const itemAberto = aberto && aberto.empresa === chave ? rx.itens.find((i) => i.sku_codigo_omie === aberto.sku) ?? null : null;
+  const itemAberto = aberto && aberto.empresa === chave
+    ? rx.itens.find((i) => i.sku_codigo_omie === aberto.sku) ?? rx.historicos.find((i) => i.sku_codigo_omie === aberto.sku) ?? null
+    : null;
+  // Linha única do mobile (UX 4): o critério da meta vem da MESMA medição do bloco completo; sem leitura → "—".
+  const liberado = useMemo(() => (medicao.linhas && chave ? medir(medicao.linhas, chave).meta_liberado : null), [medicao.linhas, chave]);
+  const pendenteTop = rx.placar.topTotal - rx.placar.topDecidido;
+  const filtrosAtivos = !!(f.rxDestino || f.rxForn || f.rxStatus || f.rxExec || f.rxTop || f.rxBusca || f.rxSku || f.rxIneq);
+  // Celular: a fila é a vista padrão. O "Avançado" abre sozinho só quando a URL pede algo além dela (outro segmento ou
+  // filtro); o link do e-mail/Cmd-K (rxTop=1&rxStatus=pendente) É a fila e não abre o Avançado.
+  const avancadoAtivo = segmento !== 'mercadoria'
+    || !!(f.rxDestino || f.rxForn || f.rxExec || f.rxBusca || f.rxSku || f.rxIneq || (f.rxStatus && f.rxStatus !== 'pendente'));
+  const limparFiltros = () => setF({ rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false, rxBusca: '', rxSku: '', rxIneq: '' });
 
   if (chave === null) {
     return <EmptyState tone="operational" icon={PackageSearch} title="Sem cadastro de produto" description="sem cadastro de produto — fora do Raio-X por ora" />;
@@ -112,14 +248,15 @@ export function RaioXTab() {
     );
   }
 
-  return (
-    <div className="space-y-4">
-      {rx.syncedHoras !== null && rx.syncedHoras >= 24 && (
-        <p role="status" className="text-xs text-status-warning">
-          estoque sincronizado há {Math.floor(rx.syncedHoras)} h — números podem estar defasados
-        </p>
-      )}
-      <RaioXPlacar placar={rx.placar} />
+  // Placar completo + medição (no celular, dentro do "Avançado").
+  const placarCompleto = (
+    <>
+      <RaioXPlacar
+        placar={rx.placar}
+        coorteIndisponivel={rx.coorteEstado === 'indisponivel'}
+        custoPendenteMes={custoEsperarMensal(rx.placar.pendente, taxa)}
+        execucao={execucao}
+      />
       <RaioXCaixaLiberado
         linhas={medicao.linhas}
         isLoading={medicao.isLoading}
@@ -127,8 +264,14 @@ export function RaioXTab() {
         empresa={chave}
         codigos={codigos}
         onFiltrarSku={filtrarSku}
+        decisoes={rx.decisoes}
+        unidadesVenda={unidadesVenda}
       />
-
+    </>
+  );
+  // Segmentos, filtros e a lista/segmento escolhido (no celular, dentro do "Avançado").
+  const segmentosEConteudo = (
+    <>
       <div role="group" aria-label="Segmento" className="flex flex-wrap gap-2">
         {SEGMENTOS.map((s) => (
           <Button key={s.id} size="touch" variant={segmento === s.id ? 'default' : 'outline'} aria-pressed={segmento === s.id} onClick={() => setF({ rx: s.id })}>
@@ -153,6 +296,17 @@ export function RaioXTab() {
               <option value="pendente">Pendente</option>
               <option value="decidido">Decidido</option>
             </select>
+            <select aria-label="Execução" className="h-9 rounded-md border bg-background px-2 text-sm" value={f.rxExec} onChange={(e) => setF({ rxExec: e.target.value })}>
+              <option value="">Toda execução</option>
+              <option value="vencidas">Vencidas</option>
+              <option value="sem_responsavel">Sem responsável</option>
+              <option value="minhas">Minhas pendências</option>
+            </select>
+            <select aria-label="Liquidação" className="h-9 rounded-md border bg-background px-2 text-sm" value={f.rxIneq} onChange={(e) => setF({ rxIneq: e.target.value })}>
+              <option value="">Inequívoco e aguardando (entre os parados)</option>
+              <option value="inequivoco">Só inequívoco ({ineq.n} · {ineq.valor === null ? 'R$ —' : fmtReais(ineq.valor)}{ineq.semCusto > 0 ? ` +${ineq.semCusto} sem custo` : ''})</option>
+              <option value="aguarda">Só aguardando ({ineq.aguardaN} entre os parados)</option>
+            </select>
             <label className="flex items-center gap-1 text-sm">
               <input type="checkbox" checked={f.rxTop} onChange={(e) => setF({ rxTop: e.target.checked })} /> Top 61
             </label>
@@ -165,9 +319,21 @@ export function RaioXTab() {
             </div>
           )}
           {filtrados.length === 0 ? (
-            <EmptyState tone="operational" icon={PackageSearch} title="Nada parado" description={mercadoria.length === 0 ? 'Nenhuma mercadoria parada nesta empresa.' : 'Nenhum item com esses filtros.'} />
+            mercadoria.length === 0 ? (
+              <EmptyState tone="operational" icon={PackageSearch} title="Nada parado" description="Nenhuma mercadoria parada nesta empresa." />
+            ) : (
+              // Há itens fora do filtro: nunca dizer "Nada parado" (UX 4).
+              <EmptyState
+                tone="operational"
+                icon={PackageSearch}
+                title="Nenhum item com esses filtros"
+                description={`${mercadoria.length} item(ns) de mercadoria ficaram de fora do filtro.`}
+                actionLabel={filtrosAtivos ? 'Limpar filtros' : undefined}
+                onAction={filtrosAtivos ? limparFiltros : undefined}
+              />
+            )
           ) : (
-            <RaioXMercadoria itens={filtrados} decisoes={rx.decisoes} onDecidir={abrir} />
+            <RaioXMercadoria itens={filtrados} decisoes={rx.decisoes} onDecidir={abrir} taxa={taxa} hoje={hoje} nomes={nomes} confirmar={confirmar} />
           )}
         </>
       ) : segmento === 'saidas' ? (
@@ -177,8 +343,79 @@ export function RaioXTab() {
       ) : (
         <RaioXContagem empresa={chave} categoria={segmento === 'uso' ? 'uso_consumo' : 'nao_mercadoria'} itens={contagem} decisoes={rx.decisoes} onDecidir={abrir} />
       )}
+    </>
+  );
+
+  return (
+    <div className="space-y-4">
+      {rx.placar.topN > 0 && rx.placar.topDecididoN === rx.placar.topN ? (
+        <EmptyState
+          tone="operational"
+          icon={PackageSearch}
+          title="Top 61 decidido"
+          description={`Os ${rx.placar.topN} itens da meta têm decisão. Agora é executar e medir o liberado.`}
+        />
+      ) : fila.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="touch" onClick={abrirFila}>Decidir Top 61 ({fila.length} pendentes)</Button>
+        </div>
+      )}
+      {/* Avisos amarelos ABAIXO do botão da fila: o 1º toque da tela é decidir, não ler aviso. */}
+      {rx.inequivocoIndisponivel && (
+        <p role="status" className="text-xs text-status-warning">
+          veredito "inequívoco" indisponível (migration ainda não aplicada ou sem acesso) — nenhum SKU é tratado como inequívoco por omissão
+        </p>
+      )}
+      {rx.syncedHoras !== null && rx.syncedHoras >= 24 && (
+        <p role="status" className="text-xs text-status-warning">
+          estoque sincronizado há {Math.floor(rx.syncedHoras)} h — números podem estar defasados
+        </p>
+      )}
+      {isMobile ? (
+        <>
+          <p data-testid="placar-linha" className="text-sm">
+            Top 61: {rx.placar.topDecididoN}/{rx.placar.topN} · liberado {liberado === null ? 'R$ —' : fmtReais(liberado)} de 60 mil
+            {execucao.vencidas > 0 && <> · <span className="text-status-error">{execucao.vencidas} vencidas</span></>}
+            {execucao.semResponsavel > 0 && <> · <span className="text-status-warning">{execucao.semResponsavel} sem responsável</span></>}
+          </p>
+          {/* Celular abre direto na fila do Top 61 (pendentes, na ordem da fila); o resto vai para o "Avançado". */}
+          {!avancadoAtivo && fila.length > 0 && (
+            <section aria-label="Fila do Top 61" className="space-y-2">
+              <RaioXMercadoria itens={fila} decisoes={rx.decisoes} onDecidir={abrir} taxa={taxa} hoje={hoje} nomes={nomes} confirmar={confirmar} />
+            </section>
+          )}
+          <details data-testid="avancado" open={avancadoAtivo} className="rounded-md border p-2 text-sm">
+            <summary className="min-h-11 cursor-pointer py-2">Avançado: placar, segmentos e filtros</summary>
+            <div className="mt-2 space-y-4">
+              {placarCompleto}
+              {segmentosEConteudo}
+            </div>
+          </details>
+        </>
+      ) : (
+        <>
+          {placarCompleto}
+          {segmentosEConteudo}
+        </>
+      )}
       {itemAberto && aberto && (
-        <DecisaoSheet empresa={aberto.empresa} item={itemAberto} decisao={rx.decisoes.get(itemAberto.sku_codigo_omie)} onClose={fechar} />
+        <DecisaoSheet
+          empresa={aberto.empresa}
+          item={itemAberto}
+          decisao={rx.decisoes.get(itemAberto.sku_codigo_omie)}
+          onClose={fechar}
+          onSalvo={aoSalvar}
+          taxa={taxa}
+          equipe={equipe}
+          userId={user?.id ?? null}
+          origem={aberto.origem}
+          fila={filaSkus.has(itemAberto.sku_codigo_omie) ? {
+            decididos: rx.placar.topDecididoN,
+            total: rx.placar.topN,
+            pendente: pendenteTop,
+            onPular: pular,
+          } : null}
+        />
       )}
     </div>
   );

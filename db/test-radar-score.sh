@@ -359,18 +359,44 @@ Pq -c "ALTER TABLE public.acoes_execucoes_fora RENAME TO acoes_execucoes;" >/dev
 # aberta em pg_sleep); a sessão B (o score) lê L19 como lead, calcula 31, espera o lock e, ao soltar,
 # EvalPlanQual reavalia só a linha-alvo: a guarda de versão (updated_at/ja_cliente lidos) tem de PULAR a
 # linha — nunca gravar 31 numa empresa que acabou de virar cliente.
+# A segura a transação até OBSERVAR B parada em Lock (receita do E17, docs/historico/ci-e17-radar-espera-por-bloqueio.md)
+# — antes era `pg_sleep(8)` fixo, ~8 s de relógio parado por execução, 19 execuções no --falsificar. Quem
+# afirma "B esperou" é a própria A (espera=sim). Se B não bloquear, A sai no teto de 8 s, como antes.
 Pq -c "UPDATE public.radar_empresas SET score = NULL, score_motivos = NULL WHERE cnpj = 'L1900000000019';" >/dev/null
-P -qAt -c "/*A17*/ BEGIN; UPDATE public.radar_empresas SET ja_cliente = true, updated_at = now() WHERE cnpj = 'L1900000000019'; SELECT pg_sleep(8); COMMIT;" >/dev/null 2>&1 &
+A17_OUT="$(dirname "$DATA")/a17.out"
+P -qAt > "$A17_OUT" 2>&1 <<'SQL' &
+SET application_name = 'a17_escritor';
+BEGIN;
+UPDATE public.radar_empresas SET ja_cliente = true, updated_at = now() WHERE cnpj = 'L1900000000019';
+CREATE TEMP TABLE a17_espera (v text);
+DO $segura$
+DECLARE t0 timestamptz := clock_timestamp(); v text := 'timeout';
+BEGIN
+  LOOP
+    PERFORM pg_stat_clear_snapshot();
+    IF EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock'
+                 AND query LIKE '%radar_score_recalcular%') THEN v := 'sim'; EXIT; END IF;
+    EXIT WHEN clock_timestamp() - t0 > interval '8 seconds';
+    PERFORM pg_sleep(0.01);
+  END LOOP;
+  INSERT INTO pg_temp.a17_espera VALUES (v);
+END $segura$;
+SELECT 'espera=' || v FROM pg_temp.a17_espera;
+COMMIT;
+SQL
 PID_A=$!
-for _ in $(seq 1 40); do
-  if [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '/*A17*/%' AND wait_event = 'PgSleep';")" = "1" ]; then break; fi
-  sleep 0.25
+# Pronto = A já tem xid (o UPDATE de L19 passou) e a transação está aberta. Estável até o COMMIT dela.
+LOCK_OK=0
+for _ in $(seq 1 100); do
+  LOCK_OK="$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'a17_escritor' AND backend_xid IS NOT NULL;")"
+  [ "$LOCK_OK" = "1" ] && break
+  sleep 0.05
 done
-LOCK_OK="$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '/*A17*/%' AND wait_event = 'PgSleep';")"
 R17="$(rodar)"        # bloqueia no row-lock de L19 até o COMMIT da sessão A
 wait "$PID_A" || true
+ESPERA_A17="$(grep -o 'espera=[a-z]*' "$A17_OUT" || echo 'espera=?')"
 eq "A17 guarda de versão: linha que virou cliente DURANTE o recálculo é pulada (score fica NULL, pulados=1), não recebe 31" \
-   "lock=$LOCK_OK $(score_de L1900000000019) pulados=$(campo "$R17" pulados)" "lock=1 (null) pulados=1"
+   "lock=$LOCK_OK $ESPERA_A17 $(score_de L1900000000019) pulados=$(campo "$R17" pulados)" "lock=1 espera=sim (null) pulados=1"
 R17B="$(rodar)"
 eq "A17b rodada seguinte recompõe a linha pulada: NULL 'já é cliente', 0 pulados" \
    "$(score_de L1900000000019) [$(motivos_de L1900000000019)] pulados=$(campo "$R17B" pulados)" "(null) [já é cliente] pulados=0"

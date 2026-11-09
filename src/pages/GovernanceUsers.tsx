@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { Shield, Users, History } from 'lucide-react';
+import { RadarEmailSemanalCard } from '@/components/governanca/RadarEmailSemanalCard';
 
 const ROLE_LABELS: Record<string, string> = {
   operacional: 'Operacional',
@@ -226,6 +227,9 @@ export default function GovernanceUsers() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Radar D1: e-mail semanal de leads por pessoa + envio automático (só master; o card some para o resto) */}
+      <RadarEmailSemanalCard />
 
       {/* Change Log */}
       <Card>

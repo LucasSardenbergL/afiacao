@@ -51,25 +51,25 @@ const renderTab = (ui: React.ReactElement) => render(<TooltipProvider>{ui}</Tool
 
 describe("OportunidadesTable", () => {
   it("loading → Carregando…", () => {
-    renderTab(<OportunidadesTable isLoading totalCount={0} rows={[]} navigate={navigate} onOpenDrawer={noop} onIgnorar={noop} />);
+    renderTab(<OportunidadesTable semLeitura={null} isLoading totalCount={0} rows={[]} navigate={navigate} onOpenDrawer={noop} onIgnorar={noop} />);
     expect(screen.getByText("Carregando…")).toBeTruthy();
   });
 
   it("totalCount=0 → estado vazio (sem cabeçalho da tabela)", () => {
-    renderTab(<OportunidadesTable isLoading={false} totalCount={0} rows={[]} navigate={navigate} onOpenDrawer={noop} onIgnorar={noop} />);
+    renderTab(<OportunidadesTable semLeitura={null} isLoading={false} totalCount={0} rows={[]} navigate={navigate} onOpenDrawer={noop} onIgnorar={noop} />);
     expect(screen.queryByText("SKU / Descrição")).toBeNull();
   });
 
   it("filtros sem match → mensagem; com linha → dados e clique abre drawer", () => {
     const onOpenDrawer = vi.fn();
     const { rerender } = renderTab(
-      <OportunidadesTable isLoading={false} totalCount={1} rows={[]} navigate={navigate} onOpenDrawer={onOpenDrawer} onIgnorar={noop} />
+      <OportunidadesTable semLeitura={null} isLoading={false} totalCount={1} rows={[]} navigate={navigate} onOpenDrawer={onOpenDrawer} onIgnorar={noop} />
     );
     expect(screen.getByText("Nenhum SKU bate os filtros atuais.")).toBeTruthy();
 
     rerender(
       <TooltipProvider>
-        <OportunidadesTable isLoading={false} totalCount={1} rows={[op]} navigate={navigate} onOpenDrawer={onOpenDrawer} onIgnorar={noop} />
+        <OportunidadesTable semLeitura={null} isLoading={false} totalCount={1} rows={[op]} navigate={navigate} onOpenDrawer={onOpenDrawer} onIgnorar={noop} />
       </TooltipProvider>
     );
     expect(screen.getByText("Verniz Premium")).toBeTruthy();

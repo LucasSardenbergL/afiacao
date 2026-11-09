@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 import { toast } from 'sonner';
 import { captureException } from '@/lib/analytics';
@@ -95,6 +96,12 @@ function chain(table: string): unknown {
   return c;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
@@ -144,7 +151,7 @@ describe('useBundleEngine — a leitura do melhor individual não fabrica zero n
   it('DETECTOR: o caminho feliz produz bundles e anuncia sucesso', async () => {
     // Sem isto, "não achei o toast de sucesso" e "o cenário nunca produziu bundle" seriam
     // indistinguíveis, e as asserções abaixo passariam por vacuidade.
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(result.current.customerBundles.length).toBeGreaterThan(0);
@@ -154,7 +161,7 @@ describe('useBundleEngine — a leitura do melhor individual não fabrica zero n
   it('a Promise REJEITADA não vira head "vazio/completo"', async () => {
     falhaMelhorIndividual = 'rejeita';
 
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     const licenca = registros.filter(
@@ -169,7 +176,7 @@ describe('useBundleEngine — a leitura do melhor individual não fabrica zero n
   it('a falha não é apresentada como sucesso', async () => {
     falhaMelhorIndividual = 'erro';
 
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(
@@ -184,7 +191,7 @@ describe('useBundleEngine — a leitura do melhor individual não fabrica zero n
     // dela trocaria uma mentira por um prejuízo maior.
     falhaMelhorIndividual = 'erro';
 
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(
@@ -198,7 +205,7 @@ describe('useBundleEngine — a leitura do melhor individual não fabrica zero n
     // chegaria ao plantão sem dizer o que quebrou. Por isso `mensagemDeErro` + `erroComCausa`.
     falhaMelhorIndividual = 'erro';
 
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     const alarmes = vi
@@ -229,7 +236,7 @@ describe('useBundleEngine — a leitura do melhor individual não fabrica zero n
   it('CONTRAPROVA: execução saudável NÃO dispara o alarme', async () => {
     // Sem isto, um `captureException` incondicional no topo do `try` passaria no teste acima. E
     // é o §13 do money-path no eixo da saturação: alarme que toca em toda execução não é sinal.
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     const alarmes = vi

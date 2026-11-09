@@ -12,7 +12,8 @@ import { fmtPct } from "./format";
 interface CriterioCardProps {
   criterio: Criterio;
   resposta: Resposta;
-  percentual: number;
+  /** `null` = faixa ou percentual desconhecido: o badge mostra "—", nunca "0,00%". */
+  percentual: number | null;
   bonus?: boolean;
   onChange: (resposta: Resposta) => void;
 }

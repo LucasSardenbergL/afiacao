@@ -9,3 +9,14 @@ PEGA | #7b hurdle de entrada aceita ≤0 (> vira >=)     | s/hurdleRaw > 0 \? hu
 PEGA | #2 custo null vira "grátis" (bucket 2 -> 0)     | s/\? 1 : 2\)/? 1 : 0)/
 PEGA | #3 EVA null vira ratio 0 (remove guard != null) | s/ && x\.impacto_eva != null//
 PEGA | #9 rollup ignora confiança do candidato         | s/fila\.some\(\(a\) => a\.confianca === 'baixa'\)/false/
+# Plano v6 C1 (A4-DADO): caixa desconhecido não vira R$0; só o saldo datado mexe no caixa.
+PEGA | C1a caixaDisponivel desconhecido vira 0          | s/!finito\(input\.dias_cobertura\)\) return null;/!finito(input.dias_cobertura)) return 0;/
+PEGA | C1b classificarStatus sem guarda de caixa null    | s/if \(input\.caixa_disponivel == null\) return 'falta_dado';/if (false) return 'falta_dado';/
+PEGA | C1c fila volta a ?? 0                            | s/cx != null && cx\.confianca === 'alta' \? cx\.disponivel : null/cx?.disponivel ?? 0/
+PEGA | C1d motivo de PMR rebaixa o caixa               | s/const saldoDatado = typeof motivoSaldo/const saldoDatado = (resp.confianca_dados?.motivos?.length ?? 0) > 0 || typeof motivoSaldo/
+PEGA | C1e transporte: cobertura null vira 0            | s/const dias = finito\(diasRaw\) \? diasRaw : null;/const dias = finito(diasRaw) ? diasRaw : 0;/
+PEGA | C1f caixa null com confiança alta                | s/disponivel == null \|\| saldoDatado \? 'baixa'/saldoDatado ? 'baixa'/
+PEGA | C1g rollup ignora o caixa da empresa            | s/if \(cx\.confianca === 'alta'\) continue;/continue;/
+PEGA | C1h saldo datado sem haircut                    | s/confianca_baixa: saldoDatado \}/confianca_baixa: false }/
+PEGA | C1i caixa ESTIMADO (saldo datado) decide financiar | s/cx != null && cx\.confianca === 'alta' \? cx\.disponivel : null/cx?.disponivel ?? null/
+PEGA | C1j bloco parcial da A1 atesta frescor (Codex)  | s/const semAtestado = motivoSaldo !== null && !saldoDatado;/const semAtestado = resp.confianca_dados == null;/

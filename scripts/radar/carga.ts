@@ -17,12 +17,15 @@ import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { execFileSync, execSync } from "node:child_process";
 import {
   montarCnpj, normalizarData, normalizarTelefone, normalizarCapital,
-  splitCnaesSecundarios, normalizarTexto, normalizarChaveMunicipio,
+  splitCnaesSecundarios, normalizarTexto,
 } from "../../src/lib/radar/normalizar";
 import type { RadarEmpresaRow, RadarMunicipioRow, RadarSituacaoRow } from "./types";
 import { mapaDeMotivos, normalizarSituacao } from "./situacao";
 import { RFB_SHARE_TOKEN, basesCandidatas, precisaDeAuth } from "./rfb";
 import { CNAES_CONCORRENTES, montarPublicacao } from "./concorrentes";
+import { coordenadaDoMunicipio, indexarCoordenadasIbge } from "./municipios";
+import { criarClienteIngest } from "./ingest-cliente";
+import { digestSocios, emChunks, MAX_LINHAS_CHUNK_SOCIOS, sqlLinhasSocios, VERSAO_CARGA_SOCIOS, type LinhaSocio } from "./socios";
 
 const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i++) {
@@ -47,27 +50,10 @@ const WORK = process.env.RADAR_WORK_DIR ? `${process.env.RADAR_WORK_DIR}/radar-$
 mkdirSync(WORK, { recursive: true });
 const sh = (cmd: string) => execSync(cmd, { stdio: ["ignore", "pipe", "inherit"], maxBuffer: 1024 * 1024 * 64 }).toString();
 
-const post = async (body: unknown) => {
-  for (let t = 1; t <= 4; t++) {
-    // try/catch cobre rejeição do fetch (rede: ECONNRESET/DNS) — review da 1ª carga:
-    // só status HTTP no retry deixava ~527 POSTs sequenciais morrerem no 1º transitório.
-    try {
-      const res = await fetch(INGEST_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-cron-secret": SECRET },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) return res.json();
-      const txt = await res.text();
-      if (t === 4) throw new Error(`POST falhou (${res.status}): ${txt}`);
-      console.warn(`tentativa ${t} falhou (${res.status}), retry…`);
-    } catch (e) {
-      if (t === 4) throw e;
-      console.warn(`tentativa ${t} falhou (rede: ${e instanceof Error ? e.message : e}), retry…`);
-    }
-    await new Promise((r) => setTimeout(r, 800 * 2 ** t));
-  }
-};
+// POST com re-tentativa + fim DECLARADO do lote (ingest-cliente.ts): erro da edge é recuperável; ao esgotar as
+// tentativas com o lote aberto a carga declara `falhar` — a edge v1.8 não fecha mais o lote sozinha num 5xx.
+const cliente = criarClienteIngest({ url: INGEST_URL, segredo: SECRET, fetch: (u, init) => fetch(u, init) });
+const post = (body: Record<string, unknown>) => cliente.post(body);
 
 // ── 0. CNPJs conhecidos (radar ∪ clientes): a situação cadastral RFB é extraída para TODOS eles, em
 //      qualquer situação (02/03/04/08), e aplicada pelo job radar-aplicar-situacao-diario. A lista vem da
@@ -304,6 +290,15 @@ duck(`
                  LEFT JOIN mun ON mun.cod = est.mun)
   TO '${WORK}/final.jsonl' (FORMAT json)`);
 
+// ── 4b. Sócios PF com CPF MASCARADO → radar_socios (passo 3 do "Radar sucessor", migration 20261107040000) ────
+// Universo = raízes do recorte ∪ raízes dos CNPJs conhecidos (clientes FORA do recorte entram aqui). A contagem
+// nacional (`n_raizes_pais`) é sobre o QSA do PAÍS inteiro — é ela que tira diretor/conselheiro de S.A. grande.
+const universoSociosSql = `SELECT DISTINCT lpad(b, 8, '0') AS b FROM read_parquet('${WORK}/est_filtrado_*.parquet') WHERE cnae1 IN (${inList})`
+  + (temConhecidos ? ` UNION SELECT DISTINCT left(cnpj, 8) FROM read_csv('${CONHECIDOS}', delim=',', header=true, all_varchar=true, names=['cnpj'])` : "");
+const SOCIOS_JSONL = `${WORK}/socios.jsonl`;
+duck(sqlLinhasSocios(`${WORK}/soc/*`, universoSociosSql, SOCIOS_JSONL));
+const universoSocios = (JSON.parse(duck(`SELECT count(*)::INTEGER AS n FROM (${universoSociosSql})`)) as { n: number }[])[0]?.n ?? 0;
+
 // ── 5. Normalizar (helpers TDD) + relatório por CNAE ──────────────────────────
 const brutas = readFileSync(`${WORK}/final.jsonl`, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 const porCnae = new Map<string, number>();
@@ -363,15 +358,9 @@ if (temConhecidos) {
     + (rejeitadasSituacao.cnpj + rejeitadasSituacao.situacao > 0 ? ` · ⚠️ rejeitadas: ${JSON.stringify(rejeitadasSituacao)}` : ""));
 }
 
-// ── 6. Municípios RFB + lat/lng IBGE (casamento por nome normalizado) ─────────
+// ── 6. Municípios RFB + lat/lng IBGE (casamento por código = siafi_id; nome de reserva) ─
 const ibge = readFileSync("scripts/radar/municipios-ibge.csv", "utf-8").split("\n").slice(1).filter(Boolean);
-const UF_POR_CODIGO: Record<string, string> = { "11":"RO","12":"AC","13":"AM","14":"RR","15":"PA","16":"AP","17":"TO","21":"MA","22":"PI","23":"CE","24":"RN","25":"PB","26":"PE","27":"AL","28":"SE","29":"BA","31":"MG","32":"ES","33":"RJ","35":"SP","41":"PR","42":"SC","43":"RS","50":"MS","51":"MT","52":"GO","53":"DF" };
-const latPorChave = new Map<string, { lat: number; lng: number }>();
-for (const l of ibge) {
-  const [_, nome, lat, lng, , uf_cod] = l.split(","); // codigo_ibge,nome,latitude,longitude,capital,codigo_uf,siafi_id
-  const uf = UF_POR_CODIGO[uf_cod?.trim() ?? ""] ?? "";
-  if (nome && uf) latPorChave.set(normalizarChaveMunicipio(nome, uf), { lat: +lat, lng: +lng });
-}
+const coordenadas = indexarCoordenadasIbge(ibge);
 const ufPorMunCodigo = new Map<string, string>();
 for (const r of linhas) if (r.municipio_codigo && r.uf) ufPorMunCodigo.set(r.municipio_codigo, r.uf);
 const municipiosRfb: { cod: string; nome: string }[] = JSON.parse(duck(
@@ -379,29 +368,86 @@ const municipiosRfb: { cod: string; nome: string }[] = JSON.parse(duck(
 let semLatLng = 0;
 const municipios: RadarMunicipioRow[] = municipiosRfb.map((m) => {
   const uf = ufPorMunCodigo.get(m.cod) ?? "";
-  const hit = uf ? latPorChave.get(normalizarChaveMunicipio(m.nome, uf)) : undefined;
+  const hit = uf ? coordenadaDoMunicipio(coordenadas, m.cod, m.nome, uf) : undefined;
   if (uf && !hit) semLatLng++;
   return { codigo: m.cod, nome: m.nome, uf, lat: hit?.lat ?? null, lng: hit?.lng ?? null };
 }).filter((m) => m.uf); // só municípios que aparecem no nosso universo
 console.log(`🗺️  municípios do universo: ${municipios.length} (${semLatLng} sem lat/lng — mapa os ignora)`);
 
+// ── 7c. Sócios: manifesto → chunks → publicação (troca de ponteiro) → limpeza. Como os concorrentes: DEPOIS do
+// finalize, e uma falha só pinta o job de vermelho (exitCode 6) — nunca deixa a fila sem foto vigente.
+async function publicarSocios(): Promise<boolean> {
+  const linhas: LinhaSocio[] = readFileSync(SOCIOS_JSONL, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const raizes = new Set(linhas.map((l) => l.raiz)).size;
+  const digest = digestSocios(linhas);
+  console.log(`👥 sócios PF com CPF mascarado: ${linhas.length} linhas em ${raizes} raízes (universo ${universoSocios}) · digest ${digest.slice(0, 8)}`);
+  // Vazio é defeito da carga (o QSA do país não some), não "ninguém tem sócio" — e a RPC recusa manifesto vazio.
+  if (linhas.length === 0 || universoSocios === 0) { console.error("❌ sócios: recorte vazio — nada publicado"); return false; }
+  if (DRY) { console.log("🏁 dry-run: sócios não publicados"); return true; }
+  try {
+    const ini = (await post({ action: "socios_iniciar", mes: MES, digest, versao: VERSAO_CARGA_SOCIOS,
+      linhas: linhas.length, raizes, universo: universoSocios })) as { resultado?: { lote?: string; status?: string } } | undefined;
+    const lote = ini?.resultado?.lote;
+    if (!lote) throw new Error("socios_iniciar: resposta sem `lote` (edge antiga?)");
+    const status = ini?.resultado?.status;
+    // Estado explícito (achado Codex P2): só 'carregando' recebe; 'vigente'/'anterior' = já publicado (retomada);
+    // qualquer outro ('descartado', ausente) é falha, nunca "deu certo sem enviar".
+    if (status !== "carregando" && status !== "vigente" && status !== "anterior") {
+      throw new Error(`socios_iniciar: lote ${lote} em estado ${status ?? "ausente"} — não publicado`);
+    }
+    if (status === "carregando") {
+      let invalidas = 0;
+      for (const chunk of emChunks(linhas, MAX_LINHAS_CHUNK_SOCIOS)) {
+        const r = (await post({ action: "chunk_socios", lote, linhas: chunk })) as { resultado?: { invalidas?: number } } | undefined;
+        if (typeof r?.resultado?.invalidas !== "number") throw new Error("chunk_socios: resposta sem `invalidas` — ausente ≠ zero");
+        invalidas += r.resultado.invalidas;
+      }
+      if (invalidas > 0) console.warn(`⚠️ sócios: ${invalidas} linha(s) recusada(s) pela RPC — a publicação vai reprovar na reconciliação`);
+      const pub = (await post({ action: "publicar_socios", lote })) as { resultado?: { status?: string } } | undefined;
+      if (pub?.resultado?.status !== "vigente") throw new Error(`publicar_socios: resposta sem status 'vigente' (${JSON.stringify(pub)})`);
+      console.log("👥 sócios publicados:", JSON.stringify(pub));
+    } else {
+      console.log(`👥 sócios: lote ${lote} já está ${status} — nada a reenviar`);
+    }
+    for (let i = 0; i < 100; i++) {
+      const r = (await post({ action: "limpar_socios", max: 20000 })) as { resultado?: { linhas_apagadas?: number; restam?: number } } | undefined;
+      if (!r?.resultado || (r.resultado.linhas_apagadas ?? 0) === 0 && (r.resultado.restam ?? 0) === 0) break;
+    }
+    return true;
+  } catch (e) {
+    console.error(`❌ sócios NÃO publicados (a fila de leads não é afetada): ${e instanceof Error ? e.message : e}`);
+    return false;
+  }
+}
+
 if (DRY) {
   // Relatório LOCAL também no dry-run: a simulação é justamente onde se quer ver o que o dump rejeitaria.
   console.log(`${rejeitadasLocal.cnpj + rejeitadasLocal.cnae > 0 ? "⚠️" : "📋"} rejeições locais: ${JSON.stringify(rejeitadasLocal)}`);
   if (concorrentesAtivos) await publicarConcorrentes();
+  await publicarSocios();
   console.log("🏁 dry-run: nada enviado"); process.exit(0);
 }
 
 // ── 7. POST em chunks ─────────────────────────────────────────────────────────
 await post({ action: "begin_lote", mes: MES });
+cliente.abrirLote(MES);
 for (let i = 0; i < municipios.length; i += 1000)
   await post({ action: "chunk_municipios", mes: MES, linhas: municipios.slice(i, i + 1000) });
 // Soma o que a edge descartou (por motivo) e deduplicou — o retorno dos chunks era ignorado.
 const descartadasEdge: Record<string, number> = {};
 let duplicadasNoChunk = 0;
-for (let i = 0; i < linhas.length; i += 1000) {
-  const resp = (await post({ action: "chunk", mes: MES, linhas: linhas.slice(i, i + 1000) })) as
-    { descartadas?: number; descartadas_por_motivo?: Record<string, number>; duplicadas_no_chunk?: number } | undefined;
+// Publicação atômica (edge v1.7): os chunks vão para o STAGING e o finalize valida a contagem dele contra
+// `esperado` = soma do `upserted` dos chunks. Uma linha por CNPJ na carga INTEIRA — CNPJ repetido em chunks
+// diferentes contaria duas vezes na soma e reprovaria o lote.
+const unicas = [...new Map(linhas.map((l) => [l.cnpj, l])).values()];
+if (unicas.length < linhas.length) console.warn(`⚠️ ${linhas.length - unicas.length} CNPJ(s) repetido(s) no dump — mantida a última linha`);
+let entreguesStaging = 0;
+for (let i = 0; i < unicas.length; i += 1000) {
+  const resp = (await post({ action: "chunk", mes: MES, linhas: unicas.slice(i, i + 1000) })) as
+    { upserted?: number; descartadas?: number; descartadas_por_motivo?: Record<string, number>; duplicadas_no_chunk?: number } | undefined;
+  // Ausente ≠ zero: sem `upserted` não há como declarar o esperado, e o lote não seria validado.
+  if (typeof resp?.upserted !== "number") throw new Error("chunk: resposta sem `upserted` — abortando (a foto vigente fica intacta)");
+  entreguesStaging += resp.upserted;
   if (resp?.descartadas_por_motivo) {
     for (const [motivo, n] of Object.entries(resp.descartadas_por_motivo)) {
       descartadasEdge[motivo] = (descartadasEdge[motivo] ?? 0) + n;
@@ -411,7 +457,7 @@ for (let i = 0; i < linhas.length; i += 1000) {
     descartadasEdge.nao_classificado = (descartadasEdge.nao_classificado ?? 0) + resp.descartadas;
   }
   duplicadasNoChunk += resp?.duplicadas_no_chunk ?? 0;
-  if ((i / 1000) % 25 === 0) console.log(`… ${i}/${linhas.length}`);
+  if ((i / 1000) % 25 === 0) console.log(`… ${i}/${unicas.length}`);
 }
 const totalRejeitadas = rejeitadasLocal.cnpj + rejeitadasLocal.cnae
   + Object.values(descartadasEdge).reduce((a, b) => a + b, 0);
@@ -431,13 +477,24 @@ if (temConhecidos) {
   const rej = Object.values(descartadasSituacao).reduce((a, b) => a + b, 0);
   console.log(`${rej > 0 ? "⚠️" : "📋"} situação cadastral enviada: ${situacoes.length} linhas · descartadas pela edge: ${JSON.stringify(descartadasSituacao)}`);
 }
-const fin = (await post({ action: "finalize", mes: MES })) as { situacao_aplicacao?: unknown; situacao?: unknown } | undefined;
+// O finalize VALIDA (staging = esperado, sem queda > 15% contra a foto vigente); quem troca a foto é o job
+// radar-publicar-lote, numa transação, em até ~15 min. Reprovado → 422 (post lança) e a foto vigente fica intacta.
+const fin = (await post({ action: "finalize", mes: MES, esperado: entreguesStaging })) as
+  { situacao_aplicacao?: unknown; situacao?: unknown; publicacao?: unknown } | undefined;
 console.log(`\n🏁 finalize:`, JSON.stringify(fin));
+cliente.fecharLote(); // validado: concorrentes/sócios que falhem depois não derrubam o lote
+if (fin?.publicacao === "cron") {
+  console.log(`📦 lote ${MES} validado (${entreguesStaging} empresas no staging) — vira vigente quando o job radar-publicar-lote publicar (≤ 15 min, fora da hora 06 UTC)`);
+} else {
+  console.warn("⚠️ finalize sem `publicacao`: edge antiga (≤ v1.6) — os chunks escreveram direto na fila, sem publicação atômica");
+}
 if (temConhecidos && fin?.situacao_aplicacao === "cron") {
   console.log("📅 situação cadastral: aplicada pelo job radar-aplicar-situacao-diario (06:05 UTC) — descartes e alerta ao gestor saem na próxima manhã, o aviso do lote às 06:45 depois disso");
 } else if (temConhecidos && fin && !("situacao" in fin)) {
   console.warn("⚠️ finalize sem `situacao_aplicacao` nem `situacao`: edge antiga (v1.1) — a situação cadastral deste lote NÃO será aplicada");
 }
-// Concorrentes DEPOIS do finalize: o lote de leads já está `complete` e uma falha da camada só pinta o job
+// Concorrentes DEPOIS do finalize: o lote de leads já está validado e uma falha da camada só pinta o job
 // de vermelho (exitCode 6, e-mail do GitHub) — nunca deixa a fila sem foto vigente.
-if (!concorrentesAtivos || !(await publicarConcorrentes())) process.exitCode = 6;
+const concorrentesOk = concorrentesAtivos && (await publicarConcorrentes());
+const sociosOk = await publicarSocios();
+if (!concorrentesOk || !sociosOk) process.exitCode = 6;

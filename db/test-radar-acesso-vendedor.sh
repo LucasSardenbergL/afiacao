@@ -186,16 +186,17 @@ gate_como() {
   case "$out" in *GATE_NEGOU*) printf 'NEGADO' ;; PASSOU) printf 'PASSOU' ;; *TECNICO:*) printf 'TECNICO:%s' "${out##*TECNICO:}" ;; *) printf '%s' "$out" ;; esac
 }
 cap() { P -tA -q -c "SELECT private.cap_radar_prospectar($1)"; }
-# corrida <uidA> <cnpjA> <uidB> <cnpjB> <campo de B> — A assume e segura a transação por 1,5 s; B assume no meio.
+# corrida <uidA> <cnpjA> <uidB> <cnpjB> <campo de B> — A assume e segura a transação até ver B esperando a
+# trava (teto 1,5 s, o sleep fixo de antes; pgh_segura_sql); B assume no meio, solta assim que A está no laço.
 # Devolve CORRIDA_A (o `ok` de A) e CORRIDA_B (o <campo> de B, ou o erro).
 corrida() {
   local claimsA claimsB pidA
   claimsA="{\"sub\":\"$1\",\"role\":\"authenticated\"}"; claimsB="{\"sub\":\"$3\",\"role\":\"authenticated\"}"
-  P -v ON_ERROR_STOP=1 -tA -q -c "BEGIN" -c "SET LOCAL ROLE authenticated" -c "SET LOCAL request.jwt.claims = '$claimsA'" \
-    -c "SELECT public.radar_definir_atendimento('$2','assumir')->>'ok'" -c "SELECT pg_sleep(1.5)" -c "COMMIT" > "$TMPD/corridaA.out" 2>&1 &
+  PGAPPNAME=corrida_a P -v ON_ERROR_STOP=1 -tA -q -c "BEGIN" -c "SET LOCAL ROLE authenticated" -c "SET LOCAL request.jwt.claims = '$claimsA'" \
+    -c "SELECT public.radar_definir_atendimento('$2','assumir')->>'ok'" -c "$(pgh_segura_sql corrida_b 1 1.5)" -c "COMMIT" > "$TMPD/corridaA.out" 2>&1 &
   pidA=$!
-  sleep 0.5
-  CORRIDA_B="$(P -tA -q -c "SET ROLE authenticated" -c "SET request.jwt.claims = '$claimsB'" \
+  pgh_espera_segurar corrida_a "$pidA" P -tA -q
+  CORRIDA_B="$(PGAPPNAME=corrida_b P -tA -q -c "SET ROLE authenticated" -c "SET request.jwt.claims = '$claimsB'" \
     -c "SELECT public.radar_definir_atendimento('$4','assumir')->>'$5'" 2>&1 | tr '\n' ' ' | sed 's/ *$//' | cut -c1-120)"
   wait "$pidA" || true
   CORRIDA_A="$(tr -d '\n ' < "$TMPD/corridaA.out")"

@@ -101,9 +101,21 @@ const candidato = (over: Obj = {}): Obj => ({
   n_pedidos: 4,
   cadencia_dias: 30,
   qtd_sugerida: 20,
+  situacao_compra: 'comprando',
+  dias_sem_comprar: 12,
+  substituto: null,
   repasse_atual: null,
   ...over,
 });
+
+const substituto = {
+  omie_codigo_produto: 456,
+  codigo: 'PRD03666',
+  descricao: 'DILUENTE PU DFA.4080LT',
+  primeira_compra: '2026-06-24',
+  ultima_compra: '2026-10-27',
+  dias_com_compra: 7,
+};
 
 describe('lerCandidatos', () => {
   it('lê o candidato e ignora a evidência de custo extra (c_last/c_now)', () => {
@@ -132,8 +144,64 @@ describe('lerCandidatos', () => {
     expect(() => lerCandidatos([candidato({ empresa: 'colacor' })])).toThrow(/empresa "colacor" fora do repasse v1/);
   });
 
+  it('lê a situação de compra e o substituto', () => {
+    const [c] = lerCandidatos([
+      candidato({ situacao_compra: 'substituido', substituto, preco_sugerido: null, valor_anual_recuperavel: null }),
+    ]);
+    expect(c.situacao_compra).toBe('substituido');
+    expect(c.substituto).toEqual(substituto);
+    expect(lerCandidatos([candidato({ situacao_compra: null })])[0].situacao_compra).toBeNull();
+  });
+
+  it('situação desconhecida, ausente ou incoerente com o substituto LANÇA', () => {
+    expect(() => lerCandidatos([candidato({ situacao_compra: 'trocado' })])).toThrow(/situacao_compra "trocado" desconhecida/);
+    const { situacao_compra: _s, ...semSituacao } = candidato();
+    expect(() => lerCandidatos([semSituacao])).toThrow(/sem "situacao_compra"/);
+    expect(() => lerCandidatos([candidato({ situacao_compra: 'substituido' })])).toThrow(/incoerente com o substituto/);
+    expect(() => lerCandidatos([candidato({ substituto })])).toThrow(/incoerente com o substituto/);
+    expect(() => lerCandidatos([candidato({ situacao_compra: 'substituido', substituto: { ...substituto, dias_com_compra: '7' } })]))
+      .toThrow(/substituto: "dias_com_compra" não é número/);
+  });
+
   it('resposta que não é lista LANÇA', () => {
     expect(() => lerCandidatos(null)).toThrow(/formato inesperado/);
     expect(() => lerCandidatos({})).toThrow(/formato inesperado/);
+  });
+});
+
+describe('lerPainel — parte herdada (sucessor declarado, 20261108010000)', () => {
+  const herdadas = { na_lista: 2, sugestoes: 4, virou: 1, nao_virou: 1, nao_medivel: 0, pendentes: 1,
+    receita_realizada: 50, receita_incompleta: true };
+  const proprias = { base_historico_propria: contagem, taxa_base_historico_propria: null,
+    base_sombra_propria: { ...contagem, virou: 2 }, taxa_base_sombra_propria: 0.5 };
+  it('lê a fatia herdada, a conversão própria e as bases próprias', () => {
+    const l = lerPainel(painel({ linhas: [linha({ herdadas, taxa_ativa_propria: 0.5, ...proprias })] })).linhas[0];
+    expect(l.herdadas).toEqual(herdadas);
+    expect(l.taxa_ativa_propria).toBe(0.5);
+    expect(l.base_sombra_propria).toEqual({ ...contagem, virou: 2 });
+    expect(l.taxa_base_historico_propria).toBeNull();
+  });
+  it('servidor anterior (sem as duas chaves): sem fatia, NÃO "zero herdadas"', () => {
+    const l = lerPainel(painel()).linhas[0];
+    expect(l.herdadas).toBeNull();
+    expect(l.taxa_ativa_propria).toBeNull();
+    expect(l.base_historico_propria).toBeNull();
+    expect(l.base_sombra_propria).toBeNull();
+  });
+  it('receita herdada ausente segue null (ausente ≠ zero)', () => {
+    const l = lerPainel(painel({ linhas: [linha({ herdadas: { ...herdadas, receita_realizada: null }, taxa_ativa_propria: null, ...proprias })] })).linhas[0];
+    expect(l.herdadas?.receita_realizada).toBeNull();
+  });
+  it('só uma das chaves, ou forma errada, LANÇA', () => {
+    expect(() => lerPainel(painel({ linhas: [linha({ herdadas })] })))
+      .toThrow('venda_painel.linhas[0]: as chaves da herança vêm juntas');
+    expect(() => lerPainel(painel({ linhas: [linha({ herdadas, taxa_ativa_propria: 0.5 })] })))
+      .toThrow('venda_painel.linhas[0]: as chaves da herança vêm juntas');
+    expect(() => lerPainel(painel({ linhas: [linha({ herdadas: { ...herdadas, sugestoes: '4' }, taxa_ativa_propria: 0.5, ...proprias })] })))
+      .toThrow('venda_painel.linhas[0].herdadas: "sugestoes" não é número');
+    expect(() => lerPainel(painel({ linhas: [linha({ herdadas: null, taxa_ativa_propria: null, ...proprias })] })))
+      .toThrow('venda_painel.linhas[0].herdadas: não é objeto');
+    expect(() => lerPainel(painel({ linhas: [linha({ herdadas, taxa_ativa_propria: 0.5, ...proprias, base_sombra_propria: null })] })))
+      .toThrow('venda_painel.linhas[0].base_sombra_propria: não é objeto');
   });
 });

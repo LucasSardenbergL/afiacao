@@ -22,7 +22,13 @@ import { exigirLeitura, exigirLinhas, tolerarColunaAusente } from "../_shared/le
 import { escritaCritica } from "../_shared/escrita-critica.ts";
 import { carregarBaixasCr } from "../_shared/baixas-cr.ts";
 import { lerPrazosEmpresa } from "./prazos-empresa.ts";
-import { referenciaFrescorSaldo, saldoInicialDasContas, type ContaComSaldo } from "./saldo-contas.ts";
+import {
+  marcarAlertasDoSaldoDatado,
+  referenciaFrescorSaldo,
+  saldoInicialDasContas,
+  type ContaComSaldo,
+  type SaldoInicialParcial,
+} from "./saldo-contas.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Observabilidade da execução (acoes_execucoes): sem ela, uma falha diária isolada é
 // INVISÍVEL — o consumidor "latest wins" serve o snapshot de ontem e o fin-valor-engine
@@ -33,7 +39,7 @@ import { hojeSP, somarDias } from "../_shared/hoje-sp.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 // PME honesto (2026-10-18): estoque = inventário manual recente OU estoque de GIRO do Omie
 // (sem imobilizado/uso e consumo); CMV = 12 meses fechados exigidos. Ausente → null + motivo.
-import { calcularPme, cmvTtmFechado, resolverEstoque, type EstoqueOmie } from "./estoque-pme.ts";
+import { calcularPme, cmvTtmFechado, colunasSerieEstoque, resolverEstoque, type EstoqueOmie } from "./estoque-pme.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -81,13 +87,37 @@ function classifyTituloStatus(status: string | null | undefined): TituloStatusCl
 }
 
 type Cenario = 'realista' | 'otimista' | 'pessimista';
+const CENARIOS: readonly Cenario[] = ['realista', 'otimista', 'pessimista'];
 
 type Input = {
   company: Company;
   cenario?: Cenario;
+  // v2.3 (D10 do plano v7): os cenários de UMA execução, com UMA carga de dados. É o caminho do cron
+  // (1 chamada por empresa). Exclusivo com `cenario`; o contrato de cenário único segue intacto.
+  cenarios?: Cenario[];
   horizon_weeks?: number;
   save_snapshot?: boolean;
 };
+
+/**
+ * Valida `cenarios` ANTES de qualquer leitura. `null` = campo ausente (caminho de cenário único);
+ * string = erro 400. Recusa vazio, repetido, desconhecido e a mistura com `cenario`: o cron que
+ * mandasse os dois teria um dos campos ignorado em silêncio, e um cenário repetido gravaria dois
+ * snapshots do mesmo combo no mesmo dia (a persistência é INSERT).
+ */
+function validarCenarios(payload: Record<string, unknown>): Cenario[] | null | string {
+  if (!('cenarios' in payload) || payload.cenarios === undefined) return null;
+  if ('cenario' in payload && payload.cenario !== undefined) return 'use cenario OU cenarios, não os dois';
+  const lista = payload.cenarios;
+  if (!Array.isArray(lista) || lista.length === 0) return 'cenarios: lista não vazia';
+  const vistos = new Set<string>();
+  for (const c of lista) {
+    if (typeof c !== 'string' || !(CENARIOS as readonly string[]).includes(c)) return 'cenarios: valor inválido';
+    if (vistos.has(c)) return 'cenarios: valor repetido';
+    vistos.add(c);
+  }
+  return lista as Cenario[];
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -126,12 +156,20 @@ Deno.serve(async (req: Request) => {
   if (!payload.company || !['oben', 'colacor', 'colacor_sc'].includes(payload.company)) {
     return jsonResponse({ error: 'company inválido' }, 400);
   }
+  const cenarios = validarCenarios(payload as unknown as Record<string, unknown>);
+  if (typeof cenarios === 'string') return jsonResponse({ error: cenarios }, 400);
 
   const cenario: Cenario = payload.cenario ?? 'realista';
   const horizon = payload.horizon_weeks ?? 13;
   const save = payload.save_snapshot ?? false;
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
+
+  if (cenarios) {
+    const r = await calcularCenarios(supabase, payload.company, cenarios, horizon, save, auth, tempos);
+    tempos.total = performance.now() - t0;
+    return jsonResponse(r.corpo, r.status, tempos);
+  }
 
   try {
     // Só a execução que PERSISTE entra no registro: é a do cron diário (9/dia) e a única
@@ -363,6 +401,8 @@ type DadosBase = {
   saldo_cc: number;
   // Não-null quando alguma conta entrou com saldo datado (./saldo-contas.ts) — vai para o snapshot.
   saldo_cc_motivo: string | null;
+  // O mesmo saldo datado, em partes, para marcar os alertas que partem dele.
+  saldo_cc_parcial: SaldoInicialParcial | null;
   // null = sem fonte (nem manual recente nem estoque de giro com custo no Omie) — nunca 0.
   estoque_valor: number | null;
   estoque_data_ref: string | null;
@@ -617,6 +657,7 @@ async function carregarDados(
     cps,
     saldo_cc,
     saldo_cc_motivo: saldoInicial.motivo,
+    saldo_cc_parcial: saldoInicial.parcial,
     estoque_valor: estoque.valor,
     estoque_data_ref: estoque.data_ref,
     estoque_fonte: estoque.fonte,
@@ -1360,6 +1401,81 @@ async function calcular(
   tempos?: Tempos,
 ) {
   const dados = await medir(tempos, 'dados', carregarDados(supabase, company, tempos));
+  return calcularComDados(supabase, company, cenario, horizon, save, dados);
+}
+
+type ResultadoCenario = Awaited<ReturnType<typeof calcularComDados>>;
+
+/**
+ * D10 (plano v7): os cenários de UMA execução com UMA carga. Antes o cron disparava 3 chamadas por
+ * empresa e cada uma relia tudo — inclusive o mapa de baixas (`fin_titulo_baixas_cr_mapa`, ~3,9 s e
+ * spill de temp na colacor) que estourou o statement_timeout e derrubou o realista da colacor em
+ * 2026-11-05. O cálculo e a gravação de cada cenário são os MESMOS de `calcular` (paridade provada
+ * em `multi-cenario_test.ts`); `calcularComDados` não muta `dados`, então compartilhá-lo é seguro.
+ *
+ * Isolamento: a falha DO CÁLCULO OU DA GRAVAÇÃO de um cenário (INSERT recusado, alerta) não impede
+ * os outros, e cada um abre o SEU registro em `acoes_execucoes` — a série de cobertura (3 empresas
+ * × 3 cenários) continua contando um registro por combo. Mas duas falhas passam a ser
+ * COMPARTILHADAS, o preço da carga única: a carga (preguiçosa, memoizada dentro do registro do 1º
+ * cenário) que falha falha os três, onde antes uma das 3 cargas podia passar; e a invocação que
+ * morre (wall-clock/CPU) leva os cenários que ainda não rodaram. Em troca, a carga pesada sai 1×
+ * em vez de 3× concorrentes — a causa medida de 05/11. Sem retry. Qualquer falha → HTTP 500 com
+ * o detalhe por cenário; `cenarios_ok` = cenários que terminaram inteiros (um snapshot gravado
+ * cujo alerta falhou fica fora dela).
+ */
+async function calcularCenarios(
+  supabase: SupabaseClient,
+  company: Company,
+  cenarios: Cenario[],
+  horizon: number,
+  save: boolean,
+  auth: Parameters<typeof comRegistro>[2],
+  tempos: Tempos,
+): Promise<{ status: number; corpo: Record<string, unknown> }> {
+  let carga: Promise<DadosBase> | null = null;
+  const obterDados = () => (carga ??= medir(tempos, 'dados', carregarDados(supabase, company, tempos)));
+
+  const resultados: Array<{ cenario: Cenario } & ResultadoCenario> = [];
+  const falhas: Array<{ cenario: Cenario; error: string }> = [];
+  for (const cen of cenarios) {
+    const executar = async () => calcularComDados(supabase, company, cen, horizon, save, await obterDados());
+    try {
+      const r = save
+        ? await comRegistro(
+          supabase as unknown as DbRegistro,
+          'fin_cashflow.snapshot_diario',
+          auth,
+          executar,
+          (x) => ({ company, cenario: cen, horizon, alertas: x.alertas.length }),
+        )
+        : await executar();
+      resultados.push({ cenario: cen, ...r });
+    } catch (err) {
+      falhas.push({ cenario: cen, error: String((err as Error).message ?? err) });
+    }
+  }
+
+  if (falhas.length > 0) {
+    return {
+      status: 500,
+      corpo: {
+        error: `${falhas.length} de ${cenarios.length} cenário(s) falharam: ${falhas.map((f) => `${f.cenario}: ${f.error}`).join(' | ')}`,
+        falhas,
+        cenarios_ok: resultados.map((r) => r.cenario),
+      },
+    };
+  }
+  return { status: 200, corpo: { resultados } };
+}
+
+async function calcularComDados(
+  supabase: SupabaseClient,
+  company: Company,
+  cenario: Cenario,
+  horizon: number,
+  save: boolean,
+  dados: DadosBase,
+) {
   const taxas = calcularTaxasHistoricas(dados.crs);
   const premissas = aplicarCenario(taxas, cenario, dados.config, dados.curvas_aging);
   const { semanas, apos_horizonte, ar_impaired } = gerarSemanas(dados, premissas, horizon);
@@ -1367,7 +1483,8 @@ async function calcular(
   // Fase 3 (B2): saída operacional projetada do horizonte → dias_cobertura.
   const saidasHorizonte = semanas.reduce((s, w) => s + w.total_saidas, 0);
   const indicadores = calcularIndicadores(dados, ncg, saidasHorizonte, horizon, company);
-  const alertas = avaliarAlertas(semanas, ncg, indicadores, dados.config);
+  // Saldo inicial datado → os alertas que partem dele carregam a marca (mensagem + contexto).
+  const alertas = marcarAlertasDoSaldoDatado(avaliarAlertas(semanas, ncg, indicadores, dados.config), dados.saldo_cc_parcial);
 
   // Auditoria: premissas aplicadas (curvas c/ cenário) + curvas calibradas puras + ponte.
   const premissasSnapshot = {
@@ -1413,6 +1530,11 @@ async function calcular(
         saldo_tesouraria: indicadores.saldo_tesouraria,
         dias_cobertura: indicadores.dias_cobertura,
         premissas: premissasSnapshot as unknown as Record<string, unknown>,
+        // v2.2: série diária de estoque de giro em colunas DEDICADAS (migration 20261031210000) — o PME
+        // por estoque MÉDIO dos 90 d (aba Ciclo) lê daqui. Ausente = null (nunca 0); cobertura_ok=false
+        // marca subtotal. 1 writer: este cron. Não em `premissas` (jsonb multi-chave, sinal money-path).
+        // Fora de faixa vira ausência ANTES do INSERT: o CHECK da tabela nunca derruba o snapshot.
+        ...colunasSerieEstoque(dados),
       }),
     );
   }

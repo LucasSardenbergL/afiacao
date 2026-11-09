@@ -1,5 +1,5 @@
 // deno test supabase/functions/fin-cashflow-engine/estoque-pme_test.ts
-import { calcularPme, cmvTtmFechado, resolverEstoque } from "./estoque-pme.ts";
+import { calcularPme, cmvTtmFechado, colunasSerieEstoque, resolverEstoque } from "./estoque-pme.ts";
 
 function assertEq(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -97,4 +97,24 @@ Deno.test("calcularPme: ausente em qualquer ponta ou cobertura ruim → null", (
   assertEq(calcularPme(1000, null, true), null);
   assertEq(calcularPme(1000, 3650, false), null);
   assertEq(calcularPme(1000, 3650, true), 100);
+});
+
+Deno.test("colunasSerieEstoque: valor em faixa com fonte passa inteiro; CMV em faixa passa", () => {
+  assertEq(
+    colunasSerieEstoque({ estoque_valor: 480000, estoque_fonte: "omie", estoque_cobertura_ok: false, cmv_ttm: 2400000 }),
+    { estoque_valor: 480000, estoque_fonte: "omie", estoque_cobertura_ok: false, cmv_ttm: 2400000 },
+  );
+});
+
+Deno.test("colunasSerieEstoque: NaN, teto, negativo ou sem fonte viram ausência (par null+null) — o CHECK nunca derruba o snapshot", () => {
+  const base = { estoque_fonte: "manual" as const, estoque_cobertura_ok: true, cmv_ttm: 2400000 };
+  for (const valor of [Number.NaN, Number.POSITIVE_INFINITY, -1, 100_000_000]) {
+    const r = colunasSerieEstoque({ ...base, estoque_valor: valor });
+    assertEq([r.estoque_valor, r.estoque_fonte, r.estoque_cobertura_ok], [null, null, null], `valor ${valor}`);
+    assertEq(r.cmv_ttm, 2400000);
+  }
+  assertEq(colunasSerieEstoque({ ...base, estoque_fonte: null, estoque_valor: 10 }).estoque_valor, null);
+  for (const cmv of [0, -5, Number.NaN, 1_000_000_000]) {
+    assertEq(colunasSerieEstoque({ ...base, estoque_valor: 10, cmv_ttm: cmv }).cmv_ttm, null, `cmv ${cmv}`);
+  }
 });

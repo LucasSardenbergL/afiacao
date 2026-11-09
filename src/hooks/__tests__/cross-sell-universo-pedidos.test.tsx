@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -34,12 +35,15 @@ const persistidas: Array<Record<string, unknown>> = [];
 /** Predicados que o hook realmente mandou para `sales_orders`, na ordem. */
 const filtrosDePedidos: string[] = [];
 
+/** `id` sequencial: o universo é lido por KEYSET (cursor por id) desde o lote 16. */
+let seqPedido = 0;
 const pedido = (
   cliente: string,
   produtos: string[],
   status: string | null,
   deletadoEm: string | null = null,
 ) => ({
+  id: `00000000-0000-4000-8000-${String(++seqPedido).padStart(12, '0')}`,
   customer_user_id: cliente,
   items: produtos.map((p) => ({ product_id: p, quantity: 1, unit_price: 50 })),
   total: 50 * produtos.length,
@@ -115,7 +119,19 @@ function stubChain(tabela: string): unknown {
   let de = 0;
   let ate = Number.MAX_SAFE_INTEGER;
   const chain: Record<string, unknown> = {};
-  for (const m of ['select', 'gte', 'lt', 'lte', 'gt', 'order', 'limit', 'or', 'neq', 'filter', 'contains']) {
+  // KEYSET (lote 16): em `sales_orders` o recorte por id e o cursor são APLICADOS — passthrough
+  // aqui faria cada faixa devolver a tabela inteira (o leitor pega isso como linha fora do recorte).
+  if (filtraDeVerdade) {
+    const porId = (ok: (id: string, v: string) => boolean) => (col: string, v: string) => {
+      if (col !== 'id') throw new Error(`stub: comparação em \`${col}\` não modelada`);
+      filtros.push((l) => ok(String(l.id), v));
+      return chain;
+    };
+    chain.gte = porId((id, v) => id >= v);
+    chain.lt = porId((id, v) => id < v);
+    chain.gt = porId((id, v) => id > v);
+  }
+  for (const m of ['select', 'lte', 'order', 'limit', 'or', 'neq', 'filter', 'contains', ...(filtraDeVerdade ? [] : ['gte', 'lt', 'gt'])]) {
     chain[m] = () => chain;
   }
   chain.eq = () => chain;
@@ -210,7 +226,7 @@ import { useCrossSellEngine } from '../useCrossSellEngine';
 type ResultadoCrossSell = { current: { recommendations: Array<{ crossSell: Array<{ productId: string }> }> } };
 
 const rodar = async () => {
-  const { result } = renderHook(() => useCrossSellEngine());
+  const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
   await act(async () => { await result.current.calculateRecommendations(); });
   return result;
 };
@@ -299,11 +315,21 @@ describe('useCrossSellEngine — a allowlist não volta', () => {
     ).toBe(false);
   });
 
-  it('o hook consome a denylist compartilhada e filtra `deleted_at`', () => {
-    expect(semComentarios).toContain('STATUS_NAO_VENDA_POSTGREST');
+  it('o hook lê o universo COMPARTILHADO, que consome a denylist e filtra `deleted_at`', () => {
+    // Desde o lote 16 (plano v4) a leitura de `sales_orders` dos 3 motores mora em
+    // `@/lib/farmer/universo-pedidos-query`: o hook tem de passar por ela (e não reler à parte),
+    // e é LÁ que a denylist + `deleted_at` têm de estar.
+    expect(semComentarios).toContain('buscarUniversoPedidos(');
+    expect(/from\(\s*['"]sales_orders['"]/.test(semComentarios), 'o hook voltou a ler sales_orders por conta').toBe(false);
+    const compartilhado = readFileSync(resolve(process.cwd(), 'src/lib/farmer/universo-pedidos-query.ts'), 'utf8')
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .join('\n');
+    expect(compartilhado).toContain('STATUS_NAO_VENDA_POSTGREST');
     expect(
-      /\.is\(\s*['"]deleted_at['"]\s*,\s*null\s*\)/.test(semComentarios),
+      /\.is\(\s*['"]deleted_at['"]\s*,\s*null\s*\)/.test(compartilhado),
       'a denylist sozinha traria pedido apagado — o `deleted_at` anda junto',
     ).toBe(true);
+    expect(/\.in\(\s*['"]status['"]/.test(compartilhado), 'allowlist de status no universo compartilhado').toBe(false);
   });
 });

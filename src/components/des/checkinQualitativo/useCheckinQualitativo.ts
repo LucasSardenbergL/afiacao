@@ -10,11 +10,11 @@ import {
   type Props,
   type Criterio,
   type CriterioPercentual,
-  type DescontoCheckin,
+  type LinhaHistoricoCheckin,
   type Resposta,
 } from "./types";
 import { coresDoDesconto, numeroOuNulo } from "./format";
-import { faixaDeJson } from "../faixa-json";
+import { derivarPosicaoAoVivo } from "../posicao-ao-vivo";
 import { exigirColunas, linhasCom } from "@/lib/linha-view";
 
 /** Colunas sem as quais uma linha da `v_des_desconto_por_checkin` não faz sentido (ver `DescontoCheckin`). */
@@ -47,7 +47,7 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("v_des_posicao_trimestre_ao_vivo")
-        .select("faixa_conservadora, faixa_otimista")
+        .select("fat_bruto_confirmado, posicao_ao_vivo_conservadora, faixa_conservadora, faixa_otimista")
         .eq("empresa", empresa)
         .eq("ano", ano)
         .eq("trimestre", trimestre)
@@ -57,8 +57,10 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
     },
   });
 
-  // Percentuais por critério para a faixa atual
-  const faixaConservId = faixaDeJson(posicaoQuery.data?.faixa_conservadora)?.faixa_id ?? null;
+  // Percentuais por critério para a faixa atual. Sem faturado confirmado do GoodData a faixa é
+  // desconhecida (ausente ≠ zero) — vale também com a view antiga, que a tirava só do trânsito.
+  const posicao = useMemo(() => derivarPosicaoAoVivo(posicaoQuery.data), [posicaoQuery.data]);
+  const faixaConservId = posicao.faixaConservadoraId;
 
   const percentuaisQuery = useQuery({
     queryKey: ["des-percentuais", faixaConservId],
@@ -108,33 +110,42 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
     },
   });
 
-  // Histórico de checkins do trimestre
+  // Histórico de checkins do trimestre. A LISTA vem de des_checkin_qualitativo: o check-in existe
+  // mesmo sem faixa, e a v_des_desconto_por_checkin só traz quem tem faixa (sem faturado confirmado,
+  // ninguém) — ler a lista dela diria "nenhum checkin registrado" com check-in salvo. Os percentuais
+  // vêm da view, casados por checkin_id; sem linha nela, ficam null ("—").
   const historicoQuery = useQuery({
     queryKey: ["des-checkin-historico", empresa, ano, trimestre],
-    queryFn: async (): Promise<DescontoCheckin[]> => {
-      const { data, error } = await supabase
-        .from("v_des_desconto_por_checkin")
-        .select("*")
+    queryFn: async (): Promise<LinhaHistoricoCheckin[]> => {
+      const { data: checkins, error } = await supabase
+        .from("des_checkin_qualitativo")
+        .select("id, data_avaliacao, tipo, avaliado_por")
         .eq("empresa", empresa)
         .eq("ano", ano)
         .eq("trimestre", trimestre)
         .order("data_avaliacao", { ascending: false });
       if (error) throw error;
-      const rows = linhasCom(data, CHAVE_DESCONTO, "v_des_desconto_por_checkin");
-      // join avaliado_por via des_checkin_qualitativo
-      const ids = rows.map((d) => d.checkin_id);
-      const porMap: Record<number, string | null> = {};
-      if (ids.length) {
-        const { data: chs } = await supabase
-          .from("des_checkin_qualitativo")
-          .select("id, avaliado_por")
-          .in("id", ids);
-        (chs ?? []).forEach((c) => { porMap[c.id] = c.avaliado_por; });
-      }
-      return rows.map((d) => ({
-        ...d,
-        avaliado_por: porMap[d.checkin_id] ?? null,
-      }));
+      const { data: descontos, error: erroDesconto } = await supabase
+        .from("v_des_desconto_por_checkin")
+        .select("*")
+        .eq("empresa", empresa)
+        .eq("ano", ano)
+        .eq("trimestre", trimestre);
+      if (erroDesconto) throw erroDesconto;
+      const porCheckin = new Map(
+        linhasCom(descontos, CHAVE_DESCONTO, "v_des_desconto_por_checkin").map((d) => [d.checkin_id, d]),
+      );
+      return (checkins ?? []).map((c) => {
+        const d = porCheckin.get(c.id);
+        return {
+          checkin_id: c.id,
+          data_avaliacao: c.data_avaliacao,
+          tipo: c.tipo,
+          avaliado_por: c.avaliado_por,
+          qualitativos_atingidos_perc: numeroOuNulo(d?.qualitativos_atingidos_perc),
+          desconto_total_projetado: numeroOuNulo(d?.desconto_total_projetado),
+        };
+      });
     },
   });
 
@@ -163,7 +174,17 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
     return map;
   }, [percentuaisQuery.data]);
 
-  const desconto = descontoQuery.data;
+  // Com a view antiga, a linha de desconto existe mesmo sem faturado (faixa tirada do trânsito).
+  const desconto = posicao.conhecida ? descontoQuery.data : null;
+  // Idem para os check-ins anteriores: sem posição confirmada, os percentuais da view antiga saíam da
+  // faixa tirada do trânsito. O check-in continua listado; só os percentuais viram "—".
+  const historico = useMemo(
+    () =>
+      posicao.conhecida
+        ? historicoQuery.data
+        : historicoQuery.data?.map((h) => ({ ...h, qualitativos_atingidos_perc: null, desconto_total_projetado: null })),
+    [posicao.conhecida, historicoQuery.data],
+  );
   // Ausente ≠ zero: sem check-in no trimestre (ou faixa sem percentual) o máximo e o projetado são
   // null — a tela mostra "—" com o card neutro, em vez de "0,00%" em vermelho.
   const max = numeroOuNulo(desconto?.desconto_total_maximo);
@@ -290,6 +311,7 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
     qualitativos,
     bonusItems,
     historicoLoading: historicoQuery.isLoading,
-    historico: historicoQuery.data,
+    historico,
+    historicoErro: historicoQuery.isError,
   };
 }

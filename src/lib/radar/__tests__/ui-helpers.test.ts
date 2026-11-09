@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ACOES_CONTATO, presetParaParams, idadeEmAnos, rotuloPorte,
   formatarCapital, formatarCnpj, digitosCnae, seloRfb, formatarDataIso, scoreUI, versaoDaFila, selosFilial, textoFilialFicha,
+  agregadoIndisponivel, avisoContagem, formatarContagensEm, MARCA_AGREGADO_INDISPONIVEL,
 } from '../ui-helpers';
 
 describe('ACOES_CONTATO', () => {
@@ -158,6 +159,11 @@ describe('selosFilial / textoFilialFicha (mesma raiz de CNPJ)', () => {
   const sem = { irmaos_na_fila: 0, irmaos_clientes: 0, cliente_nome: null };
   it('sem dado (carregando/falhou) não fabrica selo', () => {
     expect(selosFilial(null)).toEqual([]);
+    // Pacote I: a página dos irmãos que FALHOU não é "sem filial" — vira o selo "filial?" (ausente ≠ zero).
+    expect(selosFilial(null, 'falhou').map((x) => `${x.chave}:${x.texto}`)).toEqual(['nao-verificado:filial?']);
+    expect(selosFilial(null, 'carregando')).toEqual([]);
+    // Com dado em mãos (releitura falhou), o dado vale.
+    expect(selosFilial({ irmaos_na_fila: 0, irmaos_clientes: 1, cliente_nome: null }, 'falhou').map((x) => x.chave)).toEqual(['cliente']);
     expect(selosFilial(undefined)).toEqual([]);
   });
   it('sem irmãos: nenhum selo, e a ficha diz que verificou', () => {
@@ -180,6 +186,32 @@ describe('selosFilial / textoFilialFicha (mesma raiz de CNPJ)', () => {
     expect(textoFilialFicha('falhou', sem)).toBe('não consegui verificar');
     expect(textoFilialFicha('ok', { irmaos_na_fila: 1, irmaos_clientes: 0, cliente_nome: null }))
       .toBe('1 outro estabelecimento desta empresa na fila');
+  });
+});
+
+// C2 (pacote C): o clique numa cidade leva o código e ajusta o recorte geográfico de forma explícita.
+describe('filtrosDaCidade', () => {
+  it('dentro do recorte: código + nome, sem mexer em UF/região', async () => {
+    const { filtrosDaCidade } = await import('../ui-helpers');
+    expect(filtrosDaCidade({ codigo: '4123', nome: 'SANTA LUZIA', uf: 'MG' }, { uf: '', regiao: 'atuacao' }))
+      .toEqual({ patch: { municipio: 'SANTA LUZIA', municipioCodigo: '4123' }, ajuste: null });
+    expect(filtrosDaCidade({ codigo: '4123', nome: 'SANTA LUZIA', uf: 'MG' }, { uf: 'MG', regiao: 'atuacao' }).ajuste).toBeNull();
+  });
+  it('fora da região de atuação: amplia para o Brasil e diz', async () => {
+    const { filtrosDaCidade } = await import('../ui-helpers');
+    const r = filtrosDaCidade({ codigo: '7535', nome: 'CURITIBA', uf: 'PR' }, { uf: '', regiao: 'atuacao' });
+    expect(r.patch).toEqual({ municipio: 'CURITIBA', municipioCodigo: '7535', regiao: 'brasil' });
+    expect(r.ajuste).toContain('CURITIBA/PR');
+  });
+  it('UF escolhida diferente da cidade: troca a UF e diz', async () => {
+    const { filtrosDaCidade } = await import('../ui-helpers');
+    const r = filtrosDaCidade({ codigo: '3851', nome: 'SANTA LUZIA', uf: 'BA' }, { uf: 'MG', regiao: 'brasil' });
+    expect(r.patch).toEqual({ municipio: 'SANTA LUZIA', municipioCodigo: '3851', uf: 'BA' });
+    expect(r.ajuste).toContain('MG para BA');
+  });
+  it('nome ausente: o código vira o rótulo, nunca "null"', async () => {
+    const { filtrosDaCidade } = await import('../ui-helpers');
+    expect(filtrosDaCidade({ codigo: '9999', nome: null, uf: null }, { uf: '' }).patch.municipio).toBe('');
   });
 });
 
@@ -222,5 +254,34 @@ describe('lista: rótulos, região e catálogo de CNAE', () => {
     expect(buscarCnaesAlvo('padaria')).toEqual([]);
     expect(nomeCnaeAlvo('2391-5/03')).toMatch(/marmorarias/);
     expect(nomeCnaeAlvo('0000000')).toBeNull();
+  });
+});
+
+describe('contagens pré-computadas (radar_agregado_municipio)', () => {
+  // A marca tem de ser a do RAISE da migration 20261103100000 — a prova PG17 (db/test-radar-agregado.sh) casa a mesma.
+  const raise = { message: 'agregado indisponível: as contagens do lote vigente ainda não foram calculadas', code: 'P0001' };
+
+  it('reconhece o RAISE das RPCs de contagem (PostgrestError), e só ele', () => {
+    expect(MARCA_AGREGADO_INDISPONIVEL).toBe('agregado indisponível');
+    expect(agregadoIndisponivel(raise)).toBe(true);
+    expect(agregadoIndisponivel(new Error('agregado indisponível: x'))).toBe(true);
+    expect(agregadoIndisponivel({ message: 'forbidden: radar_prospectar' })).toBe(false);
+    expect(agregadoIndisponivel({ message: 'canceling statement due to statement timeout' })).toBe(false);
+    expect(agregadoIndisponivel(null)).toBe(false);
+    expect(agregadoIndisponivel('agregado indisponível')).toBe(false);
+  });
+
+  it('o aviso separa "indisponível (recalculando)" de falha de leitura — nenhum dos dois é 0', () => {
+    expect(avisoContagem(raise, 'Contagem por cidade')).toBe(
+      'Contagem por cidade indisponível: a contagem do lote vigente está sendo recalculada (até 1 h depois da carga).',
+    );
+    expect(avisoContagem({ message: 'boom' }, 'Contagem por cidade')).toBe('Não foi possível carregar contagem por cidade.');
+  });
+
+  it('hora da contagem no fuso da loja; ausente ou ilegível → null (não inventa hora)', () => {
+    expect(formatarContagensEm('2026-11-03T06:35:12.4+00:00')).toMatch(/^03\/11,? 03:35$/);
+    expect(formatarContagensEm(null)).toBeNull();
+    expect(formatarContagensEm(undefined)).toBeNull();
+    expect(formatarContagensEm('ontem')).toBeNull();
   });
 });

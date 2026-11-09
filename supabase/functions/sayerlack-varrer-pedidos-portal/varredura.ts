@@ -21,6 +21,7 @@
 // com as originais em cada entrada — divergir quebra o teste.
 
 import { somarDias } from "../_shared/hoje-sp.ts";
+import { JANELA_FUTURO_DIAS, JANELA_PASSADO_INCREMENTAL_DIAS } from "../_shared/janela-pedidos-compra.ts";
 
 export interface LinhaConsultaRaw {
   [coluna: string]: string;
@@ -97,15 +98,33 @@ export interface PedidoListado {
   emissao: string | null; // ISO
 }
 
-/** Linhas da datatable → pedidos (coluna "Pedido" EXATA; "Pedido Clien[te]" é o nº digitado pelo cliente). */
-export function lerListaConsulta(linhas: LinhaConsultaRaw[]): { pedidos: PedidoListado[]; ilegiveis: number; repetidos: string[] } {
+/** Código de situação RECONHECIDO no texto "<código> - <nome>" do portal (select real: 1..7). Outro ⇒ null. */
+function codigoSituacao(situacao: string): string | null {
+  const m = situacao.match(/^\s*([1-7])\s*-/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Linhas da datatable → pedidos (coluna "Pedido" EXATA; "Pedido Clien[te]" é o nº digitado pelo cliente).
+ *
+ * Ilegível (revisão 2, B1): nº de pedido ilegível, OU nº legível com situação sem código reconhecido (1..7), OU data
+ * de emissão ilegível. Sem isso, "situação vazia" virava `situacao_nao_importavel` e "emissão ??" virava
+ * `fora_da_janela` — o pedido sumia dos candidatos com a leitura "provada". O pedido de nº legível segue na lista
+ * (o relatório e a reconciliação o veem; sem código ele nunca é candidato nem bloqueia/libera), mas a prova reprova.
+ */
+export function lerListaConsulta(linhas: LinhaConsultaRaw[]): {
+  pedidos: PedidoListado[];
+  ilegiveis: number;
+  repetidos: string[];
+  ilegiveis_detalhe: { protocolo: string | null; campo: "pedido" | "situacao" | "emissao" }[];
+} {
   const vistos = new Map<string, PedidoListado>();
   const repetidos = new Set<string>();
-  let ilegiveis = 0;
+  const ilegiveisDetalhe: { protocolo: string | null; campo: "pedido" | "situacao" | "emissao" }[] = [];
   for (const l of linhas) {
     const protocolo = (coluna(l, "Pedido", true) ?? "").trim();
     if (!PROTOCOLO_RE.test(protocolo)) {
-      ilegiveis++;
+      ilegiveisDetalhe.push({ protocolo: null, campo: "pedido" });
       continue;
     }
     if (vistos.has(protocolo)) {
@@ -113,17 +132,17 @@ export function lerListaConsulta(linhas: LinhaConsultaRaw[]): { pedidos: PedidoL
       continue;
     }
     const situacao = (coluna(l, "Situa") ?? "").trim();
-    const m = situacao.match(/^\s*(\d+)\s*-/);
-    vistos.set(protocolo, {
-      protocolo,
-      situacao,
-      situacao_codigo: m ? m[1] : null,
-      emissao: dataBRparaISO(coluna(l, "Data Emiss")),
-    });
+    const codigo = codigoSituacao(situacao);
+    const emissao = dataBRparaISO(coluna(l, "Data Emiss"));
+    if (!codigo) ilegiveisDetalhe.push({ protocolo, campo: "situacao" });
+    if (!emissao) ilegiveisDetalhe.push({ protocolo, campo: "emissao" });
+    vistos.set(protocolo, { protocolo, situacao, situacao_codigo: codigo, emissao });
   }
   // Nº repetido na lista (proposta + pedido, ou paginação que repetiu) = ambíguo: fica de fora.
   for (const r of repetidos) vistos.delete(r);
-  return { pedidos: [...vistos.values()], ilegiveis, repetidos: [...repetidos] };
+  // Conta LINHAS ilegíveis (uma linha com situação e emissão ilegíveis conta 1).
+  const linhasIlegiveis = new Set(ilegiveisDetalhe.map((d, i) => d.protocolo ?? `#${i}`)).size;
+  return { pedidos: [...vistos.values()], ilegiveis: linhasIlegiveis, repetidos: [...repetidos], ilegiveis_detalhe: ilegiveisDetalhe };
 }
 
 type Classe =
@@ -215,7 +234,11 @@ export function contratosDoTexto(v: unknown): string[] {
 /** Resultado da edge de importar → falha a notificar? (ok=true com PO criado é sucesso; o resto é falha.) */
 export function resumoImportacao(httpStatus: number, corpo: unknown): { ok: boolean; mensagem: string } {
   const b = corpo && typeof corpo === "object" ? (corpo as { ok?: unknown; mensagem?: unknown }) : null;
-  const mensagem = typeof b?.mensagem === "string" ? b.mensagem : `resposta HTTP ${httpStatus} sem mensagem`;
+  const base = typeof b?.mensagem === "string" ? b.mensagem : `resposta HTTP ${httpStatus} sem mensagem`;
+  // B3: a importadora leu a situação e NÃO conseguiu gravá-la (2 tentativas) — se for um 6, a compra segue liberada
+  // pelo estado antigo. O aviso vai junto da mensagem (e-mail da pendência), não some no log da outra edge.
+  const naoGravada = (corpo as { situacao_gravada?: unknown } | null)?.situacao_gravada === "erro";
+  const mensagem = naoGravada ? `${base} ATENÇÃO: a situação lida no portal NÃO foi gravada no pedido do app.` : base;
   return { ok: httpStatus >= 200 && httpStatus < 300 && b?.ok === true, mensagem };
 }
 
@@ -357,4 +380,255 @@ export function desfechoNoPortal(
       ? { ...p, classe: "cancelado_no_portal" as const, situacao: l.situacao }
       : { ...p, classe: "vivo_ou_outro" as const, situacao: l.situacao };
   });
+}
+
+// ── Onda 3 dos pontos cegos (2026-11-07): rodada nunca verde sem prova ─────────────────────────────────────────────
+// Incidente: 2 de 46 rodadas leram 0 linhas e registraram sucesso (23/10 e 03/11, 01:30 UTC). Ler "nada" e ler "o
+// portal disse 0 de 0" são coisas diferentes — só a segunda prova que não havia pedido.
+
+/** Colunas sem as quais a classificação não tem o que ler (DOM mudou ⇒ erro, nunca "nenhum candidato"). */
+const COLUNAS_OBRIGATORIAS: readonly { rotulo: string; prefixo: string; exato: boolean }[] = [
+  { rotulo: "Pedido", prefixo: "Pedido", exato: true },
+  { rotulo: "Situação", prefixo: "Situa", exato: false },
+  { rotulo: "Data Emissão", prefixo: "Data Emiss", exato: false },
+  { rotulo: "Vlr", prefixo: "Vlr", exato: false },
+];
+
+function inteiroNaoNegativo(n: unknown): number | null {
+  if (typeof n === "number" && Number.isInteger(n) && n >= 0) return n;
+  if (typeof n === "string" && /^\d+$/.test(n.trim())) return Number(n.trim());
+  return null;
+}
+
+/** "Mostrando de 1 até 10 de 23 registros" / "Showing 1 to 10 of 23 entries" / "0 até 0 de 0" → 23. */
+function totalDoTexto(info: unknown): number | null {
+  if (typeof info !== "string") return null;
+  const m = info.replace(/\./g, "").match(/\b(?:de|of)\s+(\d+)\s*(?:registros|entries|itens|pedidos)?\s*(?:\(|$)/i);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Total ANUNCIADO pelo portal, por até 3 fontes: `recordsFiltered` da resposta da consulta (só o FILTRADO — o
+ * `recordsTotal` é o universo antes dos filtros, Codex P2), `page.info().recordsDisplay` da instância DataTables da
+ * tabela lida, e o texto "… de N registros". Fontes que discordam ⇒ `divergente` (nunca escolhe uma).
+ */
+export function totalAnunciado(fonte: { respostaTotal?: unknown; dtTotal?: unknown; info?: unknown }): number | null | "divergente" {
+  const vals = [inteiroNaoNegativo(fonte.respostaTotal), inteiroNaoNegativo(fonte.dtTotal), totalDoTexto(fonte.info)]
+    .filter((v): v is number => v !== null);
+  if (vals.length === 0) return null;
+  return vals.every((v) => v === vals[0]) ? vals[0] : "divergente";
+}
+
+export type ProvaLeitura =
+  | { ok: true; total: number }
+  | { ok: false; motivo: "colunas_ausentes" | "total_nao_anunciado" | "total_divergente" | "zero_lidos_sem_prova" | "lidos_diferente_do_total" | "linhas_ilegiveis" | "protocolo_repetido"; detalhe: string };
+
+/**
+ * A leitura só decide se for COMPLETA e LEGÍVEL: as colunas obrigatórias existem, o portal anunciou o total, o número
+ * de linhas lidas é esse total (0 só com "0 de 0" explícito), e nenhuma linha foi descartada como ilegível ou repetida.
+ */
+export function provarLeitura(entrada: {
+  headers: readonly string[];
+  linhasLidas: number;
+  respostaTotal?: unknown;
+  dtTotal?: unknown;
+  info?: unknown;
+  ilegiveis: number;
+  repetidos: readonly string[];
+}): ProvaLeitura {
+  const faltam = COLUNAS_OBRIGATORIAS.filter((c) =>
+    !entrada.headers.some((h) => (c.exato ? norm(h) === norm(c.prefixo) : norm(h).startsWith(norm(c.prefixo)))));
+  if (faltam.length > 0) {
+    return { ok: false, motivo: "colunas_ausentes", detalhe: `colunas ausentes na consulta: ${faltam.map((c) => c.rotulo).join(", ")} (cabeçalhos lidos: ${entrada.headers.filter(Boolean).join(" | ") || "nenhum"})` };
+  }
+  const total = totalAnunciado({ respostaTotal: entrada.respostaTotal, dtTotal: entrada.dtTotal, info: entrada.info });
+  if (total === "divergente") {
+    return { ok: false, motivo: "total_divergente", detalhe: `o portal anunciou totais diferentes (resposta ${String(entrada.respostaTotal)}, tabela ${String(entrada.dtTotal)}, texto "${String(entrada.info)}")` };
+  }
+  if (total === null) {
+    return entrada.linhasLidas === 0
+      ? { ok: false, motivo: "zero_lidos_sem_prova", detalhe: "0 linhas lidas e o portal não anunciou o total — não prova que não há pedido" }
+      : { ok: false, motivo: "total_nao_anunciado", detalhe: `${entrada.linhasLidas} linha(s) lida(s), mas o portal não anunciou o total — não prova que a lista veio inteira` };
+  }
+  if (entrada.linhasLidas !== total) {
+    return { ok: false, motivo: "lidos_diferente_do_total", detalhe: `${entrada.linhasLidas} linha(s) lida(s) contra ${total} anunciada(s) pelo portal` };
+  }
+  if (entrada.ilegiveis > 0) {
+    return { ok: false, motivo: "linhas_ilegiveis", detalhe: `${entrada.ilegiveis} linha(s) sem nº de pedido legível` };
+  }
+  if (entrada.repetidos.length > 0) {
+    return { ok: false, motivo: "protocolo_repetido", detalhe: `nº de pedido repetido na lista: ${entrada.repetidos.join(", ")}` };
+  }
+  return { ok: true, total };
+}
+
+/** Carência esperando o sync do espelho há mais que isto ⇒ o sync travou: vira pendência visível (item 3.9). */
+const CARENCIA_SYNC_MAX_MS = 6 * 3600_000;
+
+/** Protocolos presos em `carencia_aguarda_sync` desde a 1ª vista há mais de 6 h. */
+export function carenciaTravada(
+  classificados: readonly PedidoClassificado[],
+  vistos: ReadonlyMap<string, string>,
+  agoraMs: number,
+): { protocolo: string; visto_em: string }[] {
+  const out: { protocolo: string; visto_em: string }[] = [];
+  for (const p of classificados) {
+    if (p.classe !== "carencia_aguarda_sync") continue;
+    const visto = vistos.get(p.protocolo);
+    const ms = visto ? Date.parse(visto) : NaN;
+    if (visto && Number.isFinite(ms) && agoraMs - ms > CARENCIA_SYNC_MAX_MS) out.push({ protocolo: p.protocolo, visto_em: visto });
+  }
+  return out;
+}
+
+/** Teto de reconsultas por número numa rodada (cada uma abre 1 sessão do Browserless). */
+const TETO_RECONSULTAS = 4;
+
+/**
+ * Pendências fora da leitura da rodada (item 3.7): pedido do app sem PO e falha aberta cujo protocolo NÃO apareceu na
+ * lista lida (emissão além da janela). Fila pela TENTATIVA MAIS ANTIGA (nunca tentado primeiro; empate: pedido do app
+ * antes) — ordenar por `primeira_em` deixava a 13ª pendência esperando para sempre (Codex P2). Dedup e teto.
+ */
+export function reconsultasForaDaJanela(entrada: {
+  lidos: ReadonlySet<string>;
+  semPoNoApp: readonly { protocolo: string; pedido_id: number; ultima_tentativa?: string | null }[];
+  falhasAbertas: readonly { protocolo: string; ultima_em: string }[];
+  teto?: number;
+}): { protocolo: string; origem: "app_sem_po" | "falha_aberta"; pedido_id: number | null }[] {
+  const teto = entrada.teto ?? TETO_RECONSULTAS;
+  const porProt = new Map<string, { protocolo: string; origem: "app_sem_po" | "falha_aberta"; pedido_id: number | null; quando: string }>();
+  for (const p of entrada.semPoNoApp) {
+    if (!PROTOCOLO_RE.test(p.protocolo) || entrada.lidos.has(p.protocolo) || porProt.has(p.protocolo)) continue;
+    porProt.set(p.protocolo, { protocolo: p.protocolo, origem: "app_sem_po", pedido_id: p.pedido_id, quando: p.ultima_tentativa ?? "" });
+  }
+  for (const f of entrada.falhasAbertas) {
+    if (!PROTOCOLO_RE.test(f.protocolo) || entrada.lidos.has(f.protocolo) || porProt.has(f.protocolo)) continue;
+    porProt.set(f.protocolo, { protocolo: f.protocolo, origem: "falha_aberta", pedido_id: null, quando: f.ultima_em });
+  }
+  return [...porProt.values()]
+    .sort((a, b) => a.quando.localeCompare(b.quando) || (a.origem === b.origem ? 0 : a.origem === "app_sem_po" ? -1 : 1))
+    .slice(0, teto)
+    .map(({ quando: _q, ...q }) => q);
+}
+
+// ── Onda 5A (2026-11-08): situação do portal gravada no pedido ─────────────────────────────────────────────────────
+// O disparador geral cria PO de pedido `sucesso_portal` sem reler o portal; a situação que esta varredura JÁ lê vai
+// para o pedido pelo escritor único `sayerlack_registrar_situacao_portal`, e o claim de disparo recusa o 6.
+
+export interface ObservacaoSituacao {
+  protocolo: string;
+  codigo: string;
+  texto: string;
+}
+
+/** Pedidos da lista que estão no app, com código de situação RECONHECIDO (1..7). Ilegível fica de fora: nunca
+ *  substitui a observação vigente (o banco recusa também — esta é a 1ª camada). `soCancelados`: leitura com outra
+ *  linha ilegível/repetida — o 6 de uma linha única e legível ainda BLOQUEIA (falha fechada), mas nada libera. */
+export function observacoesDaLista(
+  pedidos: readonly PedidoListado[],
+  protocolosNoApp: ReadonlySet<string>,
+  opcoes: { soCancelados?: boolean } = {},
+): ObservacaoSituacao[] {
+  return pedidos
+    .filter((p) => protocolosNoApp.has(p.protocolo) && /^[1-7]$/.test(p.situacao_codigo ?? ""))
+    .filter((p) => !opcoes.soCancelados || p.situacao_codigo === "6")
+    .map((p) => ({ protocolo: p.protocolo, codigo: p.situacao_codigo as string, texto: p.situacao.slice(0, 200) }));
+}
+
+// ── Revisão 2 (2026-11-08): brechas B5–B7 ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Desfecho de uma chamada à importadora (B6/B7). Só é RESPOSTA da importadora o objeto com `ok` booleano e `mensagem`
+ * texto (o contrato dela). Rede/prazo (HTTP 0), corpo que não é objeto, `{}` ou `{"msg": …}` do gateway são
+ * INDETERMINADOS: o pedido pode ter sido gravado e o PO criado depois — nunca "falhou", nunca "não entrou".
+ */
+export function desfechoImportacao(httpStatus: number, corpo: unknown): "ok" | "falha" | "indeterminado" {
+  if (httpStatus === 0 || !corpo || typeof corpo !== "object" || Array.isArray(corpo)) return "indeterminado";
+  const b = corpo as { ok?: unknown; mensagem?: unknown; desfecho?: unknown };
+  if (typeof b.ok !== "boolean" || typeof b.mensagem !== "string") return "indeterminado";
+  // A importadora declara "não sei" explicitamente quando a gravação pode ter acontecido (Codex revisão 2, B7).
+  if (b.desfecho === "indeterminado") return "indeterminado";
+  return resumoImportacao(httpStatus, corpo).ok ? "ok" : "falha";
+}
+
+/**
+ * Carência do RE-DISPARO de pedido do app sem PO (B5): o disparo falhou (ou nunca rodou) e alguém pode ter lançado o
+ * PO à mão no Omie depois — o espelho só o vê no próximo sync. Re-dispara só se o sync de pedidos de compra terminou
+ * `complete` depois da última mudança do pedido (+ a mesma folga da carência de importação). Sem marcador ⇒ espera;
+ * esperando há mais de 6 h ⇒ `travado` (vira pendência visível, como a 3.9).
+ */
+export function carenciaRedisparo(
+  ultimaMudancaISO: string | null,
+  syncCompletoEm: string | null,
+  agoraMs: number,
+): "pode" | "aguarda_sync" | "aguarda_sync_travado" {
+  const mudanca = ultimaMudancaISO ? Date.parse(ultimaMudancaISO) : NaN;
+  const fimSync = syncCompletoEm ? Date.parse(syncCompletoEm) : NaN;
+  if (Number.isFinite(mudanca) && Number.isFinite(fimSync) && fimSync > mudanca + FOLGA_SYNC_MS) return "pode";
+  // Sem a data da mudança não há como medir a espera: trava visível já (fail-closed e visível).
+  if (!Number.isFinite(mudanca)) return "aguarda_sync_travado";
+  return agoraMs - mudanca > CARENCIA_SYNC_MAX_MS ? "aguarda_sync_travado" : "aguarda_sync";
+}
+
+/** A mais recente de duas datas ISO (nula some); as duas nulas ⇒ null. */
+export function maisRecente(a: string | null | undefined, b: string | null | undefined): string | null {
+  const ms = [a, b].map((x) => (x ? Date.parse(x) : NaN)).filter((n) => Number.isFinite(n));
+  return ms.length === 0 ? null : new Date(Math.max(...ms)).toISOString();
+}
+
+/** Folga dentro da janela do sync incremental: a previsão do PO lançado à mão pode diferir da entrega do portal. */
+const FOLGA_COBERTURA_DIAS = 10;
+
+/**
+ * O sync de pedidos de compra só coleta PO com previsão de entrega em [hoje − 60, hoje + 120] dias (incremental —
+ * `_shared/janela-pedidos-compra.ts`). "Complete depois da falha" só prova ausência de PO manual para pedido cuja
+ * entrega cai DENTRO dessa cobertura (Codex revisão 2, B5). Fora dela (ou sem data) o re-disparo automático não sai:
+ * vira pendência humana.
+ */
+export function entregaCobertaPeloSync(dataEntregaISO: string | null, hojeISO: string): boolean {
+  if (!dataEntregaISO || !/^\d{4}-\d{2}-\d{2}/.test(dataEntregaISO)) return false;
+  const d = dataEntregaISO.slice(0, 10);
+  return d >= somarDias(hojeISO, -(JANELA_PASSADO_INCREMENTAL_DIAS - FOLGA_COBERTURA_DIAS)) &&
+    d <= somarDias(hojeISO, JANELA_FUTURO_DIAS - FOLGA_COBERTURA_DIAS);
+}
+
+// ── Onda 5A fatia 2 (2026-11-08): cobertura da situação dos pedidos com compra em aberto ───────────────────────────
+
+/** Linha de `sayerlack_cobertura_situacao_portal()`: pedido com PO ainda não faturado nem encerrado no espelho. */
+export interface PedidoACobrir {
+  pedido_id: number;
+  protocolo: string;
+  enviado_em: string | null;
+  observado_ate: string | null;
+}
+
+/** Folga antes do envio: a emissão no portal pode ser do dia anterior ao carimbo do app. */
+const FOLGA_EMISSAO_COBERTURA_DIAS = 3;
+/** Teto da leitura estendida da cobertura: PO sem faturar há mais que isso vira pendência do vigia, não leitura infinita. */
+const COBERTURA_MAX_DIAS = 90;
+
+/**
+ * O que a cobertura precisa reler hoje (Codex desenho P1 #3): os pedidos sem leitura do SEU protocolo desde o início do
+ * dia em SP. A 1ª rodada do dia (12:30) relê; as seguintes só se algo ficou para trás. A emissão mais antiga define a
+ * leitura estendida (sem data ⇒ o teto); além do teto (90 dias), o pedido fica de fora e o vigia cobra.
+ */
+export function coberturaPendente(
+  linhas: readonly PedidoACobrir[],
+  inicioDoDiaISO: string,
+  hojeISO: string,
+): { emissaoDesde: string | null; pendentes: PedidoACobrir[]; foraDoAlcance: PedidoACobrir[] } {
+  const limite = inicioDaJanela(hojeISO, COBERTURA_MAX_DIAS);
+  const inicio = Date.parse(inicioDoDiaISO);
+  const pendentes: PedidoACobrir[] = [];
+  const foraDoAlcance: PedidoACobrir[] = [];
+  let emissaoDesde: string | null = null;
+  for (const l of linhas) {
+    const lido = l.observado_ate ? Date.parse(l.observado_ate) : NaN;
+    if (Number.isFinite(lido) && lido >= inicio) continue;
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(l.enviado_em ?? "") ? somarDias(l.enviado_em as string, -FOLGA_EMISSAO_COBERTURA_DIAS) : limite;
+    if (desde < limite) { foraDoAlcance.push(l); continue; }
+    pendentes.push(l);
+    if (emissaoDesde === null || desde < emissaoDesde) emissaoDesde = desde;
+  }
+  return { emissaoDesde, pendentes, foraDoAlcance };
 }

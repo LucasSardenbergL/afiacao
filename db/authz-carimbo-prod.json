@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-31T11:39:34.189Z",
-  "sourceHead": "0905d43acacbcdf1550a375debc6d6c95f0e1817",
+  "medidoEm": "2026-11-09T12:04:40.394Z",
+  "sourceHead": "13cc47931ac2eae698c5a6a67226c478c826a92f",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,19 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 68 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 69 definição(ões) lida(s) para 68 chave(s) da allowlist.",
-      "contratoFingerprint": "949fa5ec36d4c2e2d25c7ca5da4c526d0b2bcdaaab1cbd7203de7b5df6289496",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 82 definição(ões) lida(s) para 82 chave(s) da allowlist.",
+      "contratoFingerprint": "dd99cb33da3db2ebd09a320b6f8daf9e89625c8afae8e49912921e7f5b966451",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": []
+      "achados": [
+        {
+          "id": "022498c44a023a11",
+          "linha": "❌ public.sayerlack_conferir_portal — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack_conferir_portal está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-11-09",
+          "ultimaVez": "2026-11-09"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -30,9 +37,9 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 27 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 28 definição(ões) lida(s) para 27 chave(s) do manifest.",
-      "contratoFingerprint": "2afa709da68586d46652f8e9d6f61ff5f04b6ecd99667da9e3ee689eca7d166d",
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 34 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 35 definição(ões) lida(s) para 34 chave(s) do manifest.",
+      "contratoFingerprint": "fefa08d71158c2936ddf36ecc518c0507ded89850eb9cf765ccd7f90b71ce71a",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
@@ -48,27 +55,76 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 1,
-      "resumo": "audit-rls — 1 divergencia(s) entre a RLS de prod e o contrato (scripts/authz-rls-esperado.ts).",
+      "resumo": "audit-rls — 6 divergencia(s) entre a RLS de prod e o contrato (scripts/authz-rls-esperado.ts).",
       "denominador": null,
-      "contratoFingerprint": "cd74b6cc23c5fff5b7bd374fbf826424ab959e567629aae4b4d2765f669295c7",
+      "contratoFingerprint": "5782353702c86a00e2ebb5b13b8db291ace51568e93782ad9f28304e7ce5b225",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
       "achados": [
         {
-          "id": "22239733bf533413",
-          "linha": "❌ [LACUNA_GRUPO_MUDOU] fin_*: o grupo CRESCEU — 43 tabela(s) em prod contra 41 declarada(s) (medido em 2026-08-28). 5 curada(s), 38 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: fin_alertas, fin_antecipacoes, fin_audit_log, fin_balanco_inputs, fin_categoria_dre_mapping, fin_categorias, fin_conciliacao, fin_confiabilidade, fin_config_cashflow, fin_contas_correntes, fin_contas_pagar, fin_contas_receber, fin_custo_rateio, fin_divida_completude, fin_divida_parcelas, fin_dividas, fin_dre_custo_tipo, fin_dre_snapshots, fin_eliminacoes_intercompany, fin_eliminacoes_log, fin_estoque_valor, fin_eventos_eventuais, fin_eventos_recorrentes, fin_fechamento_log, fin_fechamentos, fin_forecast, fin_funding_inputs, fin_ic_contrapartes, fin_ic_matches, fin_ic_reconcile_rodadas, fin_kpi_tributario, fin_movimentacoes, fin_orcamento, fin_period_overrides, fin_permissoes, fin_projecao_snapshots, fin_regime_inputs, fin_sync_checkpoint, fin_sync_cursor, fin_sync_kick_retry, fin_sync_lease, fin_sync_log, fin_valor_inputs.",
-          "primeiraVez": "2026-10-28",
-          "ultimaVez": "2026-10-31"
+          "id": "76565bac7ea470f0",
+          "linha": "❌ [POLICY_ALTERADA] public.farmer_client_scores » fcs_select_carteira: divergente do contrato em 1 campo(s) — USING 184cfe6a578c8f43caae82a675508c5f (contrato: 4ce46ee9bbc5966f54317f7e446a452e).",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-09"
+        },
+        {
+          "id": "3a4f6f1885c01f17",
+          "linha": "❌ [POLICY_ALTERADA] public.farmer_calls » fcall_select_carteira: divergente do contrato em 1 campo(s) — USING 757ca14d46c9690529917c1363fd418a (contrato: 3e6d44046f30e603a5068b5028e53e60).",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-09"
+        },
+        {
+          "id": "6908dfcb6e6c560f",
+          "linha": "❌ [PREDICADO_NAO_DECLARADO] private.carteira_clientes_visiveis: função referenciada DIRETAMENTE por uma policy curada e NÃO declarada em AUTHZ_RLS_PREDICADOS (secdef=true, cfg=search_path=public, md5=8adee7e0f97d8745d5ea56344df4bb3c). É onde a autorização real pode morar sem que o md5 da policy mude — declare a entrada com o md5 medido, ou explique por que ela não precisa ser congelada.",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-09"
+        },
+        {
+          "id": "e89e27fc755addf3",
+          "linha": "❌ [PREDICADO_NAO_DECLARADO] private.carteira_ve_tudo: função referenciada DIRETAMENTE por uma policy curada e NÃO declarada em AUTHZ_RLS_PREDICADOS (secdef=true, cfg=search_path=public, md5=a514d1340b4292afb877748fb270b082). É onde a autorização real pode morar sem que o md5 da policy mude — declare a entrada com o md5 medido, ou explique por que ela não precisa ser congelada.",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-09"
+        },
+        {
+          "id": "2fe6b6ed50d8a922",
+          "linha": "❌ [PREDICADO_SUMIU] private.carteira_visivel_para: declarada em AUTHZ_RLS_PREDICADOS e o fecho das policies curadas não a alcança mais. Ou a policy que a usava mudou de predicado (veja os achados de POLICY_*), ou a função que a CHAMAVA parou de chamá-la (veja PREDICADO_ALTERADO no chamador — sair do grafo é mudança de autorização tanto quanto entrar), ou a entrada envelheceu. Entrada que não vigia nada é cobertura só no papel.",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-09"
+        },
+        {
+          "id": "ca5146a5523c4724",
+          "linha": "❌ [LACUNA_GRUPO_MUDOU] private.carteira_visivel_para: o grupo ENCOLHEU — 0 tabela(s) em prod contra 8 declarada(s) (medido em 2026-08-28). 0 curada(s), 0 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: .",
+          "primeiraVez": "2026-11-06",
+          "ultimaVez": "2026-11-09"
         }
       ]
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 441 identidade(s) batem com o repo (360 em dia, 66 só cosméticas, 14 aceitas na baseline) e 21 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 441 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@e8fee8562 (fetch ok) · prod 2026-10-31 11:40:27.072824Z",
-      "contratoFingerprint": "f7c97d0eb804130041e609a823b5804ea51bf2cee6d551c9d0638912bf621f21",
-      "auditorFingerprint": "b1b1d82764907d277cfd14f0bbe9a1b49cbf9e6c395a84e53b7210591476ecde",
-      "achados": []
+      "exit": 1,
+      "resumo": "deriva-corpo — 3 divergência(s) em prod (2 CORPO_ANTERIOR, 1 AUSENTE) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 540 identidade(s) conferida(s) · 33 aposentada(s) · ref origin/main@3f8ae8de1 (fetch ok) · prod 2026-11-09 12:05:13.254492Z",
+      "contratoFingerprint": "0292bcdcedcfd4f9492106b01765fdba42819fa21a8088a032d7d5a933ef8ffa",
+      "auditorFingerprint": "c34625081a1ed5cf90d66fa67effbdfa872fb15924c15ae6911e4e23c400764e",
+      "achados": [
+        {
+          "id": "e14291bd65fb0bb1",
+          "linha": "❌ [CORPO_ANTERIOR] desfazer_contato_radar(uuid): prod roda o corpo de 20261031111000_radar_contato_integridade.sql; o repo commitou 20261111134000_radar_posse_pacote_l.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 13313895)",
+          "primeiraVez": "2026-11-09",
+          "ultimaVez": "2026-11-09"
+        },
+        {
+          "id": "5b340e991a5948d0",
+          "linha": "❌ [CORPO_ANTERIOR] registrar_contato_radar(text,text,text,date): prod roda o corpo de 20261111100000_radar_acompanhamento_pacote_g.sql; o repo commitou 20261111134000_radar_posse_pacote_l.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 14248637)",
+          "primeiraVez": "2026-11-09",
+          "ultimaVez": "2026-11-09"
+        },
+        {
+          "id": "cb30ec30ede6fa14",
+          "linha": "❌ [AUSENTE] radar_registrar_agenda_uso(text,text,integer,integer): viva no repo (último CREATE: 20261111134000_radar_posse_pacote_l.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-09",
+          "ultimaVez": "2026-11-09"
+        }
+      ]
     }
   }
 }

@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useRef } from 'react';
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { provisorioConsolidado, foraDreConsolidado } from '@/lib/financeiro/dre-helpers';
+import { consolidarTitulos, TITULOS_INDISPONIVEIS } from '@/lib/financeiro/resumo-titulos';
 import {
   triggerFinanceiroSync,
   getResumoFinanceiro,
@@ -32,6 +33,9 @@ export type DatasetFinanceiro =
   | 'dre'
   | 'fluxoCaixa'
   | 'inadimplentes';
+
+/** Ordem FIXA das empresas no DRE consolidado (o array concatenado segue esta ordem). */
+const EMPRESAS_DRE_CONSOLIDADO: readonly Company[] = ['oben', 'colacor', 'colacor_sc'];
 
 export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
   const [view, setView] = useState<FinanceiroView>(defaultCompany);
@@ -87,22 +91,28 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
    */
   const [versaoDados, setVersaoDados] = useState(0);
 
-  // Computed resumo consolidado
+  // Computed resumo consolidado — sempre sobre o GRUPO INTEIRO (ALL_COMPANIES), não sobre o que
+  // o mapa tem: o `resumo` acumula cargas de outras views, então ao trocar 'oben' → 'all' (antes
+  // da carga do grupo chegar) ou depois de uma falha que apagou um CNPJ, somar `Object.values`
+  // apresentava o caixa/CR/CP de UMA empresa como total do grupo.
+  const resumosPresentes = ALL_COMPANIES.flatMap((co) => (resumo[co] ? [resumo[co]] : []));
+  const resumosAusentes = ALL_COMPANIES.filter((co) => !resumo[co]);
   const resumoConsolidado: FinResumo | null =
-    Object.keys(resumo).length > 0
+    resumosPresentes.length > 0
       ? {
-          contas_correntes: Object.values(resumo).flatMap(r => r.contas_correntes),
+          contas_correntes: resumosPresentes.flatMap(r => r.contas_correntes),
           // Consolidado "todas": indisponível se faltar o saldo de QUALQUER CNPJ do grupo.
           // Somar só quem respondeu daria um total menor apresentado como total do grupo —
           // e caixa é por-CNPJ, não-fungível: a parcela que falta não se estima pelas outras.
-          saldo_total_cc: Object.values(resumo).some((r) => r.saldo_total_cc === null)
+          saldo_total_cc: resumosAusentes.length > 0 || resumosPresentes.some((r) => r.saldo_total_cc === null)
             ? null
-            : Object.values(resumo).reduce((s, r) => s + (r.saldo_total_cc ?? 0), 0),
-          total_a_receber: Object.values(resumo).reduce((s, r) => s + r.total_a_receber, 0),
-          total_a_pagar: Object.values(resumo).reduce((s, r) => s + r.total_a_pagar, 0),
-          total_vencido_receber: Object.values(resumo).reduce((s, r) => s + r.total_vencido_receber, 0),
-          total_vencido_pagar: Object.values(resumo).reduce((s, r) => s + r.total_vencido_pagar, 0),
-          posicao_liquida: Object.values(resumo).reduce((s, r) => s + r.posicao_liquida, 0),
+            : resumosPresentes.reduce((s, r) => s + (r.saldo_total_cc ?? 0), 0),
+          // Mesma régua para os títulos, mas independente do saldo: um CNPJ sem títulos zera
+          // (null) os totais de CR/CP do grupo, não o caixa.
+          ...consolidarTitulos([
+            ...resumosPresentes,
+            ...resumosAusentes.map((co) => TITULOS_INDISPONIVEIS(`resumo de ${co} não carregado`)),
+          ]),
         }
       : null;
 
@@ -231,14 +241,14 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     try {
       setLoading(true);
       if (view === 'all') {
-        // Para consolidado, carregar cada empresa e somar
-        const allDres: FinDRE[] = [];
-        for (const co of ['oben', 'colacor', 'colacor_sc'] as Company[]) {
-          const data = await getDRE(co, ano, meses, regime);
-          allDres.push(...data);
-        }
+        // Consolidado: as 3 leituras são independentes (empresa/ano/regime) → em paralelo, espera = max.
+        // Promise.all preserva a ORDEM do array (oben, colacor, colacor_sc) e rejeita se QUALQUER uma
+        // rejeitar → nunca um DRE parcial apresentado como o consolidado (cai no catch: [] + falha).
+        const porEmpresa = await Promise.all(
+          EMPRESAS_DRE_CONSOLIDADO.map((co) => getDRE(co, ano, meses, regime)),
+        );
         if (g !== geracoes.current.dre) return;
-        setDre(allDres);
+        setDre(porEmpresa.flat());
       } else {
         const data = await getDRE(view as Company, ano, meses, regime);
         if (g !== geracoes.current.dre) return;

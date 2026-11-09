@@ -30,6 +30,7 @@ Tudo autenticado vive em `<ProtectedRoute><AppShellLayout>` e se divide em faixa
 | Tarefas | `/tarefas`, `/tarefas/templates` | aberto | tarefas operacionais + templates | 🧊 até 10/01/2027 |
 | Financeiro | `/financeiro/*` | `RequireFinanceiroAccess` | `capital-giro` (fluxo 13s/NCG), DRE, `tributario`, `mapping` de categoria, fechamento | ✅ leitura · 🧊 telas de input até 10/01/2027 |
 | Vendas | `/sales/*` | staff | pipeline / venda assistida por IA | ✅ |
+| Cobrança | `/cobranca` | staff (vendedora vê a própria carteira; gestão/master vê tudo) | fila de cobrança com estado/dona/promessa, régua D−2/D+1/D+7 com WhatsApp assistido, coorte vencida selada por título (Oben, 01/11/2026) | ✅ (#3475) |
 | Farmer / Inteligência | `/farmer/*`, `/meu-dia`, `/coaching`, `/intelligence`, `/executive/dashboard`, `/radar` | staff | plano tático, bundles, IPF, radar de empresas | ✅ |
 | Admin / CRM | `/admin/*` (customers, orders, approvals, price-table, demand-forecast) | staff | clientes, aprovações, tabela de preço, previsão de demanda | ✅ (ingestão diária do Omie) |
 | Tintométrico | `/tintometrico/*` | staff | catálogo, integração, fórmulas | ✅ |
@@ -47,6 +48,7 @@ Tudo autenticado vive em `<ProtectedRoute><AppShellLayout>` e se divide em faixa
 ## "Onde eu faço X?" (por intenção → módulo)
 
 - **Caixa / DRE / inadimplência / fluxo 13 semanas** → `/financeiro`. Para ANÁLISE sem abrir tela, use as skills `cfo-colacor` (fechamento/controladoria) e `bi-colacor` (número rápido) — elas rodam via `psql-ro`.
+- **Cobrar título vencido / ver minha carteira vencida / registrar contato ou promessa** → `/cobranca` (links na aba Ciclo do capital de giro e em Ferramentas de venda). Prazo sugerido para cliente com vencido aparece no próprio pedido (`/sales/new`, carrinho).
 - **Aprovar/disparar pedido de compra, ver ruptura/sugestões, estoque parado** → `/admin/reposicao` (número/diagnóstico sem tela → `bi-colacor`).
 - **Picking / receber mercadoria** (chão de fábrica, offline-first) → `/recebimento`, `/admin/estoque`.
 - **Preço de tinta / fórmula tintométrica** → `/tintometrico`.

@@ -7,28 +7,34 @@ import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 export interface RadarKpis {
   lote: string | null;
   novos: number;
-  a_contatar: number;
+  /** null = o agregado do lote vigente ainda não foi calculado (hora seguinte à carga): indisponível, não 0. */
+  a_contatar: number | null;
   em_conversa: number;
   virou_cliente_mes: number;
+  /** Hora do cálculo do agregado de onde `a_contatar` sai; null junto com ele (ou na RPC anterior). */
+  contagens_em: string | null;
 }
 
 /**
- * O jsonb de `radar_kpis` (`jsonb_build_object` de 5 chaves na prod) lido por forma: contagem que
- * não é número LANÇA — o card mostra "não consegui ler", nunca um 0 fabricado.
+ * O jsonb de `radar_kpis` lido por forma: contagem que não é número LANÇA — o card mostra "não consegui
+ * ler", nunca um 0 fabricado. A ÚNICA ausência aceita é `a_contatar: null`, que a RPC devolve quando o
+ * agregado (`radar_agregado_municipio`, migration 20261103100000) não é do lote vigente; aí `contagens_em`
+ * também é null. A RPC anterior não manda `contagens_em` (undefined → null).
  */
 function kpisDoJson(v: Json): RadarKpis {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('radar_kpis: resposta não é objeto');
-  const { lote, novos, a_contatar, em_conversa, virou_cliente_mes } = v;
+  const { lote, novos, a_contatar, em_conversa, virou_cliente_mes, contagens_em } = v;
   if (
     !(lote === null || typeof lote === 'string') ||
     typeof novos !== 'number' ||
-    typeof a_contatar !== 'number' ||
+    !(a_contatar === null || typeof a_contatar === 'number') ||
     typeof em_conversa !== 'number' ||
-    typeof virou_cliente_mes !== 'number'
+    typeof virou_cliente_mes !== 'number' ||
+    !(contagens_em === undefined || contagens_em === null || typeof contagens_em === 'string')
   ) {
-    throw new Error('radar_kpis: resposta fora da forma {lote, novos, a_contatar, em_conversa, virou_cliente_mes}');
+    throw new Error('radar_kpis: resposta fora da forma {lote, novos, a_contatar, em_conversa, virou_cliente_mes, contagens_em}');
   }
-  return { lote, novos, a_contatar, em_conversa, virou_cliente_mes };
+  return { lote, novos, a_contatar, em_conversa, virou_cliente_mes, contagens_em: contagens_em ?? null };
 }
 
 /**

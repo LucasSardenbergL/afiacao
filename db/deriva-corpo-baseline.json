@@ -2,16 +2,6 @@
   "formato": "deriva-corpo-baseline/1",
   "entradas": [
     {
-      "funcao": "detectar_skus_sem_grupo",
-      "identidade": "text",
-      "classe": "EDICAO_MANUAL",
-      "esperadaNoAceite": "20260606140000_detectar_skus_sem_grupo_self_heal.sql",
-      "motivo": "prod difere do repo só no literal da justificativa gravada em eventos_outlier ('…não precisa de grupo.' × '…de grupo de produção.'); os outros 346 tokens são iguais. Em prod desde ≤2026-06-19 (schema-snapshot do Lovable). Aceita pelo founder em 2026-09-26.",
-      "md5": "4147eeda24634ae0d5bb97a18452baf5",
-      "md5Tokens": "d7fc1232e8d9866c39a70fe5fe94e3c2",
-      "desde": "2026-09-26"
-    },
-    {
       "funcao": "despinar_parametro",
       "identidade": "text,text",
       "classe": "PATCH",
@@ -132,6 +122,68 @@
       "md5": "954a96411be99c18ab4bff40df14e620",
       "md5Tokens": "20b06647d1445d6b911a7fd541f51cb9",
       "desde": "2026-10-31"
+    },
+    {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261103093424_tint_promote_escreve_so_o_que_mudou.sql",
+      "efeito": "ALTERA",
+      "motivo": "#3553: a promoção escreve só o que mudou (_pulados) — 8 trocas por âncora sobre o corpo da 20261030071806. Conferido em prod em 2026-11-03 via psql-ro: md5(prosrc) = c_este da migration, _pulados no corpo (xmin 13666804; recibo db:aplicar #879).",
+      "md5": "2c6f461f9c9d4f8c54ea817e25f88f61",
+      "md5Tokens": "a7550d2e21404d7e0eced01b21f9424f",
+      "desde": "2026-11-03"
+    },
+    {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261104110000_tint_promote_snap_fonte_so_com_expansao.sql",
+      "efeito": "ALTERA",
+      "motivo": "programa Mini, temp crônico: o _snap_fonte (DISTINCT das ~123 mil chaves do snapshot, ~9,5 MB de temp por promoção) só nasce com EXISTS (SELECT 1 FROM _expand_uniq) — 1 troca por âncora sobre o corpo da 20261103093424. md5 = c_este da migration (= replace da âncora sobre o prosrc de prod 2c6f461f…, calculado fora do banco e conferido no PG17). Conferido em prod em 2026-11-04 via psql-ro: md5(prosrc) = c_este, guard no corpo (xmin 13787158; recibo db:aplicar #889).",
+      "md5": "97d4424225edab7caff792b852afb371",
+      "md5Tokens": "96979d7542ae580129e7f7f4098656a0",
+      "desde": "2026-11-04"
+    },
+    {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261104110100_tint_receita_assinada_no_cabecalho.sql",
+      "efeito": "ALTERA",
+      "motivo": "receita assinada no cabeçalho (Mini M1): 10 trocas por âncora sobre o corpo da 20261104110000 — o _pulados compara pela assinatura e o promote assina até 20.000 por run. Conferido em prod em 2026-11-04 via psql-ro: md5(prosrc) = c_este da migration (xmin 13792171; recibo db:aplicar #890).",
+      "md5": "bbd219afff819b3d2401f8e33a8a4010",
+      "md5Tokens": "54cae9584f62f3f7ced012a575a34792",
+      "desde": "2026-11-04"
+    },
+    {
+      "funcao": "tint_formulas_assina_receita",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20261104110100_tint_receita_assinada_no_cabecalho.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — REVOKE e postcondição; as 10 âncoras reescrevem tint_promote_sync_run, não esta. Conferido em prod em 2026-11-04 via psql-ro: md5(prosrc) = dae98b81148f95a05d59bb4bc60ea511 (xmin 13792171; recibo db:aplicar #890).",
+      "desde": "2026-11-04"
+    },
+    {
+      "funcao": "tint_formula_itens_invalida_assinatura",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20261104110100_tint_receita_assinada_no_cabecalho.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — REVOKE e postcondição; as 10 âncoras reescrevem tint_promote_sync_run, não esta. Conferido em prod em 2026-11-04 via psql-ro: md5(prosrc) = 039a77dbf9dafa82609fb1f0d3d86d00 (xmin 13792171; recibo db:aplicar #890).",
+      "desde": "2026-11-04"
+    },
+    {
+      "funcao": "tint_apply_keys_snapshot",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261103222838_tint_apply_keys_snapshot_lock_por_account.sql",
+      "efeito": "ALTERA",
+      "motivo": "#3578: o apply passa a tomar o lock 'tint_formulas_account:<account>' depois do de loja — 1 troca por âncora sobre o corpo da 20260611190000. Conferido em prod em 2026-11-04 via psql-ro: md5(prosrc) = c_este da migration (ea5acf0e…), lock por account no corpo (xmin 13739024).",
+      "md5": "ea5acf0e873fbc7793d887f882ad47d4",
+      "md5Tokens": "44633ab188dd2100a292cd86ce925015",
+      "desde": "2026-11-04"
     },
     {
       "funcao": "tint_staging_purge",
@@ -337,17 +389,6 @@
       "desde": "2026-10-30"
     },
     {
-      "funcao": "radar_kpis",
-      "identidade": "",
-      "classe": "PATCH",
-      "patch": "20261029201200_radar_acesso_vendedor.sql",
-      "efeito": "ALTERA",
-      "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
-      "md5": "de4e4731507e4be5a085c90efdfc0687",
-      "md5Tokens": "4865a71237657ec2ccabcffec00e7107",
-      "desde": "2026-10-30"
-    },
-    {
       "funcao": "radar_prospects_para_rota",
       "identidade": "text,integer",
       "classe": "PATCH",
@@ -378,17 +419,6 @@
       "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
       "md5": "bda54cdc691c0682bb0e8b39a0fd7b0d",
       "md5Tokens": "e0681341ee2eb6a4a549411cb653650e",
-      "desde": "2026-10-30"
-    },
-    {
-      "funcao": "registrar_contato_radar",
-      "identidade": "text,text,text",
-      "classe": "PATCH",
-      "patch": "20261029201200_radar_acesso_vendedor.sql",
-      "efeito": "ALTERA",
-      "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
-      "md5": "658d383c7f34f97427aacb053714ea3e",
-      "md5Tokens": "b6a279661c828989ce3aec0aa35f8e4f",
       "desde": "2026-10-30"
     },
     {

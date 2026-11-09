@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { spBusinessDate } from '@/lib/time/sp-day';
+import { OPEN_TITLE_STATUSES } from '@/lib/financeiro/titulo-status';
 
 // Saldo de extrato de HOJE em SP: conta sem `saldo_data` fresco é indisponível (plano v3, item 2).
 const HOJE_SP = spBusinessDate(new Date());
@@ -63,8 +64,52 @@ function makeBuilder(tabela: string) {
   return builder;
 }
 
+// Fake da RPC `fin_saldo_titulos_por_status` com a semântica da migration (provada no PG17 por
+// db/test-fin-saldo-titulos-por-status.sh): empresa sem título em NENHUM status → `desconhecida`;
+// grupos (tabela, empresa, status) só dos status pedidos, saldo como string decimal.
+const rpcCalls: Array<{ fn: string; args: { p_companies: string[]; p_statuses: string[] } }> = [];
+let rpcRejeita: Error | null = null;
+let rpcEnvelope: unknown;
+function fakeRpc(fn: string, args: { p_companies: string[]; p_statuses: string[] }) {
+  rpcCalls.push({ fn, args });
+  if (rpcRejeita) return Promise.reject(rpcRejeita);
+  if (rpcEnvelope !== undefined) return Promise.resolve({ data: rpcEnvelope, error: null });
+  const error = state.errors.rpc;
+  if (error) return Promise.resolve({ data: null, error });
+  const tabelas = [['receber', 'fin_contas_receber'], ['pagar', 'fin_contas_pagar']] as const;
+  const empresas = [...new Set(args.p_companies)].sort().map((company) => ({
+    company,
+    estado: tabelas.some(([, t]) => (state.db[t] ?? []).some((r) => r.company === company)) ? 'ok' : 'desconhecida',
+  }));
+  const ok = new Set(empresas.filter((e) => e.estado === 'ok').map((e) => e.company));
+  const grupos: Row[] = [];
+  for (const [tabela, t] of tabelas) {
+    const acc = new Map<string, { company: string; status: string; n: number; centavos: number }>();
+    for (const r of state.db[t] ?? []) {
+      const company = r.company as string, status = r.status_titulo as string;
+      if (!ok.has(company) || !args.p_statuses.includes(status)) continue;
+      const k = `${company}|${status}`;
+      const g = acc.get(k) ?? { company, status, n: 0, centavos: 0 };
+      g.n += 1; g.centavos += Math.round((r.saldo as number) * 100);
+      acc.set(k, g);
+    }
+    for (const g of acc.values()) {
+      grupos.push({ tabela, company: g.company, status_titulo: g.status, n_titulos: g.n, n_saldo_nulo: 0, saldo: (g.centavos / 100).toFixed(2) });
+    }
+  }
+  return Promise.resolve({ data: { versao: 1, empresas, grupos }, error: null });
+}
+
+const fromCalls: string[] = [];
+
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: (tabela: string) => makeBuilder(tabela) },
+  supabase: {
+    from: (tabela: string) => {
+      fromCalls.push(tabela);
+      return makeBuilder(tabela);
+    },
+    rpc: fakeRpc,
+  },
 }));
 
 import { getResumoFinanceiro, getLastSyncTime } from '@/services/financeiroService';
@@ -83,8 +128,54 @@ const muitos = (n: number, company: string, status: string, saldo: number): Row[
 
 describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
   beforeEach(() => {
-    state.db = { fin_contas_correntes: [], fin_contas_receber: [], fin_contas_pagar: [] };
+    // Um título liquidado: a empresa EXISTE para a RPC (senão `desconhecida`) sem mexer nos abertos.
+    state.db = { fin_contas_correntes: [], fin_contas_receber: [titulo('oben', 'RECEBIDO', 1)], fin_contas_pagar: [] };
     state.errors = {};
+    rpcCalls.length = 0;
+    rpcRejeita = null;
+    rpcEnvelope = undefined;
+  });
+
+  it('soma os títulos pela RPC: 1 chamada para todas as empresas, com o conjunto aberto canônico', async () => {
+    state.db.fin_contas_receber.push(titulo('colacor', 'A VENCER', 3));
+    await getResumoFinanceiro(['oben', 'colacor']);
+    expect(rpcCalls).toEqual([{
+      fn: 'fin_saldo_titulos_por_status',
+      args: { p_companies: ['oben', 'colacor'], p_statuses: [...OPEN_TITLE_STATUSES] },
+    }]);
+  });
+
+  // Títulos têm disponibilidade PRÓPRIA (follow-up do lote 13): a empresa sem títulos sai com os
+  // totais null + motivo — nunca R$ 0 — e NÃO derruba o saldo CC nem os títulos das outras.
+  const contaFresca = (company: string, saldo: number): Row =>
+    ({ company, ativo: true, descricao: `CC ${company}`, banco: '001', saldo_atual: saldo, saldo_data: HOJE_SP });
+  const SEM_TITULOS = {
+    total_a_receber: null, total_a_pagar: null, total_vencido_receber: null, total_vencido_pagar: null, posicao_liquida: null,
+  };
+
+  it('empresa desconhecida para a RPC: títulos null + motivo SÓ dela; CC e títulos das outras preservados', async () => {
+    state.db.fin_contas_correntes = [contaFresca('oben', 1000), contaFresca('colacor', 1000)];
+    state.db.fin_contas_receber.push(titulo('oben', 'A VENCER', 7));
+    const resumo = await getResumoFinanceiro(['oben', 'colacor']);
+    expect(resumo.colacor).toMatchObject({
+      ...SEM_TITULOS, titulos_motivo: 'saldo de títulos indisponível (colacor): desconhecida', saldo_total_cc: 1000,
+    });
+    expect(resumo.colacor.contas_correntes).toHaveLength(1);
+    // Dado AUSENTE, não falha de leitura: tentar de novo não muda nada (o cockpit não faz retry).
+    expect(resumo.colacor.titulos_falha_leitura).toBeUndefined();
+    expect(resumo.oben).toMatchObject({ total_a_receber: 7, posicao_liquida: 7, titulos_motivo: null, saldo_total_cc: 1000 });
+  });
+
+  it('erro da RPC: títulos null em todas com a mensagem do banco; o CC lido certo continua', async () => {
+    state.db.fin_contas_correntes = [contaFresca('oben', 1000)];
+    state.errors.rpc = { message: 'canceling statement due to statement timeout' };
+    const resumo = await getResumoFinanceiro(['oben']);
+    expect(resumo.oben).toMatchObject({
+      ...SEM_TITULOS,
+      titulos_motivo: 'Falha ao carregar saldo de títulos: canceling statement due to statement timeout',
+      titulos_falha_leitura: true,
+      saldo_total_cc: 1000,
+    });
   });
 
   it('soma TODOS os títulos abertos mesmo acima do cap de 1000 do PostgREST (CR e CP)', async () => {
@@ -243,10 +334,20 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
     expect(resumo.oben.saldo_total_cc).toBe(0);
   });
 
-  it('erro nos títulos LANÇA um Error real (nunca resumo parcial silencioso, nem "[object Object]" no banner)', async () => {
-    state.db.fin_contas_receber = muitos(10, 'oben', 'A VENCER', 1);
-    state.errors.fin_contas_pagar = { message: 'RLS negou' };
-    await expect(getResumoFinanceiro(['oben'])).rejects.toBeInstanceOf(Error);
+  it('RPC que REJEITA (rede) também vira títulos indisponíveis com motivo legível, não "[object Object]"', async () => {
+    state.db.fin_contas_correntes = [contaFresca('oben', 1000)];
+    rpcRejeita = new Error('Failed to fetch');
+    const resumo = await getResumoFinanceiro(['oben']);
+    expect(resumo.oben).toMatchObject({
+      ...SEM_TITULOS, titulos_motivo: 'Falha ao carregar saldo de títulos: Failed to fetch', titulos_falha_leitura: true,
+      saldo_total_cc: 1000,
+    });
+  });
+
+  it('envelope fora do contrato: títulos indisponíveis em todas (fail-closed), nunca R$ 0', async () => {
+    rpcEnvelope = [];
+    const resumo = await getResumoFinanceiro(['oben']);
+    expect(resumo.oben).toMatchObject({ ...SEM_TITULOS, titulos_motivo: 'resposta da RPC fora do envelope versão 1' });
   });
 
   it('erro nas contas correntes também LANÇA — caixa R$0 falso é tão ruim quanto total truncado', async () => {
@@ -271,5 +372,14 @@ describe('getLastSyncTime — erro de leitura LANÇA (não vira "último sync" p
     state.db.fin_contas_receber = [{ updated_at: '2026-10-01T10:00:00Z' }];
     state.db.fin_contas_pagar = [{ updated_at: '2026-10-02T10:00:00Z' }];
     await expect(getLastSyncTime()).resolves.toBe('2026-10-02T10:00:00Z');
+  });
+
+  it('as 3 leituras saem juntas — a latência é a da mais lenta, não a soma', async () => {
+    // CP e movimentações não têm índice no carimbo (HOT do sync): cada top-1 é seq scan + RLS por
+    // linha. Em série, o resumo do useFinanceiro esperava a soma das três.
+    fromCalls.length = 0;
+    const pendente = getLastSyncTime();
+    expect(fromCalls).toEqual(['fin_contas_receber', 'fin_contas_pagar', 'fin_movimentacoes']);
+    await pendente;
   });
 });

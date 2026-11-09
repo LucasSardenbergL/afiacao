@@ -10,13 +10,17 @@
  *  2. Separa UUID-format (auto-aplicadas) de custom (precisam validação)
  *  3. Parseia cada custom migration extraindo objetos criados
  *     (tables, indexes, functions, triggers, cron jobs, enum values)
- *  4. Emite dois artefatos:
- *      - scripts/audit-custom-migrations.sql  → cola no Supabase SQL Editor
- *      - docs/migrations-audit.md             → inventário + instruções
+ *  4. Emite dois artefatos em `.audit-migrations/` (IGNORADO pelo git):
+ *      - .audit-migrations/audit-custom-migrations.sql  → cola no Supabase SQL Editor / psql-ro
+ *      - .audit-migrations/migrations-audit.md          → inventário + instruções
  *
- * Rodar: `bun scripts/audit-custom-migrations.ts`
+ * Rodar: `bun run audit:migrations` (gere NA HORA de usar; é determinístico).
  *
- * Re-rodar sempre que migrations custom forem adicionadas — é idempotente.
+ * Por que fora do git (2026-11-09, docs/historico/ci-arquivos-gerados-sem-conflito.md): até aqui os
+ * dois saíam em `scripts/` e `docs/` e eram commitados por todo PR com migration. Nenhum gate os
+ * conferia (são função pura de `supabase/migrations/` + deste script), e a linha "Total", o resumo e
+ * o fim de cada seção mudavam em TODO PR — o conflito com o PR irmão fazia o branch re-sincronizar a
+ * main e o CI recomeçar do zero (o #3707 levou 13 cancelamentos). NÃO volte a versioná-los.
  */
 
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -26,8 +30,9 @@ import { extractObjects, funcoesRemovidas, type ExtractedObject, type ObjectKind
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MIGRATIONS_DIR = join(REPO_ROOT, 'supabase', 'migrations');
-const SQL_OUT = join(REPO_ROOT, 'scripts', 'audit-custom-migrations.sql');
-const MD_OUT = join(REPO_ROOT, 'docs', 'migrations-audit.md');
+export const DIR_SAIDA = join(REPO_ROOT, '.audit-migrations');
+const SQL_OUT = join(DIR_SAIDA, 'audit-custom-migrations.sql');
+const MD_OUT = join(DIR_SAIDA, 'migrations-audit.md');
 
 const UUID_PATTERN = /_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.sql$/;
 const TIMESTAMP_PATTERN = /^(\d{14})_(.+)\.sql$/;
@@ -93,6 +98,14 @@ const OBSOLETE: Record<string, string> = {
   // company_config.reposicao_auto_aprovacao_ativa='false'). Ligá-la exige um disparador de novo —
   // senão o pedido auto-aprovado fica órfão, e este audit NÃO vai mais acusar.
   'cron_baseline::disparar-pedidos-aprovados-oben': 'unschedule — 20261010150000_remove_cron_disparo_10h (#2911); ligar a auto-aprovação exige disparador',
+  // Índices na coluna de carimbo bloqueavam 100% do HOT update dos syncs (plano v4, lote 14 —
+  // docs/historico/hot-carimbo-sync-lote14.md). A ausência em prod é o estado CERTO depois do apply.
+  'idx_data_health_freshness_cols::idx_inventory_position_synced_at': 'drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)',
+  'idx_data_health_freshness_cols::idx_omie_products_updated_at': 'drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)',
+  'idx_data_health_freshness_cols::idx_product_costs_updated_at': 'drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)',
+  // Mesma causa em contas a pagar (plano v5, lote 11 — docs/historico/hot-contas-pagar-lote11.md).
+  // idx_fin_contas_receber_updated_at fica DE PROPÓSITO (decisão medida): a ausência dele seria ❌ real.
+  'idx_data_health_freshness_cols::idx_fin_contas_pagar_updated_at': 'drop — 20261104120000_hot_contas_pagar_sem_indice_carimbo (bloqueava HOT)',
 };
 
 interface MigrationAudit {
@@ -498,7 +511,7 @@ function emitMarkdown(audits: MigrationAudit[]): string {
 
   lines.push('# Migrations Audit — Custom (não-UUID)');
   lines.push('');
-  lines.push(`> Gerado por \`scripts/audit-custom-migrations.ts\`. Re-rodar quando custom migrations forem adicionadas: \`bun scripts/audit-custom-migrations.ts\`.`);
+  lines.push(`> Gerado por \`scripts/audit-custom-migrations.ts\`. Arquivo gerado NA HORA, fora do git (\`.audit-migrations/\`): rode \`bun run audit:migrations\` antes de usar.`);
   lines.push('');
   lines.push('## Contexto');
   lines.push('');
@@ -510,7 +523,7 @@ function emitMarkdown(audits: MigrationAudit[]): string {
   lines.push('');
   lines.push('1. Abra **Supabase Dashboard** (via Lovable Cloud → Backend → Open Supabase, ou direto via `https://supabase.com/dashboard/project/fzvklzpomgnyikkfkzai`)');
   lines.push('2. **SQL Editor** → **New query**');
-  lines.push('3. Cole TODO o conteúdo de `scripts/audit-custom-migrations.sql`');
+  lines.push('3. Cole TODO o conteúdo de `.audit-migrations/audit-custom-migrations.sql` (gerado pelo mesmo comando)');
   lines.push('4. **Run** (read-only, não altera nada)');
   lines.push('5. Você verá DUAS tabelas:');
   lines.push('   - **Section 1** — status reconciliado por migration: ✅ registrado · 🟡 aplicado-sem-registro (OK) · ⚠️ parcial · ❌ não-aplicado · ⚪ sem objeto rastreável');

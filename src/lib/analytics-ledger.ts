@@ -77,7 +77,26 @@ export type EventoLedger =
    * sinal com denominador, nunca por "ninguém reclamou".
    * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
    */
-  | 'reposicao.corantes_aberta';
+  | 'reposicao.corantes_aberta'
+  /**
+   * Raio-X do estoque parado (fase B): a aba abriu com a leitura pronta. Chave = a empresa (oben | colacor).
+   * Hoje há 0 decisões no app e nenhum sinal de visita — este é o denominador da meta de 25/11.
+   * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
+   */
+  | 'reposicao.raio_x_aberta'
+  /**
+   * Decisão GRAVADA no Raio-X (sucesso de `raio_x_decidir`), por origem do toque: `card` (Confirmar sugestão na
+   * lista), `sheet` (painel aberto direto) ou `fila` (painel aberto pela fila do Top 61). Chave = empresa:sku:origem
+   * → 1 linha por SKU, origem e dia. É o sensor do pacote de UX de 2026-11: qual atalho gera decisão de verdade.
+   */
+  | 'reposicao.raio_x_decisao'
+  /**
+   * A ficha de um lead do Radar abriu (RadarDetailSheet). Chave = CNPJ → 1 por titular, CNPJ e dia. O trigger
+   * `private.radar_evento_abertura` copia para `radar_eventos` como 'abriu' COM o cnpj (a tela /radar servida segue
+   * 'abriu' com cnpj NULL). É o que mede quais fichas são abertas — em especial as com selo de vínculo/sucessor.
+   * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
+   */
+  | 'radar.ficha_aberta';
 
 /**
  * Registra um evento decisório no ledger server-side.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { categorizar, classificar, cobertura, sugerirDestino, TOP_N } from '../classificar';
+import { alertaRecompra, categorizar, classificar, cobertura, ehEstoqueIndustrial, sugerirDestino, TOP_N, aplicarInequivoco, ROTULOS_ESPERA, alinharSugestaoAoServidor } from '../classificar';
 import { fato, HOJE } from './fixtures';
 
 describe('categorizar', () => {
@@ -63,7 +63,8 @@ describe('cobertura', () => {
 describe('sugerirDestino', () => {
   it('ordem das regras', () => {
     expect(sugerirDestino(fato({ cadastro_em: '2026-09-01' }), HOJE).destino).toBe('novo_aguarde');
-    expect(sugerirDestino(fato({ ult_entrada: '2026-10-02' }), HOJE).destino).toBe('novo_aguarde');
+    // entrada recente NÃO imuniza (só cadastro novo dá "aguarde"): segue a regra normal → liquidar
+    expect(sugerirDestino(fato({ ult_entrada: '2026-10-02' }), HOJE).destino).toBe('liquidar');
     expect(sugerirDestino(fato({ unidades_venda: ['UN', 'GL'] }), HOJE).destino).toBe('revisar');
     expect(sugerirDestino(fato({ fornecedor: 'RENNER SAYERLACK S/A' }), HOJE).destino).toBe('trocar');
     expect(sugerirDestino(fato({ fornecedor: 'marca: SAYERLACK' }), HOJE).destino).toBe('trocar');
@@ -151,5 +152,78 @@ describe('classificar', () => {
     const r = classificar([fato({ sku_codigo_omie: 7 })], new Map([[7, { categoria: 'uso_consumo' as const, motivo: 'm' }]]), 'oben', HOJE);
     expect(r[0].categoria).toBe('uso_consumo');
     expect(r[0].parado).toBe(false);
+  });
+});
+
+describe('entrada recente em item parado: alerta, não imunidade', () => {
+  it('cadastro novo segue "aguarde"; entrada recente segue a regra normal e ganha alerta', () => {
+    const [i] = classificar([fato({ ult_entrada: '2026-10-02' })], new Map(), 'oben', HOJE);
+    expect(i.destino_sugerido).toBe('liquidar');
+    expect(i.alerta_recompra).toBe('recompra recente de item parado · entrada há 12 dias');
+    const [n] = classificar([fato({ cadastro_em: '2026-09-01', ult_entrada: '2026-10-02' })], new Map(), 'oben', HOJE);
+    expect(n.destino_sugerido).toBe('novo_aguarde');
+  });
+  it('entrada há 90+ dias ou ausente: sem alerta; item que não está parado: sem alerta', () => {
+    expect(alertaRecompra(fato({ ult_entrada: '2026-07-16' }), HOJE)).toBeNull(); // 90 dias
+    expect(alertaRecompra(fato({ ult_entrada: null }), HOJE)).toBeNull();
+    const [vende] = classificar([fato({ no_motor: true, q12: 100, saldo: 10, ult_entrada: '2026-10-02' })], new Map(), 'oben', HOJE);
+    expect(vende.parado).toBe(false);
+    expect(vende.alerta_recompra).toBeNull();
+  });
+});
+
+describe('01/03 (matéria-prima / produto em processo)', () => {
+  it('seguem uso_consumo (fora da reposição), com motivo de estoque industrial', () => {
+    const mp = categorizar(fato({ tipo_produto: '01' }));
+    expect(mp.categoria).toBe('uso_consumo');
+    expect(mp.motivo).toBe('tipo do item 01 no Omie (matéria-prima — estoque industrial)');
+    expect(categorizar(fato({ tipo_produto: '03' })).motivo).toBe('tipo do item 03 no Omie (produto em processo — estoque industrial)');
+    expect(categorizar(fato({ tipo_produto: '07' })).motivo).toBe('tipo do item 07 no Omie (consumido aqui, não vendido)');
+  });
+  it('ehEstoqueIndustrial só para uso_consumo 01/03', () => {
+    expect(ehEstoqueIndustrial({ categoria: 'uso_consumo', tipo_produto: '01' })).toBe(true);
+    expect(ehEstoqueIndustrial({ categoria: 'uso_consumo', tipo_produto: '03' })).toBe(true);
+    expect(ehEstoqueIndustrial({ categoria: 'uso_consumo', tipo_produto: '07' })).toBe(false);
+    expect(ehEstoqueIndustrial({ categoria: 'mercadoria', tipo_produto: '01' })).toBe(false); // marcação manual vence
+  });
+});
+
+describe('aplicarInequivoco (veredito do servidor)', () => {
+  const base = classificar([fato({ sku_codigo_omie: 1, saldo: 100, q12: 0 }), fato({ sku_codigo_omie: 2, saldo: 100, q12: 0 })], new Map(), 'oben', HOJE);
+  it('mapa null (RPC indisponível) deixa tudo null — nunca inequívoco por omissão', () => {
+    expect(aplicarInequivoco(base, null).every((i) => i.inequivoco === null)).toBe(true);
+  });
+  it('aplica veredito e motivos por SKU; SKU fora do mapa fica null', () => {
+    const mapa = new Map([[1, { sku_codigo_omie: 1, inequivoco: false, motivos_espera: ['corante', 'cold_start'], cobertura_dias: null, qtd_liquidavel: null, ultima_entrada: null, revisar_em: null }]]);
+    const r = aplicarInequivoco(base, mapa);
+    expect(r[0].inequivoco).toBe(false);
+    expect(r[0].motivos_espera).toEqual(['corante', 'cold_start']);
+    expect(r[1].inequivoco).toBeNull();
+    expect(ROTULOS_ESPERA.corante).toContain('corante');
+  });
+});
+
+describe('alinharSugestaoAoServidor (bug 5)', () => {
+  // 0 vendas, sem Sayerlack: a regra local sugere liquidar
+  const base = () => classificar([fato({ sku_codigo_omie: 1, q12: 0, fornecedor: 'Forn X', cadastro_em: '2025-01-01' })], new Map(), 'oben', HOJE)[0];
+  it('liquidar sugerido com o servidor dizendo inequívoco: segue liquidar', () => {
+    expect(base().destino_sugerido).toBe('liquidar');
+    const [i] = alinharSugestaoAoServidor([{ ...base(), inequivoco: true }]);
+    expect(i.destino_sugerido).toBe('liquidar');
+  });
+  it('servidor diz que aguarda (entrada recente): vira "revisar" com o motivo — nunca sugere o que o RX004 recusa', () => {
+    const [i] = alinharSugestaoAoServidor([{ ...base(), inequivoco: false, motivos_espera: ['entrada_recente', 'cold_start'] }]);
+    expect(i.destino_sugerido).toBe('revisar');
+    expect(i.motivo_destino).toContain('entrada de compra em 90d, cold-start');
+  });
+  it('veredito indisponível (null): também não sugere liquidar (ausente ≠ elegível)', () => {
+    const [i] = alinharSugestaoAoServidor([base()]);
+    expect(i.inequivoco).toBeNull();
+    expect(i.destino_sugerido).toBe('revisar');
+    expect(i.motivo_destino).toContain('indisponível');
+  });
+  it('outros destinos ficam como estão', () => {
+    const t = classificar([fato({ sku_codigo_omie: 2, q12: 0, fornecedor: 'Sayerlack' })], new Map(), 'oben', HOJE)[0];
+    expect(alinharSugestaoAoServidor([t])[0].destino_sugerido).toBe('trocar');
   });
 });

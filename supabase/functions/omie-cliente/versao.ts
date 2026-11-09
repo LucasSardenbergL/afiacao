@@ -38,8 +38,15 @@ export const respostaSonda = criarRespostaSonda("omie-cliente");
  * `v1.1-paginacao-eof-e-cursor` nomeia os dois fixes que esta fatia carrega até a edge: EOF por
  * página VAZIA (não mais página curta, #1889) e cursor comparado à PRIMEIRA linha da página
  * (#1901). Nenhum bundle anterior a esta fatia pode responder esta string.
+ *
+ * `v1.6-import-no-servidor` (2026-11-01): ação `continuar_import_clientes` (cron + lease da
+ * `clientes_import_rodada`) e `sync_all_clients` direto recusado com 410.
+ *
+ * `v1.7-perfil-placeholder-com-origem` (2026-11-05, C7 do plano v7): o profile que nasce com o
+ * placeholder (import e `criar_perfil_local`) sai com `prospect_source = 'omie_import'` — fora da
+ * fila de aprovações e do KPI da home. O profile real reaproveitado por documento não muda.
  */
-export const VERSAO = "v1.3-cnpj-mascara-exata";
+export const VERSAO = "v1.7-perfil-placeholder-com-origem";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

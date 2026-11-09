@@ -34,12 +34,12 @@ describe('RadarLinha — selos de lote', () => {
   it('inédito do lote vigente ganha o selo "inédito"', () => {
     renderLinha(empresa({ primeira_vista_em: '2026-10-19T16:35:00+00:00' }), LOTE);
     expect(screen.getByText(/^inédito$/i)).toBeTruthy();
-    expect(screen.queryByText(/saiu do dump/i)).toBeNull();
+    expect(screen.queryByText(/última presença/i)).toBeNull();
   });
 
-  it('quem saiu do dump ganha "saiu do dump em mai/2026" — sem dizer motivo', () => {
+  it('quem saiu do dump ganha "última presença: mai/2026 · ausente no lote atual" — sem dizer motivo', () => {
     renderLinha(empresa({ ultimo_lote: '2026-05' }), LOTE);
-    expect(screen.getByText(/saiu do dump em mai\/2026/i)).toBeTruthy();
+    expect(screen.getByText(/última presença: mai\/2026 · ausente no lote atual/i)).toBeTruthy();
     expect(screen.queryByText(/baix/i), 'fabricou motivo (baixa é outra entrega)').toBeNull();
     expect(screen.queryByText(/^inédito$/i)).toBeNull();
   });
@@ -47,13 +47,13 @@ describe('RadarLinha — selos de lote', () => {
   it('empresa comum do lote vigente: nenhum selo de lote', () => {
     renderLinha(empresa({}), LOTE);
     expect(screen.queryByText(/^inédito$/i)).toBeNull();
-    expect(screen.queryByText(/saiu do dump/i)).toBeNull();
+    expect(screen.queryByText(/última presença/i)).toBeNull();
   });
 
   it('sem lote vigente: não fabrica selo', () => {
     renderLinha(empresa({ ultimo_lote: '2026-05', primeira_vista_em: '2026-10-19T16:35:00+00:00' }), null);
     expect(screen.queryByText(/^inédito$/i)).toBeNull();
-    expect(screen.queryByText(/saiu do dump/i)).toBeNull();
+    expect(screen.queryByText(/última presença/i)).toBeNull();
   });
 });
 
@@ -83,10 +83,18 @@ describe('RadarLinha — selo "sugerido" e motivos do score (bloco 5)', () => {
     expect(screen.getByText(/CNAE tier 1 \(\+25\)/)).toBeTruthy();
   });
 
-  it('sem `mostrarMotivos`, os motivos ficam só no title do badge', () => {
+  it('sem `mostrarMotivos`, só o 1º motivo aparece como texto (B3: o title é invisível no toque)', () => {
     renderLinha(sugerido(), LOTE, false);
-    expect(screen.queryByText(/CNAE tier 1 \(\+25\)/)).toBeNull();
+    expect(screen.getByTestId('radar-score-motivos').textContent).toBe('CNAE tier 1 (+25)');
+    expect(screen.queryByText(/capital ≥ 1 mi/)).toBeNull();
     expect(screen.getByTestId('radar-score').getAttribute('title')).toMatch(/CNAE tier 1/);
+  });
+
+  it('o nome fica numa linha própria, fora da fila de selos (B3)', () => {
+    renderLinha(sugerido(), LOTE, false);
+    const nome = screen.getByText(/^sugerido/i).closest('button')?.firstElementChild;
+    expect(nome?.textContent).not.toMatch(/sugerido/);
+    expect(nome?.className).toMatch(/truncate/);
   });
 });
 
@@ -148,5 +156,55 @@ describe('RadarLinha — selo da amostra de controle', () => {
   it('lead fora da amostra: sem selo', () => {
     renderLinha(empresa({}), LOTE);
     expect(screen.queryByTestId('selo-amostra')).toBeNull();
+  });
+});
+
+describe('RadarLinha — selo de vínculo com cliente (possível sucessor)', () => {
+  const linha = (props: Partial<Parameters<typeof RadarLinha>[0]>) =>
+    render(<RadarLinha empresa={empresa({})} hojeISO="2026-10-20" selecionada={false} onSelecionar={() => {}} onAbrir={() => {}} lote={LOTE} {...props} />);
+
+  it('vínculo com cliente baixado → chip "possível sucessor", com o cliente e a pista no título', () => {
+    linha({ vinculoEstado: 'ok', vinculo: { forca: 'forte', clientes: 1, nomes: ['C1 ANTIGA LTDA'], situacoes: ['08'] } });
+    const chip = screen.getByTestId('selo-vinculo-sucessor');
+    expect(chip.textContent).toBe('possível sucessor');
+    expect(chip.getAttribute('title')).toMatch(/^Possível sucessor de C1 ANTIGA LTDA \(baixada na Receita\)/);
+  });
+
+  it('vínculo com cliente ativo → chip "possível vínculo"', () => {
+    linha({ vinculoEstado: 'ok', vinculo: { forca: 'media', clientes: 1, nomes: ['C3 LTDA'], situacoes: ['02'] } });
+    expect(screen.getByTestId('selo-vinculo-vinculo').textContent).toBe('possível vínculo');
+  });
+
+  it('página lida sem vínculo → sem chip', () => {
+    linha({ vinculoEstado: 'ok', vinculo: null });
+    expect(screen.queryByTestId(/^selo-vinculo-/)).toBeNull();
+  });
+
+  it('leitura falhou → "vínculo?", não some como se fosse cliente novo', () => {
+    linha({ vinculoEstado: 'falhou', vinculo: null });
+    expect(screen.getByTestId('selo-vinculo-nao-verificado').textContent).toBe('vínculo?');
+  });
+
+  it('sem a prop (outros usos da linha) → sem chip', () => {
+    renderLinha(empresa({}), LOTE);
+    expect(screen.queryByTestId(/^selo-vinculo-/)).toBeNull();
+  });
+});
+
+// Pacote I, item 2: na MESMA linha, o vínculo falhado dizia "vínculo?" e os irmãos falhados sumiam calados (pareciam
+// "não é filial de cliente"). Falha parcial agora é dita nas duas leituras.
+describe('RadarLinha — irmãos (filial de cliente) com leitura falhada', () => {
+  const linha = (props: Partial<Parameters<typeof RadarLinha>[0]>) =>
+    render(<RadarLinha empresa={empresa({})} hojeISO="2026-10-20" selecionada={false} onSelecionar={() => {}} onAbrir={() => {}} lote={LOTE} {...props} />);
+
+  it('página dos irmãos falhou e a dos vínculos não → "filial?" ao lado do vínculo lido', () => {
+    linha({ irmaos: null, irmaosEstado: 'falhou', vinculoEstado: 'ok', vinculo: null });
+    expect(screen.getByTestId('selo-filial-nao-verificado').textContent).toBe('filial?');
+    expect(screen.queryByTestId(/^selo-vinculo-/)).toBeNull();
+  });
+
+  it('página lida sem irmãos → sem selo (zero legítimo)', () => {
+    linha({ irmaos: null, irmaosEstado: 'ok' });
+    expect(screen.queryByTestId(/^selo-filial-/)).toBeNull();
   });
 });

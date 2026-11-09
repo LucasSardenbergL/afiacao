@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -9,6 +9,7 @@ import { depsCadastroSupabase } from '@/queries/useRadarAcoesLead';
 import { cadastrarEmpresaNoOmie, DivergenciaCadastro, ehThrottlingOmie, FalhaCadastro } from '@/lib/radar/cadastro-omie';
 import { executarEmLote, resumirLote, CONCORRENCIA_LOTE, TETO_LOTE, type ResultadoItem } from '@/lib/radar/lote';
 import { sqlstateDe } from '@/lib/radar/conflito-cadastro';
+import { invalidarRadar } from '@/lib/radar/invalidar-cache';
 import {
   chaveLotePersistido,
   divergentesNaoSincronizados,
@@ -27,8 +28,8 @@ import {
 // e entrar de novo não pode disparar um 2º runner sobre o mesmo lote — P1 do review Codex).
 const execucoesEmVoo = new Set<string>();
 
-function gravarStorage(uid: string | null, lote: LotePersistido | null) {
-  if (!uid || typeof localStorage === 'undefined') return;
+function gravarStorage(uid: string, lote: LotePersistido | null) {
+  if (typeof localStorage === 'undefined') return;
   try {
     const k = chaveLotePersistido(uid);
     if (!lote || loteConcluido(lote)) localStorage.removeItem(k);
@@ -36,6 +37,60 @@ function gravarStorage(uid: string | null, lote: LotePersistido | null) {
   } catch {
     /* quota cheia: o estado em memória continua valendo */
   }
+}
+
+function lerStorage(uid: string): LotePersistido | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const salvo = parsearLote(localStorage.getItem(chaveLotePersistido(uid)));
+    return salvo && !loteConcluido(salvo) ? salvo : null;
+  } catch {
+    return null; // storage indisponível: segue sem retomada
+  }
+}
+
+/**
+ * Estado do lote POR USUÁRIO, fora do React e OBSERVÁVEL (pacote A3). Antes cada instância do hook tinha o
+ * próprio `useState`: o runner iniciado numa instância atualizava só ELA, e quem saía e voltava à tela durante
+ * um lote ganhava uma instância nova presa em `aguardando`/`rodando` para sempre (o localStorage já dizia
+ * ok/nao_iniciado) — a retomada ficava bloqueada. Agora o runner escreve aqui e TODA instância montada lê daqui.
+ */
+interface EstadoLoteUsuario {
+  lote: LotePersistido | null;
+  rodando: boolean;
+  descartando: boolean;
+}
+const ESTADO_VAZIO: EstadoLoteUsuario = { lote: null, rodando: false, descartando: false };
+const estados = new Map<string, EstadoLoteUsuario>();
+const ouvintes = new Map<string, Set<() => void>>();
+/** O controlador do runner em voo, por usuário: o "Parar" de uma instância remontada alcança o runner antigo. */
+const controladores = new Map<string, AbortController>();
+
+function estadoDe(uid: string): EstadoLoteUsuario {
+  let e = estados.get(uid);
+  if (!e) {
+    e = { lote: lerStorage(uid), rodando: execucoesEmVoo.has(uid), descartando: false };
+    estados.set(uid, e);
+  }
+  return e;
+}
+
+/** Escrita SÍNCRONA (o lote persiste a cada item, mesmo com a página desmontada) + aviso a quem observa. */
+function escreverEstado(uid: string, patch: Partial<EstadoLoteUsuario>) {
+  const novo = { ...estadoDe(uid), ...patch };
+  estados.set(uid, novo);
+  if ('lote' in patch) gravarStorage(uid, novo.lote);
+  ouvintes.get(uid)?.forEach((f) => f());
+}
+
+function assinar(uid: string, f: () => void) {
+  let s = ouvintes.get(uid);
+  if (!s) { s = new Set(); ouvintes.set(uid, s); }
+  // 1º observador sem runner em voo: relê o localStorage (o "carrega o lote persistido" de cada montagem). Com o
+  // runner em voo a memória É a verdade mais nova — reler o storage aqui não mudaria nada, mas a regra fica explícita.
+  if (s.size === 0 && !execucoesEmVoo.has(uid)) estados.delete(uid);
+  s.add(f);
+  return () => { s?.delete(f); };
 }
 
 /**
@@ -56,39 +111,24 @@ export function useRadarLoteOmie() {
   const uid = user?.id ?? null;
   const qc = useQueryClient();
 
-  const [lote, setLote] = useState<LotePersistido | null>(null);
-  const loteRef = useRef<LotePersistido | null>(null);
-  const [rodando, setRodando] = useState(false);
-  const [descartando, setDescartando] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const subscribe = useCallback((f: () => void) => (uid ? assinar(uid, f) : () => {}), [uid]);
+  const leitura = useCallback(() => (uid ? estadoDe(uid) : ESTADO_VAZIO), [uid]);
+  const { lote, rodando, descartando } = useSyncExternalStore(subscribe, leitura, leitura);
   const snapshots = useRef<Map<string, RadarEmpresa>>(new Map());
 
+  const loteAtual = useCallback(() => (uid ? estadoDe(uid).lote : null), [uid]);
   const gravar = useCallback((novo: LotePersistido | null) => {
-    loteRef.current = novo;
-    setLote(novo);
-    gravarStorage(uid, novo);
+    if (uid) escreverEstado(uid, { lote: novo });
   }, [uid]);
 
-  // Carrega o lote persistido 1× por usuário.
-  useEffect(() => {
-    if (!uid || typeof localStorage === 'undefined') return;
-    try {
-      const salvo = parsearLote(localStorage.getItem(chaveLotePersistido(uid)));
-      if (salvo && !loteConcluido(salvo)) { loteRef.current = salvo; setLote(salvo); }
-    } catch {
-      /* storage indisponível: segue sem retomada */
-    }
-    setRodando(execucoesEmVoo.has(uid));
-  }, [uid]);
-
-  // Desmontar a página PARA novos disparos (o item em voo termina e persiste pelo ref).
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // Desmontar a página PARA novos disparos (o item em voo termina e persiste pelo store).
+  useEffect(() => () => { if (uid) controladores.get(uid)?.abort(); }, [uid]);
 
   const atualizarItem = useCallback((cnpj: string, estado: EstadoItemLote) => {
-    const atual = loteRef.current;
+    const atual = loteAtual();
     if (!atual) return;
     gravar({ ...atual, itens: atual.itens.map((i) => (i.cnpj === cnpj ? { ...i, estado } : i)) });
-  }, [gravar]);
+  }, [loteAtual, gravar]);
 
   /** Lê do Radar as empresas sem snapshot. Devolve os CNPJs que NÃO conseguiu obter (e por quê). */
   const garantirSnapshots = useCallback(async (cnpjs: string[]): Promise<{ cnpj: string; erro: string }[]> => {
@@ -113,9 +153,9 @@ export function useRadarLoteOmie() {
     async (itens: ItemLote[], retomada: boolean) => {
       if (!uid || itens.length === 0 || execucoesEmVoo.has(uid)) return;
       execucoesEmVoo.add(uid);
-      setRodando(true);
       const ac = new AbortController();
-      abortRef.current = ac;
+      controladores.set(uid, ac);
+      escreverEstado(uid, { rodando: true });
 
       // Quem precisa do snapshot: todo item que vai passar pela edge (sem código conhecido).
       const precisaSnapshot = (i: ItemLote) => !(i.estado.status === 'falha' && i.estado.etapa === 'radar' && i.estado.codigo);
@@ -168,23 +208,21 @@ export function useRadarLoteOmie() {
       track('radar.lote_cadastrado_omie', {
         total: itens.length, criados: resumo.criados, ja_existiam: resumo.ja_existiam,
         falhas: resumo.falhas + indisponiveis.size,
-        divergentes_no_lote: loteRef.current ? itensDivergentes(loteRef.current).length : 0, nao_iniciados: resumo.cancelados, retomada,
+        divergentes_no_lote: loteAtual() ? itensDivergentes(loteAtual() as LotePersistido).length : 0, nao_iniciados: resumo.cancelados, retomada,
         parou_por_throttling: resultados.some((r) => r.status === 'falha' && ehThrottlingOmie(new Error(r.erro))),
       });
 
       // Só agora o cache: a lista é paginada por offset — reiniciar da 1ª página evita pular
-      // empresas quando as cadastradas saem da fila. KPIs/ranking só invalidam.
-      await qc.resetQueries({ queryKey: ['radar', 'lista'] });
-      qc.invalidateQueries({ queryKey: ['radar', 'kpis'] });
-      qc.invalidateQueries({ queryKey: ['radar', 'sugeridos'] }); // os cadastrados saem do "sugeridos" (Codex 2026-10-20)
-      qc.invalidateQueries({ queryKey: ['radar', 'contagem-municipios'] });
-      qc.invalidateQueries({ queryKey: ['radar', 'contatos'] });
-      qc.invalidateQueries({ queryKey: ['radar', 'conflitos-cadastro'] });
-      abortRef.current = null;
-      execucoesEmVoo.delete(uid);
-      setRodando(false);
+      // empresas quando as cadastradas saem da fila. O resto (amostra, KPIs, sugeridos, mapa…) só invalida.
+      try {
+        await invalidarRadar(qc, { reiniciarLista: true });
+      } finally {
+        if (controladores.get(uid) === ac) controladores.delete(uid);
+        execucoesEmVoo.delete(uid);
+        escreverEstado(uid, { rodando: false });
+      }
     },
-    [uid, garantirSnapshots, atualizarItem, qc],
+    [uid, garantirSnapshots, atualizarItem, loteAtual, qc],
   );
 
   // Conflito de vínculo também segura o lote (não é retentável, mas só sai por "Esquecer lote").
@@ -212,25 +250,25 @@ export function useRadarLoteOmie() {
 
   /** Retoma o que não está ok nem em conflito (aguardando, falha, não iniciado) — sempre relendo o vínculo. */
   const retomar = useCallback(() => {
-    const atual = loteRef.current;
+    const atual = loteAtual();
     if (!atual || rodando || descartando) return;
     void executar(itensPendentes(atual), true);
-  }, [rodando, descartando, executar]);
+  }, [rodando, descartando, loteAtual, executar]);
 
   /** Para novos disparos; o item em voo termina (não há como desfazer a chamada ao Omie). */
-  const parar = useCallback(() => abortRef.current?.abort(), []);
+  const parar = useCallback(() => { if (uid) controladores.get(uid)?.abort(); }, [uid]);
 
   /**
    * Esquece o lote — mas antes envia ao servidor os conflitos que só esta aba conhece. Se algum não subir, o lote
    * FICA (devolve as falhas): apagá-lo perderia a única evidência. Resolver um conflito é na ficha, não aqui.
    */
   const esquecer = useCallback(async (): Promise<{ esquecido: boolean; falhas: { cnpj: string; erro: string }[] }> => {
-    const atual = loteRef.current;
+    const atual = loteAtual();
     // A MESMA trava do runner (por usuário, fora do React) cobre o descarte INTEIRO: sem ela, uma retomada no meio
     // da sincronização registraria outro conflito local que o `gravar(null)` do fim apagaria (Codex, código P1).
     if (!uid || rodando || !atual || execucoesEmVoo.has(uid)) return { esquecido: false, falhas: [] };
     execucoesEmVoo.add(uid);
-    setDescartando(true);
+    escreverEstado(uid, { descartando: true });
     try {
       if (divergentesNaoSincronizados(atual).length > 0) {
         const r = await sincronizarDivergentes(atual, depsCadastroSupabase.registrarConflito, (e) => sqlstateDe(e) === 'RD003');
@@ -245,9 +283,9 @@ export function useRadarLoteOmie() {
       return { esquecido: true, falhas: [] };
     } finally {
       execucoesEmVoo.delete(uid);
-      setDescartando(false);
+      escreverEstado(uid, { descartando: false });
     }
-  }, [uid, rodando, gravar, qc]);
+  }, [uid, rodando, loteAtual, gravar, qc]);
 
   const progresso = useMemo(() => {
     if (!lote) return null;
@@ -282,9 +320,8 @@ export function useRadarAcaoEmLote() {
         const resultados = await executarEmLote(cnpjs, fn, { concorrencia: 2 });
         const falhas = resultados.filter((r) => r.status === 'falha') as Array<{ item: string; status: 'falha'; erro: string }>;
         track(evento, { total: cnpjs.length, ok: resultados.length - falhas.length, falhas: falhas.length });
-        await qc.resetQueries({ queryKey: ['radar', 'lista'] });
-        qc.invalidateQueries({ queryKey: ['radar', 'kpis'] });
-        qc.invalidateQueries({ queryKey: ['radar', 'contagem-municipios'] });
+        // Descarte em lote: a amostra entra na invalidação (o lead de controle descartado saía da fila só no F5).
+        await invalidarRadar(qc, { reiniciarLista: true });
         return { ok: resultados.length - falhas.length, falhas };
       } finally {
         setRodando(false);

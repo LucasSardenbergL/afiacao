@@ -24,7 +24,8 @@ export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithr
 # major é a esperada — `-x` sozinho aceita um initdb de outra versão. Fail-closed: PG ausente é
 # ERRO, nunca skip; no macOS o helper também contorna o keg-only do brew. Hardcodar /opt/homebrew
 # é o que mantinha a prova FORA do CI (runner ubuntu) — e portabilidade é pré-requisito para ela
-# entrar em `db/nucleo-ci.txt`, o caminho obrigatório do merge.
+# entrar no núcleo, o caminho obrigatório do merge: um fragmento PRÓPRIO `db/nucleo-ci.d/<prova>.txt`
+# (nunca no fim do `db/nucleo-ci.txt` — conflitava com todo PR irmão).
 # shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 

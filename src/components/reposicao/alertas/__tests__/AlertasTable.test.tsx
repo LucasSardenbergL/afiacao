@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { AlertasTable } from "../AlertasTable";
 import type { EventoOutlier } from "../types";
 
@@ -64,5 +65,34 @@ describe("AlertasTable", () => {
     const navButtons = screen.getAllByRole("button").filter(b => b.querySelector("svg"));
     fireEvent.click(navButtons[navButtons.length - 1]);
     expect(setPage).toHaveBeenCalled();
+  });
+
+  it("pendente mostra a idade desde a detecção", () => {
+    render(<AlertasTable {...baseProps()} />);
+    expect(screen.getByText(/^há \d+ d$/)).toBeTruthy();
+  });
+
+  it("decidido não mostra idade (o relógio parou)", () => {
+    render(<AlertasTable {...baseProps({ lista: { rows: [{ ...evt, status: "aceito" }], total: 1 } })} />);
+    expect(screen.queryByText(/^há \d+ d$/)).toBeNull();
+  });
+
+  it("mensagem de vazio vem de fora (fila diz onde está a venda atípica)", () => {
+    render(<AlertasTable {...baseProps({ lista: { rows: [], total: 0 }, mensagemVazia: "Nada pede decisão" })} />);
+    expect(screen.getByText("Nada pede decisão")).toBeTruthy();
+  });
+
+  it("reativado pendente → link para Religar na Revisão, sem checkbox habilitado", () => {
+    const reat = { ...evt, id: 9, tipo: "sku_reativado_omie", severidade: "info" };
+    render(
+      <MemoryRouter>
+        <AlertasTable {...baseProps({ lista: { rows: [reat], total: 1 } })} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("link", { name: "Religar…" }).getAttribute("href"))
+      .toBe("/admin/reposicao/sessao/parametros?tab=ajuste");
+    expect(screen.queryByRole("button", { name: "Detalhes" })).toBeNull();
+    expect(screen.getByText("Reativado no Omie")).toBeTruthy();
+    expect((screen.getAllByRole("checkbox")[1] as HTMLButtonElement).disabled).toBe(true);
   });
 });

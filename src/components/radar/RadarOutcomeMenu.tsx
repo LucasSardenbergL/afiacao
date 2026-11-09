@@ -20,17 +20,17 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import { track } from '@/lib/analytics';
+import { diaMesData, diasAte, hojeBRT, opcoesRetorno, retornoPadrao, retornoValido, RETORNO_MAX_DIAS, somarDias } from '@/lib/radar/retorno';
 import {
   useRegistrarContatoRadar,
   useDesfazerContatoRadar,
 } from '@/queries/useRegistrarContatoRadar';
-import { useRadarCadastrarOmie, lerLeadParaCadastro } from '@/queries/useRadarAcoesLead';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ACOES_CONTATO, type AcaoContato } from '@/lib/radar/ui-helpers';
-import { cadastravelNoOmie } from '@/lib/radar/sugeridos';
-import { DivergenciaCadastro, ehSemConfirmacaoDoServidor, FalhaCadastro, type OpcoesCadastro } from '@/lib/radar/cadastro-omie';
-import { mensagemDeErro } from '@/lib/erro-mensagem';
-import { track } from '@/lib/analytics';
+import { sqlstateDe } from '@/lib/radar/conflito-cadastro';
+import { textoPosseDoContato } from '@/lib/radar/atendimento';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
 const ICON_MAP = {
@@ -40,6 +40,17 @@ const ICON_MAP = {
   ban: Ban,
 } as const;
 
+/** O que a ficha precisa saber depois do registro (pacote G4): avança e limpa a nota só com ela gravada. */
+export interface RegistroInfo {
+  /** O servidor reconheceu o mesmo registro de < 2 min e não gravou nada novo. */
+  deduped: boolean;
+  /** A nota enviada está gravada (registro novo, ou a mesma nota já estava). Banco anterior ao pacote G: dedupe com
+   *  nota = não gravada (a regra de antes). */
+  notaGravada: boolean;
+  /** O texto exato que foi enviado — a ficha só apaga o rascunho se o campo ainda tem ESTE texto. */
+  notaEnviada: string | undefined;
+}
+
 const LABEL_OK: Record<AcaoContato, string> = {
   em_conversa: 'Marcado: em conversa',
   contatado_sem_resposta: 'Marcado: não atendeu',
@@ -47,55 +58,47 @@ const LABEL_OK: Record<AcaoContato, string> = {
   descartado: 'Lead descartado',
 };
 
-type ResultadoPosSinal = 'sucesso' | 'ja_existia' | 'indeterminado' | 'erro' | 'lead_mudou' | 'divergente';
-
-/** A oferta aberta: o lead (SNAPSHOT) e o id do toast "Marcado: em conversa" (para tirar o Desfazer). */
-/** `id` correlaciona exposição → resposta → resultado(s) e retries nos sensores (sem PII). */
-interface Oferta { empresa: RadarEmpresa; toastId: string | number | null; id: string }
-const novoIdOferta = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-
 /**
- * Menu "Registrar contato" do lead. Com `empresa` em mãos (ficha), marcar `em_conversa` num lead
- * cadastrável OFERECE "Cadastrar no Omie (Oben) agora" — bloco 5: qualificação + aprovação em 1
- * clique, nunca cadastro silencioso. Sem `empresa` (card da rota) não há oferta: o payload do
- * cadastro precisa do endereço/telefone, não só do CNPJ.
+ * Menu "Registrar contato" do lead. Pacote B6: marcar `em_conversa` NÃO abre mais a janela "Cadastrar no Omie
+ * agora?" — ela interrompia toda conversa registrada. O cadastro virou ação CONTEXTUAL da ficha (RadarAcoesLead),
+ * com a mesma confirmação manual e o mesmo tratamento de recuperação; quem decide avançar ou ficar na ficha
+ * depois do registro é quem chama (`onRegistrado`).
  *
- * Parecer Codex (desenho, 2026-10-20) incorporado:
- *  · a oferta é consumida UMA vez, por ref síncrona — o clique em "Cadastrar agora" e o
- *    `onOpenChange(false)` do Radix chegam no mesmo tick e os dois viam `oferta` preenchida;
- *  · registro DEDUPLICADO (2 min) não oferece: o 1º clique já ofereceu e o status gravado pode
- *    não ser mais `em_conversa` (em_conversa → descartado → em_conversa em 2 min);
- *  · antes do efeito o lead é RELIDO (`lerLeadParaCadastro`): o snapshot identifica o alvo, não
- *    prova elegibilidade — um lote em outra aba pode tê-lo cadastrado, ou ele foi descartado;
- *  · aceitar o cadastro tira o "Desfazer" do toast do contato: desfazer o contato não desfaz o
- *    cadastro no Omie, e o rótulo mentiria;
- *  · falha na gravação do Radar com código Omie confirmado e resposta INDETERMINADA ganham
- *    "Tentar de novo" com `codigoConhecido`/`retentativa` de verdade (a lib relê o vínculo antes
- *    de tocar o Omie) — não um "repita pela ficha" que não fazia isso.
+ * Pacote B4: `nota` (opcional, digitada na ficha) vai junto do registro — quem atendeu, o que precisa, próximo
+ * passo. No descarte, o motivo do diálogo vence; sem motivo, a nota vale como motivo.
+ *
+ * Pacote G1: "Em conversa" pede a data de retorno (sugestão marcada, de hoje a 60 dias); o servidor devolve a data
+ * efetiva também do "não atendeu" (3/7/30 dias) e o toast a diz. G4: a ficha só apaga a nota com `notaGravada`.
+ *
+ * Resposta tardia não age sobre OUTRA ficha (Codex, código 2026-10-20): a ficha avança ou fecha enquanto a RPC
+ * está em voo — o contato fica gravado (o toast diz), mas o `onRegistrado` não dispara sobre o lead errado.
  */
 export function RadarOutcomeMenu({
   cnpj,
   empresa,
+  nota,
   onRegistrado,
+  onDesfeito,
 }: {
   cnpj: string;
-  /** Dados do lead — habilita a oferta pós-sinal. */
+  /** Dados do lead — "Virou cliente" só aparece habilitado com o vínculo Omie. */
   empresa?: RadarEmpresa;
-  onRegistrado?: (acao: AcaoContato) => void;
+  /** Nota opcional do contato (B4). */
+  nota?: string;
+  /** Depois do registro: `notaGravada` diz se a ficha pode apagar o texto e seguir (pacote G4). */
+  onRegistrado?: (acao: AcaoContato, info: RegistroInfo) => void;
+  /** O contato foi desfeito (o status voltou): quem guardou estado otimista sobre ele o descarta. */
+  onDesfeito?: () => void;
 }) {
   const reg = useRegistrarContatoRadar();
   const undo = useDesfazerContatoRadar();
-  const cadastrar = useRadarCadastrarOmie();
   const { isImpersonating } = useImpersonation();
   const [confirmDescartar, setConfirmDescartar] = useState(false);
   const [motivo, setMotivo] = useState('');
-  // State abre/fecha o diálogo; a REF é a verdade de "ainda há oferta a responder" (síncrona).
-  const [ofertaAberta, setOfertaAberta] = useState<Oferta | null>(null);
-  const ofertaRef = useRef<Oferta | null>(null);
-  const [cadastrando, setCadastrando] = useState(false);
-  // Resposta tardia não pode agir sobre OUTRA ficha (Codex, código 2026-10-20): a ficha avança
-  // (`Próximo`) ou fecha enquanto a RPC/cadastro está em voo; sem esta guarda, a oferta de A
-  // aparecia sobre B e "Agora não" avançava B sem contato.
+  // G1: o passo "Quando retomar?" do "em conversa". A sugestão vem marcada (a mesma data que o servidor usaria).
+  const [pedirRetorno, setPedirRetorno] = useState(false);
+  const [hoje, setHoje] = useState(() => hojeBRT());
+  const [retorno, setRetorno] = useState(() => retornoPadrao(hojeBRT()));
   const cnpjAtualRef = useRef(cnpj);
   cnpjAtualRef.current = cnpj;
   const montadoRef = useRef(true);
@@ -105,130 +108,74 @@ export function RadarOutcomeMenu({
   }, []);
   const aindaNoAlvo = (alvo: string) => montadoRef.current && cnpjAtualRef.current === alvo;
 
-  const registrar = async (acao: AcaoContato, nota?: string) => {
-    const alvo = cnpj;
+  // O servidor só restaura o status quando o contato desfeito ainda é o DONO dele (20261031111000). Removido sem
+  // restaurar não é "desfeito": o lead mudou depois (outro vendedor, o cadastro, a RFB) e o status atual ficou.
+  const desfazer = async (id: string, alvo: string) => {
     try {
-      const r = await reg.mutateAsync({ cnpj: alvo, acao, nota });
-      let toastId: string | number | null = null;
-      if (!r.deduped) {
-        toastId = toast.success(LABEL_OK[acao], {
-          action: {
-            label: 'Desfazer',
-            onClick: async () => {
-              const u = await undo.mutateAsync(r.id);
-              toast[u.deleted ? 'success' : 'error'](
-                u.deleted ? 'Desfeito' : 'Não foi possível desfazer',
-              );
-            },
-          },
+      const u = await undo.mutateAsync(id);
+      if (u.deleted && aindaNoAlvo(alvo)) onDesfeito?.();
+      if (!u.deleted) toast.error('Não foi possível desfazer');
+      else if (u.statusRestaurado === false) {
+        toast.info('Registro removido; status preservado', {
+          description: 'O lead mudou depois deste registro, e o status atual foi mantido.',
         });
-      }
-      // Sinal comercial num lead cadastrável: oferece o cadastro e ADIA o avanço da ficha até o
-      // gestor responder. Registro que falhou nunca chega aqui; deduplicado não reoferece.
-      // A ficha mudou de lead (ou fechou) durante o registro: o contato ficou gravado e o toast
-      // diz isso, mas nada de oferta nem de avanço — seriam sobre o lead errado.
-      if (!aindaNoAlvo(alvo)) return;
-      if (acao === 'em_conversa' && !r.deduped && empresa && empresa.cnpj === alvo && cadastravelNoOmie(empresa).ok) {
-        const oferta: Oferta = { empresa, toastId, id: novoIdOferta() };
-        ofertaRef.current = oferta;
-        setOfertaAberta(oferta);
-        track('radar.cadastro_pos_sinal_exibida', { oferta_id: oferta.id, origem: 'ficha' });
-      } else {
-        onRegistrado?.(acao);
-      }
+      } else if (u.posseDesfeita) toast.success('Desfeito', { description: 'O lead voltou a ficar livre.' });
+      else toast.success('Desfeito');
     } catch {
-      toast.error('Não foi possível registrar');
+      toast.error('Não foi possível desfazer');
     }
   };
 
-  const executarCadastro = async (alvo: RadarEmpresa, ofertaId: string, opcoes?: OpcoesCadastro) => {
-    const registrarResultado = (resultado: ResultadoPosSinal) =>
-      track('radar.cadastro_pos_sinal_resultado', { resultado, oferta_id: ofertaId, retomada: Boolean(opcoes), origem: 'ficha' });
-    setCadastrando(true);
+  const abrirRetorno = () => {
+    const h = hojeBRT();
+    setHoje(h);
+    setRetorno(retornoPadrao(h));
+    setPedirRetorno(true);
+  };
+
+  const registrar = async (acao: AcaoContato, texto?: string, dataRetorno?: string) => {
+    const alvo = cnpj;
+    const notaFinal = texto?.trim() || undefined;
     try {
-      // A releitura barra um cadastro NOVO de quem mudou. Uma RETOMADA (código já confirmado pelo
-      // Omie, ou resposta indeterminada) não cria nada novo: a lib relê o vínculo antes de tocar o
-      // Omie e reconcilia — barrar aqui travaria a recuperação justo quando o recruzamento já
-      // marcou `ja_cliente` ou a RPC gravou e só perdeu a resposta (Codex, código 2026-10-20).
-      const atual = opcoes ? null : await lerLeadParaCadastro(alvo.cnpj);
-      const elegivel = opcoes != null || (atual != null && atual.prospeccao_status === 'em_conversa' && cadastravelNoOmie(atual).ok);
-      if (!elegivel) {
-        registrarResultado('lead_mudou');
-        toast.info('Não cadastrei: o lead mudou desde o sinal', {
-          description: atual == null ? 'Não encontrei mais esta empresa no Radar.'
-            : atual.ja_cliente || atual.omie_codigo_cliente ? 'Já consta como cliente / vinculado ao Omie.'
-            : atual.prospeccao_status !== 'em_conversa' ? `Status atual: ${atual.prospeccao_status ?? '—'} (não é mais "em conversa").`
-            : 'Situação cadastral na RFB não está ativa.',
+      const r = await reg.mutateAsync({ cnpj: alvo, acao, nota: notaFinal, retorno: dataRetorno });
+      // Banco anterior ao pacote G não diz: a dedupe não gravava nada, então com nota ela NÃO foi gravada.
+      const notaGravada = r.notaGravada ?? !(r.deduped && notaFinal);
+      const volta = r.retornoEm ? ` · volta para você em ${diaMesData(r.retornoEm)}` : '';
+      if (!r.deduped) {
+        // A conversão confirmada não se desfaz (RD006): o cliente continua no Omie.
+        if (acao === 'virou_cliente') toast.success(LABEL_OK[acao]);
+        else toast.success(LABEL_OK[acao] + volta, {
+          // Pacote L: o "em conversa"/"não atendeu" também dá a posse — e a tela DIZ o que aconteceu com ela.
+          description: textoPosseDoContato(r.posse) ?? undefined,
+          action: { label: 'Desfazer', onClick: () => void desfazer(r.id, alvo) },
         });
-        return;
       }
-      const r = await cadastrar.mutateAsync({ empresa: alvo, opcoes });
-      registrarResultado(r.jaExistia ? 'ja_existia' : 'sucesso');
-      toast.success(
-        r.jaExistia ? `Já era cliente no Omie (Oben) — reconciliado · cód. ${r.codigo}` : `Cadastrado no Omie (Oben) · cód. ${r.codigo}`,
-        { description: alvo.razao_social ?? alvo.cnpj },
-      );
+      if (!notaGravada && notaFinal) {
+        // Nada se perde: a ficha não apaga o texto nem avança (Codex, código 2026-11-06, P2; pacote G4).
+        toast.warning('A nota não foi gravada', {
+          description: 'Este desfecho já tinha sido registrado agora há pouco. A nota continua no campo.',
+        });
+      }
+      if (aindaNoAlvo(alvo)) onRegistrado?.(acao, { deduped: r.deduped, notaGravada, notaEnviada: notaFinal });
     } catch (e) {
-      const msg = mensagemDeErro(e) ?? 'erro desconhecido';
-      if (/OMIE_RESPOSTA_INDETERMINADA/.test(msg)) {
-        // INDETERMINADO ≠ erro: o Omie pode ter criado sem devolver o código. Nada foi gravado no
-        // Radar (o lead segue na fila); a retentativa RELÊ o vínculo antes de tocar o Omie.
-        registrarResultado('indeterminado');
-        toast.warning('Cadastro não confirmado pelo Omie', {
-          description: 'O Omie não devolveu o código do cliente. O lead continua na fila.',
-          action: { label: 'Tentar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { retentativa: true }) },
+      // Recusas de REGRA (pela SQLSTATE, nunca pela mensagem): nada foi gravado e repetir não muda a resposta.
+      const estado = sqlstateDe(e);
+      if (estado === 'RD005') {
+        toast.warning('"Virou cliente" vem do cadastro no Omie', {
+          description: 'O Radar só marca cliente com o cadastro confirmado pelo Omie (Oben): marque "em conversa" e cadastre pela ficha.',
         });
-      } else if (e instanceof DivergenciaCadastro) {
-        // Conflito de identidade Radar×Omie (RD001/RD002/lookup divergente): nada foi regravado e repetir não
-        // resolve — sem botão de retentar (ele releria o vínculo antigo e mostraria "reconciliado").
-        registrarResultado('divergente');
-        toast.error('Conflito de vínculo com o Omie — nada foi gravado', {
-          description: `${msg} Confira o cadastro no Omie.`,
+      } else if (estado === 'RD008') {
+        toast.warning('Data de retorno fora do prazo', {
+          description: `Escolha entre hoje e ${RETORNO_MAX_DIAS} dias. Nada foi gravado; a nota continua no campo.`,
         });
-      } else if (ehSemConfirmacaoDoServidor(e)) {
-        // A RPC não achou a confirmação que a EDGE grava (ledger omie_cliente_confirmacoes) — o lead segue na
-        // fila. A retentativa volta pela edge (o lookup confere o documento e grava), nunca pelo "Gravar de novo".
-        registrarResultado('indeterminado');
-        toast.warning('Cadastro não confirmado pelo servidor', {
-          description: 'O Radar não recebeu a confirmação do Omie para este CNPJ. O lead continua na fila.',
-          // o código que o Omie devolveu vai como EVIDÊNCIA: se o vínculo relido for outro, é conflito
-          action: {
-            label: 'Tentar de novo',
-            onClick: () => void executarCadastro(alvo, ofertaId, {
-              retentativa: true,
-              ...(e instanceof FalhaCadastro && e.codigoVisto ? { codigoVisto: e.codigoVisto } : {}),
-            }),
-          },
-        });
-      } else if (e instanceof FalhaCadastro && e.etapa === 'radar' && e.codigo) {
-        registrarResultado('erro');
-        const codigo = e.codigo;
-        toast.error(`Cadastrado no Omie (cód. ${codigo}), mas o Radar não gravou o vínculo`, {
-          description: msg,
-          action: { label: 'Gravar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { codigoConhecido: codigo }) },
+      } else if (estado === 'RD007') {
+        toast.warning('Já é cliente confirmado no Omie', {
+          description: 'Só o gestor muda o status de um cliente cadastrado.',
         });
       } else {
-        registrarResultado('erro');
-        toast.error('Não foi possível cadastrar', { description: msg });
+        toast.error('Não foi possível registrar');
       }
-    } finally {
-      if (montadoRef.current) setCadastrando(false);
     }
-  };
-
-  /** Consome a oferta UMA vez (clique e fechamento do Radix chegam juntos). */
-  const responderOferta = async (aceitou: boolean) => {
-    const oferta = ofertaRef.current;
-    ofertaRef.current = null;
-    setOfertaAberta(null);
-    if (!oferta) return;
-    track('radar.cadastro_pos_sinal', { aceitou, oferta_id: oferta.id, origem: 'ficha' });
-    if (aceitou) {
-      if (oferta.toastId != null) toast.dismiss(oferta.toastId); // "Desfazer" o contato não desfaz o Omie
-      await executarCadastro(oferta.empresa, oferta.id);
-    }
-    // Avança só se a ficha ainda é a do lead ofertado (o cadastro pode levar segundos).
-    if (aindaNoAlvo(oferta.empresa.cnpj)) onRegistrado?.('em_conversa');
   };
 
   return (
@@ -238,7 +185,7 @@ export function RadarOutcomeMenu({
           <Button
             variant="outline"
             size="sm"
-            disabled={reg.isPending || cadastrando || isImpersonating}
+            disabled={reg.isPending || isImpersonating}
             title={isImpersonating ? 'Indisponível em modo Ver como' : 'Registrar contato'}
           >
             <ClipboardCheck className="w-4 h-4 mr-2" /> Registrar contato
@@ -247,8 +194,17 @@ export function RadarOutcomeMenu({
         <DropdownMenuContent align="end">
           {ACOES_CONTATO.filter((a) => !a.confirmar).map((a) => {
             const Icon = ICON_MAP[a.icon];
+            // "Virou cliente" só com o vínculo Omie (o servidor exige a confirmação do ledger — RD005). Fica
+            // visível e desabilitado para dizer o caminho: o cadastro pela ficha.
+            if (a.acao === 'virou_cliente' && !empresa?.omie_codigo_cliente) {
+              return (
+                <DropdownMenuItem key={a.acao} disabled title="Vira cliente quando o cadastro no Omie (Oben) é confirmado">
+                  <Icon className="w-4 h-4 mr-2" /> {a.label} (pelo cadastro no Omie)
+                </DropdownMenuItem>
+              );
+            }
             return (
-              <DropdownMenuItem key={a.acao} onClick={() => registrar(a.acao)}>
+              <DropdownMenuItem key={a.acao} onClick={() => (a.acao === 'em_conversa' ? abrirRetorno() : void registrar(a.acao, nota))}>
                 <Icon className="w-4 h-4 mr-2" /> {a.label}
               </DropdownMenuItem>
             );
@@ -266,19 +222,40 @@ export function RadarOutcomeMenu({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <AlertDialog open={ofertaAberta != null} onOpenChange={(o) => { if (!o) void responderOferta(false); }}>
+      <AlertDialog open={pedirRetorno} onOpenChange={setPedirRetorno}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Cadastrar no Omie (Oben) agora?</AlertDialogTitle>
+            <AlertDialogTitle>Quando retomar a conversa?</AlertDialogTitle>
             <AlertDialogDescription>
-              {ofertaAberta?.empresa.razao_social ?? ofertaAberta?.empresa.cnpj} entrou em conversa e ainda não é cliente.
-              Um clique cria o cadastro na Oben (anti-duplicata pelo CNPJ) e tira o lead da fila. Nada é cadastrado
-              sem este clique.
+              Na data, o lead volta para você no "Prospectar hoje" e no e-mail da semana. O atendimento fica com você até lá.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Sugestões de data">
+            {opcoesRetorno(hoje).map((o) => (
+              <Button key={o.rotulo} type="button" size="sm" variant={retorno === o.dia ? 'secondary' : 'outline'}
+                aria-pressed={retorno === o.dia} onClick={() => setRetorno(o.dia)}>
+                {o.rotulo} <span className="ml-1 text-xs text-muted-foreground font-tabular">{diaMesData(o.dia)}</span>
+              </Button>
+            ))}
+          </div>
+          <Input type="date" aria-label="Data de retorno" value={retorno} min={hoje} max={somarDias(hoje, RETORNO_MAX_DIAS)}
+            onChange={(e) => setRetorno(e.target.value)} />
+          {!retornoValido(retorno, hoje) && (
+            <p className="text-xs text-status-warning" data-testid="radar-retorno-invalido">
+              Escolha uma data entre hoje e {RETORNO_MAX_DIAS} dias.
+            </p>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => void responderOferta(false)}>Agora não</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void responderOferta(true)}>Cadastrar agora</AlertDialogAction>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!retornoValido(retorno, hoje)}
+              onClick={() => {
+                track('radar.retorno_definido', { dias: diasAte(retorno, hoje), sugestao_aceita: retorno === retornoPadrao(hoje) });
+                void registrar('em_conversa', nota, retorno);
+              }}
+            >
+              Marcar em conversa
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -298,7 +275,7 @@ export function RadarOutcomeMenu({
           />
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => registrar('descartado', motivo || undefined)}>
+            <AlertDialogAction onClick={() => void registrar('descartado', motivo.trim() || nota)}>
               Descartar
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -51,10 +51,99 @@ clientes (0,53%)**, e 5.307 municípios sem nenhum cliente. **2.676 dos 2.686 cl
 Joinville tem 0 em 3.100.
 
 A causa é a fonte, não o mercado: `omie_clientes_nao_vinculados` só tem `empresa = 'oben'` (10.124 em
-MG, 7 em SC), e nenhum CNPJ de SC dessa fonte está no radar. Os clientes da Colacor SC não entram no
-`ja_cliente`. Por isso a legenda do mapa avisa que, fora de MG, 0% pode ser cadastro ausente, não
-mercado virgem. Ampliar a fonte do `ja_cliente` para o Omie da Colacor é trabalho de outra entrega
-(mexe em `radar_recruzar_ja_cliente`).
+MG, 7 em SC), e nenhum CNPJ de SC dessa fonte está no radar. Por isso a legenda do mapa avisa que, fora
+de MG, 0% pode ser cadastro ausente, não mercado virgem.
+
+### Correção (2026-10-31): a Colacor SC já entrava; o buraco é o cliente Colacor sem usuário
+
+A hipótese "os clientes da Colacor SC não entram no `ja_cliente`" estava errada. Medido em prod
+(psql-ro, 2026-10-31):
+
+- `radar_recruzar_ja_cliente` (e `radar_docs_clientes`) leem `profiles.document` ∪
+  `omie_clientes_nao_vinculados.cnpj_cpf`, **sem filtro de empresa**. Os vinculados, de qualquer conta,
+  já entram por `profiles`: dos 5.296 documentos do mapa `colacor_sc` (`omie_customer_account_map`),
+  **0** ficam fora dessa fonte.
+- "Colacor SC" é o CNPJ catarinense do grupo (veículo fiscal), não uma carteira em Santa Catarina. UF do
+  endereço dos clientes mapeados em `colacor_sc`: MG 4.975 · SP 202 · RS 35 · PR 26 · SC 24 · ES 9. A
+  Oben dá MG 5.286 · SC 26. Os 24 clientes `colacor_sc` com endereço em SC têm 24 CNPJs e **nenhum**
+  está em `radar_empresas`: estão fora do CNAE-alvo.
+- Cruzando com o radar cada fonte candidata (mapa das 3 contas, `customer_canonical_alias`,
+  `cliente_grupo_membros`, `omie_cliente_confirmacoes`, `profiles`, não-vinculados): **0 empresas
+  novas** em qualquer UF. Mudar a função SQL não mudaria nada.
+
+O que nunca era lido: o cliente do Omie da Colacor (contas `servicos` e `colacor_vendas`) **sem usuário
+nenhum**. O `start_nao_vinculados` da `omie-analytics-sync` recusava toda conta fora de `vendas`
+("v1: só Oben"). A entrega:
+
+- edge v1.15-nao-vinculados-tres-contas: `start_nao_vinculados` aceita as 3 contas. O `linked` já era
+  escopado à conta do run (proof fresca por conta), que é a pré-condição para abrir;
+- `supabase/migrations/20261031141053_nao_vinculados_cron_colacor.sql`: jobs diários para `servicos`
+  (08:40Z) e `colacor_vendas` (08:50Z), depois do da Oben (08:30Z). O recruzamento diário do radar
+  (06:15Z) pega as linhas no dia seguinte;
+- a tela `/clientes-nao-vinculados` continua lendo só `empresa='oben'`: as linhas novas servem ao
+  radar, não à tela.
+
+Expectativa honesta: a carteira conhecida da Colacor tem o perfil da Oben (MG), então o mais provável é
+o `ja_cliente` crescer em MG, não aparecer em SC.
+
+#### Medido (2026-10-31, psql-ro): +8 em MG, SC segue 0
+
+Ordem em prod: edge v1.15 atestada pela sonda às 18:19Z (fonte `409a1b64e69f` = main) → migration
+de cron pelo `db:aplicar` (recibo #795, 3 jobs validados por fora) → primeiro snapshot fora do cron
+(`db/2026-10-31-nao-vinculados-colacor-primeiro-snapshot.sql`, recibo #797, as duas respostas 202) →
+recruzamento (`db/2026-10-31-radar-recruzar-ja-cliente-colacor.sql`, recibo #800, função com o md5
+de sempre). O disparo e o recruzamento manuais existem porque o recruzamento diário (06:15Z) roda
+antes do snapshot Colacor (08:40Z e 08:50Z): pelo calendário, o primeiro efeito só sairia em 02/11.
+
+| | antes (16:15Z) | depois (18:5xZ) |
+|---|---|---|
+| `ja_cliente` MG | 3.003 | **3.011** |
+| `ja_cliente` SP | 3 | 3 |
+| `ja_cliente` ES, MT, PA, PE, PR, RJ, RS | 1 cada | 1 cada |
+| `ja_cliente` SC | 0 | **0** |
+
+- Snapshots: `colacor_sc` tem 55 clientes sem usuário e `colacor` tem 272 (327 linhas, 217 CNPJs).
+  A Oben tem 10.168.
+- UF desses clientes: colacor = MG 194 · SP 47 · PR 16 · **SC 9** · RJ 2 · ES 2 · BA 1 · RS 1;
+  colacor_sc = MG 50 · SP 2 · PA 1 · PR 1 · sem UF 1.
+- No radar, 30 desses CNPJs casam (colacor 23, colacor_sc 7), **todos em MG**. Só 8 eram novos; o
+  resto já estava marcado por profiles ou pelo snapshot da Oben.
+- Os 9 clientes Colacor de SC não estão no `radar_empresas`, assim como os 24 com usuário medidos
+  antes: o radar de SC é recortado pelo CNAE-alvo, e esses clientes ficam fora dele.
+
+Conclusão: a fonte do `ja_cliente` agora cobre as 3 contas, e o 0% de SC é **real**, não um buraco
+de fonte. Nenhum cliente conhecido do grupo em SC está no universo do radar de SC.
+
+#### Por que SC fica fora: não há cliente comprador lá (psql-ro, 2026-10-31)
+
+Conjunto: CNPJs (14 caracteres) de `profiles` com endereço em SC ∪ não-vinculados das 3 contas com
+`uf='SC'`. São **38**. O universo do radar é `situação ativa E CNAE-alvo` (`scripts/radar/carga.ts`),
+e `radar_situacao_cadastral` guarda a situação RFB dos CNPJs conhecidos. Então dá para separar as
+causas sem ter o CNAE na base:
+
+| situação RFB (lote 2026-10) | no radar | CNPJs | leitura |
+|---|---|---|---|
+| 02 ativa | não | 30 | fora **pelo CNAE** |
+| sem registro | não | 7 | não-vinculados Colacor que entraram hoje, depois da carga |
+| 08 baixada | não | 1 | fora pela situação |
+
+Quem são os 38: transportadoras (Expresso Leomar, Aceville, Transville, Alfa, Pauta, Azurelog…),
+fornecedores (Kanefusa Serras, HD Ferragens, Tecnofast, Mastercol) e prestadores (software, finanças,
+armazém). **Nenhum tem pedido** em `sales_orders`. O cadastro de "clientes" do Omie também guarda
+fornecedor e transportadora; o grupo não tem cliente comprador em SC.
+
+**Decisão: o recorte de CNAE não muda.** Ampliar o CNAE não acharia cliente em SC, porque não há
+cliente lá para achar, e a medição de 28/10
+([radar-uso-e-recorte-cnae-2026-10-28.md](radar-uso-e-recorte-cnae-2026-10-28.md)) já dizia que ampliar
+só aumentaria uma fila sem dono. O 0% de SC no mapa é o dado certo: mercado sem nenhuma penetração.
+
+**Precisão das 8 marcações novas.** Como o snapshot de não-vinculados inclui fornecedor e
+transportadora, um fornecedor dentro do CNAE-alvo poderia virar `ja_cliente` e sair da fila por
+engano. Conferi as 8: duas vidraçarias, uma fábrica de esquadrias, uma de usinagem e quatro MEIs de
+móveis ou artefatos de madeira, todas em MG e cadastradas pela Colacor. Nenhuma é fornecedor ou
+transportadora. O "0 pedidos" delas é esperado: `colacor_sc` é a conta de serviços (afiação), que não
+passa por `sales_orders`. O risco existe (é o mesmo do snapshot da Oben desde a v1), mas não apareceu
+nesta leva.
 
 ## Custo
 
@@ -87,7 +176,7 @@ corte de 8 s do PostgREST, mas com pouca folga a frio. Se doer, a saída é um c
 | Migration `20261029170140` ✅ aplicada 2026-10-30 | sessão (envelope: idempotente + transacional + PÓS) | **depois** da migration da frente 2 que cria `private.cap_radar_prospectar`; a PRE aborta sem ela |
 | Edge `radar-ingest` v1.4 ✅ 2026-10-30 | sessão, mensagem ao agente do Lovable | sonda DEPLOY CONFIRMADO; `pendencias:deploy` em "confere" |
 | 1ª carga de concorrentes ✅ 2026-10-31 (lote 2026-10) | sessão, `workflow_dispatch` com `so_concorrentes=true` (#3425) | daqui em diante entra sozinha na carga mensal |
-| Publish do Lovable | founder | mapa e ranking novos |
+| Publish do Lovable ✅ 2026-10-31 | founder | `steu.lovable.app` serve `app-commit-sha` `7329a84a`, que contém o #3414 |
 
 ## Aplicação em prod (2026-10-30)
 
@@ -130,3 +219,47 @@ pedido sem passar pelo seletor e chama `carga.ts --so-concorrentes`.
   `concorrentes` não nulo, 336 deles com valor positivo, somando 2.127 (igual à tabela). Nenhum
   município de MG tem só concorrente sem lead. No Brasil, a primeira página de 2.000 tem 1.727
   municípios com concorrente.
+
+## Sinal de uso e coordenadas por código (2026-11-02)
+
+**Sinal da fase (PostHog + ledger, desde o Publish de 2026-10-31 04:53Z):** zero. Nenhum
+`radar.mapa_camada` nem `radar.mapa_concorrentes`, nenhum `$pageview` em `/radar*` e nenhuma
+`navegacao.rota_servida` com rota `/radar` (desde 2026-10-25). Denominador: 3 pessoas têm acesso ao Radar
+(1 master e 2 vendedores com papel comercial), e o PostHog recebeu 78 pageviews de 4 pessoas no período,
+nenhuma no Radar. "No ar e ninguém usou" não autoriza fase N+1 do mapa: o próximo passo é de adoção (os
+dois vendedores abrirem o Radar), não de código. A query para medir de novo é a da primeira linha desta
+seção, com `event IN ('radar.mapa_camada','radar.mapa_concorrentes')`.
+
+**Coordenadas casadas pelo código.** Os 9 municípios com concorrente sem coordenada eram problema de
+grafia: a carga casava RFB↔IBGE pelo nome normalizado, e a RFB escreve PARATI, ASSU, BRASOPOLIS,
+BALNEARIO DE PICARRAS e SANTA ISABEL DO PARA. O código de município da RFB é o `siafi_id` do CSV do
+IBGE. Medido em prod: 5.473 de 5.473 códigos de `radar_municipios` existem como `siafi_id`, todos com a
+mesma UF, e nenhum dos que já casavam por nome muda de coordenada. A carga passa a casar pelo código,
+com o nome de reserva (`scripts/radar/municipios.ts`). Ganham coordenada 17 municípios, com cerca de
+400 leads, que também ficavam fora do mapa. Entra em vigor na próxima carga de lote, quando
+`chunk_municipios` regrava `radar_municipios`. Ficam de fora o EXTERIOR e 3 códigos que só têm
+concorrente e nenhum lead (são 3 estabelecimentos), porque o universo de municípios da carga vem dos
+leads.
+
+**Aplicado em prod sem esperar o lote (2026-11-03).** A carga agendada de 2026-11-02 parou fail-closed: a
+sonda da RFB deu timeout (`dadosabertos.rfb.gov.br` não respondia nem para 2026-10), o que conta como
+inconclusivo, não como "não publicado". A próxima tentativa é a segunda-feira seguinte. Para não deixar
+o conserto (#3547) esperando a RFB, os 17 municípios receberam, via MCP, as coordenadas que a carga
+gravaria (pelo `siafi_id`). Antes houve um ensaio com `RAISE 'ENSAIO_OK'`, e o psql-ro confirmou que ele
+não gravou nada. O apply foi transacional, com PRE de 17 sem coordenada, POS de 17 atualizados e zero
+restantes fora de EX. Ele não é reaplicável: rodar de novo aborta na PRE, porque já não há 17 sem
+coordenada. Pelo psql-ro depois: nenhum município com lead sem coordenada e **nenhum lead sem ponto**.
+Na camada de concorrentes, ficam sem ponto o EXTERIOR e os 3 códigos sem lead (9 estabelecimentos).
+
+
+**Base morta tirada da sonda (2026-11-06).** A sonda ficava vermelha toda segunda e nunca concluía
+"indisponivel". O motivo: `dadosabertos.rfb.gov.br` dá timeout desde pelo menos 2026-11-02, tanto do Mac
+quanto do runner (runs 41465820397, do schedule, e 42210922371, do dispatch, os dois falhando em "Escolher
+o mês"). Timeout é inconclusivo por desenho em `concluirSonda`, então uma base morta na lista basta para
+travar a decisão. HEAD de `Cnaes.zip` em 06/11: webdav dá 200 em 2026-10 e 404 em 2026-11, `dados/cnpj` dá
+404 nos dois e `dadosabertos` dá timeout nos dois. O conserto tirou a base de `basesCandidatas`
+(`scripts/radar/rfb.ts`), que também serve à carga, e **não** mexeu na regra "timeout ≠ não publicado".
+A sonda virou `sondarMes(mes, head)` com o HEAD injetável, e o teste [B1]–[B3] usa o mundo medido. A
+regra do teste: base que não está no mapa conta como timeout, então base nova só entra se responder de
+verdade. Falsificado com controle verde: devolver a base morta à lista deixa o [B1] vermelho, com o
+mesmo "sem resposta conclusiva" da produção. Tratar timeout como 404 deixa o [S3] e o [B3] vermelhos.

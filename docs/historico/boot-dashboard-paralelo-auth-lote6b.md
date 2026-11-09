@@ -1,0 +1,166 @@
+# Lote 6b (plano v5): o dashboard da home baixa em paralelo ao auth
+
+2026-11-04. Continuação do [lote 6](boot-chunk-paralelo-auth-lote6.md). Só Publish: sem edge e sem
+migration.
+
+## O problema
+
+O lote 6 fez o chunk da ROTA de entrada (`Index`) baixar no boot, em paralelo ao auth. Dentro do
+`Index`, porém, o dashboard é um `lazy` **por papel**: o `StaffDashboard` puxa o dnd (~95 KB) e o
+`CustomerDashboard` puxa o framer-motion (~124 KB). O prefetch de rota não enxerga esse `lazy`
+aninhado. Para o staff, a cadeia depois do auth tinha dois passos seriais:
+
+1. o `Index` monta e o `useMyCommercialRole` faz um 2º REST de `commercial_roles` (o `AuthContext`
+   já tinha feito o mesmo, em paralelo);
+2. só então o `StaffDashboard` monta e o import do chunk começa.
+
+Baseline de laboratório (main `cc4f83977`, persona master, medianas em ms a partir do início do
+auth):
+
+| perfil | `Index` pedido | `StaffDashboard` início → fim | LCP |
+|---|---|---|---|
+| mobile (Slow 4G + CPU 4×) | −193 | +1.290 → +2.386 | +3.413 |
+| desktop (10 Mbps, 40 ms) | −37 | +872 → +1.034 | +1.159 |
+
+No mobile, o chunk custa ~1,1 s e o 2º REST ~0,55 s. O chunk é o passo maior, e o escopo do lote
+ficou nele. O REST duplicado é o próximo passo (ver "Fora do escopo").
+
+## O desenho
+
+- **Como saber o papel antes do auth: uma dica, não o papel.** `src/pages/home/dashboards-home.ts`
+  guarda no localStorage `home-dashboard-dica` = `staff` | `cliente`, ou seja, o dashboard que a
+  home renderizou da ÚLTIMA vez neste aparelho. O `Index` grava a dica num `useEffect` a partir da
+  MESMA decisão que usa para renderizar (`decidirHome`: `aguardando | cliente | staff | redirect`).
+  O redirect da vendedora para `/meu-dia` REMOVE a dica, porque ela não usa nenhum dashboard.
+- **O prefetch:** `lazyRota` ganhou `{ prefetchJunto }`. O `App.tsx` registra
+  `prefetchJunto: carregadorDaDica` na rota do `Index`. Assim o `prefetchRota('/')` do boot (e o
+  hover em "Início" na sidebar) baixa o `Index` E o dashboard da dica pelo MESMO
+  `prefetchCarregador`. Ele roda 1× por documento, e exceção nele é engolida.
+- **Um carregador só:** o `Index` usa `lazyRota(carregarStaffDashboard)` /
+  `lazyRota(carregarCustomerDashboard)`, as mesmas funções que a dica devolve. Então o render espera
+  o prefetch em voo, e um prefetch que falhou recarrega 1× só se o dashboard for de fato renderizar.
+  Um prefetch que falha nunca recarrega sozinho.
+- **Autorização intacta:** a dica escolhe só entre dois imports fixos. Dica errada, adulterada ou
+  de outro usuário no mesmo aparelho custa um download, nunca um render. Quem renderiza continua
+  sendo o `Index`, atrás do `ProtectedRoute` e do papel. Na lente "Ver como", o `Index` segue o
+  papel REAL (`useAuth`), e a dica também.
+- **Descartados:** (b) pré-carregar sempre, porque o cliente baixaria o dnd e a decisão "lazy por
+  papel" seria revertida; (c) encadear o import no `.then` do papel, porque ganha pouco (o 2º REST
+  ainda serializa).
+- **Limites aceitos:** a 1ª visita no aparelho (sem dica) não ganha nada. A dica é lida 1× por
+  documento, então um hover depois do 1º login na mesma aba não reconsidera a dica recém-gravada.
+
+## A/B de laboratório
+
+Mesmo método do lote 6 (`boot-chunk-paralelo-auth-lote6.md` §LCP): build de produção de
+`cc4f83977` (antes) e deste PR (depois), cada um com seu servidor estático e cada carga num
+contexto frio. A sessão falsa fica no localStorage, e o Supabase é interceptado com 400 ms fixos
+(master aprovado, `[]` no resto). A sessão falsa leva também a dica `staff`, que representa o
+staff que volta ao app (o build "antes" a ignora). Foram 15 pares alternados mais 1 aquecimento,
+com Mann-Whitney. Em todas as cargas `/` renderizou e o elemento do LCP foi um `<p>`. O medidor
+rodou fora do `heavy`.
+
+| perfil | métrica (ms) | antes p50 [IQR] | depois p50 [IQR] | Δ p50 | p |
+|---|---|---|---|---|---|
+| mobile (Slow 4G + CPU 4×) | LCP − início do auth | 3.775 [3.381–5.199] | 2.283 [2.034–3.008] | **−1.492** | <0,0001 |
+| | LCP | 11.036 [10.308–12.766] | 9.312 [9.046–10.834] | −1.724 | 0,0034 |
+| | `StaffDashboard` pedido − auth | +1.440 | −306 | −1.746 | — |
+| desktop (10 Mbps, 40 ms, CPU 1×) | LCP − início do auth | 1.098 [1.088–1.104] | 895 [893–898] | **−203** | <0,0001 |
+| | LCP | 2.304 [2.300–2.320] | 2.112 [2.106–2.118] | −192 | <0,0001 |
+| | `StaffDashboard` pedido − auth | +853 | −20 | −873 | — |
+
+- **O mecanismo está provado nos dois perfis:** o chunk do `StaffDashboard` sai junto com o do
+  `Index`, antes do auth. O FCP e o pedido do `Index` não mudam (p 0,79 e 0,63), como esperado.
+- **O que sobra no caminho:** no "depois", o chunk termina (+962 mobile, +186 desktop) antes do
+  2º REST de `commercial_roles` responder (pedido em +748 / +432, mais 400 ms de resposta). Agora
+  o passo serial dominante é esse REST.
+- **Limites:** só a persona master foi medida. O ganho do cliente (dica `cliente`) usa a mesma
+  mecânica, coberta por teste, mas não foi medido. A 1ª visita sem dica não muda de
+  comportamento: é só uma leitura de localStorage. Como no lote 6, é medida do **mecanismo**, não
+  do usuário real; o medidor ficou fora do repo, porque não é gate nem sensor.
+
+## Lote 6c: o cargo comercial lido no auth semeia o cache
+
+2026-11-04, PR seguinte ao #3603. O `AuthContext` já lê `commercial_roles` em paralelo a
+`user_roles`/`profiles`, mas o `useMyCommercialRole` refazia a leitura depois que o `Index`
+montava, e o `Index` segurava o skeleton do staff até ela voltar. Agora o auth semeia o cache
+`['my-commercial-role', userId]` com a MESMA leitura (`src/lib/cargo-comercial-cache.ts`; a chave
+mora fora do hook porque o hook importa o `useAuth`). **Leitura com erro não semeia**: semear
+`null` de uma leitura que falhou fabricaria "consultei e não tem cargo". Com erro, o hook consulta
+sozinho, como antes. Com dado fresco (staleTime 60 s), o hook nasce `pronta` e não refaz o REST.
+
+A/B de laboratório, mesmo método. O antes é a main com o 6b (`329086ecd`), master, dica `staff`,
+15 pares:
+
+| perfil | LCP − início do auth | Δ p50 | p |
+|---|---|---|---|
+| desktop (10 Mbps, 40 ms) | 893 [890–896] → 481 [477–492] | **−412 ms** | <0,0001 |
+| mobile (Slow 4G + CPU 4×) | 2.045 [1.961–2.492] → 2.149 [1.975–2.291] | +104 (ruído) | 0,82 |
+
+- **O desktop ganha o RTT inteiro:** o chunk já estava pronto (+190), e quem segurava a home era o
+  REST.
+- **O mobile não ganha nada, e o motivo foi medido:** depois do 6b, o download do chunk do
+  `StaffDashboard` termina em ~+1.080, quase junto com o REST. Os dois passos já se sobrepunham, e
+  o chunk é o gargalo do mobile. Em campo, quanto mais rápida a rede e maior o RTT do Supabase,
+  mais o ganho se parece com o do desktop.
+- **Revisão do Codex (código, high, 106 s):** dois ajustes, aplicados e falsificados. (1) A
+  semente sai só da tentativa que venceu os retries, no `return` final: semear antes do `continue`
+  deixaria um `null` fresco de uma tentativa descartada. (2) Há uma geração do auth
+  (`geracaoAuthRef`), incrementada de forma síncrona em todo evento de auth, no `signOut`, no
+  `refetchRole` e no cleanup, e capturada ANTES do `setTimeout`. Um fetch atrasado não volta ao
+  cache depois de `SIGNED_OUT → clear()` nem atropela um `TOKEN_REFRESHED` mais novo. O A/B acima
+  é anterior a esse ajuste, que só acrescenta uma comparação síncrona.
+- **Achado anterior a este PR (fora do escopo, corrigido no PR seguinte):** os *setters* do
+  `AuthContext` (`setRole`, `setIsApproved`, `setCommercialRole`) tinham a mesma corrida.
+- **Resíduo (corrigido no PR seguinte):** ainda saía um pedido a `commercial_roles` depois do auth,
+  vindo do `useCommercialRole` legado.
+
+## Depois do 6c: a geração vale para o estado do auth, e o legado lê o mesmo cache
+
+2026-11-05, PR seguinte ao #3607. Os dois itens que o 6c deixou de fora.
+
+- **Os setters só escrevem na geração vigente.** Antes, um fetch em voo que resolvia depois do
+  `SIGNED_OUT` devolvia o `role` (e a aprovação e o cargo) de quem saiu, com `user` já `null`; e a
+  leitura de um evento anterior que chegava depois sobrescrevia a de um evento mais novo (inclusive
+  o fail-closed de uma leitura velha que lançou, que zerava o papel vigente). Agora
+  `fetchUserRoleAndApproval` checa a geração depois de cada `await` (entre a checagem e o fim do
+  `try` não há outro `await`, então uma checagem cobre todos os setters) e no `catch`, e devolve se
+  escreveu.
+- **Leitura vencida não termina o loading.** Sem isso, a guarda acima abriria um buraco novo: o
+  fetch do `INITIAL_SESSION`, vencido por um `TOKEN_REFRESHED` no boot, chamaria `finishLoading()`
+  sem ter escrito o papel, e a tela liberaria com `user` setado e `role` null. Quem termina é a
+  geração que escreveu: o evento mais novo, o `refetchRole`, o `SIGNED_OUT` ou o próprio `signOut()`
+  (quando as duas revogações falham e o evento não vem). O failsafe de 10 s fica só como rede.
+- **O `useCommercialRole` legado vira react-query na mesma chave.** A chave, a consulta e o
+  `staleTime` saem de um lugar só (`opcoesMeuCargoComercial` em `src/lib/cargo-comercial-cache.ts`):
+  dois `queryFn` diferentes na mesma chave dariam respostas diferentes conforme quem buscasse
+  primeiro. O hook nasce do cache semeado pelo auth e não refaz o REST. O fail-closed das
+  capabilities fica: só uma leitura com sucesso vira cargo, e não pausada: com cache antigo e
+  offline, a revalidação pausa e `isSuccess` continua `true` (é o estado do dado, não da tentativa).
+  O hook antigo negava offline, e conceder pelo cache seria afrouxar. Cache fresco (< 60 s) vale. Muda uma coisa: antes, erro de leitura
+  virava `null` na hora; agora o hook fica em `loading` durante os retries do react-query e depois
+  vira `null`. Os dois consumidores de `loading` (`useFarmerScoring`, `IntelligenceDashboard`)
+  mostram "carregando" em vez de "sem acesso" nesse intervalo, o que é mais honesto.
+- **Laboratório (mesmo método, master, dica `staff`, desktop, 5 pares; antes = main `a6f2aa438`):**
+  pedidos a `commercial_roles` por carga de `/` caíram de **8 para 1** nas 5 cargas. Cada
+  instância do legado (o `useDisplayAccess` é chamado por vários componentes da casca) fazia o seu
+  REST no `useEffect`; agora todas leem a chave semeada pelo auth. O LCP − início do auth não muda
+  (476–483 → 477–491 ms), como esperado: esses pedidos não seguravam a home, só ocupavam conexão.
+- **Revisão do Codex (código, high, 153 s):** AJUSTAR com dois P2, os dois reproduzidos por ele e
+  aplicados com teste: (1) o `refetchRole` durante o boot e o logout sem evento ficavam com o
+  loading preso até o failsafe; (2) o legado concedia pelo cache com a revalidação pausada offline.
+- **Falsificação:** 10 sabotagens, todas vermelhas em `LC_ALL=C` e `pt_BR.UTF-8`, com o controle
+  verde na mesma invocação: tirar a checagem depois do fetch, tirar a do `catch`, terminar o
+  loading com leitura vencida, não incrementar a geração no evento, `refetchRole` e logout sem
+  terminar o loading, chave própria no legado, `loading` falso no legado, conceder com a consulta
+  pausada, e a consulta compartilhada engolir o erro. A última só é pega por
+  testes que já existiam (`useSinalPositivacao.rotulos`, `FarmerCalls.erro-honesto`). A checagem
+  depois do `wait()` dos retries é economia (evita um REST de outra época), não correção: a
+  checagem depois do fetch já barra a escrita.
+
+## Lições
+
+- Um `lazy` aninhado na página de entrada é invisível ao prefetch de rota. A rota pode declarar o
+  que pré-carregar junto, desde que pelo MESMO carregador que o render usa.
+- Gravar a dica a partir da decisão do render, e não do papel, cobre a persona que redireciona
+  (vendedora): ela não paga um chunk que nunca vai usar.

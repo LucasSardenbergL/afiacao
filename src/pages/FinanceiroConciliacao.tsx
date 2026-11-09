@@ -15,13 +15,14 @@ import {
 } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { formatPrecoOuAusente } from '@/lib/format';
+import { diferencaConciliacao } from '@/lib/financeiro/conciliacao-diferenca';
 import type {
   FinConciliacaoRow,
   FinContaCorrenteRow,
 } from '@/services/financeiroTypes';
 import { gerarFilaConciliacao, resumirGeracaoConciliacao } from '@/services/financeiroConciliacao';
 
-const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDate = (d: string | null) => d ? new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
 
 type ConciliacaoStatus = 'pendente' | 'conciliado' | 'divergencia' | 'ignorado';
@@ -300,13 +301,22 @@ const FinanceiroConciliacao = () => {
                             <Badge variant="outline" className="text-[9px] mt-0.5">{item.tipo_titulo}</Badge>
                           )}
                         </TableCell>
-                        <TableCell className="text-right text-sm font-medium">{fmt(item.mov_valor || 0)}</TableCell>
-                        <TableCell className="text-right text-sm">{item.titulo_valor ? fmt(item.titulo_valor) : '—'}</TableCell>
-                        <TableCell className={`text-right text-sm font-bold ${
-                          Math.abs(item.diferenca || 0) > 0.01 ? 'text-status-error' : 'text-status-success'
-                        }`}>
-                          {item.diferenca != null ? fmt(item.diferenca) : '—'}
-                        </TableCell>
+                        <TableCell className="text-right text-sm font-medium">{formatPrecoOuAusente(item.mov_valor)}</TableCell>
+                        <TableCell className="text-right text-sm">{formatPrecoOuAusente(item.titulo_valor)}</TableCell>
+                        {(() => {
+                          const dif = diferencaConciliacao(item);
+                          const tom =
+                            dif == null
+                              ? 'text-muted-foreground'
+                              : Math.abs(dif) > 0.01
+                                ? 'text-status-error'
+                                : 'text-status-success';
+                          return (
+                            <TableCell className={`text-right text-sm font-bold ${tom}`}>
+                              {formatPrecoOuAusente(dif)}
+                            </TableCell>
+                          );
+                        })()}
                         <TableCell>
                           {item.tipo_match
                             ? <Badge variant="outline" className="text-[9px]">{item.tipo_match}</Badge>

@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Inbox } from 'lucide-react';
-import { useCicloCoorte, useCicloResumo, useReceitaDiariaTtm, hojeSp } from '@/hooks/useFinanceiroCiclo';
+import { Inbox, ListChecks } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import {
+  useCicloCoorte, useCicloCoorteMaturacao, useCicloResumo, useCrAbertoTotal, useReceitaDiariaTtm, useReguaCiclo, hojeSp, useCicloCustoCapital,
+} from '@/hooks/useFinanceiroCiclo';
 import { useUrlState } from '@/hooks/useUrlState';
 import { ALL_COMPANIES, COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { EmptyState } from '@/components/EmptyState';
@@ -9,7 +13,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { track } from '@/lib/analytics';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import type { ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
-import { CHAVE_CUSTO } from './ciclo-format';
 import { CicloEmpresaCard } from './CicloEmpresaCards';
 import { CicloTendencia } from './CicloTendencia';
 import { CicloClientesTabela } from './CicloClientesTabela';
@@ -17,6 +20,7 @@ import { CicloClienteDrill } from './CicloClienteDrill';
 import { CicloDescontoPainel } from './CicloDescontoPainel';
 import { CicloGiroEstoque, type FiltroAcaoGiro } from './CicloGiroEstoque';
 import { CicloFornecedoresSecao } from './CicloFornecedoresSecao';
+import { CicloRupturaSensor } from './CicloRupturaSensor';
 import { CargaAoAparecer } from './CargaAoAparecer';
 import { useCicloCpEmpresa } from '@/hooks/useFinanceiroCicloFornecedor';
 
@@ -32,9 +36,13 @@ export function CicloTab() {
   const hoje = hojeSp();
   const resumo = useCicloResumo();
   const coorte = useCicloCoorte();
+  const maturacao = useCicloCoorteMaturacao();
   const receita = useReceitaDiariaTtm();
   const cpEmpresa = useCicloCpEmpresa();
-  const [filtros, setFiltros] = useUrlState({ cicloEmpresa: 'oben', cicloPerfil: 'todos', cicloCustoOben: '', cicloCustoColacor: '', cicloCustoColacorSc: '', cicloGiroAcao: 'todos' });
+  const [filtros, setFiltros] = useUrlState({ cicloEmpresa: 'oben', cicloPerfil: 'todos', cicloGiroAcao: 'todos' });
+  const custoCapital = useCicloCustoCapital();
+  const regua = useReguaCiclo();
+  const crAberto = useCrAbertoTotal();
   const [aberto, setAberto] = useState<ResumoCliente | null>(null);
 
   // Sensor de uso no LEDGER (o PostHog é censurado no Chrome do founder, o leitor da aba); a RPC
@@ -57,13 +65,18 @@ export function CicloTab() {
         {ALL_COMPANIES.map((c) => (
           <CicloEmpresaCard key={c} company={c} coorte={coorteDados} receitaDia={receita.data?.[c].porDia ?? null} receitaMeses={receita.data?.[c].mesesComDado} receitaErro={receita.error !== null && receita.error !== undefined}
             resumo={resumo.data} resumoErro={resumo.error !== null && resumo.error !== undefined} hoje={hoje}
-            cpEmpresa={cpEmpresa.data?.[c]} cpErro={cpEmpresa.error !== null && cpEmpresa.error !== undefined} />
+            cpEmpresa={cpEmpresa.data?.[c]} cpErro={cpEmpresa.error !== null && cpEmpresa.error !== undefined}
+            regua={regua.data?.[c]} reguaErro={regua.error !== null && regua.error !== undefined}
+            crAberto={crAberto.data?.[c]} crErro={crAberto.error !== null && crAberto.error !== undefined} />
         ))}
       </div>
       {receita.error && <p className="text-status-error text-sm">Não foi possível ler a receita TTM (valor de 1 dia de PMR indisponível).</p>}
       {coorte.error && <p className="text-status-error text-sm">Não foi possível ler a tendência por coorte.</p>}
       {coorte.isLoading && <PageSkeleton variant="cockpit" />}
-      {!coorte.error && !coorte.isLoading && tendencias.map((c) => <CicloTendencia key={c} coorte={coorteDados} company={c} />)}
+      {!coorte.error && !coorte.isLoading && tendencias.map((c) => (
+        <CicloTendencia key={c} coorte={coorteDados} company={c} maturacao={maturacao.data ?? []}
+          maturacaoErro={maturacao.error !== null && maturacao.error !== undefined} maturacaoCarregando={maturacao.isLoading} />
+      ))}
 
       <div className="flex flex-wrap items-center gap-2">
         <Select value={empresa} onValueChange={(v) => setFiltros({ cicloEmpresa: v })}>
@@ -105,11 +118,21 @@ export function CicloTab() {
         />
       </CargaAoAparecer>
 
-      <CicloDescontoPainel
-        empresas={tendencias}
-        custos={{ oben: filtros.cicloCustoOben, colacor: filtros.cicloCustoColacor, colacor_sc: filtros.cicloCustoColacorSc }}
-        onCusto={(c, t) => setFiltros({ [CHAVE_CUSTO[c]]: t })}
-      />
+      {/* Sensor de ruptura: só a Oben tem (pedidos nascem no Omie; trigger na importação). Abaixo da dobra. */}
+      {tendencias.includes('oben') && (
+        <CargaAoAparecer rotulo="Sensor de ruptura">
+          <CicloRupturaSensor hoje={hoje} />
+        </CargaAoAparecer>
+      )}
+      {/* Frente B (PR2): a fila de cobrança com estado e dona vive na rota /cobranca (módulo próprio, staff);
+          aqui só o atalho — a aba Ciclo segue sendo a leitura, a cobrança é a ação. */}
+      <Button asChild variant="outline" size="sm" className="w-fit">
+        <Link to={`/cobranca?empresa=${empresa === 'all' ? 'oben' : empresa}`} data-testid="ciclo-link-cobranca">
+          <ListChecks className="h-4 w-4 mr-1" /> Fila de cobrança (estado, dona, promessa, régua D−2/D+1/D+7)
+        </Link>
+      </Button>
+      <CicloDescontoPainel empresas={tendencias} custos={custoCapital.data} erro={custoCapital.error} carregando={custoCapital.isLoading}
+        clientes={resumo.data} clientesIndisponiveis={resumo.isLoading || !!resumo.error} />
       <CargaAoAparecer rotulo="Fornecedores">
         <CicloFornecedoresSecao empresas={tendencias} hoje={hoje} />
       </CargaAoAparecer>

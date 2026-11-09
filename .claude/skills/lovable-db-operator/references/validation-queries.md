@@ -258,4 +258,4 @@ FROM esperado e
 ORDER BY status DESC, e.kind, e.object_name;
 ```
 
-> Para o cross-check de **todas** as custom migrations do repo (não só a sua), o usuário pode colar `scripts/audit-custom-migrations.sql` inteiro — ele já tem Section 1 (timestamps em `schema_migrations`) + Section 2 (existência objeto-a-objeto). A query acima é a versão focada e rápida pro Run imediato.
+> Para o cross-check de **todas** as custom migrations do repo (não só a sua), gere `bun run audit:migrations` e o usuário cola `.audit-migrations/audit-custom-migrations.sql` inteiro (arquivo gerado, fora do git) — ele já tem Section 1 (timestamps em `schema_migrations`) + Section 2 (existência objeto-a-objeto). A query acima é a versão focada e rápida pro Run imediato.

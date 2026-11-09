@@ -51,6 +51,52 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
     motivo: 'decisão do Raio-X: foto de custo (saldo×cmc) + tirar/restaurar o SKU no motor de compras',
   },
+  // 2026-10-31 — coorte do Top 61 do Raio-X: grava uma vez por empresa o valor (saldo×cmc) lido de
+  // inventory_position como DEFINER. Mesmo gate de custo do raio_x_decidir.
+  'public.raio_x_congelar_coorte': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
+    motivo: 'congelamento da coorte do Top 61 do Raio-X: foto de custo (saldo×cmc) por SKU',
+  },
+  // 2026-10-31 — plano de execução do Raio-X (pacote 2): piso/canal, responsável, prazo e executado
+  // sobre a decisão existente. Grava em raio_x_decisao (custo) como DEFINER; mesmo gate do raio_x_decidir.
+  'public.raio_x_planejar': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
+    motivo: 'plano de execução da decisão do Raio-X (preço piso, canal, responsável, prazo, executado)',
+  },
+  // 2026-11-01 — veredito "inequívoco" do Raio-X (20261101190000): nasceu INVOKER e dava 403 em prod (chama o helper
+  // interno _fin_estoque_classe, fechado para authenticated); virou DEFINER com o mesmo gate de custo do raio_x_decidir.
+  'public.raio_x_inequivoco': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
+    motivo: 'veredito "liquidar só o inequívoco" do Raio-X (cobertura, entradas, qtd liquidável por SKU)',
+  },
+  // 2026-11-01 — "segurar compra" escreve no motor (Frente C PME/PMR, migration 20261101090000). Lê
+  // inventory_position (saldo×cmc) e fornecedor como DEFINER para a foto da decisão e a coorte; o lote em massa
+  // (envelope, sessão direta sem JWT) passa pelo mesmo corpo. Gate = cap_compras_ler (leituras) /
+  // cap_compras_escrever (writers, master-only). Prova de papel: db/test-compra-suspensa-motor.sh R2.
+  'public.reposicao_compra_suspensa_candidatos': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'coorte "cobertura ≥ N dias" com saldo×cmc e fornecedor por SKU (lote do segurar compra)',
+  },
+  // 2026-11 — card "Varredura do portal" em Gerir pedidos: pendências do cron, importados e importados sem PO.
+  'public.sayerlack_painel_portal': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'pedidos do portal Sayerlack importados (protocolo, PO, valor) e falhas da varredura — leitura de compras',
+  },
+  'public.reposicao_compra_suspensa_listar': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'suspensões ativas com foto e situação ao vivo (saldo×cmc, fornecedor, compra evitada)',
+  },
+  'public.reposicao_compra_suspender': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_escrever' }] },
+    motivo: 'o ÚNICO writer de reposicao_compra_suspensa: grava a foto (saldo×cmc) e conta pedidos pendentes do SKU',
+  },
   // 2026-10-18 — giro de estoque por SKU (aba Ciclo, frente 3). Mesmo gate de custo do
   // fin_estimar_estoque_omie que ela substitui no engine/diálogo (service_role OU cap_custo_ler).
   'public.fin_estoque_giro_valor': {
@@ -341,6 +387,12 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
  * v2: auditar cada uma individualmente e cruzar com os grants reais.
  */
 export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
+  // "Segurar compra" (2026-11-01, migration 20261101090000): foto interna (saldo×cmc, fornecedor, cobertura)
+  // chamada SÓ pelas RPCs gateadas acima e pelo envelope como postgres. NÃO é exposta ao app: fecha por
+  // PRIVILÉGIO — `REVOKE ALL … FROM PUBLIC, anon, authenticated` na migration e postcondição que ABORTA se
+  // anon/authenticated executarem; prova no harness (`authenticated NAO executa a foto interna`). Se um dia
+  // ganhar GRANT para authenticated, PRECISA de gate e sai daqui.
+  'public._reposicao_compra_foto',
   // Venda por cliente — job de desfecho (2026-10-20, migration 20261020174221). Lê
   // `order_items.unit_price`/`desconto_valor` para decidir se a sugestão `tipo=preco` bateu o alvo
   // e somar `valor_realizado`, mas NÃO é customer-facing: só o cron (`venda-fechar-desfechos`,
@@ -504,12 +556,17 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.reposicao_aplicar_depara_sayerlack_auto', // de-para automático do boletim Sayerlack — edge `reposicao-depara-sayerlack-auto` (cron → edge, service_role)
   'public.envio_portal_lock_candidatos', // lock dos candidatos a envio — edge `enviar-pedido-portal-sayerlack`
   'public.sayerlack_importar_pedido_portal', // importa pedido digitado direto no portal (pedido+itens+custo tudo-ou-nada) — edge `sayerlack-importar-pedido-portal`, service_role
+  'public.sayerlack_aplicar_condicao_portal', // condição REAL do portal no pedido do app antes do PO (D-1) — edge `enviar-pedido-portal-sayerlack`, service_role; REVOKE PUBLIC/anon/authenticated
+  'public.sayerlack_conferir_portal', // 5.2: pedido do app × leitura do portal; escritor único do retrato/divergência/gate do claim — edge `sayerlack-importar-pedido-portal` e a RPC de importar, service_role; REVOKE PUBLIC/anon/authenticated
   'public.sayerlack_aplicar_custo_portal', // custo do portal em 1 transação (CAS omie IS NULL + itens tudo-ou-nada) — edge `enviar-pedido-portal-sayerlack`, service_role
   'public.envio_portal_claim_ids', // claim por lista positiva de ids — edges `disparar-pedidos-aprovados` e `enviar-pedido-portal-sayerlack`
   'public.iniciar_envio_portal_pre_claim', // pré-claim antes do disparo — edge `disparar-pedidos-aprovados`
   'public.reposicao_encerrar_recusas_definitivas', // encerra recusa definitiva do portal após 3 dias (#3169) — cron `reposicao-encerrar-recusas-definitivas`; REVOKE PUBLIC/anon/authenticated + postcondição has_function_privilege na migration 20261011150000
   'public.reposicao_persistir_qtde_inteira', // arredonda/persiste qtde inteira do pedido — edge `disparar-pedidos-aprovados`
   'public.reposicao_claim_disparo', // claim antes do IncluirPedCompra (Cenário B do TOCTOU) — edge `disparar-pedidos-aprovados`, service_role
+  'public.sayerlack__incidente_pelo_pedido', // trigger da 5.4 (RETURNS trigger): abre/fecha o incidente de cancelado com PO no estado do pedido; REVOKE PUBLIC/anon/authenticated (20261110120000)
+  'public.sayerlack__incidente_pelo_espelho', // trigger da 5.4 no espelho (RETURNS trigger): PO que aparece depois de um encerramento da 5.3 vira incidente; fail-open para o sync; REVOKE PUBLIC/anon/authenticated (20261110120000)
+  'public.sayerlack_cobertura_situacao_portal', // cobertura da 5.4 (pedidos com PO não faturado) — edge `sayerlack-varrer-pedidos-portal` e o compute do data_health, service_role; REVOKE PUBLIC/anon/authenticated (20261110120000)
   // Observação do conjunto aberto (PR0 da baixa de PO, migration 20261005131331): lê
   // `sku_estoque_atual.estoque_pendente_entrada` só para CONFERIR, na mesma transação, que o pendente
   // gravado bate com o que a observação contou (grava `skus_divergentes`); não projeta dado — devolve a
@@ -599,6 +656,15 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // `bun run authz:funcoes:prod`, que MEDE o EXECUTE real de prod. Ver
   // docs/historico/db-aplicar-colagem-manual-vira-comando.md.
   'public.aplicar_sql',
+  // Sensor de ruptura da Oben (2026-10-31, migration 20261031200000). Lê `inventory_position`
+  // ('vendas') e `sku_estoque_atual` ('OBEN') como DEFINER para dizer se o item do PV importado
+  // do Omie era atendível no instante da importação. NÃO é customer-facing nem staff-facing: só o
+  // trigger de `order_items` (AFTER INSERT, fail-open) e a função da prateleira diária (pg_cron
+  // como postgres) a chamam. Fecha por PRIVILÉGIO — `REVOKE ALL ... FROM PUBLIC, anon,
+  // authenticated, service_role` na migration, postcondição P5 e sabotagem na prova
+  // db/test-reposicao-ruptura-sensor.sh; medido em prod 2026-10-31 (psql-ro): anon/authenticated/
+  // service_role/public = false, owner postgres. Se um dia ganhar GRANT, PRECISA de gate.
+  'public._reposicao_ruptura_saldo_oben',
 ]);
 
 /**

@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Link } from "react-router-dom";
 import { Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { sevBadge, statusBadge } from "./badges";
-import { tipoLabel, fmt, type EventoOutlier } from "./types";
+import { tipoLabel, fmt, idadeDias, podeAceitarEmLote, ROTA_REVISAO_PARAMETROS, type EventoOutlier } from "./types";
 
 export function AlertasTable({
   lista, isLoading, selecionados, todosMarcados, selecionavelCount,
-  toggleAll, toggleOne, onDrill, page, totalPages, setPage,
+  toggleAll, toggleOne, onDrill, page, totalPages, setPage, mensagemVazia = "Nenhum alerta encontrado",
 }: {
   lista?: { rows: EventoOutlier[]; total: number };
   isLoading: boolean;
@@ -24,6 +25,7 @@ export function AlertasTable({
   page: number;
   totalPages: number;
   setPage: (value: number | ((prev: number) => number)) => void;
+  mensagemVazia?: string;
 }) {
   return (
     <Card>
@@ -35,7 +37,7 @@ export function AlertasTable({
                 <Checkbox checked={todosMarcados} onCheckedChange={toggleAll} disabled={selecionavelCount === 0} />
               </TableHead>
               <TableHead>Severidade</TableHead>
-              <TableHead>Data evento</TableHead>
+              <TableHead>Evento</TableHead>
               <TableHead>SKU</TableHead>
               <TableHead>Descrição</TableHead>
               <TableHead>Tipo</TableHead>
@@ -52,11 +54,11 @@ export function AlertasTable({
               <TableRow><TableCell colSpan={12} className="text-center py-8"><Loader2 className="h-5 w-5 animate-spin mx-auto" /></TableCell></TableRow>
             )}
             {!isLoading && (lista?.rows.length ?? 0) === 0 && (
-              <TableRow><TableCell colSpan={12} className="text-center py-8 text-muted-foreground">Nenhum alerta encontrado</TableCell></TableRow>
+              <TableRow><TableCell colSpan={12} className="text-center py-8 text-muted-foreground">{mensagemVazia}</TableCell></TableRow>
             )}
             {lista?.rows.map((r) => {
-              const podeSelecionar =
-                r.status === "pendente" && r.severidade !== "critico" && r.tipo !== "sku_sem_grupo";
+              const podeSelecionar = podeAceitarEmLote(r);
+              const idade = idadeDias(r.detectado_em);
               return (
                 <TableRow key={r.id} className="hover:bg-muted/50">
                   <TableCell>
@@ -67,7 +69,17 @@ export function AlertasTable({
                     />
                   </TableCell>
                   <TableCell>{sevBadge(r.severidade)}</TableCell>
-                  <TableCell className="text-sm">{new Date(r.data_evento).toLocaleDateString("pt-BR")}</TableCell>
+                  <TableCell className="text-sm whitespace-nowrap">
+                    <div>{new Date(r.data_evento).toLocaleDateString("pt-BR")}</div>
+                    {r.status === "pendente" && idade !== null && (
+                      <div
+                        className={idade > 30 ? "text-xs text-status-warning" : "text-xs text-muted-foreground"}
+                        title="Dias desde a detecção"
+                      >
+                        há {idade} d
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell className="font-mono text-xs whitespace-nowrap">{r.sku_codigo_omie}</TableCell>
                   <TableCell className="text-sm min-w-[260px] max-w-[360px] whitespace-normal break-words" title={r.sku_descricao ?? undefined}>{r.sku_descricao ?? "—"}</TableCell>
                   <TableCell><Badge variant="outline">{tipoLabel(r.tipo)}</Badge></TableCell>
@@ -76,8 +88,14 @@ export function AlertasTable({
                   <TableCell className="text-right font-mono text-sm">{fmt(r.desvios_padrao, 1)}</TableCell>
                   <TableCell className="text-xs min-w-[280px] max-w-[420px] whitespace-normal break-words text-muted-foreground" title={r.detalhes?.mensagem ?? undefined}>{r.detalhes?.mensagem ?? "—"}</TableCell>
                   <TableCell>{statusBadge(r.status)}</TableCell>
-                  <TableCell>
-                    <Button size="sm" variant="ghost" onClick={() => onDrill(r)}>Detalhes</Button>
+                  <TableCell className="whitespace-nowrap">
+                    {r.tipo === "sku_reativado_omie" && r.status === "pendente" ? (
+                      <Button size="sm" variant="ghost" asChild>
+                        <Link to={ROTA_REVISAO_PARAMETROS}>Religar…</Link>
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="ghost" onClick={() => onDrill(r)}>Detalhes</Button>
+                    )}
                   </TableCell>
                 </TableRow>
               );

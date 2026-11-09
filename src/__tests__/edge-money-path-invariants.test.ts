@@ -3334,37 +3334,41 @@ describe('guardrail money-path: erro Omie permanente não prende o sync_all_clie
     ).toMatch(/if \(contaAbandonada\) accErrors\+\+/);
   });
 
-  it('o caller acumula a falha ANTES de sair do laço e a tela não diz "concluída"', () => {
-    const corpo = removerComentarios(caller);
+  // Desde a migration 20261101200000 o "caller" do bloco não é mais um laço na aba: é a ação
+  // `continuar_import_clientes` (cron + lease da clientes_import_rodada). As MESMAS garantias moram
+  // agora na edge (planejarAvanco), na RPC de avanço e no estado que a tela deriva da rodada.
+  it('o caller no servidor acumula a falha, só conclui com contrato validado e a tela não diz "concluída" sobre parcial', () => {
+    const plano = removerComentarios(read('supabase/functions/omie-cliente/import-servidor.ts'));
+    const mig = removerComentarios(read('supabase/migrations/20261101200000_clientes_import_servidor.sql'));
+    const tela = removerComentarios(read('src/components/analyticsSync/rodadaClientes.ts'));
     expect(
-      corpo,
-      'REGRESSÃO: o caller parou de acumular as contas interrompidas — a edge pula a conta e ninguém fica sabendo',
-    ).toMatch(/data\?\.falha\?\.conta_abandonada === true/);
-    // A leitura tem de acontecer antes do `if (data?.done === true) break;`: a ÚLTIMA conta
-    // abandonada é justamente o caso em que a falha é a única coisa a reportar.
-    const posFalha = corpo.indexOf('data?.falha?.conta_abandonada');
-    const posBreakDone = corpo.indexOf('if (data?.done === true) break;');
-    expect(posFalha, 'sentinela: sumiu a leitura da falha no caller').toBeGreaterThan(-1);
-    expect(posBreakDone, 'sentinela: sumiu o fim-sentinela `done` do caller').toBeGreaterThan(-1);
+      plano,
+      'REGRESSÃO: o avanço da rodada parou de levar a falha da conta — a edge pula a conta e ninguém fica sabendo',
+    ).toMatch(/falha,\s*contas_sem_credencial: semCredencial/);
     expect(
-      posFalha,
-      'REGRESSÃO: o caller lê a falha DEPOIS de sair do laço — a falha da última conta se perde',
-    ).toBeLessThan(posBreakDone);
-    // Import parcial tem de LANÇAR, não resolver: `useMutationComRegistro` fecha o registro como
-    // 'sucesso' sempre que a Promise resolve, e aí o card <UltimaExecucao> mostra ✓ depois que o
-    // toast some — estado durável mentindo sobre uma conta que ficou fora (achado Codex P1).
+      mig,
+      'REGRESSÃO: a RPC de avanço parou de acumular as contas interrompidas',
+    ).toMatch(/coalesce\(\(p_falha->>'conta_abandonada'\)::boolean, false\)[\s\S]{0,120}r\.falhas \|\| jsonb_build_array/);
     expect(
-      corpo,
-      'REGRESSÃO: import com conta interrompida voltou a RESOLVER — acoes_execucoes grava sucesso e o card mostra ✓ sobre import parcial',
-    ).toMatch(/if \(falhas\.length > 0\)[\s\S]{0,400}throw new Error\(/);
+      plano,
+      'REGRESSÃO: "não sei" virou "acabou" — o fim tem de exigir done===true ou hasMore booleano',
+    ).toMatch(/typeof resultado\.hasMore !== "boolean"\)\s*\{\s*throw new Error\(/);
     expect(
-      corpo,
+      tela,
+      'REGRESSÃO: rodada concluída com conta interrompida/sem credencial/erros voltou a aparecer como "concluida"',
+    ).toMatch(/const pendente = r\.falhas\.length > 0 \|\| r\.contas_sem_credencial\.length > 0 \|\| r\.erros > 0;/);
+    expect(
+      mig,
       'REGRESSÃO: sumiu o guard de progresso do cursor — edge revertida volta a girar na mesma conta/página',
-    ).toMatch(/cursorAtual === cursorAnterior[\s\S]{0,200}throw new Error\(/);
+    ).toMatch(/invocacoes_sem_progresso \+ 1 >= 20 THEN 'sem_progresso'/);
     expect(
-      corpo,
+      mig,
       'REGRESSÃO: conta sem credencial voltou a sumir do relatório — o import sai "concluído" com um terço da base fora',
-    ).toMatch(/contas_sem_credencial/);
+    ).toMatch(/contas_sem_credencial = \(SELECT coalesce\(jsonb_agg\(DISTINCT x\)/);
+    expect(
+      removerComentarios(caller),
+      'REGRESSÃO: a tela voltou a conduzir o laço de páginas — recarregar a aba volta a matar o import no meio',
+    ).not.toMatch(/action: "sync_all_clients"/);
   });
 });
 
@@ -5120,5 +5124,41 @@ describe('guardrail money-path: `reprocess_operational_orders` (cron da Colacor)
 
   it('respeita o mesmo kill switch do operacional', () => {
     expect(corpo).toContain('cfg.operational_enabled');
+  });
+});
+
+// ── A4 (fin-next-best-action): caixa desconhecido não vira R$0 (plano v6 C1) ─────────────────────────
+// A edge fazia `dias_cobertura ?? 0` / `saldo_tesouraria ?? 0` no transporte da A1 e `disponivel ?? 0`
+// na fila: cobertura null ("sem base de saída") com saldo 10.000 virava "R$0 disponível, confiança
+// alta". O helper (fila + transporte) mora num bloco MIRROR copiado VERBATIM para ./fila.ts — a
+// paridade pega a reversão do Lovable e a cópia que deriva; o wiring prova que o handler USA o
+// transporte (o produto de `caixaDaA1` chega ao mapa de caixa) e não reabre o `?? 0` cru.
+describe('guardrail money-path: A4 sem caixa fabricado (fin-next-best-action, plano v6 C1)', () => {
+  const NBA_SRC = 'src/lib/financeiro/next-best-action-helpers.ts';
+  const NBA_FILA = 'supabase/functions/fin-next-best-action/fila.ts';
+  const NBA_INDEX = 'supabase/functions/fin-next-best-action/index.ts';
+  const NBA_ORQ = 'supabase/functions/fin-next-best-action/orquestracao.ts';
+
+  it('PARIDADE: o bloco a4-fila é idêntico em src × edge', () => {
+    const fonte = mirrorBlockNamed(read(NBA_SRC), 'a4-fila');
+    expect(fonte.length, 'sentinela: bloco da fonte vazio').toBeGreaterThan(2_000);
+    expect(fonte, 'sentinela: o bloco não contém o transporte').toContain('function caixaDaA1(');
+    expect(mirrorBlockNamed(read(NBA_FILA), 'a4-fila'), 'fila.ts divergiu do helper de src/ — recopie o bloco inteiro').toBe(fonte);
+  });
+
+  it('WIRING: o handler entrega as respostas cruas à orquestração, que passa a A1 por caixaDaA1', () => {
+    const handler = removerComentarios(read(NBA_INDEX));
+    expect(vereditoFronteira(handler, 'montarRespostaA4')).toBe('ok');
+    expect(handler).toMatch(/const result = montarRespostaA4\(\{[^}]*cashResults[^}]*\}\);\s*return jsonResponse\(result, 200\)/);
+    const orq = removerComentarios(read(NBA_ORQ));
+    expect(vereditoFronteira(orq, 'caixaDaA1')).toBe('ok');
+    expect(orq).toMatch(/caixaPorEmpresa\[empresa\] = caixaDaA1\(cash, input\.reservaDiasMin\)/);
+  });
+
+  it('REGRESSÃO: nenhum `?? 0` sobre saldo/cobertura/disponível no handler nem no helper', () => {
+    for (const f of [NBA_INDEX, NBA_ORQ, NBA_FILA]) {
+      const codigo = removerComentarios(read(f));
+      expect(codigo, `${f}: voltou a fabricar caixa com ?? 0`).not.toMatch(/(dias_cobertura|saldo_tesouraria|disponivel)\s*\?\?\s*0\b/);
+    }
   });
 });

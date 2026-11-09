@@ -21,7 +21,7 @@ import { OportunidadesTable } from "@/components/reposicao/oportunidades/Oportun
 import { GerarCicloDialog } from "@/components/reposicao/oportunidades/GerarCicloDialog";
 import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
 import { ULTIMA_EXECUCAO_QUERY_KEY } from "@/components/execucoes/tipos";
-import { estadoDeLeitura, naoConsegui } from "@/lib/leitura/estado-de-leitura";
+import { desatualizado, estadoDeLeitura, naoConsegui } from "@/lib/leitura/estado-de-leitura";
 import { AvisoLeituraFalhou } from "@/components/leitura/AvisoLeituraFalhou";
 
 // Escritor deste slug é a PRÓPRIA função SQL ciclo_oportunidade_do_dia (migration
@@ -103,7 +103,10 @@ export default function AdminReposicaoOportunidades() {
   const estadoNegociacao = estadoDeLeitura(negociacaoQuery);
 
   // ============ QUERIES ============
-  const { data: oportunidades = [], isLoading, isFetching } = useQuery({
+  // Plano v7, C10: o `queryFn` já lançava, mas o consumidor fazia `data: oportunidades = []` sem
+  // ler o estado — a falha saía como "0 SKUs, economia R$ 0", idêntica a um dia sem oportunidade
+  // (reprodução do Codex). Agora KPIs E tabela leem o MESMO `estadoDeLeitura` desta query.
+  const oportunidadesQuery = useQuery({
     queryKey: ["oportunidades-hoje", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -119,8 +122,17 @@ export default function AdminReposicaoOportunidades() {
       }));
     },
   });
+  const { isFetching } = oportunidadesQuery;
+  const estadoOportunidades = estadoDeLeitura(oportunidadesQuery);
+  const temOportunidades = oportunidadesQuery.data !== undefined;
+  // Falha de ATUALIZAÇÃO com dado anterior em mãos: o dado fica, marcado como desatualizado.
+  const oportunidadesVelhas = desatualizado(oportunidadesQuery, temOportunidades);
+  // Falha SEM dado em mãos: os números são desconhecidos — "—", nunca R$ 0.
+  const oportunidadesSemLeitura =
+    !temOportunidades && naoConsegui(estadoOportunidades) ? estadoOportunidades : null;
+  const oportunidades = useMemo(() => oportunidadesQuery.data ?? [], [oportunidadesQuery.data]);
 
-  const { data: totalSkusAtivos = 0 } = useQuery({
+  const skusAtivosQuery = useQuery({
     queryKey: ["sku-parametros-count", EMPRESA],
     queryFn: async () => {
       const { count, error } = await supabase
@@ -133,7 +145,7 @@ export default function AdminReposicaoOportunidades() {
     },
   });
 
-  const { data: cicloHoje = 0 } = useQuery({
+  const cicloHojeQuery = useQuery({
     queryKey: ["ciclo-hoje", EMPRESA],
     queryFn: async () => {
       // O mesmo "hoje" do DEFAULT de ciclo_oportunidade_do_dia (dia de SP desde a 20261001023000): com
@@ -156,9 +168,13 @@ export default function AdminReposicaoOportunidades() {
           .eq("data_vigencia", tomorrow),
       ]);
 
+      // Lança: com o erro descartado a falha virava "Sem ciclo hoje" e o botão sumia.
+      if (promo.error) throw promo.error;
+      if (aumento.error) throw aumento.error;
       return (promo.count ?? 0) + (aumento.count ?? 0);
     },
   });
+  const cicloHoje = cicloHojeQuery.data ?? 0;
 
   // Quick reference: histórico total de campanhas de promoção
   const { data: historicoPromocoes } = useQuery({
@@ -215,6 +231,7 @@ export default function AdminReposicaoOportunidades() {
   }, [oportunidades, ignoradosLocal, cenariosSelecionados, filtroFornecedor, apenasComEconomia, ordenacao]);
 
   // ============ KPIs ============
+  // Somas partem de zero SÓ quando há leitura: sem ela o KPI recebe `null` ("—"), não R$ 0.
   const totalEconomia = useMemo(
     () =>
       oportunidades.reduce(
@@ -373,14 +390,27 @@ export default function AdminReposicaoOportunidades() {
         )}
 
         {/* KPI Cards */}
+        {oportunidadesVelhas && (
+          <AvisoLeituraFalhou
+            oque="a atualização das oportunidades (os números abaixo são da leitura anterior)"
+            estado={oportunidadesVelhas}
+            testId="aviso-oportunidades-desatualizadas"
+          />
+        )}
+
         <KpiCards
-          totalEconomia={totalEconomia}
-          ganhoLiquidoPotencial={ganhoLiquidoPotencial}
-          oportunidadesCount={oportunidades.length}
-          totalSkusAtivos={totalSkusAtivos}
+          estados={{
+            oportunidades: temOportunidades ? "pronta" : estadoOportunidades,
+            skusAtivos: skusAtivosQuery.data !== undefined ? "pronta" : estadoDeLeitura(skusAtivosQuery),
+            ciclo: cicloHojeQuery.data !== undefined ? "pronta" : estadoDeLeitura(cicloHojeQuery),
+          }}
+          totalEconomia={temOportunidades ? totalEconomia : null}
+          ganhoLiquidoPotencial={temOportunidades ? ganhoLiquidoPotencial : null}
+          oportunidadesCount={temOportunidades ? oportunidades.length : null}
+          totalSkusAtivos={skusAtivosQuery.data ?? null}
           dataLimiteMaisProxima={dataLimiteMaisProxima}
           diasAteLimite={diasAteLimite}
-          cicloHoje={cicloHoje}
+          cicloHoje={cicloHojeQuery.data ?? null}
           onGerarCiclo={() => setConfirmCicloOpen(true)}
         />
 
@@ -404,7 +434,8 @@ export default function AdminReposicaoOportunidades() {
             />
 
             <OportunidadesTable
-              isLoading={isLoading}
+              isLoading={estadoOportunidades === "carregando"}
+              semLeitura={oportunidadesSemLeitura}
               totalCount={oportunidades.length}
               rows={oportunidadesFiltradas}
               navigate={navigate}
@@ -425,8 +456,8 @@ export default function AdminReposicaoOportunidades() {
         <GerarCicloDialog
           open={confirmCicloOpen}
           onOpenChange={setConfirmCicloOpen}
-          oportunidadesCount={oportunidades.length}
-          totalEconomia={totalEconomia}
+          oportunidadesCount={temOportunidades ? oportunidades.length : null}
+          totalEconomia={temOportunidades ? totalEconomia : null}
           executando={executandoCiclo}
           onConfirm={handleGerarCiclo}
         />

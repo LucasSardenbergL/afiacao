@@ -5,20 +5,33 @@
 // passa por guarda e lança fora do vocabulário; o resto é atribuição estrutural, checada pelo TS.
 import type { Database, Json, Tables } from '@/integrations/supabase/types';
 import { DESTINOS } from './classificar';
+import { CANAIS } from './execucao';
 import type {
+  CanalLiquidacao,
   Categoria,
   ClassificacaoManual,
   ClienteComprador,
+  CoorteTop,
   DecisaoRow,
   Destino,
   Empresa,
   FatoSku,
+  InequivocoSku,
   LinhaMedicao,
+  TrocaContrapartida,
 } from './tipos';
 
 type Fns = Database['public']['Functions'];
 export type FatoRpc = Fns['raio_x_estoque_fatos']['Returns'][number];
-export type MedicaoRpc = Fns['raio_x_medicao']['Returns'][number];
+// `troca_contrapartida` é anulável no banco e AUSENTE no bundle anterior à 20261101120000; o gerador a declara `string`
+// (regenerado pelo Lovable em 2026-11-01). O tipo da borda diz a verdade; o nulo vira null no domínio (abaixo).
+// `unidade_estoque`/`unidades_venda_periodo` (20261103120000) ainda não estão no types.ts gerado: opcionais aqui.
+export type MedicaoRpc = Omit<Fns['raio_x_medicao']['Returns'][number], 'troca_contrapartida' | 'unidade_estoque' | 'unidades_venda_periodo'> & {
+  troca_contrapartida?: string | null;
+  unidade_estoque?: string | null;
+  unidades_venda_periodo?: string[] | null;
+};
+export type InequivocoRpc = Fns['raio_x_inequivoco']['Returns'][number];
 export type LinhaManual = ClassificacaoManual & { sku_codigo_omie: number };
 
 const CATEGORIAS: readonly Categoria[] = ['nao_mercadoria', 'uso_consumo', 'mercadoria'];
@@ -29,6 +42,15 @@ function ehDestino(s: string): s is Destino {
 }
 function exigirDestino(s: string, sku: number): Destino {
   if (!ehDestino(s)) throw new Error(`raio-x: destino "${s}" desconhecido (SKU ${sku})`);
+  return s;
+}
+function exigirCanal(s: string, sku: number): CanalLiquidacao {
+  const c = CANAIS.find((x) => x === s);
+  if (!c) throw new Error(`raio-x: canal "${s}" desconhecido (SKU ${sku})`);
+  return c;
+}
+function exigirContrapartida(s: string, sku: number): TrocaContrapartida {
+  if (s !== 'giro' && s !== 'encalhe') throw new Error(`raio-x: contrapartida "${s}" desconhecida (SKU ${sku})`);
   return s;
 }
 function exigirEmpresa(s: string, sku: number): Empresa {
@@ -60,6 +82,20 @@ export function comoDecisaoRow(r: Tables<'raio_x_decisao'>): DecisaoRow {
     empresa: exigirEmpresa(r.empresa, r.sku_codigo_omie),
     destino: r.destino === null ? null : exigirDestino(r.destino, r.sku_codigo_omie),
     origem,
+    // Colunas do pacote 2: `?? null` porque o bundle pode ir ao ar ANTES da migration (Publish ≠ db:aplicar) —
+    // coluna inexistente chega undefined e não pode derrubar a aba nem virar "canal desconhecido".
+    preco_piso: r.preco_piso ?? null,
+    canal_liquidacao: r.canal_liquidacao == null ? null : exigirCanal(r.canal_liquidacao, r.sku_codigo_omie),
+    responsavel: r.responsavel ?? null,
+    prazo: r.prazo ?? null,
+    concluido_em: r.concluido_em ?? null,
+    concluido_por: r.concluido_por ?? null,
+    frete_estimado: r.frete_estimado ?? null,
+    desconto_sobre_medio_pct: r.desconto_sobre_medio_pct ?? null,
+    margem_unit: r.margem_unit ?? null,
+    preco_medio_base: r.preco_medio_base ?? null,
+    cmc_base: r.cmc_base ?? null,
+    troca_contrapartida: r.troca_contrapartida == null ? null : exigirContrapartida(r.troca_contrapartida, r.sku_codigo_omie),
   };
 }
 
@@ -70,5 +106,40 @@ export function comoLinhaManual(r: Pick<Tables<'raio_x_classificacao_manual'>, '
 }
 
 export function comoLinhaMedicao(r: MedicaoRpc): LinhaMedicao {
-  return { ...r, destino: exigirDestino(r.destino, r.sku_codigo_omie) };
+  return {
+    ...r,
+    destino: exigirDestino(r.destino, r.sku_codigo_omie),
+    // coluna nova no fim da RPC: bundle antes da migration recebe undefined → null (não "giro" por omissão)
+    troca_contrapartida: r.troca_contrapartida == null ? null : exigirContrapartida(r.troca_contrapartida, r.sku_codigo_omie),
+    // colunas novas no fim (migration 20261103120000): bundle antes dela recebe undefined → null = sem prova de
+    // unidade → SKU com venda fica "sem medição" (fail-closed), nunca CX comparada com UN.
+    unidade_estoque: typeof r.unidade_estoque === 'string' && r.unidade_estoque ? r.unidade_estoque : null,
+    unidades_venda_periodo: Array.isArray(r.unidades_venda_periodo)
+      ? r.unidades_venda_periodo.filter((u): u is string => typeof u === 'string')
+      : null,
+  };
+}
+
+/** Linha de `raio_x_inequivoco`. Sem veredito booleano (RPC velha/linha estranha) → null: a lista mostra "—", nunca inequívoco. */
+export function comoInequivoco(r: InequivocoRpc): InequivocoSku | null {
+  if (typeof r.inequivoco !== 'boolean' || typeof r.sku_codigo_omie !== 'number') return null;
+  return {
+    sku_codigo_omie: r.sku_codigo_omie, inequivoco: r.inequivoco,
+    motivos_espera: Array.isArray(r.motivos_espera) ? r.motivos_espera.filter((m): m is string => typeof m === 'string') : [],
+    cobertura_dias: r.cobertura_dias ?? null, qtd_liquidavel: r.qtd_liquidavel ?? null,
+    ultima_entrada: r.ultima_entrada ?? null, revisar_em: r.revisar_em ?? null,
+  };
+}
+
+/** Linhas de `raio_x_coorte_top` de UMA empresa → coorte. Vazio = ainda não congelada (null, nunca coorte vazia). */
+export function comoCoorte(
+  rows: Pick<Tables<'raio_x_coorte_top'>, 'sku_codigo_omie' | 'posicao' | 'valor' | 'congelada_em'>[],
+): CoorteTop | null {
+  if (rows.length === 0) return null;
+  const congeladaEm = rows[0].congelada_em;
+  if (rows.some((r) => r.congelada_em !== congeladaEm)) throw new Error('raio-x: coorte com mais de um congelamento');
+  return {
+    congelada_em: congeladaEm,
+    itens: new Map(rows.map((r) => [r.sku_codigo_omie, { posicao: r.posicao, valor: r.valor }])),
+  };
 }

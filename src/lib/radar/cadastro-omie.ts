@@ -115,6 +115,36 @@ export function validarRespostaCriarCliente(data: unknown): RespostaValidada {
   return { codigo, jaExistia: d.created === false };
 }
 
+/** Razão de MEI como o Radar a GUARDA e exibe: o CPF do titular mascarado ('FULANO ***456789**', migration 20261111150000). */
+export const RAZAO_MASCARADA = / \*\*\*[0-9]{6}\*\*$/;
+
+/**
+ * A razão FISCAL que vai para o Omie. A de MEI tem o CPF do titular, que o Radar guarda mascarado: o valor da Receita
+ * vem SÓ da RPC `radar_razao_social_para_cadastro` (única leitura do cru). Fail-closed: cadastrar um MEI com a razão
+ * mascarada gravaria dado fiscal errado no ERP — melhor não cadastrar e o vendedor tentar de novo.
+ *   - RPC ok com texto → ele;
+ *   - RPC ok sem texto (CNPJ fora do Radar) ou RPC ainda inexistente (PGRST202: migration não aplicada, a tabela
+ *     ainda guarda a razão crua) → a razão exibida, desde que NÃO seja a mascarada;
+ *   - qualquer outro erro → lança.
+ */
+export function escolherRazaoFiscal(
+  exibida: string | null | undefined,
+  rpc: { data: unknown; erroCodigo: string | null; erro?: unknown },
+): string | null {
+  let razao: string | null;
+  if (rpc.erroCodigo === null) {
+    razao = typeof rpc.data === 'string' && rpc.data.trim() !== '' ? rpc.data : (exibida ?? null);
+  } else if (rpc.erroCodigo === 'PGRST202') {
+    razao = exibida ?? null;
+  } else {
+    throw rpc.erro instanceof Error ? rpc.erro : new Error(`RADAR_RAZAO_FISCAL_INDISPONIVEL: ${rpc.erroCodigo}`);
+  }
+  if (razao !== null && RAZAO_MASCARADA.test(razao)) {
+    throw new Error('RADAR_RAZAO_FISCAL_INDISPONIVEL: a razão do MEI veio mascarada — cadastro não enviado ao Omie');
+  }
+  return razao;
+}
+
 export interface EmpresaCadastravel {
   cnpj: string;
   razao_social?: string | null;

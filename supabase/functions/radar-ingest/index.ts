@@ -3,6 +3,8 @@ import { authorizeCron } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { motivoDescarte, type MotivoDescarte } from "./cnpj.ts";
 import { validarLinhaSituacao, type LinhaSituacao, type MotivoDescarteSituacao } from "./situacao.ts";
+import { codigoErroSocios, ehAcaoSocios, montarPedidoSocios } from "./socios.ts";
+import { dedupPorCnpj, lerEsperado, lerMotivoFalha, montarLinhaStaging } from "./carga.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -47,27 +49,11 @@ Deno.serve(async (req) => {
   try {
     if (action === "begin_lote") {
       if (!MES_RE.test(mes)) return json({ error: "mes inválido (YYYY-MM)" }, 400);
-      // Verificar se já existe para preservar iniciado_em em re-run
-      const { data: existing, error: eSel } = await admin.from("radar_ingest_state")
-        .select("mes_referencia").eq("mes_referencia", mes).maybeSingle();
-      if (eSel) throw eSel;
-      let dbError;
-      if (existing) {
-        // Re-run: preserva iniciado_em, só recomeça o status
-        const { error } = await admin.from("radar_ingest_state").update({
-          status: "running", erro: null, finalizado_em: null,
-        }).eq("mes_referencia", mes);
-        dbError = error;
-      } else {
-        // Primeira vez
-        const { error } = await admin.from("radar_ingest_state").insert({
-          mes_referencia: mes, status: "running", total_recebido: 0, novos: null,
-          iniciado_em: new Date().toISOString(), finalizado_em: null, erro: null,
-        });
-        dbError = error;
-      }
-      if (dbError) throw dbError;
-      return json({ ok: true, mes, retomado: !!existing });
+      // Publicação atômica (migration 20261110130000): esvazia o staging e abre a carga em `recebendo`.
+      // Re-run preserva iniciado_em, e um lote já `complete` CONTINUA complete — a foto vigente segue no ar.
+      const { data, error } = await admin.rpc("radar_carga_iniciar", { p_lote: mes });
+      if (error) throw error;
+      return json({ ok: true, mes, ...(data as Record<string, unknown>) });
     }
 
     if (action === "chunk") {
@@ -90,28 +76,15 @@ Deno.serve(async (req) => {
         console.warn(`chunk ${mes}: ${descartadas} linhas descartadas`, descartadas_por_motivo);
       }
       if (validas.length === 0) return json({ ok: true, upserted: 0, descartadas, descartadas_por_motivo });
-      // ⚠️ payload SÓ com campos cadastrais + ultimo_lote: o UPDATE do upsert não
-      // toca primeira_vista_em / prospeccao_status / ja_cliente (preservação por omissão).
-      const payload = validas.map((l) => ({
-        cnpj: l.cnpj, razao_social: l.razao_social ?? null, nome_fantasia: l.nome_fantasia ?? null,
-        cnae_principal: l.cnae_principal, cnae_descricao: l.cnae_descricao ?? null,
-        cnaes_secundarios: l.cnaes_secundarios ?? [], data_abertura: l.data_abertura ?? null,
-        porte: l.porte ?? null, capital_social: l.capital_social ?? null,
-        logradouro: l.logradouro ?? null, numero: l.numero ?? null, complemento: l.complemento ?? null,
-        bairro: l.bairro ?? null, municipio_codigo: l.municipio_codigo ?? null,
-        municipio_nome: l.municipio_nome ?? null, uf: l.uf ?? null, cep: l.cep ?? null,
-        telefone1: l.telefone1 ?? null, telefone2: l.telefone2 ?? null, email: l.email ?? null,
-        socios_nomes: l.socios_nomes ?? null,
-        ultimo_lote: mes, updated_at: new Date().toISOString(),
-      }));
-      // Dedup intra-chunk: CNPJ duplicado dentro do mesmo chunk derrubaria o
-      // statement com erro 21000 permanente (retry nunca resolve). last-wins.
-      const porCnpj = new Map(payload.map((p) => [String(p.cnpj), p]));
-      const finalPayload = [...porCnpj.values()];
-      const { error } = await admin.from("radar_empresas").upsert(finalPayload, { onConflict: "cnpj" });
+      // STAGING, não a tabela viva: a fila segue lendo a foto vigente inteira enquanto a carga chega, e uma
+      // carga que morre no meio não tira ninguém dela. A RPC recusa lote fora de `recebendo` (validado,
+      // publicado ou falhou) — chunk atrasado não muda o que a validação contou.
+      const finalPayload = dedupPorCnpj(validas.map(montarLinhaStaging));
+      const { data: gravadas, error } = await admin.rpc("radar_carga_receber", { p_lote: mes, p_linhas: finalPayload });
       if (error) throw error;
-      // Sem contador incremental no chunk: a contagem oficial (total/novos) é
-      // recomputada no finalize com count real da tabela — chunk replay-safe.
+      if (gravadas !== finalPayload.length) throw new Error(`chunk ${mes}: staging gravou ${gravadas}, esperava ${finalPayload.length}`);
+      // `upserted` é o que a carga soma e devolve no finalize como `esperado`: replay do mesmo chunk é
+      // upsert por (lote, cnpj) no staging, então a soma das respostas bem-sucedidas = linhas distintas.
       return json({ ok: true, upserted: finalPayload.length, descartadas, descartadas_por_motivo,
         duplicadas_no_chunk: validas.length - finalPayload.length });
     }
@@ -169,27 +142,22 @@ Deno.serve(async (req) => {
 
     if (action === "finalize") {
       if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
-      const { data: st, error: eSt } = await admin.from("radar_ingest_state")
-        .select("iniciado_em").eq("mes_referencia", mes).single();
-      if (eSt || !st) return json({ error: "lote não iniciado" }, 400);
-      const { error: eRe } = await admin.rpc("radar_recruzar_ja_cliente");
-      if (eRe) throw eRe;
-      // A situação cadastral NÃO é aplicada aqui: radar_aplicar_situacao regrava ~553k linhas (minutos) e o
-      // PostgREST corta em 8s (57014 no lote 2026-09). O job radar-aplicar-situacao-diario (06:05 UTC,
-      // migration 20261027010000) aplica o lote `complete` pendente — a pendência é o finalizado_em abaixo.
-      const { count: total, error: eT } = await admin.from("radar_empresas")
-        .select("cnpj", { count: "exact", head: true }).eq("ultimo_lote", mes);
-      if (eT) throw eT;
-      const { count: novos, error: eN } = await admin.from("radar_empresas")
-        .select("cnpj", { count: "exact", head: true })
-        .gte("primeira_vista_em", st.iniciado_em).eq("ultimo_lote", mes);
-      if (eN) throw eN;
-      const { error: eUp } = await admin.from("radar_ingest_state").update({
-        status: "complete", total_recebido: total ?? 0, novos: novos ?? 0,
-        finalizado_em: new Date().toISOString(), erro: null,
-      }).eq("mes_referencia", mes);
-      if (eUp) throw eUp;
-      return json({ ok: true, mes, total, novos, situacao_aplicacao: "cron" });
+      // O finalize VALIDA, não publica: a contagem do staging tem de bater com o que a carga declara ter
+      // entregue (soma do `upserted` dos chunks), sem queda > 15% contra a foto vigente. Validado → o job
+      // radar-publicar-lote (≤ 15 min) troca a foto numa transação: upsert em radar_empresas, recruzar
+      // ja_cliente, `complete` + finalizado_em. Publicar aqui cairia nos 8s do PostgREST (57014 no lote 2026-09).
+      // A situação cadastral também é do job radar-aplicar-situacao-diario (06:05 UTC), pela pendência do
+      // finalizado_em que a publicação grava.
+      const esperado = lerEsperado(body.esperado);
+      if (!esperado.ok) return json({ error: esperado.erro }, 400);
+      const { data, error } = await admin.rpc("radar_carga_validar", {
+        p_lote: mes, p_esperado: esperado.valor, p_aceitar_queda: body.aceitar_queda === true,
+      });
+      if (error) throw error;
+      const v = data as { ok?: boolean; motivo?: string; recebidas?: number } | null;
+      // Reprovado: a RPC já marcou a carga `falhou` (a foto vigente fica intacta). Fora do catch geral.
+      if (!v?.ok) return json({ error: `lote ${mes} reprovado na validação: ${v?.motivo ?? "sem motivo"}`, validacao: v }, 422);
+      return json({ ok: true, mes, recebidas: v.recebidas, publicacao: "cron", situacao_aplicacao: "cron" });
     }
 
     if (action === "publicar_concorrentes") {
@@ -215,6 +183,37 @@ Deno.serve(async (req) => {
       }
     }
 
+    if (ehAcaoSocios(action)) {
+      // Sócios (QSA PF com CPF mascarado, passo 3 do "Radar sucessor"): o protocolo vive nas RPCs. Fronteira de
+      // erro PRÓPRIA, fora do catch geral — ele ecoaria a mensagem do PostgREST (que pode trazer a linha, com a
+      // máscara) e marcaria o lote da FILA como `error`; esta camada roda depois do finalize e não pode derrubá-la.
+      const pedido = montarPedidoSocios(action, body);
+      if (!pedido.ok) return json({ error: pedido.erro }, 400);
+      // Nome LITERAL em cada ramo (não `admin.rpc(pedido.rpc, …)`): é o que o pré-flight de deploy enxerga.
+      const chamada = pedido.rpc === "radar_socios_iniciar" ? admin.rpc("radar_socios_iniciar", pedido.args)
+        : pedido.rpc === "radar_socios_receber" ? admin.rpc("radar_socios_receber", pedido.args)
+        : pedido.rpc === "radar_socios_publicar" ? admin.rpc("radar_socios_publicar", pedido.args)
+        : admin.rpc("radar_socios_limpar", pedido.args);
+      const { data, error } = await chamada;
+      if (error) {
+        const codigo = codigoErroSocios(error);
+        console.error(`radar-ingest ${action} falhou: ${codigo}`);
+        return json({ error: codigo }, 500);
+      }
+      return json({ ok: true, resultado: data });
+    }
+
+    if (action === "falhar") {
+      // A CARGA declara que desistiu do lote (esgotou as tentativas ou abortou). Só uma carga `recebendo` vira
+      // `falhou` (e `error`, se o lote nunca foi publicado): lote validado/complete não é rebaixado — no-op.
+      if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
+      const motivo = lerMotivoFalha(body.erro);
+      if (!motivo.ok) return json({ error: motivo.erro }, 400);
+      const { data, error } = await admin.rpc("radar_carga_falhar", { p_lote: mes, p_erro: motivo.motivo });
+      if (error) throw error;
+      return json({ ok: true, mes, marcada: data === true });
+    }
+
     if (action === "status") {
       const { data, error } = await admin.from("radar_ingest_state")
         .select("*").order("mes_referencia", { ascending: false }).limit(3);
@@ -222,16 +221,15 @@ Deno.serve(async (req) => {
       return json({ ok: true, lotes: data });
     }
 
-    return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "cnpjs_conhecidos", "chunk_situacao", "finalize", "publicar_concorrentes", "status"] }, 400);
+    return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "cnpjs_conhecidos", "chunk_situacao", "finalize", "falhar", "publicar_concorrentes", "socios_iniciar", "chunk_socios", "publicar_socios", "limpar_socios", "status"] }, 400);
   } catch (e) {
     // Erros do PostgREST são objetos planos (não Error) — String(e) viraria
     // "[object Object]" e mascararia o diagnóstico (mordeu na 1ª carga real).
     const msg = e instanceof Error ? e.message : JSON.stringify(e);
     console.error(`radar-ingest ${action} falhou:`, msg);
-    if (MES_RE.test(mes)) {
-      await admin.from("radar_ingest_state").update({ status: "error", erro: msg })
-        .eq("mes_referencia", mes).then(() => {}, () => {});
-    }
+    // NÃO marca a carga `falhou` aqui: todo erro desta edge é RECUPERÁVEL para o chamador (chunk é upsert por
+    // (lote, cnpj); finalize repetido devolve o veredito gravado). Marcar aqui fazia um 5xx transitório num
+    // chunk fechar o lote e a 2ª tentativa morrer em RCARGA_LOTE_FECHADO. Quem desiste declara: ação `falhar`.
     return json({ error: msg }, 500);
   }
 });

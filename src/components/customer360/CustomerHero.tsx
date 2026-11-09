@@ -17,16 +17,22 @@ import {
   formatDateOrDash, initials, healthTone, churnTone, formatDocument, margemTone,
 } from './format';
 import type { Customer, CustomerScore } from './viewTypes';
+import type { EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 
 export function CustomerHero({
-  customer, score: s, isPj, onBack,
+  customer, score: s, isPj, onBack, scoreSemLeitura = null,
 }: {
   customer: Customer;
   score: CustomerScore;
   isPj: boolean;
   onBack: () => void;
+  /** Leitura do score que NÃO aconteceu (sem score em mãos): o chip não pode dizer "Sem score". */
+  scoreSemLeitura?: EstadoSemLeitura | null;
 }) {
   const health = healthTone(s?.health_class ?? null, s?.sales_history_status ?? null);
+  const rotuloSaude = scoreSemLeitura
+    ? (scoreSemLeitura === 'sem-rede' ? 'Score: sem rede' : 'Score indisponível')
+    : health.label;
   const churn = churnTone(s?.churn_risk ?? null);
   const coberturaItens = legendaCoberturaItens(coberturaCustoCliente(s));
   // Sem margem E sem cobertura: se o motivo é a janela (nenhuma compra em 12m), a tela diz — em vez
@@ -131,7 +137,7 @@ export function CustomerHero({
                 )}
               >
                 <span className={cn('inline-block w-1.5 h-1.5 rounded-full', health.dot)} />
-                {health.label}
+                {rotuloSaude}
               </span>
               {s?.churn_risk != null && (
                 <span

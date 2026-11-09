@@ -2,10 +2,12 @@
 // Envia email via Gmail API + cria evento no Google Calendar via OAuth 2.0 (refresh token).
 // Sequencial: NUNCA processa alertas em paralelo.
 // Tipos só-no-app (./politica-email.ts) são encerrados como `ignorado`, sem e-mail.
+// Destinatário por alerta (./destinatario.ts): o e-mail semanal de leads do Radar vai para o vendedor.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from '../_shared/auth.ts';
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from './versao.ts';
 import { separarPorCanal } from './politica-email.ts';
+import { destinatarioDe, falhaDeLeituraAborta, htmlDoVendedor, mapaDestinatarios } from './destinatario.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -368,6 +370,23 @@ Deno.serve(async (req) => {
     });
   }
 
+  // 1c. Destinatário de cada alerta (Radar D1): o e-mail semanal de leads vai para o vendedor, resolvido pelo
+  // envio (tabela fechada ao JWT), nunca por coluna livre de fornecedor_alerta. ANTES do token: falha de leitura
+  // aborta sem queimar tentativa — mandar ao gestor e marcar `notificado` contaria um envio que ninguém recebeu.
+  const { data: envios, error: enviosErr } = await supabase
+    .from('radar_email_vendedor_envios')
+    .select('alerta_id, destinatario_email')
+    .in('alerta_id', porEmail.map((a) => a.id));
+  if (falhaDeLeituraAborta(enviosErr)) {
+    const msg = `Falha ao ler radar_email_vendedor_envios: ${enviosErr?.message ?? 'erro desconhecido'}`;
+    console.error(`[dispatch-notifications] ${msg}`);
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  const destinos = mapaDestinatarios(enviosErr ? [] : (envios ?? []));
+
   // 2. Obter access token
   const tokenResult = await getAccessToken();
   if (!tokenResult.ok) {
@@ -388,9 +407,10 @@ Deno.serve(async (req) => {
   for (const a of porEmail) {
     try {
       const subject = subjectFor(a.severidade, a.titulo);
-      const html = buildHtmlBody(a);
+      const destino = destinatarioDe(a.id, destinos, EMAIL_TO!);
+      const html = destino.doVendedor ? htmlDoVendedor(a.titulo, a.mensagem) : buildHtmlBody(a);
 
-      const gmailId = await sendGmail(accessToken, from, EMAIL_TO!, subject, html);
+      const gmailId = await sendGmail(accessToken, from, destino.to, subject, html);
 
       let calendarEventoId: string | null = null;
       if (a.data_evento) {
@@ -416,7 +436,7 @@ Deno.serve(async (req) => {
       sucesso++;
       detalhes.push({ alerta_id: a.id, empresa: a.empresa, tipo: a.tipo, status: 'notificado', erro: null });
       console.log(
-        `[dispatch-notifications] alerta ${a.id} → notificado (gmail=${gmailId}, calendar=${calendarEventoId ?? 'n/a'})`,
+        `[dispatch-notifications] alerta ${a.id} → notificado (gmail=${gmailId}, calendar=${calendarEventoId ?? 'n/a'}, destino=${destino.doVendedor ? 'vendedor' : 'padrao'})`,
       );
     } catch (err) {
       const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 500);

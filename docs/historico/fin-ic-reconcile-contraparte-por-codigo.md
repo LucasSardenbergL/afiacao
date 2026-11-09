@@ -106,3 +106,14 @@ Antes, 2024-11 e 2025-05/06 mostravam um consolidado não nulo e inflado pelo IC
     - 2025-06: −R$ 17.000,00.
     - 2025-09 (controle): sem mudança.
 - **CR colacor_sc→colacor de R$ 3.605,67 (2025-01-02)** fica em **1.04.04 "Empréstimos/Financiamentos"**: é mútuo, não venda. Fica fora de receita e CMV, então não pesa na eliminação. A colacor não tem cadastro da colacor_sc e nenhum CP de mesmo valor; a saída, se houve, não passou por contas a pagar.
+
+## Fecho dos candidatos sem NF (2026-10-31)
+
+- O founder recategorizou no Omie da colacor os CPs de R$ 342,00 e R$ 700,00, de 2.09.05 para 2.01.01 (sync às 18:12Z). O DRE de 2026-03 e 2026-06 foi recalculado às 18:16Z, e o CMV da colacor subiu exatamente esses valores.
+- Ele aprovou o par de R$ 1.314,50 na fila. Os de R$ 342,00 e R$ 700,00 tinham sido marcados "Ignorar" às 17:38Z, por engano, e a fila não desfaz linha ignorada. A pedido dele, `db/fin-ic-aprova-342-700-2026-10-31.sql` (`db:aplicar`, tentativa #794) os passou para `manual_matched`, mantendo `resolvido_por` e com a foto do antes no cabeçalho.
+- RPC consolidada (corpo da prod em SELECT):
+  - 2026-03: −R$ 342,00 em receita e CMV.
+  - 2026-06: −R$ 2.014,50.
+  - O resultado fica intacto e 2024-11 não muda.
+- Lacuna de produto: a fila não tem "desfazer" para linha ignorada, então um clique errado só se corrige por SQL.
+

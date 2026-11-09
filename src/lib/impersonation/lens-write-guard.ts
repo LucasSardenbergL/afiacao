@@ -29,9 +29,40 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // de telefone compartilhado e os conflitos ABERTOS do lead (a RPC só lê, sob FOR SHARE).
   'radar_atendimentos_ativos',
   'radar_telefone_compartilhado',
+  // Contato provável da contabilidade (migration 20261109140000): leitura STABLE. A correção
+  // (radar_contato_contabil_corrigir) fica BLOQUEADA na lente.
+  'radar_contato_contabil_da_empresa',
   'radar_estado_cadastro_omie',
+  // Radar (migration 20261104201756) — STABLE, só lê: o "possível vínculo/sucessor de cliente" da ficha.
+  'radar_possiveis_vinculos',
+  // Sucessão declarada (migration 20261107013000) — STABLE, só leem: o selo da ficha e a prévia dos pedidos.
+  'cliente_sucessoes_do_documento',
+  'cliente_sucessao_previa',
+  // Plano de rateio (migration 20261108000000 + a leitura do 20261107210000) — STABLE, só leem: o plano vigente, os
+  // itens/destinos da tela do plano e a herança na ficha do vendedor. Publicar/revogar o plano ficam BLOQUEADOS.
+  'cliente_sucessao_plano_do_evento',
+  'cliente_sucessao_plano_itens',
+  'venda_heranca_comprador',
   // Radar (migration 20261030233200) — SELECT puro da amostra de controle vigente, intercalada na fila.
   'radar_amostra_vigente',
+  // Radar D2 (migration 20261106181000) — STABLE, só lê: os leads do card "Prospectar hoje" (o sensor do card é
+  // outra RPC, radar_registrar_card_servido, que fica BLOQUEADA na lente de propósito).
+  'radar_prospectar_hoje',
+  // Radar pacote F (migration 20261107220500) — STABLE, só lê: o território que vira o recorte "Perto dos seus
+  // clientes" da fila do /radar (na lente, o da persona vista).
+  'radar_meu_territorio',
+  // Radar D1 (migration 20261107140001) — STABLE, só lê: o painel do e-mail semanal (só master). As escritas
+  // (radar_email_semanal_definir/_cron) ficam BLOQUEADAS na lente.
+  'radar_email_semanal_painel',
+  // Radar H (migration 20261107233000) — STABLE, só lê: o funil do lead empurrado (master/gestor). Os registradores
+  // do 2º momento e das falhas (radar_registrar_ficha_entregue/_falha_sensor) GRAVAM e ficam BLOQUEADOS na lente.
+  'radar_funil',
+  'radar_funil_experimento', // pacote M (20261111134500): STABLE, só lê o experimento da coorte (mesmo gate do funil)
+  // Cockpit financeiro (migration 20261101210000) — STABLE, SECURITY INVOKER, só agrega saldo de títulos sob a RLS.
+  'fin_saldo_titulos_por_status',
+  // Crédito (migration 20261106205557) — STABLE, só lê: o aviso de vínculo com cliente que tem título vencido.
+  // O sensor (credito_vinculo_aviso_registrar) GRAVA e fica de fora de propósito.
+  'credito_vinculo_aviso',
 ]);
 function isReadOnlyRpc(name: string): boolean {
   return name.startsWith('get_') || name.startsWith('list_') || RPC_READONLY_ALLOWLIST.has(name);

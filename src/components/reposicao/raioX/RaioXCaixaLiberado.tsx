@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import { medir } from '@/lib/reposicao/raio-x/medir';
-import type { Empresa, LinhaMedicao } from '@/lib/reposicao/raio-x/tipos';
-import { fmtReais } from './formato';
+import { alertaPiso, type AlertaPiso } from '@/lib/reposicao/raio-x/execucao';
+import type { DecisaoRow, Empresa, LinhaMedicao } from '@/lib/reposicao/raio-x/tipos';
+import { fmtReais, fmtValorFino } from './formato';
 
 const META_CAIXA = 60000;
 const META_TEXTO = 'R$ 60.000';
@@ -16,6 +17,10 @@ interface Props {
   /** sku_codigo_omie → código legível (só para exibir a contradição). */
   codigos: Map<number, string>;
   onFiltrarSku: (sku: number) => void;
+  /** Decisões vigentes (piso do liquidar). Opcional: sem elas, não há alerta de piso. */
+  decisoes?: Map<number, DecisaoRow>;
+  /** sku → unidades de venda (fatos). SKU fora dos fatos não compara com o piso. */
+  unidadesVenda?: Map<number, string[] | null>;
 }
 
 // Ausente ≠ zero: null vira "—", nunca "R$ 0".
@@ -40,56 +45,73 @@ function Linha({ rotulo, valor, nota }: { rotulo: string; valor: number | null; 
   );
 }
 
-/** Caixa liberado pelas decisões do Raio-X. NUNCA soma com "R$ que distorce o DIO" (outro bloco, no placar). */
-export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, onFiltrarSku }: Props) {
+/**
+ * O que as decisões do Raio-X liberaram, em parcelas SEPARADAS: estoque reduzido (a custo) · receita das vendas ·
+ * crédito de troca informado. Nenhuma delas é "caixa", e a tela nunca as soma com esse nome. A barra da meta usa
+ * o critério da fase B (estoque reduzido + crédito informado), rotulado como critério. NUNCA soma com o DIO.
+ */
+export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, onFiltrarSku, decisoes, unidadesVenda }: Props) {
   const m = useMemo(() => (linhas ? medir(linhas, empresa) : null), [linhas, empresa]);
+  // Venda real abaixo do piso do liquidar — só onde a comparação é honesta (mesma unidade, venda desde a foto).
+  const abaixoDoPiso = useMemo<AlertaPiso[]>(
+    () =>
+      (linhas ?? [])
+        .map((l) => alertaPiso(l, decisoes?.get(l.sku_codigo_omie), unidadesVenda?.get(l.sku_codigo_omie)))
+        .filter((a): a is AlertaPiso => a !== null && a.abaixo),
+    [linhas, decisoes, unidadesVenda],
+  );
 
   if (erro) {
     const semPermissao = (erro as { code?: string }).code === '42501';
     return (
       <div role="alert" className="rounded-md border border-status-error/30 bg-status-error/5 p-4 text-sm">
         {semPermissao
-          ? 'Caixa liberado indisponível: sem permissão para ver custo.'
-          : 'Não foi possível medir o caixa liberado. Recarregue a página; se persistir, avise o time.'}
+          ? 'Medição indisponível: sem permissão para ver custo.'
+          : 'Não foi possível medir o que foi liberado. Recarregue a página; se persistir, avise o time.'}
       </div>
     );
   }
   if (isLoading || !m) {
-    return <div role="status" className="rounded-md border p-4 text-sm text-muted-foreground">Medindo o caixa liberado…</div>;
+    return <div role="status" className="rounded-md border p-4 text-sm text-muted-foreground">Medindo o que foi liberado…</div>;
   }
 
   const oben = empresa === 'oben';
-  const pct = Math.min(100, Math.round((m.caixa_liberado / META_CAIXA) * 100));
+  const pct = Math.min(100, Math.round((m.meta_liberado / META_CAIXA) * 100));
 
   return (
-    <section aria-label="Caixa liberado" className="space-y-3 rounded-md border p-4">
+    <section aria-label="Liberado pelas decisões" className="space-y-3 rounded-md border p-4">
+      <div className="space-y-1" data-testid="parcelas-liberado">
+        <div className="text-sm text-muted-foreground">Liberado pelas decisões (parcelas separadas, não é caixa)</div>
+        <Linha rotulo="Estoque reduzido (a custo)" valor={m.estoque_reduzido} nota={oben ? 'vendido + liquidado, ao CMC da foto' : 'sem NF para atribuir a saída'} />
+        <Linha rotulo="Receita das vendas" valor={m.receita_vendas} nota={oben ? 'faturado por essas unidades' : 'sem NF'} />
+        <Linha rotulo="Crédito de troca informado" valor={m.trocado} nota={`informado na decisão, não conferido${m.trocado_sem_contrapartida > 0 ? ` · ${fmtReais(m.trocado_sem_contrapartida)} sem contrapartida informada` : ''}`} />
+        {m.trocado_encalhe > 0 && <Linha rotulo="Troca por outro encalhe (fora do critério)" valor={m.trocado_encalhe} nota="entra outro parado no lugar — não libera" />}
+      </div>
+
       <div className="space-y-2">
-        <div className="text-sm text-muted-foreground">Caixa liberado</div>
-        <div className="font-display text-xl">
-          {fmtReais(m.caixa_liberado)} <span className="text-sm text-muted-foreground">de {META_TEXTO}</span>
+        <div className="text-xs text-muted-foreground">
+          Meta {META_TEXTO} — critério: estoque reduzido (a custo) + crédito de troca informado
+        </div>
+        <div className="text-sm">
+          <span className="font-medium tabular-nums">{fmtReais(m.meta_liberado)}</span>{' '}
+          <span className="text-muted-foreground">de {META_TEXTO} no critério da meta</span>
         </div>
         <div
           role="progressbar"
-          aria-label="Caixa liberado contra a meta"
+          aria-label="Critério da meta: estoque reduzido mais crédito informado"
           aria-valuemin={0}
           aria-valuemax={META_CAIXA}
-          aria-valuenow={Math.min(m.caixa_liberado, META_CAIXA)}
+          aria-valuenow={Math.min(m.meta_liberado, META_CAIXA)}
           className="h-2 w-full overflow-hidden rounded bg-muted"
         >
           <div className="h-full bg-status-success" style={{ width: `${pct}%` }} />
         </div>
-        {!oben && (
-          <p className="text-xs text-muted-foreground">
-            Colacor: sem NF para atribuir a saída; só o crédito de troca conta como caixa.
-          </p>
-        )}
       </div>
 
       <div className="space-y-1">
-        {oben && <Linha rotulo="Vendido" valor={m.vendido} />}
-        {oben && <Linha rotulo="Liquidado (preço < 90% do médio 12m)" valor={m.liquidado} />}
-        <Linha rotulo="Trocado (crédito informado)" valor={m.trocado} />
-        {!oben && <Linha rotulo="Saiu do estoque (sem NF para atribuir: venda, consumo ou baixa?)" valor={m.saiu_sem_nf} nota="Não entra no caixa liberado." />}
+        {oben && <Linha rotulo="Vendido (a custo)" valor={m.vendido} />}
+        {oben && <Linha rotulo="Liquidado (a custo; preço < 90% do médio 12m)" valor={m.liquidado} />}
+        {!oben && <Linha rotulo="Saiu do estoque (sem NF para atribuir: venda, consumo ou baixa?)" valor={m.saiu_sem_nf} nota="Não entra no critério da meta." />}
         <Linha rotulo="Ainda parado" valor={m.parado} />
         {oben && <Linha rotulo="Recomprado" valor={m.recomprado} nota={m.compras_visiveis ? undefined : 'sem permissão para ver compras'} />}
       </div>
@@ -113,6 +135,26 @@ export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, 
                   onClick={() => onFiltrarSku(c.sku_codigo_omie)}
                 >
                   {codigos.get(c.sku_codigo_omie) ?? `SKU ${c.sku_codigo_omie}`} · {ROTULOS[c.destino] ?? c.destino} · pedido em {c.pedido_em.slice(0, 10)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {abaixoDoPiso.length > 0 && (
+        <div className="space-y-1">
+          {/* bug 4 da 2ª revisão: o piso não é versionado — compara o médio do período com o piso de HOJE, e diz isso */}
+          <div className="text-sm font-medium text-status-warning">Preço médio desde a foto abaixo do piso atual</div>
+          <ul className="space-y-1">
+            {abaixoDoPiso.map((a) => (
+              <li key={a.sku_codigo_omie}>
+                <button
+                  type="button"
+                  className="text-left text-sm underline-offset-2 hover:underline"
+                  onClick={() => onFiltrarSku(a.sku_codigo_omie)}
+                >
+                  {codigos.get(a.sku_codigo_omie) ?? `SKU ${a.sku_codigo_omie}`} · médio desde a foto {fmtValorFino(a.preco)} · piso atual {fmtValorFino(a.piso)}
                 </button>
               </li>
             ))}

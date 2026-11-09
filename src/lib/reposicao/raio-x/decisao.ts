@@ -122,3 +122,36 @@ export function sugestaoInicial(i: ItemRaioX): Destino | null {
   if (i.categoria !== 'mercadoria' || !i.parado) return null;
   return ehDestino(i.destino_sugerido) ? i.destino_sugerido : null;
 }
+
+/**
+ * Args do "Confirmar: <sugestão>" (UX 2 — 1 toque no card). O toque explícito no botão É a decisão humana; a regra
+ * "pré-seleção sozinha não é decisão" continua valendo para a pré-seleção passiva do painel. `null` = não há o que
+ * confirmar: já decidido, linha histórica (fora do estoque) ou sem sugestão que seja destino (revisar/aguarde/sem
+ * histórico — inclusive o liquidar que o servidor ainda recusa, já rebaixado a "revisar"). Um item por toque: nada em lote.
+ * Observação/fornecedor de uma linha sem destino (ex.: só contagem) são preservados — a RPC apaga campo omitido.
+ */
+/**
+ * Destino que o "Confirmar: <sugestão>" gravaria em 1 toque, ou `null` (já decidido, linha histórica, sem sugestão, ou
+ * liquidar sem o veredito inequívoco). Independe da empresa — é a mesma regra do `argsConfirmarSugestao`.
+ */
+export function sugestaoConfirmavel(item: ItemRaioX, d: DecisaoRow | undefined): Destino | null {
+  if (d?.destino || item.fora_do_estoque) return null;
+  const s = sugestaoInicial(item);
+  if (!s) return null;
+  // 2ª camada do bug 5: liquidar só com o veredito "inequívoco" do servidor (o RX004 recusaria) — nunca por omissão
+  if (s === 'liquidar' && item.inequivoco !== true) return null;
+  return s;
+}
+
+export function argsConfirmarSugestao(empresa: Empresa, item: ItemRaioX, d: DecisaoRow | undefined): DecidirArgs | null {
+  const s = sugestaoConfirmavel(item, d);
+  if (!s) return null;
+  return {
+    ...argsEstadoSalvo(item, d),
+    destino: s,
+    creditoTroca: null,
+    // mesmo padrão do painel para decisão nova (S8): tira do motor quando há o que tirar — e o botão DIZ isso
+    tirarDoMotor: estadoMotor(empresa, item, s) === 'pode_tirar',
+    restaurarMotor: false,
+  };
+}

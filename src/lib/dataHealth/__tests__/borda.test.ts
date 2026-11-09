@@ -12,9 +12,24 @@ describe('paraDataHealthCheck (borda da RPC get_data_health)', () => {
     expect(paraDataHealthCheck(linha)).toMatchObject({ domain: 'financeiro', status: 'ok', severity: 'info', last_error: null, how_to_fix: null });
   });
 
-  it('domain/status/severity fora do vocabulário LANÇAM (nunca check inventado)', () => {
-    expect(() => paraDataHealthCheck({ ...linha, domain: 'rh' })).toThrow(/domain "rh" fora do vocabulário/);
-    expect(() => paraDataHealthCheck({ ...linha, status: 'meh' })).toThrow(/status "meh" fora/);
-    expect(() => paraDataHealthCheck({ ...linha, severity: 'fatal' })).toThrow(/severity "fatal" fora/);
+  it('domain analytics (sensores do outbox em prod) é vocabulário', () => {
+    expect(paraDataHealthCheck({ ...linha, source: 'analytics_outbox_trigger', domain: 'analytics' }))
+      .toMatchObject({ domain: 'analytics', status: 'ok' });
+  });
+
+  it('fora do vocabulário degrada SÓ a linha para unknown/critical — nunca verde, nunca lança', () => {
+    const casos = [
+      [{ domain: 'rh' }, 'domain "rh"'],
+      [{ status: 'meh' }, 'status "meh"'],
+      [{ severity: 'fatal' }, 'severity "fatal"'],
+    ] as const;
+    for (const [over, trecho] of casos) {
+      const c = paraDataHealthCheck({ ...linha, ...over });
+      expect(c).toMatchObject({
+        source: 'fin_sync_heartbeat', domain: 'fora_do_vocabulario', status: 'unknown', severity: 'critical',
+      });
+      expect(c.message).toContain(trecho);
+      expect(c.message).toContain('fora do vocabulário');
+    }
   });
 });

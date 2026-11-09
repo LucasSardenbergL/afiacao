@@ -14,11 +14,12 @@ describe("sevBadge", () => {
 
 describe("statusBadge", () => {
   it("mapeia status conhecidos e passthrough", () => {
-    render(<div>{statusBadge("pendente")}{statusBadge("aceito")}{statusBadge("excluido")}{statusBadge("ignorado")}{statusBadge("zzz")}</div>);
+    render(<div>{statusBadge("pendente")}{statusBadge("aceito")}{statusBadge("excluido")}{statusBadge("ignorado")}{statusBadge("resolvido_auto")}{statusBadge("zzz")}</div>);
     expect(screen.getByText("Pendente")).toBeTruthy();
     expect(screen.getByText("Aceito")).toBeTruthy();
     expect(screen.getByText("Excluído")).toBeTruthy();
     expect(screen.getByText("Ignorado")).toBeTruthy();
+    expect(screen.getByText("Resolvido auto")).toBeTruthy();
     expect(screen.getByText("zzz")).toBeTruthy();
   });
 });

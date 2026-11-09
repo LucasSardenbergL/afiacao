@@ -58,7 +58,7 @@ export function CondicaoPagamentoPanel({
               ))}
             </SelectContent>
           </Select>
-          {pedido.status === 'aprovado_aguardando_disparo' && condicaoMudou && condicaoSelecionada && (
+          {podeSalvarCondicao(pedido.status, pedido.condicao_origem, condicaoMudou) && condicaoSelecionada && (
             <Button
               size="sm"
               variant="secondary"
@@ -66,7 +66,7 @@ export function CondicaoPagamentoPanel({
               onClick={onSalvarCondicao}
             >
               {salvarCondicaoPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
-              Salvar
+              {condicaoMudou ? 'Salvar' : 'Confirmar'}
             </Button>
           )}
         </div>
@@ -84,4 +84,14 @@ export function CondicaoPagamentoPanel({
       )}
     </div>
   );
+}
+
+/**
+ * Salvar a condição: antes do disparo (aguardando) e em falha_envio. "Confirmar" sem trocar o código vale quando a
+ * condição é o padrão do motor (`default_a_vista`, nunca confirmado): é o que destrava o PO de pedido do portal cuja
+ * condição real não foi resolvida (o disparo recusa `default_a_vista` com protocolo — D-1, Codex P1 2026-11-07).
+ */
+export function podeSalvarCondicao(status: string | null | undefined, origem: string | null | undefined, mudou: boolean): boolean {
+  if (status !== 'aprovado_aguardando_disparo' && status !== 'falha_envio') return false;
+  return mudou || origem === 'default_a_vista';
 }

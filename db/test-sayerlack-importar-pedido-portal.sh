@@ -25,8 +25,15 @@ MIG_BASE2="$REPO_ROOT/supabase/migrations/20260906193522_valor_total_portal_prov
 MIG_BASE3="$REPO_ROOT/supabase/migrations/20261006120000_preco_exato_po_sayerlack_ipi.sql"
 MIG0="$REPO_ROOT/supabase/migrations/20261014120000_sayerlack_importar_pedido_portal.sql"
 # A RPC VIVA é a da 20261016013000 (UPDATE com WHERE, pg-safeupdate), aplicada por cima da 0120000.
-MIG="$REPO_ROOT/supabase/migrations/20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql"
-for f in "$MIG_BASE1" "$MIG_BASE2" "$MIG_BASE3" "$MIG0" "$MIG"; do [ -f "$f" ] || { echo "INFRA: ausente: $f"; exit 1; }; done
+MIG_SAFE="$REPO_ROOT/supabase/migrations/20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql"
+# A RPC VIVA é a da 20261106140000 (revisão Fable+Codex: condição do portal, contrato composto, trava em voo, painel).
+MIG="$REPO_ROOT/supabase/migrations/20261106140000_sayerlack_importar_portal_revisao.sql"
+# A RPC VIVA de importar é a da 20261107140000 (Onda 2: tradução única da condição + de-para D-2) — e ela traz a
+# RPC de aplicar a condição real no pedido do app (D-1). As sabotagens da importação miram ESTE arquivo.
+MIG2="$REPO_ROOT/supabase/migrations/20261107140000_sayerlack_condicao_portal_onda2.sql"
+# O DE-PARA VIVO é o da 20261109120000 (revisão 2, B13: sempre a variante SEM "(C)"; "30 DIAS" → T54).
+MIG3="$REPO_ROOT/supabase/migrations/20261109120000_sayerlack_condicao_sem_c.sql"
+for f in "$MIG_BASE1" "$MIG_BASE2" "$MIG_BASE3" "$MIG0" "$MIG_SAFE" "$MIG" "$MIG2" "$MIG3"; do [ -f "$f" ] || { echo "INFRA: ausente: $f"; exit 1; }; done
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
@@ -73,6 +80,7 @@ CREATE TABLE IF NOT EXISTS public.pedido_compra_sugerido (
   canal_usado text,
   resposta_canal jsonb,
   omie_pedido_compra_numero text,
+  omie_pedido_compra_id text,
   aprovado_por uuid,
   aprovado_em timestamptz,
   condicao_pagamento_codigo text,
@@ -82,7 +90,8 @@ CREATE TABLE IF NOT EXISTS public.pedido_compra_sugerido (
   status_envio_portal text NOT NULL DEFAULT 'nao_aplicavel',
   enviado_portal_em timestamptz,
   portal_protocolo text,
-  portal_data_entrega date
+  portal_data_entrega date,
+  dias_parcelas text
 );
 CREATE TABLE IF NOT EXISTS public.pedido_compra_item (
   id bigserial PRIMARY KEY,
@@ -121,21 +130,64 @@ CREATE TABLE IF NOT EXISTS public.purchase_orders_tracking (
   numero_pedido text,
   numero_contrato_fornecedor text
 );
+-- Catálogo de condições do Omie (prod: 145 linhas OBEN) e a tabela de falhas do cron (lida pelo painel).
+-- private.cap_compras_ler (prod: matriz de capacidades); aqui = staff, o suficiente para provar o gate.
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE OR REPLACE FUNCTION private.cap_compras_ler(_uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $f$
+  SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _uid AND role IN ('employee','master'))
+$f$;
+CREATE TABLE IF NOT EXISTS public.omie_condicao_pagamento_catalogo (
+  empresa text NOT NULL, codigo text NOT NULL, descricao text, num_parcelas integer, ativo boolean NOT NULL DEFAULT true
+);
+CREATE TABLE IF NOT EXISTS public.sayerlack_varredura_falha (
+  protocolo text PRIMARY KEY, mensagem text, primeira_em timestamptz DEFAULT now(), ultima_em timestamptz DEFAULT now(),
+  tentativas integer DEFAULT 1, notificado_em timestamptz, resolvido_em timestamptz
+);
 GRANT SELECT ON public.pedido_compra_sugerido, public.pedido_compra_item, public.omie_products TO service_role;
+-- A postcondição da Onda 2 EXECUTA a tradução contra o catálogo (em prod: A07 e A30 ativas, psql-ro 2026-11-07).
+INSERT INTO public.omie_condicao_pagamento_catalogo (empresa, codigo, descricao, num_parcelas, ativo) VALUES
+  ('OBEN', 'A07', 'Para 7 dias', 1, true), ('OBEN', 'A30', 'Para 30 dias (C)', 1, true);
 SQL
 
 # ZONA 2 — o caminho REAL do SQL Editor: as versões da RPC de custo e, por cima, a migration sob prova.
-for m in "$MIG_BASE1" "$MIG_BASE2" "$MIG_BASE3" "$MIG0" "$MIG"; do P -q -f "$m"; done
-echo "migrations aplicadas: base1 + base2 + base3 + $(basename "$MIG0") + $(basename "$MIG")"
-eq "M0 a migration é re-aplicável (idempotente, postcondição verde na 2ª colada)" "$(P -q -f "$MIG" >/dev/null 2>&1 && echo ok || echo falhou)" "ok"
+for m in "$MIG_BASE1" "$MIG_BASE2" "$MIG_BASE3" "$MIG0" "$MIG_SAFE" "$MIG" "$MIG2"; do P -q -f "$m"; done
+echo "migrations aplicadas: base1 + base2 + base3 + $(basename "$MIG0") + $(basename "$MIG_SAFE") + $(basename "$MIG") + $(basename "$MIG2")"
+eq "M0 a migration é re-aplicável (idempotente, postcondição verde na 2ª colada)" "$(P -q -f "$MIG" >/dev/null 2>&1 && P -q -f "$MIG2" >/dev/null 2>&1 && echo ok || echo falhou)" "ok"
+eq "M1 a Onda 2 é re-aplicável sozinha (idempotente)" "$(P -q -f "$MIG2" >/dev/null 2>&1 && echo ok || echo falhou)" "ok"
 
 # ZONA 3 — seed. DFA.4080LT = o pedido real 2140603 (16 LT, R$ 4.865,5584 + IPI 6,5% = R$ 5.181,82).
 seed() {
 P -q <<'SQL'
-TRUNCATE public.pedido_compra_item, public.pedido_compra_sugerido, public.omie_products, public.sku_fornecedor_externo, public.purchase_orders_tracking RESTART IDENTITY CASCADE;
+TRUNCATE public.pedido_compra_item, public.pedido_compra_sugerido, public.omie_products, public.sku_fornecedor_externo, public.purchase_orders_tracking, public.omie_condicao_pagamento_catalogo, public.sayerlack_varredura_falha RESTART IDENTITY CASCADE;
 INSERT INTO public.purchase_orders_tracking (empresa, numero_pedido, numero_contrato_fornecedor) VALUES
-  ('OBEN',    '1278', '7000001'),   -- PO lançado direto no Omie com o nº do portal no contrato
-  ('COLACOR', '9999', '7000002');   -- outra empresa: não bloqueia a OBEN
+  ('OBEN',    '1278', '7000001'),           -- PO lançado direto no Omie com o nº do portal no contrato
+  ('COLACOR', '9999', '7000002'),           -- outra empresa: não bloqueia a OBEN
+  ('OBEN',    '1300', '7100001/7100002'),   -- contrato COMPOSTO (15 POs assim em prod)
+  ('OBEN',    '1301', '17100003');          -- número que só CONTÉM o protocolo 7100003: não bloqueia
+INSERT INTO public.omie_condicao_pagamento_catalogo (empresa, codigo, descricao, num_parcelas, ativo) VALUES
+  ('OBEN', '000', 'A Vista', 1, true),
+  ('OBEN', 'A07', 'Para 7 dias', 1, true),
+  ('OBEN', 'A28', 'Para 28 dias', 1, true),
+  ('OBEN', 'S10', '28/56', 2, true),
+  ('OBEN', 'X14', 'Para 14 dias', 1, true),   -- duas condições com o mesmo texto: ambíguo
+  ('OBEN', 'Y14', 'Para 14 dias', 1, true),
+  ('OBEN', 'A21', 'Para 21 dias', 1, false),  -- inativa
+  ('OBEN', 'A30', 'Para 30 dias (C)', 1, true),  -- o que o founder quer para "30 DIAS" (D-2)
+  ('OBEN', 'T54', 'Para 30 dias', 1, true),      -- o que a regra exata de texto escolheria
+  ('OBEN', 'A04', 'Para 4 dias', 1, true),       -- B13: par com e sem "(C)" (como em prod)
+  ('OBEN', 'B23', 'Para 4 dias (C)', 1, true),
+  ('OBEN', 'A13', 'Para 13 dias', 1, true),
+  ('OBEN', 'U89', 'Para 6 dias', 1, true),
+  ('OBEN', 'D43', 'Para 6 dias (C)', 1, true),
+  ('OBEN', 'A84', 'Para  13 dias (C)', 1, true), -- espaço duplo: a comparação normaliza
+  ('OBEN', 'S20', '30/60', 2, true),
+  ('OBEN', 'V20', '30/60 (C)', 2, true),
+  ('OBEN', 'A09', 'Para 9 dias (C)', 1, true),   -- só a variante "(C)": nunca era casada pela regra
+  ('OBEN', 'X44', 'Para 44 dias', 1, true),
+  ('OBEN', 'Y44', 'Para 44 dias (C)', 1, false); -- "(C)" INATIVA não torna ambíguo
+INSERT INTO public.sayerlack_varredura_falha (protocolo, mensagem, tentativas, resolvido_em) VALUES
+  ('8000001', 'sem alíquota de IPI', 2, NULL),
+  ('8000002', 'já resolvido', 1, now());
 INSERT INTO public.sku_fornecedor_externo (empresa, fornecedor_nome, sku_omie, sku_portal, unidade_portal, fator_conversao, ativo) VALUES
   ('OBEN',    'RENNER SAYERLACK S/A', '12101724100', 'DFA.4080LT',  'LT', 1,   true),
   ('OBEN',    'RENNER SAYERLACK S/A', '8689743214',  'WJOI.7585GL', 'GL', 1,   true),
@@ -161,17 +213,27 @@ SQL
 seed
 P -q <<'SQL'
 -- Sentinelas MINHAS com a SQLSTATE exata; o veredito é o stdout INTEIRO.
-CREATE OR REPLACE FUNCTION public.tentar_imp(p_proto text, p_entrega date, p_total numeric, p_itens jsonb)
+CREATE OR REPLACE FUNCTION public.tentar_imp(p_proto text, p_entrega date, p_total numeric, p_itens jsonb, p_cond text DEFAULT '70 - 7 DIAS')
 RETURNS text LANGUAGE plpgsql SECURITY INVOKER AS $f$
 DECLARE r jsonb;
 BEGIN
-  r := public.sayerlack_importar_pedido_portal(p_proto, p_entrega, p_total, p_itens, '11111111-1111-1111-1111-111111111111');
+  r := public.sayerlack_importar_pedido_portal(p_proto, p_entrega, p_total, p_itens, '11111111-1111-1111-1111-111111111111', p_cond);
   RETURN 'IMP_OK_' || CASE WHEN (r->>'ja_existia')::boolean THEN 'existente' ELSE 'novo' END
     || '_' || coalesce((SELECT portal_protocolo FROM public.pedido_compra_sugerido WHERE id = (r->>'pedido_id')::bigint), 'sem-pedido');
 EXCEPTION WHEN OTHERS THEN
   RETURN 'IMP_ERR_' || SQLSTATE;
 END $f$;
-GRANT EXECUTE ON FUNCTION public.tentar_imp(text, date, numeric, jsonb) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.tentar_imp(text, date, numeric, jsonb, text) TO PUBLIC;
+CREATE OR REPLACE FUNCTION public.tentar_painel()
+RETURNS text LANGUAGE plpgsql SECURITY INVOKER AS $f$
+DECLARE r jsonb;
+BEGIN
+  r := public.sayerlack_painel_portal();
+  RETURN 'PAINEL_OK_' || jsonb_array_length(r->'pendencias') || '_' || jsonb_array_length(r->'sem_po') || '_' || jsonb_array_length(r->'importados');
+EXCEPTION WHEN OTHERS THEN
+  RETURN 'PAINEL_ERR_' || SQLSTATE;
+END $f$;
+GRANT EXECUTE ON FUNCTION public.tentar_painel() TO PUBLIC;
 SQL
 imp() { # $1 = argumentos · $2 = preâmbulo opcional (SET ROLE / GUC)
   local out rc=0
@@ -187,7 +249,7 @@ echo "── asserts ──"
 eq "A1 importa o 2140603 (novo)" "$(imp "'2140603', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_OK_novo_2140603"
 eq "A1 cabeçalho: OBEN/Sayerlack, aprovado p/ disparo, sucesso_portal + protocolo + entrega, à vista, importado" \
   "$(Pq -c "SELECT empresa||'|'||fornecedor_nome||'|'||status||'|'||status_envio_portal||'|'||portal_protocolo||'|'||portal_data_entrega||'|'||condicao_pagamento_codigo||'|'||num_parcelas||'|'||canal_usado||'|'||(importado_portal_em IS NOT NULL)||'|'||importado_portal_por||'|'||aprovado_por||'|'||num_skus FROM public.pedido_compra_sugerido WHERE portal_protocolo='2140603'")" \
-  "OBEN|RENNER SAYERLACK S/A|aprovado_aguardando_disparo|sucesso_portal|2140603|2026-10-26|000|1|portal_sayerlack|true|11111111-1111-1111-1111-111111111111|11111111-1111-1111-1111-111111111111|1"
+  "OBEN|RENNER SAYERLACK S/A|aprovado_aguardando_disparo|sucesso_portal|2140603|2026-10-26|A07|1|portal_sayerlack|true|11111111-1111-1111-1111-111111111111|11111111-1111-1111-1111-111111111111|1"
 eq "A1 item: sku Omie, descrição do cadastro, qtde 16, preço COM IPI (5181,82÷16), decomposição 6,5%" \
   "$(Pq -c "SELECT sku_codigo_omie||'|'||sku_descricao||'|'||trim_scale(qtde_final)||'|'||trim_scale(round(preco_unitario,6))||'|'||trim_scale(valor_linha)||'|'||trim_scale(valor_ipi_portal)||'|'||trim_scale(aliquota_ipi_portal)||'|'||sku_portal_aprovado||'|'||trim_scale(fator_portal_aprovado) FROM public.pedido_compra_item WHERE pedido_id=(SELECT id FROM public.pedido_compra_sugerido WHERE portal_protocolo='2140603')")" \
   "12101724100|DILUENTE PU DFA.4080LT|16|323.86375|5181.82|316.26|6.5|DFA.4080LT|1"
@@ -237,22 +299,130 @@ r "A5 controle IP006: contrato de OUTRA empresa não bloqueia" "'7000002', $ENT,
 r "A5 controle: o mesmo payload com o total certo grava" "'4000010', $ENT, 5181.82, '$DFA'::jsonb" "IMP_OK_novo_4000010"
 
 # A6 — authz: só service_role executa; customer barrado pelo gate de papel mesmo com EXECUTE.
-eq "A6 anon sem EXECUTE"          "$(Pq -c "SELECT has_function_privilege('anon', 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid)', 'EXECUTE')")" "f"
-eq "A6 authenticated sem EXECUTE" "$(Pq -c "SELECT has_function_privilege('authenticated', 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid)', 'EXECUTE')")" "f"
-eq "A6 service_role com EXECUTE"  "$(Pq -c "SELECT has_function_privilege('service_role', 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid)', 'EXECUTE')")" "t"
+eq "A6 anon sem EXECUTE"          "$(Pq -c "SELECT has_function_privilege('anon', 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid,text)', 'EXECUTE')")" "f"
+eq "A6 authenticated sem EXECUTE" "$(Pq -c "SELECT has_function_privilege('authenticated', 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid,text)', 'EXECUTE')")" "f"
+eq "A6 service_role com EXECUTE"  "$(Pq -c "SELECT has_function_privilege('service_role', 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid,text)', 'EXECUTE')")" "t"
 eq "A6 authenticated chamando: 42501" "$(imp "'5000001', $ENT, 5181.82, '$DFA'::jsonb" "SET ROLE authenticated;")" "IMP_ERR_42501"
 eq "A6 customer (uid) barrado pelo gate de papel" "$(imp "'5000002', $ENT, 5181.82, '$DFA'::jsonb" "SET test.uid='22222222-2222-2222-2222-222222222222';")" "IMP_ERR_42501"
 eq "A6 controle: staff (uid employee) importa" "$(imp "'5000003', $ENT, 5181.82, '$DFA'::jsonb" "SET test.uid='11111111-1111-1111-1111-111111111111';")" "IMP_OK_novo_5000003"
 
+
+# ── Revisão Fable+Codex (2026-11): condição do portal, contrato composto, trava em voo, painel ──
+eq "C1 condição do portal \"70 - 7 DIAS\" vira A07 / Para 7 dias / 1 parcela / origem portal" \
+  "$(Pq -c "SELECT condicao_pagamento_codigo||'|'||condicao_pagamento_descricao||'|'||num_parcelas||'|'||condicao_origem FROM public.pedido_compra_sugerido WHERE portal_protocolo='2140603'")" "A07|Para 7 dias|1|portal_sayerlack"
+eq "C2 \"28/56 DDL\" vira S10 (2 parcelas)" "$(imp "'4100001', $ENT, 5181.82, '$DFA'::jsonb, '12 - 28/56 DDL'")" "IMP_OK_novo_4100001"
+eq "C2 gravou S10/2" "$(Pq -c "SELECT condicao_pagamento_codigo||'|'||num_parcelas FROM public.pedido_compra_sugerido WHERE portal_protocolo='4100001'")" "S10|2"
+eq "C3 \"1 - A VISTA\" vira 000" "$(imp "'4100002', $ENT, 5181.82, '$DFA'::jsonb, '1 - A VISTA'")" "IMP_OK_novo_4100002"
+ANTES_C="$(contagem)"
+eq "C4 condição ambígua (2 \"Para 14 dias\") recusa IP007" "$(imp "'4100003', $ENT, 5181.82, '$DFA'::jsonb, '70 - 14 DIAS'")" "IMP_ERR_IP007"
+eq "C4 condição só em catálogo INATIVO recusa IP007" "$(imp "'4100004', $ENT, 5181.82, '$DFA'::jsonb, '21 DIAS'")" "IMP_ERR_IP007"
+eq "C4 condição sem número recusa IP007" "$(imp "'4100005', $ENT, 5181.82, '$DFA'::jsonb, 'BOLETO BANCARIO'")" "IMP_ERR_IP007"
+eq "C4 condição vazia recusa IP007 (ausente ≠ à vista)" "$(imp "'4100006', $ENT, 5181.82, '$DFA'::jsonb, ''")" "IMP_ERR_IP007"
+eq "C4 condição NULL recusa IP007" "$(imp "'4100007', $ENT, 5181.82, '$DFA'::jsonb, NULL")" "IMP_ERR_IP007"
+eq "C4 nenhuma recusa de condição gravou nada" "$(contagem)" "$ANTES_C"
+eq "K1 contrato COMPOSTO bloqueia o 2º número (IP006)" "$(imp "'7100002', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_ERR_IP006"
+eq "K1 contrato composto bloqueia o 1º número (IP006)" "$(imp "'7100001', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_ERR_IP006"
+eq "K2 controle: número só CONTIDO noutro contrato não bloqueia" "$(imp "'7100003', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_OK_novo_7100003"
+P -q -c "INSERT INTO public.pedido_compra_sugerido (id, empresa, fornecedor_nome, status, status_envio_portal) VALUES (900, 'OBEN', 'RENNER SAYERLACK S/A', 'aprovado_aguardando_disparo', 'enviando_portal')"
+eq "V1 pedido do app em envio ao portal bloqueia a importação (IP008)" "$(imp "'7200001', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_ERR_IP008"
+P -q -c "UPDATE public.pedido_compra_sugerido SET status_envio_portal='sucesso_portal', portal_protocolo='7299999' WHERE id=900"
+eq "V2 controle: envio concluído libera" "$(imp "'7200001', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_OK_novo_7200001"
+eq "P1 painel: anon sem EXECUTE" "$(Pq -c "SELECT has_function_privilege('anon','public.sayerlack_painel_portal()','EXECUTE')")" "f"
+eq "P2 painel: customer barrado (42501)" "$(printf '%s\nSELECT public.tentar_painel();\n' "SET test.uid='22222222-2222-2222-2222-222222222222';" | P -q -tA 2>/dev/null)" "PAINEL_ERR_42501"
+eq "P3 painel: sem usuário (cron/anon por service) barrado" "$(Pq -c "SELECT public.tentar_painel()")" "PAINEL_ERR_42501"
+PAINEL="$(printf '%s\nSELECT public.tentar_painel();\n' "SET test.uid='11111111-1111-1111-1111-111111111111';" | P -q -tA 2>/dev/null)"
+case "$PAINEL" in PAINEL_OK_1_*) ok "P4 painel: staff lê 1 pendência aberta (a resolvida fica de fora) ($PAINEL)";; *) bad "P4 painel staff — veio [$PAINEL]";; esac
+NSEMPO="$(Pq -c "SELECT count(*) FROM public.pedido_compra_sugerido WHERE importado_portal_em IS NOT NULL")"
+case "$PAINEL" in "PAINEL_OK_1_${NSEMPO}_${NSEMPO}") ok "P5 painel: importados sem PO e recentes batem com o banco ($NSEMPO)";; *) bad "P5 painel — esperado PAINEL_OK_1_${NSEMPO}_${NSEMPO}, veio [$PAINEL]";; esac
+
+# ── Onda 2 (2026-11-07): tradução única da condição, de-para D-2, condição REAL no pedido do app (D-1) ──
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.tentar_cond(p_txt text) RETURNS text LANGUAGE plpgsql SECURITY INVOKER AS $f$
+DECLARE r record;
+BEGIN
+  SELECT * INTO r FROM public.sayerlack_condicao_portal_para_omie(p_txt);
+  RETURN 'COND_' || r.codigo || '_' || r.num_parcelas;
+EXCEPTION WHEN OTHERS THEN
+  RETURN 'COND_ERR_' || SQLSTATE;
+END $f$;
+CREATE OR REPLACE FUNCTION public.tentar_aplicar(p_id bigint, p_txt text) RETURNS text LANGUAGE plpgsql SECURITY INVOKER AS $f$
+DECLARE r jsonb;
+BEGIN
+  r := public.sayerlack_aplicar_condicao_portal(p_id, p_txt);
+  RETURN CASE WHEN (r->>'aplicado')::boolean THEN 'APLICADO_' || (r->>'codigo') ELSE 'NAO_' || coalesce(r->>'motivo', 'sem-motivo') END;
+EXCEPTION WHEN OTHERS THEN
+  RETURN 'APLICAR_ERR_' || SQLSTATE;
+END $f$;
+SQL
+cond() { Pq -c "SELECT public.tentar_cond($1)"; }
+apl()  { Pq -c "SELECT public.tentar_aplicar($1, $2)"; }
+pedido_app() { # $1 id · $2 empresa · $3 status_envio_portal · $4 condicao_origem · $5 omie_pedido_compra_id
+  P -q -c "INSERT INTO public.pedido_compra_sugerido (id, empresa, fornecedor_nome, status, status_envio_portal, portal_protocolo, condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, condicao_origem, omie_pedido_compra_id) VALUES ($1, '$2', 'RENNER SAYERLACK S/A', 'aprovado_aguardando_disparo', '$3', '9$1', '000', 'A Vista', 1, $4, $5)"
+}
+eq "D1 de-para explícito vence a regra exata: \"70 - 30 DIAS\" → A30 (a regra daria T54)" "$(cond "'70 - 30 DIAS'")" "COND_A30_1"
+eq "D1 normaliza caixa e espaço: \"30  dias\" → A30" "$(cond "'30  dias'")" "COND_A30_1"
+eq "D2 sem de-para, a regra exata segue: \"7 DIAS\" → A07" "$(cond "'70 - 7 DIAS'")" "COND_A07_1"
+P -q -c "INSERT INTO public.sayerlack_condicao_portal_de_para (condicao_portal, codigo_omie, evidencia) VALUES ('BOLETO 21', 'A21', 'teste: aponta para INATIVO'), ('BOLETO 99', 'ZZZ', 'teste: código inexistente')"
+eq "D3 de-para para código INATIVO recusa IP007 (não cai na regra de texto)" "$(cond "'5 - BOLETO 21'")" "COND_ERR_IP007"
+eq "D3 de-para para código INEXISTENTE recusa IP007" "$(cond "'BOLETO 99'")" "COND_ERR_IP007"
+eq "D3 vazio/NULL recusam IP007 (ausente ≠ à vista)" "$(cond "''")|$(cond "NULL")" "COND_ERR_IP007|COND_ERR_IP007"
+eq "D4 importar \"70 - 30 DIAS\" grava A30 e o texto lido" "$(imp "'4200001', $ENT, 5181.82, '$DFA'::jsonb, '70 - 30 DIAS'")" "IMP_OK_novo_4200001"
+eq "D4 cabeçalho A30 + condicao_portal_lida" "$(Pq -c "SELECT condicao_pagamento_codigo||'|'||condicao_origem||'|'||condicao_portal_lida FROM public.pedido_compra_sugerido WHERE portal_protocolo='4200001'")" "A30|portal_sayerlack|70 - 30 DIAS"
+eq "D5 aplicar: anon/authenticated sem EXECUTE, service_role com" \
+  "$(Pq -c "SELECT has_function_privilege('anon','public.sayerlack_aplicar_condicao_portal(bigint,text)','EXECUTE')||'|'||has_function_privilege('authenticated','public.sayerlack_aplicar_condicao_portal(bigint,text)','EXECUTE')||'|'||has_function_privilege('service_role','public.sayerlack_aplicar_condicao_portal(bigint,text)','EXECUTE')")" "false|false|true"
+eq "D5 tradução: anon/authenticated sem EXECUTE" \
+  "$(Pq -c "SELECT has_function_privilege('anon','public.sayerlack_condicao_portal_para_omie(text)','EXECUTE')||'|'||has_function_privilege('authenticated','public.sayerlack_condicao_portal_para_omie(text)','EXECUTE')")" "false|false"
+pedido_app 1001 OBEN sucesso_portal "'default_a_vista'" NULL
+eq "D6 pedido do app no padrão à vista + portal \"7 DIAS\" ⇒ A07" "$(apl 1001 "'70 - 7 DIAS'")" "APLICADO_A07"
+eq "D6 gravou A07/Para 7 dias/1/portal_sayerlack + texto lido" "$(Pq -c "SELECT condicao_pagamento_codigo||'|'||condicao_pagamento_descricao||'|'||num_parcelas||'|'||condicao_origem||'|'||condicao_portal_lida FROM public.pedido_compra_sugerido WHERE id=1001")" "A07|Para 7 dias|1|portal_sayerlack|70 - 7 DIAS"
+eq "D6 de novo: já não é o padrão ⇒ não reaplica (1 escritor da decisão)" "$(apl 1001 "'70 - 30 DIAS'")" "NAO_origem_portal_sayerlack"
+pedido_app 1002 OBEN sucesso_portal "'default_a_vista'" NULL
+eq "D7 condição sem correspondente ⇒ mantém a de hoje, não lança" "$(apl 1002 "'BOLETO BANCARIO'")" "NAO_sem_correspondente"
+eq "D7 seguiu 000/default_a_vista com o texto lido ao lado" "$(Pq -c "SELECT condicao_pagamento_codigo||'|'||condicao_origem||'|'||condicao_portal_lida FROM public.pedido_compra_sugerido WHERE id=1002")" "000|default_a_vista|BOLETO BANCARIO"
+pedido_app 1003 OBEN sucesso_portal "'manual_humano'" NULL
+eq "D8 escolha humana não é sobrescrita" "$(apl 1003 "'70 - 7 DIAS'")|$(Pq -c "SELECT condicao_pagamento_codigo FROM public.pedido_compra_sugerido WHERE id=1003")" "NAO_origem_manual_humano|000"
+pedido_app 1004 OBEN sucesso_portal "'default_a_vista'" "'555'"
+eq "D9 PO já criado no Omie ⇒ não mexe" "$(apl 1004 "'70 - 7 DIAS'")|$(Pq -c "SELECT condicao_pagamento_codigo||'|'||coalesce(condicao_portal_lida,'nula') FROM public.pedido_compra_sugerido WHERE id=1004")" "NAO_po_ja_existe|000|nula"
+pedido_app 1005 OBEN nao_aplicavel "'default_a_vista'" NULL
+eq "D10 fora do envio ao portal ⇒ não mexe" "$(apl 1005 "'70 - 7 DIAS'")" "NAO_fora_do_envio_portal"
+pedido_app 1009 OBEN enviando_portal "'default_a_vista'" NULL
+eq "D15 durante o envio (claim desta execução, ANTES do sucesso_portal) aplica" "$(apl 1009 "'70 - 7 DIAS'")" "APLICADO_A07"
+pedido_app 1006 OBEN sucesso_portal "'default_a_vista'" NULL
+eq "D11 condição não lida ⇒ não mexe (ausente ≠ à vista)" "$(apl 1006 "NULL")|$(apl 1006 "'  '")" "NAO_condicao_nao_lida|NAO_condicao_nao_lida"
+pedido_app 1007 COLACOR sucesso_portal "'default_a_vista'" NULL
+eq "D12 outra empresa ⇒ não mexe" "$(apl 1007 "'70 - 7 DIAS'")" "NAO_nao_e_sayerlack_oben"
+eq "D13 pedido inexistente ⇒ motivo, sem lançar" "$(apl 999999 "'70 - 7 DIAS'")" "NAO_pedido_inexistente"
+pedido_app 1008 OBEN sucesso_portal "'default_a_vista'" NULL
+eq "D14 pedido do app com \"30 DIAS\" usa o de-para (A30)" "$(apl 1008 "'30 DIAS'")" "APLICADO_A30"
+eq "S2 nenhum UPDATE sem WHERE na RPC de aplicar" "$(Pq -c "SELECT count(*) FROM pg_proc p, regexp_matches(p.prosrc, '\mUPDATE\s[^;]*;', 'gi') AS m(x) WHERE p.oid = 'public.sayerlack_aplicar_condicao_portal(bigint,text)'::regprocedure AND m.x[1] !~* '\mWHERE\M'")" "0"
+P -q -c "DELETE FROM public.pedido_compra_sugerido WHERE id BETWEEN 1001 AND 1009; DELETE FROM public.sayerlack_condicao_portal_de_para WHERE condicao_portal IN ('BOLETO 21','BOLETO 99')"
+
 # ZONA 5 — FALSIFICAÇÃO: uma camada por vez, o vermelho CERTO, restaura com a migration REAL.
+# ── Revisão 2, B13 (2026-11-08): sempre a variante SEM "(C)"; o de-para "30 DIAS" passa a T54 ──
+P -q -f "$MIG3" >/dev/null 2>&1 || bad "B13 a migration 20261109120000 não aplicou (postcondição?)"
+seed
+eq "B13 \"4 DIAS\" com A04 e B23 (C) escolhe A04" "$(cond "'70 - 4 DIAS'")" "COND_A04_1"
+eq "B13 \"13 DIAS\" com variante (C) de espaço duplo escolhe A13" "$(cond "'13 DIAS'")" "COND_A13_1"
+eq "B13 \"6 DIAS\" com U89 e D43 (C) escolhe U89" "$(cond "'6 DIAS'")" "COND_U89_1"
+eq "B13 \"30 DIAS\" (de-para corrigido) dá T54, não A30 (C)" "$(cond "'70 - 30 DIAS'")" "COND_T54_1"
+eq "B13 \"30/60\" com \"30/60 (C)\" escolhe S20" "$(cond "'30/60'")" "COND_S20_2"
+eq "B13 \"9 DIAS\" só com a variante (C) (sem par) segue IP007" "$(cond "'9 DIAS'")" "COND_ERR_IP007"
+eq "B13 \"7 DIAS\" segue A07" "$(cond "'70 - 7 DIAS'")" "COND_A07_1"
+eq "B13 de-para não aponta para variante (C)" "$(Pq -c "SELECT count(*) FROM public.sayerlack_condicao_portal_de_para d JOIN public.omie_condicao_pagamento_catalogo c ON c.empresa='OBEN' AND c.codigo=d.codigo_omie WHERE c.descricao ~* '\(c\)\s*\$'")" "0"
+eq "B13 importar \"30 DIAS\" grava T54" "$(imp "'4300001', $ENT, 5181.82, '$DFA'::jsonb, '30 DIAS'")|$(Pq -c "SELECT condicao_pagamento_codigo FROM public.pedido_compra_sugerido WHERE portal_protocolo='4300001'")" "IMP_OK_novo_4300001|T54"
+
 echo "── falsificação ──"
 SAB="$(dirname "$DATA")/sab.sql"
-sabota() {
-  sed -e "$1" "$MIG" > "$SAB"
-  if cmp -s "$MIG" "$SAB"; then echo "  ❌ sabotagem NÃO casou o padrão ($1) — falsificação seria teatro"; FAIL=$((FAIL+1)); return 1; fi
+sabota() { # $1 = sed · $2 = arquivo (padrão: a migration do corpo VIVO, $MIG2)
+  local alvo="${2:-$MIG2}"
+  sed -e "$1" "$alvo" > "$SAB"
+  if cmp -s "$alvo" "$SAB"; then echo "  ❌ sabotagem NÃO casou o padrão ($1) — falsificação seria teatro"; FAIL=$((FAIL+1)); return 1; fi
+  # A postcondição da MIG2 exige o "30 DIAS → A30" de antes da MIG3 (que o troca por T54).
+  if [ "$alvo" = "$MIG2" ]; then P -q -c "DELETE FROM public.sayerlack_condicao_portal_de_para WHERE condicao_portal = '30 DIAS'"; fi
   P -q -f "$SAB"
 }
-restaura() { seed; P -q -f "$MIG0"; P -q -f "$MIG"; seed; }
+# A postcondição da MIG2 exige o "30 DIAS → A30" de então: a linha volta ao estado de antes da MIG3 para reaplicá-las.
+restaura() { seed; P -q -f "$MIG0"; P -q -f "$MIG_SAFE"; P -q -f "$MIG"; P -q -c "DELETE FROM public.sayerlack_condicao_portal_de_para WHERE condicao_portal = '30 DIAS'"; P -q -f "$MIG2"; P -q -f "$MIG3"; seed; }
 dente() { if [ "$2" = "$3" ]; then ok "$1 (sabotado ⇒ $2)"; else bad "$1 — sabotado devia dar [$3], veio [$2]"; fi; }
 
 seed; sabota 's/WHERE n_map <> 1;/WHERE n_map = 0;/'
@@ -296,22 +466,99 @@ fi
 restaura
 # F9 — pg-safeupdate: o Supabase recusa UPDATE sem WHERE vindo da API (1º uso real, 2141068). O PG17 local não carrega
 # a extensão, então a régua é a postcondição: sem o WHERE, o apply aborta com a mensagem DELA.
-eq "S1 nenhum UPDATE sem WHERE no corpo vivo da RPC" "$(Pq -c "SELECT count(*) FROM pg_proc p, regexp_matches(p.prosrc, '\mUPDATE\s[^;]*;', 'gi') AS m(x) WHERE p.oid = 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid)'::regprocedure AND m.x[1] !~* '\mWHERE\M'")" "0"
-sed -e 's/^   WHERE qtde_omie IS NULL;  -- WHERE obrigatório.*$/   ;/' "$MIG" > "$SAB"
-if cmp -s "$MIG" "$SAB"; then
+eq "S1 nenhum UPDATE sem WHERE no corpo vivo da RPC" "$(Pq -c "SELECT count(*) FROM pg_proc p, regexp_matches(p.prosrc, '\mUPDATE\s[^;]*;', 'gi') AS m(x) WHERE p.oid = 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid,text)'::regprocedure AND m.x[1] !~* '\mWHERE\M'")" "0"
+sed -e 's/^   WHERE qtde_omie IS NULL;  -- WHERE obrigatório.*$/   ;/' "$MIG2" > "$SAB"
+if cmp -s "$MIG2" "$SAB"; then
   bad "F9 sabotagem NÃO casou o WHERE do UPDATE — falsificação seria teatro"
 elif P -q -f "$SAB" >/dev/null 2>"$SAB.err"; then
   bad "F9 postcondição NÃO abortou com UPDATE sem WHERE"
 else
   F9="$(linhas_error "$SAB.err")"
   case "$F9" in
-    "ERROR:  A2 FALHOU: UPDATE sem WHERE no corpo — o pg-safeupdate do Supabase recusa a importação"|\
-    "ERRO:  A2 FALHOU: UPDATE sem WHERE no corpo — o pg-safeupdate do Supabase recusa a importação")
+    "ERROR:  B5 FALHOU: UPDATE sem WHERE em public.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid, text) — o pg-safeupdate recusa"|\
+    "ERRO:  B5 FALHOU: UPDATE sem WHERE em public.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid, text) — o pg-safeupdate recusa")
       ok "F9 postcondição aborta o apply com UPDATE sem WHERE" ;;
     *) bad "F9 ERRO ALHEIO à postcondição — veio [${F9:-<nenhuma linha ERROR>}]" ;;
   esac
 fi
 restaura
+seed; sabota 's/^     AND EXISTS (SELECT 1 FROM unnest(string_to_array(t\.numero_contrato_fornecedor, .\/.)) AS c(n) WHERE btrim(c\.n) = p_protocolo);$/     AND btrim(t.numero_contrato_fornecedor) = p_protocolo;/'
+dente "F10 sem a comparação por componente, contrato composto vira 2º PO" "$(imp "'7100002', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_OK_novo_7100002"
+restaura
+sabota 's/^  IF v_em_voo IS NOT NULL THEN$/  IF false THEN/'
+P -q -c "INSERT INTO public.pedido_compra_sugerido (id, empresa, fornecedor_nome, status, status_envio_portal) VALUES (900, 'OBEN', 'RENNER SAYERLACK S/A', 'aprovado_aguardando_disparo', 'enviando_portal')"
+dente "F11 sem a trava em voo, o pedido em envio não barra" "$(imp "'7200002', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_OK_novo_7200002"
+restaura
+sabota 's/^  IF coalesce(v_matches, 0) <> 1 OR v_codigo IS NULL OR coalesce(v_parc, 0) < 1 THEN$/  IF false THEN/'
+dente "F12 sem a exigência de correspondência ÚNICA, condição ambígua grava" "$(imp "'4100013', $ENT, 5181.82, '$DFA'::jsonb, '70 - 14 DIAS'")" "IMP_OK_novo_4100013"
+restaura
+sabota 's/^  IF auth\.uid() IS NULL OR NOT private\.cap_compras_ler(auth\.uid()) THEN$/  IF false THEN/' "$MIG"
+dente "F13 sem o gate do painel, customer lê pendências" "$(printf '%s\nSELECT public.tentar_painel();\n' "SET test.uid='22222222-2222-2222-2222-222222222222';" | P -q -tA 2>/dev/null | cut -c1-11)" "PAINEL_OK_1"
+restaura
+# F14 — sem o de-para, a postcondição da Onda 2 aborta o apply (B6) — e o aborto é DELA.
+sed -e 's/^  IF v_dp IS NOT NULL THEN$/  IF false THEN/' "$MIG2" > "$SAB"
+if cmp -s "$MIG2" "$SAB"; then
+  bad "F14 sabotagem NÃO casou o de-para — falsificação seria teatro"
+elif P -q -f "$SAB" >/dev/null 2>"$SAB.err"; then
+  bad "F14 postcondição NÃO abortou sem o de-para"
+else
+  F14="$(linhas_error "$SAB.err")"
+  case "$F14" in
+    "ERROR:  B6 FALHOU: \"30 DIAS\" deveria dar A30 pelo de-para, deu T54"|"ERRO:  B6 FALHOU: \"30 DIAS\" deveria dar A30 pelo de-para, deu T54")
+      ok "F14 postcondição aborta o apply sem o de-para (e a regra de texto daria T54)" ;;
+    *) bad "F14 ERRO ALHEIO à postcondição — veio [${F14:-<nenhuma linha ERROR>}]" ;;
+  esac
+fi
+restaura
+# F19 — de-para de volta para a variante (C): a postcondição da 20261109120000 aborta — e o aborto é DELA —, e o
+# assert do "30 DIAS" vira A30.
+sed -e "s/   SET codigo_omie = 'T54',/   SET codigo_omie = 'A30',/" -e "s/ WHERE condicao_portal = '30 DIAS' AND codigo_omie = 'A30';/ WHERE condicao_portal = '30 DIAS';/" "$MIG3" > "$SAB"
+if cmp -s "$MIG3" "$SAB"; then
+  bad "F19 sabotagem NÃO casou o UPDATE do de-para — falsificação seria teatro"
+elif P -q -f "$SAB" >/dev/null 2>"$SAB.err"; then
+  bad "F19 postcondição NÃO abortou com o de-para em (C)"
+else
+  F19="$(linhas_error "$SAB.err")"
+  case "$F19" in
+    "ERROR:  B13 FALHOU: de-para aponta para variante (C)"|"ERRO:  B13 FALHOU: de-para aponta para variante (C)")
+      ok "F19 postcondição aborta o apply com o de-para em variante (C)" ;;
+    *) bad "F19 ERRO ALHEIO à postcondição — veio [${F19:-<nenhuma linha ERROR>}]" ;;
+  esac
+  P -q -c "UPDATE public.sayerlack_condicao_portal_de_para SET codigo_omie='A30' WHERE condicao_portal='30 DIAS'"
+  dente "F19 com o de-para em (C), \"30 DIAS\" vai para A30" "$(cond "'30 DIAS'")" "COND_A30_1"
+fi
+restaura
+# F20 — T54 inativo no catálogo: a postcondição da 20261109120000 tem de abortar pela TRADUÇÃO (não pela checagem textual).
+P -q -c "UPDATE public.omie_condicao_pagamento_catalogo SET ativo = false WHERE empresa = 'OBEN' AND codigo = 'T54'"
+if P -q -f "$MIG3" >/dev/null 2>"$SAB.err"; then
+  bad "F20 postcondição NÃO abortou com T54 inativo"
+else
+  F20="$(linhas_error "$SAB.err")"
+  case "$F20" in
+    "ERROR:  B13 FALHOU: \"30 DIAS\" não traduz (T54 ausente ou inativo no catálogo OBEN?)"|"ERRO:  B13 FALHOU: \"30 DIAS\" não traduz (T54 ausente ou inativo no catálogo OBEN?)")
+      ok "F20 postcondição aborta o apply com T54 inativo" ;;
+    *) bad "F20 ERRO ALHEIO à postcondição — veio [${F20:-<nenhuma linha ERROR>}]" ;;
+  esac
+fi
+restaura
+sabota "s/^  IF v_p.condicao_origem IS DISTINCT FROM 'default_a_vista' THEN$/  IF false THEN/"
+pedido_app 1103 OBEN sucesso_portal "'manual_humano'" NULL
+dente "F15 sem a guarda de origem, a escolha humana é sobrescrita" "$(apl 1103 "'70 - 7 DIAS'")" "APLICADO_A07"
+restaura
+sabota "s/^  IF nullif(btrim(coalesce(v_p.omie_pedido_compra_id, '')), '') IS NOT NULL AND btrim(v_p.omie_pedido_compra_id) <> '0' THEN$/  IF false THEN/"
+pedido_app 1104 OBEN sucesso_portal "'default_a_vista'" "'555'"
+dente "F16 sem a guarda de PO, pedido com PO no Omie muda de condição" "$(apl 1104 "'70 - 7 DIAS'")" "APLICADO_A07"
+restaura
+sabota "s/^  EXCEPTION WHEN SQLSTATE 'IP007' THEN$/  EXCEPTION WHEN SQLSTATE 'XX999' THEN/"
+pedido_app 1105 OBEN sucesso_portal "'default_a_vista'" NULL
+dente "F17 sem capturar o IP007, a condição sem correspondente derruba o envio" "$(apl 1105 "'BOLETO BANCARIO'")" "APLICAR_ERR_IP007"
+restaura
+sabota "s/^  IF v_p.status_envio_portal IS NULL OR v_p.status_envio_portal NOT IN ('enviando_portal', 'sucesso_portal') THEN$/  IF false THEN/"
+pedido_app 1106 OBEN nao_aplicavel "'default_a_vista'" NULL
+dente "F18 sem a guarda de envio, pedido não enviado muda de condição" "$(apl 1106 "'70 - 7 DIAS'")" "APLICADO_A07"
+restaura
+P -q -c "DELETE FROM public.pedido_compra_sugerido WHERE id BETWEEN 1101 AND 1110"
+eq "FC controle: aplicar volta a respeitar a escolha humana" "$(pedido_app 1103 OBEN sucesso_portal "'manual_humano'" NULL; apl 1103 "'70 - 7 DIAS'")" "NAO_origem_manual_humano"
 # Controle: a migration REAL re-aplicada segue verde nos asserts centrais.
 eq "FC controle: A1 volta a gravar" "$(imp "'2140603', $ENT, 5181.82, '$DFA'::jsonb")" "IMP_OK_novo_2140603"
 eq "FC controle: CP007 volta a recusar" "$(imp "'6000099', $ENT, 9999.99, '$DFA'::jsonb")" "IMP_ERR_CP007"

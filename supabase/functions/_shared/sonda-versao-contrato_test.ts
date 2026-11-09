@@ -27,6 +27,7 @@ import * as processNfe from "../process-nfe/versao.ts";
 import * as capturaPrecos from "../sayerlack-captura-precos/versao.ts";
 import * as importarPedidoPortal from "../sayerlack-importar-pedido-portal/versao.ts";
 import * as varrerPedidosPortal from "../sayerlack-varrer-pedidos-portal/versao.ts";
+import * as encerrarCanceladoPortal from "../sayerlack-encerrar-cancelado-portal/versao.ts";
 import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
 import * as omieCliente from "../omie-cliente/versao.ts";
 import * as recommendMod from "../recommend/versao.ts";
@@ -316,6 +317,9 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // portal do fornecedor (Browserless), grava o pedido no app e cria PO REAL no Omie (via disparar).
   { nome: "sayerlack-importar-pedido-portal", mod: importarPedidoPortal },
   { nome: "sayerlack-varrer-pedidos-portal", mod: varrerPedidosPortal },
+  // 2026-11-08 — nasce instrumentada (5.3): consulta o Omie e encerra no app pedido aceito no portal e cancelado no
+  // fornecedor. Não escreve no Omie nem no portal; o efeito caro é encerrar (cancelado_humano) um pedido.
+  { nome: "sayerlack-encerrar-cancelado-portal", mod: encerrarCanceladoPortal },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -1681,5 +1685,12 @@ Deno.test("sonda por cron: o ramo atenderSondaOptions vive DENTRO do bloco OPTIO
     if (/req\.json\(|req\.text\(|createClient\(|fetch\(/.test(corpo)) {
       throw new Error(`${edge}: IO dentro do bloco OPTIONS — o ramo tem de continuar sem custo`);
     }
+  }
+});
+
+Deno.test("sayerlack-encerrar-cancelado-portal: o EFEITO diz que ENCERRA e que não escreve no Omie", () => {
+  // O efeito caro é encerrar o pedido no app (sem volta pela tela); a recusa da sonda tem de dizer isso e o Omie.
+  if (!/encerra/i.test(encerrarCanceladoPortal.EFEITO) || !/omie/i.test(encerrarCanceladoPortal.EFEITO)) {
+    throw new Error(`EFEITO não menciona o encerramento e o Omie: ${encerrarCanceladoPortal.EFEITO}`);
   }
 });

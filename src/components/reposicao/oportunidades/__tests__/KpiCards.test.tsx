@@ -3,12 +3,14 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { KpiCards } from "../KpiCards";
 
 function noop() { /* */ }
+const PRONTAS = { oportunidades: "pronta", skusAtivos: "pronta", ciclo: "pronta" } as const;
 
 describe("KpiCards", () => {
   it("renderiza economia, contagem e ciclo; clicar no badge dispara onGerarCiclo", () => {
     const onGerarCiclo = vi.fn();
     render(
       <KpiCards
+        estados={PRONTAS}
         totalEconomia={1000}
         ganhoLiquidoPotencial={600}
         oportunidadesCount={5}
@@ -34,6 +36,7 @@ describe("KpiCards", () => {
   it("sem data limite e sem ciclo → estados vazios", () => {
     render(
       <KpiCards
+        estados={PRONTAS}
         totalEconomia={0}
         ganhoLiquidoPotencial={0}
         oportunidadesCount={0}

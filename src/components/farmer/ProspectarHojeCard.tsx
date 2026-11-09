@@ -1,0 +1,308 @@
+// Radar D2 — "Prospectar hoje": 3 leads perto da carteira do vendedor, com Assumir e o link para a ficha.
+// Mesma escolha do e-mail semanal (D1): território = municípios onde o vendedor tem mais clientes. Migration 20261106181000.
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
+import { AlarmClock, Check, Hand, Loader2, MapPin, Radar, TimerOff } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/EmptyState';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
+import { track } from '@/lib/analytics';
+import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
+import { diaMes, mensagemRecusa } from '@/lib/radar/atendimento';
+import {
+  linkFichaRadar, nomeDoLead, resumoTerritorio, textoSemTerritorio, tituloMunicipio, type LeadProspectarHoje,
+  type ProspectarHoje, type RetornoHoje,
+} from '@/lib/radar/prospectar-hoje';
+import { diaMesData } from '@/lib/radar/retorno';
+import { useRadarAtendimentosAtivos, useRadarDefinirAtendimento } from '@/queries/useRadarAtendimentos';
+import { useRadarProspectarHoje } from '@/queries/useRadarProspectarHoje';
+import { registrarAberturaEmpurrada, registrarCardExibido } from '@/queries/useRadarRegistroEmpurrado';
+
+/** "Meus atendimentos" no /radar (a visão do pacote B2). */
+const LINK_MEUS_ATENDIMENTOS = '/radar?visao=meus';
+
+/**
+ * O sensor do card devolve `Promise<ResultadoSensor>` = `{ ok: true; registrado } | { ok: false; motivo; transitorio }`.
+ * Aceito também void (não sei → marca, para não registrar em laço) e boolean. `ok: false`/rejeição = não gravou: libera
+ * nova tentativa na próxima leitura (pacote F, achado 9).
+ */
+async function sensorConfirmou(r: unknown): Promise<boolean> {
+  try {
+    const v: unknown = await r;
+    if (v === false) return false;
+    if (typeof v === 'object' && v !== null && 'ok' in v) return (v as { ok: unknown }).ok === true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Quantos retornos o card mostra antes do "ver todos". */
+const RETORNOS_VISIVEIS = 3;
+
+/**
+ * Pacote G: o acompanhamento do vendedor — retornos vencidos até hoje (a agenda, à parte do top de leads novos) e as
+ * posses que vencem em 48 h. Aparece mesmo sem lead novo e sem território: a posse não vence calada.
+ * `null` (RPC anterior ao campo) não renderiza nada — nunca "zero".
+ */
+function Acompanhamento({ dados, onAbrir }: { dados: ProspectarHoje; onAbrir: (cnpj: string) => void }) {
+  const [todos, setTodos] = useState(false);
+  const retornos = dados.retornos;
+  const posses = dados.posses;
+  const nVencendo = posses?.vencendo.length ?? 0;
+  const nRetornos = retornos?.total ?? 0;
+  // Sensor do aviso (client, censurável): o registro server-side do aviso é o do e-mail (envios.acompanhamento).
+  useEffect(() => {
+    if (nVencendo > 0) track('radar.posse_aviso_exibido', { vencendo: nVencendo, vencidas_7d: posses?.vencidas7d ?? 0 });
+  }, [nVencendo, posses?.vencidas7d]);
+  useEffect(() => {
+    if (nRetornos > 0) track('radar.retornos_exibidos', { total: nRetornos });
+  }, [nRetornos]);
+  if (nRetornos === 0 && nVencendo === 0 && !posses?.vencidas7d) return null;
+  const itens = retornos ? (todos ? retornos.itens : retornos.itens.slice(0, RETORNOS_VISIVEIS)) : [];
+  const nomeR = (r: RetornoHoje) => r.nomeFantasia ?? r.razaoSocial ?? r.cnpj;
+  return (
+    <div className="mb-3 space-y-2" data-testid="prospectar-hoje-acompanhamento">
+      {nRetornos > 0 && retornos && (
+        <div>
+          <p className="text-xs font-medium flex items-center gap-1">
+            <AlarmClock className="w-3 h-3 text-status-info" /> Retornos para hoje ({retornos.total})
+          </p>
+          <ul className="divide-y divide-border">
+            {itens.map((r) => (
+              <li key={r.cnpj} className="py-1.5 flex items-center gap-2" data-testid="prospectar-hoje-retorno">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm truncate">{nomeR(r)}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {r.tipo === 'conversa' ? 'Em conversa' : 'Não atendeu, tentar de novo'}
+                    {' · '}
+                    <span className={r.atrasado ? 'text-status-warning' : undefined}>
+                      {r.atrasado ? `atrasado (era ${diaMesData(r.retornoEm)})` : `marcado p/ ${diaMesData(r.retornoEm)}`}
+                    </span>
+                    {r.nota ? ` · ${r.nota}` : ''}
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => onAbrir(r.cnpj)} aria-label={`Abrir ficha de ${nomeR(r)}`}>
+                  Abrir ficha
+                </Button>
+              </li>
+            ))}
+          </ul>
+          {retornos.itens.length > RETORNOS_VISIVEIS && (
+            <button type="button" className="text-xs text-primary hover:underline" onClick={() => setTodos((t) => !t)}
+              data-testid="prospectar-hoje-retornos-todos">
+              {todos ? 'Mostrar menos' : `Ver todos (${retornos.total})`}
+            </button>
+          )}
+          {todos && retornos.total > retornos.itens.length && (
+            <p className="text-[11px] text-muted-foreground">
+              Mostrando os {retornos.itens.length} mais antigos de {retornos.total}.
+            </p>
+          )}
+        </div>
+      )}
+      {nVencendo > 0 && posses && (
+        <div role="status" className="rounded border border-status-warning/40 px-2 py-1.5" data-testid="prospectar-hoje-posses">
+          <p className="text-xs text-status-warning flex items-center gap-1">
+            <TimerOff className="w-3 h-3 shrink-0" />
+            {nVencendo === 1 ? '1 atendimento seu vence' : `${nVencendo} atendimentos seus vencem`} em até 48 h:
+            registre um contato para continuar com {nVencendo === 1 ? 'ele' : 'eles'}.
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {posses.vencendo.map((p) => (
+              <li key={p.atendimentoId} className="text-xs flex items-center gap-2">
+                <button type="button" className="truncate underline" onClick={() => onAbrir(p.cnpj)}>
+                  {p.nomeFantasia ?? p.razaoSocial ?? p.cnpj}
+                </button>
+                <span className="text-muted-foreground shrink-0">vence {diaMes(p.expiraEm)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {!!posses?.vencidas7d && (
+        <p className="text-[11px] text-muted-foreground" data-testid="prospectar-hoje-posses-vencidas">
+          {posses.vencidas7d === 1 ? '1 atendimento seu venceu' : `${posses.vencidas7d} atendimentos seus venceram`} nos
+          últimos 7 dias sem contato e {posses.vencidas7d === 1 ? 'voltou' : 'voltaram'} para a distribuição.
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function ProspectarHojeCard() {
+  const { displayRole, displayCommercialRole } = useDisplayAccess();
+  const visivel = podeProspectarRadar({ role: displayRole, commercialRole: displayCommercialRole });
+  const q = useRadarProspectarHoje(visivel);
+  const { isImpersonating } = useImpersonation();
+  const navigate = useNavigate();
+  const definir = useRadarDefinirAtendimento();
+  // Posse viva (a mesma leitura dos selos do /radar): lead que já é do vendedor mostra "com você", nunca "Assumir" —
+  // senão o 2º clique vira "Atendimento renovado". O pacote E tira o lead do card depois do refetch; até lá, e para
+  // o caso de a RPC o devolver marcado (`comVoce`), vale também o estado local da mutação.
+  const posse = useRadarAtendimentosAtivos();
+  const [assumidosAqui, setAssumidosAqui] = useState<ReadonlySet<string>>(new Set());
+  const comVoce = (l: LeadProspectarHoje) => l.comVoce || assumidosAqui.has(l.cnpj) || posse.data?.get(l.cnpj)?.ehMeu === true;
+  // Sensor do denominador (pacote M): CADA CNPJ exibido, inclusive o que entra depois de um Assumir — antes só a 1ª
+  // quantidade do dia ia ao banco, e 3 servidos com 6 cliques davam 200 %. `exibidos` = confirmados ou em voo; falha
+  // devolve os CNPJs para a próxima leitura tentar de novo. Vai a lista INTEIRA exibida (a posição de cada um); o
+  // banco grava só o que é novo no dia.
+  const exibidos = useRef<Set<string>>(new Set());
+  const visto = useRef(false);
+
+  const leads = q.data?.leads ?? [];
+  useEffect(() => {
+    const lista = q.data?.leads ?? [];
+    if (!q.isSuccess || lista.length === 0 || isImpersonating) return;
+    const novos = lista.map((l) => l.cnpj).filter((c) => !exibidos.current.has(c));
+    if (novos.length === 0) return;
+    if (!visto.current) {
+      visto.current = true;
+      track('radar.prospectar_hoje_visto', { leads: lista.length, elegiveis: lista[0]?.elegiveis ?? null });
+    }
+    for (const c of novos) exibidos.current.add(c);
+    void sensorConfirmou(registrarCardExibido(lista.map((l) => l.cnpj))).then((ok) => {
+      // Falha já foi reportada pelo próprio hook (track 'radar.sensor_falhou' + ledger): aqui só libera a nova
+      // tentativa. `{ ok: true, registrado: false }` = já gravado hoje → conta como feito.
+      if (!ok) exibidos.current = new Set([...exibidos.current].filter((c) => !novos.includes(c)));
+    });
+  }, [q.isSuccess, q.data, isImpersonating]);
+
+  if (!visivel) return null;
+  if (q.isLoading) return <div className="h-32 rounded-lg bg-muted/40 animate-pulse" data-testid="prospectar-hoje-carregando" />;
+
+  const abrirFicha = (l: LeadProspectarHoje) => {
+    if (!isImpersonating) void registrarAberturaEmpurrada({ origem: 'card', cnpj: l.cnpj });
+    track('radar.prospectar_hoje_ficha', { posicao: l.posicao });
+    navigate(linkFichaRadar(l.cnpj, 'card'));
+  };
+
+  const assumir = async (l: LeadProspectarHoje) => {
+    try {
+      const r = await definir.mutateAsync({ cnpj: l.cnpj, acao: 'assumir' });
+      if (!r.ok) { toast.info(mensagemRecusa(r)); return; }
+      setAssumidosAqui((s) => new Set(s).add(l.cnpj));
+      track('radar.prospectar_hoje_assumido', { posicao: l.posicao, atribuido: l.atribuido });
+      toast.success(r.renovado ? 'Atendimento renovado' : 'Lead assumido', {
+        description: r.expiraEm ? `Fica com você até ${diaMes(r.expiraEm)} — está em "Meus atendimentos" no Radar` : undefined,
+      });
+    } catch (e) {
+      toast.error('Não foi possível assumir o lead', { description: e instanceof Error ? e.message : undefined });
+    }
+  };
+
+  return (
+    <Card data-testid="prospectar-hoje">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Radar className="w-4 h-4 text-status-info" />
+          Prospectar hoje
+          {q.isSuccess && leads.length > 0 && (
+            <Badge variant="outline" className="ml-auto text-[10px] font-tabular">
+              {leads.length} de {leads[0].elegiveis}
+            </Badge>
+          )}
+        </CardTitle>
+        {q.isSuccess && q.data.territorio.length > 0 && (
+          <p className="text-xs text-muted-foreground flex items-center gap-1">
+            <MapPin className="w-3 h-3 shrink-0" />
+            Perto dos seus clientes: {resumoTerritorio(q.data.territorio)}
+          </p>
+        )}
+      </CardHeader>
+      <CardContent>
+        {q.isSuccess && (
+          <Acompanhamento dados={q.data} onAbrir={(cnpj) => {
+            track('radar.acompanhamento_ficha', {});
+            navigate(linkFichaRadar(cnpj));
+          }} />
+        )}
+        {q.isError ? (
+          <div role="alert" className="space-y-2" data-testid="prospectar-hoje-erro">
+            <p className="text-sm text-status-error">
+              Não consegui ler os leads do Radar. Isto não quer dizer que não há leads perto da sua carteira.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void q.refetch()}>Tentar de novo</Button>
+          </div>
+        ) : q.data && q.data.territorio.length === 0 ? (
+          <EmptyState
+            icon={MapPin}
+            title="Sem território no Radar"
+            description={textoSemTerritorio(q.data.territorioMotivo)}
+            tone="operational"
+          />
+        ) : leads.length === 0 ? (
+          <EmptyState
+            icon={Radar}
+            title="Nenhum lead a contatar perto da sua carteira"
+            description="Todos os leads com score nesses municípios já foram trabalhados ou estão com outro vendedor."
+            tone="operational"
+          />
+        ) : (
+          <ul className="divide-y divide-border -my-1">
+            {leads.map((l) => (
+              <li key={l.cnpj} className="py-2 flex items-center gap-3" data-testid="prospectar-hoje-lead">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm truncate flex items-center gap-1.5">
+                    <span className="truncate">{nomeDoLead(l)}</span>
+                    {l.atribuido && (
+                      <Badge variant="outline" className="shrink-0 text-[10px]" data-testid="prospectar-hoje-atribuido">passado pelo gestor</Badge>
+                    )}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {tituloMunicipio(l.municipioNome)}{l.uf ? `/${l.uf}` : ''} · score {l.score}
+                    {l.motivos.length > 0 ? ` · ${l.motivos.slice(0, 2).join('; ')}` : ''}
+                  </p>
+                  {/* Todo contato parece ser da contabilidade (migration 20261109140000): não promete telefone, manda ao endereço. */}
+                  {l.visitar && (
+                    <p className="text-xs text-status-warning flex items-start gap-1" data-testid="prospectar-hoje-visitar"
+                      title="O telefone e o e-mail que a Receita tem parecem ser da contabilidade da empresa">
+                      <MapPin className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span className="min-w-0"><strong className="font-medium">Visitar</strong>{l.endereco ? ` · ${l.endereco}` : ' · endereço na ficha'}</span>
+                    </p>
+                  )}
+                </div>
+                {comVoce(l) ? (
+                  <Link to={LINK_MEUS_ATENDIMENTOS} data-testid="prospectar-hoje-com-voce"
+                    className="shrink-0 inline-flex items-center gap-1 rounded border px-2 py-1 text-xs text-status-success"
+                    title='Está em "Meus atendimentos" no Radar'>
+                    <Check className="w-3 h-3" /> com você
+                  </Link>
+                ) : (
+                  <Button
+                    size="sm"
+                    disabled={definir.isPending || isImpersonating}
+                    title={isImpersonating ? 'Indisponível em modo Ver como' : undefined}
+                    aria-label={`Assumir ${nomeDoLead(l)}`}
+                    onClick={() => void assumir(l)}
+                  >
+                    {definir.isPending && definir.variables?.cnpj === l.cnpj
+                      ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Hand className="w-4 h-4 mr-1" />}
+                    Assumir
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" onClick={() => abrirFicha(l)} aria-label={`Abrir ficha de ${nomeDoLead(l)}`}>
+                  Abrir ficha
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {q.isSuccess && q.data.territorio.some((t) => t.compartilhado) && (
+          <p className="mt-2 text-[11px] text-muted-foreground" data-testid="prospectar-hoje-compartilhado">
+            Você não é o vendedor com mais clientes em nenhuma cidade, então estes municípios são divididos com colegas.
+          </p>
+        )}
+        {q.isSuccess && (
+          <Link to={LINK_MEUS_ATENDIMENTOS} className="mt-2 inline-block text-xs text-primary hover:underline" data-testid="prospectar-hoje-meus">
+            Ver meus atendimentos{assumidosAqui.size > 0 ? ` (${assumidosAqui.size} assumido${assumidosAqui.size === 1 ? '' : 's'} agora)` : ''}
+          </Link>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

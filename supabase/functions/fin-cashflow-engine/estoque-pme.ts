@@ -85,3 +85,23 @@ export function calcularPme(estoque: number | null, cmvTtm: number | null, cober
   if (estoque == null || cmvTtm == null || !coberturaOk) return null;
   return (estoque / cmvTtm) * 365;
 }
+
+/** Colunas da série diária de estoque gravadas no snapshot (migration 20261031210000). Os CHECKs da tabela
+ *  fecham faixa (NaN, ≥ 0, < 1e8; cmv > 0, < 1e9) e exigem o par valor↔fonte: um valor que a tabela recusaria
+ *  derrubaria o snapshot INTEIRO (e os alertas) — então ele vira ausência (null + null) ANTES do INSERT,
+ *  nunca número fora de faixa (Codex, 2026-10-31). */
+const SERIE_ESTOQUE_TETO = 100_000_000;
+const SERIE_CMV_TETO = 1_000_000_000;
+export function colunasSerieEstoque(d: {
+  estoque_valor: number | null; estoque_fonte: 'manual' | 'omie' | null; estoque_cobertura_ok: boolean; cmv_ttm: number | null;
+}): { estoque_valor: number | null; estoque_fonte: 'manual' | 'omie' | null; estoque_cobertura_ok: boolean | null; cmv_ttm: number | null } {
+  const valorOk = d.estoque_valor !== null && Number.isFinite(d.estoque_valor) && d.estoque_valor >= 0
+    && d.estoque_valor < SERIE_ESTOQUE_TETO && (d.estoque_fonte === 'manual' || d.estoque_fonte === 'omie');
+  const cmvOk = d.cmv_ttm !== null && Number.isFinite(d.cmv_ttm) && d.cmv_ttm > 0 && d.cmv_ttm < SERIE_CMV_TETO;
+  return {
+    estoque_valor: valorOk ? d.estoque_valor : null,
+    estoque_fonte: valorOk ? d.estoque_fonte : null,
+    estoque_cobertura_ok: valorOk ? d.estoque_cobertura_ok : null,
+    cmv_ttm: cmvOk ? d.cmv_ttm : null,
+  };
+}
