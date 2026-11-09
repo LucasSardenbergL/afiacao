@@ -82,9 +82,12 @@ queries de [radar-piloto-acompanhado-roteiro.md](radar-piloto-acompanhado-roteir
 
 ## Pendências que ficam fora deste pacote
 
-- **Uso da agenda do pacote L na adoção.** O pacote L (#3762, aberto em 2026-11-09) cria `radar_agenda_uso`. Quando
-  ela estiver no ar, o CTE `acao` do `radar_funil` pode contá-la como ação humana: recriar com a PRE no md5
-  `fb09ceea1ad40a78dc471b3a5e4ec95d`.
+- **Uso da agenda do pacote L na adoção — feito na sequência** (migration `20261111170500_radar_funil_agenda`,
+  prova `db/test-radar-funil-agenda.sh`). A agenda "Hoje" `vista` conta como exposição, `aberta` como ação humana,
+  e quem só usou a agenda entra no universo marcado como não elegível. O expurgo apaga `radar_agenda_uso` com mais de
+  400 dias. Só `CREATE OR REPLACE` (PRE nos md5 do M, `fb09ceea…` e `398268b3…`), dentro do envelope: aplica a sessão.
+  A falsificação pegou um assert fraco: com `PERFORM 1` no lugar do DELETE, o `ROW_COUNT` ainda dava 1. Agora quem
+  decide é o estado da tabela.
 - **Piloto acompanhado:** decisão do founder.
 
 ## Provas
