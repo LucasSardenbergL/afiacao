@@ -8,7 +8,7 @@
 --   - PROD (psql-ro): nenhuma função, view, trigger ou cron.job cita o nome; pg_depend sem dependente;
 --   - PROD: geocode_status IS NULL e geocoded_em IS NULL nas 573.021 linhas — nunca gravou nada.
 -- As colunas lat/lng/geocode_status/geocoded_em FICAM (radar_prospects_para_rota as lê; dropar coluna é outra
--- decisão). radar_rfb_descricao NÃO entra: radar_aplicar_situacao a chama (prosrc em PROD).
+-- decisão). radar_rfb_descricao NÃO entra: a função que aplica a situação cadastral a chama (prosrc em PROD).
 --
 -- DDL destrutivo: aplicação do founder no SQL Editor (fora do envelope da sessão). Idempotente: DROP IF EXISTS.
 -- ============================================================
