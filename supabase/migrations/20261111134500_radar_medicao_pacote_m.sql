@@ -98,15 +98,15 @@ BEGIN
            (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(v.alvo)) AS vivo
       FROM (VALUES
         ('public.radar_funil(integer)',
-         '05a8d54a7f86de4a43c3f1f7414ae0d9', '__ESTE_FUNIL__', false),
+         '05a8d54a7f86de4a43c3f1f7414ae0d9', 'ebad7d7bf9ee1f75a01116b3d4246aef', false),
         ('private.radar_evento_contato()',
-         'a2a62eada5b026bc5bf2c3a8cb83df3d', '__ESTE_EVENTO_CONTATO__', false),
+         'a2a62eada5b026bc5bf2c3a8cb83df3d', '3c500687d276fbb1cfea19ebcaa9a316', false),
         ('public.radar_placar_uso()',
          'f648bcff995f7b4db87b2bd829831cbc', NULL, true),                                         -- sai aqui
-        ('public.radar_registrar_card_exibido(text[])', NULL, '__ESTE_CARD_EXIBIDO__', true),   -- nasce aqui
-        ('public.radar_registrar_intencao(text,text)', NULL, '__ESTE_INTENCAO__', true),        -- nasce aqui
-        ('public.radar_funil_experimento()', NULL, '__ESTE_EXPERIMENTO__', true),               -- nasce aqui
-        ('private.radar_expurgar_medicao(integer)', NULL, '__ESTE_EXPURGO__', true)             -- nasce aqui
+        ('public.radar_registrar_card_exibido(text[])', NULL, 'd98067fa9baededff8af98de6cb4001d', true),   -- nasce aqui
+        ('public.radar_registrar_intencao(text,text)', NULL, '108d88bad7b3dac38074748f76cede99', true),        -- nasce aqui
+        ('public.radar_funil_experimento()', NULL, 'f4d8024105bdf73b777e9200bb7ff26e', true),               -- nasce aqui
+        ('private.radar_expurgar_medicao(integer)', NULL, '398268b3a365066ea7c99964dc9530ea', true)             -- nasce aqui
       ) AS v(alvo, predecessor, este, pode_faltar)
   LOOP
     IF r.vivo IS NULL THEN
@@ -725,12 +725,12 @@ BEGIN
   FOR r IN
     SELECT v.alvo, v.este, (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(v.alvo)) AS vivo
       FROM (VALUES
-        ('public.radar_funil(integer)', '__ESTE_FUNIL__'),
-        ('private.radar_evento_contato()', '__ESTE_EVENTO_CONTATO__'),
-        ('public.radar_registrar_card_exibido(text[])', '__ESTE_CARD_EXIBIDO__'),
-        ('public.radar_registrar_intencao(text,text)', '__ESTE_INTENCAO__'),
-        ('public.radar_funil_experimento()', '__ESTE_EXPERIMENTO__'),
-        ('private.radar_expurgar_medicao(integer)', '__ESTE_EXPURGO__')
+        ('public.radar_funil(integer)', 'ebad7d7bf9ee1f75a01116b3d4246aef'),
+        ('private.radar_evento_contato()', '3c500687d276fbb1cfea19ebcaa9a316'),
+        ('public.radar_registrar_card_exibido(text[])', 'd98067fa9baededff8af98de6cb4001d'),
+        ('public.radar_registrar_intencao(text,text)', '108d88bad7b3dac38074748f76cede99'),
+        ('public.radar_funil_experimento()', 'f4d8024105bdf73b777e9200bb7ff26e'),
+        ('private.radar_expurgar_medicao(integer)', '398268b3a365066ea7c99964dc9530ea')
       ) AS v(alvo, este)
   LOOP
     IF r.vivo IS DISTINCT FROM r.este THEN
