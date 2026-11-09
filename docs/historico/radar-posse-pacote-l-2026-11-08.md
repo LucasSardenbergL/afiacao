@@ -11,7 +11,7 @@ em 64 mil contatos — ninguém usava o botão "Assumir", e retornos/posses só 
 | 1 contato dá a posse | `registrar_contato_radar` (migration `20261111134000`) | "em conversa"/"não atendeu" chamam `radar_definir_atendimento('assumir')` depois de gravar: livre → assume, do próprio → renova, de outro → recusa sem mexer, já-cliente/teto 100 → recusa. Resposta ganha `posse` (aditiva). Desfazer o contato que criou a posse a fecha (`radar_atendimentos.contato_origem_id`). |
 | 2 posse não vence para trás | `private.radar_atendimento_expira_em` | Uma reconstrução cronológica: cada contato do **dono** estende a cadeia (+7 d) e define o compromisso vigente (retorno+3 d do "em conversa"). Contato de outro usuário não mexe. O caso do Codex (assume 1/11, conversa 2/11 retorno 30/11, conversa 20/11) agora vence em 30/11, não "em 9/11". |
 | 3 agenda "Hoje" no /radar | `RadarAgendaHoje.tsx` + `lib/radar/agenda-hoje.ts` | Retornos de hoje/atrasados e posses vencendo em 48 h acima da fila, pela MESMA RPC e chave de cache do card (`radar_prospectar_hoje`). Vazia some; leitura que falha diz. |
-| 4 telefone do cadastro | `RadarAcoesLead.tsx`, `lib/radar/telefone-cadastro.ts`, `montarPayloadCriarCliente` | A confirmação mostra os números, marca o da contabilidade e deixa trocar (ou não enviar). A sugestão nunca é o da contabilidade. O lote (gestor) segue no 1º número — ver pendências. |
+| 4 telefone do cadastro | `RadarAcoesLead.tsx`, `lib/radar/telefone-cadastro.ts`, `montarPayloadCriarCliente` | A confirmação mostra os números, marca o da contabilidade e deixa trocar (ou não enviar). A sugestão nunca é o da contabilidade. O lote (gestor) passou a seguir a mesma regra no follow-up (abaixo). |
 | 5 "mesma empresa" eterna | `RadarClientes.tsx` | O CNPJ aberto por link fora das páginas vira uma "página" própria da consulta de irmãos e vínculos. |
 | 6 "hoje" em BRT | `lib/radar/useHojeBRT.ts` | O dia do servidor (America/Sao_Paulo), relido na meia-noite BRT e quando a aba volta. |
 | sensor (regra de fase) | `radar_agenda_uso` + `radar_registrar_agenda_uso` | `vista` 1×/vendedor/dia com o denominador (retornos, posses); `aberta` 1×/CNPJ/dia. Medição: `db/medir-radar-agenda.sql` (também separa posse pelo contato × pelo botão). |
@@ -51,6 +51,19 @@ em 64 mil contatos — ninguém usava o botão "Assumir", e retornos/posses só 
    falha calado (track + console) até a RPC existir.
 2. **Publish** no Lovable (front). Nenhuma edge.
 3. Conferência pós-apply por psql-ro: md5 dos 3 corpos = os `este` da PRE, `contato_origem_id` presente, ACL.
+
+**Estado em 2026-11-09:** migration aplicada pelo founder (`db/validar-radar-posse-l.sql` → `✅ pacote L aplicado`,
+cron do tick ativo) e Publish feito — `verify-frontend.sh --pai <squash do #3762>^` achou `radar_registrar_agenda_uso`
+em `RadarClientes-*.js` (exit 0, controle negativo ok). O carimbo `__BUILD_SHA__` do ar voltou a `dev`, então o
+`monitor-deploy.sh --pr` não mediu (exit 6 `SEM_CARIMBO`): a prova foi pelo conteúdo.
+
+## Follow-up: cadastro em lote sem o telefone da contabilidade
+
+O lote do gestor (`useRadarLote` → `depsCadastroSupabase.criarNoOmie`) não passa pela confirmação e seguia com
+`telefone1 || telefone2`. Agora, sem `telefoneCadastro`, o `criarNoOmie` lê `radar_contato_contabil_da_empresa` e
+aplica `telefoneSemConfirmacao` (a mesma sugestão da tela: pula o da contabilidade; só ele = sem telefone). Leitura que
+falha = o 1º número, como antes, com `console.warn` — campo secundário não segura o cadastro. Teste:
+`useRadarAcoesLead.telefone.test.ts` (4 casos novos; sabotagem "não aplicar a regra" deixa 2 vermelhos).
 
 ## Quando medir
 
