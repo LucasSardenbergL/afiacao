@@ -1,6 +1,6 @@
 // Testa o CÓDIGO REAL de radar-ingest/carga.ts no runtime real (Deno).
 // Roda com: deno test --no-remote supabase/functions/radar-ingest/
-import { dedupPorCnpj, lerEsperado, montarLinhaStaging } from "./carga.ts";
+import { dedupPorCnpj, lerEsperado, lerMotivoFalha, montarLinhaStaging } from "./carga.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -31,4 +31,11 @@ Deno.test("dedupPorCnpj: last-wins", () => {
 Deno.test("lerEsperado: ausente/zero/negativo/fração/string recusados; inteiro > 0 aceito", () => {
   for (const v of [undefined, null, 0, -1, 1.5, "10", NaN]) assertEquals(lerEsperado(v).ok, false);
   assertEquals(lerEsperado(503929), { ok: true, valor: 503929 });
+});
+
+Deno.test("lerMotivoFalha: vazio/não-texto recusados; motivo prefixado e cortado em 500", () => {
+  for (const v of [undefined, null, "", "   ", 42]) assertEquals(lerMotivoFalha(v).ok, false);
+  assertEquals(lerMotivoFalha(" POST falhou (503) "), { ok: true, motivo: "RCARGA_ABORTADA_PELA_CARGA: POST falhou (503)" });
+  const longo = lerMotivoFalha("x".repeat(900));
+  assertEquals(longo.ok && longo.motivo.length, 500);
 });

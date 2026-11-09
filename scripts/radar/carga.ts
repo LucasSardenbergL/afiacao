@@ -24,6 +24,7 @@ import { mapaDeMotivos, normalizarSituacao } from "./situacao";
 import { RFB_SHARE_TOKEN, basesCandidatas, precisaDeAuth } from "./rfb";
 import { CNAES_CONCORRENTES, montarPublicacao } from "./concorrentes";
 import { coordenadaDoMunicipio, indexarCoordenadasIbge } from "./municipios";
+import { criarClienteIngest } from "./ingest-cliente";
 import { digestSocios, emChunks, MAX_LINHAS_CHUNK_SOCIOS, sqlLinhasSocios, VERSAO_CARGA_SOCIOS, type LinhaSocio } from "./socios";
 
 const args = new Map<string, string>();
@@ -49,27 +50,10 @@ const WORK = process.env.RADAR_WORK_DIR ? `${process.env.RADAR_WORK_DIR}/radar-$
 mkdirSync(WORK, { recursive: true });
 const sh = (cmd: string) => execSync(cmd, { stdio: ["ignore", "pipe", "inherit"], maxBuffer: 1024 * 1024 * 64 }).toString();
 
-const post = async (body: unknown) => {
-  for (let t = 1; t <= 4; t++) {
-    // try/catch cobre rejeição do fetch (rede: ECONNRESET/DNS) — review da 1ª carga:
-    // só status HTTP no retry deixava ~527 POSTs sequenciais morrerem no 1º transitório.
-    try {
-      const res = await fetch(INGEST_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-cron-secret": SECRET },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) return res.json();
-      const txt = await res.text();
-      if (t === 4) throw new Error(`POST falhou (${res.status}): ${txt}`);
-      console.warn(`tentativa ${t} falhou (${res.status}), retry…`);
-    } catch (e) {
-      if (t === 4) throw e;
-      console.warn(`tentativa ${t} falhou (rede: ${e instanceof Error ? e.message : e}), retry…`);
-    }
-    await new Promise((r) => setTimeout(r, 800 * 2 ** t));
-  }
-};
+// POST com re-tentativa + fim DECLARADO do lote (ingest-cliente.ts): erro da edge é recuperável; ao esgotar as
+// tentativas com o lote aberto a carga declara `falhar` — a edge v1.8 não fecha mais o lote sozinha num 5xx.
+const cliente = criarClienteIngest({ url: INGEST_URL, segredo: SECRET, fetch: (u, init) => fetch(u, init) });
+const post = (body: Record<string, unknown>) => cliente.post(body);
 
 // ── 0. CNPJs conhecidos (radar ∪ clientes): a situação cadastral RFB é extraída para TODOS eles, em
 //      qualquer situação (02/03/04/08), e aplicada pelo job radar-aplicar-situacao-diario. A lista vem da
@@ -446,6 +430,7 @@ if (DRY) {
 
 // ── 7. POST em chunks ─────────────────────────────────────────────────────────
 await post({ action: "begin_lote", mes: MES });
+cliente.abrirLote(MES);
 for (let i = 0; i < municipios.length; i += 1000)
   await post({ action: "chunk_municipios", mes: MES, linhas: municipios.slice(i, i + 1000) });
 // Soma o que a edge descartou (por motivo) e deduplicou — o retorno dos chunks era ignorado.
@@ -497,6 +482,7 @@ if (temConhecidos) {
 const fin = (await post({ action: "finalize", mes: MES, esperado: entreguesStaging })) as
   { situacao_aplicacao?: unknown; situacao?: unknown; publicacao?: unknown } | undefined;
 console.log(`\n🏁 finalize:`, JSON.stringify(fin));
+cliente.fecharLote(); // validado: concorrentes/sócios que falhem depois não derrubam o lote
 if (fin?.publicacao === "cron") {
   console.log(`📦 lote ${MES} validado (${entreguesStaging} empresas no staging) — vira vigente quando o job radar-publicar-lote publicar (≤ 15 min, fora da hora 06 UTC)`);
 } else {
