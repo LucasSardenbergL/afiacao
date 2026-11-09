@@ -993,21 +993,34 @@ jobs:
   provas-sql-escopo:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # `checks: read` (fatia C, 2026-11-09): o recibo de um run anterior do MESMO PR é lido da anotação
+    # que o escopo DAQUELE run deixou (API de check-runs) — ver o bloco "Recibo do MESMO PR" do script.
     permissions:
       contents: read
       actions: read
+      checks: read
     outputs:
       roda: ${{ steps.escopo.outputs.roda }}
       base: ${{ steps.escopo.outputs.base }}
+      modo: ${{ steps.escopo.outputs.modo }}
+      recibo: ${{ steps.escopo.outputs.recibo }}
     steps:
       - uses: actions/checkout@v5
-        if: ${{ github.event_name != 'workflow_dispatch' }}
+        if: ${{ github.event_name != 'workflow_dispatch' && github.event_name != 'pull_request' }}
         with:
           fetch-depth: 2
       - uses: actions/checkout@v5
         if: ${{ github.event_name == 'workflow_dispatch' }}
         with:
           fetch-depth: 0
+      # No PR, histórico INTEIRO sem blobs (medido: ~3 s, 18 MB): o recibo precisa de merge-base e
+      # ancestralidade entre o merge commit de agora e o de um run anterior, e diff entre eles (que só
+      # lê árvores). Os blobs da árvore do PR vêm no checkout, que é o que o mapa de leitura lê.
+      - uses: actions/checkout@v5
+        if: ${{ github.event_name == 'pull_request' }}
+        with:
+          fetch-depth: 0
+          filter: blob:none
 
       # Semver estrito, mesmo motivo do job `typecheck` (o `bunpin:check` cobra a convergência).
       - name: Setup Bun
@@ -1030,10 +1043,13 @@ jobs:
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
           GH_TOKEN: ${{ github.token }}
         run: >-
           bun ./scripts/provas-sql-escopo.ts --evento "$EVENTO" --escopo-docs "$ESCOPO_DOCS"
-          --ref "$REF" --sha "$SHA" --repo "$REPO" --run-id "$RUN_ID" --github-output
+          --ref "$REF" --sha "$SHA" --repo "$REPO" --run-id "$RUN_ID" --pr "$PR" --head-ref "$HEAD_REF"
+          --github-output
 
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
@@ -1551,15 +1567,50 @@ jobs:
           [ "$casos" -ge "$piso" ] || { echo "::error::harness com $casos caso(s), abaixo do piso $piso"; exit 1; }
           echo "$linha"
 
+  # ─── FAIL-FAST (fatia B do programa "merge mais rápido", 2026-11-09) ─────────────────────────────
+  # Medido em 06–09/11 (236 runs de PR): 33% do runner-min foi em commit superado, e 22 cancelamentos
+  # vieram de um push DEPOIS de um vermelho real — em que as 5 partes do `provas-sql` (11–17 min cada)
+  # seguiram até o fim de um run que já estava reprovado. Este job espera os jobs não-SQL (todos
+  # terminam em ≤ 7 min) e, se algum FALHOU, cancela o run: as partes ainda rodando param e liberam
+  # runner. Espera os 5, e não só o primeiro vermelho, para o autor ver TODAS as falhas não-SQL antes
+  # do corte. Não há API para cancelar um job só — o cancelamento é do run.
+  #
+  # Por que o cancelamento nunca vira aprovação: o gatilho é `failure` de um job que o `validate` exige
+  # em `success`, e o `validate` (`if: always()`) roda no run cancelado e reprova por ele (e pelas
+  # partes `cancelled`). Se o `validate` nem chegar a iniciar, o check fica AUSENTE e o PR não mergeia.
+  # Fora do `needs` do `validate` de propósito: pulado (o caso verde) não é veredito de nada.
+  # Só `pull_request`: o pós-merge (dispatch do auto-merge.yml), push e cron não mudam.
+  fail-fast:
+    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, falsificacao]
+    if: ${{ failure() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: write
+    steps:
+      - name: Job não-SQL vermelho — cancela as partes do provas-sql que ainda rodam
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RESULTADOS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$RESULTADOS" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
+          gh run cancel "$RUN_ID" --repo "$REPO"
+          echo "FAIL_FAST_CANCELOU run=$RUN_ID (o validate reprova este run)"
+
   validate:
     if: always()
     needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, falsificacao, provas-sql-escopo, provas-sql, provas-sql-uniao]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue.
+    # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue. actions:read p/ revalidar, pela
+    # API, o run-recibo quando o escopo reaproveitou as provas de um run anterior do PR (fatia C).
     permissions:
       contents: read
       issues: write
+      actions: read
 
     steps:
       - name: Todos os jobs passaram? (exige 'success' POSITIVO de cada um)
@@ -1568,6 +1619,10 @@ jobs:
           EVENTO: ${{ github.event_name }}
           REF: ${{ github.ref }}
           ESCOPO_DOCS: ${{ inputs.provas_escopo_docs }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          HEAD_REF: ${{ github.head_ref }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           esperados=8
@@ -1580,19 +1635,47 @@ jobs:
           #    main, com o input `provas_escopo_docs` true e a `base` verde (40 hex) que o escopo achou.
           # Push, cron e dispatch manual nunca pulam. Escopo vermelho, saída vazia ou qualquer outro
           # valor = o skipped é ausência de dado e reprova, como sempre.
+          # O `modo` (fatia C, 2026-11-09) diz POR QUE pulou, e é exigido: `inerte` (PR, o diff do PR
+          # não alcança as provas), `recibo` (PR, um run ANTERIOR do mesmo PR provou a mesma árvore
+          # nas partes que as provas leem — ver o bloco "Recibo do MESMO PR" do script) ou `main-docs`
+          # (E14). No `recibo` este job NÃO confia na saída do escopo: relê o run-recibo pela API e
+          # exige que seja deste PR (branch e repo), concluído, com TODAS as partes e a união
+          # `success`. Erro nessa leitura reprova — aqui já não há como rodar as provas puladas.
           escopo_pulou=0
           escopo_resultado="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].result // ""')"
           escopo_roda="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.roda // ""')"
           escopo_base="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.base // ""')"
+          escopo_modo="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.modo // ""')"
+          escopo_recibo="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.recibo // ""')"
+          recibo_confere() {
+            local id="$1" run jobs
+            [[ "$id" =~ ^[1-9][0-9]{0,19}$ ]] && [ "$id" != "${RUN_ID:-}" ] && [ -n "${HEAD_REF:-}" ] && [ -n "${REPO:-}" ] || return 1
+            run="$(gh api "repos/$REPO/actions/runs/$id")" || return 1
+            jobs="$(gh api "repos/$REPO/actions/runs/$id/jobs?filter=latest&per_page=100")" || return 1
+            printf '%s' "$run" | jq -e --arg id "$id" --arg ref "$HEAD_REF" --arg repo "$REPO" \
+              '(.id | tostring) == $id and .event == "pull_request" and .status == "completed"
+               and .head_branch == $ref and .head_repository.full_name == $repo' >/dev/null || return 1
+            printf '%s' "$jobs" | jq -e \
+              '(.total_count | type) == "number" and .total_count <= (.jobs | length)
+               and ([.jobs[] | select(.name == "provas-sql-uniao")] | length == 1 and .[0].conclusion == "success")
+               and ([.jobs[] | select(.name | test("^provas-sql \\([0-9]+\\)$"))] | length > 0 and all(.conclusion == "success"))' \
+              >/dev/null || return 1
+          }
           if [ "$escopo_resultado" = success ] && [ "$escopo_roda" = false ]; then
-            if [ "$EVENTO" = pull_request ]; then
+            if [ "$EVENTO" = pull_request ] && [ "$escopo_modo" = inerte ]; then
               escopo_pulou=1
+            elif [ "$EVENTO" = pull_request ] && [ "$escopo_modo" = recibo ]; then
+              if recibo_confere "$escopo_recibo"; then
+                escopo_pulou=1
+              else
+                echo "::error::o escopo reaproveitou as provas do run '${escopo_recibo:-<vazio>}', e a API não confirma que ele é deste PR com todas as partes e a união success."
+              fi
             elif [ "$EVENTO" = workflow_dispatch ] && [ "$REF" = refs/heads/main ] && [ "$ESCOPO_DOCS" = true ] \
-                 && [[ "$escopo_base" =~ ^[0-9a-f]{40}$ ]]; then
+                 && [ "$escopo_modo" = main-docs ] && [[ "$escopo_base" =~ ^[0-9a-f]{40}$ ]]; then
               escopo_pulou=1
             fi
           fi
-          echo "  escopo das provas SQL: evento=$EVENTO ref=$REF escopo_docs=${ESCOPO_DOCS:-<vazio>} resultado=${escopo_resultado:-<vazio>} roda=${escopo_roda:-<vazio>} base=${escopo_base:-<vazio>}"
+          echo "  escopo das provas SQL: evento=$EVENTO ref=$REF escopo_docs=${ESCOPO_DOCS:-<vazio>} resultado=${escopo_resultado:-<vazio>} roda=${escopo_roda:-<vazio>} modo=${escopo_modo:-<vazio>} base=${escopo_base:-<vazio>} recibo=${escopo_recibo:-<vazio>}"
           while IFS="$(printf '\t')" read -r job resultado; do
             total=$((total + 1))
             [ "$job" = "provas-sql" ] && viu_provas_sql=1
@@ -1603,7 +1686,9 @@ jobs:
               echo "  ✅ $job: success"
             elif [ "$resultado" = skipped ] && [ "$escopo_pulou" -eq 1 ] \
                  && { [ "$job" = provas-sql ] || [ "$job" = provas-sql-uniao ]; }; then
-              if [ "$EVENTO" = pull_request ]; then
+              if [ "$escopo_modo" = recibo ]; then
+                echo "  ♻️ $job: REAPROVEITADO do run $escopo_recibo (mesmo PR, provas e união success conferidos pela API)"
+              elif [ "$EVENTO" = pull_request ]; then
                 echo "  ⏭️ $job: skipped pelo escopo (o diff não toca o que as provas leem)"
               else
                 echo "  ⏭️ $job: skipped pelo escopo da main (só docs/ desde a base verde $escopo_base)"
