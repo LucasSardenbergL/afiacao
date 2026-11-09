@@ -23,6 +23,8 @@
 #        parado, mesma base noutra embalagem, família larga, sem cadência, bordas da janela de 365 d e do 2×
 #        cadência, irmão sem código, embalagem em código de 3 segmentos, base substituta que convivia noutra
 #        embalagem; ordem por situação; H2 = predecessor do repo é o corpo da prod
+#   TR   trava (20261111170000): aprovar recusa o substituído (REPASSE_SUBSTITUIDO); parado e sem cadência
+#        seguem aprováveis; a janela de convivência vira 3 cadências (bordas SUB9/SUB10); H3 = predecessores
 #
 # Uso:  bash db/test-venda-repasse.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #       HARNESS_LC_ALL=pt_BR.UTF-8 bash db/test-venda-repasse.sh …   (rode nos DOIS locales)
@@ -40,8 +42,9 @@ MIG_ORIG="${MIG:-$REPO_ROOT/supabase/migrations/20261020233000_venda_cliente_rep
 MIG_DESEMP="$REPO_ROOT/supabase/migrations/20261021021500_venda_repasse_base_desempenho.sql"
 MIG_DEFASAGEM="$REPO_ROOT/supabase/migrations/20261014211500_defasagem_desconto_valor.sql"
 MIG_SUBST="$REPO_ROOT/supabase/migrations/20261031233000_venda_repasse_substituicao.sql"
+MIG_TRAVA="$REPO_ROOT/supabase/migrations/20261111170000_venda_repasse_trava_substituido.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=72
+TOTAL_ESPERADO=76
 
 # ── Falsificação ─────────────────────────────────────────────────────────────────────────────
 # nome:vermelhos:verdes. As sabotagens de corpo não tocam o que a POS confere (ACL/RLS/md5 do cockpit),
@@ -49,24 +52,24 @@ TOTAL_ESPERADO=72
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="vaza_cmc:C4a,C4t:C4b,C4c
               vaza_c_now:C4a,C4t:C4b,C4c
-              sem_recusa:C3a,C3b,W1:AP1,C3c
-              tinta_null:C6,C3c,H2:CAND1,C3a
+              sem_recusa:C3a,C3b,W1,H3:AP1,C3c
+              tinta_null:C6,C3c,H2,H3:CAND1,C3a
               dono_uniao:C4e,C4h:C4a,C4d
               sem_revalidar:C5d,C5b:C5a,C4b
               sem_finito:CAND1,CAND2,C4b:C4a,C4t
-              ressuscita:AP5,AP6:AP4b
-              retry_subst:AP4b:AP2,AP4
+              ressuscita:AP5,AP6,H3:AP4b
+              retry_subst:AP4b,H3:AP2,AP4
               media_max:W2:W1
               alvo_texto:C4t:C4a
               paridade_markup:C1b:C1a,CAND1
-              gate_candidatos:C2b,H2:C2a,C2c
+              gate_candidatos:C2b,H2,H3:C2a,C2c
               pos_acl_anon:MIG!POS_ACL_ANON
               pos_rls:MIG!POS_RLS
               autojuncao:PERF:CAND1,C4b,PERFv
               pos_janela:MIG!POS_JANELA
               pre_config:MIG!PRE_CONFIG
               sem_convive:SUB5,SUB10,SUB17:SUB1,SUB9
-              janela_366:SUB9:SUB10
+              janela_cad:SUB9:SUB10
               embalagem:SUB16:SUB6,SUB1
               convive_por_sku:SUB17:SUB5,SUB1
               familia_larga:SUB7:SUB1
@@ -76,7 +79,10 @@ if [ "${1:-}" = "--falsificar" ]; then
               sub_valor:SUB2:SUB1
               escolha_sub:SUB1:SUB3
               ordem_valor:SUB14:SUB1
-              pre_trava:MIG!PRE_TRAVA"
+              pre_trava:MIG!PRE_TRAVA
+              pre_trava_apr:MIG!PRE_TRAVA
+              sem_trava:TR1:TR2,TR3
+              trava_larga:TR2:TR1,TR3"
   falhas=0; sab_falhas=0
   echo "═══ CONTROLE (sem sabotagem) ═══"
   if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}-controle.log" 2>&1; then
@@ -419,13 +425,14 @@ BEGIN
   PERFORM pg_temp.serie(md5('vs:sem-cadencia')::uuid, 9401, ARRAY[160,146,132,118,100], true);
   PERFORM pg_temp.cand(md5('vs:sem-cadencia')::uuid, 9401, 100, NULL);
   PERFORM pg_temp.serie(md5('vs:sem-cadencia')::uuid, 9402, ARRAY[90,60,30], false);
-  -- S9a/S9b borda da janela de convivência (365 d até a última compra do candidato, H-100)
+  -- S9a/S9b borda da janela de convivência (3 cadências = 42 d até a última compra do candidato, H-100).
+  -- S9a é também "voltou ao produto de antes": o irmão era comprado antes (fora das 3 cadências) e voltou depois
   PERFORM pg_temp.serie(md5('vs:janela-fora')::uuid, 9401, ARRAY[160,146,132,118,100], true);
   PERFORM pg_temp.cand(md5('vs:janela-fora')::uuid, 9401, 100, 14);
-  PERFORM pg_temp.serie(md5('vs:janela-fora')::uuid, 9405, ARRAY[466,80,50], false);    -- 366 d antes: fora
+  PERFORM pg_temp.serie(md5('vs:janela-fora')::uuid, 9405, ARRAY[143,80,50], false);    -- 43 d antes: fora
   PERFORM pg_temp.serie(md5('vs:janela-dentro')::uuid, 9401, ARRAY[160,146,132,118,100], true);
   PERFORM pg_temp.cand(md5('vs:janela-dentro')::uuid, 9401, 100, 14);
-  PERFORM pg_temp.serie(md5('vs:janela-dentro')::uuid, 9405, ARRAY[465,80,50], false);  -- 365 d antes: dentro
+  PERFORM pg_temp.serie(md5('vs:janela-dentro')::uuid, 9405, ARRAY[142,80,50], false);  -- 42 d antes: dentro
   -- S10a/S10b borda do "parou": 28 d = 2×14 ainda compra; 29 d parou (4080 novo em H-20 nos dois)
   PERFORM pg_temp.serie(md5('vs:borda-comprando')::uuid, 9401, ARRAY[84,70,56,42,28], true);
   PERFORM pg_temp.cand(md5('vs:borda-comprando')::uuid, 9401, 28, 14);
@@ -492,21 +499,21 @@ eq C0 "o lote de paridade passa por 14 motivos distintos" "$NSTAT" "14"
 # ZONA 3 — a migration REAL (cópia, onde a sabotagem age)
 # Duas migrations: a original (20261020233000) e a de desempenho (20261021021500), que redefine o helper do
 # lote. A sabotagem age nas DUAS cópias (o helper existe nas duas); `sabotar_d` só na de desempenho.
-MIGC="$TMPD/mig.sql"; MIGD="$TMPD/mig-desempenho.sql"; MIGS="$TMPD/mig-substituicao.sql"
-cp "$MIG_ORIG" "$MIGC"; cp "$MIG_DESEMP" "$MIGD"; cp "$MIG_SUBST" "$MIGS"
+MIGC="$TMPD/mig.sql"; MIGD="$TMPD/mig-desempenho.sql"; MIGS="$TMPD/mig-substituicao.sql"; MIGT="$TMPD/mig-trava.sql"
+cp "$MIG_ORIG" "$MIGC"; cp "$MIG_DESEMP" "$MIGD"; cp "$MIG_SUBST" "$MIGS"; cp "$MIG_TRAVA" "$MIGT"
 md5de() { cat "$@" | { md5 -q 2>/dev/null || md5sum | cut -d' ' -f1; }; }
 # a trava/PÓS por md5 da substituição vira NOTICE para o corpo sabotado chegar ao banco (o dente é o do ASSERT)
-desliga_md5_s() { sed -i.bak -E "s/RAISE EXCEPTION 'P(RE_TRAVA|OS): /RAISE NOTICE 'P\1: /g" "$MIGS"; }
-sabotar() { # $1 = sed nas TRÊS cópias (a substituição redefine os candidatos); exige que o sed MUDE os arquivos
-  local antes; antes="$(md5de "$MIGC" "$MIGD" "$MIGS")"
-  sed -i.bak -E "$1" "$MIGC" "$MIGD" "$MIGS"
-  [ "$antes" != "$(md5de "$MIGC" "$MIGD" "$MIGS")" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada"; exit 2; }
+desliga_md5_s() { sed -i.bak -E "s/RAISE EXCEPTION 'P(RE_TRAVA|OS): /RAISE NOTICE 'P\1: /g" "$MIGS" "$MIGT"; }
+sabotar() { # $1 = sed nas QUATRO cópias (substituição e trava redefinem candidatos/aprovar); exige que o sed MUDE
+  local antes; antes="$(md5de "$MIGC" "$MIGD" "$MIGS" "$MIGT")"
+  sed -i.bak -E "$1" "$MIGC" "$MIGD" "$MIGS" "$MIGT"
+  [ "$antes" != "$(md5de "$MIGC" "$MIGD" "$MIGS" "$MIGT")" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada"; exit 2; }
   desliga_md5_s
 }
-sabotar_s() { # só na migration da substituição
-  local antes; antes="$(md5de "$MIGS")"
-  sed -i.bak -E "$1" "$MIGS"
-  [ "$antes" != "$(md5de "$MIGS")" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada (substituição)"; exit 2; }
+sabotar_s() { # só na ÚLTIMA definição da regra (a trava: helper + candidatos + aprovar)
+  local antes; antes="$(md5de "$MIGT")"
+  sed -i.bak -E "$1" "$MIGT"
+  [ "$antes" != "$(md5de "$MIGT")" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada (trava)"; exit 2; }
   desliga_md5_s
 }
 sabotar_d() { # só na migration de desempenho
@@ -539,13 +546,16 @@ case "${SABOTAGEM:-}" in
   pre_config)      ;;   # age entre as duas migrations (abaixo)
   pos_janela)      sabotar_d 's/^CREATE OR REPLACE FUNCTION private\._venda_repasse_base\(p_comprador uuid\)$/CREATE OR REPLACE FUNCTION private._venda_repasse_base_sabotada(p_comprador uuid)/' ;;
   # ── substituição (20261031233000) ──
-  sem_convive)     sabotar_s 's/BETWEEN cp\.data_ancora - 365 AND cp\.data_ancora\), false\) AS convivia_sku/BETWEEN cp.data_ancora - 365 AND cp.data_ancora - 100000), false) AS convivia_sku/' ;;
-  janela_366)      sabotar_s 's/BETWEEN cp\.data_ancora - 365 AND/BETWEEN cp.data_ancora - 366 AND/' ;;
+  sem_convive)     sabotar_s 's/BETWEEN cp\.data_ancora - cp\.janela AND cp\.data_ancora\), false\) AS convivia_sku/BETWEEN cp.data_ancora - cp.janela AND cp.data_ancora - 100000), false) AS convivia_sku/' ;;
+  janela_cad)      sabotar_s 's/least\(ceil\(3 \* it\.cadencia_dias\), 3650\)/least(ceil(3 * it.cadencia_dias) + 1, 3650)/' ;;
   embalagem)       sabotar_s "s/'\[A-Z\]\+\[0-9\]\?\\$', ''\) AS base/'^\\$', '') AS base/" ;;
   convive_por_sku) sabotar_s 's/OVER \(PARTITION BY cp\.comprador_id, cp\.omie_codigo_produto, ds\.base\) AS convivia/OVER (PARTITION BY cp.comprador_id, cp.omie_codigo_produto, ds.omie_codigo_produto) AS convivia/' ;;
-  familia_larga)   sabotar_s 's/WHERE op\.account = .oben. AND op\.familia = ANY \(v_familias_substituiveis\)$/WHERE op.account = '"'"'oben'"'"'/' ;;
-  parado_borda)    sabotar_s 's/THEN \(v_hoje - b\.data_ancora\) > 2 \* b\.cadencia_dias END AS parado/THEN (v_hoje - b.data_ancora) >= 2 * b.cadencia_dias END AS parado/' ;;
-  cadencia_null)   sabotar_s 's/THEN \(v_hoje - b\.data_ancora\) > 2 \* b\.cadencia_dias END AS parado/THEN (v_hoje - b.data_ancora) > 2 * b.cadencia_dias ELSE false END AS parado/' ;;
+  familia_larga)   sabotar_s 's/AND op\.familia = ANY \(ARRAY\[.Diluente PU./AND (op.familia = ANY (ARRAY['"'"'Diluente PU'"'"'/; s/.Thinner Nitrocelulose.\]\)$/'"'"'Thinner Nitrocelulose'"'"']) OR true)/' ;;
+  parado_borda)    sabotar_s 's/- u\.data_ancora\) > 2 \* u\.cadencia_dias END AS parado/- u.data_ancora) >= 2 * u.cadencia_dias END AS parado/' ;;
+  cadencia_null)   sabotar_s 's/- u\.data_ancora\) > 2 \* u\.cadencia_dias END AS parado/- u.data_ancora) > 2 * u.cadencia_dias ELSE false END AS parado/' ;;
+  sem_trava)       sabotar_s "s/IF v_sit\.situacao IS NOT DISTINCT FROM 'substituido' THEN/IF false THEN/" ;;
+  trava_larga)     sabotar_s "s/IF v_sit\.situacao IS NOT DISTINCT FROM 'substituido' THEN/IF v_sit.situacao IN ('substituido', 'parado') THEN/" ;;
+  pre_trava_apr)   ;;   # age entre a da substituição e a da trava (abaixo)
   sub_sugerido)    sabotar_s "s/CASE WHEN f\.situacao = 'substituido' THEN NULL ELSE f\.sugerido END AS sugerido_final/f.sugerido AS sugerido_final/" ;;
   sub_valor)       sabotar_s "s/CASE WHEN f\.situacao IS DISTINCT FROM 'substituido'$/CASE WHEN true/" ;;
   escolha_sub)     sabotar_s 's/s\.omie_codigo_produto, s\.n_dias DESC, s\.ultima DESC, s\.sku_sub$/s.omie_codigo_produto, s.n_dias ASC, s.ultima DESC, s.sku_sub/' ;;
@@ -557,19 +567,24 @@ esac
 DERIVA=":"; [ "${SABOTAGEM:-}" = "pre_config" ] && DERIVA="P -q -c 'ALTER FUNCTION private._venda_repasse_base(uuid) SET search_path = pg_catalog, public'"
 # pre_trava: deriva do CORPO dos candidatos ANTES da substituição (apply manual divergente) — a trava tem de recusar
 DERIVA_S=":"; [ "${SABOTAGEM:-}" = "pre_trava" ] && DERIVA_S="P -q -c \"DO \\\$d\\\$ BEGIN EXECUTE replace(pg_get_functiondef('public.venda_repasse_candidatos()'::regprocedure), 'RETURN v_out;', 'RETURN v_out; -- deriva'); END \\\$d\\\$\""
-MD5_CAND_PRE="(nao mediu)"
+# pre_trava_apr: deriva do corpo da APROVAÇÃO antes da trava — a PRE da trava tem de recusar
+DERIVA_T=":"; [ "${SABOTAGEM:-}" = "pre_trava_apr" ] && DERIVA_T="P -q -c \"DO \\\$d\\\$ BEGIN EXECUTE replace(pg_get_functiondef('public.venda_aprovar_repasse(uuid,text,bigint,numeric,date,uuid)'::regprocedure), 'RETURN v_id;', 'RETURN v_id; -- deriva'); END \\\$d\\\$\""
+MD5_CAND_PRE="(nao mediu)"; MD5_TRAVA_PRE="(nao mediu)"
 if P -q -f "$MIGC" >"$TMPD/mig.out" 2>&1 && eval "$DERIVA" && P -q -f "$MIGD" >>"$TMPD/mig.out" 2>&1 \
    && MD5_CAND_PRE="$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid='public.venda_repasse_candidatos()'::regprocedure")" \
-   && eval "$DERIVA_S" && P -q -f "$MIGS" >>"$TMPD/mig.out" 2>&1; then
-  ok "MIG migrations aplicaram (repasse + desempenho + substituição; PRE+CREATE+POS)"
+   && eval "$DERIVA_S" && P -q -f "$MIGS" >>"$TMPD/mig.out" 2>&1 \
+   && MD5_TRAVA_PRE="$(Pq -c "SELECT string_agg(md5(prosrc), '|' ORDER BY proname) FROM pg_proc WHERE oid IN ('public.venda_repasse_candidatos()'::regprocedure, 'public.venda_aprovar_repasse(uuid,text,bigint,numeric,date,uuid)'::regprocedure)")" \
+   && eval "$DERIVA_T" && P -q -f "$MIGT" >>"$TMPD/mig.out" 2>&1; then
+  ok "MIG migrations aplicaram (repasse + desempenho + substituição + trava; PRE+CREATE+POS)"
 else
   bad "MIG migration não aplicou: $(grep -m1 -E 'ERROR' "$TMPD/mig.out" | cut -c1-200)"
   echo "RESULTADO: $PASS ok / $FAIL fail"; exit 1
 fi
 # o predecessor do repo é o corpo medido na prod (psql-ro 2026-10-31) — a trava da substituição o aceita
 eq H2 "venda_repasse_candidatos antes da substituição = corpo medido na prod" "$MD5_CAND_PRE" "922cf8b1efcb82f45a6d962ff7e7de96"
+eq H3 "aprovar e candidatos antes da trava = corpos medidos na prod (2026-11-09)" "$MD5_TRAVA_PRE" "7e3c8dd5dde62a96b01f153c009010af|12d7fff8f2c8dbd41403715f32cfb35c"
 if P -q -f "$MIGC" >"$TMPD/mig2.out" 2>&1 && P -q -f "$MIGD" >>"$TMPD/mig2.out" 2>&1 && P -q -f "$MIGS" >>"$TMPD/mig2.out" 2>&1 \
-   && P -q -f "$MIGS" >>"$TMPD/mig2.out" 2>&1; then ok "MIG2 re-colar as migrations é seguro (PRE aceita este corpo)"
+   && P -q -f "$MIGT" >>"$TMPD/mig2.out" 2>&1 && P -q -f "$MIGT" >>"$TMPD/mig2.out" 2>&1; then ok "MIG2 re-colar as migrations é seguro (PRE aceita este corpo)"
 else bad "MIG2 re-colar falhou: $(grep -m1 ERROR "$TMPD/mig2.out" | cut -c1-200)"; fi
 eq H1 "get_defasagem_cliente: volatilidade/secdef/search_path/ACL preservados" \
   "$(Pq -c "SELECT provolatile::text||'|'||prosecdef::text||'|'||coalesce(array_to_string(proconfig,','),'-')||'|'||coalesce((SELECT string_agg(a::text, ',' ORDER BY a::text) FROM unnest(proacl) a),'NULL') FROM pg_proc WHERE oid='public.get_defasagem_cliente(jsonb,uuid)'::regprocedure")" \
@@ -626,8 +641,8 @@ eq SUB6 "mesma base em outra embalagem (4128LT → 4128L5) não é substituto �
 eq SUB7 "família larga (catalisador) não prova substituição → parado" "$(sub catalisador 9411 "$SIT")" "parado|(null)"
 eq SUB8 "sem cadência: não afirma situação nem substituto; sugerido fica (ausente ≠ zero)" \
   "$(sub sem-cadencia 9401 "$SIT||'|'||(e->>'preco_sugerido')")" "(null)|(null)|133.33"
-eq SUB9 "irmão comprado 366 d antes da última compra (fora da janela) e depois → substituído" "$(sub janela-fora 9401 "$SIT")" "substituido|9405"
-eq SUB10 "irmão comprado 365 d antes da última compra (dentro da janela) → convivia → parado" "$(sub janela-dentro 9401 "$SIT")" "parado|(null)"
+eq SUB9 "irmão comprado 43 d antes da última compra (fora das 3 cadências = 42 d) e depois → substituído" "$(sub janela-fora 9401 "$SIT")" "substituido|9405"
+eq SUB10 "irmão comprado 42 d antes da última compra (dentro das 3 cadências) → convivia → parado" "$(sub janela-dentro 9401 "$SIT")" "parado|(null)"
 eq SUB11 "28 d sem comprar com cadência 14 (= 2×) ainda é comprando" "$(sub borda-comprando 9401 "$SIT")" "comprando|(null)"
 eq SUB12 "29 d sem comprar com cadência 14 (> 2×) e irmão novo → substituído" "$(sub borda-parado 9401 "$SIT")" "substituido|9402"
 eq SUB13 "irmão sem código na descrição não prova base → parado" "$(sub sem-codigo 9401 "$SIT")" "parado|(null)"
@@ -639,6 +654,14 @@ eq SUB17 "base substituta já convivia noutra embalagem (4080LT antes, 4080L5 de
 eq SUB15 "substituto expõe exatamente as 6 chaves" \
   "$(sub ouro1 9401 "(SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(e->'substituto') k)")" \
   "codigo,descricao,dias_com_compra,omie_codigo_produto,primeira_compra,ultima_compra"
+
+# TR — trava na aprovação (20261111170000): a MESMA regra da lista recusa o substituído
+neg TR1 "aprovar o SKU substituído → 22023 REPASSE_SUBSTITUIDO" "$MST" invalid_parameter_value "REPASSE_SUBSTITUIDO" \
+  "PERFORM public.venda_aprovar_repasse(md5('vs:ouro1')::uuid, 'oben', 9401, 130.00, $HOJE + 30)"
+eq TR2 "aprovar um PARADO (sem substituto) segue possível" \
+  "$(como "$MST" "SELECT public.venda_aprovar_repasse(md5('vs:convive-parado')::uuid, 'oben', 9401, 125.00, $HOJE + 30) IS NOT NULL")" "t"
+eq TR3 "aprovar SEM cadência (nada provado) segue possível" \
+  "$(como "$MST" "SELECT public.venda_aprovar_repasse(md5('vs:sem-cadencia')::uuid, 'oben', 9401, 125.00, $HOJE + 30) IS NOT NULL")" "t"
 
 # C3 — aprovação recusa
 VAL="$HOJE + 30"
