@@ -941,7 +941,7 @@ db/test-venda-painel-heranca.sh            16  falsificar=10
 # desfecho de preço exige alta sobre o preço anterior (alvo a < 1%: o preço velho é nao_virou); a lista da
 # farmer expõe as ondas, total/motivo só da recompra e nunca custo; o pedido é a unidade do preço; dono único
 # = a farmer; complemento/preço não exibidos = nao_medivel. 18 sabotagens (md5 reassinado).
-db/test-venda-ondas23.sh                   44  falsificar=18
+db/test-venda-ondas23.sh                   46  falsificar=18
 # DRE consolidado intercompany (20261021120000 → 20261021190000): par CR↔CP — receita e CMV caem pelo MESMO
 # valor, resultado intacto, só par PROVADO pela composição do snapshot (receita_bruta/cmv, mesmo mês, mesmo
 # valor, sem cancelado/sem status, uso único, teto, snapshot fiel aos títulos atuais); venda intragrupo SEM
