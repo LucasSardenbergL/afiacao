@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **823** custom migrations totais
-- **2783** objetos esperados (criados por estas migrations)
+- **825** custom migrations totais
+- **2786** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 1112
+  - `function`: 1115
   - `rls_policy`: 522
   - `index`: 391
   - `table`: 257
@@ -6806,6 +6806,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20261111132000_radar_foto_do_card_e_contato_avaliado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_leads_do_vendedor` | — |
+| `function` | `private.radar_contato_contabil_avaliar` | — |
+
 ### `20261111134500_radar_medicao_pacote_m.sql`
 
 | Tipo | Objeto | Parent |
@@ -6819,6 +6826,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.radar_card_exibicoes` | — |
 | `index` | `public.idx_radar_card_exibicoes_dia` | `radar_card_exibicoes` |
 | `cron_job` | `cron.radar-expurgo-medicao-diario` | — |
+
+### `20261111140000_data_health_radar_carga_em_voo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ## Próximos passos por status
 

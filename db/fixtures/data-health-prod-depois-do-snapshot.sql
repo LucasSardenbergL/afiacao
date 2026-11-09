@@ -4,6 +4,8 @@
 --   20261108120000 (Onda 5A fatia 1): situação do portal no pedido.
 --   20261110100000 (5.3): trilha de encerramento do cancelado no fornecedor.
 --   espelho do Omie: colunas que a cobertura da 5.4 (20261110120000) lê.
+--   20261110130000/20261111120000 (carga do Radar em staging/passos): as colunas carga_* que o radar_lote_idade
+--   lê desde 20261111140000 (K3).
 DO $f$ BEGIN
   IF to_regclass('public.pedido_compra_sugerido') IS NOT NULL THEN
     ALTER TABLE public.pedido_compra_sugerido
@@ -32,5 +34,13 @@ DO $f$ BEGIN
     EXECUTE $c$CREATE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS boolean
       LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
       'SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role)'$c$;
+  END IF;
+END $f$;
+DO $f$ BEGIN
+  IF to_regclass('public.radar_ingest_state') IS NOT NULL THEN
+    ALTER TABLE public.radar_ingest_state
+      ADD COLUMN IF NOT EXISTS carga_fase text, ADD COLUMN IF NOT EXISTS carga_erro text,
+      ADD COLUMN IF NOT EXISTS carga_tentativas integer, ADD COLUMN IF NOT EXISTS carga_iniciada_em timestamptz,
+      ADD COLUMN IF NOT EXISTS carga_validada_em timestamptz;
   END IF;
 END $f$;
