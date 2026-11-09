@@ -340,3 +340,26 @@ não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor únic
 - **Desempenho**: a 2ª leitura de `venda_linhas_pedido` (só compradores com candidato parado em família
   substituível) agrega as datas num array por comprador × SKU — a versão por linha de dia passava dos 8 s no
   volume de prova (1.400 candidatos parados).
+
+## Venda por cliente — trava do substituído na aprovação e convivência em 3 cadências (2026-11-11)
+
+- **Decisões do founder** sobre o #3469: (1) "voltou ao produto de antes" (A → B → A) conta como substituição —
+  a janela de convivência passa de 365 dias para **3 cadências** do candidato; (2) **trava no banco**:
+  `venda_aprovar_repasse` recusa o SKU substituído (`22023 REPASSE_SUBSTITUIDO`; a tela traduz a recusa).
+- **Uma regra só**: a classificação saiu de dentro de `venda_repasse_candidatos` para
+  `private._venda_repasse_situacao` (arrays paralelos de comprador × SKU × última compra × cadência), chamada
+  pela lista E pela aprovação — o que a lista mostra como substituído é exatamente o que a aprovação recusa.
+  Parado e sem cadência seguem aprováveis (nada provado).
+- **Medição antes de mexer** (09/11, 69 parados/substituídos): 2, 3 ou 4 cadências deixam os MESMOS 11
+  substituídos — a mudança é de critério, não da lista de hoje.
+- **Parecer Codex (aprovar com ajustes, 3× P2, todos procedentes)**: (a) cadências diferentes faziam convivência
+  virar falso substituído (item a cada 2 d × irmão mensal contínuo) → a janela é 3 × o **mais lento** entre o item
+  e a base irmã (ritmo da irmã = mediana dos intervalos até a última compra do item; a mediana, não o máximo, para
+  um intervalo longo não fazer "voltou ao produto de antes" conviver); (b) re-colar a migration sobrescreveria uma
+  correção posterior do helper → PRE recusa helper derivado (`PRE_TRAVA_HELPER`), POS confere o md5 dele;
+  (c) a prova não distinguia a fórmula de uma janela fixa de 42 d → fixtures com cadência 30 e 10,4 (`ceil`).
+- **Prova**: `db/test-venda-repasse.sh` 81 asserts (TR1 recusa, TR2 parado aprova, TR3 sem cadência aprova, H3
+  predecessores = prod, H4 helper derivado recusado, SUB18–21 ritmo/fórmula) e 38 sabotagens no conjunto exato nos
+  dois locales; `sem_convive` derruba também o TR2 — prova de que a trava lê a mesma regra da lista.
+- **Histórico público do #3469**: o branch remoto foi apagado; os commits intermediários e as revisões antigas da
+  descrição do PR (com nomes de clientes) só saem pela UI do GitHub (revisões) e pelo suporte do GitHub (refs do PR).

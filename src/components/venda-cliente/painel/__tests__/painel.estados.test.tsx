@@ -31,6 +31,7 @@ import VendaClientePainel from '@/pages/VendaClientePainel';
 import { TabelaAdocao } from '../TabelaAdocao';
 import { DialogAprovarRepasse } from '../DialogAprovarRepasse';
 import { AbaRepasses } from '../AbaRepasses';
+import { mensagemErroRepasse } from '@/hooks/useVendaPainel';
 
 const vazio = { virou: 0, nao_virou: 0, nao_medivel: 0, pendentes: 0 };
 function linha(over: Partial<LinhaPainel> = {}): LinhaPainel {
@@ -268,5 +269,13 @@ describe('AbaRepasses — situação de compra (20261031233000)', () => {
     const sub = grupo(/Substituído — não é repasse/);
     expect(within(sub).getByRole('button', { name: 'Revogar' })).toBeTruthy();
     expect(within(sub).queryByRole('button', { name: 'Alterar' })).toBeNull();
+  });
+});
+
+describe('mensagemErroRepasse — recusa do substituído (20261111170000)', () => {
+  it('traduz REPASSE_SUBSTITUIDO e deixa recusa desconhecida passar crua', () => {
+    expect(mensagemErroRepasse({ message: 'REPASSE_SUBSTITUIDO: o cliente trocou o SKU 1 por PRD03666 (desde 2026-06-24) - nao e repasse' }))
+      .toBe('O cliente trocou este SKU por outro da mesma função — substituído não é repasse.');
+    expect(mensagemErroRepasse({ message: 'XYZ_DESCONHECIDO' })).toBe('XYZ_DESCONHECIDO');
   });
 });

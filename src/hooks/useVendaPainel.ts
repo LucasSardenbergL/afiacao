@@ -118,6 +118,7 @@ export function mensagemErroRepasse(e: unknown): string {
   if (msg.includes('REPASSE_ALVO_TETO')) return 'Alvo acima de 2× o último preço — confira a digitação.';
   if (msg.includes('REPASSE_SEM_ULTIMO')) return 'Sem último preço praticado provado para este comprador/SKU.';
   if (msg.includes('REPASSE_VALIDADE')) return 'Validade fora do intervalo (amanhã até 1 ano).';
+  if (msg.includes('REPASSE_SUBSTITUIDO')) return 'O cliente trocou este SKU por outro da mesma função — substituído não é repasse.';
   if (msg.includes('42501') || msg.includes('requer master')) return 'Só o master aprova repasses.';
   return msg;
 }
