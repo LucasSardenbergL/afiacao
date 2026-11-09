@@ -10,7 +10,7 @@ export const LIMITE_HISTORICO_RADAR = 20;
  * Autor de sistema do descarte automático da Receita (o finalize do lote grava com este UUID; migration
  * 20261029150100). Ele não tem `profiles`: sem este mapa a ficha dizia "autor não identificado".
  */
-export const AUTOR_SISTEMA_RECEITA = '00000000-0000-0000-0000-00000000ad0f';
+const AUTOR_SISTEMA_RECEITA = '00000000-0000-0000-0000-00000000ad0f';
 export const NOME_AUTOR_SISTEMA_RECEITA = 'Receita Federal (automático)';
 
 /** Contato do histórico com o NOME do autor (B4). `autor` null = não consegui identificar (nunca um nome inventado). */

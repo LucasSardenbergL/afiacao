@@ -90,7 +90,7 @@ interface VendedorFunil {
   nome: string | null;
 }
 /** Adoção de um vendedor no período (pacote M). Datas ISO; NULL = não aconteceu no período. */
-export interface AdocaoVendedor {
+interface AdocaoVendedor {
   userId: string;
   /** Tem a capability do Radar AGORA (a autorização histórica não é reconstruída). */
   elegivel: boolean;
@@ -259,7 +259,7 @@ export function etapasAdocao(a: AdocaoFunil, vendedor: string | null = null): Et
 }
 
 /** Experimento da coorte (RPC radar_funil_experimento, pacote M): as leituras de 20261029150100, sem mudança. */
-export interface CoorteResultado {
+interface CoorteResultado {
   sorteio: string;
   grupo: string;
   sorteados: number;
@@ -270,7 +270,7 @@ export interface CoorteResultado {
   sorteadaEm: string | null;
   diasDeAcompanhamento: number | null;
 }
-export interface FaixaConversao {
+interface FaixaConversao {
   faixa: string;
   leadsTocados: number;
   emConversa: number;
