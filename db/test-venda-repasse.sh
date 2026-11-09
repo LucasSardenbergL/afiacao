@@ -68,7 +68,7 @@ if [ "${1:-}" = "--falsificar" ]; then
               autojuncao:PERF:CAND1,C4b,PERFv
               pos_janela:MIG!POS_JANELA
               pre_config:MIG!PRE_CONFIG
-              sem_convive:SUB5,SUB10,SUB17:SUB1,SUB9
+              sem_convive:SUB5,SUB10,SUB17,TR2:SUB1,SUB9
               janela_cad:SUB9:SUB10
               embalagem:SUB16:SUB6,SUB1
               convive_por_sku:SUB17:SUB5,SUB1
