@@ -25511,7 +25511,10 @@ export type Database = {
           p_incluir_ja_clientes?: boolean
           p_limit?: number
           p_lote?: string
+          p_municipio_codigo?: string
           p_primeira_vista_min?: string
+          p_so_agregado?: boolean
+          p_so_visitar?: boolean
           p_status?: string
           p_uf?: string
           p_ufs?: string[]
@@ -25523,8 +25526,11 @@ export type Database = {
           lng: number
           municipio_codigo: string
           municipio_nome: string
+          para_visitar: number
+          para_visitar_total: number
           total: number
           uf: string
+          visitar_contado_em: string
         }[]
       }
       radar_contato_contabil_corrigir: {

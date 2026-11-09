@@ -39,7 +39,8 @@ vi.mock('@/contexts/AuthContext', () => ({
 vi.mock('@/hooks/useInfiniteScroll', () => ({ useInfiniteScroll: () => () => {} }));
 
 // Contagem do chip "para visitar" (migration 20261109140000): número fixo; o recorte da fila é o que importa aqui.
-vi.mock('@/queries/useRadarContatoContabil', () => ({
+vi.mock('@/queries/useRadarContatoContabil', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/queries/useRadarContatoContabil')>()),
   useRadarParaVisitarContagem: () => ({ isError: false, data: 37, rotulo: '37' }),
 }));
 vi.mock('@/queries/useRadarLista', async (importOriginal) => {

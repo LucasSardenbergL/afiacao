@@ -14,6 +14,8 @@ import {
   formatarPenetracao,
   bateuNoTeto,
   LIMITE_MUNICIPIOS,
+  visitarAplicado,
+  formatarContadoEm,
   type FaixaPenetracao,
 } from '@/queries/useRadarContagemMunicipios';
 import { escapeHtml } from '@/lib/escape-html';
@@ -96,7 +98,9 @@ export default function RadarMapa({
         L.marker([m.lat as number, m.lng as number], { icon: pino(r, 'hsl(var(--primary))', String(m.total)) })
           .bindPopup(popupCidade(
             `${m.municipio_nome}/${m.uf}`,
-            [`${m.total} empresas · ${m.com_telefone} c/ telefone`, `${m.a_contatar} a contatar`],
+            [`${m.total} empresas · ${m.com_telefone} c/ telefone`, `${m.a_contatar} a contatar`,
+              // Chip desligado: quantos dali são "para visitar" (dimensão do agregado; null = sem dado, não 0).
+              ...(!filtros.paraVisitar && m.para_visitar ? [`${m.para_visitar} para visitar`] : [])],
             () => onPickRef.current(cidade),
           ))
           .addTo(layer.current!);
@@ -139,7 +143,7 @@ export default function RadarMapa({
 
     if (coords.length === 0) return;
     map.current.fitBounds(L.latLngBounds(coords), { padding: [30, 30], maxZoom: 9 });
-  }, [q.data, pen.data, camada, mostrarConcorrentes, media]);
+  }, [q.data, pen.data, camada, mostrarConcorrentes, media, filtros.paraVisitar]);
 
   const carregando = camada === 'leads' ? q.isLoading : pen.isLoading;
 
@@ -171,12 +175,18 @@ export default function RadarMapa({
           <Label htmlFor="radar-mapa-concorrentes" className="text-xs">Revendas de tinta registradas (CNAE)</Label>
         </div>
       </div>
-      {/* "Para visitar" filtra a FILA, não o mapa (pacote N): a regra é por lead e não cabe no agregado por município. */}
-      {filtros.paraVisitar && camada === 'leads' && (
-        <p className="px-2 py-1 text-xs text-muted-foreground border-b" data-testid="radar-mapa-sem-visitar">
-          O mapa não aplica o “Para visitar”: os pinos contam todos os leads do recorte.
+      {/* "Para visitar" no mapa: dimensão pré-calculada do agregado (migration 20261111160000). Fora dele (data fora
+          do corte, "só sugeridos", dimensão ainda não calculada) a resposta vem SEM o recorte — e a tela diz. */}
+      {filtros.paraVisitar && camada === 'leads' && q.data && q.data.length > 0 && (visitarAplicado(q.data) ? (
+        <p className="px-2 py-1 text-xs text-muted-foreground border-b" data-testid="radar-mapa-visitar-contado">
+          Só os “Para visitar”, na contagem de {formatarContadoEm(q.data[0].visitar_contado_em as string)} (correções
+          feitas depois entram no próximo cálculo).
         </p>
-      )}
+      ) : (
+        <p className="px-2 py-1 text-xs text-muted-foreground border-b" data-testid="radar-mapa-sem-visitar">
+          O mapa não aplica o “Para visitar” neste recorte: os pinos contam todos os leads.
+        </p>
+      ))}
       <div ref={mapRef} className="w-full h-[420px]" style={{ zIndex: 1 }} />
       {camada === 'leads' && q.isError && (
         <p className="p-2 text-xs text-status-error">{avisoContagem(q.error, 'Leads do mapa')}</p>

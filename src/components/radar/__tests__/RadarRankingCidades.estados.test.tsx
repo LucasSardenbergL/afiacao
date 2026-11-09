@@ -22,6 +22,10 @@ vi.mock('@/queries/useRadarContagemMunicipios', () => ({
   formatarPenetracao: (p: number | null) => (p == null ? '—' : `${p}`),
   bateuNoTeto: (n: number | null | undefined) => n != null && n >= 500,
   LIMITE_MUNICIPIOS: 500,
+  // Contrato de `visitarAplicado` (o real é provado em para-visitar-contagem.test.ts): toda linha com a data.
+  visitarAplicado: (d: Array<{ visitar_contado_em: string | null }> | undefined) =>
+    !!d && d.length > 0 && d.every((m) => m.visitar_contado_em != null),
+  formatarContadoEm: () => '09/11 07:35',
 }));
 vi.mock('@/queries/useRadarLoteVigente', () => ({
   useRadarLoteVigente: () => ({ data: { mes_referencia: '2026-10' } }),
@@ -164,5 +168,31 @@ describe('RadarRankingCidades — falha parcial da penetração (pacote I)', () 
     const r = desenhar();
     expect(r.container.textContent).toContain('… cli.');
     expect(screen.queryByTestId('radar-ranking-penetracao-aviso')).toBeNull();
+  });
+});
+
+describe('RadarRankingCidades — "Para visitar" (dimensão do agregado, migration 20261111160000)', () => {
+  const comVisitar = (f: Partial<RadarFiltros>) =>
+    render(<RadarRankingCidades filtros={{ ...filtros, ...f } as RadarFiltros} hojeISO="2026-11-09" onPick={() => {}} />);
+
+  it('chip ligado e a resposta aplicou: diz de quando é a contagem, sem o aviso de "não aplica"', () => {
+    contagem = { data: [{ ...MUNI, para_visitar: 812, para_visitar_total: 812, visitar_contado_em: '2026-11-09T10:35:00Z' }], isLoading: false, isError: false, error: null };
+    comVisitar({ paraVisitar: true });
+    expect(screen.getByTestId('radar-ranking-visitar-contado').textContent).toContain('09/11 07:35');
+    expect(screen.queryByTestId('radar-ranking-sem-visitar')).toBeNull();
+  });
+
+  it('chip ligado e a resposta NÃO aplicou (caminho vivo / dimensão indisponível): o aviso continua', () => {
+    contagem = { data: [{ ...MUNI, para_visitar: null, para_visitar_total: null, visitar_contado_em: null }], isLoading: false, isError: false, error: null };
+    comVisitar({ paraVisitar: true });
+    expect(screen.getByTestId('radar-ranking-sem-visitar')).toBeTruthy();
+    expect(screen.queryByTestId('radar-ranking-visitar-contado')).toBeNull();
+  });
+
+  it('chip desligado: nenhum dos dois avisos', () => {
+    contagem = { data: [{ ...MUNI, para_visitar: 3, para_visitar_total: 3, visitar_contado_em: '2026-11-09T10:35:00Z' }], isLoading: false, isError: false, error: null };
+    comVisitar({ paraVisitar: false });
+    expect(screen.queryByTestId('radar-ranking-sem-visitar')).toBeNull();
+    expect(screen.queryByTestId('radar-ranking-visitar-contado')).toBeNull();
   });
 });
