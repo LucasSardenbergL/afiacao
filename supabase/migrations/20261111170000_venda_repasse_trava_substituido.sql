@@ -1,10 +1,12 @@
 -- 20261111170000_venda_repasse_trava_substituido.sql
 -- ============================================================
 -- Venda por cliente — repasse × substituição, 2ª leva (decisões do founder, 2026-11-09, sobre o #3469):
---   1. Janela de convivência = 3 cadências do candidato (era 365 dias). "Voltou ao produto de antes"
---      (DEA → DEZ → DEA) passa a contar como substituição; quem alterna nas últimas cadências segue convivendo.
---      Medido em prod 09/11 sobre os 69 parados/substituídos: 2, 3 ou 4 cadências = os MESMOS 11 substituídos
---      de hoje (a regra muda o critério, não a lista atual).
+--   1. Janela de convivência = 3 cadências (era 365 dias), medidas pelo MAIS LENTO entre o item e a base irmã
+--      (ritmo da irmã = mediana dos intervalos dela até a última compra do item; parecer Codex: item a cada 2 d ×
+--      irmão mensal contínuo não é substituição). "Voltou ao produto de antes" (DEA → DEZ → DEA) passa a contar
+--      como substituição; quem alterna nas últimas cadências segue convivendo. Medido em prod 09/11 (só com a
+--      cadência do item): 2, 3 ou 4 cadências = os MESMOS 11 substituídos de hoje; o ritmo da irmã só AMPLIA a
+--      janela (move substituído → parado, nunca o contrário) — a contagem final vai no PR, medida pós-apply.
 --   2. TRAVA na aprovação: venda_aprovar_repasse recusa (22023 REPASSE_SUBSTITUIDO) o SKU que o cliente
 --      substituiu. A regra sai de dentro dos candidatos para private._venda_repasse_situacao, chamada pelos DOIS
 --      (uma regra só: o que a lista mostra como substituído é exatamente o que a aprovação recusa). Parado e
@@ -20,7 +22,21 @@ TRUNCATE pg_temp.repasse_trava_retrato;
 
 DO $pre$
 DECLARE v_f text; v_md5 text; v_cfg text; v_ok text[];
+        v_h regprocedure := to_regprocedure('private._venda_repasse_situacao(uuid[],bigint[],date[],numeric[])');
 BEGIN
+  -- helper: ausente na 1ª aplicação; daí em diante só o corpo DESTA migration (re-colar não sobrescreve uma
+  -- correção posterior da regra — parecer Codex 2026-11-09). Primeiro: a deriva dele é a mais silenciosa.
+  IF v_h IS NOT NULL THEN
+    SELECT coalesce(array_to_string(p.proconfig, ','), '-') INTO v_cfg FROM pg_catalog.pg_proc p WHERE p.oid = v_h;
+    IF v_cfg IS DISTINCT FROM 'search_path=public, pg_temp' THEN
+      RAISE EXCEPTION 'PRE_CONFIG: % com config inesperada antes da trava: %', v_h, v_cfg;
+    END IF;
+    ALTER FUNCTION private._venda_repasse_situacao(uuid[], bigint[], date[], numeric[]) SET search_path = public, pg_temp;
+    SELECT md5(p.prosrc) INTO v_md5 FROM pg_catalog.pg_proc p WHERE p.oid = v_h;
+    IF v_md5 IS DISTINCT FROM '880fde236d6a1fce766018c38e42ddee' THEN
+      RAISE EXCEPTION 'PRE_TRAVA_HELPER: % deriva — md5(prosrc)=% não é o corpo desta migration', v_h, v_md5;
+    END IF;
+  END IF;
   FOREACH v_f IN ARRAY ARRAY['public.venda_repasse_candidatos()', 'public.venda_aprovar_repasse(uuid,text,bigint,numeric,date,uuid)'] LOOP
     IF to_regprocedure(v_f) IS NULL THEN
       RAISE EXCEPTION 'PRE: % ausente — aplique antes a 20261020233000 e a 20261031233000', v_f;
@@ -78,10 +94,9 @@ AS $function$
        AND op.familia = ANY (ARRAY['Diluente PU', 'Retardador PU', 'Seladora Nitrocelulose',
                                    'Thinner de Limpeza Sayerlack', 'Thinner Nitrocelulose'])
   ),
-  -- itens PARADOS com base provada numa família substituível; janela de convivência = 3 cadências (teto 10 anos)
+  -- itens PARADOS com base provada numa família substituível
   cp AS MATERIALIZED (
-    SELECT it.comprador_id, it.omie_codigo_produto, it.data_ancora, p.familia, p.base,
-           least(ceil(3 * it.cadencia_dias), 3650)::int AS janela
+    SELECT it.comprador_id, it.omie_codigo_produto, it.data_ancora, it.cadencia_dias, p.familia, p.base
       FROM it JOIN prod p ON p.omie_codigo_produto = it.omie_codigo_produto
      WHERE it.parado IS TRUE AND p.base IS NOT NULL
   ),
@@ -94,19 +109,40 @@ AS $function$
      WHERE l.empresa = 'oben' AND l.comprador_id IN (SELECT cp.comprador_id FROM cp)
      GROUP BY l.comprador_id, p.familia, p.base, l.omie_codigo_produto
   ),
-  -- por SKU irmão (mesma família, OUTRA base): compras DEPOIS da última do item; e se a BASE dele (qualquer
-  -- embalagem) já era comprada nas 3 cadências até a última compra do item — então convivia e não substitui
+  -- por item × BASE irmã (mesma família, outra base, qualquer embalagem): os dias de compra ATÉ a última compra
+  -- do item — a última delas e o ritmo dela (mediana dos intervalos; < 2 dias → NULL, não se afirma ritmo)
+  antes AS (
+    SELECT DISTINCT cp.comprador_id, cp.omie_codigo_produto, ds.base, u.d
+      FROM cp
+      JOIN ds ON ds.comprador_id = cp.comprador_id AND ds.familia = cp.familia AND ds.base <> cp.base
+      CROSS JOIN LATERAL unnest(ds.datas) AS u(d)
+     WHERE u.d <= cp.data_ancora
+  ),
+  irm AS (
+    SELECT g.comprador_id, g.omie_codigo_produto, g.base, max(g.d) AS ultima_antes,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY g.intervalo) AS cad_irma
+      FROM (SELECT a.*, a.d - lag(a.d) OVER (PARTITION BY a.comprador_id, a.omie_codigo_produto, a.base ORDER BY a.d)
+                          AS intervalo
+              FROM antes a) g
+     GROUP BY g.comprador_id, g.omie_codigo_produto, g.base
+  ),
+  -- por SKU irmão: compras DEPOIS da última do item; a BASE dele convivia se foi comprada nas 3 cadências até a
+  -- última compra do item, medindo a cadência pelo MAIS LENTO dos dois (item mensal × irmão semanal e vice-versa;
+  -- teto 10 anos) — convivência contínua em ritmos diferentes não vira substituição (parecer Codex 2026-11-09)
   -- (20261111170000: era 365 d; "voltou ao produto de antes" agora conta como substituição — decisão do founder)
   sub AS (
     SELECT cp.comprador_id, cp.omie_codigo_produto, ds.omie_codigo_produto AS sku_sub, x.primeira, x.ultima, x.n_dias,
-           bool_or(x.convivia_sku) OVER (PARTITION BY cp.comprador_id, cp.omie_codigo_produto, ds.base) AS convivia
+           COALESCE(irm.ultima_antes >= cp.data_ancora
+                      - least(ceil(3 * greatest(cp.cadencia_dias, coalesce(irm.cad_irma, 0))), 3650)::int,
+                    false) AS convivia
       FROM cp
       JOIN ds ON ds.comprador_id = cp.comprador_id AND ds.familia = cp.familia AND ds.base <> cp.base
+      LEFT JOIN irm ON irm.comprador_id = cp.comprador_id AND irm.omie_codigo_produto = cp.omie_codigo_produto
+                   AND irm.base = ds.base
       CROSS JOIN LATERAL (
         SELECT min(u.d) FILTER (WHERE u.d > cp.data_ancora) AS primeira,
                max(u.d) FILTER (WHERE u.d > cp.data_ancora) AS ultima,
-               count(*) FILTER (WHERE u.d > cp.data_ancora) AS n_dias,
-               COALESCE(bool_or(u.d BETWEEN cp.data_ancora - cp.janela AND cp.data_ancora), false) AS convivia_sku
+               count(*) FILTER (WHERE u.d > cp.data_ancora) AS n_dias
           FROM unnest(ds.datas) AS u(d)
       ) x
   ),
@@ -380,6 +416,9 @@ BEGIN
   IF has_function_privilege('anon', v_h, 'EXECUTE') OR has_function_privilege('authenticated', v_h, 'EXECUTE')
      OR (SELECT prosecdef FROM pg_proc WHERE oid = to_regprocedure(v_h)) THEN
     RAISE EXCEPTION 'POS_ACL_HELPER: % executável por anon/authenticated ou SECURITY DEFINER', v_h;
+  END IF;
+  IF (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure(v_h)) IS DISTINCT FROM '880fde236d6a1fce766018c38e42ddee' THEN
+    RAISE EXCEPTION 'POS: % md5(prosrc) não é o corpo desta migration', v_h;
   END IF;
   RAISE NOTICE 'POS OK';
 END $pos$;
