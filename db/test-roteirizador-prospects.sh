@@ -177,4 +177,29 @@ END $$;
 
 SELECT '✅ TODOS OS ASSERTS PASSARAM' AS resultado;
 SQL
+
+# ── Pacote N (radar), item 6: o escritor radar_salvar_geocode saiu (sem chamador desde #884). A migration REAL do
+# drop roda DUAS vezes (idempotente) sobre o banco acima, e a leitura do roteirizador segue de pé com o geo já gravado.
+DROP_MIG="supabase/migrations/20261111120100_radar_drop_salvar_geocode.sql"
+[ -f "$DROP_MIG" ] || { echo "❌ migration não encontrada: $DROP_MIG"; exit 1; }
+echo "=== N6: aplica o drop do geocode (2x) ==="
+"${P[@]}" -f "$DROP_MIG" >/dev/null
+"${P[@]}" -f "$DROP_MIG" >/dev/null
+"${P[@]}" <<'SQL'
+DO $$
+DECLARE v numeric;
+BEGIN
+  IF to_regprocedure('public.radar_salvar_geocode(text,double precision,double precision,text)') IS NOT NULL THEN
+    RAISE EXCEPTION 'N6a FALHOU: radar_salvar_geocode ainda existe depois do drop';
+  END IF;
+  PERFORM set_config('test.uid', '00000000-0000-0000-0000-000000000001', false);
+  PERFORM set_config('test.gestor', 't', false);
+  SELECT lat INTO v FROM public.radar_prospects_para_rota('TOM123') WHERE cnpj = '00000000000001';
+  IF v IS DISTINCT FROM -19.97 THEN
+    RAISE EXCEPTION 'N6b FALHOU: radar_prospects_para_rota perdeu o geo já gravado (lat=%)', v;
+  END IF;
+  RAISE NOTICE 'N6 (drop idempotente, leitura do roteirizador intacta) OK';
+END $$;
+SELECT '✅ N6 PASSOU' AS resultado;
+SQL
 echo ""; echo "✅ test-roteirizador-prospects done"

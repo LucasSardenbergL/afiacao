@@ -34,7 +34,9 @@ vi.mock('@/integrations/supabase/client', () => ({
     rpc: (fn: string, args: Args) => {
       if (fn !== 'radar_lista') throw new Error(`rpc inesperada: ${fn}`);
       lista.push(args);
-      return Promise.resolve(respostas.radar_lista);
+      // A lista encadeia `.abortSignal(signal)` (pacote N): a promessa responde por ele também.
+      const r = Promise.resolve(respostas.radar_lista);
+      return Object.assign(r, { abortSignal: () => r });
     },
   },
 }));

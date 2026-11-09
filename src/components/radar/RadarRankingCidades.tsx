@@ -84,6 +84,13 @@ export function RadarRankingCidades({
           )}
         </span>
       </div>
+      {/* "Para visitar" filtra a FILA, não o ranking (pacote N): a regra é por lead (contabilidade × contato) e não
+          cabe no agregado por município — no caminho vivo o recorte custa ~5,5 s só no pré-corte (prod 2026-11-08). */}
+      {filtros.paraVisitar && (
+        <p className="text-xs text-muted-foreground mb-2" data-testid="radar-ranking-sem-visitar">
+          O ranking não aplica o “Para visitar”: conta todos os leads do recorte.
+        </p>
+      )}
       {aguardando ? (
         <div className="space-y-1">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
       ) : semDado ? (

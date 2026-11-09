@@ -29,7 +29,8 @@ export function useRegistrarContatoRadar() {
     mutationFn: registrarContatoRadar,
     onSuccess: (_d, v) => {
       track('radar.contato_registrado', { acao: v.acao, com_nota: Boolean(v.nota?.trim()), com_retorno: Boolean(v.retorno) });
-      void invalidarRadar(qc);
+      // Cirúrgica (pacote N): a fila troca só a linha deste lead, não relê as páginas carregadas.
+      void invalidarRadar(qc, { cnpj: v.cnpj });
     },
   });
 }
@@ -42,6 +43,7 @@ export function useDesfazerContatoRadar() {
       if (error) throw error;
       return lerDesfazer(data, 'desfazer_contato_radar');
     },
+    // Desfazer pode devolver o lead a um recorte de onde ele saiu (ex.: descarte desfeito): a fila relê inteira.
     onSuccess: () => { void invalidarRadar(qc); },
   });
 }

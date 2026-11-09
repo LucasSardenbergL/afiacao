@@ -40,8 +40,7 @@ vi.mock('@/hooks/useInfiniteScroll', () => ({ useInfiniteScroll: () => () => {} 
 
 // Contagem do chip "para visitar" (migration 20261109140000): número fixo; o recorte da fila é o que importa aqui.
 vi.mock('@/queries/useRadarContatoContabil', () => ({
-  TETO_CONTAGEM_VISITAR: 200,
-  useRadarParaVisitarContagem: () => ({ isPending: false, isError: false, data: 37 }),
+  useRadarParaVisitarContagem: () => ({ isError: false, data: 37, rotulo: '37' }),
 }));
 vi.mock('@/queries/useRadarLista', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/queries/useRadarLista')>();

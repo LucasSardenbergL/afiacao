@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { replaceEqualDeep, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { isSearchablePostgrestTerm, sanitizeForPostgrestOr } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae, cnaeSecundarioCompleto, versaoDaFila, recorteDeUf, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
@@ -69,7 +69,7 @@ function useRadarRodadaScore() {
 }
 
 /** Identidade de um lote para a paginação: mês E início da carga (recarga do mesmo mês é outra foto). */
-export const identidadeDoLote = (l: { mes_referencia: string; iniciado_em: string } | null) =>
+const identidadeDoLote = (l: { mes_referencia: string; iniciado_em: string } | null) =>
   l ? `${l.mes_referencia}@${l.iniciado_em}` : 'sem-lote';
 
 type ParametrosLista = Database['public']['Functions']['radar_lista']['Args'];
@@ -165,8 +165,10 @@ export function useRadarLista(
     // Idem o lote: espera a 1ª leitura assentar (sucesso OU erro — no erro a própria lista falha ao
     // reler, como antes), senão a abertura buscaria a página 0 duas vezes.
     enabled: !aguardar && (filtros.preset !== 'score' || !rodada.isPending) && !qLote.isPending,
-    initialPageParam: 0,
-    queryFn: async ({ pageParam }) => {
+    // pageParam = OFFSET no servidor (não o nº da página): depois que um lead sai da fila no lugar
+    // (`aplicarLeadNasPaginas`), a próxima página começa no total de linhas EM CACHE — o recorte do servidor
+    // encolheu uma linha antes dali, e o offset por página pularia uma empresa.
+    queryFn: async ({ pageParam, signal }) => {
       // Lote vigente ANTES de montar a query: mesma chave/cache do `useRadarLoteVigente`
       // (lido uma vez, não por componente). Se a leitura do lote falha, a lista falha junto —
       // mostrar a fila sem saber o lote seria mostrar a foto velha de novo (52.011 leads com
@@ -185,11 +187,103 @@ export function useRadarLista(
         throw new Error('Sem lote completo da RFB: "só sugeridos" fica indisponível até a carga do lote terminar.');
       }
       // A RPC pagina e ordena (preset DESC NULLS LAST, cnpj): um `.order()` aqui REORDENARIA a página.
-      const { data, error } = await supabase.rpc('radar_lista', parametrosDaLista(filtros, lote, hojeISO, pageParam as number, soMeus));
+      // `signal`: trocar o filtro (ou desmontar) CANCELA a leitura em voo — a busca digitada não enfileira
+      // uma radar_lista por tecla que ninguém vai ler.
+      const { data, error } = await supabase
+        .rpc('radar_lista', { ...parametrosDaLista(filtros, lote, hojeISO, 0, soMeus), p_offset: pageParam as number })
+        .abortSignal(signal);
       if (error) throw error;
       return data as RadarEmpresa[];
     },
-    getNextPageParam: (last, pages) => (last.length === PAGE ? pages.length : undefined),
+    ...PAGINACAO_DA_FILA,
     staleTime: 30_000,
   });
 }
+
+/**
+ * Quantas linhas o SERVIDOR devolveu numa página, quando ela foi encolhida no lugar (um lead saiu da fila). A
+ * pergunta "tem mais?" é sobre o que o servidor mandou (página cheia = talvez haja mais), não sobre o que sobrou.
+ */
+const RECEBIDAS = new WeakMap<RadarEmpresa[], number>();
+
+/**
+ * O `structuralSharing` padrão copia a página encolhida (array novo) e a marca do WeakMap se perderia — a fila
+ * diria "acabou" com a última página de 49. Compartilha como sempre e leva a marca para a cópia.
+ */
+export function compartilharPaginas(antigo: unknown, novo: unknown): unknown {
+  const r = replaceEqualDeep(antigo, novo) as InfiniteData<RadarEmpresa[], unknown> | undefined;
+  const n = novo as InfiniteData<RadarEmpresa[], unknown> | undefined;
+  n?.pages?.forEach((p, i) => {
+    const recebidas = RECEBIDAS.get(p);
+    const copia = r?.pages?.[i];
+    if (recebidas !== undefined && copia) RECEBIDAS.set(copia, recebidas);
+  });
+  return r;
+}
+
+/** Próximo offset: o total de linhas em cache, se a última página veio cheia; senão acabou. */
+export function proximoOffset(ultima: RadarEmpresa[], paginas: RadarEmpresa[][]): number | undefined {
+  if ((RECEBIDAS.get(ultima) ?? ultima.length) !== PAGE) return undefined;
+  return paginas.reduce((n, p) => n + p.length, 0);
+}
+
+/**
+ * O lead ainda pertence ao recorte da fila? Só o que UMA ação do vendedor sobre um lead muda: o status
+ * (descartar, registrar contato) e o virar cliente (cadastro no Omie). É o mesmo predicado da `radar_lista`
+ * (status pedido, senão "não descartado"; `ja_cliente = false` sem o toggle). Recorte que depende de outra
+ * tabela — "meus atendimentos" (posse), "para visitar" (contabilidade), "só sugeridos" (score/lote) — não se
+ * decide aqui: `null` = não sei, relê do servidor.
+ */
+export function leadSegueNaFila(filtros: RadarFiltros, visao: string, lead: RadarEmpresa): boolean | null {
+  if (visao !== 'fila' || filtros.paraVisitar || filtros.soSugeridos) return null;
+  const statusOk = filtros.status ? lead.prospeccao_status === filtros.status : lead.prospeccao_status !== 'descartado';
+  return statusOk && (filtros.incluirJaClientes || !lead.ja_cliente);
+}
+
+export type ResultadoNaFila =
+  | { tipo: 'nada' }
+  | { tipo: 'reler' }
+  | { tipo: 'trocar'; data: InfiniteData<RadarEmpresa[], unknown> };
+
+/**
+ * Invalidação cirúrgica (pacote N): depois de uma ação sobre UM lead, em vez de reler as N páginas carregadas
+ * (10 páginas = 10 `radar_lista` e a lista reordenando sob o dedo), a linha é trocada pela leitura fresca do
+ * lead — ou sai, se deixou o recorte. Pura: quem aplica é `invalidarRadar`.
+ *   - `trocar`: a linha foi atualizada ou removida no lugar (a ordem das outras não muda);
+ *   - `reler`: não dá para decidir daqui (recorte que depende de outra tabela, ou o lead fora das páginas
+ *     carregadas mas dentro do recorte — pode ter (re)entrado no meio): a fila relê como antes;
+ *   - `nada`: o lead não está nas páginas e não pertence ao recorte.
+ * `lead` null = o lead não existe mais no Radar: sai.
+ */
+export function aplicarLeadNasPaginas(
+  data: InfiniteData<RadarEmpresa[], unknown> | undefined,
+  filtros: RadarFiltros,
+  visao: string,
+  cnpj: string,
+  lead: RadarEmpresa | null,
+): ResultadoNaFila {
+  if (!data) return { tipo: 'nada' };
+  const segue = lead ? leadSegueNaFila(filtros, visao, lead) : false;
+  if (segue === null) return { tipo: 'reler' };
+  const iPagina = data.pages.findIndex((p) => p.some((e) => e.cnpj === cnpj));
+  if (iPagina < 0) return segue ? { tipo: 'reler' } : { tipo: 'nada' };
+  const antiga = data.pages[iPagina];
+  const nova = segue && lead
+    ? antiga.map((e) => (e.cnpj === cnpj ? lead : e))
+    : antiga.filter((e) => e.cnpj !== cnpj);
+  RECEBIDAS.set(nova, RECEBIDAS.get(antiga) ?? antiga.length);
+  const pages = data.pages.slice();
+  pages[iPagina] = nova;
+  return { tipo: 'trocar', data: { ...data, pages } };
+}
+
+/** A paginação da fila (offset por linhas em cache + a marca das páginas encolhidas). Exportada para os testes. */
+export const PAGINACAO_DA_FILA: {
+  initialPageParam: number;
+  getNextPageParam: typeof proximoOffset;
+  structuralSharing: typeof compartilharPaginas;
+} = {
+  initialPageParam: 0,
+  getNextPageParam: proximoOffset,
+  structuralSharing: compartilharPaginas,
+};

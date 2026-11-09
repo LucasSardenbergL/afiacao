@@ -171,6 +171,12 @@ export default function RadarMapa({
           <Label htmlFor="radar-mapa-concorrentes" className="text-xs">Revendas de tinta registradas (CNAE)</Label>
         </div>
       </div>
+      {/* "Para visitar" filtra a FILA, não o mapa (pacote N): a regra é por lead e não cabe no agregado por município. */}
+      {filtros.paraVisitar && camada === 'leads' && (
+        <p className="px-2 py-1 text-xs text-muted-foreground border-b" data-testid="radar-mapa-sem-visitar">
+          O mapa não aplica o “Para visitar”: os pinos contam todos os leads do recorte.
+        </p>
+      )}
       <div ref={mapRef} className="w-full h-[420px]" style={{ zIndex: 1 }} />
       {camada === 'leads' && q.isError && (
         <p className="p-2 text-xs text-status-error">{avisoContagem(q.error, 'Leads do mapa')}</p>

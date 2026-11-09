@@ -23,3 +23,12 @@ export function useRadarEmpresa(cnpj: string | null, opcoes: { ativo: boolean })
 export function buscarEmpresaRadar(qc: QueryClient, cnpj: string): Promise<RadarEmpresa | null> {
   return qc.fetchQuery({ queryKey: chaveEmpresaRadar(cnpj), staleTime: 60_000, queryFn: () => lerEmpresaRadar(cnpj) });
 }
+
+/**
+ * Leitura FRESCA (ignora o cache) pela mesma chave: depois de uma mutação, a linha da fila é trocada por ela
+ * (`invalidarRadar` com `cnpj`). Se a ficha aberta já está relendo a mesma chave, o react-query reaproveita a
+ * leitura em voo — uma chamada só para a ficha e a fila.
+ */
+export function buscarEmpresaRadarFresca(qc: QueryClient, cnpj: string): Promise<RadarEmpresa | null> {
+  return qc.fetchQuery({ queryKey: chaveEmpresaRadar(cnpj), staleTime: 0, queryFn: () => lerEmpresaRadar(cnpj) });
+}
