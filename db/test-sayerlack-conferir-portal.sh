@@ -183,7 +183,7 @@ case "$SAB" in
   tolerancia_frouxa)
     trocar "$MIG" "     WHERE p.sku IS NULL OR t.sku IS NULL OR abs(p.v - t.v) > 0.005" "     WHERE p.sku IS NULL OR t.sku IS NULL OR abs(p.v - t.v) > 1.00" ;;
   sem_condicao)
-    trocar "$MIG" "    SELECT 'condicao', NULL, NULL, NULL WHERE v_ret.condicao_normalizada IS DISTINCT FROM v_norm" "    SELECT 'condicao', NULL, NULL, NULL WHERE false" ;;
+    trocar "$MIG" "    IF v_ret.condicao_normalizada IS DISTINCT FROM v_norm THEN" "    IF false THEN" ;;
   sem_total)
     trocar "$MIG" "     WHERE abs(v_ret.valor_total - (p_leitura->>'valor_total')::numeric) > 0.005" "     WHERE false" ;;
   mesmo_diff_empilha)
