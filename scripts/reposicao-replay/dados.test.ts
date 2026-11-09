@@ -11,7 +11,7 @@ const H = {
   vendas: 'linha_id|sku|data|quantidade|valor|cmc_linha|no_escopo',
   recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida|t2|doc_md5|unidade_nfe|encerrado_omie_em|status_tracking|valor_total|pedido_qtd|pedido_unidade|origem_compra',
   skus:
-    'sku|descricao|grupo_codigo|classe_abc_hoje|classe_forcada|minimo_forcado|minimo_operacional|multiplo_embalagem|unidade_nf|unidade_estoque|fator_conversao|cmc|saldo_hoje|habilitado|ativo|custo_pedido_aplicado|custo_capital_perc|es_hoje|pp_hoje|max_hoje|grupo_embalagem_id',
+    'sku|descricao|grupo_codigo|classe_abc_hoje|classe_forcada|minimo_forcado|minimo_operacional|multiplo_embalagem|unidade_nf|unidade_estoque|fator_conversao|cmc|saldo_hoje|habilitado|ativo|custo_pedido_aplicado|custo_capital_perc|es_hoje|pp_hoje|max_hoje|grupo_embalagem_id|demanda_hoje',
   config_custos:
     'z_classe_a|z_classe_b|z_classe_c|selic_anual|spread_oportunidade|armazenagem_fisica|custo_pedido_manual|custo_pedido_api|modo_pedido|haircut_fallback_preco',
   classificacao_hist:
@@ -73,6 +73,8 @@ function monta(ov: Partial<Record<Nome, string[]>> = {}, log = 'extracao em 2026
   b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 12 ? `${l}||` : l));
   // origem_compra (R38): normal quando o teste não informa
   b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 14 ? `${l}|normal` : l));
+  // demanda_hoje (R55): vazia quando o teste não informa (linha de skus com as 21 colunas antigas)
+  b.skus = b.skus.map((l) => (l.split('|').length === 21 ? `${l}|` : l));
   for (const n of Object.keys(H) as Nome[]) {
     writeFileSync(join(dir, `${n}.csv`), [H[n], ...b[n], 'fim|ok'].join('\n') + '\n');
   }
@@ -641,5 +643,13 @@ describe('R54 — preço do capital pelas cópias já chegadas (t4 < d)', () => 
     const d = carregarDados(monta({ recebimentos: ['T1|S1|2026-01-28|2026-02-05|10|10||docA|UN||FATURADO|35', 'T2|S1|2026-01-30|2026-02-19|10|10||docA|UN||FATURADO|35'] }));
     expect(d.precosCompra).toEqual([{ sku: 'S1', desde: '2026-02-19', preco: 3.5 }]);
     expect(d.precosCompraCapital).toEqual([{ sku: 'S1', desde: '2026-02-05', preco: 3.5 }]);
+  });
+});
+
+describe('R55 — demanda_hoje (demanda gravada do teto) na carga de skus', () => {
+  it('lê a demanda gravada; vazia vira null (ausente ≠ zero)', () => {
+    const d = carregarDados(monta({ skus: [skuLinha('S1', 'UN', 'UN', '', { 21: '0.6785' }), skuLinha('S2')] }));
+    expect(d.skus.get('S1')!.hoje.demanda).toBe(0.6785);
+    expect(d.skus.get('S2')!.hoje.demanda).toBeNull();
   });
 });

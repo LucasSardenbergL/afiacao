@@ -1097,7 +1097,9 @@ export function paridadeQuantidade(dados: Dados, paramsF0Hoje: (sku: string) => 
     out.replay.de++;
     if (bate(linha.replay, qtdeFinal)) out.replay.n++;
     if (p.tipo === 'F0' && s.hoje.pp !== null && s.hoje.max !== null) {
-      linha.gravado = mesmoSku ? decidirCompra({ ...p, pp: s.hoje.pp, max: s.hoje.max }, posicao, s, grupo) : 0;
+      // R55: "só a decisão" = o estado GRAVADO inteiro — PP, máximo e a demanda do teto (com insumo, como o motor)
+      const dem = s.hoje.demanda === undefined ? p.demandaDiariaLinha : s.hoje.demanda;
+      linha.gravado = mesmoSku ? decidirCompra({ ...p, pp: s.hoje.pp, max: s.hoje.max, demandaDiariaLinha: dem }, posicao, s, grupo) : 0;
       out.gravado.de++;
       if (bate(linha.gravado, qtdeFinal)) out.gravado.n++;
     }

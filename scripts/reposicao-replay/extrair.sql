@@ -93,6 +93,7 @@ copy (
 -- motor). custo_pedido_aplicado / custo_capital_perc = de empresa_configuracao_custos (mesma conta da view).
 -- es_hoje/pp_hoje/max_hoje = estoque_seguranca / ponto_pedido / estoque_maximo gravados em sku_parametros.
 -- grupo_embalagem_id (extra, no fim) = grupo de sku_embalagem_equivalencia (vazio = fora de grupo).
+-- demanda_hoje (R55, no fim) = demanda_media_diaria gravada em sku_parametros (com insumo): a demanda do teto do motor.
 copy (
   with escopo as (
     select sp.* from sku_parametros sp
@@ -138,7 +139,8 @@ copy (
          e.estoque_seguranca as es_hoje,
          e.ponto_pedido as pp_hoje,
          e.estoque_maximo as max_hoje,
-         eq.grupo_id as grupo_embalagem_id
+         eq.grupo_id as grupo_embalagem_id,
+         e.demanda_media_diaria as demanda_hoje
   from escopo e
   cross join cfg
   left join sku_grupo_producao sg on sg.empresa = e.empresa and sg.sku_codigo_omie = e.sku_codigo_omie::text

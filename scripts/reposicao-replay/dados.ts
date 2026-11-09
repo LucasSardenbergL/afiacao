@@ -739,7 +739,7 @@ export function carregarDados(dir: string): DadosCarregados {
   const sk = lerTabela(
     dir,
     'skus',
-    ['sku', 'descricao', 'grupo_codigo', 'classe_abc_hoje', 'classe_forcada', 'minimo_forcado', 'minimo_operacional', 'multiplo_embalagem', 'unidade_nf', 'unidade_estoque', 'fator_conversao', 'cmc', 'saldo_hoje', 'habilitado', 'ativo', 'custo_pedido_aplicado', 'custo_capital_perc', 'es_hoje', 'pp_hoje', 'max_hoje', 'grupo_embalagem_id'],
+    ['sku', 'descricao', 'grupo_codigo', 'classe_abc_hoje', 'classe_forcada', 'minimo_forcado', 'minimo_operacional', 'multiplo_embalagem', 'unidade_nf', 'unidade_estoque', 'fator_conversao', 'cmc', 'saldo_hoje', 'habilitado', 'ativo', 'custo_pedido_aplicado', 'custo_capital_perc', 'es_hoje', 'pp_hoje', 'max_hoje', 'grupo_embalagem_id', 'demanda_hoje'],
     false,
   );
   const skusBrutos = new Map<string, Sku>();
@@ -773,6 +773,7 @@ export function carregarDados(dir: string): DadosCarregados {
         es: numOuNull(sk.arquivo, 'es_hoje', g('es_hoje')),
         pp: numOuNull(sk.arquivo, 'pp_hoje', g('pp_hoje')),
         max: numOuNull(sk.arquivo, 'max_hoje', g('max_hoje')),
+        demanda: numOuNull(sk.arquivo, 'demanda_hoje', g('demanda_hoje')),
       },
     });
   }

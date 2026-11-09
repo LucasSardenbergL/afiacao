@@ -833,3 +833,24 @@ describe('R54 — o capital usa precosCompraCapital; a paridade do motor, precos
     expect(precoCompraRealAte({ precosCompra: view }, 'P', '2026-02-20')).toEqual({ preco: 9, fonte: 'compra_real' });
   });
 });
+
+describe('R55 — a leitura "decisão com o gravado" usa também a demanda gravada no teto', () => {
+  // o caso real de 09/11: SKU de insumo (99%), C, PP 13 / máx 27, múltiplo 5, posição 2,09562; o motor comprou 25
+  const f0 = (dem: number): ParamsDia => ({ tipo: 'F0', pp: 2, max: 4, coberturaTetoDias: 60, demandaDiariaLinha: dem });
+  const caso = (demanda: number | null | undefined) => {
+    const s = sku('T', { multiplo: 5, hoje: demanda === undefined ? { es: 7, pp: 13, max: 27 } : { es: 7, pp: 13, max: 27, demanda } });
+    return paridadeQuantidade(dados([s], [], { sugestaoHoje: new Map([['T', { posicao: 2.09562, qtdeFinal: 25 }]]) }), () => f0(0.368)).linhas[0];
+  };
+  it('com a demanda gravada (com insumo) o teto não corta: 25, como o motor', () => {
+    expect(caso(0.6785).gravado).toBe(25); // cap = max(floor(60 × 0,6785 − 2,09562), 11) = 38 ≥ 24,9
+  });
+  it('controle: com a demanda do replay (sem insumo) o teto corta para 20', () => {
+    expect(caso(undefined).gravado).toBe(20); // cap = floor(60 × 0,368 − 2,09562) = 19 → 20 pelo múltiplo
+  });
+  it('demanda gravada nula: sem teto (o motor faz COALESCE(…, 0) > 0)', () => {
+    expect(caso(null).gravado).toBe(25);
+  });
+  it('a leitura com o estado do replay não muda', () => {
+    expect(caso(0.6785).replay).toBe(caso(undefined).replay);
+  });
+});

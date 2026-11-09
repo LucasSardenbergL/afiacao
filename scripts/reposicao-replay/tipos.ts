@@ -79,7 +79,11 @@ export interface Sku {
   grupoEmbalagemId: string | null;
   f0: { custoPedido: number; custoCapitalPerc: number };
   /** Parâmetros gravados hoje; null onde a coluna veio vazia. */
-  hoje: { es: number | null; pp: number | null; max: number | null };
+  /**
+   * Gravado em sku_parametros na extração. `demanda` (R55) = demanda_media_diaria (com insumo), a do teto do motor;
+   * ausente só em fixture antiga (a leitura "decisão com o gravado" usa então a demanda do replay).
+   */
+  hoje: { es: number | null; pp: number | null; max: number | null; demanda?: number | null };
 }
 
 export interface TetoConfig {
