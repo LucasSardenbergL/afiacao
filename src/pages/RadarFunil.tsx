@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUrlState } from '@/hooks/useUrlState';
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
   coberturaDoPeriodo,
   etapasAdocao,
@@ -393,7 +394,7 @@ function Experimento({ q }: { q: { data?: ExperimentoFunil; isLoading: boolean; 
   if (q.isError || !q.data) {
     return (
       <EmptyState icon={AlertTriangle} tone="operational" title="Não consegui ler o experimento"
-        description={q.error instanceof Error ? q.error.message : 'A leitura falhou. Nenhum número é mostrado no lugar.'}
+        description={mensagemDeErro(q.error) ?? 'A leitura falhou. Nenhum número é mostrado no lugar.'}
         actionLabel="Tentar de novo" onAction={() => void q.refetch()} />
     );
   }

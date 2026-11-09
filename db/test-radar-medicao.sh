@@ -328,7 +328,7 @@ for i in $(seq 1 "$APLICAR_VEZES"); do
   grep -q "POSTCONDICAO RADAR MEDICAO M OK" "$TMPD/apply-m$i.log" || [ "${SABOTAGEM:-}" = expurgo_aberto ] || {
     echo "APLICAÇÃO $i SEM O MARCADOR DA POSTCONDIÇÃO"; exit 1; }
 done
-eq "A0 apply idempotente ($APLICAR_VEZES×, marcador da postcondição em todas)" ok ok
+eq "A0 apply idempotente (${APLICAR_VEZES}×, marcador da postcondição em todas)" ok ok
 
 # Cobertura sob controle da prova: os sensores declarados instalados há 60 dias; os sem declaração contam do 1º registro.
 P -q -c "UPDATE public.radar_funil_sensores SET instalado_em = now() - interval '60 days' WHERE instalado_em IS NOT NULL"
