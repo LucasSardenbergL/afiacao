@@ -40,5 +40,17 @@ export function telefonePadraoCadastro(opcoes: readonly OpcaoTelefone[]): string
   return opcoes.find((o) => o.contabil !== true)?.numero ?? null;
 }
 
+/**
+ * Cadastro SEM confirmação (lote do gestor, retentativa): a mesma sugestão da confirmação, sem ninguém para trocar —
+ * pula o número da contabilidade; só o da contabilidade = não enviar telefone. `leitura` null (não consegui ler) =
+ * o 1º número, como antes: não afirma nada sobre a contabilidade.
+ */
+export function telefoneSemConfirmacao(
+  e: { telefone1?: string | null; telefone2?: string | null },
+  leitura: LeituraContatoContabil | null,
+): string | null {
+  return telefonePadraoCadastro(opcoesTelefoneCadastro(e, leitura));
+}
+
 /** Valor do Select/RadioGroup para "não enviar telefone" (o rádio não aceita null). */
 export const SEM_TELEFONE = '__sem_telefone__';

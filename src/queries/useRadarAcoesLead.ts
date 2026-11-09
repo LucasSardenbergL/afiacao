@@ -12,11 +12,15 @@ import {
   type ResultadoCadastro,
 } from '@/lib/radar/cadastro-omie';
 import { parsearConflito, parsearEstadoCadastro, parsearRegistroV2 } from '@/lib/radar/conflito-cadastro';
+import { lerContatoContabil, type LeituraContatoContabil } from '@/lib/radar/contato-contabil';
+import { telefoneSemConfirmacao } from '@/lib/radar/telefone-cadastro';
 
 
 /**
  * O alvo do cadastro pode levar o telefone ESCOLHIDO na confirmação (pacote L, item 4): `telefoneCadastro` presente
- * vale como está (`null` = não enviar telefone); ausente (lote, retentativa antiga) = o 1º número da Receita.
+ * vale como está (`null` = não enviar telefone); ausente (lote, retentativa antiga) = `criarNoOmie` decide antes do
+ * envio pela mesma regra da confirmação (`telefoneSemConfirmacao`), e o `telefone1 || telefone2` daqui só sobra para
+ * quem monta o payload sem passar por ele.
  */
 export type EmpresaParaCadastro = RadarEmpresa & { telefoneCadastro?: string | null };
 
@@ -47,7 +51,20 @@ export function montarPayloadCriarCliente(e: EmpresaParaCadastro, razaoFiscal?: 
  * abertos são lidos JUNTOS no servidor antes de qualquer chamada (migration 20261027160000).
  * Toda resposta jsonb tem a forma CONFERIDA (`conflito-cadastro.ts`) — desvio lança.
  */
-export const depsCadastroSupabase: DepsCadastro<RadarEmpresa> = {
+/** Contato da contabilidade para o cadastro sem confirmação. Falha de leitura = `null` (o 1º número, como antes): um
+ *  campo secundário não segura o cadastro, e a tela de cadastro individual já mostra a escolha. */
+async function lerContabilParaCadastro(cnpj: string): Promise<LeituraContatoContabil | null> {
+  try {
+    const { data, error } = await supabase.rpc('radar_contato_contabil_da_empresa', { p_cnpj: cnpj }).range(0, 2);
+    if (error) throw error;
+    return lerContatoContabil(data);
+  } catch (err) {
+    console.warn('[radar] cadastro sem confirmação: não li o contato da contabilidade; vai o 1º número', err);
+    return null;
+  }
+}
+
+export const depsCadastroSupabase: DepsCadastro<EmpresaParaCadastro> = {
   // invokeFunction (não `supabase.functions.invoke` cru): em HTTP 500 o `error.message` do
   // supabase-js é o genérico "non-2xx"; o motivo real (ex.: `OMIE_TRANSIENT … rate limit`,
   // que PARA o lote) vem no corpo, e só o helper o lê (P1 do review Codex).
@@ -55,7 +72,11 @@ export const depsCadastroSupabase: DepsCadastro<RadarEmpresa> = {
     // A razão que a ficha mostra é a mascarada (LGPD, pacote J): a fiscal vem só desta RPC, logo antes do envio.
     const { data, error } = await supabase.rpc('radar_razao_social_para_cadastro', { p_cnpj: e.cnpj });
     const razao = escolherRazaoFiscal(e.razao_social, { data, erroCodigo: error ? (error.code ?? 'desconhecido') : null, erro: error });
-    return invokeFunction<unknown>('omie-vendas-sync', montarPayloadCriarCliente(e, razao));
+    // Sem escolha na tela (lote do gestor, retentativa): não manda às cegas o telefone da contabilidade.
+    const alvo: EmpresaParaCadastro = e.telefoneCadastro !== undefined || !(e.telefone1 || e.telefone2)
+      ? e
+      : { ...e, telefoneCadastro: telefoneSemConfirmacao(e, await lerContabilParaCadastro(e.cnpj)) };
+    return invokeFunction<unknown>('omie-vendas-sync', montarPayloadCriarCliente(alvo, razao));
   },
   registrarNoRadar: async (cnpj, codigo, jaExistia) => {
     const { data, error } = await supabase.rpc('radar_registrar_cadastro_omie_v2', {
