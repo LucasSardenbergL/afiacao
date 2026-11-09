@@ -12976,6 +12976,7 @@ export type Database = {
           lat: number | null
           lng: number | null
           logradouro: string | null
+          lote_anterior: string | null
           municipio_codigo: string | null
           municipio_nome: string | null
           nome_fantasia: string | null
@@ -13021,6 +13022,7 @@ export type Database = {
           lat?: number | null
           lng?: number | null
           logradouro?: string | null
+          lote_anterior?: string | null
           municipio_codigo?: string | null
           municipio_nome?: string | null
           nome_fantasia?: string | null
@@ -13066,6 +13068,7 @@ export type Database = {
           lat?: number | null
           lng?: number | null
           logradouro?: string | null
+          lote_anterior?: string | null
           municipio_codigo?: string | null
           municipio_nome?: string | null
           nome_fantasia?: string | null
@@ -13253,12 +13256,19 @@ export type Database = {
       radar_ingest_state: {
         Row: {
           avisado_em: string | null
+          carga_cursor: string | null
           carga_erro: string | null
           carga_esperado: number | null
+          carga_examinadas: number | null
           carga_fase: string | null
+          carga_gravadas: number | null
           carga_iniciada_em: string | null
+          carga_publicacao_iniciada_em: string | null
           carga_publicada_em: string | null
+          carga_recruzada_em: string | null
+          carga_tentativas: number | null
           carga_validada_em: string | null
+          carga_varrida_em: string | null
           erro: string | null
           finalizado_em: string | null
           iniciado_em: string
@@ -13272,12 +13282,19 @@ export type Database = {
         }
         Insert: {
           avisado_em?: string | null
+          carga_cursor?: string | null
           carga_erro?: string | null
           carga_esperado?: number | null
+          carga_examinadas?: number | null
           carga_fase?: string | null
+          carga_gravadas?: number | null
           carga_iniciada_em?: string | null
+          carga_publicacao_iniciada_em?: string | null
           carga_publicada_em?: string | null
+          carga_recruzada_em?: string | null
+          carga_tentativas?: number | null
           carga_validada_em?: string | null
+          carga_varrida_em?: string | null
           erro?: string | null
           finalizado_em?: string | null
           iniciado_em?: string
@@ -13291,12 +13308,19 @@ export type Database = {
         }
         Update: {
           avisado_em?: string | null
+          carga_cursor?: string | null
           carga_erro?: string | null
           carga_esperado?: number | null
+          carga_examinadas?: number | null
           carga_fase?: string | null
+          carga_gravadas?: number | null
           carga_iniciada_em?: string | null
+          carga_publicacao_iniciada_em?: string | null
           carga_publicada_em?: string | null
+          carga_recruzada_em?: string | null
+          carga_tentativas?: number | null
           carga_validada_em?: string | null
+          carga_varrida_em?: string | null
           erro?: string | null
           finalizado_em?: string | null
           iniciado_em?: string
@@ -25389,6 +25413,10 @@ export type Database = {
         Returns: boolean
       }
       radar_carga_iniciar: { Args: { p_lote: string }; Returns: Json }
+      radar_carga_publicar_passo: {
+        Args: { p_tamanho?: number }
+        Returns: Json
+      }
       radar_carga_publicar_pendente: { Args: never; Returns: Json }
       radar_carga_receber: {
         Args: { p_linhas: Json; p_lote: string }
@@ -25568,6 +25596,7 @@ export type Database = {
           lat: number | null
           lng: number | null
           logradouro: string | null
+          lote_anterior: string | null
           municipio_codigo: string | null
           municipio_nome: string | null
           nome_fantasia: string | null
@@ -25601,6 +25630,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      radar_lote_publicando: { Args: never; Returns: string }
       radar_meu_territorio: {
         Args: { p_top?: number; p_vendedor?: string }
         Returns: {

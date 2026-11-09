@@ -7,7 +7,7 @@ const base = {
   bairro: null, capital_social: 10000, cep: null, cnpj: '00000000000000', cnae_descricao: 'Fabricação de móveis com predominância de madeira',
   cnae_principal: '3101200', cnaes_secundarios: [], complemento: null, created_at: '2026-01-01', data_abertura: '2010-01-01',
   descarte_motivo: null, email: null, geocode_status: null, geocoded_em: null, ja_cliente: false, lat: null, lng: null,
-  logradouro: null, municipio_codigo: null, municipio_nome: 'NOVA SERRANA', nome_fantasia: null, numero: null,
+  logradouro: null, lote_anterior: null, municipio_codigo: null, municipio_nome: 'NOVA SERRANA', nome_fantasia: null, numero: null,
   omie_cadastrado_em: null, omie_codigo_cliente: null, porte: '01', primeira_vista_em: '2026-01-01',
   prospeccao_atualizado_em: null, prospeccao_contato_id: null, prospeccao_status: 'a_contatar', razao_social: 'X', rfb_situacao: null,
   rfb_situacao_data: null, rfb_situacao_lote: null, score: null, score_em: null, score_motivos: null, score_versao: null, socios_nomes: null,

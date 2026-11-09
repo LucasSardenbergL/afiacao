@@ -67,7 +67,7 @@ describe('useRadarContagemMunicipios — "só sugeridos" usa o predicado da fila
     const { result } = renderHook(() => useRadarContagemMunicipios(FILTROS, '2026-10-21', true), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(rpcs).toEqual([]);
-    expect(filtrosEmpresas('eq', 'ultimo_lote')).toEqual([['eq', 'ultimo_lote', '2026-08']]);
+    expect(filtrosEmpresas('in', 'ultimo_lote')).toEqual([['in', 'ultimo_lote', ['2026-08']]]);
     expect(filtrosEmpresas('eq', 'prospeccao_status')).toEqual([['eq', 'prospeccao_status', 'em_conversa']]);
     expect(filtrosEmpresas('eq', 'ja_cliente')).toEqual([['eq', 'ja_cliente', false]]);
     expect(filtrosEmpresas('is', 'omie_codigo_cliente')).toEqual([['is', 'omie_codigo_cliente', null]]);
