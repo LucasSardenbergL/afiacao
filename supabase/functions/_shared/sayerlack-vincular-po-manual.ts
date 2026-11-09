@@ -20,8 +20,7 @@ export interface ResultadoVinculo {
   execucao_id?: string;
 }
 
-// deno-lint-ignore no-explicit-any
-type DbRpc = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: any; error: { message: string } | null }> };
+type DbRpc = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> };
 
 export async function vincularPoManual(
   db: DbRpc,
