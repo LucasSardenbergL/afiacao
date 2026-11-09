@@ -1,5 +1,12 @@
 # nucleo-ci.txt — as provas SQL EXECUTADAS que rodam no caminho obrigatório do merge.
 # =====================================================================================
+# ⚠️ PROVA NOVA NÃO ENTRA AQUI (desde 2026-11-09): crie `db/nucleo-ci.d/<prova>.txt` com a(s)
+# linha(s) dela, no MESMO formato abaixo (comentário à vontade). O manifesto EFETIVO é este arquivo
+# seguido dos fragmentos em ordem LC_ALL=C, com o mesmo parse estrito (duplicata ENTRE fontes aborta;
+# no diretório só entra `<prova>.txt` regular). Acrescentar no fim deste arquivo fazia todo PR
+# conflitar com o irmão e re-sincronizar a main (docs/historico/ci-arquivos-gerados-sem-conflito.md).
+# Editar linha EXISTENTE (subir o mínimo, o falsificar=<n>) continua sendo aqui.
+#
 # Consumido por `db/roda-nucleo-ci.sh` (job `provas-sql` do ci.yml). Uma linha por
 # script; `#` comenta; linha vazia ignorada. O runner EXIGE que todo caminho aqui
 # exista e que o total executado bata com o total lido — lista vazia é ERRO, não

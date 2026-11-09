@@ -290,6 +290,67 @@ exec_exige "PostgreSQL ausente é ERRO, nunca skip" "PostgreSQL 99 não encontra
   env MANIFESTO="$ESPELHO/manifesto-pg.txt" PGVER=99 \
   bash "$ESPELHO/db/roda-nucleo-ci.sh"
 
+# ── FRAGMENTOS: db/nucleo-ci.d/<prova>.txt (2026-11-09) ─────────────────────────────────────────
+# O manifesto EFETIVO é o nucleo-ci.txt + os fragmentos (docs/historico/ci-arquivos-gerados-sem-conflito.md).
+# O que se prova aqui: (1) a prova de um fragmento EXECUTA — controle verde, antes de qualquer
+# sabotagem; (2) o fragmento passa pelo MESMO parse estrito, e o erro cita o fragmento; (3) o que
+# não é `<prova>.txt` regular no diretório ABORTA — ignorado em silêncio, tiraria uma prova do merge;
+# (4) a fiação PADRÃO (sem MANIFESTO no ambiente) lê db/nucleo-ci.d de verdade.
+echo
+echo "=== o EXECUTOR lê os FRAGMENTOS, e com o rigor do manifesto? ==="
+fake_simples() { printf '#!/usr/bin/env bash\necho "RESULTADO: 5 ok / 0 fail"\n' > "$ESPELHO/db/$1"; }
+fake_simples test-frag-a.sh; fake_simples test-frag-b.sh
+MFR="$ESPELHO/manifesto-frag.txt"; DFR="$ESPELHO/frag.d"
+frag_reset() { rm -rf "$DFR"; mkdir -p "$DFR"; printf 'db/test-frag-a.sh 5\n' > "$MFR"; printf '# a prova B\ndb/test-frag-b.sh 5\n' > "$DFR/b.txt"; }
+
+frag_reset
+exec_verde "CONTROLE: a prova do FRAGMENTO executa (principal + fragmento = 2/2)" "SQL_PROOF_OK provas=2/2" \
+  env MANIFESTO="$MFR" MANIFESTO_D="$DFR" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+exec_verde "CONTROLE: MANIFESTO explícito sem MANIFESTO_D não lê fragmento nenhum (1/1)" "SQL_PROOF_OK provas=1/1" \
+  env MANIFESTO="$MFR" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+frag_reset; printf 'db/test-frag-a.sh 5\n' > "$DFR/b.txt"
+exec_exige "duplicata ENTRE o principal e um fragmento ABORTA" "b.txt:1 — duplicata" \
+  env MANIFESTO="$MFR" MANIFESTO_D="$DFR" bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+
+frag_reset; printf '# a prova B\ndb/test-frag-b.sh\n' > "$DFR/b.txt"
+exec_exige "linha malformada num fragmento ABORTA, citando o fragmento e a linha" "b.txt:2 — falta o mínimo" \
+  env MANIFESTO="$MFR" MANIFESTO_D="$DFR" bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+
+frag_reset; printf 'db/test-frag-b.sh 5\n' > "$DFR/LEIA.md"
+exec_exige "arquivo não-.txt no diretório ABORTA (não é ignorado)" "só entra <prova>.txt" \
+  env MANIFESTO="$MFR" MANIFESTO_D="$DFR" bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+
+frag_reset; printf '# rascunho\n\n' > "$DFR/c.txt"
+exec_exige "fragmento SEM linha de prova ABORTA" "fragmento sem nenhuma linha de prova" \
+  env MANIFESTO="$MFR" MANIFESTO_D="$DFR" bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+
+frag_reset; ln -s "$DFR/b.txt" "$DFR/c.txt"
+exec_exige "fragmento SYMLINK ABORTA" "precisa ser arquivo regular" \
+  env MANIFESTO="$MFR" MANIFESTO_D="$DFR" bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+
+frag_reset; mkdir "$DFR/d.txt"
+exec_exige "subdiretório no diretório de fragmentos ABORTA" "precisa ser arquivo regular" \
+  env MANIFESTO="$MFR" MANIFESTO_D="$DFR" bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+
+frag_reset; printf 'db/test-frag-b.sh 5\n' > "$DFR/com espaco.txt"
+exec_exige "fragmento com espaço no nome ABORTA" "fragmento com espaço no nome" \
+  env MANIFESTO="$MFR" MANIFESTO_D="$DFR" bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+rm -rf "$DFR"
+
+# A fiação PADRÃO: sem MANIFESTO no ambiente, o runner do espelho tem de ler $ESPELHO/db/nucleo-ci.d.
+# Controle (fragmento bom → a prova dele aparece na lista) e sabotagem (fragmento com caminho
+# inexistente → aborta citando o fragmento) na MESMA invocação. Um runner que esquecesse o diretório
+# passaria o controle? Não: a linha da prova B só existe no fragmento.
+mkdir -p "$ESPELHO/db/nucleo-ci.d"
+printf 'db/test-frag-b.sh 5\n' > "$ESPELHO/db/nucleo-ci.d/zz-controle-falsifica.txt"
+exec_verde "CONTROLE: a fiação PADRÃO lê db/nucleo-ci.d (a prova do fragmento está na lista)" "  db/test-frag-b.sh  (asserts≥5)" \
+  env -u MANIFESTO -u MANIFESTO_D bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+printf 'db/test-nao-existe-mesmo.sh 1\n' > "$ESPELHO/db/nucleo-ci.d/zz-controle-falsifica.txt"
+exec_exige "fiação PADRÃO: fragmento com prova inexistente ABORTA" "zz-controle-falsifica.txt:1 — arquivo não existe" \
+  env -u MANIFESTO -u MANIFESTO_D bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+rm -f "$ESPELHO/db/nucleo-ci.d/zz-controle-falsifica.txt"
+
 # ── O 3º CAMPO: a falsificação das provas no caminho obrigatório (2026-09-10) ──────────────
 # Caminho novo do runner, e com a mesma exigência dos de cima: reprovar PELO MOTIVO CERTO. Mas
 # recusa não basta — um runner que reprovasse TODA falsificação passaria em todos os casos de
