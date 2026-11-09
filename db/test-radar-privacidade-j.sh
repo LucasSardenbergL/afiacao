@@ -314,7 +314,7 @@ upd_foto() { Pq -c "SELECT md5(string_agg(cnpj || '@' || updated_at::text, ',' O
 UPD_ANTES=$(upd_foto)
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
 tem() { if printf '%s' "$2" | grep -qF -- "$3"; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — [$3] ausente em [$2]"; FAIL=$((FAIL+1)); fi; }
-igual() { diff "$1" "$2" > /dev/null && echo igual || { diff "$1" "$2" | head -6 >&2; echo diferente; }; }
+igual() { if diff "$1" "$2" > /dev/null; then echo igual; else diff "$1" "$2" | head -6 >&2; echo diferente; fi; }
 
 # E1: migration aplicada, razão ainda CRUA (o backfill não correu): vínculo, aviso e guarda idênticos.
 foto_base > "$DIR/base-durante.txt"; foto_aviso > "$DIR/aviso-durante.txt"; foto_conflito > "$DIR/conf-durante.txt"

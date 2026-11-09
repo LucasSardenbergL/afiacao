@@ -82,9 +82,12 @@ tabela continuaria legível crua pelo PostgREST. E toda RPC futura nasceria vaza
     registro e a pedida nova sobrescrevia a trilha → todos corrigidos e cobertos.
 - **Prova PG17** com as migrations reais da cadeia do vínculo (`20261104201756` → `20261106083754` →
   `20261106205557` → `20261107040000`), o lote de sócios carregado pelas RPCs da carga e esta migration aplicada 2×.
-  Rodei `--falsificar` em `LC_ALL=C` e em `pt_BR.UTF-8`: controle verde e 10/10 sabotagens vermelhas no assert
-  certo. Achei por sabotagem que o filtro de exclusão no `lead_cpf` e no `mascaras_conflitam` seria camada
-  redundante (o trigger já zera nomes e sufixo da raiz). Ficou só o filtro necessário, em `ocorr`.
+  Fechou com 30 asserts. Rodei `--falsificar` em `LC_ALL=C` e em `pt_BR.UTF-8`: controle verde e 14/14 sabotagens
+  vermelhas no assert certo. Na 1ª versão, a sabotagem mostrou que um filtro de exclusão no `lead_cpf` era camada
+  redundante; depois a decisão do crédito tirou do vínculo todo filtro de exclusão.
+- **Custo do trigger** (PG17 local, upsert de 500 mil linhas com 20% de MEI): 2,4 s sem trigger, 5,5 a 6,1 s com,
+  cerca de 6 µs por linha. No caminho real, o staging recebe em chunks de 1.000 (cerca de +6 ms por chunk) e o passo
+  da publicação só reescreve o que difere.
 - **Varredura de vazamento histórico em prod:** 0 tarefas, 0 alertas (`mensagem` e `metadata`) com CPF, staging
   vazio. Só `radar_empresas` tinha o CPF, e o backfill cobre.
 
