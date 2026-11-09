@@ -168,7 +168,7 @@ export function ProspectarHojeCard() {
     void sensorConfirmou(registrarCardExibido(lista.map((l) => l.cnpj))).then((ok) => {
       // Falha já foi reportada pelo próprio hook (track 'radar.sensor_falhou' + ledger): aqui só libera a nova
       // tentativa. `{ ok: true, registrado: false }` = já gravado hoje → conta como feito.
-      if (!ok) for (const c of novos) exibidos.current.delete(c);
+      if (!ok) exibidos.current = new Set([...exibidos.current].filter((c) => !novos.includes(c)));
     });
   }, [q.isSuccess, q.data, isImpersonating]);
 

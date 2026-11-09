@@ -113,12 +113,12 @@ describe('coberturaDoPeriodo', () => {
 });
 
 describe('inconsistencias', () => {
-  it('clique no card sem card servido = o sensor do card servido perdeu evento', () => {
-    const i = inconsistencias(contagens({ card_leads_clicados: 2, card_leads_servidos: 0 }));
+  it('sem o sensor de exibição (pré-M): clique no card acima da 1ª exibição do dia acusa o card', () => {
+    const i = inconsistencias(contagens({ card_leads_clicados: 2, card_leads_servidos: 0, card_leads_exibidos: null }));
     expect(i.map((x) => x.etapa)).toEqual(['card']);
   });
   it('NULL não acusa inconsistência (sem dado não é contradição)', () => {
-    expect(inconsistencias(contagens({ card_leads_clicados: 2, card_leads_servidos: null }))).toEqual([]);
+    expect(inconsistencias(contagens({ card_leads_clicados: 2, card_leads_servidos: null, card_leads_exibidos: null }))).toEqual([]);
   });
 });
 
