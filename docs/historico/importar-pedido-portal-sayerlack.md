@@ -570,6 +570,10 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
   - a fiação no `index.ts` não tem teste de handler;
   - caracteres C1 e bidi passam pelo filtro;
   - o teto do `cObs` no Omie não está provado.
+- **Deploy (2026-11-09):** #3751 mergeado às 21:55Z. A ordem entre edges reteve o disparador até a predecessora
+  `enviar-pedido-portal-sayerlack` ser sondada de novo (DEPLOY CONFIRMADO, #1027). Depois:
+  - disparar v1.13: 17/17 hashes, sonda #1029 DEPLOY CONFIRMADO;
+  - o `commit_sha` da resposta foi só o `types.ts` regenerado (`d7792da1`, tolerado), e nenhuma edge mudou.
 
 ## 7.2 + 4.3 — evidência imutável de cada leitura e sessão do Browserless pela importadora (2026-11-08)
 
