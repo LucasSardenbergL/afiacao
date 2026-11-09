@@ -26620,6 +26620,10 @@ export type Database = {
         Returns: Json
       }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
+      sayerlack_vincular_po_manual: {
+        Args: { p_ator: string; p_origem: string; p_pedido_id: number }
+        Returns: Json
+      }
       seed_targets_faltantes: {
         Args: never
         Returns: {
