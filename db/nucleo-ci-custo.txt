@@ -127,6 +127,7 @@ db/test-radar-contagem-regiao.sh 16
 db/test-radar-contato-integridade.sh 87
 db/test-radar-distribuicao-e.sh 6
 db/test-radar-funil.sh 140
+db/test-radar-medicao.sh 25
 db/test-radar-irmaos-por-raiz.sh 13
 db/test-radar-kpis-conversao.sh 15
 db/test-radar-leads-vendedor.sh 86
