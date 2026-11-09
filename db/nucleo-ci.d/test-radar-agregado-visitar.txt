@@ -1,0 +1,4 @@
+# Radar — "para visitar" no agregado (20261111160000): a dimensão visitar dos 3 agregados é a MESMA regra da fila
+# (oráculo linha a linha em 14 recortes), indisponível ≠ 0 (antes do tick e depois de código velho), recálculo quando a
+# contabilidade é mais nova, p_so_agregado sem ler radar_empresas, total antes do LIMIT, PRE anti-deriva e ACL.
+db/test-radar-agregado-visitar.sh          55  falsificar=11
