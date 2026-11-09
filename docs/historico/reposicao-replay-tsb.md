@@ -1,27 +1,31 @@
-# Replay TSB do estoque de segurança — simulador consertado pela revisão do Codex, rodada oficial pendente (2026-10-29)
+# Replay TSB do estoque de segurança — rodada oficial: NO-GO na calibração, paridade do F0 passando (2026-11-09)
 
 **Entrega:** o simulador walk-forward `scripts/reposicao-replay/` (projeto 3; spec `docs/superpowers/specs/2026-10-20-tsb-estoque-seguranca-design.md`, plano `docs/superpowers/plans/2026-10-21-tsb-estoque-seguranca-replay.md`). Ele compara o motor atual (F0) com F1 (gaussiana em 63 du), F2 (TSB com tamanhos empíricos) e F3 (quantil de blocos) na coorte Sayerlack/OBEN fixada em 2026-05-01 (153 SKUs, 141 intermitentes). Janelas: aquecimento até 31/01, calibração de 01/02 a 30/04 e avaliação de 01/05 a 20/10/2026. Banco só lido via `psql-ro`; dados em `$REPLAY_DADOS`, fora do repositório.
 
-**Relatório da rodada de 28/10 (privado, anterior aos consertos e substituído pela rodada oficial pendente):** https://claude.ai/artifact/NwMRPYBcCHdcwnP5BZQ1Ts
+**Relatório da rodada oficial (privado, v4, com os valores em R$):** https://claude.ai/artifact/NwMRPYBcCHdcwnP5BZQ1Ts
 
 ## Veredito
 
-**Pendente: a rodada oficial não foi refeita depois dos consertos do Codex.** Os números da rodada de 28/10, inclusive o NO-GO `INVIAVEL_NA_CALIBRACAO`, foram calculados com o código anterior e **não valem mais**. Os consertos mudam a abertura, o LT, a classe da célula, a escolha de embalagem, a valoração do capital e o gate.
+**NO-GO oficial, `INVIAVEL_NA_CALIBRACAO`** (extração de 09/11/2026, motor das 07:15 SP, âncora na posição datada do Omie; gate de paridade **PASSA**).
 
-A rodada oficial depende de duas coisas fora do código:
-- a posição de estoque datada do Omie (`extrair-omie-posicao.ts`, com a credencial OBEN em `~/.config/afiacao/omie-oben.env`), que é a âncora da abertura (R31) e dá o CMC datado (R45);
-- uma extração limpa entre o motor do dia e a passada seguinte, por volta de 19:00 a 22:15 em São Paulo (R40).
+- Na calibração, o próprio F0 atende **90,58%** das linhas de A (piso 98%). Os SKUs suaves de A, que ficam no F0 em todas as variantes (spec §5.3), atendem 90,65%; os alterados, 90,49%. Nenhum quantil alcança os suaves, então nenhuma fórmula leva a célula A ao piso: o NO-GO vem da régua, não de uma comparação TSB × F0.
+- Melhor fill de A na grade: F2 β 0,02 com 93,94%, usando 49% a mais de estoque que o F0. F3 usa menos estoque (3–7%), mas fica abaixo do F0 em B.
+- Estoque sem preço na calibração do F0: **0,00%** (era o que deixava as rodadas de 30/10 e 31/10 INCONCLUSIVAS).
+- Paridade: ES, PP e máximo 100% contra a view (n = 118); decisão de compra com o estado gravado 24/24; com o estado do replay 17/18 (o 8689783095 da allowlist R21).
 
-Sem a âncora, a rodada para com `ANCORA_OMIE_AUSENTE`, e o modo `--informativo-saldo-hoje` sai rotulado NÃO OFICIAL.
+**Rodada informativa (R27, não oficial), só nos intermitentes: NO-GO.** Candidata congelada: F2 β 0,02 (quantis 0,999 / 0,999 / 0,95). Serviço sobe em todas as classes (espera: A +5,50 p.p. [LI +2,46], B +5,53 [+4,12], C +1,52 [+0,12]; pisos e não inferioridade passam), mas o estoque sobe 87% (redução −87,25% [LI −89,00%]), o estresse de LT dobra o estoque e a economia a 25% a.a. falha em 9/9 células de espera. DIO 48 → 90 dias. Critérios: 40 passam · 15 falham · 24 incertos.
 
-**Extração limpa de 29/10, às 21:49 em São Paulo** (o motor rodou às 20:39). Ela está em `$REPLAY_DADOS` (pasta `reposicao-replay-2026-10-29`) e só falta a âncora do Omie para virar a rodada oficial. O gate de paridade reprovou na primeira tentativa, com decisão 14/15, porque o motor sugeriu 8 numa linha que uma pessoa editou para 18 antes do disparo. A **leva E** passou a comparar o gate com a decisão do motor:
-- linha editada à mão, sem teto e sem promoção: `qtde_sem_teto`;
-- linha em promoção não editada: `qtde_sem_promocao`, porque o `forward_buying` infla `qtde_final` sem marcar ajuste;
-- qualquer outro caso: a carga para, em vez de tirar a linha do denominador.
+**Leitura:** o gargalo de serviço em A é o F0 nos suaves e a defasagem da média de 90 dias quando a demanda sobe (fev → abr: 1,55×), não a fórmula dos intermitentes. Nos intermitentes o TSB compra serviço com capital, e a taxa de 25% a.a. não paga isso.
 
-Com a leva E, o gate passa: decisão 15/15 e estado 8/8. A rodada informativa ficou INCONCLUSIVA porque, sem o Omie, falta o CMC datado (`CAPITAL_NAO_VALORADO_NA_CALIBRACAO`).
+### Leva F (30/10 → 09/11): o que destravou a rodada oficial
 
-Atenção: `ajustado_humano` também marca linhas em que só o preço foi editado. Numa linha com teto, isso para a carga.
+- **Causa 1 (cmc_linha):** o cmc da linha passou a ser buscado pelo código original do item (`venda_items_history`).
+- **R53 (founder, 31/10) — existência:** SKU sem saldo na abertura só existe a partir do 1º evento real, recebimento físico ou venda (o histórico de recebimentos começa em 28/01/26, então a venda também é evidência); antes disso não decide, não é comprado e não tem estoque. Tirou as compras simuladas antecipadas de SKU novo.
+- **R54 (founder, 31/10) — preço de compra no capital:** vale pelas cópias do documento que já chegaram (t4 < d); cópia criada e ainda não chegada não anula. A paridade do motor segue com a regra da view (N3/R51). Fechou o último SKU com 14 dias de estoque sem preço.
+- **R55 (founder, 09/11) — gate:** a leitura "decisão com o gravado" usa também a demanda gravada no teto de cobertura (`demanda_media_diaria`, com insumo). O motor comprou 25 de um SKU com 99% de demanda via ficha técnica; com a demanda simulada (sem insumo) o teto cortava para 20 e o gate dava 23/24.
+- **Extração só em dia útil:** a de domingo (08/11) parou em `DATA_DECISAO_SEM_PARAMETRO`; a data da decisão é o dia da extração.
+- **Suspensão de compra (main, 01/11):** 68 SKUs Sayerlack suspensos; a linha suspensa não entra em `sugestao_hoje`, então só sai do denominador do gate.
+- **Revisão independente da R53** (4 achados): âncora tardia travando o grupo e 1ª chegada que é compra aberta no início não ocorrem nos dados; `skusSemCmc` conta dias sem estoque (cosmético); existência difere entre cenários só no modo saldo_hoje. Declarados, não corrigidos.
 
 ## Revisão adversarial do Codex (3 consultas de código)
 
