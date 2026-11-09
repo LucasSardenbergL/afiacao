@@ -685,7 +685,7 @@ db/test-radar-acompanhamento-g.sh          35  falsificar=fora-do-ci  # 18 sabot
 # Radar pacote L (20261111134000): o contato dá a posse e a posse não vence para trás. Defeito aqui = contato que não
 # assume lead livre, que toma o de outro vendedor, posse que "venceu" numa data em que estava protegida pelo retorno,
 # contato tardio que ressuscita, desfazer que deixa o lead preso (ou solta o confirmado), sensor da agenda que infla.
-db/test-radar-posse-l.sh                   32  falsificar=fora-do-ci  # 15 sabotagens × ~8 s ≈ +2 min; controle + 15/15 nos locales C e pt_BR no PR (2026-11-09)
+db/test-radar-posse-l.sh                   33  falsificar=fora-do-ci  # 15 sabotagens × ~8 s ≈ +2 min; controle + 15/15 nos locales C e pt_BR no PR (2026-11-09)
 db/test-radar-recruzamento-diario.sh        12  falsificar=6
 # O byte que o ESCRITOR grava é o byte que o recruzar marca (alfanumérico preservado vs mutilado; #3175 → escritores).
 # Depende da migration 20261019110000 (#3175) estar na main.

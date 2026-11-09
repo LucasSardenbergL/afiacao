@@ -438,6 +438,9 @@ eq "L4f a medição roda: agenda (1 vista, 2 aberturas, contato depois da abertu
    "$(printf '%s\n' "$MED" | grep '^agenda|' | cut -d'|' -f3-)|$(printf '%s\n' "$MED" | grep -c '^posses|' || true)|$(printf '%s' "$MED" | grep -c 'FIM_MEDICAO' || true)" \
    "1|1|1|2|0|2|1"
 
+eq "L5 a validação pós-apply (db/validar-radar-posse-l.sql) dá ✅ com a migration aplicada" \
+   "$(P -qAt -v ON_ERROR_STOP=1 -f "$REPO_ROOT/db/validar-radar-posse-l.sql" 2>&1)" "✅ pacote L aplicado"
+
 # ── L3: fronteira, re-aplicação, anti-deriva ──────────────────────────────────────────────────────────────
 prefixo "L3a authenticated não executa o vencimento interno" \
    "$(erro_como authenticated "$V1" "SELECT private.radar_atendimento_expira_em('30100000000101', '$V1', now(), NULL)")" "42501 permission denied for function radar_atendimento_expira_em"
