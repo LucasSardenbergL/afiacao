@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-09T12:04:40.394Z",
-  "sourceHead": "13cc47931ac2eae698c5a6a67226c478c826a92f",
+  "medidoEm": "2026-11-09T22:49:53.615Z",
+  "sourceHead": "498f69cd812ca3141312440d171056193af5dbf0",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,19 +11,12 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 1,
-      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 82 definição(ões) lida(s) para 82 chave(s) da allowlist.",
+      "exit": 0,
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 82 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 83 definição(ões) lida(s) para 82 chave(s) da allowlist.",
       "contratoFingerprint": "dd99cb33da3db2ebd09a320b6f8daf9e89625c8afae8e49912921e7f5b966451",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": [
-        {
-          "id": "022498c44a023a11",
-          "linha": "❌ public.sayerlack_conferir_portal — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack_conferir_portal está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-11-09",
-          "ultimaVez": "2026-11-09"
-        }
-      ]
+      "achados": []
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -100,31 +93,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 3 divergência(s) em prod (2 CORPO_ANTERIOR, 1 AUSENTE) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 540 identidade(s) conferida(s) · 33 aposentada(s) · ref origin/main@3f8ae8de1 (fetch ok) · prod 2026-11-09 12:05:13.254492Z",
-      "contratoFingerprint": "0292bcdcedcfd4f9492106b01765fdba42819fa21a8088a032d7d5a933ef8ffa",
-      "auditorFingerprint": "c34625081a1ed5cf90d66fa67effbdfa872fb15924c15ae6911e4e23c400764e",
-      "achados": [
-        {
-          "id": "e14291bd65fb0bb1",
-          "linha": "❌ [CORPO_ANTERIOR] desfazer_contato_radar(uuid): prod roda o corpo de 20261031111000_radar_contato_integridade.sql; o repo commitou 20261111134000_radar_posse_pacote_l.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 13313895)",
-          "primeiraVez": "2026-11-09",
-          "ultimaVez": "2026-11-09"
-        },
-        {
-          "id": "5b340e991a5948d0",
-          "linha": "❌ [CORPO_ANTERIOR] registrar_contato_radar(text,text,text,date): prod roda o corpo de 20261111100000_radar_acompanhamento_pacote_g.sql; o repo commitou 20261111134000_radar_posse_pacote_l.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 14248637)",
-          "primeiraVez": "2026-11-09",
-          "ultimaVez": "2026-11-09"
-        },
-        {
-          "id": "cb30ec30ede6fa14",
-          "linha": "❌ [AUSENTE] radar_registrar_agenda_uso(text,text,integer,integer): viva no repo (último CREATE: 20261111134000_radar_posse_pacote_l.sql) e ausente em prod — migration não aplicada ou DROP manual",
-          "primeiraVez": "2026-11-09",
-          "ultimaVez": "2026-11-09"
-        }
-      ]
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 544 identidade(s) batem com o repo (467 em dia, 64 só cosméticas, 12 aceitas na baseline) e 34 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 544 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@697127623 (fetch ok) · prod 2026-11-09 22:50:22.661786Z",
+      "contratoFingerprint": "4243a14825376b5053104b01074ed80be3bef325628041fd534ada298a610487",
+      "auditorFingerprint": "3b1f38be117c2aafd7804b36b20e2de39cee5565430fc752349d4ddddcb76fd0",
+      "achados": []
     }
   }
 }
