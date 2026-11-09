@@ -73,6 +73,12 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# O manifesto EFETIVO é `db/nucleo-ci.txt` seguido dos fragmentos `db/nucleo-ci.d/*.txt` (LC_ALL=C).
+# Prova nova entra num fragmento PRÓPRIO: dois PRs paralelos nunca tocam o mesmo arquivo (até
+# 2026-11-09 todo PR acrescentava no FIM do nucleo-ci.txt, conflitava com o irmão e re-sincronizava a
+# main — docs/historico/ci-arquivos-gerados-sem-conflito.md). Quem passa MANIFESTO explícito (o
+# db/falsifica-nucleo-ci.sh, no espelho) só ganha fragmentos se passar MANIFESTO_D também.
+if [ -z "${MANIFESTO:-}" ]; then MANIFESTO_D="${MANIFESTO_D-$REPO_ROOT/db/nucleo-ci.d}"; else MANIFESTO_D="${MANIFESTO_D:-}"; fi
 MANIFESTO="${MANIFESTO:-$REPO_ROOT/db/nucleo-ci.txt}"
 PORTA_BASE="${PORTA_BASE:-5810}"
 # Piso da versão do servidor. 170006 = 17.6, que é o que PRODUÇÃO roda (medido via
@@ -103,11 +109,18 @@ if [ -n "${NUCLEO_RECIBO:-}" ] && [ -z "${NUCLEO_PARTE:-}" ]; then
   uso "NUCLEO_RECIBO só vale com NUCLEO_PARTE — o recibo é de uma parte, e a execução inteira não é parte nenhuma"
 fi
 
-# sha256 do manifesto: o recibo da parte leva o do manifesto que ELA leu, e a união exige o mesmo.
-# Erro no stderr: aqui dentro o stdout é o valor capturado pelo chamador.
+# sha256 do manifesto EFETIVO: o recibo da parte leva o do manifesto que ELA leu, e a união exige o
+# mesmo. Com fragmentos, é o hash do fluxo `== <fonte>` + conteúdo de cada fonte, na ordem de leitura
+# (o nome entra: mover uma linha de um fragmento para outro muda o hash). Sem fragmento nenhum, é o
+# sha256 do próprio arquivo, como sempre foi. Erro no stderr: o stdout é o valor capturado.
 sha_manifesto() {
-  local s
-  if command -v sha256sum > /dev/null 2>&1; then s="$(sha256sum "$MANIFESTO")"; else s="$(shasum -a 256 "$MANIFESTO")"; fi
+  local s f
+  if [ ${#FONTES[@]} -eq 1 ]; then
+    if command -v sha256sum > /dev/null 2>&1; then s="$(sha256sum "$MANIFESTO")"; else s="$(shasum -a 256 "$MANIFESTO")"; fi
+  else
+    s="$(for f in "${FONTES[@]}"; do printf '== %s\n' "${f#"$REPO_ROOT"/}"; cat "$f" || exit 1; done \
+         | if command -v sha256sum > /dev/null 2>&1; then sha256sum; else shasum -a 256; fi)"
+  fi
   s="${s%% *}"
   if ! printf '%s' "$s" | grep -qE '^[0-9a-f]{64}$'; then
     echo "::error::não consegui calcular o sha256 do manifesto (veio '$s')" >&2; exit 1
@@ -118,8 +131,30 @@ sha_manifesto() {
 # ── 1. Manifesto ────────────────────────────────────────────────────────────────
 [ -f "$MANIFESTO" ] || { echo "::error::manifesto ausente: $MANIFESTO"; exit 1; }
 
+# As FONTES do manifesto efetivo. O diretório de fragmentos é ESTRITO: só arquivo regular `*.txt`
+# com nome sem espaço; qualquer outra coisa ABORTA (subdiretório, symlink, `.md`, `prova.txt~`) —
+# ignorar em silêncio seria tirar uma prova do merge sem nenhum vermelho. Fragmento sem linha de
+# prova também aborta: arquivo vazio é rascunho, não cadastro. Diretório ausente = zero fragmentos
+# (equivale a apagar as linhas do nucleo-ci.txt: fica no diff, como sempre).
+FONTES=("$MANIFESTO")
+n_fragmentos=0
+if [ -n "$MANIFESTO_D" ] && [ -e "$MANIFESTO_D" ]; then
+  [ -d "$MANIFESTO_D" ] && [ ! -L "$MANIFESTO_D" ] || { echo "::error::$MANIFESTO_D existe mas não é diretório"; exit 1; }
+  while IFS= read -r -d '' f; do
+    nome="${f##*/}"
+    case "$nome" in
+      *[[:space:]]*) echo "::error::fragmento com espaço no nome: '$f'"; exit 1 ;;
+      *.txt) ;;
+      *) echo "::error::$f — no diretório de fragmentos só entra <prova>.txt (o resto seria ignorado em silêncio)"; exit 1 ;;
+    esac
+    if [ -L "$f" ] || [ ! -f "$f" ]; then echo "::error::$f — fragmento precisa ser arquivo regular (não symlink, não diretório)"; exit 1; fi
+    FONTES+=("$f"); n_fragmentos=$((n_fragmentos + 1))
+  done < <(find "$MANIFESTO_D" -mindepth 1 -maxdepth 1 -print0 | LC_ALL=C sort -z)
+fi
+
 scripts=(); minimos=(); falsifs=(); motivos_fora=()
-linha_n=0
+for FONTE in "${FONTES[@]}"; do
+linha_n=0; provas_na_fonte=0
 while IFS= read -r linha || [ -n "$linha" ]; do
   linha_n=$((linha_n + 1))
   linha="$(printf '%s' "$linha" | tr -d '\r')"
@@ -138,10 +173,10 @@ while IFS= read -r linha || [ -n "$linha" ]; do
   sobra="$(printf '%s' "$linha" | awk '{print $4}')"
 
   if ! printf '%s' "$minimo" | grep -qE '^[0-9]+$'; then
-    echo "::error::$MANIFESTO:$linha_n — falta o mínimo de asserts (formato: <caminho> <n>): $linha"; exit 1
+    echo "::error::$FONTE:$linha_n — falta o mínimo de asserts (formato: <caminho> <n>): $linha"; exit 1
   fi
   if [ -n "$sobra" ]; then
-    echo "::error::$MANIFESTO:$linha_n — campo a mais ('$sobra'). Formato: <caminho> <n> [falsificar=<n>|falsificar=fora-do-ci]"; exit 1
+    echo "::error::$FONTE:$linha_n — campo a mais ('$sobra'). Formato: <caminho> <n> [falsificar=<n>|falsificar=fora-do-ci]"; exit 1
   fi
   # Parse ESTRITO: um erro de digitação (`falsifcar=17`, `falsificar=`, `falsificar=0`) não pode
   # DESLIGAR a falsificação em silêncio — que é o jeito de um gate morrer sem ninguém ver.
@@ -149,20 +184,20 @@ while IFS= read -r linha || [ -n "$linha" ]; do
     '')                    falsif="" ;;
     falsificar=fora-do-ci) falsif="fora" ;;
     falsificar=[1-9]|falsificar=[1-9][0-9]|falsificar=[1-9][0-9][0-9]) falsif="${campo3#falsificar=}" ;;
-    *) echo "::error::$MANIFESTO:$linha_n — 3º campo inválido '$campo3': esperado falsificar=<1..999> ou falsificar=fora-do-ci"; exit 1 ;;
+    *) echo "::error::$FONTE:$linha_n — 3º campo inválido '$campo3': esperado falsificar=<1..999> ou falsificar=fora-do-ci"; exit 1 ;;
   esac
   motivo_fora="$(printf '%s' "$comentario" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   if [ "$falsif" = "fora" ] && [ -z "$motivo_fora" ]; then
-    echo "::error::$MANIFESTO:$linha_n — falsificar=fora-do-ci sem o MOTIVO em comentário na mesma linha: exceção sem porquê vira álibi"; exit 1
+    echo "::error::$FONTE:$linha_n — falsificar=fora-do-ci sem o MOTIVO em comentário na mesma linha: exceção sem porquê vira álibi"; exit 1
   fi
   if [ "$minimo" -lt 1 ]; then
-    echo "::error::$MANIFESTO:$linha_n — mínimo de asserts precisa ser ≥1 (0 aprovaria uma prova vazia)"; exit 1
+    echo "::error::$FONTE:$linha_n — mínimo de asserts precisa ser ≥1 (0 aprovaria uma prova vazia)"; exit 1
   fi
   if [ ! -f "$REPO_ROOT/$caminho" ]; then
-    echo "::error::$MANIFESTO:$linha_n — arquivo não existe: $caminho (arquivo ausente ABORTA, nunca é filtrado)"; exit 1
+    echo "::error::$FONTE:$linha_n — arquivo não existe: $caminho (arquivo ausente ABORTA, nunca é filtrado)"; exit 1
   fi
   for ja in ${scripts[@]+"${scripts[@]}"}; do
-    [ "$ja" = "$caminho" ] && { echo "::error::$MANIFESTO:$linha_n — duplicata: $caminho"; exit 1; }
+    [ "$ja" = "$caminho" ] && { echo "::error::$FONTE:$linha_n — duplicata: $caminho"; exit 1; }
   done
 
   # Construções BSD-only: o núcleo nasceu no macOS e roda no Ubuntu. `sed -i '' "expr" arq`
@@ -187,17 +222,22 @@ while IFS= read -r linha || [ -n "$linha" ]; do
     tem_modo=0
   fi
   if [ "$tem_modo" -eq 1 ] && [ -z "$falsif" ]; then
-    echo "::error::$MANIFESTO:$linha_n — $caminho tem modo --falsificar e a linha não diz o que fazer com ele."
+    echo "::error::$FONTE:$linha_n — $caminho tem modo --falsificar e a linha não diz o que fazer com ele."
     echo "         declare falsificar=<n> (roda aqui, exige ≥n sabotagens vermelhas) ou"
     echo "         falsificar=fora-do-ci com o motivo em comentário na mesma linha."
     exit 1
   fi
   if [ "$tem_modo" -eq 0 ] && [ -n "$falsif" ]; then
-    echo "::error::$MANIFESTO:$linha_n — declara '$campo3', mas $caminho não tem modo --falsificar: a flag seria ignorada e o modo NORMAL rodaria no lugar"
+    echo "::error::$FONTE:$linha_n — declara '$campo3', mas $caminho não tem modo --falsificar: a flag seria ignorada e o modo NORMAL rodaria no lugar"
     exit 1
   fi
   scripts+=("$caminho"); minimos+=("$minimo"); falsifs+=("$falsif"); motivos_fora+=("$motivo_fora")
-done < "$MANIFESTO"
+  provas_na_fonte=$((provas_na_fonte + 1))
+done < "$FONTE"
+if [ "$FONTE" != "$MANIFESTO" ] && [ "$provas_na_fonte" -lt 1 ]; then
+  echo "::error::$FONTE — fragmento sem nenhuma linha de prova (vazio ou só comentário): rascunho não é cadastro"; exit 1
+fi
+done
 
 esperados=${#scripts[@]}
 # Guard do DENOMINADOR — sem ele um manifesto vazio (ou um parser quebrado) sairia
@@ -407,7 +447,7 @@ for f in ${falsifs[@]+"${falsifs[@]}"}; do
 done
 
 if [ "$so_lista" -eq 1 ]; then
-  printf '%s\n' "manifesto=$MANIFESTO provas=$esperados falsificacoes=$n_falsif fora_do_ci=$n_fora${parte:+ ($parte)}"
+  printf '%s\n' "manifesto=$MANIFESTO fragmentos=$n_fragmentos provas=$esperados falsificacoes=$n_falsif fora_do_ci=$n_fora${parte:+ ($parte)}"
   for i in "${!scripts[@]}"; do
     case "${falsifs[$i]}" in
       '')   extra="" ;;
