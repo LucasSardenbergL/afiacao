@@ -31,10 +31,10 @@
 
 1. **REPROVA, 14 P1.** O founder mandou consertar os 14. Os rulings R2, R7, R9, R10, R22 e o piso 0 da R24 foram revogados onde contrariavam a §5.9.
 2. **REPROVA.** 6 dos 14 fechados, 8 parciais e 7 P1 novos introduzidos pelos consertos.
-3. **REPROVA, a última consulta por decisão do founder.** Tudo fechado, exceto três P1, que ficam como **pendência**:
-   - **N1:** um pedido encerrado no Omie abaixo de 95% do recebido ainda fecha, e a quantidade pedida vem do `raw_data` atual;
-   - **N3:** a data do pedido (`t1`) é usada como data de existência da cópia na consolidação point-in-time;
-   - **N5:** valor gravado ausente reduz o denominador do gate em vez de bloquear.
+3. **REPROVA, a última consulta por decisão do founder.** Tudo fechado, exceto três P1, que o founder declarou como **limitação** em 09/11 ("limitação, merge"), sem conserto:
+   - **N1:** um pedido encerrado no Omie abaixo de 95% do recebido ainda fecha, e a quantidade pedida vem do `raw_data` atual. Efeito: poucos documentos de LT entram na amostra como fechados, igual para o F0 e as fórmulas. Não muda o NO-GO, que vem do fill do F0 nos suaves de A (90,65% contra piso de 98%), longe de qualquer variação de LT desse tamanho;
+   - **N3:** a data do pedido (`t1`) é usada como data de existência da cópia na consolidação point-in-time. Efeito medido em 28/10: diverge da leitura literal em 1 trecho de 1 SKU. Não muda o NO-GO;
+   - **N5:** valor gravado ausente reduz o denominador do gate em vez de bloquear. Efeito: 13 donos sem ES/PP/máximo gravado ficam fora do denominador do estado (168 comparados). O gate não decide o veredito, que sai da calibração; não muda o NO-GO.
 
 ## O que vale levar adiante
 
