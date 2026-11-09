@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 822
+-- Total de custom migrations: 824
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -890,7 +890,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261111100000', 'radar_acompanhamento_pacote_g', '20261111100000_radar_acompanhamento_pacote_g.sql'),
   ('20261111110000', 'sayerlack_vincular_po_manual', '20261111110000_sayerlack_vincular_po_manual.sql'),
   ('20261111120000', 'radar_carga_publicacao_curta', '20261111120000_radar_carga_publicacao_curta.sql'),
-  ('20261111134500', 'radar_medicao_pacote_m', '20261111134500_radar_medicao_pacote_m.sql')
+  ('20261111132000', 'radar_foto_do_card_e_contato_avaliado', '20261111132000_radar_foto_do_card_e_contato_avaliado.sql'),
+  ('20261111134500', 'radar_medicao_pacote_m', '20261111134500_radar_medicao_pacote_m.sql'),
+  ('20261111140000', 'data_health_radar_carga_em_voo', '20261111140000_data_health_radar_carga_em_voo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3627,6 +3629,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_carga_publicacao_curta', 'function', 'public', 'radar_score_recalcular', ''),
   ('radar_carga_publicacao_curta', 'function', 'public', 'radar_avisar_lote', ''),
   ('radar_carga_publicacao_curta', 'function', 'public', 'radar_coorte_sortear', ''),
+  ('radar_foto_do_card_e_contato_avaliado', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_foto_do_card_e_contato_avaliado', 'function', 'private', 'radar_contato_contabil_avaliar', ''),
   ('radar_medicao_pacote_m', 'function', 'private', 'radar_evento_contato', ''),
   ('radar_medicao_pacote_m', 'function', 'public', 'radar_registrar_card_exibido', ''),
   ('radar_medicao_pacote_m', 'function', 'public', 'radar_registrar_intencao', ''),
@@ -3635,7 +3639,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_medicao_pacote_m', 'function', 'private', 'radar_expurgar_medicao', ''),
   ('radar_medicao_pacote_m', 'table', 'public', 'radar_card_exibicoes', ''),
   ('radar_medicao_pacote_m', 'index', 'public', 'idx_radar_card_exibicoes_dia', 'radar_card_exibicoes'),
-  ('radar_medicao_pacote_m', 'cron_job', 'cron', 'radar-expurgo-medicao-diario', '')
+  ('radar_medicao_pacote_m', 'cron_job', 'cron', 'radar-expurgo-medicao-diario', ''),
+  ('data_health_radar_carga_em_voo', 'function', 'public', '_data_health_compute', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -6420,6 +6425,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_carga_publicacao_curta', 'function', 'public', 'radar_score_recalcular', ''),
   ('radar_carga_publicacao_curta', 'function', 'public', 'radar_avisar_lote', ''),
   ('radar_carga_publicacao_curta', 'function', 'public', 'radar_coorte_sortear', ''),
+  ('radar_foto_do_card_e_contato_avaliado', 'function', 'private', 'radar_leads_do_vendedor', ''),
+  ('radar_foto_do_card_e_contato_avaliado', 'function', 'private', 'radar_contato_contabil_avaliar', ''),
   ('radar_medicao_pacote_m', 'function', 'private', 'radar_evento_contato', ''),
   ('radar_medicao_pacote_m', 'function', 'public', 'radar_registrar_card_exibido', ''),
   ('radar_medicao_pacote_m', 'function', 'public', 'radar_registrar_intencao', ''),
@@ -6428,7 +6435,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_medicao_pacote_m', 'function', 'private', 'radar_expurgar_medicao', ''),
   ('radar_medicao_pacote_m', 'table', 'public', 'radar_card_exibicoes', ''),
   ('radar_medicao_pacote_m', 'index', 'public', 'idx_radar_card_exibicoes_dia', 'radar_card_exibicoes'),
-  ('radar_medicao_pacote_m', 'cron_job', 'cron', 'radar-expurgo-medicao-diario', '')
+  ('radar_medicao_pacote_m', 'cron_job', 'cron', 'radar-expurgo-medicao-diario', ''),
+  ('data_health_radar_carga_em_voo', 'function', 'public', '_data_health_compute', '')
 )
 SELECT
   e.migration,
@@ -6456,7 +6464,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 194.
+-- Funções redefinidas com corpo extraível: 195.
 -- Fora da seção (5) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6687,6 +6695,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 39, '20261031191715_data_health_saldo_bancario_conta_a_conta.sql', 'ac1f616de90dcdb17656607b9f0f2458'),
   ('public', '_data_health_compute', 40, '20261107220000_data_health_sayerlack_varredura_portal.sql', '8faab148e76a96842994b337ac3c26f6'),
   ('public', '_data_health_compute', 41, '20261110120000_sayerlack_cancelado_com_compra_viva.sql', '16b30fbe018fb0126a1b6a0bedadf5c6'),
+  ('public', '_data_health_compute', 42, '20261111140000_data_health_radar_carga_em_voo.sql', 'bcdbedf94d94c26fc4c33069abbfa9ec'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -7161,6 +7170,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'radar_leads_do_vendedor', 1, '20261106181000_radar_leads_ao_vendedor.sql', '51506ada745f4c91ec5de07a54e06ac0'),
   ('private', 'radar_leads_do_vendedor', 2, '20261107230000_radar_distribuicao_pacote_e.sql', 'a4a2d893fefd6182d8299300561a2dcc'),
   ('private', 'radar_leads_do_vendedor', 3, '20261111100000_radar_acompanhamento_pacote_g.sql', '8fe003f34f6f422ac2587571074353d2'),
+  ('private', 'radar_leads_do_vendedor', 4, '20261111132000_radar_foto_do_card_e_contato_avaliado.sql', 'a7ffe7e7f71d4f7ca552c4f68e52b396'),
   ('public', 'radar_avisar_vendedores', 1, '20261106181000_radar_leads_ao_vendedor.sql', 'fdde2726b59b6ba115a465bf3af3a913'),
   ('public', 'radar_avisar_vendedores', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '43860b5d9d9cdd4e0cdb06b4d6805ddc'),
   ('public', 'radar_avisar_vendedores', 3, '20261109140000_radar_contato_contabil.sql', '14ac99777dac60b887d29f1418cb9aa9'),
@@ -7177,6 +7187,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_email_semanal_painel', 2, '20261107230000_radar_distribuicao_pacote_e.sql', '98e98147155301c10578baeda21f9017'),
   ('public', 'radar_funil', 1, '20261107233000_radar_funil_painel.sql', '21c2491359cd9eb3dc05346454cdb628'),
   ('public', 'radar_funil', 2, '20261111134500_radar_medicao_pacote_m.sql', 'd35d568af043c3e68f74dd4a61cb6025'),
+  ('private', 'radar_contato_contabil_avaliar', 1, '20261109140000_radar_contato_contabil.sql', '75273a7db8bd46bf1f3c3651e53c28c4'),
+  ('private', 'radar_contato_contabil_avaliar', 2, '20261111132000_radar_foto_do_card_e_contato_avaliado.sql', 'db61f0acae8588f9eb7fcfc317232c65'),
   ('public', 'radar_carga_iniciar', 1, '20261110130000_radar_carga_publicacao_atomica.sql', '2d9d3627a08c7e296a461ad7369f56da'),
   ('public', 'radar_carga_iniciar', 2, '20261111120000_radar_carga_publicacao_curta.sql', '45a57f016c56325de0688914f7919092'),
   ('public', 'radar_carga_publicar_pendente', 1, '20261110130000_radar_carga_publicacao_atomica.sql', '9e83faf4d066efeb88a5ee90a60e8e47'),
