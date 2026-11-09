@@ -290,6 +290,17 @@ exec_exige "PostgreSQL ausente é ERRO, nunca skip" "PostgreSQL 99 não encontra
   env MANIFESTO="$ESPELHO/manifesto-pg.txt" PGVER=99 \
   bash "$ESPELHO/db/roda-nucleo-ci.sh"
 
+# O verde EXIGIDO (definido aqui: o bloco de fragmentos abaixo já o usa — chamá-lo antes de
+# definir abortava o harness inteiro com 127 sob `set -e`, achado da revisão de 2026-11-09).
+exec_verde() { # <descrição> <marca-que-o-verde-tem-de-conter> <cmd...>
+  local desc="$1" marca="$2"; shift 2
+  local log="$LOGS/exec-verde.$RANDOM.log" rc
+  "$@" > "$log" 2>&1 && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ]; then bad "$desc — runner REPROVOU (exit $rc)"; tail -4 "$log" | sed 's/^/       /'
+  elif ! grep -qF -e "$marca" "$log"; then bad "$desc — verde SEM a marca '$marca'"; tail -3 "$log" | sed 's/^/       /'
+  else ok "$desc — verde com a marca certa"; fi
+}
+
 # ── FRAGMENTOS: db/nucleo-ci.d/<prova>.txt (2026-11-09) ─────────────────────────────────────────
 # O manifesto EFETIVO é o nucleo-ci.txt + os fragmentos (docs/historico/ci-arquivos-gerados-sem-conflito.md).
 # O que se prova aqui: (1) a prova de um fragmento EXECUTA — controle verde, antes de qualquer
@@ -357,15 +368,6 @@ rm -f "$ESPELHO/db/nucleo-ci.d/zz-controle-falsifica.txt"
 # recusa abaixo. Por isso o 1º caso é o CONTROLE POSITIVO: falsificação honesta, runner VERDE.
 echo
 echo "=== o EXECUTOR roda --falsificar e confere o RECIBO? ==="
-
-exec_verde() { # <descrição> <marca-que-o-verde-tem-de-conter> <cmd...>
-  local desc="$1" marca="$2"; shift 2
-  local log="$LOGS/exec-verde.$RANDOM.log" rc
-  "$@" > "$log" 2>&1 && rc=0 || rc=$?
-  if [ "$rc" -ne 0 ]; then bad "$desc — runner REPROVOU (exit $rc)"; tail -4 "$log" | sed 's/^/       /'
-  elif ! grep -qF -e "$marca" "$log"; then bad "$desc — verde SEM a marca '$marca'"; tail -3 "$log" | sed 's/^/       /'
-  else ok "$desc — verde com a marca certa"; fi
-}
 
 # fake_falsificavel <arquivo-no-espelho> <corpo do modo --falsificar> — prova falsa com modo:
 # o modo normal é sempre `RESULTADO: 5 ok / 0 fail`; o que muda de caso a caso é o --falsificar.

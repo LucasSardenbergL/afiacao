@@ -118,8 +118,12 @@ sha_manifesto() {
   if [ ${#FONTES[@]} -eq 1 ]; then
     if command -v sha256sum > /dev/null 2>&1; then s="$(sha256sum "$MANIFESTO")"; else s="$(shasum -a 256 "$MANIFESTO")"; fi
   else
-    s="$(for f in "${FONTES[@]}"; do printf '== %s\n' "${f#"$REPO_ROOT"/}"; cat "$f" || exit 1; done \
-         | if command -v sha256sum > /dev/null 2>&1; then sha256sum; else shasum -a 256; fi)"
+    # Cada fonte é LIDA antes do hash, fora de pipe: um `cat` falho dentro do pipe deixaria o hash
+    # do conteúdo PARCIAL passar na regex de 64 hex (sem inherit_errexit o erro não sobe).
+    for f in "${FONTES[@]}"; do [ -r "$f" ] || { echo "::error::não consegui ler $f para o sha256 do manifesto" >&2; exit 1; }; done
+    s="$(for f in "${FONTES[@]}"; do printf '== %s\n' "${f#"$REPO_ROOT"/}"; cat "$f"; done \
+         | if command -v sha256sum > /dev/null 2>&1; then sha256sum; else shasum -a 256; fi)" \
+      || { echo "::error::sha256 do manifesto efetivo falhou" >&2; exit 1; }
   fi
   s="${s%% *}"
   if ! printf '%s' "$s" | grep -qE '^[0-9a-f]{64}$'; then
