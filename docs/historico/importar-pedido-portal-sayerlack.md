@@ -884,4 +884,5 @@ segundos antes do aceite pode não estar lá ainda.
   `leitura_lido_ate`; RPC SECDEF com `search_path` fixo, executável por authenticated e service_role e fechada a anon;
   helper e porta só ao service_role.
 - Edges: nenhuma mudou.
-- 🖱️ **Publish:** pendente do founder (botão no `DetalhesModal`).
+- ✅ **Publish** (founder, 2026-11-10): `monitor-deploy.sh --pr 3786` → `PR_NO_AR`; o ar serve o carimbo
+  `60f583be`, o squash do #3786 (entry `index-BH7rPGRT`).
