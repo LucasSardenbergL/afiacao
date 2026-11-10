@@ -565,7 +565,14 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
 - **Provas:** 3 testes Deno das funções puras. Falsificação 6/6 vermelha, com controle verde; uma guarda redundante
   ficou verde e foi removida.
 - **Codex:** Caminho B (`sem-codex: cota no teto local (79)`), por decisão do founder de guardar a reserva para o 5.2 e
-  o 7.1. REVISÃO INDEPENDENTE PENDENTE; o Codex retroativo roda quando a janela reabrir.
+  o 7.1. O Codex retroativo rodou em 2026-11-09, com o código já em produção. Rodou acima do teto de
+  cota (94%), por autorização do founder, e não achou defeito real nos 4 eixos:
+  - fail-open: a leitura e a extração estão sob `try/catch` com `AbortSignal.timeout(3_000)`, e só alimentam o
+    `cObs`;
+  - correlação: a evidência e o disparador usam o mesmo protocolo completo;
+  - `cObs`: chega a 168 caracteres no máximo, e o Omie não documenta teto;
+  - nenhuma escrita nova.
+  Os riscos declarados abaixo continuam como estavam.
 - **Resta (declarado):**
   - a fiação no `index.ts` não tem teste de handler;
   - caracteres C1 e bidi passam pelo filtro;
@@ -816,3 +823,65 @@ consumida no claim, o que fica fora da fatia 1.
 
 Na edge importar, os handlers em Deno cobrem: bate e dispara, alterado, erro ou leitura antiga, fora do contrato,
 condição ilegível, 1ª importação sem conferência pela edge, e `ja_existia` divergente ou faturado.
+
+**No ar (2026-11-09, #3767):**
+- **Migration `20261111150000`:** aplicada pelo envelope (tentativa #1050, sha `5da3782a…`).
+  - Conferida no psql-ro: a porta está fechada a anon e authenticated e aberta só ao service_role; o service_role
+    não tem INSERT direto; a RLS está ligada; o claim leva o gate; a importação chama a porta.
+  - O timestamp coincide com o de `20261111150000_radar_privacidade_titular_mei.sql` (#3763). Os objetos são
+    independentes e o replay ordena pelo nome do arquivo.
+- **Edges:** subiram em 2 ondas pelo pacote, porque o `deploy-ordem.json` da importar pede o disparar antes.
+  - Disparar v1.14, colada às 22:48Z: 17/17 hashes, sonda #1057 com DEPLOY CONFIRMADO. Outra sessão repetiu o
+    envio às 22:49Z, com o mesmo bundle.
+  - Importar v1.11, colada às 23:03Z depois dos 10 min do #3075: 13/13 hashes, sonda #1061 com DEPLOY CONFIRMADO.
+  - `pendencias:deploy` saiu com exit 0.
+- **Sensor de edição:**
+  - 1ª onda: `EDICAO_DETECTADA` só pelo `edit_id`, que é a regeneração do `types.ts` com as tabelas novas
+    (`ca7e54a5`, tolerado). Nada em `supabase/` mudou.
+  - 2ª onda: `SEM_EDICAO`.
+
+## 5.2 fatia 2 — botão "Aceitar o portal" (2026-11-09)
+
+**Antes:** com a fatia 1, um pedido alterado no portal ficava bloqueado (gate `portal_divergencia_aberta_id`), e
+não havia como seguir quando a mudança era combinada com o fornecedor. **Agora** (migration `20261111180000`, decisão
+do founder: opção (a), humano com justificativa):
+
+1. **RPC `sayerlack_aceitar_portal(pedido, divergencia, justificativa)`**, SECURITY DEFINER, só staff (marca
+   `[ACEITAR-STAFF]`, 42501). Justificativa de 10 a 1000 caracteres.
+   - `FOR UPDATE` no pedido e na divergência, com revalidação sob a trava e 40001 na corrida.
+   - Recusa sem escrever: sem protocolo, com PO, status ou situação fora de 1/5, claim aberto, sem divergência,
+     divergência diferente da que a tela viu, PO no espelho com o protocolo/AFI-<id>, divergência já aceita
+     (`aguardando_releitura`).
+   - Reescreve itens, cabeçalho e condição a partir da `leitura` da divergência (validações IP001–IP007), herdando do
+     item antigo só as colunas de estoque do motor (nada de promoção ou desconto), e recalcula o custo pela mesma prova
+     da importação (`sayerlack_aplicar_custo_portal` + `sayerlack_ipi_itens`).
+   - Trilha em `acoes_execucoes` com justificativa, diferenças, antes, depois e versão do retrato.
+2. **Porta única estendida:** `sayerlack_conferir_portal` ganhou o modo `aceito_portal`, autorizado só pelo GUC local
+   que a RPC seta e limpa. Ele grava o retrato v+1 com o marco `leitura_lido_ate` e fecha a divergência como
+   `aceito_portal`. **O gate fica** (Codex P1): aponta a divergência fechada e só solta quando uma releitura de
+   redisparo com `lido_de` > marco bate. A tela re-dispara pela edge importar de sempre (relê, confere, claim).
+   - "Mesmo diff" só mantém a aberta se o CONTEÚDO da leitura também for igual (helper
+     `sayerlack__portal_leitura_conteudo`).
+   - TRAVA + PRE: md5 exato do corpo vivo da porta ∈ {fatia 1, esta}; a migration aborta se a porta derivou.
+3. **UI mínima** (`AceitarPortal.tsx` no `DetalhesModal`, tela da Sessão B): mostra as diferenças e a leitura inteira
+   (itens com quantidade e valor, total, condição), pede a justificativa e não deixa aceitar se não conseguir ler.
+   Depois do aceite, o card vira "Reler o portal e disparar".
+
+**Codex** (reasoning max, `CODEX_ASYNC_TETO_SALDO=0`): desenho com 3 P1 (conteúdo no mesmo diff, marco do retrato
+aceito, `po_no_espelho`); código r1 com 2 P1 (gate fica até a releitura; UI mostra a leitura); código r2 "nada P0/P1".
+Foram 3 rodadas, 189.212 tokens no total.
+
+**Provas:** `db/test-sayerlack-aceitar-portal.sh` (PG17, cadeia real): 31 asserts verdes nos 2 locales, inclusive
+releitura × aceite em 2 conexões; `--falsificar` com 14 sabotagens vermelhas no assert declarado, nos 2 locales. A
+suíte da fatia 1 (39 asserts) segue verde contra a porta nova nos 2 locales. Vitest da tela verde.
+
+**Risco residual:** a recusa `po_no_espelho` depende do espelho de POs do Omie estar sincronizado; um PO lançado à mão
+segundos antes do aceite pode não estar lá ainda.
+
+**No ar (2026-11-09):**
+- ✅ **Migration `20261111180000`:** ensaio e aplicação pelo envelope (tentativa #1064, sha `75a3d1e8…`), com o
+  marcador `ACEITAR_PORTAL_POS_OK`. Conferida no psql-ro: md5 da porta `f6d244ca…`, VOLATILE; coluna
+  `leitura_lido_ate`; RPC SECDEF com `search_path` fixo, executável por authenticated e service_role e fechada a anon;
+  helper e porta só ao service_role.
+- Edges: nenhuma mudou.
+- 🖱️ **Publish:** pendente do founder (botão no `DetalhesModal`).

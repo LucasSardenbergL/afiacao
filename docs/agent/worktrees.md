@@ -390,6 +390,24 @@ as base branch". Crie com `git checkout --no-track -b <branch> origin/main` (ou 
 `git branch --unset-upstream` antes do 1º push) e confira `git rev-parse --abbrev-ref @{u}`: o
 esperado é "no upstream". Nunca conserte com force-push na `main`.
 
+### Disciplina de push: cada push novo cancela o CI em voo (2026-11-09)
+
+Push novo no branch de um PR **cancela** o run que estava rodando e recomeça do zero. Na medição
+de 06–09/11, 93 de 236 runs foram cancelados (33% do runner-min, ~82,5 min cada, numa conta com
+20 jobs concorrentes): 22 vieram de push de código depois de um vermelho real e 17 de push só de
+docs no meio do CI. Evidência em `docs/historico/disciplina-de-push.md`. Regra, sem máquina:
+
+1. **Antes de abrir o PR ou tirar de draft:** junte os commits num push só. Rode local o que for
+   barato e relevante: `bun run typecheck`, o teste do arquivo tocado, a prova SQL tocada.
+2. **Depois de um vermelho real:** leia o log, reproduza local e corrija. Empurre quando o local
+   passar, nunca uma tentativa "para ver se o CI passa". Vale também para o conserto via Auto-fix.
+   Flaky ou infra não é vermelho real: aí re-rode o job, sem commit.
+3. **Commit só de docs com o CI do PR rodando:** não empurre. Junte ao próximo push de código ou
+   empurre depois do verde (o auto-merge espera o `validate` de novo, mas sem ter jogado fora um
+   run quase pronto).
+4. **Merge da `main` no branch:** só com conflito (`mergeStateStatus` DIRTY) ou dependência real
+   (o PR precisa de algo que acabou de mergear). "Ficar em dia" não é motivo: o squash já junta.
+
 ## Higiene de RAM/Node (M2 8GB satura; **swap em uso = RAM cheia**)
 
 | Comando | O quê (todos DRY-RUN por padrão; `--yes` executa) |

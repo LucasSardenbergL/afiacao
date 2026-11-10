@@ -26823,6 +26823,14 @@ export type Database = {
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
       sales_orders_instante_envio: { Args: never; Returns: string }
+      sayerlack_aceitar_portal: {
+        Args: {
+          p_divergencia_id: number
+          p_justificativa: string
+          p_pedido_id: number
+        }
+        Returns: Json
+      }
       sayerlack_aplicar_condicao_portal: {
         Args: { p_condicao_portal: string; p_pedido_id: number }
         Returns: Json

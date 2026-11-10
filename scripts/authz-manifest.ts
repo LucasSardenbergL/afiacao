@@ -129,6 +129,14 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
   // INVOKER não conseguiria auditar, e sem trilha a correção não deve acontecer.
   // O gate de entrada é o mesmo dos vizinhos — staff decide cancelamento —, e o COALESCE em volta
   // dele é o que impede o fail-OPEN de `NOT NULL` ser NULL.
+  // 5.2 fatia 2 (2026-11-09): "aceitar o portal" — reescreve itens/custo/condição do pedido sem PO a partir da
+  // leitura da divergência aberta e solta o gate do claim. SECURITY DEFINER por desenho: escreve pela porta única
+  // `sayerlack_conferir_portal` (fechada para authenticated) e grava a trilha em acoes_execucoes. Staff decide.
+  'public.sayerlack_aceitar_portal': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
+    motivo: 'aceitar o pedido alterado no portal Sayerlack: reescreve itens, custo (prova do IPI) e condição do pedido sem PO e re-libera o disparo — trilha antes/depois',
+  },
   'public.corrigir_cancelamento_pos_disparo': {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
@@ -558,6 +566,7 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.sayerlack_importar_pedido_portal', // importa pedido digitado direto no portal (pedido+itens+custo tudo-ou-nada) — edge `sayerlack-importar-pedido-portal`, service_role
   'public.sayerlack_aplicar_condicao_portal', // condição REAL do portal no pedido do app antes do PO (D-1) — edge `enviar-pedido-portal-sayerlack`, service_role; REVOKE PUBLIC/anon/authenticated
   'public.sayerlack_conferir_portal', // 5.2: pedido do app × leitura do portal; escritor único do retrato/divergência/gate do claim — edge `sayerlack-importar-pedido-portal` e a RPC de importar, service_role; REVOKE PUBLIC/anon/authenticated
+  'public.sayerlack__portal_leitura_conteudo', // 5.2 fatia 2: conteúdo comparável de uma leitura do portal — só a porta `sayerlack_conferir_portal` usa; REVOKE PUBLIC/anon/authenticated
   'public.sayerlack_aplicar_custo_portal', // custo do portal em 1 transação (CAS omie IS NULL + itens tudo-ou-nada) — edge `enviar-pedido-portal-sayerlack`, service_role
   'public.envio_portal_claim_ids', // claim por lista positiva de ids — edges `disparar-pedidos-aprovados` e `enviar-pedido-portal-sayerlack`
   'public.iniciar_envio_portal_pre_claim', // pré-claim antes do disparo — edge `disparar-pedidos-aprovados`

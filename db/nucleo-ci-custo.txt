@@ -169,6 +169,7 @@ db/test-rls-has-role-initplan-classe.sh 262
 db/test-sales-orders-kpi-no-envio.sh 42
 db/test-sales-price-history-created-at-futuro.sh 1
 db/test-sales_orders_omie_hash_unique.sh 0
+db/test-sayerlack-aceitar-portal.sh 90
 db/test-sayerlack-cancelado-com-compra-viva.sh 236
 db/test-sayerlack-conferir-portal.sh 72
 db/test-sayerlack-encerrar-cancelado-portal.sh 17
