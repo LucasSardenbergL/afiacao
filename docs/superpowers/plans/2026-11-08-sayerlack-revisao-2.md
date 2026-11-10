@@ -50,7 +50,7 @@
 - ✅ **5.2 fatia 1** (#3767) — detecção 5B: retrato + divergência + claim que recusa (migration `20261111150000`, #1050);
   disparar v1.14 e importar v1.11 com DEPLOY CONFIRMADO (sondas #1057/#1061, 2026-11-09).
 - ✅ **5.2 fatia 2** — botão "Aceitar o portal" (RPC `sayerlack_aceitar_portal` + modo `aceito_portal` da porta;
-  migration `20261111180000`, #1064); sem edge; Publish do founder pendente. (7.5 encerrada: o portal não expõe IPI por item.)
+  migration `20261111180000`, #1064; #3786); sem edge; Publish confirmado (`PR_NO_AR`, 2026-11-10). (7.5 encerrada: o portal não expõe IPI por item.)
 
 ## Andamento da Sessão B (tela e painel)
 
