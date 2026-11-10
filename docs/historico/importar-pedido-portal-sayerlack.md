@@ -565,7 +565,14 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
 - **Provas:** 3 testes Deno das funções puras. Falsificação 6/6 vermelha, com controle verde; uma guarda redundante
   ficou verde e foi removida.
 - **Codex:** Caminho B (`sem-codex: cota no teto local (79)`), por decisão do founder de guardar a reserva para o 5.2 e
-  o 7.1. REVISÃO INDEPENDENTE PENDENTE; o Codex retroativo roda quando a janela reabrir.
+  o 7.1. O Codex retroativo rodou em 2026-11-09, com o código já em produção. Rodou acima do teto de
+  cota (94%), por autorização do founder, e não achou defeito real nos 4 eixos:
+  - fail-open: a leitura e a extração estão sob `try/catch` com `AbortSignal.timeout(3_000)`, e só alimentam o
+    `cObs`;
+  - correlação: a evidência e o disparador usam o mesmo protocolo completo;
+  - `cObs`: chega a 168 caracteres no máximo, e o Omie não documenta teto;
+  - nenhuma escrita nova.
+  Os riscos declarados abaixo continuam como estavam.
 - **Resta (declarado):**
   - a fiação no `index.ts` não tem teste de handler;
   - caracteres C1 e bidi passam pelo filtro;
