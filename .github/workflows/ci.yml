@@ -1161,6 +1161,10 @@ jobs:
   # EXPLICITAMENTE 'false' (job de escopo vermelho = saída vazia = roda); e o `validate` só aceita o
   # SKIPPED daqui e da união com o `success` do escopo e o `roda=false` dele. Mapa de leitura e
   # medição: docs/historico/ci-provas-sql-escopo.md
+  # RECIBO (fatia C, 2026-11-09): no PR que toca o que as provas leem, também pula quando um run
+  # ANTERIOR do mesmo PR provou a mesma árvore nas partes que as provas leem (`modo=recibo`, que o
+  # `validate` revalida pela API). E o job `fail-fast` cancela as partes quando um job não-SQL
+  # reprova o PR. Desenho e falsificação: docs/historico/ci-fail-fast-e-recibo-provas-sql.md
   provas-sql:
     needs: [provas-sql-escopo]
     if: ${{ !cancelled() && needs.provas-sql-escopo.outputs.roda != 'false' }}

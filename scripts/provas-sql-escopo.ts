@@ -854,6 +854,8 @@ if (import.meta.main) {
           roda = false;
           modo = 'recibo';
           recibo = r.recibo;
+          // Sensor do reaproveitamento: contável pela API de anotações na medição de 7 dias.
+          console.log(`::notice title=provas-sql-reaproveitado::run=${r.recibo}`);
         }
       }
     }
