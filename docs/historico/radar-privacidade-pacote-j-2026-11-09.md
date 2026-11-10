@@ -170,6 +170,11 @@ sobre as 573.021 razões de prod: 0 mudam algum predicado ou o sufixo capturado,
 mascarar 2 vezes dá o mesmo texto. Na prova PG17 (`db/test-radar-privacidade-j.sh`, C0–C7), C3 confere que a foto
 de vínculo, aviso e homônimo é a mesma antes e depois. São 7 sabotagens novas, cada uma vermelha no seu assert.
 
+**Aplicada em prod (2026-11-10, `db:aplicar`, recibo #1068, sha256 `d9eb2bec…`):** regravou 207 razões. Validação
+por fora (psql-ro, depois do commit): os 3 corpos com o md5 novo (`6590f8d7…`, `e4d716e9…`, `1eff8619…`), os 2
+triggers ativos, **0 CPF visível** em `radar_empresas` e no staging, as 207 na forma mascarada nova, e a máscara
+fechada ao JWT.
+
 **Lição:** "o contador do job chegou a 0" prova só o que o contador conta. A validação por fora (regex mais larga
 que a da própria regra) é que achou o resto, e vale para qualquer máscara por padrão.
 
