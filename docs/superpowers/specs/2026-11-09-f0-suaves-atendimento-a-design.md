@@ -248,6 +248,17 @@ A linha "F0 atual / pacote F2" (93,94% em A, +49,13% de estoque) repete exatamen
 - **D6: piso de A ≥ 98%.** Confirmar que continua sendo o piso também para esta pergunta. O melhor pacote medido toca 98,06% no ponto, com +74% de estoque.
 - **D7: Codex agora ou depois.** A consulta de desenho foi barrada pelo guard local (cota em 96%, reabre em 11/11 07:47). Três saídas: esperar a janela (o PR fica DRAFT), seguir pelo Caminho B já aplicado (§8), ou gastar a reserva agora (`CODEX_ASYNC_TETO_SALDO=0`). Proponho esperar: nada aqui é urgente e o adversarial de código continua obrigatório antes da implementação.
 
+### 7.1 Decisões tomadas (Lucas, 2026-11-09)
+
+| # | Decisão |
+|---|---|
+| D1 | **Economia + teto.** O critério 3 vira 3′ **e** 3″: custo líquido positivo pelo LI em toda célula da grade (capital a 25% a.a., 20% e 30% como sensibilidade) **e** aumento de estoque da coorte abaixo de um teto. **O valor do teto ainda está em aberto:** o Lucas o fixa antes da rodada oficial do pacote e ele fica em `$REPLAY_DADOS`, nunca depois de ver o resultado |
+| D2 | **Só os suaves no replay.** A correção de unidade em toda a carteira vira uma frente separada, depois do veredito do pacote |
+| D4 | **F1, F2 e F3** nos intermitentes, calibradas em conjunto com o F0′ dos suaves |
+| D7 | **Gastar a reserva do Codex agora** (`CODEX_ASYNC_TETO_SALDO=0`) |
+
+D3, D5 e D6 ficam como propostos na §7: o z(A) entra como parâmetro calibrado e congelado; as sensibilidades sem o 8689717792 e sem a 1ª semana são só informativas; o piso de A continua em 98%.
+
 ## 8. Parecer do Codex (consulta de DESENHO, money-path)
 
 **Não consultado: `sem-codex: cota (rc = 79, guard local)`.** A consulta foi disparada em background via `scripts/codex-async.sh -r max`. O guard recusou **sem gastar a chamada**: cota em 96% (teto 85%), leitura de 27 minutos antes, janela que reabre em 11/11 às 07:47. O prompt está guardado em `codex-prompt-desenho.txt`, na pasta de notas da sessão.
