@@ -388,7 +388,7 @@ const fracao = (num: number, den: number | null): number | null => (den !== null
  * se vierem, são avaliadas como as demais (código mantido). O motivo NÃO traz R$ absoluto (repo público): só o sinal exigido e o peso da
  * margem desconhecida (achado 11) em % das linhas e do valor demandados.
  */
-function criteriosEconomia(economia: Evidencia['economia']): Criterio[] {
+function criteriosEconomia(economia: Evidencia['economia'], prefixo = '5 Economia'): Criterio[] {
   const out: Criterio[] = [];
   for (const falta of CENARIOS_FALTA.economia) {
     const faltando: string[] = [];
@@ -405,11 +405,11 @@ function criteriosEconomia(economia: Evidencia['economia']): Criterio[] {
       }
     }
     if (faltando.length > 0) {
-      out.push({ criterio: `5 Economia [${falta}]`, estado: 'INCERTO', motivo: `grade incompleta: ${faltando.length} célula(s) sem evidência` });
+      out.push({ criterio: `${prefixo} [${falta}]`, estado: 'INCERTO', motivo: `grade incompleta: ${faltando.length} célula(s) sem evidência` });
     }
   }
   for (const e of economia) {
-    const nome = `5 Economia [${e.falta} ${rotuloGrade(e.grade)}]`;
+    const nome = `${prefixo} [${e.falta} ${rotuloGrade(e.grade)}]`;
     const iv = combinar(e.custo);
     const limite =
       `margem desconhecida (cancelada sem CMC; achado 11): ${pct(fracao(e.linhasMargemDesconhecida, e.linhasDemandadas))} das linhas, ` +
@@ -461,12 +461,52 @@ function criterioEstadoInicial(estados: Evidencia['estadosIniciais']): Criterio 
 }
 
 /**
+ * 3″ (spec 2026-11-09 §4.3 e §7.2): aumento relativo do estoque médio da coorte contra o F0, `Ī_pacote / Ī_F0 − 1`, que é
+ * exatamente −(redução) da `estatReducaoCapital` (mesmos braços pareados e reamostragens). LS(aumento) = −LI(redução) e
+ * LI(aumento) = −LS(redução). PASSA: LS95(aumento) ≤ teto; FALHA: LI95(aumento) > teto; INCERTO no resto (inclusive null).
+ */
+function criteriosTeto(capital: readonly EvidenciaCapital[], teto: number, prefixo: string): Criterio[] {
+  return [...capitalAusente(capital, prefixo), ...capital.map((c): Criterio => {
+    const nome = `${prefixo} [${c.falta}]`;
+    const r = combinar(c.reducao);
+    const iv: Intervalo = { ponto: r.ponto === null ? null : -r.ponto, li: r.ls === null ? null : -r.ls, ls: r.li === null ? null : -r.li };
+    const motivo = `aumento do estoque médio ${limites(iv)}; teto ${pct(teto, 0)} (PASSA: LS ≤ teto; FALHA: LI > teto)` + textoNaoValorado(c);
+    if (iv.li !== null && iv.li > teto) return { criterio: nome, estado: 'FALHA', motivo };
+    if (iv.ls !== null && iv.ls <= teto) return { criterio: nome, estado: 'PASSA', motivo };
+    return { criterio: nome, estado: 'INCERTO', motivo: iv.ls === null ? `${motivo}; ${SEM_DADO}` : motivo };
+  })];
+}
+
+/** Modo PACOTE: a régua de capital para mudança que COMPRA serviço (D1/D1b): 3′ e 3″ no lugar de 3, 4-capital e 5. */
+export interface OpcoesCriterios {
+  pacote?: { teto: number };
+}
+
+/**
  * Tabela da spec §6.1, linha por linha, com LI = min(LI4, LI8) e LS = max(LS4, LS8). Uma linha de saída por item
  * avaliado (classe × cenário, célula da grade...). Evidência ausente vira INCERTO, nunca PASSA.
  * Para a linha "Estado inicial", o chamador calcula o veredito de cada estado com `estadosIniciais: null` e descarta a
  * linha "Estado inicial" (é a única que lê os outros vereditos).
  */
-export function avaliarCriterios(ev: Evidencia): Criterio[] {
+export function avaliarCriterios(ev: Evidencia, opcoes: OpcoesCriterios = {}): Criterio[] {
+  if (opcoes.pacote) {
+    const { teto } = opcoes.pacote;
+    if (!(Number.isFinite(teto) && teto > 0 && teto <= 1)) throw new Error(`PACOTE_TETO_INVALIDO:${teto}`);
+    // D1: 3′ (economia, que absorve o 5) + 3″ (teto); D1b: os dois também no estresse, no lugar de LI(redução) > 0
+    return [
+      ...criteriosServico(ev.servico, ''),
+      ...criteriosEconomia(ev.economia, "3' Economia"),
+      ...criteriosTeto(ev.capital, teto, '3" Teto'),
+      ...criteriosServico(ev.estresse.servico, '4 Estresse '),
+      ...(ev.estresse.economia === undefined
+        ? [{ criterio: "4 Estresse 3' Economia", estado: 'INCERTO' as const, motivo: 'estresse sem evidência de economia' }]
+        : criteriosEconomia(ev.estresse.economia, "4 Estresse 3' Economia")),
+      ...criteriosTeto(ev.estresse.capital, teto, '4 Estresse 3" Teto'),
+      ...criteriosExposicao(ev.exposicao),
+      criterioPrecisao(ev.precisao),
+      criterioEstadoInicial(ev.estadosIniciais),
+    ];
+  }
   return [
     ...criteriosServico(ev.servico, ''),
     ...criteriosCapital(ev.capital),

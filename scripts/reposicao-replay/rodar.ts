@@ -40,8 +40,12 @@ import {
   estoqueDaJanela,
   vereditoDaCalibracao,
   fillDaCelula,
+  mapaDosSuaves,
   mapaMisto,
+  mapaPacote,
   mediaSomas,
+  suavesDaCoorte,
+  type PerfilSuaves,
   populacaoDoModo,
   reducaoRelativa,
   REPS_CALIBRACAO,
@@ -116,6 +120,11 @@ export interface Congelado {
   params: ParamsFormula;
   /** Ausente/'classe' = rodada OFICIAL; 'alt' = rodada INFORMATIVA NÃO OFICIAL (R27): só a população alterada é simulada. */
   celulasAlvo?: CelulasAlvo;
+  /**
+   * Modo PACOTE (spec 2026-11-09 §4.1): o perfil CONGELADO dos suaves da coorte (o F0′, ou a F1 da Alt3). O braço alt é
+   * `mapaPacote`; o baseline continua o F0 de hoje; as células *_alt continuam a máscara dos alterados originais.
+   */
+  suaves?: PerfilSuaves;
 }
 /** Por população: os mapas e o conjunto `alterados` que troca a fórmula — o MESMO que define as células *_alt (revisão final I2). */
 interface Mapas {
@@ -138,6 +147,16 @@ function mapasDaAvaliacao(dados: Dados, cg: Congelado, cacheDir?: string | null)
   const modo = cg.celulasAlvo ?? 'classe';
   const pc = populacaoDoModo(c, modo);
   const pt = populacaoDoModo(t, modo);
+  if (cg.suaves) {
+    if (modo !== 'classe') throw new Error('PACOTE_SO_NA_CELULA_DA_CLASSE');
+    // D2: o F0′ só nos suaves da COORTE (também na população "todos os ativos"); quem é alterado lá recebe Fn
+    const sv = suavesDaCoorte(c);
+    const linha = mapaDosSuaves(dados, cg.suaves, { calibracao: false }, cacheDir);
+    return {
+      coorte: { f0: mapaMisto(f0, null, pc, c.alterados), alt: mapaPacote(f0, linha, sv, fn, pc, c.alterados), alterados: c.alterados },
+      todos: { f0: mapaMisto(f0, null, pt, t.alterados), alt: mapaPacote(f0, linha, sv, fn, pt, t.alterados), alterados: t.alterados },
+    };
+  }
   return {
     coorte: { f0: mapaMisto(f0, null, pc, c.alterados), alt: mapaMisto(f0, fn, pc, c.alterados), alterados: c.alterados },
     todos: { f0: mapaMisto(f0, null, pt, t.alterados), alt: mapaMisto(f0, fn, pt, t.alterados), alterados: t.alterados },
@@ -323,6 +342,8 @@ export function evidencia(
   inicial: CenarioInicial,
   precisao: Evidencia['precisao'],
   nulos: Nulos[],
+  /** Modo PACOTE (D1b): também a grade de economia no estresse. */
+  pacote = false,
 ): { ev: Evidencia; sensibilidadeTaxa: { falta: Falta; grade: GradeCusto; custo: Intervalo }[] } {
   const cen = (lt: CenarioLT, falta: Falta): Cenario => ({ pop, inicial, lt, falta, sub: false });
   const rot = (lt: CenarioLT, falta: Falta) => `${pop}/${inicial}/${lt}/${falta}`;
@@ -339,21 +360,24 @@ export function evidencia(
     estadosIniciais: null,
   };
   const sensibilidadeTaxa: { falta: Falta; grade: GradeCusto; custo: Intervalo }[] = [];
+  if (pacote) ev.estresse.economia = [];
+  for (const [lt, destino] of [['empirico', ev.economia], ...(pacote ? [['estresse15', ev.estresse.economia!] as const] : [])] as const) {
   for (const falta of CENARIOS_FALTA.economia) {
-    const m = pegar(pc, cen('empirico', falta));
+    const m = pegar(pc, cen(lt, falta));
     const total = m.alt.porCelula.total;
     for (const taxa of GRADE_CUSTO.taxaAnual) {
       for (const emergencialPerc of GRADE_CUSTO.emergencial) {
         for (const atrasoPerc of GRADE_CUSTO.atrasoPorDia) {
           const grade: GradeCusto = { taxa, emergencialPerc, atrasoPerc };
+          if (taxa !== GRADE_CUSTO.taxaBase && lt !== 'empirico') continue; // a sensibilidade de taxa é só do empírico
           const r = bootstrap(m.f0, m.alt, estatCusto(grade));
           if (taxa !== GRADE_CUSTO.taxaBase) {
             sensibilidadeTaxa.push({ falta, grade, custo: combinar(r.porBloco) });
             continue;
           }
-          nulos.push({ cenario: rot('empirico', falta), item: `custo ${emergencialPerc}/${atrasoPerc}`, nulos: r.nulos });
+          nulos.push({ cenario: rot(lt, falta), item: `custo ${emergencialPerc}/${atrasoPerc}`, nulos: r.nulos });
           const lim = custoLiquido(m.f0, m.alt, grade);
-          ev.economia.push({
+          destino.push({
             falta, grade, custo: r.porBloco,
             linhasMargemDesconhecida: lim.linhasMargemDesconhecida, valorMargemDesconhecida: lim.valorMargemDesconhecida,
             // denominadores dos DOIS braços (a margem desconhecida soma base + alt)
@@ -362,6 +386,7 @@ export function evidencia(
         }
       }
     }
+  }
   }
   return { ev, sensibilidadeTaxa };
 }
@@ -376,6 +401,8 @@ export interface OpcoesAvaliacao {
   tetoReps?: number;
   /** Cache de grades (null = sem disco; padrão $REPLAY_DADOS/cache). */
   cacheDir?: string | null;
+  /** Modo PACOTE (D1/D1b): critérios 3′ e 3″ com o teto gravado em $REPLAY_DADOS antes da rodada. Exige `cg.suaves`. */
+  pacote?: { teto: number };
 }
 
 /** Passos 4–6 com a candidata CONGELADA: replicações até a precisão, evidência, tabela de decisão e tabelas do relatório. */
@@ -392,6 +419,9 @@ export async function avaliarCandidata(
   const marca = (k: string, t0: number) => (tempos[k] = (performance.now() - t0) / 1000);
   const teto = opcoes.tetoReps ?? PRECISAO.tetoReplicacoes;
   const c = coorte(dados);
+  if ((opcoes.pacote === undefined) !== (cg.suaves === undefined)) throw new Error('PACOTE_INCOERENTE: teto e perfil dos suaves andam juntos');
+  const crit = { ...(opcoes.pacote ? { pacote: opcoes.pacote } : {}) };
+  const ehPacote = opcoes.pacote !== undefined;
   let t: number;
   // 4–5. avaliação com replicações até a precisão
   t = performance.now();
@@ -445,15 +475,15 @@ export async function avaliarCandidata(
   };
   const nulos: Nulos[] = [];
   const porEstado = INICIAIS.map((inicial) => {
-    const { ev, sensibilidadeTaxa } = evidencia(pc, 'coorte', inicial, precisao, inicial === 'reconstruido' ? nulos : []);
-    const crit = semEstadoInicial(avaliarCriterios(ev));
-    return { inicial, ev, sensibilidadeTaxa, crit, v: veredito(crit) };
+    const { ev, sensibilidadeTaxa } = evidencia(pc, 'coorte', inicial, precisao, inicial === 'reconstruido' ? nulos : [], ehPacote);
+    const cs = semEstadoInicial(avaliarCriterios(ev, crit));
+    return { inicial, ev, sensibilidadeTaxa, crit: cs, v: veredito(cs) };
   });
   const rotuloEstado: Record<CenarioInicial, string> = { reconstruido: 'reconstruido+ajuste', piso_zero: 'piso_zero' };
   const principalEst = porEstado[0];
   const evFinal: Evidencia = { ...principalEst.ev, estadosIniciais: porEstado.map((e) => ({ rotulo: rotuloEstado[e.inicial], veredito: e.v.veredito })) };
-  const todos = evidencia(pc, 'todos', 'reconstruido', precisao, []);
-  const critTodos = semEstadoInicial(avaliarCriterios(todos.ev));
+  const todos = evidencia(pc, 'todos', 'reconstruido', precisao, [], ehPacote);
+  const critTodos = semEstadoInicial(avaliarCriterios(todos.ev, crit));
   const vTodos = veredito(critTodos);
   const extras: Criterio[] = [
     vereditoCalibracao === null
@@ -463,7 +493,7 @@ export async function avaliarCandidata(
       ? { criterio: 'Coorte "todos os ativos"', estado: 'PASSA', motivo: `mesmo veredito (${vTodos.veredito})` }
       : { criterio: 'Coorte "todos os ativos"', estado: 'INCERTO', motivo: `veredito muda: coorte ${principalEst.v.veredito}, todos os ativos ${vTodos.veredito}` },
   ];
-  const criterios = [...avaliarCriterios(evFinal), ...extras];
+  const criterios = [...avaliarCriterios(evFinal, crit), ...extras];
   const vf = veredito(criterios);
   marca('estatistica', t);
 
