@@ -1,6 +1,6 @@
 # F0 dos SUAVES — o gargalo de atendimento da classe A (design, sem implementação)
 
-> **Status:** desenho, 2026-11-09. Nada de código de produção, migration, edge nem `db/embalagem-motor-rpc.sql` nesta fase.
+> **Status:** desenho **aprovado pelo Codex na rodada 4** (2026-11-10), depois de 3 rodadas de REPROVA tratadas. Começou em 2026-11-09. Nada de código de produção, migration, edge nem `db/embalagem-motor-rpc.sql` nesta fase.
 > **Ponto de partida:** NO-GO oficial do replay TSB, `INVIAVEL_NA_CALIBRACAO` (PR #3411, `c8fcaae78`). Histórico em [reposicao-replay-tsb.md](../../historico/reposicao-replay-tsb.md) e spec mãe em [2026-10-20-tsb-estoque-seguranca-design.md](2026-10-20-tsb-estoque-seguranca-design.md).
 > **Money-path:** sim, porque decide quanto estoque comprar. A 2ª opinião do Codex está na §8.
 > **Repositório público:** este documento usa só percentuais e contagens. Os R$ ficam em `$REPLAY_DADOS`.
@@ -426,7 +426,13 @@ O Codex reproduziu a decomposição corrigida: as 8 combinações, o Shapley D =
 | Overfit | **FECHADO** (só como diagnóstico) | — |
 | Teto | proposta de 20% | Adotado (§7.2) |
 
-**Para sair do DRAFT:** uma rodada 4 do Codex, curta, restrita aos dois P1 desta rodada (a tabela de perfil e os três estados). Gastar mais cota é decisão do Lucas.
+### Rodada 4: APROVA (gpt-6-astra, max, 94 s, rc = 0)
+
+O escopo foi restrito aos dois P1 da rodada 3:
+- **Perfil completo: FECHADO.** A tabela da §4.4 foi conferida contra `sugestaoF0`, `serieDu` e `amostraLt`, e não sobrou campo que permita duas quantidades válidas para o mesmo perfil.
+- **Três estados: FECHADO.** O Codex reexecutou os dois casos mínimos: "única candidata com capital desconhecido" e "valorada + capital desconhecido" dão seleção `INDETERMINADA` e veredito `INCONCLUSIVO` (`calibracao.ts:460`, `:479`).
+
+**P1 novo: nenhum.** O desenho está pronto para a implementação (§4.4). O adversarial de **código** continua obrigatório antes da rodada oficial do pacote.
 
 ### Régua própria (rodada 1, mantida com a correção do R3)
 
