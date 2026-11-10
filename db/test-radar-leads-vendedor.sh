@@ -390,11 +390,14 @@ INSERT INTO public.radar_empresas (cnpj, razao_social, nome_fantasia, municipio_
   ('12300000000001','Lead Vinte e Tres',NULL,'3106200','Belo Horizonte','MG',false,'a_contatar',NULL,99,NULL);
 SQL
 P -q -v v1="$V1" -v v2="$V2" -v c="$C" <<'SQL'
+-- Relógio ANCORADO no T0 dos envios (radar_avisar_vendedores('2026-11-09 11:00+00')), não em now():
+-- com now(), a posse de 1 dia do 107 passou a vencer DEPOIS do p_agora da semana seguinte assim que o
+-- relógio real cruzou 2026-11-10 11:00 UTC, e o A13a reprovou em todo PR (run 42804285755).
 INSERT INTO public.radar_atendimentos (cnpj, dono_user_id, assumido_em) VALUES
-  ('10700000000001', :'v2', now() - interval '1 day'),
-  ('10800000000001', :'v1', now() - interval '1 day'),
-  ('10900000000001', :'v2', now() - interval '30 days'),
-  ('11000000000001', :'c',  now() - interval '1 day');
+  ('10700000000001', :'v2', timestamptz '2026-11-09 11:00+00' - interval '1 day'),
+  ('10800000000001', :'v1', timestamptz '2026-11-09 11:00+00' - interval '1 day'),
+  ('10900000000001', :'v2', timestamptz '2026-11-09 11:00+00' - interval '30 days'),
+  ('11000000000001', :'c',  timestamptz '2026-11-09 11:00+00' - interval '1 day');
 SQL
 
 APPLY_LOG="$(dirname "$DATA")/apply.log"
@@ -433,13 +436,13 @@ eq "A2 território de V2 = sem Divinópolis (dono é V1, 4 × 2); não-vendedor 
 
 # ── Leads ─────────────────────────────────────────────────────────────────────────────────────────────────
 eq "A3 top-5 de V1 por score, 1 por raiz de CNPJ (a filial 94 do 101 sai do top e do denominador): fora ja_cliente/descartado/em_conversa/sem score/RFB 08/dono ativo de outro; elegíveis = 8" \
-   "$(Pq -c "SELECT string_agg(left(cnpj,3), ',' ORDER BY posicao)||'|'||max(elegiveis) FROM private.radar_leads_do_vendedor('$V1', 5, NULL, now())")" \
+   "$(Pq -c "SELECT string_agg(left(cnpj,3), ',' ORDER BY posicao)||'|'||max(elegiveis) FROM private.radar_leads_do_vendedor('$V1', 5, NULL, timestamptz '2026-11-09 11:00+00')")" \
    "101,108,109,110,111|8"
 eq "A4 top de V2 (3 elegíveis no território, Belo Horizonte é o 4º município e fica fora)" \
-   "$(Pq -c "SELECT string_agg(left(cnpj,3), ',' ORDER BY posicao)||'|'||max(elegiveis) FROM private.radar_leads_do_vendedor('$V2', 5, NULL, now())")" \
+   "$(Pq -c "SELECT string_agg(left(cnpj,3), ',' ORDER BY posicao)||'|'||max(elegiveis) FROM private.radar_leads_do_vendedor('$V2', 5, NULL, timestamptz '2026-11-09 11:00+00')")" \
    "121,120,122|3"
 eq "A5 p_n é limitado a 5 e a posição é 1..n" \
-   "$(Pq -c "SELECT count(*)||':'||min(posicao)||'-'||max(posicao) FROM private.radar_leads_do_vendedor('$V1', 50, NULL, now())")" \
+   "$(Pq -c "SELECT count(*)||':'||min(posicao)||'-'||max(posicao) FROM private.radar_leads_do_vendedor('$V1', 50, NULL, timestamptz '2026-11-09 11:00+00')")" \
    "5:1-5"
 
 # ── Card D2: radar_prospectar_hoje ────────────────────────────────────────────────────────────────────────
@@ -538,7 +541,7 @@ eq "A15 placar do sensor (query do doc): aberturas do destinatário / e-mails re
 prefixo "A16 authenticated não executa o entrypoint do cron" \
    "$(erro_como authenticated "$G" "SELECT public.radar_avisar_vendedores()")" "42501 permission denied for function radar_avisar_vendedores"
 prefixo "A16b authenticated não executa o núcleo private" \
-   "$(erro_como authenticated "$V1" "SELECT * FROM private.radar_leads_do_vendedor('$V2', 5, NULL, now())")" "42501 permission denied for function radar_leads_do_vendedor"
+   "$(erro_como authenticated "$V1" "SELECT * FROM private.radar_leads_do_vendedor('$V2', 5, NULL, timestamptz '2026-11-09 11:00+00')")" "42501 permission denied for function radar_leads_do_vendedor"
 prefixo "A17 authenticated não lê a tabela de envios (destinatários)" \
    "$(erro_como authenticated "$G" "SELECT count(*) FROM public.radar_email_vendedor_envios")" "42501 permission denied for table radar_email_vendedor_envios"
 prefixo "A17b authenticated não escreve na config (não liga e-mail para si)" \

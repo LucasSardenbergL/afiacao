@@ -673,6 +673,50 @@ fi
 rm -f "$ESPELHO/$FALSO" "$ESPELHO/db/test-fake-falsificavel-2.sh" "$ESPELHO/db/test-fake-falsificavel-3.sh" \
   "$ESPELHO/db/roda-nucleo-ci-perde.sh" "$MPR"
 
+# ── N PARTES com DOIS dígitos (2026-11-10, programa "merge mais rápido" com o teto do GitHub Pro) ──
+# A união acima é provada com N=2; a matriz pode passar a 10 ou 16 partes. O que muda com N ≥ 10 é
+# a FORMA: `parte 15/16`, `parte-15.txt`, a ordem lexical dos recibos (`parte-10` antes de `parte-2`)
+# e a ÚLTIMA parte, de dois dígitos. Fixture: 17 provas em 16 partes, todas REAIS (runner de verdade,
+# recibo de verdade) — recibo sintético provaria o juiz, não o formato que o runner grava. O controle
+# verde vem antes, na mesma invocação: sem ele, uma união que recusasse todo N ≥ 10 passaria nos três.
+echo
+echo "=== N partes com dois dígitos (16): a união pega ausente, duplicada e fora da faixa? ==="
+MN="$ESPELHO/manifesto-n16.txt"; : > "$MN"
+for n in $(seq 1 17); do fake_simples "test-n16-$n.sh"; printf 'db/test-n16-%s.sh 5\n' "$n" >> "$MN"; done
+RN="$ESPELHO/recibos-n16"; rm -rf "$RN"; mkdir -p "$RN"
+falhas_n16=""
+for i in $(seq 0 15); do
+  env MANIFESTO="$MN" NUCLEO_PARTE="$i/16" NUCLEO_RECIBO="$RN/parte-$i.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh" \
+    > "$LOGS/n16.$i.log" 2>&1 || falhas_n16="$falhas_n16 $i"
+  grep -qF "RECIBO_DA_PARTE $i/16 " "$LOGS/n16.$i.log" || falhas_n16="$falhas_n16 $i(sem-recibo)"
+done
+if [ -n "$falhas_n16" ]; then
+  bad "CONTROLE N=16: parte(s) que não fecharam o recibo:$falhas_n16"
+else
+  exec_verde "CONTROLE: as 16 partes reais gravam recibo e a união é o manifesto inteiro" \
+    "SQL_PROOF_OK uniao=16/16 provas=17/17" \
+    env MANIFESTO="$MN" bash "$ESPELHO/db/roda-nucleo-ci.sh" --uniao "$RN"
+fi
+uniao_n16_exige() { # <descrição> <marca> <diretório>
+  exec_exige "$1" "$2" env MANIFESTO="$MN" bash "$ESPELHO/db/roda-nucleo-ci.sh" --uniao "$3"
+}
+variante_n16() { local d="$ESPELHO/rn16-$1"; rm -rf "$d"; cp -R "$RN" "$d"; printf '%s' "$d"; }
+
+D="$(variante_n16 falta)"; rm -f "$D/parte-15.txt"
+uniao_n16_exige "N=16: a ÚLTIMA parte (15, dois dígitos) ausente REPROVA" "falta o recibo da parte 15/16" "$D"
+
+D="$(variante_n16 dup)"; cp "$D/parte-10.txt" "$D/parte-99.txt"
+uniao_n16_exige "N=16: a parte 10 duas vezes (recibo copiado) REPROVA" "a parte 10/16 apareceu 2 vezes" "$D"
+
+D="$(variante_n16 fora)"
+if adultera "$D/parte-15.txt" sed -e 's/^parte 15\/16$/parte 16\/16/'; then
+  uniao_n16_exige "N=16: recibo da parte 16/16 (i = N, fora da faixa) REPROVA" "parte 16/16 não existe" "$D"
+fi
+
+exec_exige "N=16: NUCLEO_PARTE=16/16 (i = N, dois dígitos) ABORTA na execução" "NUCLEO_PARTE inválida" \
+  env MANIFESTO="$MN" NUCLEO_PARTE=16/16 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+rm -rf "$RN" "$ESPELHO"/rn16-* "$MN" "$ESPELHO"/db/test-n16-*.sh
+
 # ── PESO DAS DUAS FASES na partição (2026-11-09) ────────────────────────────────────────────────
 # Com W workers a parte leva ~ serial + pool/W: a prova da faixa serial pesa custo × W, a do pool
 # pesa custo, e a parte 0 nasce com a cauda do harness (`@cauda-parte-0`). O W vai no recibo, e a
@@ -829,7 +873,10 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # acima com o piso FORA daqui — `HARNESS_OK_MINIMO` no ci.yml; mude os dois juntos.
 # 45 → 65 em 2026-10-01: os 20 casos do recibo das partes e da união.
 # 67 → 76 em 2026-11-09: os 9 casos do peso das duas fases (partição, cauda, `workers` no recibo).
-OK_MINIMO=76
+# 76 → 81 em 2026-11-10: os 5 casos de N=16 partes (controle, última ausente, duplicada, fora da faixa ×2).
+# 81 → 85 em 2026-11-10: os 4 casos do 3º slot (D2). Só rodam com bash ≥ 5.1; no bash 3.2 a contagem
+# fica acima do piso mesmo sem eles.
+OK_MINIMO=85
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi
