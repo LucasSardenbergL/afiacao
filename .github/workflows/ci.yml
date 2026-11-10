@@ -107,6 +107,13 @@ on:
         description: 'Pular as provas SQL se, desde a última base com provas verdes, só docs/ mudou'
         type: boolean
         default: false
+      # EXPERIMENTO D2 (só no branch claude/provas-5x3-experimento, nunca na main): W do núcleo por
+      # dispatch, para comparar 5×2 e 5×3 no MESMO SHA. O pull_request não tem input ⇒ 2.
+      nucleo_workers:
+        description: 'EXPERIMENTO D2: NUCLEO_WORKERS das partes do provas-sql'
+        type: choice
+        options: ['2', '3']
+        default: '2'
 
 # ┌─ FAN-OUT (2026-09-07) ─────────────────────────────────────────────────────────────────────────┐
 # O `validate` era UM job serial de ~40 steps, com `timeout-minutes: 15`. Medido em 2026-09-07 sobre
@@ -1476,7 +1483,7 @@ jobs:
         env:
           NUCLEO_PARTE: ${{ strategy.job-index }}/${{ strategy.job-total }}
           NUCLEO_RECIBO: ${{ runner.temp }}/nucleo-recibo/parte-${{ strategy.job-index }}.txt
-          NUCLEO_WORKERS: "2"
+          NUCLEO_WORKERS: ${{ inputs.nucleo_workers || '2' }}
         run: bash db/roda-nucleo-ci.sh
 
       # O dente do RUNNER, provado onde o runner vale. `db/falsifica-nucleo-ci.sh` restaura
@@ -1496,7 +1503,7 @@ jobs:
       - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
         if: ${{ strategy.job-index == 0 }}
         env:
-          HARNESS_OK_MINIMO: "92"
+          HARNESS_OK_MINIMO: "96"
         run: |
           log="$RUNNER_TEMP/falsifica-nucleo.log"
           bash db/falsifica-nucleo-ci.sh > "$log" 2>&1 && rc=0 || rc=$?
