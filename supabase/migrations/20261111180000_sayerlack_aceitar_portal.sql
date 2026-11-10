@@ -14,7 +14,10 @@
 --      porta prova que os itens reescritos batem com a leitura, grava o retrato v+1 (origem 'aceito_portal'), fecha a
 --      divergência como 'aceito_portal' e solta o gate. Retrato, divergência e gate seguem com 1 escritor.
 --   3. O re-disparo é o de sempre: a tela chama a importadora com o protocolo, que RELÊ o portal, confere contra o
---      retrato novo e dispara pelo claim (portal mudou de novo no meio ⇒ divergência nova, fail-closed).
+--      retrato novo e dispara pelo claim (portal mudou de novo no meio ⇒ divergência nova, fail-closed). O gate NÃO
+--      solta no aceite (Codex código P1): fica apontando a divergência (já fechada como 'aceito_portal') até uma
+--      leitura de redisparo POSTERIOR ao marco bater — senão o cron dispararia o conteúdo aceito sem ver o portal de
+--      agora. Quem solta é a porta, no caminho de sempre ("bateu ⇒ gate nulo").
 --
 -- Codex (desenho, 3 × P1), corrigidos aqui:
 --   a. "mesmo diff" sem retrato conservava a leitura VELHA (preço/total/condição superados não entram no diff sem
@@ -61,6 +64,25 @@ REVOKE ALL ON FUNCTION public.sayerlack__portal_leitura_conteudo(jsonb) FROM aut
 -- Pré-flight: pg_get_functiondef da PROD em 2026-11-09 = a de 20261111150000 (md5 2dc8ed2b9a39782c4f6feb822cdaa0fb).
 -- Isto a recria com: a origem nova na entrada; o marco do retrato aceito na regra de ordem (b); o ramo do modo aceito
 -- depois do diff de SKU/quantidade; e o conteúdo da leitura na condição do "mesmo diff" (a). O resto é idêntico.
+-- TRAVA antes de ler (ALTER sem efeito: a volatilidade viva) e PRE: md5 EXATO do corpo vivo ∈ {predecessor = prod
+-- conferida em 2026-11-09 (= 20261111150000), este}. Ausente ABORTA (a fatia 1 é predecessora obrigatória).
+DO $trava$
+BEGIN
+  IF to_regprocedure('public.sayerlack_conferir_portal(bigint,jsonb,bigint,text)') IS NOT NULL THEN
+    ALTER FUNCTION public.sayerlack_conferir_portal(bigint, jsonb, bigint, text) VOLATILE;
+  END IF;
+END
+$trava$;
+DO $pre$
+DECLARE
+  v_vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
+                   WHERE p.oid = to_regprocedure('public.sayerlack_conferir_portal(bigint,jsonb,bigint,text)'));
+BEGIN
+  IF v_vivo IS NULL OR v_vivo NOT IN ('ed4d529aa8fc99f40e6af28d48ad8f1c', 'f6d244caaf4fc661507cf6bf3fad78d4') THEN
+    RAISE EXCEPTION 'PRE FALHOU: sayerlack_conferir_portal viva (md5 %) não é a da fatia 1 nem esta', v_vivo;
+  END IF;
+END
+$pre$;
 CREATE OR REPLACE FUNCTION public.sayerlack_conferir_portal(
   p_pedido_id bigint, p_leitura jsonb, p_evidencia_id bigint, p_origem text)
 RETURNS jsonb
@@ -195,8 +217,9 @@ BEGIN
     INTO v_diff FROM d;
 
   -- 1b. Aceito: os itens que a RPC acabou de reescrever TÊM de bater com a leitura em SKU e quantidade — senão nada
-  --     se grava (a RPC desfaz tudo). Depois: retrato v+1 desta leitura com o marco da última observação dela, a
-  --     divergência fecha como 'aceito_portal' e o gate solta. Valor e condição passam a se comparar com ESTE retrato.
+  --     se grava (a RPC desfaz tudo). Depois: retrato v+1 desta leitura com o marco da última observação dela e a
+  --     divergência fecha como 'aceito_portal'. O gate FICA (Codex código P1): o claim segue recusando até a releitura
+  --     posterior ao marco bater com este retrato — aí o passo "bateu" abaixo o solta.
   IF p_origem = 'aceito_portal' THEN
     IF v_diff IS NOT NULL THEN
       RAISE EXCEPTION USING ERRCODE = 'AP009',
@@ -217,11 +240,9 @@ BEGIN
     UPDATE public.sayerlack_portal_divergencia
        SET resolvida_em = now(), resolucao = 'aceito_portal', resolvida_por = v_ator
      WHERE id = v_aberta.id AND resolvida_em IS NULL;
-    UPDATE public.pedido_compra_sugerido SET portal_divergencia_aberta_id = NULL
-     WHERE id = r.id AND portal_divergencia_aberta_id = v_aberta.id;
     RETURN jsonb_build_object('conferido', true, 'divergente', false, 'aceito', true, 'pedido_id', r.id,
                               'retrato_criado', true, 'retrato_versao', v_ret.versao,
-                              'divergencia_fechada_id', v_aberta.id);
+                              'divergencia_fechada_id', v_aberta.id, 'aguardando_releitura', true);
   END IF;
 
   -- 2. Retrato vigente (a maior versão). Sem retrato, ESTA leitura vira o retrato — SÓ se SKU e quantidade bateram
@@ -420,6 +441,10 @@ BEGIN
 
   -- 2. A divergência sob a trava: aberta, deste pedido, a do gate. Fora disso o gate e a tabela discordam.
   SELECT * INTO d FROM public.sayerlack_portal_divergencia WHERE id = p_divergencia_id FOR UPDATE;
+  -- Já aceita, gate mantido até a releitura (Codex código P1): não há o que aceitar de novo — falta reler o portal.
+  IF FOUND AND d.pedido_id = r.id AND d.resolucao = 'aceito_portal' THEN
+    RETURN jsonb_build_object('aceito', false, 'motivo', 'aguardando_releitura', 'divergencia_id', d.id);
+  END IF;
   IF NOT FOUND OR d.pedido_id IS DISTINCT FROM r.id OR d.resolvida_em IS NOT NULL THEN
     RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = '[ACEITAR-CORRIDA] a divergência mudou durante o aceite';
   END IF;

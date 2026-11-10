@@ -66,6 +66,29 @@ export function lerDiferencas(v: unknown): Diferenca[] | null {
   return out;
 }
 
+export interface LeituraAceita {
+  itens: { sku: string; qtde: number; valor: number }[];
+  total: number;
+  condicao: string;
+}
+
+/**
+ * A leitura da divergência = o que o pedido PASSA A SER (Codex código P1: sem retrato, o diff mostra só SKU/quantidade
+ * e o preço e a condição aceitos ficariam invisíveis). Forma inesperada = null — a tela não deixa aceitar às cegas.
+ */
+export function lerLeitura(v: unknown): LeituraAceita | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const l = v as Record<string, unknown>;
+  if (!Array.isArray(l.itens) || l.itens.length === 0 || typeof l.valor_total !== 'number' || typeof l.condicao !== 'string') return null;
+  const itens: LeituraAceita['itens'] = [];
+  for (const e of l.itens) {
+    const x = e as Record<string, unknown> | null;
+    if (!x || typeof x.sku_portal !== 'string' || typeof x.qtde_portal !== 'number' || typeof x.valor_mercadoria !== 'number') return null;
+    itens.push({ sku: x.sku_portal, qtde: x.qtde_portal, valor: x.valor_mercadoria });
+  }
+  return { itens, total: l.valor_total, condicao: l.condicao };
+}
+
 const MOTIVOS: Record<string, string> = {
   pedido_nao_encontrado: 'O pedido não existe mais.',
   sem_protocolo_do_portal: 'O pedido não tem protocolo do portal Sayerlack.',
@@ -76,10 +99,11 @@ const MOTIVOS: Record<string, string> = {
   situacao_nao_aceitavel: 'No portal o pedido não está Aberto nem Suspenso (ou a situação não foi lida). Releia o portal.',
   sem_divergencia: 'O pedido já não tem divergência com o portal.',
   divergencia_mudou: 'O portal mudou de novo desde que esta tela abriu. Reabra o pedido e confira as diferenças novas.',
+  aguardando_releitura: 'O portal já foi aceito; falta reler o portal para disparar (botão abaixo).',
   po_no_espelho: 'Já existe pedido de compra no Omie com este protocolo (lançado à mão?). Vincule-o pelo importar antes.',
 };
 
-export type DesfechoAceitar = 'aceito' | 'recusado' | 'erro';
+type DesfechoAceitar = 'aceito' | 'recusado' | 'erro';
 export interface ResultadoAceitar { desfecho: DesfechoAceitar; mensagem: string }
 
 /** Resposta da RPC. Sem contrato reconhecido = "não sei" — nunca "aceito": a tela manda reabrir para conferir. */

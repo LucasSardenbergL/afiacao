@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { functions: { invoke: vi.fn() } } }));
 
-import { descreverDiferenca, interpretarRespostaAceitar, lerDiferencas, podeOferecerAceitar } from '../aceitar-portal';
+import { descreverDiferenca, interpretarRespostaAceitar, lerDiferencas, lerLeitura, podeOferecerAceitar } from '../aceitar-portal';
 import type { PedidoSugerido } from '../types';
 
 const base = {
@@ -68,5 +68,22 @@ describe('diferenças', () => {
     expect(descreverDiferenca({ tipo: 'condicao', sku: null, app: '70 - 7 DIAS', portal: '30 DIAS' })).toBe('Condição: 70 - 7 DIAS → 30 DIAS');
     expect(descreverDiferenca({ tipo: 'sku_novo_no_portal', sku: 'GL.UM', app: null, portal: 2 })).toBe('GL.UM: entrou no portal (2)');
     expect(descreverDiferenca({ tipo: 'misterio', sku: null, app: 1, portal: 2 })).toBe('misterio: 1 → 2');
+  });
+});
+
+describe('lerLeitura', () => {
+  it('lê o pedido do portal que o aceite aplica (itens com valor, total, condição)', () => {
+    const l = lerLeitura({ protocolo: '1', condicao: '30 DIAS', valor_total: 5644.5,
+      itens: [{ sku_portal: 'DFA.4080LT', qtde_portal: 17, valor_mercadoria: 5100 }] });
+    expect(l).toEqual({ itens: [{ sku: 'DFA.4080LT', qtde: 17, valor: 5100 }], total: 5644.5, condicao: '30 DIAS' });
+  });
+  it('forma inesperada é null — ausente nunca vira zero nem lista vazia', () => {
+    expect(lerLeitura(null)).toBeNull();
+    expect(lerLeitura({ condicao: 'x', valor_total: 1, itens: [] })).toBeNull();
+    expect(lerLeitura({ condicao: 'x', itens: [{ sku_portal: 'A', qtde_portal: 1, valor_mercadoria: 1 }] })).toBeNull();
+    expect(lerLeitura({ condicao: 'x', valor_total: 1, itens: [{ sku_portal: 'A', qtde_portal: '1', valor_mercadoria: 1 }] })).toBeNull();
+  });
+  it('aguardando_releitura tem mensagem própria', () => {
+    expect(interpretarRespostaAceitar({ aceito: false, motivo: 'aguardando_releitura' }, null).mensagem).toMatch(/reler o portal/);
   });
 });

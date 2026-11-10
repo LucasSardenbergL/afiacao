@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import type { ResultadoTela } from './importar-portal';
 import type { PedidoSugerido } from './types';
 import {
-  descreverDiferenca, interpretarRespostaAceitar, lerDiferencas, podeOferecerAceitar, redispararPeloPortal,
+  descreverDiferenca, interpretarRespostaAceitar, lerDiferencas, lerLeitura, podeOferecerAceitar, redispararPeloPortal,
   type ResultadoAceitar,
 } from './aceitar-portal';
 
@@ -38,7 +38,7 @@ export function AceitarPortal({ pedido }: { pedido: PedidoSugerido | null }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('sayerlack_portal_divergencia')
-        .select('id, diferencas, lido_de, resolvida_em')
+        .select('id, diferencas, leitura, resolucao')
         .eq('id', divergenciaId as number)
         .maybeSingle();
       if (error) throw error;
@@ -48,8 +48,43 @@ export function AceitarPortal({ pedido }: { pedido: PedidoSugerido | null }) {
 
   if (!oferecer || !pedido || typeof divergenciaId !== 'number') return null;
   const diferencas = divergencia.data ? lerDiferencas(divergencia.data.diferencas) : null;
+  const leitura = divergencia.data ? lerLeitura(divergencia.data.leitura) : null;
+  // Já aceito: o gate fica até a releitura do portal bater (o cron não dispara o aceito às cegas) — falta reler.
+  const jaAceito = divergencia.data?.resolucao === 'aceito_portal';
+  const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const valida = justificativa.trim().length >= 10;
   const protocolo = (pedido.portal_protocolo ?? '').trim();
+
+  const reler = async () => {
+    setEnviando(true);
+    setRedisparo(null);
+    const d = await redispararPeloPortal(protocolo);
+    setRedisparo(d);
+    track('reposicao.aceitar_portal_redisparo', { pedido_id: pedido.id, tom: d.tom });
+    void queryClient.invalidateQueries({ queryKey: [...CHAVE_INVALIDAR] });
+    void queryClient.invalidateQueries({ queryKey: ['sayerlack-divergencia', divergenciaId] });
+    setEnviando(false);
+  };
+
+  if (jaAceito) {
+    return (
+      <div className="rounded-md border border-status-warning/40 p-3 space-y-2">
+        <p className="text-xs text-muted-foreground">
+          O portal foi aceito (protocolo {protocolo}). O pedido de compra só sai depois de uma releitura do portal que
+          confirme o que foi aceito.
+        </p>
+        <Button variant="outline" size="sm" onClick={reler} disabled={enviando}>
+          {enviando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Reler o portal e disparar
+        </Button>
+        {redisparo && (
+          <p className={redisparo.tom === 'sucesso' ? 'text-sm text-status-success' : redisparo.tom === 'aviso' ? 'text-sm text-status-warning' : 'text-sm text-status-error'}>
+            {redisparo.titulo}: {redisparo.mensagem}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   const aceitar = async () => {
     setEnviando(true);
@@ -104,6 +139,18 @@ export function AceitarPortal({ pedido }: { pedido: PedidoSugerido | null }) {
               {diferencas.map((d, i) => <li key={i}>{descreverDiferenca(d)}</li>)}
             </ul>
           )}
+          {!divergencia.isLoading && leitura === null && (
+            <p className="text-sm text-status-error">Não consegui ler o pedido do portal desta divergência — não aceite às cegas.</p>
+          )}
+          {leitura && (
+            <div className="text-sm space-y-0.5">
+              <p className="font-medium">O pedido passa a ser (valores sem IPI; o total do portal tem IPI):</p>
+              <ul className="list-disc pl-5">
+                {leitura.itens.map((i) => <li key={i.sku}>{i.sku}: {i.qtde.toLocaleString('pt-BR')} un. do portal — {brl(i.valor)}</li>)}
+              </ul>
+              <p>Total do portal: {brl(leitura.total)} · Condição: {leitura.condicao}</p>
+            </div>
+          )}
           <Textarea
             value={justificativa}
             onChange={(e) => setJustificativa(e.target.value)}
@@ -132,7 +179,7 @@ export function AceitarPortal({ pedido }: { pedido: PedidoSugerido | null }) {
               {resultado?.desfecho === 'aceito' ? 'Fechar' : 'Voltar'}
             </Button>
             {resultado?.desfecho !== 'aceito' && (
-              <Button onClick={aceitar} disabled={!valida || enviando || diferencas === null}>
+              <Button onClick={aceitar} disabled={!valida || enviando || diferencas === null || leitura === null}>
                 {enviando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Aceitar e re-disparar
               </Button>

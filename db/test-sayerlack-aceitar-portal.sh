@@ -43,7 +43,7 @@ for f in $CADEIA "$MIG_REAL"; do [ -f "$f" ] || { echo "INFRA: ausente: $f"; exi
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sem_gate_staff:R1 sem_divergencia_vista:R3 sem_situacao:R4 sem_claim:R5 sem_po_espelho:R6
               sem_custo:S2 trilha_sem_antes:S5 sem_guc:P1 aceito_sem_diff:P2 sem_marco:P3
-              dedupe_sem_conteudo:P4 herda_promocao:S6 retrato_sem_marco:S3"
+              dedupe_sem_conteudo:P4 herda_promocao:S6 retrato_sem_marco:S3 aceito_solta_gate:S4,S4b"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -184,6 +184,11 @@ case "$SAB" in
     trocar "$MIG" "           GREATEST(v_aberta.lido_ate, v_aberta.ultima_lido_ate)
     RETURNING * INTO v_ret;" "           NULL
     RETURNING * INTO v_ret;" ;;
+  aceito_solta_gate)  # o desenho antes do Codex código P1: o cron dispararia o aceito sem reler o portal
+    trocar "$MIG" "     WHERE id = v_aberta.id AND resolvida_em IS NULL;
+    RETURN" "     WHERE id = v_aberta.id AND resolvida_em IS NULL;
+    UPDATE public.pedido_compra_sugerido SET portal_divergencia_aberta_id = NULL WHERE id = r.id;
+    RETURN" ;;
   dedupe_sem_conteudo)  # o "mesmo diff" da fatia 1 (Codex a)
     trocar "$MIG" "     AND public.sayerlack__portal_leitura_conteudo(v_aberta.leitura) = public.sayerlack__portal_leitura_conteudo(p_leitura) THEN" "     THEN" ;;
   herda_promocao)  # herdar o desconto do preço antigo como se valesse para o novo
@@ -272,6 +277,10 @@ if out="$(P -1 -f "$MIG" 2>&1)"; then
   case "$out" in *"ACEITAR_PORTAL_POS_OK"*) ok "A1 migration aplica com o NOTICE positivo de fim";; *) bad "A1 sem o NOTICE de fim";; esac
 else bad "A1 migration NÃO aplicou: $(printf '%s' "$out" | grep -m1 -E 'ERROR|FALHOU' || true)"; fi
 if P -1 -q -f "$MIG" >/dev/null 2>&1; then ok "A2 re-aplicar é idempotente"; else bad "A2 re-aplicar falhou"; fi
+# A PRE anti-deriva: com a porta viva diferente da fatia 1 e desta, a migration aborta inteira (e o -1 desfaz).
+{ printf '%s\n' "CREATE OR REPLACE FUNCTION public.sayerlack_conferir_portal(p_pedido_id bigint, p_leitura jsonb, p_evidencia_id bigint, p_origem text) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS \$d\$ BEGIN RETURN '{}'::jsonb; END \$d\$;"; cat "$MIG"; } > "$TMP/derivada.sql"
+if out="$(P -1 -f "$TMP/derivada.sql" 2>&1)"; then bad "A4 porta derivada NÃO abortou a migration"; else
+  case "$out" in *"PRE FALHOU"*) ok "A4 porta derivada aborta na PRE (nada aplicado)";; *) bad "A4 abortou sem a PRE: $(printf '%s' "$out" | grep -m1 ERRO || true)";; esac; fi
 AC="public.sayerlack_aceitar_portal(bigint,bigint,text)"
 FN="public.sayerlack_conferir_portal(bigint,jsonb,bigint,text)"
 HP="public.sayerlack__portal_leitura_conteudo(jsonb)"
@@ -333,11 +342,12 @@ r="$(AX "$P1" "$D1")"
 eq "S1 aceito, retrato v2, o pedido e a trilha" "$(printf '%s' "$r" | campo aceito)|$(printf '%s' "$r" | campo retrato_versao)|$(NEXEC)" "true|2|1"
 eq "S2 itens da leitura com o custo pela prova (IPI 6,5% dentro) e o cabeçalho: total, provado, num_skus, condição 30 DIAS → T54" "$(ITENS "$P1")|$(Pq -c "SELECT trim_scale(valor_total) || '|' || trim_scale(valor_total_portal_provado) || '|' || num_skus || '|' || condicao_pagamento_codigo || '|' || condicao_portal_lida FROM public.pedido_compra_sugerido WHERE id = $P1")" "DFA.4080LT:17:5431.5;GL.UM:2:213|5644.5|5644.5|2|T54|30 DIAS"
 eq "S3 retrato v2 'aceito_portal' com a evidência da divergência e o marco = fim da leitura aceita" "$(Pq -c "SELECT origem || '|' || evidencia_id || '|' || trim_scale(valor_total) || '|' || to_char(leitura_lido_ate AT TIME ZONE 'UTC', 'HH24:MI:SS') FROM public.sayerlack_portal_retrato WHERE pedido_id = $P1 AND versao = 2")" "aceito_portal|2|5644.5|10:02:30"
-eq "S4 divergência fechada 'aceito_portal' com o ator; gate solto" "$(Pq -c "SELECT resolucao || '|' || resolvida_por FROM public.sayerlack_portal_divergencia WHERE id = $D1")|$(GATE "$P1")" "aceito_portal|$STAFF|-"
+eq "S4 divergência fechada 'aceito_portal' com o ator; o gate FICA até a releitura (Codex código P1)" "$(Pq -c "SELECT resolucao || '|' || resolvida_por FROM public.sayerlack_portal_divergencia WHERE id = $D1")|$(GATE "$P1")" "aceito_portal|$STAFF|$D1"
+eq "S4b antes da releitura o claim (cron) recusa, e aceitar de novo é aguardando_releitura (sem 2ª trilha)" "$(K "$P1" | campo claimed)|$(AX "$P1" "$D1" | campo motivo)|$(NEXEC)" "false|aguardando_releitura|1"
 eq "S5 trilha com o ANTES (1 item, 16) e o DEPOIS (2 itens), a justificativa e o ator" "$(Pq -c "SELECT executado_por || '|' || trim_scale((detalhes->'antes'->'itens'->0->>'qtde_final')::numeric) || '|' || jsonb_array_length(detalhes->'depois'->'itens') || '|' || (detalhes->>'justificativa') || '|' || (detalhes->'antes'->'cabecalho'->>'condicao_pagamento_codigo') FROM public.acoes_execucoes WHERE acao = 'sayerlack_aceitar_portal'")" "$STAFF|16|2|Confirmado com o vendedor por telefone|A07"
 eq "S6 item do mesmo SKU herda o estoque do motor, não o desconto do preço antigo; item novo nasce com qtde_sugerida = qtde" "$(Pq -c "SELECT string_agg(sku_portal_aprovado || ':' || COALESCE(trim_scale(estoque_atual)::text,'-') || ':' || COALESCE(trim_scale(desconto_perc_aplicado)::text,'-') || ':' || trim_scale(qtde_sugerida), ';' ORDER BY sku_portal_aprovado) FROM public.pedido_compra_item WHERE pedido_id = $P1")" "DFA.4080LT:7:-:16;GL.UM:-:-:2"
 r="$(C "$P1" "$(L 2140603 "$NOVO" "$TOT" "30 DIAS" 5)" 2)"
-eq "S7 o re-disparo (releitura posterior) bate com o pedido aceito e o claim passa" "$(printf '%s' "$r" | campo divergente)|$(K "$P1" | campo claimed)" "false|true"
+eq "S7 o re-disparo (releitura posterior) bate com o pedido aceito, solta o gate e o claim passa" "$(printf '%s' "$r" | campo divergente)|$(GATE "$P1")|$(K "$P1" | campo claimed)" "false|-|true"
 Pq -c "UPDATE public.pedido_compra_sugerido SET disparo_claim_em = NULL, disparo_claim_por = NULL WHERE id = $P1" >/dev/null
 eq "S8 aceitar de novo, sem divergência: sem_divergencia (e nenhuma 2ª trilha)" "$(AX "$P1" "$D1" | campo motivo)|$(NEXEC)" "sem_divergencia|1"
 
