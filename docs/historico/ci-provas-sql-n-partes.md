@@ -45,9 +45,19 @@ use um dos dois caminhos:
 
 ## Falsificação (local, 2026-11-10)
 
-`commit` antes de sabotar. Uma camada por vez, nos DOIS locales (`LC_ALL=C` e `pt_BR.UTF-8`), com o
-controle verde na MESMA invocação, antes do 1º `sed`. A restauração é `git checkout --`. O resultado
-está no corpo do PR.
+Fiz `commit` antes de sabotar e sabotei uma camada por vez. Rodei nos DOIS locales (`LC_ALL=C` e
+`pt_BR.UTF-8`), com o controle verde na MESMA invocação, antes do 1º `sed`. A restauração foi por
+`git checkout --`, conferida (`RESTAURADO_OK`).
+
+O controle deu `OK=92 XX=0` nos dois locales. Antes eram 87, então são +5 casos. Cada sabotagem deu
+`rc=1`, igual nos dois locales:
+
+- S1: XX=2;
+- S2: XX=1;
+- S3: XX=2;
+- S4: XX=4, os 4 casos N=16; os de N=2 seguem verdes.
+
+Cada XX veio exatamente do caso previsto.
 
 | Sabotagem em `db/roda-nucleo-ci.sh` | Caso que tem de ficar vermelho |
 |---|---|
