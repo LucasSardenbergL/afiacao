@@ -51,7 +51,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   echo "══ CONTROLE (migration real, sem sabotagem) — tem de ficar VERDE ══"
   if PGPORT_TEST=$porta SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
     asserts_controle="$(executados "$LOGDIR/controle.log")"
-    erros_controle="$(grep -c 'ERROR:  ' "$LOGDIR/controle.log" || true)"
+    erros_controle="$(grep -Ec '^(psql:.*: )?(ERROR|ERRO):  ' "$LOGDIR/controle.log" || true)"
     echo "  ✅ controle VERDE (${asserts_controle:-?} asserts) — a suíte sabe passar"
   else
     echo "  ❌ CONTROLE VERMELHO — abortando ANTES de sabotar."
@@ -70,7 +70,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       falhas=$((falhas+1)); continue
     fi
     vermelhos="$(grep -Eo '^  ❌ [A-Z][0-9]+b? ' "$log" | grep -Eo '[A-Z][0-9]+b?' | tr '\n' ' ' || true)"
-    erros_sql="$(grep -c 'ERROR:  ' "$log" || true)"
+    erros_sql="$(grep -Ec '^(psql:.*: )?(ERROR|ERRO):  ' "$log" || true)"
     faltam=""
     for exigido in ${exigidos//,/ }; do
       if ! grep -Eq "^  ✅ ($exigido) " "$LOGDIR/controle.log" || ! grep -Eq "^  ❌ ($exigido) " "$log"; then
@@ -87,7 +87,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       falhas=$((falhas+1))
     elif [ "$erros_sql" -gt "$erros_controle" ]; then  # MENOS erro é legítimo: a sabotagem tira um RAISE esperado
       echo "  ❌ $sab — vermelha com ERRO de SQL a mais ($erros_sql linha(s) ERROR, controle $erros_controle): não é julgamento"
-      { grep -m2 'ERROR:  ' "$log" || true; } | sed 's/^/       /'
+      { grep -m2 -E '(ERROR|ERRO):  ' "$log" || true; } | sed 's/^/       /'
       falhas=$((falhas+1))
     elif [ -n "$faltam" ]; then
       echo "  ❌ $sab — vermelha, mas o assert declarado não virou:$faltam · vermelhos: ${vermelhos:-nenhum}"
@@ -173,7 +173,7 @@ case "$SAB" in
   trilha_sem_antes)
     trocar "$MIG" "            'antes', v_antes, 'depois', v_depois))" "            'depois', v_depois))" ;;
   sem_guc)  # a porta entraria no modo aceito para qualquer service_role
-    trocar "$MIG" "    v_guc := NULLIF(current_setting('app.sayerlack_aceitar_portal', true), '');" "    v_guc := r.id || ':' || v_aberta.id || ':11111111-1111-1111-1111-111111111111';" ;;
+    trocar "$MIG" "    v_guc := NULLIF(current_setting('app.sayerlack_aceitar_portal', true), '');" "    v_guc := COALESCE(NULLIF(current_setting('app.sayerlack_aceitar_portal', true), ''), r.id || ':' || v_aberta.id || ':11111111-1111-1111-1111-111111111111');" ;;
   aceito_sem_diff)
     trocar "$MIG" "    IF v_diff IS NOT NULL THEN
       RAISE EXCEPTION USING ERRCODE = 'AP009'," "    IF false THEN
@@ -309,7 +309,8 @@ P1="$(importar 2140603)"
 Pq -c "UPDATE public.pedido_compra_item SET estoque_atual = 7, ponto_pedido = 12, desconto_perc_aplicado = 9 WHERE pedido_id = $P1" >/dev/null
 r="$(C "$P1" "$(L 2140603 "$NOVO" "$TOT" "30 DIAS" 2)" 2)"; D1="$(printf '%s' "$r" | campo divergencia_id)"
 eq "R0 a releitura do portal abre a divergência com o gate" "$(printf '%s' "$r" | campo divergente)|$(GATE "$P1")" "true|$D1"
-eq "R1 não-staff (customer) = 42501" "$(AXerr "$P1" "$D1" "Confirmado com o vendedor" "$CLI" | sqlstate)" "42501"
+# A marca do ramo, não só "lançou 42501": a RPC de custo também barra não-staff (2ª camada) e esconderia o gate.
+eq "R1 não-staff (customer) = 42501 do gate da RPC [ACEITAR-STAFF]" "$(r1="$(AXerr "$P1" "$D1" "Confirmado com o vendedor" "$CLI")"; printf '%s' "$(printf '%s' "$r1" | sqlstate)"; case "$r1" in *'[ACEITAR-STAFF]'*) printf '|marca';; *) printf '|sem-marca';; esac)" "42501|marca"
 eq "R2 justificativa curta = 22023" "$(AXerr "$P1" "$D1" "curta" | sqlstate)" "22023"
 eq "R3 divergência que a tela NÃO viu (id antigo): divergencia_mudou" "$(AX "$P1" 999 | campo motivo)" "divergencia_mudou"
 Pq -c "UPDATE public.pedido_compra_sugerido SET portal_situacao_codigo = '6' WHERE id = $P1" >/dev/null
