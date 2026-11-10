@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-10T00:22:32.390Z",
-  "sourceHead": "23455bc39fb26032a6cc62b0cf97d4e035c03f8d",
+  "medidoEm": "2026-11-10T00:46:06.472Z",
+  "sourceHead": "9554dd438a8ed12ae9bef51af638952d799a0af7",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 83 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 84 definição(ões) lida(s) para 83 chave(s) da allowlist.",
-      "contratoFingerprint": "bad2bb964910cd22388a38743e7ce350899daca9ec888413b550c8e6916ae5e8",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 84 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 85 definição(ões) lida(s) para 84 chave(s) da allowlist.",
+      "contratoFingerprint": "f4528a530b12f57abecb00a88986bf66f0735e7c27844364bca6b71445223465",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -95,7 +95,7 @@
       "script": "deriva:corpo:prod",
       "exit": 1,
       "resumo": "deriva-corpo — 1 divergência(s) em prod (1 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 544 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@3a93ef075 (fetch ok) · prod 2026-11-10 00:22:59.97853Z",
+      "denominador": "🔎 deriva-corpo — 544 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@19cc43adc (fetch ok) · prod 2026-11-10 00:46:34.670261Z",
       "contratoFingerprint": "4243a14825376b5053104b01074ed80be3bef325628041fd534ada298a610487",
       "auditorFingerprint": "3b1f38be117c2aafd7804b36b20e2de39cee5565430fc752349d4ddddcb76fd0",
       "achados": [
