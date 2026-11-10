@@ -886,3 +886,24 @@ segundos antes do aceite pode não estar lá ainda.
 - Edges: nenhuma mudou.
 - ✅ **Publish** (founder, 2026-11-10): `monitor-deploy.sh --pr 3786` → `PR_NO_AR`; o ar serve o carimbo
   `60f583be`, o squash do #3786 (entry `index-BH7rPGRT`).
+
+## 6.11 — "alterado no portal" no card (2026-11-09)
+
+Faltava do 6.11 a linha do pedido **alterado no portal**: o painel v2 (20261109100000) a deixou para quando a 5.2
+criasse a divergência, e ninguém voltou a ela depois da 5.2.
+
+- **Migration `20261112090000_sayerlack_painel_alterado_portal.sql`**: recria `sayerlack_painel_portal()` a partir do
+  v2. O pré-voo de 2026-11-09 mostrou o `prosrc` de prod idêntico ao do repo. A versão continua 2 e só ganha chaves:
+  `alterado_portal` (teto 50) e `total_alterado_portal`, que trazem o pedido com divergência ABERTA (o JOIN exige
+  `resolvida_em IS NULL`, porque um ponteiro velho não conta), com ou sem pedido de compra e com as diferenças.
+  Também `sem_po[].divergencia_aberta`. O alterado entra em `pendentes_unicos` e no dedupe da falha do mesmo
+  protocolo (6.4). Em prod, nesta data: 0 divergências desde a 5.2.
+- **Card**: seção "Alterado no portal" com até 3 diferenças por linha (`descreverDiferenca` da 5.2; diferença
+  ilegível vira "não consegui ler") e o link "Abrir o pedido", onde fica o Aceitar o portal. Na linha sem pedido de
+  compra travada pela divergência, o link substitui o "Criar pedido de compra", que seria recusado pelo claim. A
+  lista é obrigatória no contrato: sem ela, o card diz "não consegui ler".
+- **Provas:** `db/test-sayerlack-painel-alterado-portal.sh` (herda os casos do v2): 48 asserts verdes nos 2 locales.
+  Inclui 2 sabotagens novas (sem `resolvida_em IS NULL` e sem o alterado no dedupe), com controle antes e depois. No
+  vitest do card, sabotar a troca do botão deixa o teste novo vermelho e o controle verde.
+- **Ordem de deploy:** a migration vai antes do Publish. O front novo exige a lista; com o banco velho, o card diria
+  "não consegui ler". Nenhuma edge mudou.

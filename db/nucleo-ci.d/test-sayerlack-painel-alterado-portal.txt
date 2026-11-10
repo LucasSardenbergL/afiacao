@@ -1,0 +1,4 @@
+# Portal Sayerlack 6.11 (20261112090000): o painel lista o pedido ALTERADO NO PORTAL (divergência aberta da 5.2, com
+# ou sem pedido de compra), marca a linha sem PO travada, deduplica a falha do mesmo protocolo e conta em
+# pendentes_unicos. Herda os casos do v2; 7 sabotagens INLINE com controle antes/depois.
+db/test-sayerlack-painel-alterado-portal.sh 48

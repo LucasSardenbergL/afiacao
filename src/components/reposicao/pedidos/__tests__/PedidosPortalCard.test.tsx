@@ -101,6 +101,44 @@ describe('PedidosPortalCard', () => {
     expect(screen.getByText(/pedido de compra 1291/)).toBeTruthy();
     expect(screen.queryByText(/\bPO\b/)).toBeNull(); // 6.9: vocabulário único
   });
+
+  it('6.11: alterado no portal mostra as diferenças, manda abrir o pedido e a linha sem pedido de compra não oferece re-disparo', async () => {
+    respostaRpc = { data: painelV2({
+      alterado_portal: [
+        { pedido_id: 3801, protocolo: '2141900', sem_po: true, omie_numero: null, detectada_em: '2026-11-09T15:00:00Z',
+          diferencas: [{ tipo: 'quantidade', sku: 'FO.1', app: 2, portal: 3 }], pendencia_mensagem: 'portal diverge do app', pendencia_tentativas: 2 },
+        { pedido_id: 3802, protocolo: '2141901', sem_po: false, omie_numero: '1293', detectada_em: '2026-11-09T14:00:00Z', diferencas: 'quebrado' },
+      ],
+      total_alterado_portal: 2,
+      sem_po: [{ pedido_id: 3801, protocolo: '2141900', status: 'aprovado_aguardando_disparo', origem: 'app', desde: '2026-11-09T10:00:00Z', divergencia_aberta: true }],
+      total_sem_po: 1, pendentes_unicos: 2,
+    }), error: null };
+    renderizar(<PedidosPortalCard />);
+    expect(await screen.findByText('Alterado no portal (não bate com o pedido do app)')).toBeTruthy();
+    const linhas = screen.getAllByTestId('pedidos-portal-alterado');
+    expect(linhas).toHaveLength(2);
+    expect(linhas[0].textContent).toContain('FO.1: quantidade 2 → 3 (no portal)');
+    expect(linhas[0].textContent).toContain('aceite o portal');
+    expect(linhas[0].textContent).toContain('portal diverge do app · 2 tentativas');
+    expect(linhas[1].textContent).toContain('pedido de compra 1293');
+    expect(linhas[1].textContent).toContain('Confira-o no Omie');
+    // Diferenças ilegíveis não somem em silêncio.
+    expect(linhas[1].textContent).toContain('Não consegui ler as diferenças');
+    // A linha sem pedido de compra travada pela divergência leva ao pedido, não ao re-disparo (seria recusado).
+    expect(screen.queryByRole('button', { name: 'Criar pedido de compra' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Alterado no portal — abrir' }).getAttribute('href')).toBe('/admin/reposicao/pedidos?id=3801');
+    expect(screen.getByText(/2 pendentes/)).toBeTruthy();
+    expect(screen.queryByText('Nada pendente do portal.')).toBeNull();
+  });
+
+  it('6.11: resposta sem a lista alterado_portal é "não consegui ler", nunca "nada pendente"', async () => {
+    const semAlterado = painelV2();
+    delete semAlterado.alterado_portal;
+    respostaRpc = { data: semAlterado, error: null };
+    renderizar(<PedidosPortalCard />);
+    expect(await screen.findByText(/Não consegui ler os pedidos do portal/)).toBeTruthy();
+    expect(screen.queryByText('Nada pendente do portal.')).toBeNull();
+  });
 });
 
 describe('ImportarPedidoPortalDialog', () => {
