@@ -818,6 +818,37 @@ if [ "${BASH_VERSINFO[0]}" -gt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${
   printf 'db/test-w2-solo.sh 5\ndb/test-w2-vermelha.sh 5\n' > "$ESPELHO/manifesto-w2-verm.txt"
   exec_exige "2 workers: assert vermelho num worker REPROVA a parte" "assert(s) vermelhos" \
     env MANIFESTO="$ESPELHO/manifesto-w2-verm.txt" NUCLEO_WORKERS=2 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+  # ── 3º SLOT (D2, 2026-11-10): com 3 workers, o slot 2 tem de ser real e isolado ──
+  # Trio que só passa se os TRÊS rodam juntos. Cada um reserva 20 portas a partir do seu PGPORT_TEST
+  # (mkdir atômico num diretório comum) e falha se outra unidade já reservou alguma: prova usa
+  # PGPORT_TEST+i nas sabotagens. Faixa de slot que colide (o slot 2 caindo na do 0, por exemplo)
+  # fica vermelha aqui e não nos casos de 2 workers.
+  W3="$ESPELHO/w3"; rm -rf "$W3"; mkdir -p "$W3/portas"
+  for eu in x y z; do
+    # shellcheck disable=SC2016  # os $ são do script GERADO, não deste
+    { printf '#!/usr/bin/env bash\n'
+      printf 'for i in $(seq 0 19); do mkdir "%s/portas/$((PGPORT_TEST + i))" 2>/dev/null || { echo "porta $((PGPORT_TEST + i)) JA RESERVADA"; echo "RESULTADO: 0 ok / 1 fail"; exit 1; }; done\n' "$W3"
+      printf 'touch "%s/%s"\n' "$W3" "$eu"
+      printf 'for _ in $(seq 1 200); do n=0; for o in x y z; do [ -f "%s/$o" ] && n=$((n + 1)); done; [ "$n" -eq 3 ] && { echo "RESULTADO: 5 ok / 0 fail"; exit 0; }; sleep 0.1; done\n' "$W3"
+      printf 'echo "RESULTADO: 0 ok / 1 fail"; exit 1\n'
+    } > "$ESPELHO/db/test-w3-trio-$eu.sh"
+  done
+  printf 'db/test-w3-trio-x.sh 5\ndb/test-w3-trio-y.sh 5\ndb/test-w3-trio-z.sh 5\n' > "$ESPELHO/manifesto-w3.txt"
+  exec_verde "3 workers: o trio SIMULTÂNEO verde, cada slot na sua faixa de portas (controle)" "provas=3/3" \
+    env MANIFESTO="$ESPELHO/manifesto-w3.txt" NUCLEO_WORKERS=3 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+  rm -rf "$W3"; mkdir -p "$W3/portas"
+  exec_exige "2 workers rodam o mesmo trio SEM o 3º junto (o controle acima mediu o 3º slot)" "exit=1" \
+    env MANIFESTO="$ESPELHO/manifesto-w3.txt" NUCLEO_WORKERS=2 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+  # morte e vermelho NO 3º SLOT: duas unidades lentas ocupam os slots 0 e 1, a 3ª cai no slot 2.
+  printf '#!/usr/bin/env bash\nsleep 2\necho "RESULTADO: 5 ok / 0 fail"\n' > "$ESPELHO/db/test-w3-lenta-1.sh"
+  cp "$ESPELHO/db/test-w3-lenta-1.sh" "$ESPELHO/db/test-w3-lenta-2.sh"
+  printf 'db/test-w3-lenta-1.sh 5\ndb/test-w3-lenta-2.sh 5\ndb/test-w2-orfa.sh 5\n' > "$ESPELHO/manifesto-w3-orfa.txt"
+  exec_exige "3 workers: subshell morto no 3º slot REPROVA (ausência de veredito)" "sem veredito" \
+    env MANIFESTO="$ESPELHO/manifesto-w3-orfa.txt" NUCLEO_WORKERS=3 bash "$ESPELHO/db/roda-nucleo-ci.sh"
+  printf 'db/test-w3-lenta-1.sh 5\ndb/test-w3-lenta-2.sh 5\ndb/test-w2-vermelha.sh 5\n' > "$ESPELHO/manifesto-w3-verm.txt"
+  exec_exige "3 workers: assert vermelho no 3º slot REPROVA a parte" "assert(s) vermelhos" \
+    env MANIFESTO="$ESPELHO/manifesto-w3-verm.txt" NUCLEO_WORKERS=3 bash "$ESPELHO/db/roda-nucleo-ci.sh"
 else
   echo "  ⚠️  bash $BASH_VERSION < 5.1: casos de 2 workers NÃO rodaram aqui (ausência de dado; rodam no CI)"
 fi
@@ -843,7 +874,9 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # 45 → 65 em 2026-10-01: os 20 casos do recibo das partes e da união.
 # 67 → 76 em 2026-11-09: os 9 casos do peso das duas fases (partição, cauda, `workers` no recibo).
 # 76 → 81 em 2026-11-10: os 5 casos de N=16 partes (controle, última ausente, duplicada, fora da faixa ×2).
-OK_MINIMO=81
+# 81 → 85 em 2026-11-10: os 4 casos do 3º slot (D2). Só rodam com bash ≥ 5.1; no bash 3.2 a contagem
+# fica acima do piso mesmo sem eles.
+OK_MINIMO=85
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi

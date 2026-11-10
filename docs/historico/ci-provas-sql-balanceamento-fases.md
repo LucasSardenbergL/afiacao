@@ -95,4 +95,4 @@ nova do radar-funil-agenda.
     runners);
   - 2 runs da main de 10/11 pularam as provas (o escopo era só docs) e ficaram fora da conta.
 
-Próximo passo: o D2, experimento 5×3 no mesmo SHA, só depois deste merge.
+Seguiu-se o D2 (5×3), aprovado: [ci-provas-sql-3-workers.md](ci-provas-sql-3-workers.md).
