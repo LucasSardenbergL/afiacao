@@ -13,9 +13,10 @@
 - ✅ **Onda 3** — #3693; varrer v1.5 com DEPLOY CONFIRMADO (#958).
 - ✅ **Onda 4** — #3703; migration `20261107220000` aplicada (#960); varrer v1.6 DEPLOY CONFIRMADO (#962).
 - ✅ **Onda 5A fatia 1** (5.1 + claim recusa o 6 + 5.5) — #3708; migration `20261108120000` aplicada (#966);
-  disparar v1.12 (#971), importar v1.6 (#973), varrer v1.7 (#975) com DEPLOY CONFIRMADO; Publish feito. ⏳ **5A fatia 2**: botão auditado (5.3), avisos (5.4), cobertura dos protocolos com PO,
-  painel. ⏳ **5B**: pedido alterado no portal (5.2).
-- ⏳ Ondas 6, 7 (7.1, 7.2, 7.3, 7.5) e 8.
+  disparar v1.12 (#971), importar v1.6 (#973), varrer v1.7 (#975) com DEPLOY CONFIRMADO; Publish feito.
+- ✅ **5A fatia 2, 5B, Ondas 6, 7 e 8** — entregues pela revisão 2; o andamento item a item fica em
+  [2026-11-08-sayerlack-revisao-2.md](2026-11-08-sayerlack-revisao-2.md) §Andamento (7.5 encerrada: o portal não
+  expõe IPI por item). As 5 alíquotas 🧭 da Onda 1 foram provadas nas NF-e do Omie (#3717, #3744).
 
 ## Dados de prod que dimensionam (psql-ro, 2026-11-07)
 

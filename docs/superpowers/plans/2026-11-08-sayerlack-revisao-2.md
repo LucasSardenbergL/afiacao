@@ -55,8 +55,10 @@
 ## Andamento da Sessão B (tela e painel)
 
 - ✅ **PR B1** (#3715) — B7 (tela), B8, 8.5, 6.10, 6.7 (chave sob `pedidos-ciclo`), B12/8.4 runbook. Publish: founder.
-- 🔄 **PR B2** — RPC `sayerlack_painel_portal` v2 (migration `20261109100000` APLICADA, #977) + card (6.1–6.9, 6.11 sem
-  "alterado no portal", que espera a 5.2) + prova PG17.
+- ✅ **PR B2** (#3716) — RPC `sayerlack_painel_portal` v2 (migration `20261109100000` APLICADA, #977) + card (6.1–6.9, 6.11 sem
+  "alterado no portal", que esperava a 5.2) + prova PG17.
+- ✅ **6.11 "alterado no portal"** (#3790) — painel ganha `alterado_portal`/`total_alterado_portal` (migration
+  `20261112090000` APLICADA, #1066); card com a seção nova; sem edge. Publish: founder.
 - ✅ **8.3** — QA no navegador do app (app local com o código do B2, dados de prod, usuário master), desktop e
   375×812: card com horário, sensor de alíquota (13 SKUs) e "não posso afirmar" (correto: a última efetiva é v1.4);
   importados com "pedido de compra"; Cmd-K abre o diálogo; vários números com inválido mostrado e botão travado (sem
@@ -244,6 +246,11 @@ Preservar “não sei” é correto. Falta transformar essa incerteza em trabalh
 Não reapresentei como novidades os contratos compostos, o bloqueio do default à vista, a imutabilidade do protocolo nem as corridas temporais já corrigidas. Também não considero as provas PG17 “só caminho feliz”: há falsificações e concorrência reais. A lacuna está principalmente na composição das edges e nas entradas que os testes puros não exercitam.
 
 **2) O que ainda falta do plano**
+
+> ⚠️ **Retrato de 2026-11-08, ANTES das entregas.** Os FALTA/PARCIAL abaixo não são o estado atual: conferido contra a
+> main em 2026-11-10, tudo foi entregue (ver §Andamento), exceto o **2.6** — falta o inventário reconciliado das
+> condições do portal, que depende do significado do "(C)" (🧭 founder; até lá vale o fail-closed IP007). O 1.4 ficou
+> como sensor no card (6.8), sem alerta no `data_health`, como decidido acima.
 
 `FEITO` significa implementação encontrada; não é nova certificação de deploy. Prioridade e esforço abaixo se referem ao trabalho restante. Para QA, `FALTA` significa **falta comprovação no repositório**, não afirmação de que ninguém tenha testado manualmente.
 
