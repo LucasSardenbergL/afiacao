@@ -60,6 +60,9 @@ export interface PedidoSugerido {
   portal_situacao_em?: string | null;
   portal_situacao_protocolo?: string | null;
   omie_pedido_compra_id?: string | null;
+  // 5.2: divergência portal × app aberta (sayerlack_portal_divergencia.id). Não nula ⇒ o claim recusa; a saída é
+  // aceitar o portal (sayerlack_aceitar_portal) ou o portal voltar. Escritor único: sayerlack_conferir_portal.
+  portal_divergencia_aberta_id?: number | null;
   // Resposta do disparo (edge disparar-pedidos-aprovados). Em status='falha_envio',
   // resposta_canal.erro carrega o MOTIVO real da falha (ex.: "SKU(s) sem custo (preço
   // unitário 0)..."). Antes só era visível no banco — não aparecia na UI.

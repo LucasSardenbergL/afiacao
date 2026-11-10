@@ -51,7 +51,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   echo "══ CONTROLE (migration real, sem sabotagem) — tem de ficar VERDE ══"
   if PGPORT_TEST=$porta SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
     asserts_controle="$(executados "$LOGDIR/controle.log")"
-    erros_controle="$(grep -Ec '^(psql:.*: )?(ERROR|ERRO):  ' "$LOGDIR/controle.log" || true)"
+    erros_controle="$(grep -Ec '(ERROR|ERRO):  ' "$LOGDIR/controle.log" || true)"
     echo "  ✅ controle VERDE (${asserts_controle:-?} asserts) — a suíte sabe passar"
   else
     echo "  ❌ CONTROLE VERMELHO — abortando ANTES de sabotar."
@@ -70,7 +70,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       falhas=$((falhas+1)); continue
     fi
     vermelhos="$(grep -Eo '^  ❌ [A-Z][0-9]+b? ' "$log" | grep -Eo '[A-Z][0-9]+b?' | tr '\n' ' ' || true)"
-    erros_sql="$(grep -Ec '^(psql:.*: )?(ERROR|ERRO):  ' "$log" || true)"
+    erros_sql="$(grep -Ec '(ERROR|ERRO):  ' "$log" || true)"
     faltam=""
     for exigido in ${exigidos//,/ }; do
       if ! grep -Eq "^  ✅ ($exigido) " "$LOGDIR/controle.log" || ! grep -Eq "^  ❌ ($exigido) " "$log"; then
