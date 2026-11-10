@@ -66,3 +66,54 @@ Para comparar builds, acrescente `AND build_id = '<entry do build>'`. O PostHog 
 
 180 dias, escrita no `COMMENT ON TABLE`. Ainda não há expurgo automático: o volume é ~5 linhas por
 carga de página.
+
+## Leitura dos lotes de tela (plano v7, §0): 2026-11-10
+
+Leitura em 2026-11-10 19:41 UTC (`psql-ro -v ON_ERROR_STOP=1`, rc 0, marcador `FIM_OK`). "Lotes de tela" são os
+PRs de tela do v6, no ar a partir do build de 2026-11-05 14:27:19Z (`5ab78cba`, §0 do plano v7).
+
+**Veredito: 🟡 amostra insuficiente.** O sensor mede o founder, não o uso.
+
+| denominador | valor |
+|---|---|
+| linhas | 542 (02/11 16:06 → 10/11 19:33) |
+| `user_id` distintos | **1**, papel `master` |
+| aparelhos | 3: `1aedeba2` 405 linhas e 60 builds · `fa401591` 102 e 11 · `a90b7e30` 35 e 7 |
+| builds | 78, com vida mediana de **52 min** entre um build e o seguinte (máx. 19 h 25) |
+| maior amostra de UMA métrica num build | 11 (TTFB); CLS e LCP 5; FCP e INP 7 |
+| builds com ≥ 30 linhas (todas as métricas) | 0 |
+
+**Build adotado:** todo build da tabela foi carregado de verdade (a linha só nasce na carga), mas por uma pessoa
+só, que troca de build a cada ~1 h. Com no máximo 11 amostras de uma métrica por build, o p75 de um build é
+ruído. O corte por build não fecha.
+
+**Antes/depois do build de 05/11 14:27Z** (pela 1ª aparição de cada build), só para registro:
+
+| métrica | antes: n · p75 | depois: n · p75 |
+|---|---|---|
+| CLS | 20 · 0,345 | 37 · 0,239 |
+| FCP (ms) | 39 · 4.074 | 63 · 3.324 |
+| INP (ms) | 19 · 172 | 41 · 128 |
+| LCP (ms) | 29 · 6.312 | 49 · 4.032 |
+| TTFB (ms) | 94 · 1.960 | 151 · 1.643 |
+
+**Isto não é tendência.** O TTFB é o controle: é tempo de servidor e rede, nenhum PR de tela mexe nele, e ele
+caiu 16%. A queda das métricas de tela tem o mesmo sinal e a mesma ordem de grandeza, então o mix (rede, rota,
+aparelho, recarga × navegação) explica o movimento tanto quanto o código. No aparelho `1aedeba2` sozinho, o
+padrão se repete (TTFB 2.194 → 1.815).
+
+Nota de leitura: `metrica` é minúscula (`cls`, `fcp`, `inp`, `lcp`, `ttfb`) e `classificacao` é
+`bom`/`melhorar`/`ruim`. Filtro por `'good'` ou `'LCP'` volta 0 linhas sem erro.
+
+**O que fica:** os itens F do v7 valem pelo laboratório antes/depois (§0, linha "sensores de uso continuam com
+1 usuário"), e este sensor não substitui o laboratório. Reler só quando houver **≥ 3 `user_id` fora do staff**
+na janela de 7 dias. Uma data nova não traz amostra:
+
+```sql
+SELECT count(DISTINCT v.user_id) FILTER (WHERE NOT EXISTS (
+         SELECT 1 FROM public.user_roles r
+          WHERE r.user_id = v.user_id AND r.role IN ('master', 'employee'))) AS usuarios_fora_do_staff,
+       count(DISTINCT v.user_id) AS usuarios, count(*) AS linhas
+  FROM public.telemetria_vitals v
+ WHERE v.criado_em > now() - interval '7 days';
+```

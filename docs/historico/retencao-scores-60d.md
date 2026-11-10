@@ -131,4 +131,60 @@ precisa descontar essa soma.
 
 - Job 196, run 932378: `succeeded` às 04:30, **28 s**. Ficou abaixo dos 37 s do run mensal de 1º/11 e dentro do `statement_timeout` de 5 min.
 - As duas tabelas agora começam em **2026-09-09**, o corte de 60 dias do domingo. Há 1.029.013 linhas em cada uma, com zero acima de 67 dias.
-- Tamanho total: 307 MB + 296 MB = 603 MB (eram 809 MB antes do DROP dos índices). O autovacuum rodou às 04:31 e o espaço apagado volta para reuso. O arquivo não encolhe, como previsto, e as tabelas param de crescer.
+- Tamanho total: 307 MB + 296 MB = 603 MB (eram 809 MB antes do DROP dos índices). O autovacuum rodou às 04:31 e o espaço apagado volta para reuso. O arquivo não encolhe, como previsto. As tabelas, porém, **não** param de crescer: o ritmo de escrita subiu 2,56× em 02/11 (achado abaixo).
+
+## 1º expurgo semanal: a conta exata e o veredito do plano v7 (2026-11-10)
+
+Complementa a seção anterior (#3796). Leitura em 2026-11-10 19:41 UTC (`psql-ro -v ON_ERROR_STOP=1`, rc 0,
+marcador `FIM_OK`).
+
+**Veredito: ✅ o expurgo semanal funciona como desenhado.** A 1ª passada levou todo o atraso numa chamada só, e o
+teto tem folga para o ritmo novo. A premissa de espaço é que caducou: as tabelas **não** param de crescer (ver
+abaixo).
+
+| | medido |
+|---|---|
+| apagado por tabela | **490.842** = `n_tup_del` desde o boot (1.098.302) − o run de 1º/11 (607.460) |
+| conferência | 464.310 (> 60 d em 05/11) + 2 lotes diários de 13.266 (06 e 07/09) = 490.842, exato |
+| linha mais antiga depois | 2026-09-09 06:00 nas duas: o corte de 08/11 era 2026-09-09 04:30, então nada ficou para trás |
+| > 60 d hoje | **39.798** por tabela = 3 lotes de 13.266 (09 a 11/09): o acúmulo normal entre domingos, não resto |
+
+O `return_message` do pg_cron só diz `1 row`: ele não guarda o jsonb que a função devolve, então `resta_*` não
+aparece ali. A prova de que o teto não cortou a chamada é a linha mais antiga depois do corte e a conta exata
+acima.
+
+### Achado: o ritmo de escrita subiu 2,56× em 02/11, e a tabela de espaço acima ficou velha
+
+| dia | linhas/dia por tabela | clientes distintos | passadas (minutos distintos) |
+|---|---|---|---|
+| até 2026-11-01 | 13.266 | 6.633 | 2 |
+| 2026-11-02 em diante | 33.982 a 34.078 | 16.993 a 17.039 | 3 em 02 e 03/11 |
+
+São sempre 3 farmers. Cada cliente aparece 2× por dia nas duas tabelas, porque a `calculate-scores` grava o
+universo inteiro em mais de uma passada diária. O salto coincide com o import de clientes no servidor (#3501,
+mergeado em 2026-11-01 21:56 UTC) e com a varredura diária (#3535, 02/11). **Não verifiquei a causa nesta fatia.**
+
+O que muda:
+
+- **Teto da função:** 7 × 34k = ~238k linhas por domingo, contra 600k por chamada. Folga de 2,5×.
+- **Pico de linhas por tabela** (60 d mais 7 d): de 950k para **~2,28 M**.
+- **Espaço:** na densidade sem os 4 índices (307 MB para 950k), o pico vai para **~740 MB por tabela**, contra
+  ~300 MB hoje. O heap absorve até o volume de antes do run de 1º/11 (~1,86 M) e cresce depois disso. O pico
+  chega quando a janela de 60 d estiver toda no ritmo novo, por volta de **2027-01-01**.
+
+**Proposta (não aplicada, decisão do founder):** a instância já está em discussão (D11: Micro → Small). Antes de
+pagar ~880 MB a mais nas duas tabelas, vale responder duas perguntas de produto. Os ~10,4 k clientes novos
+precisam de score diário (aliases fiscais `@placeholder.local` e cadastros sem farmer ativo entram)? A 2ª
+passada diária precisa ir para o histórico, ou só a última do dia? Cada "não" corta o volume pela metade, ou mais.
+Sem mudança, a retenção pode descer para 30 d: o histórico não tem leitor além do próprio expurgo.
+
+Reler em 2026-11-15 (2º domingo), e o tamanho por volta de 2027-01-03:
+
+```sql
+SELECT runid, status, end_time - start_time AS dur, return_message
+  FROM cron.job_run_details WHERE jobid = 196 ORDER BY start_time DESC LIMIT 3;
+SELECT relname, n_tup_del, n_live_tup, pg_size_pretty(pg_total_relation_size(relid)) AS total
+  FROM pg_stat_user_tables WHERE relname IN ('health_score_history', 'priority_score_log');
+SELECT count(*) FILTER (WHERE calculated_at < now() - interval '60 days') AS gt60, min(calculated_at)
+  FROM public.health_score_history;
+```
