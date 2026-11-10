@@ -27,6 +27,11 @@ Este documento faz três coisas:
 
 **Controle verde na mesma invocação.** O recálculo sem trocar nada (`D0L0U0`) reproduz o oficial: 90,66% × 90,66%, |Δ| = 0,00 p.p. Simular só os suaves também repete o fill deles (90,66%), o que prova que os SKUs não interferem entre si. As linhas de A contadas pelo script batem com a célula do simulador (724 = 724). Se não batessem, o script sai com rc = 3.
 
+**Falsificação do controle** (10 réplicas, controle verde na mesma invocação):
+
+- sabotar o z do recálculo em −5% faz o controle divergir 0,85 p.p. (89,42% × 90,28%). O controle é genuíno, não idêntico por construção;
+- sabotar o piso `PP ≥ max(ss, mín. op.) + 1` **não** muda nada (|Δ| = 0,00). Essa camada é inalcançada nos suaves (o `⌈D·LT + z·σ⌉` sempre fica acima dela) e fica registrada como tal.
+
 Os dados são os da rodada oficial, `~/.cache/afiacao/reposicao-replay-2026-11-09/` (hashDados `f4704d895c47…`). O script e a saída completa estão na §9.
 
 ### 2.1 Quem falha e quando
@@ -88,7 +93,7 @@ Referência fora da decomposição: a demanda **clarividente**, a média dos 30 
 **Leitura:**
 
 - **A hipótese do NO-GO estava parcialmente errada.** A defasagem da média de 90 dias é o **menor** componente identificado: a média centrada fica só 1,4% acima da de 90 dias, em média, nos SKU-dias de A.
-- **O maior componente é estrutural:** o PP cobre `D_corrido × LT_du`, mas o LT de *L* dias úteis dura cerca de *1,4 L* dias corridos com venda. A demanda média no LT fica **subestimada em ~29%** antes de qualquer margem de segurança.
+- **O maior componente é estrutural:** o PP cobre `D_corrido × LT_du`, mas o LT de *L* dias úteis dura cerca de *1,4 L* dias corridos. Nos suaves, **0,00%** da venda da calibração cai em sábado ou domingo, então toda a demanda corrida se concentra nos dias úteis. A demanda média no LT fica **subestimada em ~29%** antes de qualquer margem de segurança.
 - Esse viés não é dos suaves: **está na view** (`v_sku_parametros_sugeridos`, paridade 100% no replay) e vale para todo SKU do F0. Também o EOQ usa `D_corrido × 252` (dias úteis/ano).
 
 ### 2.3 Reconciliação com os números do NO-GO
@@ -149,7 +154,7 @@ A linha "F0 atual / pacote F2" (93,94% em A, +49,13% de estoque) repete exatamen
 - **Riscos:**
   - (a) o viés está **na view**, para todo o F0. Corrigir só nos suaves Sayerlack cria duas definições de "demanda média diária" no mesmo motor;
   - (b) a correção global muda o estoque de **todos** os SKUs, inclusive Colacor/Oben fora da coorte, e precisa de medição própria;
-  - (c) o sábado com NF conta venda num dia que não é du, e a conta superestima levemente onde há venda de sábado.
+  - (c) o sábado com NF conta venda num dia que não é du, e a conta superestimaria onde houvesse venda de sábado. Nos suaves, a fração da venda em sábado ou domingo na calibração é **0,00%**; fora da coorte, isso precisa ser medido.
 
 ### Alt 2 — Alt 1 + LT por quantil + z de A recalibrado
 
@@ -241,10 +246,25 @@ A linha "F0 atual / pacote F2" (93,94% em A, +49,13% de estoque) repete exatamen
 - **D4: fórmula dos intermitentes no pacote.** Só F2 (a candidata da R27), ou as três (F1/F2/F3), calibradas em conjunto com o F0′?
 - **D5: sensibilidades declaradas.** Pacote sem o 8689717792 e fill sem a 1ª semana: informativos, como proposto, ou com peso no veredito?
 - **D6: piso de A ≥ 98%.** Confirmar que continua sendo o piso também para esta pergunta. O melhor pacote medido toca 98,06% no ponto, com +74% de estoque.
+- **D7: Codex agora ou depois.** A consulta de desenho foi barrada pelo guard local (cota em 96%, reabre em 11/11 07:47). Três saídas: esperar a janela (o PR fica DRAFT), seguir pelo Caminho B já aplicado (§8), ou gastar a reserva agora (`CODEX_ASYNC_TETO_SALDO=0`). Proponho esperar: nada aqui é urgente e o adversarial de código continua obrigatório antes da implementação.
 
 ## 8. Parecer do Codex (consulta de DESENHO, money-path)
 
-*Pendente: preenchido depois da consulta via `scripts/codex-async.sh` em background.*
+**Não consultado: `sem-codex: cota (rc = 79, guard local)`.** A consulta foi disparada em background via `scripts/codex-async.sh -r max`. O guard recusou **sem gastar a chamada**: cota em 96% (teto 85%), leitura de 27 minutos antes, janela que reabre em 11/11 às 07:47. O prompt está guardado em `codex-prompt-desenho.txt`, na pasta de notas da sessão.
+
+Pelo `money-path.md`, sem Codex o desenho vira **RÉGUA escrita e conferida por mim**, com o PR em **DRAFT**. A consulta retroativa fica pendente (D7). Esta é a régua própria aplicada; cada item foi testado ou declarado:
+
+| # | Ataque | Resultado |
+|---|---|---|
+| R1 | O controle `D0L0U0` é idêntico por construção? | **Não.** Sabotar o z em −5% diverge 0,85 p.p. (§2) |
+| R2 | U é só "mais margem", não correção de viés? | **É viés de média.** 0,00% da venda dos suaves em fim de semana, e o simulador converte LT em du para datas reais (`aleatorio.ts` `ltRealizado`, `simulador.ts` ~L872: chegada no du d + lt, mínimo de 1). A demanda esperada no LT é `D_corrido × dias corridos do LT` |
+| R3 | D e L carregam clarividência? | **D não:** média centrada de 90 d, a mesma suavização; a clarividência de 30 d está à parte (95,83%). **L parcialmente:** é o LT esperado do sorteio por SKU-dia, que usa documentos com t1 a ±10 du de d, inclusive futuros (§5.9 da mãe). Declarado: o fator L mede o descasamento contra o ambiente simulado, e a Alt 2 usa só t4 < d |
+| R4 | O teto de 95,75% depende da classe do dia? | Não: as 724 linhas usam a classe efetiva do dia, a mesma do simulador (bate com a célula, 724 = 724) |
+| R5 | Trocar o critério 3 é afrouxar a régua? | Os pisos e a não inferioridade não mudam. O critério de capital muda de pergunta e vira decisão explícita do Lucas (D1), fixada **antes** da rodada, nunca depois de ver o resultado |
+| R6 | Overfit do z(A) com 12 SKUs? | Risco real, não testado aqui: sensibilidade sem o 8689717792 (§5) e congelamento na calibração (§4.2) |
+| R7 | p80 + σLT conta a incerteza duas vezes? | Sim, na Alt 2 como medida. A implementação mede as duas formas separadas (§3, Alt 2) |
+
+`REVISÃO INDEPENDENTE PENDENTE`: Codex retroativo, desenho e código, antes da rodada oficial do pacote.
 
 ## 9. Evidência
 
@@ -259,6 +279,7 @@ A linha "F0 atual / pacote F2" (93,94% em A, +49,13% de estoque) repete exatamen
   heavy bun diag-suaves-a.ts "$PWD" ~/.cache/afiacao/reposicao-replay-2026-11-09 50 > diag-r50c.txt  # rc=0 (só suaves, controle de independência)
   ```
 
+- Falsificação (10 réplicas, `diag-falsifica.ts` ao lado): `SABOTA=0` controle 90,28% × 90,28%, rc = 0; `SABOTA=2` (z −5%) 89,42% × 90,28%, rc = 0, com divergência esperada; `SABOTA=1` (piso +1) sem efeito: camada inalcançada.
 - Controles na mesma invocação:
   - recálculo nulo × oficial: |Δ| = 0,00 p.p.;
   - linhas A do script × célula do simulador: 724 = 724, com saída rc = 3 se divergir;

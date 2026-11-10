@@ -50,6 +50,7 @@
   O máximo contra o valor gravado ficou em 95,18%, a 1 SKU do limiar.
 - **O LT do F0 replica `v_sku_leadtime_efetivo` point-in-time (R43, R51).** A amostra do replay só coincide com a de produção (949 observações) se o replay anular os documentos em que alguma cópia não tem t4, como faz a view.
 - **Entradas da mesma NF:** cópias com a mesma quantidade sob `tracking_id` distintos são uma entrada física só (R52). Contá-las em separado inflava em 6,7% as unidades recebidas.
+- **Correção da leitura (diagnóstico de 09/11, spec [F0 dos suaves](../superpowers/specs/2026-11-09-f0-suaves-atendimento-a-design.md)):** nos suaves de A, a defasagem da média de 90 dias é o MENOR componente (1,40 p.p.). O maior é a mistura de demanda por dia corrido com LT em dia útil (4,49 p.p., subestima ~29% a demanda no LT); o LT acima do parâmetro dá 1,98 p.p. Mexer só nos suaves leva a célula A a no máximo 95,75%.
 - **Achado de produto:** o motor ainda sugere compra de SKU já substituído (11892839175 → 12101724100, consolidado em 05/07), com parâmetros congelados.
 - **Duplicatas em `sku_leadtime_history`:** a produção já deduplica (`v_sku_leadtime_efetivo`). A nota está em [reposicao.md](../agent/reposicao.md).
 
