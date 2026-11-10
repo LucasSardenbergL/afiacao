@@ -139,7 +139,8 @@ export interface DiagnosticoPacote {
   semPrimeiraSemana: { f0: number | null; pacote: number | null };
   /** Fill da célula A sem as linhas do SKU de sensibilidade; null = contagem de linhas A não bate com a célula (nunca fabricado). */
   semSku: { sku: string; f0: number | null; pacote: number | null; linhasA: number } | null;
-  capital: ReturnType<typeof decomporCapital>;
+  /** null = há estoque sem preço em algum braço: o capital por SKU seria o subtotal valorado (ausente ≠ zero, achado 10). */
+  capital: ReturnType<typeof decomporCapital> | null;
 }
 
 /** Linhas medidas de A (classe efetiva do dia da linha, como o simulador) na janela, por id. */
@@ -187,7 +188,7 @@ export function diagnosticarPacote(dados: Dados, cg: Congelado, reps = REPS_CALI
     const dA = somaV(m.porCelula.A.demandadas);
     const bate = Math.abs(dA - linhasA.size) < 1e-6;
     const semSku = bate && dA - alvo > 0 ? (somaV(m.porCelula.A.integrais) - (alvo - falhasSku / reps)) / (dA - alvo) : null;
-    return { m, cap, semSku, bate };
+    return { m, cap, semSku, bate, naoValorado: somaV(m.estoqueNaoValoradoDias) > 0 };
   };
   const b0 = braco('F0', mF0);
   const b1 = braco(cg.candidata, mAlt);
@@ -195,7 +196,7 @@ export function diagnosticarPacote(dados: Dados, cg: Congelado, reps = REPS_CALI
     fillA: { f0: fillASuavesIntermitentes(b0.m), pacote: fillASuavesIntermitentes(b1.m) },
     semPrimeiraSemana: { f0: fillASemPrimeiraSemana(b0.m), pacote: fillASemPrimeiraSemana(b1.m) },
     semSku: b0.bate && b1.bate ? { sku: SKU_SENSIBILIDADE, f0: b0.semSku, pacote: b1.semSku, linhasA: alvo } : null,
-    capital: decomporCapital(b0.cap, b1.cap, sv, c.alterados),
+    capital: b0.naoValorado || b1.naoValorado ? null : decomporCapital(b0.cap, b1.cap, sv, c.alterados),
   };
 }
 
@@ -298,9 +299,12 @@ export function montarRelatorioPacote(r: RodadaPacote): string {
     l.push(`- A sem a 1ª semana (D5): F0 ${pct(d.semPrimeiraSemana.f0)} → pacote ${pct(d.semPrimeiraSemana.pacote)}`);
     l.push(d.semSku ? `- A sem o ${d.semSku.sku} (${d.semSku.linhasA} linhas, D5): F0 ${pct(d.semSku.f0)} → pacote ${pct(d.semSku.pacote)}` : '- A sem o SKU de sensibilidade: não medido (contagem de linhas A divergente)');
     const k = d.capital;
-    l.push(`- Aumento de capital (estoque médio, R$): ${k.aumento.toFixed(0)}; suaves ${pct(k.suaves)}, intermitentes ${pct(k.intermitentes)}, outros ${pct(k.outros)}; maior SKU ${k.maior ? `${k.maior.sku} ${pct(k.maior.parte)}` : 'n/d'}`);
-    l.push('', '| SKU | Δ estoque médio (R$) |', '|---|---:|');
-    for (const x of k.porSku.filter((y) => Math.abs(y.delta) > 0.005)) l.push(`| ${x.sku} | ${x.delta.toFixed(2)} |`);
+    if (k === null) l.push('- Capital por SKU: não medido (estoque sem preço em algum braço; o subtotal valorado não é o capital)');
+    else {
+      l.push(`- Aumento de capital (estoque médio, R$): ${k.aumento.toFixed(0)}; suaves ${pct(k.suaves)}, intermitentes ${pct(k.intermitentes)}, outros ${pct(k.outros)}; maior SKU ${k.maior ? `${k.maior.sku} ${pct(k.maior.parte)}` : 'n/d'}`);
+      l.push('', '| SKU | Δ estoque médio (R$) |', '|---|---:|');
+      for (const x of k.porSku.filter((y) => Math.abs(y.delta) > 0.005)) l.push(`| ${x.sku} | ${x.delta.toFixed(2)} |`);
+    }
   }
   if (r.estabilidade) {
     l.push('', '## Estabilidade da seleção (informativa)', '', '| recorte | tupla escolhida |', '|---|---|');
