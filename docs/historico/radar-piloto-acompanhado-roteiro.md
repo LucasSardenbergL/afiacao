@@ -44,6 +44,22 @@ SELECT l ->> 'vendedor_user_id' AS vendedor,
 
 `NULL` numa coluna = o sensor não cobria (ex.: Publish ainda não feito), **não** zero.
 
+## Linha de base antes do piloto (psql-ro, 2026-11-09, com M e agenda no ar)
+
+`radar_funil(4)`, de 19/10 a 09/11, com os 3 elegíveis de agora:
+
+| Elegível | Exposto | 1ª ação | Dias com ação | Ações |
+|---|---|---|---|---|
+| master (founder) | 03/11 | 06/11 | 3 | 30 |
+| farmer A | — | — | 0 | 0 |
+| farmer B | — | — | 0 | 0 |
+
+- Contatos registrados: 0 nas 4 semanas, para os 3.
+- Exibidos, clicados e intenções aparecem como `—`. Os sensores entraram hoje (M e agenda) e ninguém foi exposto
+  depois disso.
+- Leitura: o único uso medido é o do founder. Os 2 farmers, que são o grupo do piloto, nunca abriram o Radar. Pelo
+  critério abaixo, o "antes" é zero em todos os sinais e qualquer valor no piloto vem da semana combinada.
+
 ## Critério de sucesso (decidir ANTES de começar, para não ler o resultado com a régua do resultado)
 
 Por vendedor do piloto, na semana:
