@@ -179,7 +179,7 @@ A política não é monotônica: tirar o σLT até melhorou um pouco. As três l
 - **Riscos:**
   - (a) o viés está **na view**, para todo o F0. Corrigir só nos suaves Sayerlack cria duas definições de "demanda média diária" no mesmo motor;
   - (b) a correção global muda o estoque de **todos** os SKUs, inclusive Colacor/Oben fora da coorte, e precisa de medição própria;
-  - (c) o sábado com NF conta venda num dia que não é du, e a conta superestimaria onde houvesse venda de sábado. Nos suaves, a fração da venda em sábado ou domingo na calibração é **0,00%**; fora da coorte, isso precisa ser medido.
+  - (c) a venda de sábado **não** é superestimada por si só. Seis unidades por semana entre segunda e sábado dão `6/5 = 1,2` por dia de revisão, que é a carga certa. O que precisa de regra é a distribuição dentro do calendário, e por isso ela entra no du anterior (§4.4). Nos suaves, a fração da venda em sábado ou domingo na calibração é **0,00%**; fora da coorte, isso precisa ser medido.
 
 ### Alt 2 — Alt 1 + LT por quantil + z de A recalibrado
 
@@ -227,7 +227,7 @@ O Codex (P1) apontou que "descida por coordenada no par" não fecha o algoritmo.
 1. **Enumerar os perfis do F0′ por fora da busca.** A lista é finita e fixada antes da rodada:
    - `P0`: o perfil nulo, igual ao F0 de hoje;
    - Alt 1: demanda por du;
-   - Alt 2, nas variantes `{LT p80 com σLT = 0, LT médio com σLT}` × z(A) ∈ {1,65; 1,88; 2,054; 2,326; 2,576; 3,09};
+   - `Alt2a` (LT p80, σLT = 0) e `Alt2b` (LT médio, σLT herdado), cada um × z(A) ∈ {1,65; 1,88; 2,054; 2,326; 2,576; 3,09}. Os campos completos estão na tabela da §4.4;
    - Alt 3: F1 nos suaves, com quantil q ∈ grade §5.9.
 
    Os valores medidos na calibração para as duas versões de LT da Alt 2 estão na tabela da §3.
@@ -238,7 +238,12 @@ O Codex (P1) apontou que "descida por coordenada no par" não fecha o algoritmo.
    - (b) perfil mais simples, P0 < Alt 1 < Alt 2 < Alt 3;
    - (c) menor z(A) ou q;
    - (d) ordem lexicográfica da tupla serializada.
-5. **Tudo vira dado:** dado ausente é inviável, nunca 0, e `escolherCandidata` passa a devolver a **tupla inteira**, não só a fórmula.
+5. **Três estados, nunca dois** (Codex, rodada 3, P1 novo). Cada (P, X) é:
+   - **viável:** atinge o alvo nas três classes com capital valorado;
+   - **inviável:** há evidência de que nenhum ponto da grade atinge o alvo;
+   - **indeterminado:** falta dado, por exemplo capital sem preço ou classe não observável. Dado ausente **nunca** vira inviável nem 0.
+
+   A semântica de hoje continua (`calibracao.ts:239`, `:473`): uma candidata com capital desconhecido dá `INDETERMINADA` e o veredito vai para `INCONCLUSIVO`. Se houver uma tupla indeterminada que poderia ter menos estoque que a escolhida, a seleção também é `INDETERMINADA` e nunca escolhe a valorada por exclusão. Classe não observável dá `INCONCLUSIVO`. `escolherCandidata` passa a devolver a **tupla inteira**, não só a fórmula.
 6. **Congelar a tupla e avaliar** de 01/05 a 20/10, com as réplicas, o bootstrap pareado (blocos de 4 e 8), os choques comuns e LI/LS da §5.8.
 
 **Estabilidade (informativa, no relatório):**
@@ -270,14 +275,23 @@ O relatório mostra a **fronteira** capital × fill da célula A, de 95% a 99%, 
 
 ### 4.4 O que o replay precisa ganhar (plano, não código agora)
 
-1. **Perfil completo do F0′ em `formulas.ts`.** Cada campo é explícito:
-   - a demanda: `corrido90` ou `du90`;
-   - no aquecimento, o F0 divide pelos dias observados quando há menos de 90 (`formulas.ts:453`). O `du90` divide pelos **du observados** na mesma condição. O diagnóstico dividia pela janela cheia, o que é um defeito a não repetir;
-   - a regra de σd: corrida, como hoje, ou por du com os fins de semana agregados ao du anterior, como na F1 (`formulas.ts:598`);
-   - o σLT: o atual, ou 0 com o LT em quantil;
-   - a amostra e a janela do LT, o piso teórico, o fallback e o arredondamento;
-   - z(A), aplicado pela classe proposta do dia (a mesma de `zPorClasse`);
-   - desde quando o perfil vale: só a partir do 1º dia da calibração, com o aquecimento sempre em `P0`.
+1. **Perfil completo do F0′ em `formulas.ts`.** Cada perfil fixa **todos** os campos (Codex, rodada 3, P1). "Herdado" quer dizer igual ao `P0`, com a mesma linha de `sugestaoF0` (`formulas.ts:446-517`):
+
+   | Campo | `P0` (F0 de hoje) | `Alt1` | `Alt2a` | `Alt2b` |
+   |---|---|---|---|---|
+   | Demanda D | Σ vendas `[d−90, d)` ÷ dias corridos observados (`formulas.ts:453`) | Σ vendas `[d−90, d)` ÷ **du observados** na janela (a venda de sábado entra no du anterior, como em `serieDu`, `formulas.ts:590-602`) | = `Alt1` | = `Alt1` |
+   | σd | série corrida de 180 dias com zeros (`formulas.ts:362-376`) | desvio amostral da **série por du** dos últimos 180 dias corridos, com o mesmo agrupamento de sábado e os zeros dos du sem venda; fallback `D × 0,5`, herdado | = `Alt1` | = `Alt1` |
+   | LT | média do SKU ou do fornecedor, max com o teórico | herdado | **p80** (quantil tipo 7) da amostra documental com `conhecidoEm ?? t4 < d`: do SKU se tiver ≥ 5 itens, senão da Sayerlack (a amostra de `amostraLt`, `formulas.ts:611-624`), depois `max(teórico, p80)`. Amostra vazia: o LT do `P0` | herdado |
+   | σLT | desvio do SKU, do fornecedor ou `(teórico ou 10) × 0,3` | herdado | **0** | herdado |
+   | z | `zPorClasse` da classe proposta do dia | herdado | z(A) da grade só quando a classe proposta é A; B e C herdados | = `Alt2a` |
+   | Horizonte | `H = LT`, sem termo de revisão | herdado | herdado | herdado |
+   | EOQ | `D × 252` | herdado, com D por du (coerente) | = `Alt1` | = `Alt1` |
+   | Arredondamento, mínimo operacional, `+1` do PP, status e gravação | `teto9`, `formulas.ts:507-547` | herdado | herdado | herdado |
+   | Vigência | — | do 1º dia da calibração em diante; o aquecimento é sempre `P0` | = `Alt1` | = `Alt1` |
+
+   - **σd: uma regra por perfil, sem "ou".** O exemplo do Codex (D = 1 por du, LT = 10, σLT = 0, z = 1,65: PP 10 com σd por du e 13 com σd corrido) é um dos oráculos manuais do item 3.
+   - **O termo de revisão não entra.** O período de revisão (o exemplo de 20,6% da §2.2) fica como limitação declarada de todos os perfis F0′, e só a `Alt3` (F1, `H = LT + 1`) o trata.
+   - A `Alt3` é a F1 do simulador sem mudança.
 2. **Paridade nula bit a bit:** `P0` × F0 em todos os SKU-dias, com controle na mesma invocação (o `D0L0U0` daqui).
 3. **Oráculos de teste independentes**, porque a paridade nula não prova o `du90`. São exemplos manuais com:
    - calendário, sábado com NF e semana com feriado ausente;
@@ -333,9 +347,31 @@ O relatório mostra a **fronteira** capital × fill da célula A, de 95% a 99%, 
 | Teto | **Delegado pelo Lucas** a uma proposta do Fable e do Codex, cada um sem ver a do outro (2026-11-10). O valor e a justificativa ficam na §7.2 |
 
 **Ainda em aberto, depois do Codex (rodada 2):**
-- **D1, valor do teto:** em definição (§7.2).
 
 D3, D5 e D6 ficam como propostos na §7: o z(A) entra como parâmetro calibrado e congelado; as sensibilidades sem o 8689717792 e sem a 1ª semana são só informativas; o piso de A continua em 98%.
+
+### 7.2 Teto de capital (critério 3″): 20%
+
+O Lucas delegou o valor ao Fable e ao Codex, consultados em separado e sem ver a resposta um do outro (2026-11-10).
+
+| | Fable | Codex (rodada 3) |
+|---|---|---|
+| **Teto proposto** | 30% | **20%** |
+| **Derivação** | a troca não pode alongar o ciclo de caixa em mais de 1 semana (coorte ≈ 68% do estoque Sayerlack, CCC ≈ 102 d: ≈ 30%); e o carregamento no pior caso a 30% a.a. ≤ a materialidade de 10% da régua mãe (≤ 33%) | limite prudencial: a expansão média fica em no máximo 1/5 da base. Declarado como escolha de exposição, não ótimo inferido dos dados nem prova de suficiência de caixa |
+| **Escopo** | a coorte inteira; por SKU só como diagnóstico | igual |
+| **Ancoragem** | derivado de constantes anteriores à calibração | aceita que conhecer +9,5%, +49% e +72–74% impede uma escolha cega; fixar antes da rodada evita novo ajuste |
+| **GO na prática?** | improvável, e não por causa do teto | inviável para os pacotes já medidos que tocam 98% |
+
+**Decisão (minha, por delegação do Lucas):** **20%**, o menor dos dois (money-path: precisão > recall).
+- Os dois concordam que, nos pontos conhecidos, o teto **não** é o critério decisor.
+- Numa célula da grade (espera, atraso gratuito, emergencial 5%), o próprio 3′ só deixa benefício positivo se o aumento de estoque ficar abaixo de **8,13%** (conta do Codex, com o backlog terminal do F0 a 9,9072% do estoque médio). O teto mais apertado não muda a região viável onde o 3′ já corta, e erra menos para o lado da exposição.
+
+**Regras do teto:**
+- **Métrica:** `aumento = Ī_pacote / Ī_F0 − 1`, com o estoque médio a CMC ponderado pelos dias e os braços pareados no mesmo cenário, inclusive o estresse (D1b).
+- **Decisão:** PASSA se `LS95 ≤ 20%`; FALHA se `LI95 > 20%`; INCERTO no resto.
+- **Um número só:** sem grade de sensibilidade do teto, porque a grade é a porta para "qual teto passaria". O valor fica gravado em `$REPLAY_DADOS` antes da rodada.
+- **O relatório mostra, como diagnóstico:** o incremento de capital por SKU, a parte dos suaves e dos intermitentes, e a parte do maior SKU.
+- **O Lucas pode trocar o valor**, mas só antes da rodada do pacote, nunca depois de ver o resultado.
 
 ## 8. Parecer do Codex (consulta de DESENHO, money-path)
 
@@ -361,7 +397,7 @@ O Codex reexecutou o diagnóstico com 50 réplicas e confirmou, de forma indepen
 | P2 | **L tirava os momentos das mesmas réplicas medidas** | **Corrigido:** 200 réplicas independentes. O Codex mostrou que L é estável (92,84% com os momentos exatos, 93,25% com outra amostra) |
 | P1 | **U inflava também o σLT**, com o σd corrido, o que é margem e não correção da média | **Corrigido:** U só no termo médio, 3,46 p.p. (era 4,49). A questão do σd virou campo do perfil |
 | P2 | **"29%" não é o erro exato do horizonte**, que depende das bordas (exemplo: 20,6%) | **Corrigido** na §2.2. O período de revisão entra no perfil |
-| P2 | **Venda de sábado ÷ du não superestima** necessariamente | **Corrigido** na Alt 1 (c) |
+| P2 | **Venda de sábado ÷ du não superestima** necessariamente | Ficou **ABERTO** na rodada 2: a frase não tinha sido trocada, e o Codex apontou na rodada 3. **Corrigido** na rodada 3, na Alt 1 (c) |
 | P3 | A conta "~98,5%" é 98,62% | **Corrigido** na §2.4 |
 | P1 | **O critério 4 (estresse) ainda exigia redução de capital**; o 3′ repetia o 5 | **Reescrito** na §4.3 (tabela executável). O capital no estresse virou a decisão **D1b** |
 | — | O pacote de +74% dá benefício líquido de −4,07% do estoque do F0 no ponto | **Registrado** na §4.3: a D1 não decide a viabilidade. É vedado retirar células da grade depois |
@@ -371,6 +407,26 @@ O Codex reexecutou o diagnóstico com 50 réplicas e confirmou, de forma indepen
 | — | Contrato do perfil, aquecimento, cache, oráculos de teste independentes e máscara de `A_alt` | **Incorporado** na §4.4 |
 
 **Próximo passo do ritual:** uma rodada 3 do Codex sobre esta versão, para confirmar que os P1 fecharam. A decisão de gastar mais cota é do Lucas (D7′).
+
+### Rodada 3: REPROVA (gpt-6-astra, max, 900 s, rc = 0, D7′)
+
+O Codex reproduziu a decomposição corrigida: as 8 combinações, o Shapley D = 1,67, L = 2,31 e U = 3,46 e o mapa nulo igual ao oficial.
+
+| Achado | Estado na rodada 3 | Tratamento |
+|---|---|---|
+| P1 D com clarividência | **FECHADO** | — |
+| P1 U alterava a margem | **FECHADO** | — |
+| P1 estresse e 3′ × 5 | **FECHADO** | — |
+| P1 seleção e perfil executáveis | **PARCIAL**: o σd tinha "ou"; LT, piso, fallback, arredondamento e revisão sem regra por perfil (o PP muda de 10 para 13 no exemplo) | **Corrigido:** tabela de perfil completa, campo a campo (§4.4, item 1), e o exemplo virou oráculo de teste |
+| **P1 novo:** "dado ausente é inviável" | ABERTO | **Corrigido:** três estados (viável, inviável, indeterminado), preservando o `INDETERMINADA`/`INCONCLUSIVO` de `calibracao.ts:239`, `:473` (§4.2, item 5) |
+| P2 L com as mesmas réplicas | **FECHADO** | — |
+| P2 "29%" | **FECHADO** | — |
+| P2 98,06% atribuído às versões finais | **FECHADO** | — |
+| P2 sábado | **ABERTO**: a frase não tinha sido trocada | **Corrigido** (Alt 1, c) |
+| Overfit | **FECHADO** (só como diagnóstico) | — |
+| Teto | proposta de 20% | Adotado (§7.2) |
+
+**Para sair do DRAFT:** uma rodada 4 do Codex, curta, restrita aos dois P1 desta rodada (a tabela de perfil e os três estados). Gastar mais cota é decisão do Lucas.
 
 ### Régua própria (rodada 1, mantida com a correção do R3)
 
