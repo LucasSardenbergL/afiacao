@@ -259,7 +259,7 @@ A régua do TSB foi feita para uma mudança que **economiza** capital: o critér
 | **3 → 3′ (economia)** | benefício líquido = custo de falta evitada (emergencial, atraso, cancelamento pela margem, **incluindo o backlog terminal**) − custo do capital incremental a **25% a.a.**, proporcional aos dias da janela. Somas pareadas por semana e réplica | PASSA: `LI95 > 0` em **todas** as células da grade e nos três cenários de falta (espera, cancelamento, misto). FALHA: `LS95 < 0` em alguma. INCERTO no resto. 20% e 30% a.a. ficam como sensibilidade |
 | **3″ (teto)** | aumento relativo do **estoque médio** da coorte contra o F0 (a média não é limite de pico de caixa) | PASSA: `LS95(aumento) ≤ teto`. FALHA: `LI95(aumento) > teto`. INCERTO no resto. O teto é fixado antes da rodada e fica em `$REPLAY_DADOS` |
 | **5** | absorvido por 3′, que é a mesma conta com o sinal do capital invertido. A tabela do pacote tem 3′ e não repete o 5 | — |
-| **4 (estresse)** | serviço como em 1 e 2 sob `max(LT, 15)`. Capital: **pendente (D1b)**. Proposta: 3′ e 3″ também no estresse, no lugar de `LI(redução) > 0` | — |
+| **4 (estresse)** | serviço como em 1 e 2 sob `max(LT, 15)`. Capital: 3′ e 3″ também no estresse, no lugar de `LI(redução) > 0` (**D1b**, decidido) | — |
 
 **O que já se sabe no ponto** (conta do Codex, calibração, sem intervalo): o pacote de +74,23% de estoque, no cenário de espera, com atraso gratuito e emergencial terminal a 5%, dá benefício líquido de **−4,07% do estoque médio do F0**. Isso já inclui o backlog terminal menor.
 
@@ -328,11 +328,12 @@ O relatório mostra a **fronteira** capital × fill da célula A, de 95% a 99%, 
 | D2 | **Só os suaves no replay.** A correção de unidade em toda a carteira vira uma frente separada, depois do veredito do pacote |
 | D4 | **F1, F2 e F3** nos intermitentes, calibradas em conjunto com o F0′ dos suaves |
 | D7 | **Gastar a reserva do Codex agora** (`CODEX_ASYNC_TETO_SALDO=0`) |
+| D1b | **Economia + teto também no estresse** (Lucas, 2026-11-10): no estresse `max(LT, 15)`, os critérios 3′ e 3″ valem no lugar de `LI(redução) > 0`, e o serviço segue como nos critérios 1 e 2 |
+| D7′ | **Rodar a 3ª consulta do Codex agora** (Lucas, 2026-11-10) |
+| Teto | **Delegado pelo Lucas** a uma proposta do Fable e do Codex, cada um sem ver a do outro (2026-11-10). O valor e a justificativa ficam na §7.2 |
 
 **Ainda em aberto, depois do Codex (rodada 2):**
-- **D1b:** a regra de capital no estresse `max(LT, 15)`. Proposta: 3′ e 3″ também no estresse, no lugar de `LI(redução) > 0` (§4.3);
-- **D1, valor do teto:** fixado antes da rodada, em `$REPLAY_DADOS`;
-- **D7′:** rodar a 3ª consulta do Codex sobre esta versão.
+- **D1, valor do teto:** em definição (§7.2).
 
 D3, D5 e D6 ficam como propostos na §7: o z(A) entra como parâmetro calibrado e congelado; as sensibilidades sem o 8689717792 e sem a 1ª semana são só informativas; o piso de A continua em 98%.
 
