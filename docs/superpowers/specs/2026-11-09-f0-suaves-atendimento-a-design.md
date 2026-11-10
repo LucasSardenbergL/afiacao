@@ -58,43 +58,58 @@ As falhas esperadas por réplica somam **37,4 de 400 linhas**, e quase metade ve
 
 ### 2.2 Decomposição da falha (Shapley de 3 fatores)
 
-Os três fatores trocam o insumo do F0 por um "nível certo" sem clarividência:
+> **Revisado depois do Codex (rodada 2, §8).** A 1ª versão tinha três defeitos:
+> - o fator D consultava vendas posteriores a 30/04, até 13/06;
+> - o fator L tirava os momentos do LT das mesmas réplicas que mediam o resultado;
+> - o fator U alongava também o σLT, o que é margem e não correção da média.
+>
+> Os números abaixo já são os corrigidos (`diag-suaves-a-v2.ts`). A ordem dos componentes não mudou; os tamanhos, sim.
 
-| Fator | F0 hoje | Contrafactual |
+Os três fatores trocam o insumo do F0 por um nível de **referência retrospectiva**. São diagnósticos, não estimativas que o motor teria no dia:
+
+| Fator | F0 hoje | Contrafactual (diagnóstico) |
 |---|---|---|
-| **D: defasagem** | média dos 90 dias anteriores | média **centrada** de 90 dias (45 antes + 45 depois). A suavização é a mesma, só a defasagem some |
-| **L: LT acima do parâmetro** | LT médio do parâmetro (amostra com t4 < d) | LT **esperado do sorteio** do simulador naquele SKU-dia (média e desvio de `max(1, lt)` nas 50 réplicas) |
-| **U: unidade** | demanda por **dia corrido** (÷ 90) × LT em **dias úteis** | LT convertido para dias corridos (× 7/5). É a mistura de unidades que a spec mãe já apontava (§1) |
+| **D: defasagem** | média dos 90 dias anteriores | média **centrada** de 90 dias, `[d−45, d+45)`, **truncada em 30/04**: não lê nada da avaliação, mas lê o futuro da calibração |
+| **L: LT acima do parâmetro** | LT médio do parâmetro (amostra com t4 < d) | LT **esperado do sorteio** naquele SKU-dia: média e desvio de `max(1, lt)` em 200 réplicas **independentes** das medidas (reps 1000+) |
+| **U: unidade** | `D_corrido × LT_du` no termo médio do PP | o termo médio vira `D_corrido × LT_du × 7/5`; o σ (σd e σLT) **fica como está** |
 
 Fill dos suaves de A nas 8 combinações:
 
 | D | L | U | fill | Δ estoque da coorte |
 |:-:|:-:|:-:|---:|---:|
 | 0 | 0 | 0 | 90,66% | 0 |
-| 1 | 0 | 0 | 92,33% | +0,32% |
-| 0 | 1 | 0 | 93,19% | +1,74% |
-| 0 | 0 | 1 | 96,14% | +11,80% |
-| 1 | 1 | 0 | 94,75% | +1,92% |
-| 1 | 0 | 1 | 96,80% | +12,17% |
-| 0 | 1 | 1 | 97,10% | +15,10% |
-| 1 | 1 | 1 | 98,52% | +14,83% |
+| 1 | 0 | 0 | 92,57% | +0,87% |
+| 0 | 1 | 0 | 93,16% | +2,41% |
+| 0 | 0 | 1 | 95,10% | +7,38% |
+| 1 | 1 | 0 | 95,39% | +2,90% |
+| 1 | 0 | 1 | 95,75% | +8,16% |
+| 0 | 1 | 1 | 96,44% | +9,33% |
+| 1 | 1 | 1 | 98,09% | +10,69% |
 
 **Repartição das 9,34 p.p. que faltam para 100%:**
 
-| Componente | p.p. | parcela |
-|---|---:|---:|
-| **U: demanda em dia corrido × LT em du** | **4,49** | 48% |
-| L: LT do sorteio acima do parâmetro | 1,98 | 21% |
-| D: defasagem da média de 90 dias | 1,40 | 15% |
-| resíduo (variância da demanda e do LT, z = 1,65, arredondamentos, estado herdado) | 1,48 | 16% |
+| Componente | p.p. | parcela | 1ª versão |
+|---|---:|---:|---:|
+| **U: taxa média em dia corrido × LT em du** | **3,46** | 37% | 4,49 |
+| L: LT do sorteio acima do parâmetro | 2,31 | 25% | 1,98 |
+| D: defasagem da média de 90 dias (oráculo retrospectivo) | 1,67 | 18% | 1,40 |
+| resíduo (variância, z = 1,65, arredondamentos, estado herdado) | 1,91 | 20% | 1,48 |
 
-Referência fora da decomposição: a demanda **clarividente**, a média dos 30 dias seguintes, dá 95,83%. A diferença para a centrada (92,33%) é informação de curto prazo que nenhuma média tem, então não é atribuível à "defasagem".
+Referência fora da decomposição: a demanda **clarividente**, a média dos 30 dias seguintes truncada em 30/04, dá 96,12%.
 
 **Leitura:**
 
-- **A hipótese do NO-GO estava parcialmente errada.** A defasagem da média de 90 dias é o **menor** componente identificado: a média centrada fica só 1,4% acima da de 90 dias, em média, nos SKU-dias de A.
-- **O maior componente é estrutural:** o PP cobre `D_corrido × LT_du`, mas o LT de *L* dias úteis dura cerca de *1,4 L* dias corridos. Nos suaves, **0,00%** da venda da calibração cai em sábado ou domingo, então toda a demanda corrida se concentra nos dias úteis. A demanda média no LT fica **subestimada em ~29%** antes de qualquer margem de segurança.
-- Esse viés não é dos suaves: **está na view** (`v_sku_parametros_sugeridos`, paridade 100% no replay) e vale para todo SKU do F0. Também o EOQ usa `D_corrido × 252` (dias úteis/ano).
+- **A hipótese do NO-GO estava parcialmente errada.** A defasagem é o menor componente identificado. Além disso, D é um **oráculo retrospectivo**: ele usa vendas posteriores a d, ainda dentro da calibração. Por isso **não** prova que 18% da falha seja "recuperável" por uma média mais rápida. As médias de 30 e 45 dias, que seriam a versão operacional, não recuperam nada (§3).
+- **O maior componente continua sendo de unidade, mas na taxa média, não no horizonte exato:**
+  - a taxa média: `D_corrido = 5/7 × D_útil` quando não há venda no fim de semana, o que dá **28,6% a menos**. Nos suaves, 0,00% da venda cai em sábado ou domingo na calibração e no aquecimento;
+  - o horizonte exato: o erro da demanda até a chegada depende das bordas do calendário. O simulador compra depois das vendas do dia e recebe antes delas. No exemplo do Codex, com LT de 10 du, há 9 dias úteis de demanda entre os eventos e a subestimação é de **20,6%**. O período de revisão precisa ser tratado explicitamente.
+- **Questão de σd em aberto.** O σd é medido em dias corridos, com os zeros dos fins de semana. Uma demanda constante de 1 por du tem variância útil zero e variância corrida positiva. Corrigir a média sem decidir o σd não é "coerência completa de unidades". O perfil do F0′ precisa fixar essa regra (§4.4).
+- Esse viés de taxa **está na view** (`v_sku_parametros_sugeridos`, paridade de 100% no replay) e vale para todo SKU do F0. O EOQ também usa `D_corrido × 252` (dias úteis/ano).
+- **O que o Codex reproduziu de forma independente:**
+  - o controle é genuíno: mapa nulo = oficial em todas as entradas, e o z a −5% muda o fill;
+  - L é estável à amostragem: 92,84% com os momentos exatos da distribuição documental, 93,25% com outra amostra de 50, contra 93,16% aqui.
+
+  **Não está validado:** os caminhos de retenção e fusível da gravação (`formulas.ts:537-545`), que o recálculo simplificado omite. Nos suaves, eles não divergem na calibração.
 
 ### 2.3 Reconciliação com os números do NO-GO
 
@@ -107,7 +122,7 @@ Referência fora da decomposição: a demanda **clarividente**, a média dos 30 
   | intermitentes | desde 16/03 | 10,59 du | 9,58 du | 77,4 |
   | intermitentes | calibração inteira | 10,15 du | 9,44 du | 131,6 |
 
-  O LT acima do parâmetro existe, mas é modesto e concentrado no fim da janela. O fator L pesa 1,98 p.p. mais pelo **descasamento no tempo** (o LT sobe quando os pedidos saem) e pelo desvio do que pela média.
+  O LT acima do parâmetro existe, mas é modesto e concentrado no fim da janela. O fator L pesa 2,31 p.p. mais pelo **descasamento no tempo** (o LT sobe quando os pedidos saem) e pelo desvio do que pela média.
 - **"Demanda de A cresceu 1,55×"** vale para a coorte A inteira. Nas linhas de A dos suaves, foi 1,38×.
 
 ### 2.4 O teto da célula A mexendo só nos suaves
@@ -118,7 +133,7 @@ Referência fora da decomposição: a demanda **clarividente**, a média dos 30 
 | intermitentes | 324 | 90,49% |
 | **célula A, com suaves a 100%** | 724 | **95,75%** |
 
-**Consequência para a régua:** o piso de 98% na célula inteira exige que os intermitentes de A cheguem a ≥ 95,5% com os suaves perfeitos, ou a ~98,5% com os suaves a ~97,5%. O desenho precisa ser um **pacote**: F0′ nos suaves e uma fórmula X nos intermitentes, medidos juntos.
+**Consequência para a régua:** o piso de 98% na célula inteira exige que os intermitentes de A cheguem a ≥ 95,5% com os suaves perfeitos, ou a 98,62% com os suaves a 97,5%. O teto é condicional à janela, ao cenário e ao F0 dos intermitentes, não uma constante da avaliação. O desenho precisa ser um **pacote**: F0′ nos suaves e uma fórmula X nos intermitentes, medidos juntos.
 
 ## 3. Alternativas para o F0 dos suaves
 
@@ -142,7 +157,17 @@ A linha "F0 atual / pacote F2" (93,94% em A, +49,13% de estoque) repete exatamen
 
 ¹ Medida na variante vizinha, com demanda de 45 dias, LT p80 e × 7/5 (`A13_dem45_ltP80_U`). Na implementação, a Alt 1 + p80 é medida com a definição exata dela.
 
-> **Mesmo o melhor pacote só toca o piso no ponto, com +74% de estoque da coorte.** A célula A dá 98,06% na calibração, que é o ponto e não o limite inferior.
+**O tratamento de LT da Alt 2 no pacote** (z(A) = 2,326, F2 nos intermitentes, calibração). Os 98,06% da tabela acima são da combinação "p80 + σLT", que a §4.4 manda **não** usar, porque sobrepõe proteção:
+
+| LT nos suaves | célula A | Δ estoque |
+|---|---:|---:|
+| p80 + σLT atual (a medida acima) | 98,06% | +74,23% |
+| p80 com σLT = 0 | 98,11% | +72,17% |
+| média + σLT atual | 97,71% | +68,37% |
+
+A política não é monotônica: tirar o σLT até melhorou um pouco. As três linhas mantêm o σd corrido original.
+
+> **Mesmo o melhor pacote só toca o piso no ponto, com +72% a +74% de estoque da coorte.** A célula A dá 98,06% na calibração, que é o ponto e não o limite inferior.
 >
 > Pela régua atual, o critério 3 (redução de capital ≥ 10%) reprova **por construção** qualquer mudança que suba o serviço comprando estoque (§4.3).
 
@@ -150,7 +175,7 @@ A linha "F0 atual / pacote F2" (93,94% em A, +49,13% de estoque) repete exatamen
 
 - **O quê:** `D = Σ vendas em [d−90, d) ÷ nº de dias úteis da janela`, em vez de ÷ 90. O LT continua em du, e o EOQ fica coerente (`D_du × 252`).
 - **Premissa:** a venda acontece em dia útil, com sábado residual. Então demanda por du × LT em du é a demanda esperada no LT. Isso é **correção de viés**, não aumento de margem: com z inalterado, o ES só cresce pelo D maior.
-- **Ganho:** +4,65 p.p. nos suaves de A, por +9,54% do estoque da coorte (+38,70% do estoque dos próprios suaves). Ataca o maior componente (U).
+- **Ganho:** +4,65 p.p. nos suaves de A, por +9,54% do estoque da coorte (+38,70% do estoque dos próprios suaves). Ataca o maior componente (U, a taxa média). A questão do σd corrido continua aberta (§2.2) e é um campo do perfil (§4.4).
 - **Riscos:**
   - (a) o viés está **na view**, para todo o F0. Corrigir só nos suaves Sayerlack cria duas definições de "demanda média diária" no mesmo motor;
   - (b) a correção global muda o estoque de **todos** os SKUs, inclusive Colacor/Oben fora da coorte, e precisa de medição própria;
@@ -195,33 +220,80 @@ A linha "F0 atual / pacote F2" (93,94% em A, +49,13% de estoque) repete exatamen
 - A célula "A suaves" aparece só como diagnóstico, **nunca** como critério.
 - A **linha de base continua o F0 atual** nos 153 SKUs: todos os deltas e o alvo `max(piso, fill F0 − 0,25 p.p.)` são contra o motor de hoje, não contra o F0′.
 
-### 4.2 Calibração e congelamento
+### 4.2 Calibração e seleção determinística do pacote
 
-- **Parâmetro livre de cada alternativa:**
-  - Alt 1: nenhum;
-  - Alt 2: z(A) ∈ {1,65; 1,88; 2,054; 2,326; 2,576; 3,09} e a escolha "p80 × σLT", sem acumular as duas;
-  - Alt 3: o quantil da grade da §5.9.
-- A escolha acontece na calibração, junto com a da fórmula X dos intermitentes: descida por coordenada no par (parâmetro de F0′, quantil de X), validação do trio de classes e menor estoque que atinge o alvo nas três. Depois, **congela**.
-- **Avaliação:** de 01/05 a 20/10, com as réplicas e o bootstrap pareado da §5.8, os mesmos choques comuns e LI/LS.
+O Codex (P1) apontou que "descida por coordenada no par" não fecha o algoritmo. A seleção passa a ser esta:
 
-### 4.3 Capital: o critério 3 não serve para esta pergunta
+1. **Enumerar os perfis do F0′ por fora da busca.** A lista é finita e fixada antes da rodada:
+   - `P0`: o perfil nulo, igual ao F0 de hoje;
+   - Alt 1: demanda por du;
+   - Alt 2, nas variantes `{LT p80 com σLT = 0, LT médio com σLT}` × z(A) ∈ {1,65; 1,88; 2,054; 2,326; 2,576; 3,09};
+   - Alt 3: F1 nos suaves, com quantil q ∈ grade §5.9.
 
-- A régua do TSB foi desenhada para uma mudança que **economiza** capital. O critério 3 exige redução ≥ 10%, e toda alternativa deste documento **aumenta** o estoque.
-- Manter o critério 3 dá NO-GO garantido. Isso não é rigor: a régua estaria respondendo outra pergunta.
-- **O piso de serviço não se mexe.** O que precisa de decisão do Lucas (D1) é o critério de capital para mudança que compra serviço. Proposta:
-  - **3′ (economia):** custo líquido = custo de falta evitada (grade da §6: emergencial 5/10/20%, atraso 0/0,5/1% por linha-dia, cancelamento pela margem) − custo do capital adicional a **25% a.a.** (20% e 30% como sensibilidade), positivo pelo LI em toda célula da grade;
-  - **3″ (teto):** aumento de estoque da coorte ≤ um teto que o Lucas fixa antes da rodada (por exemplo, +X% ou +R$ Y, guardado em `$REPLAY_DADOS`).
-- O relatório mostra a **fronteira** capital × fill da célula A, de 95% a 99%, como já faz para F2/F3.
+   Os valores medidos na calibração para as duas versões de LT da Alt 2 estão na tabela da §3.
+2. **Para cada perfil P, rodar a calibração existente sem mudança** (`calibrar`, §5.9 da mãe) para X ∈ {F1, F2, F3} (D4). Ela usa o mesmo alvo, a mesma grade, a mesma descida por classe e o mesmo trio validado. A saída de cada (P, X) é a tupla congelável `(P, X, β ou janela, quantis A/B/C)`, ou "inviável".
+3. **Candidata:** entre as tuplas viáveis (alvo nas três classes, **com** A medido na célula inteira), fica a de menor estoque médio.
+4. **Desempate**, nesta ordem:
+   - (a) a regra de simplicidade da mãe, ≤ 1 p.p. de capital: F1 < F3 < F2;
+   - (b) perfil mais simples, P0 < Alt 1 < Alt 2 < Alt 3;
+   - (c) menor z(A) ou q;
+   - (d) ordem lexicográfica da tupla serializada.
+5. **Tudo vira dado:** dado ausente é inviável, nunca 0, e `escolherCandidata` passa a devolver a **tupla inteira**, não só a fórmula.
+6. **Congelar a tupla e avaliar** de 01/05 a 20/10, com as réplicas, o bootstrap pareado (blocos de 4 e 8), os choques comuns e LI/LS da §5.8.
+
+**Estabilidade (informativa, no relatório):**
+- a seleção é refeita em dois cortes temporais dentro da calibração (fev–mar e mar–abr);
+- e em *leave-one-SKU-out* nos 12 suaves.
+
+Uma escolha que troca de perfil entre cortes é sinal de overfit. Fica registrada, mas não muda o veredito. As 50 réplicas não criam 50 históricos de demanda independentes.
+
+### 4.3 Capital: a régua para mudança que compra serviço (D1, contrato executável)
+
+A régua do TSB foi feita para uma mudança que **economiza** capital: o critério 3 exige redução ≥ 10%, e o 4 exige `LI(redução) > 0` no estresse. Toda alternativa deste documento **aumenta** o estoque. Pela D1 (economia + teto), os critérios de capital do TSB são substituídos assim:
+
+| | O que é | Regra |
+|---|---|---|
+| **Mantido** | serviço (critérios 1 e 2, nas 6 células), exposição (≥ 300 linhas), precisão, estados iniciais, Clopper–Pearson, blocos 4/8 com `LI = min`, `LS = max` | sem mudança |
+| **Mantido** | precedência NO-GO > INCONCLUSIVO > GO | sem mudança |
+| **Mantido** | `A_alt`, `B_alt` e `C_alt` medidos na máscara dos **intermitentes originais** (`coorte.alterados`, fixada no corte), **nunca** na união com os suaves. Senão `A_alt` vira A e perde a função de proteger os intermitentes | sem mudança |
+| **3 → 3′ (economia)** | benefício líquido = custo de falta evitada (emergencial, atraso, cancelamento pela margem, **incluindo o backlog terminal**) − custo do capital incremental a **25% a.a.**, proporcional aos dias da janela. Somas pareadas por semana e réplica | PASSA: `LI95 > 0` em **todas** as células da grade e nos três cenários de falta (espera, cancelamento, misto). FALHA: `LS95 < 0` em alguma. INCERTO no resto. 20% e 30% a.a. ficam como sensibilidade |
+| **3″ (teto)** | aumento relativo do **estoque médio** da coorte contra o F0 (a média não é limite de pico de caixa) | PASSA: `LS95(aumento) ≤ teto`. FALHA: `LI95(aumento) > teto`. INCERTO no resto. O teto é fixado antes da rodada e fica em `$REPLAY_DADOS` |
+| **5** | absorvido por 3′, que é a mesma conta com o sinal do capital invertido. A tabela do pacote tem 3′ e não repete o 5 | — |
+| **4 (estresse)** | serviço como em 1 e 2 sob `max(LT, 15)`. Capital: **pendente (D1b)**. Proposta: 3′ e 3″ também no estresse, no lugar de `LI(redução) > 0` | — |
+
+**O que já se sabe no ponto** (conta do Codex, calibração, sem intervalo): o pacote de +74,23% de estoque, no cenário de espera, com atraso gratuito e emergencial terminal a 5%, dá benefício líquido de **−4,07% do estoque médio do F0**. Isso já inclui o backlog terminal menor.
+
+- **A D1 não resolve a viabilidade por decreto.** O pacote mais caro provavelmente reprova em 3′.
+- **Retirar depois a célula de atraso gratuito para fazer passar seria afrouxamento**, e está vedado.
+
+O relatório mostra a **fronteira** capital × fill da célula A, de 95% a 99%, com o benefício líquido de cada ponto.
 
 ### 4.4 O que o replay precisa ganhar (plano, não código agora)
 
-1. **Parametrizar o F0 no `formulas.ts`:** `F0` ganha um "perfil" {`demanda: 'corrido90' | 'du90'`, `lt: 'media' | {quantil}`, `zA?`}. O perfil nulo tem de reproduzir o F0 de hoje **bit a bit**: paridade 100% contra a view e controle na mesma invocação, como o `D0L0U0` deste diagnóstico. Teste: perfil nulo × F0 em todos os SKU-dias.
-2. **Modo de calibração "pacote"** em `calibracao.ts`/`rodar.ts`: grade conjunta, o mesmo `alvo`, a mesma régua e o veredito da tabela §6.1 com o critério 3 trocado pela decisão D1. **Sem tocar no modo oficial atual**: a rodada de 09/11 continua reprodutível.
-3. **Falsificação por camada**, com controle verde na mesma invocação:
-   - sabotar o perfil (por exemplo, ÷ 90 no lugar de ÷ du) e exigir vermelho no teste de paridade do perfil;
-   - sabotar o mapa misto (suaves no F0) e exigir que o pacote reproduza a linha "F0 atual + F2".
-4. **Relatório:** decomposição (§2.2) como seção fixa; célula A suaves e intermitentes como diagnóstico; fronteira.
-5. **Codex adversarial do código** antes da rodada oficial (o ritual da spec mãe).
+1. **Perfil completo do F0′ em `formulas.ts`.** Cada campo é explícito:
+   - a demanda: `corrido90` ou `du90`;
+   - no aquecimento, o F0 divide pelos dias observados quando há menos de 90 (`formulas.ts:453`). O `du90` divide pelos **du observados** na mesma condição. O diagnóstico dividia pela janela cheia, o que é um defeito a não repetir;
+   - a regra de σd: corrida, como hoje, ou por du com os fins de semana agregados ao du anterior, como na F1 (`formulas.ts:598`);
+   - o σLT: o atual, ou 0 com o LT em quantil;
+   - a amostra e a janela do LT, o piso teórico, o fallback e o arredondamento;
+   - z(A), aplicado pela classe proposta do dia (a mesma de `zPorClasse`);
+   - desde quando o perfil vale: só a partir do 1º dia da calibração, com o aquecimento sempre em `P0`.
+2. **Paridade nula bit a bit:** `P0` × F0 em todos os SKU-dias, com controle na mesma invocação (o `D0L0U0` daqui).
+3. **Oráculos de teste independentes**, porque a paridade nula não prova o `du90`. São exemplos manuais com:
+   - calendário, sábado com NF e semana com feriado ausente;
+   - σd corrido × du e LT = 0;
+   - histórico curto (< 90 dias);
+   - os limites PASSA, FALHA e INCERTO de 3′ e 3″.
+
+   E **mutar os dados posteriores a 30/04 não pode mudar** a calibração de nenhum perfil implementável. Esse teste pega exatamente o defeito do fator D da 1ª versão.
+4. **Modo "pacote"** em `calibracao.ts`/`rodar.ts`, com o algoritmo da §4.2 e a tabela da §4.3. **O modo oficial não muda**: a rodada de 09/11 continua reprodutível byte a byte.
+5. **Cache e relatório:** o perfil e o protocolo entram na chave do cache (hoje ela não tem perfil, `formulas.ts:805`) e no cabeçalho do relatório.
+6. **Falsificação por camada**, com controle verde na mesma invocação:
+   - sabotar `du90` para `÷ 90` e exigir vermelho nos oráculos manuais;
+   - pôr os suaves no `P0` e exigir que o pacote reproduza a linha "F0 atual + F2" (93,94%, +49,13%);
+   - trocar a máscara de `A_alt` pela união e exigir vermelho no teste da máscara.
+7. **Relatório:** decomposição (§2.2) como diagnóstico; células A dos suaves e dos intermitentes como diagnóstico; fronteira; estabilidade (§4.2).
+8. **Codex adversarial do código** antes da rodada oficial do pacote.
 
 ## 5. Limites e riscos de leitura
 
@@ -257,25 +329,59 @@ A linha "F0 atual / pacote F2" (93,94% em A, +49,13% de estoque) repete exatamen
 | D4 | **F1, F2 e F3** nos intermitentes, calibradas em conjunto com o F0′ dos suaves |
 | D7 | **Gastar a reserva do Codex agora** (`CODEX_ASYNC_TETO_SALDO=0`) |
 
+**Ainda em aberto, depois do Codex (rodada 2):**
+- **D1b:** a regra de capital no estresse `max(LT, 15)`. Proposta: 3′ e 3″ também no estresse, no lugar de `LI(redução) > 0` (§4.3);
+- **D1, valor do teto:** fixado antes da rodada, em `$REPLAY_DADOS`;
+- **D7′:** rodar a 3ª consulta do Codex sobre esta versão.
+
 D3, D5 e D6 ficam como propostos na §7: o z(A) entra como parâmetro calibrado e congelado; as sensibilidades sem o 8689717792 e sem a 1ª semana são só informativas; o piso de A continua em 98%.
 
 ## 8. Parecer do Codex (consulta de DESENHO, money-path)
 
-**Não consultado: `sem-codex: cota (rc = 79, guard local)`.** A consulta foi disparada em background via `scripts/codex-async.sh -r max`. O guard recusou **sem gastar a chamada**: cota em 96% (teto 85%), leitura de 27 minutos antes, janela que reabre em 11/11 às 07:47. O prompt está guardado em `codex-prompt-desenho.txt`, na pasta de notas da sessão.
+### Rodada 1: não consultado (guard de cota)
 
-Pelo `money-path.md`, sem Codex o desenho vira **RÉGUA escrita e conferida por mim**, com o PR em **DRAFT**. A consulta retroativa fica pendente (D7). Esta é a régua própria aplicada; cada item foi testado ou declarado:
+`sem-codex: cota (rc = 79, guard local)`. A cota estava em 96% (teto 85%), e a chamada não foi gasta. Nessa rodada foi aplicada a régua própria (abaixo).
+
+### Rodada 2: REPROVA (gpt-6-astra, max, 546 s, rc = 0, reserva liberada pela D7)
+
+> O parecer inteiro está em `codex-desenho-rodada2.txt` na pasta de notas da sessão.
+
+**Veredito:** reprova o desenho **como contrato pronto para implementar**. Nas palavras dele, a tese do pacote se sustenta, mas a atribuição causal e as regras de decisão ainda admitiam leituras incompatíveis.
+
+O Codex reexecutou o diagnóstico com 50 réplicas e confirmou, de forma independente:
+- o controle (mapa nulo = oficial em todas as entradas; o z a −5% muda o fill);
+- o teto de 95,745856%;
+- que os suaves não pertencem a grupo de embalagem;
+- os alvos A = 98%, B = 95%, C = 92,7233%.
+
+| # | Achado | Tratamento |
+|---|---|---|
+| P1 | **D tinha clarividência:** a média centrada lia até 13/06, já dentro da avaliação. Retirar só do oráculo as vendas posteriores a 30/04 mudou 278 SKU-dias e levou o D1L0U0 a 91,68% | **Corrigido.** O oráculo é truncado em 30/04 (§2.2) e D virou "oráculo retrospectivo", sem prova de ser recuperável. **Registrado:** a direção desta spec foi escolhida tendo consultado parte de maio/junho |
+| P2 | **L tirava os momentos das mesmas réplicas medidas** | **Corrigido:** 200 réplicas independentes. O Codex mostrou que L é estável (92,84% com os momentos exatos, 93,25% com outra amostra) |
+| P1 | **U inflava também o σLT**, com o σd corrido, o que é margem e não correção da média | **Corrigido:** U só no termo médio, 3,46 p.p. (era 4,49). A questão do σd virou campo do perfil |
+| P2 | **"29%" não é o erro exato do horizonte**, que depende das bordas (exemplo: 20,6%) | **Corrigido** na §2.2. O período de revisão entra no perfil |
+| P2 | **Venda de sábado ÷ du não superestima** necessariamente | **Corrigido** na Alt 1 (c) |
+| P3 | A conta "~98,5%" é 98,62% | **Corrigido** na §2.4 |
+| P1 | **O critério 4 (estresse) ainda exigia redução de capital**; o 3′ repetia o 5 | **Reescrito** na §4.3 (tabela executável). O capital no estresse virou a decisão **D1b** |
+| — | O pacote de +74% dá benefício líquido de −4,07% do estoque do F0 no ponto | **Registrado** na §4.3: a D1 não decide a viabilidade. É vedado retirar células da grade depois |
+| P2 | **Os 98,06% são da combinação p80 + σLT**, que o próprio desenho manda abandonar | **Corrigido:** tabela com as três variantes de LT (§3) |
+| P2 | **Risco de overfit** com 12 SKUs | **Incorporado:** estabilidade por cortes temporais e *leave-one-SKU-out* (§4.2), só informativa |
+| P1 | **Seleção do pacote indeterminada;** `escolherCandidata` devolve só a fórmula | **Reescrito:** enumeração de perfis por fora, tupla congelada e desempate total (§4.2) |
+| — | Contrato do perfil, aquecimento, cache, oráculos de teste independentes e máscara de `A_alt` | **Incorporado** na §4.4 |
+
+**Próximo passo do ritual:** uma rodada 3 do Codex sobre esta versão, para confirmar que os P1 fecharam. A decisão de gastar mais cota é do Lucas (D7′).
+
+### Régua própria (rodada 1, mantida com a correção do R3)
 
 | # | Ataque | Resultado |
 |---|---|---|
-| R1 | O controle `D0L0U0` é idêntico por construção? | **Não.** Sabotar o z em −5% diverge 0,85 p.p. (§2) |
-| R2 | U é só "mais margem", não correção de viés? | **É viés de média.** 0,00% da venda dos suaves em fim de semana, e o simulador converte LT em du para datas reais (`aleatorio.ts` `ltRealizado`, `simulador.ts` ~L872: chegada no du d + lt, mínimo de 1). A demanda esperada no LT é `D_corrido × dias corridos do LT` |
-| R3 | D e L carregam clarividência? | **D não:** média centrada de 90 d, a mesma suavização; a clarividência de 30 d está à parte (95,83%). **L parcialmente:** é o LT esperado do sorteio por SKU-dia, que usa documentos com t1 a ±10 du de d, inclusive futuros (§5.9 da mãe). Declarado: o fator L mede o descasamento contra o ambiente simulado, e a Alt 2 usa só t4 < d |
-| R4 | O teto de 95,75% depende da classe do dia? | Não: as 724 linhas usam a classe efetiva do dia, a mesma do simulador (bate com a célula, 724 = 724) |
-| R5 | Trocar o critério 3 é afrouxar a régua? | Os pisos e a não inferioridade não mudam. O critério de capital muda de pergunta e vira decisão explícita do Lucas (D1), fixada **antes** da rodada, nunca depois de ver o resultado |
-| R6 | Overfit do z(A) com 12 SKUs? | Risco real, não testado aqui: sensibilidade sem o 8689717792 (§5) e congelamento na calibração (§4.2) |
-| R7 | p80 + σLT conta a incerteza duas vezes? | Sim, na Alt 2 como medida. A implementação mede as duas formas separadas (§3, Alt 2) |
-
-`REVISÃO INDEPENDENTE PENDENTE`: Codex retroativo, desenho e código, antes da rodada oficial do pacote.
+| R1 | O controle `D0L0U0` é idêntico por construção? | **Não.** O z a −5% diverge 0,85 p.p., e o Codex confirmou |
+| R2 | U é só "mais margem"? | Na 1ª versão **era em parte**, porque alongava o σLT: o meu R2 errou, e o Codex pegou. Agora U mexe só no termo médio |
+| R3 | D e L carregam clarividência? | **D carrega**, e o meu R3 errou ao dizer que não: lia até 13/06. Agora está truncado em 30/04 e rotulado como oráculo retrospectivo. **L**: o sorteio usa documentos com t1 a ±10 du de d (§5.9 da mãe), e a Alt 2 usa só t4 < d |
+| R4 | O teto depende da classe do dia? | Não: 724 = 724, e o Codex confirmou 95,745856% |
+| R5 | Trocar o critério 3 é afrouxar? | Não, desde que a régua seja executável e fixada antes (§4.3) |
+| R6 | Overfit do z(A)? | Risco real: estabilidade na §4.2 |
+| R7 | p80 + σLT sobrepõe proteção? | Sim: a §3 mede as três versões e a §4.2 só enumera as duas sem sobreposição |
 
 ## 9. Evidência
 
@@ -291,6 +397,7 @@ Pelo `money-path.md`, sem Codex o desenho vira **RÉGUA escrita e conferida por 
   ```
 
 - Falsificação (10 réplicas, `diag-falsifica.ts` ao lado): `SABOTA=0` controle 90,28% × 90,28%, rc = 0; `SABOTA=2` (z −5%) 89,42% × 90,28%, rc = 0, com divergência esperada; `SABOTA=1` (piso +1) sem efeito: camada inalcançada.
+- **Versão corrigida depois do Codex:** `diag-suaves-a-v2.ts`, saída `diag-v2.txt`, rc = 0, `fim ok`. Ela traz o oráculo truncado em 30/04, os momentos de LT de réplicas independentes, o U só no termo médio e as variantes de LT do pacote. Controle 90,66% × 90,66%.
 - Controles na mesma invocação:
   - recálculo nulo × oficial: |Δ| = 0,00 p.p.;
   - linhas A do script × célula do simulador: 724 = 724, com saída rc = 3 se divergir;
