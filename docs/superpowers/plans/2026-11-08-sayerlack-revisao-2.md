@@ -42,8 +42,8 @@
   `_shared/sayerlack-portal-dom.ts`; importar v1.8 e varrer v1.10, as 2 com DEPLOY CONFIRMADO.
 - ✅ **7.2 + 4.3** (#3747) — evidência imutável de cada leitura (`sayerlack_portal_evidencia`, migration `20261111090000`) e
   sessão do Browserless contada pela importadora; migration aplicada (#1015), importar v1.9 e varrer v1.11 com DEPLOY CONFIRMADO.
-- ✅ **7.3** (#3751) — transportadora do portal no `cObs` do PO, lida da evidência do 7.2; disparar v1.13 com DEPLOY CONFIRMADO (Caminho B, Codex
-  retroativo pendente).
+- ✅ **7.3** (#3751) — transportadora do portal no `cObs` do PO, lida da evidência do 7.2; disparar v1.13 com DEPLOY CONFIRMADO (Caminho B; Codex
+  retroativo em 2026-11-09: nenhum defeito real).
 - ✅ **7.1** (#3754) — vincular o PO lançado à mão no Omie: RPC `sayerlack_vincular_po_manual` (migration `20261111110000`;
   contrato por token, dono, SKU/quantidade/valor calibrados em prod, trilha em `acoes_execucoes`); migration aplicada
   (#1031), importar v1.10 e varrer v1.12 com DEPLOY CONFIRMADO.
