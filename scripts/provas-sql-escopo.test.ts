@@ -24,9 +24,26 @@ import {
   type JobDoRun,
   type Repo,
   type RunDaMain,
+  TITULO_RECIBO,
+  anotacaoRecibo,
+  decidirRecibo,
+  escolherRecibo,
+  fatosGitDoRecibo,
+  mergeDaAnotacao,
+  mergeDoCheckout,
+  rotaDoCheckRun,
+  type FatosRecibo,
+  type JobComId,
+  type RunDoPr,
 } from './provas-sql-escopo';
 
 const NENHUM: ReadonlySet<string> = new Set();
+
+function lidosDe(repo: Repo): Set<string> {
+  const l = lidosEmInerte(repo);
+  if (l === null) throw new Error('mapa de leitura null num repo legível');
+  return l;
+}
 
 function repoFalso(arquivos: Record<string, string>): Repo {
   return {
@@ -122,7 +139,7 @@ describe('provas-sql-escopo — o que as provas leem dentro do inerte', () => {
   });
 
   it('script citado com raiz em variável entra no fecho', () => {
-    const lidos = lidosEmInerte(
+    const lidos = lidosDe(
       repoFalso({
         'db/test-e.sh': 'node "$REPO_ROOT/scripts/e.ts" && bun ${RAIZ}/scripts/f.mjs',
         'scripts/e.ts': "import { z } from '../src/lib/z';",
@@ -171,17 +188,17 @@ describe('provas-sql-escopo — o que as provas leem dentro do inerte', () => {
       'scripts/venda-cidades-alvo-esperado.ts': "import { r } from '../src/lib/whatsapp/route-city';",
       'src/lib/whatsapp/route-city.ts': '',
     };
-    const lidos = lidosEmInerte(repoFalso({ ...arquivos, 'src/lib/whatsapp/route-city.tsx': '' }));
+    const lidos = lidosDe(repoFalso({ ...arquivos, 'src/lib/whatsapp/route-city.tsx': '' }));
     expect(decidir('pull_request', ['src/lib/whatsapp/route-city.tsx'], lidos).roda).toBe(true);
     // e o caso de antes do PR, com só o .ts: tocar QUALQUER variante roda
-    const antes = lidosEmInerte(repoFalso(arquivos));
+    const antes = lidosDe(repoFalso(arquivos));
     for (const f of ['src/lib/whatsapp/route-city.ts', 'src/lib/whatsapp/route-city.tsx', 'src/lib/whatsapp/route-city.mts']) {
       expect(decidir('pull_request', [f], antes).roda, f).toBe(true);
     }
   });
 
   it('o fecho segue TODOS os candidatos existentes, não só o primeiro', () => {
-    const lidos = lidosEmInerte(
+    const lidos = lidosDe(
       repoFalso({
         'db/lib/g.ts': "import { a } from '../../src/lib/dupla';",
         'src/lib/dupla.ts': "import { b } from './so-do-ts';",
@@ -195,7 +212,7 @@ describe('provas-sql-escopo — o que as provas leem dentro do inerte', () => {
   });
 
   it('fecho transitivo: db/*.sh → scripts/*.ts citado → ../src → @/ → src', () => {
-    const lidos = lidosEmInerte(
+    const lidos = lidosDe(
       repoFalso({
         'db/test-a.sh': 'bun scripts/esperado.ts "$X"',
         'db/lib/gera.ts': "import { f } from '../../scripts/lib/leitor';",
@@ -226,7 +243,7 @@ describe('provas-sql-escopo — o que as provas leem dentro do inerte', () => {
   it('na árvore real, o cálculo acha as leituras que o mapa de 2026-11-04 achou à mão', () => {
     const repo = lerRepo();
     expect(repo).not.toBeNull();
-    const lidos = lidosEmInerte(repo!);
+    const lidos = lidosDe(repo!);
     for (const f of [
       'src/lib/financeiro/saldo-contas.ts',
       'src/lib/farmer/universo-pedidos.ts',
@@ -439,10 +456,12 @@ describe('ci.yml — validate aceita o skip das provas só onde o escopo pode pu
   const passo = ci.jobs.validate.steps.find((s) => s.name?.startsWith('Todos os jobs passaram'));
   const temJq = spawnSync('jq', ['--version']).status === 0;
 
-  function needs(escopo: { result: string; roda?: string; base?: string }, provas = 'skipped') {
+  function needs(escopo: { result: string; roda?: string; base?: string; modo?: string; recibo?: string }, provas = 'skipped') {
     const outputs: Record<string, string> = {};
     if (escopo.roda !== undefined) outputs.roda = escopo.roda;
     if (escopo.base !== undefined) outputs.base = escopo.base;
+    if (escopo.modo !== undefined) outputs.modo = escopo.modo;
+    if (escopo.recibo !== undefined) outputs.recibo = escopo.recibo;
     const ok = { result: 'success', outputs: {} };
     return JSON.stringify({
       typecheck: ok,
@@ -455,16 +474,16 @@ describe('ci.yml — validate aceita o skip das provas só onde o escopo pode pu
       'provas-sql-uniao': { result: provas, outputs: {} },
     });
   }
-  function roda(env: Record<string, string>): number {
-    const r = spawnSync('bash', ['-c', passo!.run!], { env: { PATH: process.env.PATH ?? '', ...env }, encoding: 'utf8' });
+  function roda(env: Record<string, string>, path = process.env.PATH ?? ''): number {
+    const r = spawnSync('bash', ['-c', passo!.run!], { env: { PATH: path, ...env }, encoding: 'utf8' });
     return r.status ?? -1;
   }
   const MAIN = { EVENTO: 'workflow_dispatch', REF: 'refs/heads/main', ESCOPO_DOCS: 'true' };
-  const PULOU_MAIN = needs({ result: 'success', roda: 'false', base: A });
+  const PULOU_MAIN = needs({ result: 'success', roda: 'false', base: A, modo: 'main-docs' });
 
   it.skipIf(!temJq)('controles: PR pulado, dispatch pós-merge pulado e tudo success passam', () => {
     expect(passo?.run).toBeTruthy();
-    expect(roda({ EVENTO: 'pull_request', REF: 'refs/pull/1/merge', ESCOPO_DOCS: '', RESULTADOS: needs({ result: 'success', roda: 'false' }) })).toBe(0);
+    expect(roda({ EVENTO: 'pull_request', REF: 'refs/pull/1/merge', ESCOPO_DOCS: '', RESULTADOS: needs({ result: 'success', roda: 'false', modo: 'inerte' }) })).toBe(0);
     expect(roda({ ...MAIN, RESULTADOS: PULOU_MAIN })).toBe(0);
     for (const evento of ['push', 'schedule', 'workflow_dispatch']) {
       expect(
@@ -478,20 +497,98 @@ describe('ci.yml — validate aceita o skip das provas só onde o escopo pode pu
     ['dispatch sem o input', { ...MAIN, ESCOPO_DOCS: 'false' }, PULOU_MAIN],
     ['dispatch com input vazio', { ...MAIN, ESCOPO_DOCS: '' }, PULOU_MAIN],
     ['dispatch fora da main', { ...MAIN, REF: 'refs/heads/feature' }, PULOU_MAIN],
-    ['dispatch sem base', MAIN, needs({ result: 'success', roda: 'false' })],
-    ['dispatch com base curta', MAIN, needs({ result: 'success', roda: 'false', base: A.slice(1) })],
-    ['dispatch com base em caixa alta', MAIN, needs({ result: 'success', roda: 'false', base: A.toUpperCase() })],
-    ['dispatch com base e lixo', MAIN, needs({ result: 'success', roda: 'false', base: `${A}\nx` })],
+    ['dispatch sem base', MAIN, needs({ result: 'success', roda: 'false', modo: 'main-docs' })],
+    ['dispatch sem modo', MAIN, needs({ result: 'success', roda: 'false', base: A })],
+    ['dispatch com modo do PR', MAIN, needs({ result: 'success', roda: 'false', base: A, modo: 'inerte' })],
+    ['PR pulado sem modo', { EVENTO: 'pull_request', REF: 'x', ESCOPO_DOCS: '' }, needs({ result: 'success', roda: 'false' })],
+    ['PR com modo da main', { EVENTO: 'pull_request', REF: 'x', ESCOPO_DOCS: '' }, needs({ result: 'success', roda: 'false', modo: 'main-docs', base: A })],
+    ['PR com parte CANCELADA (fail-fast) e escopo que mandou rodar', { EVENTO: 'pull_request', REF: 'x', ESCOPO_DOCS: '' }, needs({ result: 'success', roda: 'true' }, 'cancelled')],
+    ['PR com parte CANCELADA e escopo inerte', { EVENTO: 'pull_request', REF: 'x', ESCOPO_DOCS: '' }, needs({ result: 'success', roda: 'false', modo: 'inerte' }, 'cancelled')],
+    ['dispatch com base curta', MAIN, needs({ result: 'success', roda: 'false', base: A.slice(1), modo: 'main-docs' })],
+    ['dispatch com base em caixa alta', MAIN, needs({ result: 'success', roda: 'false', base: A.toUpperCase(), modo: 'main-docs' })],
+    ['dispatch com base e lixo', MAIN, needs({ result: 'success', roda: 'false', base: `${A}\nx`, modo: 'main-docs' })],
     ['push forjando o pulo', { ...MAIN, EVENTO: 'push' }, PULOU_MAIN],
     ['schedule forjando o pulo', { ...MAIN, EVENTO: 'schedule' }, PULOU_MAIN],
-    ['escopo failure', MAIN, needs({ result: 'failure', roda: 'false', base: A })],
-    ['escopo cancelled', MAIN, needs({ result: 'cancelled', roda: 'false', base: A })],
-    ['roda=true com provas puladas', MAIN, needs({ result: 'success', roda: 'true', base: A })],
-    ['roda=FALSE', MAIN, needs({ result: 'success', roda: 'FALSE', base: A })],
+    ['escopo failure', MAIN, needs({ result: 'failure', roda: 'false', base: A, modo: 'main-docs' })],
+    ['escopo cancelled', MAIN, needs({ result: 'cancelled', roda: 'false', base: A, modo: 'main-docs' })],
+    ['roda=true com provas puladas', MAIN, needs({ result: 'success', roda: 'true', base: A, modo: 'main-docs' })],
+    ['roda=FALSE', MAIN, needs({ result: 'success', roda: 'FALSE', base: A, modo: 'main-docs' })],
     ['saída vazia', MAIN, needs({ result: 'success' })],
-    ['PR com escopo failure', { EVENTO: 'pull_request', REF: 'x', ESCOPO_DOCS: '' }, needs({ result: 'failure', roda: 'false' })],
+    ['PR com escopo failure', { EVENTO: 'pull_request', REF: 'x', ESCOPO_DOCS: '' }, needs({ result: 'failure', roda: 'false', modo: 'inerte' })],
   ] as [string, Record<string, string>, string][])('%s reprova', (_n, env, resultados) => {
     expect(roda({ ...env, RESULTADOS: resultados })).toBe(1);
+  });
+
+  // `gh` FALSO no PATH: devolve o run e os jobs de `fixtures/<id>.run|.jobs` (ausente ⇒ exit 1, como
+  // um 404). Assim o validate é exercitado sem rede, e a revalidação do recibo tem de ACONTECER.
+  function ghFalso(runs: Record<string, { run: unknown; jobs: unknown }>): { path: string; limpa: () => void } {
+    const dir = mkdtempSync(join(tmpdir(), 'gh-falso-'));
+    for (const [id, f] of Object.entries(runs)) {
+      writeFileSync(join(dir, `${id}.run`), JSON.stringify(f.run));
+      writeFileSync(join(dir, `${id}.jobs`), JSON.stringify(f.jobs));
+    }
+    writeFileSync(
+      join(dir, 'gh'),
+      [
+        '#!/usr/bin/env bash',
+        '[ "$1" = api ] || exit 2',
+        `d='${dir}'`,
+        'if [[ "$2" =~ ^repos/[^/]+/[^/]+/actions/runs/([0-9]+)/jobs ]]; then f="$d/${BASH_REMATCH[1]}.jobs";',
+        'elif [[ "$2" =~ ^repos/[^/]+/[^/]+/actions/runs/([0-9]+)$ ]]; then f="$d/${BASH_REMATCH[1]}.run"; else exit 3; fi',
+        '[ -f "$f" ] || { echo "HTTP 404" >&2; exit 1; }',
+        'cat "$f"',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+    return { path: `${dir}:${process.env.PATH ?? ''}`, limpa: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+  const PR_ENV = { EVENTO: 'pull_request', REF: 'refs/pull/7/merge', ESCOPO_DOCS: '', REPO: 'o/r', RUN_ID: '900', HEAD_REF: 'claude/x' };
+  const runOk = { id: 800, event: 'pull_request', status: 'completed', head_branch: 'claude/x', head_repository: { full_name: 'o/r' } };
+  const jobsOk = {
+    total_count: 7,
+    jobs: [...[1, 2, 3, 4, 5].map((k) => ({ name: `provas-sql (${k})`, conclusion: 'success' })), { name: 'provas-sql-uniao', conclusion: 'success' }, { name: 'validate', conclusion: 'success' }],
+  };
+  const REAPROVEITOU = needs({ result: 'success', roda: 'false', modo: 'recibo', recibo: '800' });
+
+  it.skipIf(!temJq)('controle: recibo deste PR com partes e união success passa — e a API é CONSULTADA', () => {
+    const gh = ghFalso({ '800': { run: runOk, jobs: jobsOk } });
+    try {
+      expect(roda({ ...PR_ENV, RESULTADOS: REAPROVEITOU }, gh.path)).toBe(0);
+      // Sem o run na API (recibo inexistente), o mesmo cenário reprova: a aprovação veio da leitura.
+      const vazio = ghFalso({});
+      try {
+        expect(roda({ ...PR_ENV, RESULTADOS: REAPROVEITOU }, vazio.path)).toBe(1);
+      } finally {
+        vazio.limpa();
+      }
+    } finally {
+      gh.limpa();
+    }
+  });
+
+  it.skipIf(!temJq).each([
+    ['recibo de OUTRO PR (outra branch)', { '800': { run: { ...runOk, head_branch: 'claude/outro' }, jobs: jobsOk } }, REAPROVEITOU, PR_ENV],
+    ['recibo de fork (outro repo)', { '800': { run: { ...runOk, head_repository: { full_name: 'fork/r' } }, jobs: jobsOk } }, REAPROVEITOU, PR_ENV],
+    ['recibo de run da main', { '800': { run: { ...runOk, event: 'workflow_dispatch' }, jobs: jobsOk } }, REAPROVEITOU, PR_ENV],
+    ['recibo não concluído', { '800': { run: { ...runOk, status: 'in_progress' }, jobs: jobsOk } }, REAPROVEITOU, PR_ENV],
+    ['recibo com parte CANCELADA', { '800': { run: runOk, jobs: { ...jobsOk, jobs: jobsOk.jobs.map((j, i) => (i === 2 ? { ...j, conclusion: 'cancelled' } : j)) } } }, REAPROVEITOU, PR_ENV],
+    ['recibo com união skipped', { '800': { run: runOk, jobs: { ...jobsOk, jobs: jobsOk.jobs.map((j) => (j.name === 'provas-sql-uniao' ? { ...j, conclusion: 'skipped' } : j)) } } }, REAPROVEITOU, PR_ENV],
+    ['recibo sem partes', { '800': { run: runOk, jobs: { total_count: 1, jobs: [{ name: 'provas-sql-uniao', conclusion: 'success' }] } } }, REAPROVEITOU, PR_ENV],
+    ['recibo com página incompleta', { '800': { run: runOk, jobs: { ...jobsOk, total_count: 99 } } }, REAPROVEITOU, PR_ENV],
+    ['recibo INEXISTENTE (404)', {}, REAPROVEITOU, PR_ENV],
+    ['recibo é o próprio run', { '900': { run: { ...runOk, id: 900 }, jobs: jobsOk } }, needs({ result: 'success', roda: 'false', modo: 'recibo', recibo: '900' }), PR_ENV],
+    ['recibo vazio', { '800': { run: runOk, jobs: jobsOk } }, needs({ result: 'success', roda: 'false', modo: 'recibo' }), PR_ENV],
+    ['recibo com lixo', { '800': { run: runOk, jobs: jobsOk } }, needs({ result: 'success', roda: 'false', modo: 'recibo', recibo: '800 x' }), PR_ENV],
+    ['recibo fora de PR', { '800': { run: runOk, jobs: jobsOk } }, REAPROVEITOU, { ...PR_ENV, ...MAIN }],
+    ['recibo sem HEAD_REF', { '800': { run: { ...runOk, head_branch: '' }, jobs: jobsOk } }, REAPROVEITOU, { ...PR_ENV, HEAD_REF: '' }],
+    ['recibo com partes que RODARAM aqui canceladas', { '800': { run: runOk, jobs: jobsOk } }, needs({ result: 'success', roda: 'false', modo: 'recibo', recibo: '800' }, 'cancelled'), PR_ENV],
+  ] as [string, Record<string, { run: unknown; jobs: unknown }>, string, Record<string, string>][])('%s reprova', (_n, api, resultados, env) => {
+    const gh = ghFalso(api);
+    try {
+      expect(roda({ ...env, RESULTADOS: resultados }, gh.path)).toBe(1);
+    } finally {
+      gh.limpa();
+    }
   });
 
   it.skipIf(!temJq)('o skip aceito é SÓ de provas-sql e da união: outro job pulado reprova', () => {
@@ -525,6 +622,233 @@ describe('provas-sql-escopo — CLI só entra no modo da main com dispatch, inpu
       expect(readFileSync(saida, 'utf8')).toBe('roda=true\n');
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── Recibo do MESMO PR (fatia C) ───────────────────────────────────────────────────────────────
+const C = 'c'.repeat(40);
+const D = 'd'.repeat(40);
+const T = 'e'.repeat(40);
+const F = 'f'.repeat(40);
+
+describe('provas-sql-escopo — mergeDaAnotacao (o merge que o recibo testou)', () => {
+  const ok = { title: TITULO_RECIBO, message: `pr=7 base=${A} head=${B} tree=${T}` };
+  it('controle: a anotação que o próprio script emite é lida de volta', () => {
+    expect(anotacaoRecibo(7, { base: A, head: B, tree: T })).toBe(`::notice title=${TITULO_RECIBO}::pr=7 base=${A} head=${B} tree=${T}`);
+    expect(mergeDaAnotacao([{ title: 'outra', message: 'x' }, ok], 7, B)).toEqual({ base: A, head: B, tree: T });
+  });
+  it.each([
+    ['de OUTRO PR', [ok], 8, B],
+    ['head diferente do head_sha do run', [ok], 7, C],
+    ['duas anotações', [ok, ok], 7, B],
+    ['nenhuma', [{ title: 'outra', message: ok.message }], 7, B],
+    ['sem tree', [{ ...ok, message: `pr=7 base=${A} head=${B}` }], 7, B],
+    ['com lixo no fim', [{ ...ok, message: `${ok.message} x` }], 7, B],
+    ['corpo não-lista', { message: ok.message }, 7, B],
+  ] as [string, unknown, number, string][])('%s ⇒ null', (_n, corpo, pr, head) => {
+    expect(mergeDaAnotacao(corpo, pr, head)).toBeNull();
+  });
+  it('rota do check-run vem da URL da API, nunca do id do job', () => {
+    expect(rotaDoCheckRun({ id: 1, name: 'x', conclusion: 'success', check_run_url: 'https://api.github.com/repos/o/r/check-runs/55' })).toBe('repos/o/r/check-runs/55');
+    expect(() => rotaDoCheckRun({ id: 1, name: 'x', conclusion: 'success' })).toThrow(/check_run_url fora de forma/);
+    expect(() => rotaDoCheckRun({ id: 1, name: 'x', conclusion: 'success', check_run_url: 'https://evil/repos/o/r/check-runs/55' })).toThrow(/check_run_url fora de forma/);
+  });
+});
+
+describe('provas-sql-escopo — escolherRecibo', () => {
+  const run = (id: number, over: Partial<RunDoPr> = {}): RunDoPr => ({
+    id, event: 'pull_request', status: 'completed', head_sha: B, head_branch: 'claude/x', repo: 'o/r', ...over,
+  });
+  const verde: JobComId[] = [...VERDE.map((j, i) => ({ ...j, id: i + 1 })), { name: 'provas-sql-escopo', conclusion: 'success', id: 99 }];
+  const pulado: JobComId[] = [{ name: 'provas-sql (1)', conclusion: 'skipped', id: 1 }, { name: 'provas-sql-uniao', conclusion: 'skipped', id: 2 }];
+  const vermelho: JobComId[] = verde.map((j) => (j.name === 'provas-sql (3)' ? { ...j, conclusion: 'failure' } : j));
+  const cancelado: JobComId[] = verde.map((j) => (j.name === 'provas-sql (3)' ? { ...j, conclusion: 'cancelled' } : j));
+  const de = (m: Record<number, JobComId[] | null>) => (id: number) => (id in m ? m[id] : null);
+
+  it('controle: atravessa o run pulado e acha o verde', () => {
+    const r = escolherRecibo([run(5), run(4), run(3)], 5, 'o/r', 'claude/x', de({ 4: pulado, 3: verde }));
+    expect('run' in r && r.run.id).toBe(3);
+  });
+  it.each([
+    ['o mais recente que executou ficou VERMELHO (não atravessa até o verde velho)', de({ 4: vermelho, 3: verde })],
+    ['o mais recente que executou foi CANCELADO (fail-fast ou superado)', de({ 4: cancelado, 3: verde })],
+    ['jobs ilegíveis', de({ 4: null, 3: verde })],
+  ])('%s ⇒ sem recibo', (_n, jobsDe) => {
+    expect('motivo' in escolherRecibo([run(5), run(4), run(3)], 5, 'o/r', 'claude/x', jobsDe)).toBe(true);
+  });
+  it.each([
+    ['de OUTRA branch (outro PR)', run(3, { head_branch: 'claude/outro' })],
+    ['de fork', run(3, { repo: 'fork/r' })],
+    ['da main', run(3, { event: 'workflow_dispatch' })],
+    ['não concluído', run(3, { status: 'in_progress' })],
+    ['o próprio run', run(5)],
+    ['SHA inválido', run(3, { head_sha: 'xyz' })],
+  ])('run %s nunca é recibo', (_n, r) => {
+    expect('motivo' in escolherRecibo([r], 5, 'o/r', 'claude/x', de({ 3: verde, 5: verde }))).toBe(true);
+  });
+  it('SHA verde INEXISTENTE (nenhum run anterior) ⇒ sem recibo', () => {
+    expect('motivo' in escolherRecibo([], 5, 'o/r', 'claude/x', de({}))).toBe(true);
+  });
+});
+
+describe('provas-sql-escopo — decidirRecibo', () => {
+  const LIDOS = new Set(['src/lib/lido.ts']);
+  const ok: FatosRecibo = {
+    atual: { base: C, head: D, tree: F },
+    recibo: { runId: 3, merge: { base: A, head: B, tree: T } },
+    headAncestral: true,
+    baseAncestral: true,
+    merges: 0,
+    forkRecibo: A,
+    forkAtual: A,
+    arvoreRecalculada: T,
+    diffHead: ['docs/historico/x.md'],
+    diffArvore: [{ caminho: 'docs/historico/x.md', especial: false }, { caminho: 'src/pages/Tela.tsx', especial: false }],
+    lidos: LIDOS,
+  };
+  it('controle: só docs/inerte desde a árvore provada ⇒ REAPROVEITA, com o id do run', () => {
+    const d = decidirRecibo(ok);
+    expect(d.roda).toBe(false);
+    expect(d.recibo).toBe(3);
+  });
+  it.each([
+    ['sem recibo (SHA verde inexistente)', { recibo: { motivo: 'nenhum run' } }],
+    ['1 arquivo SQL no meio de docs (árvore)', { diffArvore: [...ok.diffArvore!, { caminho: 'supabase/migrations/x.sql', especial: false }] }],
+    ['1 arquivo de db/ no meio de docs (head)', { diffHead: ['docs/a.md', 'db/test-x.sh', 'docs/b.md'] }],
+    ['código lido pelas provas no meio de docs', { diffArvore: [...ok.diffArvore!, { caminho: 'src/lib/lido.ts', especial: false }] }],
+    ['scripts/ no meio de docs', { diffHead: ['docs/a.md', 'scripts/x.ts'] }],
+    ['.gitattributes dentro de src/', { diffArvore: [...ok.diffArvore!, { caminho: 'src/.gitattributes', especial: false }] }],
+    ['symlink no diff', { diffArvore: [{ caminho: 'docs/link', especial: true }] }],
+    ['drift da main com código', { diffArvore: [...ok.diffArvore!, { caminho: 'package.json', especial: false }] }],
+    ['merge da main no PR (merge commit)', { merges: 1 }],
+    ['merges ilegíveis', { merges: null }],
+    ['rebase (head do recibo não é ancestral)', { headAncestral: false }],
+    ['ancestralidade do head inconclusiva', { headAncestral: null }],
+    ['OUTRA base: a base do recibo não é ancestral', { baseAncestral: false }],
+    ['OUTRA base: merge-base com a main mudou', { forkAtual: C }],
+    ['merge-base ilegível', { forkRecibo: null }],
+    ['árvore recalculada ≠ registrada', { arvoreRecalculada: F }],
+    ['árvore recalculada com conflito', { arvoreRecalculada: null }],
+    ['re-run do MESMO head', { atual: { base: C, head: B, tree: F } }],
+    ['diff vazio', { diffArvore: [] }],
+    ['diff do head vazio', { diffHead: [] }],
+    ['diff ilegível', { diffArvore: null }],
+    ['mapa de leitura ilegível', { lidos: null }],
+    ['SHA fora de forma', { atual: { base: 'x', head: D, tree: F } }],
+  ] as [string, Partial<FatosRecibo>][])('%s ⇒ roda TUDO', (_n, mudanca) => {
+    const d = decidirRecibo({ ...ok, ...mudanca });
+    expect(d.roda).toBe(true);
+    expect(d.recibo).toBeUndefined();
+  });
+});
+
+describe('provas-sql-escopo — mapa de leitura incompleto e .gitattributes', () => {
+  it('arquivo de db/ que não se lê ⇒ mapa null (roda), não "não lê nada"', () => {
+    const repo: Repo = { arquivos: ['db/test-a.sh'], ler: () => null, existe: () => true };
+    expect(lidosEmInerte(repo)).toBeNull();
+    expect(decidir('pull_request', ['docs/x.md'], lidosEmInerte(repo)).roda).toBe(true);
+  });
+  it('symlink de db/ para src/ registra o alvo como lido', () => {
+    const repo: Repo = { ...repoFalso({ 'db/link.sh': 'echo', 'src/alvo.sh': 'echo' }), alvo: (p) => (p === 'db/link.sh' ? 'src/alvo.sh' : null) };
+    expect(inerte('src/alvo.sh', lidosDe(repo))).toBe(false);
+    expect(inerte('src/outro.ts', lidosDe(repo))).toBe(true);
+  });
+  it('.gitattributes em qualquer diretório nunca é inerte', () => {
+    expect(inerte('src/.gitattributes', NENHUM)).toBe(false);
+    expect(inerte('docs/.gitattributes', NENHUM)).toBe(false);
+    expect(inerte('docs/gitattributes.md', NENHUM)).toBe(true);
+  });
+});
+
+// Git REAL: main + PR, o merge commit que o GitHub testaria (`merge --no-ff`), e os pushes seguintes.
+describe('provas-sql-escopo — recibo com git real', () => {
+  function cenario() {
+    const dir = mkdtempSync(join(tmpdir(), 'escopo-recibo-'));
+    const git = (...a: string[]) =>
+      execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8' }).trim();
+    const escreve = (f: string, t: string) => {
+      execFileSync('mkdir', ['-p', join(dir, f, '..')]);
+      writeFileSync(join(dir, f), t);
+      git('add', f);
+    };
+    git('init', '-q', '-b', 'main');
+    escreve('db/test-a.sh', 'cat src/lib/lido.ts\n');
+    escreve('src/lib/lido.ts', 'export const x = 1;\n');
+    escreve('docs/a.md', 'a\n');
+    git('commit', '-qm', 'raiz');
+    git('checkout', '-qb', 'pr');
+    escreve('supabase/migrations/1.sql', 'select 1;\n');
+    git('commit', '-qm', 'pr: sql');
+    /** O merge commit que o CI testa: main + head do PR, sem mexer nas branches. */
+    const testa = (): { base: string; head: string; tree: string } => {
+      const head = git('rev-parse', 'pr');
+      git('checkout', '-q', '--detach', 'main');
+      git('merge', '-q', '--no-ff', '--no-edit', head);
+      const m = mergeDoCheckout(dir)!;
+      git('checkout', '-q', 'pr');
+      return m;
+    };
+    const naMain = (f: string, t: string) => {
+      git('checkout', '-q', 'main');
+      escreve(f, t);
+      git('commit', '-qm', `main: ${f}`);
+      git('checkout', '-q', 'pr');
+    };
+    const noPr = (f: string, t: string) => {
+      escreve(f, t);
+      git('commit', '-qm', `pr: ${f}`);
+    };
+    const lidos = new Set(['src/lib/lido.ts']);
+    const decide = (m1: ReturnType<typeof testa>, m2: ReturnType<typeof testa>) =>
+      decidirRecibo(fatosGitDoRecibo(m2, { runId: 3, merge: m1 }, lidos, dir));
+    return { dir, git, testa, naMain, noPr, decide, limpa: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+
+  it('controle: push só de docs, e a main andou só em docs ⇒ REAPROVEITA', () => {
+    const c = cenario();
+    try {
+      const m1 = c.testa();
+      c.noPr('docs/b.md', 'b\n');
+      c.naMain('docs/c.md', 'c\n');
+      const d = c.decide(m1, c.testa());
+      expect(d.motivos.join(' ')).toContain('REAPROVEITA');
+      expect(d.roda).toBe(false);
+    } finally {
+      c.limpa();
+    }
+  });
+  it.each([
+    ['1 arquivo SQL no meio de docs', (c: ReturnType<typeof cenario>) => { c.noPr('docs/b.md', 'b\n'); c.noPr('supabase/migrations/2.sql', 'select 2;\n'); c.noPr('docs/d.md', 'd\n'); }],
+    ['código lido pelas provas no meio de docs', (c: ReturnType<typeof cenario>) => { c.noPr('docs/b.md', 'b\n'); c.noPr('src/lib/lido.ts', 'export const x = 2;\n'); }],
+    ['a main mudou código (drift não-inerte)', (c: ReturnType<typeof cenario>) => { c.noPr('docs/b.md', 'b\n'); c.naMain('db/test-a.sh', 'cat src/lib/lido.ts # v2\n'); }],
+    ['merge da main no PR', (c: ReturnType<typeof cenario>) => { c.naMain('docs/c.md', 'c\n'); c.git('merge', '-q', '--no-ff', '--no-edit', 'main'); c.noPr('docs/b.md', 'b\n'); }],
+    ['rebase do PR sobre a main', (c: ReturnType<typeof cenario>) => { c.naMain('docs/c.md', 'c\n'); c.git('rebase', '-q', 'main'); c.noPr('docs/b.md', 'b\n'); }],
+  ])('%s ⇒ roda TUDO', (_n, depois) => {
+    const c = cenario();
+    try {
+      const m1 = c.testa();
+      depois(c);
+      const d = c.decide(m1, c.testa());
+      expect(d.roda).toBe(true);
+      expect(d.recibo).toBeUndefined();
+    } finally {
+      c.limpa();
+    }
+  });
+  it('recibo de OUTRO PR (outra história) ⇒ roda TUDO', () => {
+    const c = cenario();
+    try {
+      c.git('checkout', '-qb', 'outro', 'main');
+      c.noPr('supabase/migrations/9.sql', 'select 9;\n');
+      c.git('branch', '-f', 'pr', 'outro');
+      const doOutro = c.testa();
+      c.git('checkout', '-q', '-B', 'pr', 'main');
+      c.noPr('supabase/migrations/1.sql', 'select 1;\n');
+      c.noPr('docs/b.md', 'b\n');
+      expect(c.decide(doOutro, c.testa()).roda).toBe(true);
+    } finally {
+      c.limpa();
     }
   });
 });
