@@ -1211,6 +1211,14 @@ jobs:
         # Peso das duas fases (2026-11-09): a partição pesa a prova da faixa serial × NUCLEO_WORKERS e
         # passa a pesar a cauda do harness da 1ª parte (`@cauda-parte-0` na tabela; hoje ~1,6 min, não
         # mais 0,7). Medição em docs/historico/ci-provas-sql-balanceamento-fases.md.
+        # N É O TAMANHO DESTA LISTA, e é o ÚNICO lugar a mudar (2026-11-10): o runner recebe `i/N` de
+        # `strategy.job-index/job-total` (step do núcleo), a partição e a união são N-agnósticas (N até
+        # 99; recibo `parte i/N` em cada parte), e o harness prova N=16 (última parte ausente,
+        # duplicada, fora da faixa). Os valores não importam, só a contagem — `[1..N]` por legibilidade.
+        # Simulado com db/nucleo-ci-custo.txt (W=2): pior parte de núcleo 14,8 min com N=5, 7,4 com
+        # N=10. Mais partes = mais jobs por run: com 5 partes o run ocupa ~17 jobs, contra o teto de 20
+        # jobs concorrentes da conta no plano Free (40 no Pro). Não suba N sem o teto que o comporte —
+        # o ganho vira fila. Comparação e medição: docs/historico/ci-provas-sql-n-partes.md
         parte: [1, 2, 3, 4, 5]
     permissions:
       contents: read
@@ -1496,7 +1504,7 @@ jobs:
       - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
         if: ${{ strategy.job-index == 0 }}
         env:
-          HARNESS_OK_MINIMO: "92"
+          HARNESS_OK_MINIMO: "97"
         run: |
           log="$RUNNER_TEMP/falsifica-nucleo.log"
           bash db/falsifica-nucleo-ci.sh > "$log" 2>&1 && rc=0 || rc=$?

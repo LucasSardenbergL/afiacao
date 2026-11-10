@@ -842,7 +842,8 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # acima com o piso FORA daqui — `HARNESS_OK_MINIMO` no ci.yml; mude os dois juntos.
 # 45 → 65 em 2026-10-01: os 20 casos do recibo das partes e da união.
 # 67 → 76 em 2026-11-09: os 9 casos do peso das duas fases (partição, cauda, `workers` no recibo).
-OK_MINIMO=76
+# 76 → 81 em 2026-11-10: os 5 casos de N=16 partes (controle, última ausente, duplicada, fora da faixa ×2).
+OK_MINIMO=81
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi
