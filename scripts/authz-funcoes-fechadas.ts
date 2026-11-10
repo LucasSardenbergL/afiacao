@@ -225,6 +225,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
   // dela que a correção legítima sai); `anon` foi revogado nominalmente na própria migration que
   // a cria, junto com PUBLIC. O fecho por privilégio e o gate no corpo são complementares aqui:
   // sem o gate, qualquer authenticated (inclusive customer) corrigiria cancelamento de compra.
+  'public.sayerlack_aceitar_portal': {
+    fechadaPor: '20261111180000_sayerlack_aceitar_portal.sql',
+    permitido: PORTA_GATE,
+    motivo: '5.2 fatia 2: aceitar o portal (pedido do app vira a leitura da divergência, custo re-provado, trilha antes/depois) — staff no browser; gate has_role(employee|master) + justificativa',
+  },
   'public.corrigir_cancelamento_pos_disparo': {
     fechadaPor: '20260906152235_cancelamento_pos_disparo_trigger_e_rpc.sql',
     permitido: PORTA_GATE,
@@ -521,6 +526,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     fechadaPor: '20261111150000_sayerlack_conferir_portal.sql',
     permitido: PORTA_FECHADA,
     motivo: '5.2: pedido do app × leitura do portal; escritor único do retrato, da divergência e do gate do claim — edge sayerlack-importar-pedido-portal e a RPC de importar, service_role',
+  },
+  'public.sayerlack__portal_leitura_conteudo': {
+    fechadaPor: '20261111180000_sayerlack_aceitar_portal.sql',
+    permitido: PORTA_FECHADA,
+    motivo: '5.2 fatia 2: conteúdo comparável de uma leitura do portal (itens, total, condição) — só a porta sayerlack_conferir_portal usa',
   },
   'public.sayerlack_aplicar_custo_portal': {
     fechadaPor: '20261006120000_preco_exato_po_sayerlack_ipi.sql',

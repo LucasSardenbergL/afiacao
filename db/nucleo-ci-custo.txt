@@ -170,6 +170,7 @@ db/test-sayerlack-situacao-portal.sh 24
 db/test-sayerlack-encerrar-cancelado-portal.sh 60
 db/test-sayerlack-vincular-po-manual.sh 60
 db/test-sayerlack-conferir-portal.sh 95
+db/test-sayerlack-aceitar-portal.sh 90
 db/test-security-invoker-views.sh 1
 db/test-sku-items-fila-parada.sh 14
 db/test-sonda-passo-pelo-db-aplicar.sh 11

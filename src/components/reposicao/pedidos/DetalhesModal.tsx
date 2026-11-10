@@ -10,6 +10,8 @@ import { StatusBadge, SplitInfo } from './badges';
 import { useDetalhesModal } from './useDetalhesModal';
 import { PortalStatusPanel } from './PortalStatusPanel';
 import { EncerrarCanceladoPortal } from './EncerrarCanceladoPortal';
+import { AceitarPortal } from './AceitarPortal';
+import { podeOferecerAceitar } from './aceitar-portal';
 import { podeOferecerEncerrar } from './encerrar-cancelado-portal';
 import { HistoricoAcoesPanel } from './HistoricoAcoesPanel';
 import { CondicaoPagamentoPanel } from './CondicaoPagamentoPanel';
@@ -199,6 +201,8 @@ export function DetalhesModal({
         </div>
         {/* Só monta (e só lê useAuth) no caso da 5.3 — o resto do detalhe não depende do AuthProvider. */}
         {podeOferecerEncerrar(pedido) && <EncerrarCanceladoPortal pedido={pedido} />}
+        {/* 5.2 fatia 2: pedido alterado no portal — idem, só monta no caso. */}
+        {podeOferecerAceitar(pedido) && <AceitarPortal pedido={pedido} />}
 
 
         {podeEditar && (

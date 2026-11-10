@@ -1,0 +1,6 @@
+# Portal Sayerlack 5.2 fatia 2 (20261111180000): "aceitar o portal" — gate staff com a marca do ramo, recusas sem
+# escrita (divergência que a tela não viu, situação ≠ 1/5, claim aberto, PO no espelho, PO no pedido), itens/custo
+# (prova do IPI)/condição reescritos da leitura da divergência, retrato v+1 com o marco, trilha antes/depois, leitura
+# antiga depois do aceite não reabre, "mesmo diff" com conteúdo novo substitui, releitura × aceite em 2 conexões
+# (docs/historico/importar-pedido-portal-sayerlack.md).
+db/test-sayerlack-aceitar-portal.sh        31  falsificar=14
