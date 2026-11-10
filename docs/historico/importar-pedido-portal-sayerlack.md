@@ -907,3 +907,5 @@ criasse a divergência, e ninguém voltou a ela depois da 5.2.
   vitest do card, sabotar a troca do botão deixa o teste novo vermelho e o controle verde.
 - **Ordem de deploy:** a migration vai antes do Publish. O front novo exige a lista; com o banco velho, o card diria
   "não consegui ler". Nenhuma edge mudou.
+- **Recibo:** migration aplicada pelo envelope (#1066) e conferida no psql-ro: corpo novo, SECURITY DEFINER, `anon`
+  sem EXECUTE e `authenticated` com EXECUTE. PR #3790 mergeado em 2026-11-10. Publish: founder.
