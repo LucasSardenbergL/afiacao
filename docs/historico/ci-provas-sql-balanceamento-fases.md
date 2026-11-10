@@ -65,4 +65,34 @@ cada run.
 
 ## Medido no CI
 
-(preenchido com os runs do PR)
+A conta é o job inteiro de cada uma das 5 partes, em min, com setup. Os 6 runs do PR (#3785) são:
+
+- 2 no SHA `eecef96a6`: o CI do PR e 1 dispatch, que rodou junto com o CI do PR e por isso é
+  ruidoso;
+- 4 no SHA `e3d448ae7`: o CI do PR e 3 dispatches em sequência, com `mutcheck=false`.
+
+A main tem 16 runs verdes com 2 workers: os 12 da tabela e mais 4 de 09–10/11, que já têm a prova
+nova do radar-funil-agenda.
+
+| | pior parte mediana | p90 | máx | Σ runner mediana | Σ faixa |
+|---|---|---|---|---|---|
+| main (16 runs) | 18,4 | 19,6 | 20,1 | 77,2 | 70,2–82,3 |
+| **PR (6 runs)** | **16,8** | **17,6** | **17,9** | **76,5** | 67,9–82,8 |
+
+- **Pior parte por run do PR:** 16,8 · 16,8 · 16,6 · 17,9 · 17,3 · 16,8. Na main, os 4 runs mais
+  recentes deram 19,4 · 19,4 · 19,7 · 17,4.
+- **Critério do D1 atendido:**
+  - a mediana da pior parte cai 1,6 min e o p90 cai 2,1;
+  - o Σ do runner não sobe (76,5 contra 77,2; as faixas se sobrepõem, então é ruído).
+  O ganho medido bate com o previsto pela simulação (16,0 / 16,7, sem setup).
+- **Conjunto `(arquivo, modo)` idêntico,** com as mesmas contagens de asserts e sabotagens por
+  unidade. Foram 2 comparações:
+  - o PR contra a main na mesma base (`d6f63fb38`, 328 unidades);
+  - os 4 runs em `e3d448ae7` contra a main `60f583be8` (330 unidades).
+- **Harness:** `HARNESS_NUCLEO_OK casos=92` em todos os runs do PR (piso 92).
+- **Limites da medição:**
+  - os runs da main mais antigos são de outro SHA e de outra fila (o mesmo dia, o mesmo plano de
+    runners);
+  - 2 runs da main de 10/11 pularam as provas (o escopo era só docs) e ficaram fora da conta.
+
+Próximo passo: o D2, experimento 5×3 no mesmo SHA, só depois deste merge.
