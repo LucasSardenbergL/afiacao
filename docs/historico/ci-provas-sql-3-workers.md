@@ -36,7 +36,8 @@
     em ~−10 min.
 - **Ganho menor na pior parte do que no Σ:** a tabela de custo foi medida com 2 workers, e as partes
   ficam mais desiguais com W=3 (a diferença entre a maior e a menor sobe de 4,8 para 5,3 min). Se
-  quiser mais, re-medir a tabela com 3 workers é o próximo passo barato.
+  quiser mais, re-medir a tabela com 3 workers é o próximo passo barato (feito e **descartado**: veja
+  "Tabela re-medida com 3 workers", abaixo).
 
 ## O que mudou na main
 
@@ -67,3 +68,28 @@ sabotagens. Nenhuma das duas ataca a colheita, que é a mesma do W=2 e já é fa
 **Locale:** o harness faz `export LC_ALL=C LANG=C` no topo. A rodada "pt_BR.UTF-8" roda em C por
 dentro, e isso já era assim antes do D1. A falsificação nos dois locales é, na prática, num só.
 Fica registrado; não foi mudado aqui.
+
+## Tabela re-medida com 3 workers (2026-11-10): descartada
+
+Foi simulada antes de abrir PR, sem gastar CI.
+
+- **Dados:** 6 runs com W=3 e as mesmas provas (4 do experimento e 2 da main pós-merge: 42818208371
+  e 42860295419). A cauda do harness subiu para ~135 s (121–154 s), porque o harness passou a ter
+  101 casos.
+- **Método:** leave-one-out. Para cada run, a tabela sai dos outros 5 e é avaliada nele. O
+  simulador é o do D1, com W=3; sem o setup do job, ele erra ≤ 0,6 min por parte contra o real.
+
+| tabela | pior parte por run (min) | mediana | máx | maior − menor parte (mediana) | Σ mediana |
+|---|---|---|---|---|---|
+| atual (medida com W=2, cauda 100) | 16,9 · 17,4 · 15,3 · 15,8 · 15,5 · 15,8 | **15,8** | 17,4 | 4,1 | 68,3 |
+| re-medida com W=3 (cauda 135) | 16,2 · 16,7 · 14,9 · 16,2 · 14,7 · 16,3 | 16,2 | **16,7** | 3,7 | 68,7 |
+
+- **Resultado:** a mediana piora 0,4 min, o máximo melhora 0,7 e o Σ fica igual. Isso está dentro
+  do ruído de 6 runs e não passa no critério do D1, que pedia mediana menor. A tabela fica como
+  está.
+- **Por que não ajuda:** a tabela só muda a ATRIBUIÇÃO das provas às partes, e a de W=2 já ordena
+  bem as provas grandes. A diferença que resta entre as partes vem de duas fontes que a tabela não
+  corrige:
+  - unidades grandes que não se dividem no pool;
+  - o ruído entre runs, ±15% por unidade.
+
