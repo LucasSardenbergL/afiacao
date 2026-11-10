@@ -11,8 +11,11 @@
 #       (staging e upsert crus de novo) e ao "reabrir" o lead; NÃO mexe no vínculo/aviso de crédito (art. 7º X).
 #   R*  retenção: nota livre de lead descartado há > 12 meses sai; a nota automática da RFB e a recente ficam.
 #   G*  ACL: nada novo aberto ao JWT além do previsto.
+#   C*  a continuação 20261112100000: o CPF escrito em formato livre na razão ('… CPF 123.456.789-01', '… 12345678901
+#       ME') também é mascarado na entrada e regravado no que já está no banco; o cru fica no private (e a razão meio
+#       mascarada não o sobrescreve); vínculo, aviso de crédito e guarda de homônimo decidem igual; updated_at intacto.
 # Aplica as migrations REAIS da cadeia do vínculo (20261104201756 → 20261106083754 → 20261106205557 → 20261107040000)
-# e depois esta.
+# e depois esta (e, no fim, a 20261112100000).
 #
 #   bash db/test-radar-privacidade-j.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   SABOTAGEM=<nome> bash db/test-radar-privacidade-j.sh   # tem de ficar VERMELHA
@@ -28,10 +31,11 @@ MIG_PRAZO="$MIGS/20261031200000_venda_prazo_decisao.sql"
 MIG_DOC="$MIGS/20261019140000_omie_identidade_cnpj_alfanumerico.sql"
 MIG_SOC="$MIGS/20261107040000_radar_socios_cpf_mascarado.sql"
 MIG="$MIGS/20261111150000_radar_privacidade_titular_mei.sql"
+MIG2="$MIGS/20261112100000_radar_privacidade_cpf_formato_livre.sql"
 PROVA_P2="$REPO_ROOT/db/test-credito-vinculo-aviso.sh"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_trigger:M1 mascara_errada:E2 regra_so_crua:E2 nome_final_cru:E2 staging_cru:P1 exclusao_sem_ingestao:X4 status_fora_do_trigger:X6b reter_tudo:R1 apaga_rfb:R2 cadastro_aberto:M5v acesso_sem_registro:M5 escopo_regride:X6 bump_updated_at:U1 deriva:pre"
+  SABOTAGENS="sem_trigger:M1 mascara_errada:E2 regra_so_crua:E2 nome_final_cru:E2 staging_cru:P1 exclusao_sem_ingestao:X4 status_fora_do_trigger:X6b reter_tudo:R1 apaga_rfb:R2 cadastro_aberto:M5v acesso_sem_registro:M5 escopo_regride:X6 bump_updated_at:U1 deriva:pre mascara_so_sufixo:C1 gatilho_so_sufixo:C1 sem_regrava:C1 cru_sobrescrito:C2 fronteira_consome:C6 sem_regrava_com_pos:pos deriva2:pre"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-privacidade.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -49,6 +53,8 @@ if [ "${1:-}" = "--falsificar" ]; then
     fi
     if [ "$alvo" = "pre" ]; then
       if grep -q "PRE FALHOU" "$LOGDIR/$s.log"; then echo "✅ $s: vermelha na PRE"; else echo "❌ $s: vermelha, mas não na PRE"; falhas=$((falhas+1)); fi
+    elif [ "$alvo" = "pos" ]; then
+      if grep -qE "REGRAVA FALHOU|FALHOU: ainda h" "$LOGDIR/$s.log"; then echo "✅ $s: vermelha na POS"; else echo "❌ $s: vermelha, mas não na POS"; falhas=$((falhas+1)); fi
     elif grep -q "^FAIL $alvo\b" "$LOGDIR/$s.log"; then
       echo "✅ $s: vermelha em $alvo"
     else
@@ -80,6 +86,32 @@ if s.count(de) != 1:
     sys.exit("padrao deve ocorrer 1 vez, ocorre %d: %s" % (s.count(de), de))
 open(p, "w", encoding="utf-8").write(s.replace(de, para))
 PY
+}
+MIG2_USADA="$DIR/mig2.sql"
+cp "$MIG2" "$MIG2_USADA"
+sabotar2() { # $1 = ocorrências esperadas, $2 = de, $3 = para (literal) — na 20261112100000
+  python3 -I - "$MIG2_USADA" "$1" "$2" "$3" <<'PY'
+import sys
+p, n, de, para = sys.argv[1:]
+s = open(p, encoding="utf-8").read()
+if s.count(de) != int(n):
+    sys.exit("padrao deve ocorrer %s vez(es), ocorre %d: %s" % (n, s.count(de), de))
+open(p, "w", encoding="utf-8").write(s.replace(de, para))
+PY
+}
+# Sabotagem na 20261112100000: cega a PRE (o 2º apply vê o corpo sabotado), a conferência do cru e a PÓS — quem
+# tem de morder é o assert C* da prova, não a migration.
+cegar2() {
+  sabotar2 1 "  IF v_ms IS NULL OR v_ms NOT IN" "  IF false AND v_ms NOT IN"
+  sabotar2 1 "  IF v_cg IS NULL OR v_cg NOT IN" "  IF false AND v_cg NOT IN"
+  sabotar2 1 "  IF v_em IS NULL OR v_em NOT IN" "  IF false AND v_em NOT IN"
+  sabotar2 1 "  IF EXISTS (SELECT 1 FROM unnest(v_cnpjs)" "  IF false AND EXISTS (SELECT 1 FROM unnest(v_cnpjs)"
+  sabotar2 1 "DO \$pos\$
+BEGIN
+" "DO \$pos\$
+BEGIN
+  RETURN;
+"
 }
 # Sabotagem que muda o corpo das regras: cega o md5 da PÓS (a PRE do 2º apply aceita o corpo novo pelo md5 dele).
 cegar_md5() {
@@ -121,6 +153,14 @@ PY2
   escopo_regride)       sabotar "SET escopo = CASE WHEN x.escopo = 'contato' THEN 'contato' ELSE EXCLUDED.escopo END," "SET escopo = EXCLUDED.escopo," ;;
   bump_updated_at)      sabotar "      -- Reabrir o lead (registrar contato) também passa por aqui: a oposição não volta para a fila." "      NEW.updated_at := now();" ;;
   deriva)               ;;  # outra sessão mudou a base viva depois do pré-voo: a PRE tem de abortar o apply
+  # ── na 20261112100000 ──
+  mascara_so_sufixo)    cegar2; sabotar2 1 "  SELECT regexp_replace(p, '(?<![0-9])[0-9]{3}([ ./-]{0,3}[0-9]{3}[ ./-]{0,3})([0-9]{3})([ ./-]{0,3})[0-9]{2}(?![0-9])', '***\1\2\3**', 'g')" "  SELECT regexp_replace(p, ' [0-9]{3}([0-9]{6})[0-9]{2}\$', ' ***\1**')" ;;
+  gatilho_so_sufixo)    cegar2; sabotar2 2 "  IF NEW.razao_social IS DISTINCT FROM private.radar_razao_mascarada(NEW.razao_social) THEN" "  IF NEW.razao_social ~ ' [0-9]{11}\$' THEN" ;;
+  sem_regrava)          cegar2; sabotar2 1 "  UPDATE public.radar_empresas SET razao_social = razao_social WHERE cnpj = ANY (v_cnpjs);" "  PERFORM 1;" ;;
+  cru_sobrescrito)      cegar2; sabotar2 2 "    IF NEW.razao_social !~ '\*\*\*[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}\*\*' THEN" "    IF true THEN" ;;
+  fronteira_consome)    cegar2; sabotar2 1 "  SELECT regexp_replace(p, '(?<![0-9])[0-9]{3}([ ./-]{0,3}[0-9]{3}[ ./-]{0,3})([0-9]{3})([ ./-]{0,3})[0-9]{2}(?![0-9])', '***\1\2\3**', 'g')" "  SELECT regexp_replace(p, '(^|[^0-9])[0-9]{3}([ ./-]{0,3}[0-9]{3}[ ./-]{0,3})([0-9]{3})([ ./-]{0,3})[0-9]{2}([^0-9]|\$)', '\1***\2\3\4**\5', 'g')" ;;
+  sem_regrava_com_pos)  sabotar2 1 "  UPDATE public.radar_empresas SET razao_social = razao_social WHERE cnpj = ANY (v_cnpjs);" "  PERFORM 1;" ;;
+  deriva2)              ;;  # idem, na base da 20261112100000
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
@@ -456,6 +496,54 @@ Pq -c "ALTER TABLE public.radar_contatos RENAME COLUMN nota TO nota_x;" >/dev/nu
 Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
 Pq -c "ALTER TABLE public.radar_contatos RENAME COLUMN nota_x TO nota;" >/dev/null
 eq R4 "$(Pq -c "SELECT status FROM public.acoes_execucoes WHERE acao = 'radar.privacidade_expurgo' ORDER BY id DESC LIMIT 1")" "erro"
+
+# ── CPF em formato livre (20261112100000) ──
+# Antes dela: o CPF fora do sufixo da RFB passa cru pela J (o furo medido em prod: 207 razões). ENZO é a razão meio
+# mascarada: o sufixo da RFB a J mascara na entrada; o CPF livre do nome, não.
+Pq -c "INSERT INTO public.radar_empresas (cnpj, razao_social, ja_cliente, municipio_codigo, rfb_situacao) VALUES
+  ('33000001000101','CARLA NUNES - CPF 123.456.789-01',false,'M1','02'),
+  ('33000002000101','BRUNO REIS 98765432100 ME',false,'M1','02'),
+  ('33000003000101','DUDA LIMA 111222333-44',false,'M1','02'),
+  ('33000004000101','ENZO PAZ 555.666.777-88 99988877766',false,'M1','02'),
+  ('33000005000101','LOJA 12345678901234 LTDA',false,'M1','02'),
+  ('33000006000101','12.345.678 FABIO MOTA',false,'M1','02');
+  INSERT INTO public.radar_empresas_carga (lote, cnpj, razao_social) VALUES ('2027-01', '33000007000101', 'GIL SOUZA CPF 222.333.444-55');" >/dev/null
+eq C0 "$(Pq -c "SELECT string_agg(razao_social, ',' ORDER BY cnpj) FROM public.radar_empresas WHERE cnpj IN ('33000001000101', '33000004000101')")" \
+  "CARLA NUNES - CPF 123.456.789-01,ENZO PAZ 555.666.777-88 ***888777**"
+CNPJS_C=$(Pq -c "SELECT string_agg(quote_literal(cnpj), ',') FROM public.radar_empresas")
+upd_c() { Pq -c "SELECT md5(string_agg(cnpj || '@' || updated_at::text, ',' ORDER BY cnpj)) FROM public.radar_empresas WHERE cnpj IN ($CNPJS_C)"; }
+UPD_C_ANTES=$(upd_c)
+foto_base > "$DIR/base-c-antes.txt"; foto_aviso > "$DIR/aviso-c-antes.txt"; foto_conflito > "$DIR/conf-c-antes.txt"
+if [ "${SABOTAGEM:-}" = "deriva2" ]; then
+  P -q -c "CREATE OR REPLACE FUNCTION private.radar_razao_mascarada(p text) RETURNS text LANGUAGE sql IMMUTABLE AS \$f\$ SELECT p \$f\$;" >/dev/null
+fi
+P -q -1 -f "$MIG2_USADA" > "$DIR/apply-c.log" 2>&1 || { cat "$DIR/apply-c.log"; exit 1; }
+P -q -1 -f "$MIG2_USADA" > "$DIR/apply-c2.log" 2>&1 || { echo "FAIL C9 re-apply"; cat "$DIR/apply-c2.log"; exit 1; }
+# C1: o que já estava no banco foi regravado mascarado (pontuação mantida); o que não é CPF ficou intacto.
+eq C1 "$(Pq -c "SELECT string_agg(razao_social, ',' ORDER BY cnpj) FROM public.radar_empresas WHERE cnpj LIKE '3300000%'")|$(Pq -c "SELECT razao_social FROM public.radar_empresas_carga WHERE cnpj = '33000007000101'")" \
+  "CARLA NUNES - CPF ***.456.789-**,BRUNO REIS ***654321** ME,DUDA LIMA ***222333-**,ENZO PAZ ***.666.777-** ***888777**,LOJA 12345678901234 LTDA,12.345.678 FABIO MOTA|GIL SOUZA CPF ***.333.444-**"
+# C2: o cru está no private — e o da razão meio mascarada (ENZO) é o VERDADEIRO, não o meio mascarado.
+eq C2 "$(Pq -c "SELECT string_agg(razao_social, ',' ORDER BY cnpj) FROM private.radar_razao_receita WHERE cnpj LIKE '3300000%'")" \
+  "CARLA NUNES - CPF 123.456.789-01,BRUNO REIS 98765432100 ME,DUDA LIMA 111222333-44,ENZO PAZ 555.666.777-88 99988877766,GIL SOUZA CPF 222.333.444-55"
+# C3: vínculo de todo sujeito, aviso de crédito e guarda de homônimo: a MESMA foto de antes da 20261112100000.
+foto_base > "$DIR/base-c-depois.txt"; foto_aviso > "$DIR/aviso-c-depois.txt"; foto_conflito > "$DIR/conf-c-depois.txt"
+eq C3 "$(igual "$DIR/base-c-antes.txt" "$DIR/base-c-depois.txt")|$(igual "$DIR/aviso-c-antes.txt" "$DIR/aviso-c-depois.txt")|$(igual "$DIR/conf-c-antes.txt" "$DIR/conf-c-depois.txt")" "igual|igual|igual"
+# C4: o cadastro no Omie recebe a razão fiscal exata (o gestor, pela RPC de sempre).
+eq C4 "$(sql_como "$GESTOR" "SELECT public.radar_razao_social_para_cadastro('33000001000101');" | tail -1)|$(sql_como "$GESTOR" "SELECT public.radar_razao_social_para_cadastro('33000004000101');" | tail -1)" \
+  "CARLA NUNES - CPF 123.456.789-01|ENZO PAZ 555.666.777-88 99988877766"
+# C5: a forma da RFB sai idêntica à da J; e o upsert cru da carga seguinte (EXCLUDED) grava mascarado.
+Pq -c "INSERT INTO public.radar_empresas AS e (cnpj, razao_social) VALUES ('33000008000101', 'NOVO MEI ALVES 12345678901'), ('33000001000101', 'CARLA NUNES - CPF 123.456.789-01')
+       ON CONFLICT (cnpj) DO UPDATE SET razao_social = EXCLUDED.razao_social;" >/dev/null
+eq C5 "$(Pq -c "SELECT string_agg(razao_social, ',' ORDER BY cnpj) FROM public.radar_empresas WHERE cnpj IN ('33000001000101', '33000008000101')")" \
+  "CARLA NUNES - CPF ***.456.789-**,NOVO MEI ALVES ***456789**"
+# C6: dois CPFs separados por UM espaço: os dois mascarados (a fronteira não consome o vizinho).
+Pq -c "INSERT INTO public.radar_empresas (cnpj, razao_social) VALUES ('33000009000101', 'DOIS CPF 123.456.789-01 98765432100 LTDA');" >/dev/null
+eq C6 "$(Pq -c "SELECT razao_social FROM public.radar_empresas WHERE cnpj = '33000009000101'")" "DOIS CPF ***.456.789-** ***654321** LTDA"
+# C7: nenhuma razão (foto ou staging) com sequência de CPF; o job segue verde; updated_at intacto.
+Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
+eq C7 "$(Pq -c "SELECT count(*) FROM (SELECT razao_social FROM public.radar_empresas UNION ALL SELECT razao_social FROM public.radar_empresas_carga) t
+                 WHERE razao_social ~ '(?<![0-9])[0-9]{3}[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}[0-9]{2}(?![0-9])'")|$(Pq -c "SELECT status FROM public.acoes_execucoes WHERE acao = 'radar.privacidade_expurgo' ORDER BY id DESC LIMIT 1")|$(upd_c)" \
+  "0|sucesso|$UPD_C_ANTES"
 
 # ── ACL ──
 tem G1 "$(sql_como "$GESTOR" "SELECT count(*) FROM public.radar_exclusoes_titular;")" "42501"
