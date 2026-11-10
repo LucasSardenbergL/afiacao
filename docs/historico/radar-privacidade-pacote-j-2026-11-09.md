@@ -149,6 +149,35 @@ O efeito é imediato e se mantém nas cargas seguintes. Para conferir:
 `socios_nomes` NULL e, no escopo `contato`, e-mail e telefone NULL e o lead descartado. O vínculo e o aviso de
 crédito seguem (decisão acima).
 
+## Continuação: CPF em formato livre (2026-11-10, migration `20261112100000`)
+
+**O furo, medido depois do backfill** (psql-ro, 10:47Z): o contador do cron chegou a 0, mas ele só conta o sufixo
+da RFB (`' [0-9]{11}$'`). Numa conferência por fora sobraram **207 razões com o CPF escrito no nome** por quem
+registrou: `… - CPF 123.456.789-01` (152), `… 12345678901 ME` (27), `… 123456789-01` (19) e grafias avulsas
+(`/`, espaços, `..`, ` - `). Elas saíam inteiras em toda saída.
+
+**A correção (só banco; front e edge não mudam):**
+
+- `private.radar_razao_mascarada` passa a reconhecer 3-3-3-2 dígitos com até 3 separadores (espaço `.` `/` `-`),
+  não colados a outro dígito. Mantém a pontuação (`***.456.789-**`), e a forma da RFB sai idêntica à da J.
+- Os 2 triggers guardam o cru e mascaram sempre que a máscara muda a razão. O cru só vem de razão **sem máscara
+  nenhuma**: a razão meio mascarada não sobrescreve o cru verdadeiro que o cadastro no Omie lê. Meio mascarada quer
+  dizer sufixo da RFB já mascarado mais um CPF livre no nome.
+- As existentes são regravadas na própria migration (`UPDATE razao_social = razao_social`; `updated_at` intacto).
+
+**Por que o vínculo e o crédito não mudam:** as regras só leem o sufixo e o prefixo `dd.ddd.ddd` da razão. Simulado
+sobre as 573.021 razões de prod: 0 mudam algum predicado ou o sufixo capturado, 0 das 207 casam algum dos 2, e
+mascarar 2 vezes dá o mesmo texto. Na prova PG17 (`db/test-radar-privacidade-j.sh`, C0–C7), C3 confere que a foto
+de vínculo, aviso e homônimo é a mesma antes e depois. São 7 sabotagens novas, cada uma vermelha no seu assert.
+
+**Aplicada em prod (2026-11-10, `db:aplicar`, recibo #1068, sha256 `d9eb2bec…`):** regravou 207 razões. Validação
+por fora (psql-ro, depois do commit): os 3 corpos com o md5 novo (`6590f8d7…`, `e4d716e9…`, `1eff8619…`), os 2
+triggers ativos, **0 CPF visível** em `radar_empresas` e no staging, as 207 na forma mascarada nova, e a máscara
+fechada ao JWT.
+
+**Lição:** "o contador do job chegou a 0" prova só o que o contador conta. A validação por fora (regex mais larga
+que a da própria regra) é que achou o resto, e vale para qualquer máscara por padrão.
+
 ## Fora deste pacote (follow-up)
 
 - **Clientes MEI fora do Radar:** `profiles.razao_social` e a base Omie também guardam a razão de MEI com o CPF.
