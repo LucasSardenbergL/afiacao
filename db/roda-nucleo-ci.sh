@@ -108,6 +108,13 @@ fi
 if [ -n "${NUCLEO_RECIBO:-}" ] && [ -z "${NUCLEO_PARTE:-}" ]; then
   uso "NUCLEO_RECIBO só vale com NUCLEO_PARTE — o recibo é de uma parte, e a execução inteira não é parte nenhuma"
 fi
+# Workers (NUCLEO_WORKERS, default 1), validado AQUI e não só na execução: o W também pesa a PARTIÇÃO
+# (a faixa serial ocupa a parte inteira, o pool divide por W — ver `atribui_partes`), e vai no recibo
+# para a união refazer a mesma conta. O bash ≥ 5.1 (wait -n -p) só é exigido onde o pool roda (§3).
+WORKERS="${NUCLEO_WORKERS:-1}"
+if ! printf '%s' "$WORKERS" | grep -qE '^[1-8]$'; then
+  echo "::error::NUCLEO_WORKERS inválido: '$WORKERS' (1 a 8)"; exit 1
+fi
 
 # sha256 do manifesto EFETIVO: o recibo da parte leva o do manifesto que ELA leu, e a união exige o
 # mesmo. Com fragmentos, é o hash do fluxo `== <fonte>` + conteúdo de cada fonte, na ordem de leitura
@@ -250,30 +257,65 @@ if [ "$esperados" -lt 1 ]; then
   echo "::error::manifesto sem nenhuma prova — um gate que não executa nada não pode afirmar nada"; exit 1
 fi
 
-# atribui_partes <N> — preenche alvo[k] (a parte da prova de posição k) pela partição BALANCEADA da 1b.
-# Função porque as DUAS pontas precisam da MESMA resposta: a parte (1b) escolhe o que roda, e a união
-# (1a) confere que cada unidade veio da parte certa. Regras e medição no cabeçalho da 1b.
+# FAIXA SERIAL: prova com `lock_timeout`/`statement_timeout` ≤ 2 s (número puro = ms, a unidade
+# dessas GUCs), ou que cita uma delas sem valor legível (conservador), roda SOZINHA: a vizinha
+# disputaria CPU no meio de uma espera de 200 ms. Derivada do FONTE a cada execução, então prova
+# nova com timeout curto já nasce serial. Em 2026-11-09 eram 21 provas, 23% do tempo do núcleo.
+timeout_curto() {
+  LC_ALL=C awk '
+    { linha = $0
+      while (match(linha, /(lock|statement)_timeout/)) {
+        achou = 1; resto = substr(linha, RSTART + RLENGTH); linha = resto
+        if (match(resto, /^[[:space:]]*(=|TO|to)[[:space:]]*\047?[0-9]+[[:space:]]*(ms|s|min)?/)) {
+          v = substr(resto, RSTART, RLENGTH); sub(/^[^0-9]*/, "", v); gsub(/[^0-9a-z]/, "", v)
+          n = v + 0; u = v; gsub(/[0-9]/, "", u)
+          ms = (u == "s") ? n * 1000 : (u == "min") ? n * 60000 : n
+          lido = 1; if (ms > 0 && ms <= 2000) curto = 1
+        }
+      } }
+    END { exit !(curto || (achou && !lido)) }' "$REPO_ROOT/$1"
+}
+# seriais[k] = 1 se a prova de posição k é da faixa serial. Calculada UMA vez, sobre o manifesto
+# inteiro: a MESMA resposta pesa a partição (parte e união) e decide a faixa na execução (§3).
+seriais=()
+for k in "${!scripts[@]}"; do
+  if timeout_curto "${scripts[$k]}"; then seriais[k]=1; else seriais[k]=0; fi
+done
+
+# atribui_partes <N> <W> — preenche alvo[k] (a parte da prova de posição k) pela partição BALANCEADA
+# da 1b. Função porque as DUAS pontas precisam da MESMA resposta: a parte (1b) escolhe o que roda, e a
+# união (1a) confere que cada unidade veio da parte certa. W é o NUCLEO_WORKERS da parte (a união o lê
+# dos recibos). Regras e medição no cabeçalho da 1b.
 atribui_partes() {
-  local p_n="$1" podre k p
+  local p_n="$1" p_w="$2" podre k p
   CUSTO="${NUCLEO_CUSTO:-$REPO_ROOT/db/nucleo-ci-custo.txt}"
   CUSTO_DEFAULT=30
   if [ -f "$CUSTO" ]; then
-    podre="$(grep -vE '^[[:space:]]*(#|$)' "$CUSTO" | grep -vE '^db/test-[A-Za-z0-9_-]+\.sh[[:space:]]+[0-9]+[[:space:]]*$' | head -1 || true)"
+    podre="$(grep -vE '^[[:space:]]*(#|$)' "$CUSTO" | grep -vE '^(db/test-[A-Za-z0-9_-]+\.sh|@cauda-parte-0)[[:space:]]+[0-9]+[[:space:]]*$' | head -1 || true)"
     if [ -n "$podre" ]; then
-      echo "::error::$CUSTO: linha malformada (esperado 'db/test-x.sh <segundos>'): $podre"; exit 1
+      echo "::error::$CUSTO: linha malformada (esperado 'db/test-x.sh <segundos>' ou '@cauda-parte-0 <segundos>'): $podre"; exit 1
     fi
   fi
-  # alvo[k] = a parte da prova de posição k. O `sort` ordena por custo DESC e posição ASC; o awk
-  # entrega cada uma à parte menos carregada. `FILENAME == ARGV[1]` e não `NR==FNR`: com a tabela
-  # vazia (ou ausente), o `NR==FNR` valeria também para o manifesto e engoliria todas as provas.
+  # alvo[k] = a parte da prova de posição k. PESO em unidades de 1/W segundo, para ficar inteiro:
+  # prova da faixa serial pesa custo × W (ocupa a parte INTEIRA, sozinha), a do pool pesa custo (divide
+  # a parte com W−1 vizinhas). É `serial + pool/W` multiplicado por W. A parte 0 já nasce com a cauda
+  # do harness (`@cauda-parte-0`, o step que só ela roda depois do núcleo, serial) × W. O `sort` ordena
+  # por peso DESC e posição ASC; o awk entrega cada uma à parte menos carregada. Com W = 1 e sem cauda
+  # é o LPT por custo de antes. `FILENAME == ARGV[1]` e não `NR==FNR`: com a tabela vazia (ou
+  # ausente), o `NR==FNR` valeria também para o manifesto e engoliria todas as provas.
+  cauda=0
+  if [ -f "$CUSTO" ]; then
+    cauda="$(awk '$1 == "@cauda-parte-0" { v = $2 } END { print v + 0 }' "$CUSTO")"
+  fi
   alvo=()
   while read -r k p; do alvo[k]=$p; done < <(
-    awk -v def="$CUSTO_DEFAULT" '
+    awk -v def="$CUSTO_DEFAULT" -v w="$p_w" '
           FILENAME == ARGV[1] { if (NF > 0 && $1 !~ /^#/) c[$1] = $2; next }
-          { print (($1 in c) ? c[$1] : def), FNR - 1 }' \
-        <(if [ -f "$CUSTO" ]; then cat "$CUSTO"; fi) <(printf '%s\n' "${scripts[@]}") \
+          { print (($1 in c) ? c[$1] : def) * ($2 == 1 ? w : 1), FNR - 1 }' \
+        <(if [ -f "$CUSTO" ]; then cat "$CUSTO"; fi) \
+        <(for k in "${!scripts[@]}"; do printf '%s %s\n' "${scripts[$k]}" "${seriais[$k]}"; done) \
       | LC_ALL=C sort -k1,1nr -k2,2n \
-      | awk -v n="$p_n" 'BEGIN { for (i = 0; i < n; i++) carga[i] = 0 }
+      | awk -v n="$p_n" -v c0="$((cauda * p_w))" 'BEGIN { for (i = 0; i < n; i++) carga[i] = 0; carga[0] = c0 }
           { m = 0; for (i = 1; i < n; i++) if (carga[i] < carga[m]) m = i; carga[m] += $1; print $2, m }'
   )
   if [ "${#alvo[@]}" -ne "${#scripts[@]}" ]; then
@@ -304,9 +346,9 @@ if [ -n "$dir_uniao" ]; then
   fi
 
   # 1ª passada: o FORMATO de cada recibo e o N. Sem N não há partição contra a qual conferir.
-  n_uniao=""; rec_parte=()
+  n_uniao=""; w_uniao=""; rec_parte=()
   for f in "${recibos[@]}"; do
-    n_l=0; n_sha=0; n_par=0; n_fim=0; n_un=0; fim_n=""; ultima=""; r_i=""
+    n_l=0; n_sha=0; n_par=0; n_wk=0; n_fim=0; n_un=0; fim_n=""; ultima=""; r_i=""
     while IFS= read -r l || [ -n "$l" ]; do
       n_l=$((n_l + 1)); ultima="$l"
       if [ "$n_l" -eq 1 ]; then
@@ -326,13 +368,20 @@ if [ -n "$dir_uniao" ]; then
           if [ -z "$n_uniao" ]; then n_uniao="$r_n"; fi
           if [ "$r_n" -ne "$n_uniao" ]; then echo "::error::$f: parte $v, mas outro recibo diz N=$n_uniao — partes de partições diferentes"; exit 1; fi
           if [ "$r_i" -ge "$r_n" ]; then echo "::error::$f: parte $v não existe (i ≥ N)"; exit 1; fi ;;
+        'workers '*)
+          # O W PESA a partição (atribui_partes): a união refaz a conta com o W que as partes usaram, e
+          # partes com W diferentes calcularam partições diferentes — nenhuma das duas é "a certa".
+          n_wk=$((n_wk + 1)); v="${l#workers }"
+          printf '%s' "$v" | grep -qE '^[1-8]$' || { echo "::error::$f: linha de workers malformada: '$l'"; exit 1; }
+          if [ -z "$w_uniao" ]; then w_uniao="$v"; fi
+          if [ "$v" -ne "$w_uniao" ]; then echo "::error::$f: workers $v, mas outro recibo diz workers $w_uniao — partes de partições diferentes"; exit 1; fi ;;
         'unidade '*) n_un=$((n_un + 1)) ;;
         'fim '*) n_fim=$((n_fim + 1)); fim_n="${l#fim }" ;;
         *) echo "::error::$f: linha não reconhecida no recibo: '$l'"; exit 1 ;;
       esac
     done < "$f"
-    if [ "$n_sha" -ne 1 ] || [ "$n_par" -ne 1 ] || [ "$n_fim" -ne 1 ]; then
-      echo "::error::$f: recibo exige UMA linha de cada (manifesto_sha256=$n_sha parte=$n_par fim=$n_fim)"; exit 1
+    if [ "$n_sha" -ne 1 ] || [ "$n_par" -ne 1 ] || [ "$n_wk" -ne 1 ] || [ "$n_fim" -ne 1 ]; then
+      echo "::error::$f: recibo exige UMA linha de cada (manifesto_sha256=$n_sha parte=$n_par workers=$n_wk fim=$n_fim)"; exit 1
     fi
     if [ "$ultima" != "fim $fim_n" ] || [ "$fim_n" != "$n_un" ]; then
       echo "::error::$f: recibo TRUNCADO ou adulterado — 'fim $fim_n' com $n_un unidade(s), e o fim tem de ser a última linha"; exit 1
@@ -348,7 +397,7 @@ if [ -n "$dir_uniao" ]; then
     if [ "$vezes" -gt 1 ]; then echo "::error::a parte $i/$n_uniao apareceu $vezes vezes"; exit 1; fi
   done
 
-  atribui_partes "$n_uniao"
+  atribui_partes "$n_uniao" "$w_uniao"
 
   # 2ª passada: cada unidade do recibo existe no manifesto, cai NESTA parte pela partição e não foi
   # vista antes. Depois, toda unidade do manifesto tem de ter sido vista — o conjunto, não a contagem.
@@ -391,7 +440,7 @@ if [ -n "$dir_uniao" ]; then
     fi
   done
   echo "=================================================="
-  echo "SQL_PROOF_OK uniao=$n_uniao/$n_uniao provas=$esperados/$esperados falsificacoes=$n_falsif_u/$n_falsif_u fora_do_ci=$n_fora_u unidades=${#id_cam[@]} manifesto_sha256=$sha"
+  echo "SQL_PROOF_OK uniao=$n_uniao/$n_uniao provas=$esperados/$esperados falsificacoes=$n_falsif_u/$n_falsif_u fora_do_ci=$n_fora_u unidades=${#id_cam[@]} manifesto_sha256=$sha workers=$w_uniao"
   exit 0
 fi
 
@@ -406,7 +455,12 @@ fi
 #     posição: medido em 4 runs de 2026-10-21, as 6 partes somavam 10,9/14,2/4,8/10,2/6,3/10,1 min de
 #     núcleo (a 2ª era o caminho crítico do `validate`); balanceadas, 9,5–9,6 cada. Com custos iguais
 #     (tabela vazia) o LPT reduz ao round-robin. Determinística: as N partes calculam a MESMA
-#     atribuição a partir dos mesmos dois arquivos do checkout.
+#     atribuição a partir dos mesmos dois arquivos do checkout e do mesmo NUCLEO_WORKERS (que vai no
+#     recibo, para a união refazer a conta com ele).
+#   · Peso CONSCIENTE DAS DUAS FASES (2026-11-09): com W workers, a parte leva ~ serial + pool/W, e
+#     não a soma dos custos. A prova da faixa serial pesa custo × W; a do pool, custo. A parte 0 nasce
+#     com a cauda do harness (`@cauda-parte-0`). Antes, a parte com 11 unidades seriais levava 17–19
+#     min e a com 3 levava 9–12, com a mesma soma. Medição: docs/historico/ci-provas-sql-balanceamento-fases.md
 #     Nenhuma prova em duas partes e nenhuma fora de todas, DESDE QUE as N partes rodem — e quem diz
 #     i e N é o próprio GitHub (`strategy.job-index`/`job-total`), contados pela matriz real: mexer na
 #     lista da matriz não abre buraco nem repete parte.
@@ -425,18 +479,18 @@ if [ -n "${NUCLEO_PARTE:-}" ]; then
   if [ "$p_n" -lt 1 ] || [ "$p_i" -ge "$p_n" ]; then
     echo "::error::NUCLEO_PARTE inválida: '$NUCLEO_PARTE' (formato i/N, com 0 ≤ i < N)"; exit 1
   fi
-  atribui_partes "$p_n"
-  sel_s=(); sel_m=(); sel_f=(); sel_mf=()
+  atribui_partes "$p_n" "$WORKERS"
+  sel_s=(); sel_m=(); sel_f=(); sel_mf=(); sel_se=()
   for k in "${!scripts[@]}"; do
     if [ "${alvo[$k]}" -eq "$p_i" ]; then
-      sel_s+=("${scripts[$k]}"); sel_m+=("${minimos[$k]}"); sel_f+=("${falsifs[$k]}"); sel_mf+=("${motivos_fora[$k]}")
+      sel_s+=("${scripts[$k]}"); sel_m+=("${minimos[$k]}"); sel_f+=("${falsifs[$k]}"); sel_mf+=("${motivos_fora[$k]}"); sel_se+=("${seriais[$k]}")
     fi
   done
   if [ "${#sel_s[@]}" -lt 1 ]; then
     echo "::error::NUCLEO_PARTE $NUCLEO_PARTE: parte sem nenhuma prova ($esperados no manifesto) — reduza N"; exit 1
   fi
   parte="parte $((p_i + 1)) de $p_n: ${#sel_s[@]} de $esperados provas"
-  scripts=("${sel_s[@]}"); minimos=("${sel_m[@]}"); falsifs=("${sel_f[@]}"); motivos_fora=("${sel_mf[@]}")
+  scripts=("${sel_s[@]}"); minimos=("${sel_m[@]}"); falsifs=("${sel_f[@]}"); motivos_fora=("${sel_mf[@]}"); seriais=("${sel_se[@]}")
   esperados=${#scripts[@]}
 fi
 # O sha do manifesto que ESTA parte leu, tomado agora — não no fim, depois de minutos de provas.
@@ -513,10 +567,6 @@ concluidas=(); falhas=()
 # pai só lê os arquivos depois. Unidade sem arquivo de veredito completo (subshell morto no meio)
 # REPROVA: ausência de veredito não é verde. A porta é do SLOT do worker (faixas de PORTA_STRIDE
 # disjuntas), porque prova usa PGPORT_TEST+i nas sabotagens e PGPORT_TEST+1 em cluster irmão.
-WORKERS="${NUCLEO_WORKERS:-1}"
-if ! printf '%s' "$WORKERS" | grep -qE '^[1-8]$'; then
-  echo "::error::NUCLEO_WORKERS inválido: '$WORKERS' (1 a 8)"; exit 1
-fi
 if [ "$WORKERS" -gt 1 ] && { [ "${BASH_VERSINFO[0]}" -lt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -lt 1 ]; }; }; then
   echo "::error::NUCLEO_WORKERS=$WORKERS exige bash ≥ 5.1 (wait -n -p); este é $BASH_VERSION"; exit 1
 fi
@@ -658,28 +708,10 @@ custo_de() {
   printf '%s' "${c:-${CUSTO_DEFAULT:-30}}"
 }
 CUSTO="${CUSTO:-${NUCLEO_CUSTO:-$REPO_ROOT/db/nucleo-ci-custo.txt}}"
-# FAIXA SERIAL: prova com `lock_timeout`/`statement_timeout` ≤ 2 s (número puro = ms, a unidade
-# dessas GUCs), ou que cita uma delas sem valor legível (conservador), roda SOZINHA: a vizinha
-# disputaria CPU no meio de uma espera de 200 ms. Derivada do FONTE a cada execução, então prova
-# nova com timeout curto já nasce serial. Em 2026-11-09 eram 21 provas, 23% do tempo do núcleo.
-timeout_curto() {
-  LC_ALL=C awk '
-    { linha = $0
-      while (match(linha, /(lock|statement)_timeout/)) {
-        achou = 1; resto = substr(linha, RSTART + RLENGTH); linha = resto
-        if (match(resto, /^[[:space:]]*(=|TO|to)[[:space:]]*\047?[0-9]+[[:space:]]*(ms|s|min)?/)) {
-          v = substr(resto, RSTART, RLENGTH); sub(/^[^0-9]*/, "", v); gsub(/[^0-9a-z]/, "", v)
-          n = v + 0; u = v; gsub(/[0-9]/, "", u)
-          ms = (u == "s") ? n * 1000 : (u == "min") ? n * 60000 : n
-          lido = 1; if (ms > 0 && ms <= 2000) curto = 1
-        }
-      } }
-    END { exit !(curto || (achou && !lido)) }' "$REPO_ROOT/$1"
-}
-
+# A faixa serial (timeout_curto, lá em cima) vem de `seriais`, a MESMA resposta que pesou a partição.
 # enfileira <caminho> <modo> <mínimo> <grupo 0=falsificar|1=normal> <custo> <posição>
 enfileira() {
-  local faixa=1; timeout_curto "$1" && faixa=0
+  local faixa=1; [ "${seriais[$6]}" = 1 ] && faixa=0
   u_cam+=("$1"); u_modo+=("$2"); u_min+=("$3"); u_chave+=("$faixa $4 $5 $6")
   if [ "$2" = falsificar ]; then u_rot+=("$(basename "$1" .sh) --falsificar"); else u_rot+=("$(basename "$1" .sh)"); fi
 }
@@ -771,6 +803,7 @@ if [ -n "${NUCLEO_RECIBO:-}" ]; then
   { echo NUCLEO_RECIBO_V1
     echo "manifesto_sha256 $sha_parte"
     echo "parte $p_i/$p_n"
+    echo "workers $WORKERS"
     for feito in "${concluidas[@]}"; do echo "unidade $feito"; done
     echo "fim ${#concluidas[@]}"
   } > "$NUCLEO_RECIBO.tmp"

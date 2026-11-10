@@ -1208,6 +1208,9 @@ jobs:
         # O runner roda NUCLEO_WORKERS unidades ao mesmo tempo (step do núcleo, abaixo), menos a FAIXA
         # SERIAL (timeout ≤ 2 s, 23% do tempo), que roda sozinha. Ganho estimado de 1,4–1,6× (5 partes,
         # não 4); resultado medido em docs/historico/ci-provas-sql-2-workers.md.
+        # Peso das duas fases (2026-11-09): a partição pesa a prova da faixa serial × NUCLEO_WORKERS e
+        # passa a pesar a cauda do harness da 1ª parte (`@cauda-parte-0` na tabela; hoje ~1,6 min, não
+        # mais 0,7). Medição em docs/historico/ci-provas-sql-balanceamento-fases.md.
         parte: [1, 2, 3, 4, 5]
     permissions:
       contents: read
@@ -1493,7 +1496,7 @@ jobs:
       - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
         if: ${{ strategy.job-index == 0 }}
         env:
-          HARNESS_OK_MINIMO: "83"
+          HARNESS_OK_MINIMO: "92"
         run: |
           log="$RUNNER_TEMP/falsifica-nucleo.log"
           bash db/falsifica-nucleo-ci.sh > "$log" 2>&1 && rc=0 || rc=$?

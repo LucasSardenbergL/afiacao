@@ -50,6 +50,10 @@ echo "=== espelho em $ESPELHO ==="
 cp -R "$REPO_ROOT/db" "$ESPELHO/db"
 mkdir -p "$ESPELHO/supabase"
 cp -R "$REPO_ROOT/supabase/migrations" "$ESPELHO/supabase/migrations"
+# Tabela de custo VAZIA por padrão: os casos de partição usam provas de mentira, e a tabela REAL não
+# pode pesar neles. A linha `@cauda-parte-0` dela (2026-11-09) carregava a parte 0 e esvaziava as
+# partições de 3 provas. Caso que testa custo passa NUCLEO_CUSTO próprio.
+: > "$ESPELHO/custo-vazio.txt"; export NUCLEO_CUSTO="$ESPELHO/custo-vazio.txt"
 
 # roda_prova <script-basename> -> ecoa rc; log em $LOGS/<nome>.<tag>.log
 roda_prova() {
@@ -669,6 +673,63 @@ fi
 rm -f "$ESPELHO/$FALSO" "$ESPELHO/db/test-fake-falsificavel-2.sh" "$ESPELHO/db/test-fake-falsificavel-3.sh" \
   "$ESPELHO/db/roda-nucleo-ci-perde.sh" "$MPR"
 
+# ── PESO DAS DUAS FASES na partição (2026-11-09) ────────────────────────────────────────────────
+# Com W workers a parte leva ~ serial + pool/W: a prova da faixa serial pesa custo × W, a do pool
+# pesa custo, e a parte 0 nasce com a cauda do harness (`@cauda-parte-0`). O W vai no recibo, e a
+# união refaz a partição com ELE. Fixture: a (serial, 10 s), b (15 s), c (6 s), em 2 partes.
+#   W=1: b→0, a→1, c→1 (o LPT por custo de antes) · W=2: a pesa 20 → a→0, b→1, c→1
+#   W=1 com cauda 20: b→1, a→1, c→0
+# O W=1 é o CONTROLE da mesma invocação: sem ele, um runner que pusesse sempre `a` na parte 0
+# passaria no caso do W=2.
+echo
+echo "=== a partição pesa a faixa serial × W, a cauda da parte 0, e a união usa o W do recibo? ==="
+for x in a b c; do fake_simples "test-fase-$x.sh"; done
+printf "# SET lock_timeout = '200ms' (marca da faixa serial)\n" >> "$ESPELHO/db/test-fase-a.sh"
+MF="$ESPELHO/manifesto-fases.txt"; TF="$ESPELHO/custo-fases.txt"; TFC="$ESPELHO/custo-fases-cauda.txt"
+printf 'db/test-fase-a.sh 5\ndb/test-fase-b.sh 5\ndb/test-fase-c.sh 5\n' > "$MF"
+printf 'db/test-fase-a.sh 10\ndb/test-fase-b.sh 15\ndb/test-fase-c.sh 6\n' > "$TF"
+{ printf '@cauda-parte-0 20\n'; cat "$TF"; } > "$TFC"
+parte0_fases() { # <tabela> <W> → as provas da parte 0/2, numa linha
+  env MANIFESTO="$MF" NUCLEO_CUSTO="$1" NUCLEO_WORKERS="$2" NUCLEO_PARTE=0/2 bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista \
+    > "$LOGS/fases.lst" 2>&1 || { echo "LISTA_FALHOU: $(tail -1 "$LOGS/fases.lst")"; return; }
+  tail -n +2 "$LOGS/fases.lst" | awk '{printf "%s ", $1}'
+}
+v="$(parte0_fases "$TF" 1)"
+if [ "$v" = "db/test-fase-b.sh " ]; then ok "CONTROLE: com W=1 a partição é o LPT por custo (parte 0 = a prova mais cara, b)"
+else bad "controle W=1 da partição por fases: parte 0/2 = '$v' (esperava b)"; fi
+v="$(parte0_fases "$TF" 2)"
+if [ "$v" = "db/test-fase-a.sh " ]; then ok "W=2: a prova da FAIXA SERIAL pesa ×W e fica sozinha na parte 0"
+else bad "W=2 não pesou a faixa serial: parte 0/2 = '$v' (esperava a)"; fi
+v="$(parte0_fases "$TFC" 1)"
+if [ "$v" = "db/test-fase-c.sh " ]; then ok "a cauda do harness (@cauda-parte-0) é carga inicial da parte 0"
+else bad "a cauda da parte 0 não pesou: parte 0/2 = '$v' (esperava c)"; fi
+
+RF="$ESPELHO/recibos-fases"; rm -rf "$RF"; mkdir -p "$RF"
+exec_verde "CONTROLE: a parte 0/2 (W=1) grava o recibo com o W dela" "RECIBO_DA_PARTE 0/2 unidades=1" \
+  env MANIFESTO="$MF" NUCLEO_CUSTO="$TF" NUCLEO_WORKERS=1 NUCLEO_PARTE=0/2 NUCLEO_RECIBO="$RF/parte-0.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+exec_verde "CONTROLE: a parte 1/2 (W=1) grava o recibo com o W dela" "RECIBO_DA_PARTE 1/2 unidades=2" \
+  env MANIFESTO="$MF" NUCLEO_CUSTO="$TF" NUCLEO_WORKERS=1 NUCLEO_PARTE=1/2 NUCLEO_RECIBO="$RF/parte-1.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+uniao_fases() { # <descrição> <marca> <diretório> — a união SEM NUCLEO_WORKERS: o W vem do recibo
+  exec_exige "$1" "$2" env -u NUCLEO_WORKERS MANIFESTO="$MF" NUCLEO_CUSTO="$TF" bash "$ESPELHO/db/roda-nucleo-ci.sh" --uniao "$3"
+}
+exec_verde "CONTROLE: a união dos recibos W=1 fecha o manifesto" "SQL_PROOF_OK uniao=2/2 provas=3/3 falsificacoes=0/0" \
+  env -u NUCLEO_WORKERS MANIFESTO="$MF" NUCLEO_CUSTO="$TF" bash "$ESPELHO/db/roda-nucleo-ci.sh" --uniao "$RF"
+REC_SALVO="$REC"; REC="$RF"
+D="$(variante fases-w2)"
+if adultera "$D/parte-0.txt" sed -e 's/^workers 1$/workers 2/' && adultera "$D/parte-1.txt" sed -e 's/^workers 1$/workers 2/'; then
+  uniao_fases "a união refaz a partição com o W do RECIBO (W=2 põe a prova serial em outra parte)" "a parte rodou OUTRO conjunto" "$D"
+fi
+D="$(variante fases-w-diverge)"
+if adultera "$D/parte-1.txt" sed -e 's/^workers 1$/workers 2/'; then
+  uniao_fases "partes com W DIFERENTES (partições diferentes) REPROVAM a união" "outro recibo diz workers" "$D"
+fi
+D="$(variante fases-sem-w)"
+if adultera "$D/parte-0.txt" sed -e '/^workers /d'; then
+  uniao_fases "recibo SEM a linha workers REPROVA (a união não chuta o W)" "workers=0" "$D"
+fi
+REC="$REC_SALVO"
+rm -f "$ESPELHO"/db/test-fase-[abc].sh "$MF" "$TF" "$TFC"
+
 # ── WORKERS: unidades simultâneas na parte (2026-11-09, fatia 2) ────────────────────────────────
 # O veredito de cada unidade volta do subshell por ARQUIVO. O que pode dar errado sem ninguém ver:
 # "2 workers" que na verdade rodam em série (ganho nenhum, custo de leitura), subshell que morre e
@@ -736,7 +797,8 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # (parecer Codex 2026-09-14). No CI quem decide é o step do `provas-sql`, que confere o recibo
 # acima com o piso FORA daqui — `HARNESS_OK_MINIMO` no ci.yml; mude os dois juntos.
 # 45 → 65 em 2026-10-01: os 20 casos do recibo das partes e da união.
-OK_MINIMO=67
+# 67 → 76 em 2026-11-09: os 9 casos do peso das duas fases (partição, cauda, `workers` no recibo).
+OK_MINIMO=76
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi
