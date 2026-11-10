@@ -10,6 +10,7 @@ import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
 import { useRegisterCommands, type Command } from '@/components/shell/CommandsRegistry';
 import { formatBRL } from '@/components/reposicao/pedidos/shared';
 import { ImportarPedidoPortalDialog } from './ImportarPedidoPortalDialog';
+import { descreverDiferenca, lerDiferencas } from './aceitar-portal';
 import {
   CHAVE_PAINEL_PORTAL, esperaDaRodada, linkDoPedido, msAteReleituraPosCron, normalizarPainel, vereditoPainel, type PainelPortal,
 } from './importar-portal';
@@ -142,6 +143,51 @@ export function PedidosPortalCard() {
           </section>
         )}
 
+        {data && data.alterado.length > 0 && (
+          <section aria-label="Alterados no portal">
+            <p className="font-medium text-status-error mb-1">Alterado no portal (não bate com o pedido do app)</p>
+            <ul className="divide-y rounded-md border">
+              {data.alterado.map((p) => {
+                const difs = lerDiferencas(p.diferencas);
+                return (
+                  <li key={p.pedidoId} className="flex flex-col gap-2 p-2 sm:flex-row sm:items-start sm:justify-between" data-testid="pedidos-portal-alterado">
+                    <div className="min-w-0">
+                      <p className="font-medium">
+                        Pedido {p.protocolo} · <Link className="underline" to={linkDoPedido(p.pedidoId)}>#{p.pedidoId}</Link>
+                        {p.omieNumero ? ` · pedido de compra ${p.omieNumero}` : ''}
+                      </p>
+                      {difs === null ? (
+                        <p className="text-xs text-status-warning">Não consegui ler as diferenças — abra o pedido.</p>
+                      ) : (
+                        <ul className="text-xs text-muted-foreground break-words">
+                          {difs.slice(0, 3).map((d, i) => <li key={i}>{descreverDiferenca(d)}</li>)}
+                          {difs.length > 3 && <li>e mais {difs.length - 3} diferença{difs.length - 3 > 1 ? 's' : ''}</li>}
+                        </ul>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        {p.semPo
+                          ? 'O app não cria o pedido de compra enquanto o portal diverge. Abra o pedido e aceite o portal (ou corrija no portal).'
+                          : 'O pedido de compra no Omie foi feito com o pedido antigo. Confira-o no Omie se o portal é o que vale.'}
+                        {` · visto ${quando(p.detectadaEm)}`}
+                      </p>
+                      {p.pendenciaMensagem && (
+                        <p className="text-xs text-muted-foreground break-words">
+                          {p.pendenciaMensagem}
+                          {p.pendenciaTentativas ? ` · ${p.pendenciaTentativas} tentativa${p.pendenciaTentativas > 1 ? 's' : ''}` : ''}
+                        </p>
+                      )}
+                    </div>
+                    <Button asChild size="sm" variant="outline" className="shrink-0">
+                      <Link to={linkDoPedido(p.pedidoId)}>Abrir o pedido</Link>
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+            <Corte mostrados={data.alterado.length} total={data.totalAlterado} />
+          </section>
+        )}
+
         {data && data.pendencias.length > 0 && (
           <section aria-label="Pendências da varredura">
             <p className="font-medium text-status-error mb-1">Não entraram no Omie</p>
@@ -185,9 +231,16 @@ export function PedidosPortalCard() {
                       </p>
                     )}
                   </div>
-                  <Button size="sm" variant="outline" className="shrink-0" onClick={() => setImportarProtocolo(p.protocolo)}>
-                    Criar pedido de compra
-                  </Button>
+                  {p.divergenciaAberta ? (
+                    // 6.11: re-disparar seria recusado (a divergência trava o claim) — resolve-se no pedido.
+                    <Button asChild size="sm" variant="outline" className="shrink-0">
+                      <Link to={linkDoPedido(p.pedidoId)}>Alterado no portal — abrir</Link>
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" className="shrink-0" onClick={() => setImportarProtocolo(p.protocolo)}>
+                      Criar pedido de compra
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>

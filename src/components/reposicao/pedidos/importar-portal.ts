@@ -225,6 +225,15 @@ interface SemPoPortal {
   desde: string | null; origem: 'importado' | 'app';
   /** A falha da varredura do MESMO protocolo vem dentro da linha (6.4 — conta uma vez). */
   pendenciaMensagem: string | null; pendenciaTentativas: number | null;
+  /** 6.11: o portal diverge do app — o re-disparo é recusado até resolver no pedido (5.2). */
+  divergenciaAberta: boolean;
+}
+/** 6.11: pedido com divergência portal × app ABERTA (5.2), com ou sem pedido de compra. */
+interface AlteradoPortal {
+  pedidoId: number; protocolo: string; omieNumero: string | null; semPo: boolean; detectadaEm: string | null;
+  /** Cru da RPC: quem lê é `lerDiferencas` (aceitar-portal.ts) na tela — forma inesperada vira "não consegui ler". */
+  diferencas: unknown;
+  pendenciaMensagem: string | null; pendenciaTentativas: number | null;
 }
 interface CanceladoPortal { pedidoId: number; protocolo: string; omieNumero: string | null; situacaoEm: string | null }
 interface ImportadoPortal {
@@ -245,6 +254,7 @@ export interface PainelPortal {
   aguardando: { total: number; maisAntigoEm: string | null };
   canceladoSemPo: CanceladoPortal[]; totalCanceladoSemPo: number;
   canceladoComPo: CanceladoPortal[]; totalCanceladoComPo: number;
+  alterado: AlteradoPortal[]; totalAlterado: number;
   pendentesUnicos: number;
   importados: ImportadoPortal[]; totalImportados: number;
   semAliquota: { skus: number; ncms: string[] };
@@ -276,7 +286,7 @@ const cancelado = (p: Record<string, unknown>): CanceladoPortal[] => {
 };
 
 /**
- * Normaliza o JSON do painel (contrato v2 da RPC, migration 20261109100000). Contrato RÍGIDO (6.2): `{}`, versão
+ * Normaliza o JSON do painel (contrato v2 da RPC, migrations 20261109100000 + 20261112090000). Contrato RÍGIDO (6.2): `{}`, versão
  * antiga, lista ou total ausente → LANÇA, e o card mostra "não consegui ler" — nunca três listas vazias. Linha sem
  * identidade (protocolo/pedido) é descartada, não inventada.
  */
@@ -317,6 +327,7 @@ export function normalizarPainel(data: unknown): PainelPortal {
         pedidoId, protocolo, status: texto(p.status), importadoEm: texto(p.importado_em), desde: texto(p.desde),
         origem: p.origem === 'app' ? 'app' as const : 'importado' as const,
         pendenciaMensagem: texto(p.pendencia_mensagem), pendenciaTentativas: inteiro(p.pendencia_tentativas),
+        divergenciaAberta: p.divergencia_aberta === true,
       }] : [];
     }),
     totalSemPo: total(d, 'total_sem_po'),
@@ -325,6 +336,16 @@ export function normalizarPainel(data: unknown): PainelPortal {
     totalCanceladoSemPo: total(d, 'total_cancelado_sem_po'),
     canceladoComPo: listaObrigatoria(d, 'cancelado_com_po').flatMap(cancelado),
     totalCanceladoComPo: total(d, 'total_cancelado_com_po'),
+    // 6.11 (migration 20261112090000): obrigatória — sem ela o card diz "não consegui ler", nunca "nada alterado".
+    alterado: listaObrigatoria(d, 'alterado_portal').flatMap((p) => {
+      const pedidoId = inteiro(p.pedido_id); const protocolo = texto(p.protocolo);
+      return pedidoId != null && protocolo ? [{
+        pedidoId, protocolo, omieNumero: texto(p.omie_numero), semPo: p.sem_po !== false, detectadaEm: texto(p.detectada_em),
+        diferencas: p.diferencas,
+        pendenciaMensagem: texto(p.pendencia_mensagem), pendenciaTentativas: inteiro(p.pendencia_tentativas),
+      }] : [];
+    }),
+    totalAlterado: total(d, 'total_alterado_portal'),
     pendentesUnicos: total(d, 'pendentes_unicos'),
     importados: listaObrigatoria(d, 'importados').flatMap((p) => {
       const pedidoId = inteiro(p.pedido_id); const protocolo = texto(p.protocolo);
