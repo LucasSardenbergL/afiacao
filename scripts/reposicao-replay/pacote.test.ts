@@ -73,6 +73,24 @@ describe('oráculos do F0′ (contas à mão)', () => {
     expect(g0.demanda).toBeLessThan(0.75);
   });
 
+  it('LT e σLT por perfil: Alt2a = max(teórico, p80) com σLT 0; Alt2b herda LT/σLT; z(A) só na classe proposta A', () => {
+    const d = '2026-04-06';
+    const dus = diasEntre(INICIO_AQUECIMENTO, addDias(d, -1)).filter(ehDiaUtil);
+    const vendas = [...dus.map((dia) => venda('X', dia, 1)), ...dus.map((dia) => ({ ...venda('W', dia, 1), valor: 3 }))];
+    // LTs próprios 8, 9, 10, 10, 11, 12: p80 tipo 7 = ordenado[(6 − 1)·0,8 = 4] = 11 (à mão); desvio > 0 no P0
+    const itens = [8, 9, 10, 10, 11, 12].map((lt, i) => item(`X${i}`, 'X', addDias('2025-12-01', 7 * i), lt));
+    const dd = dados([sku('X'), sku('W')], vendas, itens);
+    const g0 = diagnosticoF0(dd, 'X', d, { calibracao: false });
+    const ga = diagnosticoF0(dd, 'X', d, { calibracao: false, perfilF0: { nome: 'Alt2a', zA: 3.09 } });
+    const gb = diagnosticoF0(dd, 'X', d, { calibracao: false, perfilF0: { nome: 'Alt2b', zA: 3.09 } });
+    expect(g0.sigmaLt).toBeGreaterThan(0.5);
+    expect([ga.lt, ga.sigmaLt, ga.z]).toEqual([11, 0, 3.09]);
+    expect([gb.lt, gb.sigmaLt, gb.z]).toEqual([g0.lt, g0.sigmaLt, 3.09]);
+    // W é C: o z(A) da grade não vale para ela (B e C herdados)
+    const w = diagnosticoF0(dd, 'W', d, { calibracao: false, perfilF0: { nome: 'Alt2a', zA: 3.09 } });
+    expect([w.classeProposta, w.z]).toEqual(['C', 0.84]);
+  });
+
   it('LT = 0: o PP cai no piso max(ss, mín. operacional) + 1', () => {
     expect(pontoDePedidoF0({ demanda: 3, sigmaD: 1, lt: 0, sigmaLt: 0, z: 1.65, minimoOperacional: 2 })).toEqual({ ss: 0, pp: 3 });
   });
