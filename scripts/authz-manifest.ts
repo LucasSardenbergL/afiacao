@@ -129,6 +129,14 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
   // INVOKER não conseguiria auditar, e sem trilha a correção não deve acontecer.
   // O gate de entrada é o mesmo dos vizinhos — staff decide cancelamento —, e o COALESCE em volta
   // dele é o que impede o fail-OPEN de `NOT NULL` ser NULL.
+  // 5.2 fatia 2 (2026-11-09): "aceitar o portal" — reescreve itens/custo/condição do pedido sem PO a partir da
+  // leitura da divergência aberta e solta o gate do claim. SECURITY DEFINER por desenho: escreve pela porta única
+  // `sayerlack_conferir_portal` (fechada para authenticated) e grava a trilha em acoes_execucoes. Staff decide.
+  'public.sayerlack_aceitar_portal': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
+    motivo: 'aceitar o pedido alterado no portal Sayerlack: reescreve itens, custo (prova do IPI) e condição do pedido sem PO e re-libera o disparo — trilha antes/depois',
+  },
   'public.corrigir_cancelamento_pos_disparo': {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },
