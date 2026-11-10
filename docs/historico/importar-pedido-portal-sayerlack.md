@@ -565,7 +565,14 @@ situação dos protocolos dos últimos 7 dias — o pedido de 10 dias, com PO, c
 - **Provas:** 3 testes Deno das funções puras. Falsificação 6/6 vermelha, com controle verde; uma guarda redundante
   ficou verde e foi removida.
 - **Codex:** Caminho B (`sem-codex: cota no teto local (79)`), por decisão do founder de guardar a reserva para o 5.2 e
-  o 7.1. REVISÃO INDEPENDENTE PENDENTE; o Codex retroativo roda quando a janela reabrir.
+  o 7.1. O Codex retroativo rodou em 2026-11-09, com o código já em produção. Rodou acima do teto de
+  cota (94%), por autorização do founder, e não achou defeito real nos 4 eixos:
+  - fail-open: a leitura e a extração estão sob `try/catch` com `AbortSignal.timeout(3_000)`, e só alimentam o
+    `cObs`;
+  - correlação: a evidência e o disparador usam o mesmo protocolo completo;
+  - `cObs`: chega a 168 caracteres no máximo, e o Omie não documenta teto;
+  - nenhuma escrita nova.
+  Os riscos declarados abaixo continuam como estavam.
 - **Resta (declarado):**
   - a fiação no `index.ts` não tem teste de handler;
   - caracteres C1 e bidi passam pelo filtro;
@@ -816,3 +823,19 @@ consumida no claim, o que fica fora da fatia 1.
 
 Na edge importar, os handlers em Deno cobrem: bate e dispara, alterado, erro ou leitura antiga, fora do contrato,
 condição ilegível, 1ª importação sem conferência pela edge, e `ja_existia` divergente ou faturado.
+
+**No ar (2026-11-09, #3767):**
+- **Migration `20261111150000`:** aplicada pelo envelope (tentativa #1050, sha `5da3782a…`).
+  - Conferida no psql-ro: a porta está fechada a anon e authenticated e aberta só ao service_role; o service_role
+    não tem INSERT direto; a RLS está ligada; o claim leva o gate; a importação chama a porta.
+  - O timestamp coincide com o de `20261111150000_radar_privacidade_titular_mei.sql` (#3763). Os objetos são
+    independentes e o replay ordena pelo nome do arquivo.
+- **Edges:** subiram em 2 ondas pelo pacote, porque o `deploy-ordem.json` da importar pede o disparar antes.
+  - Disparar v1.14, colada às 22:48Z: 17/17 hashes, sonda #1057 com DEPLOY CONFIRMADO. Outra sessão repetiu o
+    envio às 22:49Z, com o mesmo bundle.
+  - Importar v1.11, colada às 23:03Z depois dos 10 min do #3075: 13/13 hashes, sonda #1061 com DEPLOY CONFIRMADO.
+  - `pendencias:deploy` saiu com exit 0.
+- **Sensor de edição:**
+  - 1ª onda: `EDICAO_DETECTADA` só pelo `edit_id`, que é a regeneração do `types.ts` com as tabelas novas
+    (`ca7e54a5`, tolerado). Nada em `supabase/` mudou.
+  - 2ª onda: `SEM_EDICAO`.

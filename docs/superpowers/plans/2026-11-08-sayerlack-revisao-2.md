@@ -42,13 +42,13 @@
   `_shared/sayerlack-portal-dom.ts`; importar v1.8 e varrer v1.10, as 2 com DEPLOY CONFIRMADO.
 - ✅ **7.2 + 4.3** (#3747) — evidência imutável de cada leitura (`sayerlack_portal_evidencia`, migration `20261111090000`) e
   sessão do Browserless contada pela importadora; migration aplicada (#1015), importar v1.9 e varrer v1.11 com DEPLOY CONFIRMADO.
-- ✅ **7.3** (#3751) — transportadora do portal no `cObs` do PO, lida da evidência do 7.2; disparar v1.13 com DEPLOY CONFIRMADO (Caminho B, Codex
-  retroativo pendente).
+- ✅ **7.3** (#3751) — transportadora do portal no `cObs` do PO, lida da evidência do 7.2; disparar v1.13 com DEPLOY CONFIRMADO (Caminho B; Codex
+  retroativo em 2026-11-09: nenhum defeito real).
 - ✅ **7.1** (#3754) — vincular o PO lançado à mão no Omie: RPC `sayerlack_vincular_po_manual` (migration `20261111110000`;
   contrato por token, dono, SKU/quantidade/valor calibrados em prod, trilha em `acoes_execucoes`); migration aplicada
   (#1031), importar v1.10 e varrer v1.12 com DEPLOY CONFIRMADO.
-- 🔄 **5.2 fatia 1** (detecção 5B): retrato + divergência + claim que recusa (migration `20261111150000`, importar v1.11,
-  disparar v1.14) — PR aberto; o ✅ vem com a migration aplicada e o DEPLOY CONFIRMADO.
+- ✅ **5.2 fatia 1** (#3767) — detecção 5B: retrato + divergência + claim que recusa (migration `20261111150000`, #1050);
+  disparar v1.14 e importar v1.11 com DEPLOY CONFIRMADO (sondas #1057/#1061, 2026-11-09).
 - ⏳ Depois: 5.2 fatia 2 (botão "aceitar o portal", decisão do founder) (7.5 encerrada: o portal não expõe IPI por item).
 
 ## Andamento da Sessão B (tela e painel)
