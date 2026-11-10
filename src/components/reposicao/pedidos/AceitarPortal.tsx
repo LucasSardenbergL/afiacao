@@ -11,6 +11,8 @@ import { track } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import type { ResultadoTela } from './importar-portal';
 import type { PedidoSugerido } from './types';
 import {
@@ -32,7 +34,7 @@ export function AceitarPortal({ pedido }: { pedido: PedidoSugerido | null }) {
   const divergenciaId = pedido?.portal_divergencia_aberta_id ?? null;
   const oferecer = isStaff && podeOferecerAceitar(pedido);
 
-  const divergencia = useQuery({
+  const { data: div, error: erroDiv, isLoading: carregandoDiv, status, fetchStatus } = useQuery({
     queryKey: ['sayerlack-divergencia', divergenciaId],
     enabled: oferecer && typeof divergenciaId === 'number',
     queryFn: async () => {
@@ -47,10 +49,15 @@ export function AceitarPortal({ pedido }: { pedido: PedidoSugerido | null }) {
   });
 
   if (!oferecer || !pedido || typeof divergenciaId !== 'number') return null;
-  const diferencas = divergencia.data ? lerDiferencas(divergencia.data.diferencas) : null;
-  const leitura = divergencia.data ? lerLeitura(divergencia.data.leitura) : null;
+  // Leitura que não aconteceu: nunca "já aceito" nem "não há diferenças" — a tela diz que não sabe.
+  const estado = estadoDeLeitura({ status, fetchStatus });
+  if (erroDiv || naoConsegui(estado)) {
+    return <AvisoLeituraFalhou oque="a divergência do portal deste pedido" estado={naoConsegui(estado) ? estado : 'erro'} />;
+  }
+  const diferencas = div ? lerDiferencas(div.diferencas) : null;
+  const leitura = div ? lerLeitura(div.leitura) : null;
   // Já aceito: o gate fica até a releitura do portal bater (o cron não dispara o aceito às cegas) — falta reler.
-  const jaAceito = divergencia.data?.resolucao === 'aceito_portal';
+  const jaAceito = div?.resolucao === 'aceito_portal';
   const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const valida = justificativa.trim().length >= 10;
   const protocolo = (pedido.portal_protocolo ?? '').trim();
@@ -130,8 +137,8 @@ export function AceitarPortal({ pedido }: { pedido: PedidoSugerido | null }) {
               recalculado pela mesma prova da importação. Fica registrado quem aceitou, por quê, e o antes e o depois.
             </DialogDescription>
           </DialogHeader>
-          {divergencia.isLoading && <p className="text-sm text-muted-foreground">Carregando as diferenças…</p>}
-          {!divergencia.isLoading && diferencas === null && (
+          {carregandoDiv && <p className="text-sm text-muted-foreground">Carregando as diferenças…</p>}
+          {!carregandoDiv && diferencas === null && (
             <p className="text-sm text-status-error">Não consegui ler as diferenças desta divergência — não aceite às cegas.</p>
           )}
           {diferencas && (
@@ -139,7 +146,7 @@ export function AceitarPortal({ pedido }: { pedido: PedidoSugerido | null }) {
               {diferencas.map((d, i) => <li key={i}>{descreverDiferenca(d)}</li>)}
             </ul>
           )}
-          {!divergencia.isLoading && leitura === null && (
+          {!carregandoDiv && leitura === null && (
             <p className="text-sm text-status-error">Não consegui ler o pedido do portal desta divergência — não aceite às cegas.</p>
           )}
           {leitura && (
