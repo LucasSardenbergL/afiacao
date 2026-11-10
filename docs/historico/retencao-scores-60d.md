@@ -126,3 +126,9 @@ a opclass, porque o `postgres` tem `extensions` no `search_path` e `pg_get_index
 buffers lidos do cache e ~39 k do disco aos contadores de `radar_empresas` (heap e índice). O D12 do v7
 mediu às 12:32 UTC (#3697), antes disso, então o número dele está limpo. Um delta que atravesse essa hora
 precisa descontar essa soma.
+
+## 1º expurgo semanal (2026-11-08) — medido em 2026-11-10 via psql-ro
+
+- Job 196, run 932378: `succeeded` às 04:30, **28 s**. Ficou abaixo dos 37 s do run mensal de 1º/11 e dentro do `statement_timeout` de 5 min.
+- As duas tabelas agora começam em **2026-09-09**, o corte de 60 dias do domingo. Há 1.029.013 linhas em cada uma, com zero acima de 67 dias.
+- Tamanho total: 307 MB + 296 MB = 603 MB (eram 809 MB antes do DROP dos índices). O autovacuum rodou às 04:31 e o espaço apagado volta para reuso. O arquivo não encolhe, como previsto, e as tabelas param de crescer.
