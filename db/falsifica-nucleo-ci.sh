@@ -797,7 +797,8 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # (parecer Codex 2026-09-14). No CI quem decide é o step do `provas-sql`, que confere o recibo
 # acima com o piso FORA daqui — `HARNESS_OK_MINIMO` no ci.yml; mude os dois juntos.
 # 45 → 65 em 2026-10-01: os 20 casos do recibo das partes e da união.
-OK_MINIMO=67
+# 67 → 76 em 2026-11-09: os 9 casos do peso das duas fases (partição, cauda, `workers` no recibo).
+OK_MINIMO=76
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi

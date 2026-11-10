@@ -1476,7 +1476,7 @@ jobs:
       - name: Falsificação do núcleo — o runner reprova pelo motivo certo?
         if: ${{ strategy.job-index == 0 }}
         env:
-          HARNESS_OK_MINIMO: "83"
+          HARNESS_OK_MINIMO: "92"
         run: |
           log="$RUNNER_TEMP/falsifica-nucleo.log"
           bash db/falsifica-nucleo-ci.sh > "$log" 2>&1 && rc=0 || rc=$?
