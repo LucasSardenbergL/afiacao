@@ -37,7 +37,7 @@ a unidade `db/test-venda-repasse.sh --falsificar`: 38 sabotagens, mediana 371 s,
 - **`db/falsifica-nucleo-ci.sh`:** 14 casos novos (controle, faixa ignorada, fatia fora da canônica,
   total encolhido, faixa incompleta, `FAIXA:` sem faixa pedida, 3 de parse, faixa omitida pelo runner,
   e a união com e sem a faixa 2/2). Pisos: `OK_MINIMO` e `HARNESS_OK_MINIMO` sobem juntos.
-- **`db/nucleo-ci-custo.txt`:** `venda-repasse` 381 → 300 s estimados, até a re-medição.
+- **`db/nucleo-ci-custo.txt`:** `venda-repasse` 381 → 398 s, medido no run do PR (soma das 3 unidades).
 
 ## Medido local
 
@@ -52,8 +52,27 @@ a unidade `db/test-venda-repasse.sh --falsificar`: 38 sabotagens, mediana 371 s,
 
 ## Medido no run do PR
 
-PREENCHER
+Run 43062331253, em 30c07c8e7. Comparo o step **Núcleo** de cada parte, e não o job inteiro: o step
+`PostgreSQL 17 (PGDG)` sofre com o DNS do mirror apt. Nesse run ele pendurou até o teto nas partes 10 e
+13, sem nenhuma prova rodar, e a união reprovou por elas. O próximo push refaz o run inteiro.
+
+- **As faixas:** `--falsificar 1/2` levou 186 s e `2/2` levou 201 s, em paralelo na parte 6. O normal
+  levou 11 s. Antes era uma unidade só, com mediana de 371 s e 469 s no run 43035081419.
+- **Pior parte (step Núcleo, 14 de 16 partes):** 369 s, a parte 16. Nas bases foram 479 s
+  (43035081419, parte 5) e 419 s (43022871928, parte 15). A parte que recebeu a `venda-repasse`
+  fechou em 284 s.
+- **Soma das unidades da prova:** subiu de 381 para 398 s, porque as 2 faixas disputam a mesma parte e
+  cada uma paga um controle. O que importa para o teto é a maior unidade, e ela caiu para ~200 s.
 
 ## Próximo piso
 
-PREENCHER
+Agora as maiores unidades estão no mesmo patamar, em torno de 290 s:
+
+- `test-hoje-sp-views-defaults --falsificar`, da faixa serial: 284 s na parte 2 (a previsão era de
+  mediana 300 s);
+- `test-radar-privacidade-j --falsificar`: 289 s na parte 16, a pior parte deste run, porque somou a
+  faixa serial às vizinhas.
+
+O próximo passo é o mesmo que foi feito aqui, aplicado a essas duas: `faixas=2`, se o laço delas
+aceitar a fatia. A ferramenta já existe, então não precisa de máquina nova. Antes, confirme se não há
+nelas uma medição sem teto como a desta prova.

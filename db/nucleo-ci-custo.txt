@@ -16,10 +16,10 @@
 # step do harness nos mesmos runs (141–160 s; a de 100 s era do tempo de 2 workers e 92 casos).
 # Antes/depois e o PISO (a `venda-repasse --falsificar`, unidade indivisível):
 # docs/historico/ci-provas-sql-custo-remedido-w3.md
-# Exceção (2026-11-11): `venda-repasse` saiu de 381 para 300 s ESTIMADOS — a falsificação parou de medir
-# a query sabotada sem teto (~90 s no CI) e virou 2 faixas com 1 controle a mais (~10 s); o custo da
-# prova soma as 3 unidades (normal + 2 faixas), que dividem a parte como qualquer unidade do pool.
-# Re-medir no run do PR: docs/historico/ci-provas-sql-venda-repasse-faixas.md
+# Exceção (2026-11-11): `venda-repasse` = 398 s, UM run (43062331253): normal 11 + faixa 1/2 186 + faixa
+# 2/2 201. A soma subiu (as 2 faixas disputam a parte e cada uma paga um controle), mas a MAIOR unidade
+# caiu de 371 s (mediana) para ~200 s, e as faixas dividem a parte como qualquer unidade do pool.
+# docs/historico/ci-provas-sql-venda-repasse-faixas.md
 # Re-meça quando a pior parte destoar das outras ou entrar prova cara nova (o `comm` de
 # docs/historico/ci-fila-de-runners.md lista as provas sem custo): para cada job `provas-sql (i)` de
 # um run verde, baixe o log pela API (`gh run view --log` em paralelo volta VAZIO sob limite),
@@ -232,7 +232,7 @@ db/test-venda-painel-heranca.sh 17
 db/test-venda-painel.sh 14
 db/test-venda-prazo-decisao.sh 26
 db/test-venda-recompra.sh 26
-db/test-venda-repasse.sh 300
+db/test-venda-repasse.sh 398
 db/test-vendas-sync-cursor-falha-honesta.sh 7
 db/test-vendas-sync-cursor-fencing.sh 11
 db/test-views-invoker-off-p0.sh 2
