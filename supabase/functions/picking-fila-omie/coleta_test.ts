@@ -3,6 +3,8 @@ import {
   type Acompanhada,
   AUSENCIAS_PARA_SAIR_DA_JANELA,
   codigoOmie,
+  comRetryConcorrente,
+  ESPERAS_CONCORRENTE_MS,
   conferirFiltro,
   ordemDosCodigos,
   paginasDaCauda,
@@ -17,6 +19,7 @@ import {
   quantidadeTexto,
   resumirLeitura,
 } from "./coleta.ts";
+import { classificarFaultCota } from "../_shared/omie-cota.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -304,4 +307,103 @@ Deno.test("montarLoteSync: listagem completa não é suspeita; sem total legíve
   const b = await paginar(lister([{ tipo: "corpo", corpo: { pedido_venda_produto: [ped(1)] } }]).listar, { tetoPaginas: 5 });
   if (!b.ok) throw new Error(b.erro);
   assertEquals(montarLoteSync(b.listagem, "2026-09-11", new Set()), null);
+});
+
+// ─── C19 (plano v9): retry da página recusada por concorrência ──────────────────────────────────
+// Texto real de `acoes_execucoes` (picking_fila.sincronizar_colacor, 2026-11-11 17:01).
+const CONCORRENTE = "ERROR: Já existe uma requisição desse método sendo executada e você pode tentar novamente em alguns instantes.";
+// O MESMO classificador que a edge usa (index.ts): o teste prova a fiação com o texto de produção.
+const ehConcorrenteTeste = (erro: string) => classificarFaultCota(erro)?.tipo === "concorrente";
+
+function roteiro(paginas: Pagina[]) {
+  let chamadas = 0;
+  const esperas: number[] = [];
+  return {
+    tentar: () => Promise.resolve(paginas[Math.min(chamadas++, paginas.length - 1)]),
+    esperar: (ms: number) => {
+      esperas.push(ms);
+      return Promise.resolve();
+    },
+    chamadas: () => chamadas,
+    esperas,
+  };
+}
+
+Deno.test("comRetryConcorrente: concorrência na 1ª vez, corpo na 2ª → devolve o corpo após UMA espera", async () => {
+  const r = roteiro([{ tipo: "erro", erro: CONCORRENTE }, { tipo: "corpo", corpo: { ok: 1 } }]);
+  let retentou = 0;
+  const p = await comRetryConcorrente(r.tentar, {
+    esperas: ESPERAS_CONCORRENTE_MS,
+    ehConcorrente: ehConcorrenteTeste,
+    podeIniciar: () => true,
+    esperar: r.esperar,
+    aoRetentar: () => retentou++,
+  });
+  assertEquals(p, { tipo: "corpo", corpo: { ok: 1 } });
+  assertEquals(r.chamadas(), 2);
+  assertEquals(r.esperas, [5_000]);
+  assertEquals(retentou, 1);
+});
+
+Deno.test("comRetryConcorrente: concorrência que persiste → esgota as esperas e marca as retentativas", async () => {
+  const r = roteiro([{ tipo: "erro", erro: CONCORRENTE }]);
+  const p = await comRetryConcorrente(r.tentar, {
+    esperas: ESPERAS_CONCORRENTE_MS,
+    ehConcorrente: ehConcorrenteTeste,
+    podeIniciar: () => true,
+    esperar: r.esperar,
+  });
+  assertEquals(p, { tipo: "erro", erro: `${CONCORRENTE} (após 3 retentativas)` });
+  assertEquals(r.chamadas(), 4);
+  assertEquals(r.esperas, [5_000, 10_000, 20_000]);
+});
+
+Deno.test("comRetryConcorrente: sem prazo para a espera → devolve o erro sem dormir nem chamar de novo", async () => {
+  const r = roteiro([{ tipo: "erro", erro: CONCORRENTE }, { tipo: "corpo", corpo: {} }]);
+  const pedidas: number[] = [];
+  const p = await comRetryConcorrente(r.tentar, {
+    esperas: ESPERAS_CONCORRENTE_MS,
+    ehConcorrente: ehConcorrenteTeste,
+    podeIniciar: (ms) => {
+      pedidas.push(ms);
+      return false;
+    },
+    esperar: r.esperar,
+  });
+  assertEquals(p, { tipo: "erro", erro: CONCORRENTE });
+  assertEquals(r.chamadas(), 1);
+  assertEquals(r.esperas, []);
+  assertEquals(pedidas, [5_000]);
+});
+
+Deno.test("comRetryConcorrente: REDUNDANT, bloqueio e erro de dado NÃO são repetidos", async () => {
+  for (const erro of [
+    "Consumo redundante detectado. Aguarde 30 segundos (REDUNDANT)",
+    "API bloqueada por consumo indevido. Aguarde 30 minutos",
+    "SOAP-ERROR: Broken response from Application Server (BG)",
+  ]) {
+    const r = roteiro([{ tipo: "erro", erro }, { tipo: "corpo", corpo: {} }]);
+    const p = await comRetryConcorrente(r.tentar, {
+      esperas: ESPERAS_CONCORRENTE_MS,
+      ehConcorrente: ehConcorrenteTeste,
+      podeIniciar: () => true,
+      esperar: r.esperar,
+    });
+    assertEquals(p, { tipo: "erro", erro }, `não repete: ${erro}`);
+    assertEquals(r.chamadas(), 1, `uma chamada só: ${erro}`);
+  }
+});
+
+Deno.test("comRetryConcorrente: 'fim' e corpo passam direto, sem espera", async () => {
+  for (const pagina of [{ tipo: "fim" } as Pagina, { tipo: "corpo", corpo: [] } as Pagina]) {
+    const r = roteiro([pagina]);
+    const p = await comRetryConcorrente(r.tentar, {
+      esperas: ESPERAS_CONCORRENTE_MS,
+      ehConcorrente: ehConcorrenteTeste,
+      podeIniciar: () => true,
+      esperar: r.esperar,
+    });
+    assertEquals(p, pagina);
+    assertEquals(r.esperas, []);
+  }
 });

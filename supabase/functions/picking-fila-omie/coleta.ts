@@ -218,6 +218,43 @@ export async function paginar(
   };
 }
 
+/**
+ * Esperas do retry da página recusada por CONCORRÊNCIA (C19, v9). Um chamador fora do app usa o
+ * `ListarPedidos` da Colacor às 11/15/17/19 h UTC em ponto, em rajadas com intervalo: a página 3
+ * cai e as 1-2 passam na mesma rodada. Mesmo desenho do `omie-vendas-sync` (5/10/15 s no
+ * "Já existe uma requisição"), aqui com teto maior porque a rodada do picking leva ~10 s.
+ */
+export const ESPERAS_CONCORRENTE_MS: readonly number[] = [5_000, 10_000, 20_000];
+
+/**
+ * Repete SÓ a página recusada por "Já existe uma requisição desse método" (`ehConcorrente`).
+ * Cada tentativa chama `tentar` de novo — que passa outra vez pela trava (`comVezOmie`) e pelo
+ * prazo de início de página. `podeIniciar(esperaMs)` = ainda há prazo para dormir e tentar; se
+ * não houver, devolve o erro já. REDUNDANT, bloqueio e qualquer outro erro voltam na 1ª vez, sem
+ * repetir: chamar cedo depois de um "aguarde" é o que escala para o bloqueio (`_shared/omie-cota.ts`).
+ */
+export async function comRetryConcorrente(
+  tentar: () => Promise<Pagina>,
+  opts: {
+    esperas: readonly number[];
+    ehConcorrente: (erro: string) => boolean;
+    podeIniciar: (esperaMs: number) => boolean;
+    esperar: (ms: number) => Promise<void>;
+    aoRetentar?: () => void;
+  },
+): Promise<Pagina> {
+  for (let i = 0; ; i++) {
+    const p = await tentar();
+    if (p.tipo !== "erro" || !opts.ehConcorrente(p.erro)) return p;
+    const espera = opts.esperas[i];
+    if (espera === undefined || !opts.podeIniciar(espera)) {
+      return i === 0 ? p : { tipo: "erro", erro: `${p.erro} (após ${i} retentativa${i > 1 ? "s" : ""})` };
+    }
+    opts.aoRetentar?.();
+    await opts.esperar(espera);
+  }
+}
+
 // ─── Lote para o banco ────────────────────────────────────────────────────────────────────────
 
 export interface Lote {

@@ -12,14 +12,16 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
-import { clienteCotaDoAmbiente, comVezOmie, metodoCoordenado } from "../_shared/omie-cota.ts";
+import { classificarFaultCota, clienteCotaDoAmbiente, comVezOmie, metodoCoordenado } from "../_shared/omie-cota.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { resumirEtapas, resumirPedidos, resumirProdutos } from "./diagnostico.ts";
 import {
   type Acompanhada,
+  comRetryConcorrente,
   conferirFiltro,
+  ESPERAS_CONCORRENTE_MS,
   paginasDaCauda,
   faultDeFimDePagina,
   janelaDaListagem,
@@ -272,18 +274,31 @@ async function sincronizarConta(db: Db, conta: Conta, inicio: number): Promise<R
   const janela = janelaDaListagem(corteIso, acompanhadas);
   if (janela === null) throw new Error("tarefa aberta sem incluido_em — janela da listagem indeterminada");
 
+  // C19: a página recusada por concorrência (chamador fora do app no mesmo método) é repetida,
+  // passando de novo pela trava e pelo prazo de início — nunca depois de PRAZO_INICIO_PAGINA_MS.
+  let retentativasConcorrente = 0;
   const res = await paginar(
     (pagina) =>
-      Date.now() - inicio > PRAZO_INICIO_PAGINA_MS
-        ? Promise.resolve<Pagina>({ tipo: "erro", erro: `prazo de ${PRAZO_INICIO_PAGINA_MS / 1000} s da listagem estourado` })
-        : paginaDePedidos(conta, cred, {
-          pagina,
-          registros_por_pagina: POR_PAGINA,
-          etapa: "10",
-          apenas_importado_api: "N",
-          filtrar_apenas_inclusao: "N",
-          filtrar_por_data_de: paraDataOmie(janela),
-        }),
+      comRetryConcorrente(
+        () =>
+          Date.now() - inicio > PRAZO_INICIO_PAGINA_MS
+            ? Promise.resolve<Pagina>({ tipo: "erro", erro: `prazo de ${PRAZO_INICIO_PAGINA_MS / 1000} s da listagem estourado` })
+            : paginaDePedidos(conta, cred, {
+              pagina,
+              registros_por_pagina: POR_PAGINA,
+              etapa: "10",
+              apenas_importado_api: "N",
+              filtrar_apenas_inclusao: "N",
+              filtrar_por_data_de: paraDataOmie(janela),
+            }),
+        {
+          esperas: ESPERAS_CONCORRENTE_MS,
+          ehConcorrente: (erro) => classificarFaultCota(erro)?.tipo === "concorrente",
+          podeIniciar: (esperaMs) => Date.now() - inicio + esperaMs <= PRAZO_INICIO_PAGINA_MS,
+          esperar,
+          aoRetentar: () => retentativasConcorrente++,
+        },
+      ),
     { tetoPaginas: TETO_PAGINAS, entrePaginas: () => esperar(ENTRE_PAGINAS_MS) },
   );
   if (!res.ok) throw new Error(`listagem: ${res.erro}`);
@@ -312,6 +327,7 @@ async function sincronizarConta(db: Db, conta: Conta, inicio: number): Promise<R
     janela_desde: janela,
     corte_inclusao_desde: corteIso,
     paginas: res.listagem.paginas,
+    retentativas_concorrente: retentativasConcorrente,
     presentes: lote.p_presentes.length,
     total_de_registros: lote.p_total_de_registros,
     motivos_incompleta: res.listagem.motivos_incompleta,

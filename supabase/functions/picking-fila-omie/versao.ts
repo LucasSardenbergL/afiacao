@@ -28,8 +28,12 @@ export const respostaSonda = criarRespostaSonda("picking-fila-omie");
  * ordena só dentro da página; `amostra_no_corte` = 0 nas duas contas em 2026-10-12).
  * v0.6: o preflight `OPTIONS` atende a sonda de deploy por cron (`atenderSondaOptions`) e sai antes
  * do gate de auth — a edge passa a ser atestada pelo cron, sem sonda manual. Fora da sonda, nada muda.
+ * v0.7 (C19, plano v9): no `sincronizar`, a página recusada por "Já existe uma requisição desse
+ * método" (concorrência — um chamador fora do app às 11/15/17/19 h UTC) é repetida após 5/10/20 s,
+ * passando de novo pela trava e só dentro do prazo de início de página (80 s). REDUNDANT, bloqueio
+ * e os demais erros seguem abortando na 1ª vez. O resumo ganha `retentativas_concorrente`.
  */
-export const VERSAO = "v0.6-sonda-cron";
+export const VERSAO = "v0.7-retry-concorrente";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =
