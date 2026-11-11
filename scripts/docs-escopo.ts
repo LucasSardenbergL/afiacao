@@ -25,6 +25,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 /** Allowlist do que um PR só-docs pode tocar. Estreita de propósito: só Markdown sob `docs/`. */
 export const RE_DOC = /^docs\/.+\.md$/;
@@ -96,7 +97,7 @@ function modoEscopo(evento: string): number {
     }
     d = decidir(evento, pais, diff);
   } catch (e) {
-    d = { soDocs: false, motivo: `erro: ${e instanceof Error ? e.message : String(e)}` };
+    d = { soDocs: false, motivo: `erro: ${mensagemDeErro(e) ?? 'desconhecido'}` };
   }
   console.log(`DOCS_ESCOPO so_docs=${d.soDocs} — ${d.motivo}`);
   const saida = process.env.GITHUB_OUTPUT;
