@@ -14,6 +14,9 @@
 #   C*  a continuação 20261112100000: o CPF escrito em formato livre na razão ('… CPF 123.456.789-01', '… 12345678901
 #       ME') também é mascarado na entrada e regravado no que já está no banco; o cru fica no private (e a razão meio
 #       mascarada não o sobrescreve); vínculo, aviso de crédito e guarda de homônimo decidem igual; updated_at intacto.
+#   I*  a 20261113110000 (plano v8, R2): o expurgo para de reler o heap — a higiene do cru calcula os órfãos num
+#       SELECT (CTE MATERIALIZED, Index Only Scan em radar_empresas_pkey, visto pelo auto_explain DENTRO da função) e
+#       roda 1x a cada ~24 h; o backfill segue a cada hora e mascara uma razão crua que furou o trigger.
 # Aplica as migrations REAIS da cadeia do vínculo (20261104201756 → 20261106083754 → 20261106205557 → 20261107040000)
 # e depois esta (e, no fim, a 20261112100000).
 #
@@ -32,10 +35,11 @@ MIG_DOC="$MIGS/20261019140000_omie_identidade_cnpj_alfanumerico.sql"
 MIG_SOC="$MIGS/20261107040000_radar_socios_cpf_mascarado.sql"
 MIG="$MIGS/20261111150000_radar_privacidade_titular_mei.sql"
 MIG2="$MIGS/20261112100000_radar_privacidade_cpf_formato_livre.sql"
+MIG3="$MIGS/20261113110000_radar_expurgo_sem_varrer_heap.sql"
 PROVA_P2="$REPO_ROOT/db/test-credito-vinculo-aviso.sh"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_trigger:M1 mascara_errada:E2 regra_so_crua:E2 nome_final_cru:E2 staging_cru:P1 exclusao_sem_ingestao:X4 status_fora_do_trigger:X6b reter_tudo:R1 apaga_rfb:R2 cadastro_aberto:M5v acesso_sem_registro:M5 escopo_regride:X6 bump_updated_at:U1 deriva:pre mascara_so_sufixo:C1 gatilho_so_sufixo:C1 sem_regrava:C1 cru_sobrescrito:C2 fronteira_consome:C6 sem_regrava_com_pos:pos deriva2:pre"
+  SABOTAGENS="sem_trigger:M1 mascara_errada:E2 regra_so_crua:E2 nome_final_cru:E2 staging_cru:P1 exclusao_sem_ingestao:X4 status_fora_do_trigger:X6b reter_tudo:R1 apaga_rfb:R2 cadastro_aberto:M5v acesso_sem_registro:M5 escopo_regride:X6 bump_updated_at:U1 deriva:pre mascara_so_sufixo:C1 gatilho_so_sufixo:C1 sem_regrava:C1 cru_sobrescrito:C2 fronteira_consome:C6 sem_regrava_com_pos:pos deriva2:pre sem_backfill:I1 higiene_rowmark:I4 sem_gate:I2b gate_eterno:I2 ignora_staging:I3 deriva3:pre"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-privacidade.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -97,6 +101,21 @@ s = open(p, encoding="utf-8").read()
 if s.count(de) != int(n):
     sys.exit("padrao deve ocorrer %s vez(es), ocorre %d: %s" % (n, s.count(de), de))
 open(p, "w", encoding="utf-8").write(s.replace(de, para))
+PY
+}
+MIG3_USADA="$DIR/mig3.sql"
+cp "$MIG3" "$MIG3_USADA"
+sabotar3() { # $1 = de, $2 = para (literal; UMA vez) — na 20261113110000. Cega a PRE (2º apply) e a PÓS (md5).
+  python3 -I - "$MIG3_USADA" "$1" "$2" <<'PY'
+import sys
+p, de, para = sys.argv[1:]
+s = open(p, encoding="utf-8").read()
+for a, b in ((de, para), ("  IF v_ex IS NULL OR v_ex NOT IN", "  IF false AND v_ex NOT IN"),
+             ("'3f4fd1f23db1c8a2612c649a18db22a2' THEN", "'3f4fd1f23db1c8a2612c649a18db22a2' AND false THEN")):
+    if s.count(a) != 1:
+        sys.exit("padrao deve ocorrer 1 vez, ocorre %d: %s" % (s.count(a), a))
+    s = s.replace(a, b)
+open(p, "w", encoding="utf-8").write(s)
 PY
 }
 # Sabotagem na 20261112100000: cega a PRE (o 2º apply vê o corpo sabotado), a conferência do cru e a PÓS — quem
@@ -161,6 +180,21 @@ PY2
   fronteira_consome)    cegar2; sabotar2 1 "  SELECT regexp_replace(p, '(?<![0-9])[0-9]{3}([ ./-]{0,3}[0-9]{3}[ ./-]{0,3})([0-9]{3})([ ./-]{0,3})[0-9]{2}(?![0-9])', '***\1\2\3**', 'g')" "  SELECT regexp_replace(p, '(^|[^0-9])[0-9]{3}([ ./-]{0,3}[0-9]{3}[ ./-]{0,3})([0-9]{3})([ ./-]{0,3})[0-9]{2}([^0-9]|\$)', '\1***\2\3\4**\5', 'g')" ;;
   sem_regrava_com_pos)  sabotar2 1 "  UPDATE public.radar_empresas SET razao_social = razao_social WHERE cnpj = ANY (v_cnpjs);" "  PERFORM 1;" ;;
   deriva2)              ;;  # idem, na base da 20261112100000
+  # ── na 20261113110000 ──
+  sem_backfill)         sabotar3 "     WHERE e.cnpj IN (SELECT c.cnpj FROM public.radar_empresas c" "     WHERE false AND e.cnpj IN (SELECT c.cnpj FROM public.radar_empresas c" ;;
+  higiene_rowmark)      sabotar3 "      WITH orfaos AS MATERIALIZED (
+        SELECT r.cnpj FROM private.radar_razao_receita r
+         WHERE NOT EXISTS (SELECT 1 FROM public.radar_empresas e WHERE e.cnpj = r.cnpj)
+           AND NOT EXISTS (SELECT 1 FROM public.radar_empresas_carga k WHERE k.cnpj = r.cnpj))
+      DELETE FROM private.radar_razao_receita r USING orfaos o WHERE r.cnpj = o.cnpj;" "      DELETE FROM private.radar_razao_receita r
+       WHERE NOT EXISTS (SELECT 1 FROM public.radar_empresas e WHERE e.cnpj = r.cnpj)
+         AND NOT EXISTS (SELECT 1 FROM public.radar_empresas_carga k WHERE k.cnpj = r.cnpj);" ;;
+  sem_gate)             sabotar3 "    IF NOT EXISTS (SELECT 1 FROM public.acoes_execucoes a" "    IF true OR NOT EXISTS (SELECT 1 FROM public.acoes_execucoes a" ;;
+  gate_eterno)          sabotar3 "    IF NOT EXISTS (SELECT 1 FROM public.acoes_execucoes a" "    IF false AND NOT EXISTS (SELECT 1 FROM public.acoes_execucoes a" ;;
+  ignora_staging)       sabotar3 "           AND NOT EXISTS (SELECT 1 FROM public.radar_empresas_carga k WHERE k.cnpj = r.cnpj))
+      DELETE" "           )
+      DELETE" ;;
+  deriva3)              ;;  # idem, na base da 20261113110000
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
@@ -544,6 +578,67 @@ Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
 eq C7 "$(Pq -c "SELECT count(*) FROM (SELECT razao_social FROM public.radar_empresas UNION ALL SELECT razao_social FROM public.radar_empresas_carga) t
                  WHERE razao_social ~ '(?<![0-9])[0-9]{3}[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}[0-9]{2}(?![0-9])'")|$(Pq -c "SELECT status FROM public.acoes_execucoes WHERE acao = 'radar.privacidade_expurgo' ORDER BY id DESC LIMIT 1")|$(upd_c)" \
   "0|sucesso|$UPD_C_ANTES"
+
+# ── Expurgo sem reler o heap (20261113110000) ──
+if [ "${SABOTAGEM:-}" = "deriva3" ]; then
+  P -q -c "CREATE OR REPLACE FUNCTION public.radar_privacidade_expurgo(p_lote integer DEFAULT 10000, p_meses integer DEFAULT 12) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'pg_temp' AS \$f\$ BEGIN RETURN '{}'::jsonb; END \$f\$;" >/dev/null
+fi
+P -q -1 -f "$MIG3_USADA" > "$DIR/apply-i.log" 2>&1 || { cat "$DIR/apply-i.log"; exit 1; }
+P -q -1 -f "$MIG3_USADA" > "$DIR/apply-i2.log" 2>&1 || { echo "FAIL I0 re-apply"; cat "$DIR/apply-i2.log"; exit 1; }
+ult() { Pq -c "SELECT COALESCE(detalhes ->> '$1', 'nulo') FROM public.acoes_execucoes WHERE acao = 'radar.privacidade_expurgo' ORDER BY id DESC LIMIT 1"; }
+st() { Pq -c "SELECT status FROM public.acoes_execucoes WHERE acao = 'radar.privacidade_expurgo' ORDER BY id DESC LIMIT 1"; }
+envelhecer() { Pq -c "UPDATE public.acoes_execucoes SET iniciado_em = iniciado_em - interval '$1' WHERE acao = 'radar.privacidade_expurgo';" >/dev/null; }
+# I1 (negativo da garantia): uma razão crua que furou o trigger (escritor com session_replication_role = replica) é
+#     mascarada pela rodada horária seguinte, o cru vai para o private e a contagem de restantes zera.
+Pq -c "SET session_replication_role = replica;
+       INSERT INTO public.radar_empresas (cnpj, razao_social, ja_cliente, municipio_codigo, rfb_situacao)
+       VALUES ('34000001000101', 'MEI FUROU TRIGGER 12345678901', false, 'M1', '02');" >/dev/null
+eq I1pre "$(Pq -c "SELECT razao_social FROM public.radar_empresas WHERE cnpj = '34000001000101'")" "MEI FUROU TRIGGER 12345678901"
+Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
+eq I1 "$(Pq -c "SELECT razao_social FROM public.radar_empresas WHERE cnpj = '34000001000101'")|$(Pq -c "SELECT razao_social FROM private.radar_razao_receita WHERE cnpj = '34000001000101'")|$(ult razoes_mascaradas)|$(ult razoes_cruas_restantes)|$(st)" \
+  "MEI FUROU TRIGGER ***456789**|MEI FUROU TRIGGER 12345678901|1|0|sucesso"
+# I2/I3: a higiene do cru roda quando não houve uma `sucesso` nas últimas 23 h 30 min: apaga o órfão e guarda o cru
+#     de quem está no staging. I2b: na rodada seguinte (1 h depois) ela não roda — o órfão novo fica e o ledger diz
+#     null, não 0. I2c: passadas 24 h, roda de novo.
+envelhecer '2 days'
+Pq -c "INSERT INTO private.radar_razao_receita (cnpj, razao_social) VALUES ('39999998000101', 'ORFAO A 11111111111'), ('39999996000101', 'NO STAGING 22222222222');
+       INSERT INTO public.radar_empresas_carga (lote, cnpj, razao_social) VALUES ('2027-02', '39999996000101', 'NO STAGING ***222222**');" >/dev/null
+Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
+eq I2 "$(Pq -c "SELECT count(*) FROM private.radar_razao_receita WHERE cnpj = '39999998000101'")|$(ult cru_orfao_apagado)" "0|1"
+eq I3 "$(Pq -c "SELECT count(*) FROM private.radar_razao_receita WHERE cnpj IN ('39999996000101', '34000001000101')")" "2"
+envelhecer '1 hour'
+Pq -c "INSERT INTO private.radar_razao_receita (cnpj, razao_social) VALUES ('39999997000101', 'ORFAO B 33333333333');" >/dev/null
+Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
+eq I2b "$(Pq -c "SELECT count(*) FROM private.radar_razao_receita WHERE cnpj = '39999997000101'")|$(ult cru_orfao_apagado)|$(Pq -c "SELECT (detalhes ? 'cru_orfao_apagado')::text || '/' || status FROM public.acoes_execucoes WHERE acao = 'radar.privacidade_expurgo' ORDER BY id DESC LIMIT 1")" \
+  "1|nulo|true/sucesso"
+envelhecer '23 hours'
+Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
+eq I2c "$(Pq -c "SELECT count(*) FROM private.radar_razao_receita WHERE cnpj = '39999997000101'")|$(ult cru_orfao_apagado)" "0|1"
+# I4 (o custo): DENTRO da função, a anti-junção da higiene lê radar_empresas pelo Index Only Scan da PK — nunca pelo
+#     Index Scan que vai ao heap (o rowmark do DELETE com junção). Planner empurrado para índice (tabela minúscula) e
+#     VM em dia (VACUUM), como em prod; o plano vem do auto_explain da instrução aninhada.
+envelhecer '2 days'
+P -q -c "VACUUM ANALYZE public.radar_empresas" -c "VACUUM ANALYZE private.radar_razao_receita" -c "VACUUM ANALYZE public.radar_empresas_carga" >/dev/null
+P -X -q -c "LOAD 'auto_explain'" -c "SET auto_explain.log_min_duration = 0" -c "SET auto_explain.log_nested_statements = on" \
+  -c "SET enable_seqscan = off" -c "SET enable_bitmapscan = off" -c "SET enable_hashjoin = off" -c "SET client_min_messages = log" \
+  -c "SELECT public.radar_privacidade_expurgo();" > "$DIR/explain-i.log" 2>&1 || { cat "$DIR/explain-i.log"; exit 1; }
+PLANO_HIG=$(python3 -I - "$DIR/explain-i.log" <<'PY'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+blocos = [b for b in t.split("LOG:") if "Query Text:" in b and "radar_razao_receita r" in b and "radar_empresas e WHERE e.cnpj = r.cnpj" in b]
+if len(blocos) != 1:
+    print("blocos=%d" % len(blocos)); sys.exit(0)
+b = blocos[0]
+print("ios=%s|heap=%s" % ("Index Only Scan using radar_empresas_pkey on radar_empresas e" in b,
+                          "Index Scan using radar_empresas_pkey on radar_empresas e" in b or "Seq Scan on radar_empresas e" in b))
+PY
+)
+eq I4 "$PLANO_HIG|$(st)" "ios=True|heap=False|sucesso"
+# I5: a retenção de nota segue a cada hora (sem gate): nota livre nova de lead descartado há 13 meses sai já.
+Pq -c "INSERT INTO public.radar_contatos (cnpj, acao, nota, criado_por, created_at) VALUES
+       ('31000003000101', 'em_conversa', 'nota nova depois do R2', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', now() - interval '14 months');" >/dev/null
+Pq -c "SELECT public.radar_privacidade_expurgo();" >/dev/null
+eq I5 "$(Pq -c "SELECT count(*) FROM public.radar_contatos WHERE nota = 'nota nova depois do R2'")|$(ult notas_expurgadas)|$(ult cru_orfao_apagado)" "0|1|nulo"
 
 # ── ACL ──
 tem G1 "$(sql_como "$GESTOR" "SELECT count(*) FROM public.radar_exclusoes_titular;")" "42501"
