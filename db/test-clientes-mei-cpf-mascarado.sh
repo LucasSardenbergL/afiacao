@@ -25,7 +25,7 @@ MIG_TITULAR="$MIGS/20261111150000_radar_privacidade_titular_mei.sql"
 MARCA="CLIENTES_MEI_CPF_PROVA_OK"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_trigger:pos so_insert:pos sem_backfill:pos sem_backfill_pos_cega:M1a sem_definer:M3a pre_cega:M7 venda_sem_trigger:pos"
+  SABOTAGENS="sem_trigger:pos so_insert:pos sem_backfill:pos sem_backfill_pos_cega:M1a sem_definer:M3a pre_cega:M7 venda_sem_trigger:pos pre_deploy_cega:M8 sem_refresh:M3c"
   LOGDIR="$(mktemp -d "/tmp/falsifica-clientes-mei.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -104,6 +104,9 @@ BEGIN
   NEW.name :=" ;;
   # Cega o RAISE inteiro (um 'false AND' no 1º termo não cega: o OR seguinte ainda avalia as outras amostras).
   pre_cega)     sabotar "    RAISE EXCEPTION 'PRE FALHOU: private.radar_razao_mascarada não é a do formato livre" "    RAISE NOTICE 'pre cega: private.radar_razao_mascarada não é a do formato livre" ;;
+  pre_deploy_cega) sabotar "  IF NOT EXISTS (SELECT 1 FROM public.deploy_atestacoes WHERE edge = 'omie-sync'" "  IF false AND NOT EXISTS (SELECT 1 FROM public.deploy_atestacoes WHERE edge = 'omie-sync'"
+                sabotar "     OR NOT EXISTS (SELECT 1 FROM public.deploy_atestacoes WHERE edge = 'omie-vendas-sync'" "     AND NOT EXISTS (SELECT 1 FROM public.deploy_atestacoes WHERE edge = 'omie-vendas-sync'" ;;
+  sem_refresh)  sabotar "SELECT public.refresh_customer_metrics();" "SELECT 1;" ;;
   venda_sem_trigger) sabotar "  FOR EACH ROW EXECUTE FUNCTION private.venda_item_razao_sem_cpf();" "  FOR EACH ROW WHEN (false) EXECUTE FUNCTION private.venda_item_razao_sem_cpf();" ;;
   *) echo "SABOTAGEM desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
@@ -160,6 +163,11 @@ SQL
   extrair_funcao "$MIG_TITULAR" "private.radar_titular_mascara"
   cat <<'SQL'
 REVOKE ALL ON FUNCTION private.radar_razao_mascarada(text) FROM PUBLIC, anon, authenticated;
+CREATE TABLE public.deploy_atestacoes (edge text NOT NULL, versao text NOT NULL, observado_em timestamptz NOT NULL DEFAULT now());
+INSERT INTO public.deploy_atestacoes (edge, versao) VALUES
+  ('omie-sync', 'v1.11-razao-fiscal-da-outra-conta'), ('omie-vendas-sync', 'v1.34-razao-fiscal-da-outra-conta');
+CREATE TABLE public.refresh_chamadas (em timestamptz NOT NULL DEFAULT now());
+CREATE FUNCTION public.refresh_customer_metrics() RETURNS void LANGUAGE sql AS $$ INSERT INTO public.refresh_chamadas DEFAULT VALUES $$;
 INSERT INTO public.profiles (id, name, document) VALUES
   ('00000000-0000-0000-0000-000000000001', 'PEDRO ALVES COSTA 12345678901', '12345678000195'),
   ('00000000-0000-0000-0000-000000000002', 'MARIA SOUZA 123.456.789-01', '22345678000195'),
@@ -240,6 +248,20 @@ fi
 # G1 — ACL
 igual G1 "$(Q "SELECT bool_or(has_function_privilege(r, f, 'EXECUTE')) FROM unnest(ARRAY['anon','authenticated']) r,
   unnest(ARRAY['private.cliente_nome_sem_cpf()','private.venda_item_razao_sem_cpf()']) f")" "f"
+
+# M3c — a cópia derivada é renovada depois do COMMIT (1º e 2º apply)
+igual M3c "$(Q "SELECT count(*) FROM public.refresh_chamadas")" "2"
+
+# M8 — a PRE recusa aplicar com as edges velhas no ar (sem atestação das versões novas)
+Q "DELETE FROM public.deploy_atestacoes WHERE edge = 'omie-sync'" >/dev/null
+if P -q -f "$MIG_USADA" > "$DIR/apply4.log" 2>&1; then
+  fail M8 "a migration aplicou sem a omie-sync v1.11 atestada"
+elif grep -q "PRE FALHOU: omie-sync v1.11" "$DIR/apply4.log"; then
+  ok M8
+else
+  fail M8 "falhou, mas não na PRE de deploy: $(grep -m1 ERROR "$DIR/apply4.log" || true)"
+fi
+Q "INSERT INTO public.deploy_atestacoes (edge, versao) VALUES ('omie-sync', 'v1.11-razao-fiscal-da-outra-conta')" >/dev/null
 
 # M7 — a PRE recusa a máscara antiga (só no fim, sem separador). Por último: troca a função viva.
 Q "CREATE OR REPLACE FUNCTION private.radar_razao_mascarada(p text) RETURNS text LANGUAGE sql IMMUTABLE

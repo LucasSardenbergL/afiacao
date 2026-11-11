@@ -11,8 +11,9 @@
 -- cadastro, tela de perfil, sync de itens), e o backfill regrava o que já está no banco. A máscara é a
 -- private.radar_razao_mascarada (formato do QSA da RFB, dígitos 4 a 9 visíveis, CPF com ou sem separador em qualquer
 -- posição). SEM cópia crua: a razão fiscal vive no próprio Omie e o app nunca a regrava (não há AlterarCliente). O
--- IncluirCliente das duas edges recusa a razão mascarada (_shared/razao-fiscal.ts): as edges omie-sync v1.11 e
--- omie-vendas-sync v1.34 TÊM de estar no ar ANTES desta migration.
+-- IncluirCliente das duas edges troca a razão mascarada pela razão fiscal do mesmo documento noutra conta Omie do grupo,
+-- ou recusa (_shared/razao-fiscal.ts): as edges omie-sync v1.11 e omie-vendas-sync v1.34 TÊM de estar no ar ANTES
+-- desta migration, e a PRE exige a atestação delas em deploy_atestacoes.
 --
 -- O vínculo do Radar (private.radar_vinculos_base) aceita o nome do perfil cru ou mascarado
 -- (private.radar_titular_mascara), então decide igual depois do backfill.
@@ -36,6 +37,11 @@ BEGIN
      OR private.radar_razao_mascarada('FULANO 12345678901 ME') IS DISTINCT FROM 'FULANO ***456789** ME'
      OR private.radar_razao_mascarada('ACME LTDA 12345678000195') IS DISTINCT FROM 'ACME LTDA 12345678000195' THEN
     RAISE EXCEPTION 'PRE FALHOU: private.radar_razao_mascarada não é a do formato livre (20261112100000) — reconcilie antes';
+  END IF;
+  -- Edge velha no ar = o 1º cliente MEI montado do perfil vai ao IncluirCliente com a razão mascarada.
+  IF NOT EXISTS (SELECT 1 FROM public.deploy_atestacoes WHERE edge = 'omie-sync' AND versao = 'v1.11-razao-fiscal-da-outra-conta')
+     OR NOT EXISTS (SELECT 1 FROM public.deploy_atestacoes WHERE edge = 'omie-vendas-sync' AND versao = 'v1.34-razao-fiscal-da-outra-conta') THEN
+    RAISE EXCEPTION 'PRE FALHOU: omie-sync v1.11 e omie-vendas-sync v1.34 não estão atestadas no ar (deploy_atestacoes) — deploy das edges ANTES desta migration';
   END IF;
 END
 $pre$;
@@ -153,5 +159,9 @@ END
 $pos$;
 
 COMMIT;
+
+-- A cópia derivada (private.customer_metrics_mv.razao_social) sai do cron de 6 h: renova agora, fora da transação
+-- (REFRESH CONCURRENTLY sob advisory lock — se o cron estiver no meio, pula e o próximo ciclo pega).
+SELECT public.refresh_customer_metrics();
 
 SELECT 'CLIENTES_MEI_CPF_MASCARADO_OK' AS fim;
