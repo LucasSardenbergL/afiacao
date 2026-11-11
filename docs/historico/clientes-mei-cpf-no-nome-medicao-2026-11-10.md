@@ -1,0 +1,77 @@
+# Clientes MEI com CPF em `profiles.name`: medição e mapa (2026-11-10)
+
+Follow-up "Clientes MEI fora do Radar" de [radar-privacidade-pacote-j-2026-11-09.md](radar-privacidade-pacote-j-2026-11-09.md).
+O pacote J mascarou o CPF do titular de MEI em `radar_empresas` (lead de prospecção). Este doc cobre o outro domínio:
+clientes em `public.profiles`, que vêm do Omie. **Só medição e mapa. Nada foi implementado; a decisão é do founder.**
+
+## Medição (prod, `psql-ro`, 2026-11-10)
+
+Regex: `(?<![0-9])[0-9]{3}[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}[0-9]{2}(?![0-9])`. Só contagens e formas
+(dígitos trocados por 9). Nenhum valor saiu do banco.
+
+| Recorte | Resultado |
+|---|---|
+| `profiles` com CPF em `name` | **1.888** de 16.085 |
+| `profiles.razao_social` com CPF | 0 (a coluna não tem escritor no repo) |
+| Dígito verificador de CPF válido | 1.887 de 1.888. É CPF, não celular |
+| Igual ao `profiles.document` | 1. Nas outras 1.887, `document` é o CNPJ (14 dígitos) do MEI |
+| Papel / tipo | 100% `customer`, `customer_type = domestic`, `is_prospect = false` |
+| Origem | 100% `prospect_source = omie_import`, criados em 2026 |
+| `is_approved` | 0 aprovados. Hoje nenhum desses titulares entra no portal |
+| `venda_items_history.cliente_razao_social` | **685** de 8.027 (cópia da NF, outro escritor) |
+| Outras colunas de nome de cliente (`fin_contas_receber`, `cobranca_*`, `picking_tarefas`, `production_orders`, `omie_clientes_nao_vinculados`, `customer_contacts`, `venda_*_log`) | 0 |
+
+Formas do CPF em `name`:
+
+| Forma | Posição | Linhas |
+|---|---|---|
+| `99999999999` | fim do nome | 1.867 |
+| `999.999.999-99` | fim do nome | 20 |
+| `99999999999` | meio do nome | 1 |
+
+## Quem escreve
+
+- **Escritor principal:** edge `omie-cliente`, `linhaPerfilPlaceholder`
+  (`supabase/functions/omie-cliente/perfil-placeholder.ts:42`). Grava `nome_fantasia || razao_social || "Cliente"` do
+  Omie, sem normalizar. Só no INSERT do perfil, nos casos `sync_all_clients` e `criar_perfil_local`. O sync de
+  cliente existente só repõe o telefone (`index.ts:1299`), então um backfill não é desfeito pelo sync.
+- **Segundo vetor:** o cadastro do próprio cliente. `SignupForm.tsx:99` pré-preenche o nome com a `razao_social` do
+  Omie, e `Auth.tsx:106` faz upsert. A tela `Profile.tsx` deixa o cliente regravar o próprio nome.
+- **Nenhuma função SQL ou trigger** escreve `profiles.name`. Não existe máscara de CPF em `profiles` hoje.
+- `venda_items_history.cliente_razao_social`: só a edge `omie-sync-vendas-items` (`dest.cRazao` da NF).
+
+## Onde aparece
+
+- **Staff (RLS: `master` ou `employee` leem todas as linhas):** cerca de 73 arquivos de `src` leem `profiles`
+  (busca/Cmd-K, lista e ficha de cliente, seletor do pedido, separação, rota, dashboards, Farmer, fidelidade, inbox de
+  WhatsApp), e cerca de 56 migrations citam `p.name` em RPC ou view. Nenhum `select('*')` em `profiles`. A RPC
+  `raio_x_estoque_fatos` expõe a cópia de `venda_items_history` na tela Raio-X.
+- **O próprio cliente:** só o próprio nome (`Profile.tsx`, saudação do dashboard). As views `selfservice_*` não
+  projetam `name`. Não há caminho em que um cliente veja o nome de outro.
+- **Para fora do app:** impressão de pedido e orçamento (`OrderPrintLayout.tsx`, `salesOrders/print.ts`), link
+  `wa.me` "Cliente: {nome}" (`whatsappShare.ts`), push à vendedora (`20260610200000_push_vendedora.sql`), e-mail
+  mensal ao próprio titular (`monthly-report`), **prompts de LLM** (`generate-tactical-plan`, `analyze-unified-order`,
+  copiloto do Farmer), **MCP** (`mcp/index.ts:54`, que devolve `name, document, phone, email`).
+- **Omie:** `buildOmieCustomer` manda `razao_social || name` como `razao_social`. O app nunca chama `AlterarCliente`;
+  `criar_cliente` só chama `IncluirCliente` quando o documento NÃO existe no Omie, e `exigirRazaoFiscal` já barra a
+  razão mascarada. Para estas 1.888 linhas, que vieram do Omie, o cadastro fiscal com CPF continua no próprio ERP.
+
+## Opções levadas ao founder
+
+1. **Mascarar só na exibição.** São cerca de 73 arquivos, 56 SQL, impressões, prompts de LLM e MCP. Cada leitor novo
+   vaza de novo. É a opção cara e frágil.
+2. **Gravar mascarado na entrada** (padrão do pacote J): trigger BEFORE em `profiles.name` e em
+   `venda_items_history.cliente_razao_social` com `private.radar_razao_mascarada`, backfill das 1.888 + 685 linhas e
+   tirar o CPF do pré-preenchimento do `SignupForm`. A cópia crua à parte é **opcional** aqui: diferente do Radar, a
+   fonte (Omie) guarda a razão fiscal e o app nunca a regrava.
+3. **Manter.** A base legal existe (contrato e obrigação fiscal), mas o CPF no nome não serve a nenhuma operação do
+   app (`document` já guarda o CNPJ) e vai a prompts de LLM de terceiros, ao MCP e a links de WhatsApp. Isso pesa
+   contra a minimização (LGPD art. 6º, III).
+
+Antes de implementar a opção 2, conferir:
+
+- Se algum código casa cliente por `name` = razão do Omie. O escritor casa por código e documento, mas os leitores não
+  foram auditados para isso.
+- Que a guarda `exigirRazaoFiscal` só reconhece a máscara no FIM. A linha com CPF no meio do nome escaparia dela.
+
+**Decisão:** pendente com o founder (2026-11-10).
