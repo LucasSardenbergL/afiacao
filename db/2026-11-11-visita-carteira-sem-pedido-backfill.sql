@@ -90,7 +90,7 @@ BEGIN
      AND (alvo.visit_score, alvo.primary_mission::text, alvo.recuperacao_score, alvo.relacionamento_score,
           alvo.prospeccao_score)
          IS DISTINCT FROM (10::numeric, 'prospeccao', 0::numeric, 0::numeric, 10::numeric);
-  IF v_resta <> 0 THEN
+  IF v_resta IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'POST: % linha(s) de quem nunca comprou ainda com o score velho', v_resta;
   END IF;
 
@@ -103,7 +103,7 @@ BEGIN
           OR EXISTS (SELECT 1 FROM public.farmer_client_scores f
                       WHERE f.customer_user_id = c.customer_user_id AND f.sales_history_status IN ('ativo', 'stale'))
           OR EXISTS (SELECT 1 FROM public.profiles p WHERE p.user_id = c.customer_user_id AND p.is_prospect));
-  IF v_errado <> 0 THEN
+  IF v_errado IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'POST: % linha(s) de comprador ou lead marcadas pelo backfill', v_errado;
   END IF;
 
