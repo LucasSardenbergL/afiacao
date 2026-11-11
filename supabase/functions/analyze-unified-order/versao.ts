@@ -84,8 +84,7 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  * `ia-nao-precifica-v1`); v1.4 = hotfix do BOOT_ERROR. Por quê: docs/historico/ia-nao-precifica.md.
  * `v1.6-so-imagem-2-passos`: só-imagem transcreve a foto e ranqueia catálogo/perfis INTEIROS (transcricao.ts).
  */
-// v1.10 (2026-11-11) — candidato do Omie (prompt do LLM, logs, resposta) com o CPF de MEI mascarado na razão/fantasia.
-export const VERSAO = "v1.10-candidato-sem-cpf";
+export const VERSAO = "v1.10-candidato-sem-cpf"; // 2026-11-11: candidato do Omie ao LLM/log/resposta com o CPF de MEI mascarado
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

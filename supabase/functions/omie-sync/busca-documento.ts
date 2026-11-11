@@ -43,8 +43,8 @@ export async function primeiroClientePorDocumento<T>(chamar: () => Promise<unkno
  * "transitório" NÃO entram: cada `callOmieApi` tem relógio próprio de 140s, e retentar um timeout empilharia 3×140s
  * até a plataforma matar a edge (revisão adversarial do Fable, 2026-11-11). Esses sobem na 1ª, como antes.
  */
-export function recusaPorConcorrencia(erro: unknown): boolean {
-  const t = (erro instanceof Error ? erro.message : String(erro)).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+function recusaPorConcorrencia(erro: unknown): boolean {
+  const t = (mensagemDeErro(erro) ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   return classificarExcecao(erro) === "transitorio"
     && ["ja existe uma requisicao desse metodo", "consumo redundante", "redundant"].some((m) => t.includes(m));
 }
@@ -66,7 +66,7 @@ export async function lerComRetentativa<T>(
       return await ler();
     } catch (erro) {
       if (tentativa >= tentativas || !recusaPorConcorrencia(erro)) throw erro;
-      await esperar(atrasoRetentativaMs(tentativa, erro instanceof Error ? erro.message : String(erro)));
+      await esperar(atrasoRetentativaMs(tentativa, mensagemDeErro(erro) ?? ""));
     }
   }
 }
