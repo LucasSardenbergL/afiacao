@@ -671,6 +671,30 @@ esac
 O antídoto geral vale igual: o `if !` acima **não** distinguia "não achei" de "a busca não pôde ser
 feita" — três estados espremidos em dois, com o terceiro caindo no lado que acusa.
 
+**Correção (2026-11-11): saída PEQUENA não protege, se tiver mais de uma linha.** A leitura acima
+("o tamanho explica a raridade") vale só para payload de UMA linha. No 1º CI do #3804 (run
+**43003175001**, attempt 1, `provas-sql (10)`), a prova `test-hoje-sp-sessao-utc-precos-piso`
+caiu em "X1g … falhou, mas não pela PRE" com um `$out` de **~470 bytes** que CONTINHA a PRE. O
+rerun deu verde. Um `write()` de 470 B nunca leva SIGPIPE, mas o `printf` não fez um só:
+
+- o bash 5 deixa o stdout **line-buffered** (`setvbuf(stdout, _IOLBF)`, capturado por interpose
+  DYLD no bash 5.3) e o `printf` builtin emite `%s` por `putchar` (`builtins/printf.def`). Então
+  são **k linhas → k `write()`**, herdado pelo subshell do pipeline;
+- a linha que casa era a **1ª** (o `ERROR: PRE FALHOU…` do psql, antes do `CONTEXT:`). O `grep -q`
+  casa, sai, e o `write()` da 2ª linha leva SIGPIPE;
+- com o `printf` pausado entre as linhas (`{ printf 'PRE FALHOU\n'; sleep .3; printf 'CONTEXT\n'; }
+  | grep -q PRE`), o resultado é `PIPESTATUS="141 0"` de forma determinística.
+
+A janela natural é de microssegundos: no macOS deu 0/2000, mesmo sob carga. Mas o CI com 16
+partes e PGs paralelos achou essa janela. Atenção: `/bin/bash` no macOS é o **3.2**, e é ele que
+`#!/usr/bin/env bash` resolve aqui; medir no bash do CI exige `/opt/homebrew/bin/bash`.
+
+O risco, então, é **match antes da última linha**, qualquer que seja o tamanho. A contramedida
+mínima é `grep -q PADRAO <<<"$out"`: o shell grava o here-string inteiro antes de o `grep` rodar,
+não há produtor concorrente nem `pipefail` no caminho. O `case` acima também serve. Conserto no
+#3809. Na varredura de 2026-11-11, `db/test-*.sh` tinha **172** vereditos `| [command ]grep -q`
+em pipe e ~36 `$(… | head -1)` atribuídos sem `|| true` (entre eles `db/lib/pg-harness.sh:50`).
+
 ### 17. Flag que NÃO EXISTE no BSD + `2>/dev/null` — o erro morre no cano posto por higiene
 
 A #6 é a flag homônima que faz **outra coisa**. Esta é a irmã mais silenciosa: a flag **não existe**,
