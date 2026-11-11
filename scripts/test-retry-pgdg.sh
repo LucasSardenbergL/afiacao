@@ -12,7 +12,8 @@
 #   · falsifica.sh  — o lab SABE ficar vermelho (5 sabotagens, controle verde antes da 1a).
 #
 # Sem rede: curl/apt-get/lsb_release/sudo/sleep sao dublês num PATH de mktemp, e o texto do step
-# vem do proprio ci.yml a cada invocacao (copia envelheceria calada).
+# vem do proprio ci.yml a cada invocacao (copia envelheceria calada). O `tentar` mora em
+# scripts/lib/tentar.sh desde o E19 (o shellcheck pinado usa o mesmo helper): o lab o embute no step.
 #
 # Uso: bash scripts/test-retry-pgdg.sh                (exit 0 = tudo verde)
 #      bash scripts/test-retry-pgdg.sh --falsificar   (sabota o retry; EXIGE vermelho)

@@ -21,12 +21,19 @@
 # inalcancada ou redundante, e o lab reprova dizendo isso.
 #
 # Uso: bash scripts/lab-retry-pgdg/lab.sh      (exit 0 = tudo verde; imprime LAB-VERDE/LAB-VERMELHO)
-# Env: ALVO_YML (default .github/workflows/ci.yml) — o falsifica.sh aponta para a copia sabotada.
+# Env: ALVO_YML (default .github/workflows/ci.yml) e ALVO_TENTAR (default scripts/lib/tentar.sh) — o
+#      falsifica.sh aponta um ou outro para a copia sabotada.
+#
+# O `tentar` mora em scripts/lib/tentar.sh (os steps do shellcheck pinado usam o mesmo helper) e o
+# step o carrega com `. scripts/lib/tentar.sh`. O lab EMBUTE o arquivo no lugar dessa linha (guarda
+# 1b): rodar o `.` relativo dependeria do cwd de quem chama, e um `tentar` ausente faria o step
+# morrer por "command not found" — vermelho pelo motivo errado, que o falsificador leria como dente.
 set -u
 
 L="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 RAIZ_REPO="$(cd "$L/../.." && pwd -P)"
 YML="${ALVO_YML:-$RAIZ_REPO/.github/workflows/ci.yml}"
+TENTAR="${ALVO_TENTAR:-$RAIZ_REPO/scripts/lib/tentar.sh}"
 PASSO="PostgreSQL 17 (PGDG)"
 
 tmpbase="${TMPDIR:-/tmp}"
@@ -55,10 +62,16 @@ fi
 # ── Guarda 1: a substituicao de prefixos tem de CASAR ────────────────────────────────────────────
 SANDBOX="$TMP/raiz"
 mkdir -p "$SANDBOX/etc/apt/sources.list.d" "$SANDBOX/usr/lib" "$SANDBOX/usr/share"
-if ! python3 - "$TMP/passo-cru.sh" "$TMP/passo.sh" "$SANDBOX" <<'PY'
+if ! python3 - "$TMP/passo-cru.sh" "$TMP/passo.sh" "$SANDBOX" "$TENTAR" <<'PY'
 import sys
-cru, saida, raiz = sys.argv[1], sys.argv[2], sys.argv[3]
+cru, saida, raiz, tentar = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 t = open(cru, encoding="utf-8").read()
+# Guarda 1b: a linha que carrega o helper tem de existir UMA vez, e o helper entra no lugar dela.
+fonte = ". scripts/lib/tentar.sh\n"
+n = t.count(fonte)
+if n != 1:
+    sys.exit(f"o step carrega o tentar {n}x (esperava 1) — o lab nao saberia o que provar")
+t = t.replace(fonte, open(tentar, encoding="utf-8").read())
 faltou = []
 for pref in ("/usr/lib/postgresql", "/usr/share/postgresql-common", "/etc/apt"):
     n = t.count(pref)
