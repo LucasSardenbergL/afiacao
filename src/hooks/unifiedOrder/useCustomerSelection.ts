@@ -12,6 +12,7 @@ import {
   avisoFalhaAutoCadastro,
   desfechoAutoCadastro,
   deveCriarClienteNaConta,
+  payloadAutoCadastro,
   type ContaAutoCadastro,
   type DesfechoAutoCadastro,
 } from './ensure-helpers';
@@ -300,19 +301,7 @@ export function useCustomerSelection({
     cust: OmieCustomer,
     lookupFailed: { colacor: boolean; afiacao: boolean },
   ): Promise<Extract<DesfechoAutoCadastro, { ok: false }>[]> => {
-    const customerPayload = {
-      document: cust.cnpj_cpf,
-      razao_social: cust.razao_social,
-      nome_fantasia: cust.nome_fantasia,
-      endereco: cust.endereco,
-      endereco_numero: cust.endereco_numero,
-      bairro: cust.bairro,
-      cidade: cust.cidade,
-      estado: cust.estado,
-      cep: cust.cep,
-      telefone: cust.telefone,
-      contato: cust.contato,
-    };
+    const customerPayload = payloadAutoCadastro(cust);
 
     const falhas: Extract<DesfechoAutoCadastro, { ok: false }>[] = [];
     const contas: Array<{

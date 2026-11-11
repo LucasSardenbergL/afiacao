@@ -818,8 +818,9 @@ Deno.serve(async (req) => {
         result = {
           clientes: searchResult.clientes.map(c => ({
             codigo_cliente: c.codigo_cliente_omie || c.codigo_cliente,
-            razao_social: c.razao_social,
-            nome_fantasia: c.nome_fantasia,
+            // Busca do staff: o CPF do titular de MEI na razão (e no fantasia, que costuma repeti-la) sai mascarado.
+            razao_social: razaoSemCpf(c.razao_social),
+            nome_fantasia: razaoSemCpf(c.nome_fantasia),
             cnpj_cpf: c.cnpj_cpf,
             email: c.email,
             telefone: telefoneOmie(c.telefone1_ddd, c.telefone1_numero),
@@ -843,8 +844,8 @@ Deno.serve(async (req) => {
             found: true,
             cliente: {
               codigo_cliente: clienteCompleto.codigo_cliente,
-              razao_social: clienteCompleto.razao_social,
-              nome_fantasia: clienteCompleto.nome_fantasia,
+              razao_social: razaoSemCpf(clienteCompleto.razao_social),
+              nome_fantasia: razaoSemCpf(clienteCompleto.nome_fantasia),
               cnpj_cpf: clienteCompleto.cnpj_cpf,
               email: clienteCompleto.email,
               telefone: telefoneOmie(clienteCompleto.telefone1_ddd, clienteCompleto.telefone1_numero),

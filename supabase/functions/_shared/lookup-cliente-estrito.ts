@@ -6,10 +6,11 @@
 //   - resposta inválida, ou paginação que não chega à página vazia dentro do guard → OMIE_LOOKUP_INDETERMINADO;
 //   - registro com OUTRO documento → OMIE_LOOKUP_DIVERGENTE (o contrato de antes, agora em TODOS os registros);
 //   - 2+ códigos distintos para o documento → OMIE_LOOKUP_AMBIGUO (terminal: só um humano no Omie resolve).
-// PURO: o fetch da página é INJETADO (index.ts passa o callOmieVendasApi com throwOnTransient) → testável com
+// PURO: o fetch da página é INJETADO (a omie-vendas-sync passa o callOmieVendasApi com throwOnTransient; a omie-sync,
+// no criar_cliente_afiacao, o `paginaDeClientesPorDocumento` de busca-documento.ts) → testável com
 // `--no-remote` (lookup-cliente-estrito_test.ts). Diário docs/historico/omie-lookup-cliente-estrito.md.
-import { documentoParaCadastro } from "../_shared/cnpj-alfanumerico.ts";
-import { lookupDevolveuOMesmoDocumento } from "../_shared/lookup-documento.ts";
+import { documentoParaCadastro } from "./cnpj-alfanumerico.ts";
+import { lookupDevolveuOMesmoDocumento } from "./lookup-documento.ts";
 
 export interface ClienteEncontrado {
   codigo_cliente: number;

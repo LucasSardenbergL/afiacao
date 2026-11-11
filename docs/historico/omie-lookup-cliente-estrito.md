@@ -18,7 +18,7 @@ não há dado a migrar, mas o defeito atingiria o primeiro uso real.
 
 ## Desenho (Codex `-r max`: ACEITO COM AJUSTES, todos incorporados)
 
-Módulo PURO `supabase/functions/omie-vendas-sync/lookup-cliente-estrito.ts`. O fetch da página é injetado: o
+Módulo PURO `supabase/functions/_shared/lookup-cliente-estrito.ts` (era `omie-vendas-sync/`; movido em 2026-11-11 para a omie-sync usar no `criar_cliente_afiacao`). O fetch da página é injetado: o
 `index.ts` passa o `callOmieVendasApi` com `throwOnTransient`.
 
 | Resposta do Omie | Desfecho |

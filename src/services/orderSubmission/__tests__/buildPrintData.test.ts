@@ -73,6 +73,26 @@ function makeParams(over: Partial<Params> = {}): Params {
 beforeEach(() => vi.clearAllMocks());
 
 describe('buildPrintData', () => {
+  it('cliente MEI com o CPF na razão: os três blocos imprimem a razão mascarada, e a fiscal não aparece em lugar nenhum', () => {
+    const mei = {
+      razao_social: 'PEDRO ALVES COSTA 12345678901',
+      razao_fiscal: 'PEDRO ALVES COSTA 12345678901',
+      cnpj_cpf: '12345678000199',
+    } as OmieCustomer;
+    const blocos = buildPrintData(makeParams({
+      customer: mei,
+      obenProductItems: [obenItem()],
+      colacorProductItems: [colacorItem()],
+      serviceItems: [svcItem()],
+    }));
+    expect(blocos.map((b) => b.customerName)).toEqual([
+      'PEDRO ALVES COSTA ***456789**',
+      'PEDRO ALVES COSTA ***456789**',
+      'PEDRO ALVES COSTA ***456789**',
+    ]);
+    expect(JSON.stringify(blocos)).not.toContain('12345678901');
+  });
+
   it('carrinho vazio → array vazio', () => {
     expect(buildPrintData(makeParams())).toEqual([]);
   });

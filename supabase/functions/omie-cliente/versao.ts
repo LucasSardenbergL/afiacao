@@ -48,8 +48,11 @@ export const respostaSonda = criarRespostaSonda("omie-cliente");
  *
  * `v1.8-pre-cadastro-sem-cpf` (2026-11-10): `buscar_por_documento`, chamado antes do login, devolve a
  * razão social com o CPF do titular de MEI mascarado (`_shared/razao-fiscal.ts`, migration 20261113090000).
+ *
+ * `v1.9-busca-staff-sem-cpf` (2026-11-11): `pesquisar_clientes` e `consultar_cliente` devolvem a razão e o
+ * fantasia com o CPF de MEI mascarado (busca do staff, M1 da revisão do Fable).
  */
-export const VERSAO = "v1.8-pre-cadastro-sem-cpf";
+export const VERSAO = "v1.9-busca-staff-sem-cpf";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

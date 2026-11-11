@@ -4,7 +4,9 @@ import {
   desfechoAutoCadastro,
   deveCriarClienteNaConta,
   MARCA_RAZAO_MASCARADA,
+  payloadAutoCadastro,
 } from '@/hooks/unifiedOrder/ensure-helpers';
+import type { OmieCustomer } from '@/hooks/unifiedOrder/types';
 
 describe('deveCriarClienteNaConta (tri-state do auto-cadastro)', () => {
   it('cria quando ausência foi CONFIRMADA (lookup ok, sem código, com documento)', () => {
@@ -151,5 +153,36 @@ describe('avisoFalhaAutoCadastro (texto do toast)', () => {
     expect(a.descricao).toBe(
       'OMIE_LOOKUP_AMBIGUO: 2 códigos para o documento. Pedido com itens da Afiação fica bloqueado até o app confirmar um código válido do cliente nessa conta.',
     );
+  });
+});
+
+describe('payloadAutoCadastro (a única leitura de razao_fiscal no front)', () => {
+  const base = {
+    codigo_cliente: 1,
+    nome_fantasia: 'PEDRO ***456789**',
+    cnpj_cpf: '12345678000199',
+    codigo_vendedor: null,
+  };
+
+  it('MEI vindo da busca ao vivo: a razão FISCAL vai ao cadastro no Omie, não a exibida', () => {
+    const cust = { ...base, razao_social: 'PEDRO ***456789**', razao_fiscal: 'PEDRO 12345678901' } as OmieCustomer;
+    expect(payloadAutoCadastro(cust).razao_social).toBe('PEDRO 12345678901');
+  });
+
+  it('sem razao_fiscal (cliente do perfil, build velho): segue a exibida e a edge resolve a fiscal', () => {
+    const cust = { ...base, razao_social: 'PEDRO ***456789**' } as OmieCustomer;
+    expect(payloadAutoCadastro(cust).razao_social).toBe('PEDRO ***456789**');
+  });
+
+  it('fantasia mascarada na tela (telefone, CPF): o original vai ao cadastro', () => {
+    const cust = { ...base, razao_social: 'DISK LTDA', nome_fantasia: 'DISK ***999988**', fantasia_fiscal: 'DISK 31999998888' } as OmieCustomer;
+    expect(payloadAutoCadastro(cust).nome_fantasia).toBe('DISK 31999998888');
+  });
+
+  it('o payload não carrega o campo razao_fiscal em si (só o valor, no lugar da razão)', () => {
+    const cust = { ...base, razao_social: 'PEDRO ***456789**', razao_fiscal: 'PEDRO 12345678901' } as OmieCustomer;
+    expect(Object.keys(payloadAutoCadastro(cust))).not.toContain('razao_fiscal');
+    expect(Object.keys(payloadAutoCadastro(cust))).not.toContain('fantasia_fiscal');
+    expect(payloadAutoCadastro(cust).document).toBe('12345678000199');
   });
 });

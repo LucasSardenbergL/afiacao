@@ -1,5 +1,6 @@
 import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import { isValidOmieClientCode } from '@/services/orderSubmission/helpers';
+import type { OmieCustomer } from './types';
 
 /**
  * Tri-state do auto-cadastro de cliente por conta Omie (spec
@@ -56,6 +57,28 @@ const NOME_CONTA: Record<ContaAutoCadastro, string> = { colacor: 'Colacor', afia
 /** Marca que `_shared/razao-fiscal.ts` põe no início da mensagem quando a razão chegou com o CPF
  *  mascarado e nenhuma outra conta Omie do grupo tem a razão fiscal do documento. */
 export const MARCA_RAZAO_MASCARADA = 'RAZAO_MASCARADA:';
+
+/**
+ * O corpo comum do `criar_cliente` (Colacor) e do `criar_cliente_afiacao`. É o ÚNICO lugar do front que lê
+ * `razao_fiscal` (e `fantasia_fiscal`): a razão com o CPF do titular de MEI vai ao IncluirCliente e a nenhuma exibição (M1, 2026-11-11).
+ * Sem ela (cliente montado do perfil, que guarda mascarado) segue a razão exibida, e a edge troca a máscara pela
+ * razão fiscal de outra conta ou recusa com `RAZAO_MASCARADA` (`_shared/razao-fiscal.ts`).
+ */
+export function payloadAutoCadastro(cust: OmieCustomer) {
+  return {
+    document: cust.cnpj_cpf,
+    razao_social: cust.razao_fiscal ?? cust.razao_social,
+    nome_fantasia: cust.fantasia_fiscal ?? cust.nome_fantasia,
+    endereco: cust.endereco,
+    endereco_numero: cust.endereco_numero,
+    bairro: cust.bairro,
+    cidade: cust.cidade,
+    estado: cust.estado,
+    cep: cust.cep,
+    telefone: cust.telefone,
+    contato: cust.contato,
+  };
+}
 
 export type DesfechoAutoCadastro =
   | { ok: true; codigoCliente: number; codigoVendedor: number | null }

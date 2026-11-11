@@ -29,6 +29,35 @@ export function razaoSemCpf<T extends string | null | undefined>(razao: T): T {
 }
 
 /**
+ * O cliente que vem AO VIVO do Omie para o navegador do staff (busca do pedido, M1 da revisão do Fable, 2026-11-11):
+ * `razao_social` sai mascarada, porque é ela que a tela, a impressão, o `lastOrderData`, o bloqueio de crédito, o
+ * e-mail "Novo Pedido" e o LLM leem. `razao_fiscal` só existe quando a máscara mudou algo (MEI com o CPF na razão) e
+ * só serve ao payload do autocadastro (`criar_cliente` / `criar_cliente_afiacao`): nenhuma exibição a lê.
+ * Sem `razao_fiscal` (build velho do front, cliente montado do perfil), o cadastro manda a mascarada e
+ * `razaoFiscalParaCadastro` resolve a razão fiscal noutra conta.
+ */
+export function razaoParaExibicao(razao: string): { razao_social: string; razao_fiscal?: string } {
+  const mascarada = razaoSemCpf(razao);
+  return mascarada === razao ? { razao_social: razao } : { razao_social: mascarada, razao_fiscal: razao };
+}
+
+/** O mesmo para o nome fantasia (o de MEI costuma repetir a razão; o de loja pode ter telefone de 11 dígitos, que a
+ *  máscara também pega): `fantasia_fiscal` leva o original ao cadastro, para o IncluirCliente não perder a fantasia. */
+export function fantasiaParaExibicao(fantasia: string): { nome_fantasia: string; fantasia_fiscal?: string } {
+  const mascarada = razaoSemCpf(fantasia);
+  return mascarada === fantasia ? { nome_fantasia: fantasia } : { nome_fantasia: mascarada, fantasia_fiscal: fantasia };
+}
+
+/**
+ * Onde buscar a razão fiscal quando o autocadastro de VENDAS (`omie-vendas-sync` `criar_cliente`) chega com a mascarada:
+ * a outra conta de vendas e, depois, a Colacor SC (Afiação), que tem a razão completa de MEI que as duas não têm (3 casos
+ * medidos — MÉDIO 1 do Codex no #3803). A conta que cadastra nunca entra: o lookup dela já provou que não tem o documento.
+ */
+export function fontesDaRazaoFiscalVendas(conta: "oben" | "colacor"): Array<"oben" | "colacor" | "colacor_sc"> {
+  return [conta === "oben" ? "colacor" : "oben", "colacor_sc"];
+}
+
+/**
  * A razão social que pode ir ao IncluirCliente. A não mascarada passa como veio. A mascarada (cliente montado do
  * perfil, que guarda o CPF mascarado) é trocada pela razão FISCAL do MESMO documento noutra conta Omie do grupo, onde
  * o cliente já existe — a Oben tem 1.882 dos 1.888 MEI medidos em 2026-11-10.

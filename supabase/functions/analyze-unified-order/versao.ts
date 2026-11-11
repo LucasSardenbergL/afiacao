@@ -82,9 +82,9 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  * "bump v1.1-corpo-tipado". Um `git revert` deste bump devolveria a sonda a "responde verde sem provar nada".
  * `v1.3-ia-nao-precifica`: a edge deixou de decidir preço (fronteira `montarRespostaAnalise`, canária
  * `ia-nao-precifica-v1`); v1.4 = hotfix do BOOT_ERROR. Por quê: docs/historico/ia-nao-precifica.md.
- * `v1.6-so-imagem-2-passos`: só-imagem transcreve a foto e ranqueia catálogo/perfis INTEIROS (transcricao.ts).
+ * `v1.6-so-imagem-2-passos`: só-imagem transcreve a foto e ranqueia catálogo/perfis INTEIROS (transcricao.ts). v1.10 (2026-11-11): candidato do Omie ao LLM/log/resposta com o CPF de MEI mascarado.
  */
-export const VERSAO = "v1.9-cnpj-mascara-exata";
+export const VERSAO = "v1.10-candidato-sem-cpf";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

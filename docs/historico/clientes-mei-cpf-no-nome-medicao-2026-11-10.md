@@ -144,3 +144,47 @@ O Codex ficou indisponível (cota, rc=75). A revisão adversarial do Fable não 
   `index-CYAPg7i9.js`.
 - **Segue em aberto:** M1 (a razão crua da busca ao vivo no Omie chega à impressão do pedido e ao e-mail
   "Novo Pedido") e B5 (`fin_movimentacoes.descricao`).
+
+### M1: a razão ao vivo do Omie sai sem o CPF (2026-11-11)
+
+A busca do pedido traz o cliente AO VIVO do Omie, e a razão de MEI chega com o CPF do titular. Ela ia à tela, à
+impressão do pedido, ao `lastOrderData`, ao bloqueio de crédito, ao e-mail "Novo Pedido" e ao LLM do pedido por IA.
+
+- **Desenho:** a edge devolve a razão de EXIBIÇÃO já mascarada (`razaoParaExibicao` / `fantasiaParaExibicao` em
+  `_shared/razao-fiscal.ts`). A razão FISCAL vai à parte, em `razao_fiscal` (e `fantasia_fiscal`), só quando a máscara
+  mudou algo, e só o `payloadAutoCadastro` do front a lê, para o IncluirCliente.
+  - O CPF sai dos campos de exibição, não do navegador do staff. É o compromisso aceito na revisão do Codex.
+  - Sem `razao_fiscal` (build velho, cliente montado do perfil ou pela IA), o cadastro manda a mascarada e a edge
+    resolve a fiscal noutra conta (`razaoFiscalParaCadastro`).
+- **Onde mascara:**
+  - `omie-vendas-sync`: `listar_clientes`, `buscar_cliente` e o eco do `criar_cliente`;
+  - `omie-cliente`: `pesquisar_clientes` e `consultar_cliente`;
+  - `omie-sync`: `list_clientes` e o e-mail "Novo Pedido" (assunto e corpo);
+  - `analyze-unified-order`: os candidatos do Omie e o `safeCustomer` que vão ao LLM;
+  - front (`src/lib/omie/razao-exibicao.ts`, espelho da regex com teste de paridade): impressão (`buildPrintData`)
+    e `submitOrder` (`nomeClienteExibicao`).
+- **Revisão adversarial (Fable), corrigida antes do PR:**
+  - o retry da razão fiscal pegava o timeout de 140s → passou a retentar só a recusa por concorrência
+    (`recusaPorConcorrencia`);
+  - o fantasia de MEI se perdia no cadastro → `fantasia_fiscal`;
+  - a paridade cobria só a regex → cobre também a substituição;
+  - a fiação não tinha teste → testes de texto nas 4 edges e no `submitOrder`.
+- **Os 2 MÉDIOS do Codex retroativo no #3803, no mesmo PR:**
+  - o `criar_cliente` da `omie-vendas-sync` busca a razão fiscal também na Colacor SC (Afiação), depois da outra
+    conta de vendas (`fontesDaRazaoFiscalVendas`), pelo lookup estrito; 3 MEI só têm a razão completa nela;
+  - o `criar_cliente_afiacao` da `omie-sync` passa a usar o MESMO lookup estrito, movido para
+    `_shared/lookup-cliente-estrito.ts`. Ele pagina, recusa 2+ códigos (`OMIE_LOOKUP_AMBIGUO`) e recusa a contagem
+    contraditória `{registros:1, clientes_cadastro:[]}` (`OMIE_LOOKUP_INDETERMINADO`). Casos medidos: 0.
+- **Falsificação:** controle verde na mesma invocação; 13 sabotagens, 13 vermelhas.
+- **Versões:** `omie-sync` v1.12, `omie-vendas-sync` v1.35, `omie-cliente` v1.9 e `analyze-unified-order` v1.10.
+  Ordem: as 4 edges antes do Publish; entre elas, qualquer ordem.
+
+### B4, B5 e a revisão retroativa do Codex (2026-11-11)
+
+- **B4, backups e PITR:** guardam o nome com o CPF anterior à migration `20261113090000` até a retenção expirar. Não
+  há o que reescrever; fica registrado no inventário do Encarregado.
+- **B5, `fin_movimentacoes.descricao`:** 2.331 das 148.307 linhas têm 11 dígitos, nos moldes `A_A_A · 99999999999 · A`
+  (2.301) e `A_A_A · 999999999/99 · A` (29). Só 46 (2%) passam no dígito verificador de CPF, o esperado ao acaso em
+  números quaisquer: são códigos do Omie, não CPF. Encerrado sem ação.
+- **Codex retroativo (#3803 e #3812):** nada ALTO. Nenhum defeito no #3812. Os dois MÉDIOS do #3803 entraram no M1
+  (acima).
