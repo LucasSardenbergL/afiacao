@@ -110,3 +110,37 @@ O Codex ficou indisponível (cota, rc=75). A revisão adversarial do Fable não 
 - **Fica para depois:** M1 (a razão crua da busca ao vivo no Omie ainda chega à impressão e ao e-mail do pedido) e
   B5 (`fin_movimentacoes.descricao`).
 
+
+### Desfecho (2026-11-11, decisão do founder: "Seguir com E+F")
+
+- **F, o front** ([#3812](https://github.com/LucasSardenbergL/afiacao/pull/3812), mergeado às 12:37Z): o autocadastro
+  não engole mais o erro. O `supabase.functions.invoke` não rejeita em erro de edge: a `omie-vendas-sync` devolve
+  500 `{error}` e a `omie-sync`, 200 `{success:false}`.
+  - `desfechoAutoCadastro` classifica a resposta e o hook mostra o motivo real num `toast.error`, só se a seleção
+    ainda for a corrente.
+  - Com `RAZAO_MASCARADA`, o vendedor é orientado a selecionar o cliente pela busca (que consulta o Omie) ou a
+    cadastrá-lo no Omie com a razão completa.
+  - 20 testes, 6 sabotagens vermelhas.
+  - Codex: "sem achados de regressão money-path". O MÉDIO foi corrigido: com `OMIE_LOOKUP_AMBIGUO` o cliente já
+    existe, então o texto diz "até o app confirmar um código válido", não "até o cadastro existir".
+- **E, as edges:** pacote `6090e6405577`, de `origin/main@191faa11`, enviado pelo MCP às 11:01:43Z. O agente do Lovable
+  conferiu 45/45 hashes, deixou as 3 funções Active e respondeu `No files were edited.`.
+  - O sensor deu `EDICAO_DETECTADA` só pelo `edit_id`. O `get_diff` mostra apenas o `types.ts` regenerado, que é
+    tolerado (`db0339c0e`), então não houve revert.
+  - A 1ª atestação foi pelo envelope:
+    - `db:aplicar` #1070, disparo direto de `omie-cliente` e `omie-sync`: 2× DEPLOY CONFIRMADO pelo `psql-ro`;
+    - #1072, relé `deploy_sonda_disparar` para a `omie-vendas-sync`.
+  - O colhedor gravou as 3 em `deploy_atestacoes` (11:33–11:34Z) e o `pendencias:deploy` saiu 0.
+  - Arquivos: `db/2026-11-11-sonda-*-razao-fiscal-*.sql`.
+- **Migration `20261113090000`:** o founder colou no SQL Editor depois das atestações. Validação pelo `psql-ro`:
+  - **0** CPF em `profiles.name` e **0** em `venda_items_history.cliente_razao_social`;
+  - os 2 triggers ligados;
+  - 1.888 e 687 linhas mascaradas;
+  - nenhuma linha de prova vazou;
+  - as funções de trigger não são executáveis por `anon`/`authenticated`.
+- **Publish do #3812:** o pré-requisito está verde (`pendencias:deploy` 0, `deriva:corpo:prod` 0, workspace em
+  `5a0e0f1af` ⊇ #3812). O `deploy_project` pela sessão foi recusado pelo classificador de permissão do modo
+  automático (deploy de produção), então o Publish ficou com o founder. Antes dele, o bundle era
+  `index-CYAPg7i9.js`.
+- **Segue em aberto:** M1 (a razão crua da busca ao vivo no Omie chega à impressão do pedido e ao e-mail
+  "Novo Pedido") e B5 (`fin_movimentacoes.descricao`).
