@@ -1500,13 +1500,6 @@ jobs:
       # e um pin assim viraria vermelho por AMBIENTE — o que ensinaria a tratar este job
       # como flaky, que é como um gate morre. O piso + o registro da versão dão o
       # determinismo que importa sem essa fragilidade.
-      # EXPERIMENTO E20 — REMOVER ANTES DO MERGE. Reproduz o incidente de 11/11 (mirror do Ubuntu
-      # inalcançável) para provar que o step seguinte não depende mais dele.
-      - name: EXPERIMENTO E20 — mirror do Ubuntu sem rota
-        run: |
-          cat /etc/apt/apt-mirrors.txt || true
-          printf '10.255.255.1 azure.archive.ubuntu.com\n10.255.255.1 archive.ubuntu.com\n10.255.255.1 security.ubuntu.com\n' | sudo tee -a /etc/hosts
-          getent hosts azure.archive.ubuntu.com
       - name: PostgreSQL 17 (PGDG) + pgvector — instala e confere a versão
         # Orçamento TOTAL do step (E20): caminho normal ~12 s; o fallback com o mirror sem DNS (~200 s
         # de update) ainda cabe. Os `timeout` internos somam mais que isto de propósito — o teto que
