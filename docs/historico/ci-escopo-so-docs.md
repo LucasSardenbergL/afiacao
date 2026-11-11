@@ -83,4 +83,4 @@ Três camadas ficaram **verdes** e foram removidas por serem redundantes: o laç
 
 ## Depois
 
-Ver o corpo do PR: push → `validate` de um PR só-docs, antes e depois.
+Medido no 1º PR só-docs pós-merge (#3830 mergeado em 2026-11-11 15:34 UTC) — este próprio doc é o diff da medição. Números em seguida.
