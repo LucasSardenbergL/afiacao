@@ -75,7 +75,7 @@ PY
 # fora da lista passaria despercebida AQUI — quem cobre isso e' o lab completo, que roda inteiro no
 # controle desta mesma invocacao e no `test:hooks`.
 # roda_lab <yml> <tentar> <locale> [cenarios]
-roda_lab() { ALVO_YML="$1" ALVO_TENTAR="$2" LC_ALL="$3" LAB_CENARIOS="${4:-C1 C2 C3 C4 C5 C6 C7 C8}" bash "$L/lab.sh" 2>&1; }
+roda_lab() { ALVO_YML="$1" ALVO_TENTAR="$2" LC_ALL="$3" LAB_CENARIOS="${4:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10}" bash "$L/lab.sh" 2>&1; }
 
 # ── (0) CONTROLE — antes de qualquer sabotagem, na mesma invocacao ───────────────────────────────
 cp "$ORIG" "$TMP/controle.yml"
@@ -157,9 +157,9 @@ prova yml "S3 '|| true' na chamada do curl (mascara a falha)" \
 
 # S4 — uma camada perde o retry. E' o teste de ALCANCE: se C3 seguisse verde sem o `tentar`,
 # a assercao dele nao estaria olhando para o install.
-prova yml "S4 apt-get install volta a ser chamado sem 'tentar' (camada sem retry)" \
-  '            tentar "apt-get install postgresql-17 + pgvector" sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector' \
-  '            sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector' \
+prova yml "S4 apt-get install do fallback volta a ser chamado sem 'tentar' (camada sem retry)" \
+  '              tentar "apt-get install postgresql-17 + pgvector" instalar' \
+  '              instalar' \
   "C3 C7"
 
 # S5 — some o `|| rc=$?`, o unico ponto onde o `set -e` fica suspenso de proposito. Sem ele o
@@ -168,6 +168,33 @@ prova yml "S4 apt-get install volta a ser chamado sem 'tentar' (camada sem retry
 prova tentar "S5 '\"\$@\" || rc=\$?' vira '\"\$@\"; rc=\$?' (set -e mata na 1a falha)" \
   '    "$@" || rc=$?' '    "$@"; rc=$?' \
   "C1 C2 C3 C4 C5"
+
+# S6-S10 — as propriedades do E20 (plano v9), uma por vez.
+# S6 — o fallback deixa de atualizar as fontes base: install que precisa de indice do Ubuntu fica
+# sem saida, e C3/C10 (que contam a chamada base) tem de ver.
+prova yml "S6 fallback sem o update das fontes base" \
+  '              sudo timeout 240 apt-get update -qq
+' '              true
+' \
+  "C3 C10"
+
+prova yml "S7 update do PGDG sem --error-on=any (W: volta a sair 0)" \
+  'apt-get update -qq --error-on=any \' 'apt-get update -qq \' \
+  "C9"
+
+prova yml "S8 update do PGDG volta a ler sources.list.d inteiro" \
+  '-o Dir::Etc::sourceparts=- -o' '-o' \
+  "C9"
+
+prova yml "S9 update do PGDG sem List-Cleanup=0 (apaga os outros indices)" \
+  ' -o APT::Get::List-Cleanup=0' '' \
+  "C9"
+
+prova yml "S10 update do fallback sem timeout (orcamento furado)" \
+  '              sudo timeout 240 apt-get update -qq
+' '              sudo apt-get update -qq
+' \
+  "C9"
 
 echo ""
 echo "── resultado: $ok ok · $ruim falha(s) ──"

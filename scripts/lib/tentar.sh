@@ -4,7 +4,7 @@
 # checkout). Steps não compartilham funções de shell, então o helper mora aqui, UMA vez — e não
 # copiado em cada step que baixa algo (cópia é laço novo, com a sua própria chance de desistir verde).
 #
-# Quem usa: o step "PostgreSQL 17 (PGDG)" do `provas-sql` (curl da chave + 2 apt-get) e os dois
+# Quem usa: o step "PostgreSQL 17 (PGDG)" do `provas-sql` (curl da chave + os apt-get do PGDG e do install) e os dois
 # steps "shellcheck pinado 0.11.0" (`gates-e-falsificacao` e `falsificacao`). Quem PROVA:
 # scripts/lab-retry-pgdg/ no `test:hooks` — o lab embute ESTE arquivo no texto do step PGDG
 # extraído do ci.yml e o falsificador sabota ESTE arquivo (S1, S2, S5).
