@@ -200,8 +200,8 @@ export function foraDoLaco(cmd: string): string[] {
  * Alvo PARTIDO entre runners (2026-11-11): `bash scripts/test-x.sh --falsificar k/N`, fora do
  * laço. A suíte roda o controle inteiro e só as sabotagens de posição ≡ k (mod N) — a união das
  * partes 1..N é o alvo inteiro por construção DENTRO da suíte; o que se prova AQUI é que as N
- * partes estão todas no CI, cada uma uma vez, com o mesmo N. Hoje só o `codex-async` (330 s
- * num runner, o caminho crítico dos PRs sem provas SQL).
+ * partes estão todas no CI, cada uma uma vez, com o mesmo N. Hoje o `codex-async` (330 s num
+ * runner) e o `fecho-edges-pendentes` (~290 s) — cada um era o caminho crítico dos PRs sem provas SQL.
  */
 export function partesFalsificadas(cmd: string): { alvo: string; k: number; n: number }[] {
   const semLacos = cmd.replace(/for\s+\w+\s+in\s+[^;]+;\s*do\b[\s\S]*?\bdone\b/g, '');

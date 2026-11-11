@@ -1046,7 +1046,23 @@ MAPA3
 # ---------------------------------------------------------------- falsificação ---
 if [ "${1:-}" = "--falsificar" ]; then
   falhou=0
-  printf '== falsificacao (sabota o alvo e EXIGE vermelho NO ASSERT que a sabotagem declara) ==\n'
+  # PARTE `k/N` (opcional, 2026-11-11): `--falsificar 1/2` roda o CONTROLE inteiro (2 locales) e as
+  # travas de forma da lista (repetido, `|`, registro órfão), e SÓ as sabotagens de posição p na
+  # lista SABOTAGENS com (p-1) % N + 1 == k. Existe porque o alvo levava ~290 s num runner só e era
+  # sozinho o caminho crítico dos PRs sem provas SQL (docs/historico/ci-fecho-falsificar-em-partes.md).
+  # Mesmo desenho do `test-codex-async.sh --falsificar k/N` (#3808): a união das partes é o todo por
+  # CONSTRUÇÃO (resto da divisão); sem argumento roda tudo (o laptop e o `test:falsificacao`). Parte
+  # mal formada sai 64; parte que não sabota nada REPROVA (`FAIL [parte-vazia]`) — runner verde
+  # sem prova é ausência de dado (falsificacao-cobertura.test.ts cobra 1..N no package.json).
+  parte_k=1; parte_n=1
+  if [ -n "${2:-}" ]; then
+    if [[ "$2" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] && [ "${BASH_REMATCH[1]}" -le "${BASH_REMATCH[2]}" ]; then
+      parte_k="${BASH_REMATCH[1]}"; parte_n="${BASH_REMATCH[2]}"
+    else
+      echo "uso: $0 --falsificar [k/N]  (1 <= k <= N) — recebi '$2'"; exit 64
+    fi
+  fi
+  printf '== falsificacao (sabota o alvo e EXIGE vermelho NO ASSERT que a sabotagem declara) — parte %s/%s ==\n' "$parte_k" "$parte_n"
 
   # Os logs das rodadas saem SEM cor (`sem_cor`), para o ID casar logo depois da palavra.
   esc="$(printf '\033')"
@@ -1464,12 +1480,20 @@ if [ "${1:-}" = "--falsificar" ]; then
   repetidos="$(printf '%s\n' $SABOTAGENS | cut -d: -f1 | sort | uniq -d | tr '\n' ' ')"
   [ -z "$repetidos" ] || { printf '  \033[31mFALHA\033[0m SABOTAGENS com nome repetido: %s\n' "$repetidos"; falhou=1; }
   case "$SABOTAGENS" in *'|'*) printf '  \033[31mFALHA\033[0m SABOTAGENS com | (OU): declare por , (E)\n'; falhou=1 ;; esac
+  pos=0; rodadas=0
   for item in $SABOTAGENS; do
     sab="${item%%:*}"; exigidos="${item#*:}"
     v="desc_$sab"; desc="${!v-}"; v="expr_$sab"; expr="${!v-}"
     if [ -z "$expr" ]; then
       printf '  \033[31mFALHA\033[0m "%s": na lista SABOTAGENS e SEM registro — nada foi sabotado\n' "$sab"; falhou=1; continue
     fi
+    # a parte é decidida pela POSIÇÃO na lista, DEPOIS da trava de registro (que vale em toda parte)
+    pos=$((pos + 1))
+    if [ $(( (pos - 1) % parte_n + 1 )) -ne "$parte_k" ]; then
+      printf '  --   [%s] na parte %s/%s, nao nesta\n' "$sab" $(( (pos - 1) % parte_n + 1 )) "$parte_n"
+      continue
+    fi
+    rodadas=$((rodadas + 1))
     aplica || continue
     # Os 2 locales da sabotagem correm JUNTOS (2026-10-05): era o alvo mais lento do
     # `test:falsificacao` (313 de 831 s no runner), ~102 rodadas de ~3 s em série. A rodada já é
@@ -1539,6 +1563,11 @@ if [ "${1:-}" = "--falsificar" ]; then
       *) printf '  \033[31mFALHA\033[0m "%s": registrada e FORA da lista SABOTAGENS — nunca roda\n' "$r"; falhou=1 ;;
     esac
   done
+  if [ "$rodadas" -eq 0 ]; then
+    printf '  FAIL [parte-vazia]  a parte %s/%s nao sabotou nada (%s sabotagens no total) — reduza N\n' "$parte_k" "$parte_n" "$pos"
+    falhou=1
+  fi
+  printf 'parte %s/%s: %s de %s sabotagens\n' "$parte_k" "$parte_n" "$rodadas" "$pos"
 
   [ "$falhou" -eq 0 ] && { printf '\n== falsificacao: todas as sabotagens ficaram vermelhas NO assert que declaram ==\n'; exit 0; }
   printf '\n== falsificacao REPROVOU ==\n'; exit 1
