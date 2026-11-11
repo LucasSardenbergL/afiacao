@@ -93,7 +93,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "tint-omie-sync": "cb02d31f30329f4ebb93643e382bbb98b69cc2073e02a3cf272ea822614cbaae",
   "tint-sync-agent": "0bff5f3cee0ea8e94db8a23788edd6091845a05029af3f152d10dc2c9cb0b7a6",
   "visit-score-recalc-batch": "fc6e87d83a3d700cf802731a40ac10098be412a11e6e95e7826efb1364114a95",
-  "visit-score-recalc-client": "a6fff7b62e1a7fa6235cfcd89d7d9812f0088ebbf9b6fab41096d4f35d21e591",
+  "visit-score-recalc-client": "958346956ecedcec79d630a4a48af63770c959c8ab578055a2c946d8a37da1dc",
   "whatsapp-inbound": "dff68bcafe9edc89673ce4cd7755c721b87a1ffa833eea6874f3a7214c2d17a7",
   "whatsapp-send": "dea0911c8768412918d9730b76b0f8231ef74042715a587c003dd80f00917ecf",
   "whatsapp-send-template": "a4fec739b2c2695fe4954c03c6c7b134f41bba910eec8e2769427a4a5dfa7f02",

@@ -5,6 +5,9 @@ import {
   scoreRelacionamento,
   scoreProspeccao,
   computeVisitScore,
+  nuncaComprou,
+  cadastroRecente,
+  SCORE_CARTEIRA_SEM_PEDIDO,
 } from '../missions';
 import type { CustomerScoreInputs } from '../types';
 
@@ -19,12 +22,14 @@ function mkInput(overrides: Partial<CustomerScoreInputs> = {}): CustomerScoreInp
     revenue_potential: null,
     avg_monthly_spend_180d: 0,
     days_since_last_purchase: 30,
+    sales_history_status: 'ativo',
     signal_modifiers: null,
     days_since_last_visit: null,
     last_visit_at: null,
     sales_orders_count: 5,
     is_prospect: false,
     days_since_signup: 365,
+    prospect_source: null,
     city: 'Belo Horizonte',
     neighborhood: null,
     state: 'MG',
@@ -171,16 +176,17 @@ describe('scoreRelacionamento', () => {
 });
 
 describe('scoreProspeccao', () => {
-  it('cliente com 0 sales_orders → score >= 70', () => {
+  it('cliente da carteira com 0 sales_orders e sem histórico → piso da carteira (não 70)', () => {
     const r = scoreProspeccao(mkInput({
       sales_orders_count: 0,
+      sales_history_status: 'sem_historico',
       is_prospect: false,
       days_since_signup: 100,
     }));
-    expect(r.score!).toBeGreaterThanOrEqual(70);
+    expect(r.score).toBe(SCORE_CARTEIRA_SEM_PEDIDO);
   });
 
-  it('is_prospect=true com signup recente (< 30d) → score >= 90', () => {
+  it('is_prospect=true com signup recente (< 30d) e cadastro de verdade → score >= 90', () => {
     const r = scoreProspeccao(mkInput({
       sales_orders_count: 0,
       is_prospect: true,
@@ -195,6 +201,76 @@ describe('scoreProspeccao', () => {
       is_prospect: false,
     }));
     expect(r.score).toBe(0);
+  });
+});
+
+// Plano v8, D13 — decisão do founder (2026-11-11): quem está na carteira do Omie e nunca comprou
+// fica ABAIXO de quem compra. Medido antes: o importado sem pedido saía com 90 e o top 30 da
+// cidade padrão das farmers era 100% de quem nunca comprou.
+describe('D13 — carteira sem pedido abaixo de quem compra', () => {
+  // O perfil real da onda de 02/11: importado do Omie há 9 dias, sem pedido, churn 100 / health 0.
+  const importado = () => mkInput({
+    sales_orders_count: 0,
+    sales_history_status: 'sem_historico',
+    is_prospect: false,
+    prospect_source: 'omie_import',
+    days_since_signup: 9,
+    days_since_last_purchase: 999,
+    churn_risk: 100,
+    health_score: 0,
+  });
+
+  it('o importado sem pedido sai com o piso da carteira, missão prospecção (era 90)', () => {
+    const v = computeVisitScore(importado());
+    expect(v.visit_score).toBe(SCORE_CARTEIRA_SEM_PEDIDO);
+    expect(v.primary_mission).toBe('prospeccao');
+    expect(v.insumos_ausentes).toEqual([]);
+  });
+
+  it('recuperação e relacionamento valem 0 para quem nunca comprou (o churn 100 dava 50)', () => {
+    expect(scoreRecuperacao(importado())).toEqual({ score: 0, insumosAusentes: [] });
+    expect(scoreRelacionamento(importado())).toEqual({ score: 0, insumosAusentes: [] });
+  });
+
+  it('a data do import não é cadastro recente: lead omie_import de 9 dias não ganha o +20', () => {
+    expect(cadastroRecente({ days_since_signup: 9, prospect_source: 'omie_import' })).toBe(false);
+    expect(cadastroRecente({ days_since_signup: 9, prospect_source: null })).toBe(true);
+    expect(cadastroRecente({ days_since_signup: 30, prospect_source: null })).toBe(false);
+    const lead = scoreProspeccao({ ...importado(), is_prospect: true });
+    expect(lead.score).toBe(70);
+  });
+
+  it('o comprador de menor score possível fica acima do piso (varredura de health com churn = 100 - health)', () => {
+    // Pior caso de quem compra: comprou hoje (penalidade de recência máxima), visitado hoje (sem
+    // boost de visita), sem gasto medido, sem sinal. Varre health 0..100 com o acoplamento de prod.
+    let menor = Infinity;
+    for (let h = 0; h <= 100; h += 0.5) {
+      const v = computeVisitScore(mkInput({
+        sales_orders_count: 1,
+        sales_history_status: 'ativo',
+        health_score: h,
+        churn_risk: 100 - h,
+        days_since_last_purchase: 0,
+        days_since_last_visit: 0,
+        avg_monthly_spend_180d: 0,
+      }));
+      menor = Math.min(menor, v.visit_score);
+    }
+    expect(menor).toBeGreaterThan(SCORE_CARTEIRA_SEM_PEDIDO);
+  });
+
+  it('nuncaComprou: pedido OU histórico ativo/stale provam compra; null no status não prova', () => {
+    expect(nuncaComprou({ sales_orders_count: 1, sales_history_status: 'sem_historico' })).toBe(false);
+    expect(nuncaComprou({ sales_orders_count: 0, sales_history_status: 'ativo' })).toBe(false);
+    expect(nuncaComprou({ sales_orders_count: 0, sales_history_status: 'stale' })).toBe(false);
+    expect(nuncaComprou({ sales_orders_count: 0, sales_history_status: 'sem_historico' })).toBe(true);
+    expect(nuncaComprou({ sales_orders_count: 0, sales_history_status: null })).toBe(true);
+  });
+
+  it('histórico ativo sem pedido no app (1 caso em prod) não é prospecção: vale a regra de comprador', () => {
+    const v = computeVisitScore(mkInput({ sales_orders_count: 0, sales_history_status: 'ativo', health_score: 40, churn_risk: 60 }));
+    expect(v.scores.prospeccao.score).toBe(0);
+    expect(v.primary_mission).not.toBe('prospeccao');
   });
 });
 
@@ -315,7 +391,7 @@ describe('computeVisitScore com missão não avaliada', () => {
   it('scores.expansao.score fica null e a expansão não vence o argmax (prospecção vence)', () => {
     const r = computeVisitScore(mkInput({
       expansion_score: null, revenue_potential: null,
-      sales_orders_count: 0, // vira candidato a prospecção (piso 70)
+      sales_orders_count: 0, is_prospect: true, // lead declarado: prospecção com base 70
     }));
     expect(r.scores.expansao.score).toBeNull();
     expect(r.primary_mission).toBe('prospeccao');

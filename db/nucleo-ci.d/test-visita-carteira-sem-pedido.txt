@@ -1,0 +1,4 @@
+# Visita (plano v8, D13): backfill de quem nunca comprou → 10/prospecção, comprador/lead/excluído/expansão/pedido apagado
+# intocados, TRAVA pela última atestação da edge v1.1, idempotência e PÓS com 2ª testemunha. 6 sabotagens INLINE
+# com controle antes/depois.
+db/test-visita-carteira-sem-pedido.sh 21

@@ -26,6 +26,33 @@ function somaModifiers(mods: Array<{ delta: number; decayedWeight: number }> | u
   return (mods ?? []).reduce((s, m) => s + m.delta * m.decayedWeight, 0);
 }
 
+// MIRROR-START carteira-sem-pedido — espelhado verbatim em supabase/functions/visit-score-recalc-client/index.ts
+// Plano v8, D13 — decisão do founder em 2026-11-11: o cliente da carteira que nunca comprou fica
+// ABAIXO de quem compra nas sugestões de visita. Antes ele ganhava 90 (prospecção 70 + 20 de
+// "cadastro novo" fabricado pela data do import do Omie) e ocupava o top 30 inteiro da cidade.
+//
+// Por que 10 (psql-ro, 2026-11-11): o menor visit_score de quem compra é 19,97 (p5 25,1; 1.237
+// compradores com linha), e 42% dos ativos ficam em 30 ou menos. Qualquer piso que deixe o nunca
+// comprou acima do corte `> 30` do card passaria na frente desses ativos. Com churn = 100 - health
+// (0 divergências em 17.002 linhas de farmer_client_scores), o piso teórico de quem compra é
+// ~13 (recuperação e relacionamento se cruzam em health ~54 com penalidade de recência máxima e
+// visita no dia). 10 fica abaixo dos dois e acima de 0, o "não candidato", para ainda preencher
+// as vagas que sobram depois dos compradores.
+export const SCORE_CARTEIRA_SEM_PEDIDO = 10;
+
+// Nunca comprou = nenhum pedido de venda E o histórico canônico não diz ativo/stale. `null` no
+// status (ainda não computado) não prova compra, então vale só o pedido.
+export function nuncaComprou(c: { sales_orders_count: number; sales_history_status: string | null }): boolean {
+  if (c.sales_orders_count > 0) return false;
+  return c.sales_history_status !== 'ativo' && c.sales_history_status !== 'stale';
+}
+
+// O +20 de "novo" é para cadastro de verdade: no perfil do import, o created_at é a data do import.
+export function cadastroRecente(c: { days_since_signup: number; prospect_source: string | null }): boolean {
+  return c.days_since_signup < 30 && c.prospect_source !== 'omie_import';
+}
+// MIRROR-END
+
 /**
  * RECUPERAÇÃO — cliente que comprava bem e parou.
  *
@@ -34,6 +61,9 @@ function somaModifiers(mods: Array<{ delta: number; decayedWeight: number }> | u
  * dependem dela hoje. O ausente é NOMEADO, não fabricado como 0.
  */
 export function scoreRecuperacao(c: CustomerScoreInputs): MissionResult {
+  // Quem nunca comprou não tem o que recuperar: medido, vale 0. Sem isto o churn_risk 100 de todo
+  // `sem_historico` (health 0) dava 50 aqui, acima da mediana dos ativos (D13).
+  if (nuncaComprou(c)) return { score: 0, insumosAusentes: [] };
   const insumosAusentes: string[] = [];
   let insumosMedidos = 0;
 
@@ -111,6 +141,8 @@ export function scoreExpansao(c: CustomerScoreInputs): MissionResult {
  * produtor → nunca fica null.
  */
 export function scoreRelacionamento(c: CustomerScoreInputs): MissionResult {
+  // Sem compra não há relacionamento a manter (mesma razão da recuperação).
+  if (nuncaComprou(c)) return { score: 0, insumosAusentes: [] };
   const healthBoost = c.health_score * 0.5;
   const revenueBoost = normalizeRevenue(c.avg_monthly_spend_180d) * 30;
   // null = nunca visitado: fallback conservador (30d) para não inflar score de relacionamento
@@ -122,14 +154,21 @@ export function scoreRelacionamento(c: CustomerScoreInputs): MissionResult {
   return { score, insumosAusentes: [] };
 }
 
-/** PROSPECÇÃO — lead novo ou cliente sem histórico. Insumos sempre presentes. */
+/**
+ * PROSPECÇÃO — dois públicos, com pesos diferentes (plano v8, D13):
+ * - lead declarado (`is_prospect`): base 70, +20 se o cadastro é recente DE VERDADE, +10 com sinal;
+ * - cliente da carteira que nunca comprou: SCORE_CARTEIRA_SEM_PEDIDO, abaixo de quem compra.
+ * Quem já comprou e não é lead não é candidato (0). Insumos sempre presentes.
+ */
 export function scoreProspeccao(c: CustomerScoreInputs): MissionResult {
-  const isProspectCandidate = c.sales_orders_count === 0 || c.is_prospect === true;
-  if (!isProspectCandidate) return { score: 0, insumosAusentes: [] };
-  const baseProspect = 70;
-  const recencyOfSignup = c.days_since_signup < 30 ? 20 : 0;
-  const signalsQuality = (c.signal_modifiers?.source_call_count ?? 0) > 0 ? 10 : 0;
-  return { score: clamp(baseProspect + recencyOfSignup + signalsQuality, 0, 100), insumosAusentes: [] };
+  if (c.is_prospect === true) {
+    const baseProspect = 70;
+    const recencyOfSignup = cadastroRecente(c) ? 20 : 0;
+    const signalsQuality = (c.signal_modifiers?.source_call_count ?? 0) > 0 ? 10 : 0;
+    return { score: clamp(baseProspect + recencyOfSignup + signalsQuality, 0, 100), insumosAusentes: [] };
+  }
+  if (nuncaComprou(c)) return { score: SCORE_CARTEIRA_SEM_PEDIDO, insumosAusentes: [] };
+  return { score: 0, insumosAusentes: [] };
 }
 
 /**

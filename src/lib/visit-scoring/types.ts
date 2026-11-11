@@ -17,6 +17,8 @@ export type MissionType =
   | 'relacionamento'
   | 'prospeccao';
 
+type SalesHistoryStatus = 'ativo' | 'stale' | 'sem_historico';
+
 export interface CustomerScoreInputs {
   customer_user_id: string;
   farmer_id: string;
@@ -33,6 +35,9 @@ export interface CustomerScoreInputs {
   revenue_potential: number | null;
   avg_monthly_spend_180d: number;
   days_since_last_purchase: number;
+  // Classificação canônica do histórico de compra (calculate-scores; spec
+  // 2026-06-20-sales-history-status-design). `null` = ainda não computado.
+  sales_history_status: SalesHistoryStatus | null;
   // de PR-SCORING-V2
   signal_modifiers: ScoreAdjustment | null;
   // de route_visits
@@ -43,6 +48,9 @@ export interface CustomerScoreInputs {
   // de profiles
   is_prospect: boolean;
   days_since_signup: number;
+  // 'omie_import' = perfil nascido do import da carteira do Omie: o `created_at` é a data do
+  // import, não um cadastro novo (plano v8, D13).
+  prospect_source: string | null;
   // de addresses
   city: string | null;
   neighborhood: string | null;

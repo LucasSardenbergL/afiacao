@@ -11,7 +11,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("visit-score-recalc-client");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sonda";
+export const VERSAO = "v1.1-carteira-sem-pedido";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

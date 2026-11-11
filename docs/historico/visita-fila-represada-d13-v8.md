@@ -45,9 +45,9 @@ Edge `visit-score-recalc-batch` (job 60, 07:00 UTC, `timeout_milliseconds = 5500
 últimos 30 dias, mas esse ramo não acha ninguém (ver "uso").
 
 **`processed_at` não quer dizer sucesso.** O drain grava `processed_at` em todo item, inclusive no erro ("Always mark
-processed (even on uncaught error) — avoids poison-pill", `supabase/functions/visit-score-recalc-client/index.ts:507`<!--cita: Always mark processed-->), junto com
+processed (even on uncaught error) — avoids poison-pill", `supabase/functions/visit-score-recalc-client/index.ts:553`<!--cita: Always mark processed-->), junto com
 `error: r.error ?? null`. Há ainda um terceiro desfecho: o cliente marcado `excluir_da_carteira` volta `{ ok: true }`
-sem gravar score (`supabase/functions/visit-score-recalc-client/index.ts:327`<!--cita: if (flagRes.data) return { ok: true };-->). Separando os três (sucesso = `error` nulo **e** `customer_visit_scores.calculated_at`
+sem gravar score (`supabase/functions/visit-score-recalc-client/index.ts:369`<!--cita: if (flagRes.data) return { ok: true };-->). Separando os três (sucesso = `error` nulo **e** `customer_visit_scores.calculated_at`
 até 10 min antes do `processed_at`):
 
 | dia (28/10 a 11/11) | processados | com erro | sucesso com score gravado | `ok` sem score gravado |
