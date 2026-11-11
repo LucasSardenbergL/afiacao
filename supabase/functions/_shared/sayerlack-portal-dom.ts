@@ -219,7 +219,7 @@ export function lerCondicaoSelecionadaDom(): string | false {
   return txt && txt.toLowerCase().indexOf("selecione") === -1 ? txt : false;
 }
 
-/** Todas as opções do `#condicoes_pagamento` (só leitura; insumo do de-para condição do portal → Omie). */
+/** Todas as opções do `#condicoes_pagamento` (só leitura; insumo do de-para condição do portal → Omie). O portal tem 163; teto 200 só contra DOM patológico. */
 export function lerCondicoesOpcoesDom(): string[] {
   // deno-lint-ignore no-explicit-any
   const g: any = globalThis;
@@ -227,7 +227,7 @@ export function lerCondicoesOpcoesDom(): string[] {
   // deno-lint-ignore no-explicit-any
   const sel: any = document.querySelector("#condicoes_pagamento");
   // deno-lint-ignore no-explicit-any
-  return sel ? Array.from(sel.options).map((o: any) => String(o.text || "").trim()).slice(0, 80) : [];
+  return sel ? Array.from(sel.options).map((o: any) => String(o.text || "").trim()).slice(0, 200) : [];
 }
 
 export type DesfechoPaginacao =
