@@ -69,6 +69,18 @@
 # montada por concatenação, delegação por `source`). Ele pega a forma CONVENCIONAL, e
 # a declaração no manifesto é o cadastro. Cru e não "sem comentários" de propósito: o
 # erro que ele comete é o falso positivo, que é barulhento e se resolve declarando.
+#
+# ## Faixas: uma falsificação em k unidades (4º campo `faixas=<k>`, 2026-11-11)
+#
+# A falsificação é uma unidade só, e a maior delas era o TETO do `provas-sql` (a `venda-repasse`, 38
+# sabotagens: docs/historico/ci-provas-sql-venda-repasse-faixas.md). `falsificar=<n> faixas=<k>` a parte
+# em k unidades `falsificar:i/k`, que os workers da parte rodam ao mesmo tempo. Cada uma roda a prova com
+# `NUCLEO_FAIXA=i/k` e exige, além do recibo `SABOTAGENS:`, EXATAMENTE uma linha
+#   `FAIXA: i/k sabotagens a-b de T`
+# com T ≥ n, a = ((i−1)·T/k)+1 e b = i·T/k (divisão inteira — a fatia CANÔNICA, refeita aqui) e as
+# vermelhas = b−a+1. Cada unidade prova a SUA fatia sozinha; as k fatias canônicas cobrem 1..T, e a união
+# exige as k identidades. A prova roda o controle verde em CADA faixa (a regra da mesma invocação). Sem
+# faixa pedida, a linha `FAIXA:` não pode aparecer: seria a prova recortando sozinha.
 
 set -euo pipefail
 
@@ -163,7 +175,7 @@ if [ -n "$MANIFESTO_D" ] && [ -e "$MANIFESTO_D" ]; then
   done < <(find "$MANIFESTO_D" -mindepth 1 -maxdepth 1 -print0 | LC_ALL=C sort -z)
 fi
 
-scripts=(); minimos=(); falsifs=(); motivos_fora=()
+scripts=(); minimos=(); falsifs=(); motivos_fora=(); faixas=()
 for FONTE in "${FONTES[@]}"; do
 linha_n=0; provas_na_fonte=0
 while IFS= read -r linha || [ -n "$linha" ]; do
@@ -181,13 +193,14 @@ while IFS= read -r linha || [ -n "$linha" ]; do
   caminho="$(printf '%s' "$linha" | awk '{print $1}')"
   minimo="$(printf '%s' "$linha" | awk '{print $2}')"
   campo3="$(printf '%s' "$linha" | awk '{print $3}')"
-  sobra="$(printf '%s' "$linha" | awk '{print $4}')"
+  campo4="$(printf '%s' "$linha" | awk '{print $4}')"
+  sobra="$(printf '%s' "$linha" | awk '{print $5}')"
 
   if ! printf '%s' "$minimo" | grep -qE '^[0-9]+$'; then
     echo "::error::$FONTE:$linha_n — falta o mínimo de asserts (formato: <caminho> <n>): $linha"; exit 1
   fi
   if [ -n "$sobra" ]; then
-    echo "::error::$FONTE:$linha_n — campo a mais ('$sobra'). Formato: <caminho> <n> [falsificar=<n>|falsificar=fora-do-ci]"; exit 1
+    echo "::error::$FONTE:$linha_n — campo a mais ('$sobra'). Formato: <caminho> <n> [falsificar=<n> [faixas=<k>]|falsificar=fora-do-ci]"; exit 1
   fi
   # Parse ESTRITO: um erro de digitação (`falsifcar=17`, `falsificar=`, `falsificar=0`) não pode
   # DESLIGAR a falsificação em silêncio — que é o jeito de um gate morrer sem ninguém ver.
@@ -196,6 +209,20 @@ while IFS= read -r linha || [ -n "$linha" ]; do
     falsificar=fora-do-ci) falsif="fora" ;;
     falsificar=[1-9]|falsificar=[1-9][0-9]|falsificar=[1-9][0-9][0-9]) falsif="${campo3#falsificar=}" ;;
     *) echo "::error::$FONTE:$linha_n — 3º campo inválido '$campo3': esperado falsificar=<1..999> ou falsificar=fora-do-ci"; exit 1 ;;
+  esac
+  # 4º campo (opcional): `faixas=<k>` parte a falsificação em k unidades (ver o cabeçalho, §Faixas). Só
+  # cabe numa falsificação que RODA, com k entre 2 e 9 e k ≤ n (faixa vazia não prova nada).
+  case "$campo4" in
+    '') faixa_k="" ;;
+    faixas=[2-9])
+      faixa_k="${campo4#faixas=}"
+      case "$falsif" in ''|fora)
+        echo "::error::$FONTE:$linha_n — '$campo4' sem falsificar=<n>: só uma falsificação que roda se parte em faixas"; exit 1 ;;
+      esac
+      if [ "$faixa_k" -gt "$falsif" ]; then
+        echo "::error::$FONTE:$linha_n — '$campo4' com falsificar=$falsif: mais faixas que sabotagens deixaria faixa vazia"; exit 1
+      fi ;;
+    *) echo "::error::$FONTE:$linha_n — 4º campo inválido '$campo4': esperado faixas=<2..9>"; exit 1 ;;
   esac
   motivo_fora="$(printf '%s' "$comentario" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
   if [ "$falsif" = "fora" ] && [ -z "$motivo_fora" ]; then
@@ -242,7 +269,7 @@ while IFS= read -r linha || [ -n "$linha" ]; do
     echo "::error::$FONTE:$linha_n — declara '$campo3', mas $caminho não tem modo --falsificar: a flag seria ignorada e o modo NORMAL rodaria no lugar"
     exit 1
   fi
-  scripts+=("$caminho"); minimos+=("$minimo"); falsifs+=("$falsif"); motivos_fora+=("$motivo_fora")
+  scripts+=("$caminho"); minimos+=("$minimo"); falsifs+=("$falsif"); motivos_fora+=("$motivo_fora"); faixas+=("$faixa_k")
   provas_na_fonte=$((provas_na_fonte + 1))
 done < "$FONTE"
 if [ "$FONTE" != "$MANIFESTO" ] && [ "$provas_na_fonte" -lt 1 ]; then
@@ -256,6 +283,16 @@ esperados=${#scripts[@]}
 if [ "$esperados" -lt 1 ]; then
   echo "::error::manifesto sem nenhuma prova — um gate que não executa nada não pode afirmar nada"; exit 1
 fi
+
+# modos_falsif <posição> — os MODOS de falsificação da prova, cada um uma identidade do recibo:
+# nenhum (sem falsificação ou fora-do-ci), `falsificar`, ou `falsificar:1/k … falsificar:k/k` com
+# `faixas=k`. A MESMA função alimenta a união (1a), a fila (§3) e o conjunto exigido (§4).
+modos_falsif() {
+  local f="${falsifs[$1]}" k="${faixas[$1]}" j
+  case "$f" in ''|fora) return 0 ;; esac
+  if [ -z "$k" ]; then echo falsificar; return 0; fi
+  for ((j = 1; j <= k; j++)); do echo "falsificar:$j/$k"; done
+}
 
 # FAIXA SERIAL: prova com `lock_timeout`/`statement_timeout` ≤ 2 s (número puro = ms, a unidade
 # dessas GUCs), ou que cita uma delas sem valor legível (conservador), roda SOZINHA: a vizinha
@@ -333,11 +370,10 @@ if [ -n "$dir_uniao" ]; then
   id_cam=(); id_modo=(); id_k=(); n_falsif_u=0; n_fora_u=0
   for k in "${!scripts[@]}"; do
     id_cam+=("${scripts[$k]}"); id_modo+=(normal); id_k+=("$k")
-    case "${falsifs[$k]}" in
-      '') ;;
-      fora) n_fora_u=$((n_fora_u + 1)) ;;
-      *) id_cam+=("${scripts[$k]}"); id_modo+=(falsificar); id_k+=("$k"); n_falsif_u=$((n_falsif_u + 1)) ;;
-    esac
+    [ "${falsifs[$k]}" = fora ] && n_fora_u=$((n_fora_u + 1))
+    while read -r m; do
+      id_cam+=("${scripts[$k]}"); id_modo+=("$m"); id_k+=("$k"); n_falsif_u=$((n_falsif_u + 1))
+    done < <(modos_falsif "$k")
   done
   recibos=()
   while IFS= read -r f; do recibos+=("$f"); done < <(find "$dir_uniao" -maxdepth 1 -type f -name 'parte-*.txt' | LC_ALL=C sort)
@@ -480,17 +516,17 @@ if [ -n "${NUCLEO_PARTE:-}" ]; then
     echo "::error::NUCLEO_PARTE inválida: '$NUCLEO_PARTE' (formato i/N, com 0 ≤ i < N)"; exit 1
   fi
   atribui_partes "$p_n" "$WORKERS"
-  sel_s=(); sel_m=(); sel_f=(); sel_mf=(); sel_se=()
+  sel_s=(); sel_m=(); sel_f=(); sel_mf=(); sel_se=(); sel_fx=()
   for k in "${!scripts[@]}"; do
     if [ "${alvo[$k]}" -eq "$p_i" ]; then
-      sel_s+=("${scripts[$k]}"); sel_m+=("${minimos[$k]}"); sel_f+=("${falsifs[$k]}"); sel_mf+=("${motivos_fora[$k]}"); sel_se+=("${seriais[$k]}")
+      sel_s+=("${scripts[$k]}"); sel_m+=("${minimos[$k]}"); sel_f+=("${falsifs[$k]}"); sel_mf+=("${motivos_fora[$k]}"); sel_se+=("${seriais[$k]}"); sel_fx+=("${faixas[$k]}")
     fi
   done
   if [ "${#sel_s[@]}" -lt 1 ]; then
     echo "::error::NUCLEO_PARTE $NUCLEO_PARTE: parte sem nenhuma prova ($esperados no manifesto) — reduza N"; exit 1
   fi
   parte="parte $((p_i + 1)) de $p_n: ${#sel_s[@]} de $esperados provas"
-  scripts=("${sel_s[@]}"); minimos=("${sel_m[@]}"); falsifs=("${sel_f[@]}"); motivos_fora=("${sel_mf[@]}"); seriais=("${sel_se[@]}")
+  scripts=("${sel_s[@]}"); minimos=("${sel_m[@]}"); falsifs=("${sel_f[@]}"); motivos_fora=("${sel_mf[@]}"); seriais=("${sel_se[@]}"); faixas=("${sel_fx[@]}")
   esperados=${#scripts[@]}
 fi
 # O sha do manifesto que ESTA parte leu, tomado agora — não no fim, depois de minutos de provas.
@@ -499,9 +535,11 @@ if [ -n "${NUCLEO_RECIBO:-}" ]; then sha_parte="$(sha_manifesto)"; fi
 
 # Identidades que o recibo final exige: toda prova no modo normal, e cada `falsificar=<n>` como
 # identidade PRÓPRIA — a canária verde no modo normal não vale como falsificação concluída.
+# n_falsif conta UNIDADES de falsificação (uma por faixa), que é o que o recibo conclui.
 n_falsif=0; n_fora=0
-for f in ${falsifs[@]+"${falsifs[@]}"}; do
-  case "$f" in '') ;; fora) n_fora=$((n_fora + 1)) ;; *) n_falsif=$((n_falsif + 1)) ;; esac
+for i in "${!scripts[@]}"; do
+  [ "${falsifs[$i]}" = fora ] && n_fora=$((n_fora + 1))
+  while read -r _; do n_falsif=$((n_falsif + 1)); done < <(modos_falsif "$i")
 done
 
 if [ "$so_lista" -eq 1 ]; then
@@ -510,7 +548,7 @@ if [ "$so_lista" -eq 1 ]; then
     case "${falsifs[$i]}" in
       '')   extra="" ;;
       fora) extra="  --falsificar FORA DO CI (${motivos_fora[$i]})" ;;
-      *)    extra="  --falsificar (sabotagens≥${falsifs[$i]})" ;;
+      *)    extra="  --falsificar (sabotagens≥${falsifs[$i]}${faixas[$i]:+, em ${faixas[$i]} faixas})" ;;
     esac
     printf '  %s  (asserts≥%s)%s\n' "${scripts[$i]}" "${minimos[$i]}" "$extra"
   done
@@ -576,16 +614,23 @@ PORTA_STRIDE=5000
 # valida o recibo DAQUELE modo. Só com tudo batendo acrescenta "<caminho> <modo>" a `concluidas`:
 # a identidade do recibo é o PAR (arquivo, modo).
 executa() {
-  local caminho="$1" modo="$2" minimo="$3" nome rotulo log inicio dur rc
+  local caminho="$1" modo="$2" minimo="$3" nome rotulo log inicio dur rc faixa=""
   nome="$(basename "$caminho" .sh)"
-  rotulo="$nome"; [ "$modo" = falsificar ] && rotulo="$nome --falsificar"
-  log="$LOGS/$nome.$modo.log"
+  rotulo="$nome"
+  case "$modo" in
+    falsificar)   rotulo="$nome --falsificar" ;;
+    falsificar:*) faixa="${modo#falsificar:}"; rotulo="$nome --falsificar $faixa" ;;
+  esac
+  log="$LOGS/$nome.${modo//[:\/]/-}.log"
 
   inicio=$(date +%s)
   # rc capturado ANTES de qualquer recorte da saída: `| tail` devolveria o status
-  # do tail e o veredito do trabalho se perderia.
-  if [ "$modo" = falsificar ]; then
-    PGPORT_TEST="$porta" bash "$REPO_ROOT/$caminho" --falsificar > "$log" 2>&1 && rc=0 || rc=$?
+  # do tail e o veredito do trabalho se perderia. A faixa vai SÓ para a unidade que a pede: a
+  # falsificação inteira roda sem NUCLEO_FAIXA mesmo que o ambiente do runner a traga.
+  if [ -n "$faixa" ]; then
+    NUCLEO_FAIXA="$faixa" PGPORT_TEST="$porta" bash "$REPO_ROOT/$caminho" --falsificar > "$log" 2>&1 && rc=0 || rc=$?
+  elif [ "$modo" = falsificar ]; then
+    env -u NUCLEO_FAIXA PGPORT_TEST="$porta" bash "$REPO_ROOT/$caminho" --falsificar > "$log" 2>&1 && rc=0 || rc=$?
   else
     PGPORT_TEST="$porta" bash "$REPO_ROOT/$caminho" > "$log" 2>&1 && rc=0 || rc=$?
   fi
@@ -599,7 +644,7 @@ executa() {
     return 0
   fi
 
-  if [ "$modo" = falsificar ]; then
+  if [ "$modo" != normal ]; then
     # EXATAMENTE um recibo, e bem-formado. `tail -1` (o idioma do modo normal) aceitaria dois
     # recibos contraditórios lendo só o último; e uma linha `SABOTAGENS:` fora do formato é
     # prova de que o emissor mudou sem o runner saber — erro, não "sem recibo".
@@ -619,12 +664,54 @@ executa() {
       printf '  ❌ %-44s falhas=%s com exit 0 — recibo e exit se contradizem\n' "$rotulo" "$n_falh"
       return 0
     fi
-    if [ "$n_verm" -lt "$minimo" ]; then
-      falhas+=("$rotulo: $n_verm sabotagens vermelhas, o manifesto exige ≥$minimo")
-      printf '  ❌ %-44s sabotagens=%s < mínimo %s (a falsificação encolheu)\n' "$rotulo" "$n_verm" "$minimo"
-      return 0
+    # A linha `FAIXA: i/k sabotagens a-b de T` (§Faixas no cabeçalho). Sem faixa pedida, ela NÃO pode
+    # existir: a prova que recorta sozinha rodaria uma fatia como se fosse o todo. Com faixa, EXATAMENTE
+    # uma, da faixa pedida, com a fatia CANÔNICA desta conta e T ≥ o mínimo do manifesto; as vermelhas
+    # são a fatia inteira. Assim cada unidade prova a SUA fatia sozinha, e a união exige as k.
+    local n_fx linha_fx re_fx t_fx a_fx b_fx f_i f_k
+    n_fx="$(grep -c '^FAIXA:' "$log" || true)"
+    if [ -z "$faixa" ]; then
+      if [ "$n_fx" != 0 ]; then
+        falhas+=("$rotulo: a prova emitiu $n_fx linha(s) 'FAIXA:' sem faixa pedida — recortou as sabotagens sozinha")
+        printf '  ❌ %-44s FAIXA sem faixa pedida — a prova rodou uma fatia como se fosse o todo\n' "$rotulo"
+        return 0
+      fi
+      if [ "$n_verm" -lt "$minimo" ]; then
+        falhas+=("$rotulo: $n_verm sabotagens vermelhas, o manifesto exige ≥$minimo")
+        printf '  ❌ %-44s sabotagens=%s < mínimo %s (a falsificação encolheu)\n' "$rotulo" "$n_verm" "$minimo"
+        return 0
+      fi
+    else
+      re_fx="^FAIXA: ${faixa%/*}/${faixa#*/} sabotagens [0-9]{1,4}-[0-9]{1,4} de [0-9]{1,4}\$"
+      if [ "$n_fx" != 1 ] || [ "$(grep -cE "$re_fx" "$log" || true)" != 1 ]; then
+        falhas+=("$rotulo: exit 0 com $n_fx linha(s) 'FAIXA:' — o runner exige exatamente uma, da faixa $faixa")
+        printf '  ❌ %-44s linhas FAIXA=%s — sem UMA linha da faixa %s, a prova pode ter ignorado a faixa\n' "$rotulo" "$n_fx" "$faixa"
+        return 0
+      fi
+      linha_fx="$(grep -E "$re_fx" "$log")"
+      read -r a_fx b_fx t_fx < <(printf '%s\n' "$linha_fx" | sed -E 's/.* sabotagens ([0-9]+)-([0-9]+) de ([0-9]+)$/\1 \2 \3/')
+      f_i="${faixa%/*}"; f_k="${faixa#*/}"
+      if [ "$t_fx" -lt "$minimo" ]; then
+        falhas+=("$rotulo: a prova tem $t_fx sabotagens, o manifesto exige ≥$minimo")
+        printf '  ❌ %-44s total=%s < mínimo %s (a falsificação encolheu)\n' "$rotulo" "$t_fx" "$minimo"
+        return 0
+      fi
+      if [ "$a_fx" -ne $(( (f_i - 1) * t_fx / f_k + 1 )) ] || [ "$b_fx" -ne $(( f_i * t_fx / f_k )) ]; then
+        falhas+=("$rotulo: fatia $a_fx-$b_fx de $t_fx, a faixa $faixa é $(( (f_i - 1) * t_fx / f_k + 1 ))-$(( f_i * t_fx / f_k ))")
+        printf '  ❌ %-44s fatia %s-%s de %s ≠ a canônica da faixa %s\n' "$rotulo" "$a_fx" "$b_fx" "$t_fx" "$faixa"
+        return 0
+      fi
+      if [ "$n_verm" -ne $(( b_fx - a_fx + 1 )) ]; then
+        falhas+=("$rotulo: $n_verm sabotagens vermelhas, a fatia $a_fx-$b_fx tem $(( b_fx - a_fx + 1 ))")
+        printf '  ❌ %-44s sabotagens=%s ≠ fatia %s-%s (a faixa não rodou inteira)\n' "$rotulo" "$n_verm" "$a_fx" "$b_fx"
+        return 0
+      fi
     fi
     concluidas+=("$caminho $modo")
+    if [ -n "$faixa" ]; then
+      printf '  ✅ %-44s sabotagens=%-4s (fatia %s-%s de %s, ≥%s) %ss\n' "$rotulo" "$n_verm" "$a_fx" "$b_fx" "$t_fx" "$minimo" "$dur"
+      return 0
+    fi
     printf '  ✅ %-44s sabotagens=%-4s (≥%s) %ss\n' "$rotulo" "$n_verm" "$minimo" "$dur"
     return 0
   fi
@@ -713,14 +800,17 @@ CUSTO="${CUSTO:-${NUCLEO_CUSTO:-$REPO_ROOT/db/nucleo-ci-custo.txt}}"
 enfileira() {
   local faixa=1; [ "${seriais[$6]}" = 1 ] && faixa=0
   u_cam+=("$1"); u_modo+=("$2"); u_min+=("$3"); u_chave+=("$faixa $4 $5 $6")
-  if [ "$2" = falsificar ]; then u_rot+=("$(basename "$1" .sh) --falsificar"); else u_rot+=("$(basename "$1" .sh)"); fi
+  case "$2" in
+    falsificar)   u_rot+=("$(basename "$1" .sh) --falsificar") ;;
+    falsificar:*) u_rot+=("$(basename "$1" .sh) --falsificar ${2#falsificar:}") ;;
+    *)            u_rot+=("$(basename "$1" .sh)") ;;
+  esac
 }
 for i in "${!scripts[@]}"; do
   c="$(custo_de "${scripts[$i]}")"
-  case "${falsifs[$i]}" in
-    ''|fora) ;;
-    *)    enfileira "${scripts[$i]}" falsificar "${falsifs[$i]}" 0 "$c" "$i" ;;
-  esac
+  while read -r m; do
+    enfileira "${scripts[$i]}" "$m" "${falsifs[$i]}" 0 "$c" "$i"
+  done < <(modos_falsif "$i")
   enfileira "${scripts[$i]}" normal "${minimos[$i]}" 1 "$c" "$i"
 done
 # Ordem: faixa serial (0) antes do pool (1); dentro de cada faixa, falsificações antes, custo DESC.
@@ -773,7 +863,7 @@ echo
 faltando=()
 for i in "${!scripts[@]}"; do
   identidades=("${scripts[$i]} normal")
-  case "${falsifs[$i]}" in ''|fora) ;; *) identidades+=("${scripts[$i]} falsificar") ;; esac
+  while read -r m; do identidades+=("${scripts[$i]} $m"); done < <(modos_falsif "$i")
   for esperado in "${identidades[@]}"; do
     achou=0
     for feito in ${concluidas[@]+"${concluidas[@]}"}; do [ "$feito" = "$esperado" ] && achou=1 && break; done
@@ -792,7 +882,7 @@ fi
 echo "=================================================="
 ok_normal=0; ok_falsif=0
 for feito in "${concluidas[@]}"; do
-  case "$feito" in *' normal') ok_normal=$((ok_normal + 1)) ;; *' falsificar') ok_falsif=$((ok_falsif + 1)) ;; esac
+  case "$feito" in *' normal') ok_normal=$((ok_normal + 1)) ;; *' falsificar'|*' falsificar:'*) ok_falsif=$((ok_falsif + 1)) ;; esac
 done
 echo "SQL_PROOF_OK provas=$ok_normal/$esperados falsificacoes=$ok_falsif/$n_falsif fora_do_ci=$n_fora server_version_num=$versao_num pgbin=$PGBIN${parte:+ parte=$NUCLEO_PARTE}"
 # O recibo só nasce aqui, DEPOIS do conjunto da parte conferido: parte vermelha não deixa recibo, e a

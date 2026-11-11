@@ -25,7 +25,7 @@
 # autorização > finitude monetária > atomicidade > concorrência. É a ordem de dano:
 # um furo de autorização vale por todos os outros somados.
 
-# Formato: <caminho> <mínimo de asserts> [falsificar=<n> | falsificar=fora-do-ci]
+# Formato: <caminho> <mínimo de asserts> [falsificar=<n> [faixas=<k>] | falsificar=fora-do-ci]
 # O segundo campo é CONTRATO, não enfeite: o fechamento das provas é
 # `[ "$FAIL" -eq 0 ]`, que **também aceita PASS=0** — uma prova truncada sai 0 e
 # passaria. O runner exige que o nº de asserts EXECUTADOS seja ≥ este número.
@@ -37,6 +37,9 @@
 # aqui e exige ≥n sabotagens com o vermelho CERTO — mesma lógica de ratchet do 2º
 # campo. `falsificar=fora-do-ci` é exceção declarada, com o motivo em comentário na
 # MESMA linha; o runner a imprime em toda execução. Detalhe no cabeçalho do runner.
+# O quarto (opcional) `faixas=<k>` parte a falsificação em k unidades que rodam em workers
+# diferentes: cada uma roda o controle e a SUA fatia canônica das sabotagens, e o recibo exige as k
+# (§Faixas no cabeçalho do runner). Para quando UMA falsificação é o teto do job.
 
 # ── Eixo 1 — AUTORIZAÇÃO ──────────────────────────────────────────────────────────
 # RLS sob `SET ROLE`, REVOKE nas DUAS pontas (PUBLIC e anon) e o `security_invoker`
@@ -931,7 +934,9 @@ db/test-venda-recompra.sh                  49  falsificar=15
 # revalidar, CMC infinito, ressuscita revogado, retry da substituição, média→MAX, alvo como texto, markup do cockpit,
 # gate de candidatos, POS ACL anon, POS RLS, autojunção (PERF: volume de prod sob o statement_timeout de 8 s — incidente
 # 2026-10-21, candidatos 500 na prod), POS janela, PRE config (search_path derivado).
-db/test-venda-repasse.sh                   81  falsificar=38
+# Partida em 2 faixas (2026-11-11): era a maior unidade do núcleo e o teto do provas-sql
+# (docs/historico/ci-provas-sql-venda-repasse-faixas.md); 1-19 e 20-38, cada uma com o seu controle verde.
+db/test-venda-repasse.sh                   81  falsificar=38 faixas=2
 
 # Venda por cliente — GERADOR D-1 (migration 20261020181743, Task 4 do plano 2026-10-20): lista do dia = UNIÃO de
 # atrasados das cidades de amanhã (porta de resolvePrepForWorkday, paridade SQL × TS via `bun` sobre
