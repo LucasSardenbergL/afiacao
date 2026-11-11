@@ -4,7 +4,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "./lookup-cliente-estrito.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
-import { exigirRazaoFiscal } from "../_shared/razao-fiscal.ts";
+import { razaoFiscalParaCadastro, temCpfMascarado } from "../_shared/razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
@@ -2932,7 +2932,6 @@ Deno.serve(async (req) => {
       case "criar_cliente": {
         const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato } = params;
         if (!docCriar || !razao_social) throw new Error("Documento e razão social são obrigatórios");
-        exigirRazaoFiscal(razao_social); // razão do Radar mascarada (aba em build velho) nunca vira cadastro no ERP
         const docClean = documentoParaCadastro(docCriar);
         // Lookup anti-duplicação ESTRITO (retroativo Codex): com o null
         // ambíguo, um flake do Omie pós-retries era lido como "não existe" e
@@ -2963,10 +2962,18 @@ Deno.serve(async (req) => {
         // conta+documento (era Date.now()): se dois caminhos tentarem criar o
         // mesmo cliente, o Omie rejeita a 2ª por integração duplicada
         // ("já cadastrado") em vez de aceitar uma duplicata.
+        // Razão com o CPF mascarado (perfil de cliente MEI, lead do Radar em build velho) nunca vira cadastro no ERP:
+        // vira a razão FISCAL do mesmo documento na outra conta, pelo lookup estrito, ou a action recusa
+        // (_shared/razao-fiscal.ts). Fica DEPOIS do lookup desta conta: cliente que já existe resolve o código.
+        const outraConta: Account = account === "oben" ? "colacor" : "oben";
+        const razaoFiscal = await razaoFiscalParaCadastro(String(razao_social), [outraConta], async (conta) =>
+          (await buscarClienteEstrito(docClean, conta as Account, listarClientesPorDocumento(docClean, conta as Account)))?.razao_social ?? null);
+        const fantasia = typeof nome_fantasia === "string" && nome_fantasia.trim() !== "" && !temCpfMascarado(nome_fantasia)
+          ? nome_fantasia : razaoFiscal;
         const clienteParams: Record<string, unknown> = {
           codigo_cliente_integracao: `APP_${account.toUpperCase()}_${docClean}`,
-          razao_social,
-          nome_fantasia: nome_fantasia || razao_social,
+          razao_social: razaoFiscal,
+          nome_fantasia: fantasia,
           cnpj_cpf: docClean,
           pessoa_fisica: docClean.length <= 11 ? "S" : "N",
         };

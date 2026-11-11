@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { lookupDevolveuOMesmoDocumento } from "../_shared/lookup-documento.ts";
-import { exigirRazaoFiscal } from "../_shared/razao-fiscal.ts";
+import { razaoFiscalParaCadastro, temCpfMascarado } from "../_shared/razao-fiscal.ts";
 import { primeiroClientePorDocumento } from "./busca-documento.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
@@ -93,17 +93,28 @@ interface ServicoLocalRow {
   inativo: boolean;
 }
 
+// As contas do grupo que esta edge sabe consultar. A da edge é a Colacor SC (afiação); Oben e Colacor só são lidas
+// para achar a razão FISCAL de um cliente que já existe lá (criar_cliente_afiacao com a razão mascarada).
+const CREDENCIAIS_OMIE = {
+  colacor_sc: { key: "OMIE_COLACOR_SC_APP_KEY", secret: "OMIE_COLACOR_SC_APP_SECRET", nome: "Colacor SC" },
+  oben: { key: "OMIE_OBEN_APP_KEY", secret: "OMIE_OBEN_APP_SECRET", nome: "Oben" },
+  colacor: { key: "OMIE_COLACOR_APP_KEY", secret: "OMIE_COLACOR_APP_SECRET", nome: "Colacor" },
+} as const;
+type ContaOmie = keyof typeof CREDENCIAIS_OMIE;
+
 // Função para fazer chamadas à API do Omie
 async function callOmieApi(
   endpoint: string,
   call: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  conta: ContaOmie = "colacor_sc",
 ): Promise<OmieResponse> {
-  const OMIE_APP_KEY = Deno.env.get("OMIE_COLACOR_SC_APP_KEY");
-  const OMIE_APP_SECRET = Deno.env.get("OMIE_COLACOR_SC_APP_SECRET");
+  const cred = CREDENCIAIS_OMIE[conta];
+  const OMIE_APP_KEY = Deno.env.get(cred.key);
+  const OMIE_APP_SECRET = Deno.env.get(cred.secret);
 
   if (!OMIE_APP_KEY || !OMIE_APP_SECRET) {
-    throw new Error("Credenciais do Omie (Colacor SC) não configuradas");
+    throw new Error(`Credenciais do Omie (${cred.nome}) não configuradas`);
   }
 
   const body = {
@@ -139,7 +150,7 @@ async function callOmieApi(
     });
     const result = await response.json();
     return { response, result };
-  }, { metodo: call, conta: "colacor_sc", deadline: prazoDaChamadaOmie(Date.now()) });
+  }, { metodo: call, conta, deadline: prazoDaChamadaOmie(Date.now()) });
   // Só a forma da resposta: o corpo traz cadastro de cliente/pedido (PII — M-36, LGPD).
   console.log(`[Omie API] Resposta (campos):`, Object.keys(result ?? {}).join(","));
 
@@ -1126,14 +1137,27 @@ Deno.serve(async (req) => {
               created: false,
             };
           } else {
-            // Razão com o CPF mascarado (o perfil do cliente MEI guarda assim) nunca vira cadastro no ERP. Fica
-            // DEPOIS do lookup: cliente que já existe na conta resolve o código mesmo com a razão mascarada.
-            exigirRazaoFiscal(razao_social);
+            // Razão com o CPF mascarado (o perfil do cliente MEI guarda assim) nunca vira cadastro no ERP: vira a
+            // razão FISCAL do mesmo documento na Oben ou na Colacor, com a mesma conferência de documento do lookup
+            // acima, ou a action recusa (_shared/razao-fiscal.ts). Fica DEPOIS do lookup: cliente que já existe na
+            // conta resolve o código mesmo com a razão mascarada.
+            const razaoFiscal = await razaoFiscalParaCadastro(String(razao_social), ["oben", "colacor"], async (conta) => {
+              const achado = await primeiroClientePorDocumento<OmieClienteCadastro>(() =>
+                callOmieApi("geral/clientes/", "ListarClientes", { pagina: 1, registros_por_pagina: 1, clientesFiltro: { cnpj_cpf: docClean } }, conta as ContaOmie)
+              );
+              if (!achado) return null;
+              if (!lookupDevolveuOMesmoDocumento(docClean, achado.cnpj_cpf)) {
+                throw new Error("OMIE_LOOKUP_DIVERGENTE: o ListarClientes da outra conta devolveu um cliente com OUTRO documento");
+              }
+              return achado.razao_social ?? null;
+            });
+            const fantasia = typeof nome_fantasia === "string" && nome_fantasia.trim() !== "" && !temCpfMascarado(nome_fantasia)
+              ? nome_fantasia : razaoFiscal;
             // Create the client
             const clienteParams: Record<string, unknown> = {
               codigo_cliente_integracao: `APP_${docClean}_${Date.now()}`,
-              razao_social,
-              nome_fantasia: nome_fantasia || razao_social,
+              razao_social: razaoFiscal,
+              nome_fantasia: fantasia,
               cnpj_cpf: docClean,
               pessoa_fisica: docClean.length <= 11 ? "S" : "N",
             };
