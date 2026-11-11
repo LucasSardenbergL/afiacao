@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- DOM da página do portal sem tipos (o Deno não tem lib DOM); o comportamento é provado contra HTML */
 // C16 (plano v8): retrato da tela de detalhe do portal Sayerlack quando a condição de pagamento NÃO veio. Função de
 // PÁGINA: vai ao Chrome pelo `.toString()` (sem crase, sem helper do módulo) — provada em `condicao-dom_test.ts` (texto
 // serializado) e em `scripts/sayerlack-portal-dom.test.ts` (jsdom). Fica na importadora, fora do `_shared`, para não
@@ -37,7 +38,7 @@ export function diagnosticarCondicaoDom(): DiagnosticoCondicaoDom {
   // Máscara de PII/segredo: CPF/CNPJ formatados, 8+ dígitos corridos e 24+ caracteres de token viram "#". Prazos como
   // "30/60/90 DD" ficam (são o dado que se busca).
   const mascara = (v: string) =>
-    v.replace(/\d{2,3}\.\d{3}\.\d{3}[\/-]\d{2,4}(-\d{2})?/g, "#").replace(/\d{8,}/g, "#").replace(/[A-Za-z0-9_-]{24,}/g, "#");
+    v.replace(/\d{2,3}\.\d{3}\.\d{3}[/-]\d{2,4}(-\d{2})?/g, "#").replace(/\d{8,}/g, "#").replace(/[A-Za-z0-9_-]{24,}/g, "#");
   const corta = (v: unknown, n: number) => mascara(String(v == null ? "" : v).replace(/\s+/g, " ").trim()).substring(0, n);
   const fala = /condi[cç]|pagamento|pagto|prazo/i;
   const loc = g.location;

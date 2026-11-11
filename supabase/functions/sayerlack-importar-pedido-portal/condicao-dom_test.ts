@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- globalThis.document falso para rodar a função de página no Deno */
 // C16: o retrato vai ao Chrome pelo TEXTO do `.toString()` que o Deno produz. Aqui ele é reavaliado a partir desse
 // texto, sem o escopo do módulo, e EXECUTADO contra um documento mínimo (helper externo vira ReferenceError). O
 // comportamento contra HTML é provado em `scripts/sayerlack-portal-dom.test.ts` (vitest + jsdom).
