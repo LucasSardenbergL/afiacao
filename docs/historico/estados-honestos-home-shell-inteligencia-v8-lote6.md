@@ -51,3 +51,17 @@ Testes novos (cada um com o seu CONTROLE de leitura boa): `useBriefDeltas.leitur
 `useNotificacoes.stats-leitura`, `useRevisaoParametros.leitura`, e os casos novos em `StatsTab.test`
 e `tabs-erro-honesto` (LTV/CAC ausentes no mesmo render em que Concentração aparece). A falsificação
 (sabotar cada conserto e exigir vermelho, nos dois locales) está no corpo do PR.
+
+## No ar (2026-11-11)
+
+PR #3810, squash `e8ace0809`, mergeado às 12:27Z, Publish feito pelo founder. Duas provas:
+
+- `monitor-deploy.sh --pr 3810` deu **`PR_NO_AR`**, com o ar = main = `ede6adb6` e o entry trocado de
+  `index-CUTnPuWw` para `index-CDF2hx-f`. Não houve aviso de revert posterior.
+- `verify-frontend.sh --pai e8ace0809^ --novo e8ace0809 'stats-notificacoes-sem-leitura'` encontrou
+  a sentinela exclusiva (0 ocorrências no pai) em `AdminNotificacoes-Bp0aIhvI.js`, numa varredura de
+  396 chunks. Deu `LIB_SEM_A_SENTINELA` e `CONTROLE_NEGATIVO_OK`, com exit 0.
+
+Isto prova que o código subiu. A renderização dos avisos só aparece quando uma leitura falha, então
+não há QA visual possível sem provocar a falha. O service worker só troca de build quando o usuário
+clica para atualizar.
