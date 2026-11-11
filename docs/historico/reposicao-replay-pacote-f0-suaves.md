@@ -9,13 +9,13 @@
 | Peça | Onde | Contrato |
 |---|---|---|
 | Perfil do F0′ (`P0`, `Alt1`, `Alt2a`, `Alt2b`) | `formulas.ts` (`PerfilF0`, `sugestaoF0`, `pontoDePedidoF0`) | tabela da §4.4 campo a campo; o **status** é sempre o do P0 (o perfil muda o valor, nunca quais dias têm sugestão); vigência a partir de 01/02, aquecimento sempre P0 |
-| Demanda e σd por du | `janelaPorDu`/`demandaPorDu`/`sigmaPorDu` | venda < d no balde do du (fim de semana → du anterior); a de borda esquerda cujo du cai fora da janela não entra; feriado não existe no calendário |
+| Demanda e σd por du | `janelaPorDu`/`demandaPorDu`/`sigmaPorDu` | D = Σ vendas em [d−90, d) ÷ nº de du (a venda de sábado de borda esquerda **entra** no numerador — achado P1 do Codex r1); a série do σd põe a venda no balde do du (fim de semana → du anterior) e a de borda cujo du cai fora da janela fica fora só da série; feriado não existe no calendário |
 | Cache | `chaveCache` | o perfil entra na chave; P0 mantém a chave do modo oficial |
-| Calibração do pacote | `calibracao.ts` (`calibrarPacote`, `escolherTupla`, `estadoDaTupla`) | §4.2: lista finita de 29 perfis × {F1, F2, F3}; `calibrar` sem mudança; tupla inteira; três estados (qualquer INDETERMINADA ⇒ seleção INDETERMINADA, nunca a valorada por exclusão) |
+| Calibração do pacote | `calibracao.ts` (`calibrarPacote`, `escolherTupla`, `estadoDaTupla`, `motivoIndeterminacao`) | §4.2: lista finita de 29 perfis × {F1, F2, F3}; `calibrar` sem mudança; tupla inteira; três estados — capital sem preço **e classe inobservável** são INDETERMINADO, cada um com o seu motivo (qualquer INDETERMINADA ⇒ seleção INDETERMINADA, nunca a valorada por exclusão) |
 | Régua 3′/3″ | `estatistica.ts` (`avaliarCriterios(ev, { pacote: { teto } })`) | 3′ = a grade de economia (absorve o 5); 3″ = aumento = −redução, PASSA com LS ≤ teto, FALHA com LI > teto; os dois também no estresse (D1b) |
 | Avaliação | `rodar.ts` (`Congelado.suaves`, `mapaPacote`) | baseline = F0 de hoje; `A_alt` = máscara dos intermitentes ORIGINAIS |
 | Orquestração e relatório | `pacote.ts` | `bun scripts/reposicao-replay/pacote.ts [--dados DIR] [--paralelo N] [--estabilidade]`; o teto vem de `$REPLAY_DADOS/teto-capital-pacote.json` (`{"teto": 0.2}`), gravado ANTES da rodada — sem ele a rodada para |
-| Diagnósticos (informativos) | `pacote.ts` | A suaves × A intermitentes, sem a 1ª semana, sem o 8689717792, capital por SKU (`simular({ capitalPorSku: true })`), fronteira capital × fill A com o benefício líquido, estabilidade (cortes fev–mar/mar–abr e leave-one-SKU-out) |
+| Diagnósticos (informativos) | `pacote.ts`, `pacote-dlu.ts` | A suaves × A intermitentes; sem a 1ª semana **da calibração** (01–07/02); sem o 8689717792; capital por SKU (`simular({ capitalPorSku: true })`); **fronteira** = as famílias (P0, X) e (P*, X) recalibradas com o alvo de A em 95…99% (`OpcoesCalibracao.alvoA`), com capital e benefício líquido de cada ponto; **decomposição D/L/U** da §2.2 (porte do `diag-suaves-a-v2.ts`, com o controle D0L0U0 × oficial no relatório); estabilidade (cortes fev–mar/mar–abr e leave-one-SKU-out com o SKU **fora da população medida** nos dois braços, `OpcoesCalibracao.semSku`) |
 
 ## Números nos dados de 09/11 (calibração, 50 réplicas — NÃO é a rodada oficial do pacote)
 
@@ -29,6 +29,8 @@
   | Alt1 | 92,67% / +9,99% | 96,03% / +59,12% |
   | Alt2a z 2,326 | 93,67% / +23,87% | 97,03% / +73,00% |
   | Alt2b z 2,326 | 93,39% / +19,09% | 96,75% / +68,21% |
+
+  Medidos ANTES da correção do P1 do Codex r1 (a venda de borda esquerda passou a entrar no numerador de D, o que só aumenta D): os perfis F0′ ficam iguais ou um pouco acima nesta tabela; a rodada oficial do pacote mede de novo.
 
   O σd por du é menor que o corrido (os zeros de fim de semana saem), e isso tira margem: a Alt2a a z 2,326 cai de 98,11% (§3) para 97,03% no pacote.
 

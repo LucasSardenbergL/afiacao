@@ -21,10 +21,12 @@ import { fileURLToPath } from 'node:url';
 import {
   avaliarNaCalibracao,
   baseDaCalibracao,
+  calibrar,
   calibrarPacote,
   chavePerfilSuaves,
   escolherTupla,
   estadoDaTupla,
+  FORMULAS_PACOTE,
   mapaDosSuaves,
   mapaMisto,
   mapaPacote,
@@ -35,13 +37,16 @@ import {
   suavesDaCoorte,
   vereditoDaCalibracaoPacote,
   type EscolhaPacote,
+  type PerfilSuaves,
   type TuplaPacote,
 } from './calibracao';
 import { classeEfetiva } from './classe';
 import { GRADE_CUSTO, JANELAS } from './config';
+import { addDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { carregarDados } from './dados';
-import { hashCodigo, preComputarComOrigem, type ParamsDia } from './formulas';
+import { hashCodigo, preComputarComOrigem, type Formula, type ParamsDia } from './formulas';
 import { custoLiquido } from './metricas';
+import { decomporDLU, type DecomposicaoDLU } from './pacote-dlu';
 import { coorte, coorteTodosAtivos } from './parados';
 import { avaliarCandidata, etapasPreCalibracao, type Congelado } from './rodar';
 import { simular, type SomasSemanais } from './simulador';
@@ -75,8 +80,17 @@ export function lerTetoPacote(dir: string): { teto: number; sha256: string; arqu
 
 // ── diagnósticos (informativos) ────────────────────────────────────────────────────────────────────────────────
 
-/** Uma tupla da calibração como ponto da fronteira capital × fill A (calibração, 50 reps, espera). */
+/** Níveis de serviço da célula A varridos na fronteira (§4.3: de 95% a 99%). */
+export const NIVEIS_FRONTEIRA: readonly number[] = [0.95, 0.96, 0.97, 0.98, 0.99];
+
+/**
+ * Um ponto da fronteira capital × fill A: a família (P, X) recalibrada com o alvo de A no `nivel` (B e C no alvo oficial),
+ * na calibração (50 reps, espera). Informativo: a seleção oficial já está congelada antes da varredura.
+ */
 export interface PontoFronteira {
+  nivel: number;
+  familia: string;
+  /** A tupla que a busca devolveu nesse nível (no inviável: a do trio final da busca, só informativa). */
   tupla: string;
   estado: ReturnType<typeof estadoDaTupla>;
   fill: Record<Classe, number | null>;
@@ -103,10 +117,41 @@ export function fillASuavesIntermitentes(s: SomasSemanais): { celula: number | n
   };
 }
 
-/** Fill da célula A sem a 1ª semana da janela (D5, informativo). */
-export function fillASemPrimeiraSemana(s: SomasSemanais): number | null {
-  const d = somaV(s.porCelula.A.demandadas.slice(1));
-  return d > 0 ? somaV(s.porCelula.A.integrais.slice(1)) / d : null;
+/**
+ * Fill da célula A com e sem a 1ª semana das somas (D5, informativo). Nas somas da CALIBRAÇÃO a 1ª semana é 01–07/02, a
+ * herdada do aquecimento (spec §5; achado P2 do Codex: não é a 1ª semana da avaliação). A semana vem rotulada pelas datas.
+ */
+export function fillAComESemPrimeiraSemana(s: SomasSemanais): { semana: [Data, Data]; com: number | null; sem: number | null } {
+  if (s.semanas.length === 0) throw new Error('SOMAS_SEM_SEMANAS');
+  const dCom = somaV(s.porCelula.A.demandadas);
+  const dSem = somaV(s.porCelula.A.demandadas.slice(1));
+  return {
+    semana: [s.semanas[0], addDias(s.semanas[0], 6)],
+    com: dCom > 0 ? somaV(s.porCelula.A.integrais) / dCom : null,
+    sem: dSem > 0 ? somaV(s.porCelula.A.integrais.slice(1)) / dSem : null,
+  };
+}
+
+/** A sensibilidade "sem a 1ª semana" da CALIBRAÇÃO (01–07/02): F0 e, havendo tupla congelada, o pacote. */
+export function primeiraSemanaDaCalibracao(
+  dados: Dados,
+  tupla: TuplaPacote | null,
+  cacheDir?: string | null,
+  reps = REPS_CALIBRACAO,
+): { f0: ReturnType<typeof fillAComESemPrimeiraSemana>; pacote: ReturnType<typeof fillAComESemPrimeiraSemana> | null } {
+  const base = baseDaCalibracao(dados, { reps, ...(cacheDir === undefined ? {} : { cacheDir }) });
+  if (base.somasF0.semanas[0] !== JANELAS.calibracaoIni) throw new Error(`PRIMEIRA_SEMANA_FORA_DA_CALIBRACAO:${base.somasF0.semanas[0]}`);
+  return { f0: fillAComESemPrimeiraSemana(base.somasF0), pacote: tupla === null ? null : fillAComESemPrimeiraSemana(somasDaTupla(dados, tupla.perfil, tupla.resultado.formula, tupla.resultado.params, cacheDir, reps)) };
+}
+
+/** As somas da calibração de uma tupla (P, X, params) — o mesmo mapa que a calibração avaliou. */
+function somasDaTupla(dados: Dados, perfil: PerfilSuaves, formula: Formula, params: TuplaPacote['resultado']['params'], cacheDir: string | null | undefined, reps: number): SomasSemanais {
+  const base = baseDaCalibracao(dados, { reps, ...(cacheDir === undefined ? {} : { cacheDir }) });
+  const c = coorte(dados);
+  const o = cacheDir === undefined ? {} : { cacheDir };
+  const fn = preComputarComOrigem(formula, dados, params, { calibracao: true }, o).mapa;
+  const mapa = mapaPacote(base.f0Mapa, mapaDosSuaves(dados, perfil, { calibracao: true }, cacheDir), suavesDaCoorte(c), fn, c.populacao, c.alterados);
+  return avaliarNaCalibracao(dados, formula, mapa, reps).somas;
 }
 
 /**
@@ -136,7 +181,6 @@ export function decomporCapital(
 export interface DiagnosticoPacote {
   /** Avaliação, coorte, reconstruído, LT empírico, espera, REPS_CALIBRACAO reps. */
   fillA: { f0: ReturnType<typeof fillASuavesIntermitentes>; pacote: ReturnType<typeof fillASuavesIntermitentes> };
-  semPrimeiraSemana: { f0: number | null; pacote: number | null };
   /** Fill da célula A sem as linhas do SKU de sensibilidade; null = contagem de linhas A não bate com a célula (nunca fabricado). */
   semSku: { sku: string; f0: number | null; pacote: number | null; linhasA: number } | null;
   /** null = há estoque sem preço em algum braço: o capital por SKU seria o subtotal valorado (ausente ≠ zero, achado 10). */
@@ -194,40 +238,62 @@ export function diagnosticarPacote(dados: Dados, cg: Congelado, reps = REPS_CALI
   const b1 = braco(cg.candidata, mAlt);
   return {
     fillA: { f0: fillASuavesIntermitentes(b0.m), pacote: fillASuavesIntermitentes(b1.m) },
-    semPrimeiraSemana: { f0: fillASemPrimeiraSemana(b0.m), pacote: fillASemPrimeiraSemana(b1.m) },
     semSku: b0.bate && b1.bate ? { sku: SKU_SENSIBILIDADE, f0: b0.semSku, pacote: b1.semSku, linhasA: alvo } : null,
     capital: b0.naoValorado || b1.naoValorado ? null : decomporCapital(b0.cap, b1.cap, sv, c.alterados),
   };
 }
 
-/** Fronteira (§4.3): cada tupla da calibração com fill, aumento de estoque e o benefício líquido na grade de 25% a.a. */
-export function fronteiraDoPacote(dados: Dados, tuplas: readonly TuplaPacote[], cacheDir?: string | null): PontoFronteira[] {
-  const base = baseDaCalibracao(dados);
-  const c = coorte(dados);
-  const sv = suavesDaCoorte(c);
-  const o = cacheDir === undefined ? {} : { cacheDir };
-  return tuplas.map((t) => {
-    const r = t.resultado;
-    const fn = preComputarComOrigem(r.formula, dados, r.params, { calibracao: true }, o).mapa;
-    const mapa = mapaPacote(base.f0Mapa, mapaDosSuaves(dados, t.perfil, { calibracao: true }, cacheDir), sv, fn, c.populacao, c.alterados);
-    const av = avaliarNaCalibracao(dados, r.formula, mapa, REPS_CALIBRACAO);
-    const bs: number[] = [];
-    let nulo = false;
-    for (const emergencialPerc of GRADE_CUSTO.emergencial) {
-      for (const atrasoPerc of GRADE_CUSTO.atrasoPorDia) {
-        const x = custoLiquido(base.somasF0, av.somas, { taxa: GRADE_CUSTO.taxaBase, emergencialPerc, atrasoPerc }).custo;
-        if (x === null) nulo = true;
-        else bs.push(x);
+/** As famílias (P, X) da fronteira: (P0, X) para cada X e, havendo tupla congelada, (P*, X) para cada X (sem repetir). */
+export function familiasDaFronteira(escolha: EscolhaPacote): { perfil: PerfilSuaves; formula: Formula }[] {
+  const perfis: PerfilSuaves[] = [{ tipo: 'F0', perfil: { nome: 'P0' } }];
+  if (escolha.tipo === 'TUPLA' && chavePerfilSuaves(escolha.tupla.perfil) !== 'P0') perfis.push(escolha.tupla.perfil);
+  return perfis.flatMap((perfil) => FORMULAS_PACOTE.map((formula) => ({ perfil, formula })));
+}
+
+/**
+ * Fronteira (§4.3, informativa): cada família (P, X) recalibrada com o alvo de A em cada nível de NIVEIS_FRONTEIRA (B e C no
+ * alvo oficial), com fill, aumento de estoque e o benefício líquido na grade de 25% a.a. A seleção oficial NÃO muda.
+ */
+export function fronteiraDoPacote(
+  dados: Dados,
+  familias: readonly { perfil: PerfilSuaves; formula: Formula }[],
+  opcoes: { cacheDir?: string | null; reps?: number; niveis?: readonly number[]; log?: (m: string) => void } = {},
+): PontoFronteira[] {
+  const reps = opcoes.reps ?? REPS_CALIBRACAO;
+  const oc = opcoes.cacheDir === undefined ? {} : { cacheDir: opcoes.cacheDir };
+  const base = baseDaCalibracao(dados, { reps, ...oc });
+  const sv = suavesDaCoorte(coorte(dados));
+  const out: PontoFronteira[] = [];
+  for (const fam of familias) {
+    const mapaSv = mapaDosSuaves(dados, fam.perfil, { calibracao: true }, opcoes.cacheDir);
+    for (const nivel of opcoes.niveis ?? NIVEIS_FRONTEIRA) {
+      const r = calibrar(dados, fam.formula, { reps, ...oc, alvoA: nivel, suaves: { mapa: mapaSv, skus: sv } });
+      const t: TuplaPacote = { perfil: fam.perfil, resultado: r };
+      const estado = estadoDaTupla(r);
+      const somas = somasDaTupla(dados, fam.perfil, fam.formula, r.params, opcoes.cacheDir, reps);
+      const bs: number[] = [];
+      let nulo = false;
+      for (const emergencialPerc of GRADE_CUSTO.emergencial) {
+        for (const atrasoPerc of GRADE_CUSTO.atrasoPorDia) {
+          const x = custoLiquido(base.somasF0, somas, { taxa: GRADE_CUSTO.taxaBase, emergencialPerc, atrasoPerc }).custo;
+          if (x === null) nulo = true;
+          else bs.push(x);
+        }
       }
+      const p: PontoFronteira = {
+        nivel,
+        familia: `${chavePerfilSuaves(fam.perfil)}|${fam.formula}`,
+        tupla: serializarTupla(t),
+        estado,
+        fill: r.fill,
+        aumento: r.estoqueMedio === null || base.estoqueF0 === null || !(base.estoqueF0 > 0) ? null : r.estoqueMedio / base.estoqueF0 - 1,
+        beneficio: nulo || bs.length === 0 ? { min: null, max: null } : { min: Math.min(...bs), max: Math.max(...bs) },
+      };
+      out.push(p);
+      opcoes.log?.(`fronteira ${p.familia} @ A ${nivel}: ${estado} fill A ${r.fill.A} aumento ${p.aumento}`);
     }
-    return {
-      tupla: serializarTupla(t),
-      estado: estadoDaTupla(r),
-      fill: av.fill,
-      aumento: av.estoque === null || base.estoqueF0 === null || !(base.estoqueF0 > 0) ? null : av.estoque / base.estoqueF0 - 1,
-      beneficio: nulo ? { min: null, max: null } : { min: Math.min(...bs), max: Math.max(...bs) },
-    };
-  });
+  }
+  return out;
 }
 
 /** Estabilidade (§4.2, informativa): a seleção refeita nos cortes temporais e em leave-one-SKU-out nos suaves. */
@@ -262,6 +328,10 @@ export interface RodadaPacote {
   reps: number | null;
   diagnostico: DiagnosticoPacote | null;
   fronteira: PontoFronteira[];
+  /** D5: fill A da CALIBRAÇÃO com e sem a 1ª semana (01–07/02). */
+  primeiraSemana: ReturnType<typeof primeiraSemanaDaCalibracao>;
+  /** §2.2 / §4.4(7): decomposição D/L/U da falha dos suaves de A (calibração, diagnóstico). */
+  dlu: DecomposicaoDLU;
   estabilidade: { recorte: string; escolha: string }[] | null;
   segundos: number;
 }
@@ -285,10 +355,27 @@ export function montarRelatorioPacote(r: RodadaPacote): string {
   l.push('', '## Critérios (régua do pacote: 3′ economia + 3″ teto, também no estresse)', '', '| critério | estado | motivo |', '|---|---|---|');
   for (const c of r.criterios) l.push(`| ${c.criterio} | ${c.estado} | ${c.motivo.replace(/\|/g, '/')} |`);
   if (r.fronteira.length > 0) {
-    l.push('', '## Fronteira capital × fill A (calibração, diagnóstico)', '', '| tupla | fill A | aumento de estoque | benefício líquido 25% a.a. (pior … melhor célula, R$) |', '|---|---:|---:|---:|');
-    for (const p of [...r.fronteira].sort((a, b) => (a.fill.A ?? -1) - (b.fill.A ?? -1))) {
-      l.push(`| \`${p.tupla}\` | ${pct(p.fill.A)} | ${pct(p.aumento)} | ${p.beneficio.min === null ? 'n/d' : `${p.beneficio.min.toFixed(0)} … ${p.beneficio.max!.toFixed(0)}`} |`);
+    l.push('', '## Fronteira capital × fill A (calibração, informativa; a seleção oficial não muda)', '');
+    l.push('Cada família (P, X) recalibrada com o alvo de A no nível (B e C no alvo oficial).', '');
+    l.push('| família | alvo A | estado | fill A | aumento de estoque | benefício líquido 25% a.a. (pior … melhor célula, R$) |', '|---|---:|---|---:|---:|---:|');
+    for (const p of r.fronteira) {
+      l.push(`| \`${p.familia}\` | ${pct(p.nivel, 0)} | ${p.estado} | ${pct(p.fill.A)} | ${pct(p.aumento)} | ${p.beneficio.min === null ? 'n/d' : `${p.beneficio.min.toFixed(0)} … ${p.beneficio.max!.toFixed(0)}`} |`);
     }
+  }
+  {
+    const ps = r.primeiraSemana;
+    const sem = `${ps.f0.semana[0]}..${ps.f0.semana[1]}`;
+    l.push('', `## Sensibilidade sem a 1ª semana da calibração (${sem}, D5, informativa)`, '');
+    l.push(`- F0: A ${pct(ps.f0.com)} com a semana → ${pct(ps.f0.sem)} sem ela`);
+    l.push(ps.pacote ? `- Pacote congelado: A ${pct(ps.pacote.com)} com a semana → ${pct(ps.pacote.sem)} sem ela` : '- Pacote: sem tupla congelada');
+  }
+  {
+    const k = r.dlu;
+    l.push('', `## Decomposição D/L/U da falha dos suaves de A (§2.2, calibração, ${k.reps} reps, ${k.linhasSuavesA} linhas)`, '');
+    l.push(`Controle da gravação simplificada: oficial ${pct(k.controle.oficial)} × recálculo D0L0U0 ${pct(k.controle.recalculo)} (|Δ| ${pct(Math.abs(k.controle.oficial - k.controle.recalculo))}).`, '');
+    l.push('| D | L | U | fill suaves A | Δ estoque da coorte |', '|:-:|:-:|:-:|---:|---:|');
+    for (const x of k.combinacoes) l.push(`| ${x.D} | ${x.L} | ${x.U} | ${pct(x.fillSuavesA)} | ${pct(x.deltaEstoque)} |`);
+    l.push('', `Shapley (p.p.): D ${pct(k.shapley.D)} · L ${pct(k.shapley.L)} · U ${pct(k.shapley.U)} · resíduo até 100% ${pct(k.residual)}`);
   }
   const d = r.diagnostico;
   if (d) {
@@ -296,7 +383,6 @@ export function montarRelatorioPacote(r: RodadaPacote): string {
     l.push(`- Célula A: F0 ${pct(d.fillA.f0.celula)} → pacote ${pct(d.fillA.pacote.celula)}`);
     l.push(`- A suaves (${d.fillA.f0.linhasSuaves} linhas): F0 ${pct(d.fillA.f0.suaves)} → pacote ${pct(d.fillA.pacote.suaves)}`);
     l.push(`- A intermitentes (${d.fillA.f0.linhasIntermitentes} linhas): F0 ${pct(d.fillA.f0.intermitentes)} → pacote ${pct(d.fillA.pacote.intermitentes)}`);
-    l.push(`- A sem a 1ª semana (D5): F0 ${pct(d.semPrimeiraSemana.f0)} → pacote ${pct(d.semPrimeiraSemana.pacote)}`);
     l.push(d.semSku ? `- A sem o ${d.semSku.sku} (${d.semSku.linhasA} linhas, D5): F0 ${pct(d.semSku.f0)} → pacote ${pct(d.semSku.pacote)}` : '- A sem o SKU de sensibilidade: não medido (contagem de linhas A divergente)');
     const k = d.capital;
     if (k === null) l.push('- Capital por SKU: não medido (estoque sem preço em algum braço; o subtotal valorado não é o capital)');
@@ -359,7 +445,10 @@ async function principal(): Promise<number> {
   const escolha = escolherTupla(tuplas);
   const vc = vereditoDaCalibracaoPacote(escolha);
   log(`escolha: ${escolha.tipo === 'TUPLA' ? serializarTupla(escolha.tupla) : escolha.tipo}`);
-  const fronteira = fronteiraDoPacote(dados, tuplas);
+  const fronteira = fronteiraDoPacote(dados, familiasDaFronteira(escolha), { log });
+  const primeiraSemana = primeiraSemanaDaCalibracao(dados, escolha.tipo === 'TUPLA' ? escolha.tupla : null);
+  log('decomposição D/L/U (9 braços na calibração)');
+  const dlu = decomporDLU(dados);
   const comum = {
     geradoEm: new Date().toISOString(),
     chave: { hashDados: dados.hashDados, hashCodigo: hashCodigo(), dataExtracao: dados.dataExtracao, protocolo: 'pacote-2026-11-09-v1', perfis: [...new Set(tuplas.map((t) => chavePerfilSuaves(t.perfil)))] },
@@ -368,6 +457,8 @@ async function principal(): Promise<number> {
     tuplas: tuplas.map((t) => ({ tupla: serializarTupla(t), estado: estadoDaTupla(t.resultado), estoqueMedio: t.resultado.estoqueMedio, estoqueF0: t.resultado.estoqueF0, fill: t.resultado.fill })),
     escolha: escolha.tipo === 'TUPLA' ? serializarTupla(escolha.tupla) : escolha.tipo,
     fronteira,
+    primeiraSemana,
+    dlu,
     estabilidade: a.estabilidade === true ? estabilidadeDoPacote(dados, log) : null,
   };
   if (escolha.tipo !== 'TUPLA' || vc?.veredito === 'NO-GO') {

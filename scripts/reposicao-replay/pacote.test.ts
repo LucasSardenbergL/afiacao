@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { addDias, diffDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
 import {
   baseDaCalibracao,
+  calibrar,
   calibrarPacote,
   escolherTupla,
+  mediaSomas,
   estadoDaTupla,
   mapaDosSuaves,
   perfisDoPacote,
@@ -18,9 +20,10 @@ import {
 } from './calibracao';
 import { somarDiasUteis } from './calendario';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
-import { avaliarCriterios, type Estado } from './estatistica';
+import { avaliarCriterios, estatCusto, veredito, type Estado } from './estatistica';
 import { demandaSigmaPorDu, diagnosticoF0, pontoDePedidoF0, preComputarComOrigem, sigmaDemanda180, type Formula } from './formulas';
-import { decomporCapital, lerTetoPacote } from './pacote';
+import { decomporCapital, familiasDaFronteira, fronteiraDoPacote, lerTetoPacote, primeiraSemanaDaCalibracao } from './pacote';
+import { decomporDLU, shapley3 } from './pacote-dlu';
 import { coorte } from './parados';
 import { avaliarCandidata, rodarLote } from './rodar';
 import type { Celula } from './simulador';
@@ -131,7 +134,8 @@ describe('oráculos do F0′ (contas à mão)', () => {
 });
 
 // ── fixture com coorte: 2 intermitentes + 1 suave ─────────────────────────────────────────────────────────────────
-function cenario(alterarAvaliacao: boolean): Dados {
+/** `comW`: um 2º suave (W) de valor alto, para haver suave na classe A (S fica B pelo Pareto acumulado). */
+function cenario(alterarAvaliacao: boolean, comW = false): Dados {
   const vs: LinhaVenda[] = [];
   const receb: EventoRecebimento[] = [];
   const itens: ItemLT[] = [];
@@ -148,14 +152,20 @@ function cenario(alterarAvaliacao: boolean): Dados {
     const depois = d > JANELAS.calibracaoFim;
     if (ehDiaUtil(d)) vs.push({ linhaId: `S${k++}`, sku: 'S', data: d, quantidade: 2 + (i % 2) + (alterarAvaliacao && depois ? 4 : 0), valor: 30, cmcLinha: 6, noEscopo: true });
     else if (alterarAvaliacao && depois) vs.push({ linhaId: `S${k++}`, sku: 'S', data: d, quantidade: 9, valor: 90, cmcLinha: 6, noEscopo: true });
+    if (comW && ehDiaUtil(d)) vs.push({ linhaId: `W${k++}`, sku: 'W', data: d, quantidade: 3 + (i % 3), valor: 120, cmcLinha: 6, noEscopo: true });
   }
   for (let t1 = '2025-11-03', j = 0; t1 <= '2026-10-01'; t1 = somarDiasUteis(t1, 15), j++) {
     const lt = 4 + (j % 5);
     const ltFinal = alterarAvaliacao && somarDiasUteis(t1, lt) > JANELAS.calibracaoFim ? lt + 9 : lt;
     itens.push(item(`D${j}`, 'P', t1, ltFinal), item(`D${j}`, 'Q', t1, ltFinal + 1), item(`D${j}`, 'S', t1, ltFinal + 2));
     receb.push({ sku: 'P', data: somarDiasUteis(t1, ltFinal), quantidade: 6 }, { sku: 'Q', data: somarDiasUteis(t1, ltFinal + 1), quantidade: 4 }, { sku: 'S', data: somarDiasUteis(t1, ltFinal + 2), quantidade: 60 });
+    if (comW) {
+      itens.push(item(`D${j}`, 'W', t1, ltFinal + 3));
+      receb.push({ sku: 'W', data: somarDiasUteis(t1, ltFinal + 3), quantidade: 50 });
+    }
   }
   receb.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : a.sku < b.sku ? -1 : 1));
+  if (comW) return dados([sku('P', { multiplo: 2 }), sku('Q'), sku('S'), sku('W')], vs, itens, receb, { P: 12, Q: 8, S: 40, W: 30 });
   return dados([sku('P', { multiplo: 2 }), sku('Q'), sku('S')], vs, itens, receb, { P: 12, Q: 8, S: 40 });
 }
 
@@ -360,6 +370,16 @@ describe("3′ (benefício líquido em toda a grade, também no estresse)", () =
     expect(estado(evidenciaPacote(red, iv(null, null, null)), c)).toBe('INCERTO');
     expect(estado(evidenciaPacote(red, iv(-10, -20, -0.01)), `4 Estresse ${c}`)).toBe('FALHA');
   });
+  it('empírico PASSA e estresse FALHA: cada linha lê a SUA grade (o 3′ não contamina o 4 nem vice-versa) ⇒ NO-GO', () => {
+    const ev = evidenciaPacote(iv(-0.05, -0.1, -0.02), CUSTO_OK);
+    ev.estresse.economia = ev.estresse.economia!.map((e) => (e.falta === 'misto' && e.grade.emergencialPerc === 0.2 ? { ...e, custo: iv(-30, -50, -5) } : e));
+    const cs = avaliarCriterios(ev, TETO);
+    expect(cs.filter((x) => x.criterio.startsWith("3' Economia [")).every((x) => x.estado === 'PASSA')).toBe(true);
+    const falhas = cs.filter((x) => x.estado === 'FALHA').map((x) => x.criterio);
+    expect(falhas).toHaveLength(3); // misto × emergencial 20% × 3 atrasos
+    expect(falhas.every((f) => f.startsWith("4 Estresse 3' Economia [misto") && f.includes('emerg 20,0%'))).toBe(true);
+    expect(veredito(cs).veredito).toBe('NO-GO');
+  });
   it('a régua do pacote substitui 3, 4-capital e 5; sem a grade do estresse vira INCERTO; teto inválido lança', () => {
     const ev = evidenciaPacote(iv(-0.05, -0.1, -0.02), CUSTO_OK);
     const nomes = avaliarCriterios(ev, TETO).map((x) => x.criterio);
@@ -402,6 +422,21 @@ describe('avaliação do pacote', () => {
     expect(nomes.filter((n) => n.startsWith("4 Estresse 3' Economia ["))).toHaveLength(27);
     expect(nomes.some((n) => /^3 Capital|^5 Economia/.test(n))).toBe(false);
     expect(r.avaliacao.blocos.estresse.economia).toHaveLength(27);
+    // oráculo numérico (achado P2 do Codex: a sabotagem cen('empirico') no estresse ficava verde): o ponto de cada célula da
+    // economia do ESTRESSE é o custo líquido das médias do cenário estresse15 do mesmo lote, e difere do empírico
+    const n = r.avaliacao.reps;
+    const lote = rodarLote(dd, cg, Array.from({ length: n }, (_, i) => i), null);
+    let difere = 0;
+    for (const e of r.avaliacao.blocos.estresse.economia!) {
+      const m = lote.somas[`coorte|reconstruido|estresse15|${e.falta}|exato`];
+      const todas = Array.from({ length: m.f0.semanas.length }, (_, i) => i);
+      const esperado = estatCusto(e.grade)([mediaSomas(m.f0, n)], [mediaSomas(m.alt, n)], todas);
+      expect(esperado).not.toBeNull();
+      expect(e.custo[4].ponto).toBeCloseTo(esperado as number, 6);
+      const emp = r.avaliacao.blocos.economia.find((x) => x.falta === e.falta && JSON.stringify(x.grade) === JSON.stringify(e.grade))!;
+      if (Math.abs((emp.custo[4].ponto as number) - (e.custo[4].ponto as number)) > 1e-6) difere++;
+    }
+    expect(difere).toBeGreaterThan(0); // sanidade: o fixture distingue estresse de empírico (senão o oráculo é cego)
     await expect(avaliarCandidata(dd, '/inexistente', { candidata: 'F1', params: cg.params }, null, { paralelo: 1, tetoReps: 1, cacheDir: null, pacote: { teto: 0.2 } })).rejects.toThrow(/^PACOTE_INCOERENTE/);
     await expect(avaliarCandidata(dd, '/inexistente', cg, null, { paralelo: 1, tetoReps: 1, cacheDir: null })).rejects.toThrow(/^PACOTE_INCOERENTE/);
   }, 300_000);
@@ -419,4 +454,56 @@ describe('teto e capital por SKU', () => {
     const z = decomporCapital({ S: 100 }, { S: 90 }, new Set(['S']), new Set());
     expect([z.suaves, z.maior]).toEqual([null, null]);
   });
+});
+
+describe('diagnósticos da rodada do pacote (achados P2 do Codex)', () => {
+  it('Shapley de 3 fatores: aditivo devolve cada efeito; a interação D×L reparte meio a meio; a soma fecha f(111) − f(000)', () => {
+    const ad = shapley3((d, l, u) => 0.9 + 0.01 * d + 0.02 * l + 0.03 * u);
+    expect(ad.D).toBeCloseTo(0.01, 12);
+    expect(ad.L).toBeCloseTo(0.02, 12);
+    expect(ad.U).toBeCloseTo(0.03, 12);
+    const it = shapley3((d, l, u) => 0.9 + 0.01 * d + 0.02 * l + 0.03 * u + 0.04 * d * l);
+    expect([it.D, it.L, it.U].map((x) => Math.round(x * 1e12) / 1e12)).toEqual([0.03, 0.04, 0.03]);
+  });
+
+  it('D/L/U no fixture: 8 combinações, controle e Shapley que fecha a soma', () => {
+    const dd = cenario(false, true);
+    expect([...suavesDaCoorte(coorte(dd))].sort()).toEqual(['S', 'W']); // sanidade do fixture
+    const k = decomporDLU(dd, 2);
+    expect(k.combinacoes).toHaveLength(8);
+    expect(k.linhasSuavesA).toBeGreaterThan(0);
+    const f = (d: number, l: number, u: number) => k.combinacoes.find((x) => x.D === d && x.L === l && x.U === u)!.fillSuavesA;
+    expect(k.controle.recalculo).toBe(f(0, 0, 0));
+    expect(k.shapley.D + k.shapley.L + k.shapley.U).toBeCloseTo(f(1, 1, 1) - f(0, 0, 0), 12);
+    expect(k.residual).toBeCloseTo(1 - f(1, 1, 1), 12);
+    // U multiplica o termo médio por 7/5 nos suaves: o estoque da coorte sobe (senão o fator não chegou ao mapa)
+    const u = k.combinacoes.find((x) => x.D === 0 && x.L === 0 && x.U === 1)!;
+    expect(u.deltaEstoque as number).toBeGreaterThan(0);
+  }, 300_000);
+
+  it('1ª semana é a da CALIBRAÇÃO (01–07/02), rotulada; fronteira varre o alvo de A por nível com a seleção intocada', () => {
+    const dd = cenario(false, true); // com W: há suave em A, o alvo de A é observável
+    const ps = primeiraSemanaDaCalibracao(dd, null, null, 2);
+    expect(ps.f0.semana).toEqual(['2026-02-01', '2026-02-07']);
+    expect(ps.pacote).toBeNull();
+    const b = baseDaCalibracao(dd, { reps: 2, cacheDir: null });
+    const dA = b.somasF0.porCelula.A.demandadas;
+    const iA = b.somasF0.porCelula.A.integrais;
+    const sum = (v: number[]) => v.reduce((x, y) => x + y, 0);
+    expect(ps.f0.sem).toBe(sum(dA.slice(1)) > 0 ? sum(iA.slice(1)) / sum(dA.slice(1)) : null);
+    expect(ps.f0.com).toBe(sum(dA) > 0 ? sum(iA) / sum(dA) : null);
+    expect(familiasDaFronteira({ tipo: 'NENHUMA' }).map((x) => `${x.perfil.tipo}:${x.formula}`)).toEqual(['F0:F1', 'F0:F2', 'F0:F3']);
+    const pts = fronteiraDoPacote(dd, [{ perfil: P0, formula: 'F1' }], { cacheDir: null, reps: 2, niveis: [0.95, 0.99] });
+    expect(pts.map((p) => [p.nivel, p.familia])).toEqual([[0.95, 'P0|F1'], [0.99, 'P0|F1']]);
+    // o nível chega ao alvo da busca: a 99% o quantil de A não fica abaixo do de 95%
+    const qA = (t: string) => Number(t.split('q=')[1].split(',')[0]);
+    expect(qA(pts[1].tupla)).toBeGreaterThanOrEqual(qA(pts[0].tupla));
+    expect(() => fronteiraDoPacote(dd, [{ perfil: P0, formula: 'F1' }], { cacheDir: null, reps: 2, niveis: [1] })).toThrow('ALVO_A_INVALIDO:1');
+    // o nível É o alvo da busca: o resultado carrega alvo A = 99% e, se viável, atinge-o (B e C no alvo oficial)
+    const r99 = calibrar(dd, 'F1', { reps: 2, cacheDir: null, alvoA: 0.99 });
+    expect(b.alvo.A).not.toBeNull(); // sanidade: A observável no fixture
+    expect(r99.alvo.A).toBe(0.99);
+    expect([r99.alvo.B, r99.alvo.C]).toEqual([b.alvo.B, b.alvo.C]);
+    if (!r99.inviavel) expect(r99.fill.A as number).toBeGreaterThanOrEqual(0.99);
+  }, 300_000);
 });

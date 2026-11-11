@@ -318,6 +318,11 @@ export interface OpcoesCalibracao {
    * são os do recorte. A classe ABC dos demais é a da coorte (não reclassifica).
    */
   semSku?: string;
+  /**
+   * Só a FRONTEIRA do pacote (informativa, §4.3): o alvo da célula A trocado por este nível (95%–99%); B e C ficam no
+   * alvo oficial. A seleção oficial NUNCA usa isto (ela é congelada antes da varredura).
+   */
+  alvoA?: number;
 }
 
 /** A população medida: a do modo, menos o SKU da estabilidade (leave-one-SKU-out). */
@@ -429,6 +434,9 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
   if (f === 'F0') throw new Error('CALIBRAR_F0: o F0 não é calibrado (só dá o alvo)');
   const reps = opcoes.reps ?? REPS_CALIBRACAO;
   const base = baseDaCalibracao(dados, opcoes);
+  if (opcoes.alvoA !== undefined && !(opcoes.alvoA > 0 && opcoes.alvoA < 1)) throw new Error(`ALVO_A_INVALIDO:${opcoes.alvoA}`);
+  // fronteira (informativa): A no nível da varredura; A inobservável continua null (ausente ≠ alvo)
+  const alvo = opcoes.alvoA === undefined || base.alvo.A === null ? base.alvo : { ...base.alvo, A: opcoes.alvoA };
   const c = coorte(dados);
   const sv = opcoes.suaves;
   if (sv && base.celulasAlvo !== 'classe') throw new Error('PACOTE_SO_NA_CELULA_DA_CLASSE');
@@ -446,7 +454,7 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
       const mapa = sv ? mapaPacote(base.f0Mapa, sv.mapa, sv.skus, fn, pop, c.alterados) : mapaMisto(base.f0Mapa, fn, pop, c.alterados);
       return avaliarNaCalibracao(dados, f, mapa, reps, base.celulasAlvo, opcoes.janela ?? JANELA_CALIBRACAO);
     };
-    const busca = buscarTrio(avaliar, base.alvo);
+    const busca = buscarTrio(avaliar, alvo);
     const params: ParamsFormula = { ...v, quantil: busca.quantil };
     tentativas.push({ params, inviavel: busca.inviavel, estoqueMedio: busca.avaliacao.estoque, fill: busca.avaliacao.fill, avaliacoes: busca.avaliacoes });
     if (busca.capitalIndeterminado) indeterminado = true;
@@ -470,7 +478,7 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
     estoqueMedio: indeterminado ? null : r.busca.avaliacao.estoque,
     estoqueF0: base.estoqueF0,
     capitalIndeterminado: indeterminado || base.estoqueF0 === null,
-    alvo: base.alvo,
+    alvo,
     fillF0: base.fillF0,
     fill: r.busca.avaliacao.fill,
     naoObservaveis: r.busca.naoObservaveis,
