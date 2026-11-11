@@ -29,6 +29,19 @@ export function razaoSemCpf<T extends string | null | undefined>(razao: T): T {
 }
 
 /**
+ * O cliente que vem AO VIVO do Omie para o navegador do staff (busca do pedido, M1 da revisão do Fable, 2026-11-11):
+ * `razao_social` sai mascarada, porque é ela que a tela, a impressão, o `lastOrderData`, o bloqueio de crédito, o
+ * e-mail "Novo Pedido" e o LLM leem. `razao_fiscal` só existe quando a máscara mudou algo (MEI com o CPF na razão) e
+ * só serve ao payload do autocadastro (`criar_cliente` / `criar_cliente_afiacao`): nenhuma exibição a lê.
+ * Sem `razao_fiscal` (build velho do front, cliente montado do perfil), o cadastro manda a mascarada e
+ * `razaoFiscalParaCadastro` resolve a razão fiscal noutra conta.
+ */
+export function razaoParaExibicao(razao: string): { razao_social: string; razao_fiscal?: string } {
+  const mascarada = razaoSemCpf(razao);
+  return mascarada === razao ? { razao_social: razao } : { razao_social: mascarada, razao_fiscal: razao };
+}
+
+/**
  * A razão social que pode ir ao IncluirCliente. A não mascarada passa como veio. A mascarada (cliente montado do
  * perfil, que guarda o CPF mascarado) é trocada pela razão FISCAL do MESMO documento noutra conta Omie do grupo, onde
  * o cliente já existe — a Oben tem 1.882 dos 1.888 MEI medidos em 2026-11-10.

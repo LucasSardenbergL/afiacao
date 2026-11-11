@@ -9,6 +9,8 @@ import type {
 } from '@/hooks/unifiedOrder/types';
 import type { DeliveryOption } from '@/types';
 import { findParcelaDesc, getToolName } from './helpers';
+// Impressão sai do app: razão de MEI sem o CPF do titular (M1, 2026-11-11). `razao_fiscal` nunca vem aqui.
+import { razaoSemCpf } from '@/lib/omie/razao-exibicao';
 
 interface BuildPrintDataParams {
   customer: OmieCustomer;
@@ -56,7 +58,7 @@ export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
       companyAddress: obenProfile?.address || 'Av. Primeiro de Junho, 70 – Centro, Divinópolis/MG – CEP: 35.500-002',
       orderNumber: obenOrderNum,
       date: dateShort,
-      customerName: customer.razao_social,
+      customerName: razaoSemCpf(customer.razao_social),
       customerDocument: customer.cnpj_cpf || '',
       customerAddress,
       customerPhone,
@@ -91,7 +93,7 @@ export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
       companyAddress: colacorProfile?.address || 'Av. Primeiro de Junho, 48 – Centro, Divinópolis/MG – CEP: 35.500-002',
       orderNumber: colacorOrderNum,
       date: dateShort,
-      customerName: customer.razao_social,
+      customerName: razaoSemCpf(customer.razao_social),
       customerDocument: customer.cnpj_cpf || '',
       customerAddress,
       customerPhone,
@@ -123,7 +125,7 @@ export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
       companyAddress: afiacaoProfile?.address || 'Av. Primeiro de Junho, 50 – Centro, Divinópolis/MG – CEP: 35.500-002',
       orderNumber: afiacaoOrderNum,
       date: dateShort,
-      customerName: customer.razao_social,
+      customerName: razaoSemCpf(customer.razao_social),
       customerDocument: customer.cnpj_cpf || '',
       customerAddress,
       customerPhone,

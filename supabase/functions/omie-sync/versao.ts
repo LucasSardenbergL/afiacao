@@ -42,7 +42,9 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 // v1.11 (2026-11-11) — criar_cliente_afiacao troca a razão com o CPF mascarado pela razão fiscal do mesmo documento
 //   na Oben ou na Colacor, ou recusa (`_shared/razao-fiscal.ts`, migration 20261113090000).
-export const VERSAO = "v1.11-razao-fiscal-da-outra-conta";
+// v1.12 (2026-11-11) — e-mail "Novo Pedido" (assunto e corpo) e `list_clientes` com o CPF de MEI mascarado na razão;
+//   a consulta da razão fiscal do criar_cliente_afiacao retenta o transitório (concorre com a da Colacor na Oben).
+export const VERSAO = "v1.12-razao-exibida-sem-cpf";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

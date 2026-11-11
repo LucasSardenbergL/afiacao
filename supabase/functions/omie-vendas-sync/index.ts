@@ -4,7 +4,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "./lookup-cliente-estrito.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
-import { razaoFiscalParaCadastro, temCpfMascarado } from "../_shared/razao-fiscal.ts";
+import { razaoFiscalParaCadastro, razaoParaExibicao, razaoSemCpf, temCpfMascarado } from "../_shared/razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
@@ -670,6 +670,8 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
   const results: Array<{
     codigo_cliente: number;
     razao_social: string;
+    /** Só com o CPF de MEI na razão: vai ao payload do autocadastro, nunca à exibição (razaoParaExibicao). */
+    razao_fiscal?: string;
     nome_fantasia: string;
     cnpj_cpf: string;
     codigo_vendedor: number | null;
@@ -706,8 +708,8 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
       for (const c of clientes) {
             results.push({
               codigo_cliente: c.codigo_cliente_omie ?? 0,
-              razao_social: c.razao_social || "",
-              nome_fantasia: c.nome_fantasia || "",
+              ...razaoParaExibicao(c.razao_social || ""),
+              nome_fantasia: razaoSemCpf(c.nome_fantasia || ""),
               cnpj_cpf: c.cnpj_cpf || "",
               codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
               endereco: c.endereco || "",
@@ -751,8 +753,8 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
           if (!results.find(r => r.codigo_cliente === c.codigo_cliente_omie)) {
             results.push({
               codigo_cliente: c.codigo_cliente_omie ?? 0,
-              razao_social: c.razao_social || "",
-              nome_fantasia: c.nome_fantasia || "",
+              ...razaoParaExibicao(c.razao_social || ""),
+              nome_fantasia: razaoSemCpf(c.nome_fantasia || ""),
               cnpj_cpf: c.cnpj_cpf || "",
               codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
               endereco: c.endereco || "",
@@ -2924,7 +2926,9 @@ Deno.serve(async (req) => {
         // O código vira o cliente do pedido: mesmo lookup ESTRITO do criar_cliente (lookup-cliente-estrito.ts) —
         // OUTRO documento (DIVERGENTE), 2+ códigos (AMBIGUO) ou resposta inválida (INDETERMINADO) lançam, e o
         // client marca lookupFalhou em vez de seguir com código alheio ou com o 1º de vários (Codex, #3293).
-        const cliente = await buscarClienteEstrito(docBusca, account, listarClientesPorDocumento(docBusca, account));
+        const achado = await buscarClienteEstrito(docBusca, account, listarClientesPorDocumento(docBusca, account));
+        // A resposta vai ao navegador do staff: razão com o CPF do titular de MEI sai mascarada (só o código é lido).
+        const cliente = achado ? { ...achado, razao_social: razaoSemCpf(achado.razao_social) } : achado;
         result = { success: true, cliente };
         break;
       }
@@ -2951,7 +2955,7 @@ Deno.serve(async (req) => {
           result = {
             success: true,
             codigo_cliente: existingCliente.codigo_cliente,
-            razao_social: existingCliente.razao_social,
+            razao_social: razaoSemCpf(existingCliente.razao_social),
             codigo_vendedor: existingCliente.codigo_vendedor,
             created: false,
             confirmacao_registrada: linhaLookup ? await gravarConfirmacao(supabaseAdmin, linhaLookup) : null,
@@ -2994,7 +2998,8 @@ Deno.serve(async (req) => {
         result = {
           success: true,
           codigo_cliente: codigoCriado,
-          razao_social,
+          // Eco ao navegador: mascarado (a fiscal foi só ao IncluirCliente).
+          razao_social: razaoSemCpf(String(razao_social)),
           codigo_vendedor: null,
           created: true,
           confirmacao_registrada: linhaIncluir ? await gravarConfirmacao(supabaseAdmin, linhaIncluir) : null,

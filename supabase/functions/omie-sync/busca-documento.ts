@@ -5,7 +5,7 @@
 // `criar_cliente_afiacao` sobre uma falsa ausência (Codex retroativo do #3311, 2026-10-27).
 // Agora só o EOF é ausência; transitório, permanente e indeterminado falham alto (500).
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
-import { classificarFaultstring } from "../_shared/omie-falha.ts";
+import { atrasoRetentativaMs, classificarExcecao, classificarFaultstring } from "../_shared/omie-falha.ts";
 
 /** true só quando o erro é o EOF do Omie, a única falha que significa "não há cliente com esse documento". */
 export function buscaPorDocumentoNaoAchou(erro: unknown): boolean {
@@ -35,4 +35,27 @@ export async function primeiroClientePorDocumento<T>(chamar: () => Promise<unkno
     throw new Error("OMIE_RESPOSTA_MALFORMADA: ListarClientes sem clientes_cadastro em lista — não dá pra afirmar ausência");
   }
   return lista[0] as T | undefined;
+}
+
+/**
+ * Leitura com até `tentativas` chamadas, retentando SÓ a falha transitória (rate-limit, "Já existe uma requisição desse
+ * método", 5xx): a consulta da razão fiscal do `criar_cliente_afiacao` corre em paralelo com a do `criar_cliente` da
+ * Colacor na MESMA conta Oben (o front dispara os dois cadastros juntos), e o Omie recusa a 2ª chamada simultânea do
+ * método. Sem isto, a busca ao vivo mascarada (M1, 2026-11-11) fazia o cadastro da Afiação falhar onde antes não havia
+ * consulta. Só para LEITURA: a escrita indeterminada nunca se repete. Permanente/indeterminada sobe na 1ª.
+ */
+export async function lerComRetentativa<T>(
+  ler: () => Promise<T>,
+  opcoes: { tentativas?: number; esperar?: (ms: number) => Promise<void> } = {},
+): Promise<T> {
+  const tentativas = opcoes.tentativas ?? 3;
+  const esperar = opcoes.esperar ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let tentativa = 1; ; tentativa++) {
+    try {
+      return await ler();
+    } catch (erro) {
+      if (tentativa >= tentativas || classificarExcecao(erro) !== "transitorio") throw erro;
+      await esperar(atrasoRetentativaMs(tentativa, erro instanceof Error ? erro.message : String(erro)));
+    }
+  }
 }

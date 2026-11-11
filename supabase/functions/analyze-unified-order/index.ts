@@ -15,6 +15,7 @@ import {
 import { classificarFlag, erroFlagAmbigua } from "../_shared/sonda-versao.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
+import { razaoSemCpf } from "../_shared/razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   type AcumuladorCache,
@@ -565,9 +566,11 @@ Deno.serve(async (req) => {
                   const key = `omie_${c.codigo_cliente_omie}`;
                   if (!candidateIds.has(key)) {
                     candidateIds.add(key);
+                    // O candidato vai ao prompt do LLM, aos logs e à resposta ao navegador: o CPF do titular de MEI na
+                    // razão (e no fantasia, que costuma repeti-la) sai mascarado já aqui (_shared/razao-fiscal.ts, M1).
                     customerCandidates.push({
-                      nome_fantasia: c.nome_fantasia || "",
-                      razao_social: c.razao_social || "",
+                      nome_fantasia: razaoSemCpf(c.nome_fantasia || ""),
+                      razao_social: razaoSemCpf(c.razao_social || ""),
                       cnpj_cpf: c.cnpj_cpf || "",
                       cidade: c.cidade || "",
                       estado: c.estado || "",
@@ -1500,8 +1503,8 @@ Deno.serve(async (req) => {
     // SECURITY: strip PII (cnpj_cpf/email/phone/document) from response payload.
     const safeCustomer = validCustomer
       ? {
-          nome_fantasia: validCustomer.nome_fantasia || "",
-          razao_social: validCustomer.razao_social || "",
+          nome_fantasia: razaoSemCpf(validCustomer.nome_fantasia || ""),
+          razao_social: razaoSemCpf(validCustomer.razao_social || ""),
           cidade: validCustomer.cidade || "",
           codigo_cliente: validCustomer.codigo_cliente || 0,
           confidence: validCustomer.confidence || "medium",

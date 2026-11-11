@@ -24,6 +24,8 @@ import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard
 import { parseBloqueioAtp, mensagemRecusasAtp } from './atp';
 import type { BloqueioAtpPedido } from './atp';
 import { aguardarRegistrosComTeto, desfechoDosErros, registrarDecisaoPrazo } from './prazoDecisao';
+// O nome do cliente que sai do app (bloqueio de crédito, e-mail, lastOrderData) sem o CPF de MEI (M1, 2026-11-11).
+import { nomeClienteExibicao } from '@/lib/omie/razao-exibicao';
 
 /** Resposta estruturada dos gates do edge (crédito Fase 2 / tint Fase 3 — não cria o PV). */
 interface GateCreditoPayload {
@@ -307,7 +309,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
               account: 'oben',
               salesOrderId,
               omieCodigoCliente: customer.codigo_cliente,
-              nomeCliente: customer.nome_fantasia || customer.razao_social,
+              nomeCliente: nomeClienteExibicao(customer),
               vencido: typeof gatePayload.gate?.vencido === 'number' ? gatePayload.gate.vencido : null,
               titulos: typeof gatePayload.gate?.titulos === 'number' ? gatePayload.gate.titulos : null,
             });
@@ -465,7 +467,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
             salesOrderId,
             // Identidade Colacor garantida pelo preflight (o invoke acima já a usou).
             omieCodigoCliente: customer.codigo_cliente_colacor!,
-            nomeCliente: customer.nome_fantasia || customer.razao_social,
+            nomeCliente: nomeClienteExibicao(customer),
             vencido: typeof gatePayloadColacor.gate?.vencido === 'number' ? gatePayloadColacor.gate.vencido : null,
             titulos: typeof gatePayloadColacor.gate?.titulos === 'number' ? gatePayloadColacor.gate.titulos : null,
           });
@@ -597,7 +599,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         payment_method: payment.afiacaoMethod,
       };
       const profileData = {
-        name: customer.nome_fantasia || customer.razao_social,
+        name: nomeClienteExibicao(customer),
         document: customer.cnpj_cpf || undefined,
       };
       const staffContext = {
@@ -685,7 +687,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     subtotals.service + DELIVERY_FEES[delivery.option];
 
   const lastOrderData = {
-    customerName: customer.nome_fantasia || customer.razao_social,
+    customerName: nomeClienteExibicao(customer),
     customerDocument: customer.cnpj_cpf || '',
     items: allItems,
     total,

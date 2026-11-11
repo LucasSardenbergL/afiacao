@@ -2,7 +2,7 @@
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (a !== b) throw new Error(msg ?? `esperado ${String(b)}, veio ${String(a)}`);
 }
-import { buscaPorDocumentoNaoAchou, primeiroClientePorDocumento } from "./busca-documento.ts";
+import { buscaPorDocumentoNaoAchou, lerComRetentativa, primeiroClientePorDocumento } from "./busca-documento.ts";
 
 Deno.test("só o EOF do Omie é ausência (busca vazia → codigo_cliente null)", () => {
   assertEquals(buscaPorDocumentoNaoAchou(new Error("Erro Omie: ERROR: Não existem registros para a página [1]!")), true);
@@ -55,4 +55,47 @@ Deno.test("primeiroClientePorDocumento: erro que não é EOF é relançado intac
     primeiroClientePorDocumento(() => Promise.reject(new Error("Erro Omie: SOAP-ERROR: Broken response from Application Server"))),
   );
   assertEquals(msg, "Erro Omie: SOAP-ERROR: Broken response from Application Server");
+});
+
+Deno.test("lerComRetentativa: a chamada simultânea recusada pelo Omie é retentada e a 2ª devolve", async () => {
+  let chamadas = 0;
+  const esperas: number[] = [];
+  const r = await lerComRetentativa(async () => {
+    chamadas++;
+    if (chamadas === 1) throw new Error("Erro Omie: Já existe uma requisição desse método em execução");
+    return "PEDRO ALVES COSTA 12345678901";
+  }, { esperar: async (ms) => { esperas.push(ms); } });
+  assertEquals(r, "PEDRO ALVES COSTA 12345678901");
+  assertEquals(chamadas, 2);
+  assertEquals(esperas.length, 1);
+});
+
+Deno.test("lerComRetentativa: permanente sobe na 1ª, sem retentar", async () => {
+  let chamadas = 0;
+  let marca = "";
+  try {
+    await lerComRetentativa(async () => {
+      chamadas++;
+      throw new Error("OMIE_LOOKUP_DIVERGENTE: o ListarClientes da outra conta devolveu um cliente com OUTRO documento");
+    }, { esperar: async () => {} });
+  } catch (e) {
+    marca = e instanceof Error ? e.message.split(":")[0] : "";
+  }
+  assertEquals(marca, "OMIE_LOOKUP_DIVERGENTE");
+  assertEquals(chamadas, 1);
+});
+
+Deno.test("lerComRetentativa: transitório que não passa sobe com a mensagem da última tentativa, no teto", async () => {
+  let chamadas = 0;
+  let mensagem = "";
+  try {
+    await lerComRetentativa(async () => {
+      chamadas++;
+      throw new Error(`Erro Omie: HTTP 503 em ListarClientes #${chamadas}`);
+    }, { tentativas: 3, esperar: async () => {} });
+  } catch (e) {
+    mensagem = e instanceof Error ? e.message : "";
+  }
+  assertEquals(mensagem, "Erro Omie: HTTP 503 em ListarClientes #3");
+  assertEquals(chamadas, 3);
 });
