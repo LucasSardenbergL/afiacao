@@ -83,4 +83,13 @@ Três camadas ficaram **verdes** e foram removidas por serem redundantes: o laç
 
 ## Depois
 
-Medido no 1º PR só-docs pós-merge (#3830 mergeado em 2026-11-11 15:34 UTC) — este próprio doc é o diff da medição. Números em seguida.
+Medido no 1º PR só-docs pós-merge (#3832, run 43054539932; o #3830 mergeou em 2026-11-11 15:34 UTC). O diff do #3832 é este próprio doc. O "antes" são os 9 runs só-docs da medição acima, com a mesma régua: `updated_at − created_at` do run, e a soma de `completed_at − started_at` dos jobs não pulados.
+
+| | antes (9 runs) | depois (#3832) |
+|---|---|---|
+| parede do run (criação → fim) | 303–534 s (mediana 418) | **177 s** |
+| push → `validate` concluído | — | 183 s |
+| runner do run inteiro | 2.262–2.543 s | **193 s** |
+| runner no lugar dos 7 jobs não-SQL | 2.245–2.517 s | **162 s** (`docs-escopo` 9 + `docs-gates` 153) |
+
+Os 7 jobs vieram `skipped`, e o `validate` aceitou o pulo (`success`). O caminho crítico agora é o `docs-gates`: install, 5 gates e o vitest dos 122 arquivos. O custo para os PRs que não são só-docs foi medido no próprio #3830: `docs-escopo` de ~9 s em série antes dos 7 jobs.
