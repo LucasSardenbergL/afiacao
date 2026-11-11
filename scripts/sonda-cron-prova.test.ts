@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   chaveDoManifesto,
   enumerarClosures,
   limparMemoGit,
+  Mecanica,
+  materializarClosure,
   identidadeDosControles,
   classificarVeredito,
   gateG1,
@@ -222,5 +224,113 @@ describe('memo das leituras do git na enumeração (E18)', () => {
       limparMemoGit();
       rmSync(raiz, { recursive: true, force: true });
     }
+  });
+});
+
+describe('materializarClosure — arquivo do git, conferência e retry SÓ da materialização (E21)', () => {
+  // Incidente: run 43029163344, `tar: Unexpected EOF in archive` no closure `fin-valor-cockpit`,
+  // re-run do mesmo SHA verde. Causa não provada — então o que se prova aqui é o CONTRATO: falha de
+  // materialização é detectada (inclusive a que sai 0), re-tentada UMA vez em diretório novo,
+  // registrada, e persistindo vira Mecanica (exit 2). Nunca closure aprovado sem os arquivos.
+  type Exec = Parameters<typeof materializarClosure>[4];
+  const real: NonNullable<Exec> = (cmd, args, cwd) => {
+    const r = spawnSync(cmd, args, { cwd, encoding: 'utf8' });
+    return { status: r.status, stderr: r.stderr ?? '' };
+  };
+  const ARQS = {
+    'supabase/functions/e1/index.ts': "import { h } from '../_shared/h.ts';\nh();\n",
+    'supabase/functions/_shared/h.ts': `export const h = () => ${'1 + '.repeat(400)}1;\n`,
+  };
+  function repo(): { raiz: string; sha: string } {
+    const raiz = mkdtempSync(join(tmpdir(), 'sonda-mat-'));
+    const g = (...a: string[]) => execFileSync('git', a, { cwd: raiz, encoding: 'utf8' });
+    g('init', '-q'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
+    for (const [p, c] of Object.entries(ARQS)) {
+      mkdirSync(join(raiz, p, '..'), { recursive: true });
+      writeFileSync(join(raiz, p), c);
+    }
+    g('add', '-A'); g('commit', '-qm', 'c1');
+    return { raiz, sha: g('rev-parse', 'HEAD').trim() };
+  }
+  const CAMINHOS = ['supabase/functions/e1', 'supabase/functions/_shared'];
+  /** Exec que sabota só a 1ª chamada de `cmd`, DEPOIS de rodá-la de verdade. */
+  function sabotaPrimeira(cmd: string, depois: (args: string[]) => void): { exec: NonNullable<Exec>; dirs: string[] } {
+    let n = 0; const dirs: string[] = [];
+    const exec: NonNullable<Exec> = (c, args, cwd) => {
+      const r = real(c, args, cwd);
+      if (c === 'tar') dirs.push(args[args.indexOf('-C') + 1]);
+      if (c === cmd && ++n === 1) depois(args);
+      return r;
+    };
+    return { exec, dirs };
+  }
+  const tarDe = (args: string[]) => args[args.indexOf('-o') + 1];
+
+  it('controle: materializa todos os arquivos do sha, sem retry no registro', () => {
+    const { raiz, sha } = repo();
+    const log: string[] = [];
+    try {
+      const dir = materializarClosure('e1', sha, CAMINHOS, raiz, real, (l) => log.push(l));
+      for (const [p, c] of Object.entries(ARQS)) expect(readFileSync(join(dir, p), 'utf8')).toBe(c);
+      expect(log).toEqual([]);
+      rmSync(dir, { recursive: true, force: true });
+    } finally { rmSync(raiz, { recursive: true, force: true }); }
+  });
+
+  it('tar truncado (o EOF do incidente) → registra etapa=extracao e acerta na 2ª, em diretório NOVO', () => {
+    const { raiz, sha } = repo();
+    const log: string[] = [];
+    const { exec, dirs } = sabotaPrimeira('git', (a) => truncateSync(tarDe(a), 700));
+    try {
+      const dir = materializarClosure('e1', sha, CAMINHOS, raiz, exec, (l) => log.push(l));
+      expect(log[0]).toMatch(new RegExp(`tentativa 1/2\\): sha=${sha} etapa=extracao tamanho=700B exit=[1-9]`));
+      expect(log[1]).toContain('OK na tentativa 2/2');
+      expect(dirs).toHaveLength(2);
+      expect(dir).toBe(dirs[1]);
+      expect(dirs[0]).not.toBe(dirs[1]);
+      expect(existsSync(dirs[0])).toBe(false);
+      expect(readFileSync(join(dir, 'supabase/functions/_shared/h.ts'), 'utf8')).toBe(ARQS['supabase/functions/_shared/h.ts']);
+      rmSync(dir, { recursive: true, force: true });
+    } finally { rmSync(raiz, { recursive: true, force: true }); }
+  });
+
+  it('tar sai 0 mas falta arquivo → etapa=conferencia (exit 0 não é prova)', () => {
+    const { raiz, sha } = repo();
+    const log: string[] = [];
+    const { exec } = sabotaPrimeira('tar', (a) => unlinkSync(join(a[a.indexOf('-C') + 1], 'supabase/functions/_shared/h.ts')));
+    try {
+      const dir = materializarClosure('e1', sha, CAMINHOS, raiz, exec, (l) => log.push(l));
+      expect(log[0]).toMatch(/etapa=conferencia .*exit=0 .*h\.ts ausente/);
+      rmSync(dir, { recursive: true, force: true });
+    } finally { rmSync(raiz, { recursive: true, force: true }); }
+  });
+
+  it('tar sai 0 com arquivo cortado → etapa=conferencia pelo TAMANHO do blob', () => {
+    const { raiz, sha } = repo();
+    const log: string[] = [];
+    const { exec } = sabotaPrimeira('tar', (a) => truncateSync(join(a[a.indexOf('-C') + 1], 'supabase/functions/_shared/h.ts'), 10));
+    try {
+      const dir = materializarClosure('e1', sha, CAMINHOS, raiz, exec, (l) => log.push(l));
+      expect(log[0]).toMatch(/etapa=conferencia .*h\.ts com 10B, blob tem \d+B/);
+      rmSync(dir, { recursive: true, force: true });
+    } finally { rmSync(raiz, { recursive: true, force: true }); }
+  });
+
+  it('falha PERSISTENTE → Mecanica com as 2 tentativas registradas (nunca closure aprovado)', () => {
+    const { raiz, sha } = repo();
+    const log: string[] = [];
+    let chamadas = 0;
+    const quebrado: NonNullable<Exec> = (c, args, cwd) => {
+      if (c === 'git') { chamadas++; return { status: 128, stderr: 'fatal: sabotado' }; }
+      return real(c, args, cwd);
+    };
+    try {
+      let erro: unknown = null;
+      try { materializarClosure('e1', sha, CAMINHOS, raiz, quebrado, (l) => log.push(l)); } catch (e) { erro = e; }
+      expect(erro).toBeInstanceOf(Mecanica);
+      expect((erro as Error).message).toMatch(/materialização falhou nas 2 tentativas — sha=\w+ etapa=archive tamanho=—B exit=128 stderr="fatal: sabotado" \| sha=/);
+      expect(chamadas).toBe(2);
+      expect(log).toHaveLength(2);
+    } finally { rmSync(raiz, { recursive: true, force: true }); }
   });
 });
