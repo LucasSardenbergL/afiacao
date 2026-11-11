@@ -1,0 +1,57 @@
+## CREATE TEMP no corpo vivo (nome, ON COMMIT)
+_tp_prod | t
+_tp_base | t
+_tp_emb | t
+_tp_cor | t
+_tp_sku | t
+_skus_novos | t
+_pares | t
+_formulas_latest | t
+_fl_resolved | t
+_fl_culpa | t
+_fl_corrompida | t
+_expand | t
+_preco | t
+_expand_uniq | t
+_eu_incompleta | t
+_eu_pura_contraditoria | t
+_eu_sem_receita | t
+_eu_limpezas | t
+_snap_fonte | t
+_pulados | t
+_promoted | t
+_assinar | t
+## runs por tipo (7 d): n, promovidos, duração do sync, promoção (promovido_em - completed_at), total_records
+catalogs | promovido | 3885 | 839 | 34064 | 59912 | 66
+formulas | promovido | 10 | 1977 | 385812 | 472044 | 66
+keys_snapshot |  | 7 |  |  |  | 0
+## runs por dia (catalogs) e por hora no último dia
+2026-11-11 | catalogs | 215 | 14276
+2026-11-11 | formulas | 1 | 2
+2026-11-11 | keys_snapshot | 1 | 0
+2026-11-10 | catalogs | 235 | 15604
+2026-11-10 | formulas | 2 | 176
+2026-11-10 | keys_snapshot | 1 | 0
+2026-11-09 | catalogs | 590 | 39176
+2026-11-09 | formulas | 2 | 115
+2026-11-09 | keys_snapshot | 1 | 0
+2026-11-08 | catalogs | 695 | 46148
+2026-11-08 | formulas | 2 | 9
+2026-11-08 | keys_snapshot | 1 | 0
+2026-11-07 | catalogs | 695 | 46148
+2026-11-07 | keys_snapshot | 1 | 0
+2026-11-06 | catalogs | 185 | 12284
+## últimos 12 runs promovidos (para casar com janela de contadores)
+11-11 17:24:11 | catalogs | complete | promovido | 1245 | 26 | 0 | 0 | 17:25:08.955
+11-11 17:24:09 | catalogs | complete | promovido | 1062 | 224 | 0 | 0 | 17:24:54.076
+11-11 17:24:08 | catalogs | complete | promovido | 499 | 4 | 0 | 0 | 17:24:38.904
+11-11 17:24:06 | catalogs | complete | promovido | 603 | 57 | 0 | 0 | 17:24:23.915
+11-11 17:24:05 | catalogs | complete | promovido | 935 | 21 | 0 | 0 | 17:24:09.063
+11-11 17:13:59 | formulas | complete | promovido | 1359 | 2 | 1790 | 0 | 17:15:08.109
+11-11 17:13:40 | catalogs | complete | promovido | 1224 | 26 | 0 | 0 | 17:14:37.838
+11-11 17:13:37 | catalogs | complete | promovido | 933 | 224 | 0 | 0 | 17:14:22.994
+11-11 17:13:35 | catalogs | complete | promovido | 815 | 4 | 0 | 0 | 17:14:07.783
+11-11 17:13:32 | catalogs | complete | promovido | 1344 | 57 | 0 | 0 | 17:13:52.784
+11-11 17:13:29 | catalogs | complete | promovido | 1276 | 21 | 0 | 0 | 17:13:38.025
+11-11 17:03:10 | catalogs | complete | promovido | 568 | 26 | 0 | 0 | 17:04:06.890
+#FIM-OK
