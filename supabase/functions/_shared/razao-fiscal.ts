@@ -15,7 +15,7 @@
 const CPF_LIVRE = /(?<![0-9])[0-9]{3}([ ./-]{0,3}[0-9]{3}[ ./-]{0,3})([0-9]{3})([ ./-]{0,3})[0-9]{2}(?![0-9])/g;
 
 /** A forma que a máscara deixa: '***456789**', '***.456.789-**', '*** 456 789 **', no fim ou no meio do nome. */
-export const RAZAO_MASCARADA = /\*\*\*[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}\*\*/;
+const RAZAO_MASCARADA = /\*\*\*[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}[0-9]{3}[ ./-]{0,3}\*\*/;
 
 /** Troca todo CPF do texto pela máscara (dígitos 4 a 9 visíveis), como a SQL faz na entrada do banco. */
 export function razaoSemCpf<T extends string | null | undefined>(razao: T): T {
