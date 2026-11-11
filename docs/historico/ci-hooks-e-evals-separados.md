@@ -22,4 +22,14 @@
   `esperados` velho, job fora do `case` do só-docs, `if` do só-docs ausente → vermelho.
 
 ## Medido
-_preenchido no PR (run do próprio PR)._
+Run do próprio PR (#3837, 43062069811; rodou provas SQL e `mutation-check`, só os não-SQL contam):
+`hooks` **170 s** · `evals-falsificacao` **95 s** (antes: `hooks-e-evals` 277 s no 43059927916).
+O piso não-SQL passou a ser `falsificacao (1)` 244 s (`codex-async 1/2` + 3 alvos).
+
+**Fila:** neste run vários jobs não-SQL esperaram 40–99 s para começar (no #3835: 3–4 s). O run
+disputava runners com 16 partes do `provas-sql` e 3 do `mutation-check` (19–27 min cada), então
+ainda não separa o efeito dos 2 runners da leva — quem decide é a amostra n≥5 de PRs SEM provas SQL.
+
+**Incidente no mesmo run (fora do escopo):** 3 partes do `provas-sql` travaram no `apt-get update` do
+PGDG até o timeout de 25 min (attempt 1); o `tentar` repete a falha mas nenhuma tentativa tem prazo
+próprio, e mirror que TRAVA em vez de falhar segura o job inteiro. Re-run dos falhos passou.
