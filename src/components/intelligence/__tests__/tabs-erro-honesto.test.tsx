@@ -64,7 +64,14 @@ function resposta(table: string): Resposta {
     if (falharScores) return { data: null, error: ERRO_PG };
     if (scoresRevenueAusente) return { data: SCORES_SEM_REVENUE, error: null };
     if (scoresGerencial) return { data: SCORES_GERENCIAL, error: null };
+    if (scoresOperacional) return { data: scoresOperacional, error: null };
     return { data: [], error: null };
+  }
+  if (table === 'farmer_performance_scores') {
+    if (falharPerf) return { data: null, error: ERRO_PG };
+    if (perfComNulo) {
+      return { data: [{ iee_ptpl_usage: 80, iee_objective_adherence: null, iee_questions_usage: 50, iee_bundle_offered: 40, iee_post_call_registration: 90 }], error: null };
+    }
   }
   if (table === 'margin_audit_log' && falharAudit) return { data: null, error: ERRO_PG };
   if (table === 'farmer_recommendations') {
@@ -101,6 +108,12 @@ function chain(table: string): unknown {
   return c;
 }
 
+/** Linhas de `farmer_client_scores` servidas à aba Operacional (null = usa as fixtures acima). */
+let scoresOperacional: unknown[] | null = null;
+let falharPerf = false;
+/** A última pontuação de IEE com um componente ausente. */
+let perfComNulo = false;
+
 /** A margem sai pela RPC `get_scores_margem` desde o fecho da coluna (FU4-F); espelha as linhas servidas. */
 function rpc(fn: string): unknown {
   const c: Record<string, unknown> = { order: () => c, range: () => c };
@@ -125,11 +138,15 @@ vi.mock('@/integrations/supabase/client', () => ({
     functions: { invoke: vi.fn().mockResolvedValue({ data: null, error: null }) },
   },
 }));
+// recharts (ResponsiveContainer, na distribuição de saúde da aba Operacional) exige
+// ResizeObserver, ausente no jsdom. O gráfico em si não é o objeto destes testes.
+globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock('@/lib/analytics', () => ({ captureException: vi.fn(), track: vi.fn() }));
 
 import { IntelligenceManagerialTab } from '../IntelligenceManagerialTab';
 import { IntelligenceStrategicTab } from '../IntelligenceStrategicTab';
+import { IntelligenceOperationalTab } from '../IntelligenceOperationalTab';
 
 // `retry: false` — o retry limitado é config global (App.tsx: retry 2 + backoff); aqui só
 // interessa o ESTADO FINAL de erro, não a política de tentativa.
@@ -163,6 +180,9 @@ beforeEach(() => {
   recoComDesfecho = false;
   margemOculta = false;
   margemC1 = false;
+  scoresOperacional = null;
+  falharPerf = false;
+  perfComNulo = false;
   chamadas = [];
   vi.clearAllMocks();
 });
@@ -279,7 +299,7 @@ describe('IntelligenceStrategicTab — base de scores em voo não vira KPI zerad
     });
 
     expect(screen.queryByText('Concentração Top 20%'), 'KPI de carteira renderizou sem a base').toBeNull();
-    expect(screen.queryByText('Market Share Est.'), 'KPI de carteira renderizou sem a base').toBeNull();
+    expect(screen.queryByText('Margem Bruta Média'), 'KPI de carteira renderizou sem a base').toBeNull();
     expect(
       skeletons(container).length,
       'sem skeleton e sem KPI: a tela não está dizendo nada',
@@ -294,7 +314,7 @@ describe('IntelligenceStrategicTab — base de scores em voo não vira KPI zerad
     renderWithClient(<IntelligenceStrategicTab />);
 
     expect(await screen.findByText('Concentração Top 20%')).toBeTruthy();
-    expect(await screen.findByText('Market Share Est.')).toBeTruthy();
+    expect(await screen.findByText('Margem Bruta Média')).toBeTruthy();
   });
 
   it('LTV e CAC não aparecem: nenhum dos dois é medido (plano v8, C15)', async () => {
@@ -308,6 +328,17 @@ describe('IntelligenceStrategicTab — base de scores em voo não vira KPI zerad
     expect(await screen.findByText('Concentração Top 20%')).toBeTruthy();
     expect(screen.queryByText(/LTV/)).toBeNull();
     expect(screen.queryByText(/CAC/)).toBeNull();
+  });
+
+  it('Market Share não aparece: era clientes ÷ max(clientes × 3, 100), 33,3% fixo (plano v9, C17)', async () => {
+    // CONTROLE no mesmo render: a base resolvida mostra os KPIs de carteira que TÊM fonte.
+    scoresPendentes = false;
+
+    renderWithClient(<IntelligenceStrategicTab />);
+
+    expect(await screen.findByText('Concentração Top 20%')).toBeTruthy();
+    expect(screen.queryByText(/Market Share/)).toBeNull();
+    expect(screen.queryByText(/de ~\d+ clientes/)).toBeNull();
   });
 });
 
@@ -470,5 +501,120 @@ describe('IntelligenceManagerialTab — margem não concedida (sem cap_custo_ler
 
     const linha = screen.getByText(/^f1/).closest('tr')!;
     expect(linha.textContent).toMatch(/35\.0%/);
+  });
+});
+
+/**
+ * Plano v9, C17 (fatia 1) — a aba Operacional não afirma número sem fonte.
+ *
+ * (a) "Margem Própria" e "Ticket Médio" somavam `farmer_calls` (0 linhas em prod, telefonia
+ *     congelada) com `Number(x || 0)`: R$ 0 fixo como fato. Saíram, com a query.
+ * (b) O componente só lia `isLoading`: a falha dos scores virava "0 clientes em risco".
+ * (c) Os agregados saem de `.limit(50)` por prioridade — o top-50, não a carteira (17.002 linhas).
+ *     O rótulo diz isso. O `.limit` FICA (tirá-lo troca o corte de 50 pelo de 1.000).
+ */
+const linhaScore = (i: number, extra: Record<string, unknown> = {}) => ({
+  id: `s${i}`, customer_user_id: `cliente-${String(i).padStart(4, '0')}`, health_score: 50,
+  health_class: 'estavel', priority_score: 10, sales_history_status: 'ok', ...extra,
+});
+
+describe('IntelligenceOperationalTab — KPIs sem fonte e o recorte do top-50 (plano v9, C17)', () => {
+  beforeEach(() => { falharScores = false; });
+
+  it('não mostra Margem Própria nem Ticket Médio e nem consulta farmer_calls', async () => {
+    scoresOperacional = [linhaScore(1), linhaScore(2)];
+    renderWithClient(<IntelligenceOperationalTab />);
+
+    // CONTROLE no mesmo render: os KPIs com fonte aparecem.
+    expect(await screen.findByText('Health Score Médio')).toBeTruthy();
+    expect(screen.queryByText('Margem Própria')).toBeNull();
+    expect(screen.queryByText('Ticket Médio')).toBeNull();
+    expect(screen.queryByText(/R\$/)).toBeNull();
+    expect(chamadas.map(c => c.table)).not.toContain('farmer_calls');
+  });
+
+  it('no limite da leitura, os agregados dizem que são os 50 de maior prioridade', async () => {
+    scoresOperacional = Array.from({ length: 50 }, (_, i) => linhaScore(i));
+    renderWithClient(<IntelligenceOperationalTab />);
+
+    await screen.findByText('Health Score Médio');
+    await waitFor(() => expect(cardDo('Health Score Médio')).toContain('50 clientes de maior prioridade'));
+    expect(cardDo('Priority Score Médio')).toContain('50 clientes de maior prioridade');
+    expect(screen.getByTestId('recorte-distribuicao').textContent).toBe('50 clientes de maior prioridade');
+    expect(screen.getByText(/entre os 50 clientes de maior prioridade/)).toBeTruthy();
+    expect(screen.queryByText(/Carteira/)).toBeNull();
+    // o corte continua: ordenado por prioridade e limitado (a fatia 2 é que troca por agregado)
+    const leitura = chamadas.find(c => c.table === 'farmer_client_scores');
+    expect(leitura?.metodos).toEqual(expect.arrayContaining(['order', 'limit']));
+  });
+
+  it('abaixo do limite, o rótulo diz quantos clientes a leitura trouxe', async () => {
+    scoresOperacional = [linhaScore(1), linhaScore(2), linhaScore(3)];
+    renderWithClient(<IntelligenceOperationalTab />);
+
+    await screen.findByText('Health Score Médio');
+    expect(cardDo('Health Score Médio')).toContain('3 clientes com score');
+    expect(screen.queryByText(/maior prioridade/)).toBeNull();
+  });
+
+  it('health score ausente fica fora da média (não entra como 0)', async () => {
+    scoresOperacional = [linhaScore(1, { health_score: 80 }), linhaScore(2, { health_score: null })];
+    renderWithClient(<IntelligenceOperationalTab />);
+
+    await screen.findByText('Health Score Médio');
+    expect(cardDo('Health Score Médio')).toContain('80.0');
+    expect(cardDo('Health Score Médio')).not.toContain('40.0');
+  });
+
+  it('falha dos scores: alerta e "—", nunca "0 clientes em risco"', async () => {
+    falharScores = true;
+    renderWithClient(<IntelligenceOperationalTab />);
+
+    const aviso = await screen.findByRole('alert');
+    expect(aviso.textContent).toContain('base de scores não pôde ser lida');
+    expect(screen.getByTestId('clientes-em-risco').textContent).toBe('—');
+    expect(cardDo('Health Score Médio')).toContain('—');
+    expect(cardDo('Health Score Médio')).toContain('base indisponível');
+    expect(cardDo('Priority Score Médio')).not.toMatch(/\d/);
+  });
+
+  it('DETECTOR: com a leitura boa, clientes em risco é um número e não há alerta', async () => {
+    scoresOperacional = [linhaScore(1, { health_class: 'critico' }), linhaScore(2)];
+    renderWithClient(<IntelligenceOperationalTab />);
+
+    await screen.findByText('Health Score Médio');
+    expect(screen.getByTestId('clientes-em-risco').textContent).toBe('1');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('refetch que falha com cache: mantém o último dado e avisa que pode estar velho', async () => {
+    scoresOperacional = [linhaScore(1, { health_class: 'critico' })];
+    const { qc } = renderWithClient(<IntelligenceOperationalTab />);
+    await waitFor(() => expect(screen.getByTestId('clientes-em-risco').textContent).toBe('1'));
+    expect(screen.queryByText(/última leitura bem-sucedida/)).toBeNull();
+
+    falharScores = true;
+    await qc.refetchQueries({ queryKey: ['intel-client-scores'] }).catch(() => undefined);
+
+    expect(await screen.findByText(/última leitura bem-sucedida/)).toBeTruthy();
+    expect(screen.getByTestId('clientes-em-risco').textContent).toBe('1');
+  });
+
+  it('falha do IEE é anunciada; componente ausente do IEE é "—", não 0%', async () => {
+    scoresOperacional = [linhaScore(1)];
+    falharPerf = true;
+    const { unmount } = renderWithClient(<IntelligenceOperationalTab />);
+    expect(await screen.findByText(/Índice de Execução Estratégica indisponível/)).toBeTruthy();
+    unmount();
+
+    falharPerf = false;
+    perfComNulo = true;
+    renderWithClient(<IntelligenceOperationalTab />);
+    // CONTROLE: o componente medido mostra o número.
+    expect(await screen.findByText('80%')).toBeTruthy();
+    const aderencia = screen.getByText('Aderência Obj.').parentElement?.textContent ?? '';
+    expect(aderencia).toContain('—');
+    expect(aderencia).not.toContain('0%');
+    expect(screen.queryByText(/Índice de Execução Estratégica indisponível/)).toBeNull();
   });
 });
