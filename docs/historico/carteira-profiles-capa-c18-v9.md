@@ -67,8 +67,8 @@ e a soma cobrindo o universo; falha num lote do meio (erro e `data: null`) decla
 do cálculo.
 
 Falsificação (controle verde em `LC_ALL=C` e `pt_BR.UTF-8` na mesma invocação, uma camada por vez):
-código antigo inteiro → 6 vermelhos; engolir o erro do lote → 2; lote único de 2.000 → 1; engolir o
-erro de `farmer_calls` → 2.
+código antigo inteiro → 7 vermelhos de 8; engolir o erro do lote → 2; lote único de 2.000 → 1;
+engolir o erro de `farmer_calls` → 2; `farmer_calls` fail-closed mas sem paginar → 3.
 
 ## Codex
 
