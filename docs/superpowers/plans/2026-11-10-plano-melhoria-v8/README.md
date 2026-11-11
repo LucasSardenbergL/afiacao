@@ -98,6 +98,20 @@ Os cortes do v5, v6 e v7 continuam valendo.
 | 8 | **E19** e depois **E18** | E18 coordenado com o programa "merge mais rápido" | sessão |
 | — | **Instância Mini** | §5 (vale reler depois do lote 1) | **founder** (painel do Lovable) |
 
+### Estado dos lotes (2026-11-11 ~13:30 UTC)
+
+| Lote | Estado | Evidência | Falta |
+|---|---|---|---|
+| 0 · C16 | 🔄 #3815 mergeado: a recusa por condição ilegível passa a gravar o retrato da tela ([histórico](../../../historico/sayerlack-condicao-ilegivel-c16.md)). Ainda **não** corrige o leitor | ✔ `pendencias:deploy`: `sayerlack-importar-pedido-portal` prod v1.11-confere-portal → main **v1.12-condicao-retrato** (P1) | **Founder:** deploy da edge e importar de novo 2148220 e 2148223. Depois, com o retrato, o conserto definitivo do leitor |
+| 1 · R2 | ✅ #3813 mergeado e **aplicado**: a higiene do cru passa a rodar 1× por ~24 h, e o resto do expurgo segue horário ([histórico](../../../historico/radar-expurgo-rowmark-2026-11-11.md)) | ✔ md5 vivo de `radar_privacidade_expurgo` mudou (`cdb486…` → `477436e7…`); 1 registro em `db_aplicacoes` | Medida do depois numa rodada com limpeza (sessão do Radar, branch `claude/radar-expurgo-medida`) |
+| 2–3 · T1 | ⏸️ | ✔ M1 ainda em 157.039 assinadas (9 runs); nenhum run de fórmulas desde 10/11 17:56. Ritmo de 14 d: 1–2 runs/dia, então os 15 runs que faltam dão ~20/11 ou depois | Reler a query do histórico do T1 |
+| 4 · T2 | ✅ roteiro no #3806 ([runbook](../../../runbooks/tint-staging-vacuum-full.md)) | `VACUUM` comum primeiro, com a ingestão coordenada | **Founder:** rodar o roteiro no SQL Editor |
+| 5 · R1 | ⏸️ **cortado** pela sessão do Radar | O incremental pelo corte "estabelecida" não empata com o recálculo cheio sem um log de alterações por trigger em `radar_empresas`, que é escrita extra na tabela mais pesada | — |
+| 6 · C13–C15 | ✅ #3810 e #3814, no ar ([histórico](../../../historico/estados-honestos-home-shell-inteligencia-v8-lote6.md)) | sessão do lote 6, Publish conferido | — |
+| 7 · D13 | ✅ diagnóstico no #3806 ([histórico](../../../historico/visita-fila-represada-d13-v8.md)) | — | **Founder:** decidir a regra do score de visita |
+| 8 · E19/E18 | 🔄 #3805 (E19) com todos os checks verdes e auto-merge ligado, mas sem mergear | ✔ `validate` SUCCESS 11:45:54 UTC, `mergeStateStatus` CLEAN | Sessão do lote 8 rearma o merge; o E18 segue em experimento |
+| Instância | 🧭 | §5 | **Founder** |
+
 Os lotes 0, 1, 4, 6, 7 e 8 tocam arquivos distintos e são independentes. 2 → 3 rodam em sequência. Antes de cada lote, procurar o artefato na main (`git grep <símbolo> origin/main`) e re-conferir os PRs abertos.
 
 **Quem lê o disco hoje.** Blocos lidos fora do `shared_buffers` (parte vem do cache do SO); medir antes e depois de cada lote:

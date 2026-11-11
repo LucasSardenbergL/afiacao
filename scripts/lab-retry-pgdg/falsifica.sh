@@ -21,6 +21,9 @@ set -u
 L="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 RAIZ_REPO="$(cd "$L/../.." && pwd -P)"
 ORIG="${ALVO:-$RAIZ_REPO/.github/workflows/ci.yml}"
+# O `tentar` mora em scripts/lib/tentar.sh desde o E19 (os steps do shellcheck pinado usam o mesmo
+# helper). S1, S2 e S5 sabotam ESTE arquivo; S3 e S4, os pontos de uso no ci.yml.
+ORIG_TENTAR="${ALVO_TENTAR:-$RAIZ_REPO/scripts/lib/tentar.sh}"
 
 tmpbase="${TMPDIR:-/tmp}"
 TMP="$(mktemp -d "${tmpbase%/}/fals-pgdg.XXXXXX")" || { echo "FALSIFICACAO-VERMELHA: mktemp falhou"; exit 1; }
@@ -38,7 +41,9 @@ falhou() { echo "   ❌ $1"; ruim=$(( ruim + 1 )); }
 passou() { echo "   ✅ $1"; ok=$(( ok + 1 )); }
 
 # ── (2) o alvo sabotado ainda tem de ser YAML valido e bash valido ───────────────────────────────
-confere_forma() {
+confere_forma() { # confere_forma <yml|tentar> <arquivo>
+  if [ "$1" = tentar ]; then bash -n "$2"; return; fi
+  shift
   python3 - "$1" "$TMP/forma.sh" <<'PY'
 import sys, yaml
 d = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
@@ -51,8 +56,8 @@ PY
 }
 
 # ── a sabotagem, com a trava (1) embutida ────────────────────────────────────────────────────────
-sabota() {
-  python3 - "$ORIG" "$TMP/sab.yml" "$1" "$2" <<'PY'
+sabota() { # sabota <origem> <saida> <de> <para>
+  python3 - "$1" "$2" "$3" "$4" <<'PY'
 import sys
 orig, saida, de, para = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 t = open(orig, encoding="utf-8").read()
@@ -69,14 +74,16 @@ PY
 # "o lab caiu". O LIMITE do recorte, dito de frente: uma sabotagem que tambem quebrasse um cenario
 # fora da lista passaria despercebida AQUI — quem cobre isso e' o lab completo, que roda inteiro no
 # controle desta mesma invocacao e no `test:hooks`.
-roda_lab() { ALVO_YML="$1" LC_ALL="$2" LAB_CENARIOS="${3:-C1 C2 C3 C4 C5 C6 C7 C8}" bash "$L/lab.sh" 2>&1; }
+# roda_lab <yml> <tentar> <locale> [cenarios]
+roda_lab() { ALVO_YML="$1" ALVO_TENTAR="$2" LC_ALL="$3" LAB_CENARIOS="${4:-C1 C2 C3 C4 C5 C6 C7 C8}" bash "$L/lab.sh" 2>&1; }
 
 # ── (0) CONTROLE — antes de qualquer sabotagem, na mesma invocacao ───────────────────────────────
 cp "$ORIG" "$TMP/controle.yml"
+cp "$ORIG_TENTAR" "$TMP/controle-tentar.sh"
 for loc in $LOCALES; do
-  SAI="$(roda_lab "$TMP/controle.yml" "$loc")"
+  SAI="$(roda_lab "$TMP/controle.yml" "$TMP/controle-tentar.sh" "$loc")"
   case "$SAI" in
-    *LAB-VERDE*) passou "controle [$loc] — lab verde sobre o ci.yml intacto" ;;
+    *LAB-VERDE*) passou "controle [$loc] — lab verde sobre o ci.yml e o tentar.sh intactos" ;;
     *) echo "   ❌ controle [$loc] — lab NAO esta verde antes de sabotar; sabotar nao provaria nada"
        echo "$SAI" | sed 's/^/      | /' | head -30
        echo "FALSIFICACAO-VERMELHA: sem linha de base"; exit 1 ;;
@@ -86,16 +93,23 @@ done
 # ── as sabotagens ────────────────────────────────────────────────────────────────────────────────
 # Cada uma remove UMA propriedade do retry. `esperados` sao os casos do lab que TEM de ficar ❌;
 # se um deles continuar verde, aquela assercao nao mede a propriedade que diz medir.
-prova() {
-  local nome="$1" de="$2" para="$3" esperados="$4" loc
-  if ! sabota "$de" "$para" 2>"$TMP/erro.txt"; then
-    falhou "$nome — sabotagem invalida: $(head -c 200 "$TMP/erro.txt")"; return
+prova() { # prova <yml|tentar> <nome> <de> <para> <esperados> — sabota UM alvo; o outro segue o controle
+  local alvo="$1" nome="$2" de="$3" para="$4" esperados="$5" loc yml tnt sab
+  yml="$TMP/controle.yml"; tnt="$TMP/controle-tentar.sh"
+  if [ "$alvo" = tentar ]; then
+    sab="$TMP/sab-tentar.sh"; tnt="$sab"
+    sabota "$ORIG_TENTAR" "$sab" "$de" "$para" 2>"$TMP/erro.txt" || {
+      falhou "$nome — sabotagem invalida: $(head -c 200 "$TMP/erro.txt")"; return; }
+  else
+    sab="$TMP/sab.yml"; yml="$sab"
+    sabota "$ORIG" "$sab" "$de" "$para" 2>"$TMP/erro.txt" || {
+      falhou "$nome — sabotagem invalida: $(head -c 200 "$TMP/erro.txt")"; return; }
   fi
-  if ! confere_forma "$TMP/sab.yml" >"$TMP/forma.log" 2>&1; then
+  if ! confere_forma "$alvo" "$sab" >"$TMP/forma.log" 2>&1; then
     falhou "$nome — alvo sabotado nao e YAML/bash valido: $(head -c 200 "$TMP/forma.log")"; return
   fi
   for loc in $LOCALES; do
-    local SAI; SAI="$(roda_lab "$TMP/sab.yml" "$loc" "$esperados")"
+    local SAI; SAI="$(roda_lab "$yml" "$tnt" "$loc" "$esperados")"
     case "$SAI" in
       *LAB-VERMELHO*) ;;
       *) falhou "$nome [$loc] — o lab NAO reprovou (a guarda nao existe)"; continue ;;
@@ -125,17 +139,17 @@ echo "── falsificacao do retry PGDG ──"
 # padroes sao o TEXTO procurado DENTRO do ci.yml, nao variaveis deste script. Expandir escreveria um
 # padrao que nao casa — a trava (1) pegaria, mas so depois de custar uma rodada.
 # S1 — desistir passa a ser VERDE. E o `|| true` que o comentario do step proibe, escrito por dentro.
-prova "S1 'return \$rc' vira 'return 0' (desiste em silencio)" \
-  '                return "$rc"' '                return 0' \
+prova tentar "S1 'return \$rc' vira 'return 0' (desiste em silencio)" \
+  '      return "$rc"' '      return 0' \
   "C5 C6 C7 C8"
 
 # S2 — o teto cai para 1: o laco existe, mas nunca retenta.
-prova "S2 TENTATIVAS=3 vira 1 (nao retenta)" \
-  '          TENTATIVAS=3' '          TENTATIVAS=1' \
+prova tentar "S2 TENTATIVAS=3 vira 1 (nao retenta)" \
+  'TENTATIVAS=3' 'TENTATIVAS=1' \
   "C1 C2 C3 C4"
 
 # S3 — a chamada deixa de ser NUA. O `set -e` para de matar o step e a falha some.
-prova "S3 '|| true' na chamada do curl (mascara a falha)" \
+prova yml "S3 '|| true' na chamada do curl (mascara a falha)" \
   'https://www.postgresql.org/media/keys/ACCC4CF8.asc
             echo "deb' 'https://www.postgresql.org/media/keys/ACCC4CF8.asc || true
             echo "deb' \
@@ -143,7 +157,7 @@ prova "S3 '|| true' na chamada do curl (mascara a falha)" \
 
 # S4 — uma camada perde o retry. E' o teste de ALCANCE: se C3 seguisse verde sem o `tentar`,
 # a assercao dele nao estaria olhando para o install.
-prova "S4 apt-get install volta a ser chamado sem 'tentar' (camada sem retry)" \
+prova yml "S4 apt-get install volta a ser chamado sem 'tentar' (camada sem retry)" \
   '            tentar "apt-get install postgresql-17 + pgvector" sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector' \
   '            sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector' \
   "C3 C7"
@@ -151,8 +165,8 @@ prova "S4 apt-get install volta a ser chamado sem 'tentar' (camada sem retry)" \
 # S5 — some o `|| rc=$?`, o unico ponto onde o `set -e` fica suspenso de proposito. Sem ele o
 # `set -e` mata a funcao na 1a falha e nao existe 2a tentativa: prova que aquela linha e' carga,
 # nao enfeite.
-prova "S5 '\"\$@\" || rc=\$?' vira '\"\$@\"; rc=\$?' (set -e mata na 1a falha)" \
-  '              "$@" || rc=$?' '              "$@"; rc=$?' \
+prova tentar "S5 '\"\$@\" || rc=\$?' vira '\"\$@\"; rc=\$?' (set -e mata na 1a falha)" \
+  '    "$@" || rc=$?' '    "$@"; rc=$?' \
   "C1 C2 C3 C4 C5"
 
 echo ""
