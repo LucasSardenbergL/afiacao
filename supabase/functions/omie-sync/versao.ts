@@ -40,7 +40,9 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 // v1.9 (2026-10-27) — o documento DEVOLVIDO pelo Omie também passa pela gramática estrita (Codex retroativo do #3311).
 // v1.10 (2026-10-27) — buscar_cliente_por_documento: só o EOF do Omie é "não existe"; 503/credencial/timeout falham 500.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.10-busca-transitorio-nao-e-ausencia";
+// v1.11 (2026-11-10) — criar_cliente_afiacao recusa a razão com o CPF mascarado antes do IncluirCliente
+//   (`_shared/razao-fiscal.ts`, migration 20261113090000): o cliente montado do perfil não grava razão errada no ERP.
+export const VERSAO = "v1.11-recusa-razao-mascarada";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

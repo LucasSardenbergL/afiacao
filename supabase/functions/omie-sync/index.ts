@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { lookupDevolveuOMesmoDocumento } from "../_shared/lookup-documento.ts";
+import { exigirRazaoFiscal } from "../_shared/razao-fiscal.ts";
 import { primeiroClientePorDocumento } from "./busca-documento.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
@@ -1125,6 +1126,9 @@ Deno.serve(async (req) => {
               created: false,
             };
           } else {
+            // Razão com o CPF mascarado (o perfil do cliente MEI guarda assim) nunca vira cadastro no ERP. Fica
+            // DEPOIS do lookup: cliente que já existe na conta resolve o código mesmo com a razão mascarada.
+            exigirRazaoFiscal(razao_social);
             // Create the client
             const clienteParams: Record<string, unknown> = {
               codigo_cliente_integracao: `APP_${docClean}_${Date.now()}`,

@@ -45,8 +45,11 @@ export const respostaSonda = criarRespostaSonda("omie-cliente");
  * `v1.7-perfil-placeholder-com-origem` (2026-11-05, C7 do plano v7): o profile que nasce com o
  * placeholder (import e `criar_perfil_local`) sai com `prospect_source = 'omie_import'` — fora da
  * fila de aprovações e do KPI da home. O profile real reaproveitado por documento não muda.
+ *
+ * `v1.8-pre-cadastro-sem-cpf` (2026-11-10): `buscar_por_documento`, chamado antes do login, devolve a
+ * razão social com o CPF do titular de MEI mascarado (`_shared/razao-fiscal.ts`, migration 20261113090000).
  */
-export const VERSAO = "v1.7-perfil-placeholder-com-origem";
+export const VERSAO = "v1.8-pre-cadastro-sem-cpf";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

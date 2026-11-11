@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
+import { razaoSemCpf } from "../_shared/razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { deveReporTelefone, telefoneCompleto, telefoneOmie } from "./telefone.ts";
 import { deveInterromperPagina, podeIniciarPagina } from "./orcamento.ts";
@@ -796,11 +797,12 @@ Deno.serve(async (req) => {
 
         const { cliente, cnpjData } = await buscarClientePorDocumento(documento);
 
-        // Pre-signup: retorna apenas {existe, razao_social} (sem PII)
+        // Pre-signup: retorna apenas {existe, razao_social}, com o CPF do titular de MEI mascarado (quem chama
+        // ainda não fez login; a razão de MEI termina no CPF)
         if (cliente) {
-          result = { existe: true, razao_social: cliente.razao_social ?? null };
+          result = { existe: true, razao_social: razaoSemCpf(cliente.razao_social ?? null) };
         } else if (cnpjData) {
-          result = { existe: false, razao_social: cnpjData.nome ?? null };
+          result = { existe: false, razao_social: razaoSemCpf(cnpjData.nome ?? null) };
         } else {
           result = { existe: false, razao_social: null };
         }
