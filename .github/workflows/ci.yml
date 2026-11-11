@@ -180,6 +180,10 @@ concurrency:
 jobs:
   # ─── Job 1/4 — typecheck (medido: ~53s) ─────────────────────────────────────
   typecheck:
+    # Escopo só-docs (docs/historico/ci-escopo-so-docs.md): pula SÓ com o escopo `success` dizendo
+    # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
+    needs: docs-escopo
+    if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -247,6 +251,10 @@ jobs:
   # dividisse runner com ele só o empurraria para cima. É também o step que mais
   # cresce — `bun run test` é O(nº de arquivos de teste).
   testes:
+    # Escopo só-docs (docs/historico/ci-escopo-so-docs.md): pula SÓ com o escopo `success` dizendo
+    # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
+    needs: docs-escopo
+    if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -315,6 +323,10 @@ jobs:
   # junto por serem contíguos na ordem original e baratos (25s + 22s) — cabem à sombra
   # do `testes` sem alongar o caminho crítico.
   edges-e-build:
+    # Escopo só-docs (docs/historico/ci-escopo-so-docs.md): pula SÓ com o escopo `success` dizendo
+    # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
+    needs: docs-escopo
+    if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 12
     permissions:
@@ -560,6 +572,10 @@ jobs:
   # empatados no caminho crítico dos PRs sem provas SQL. Mesmo comando, mesmo ambiente
   # (fetch-depth 0 para o `git archive` dos closures, bun, deno); DENTRO do `validate.needs`.
   sonda-cron-prova:
+    # Escopo só-docs (docs/historico/ci-escopo-so-docs.md): pula SÓ com o escopo `success` dizendo
+    # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
+    needs: docs-escopo
+    if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 12
     permissions:
@@ -587,10 +603,8 @@ jobs:
       # PROVA da allowlist da sonda por cron: cobertura do manifesto (todo closure histórico de cada
       # edge da allowlist, na identidade de harness E de `desde` atuais) + G1 (ramo dentro do bloco
       # OPTIONS) + G3 (o relé só emite OPTIONS, medindo a VARIÁVEL que passou pela barreira) + G4
-      # (o espelho no banco ⊆ allowlist) + o sentinela do stripper. O `--gate` re-executa TODO
-      # closure, de propósito (veredito fresco + MANIFESTO ADULTERADO) — custo medido e não cortado
-      # em docs/historico/deploy-redundante-ledger-e-cron-de-sonda.md §8. Exit 2 é MECÂNICA (git
-      # raso, deno ausente), que nunca é "tudo limpo".
+      # (o espelho no banco ⊆ allowlist) + o sentinela do stripper. Re-executa o que mudou; exit 2
+      # é MECÂNICA (git raso, deno ausente), que nunca é "tudo limpo".
       - name: Sonda por cron — prova por execução de cada closure histórico (G1/G3/G4)
         run: bun run sonda:cron-prova -- --gate
 
@@ -600,6 +614,10 @@ jobs:
   # shellcheck PINADO (`test-shellcheck-gate.sh` roda dentro do `test:hooks`) —, mesmos comandos,
   # DENTRO do `validate.needs`. O porquê de cada step está no comentário dele, abaixo.
   hooks-e-evals:
+    # Escopo só-docs (docs/historico/ci-escopo-so-docs.md): pula SÓ com o escopo `success` dizendo
+    # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
+    needs: docs-escopo
+    if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -662,6 +680,10 @@ jobs:
         run: bun run evals:deploy-verify:falsificacao
 
   gates-e-falsificacao:
+    # Escopo só-docs (docs/historico/ci-escopo-so-docs.md): pula SÓ com o escopo `success` dizendo
+    # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
+    needs: docs-escopo
+    if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
     runs-on: ubuntu-latest
     # 15 → 25 (2026-09-25): em 58 runs, p50 707s · p90 808s · pior 841s = 93% do teto ANTES das
     # 2 sabotagens novas do codex-async (~+85s; runner lento ~+110s) — com 15, 9–18% dos runs
@@ -998,6 +1020,10 @@ jobs:
   # `fecho-edges-pendentes` (263 s) ficou numa fatia só dele, que é o novo piso.
   # `falsificacao-cobertura.test.ts` prova que as partes 1..N estão todas aqui.
   falsificacao:
+    # Escopo só-docs (docs/historico/ci-escopo-so-docs.md): pula SÓ com o escopo `success` dizendo
+    # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
+    needs: docs-escopo
+    if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
     runs-on: ubuntu-latest
     # Fatia maior ~6 min medida (5,8 de alvos + preâmbulo); 15 deixa ~2,5× de folga e segue acima
     # do pior alvo isolado. Timeout é ausência de dado (docs/historico/timeout-de-job-e-ausencia-de-dado.md).
@@ -1092,6 +1118,79 @@ jobs:
   # o último run da main com provas e união `success` e exige que o SHA dele seja ANCESTRAL do
   # `github.sha` deste run (`git merge-base --is-ancestor`), com o diff cumulativo entre os dois. Em
   # PR fica o raso, que é o caminho crítico quando as provas rodam. `actions: read` é para essa busca.
+  # Escopo SÓ-DOCS (docs/historico/ci-escopo-so-docs.md). PR cujo diff inteiro é `docs/**/*.md` não
+  # paga os 7 jobs não-SQL (~2.400 s de runner e 264–434 s de parede por run, medidos): eles não leem
+  # docs/, salvo 5 gates e 6 testes vitest, que o `docs-gates` abaixo roda. Fail-CLOSED: roda em
+  # TODO evento e só diz `so_docs=true` em pull_request com diff legível, não-vazio e 100% na
+  # allowlist; o resto (main, erro, `.mjs`/`.sh` em docs/, CLAUDE.md) diz `false` e tudo roda. A rede
+  # é a main: fora de PR os 7 jobs rodam integralmente. Step OPACO pelo mesmo motivo do
+  # `provas-sql-escopo` — decide escopo, não reprova conteúdo.
+  docs-escopo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    outputs:
+      so_docs: ${{ steps.escopo.outputs.so_docs }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # O evento entra por `env:`, nunca `${{ }}` cru no `run:` (script injection).
+      - name: O diff do PR é só docs/**/*.md?
+        id: escopo
+        env:
+          EVENTO: ${{ github.event_name }}
+        run: bun ./scripts/docs-escopo.ts --evento "$EVENTO"
+
+  # Roda SÓ quando o escopo pulou os 7 jobs: os gates que leem docs/ (mapa de 2026-11-11) e o vitest
+  # sobre o superconjunto dos testes que citam ou leem docs/ (`scripts/docs-escopo.ts --testes`).
+  # Os nomes de script repetem os do `gates-e-falsificacao`, que vem antes no arquivo e é o dono no
+  # censo do `gates:frescura` (que deduplica por nome).
+  docs-gates:
+    needs: docs-escopo
+    if: ${{ needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: CLAUDE.md size budget
+        run: bun run claude:size
+
+      - name: Docs índice gate (nenhum doc invisível)
+        run: bun run docs:indice
+
+      - name: Docs citações gate (arquivo:linha ainda aponta pro que diz)
+        run: bun run docs:citacoes
+
+      - name: Docs links gate (link relativo de .md resolve)
+        run: bun run docs:links
+
+      - name: Frescura do manual (CLAUDE.md <-> ci.yml/hooks, dois sentidos)
+        run: bun run gates:frescura
+
+      - name: Testes vitest que citam ou leem docs/
+        run: bun ./scripts/docs-escopo.ts --testes
+
   provas-sql-escopo:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1664,7 +1763,7 @@ jobs:
   # Fora do `needs` do `validate` de propósito: pulado (o caso verde) não é veredito de nada.
   # Só `pull_request`: o pós-merge (dispatch do auto-merge.yml), push e cron não mudam.
   fail-fast:
-    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks-e-evals, falsificacao]
+    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks-e-evals, falsificacao, docs-gates]
     if: ${{ failure() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -1685,7 +1784,7 @@ jobs:
 
   validate:
     if: always()
-    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks-e-evals, falsificacao, provas-sql-escopo, provas-sql, provas-sql-uniao]
+    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks-e-evals, falsificacao, docs-escopo, docs-gates, provas-sql-escopo, provas-sql, provas-sql-uniao]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue. actions:read p/ revalidar, pela
@@ -1708,7 +1807,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          esperados=10
+          esperados=12
           total=0; falhou=0; viu_provas_sql=0; viu_uniao=0; viu_falsificacao=0; viu_escopo=0
           # O ÚNICO skipped aceito: `provas-sql` e `provas-sql-uniao` pulados porque o escopo DISSE que
           # o diff não alcança nada que as provas leem. Sempre com o escopo em `success` e `roda`
@@ -1725,6 +1824,22 @@ jobs:
           # exige que seja deste PR (branch e repo), concluído, com TODAS as partes e a união
           # `success`. Erro nessa leitura reprova — aqui já não há como rodar as provas puladas.
           escopo_pulou=0
+          # Escopo só-docs: os 7 pesados só podem vir `skipped` com o escopo `success` dizendo
+          # `so_docs=true` num PR; o `docs-gates` só pode vir `skipped` com o escopo `success` dizendo
+          # outra coisa (aí os 7 rodaram e respondem por si). Com `so_docs=true` o `docs-gates` cai no
+          # laço como qualquer job: só `success` passa — por isso ele não é repetido no `docs_pulou`; e o
+          # próprio `docs-escopo` também (falho = ❌ no laço), por isso o resultado dele só vai ao log.
+          docs_resultado="$(printf '%s' "$RESULTADOS" | jq -r '.["docs-escopo"].result // ""')"
+          docs_so="$(printf '%s' "$RESULTADOS" | jq -r '.["docs-escopo"].outputs.so_docs // ""')"
+          docs_gates="$(printf '%s' "$RESULTADOS" | jq -r '.["docs-gates"].result // ""')"
+          docs_pulou=0; docs_gates_dispensado=0; viu_docs_escopo=0; viu_docs_gates=0
+          if [ "$EVENTO" = pull_request ] && [ "$docs_so" = true ]; then
+            docs_pulou=1
+          fi
+          if [ "$docs_so" != true ]; then
+            docs_gates_dispensado=1
+          fi
+          echo "  escopo só-docs: evento=$EVENTO resultado=${docs_resultado:-<vazio>} so_docs=${docs_so:-<vazio>} docs-gates=${docs_gates:-<vazio>} → pulou_pesados=$docs_pulou"
           escopo_resultado="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].result // ""')"
           escopo_roda="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.roda // ""')"
           escopo_base="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.base // ""')"
@@ -1765,8 +1880,15 @@ jobs:
             [ "$job" = "provas-sql-uniao" ] && viu_uniao=1
             [ "$job" = "falsificacao" ] && viu_falsificacao=1
             [ "$job" = "provas-sql-escopo" ] && viu_escopo=1
+            [ "$job" = "docs-escopo" ] && viu_docs_escopo=1
+            [ "$job" = "docs-gates" ] && viu_docs_gates=1
             if [ "$resultado" = "success" ]; then
               echo "  ✅ $job: success"
+            elif [ "$resultado" = skipped ] && [ "$docs_pulou" -eq 1 ] \
+                 && case "$job" in typecheck|testes|edges-e-build|sonda-cron-prova|gates-e-falsificacao|hooks-e-evals|falsificacao) true ;; *) false ;; esac; then
+              echo "  ⏭️ $job: skipped pelo escopo só-docs (o docs-gates rodou os gates e testes que leem docs/)"
+            elif [ "$resultado" = skipped ] && [ "$docs_gates_dispensado" -eq 1 ] && [ "$job" = docs-gates ]; then
+              echo "  ⏭️ $job: skipped (o PR não é só docs — os 7 jobs rodaram)"
             elif [ "$resultado" = skipped ] && [ "$escopo_pulou" -eq 1 ] \
                  && { [ "$job" = provas-sql ] || [ "$job" = provas-sql-uniao ]; }; then
               if [ "$escopo_modo" = recibo ]; then
@@ -1811,6 +1933,10 @@ jobs:
           fi
           # E para o escopo das provas: sem ele no `needs`, o `escopo_pulou` acima leria saída vazia — e
           # reprovaria, que é o lado seguro; a guarda dá o nome certo ao defeito.
+          if [ "$viu_docs_escopo" -ne 1 ] || [ "$viu_docs_gates" -ne 1 ]; then
+            echo "::error::'docs-escopo' e 'docs-gates' precisam estar entre os $total lidos — ninguém justificaria um job pesado pulado."
+            exit 1
+          fi
           if [ "$viu_escopo" -ne 1 ]; then
             echo "::error::o job 'provas-sql-escopo' não está entre os $total lidos — ninguém justifica um provas-sql pulado."
             exit 1
