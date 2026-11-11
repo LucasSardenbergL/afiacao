@@ -333,7 +333,7 @@ Deno.test("script do Browserless parseia e embute as funções de página do _sh
   const code = String((envios[0].corpo as { code: string }).code);
   const fn = new Function(code.trim().replace(/^export default /, "return "))();
   igual(typeof fn, "function", "o módulo exporta a função");
-  for (const nome of ["aplicarFiltrosConsultaDom", "clicarFiltrarDom", "lerTabelaConsultaDom", "lerCondicaoSelecionadaDom", "lerCondicoesOpcoesDom", "diagnosticarCondicaoDom"]) {
+  for (const nome of ["aplicarFiltrosConsultaDom", "clicarFiltrarDom", "lerTabelaConsultaDom", "lerCondicaoSelecionadaDom", "lerCondicoesOpcoesDom", "diagnosticarCondicaoDom", "clicarDetalhePedidoDom"]) {
     igual(code.includes(`function ${nome}(`), true, `embute ${nome}`);
   }
 });

@@ -184,6 +184,27 @@ export function aplicarFiltrosConsultaDom(
 }
 
 /**
+ * Abre a tela de DETALHE pelo link do nº do pedido na linha da Consulta (`<a href=".../order-creation-form-edit/<nº>/
+ * route/order-viewer">`), o mesmo clique que o founder faz. É GET, só leitura. O `goto` direto para essa URL não chega
+ * ao detalhe no Browserless (11/11: `condicoes_opcoes` vazio em 100% das leituras, e no Chrome logado o select está
+ * lá). Casa o href pelo FIM com o nº entre barras, nunca por prefixo (2148220 ≠ 21482201). `false` = link ausente.
+ */
+export function clicarDetalhePedidoDom(protocolo: string): boolean {
+  // deno-lint-ignore no-explicit-any
+  const g: any = globalThis;
+  const document = g.document;
+  const alvo = "/order-creation-form-edit/" + String(protocolo) + "/route/order-viewer";
+  // deno-lint-ignore no-explicit-any
+  const a: any = Array.from(document.querySelectorAll("a[href]")).find((x: any) => {
+    const h = String(x.getAttribute("href") || "").split("?")[0];
+    return h.endsWith(alvo);
+  });
+  if (!a) return false;
+  a.click();
+  return true;
+}
+
+/**
  * Texto da condição de pagamento SELECIONADA na tela de detalhe (`#condicoes_pagamento`, ex. "70 - 7 DIAS").
  * `false` enquanto não há seleção legível (vazio ou "Selecione"): é o predicado do `waitForFunction`.
  */

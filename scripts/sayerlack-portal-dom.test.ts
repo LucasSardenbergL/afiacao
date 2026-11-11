@@ -32,6 +32,7 @@ const clicarFiltrarDom = viaTexto(dom.clicarFiltrarDom);
 const clicarProximaPaginaDom = viaTexto(dom.clicarProximaPaginaDom);
 const lerCondicaoSelecionadaDom = viaTexto(dom.lerCondicaoSelecionadaDom);
 const lerCondicoesOpcoesDom = viaTexto(dom.lerCondicoesOpcoesDom);
+const clicarDetalhePedidoDom = viaTexto(dom.clicarDetalhePedidoDom);
 const lerSituacoesDom = viaTexto(dom.lerSituacoesDom);
 const lerTabelaConsultaDom = viaTexto(dom.lerTabelaConsultaDom);
 const lerTodasAsPaginas = viaTexto(dom.lerTodasAsPaginas);
@@ -269,6 +270,33 @@ describe("filtros e situações", () => {
   it("lê as situações oferecidas pelo portal (valor + texto)", () => {
     expect(lerSituacoesDom()).toContainEqual({ valor: "6", texto: "6 - Cancelado" });
     expect(lerSituacoesDom()).toHaveLength(5);
+  });
+});
+
+describe("consulta → detalhe pelo link do nº (v1.12)", () => {
+  beforeEach(() => carregar("consulta-pedidos.html"));
+
+  it("clica no link do nº EXATO na linha da consulta", () => {
+    const cliques: string[] = [];
+    document.querySelectorAll("a[href]").forEach((a) =>
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        cliques.push(a.getAttribute("href")!);
+      }),
+    );
+    expect(clicarDetalhePedidoDom("2141200")).toBe(true);
+    expect(cliques).toEqual(["/order-creation-form-edit/2141200/route/order-viewer"]);
+  });
+
+  it("nº que só é PREFIXO de outro não casa (214060 ≠ 2140603): false, nenhum clique", () => {
+    let clicou = false;
+    document.querySelectorAll("a[href]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); clicou = true; }));
+    expect([clicarDetalhePedidoDom("214060"), clicarDetalhePedidoDom("140603"), clicou]).toEqual([false, false, false]);
+  });
+
+  it("o link no nº não muda a leitura da tabela (o texto da célula segue o nº)", () => {
+    const p = lerTabelaConsultaDom();
+    expect(p.ok && p.linhas.map((l) => l["Pedido"])).toEqual(["2140603", "2141200"]);
   });
 });
 
