@@ -353,7 +353,8 @@ jobs:
       # O pin do deno tem 4 ocorrências (esta; o job `falsificacao` — cujo `test:falsificacao`
       # chama `sonda-cron-prova.ts`, que faz `spawnSync('deno')`; o `gates-e-falsificacao`, de onde
       # a falsificação saiu em 2026-10-02; e o `mutation-check`, que roda contrato .mut de edge) —
-      # bump alinha as quatro.
+      # bump alinha as quatro. Desde 2026-11-11, mais duas: `sonda-cron-prova` e `hooks-e-evals`,
+      # que saíram deste job e do `gates-e-falsificacao` com o mesmo ambiente.
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
@@ -383,13 +384,8 @@ jobs:
       - name: Sonda por cron — rollback para bundle velho fica em ZERO efeito (Deno, offline)
         run: bun run test:sonda-rollback
 
-      # PROVA da allowlist da sonda por cron: cobertura do manifesto (todo closure histórico de cada
-      # edge da allowlist, na identidade de harness E de `desde` atuais) + G1 (ramo dentro do bloco
-      # OPTIONS) + G3 (o relé só emite OPTIONS, medindo a VARIÁVEL que passou pela barreira) + G4
-      # (o espelho no banco ⊆ allowlist) + o sentinela do stripper. Re-executa o que mudou; exit 2
-      # é MECÂNICA (git raso, deno ausente), que nunca é "tudo limpo".
-      - name: Sonda por cron — prova por execução de cada closure histórico (G1/G3/G4)
-        run: bun run sonda:cron-prova -- --gate
+      # A PROVA da allowlist da sonda por cron (`sonda:cron-prova -- --gate`) saiu daqui para o
+      # job `sonda-cron-prova` (2026-11-11): eram 223 dos 361 s deste job.
 
       # Type-check das EDGE FUNCTIONS — blocking. Buraco que ficou aberto mesmo depois do
       # `test:edges` acima: `deno test` só type-checa o grafo que os TESTES alcançam, e por desenho
@@ -549,6 +545,110 @@ jobs:
   #     vermelho de mecânica em todo PR.
   # O nome do job ficou por compatibilidade (é citado em docs/ e nos gates); a falsificação mora no
   # job `falsificacao`, logo abaixo.
+  # ─── Sonda por cron em job próprio (2026-11-11) ─────────────────────────────────────────────
+  # Saiu do `edges-e-build`, onde levava 223 dos 361 s (run 42950648837) e fazia dele um dos jobs
+  # empatados no caminho crítico dos PRs sem provas SQL. Mesmo comando, mesmo ambiente
+  # (fetch-depth 0 para o `git archive` dos closures, bun, deno); DENTRO do `validate.needs`.
+  sonda-cron-prova:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      # O pin do deno segue o do `edges-e-build` (ver o ⚠️ de lá) — bump alinha todos.
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.9.2
+
+      # PROVA da allowlist da sonda por cron: cobertura do manifesto (todo closure histórico de cada
+      # edge da allowlist, na identidade de harness E de `desde` atuais) + G1 (ramo dentro do bloco
+      # OPTIONS) + G3 (o relé só emite OPTIONS, medindo a VARIÁVEL que passou pela barreira) + G4
+      # (o espelho no banco ⊆ allowlist) + o sentinela do stripper. Re-executa o que mudou; exit 2
+      # é MECÂNICA (git raso, deno ausente), que nunca é "tudo limpo".
+      - name: Sonda por cron — prova por execução de cada closure histórico (G1/G3/G4)
+        run: bun run sonda:cron-prova -- --gate
+
+  # ─── Hooks guard tests + falsificação dos evals em job próprio (2026-11-11) ─────────────────
+  # Saíram do `gates-e-falsificacao`: `test:hooks` 136 s + `evals:deploy-verify:falsificacao` 68 s
+  # eram 2/3 dele (316 s, run 42950648837). Mesmo ambiente do job de origem — bun, deno e o
+  # shellcheck PINADO (`test-shellcheck-gate.sh` roda dentro do `test:hooks`) —, mesmos comandos,
+  # DENTRO do `validate.needs`. O porquê de cada step está no comentário dele, abaixo.
+  hooks-e-evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.9.2
+
+      # O porquê do pin está no mesmo passo do `gates-e-falsificacao`.
+      - name: shellcheck pinado 0.11.0 (o runner traz 0.9.0)
+        run: |
+          set -euo pipefail
+          ver=v0.11.0
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/${ver}/shellcheck-${ver}.linux.x86_64.tar.xz" | tar -xJ
+          sudo install -m 0755 "shellcheck-${ver}/shellcheck" /usr/local/bin/shellcheck
+          rm -rf "shellcheck-${ver}"
+          instalada=$(shellcheck --version | awk '/^version:/{print $2}')
+          [ "$instalada" = "0.11.0" ] || { echo "::error::shellcheck instalado=$instalada, esperado 0.11.0"; exit 1; }
+          echo "shellcheck pinado e conferido: $instalada"
+
+      # Guards de PreToolUse (colisão multi-sessão, comando destrutivo, imutabilidade de migration):
+      # cada um tem suíte HERMÉTICA (sem rede) em scripts/test-*-guard.sh — os de colisão stubam
+      # git/gh num mktemp; os demais não saem do processo (só passam strings ao hook) ou montam um
+      # repo git temporário com `git init`.
+      # Os DOIS laços do `test:hooks` são a ÚNICA coisa que roda essas suítes — script fora deles é
+      # teste órfão, e teste que não roda é ausência de dado, não aprovação: o guard regride em
+      # silêncio. Ao criar um scripts/test-<x>.sh (com ou sem sufixo -guard), ACRESCENTE <x> ao laço
+      # correspondente no package.json. Quem cobra isso é scripts/hooks-guard-cobertura.test.ts, que
+      # lê os dois laços e cobra TODO scripts/test-*.sh; a única saída é a baseline explícita de
+      # scripts/hooks-suites-baseline.ts (hoje só a família `heavy`, que é macOS-only), com
+      # burn-down obrigatório.
+      - name: Hooks guard tests
+        # sem `heavy` aqui: o semáforo de RAM é da M2 local e nao existe no runner (exit 127).
+        run: bun run test:hooks
+
+      # Falsificação dos evals da skill lovable-deploy-verify — blocking. Os evals em si (o step
+      # "Evals da skill lovable-deploy-verify") ficam no `gates-e-falsificacao`: aquele prova que a
+      # skill faz o que os evals dizem; ESTE sabota a skill (20 sabotagens: fechamento transitivo,
+      # fonte precache, guard de exclusividade, sonda do 2º emissor, gabarito do classify) e exige
+      # que cada eval fique VERMELHO. Sem ele um PR afrouxa as asserções e o step de lá segue
+      # verde — teatro. As sabotagens são feitas em CÓPIAS dentro do mktemp do harness; o script
+      # versionado nunca é mutado, então não há resíduo. DENTRO do `validate` (via `needs`) pelo
+      # motivo medido no #1947: fora dele, o merge aconteceria antes deste terminar.
+      - name: Falsificação — sabota a skill e EXIGE vermelho em cada eval
+        run: bun run evals:deploy-verify:falsificacao
+
   gates-e-falsificacao:
     runs-on: ubuntu-latest
     # 15 → 25 (2026-09-25): em 58 runs, p50 707s · p90 808s · pior 841s = 93% do teto ANTES das
@@ -651,20 +751,7 @@ jobs:
       - name: CLAUDE.md size budget
         run: bun run claude:size
 
-      # Guards de PreToolUse (colisão multi-sessão, comando destrutivo, imutabilidade de migration):
-      # cada um tem suíte HERMÉTICA (sem rede) em scripts/test-*-guard.sh — os de colisão stubam
-      # git/gh num mktemp; os demais não saem do processo (só passam strings ao hook) ou montam um
-      # repo git temporário com `git init`.
-      # Os DOIS laços do `test:hooks` são a ÚNICA coisa que roda essas suítes — script fora deles é
-      # teste órfão, e teste que não roda é ausência de dado, não aprovação: o guard regride em
-      # silêncio. Ao criar um scripts/test-<x>.sh (com ou sem sufixo -guard), ACRESCENTE <x> ao laço
-      # correspondente no package.json. Quem cobra isso é scripts/hooks-guard-cobertura.test.ts, que
-      # lê os dois laços e cobra TODO scripts/test-*.sh; a única saída é a baseline explícita de
-      # scripts/hooks-suites-baseline.ts (hoje só a família `heavy`, que é macOS-only), com
-      # burn-down obrigatório.
-      - name: Hooks guard tests
-        # sem `heavy` aqui: o semáforo de RAM é da M2 local e nao existe no runner (exit 127).
-        run: bun run test:hooks
+      # `Hooks guard tests` (`test:hooks`) saiu para o job `hooks-e-evals` (2026-11-11).
 
       # Evals da skill lovable-deploy-verify — blocking. A skill decide se um Publish está NO AR
       # (Passo 4, verify-frontend.sh) e quais das 3 camadas de deploy um diff exige (Passo 1,
@@ -693,33 +780,8 @@ jobs:
         # sem `heavy` aqui: o semáforo de RAM é da M2 local e nao existe no runner (exit 127).
         run: bun run evals:deploy-verify
 
-      # Falsificação dos evals acima — blocking, e o step anterior NÃO a cobre. Aquele prova que a
-      # skill faz o que os evals dizem; ESTE sabota a skill (20 sabotagens: fechamento transitivo,
-      # fonte precache, guard de exclusividade, sonda do 2º emissor, gabarito do classify) e exige
-      # que cada eval fique VERMELHO. Sem ele um PR afrouxa as asserções e o step de cima segue
-      # verde — teatro. As sabotagens são feitas em CÓPIAS dentro do mktemp do harness; o script
-      # versionado nunca é mutado (conferido: árvore limpa depois do run), então não há resíduo.
-      #
-      # DENTRO do `validate`, não em job próprio — é a mesma escolha já medida no #1947 logo acima,
-      # e vale igual aqui: `validate` é o único check required e o auto-merge só espera os required,
-      # então em job separado o merge acontece ANTES deste terminar (vermelho depois do merge que
-      # ninguém lê — classe do gate de dead-code do #1212). Tornar o job separado required também
-      # não serve: exigiria mudar branch protection fora do repo e, com `paths:`, o check nunca
-      # reporta quando o filtro não casa e o PR fica pendente pra sempre.
-      #
-      # O custo de blast-radius que um gate compartilhado costuma ter está INVERTIDO aqui: estes
-      # evals não leem `src/`, `package.json`, `node_modules` (usam cwd neutro de propósito) nem a
-      # rede, então PR de produto não consegue deixá-los vermelhos — só PR que toca a própria
-      # skill, que é exatamente quando devem barrar. Custo REAL no runner, medido no primeiro run
-      # depois do #2041 (run 32983531687): 2s + 2s, contra `validate` em 570s — 0,7% do job.
-      # A medição LOCAL não previa isso e não devia mesmo (lição do #1947): nesta M2 o mesmo
-      # comando variou de 6s a 70s conforme a carga (~30 worktrees), e o `bun run` não era o
-      # culpado (bash direto deu 70s no instante em que o `bun run` deu 45s). O erro de projetar
-      # daqui é de UMA ORDEM DE GRANDEZA, e para o lado caro — quem estimar custo de CI pela M2
-      # vai recusar gate barato. Se um dia apertar o timeout de 15min do job, o corte certo é a
-      # fixture, não a cobertura.
-      - name: Falsificação — sabota a skill e EXIGE vermelho em cada eval
-        run: bun run evals:deploy-verify:falsificacao
+      # A falsificação destes evals (`evals:deploy-verify:falsificacao`) saiu para o job
+      # `hooks-e-evals` (2026-11-11), com o porquê de ela ser blocking.
 
       # Anti-regressão de gate de autorização em RPCs SECURITY DEFINER sensíveis (custo/preço/
       # estoque). Mata o padrão "CREATE OR REPLACE derrubou o gate" — 3 ocorrências (5 views #1246,
@@ -908,6 +970,14 @@ jobs:
   # fonte própria (o laço expandido), e entram na matriz como `dispensados` com o motivo: são
   # fatias do `test:falsificacao`, medido em 8 linhas — a união delas É a invocação medida.
   # O nome do job fica `falsificacao`: é o que o `validate` exige por identidade (`viu_falsificacao`).
+  #
+  # ─── 5 fatias, com o `codex-async` PARTIDO em 2 (2026-11-11) ────────────────────────────────
+  # Com as provas SQL a ~8 min (#3804), os PRs SEM provas passaram a esperar por este job: fatias
+  # de 381/356/335 s (run 42950648837). Mais fatias sozinhas não baixavam o piso — o `codex-async`
+  # levava 330 s num alvo só. Ele agora roda `--falsificar 1/2` e `2/2` em runners diferentes
+  # (controle inteiro em cada um; sabotagens por resto da divisão, ver o cabeçalho da suíte), e o
+  # `fecho-edges-pendentes` (263 s) ficou numa fatia só dele, que é o novo piso.
+  # `falsificacao-cobertura.test.ts` prova que as partes 1..N estão todas aqui.
   falsificacao:
     runs-on: ubuntu-latest
     # Fatia maior ~6 min medida (5,8 de alvos + preâmbulo); 15 deixa ~2,5× de folga e segue acima
@@ -916,7 +986,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        parte: [1, 2, 3]
+        parte: [1, 2, 3, 4, 5]
     permissions:
       contents: read
 
@@ -982,6 +1052,12 @@ jobs:
       - name: Falsificação (fatia 3) — sabota o alvo e EXIGE vermelho em cada regra
         if: matrix.parte == 3
         run: bun run test:falsificacao:3
+      - name: Falsificação (fatia 4) — sabota o alvo e EXIGE vermelho em cada regra
+        if: matrix.parte == 4
+        run: bun run test:falsificacao:4
+      - name: Falsificação (fatia 5) — sabota o alvo e EXIGE vermelho em cada regra
+        if: matrix.parte == 5
+        run: bun run test:falsificacao:5
 
   # Escopo do `provas-sql` (ver o bloco ESCOPO logo abaixo). `fetch-depth: 2` pelo mesmo motivo do
   # `mutcheck-escopo`: com os dois pais do merge commit na árvore, `pai 1 → HEAD` é o que o PR muda.
@@ -1599,7 +1675,7 @@ jobs:
   # Fora do `needs` do `validate` de propósito: pulado (o caso verde) não é veredito de nada.
   # Só `pull_request`: o pós-merge (dispatch do auto-merge.yml), push e cron não mudam.
   fail-fast:
-    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, falsificacao]
+    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks-e-evals, falsificacao]
     if: ${{ failure() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -1620,7 +1696,7 @@ jobs:
 
   validate:
     if: always()
-    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, falsificacao, provas-sql-escopo, provas-sql, provas-sql-uniao]
+    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks-e-evals, falsificacao, provas-sql-escopo, provas-sql, provas-sql-uniao]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue. actions:read p/ revalidar, pela
@@ -1643,7 +1719,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          esperados=8
+          esperados=10
           total=0; falhou=0; viu_provas_sql=0; viu_uniao=0; viu_falsificacao=0; viu_escopo=0
           # O ÚNICO skipped aceito: `provas-sql` e `provas-sql-uniao` pulados porque o escopo DISSE que
           # o diff não alcança nada que as provas leem. Sempre com o escopo em `success` e `roda`

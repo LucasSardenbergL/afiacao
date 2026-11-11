@@ -116,17 +116,27 @@
     {
       "gate": "test:falsificacao:1",
       "desde": "2026-10-18",
-      "motivo": "fatia 1/3 do test:falsificacao (medido em 8 linhas); a uniao das 3 fatias E a invocacao medida — particao provada em scripts/falsificacao-cobertura.test.ts"
+      "motivo": "fatia 1/5 do test:falsificacao (medido em 8 linhas); a uniao das 5 fatias E a invocacao medida (o codex-async partido em 1/2 e 2/2 entre as fatias 1 e 2) — particao provada em scripts/falsificacao-cobertura.test.ts"
     },
     {
       "gate": "test:falsificacao:2",
       "desde": "2026-10-18",
-      "motivo": "fatia 2/3 do test:falsificacao (medido em 8 linhas); a uniao das 3 fatias E a invocacao medida — particao provada em scripts/falsificacao-cobertura.test.ts"
+      "motivo": "fatia 2/5 do test:falsificacao (medido em 8 linhas); a uniao das 5 fatias E a invocacao medida (o codex-async partido em 1/2 e 2/2 entre as fatias 1 e 2) — particao provada em scripts/falsificacao-cobertura.test.ts"
     },
     {
       "gate": "test:falsificacao:3",
       "desde": "2026-10-18",
-      "motivo": "fatia 3/3 do test:falsificacao (medido em 8 linhas); a uniao das 3 fatias E a invocacao medida — particao provada em scripts/falsificacao-cobertura.test.ts"
+      "motivo": "fatia 3/5 do test:falsificacao (medido em 8 linhas); a uniao das 5 fatias E a invocacao medida (o codex-async partido em 1/2 e 2/2 entre as fatias 1 e 2) — particao provada em scripts/falsificacao-cobertura.test.ts"
+    },
+    {
+      "gate": "test:falsificacao:4",
+      "desde": "2026-11-11",
+      "motivo": "fatia 4/5 do test:falsificacao (medido em 8 linhas); a uniao das 5 fatias E a invocacao medida (o codex-async partido em 1/2 e 2/2 entre as fatias 1 e 2) — particao provada em scripts/falsificacao-cobertura.test.ts"
+    },
+    {
+      "gate": "test:falsificacao:5",
+      "desde": "2026-11-11",
+      "motivo": "fatia 5/5 do test:falsificacao (medido em 8 linhas); a uniao das 5 fatias E a invocacao medida (o codex-async partido em 1/2 e 2/2 entre as fatias 1 e 2) — particao provada em scripts/falsificacao-cobertura.test.ts"
     }
   ],
   "baseline": [
