@@ -29,6 +29,7 @@
 # Uso:  bash db/test-venda-repasse.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #       HARNESS_LC_ALL=pt_BR.UTF-8 bash db/test-venda-repasse.sh …   (rode nos DOIS locales)
 #       bash db/test-venda-repasse.sh --falsificar > /tmp/f.log 2>&1; echo "exit=$?"
+#       NUCLEO_FAIXA=1/2 bash db/test-venda-repasse.sh --falsificar …   (só a 1ª metade; o CI roda as 2)
 # O --falsificar roda PRIMEIRO o controle (sem sabotagem, exige verde e o total) e só então cada
 # sabotagem, exigindo VERMELHO exatamente nos asserts listados e VERDE nos de controle.
 set -euo pipefail
@@ -88,17 +89,33 @@ if [ "${1:-}" = "--falsificar" ]; then
               janela_const:SUB20,PERF:SUB9,SUB10
               janela_floor:SUB21:SUB10
               pre_trava_helper:H4:H3"
-  falhas=0; sab_falhas=0
-  echo "═══ CONTROLE (sem sabotagem) ═══"
-  if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}-controle.log" 2>&1; then
-    echo "❌ CONTROLE VERMELHO — sem linha de base, a falsificação não prova nada"; tail -20 "/tmp/falsif-${SLUG}-controle.log"; exit 1
+  # FAIXA (NUCLEO_FAIXA=i/k, passada por db/roda-nucleo-ci.sh quando o manifesto diz `faixas=k`): roda só a
+  # fatia CANÔNICA i de k das sabotagens — da ((i-1)·T/k)+1 à (i·T/k), divisão inteira, T = todas — depois do
+  # MESMO controle verde. O runner confere a linha `FAIXA:` contra a conta dele; sem a variável, roda as T.
+  # Faixa malformada ABORTA: rodar todas ou nenhuma em silêncio esconderia a fatia errada.
+  total_sab=0; for linha in $SABOTAGENS; do total_sab=$((total_sab+1)); done
+  sab_de=1; sab_ate=$total_sab; sufixo=""
+  if [ -n "${NUCLEO_FAIXA:-}" ]; then
+    if ! printf '%s' "$NUCLEO_FAIXA" | grep -qE '^[1-9]/[2-9]$' || [ "${NUCLEO_FAIXA%/*}" -gt "${NUCLEO_FAIXA#*/}" ]; then
+      echo "❌ NUCLEO_FAIXA inválida: '$NUCLEO_FAIXA' (i/k, 1 ≤ i ≤ k, 2 ≤ k ≤ 9)"; exit 1
+    fi
+    f_i="${NUCLEO_FAIXA%/*}"; f_k="${NUCLEO_FAIXA#*/}"
+    sab_de=$(( (f_i - 1) * total_sab / f_k + 1 )); sab_ate=$(( f_i * total_sab / f_k ))
+    sufixo="-faixa${f_i}de${f_k}"   # as k faixas podem rodar ao mesmo tempo: o log do controle é de cada uma
   fi
-  n=$(grep -c '  ✅ ' "/tmp/falsif-${SLUG}-controle.log" || true)
+  falhas=0; sab_falhas=0; rodadas=0
+  echo "═══ CONTROLE (sem sabotagem) ═══"
+  if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}${sufixo}-controle.log" 2>&1; then
+    echo "❌ CONTROLE VERMELHO — sem linha de base, a falsificação não prova nada"; tail -20 "/tmp/falsif-${SLUG}${sufixo}-controle.log"; exit 1
+  fi
+  n=$(grep -c '  ✅ ' "/tmp/falsif-${SLUG}${sufixo}-controle.log" || true)
   [ "$n" = "$TOTAL_ESPERADO" ] || { echo "❌ CONTROLE rodou $n asserts, esperado $TOTAL_ESPERADO"; exit 1; }
   echo "  ✅ controle verde ($n asserts)"
   i=0
   for linha in $SABOTAGENS; do
     i=$((i+1))
+    [ "$i" -ge "$sab_de" ] && [ "$i" -le "$sab_ate" ] || continue
+    rodadas=$((rodadas+1))
     nome="${linha%%:*}"; resto="${linha#*:}"; reds="${resto%%:*}"
     case "$resto" in *:*) greens="${resto#*:}" ;; *) greens="" ;; esac
     log="/tmp/falsif-${SLUG}-${nome}.log"
@@ -130,7 +147,8 @@ if [ "${1:-}" = "--falsificar" ]; then
     [ "$falhas" = "$antes" ] || { sab_falhas=$((sab_falhas+1)); continue; }
     echo "  ✅ $nome → vermelho em [$reds]${greens:+, verde em [$greens]}"
   done
-  echo "SABOTAGENS: $((i - sab_falhas)) vermelhas / $sab_falhas falhas"   # recibo exigido por db/roda-nucleo-ci.sh
+  [ -z "${NUCLEO_FAIXA:-}" ] || echo "FAIXA: $NUCLEO_FAIXA sabotagens $sab_de-$sab_ate de $total_sab"   # conferida por db/roda-nucleo-ci.sh
+  echo "SABOTAGENS: $((rodadas - sab_falhas)) vermelhas / $sab_falhas falhas"   # recibo exigido por db/roda-nucleo-ci.sh
   [ "$falhas" = 0 ] || { echo "❌ FALSIFICAÇÃO FALHOU ($falhas)"; exit 1; }
   echo "✅ FALSIFICAÇÃO OK — todas as sabotagens ficaram vermelhas onde deviam"
   exit 0
@@ -844,10 +862,17 @@ PERF="$(Pq -c "SET test.uid='$MST'; SET ROLE authenticated; SET statement_timeou
            -c "SELECT CASE WHEN jsonb_array_length(public.venda_repasse_candidatos()) >= 0 THEN 'PERF-OK' END" 2>&1 \
         | grep -oE 'PERF-OK|statement timeout' | head -1 || true)"
 eq PERF "candidatos com volume de prod cabem no statement_timeout de 8 s da prod" "$PERF" "PERF-OK"
-# informativo (não é assert): a folga até o teto de 8 s — psql \timing, número em ms nos dois locales
-PERF_MS="$(printf '\\timing on\nSET test.uid = %s;\nSET ROLE authenticated;\nSELECT jsonb_array_length(public.venda_repasse_candidatos());\n' "'$MST'" \
-  | P -tA 2>&1 | grep -oE '[0-9]+[.,][0-9]+ ms' | tail -1 || true)"
-echo "   ⏱ PERF candidatos: ${PERF_MS:-(não medi)} (teto 8000 ms)"
+# informativo (não é assert): a folga até o teto de 8 s — psql \timing, número em ms nos dois locales.
+# Só com o PERF verde, e sob o MESMO teto: com o PERF vermelho (sabotagens autojuncao e janela_const) a folga
+# não existe, e esta medição SEM statement_timeout rodava a query sabotada até o fim — 25 a 48 s locais por
+# sabotagem, variando entre execuções; era a maior parte da variância de 1,7× do --falsificar no CI
+# (docs/historico/ci-provas-sql-venda-repasse-faixas.md).
+PERF_MS=""
+if [ "$PERF" = "PERF-OK" ]; then
+  PERF_MS="$(printf '\\timing on\nSET test.uid = %s;\nSET ROLE authenticated;\nSET statement_timeout = %s;\nSELECT jsonb_array_length(public.venda_repasse_candidatos());\n' "'$MST'" "'8s'" \
+    | P -tA 2>&1 | grep -oE '[0-9]+[.,][0-9]+ ms' | tail -1 || true)"
+fi
+echo "   ⏱ PERF candidatos: ${PERF_MS:-(não medi: PERF vermelho ou sem número)} (teto 8000 ms)"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
