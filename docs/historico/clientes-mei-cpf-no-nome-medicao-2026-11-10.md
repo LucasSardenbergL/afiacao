@@ -188,3 +188,27 @@ impressão do pedido, ao `lastOrderData`, ao bloqueio de crédito, ao e-mail "No
   números quaisquer: são códigos do Omie, não CPF. Encerrado sem ação.
 - **Codex retroativo (#3803 e #3812):** nada ALTO. Nenhum defeito no #3812. Os dois MÉDIOS do #3803 entraram no M1
   (acima).
+
+### Desfecho do M1 (2026-11-11)
+
+- **PR:** [#3831](https://github.com/LucasSardenbergL/afiacao/pull/3831), mergeado em `fca92fe97`. O CI pegou duas
+  coisas antes do merge, ambas corrigidas no próprio PR:
+  - o `ordem-entre-edges` só aceita a declaração numa linha crua;
+  - a sonda não lê a `VERSAO` com comentário na mesma linha.
+- **Edges:** pacote `9fca6906a637`, só com as 4 edges do PR, enviado pelo MCP às 16:05:17Z.
+  - O agente do Lovable conferiu 53/53 hashes contra `fca92fe97`, deixou as 4 funções Active e fechou com
+    `No files were edited.`.
+  - A 1ª atestação foi pelo envelope: `db:aplicar` #1082 disparou `analyze-unified-order`, `omie-cliente` e
+    `omie-sync` (3× DEPLOY CONFIRMADO no `psql-ro`), e o #1083 chamou o relé `deploy_sonda_disparar` para a
+    `omie-vendas-sync`. As 4 ficaram CONFERE no `pendencias:deploy` (16:11Z).
+  - Arquivos: `db/2026-11-11-sonda-*-m1-cpf-mei-*.sql`.
+- **O bot empurrou de novo as devDependencies `@lovable.dev/*`:** o commit `75952e848` ("Deployed 4 edge
+  functions") levou `package.json` e `bun.lock` à main, apesar de o agente dizer que não os commitaria. É a mesma
+  recorrência do #3821. O sensor deu `EDICAO_DETECTADA`, nenhuma edge foi tocada, e o revert foi no mesmo PR deste
+  registro.
+- **Publish:** a sessão disparou pelo MCP (`deploy_project`, deployment `178c3b22`) depois das 4 edges atestadas.
+  - O index servido trocou de `index-CnNKgGn4.js` para `index-L5rOykts.js`.
+  - Nos 376 arquivos servidos, as 3 marcas do front do M1 (`razao_fiscal`, `fantasia_fiscal` e a substituição
+    `***$1$2$3**` do espelho) aparecem no chunk novo. Isso prova disponibilidade, não adoção: o SW só troca de
+    build quando o cliente clica.
+- **Fechado:** M1, os 2 MÉDIOS do Codex, B4 e B5. Não resta pendência desta entrega.
