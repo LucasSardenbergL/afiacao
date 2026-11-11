@@ -1019,6 +1019,11 @@ jobs:
   # (controle inteiro em cada um; sabotagens por resto da divisão, ver o cabeçalho da suíte), e o
   # `fecho-edges-pendentes` (263 s) ficou numa fatia só dele, que é o novo piso.
   # `falsificacao-cobertura.test.ts` prova que as partes 1..N estão todas aqui.
+  #
+  # ─── 6 fatias, com o `fecho-edges-pendentes` PARTIDO em 2 (2026-11-11) ──────────────────────
+  # Depois do memo da sonda (#3829) a fatia 3 (só o `fecho`) era o piso dos PRs sem provas SQL:
+  # 292 s de job (run 43043785156). Mesmo desenho do `codex-async`: `--falsificar 1/2` na fatia 3
+  # e `2/2` na fatia 6, controle inteiro em cada uma (docs/historico/ci-fecho-falsificar-em-partes.md).
   falsificacao:
     # Escopo só-docs (docs/historico/ci-escopo-so-docs.md): pula SÓ com o escopo `success` dizendo
     # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
@@ -1031,7 +1036,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        parte: [1, 2, 3, 4, 5]
+        parte: [1, 2, 3, 4, 5, 6]
     permissions:
       contents: read
 
@@ -1110,6 +1115,9 @@ jobs:
       - name: Falsificação (fatia 5) — sabota o alvo e EXIGE vermelho em cada regra
         if: matrix.parte == 5
         run: bun run test:falsificacao:5
+      - name: Falsificação (fatia 6) — sabota o alvo e EXIGE vermelho em cada regra
+        if: matrix.parte == 6
+        run: bun run test:falsificacao:6
 
   # Escopo do `provas-sql` (ver o bloco ESCOPO logo abaixo). `fetch-depth: 2` pelo mesmo motivo do
   # `mutcheck-escopo`: com os dois pais do merge commit na árvore, `pai 1 → HEAD` é o que o PR muda.
