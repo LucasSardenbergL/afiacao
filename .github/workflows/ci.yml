@@ -1215,11 +1215,12 @@ jobs:
         # `strategy.job-index/job-total` (step do núcleo), a partição e a união são N-agnósticas (N até
         # 99; recibo `parte i/N` em cada parte), e o harness prova N=16 (última parte ausente,
         # duplicada, fora da faixa). Os valores não importam, só a contagem — `[1..N]` por legibilidade.
-        # Simulado com db/nucleo-ci-custo.txt (W=2): pior parte de núcleo 14,8 min com N=5, 7,4 com
-        # N=10. Mais partes = mais jobs por run: com 5 partes o run ocupa ~17 jobs, contra o teto de 20
-        # jobs concorrentes da conta no plano Free (40 no Pro). Não suba N sem o teto que o comporte —
-        # o ganho vira fila. Comparação e medição: docs/historico/ci-provas-sql-n-partes.md
-        parte: [1, 2, 3, 4, 5]
+        # MEDIDO (2026-11-11, GitHub Pro = teto de 40 jobs concorrentes, W=3, 4 runs por braço no MESMO
+        # SHA): pior parte p50/p90 = 15,9/16,7 min com N=5 · 10,0/10,8 com N=10 · 7,3/8,0 com N=16;
+        # push→validate p50 16,8 → 8,1 min (−52%) com N=16; runner-min +11%. N=16 é o MENOR que fica
+        # com p90 ≤ 9 min. Um run ocupa ~28 jobs: no plano Free (teto 20) isto vira FILA — se o Pro for
+        # cancelado, volte esta lista para 5. Medição: docs/historico/ci-provas-sql-n-partes.md
+        parte: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     permissions:
       contents: read
 
