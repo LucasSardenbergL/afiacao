@@ -27,8 +27,8 @@
  *   runner sem veredito) — mecânica NUNCA é "tudo limpo".
  */
 import { createHash } from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
@@ -289,8 +289,102 @@ function closureTemRamo(sha: string, edge: string, raiz: string): boolean {
   return /atenderSondaOptions\(/.test(removerComentarios(r.stdout));
 }
 
+/** Uma tentativa de materialização que não deu certo — o registro que o log do CI precisa ter. */
+export type FalhaMaterializacao = {
+  sha: string; etapa: 'archive' | 'extracao' | 'conferencia';
+  tamanho: number | null; exit: number | null; stderr: string;
+};
+type Exec = (cmd: string, args: string[], cwd: string) => { status: number | null; stderr: string };
+const execPadrao: Exec = (cmd, args, cwd) => {
+  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  return { status: r.status, stderr: `${r.stderr ?? ''}${r.error ? String(r.error) : ''}` };
+};
+
+/** O que o tar TEM de trazer: cada blob do `ls-tree -r -l` daquele sha, com o tamanho exato. */
+function esperadosNoSha(sha: string, caminhos: string[], raiz: string): Array<{ p: string; tamanho: number | null }> {
+  const r = spawnSync('git', ['ls-tree', '-r', '-l', '-z', sha, '--', ...caminhos], {
+    cwd: raiz, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  });
+  if (r.status !== 0) throw new Mecanica(`git ls-tree ${sha}: ${(r.stderr || '').slice(0, 200)}`);
+  const lista = r.stdout.split('\0').filter(Boolean).map((l) => {
+    const [meta, p] = l.split('\t');
+    const [modo, , , tam] = meta.trim().split(/\s+/);
+    // Symlink (120000) e submódulo (160000): só presença — o tamanho do blob não é o do disco.
+    return { p, tamanho: modo === '100644' || modo === '100755' ? Number(tam) : null };
+  });
+  if (lista.length === 0) throw new Mecanica(`git ls-tree ${sha}: 0 arquivos em ${caminhos.join(',')}`);
+  return lista;
+}
+
+function umaTentativa(
+  sha: string, caminhos: string[], raiz: string, dir: string,
+  esperados: Array<{ p: string; tamanho: number | null }>, exec: Exec,
+): FalhaMaterializacao | null {
+  const arquivo = join(dir, 'c.tar');
+  const tamanhoDe = () => (existsSync(arquivo) ? statSync(arquivo).size : null);
+  // `-o`: o git escreve o arquivo ele mesmo. O tar não passa mais pelo buffer do processo pai,
+  // que era o único trecho deste caminho em que o runtime (Bun no CI) podia entregar bytes a menos.
+  const a = exec('git', ['archive', '--format=tar', '-o', arquivo, sha, '--', ...caminhos], raiz);
+  if (a.status !== 0) return { sha, etapa: 'archive', tamanho: tamanhoDe(), exit: a.status, stderr: a.stderr };
+  const x = exec('tar', ['-x', '-C', dir, '-f', arquivo], dir);
+  if (x.status !== 0) return { sha, etapa: 'extracao', tamanho: tamanhoDe(), exit: x.status, stderr: x.stderr };
+  // Exit 0 do tar NÃO prova o closure inteiro (um corte em fronteira de bloco extrai a metade e sai 0):
+  // cada arquivo do sha tem de estar no disco, com o tamanho do blob.
+  const faltas: string[] = [];
+  for (const e of esperados) {
+    const destino = join(dir, e.p);
+    if (!lstatExiste(destino)) faltas.push(`${e.p} ausente`);
+    else if (e.tamanho !== null && statSync(destino).size !== e.tamanho) {
+      faltas.push(`${e.p} com ${statSync(destino).size}B, blob tem ${e.tamanho}B`);
+    }
+  }
+  if (faltas.length > 0) {
+    return {
+      sha, etapa: 'conferencia', tamanho: tamanhoDe(), exit: 0,
+      stderr: `${faltas.length}/${esperados.length} arquivo(s) fora: ${faltas.slice(0, 3).join('; ')}`,
+    };
+  }
+  return null;
+}
+function lstatExiste(p: string): boolean {
+  try { lstatSync(p); return true; } catch { return false; }
+}
+
+export function descreverFalha(f: FalhaMaterializacao): string {
+  return `sha=${f.sha} etapa=${f.etapa} tamanho=${f.tamanho ?? '—'}B exit=${f.exit ?? 'sinal'} stderr=${JSON.stringify(f.stderr.trim().slice(0, 300))}`;
+}
+
+/**
+ * Materializa o closure `caminhos@sha` num diretório novo e devolve esse diretório.
+ *
+ * Retry SÓ desta etapa, e uma vez (run 43029163344: `tar: Unexpected EOF in archive` no closure
+ * `fin-valor-cockpit`, re-run do mesmo SHA verde — causa NÃO provada). A 2ª tentativa vai para um
+ * diretório NOVO, nunca o da 1ª; cada falha sai registrada (sha, etapa, tamanho, exit, stderr) e,
+ * persistindo, vira `Mecanica` (exit 2) — o instrumento não mediu, o que nunca é "closure limpo".
+ * Nada aqui repete veredito de gate: o que se repete é só a cópia dos arquivos.
+ */
+export function materializarClosure(
+  edge: string, sha: string, caminhos: string[], raiz: string,
+  exec: Exec = execPadrao, registrar: (l: string) => void = (l) => console.error(l),
+): string {
+  const esperados = esperadosNoSha(sha, caminhos, raiz);
+  const falhas: FalhaMaterializacao[] = [];
+  for (let n = 1; n <= 2; n++) {
+    const dir = mkdtempSync(join(tmpdir(), `closure-${edge}-`));
+    const f = umaTentativa(sha, caminhos, raiz, dir, esperados, exec);
+    if (f === null) {
+      if (n > 1) registrar(`  ↻ materialização ${edge}@${sha}: OK na tentativa ${n}/2`);
+      return dir;
+    }
+    rmSync(dir, { recursive: true, force: true });
+    falhas.push(f);
+    registrar(`  ⚠ materialização ${edge}@${sha} falhou (tentativa ${n}/2): ${descreverFalha(f)}`);
+  }
+  throw new Mecanica(`${edge}@${sha}: materialização falhou nas 2 tentativas — ${falhas.map(descreverFalha).join(' | ')}`);
+}
+
 function executar(edge: string, sha: string | null, raiz: string, indexDireto?: string): Veredito {
-  const dir = sha ? mkdtempSync(join(tmpdir(), `closure-${edge}-`)) : '';
+  let dir = '';
   try {
     let indexPath: string;
     let mapaPath: string;
@@ -299,9 +393,7 @@ function executar(edge: string, sha: string | null, raiz: string, indexDireto?: 
         spawnSync('git', ['ls-tree', '--name-only', sha, c], { cwd: raiz, encoding: 'utf8' }).stdout.trim().length > 0;
       const caminhos = [`supabase/functions/${edge}`, 'supabase/functions/_shared'].filter(existe);
       if (caminhos.length === 0) throw new Mecanica(`${edge}@${sha}: nenhum caminho existe neste sha`);
-      const tar = execFileSync('git', ['archive', sha, ...caminhos], { cwd: raiz, maxBuffer: 256 * 1024 * 1024 });
-      writeFileSync(join(dir, 'c.tar'), tar);
-      execFileSync('tar', ['-x', '-C', dir, '-f', join(dir, 'c.tar')]);
+      dir = materializarClosure(edge, sha, caminhos, raiz);
       indexPath = join(dir, 'supabase/functions', edge, 'index.ts');
       if (!existsSync(indexPath)) throw new Mecanica(`${edge}@${sha}: archive sem index.ts — materialização vazia não é zero efeito`);
       const remotos = new Set<string>();
