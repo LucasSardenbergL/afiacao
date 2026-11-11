@@ -163,9 +163,14 @@ CV_PREDECESSORAS=(
 #   · 20261111134000 (Radar pacote L) recria radar_atendimento_expira_em, registrar_contato_radar e desfazer_contato_radar
 #     (posse pelo contato, vencimento cronológico) e a TRAVA exige o pacote G (fora, acima). Prova que cobre:
 #     db/test-radar-posse-l.sh (sobre os corpos vivos da PROD de 2026-11-08, com --falsificar).
+#   · 20261113090000 (CPF de MEI no nome do cliente) põe trigger em profiles, mas a PRE exige a
+#     private.radar_razao_mascarada do formato livre (20261112100000) e as edges novas em deploy_atestacoes; nada disso
+#     está no snapshot de 10-15. O trigger só reescreve o name. Prova que cobre:
+#     db/test-clientes-mei-cpf-mascarado.sh (com --falsificar, nos dois locales).
 CV_FORA=(
   "20261111100000_radar_acompanhamento_pacote_g.sql"
   "20261111134000_radar_posse_pacote_l.sql"
+  "20261113090000_clientes_mei_cpf_mascarado.sql"
 )
 _cv_fora() {
   local x
