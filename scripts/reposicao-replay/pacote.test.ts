@@ -22,7 +22,7 @@ import { somarDiasUteis } from './calendario';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
 import { avaliarCriterios, estatCusto, veredito, type Estado } from './estatistica';
 import { demandaSigmaPorDu, diagnosticoF0, pontoDePedidoF0, preComputarComOrigem, sigmaDemanda180, type Formula } from './formulas';
-import { decomporCapital, familiasDaFronteira, fronteiraDoPacote, lerTetoPacote, primeiraSemanaDaCalibracao } from './pacote';
+import { decomporCapital, familiasDaFronteira, fronteiraDoPacote, lerTetoPacote, montarRelatorioPacote, primeiraSemanaDaCalibracao } from './pacote';
 import { decomporDLU, shapley3 } from './pacote-dlu';
 import { coorte } from './parados';
 import { avaliarCandidata, rodarLote } from './rodar';
@@ -469,7 +469,9 @@ describe('diagnósticos da rodada do pacote (achados P2 do Codex)', () => {
   it('D/L/U no fixture: 8 combinações, controle e Shapley que fecha a soma', () => {
     const dd = cenario(false, true);
     expect([...suavesDaCoorte(coorte(dd))].sort()).toEqual(['S', 'W']); // sanidade do fixture
-    const k = decomporDLU(dd, 2);
+    const r = decomporDLU(dd, 2);
+    if ('indisponivel' in r) throw new Error(r.indisponivel);
+    const k = r;
     expect(k.combinacoes).toHaveLength(8);
     expect(k.linhasSuavesA).toBeGreaterThan(0);
     const f = (d: number, l: number, u: number) => k.combinacoes.find((x) => x.D === d && x.L === l && x.U === u)!.fillSuavesA;
@@ -479,6 +481,22 @@ describe('diagnósticos da rodada do pacote (achados P2 do Codex)', () => {
     // U multiplica o termo médio por 7/5 nos suaves: o estoque da coorte sobe (senão o fator não chegou ao mapa)
     const u = k.combinacoes.find((x) => x.D === 0 && x.L === 0 && x.U === 1)!;
     expect(u.deltaEstoque as number).toBeGreaterThan(0);
+  }, 300_000);
+
+  it('Codex r2 (P2): A sem linha dos suaves ⇒ D/L/U n/d, e o relatório INCONCLUSIVO da calibração sai (nunca uma exceção)', () => {
+    const dd = cenario(false); // sem W: nenhum suave em A, A inobservável
+    const e = escolherTupla(calibrarPacote(dd, { reps: 2, cacheDir: null, perfis: [P0], formulas: ['F1'] }));
+    const vc = vereditoDaCalibracaoPacote(e);
+    expect(vc?.veredito).toBe('INCONCLUSIVO');
+    const dlu = decomporDLU(dd, 2);
+    expect(dlu).toEqual({ indisponivel: 'DLU_SEM_LINHAS_A_DOS_SUAVES' });
+    const md = montarRelatorioPacote({
+      geradoEm: 'x', chave: { hashDados: 'h', hashCodigo: 'c', dataExtracao: '2026-11-09', protocolo: 'p', perfis: ['P0'] },
+      teto: { teto: 0.2, sha256: 's' }, modoAncora: 'm', tuplas: [], escolha: e.tipo, veredito: vc!, congelado: null, criterios: [],
+      reps: null, diagnostico: null, fronteira: [], primeiraSemana: primeiraSemanaDaCalibracao(dd, null, null, 2), dlu, estabilidade: null, segundos: 0,
+    });
+    expect(md).toContain('## Veredito: **INCONCLUSIVO**');
+    expect(md).toContain('n/d — DLU_SEM_LINHAS_A_DOS_SUAVES');
   }, 300_000);
 
   it('1ª semana é a da CALIBRAÇÃO (01–07/02), rotulada; fronteira varre o alvo de A por nível com a seleção intocada', () => {

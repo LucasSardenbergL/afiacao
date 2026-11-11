@@ -46,7 +46,7 @@ import { addDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { carregarDados } from './dados';
 import { hashCodigo, preComputarComOrigem, type Formula, type ParamsDia } from './formulas';
 import { custoLiquido } from './metricas';
-import { decomporDLU, type DecomposicaoDLU } from './pacote-dlu';
+import { decomporDLU, type DecomposicaoDLU, type DLUIndisponivel } from './pacote-dlu';
 import { coorte, coorteTodosAtivos } from './parados';
 import { avaliarCandidata, etapasPreCalibracao, type Congelado } from './rodar';
 import { simular, type SomasSemanais } from './simulador';
@@ -331,7 +331,7 @@ export interface RodadaPacote {
   /** D5: fill A da CALIBRAÇÃO com e sem a 1ª semana (01–07/02). */
   primeiraSemana: ReturnType<typeof primeiraSemanaDaCalibracao>;
   /** §2.2 / §4.4(7): decomposição D/L/U da falha dos suaves de A (calibração, diagnóstico). */
-  dlu: DecomposicaoDLU;
+  dlu: DecomposicaoDLU | DLUIndisponivel;
   estabilidade: { recorte: string; escolha: string }[] | null;
   segundos: number;
 }
@@ -369,7 +369,9 @@ export function montarRelatorioPacote(r: RodadaPacote): string {
     l.push(`- F0: A ${pct(ps.f0.com)} com a semana → ${pct(ps.f0.sem)} sem ela`);
     l.push(ps.pacote ? `- Pacote congelado: A ${pct(ps.pacote.com)} com a semana → ${pct(ps.pacote.sem)} sem ela` : '- Pacote: sem tupla congelada');
   }
-  {
+  if ('indisponivel' in r.dlu) {
+    l.push('', '## Decomposição D/L/U da falha dos suaves de A (§2.2)', '', `n/d — ${r.dlu.indisponivel}`);
+  } else {
     const k = r.dlu;
     l.push('', `## Decomposição D/L/U da falha dos suaves de A (§2.2, calibração, ${k.reps} reps, ${k.linhasSuavesA} linhas)`, '');
     l.push(`Controle da gravação simplificada: oficial ${pct(k.controle.oficial)} × recálculo D0L0U0 ${pct(k.controle.recalculo)} (|Δ| ${pct(Math.abs(k.controle.oficial - k.controle.recalculo))}).`, '');

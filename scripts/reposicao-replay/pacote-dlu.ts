@@ -58,7 +58,12 @@ export function shapley3(f: (d: 0 | 1, l: 0 | 1, u: 0 | 1) => number): { D: numb
   return out;
 }
 
-export function decomporDLU(dados: Dados, reps = REPS_CALIBRACAO): DecomposicaoDLU {
+/** D/L/U não medível (ausente ≠ zero): sem linhas de A dos suaves na calibração não há fill a decompor. */
+export interface DLUIndisponivel {
+  indisponivel: string;
+}
+
+export function decomporDLU(dados: Dados, reps = REPS_CALIBRACAO): DecomposicaoDLU | DLUIndisponivel {
   const [CI, CF] = [JANELAS.calibracaoIni, JANELAS.calibracaoFim];
   const c = coorte(dados);
   const suaves = suavesDaCoorte(c);
@@ -76,7 +81,8 @@ export function decomporDLU(dados: Dados, reps = REPS_CALIBRACAO): DecomposicaoD
     if ((classeDia(v.data).get(v.sku) ?? 'C') === 'A') linhasA.set(v.linhaId, v.sku);
   }
   const linhasSuavesA = [...linhasA.values()].filter((s) => suaves.has(s)).length;
-  if (linhasSuavesA === 0) throw new Error('DLU_SEM_LINHAS_A_DOS_SUAVES');
+  // classe A sem linha dos suaves (o caso INCONCLUSIVO da §4.2(5)): o diagnóstico vira n/d, nunca derruba a rodada
+  if (linhasSuavesA === 0) return { indisponivel: 'DLU_SEM_LINHAS_A_DOS_SUAVES' };
   const vendaDia = new Map<string, number>();
   for (const v of dados.vendas) if (v.noEscopo && v.quantidade > 0) vendaDia.set(`${v.sku}|${v.data}`, (vendaDia.get(`${v.sku}|${v.data}`) ?? 0) + v.quantidade);
   // D: média centrada de 90 dias corridos, truncada em 30/04 (o divisor é o nº de dias lidos)
