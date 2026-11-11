@@ -41,5 +41,16 @@ Jobs: +4 por run (2 fatias + 2 jobs). PR com provas: ~29 → ~33 dos 40 simultâ
 
 ## Depois
 
-Medição no próprio PR (#PR) — ver o corpo do PR. Próximo piso: `fecho-edges-pendentes` (263 s);
+Medido no próprio PR (#3808, run 43015374913, segundos do início do run ao fim do job):
+
+| | antes (42950648837) | depois (43015374913) |
+|---|---|---|
+| último job não-SQL | `falsificacao (1)` 384 | `falsificacao (3)` 256 |
+| `edges-e-build` | 364 | 145 |
+| `gates-e-falsificacao` | 319 | 152 |
+| fatias da falsificação | 338–384 | 169–256 |
+| jobs novos | — | `sonda-cron-prova` 221 · `hooks-e-evals` 239 |
+
+Caminho não-SQL **384 → 256 s (−33%)**. Agora `testes` (vitest, 199–207 s; 304 s num run) está logo
+abaixo do piso — é o próximo item (vitest em 4 shards). O piso é o `fecho-edges-pendentes` (fatia 3);
 partir com o mesmo `k/N` só se ele voltar a ser o caminho crítico.
