@@ -74,9 +74,8 @@ PY
 # "o lab caiu". O LIMITE do recorte, dito de frente: uma sabotagem que tambem quebrasse um cenario
 # fora da lista passaria despercebida AQUI — quem cobre isso e' o lab completo, que roda inteiro no
 # controle desta mesma invocacao e no `test:hooks`.
-roda_lab() { # roda_lab <yml> <tentar> <locale> [cenarios]
-  ALVO_YML="$1" ALVO_TENTAR="$2" LC_ALL="$3" LAB_CENARIOS="${4:-C1 C2 C3 C4 C5 C6 C7 C8}" bash "$L/lab.sh" 2>&1
-}
+# roda_lab <yml> <tentar> <locale> [cenarios]
+roda_lab() { ALVO_YML="$1" ALVO_TENTAR="$2" LC_ALL="$3" LAB_CENARIOS="${4:-C1 C2 C3 C4 C5 C6 C7 C8}" bash "$L/lab.sh" 2>&1; }
 
 # ── (0) CONTROLE — antes de qualquer sabotagem, na mesma invocacao ───────────────────────────────
 cp "$ORIG" "$TMP/controle.yml"
