@@ -16106,6 +16106,7 @@ export type Database = {
           criado_em: string
           evidencia_id: number | null
           itens: Json
+          leitura_lido_ate: string | null
           origem: string
           pedido_id: number
           protocolo: string
@@ -16118,6 +16119,7 @@ export type Database = {
           criado_em?: string
           evidencia_id?: number | null
           itens: Json
+          leitura_lido_ate?: string | null
           origem: string
           pedido_id: number
           protocolo: string
@@ -16130,6 +16132,7 @@ export type Database = {
           criado_em?: string
           evidencia_id?: number | null
           itens?: Json
+          leitura_lido_ate?: string | null
           origem?: string
           pedido_id?: number
           protocolo?: string
@@ -26823,6 +26826,10 @@ export type Database = {
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
       sales_orders_instante_envio: { Args: never; Returns: string }
+      sayerlack__portal_leitura_conteudo: {
+        Args: { p_leitura: Json }
+        Returns: Json
+      }
       sayerlack_aceitar_portal: {
         Args: {
           p_divergencia_id: number
