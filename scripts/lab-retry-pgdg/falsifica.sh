@@ -179,7 +179,7 @@ prova yml "S6 fallback sem o update das fontes base" \
   "C3 C10"
 
 prova yml "S7 update do PGDG sem --error-on=any (W: volta a sair 0)" \
-  'apt-get update -qq --error-on=any \' 'apt-get update -qq \' \
+  'apt-get update -qq --error-on=any' 'apt-get update -qq' \
   "C9"
 
 prova yml "S8 update do PGDG volta a ler sources.list.d inteiro" \
