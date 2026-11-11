@@ -58,7 +58,31 @@ Pior parte simulada em s: núcleo, mais o harness na parte 0, sem o setup.
 
 ## Medido no run do próprio PR
 
-PREENCHER
+Tempos por parte: steps `Núcleo` + `Falsificação do núcleo`, sem o setup. Os runs com a tabela nova
+são 3: o do PR (43035081419) e os da main logo depois do merge (43039327384 e 43038598856, este
+parcial).
+
+| | base: 9 runs com a tabela antiga | tabela nova: 3 runs |
+|---|---|---|
+| parte 1 (a do harness) | 298–439 s, mediana 330 | **250 · 262 · 271 s** |
+| pior parte | 382–479 s, mediana 414 | 479 · 445 · ≥378 s |
+| 2º teto | 343–419 s, mediana 377 | 396 · 385 s |
+
+- **Cauda corrigida:**
+  - a parte do harness deixou de ser teto, com ~70 s a menos;
+  - na base, ela era a pior parte em 3 de 9 runs.
+- **Pior parte:**
+  - continua sendo a da `venda-repasse --falsificar`, como previsto;
+  - no run do PR, a unidade levou 469 s, acima do máximo de 451 s da medição;
+  - o fator de velocidade do run contra a tabela foi 1,02, então a lentidão foi da prova e não do
+    runner.
+- **push→validate:** NÃO dá para comparar com estes runs.
+  - Desde ~14:05Z de 2026-11-11, o step `PostgreSQL 17 (PGDG)` leva ~210 s em vez de ~15 s.
+  - A causa é o `apt-get update` falhando ao resolver `azure.archive.ubuntu.com` no runner. É infra
+    externa: o run 43029715922, já com o #3805, levou 13 s.
+  - O run do PR deu 751 s; tirados os ~195 s do DNS, dá ~556 s, dentro da faixa da base (457–590 s
+    nos 8 runs de partida).
+  - Medir de novo quando o mirror normalizar.
 
 ## Próximo passo de verdade
 
