@@ -67,7 +67,11 @@ sabotagens. Nenhuma das duas ataca a colheita, que é a mesma do W=2 e já é fa
 
 **Locale:** o harness faz `export LC_ALL=C LANG=C` no topo. A rodada "pt_BR.UTF-8" roda em C por
 dentro, e isso já era assim antes do D1. A falsificação nos dois locales é, na prática, num só.
-Fica registrado; não foi mudado aqui.
+**Corrigido depois, no mesmo dia:** o harness passou a usar o locale de quem chama. O controle
+deu verde nos dois locales de verdade, com o locale efetivo conferido por `locale`:
+
+- bash 5: `OK=101 XX=0` em C e `OK=101 XX=0` em pt_BR.UTF-8;
+- bash 3.2: `OK=92 XX=0` em pt_BR.UTF-8.
 
 ## Tabela re-medida com 3 workers (2026-11-10): descartada
 
