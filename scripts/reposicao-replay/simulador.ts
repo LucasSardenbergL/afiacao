@@ -130,6 +130,8 @@ export interface SomasSemanais {
   pedidos?: { dia: Data; sku: string; qtd: number; chegada: Data | null }[];
   /** Só com `rastro: true`: o desfecho de cada linha que falhou (medida ou não). */
   desfechos?: { linhaId: string; desfecho: 'espera' | 'cancelamento' | 'emergencial' }[];
+  /** Só com `capitalPorSku: true` (diagnóstico do pacote, spec 2026-11-09 §7.2): Σ estoque × preço do dia × dias por SKU na janela. */
+  capitalPorSku?: Record<string, number>;
 }
 
 export interface EntradaSimulacao {
@@ -148,6 +150,8 @@ export interface EntradaSimulacao {
    */
   itensLT?: readonly ItemLT[];
   rastro?: boolean;
+  /** Diagnóstico (não muda nenhuma soma): devolve `capitalPorSku`. */
+  capitalPorSku?: boolean;
   /**
    * SKUs "alterados" que definem as células *_alt — devem ser os MESMOS que trocam de fórmula no mapa (revisão final I2).
    * Padrão: coorte(dados).alterados.
@@ -665,6 +669,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
   // somas
   const cel = { dem: new Float64Array(NC * nSem), int: new Float64Array(NC * nSem), uDem: new Float64Array(NC * nSem), uAt: new Float64Array(NC * nSem), vDem: new Float64Array(NC * nSem), vAt: new Float64Array(NC * nSem) };
   const capital = new Float64Array(nSem);
+  const capSku = e.capitalPorSku ? new Float64Array(P.skus.length) : null;
   const naoValorado = new Float64Array(nSem);
   const unidades = new Float64Array(nSem);
   const capitalGrupos = new Float64Array(nSem);
@@ -901,6 +906,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
         const x = est[s] * preco;
         v += x;
         if (emGrupo[s]) vg += x;
+        if (capSku) capSku[s] += x;
       }
       capital[w] += v;
       naoValorado[w] += nv;
@@ -960,6 +966,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     semanas: [...P.semanas],
     porCelula,
     estoqueCmcDias: Array.from(capital),
+    ...(capSku ? { capitalPorSku: Object.fromEntries(P.skus.map((k, i) => [k, capSku[i]])) } : {}),
     estoqueNaoValoradoDias: Array.from(naoValorado),
     estoqueUnidadesDias: Array.from(unidades),
     estoqueCmcDiasGrupos: Array.from(capitalGrupos),

@@ -80,8 +80,24 @@ export interface SemDecisao {
   motivo: MotivoSemDecisao;
 }
 export type ParamsDia = ParamsF0 | { tipo: 'S'; s: number } | SemDecisao;
+/**
+ * Perfil do F0′ dos SUAVES (spec 2026-11-09 §4.4, tabela campo a campo). `P0` = o F0 de hoje, bit a bit. `Alt1`: demanda e
+ * σd por DIA ÚTIL (EOQ coerente: D_du × 252). `Alt2a`: Alt1 + LT p80 da amostra documental, σLT = 0 e z(A) da grade.
+ * `Alt2b`: Alt1 + LT/σLT herdados e z(A) da grade. Horizonte H = LT (sem termo de revisão: limitação declarada) em todos.
+ * Vigência: do 1º dia da calibração em diante; o aquecimento é sempre P0. A F1 nos suaves (Alt3) NÃO é perfil do F0: é a
+ * F1 do simulador sem mudança (calibracao.ts, `PerfilSuaves`).
+ */
+export type PerfilF0 = { nome: 'P0' } | { nome: 'Alt1' } | { nome: 'Alt2a'; zA: number } | { nome: 'Alt2b'; zA: number };
+export const PERFIL_P0: PerfilF0 = Object.freeze({ nome: 'P0' as const });
+/** Grade de z(A) das Alt2 (§4.2, item 1): fixada antes da rodada. */
+export const GRADE_Z_A = [1.65, 1.88, 2.054, 2.326, 2.576, 3.09] as const;
+/** Serialização estável do perfil (chave da trajetória, do cache e do relatório). */
+export const chavePerfil = (p: PerfilF0): string => (p.nome === 'Alt2a' || p.nome === 'Alt2b' ? `${p.nome}:z${p.zA}` : p.nome);
+
 export interface CtxFormula {
   calibracao: boolean;
+  /** F0′ (só com f = 'F0'): ausente/P0 = o F0 de hoje, e a chave do cache fica a MESMA do modo oficial. */
+  perfilF0?: PerfilF0;
   /** Dias (inclusive) do preComputar; padrão: do início do aquecimento ao fim da janela do contexto. */
   dias?: [Data, Data];
   /** SKUs do preComputar; padrão: população "todos os ativos" (⊇ coorte). */
@@ -443,7 +459,7 @@ interface TrajetoriaF0 {
  * view VIVA consultada no dia E = d − 1 lê a demanda e as ordens de E − 90 até E (91 dias) ÷ 90; o cron (padrão) roda de
  * madrugada, sem venda do dia, e lê [d − 90, d).
  */
-function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean, janelaView = false): Omit<DiagnosticoF0, 'gravacao' | 'coldStart' | 'es' | 'pp' | 'max' | 'demandaGravada'> {
+function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean, janelaView = false, perfil: PerfilF0 = PERFIL_P0): Omit<DiagnosticoF0, 'gravacao' | 'coldStart' | 'es' | 'pp' | 'max' | 'demandaGravada'> {
   const vazio = { naView: false, classeProposta: null, numOrdens: 0, demanda: null, sigmaD: null, lt: null, sigmaLt: null, z: null, minimoOperacional: null, precoEoq: null, fontePreco: null, ssCalculado: null, ppSugerido: null, maxSugerido: null, status: null };
   const classe = propostaDoDia(dados, ix, d).get(s.sku) ?? null;
   const pT = ix.prefTotal.get(s.sku);
@@ -453,8 +469,11 @@ function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean, j
   const ini = Math.max(0, iD - F0.janelaDemandaDias - (janelaView ? 1 : 0));
   const nObs = janelaView ? F0.janelaDemandaDias : iD - ini;
   const numOrdens = pL[iD] - pL[ini];
-  const demanda = arred((pT[iD] - pT[ini]) / nObs, 4);
-  const sigmaD = sigmaJanela(ix, s.sku, d);
+  // F0′ (§4.4): o perfil vale do 1º dia da calibração em diante; o aquecimento é sempre P0. A paridade da view (janelaView) é só P0.
+  const vig = janelaView || d < JANELAS.calibracaoIni ? PERFIL_P0 : perfil;
+  const porDu = vig.nome !== 'P0';
+  const demanda = porDu ? demandaPorDu(ix, s.sku, d) : arred((pT[iD] - pT[ini]) / nObs, 4);
+  const sigmaD = porDu ? sigmaPorDu(ix, s.sku, d) : sigmaJanela(ix, s.sku, d);
   // LT (v_sku_leadtime_estatisticas + v_sku_lt_teorico)
   const iniLt = addDias(d, -F0.janelaLtDias);
   const naJanela = (ix.obsMotorPorSku.get(s.sku) ?? []).filter((o) => obsValeEm(o, corte(d, calib)) && o.tJanela >= iniLt);
@@ -501,25 +520,43 @@ function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean, j
     : s.grupo === null ? 'AGUARDANDO_CLASSIFICACAO_GRUPO'
     : preco === null || preco === 0 ? 'SEM_PRECO'
     : 'OK';
-  const z = dados.zPorClasse[classe];
+  // z: Alt2a/Alt2b trocam só o z da classe proposta A (B e C herdados)
+  const z = (vig.nome === 'Alt2a' || vig.nome === 'Alt2b') && classe === 'A' ? vig.zA : dados.zPorClasse[classe];
+  // LT/σLT: a Alt2a usa o p80 (tipo 7) da amostra documental de amostraLt e σLT = 0; amostra vazia ⇒ o LT do P0. O STATUS
+  // é sempre o do P0 (acima, com o LT da view): o perfil nunca muda QUAIS dias têm sugestão, só o valor dela.
+  let ltPerfil = lt;
+  let sigmaLtPerfil = sigmaLt;
+  if (vig.nome === 'Alt2a') {
+    const amostra = amostraLt(dados, ix, s.sku, d, calib);
+    const p80 = amostra === null ? null : quantilTipo7(amostra, 0.8);
+    ltPerfil = p80 === null ? lt : teorico === null ? p80 : Math.max(teorico, p80);
+    sigmaLtPerfil = 0;
+  }
   const minimoOperacional = MINIMO_OPERACIONAL_POR_CLASSE[classe];
-  const base = { naView: true, classeProposta: classe, numOrdens, demanda, sigmaD, lt, sigmaLt, z, minimoOperacional, precoEoq: preco, fontePreco };
-  if (status !== 'OK' || lt === null || preco === null) return { ...base, ssCalculado: null, ppSugerido: null, maxSugerido: null, status };
-  const sd = sigmaD ?? demanda * 0.5;
-  const sigmaLtD = Math.sqrt(lt * sd ** 2 + demanda ** 2 * sigmaLt ** 2);
-  const ss = teto9(z * sigmaLtD);
-  const ppCalc = teto9(demanda * lt + z * sigmaLtD);
+  const base = { naView: true, classeProposta: classe, numOrdens, demanda, sigmaD, lt: ltPerfil, sigmaLt: sigmaLtPerfil, z, minimoOperacional, precoEoq: preco, fontePreco };
+  if (status !== 'OK' || ltPerfil === null || preco === null) return { ...base, ssCalculado: null, ppSugerido: null, maxSugerido: null, status };
+  const { ss, pp: ppSug } = pontoDePedidoF0({ demanda, sigmaD, lt: ltPerfil, sigmaLt: sigmaLtPerfil, z, minimoOperacional });
   const cm = s.f0.custoCapitalPerc / 100;
   const qc = preco > 0 && cm > 0 && demanda > 0 ? teto9(Math.sqrt((2 * (demanda * F0.diasAnoEoq) * s.f0.custoPedido) / (cm * preco))) : 1;
-  const minSug = Math.max(ss, minimoOperacional);
-  const ppSug = Math.max(ppCalc, minSug + 1);
   return { ...base, ssCalculado: ss, ppSugerido: ppSug, maxSugerido: ppSug + Math.max(qc, 1), status };
 }
 
+/**
+ * Núcleo da view (v_sku_parametros_sugeridos) para um conjunto de insumos JÁ escolhido pelo perfil: σd ausente ⇒ D·0,5;
+ * ss = ⌈z·√(LT·σd² + D²·σLT²)⌉; PP = max(⌈D·LT + z·√…⌉, max(ss, mín. operacional) + 1). Mesma aritmética (teto9) do P0.
+ */
+export function pontoDePedidoF0(e: { demanda: number; sigmaD: number | null; lt: number; sigmaLt: number; z: number; minimoOperacional: number }): { ss: number; pp: number } {
+  const sd = e.sigmaD ?? e.demanda * 0.5;
+  const sigmaLtD = Math.sqrt(e.lt * sd ** 2 + e.demanda ** 2 * e.sigmaLt ** 2);
+  const ss = teto9(e.z * sigmaLtD);
+  const ppCalc = teto9(e.demanda * e.lt + e.z * sigmaLtD);
+  return { ss, pp: Math.max(ppCalc, Math.max(ss, e.minimoOperacional) + 1) };
+}
+
 /** Rola atualizar_parametros_numericos_skus (1×/dia) do início até `ate`, guardando o diagnóstico de cada dia. */
-function trajetoriaF0(dados: Dados, sku: string, ate: Data, calib: boolean): TrajetoriaF0 {
+function trajetoriaF0(dados: Dados, sku: string, ate: Data, calib: boolean, perfil: PerfilF0 = PERFIL_P0): TrajetoriaF0 {
   const ix = indice(dados);
-  const chave = `${sku}|${calib ? 1 : 0}`;
+  const chave = perfil.nome === 'P0' ? `${sku}|${calib ? 1 : 0}` : `${sku}|${calib ? 1 : 0}|${chavePerfil(perfil)}`;
   let t = ix.trajF0.get(chave);
   if (!t) ix.trajF0.set(chave, (t = { ate: null, estado: ESTADO_COLD_START, demanda: null, dias: new Map() }));
   const s = dados.skus.get(sku);
@@ -527,7 +564,7 @@ function trajetoriaF0(dados: Dados, sku: string, ate: Data, calib: boolean): Tra
   if (!s || ate < inicio) return t;
   let d = t.ate === null ? inicio : addDias(t.ate, 1);
   for (; d <= ate; d = addDias(d, 1)) {
-    const sug = sugestaoF0(dados, ix, s, d, calib);
+    const sug = sugestaoF0(dados, ix, s, d, calib, false, perfil);
     let gravacao: StatusGravacao = 'fora_da_view';
     if (sug.naView) {
       t.demanda = sug.demanda;
@@ -558,8 +595,8 @@ export function sugestaoDaView(dados: Dados, sku: string, E: Data): ReturnType<t
 }
 
 /** Diagnóstico do F0 no dia d (a sugestão da view e o gravado depois da passada do dia). */
-export function diagnosticoF0(dados: Dados, sku: string, d: Data, ctx: { calibracao: boolean }): DiagnosticoF0 {
-  const t = trajetoriaF0(dados, sku, d, ctx.calibracao);
+export function diagnosticoF0(dados: Dados, sku: string, d: Data, ctx: { calibracao: boolean; perfilF0?: PerfilF0 }): DiagnosticoF0 {
+  const t = trajetoriaF0(dados, sku, d, ctx.calibracao, ctx.perfilF0 ?? PERFIL_P0);
   return (
     t.dias.get(d) ?? {
       naView: false, classeProposta: null, numOrdens: 0, demanda: null, sigmaD: null, lt: null, sigmaLt: null, z: null, minimoOperacional: null,
@@ -568,11 +605,11 @@ export function diagnosticoF0(dados: Dados, sku: string, d: Data, ctx: { calibra
   );
 }
 
-function paramsF0(dados: Dados, sku: string, d: Data, calib: boolean): ParamsF0 | SemDecisao {
+function paramsF0(dados: Dados, sku: string, d: Data, calib: boolean, perfil: PerfilF0 = PERFIL_P0): ParamsF0 | SemDecisao {
   const ix = indice(dados);
   const g = ix.grupoDe.get(sku);
   if (g && g.ancora !== sku) return { tipo: 'SEM_DECISAO', motivo: 'MEMBRO_GRUPO_NAO_ANCORA' };
-  const diag = diagnosticoF0(dados, sku, d, { calibracao: calib });
+  const diag = diagnosticoF0(dados, sku, d, { calibracao: calib, perfilF0: perfil });
   const s = dados.skus.get(sku);
   if (!s) return { tipo: 'SEM_DECISAO', motivo: 'F0_SEM_PARAMETRO' };
   let cobertura: number | null = null;
@@ -605,6 +642,54 @@ function baldesAntes(ix: Indice, d: Data): number {
   const i = idx(d);
   if (i <= 0) return 0;
   return ix.baldeDoDia[Math.min(i, ix.nDias) - 1] + 1;
+}
+
+/**
+ * F0′ (Alt1/Alt2): a série por DIA ÚTIL do PRÓPRIO SKU (não do grupo: a demanda do F0 é só a dele) na janela de `dias`
+ * corridos [d − dias, d), truncada no início do histórico. Cada venda de dia corrido < d entra no balde do seu dia útil
+ * (fim de semana → du anterior, como em `serieDu`); a de fim de semana cujo du cai ANTES da janela fica fora da SÉRIE
+ * (borda esquerda — afeta só o σd), mas entra em `soma` (o numerador de D é Σ vendas em [d − dias, d), §4.4).
+ * Du sem venda = 0. Feriado não existe no calendário (seg–sex): o du dele conta.
+ */
+function janelaPorDu(ix: Indice, sku: string, d: Data, dias: number): { valores: Float64Array; comVenda: boolean; soma: number } {
+  const iD = Math.min(idx(d), ix.nDias);
+  if (iD <= 0) return { valores: new Float64Array(0), comVenda: false, soma: 0 };
+  const iIni = Math.max(0, iD - dias);
+  const b0 = iIni === 0 ? 0 : ix.baldeDoDia[iIni - 1] + 1;
+  const bFim = ix.baldeDoDia[iD - 1] + 1; // baldes estritamente antes de d
+  const valores = new Float64Array(Math.max(0, bFim - b0));
+  const tot = ix.totalDia.get(sku);
+  let comVenda = false;
+  let soma = 0; // Σ vendas de [d − dias, d) — TODAS, inclusive a de borda esquerda (numerador de D, achado P1 do Codex)
+  if (tot) {
+    for (let i = iIni; i < iD; i++) {
+      if (tot[i] === 0) continue;
+      soma += tot[i];
+      const b = ix.baldeDoDia[i];
+      if (b < b0) continue; // fora só da SÉRIE por du (σd), nunca da soma
+      valores[b - b0] += tot[i];
+      comVenda = true;
+    }
+  }
+  return { valores, comVenda, soma };
+}
+/** Alt1: Σ vendas da janela de 90 d ÷ nº de DIAS ÚTEIS observados nela, round 4 (como a view). */
+function demandaPorDu(ix: Indice, sku: string, d: Data): number {
+  const { valores, soma } = janelaPorDu(ix, sku, d, F0.janelaDemandaDias);
+  if (valores.length === 0) throw new Error(`F0_PERFIL_SEM_DIA_UTIL:${sku}|${d}`); // inalcançável: o motor só roda após 28 dias
+  return arred(soma / valores.length, 4);
+}
+/** Alt1: stddev_samp da série por du dos últimos 180 dias corridos (zeros nos du sem venda), round 4; sem venda ⇒ null (fallback D·0,5). */
+function sigmaPorDu(ix: Indice, sku: string, d: Data): number | null {
+  const { valores, comVenda } = janelaPorDu(ix, sku, d, F0.janelaSigmaDias);
+  if (!comVenda) return null;
+  const dp = desvioAmostral(valores);
+  return dp === null ? null : arred(dp, 4);
+}
+/** Para os oráculos de teste (§4.4, item 3): demanda e σd do perfil por du, no dia d. */
+export function demandaSigmaPorDu(dados: Dados, sku: string, d: Data): { demanda: number; sigmaD: number | null; du: number } {
+  const ix = indice(dados);
+  return { demanda: demandaPorDu(ix, sku, d), sigmaD: sigmaPorDu(ix, sku, d), du: janelaPorDu(ix, sku, d, F0.janelaDemandaDias).valores.length };
 }
 
 /** Amostra de LT documental (t4 < d): do SKU/grupo se >= 5, senão da Sayerlack toda; null se vazia. Ordenada. */
@@ -724,11 +809,12 @@ function gradeF2(ix: Indice, sku: string, serie: Float64Array, n: number, lts: n
   });
 }
 
-function gradeNoDia(f: Formula, dados: Dados, sku: string, d: Data, janelaDias: number | undefined, calib: boolean): Grade {
+function gradeNoDia(f: Formula, dados: Dados, sku: string, d: Data, janelaDias: number | undefined, calib: boolean, perfil: PerfilF0 = PERFIL_P0): Grade {
   const ix = indice(dados);
   const g = ix.grupoDe.get(sku);
   if (g && g.ancora !== sku) return { tipo: 'SEM_DECISAO', motivo: 'MEMBRO_GRUPO_NAO_ANCORA' };
-  if (f === 'F0') return paramsF0(dados, sku, d, calib);
+  if (f === 'F0') return paramsF0(dados, sku, d, calib, perfil);
+  if (perfil.nome !== 'P0') throw new Error(`PERFIL_F0_FORA_DO_F0:${f}`);
   if (!ehDiaUtil(d)) throw new Error(`DIA_NAO_UTIL:${d}`);
   const serie = serieDu(ix, sku);
   const n = baldesAntes(ix, d);
@@ -809,6 +895,8 @@ export interface EntradaChave {
   formula: Formula;
   janelaDias: number | null;
   ctx: { calibracao: boolean; dias: [Data, Data]; skus: string[] };
+  /** chavePerfil do F0′; ausente = P0 (modo oficial). */
+  perfilF0?: string;
 }
 /** sha256(hashDados, dataExtracao, hashCodigo, calendário, precisão, f, janela, ctx). O quantil e o β NÃO entram: o disco guarda a GRADE (todos os quantis e os 3 β); resolver é barato. */
 export function chaveCache(e: EntradaChave): string {
@@ -843,9 +931,13 @@ export function preComputarComOrigem(
   const skus = ctx.skus ?? [...coorteTodosAtivos(dados).populacao].sort();
   const janelaDias = f === 'F3' ? (p.janelaDias ?? null) : null;
   if (f === 'F3' && janelaDias === null) throw new Error('F3_SEM_JANELA');
+  const perfil = ctx.perfilF0 ?? PERFIL_P0;
+  if (f !== 'F0' && perfil.nome !== 'P0') throw new Error(`PERFIL_F0_FORA_DO_F0:${f}`);
+  // §4.4, item 5: o perfil entra na chave; P0 não acrescenta campo (a chave do modo oficial fica a mesma)
   const chave = chaveCache({
     hashDados: dados.hashDados, dataExtracao: dados.dataExtracao, hashCodigo: opcoes.hashCodigo ?? hashCodigo(), formula: f, janelaDias,
     ctx: { calibracao: ctx.calibracao, dias, skus },
+    ...(perfil.nome === 'P0' ? {} : { perfilF0: chavePerfil(perfil) }),
   });
   let porChave = gradesMemo.get(dados);
   if (!porChave) gradesMemo.set(dados, (porChave = new Map()));
@@ -867,7 +959,7 @@ export function preComputarComOrigem(
     const dus = ix.du.filter((d) => d >= dias[0] && d <= dias[1]);
     for (const s of skus) {
       if (!dados.skus.has(s)) throw new Error(`SKU_FORA_DOS_DADOS:${s}`);
-      for (const d of dus) grades.set(`${s}|${d}`, gradeNoDia(f, dados, s, d, janelaDias ?? undefined, ctx.calibracao));
+      for (const d of dus) grades.set(`${s}|${d}`, gradeNoDia(f, dados, s, d, janelaDias ?? undefined, ctx.calibracao, perfil));
       ix.aleatoriosF2.delete(s); // ~1 MB por SKU: não acumular (M2 8 GB)
     }
     if (arq !== null && dir !== null) {

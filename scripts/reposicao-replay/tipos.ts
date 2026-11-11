@@ -303,7 +303,12 @@ export interface Evidencia {
   /** Critério 3: obrigatórios os cenários de `CENARIOS_FALTA.economia` (R25). */
   capital: EvidenciaCapital[];
   /** Critério 4: LT `max(LT,15)`, serviço como em 1 e 2 e redução de capital (capital nos cenários da economia, R25). */
-  estresse: { servico: EvidenciaServico[]; capital: EvidenciaCapital[] };
+  estresse: {
+    servico: EvidenciaServico[];
+    capital: EvidenciaCapital[];
+    /** Só no modo PACOTE (D1b, spec 2026-11-09 §4.3): a grade de economia (3′) também sob `max(LT, 15)`. */
+    economia?: EvidenciaEconomia[];
+  };
   /**
    * Critério 5: toda a grade na taxa base em cada cenário de `CENARIOS_FALTA.economia`. Taxas de 20%/30% = só
    * sensibilidade (R26), não são gate.
