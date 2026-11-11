@@ -75,3 +75,20 @@ Antes de implementar a opção 2, conferir:
 - Que a guarda `exigirRazaoFiscal` só reconhece a máscara no FIM. A linha com CPF no meio do nome escaparia dela.
 
 **Decisão:** pendente com o founder (2026-11-10).
+
+## Decisão e implementação (2026-11-10/11)
+
+O founder escolheu a opção 2 (gravar mascarado). O PR `claude/clientes-mei-cpf-mascarado`, aberto como DRAFT, contém:
+
+- a migration `20261113090000`, com triggers, backfill, PRE e PÓS;
+- `_shared/razao-fiscal.ts`, com a guarda ampliada para qualquer posição e com separadores;
+- a guarda nova no `criar_cliente_afiacao`;
+- o pré-cadastro do `omie-cliente` sem o CPF;
+- a prova `db/test-clientes-mei-cpf-mascarado.sh` (15 asserts; 7 de 7 sabotagens vermelhas em `C` e em `pt_BR`).
+
+O Codex ficou indisponível (cota, rc=75). A revisão adversarial do Fable não pediu a cópia crua, mas achou bloqueios:
+
+- **A1 (ALTO).** Com o perfil mascarado, o autocadastro numa conta sem código (1.115 MEI sem código `colacor`) recebe a recusa da guarda. O front engole o erro: só olha `res.data?.codigo_cliente`, e o `invoke` não rejeita. Assim o pedido trava com "provável falha temporária do Omie". **A migration não deve ser aplicada antes de corrigir isso.**
+- **M1.** A busca ao vivo no Omie (`listar_clientes`, respostas da `omie-cliente`) ainda leva a razão crua à impressão e ao e-mail "Novo Pedido".
+- **M2.** A PRE não confere se as edges novas já estão no ar.
+- **M3.** `private.customer_metrics_mv.razao_social` só se renova no cron de 6 h.
