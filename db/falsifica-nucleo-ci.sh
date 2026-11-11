@@ -457,9 +457,9 @@ printf '%s 5 falsificar=3\ndb/test-fake-falsificavel-2.sh 5 falsificar=3\n' "$FA
 if python3 - "$ESPELHO/db/roda-nucleo-ci.sh" "$ESPELHO/db/roda-nucleo-ci-pula.sh" > "$LOGS/sabotagem.log" 2>&1 <<'PY'
 import sys, pathlib
 t = pathlib.Path(sys.argv[1]).read_text()
-a = '*)    enfileira "${scripts[$i]}" falsificar "${falsifs[$i]}" 0 "$c" "$i" ;;'
+a = '    enfileira "${scripts[$i]}" "$m" "${falsifs[$i]}" 0 "$c" "$i"'
 assert t.count(a) == 1, f"esperava 1 chamada da falsificacao no laco, achei {t.count(a)}"
-pathlib.Path(sys.argv[2]).write_text(t.replace(a, '*)    [ "$i" -eq 1 ] || enfileira "${scripts[$i]}" falsificar "${falsifs[$i]}" 0 "$c" "$i" ;;', 1))
+pathlib.Path(sys.argv[2]).write_text(t.replace(a, '    [ "$i" -eq 1 ] || enfileira "${scripts[$i]}" "$m" "${falsifs[$i]}" 0 "$c" "$i"', 1))
 PY
 then
   exec_exige "falsificação OMITIDA entre duas declaradas REPROVA pelo recibo de identidade" \
@@ -467,6 +467,108 @@ then
     env MANIFESTO="$MF" bash "$ESPELHO/db/roda-nucleo-ci-pula.sh"
 else
   bad "runner que pula a falsificação — SABOTAGEM NÃO APLICOU (falsificação inválida): $(tail -1 "$LOGS/sabotagem.log")"
+fi
+
+# FAIXAS (`falsificar=<n> faixas=<k>`): a falsificação em k unidades `falsificar:i/k`, cada uma com a
+# linha `FAIXA: i/k sabotagens a-b de T` conferida contra a fatia CANÔNICA. Controle positivo primeiro:
+# um runner que reprovasse toda faixa passaria em todas as recusas abaixo.
+echo
+echo "=== FAIXAS: cada metade prova a SUA fatia, e o conjunto exige as k? ==="
+FX="db/test-fake-faixas.sh"
+# fake_faixas <T> <a-b forçado ou vazio> <vermelhas forçadas ou vazio> — prova falsa com T sabotagens que
+# honra NUCLEO_FAIXA (fatia canônica), salvo quando o caso força a fatia ou a contagem de vermelhas.
+fake_faixas() {
+  # shellcheck disable=SC2016  # é TEXTO da prova falsa: expande lá, não aqui
+  fake_falsificavel test-fake-faixas.sh "  T=$1; forca_ab='$2'; forca_v='$3'"'
+  if [ -n "${NUCLEO_FAIXA:-}" ]; then
+    i=${NUCLEO_FAIXA%/*}; k=${NUCLEO_FAIXA#*/}; a=$(( (i-1)*T/k+1 )); b=$(( i*T/k ))
+    [ -z "$forca_ab" ] || { a=${forca_ab%-*}; b=${forca_ab#*-}; }
+    v=$((b-a+1)); [ -z "$forca_v" ] || v=$forca_v
+    echo "FAIXA: $NUCLEO_FAIXA sabotagens $a-$b de $T"; echo "SABOTAGENS: $v vermelhas / 0 falhas"
+  else
+    echo "SABOTAGENS: $T vermelhas / 0 falhas"
+  fi
+  exit 0'
+}
+MFX="$ESPELHO/manifesto-faixas.txt"
+fake_faixas 6 '' ''
+printf '%s 5 falsificar=6 faixas=2\n' "$FX" > "$MFX"
+exec_verde "CONTROLE: faixas=2 honesto passa, com as 2 faixas como unidades próprias" \
+  "falsificacoes=2/2 fora_do_ci=0" env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+exec_verde "CONTROLE: a faixa 2/2 roda a fatia 4-6 de 6" "test-fake-faixas --falsificar 2/2" \
+  env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+{ printf '#!/usr/bin/env bash\n# aceita --falsificar, mas não conhece NUCLEO_FAIXA: roda TODAS em cada faixa\n'
+  # shellcheck disable=SC2016  # é TEXTO da prova falsa: expande lá, não aqui
+  printf 'if [ "${1:-}" = "--falsificar" ]; then echo "SABOTAGENS: 6 vermelhas / 0 falhas"; exit 0; fi\n'
+  printf 'echo "RESULTADO: 5 ok / 0 fail"\n'; } > "$ESPELHO/$FX"
+exec_exige "prova que IGNORA a faixa (sem linha FAIXA:) REPROVA" "sem UMA linha da faixa" \
+  env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+fake_faixas 6 '1-3' ''
+exec_exige "fatia FORA da canônica (as 2 faixas rodam 1-3: 4-6 nunca roda) REPROVA" "≠ a canônica da faixa 2/2" \
+  env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+fake_faixas 4 '' ''
+exec_exige "total ENCOLHIDO (T=4 < falsificar=6) REPROVA mesmo com fatias canônicas" "total=4 < mínimo 6" \
+  env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+fake_faixas 6 '' '2'
+exec_exige "vermelhas ≠ tamanho da fatia (a faixa não rodou inteira) REPROVA" "a faixa não rodou inteira" \
+  env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+fake_faixas 6 '' ''
+printf '%s 5 falsificar=6\n' "$FX" > "$MFX"
+{ printf '#!/usr/bin/env bash\n# recorta SOZINHA: sem faixa pedida, roda só a 1ª metade e diz isso\n'
+  # shellcheck disable=SC2016  # é TEXTO da prova falsa: expande lá, não aqui
+  printf 'if [ "${1:-}" = "--falsificar" ]; then echo "FAIXA: 1/2 sabotagens 1-3 de 6"; echo "SABOTAGENS: 6 vermelhas / 0 falhas"; exit 0; fi\n'
+  printf 'echo "RESULTADO: 5 ok / 0 fail"\n'; } > "$ESPELHO/$FX"
+exec_exige "linha FAIXA: SEM faixa pedida (a prova recortou sozinha) REPROVA" "FAIXA sem faixa pedida" \
+  env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+
+fake_faixas 6 '' ''
+printf '%s 5 falsificar=6 faixas=1\n' "$FX" > "$MFX"
+exec_exige "faixas=1 ABORTA (4º campo inválido, não desliga nada)" "4º campo inválido" \
+  env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+printf '%s 5 falsificar=fora-do-ci faixas=2  # motivo\n' "$FX" > "$MFX"
+exec_exige "faixas numa falsificação fora-do-ci ABORTA" "só uma falsificação que roda" \
+  env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+printf '%s 5 falsificar=3 faixas=4\n' "$FX" > "$MFX"
+exec_exige "mais faixas que sabotagens ABORTA (faixa vazia)" "mais faixas que sabotagens" \
+  env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+
+# O CONJUNTO com faixas: o runner sabotado não ENFILEIRA a faixa 2/2. A 1/2 roda e passa — só a
+# identidade `falsificar:2/2` exigida pelo §4 vê a metade que sumiu. (Sabotar o `modos_falsif` não serve:
+# ele DEFINE o conjunto, para a fila, o §4 e a união; sabotá-lo é mudar o manifesto, não furar o runner.)
+printf '%s 5 falsificar=6 faixas=2\n' "$FX" > "$MFX"
+if python3 - "$ESPELHO/db/roda-nucleo-ci.sh" "$ESPELHO/db/roda-nucleo-ci-meia.sh" > "$LOGS/sabotagem.log" 2>&1 <<'PY2'
+import sys, pathlib
+t = pathlib.Path(sys.argv[1]).read_text()
+a = '    enfileira "${scripts[$i]}" "$m" "${falsifs[$i]}" 0 "$c" "$i"'
+assert t.count(a) == 1, f"esperava 1 chamada da falsificacao no laco, achei {t.count(a)}"
+pathlib.Path(sys.argv[2]).write_text(t.replace(a, '    [ "$m" = "falsificar:2/2" ] || enfileira "${scripts[$i]}" "$m" "${falsifs[$i]}" 0 "$c" "$i"', 1))
+PY2
+then
+  exec_exige "faixa OMITIDA da fila (o runner não enfileira a 2/2) REPROVA pelo recibo de identidade" \
+    "sem recibo de conclusão: db/test-fake-faixas.sh falsificar:2/2" \
+    env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci-meia.sh"
+  REC_FX="$ESPELHO/recibos-faixas"; rm -rf "$REC_FX"; mkdir -p "$REC_FX"
+  exec_verde "CONTROLE: a parte 0/1 (runner íntegro) grava as 2 faixas no recibo" "RECIBO_DA_PARTE 0/1 unidades=3" \
+    env MANIFESTO="$MFX" NUCLEO_PARTE=0/1 NUCLEO_RECIBO="$REC_FX/parte-0.txt" bash "$ESPELHO/db/roda-nucleo-ci.sh"
+  exec_verde "CONTROLE: a união do recibo íntegro fecha com as 2 faixas" "falsificacoes=2/2" \
+    env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh" --uniao "$REC_FX"
+  # (o `adultera` só nasce na seção da união, abaixo: a mesma regra 3 aqui, à mão)
+  sed -e '/^unidade db\/test-fake-faixas.sh falsificar:2\/2$/d' -e 's/^fim 3$/fim 2/' "$REC_FX/parte-0.txt" > "$REC_FX/meio.tmp"
+  if cmp -s "$REC_FX/meio.tmp" "$REC_FX/parte-0.txt"; then
+    bad "adulteração do recibo de faixas NÃO APLICOU — falsificação inválida"
+  else
+    mv "$REC_FX/meio.tmp" "$REC_FX/parte-0.txt"
+    exec_exige "a união sem a faixa 2/2 REPROVA (o conjunto, não a contagem)" \
+      "sem recibo de conclusão: db/test-fake-faixas.sh falsificar:2/2" \
+      env MANIFESTO="$MFX" bash "$ESPELHO/db/roda-nucleo-ci.sh" --uniao "$REC_FX"
+  fi
+else
+  bad "runner que não enfileira uma faixa — SABOTAGEM NÃO APLICOU (falsificação inválida): $(tail -1 "$LOGS/sabotagem.log")"
 fi
 rm -f "$ESPELHO/$FALSO" "$ESPELHO/db/test-fake-falsificavel-2.sh" "$ESPELHO/db/roda-nucleo-ci-pula.sh"
 
@@ -878,7 +980,8 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # 76 → 81 em 2026-11-10: os 5 casos de N=16 partes (controle, última ausente, duplicada, fora da faixa ×2).
 # 81 → 85 em 2026-11-10: os 4 casos do 3º slot (D2). Só rodam com bash ≥ 5.1; no bash 3.2 a contagem
 # fica acima do piso mesmo sem eles.
-OK_MINIMO=85
+# 85 → 99 em 2026-11-11: os 14 casos das FAIXAS (`falsificar=<n> faixas=<k>`).
+OK_MINIMO=99
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi
