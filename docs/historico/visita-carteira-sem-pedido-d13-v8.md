@@ -70,7 +70,7 @@ sobre as linhas atuais. Consulta: `db/validar-visita-top30-d13.sql` (`-v simular
 | Regina — depois (simulado) | 40 | 305 de 493 | Balsas | 2 de 3 |
 
 Nas vagas que sobram depois dos compradores, quem nunca comprou entra em ordem, abaixo de todos eles. O depois MEDIDO
-(após deploy e backfill) vai no registro de "no ar".
+(após deploy e backfill) está em "No ar", abaixo: bate com o simulado em todas as colunas.
 
 ## Backfill
 
@@ -108,3 +108,24 @@ sensor novo.
 (`score_breakdown->'inputs'->>'sales_orders_count'`), `churn_risk` vs `100 − health_score` por status, scores de missão
 de quem nunca comprou, alvo do backfill (as cláusulas do UPDATE como `count(*)`), e o top 30 por dono/cidade com a
 regra nova aplicada como `CASE` sobre a linha atual (`db/validar-visita-top30-d13.sql`).
+
+## No ar (11/11)
+
+- **Código:** #3827, mergeado às 15:09 UTC (`82fdcf511`). O PÓS do backfill usa `IS DISTINCT FROM 0`, não `<> 0`
+  (catraca `assert-verde-por-ausencia` em `.sql` novo).
+- **Edge:** `visit-score-recalc-client` `v1.1-carteira-sem-pedido`, vista pela sonda às 17:11 UTC na janela viva e copiada
+  para `deploy_atestacoes` pelo coletor (`deploy-atestacoes-colher`, a cada 15 min) logo depois. A TRAVA lê só o
+  ledger, então o backfill esperou essa cópia.
+- **Backfill:** `bun run db:aplicar` (ensaio e depois de verdade, commit `3064c8969`, sha256 `b3f834bb711a…`), recibo
+  **#1089** em `db_aplicacoes`. `D13_BACKFILL_OK marcadas=9664`, igual ao pré-voo.
+- **2ª testemunha (`psql-ro`):** 9.664 linhas com `backfill.regra = d13-carteira-sem-pedido`, todas com `visit_score` 10
+  e missão `prospeccao`; 0 linhas restantes no alvo; 0 linhas marcadas de comprador ou lead.
+- **Top 30 depois, medido** (`db/validar-visita-top30-d13.sql -v simular=0`):
+
+| dono | cidades na lista | compradores no top 30 (todas as cidades) | cidade padrão | compradores no top 30 da cidade padrão |
+|---|---|---|---|---|
+| Tatyana | 40 | 339 de 852 | Divinópolis | **30 de 30** |
+| Lucas | 53 | 198 de 871 | Carmo do Cajuru | 15 de 30 |
+| Regina | 40 | 305 de 493 | Balsas | 2 de 3 |
+
+A fila de recálculo (6.577 pendentes) segue no drain de 500/dia, agora com a regra da v1.1. Sem Publish: o front não mudou.
