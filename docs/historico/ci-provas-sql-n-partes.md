@@ -1,4 +1,4 @@
-# Provas SQL: N de partes como botão único, pronto para o teto do GitHub Pro (2026-11-10)
+# Provas SQL: N de partes como botão único — 16 partes no GitHub Pro (2026-11-10/11)
 
 ## Por quê
 
@@ -10,19 +10,16 @@ O limite é a concorrência. Um run ocupa ~17 jobs (12 não-SQL + 5 partes), e o
 permite 20 jobs GitHub-hosted ao mesmo tempo. Daí a fila no pico. O GitHub Pro sobe o teto para 40
 (docs.github.com/en/actions/reference/limits). Meta: pior parte com p90 ≤ 9 min.
 
-## Estado: código pronto, MEDIÇÃO PENDENTE (o Pro ainda não foi assinado)
+## Estado (2026-11-11): N=16 em produção do CI
 
-Em 2026-11-10 o founder confirmou que **ainda não assinou o Pro**. Pela regra da tarefa, preparei o
-código e parei antes de medir. Com o teto de 20, subir N já colocaria um run sozinho na fila:
-10 partes dão 22 jobs, 16 partes dão 28. A lista da matriz **segue com 5 partes**, e este PR é
-equivalente ao de antes.
+O #3792 deixou o código pronto com 5 partes, enquanto o Pro não estava assinado. O founder assinou
+o GitHub Pro em 2026-11-10. A medição (seção "Medido no CI", abaixo) escolheu **N=16**, e o PR
+seguinte mudou só a lista `matrix.parte`. A base da medição já é **W=3** (D2, #3793), não o W=2 da
+simulação.
 
-Observação: `gh api user --jq .plan.name` devolve `null` com o token atual. Os escopos dele são
-`gist, read:org, repo, workflow`, e o campo `plan` exige `read:user`/`user`. Para conferir o Pro,
-use um dos dois caminhos:
-
-- `gh auth refresh -s read:user` e depois a mesma consulta;
-- a prova empírica: um run com mais de 20 jobs `in_progress` ao mesmo tempo (receita abaixo).
+Para conferir o plano: `gh api user --jq .plan.name` exige o escopo `read:user`, que o token não
+tem. A prova usada foi a empírica: num run, 27 jobs ficaram `in_progress` ao mesmo tempo. No Free, o
+pico em 24 h tinha sido exatamente 20 (179 runs, 1.332 jobs).
 
 ## O que mudou
 
@@ -119,6 +116,48 @@ critério) fica para a medição.
      precisariam de cópias isoladas;
    - runner externo pago.
 
-## Medido no CI
+## Medido no CI (2026-11-10/11, GitHub Pro, W=3)
 
-_Pendente: depende da assinatura do Pro._
+Usei `workflow_dispatch` num branch de experimento sem PR (`claude/provas-n-partes-experimento`,
+SHA `d1176a617`, input `partes_sql`, `mutcheck=false`). O branch é a main de então (#3793, W=3) mais
+o input. Disparei **12 runs em série, na ordem 16·5·10 repetida 4 vezes**, um por vez para que um
+não pusesse o outro na fila. Todos os 12 deram `success`, e nenhum run foi descartado.
+
+| N | Pior parte p50 / p90 | push→`validate` p50 / p90 | runner-min p50 | Falhas |
+|---|---|---|---|---|
+| 5 | 15,9 / 16,7 min | 16,8 / 17,4 min | 109 | 0/4 |
+| 10 | 10,0 / 10,8 min | 10,7 / 11,5 min | 115 | 0/4 |
+| **16** | **7,3 / 8,0 min** | **8,1 / 8,8 min** | 121 | 0/4 |
+
+Runs por braço:
+
+- N=5: 42887575915, 42947122197, 42950872843, 42955012632;
+- N=10: 42890412185, 42948818112, 42952916522, 42956795078;
+- N=16: 42886225314, 42946024780, 42950024334, 42954119141.
+
+**Critério:**
+
+| N | SQL p90 ≤ 9 min | Queda ≥ 35% no `validate` p50 | Sem regressão de falha |
+|---|---|---|---|
+| 10 | ❌ (10,8) | ✅ (−36%, no limite) | ✅ |
+| 16 | ✅ (8,0) | ✅ (−52%) | ✅ |
+
+Para N=10, o critério de SQL p90 já reprova sozinho. Escolhi **N=16**, o menor N que atinge os três.
+
+- **Runner-min:** +11% por run (109 → 121). O repo é **público**, então os minutos de runner
+  GitHub-hosted padrão não são cobrados.
+- **Teto:** o 1º run com N=16 teve 27 jobs `in_progress` ao mesmo tempo, acima dos 20 do Free. Esse é
+  o Pro em vigor.
+- **Dois PRs simultâneos (N=16, 2 refs de mesmo SHA, 42958687700 e 42958687697):**
+
+  | | 1º run | 2º run |
+  |---|---|---|
+  | Fila | 4 s | até 4,3 min (média de 51 s), porque 2 × ~28 jobs passam do teto de 40 |
+  | Pior parte | 7,4 min | 7,4 min |
+  | push→`validate` | 8,1 min | 12,1 min |
+
+  Mesmo no 2º run, o push→`validate` fica abaixo dos 16,8 min de N=5 com um run só.
+- **Armadilha de medição:** 2 dispatches no MESMO ref não rodam juntos. O grupo `concurrency` do
+  `ci.yml` (`ci-dispatch-<ref>`) põe o segundo como `pending`. Para simular 2 PRs, use 2 branches.
+- **Se o Pro for cancelado:** volte `matrix.parte` para 5. No Free (teto 20), um run com 28 jobs
+  entra na fila sozinho.
