@@ -206,7 +206,7 @@ SEM_REVOKE="$TMP/sem-revoke.sql"
 grep -vF "FROM anon;" "$MIG" > "$SEM_REVOKE"
 if out="$(P -q -c "BEGIN;" -c "DROP FUNCTION public.tint_adocao_balcao(integer);" -f "$SEM_REVOKE" -c "ROLLBACK;" 2>&1)"; then
   bad "A9 postcondição tem dente — sem o REVOKE do anon a migration TERMINOU (deveria abortar na P5)"
-elif printf '%s' "$out" | grep -q 'P5 FALHOU'; then
+elif grep -q 'P5 FALHOU' <<<"$out"; then
   ok "A9 postcondição tem dente — sem o REVOKE do anon a migration aborta na P5"
 else
   bad "A9 postcondição — abortou, mas não na P5: $(printf '%s' "$out" | grep -o 'P[0-9] FALHOU' | head -1)"

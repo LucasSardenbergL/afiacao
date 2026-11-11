@@ -223,7 +223,7 @@ Aplica() {   # <arquivo> <marca da negação> [<preparo, na MESMA transação, a
             printf '\\i %s\nROLLBACK;\n' "$arq"; } \
           | P -qAt 2>&1 )" || rc=$?
   if [ "$rc" -eq 0 ]; then echo PASSOU
-  elif printf '%s' "$out" | grep -q "P0001: $marca"; then echo NEGOU
+  elif grep -q "P0001: $marca" <<<"$out"; then echo NEGOU
   else printf 'rc=%s psql: %s' "$rc" "$(printf '%s' "$out" | tr '\n' ' ' | head -c 300)"
   fi
 }

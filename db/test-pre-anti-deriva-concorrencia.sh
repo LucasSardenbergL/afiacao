@@ -381,7 +381,7 @@ cenario_m() { # <parte1> <arquivo de B> <alvo f|v> [controle]
   if ! espera_arquivo "$WORK/a.pronta" "$PID_A"; then
     fecha_A; echo "NAO_PAROU:$(tr '\n' ' ' < "$WORK/a.out" | head -c 200)"; return
   fi
-  local apid; apid="$(sed -n 's/^A_PID=//p' "$WORK/a.out" | head -1)"
+  local apid; apid="$(sed -n 's/^A_PID=//p' "$WORK/a.out" | sed -n 1p)"
   if [ -n "$ctl" ]; then
     # controle inócuo: com A parado segurando a trava, OUTRA função e OUTRA view se recriam na hora
     livre="$(P -c "SET lock_timeout = '3s';
@@ -564,7 +564,7 @@ fila_apos_commit() {
     > "$WORK/fila-commit.sql"
   RWV -f "$WORK/fila-commit.sql" > "$WORK/fila-commit.out" 2>&1 || true
   grep -q 'FIM_APLICACAO_OK' "$WORK/fila-commit.out" && fim=FIM_APLICACAO_OK
-  locks="$(sed -n 's/^LOCKS=//p' "$WORK/fila-commit.out" | head -1)"
+  locks="$(sed -n 's/^LOCKS=//p' "$WORK/fila-commit.out" | sed -n 1p)"
   echo "$fim|locks=${locks:-?}"
 }
 # E14/E14b: o delta com a porta nova QUEBRADA num trecho que só roda ao EXECUTAR (late-bound),
@@ -606,7 +606,7 @@ cenario_e15() {
   if ! espera_arquivo "$WORK/a.pronta" "$PID_A"; then
     fecha_A; echo "NAO_PAROU:$(tr '\n' ' ' < "$WORK/a.out" | head -c 200)"; return
   fi
-  apid="$(sed -n 's/^A_PID=//p' "$WORK/a.out" | head -1)"
+  apid="$(sed -n 's/^A_PID=//p' "$WORK/a.out" | sed -n 1p)"
   roda_B "$bsql"
   obs="$(observa_B "$apid")"
   manda_A "ROLLBACK;"
@@ -657,7 +657,7 @@ cenario_r0() {
           "COMMIT;" "SELECT 'A_FIM_OK';"
   fecha_A
   local leu a=ERRO
-  leu="$(sed -n 's/^LEU=//p' "$WORK/a.out" | head -1)"
+  leu="$(sed -n 's/^LEU=//p' "$WORK/a.out" | sed -n 1p)"
   grep -q '^A_FIM_OK$' "$WORK/a.out" && a=OK
   echo "leu=${leu:-nada}|S=$a|final=$(qual_f)"
 }

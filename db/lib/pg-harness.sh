@@ -47,7 +47,7 @@ _pgh_major_confere() {
   local dir="$1" saida major
   [ -n "$dir" ] && [ -x "$dir/initdb" ] || return 1
   saida="$("$dir/initdb" --version 2>/dev/null)" || return 1
-  major="$(printf '%s\n' "$saida" | grep -oE '[0-9]+' | head -1)"
+  major="$(printf '%s\n' "$saida" | grep -oE '[0-9]+' | sed -n 1p)"
   [ "$major" = "$PGVER" ] || return 1
   return 0
 }

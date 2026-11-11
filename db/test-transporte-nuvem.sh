@@ -227,7 +227,7 @@ done
 # T6: a trava EMITIDA (a 1a linha) trava escrita no lote inteiro — SQLSTATE, nao mensagem (idioma)
 prefixo="$(head -1 "$TMP/transporte.sql")"
 saida6="$(P -v VERBOSITY=sqlstate -c "$prefixo INSERT INTO prova_escrita VALUES (1);" 2>&1)"
-if printf '%s' "$saida6" | grep -qF '25006' && [ "$(P -A -t -c 'SELECT count(*) FROM prova_escrita')" = "0" ]; then
+if grep -qF '25006' <<<"$saida6" && [ "$(P -A -t -c 'SELECT count(*) FROM prova_escrita')" = "0" ]; then
   ok "[T6] o prefixo emitido bloqueia a escrita (25006) e nada persiste"
 else
   bad "[T6] escrita NAO bloqueada pelo prefixo: $(printf '%s' "$saida6" | head -c 300)"

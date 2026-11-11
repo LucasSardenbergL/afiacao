@@ -198,8 +198,8 @@ $gate
 ROLLBACK;
 SQL
 )"
-  dml="$(printf '%s\n' "$out" | sed -n 's/^\(NOTICE:  \)\{0,1\}DML=//p' | head -1 | tr ' ' '_')"
-  g="$(printf '%s\n' "$out" | sed -n 's/^GATE=//p' | head -1)"
+  dml="$(printf '%s\n' "$out" | sed -n 's/^\(NOTICE:  \)\{0,1\}DML=//p' | sed -n 1p | tr ' ' '_')"
+  g="$(printf '%s\n' "$out" | sed -n 's/^GATE=//p' | sed -n 1p)"
   echo "$rot=${dml:-SEM_SAIDA}/${g:-SEM_SAIDA}"
 }
 
@@ -230,7 +230,7 @@ diverge() {
   local saida="$1" esp="$2" par rot val lin res=""
   for par in $esp; do
     rot="${par%%=*}"; val="${par#*=}"
-    lin="$(printf '%s\n' "$saida" | grep -E "^$rot=" | head -1)"
+    lin="$(printf '%s\n' "$saida" | grep -E "^$rot=" | sed -n 1p)"
     [ "${lin#*=}" = "$val" ] || res="$res,$rot"
   done
   echo "${res#,}"
@@ -246,14 +246,14 @@ else bad "baseline inesperado em [$D]:"; printf '%s\n' "$S_B0" | sed 's/^/      
 echo "▶ T0 — migration REAL"
 novo_db tpl_base t0
 OUT_T0="$(PA -d t0 -tA -f "$MIG" 2>&1)" && RC=0 || RC=$?
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT_T0" | grep -q 'TINT_GRANTS_ESCRITA_STAFF_OK'; then ok "aplica com o marcador de fim (exit 0)"
+if [ "$RC" -eq 0 ] && grep -q 'TINT_GRANTS_ESCRITA_STAFF_OK' <<<"$OUT_T0"; then ok "aplica com o marcador de fim (exit 0)"
 else bad "migration real não aplicou (rc=$RC): $(printf '%s' "$OUT_T0" | tail -3)"; fi
 S_T0="$(roda_sondas t0)"
 D="$(diverge "$S_T0" "$ESP_T0")"
 if [ -z "$D" ]; then ok "com a migration: os 4 ataques e D1/TR dão 42501 de privilégio, o gate segue barrando, L1/L2 (TintMapping/TintPricing) e a leitura seguem"
 else bad "contrato protegido falhou em [$D]:"; printf '%s\n' "$S_T0" | sed 's/^/      /'; fi
 OUT_RE="$(PA -d t0 -tA -f "$MIG" 2>&1)" && RC=0 || RC=$?
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT_RE" | grep -q 'TINT_GRANTS_ESCRITA_STAFF_OK'; then ok "idempotente: re-aplicar passa de novo"
+if [ "$RC" -eq 0 ] && grep -q 'TINT_GRANTS_ESCRITA_STAFF_OK' <<<"$OUT_RE"; then ok "idempotente: re-aplicar passa de novo"
 else bad "re-apply falhou (rc=$RC)"; fi
 PA -q -d postgres -c "CREATE DATABASE tpl_mig TEMPLATE t0" >/dev/null
 
@@ -275,8 +275,8 @@ detector() {
   acl="$(PA -d "$db" -tA -c "SELECT has_table_privilege('authenticated','public.tint_formula_itens','INSERT')::text
                              || '/' || has_table_privilege('anon','public.tint_formulas','SELECT')::text
                              || '/' || has_table_privilege('authenticated','public.tint_skus','TRUNCATE')::text")"
-  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'pós-condição tint_grants_escrita_staff:' \
-     && printf '%s' "$out" | grep -qF "$cita" && ! printf '%s' "$out" | grep -q 'TINT_GRANTS_ESCRITA_STAFF_OK' \
+  if [ "$rc" -ne 0 ] && grep -q 'pós-condição tint_grants_escrita_staff:' <<<"$out" \
+     && grep -qF "$cita" <<<"$out" && ! grep -q 'TINT_GRANTS_ESCRITA_STAFF_OK' <<<"$out" \
      && [ "$acl" = "true/true/true" ]; then
     ok "$rot: abortou citando \"$cita\" e a ACL voltou ao estado aberto (rollback integral)"
   else bad "$rot: esperava abortar citando \"$cita\" com rollback integral (rc=$rc, acl=$acl): $(printf '%s' "$out" | grep -E 'ERROR|ERRO' | head -2)"; fi

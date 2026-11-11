@@ -126,9 +126,9 @@ if [ "$A2" = "0" ]; then ok "A2 paridade com filtro UF (slow-path): 0 divergente
 # A3: query interna do fast-path → Index Only Scan + 0 heap fetches (pós-vacuum)
 INNER="WITH agg AS MATERIALIZED (SELECT re.municipio_codigo AS mc, re.uf AS u, re.municipio_nome AS mn, count(*)::bigint AS t, count(*) FILTER (WHERE re.telefone1 IS NOT NULL OR re.telefone2 IS NOT NULL)::bigint AS ct, count(*) FILTER (WHERE re.prospeccao_status='a_contatar')::bigint AS ac FROM public.radar_empresas re WHERE re.ja_cliente=false AND re.prospeccao_status<>'descartado' GROUP BY re.municipio_codigo, re.uf, re.municipio_nome) SELECT a.mc, COALESCE(m.nome,a.mn), a.u, m.lat, m.lng, sum(a.t)::bigint, sum(a.ct)::bigint, sum(a.ac)::bigint FROM agg a LEFT JOIN public.radar_municipios m ON m.codigo=a.mc GROUP BY a.mc, COALESCE(m.nome,a.mn), a.u, m.lat, m.lng ORDER BY sum(a.t) DESC, a.mc LIMIT 500"
 PLAN="$("${P[@]}" -c "EXPLAIN (ANALYZE, BUFFERS) $INNER;")"
-if echo "$PLAN" | grep -qiE "Index Only Scan using idx_radar_muni_cover"; then ok "A3 fast-path: Index Only Scan em idx_radar_muni_cover"; else bad "A3 NÃO usou index-only"; echo "$PLAN" | grep -iE "scan|heap" | head; fi
-if echo "$PLAN" | grep -qiE "Seq Scan on radar_empresas|Parallel Seq Scan on radar_empresas"; then bad "A3b ainda faz Seq Scan da radar_empresas"; else ok "A3b sem Seq Scan da radar_empresas"; fi
-HEAP=$(echo "$PLAN" | grep -oiE "Heap Fetches: [0-9]+" | grep -oE "[0-9]+" | head -1 || echo "?")
+if grep -qiE "Index Only Scan using idx_radar_muni_cover" <<<"$PLAN"; then ok "A3 fast-path: Index Only Scan em idx_radar_muni_cover"; else bad "A3 NÃO usou index-only"; echo "$PLAN" | grep -iE "scan|heap" | head; fi
+if grep -qiE "Seq Scan on radar_empresas|Parallel Seq Scan on radar_empresas" <<<"$PLAN"; then bad "A3b ainda faz Seq Scan da radar_empresas"; else ok "A3b sem Seq Scan da radar_empresas"; fi
+HEAP=$(echo "$PLAN" | grep -oiE "Heap Fetches: [0-9]+" | grep -oE "[0-9]+" | sed -n 1p || echo "?")
 echo "  (Heap Fetches: ${HEAP:-?})"
 
 # A4: Execution Time da FUNÇÃO nova < original (média de 3, cache quente)

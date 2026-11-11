@@ -493,8 +493,8 @@ EXPLAIN (COSTS OFF) SELECT rotulo FROM public.farmer_client_scores;
 ROLLBACK;
 SQL
 )
-if printf '%s' "$PLANO" | grep -q 'hashed SubPlan'; then ok "A4 plano tem hashed SubPlan"; else bad "A4 sem hashed SubPlan:"; printf '%s\n' "$PLANO"; fi
-if printf '%s' "$PLANO" | grep -q 'carteira_visivel_para'; then bad "A4 plano ainda chama carteira_visivel_para"; else ok "A4 plano sem carteira_visivel_para"; fi
+if grep -q 'hashed SubPlan' <<<"$PLANO"; then ok "A4 plano tem hashed SubPlan"; else bad "A4 sem hashed SubPlan:"; printf '%s\n' "$PLANO"; fi
+if grep -q 'carteira_visivel_para' <<<"$PLANO"; then bad "A4 plano ainda chama carteira_visivel_para"; else ok "A4 plano sem carteira_visivel_para"; fi
 eq "A5 contador DEPOIS: 1 chamada por consulta" "$(Q real "SELECT _prova.chamadas('farmer_client_scores')")" "linhas=1,visivel_para=0,clientes_visiveis=1"
 eq "A5 contador DEPOIS (carteira_assignments)" "$(Q real "SELECT _prova.chamadas('carteira_assignments')")" "linhas=1,visivel_para=0,clientes_visiveis=1"
 
@@ -592,7 +592,7 @@ Q s4 "ALTER POLICY vag_insert_own_carteira ON public.visitas_agendadas WITH CHEC
 resonda s4
 S4=$(Q s4 "SELECT _prova.a1()")
 morde "S4 WITH CHECK sem o conjunto → A1" "$S4" "verde"
-if printf '%s' "$S4" | grep -q 'F1/ins:c1-eu-pendente ok'; then ok "S4 vermelho CERTO (F1 perdeu o INSERT de c1)"; else bad "S4 vermelho por outro motivo: $S4"; fi
+if grep -q 'F1/ins:c1-eu-pendente ok' <<<"$S4"; then ok "S4 vermelho CERTO (F1 perdeu o INSERT de c1)"; else bad "S4 vermelho por outro motivo: $S4"; fi
 
 copia real s5
 Q s5 "GRANT EXECUTE ON FUNCTION private.carteira_clientes_visiveis() TO anon" >/dev/null

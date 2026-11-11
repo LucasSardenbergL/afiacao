@@ -260,7 +260,7 @@ PY
   saida=$(cenarios 2>&1 || true)
   PASS=$antes_pass; FAIL=$antes_fail
   [ -n "${PROVA_VERBOSE:-}" ] && printf '%s\n' "$saida" | sed "s/^/    [sab $rotulo] /" >&2
-  if printf '%s\n' "$saida" | grep -q "❌ $rotulo"; then ok "FALS [$rotulo] reprova com a sabotagem"; else bad "FALS [$rotulo] ficou VERDE com a sabotagem — a prova não morde"; fi
+  if grep -q "❌ $rotulo" <<<"$saida"; then ok "FALS [$rotulo] reprova com a sabotagem"; else bad "FALS [$rotulo] ficou VERDE com a sabotagem — a prova não morde"; fi
   P -q -f "$MIG" >/dev/null
 }
 

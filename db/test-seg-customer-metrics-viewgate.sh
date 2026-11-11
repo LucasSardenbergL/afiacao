@@ -43,7 +43,7 @@ ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
 deny() { local out; if out=$(P -q -c "$1" 2>&1); then bad "$2 — devia NEGAR e passou"; \
-         elif echo "$out" | grep -qiE "permission denied|does not exist"; then ok "$2 (negado)"; \
+         elif grep -qiE "permission denied|does not exist" <<<"$out"; then ok "$2 (negado)"; \
          else bad "$2 — erro inesperado: $(echo "$out" | tail -1)"; fi; }
 
 echo "═══ setup PG17 :$PORT ═══"
@@ -150,7 +150,7 @@ P -q -c "DROP MATERIALIZED VIEW public.cmv_sabotage;"
 # FM2: se a view fosse security_invoker=on, authenticated (sem grant na MV private) NÃO leria → prova que invoker=off é o que faz funcionar
 P -q -c "ALTER VIEW public.customer_metrics_mv SET (security_invoker = on);"
 R=$(P -q -c "SET ROLE authenticated; SELECT count(*) FROM public.customer_metrics_mv;" 2>&1 || true)
-if echo "$R" | grep -qi "permission denied"; then ok "FM2 sabotado (invoker=on) authenticated perde acesso -> invoker=off tem dente"; else bad "FM2 leu mesmo com invoker=on ($R) -> sem dente"; fi
+if grep -qi "permission denied" <<<"$R"; then ok "FM2 sabotado (invoker=on) authenticated perde acesso -> invoker=off tem dente"; else bad "FM2 leu mesmo com invoker=on ($R) -> sem dente"; fi
 P -q -c "ALTER VIEW public.customer_metrics_mv SET (security_invoker = off);"
 
 echo "──────────────────────────────"

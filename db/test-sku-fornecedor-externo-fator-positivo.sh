@@ -192,7 +192,7 @@ awk 'BEGIN{skip=0; have=0}
   { if (skip) { if ($0 ~ /;/) skip=0; next }
     if (have) print held; held=$0; have=1 }
   END { if (have) print held }' "$MIG" > "$SABOT_DIR/f3.sql"
-command grep -v -- '^--' "$SABOT_DIR/f3.sql" | command grep -q "ADD CONSTRAINT" && { echo "‼ awk F3 não removeu o ADD"; exit 2; }
+command grep -q "ADD CONSTRAINT" <<<"$(command grep -v -- '^--' "$SABOT_DIR/f3.sql")" && { echo "‼ awk F3 não removeu o ADD"; exit 2; }
 falsifica "F3 sabotagem: ADD CONSTRAINT removido" "$SABOT_DIR/f3.sql" "A1"
 
 # F4: o assert DO HARNESS tem dente? Sem constraint, must_reject de 0 tem de ficar VERMELHO.

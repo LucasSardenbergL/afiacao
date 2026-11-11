@@ -124,8 +124,8 @@ EXCEPTION
 END $$;
 SQL
 ) || true
-  if echo "$out" | grep -q 'PROBE_BLOQUEOU_42501'; then echo 'BLOQUEOU';
-  elif echo "$out" | grep -q 'PROBE_PASSOU_SEM_BLOQUEIO'; then echo 'PASSOU';
+  if grep -q 'PROBE_BLOQUEOU_42501' <<<"$out"; then echo 'BLOQUEOU';
+  elif grep -q 'PROBE_PASSOU_SEM_BLOQUEIO' <<<"$out"; then echo 'PASSOU';
   else echo "ERRO_INESPERADO:${out}"; fi
 }
 
@@ -158,7 +158,7 @@ EXCEPTION
 END $$;
 SQL
 ) || true
-  if echo "$out" | grep -q 'PROBE_BLOQUEOU_42501'; then echo 'BLOQUEOU'; else echo 'PASSOU'; fi
+  if grep -q 'PROBE_BLOQUEOU_42501' <<<"$out"; then echo 'BLOQUEOU'; else echo 'PASSOU'; fi
 }
 
 echo "── positivos ──"

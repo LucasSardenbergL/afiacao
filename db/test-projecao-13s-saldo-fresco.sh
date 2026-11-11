@@ -271,7 +271,7 @@ saida="$(P -q --single-transaction -f "$MIG" 2>&1 || true)"
 depois="$(Pq -c "$MD5Q")"
 if [ "$md5_deriva" = "$MD5_PRED" ]; then
   erro_exec K1 "a deriva não mudou o corpo — o caso não existe"
-elif printf '%s' "$saida" | grep -q 'PRE FALHOU' && [ "$depois" = "$md5_deriva" ]; then
+elif grep -q 'PRE FALHOU' <<<"$saida" && [ "$depois" = "$md5_deriva" ]; then
   ok K1 "PRE recusou o corpo em deriva e nada mudou"
 else
   bad K1 "PRE deixou passar a deriva (corpo agora $depois) [$(printf '%s' "$saida" | tr '\n' ' ' | head -c 160)]"

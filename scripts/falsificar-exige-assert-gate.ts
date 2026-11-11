@@ -397,7 +397,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
         'P -v ON_ERROR_STOP=1 -q -f "$SAB" >/dev/null 2>&1 || { echo "…"; exit 1; }',
         'OUT="$(OFERTADOS)"',
         String.raw`SAIDA="$(printf '%s\n' "$OUT" | tail -1)"`,
-        String.raw`RET="$(printf '%s\n' "$OUT" | tail -2 | head -1)"`,
+        String.raw`RET="$(printf '%s\n' "$OUT" | tail -2 | sed -n 1p)"`,
         'HI="$(P -At -v ON_ERROR_STOP=1 -c "…")"',
         'MED="$SAIDA|ret=$RET|hi=$HI"',
         `if [ "$BLOCO" = "1" ]; then DECL='NENHUM|ret=0|0|0|0|{promo_flat}|hi=0|0'; else DECL='NENHUM|ret=1|1|200|0|{promo_flat}|hi=1|0'; fi`,

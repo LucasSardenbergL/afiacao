@@ -442,7 +442,7 @@ echo "── F7 controle negativo: a versão que lia ANTES de travar sobrescreve
 F7=$(corrida corrida_v0 "$REPO_ROOT/db/fixtures/rls-has-role-initplan-v0-le-antes-de-travar.sql")
 eq "F7 a outra sessão viu a v0 esperando e commitou" "${F7%%|*}" "0"
 R="${F7#*|}"
-if [ "${R#*|}" != "$APERTADA" ] && printf '%s' "${R#*|}" | grep -q "'employee'::app_role"; then
+if [ "${R#*|}" != "$APERTADA" ] && grep -q "'employee'::app_role" <<<"${R#*|}"; then
   ok "F7 A8 morde: a v0 devolveu o employee à policy apertada"
 else
   bad "F7 a v0 NÃO sobrescreveu (A8 não distingue): [${R#*|}]"

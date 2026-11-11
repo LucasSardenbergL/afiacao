@@ -222,7 +222,7 @@ EXCEPTION
 END $$;
 SQL
 )
-if printf '%s' "$R5" | grep -q 'GATE-BARROU-OK'; then ok "A5 não-staff barrado com 42501"; else bad "A5 gate de role NÃO barrou não-staff — veio: $R5"; fi
+if grep -q 'GATE-BARROU-OK' <<<"$R5"; then ok "A5 não-staff barrado com 42501"; else bad "A5 gate de role NÃO barrou não-staff — veio: $R5"; fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (INVERTIDA: sabotar = CONSERTAR)
@@ -308,7 +308,7 @@ EXCEPTION
 END $$;
 SQL
 )
-if printf '%s' "$R5G" | grep -q 'GATE-BARROU-OK'; then ok "F4 o guard preserva o gate de role (A5 segue verde)"; else bad "F4 o guard QUEBROU o gate de role — veio: $R5G"; fi
+if grep -q 'GATE-BARROU-OK' <<<"$R5G"; then ok "F4 o guard preserva o gate de role (A5 segue verde)"; else bad "F4 o guard QUEBROU o gate de role — veio: $R5G"; fi
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"

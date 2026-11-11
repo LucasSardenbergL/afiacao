@@ -44,7 +44,7 @@ espera() {
   local out rc ok_cod=0
   out=$("$@" 2>&1); rc=$?
   if [ -z "$cod" ]; then ok_cod=1
-  elif printf '%s' "$out" | command grep -qF "$cod"; then ok_cod=1
+  elif command grep -qF "$cod" <<<"$out"; then ok_cod=1
   fi
   if [ "$rc" = "$exp" ] && [ "$ok_cod" = 1 ]; then
     printf '  [%s] OK    %-34s exit=%s %s\n' "$LOC" "$rot" "$rc" "${cod:-—}"

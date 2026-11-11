@@ -156,7 +156,7 @@ case "${SABOTAGEM:-}" in
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
-este_de() { grep -oE "'[0-9a-f]{32}' /\* este:$1 \*/" "$MIG_USADA" | grep -oE '[0-9a-f]{32}' | head -1; }
+este_de() { grep -oE "'[0-9a-f]{32}' /\* este:$1 \*/" "$MIG_USADA" | grep -oE '[0-9a-f]{32}' | sed -n 1p; }
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -A trust -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMPD/pg.log" -w start >/dev/null

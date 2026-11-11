@@ -223,7 +223,7 @@ PY
     # itens — o que separa o bloco 1 (sem header) do bloco 2 (header sem o item).
     OUT="$(OFERTADOS)"
     SAIDA="$(printf '%s\n' "$OUT" | tail -1)"
-    RET="$(printf '%s\n' "$OUT" | tail -2 | head -1)"
+    RET="$(printf '%s\n' "$OUT" | tail -2 | sed -n 1p)"
     HI="$(P -At -v ON_ERROR_STOP=1 -c "SELECT COALESCE(SUM(num_skus),0) || '|' || (SELECT count(*) FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id = pci.pedido_id WHERE pcs.tipo_ciclo LIKE 'oportunidade_%') FROM pedido_compra_sugerido WHERE tipo_ciclo LIKE 'oportunidade_%';")"
     MED="$SAIDA|ret=$RET|hi=$HI"
     if [ "$BLOCO" = "1" ]; then DECL='NENHUM|ret=0|0|0|0|{promo_flat}|hi=0|0'; else DECL='NENHUM|ret=1|1|200|0|{promo_flat}|hi=1|0'; fi

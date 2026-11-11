@@ -38,7 +38,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     PGPORT_TEST="$2" SABOTAGEM="$1" bash "$0" 2>&1 | grep -E '^(RESUMO|VERDE|VERMELHO|ERRO)' || true
   }
   ctl="$(rodar "" 5852)"
-  if ! printf '%s\n' "$ctl" | grep -q "^RESUMO verdes=$TOTAL_ESPERADO vermelhos=0$"; then
+  if ! grep -q "^RESUMO verdes=$TOTAL_ESPERADO vermelhos=0$" <<<"$ctl"; then
     echo "CONTROLE NÃO VERDE — falsificação inválida:"; printf '%s\n' "$ctl"; exit 1
   fi
   echo "controle: $TOTAL_ESPERADO/$TOTAL_ESPERADO verdes"
@@ -49,17 +49,17 @@ if [ "${1:-}" = "--falsificar" ]; then
     [ "$resto" = "$verm" ] || verdes="${resto#*:}"
     out="$(rodar "$sab" "$porta")"; porta=$((porta + 1))
     motivo=""
-    printf '%s\n' "$out" | grep -q '^RESUMO ' || motivo="$motivo o filho não chegou ao RESUMO (abortou antes de provar);"
+    grep -q '^RESUMO ' <<<"$out" || motivo="$motivo o filho não chegou ao RESUMO (abortou antes de provar);"
     for decl in ${verm//,/ }; do
       id="${decl%%!*}"; marca=""
       [ "$id" = "$decl" ] || marca="${decl#*!}"
       linha_v="$(printf '%s\n' "$out" | grep -m1 "^VERMELHO $id " || true)"
       if [ -z "$linha_v" ]; then motivo="$motivo $id deveria ficar VERMELHO;"
-      elif [ -n "$marca" ] && ! printf '%s' "$linha_v" | grep -qF -- "$marca"; then motivo="$motivo $id vermelho pelo motivo errado (sem '$marca');"
+      elif [ -n "$marca" ] && ! grep -qF -- "$marca" <<<"$linha_v"; then motivo="$motivo $id vermelho pelo motivo errado (sem '$marca');"
       fi
     done
     for id in ${verdes//,/ }; do
-      printf '%s\n' "$out" | grep -q "^VERDE $id\$" || motivo="$motivo $id deveria seguir VERDE (linha VERDE ausente);"
+      grep -q "^VERDE $id\$" <<<"$out" || motivo="$motivo $id deveria seguir VERDE (linha VERDE ausente);"
     done
     if [ -z "$motivo" ]; then echo "sabotagem $sab: tem dente ($verm)"; else falhas=$((falhas + 1)); echo "sabotagem $sab:$motivo"; printf '%s\n' "$out"; fi
   done

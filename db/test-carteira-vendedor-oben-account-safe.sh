@@ -133,7 +133,7 @@ eq "F2 a BASE traz o stale (300) — a view fresca é o que o oculta; ler a base
 #      violar unique_violation (SQLSTATE 23505). É a GARANTIA da unicidade que torna o KEYSET seguro (sem
 #      empate que a fronteira de página pudesse cortar). Falsifica a premissa do invariante-4 na base.
 ERR=$(P -v VERBOSITY=verbose -c "INSERT INTO public.omie_customer_account_map (user_id, account, omie_codigo_cliente, omie_codigo_vendedor, source) VALUES ('$U1','oben', 9999, 999, 'document');" 2>&1 || true)
-if echo "$ERR" | grep -qE "23505|uq_ocam_user_account"; then ok "F3 UNIQUE(user_id,account) impede 2ª linha oben → keyset seguro + ambiguidade impossível NA BASE (23505)"; else bad "F3 esperava unique_violation (23505/uq_ocam_user_account), veio: $ERR"; fi
+if grep -qE "23505|uq_ocam_user_account" <<<"$ERR"; then ok "F3 UNIQUE(user_id,account) impede 2ª linha oben → keyset seguro + ambiguidade impossível NA BASE (23505)"; else bad "F3 esperava unique_violation (23505/uq_ocam_user_account), veio: $ERR"; fi
 
 # F4 — prova que a UNIQUE é REAL (dropa a constraint → o insert duplicado agora PASSA → assert vira vermelho).
 #      Restaura em seguida. Isto garante que F3 tem dente (não passou por acaso).
