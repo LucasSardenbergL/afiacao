@@ -41,6 +41,13 @@ export function razaoParaExibicao(razao: string): { razao_social: string; razao_
   return mascarada === razao ? { razao_social: razao } : { razao_social: mascarada, razao_fiscal: razao };
 }
 
+/** O mesmo para o nome fantasia (o de MEI costuma repetir a razão; o de loja pode ter telefone de 11 dígitos, que a
+ *  máscara também pega): `fantasia_fiscal` leva o original ao cadastro, para o IncluirCliente não perder a fantasia. */
+export function fantasiaParaExibicao(fantasia: string): { nome_fantasia: string; fantasia_fiscal?: string } {
+  const mascarada = razaoSemCpf(fantasia);
+  return mascarada === fantasia ? { nome_fantasia: fantasia } : { nome_fantasia: mascarada, fantasia_fiscal: fantasia };
+}
+
 /**
  * A razão social que pode ir ao IncluirCliente. A não mascarada passa como veio. A mascarada (cliente montado do
  * perfil, que guarda o CPF mascarado) é trocada pela razão FISCAL do MESMO documento noutra conta Omie do grupo, onde

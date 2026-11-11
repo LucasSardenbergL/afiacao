@@ -4,7 +4,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "./lookup-cliente-estrito.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
-import { razaoFiscalParaCadastro, razaoParaExibicao, razaoSemCpf, temCpfMascarado } from "../_shared/razao-fiscal.ts";
+import { fantasiaParaExibicao, razaoFiscalParaCadastro, razaoParaExibicao, razaoSemCpf, temCpfMascarado } from "../_shared/razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
@@ -672,6 +672,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
     razao_social: string;
     /** Só com o CPF de MEI na razão: vai ao payload do autocadastro, nunca à exibição (razaoParaExibicao). */
     razao_fiscal?: string;
+    fantasia_fiscal?: string;
     nome_fantasia: string;
     cnpj_cpf: string;
     codigo_vendedor: number | null;
@@ -709,7 +710,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
             results.push({
               codigo_cliente: c.codigo_cliente_omie ?? 0,
               ...razaoParaExibicao(c.razao_social || ""),
-              nome_fantasia: razaoSemCpf(c.nome_fantasia || ""),
+              ...fantasiaParaExibicao(c.nome_fantasia || ""),
               cnpj_cpf: c.cnpj_cpf || "",
               codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
               endereco: c.endereco || "",
@@ -754,7 +755,7 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
             results.push({
               codigo_cliente: c.codigo_cliente_omie ?? 0,
               ...razaoParaExibicao(c.razao_social || ""),
-              nome_fantasia: razaoSemCpf(c.nome_fantasia || ""),
+              ...fantasiaParaExibicao(c.nome_fantasia || ""),
               cnpj_cpf: c.cnpj_cpf || "",
               codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
               endereco: c.endereco || "",

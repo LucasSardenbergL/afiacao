@@ -60,7 +60,7 @@ export const MARCA_RAZAO_MASCARADA = 'RAZAO_MASCARADA:';
 
 /**
  * O corpo comum do `criar_cliente` (Colacor) e do `criar_cliente_afiacao`. É o ÚNICO lugar do front que lê
- * `razao_fiscal`: a razão com o CPF do titular de MEI vai ao IncluirCliente e a nenhuma exibição (M1, 2026-11-11).
+ * `razao_fiscal` (e `fantasia_fiscal`): a razão com o CPF do titular de MEI vai ao IncluirCliente e a nenhuma exibição (M1, 2026-11-11).
  * Sem ela (cliente montado do perfil, que guarda mascarado) segue a razão exibida, e a edge troca a máscara pela
  * razão fiscal de outra conta ou recusa com `RAZAO_MASCARADA` (`_shared/razao-fiscal.ts`).
  */
@@ -68,7 +68,7 @@ export function payloadAutoCadastro(cust: OmieCustomer) {
   return {
     document: cust.cnpj_cpf,
     razao_social: cust.razao_fiscal ?? cust.razao_social,
-    nome_fantasia: cust.nome_fantasia,
+    nome_fantasia: cust.fantasia_fiscal ?? cust.nome_fantasia,
     endereco: cust.endereco,
     endereco_numero: cust.endereco_numero,
     bairro: cust.bairro,

@@ -1,7 +1,7 @@
 // Sem rede (`--no-remote` do test:edges): assert inline.
 // As amostras de `razaoSemCpf` são as MESMAS da prova SQL (db/test-clientes-mei-cpf-mascarado.sh, M2): a máscara em TS
 // tem de ser o espelho da `private.radar_razao_mascarada`.
-import { razaoFiscalParaCadastro, razaoParaExibicao, razaoSemCpf } from "./razao-fiscal.ts";
+import { fantasiaParaExibicao, razaoFiscalParaCadastro, razaoParaExibicao, razaoSemCpf } from "./razao-fiscal.ts";
 
 function igual(obtido: unknown, esperado: unknown) {
   if (obtido !== esperado) throw new Error(`esperado ${JSON.stringify(esperado)}, veio ${JSON.stringify(obtido)}`);
@@ -93,4 +93,11 @@ Deno.test("razaoParaExibicao: razão sem CPF (empresa comum, já mascarada, vazi
     igual(r.razao_social, razao);
     igual("razao_fiscal" in r, false);
   }
+});
+
+Deno.test("fantasiaParaExibicao: telefone de 11 dígitos sai mascarado na tela e inteiro no cadastro", () => {
+  const r = fantasiaParaExibicao("DISK TINTAS 31999998888");
+  igual(r.nome_fantasia, "DISK TINTAS ***999988**");
+  igual(r.fantasia_fiscal, "DISK TINTAS 31999998888");
+  igual("fantasia_fiscal" in fantasiaParaExibicao("DISK TINTAS"), false);
 });

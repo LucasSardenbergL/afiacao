@@ -85,17 +85,34 @@ Deno.test("lerComRetentativa: permanente sobe na 1ª, sem retentar", async () =>
   assertEquals(chamadas, 1);
 });
 
-Deno.test("lerComRetentativa: transitório que não passa sobe com a mensagem da última tentativa, no teto", async () => {
+Deno.test("lerComRetentativa: concorrência que não passa sobe com a mensagem da última tentativa, no teto", async () => {
   let chamadas = 0;
   let mensagem = "";
   try {
     await lerComRetentativa(async () => {
       chamadas++;
-      throw new Error(`Erro Omie: HTTP 503 em ListarClientes #${chamadas}`);
+      throw new Error(`Erro Omie: Consumo redundante detectado #${chamadas}`);
     }, { tentativas: 3, esperar: async () => {} });
   } catch (e) {
     mensagem = e instanceof Error ? e.message : "";
   }
-  assertEquals(mensagem, "Erro Omie: HTTP 503 em ListarClientes #3");
+  assertEquals(mensagem, "Erro Omie: Consumo redundante detectado #3");
   assertEquals(chamadas, 3);
+});
+
+Deno.test("lerComRetentativa: timeout e 5xx sobem na 1ª (cada chamada já gastou o relógio de 140s)", async () => {
+  for (const msg of [
+    "OMIE_TRANSIENT (oben): timeout — ListarClientes sem resposta em 140s",
+    "Erro Omie: HTTP 503 em ListarClientes",
+  ]) {
+    let chamadas = 0;
+    let mensagem = "";
+    try {
+      await lerComRetentativa(async () => { chamadas++; throw new Error(msg); }, { esperar: async () => {} });
+    } catch (e) {
+      mensagem = e instanceof Error ? e.message : "";
+    }
+    assertEquals(mensagem, msg);
+    assertEquals(chamadas, 1, `retentou: ${msg}`);
+  }
 });

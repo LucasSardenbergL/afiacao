@@ -174,9 +174,15 @@ describe('payloadAutoCadastro (a única leitura de razao_fiscal no front)', () =
     expect(payloadAutoCadastro(cust).razao_social).toBe('PEDRO ***456789**');
   });
 
+  it('fantasia mascarada na tela (telefone, CPF): o original vai ao cadastro', () => {
+    const cust = { ...base, razao_social: 'DISK LTDA', nome_fantasia: 'DISK ***999988**', fantasia_fiscal: 'DISK 31999998888' } as OmieCustomer;
+    expect(payloadAutoCadastro(cust).nome_fantasia).toBe('DISK 31999998888');
+  });
+
   it('o payload não carrega o campo razao_fiscal em si (só o valor, no lugar da razão)', () => {
     const cust = { ...base, razao_social: 'PEDRO ***456789**', razao_fiscal: 'PEDRO 12345678901' } as OmieCustomer;
     expect(Object.keys(payloadAutoCadastro(cust))).not.toContain('razao_fiscal');
+    expect(Object.keys(payloadAutoCadastro(cust))).not.toContain('fantasia_fiscal');
     expect(payloadAutoCadastro(cust).document).toBe('12345678000199');
   });
 });

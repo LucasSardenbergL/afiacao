@@ -38,11 +38,21 @@ export async function primeiroClientePorDocumento<T>(chamar: () => Promise<unkno
 }
 
 /**
- * Leitura com até `tentativas` chamadas, retentando SÓ a falha transitória (rate-limit, "Já existe uma requisição desse
- * método", 5xx): a consulta da razão fiscal do `criar_cliente_afiacao` corre em paralelo com a do `criar_cliente` da
+ * SÓ a recusa por chamada simultânea ou rate-limit do Omie, que passa em segundos. Timeout, 5xx e o resto do
+ * "transitório" NÃO entram: cada `callOmieApi` tem relógio próprio de 140s, e retentar um timeout empilharia 3×140s
+ * até a plataforma matar a edge (revisão adversarial do Fable, 2026-11-11). Esses sobem na 1ª, como antes.
+ */
+export function recusaPorConcorrencia(erro: unknown): boolean {
+  const t = (erro instanceof Error ? erro.message : String(erro)).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return classificarExcecao(erro) === "transitorio"
+    && ["ja existe uma requisicao desse metodo", "consumo redundante", "redundant"].some((m) => t.includes(m));
+}
+
+/**
+ * Leitura com até `tentativas` chamadas, retentando SÓ a recusa por concorrência (`recusaPorConcorrencia`): a consulta da razão fiscal do `criar_cliente_afiacao` corre em paralelo com a do `criar_cliente` da
  * Colacor na MESMA conta Oben (o front dispara os dois cadastros juntos), e o Omie recusa a 2ª chamada simultânea do
  * método. Sem isto, a busca ao vivo mascarada (M1, 2026-11-11) fazia o cadastro da Afiação falhar onde antes não havia
- * consulta. Só para LEITURA: a escrita indeterminada nunca se repete. Permanente/indeterminada sobe na 1ª.
+ * consulta. Só para LEITURA: a escrita indeterminada nunca se repete. Timeout/5xx/permanente sobem na 1ª.
  */
 export async function lerComRetentativa<T>(
   ler: () => Promise<T>,
@@ -54,7 +64,7 @@ export async function lerComRetentativa<T>(
     try {
       return await ler();
     } catch (erro) {
-      if (tentativa >= tentativas || classificarExcecao(erro) !== "transitorio") throw erro;
+      if (tentativa >= tentativas || !recusaPorConcorrencia(erro)) throw erro;
       await esperar(atrasoRetentativaMs(tentativa, erro instanceof Error ? erro.message : String(erro)));
     }
   }

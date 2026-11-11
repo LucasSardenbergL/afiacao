@@ -137,6 +137,8 @@ export interface OmieCustomer {
   /** Razão FISCAL, com o CPF de MEI. Só existe quando difere da exibida, e só vai ao payload do autocadastro
    *  (`payloadAutoCadastro`). Nunca a leia para tela, impressão, e-mail, bloqueio de crédito ou LLM. */
   razao_fiscal?: string;
+  /** Idem para o nome fantasia: o original, só quando a máscara o mudou; só para o payload do autocadastro. */
+  fantasia_fiscal?: string;
   nome_fantasia: string;
   cnpj_cpf: string;
   codigo_vendedor: number | null;
