@@ -21,6 +21,7 @@ import {
   aplicarFiltrosConsultaDom,
   clicarFiltrarDom,
   lerCondicaoSelecionadaDom,
+  clicarDetalhePedidoDom,
   lerCondicoesOpcoesDom,
   lerTabelaConsultaDom,
 } from "../_shared/sayerlack-portal-dom.ts";
@@ -60,6 +61,7 @@ export default async ({ page, context }) => {
   const lerCondicaoSelecionadaDom = ${lerCondicaoSelecionadaDom.toString()};
   const lerCondicoesOpcoesDom = ${lerCondicoesOpcoesDom.toString()};
   const diagnosticarCondicaoDom = ${diagnosticarCondicaoDom.toString()};
+  const clicarDetalhePedidoDom = ${clicarDetalhePedidoDom.toString()};
 
   const HARD_CEILING_MS = 150000;
   const RETURN_GUARD_MS = 2000;
@@ -175,34 +177,45 @@ ${ABRIR_CONSULTA_PEDIDOS}
     }, protocolo);
     const temItens = (b) => !!(b && b.json && b.json.success === true && Array.isArray(b.json.itens) && b.json.itens.length > 0);
 
+    // Tela de DETALHE: pelo CLIQUE no link do nº na linha da consulta (GET, só leitura) — o goto direto não chega ao
+    // detalhe no Browserless (v1.12). Fallback de goto se o link sumiu. Grava url/título/selects no trace: se a leitura
+    // falhar de novo, o trace diz ONDE o robô estava (antes era cego: só 'condicao: null').
+    const abrirDetalhe = async (via) => {
+      const nav = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: budgetFor('detalhe-nav-' + via, 20000) }).catch(() => null);
+      const clicou = await page.evaluate(clicarDetalhePedidoDom, String(protocolo)).catch(() => false);
+      const respClique = clicou ? await nav : null;
+      let resp = respClique;
+      if (page.url().indexOf('/order-creation-form-edit/') === -1) {
+        resp = await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
+          { waitUntil: 'domcontentloaded', timeout: budgetFor('detalhe-goto-' + via, 30000) });
+      }
+      // Espera o portal terminar de carregar opções e itens antes de ler o select (nunca ler a opção-padrão de passagem).
+      await page.waitForNetworkIdle({ idleTime: 750, timeout: budgetFor('detalhe-idle-' + via, 10000) }).catch(() => null);
+      // C16: status e caminho FINAL (redirect para login/home aparece aqui), sem query.
+      trace.push({ step: 'detalhe_aberto', via, via_clique: clicou, status: resp ? resp.status() : null, caminho: (function() { try { return new URL(page.url()).pathname; } catch (e) { return null; } })(), t: Date.now() - t0 });
+    };
+
     let itens = null;
     const achouNaConsulta = consulta.linhas.some((l) => Object.keys(l).some((k) => l[k] === String(protocolo)));
     if (achouNaConsulta) {
       itens = await buscarItens();
       trace.push({ step: 'itens_direto', status: itens.status, ok: temItens(itens), t: Date.now() - t0 });
       if (!temItens(itens)) {
-        const respDetalheItens = await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
-          { waitUntil: 'domcontentloaded', timeout: budgetFor('goto-detalhe', 30000) });
-        trace.push({ step: 'detalhe_aberto', via: 'itens', status: respDetalheItens ? respDetalheItens.status() : null, caminho: (function() { try { return new URL(page.url()).pathname; } catch (e) { return null; } })(), t: Date.now() - t0 });
-        await sleep(2500);
+        await abrirDetalhe('itens');
+        await sleep(1000);
         itens = await buscarItens();
         trace.push({ step: 'itens_pos_detalhe', status: itens.status, ok: temItens(itens), t: Date.now() - t0 });
       }
     }
 
-    // Condição de pagamento: só existe na tela de DETALHE (select #condicoes_pagamento, ex. "70 - 7 DIAS"). Carrega a
-    // página (GET, o que o founder faz à mão) se ainda não está nela e LÊ o texto selecionado — nenhum clique, nenhum
-    // envio. Sem condição legível, o Deno recusa: ausente nunca vira "à vista" (revisão Fable+Codex, 2026-11).
+    // Condição de pagamento: só existe na tela de DETALHE (select #condicoes_pagamento, ex. "70 - 7 DIAS"). Abre a
+    // página pelo link do nº (GET, o clique que o founder faz à mão) se ainda não está nela e LÊ o texto selecionado —
+    // nenhum clique de gravação, nenhum envio. Sem condição legível, o Deno recusa: ausente nunca vira "à vista" (revisão Fable+Codex, 2026-11).
     let condicao = null;
     let condicoesOpcoes = [];
     let condicaoDiag = null;
     if (achouNaConsulta && temItens(itens)) {
-      if (page.url().indexOf('/order-creation-form-edit/') === -1) {
-        const respDetalhe = await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
-          { waitUntil: 'domcontentloaded', timeout: budgetFor('goto-detalhe-condicao', 30000) });
-        // C16: status e caminho FINAL (redirect para login/home aparece aqui), sem query.
-        trace.push({ step: 'detalhe_aberto', status: respDetalhe ? respDetalhe.status() : null, caminho: (function() { try { return new URL(page.url()).pathname; } catch (e) { return null; } })(), t: Date.now() - t0 });
-      }
+      if (page.url().indexOf('/order-creation-form-edit/') === -1) await abrirDetalhe('condicao');
       condicao = await page.waitForFunction(lerCondicaoSelecionadaDom, { timeout: budgetFor('condicao', 15000), polling: 250 }).then((h) => h.jsonValue()).catch(() => null);
       trace.push({ step: 'condicao', condicao, t: Date.now() - t0 });
       // Lista de opções do select (só leitura): insumo do de-para condição do portal → Omie (D-2).

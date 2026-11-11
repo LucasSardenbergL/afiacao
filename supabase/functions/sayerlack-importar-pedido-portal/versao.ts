@@ -65,7 +65,9 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * recusa. A RPC achando o pedido já gravado (outra aba) passa pelas mesmas recusas. Migration 20261111150000 antes.
  */
 /** v1.12 (2026-11-11, C16): retrato da tela sem condição na evidência + causa na recusa — docs/historico/sayerlack-condicao-ilegivel-c16.md */
-export const VERSAO = "v1.12-condicao-retrato";
+
+/** v1.13 (2026-11-11) — detalhe aberto pelo CLIQUE no link do nº (o goto direto não chegava; condição ilegível). */
+export const VERSAO = "v1.13-detalhe-por-clique";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
