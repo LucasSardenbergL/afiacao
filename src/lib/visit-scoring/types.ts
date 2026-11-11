@@ -17,7 +17,7 @@ export type MissionType =
   | 'relacionamento'
   | 'prospeccao';
 
-export type SalesHistoryStatus = 'ativo' | 'stale' | 'sem_historico';
+type SalesHistoryStatus = 'ativo' | 'stale' | 'sem_historico';
 
 export interface CustomerScoreInputs {
   customer_user_id: string;
