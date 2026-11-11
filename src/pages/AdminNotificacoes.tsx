@@ -24,6 +24,7 @@ export default function AdminNotificacoes() {
     historico,
     loadingHist,
     loadingStats,
+    statsSemLeitura,
     dispatchPending,
     dispatch,
     empresasOpts,
@@ -86,6 +87,7 @@ export default function AdminNotificacoes() {
         <TabsContent value="stats" className="space-y-4">
           <StatsTab
             loading={loadingStats}
+            semLeitura={statsSemLeitura}
             total7d={total7d}
             taxaSucesso={taxaSucesso}
             esgotados={esgotados}

@@ -31,3 +31,22 @@ describe("StatsTab", () => {
     expect(container.querySelectorAll(".animate-shimmer")).toHaveLength(3);
   });
 });
+
+/**
+ * Plano v8, C14 — leitura falhada não vira KPI zerado. Âncora: o `testId` do aviso, não a copy.
+ */
+describe("StatsTab — sem leitura", () => {
+  it("CONTROLE: com leitura, nenhum aviso", () => {
+    render(<StatsTab loading={false} total7d={5} taxaSucesso={90} esgotados={0} chartData={[]} semLeitura={null} />);
+    expect(screen.queryByTestId("stats-notificacoes-sem-leitura")).toBeNull();
+  });
+
+  it("falha sem dado → aviso e '—' nos três KPIs, nunca 0", () => {
+    const { container } = render(
+      <StatsTab loading={false} total7d={null} taxaSucesso={null} esgotados={null} chartData={[]} semLeitura="erro" />,
+    );
+    expect(screen.getByTestId("stats-notificacoes-sem-leitura").getAttribute("data-estado")).toBe("erro");
+    const kpis = Array.from(container.querySelectorAll(".text-3xl")).map((el) => el.textContent);
+    expect(kpis).toEqual(["—", "—", "—"]);
+  });
+});

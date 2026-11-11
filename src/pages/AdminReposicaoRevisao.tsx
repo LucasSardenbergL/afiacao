@@ -2,6 +2,7 @@ import { SkuDetailSheet } from "@/components/reposicao/SkuDetailSheet";
 import { useRevisaoParametros } from "@/components/reposicao/revisao/useRevisaoParametros";
 import { FiltrosCard } from "@/components/reposicao/revisao/FiltrosCard";
 import { RevisaoTable } from "@/components/reposicao/revisao/RevisaoTable";
+import { AvisoLeituraFalhou } from "@/components/leitura/AvisoLeituraFalhou";
 
 // "Ajuste manual" — conteúdo da aba de Parâmetros (AdminReposicaoParametros) e alvo do
 // redirect /admin/reposicao/revisao. Sem chrome de página própria (container/h1/Histórico):
@@ -16,6 +17,8 @@ export default function AdminReposicaoRevisao() {
     openSku,
     setOpenSku,
     isLoading,
+    leituraSemLeitura,
+    precosIndisponiveis,
     rows,
     total,
     totalPages,
@@ -71,12 +74,29 @@ export default function AdminReposicaoRevisao() {
         clearClasses={clearClasses}
       />
 
+      {leituraSemLeitura && (
+        <AvisoLeituraFalhou
+          oque="os SKUs da revisão de parâmetros"
+          estado={leituraSemLeitura}
+          variante="bloco"
+          testId="revisao-sem-leitura"
+        />
+      )}
+      {!leituraSemLeitura && precosIndisponiveis && (
+        <AvisoLeituraFalhou
+          oque="os preços e o status de sugestão destes SKUs (as colunas aparecem vazias)"
+          estado="erro"
+          testId="revisao-precos-sem-leitura"
+        />
+      )}
+
       <RevisaoTable
         total={total}
         page={page}
         totalPages={totalPages}
         isLoading={isLoading}
         rows={rows}
+        semLeitura={!!leituraSemLeitura && rows.length === 0}
         onOpenDetail={setOpenSku}
         onPrevPage={prevPage}
         onNextPage={nextPage}
