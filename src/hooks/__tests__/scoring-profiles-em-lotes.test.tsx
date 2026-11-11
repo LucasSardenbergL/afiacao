@@ -24,6 +24,8 @@ const N_CLIENTES = 1245;
 const N_SEM_PROFILE = 31;
 /** Teto de UUIDs por `.in`: 200 já chegam perto de 8 KB de URL (parecer do Codex, v9 C18). */
 const TETO_URL_SEGURO = 150;
+/** Ligações do farmer: acima da capa, para a que conta cair na 2ª página do cursor. */
+const N_LIGACOES = 1200;
 
 const cid = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
 const CLIENTES = Array.from({ length: N_CLIENTES }, (_, i) => cid(i));
@@ -40,9 +42,18 @@ function linhasDe(tabela: string): Record<string, unknown>[] {
     return CLIENTES.filter((c) => !SEM_PROFILE.has(c)).map((c, i) => ({ user_id: c, name: `Cliente ${i}`, phone: null }));
   }
   if (tabela === 'farmer_calls') {
-    // Ligação de 3 dias atrás para o 1º cliente: prova que a leitura chegou ao score.
-    const ontem = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
-    return [{ id: 'call-1', customer_user_id: CLIENTES[0], call_result: 'contato_sucesso', is_whatsapp: false, whatsapp_replied: false, created_at: ontem }];
+    // 1.200 ligações: as 1.199 de enchimento são de um cliente fora do universo e empurram a
+    // ligação que conta (3 dias atrás, 1º cliente, `id` o MAIOR) para a 2ª página. Sem paginar
+    // ela some; com página perdida, o score sairia sem ela.
+    const recente = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+    const enchimento = Array.from({ length: N_LIGACOES - 1 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      customer_user_id: 'fora-do-universo', call_result: 'sem_resposta', is_whatsapp: false, whatsapp_replied: false, created_at: recente,
+    }));
+    return [
+      ...enchimento,
+      { id: 'ffffffff-0000-4000-8000-000000000000', customer_user_id: CLIENTES[0], call_result: 'contato_sucesso', is_whatsapp: false, whatsapp_replied: false, created_at: recente },
+    ];
   }
   return [];
 }
@@ -52,8 +63,12 @@ function stubChain(tabela: string): unknown {
   let filtroIn: { col: string; vals: Set<unknown> } | null = null;
   let ordem: string | null = null;
   let faixa: [number, number] | null = null;
+  let depoisDe: { col: string; valor: string } | null = null;
+  let limite: number | null = null;
   const chain: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'gte', 'lt', 'lte', 'gt', 'is', 'not', 'limit', 'or', 'neq', 'filter']) chain[m] = () => chain;
+  for (const m of ['select', 'eq', 'gte', 'lt', 'lte', 'is', 'not', 'or', 'neq', 'filter']) chain[m] = () => chain;
+  chain.gt = (col: string, valor: string) => { depoisDe = { col, valor }; return chain; };
+  chain.limit = (n: number) => { limite = n; return chain; };
   chain.in = (col: string, vals: unknown[]) => {
     filtroIn = { col, vals: new Set(vals) };
     if (tabela === 'profiles') tamanhosDoIn.push(vals.length);
@@ -74,12 +89,18 @@ function stubChain(tabela: string): unknown {
       const { col, vals } = filtroIn;
       linhas = linhas.filter((l) => vals.has(l[col]));
     }
-    if (ordem) {
-      const col = ordem;
-      linhas = [...linhas].sort((a, b) => String(a[col]).localeCompare(String(b[col])));
+    if (depoisDe) {
+      const { col, valor } = depoisDe;
+      linhas = linhas.filter((l) => String(l[col]) > valor);
     }
-    // A capa do PostgREST: sem `.range()`, as 1.000 primeiras — em silêncio.
-    linhas = faixa ? linhas.slice(faixa[0], faixa[1] + 1) : linhas.slice(0, CAPA);
+    if (ordem) {
+      // Unidade de código, não `localeCompare`: é a ordem do uuid no Postgres e a do cursor.
+      const col = ordem;
+      linhas = [...linhas].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : String(a[col]) > String(b[col]) ? 1 : 0));
+    }
+    // A capa do PostgREST: sem `.range()`, as 1.000 primeiras — em silêncio. `.limit(n)` acima da
+    // capa também volta capado.
+    linhas = faixa ? linhas.slice(faixa[0], faixa[1] + 1) : linhas.slice(0, Math.min(limite ?? CAPA, CAPA));
     return resolve({ data: linhas, error: null, count: linhas.length });
   };
   return chain;
@@ -163,7 +184,7 @@ describe('useFarmerScoring — profiles acima da capa de 1.000', () => {
     expect(porRodada.reduce((a, b) => a + b, 0)).toBe(N_CLIENTES);
   });
 
-  it('a ligação lida em `farmer_calls` chega ao score do cliente', async () => {
+  it('a ligação na 2ª página de `farmer_calls` (acima da capa) chega ao score do cliente', async () => {
     const { result } = await montarECalcular();
 
     const primeiro = result.current.clientScores.find((s) => s.customer_user_id === CLIENTES[0]);
@@ -177,7 +198,8 @@ describe('useFarmerScoring — profiles acima da capa de 1.000', () => {
     const { result } = await montarECalcular();
     expect(result.current.clientScores).toHaveLength(N_CLIENTES - N_SEM_PROFILE);
 
-    // 13 lotes por rodada; a 2ª rodada (o recalculate abaixo) começa onde a anterior parou.
+    // 13 lotes por rodada; montagem + recalculate já fizeram 2 rodadas, e a próxima começa no
+    // índice `requisicoes.profiles`. A falha cai no lote do meio dela, depois de 6 lotes bons.
     const lotesPorRodada = requisicoes.profiles / 2;
     falha = { tabela: 'profiles', naRequisicao: requisicoes.profiles + Math.floor(lotesPorRodada / 2), modo };
     await act(async () => { await result.current.recalculate(); });
@@ -190,12 +212,15 @@ describe('useFarmerScoring — profiles acima da capa de 1.000', () => {
   it.each([
     ['erro de transporte', 'erro' as const],
     ['resposta malformada (data null sem error)', 'data_null' as const],
-  ])('falha em `farmer_calls` (%s) declara o erro em vez de zerar a taxa de contato', async (_, modo) => {
+  ])('falha na 2ª página de `farmer_calls` (%s) declara o erro em vez de publicar contato parcial', async (_, modo) => {
     const { result } = await montarECalcular();
     const antes = result.current.clientScores.find((s) => s.customer_user_id === CLIENTES[0]);
     expect(antes?.answerRate60d).toBe(100);
+    // 2 páginas por rodada (1.200 ligações): o cursor de fato andou.
+    expect(requisicoes.farmer_calls).toBe(4);
 
-    falha = { tabela: 'farmer_calls', naRequisicao: requisicoes.farmer_calls, modo };
+    // A 1ª página da próxima rodada volta; a 2ª, onde está a ligação que conta, falha.
+    falha = { tabela: 'farmer_calls', naRequisicao: requisicoes.farmer_calls + 1, modo };
     await act(async () => { await result.current.recalculate(); });
 
     expect(result.current.erro).not.toBeNull();

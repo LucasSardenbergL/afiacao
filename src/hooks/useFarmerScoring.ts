@@ -11,14 +11,14 @@ import type { Tables } from '@/integrations/supabase/types';
 import { useFarmerAlgorithmConfig, FARMER_ALGORITHM_CONFIG_KEY } from '@/hooks/useFarmerAlgorithmConfig';
 import type { AlgorithmConfig } from '@/lib/scoring/configAlgoritmo';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
-import { fetchAllPages } from '@/lib/postgrest';
+import { fetchAllKeyset, fetchAllPages, POSTGREST_PAGE_SIZE } from '@/lib/postgrest';
 import { resolveProductIdsFromItems } from '@/lib/scoring/margin';
 import { calcularHealthScore } from '@/lib/scoring/healthScore';
 import type { FaixaMargem } from '@/lib/scoring/faixaMargem';
 
 type FarmerCallRow = Pick<
   Tables<'farmer_calls'>,
-  'customer_user_id' | 'call_result' | 'is_whatsapp' | 'whatsapp_replied' | 'created_at'
+  'id' | 'customer_user_id' | 'call_result' | 'is_whatsapp' | 'whatsapp_replied' | 'created_at'
 >;
 type ProfileRow = Pick<Tables<'profiles'>, 'user_id' | 'name' | 'phone'>;
 // O jsonb real de sales_orders.items é pt-BR (omie_codigo_produto/quantidade/valor_unitario);
@@ -102,9 +102,9 @@ function percentile(arr: number[], p: number): number {
 }
 
 /**
- * Quantos UUIDs vão num `.in('user_id', …)`. O teto é a URL, não a capa de linhas: cada UUID
- * ocupa ~37 bytes serializado, e 200 já chegam perto de 8 KB com o resto da query. 100 dá ~3,7 KB
- * de lista, folga para proxy e CDN.
+ * Quantos UUIDs vão num `.in('user_id', …)`. O teto é a URL, não a capa de linhas. Medido pelo
+ * Codex com o builder instalado e a query exata: 100 → 4.040 bytes, 150 → 5.990, 200 → 7.940
+ * (perto de 8 KB). 100 deixa folga para proxy e CDN.
  */
 const LOTE_PROFILES = 100;
 
@@ -393,17 +393,21 @@ export const useFarmerScoring = (farmerId?: string) => {
       });
 
       // 3. Load farmer calls for contact rates
-      // `fetchAllPages`, não `.select()` cru (plano v9, C18): o `{ data }` sem o `error` fazia da
+      // `fetchAllKeyset`, não `.select()` cru (plano v9, C18): o `{ data }` sem o `error` fazia da
       // falha de leitura um "nenhuma ligação" — taxa de contato zerada para a carteira inteira,
       // indistinguível de um farmer que não ligou. Falha ou `data: null` LANÇA e cai no catch
-      // (último resultado bom preservado). `id` é ordem total para a paginação.
-      const calls: FarmerCallRow[] = await fetchAllPages((de, ate) =>
-        supabase
-          .from('farmer_calls')
-          .select('customer_user_id, call_result, is_whatsapp, whatsapp_replied, created_at')
-          .eq('farmer_id', targetFarmerId)
-          .order('id', { ascending: true })
-          .range(de, ate),
+      // (último resultado bom preservado). Cursor por `id` (uuid) e não offset: ligação gravada ou
+      // apagada durante a leitura não desloca a página seguinte (achado do Codex no C18).
+      const calls: FarmerCallRow[] = await fetchAllKeyset(
+        (apos) => {
+          let q = supabase
+            .from('farmer_calls')
+            .select('id, customer_user_id, call_result, is_whatsapp, whatsapp_replied, created_at')
+            .eq('farmer_id', targetFarmerId);
+          if (apos !== null) q = q.gt('id', apos);
+          return q.order('id', { ascending: true }).limit(POSTGREST_PAGE_SIZE);
+        },
+        (c) => c.id,
         'farmer_calls/scoring',
       );
 
