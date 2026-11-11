@@ -200,7 +200,7 @@ Deno.test("C16: repetir só é sugerido quando pode resolver; o resto diz como s
   const transitoria = mensagemCondicaoAusente("2148223", diagCond({ caminho: "/login" }));
   assertEquals(
     [
-      estrutural.mensagem.includes("Tentar de novo não resolve"), estrutural.mensagem.includes("nº 2148223 no campo contrato"),
+      estrutural.mensagem.includes("tentar de novo não adianta"), estrutural.mensagem.includes("nº 2148223 no campo contrato"),
       estrutural.mensagem.includes("Tente de novo em"), transitoria.mensagem.includes("Tente de novo em"),
       transitoria.mensagem.includes('"/login"'), estrutural.mensagem.includes("Nada foi gravado"),
     ],

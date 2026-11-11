@@ -16,7 +16,8 @@ Deno.test("C16: o retrato serializado roda sem o escopo do módulo e sem crase",
   try {
     igual(new Function(`return (${src});`)()(), {
       caminho: "", titulo: "", select_presente: false, select_n_opcoes: null, select_selecionada: null,
-      select_desabilitado: null, selects: [], campos: [], textos: [],
+      select_desabilitado: null, selects: [], campos: [], textos: [], n_iframes: 0,
+      omitidos: { selects: 0, campos: 0, textos: 0 },
     }, "retrato de página vazia");
   } finally {
     delete g.document;

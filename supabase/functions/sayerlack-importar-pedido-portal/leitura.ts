@@ -273,7 +273,10 @@ export function mensagemErroImportacao(code: string | null | undefined, message:
   return message ? `${base} Detalhe: ${message}` : base;
 }
 
-/** Por que a condição de pagamento não veio (C16). Nenhuma causa vira condição: todas recusam. */
+/**
+ * Por que a condição de pagamento não veio (C16) — o que ESTA leitura observou, não causa confirmada (Codex C16, P2).
+ * Nenhuma causa vira condição: todas recusam. `repetirResolve` = repetir provavelmente adianta.
+ */
 export type CausaCondicaoAusente =
   | "sem_retrato"
   | "fora_do_detalhe"
@@ -306,14 +309,14 @@ export function explicarCondicaoAusente(diag: unknown): { causa: CausaCondicaoAu
   if (!d.select_presente) {
     return {
       causa: "campo_ausente",
-      porque: "a tela de detalhe abriu, mas não tem o campo de condição de pagamento que o app lê (#condicoes_pagamento) — o portal mostra essa tela diferente do que o app espera.",
+      porque: "a tela de detalhe abriu, mas nesta leitura não tinha o campo de condição de pagamento que o app lê (#condicoes_pagamento).",
       repetirResolve: false,
     };
   }
   if (d.select_n_opcoes === 0) {
     return {
       causa: "campo_sem_opcoes",
-      porque: "o campo de condição de pagamento da tela de detalhe veio sem nenhuma opção (o portal não carregou a lista).",
+      porque: "o campo de condição de pagamento da tela de detalhe veio sem nenhuma opção nesta leitura.",
       repetirResolve: false,
     };
   }
@@ -339,9 +342,10 @@ export function mensagemCondicaoAusente(protocolo: string, diag: unknown): { cau
   const e = explicarCondicaoAusente(diag);
   const proximo = e.repetirResolve
     ? "Tente de novo em alguns minutos."
-    : "Tentar de novo não resolve até o leitor do app ser ajustado. Se precisar do pedido de compra antes disso, lance-o " +
-      `à mão no Omie com a condição que aparece no portal e o nº ${protocolo} no campo contrato — a importação não ` +
-      'duplica depois (runbook "Condição de pagamento ilegível").';
+    : "Tente de novo uma vez; se a recusa se repetir, tentar de novo não adianta — o leitor do app precisa de ajuste (o " +
+      "retrato da tela ficou na evidência). Precisa do pedido de compra antes? Lance à mão no Omie com a condição que " +
+      `aparece no portal e o nº ${protocolo} no campo contrato, só depois de conferir que não há PO nem importação em ` +
+      'andamento — e não importe de novo até esse PO aparecer no app (runbook "Condição de pagamento ilegível").';
   return {
     causa: e.causa,
     mensagem: `Não importei o pedido ${protocolo}: ${e.porque} Nada foi gravado e nenhum pedido de compra foi criado — ` +

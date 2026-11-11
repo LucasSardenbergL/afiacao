@@ -307,7 +307,27 @@ describe("tela de detalhe — condição de pagamento", () => {
     const d = diagnosticarCondicaoDom();
     expect([d.select_presente, d.select_n_opcoes, d.select_selecionada]).toEqual([false, null, null]);
     expect(d.campos).toEqual([{ tag: "input", id: "cond_pagto", name: "", tipo: "text", valor: "70 - 7 DIAS", rotulo: "Cond. Pagamento" }]);
-    expect(d.textos).toEqual(["Cond. Pagamento", "Condição de pagamento: 70 - 7 DIAS"]);
+    // Rótulo e valor em linhas separadas ficam juntos; a sequência longa (token-like) é mascarada.
+    expect(d.textos).toEqual(["Cond. Pagamento | Condição de pagamento: 70 - 7 DIAS", "Condição de pagamento: 70 - 7 DIAS | #"]);
     expect(d.selects).toHaveLength(30);
+    expect(d.omitidos).toEqual({ selects: 10, campos: 0, textos: 0 });
+  });
+
+  it("retrato: campo oculto/senha só como metadado, select alheio sem o selecionado, CPF/CNPJ mascarados", () => {
+    document.querySelector("#condicoes_pagamento")!.remove();
+    document.body.innerHTML += '<input type="hidden" name="pagamento_token" value="segredo-de-sessao">' +
+      '<select id="cliente"><option selected>OBEN 123.456.789-09</option></select>' +
+      '<label for="prazo_x">Prazo</label><input id="prazo_x" value="30/60/90 DD"><br>' +
+      "<p>Condição do cliente 12.345.678/0001-90 · 30/60/90/120/150/180 DD</p><iframe></iframe>";
+    const d = diagnosticarCondicaoDom();
+    expect(d.campos).toEqual([
+      { tag: "input", id: "", name: "pagamento_token", tipo: "hidden", valor: null, rotulo: "" },
+      { tag: "input", id: "prazo_x", name: "", tipo: "text", valor: "30/60/90 DD", rotulo: "Prazo" },
+    ]);
+    expect(d.selects).toEqual([{ id: "cliente", name: "", n: 1, sel: null }]);
+    expect(d.textos).toEqual(["Prazo | Condição do cliente # · 30/60/90/120/150/180 DD", "Condição do cliente # · 30/60/90/120/150/180 DD"]);
+    expect(JSON.stringify(d)).not.toContain("segredo");
+    expect(JSON.stringify(d)).not.toContain("789-09");
+    expect(d.n_iframes).toBe(1);
   });
 });

@@ -5,19 +5,25 @@
 
 /** Retrato limitado da tela quando a condição NÃO veio (C16): o que a evidência precisa para dizer o porquê. */
 export type DiagnosticoCondicaoDom = {
-  /** Caminho da página aberta, sem query nem hash. */
+  /** Caminho da página aberta, sem query nem hash; sequências longas de dígitos/hex mascaradas. */
   caminho: string;
   titulo: string;
   select_presente: boolean;
   select_n_opcoes: number | null;
   select_selecionada: string | null;
   select_desabilitado: boolean | null;
-  /** Todos os `<select>` da página (≤30): id, name, nº de opções e texto selecionado. */
-  selects: { id: string; name: string; n: number; sel: string }[];
-  /** Campos cujo id/name/rótulo fala de condição/pagamento/prazo (≤20). */
-  campos: { tag: string; id: string; name: string; tipo: string; valor: string; rotulo: string }[];
-  /** Linhas de texto visível que falam de condição/pagamento (≤10 × 120 caracteres). */
+  /**
+   * Todos os `<select>` da página (≤30): id, name e nº de opções. O texto selecionado só vem dos que falam de
+   * condição/pagamento — select alheio (cliente, transportadora) pode carregar CPF/CNPJ (Codex C16, P1).
+   */
+  selects: { id: string; name: string; n: number; sel: string | null }[];
+  /** Campos cujo id/name/rótulo fala de condição/pagamento/prazo (≤20). Oculto/senha: só metadado, valor nunca. */
+  campos: { tag: string; id: string; name: string; tipo: string; valor: string | null; rotulo: string }[];
+  /** Linhas de texto visível que falam de condição/pagamento + a linha seguinte (rótulo e valor em linhas separadas). */
   textos: string[];
+  n_iframes: number;
+  /** Quanto ficou de fora de cada lista (0 = nada cortado). */
+  omitidos: { selects: number; campos: number; textos: number };
 };
 
 /**
@@ -28,7 +34,11 @@ export function diagnosticarCondicaoDom(): DiagnosticoCondicaoDom {
   // deno-lint-ignore no-explicit-any
   const g: any = globalThis;
   const document = g.document;
-  const corta = (v: unknown, n: number) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().substring(0, n);
+  // Máscara de PII/segredo: CPF/CNPJ formatados, 8+ dígitos corridos e 24+ caracteres de token viram "#". Prazos como
+  // "30/60/90 DD" ficam (são o dado que se busca).
+  const mascara = (v: string) =>
+    v.replace(/\d{2,3}\.\d{3}\.\d{3}[\/-]\d{2,4}(-\d{2})?/g, "#").replace(/\d{8,}/g, "#").replace(/[A-Za-z0-9_-]{24,}/g, "#");
+  const corta = (v: unknown, n: number) => mascara(String(v == null ? "" : v).replace(/\s+/g, " ").trim()).substring(0, n);
   const fala = /condi[cç]|pagamento|pagto|prazo/i;
   const loc = g.location;
   // deno-lint-ignore no-explicit-any
@@ -47,28 +57,41 @@ export function diagnosticarCondicaoDom(): DiagnosticoCondicaoDom {
     const lab: any = id ? document.querySelector('label[for="' + id.replace(/"/g, "") + '"]') : null;
     return corta(lab ? lab.innerText || lab.textContent : "", 60);
   };
+  // deno-lint-ignore no-explicit-any
+  const falaDe = (el: any) => fala.test(String(el.id || "")) || fala.test(String(el.name || "")) || fala.test(rotuloDe(el));
   const campos = [];
+  let camposOmitidos = 0;
   // deno-lint-ignore no-explicit-any
   const candidatos: any[] = Array.from(document.querySelectorAll("select, input, textarea, span[id], div[id]") || []);
   for (const el of candidatos) {
-    if (campos.length >= 20) break;
-    const rotulo = rotuloDe(el);
-    if (!fala.test(String(el.id || "")) && !fala.test(String(el.name || "")) && !fala.test(rotulo)) continue;
+    if (!falaDe(el)) continue;
+    if (campos.length >= 20) {
+      camposOmitidos++;
+      continue;
+    }
     const tag = String(el.tagName || "").toLowerCase();
+    const tipo = corta(el.type, 20).toLowerCase();
+    const sigiloso = tipo === "hidden" || tipo === "password";
     campos.push({
       tag,
       id: corta(el.id, 60),
       name: corta(el.name, 60),
-      tipo: corta(el.type, 20),
-      valor: tag === "select" ? textoSel(el) : corta(el.value != null ? el.value : el.innerText || el.textContent, 80),
-      rotulo,
+      tipo,
+      valor: sigiloso ? null : tag === "select" ? textoSel(el) : corta(el.value != null ? el.value : el.innerText || el.textContent, 80),
+      rotulo: rotuloDe(el),
     });
   }
   const textos = [];
-  const linhas = String((document.body && (document.body.innerText || document.body.textContent)) || "").split("\n");
-  for (const l of linhas) {
-    if (textos.length >= 10) break;
-    if (fala.test(l) && l.trim()) textos.push(corta(l, 120));
+  let textosOmitidos = 0;
+  const linhas = String((document.body && (document.body.innerText || document.body.textContent)) || "")
+    .split("\n").map((l) => l.trim()).filter((l) => l);
+  for (let i = 0; i < linhas.length; i++) {
+    if (!fala.test(linhas[i])) continue;
+    if (textos.length >= 10) {
+      textosOmitidos++;
+      continue;
+    }
+    textos.push(corta(linhas[i] + (i + 1 < linhas.length ? " | " + linhas[i + 1] : ""), 160));
   }
   return {
     caminho: corta(loc ? loc.pathname : "", 200),
@@ -81,9 +104,11 @@ export function diagnosticarCondicaoDom(): DiagnosticoCondicaoDom {
       id: corta(s.id, 60),
       name: corta(s.name, 60),
       n: s.options ? s.options.length : 0,
-      sel: textoSel(s),
+      sel: falaDe(s) ? textoSel(s) : null,
     })),
     campos,
     textos,
+    n_iframes: (document.querySelectorAll("iframe") || []).length,
+    omitidos: { selects: Math.max(0, todosSelects.length - 30), campos: camposOmitidos, textos: textosOmitidos },
   };
 }

@@ -181,8 +181,9 @@ ${ABRIR_CONSULTA_PEDIDOS}
       itens = await buscarItens();
       trace.push({ step: 'itens_direto', status: itens.status, ok: temItens(itens), t: Date.now() - t0 });
       if (!temItens(itens)) {
-        await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
+        const respDetalheItens = await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
           { waitUntil: 'domcontentloaded', timeout: budgetFor('goto-detalhe', 30000) });
+        trace.push({ step: 'detalhe_aberto', via: 'itens', status: respDetalheItens ? respDetalheItens.status() : null, caminho: (function() { try { return new URL(page.url()).pathname; } catch (e) { return null; } })(), t: Date.now() - t0 });
         await sleep(2500);
         itens = await buscarItens();
         trace.push({ step: 'itens_pos_detalhe', status: itens.status, ok: temItens(itens), t: Date.now() - t0 });

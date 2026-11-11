@@ -33,18 +33,30 @@ diagnóstico.
 
 1. **Retrato da tela na evidência.** Quando a condição não vem, o script grava no `trace` os passos `detalhe_aberto`
    (status do GET e caminho final, sem query, o que mostra redirect para login ou home) e `condicao_diag`
-   (`diagnosticarCondicaoDom`, em `condicao-dom.ts`: todos os `<select>` com nº de opções e texto selecionado, os campos
-   e as linhas de texto que falam de condição ou pagamento, tudo com teto). A função mora na importadora, fora do
+   (`diagnosticarCondicaoDom`, em `condicao-dom.ts`: todos os `<select>` com nº de opções, os campos e as linhas de texto
+   que falam de condição ou pagamento, com a linha seguinte, nº de iframes e quanto foi cortado). Com teto e sem PII:
+   campo oculto ou senha só como metadado; texto selecionado só dos selects de condição; CPF/CNPJ, 8+ dígitos e
+   sequências de token mascarados. A função mora na importadora, fora do
    `_shared`, para não mudar a fonte (e o fingerprint) da varredura.
 2. **Recusa com causa.** O `motivo=condicao_ilegivel` continua o mesmo (contrato). A resposta ganha `causa_condicao`
    (`sem_retrato` · `fora_do_detalhe` · `campo_ausente` · `campo_sem_opcoes` · `sem_selecao` · `fora_do_prazo`) e uma
-   mensagem que diz se repetir resolve. Nas causas estruturais, a mensagem diz como seguir: lançar à mão no Omie com o
-   nº no contrato, o que a RPC depois recusa com IP006, sem duplicar. Nenhuma causa vira condição: tudo continua
-   recusando.
+   mensagem que diz se repetir provavelmente adianta. A causa é o que ESTA leitura observou, não causa confirmada.
+   Quando repetir não adianta, a mensagem diz como seguir: lançar à mão no Omie com o nº no contrato, depois de
+   conferir que não há PO nem importação em andamento, e não importar de novo até o PO aparecer no espelho. O IP006
+   lê `purchase_orders_tracking`, que tem a defasagem do sync. Nenhuma causa vira condição: tudo continua recusando.
 3. **Testes.** Envelope REAL da evidência #12 (2148223) no teste do handler: recusa sem RPC de gravação e sem disparo.
    Classificador por causa; texto serializado do retrato rodando sem o escopo do módulo; retrato no jsdom (com e sem
    select, teto de 30 selects). Falsificação: 9 sabotagens, uma por vez, todas vermelhas, com controle verde antes e
    depois, em `LC_ALL=C` e `pt_BR.UTF-8`.
+
+## 2ª opinião (Codex, challenge, 2026-11-11)
+
+Sem P0. O Codex confirmou o fail-closed (o retrato nunca alimenta a condição) e o template do Browserless (o
+`${fn.toString()}` não reinterpreta escapes). Os 2 P1 foram corrigidos no mesmo PR: o "não duplica" era uma garantia
+falsa, porque o IP006 lê um espelho com defasagem, e o retrato podia gravar campo oculto e CPF de select alheio. Os P2
+também: a causa passou a ser descrita como observação e o retrato ganhou o par rótulo→valor, os cortes, os iframes e o
+status do detalhe no caminho de fallback. Fica de fora o status das requisições XHR da tela (sem corpo nem URL): só se
+o retrato não bastar.
 
 ## Próximo passo (o conserto do seletor)
 

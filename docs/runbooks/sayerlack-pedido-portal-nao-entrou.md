@@ -92,8 +92,8 @@ no `trace` da evidência, passo `condicao_diag`):
 | `causa_condicao` | O que a tela tinha | Repetir resolve? |
 |---|---|---|
 | `fora_do_detalhe` | o portal abriu outra página (login, home) | sim — tente de novo |
-| `campo_ausente` | detalhe aberto, sem `#condicoes_pagamento` | **não** — o leitor precisa de ajuste |
-| `campo_sem_opcoes` | o select veio sem nenhuma opção | **não** — o leitor precisa de ajuste |
+| `campo_ausente` | detalhe aberto, sem `#condicoes_pagamento` nesta leitura | uma vez; repetiu → o leitor precisa de ajuste |
+| `campo_sem_opcoes` | o select veio sem nenhuma opção nesta leitura | uma vez; repetiu → o leitor precisa de ajuste |
 | `sem_selecao` | select com opções, "Selecione" escolhido | confira o pedido no portal |
 | `fora_do_prazo` | a condição apareceu depois dos 15 s | sim — tente de novo |
 | `sem_retrato` | leitura anterior ao C16 (sem retrato) ou o retrato falhou | sim, uma vez |
@@ -107,8 +107,13 @@ FROM public.sayerlack_portal_evidencia WHERE protocolo = '<nº>' ORDER BY id DES
 ```
 
 Precisa do pedido de compra antes do conserto? Lance-o à mão no Omie **com a condição que aparece no portal** e o nº do
-portal no campo contrato. A importação depois não duplica: a RPC recusa com IP006 (PO no Omie com esse contrato). A
-pendência da varredura pode seguir aberta — confira com as queries de "onde está o pedido". Histórico: `docs/historico/sayerlack-condicao-ilegivel-c16.md`.
+portal no campo contrato, nesta ordem:
+
+1. Confira com as queries de "onde está o pedido" que não há PO nem importação em andamento.
+2. Lance o PO à mão.
+3. **Não importe de novo** (nem deploy de leitor consertado) até o PO aparecer em `purchase_orders_tracking`. O
+   bloqueio IP006 da RPC lê esse espelho, que tem a defasagem do sync: PO digitado minutos antes escapa e a importação
+   duplicaria. A varredura importa sozinha 3×/dia; enquanto o leitor recusar, ela não grava. Histórico: `docs/historico/sayerlack-condicao-ilegivel-c16.md`.
 
 ### IP008 — pedido do app em envio/conciliação no portal
 

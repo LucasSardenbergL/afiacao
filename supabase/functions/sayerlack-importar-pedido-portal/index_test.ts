@@ -567,7 +567,7 @@ Deno.test("C16: tela de detalhe SEM o campo de condição → recusa dizendo que
   igual([r.corpo.ok, r.corpo.motivo, r.corpo.causa_condicao], [false, "condicao_ilegivel", "campo_ausente"], "resposta");
   igual(nadaGravado(falso), 0, "nada gravado, nenhum PO");
   const m = String(r.corpo.mensagem);
-  igual([m.includes("Tentar de novo não resolve"), m.includes("nº 2148223 no campo contrato"), m.includes("Tente de novo em")], [true, true, false], "mensagem acionável");
+  igual([m.includes("tentar de novo não adianta"), m.includes("nº 2148223 no campo contrato"), m.includes("Tente de novo em")], [true, true, false], "mensagem acionável");
   igual((r.corpo.condicao_diag as { select_presente: boolean }).select_presente, false, "o retrato volta na resposta");
 });
 
