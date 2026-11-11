@@ -67,12 +67,12 @@ describe('selecionarTestes — superconjunto textual ∪ leitores conhecidos', (
 });
 
 // O step REAL do `validate`, extraído do ci.yml e executado sob cenários de `needs`.
-describe('ci.yml — validate aceita os 7 pesados skipped só com o escopo só-docs', () => {
+describe('ci.yml — validate aceita os 8 pesados skipped só com o escopo só-docs', () => {
   type Ci = { jobs: Record<string, { needs?: string | string[]; if?: string; steps: { name?: string; run?: string }[] }> };
   const ci = parse(readFileSync('.github/workflows/ci.yml', 'utf8')) as Ci;
   const passo = ci.jobs.validate.steps.find((s) => s.name?.startsWith('Todos os jobs passaram'));
   const temJq = spawnSync('jq', ['--version']).status === 0;
-  const PESADOS = ['typecheck', 'testes', 'edges-e-build', 'sonda-cron-prova', 'gates-e-falsificacao', 'hooks-e-evals', 'falsificacao'];
+  const PESADOS = ['typecheck', 'testes', 'edges-e-build', 'sonda-cron-prova', 'gates-e-falsificacao', 'hooks', 'evals-falsificacao', 'falsificacao'];
 
   function needs(escopo: { result: string; so?: string }, gates: string, pesados = 'skipped', exceto: Record<string, string> = {}, provas = 'skipped') {
     const r: Record<string, { result: string; outputs: Record<string, string> }> = {};
@@ -91,7 +91,7 @@ describe('ci.yml — validate aceita os 7 pesados skipped só com o escopo só-d
     return spawnSync('bash', ['-c', passo!.run!], { env, encoding: 'utf8' }).status ?? -1;
   }
 
-  it('os 7 pesados dependem do escopo e pulam SÓ com success E so_docs=true; docs-gates é o inverso', () => {
+  it('os 8 pesados dependem do escopo e pulam SÓ com success E so_docs=true; docs-gates é o inverso', () => {
     for (const j of PESADOS) {
       expect([ci.jobs[j].needs].flat(), j).toContain('docs-escopo');
       expect(ci.jobs[j].if, j).toBe(
