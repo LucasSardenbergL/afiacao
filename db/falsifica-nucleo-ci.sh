@@ -38,7 +38,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ESPELHO="$(mktemp -d "/tmp/falsif-nucleo.XXXXXX")"
 LOGS="$ESPELHO/_logs"; mkdir -p "$LOGS"
 PORTA=5920
-export LC_ALL=C LANG=C
+# Locale: o de QUEM CHAMA, de propósito (2026-11-10). Até aqui o harness forçava `LC_ALL=C LANG=C`,
+# e a regra de falsificar nos DOIS locales (`LC_ALL=C` e `pt_BR.UTF-8`, #1483) rodava num só. O
+# runner já fixa `LC_ALL=C` onde a ordem importa (os `sort`); as marcas casadas aqui são ASCII.
 
 trap 'rm -rf "$ESPELHO"' EXIT
 
