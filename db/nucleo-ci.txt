@@ -1079,6 +1079,8 @@ db/test-radar-socios-cpf.sh                32  falsificar=19
 # catálogo); exclusão de titular resiste à recarga e a lote novo de sócios; retenção das notas livres; ACL.
 # + a 20261113110000 (plano v8, R2): o expurgo horário sem reler o heap — higiene do cru por Index Only Scan
 # (auto_explain dentro da função), 1x a cada ~24 h; o backfill horário mascara a razão crua que furou o trigger.
+# Partida em 2 faixas (2026-11-11): depois da venda-repasse, era uma das 2 maiores unidades (~290 s)
+# (docs/historico/ci-provas-sql-radar-privacidade-faixas.md); 1-13 e 14-27, cada uma com o seu controle verde.
 db/test-radar-privacidade-j.sh             46  falsificar=27 faixas=2
 
 # Radar pacote D — levar o lead ao vendedor (migration 20261106181000): território por carteira elegível com 1 dono por
