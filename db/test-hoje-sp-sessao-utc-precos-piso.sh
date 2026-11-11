@@ -334,7 +334,7 @@ BEGIN;
 ROLLBACK;
 SQL
 )" || rc=$?
-  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "PRE FALHOU: o corpo vivo de public.$fn"; then
+  if [ "$rc" -ne 0 ] && grep -q "PRE FALHOU: o corpo vivo de public.$fn" <<<"$out"; then
     ok "$id" "$descr"
   elif [ "$rc" -eq 0 ]; then
     bad "$id" "$descr — a migration APLICOU sobre o corpo derivado: a PRE deixou passar"
@@ -375,7 +375,7 @@ SQL
   v="$(printf '%s\n' "$out" | grep "^$id|" || true)"
   if [ "$rc" -eq 0 ]; then
     eq "$id" "$descr" "$v" "$id|false,false|false,false|true,true|postgres,postgres"
-  elif printf '%s' "$out" | grep -q 'POS[0-9] FALHOU'; then
+  elif grep -q 'POS[0-9] FALHOU' <<<"$out"; then
     bad "$id" "$descr — a migration abortou ao nascer: $(printf '%s' "$out" | grep -o 'POS[0-9] FALHOU[^—]*' | head -1)"
   else
     erro_exec "$id" "$descr — falhou, mas não pela POS: $(printf '%s' "$out" | tr '\n' ' ' | head -c 200)"
@@ -386,15 +386,15 @@ nascimento X3s "função AUSENTE com o default ACL do Supabase (EXECUTE direto a
   "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;"
 
 rc=0; out="$(P -1 -q -f "$MIG_NOVA" 2>&1)" || rc=$?
-if [ "$rc" -ne 0 ] || ! printf '%s' "$out" | grep -q 'POS OK:'; then
+if [ "$rc" -ne 0 ] || ! grep -q 'POS OK:' <<<"$out"; then
   echo "❌ INFRA: a migration nova não aplicou (rc=$rc): $(printf '%s' "$out" | tr '\n' ' ' | head -c 400)"; exit 1
 fi
 echo "migration aplicada: $(basename "$MIG_NOVA") (PRE e POS passaram, transação única)"
 
 rc=0; out="$(P -1 -q -f "$MIG_X2" 2>&1)" || rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'POS OK:'; then
+if [ "$rc" -eq 0 ] && grep -q 'POS OK:' <<<"$out"; then
   ok X2 "re-aplicar a migration sobre ela mesma é seguro (a PRE reconhece o próprio corpo)"
-elif [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'PRE FALHOU'; then
+elif [ "$rc" -ne 0 ] && grep -q 'PRE FALHOU' <<<"$out"; then
   bad X2 "a re-aplicação ABORTOU na PRE — a migration não é idempotente"
 else
   erro_exec X2 "re-aplicação sem veredito (rc=$rc): $(printf '%s' "$out" | tr '\n' ' ' | head -c 200)"
