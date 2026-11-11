@@ -138,7 +138,9 @@ if [ "$SABOTAGEM" = pc_policy_extra_aceita ]; then  # só a cópia usada no I2: 
   MIG_I2="$TMPD/m2.sql"
 fi
 [ -f "$TMPD/m.sql" ] && MIG_USADA="$TMPD/m.sql"
-if Pdb -q -f "$MIG_USADA" >"$TMPD/i0.log" 2>&1 && grep -q "POSTCONDICAO OK" "$TMPD/i0.log"; then ok I0 aplicou aplicou; else ok I0 aplicou "falhou: $(grep -m1 -E 'ERROR|EXCEPTION' "$TMPD/i0.log" | cut -c1-400)"; fi
+# 'ERRO' casa o prefixo nos DOIS locales ("ERROR:" em C, "ERRO:" em pt_BR); com 'ERROR' a marca do
+# motivo (RLS/SECURITY/EXECUTE/CHECK) saía vazia em pt_BR e as sabotagens pc_* reprovavam pelo motivo errado.
+if Pdb -q -f "$MIG_USADA" >"$TMPD/i0.log" 2>&1 && grep -q "POSTCONDICAO OK" "$TMPD/i0.log"; then ok I0 aplicou aplicou; else ok I0 aplicou "falhou: $(grep -m1 -E 'ERRO|EXCEPTION' "$TMPD/i0.log" | cut -c1-400)"; fi
 if [ "${MIG_USADA}" != "$MIG" ]; then  # sabotagem de postcondição: só o I0 importa
   echo "RESUMO verdes=$verdes vermelhos=$vermelhos"; exit 0
 fi
