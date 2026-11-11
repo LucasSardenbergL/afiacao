@@ -155,3 +155,42 @@ Conflito de arquivo é um eixo; "já entregue na main" é outro, e o segundo nã
 `db/` e `.claude/skills/*/`. O bloco `run:` deste step foi conferido à mão
 (`shellcheck --shell=bash` sobre o `run` extraído do YAML, zero achados) e os três scripts do lab
 entram no gate pelo glob `scripts/lab-*/*.sh`, em zero achados.
+
+## 2026-11-11 — E19: o mesmo `tentar` no download do shellcheck pinado
+
+**O caso.** Os dois steps "shellcheck pinado 0.11.0" (`gates-e-falsificacao` e `falsificacao`)
+baixavam com `curl -fsSL … | tar -xJ`, sem retry. O plano v8 (E19) contou 1 re-run em 126 runs por
+esse step: run `42659232737`, job `falsificacao (1)`. O log mostra o modo de falha e uma segunda
+lição: `curl: (22) The requested URL returned error: 500`, seguido de `xz: File format not
+recognized`, e o step saiu com **exit 2**. Sob `pipefail` o exit que sobra é o do último comando que
+falhou, ou seja, o do `tar`. O 22 do curl, que era a causa, sumiu do veredito.
+
+**O desenho.** Os steps do Actions não compartilham funções de shell, e o `tentar` morava dentro do
+step PGDG. Copiá-lo para mais dois steps seria laço novo: três cópias, cada uma com a sua chance de
+desistir verde. Por isso ele foi para `scripts/lib/tentar.sh`, de onde os três steps o carregam com
+`. scripts/lib/tentar.sh`. O shellcheck agora baixa para ARQUIVO, sob o `tentar`, e extrai depois.
+O pipe saiu, e com ele o exit mascarado. O teto (3) e a espera (5s, 10s) seguem literais.
+
+**A prova que continua viva** é o lab de sempre, ajustado para o arquivo:
+
+- `lab.sh` **embute** `scripts/lib/tentar.sh` no lugar da linha `.` do step extraído. A guarda 1b
+  exige que essa linha exista exatamente 1 vez. Rodar o `.` relativo dependeria do cwd, e um
+  `tentar` ausente seria vermelho pelo motivo errado. Resultado: 29 ok, `LAB-VERDE`.
+- `falsifica.sh` sabota o arquivo em S1, S2 e S5 e o ci.yml em S3 e S4, sempre com o outro alvo
+  no controle. Controle verde primeiro, depois 5 sabotagens vermelhas nos casos certos, em `C` e
+  em `pt_BR.UTF-8`. Resultado: `FALSIFICACAO-VERDE`.
+
+**A prova pontual dos pontos de uso** não virou suíte (não é máquina nova). O texto REAL dos 2
+steps foi extraído do ci.yml e rodado com `curl` de verdade contra um servidor local. Os desvios
+declarados foram URL para `127.0.0.1`, `/usr/local/bin` para uma sandbox e `sleep`/`sudo` dublados.
+Os dois jobs deram o mesmo resultado:
+
+| servidor | exit do step | requisições | instalou? |
+|---|---|---|---|
+| 500 sempre | **22** (o do curl, não mais o 2 do tar), com `::error::… falhou nas 3 tentativas` | 3 | não |
+| 500, depois 200 | 0, com `OK na tentativa 2/3` e `conferido: 0.11.0` | 2 | sim |
+| 200 com corpo lixo | 1 (`tar: Unrecognized archive format`) | 1 | não |
+
+A 3ª linha é o limite, dito de frente. Um corpo corrompido com HTTP 200 não é repetido, porque o
+`tentar` cerca só o curl. Ele falha FECHADO no `tar`, e a asserção positiva de versão logo depois
+cobre o resto. Repetir o par curl+tar exigiria uma função no step, e o caso medido foi o 500.

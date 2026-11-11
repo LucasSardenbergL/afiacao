@@ -944,9 +944,9 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
     motivo: 'LAB-VERMELHO + o controle C0 do lab VERDE (quebrar o lab não é quebrar a guarda) + CADA caso declarado vermelho, por locale',
     mede: ['SAI'],
     ancoras: [
-      'roda_lab() { ALVO_YML="$1" LC_ALL="$2" LAB_CENARIOS="${3:-C1 C2 C3 C4 C5 C6 C7 C8}" bash "$L/lab.sh" 2>&1; }',
+      'roda_lab() { ALVO_YML="$1" ALVO_TENTAR="$2" LC_ALL="$3" LAB_CENARIOS="${4:-C1 C2 C3 C4 C5 C6 C7 C8}" bash "$L/lab.sh" 2>&1; }',
       [
-        'SAI="$(roda_lab "$TMP/controle.yml" "$loc")"',
+        'SAI="$(roda_lab "$TMP/controle.yml" "$TMP/controle-tentar.sh" "$loc")"',
         'case "$SAI" in',
         '*LAB-VERDE*) passou "…" ;;',
         '*) echo "…"',
@@ -955,7 +955,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
         'esac',
       ],
       [
-        'local SAI; SAI="$(roda_lab "$TMP/sab.yml" "$loc" "$esperados")"',
+        'local SAI; SAI="$(roda_lab "$yml" "$tnt" "$loc" "$esperados")"',
         'case "$SAI" in',
         '*LAB-VERMELHO*) ;;',
         '*) falhou "…"; continue ;;',
