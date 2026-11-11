@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import {
-  DollarSign, TrendingUp, TrendingDown, Target, Eye, Percent,
+  DollarSign, TrendingUp, TrendingDown, Eye, Percent,
   PieChart, ShieldCheck, RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -141,9 +141,9 @@ export function IntelligenceStrategicTab() {
   // Desconto: `order_items.desconto_valor`, com não-apurado (NULL) FORA da conta e contado (ver desconto-kpis).
   const desconto = kpisDesconto(salesOrders, orderItems);
 
-  const uniqueCustomers = new Set(allScores?.map(c => c.customer_user_id)).size;
-  const estimatedMarket = Math.max(uniqueCustomers * 3, 100);
-  const marketSharePct = (uniqueCustomers / estimatedMarket * 100);
+  // Plano v9, C17: não há "Market Share Est." aqui. Era clientes ÷ max(clientes × 3, 100): a partir
+  // de 34 clientes dava 33,3% fixo, uma fórmula circular sem nenhum dado de mercado. Mesma família
+  // do LTV/CAC do C15. Volta quando houver uma fonte de tamanho de mercado.
 
   // Só as margens conhecidas entram na média (numerador E denominador). Com `|| 0`, cliente sem
   // margem apurada entrava como 0 — e como esse é o caso da maioria da base desde o cálculo
@@ -187,26 +187,25 @@ export function IntelligenceStrategicTab() {
 
   // O gate espera TODA fonte que a tela apresenta como número. Antes ele olhava só
   // `margin_audit_log`: bastava a AUDITORIA resolver — com os scores ainda em voo — para a tela
-  // renderizar inteira, e LTV/CAC/Market Share saíam em zero. Um zero de "ainda não chegou" é
+  // renderizar inteira, e os KPIs de carteira saíam em zero. Um zero de "ainda não chegou" é
   // indistinguível, na tela, de um zero medido. E "—" não serve nesta janela: "—" é o estado
   // FINAL de indisponibilidade, e carregar não é indisponível — o honesto é seguir carregando.
   if (auditCarregando || scoresCarregando) {
     return <div className="grid grid-cols-2 gap-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>;
   }
 
-  // Os KPIs derivados de `allScores` (LTV, CAC, Concentração, Market Share, Margem Bruta) não
+  // Os KPIs derivados de `allScores` (Concentração e Margem Bruta) não
   // olhavam o próprio estado de erro, então a tela renderizava INTEIRA como se estivesse tudo
   // certo, com esses números em zero produzidos por uma falha de transporte. O #1545 fazer
   // `fetchAllPages` lançar não bastou: a exceção vira `allScores === undefined` e os `|| 0`
   // fabricam de novo. Nunca zero: "—" e o motivo. `retry` é global (App.tsx: 2 + backoff);
   // aqui só o estado final.
   // `naoConsegui` cobre erro E sem-rede: offline sem cache a query fica pending/paused, SEM `isError` — e
-  // os `|| 0` abaixo voltavam a fabricar LTV/CAC/Market Share em zero.
+  // os `|| 0` abaixo voltavam a fabricar os KPIs de carteira em zero.
   const semLeituraScores = naoConsegui(estadoDeLeitura({ status: scoresStatus, fetchStatus: scoresFetch }));
   const scoresIndisponivel = semLeituraScores && !allScores;
   // com cache, `paused` vem com status `success` (estado "pronta") — só o `desatualizado` enxerga
   const scoresDesatualizados = desatualizado({ status: scoresStatus, fetchStatus: scoresFetch }, !!allScores) != null;
-  const ou = (v: string) => (scoresIndisponivel ? '—' : v);
 
   // Mesmo par para a auditoria de margem — as duas queries falham de forma independente, e a
   // tela precisa dizer QUAL bloco não pôde ser lido (os KPIs de carteira e os de margem vêm de
@@ -234,8 +233,8 @@ export function IntelligenceStrategicTab() {
     <div className="space-y-4">
       {scoresIndisponivel && (
         <div role="alert" className="rounded-lg border border-status-error/30 bg-status-error/5 p-3 text-xs text-status-error">
-          Indicadores de carteira indisponíveis — a base de scores não pôde ser lida. LTV, CAC,
-          Concentração, Market Share e Margem Bruta ficam em “—”; nenhum deles foi estimado.
+          Indicadores de carteira indisponíveis — a base de scores não pôde ser lida. Concentração e
+          Margem Bruta ficam em “—”; nenhum deles foi estimado.
         </div>
       )}
       {scoresDesatualizados && (
@@ -292,7 +291,7 @@ export function IntelligenceStrategicTab() {
         />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <KpiCard
           title="Elasticidade de Preço"
           value={desconto.elasticidade === null ? '—' : `${desconto.elasticidade.toFixed(1)}%`}
@@ -315,7 +314,6 @@ export function IntelligenceStrategicTab() {
               : salesOrders ? 'desconto não apurado nos pedidos recentes' : 'pedidos indisponíveis'
           }
         />
-        <KpiCard title="Market Share Est." value={ou(`${marketSharePct.toFixed(1)}%`)} icon={Target} subtitle={scoresIndisponivel ? 'base indisponível' : `${uniqueCustomers} de ~${estimatedMarket} clientes`} />
         <KpiCard title="Margem Global" value={ouAudit(brl(agregadoAudit?.margemReal ?? null))} icon={DollarSign} subtitle={legendaAudit} />
       </div>
 

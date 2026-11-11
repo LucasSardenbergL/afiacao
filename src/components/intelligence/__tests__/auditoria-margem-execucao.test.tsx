@@ -471,7 +471,8 @@ describe('IntelligenceStrategicTab — a última execução inteira', () => {
     onlineManager.setOnline(false);
     renderAba();
     await screen.findByText(/Indicadores de carteira indisponíveis/);
-    expect(cardDo('Market Share Est.')).toMatch(/—/);
+    expect(cardDo('Concentração Top 20%')).toMatch(/—/);
+    expect(cardDo('Margem Bruta Média')).toMatch(/—/);
   });
 });
 
