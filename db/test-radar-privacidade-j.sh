@@ -58,7 +58,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   total_sab=$(( $(printf '%s\n' "$SABOTAGENS" | wc -w) ))   # contar sem um 2º laço sobre a lista (R2 do falsificar-exige-assert)
   sab_de=1; sab_ate=$total_sab
   if [ -n "${NUCLEO_FAIXA:-}" ]; then
-    if ! printf '%s' "$NUCLEO_FAIXA" | grep -qE '^[1-9]/[2-9]$' || [ "${NUCLEO_FAIXA%/*}" -gt "${NUCLEO_FAIXA#*/}" ]; then
+    if ! [[ "$NUCLEO_FAIXA" =~ ^[1-9]/[2-9]$ ]] || [ "${NUCLEO_FAIXA%/*}" -gt "${NUCLEO_FAIXA#*/}" ]; then
       echo "❌ NUCLEO_FAIXA inválida: '$NUCLEO_FAIXA' (i/k, 1 ≤ i ≤ k, 2 ≤ k ≤ 9)"; exit 1
     fi
     f_i="${NUCLEO_FAIXA%/*}"; f_k="${NUCLEO_FAIXA#*/}"
