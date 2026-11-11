@@ -647,35 +647,37 @@ function baldesAntes(ix: Indice, d: Data): number {
 /**
  * F0′ (Alt1/Alt2): a série por DIA ÚTIL do PRÓPRIO SKU (não do grupo: a demanda do F0 é só a dele) na janela de `dias`
  * corridos [d − dias, d), truncada no início do histórico. Cada venda de dia corrido < d entra no balde do seu dia útil
- * (fim de semana → du anterior, como em `serieDu`); a de fim de semana cujo du cai ANTES da janela fica fora (borda esquerda).
+ * (fim de semana → du anterior, como em `serieDu`); a de fim de semana cujo du cai ANTES da janela fica fora da SÉRIE
+ * (borda esquerda — afeta só o σd), mas entra em `soma` (o numerador de D é Σ vendas em [d − dias, d), §4.4).
  * Du sem venda = 0. Feriado não existe no calendário (seg–sex): o du dele conta.
  */
-function janelaPorDu(ix: Indice, sku: string, d: Data, dias: number): { valores: Float64Array; comVenda: boolean } {
+function janelaPorDu(ix: Indice, sku: string, d: Data, dias: number): { valores: Float64Array; comVenda: boolean; soma: number } {
   const iD = Math.min(idx(d), ix.nDias);
-  if (iD <= 0) return { valores: new Float64Array(0), comVenda: false };
+  if (iD <= 0) return { valores: new Float64Array(0), comVenda: false, soma: 0 };
   const iIni = Math.max(0, iD - dias);
   const b0 = iIni === 0 ? 0 : ix.baldeDoDia[iIni - 1] + 1;
   const bFim = ix.baldeDoDia[iD - 1] + 1; // baldes estritamente antes de d
   const valores = new Float64Array(Math.max(0, bFim - b0));
   const tot = ix.totalDia.get(sku);
   let comVenda = false;
+  let soma = 0; // Σ vendas de [d − dias, d) — TODAS, inclusive a de borda esquerda (numerador de D, achado P1 do Codex)
   if (tot) {
     for (let i = iIni; i < iD; i++) {
+      if (tot[i] === 0) continue;
+      soma += tot[i];
       const b = ix.baldeDoDia[i];
-      if (tot[i] === 0 || b < b0) continue;
+      if (b < b0) continue; // fora só da SÉRIE por du (σd), nunca da soma
       valores[b - b0] += tot[i];
       comVenda = true;
     }
   }
-  return { valores, comVenda };
+  return { valores, comVenda, soma };
 }
 /** Alt1: Σ vendas da janela de 90 d ÷ nº de DIAS ÚTEIS observados nela, round 4 (como a view). */
 function demandaPorDu(ix: Indice, sku: string, d: Data): number {
-  const { valores } = janelaPorDu(ix, sku, d, F0.janelaDemandaDias);
+  const { valores, soma } = janelaPorDu(ix, sku, d, F0.janelaDemandaDias);
   if (valores.length === 0) throw new Error(`F0_PERFIL_SEM_DIA_UTIL:${sku}|${d}`); // inalcançável: o motor só roda após 28 dias
-  let t = 0;
-  for (const x of valores) t += x;
-  return arred(t / valores.length, 4);
+  return arred(soma / valores.length, 4);
 }
 /** Alt1: stddev_samp da série por du dos últimos 180 dias corridos (zeros nos du sem venda), round 4; sem venda ⇒ null (fallback D·0,5). */
 function sigmaPorDu(ix: Indice, sku: string, d: Data): number | null {

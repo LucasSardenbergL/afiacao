@@ -312,6 +312,20 @@ export interface OpcoesCalibracao {
    * oficial. Os parâmetros continuam os do contexto da calibração (conhecimento até 30/04).
    */
   janela?: [Data, Data];
+  /**
+   * Só a ESTABILIDADE do pacote (leave-one-SKU-out, informativa, §4.2): este SKU sai da população MEDIDA nos dois braços —
+   * vendas, estoque e peso no alvo (achado P2 do Codex: devolvê-lo ao F0 não é "sem ele"). Linha de base, alvo e capital
+   * são os do recorte. A classe ABC dos demais é a da coorte (não reclassifica).
+   */
+  semSku?: string;
+}
+
+/** A população medida: a do modo, menos o SKU da estabilidade (leave-one-SKU-out). */
+function populacaoMedida(c: { populacao: Set<string>; alterados: Set<string> }, modo: CelulasAlvo, semSku: string | undefined): Set<string> {
+  const pop = populacaoDoModo(c, modo);
+  if (semSku === undefined) return pop;
+  if (!pop.has(semSku)) throw new Error(`SEM_SKU_FORA_DA_POPULACAO:${semSku}`);
+  return new Set([...pop].filter((s) => s !== semSku));
 }
 
 /** R27: 'classe' = régua oficial; 'alt' = rodada informativa não oficial. */
@@ -368,11 +382,12 @@ export function baseDaCalibracao(dados: Dados, opcoes: OpcoesCalibracao = {}): B
   const modo = opcoes.celulasAlvo ?? 'classe';
   const jan = opcoes.janela ?? JANELA_CALIBRACAO;
   // a chave oficial não muda; só o corte de estabilidade acrescenta a janela
-  const chave = opcoes.janela ? `${reps}|${modo}|${jan.join('..')}` : `${reps}|${modo}`;
+  const chave =
+    opcoes.janela || opcoes.semSku !== undefined ? `${reps}|${modo}|${jan.join('..')}|sem=${opcoes.semSku ?? '-'}` : `${reps}|${modo}`;
   const pronto = porReps.get(chave);
   if (pronto) return pronto;
   const c = coorte(dados);
-  const f0Mapa = mapaMisto(preComputarCtx('F0', dados, QUANTIL_NEUTRO, opcoes), null, populacaoDoModo(c, modo), c.alterados);
+  const f0Mapa = mapaMisto(preComputarCtx('F0', dados, QUANTIL_NEUTRO, opcoes), null, populacaoMedida(c, modo, opcoes.semSku), c.alterados);
   const a = avaliarNaCalibracao(dados, 'F0', f0Mapa, reps, modo, jan);
   const base: BaseCalibracao = {
     celulasAlvo: modo,
@@ -427,7 +442,7 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
     const avaliar = (q: Trio): AvaliacaoTrio => {
       const p: ParamsFormula = { ...v, quantil: q };
       const fn = preComputarCtx(f, dados, p, opcoes);
-      const pop = populacaoDoModo(c, base.celulasAlvo);
+      const pop = populacaoMedida(c, base.celulasAlvo, opcoes.semSku);
       const mapa = sv ? mapaPacote(base.f0Mapa, sv.mapa, sv.skus, fn, pop, c.alterados) : mapaMisto(base.f0Mapa, fn, pop, c.alterados);
       return avaliarNaCalibracao(dados, f, mapa, reps, base.celulasAlvo, opcoes.janela ?? JANELA_CALIBRACAO);
     };
@@ -569,10 +584,20 @@ export function mapaDosSuaves(dados: Dados, perfil: PerfilSuaves, ctx: { calibra
 
 /** §4.2, item 5: três estados, nunca dois. Dado ausente (capital sem preço) nunca vira inviável. */
 export type EstadoTupla = 'VIAVEL' | 'INVIAVEL' | 'INDETERMINADO';
-export function estadoDaTupla(r: Pick<ResultadoCalibracao, 'inviavel' | 'estoqueMedio' | 'estoqueF0' | 'capitalIndeterminado'>): EstadoTupla {
-  if (r.capitalIndeterminado) return 'INDETERMINADO';
-  if (r.inviavel) return 'INVIAVEL';
-  return r.estoqueMedio === null || r.estoqueF0 === null ? 'INDETERMINADO' : 'VIAVEL';
+type ResumoEstado = Pick<ResultadoCalibracao, 'inviavel' | 'estoqueMedio' | 'estoqueF0' | 'capitalIndeterminado' | 'naoObservaveis'>;
+/**
+ * Por que a tupla é INDETERMINADA (null = não é). Capital sem preço e classe sem demanda na calibração (alvo inobservável:
+ * nem o atingimento nem a inviabilidade estão provados — achado P2 do Codex) são motivos DISTINTOS, nunca rotulados um pelo outro.
+ */
+export function motivoIndeterminacao(r: ResumoEstado): string | null {
+  if (r.capitalIndeterminado) return 'CAPITAL_NAO_VALORADO_NA_CALIBRACAO';
+  if (r.naoObservaveis.length > 0) return `CLASSE_NAO_OBSERVAVEL_NA_CALIBRACAO:${r.naoObservaveis.join(',')}`;
+  if (r.inviavel) return null;
+  return r.estoqueMedio === null || r.estoqueF0 === null ? 'CAPITAL_NAO_VALORADO_NA_CALIBRACAO' : null;
+}
+export function estadoDaTupla(r: ResumoEstado): EstadoTupla {
+  if (motivoIndeterminacao(r) !== null) return 'INDETERMINADO';
+  return r.inviavel ? 'INVIAVEL' : 'VIAVEL';
 }
 
 /** Uma tupla congelável (P, X, β ou janela, quantis A/B/C) com o resultado da calibração existente, sem mudança. */
@@ -590,13 +615,12 @@ export function calibrarPacote(
     perfis?: readonly PerfilSuaves[];
     formulas?: readonly Formula[];
     log?: (m: string) => void;
-    /** Só a ESTABILIDADE (leave-one-SKU-out, informativa): este suave fica no F0 de hoje. */
-    semSuave?: string;
   } = {},
 ): TuplaPacote[] {
   if ((opcoes.celulasAlvo ?? 'classe') !== 'classe') throw new Error('PACOTE_SO_NA_CELULA_DA_CLASSE');
   const skus = suavesDaCoorte(coorte(dados));
-  if (opcoes.semSuave !== undefined && !skus.delete(opcoes.semSuave)) throw new Error(`SEM_SUAVE_FORA_DOS_SUAVES:${opcoes.semSuave}`);
+  // leave-one-SKU-out: o suave sai da população medida (OpcoesCalibracao.semSku), não só do conjunto dos suaves
+  if (opcoes.semSku !== undefined && !skus.delete(opcoes.semSku)) throw new Error(`SEM_SUAVE_FORA_DOS_SUAVES:${opcoes.semSku}`);
   const out: TuplaPacote[] = [];
   for (const perfil of opcoes.perfis ?? perfisDoPacote()) {
     const mapa = mapaDosSuaves(dados, perfil, { calibracao: true }, opcoes.cacheDir);
@@ -609,7 +633,7 @@ export function calibrarPacote(
   return out;
 }
 
-export type EscolhaPacote = { tipo: 'TUPLA'; tupla: TuplaPacote } | { tipo: 'NENHUMA' } | { tipo: 'INDETERMINADA'; tuplas: string[] };
+export type EscolhaPacote = { tipo: 'TUPLA'; tupla: TuplaPacote } | { tipo: 'NENHUMA' } | { tipo: 'INDETERMINADA'; tuplas: { tupla: string; motivo: string }[] };
 
 /**
  * §4.2, itens 3–5. Candidata = a tupla VIÁVEL de menor estoque médio; desempate, nesta ordem: (a) a regra de simplicidade
@@ -620,7 +644,8 @@ export type EscolhaPacote = { tipo: 'TUPLA'; tupla: TuplaPacote } | { tipo: 'NEN
  */
 export function escolherTupla(tuplas: readonly TuplaPacote[]): EscolhaPacote {
   const indeterminadas = tuplas.filter((t) => estadoDaTupla(t.resultado) === 'INDETERMINADO');
-  if (indeterminadas.length > 0) return { tipo: 'INDETERMINADA', tuplas: indeterminadas.map(serializarTupla) };
+  if (indeterminadas.length > 0)
+    return { tipo: 'INDETERMINADA', tuplas: indeterminadas.map((t) => ({ tupla: serializarTupla(t), motivo: motivoIndeterminacao(t.resultado)! })) };
   const viaveis = tuplas.filter((t) => estadoDaTupla(t.resultado) === 'VIAVEL');
   if (viaveis.length === 0) return { tipo: 'NENHUMA' };
   const est = (t: TuplaPacote) => t.resultado.estoqueMedio as number;
@@ -648,8 +673,13 @@ export function escolherTupla(tuplas: readonly TuplaPacote[]): EscolhaPacote {
 /** O veredito que a calibração do pacote já decide (mesma semântica de `vereditoDaCalibracao`). */
 export function vereditoDaCalibracaoPacote(escolha: EscolhaPacote): { veredito: 'NO-GO' | 'INCONCLUSIVO'; motivos: string[] } | null {
   if (escolha.tipo === 'NENHUMA') return { veredito: 'NO-GO', motivos: ['INVIAVEL_NA_CALIBRACAO'] };
-  if (escolha.tipo === 'INDETERMINADA') return { veredito: 'INCONCLUSIVO', motivos: [`CAPITAL_NAO_VALORADO_NA_CALIBRACAO: ${escolha.tuplas.join(', ')}`] };
+  if (escolha.tipo === 'INDETERMINADA') {
+    const porMotivo = new Map<string, string[]>();
+    for (const t of escolha.tuplas) porMotivo.set(t.motivo, [...(porMotivo.get(t.motivo) ?? []), t.tupla]);
+    return { veredito: 'INCONCLUSIVO', motivos: [...porMotivo].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([m, ts]) => `${m}: ${ts.join(', ')}`) };
+  }
+  // a tupla escolhida é VIÁVEL ⇒ observável por construção (estadoDaTupla); a guarda fica como defesa
   const r = escolha.tupla.resultado;
-  if (r.naoObservaveis.length > 0) return { veredito: 'INCONCLUSIVO', motivos: [`CLASSE_NAO_OBSERVAVEL_NA_CALIBRACAO:${r.naoObservaveis.join(',')}`] };
+  if (r.naoObservaveis.length > 0) throw new Error(`PACOTE_TUPLA_VIAVEL_INOBSERVAVEL:${r.naoObservaveis.join(',')}`);
   return null;
 }

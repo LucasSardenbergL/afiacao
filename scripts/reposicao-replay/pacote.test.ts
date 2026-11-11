@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { addDias, diffDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
 import {
+  baseDaCalibracao,
   calibrarPacote,
   escolherTupla,
   estadoDaTupla,
@@ -95,7 +96,7 @@ describe('oráculos do F0′ (contas à mão)', () => {
     expect(pontoDePedidoF0({ demanda: 3, sigmaD: 1, lt: 0, sigmaLt: 0, z: 1.65, minimoOperacional: 2 })).toEqual({ ss: 0, pp: 3 });
   });
 
-  it('sábado com NF e borda esquerda: a venda de sábado entra no du anterior; a da borda (du fora da janela) não entra', () => {
+  it('sábado com NF e borda esquerda: a venda de sábado entra no du anterior; a da borda soma em D (Σ vendas em [d−90,d)) mas fica fora da série do σd', () => {
     const d = '2026-03-06'; // sexta; d − 90 = sábado 06/12/2025
     expect(addDias(d, -90)).toBe('2025-12-06');
     const base = diasEntre(INICIO_AQUECIMENTO, addDias(d, -1)).filter(ehDiaUtil).map((dia) => venda('Y', dia, 1));
@@ -105,7 +106,11 @@ describe('oráculos do F0′ (contas à mão)', () => {
     const duJanela = diasEntre(addDias(d, -90), addDias(d, -1)).filter(ehDiaUtil);
     const r = demandaSigmaPorDu(dd, 'Y', d);
     expect(r.du).toBe(duJanela.length);
-    expect(r.demanda).toBe(Math.round(((duJanela.length + 5) / duJanela.length) * 1e4) / 1e4); // 7 da borda fica fora
+    expect(r.demanda).toBe(Math.round(((duJanela.length + 12) / duJanela.length) * 1e4) / 1e4); // 7 da borda ENTRA no numerador
+    // reprodução do Codex (P1): 64 du, 1/du + 7 no sábado 06/12/2025 ⇒ D = 71/64, não 1
+    expect(duJanela.length).toBe(64);
+    const so7 = dados([sku('Y')], [...base, venda('Y', '2025-12-06', 7)], []);
+    expect(demandaSigmaPorDu(so7, 'Y', d).demanda).toBe(Math.round((71 / 64) * 1e4) / 1e4);
     // σd por du (180 dias corridos, du sem venda = 0): sexta 05/12 recebe o sábado 06/12 (dentro da janela de 180)
     const du180 = diasEntre(addDias(d, -180), addDias(d, -1)).filter((x) => ehDiaUtil(x) && x >= INICIO_AQUECIMENTO);
     const serie = du180.map((x) => 1 + (x === '2025-12-05' ? 7 : 0) + (x === '2026-02-27' ? 5 : 0));
@@ -160,6 +165,25 @@ describe('fixture do pacote (sanidade: senão os testes abaixo são cegos)', () 
     expect([...suavesDaCoorte(c)]).toEqual(['S']);
     expect([...c.alterados].sort()).toEqual(['P', 'Q']);
   });
+});
+
+describe('leave-one-SKU-out (estabilidade): o SKU sai da população MEDIDA, não só volta ao F0', () => {
+  it('sem S: as linhas dele saem da calibração do F0 e o estoque muda; com S fora, P0 e Alt1 empatam (não há mais suave)', () => {
+    const dd = cenario(false);
+    const linhas = (b: ReturnType<typeof baseDaCalibracao>) =>
+      (['A', 'B', 'C'] as const).reduce((t, c) => t + b.somasF0.porCelula[c].demandadas.reduce((x, y) => x + y, 0), 0);
+    const com = baseDaCalibracao(dd, { reps: 2, cacheDir: null });
+    const sem = baseDaCalibracao(dd, { reps: 2, cacheDir: null, semSku: 'S' });
+    const linhasS = dd.vendas.filter((v) => v.sku === 'S' && v.data >= JANELAS.calibracaoIni && v.data <= JANELAS.calibracaoFim).length;
+    expect(linhasS).toBeGreaterThan(0);
+    expect(linhas(sem)).toBe(linhas(com) - linhasS);
+    expect(sem.estoqueF0).not.toBeCloseTo(com.estoqueF0 as number, 6);
+    const tuplas = calibrarPacote(dd, { reps: 2, cacheDir: null, perfis: [P0, ALT1], formulas: ['F1'], semSku: 'S' });
+    const resumo = (t: TuplaPacote) => ({ est: t.resultado.estoqueMedio, fill: t.resultado.fill, e0: t.resultado.estoqueF0 });
+    expect(resumo(tuplas[1])).toEqual(resumo(tuplas[0]));
+    expect(tuplas[0].resultado.estoqueF0).toBe(sem.estoqueF0);
+    expect(() => calibrarPacote(dd, { reps: 2, cacheDir: null, perfis: [P0], formulas: ['F1'], semSku: 'P' })).toThrow('SEM_SUAVE_FORA_DOS_SUAVES:P');
+  }, 300_000);
 });
 
 // ── paridade nula (§4.4, item 2) com controle na MESMA invocação ─────────────────────────────────────────────────
@@ -243,9 +267,21 @@ describe('três estados, nunca dois', () => {
     expect(e.tipo).toBe('NENHUMA');
     expect(vereditoDaCalibracaoPacote(e)).toEqual({ veredito: 'NO-GO', motivos: ['INVIAVEL_NA_CALIBRACAO'] });
   });
-  it('classe não observável na tupla escolhida ⇒ INCONCLUSIVO', () => {
-    const e = escolherTupla([tu(P0, res('F1', { naoObservaveis: ['C'] }))]);
-    expect(vereditoDaCalibracaoPacote(e)?.motivos).toEqual(['CLASSE_NAO_OBSERVAVEL_NA_CALIBRACAO:C']);
+  it('classe não observável ⇒ tupla INDETERMINADA (achado P2 do Codex), com o motivo próprio, nunca "capital"', () => {
+    expect(estadoDaTupla(res('F1', { naoObservaveis: ['A'] }))).toBe('INDETERMINADO');
+    expect(estadoDaTupla(res('F1', { naoObservaveis: ['A'], inviavel: true }))).toBe('INDETERMINADO');
+    // valorada + inobservável ⇒ a seleção NÃO congela a valorada por exclusão
+    const e = escolherTupla([tu(P0, res('F1', { estoqueMedio: 100 })), tu(ALT1, res('F2', { naoObservaveis: ['C'] }))]);
+    expect(e.tipo).toBe('INDETERMINADA');
+    expect(vereditoDaCalibracaoPacote(e)?.motivos).toEqual(['CLASSE_NAO_OBSERVAVEL_NA_CALIBRACAO:C: Alt1|F2|beta=-|janela=-|q=0.9,0.9,0.9']);
+    const mista = escolherTupla([
+      tu(P0, res('F1', { naoObservaveis: ['A'] })),
+      tu(ALT1, res('F2', { estoqueMedio: null, capitalIndeterminado: true })),
+    ]);
+    expect(vereditoDaCalibracaoPacote(mista)?.motivos.map((m) => m.split(': ')[0])).toEqual([
+      'CAPITAL_NAO_VALORADO_NA_CALIBRACAO',
+      'CLASSE_NAO_OBSERVAVEL_NA_CALIBRACAO:A',
+    ]);
   });
 });
 

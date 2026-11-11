@@ -240,8 +240,8 @@ export function estabilidadeDoPacote(dados: Dados, log: (m: string) => void): { 
     log(`estabilidade corte ${janela.join('..')}: ${rotulo(e)}`);
   }
   for (const sku of [...suavesDaCoorte(coorte(dados))].sort()) {
-    const e = escolherTupla(calibrarPacote(dados, { semSuave: sku }));
-    out.push({ recorte: `sem ${sku}`, escolha: rotulo(e) });
+    const e = escolherTupla(calibrarPacote(dados, { semSku: sku }));
+    out.push({ recorte: `sem ${sku} (fora da população medida)`, escolha: rotulo(e) });
     log(`estabilidade sem ${sku}: ${rotulo(e)}`);
   }
   return out;
