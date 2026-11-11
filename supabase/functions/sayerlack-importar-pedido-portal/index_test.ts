@@ -333,7 +333,7 @@ Deno.test("script do Browserless parseia e embute as funções de página do _sh
   const code = String((envios[0].corpo as { code: string }).code);
   const fn = new Function(code.trim().replace(/^export default /, "return "))();
   igual(typeof fn, "function", "o módulo exporta a função");
-  for (const nome of ["aplicarFiltrosConsultaDom", "clicarFiltrarDom", "lerTabelaConsultaDom", "lerCondicaoSelecionadaDom", "lerCondicoesOpcoesDom"]) {
+  for (const nome of ["aplicarFiltrosConsultaDom", "clicarFiltrarDom", "lerTabelaConsultaDom", "lerCondicaoSelecionadaDom", "lerCondicoesOpcoesDom", "diagnosticarCondicaoDom"]) {
     igual(code.includes(`function ${nome}(`), true, `embute ${nome}`);
   }
 });
@@ -518,4 +518,71 @@ Deno.test("5.2: a RPC achou o pedido JÁ gravado e o portal diz faturado: recusa
   const r = await importar();
   igual([r.corpo.ok, r.corpo.motivo, r.corpo.pedido_id], [false, "faturado_no_portal", 501], "resposta");
   igual(falso.de(DISPARO).length, 0, "zero disparo");
+});
+
+// ── C16 (plano v8): condição ausente — o caso REAL dos pedidos 2148220/2148223 ─────────────────────────
+// Envelope que o portal devolveu em prod (evidência #12, pedido 2148223, 2026-11-11 01:31 UTC): consulta e itens
+// lidos, condição null e ZERO opções. Sem retrato da tela (a edge de então não o capturava).
+const PROTOCOLO_REAL = "2148223";
+const ENVELOPE_REAL_2148223 = {
+  success: true,
+  consulta: {
+    headers: ["Estab", "Pedido", "Pedido Cliente", "Cliente", "Situação", "Data Emissão", "Data Entrega", "Vlr Mercadoria", "Vlr Total", "Ações"],
+    linhas: [{
+      "Estab": "CAJ", "Pedido": "2148223", "Ações": "", "Cliente": "OBEN COMERCIO LTDA", "Vlr Total": "576,2700",
+      "Situação": "1 - Aberto", "Data Entrega": "16/11/2026", "Data Emissão": "09/11/2026", "Pedido Cliente": "2148223",
+      "Vlr Mercadoria": "576,2700",
+    }],
+  },
+  itens: {
+    success: true,
+    itens: [[10, "FL.6264.02KGBH", "", "KG", 25, 75, 3, 7.6836, 192.09, 192.09, 5, "0", 576.27, "PRIMER PU 6264 BRANCO 02 KG BH", "PROREAL", 31, "0.0000", "1.0000", "", 1]],
+    data_pedido: { tabelaPreco: "PROREAL", transportadora: "SPMINAS", taxa_financiamento: 1, cliente_remessa_triang: "" },
+  },
+  condicao: null,
+  condicoes_opcoes: [],
+  trace: [{ step: "itens_direto", status: 200, ok: true, t: 9809 }, { step: "condicao", condicao: null, t: 25056 }],
+};
+
+function nadaGravado(falso: ReturnType<typeof montar>) {
+  return falso.de("rpc:sayerlack_importar_pedido_portal").length + falso.de(DISPARO).length;
+}
+
+Deno.test("C16: envelope REAL do 2148223 (condição null, 0 opções, sem retrato) recusa sem gravar nem disparar", async () => {
+  const falso = montar({ porProtocolo: () => null, browserless: () => ({ corpo: { data: ENVELOPE_REAL_2148223 } }) });
+  const r = await importar({ protocolo: PROTOCOLO_REAL });
+  igual([r.corpo.ok, r.corpo.etapa, r.corpo.motivo, r.corpo.causa_condicao], [false, "leitura", "condicao_ilegivel", "sem_retrato"], "resposta");
+  igual(nadaGravado(falso), 0, "nada gravado, nenhum PO");
+  const m = String(r.corpo.mensagem);
+  igual([m.includes("Nada foi gravado"), m.includes("nunca é presumida"), m.includes("Tente de novo")], [true, true, true], "mensagem");
+});
+
+Deno.test("C16: tela de detalhe SEM o campo de condição → recusa dizendo que repetir não resolve e como seguir", async () => {
+  const diag = {
+    caminho: "/order-creation-form-edit/2148223/route/order-viewer", titulo: "Pedido", select_presente: false,
+    select_n_opcoes: null, select_selecionada: null, select_desabilitado: null, selects: [], campos: [], textos: [],
+  };
+  const falso = montar({ porProtocolo: () => null, browserless: () => ({ corpo: { data: { ...ENVELOPE_REAL_2148223, condicao_diag: diag } } }) });
+  const r = await importar({ protocolo: PROTOCOLO_REAL });
+  igual([r.corpo.ok, r.corpo.motivo, r.corpo.causa_condicao], [false, "condicao_ilegivel", "campo_ausente"], "resposta");
+  igual(nadaGravado(falso), 0, "nada gravado, nenhum PO");
+  const m = String(r.corpo.mensagem);
+  igual([m.includes("Tentar de novo não resolve"), m.includes("nº 2148223 no campo contrato"), m.includes("Tente de novo em")], [true, true, false], "mensagem acionável");
+  igual((r.corpo.condicao_diag as { select_presente: boolean }).select_presente, false, "o retrato volta na resposta");
+});
+
+Deno.test("C16: re-disparo de pedido já no app com condição ausente explica a causa e não dispara", async () => {
+  const diag = {
+    caminho: "/login", titulo: "Login", select_presente: false, select_n_opcoes: null, select_selecionada: null,
+    select_desabilitado: null, selects: [], campos: [], textos: [],
+  };
+  const falso = montar({
+    porProtocolo: () => pedido({ portal_protocolo: PROTOCOLO_REAL }),
+    pos: () => ({ corpo: [] }),
+    browserless: () => ({ corpo: { data: { ...ENVELOPE_REAL_2148223, condicao_diag: diag } } }),
+  });
+  const r = await importar({ protocolo: PROTOCOLO_REAL });
+  igual([r.corpo.ok, r.corpo.motivo, r.corpo.causa_condicao, r.corpo.pedido_id], [false, "condicao_ilegivel", "fora_do_detalhe", 501], "resposta");
+  igual(falso.de(DISPARO).length + falso.de("rpc:sayerlack_conferir_portal").length, 0, "sem conferência nem disparo");
+  igual(String(r.corpo.mensagem).includes('"/login"'), true, "diz a página que abriu");
 });

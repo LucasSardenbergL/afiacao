@@ -272,3 +272,79 @@ export function mensagemErroImportacao(code: string | null | undefined, message:
   const base = (code && MENSAGEM_SQLSTATE[code]) ?? "Falha ao gravar a importação.";
   return message ? `${base} Detalhe: ${message}` : base;
 }
+
+/** Por que a condição de pagamento não veio (C16). Nenhuma causa vira condição: todas recusam. */
+export type CausaCondicaoAusente =
+  | "sem_retrato"
+  | "fora_do_detalhe"
+  | "campo_ausente"
+  | "campo_sem_opcoes"
+  | "sem_selecao"
+  | "fora_do_prazo";
+
+/**
+ * Lê o retrato da tela (`diagnosticarCondicaoDom`, devolvido como `condicao_diag`) e diz POR QUE a condição não veio,
+ * numa frase para o operador. Fail-closed: isto só explica a recusa — nunca devolve uma condição (C16, 2026-11-11:
+ * 13 leituras recusaram com "tente de novo" sem dizer que tentar de novo não resolveria).
+ */
+export function explicarCondicaoAusente(diag: unknown): { causa: CausaCondicaoAusente; porque: string; repetirResolve: boolean } {
+  const d = (diag && typeof diag === "object" && !Array.isArray(diag)) ? diag as Record<string, unknown> : null;
+  if (!d || typeof d.erro === "string" || typeof d.caminho !== "string" || typeof d.select_presente !== "boolean") {
+    return {
+      causa: "sem_retrato",
+      porque: "não consegui ler a condição de pagamento na tela de detalhe do portal, nem o retrato dessa tela.",
+      repetirResolve: true,
+    };
+  }
+  if (!d.caminho.includes("/order-creation-form-edit/")) {
+    return {
+      causa: "fora_do_detalhe",
+      porque: `o portal abriu "${d.caminho || "?"}" em vez da tela de detalhe do pedido (sessão caiu ou o portal redirecionou).`,
+      repetirResolve: true,
+    };
+  }
+  if (!d.select_presente) {
+    return {
+      causa: "campo_ausente",
+      porque: "a tela de detalhe abriu, mas não tem o campo de condição de pagamento que o app lê (#condicoes_pagamento) — o portal mostra essa tela diferente do que o app espera.",
+      repetirResolve: false,
+    };
+  }
+  if (d.select_n_opcoes === 0) {
+    return {
+      causa: "campo_sem_opcoes",
+      porque: "o campo de condição de pagamento da tela de detalhe veio sem nenhuma opção (o portal não carregou a lista).",
+      repetirResolve: false,
+    };
+  }
+  const sel = typeof d.select_selecionada === "string" ? d.select_selecionada.trim() : "";
+  if (sel && !sel.toLowerCase().includes("selecione")) {
+    return {
+      causa: "fora_do_prazo",
+      porque: `a condição ("${sel}") só apareceu na tela de detalhe depois do prazo de leitura.`,
+      repetirResolve: true,
+    };
+  }
+  return {
+    causa: "sem_selecao",
+    porque: sel
+      ? `o campo de condição de pagamento está em "${sel}" na tela de detalhe, sem condição escolhida.`
+      : "o campo de condição de pagamento está sem condição escolhida na tela de detalhe.",
+    repetirResolve: true,
+  };
+}
+
+/** Mensagem da recusa por condição ausente num pedido NOVO (nada gravado). */
+export function mensagemCondicaoAusente(protocolo: string, diag: unknown): { causa: CausaCondicaoAusente; mensagem: string } {
+  const e = explicarCondicaoAusente(diag);
+  const proximo = e.repetirResolve
+    ? "Tente de novo em alguns minutos."
+    : "Tentar de novo não resolve até o leitor do app ser ajustado. Se precisar do pedido de compra antes disso, lance-o " +
+      `à mão no Omie com a condição que aparece no portal e o nº ${protocolo} no campo contrato — a importação não ` +
+      'duplica depois (runbook "Condição de pagamento ilegível").';
+  return {
+    causa: e.causa,
+    mensagem: `Não importei o pedido ${protocolo}: ${e.porque} Nada foi gravado e nenhum pedido de compra foi criado — ` +
+      `a condição de pagamento nunca é presumida. ${proximo}`,
+  };
+}

@@ -64,7 +64,13 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * retrato); divergiu ⇒ `alterado_no_portal` com as diferenças, sem disparo. Condição ilegível no re-disparo também
  * recusa. A RPC achando o pedido já gravado (outra aba) passa pelas mesmas recusas. Migration 20261111150000 antes.
  */
-export const VERSAO = "v1.11-confere-portal";
+/**
+ * v1.12 (2026-11-11, plano v8 C16) — condição de pagamento ausente: a leitura grava na evidência o retrato da tela de
+ * detalhe (passos `detalhe_aberto` e `condicao_diag`: caminho final, status do GET, selects, campos e textos de
+ * condição) e a recusa diz a causa (`causa_condicao`) e se repetir resolve. Continua recusando: nunca presume condição.
+ * Sem migration.
+ */
+export const VERSAO = "v1.12-condicao-retrato";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

@@ -4,7 +4,7 @@ function assertEquals(atual: unknown, esperado: unknown) {
   const e = JSON.stringify(esperado);
   if (a !== e) throw new Error(`esperado ${e}, veio ${a}`);
 }
-import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, ncmsDoCp006, numeroBR, situacaoCancelada, situacaoFaturada, situacaoObservada, situacaoPermitida } from "./leitura.ts";
+import { dataBRparaISO, explicarCondicaoAusente, lerCabecalho, mensagemCondicaoAusente, lerItens, lerPedidoPortal, mensagemErroImportacao, ncmsDoCp006, numeroBR, situacaoCancelada, situacaoFaturada, situacaoObservada, situacaoPermitida } from "./leitura.ts";
 
 // Resposta REAL do portal (pedido 2140603, 2026-10-14) — consulta e busca-itens-pedido.
 const LINHA_REAL = {
@@ -170,4 +170,40 @@ Deno.test("B1: situação sem código reconhecido (1..7) é recusada — o botã
 Deno.test("B2: situacaoFaturada só para 3 (Atendido Total) e 7 (Fatur Balcão)", () => {
   assertEquals(["1 - Aberto", "2 - Atendido Parcial", "3 - Atendido Total", "4 - Pendentes", "5 - Suspenso", "6 - Cancelado", "7 - Fatur Balcão", "37 - X", ""].map(situacaoFaturada),
     [false, false, true, false, false, false, true, false, false]);
+});
+
+// ── C16: por que a condição não veio (nunca devolve condição — só explica a recusa) ─────────────────────
+const DETALHE = "/order-creation-form-edit/2148223/route/order-viewer";
+function diagCond(p: Record<string, unknown> = {}) {
+  return {
+    caminho: DETALHE, titulo: "Pedido", select_presente: true, select_n_opcoes: 4, select_selecionada: "Selecione",
+    select_desabilitado: false, selects: [], campos: [], textos: [], ...p,
+  };
+}
+Deno.test("C16: causa da condição ausente pelo retrato da tela", () => {
+  const causa = (d: unknown) => explicarCondicaoAusente(d).causa;
+  assertEquals(
+    [
+      causa(undefined), causa(null), causa([]), causa({ erro: "Execution context was destroyed" }),
+      causa(diagCond({ caminho: "/login" })), causa(diagCond({ select_presente: false, select_n_opcoes: null })),
+      causa(diagCond({ select_n_opcoes: 0 })), causa(diagCond()), causa(diagCond({ select_selecionada: "" })),
+      causa(diagCond({ select_selecionada: "70 - 7 DIAS" })),
+    ],
+    [
+      "sem_retrato", "sem_retrato", "sem_retrato", "sem_retrato", "fora_do_detalhe", "campo_ausente",
+      "campo_sem_opcoes", "sem_selecao", "sem_selecao", "fora_do_prazo",
+    ],
+  );
+});
+Deno.test("C16: repetir só é sugerido quando pode resolver; o resto diz como seguir sem presumir condição", () => {
+  const estrutural = mensagemCondicaoAusente("2148223", diagCond({ select_presente: false }));
+  const transitoria = mensagemCondicaoAusente("2148223", diagCond({ caminho: "/login" }));
+  assertEquals(
+    [
+      estrutural.mensagem.includes("Tentar de novo não resolve"), estrutural.mensagem.includes("nº 2148223 no campo contrato"),
+      estrutural.mensagem.includes("Tente de novo em"), transitoria.mensagem.includes("Tente de novo em"),
+      transitoria.mensagem.includes('"/login"'), estrutural.mensagem.includes("Nada foi gravado"),
+    ],
+    [true, true, false, true, true, true],
+  );
 });

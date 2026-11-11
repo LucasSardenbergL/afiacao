@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import * as dom from "../supabase/functions/_shared/sayerlack-portal-dom";
 import type { PaginaConsultaDom } from "../supabase/functions/_shared/sayerlack-portal-dom";
 import { lerPedidoPortal } from "../supabase/functions/sayerlack-importar-pedido-portal/leitura";
+import { diagnosticarCondicaoDom } from "../supabase/functions/sayerlack-importar-pedido-portal/condicao-dom";
 import { lerListaConsulta, provarLeitura } from "../supabase/functions/sayerlack-varrer-pedidos-portal/varredura";
 
 /**
@@ -287,5 +288,26 @@ describe("tela de detalhe — condição de pagamento", () => {
   it("sem o select: sem condição e sem opções", () => {
     document.querySelector("#condicoes_pagamento")!.remove();
     expect([lerCondicaoSelecionadaDom(), lerCondicoesOpcoesDom()]).toEqual([false, []]);
+  });
+
+  // C16: o retrato que vai para a evidência quando a condição não vem.
+  it("retrato: com o select, conta as opções e diz a selecionada", () => {
+    const d = diagnosticarCondicaoDom();
+    expect([d.select_presente, d.select_n_opcoes, d.select_selecionada, d.select_desabilitado]).toEqual([true, 4, "70 - 7 DIAS", false]);
+    expect(d.selects).toEqual([{ id: "condicoes_pagamento", name: "", n: 4, sel: "70 - 7 DIAS" }]);
+    expect(d.campos.map((c) => c.id)).toEqual(["condicoes_pagamento"]);
+  });
+
+  it("retrato: sem o select, lista o que a tela tem de condição/pagamento — limitado", () => {
+    document.querySelector("#condicoes_pagamento")!.remove();
+    const extra = Array.from({ length: 40 }, (_, i) => '<select id="s' + i + '"><option>x</option></select>').join("");
+    // <br>: o polyfill de innerText do jsdom só quebra linha nele (o Chrome também quebra nos blocos).
+    document.body.innerHTML += '<label for="cond_pagto">Cond. Pagamento</label><input id="cond_pagto" value="70 - 7 DIAS"><br>' +
+      "<p>Condição de pagamento: 70 - 7 DIAS</p><br>" + extra;
+    const d = diagnosticarCondicaoDom();
+    expect([d.select_presente, d.select_n_opcoes, d.select_selecionada]).toEqual([false, null, null]);
+    expect(d.campos).toEqual([{ tag: "input", id: "cond_pagto", name: "", tipo: "text", valor: "70 - 7 DIAS", rotulo: "Cond. Pagamento" }]);
+    expect(d.textos).toEqual(["Cond. Pagamento", "Condição de pagamento: 70 - 7 DIAS"]);
+    expect(d.selects).toHaveLength(30);
   });
 });

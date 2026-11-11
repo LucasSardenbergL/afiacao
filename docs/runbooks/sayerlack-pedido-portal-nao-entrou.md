@@ -82,6 +82,34 @@ A condição lida no portal (`#condicoes_pagamento`) não tem tradução, ou tem
    migration. Caso ambíguo ("(C)" ou não) **vai ao founder** com a lista — não escolha.
 3. Importe de novo.
 
+### Condição de pagamento ilegível (`motivo=condicao_ilegivel`)
+
+A importadora leu o pedido (situação, itens, total), mas não a condição de pagamento da tela de detalhe
+(`/order-creation-form-edit/<nº>/route/order-viewer`). **Nada é gravado**: a condição nunca é presumida (à vista
+fabricado foi o bug que isto corrigiu). A resposta traz `causa_condicao` e o retrato da tela (`condicao_diag`, também
+no `trace` da evidência, passo `condicao_diag`):
+
+| `causa_condicao` | O que a tela tinha | Repetir resolve? |
+|---|---|---|
+| `fora_do_detalhe` | o portal abriu outra página (login, home) | sim — tente de novo |
+| `campo_ausente` | detalhe aberto, sem `#condicoes_pagamento` | **não** — o leitor precisa de ajuste |
+| `campo_sem_opcoes` | o select veio sem nenhuma opção | **não** — o leitor precisa de ajuste |
+| `sem_selecao` | select com opções, "Selecione" escolhido | confira o pedido no portal |
+| `fora_do_prazo` | a condição apareceu depois dos 15 s | sim — tente de novo |
+| `sem_retrato` | leitura anterior ao C16 (sem retrato) ou o retrato falhou | sim, uma vez |
+
+```sql
+-- O que a tela de detalhe tinha (psql-ro):
+SELECT id, gravado_em, condicao, jsonb_array_length(condicoes_opcoes) n_opcoes,
+       jsonb_path_query_first(trace, '$[*] ? (@.step == "detalhe_aberto")') detalhe,
+       jsonb_path_query_first(trace, '$[*] ? (@.step == "condicao_diag")') retrato
+FROM public.sayerlack_portal_evidencia WHERE protocolo = '<nº>' ORDER BY id DESC LIMIT 3;
+```
+
+Precisa do pedido de compra antes do conserto? Lance-o à mão no Omie **com a condição que aparece no portal** e o nº do
+portal no campo contrato. A importação depois não duplica: a RPC recusa com IP006 (PO no Omie com esse contrato). A
+pendência da varredura pode seguir aberta — confira com as queries de "onde está o pedido". Histórico: `docs/historico/sayerlack-condicao-ilegivel-c16.md`.
+
 ### IP008 — pedido do app em envio/conciliação no portal
 
 Um pedido do app ainda está sendo enviado ao portal, ou ficou em `indeterminado_requer_conciliacao`. Importar agora
