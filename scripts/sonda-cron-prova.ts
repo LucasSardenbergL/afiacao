@@ -88,15 +88,56 @@ export function pontoFixoDeArquivos(
   return { arquivos: [...arquivos].sort(), shas: [...shas] };
 }
 
+/**
+ * MEMO de leituras do git (E18, 2026-11-11). A enumeração relia o mesmo `git log --follow` a cada
+ * volta do ponto fixo e o mesmo blob `sha:path` em cada fecho e de novo no hash da identidade —
+ * ~79% do tempo do `--gate`. As duas leituras são funções PURAS da chave usada aqui:
+ *   · `git show <sha>:<path>` — um sha de commit fixa a árvore inteira (conteúdo imutável);
+ *   · `git log --follow -- <f>` — fixa-se pelo HEAD resolvido UMA vez por enumeração (a chave
+ *     leva o HEAD: um commit novo no meio do processo, como nos testes com repo temporário,
+ *     muda a chave e não reaproveita a história velha).
+ * Nunca por nome de edge, volta do ponto fixo ou posição — só por conteúdo. O conjunto de
+ * closures (e o hash de cada identidade) sai idêntico ao sem memo; quem prova é
+ * scripts/sonda-cron-prova.test.ts (memo × leitura crua, e a sabotagem da chave).
+ */
+const memoShow = new Map<string, string | null>();
+const memoLog = new Map<string, string[]>();
+
+/** Exportada só para o teste comparar memo × leitura crua. */
+export function limparMemoGit(): void {
+  memoShow.clear();
+  memoLog.clear();
+}
+
+function chaveShow(raiz: string, sha: string, p: string): string {
+  return `${resolve(raiz)}\0${sha}\0${p}`;
+}
+
+/** Conteúdo de `sha:path`, ou null se o arquivo não existia naquele commit. */
+function mostrar(sha: string, p: string, raiz: string): string | null {
+  const k = chaveShow(raiz, sha, p);
+  if (memoShow.has(k)) return memoShow.get(k) as string | null;
+  const r = spawnSync('git', ['show', `${sha}:${p}`], { cwd: raiz, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const v = r.status === 0 ? r.stdout : null;
+  memoShow.set(k, v);
+  return v;
+}
+
 /** `--follow` aceita UM pathspec por vez — passar um conjunto aborta o git (achado do challenge). */
-function historicoComRenames(arquivos: string[], raiz: string): string[] {
+function historicoComRenames(arquivos: string[], raiz: string, head: string): string[] {
   const shas = new Set<string>();
   for (const f of arquivos) {
-    const r = spawnSync('git', ['log', '--follow', '--format=%H', '--', f], {
-      cwd: raiz, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
-    });
-    if (r.status !== 0) throw new Mecanica(`git log --follow -- ${f}: ${(r.stderr || '').slice(0, 150)}`);
-    for (const l of r.stdout.split('\n')) if (/^[0-9a-f]{40}$/.test(l)) shas.add(l);
+    const k = `${resolve(raiz)}\0${head}\0${f}`;
+    let doArquivo = memoLog.get(k);
+    if (!doArquivo) {
+      const r = spawnSync('git', ['log', '--follow', '--format=%H', head, '--', f], {
+        cwd: raiz, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+      });
+      if (r.status !== 0) throw new Mecanica(`git log --follow -- ${f}: ${(r.stderr || '').slice(0, 150)}`);
+      doArquivo = r.stdout.split('\n').filter((l) => /^[0-9a-f]{40}$/.test(l));
+      memoLog.set(k, doArquivo);
+    }
+    for (const l of doArquivo) shas.add(l);
   }
   return [...shas];
 }
@@ -107,14 +148,14 @@ function fechoNoSha(sha: string, edge: string, raiz: string): string[] {
   while (fila.length > 0) {
     const p = fila.pop() as string;
     if (vistos.has(p)) continue;
-    const r = spawnSync('git', ['show', `${sha}:${p}`], { cwd: raiz, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-    if (r.status !== 0) continue; // não existia neste sha: não faz parte deste fecho
+    const conteudo = mostrar(sha, p, raiz);
+    if (conteudo === null) continue; // não existia neste sha: não faz parte deste fecho
     // O mapa de fingerprints fica FORA do fecho, como no gerador oficial (`fecharGrafo`): ele é
     // DERIVADO do fecho, então incluí-lo faria todo PR que regenera o mapa criar um closure novo
     // de toda edge — ruído que não corresponde a mudança de comportamento nenhuma.
     if (p === 'supabase/functions/_shared/sonda-fingerprints.ts') continue;
     vistos.add(p);
-    for (const esp of extrairImportsLocais(r.stdout)) {
+    for (const esp of extrairImportsLocais(conteudo)) {
       fila.push(resolve('/', p, '..', esp).slice(1));
     }
   }
@@ -123,7 +164,8 @@ function fechoNoSha(sha: string, edge: string, raiz: string): string[] {
 
 export function enumerarClosures(edge: string, raiz = process.cwd()): Array<{ sha: string; identidade: string }> {
   const inicial = fecharGrafo(`supabase/functions/${edge}/index.ts`, raiz);
-  const { shas } = pontoFixoDeArquivos(inicial, (fs) => historicoComRenames(fs, raiz), (sha) => fechoNoSha(sha, edge, raiz));
+  const head = git(['rev-parse', 'HEAD'], raiz).trim();
+  const { shas } = pontoFixoDeArquivos(inicial, (fs) => historicoComRenames(fs, raiz, head), (sha) => fechoNoSha(sha, edge, raiz));
   if (shas.length === 0) throw new Mecanica(`${edge}: 0 commits na história — checkout raso? (o CI usa fetch-depth: 0)`);
   const porIdentidade = new Map<string, { sha: string; identidade: string }>();
   for (const sha of shas) {
@@ -131,7 +173,8 @@ export function enumerarClosures(edge: string, raiz = process.cwd()): Array<{ sh
     if (!arquivos.includes(`supabase/functions/${edge}/index.ts`)) continue; // a edge não existia
     const h = createHash('sha256');
     for (const a of arquivos) {
-      const c = git(['show', `${sha}:${a}`], raiz);
+      const c = mostrar(sha, a, raiz);
+      if (c === null) throw new Mecanica(`git show ${sha}:${a} falhou — o fecho acabou de lê-lo`);
       h.update(a).update('\0').update(String(Buffer.byteLength(c))).update('\0').update(c);
     }
     const identidade = h.digest('hex');

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   chaveDoManifesto,
+  enumerarClosures,
+  limparMemoGit,
   identidadeDosControles,
   classificarVeredito,
   gateG1,
@@ -181,5 +187,40 @@ describe('cache e enumeração', () => {
       arquivos: ['_shared/velho.ts', '_shared/x.ts', 'a/index.ts'],
       shas: ['s1', 's2', 's3'],
     });
+  });
+});
+
+describe('memo das leituras do git na enumeração (E18)', () => {
+  // O risco do memo é VERDE-FALSO: chave incompleta devolve a história velha, o conjunto de
+  // closures encolhe e um closure novo sai da prova em silêncio. Aqui o memo está QUENTE (mesmo
+  // processo, mesma raiz) quando entra um commit novo — ele tem de aparecer.
+  it('commit novo depois da 1ª enumeração vira closure novo; memo quente == memo frio', () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'sonda-memo-'));
+    const g = (...a: string[]) => execFileSync('git', a, { cwd: raiz, encoding: 'utf8' });
+    try {
+      g('init', '-q');
+      g('config', 'user.email', 't@t');
+      g('config', 'user.name', 't');
+      mkdirSync(join(raiz, 'supabase/functions/e1'), { recursive: true });
+      mkdirSync(join(raiz, 'supabase/functions/_shared'), { recursive: true });
+      writeFileSync(join(raiz, 'supabase/functions/e1/index.ts'), "import { h } from '../_shared/h.ts';\nh();\n");
+      writeFileSync(join(raiz, 'supabase/functions/_shared/h.ts'), 'export const h = () => 1;\n');
+      g('add', '-A');
+      g('commit', '-qm', 'c1');
+      limparMemoGit();
+      expect(enumerarClosures('e1', raiz)).toHaveLength(1);
+
+      // Só o helper muda: a história do index.ts NÃO tem este commit — só a do _shared tem.
+      writeFileSync(join(raiz, 'supabase/functions/_shared/h.ts'), 'export const h = () => 2;\n');
+      g('commit', '-qam', 'c2');
+      const quente = enumerarClosures('e1', raiz).map((c) => c.identidade).sort();
+      limparMemoGit();
+      const frio = enumerarClosures('e1', raiz).map((c) => c.identidade).sort();
+      expect(quente).toHaveLength(2);
+      expect(quente).toEqual(frio);
+    } finally {
+      limparMemoGit();
+      rmSync(raiz, { recursive: true, force: true });
+    }
   });
 });
