@@ -8,7 +8,13 @@ import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { eqText, orFilter } from '@/lib/postgrest';
 import { chaveDocumentoParaBusca } from '@/lib/omie/documento-cliente';
-import { deveCriarClienteNaConta } from './ensure-helpers';
+import {
+  avisoFalhaAutoCadastro,
+  desfechoAutoCadastro,
+  deveCriarClienteNaConta,
+  type ContaAutoCadastro,
+  type DesfechoAutoCadastro,
+} from './ensure-helpers';
 import { montarPrecosLocaisPorConta, type PrecosLocaisPorConta } from './precos-por-conta';
 import type {
   OmieCustomer,
@@ -286,11 +292,14 @@ export function useCustomerSelection({
   /** Auto-create customer in Colacor and Afiação if missing. Mutates `cust` in place.
    *  Tri-state (deveCriarClienteNaConta): conta cujo LOOKUP falhou NÃO cria às
    *  cegas — ausência não confirmada; criar em cima de erro de leitura
-   *  duplicaria no Omie um cliente que já existe. */
+   *  duplicaria no Omie um cliente que já existe.
+   *  Devolve as FALHAS por conta (com o motivo real da edge) para quem chamou
+   *  avisar o vendedor — o invoke não rejeita em erro, então sem isto o motivo
+   *  sumia e o submit só dizia "provável falha temporária do Omie". */
   const autoCreateInMissingAccounts = useCallback(async (
     cust: OmieCustomer,
     lookupFailed: { colacor: boolean; afiacao: boolean },
-  ) => {
+  ): Promise<Extract<DesfechoAutoCadastro, { ok: false }>[]> => {
     const customerPayload = {
       document: cust.cnpj_cpf,
       razao_social: cust.razao_social,
@@ -305,65 +314,79 @@ export function useCustomerSelection({
       contato: cust.contato,
     };
 
-    const promises: Promise<unknown>[] = [];
-
-    if (
-      deveCriarClienteNaConta({
-        codigoExistente: cust.codigo_cliente_colacor,
-        temDocumento: !!cust.cnpj_cpf,
-        lookupFalhou: lookupFailed.colacor,
-      })
-    ) {
-      promises.push(
-        supabase.functions.invoke('omie-vendas-sync', {
+    const falhas: Extract<DesfechoAutoCadastro, { ok: false }>[] = [];
+    const contas: Array<{
+      conta: ContaAutoCadastro;
+      deveCriar: boolean;
+      invocar: () => Promise<{ data: unknown; error: unknown }>;
+      aplicar: (codigoCliente: number, codigoVendedor: number | null) => void;
+      rotulo: string;
+    }> = [
+      {
+        conta: 'colacor',
+        deveCriar: deveCriarClienteNaConta({
+          codigoExistente: cust.codigo_cliente_colacor,
+          temDocumento: !!cust.cnpj_cpf,
+          lookupFalhou: lookupFailed.colacor,
+        }),
+        invocar: () => supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'criar_cliente', account: 'colacor', ...customerPayload },
-        }).then(res => {
-          if (res.data?.codigo_cliente) {
-            cust.codigo_cliente_colacor = res.data.codigo_cliente;
-            cust.codigo_vendedor_colacor = res.data.codigo_vendedor || null;
-            logger.info('Customer auto-created on Colacor Vendas', {
-              stage: 'auto_create_colacor',
-              customerCnpjCpf: maskDocument(cust.cnpj_cpf),
-              codigoClienteColacor: res.data.codigo_cliente,
-            });
-          }
-        }).catch(e => logger.warn('Auto-create customer on Colacor Vendas failed (continuing)', {
-          stage: 'auto_create_colacor',
-          customerCnpjCpf: maskDocument(cust.cnpj_cpf),
-          error: e,
-        }))
-      );
-    }
-
-    if (
-      deveCriarClienteNaConta({
-        codigoExistente: cust.codigo_cliente_afiacao,
-        temDocumento: !!cust.cnpj_cpf,
-        lookupFalhou: lookupFailed.afiacao,
-      })
-    ) {
-      promises.push(
-        supabase.functions.invoke('omie-sync', {
+        }),
+        aplicar: (codigo, vendedor) => {
+          cust.codigo_cliente_colacor = codigo;
+          cust.codigo_vendedor_colacor = vendedor;
+        },
+        rotulo: 'Colacor Vendas',
+      },
+      {
+        conta: 'afiacao',
+        deveCriar: deveCriarClienteNaConta({
+          codigoExistente: cust.codigo_cliente_afiacao,
+          temDocumento: !!cust.cnpj_cpf,
+          lookupFalhou: lookupFailed.afiacao,
+        }),
+        invocar: () => supabase.functions.invoke('omie-sync', {
           body: { action: 'criar_cliente_afiacao', ...customerPayload },
-        }).then(res => {
-          if (res.data?.codigo_cliente) {
-            cust.codigo_cliente_afiacao = res.data.codigo_cliente;
-            cust.codigo_vendedor_afiacao = res.data.codigo_vendedor || null;
-            logger.info('Customer auto-created on Colacor Afiação', {
-              stage: 'auto_create_afiacao',
-              customerCnpjCpf: maskDocument(cust.cnpj_cpf),
-              codigoClienteAfiacao: res.data.codigo_cliente,
-            });
-          }
-        }).catch(e => logger.warn('Auto-create customer on Colacor Afiação failed (continuing)', {
-          stage: 'auto_create_afiacao',
-          customerCnpjCpf: maskDocument(cust.cnpj_cpf),
-          error: e,
-        }))
-      );
-    }
+        }),
+        aplicar: (codigo, vendedor) => {
+          cust.codigo_cliente_afiacao = codigo;
+          cust.codigo_vendedor_afiacao = vendedor;
+        },
+        rotulo: 'Colacor Afiação',
+      },
+    ];
 
-    if (promises.length > 0) await Promise.all(promises);
+    await Promise.all(contas.filter(c => c.deveCriar).map(async (c) => {
+      let desfecho: DesfechoAutoCadastro;
+      try {
+        desfecho = await desfechoAutoCadastro(c.conta, await c.invocar());
+      } catch (e) {
+        // Rejeição do invoke (rede/throw): mesmo tratamento da falha com corpo.
+        desfecho = {
+          ok: false,
+          conta: c.conta,
+          motivo: e instanceof Error && e.message ? e.message : 'falha de rede ao chamar o cadastro',
+          razaoMascarada: false,
+        };
+      }
+      if (desfecho.ok) {
+        c.aplicar(desfecho.codigoCliente, desfecho.codigoVendedor);
+        logger.info(`Customer auto-created on ${c.rotulo}`, {
+          stage: `auto_create_${c.conta}`,
+          customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+          codigoCliente: desfecho.codigoCliente,
+        });
+        return;
+      }
+      falhas.push(desfecho);
+      logger.warn(`Auto-create customer on ${c.rotulo} failed (continuing)`, {
+        stage: `auto_create_${c.conta}`,
+        customerCnpjCpf: maskDocument(cust.cnpj_cpf),
+        motivo: desfecho.motivo,
+        razaoMascarada: desfecho.razaoMascarada,
+      });
+    }));
+    return falhas;
   }, []);
 
   /** Resolve o último preço praticado local em DOIS mapas account-aware
@@ -610,10 +633,17 @@ export function useCustomerSelection({
       ensureAccountsRef.current = {
         token: myToken,
         promise: autoCreateInMissingAccounts(cust, lookupFailed)
-          .then(() => {
+          .then((falhas) => {
             // Reflete códigos recém-criados (purchase-history reage à key);
-            // conclusão atrasada de cliente trocado não sobrescreve (guard).
-            if (!isStale()) setSelectedCustomer({ ...cust });
+            // conclusão atrasada de cliente trocado não sobrescreve (guard) —
+            // nem avisa falha de um cliente que o vendedor já trocou.
+            if (!isStale()) {
+              setSelectedCustomer({ ...cust });
+              for (const falha of falhas) {
+                const { titulo, descricao } = avisoFalhaAutoCadastro(falha);
+                toast.error(titulo, { description: descricao, duration: 15000 });
+              }
+            }
             return cust;
           })
           .catch((e) => {
