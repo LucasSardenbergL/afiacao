@@ -35,10 +35,29 @@ fora_da_base() { # arquivo-base → filtra o stdin
 # de sintaxe também fica). Três camadas, UMA POR VEZ: a que ficar verde é redundante ou
 # inalcançada. Julgada nos DOIS locales (#1483) e só depois de um CONTROLE verde na MESMA
 # invocação do laço (docs/historico/falsificacao-sem-linha-de-base.md).
+#
+# PARTE `k/N` (opcional, 2026-11-11): `--falsificar 1/2` roda o CONTROLE inteiro e só as
+# sabotagens de posição p com (p-1) % N + 1 == k. Existe porque o alvo levava 330 s num runner
+# só (20 rodadas × ~17,7 s, em série) e era sozinho o caminho crítico dos PRs sem provas SQL.
+# Em paralelo NO MESMO runner não dá: o caso `watchdog-sleep-vazado` conta `sleep 977` da
+# máquina inteira e o `suite()` recolhe órfão de qualquer rodada — duas rodadas juntas se
+# acusariam. Em runners diferentes, cada parte tem a máquina só para si. A união das partes é o
+# todo por CONSTRUÇÃO (resto da divisão); sem argumento, roda tudo (o laptop e o
+# `test:falsificacao`). Parte mal formada sai 64; parte que não sabota nada REPROVA — runner
+# verde sem prova é ausência de dado (falsificacao-cobertura.test.ts cobra 1..N no package.json).
 if [ "${1:-}" = "--falsificar" ]; then
-  printf '== falsificacao (sabota o WRAPPER; exige vermelho pela marca certa, 2 locales) ==\n'
+  parte_k=1; parte_n=1
+  if [ -n "${2:-}" ]; then
+    if [[ "$2" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] && [ "${BASH_REMATCH[1]}" -le "${BASH_REMATCH[2]}" ]; then
+      parte_k="${BASH_REMATCH[1]}"; parte_n="${BASH_REMATCH[2]}"
+    else
+      echo "uso: $0 --falsificar [k/N]  (1 <= k <= N) — recebi '$2'"; exit 64
+    fi
+  fi
+  printf '== falsificacao (sabota o WRAPPER; exige vermelho pela marca certa, 2 locales) — parte %s/%s ==\n' "$parte_k" "$parte_n"
   fals="$(mktemp -d)"; trap 'rm -rf "$fals"' EXIT
   falhas=0
+  pos=0; rodadas=0
   utf8=""
   for cand in pt_BR.UTF-8 pt_BR.utf8 en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
     if [ "$(LC_ALL="$cand" locale charmap 2>/dev/null)" = "UTF-8" ]; then utf8="$cand"; break; fi
@@ -77,6 +96,12 @@ if [ "${1:-}" = "--falsificar" ]; then
 
   sabotar() { # id  marca-esperada  script-python-de-sabotagem
     local id="$1" marca="$2" prog="$3" alvo="$fals/$1.sh"
+    pos=$((pos + 1))
+    if [ $(( (pos - 1) % parte_n + 1 )) -ne "$parte_k" ]; then
+      printf '  --    [%s] na parte %s/%s, nao nesta\n' "$id" $(( (pos - 1) % parte_n + 1 )) "$parte_n"
+      return
+    fi
+    rodadas=$((rodadas + 1))
     cp "$original" "$alvo"
     ALVO="$alvo" python3 -c "$prog" || { printf '  FAIL [%s]  a sabotagem nao pegou no arquivo\n' "$id"; falhas=1; return; }
     bash -n "$alvo" 2>/dev/null || { printf '  FAIL [%s]  sabotagem quebrou a SINTAXE (vermelho por crash nao prova nada)\n' "$id"; falhas=1; return; }
@@ -186,6 +211,11 @@ assert s.count(a)==1, s.count(a)
 io.open(p,"w",encoding="utf-8").write(s.replace(a,"        if (piso == \"\" || P[i] + 0 < piso + 0) piso = P[i]"))'
 
   echo
+  if [ "$rodadas" -eq 0 ]; then
+    echo "  FAIL [parte-vazia]  a parte $parte_k/$parte_n nao sabotou nada ($pos sabotagens no total) — reduza N"
+    falhas=1
+  fi
+  echo "parte $parte_k/$parte_n: $rodadas de $pos sabotagens"
   if [ "$falhas" -eq 0 ]; then echo "PASS — toda sabotagem ficou vermelha pela marca certa"; else echo "FALHOU"; fi
   exit "$falhas"
 fi

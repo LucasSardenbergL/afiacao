@@ -196,6 +196,39 @@ export function foraDoLaco(cmd: string): string[] {
   return [...semLacos.matchAll(/bun\s+(scripts\/[A-Za-z0-9_.-]+\.ts)\s+--falsificar\b/g)].map((m) => m[1]).sort();
 }
 
+/**
+ * Alvo PARTIDO entre runners (2026-11-11): `bash scripts/test-x.sh --falsificar k/N`, fora do
+ * laço. A suíte roda o controle inteiro e só as sabotagens de posição ≡ k (mod N) — a união das
+ * partes 1..N é o alvo inteiro por construção DENTRO da suíte; o que se prova AQUI é que as N
+ * partes estão todas no CI, cada uma uma vez, com o mesmo N. Hoje só o `codex-async` (330 s
+ * num runner, o caminho crítico dos PRs sem provas SQL).
+ */
+export function partesFalsificadas(cmd: string): { alvo: string; k: number; n: number }[] {
+  const semLacos = cmd.replace(/for\s+\w+\s+in\s+[^;]+;\s*do\b[\s\S]*?\bdone\b/g, '');
+  return [...semLacos.matchAll(/bash\s+scripts\/(test-[A-Za-z0-9_.-]+\.sh)\s+--falsificar\s+(\d+)\/(\d+)\b/g)].map(
+    (m) => ({ alvo: m[1], k: Number(m[2]), n: Number(m[3]) }),
+  );
+}
+
+/** Alvos que uma fatia falsifica: os do laço (inteiros) + os partidos (`alvo k/N`). */
+function alvosDaFatia(cmd: string): string[] {
+  return [...alvosFalsificados(cmd), ...partesFalsificadas(cmd).map((p) => `${p.alvo} ${p.k}/${p.n}`)];
+}
+
+describe('partesFalsificadas — parser', () => {
+  it('lê o alvo partido fora do laço e ignora o que está dentro dele', () => {
+    expect(
+      partesFalsificadas(
+        'bash scripts/test-a.sh --falsificar 1/2 && for t in b; do bash scripts/test-$t.sh --falsificar || exit 1; done',
+      ),
+    ).toEqual([{ alvo: 'test-a.sh', k: 1, n: 2 }]);
+  });
+
+  it('sem `k/N` não é parte (é o alvo inteiro, e fora do laço não conta como alvo)', () => {
+    expect(partesFalsificadas('bash scripts/test-a.sh --falsificar && true')).toEqual([]);
+  });
+});
+
 describe('fatias do CI — a união das test:falsificacao:N é o roteiro inteiro', () => {
   const pkg = JSON.parse(readFileSync(join(RAIZ, 'package.json'), 'utf8')) as {
     scripts: Record<string, string>;
@@ -210,16 +243,41 @@ describe('fatias do CI — a união das test:falsificacao:N é o roteiro inteiro
 
   it('cada fatia passa --falsificar a pelo menos um alvo (fatia vazia é runner verde sem prova)', () => {
     for (const f of fatias) {
-      expect(alvosFalsificados(f.cmd).length, `${f.nome} não falsifica alvo nenhum`).toBeGreaterThan(0);
+      expect(alvosDaFatia(f.cmd).length, `${f.nome} não falsifica alvo nenhum`).toBeGreaterThan(0);
     }
   });
 
   it('a união das fatias é exatamente o roteiro — nenhum alvo fora do CI, nenhum em duas fatias', () => {
-    const porFatia = fatias.map((f) => alvosFalsificados(f.cmd));
-    const uniao = porFatia.flat();
+    const uniao = fatias.flatMap((f) => alvosDaFatia(f.cmd));
     const duplicados = uniao.filter((a, i) => uniao.indexOf(a) !== i);
     expect(duplicados, `alvo(s) em mais de uma fatia: ${duplicados.join(', ')}`).toEqual([]);
-    expect([...uniao].sort(), 'união das fatias ≠ alvos do test:falsificacao').toEqual(alvosFalsificados(roteiro));
+
+    // Alvo partido: as partes têm o MESMO N e são exatamente 1..N — parte que falta é sabotagem
+    // que nunca roda no CI; e ele não pode estar também INTEIRO num laço (custo em dobro, calado).
+    const partes = fatias.flatMap((f) => partesFalsificadas(f.cmd));
+    const inteiros = fatias.flatMap((f) => alvosFalsificados(f.cmd));
+    const partidos = [...new Set(partes.map((p) => p.alvo))].sort();
+    for (const alvo of partidos) {
+      const dele = partes.filter((p) => p.alvo === alvo);
+      const n = dele[0].n;
+      expect(dele.every((p) => p.n === n), `${alvo}: partes com N diferentes`).toBe(true);
+      expect(dele.map((p) => p.k).sort((a, b) => a - b), `${alvo}: partes ≠ 1..${n}`).toEqual(
+        Array.from({ length: n }, (_, i) => i + 1),
+      );
+      expect(n, `${alvo}: N=1 é o alvo inteiro — ponha no laço`).toBeGreaterThanOrEqual(2);
+      expect(inteiros.includes(alvo), `${alvo} está partido E inteiro num laço`).toBe(false);
+    }
+    expect([...inteiros, ...partidos].sort(), 'união das fatias ≠ alvos do test:falsificacao').toEqual(
+      alvosFalsificados(roteiro),
+    );
+  });
+
+  it('o alvo partido ACEITA a parte (sem o parser de `k/N` na suíte, cada parte rodaria TUDO)', () => {
+    for (const alvo of [...new Set(fatias.flatMap((f) => partesFalsificadas(f.cmd)).map((p) => p.alvo))]) {
+      const fonte = readFileSync(join(RAIZ, 'scripts', alvo), 'utf8');
+      expect(fonte, `${alvo} não lê \`$2\` como k/N`).toMatch(/\[\[\s*"\$2"\s*=~/);
+      expect(fonte, `${alvo} não reprova parte vazia`).toMatch(/FAIL \[parte-vazia\]/);
+    }
   });
 
   it('o que o roteiro roda FORA do laço está em exatamente uma fatia', () => {
