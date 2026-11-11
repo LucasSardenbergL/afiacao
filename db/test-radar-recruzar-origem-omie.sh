@@ -81,7 +81,7 @@ open(p, "w", encoding="utf-8").write(s.replace(de, para))
 PY
 }
 # A régua de md5 "este" da PRE/PÓS da migration: sabotar o corpo exige trocar o literal pelo md5 VIVO.
-ESTE_MD5="$(grep -oE "IS DISTINCT FROM '[0-9a-f]{32}'" "$MIG" | grep -oE '[0-9a-f]{32}' | head -1)"
+ESTE_MD5="$(grep -oE "IS DISTINCT FROM '[0-9a-f]{32}'" "$MIG" | grep -oE '[0-9a-f]{32}' | sed -n 1p)"
 MD5_VIVO="(SELECT md5(q.prosrc) FROM pg_catalog.pg_proc q WHERE q.oid = to_regprocedure('public.radar_recruzar_ja_cliente()'))"
 case "${SABOTAGEM:-}" in
   "") ;;

@@ -395,7 +395,7 @@ barra() { # $1=nome  $2=arquivo sabotado  $3=trecho EXATO esperado no erro  $4=S
   # Um NOTICE com a mesma frase sai com 00000 -- a marca solta no texto, antes de OUTRO erro, passava.
   if P -q -v VERBOSITY=verbose -f "$2" > "$TMP/out.log" 2>&1; then
     bad "$1 -- o apply sabotado PASSOU (a pos-condicao nao tem dente)"
-  elif command grep -F "$4: frescor-marcador:" "$TMP/out.log" | command grep -qF "$3"; then
+  elif command grep -qF "$3" <<<"$(command grep -F "$4: frescor-marcador:" "$TMP/out.log")"; then
     ok "$1"
   else
     bad "$1 -- abortou, mas por outro motivo: $(head -c 200 "$TMP/out.log" | tr '\n' ' ')"

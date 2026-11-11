@@ -536,7 +536,7 @@ SQL
 }
 # Prova que a sabotagem APLICOU (senao "nao casou nada" se le como "assert sem dente")
 SABOTA_CLAIM
-if Pq -c "SELECT pg_get_functiondef('public.claim_calculate_scores(text)'::regprocedure);" | command grep -q "WHERE REMOVIDO"; then
+if command grep -q "WHERE REMOVIDO" <<<"$(Pq -c "SELECT pg_get_functiondef('public.claim_calculate_scores(text)'::regprocedure);")"; then
   ok "F0 sabotagem do claim APLICOU (tell contra vermelho invalido)"
 else
   bad "F0 sabotagem do claim NAO aplicou -- falsificacao INVALIDA"

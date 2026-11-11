@@ -461,7 +461,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$SAB" | grep -q 'SAB_VAZOU'; then
+if grep -q 'SAB_VAZOU' <<<"$SAB"; then
   echo "  OK D8 (falsificação) — sem o filtro de conta a âncora de 'vendas' (50) vazou p/ colacor → D8 tem dente"
 else
   echo "  D8 (falsificação) — account-blind não vazou neste seed (ambos os pedidos têm a MESMA data; o desempate não escolheu 'vendas')."
@@ -518,7 +518,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$SAB" | grep -q 'SAB_VAZOU'; then echo "  OK D9 (falsificação) — gate furado vazou c_last 60 p/ a vendedora → D9 tem dente"; else echo "  D9 FALHOU (falsificação): $SAB"; exit 1; fi
+if grep -q 'SAB_VAZOU' <<<"$SAB"; then echo "  OK D9 (falsificação) — gate furado vazou c_last 60 p/ a vendedora → D9 tem dente"; else echo "  D9 FALHOU (falsificação): $SAB"; exit 1; fi
 # Restaura o gate correto (corpo FIEL de prod — NÃO o master-only degenerado).
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 CREATE OR REPLACE FUNCTION private.cap_custo_ler(_uid uuid)
@@ -640,7 +640,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$SAB11" | grep -q 'D11_FICOU_VERMELHO'; then
+if grep -q 'D11_FICOU_VERMELHO' <<<"$SAB11"; then
   echo "  OK D11 (falsificação X-D11) — gate velho de volta ⇒ o gerencial VÊ os absolutos → D11 separa as 2 políticas"
 else
   echo "  D11 FALHOU (falsificação X-D11): o gate velho não mudou o veredito do gerencial — D11 é teatro. saída: $SAB11"
@@ -679,7 +679,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$SAB13" | grep -q 'D13_FICOU_VERMELHO'; then
+if grep -q 'D13_FICOU_VERMELHO' <<<"$SAB13"; then
   echo "  OK D13 (falsificação X-D13) — master-only barra o estratégico → D13 guarda contra a vacuidade de D11"
 else
   echo "  D13 FALHOU (falsificação X-D13): master-only não mudou o veredito do estratégico. saída: $SAB13"
@@ -713,7 +713,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$SAB12" | grep -q 'D12_FICOU_VERMELHO'; then
+if grep -q 'D12_FICOU_VERMELHO' <<<"$SAB12"; then
   echo "  OK D12 (falsificação X-D12) — sem o seed gerencial a contraprova cai → D12 guarda a EXISTÊNCIA da persona"
 else
   echo "  D12 FALHOU (falsificação X-D12): seed sabotado e a contraprova sobreviveu — D12 é vácuo. saída: $SAB12"

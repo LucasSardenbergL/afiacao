@@ -89,7 +89,7 @@ estado() {
 }
 # conta "<prelúdio>" "<from>" → count(*) ou DENIED/ERRO
 conta() {
-  local out; out="$(P -q -tA -c "BEGIN;" -c "$1" -c "SELECT count(*) FROM $2;" -c "ROLLBACK;" 2>&1)" || { echo "$out" | grep -q "permission denied" && echo DENIED || echo ERRO; return; }
+  local out; out="$(P -q -tA -c "BEGIN;" -c "$1" -c "SELECT count(*) FROM $2;" -c "ROLLBACK;" 2>&1)" || { grep -q "permission denied" <<<"$out" && echo DENIED || echo ERRO; return; }
   echo "$out" | tail -1
 }
 COMO_STAFF="SET LOCAL ROLE authenticated; SET LOCAL test.uid TO '00000000-0000-4000-8000-0000000000e5'; SET LOCAL test.role TO 'authenticated';"
@@ -293,9 +293,9 @@ eq "A4i staff: v_grupo_contas_receber_por_doc alfanumérico" "$(conta "$COMO_STA
 # ════════════════════════════════════════════════════════
 echo "═══ A5. custo em 50k linhas sintéticas ═══"
 P -q -c "CREATE TABLE teste.docs AS SELECT CASE WHEN i%3=0 THEN lpad(i::text,14,'0') WHEN i%3=1 THEN '12.'||lpad((i%1000)::text,3,'0')||'.678/0001-'||lpad((i%100)::text,2,'0') ELSE lpad((i%100000000000)::text,11,'0') END AS d FROM generate_series(1,50000) i;"
-T_RE="$(Pq -c "EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) SELECT sum(length(regexp_replace(d,'\D','','g'))) FROM teste.docs" | sed -nE 's/.*"Execution Time": ([0-9.]+).*/\1/p' | head -1)"
-T_ND="$(Pq -c "EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) SELECT sum(length(public.normalizar_documento(d))) FROM teste.docs" | sed -nE 's/.*"Execution Time": ([0-9.]+).*/\1/p' | head -1)"
-T_GD="$(Pq -c "EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) SELECT sum(length(CASE WHEN d ~ '[A-Za-z]' THEN public.normalizar_documento(d) ELSE regexp_replace(d,'\\D','','g') END)) FROM teste.docs" | sed -nE 's/.*"Execution Time": ([0-9.]+).*/\1/p' | head -1)"
+T_RE="$(Pq -c "EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) SELECT sum(length(regexp_replace(d,'\D','','g'))) FROM teste.docs" | sed -nE 's/.*"Execution Time": ([0-9.]+).*/\1/p' | sed -n 1p)"
+T_ND="$(Pq -c "EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) SELECT sum(length(public.normalizar_documento(d))) FROM teste.docs" | sed -nE 's/.*"Execution Time": ([0-9.]+).*/\1/p' | sed -n 1p)"
+T_GD="$(Pq -c "EXPLAIN (ANALYZE, TIMING OFF, FORMAT JSON) SELECT sum(length(CASE WHEN d ~ '[A-Za-z]' THEN public.normalizar_documento(d) ELSE regexp_replace(d,'\\D','','g') END)) FROM teste.docs" | sed -nE 's/.*"Execution Time": ([0-9.]+).*/\1/p' | sed -n 1p)"
 echo "  ℹ️  50k linhas numéricas: regexp_replace=${T_RE} ms · normalizar_documento=${T_ND} ms · guard das views=${T_GD} ms"
 # tempo absoluto PISCA sob carga (2 harness em paralelo inflaram o guard a >2× em 2026-10-20) — o assert é RELATIVO à função nua
 eq "A5a o guard das views é mais barato que normalizar_documento nu (numérico não paga a função)" "$(Pq -c "SELECT ${T_GD:-99999} < ${T_ND:-0}")" "t"

@@ -185,7 +185,7 @@ n_trilha() { Pq -c "SELECT count(*)::text FROM public.reposicao_cancelamento_pos
 # trigger aborta. As sentinelas sao ASCII de caixa fixa -> o assert nao depende do locale das
 # mensagens do servidor. A sentinela do TESTE nunca contem o texto que o codigo emite alem do
 # proprio marcador, entao um `grep` frouxo nao consegue casar consigo mesmo.
-extrai_sentinela() { printf '%s' "$1" | grep -oE '\[[A-Z0-9-]+\]' | head -1; }
+extrai_sentinela() { printf '%s' "$1" | grep -oE '\[[A-Z0-9-]+\]' | sed -n 1p; }
 cancelar_x() {
   local out rc
   set +e; out="$(Pq -c "SELECT public.cancelar_pedido_sugerido($1, 'lucas', 'motivo do teste')::text;" 2>&1)"; rc=$?; set -e
@@ -406,7 +406,7 @@ else
   bad "F3 sabotagem nao mudou nada (veio [$F3]) -- S1 nao mede a allowlist"
 fi
 F3B="$(semear; corrigir 4 cancelado_junto_ao_fornecedor 'protocolo-fornecedor-4471')"
-if printf '%s' "$F3B" | grep -q '"status": "ok"'; then
+if grep -q '"status": "ok"' <<<"$F3B"; then
   ok "F3b CONTROLE: na MESMA sabotagem, 'disparado' ainda sai pela porta -- sabotagem cirurgica"
 else
   bad "F3b a sabotagem quebrou a porta inteira (veio [$F3B])"
@@ -436,7 +436,7 @@ else
   bad "F4 esperado [CANCEL-POS-DISPARO-ZERO-LINHAS], veio [$F4] -- a allowlist do UPDATE nao esta medida"
 fi
 F4B="$(semear; corrigir 4 cancelado_junto_ao_fornecedor 'protocolo-fornecedor-4471')"
-if printf '%s' "$F4B" | grep -q '"status": "ok"'; then
+if grep -q '"status": "ok"' <<<"$F4B"; then
   ok "F4b CONTROLE: na MESMA sabotagem, 'disparado' ainda passa pelos tres pontos"
 else
   bad "F4b a sabotagem quebrou a funcao inteira (veio [$F4B])"
@@ -457,7 +457,7 @@ eq "F5-controle a postcondicao PASSA com a migration aplicada de verdade" \
 extrai_funcao "$MIG_TRG" "reposicao__valida_cancelamento_pos_disparo" > /tmp/sab-trg2-$$.sql
 P -q -f /tmp/sab-trg2-$$.sql >/dev/null
 F5="$(P -tA -f "$POSTBLOCO" 2>&1 || true)"
-if printf '%s' "$F5" | grep -q 'GUARD-CEGO'; then
+if grep -q 'GUARD-CEGO' <<<"$F5"; then
   ok "F5 com o guard sabotado, a postcondicao aborta com [GUARD-CEGO] -- ela tem dente"
 else
   bad "F5 a postcondicao passou (ou gritou outra coisa) com o guard cego: $(printf '%s' "$F5" | head -c 160)"
@@ -480,14 +480,14 @@ else
 fi
 P -q -f /tmp/sab-velho-$$.sql >/dev/null
 F6="$(P -tA -f "$POSTBLOCO" 2>&1 || true)"
-if printf '%s' "$F6" | grep -q 'REGRESSAO-PORTAL'; then
+if grep -q 'REGRESSAO-PORTAL' <<<"$F6"; then
   ok "F6 a postcondicao pega o REPLACE partido do corpo errado -- [REGRESSAO-PORTAL]"
 else
   bad "F6 a postcondicao nao viu a regressao do guard de portal: $(printf '%s' "$F6" | head -c 160)"
 fi
 # F6b CONTROLE na MESMA sabotagem: o alarme do OUTRO eixo NAO dispara -- prova que [REGRESSAO-PORTAL]
 # foi o que mordeu, e nao um alarme qualquer que casaria com qualquer estrago.
-if printf '%s' "$F6" | grep -q 'DENYLIST-CEGA'; then
+if grep -q 'DENYLIST-CEGA' <<<"$F6"; then
   bad "F6b a sabotagem vazou para o outro eixo (DENYLIST-CEGA tambem disparou) -- F6 nao isola o portal"
 else
   ok "F6b CONTROLE: na MESMA sabotagem [DENYLIST-CEGA] NAO dispara -- F6 isola o eixo do portal"
@@ -514,7 +514,7 @@ else
 fi
 P -q -f /tmp/sab-cego-$$.sql >/dev/null
 F7="$(P -tA -f "$POSTBLOCO2" 2>&1 || true)"
-if printf '%s' "$F7" | grep -q 'GUARD-CEGO'; then
+if grep -q 'GUARD-CEGO' <<<"$F7"; then
   ok "F7 a postcondicao grita [GUARD-CEGO] mesmo com a palavra presente em comentario"
 else
   bad "F7 a postcondicao passou com a logica cega -- ela mede a PALAVRA, nao a condicao: $(printf '%s' "$F7" | head -c 160)"
@@ -534,12 +534,12 @@ extrai_funcao "$MIG" "corrigir_cancelamento_pos_disparo" > /tmp/sab-cego2-$$.sql
 sed "s/AND status IN ('disparado', 'disparado_simulado', 'concluido_recebido')/AND status IN ('disparado', 'concluido_recebido')/" /tmp/sab-cego2-$$.sql > /tmp/sab-cego2-$$.sql.tmp && mv /tmp/sab-cego2-$$.sql.tmp /tmp/sab-cego2-$$.sql
 P -q -f /tmp/sab-cego2-$$.sql >/dev/null
 F8="$(P -tA -f "$POSTBLOCO2" 2>&1 || true)"
-if printf '%s' "$F8" | grep -q 'SAIDA-SEM-UPDATE'; then
+if grep -q 'SAIDA-SEM-UPDATE' <<<"$F8"; then
   ok "F8 a postcondicao separa os tres pontos: grita [SAIDA-SEM-UPDATE] com o IF ainda intacto"
 else
   bad "F8 a postcondicao nao distinguiu o WHERE do IF: $(printf '%s' "$F8" | head -c 160)"
 fi
-if printf '%s' "$F8" | grep -q 'SAIDA-SEM-IF'; then
+if grep -q 'SAIDA-SEM-IF' <<<"$F8"; then
   bad "F8b a sabotagem vazou para o outro ponto -- F8 nao isola o WHERE do UPDATE"
 else
   ok "F8b CONTROLE: [SAIDA-SEM-IF] NAO dispara -- F8 isola o WHERE do UPDATE"

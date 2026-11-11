@@ -168,7 +168,7 @@ EXCEPTION WHEN SQLSTATE '$2' THEN RAISE NOTICE 'MARCA_OK';
 END \$t\$;
 SQL
 }
-marca() { P -c "DO \$t\$ BEGIN PERFORM public.reposicao_selar_pedido($1); RAISE WARNING 'SEM_ERRO'; EXCEPTION WHEN SQLSTATE '$2' THEN RAISE WARNING 'MARCA_OK'; END \$t\$;" 2>&1 | grep -oE 'SEM_ERRO|MARCA_OK' | head -1; }
+marca() { P -c "DO \$t\$ BEGIN PERFORM public.reposicao_selar_pedido($1); RAISE WARNING 'SEM_ERRO'; EXCEPTION WHEN SQLSTATE '$2' THEN RAISE WARNING 'MARCA_OK'; END \$t\$;" 2>&1 | grep -oE 'SEM_ERRO|MARCA_OK' | sed -n 1p; }
 
 echo "--- POSITIVOS ---"
 R=$(aprova 100 "'[{\"id\":101,\"sku_codigo_omie\":\"TEH.3505.00BB\",\"qtde_final\":40,\"fator_embalagem_portal\":0.2,\"preco_unitario\":10},{\"id\":102,\"sku_codigo_omie\":\"FOA05\",\"qtde_final\":3,\"fator_embalagem_portal\":null,\"preco_unitario\":20}]'::jsonb")

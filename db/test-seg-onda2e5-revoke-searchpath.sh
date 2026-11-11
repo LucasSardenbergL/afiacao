@@ -43,7 +43,7 @@ ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
 deny() { local out; if out=$(P -q -c "$1" 2>&1); then bad "$2 — devia NEGAR e passou"; \
-         elif echo "$out" | grep -q "permission denied"; then ok "$2 (permission denied)"; \
+         elif grep -q "permission denied" <<<"$out"; then ok "$2 (permission denied)"; \
          else bad "$2 — erro inesperado: $(echo "$out" | tail -1)"; fi; }
 
 echo "═══ setup PG17 :$PORT ═══"

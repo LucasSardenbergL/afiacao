@@ -216,15 +216,15 @@ Pq() { P -qAt "$@"; }
 estado() {
   local saida
   if saida="$(P -qAt -v VERBOSITY=verbose -c "$1" 2>&1)"; then echo "verde"; return; fi
-  printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | head -1 | grep -oE '[0-9A-Z]{5}:$' | tr -d ':' || echo "sem-codigo"
+  printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | sed -n 1p | grep -oE '[0-9A-Z]{5}:$' | tr -d ':' || echo "sem-codigo"
 }
 # SQLSTATE + marca do ramo: o 42501 do DELETE e o do "so o master desfaz" são ramos distintos do mesmo
 # trigger — casar só o código deixa um mascarar o outro (a falsificação de trg_delete mostrou).
 estado_ramo() {
   local saida c
   if saida="$(P -qAt -v VERBOSITY=verbose -c "$1" 2>&1)"; then echo "verde"; return; fi
-  c="$(printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | head -1 | grep -oE '[0-9A-Z]{5}:$' | tr -d ':')"
-  if printf '%s\n' "$saida" | grep -qF -- "$2"; then echo "${c:-sem-codigo}+ramo"; else echo "${c:-sem-codigo}-outro-ramo"; fi
+  c="$(printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | sed -n 1p | grep -oE '[0-9A-Z]{5}:$' | tr -d ':')"
+  if grep -qF -- "$2" <<<"$saida"; then echo "${c:-sem-codigo}+ramo"; else echo "${c:-sem-codigo}-outro-ramo"; fi
 }
 PASS=0; FAIL=0
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
@@ -748,7 +748,7 @@ eq "MIG8 re-aplicar restaura o default de gravado_em (a edge não o envia)" "$(e
 # ── MIG5: a PRE recusa função de trigger estranha ──
 Pq -c "CREATE OR REPLACE FUNCTION public.fin_ic_matches_guarda_sem_cobranca() RETURNS trigger LANGUAGE plpgsql AS \$f\$ BEGIN RETURN NEW; END \$f\$"
 saida_pre="$(P -qAt -f "$MIG_USADA" 2>&1 || true)"
-if printf '%s' "$saida_pre" | grep -q "PRE FALHOU: fin_ic_matches_guarda_sem_cobranca viva"; then eq "MIG5 PRE recusa trigger estranho" "recusou" "recusou"
+if grep -q "PRE FALHOU: fin_ic_matches_guarda_sem_cobranca viva" <<<"$saida_pre"; then eq "MIG5 PRE recusa trigger estranho" "recusou" "recusou"
 else eq "MIG5 PRE recusa trigger estranho" "aplicou" "recusou"; fi
 
 # ── MIG4: a PRE recusa corpo estranho (nem o predecessor nem este) ──
@@ -758,7 +758,7 @@ Pq -c "CREATE OR REPLACE FUNCTION public.fin_consolidado_intercompany(p_ano inte
   AS \$f\$ BEGIN RETURN; END \$f\$"
 cp "$MIG_USADA" "$MIG_ESTRANHA"
 saida_pre="$(P -qAt -f "$MIG_ESTRANHA" 2>&1 || true)"
-if printf '%s' "$saida_pre" | grep -q "PRE FALHOU: fin_consolidado_intercompany vivo"; then eq "MIG4 PRE recusa corpo estranho" "recusou" "recusou"
+if grep -q "PRE FALHOU: fin_consolidado_intercompany vivo" <<<"$saida_pre"; then eq "MIG4 PRE recusa corpo estranho" "recusou" "recusou"
 else eq "MIG4 PRE recusa corpo estranho" "aplicou" "recusou"; fi
 
 echo "PASS=$PASS FAIL=$FAIL"

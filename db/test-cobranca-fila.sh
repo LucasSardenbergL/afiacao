@@ -134,7 +134,7 @@ Pq() { P -qAt "$@"; }
 estado() {
   local saida
   if saida="$(P -qAt -v VERBOSITY=verbose -c "$1" 2>&1)"; then echo "verde"; return; fi
-  printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | head -1 | grep -oE '[0-9A-Z]{5}:$' | tr -d ':' || echo "sem-codigo"
+  printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | sed -n 1p | grep -oE '[0-9A-Z]{5}:$' | tr -d ':' || echo "sem-codigo"
 }
 V1=00000000-0000-0000-0000-0000000000a1; V2=00000000-0000-0000-0000-0000000000a2; V3=00000000-0000-0000-0000-0000000000a3
 M=00000000-0000-0000-0000-0000000000ee; CUST=00000000-0000-0000-0000-0000000000cc

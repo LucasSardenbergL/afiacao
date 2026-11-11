@@ -1003,16 +1003,16 @@ for MG in 20260617130000_tint_promote_preserva_preco 20260617150000_tint_promote
   P -v ON_ERROR_STOP=1 -q -f "$REPO_ROOT/supabase/migrations/$MG.sql" >/dev/null
 done
 # Sanidade: o guard 4 está no corpo aplicado (o _fl_corrompida existe na definição em runtime).
-P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_fl_corrompida%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+grep -qx OK <<<"$(P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_fl_corrompida%' THEN 'OK' ELSE 'FALTA' END;")" \
   || { echo "✗ FASE1: guard 4 (_fl_corrompida) não está no corpo aplicado"; exit 1; }
 # FASE 1c: o gate de integridade de transporte também precisa estar no corpo (C14-C23 rodam sobre a
 # cadeia consolidada — os seeds legados não declaram expected_item_count, o que prova a NÃO-REGRESSÃO
 # do caminho NULL).
-P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_incompleta%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+grep -qx OK <<<"$(P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_incompleta%' THEN 'OK' ELSE 'FALTA' END;")" \
   || { echo "✗ FASE1c: gate _eu_incompleta não está no corpo aplicado"; exit 1; }
 # FASE 1d: gate de contradição + cap de limpeza no corpo (C14-C23 rodam sobre a v5; os seeds legados
 # nunca declaram is_base_pura → NÃO-REGRESSÃO do caminho não-declarado; C15 prova o endurecimento).
-P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' AND pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%v_limpezas_24h%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+grep -qx OK <<<"$(P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' AND pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%v_limpezas_24h%' THEN 'OK' ELSE 'FALTA' END;")" \
   || { echo "✗ FASE1d: gates 1d (_eu_pura_contraditoria + cap acumulado) não estão no corpo aplicado"; exit 1; }
 ok "corpo consolidado + guard 4 + gate 1c + fase 1d aplicados (_fl_corrompida + _eu_incompleta + _eu_pura_contraditoria)"
 
@@ -1478,7 +1478,7 @@ case "$NSAB" in
 esac
 # RESTAURA a migration real.
 P -v ON_ERROR_STOP=1 -q -f "$MIGG" >/dev/null
-P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_fl_corrompida%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+grep -qx OK <<<"$(P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_fl_corrompida%' THEN 'OK' ELSE 'FALTA' END;")" \
   || { echo "✗ restauração guard4 falhou"; exit 1; }
 ok "restauração OK — guard4 de volta no corpo"
 
@@ -1753,7 +1753,7 @@ QSAB=$(P -tA -c "SELECT (max(fi.qtd_ml) FILTER (WHERE c.id_corante_sayersystem='
 ok "gate furado — subconjunto SUBSTITUIU a receita (AX24=77): C24 tem dente"
 # RESTAURA a v4 íntegra e re-prova: novo run subconjunto (88) tem de ser BARRADO (receita segue 77).
 P -v ON_ERROR_STOP=1 -q -f "$MIGF" >/dev/null
-P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%expected_item_count <> COALESCE%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+grep -qx OK <<<"$(P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%expected_item_count <> COALESCE%' THEN 'OK' ELSE 'FALTA' END;")" \
   || { echo "✗ restauração F1c falhou (predicado do gate ausente)"; exit 1; }
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
@@ -1782,7 +1782,7 @@ MIG1D="$REPO_ROOT/supabase/migrations/20260722113000_tint_fase1d_is_base_pura.sq
 echo ""
 echo "════════ FASE 1d — re-aplica a v5 (pós-F1c) ════════"
 P -v ON_ERROR_STOP=1 -q -f "$MIG1D" >/dev/null
-P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+grep -qx OK <<<"$(P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' THEN 'OK' ELSE 'FALTA' END;")" \
   || { echo "✗ FASE1d: v5 não aplicou (gate _eu_pura_contraditoria ausente)"; exit 1; }
 ok "v5 aplicada"
 
@@ -2141,7 +2141,7 @@ ok "janela zerada → catraca limpou as 2 restantes (dano provado): C34 tem dent
 # RESTAURA a v5 real e prova que o cap volta a barrar: re-semeia as 51 receitas e roda um run NOVO
 # declarando as 52 (após F1d-2, o latest de COR33_5 ficou SEM declaração — re-declarar garante 52>cap).
 P -v ON_ERROR_STOP=1 -q -f "$MIG1D" >/dev/null
-P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' AND pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%:= 50;%' THEN 'OK' ELSE 'FALTA' END;" | grep -qx OK \
+grep -qx OK <<<"$(P -tA -c "SELECT CASE WHEN pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%_eu_pura_contraditoria%' AND pg_get_functiondef('public.tint_promote_sync_run(uuid)'::regprocedure) LIKE '%:= 50;%' THEN 'OK' ELSE 'FALTA' END;")" \
   || { echo "✗ restauração F1d falhou (v5 real ausente)"; exit 1; }
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 INSERT INTO tint_formula_itens (formula_id, corante_id, ordem, qtd_ml)

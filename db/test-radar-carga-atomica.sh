@@ -115,7 +115,7 @@ Perro() { if out="$(P -qAt -v VERBOSITY=verbose -c "$1" 2>&1)"; then echo "SEM_E
 
 PASS=0; FAIL=0
 eq()  { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
-tem() { if printf '%s' "$2" | grep -qF -- "$3"; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — [$3] ausente em [$2]"; FAIL=$((FAIL+1)); fi; }
+tem() { if grep -qF -- "$3" <<<"$2"; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — [$3] ausente em [$2]"; FAIL=$((FAIL+1)); fi; }
 
 # ── Esquema mínimo com os MESMOS CHECKs/colunas de prod ────────────────────────────────────────────────
 P -q <<'SQL'

@@ -424,7 +424,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$A8" | grep -q 'SABOTAGEM_PASSOU'; then
+if grep -q 'SABOTAGEM_PASSOU' <<<"$A8"; then
   echo "  OK A8 — gate sabotado deixou o employee confirmar → o assert A6a REALMENTE guarda (não é teatro)"
 else
   echo "  A8 FALHOU: mesmo com o gate sabotado o employee foi barrado — o assert A6a NÃO está testando o gate."
@@ -458,7 +458,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$A8R" | grep -q 'GATE_RESTAURADO'; then
+if grep -q 'GATE_RESTAURADO' <<<"$A8R"; then
   echo "  OK A8 (restauração) — gate master de volta, employee barrado novamente"
 else
   echo "  A8 FALHOU (restauração): gate não voltou. saída: $A8R"

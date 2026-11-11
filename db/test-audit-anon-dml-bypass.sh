@@ -93,7 +93,7 @@ rodar_sh() { if SAIDA="$(PSQL_RO="$TMPD/psql-ro-fake" bash "$1" 2>&1)"; then RC=
 # C1 — caminho FELIZ: após (B) não há mais fogo, então tem de sair LIMPO com exit 0.
 # Sem este caso, "sempre recusa" passaria pelos negativos abaixo e o linter viraria inútil.
 rodar_sh "$REPO_ROOT/db/audit-anon-dml-bypass.sh"
-if [ "$RC" = 0 ] && printf '%s' "$SAIDA" | command grep -Fq 'LIMPO'; then
+if [ "$RC" = 0 ] && command grep -Fq 'LIMPO' <<<"$SAIDA"; then
   ok "C1: banco são → LIMPO com exit 0 (o fix não fechou o caminho feliz)"
 else bad "C1: esperava LIMPO/exit 0 — veio rc=$RC: $SAIDA"; fi
 
@@ -106,14 +106,14 @@ cp "$REPO_ROOT/db/audit-anon-dml-bypass.sh" "$SAB/"
 # É aqui que o psql-ro entrega exit 0 lido de `-f`: sem ON_ERROR_STOP o .sh dizia "✅ LIMPO".
 echo "SELECT 'HIT|'||x FROM relacao_que_nao_existe_zzz;" > "$SAB/audit-anon-dml-bypass.sql"
 rodar_sh "$SAB/audit-anon-dml-bypass.sh"
-if [ "$RC" != 0 ] && ! printf '%s' "$SAIDA" | command grep -Fq 'LIMPO'; then
+if [ "$RC" != 0 ] && ! command grep -Fq 'LIMPO' <<<"$SAIDA"; then
   ok "C2: SQL que falhou → recusa (rc=$RC), NÃO 'LIMPO'"
 else bad "C2: FALHA ABERTA — SQL quebrado devolveu rc=$RC: $SAIDA"; fi
 
 # C3 — query que RODA mas não é mais esta (truncada/trocada): o exit code não pega, o marcador sim.
 echo "SELECT 'nada';" > "$SAB/audit-anon-dml-bypass.sql"
 rodar_sh "$SAB/audit-anon-dml-bypass.sh"
-if [ "$RC" != 0 ] && ! printf '%s' "$SAIDA" | command grep -Fq 'LIMPO'; then
+if [ "$RC" != 0 ] && ! command grep -Fq 'LIMPO' <<<"$SAIDA"; then
   ok "C3: query sem o marcador FIM| → recusa (rc=$RC), NÃO 'LIMPO'"
 else bad "C3: query trocada passou como limpa — rc=$RC: $SAIDA"; fi
 
@@ -124,7 +124,7 @@ else bad "C3: query trocada passou como limpa — rc=$RC: $SAIDA"; fi
 { echo "SELECT 'FIM|audit-anon-dml-bypass';"
   echo "SELECT 'HIT|'||x FROM relacao_que_nao_existe_zzz;"; } > "$SAB/audit-anon-dml-bypass.sql"
 rodar_sh "$SAB/audit-anon-dml-bypass.sh"
-if [ "$RC" != 0 ] && ! printf '%s' "$SAIDA" | command grep -Fq 'LIMPO'; then
+if [ "$RC" != 0 ] && ! command grep -Fq 'LIMPO' <<<"$SAIDA"; then
   ok "C4: erro APÓS o marcador → recusa (rc=$RC) pelo ON_ERROR_STOP"
 else bad "C4: erro após o marcador passou como limpo — rc=$RC: $SAIDA"; fi
 

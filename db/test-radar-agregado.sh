@@ -344,7 +344,7 @@ eq "B4 2026-11-29 06:35:01 UTC: recalcula (e o medidor vê 1 scan)" "$(leituras 
 
 # C1 — tabelas do agregado fechadas: authenticated recebe 42501 (GRANT), o escritor também.
 # A SQLSTATE vem do prefixo do SERVIDOR (ERROR/ERRO em caixa alta, VERBOSITY verbose), nunca do texto.
-estado_sob_auth() { local s; s="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE authenticated; $1" 2>&1 | sed -nE 's/^(ERROR|ERRO): +([0-9A-Z]{5}):.*/\2/p' | head -1)"; printf '%s' "${s:-LEU}"; }
+estado_sob_auth() { local s; s="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE authenticated; $1" 2>&1 | sed -nE 's/^(ERROR|ERRO): +([0-9A-Z]{5}):.*/\2/p' | sed -n 1p)"; printf '%s' "${s:-LEU}"; }
 eq "C1a authenticated não lê radar_agregado_municipio (42501)" "$(estado_sob_auth "SELECT count(*) FROM public.radar_agregado_municipio")" "42501"
 eq "C1b authenticated não lê radar_agregado_estado (42501)" "$(estado_sob_auth "SELECT count(*) FROM public.radar_agregado_estado")" "42501"
 eq "C1c authenticated não executa o escritor (42501)" "$(estado_sob_auth "SELECT public.radar_agregado_recalcular(true)")" "42501"

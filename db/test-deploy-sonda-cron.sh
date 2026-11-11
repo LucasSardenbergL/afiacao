@@ -239,7 +239,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # S1: sem o REVOKE de service_role → a postcondição A3 aborta o apply
   s1="$(sabotar s1 "/^REVOKE ALL ON public.deploy_sonda_alvos FROM service_role;/d")"
   prova "$s1" prova_s1 >/dev/null
-  if [ "$FAIL" -gt 0 ] && printf '%s' "$NOMES_FALHOS" | grep -q 'APPLY'; then
+  if [ "$FAIL" -gt 0 ] && grep -q 'APPLY' <<<"$NOMES_FALHOS"; then
     echo "  ✅ S1 (sem REVOKE service_role) → a postcondição A3 abortou o apply"
   else echo "  ❌ S1 ficou VERDE"; TOTAL_FALSIF=$((TOTAL_FALSIF+1)); fi
 
@@ -247,14 +247,14 @@ if [ "${1:-}" = "--falsificar" ]; then
   #     deixa de ser semântica da linguagem e passa a depender do planejador.
   s2="$(sabotar s2 "s/WHERE a.ativo$/WHERE true/")"
   prova "$s2" prova_s2 >/dev/null
-  if [ "$FAIL" -gt 0 ] && printf '%s' "$NOMES_FALHOS" | grep -q 'inativa'; then
+  if [ "$FAIL" -gt 0 ] && grep -q 'inativa' <<<"$NOMES_FALHOS"; then
     echo "  ✅ S2 (filtro do ativo removido) → vermelho em 'inativa NÃO é postada'"
   else echo "  ❌ S2 ficou VERDE"; TOTAL_FALSIF=$((TOTAL_FALSIF+1)); fi
 
   # S3: sem a exigência de unicidade do vault → 2 segredos passam e o dispatcher usa um arbitrário
   s3="$(sabotar s3 "s/IF v_n <> 1 THEN/IF v_n < 1 THEN/")"
   prova "$s3" prova_s3 >/dev/null
-  if [ "$FAIL" -gt 0 ] && printf '%s' "$NOMES_FALHOS" | grep -q 'DUPLICADO'; then
+  if [ "$FAIL" -gt 0 ] && grep -q 'DUPLICADO' <<<"$NOMES_FALHOS"; then
     echo "  ✅ S3 (unicidade do vault afrouxada) → vermelho em 'vault DUPLICADO'"
   else echo "  ❌ S3 ficou VERDE"; TOTAL_FALSIF=$((TOTAL_FALSIF+1)); fi
 
@@ -263,7 +263,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # menos deixa `);` órfão, o apply quebra por SINTAXE e a sabotagem passa a testar outra coisa.
   s4="$(sabotar s4 "/INSERT INTO public.deploy_sonda_disparos (request_id, tick_id, edge)/,+4d")"
   prova "$s4" prova_s4 >/dev/null
-  if [ "$FAIL" -gt 0 ] && printf '%s' "$NOMES_FALHOS" | grep -q 'atribuição'; then
+  if [ "$FAIL" -gt 0 ] && grep -q 'atribuição' <<<"$NOMES_FALHOS"; then
     echo "  ✅ S4 (sem o INSERT da atribuição) → vermelho em 'atribuição'"
   else echo "  ❌ S4 ficou VERDE"; TOTAL_FALSIF=$((TOTAL_FALSIF+1)); fi
 
@@ -271,7 +271,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   #     que é exatamente o que este mecanismo inteiro existe para impedir.
   s5="$(sabotar s5 "s|/functions/v1/sonda-relay'|/functions/v1/' \|\| v_edge|")"
   prova "$s5" prova_s5 >/dev/null
-  if [ "$FAIL" -gt 0 ] && printf '%s' "$NOMES_FALHOS" | grep -qE 'RELÉ|alvo'; then
+  if [ "$FAIL" -gt 0 ] && grep -qE 'RELÉ|alvo' <<<"$NOMES_FALHOS"; then
     echo "  ✅ S5 (URL da edge-alvo no lugar do relé) → vermelho no assert da URL"
   else echo "  ❌ S5 ficou VERDE"; TOTAL_FALSIF=$((TOTAL_FALSIF+1)); fi
 

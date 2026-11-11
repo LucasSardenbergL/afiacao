@@ -155,7 +155,7 @@ sabota() {
   if cmp -s "$MIG" "$copia"; then echo "  ERRO sabotagem '$nome' nao alterou o arquivo (sed nao casou)"; exit 1; fi
   echo "--- sabotagem: $nome (espera $alvo VERMELHO) ---"
   local saida; saida="$(rodada "$copia")"; printf '%s\n' "$saida" | while IFS= read -r l; do echo "    $l"; done
-  if echo "$saida" | grep -q "FALHOU $alvo "; then
+  if grep -q "FALHOU $alvo " <<<"$saida"; then
     SABOTAGENS_OK=$((SABOTAGENS_OK+1)); echo "  OK   sabotagem '$nome' derrubou $alvo"
   else
     SABOTAGENS_FRACAS=$((SABOTAGENS_FRACAS+1)); echo "  FALHOU sabotagem '$nome' NAO derrubou $alvo (assert sem dente)"

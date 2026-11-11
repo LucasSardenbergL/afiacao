@@ -93,7 +93,7 @@ SELECT count(*) FROM $2;
 COMMIT;
 SQL
 )"
-  if echo "$out" | grep -qi 'permission denied'; then echo "DENIED"; return; fi
+  if grep -qi 'permission denied' <<<"$out"; then echo "DENIED"; return; fi
   echo "$out" | grep -E '^[0-9]+$' | tail -1
 }
 CUST_UID='11111111-1111-1111-1111-111111111111'
@@ -127,7 +127,7 @@ SELECT COALESCE((SELECT document FROM public.customer_metrics_mv
 COMMIT;
 SQL
 )"
-  if echo "$out" | grep -qi 'permission denied'; then echo "DENIED"; return; fi
+  if grep -qi 'permission denied' <<<"$out"; then echo "DENIED"; return; fi
   echo "$out" | grep -E '^([0-9]{14}|<sem-linha>)$' | tail -1
 }
 
@@ -334,7 +334,7 @@ EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF) SELECT * FROM public.custo
 COMMIT;
 SQL
 )"
-if echo "$PLANO" | grep -qi 'never executed'; then
+if grep -qi 'never executed' <<<"$PLANO"; then
   ok "customer: a varredura da MV aparece como 'never executed' (gate curto-circuita)"
 else
   bad "customer: esperava 'never executed' no plano — veio: $(echo "$PLANO" | tr '\n' ' ' | cut -c1-120)"

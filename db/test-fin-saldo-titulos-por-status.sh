@@ -300,7 +300,7 @@ sabotar() {  # $1 rótulo · $2 expressão sed · $3 função de assert · $4 r�
   PASS=$antes_pass; FAIL=$antes_fail
   if grep -qE '💥|ERROR|ERRO' "$TMPD/sab.out"; then
     bad "S $rot — erro de execução no assert (não é o vermelho exigido): $(grep -m1 -E '💥|ERROR|ERRO' "$TMPD/sab.out" | head -c 200)"
-  elif grep -F '❌' "$TMPD/sab.out" | grep -qF "$alvo — esperado"; then
+  elif grep -qF "$alvo — esperado" <<<"$(grep -F '❌' "$TMPD/sab.out")"; then
     ok "S $rot → vermelho por divergência em [$alvo]"
   else
     bad "S $rot — [$alvo] não caiu por divergência com a sabotagem"

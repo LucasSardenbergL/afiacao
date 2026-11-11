@@ -306,7 +306,7 @@ eq "B2c estabelecidas do lote novo = tabela" \
    "$(Pq -c "SELECT count(*) FROM public.radar_empresas WHERE ultimo_lote = '2026-11' AND data_abertura <= '$CORTE' AND ja_cliente = false AND prospeccao_status <> 'descartado'")"
 
 # C1 — o fino fechado: authenticated recebe 42501 (GRANT). SQLSTATE do prefixo do SERVIDOR.
-estado_sob_auth() { local s; s="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE authenticated; $1" 2>&1 | sed -nE 's/^(ERROR|ERRO): +([0-9A-Z]{5}):.*/\2/p' | head -1)"; printf '%s' "${s:-LEU}"; }
+estado_sob_auth() { local s; s="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE authenticated; $1" 2>&1 | sed -nE 's/^(ERROR|ERRO): +([0-9A-Z]{5}):.*/\2/p' | sed -n 1p)"; printf '%s' "${s:-LEU}"; }
 eq "C1a authenticated não lê radar_agregado_cnae (42501)" "$(estado_sob_auth "SELECT count(*) FROM public.radar_agregado_cnae")" "42501"
 eq "C1b RLS ligada no fino" "$(Pq -c "SELECT relrowsecurity FROM pg_class WHERE relname = 'radar_agregado_cnae'")" "t"
 eq "C2 ACL: contagem p/ authenticated e não anon; recalcular só owner" \

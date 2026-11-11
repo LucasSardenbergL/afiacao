@@ -387,7 +387,7 @@ CNPJS_FIXTURE=$(Pq -c "SELECT string_agg(quote_literal(cnpj), ',') FROM public.r
 upd_foto() { Pq -c "SELECT md5(string_agg(cnpj || '@' || updated_at::text, ',' ORDER BY cnpj)) FROM public.radar_empresas WHERE cnpj IN ($CNPJS_FIXTURE)"; }
 UPD_ANTES=$(upd_foto)
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
-tem() { if printf '%s' "$2" | grep -qF -- "$3"; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — [$3] ausente em [$2]"; FAIL=$((FAIL+1)); fi; }
+tem() { if grep -qF -- "$3" <<<"$2"; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — [$3] ausente em [$2]"; FAIL=$((FAIL+1)); fi; }
 igual() { if diff "$1" "$2" > /dev/null; then echo igual; else diff "$1" "$2" | head -6 >&2; echo diferente; fi; }
 
 # E1: migration aplicada, razão ainda CRUA (o backfill não correu): vínculo, aviso e guarda idênticos.

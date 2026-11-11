@@ -162,7 +162,7 @@ UPDATE sales_orders SET
 WHERE id='aaaa0000-0000-0000-0000-000000000001';" 2>&1)"
 RC_B1=$?
 set -e
-if [ "$RC_B1" -ne 0 ] && printf '%s' "$ERR_B1" | grep -q 'incoerente'; then
+if [ "$RC_B1" -ne 0 ] && grep -q 'incoerente' <<<"$ERR_B1"; then
   ok "B1 escritor alternativo (omie-vendas-sync:3381) RECUSADO no commit"
 else
   bad "B1 escritor alternativo PASSOU -- invariante nao fechou (rc=$RC_B1)"
@@ -414,7 +414,7 @@ CREATE TABLE order_items (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 set +e
 CTRL="$(Ps -f "$MIG" 2>&1)"; RC_CTRL=$?
 set -e
-if [ "$RC_CTRL" -eq 0 ] && printf '%s' "$CTRL" | grep -q 'POSTCOND-OK'; then
+if [ "$RC_CTRL" -eq 0 ] && grep -q 'POSTCOND-OK' <<<"$CTRL"; then
   ok "H0 CONTROLE: migration integra aplica limpa no db de teste"
 else
   bad "H0 CONTROLE VERMELHO -- a sabotagem abaixo nao provaria nada (rc=$RC_CTRL)"
@@ -436,7 +436,7 @@ set +e
 SAB="$(Ps -f /tmp/mig-sab-$$.sql 2>&1)"; RC_SAB=$?
 set -e
 rm -f /tmp/mig-sab-$$.sql
-if [ "$RC_SAB" -ne 0 ] && printf '%s' "$SAB" | grep -q 'POSTCOND'; then
+if [ "$RC_SAB" -ne 0 ] && grep -q 'POSTCOND' <<<"$SAB"; then
   ok "H1 sabotar ENABLE ALWAYS -> apply ABORTA na postcondicao (tem dente)"
 else
   bad "H1 apply passou sabotado (rc=$RC_SAB) -- postcondicao e decoracao"

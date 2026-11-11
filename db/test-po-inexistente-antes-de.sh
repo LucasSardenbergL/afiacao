@@ -370,7 +370,7 @@ pos_falsifica() { # $1=nome  $2=sql sabotado  $3=trecho ASCII exclusivo da mensa
   if [ "$rc" -eq 0 ]; then
     # NOTICE tambem carrega o prefixo da migration: so o exit!=0 distingue ABORTO de aviso.
     bad "$1 -- a migration APLICOU (exit 0): a defesa nao tem dente"
-  elif printf '%s\n' "$out" | command grep -qF "$3"; then
+  elif command grep -qF "$3" <<<"$out"; then
     ok "$1 -> apply abortado com a mensagem certa"
   else
     bad "$1 -- abortou por OUTRO ramo: $(printf '%s\n' "$out" | command grep -F 'ERROR:' | head -1)"

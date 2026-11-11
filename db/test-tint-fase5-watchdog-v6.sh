@@ -1013,7 +1013,7 @@ PY2
       fi
       if saida="$(P -1 -f "$alvo" 2>&1)"; then
         SAB_F=$((SAB_F+1)); echo "!! $s: o apply sabotado PASSOU — a pós-condição não morde"
-      elif printf '%s\n' "$saida" | grep -qF "$marca"; then
+      elif grep -qF "$marca" <<<"$saida"; then
         SAB_V=$((SAB_V+1)); echo "   vermelho exato: apply abortou com '$marca'"
       else
         SAB_F=$((SAB_F+1)); echo "!! $s: abortou com OUTRA marca: $saida"

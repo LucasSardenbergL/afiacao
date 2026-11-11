@@ -249,8 +249,8 @@ NF=$(grep -c '^CREATE OR REPLACE FUNCTION public\.gerar_pedidos_sugeridos_ciclo'
 N=$(grep -c '^      AND op.account = lower(p_empresa)$' "$RODADA/aa-funcC.sql")
 [ "$N" = "1" ] || { echo "✗ cláusula aparece $N vezes (esperado 1)"; exit 1; }
 # A cláusula deve vir imediatamente APÓS a linha do JOIN omie_products.
-grep -A1 '^    LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text$' "$RODADA/aa-funcC.sql" \
-  | grep -q '^      AND op.account = lower(p_empresa)$' || { echo "✗ cláusula não está logo após o JOIN"; exit 1; }
+grep -q '^      AND op.account = lower(p_empresa)$' \
+  <<<"$(grep -A1 '^    LEFT JOIN omie_products op ON op.omie_codigo_produto::text = sp.sku_codigo_omie::text$' "$RODADA/aa-funcC.sql")" || { echo "✗ cláusula não está logo após o JOIN"; exit 1; }
 # Remove APENAS essa linha de C e compara com B byte-a-byte → devem ser idênticos.
 grep -v '^      AND op.account = lower(p_empresa)$' "$RODADA/aa-funcC.sql" > "$RODADA/aa-funcC-stripped.sql"
 if cmp -s "$RODADA/aa-funcB.sql" "$RODADA/aa-funcC-stripped.sql"; then

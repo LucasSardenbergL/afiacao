@@ -95,7 +95,7 @@ s = s.replace(de, para)
 open(p, "w", encoding="utf-8").write(s)
 PY
 }
-ESTE="$(grep -oE "'[0-9a-f]{32}' /\* este:radar_registrar_cadastro_omie \*/" "$MIG" | grep -oE '[0-9a-f]{32}' | grep -v "$MD5_CONF" | head -1)"
+ESTE="$(grep -oE "'[0-9a-f]{32}' /\* este:radar_registrar_cadastro_omie \*/" "$MIG" | grep -oE '[0-9a-f]{32}' | grep -v "$MD5_CONF" | sed -n 1p)"
 # Régua "este" → md5 do corpo SABOTADO (calculado do arquivo, como o PG o guardará). Trocar por uma subconsulta
 # do vivo faria a PRE aceitar QUALQUER predecessor — e o A0r deixaria de medir a PRE.
 neutralizar() {
@@ -127,7 +127,7 @@ case "${SABOTAGEM:-}" in
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
-ESTE_USADO="$(grep -oE "'[0-9a-f]{32}' /\* este:radar_registrar_cadastro_omie \*/" "$MIG_USADA" | grep -oE '[0-9a-f]{32}' | head -1)"
+ESTE_USADO="$(grep -oE "'[0-9a-f]{32}' /\* este:radar_registrar_cadastro_omie \*/" "$MIG_USADA" | grep -oE '[0-9a-f]{32}' | sed -n 1p)"
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -A trust -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMPD/pg.log" -w start >/dev/null

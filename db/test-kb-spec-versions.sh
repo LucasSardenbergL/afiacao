@@ -383,7 +383,7 @@ EXCEPTION WHEN OTHERS THEN
 END \$\$;
 SQL
 )
-if echo "$SAB_V3" | grep -q 'IMUT_SABOTADA$'; then
+if grep -q 'IMUT_SABOTADA$' <<<"$SAB_V3"; then
   echo "  OK V3 (falsificação) — trigger DROP deixou UPDATE passar → trigger REALMENTE bloqueia (não é teatro)"
 else
   echo "  V3 FALHOU (falsificação): UPDATE não passou mesmo sem trigger. Saída: $SAB_V3"
@@ -478,9 +478,9 @@ END \$\$;
 SQL
 )
 
-if echo "$SAB_V4" | grep -q 'GATE_ATIVADO'; then
+if grep -q 'GATE_ATIVADO' <<<"$SAB_V4"; then
   echo "  OK V4a — employee barrado pelo gate (raise_exception disparou)"
-elif echo "$SAB_V4" | grep -q 'GATE_NAO_IMPEDIU'; then
+elif grep -q 'GATE_NAO_IMPEDIU' <<<"$SAB_V4"; then
   echo "  V4 FALHOU: employee conseguiu chamar a RPC sem ser barrado"
   exit 1
 else

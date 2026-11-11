@@ -375,7 +375,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$SAB" | grep -q 'SABOTAGEM_PASSOU'; then
+if grep -q 'SABOTAGEM_PASSOU' <<<"$SAB"; then
   echo "  OK A5 (falsificação) — gate furado vazou o cmc p/ a vendedora → o assert A5 REALMENTE guarda (não é teatro)"
 else
   echo "  A5 FALHOU (falsificação): mesmo com o gate furado o número NÃO vazou — A5 não testa o role-gate. saída: $SAB"
@@ -500,7 +500,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$SAB11" | grep -q 'A11_FICOU_VERMELHO'; then
+if grep -q 'A11_FICOU_VERMELHO' <<<"$SAB11"; then
   echo "  OK A11 (falsificação X-A11) — gate velho de volta ⇒ o gerencial VÊ o custo → A11 separa as 2 políticas"
 else
   echo "  A11 FALHOU (falsificação X-A11): o gate velho não mudou o veredito do gerencial — A11 é teatro. saída: $SAB11"
@@ -540,7 +540,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$SAB13" | grep -q 'A13_FICOU_VERMELHO'; then
+if grep -q 'A13_FICOU_VERMELHO' <<<"$SAB13"; then
   echo "  OK A13 (falsificação X-A13) — master-only barra o estratégico → A13 guarda contra a vacuidade de A11"
 else
   echo "  A13 FALHOU (falsificação X-A13): master-only não mudou o veredito do estratégico. saída: $SAB13"
@@ -575,7 +575,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$SAB12" | grep -q 'A12_FICOU_VERMELHO'; then
+if grep -q 'A12_FICOU_VERMELHO' <<<"$SAB12"; then
   echo "  OK A12 (falsificação X-A12) — sem o seed gerencial a contraprova cai → A12 guarda a EXISTÊNCIA da persona"
 else
   echo "  A12 FALHOU (falsificação X-A12): seed sabotado e a contraprova sobreviveu — A12 é vácuo. saída: $SAB12"
@@ -796,7 +796,7 @@ BEGIN
 END $$;
 SQL
 )
-if echo "$SAB" | grep -q 'SAB_PASSOU'; then echo "  OK B1 (falsificação) — policy velha deixou o employee ler → B1 tem dente"; else echo "  B1 FALHOU (falsificação): $SAB"; exit 1; fi
+if grep -q 'SAB_PASSOU' <<<"$SAB"; then echo "  OK B1 (falsificação) — policy velha deixou o employee ler → B1 tem dente"; else echo "  B1 FALHOU (falsificação): $SAB"; exit 1; fi
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 DROP POLICY IF EXISTS "cmc_ledger_select_staff" ON public.cmc_ledger;
 CREATE POLICY "cmc_ledger_select_gestor" ON public.cmc_ledger FOR SELECT TO authenticated

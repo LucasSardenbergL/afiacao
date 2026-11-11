@@ -317,7 +317,7 @@ COMMIT;
 SQL
 )"
 case "$OUT_PRE" in *"PRE FALHOU: public.radar_funil(integer) vivo"*) eq "A8a deriva no radar_funil aborta pela PRE" ok ok ;;
-  *) eq "A8a deriva no radar_funil aborta pela PRE" "$(printf '%s' "$OUT_PRE" | grep -m1 -E 'ERRO|ERROR|FALHOU' || echo SEM_ERRO)" "PRE FALHOU…" ;; esac
+  *) eq "A8a deriva no radar_funil aborta pela PRE" "$(grep -m1 -E 'ERRO|ERROR|FALHOU' <<<"$OUT_PRE" || echo SEM_ERRO)" "PRE FALHOU…" ;; esac
 eq "A8b o abort não deixou nada aplicado" "$(Pq -c "SELECT to_regclass('public.radar_card_exibicoes') IS NULL AND to_regprocedure('public.radar_placar_uso()') IS NOT NULL")" "t"
 
 # ── Apply do pacote M (2×: idempotente) ─────────────────────────────────────────────────────────────────────
