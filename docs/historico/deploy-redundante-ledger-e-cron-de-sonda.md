@@ -357,3 +357,80 @@ O que a soma **não** dá é a metade verbatim: ela segue exatamente onde o pilo
   lado esperado é idêntico. Ela mede persistência do veredito, não robustez a drift.)
 - **O artefato do prompt** (`pacote-deploy-29258bf8ac3d.md`): 34 entradas, 24 caminhos únicos, 10
   `_shared/` repetidos exatamente 2× — contados no arquivo, não estimados.
+
+## 8. O custo do `--gate` no CI — medido, e o corte NÃO entrou (E18, 2026-11-11)
+
+**Pergunta (plano v8, Lote 8):** o step `sonda:cron-prova -- --gate` custava p50 4,3 min. Por que
+roda TUDO, e dá para escopar por diff ou paralelizar sem afrouxar o gate?
+
+**Por que roda tudo — e fica assim.** O `--gate` re-executa todo closure de propósito: o veredito é
+fresco, e a comparação com o commitado é o que dispara `MANIFESTO ADULTERADO`. Escopo por diff
+tiraria closure da re-execução, e com isso a garantia. Descartado antes de medir.
+
+**Achado lateral: no CI, a checagem de adulteração nunca dispara.** `identidadeDoHarness` faz hash da
+1ª linha do `deno --version`, que inclui a ARQUITETURA. O manifesto é gerado no Mac
+(`aarch64-apple-darwin`); o CI roda `x86_64-unknown-linux-gnu`. Logo, nenhuma chave commitada casa
+no CI, `commitado` é sempre `undefined` e `MANIFESTO ADULTERADO` não tem como sair lá. **Não é
+buraco:** a execução fresca decide sozinha, e FALHA/INVERIFICAVEL reprova com ou sem manifesto. Mas
+é a razão por que qualquer cache "pula o que não mudou" nunca acertaria no CI. O log
+`harness mudou (6bf43f361b85 → 6bf43f361b85)` imprime só o prefixo, que é o digest dos arquivos;
+a parte que muda (a do deno) fica fora do recorte e a linha parece dizer "mudou para o mesmo".
+
+**Perfil local (`--gate` inteiro, 17 edges, Mac M2 com fila do `heavy`):**
+- A **enumeração** (`git log --follow` por arquivo e `git show` por blob) somou ~781 s, contra
+  ~206 s de execução no Deno. Isso dá ~79% da parede.
+- O ponto fixo relia o mesmo blob a cada volta e de novo para o hash.
+- Do lado da execução, `picking-fila-omie` gasta ~8 s por closure em ESPERA de timer real (o
+  controle positivo), e não em CPU.
+
+**O que foi experimentado em código e não entrou:**
+1. **Memoização dentro de UMA enumeração:**
+   - log por arquivo;
+   - fecho e identidade por sha, com uma leitura por blob.
+
+   O hash do conjunto de closures saiu IDÊNTICO antes e depois:
+
+   | edge | antes | depois |
+   |---|---|---|
+   | `calculate-scores` | 94 s | 27 s |
+   | `sync-reprocess` | 285 s | 53 s |
+   | `picking-fila-omie` | 117 s | 61 s |
+
+   Os números valem como relação, porque o Mac estava disputado.
+2. **Pool de 4 runners Deno:**
+   - execução em paralelo limitado;
+   - classificação em série, na ordem da enumeração, então log e vereditos ficam idênticos;
+   - todo closure segue re-executado.
+
+**Por que foi cortado — a medição.** No mesmo dia, o #3808 tirou a prova do `edges-e-build`
+(onde eram 223 dos 361 s) e a pôs num job próprio, `sonda-cron-prova`, em paralelo, dentro do
+`validate.needs`. Duração dos jobs, em segundos, em 11 runs verdes de `ci.yml` depois do #3808:
+
+| run | sonda-cron-prova | job mais longo (fora a sonda) | posição da sonda |
+|---|---|---|---|
+| 43026336552 | 281 | 448 `provas-sql (5)` | 12º |
+| 43025227020 | 262 | 464 `provas-sql (1)` | 12º |
+| 43022871928 | 274 | 476 `provas-sql (1)` | 11º |
+| 43021975054 | 280 | 443 `provas-sql (15)` | 13º |
+| 43021894972 | 217 | 292 `falsificacao (3)` | 6º |
+| 43021402837 | 260 | 468 `provas-sql (1)` | 16º |
+| 43021172474 | 279 | 304 `testes (1)` | 2º |
+| 43020526164 | 248 | 419 `provas-sql (5)` | 18º |
+| 43019855035 | 254 | 305 `testes (1)` | 4º |
+| 43019770007 | 232 | 287 `falsificacao (3)` | 5º |
+| 43019688373 | 287 | 419 `provas-sql (1)` | 11º |
+
+A sonda **não é o job mais longo em nenhum** desses runs. Sem provas SQL, ela fica 25–70 s abaixo do
+mais longo; com provas SQL, 140–200 s abaixo. Acelerá-la não encurta a parede de PR nenhum, e o pool
+ainda traria o único risco novo: disputa de CPU encostando no teto de timers do runner. Esse erro
+seria VERMELHO falso, não verde, mas é custo sem ganho. O experimento antes/depois com n ≥ 10 não
+foi rodado: com o job fora do caminho crítico, o ganho de parede é zero por construção, e gastar
+dez CIs para confirmar zero não paga.
+
+**Gatilho para reabrir:** o job `sonda-cron-prova` virar o mais longo dos PRs SEM provas SQL. A folga
+mínima medida foi de 25 s (run 43021172474), e o job cresce com o histórico, porque cada commit que
+toca o fecho de uma edge da allowlist é um closure a mais. Quando isso acontecer:
+- comece pela memoização acima: pura, determinística, provada pelo hash idêntico;
+- deixe o pool para depois.
+
+Medir com a duração por job da API do Actions (`/actions/runs/<id>/jobs`), não com a duração do run.
