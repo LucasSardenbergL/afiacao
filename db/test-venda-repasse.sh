@@ -93,7 +93,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # fatia CANÔNICA i de k das sabotagens — da ((i-1)·T/k)+1 à (i·T/k), divisão inteira, T = todas — depois do
   # MESMO controle verde. O runner confere a linha `FAIXA:` contra a conta dele; sem a variável, roda as T.
   # Faixa malformada ABORTA: rodar todas ou nenhuma em silêncio esconderia a fatia errada.
-  total_sab=0; for linha in $SABOTAGENS; do total_sab=$((total_sab+1)); done
+  total_sab=$(( $(printf '%s\n' "$SABOTAGENS" | wc -w) ))   # contar sem um 2º laço sobre a lista (R2 do falsificar-exige-assert)
   sab_de=1; sab_ate=$total_sab; sufixo=""
   if [ -n "${NUCLEO_FAIXA:-}" ]; then
     if ! printf '%s' "$NUCLEO_FAIXA" | grep -qE '^[1-9]/[2-9]$' || [ "${NUCLEO_FAIXA%/*}" -gt "${NUCLEO_FAIXA#*/}" ]; then
