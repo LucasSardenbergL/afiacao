@@ -127,6 +127,10 @@ buffers lidos do cache e ~39 k do disco aos contadores de `radar_empresas` (heap
 mediu às 12:32 UTC (#3697), antes disso, então o número dele está limpo. Um delta que atravesse essa hora
 precisa descontar essa soma.
 
+**Na releitura dos `lista_*`, desconte 2 scans.** O mesmo `EXPLAIN ANALYZE` somou 2 a `idx_radar_lista_novas`
+(`last_idx_scan` 2026-11-07 12:36 UTC), e em 2026-11-10 19:55 UTC o contador estava exatamente nisso. Esses 2 não
+são uso de tela. O `idx_radar_lista_estab` seguia com 0. O lote vigente ainda era `2026-10`.
+
 ## 1º expurgo semanal (2026-11-08) — medido em 2026-11-10 via psql-ro
 
 - Job 196, run 932378: `succeeded` às 04:30, **28 s**. Ficou abaixo dos 37 s do run mensal de 1º/11 e dentro do `statement_timeout` de 5 min.
