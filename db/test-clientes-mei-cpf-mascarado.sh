@@ -25,7 +25,7 @@ MIG_TITULAR="$MIGS/20261111150000_radar_privacidade_titular_mei.sql"
 MARCA="CLIENTES_MEI_CPF_PROVA_OK"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_trigger:pos so_insert:pos sem_backfill:pos sem_backfill_pos_cega:M1 sem_definer:M3 pre_cega:M7 venda_sem_trigger:pos"
+  SABOTAGENS="sem_trigger:pos so_insert:pos sem_backfill:pos sem_backfill_pos_cega:M1a sem_definer:M3a pre_cega:M7 venda_sem_trigger:pos"
   LOGDIR="$(mktemp -d "/tmp/falsifica-clientes-mei.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -102,7 +102,8 @@ BEGIN
 AS \$f\$
 BEGIN
   NEW.name :=" ;;
-  pre_cega)     sabotar "  IF private.radar_razao_mascarada('FULANO DE TAL 12345678901') IS DISTINCT FROM" "  IF false AND private.radar_razao_mascarada('FULANO DE TAL 12345678901') IS DISTINCT FROM" ;;
+  # Cega o RAISE inteiro (um 'false AND' no 1º termo não cega: o OR seguinte ainda avalia as outras amostras).
+  pre_cega)     sabotar "    RAISE EXCEPTION 'PRE FALHOU: private.radar_razao_mascarada não é a do formato livre" "    RAISE NOTICE 'pre cega: private.radar_razao_mascarada não é a do formato livre" ;;
   venda_sem_trigger) sabotar "  FOR EACH ROW EXECUTE FUNCTION private.venda_item_razao_sem_cpf();" "  FOR EACH ROW WHEN (false) EXECUTE FUNCTION private.venda_item_razao_sem_cpf();" ;;
   *) echo "SABOTAGEM desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
