@@ -91,7 +91,7 @@ no `trace` da evidência, passo `condicao_diag`):
 
 | `causa_condicao` | O que a tela tinha | Repetir resolve? |
 |---|---|---|
-| `fora_do_detalhe` | o portal abriu outra página (login, home) | sim — tente de novo |
+| `fora_do_detalhe` | o portal abriu outra página (login, home) | sim, tente de novo. **Exceto** se o passo `detalhe_aberto` do trace tiver `status: 404`: aí a edge não chegou à tela (C16, até a v1.12, que fazia `goto` direto). Desde a v1.13 ela abre a tela clicando no nº na consulta. Se aparecer `via_clique: false`, o link do nº não estava na linha da consulta, e repetir não adianta: ver `docs/historico/sayerlack-condicao-ilegivel-c16.md` |
 | `campo_ausente` | detalhe aberto, sem `#condicoes_pagamento` nesta leitura | uma vez; repetiu → o leitor precisa de ajuste |
 | `campo_sem_opcoes` | o select veio sem nenhuma opção nesta leitura | uma vez; repetiu → o leitor precisa de ajuste |
 | `sem_selecao` | select com opções, "Selecione" escolhido | confira o pedido no portal |
