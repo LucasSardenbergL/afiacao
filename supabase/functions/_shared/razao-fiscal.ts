@@ -49,6 +49,15 @@ export function fantasiaParaExibicao(fantasia: string): { nome_fantasia: string;
 }
 
 /**
+ * Onde buscar a razão fiscal quando o autocadastro de VENDAS (`omie-vendas-sync` `criar_cliente`) chega com a mascarada:
+ * a outra conta de vendas e, depois, a Colacor SC (Afiação), que tem a razão completa de MEI que as duas não têm (3 casos
+ * medidos — MÉDIO 1 do Codex no #3803). A conta que cadastra nunca entra: o lookup dela já provou que não tem o documento.
+ */
+export function fontesDaRazaoFiscalVendas(conta: "oben" | "colacor"): Array<"oben" | "colacor" | "colacor_sc"> {
+  return [conta === "oben" ? "colacor" : "oben", "colacor_sc"];
+}
+
+/**
  * A razão social que pode ir ao IncluirCliente. A não mascarada passa como veio. A mascarada (cliente montado do
  * perfil, que guarda o CPF mascarado) é trocada pela razão FISCAL do MESMO documento noutra conta Omie do grupo, onde
  * o cliente já existe — a Oben tem 1.882 dos 1.888 MEI medidos em 2026-11-10.

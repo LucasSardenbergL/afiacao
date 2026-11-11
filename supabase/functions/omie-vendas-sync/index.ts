@@ -2,9 +2,9 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
-import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "./lookup-cliente-estrito.ts";
+import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "../_shared/lookup-cliente-estrito.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
-import { fantasiaParaExibicao, razaoFiscalParaCadastro, razaoParaExibicao, razaoSemCpf, temCpfMascarado } from "../_shared/razao-fiscal.ts";
+import { fantasiaParaExibicao, fontesDaRazaoFiscalVendas, razaoFiscalParaCadastro, razaoParaExibicao, razaoSemCpf, temCpfMascarado } from "../_shared/razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
@@ -235,11 +235,21 @@ const corsHeaders = {
 const OMIE_API_URL = "https://app.omie.com.br/api/v1";
 
 type Account = "oben" | "colacor";
+// Conta só de LEITURA: a Colacor SC (Afiação) entra aqui apenas como fonte da razão fiscal no autocadastro (MÉDIO 1 do
+// Codex no #3803 — 3 MEI só têm a razão completa nela). Nunca escreve, e o ListarClientes não é método coordenado da
+// cota (_shared/omie-cota.ts), então ela não passa pela trava compartilhada.
+type ContaLeitura = Account | "colacor_sc";
 
 // Trava compartilhada do Omie (Fase 0.2 do picking v2) — cliente service_role, uma vez por isolate.
 const clienteCota = clienteCotaDoAmbiente((url, chave) => createClient(url, chave));
 
-function getCredentials(account: Account) {
+function getCredentials(account: ContaLeitura) {
+  if (account === "colacor_sc") {
+    const APP_KEY = Deno.env.get("OMIE_COLACOR_SC_APP_KEY");
+    const APP_SECRET = Deno.env.get("OMIE_COLACOR_SC_APP_SECRET");
+    if (!APP_KEY || !APP_SECRET) throw new Error("Credenciais da Colacor SC não configuradas");
+    return { APP_KEY, APP_SECRET };
+  }
   if (account === "colacor") {
     const APP_KEY = Deno.env.get("OMIE_COLACOR_APP_KEY");
     const APP_SECRET = Deno.env.get("OMIE_COLACOR_APP_SECRET");
@@ -256,7 +266,7 @@ async function callOmieVendasApi(
   endpoint: string,
   call: string,
   params: Record<string, unknown>,
-  account: Account = "oben",
+  account: ContaLeitura = "oben",
   // throwOnTransient: erro transitório que ESGOTOU os retries vira THROW em
   // vez de null. Sem isso, o null é AMBÍGUO ("não existe" × "Omie fora do
   // ar") — e no caminho de criação de cliente a ambiguidade vira DUPLICATA
@@ -298,8 +308,8 @@ async function callOmieVendasApi(
       ({ response, result } = await chamarComRelogio(
         (signal) =>
           comVezOmie(
-            clienteCota(),
-            account,
+            account === "colacor_sc" ? null : clienteCota(),
+            account === "colacor_sc" ? "oben" : account, // sem cliente de cota a conta não é lida: a chamada vai direto
             call,
             async () => {
               const response = await fetch(`${OMIE_API_URL}/${endpoint}`, {
@@ -781,9 +791,9 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
   return results;
 }
 
-// Página do ListarClientes filtrado pelo documento, para o lookup ESTRITO (./lookup-cliente-estrito.ts).
+// Página do ListarClientes filtrado pelo documento, para o lookup ESTRITO (_shared/lookup-cliente-estrito.ts).
 // throwOnTransient: transitório esgotado LANÇA; `null` só no fault "Não existem registros" (página vazia).
-function listarClientesPorDocumento(docClean: string, account: Account): ListarPagina {
+function listarClientesPorDocumento(docClean: string, account: ContaLeitura): ListarPagina {
   return (pagina, porPagina, prazo) =>
     callOmieVendasApi(
       "geral/clientes/",
@@ -980,7 +990,7 @@ async function buscarContextoComercialCliente(
   let codigoVendedor: number | null = null;
 
   if (!codigoCliente && opts.document) {
-    // Lookup ESTRITO (./lookup-cliente-estrito.ts, v1.29): o 1º registro do ListarClientes trazia o histórico de preço
+    // Lookup ESTRITO (_shared/lookup-cliente-estrito.ts, v1.29): o 1º registro do ListarClientes trazia o histórico de preço
     // e a parcela de OUTRO cliente quando o Omie devolvia outro documento ou dois códigos. Ambíguo/divergente/resposta
     // inválida e transitório LANÇAM (a action falha) — contexto de outro cliente é pior que nenhum; ausência provada
     // segue devolvendo o contexto vazio, como antes.
@@ -2140,7 +2150,7 @@ function aplicarProvaPositivaNoCache(
 }
 // MIRROR-END
 
-// Resolve os matches de cliente por documento na conta pelo lookup ESTRITO (./lookup-cliente-estrito.ts): pagina até
+// Resolve os matches de cliente por documento na conta pelo lookup ESTRITO (_shared/lookup-cliente-estrito.ts): pagina até
 // a página vazia e confere o documento de TODO registro. 0 ou 1 match; ambíguo/divergente/resposta inválida LANÇAM com a
 // marca (o chamador rejeita o envio); transitório segue lançando OMIE_TRANSIENT (ausência só como página vazia válida).
 async function buscarClienteVendasMatches(document: string, account: Account = "oben"): Promise<OmieMatch[]> {
@@ -2970,9 +2980,9 @@ Deno.serve(async (req) => {
         // Razão com o CPF mascarado (perfil de cliente MEI, lead do Radar em build velho) nunca vira cadastro no ERP:
         // vira a razão FISCAL do mesmo documento na outra conta, pelo lookup estrito, ou a action recusa
         // (_shared/razao-fiscal.ts). Fica DEPOIS do lookup desta conta: cliente que já existe resolve o código.
-        const outraConta: Account = account === "oben" ? "colacor" : "oben";
-        const razaoFiscal = await razaoFiscalParaCadastro(String(razao_social), [outraConta], async (conta) =>
-          (await buscarClienteEstrito(docClean, conta as Account, listarClientesPorDocumento(docClean, conta as Account)))?.razao_social ?? null);
+        // Fontes: a outra conta de vendas e a Colacor SC (Afiação), nesta ordem — todas pelo lookup estrito.
+        const razaoFiscal = await razaoFiscalParaCadastro(String(razao_social), fontesDaRazaoFiscalVendas(account), async (conta) =>
+          (await buscarClienteEstrito(docClean, conta, listarClientesPorDocumento(docClean, conta as ContaLeitura)))?.razao_social ?? null);
         const fantasia = typeof nome_fantasia === "string" && nome_fantasia.trim() !== "" && !temCpfMascarado(nome_fantasia)
           ? nome_fantasia : razaoFiscal;
         const clienteParams: Record<string, unknown> = {

@@ -3,7 +3,8 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { lookupDevolveuOMesmoDocumento } from "../_shared/lookup-documento.ts";
 import { razaoFiscalParaCadastro, razaoSemCpf, temCpfMascarado } from "../_shared/razao-fiscal.ts";
-import { lerComRetentativa, primeiroClientePorDocumento } from "./busca-documento.ts";
+import { paginaDeClientesPorDocumento, primeiroClientePorDocumento } from "./busca-documento.ts";
+import { buscarClienteEstrito } from "../_shared/lookup-cliente-estrito.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
 import { montarParcelasOS } from "./parcelas-os.ts";
@@ -1120,41 +1121,30 @@ Deno.serve(async (req) => {
         }
         const docClean = documentoParaCadastro(docCriar);
         try {
-          // First check if already exists
-          // EOF = não existe → segue para o IncluirCliente (antes o EOF caía no catch e o cliente novo
-          // nunca era cadastrado); resposta malformada ou outro erro → catch → success:false.
-          const existing = await primeiroClientePorDocumento<OmieClienteCadastro>(() =>
-            callOmieApi("geral/clientes/", "ListarClientes", { pagina: 1, registros_por_pagina: 1, clientesFiltro: { cnpj_cpf: docClean } })
+          // Lookup ESTRITO (_shared/lookup-cliente-estrito.ts, MÉDIO 2 do Codex no #3803 — o mesmo do criar_cliente
+          // da omie-vendas-sync): pagina até a página vazia e confere TODOS os registros. Só a ausência PROVADA (EOF
+          // do Omie ou 1ª página vazia e válida) segue para o IncluirCliente; registro com OUTRO documento =
+          // OMIE_LOOKUP_DIVERGENTE, 2+ códigos = OMIE_LOOKUP_AMBIGUO, resposta inválida ou contraditória
+          // ({registros:1, clientes_cadastro:[]}) = OMIE_LOOKUP_INDETERMINADO → catch → success:false.
+          const listarNa = (conta: ContaOmie) => paginaDeClientesPorDocumento((pagina, porPagina) =>
+            callOmieApi("geral/clientes/", "ListarClientes", { pagina, registros_por_pagina: porPagina, clientesFiltro: { cnpj_cpf: docClean } }, conta)
           );
+          const existing = await buscarClienteEstrito(docClean, "colacor_sc", listarNa("colacor_sc"));
           if (existing) {
-            // O Omie devolve o 1º registro da página: só é "já existe" se o documento dele for o PEDIDO —
-            // senão reaproveitaria o código de OUTRA pessoa (Codex 2026-10-21). Divergência cai no catch →
-            // success:false.
-            if (!lookupDevolveuOMesmoDocumento(docClean, existing.cnpj_cpf)) {
-              throw new Error("OMIE_LOOKUP_DIVERGENTE: o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade");
-            }
             result = {
               success: true,
-              codigo_cliente: existing.codigo_cliente_omie,
-              codigo_vendedor: existing.recomendacoes?.codigo_vendedor || existing.codigo_vendedor || null,
+              codigo_cliente: existing.codigo_cliente,
+              codigo_vendedor: existing.codigo_vendedor,
               created: false,
             };
           } else {
             // Razão com o CPF mascarado (o perfil do cliente MEI guarda assim) nunca vira cadastro no ERP: vira a
-            // razão FISCAL do mesmo documento na Oben ou na Colacor, com a mesma conferência de documento do lookup
-            // acima, ou a action recusa (_shared/razao-fiscal.ts). Fica DEPOIS do lookup: cliente que já existe na
-            // conta resolve o código mesmo com a razão mascarada.
-            const razaoFiscal = await razaoFiscalParaCadastro(String(razao_social), ["oben", "colacor"], async (conta) => {
-              // Retenta só o transitório: o criar_cliente da Colacor consulta a MESMA Oben ao mesmo tempo (lerComRetentativa).
-              const achado = await lerComRetentativa(() => primeiroClientePorDocumento<OmieClienteCadastro>(() =>
-                callOmieApi("geral/clientes/", "ListarClientes", { pagina: 1, registros_por_pagina: 1, clientesFiltro: { cnpj_cpf: docClean } }, conta as ContaOmie)
-              ));
-              if (!achado) return null;
-              if (!lookupDevolveuOMesmoDocumento(docClean, achado.cnpj_cpf)) {
-                throw new Error("OMIE_LOOKUP_DIVERGENTE: o ListarClientes da outra conta devolveu um cliente com OUTRO documento");
-              }
-              return achado.razao_social ?? null;
-            });
+            // razão FISCAL do mesmo documento na Oben ou na Colacor, pelo MESMO lookup estrito acima, ou a action recusa
+            // (_shared/razao-fiscal.ts). Fica DEPOIS do lookup: cliente que já existe na conta resolve o código mesmo com a
+            // razão mascarada. A recusa por concorrência é retentada na página (o criar_cliente da Colacor consulta a
+            // MESMA Oben ao mesmo tempo — paginaDeClientesPorDocumento).
+            const razaoFiscal = await razaoFiscalParaCadastro(String(razao_social), ["oben", "colacor"], async (conta) =>
+              (await buscarClienteEstrito(docClean, conta, listarNa(conta as ContaOmie)))?.razao_social ?? null);
             const fantasia = typeof nome_fantasia === "string" && nome_fantasia.trim() !== "" && !temCpfMascarado(nome_fantasia)
               ? nome_fantasia : razaoFiscal;
             // Create the client

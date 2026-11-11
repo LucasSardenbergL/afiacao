@@ -5,6 +5,7 @@
 // `criar_cliente_afiacao` sobre uma falsa ausência (Codex retroativo do #3311, 2026-10-27).
 // Agora só o EOF é ausência; transitório, permanente e indeterminado falham alto (500).
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import type { ListarPagina } from "../_shared/lookup-cliente-estrito.ts";
 import { atrasoRetentativaMs, classificarExcecao, classificarFaultstring } from "../_shared/omie-falha.ts";
 
 /** true só quando o erro é o EOF do Omie, a única falha que significa "não há cliente com esse documento". */
@@ -68,4 +69,28 @@ export async function lerComRetentativa<T>(
       await esperar(atrasoRetentativaMs(tentativa, erro instanceof Error ? erro.message : String(erro)));
     }
   }
+}
+
+/**
+ * Página do ListarClientes por documento no formato que o lookup ESTRITO (`_shared/lookup-cliente-estrito.ts`) consome,
+ * para o `criar_cliente_afiacao` (MÉDIO 2 do Codex no #3803): o lookup de antes lia só o 1º registro de UMA página e
+ * não via um 2º código para o mesmo documento nem a contradição `{registros:1, clientes_cadastro:[]}`.
+ *   · EOF do Omie ("Não existem registros") → `null`, o fim real que o lookup estrito espera;
+ *   · recusa por concorrência ("Já existe uma requisição desse método") → retentada (`lerComRetentativa`);
+ *   · qualquer outro erro → sobe: "não consegui ver" nunca é "não existe".
+ * O `callOmieApi` desta edge não recebe prazo externo: o orçamento de 40s do lookup é conferido depois de cada página.
+ */
+export function paginaDeClientesPorDocumento(
+  chamar: (pagina: number, porPagina: number) => Promise<unknown>,
+  opcoes: { esperar?: (ms: number) => Promise<void> } = {},
+): ListarPagina {
+  return (pagina, porPagina) =>
+    lerComRetentativa(async () => {
+      try {
+        return await chamar(pagina, porPagina);
+      } catch (erro) {
+        if (buscaPorDocumentoNaoAchou(erro)) return null;
+        throw erro;
+      }
+    }, opcoes);
 }

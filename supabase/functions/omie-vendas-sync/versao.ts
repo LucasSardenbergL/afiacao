@@ -95,6 +95,8 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  */
 // v1.35 (2026-11-11) — listar_clientes devolve a razão (e o fantasia) com o CPF de MEI mascarado; a razão fiscal vai
 //   à parte em `razao_fiscal`, só para o payload do autocadastro. buscar_cliente e o eco do criar_cliente, mascarados.
+//   O criar_cliente com a razão mascarada busca a razão fiscal também na Colacor SC (Afiação), depois da outra conta
+//   de vendas, pelo mesmo lookup estrito (MÉDIO 1 do Codex no #3803); o lookup mudou para `_shared/`.
 export const VERSAO = "v1.35-razao-exibida-sem-cpf";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */

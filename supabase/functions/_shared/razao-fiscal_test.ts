@@ -1,7 +1,7 @@
 // Sem rede (`--no-remote` do test:edges): assert inline.
 // As amostras de `razaoSemCpf` são as MESMAS da prova SQL (db/test-clientes-mei-cpf-mascarado.sh, M2): a máscara em TS
 // tem de ser o espelho da `private.radar_razao_mascarada`.
-import { fantasiaParaExibicao, razaoFiscalParaCadastro, razaoParaExibicao, razaoSemCpf } from "./razao-fiscal.ts";
+import { fantasiaParaExibicao, fontesDaRazaoFiscalVendas, razaoFiscalParaCadastro, razaoParaExibicao, razaoSemCpf } from "./razao-fiscal.ts";
 
 function igual(obtido: unknown, esperado: unknown) {
   if (obtido !== esperado) throw new Error(`esperado ${JSON.stringify(esperado)}, veio ${JSON.stringify(obtido)}`);
@@ -100,4 +100,19 @@ Deno.test("fantasiaParaExibicao: telefone de 11 dígitos sai mascarado na tela e
   igual(r.nome_fantasia, "DISK TINTAS ***999988**");
   igual(r.fantasia_fiscal, "DISK TINTAS 31999998888");
   igual("fantasia_fiscal" in fantasiaParaExibicao("DISK TINTAS"), false);
+});
+
+Deno.test("fontesDaRazaoFiscalVendas: a outra conta de vendas e depois a Colacor SC, nunca a que cadastra", () => {
+  igual(fontesDaRazaoFiscalVendas("oben").join(","), "colacor,colacor_sc");
+  igual(fontesDaRazaoFiscalVendas("colacor").join(","), "oben,colacor_sc");
+});
+
+Deno.test("MEI que só a Colacor SC tem: as duas contas de vendas provam ausência e a razão fiscal vem da SC", async () => {
+  const consultadas: string[] = [];
+  const r = await razaoFiscalParaCadastro("PEDRO ALVES COSTA ***456789**", fontesDaRazaoFiscalVendas("oben"), (c) => {
+    consultadas.push(c);
+    return Promise.resolve(c === "colacor_sc" ? "PEDRO ALVES COSTA 12345678901" : null);
+  });
+  igual(r, "PEDRO ALVES COSTA 12345678901");
+  igual(consultadas.join(","), "colacor,colacor_sc");
 });
