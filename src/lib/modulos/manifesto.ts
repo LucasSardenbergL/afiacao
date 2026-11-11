@@ -448,6 +448,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/bundle-universo-pedidos.test.tsx",
       "src/hooks/__tests__/bundle-golden-universo-pedidos.test.tsx",
       "src/hooks/__tests__/scoring-faixa-margem-paginacao.test.tsx",
+      "src/hooks/__tests__/scoring-profiles-em-lotes.test.tsx",
       "src/hooks/__tests__/scoring-golden-universo-pedidos.test.tsx",
       "src/hooks/__tests__/cluster-margin-cobertura.test.tsx",
       "src/hooks/__tests__/cluster-margin-paginacao.test.tsx",

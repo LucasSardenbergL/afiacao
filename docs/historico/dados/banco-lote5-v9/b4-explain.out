@@ -1,0 +1,67 @@
+## A score (controle): preset score, lote vigente
+Limit  (cost=0.42..15.88 rows=51 width=808)
+  ->  Index Scan using idx_radar_lista_score on radar_empresas e  (cost=0.42..130745.31 rows=431482 width=808)
+        Filter: ((ultimo_lote = ANY ('{2026-10,NULL}'::text[])) AND ((ultimo_lote = '2026-10'::text) OR (lote_anterior = '2026-10'::text)))
+## B estabelecidas: capital_social DESC NULLS LAST + data_abertura <= hoje-5a, lote vigente
+Limit  (cost=99592.06..99597.93 rows=51 width=808)
+  ->  Gather Merge  (cost=99592.06..113992.25 rows=125219 width=808)
+        Workers Planned: 1
+        ->  Sort  (cost=98592.05..98905.10 rows=125219 width=808)
+              Sort Key: capital_social DESC NULLS LAST, cnpj
+              ->  Parallel Index Scan using idx_radar_empresas_fila on radar_empresas e  (cost=0.42..94414.48 rows=125219 width=808)
+                    Index Cond: ((ultimo_lote = ANY ('{2026-10,NULL}'::text[])) AND (data_abertura <= '2021-11-11'::date))
+                    Filter: ((NOT ja_cliente) AND (prospeccao_status <> 'descartado'::text))
+## C novas: data_abertura DESC NULLS LAST, lote vigente
+Limit  (cost=110320.86..110326.72 rows=51 width=808)
+  ->  Gather Merge  (cost=110320.86..139509.35 rows=253813 width=808)
+        Workers Planned: 1
+        ->  Sort  (cost=109320.85..109955.38 rows=253813 width=808)
+              Sort Key: data_abertura DESC NULLS LAST, cnpj
+              ->  Parallel Seq Scan on radar_empresas e  (cost=0.00..100853.11 rows=253813 width=808)
+                    Filter: ((NOT ja_cliente) AND (prospeccao_status <> 'descartado'::text) AND (ultimo_lote = ANY ('{2026-10,NULL}'::text[])) AND ((ultimo_lote = '2026-10'::text) OR (lote_anterior = '2026-10'::text)))
+## D estabelecidas sem recorte de lote (p_ultimo_lote NULL, v_pub NULL)
+Limit  (cost=102854.74..102860.60 rows=51 width=808)
+  ->  Gather Merge  (cost=102854.74..121319.83 rows=160566 width=808)
+        Workers Planned: 1
+        ->  Sort  (cost=101854.73..102256.14 rows=160566 width=808)
+              Sort Key: capital_social DESC NULLS LAST, cnpj
+              ->  Parallel Index Scan using idx_radar_empresas_fila on radar_empresas e  (cost=0.42..96497.91 rows=160566 width=808)
+                    Index Cond: (data_abertura <= '2021-11-11'::date)
+                    Filter: ((NOT ja_cliente) AND (prospeccao_status <> 'descartado'::text))
+## E novas sem recorte de lote
+Limit  (cost=109957.76..109963.63 rows=51 width=808)
+  ->  Gather Merge  (cost=109957.76..147385.32 rows=325457 width=808)
+        Workers Planned: 1
+        ->  Sort  (cost=108957.75..109771.40 rows=325457 width=808)
+              Sort Key: data_abertura DESC NULLS LAST, cnpj
+              ->  Parallel Seq Scan on radar_empresas e  (cost=0.00..98099.82 rows=325457 width=808)
+                    Filter: ((NOT ja_cliente) AND (prospeccao_status <> 'descartado'::text))
+## F novas sem lote, com uf=SP
+Limit  (cost=89962.00..89967.86 rows=51 width=808)
+  ->  Gather Merge  (cost=89962.00..98615.29 rows=75246 width=808)
+        Workers Planned: 1
+        ->  Sort  (cost=88961.99..89150.10 rows=75246 width=808)
+              Sort Key: data_abertura DESC NULLS LAST, cnpj
+              ->  Parallel Bitmap Heap Scan on radar_empresas e  (cost=5846.01..86451.62 rows=75246 width=808)
+                    Recheck Cond: ((uf = 'SP'::text) AND (NOT ja_cliente) AND (prospeccao_status <> 'descartado'::text))
+                    ->  BitmapAnd  (cost=5846.01..5846.01 rows=127918 width=0)
+                          ->  Bitmap Index Scan on idx_radar_empresas_local  (cost=0.00..1502.78 rows=144287 width=0)
+                                Index Cond: (uf = 'SP'::text)
+                          ->  Bitmap Index Scan on idx_radar_muni  (cost=0.00..4279.02 rows=553277 width=0)
+## G CONTRAFACTUAL: novas sem lote, ORDEM DO ÍNDICE (DESC = NULLS FIRST), prova se o índice casaria
+Limit  (cost=0.42..11.41 rows=51 width=808)
+  ->  Index Scan using idx_radar_lista_novas on radar_empresas e  (cost=0.42..119218.15 rows=553277 width=808)
+## H CONTRAFACTUAL: estabelecidas sem lote, ORDEM DO ÍNDICE
+Limit  (cost=0.42..24.44 rows=51 width=808)
+  ->  Index Scan using idx_radar_lista_estab on radar_empresas e  (cost=0.42..128559.71 rows=272962 width=808)
+        Filter: (data_abertura <= '2021-11-11'::date)
+## I página funda (offset 1000) estabelecidas sem lote
+Limit  (cost=106474.19..106480.05 rows=51 width=808)
+  ->  Gather Merge  (cost=106359.19..124824.28 rows=160566 width=808)
+        Workers Planned: 1
+        ->  Sort  (cost=105359.18..105760.59 rows=160566 width=808)
+              Sort Key: capital_social DESC NULLS LAST, cnpj
+              ->  Parallel Index Scan using idx_radar_empresas_fila on radar_empresas e  (cost=0.42..96497.91 rows=160566 width=808)
+                    Index Cond: (data_abertura <= '2021-11-11'::date)
+                    Filter: ((NOT ja_cliente) AND (prospeccao_status <> 'descartado'::text))
+#FIM-OK

@@ -1,0 +1,9 @@
+# Leituras da PRÓPRIA sessão do lote 5 que entram no delta T0->T1 e são descontadas (delta.py --descontar).
+# Erro meu: duas consultas de diagnóstico com count(*) ... GROUP BY em public.radar_empresas (1,4 GB, 93.511 páginas)
+# leram o heap inteiro, depois do T0 (17:20:24 UTC), entre 17:21 e 17:24 UTC:
+#   select ultimo_lote, count(*) from radar_empresas group by 1 ...
+#   select prospeccao_status, ja_cliente, count(*) from radar_empresas group by 1,2 ...
+# Medido no delta de 11 min (T0 -> teste das 17:31:40): radar_empresas heap_blks_read +187.038, seq_scan +4 (2 delas minhas).
+public.radar_empresas=187022
+# Fora disso: o SELECT de cron.job_run_details e as 2 amostras de seq scan (~5,7 mil blocos cada, quase tudo hit) são desprezíveis.
+# NÃO descontável: leituras de sessões-irmãs do mesmo plano (psql-ro) e dos crons. Entram no delta e estão no número.

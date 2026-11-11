@@ -1,0 +1,39 @@
+## funções que citam job_run_details (prosrc vivo)
+extensions.grant_pg_cron_access() | 1194 | 3a3917aad6ddd66182bf45b7490c3029 | supabase_admin
+public._data_health_compute() | 133797 | 1262b63277d50a475949800d1cde15cd | postgres
+public.analytics_outbox_claim(p_limite integer) | 1758 | 8da9e39f2e3cb85b52b1e6b954a80266 | postgres
+public.get_carteira_saude() | 2925 | 06739db517fc7efaa19018605b66fe69 | postgres
+public.radar_avisar_vendedores(p_agora timestamp with time zone) | 18369 | 8d978dcdd8131798070d9cfb3674b41d | postgres
+public.tint_promocao_watchdog() | 3364 | 5e98370b7571a775875fa1f0bb418d26 | postgres
+public.tint_watchdog_corante_check() | 13270 | 871204cf566111fb170c4b385ce10f87 | postgres
+public.tint_watchdog_corante_vigia_check() | 2070 | cf128aad0db39281833350bc03872859 | postgres
+## views/matviews que citam job_run_details
+public.v_cron_jobs_falhas | v | postgres
+public.v_cron_jobs_status | v | postgres
+## views v_cron_* (todas) e o que leem
+public.v_cron_jobs_falhas | t
+public.v_cron_jobs_status | t
+## dependências pg_depend/pg_rewrite de views sobre cron.job_run_details
+public.v_cron_jobs_falhas
+public.v_cron_jobs_status
+## schema cron / tabela: dono, ACL, índices, tamanho
+schema | cron | supabase_admin | {supabase_admin=UC/supabase_admin,postgres=U*/supabase_admin,claude_ro=U/postgres}
+tabela | job_run_details | supabase_admin | {supabase_admin=arwdDxtm/supabase_admin,=rd/supabase_admin,postgres=a*r*w*d*D*x*t*m*/supabase_admin,claude_ro=r/postgres} | 5723 | 117928 | 49 MB | 45 MB
+indice | cron.job_run_details_pkey | CREATE UNIQUE INDEX job_run_details_pkey ON cron.job_run_details USING btree (runid)
+privilégios claude_ro | t | CREATE no schema cron: postgres= | f | claude_ro= | f
+postgres é membro de quem é dono? | f | t
+## contadores e cobertura de dados
+stat | 1627 | 174232657 | 2 | 117928 | 0 | 0 | 138671 | 2026-11-11 04:01:03.784141+00 | 6 | 
+statio | 758744 | 6695904 | 12 | 3
+janela | 2026-11-04 04:00:00.711061+00 | 2026-11-11 17:26:08.905438+00 | 127850
+por job | 245 | 43479 | 2026-11-04 04:00:14.498203+00
+por job | 187 | 43283 | 2026-11-04 04:00:06.205808+00
+por job | 256 | 10887 | 2026-11-04 04:00:01.017079+00
+por job | 274 | 5868 | 2026-11-07 15:39:00.109666+00
+por job | 49 | 2178 | 2026-11-04 04:00:01.130113+00
+por job | 181 | 2178 | 2026-11-04 04:00:01.299024+00
+por job | 166 | 2178 | 2026-11-04 04:00:00.711061+00
+por job | 140 | 1815 | 2026-11-04 04:00:00.94519+00
+## retenção
+job | 137 | purge-cron-job-run-details | 0 4 * * * | t |  DELETE FROM cron.job_run_details WHERE start_time < now() - interval '7 days' 
+#FIM-OK
