@@ -256,10 +256,14 @@ jobs:
       matrix:
         # 2 shards do vitest (E10 do plano v6, 2026-11-05). O `pool: forks` e o resto do
         # vitest.config.ts ficam iguais; só a lista de arquivos é dividida. O `validate` lê
-        # `needs.testes.result`, que a matriz agrega (success só se os 2 shards passarem). Medido: job
+        # `needs.testes.result`, que a matriz agrega (success só se TODOS os shards passarem). Medido: job
         # 7,2 min (p50, 120 runs; mín. 4,8) → 4,4 / 4,28 (575 + 575 arquivos) por +1% de runner. Tira
         # o `testes` do caminho crítico nos runs sem provas SQL (docs/historico/ci-lote6-v6-lpt-remedido-e-shard-vitest.md).
-        shard: [1, 2]
+        # 2026-11-11: 2 → 4 shards (mesmo nome de matriz → `validate.needs` intacto). Medido antes:
+        # vitest 252–282 s por shard + ~16 s de preâmbulo, colado no piso do `falsificacao (3)`
+        # (docs/historico/ci-vitest-4-shards.md). A prova estática de 1..N ↔ steps é
+        # scripts/vitest-shards.test.ts.
+        shard: [1, 2, 3, 4]
 
     steps:
       # Preâmbulo comum aos jobs de trabalho. O PORQUÊ de cada escolha (`fetch-depth: 0`
@@ -280,12 +284,18 @@ jobs:
       # Um step ESTÁTICO por shard (e não `--shard=${{ matrix.shard }}`): o `exclusividade` assina o
       # argv literal de cada gate bloqueante e recusa interpolação — o mesmo desenho do job
       # `falsificacao` com `test:falsificacao:1..3`.
-      - name: Tests (shard 1/2)
+      - name: Tests (shard 1/4)
         if: matrix.shard == 1
         run: bun run test:shard:1
-      - name: Tests (shard 2/2)
+      - name: Tests (shard 2/4)
         if: matrix.shard == 2
         run: bun run test:shard:2
+      - name: Tests (shard 3/4)
+        if: matrix.shard == 3
+        run: bun run test:shard:3
+      - name: Tests (shard 4/4)
+        if: matrix.shard == 4
+        run: bun run test:shard:4
 
       # O vitest procura `@vitest-environment` com REGEX NO ARQUIVO INTEIRO e aceita o alias
       # `jest` (coverage.DfSpMS-b.js:2403). Num repo de gates textuais, um teste que CITE o

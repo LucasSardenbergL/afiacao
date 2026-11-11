@@ -106,12 +106,22 @@
     {
       "gate": "test:shard:1",
       "desde": "2026-11-05",
-      "motivo": "shard 1/2 do vitest (`vitest run --shard=1/2`) — o mesmo `bun run test` medido; a uniao dos 2 shards e o vitest que garante. Experimento E10 do plano v6"
+      "motivo": "shard 1/4 do vitest (`vitest run --shard=1/4`) — o mesmo `bun run test` medido; a uniao dos 4 shards e o vitest que garante. Experimento E10 do plano v6 (2 -> 4 shards em 2026-11-11)"
     },
     {
       "gate": "test:shard:2",
       "desde": "2026-11-05",
-      "motivo": "shard 2/2 do vitest (`vitest run --shard=2/2`) — o mesmo `bun run test` medido; a uniao dos 2 shards e o vitest que garante. Experimento E10 do plano v6"
+      "motivo": "shard 2/4 do vitest (`vitest run --shard=2/4`) — o mesmo `bun run test` medido; a uniao dos 4 shards e o vitest que garante. Experimento E10 do plano v6 (2 -> 4 shards em 2026-11-11)"
+    },
+    {
+      "gate": "test:shard:3",
+      "desde": "2026-11-11",
+      "motivo": "shard 3/4 do vitest (`vitest run --shard=3/4`) — o mesmo `bun run test` medido; a uniao dos 4 shards e o vitest que garante. Experimento E10 do plano v6 (2 -> 4 shards em 2026-11-11)"
+    },
+    {
+      "gate": "test:shard:4",
+      "desde": "2026-11-11",
+      "motivo": "shard 4/4 do vitest (`vitest run --shard=4/4`) — o mesmo `bun run test` medido; a uniao dos 4 shards e o vitest que garante. Experimento E10 do plano v6 (2 -> 4 shards em 2026-11-11)"
     },
     {
       "gate": "test:falsificacao:1",
