@@ -12,6 +12,12 @@ import { toast } from "sonner";
 import { track } from "@/lib/analytics";
 import { mensagemDeErro } from "@/lib/erro-mensagem";
 import {
+  desatualizado,
+  estadoDeLeitura,
+  naoConsegui,
+  type EstadoSemLeitura,
+} from "@/lib/leitura/estado-de-leitura";
+import {
   type SkuParam,
   type RowWithPrice,
   type StatusFilterValue,
@@ -41,7 +47,7 @@ export function useRevisaoParametros() {
   const [page, setPage] = useState(0);
   const [openSku, setOpenSku] = useState<RowWithPrice | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const revisaoQuery = useQuery({
     queryKey: ["sku_parametros_revisao", empresa, classes, statusFilter, debouncedSearch, page],
     // Mantém a página anterior visível enquanto a busca nova carrega — sem
     // isso a tabela pisca pra vazio a cada pausa de digitação (troca de key).
@@ -112,7 +118,7 @@ export function useRevisaoParametros() {
           read_only: true,
         }));
 
-        return { rows: priced, total: count ?? 0 };
+        return { rows: priced, total: count ?? 0, precosIndisponiveis: false };
       }
 
       // Cold-start: candidatos a PRIMEIRA COMPRA (venda recorrente, nunca comprados). Lê de uma VIEW
@@ -187,7 +193,7 @@ export function useRevisaoParametros() {
           ja_habilitado: v.ja_habilitado ?? null,
         }));
 
-        return { rows: priced, total: count ?? 0 };
+        return { rows: priced, total: count ?? 0, precosIndisponiveis: false };
       }
 
       // Fall-through: branches "Todos" (default), "Descontinuados" e "Fora do motor" — mesma tabela
@@ -195,7 +201,7 @@ export function useRevisaoParametros() {
       // "Fora do motor": o UNIVERSO vem da v_reposicao_sku_fora_do_motor — espelho do WHERE do motor com o
       // flag invertido, que sabe o que esta tela não sabe filtrar (ativo no Omie, família, fracionado…).
       const foraDoMotor = statusFilter === "fora_do_motor" ? await buscarForaDoMotor(empresa) : null;
-      if (foraDoMotor && foraDoMotor.size === 0) return { rows: [], total: 0 };
+      if (foraDoMotor && foraDoMotor.size === 0) return { rows: [], total: 0, precosIndisponiveis: false };
 
       let q = supabase
         .from("sku_parametros")
@@ -246,9 +252,13 @@ export function useRevisaoParametros() {
         fonte_preco: null,
       }));
 
+      // Plano v8, C14: o `error` desta view era descartado e os preços/status degradavam para
+      // nulo calados — "sem preço" e "não consegui ler o preço" ficavam iguais. As linhas base
+      // continuam (são de outra leitura, que deu certo); a falha sobe para a tela avisar.
+      let precosIndisponiveis = false;
       if (baseRows.length > 0) {
         const codes = baseRows.map((r) => r.sku_codigo_omie);
-        const { data: vrows } = await supabase
+        const { data: vrows, error: precosErro } = await supabase
           .from("v_sku_parametros_sugeridos")
           .select("sku_codigo_omie, preco_compra_real, preco_venda_medio, preco_item_eoq, fonte_preco, fornecedor_habilitado, status_sugestao")
           .eq("empresa", empresa)
@@ -258,6 +268,7 @@ export function useRevisaoParametros() {
           SkuSugeridoView,
           "sku_codigo_omie" | "preco_compra_real" | "preco_venda_medio" | "preco_item_eoq" | "fonte_preco" | "fornecedor_habilitado" | "status_sugestao"
         >;
+        if (precosErro) precosIndisponiveis = true;
         const map = new Map<number, SkuPriceRow>();
         ((vrows ?? []) as SkuPriceRow[]).forEach((row) => map.set(Number(row.sku_codigo_omie), row));
         priced = baseRows.map((r) => {
@@ -282,7 +293,7 @@ export function useRevisaoParametros() {
         }));
       }
 
-      return { rows: priced, total: count ?? 0 };
+      return { rows: priced, total: count ?? 0, precosIndisponiveis };
     },
   });
 
@@ -303,6 +314,19 @@ export function useRevisaoParametros() {
     }
   };
 
+  const data = revisaoQuery.data;
+  const isLoading = revisaoQuery.isLoading;
+  // Falha da leitura principal NÃO é "Nenhum SKU encontrado" (plano v8, C14). Com a página anterior
+  // em mãos (keepPreviousData), ela fica e ganha o aviso; sem nada, a tabela troca o vazio pelo aviso.
+  const leituraSemLeitura: EstadoSemLeitura | null = (() => {
+    const temDado = data !== undefined;
+    const velho = desatualizado(revisaoQuery, temDado);
+    if (velho) return velho;
+    if (temDado) return null;
+    const estado = estadoDeLeitura(revisaoQuery);
+    return naoConsegui(estado) ? estado : null;
+  })();
+  const precosIndisponiveis = data?.precosIndisponiveis ?? false;
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -409,6 +433,8 @@ export function useRevisaoParametros() {
     openSku,
     setOpenSku,
     isLoading,
+    leituraSemLeitura,
+    precosIndisponiveis,
     rows,
     total,
     page,

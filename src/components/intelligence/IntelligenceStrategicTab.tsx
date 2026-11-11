@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import {
   DollarSign, TrendingUp, TrendingDown, Target, Eye, Percent,
-  BarChart3, PieChart, ShieldCheck, RefreshCw
+  PieChart, ShieldCheck, RefreshCw
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { mediaMargensConhecidas, coberturaMargem, legendaCobertura } from '@/lib/scoring/margin';
@@ -122,15 +122,10 @@ export function IntelligenceStrategicTab() {
   const auditComCusto = agregadoAudit?.comMargemReal ?? 0;
   const auditTotal = agregadoAudit?.clientes ?? 0;
 
-  const avgSpend = allScores?.length
-    ? allScores.reduce((a, c) => a + Number(c.avg_monthly_spend_180d || 0), 0) / allScores.length
-    : 0;
-  const ltvEstimate = avgSpend * 12 * 3;
-
-  const totalClients = allScores?.length || 1;
-  const avgCostPerHour = 50;
-  const totalCallHours = allScores?.reduce((a, c) => a + Number(c.avg_repurchase_interval || 0) * 0.1, 0) || 0;
-  const cacEstimate = totalClients > 0 ? (totalCallHours * avgCostPerHour) / totalClients : 0;
+  // Plano v8, C15: não há "LTV Projetado" nem "CAC Estimado" aqui. O CAC era Σ(intervalo de
+  // recompra × 0,1 h) × R$ 50/h — constantes inventadas, sem nenhum dado de aquisição. O LTV era
+  // gasto médio × 36 com `Number(x || 0)` puxando a média para baixo onde o gasto faltava. Nenhum
+  // dos dois é medido: um card em R$ afirmaria um número que não existe. Volta quando houver fonte.
 
   const sortedByRevenue = [...(allScores || [])].sort((a, b) => Number(b.revenue_potential || 0) - Number(a.revenue_potential || 0));
   const top20Count = Math.ceil(sortedByRevenue.length * 0.2);
@@ -286,10 +281,8 @@ export function IntelligenceStrategicTab() {
         )}
       </div>
 
-      {/* Strategic KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard title="LTV Projetado (3a)" value={ou(`R$ ${ltvEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={BarChart3} subtitle="Estimativa média" />
-        <KpiCard title="CAC Estimado" value={ou(`R$ ${cacEstimate.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`)} icon={DollarSign} subtitle="Custo aquisição cliente" />
+      {/* Strategic KPIs — sem LTV/CAC (plano v8, C15: nenhum dos dois é medido) */}
+      <div className="grid grid-cols-2 gap-3">
         <KpiCard title="Concentração Top 20%" value={scoresIndisponivel || concentracaoIndisponivel ? '—' : `${concentrationPct.toFixed(1)}%`} icon={PieChart} subtitle={scoresIndisponivel ? 'base indisponível' : concentracaoIndisponivel ? 'potencial não medido' : 'da receita total'} />
         <KpiCard
           title="Margem Bruta Média"

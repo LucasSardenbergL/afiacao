@@ -9,7 +9,7 @@ export function DeltasStrip() {
   const navigate = useNavigate();
   const { persona } = useDashboardPersonaContext();
   const { lastVisitIso, minutesSinceLastVisit } = useLastVisit();
-  const { deltas, isLoading, isEmpty } = useBriefDeltas(persona);
+  const { deltas, falhas, isLoading, isEmpty } = useBriefDeltas(persona);
 
   // Primeiro acesso
   if (!lastVisitIso) {
@@ -30,6 +30,22 @@ export function DeltasStrip() {
     return (
       <div className="mx-auto max-w-3xl text-center text-xs text-muted-foreground py-2 font-mono opacity-60">
         Calculando deltas…
+      </div>
+    );
+  }
+
+  // Contagem que falhou NÃO é "nada novo" (plano v8, C13): com falha, a faixa diz o que não viu.
+  const avisoFalha =
+    falhas.length > 0 ? (
+      <span data-testid="deltas-falha" className="text-status-warning">
+        Não foi possível verificar {falhas.join(', ')}.
+      </span>
+    ) : null;
+
+  if (isEmpty && avisoFalha) {
+    return (
+      <div role="status" className="mx-auto max-w-3xl text-center text-xs py-2">
+        {avisoFalha}
       </div>
     );
   }
@@ -71,6 +87,12 @@ export function DeltasStrip() {
           </span>
         );
       })}
+      {avisoFalha && (
+        <>
+          <span className="text-muted-foreground mx-2">•</span>
+          {avisoFalha}
+        </>
+      )}
     </div>
   );
 }

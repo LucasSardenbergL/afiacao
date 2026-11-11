@@ -11,6 +11,12 @@ import { alertaDaLinha } from './borda';
 import { SELECT_COLUMNS } from './format';
 import type { AlertaRow } from './types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import {
+  desatualizado,
+  estadoDeLeitura,
+  naoConsegui,
+  type EstadoSemLeitura,
+} from '@/lib/leitura/estado-de-leitura';
 
 export function useNotificacoes() {
   const qc = useQueryClient();
@@ -55,7 +61,7 @@ export function useNotificacoes() {
   });
 
   // Estatísticas (30 dias completos para gráfico)
-  const { data: stats30, isLoading: loadingStats } = useQuery({
+  const statsQuery = useQuery({
     queryKey: ['notificacoes', 'stats30'],
     queryFn: async () => {
       const since = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
@@ -111,32 +117,52 @@ export function useNotificacoes() {
     });
   }, [pendentes, filtroSev, filtroEmpresa, filtroTipo]);
 
+  const stats30 = statsQuery.data;
+  const loadingStats = statsQuery.isLoading;
+  // Plano v8, C14: sem a leitura, os KPIs NÃO são zero — `stats30 ?? []` fazia "não consegui ler"
+  // virar "0 alertas, 0% de sucesso, 0 esgotados". Sem dado → null ("—") + aviso; com dado velho
+  // em cache → os números ficam, com o aviso de que a leitura atual falhou.
+  const statsSemLeitura: EstadoSemLeitura | null = (() => {
+    const temDado = stats30 !== undefined;
+    const velho = desatualizado(statsQuery, temDado);
+    if (velho) return velho;
+    if (temDado) return null;
+    const estado = estadoDeLeitura(statsQuery);
+    return naoConsegui(estado) ? estado : null;
+  })();
+
   // Stats
   const total7d = useMemo(() => {
+    if (!stats30) return null;
     const cutoff = Date.now() - 7 * 24 * 3600_000;
-    return (stats30 ?? []).filter((a) => new Date(a.criado_em).getTime() >= cutoff).length;
+    return stats30.filter((a) => new Date(a.criado_em).getTime() >= cutoff).length;
   }, [stats30]);
 
+  // Sem notificação concluída no período não há taxa: 0% afirmaria "tudo falhou".
   const taxaSucesso = useMemo(() => {
-    const finais = (stats30 ?? []).filter((a) => a.status === 'notificado' || a.status === 'falha_notificacao');
-    if (finais.length === 0) return 0;
+    if (!stats30) return null;
+    const finais = stats30.filter((a) => a.status === 'notificado' || a.status === 'falha_notificacao');
+    if (finais.length === 0) return null;
     const ok = finais.filter((a) => a.status === 'notificado').length;
     return Math.round((ok / finais.length) * 100);
   }, [stats30]);
 
   const esgotados = useMemo(() => {
-    return (stats30 ?? []).filter((a) => a.status === 'falha_notificacao' && (a.tentativas ?? 0) >= 3).length;
+    if (!stats30) return null;
+    return stats30.filter((a) => a.status === 'falha_notificacao' && (a.tentativas ?? 0) >= 3).length;
   }, [stats30]);
 
   // Stack chart data por dia
   const chartData = useMemo(() => {
+    // Sem leitura, 30 barras zeradas seriam um gráfico fabricado: vazio + o aviso da aba.
+    if (!stats30) return [];
     const buckets: Record<string, { dia: string; notificado: number; pendente: number; falha: number }> = {};
     for (let i = 29; i >= 0; i--) {
       const d = new Date(Date.now() - i * 24 * 3600_000);
       const key = d.toISOString().slice(0, 10);
       buckets[key] = { dia: key.slice(5), notificado: 0, pendente: 0, falha: 0 };
     }
-    for (const a of stats30 ?? []) {
+    for (const a of stats30) {
       const key = a.criado_em.slice(0, 10);
       const b = buckets[key];
       if (!b) continue;
@@ -161,6 +187,7 @@ export function useNotificacoes() {
     historico,
     loadingHist,
     loadingStats,
+    statsSemLeitura,
     dispatchPending: dispatchMut.isPending,
     dispatch: () => dispatchMut.mutate(),
     empresasOpts,

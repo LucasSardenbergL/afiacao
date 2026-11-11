@@ -208,7 +208,7 @@ describe('IntelligenceManagerialTab — falha de carga não vira "0 clientes"', 
   });
 });
 
-describe('IntelligenceStrategicTab — falha de carga não vira LTV/CAC/Concentração zerados', () => {
+describe('IntelligenceStrategicTab — falha de carga não vira Concentração zerada', () => {
   it('anuncia indisponibilidade dos KPIs derivados da base de scores', async () => {
     renderWithClient(<IntelligenceStrategicTab />);
 
@@ -216,12 +216,12 @@ describe('IntelligenceStrategicTab — falha de carga não vira LTV/CAC/Concentr
     expect(aviso.textContent).toMatch(/indispon/i);
   });
 
-  it('LTV, CAC e Concentração mostram "—", não R$ 0 / 0.0%', async () => {
+  it('Concentração mostra "—", não 0.0%', async () => {
     renderWithClient(<IntelligenceStrategicTab />);
     await screen.findByRole('alert');
 
-    // Estes três derivam SÓ de `allScores`. Com a query em erro, o valor honesto é "—".
-    for (const titulo of ['LTV Projetado (3a)', 'CAC Estimado', 'Concentração Top 20%']) {
+    // Deriva SÓ de `allScores`. Com a query em erro, o valor honesto é "—".
+    for (const titulo of ['Concentração Top 20%']) {
       const el = screen.queryByText(titulo);
       expect(el, `KPI "${titulo}" sumiu da tela`).toBeTruthy();
       const card = el!.closest('div')?.parentElement;
@@ -278,7 +278,7 @@ describe('IntelligenceStrategicTab — base de scores em voo não vira KPI zerad
       expect(qc.getQueryState(['intel-margin-audit'])?.status, 'a auditoria nem resolveu').toBe('success');
     });
 
-    expect(screen.queryByText('LTV Projetado (3a)'), 'KPI de carteira renderizou sem a base').toBeNull();
+    expect(screen.queryByText('Concentração Top 20%'), 'KPI de carteira renderizou sem a base').toBeNull();
     expect(screen.queryByText('Market Share Est.'), 'KPI de carteira renderizou sem a base').toBeNull();
     expect(
       skeletons(container).length,
@@ -293,8 +293,21 @@ describe('IntelligenceStrategicTab — base de scores em voo não vira KPI zerad
 
     renderWithClient(<IntelligenceStrategicTab />);
 
-    expect(await screen.findByText('LTV Projetado (3a)')).toBeTruthy();
+    expect(await screen.findByText('Concentração Top 20%')).toBeTruthy();
     expect(await screen.findByText('Market Share Est.')).toBeTruthy();
+  });
+
+  it('LTV e CAC não aparecem: nenhum dos dois é medido (plano v8, C15)', async () => {
+    // Mesmo render do DETECTOR acima: a base resolvida mostra os KPIs de carteira, e mesmo assim
+    // não há card em R$ para LTV/CAC — o CAC vinha de constantes (R$ 50/h × 0,1 h), o LTV de
+    // gasto médio × 36 com o gasto ausente contado como 0.
+    scoresPendentes = false;
+
+    renderWithClient(<IntelligenceStrategicTab />);
+
+    expect(await screen.findByText('Concentração Top 20%')).toBeTruthy();
+    expect(screen.queryByText(/LTV/)).toBeNull();
+    expect(screen.queryByText(/CAC/)).toBeNull();
   });
 });
 

@@ -51,3 +51,19 @@ export function motivoDoBadgeIndisponivel(
       : `Não foi possível contar ${oque}`;
   return ultimo == null ? base : `${base} (última leitura: ${ultimo})`;
 }
+
+/**
+ * A face reduzida aos DOIS primitivos que o item da nav consome (`badge` e `badgeIndisponivel`).
+ * Primitivos de propósito: o objeto da face é novo a cada render e invalidaria o `useMemo` dos
+ * itens da nav (plano v4, lote 10 — C8). No máximo um dos dois vem preenchido.
+ */
+export function primitivosDoBadge(
+  face: FaceDoBadge,
+  oque: string,
+): { valor: number | undefined; indisponivel: string | undefined } {
+  if (face.tipo === 'numero') return { valor: face.valor, indisponivel: undefined };
+  if (face.tipo === 'indisponivel') {
+    return { valor: undefined, indisponivel: motivoDoBadgeIndisponivel(oque, face.estado, face.ultimo) };
+  }
+  return { valor: undefined, indisponivel: undefined };
+}

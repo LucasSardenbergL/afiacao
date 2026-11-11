@@ -30,6 +30,8 @@ interface RevisaoTableProps {
   reativando?: boolean;
   onDescontinuar?: (sku: number) => void;
   descontinuando?: boolean;
+  /** A leitura falhou sem dado em mãos (plano v8, C14): o vazio NÃO é "nenhum SKU". */
+  semLeitura?: boolean;
 }
 
 export function RevisaoTable({
@@ -38,6 +40,7 @@ export function RevisaoTable({
   totalPages,
   isLoading,
   rows,
+  semLeitura = false,
   onOpenDetail,
   onPrevPage,
   onNextPage,
@@ -97,7 +100,9 @@ export function RevisaoTable({
               {rows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
-                    Nenhum SKU encontrado para os filtros atuais.
+                    {semLeitura
+                      ? 'Os SKUs não puderam ser carregados — veja o aviso acima.'
+                      : 'Nenhum SKU encontrado para os filtros atuais.'}
                   </TableCell>
                 </TableRow>
               )}

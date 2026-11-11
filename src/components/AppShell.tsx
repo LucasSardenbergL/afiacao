@@ -5,9 +5,6 @@ import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCa
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
-import { hojeSP } from '@/lib/time/sp-day';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -37,7 +34,13 @@ import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicato
 import { useSaidaComFilaPendente } from '@/components/shell/SaidaComFilaPendente';
 import { DataHealthBadge } from '@/components/shell/DataHealthBadge';
 import { BadgeIndisponivel } from '@/components/shell/BadgeDeContagem';
-import { faceDoBadge, motivoDoBadgeIndisponivel } from '@/components/shell/badge-de-contagem';
+import { faceDoBadge, motivoDoBadgeIndisponivel, primitivosDoBadge } from '@/components/shell/badge-de-contagem';
+import {
+  useAumentosAtivosBadge,
+  useNegociacaoNovasBadge,
+  useNotificacoesPendentesBadge,
+  usePedidosPendentesBadge,
+} from '@/components/shell/useContagensDoShell';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
 import { VersaoDoApp } from '@/components/shell/VersaoDoApp';
 import { IndicadorAtualizacao } from '@/components/shell/IndicadorAtualizacao';
@@ -458,78 +461,39 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   // badges (/alertas e o destrutivo de /sessao/parametros); erro → null esconde o badge.
   const { data: alertasCriticos } = useAlertasCriticos(enableStaffPolls);
 
-  // Contador de pedidos pendentes/bloqueados do dia atual
-  const { data: pedidosPendentes } = useQuery({
-    queryKey: ['pedidos-pendentes-count'],
-    queryFn: async () => {
-      // data_ciclo é o dia de SP (gerar-pedidos-diario e o "recalcular"): com o dia UTC o badge zerava às 21h.
-      const today = hojeSP();
-      const { count } = await supabase
-        .from('pedido_compra_sugerido')
-        .select('*', { count: 'exact', head: true })
-        .eq('data_ciclo', today)
-        .in('status', ['pendente_aprovacao', 'bloqueado_guardrail']);
-      return count ?? 0;
-    },
-    enabled: enableStaffPolls,
-    refetchInterval: 30000,
-    refetchIntervalInBackground: false,
-    staleTime: 15000,
-  });
-
-  // Contador de aumentos ativos aguardando vigência
-  // (corrige bug: faltava `enabled` — antes polava pra customer também)
-  const { data: aumentosAtivos } = useQuery({
-    queryKey: ['aumentos-ativos-count'],
-    queryFn: async () => {
-      const { count } = await supabase
-        .from('fornecedor_aumento_anunciado')
-        .select('*', { count: 'exact', head: true })
-        .eq('estado', 'ativo');
-      return count ?? 0;
-    },
-    enabled: enableStaffPolls,
-    refetchInterval: 60000,
-    refetchIntervalInBackground: false,
-  });
+  // Contadores de pedidos pendentes, aumentos ativos, negociação paralela e notificações:
+  // contrato de 3 faces (plano v8, C14 — o mesmo do C11): número / oculto / "?" quando a
+  // leitura falhou. Os hooks LANÇAM no erro (antes `return count ?? 0` sumia com a falha).
+  const pedidosPendentesBadge = primitivosDoBadge(
+    faceDoBadge(usePedidosPendentesBadge(enableStaffPolls)),
+    'os pedidos pendentes de aprovação',
+  );
+  const aumentosAtivosBadge = primitivosDoBadge(
+    faceDoBadge(useAumentosAtivosBadge(enableStaffPolls)),
+    'os aumentos ativos',
+  );
+  const negociacaoNovasBadge = primitivosDoBadge(
+    faceDoBadge(useNegociacaoNovasBadge(enableStaffPolls)),
+    'as sugestões de negociação',
+  );
+  const notificacoesPendentesBadge = primitivosDoBadge(
+    faceDoBadge(useNotificacoesPendentesBadge(enableStaffPolls)),
+    'as notificações pendentes',
+  );
+  // Primitivos para o useMemo abaixo (plano v4, lote 10 — C8).
+  const pedidosPendentes = pedidosPendentesBadge.valor;
+  const pedidosPendentesIndisponivel = pedidosPendentesBadge.indisponivel;
+  const aumentosAtivos = aumentosAtivosBadge.valor;
+  const aumentosAtivosIndisponivel = aumentosAtivosBadge.indisponivel;
+  const negociacaoNovasCount = negociacaoNovasBadge.valor;
+  const negociacaoNovasIndisponivel = negociacaoNovasBadge.indisponivel;
+  const notificacoesPendentes = notificacoesPendentesBadge.valor;
+  const notificacoesPendentesIndisponivel = notificacoesPendentesBadge.indisponivel;
 
   // Contador de oportunidades econômicas ativas hoje (OBEN) — hook único com queryKey
   // estável (1 request/60s na view cara). Degrada honesto p/ null em erro →
   // badge oculto, não fabrica "0". Detalhe em useReposicaoSessao.ts.
   const { data: oportunidadesAtivas } = useOportunidadesAtivasCount({ enabled: enableStaffPolls });
-
-  // Contador de sugestões novas de negociação paralela (OBEN)
-  const { data: negociacaoNovasCount } = useQuery({
-    queryKey: ['negociacao-paralela-sugestoes-count'],
-    queryFn: async () => {
-      const { count } = await supabase
-        .from('v_sugestao_negociacao_ativa')
-        .select('*', { count: 'exact', head: true })
-        .eq('empresa', 'OBEN')
-        .eq('status', 'nova');
-      return count ?? 0;
-    },
-    enabled: enableStaffPolls,
-    refetchInterval: 60000,
-    refetchIntervalInBackground: false,
-    staleTime: 30000,
-  });
-
-  // Contador de alertas de notificação pendentes
-  const { data: notificacoesPendentes } = useQuery({
-    queryKey: ['notificacoes-pendentes-count'],
-    queryFn: async () => {
-      const { count } = await supabase
-        .from('fornecedor_alerta')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pendente_notificacao');
-      return count ?? 0;
-    },
-    enabled: enableStaffPolls,
-    refetchInterval: 60000,
-    refetchIntervalInBackground: false,
-    staleTime: 30000,
-  });
 
   const { data: financeiroAtrasados } = useFinanceiroAlertas(enableStaffPolls);
   const { data: tintErros } = useTintAlertas(enableStaffPolls);
@@ -575,8 +539,14 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
         if (it.path === '/admin/reposicao/alertas' && alertasCriticos) {
           return { ...it, badge: alertasCriticos };
         }
+        if (it.path === '/admin/reposicao/pedidos' && pedidosPendentesIndisponivel) {
+          return { ...it, badgeIndisponivel: pedidosPendentesIndisponivel };
+        }
         if (it.path === '/admin/reposicao/pedidos' && pedidosPendentes) {
           return { ...it, badge: pedidosPendentes };
+        }
+        if (it.path === '/admin/reposicao/aumentos' && aumentosAtivosIndisponivel) {
+          return { ...it, badgeIndisponivel: aumentosAtivosIndisponivel };
         }
         if (it.path === '/admin/reposicao/aumentos' && aumentosAtivos) {
           return { ...it, badge: aumentosAtivos };
@@ -584,8 +554,14 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
         if (it.path === '/admin/reposicao/oportunidades' && oportunidadesAtivas) {
           return { ...it, badge: oportunidadesAtivas };
         }
+        if (it.path === '/admin/reposicao/negociacao-paralela' && negociacaoNovasIndisponivel) {
+          return { ...it, badgeIndisponivel: negociacaoNovasIndisponivel };
+        }
         if (it.path === '/admin/reposicao/negociacao-paralela' && negociacaoNovasCount) {
           return { ...it, badge: negociacaoNovasCount };
+        }
+        if (it.path === '/admin/notificacoes' && notificacoesPendentesIndisponivel) {
+          return { ...it, badgeIndisponivel: notificacoesPendentesIndisponivel };
         }
         if (it.path === '/admin/notificacoes' && notificacoesPendentes) {
           return { ...it, badge: notificacoesPendentes, badgeVariant: 'destructive' as const };
@@ -617,7 +593,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
         return it;
       }),
     })),
-    [pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, melhoriasIndisponivel, isImpersonating],
+    [pedidosPendentes, pedidosPendentesIndisponivel, aumentosAtivos, aumentosAtivosIndisponivel, oportunidadesAtivas, negociacaoNovasCount, negociacaoNovasIndisponivel, notificacoesPendentes, notificacoesPendentesIndisponivel, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, melhoriasIndisponivel, isImpersonating],
   );
 
   const isActive = (path: string) => {
