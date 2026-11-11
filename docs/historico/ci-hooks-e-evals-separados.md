@@ -40,8 +40,8 @@ Coletados os runs de PR verdes com `provas-sql` pulado depois do #3837: só **2*
 
 | run | duração `falsificacao (1)` | maior `testes` | fila dos não-SQL | quem fechou o run | CI concorrentes |
 |---|---|---|---|---|---|
-| 43074539735 | 243 s | 182 s | 207–338 s | `falsificacao (4)`, 182 s + 338 s de fila | 7 |
-| 43077059264 | — (não estava no topo) | 185 s | 274–448 s | `falsificacao (2)`, 197 s + 439 s de fila | 7 |
+| 43074539735 | 243 s (fim em 490 s; run fechou em 560 s) | 182 s | 207–338 s | `falsificacao (4)`, 182 s + 338 s de fila | 7 |
+| 43077059264 | 247 s (fim em 500 s; run fechou em 736 s) | 185 s | 274–448 s | `falsificacao (2)`, 197 s + 439 s de fila | 7 |
 
 **Decisão: o `codex-async` NÃO vai para 3 partes; o programa para aqui.** A duração ainda deixa a
 `falsificacao (1)` ~60 s acima do maior shard de `testes`, mas em nenhum dos dois runs ela definiu o
