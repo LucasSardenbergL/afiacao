@@ -1,0 +1,133 @@
+# Plano de melhoria v8 — quem lê o disco da instância Mini, pedido do portal fora do Omie e resíduos honestos (2026-11-10)
+
+> Levantamento em 3 eixos por varreduras Fable (app: código das telas ativas · banco/edges em prod por `psql-ro` · dev/CI por `gh run`). O TINT-PROMO-IO e a instância (money-path e decisão do founder) eu medi direto. Conferi no código ou na prod cada achado que sobreviveu; os números das varreduras que não sobreviveram à conferência estão em §3.
+> Leitura em 2026-11-10 ~19:40 UTC (`origin/main` = `1be0d66f5`) e de novo em 2026-11-11 ~02:40 UTC (`3f5e689ca`): a pausa da sessão virou uma janela de delta de 6,9 h.
+
+## 0. Fecho do v7
+
+Os lotes do [v7](../2026-11-05-plano-melhoria-v7/README.md) estão todos mergeados e no ar (ver o §4 e o Fecho de lá): D10 (#3646, 1º ciclo verde em 07/11, #3696), C7 (#3645), C8–C11 (#3648), E16 (#3643), E14 (#3657), F13 (#3649), F12 (#3647), E17 (#3660). D11 e D12 foram diagnosticados sem PR de código.
+
+O que o v7 deixou aberto, medido hoje:
+
+| Item | Estado hoje | Destino |
+|---|---|---|
+| **TINT-PROMO-IO** | Medido: o custo **não** é a cadência de 15 s, é a promoção de fórmulas (~2 por dia). E o tick deixou de ser o maior leitor: desde 09/11 é o expurgo horário do Radar (R2), ~3× mais | §2 T1 e R2 |
+| **Instância Mini** (a) Small × (b) cortar o tick × (c) aceitar | A opção (b) muda de forma: cortar o tick não corta leitura; cortar o expurgo do Radar corta a maior fatia | §5, decisão do founder |
+| RADAR-AGREGADO-IO (D12) | ✔ Job 264: rodada pesada às 06:35 UTC, 204–213 s de 04 a 09/11, **146,5 s em 10/11**; uma rodada pesada extra em 09/11 22:35 (147 s), no dia do #3769 ("para visitar" no agregado) | §2 R1 |
+| B1: expurgo semanal dos scores | ✅ 08/11 04:30, `succeeded` em 28 s (#3796, só docs, aberto). Índices ociosos dropados no #3675 | fechado |
+| B3: HOT de contas a receber | ⏸️ **Segue pausado.** ✔ `n_tup_upd` = 339.189 hoje contra 280.672 em 05/11: ~11 mil/dia, abaixo dos ~30 mil do critério. A média desde o restart (32,7 mil/dia) engana: inclui o bootstrap de 03/11 | §3 |
+| Web-vitals / F2 TTFB | ✔ `telemetria_vitals`: 542 linhas, **1 `user_id`**, 78 builds. Continua sem denominador | ⏸️ |
+| E11, merge queue | Fila p90 do PR 2,9 min (era 0,9); a espera por runner é do programa "merge mais rápido", em voo (#3783, #3785, #3792, #3793) | fora do v8 |
+| `pg_stat_statements` | ✔ O `claude_ro` não lê (`permission denied for schema extensions`). A leitura por statement só sai pelo conector Lovable | nota de método |
+
+## 1. Como ler
+
+- **Medido**:
+  - `psql-ro` em prod, com contadores de **10,4 d** desde o restart de 2026-10-31 10:33 UTC. **Média desde o restart não é taxa de hoje:** o B3 e o OMIE-PRODUCTS (§3) pareciam acima do critério só porque a janela inclui o bootstrap. Taxa = delta entre duas leituras com data;
+  - **delta de `pg_statio`/`pg_stat_database`** entre 10/11 19:45 e 11/11 02:39 UTC (6,9 h, madrugada, sem run de fórmulas), e numa rodada isolada do expurgo do Radar (11/11 02:41);
+  - `cron.job_run_details` de 72 h para o tick e de 7 d para o resto; `net._http_response` guarda só 6 h;
+  - `gh run`: 126 runs do `ci.yml` de 09/11 09:24 a 10/11 19:40 UTC, misturando 3 regimes das provas SQL (4×2 → 5×2 → 5×3). Leia os números "com provas" como faixa.
+- **Estimado** = ganho em GB/dia, min ou runner-min; é hipótese até medir.
+- ✔ = conferi no código ou na prod. Veredito final = meu.
+- Sensores de uso seguem com 1 usuário: itens C valem quando o defeito é reproduzível numa tela **ativa**; itens de IO valem pelo delta de `pg_statio` antes/depois.
+
+## 2. Itens, um a um
+
+### T. Tintométrico (money-path: preço do tintométrico, fail-closed)
+
+| # | Item | Evidência | Parecer | Veredito |
+|---|---|---|---|---|
+| T1 | **TINT-PROMO-IO** — reduzir a leitura de disco do `tint_promocao_tick` (job 187, `15 seconds`, 38% dos blocos lidos da instância no D11) | ✔ **O tick ocioso custa 5 buffers.** `EXPLAIN (ANALYZE, BUFFERS)` da fila do corpo vivo (md5 `4b72d0ef…`): `shared hit=5`, 0 lidos, 0,13 ms, pelo índice `idx_tint_sync_runs_promocao_fila`. ✔ **O tempo está em 5 rodadas.** Job 187 em 72 h: 17.154 rodadas, 0 falhas; 15.610 abaixo de 0,1 s (137 s somados), 1.527 entre 0,1 e 1 s (281 s), 12 entre 1 e 60 s (55 s) e **5 com ≥ 60 s, somando 1.483 s (76% do tempo do job)**. As 5 batem com as promoções de `formulas` em `tint_sync_runs`: 08/11 03:05 (65 s), 09/11 10:12 (406 s), 09/11 16:06 (384 s), 10/11 10:03 (284 s) e 10/11 17:58 (344 s). As de `catalogs` são 590–695 por dia, na faixa de 0,1–1 s. ✔ **Uma promoção de fórmulas lê ~4,4 GB** (medido em 05/11, run `82be55dc`, [histórico](../../../historico/tint-purge-staging-io.md)): `tint_formulas` 871 MB de heap, `tint_formula_itens` 1.764 MB, índices 597 MB; o banco inteiro leu 4.366 MB em 9,5 min. Cada run compara de 358 mil a 491 mil chaves (`formulas_identicas_puladas`). ✔ **A M1 ainda está convergindo.** `sum(receitas_assinadas)` desde 04/11 13:10 = **157.039** em 9 runs, contra ~493.788 fórmulas vivas (05/11): ≤ 31,8% (limite superior: reassinatura conta de novo). O teto é 20.000 por run (`c_teto_assinar`, `20261104110100_tint_receita_assinada_no_cabecalho.sql:219`). A M2 (índice de cobertura por par) está **segurada pelo founder desde 05/11** até a M1 convergir | AJUSTAR a premissa: a leitura vem da **promoção de fórmulas**, ~2 por dia × ~4,4 GB ≈ **8,7 GB/dia**, e não da cadência. Espaçar o tick não tira nenhum bloco, só atrasa a promoção de catálogo (preço). O caminho já existe e está no meio: (1) esperar a M1 passar de ~90% pela query do histórico; no ritmo atual (2 runs × 20 mil), faltam ≥ 15 runs, **~18/11 no mínimo**; (2) medir o delta de `pg_statio` de 1 run de reenvio depois disso: o esperado é que os itens (1,76 GB) deixem de ser lidos; (3) só então decidir a M2 (heap de `tint_formulas`, 871 MB), com o critério que o founder já fixou. Subir o `c_teto_assinar` aceleraria a convergência, mas cada run passaria a sujar mais páginas do heap (o visibility map do argumento contra a M2): não proponho | **MANTER, ajustado** (M) — fase 1 só leitura (sessão); M2 = migration + prova PG17 + Codex + founder (é ele quem libera a M2) |
+| T2 | **TINT-STAGING-INCHADO** — staging de fórmulas com ~590 MB para 864 linhas | ✔ `tint_staging_formulas` 291 MB de heap (321 MB total) para **176 linhas** vivas; `tint_staging_formula_itens` 167 MB de heap (270 MB total) para **688**. Os DELETEs do purge liberam espaço que nunca é reocupado (1.436 e 5.253 inserts em 10 d). Cada seq scan relê o heap inteiro: 48 e 55 seq scans, 2,1 M e 0,9 M blocos lidos do disco desde o restart. O `tint_staging_purge()` leu **346.483 blocos em 2 chamadas** (D12), ~1,4 GB por dia | Só `VACUUM FULL` (ou `pg_repack`) devolve o espaço. Não roda em transação, então fica fora do envelope do `db:aplicar`. Toma `ACCESS EXCLUSIVE` por segundos: rodar fora da janela das promoções de fórmulas (as de hoje vieram às 03:05, 10:00–10:12 e 16:00–18:00 UTC) e conferir `tint_sync_runs` sem run pendente antes. Não muda dado; o promote só lê o staging | **MANTER** (P) — sessão prepara o roteiro com pré e pós (`pg_relation_size`, `n_live_tup` iguais); **founder no SQL Editor** |
+
+### R. Radar (instância, sem dinheiro)
+
+| # | Item | Evidência | Parecer | Veredito |
+|---|---|---|---|---|
+| R1 | **RADAR-AGREGADO-IO** — a rodada diária do `radar_agregado_recalcular` relê ~2,5 GB | ✔ Job 264 (`35 * * * *`): a pesada é a das 06:35 UTC, 204–213 s de 04 a 09/11 e 146,5 s em 10/11; as outras 23 têm p50 0,1 s. D12: +317 mil blocos em 24 h. O corte "estabelecida" é hoje − 5 anos, então o agregado muda todo dia e não cabe no gate de "nada mudou" do #3638 | AJUSTAR: medir de novo antes de desenhar. A queda para 146 s em 10/11 coincide com o #3769 e ainda não tem explicação. Desenho candidato: recalcular só a faixa de empresas cuja data de abertura cruzou o corte desde a última rodada, mantendo o resto do agregado. Exige prova de igualdade com o recálculo cheio | **DIAGNÓSTICO → MANTER** (M) — sessão; migration |
+| R2 | **RADAR-EXPURGO-HORARIO** — o expurgo de privacidade varre `radar_empresas` (731 MB de heap) a cada hora; **é o maior leitor de disco da instância hoje** | ✔ **Medido numa rodada isolada** (11/11 02:41:00 → 02:42:17, 77 s): `radar_empresas` leu **155.652 blocos de heap + 4.697 de índice fora do `shared_buffers` (1,22 GiB)** e 410.813 em cache. A ~24 rodadas por dia, **~29 GiB/dia**, ~3× a promoção de fórmulas (T1). ✔ Na madrugada de 10→11/11 (6,9 h, sem run de fórmulas), o banco leu 1,23 M blocos, **78% em `radar_*`**, e o único job de radar com tempo relevante foi este (6 rodadas, 446 s). ✔ Job 284 (`41 * * * *`, `radar_privacidade_expurgo(integer, integer)`, do pacote J, #3763): 22 rodadas desde 09/11 22:41, p50 83,5 s, máx. 124,6 s, todas `succeeded`, ~33 min/dia de trabalho. ✔ O corpo (`20261111150000_radar_privacidade_titular_mei.sql:558-613`) faz **duas** varreduras por regex sem índice a cada hora: o backfill (`razao_social ~ ' [0-9]{11}$'`, `:576-579`) e a contagem `razoes_cruas_restantes` no fim; mais o anti-join da higiene do cru. ✔ **O backfill já convergiu:** `acoes_execucoes` das últimas 5 rodadas = `razoes_mascaradas` 0, `razoes_cruas_restantes` 0, 66–79 s cada. Os triggers de INSERT/UPDATE já mascaram na entrada (`:135-193`) | AJUSTAR: a garantia de LGPD fica; muda o custo de provar que não sobrou nada. Candidatos: índice parcial com o **mesmo** predicado (fica vazio, e as duas varreduras viram index scan) ou separar o backfill (diário) da retenção e das exclusões. O #3795 (mesmo domínio, regex do formato livre nos triggers) mergeou em 11/11 (`3f5e689ca`) e já está aplicado (✔ o corpo vivo de `private.radar_empresas_privacidade()` traz o regex novo); ele não redefine o expurgo. Partir do corpo vivo (`pg_get_functiondef`) | **MANTER — maior ganho de IO do plano** (P/M) — sessão + prova PG17 + migration (founder ou envelope) |
+
+### C. Correção e dinheiro honesto
+
+| # | Item | Evidência | Parecer | Veredito |
+|---|---|---|---|---|
+| C16 | **PORTAL-COND-PAGTO** — 2 pedidos do portal Sayerlack fora do Omie desde 09/11 | ✔ `net._http_response`: HTTP 500 às 15:30 UTC de `sayerlack-varrer-pedidos-portal`, "2 pedido(s) do portal não entraram no Omie: 2148220, 2148223". ✔ `sayerlack_varredura_falha`: os dois desde 09/11 20:31, 2 tentativas da varredura; `acoes_execucoes`: também tentativas **manuais** (10/11 09:28 e 09/11 22:24), todas `etapa=leitura`, "Não consegui ler a condição de pagamento". ✔ `pedido_compra_sugerido` com esses protocolos: 0 linhas. A recusa é o ramo `condicao_ilegivel` (`sayerlack-importar-pedido-portal/index.ts:717-721`): `envelope.condicao` veio vazio. Falha **determinística** (4 tentativas em 19 h), não transitória | MANTER: o fail-closed está certo (não inventar condição de pagamento). Falta saber **por que** a condição veio vazia nesses dois: a evidência imutável de cada leitura (#3747) está gravada. Hoje o operador segue o [runbook](../../../runbooks/sayerlack-pedido-portal-nao-entrou.md) | **MANTER — prioridade máxima** (P/M) — diagnóstico pela evidência gravada + conserto do leitor + **deploy de edge**. Operação imediata pelo runbook (founder/compras) |
+| C13 | **HOME-DELTA-FANTASMA** — o delta "aumentos anunciados" da home nunca aparece | ✔ `useBriefDeltas.ts:82-86` filtra `eventos_outlier` por `created_at`. ✔ A tabela não tem essa coluna (`information_schema`: `detectado_em`, `data_evento`): toda carga da home faz um request que dá 400, e o `error` não é lido. E o rótulo está errado: `eventos_outlier` são outliers, não aumentos | AJUSTAR: não basta trocar a coluna, porque contaria a coisa errada. Ou remover o delta, ou apontar para `fornecedor_aumento_anunciado` (que tem **0 linhas** no v7: a superfície do aumento nunca foi usada). Ler o `error` dos 4 deltas | **MANTER** (P) — Publish |
+| C14 | **SHELL-BADGES-ERRO-ZERO** — 4 badges da sidebar somem em falha | ✔ `AppShell.tsx:462-532`: pedidos pendentes de aprovação, aumentos ativos, negociação paralela e notificações fazem `const { count } = …; return count ?? 0`. O contrato `faceDoBadge` do C11 (v7) só foi aplicado ao badge de melhorias; o resíduo ficou anotado em `reposicao-kpis-badge-leitura-v7-lote3.md:63`. Junto: `useNotificacoes.ts:58-72,115-128` (KPIs de `/admin/notificacoes` zerados em erro, `stats30 ?? []`) e `useRevisaoParametros.ts:251-256` (erro de `v_sku_parametros_sugeridos` descartado; degrada para nulo sem aviso) | MANTER: aplicar o mesmo contrato do C11. A truncagem do `useNotificacoes` (`.limit(5000)` sem `.order`) **não** entra: ✔ `fornecedor_alerta` = 104 linhas em 30 d | **MANTER** (P) — Publish |
+| C15 | **INTEL-CAC-LTV-FABRICADO** — dois KPIs em R$ que são fórmula inventada | ✔ `IntelligenceStrategicTab.tsx:125-133`: "CAC Estimado" = Σ(`avg_repurchase_interval` × 0,1 h) × R$ 50/h ÷ clientes, com constantes no código e nenhum dado de aquisição; "LTV Projetado (3a)" = gasto médio × 36, com `Number(x \|\| 0)` puxando a média para baixo quando o gasto falta | MANTER: remover os dois cards ou rotular "não medido". Não inventar CAC | **MANTER** (P) — Publish |
+| D13 | **VISITA-FILA-REPRESADA** — a fila de recálculo do score de visita anda 500 por dia | ✔ `visit_score_recalc_queue`: **7.070 pendentes**, o mais antigo de 02/11 06:00, **7.069 de perfis `omie_import`** (os clientes importados do Omie em 01/11, C7 do v7). O job 60 (`0 7 * * *`) processa 500 por dia: drena em ~14 d | DIAGNÓSTICO: decidir se cliente importado (sem login, mas da carteira real) precisa de score de visita, e quem lê (`useRouteContactList.ts`, `useMyVisitSuggestions.ts`). Se precisa, o lote fixo é o gargalo; se não precisa, o enfileiramento está errado | **DIAGNÓSTICO** (P) — sessão, só leitura; a decisão de produto é do founder |
+
+### E. Dev e CI
+
+Base (✔ `gh run`, 126 runs, 34 h): **PR com provas p50 20,5 / p90 30,2 min** até o `validate` (117,8 runner-min p50); **sem provas p50 8,4 / p90 22,2** (40,4 runner-min), com `edges-e-build` como caminho crítico (p50 7,0). Fila até o 1º job p90 2,9 min, mas 17 de 70 runs de PR tiveram algum job esperando runner por mais de 5 min. 7 vermelhos, **0 flaky de teste**; 4 deles foram a bomba-relógio `test-radar-leads-vendedor`, consertada no #3792. Dispatch da main: 5 de 25 pularam pelo E14 (20%).
+
+| # | Item | Evidência | Parecer | Veredito |
+|---|---|---|---|---|
+| E18 | **SONDA-CRON-CUSTO** — a prova por execução dos closures de cron pesa 60% do `edges-e-build` | ✔ `ci.yml:391` `bun run sonda:cron-prova -- --gate`: p50 4,3 min em 108 de 108 runs, ~7,6 s por closure histórico, em série (log do run 42886225314). O v7 cortou o E15 estimando −0,7 min; o passo cresceu com o histórico | AJUSTAR: o comentário do passo (`ci.yml:388-390`) diz "re-executa o que mudou", mas o custo é constante. Primeiro diagnosticar por que tudo roda; depois escopo por diff ou paralelismo. **Sem afrouxar o gate**: ele nasceu de incidente. `ci.yml` é arquivo quente do programa "merge mais rápido": coordenar | **DIAGNÓSTICO → EXPERIMENTO** (M) — parede sem provas de ~8,4 para ~6,5 min estimada |
+| E19 | **SHELLCHECK-RETRY** — download do shellcheck sem retry | ✔ `ci.yml:611-615`: `curl -fsSL … \| tar -xJ` sem retry (o mesmo download aparece 2 vezes no `ci.yml`). O padrão de retry com falsificação já existe no próprio arquivo (`tentar`, `ci.yml:1274-1320`, provado pelo `scripts/lab-retry-pgdg/`). 1 re-run em 126 (42659232737, step "shellcheck pinado 0.11.0") | MANTER: reusar o `tentar`, sem laço novo. Não é máquina nova | **MANTER** (P) |
+
+## 3. Cortes
+
+| # | Item | Por quê |
+|---|---|---|
+| — | **"Cortar o tick"** (espaçar o `tint_promocao_tick`) | ✔ O tick ocioso custa 5 buffers em cache. Espaçar não tira leitura e atrasa a promoção de catálogo, que leva preço |
+| — | Subir o `c_teto_assinar` para a M1 convergir mais rápido | Cada run sujaria mais páginas do heap de `tint_formulas` (o argumento do founder contra a M2 em 05/11). A convergência sai em ~1 semana sem mexer |
+| CR-HOT (B3) | `fin_contas_receber` sem HOT | ✔ ~11 mil updates/dia desde 05/11, abaixo do critério de ~30 mil. Os "32,7 mil/dia" da varredura são média desde o restart, com o bootstrap de 03/11 dentro |
+| OMIE-PRODUCTS-CHURN | `omie_products`: 1,0 M updates e 277 mil seq scans desde o restart | ✔ A tabela tem 8,9 MB e vive no cache: não pesa na leitura de disco. Sem taxa medida por delta, e sem tela com sintoma. Reabrir se aparecer no `pg_statio` com leitura de disco |
+| SCORES-2,5X | `priority_score_log` e `health_score_history` passaram de 13.266 para ~34.000 linhas/dia em 02/11 | ✔ **Não é defeito:** 31.080 das 34.004 linhas de hoje são de perfis `omie_import`, a carteira importada em 01/11 (C7 do v7). Fica como nota de **capacidade** para a §5: no platô de 60 d, cada tabela vai de 1,03 M para ~2,04 M linhas, ~+300 MB cada |
+| RADAR-PUBLICAR | Job 279 (`radar_carga_publicar`) com 2 falhas em 08/11 (1.800 s, timeout) | Única falha de cron em 7 d; as rodadas seguintes passaram (83 e 96 s). Episódio de carga mensal. Reabrir se repetir na próxima carga |
+| EMBALAGEM-TRUNCA | `useEmbalagemConsulta.ts:62-74` / `useEmbalagemPedido.ts:65-76` leem o histórico de preço sem `.range()` | ✔ `sku_preco_fornecedor_capturado` = **61 linhas** no total. Latente; reabrir com crescimento. O waterfall de 7 leituras do mesmo hook não tem sinal de uso que pague o lab |
+| CICLOS-HISTORICO | `CiclosAnteriores.tsx:18` | Já na baseline do `single-shot-truncado-gate`; 784 linhas no v7 |
+| MAIN-ESCOPO-CODIGO | Estender o pulo da main além de `docs/` | O v7 decidiu **não** estender a allowlist do PR à main (E14), e o E2 inteiro segue cortado. Fato novo não há: 20% dos dispatches pulam, como o E14 previu |
+| MUTCHECK, CANCELADOS, FILA-RUNNERS | Custo do `mutation-check` (~11% do runner-min de PR), runs cancelados (27% → 17% depois do #3783), espera por runner | Do programa "merge mais rápido", em voo (#3783/#3785/#3792/#3793). A espera por runner depende do GitHub Pro, decisão do founder já registrada em `docs/historico/ci-provas-sql-n-partes.md` |
+
+Os cortes do v5, v6 e v7 continuam valendo.
+
+## 4. Roadmap em lotes
+
+| Lote | Conteúdo | Depende de | Quem aplica |
+|---|---|---|---|
+| 0 | **C16 — pedido do portal com condição de pagamento ilegível**: ler a evidência gravada dos 2 pedidos, corrigir o leitor, provar com o caso real | — | **Agora:** founder/compras pelo runbook. Depois: sessão + Codex + **deploy de edge** (`sayerlack-importar-pedido-portal`) + sonda |
+| 1 | **R2 — expurgo de privacidade sem varrer o heap**: o maior leitor de disco da instância hoje (~29 GiB/dia) | — (o #3795 já está mergeado e aplicado) | sessão + prova PG17 (a garantia de LGPD: nenhuma razão crua sobra) + **migration** |
+| 2 | **T1 fase 1 — medir a promoção de fórmulas depois da M1**: a query de convergência do histórico; com ≥ ~90%, delta de `pg_statio` de 1 run de reenvio | M1 ≥ ~90% (**~18/11 no mínimo**) | sessão, só leitura |
+| 3 | **T1 fase 2 — M2** (índice de cobertura por par em `tint_formulas`), se a fase 1 mostrar o heap de `tint_formulas` como bloco dominante | lote 2 + founder libera a M2 | sessão + prova PG17 + Codex + **migration** (`CREATE INDEX CONCURRENTLY`: founder no SQL Editor) |
+| 4 | **T2 — `VACUUM FULL` do staging de fórmulas** | janela sem run de fórmulas pendente | sessão prepara o roteiro com pré/pós; **founder no SQL Editor** |
+| 5 | **R1 — agregado do Radar incremental** | diagnóstico da queda de 10/11 | sessão + prova de igualdade + **migration** |
+| 6 | **C13 + C14 + C15 — estados honestos na home, no shell e na inteligência** | — | sessão + **Publish** |
+| 7 | **D13 — fila de visita** | — | sessão (só leitura) + decisão de produto do founder |
+| 8 | **E19** e depois **E18** | E18 coordenado com o programa "merge mais rápido" | sessão |
+| — | **Instância Mini** | §5 (vale reler depois do lote 1) | **founder** (painel do Lovable) |
+
+Os lotes 0, 1, 4, 6, 7 e 8 tocam arquivos distintos e são independentes. 2 → 3 rodam em sequência. Antes de cada lote, procurar o artefato na main (`git grep <símbolo> origin/main`) e re-conferir os PRs abertos.
+
+**Quem lê o disco hoje.** Blocos lidos fora do `shared_buffers` (parte vem do cache do SO); medir antes e depois de cada lote:
+
+| fonte | hoje | evidência | lote |
+|---|---|---|---|
+| **expurgo horário do Radar** | **~29 GiB/dia** (1,19 GiB por rodada × 24) | ✔ delta de `pg_statio` de `radar_empresas` na rodada de 11/11 02:41 (77 s): 155.652 blocos de heap e 4.697 de índice lidos. Na madrugada (10/11 19:45 → 11/11 02:39, sem run de fórmulas), o banco leu 1,23 M blocos (9,4 GiB), **78% em `radar_*`**; o único job de radar com tempo relevante na janela foi o 284 (6 rodadas, 446 s) | 1 |
+| promoção de fórmulas | ~8,7 GiB/dia (2 runs × 4,4 GB, medida de 05/11) | ✔ T1 | 2–3 |
+| agregado do Radar | ~2,5 GB/dia (D12) | D12 | 5 |
+| purge do staging | ~1,4 GB/dia (D12: 346 mil blocos em 2 chamadas) | D12 | 4 |
+
+O "38% para o tick" do D11 foi medido de 05 a 07/11, **antes** do job 284 existir (09/11 22:41). Hoje o tick não é o maior leitor.
+
+## 5. Decisão do founder: a instância Mini
+
+Não decido por você: abaixo estão as opções com os números de hoje. O caminho no Lovable é **More → Database → Manage → Settings** (o tamanho atual e os cards de CPU, Memory e Disk das últimas 24 h, por hora).
+
+**Hoje (✔ `psql-ro`, 10,4 d desde o restart):** Lovable **Mini** (no Postgres, `micro`): 2 cores ARM compartilhados, 1 GB de RAM, `shared_buffers` 256 MB, contra um banco de **6.903 MB**. Desde o restart: 65,2 M blocos lidos fora do `shared_buffers` (parte vem do cache do SO, não do disco), **hit 98,40%**, **51 GB de temp**. Na madrugada de 10→11/11, o banco leu **9,4 GiB em 6,9 h** (~33 GiB/dia no ritmo noturno), 78% no Radar. Tick de promoção: 0 falhas em 72 h. Única falha de cron em 7 d: o job 279 do Radar em 08/11. No print de 06/11, nenhuma hora destacada em CPU, Memory ou Disk. O Lovable não expõe swap nem orçamento de IO.
+
+| opção | o que compra | o que custa | números para decidir |
+|---|---|---|---|
+| **(a) Mini → Small** | Dobra o cache: 2 GB de RAM, `shared_buffers` 512 MB, 90 conexões. Ataca a causa do D11 (cache saturado) sem código | O preço por hora do tamanho maior (o painel mostra a estimativa mensal sob cada tamanho) e alguns minutos de reinício | No Small, em 28/10: 46,7 MB lidos do disco por 10 min e hit 99,92%. Você já voltou do Micro para o Small uma vez (29/10) e desceu para o Mini em 31/10 depois de encolher o conjunto de trabalho do tint. O banco (6,9 GB) continua muito maior que o cache: o ganho é parcial |
+| **(b) Cortar quem mais lê**, em vez de "cortar o tick" | Os lotes 1 a 5 acima. A maior fatia é o expurgo do Radar (~29 GiB/dia, lote 1, P/M, sem dinheiro); a 2ª, a promoção de fórmulas (~8,7 GiB/dia), já está encaminhada pela M1, que converge sozinha até ~18/11 | Trabalho de sessão e 2 a 3 migrations; a M2 é decisão sua | Medir depois do lote 1: o expurgo deveria sair da conta quase inteiro. Depois do lote 2: se a promoção de fórmulas cair de ~4,4 GB para perto do heap de `tint_formulas` (~0,9 GB), a 2ª fonte encolhe ~4× |
+| **(c) Aceitar como está** | Nada muda | Risco de crescimento: os scores chegam a ~+600 MB no platô de 60 d (~01/01/2027), e o staging inchado ocupa ~590 MB até o lote 3 | 0 falha atribuída à instância e 0 impacto em usuário medido. O watchdog de saúde é lento (cache frio), mas não falha |
+
+As opções não se excluem: (b) já está em andamento pela M1, e (a) pode vir a qualquer hora. Se você quiser decidir com mais dado, espere o lote 1: a leitura da instância muda de patamar sem ele, e o print dos cards depois dele é o que vale. O critério do v7 continua valendo para escolher entre (a) e (c): aviso de "high load" no Lovable, horas destacadas nos cards ou um job falhando por timeout → (a); nada disso → (c), com (b) seguindo.
+
+## 6. Como foi feito
+
+- Varreduras Fable (só leitura, uma por eixo), com as conclusões conferidas por mim no código e na prod. Os 3 números que mudaram na conferência: o B3 (média desde o restart ≠ taxa), o salto dos scores (é a carteira importada, não defeito) e a truncagem do histórico de preço (61 linhas).
+- O `tint_promocao_tick` e a instância foram medidos por mim, só com SELECT e `EXPLAIN` da fila (nunca o tick, que grava).
+- Nenhuma escrita em prod; nenhum código mudou.
+- **Codex não foi consultado (Caminho B).** `scripts/codex-async.sh` saiu com 79 (cota a 100%, janela reabre em 11/11 07:47 UTC) sem gastar a chamada. Nenhum item deste plano muda preço nem dinheiro por si: o que é money-path (M2 do T1, C16) leva o Codex na execução do lote, como no v7.
