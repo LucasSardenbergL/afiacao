@@ -934,3 +934,15 @@ criasse a divergência, e ninguém voltou a ela depois da 5.2.
   - Deno 74/74; `edges:typecheck`, `edges:sintaxe`, `sonda:bump` e `sonda:fingerprint`.
 - **Deploy:** `sayerlack-importar-pedido-portal` (v1.13-detalhe-por-clique). `sayerlack-varrer-pedidos-portal` mudou
   só de fingerprint, porque o `_shared` é comum às duas, e entra na mesma leva. Nenhuma migration e nenhum Publish.
+
+## v1.14 — todas as opções de condição do portal (2026-11-11)
+
+- **Sintoma:** as evidências 18–20 (v1.13) trazem a condição lida, mas `condicoes_opcoes` com só 80 itens; o portal
+  tem 163. O inventário para o de-para 2.6 "(C)" saía cortado.
+- **Conserto:** `lerCondicoesOpcoesDom` sobe o teto de 80 para 200 (o teto só protege contra DOM patológico).
+- **Provas:** teste com Selecione + 163 opções (`scripts/sayerlack-portal-dom.test.ts`); com o teto 80 fica
+  vermelho (`[80, …]`), controle verde na mesma rodada. Deno, `edges:typecheck`, `edges:sintaxe`, `sonda:bump` e
+  `sonda:fingerprint` verdes. O `versao.ts` resumiu v1.1–v1.11 num ponteiro para este diário (o sentinela
+  `limpeza-fonte` reprovava 7/71 linhas de código).
+- **Deploy:** `sayerlack-importar-pedido-portal` (v1.14-condicoes-opcoes-completas) e
+  `sayerlack-varrer-pedidos-portal` (só fingerprint, `_shared` comum). Nenhuma migration e nenhum Publish.
