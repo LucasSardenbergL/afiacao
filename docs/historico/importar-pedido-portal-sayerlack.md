@@ -909,3 +909,27 @@ criasse a divergência, e ninguém voltou a ela depois da 5.2.
   "não consegui ler". Nenhuma edge mudou.
 - **Recibo:** migration aplicada pelo envelope (#1066) e conferida no psql-ro: corpo novo, SECURITY DEFINER, `anon`
   sem EXECUTE e `authenticated` com EXECUTE. PR #3790 mergeado em 2026-11-10. Publish: founder.
+
+## v1.12 — condição ilegível em TODA importação: o detalhe abre pelo clique (2026-11-11)
+
+- **Sintoma:** desde que a leitura da condição entrou (revisão Fable+Codex), nenhuma importação passou. Foram 8
+  tentativas em `acoes_execucoes` (09/11 → 11/11) para 2148220 e 2148223, todas com `etapa: leitura` e
+  `motivo: condicao_ilegivel`. Em 100% das evidências, `condicao` veio null e `condicoes_opcoes` veio vazio, e
+  nenhum `pedido_compra_sugerido` tem `condicao_portal_lida`. O fail-closed funcionou: nada virou "à vista". Mas o
+  robô ficou parado.
+- **Causa provada no Chrome logado (só leitura):**
+  - A rota estava CERTA: o link do nº na Consulta é `/order-creation-form-edit/<nº>/route/order-viewer`.
+  - Nessa tela, `#condicoes_pagamento` existe, com 163 opções, e a função do repo lê "70 - 7 DIAS" em ~1,5 s.
+  - No Browserless o select nem existia. O `goto` direto não chega ao detalhe, a mesma armadilha que já fazia a
+    Consulta abrir pelo MENU.
+- **Conserto:**
+  - Função nova `clicarDetalhePedidoDom`: clica no link do nº na linha da consulta. Casa o href pelo FIM, então
+    2148220 não abre 21482201. O `goto` fica só de fallback.
+  - Antes de ler o select, a edge espera a rede assentar, para nunca ler a opção-padrão de passagem.
+  - O trace grava `url`, título e ids dos selects da página aberta, então um erro novo deixa de ser cego.
+- **Provas:**
+  - vitest do DOM contra o fixture da consulta (que agora tem o link real no nº).
+  - Sabotar o casamento para prefixo deixa vermelho só o teste do prefixo, com o controle verde antes.
+  - Deno 74/74; `edges:typecheck`, `edges:sintaxe`, `sonda:bump` e `sonda:fingerprint`.
+- **Deploy:** `sayerlack-importar-pedido-portal` (v1.12-detalhe-por-clique). `sayerlack-varrer-pedidos-portal` mudou
+  só de fingerprint, porque o `_shared` é comum às duas, e entra na mesma leva. Nenhuma migration e nenhum Publish.
