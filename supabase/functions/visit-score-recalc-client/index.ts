@@ -44,6 +44,33 @@ function valorMedido(raw: unknown): number | null {
 }
 // MIRROR-END
 
+// MIRROR-START carteira-sem-pedido — espelhado verbatim de src/lib/visit-scoring/missions.ts
+// Plano v8, D13 — decisão do founder em 2026-11-11: o cliente da carteira que nunca comprou fica
+// ABAIXO de quem compra nas sugestões de visita. Antes ele ganhava 90 (prospecção 70 + 20 de
+// "cadastro novo" fabricado pela data do import do Omie) e ocupava o top 30 inteiro da cidade.
+//
+// Por que 10 (psql-ro, 2026-11-11): o menor visit_score de quem compra é 19,97 (p5 25,1; 1.237
+// compradores com linha), e 42% dos ativos ficam em 30 ou menos. Qualquer piso que deixe o nunca
+// comprou acima do corte `> 30` do card passaria na frente desses ativos. Com churn = 100 - health
+// (0 divergências em 17.002 linhas de farmer_client_scores), o piso teórico de quem compra é
+// ~13 (recuperação e relacionamento se cruzam em health ~54 com penalidade de recência máxima e
+// visita no dia). 10 fica abaixo dos dois e acima de 0, o "não candidato", para ainda preencher
+// as vagas que sobram depois dos compradores.
+const SCORE_CARTEIRA_SEM_PEDIDO = 10;
+
+// Nunca comprou = nenhum pedido de venda E o histórico canônico não diz ativo/stale. `null` no
+// status (ainda não computado) não prova compra, então vale só o pedido.
+function nuncaComprou(c: { sales_orders_count: number; sales_history_status: string | null }): boolean {
+  if (c.sales_orders_count > 0) return false;
+  return c.sales_history_status !== 'ativo' && c.sales_history_status !== 'stale';
+}
+
+// O +20 de "novo" é para cadastro de verdade: no perfil do import, o created_at é a data do import.
+function cadastroRecente(c: { days_since_signup: number; prospect_source: string | null }): boolean {
+  return c.days_since_signup < 30 && c.prospect_source !== 'omie_import';
+}
+// MIRROR-END
+
 // =====================================================
 // --- Inline types ---
 // =====================================================
@@ -81,12 +108,16 @@ interface CustomerScoreInputs {
   revenue_potential: number | null;
   avg_monthly_spend_180d: number;
   days_since_last_purchase: number;
+  // Classificação canônica do histórico de compra; null = ainda não computado.
+  sales_history_status: 'ativo' | 'stale' | 'sem_historico' | null;
   signal_modifiers: ScoreAdjustment | null;
   days_since_last_visit: number | null;
   last_visit_at: string | null;
   sales_orders_count: number;
   is_prospect: boolean;
   days_since_signup: number;
+  // 'omie_import' = perfil do import da carteira: created_at é a data do import (D13).
+  prospect_source: string | null;
   city: string | null;
   neighborhood: string | null;
   state: string | null;
@@ -130,6 +161,8 @@ function aplicaveis(
  * NOMEADO, não fabricado como 0.
  */
 function scoreRecuperacao(c: CustomerScoreInputs, classesAtivas: Set<string>): MissionResult {
+  // Quem nunca comprou não tem o que recuperar: medido, vale 0 (D13; espelha src/).
+  if (nuncaComprou(c)) return { score: 0, insumosAusentes: [] };
   const insumosAusentes: string[] = [];
   let insumosMedidos = 0;
 
@@ -200,6 +233,8 @@ function scoreExpansao(c: CustomerScoreInputs, classesAtivas: Set<string>): Miss
  * src/lib/visit-scoring/missions.ts. Todos os insumos têm produtor → nunca fica null.
  */
 function scoreRelacionamento(c: CustomerScoreInputs): MissionResult {
+  // Sem compra não há relacionamento a manter (D13; espelha src/).
+  if (nuncaComprou(c)) return { score: 0, insumosAusentes: [] };
   // health_score é 0..100 (calculate-scores). * 0.5 → contribuição 0..50.
   const healthBoost = c.health_score * 0.5;
   const revenueBoost = normalizeRevenue(c.avg_monthly_spend_180d) * 30;
@@ -212,25 +247,27 @@ function scoreRelacionamento(c: CustomerScoreInputs): MissionResult {
 }
 
 /**
- * PROSPECÇÃO — lead novo ou cliente sem histórico. Insumos sempre presentes → nunca fica null.
- * A qualidade de sinal usa `aplicaveis(...)` (FA4 shadow-mode), que só existe no edge: com a
- * config tudo OFF, `classesAtivas` é vazio e o boost fica idêntico a hoje.
+ * PROSPECÇÃO — dois públicos (plano v8, D13; espelha scoreProspeccao de src/):
+ * - lead declarado (`is_prospect`): base 70, +20 se o cadastro é recente DE VERDADE, +10 com sinal;
+ * - cliente da carteira que nunca comprou: SCORE_CARTEIRA_SEM_PEDIDO, abaixo de quem compra.
+ * Quem já comprou e não é lead não é candidato (0). A qualidade de sinal usa `aplicaveis(...)`
+ * (FA4 shadow-mode), que só existe no edge: com a config tudo OFF, o boost fica 0.
  */
 function scoreProspeccao(c: CustomerScoreInputs, classesAtivas: Set<string>): MissionResult {
-  const isProspectCandidate = c.sales_orders_count === 0 || c.is_prospect === true;
-  if (!isProspectCandidate) return { score: 0, insumosAusentes: [] };
-  const baseProspect = 70;
-  const recencyOfSignup = c.days_since_signup < 30 ? 20 : 0;
-  // Shadow-safe: a qualidade só sobe com sinal de classe ATIVADA (não com source_call_count
-  // cru, que a Fatia 2 passa a alimentar via sinais_ligacao). Em shadow total → 0, idêntico a hoje.
-  const bd = c.signal_modifiers?.breakdown;
-  const temSinalAplicavel =
-    aplicaveis(bd?.churn, classesAtivas).length > 0 ||
-    aplicaveis(bd?.expansion, classesAtivas).length > 0 ||
-    aplicaveis(bd?.health, classesAtivas).length > 0 ||
-    aplicaveis(bd?.eff, classesAtivas).length > 0;
-  const signalsQuality = temSinalAplicavel ? 10 : 0;
-  return { score: clamp(baseProspect + recencyOfSignup + signalsQuality, 0, 100), insumosAusentes: [] };
+  if (c.is_prospect === true) {
+    const baseProspect = 70;
+    const recencyOfSignup = cadastroRecente(c) ? 20 : 0;
+    const bd = c.signal_modifiers?.breakdown;
+    const temSinalAplicavel =
+      aplicaveis(bd?.churn, classesAtivas).length > 0 ||
+      aplicaveis(bd?.expansion, classesAtivas).length > 0 ||
+      aplicaveis(bd?.health, classesAtivas).length > 0 ||
+      aplicaveis(bd?.eff, classesAtivas).length > 0;
+    const signalsQuality = temSinalAplicavel ? 10 : 0;
+    return { score: clamp(baseProspect + recencyOfSignup + signalsQuality, 0, 100), insumosAusentes: [] };
+  }
+  if (nuncaComprou(c)) return { score: SCORE_CARTEIRA_SEM_PEDIDO, insumosAusentes: [] };
+  return { score: 0, insumosAusentes: [] };
 }
 
 /**
@@ -280,6 +317,11 @@ function computeVisitScore(c: CustomerScoreInputs, classesAtivas: Set<string>): 
 // =====================================================
 // --- IO helpers ---
 // =====================================================
+// Valor fora do domínio (ou ausente) vira null = "não computado": não prova compra nem a nega.
+function statusHistorico(raw: unknown): 'ativo' | 'stale' | 'sem_historico' | null {
+  return raw === 'ativo' || raw === 'stale' || raw === 'sem_historico' ? raw : null;
+}
+
 function jsonError(msg: string, status: number) {
   return new Response(JSON.stringify({ error: msg }), {
     status,
@@ -307,14 +349,14 @@ async function recalcOne(
     // visit score. Checagem na mesma rodada paralela → zero latência extra. Ausência = segue.
     supabase.from('cliente_classificacao').select('user_id').eq('user_id', customer_user_id).eq('excluir_da_carteira', true).maybeSingle(),
     // Opção A (carteira-Omie): 1 linha de score por cliente → lê por customer_user_id só.
-    supabase.from('farmer_client_scores').select('churn_risk, expansion_score, health_score, recover_score, revenue_potential, avg_monthly_spend_180d, days_since_last_purchase, signal_modifiers').eq('customer_user_id', customer_user_id).maybeSingle(),
+    supabase.from('farmer_client_scores').select('churn_risk, expansion_score, health_score, recover_score, revenue_potential, avg_monthly_spend_180d, days_since_last_purchase, sales_history_status, signal_modifiers').eq('customer_user_id', customer_user_id).maybeSingle(),
     supabase.from('route_visits').select('check_in_at').eq('customer_user_id', customer_user_id).order('check_in_at', { ascending: false }).limit(1),
     // Prospect = quem NUNCA COMPROU: conta só pedido de venda (o universo canônico). Orçamento,
     // rascunho e cancelado não tiram ninguém de prospect (0 clientes afetados em 2026-10-01).
     supabase.from('sales_orders').select('id').eq('customer_user_id', customer_user_id)
       .not('status', 'in', STATUS_NAO_VENDA_POSTGREST).is('deleted_at', null),
     supabase.from('addresses').select('city, neighborhood, state').eq('user_id', customer_user_id).eq('is_default', true).maybeSingle(),
-    supabase.from('profiles').select('created_at, is_prospect').eq('user_id', customer_user_id).maybeSingle(),
+    supabase.from('profiles').select('created_at, is_prospect, prospect_source').eq('user_id', customer_user_id).maybeSingle(),
     // FA4 (shadow-mode): classes de sinal ATIVADAS. Leitura na mesma rodada paralela (1 query,
     // não N+1 — a tabela tem só 3 linhas; ler por cliente é trivial e mantém recalcOne autossuficiente).
     // Estado inicial: tudo ativado=false → nenhuma linha aqui → classesAtivas vazio (invariante = boost 0).
@@ -382,12 +424,14 @@ async function recalcOne(
     revenue_potential: valorMedido(scores.revenue_potential),
     avg_monthly_spend_180d: Number(scores.avg_monthly_spend_180d ?? 0),
     days_since_last_purchase: Number(scores.days_since_last_purchase ?? 999),
+    sales_history_status: statusHistorico(scores.sales_history_status),
     signal_modifiers: (scores.signal_modifiers ?? null) as ScoreAdjustment | null,
     days_since_last_visit: computeDays(lastVisitAt),
     last_visit_at: lastVisitAt,
     sales_orders_count: salesOrdersCount,
     is_prospect: Boolean(profile.is_prospect ?? false),
     days_since_signup: computeDays(profile.created_at as string) ?? 999,
+    prospect_source: typeof profile.prospect_source === 'string' ? profile.prospect_source : null,
     city: (address.city as string) ?? null,
     neighborhood: (address.neighborhood as string) ?? null,
     state: (address.state as string) ?? null,
@@ -404,7 +448,9 @@ async function recalcOne(
       days_since_last_purchase: inputs.days_since_last_purchase,
       days_since_last_visit: inputs.days_since_last_visit,
       sales_orders_count: inputs.sales_orders_count,
+      sales_history_status: inputs.sales_history_status,
       is_prospect: inputs.is_prospect,
+      prospect_source: inputs.prospect_source,
       revenue_potential: inputs.revenue_potential,
       avg_monthly_spend_180d: inputs.avg_monthly_spend_180d,
     },

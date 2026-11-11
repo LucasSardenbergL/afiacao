@@ -3500,6 +3500,21 @@ describe('guardrail money-path: visit-score-recalc-client não coage score de mi
     ).toBe(mirrorBlockNamed(helper, 'valor-medido'));
   });
 
+  // Plano v8, D13: a regra "carteira sem pedido abaixo de quem compra" vive em src/ (testada) e é
+  // duplicada inline na edge (que é quem GRAVA o score). Divergência = a tela volta a mostrar o
+  // importado sem pedido com 90 sem nenhum teste de src/ perceber.
+  it('PARIDADE: o bloco carteira-sem-pedido do edge é IDÊNTICO ao de src/lib/visit-scoring/missions.ts', () => {
+    const missoes = read('src/lib/visit-scoring/missions.ts');
+    const bloco = mirrorBlockNamed(src, 'carteira-sem-pedido');
+    expect(bloco, 'sentinela: o bloco tem a regra (não é um par vazio)').toContain('SCORE_CARTEIRA_SEM_PEDIDO = 10');
+    expect(bloco, 'edge divergiu de src/lib/visit-scoring/missions.ts (Lovable reescreveu no deploy?)')
+      .toBe(mirrorBlockNamed(missoes, 'carteira-sem-pedido'));
+    // As 3 missões da edge consultam a regra (sem isto o bloco poderia ficar idêntico e morto).
+    const usos = removerComentarios(src).match(/if \(nuncaComprou\(c\)\)/g) ?? [];
+    expect(usos.length, 'recuperação, relacionamento e prospecção da edge chamam nuncaComprou').toBe(3);
+    expect(removerComentarios(src)).toContain('cadastroRecente(c) ? 20 : 0');
+  });
+
   it('NÃO coage expansion_score/recover_score/revenue_potential a 0 (ausente != zero)', () => {
     const ofensas = coercoesSemWriterVisitScore(removerComentarios(src));
     expect(
