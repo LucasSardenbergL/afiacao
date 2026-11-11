@@ -32,6 +32,9 @@ grande. Drenar mais rápido piora a tela.
   nascido de placeholder do Omie, desde março. Na prod há 16.081 perfis `omie_import` e 4 sem origem. **Cliente
   importado é a carteira inteira.** Tirar `omie_import` do enfileiramento desligaria o score de visita de todo mundo.
 
+- **Sem login não quer dizer fora da carteira.** O perfil placeholder nunca loga, mas é cliente real do Omie com dono:
+  6.546 dos 6.577 pendentes têm dono elegível em `carteira_assignments`, e 6.576 têm cidade.
+
 Portanto a opção (b) como escrita está errada: o enfileiramento não erra o público.
 
 ## Quem drena
@@ -41,9 +44,20 @@ Edge `visit-score-recalc-batch` (job 60, 07:00 UTC, `timeout_milliseconds = 5500
 `enqueued_at`: **a fila é FIFO estrita.** O mesmo batch ainda faz o "decay" dos clientes com ligação ou visita nos
 últimos 30 dias, mas esse ramo não acha ninguém (ver "uso").
 
-Ritmo medido: 500 processados por dia todos os dias de 28/10 a 11/11, 0 com erro. `customer_visit_scores` recebe ~498
-linhas recalculadas por dia, que são exatamente as 500 do drain (menos as excluídas da carteira). Fila hoje (11/11,
-depois do drain das 07:00): **6.577**. Ao ritmo atual, esvazia por volta de 25/11.
+**`processed_at` não quer dizer sucesso.** O drain grava `processed_at` em todo item, inclusive no erro ("Always mark
+processed (even on uncaught error) — avoids poison-pill", `supabase/functions/visit-score-recalc-client/index.ts:507`<!--cita: Always mark processed-->), junto com
+`error: r.error ?? null`. Há ainda um terceiro desfecho: o cliente marcado `excluir_da_carteira` volta `{ ok: true }`
+sem gravar score (`supabase/functions/visit-score-recalc-client/index.ts:327`<!--cita: if (flagRes.data) return { ok: true };-->). Separando os três (sucesso = `error` nulo **e** `customer_visit_scores.calculated_at`
+até 10 min antes do `processed_at`):
+
+| dia (28/10 a 11/11) | processados | com erro | sucesso com score gravado | `ok` sem score gravado |
+|---|---:|---:|---:|---:|
+| cada dia | 500 | **0** | 497 a 500 | 0 a 3 |
+| soma dos 15 dias | 7.500 | **0** | 7.483 | 17 |
+
+Não há nenhum `error` não nulo na fila desde sempre. Os 1 a 3 por dia sem score gravado são o retorno da exclusão da
+carteira. Por isso `customer_visit_scores` recebe ~498 linhas por dia, e não 500. A vazão útil é ~498 por dia. Fila hoje
+(11/11, depois do drain das 07:00): **6.577**. Nesse ritmo, esvazia por volta de 25/11.
 
 ## Quem lê o score de visita, e se o importado aparece
 
