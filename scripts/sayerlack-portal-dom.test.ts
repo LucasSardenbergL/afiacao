@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import * as dom from "../supabase/functions/_shared/sayerlack-portal-dom";
 import type { PaginaConsultaDom } from "../supabase/functions/_shared/sayerlack-portal-dom";
 import { lerPedidoPortal } from "../supabase/functions/sayerlack-importar-pedido-portal/leitura";
+import { diagnosticarCondicaoDom } from "../supabase/functions/sayerlack-importar-pedido-portal/condicao-dom";
 import { lerListaConsulta, provarLeitura } from "../supabase/functions/sayerlack-varrer-pedidos-portal/varredura";
 
 /**
@@ -287,5 +288,51 @@ describe("tela de detalhe — condição de pagamento", () => {
   it("sem o select: sem condição e sem opções", () => {
     document.querySelector("#condicoes_pagamento")!.remove();
     expect([lerCondicaoSelecionadaDom(), lerCondicoesOpcoesDom()]).toEqual([false, []]);
+  });
+
+  // C16: o retrato que vai para a evidência quando a condição não vem.
+  it("retrato: com o select, conta as opções e diz a selecionada", () => {
+    const d = diagnosticarCondicaoDom();
+    expect([d.select_presente, d.select_n_opcoes, d.select_selecionada, d.select_desabilitado]).toEqual([true, 4, "70 - 7 DIAS", false]);
+    expect(d.selects).toEqual([{ id: "condicoes_pagamento", name: "", n: 4, sel: "70 - 7 DIAS" }]);
+    expect(d.campos.map((c) => c.id)).toEqual(["condicoes_pagamento"]);
+  });
+
+  it("retrato: sem o select, lista o que a tela tem de condição/pagamento — limitado", () => {
+    document.querySelector("#condicoes_pagamento")!.remove();
+    const extra = Array.from({ length: 40 }, (_, i) => '<select id="s' + i + '"><option>x</option></select>').join("");
+    // <br>: o polyfill de innerText do jsdom só quebra linha nele (o Chrome também quebra nos blocos).
+    document.body.innerHTML += '<label for="cond_pagto">Cond. Pagamento</label><input id="cond_pagto" value="70 - 7 DIAS"><br>' +
+      "<p>Condição de pagamento: 70 - 7 DIAS</p><br>" + extra;
+    const d = diagnosticarCondicaoDom();
+    expect([d.select_presente, d.select_n_opcoes, d.select_selecionada]).toEqual([false, null, null]);
+    expect(d.campos).toEqual([{ tag: "input", id: "cond_pagto", name: "", tipo: "text", valor: "70 - 7 DIAS", rotulo: "Cond. Pagamento" }]);
+    // Rótulo e valor em linhas separadas ficam juntos; a sequência longa (token-like) é mascarada.
+    expect(d.textos).toEqual(["Cond. Pagamento | Condição de pagamento: 70 - 7 DIAS", "Condição de pagamento: 70 - 7 DIAS | #"]);
+    expect(d.selects).toHaveLength(30);
+    expect(d.omitidos).toEqual({ selects: 10, campos: 0, textos: 0 });
+  });
+
+  it("retrato: campo oculto/senha só como metadado, select alheio sem o selecionado, CPF/CNPJ mascarados", () => {
+    document.querySelector("#condicoes_pagamento")!.remove();
+    document.body.innerHTML += '<input type="hidden" name="pagamento_token" value="segredo-de-sessao">' +
+      '<select id="cliente"><option selected>OBEN 123.456.789-09</option></select>' +
+      '<label for="prazo_x">Prazo</label><input id="prazo_x" value="30/60/90 DD"><br>' +
+      "<p>Condição do cliente 12.345.678/0001-90 · CPF 12345678909 · 30/60/90/120/150/180 DD</p><iframe></iframe>";
+    const d = diagnosticarCondicaoDom();
+    expect(d.campos).toEqual([
+      { tag: "input", id: "", name: "pagamento_token", tipo: "hidden", valor: null, rotulo: "" },
+      { tag: "input", id: "prazo_x", name: "", tipo: "text", valor: "30/60/90 DD", rotulo: "Prazo" },
+    ]);
+    expect(d.selects).toEqual([{ id: "cliente", name: "", n: 1, sel: null }]);
+    // O texto do <option> entra no innerText (como no Chrome): o CPF do select alheio sai mascarado; o prazo fica.
+    expect(d.textos).toEqual([
+      "OBEN #Prazo | Condição do cliente # · CPF # · 30/60/90/120/150/180 DD",
+      "Condição do cliente # · CPF # · 30/60/90/120/150/180 DD",
+    ]);
+    expect(JSON.stringify(d)).not.toContain("segredo");
+    expect(JSON.stringify(d)).not.toContain("789-09");
+    expect(JSON.stringify(d)).not.toContain("12345678909");
+    expect(d.n_iframes).toBe(1);
   });
 });

@@ -64,7 +64,8 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * retrato); divergiu ⇒ `alterado_no_portal` com as diferenças, sem disparo. Condição ilegível no re-disparo também
  * recusa. A RPC achando o pedido já gravado (outra aba) passa pelas mesmas recusas. Migration 20261111150000 antes.
  */
-export const VERSAO = "v1.11-confere-portal";
+/** v1.12 (2026-11-11, C16): retrato da tela sem condição na evidência + causa na recusa — docs/historico/sayerlack-condicao-ilegivel-c16.md */
+export const VERSAO = "v1.12-condicao-retrato";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

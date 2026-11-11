@@ -1,5 +1,7 @@
 <!doctype html>
-<!-- Tela de detalhe do pedido (/order-creation-form-edit/<nº>/route/order-viewer), recortada no que o script lê. -->
+<!-- Tela de detalhe do pedido (/order-creation-form-edit/<nº>/route/order-viewer), recortada no que o script lê.
+     ⚠️ HIPÓTESE, não captura (C16, 2026-11-11): escrita à mão a partir da tela de CRIAÇÃO; em prod, 13 de 13 leituras
+     do viewer não acharam este select com opções. Substituir pelo DOM real quando o retrato (condicao_diag) vier. -->
 <html lang="pt-BR">
 <body>
   <select id="condicoes_pagamento" class="form-control">

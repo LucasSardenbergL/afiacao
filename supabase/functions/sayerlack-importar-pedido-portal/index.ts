@@ -24,9 +24,10 @@ import {
   lerCondicoesOpcoesDom,
   lerTabelaConsultaDom,
 } from "../_shared/sayerlack-portal-dom.ts";
+import { diagnosticarCondicaoDom } from "./condicao-dom.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { mensagemNaoVinculado, mensagemVinculado, vincularPoManual } from "../_shared/sayerlack-vincular-po-manual.ts";
-import { lerPedidoPortal, mensagemErroImportacao, situacaoFaturada, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
+import { explicarCondicaoAusente, lerPedidoPortal, mensagemCondicaoAusente, mensagemErroImportacao, situacaoFaturada, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
 import { comPrazo, cortarTrace, PRAZO_EVIDENCIA_MS } from "./evidencia.ts";
 import { conferirPortal, mensagemRecusa, montarLeitura, resumoDiferencas } from "./conferencia.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -58,6 +59,7 @@ export default async ({ page, context }) => {
   const lerTabelaConsultaDom = ${lerTabelaConsultaDom.toString()};
   const lerCondicaoSelecionadaDom = ${lerCondicaoSelecionadaDom.toString()};
   const lerCondicoesOpcoesDom = ${lerCondicoesOpcoesDom.toString()};
+  const diagnosticarCondicaoDom = ${diagnosticarCondicaoDom.toString()};
 
   const HARD_CEILING_MS = 150000;
   const RETURN_GUARD_MS = 2000;
@@ -179,8 +181,9 @@ ${ABRIR_CONSULTA_PEDIDOS}
       itens = await buscarItens();
       trace.push({ step: 'itens_direto', status: itens.status, ok: temItens(itens), t: Date.now() - t0 });
       if (!temItens(itens)) {
-        await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
+        const respDetalheItens = await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
           { waitUntil: 'domcontentloaded', timeout: budgetFor('goto-detalhe', 30000) });
+        trace.push({ step: 'detalhe_aberto', via: 'itens', status: respDetalheItens ? respDetalheItens.status() : null, caminho: (function() { try { return new URL(page.url()).pathname; } catch (e) { return null; } })(), t: Date.now() - t0 });
         await sleep(2500);
         itens = await buscarItens();
         trace.push({ step: 'itens_pos_detalhe', status: itens.status, ok: temItens(itens), t: Date.now() - t0 });
@@ -192,19 +195,27 @@ ${ABRIR_CONSULTA_PEDIDOS}
     // envio. Sem condição legível, o Deno recusa: ausente nunca vira "à vista" (revisão Fable+Codex, 2026-11).
     let condicao = null;
     let condicoesOpcoes = [];
+    let condicaoDiag = null;
     if (achouNaConsulta && temItens(itens)) {
       if (page.url().indexOf('/order-creation-form-edit/') === -1) {
-        await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
+        const respDetalhe = await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
           { waitUntil: 'domcontentloaded', timeout: budgetFor('goto-detalhe-condicao', 30000) });
+        // C16: status e caminho FINAL (redirect para login/home aparece aqui), sem query.
+        trace.push({ step: 'detalhe_aberto', status: respDetalhe ? respDetalhe.status() : null, caminho: (function() { try { return new URL(page.url()).pathname; } catch (e) { return null; } })(), t: Date.now() - t0 });
       }
       condicao = await page.waitForFunction(lerCondicaoSelecionadaDom, { timeout: budgetFor('condicao', 15000), polling: 250 }).then((h) => h.jsonValue()).catch(() => null);
       trace.push({ step: 'condicao', condicao, t: Date.now() - t0 });
       // Lista de opções do select (só leitura): insumo do de-para condição do portal → Omie (D-2).
       condicoesOpcoes = await page.evaluate(lerCondicoesOpcoesDom).catch(() => []);
+      // C16: sem condição, o retrato da tela vai para a evidência — 13 leituras recusaram sem dizer o que a tela tinha.
+      if (!condicao) {
+        condicaoDiag = await page.evaluate(diagnosticarCondicaoDom).catch((e) => ({ erro: String((e && e.message) || e).substring(0, 160) }));
+        trace.push({ step: 'condicao_diag', diag: condicaoDiag, t: Date.now() - t0 });
+      }
     }
 
     return {
-      data: { success: true, consulta: { headers: consulta.headers, linhas: consulta.linhas }, itens: itens ? itens.json : null, condicao, condicoes_opcoes: condicoesOpcoes, trace },
+      data: { success: true, consulta: { headers: consulta.headers, linhas: consulta.linhas }, itens: itens ? itens.json : null, condicao, condicoes_opcoes: condicoesOpcoes, condicao_diag: condicaoDiag, trace },
       type: 'application/json',
     };
   } catch (e) {
@@ -224,6 +235,8 @@ interface BrowserlessData {
   condicao?: string | null;
   /** Textos de todas as opções do select de condição (insumo do de-para D-2). */
   condicoes_opcoes?: string[];
+  /** C16: retrato da tela de detalhe quando a condição não veio (`diagnosticarCondicaoDom`). */
+  condicao_diag?: unknown;
   trace?: unknown[];
 }
 
@@ -673,9 +686,15 @@ async function tratar(
     const conferirOuRecusar = async (pedidoId: number, status: string | null): Promise<Response | null> => {
       const doPedido = { ja_existia: true, pedido_id: pedidoId, status, situacao_gravada: situacaoGravada };
       if (!condicaoLida) {
+        const ausente = explicarCondicaoAusente(envelope.condicao_diag);
         return json({
-          ok: false, etapa: "leitura", protocolo, motivo: "condicao_ilegivel", ...doPedido, trace: envelope.trace ?? null,
-          mensagem: naoRedisparei("Não consegui ler a condição de pagamento dele no portal, então não sei se o pedido mudou. Tente de novo.", pedidoId),
+          ok: false, etapa: "leitura", protocolo, motivo: "condicao_ilegivel", causa_condicao: ausente.causa, ...doPedido,
+          condicao_diag: envelope.condicao_diag ?? null, trace: envelope.trace ?? null,
+          mensagem: naoRedisparei(
+            `Não conferi a condição de pagamento dele no portal: ${ausente.porque} Sem isso não sei se o pedido mudou.` +
+              (ausente.repetirResolve ? " Tente de novo." : ""),
+            pedidoId,
+          ),
         });
       }
       const conf = await conferirPortal(
@@ -715,9 +734,11 @@ async function tratar(
     }
 
     if (!envelope.condicao || !String(envelope.condicao).trim()) {
+      const ausente = mensagemCondicaoAusente(protocolo, envelope.condicao_diag);
       return json({
-        ok: false, etapa: "leitura", protocolo, motivo: "condicao_ilegivel", trace: envelope.trace ?? null,
-        mensagem: `Não consegui ler a condição de pagamento do pedido ${protocolo} na tela de detalhe do portal. Nada foi gravado — tente de novo.`,
+        ok: false, etapa: "leitura", protocolo, motivo: "condicao_ilegivel", causa_condicao: ausente.causa,
+        condicao_diag: envelope.condicao_diag ?? null, trace: envelope.trace ?? null,
+        mensagem: ausente.mensagem,
       });
     }
 
