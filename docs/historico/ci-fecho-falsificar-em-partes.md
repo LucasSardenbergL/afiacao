@@ -28,4 +28,7 @@
 - Local: `--falsificar 1/2` e `2/2` verdes; a união das sabotagens julgadas = as do modo sem argumento.
 
 ## Medido
-_preenchido no PR (run do próprio PR)._
+Run do próprio PR (#3835, 43059927916; rodou provas SQL, por isso só os jobs não-SQL contam):
+`falsificacao (3)` **292 → 148 s** · `falsificacao (6)` 132 s · fila de início 3–4 s em todos (não
+piorou com o runner a mais). O piso não-SQL passou a ser `hooks-e-evals` 277 s, seguido de
+`falsificacao (1)` 247 s e `falsificacao (5)` 221 s — próximo passo: o split do `hooks-e-evals`.

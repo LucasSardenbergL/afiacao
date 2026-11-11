@@ -308,6 +308,13 @@ describe("tela de detalhe — condição de pagamento", () => {
     expect(lerCondicoesOpcoesDom()).toEqual(["Selecione", "54 - 30 DIAS", "70 - 7 DIAS", "71 - 7 DIAS (C)"]);
   });
 
+  it("lê TODAS as opções do tamanho real do portal (Selecione + 163), sem cortar no meio", () => {
+    const sel = document.querySelector("#condicoes_pagamento") as HTMLSelectElement;
+    for (let i = 1; i <= 160; i++) sel.add(new Option(`${100 + i} - ${i} DIAS`, String(100 + i)));
+    const opcoes = lerCondicoesOpcoesDom();
+    expect([opcoes.length, opcoes[opcoes.length - 1]]).toEqual([164, "260 - 160 DIAS"]);
+  });
+
   it("'Selecione' selecionado = ainda sem condição (false, o waitForFunction segue esperando)", () => {
     (document.querySelector("#condicoes_pagamento") as HTMLSelectElement).value = "";
     expect(lerCondicaoSelecionadaDom()).toBe(false);

@@ -375,8 +375,8 @@ jobs:
       # O pin do deno tem 4 ocorrências (esta; o job `falsificacao` — cujo `test:falsificacao`
       # chama `sonda-cron-prova.ts`, que faz `spawnSync('deno')`; o `gates-e-falsificacao`, de onde
       # a falsificação saiu em 2026-10-02; e o `mutation-check`, que roda contrato .mut de edge) —
-      # bump alinha as quatro. Desde 2026-11-11, mais duas: `sonda-cron-prova` e `hooks-e-evals`,
-      # que saíram deste job e do `gates-e-falsificacao` com o mesmo ambiente.
+      # bump alinha as quatro. Desde 2026-11-11, mais três: `sonda-cron-prova`, `hooks` e
+      # `evals-falsificacao`, que saíram deste job e do `gates-e-falsificacao` com o mesmo ambiente.
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
@@ -608,12 +608,13 @@ jobs:
       - name: Sonda por cron — prova por execução de cada closure histórico (G1/G3/G4)
         run: bun run sonda:cron-prova -- --gate
 
-  # ─── Hooks guard tests + falsificação dos evals em job próprio (2026-11-11) ─────────────────
+  # ─── Hooks guard tests em job próprio (2026-11-11) ──────────────────────────────────────────
   # Saíram do `gates-e-falsificacao`: `test:hooks` 136 s + `evals:deploy-verify:falsificacao` 68 s
   # eram 2/3 dele (316 s, run 42950648837). Mesmo ambiente do job de origem — bun, deno e o
   # shellcheck PINADO (`test-shellcheck-gate.sh` roda dentro do `test:hooks`) —, mesmos comandos,
   # DENTRO do `validate.needs`. O porquê de cada step está no comentário dele, abaixo.
-  hooks-e-evals:
+  # Desde o PR 3 do piso não-SQL a falsificação dos evals é o job `evals-falsificacao` (abaixo).
+  hooks:
     # Escopo só-docs (docs/historico/ci-escopo-so-docs.md): pula SÓ com o escopo `success` dizendo
     # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
     needs: docs-escopo
@@ -667,6 +668,39 @@ jobs:
       - name: Hooks guard tests
         # sem `heavy` aqui: o semáforo de RAM é da M2 local e nao existe no runner (exit 127).
         run: bun run test:hooks
+
+  # ─── Falsificação dos evals em job próprio (2026-11-11, PR 3 do piso não-SQL) ───────────────
+  # Saiu do `hooks-e-evals`, onde rodava em SÉRIE depois do `test:hooks` (158 + 83 s = job de
+  # 263 s, run 43043785156). Os evals usam deno (não shellcheck): mesmo ambiente menos o pin.
+  # DENTRO do `validate.needs` E do `fail-fast.needs` (#1947: fora, o merge não espera por ele).
+  # docs/historico/ci-hooks-e-evals-separados.md
+  evals-falsificacao:
+    # Escopo só-docs (docs/historico/ci-escopo-so-docs.md): pula SÓ com o escopo `success` dizendo
+    # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
+    needs: docs-escopo
+    if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: 2.9.2
 
       # Falsificação dos evals da skill lovable-deploy-verify — blocking. Os evals em si (o step
       # "Evals da skill lovable-deploy-verify") ficam no `gates-e-falsificacao`: aquele prova que a
@@ -792,7 +826,7 @@ jobs:
       - name: CLAUDE.md size budget
         run: bun run claude:size
 
-      # `Hooks guard tests` (`test:hooks`) saiu para o job `hooks-e-evals` (2026-11-11).
+      # `Hooks guard tests` (`test:hooks`) saiu para o job `hooks` (2026-11-11).
 
       # Evals da skill lovable-deploy-verify — blocking. A skill decide se um Publish está NO AR
       # (Passo 4, verify-frontend.sh) e quais das 3 camadas de deploy um diff exige (Passo 1,
@@ -822,7 +856,7 @@ jobs:
         run: bun run evals:deploy-verify
 
       # A falsificação destes evals (`evals:deploy-verify:falsificacao`) saiu para o job
-      # `hooks-e-evals` (2026-11-11), com o porquê de ela ser blocking.
+      # `evals-falsificacao` (2026-11-11), com o porquê de ela ser blocking.
 
       # Anti-regressão de gate de autorização em RPCs SECURITY DEFINER sensíveis (custo/preço/
       # estoque). Mata o padrão "CREATE OR REPLACE derrubou o gate" — 3 ocorrências (5 views #1246,
@@ -1127,11 +1161,11 @@ jobs:
   # `github.sha` deste run (`git merge-base --is-ancestor`), com o diff cumulativo entre os dois. Em
   # PR fica o raso, que é o caminho crítico quando as provas rodam. `actions: read` é para essa busca.
   # Escopo SÓ-DOCS (docs/historico/ci-escopo-so-docs.md). PR cujo diff inteiro é `docs/**/*.md` não
-  # paga os 7 jobs não-SQL (~2.400 s de runner e 264–434 s de parede por run, medidos): eles não leem
+  # paga os 8 jobs não-SQL (~2.400 s de runner e 264–434 s de parede por run, medidos): eles não leem
   # docs/, salvo 5 gates e 6 testes vitest, que o `docs-gates` abaixo roda. Fail-CLOSED: roda em
   # TODO evento e só diz `so_docs=true` em pull_request com diff legível, não-vazio e 100% na
   # allowlist; o resto (main, erro, `.mjs`/`.sh` em docs/, CLAUDE.md) diz `false` e tudo roda. A rede
-  # é a main: fora de PR os 7 jobs rodam integralmente. Step OPACO pelo mesmo motivo do
+  # é a main: fora de PR os 8 jobs rodam integralmente. Step OPACO pelo mesmo motivo do
   # `provas-sql-escopo` — decide escopo, não reprova conteúdo.
   docs-escopo:
     runs-on: ubuntu-latest
@@ -1157,7 +1191,7 @@ jobs:
           EVENTO: ${{ github.event_name }}
         run: bun ./scripts/docs-escopo.ts --evento "$EVENTO"
 
-  # Roda SÓ quando o escopo pulou os 7 jobs: os gates que leem docs/ (mapa de 2026-11-11) e o vitest
+  # Roda SÓ quando o escopo pulou os 8 jobs: os gates que leem docs/ (mapa de 2026-11-11) e o vitest
   # sobre o superconjunto dos testes que citam ou leem docs/ (`scripts/docs-escopo.ts --testes`).
   # Os nomes de script repetem os do `gates-e-falsificacao`, que vem antes no arquivo e é o dono no
   # censo do `gates:frescura` (que deduplica por nome).
@@ -1771,7 +1805,7 @@ jobs:
   # Fora do `needs` do `validate` de propósito: pulado (o caso verde) não é veredito de nada.
   # Só `pull_request`: o pós-merge (dispatch do auto-merge.yml), push e cron não mudam.
   fail-fast:
-    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks-e-evals, falsificacao, docs-gates]
+    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks, evals-falsificacao, falsificacao, docs-gates]
     if: ${{ failure() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -1792,7 +1826,7 @@ jobs:
 
   validate:
     if: always()
-    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks-e-evals, falsificacao, docs-escopo, docs-gates, provas-sql-escopo, provas-sql, provas-sql-uniao]
+    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks, evals-falsificacao, falsificacao, docs-escopo, docs-gates, provas-sql-escopo, provas-sql, provas-sql-uniao]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue. actions:read p/ revalidar, pela
@@ -1815,7 +1849,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          esperados=12
+          esperados=13
           total=0; falhou=0; viu_provas_sql=0; viu_uniao=0; viu_falsificacao=0; viu_escopo=0
           # O ÚNICO skipped aceito: `provas-sql` e `provas-sql-uniao` pulados porque o escopo DISSE que
           # o diff não alcança nada que as provas leem. Sempre com o escopo em `success` e `roda`
@@ -1832,9 +1866,9 @@ jobs:
           # exige que seja deste PR (branch e repo), concluído, com TODAS as partes e a união
           # `success`. Erro nessa leitura reprova — aqui já não há como rodar as provas puladas.
           escopo_pulou=0
-          # Escopo só-docs: os 7 pesados só podem vir `skipped` com o escopo `success` dizendo
+          # Escopo só-docs: os 8 pesados só podem vir `skipped` com o escopo `success` dizendo
           # `so_docs=true` num PR; o `docs-gates` só pode vir `skipped` com o escopo `success` dizendo
-          # outra coisa (aí os 7 rodaram e respondem por si). Com `so_docs=true` o `docs-gates` cai no
+          # outra coisa (aí os 8 rodaram e respondem por si). Com `so_docs=true` o `docs-gates` cai no
           # laço como qualquer job: só `success` passa — por isso ele não é repetido no `docs_pulou`; e o
           # próprio `docs-escopo` também (falho = ❌ no laço), por isso o resultado dele só vai ao log.
           docs_resultado="$(printf '%s' "$RESULTADOS" | jq -r '.["docs-escopo"].result // ""')"
@@ -1893,10 +1927,10 @@ jobs:
             if [ "$resultado" = "success" ]; then
               echo "  ✅ $job: success"
             elif [ "$resultado" = skipped ] && [ "$docs_pulou" -eq 1 ] \
-                 && case "$job" in typecheck|testes|edges-e-build|sonda-cron-prova|gates-e-falsificacao|hooks-e-evals|falsificacao) true ;; *) false ;; esac; then
+                 && case "$job" in typecheck|testes|edges-e-build|sonda-cron-prova|gates-e-falsificacao|hooks|evals-falsificacao|falsificacao) true ;; *) false ;; esac; then
               echo "  ⏭️ $job: skipped pelo escopo só-docs (o docs-gates rodou os gates e testes que leem docs/)"
             elif [ "$resultado" = skipped ] && [ "$docs_gates_dispensado" -eq 1 ] && [ "$job" = docs-gates ]; then
-              echo "  ⏭️ $job: skipped (o PR não é só docs — os 7 jobs rodaram)"
+              echo "  ⏭️ $job: skipped (o PR não é só docs — os 8 jobs rodaram)"
             elif [ "$resultado" = skipped ] && [ "$escopo_pulou" -eq 1 ] \
                  && { [ "$job" = provas-sql ] || [ "$job" = provas-sql-uniao ]; }; then
               if [ "$escopo_modo" = recibo ]; then

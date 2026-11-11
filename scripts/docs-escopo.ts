@@ -1,5 +1,5 @@
 /**
- * Escopo SÓ-DOCS do PR: decide se os 7 jobs não-SQL do `ci.yml` podem ceder lugar ao `docs-gates`.
+ * Escopo SÓ-DOCS do PR: decide se os 8 jobs não-SQL do `ci.yml` podem ceder lugar ao `docs-gates`.
  *
  * Medido em 28/10–11/11/2026 (docs/historico/ci-escopo-so-docs.md): 133 de 400 PRs mergeados eram só
  * de `docs/`, e cada run deles pagava ~2.400 s de runner e 264–434 s de caminho crítico em jobs que
@@ -10,14 +10,14 @@
  *  - `--evento <nome>` (job `docs-escopo`): escreve `so_docs=true` em `$GITHUB_OUTPUT` SÓ se o evento é
  *    `pull_request`, o HEAD é o merge sintético (2 pais), o `git diff -z` do pai 1 ao HEAD terminou 0,
  *    é não-vazio, e TODO caminho casa `^docs/.+\.md$`. Qualquer outra coisa (evento da main, erro de
- *    git, diff vazio, `.mjs`/`.sql`/`.sh` em `docs/`, `CLAUDE.md` na raiz) escreve `false` — e os 7
+ *    git, diff vazio, `.mjs`/`.sql`/`.sh` em `docs/`, `CLAUDE.md` na raiz) escreve `false` — e os 8
  *    jobs rodam. Nunca sai ≠ 0 por decisão; só se não conseguir ESCREVER a saída (aí o job falha e os
  *    pesados rodam pelo `if`, que exige `result == success`).
  *
  *  - `--testes` (job `docs-gates`): roda o vitest sobre o SUPERCONJUNTO dos testes que podem ler
  *    `docs/`: todo arquivo do universo do vitest cujo texto cita `docs`, `CLAUDE.md` ou `README.md`,
  *    UNIDO aos leitores conhecidos (`LEITORES_DE_DOCS`), que precisam existir — sumiu um, reprova.
- *    O filtro textual é heurística, não análise de dependência: a rede é o CI da main, que roda os 7
+ *    O filtro textual é heurística, não análise de dependência: a rede é o CI da main, que roda os 8
  *    jobs inteiros a cada merge (mesma postura do `provas-sql-escopo`, docs/historico/ci-provas-sql-escopo.md).
  *
  * Step OPACO de propósito (`bun ./scripts/…`): o escopo não é gate, e os testes que o `--testes` roda

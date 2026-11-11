@@ -58,7 +58,7 @@ também: a causa passou a ser descrita como observação e o retrato ganhou o pa
 status do detalhe no caminho de fallback. Fica de fora o status das requisições XHR da tela (sem corpo nem URL): só se
 o retrato não bastar.
 
-## Próximo passo (o conserto do seletor)
+## Próximo passo (o conserto do seletor) — superado, ver Desfecho
 
 Depois do deploy da edge, a próxima leitura de 2148220/2148223 (botão ou varredura) grava o retrato. Com ele, o seletor
 certo para o viewer sai de dado, não de hipótese:
@@ -70,7 +70,28 @@ SELECT id, gravado_em,
 FROM public.sayerlack_portal_evidencia WHERE protocolo IN ('2148220','2148223') ORDER BY id DESC LIMIT 2;
 ```
 
+## Desfecho (2026-11-11): o seletor estava certo; o caminho até a tela, não
+
+- **O retrato (v1.12, evidência de 14:02Z, 2148223 manual) mostrou a causa.** O `page.goto` direto para
+  `/order-creation-form-edit/2148223/route/order-viewer` respondeu **404**. O caminho final foi
+  `/login/order-creation-form-edit/…` e a página ficou com o título "Not Found", sem nenhum select. O leitor de condição
+  nunca chegou à tela de detalhe.
+- **A rota existe.** No Chrome logado do founder, a mesma URL mostra "Condição de Pagamento 70 - 7 DIAS" num campo
+  travado. Na Consulta Pedidos, o nº do pedido é um `<a href>` para essa URL. A coluna Ações só tem e-mail e impressão.
+- **O conserto foi o #3820 (v1.13-detalhe-por-clique).** A edge passou a abrir o detalhe clicando nesse link, o mesmo
+  padrão que já se usava para abrir a Consulta pelo menu ("goto direto pode cair em /login/…"). O `goto` ficou só como
+  fallback.
+- **A prova foi feita em prod.** A varredura das 15:31Z leu os dois pedidos com `detalhe_aberto` via clique e status
+  200, e com `condicao = "70 - 7 DIAS"` e 80 opções. Os dois entraram no Omie: 2148220 → PO 1340 e 2148223 → PO 1341.
+  `sayerlack_varredura_falha.resolvido_em` foi preenchido às 15:31Z nos dois. A sonda pós-deploy (tentativa #1086,
+  request 16132) deu DEPLOY CONFIRMADO para a v1.13, com fonte `bf57a210…`.
+
 ## Lição
+
+**Neste portal, `goto` direto é suspeito; chegar pelo clique é o normal.** Rota que abre no Chrome do usuário pode
+dar 404 por `goto` na sessão do robô. Quando a tela é alcançada por link, o robô navega pelo link: casa o `href` pelo
+fim, com o nº entre barras, e usa só links de leitura. Mesmo assim, grave status e caminho do destino no trace, porque
+foi isso que transformou "condição ilegível" em "404".
 
 **Fixture escrita à mão não é "HTML real".** Um teste de seletor contra uma fixture inventada prova a hipótese, não o
 portal. Ele passa verde para sempre enquanto a produção recusa 100%. Toda fixture de tela de terceiro precisa dizer de
