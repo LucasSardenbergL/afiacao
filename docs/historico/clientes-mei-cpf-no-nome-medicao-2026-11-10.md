@@ -92,3 +92,21 @@ O Codex ficou indisponível (cota, rc=75). A revisão adversarial do Fable não 
 - **M1.** A busca ao vivo no Omie (`listar_clientes`, respostas da `omie-cliente`) ainda leva a razão crua à impressão e ao e-mail "Novo Pedido".
 - **M2.** A PRE não confere se as edges novas já estão no ar.
 - **M3.** `private.customer_metrics_mv.razao_social` só se renova no cron de 6 h.
+
+### Correção dos achados (2026-11-11, decisão do founder: "a edge busca a razão")
+
+- **A1:** no `IncluirCliente`, a razão mascarada vira a razão FISCAL do mesmo documento noutra conta Omie
+  (`razaoFiscalParaCadastro` em `_shared/razao-fiscal.ts`).
+  - A `omie-vendas-sync` consulta a outra conta, oben ↔ colacor, com o lookup estrito.
+  - A `omie-sync` consulta a Oben e depois a Colacor; a `callOmieApi` ganhou a conta como parâmetro, com padrão
+    Colacor SC.
+  - Falha de leitura sobe, nunca vira "não existe". Sem conta com o documento → `RAZAO_MASCARADA`.
+  - A guarda saiu de antes do lookup na `omie-vendas-sync` (corrige o B2).
+  - Resíduo: nesse último caso o front ainda engole o erro. Pela medição, nenhum dos 1.888 está nele, porque todos
+    têm código em alguma conta.
+- **M2:** a PRE exige `omie-sync v1.11` e `omie-vendas-sync v1.34` em `deploy_atestacoes`.
+- **M3:** a migration chama `refresh_customer_metrics()` depois do `COMMIT`.
+- **Prova:** 18 asserts; `--falsificar` dá 9 de 9 sabotagens vermelhas em `C` e em `pt_BR`.
+- **Fica para depois:** M1 (a razão crua da busca ao vivo no Omie ainda chega à impressão e ao e-mail do pedido) e
+  B5 (`fin_movimentacoes.descricao`).
+
