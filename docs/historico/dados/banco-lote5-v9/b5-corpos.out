@@ -1,0 +1,72 @@
+_data_health_compute | 155 | THEN 'cron enfileirou mas a edge pode nao ter respondido (transporte pg_net / BOOT_ERROR) — cron.job_run_details so prova o ENQUEUE; a verdade HTTP esta em net._http_response (~6h de retencao) e o lease em sync_state.car
+_data_health_compute | 901 | || 'cron.job_run_details nem em acoes_execucoes.'
+_data_health_compute | 1491 | -- em erro, PROPAGA sem gravar (o erro fica em cron.job_run_details). Logo "sem sucesso na
+_data_health_compute | 1514 | || 'esta falhando (o erro propaga e NAO grava linha no ledger — leia cron.job_run_details). '
+_data_health_compute | 1518 | 'Cron: SELECT start_time, status, return_message FROM cron.job_run_details WHERE jobid = (SELECT jobid FROM cron.job WHERE jobname = ''radar-recruzar-ja-cliente-diario'') ORDER BY start_time DESC LIMIT 10; '
+_data_health_compute | 1573 | || 'cron: SELECT start_time, status, return_message FROM cron.job_run_details WHERE jobid = (SELECT jobid FROM cron.job WHERE jobname = ''sayerlack-varrer-pedidos-portal'') ORDER BY start_time DESC LIMIT 6; '
+analytics_outbox_claim | 7 | -- no cron — onde `job_run_details = succeeded` (que prova o ENQUEUE) o esconde.
+get_carteira_saude | 26 | FROM cron.job_run_details d
+get_carteira_saude | 33 | -- job_run_details apaga o run mensal na maior parte do mês; o
+radar_avisar_vendedores | 268 | -- (cron.job_run_details é a fonte do "rodou"). Pulado e erro também entram.
+tint_promocao_watchdog | 51 | 'Confira cron.job_run_details e promocao_erro.';
+tint_watchdog_corante_check | 188 | -- Um cron não vigia a si mesmo: cron.job_run_details diz "succeeded" só por ter
+tint_watchdog_corante_vigia_check | 25 | || '. Cheque cron.job_run_details do job tint-watchdog-corante-5min (timeout?).',
+## views v_cron_*
+v_cron_jobs_falhas |  SELECT j.jobname,
+    jrd.jobid,
+    jrd.runid,
+    jrd.start_time,
+    jrd.end_time,
+    (EXTRACT(epoch FROM (jrd.end_time - jrd.start_time)))::numeric(10,2) AS duracao_segundos,
+    jrd.return_message,
+    jrd.status
+   FROM (cron.job_run_details jrd
+     JOIN cron.job j ON ((j.jobid = jrd.jobid)))
+  WHERE ((jrd.status = 'failed'::text) AND (jrd.start_time > (now() - '7 days'::interval)) AND (j.jobname ~~ 'afiacao_%'::text))
+  ORDER BY jrd.start_time DESC;
+v_cron_jobs_status |  WITH ultima_execucao AS (
+         SELECT DISTINCT ON (job_run_details.jobid) job_run_details.jobid,
+            job_run_details.start_time,
+            job_run_details.end_time,
+            job_run_details.status,
+            job_run_details.return_message,
+            EXTRACT(epoch FROM (job_run_details.end_time - job_run_details.start_time)) AS duracao_segundos
+           FROM cron.job_run_details
+          WHERE (job_run_details.start_time > (now() - '30 days'::interval))
+          ORDER BY job_run_details.jobid, job_run_details.start_time DESC
+        ), historico_7d AS (
+         SELECT job_run_details.jobid,
+            count(*) AS execucoes_7d,
+            count(*) FILTER (WHERE (job_run_details.status = 'succeeded'::text)) AS sucessos_7d,
+            count(*) FILTER (WHERE (job_run_details.status = 'failed'::text)) AS falhas_7d,
+            (avg(EXTRACT(epoch FROM (job_run_details.end_time - job_run_details.start_time))))::numeric(10,2) AS duracao_media_segundos
+           FROM cron.job_run_details
+          WHERE (job_run_details.start_time > (now() - '7 days'::interval))
+          GROUP BY job_run_details.jobid
+        )
+ SELECT j.jobid,
+    j.jobname,
+    j.schedule,
+    j.command,
+    j.active,
+    ue.start_time AS ultima_execucao,
+    ue.status AS ultimo_status,
+    ue.duracao_segundos AS ultima_duracao_seg,
+    ue.return_message AS ultima_mensagem,
+    h.execucoes_7d,
+    h.sucessos_7d,
+    h.falhas_7d,
+    h.duracao_media_segundos
+   FROM ((cron.job j
+     LEFT JOIN ultima_execucao ue ON ((ue.jobid = j.jobid)))
+     LEFT JOIN historico_7d h ON ((h.jobid = j.jobid)))
+  WHERE (j.jobname ~~ 'afiacao_%'::text)
+  ORDER BY j.jobname;
+## leitores das views v_cron_* (funções)
+## crons que chamam cada função (jobid, schedule, ativo)
+101 | data-health-watchdog | */30 * * * * | t | SELECT public.data_health_watchdog()
+166 | tint-watchdog-corante-5min | */5 * * * * | t | SELECT public.tint_watchdog_corante_check();
+188 | tint-promocao-watchdog | */10 * * * * | t |  SELECT public.tint_promocao_watchdog(); 
+217 | tint-watchdog-corante-vigia-15min | */15 * * * * | t | SELECT public.tint_watchdog_corante_vigia_check()
+273 | radar-avisar-vendedores-semanal | 0 11 * * 1 | f | SELECT public.radar_avisar_vendedores();
+#FIM-OK
