@@ -910,7 +910,7 @@ criasse a divergência, e ninguém voltou a ela depois da 5.2.
 - **Recibo:** migration aplicada pelo envelope (#1066) e conferida no psql-ro: corpo novo, SECURITY DEFINER, `anon`
   sem EXECUTE e `authenticated` com EXECUTE. PR #3790 mergeado em 2026-11-10. Publish: founder.
 
-## v1.12 — condição ilegível em TODA importação: o detalhe abre pelo clique (2026-11-11)
+## v1.13 — condição ilegível em TODA importação: o detalhe abre pelo clique (2026-11-11)
 
 - **Sintoma:** desde que a leitura da condição entrou (revisão Fable+Codex), nenhuma importação passou. Foram 8
   tentativas em `acoes_execucoes` (09/11 → 11/11) para 2148220 e 2148223, todas com `etapa: leitura` e
@@ -926,10 +926,11 @@ criasse a divergência, e ninguém voltou a ela depois da 5.2.
   - Função nova `clicarDetalhePedidoDom`: clica no link do nº na linha da consulta. Casa o href pelo FIM, então
     2148220 não abre 21482201. O `goto` fica só de fallback.
   - Antes de ler o select, a edge espera a rede assentar, para nunca ler a opção-padrão de passagem.
-  - O trace grava `url`, título e ids dos selects da página aberta, então um erro novo deixa de ser cego.
+  - O passo `detalhe_aberto` ganha `via_clique`. O retrato da tela (`condicao_diag`) e a causa na recusa vieram do
+    #3815 (C16, v1.12), mergeado minutos antes; este PR é o conserto que aquele retrato iria apontar.
 - **Provas:**
   - vitest do DOM contra o fixture da consulta (que agora tem o link real no nº).
   - Sabotar o casamento para prefixo deixa vermelho só o teste do prefixo, com o controle verde antes.
   - Deno 74/74; `edges:typecheck`, `edges:sintaxe`, `sonda:bump` e `sonda:fingerprint`.
-- **Deploy:** `sayerlack-importar-pedido-portal` (v1.12-detalhe-por-clique). `sayerlack-varrer-pedidos-portal` mudou
+- **Deploy:** `sayerlack-importar-pedido-portal` (v1.13-detalhe-por-clique). `sayerlack-varrer-pedidos-portal` mudou
   só de fingerprint, porque o `_shared` é comum às duas, e entra na mesma leva. Nenhuma migration e nenhum Publish.
