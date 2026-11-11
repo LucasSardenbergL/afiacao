@@ -318,16 +318,21 @@ describe("tela de detalhe — condição de pagamento", () => {
     document.body.innerHTML += '<input type="hidden" name="pagamento_token" value="segredo-de-sessao">' +
       '<select id="cliente"><option selected>OBEN 123.456.789-09</option></select>' +
       '<label for="prazo_x">Prazo</label><input id="prazo_x" value="30/60/90 DD"><br>' +
-      "<p>Condição do cliente 12.345.678/0001-90 · 30/60/90/120/150/180 DD</p><iframe></iframe>";
+      "<p>Condição do cliente 12.345.678/0001-90 · CPF 12345678909 · 30/60/90/120/150/180 DD</p><iframe></iframe>";
     const d = diagnosticarCondicaoDom();
     expect(d.campos).toEqual([
       { tag: "input", id: "", name: "pagamento_token", tipo: "hidden", valor: null, rotulo: "" },
       { tag: "input", id: "prazo_x", name: "", tipo: "text", valor: "30/60/90 DD", rotulo: "Prazo" },
     ]);
     expect(d.selects).toEqual([{ id: "cliente", name: "", n: 1, sel: null }]);
-    expect(d.textos).toEqual(["Prazo | Condição do cliente # · 30/60/90/120/150/180 DD", "Condição do cliente # · 30/60/90/120/150/180 DD"]);
+    // O texto do <option> entra no innerText (como no Chrome): o CPF do select alheio sai mascarado; o prazo fica.
+    expect(d.textos).toEqual([
+      "OBEN #Prazo | Condição do cliente # · CPF # · 30/60/90/120/150/180 DD",
+      "Condição do cliente # · CPF # · 30/60/90/120/150/180 DD",
+    ]);
     expect(JSON.stringify(d)).not.toContain("segredo");
     expect(JSON.stringify(d)).not.toContain("789-09");
+    expect(JSON.stringify(d)).not.toContain("12345678909");
     expect(d.n_iframes).toBe(1);
   });
 });
