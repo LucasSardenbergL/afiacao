@@ -30,4 +30,4 @@ Pelo contrato do Node, a falha do processo lança exceção, mas o CI roda sob B
   - arquivo cortado → `conferencia` pelo tamanho do blob;
   - falha persistente → `Mecanica` com as 2 tentativas.
 - Falsificação com controle verde na mesma invocação: S1 sem conferência, S2 sem retry, S3 retry no mesmo diretório, S4 persistência sem throw e S5 exit do tar ignorado deram **5/5 vermelhos**.
-- `bun run sonda:cron-prova -- --gate` local, com o caminho real sobre todos os closures: ver o PR.
+- `bun run sonda:cron-prova -- --gate` local, com o caminho real: **exit 0**, 747 de 748 closures PASSA (1 NAO_COMPILA já dispensado, `omie-sync-nfes-recebidas@b880daeb1`) e **0** retries de materialização.
