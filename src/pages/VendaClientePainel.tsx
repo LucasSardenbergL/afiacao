@@ -7,6 +7,7 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { AbaRepasses } from '@/components/venda-cliente/painel/AbaRepasses';
+import { AbaResumoEmail } from '@/components/venda-cliente/painel/AbaResumoEmail';
 import { AvisoNaoCausal } from '@/components/venda-cliente/painel/AvisoNaoCausal';
 import { PainelOndas } from '@/components/venda-cliente/painel/PainelOndas';
 import { TabelaAdocao } from '@/components/venda-cliente/painel/TabelaAdocao';
@@ -88,6 +89,7 @@ export default function VendaClientePainel() {
       <Tabs value={url.aba} onValueChange={(v) => setUrl({ aba: v })}>
         <TabsList>
           <TabsTrigger value="adocao">Adoção</TabsTrigger>
+          <TabsTrigger value="resumo">Resumo por e-mail</TabsTrigger>
           <TabsTrigger value="repasses">Repasses</TabsTrigger>
         </TabsList>
 
@@ -122,6 +124,10 @@ export default function VendaClientePainel() {
               )}
             </>
           )}
+        </TabsContent>
+
+        <TabsContent value="resumo">
+          <AbaResumoEmail de={de} ate={ate} />
         </TabsContent>
 
         <TabsContent value="repasses">

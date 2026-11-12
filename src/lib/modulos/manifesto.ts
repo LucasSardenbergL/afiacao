@@ -345,6 +345,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/PerformanceHub.tsx",
       "src/pages/RadarClientes.tsx",
       "src/pages/RadarAbrirEmail.tsx",
+      "src/pages/VendaResumoAbrir.tsx",
       "src/pages/RadarFunil.tsx",
       "src/pages/CoachingSPIN.tsx",
       "src/hooks/useFarmer*.ts",

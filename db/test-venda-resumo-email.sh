@@ -79,9 +79,16 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-venda-resumo.XXXXXX")"
 DATA="$WORK/data"
 MIG_USADA="$WORK/mig.sql"
 PRED_SQL="$WORK/pred.sql"
-# Preserva o status de quem saiu: sem isto um `set -u` (unbound variable) saía 0 pelo último comando do trap e a
-# falsificação lia "VERDE" numa suíte que tinha morrido no meio (medido: sabotagem hash_int, 12/11/2026).
-cleanup() { local rc=$?; "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$WORK"; exit "$rc"; }
+# Saída SÓ é verde se a suíte chegou ao fim: um `set -u` (unbound variable) aborta com `$?` = 0 dentro do trap EXIT
+# (medido no bash local, 12/11/2026 — a sabotagem hash_int saía "VERDE" com a suíte morta no meio). Por isso o
+# trap não confia no `$?`: sem o marcador TERMINOU, sai 99.
+TERMINOU=0
+cleanup() {
+  local rc=$?
+  "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$WORK"
+  if [ "$TERMINOU" != 1 ] && [ "$rc" -eq 0 ]; then echo "ABORTOU antes do fim (rc mascarado)"; rc=99; fi
+  exit "$rc"
+}
 trap cleanup EXIT
 
 cp "$MIG" "$MIG_USADA"
@@ -471,6 +478,7 @@ eq "M1d anon nao le as tabelas novas" "$(estado "SET ROLE anon; SELECT 1 FROM pu
 eq "M1e farmer nao le a tabela de bracos (RLS)" "$(Pq -c "$(como "$F1" "SELECT count(*) FROM public.venda_braco_comprador")")" "0"
 
 FAIL=$((FAIL + FAIL_APPLY))
+TERMINOU=1
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "FIM-OK venda-resumo-email"

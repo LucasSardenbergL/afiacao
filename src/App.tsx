@@ -187,6 +187,7 @@ const Melhorias = lazyRota(() => import("./pages/Melhorias"));
 const GestaoMelhorias = lazyRota(() => import("./pages/GestaoMelhorias"));
 const RadarClientes = lazyRota(() => import("./pages/RadarClientes"));
 const RadarAbrirEmail = lazyRota(() => import("./pages/RadarAbrirEmail"));
+const VendaResumoAbrir = lazyRota(() => import("./pages/VendaResumoAbrir"));
 const RadarFunil = lazyRota(() => import("./pages/RadarFunil"));
 
 const PageLoader = () => <PageSkeleton variant="auto" />;
@@ -296,6 +297,7 @@ const arvoreDeRotas = (
         <Route path="unified-order" element={<Navigate to="/sales/new" replace />} />
         <Route path="farmer" element={<FarmerDashboard />} />
         <Route path="meu-dia" element={<MeuDia />} />
+        <Route path="meu-dia/abrir/:token" element={<VendaResumoAbrir />} />
         <Route path="farmer/calls" element={<FarmerCalls />} />
         <Route path="farmer/carteira" element={<CarteiraBoard />} />
         <Route path="farmer/calls/pending-link" element={<FarmerCallsPendingLink />} />
