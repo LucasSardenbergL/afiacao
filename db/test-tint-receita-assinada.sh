@@ -565,7 +565,7 @@ consistente() {   # $1 = cópia com c_este SENTINELA → reescreve com o md5 cal
   local md5
   PA -q -d postgres -c "DROP DATABASE IF EXISTS ensaio" -c "CREATE DATABASE ensaio TEMPLATE tpl_diff" >/dev/null
   PA -q -d ensaio --single-transaction -f "$1" >"$TMP/ensaio.log" 2>&1 || true
-  md5="$(sed -nE 's/.*pos-troca o md5 do promote e ([0-9a-f]{32}) \(esperado SENTINELA\).*/\1/p' "$TMP/ensaio.log" | head -1)"
+  md5="$(sed -nE 's/.*pos-troca o md5 do promote e ([0-9a-f]{32}) \(esperado SENTINELA\).*/\1/p' "$TMP/ensaio.log" | sed -n 1p)"
   if [ -n "$md5" ]; then sed -i.bak "s/c_este constant text := 'SENTINELA'/c_este constant text := '$md5'/" "$1"; fi
 }
 

@@ -227,7 +227,7 @@ EXCEPTION
 END \$\$;
 SQL
 )
-if printf '%s' "$R" | command grep -qF 'VEREDITO_RECUSOU_42501'; then
+if command grep -qF 'VEREDITO_RECUSOU_42501' <<<"$R"; then
   ok "N4 employee SEM cap NÃO cria key nova no namespace (42501, prefixo cobre chave futura)"
 else
   bad "N4 INSERT de key margem_faixa_* nova não foi barrado com 42501 — veio: $(printf '%s' "$R" | tr '\n' ' ' | cut -c1-200)"
@@ -306,7 +306,7 @@ EXCEPTION
 END \$\$;
 SQL
 )
-if printf '%s' "$R2" | command grep -qF 'VEREDITO_ACEITOU_A_ESCRITA'; then
+if command grep -qF 'VEREDITO_ACEITOU_A_ESCRITA' <<<"$R2"; then
   ok "S3 sabotagem (drop policy INSERT) deixa a key nova entrar — assert N4 tem dente"
 else
   bad "S3 a sabotagem do INSERT não produziu vermelho: N4 passaria de qualquer jeito"
@@ -357,7 +357,7 @@ EXCEPTION
 END \$\$;
 SQL
 }
-if printf '%s' "$(trunca_como_atacante)" | command grep -qF 'VEREDITO_SEM_PRIVILEGIO_DE_TRUNCATE'; then
+if command grep -qF 'VEREDITO_SEM_PRIVILEGIO_DE_TRUNCATE' <<<"$(trunca_como_atacante)"; then
   ok "T1 employee SEM cap não TRUNCA a config (o REVOKE pega o que a RLS não vê)"
 else
   bad "T1 TRUNCATE não foi barrado — as 3 policies viram decoração: truncar reseta o limiar ao default"
@@ -366,7 +366,7 @@ fi
 # S5 — devolve o privilégio e exige que o truncate volte a passar (senão T1 passaria de graça,
 # por a role nunca ter tido TRUNCATE, e não por causa do REVOKE da migration).
 P -q -c 'GRANT TRUNCATE ON public.farmer_algorithm_config TO authenticated;'
-if printf '%s' "$(trunca_como_atacante)" | command grep -qF 'VEREDITO_A_TABELA_FOI_ESVAZIADA'; then
+if command grep -qF 'VEREDITO_A_TABELA_FOI_ESVAZIADA' <<<"$(trunca_como_atacante)"; then
   ok "S5 sabotagem (re-GRANT de TRUNCATE) esvazia a tabela — T1 tem dente"
 else
   bad "S5 re-conceder TRUNCATE não permitiu truncar: T1 passaria mesmo sem o REVOKE"

@@ -331,7 +331,7 @@ echo "═══ setup pronto (PG17 :$PORT, lc_messages=$HARNESS_LC) ═══"
 aplicar() {   # <db> <arquivo> → "OK" | "SEM_NOTICE" | "ERRO: <1ª linha de erro>"
   local out
   if out="$(Pdb "$1" -f "$2" 2>&1)"; then
-    if printf '%s' "$out" | grep -q 'POSTCONDICAO OK'; then echo "OK"; else echo "SEM_NOTICE"; fi
+    if grep -q 'POSTCONDICAO OK' <<<"$out"; then echo "OK"; else echo "SEM_NOTICE"; fi
   else
     echo "ERRO: $(printf '%s' "$out" | grep -m1 -E 'ERRO|ERROR|FATAL' | head -c 240)"
   fi
@@ -564,7 +564,7 @@ postcond_recusa() {   # <id> <descrição> <fragmento esperado na mensagem> <de>
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T molde "$db"
   if out="$(Pdb "$db" -f "$copia" 2>&1)"; then
     v="APLICOU"
-  elif printf '%s' "$out" | grep -q "POSTCONDICAO FALHOU: .*${frag}"; then
+  elif grep -q "POSTCONDICAO FALHOU: .*${frag}" <<<"$out"; then
     v="RECUSOU"
   else
     v="ERRO: $(printf '%s' "$out" | grep -m1 -E 'ERRO|ERROR|FATAL' | head -c 240)"

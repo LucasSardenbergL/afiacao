@@ -248,7 +248,7 @@ suite() {
   saida_inercia="$(P -v ON_ERROR_STOP=1 -f "$ALVO" 2>&1)"; rc_inercia=$?
   if [ "$rc_inercia" -eq 0 ]; then
     bad "artefato de fixture rodou LIMPO — o envelope inerte sumiu, e colar isto dispararia"
-  elif printf '%s' "$saida_inercia" | grep -q 'ARTEFATO DE FIXTURE'; then
+  elif grep -q 'ARTEFATO DE FIXTURE' <<<"$saida_inercia"; then
     ok "artefato aborta com a marca do RAISE (não é 'deu erro' genérico)"
   else
     bad "artefato abortou SEM a marca do RAISE — veio '$(printf '%s' "${saida_inercia:0:90}")'"
@@ -264,7 +264,7 @@ suite() {
     bad "[SQL-INVALIDO] a contagem da sentinela nem executou: $(head -c 120 "$TMP/sentinela.err" | tr '\n' ' ')"
   elif [ "$disparos" = "0" ]; then
     ok "artefato não dispara nada nem sem ON_ERROR_STOP (sentinela vazia com a armadilha armada)"
-  elif printf '%s' "$disparos" | grep -qE '^[1-9][0-9]*$'; then
+  elif grep -qE '^[1-9][0-9]*$' <<<"$disparos"; then
     bad "o artefato DISPAROU $disparos vez(es) — o SQL de fixture está executável"
   else
     bad "[SQL-INVALIDO] a contagem da sentinela veio ilegível ('${disparos:0:40}')"
@@ -579,7 +579,7 @@ invalida() { # <id> <descricao> <motivo>
 # compensaria retirar outra, e o runner seguiria verde.
 registra() {
   case "$SAB_IDS" in *" $1 "*) invalida "$1" "(id repetido)" "id DUPLICADO"; return 1 ;; esac
-  if [ -n "$SAB_EXPRS" ] && printf '%s\n' "$SAB_EXPRS" | grep -qxF -- "$2"; then
+  if [ -n "$SAB_EXPRS" ] && grep -qxF -- "$2" <<<"$SAB_EXPRS"; then
     invalida "$1" "(expressao repetida)" "a MESMA sabotagem ja rodou com outro id"; return 1
   fi
   SAB_IDS="$SAB_IDS$1 "

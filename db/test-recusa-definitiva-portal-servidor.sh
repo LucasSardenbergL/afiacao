@@ -314,7 +314,7 @@ intocados() {
   local ids id
   ids=$(Pq -c "SELECT public.reposicao_encerrar_recusas_definitivas(3)->>'ids';")
   for id in 202 203 204 205 206 207 208 209 210 212 215; do
-    if echo "$ids" | grep -qE "(\[|, )$id(,|\])"; then echo "  FALHA E2_$id"; else echo "  ok E2_$id"; fi
+    if grep -qE "(\[|, )$id(,|\])" <<<"$ids"; then echo "  FALHA E2_$id"; else echo "  ok E2_$id"; fi
   done
 }
 

@@ -255,7 +255,7 @@ EXCEPTION
 END $$;
 SQL
 )
-if echo "$AUTHN" | grep -q 'NEGOU_42501'; then ok "A1 authenticated NEGADO (42501)"; else bad "A1 authenticated devia ser negado — veio: $AUTHN"; fi
+if grep -q 'NEGOU_42501' <<<"$AUTHN"; then ok "A1 authenticated NEGADO (42501)"; else bad "A1 authenticated devia ser negado — veio: $AUTHN"; fi
 
 ANONN=$(P -tA 2>&1 <<'SQL' || true
 SET ROLE anon;
@@ -269,7 +269,7 @@ EXCEPTION
 END $$;
 SQL
 )
-if echo "$ANONN" | grep -q 'NEGOU_42501'; then ok "A2 anon NEGADO (42501)"; else bad "A2 anon devia ser negado — veio: $ANONN"; fi
+if grep -q 'NEGOU_42501' <<<"$ANONN"; then ok "A2 anon NEGADO (42501)"; else bad "A2 anon devia ser negado — veio: $ANONN"; fi
 
 SVC=$(Pq -c "SET ROLE service_role; SELECT count(*) FROM public.get_customer_margin_summary();" | tail -1)
 eq "A3 service_role EXECUTA"               "$SVC" "7"
@@ -317,7 +317,7 @@ EXCEPTION
 END $$;
 SQL
 )
-if echo "$GUARD" | grep -q 'GUARD_OK_23514'; then ok "AP3 guard barra health_score ausente (23514)"; else bad "AP3 guard NAO barrou — veio: $GUARD"; fi
+if grep -q 'GUARD_OK_23514' <<<"$GUARD"; then ok "AP3 guard barra health_score ausente (23514)"; else bad "AP3 guard NAO barrou — veio: $GUARD"; fi
 
 echo "── asserts: chave AUSENTE ≠ chave null (sentinela de presença) ──"
 # O ponto do P1.4: jsonb_to_recordset colapsa os dois casos. A distinção é o que impede um typo na
@@ -369,7 +369,7 @@ EXCEPTION
 END $$;
 SQL
 )
-if echo "$AUTHN2" | grep -q 'NEGOU_42501'; then ok "I3 revoke sobrevive ao 2o apply"; else bad "I3 revoke NAO sobreviveu ao 2o apply — veio: $AUTHN2"; fi
+if grep -q 'NEGOU_42501' <<<"$AUTHN2"; then ok "I3 revoke sobrevive ao 2o apply"; else bad "I3 revoke NAO sobreviveu ao 2o apply — veio: $AUTHN2"; fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 5 — FALSIFICAÇÃO (Lei #3): sabota → exige VERMELHO → restaura
@@ -539,7 +539,7 @@ EXCEPTION
 END $$;
 SQL
 )
-if echo "$AUTHR" | grep -q 'NEGOU_42501'; then ok "R4 revoke restaurado"; else bad "R4 revoke NAO restaurado — veio: $AUTHR"; fi
+if grep -q 'NEGOU_42501' <<<"$AUTHR"; then ok "R4 revoke restaurado"; else bad "R4 revoke NAO restaurado — veio: $AUTHR"; fi
 # R5: com a função VERDADEIRA de volta, o NULL honesto tem de sobrescrever o 42 da falsificação.
 APPLY '[{"id":"0d000000-0000-0000-0000-000000000002","health_score":40,"health_class":"atencao","churn_risk":60,"priority_score":5,"rf_score":8,"m_score":null,"g_score":9,"gross_margin_pct":null,"days_since_last_purchase":20,"avg_monthly_spend_180d":50,"category_count":1,"calculated_at":"2026-07-20T00:00:00Z","updated_at":"2026-07-20T00:00:00Z"}]' >/dev/null
 eq "R5 NULL sobrescreve apos restauro"      "$(GMP 2)" "NULL"

@@ -203,7 +203,7 @@ eq() {
   elif [ "$3" = "$4" ]; then ok "$1" "$2 (=$3)"; else bad "$1" "$2 — esperado [$4], veio [$3]"; fi
 }
 # Impressões digitais de uma leitura (`linhas:md5`): as duas têm de ser válidas para o veredito contar.
-digital() { printf '%s' "$1" | grep -Eq '^[0-9]+:[0-9a-f]{32}$'; }
+digital() { grep -Eq '^[0-9]+:[0-9a-f]{32}$' <<<"$1"; }
 iguais() {   # <id> <descrição> <v1> <v2>
   if ! digital "$3" || ! digital "$4"; then
     erro_exec "$1" "$2 — leitura inválida: [$(printf '%s | %s' "$3" "$4" | tr '\n' ' ' | head -c 220)]"

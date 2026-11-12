@@ -93,7 +93,7 @@ s = s.replace(de, para)
 open(p, "w", encoding="utf-8").write(s)
 PY
 }
-ESTE="$(grep -oE "'[0-9a-f]{32}' /\* este:radar_registrar_cadastro_omie \*/" "$MIG" | grep -oE '[0-9a-f]{32}' | head -1)"
+ESTE="$(grep -oE "'[0-9a-f]{32}' /\* este:radar_registrar_cadastro_omie \*/" "$MIG" | grep -oE '[0-9a-f]{32}' | sed -n 1p)"
 neutralizar() {
   sabotar "$MIG_USADA" "'$ESTE' /* este:radar_registrar_cadastro_omie */" "(SELECT md5(q.prosrc) FROM pg_catalog.pg_proc q WHERE q.oid = to_regprocedure('public.radar_registrar_cadastro_omie(text,text,boolean)'))"
 }

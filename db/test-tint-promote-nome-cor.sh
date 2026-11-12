@@ -106,7 +106,7 @@ INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_cora
  ('20000000-0000-0000-0000-0000000000ff','50000000-0000-0000-0000-0000000000ff','C1',10,1);
 SQL
 FALSO=$(P0 -tA -c "SELECT tint_promote_sync_run('20000000-0000-0000-0000-0000000000ff');" 2>&1 || true)
-if echo "$FALSO" | grep -qiE "23502|null value in column .nome_cor."; then
+if grep -qiE "23502|null value in column .nome_cor." <<<"$FALSO"; then
   ok "falsificação tem dente: SEM o fallback, a promoção estoura 23502 (nome_cor NOT NULL)"
 else
   bad "falsificação FRACA: esperava erro 23502, veio [$FALSO]"

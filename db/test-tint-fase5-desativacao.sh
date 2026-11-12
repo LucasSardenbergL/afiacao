@@ -143,7 +143,7 @@ confere_falsificacao() {
   case "$out" in
     *TODOS_OK*) bad "$rot NAO pegou: asserts VERDES sob a sabotagem (sem dente) — $desc"; return ;;
   esac
-  n_real="$(printf '%s' "$out" | sed -n 's/.*FALHAS\[\([0-9]\{1,\}\)\].*/\1/p' | head -1)"
+  n_real="$(printf '%s' "$out" | sed -n 's/.*FALHAS\[\([0-9]\{1,\}\)\].*/\1/p' | sed -n 1p)"
   if [ -z "$n_real" ]; then
     bad "$rot quebrou FORA do contrato de asserts (sem FALHAS[n] — erro SQL?): $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-180)"; return
   fi

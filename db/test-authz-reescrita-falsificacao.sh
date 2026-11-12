@@ -44,7 +44,7 @@ espera() {
   local out rc ok_cod=0
   out=$("$@" 2>&1); rc=$?
   if [ -z "$cod" ]; then ok_cod=1
-  elif printf '%s' "$out" | command grep -qF "$cod"; then ok_cod=1
+  elif command grep -qF "$cod" <<<"$out"; then ok_cod=1
   fi
   if [ "$rc" = "$exp" ] && [ "$ok_cod" = 1 ]; then
     printf '  [%s] OK    %-34s exit=%s %s\n' "$LOC" "$rot" "$rc" "${cod:-—}"
@@ -59,17 +59,41 @@ echo "== falsificação da Parte D — locale $LOC =="
 # C0 — canário: sem sabotagem, verde. Sem ele, um harness quebrado "passa" mostrando vermelho.
 espera "C0 canario authz:check" 0 "" bun run authz:check
 
+# Alvo de F1/F4 lido da PRÓPRIA baseline (1ª entrada), não chumbado: a entrada tem prazo (cabeçalho de
+# scripts/authz-reescritas-conhecidas.ts) e, chumbada, a sabotagem apodrece quando a dívida é paga — o
+# `s.index` explodia e F1/F4 ficavam vermelhos pelo motivo errado fora do núcleo do CI.
+# Lista vazia = não há reescrita a remover nem md5 a sabotar: F1/F4 dizem PULADO e NOMEIAM o porquê.
+# Lista não-vazia que o parse não lê = exit 2 (nunca degrada para "vazia").
+ALVO_REESCRITA="$(python3 - <<'PY'
+import re, sys
+s = open('scripts/authz-reescritas-conhecidas.ts').read()
+m = re.search(r'export const AUTHZ_REESCRITAS_CONHECIDAS: ReescritaConhecida\[\] = \[(.*?)\];', s, re.S)
+if not m: sys.exit('declaracao de AUTHZ_REESCRITAS_CONHECIDAS nao encontrada')
+corpo = m.group(1)
+ents = re.findall(r"arquivo:\s*'([^']+)'.*?funcao:\s*'([^']+)'.*?md5ProdEsperado:\s*'([0-9a-f]{32})'", corpo, re.S)
+if corpo.strip() and not ents: sys.exit('baseline nao-vazia que o parse nao le')
+if ents: print('\t'.join(ents[0]))
+PY
+)" || { echo "  [$LOC] ERRO: não li o alvo de F1/F4 na baseline"; exit 2; }
+IFS=$'\t' read -r ALVO_ARQ ALVO_FUN ALVO_MD5 <<<"$ALVO_REESCRITA"
+export ALVO_ARQ ALVO_MD5
+
 # F1 — entrada removida da baseline: a reescrita volta a ser ERRO, nomeando arquivo e função.
 #      É o teste que separa "a baseline existe" de "a baseline é o que segura o erro".
-python3 - <<'PY'
+if [ -n "$ALVO_ARQ" ]; then
+  python3 - <<'PY'
+import os
 p='scripts/authz-reescritas-conhecidas.ts'; s=open(p).read()
-i=s.index("    arquivo: '20260814022626"); j=s.index('  },', i)+5
+i=s.index("    arquivo: '"+os.environ['ALVO_ARQ']); j=s.index('  },', i)+5
 open(p,'w').write(s[:i-2]+s[j:])
 PY
-espera "F1 baseline sem a 20260814022626" 1 "REESCRITA_VIVA_NAO_MEDIDA" bun run authz:check
-espera "F1 nomeia o ARQUIVO certo"        1 "20260814022626_reposicao_po_inexistente_antes_de.sql" bun run authz:check
-espera "F1 nomeia a FUNCAO certa"         1 "public.reposicao_pos_candidatos" bun run authz:check
-restaurar
+  espera "F1 baseline sem a entrada"         1 "REESCRITA_VIVA_NAO_MEDIDA" bun run authz:check
+  espera "F1 nomeia o ARQUIVO certo"         1 "$ALVO_ARQ" bun run authz:check
+  espera "F1 nomeia a FUNCAO certa"          1 "$ALVO_FUN" bun run authz:check
+  restaurar
+else
+  echo "  [$LOC] PULADO F1: AUTHZ_REESCRITAS_CONHECIDAS vazia — nenhuma entrada a remover (dívidas pagas)."
+fi
 
 # F2 — detector desligado: a baseline vira decoração e o teste anti-decoração tem de cair.
 #      Sem este, um detector quebrado deixaria TUDO verde e o silêncio pareceria cobertura.
@@ -96,13 +120,20 @@ restaurar
 # F4 — só com psql-ro: md5 sabotado tem de acender no audit de prod, e NÃO no CI (que não vê prod).
 if [ -x "${PSQL_RO:-$HOME/.config/afiacao/psql-ro}" ]; then
   espera "C0 canario audit:prod"           0 "" bun run authz:audit:prod
-  python3 - <<'PY'
+  if [ -n "$ALVO_MD5" ]; then
+    python3 - <<'PY'
+import os
 p='scripts/authz-reescritas-conhecidas.ts'; s=open(p).read()
-open(p,'w').write(s.replace("632964445c40e792ca62d945aeb2e85e","00000000000000000000000000000000"))
+md5=os.environ['ALVO_MD5']
+if s.count(md5)!=1: raise SystemExit('sabotagem F4: md5 casou %d vez(es) (esperado 1)' % s.count(md5))
+open(p,'w').write(s.replace(md5,"00000000000000000000000000000000"))
 PY
-  espera "F4 md5 sabotado -> audit:prod"   1 "MD5_DIVERGIU" bun run authz:audit:prod
-  espera "F4 authz:check NAO ve o md5"     0 "" bun run authz:check
-  restaurar
+    espera "F4 md5 sabotado -> audit:prod"   1 "MD5_DIVERGIU" bun run authz:audit:prod
+    espera "F4 authz:check NAO ve o md5"     0 "" bun run authz:check
+    restaurar
+  else
+    echo "  [$LOC] PULADO F4: AUTHZ_REESCRITAS_CONHECIDAS vazia — nenhum md5 a sabotar (dívidas pagas)."
+  fi
 else
   echo "  [$LOC] PULADO F4 (md5/prod): psql-ro ausente — audit de prod não roda no CI, e isso é o desenho."
 fi

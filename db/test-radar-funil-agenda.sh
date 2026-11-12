@@ -298,7 +298,7 @@ COMMIT;
 SQL
 )"
 case "$OUT_PRE" in *"PRE FALHOU: public.radar_funil(integer) vivo"*) eq "B6a deriva no radar_funil aborta pela PRE" ok ok ;;
-  *) eq "B6a deriva no radar_funil aborta pela PRE" "$(printf '%s' "$OUT_PRE" | grep -m1 -E 'ERRO|ERROR|FALHOU' || echo SEM_ERRO)" "PRE FALHOU…" ;; esac
+  *) eq "B6a deriva no radar_funil aborta pela PRE" "$(grep -m1 -E 'ERRO|ERROR|FALHOU' <<<"$OUT_PRE" || echo SEM_ERRO)" "PRE FALHOU…" ;; esac
 eq "B6b o abort não deixou nada aplicado" "$(md5_de 'public.radar_funil(integer)')" "fb09ceea1ad40a78dc471b3a5e4ec95d"
 
 # ── Apply (2×: idempotente) ─────────────────────────────────────────────────────────────────────────────────

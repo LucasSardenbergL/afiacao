@@ -121,7 +121,7 @@ P -q -c "$PREREQ_SQL"
 # `VAR="$(cmd)"` sob `set -e` ABORTA o script quando o cmd falha, e o erro morre dentro da
 # variável: o harness sairia sem dizer nada. Por isso o `set +e` cercando a captura.
 set +e; APPLY_OUT="$(P -f "$MIG" 2>&1)"; RC_APPLY=$?; set -e
-if [ "$RC_APPLY" -eq 0 ] && printf '%s' "$APPLY_OUT" | grep -q 'POSTCOND-OK'; then
+if [ "$RC_APPLY" -eq 0 ] && grep -q 'POSTCOND-OK' <<<"$APPLY_OUT"; then
   ok "Z2 migration real aplicou e a postcondicao do APPLY confirmou"
 else
   bad "Z2 migration NAO aplicou limpa (rc=$RC_APPLY): $(printf '%s' "$APPLY_OUT" | grep -i 'erro\|error' | head -3)"
@@ -360,9 +360,9 @@ montar() { # $1 = db, $2 = arquivo de migration
 
 # --- G0 CONTROLE: a migration ÍNTEGRA aplica limpa e a RPC funciona neste db de sabotagem ---
 CTRL_OUT="$(montar sab "$MIG")"; RC_CTRL=$?
-if [ "$RC_CTRL" -eq 0 ] && printf '%s' "$CTRL_OUT" | grep -q 'POSTCOND-OK'; then
+if [ "$RC_CTRL" -eq 0 ] && grep -q 'POSTCOND-OK' <<<"$CTRL_OUT"; then
   seed sab
-  RC_OK="$(rpc "$P1" "$ITENS_P1" "$ITEMS_P1" "$TOTAL_P1" "$LIDO" sab | head -c 20)"
+  RC_OK="$(rpc "$P1" "$ITENS_P1" "$ITEMS_P1" "$TOTAL_P1" "$LIDO" sab | { head -c 20; cat >/dev/null; })"
   if [ -n "$RC_OK" ]; then ok "G0 CONTROLE VERDE: migration íntegra aplica e a RPC grava (a sabotagem abaixo vale)"
   else bad "G0 CONTROLE VERMELHO — a RPC não gravou no db de sabotagem"; fi
 else
@@ -435,7 +435,7 @@ apply_sabotado() { # $1 rotulo | $2 sed | $3 marcador que o erro DEVE conter
   if cmp -s "$f" "$MIG"; then bad "$1 — o sed NÃO alterou nada (sabotagem inócua = teatro)"; rm -f "$f"; return; fi
   set +e; out="$(montar sab "$f")"; rc=$?; set -e
   rm -f "$f"
-  if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "$3"; then
+  if [ "$rc" -ne 0 ] && grep -q "$3" <<<"$out"; then
     ok "$1 — o APPLY ABORTA na postcondição (ela não é decoração)"
   else
     bad "$1 — apply terminou rc=$rc sem [$3]: $(printf '%s' "$out" | grep -i 'error' | head -1)"

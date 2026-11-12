@@ -1063,7 +1063,7 @@ SQL
 # confere_impl <rótulo> <saída> <conjunto esperado | OK>: casa o conjunto EXATO
 confere_impl() {
   local esperado="IMPL_FALHAS=$3"; [ "$3" = "OK" ] && esperado="IMPL_OK"
-  local veio; veio="$(printf '%s\n' "$2" | grep -oE 'IMPL_(OK|FALHAS=[A-Za-z0-9,]*)' | head -1)"
+  local veio; veio="$(printf '%s\n' "$2" | grep -oE 'IMPL_(OK|FALHAS=[A-Za-z0-9,]*)' | sed -n 1p)"
   if [ "$veio" = "$esperado" ]; then ok "$1 ($veio)"; else bad "$1 — esperado [$esperado], veio [${veio:-$(printf '%s' "$2" | tr '\n' ' ' | cut -c1-200)}]"; fi
 }
 

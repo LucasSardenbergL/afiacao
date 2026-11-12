@@ -391,7 +391,7 @@ eq "V4 lista: código com curinga grita" "$(invalido "public.radar_lista(p_munic
 eq "V5 controle: código bem formado é aceito" "$(invalido "public.radar_lista(p_municipio_codigo => '0003')")" "R:ACEITOU"
 
 # C — ACL das assinaturas novas; as antigas sumiram.
-estado_sob() { local s; s="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE $1; $2" 2>&1 | sed -nE 's/^(ERROR|ERRO): +([0-9A-Z]{5}):.*/\2/p' | head -1)"; printf '%s' "${s:-LEU}"; }
+estado_sob() { local s; s="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE $1; $2" 2>&1 | sed -nE 's/^(ERROR|ERRO): +([0-9A-Z]{5}):.*/\2/p' | sed -n 1p)"; printf '%s' "${s:-LEU}"; }
 eq "C1 authenticated chama as 3 RPCs novas" \
    "$(estado_sob authenticated "SELECT count(*) FROM public.radar_penetracao_por_municipio(p_lote => '2026-10', $REG); SELECT count(*) FROM public.radar_contagem_por_municipio(p_com_telefone => true); SELECT count(*) FROM public.radar_lista(p_municipio_codigo => '0001')")" "LEU"
 eq "C2 anon não chama a penetração nova (42501)" "$(estado_sob anon "SELECT count(*) FROM public.radar_penetracao_por_municipio(p_lote => '2026-10')")" "42501"

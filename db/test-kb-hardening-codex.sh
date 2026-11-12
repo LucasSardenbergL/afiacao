@@ -316,7 +316,7 @@ BEGIN
 END \$\$;
 SQL
 )
-if echo "$SAB_B2" | grep -q 'SABOTAGEM_VIROU_MASTER'; then
+if grep -q 'SABOTAGEM_VIROU_MASTER' <<<"$SAB_B2"; then
   echo "  OK B2 (falsificação) — trigger ANTIGO concedeu master pelo MESMO insert → o assert B1 REALMENTE guarda (não é teatro)"
 else
   echo "  B2 FALHOU (falsificação): trigger antigo NÃO concedeu master pelo mesmo insert → o B1 não testa a escalada."
@@ -339,7 +339,7 @@ BEGIN
 END \$\$;
 SQL
 )
-if echo "$REST_B2" | grep -q 'FIX_RESTAURADO'; then
+if grep -q 'FIX_RESTAURADO' <<<"$REST_B2"; then
   echo "  OK B2 (restauração) — fix de volta, insert não concede master (n_master=0)"
 else
   echo "  B2 FALHOU (restauração): re-aplicar a migration 1 não restaurou o fix. saída: $REST_B2"
@@ -678,7 +678,7 @@ BEGIN
 END \$\$;
 SQL
 )
-if echo "$SAB_E2" | grep -q 'DELETE_SABOTADO_PASSOU'; then
+if grep -q 'DELETE_SABOTADO_PASSOU' <<<"$SAB_E2"; then
   echo "  OK E2 (falsificação) — sem o trigger o DELETE passou → o trigger REALMENTE bloqueia (não é teatro)"
 else
   echo "  E2 FALHOU (falsificação): DELETE não passou mesmo sem o trigger. saída: $SAB_E2"

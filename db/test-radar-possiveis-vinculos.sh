@@ -200,7 +200,7 @@ eq "A13 lead que já é cliente não devolve nada" "$(res "$GESTOR" 211111110001
 # (a sabotagem indice_email_errado mostrou isso: a expressão errada ainda aparecia no plano, com Filter).
 expl() {
   local plano; plano="$(Pq -c "SET enable_seqscan = off; EXPLAIN $1")"
-  if printf '%s\n' "$plano" | grep -q "$2" && printf '%s\n' "$plano" | grep -q "Index Cond"; then echo 1; else echo 0; fi
+  if grep -q "$2" <<<"$plano" && grep -q "Index Cond" <<<"$plano"; then echo 1; else echo 0; fi
 }
 eq "A14 índice de e-mail casa com a expressão da RPC" \
    "$(expl "SELECT 1 FROM public.radar_empresas e WHERE e.email IS NOT NULL AND lower(btrim(e.email)) = 'x@y.z';" idx_radar_empresas_email_norm)" "1"

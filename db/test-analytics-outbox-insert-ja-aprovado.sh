@@ -108,7 +108,7 @@ eq "B2 corpo de PROD: nenhuma 'aprovada' para as 3 importadas" \
 echo "-- grupo M: o arquivo (TRAVA → PRE → CREATE → backfill → POS) --"
 P -q -f "$ARQ" > "$RODADA/apply1.log" 2>&1 || { bad "M1 arquivo nao aplicou: $(tail -c 400 "$RODADA/apply1.log")"; exit 1; }
 ok "M1 aplicou com ON_ERROR_STOP (PRE aceitou o predecessor; POS passou)"
-ESTE="$(grep -E -- '-- este arquivo \(medido em PG17\)' "$ARQ" | grep -oE "[0-9a-f]{32}|MD5_DESTE_ARQUIVO" | head -1)"
+ESTE="$(grep -E -- '-- este arquivo \(medido em PG17\)' "$ARQ" | grep -oE "[0-9a-f]{32}|MD5_DESTE_ARQUIVO" | sed -n 1p)"
 eq "M2 md5 vivo apos aplicar = o que o arquivo declara como 'este' (PRE idempotente de verdade)" "$(md5vivo)" "$ESTE"
 P -q -f "$ARQ" > "$RODADA/apply2.log" 2>&1 || { bad "M3 re-aplicar falhou: $(tail -c 400 "$RODADA/apply2.log")"; exit 1; }
 ok "M3 re-aplicar e idempotente (PRE aceita 'este'; backfill ON CONFLICT)"

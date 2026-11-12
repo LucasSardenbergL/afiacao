@@ -69,9 +69,9 @@ END
 \$do\$;
 SQL
 )
-  if printf '%s' "$out" | command grep -q "VEREDITO_REJEITOU_${want}"; then
+  if command grep -q "VEREDITO_REJEITOU_${want}" <<<"$out"; then
     ok "$desc (rejeitado $want)"
-  elif printf '%s' "$out" | command grep -q 'VEREDITO_ACEITOU'; then
+  elif command grep -q 'VEREDITO_ACEITOU' <<<"$out"; then
     bad "$desc -- ACEITOU e devia rejeitar com $want"
   else
     bad "$desc -- erro inesperado: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-180)"
@@ -211,7 +211,7 @@ END
 \$do\$;
 SQL
 )
-  printf '%s' "$out" | command grep -q 'VEREDITO_REJEITOU_23514'
+  command grep -q 'VEREDITO_REJEITOU_23514' <<<"$out"
 }
 
 INS_NAN="INSERT INTO public.tint_formula_itens (formula_id,corante_id,ordem,qtd_ml) VALUES (gen_random_uuid(),gen_random_uuid(),90,'NaN'::numeric);"
@@ -280,7 +280,7 @@ END
 $do$;
 SQL
 )
-if printf '%s' "$OUT" | command grep -q 'VEREDITO_ACEITOU'; then
+if command grep -q 'VEREDITO_ACEITOU' <<<"$OUT"; then
   ok "F4 com o CHECK antigo do cmc o NaN ENTRA => A11 tem dente"
 else
   bad "F4 -- o CHECK antigo do cmc rejeitou NaN; A11 nao tem dente"

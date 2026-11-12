@@ -31,8 +31,8 @@ P() { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
-tem()   { if echo "$2" | grep -q "$3"; then ok "$1"; else bad "$1 — '$3' AUSENTE da saída"; fi; }
-naotem(){ if echo "$2" | grep -q "$3"; then bad "$1 — '$3' PRESENTE (não devia)"; else ok "$1"; fi; }
+tem()   { if grep -q "$3" <<<"$2"; then ok "$1"; else bad "$1 — '$3' AUSENTE da saída"; fi; }
+naotem(){ if grep -q "$3" <<<"$2"; then bad "$1 — '$3' PRESENTE (não devia)"; else ok "$1"; fi; }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CENÁRIO — reconstrói o estado pós-#1421 / pré-#1423 (o momento da quebra)
@@ -140,8 +140,8 @@ naotem "C2 quem usa só o vizinho não entra"                         "$OUT" "us
 echo ""
 echo "── D. a varredura sobrevive ao que já a quebrou antes ──"
 tem "D1 rodou até o fim (agregado no banco não abortou)" "$OUT" "caller_quebrado"
-if echo "$OUT" | grep -qi "is an aggregate function"; then bad "D2 explodiu no agregado"; else ok "D2 nenhum erro de agregado"; fi
-if echo "$OUT" | grep -qi "^ERROR"; then bad "D3 saída tem ERROR"; else ok "D3 saída limpa"; fi
+if grep -qi "is an aggregate function" <<<"$OUT"; then bad "D2 explodiu no agregado"; else ok "D2 nenhum erro de agregado"; fi
+if grep -qi "^ERROR" <<<"$OUT"; then bad "D3 saída tem ERROR"; else ok "D3 saída limpa"; fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FALSIFICAÇÃO — sabota cada defesa e exige que o assert correspondente vire vermelho
@@ -156,7 +156,7 @@ SAB="$(mktemp "$RODADA/sab-XXXX")"
 sed "s/~ :'alvo_re'/ilike ('%'||:'alvo'||'%')/g; s/~ :'alvo_qual'/ilike ('%'||:'alvo'||'%')/g; s/~ :'alvo_nu'/ilike ('%'||:'alvo'||'%')/g" \
   "$REPO_ROOT/db/preflight-dependencia-funcao.sql" > "$SAB"
 OUT_SAB="$(P -tA -v alvo=carteira_visivel_para -f "$SAB" 2>&1 || true)"
-if echo "$OUT_SAB" | grep -q "carteira_visivel_para_completa\|usa_so_o_vizinho"; then
+if grep -q "carteira_visivel_para_completa\|usa_so_o_vizinho" <<<"$OUT_SAB"; then
   ok "F1 sem word-boundary o vizinho INVADE o inventário → C1/C2 têm dente"
 else
   bad "F1 sabotagem não mudou nada — C1/C2 não provam o word-boundary"
@@ -170,7 +170,7 @@ SAB2="$(mktemp "$RODADA/sab2-XXXX")"
 sed "s/and p.oid not in (select aggfnoid from pg_aggregate)//g; s/and p.prokind in ('f','p')//g" \
   "$REPO_ROOT/db/preflight-dependencia-funcao.sql" > "$SAB2"
 OUT_SAB2="$(P -tA -v alvo=carteira_visivel_para -f "$SAB2" 2>&1 || true)"
-if echo "$OUT_SAB2" | grep -qi "aggregate function"; then
+if grep -qi "aggregate function" <<<"$OUT_SAB2"; then
   ok "F2 sem prokind+pg_aggregate a varredura EXPLODE no agregado → D2 tem dente"
 else
   bad "F2 sabotagem não explodiu — D2 não prova a exclusão de agregado"
@@ -180,7 +180,7 @@ rm -f "$SAB2"
 # F3: o teste-do-teste — some com o caller e o assert que o procura tem de cair
 P -q -c "DROP FUNCTION public.caller_quebrado();"
 OUT_F3="$(P -tA -v alvo=carteira_visivel_para -f "$REPO_ROOT/db/preflight-dependencia-funcao.sql" 2>&1)"
-if echo "$OUT_F3" | grep -q "caller_quebrado"; then
+if grep -q "caller_quebrado" <<<"$OUT_F3"; then
   bad "F3 caller dropado ainda aparece — a varredura lê estado velho"
 else
   ok "F3 caller dropado some do inventário → A1 reflete o banco, não um cache"

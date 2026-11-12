@@ -97,7 +97,7 @@ _cv_alternativas() { local IFS='|'; printf '%s' "$*"; }
 # diretório sem migrations, versão fora do formato, grep que não leu (exit 2), CV_INICIO ausente e as
 # duas listas vazias abortam com exit 1. Cadeia vazia é resultado legítimo — o snapshot já é a versão viva.
 cv_cadeia() {
-  local dir="$1" f base v rc fns tabs sp='[[:space:]]' fim='([^a-z0-9_"]|$)' padrao='' achou_inicio=0
+  local dir="$1" f base v rc corpo fns tabs sp='[[:space:]]' fim='([^a-z0-9_"]|$)' padrao='' achou_inicio=0
   fns="$(_cv_alternativas "${CV_FUNCOES[@]+"${CV_FUNCOES[@]}"}")"
   tabs="$(_cv_alternativas "${CV_TABELAS[@]+"${CV_TABELAS[@]}"}")"
   [ -n "$fns$tabs" ] || { echo "cv_cadeia: CV_FUNCOES e CV_TABELAS vazias — nada a guardar" >&2; return 1; }
@@ -118,7 +118,10 @@ cv_cadeia() {
     [ "$v" = "$CV_INICIO" ] && achou_inicio=1
     [ "$v" -lt "$CV_INICIO" ] && continue
     _cv_fora "$base" && continue
-    if sed -E 's/--.*$//' "$f" | tr '\n' ' ' | grep -qiE "$padrao"; then
+    # Corpo capturado ANTES do veredito: `sed | tr | grep -q` sob pipefail troca o "achou" do grep pelo
+    # SIGPIPE (141) do tr quando o casamento vem antes do fim (docs/historico/evidencia-positiva-shell.md).
+    corpo="$(sed -E 's/--.*$//' "$f" | tr '\n' ' ')" || { echo "cv_cadeia: sed não leu $base" >&2; return 1; }
+    if grep -qiE "$padrao" <<<"$corpo"; then
       printf '%s\n' "$f"
     else
       rc=$?

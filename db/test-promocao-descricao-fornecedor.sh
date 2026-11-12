@@ -597,8 +597,8 @@ if [ -n "$m9_a" ]; then wait "$m9_a" 2>/dev/null || true; fi
 case "$r9" in
   SOLTA)
     saida9="$(cat "$TMPD/m9-a.log")"
-    if printf '%s' "$saida9" | grep -q '^RC=0$'; then v9="APLICOU"
-    elif printf '%s\n' "$saida9" | grep -qE "(ERROR|ERRO): +BACKFILL FALHOU: a observa"; then v9="RECUSOU"
+    if grep -q '^RC=0$' <<<"$saida9"; then v9="APLICOU"
+    elif grep -qE "(ERROR|ERRO): +BACKFILL FALHOU: a observa" <<<"$saida9"; then v9="RECUSOU"
     else v9="RECUSOU_POR_OUTRO $(printf '%s\n' "$saida9" | grep -E '(ERROR|ERRO): ' | head -1 | tr -d ':' | head -c 150)"
     fi
     eq M9 "corrida: observação mudada por outra transação durante o apply — a migration espera, relê e recusa (veredito|funções)" \

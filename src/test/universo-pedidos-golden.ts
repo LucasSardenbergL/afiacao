@@ -139,6 +139,9 @@ export function gerarUniversoGolden(nPedidos = 6_500): UniversoGolden {
   for (let k = 0; k < 400; k++) {
     const ci = Math.floor(r() * 100);
     chamadas.push({
+      // `id` determinístico pelo índice, FORA do PRNG: o scoring lê as ligações por cursor de `id`
+      // (v9 C18), e sortear o id deslocaria a sequência e mudaria o golden inteiro.
+      id: `00000000-0000-4000-8000-${pad(k, 12)}`,
       customer_user_id: clientes[ci],
       farmer_id: FARMER_GOLDEN,
       call_result: r() < 0.5 ? 'contato_sucesso' : 'sem_resposta',

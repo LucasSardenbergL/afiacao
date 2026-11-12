@@ -240,7 +240,7 @@ for col_val in "items:'[]'::jsonb" "subtotal:1" "total:1" "notes:'x'" "customer_
                "omie_payload:'{}'::jsonb" "deleted_at:now()" "status:'rascunho'"; do
   c="${col_val%%:*}"; v="${col_val#*:}"
   R=$(as_role "$EMPL" authenticated "UPDATE public.sales_orders SET $c=$v WHERE id='$SO_ORC';")
-  echo "$R" | grep -q "permission denied" && { bad "A4 allowlist: coluna [$c] NEGADA (front quebraria)"; A4FAIL=1; }
+  grep -q "permission denied" <<<"$R" && { bad "A4 allowlist: coluna [$c] NEGADA (front quebraria)"; A4FAIL=1; }
 done
 [ "$A4FAIL" = "0" ] && ok "A4 as 11 colunas da allowlist são graváveis pelo employee"
 P -q -c "UPDATE public.sales_orders SET deleted_at=NULL, status='orcamento' WHERE id='$SO_ORC';"
@@ -271,7 +271,7 @@ for c in omie_pedido_id customer_user_id created_by; do
   R=$(as_role "$EMPL" authenticated "UPDATE public.sales_orders SET $c=NULL WHERE id='$SO_FAT';")
   V=$(Pq -c "SELECT ($c IS NULL)::text FROM public.sales_orders WHERE id='$SO_FAT';")
   # ::text de boolean devolve 'false'/'true' (≠ 'f'/'t' do formato aligned)
-  if echo "$R" | grep -q "permission denied" && [ "$V" = "false" ]; then
+  if grep -q "permission denied" <<<"$R" && [ "$V" = "false" ]; then
     ok "B3 employee NÃO atualiza [$c] (negado + valor intacto)"
   else
     bad "B3 [$c]: negado=$(echo "$R" | grep -c 'permission denied') virou_null=$V — allowlist furada"
@@ -279,10 +279,10 @@ for c in omie_pedido_id customer_user_id created_by; do
 done
 
 B4=$(as_role "$EMPL" authenticated "DELETE FROM public.order_items WHERE id='bbbbbbbb-0000-0000-0000-000000000001';")
-if echo "$B4" | grep -q "permission denied"; then ok "B4 employee NÃO apaga order_items (2ª barreira)"; else bad "B4 employee apagou order_items"; fi
+if grep -q "permission denied" <<<"$B4"; then ok "B4 employee NÃO apaga order_items (2ª barreira)"; else bad "B4 employee apagou order_items"; fi
 
 B5=$(as_role "$EMPL" authenticated "UPDATE public.sales_price_history SET unit_price=1 WHERE id='cccccccc-0000-0000-0000-000000000001';")
-if echo "$B5" | grep -q "permission denied"; then ok "B5 employee NÃO altera sales_price_history"; else bad "B5 employee alterou sales_price_history"; fi
+if grep -q "permission denied" <<<"$B5"; then ok "B5 employee NÃO altera sales_price_history"; else bad "B5 employee alterou sales_price_history"; fi
 
 B6=$(as_role "$CUST_A" authenticated "SELECT count(*) FROM public.sales_orders WHERE id='$SO_FAT';" | tail -1)
 eq "B6 customer A vê o PRÓPRIO pedido" "$B6" "1"
@@ -406,7 +406,7 @@ P -q -c "UPDATE public.sales_orders SET omie_pedido_id=987654 WHERE id='$SO_FAT'
 # a 2ª camada existe; sem (b) não se sabe se o assert mede alguma coisa.
 P -q -c "CREATE POLICY oi_bug ON public.order_items FOR ALL TO authenticated USING (true) WITH CHECK (true);"
 F5a=$(as_role "$EMPL" authenticated "DELETE FROM public.order_items WHERE id='bbbbbbbb-0000-0000-0000-000000000001';")
-if echo "$F5a" | grep -q "permission denied"; then ok "F5a só a policy de volta: o REVOKE ainda barra (2ª camada é REAL)"; else bad "F5a a policy sozinha já reabriu — o REVOKE não está fazendo nada"; fi
+if grep -q "permission denied" <<<"$F5a"; then ok "F5a só a policy de volta: o REVOKE ainda barra (2ª camada é REAL)"; else bad "F5a a policy sozinha já reabriu — o REVOKE não está fazendo nada"; fi
 P -q -c "GRANT ALL ON public.order_items TO authenticated;"
 F5b=$(as_role "$EMPL" authenticated "DELETE FROM public.order_items WHERE id='bbbbbbbb-0000-0000-0000-000000000001'; SELECT count(*) FROM public.order_items WHERE id='bbbbbbbb-0000-0000-0000-000000000001';" | tail -1)
 if [ "$F5b" = "0" ]; then ok "F5b policy + grant: o furo REABRE (B4 tem dente)"; else bad "F5b tirando as 2 camadas o furo não reabriu — B4 não mede nada"; fi

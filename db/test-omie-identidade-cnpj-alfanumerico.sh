@@ -89,7 +89,7 @@ open(p, "w", encoding="utf-8").write(s.replace(de, para))
 PY
 }
 # A régua de md5 "este" da PRE/PÓS da RPC: o literal de 32 hex em `IS DISTINCT FROM '<md5>'`.
-ESTE_MD5="$(grep -oE "IS DISTINCT FROM '[0-9a-f]{32}'" "$MIG" | grep -oE '[0-9a-f]{32}' | head -1)"
+ESTE_MD5="$(grep -oE "IS DISTINCT FROM '[0-9a-f]{32}'" "$MIG" | grep -oE '[0-9a-f]{32}' | sed -n 1p)"
 MD5_VIVO="(SELECT md5(pg_get_functiondef(q.oid)) FROM pg_catalog.pg_proc q WHERE q.oid = to_regprocedure('public.omie_sync_identity_snapshot(text)'))"
 RAMO_ALNUM="    THEN regexp_replace(btrim(upper(p_bruto)), '[-./]', '', 'g')"
 case "${SABOTAGEM:-}" in

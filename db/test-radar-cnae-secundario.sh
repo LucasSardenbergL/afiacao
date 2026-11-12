@@ -407,7 +407,7 @@ eq "B2d secundário do lote novo = tabela" \
    "$(Pq -c "SELECT count(*) FROM public.radar_empresas WHERE ultimo_lote = '2026-11' AND prospeccao_status = 'a_contatar' AND cnaes_secundarios @> '{1622699}'")"
 
 # C — fechado e com o ACL certo.
-estado_sob_auth() { local s; s="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE authenticated; $1" 2>&1 | sed -nE 's/^(ERROR|ERRO): +([0-9A-Z]{5}):.*/\2/p' | head -1)"; printf '%s' "${s:-LEU}"; }
+estado_sob_auth() { local s; s="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE authenticated; $1" 2>&1 | sed -nE 's/^(ERROR|ERRO): +([0-9A-Z]{5}):.*/\2/p' | sed -n 1p)"; printf '%s' "${s:-LEU}"; }
 eq "C1a authenticated não lê radar_agregado_cnae_sec (42501)" "$(estado_sob_auth "SELECT count(*) FROM public.radar_agregado_cnae_sec")" "42501"
 eq "C1b RLS ligada no secundário" "$(Pq -c "SELECT relrowsecurity FROM pg_class WHERE relname = 'radar_agregado_cnae_sec'")" "t"
 eq "C2 ACL: contagem e lista p/ authenticated e não anon; recalcular só owner" \
