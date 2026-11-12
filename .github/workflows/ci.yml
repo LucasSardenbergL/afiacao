@@ -1690,9 +1690,13 @@ jobs:
           rm "$shim/initdb"
           # As flags vão DEPOIS de "$@": o initdb só reconhece `--version` como 1º argumento,
           # e o pg-harness confere a major por `initdb --version`.
-          printf '#!/bin/sh\nexec %s/initdb "$@" --no-sync -c fsync=off -c full_page_writes=off\n' "$real" > "$shim/initdb"
+          printf '#!/bin/sh\nINITDB_REAL=%s exec bash %s/db/lib/initdb-template.sh "$@" --no-sync -c fsync=off -c full_page_writes=off\n' \
+            "$real" "$GITHUB_WORKSPACE" > "$shim/initdb"
           chmod +x "$shim/initdb"
           echo "PGBIN_OVERRIDE=$shim" >> "$GITHUB_ENV"
+          echo "INITDB_TEMPLATE_DIR=$RUNNER_TEMP/initdb-template" >> "$GITHUB_ENV"
+          echo "INITDB_TEMPLATE_LOG=$RUNNER_TEMP/initdb-template.tsv" >> "$GITHUB_ENV"   # MEDICAO-TEMPORARIA
+          echo "INITDB_TEMPLATE=0" >> "$GITHUB_ENV"   # MEDICAO-TEMPORARIA braço A
           resolvido="$(PGBIN_OVERRIDE="$shim" PGVER=17 bash -c '. db/lib/pg-harness.sh; printf %s "$PGBIN"')"
           [ "$resolvido" = "$shim" ] \
             || { echo "::error::o pg-harness resolveu '$resolvido', não o shim '$shim'"; exit 1; }
@@ -1756,6 +1760,13 @@ jobs:
           # O recibo do harness vai no artefato da 1ª parte: a união o exige — step pulado não reprova nada.
           mkdir -p "$RUNNER_TEMP/nucleo-recibo"
           echo "HARNESS_NUCLEO_OK casos=$casos piso=$HARNESS_OK_MINIMO" > "$RUNNER_TEMP/nucleo-recibo/harness.txt"
+
+      - name: MEDICAO-TEMPORARIA initdb por parte
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/initdb-template.tsv"
+          [ -f "$f" ] || { echo "MEDICAO sem log"; exit 0; }
+          P="${{ strategy.job-index }}" awk -F'\t' '{n[$1]++; ms[$1]+=$2} END {for (m in n) printf "MEDICAO parte=%s modo=%s n=%d soma_s=%.1f media_ms=%.1f\n", ENVIRON["P"], m, n[m], ms[m]/1000, ms[m]/n[m]}' "$f" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # `if-no-files-found: error`: parte verde sem recibo é contradição, e vira vermelho aqui.
       - name: Recibo da parte → artefato da união
