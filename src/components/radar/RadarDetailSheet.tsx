@@ -1,4 +1,4 @@
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { AvisoVinculoCredito } from '@/components/credito-vinculo/AvisoVinculoCredito';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -132,8 +132,11 @@ export function RadarDetailSheet({
   lote = null,
   irmaos = null,
   irmaosEstado = 'carregando',
+  carregandoCnpj = null,
 }: {
   empresa: RadarEmpresa | null;
+  /** CNPJ da URL cuja leitura ainda não chegou (deep link do card/e-mail): o sheet abre com esqueleto, não some. */
+  carregandoCnpj?: string | null;
   hojeISO: string;
   onClose: () => void;
   /** Avança para o próximo lead da lista (registrar desfecho → próximo, sem fechar a ficha). */
@@ -169,7 +172,27 @@ export function RadarDetailSheet({
   useEffect(() => {
     if (cnpjAberto) void registrarNoLedger('radar.ficha_aberta', cnpjAberto, { cnpj: cnpjAberto });
   }, [cnpjAberto]);
-  if (!empresa) return null;
+  // Revisão 2026-11-11 (item 4): com CNPJ na URL e a leitura a caminho, a ficha abre JÁ, com esqueleto — antes não
+  // aparecia nada até a resposta (o vendedor via a fila e achava que o link não tinha funcionado).
+  if (!empresa) {
+    if (!carregandoCnpj) return null;
+    return (
+      <Sheet open onOpenChange={(o) => { if (!o) onClose(); }}>
+        <SheetContent className="w-full sm:max-w-lg overflow-y-auto" data-testid="radar-ficha-carregando">
+          <SheetHeader>
+            <SheetTitle>Abrindo a ficha…</SheetTitle>
+            <SheetDescription>CNPJ {formatarCnpj(carregandoCnpj)} — lendo os dados do lead.</SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 space-y-3" aria-busy="true">
+            <Skeleton className="h-6 w-2/3" />
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-24" />
+            <Skeleton className="h-10" />
+          </div>
+        </SheetContent>
+      </Sheet>
+    );
+  }
   const alternarDiscagem = () => {
     const v = !discagem;
     setDiscagem(v);
