@@ -28,8 +28,10 @@
 #   INITDB_REAL            diretório do initdb real (obrigatório)
 #   INITDB_TEMPLATE_DIR    onde guardar os templates (sem ele: sempre real)
 #   INITDB_TEMPLATE=0      desliga o template (sempre real)
-#   INITDB_TEMPLATE_LOG    se definido, 1 linha por chamada: modo e ms (medição)
-#   INITDB_TEMPLATE_SABOTA=locale  falsificação: a chave ignora o --locale
+#   INITDB_TEMPLATE_LOG    se definido, 1 linha por chamada: modo e ms (medição;
+#                          modos: real-gera · copia · desligado · fora-da-lista)
+#
+# Prova: db/test-initdb-template.sh (e o `--falsificar` dela, que sabota uma CÓPIA deste arquivo).
 set -u
 
 real="${INITDB_REAL:?INITDB_REAL ausente}/initdb"
@@ -49,9 +51,7 @@ _real() { # modo; executa o initdb real e devolve o exit dele
   _log "$modo_real"
   exit "$rc"
 }
-modo_real="real"
-
-if [ "${INITDB_TEMPLATE:-1}" = 0 ] || [ -z "${INITDB_TEMPLATE_DIR:-}" ]; then _real "$@"; fi
+modo_real="fora-da-lista"
 
 # ---- reconhecimento estrito dos argumentos --------------------------------
 dir=""; chave=()
@@ -64,8 +64,7 @@ while [ "$i" -lt "${#args[@]}" ]; do
     -U|-E|-A|-c)
       i=$((i + 1)); [ "$i" -lt "${#args[@]}" ] || _real "$@"
       chave+=("$a" "${args[$i]}") ;;
-    --locale=*)
-      if [ "${INITDB_TEMPLATE_SABOTA:-}" = locale ]; then :; else chave+=("$a"); fi ;;
+    --locale=*) chave+=("$a") ;;
     --encoding=*|--auth=*|--no-sync) chave+=("$a") ;;
     *) _real "$@" ;;
   esac
@@ -73,6 +72,9 @@ while [ "$i" -lt "${#args[@]}" ]; do
 done
 
 [ -n "$dir" ] || _real "$@"
+modo_real="desligado"
+if [ "${INITDB_TEMPLATE:-1}" = 0 ] || [ -z "${INITDB_TEMPLATE_DIR:-}" ]; then _real "$@"; fi
+modo_real="fora-da-lista"
 dir_arg="$dir"   # como o initdb o imprime
 case "$dir" in /*) ;; *) dir="$PWD/$dir" ;; esac
 if [ -e "$dir" ]; then
