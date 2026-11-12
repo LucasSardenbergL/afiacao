@@ -75,7 +75,8 @@ AS $function$
   valor AS (
     SELECT b.*,
            CASE WHEN b.preco > 0 AND b.preco < 'Infinity'::numeric THEN b.preco * b.qtd END AS rb,
-           CASE WHEN NOT (b.preco > 0 AND b.preco < 'Infinity'::numeric)               THEN 'sem_preco'
+           -- `IS NOT TRUE`: unit_price é nullable e `NOT (NULL > 0 …)` é NULL — cairia em desconto.
+           CASE WHEN (b.preco > 0 AND b.preco < 'Infinity'::numeric) IS NOT TRUE          THEN 'sem_preco'
                 WHEN b.dv IS NULL                                                       THEN 'nao_apurado'
                 WHEN b.dv >= 0 AND b.dv < 'Infinity'::numeric AND b.dv <= b.preco * b.qtd THEN 'apurado'
                 ELSE 'invalido'
@@ -196,7 +197,8 @@ AS $function$
            CASE
              WHEN count(t.sales_order_id) = 0                                    THEN 'sem_titulo'
              WHEN bool_or(t.multi)                                               THEN 'ambiguo'
-             WHEN bool_or(NOT t.cliente_ok)                                      THEN 'cliente_nao_confere'
+             -- IS NOT TRUE: título com cliente NULO (o writer grava NULL) também não confere — bool_or ignora NULL.
+             WHEN bool_or(t.cliente_ok IS NOT TRUE)                              THEN 'cliente_nao_confere'
              WHEN bool_or(t.v IS NULL OR NOT (t.v > 0 AND t.v < 'Infinity'::numeric))
                OR bool_or(t.d IS NULL)                                           THEN 'titulo_invalido'
              WHEN NOT (p.total_pedido > 0 AND p.total_pedido < 'Infinity'::numeric)
@@ -432,7 +434,8 @@ BEGIN
              WHEN 'pedido'  THEN jsonb_build_object('empresa', m.empresa_min, 'numero', m.np_min,
                                                     'data', m.data_min, 'comprador_id', m.comprador_min,
                                                     'comprador', COALESCE(nullif(btrim(pc.razao_social), ''), pc.name))
-             WHEN 'sku'     THEN jsonb_build_object('empresa', m.empresa_min, 'familia', m.familia_min)
+             WHEN 'sku'     THEN jsonb_build_object('empresa', CASE WHEN m.n_empresas = 1 THEN m.empresa_min END,
+                                                    'empresas', m.n_empresas, 'familia', m.familia_min)
              WHEN 'cliente' THEN jsonb_build_object('empresas', m.n_empresas)
              ELSE '{}'::jsonb
            END AS detalhe,

@@ -30,6 +30,9 @@
 #  APAGINA    páginas cobrem o eixo inteiro, sem repetição, na ordem estável
 #  AORDEM     desconto_desc põe o maior desconto primeiro
 #  AVENDEDOR  eixo vendedor responde indisponível
+#  ACLIENTE   (também) cliente NULO no título, em todas ou em uma parcela
+#  ASEMPRECO  preço NULL ⇒ sem_preco (não 'invalido'/'nao_apurado')
+#  AMARGEM/APRAZOPCT/ACONTRIBPCT  cada percentual no SEU denominador, contra oráculo das linhas
 #  AVALIDA    a query de validação pós-apply (db/valida-venda-contribuicao.sql) dá 6 ✅ contra a migration real
 #
 #   bash db/test-venda-contribuicao.sh > /tmp/t.log 2>&1; echo "exit=$?"
@@ -43,7 +46,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261113130000_venda_contribuicao_cliente.sq
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca.
-  SABOTAGENS="gate_so_cap:AGATE desconto_ignorado:ADESC desconto_null_zero:ANAOAPUR custo_zero:ASEMCUSTO snapshot_futuro:ACUSTODATA sem_idade:ACUSTOVELHO peso_igual:APRAZO tolerancia_off:AVALOR exclusividade_na_janela:AAMBIG cliente_off:ACLIENTE piso_inner_join:ACARD piso_bruto:APISO janela_errada:AJANELA alias_ignorado:ACANON acl_aberta:POST!POS_3"
+  SABOTAGENS="gate_so_cap:AGATE desconto_ignorado:ADESC desconto_null_zero:ANAOAPUR custo_zero:ASEMCUSTO snapshot_futuro:ACUSTODATA sem_idade:ACUSTOVELHO peso_igual:APRAZO tolerancia_off:AVALOR exclusividade_na_janela:AAMBIG cliente_off:ACLIENTE piso_inner_join:ACARD piso_bruto:APISO janela_errada:AJANELA alias_ignorado:ACANON cliente_nulo_passa:ACLIENTE preco_nulo_desconto:ASEMPRECO denominador_margem:AMARGEM denominador_prazo:APRAZOPCT denominador_contrib:ACONTRIBPCT acl_aberta:POST!POS_3"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-contribuicao.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -112,7 +115,14 @@ case "${SABOTAGEM:-}" in
   exclusividade_na_janela) sabotar "AND EXISTS (SELECT 1 FROM pedido p
                     WHERE p.empresa = so.account AND p.np = btrim(so.omie_numero_pedido))" \
                               "AND so.id IN (SELECT p.sales_order_id FROM pedido p)" ;;
-  cliente_off)        sabotar "WHEN bool_or(NOT t.cliente_ok)" "WHEN false" ;;
+  cliente_off)        sabotar "WHEN bool_or(t.cliente_ok IS NOT TRUE)" "WHEN false" ;;
+  cliente_nulo_passa) sabotar "WHEN bool_or(t.cliente_ok IS NOT TRUE)" "WHEN bool_or(NOT t.cliente_ok)" ;;
+  preco_nulo_desconto) sabotar "CASE WHEN (b.preco > 0 AND b.preco < 'Infinity'::numeric) IS NOT TRUE          THEN 'sem_preco'" \
+                              "CASE WHEN NOT (b.preco > 0 AND b.preco < 'Infinity'::numeric)               THEN 'sem_preco'" ;;
+  denominador_margem) sabotar "sum(k.receita_liquida) FILTER (WHERE k.custo_total IS NOT NULL)           AS receita_com_custo," \
+                              "sum(k.receita_liquida)                                                    AS receita_com_custo," ;;
+  denominador_prazo)  sabotar "THEN round(g.custo_prazo / g.receita_com_prazo * 100, 2) END," "THEN round(g.custo_prazo / g.receita_liquida * 100, 2) END," ;;
+  denominador_contrib) sabotar "THEN round(g.contribuicao / g.receita_contribuicao * 100, 2) END," "THEN round(g.contribuicao / g.receita_liquida * 100, 2) END," ;;
   piso_inner_join)    sabotar "LEFT JOIN LATERAL public.resolve_markup_policy" "JOIN LATERAL public.resolve_markup_policy" ;;
   piso_bruto)         sabotar "THEN l.rl / l.qtd < l.cu * (1 + l.piso / 100) END" "THEN l.preco < l.cu * (1 + l.piso / 100) END" ;;
   janela_errada)      sabotar "CASE p_janela WHEN '12m' THEN 364 ELSE 89 END" "CASE p_janela WHEN '12m' THEN 365 ELSE 90 END" ;;
@@ -298,7 +308,7 @@ INSERT INTO public.cmc_snapshot (account, omie_codigo_produto, data_posicao, cmc
   ('vendas',1001,'$D'::date - 10, 40), ('vendas',1001,'$D'::date + 5, 99), ('vendas',1002,'$D'::date - 50, 12);
 
 CREATE TEMP TABLE ped (n text PRIMARY KEY, id uuid DEFAULT gen_random_uuid());
-INSERT INTO ped (n) VALUES ('O1'),('O2'),('O3'),('O4'),('O5'),('O6'),('O7'),('O8'),('O9'),('O10'),('O11'),('O12'),('O13'),('O14'),('O15');
+INSERT INTO ped (n) VALUES ('O1'),('O2'),('O3'),('O4'),('O5'),('O6'),('O7'),('O8'),('O9'),('O10'),('O11'),('O12'),('O13'),('O14'),('O15'),('O16'),('O17');
 INSERT INTO public.sales_orders (id, customer_user_id, status, account, omie_numero_pedido, total, order_date_kpi)
 SELECT p.id, v.cli::uuid, v.st, v.acc, v.np, v.tot, v.dia FROM ped p JOIN (VALUES
   ('O1','$K1','faturado','oben','500',1100,'$D'::date),
@@ -315,11 +325,13 @@ SELECT p.id, v.cli::uuid, v.st, v.acc, v.np, v.tot, v.dia FROM ped p JOIN (VALUE
   ('O12','$K2','faturado','oben',NULL,10,'$HOJE'::date - 364),
   ('O13','$K2','faturado','oben',NULL,10,'$HOJE'::date - 365),
   ('O14','$K2','faturado','oben',NULL,10,'$HOJE'::date - 89),
-  ('O15','$K2','faturado','oben',NULL,10,'$HOJE'::date - 90)
+  ('O15','$K2','faturado','oben',NULL,10,'$HOJE'::date - 90),
+  ('O16','$K2','faturado','oben','803',10,'$D'::date - 4),
+  ('O17','$K2','faturado','oben','804',10,'$D'::date - 6)
 ) v(n, cli, st, acc, np, tot, dia) ON v.n = p.n;
 
 CREATE TEMP TABLE item (n text PRIMARY KEY, id uuid DEFAULT gen_random_uuid());
-INSERT INTO item (n) VALUES ('I1'),('I2'),('I3'),('I4'),('I5'),('I6'),('I7'),('I8'),('I9'),('I10'),('I11'),('I12'),('I13'),('I14'),('I15'),('I16'),('I17');
+INSERT INTO item (n) VALUES ('I1'),('I2'),('I3'),('I4'),('I5'),('I6'),('I7'),('I8'),('I9'),('I10'),('I11'),('I12'),('I13'),('I14'),('I15'),('I16'),('I17'),('I18'),('I19'),('I20'),('I21');
 INSERT INTO public.order_items (id, sales_order_id, omie_codigo_produto, quantity, unit_price, desconto_valor)
 SELECT i.id, p.id, v.sku, v.q, v.pr, v.dv FROM item i JOIN (VALUES
   ('I1','O1',1001,10,100,50), ('I2','O1',1002,2,25,0), ('I5','O1',1001,1,100,0),
@@ -331,7 +343,9 @@ SELECT i.id, p.id, v.sku, v.q, v.pr, v.dv FROM item i JOIN (VALUES
   ('I12','O8',1001,1,10,0), ('I13','O9',1001,1,10,0),
   ('I10','O10',1001,1,10,0),
   ('I14','O11',1004,1,10,15),
-  ('I15','O12',1004,1,10,0), ('I16','O13',1004,1,10,0), ('I17','O14',1004,1,10,0)
+  ('I15','O12',1004,1,10,0), ('I16','O13',1004,1,10,0), ('I17','O14',1004,1,10,0),
+  ('I18','O16',1004,1,10,0), ('I19','O16',1004,1,NULL,0), ('I20','O16',1004,1,NULL,NULL),
+  ('I21','O17',1004,1,10,0)
 ) v(n, ped, sku, q, pr, dv) ON v.n = i.n JOIN ped p ON p.n = v.ped;
 INSERT INTO public.order_items (sales_order_id, omie_codigo_produto, quantity, unit_price, desconto_valor)
 SELECT id, 1004, 1, 10, 0 FROM ped WHERE n = 'O15';
@@ -345,7 +359,11 @@ INSERT INTO public.fin_contas_receber (company, numero_pedido, omie_codigo_clien
   ('oben',   '700', 9003, '$D'::date - 40, '$D'::date - 10, 40, 'RECEBIDO'),
   ('oben',   '800', 9004, '$D', '$D'::date + 28, 250, 'A VENCER'),
   ('oben',   '801', 7777, '$D'::date - 2, '$D'::date + 28, 20, 'A VENCER'),
-  ('oben',   '802', 9004, '$D'::date - 3, '$D'::date - 3, 10, 'RECEBIDO');
+  ('oben',   '802', 9004, '$D'::date - 3, '$D'::date - 3, 10, 'RECEBIDO'),
+  -- O16: cliente NULO em todas as parcelas; O17: uma parcela confere, a outra tem cliente NULO
+  ('oben',   '803', NULL, '$D'::date - 4, '$D'::date + 26, 10, 'A VENCER'),
+  ('oben',   '804', 9004, '$D'::date - 6, '$D'::date + 24, 5, 'A VENCER'),
+  ('oben',   '804', NULL, '$D'::date - 6, '$D'::date + 54, 5, 'A VENCER');
 SQL
 
 # As tabelas temporárias morreram com a sessão do heredoc: ids recuperados pelos dados.
@@ -381,8 +399,8 @@ eq "APARAM limite 201 -> 22023" "$(estado "$(como "$M" "SELECT public.venda_cont
 eq "APARAM ordem invalida -> 22023" "$(estado "$(como "$M" "SELECT public.venda_contribuicao('12m','cliente',NULL,'lucro');")")" "22023"
 
 # ACARD — universo 12m: I1 I2 I5 I3 I4 I6 I7 I8 I9 I11 I10 I14 I15 I17 + o item do O15 = 15 (fora: O8, O9, O13)
-eq "ACARD linhas = itens distintos = 15 (inclui item colacor sem politica)" \
-   "$(motor "$M12" "count(*) || '/' || count(DISTINCT order_item_id)")" "15/15"
+eq "ACARD linhas = itens distintos = 19 (inclui item colacor sem politica)" \
+   "$(motor "$M12" "count(*) || '/' || count(DISTINCT order_item_id)")" "19/19"
 eq "ACARD duas linhas do mesmo SKU no mesmo pedido" \
    "$(motor "$M12" "count(*)" "x.omie_codigo_produto = 1001 AND x.omie_numero_pedido = '500'")" "2"
 
@@ -465,7 +483,7 @@ eq "APONTE receita - custo - prazo da intersecao = contribuicao (+-0,02 de arred
 eq "APONTE total da porta = soma das linhas do motor" \
    "$(rpc "'12m','empresa'" "(j->'total'->>'contribuicao')::numeric")" "$(motor "$M12" "round(sum(contribuicao), 2)")"
 eq "APONTE cobertura de custo por fonte no total: data 4 / atual 10 / sem 1" \
-   "$(rpc "'12m','empresa'" "concat_ws('/', j->'total'->>'itens_custo_data', j->'total'->>'itens_custo_atual', j->'total'->>'itens_sem_custo')")" "4/10/1"
+   "$(rpc "'12m','empresa'" "concat_ws('/', j->'total'->>'itens_custo_data', j->'total'->>'itens_custo_atual', j->'total'->>'itens_sem_custo')")" "4/14/1"
 
 # ANULL
 eq "ANULL K3 (so pedidos ambiguos): contribuicao e custo_prazo JSON null, margem conhecida" \
@@ -475,12 +493,37 @@ eq "ANULL K3 (so pedidos ambiguos): contribuicao e custo_prazo JSON null, margem
 TOTAL_PED="$(rpc "'12m','pedido'" "j->>'total_linhas'")"
 PAGS="$(for off in 0 3 6 9 12; do rpc "'12m','pedido',NULL,'contribuicao_asc',3,$off" "(SELECT string_agg(e->>'chave', ',' ORDER BY ord) FROM jsonb_array_elements(j->'linhas') WITH ORDINALITY t(e, ord))"; done | tr '\n' ',' )"
 TUDO="$(rpc "'12m','pedido',NULL,'contribuicao_asc',200,0" "(SELECT string_agg(e->>'chave', ',' ORDER BY ord) FROM jsonb_array_elements(j->'linhas') WITH ORDINALITY t(e, ord))")"
-eq "APAGINA 12m tem 12 pedidos" "$TOTAL_PED" "12"
+eq "APAGINA 12m tem 14 pedidos" "$TOTAL_PED" "14"
 eq "APAGINA paginas de 3 reproduzem a lista inteira na mesma ordem" "$(printf '%s' "$PAGS" | sed 's/,,*/,/g; s/,$//')" "$TUDO"
 
 # AORDEM
 eq "AORDEM desconto_desc: o O1 (desconto 50) primeiro" \
    "$(rpc "'12m','pedido',NULL,'desconto_desc',1,0" "j->'linhas'->0->>'chave' = $O1::text || '' AND (j->'linhas'->0->>'desconto')::numeric = 50")" "t"
+
+# ACLIENTE (nulo) — o título sem cliente Omie não confirma nada, nem todo nulo nem misturado com um que confere
+eq "ACLIENTE cliente nulo em todas as parcelas" \
+   "$(motor "$M12" "DISTINCT prazo_status || ' ' || bool_and(custo_prazo IS NULL AND contribuicao IS NULL)" "x.omie_numero_pedido = '803' GROUP BY prazo_status")" "cliente_nao_confere true"
+eq "ACLIENTE uma parcela confere, outra com cliente nulo" \
+   "$(motor "$M12" "DISTINCT prazo_status || ' ' || bool_and(custo_prazo IS NULL)" "x.omie_numero_pedido = '804' GROUP BY prazo_status")" "cliente_nao_confere true"
+
+# ASEMPRECO — preço NULL é falta de PREÇO (com desconto 0 ou NULL), nunca problema de desconto
+eq "ASEMPRECO preco nulo com desconto 0 e com desconto nulo" \
+   "$(motor "$M12" "string_agg(desconto_status, ',' ORDER BY desconto_status) || ' ' || bool_and(receita_liquida IS NULL)" "x.omie_numero_pedido = '803' AND x.receita_bruta IS NULL")" "sem_preco,sem_preco true"
+eq "ASEMPRECO a porta conta os 2 em itens_sem_preco" \
+   "$(rpc "'12m','empresa'" "j->'total'->>'itens_sem_preco'")" "2"
+
+# AMARGEM / APRAZOPCT / ACONTRIBPCT — os percentuais da porta contra um oráculo calculado das LINHAS, cada um no
+# SEU denominador (o cenário tem linha com receita sem custo, com custo sem receita, com receita sem prazo).
+ORA="$(motor "$M12" "concat_ws(' ',
+  round((sum(receita_liquida) FILTER (WHERE custo_total IS NOT NULL) - sum(custo_total) FILTER (WHERE receita_liquida IS NOT NULL))
+        / sum(receita_liquida) FILTER (WHERE custo_total IS NOT NULL) * 100, 2),
+  round(sum(custo_prazo) / sum(receita_liquida) FILTER (WHERE custo_prazo IS NOT NULL) * 100, 2),
+  round(sum(contribuicao) / sum(receita_liquida) FILTER (WHERE contribuicao IS NOT NULL) * 100, 2))")"
+RPCPCT="$(rpc "'12m','empresa'" "concat_ws(' ', j->'total'->>'margem_bruta_pct', j->'total'->>'custo_prazo_pct', j->'total'->>'contribuicao_pct')")"
+eq "AMARGEM margem_bruta_pct sobre a receita COM custo" "$(echo "$RPCPCT" | cut -d' ' -f1)" "$(echo "$ORA" | cut -d' ' -f1)"
+eq "APRAZOPCT custo_prazo_pct sobre a receita COM prazo" "$(echo "$RPCPCT" | cut -d' ' -f2)" "$(echo "$ORA" | cut -d' ' -f2)"
+eq "ACONTRIBPCT contribuicao_pct sobre a INTERSECAO" "$(echo "$RPCPCT" | cut -d' ' -f3)" "$(echo "$ORA" | cut -d' ' -f3)"
+eq "AMARGEM o oraculo nao e vacuo (3 percentuais, nenhum vazio)" "$(echo "$ORA" | wc -w | tr -d ' ')" "3"
 
 # AVENDEDOR
 eq "AVENDEDOR indisponivel" "$(rpc "'12m','vendedor'" "j->>'indisponivel'")" "true"
