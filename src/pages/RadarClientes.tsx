@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useAuth } from '@/contexts/AuthContext';
+import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, FILTROS_MEUS_ATENDIMENTOS, CHAVE_VISAO_MEUS, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
 import { dicaDoChip, useRadarParaVisitarContagem } from '@/queries/useRadarContatoContabil';
@@ -114,9 +115,13 @@ const DEFAULTS: RadarUrlState = {
   perto: '',
 };
 
-/** O que um favorito guarda: os filtros da URL, sem a vista, a visão nem o `perto` (navegação, não filtro). */
+/**
+ * O que um favorito guarda: os filtros da URL sem a vista e a visão (navegação). O `perto` ENTRA (revisão 2026-11-11,
+ * item 9): é a intenção territorial — um favorito "Toda a região" (perto=nao) aplicado sem ela voltava a ser recortado
+ * pela cidade nº 1 do território. Favorito antigo, sem a chave, cai no default '' (automático), como era.
+ */
 const { vista: _vista, visao: _visao, perto: _perto, ...PADRAO_FILTROS } = DEFAULTS;
-const PADRAO_FAVORITO: FiltrosSalvos = PADRAO_FILTROS;
+const PADRAO_FAVORITO: FiltrosSalvos = { ...PADRAO_FILTROS, perto: DEFAULTS.perto };
 
 function narrowPreset(v: string): PresetRadar {
   return v === 'estabelecidas' || v === 'novas' ? v : 'score';
@@ -162,7 +167,12 @@ export default function RadarClientes() {
   // um dia para o outro não fica pedindo a fila de ontem.
   const hojeISO = useHojeBRT();
 
-  const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus, aguardar: aguardandoTerritorio });
+  // Revisão 2026-11-11 (item 14): staff SEM a capacidade de prospectar (a rota só exige staff) via a fila falhar com
+  // "Não foi possível carregar" — a RPC recusa. A fila nem é pedida, e a tela diz que é falta de acesso.
+  const { role: papel, commercialRole, loading: authCarregando } = useAuth();
+  const podeProspectar = podeProspectarRadar({ role: papel, commercialRole });
+  const semAcesso = !authCarregando && !podeProspectar;
+  const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus, aguardar: aguardandoTerritorio || !podeProspectar });
   // Quantos do recorte são "para visitar": desligado, do agregado (quando o recorte cabe nele); ligado, da própria fila.
   const contagemVisitar = useRadarParaVisitarContagem(filtros, hojeISO, { desligado: meus || aguardandoTerritorio });
   const rotuloContagemVisitar = contagemVisitar.rotulo;
@@ -440,6 +450,17 @@ export default function RadarClientes() {
     if (ajuste) toast.info(ajuste);
   };
 
+  if (semAcesso) {
+    return (
+      <div className="p-4" data-testid="radar-sem-acesso">
+        <EmptyState
+          tone="operational" icon={Radar} title="Sem acesso ao Radar de Clientes"
+          description="A prospecção é dos vendedores (farmer, hunter, closer) e da gestão comercial. Se você deveria ver esta tela, peça ao gestor o seu papel comercial."
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 space-y-4 max-w-6xl mx-auto pb-24">
       <div className="flex items-center gap-2">
@@ -555,7 +576,7 @@ export default function RadarClientes() {
               filtros={filtros}
               set={setFiltros}
               lote={lote}
-              acoes={<RadarFavoritos atuais={filtrosAtuais} padrao={PADRAO_FAVORITO} onAplicar={(f) => set({ ...PADRAO_FAVORITO, ...f })} />}
+              acoes={<RadarFavoritos atuais={{ ...filtrosAtuais, perto }} padrao={PADRAO_FAVORITO} onAplicar={(f) => set({ ...PADRAO_FAVORITO, ...f })} />}
             />
             <RadarChipsLote
               soIneditos={filtros.soIneditos}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
+import { rotuloIdade,
   ACOES_CONTATO, presetParaParams, idadeEmAnos, rotuloPorte,
   formatarCapital, formatarCnpj, digitosCnae, seloRfb, formatarDataIso, scoreUI, versaoDaFila, selosFilial, textoFilialFicha,
   agregadoIndisponivel, avisoContagem, formatarContagensEm, MARCA_AGREGADO_INDISPONIVEL,
@@ -283,5 +283,14 @@ describe('contagens pré-computadas (radar_agregado_municipio)', () => {
     expect(formatarContagensEm(null)).toBeNull();
     expect(formatarContagensEm(undefined)).toBeNull();
     expect(formatarContagensEm('ontem')).toBeNull();
+  });
+});
+
+describe('formatação da ficha e da linha (revisão 2026-11-11, item 20)', () => {
+  it('idade: singular e plural', () => {
+    expect(rotuloIdade(0)).toBe('menos de 1 ano');
+    expect(rotuloIdade(1)).toBe('1 ano');
+    expect(rotuloIdade(7)).toBe('7 anos');
+    expect(rotuloIdade(null)).toBeNull();
   });
 });

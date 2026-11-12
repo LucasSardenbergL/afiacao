@@ -227,6 +227,13 @@ export function seloRfb(e: { rfb_situacao: string | null; rfb_situacao_data: str
   };
 }
 /** YYYY-MM-DD → dd/mm/aaaa sem passar por Date (fuso não entra). */
+/** "1 ano" / "7 anos" (revisão 2026-11-11, item 20: a linha e a ficha diziam "1 anos"); 0 = "menos de 1 ano". */
+export function rotuloIdade(idade: number | null): string | null {
+  if (idade == null) return null;
+  if (idade < 1) return 'menos de 1 ano';
+  return idade === 1 ? '1 ano' : `${idade} anos`;
+}
+
 export function formatarDataIso(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
