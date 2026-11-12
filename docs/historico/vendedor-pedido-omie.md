@@ -62,7 +62,7 @@ Era a assinatura do sync, não autoria. Medir oferta ou conversão por farmer em
 
 ## Contrato para a Entrega 1 (resumo por e-mail / painel `/admin/venda-cliente`)
 
-- **Por pedido:** `sales_orders.vendedor_user_id`, com `authenticated` lendo por coluna. Universo:
+- **Por pedido:** `sales_orders.vendedor_user_id`, lido por `service_role` (edge) ou dentro de RPC. Não há GRANT de coluna para `authenticated`: o `authz:check` trata isso como reabertura da tabela fechada, e `gemeo_importado_id` é o precedente. Universo:
   `hash_payload LIKE 'omie\_%'`. NULL não é zero.
 - **Cobertura:** `public.venda_cobertura_vendedor(p_de date, p_ate date) → jsonb`. Gate: master ou
   `service_role`. Período de no máximo 400 dias, no eixo `order_date_kpi`, excluindo apagados e

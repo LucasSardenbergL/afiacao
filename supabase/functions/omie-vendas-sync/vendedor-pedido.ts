@@ -76,7 +76,7 @@ export function montarLoteVendedor(pedidos: PedidoComVendedor[]): {
 }
 
 /** Resposta do escritor `sales_orders_registrar_vendedor_omie`. */
-export interface ResultadoRegistroVendedor {
+interface ResultadoRegistroVendedor {
   recebidos: number;
   casados: number;
   atualizados: number;

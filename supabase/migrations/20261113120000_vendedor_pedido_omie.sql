@@ -71,10 +71,9 @@ CREATE INDEX IF NOT EXISTS idx_sales_orders_vendedor_user
   ON public.sales_orders (vendedor_user_id, order_date_kpi)
   WHERE vendedor_user_id IS NOT NULL;
 
--- Coluna nova nasce SEM grant de SELECT para `authenticated` (sales_orders é fechada por coluna,
--- 20260709163500): conceder só SELECT das três. UPDATE não — escritor único é a RPC.
-GRANT SELECT (vendedor_omie_codigo, vendedor_user_id, vendedor_lido_em)
-  ON public.sales_orders TO authenticated;
+-- Sem GRANT de coluna para `authenticated` (sales_orders é fechada por coluna desde 20260709163500 e
+-- o authz:check trata GRANT novo como reabertura; precedente: gemeo_importado_id). Leitura: pela RPC
+-- venda_cobertura_vendedor ou por service_role (edge). UPDATE também não — escritor único é a RPC.
 
 -- ── 3. o escritor ──────────────────────────────────────────────────────────────────────────
 -- p_pedidos = [{ "codigo_pedido": <bigint>, "cod_vend": <bigint|null> }, …] de UMA conta.
@@ -290,9 +289,6 @@ BEGIN
                   WHERE conrelid = 'public.sales_orders'::regclass
                     AND conname = 'sales_orders_vendedor_coerente' AND convalidated) THEN
     RAISE EXCEPTION 'P3_FALHOU: CHECK sales_orders_vendedor_coerente ausente ou NOT VALID';
-  END IF;
-  IF NOT has_column_privilege('authenticated', 'public.sales_orders', 'vendedor_user_id', 'SELECT') THEN
-    RAISE EXCEPTION 'P4_FALHOU: authenticated sem SELECT em sales_orders.vendedor_user_id (some do PostgREST)';
   END IF;
   IF has_column_privilege('authenticated', 'public.sales_orders', 'vendedor_user_id', 'UPDATE') THEN
     RAISE EXCEPTION 'P5_FALHOU: authenticated pode UPDATE vendedor_user_id — escritor deixaria de ser único';

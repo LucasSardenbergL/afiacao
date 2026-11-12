@@ -159,7 +159,7 @@ case "${SABOTAGEM:-}" in
   pct_zero)            sabotar 's/CASE WHEN coalesce\(sum\(pedidos\), 0\) = 0 THEN NULL/CASE WHEN coalesce(sum(pedidos), 0) = 0 THEN 0/'; desliga_pos ;;
   sem_gate_cobertura)  sabotar 's/IF NOT \(coalesce\(auth\.role\(\), ..\) = .service_role./IF false AND NOT (coalesce(auth.role(), \x27\x27) = \x27service_role\x27/'; desliga_pos ;;
   pos_not_null)        sabotar 's/ALTER TABLE public\.sales_orders ALTER COLUMN created_by DROP NOT NULL;/-- sabotado/' ;;
-  pos_grant_update)    sabotar 's/UPDATE não — escritor único é a RPC\.\nGRANT SELECT \(vendedor_omie_codigo, vendedor_user_id, vendedor_lido_em\)/UPDATE não — escritor único é a RPC.\nGRANT UPDATE (vendedor_user_id) ON public.sales_orders TO authenticated;\nGRANT SELECT (vendedor_omie_codigo, vendedor_user_id, vendedor_lido_em)/' ;;
+  pos_grant_update)    sabotar 's/UPDATE também não — escritor único é a RPC\.\n/UPDATE também não — escritor único é a RPC.\nGRANT UPDATE (vendedor_user_id) ON public.sales_orders TO authenticated;\n/' ;;
   desfabrica_app)      perl -0pi -e 's/ WHERE so\.hash_payload LIKE .omie\\_%.\n   AND so\.created_by IS NOT NULL\nON CONFLICT/ WHERE so.created_by IS NOT NULL\nON CONFLICT/' "$DESF"
                        perl -0pi -e 's/ WHERE so\.hash_payload LIKE .omie\\_%.\n   AND so\.created_by IS NOT NULL\n   AND EXISTS/ WHERE so.created_by IS NOT NULL\n   AND EXISTS/' "$DESF"
                        cmp -s "$DESF" "$REPO_ROOT/db/2026-11-13-desfabricar-autor-importado.sql" && { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada"; exit 2; } ;;
