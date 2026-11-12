@@ -3,7 +3,7 @@
 //
 // M-26, 3ª leva do Lote C (plano de melhorias): edge ATIVA com escrita e sem prova de deploy.
 // Contexto: carga mensal do radar (CLI `scripts/radar/carga.ts`), por `action`. O gate
-// próprio da edge (`autorizado`) aceita `x-cron-secret` ⇒ sem gate extra.
+// da edge (`autorizarIngest`: `authorizeCron` OU `authorizeMaster`) aceita `x-cron-secret` ⇒ sem gate extra.
 //
 // ⚠️ SONDAR O BUNDLE PRÉ-SENSOR: BARATA — `{"probe":true}` não tem `action` e cai no 400 de ação
 // desconhecida antes de escrever.
@@ -15,7 +15,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("radar-ingest");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.8-chunk-recuperavel";
+export const VERSAO = "v1.9-gate-compartilhado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
