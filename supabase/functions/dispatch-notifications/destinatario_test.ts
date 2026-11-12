@@ -1,6 +1,6 @@
 // Régua do destinatário do dispatch-notifications (Radar D1, 2026-11-06). Roda:
 //   deno test supabase/functions/dispatch-notifications/destinatario_test.ts
-import { destinatarioDe, falhaDeLeituraAborta, htmlDoVendedor, mapaDestinatarios } from "./destinatario.ts";
+import { destinatarioDe, falhaDeLeituraAborta, htmlDoVendedor, mapaDestinatarios, mapaPixels } from "./destinatario.ts";
 
 function eq(a: unknown, b: unknown, msg: string) {
   const sa = JSON.stringify(a) ?? "<undefined>";
@@ -46,4 +46,22 @@ Deno.test("corpo do vendedor: escapa HTML e torna o link clicável", () => {
     "link",
   );
   eq(html.includes("<br/>"), true, "quebra de linha");
+});
+
+Deno.test("resumo de venda: destinatário do envio + pixel só nele; radar e padrão sem pixel", () => {
+  const resumos = [{ alerta_id: 20, destinatario_email: "tatyana@exemplo.com", token_abertura: "tok-20" }];
+  const mapa = mapaDestinatarios([{ alerta_id: 10, destinatario_email: "regina@exemplo.com" }, ...resumos]);
+  const pixels = mapaPixels(resumos);
+  eq(destinatarioDe(20, mapa, "gestor@exemplo.com", pixels),
+    { to: "tatyana@exemplo.com", doVendedor: true, pixel: "tok-20" }, "resumo com pixel");
+  eq(destinatarioDe(10, mapa, "gestor@exemplo.com", pixels),
+    { to: "regina@exemplo.com", doVendedor: true }, "radar sem pixel");
+  eq(destinatarioDe(30, mapa, "gestor@exemplo.com", pixels), { to: "gestor@exemplo.com", doVendedor: false }, "padrão");
+  eq(mapaPixels([{ alerta_id: 21, destinatario_email: "sem-arroba", token_abertura: "t" }]).size, 0, "e-mail inválido sem pixel");
+});
+
+Deno.test("html do vendedor: pixel escapado no fim; sem url, sem img", () => {
+  const com = htmlDoVendedor("T", "corpo", "https://x.supabase.co/functions/v1/dispatch-notifications?abertura=a&b");
+  eq(com.endsWith('<img src="https://x.supabase.co/functions/v1/dispatch-notifications?abertura=a&amp;b" width="1" height="1" alt="" style="display:none"/>'), true, "img no fim, & escapado");
+  eq(htmlDoVendedor("T", "corpo").includes("<img"), false, "sem pixel");
 });

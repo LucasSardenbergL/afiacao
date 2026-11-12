@@ -38,7 +38,7 @@ for f in "$MIG" "$MIG_JSON" "$MIG_MOSTRADA" "$MIG_PAINEL" "$MIG_LISTA"; do [ -f 
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca exata.
-  SABOTAGENS="hash_int:S1a lista_ve_controle:L1a mostrada_controle:L1b policy_aberta:POST!P8_FALHOU selecao_so_tratamento:R1b email_com_controle:R1c braco_livre:B1d preparar_aberto:POST!P6_FALHOU clique_qualquer:C1c mostrada_na_copia:C1e oferta_nao_atendeu:P1d contato_antes:P1c painel_com_controle:V1b inicio_hoje:S2b nome_sem_coalesce:R1c"
+  SABOTAGENS="hash_int:S1a lista_ve_controle:L1a mostrada_controle:L1b policy_aberta:POST!P8_FALHOU selecao_so_tratamento:R1b email_com_controle:R1c braco_livre:B1d preparar_aberto:POST!P6_FALHOU clique_qualquer:C1c mostrada_por_outro:C1e oferta_nao_atendeu:P1d contato_antes:P1c painel_com_controle:V1b inicio_hoje:S2b nome_sem_coalesce:R1c"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-resumo.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -79,7 +79,9 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-venda-resumo.XXXXXX")"
 DATA="$WORK/data"
 MIG_USADA="$WORK/mig.sql"
 PRED_SQL="$WORK/pred.sql"
-cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$WORK"; }
+# Preserva o status de quem saiu: sem isto um `set -u` (unbound variable) saía 0 pelo último comando do trap e a
+# falsificação lia "VERDE" numa suíte que tinha morrido no meio (medido: sabotagem hash_int, 12/11/2026).
+cleanup() { local rc=$?; "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$WORK"; exit "$rc"; }
 trap cleanup EXIT
 
 cp "$MIG" "$MIG_USADA"
@@ -135,7 +137,9 @@ case "${SABOTAGEM:-}" in
   preparar_aberto)      sabotar "REVOKE ALL ON FUNCTION public.venda_resumo_preparar(date, uuid) FROM PUBLIC, anon, authenticated;" \
                                 "GRANT EXECUTE ON FUNCTION public.venda_resumo_preparar(date, uuid) TO anon;" ;;
   clique_qualquer)      sabotar "  v_dest := l.destinatario_user_id = v_uid;" "  v_dest := true;" ;;
-  mostrada_na_copia)    sabotar "  IF v_dest AND l.tipo = 'farmer' AND l.selecao_id IS NOT NULL THEN" "  IF v_dest AND l.selecao_id IS NOT NULL THEN" ;;
+  # Duas camadas guardam a cópia (tipo farmer E s.farmer_user_id = quem clicou): sabotar só uma fica VERDE (medido).
+  mostrada_por_outro)   sabotar "  IF v_dest AND l.tipo = 'farmer' AND l.selecao_id IS NOT NULL THEN" "  IF v_dest AND l.selecao_id IS NOT NULL THEN"
+                        sabotar "       AND s.farmer_user_id = v_uid AND s.fase = 'ativa' AND s.braco IS DISTINCT FROM 'controle'" "       AND s.fase = 'ativa' AND s.braco IS DISTINCT FROM 'controle'" ;;
   oferta_nao_atendeu)   sabotar "o.resultado IN ('vendeu', 'vai_pedir', 'sem_interesse')" "o.resultado IS NOT NULL" ;;
   contato_antes)        sabotar "         AND vc.atualizado_em >= COALESCE(o.enviado_em, 'infinity'::timestamptz)
 " "" ;;
@@ -174,7 +178,7 @@ estado() { # SQLSTATE de um comando que TEM de falhar: "verde" se passou; senão
   printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | sed -n 1p | grep -oE '[0-9A-Z]{5}:$' | tr -d ':' || echo "sem-codigo"
 }
 como() { printf "SET ROLE authenticated; SET request.jwt.claim.sub = '%s'; %s" "$1" "$2"; }
-PASS=0; FAIL=0
+PASS=0; FAIL=0; FAIL_APPLY=0
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
 
 F1=00000000-0000-0000-0000-0000000000f1; F2=00000000-0000-0000-0000-0000000000f2
@@ -276,7 +280,7 @@ P -q -c "INSERT INTO public.venda_sugestao (tipo, fase, dia_referencia, farmer_u
 
 
 # ── a migration ─────────────────────────────────────────────────────────────────────────────────────────────────
-P -q -f "$MIG_USADA" > "$WORK/apply.log" 2>&1 || { echo "FAIL apply"; cat "$WORK/apply.log"; }
+if ! P -q -f "$MIG_USADA" > "$WORK/apply.log" 2>&1; then echo "FAIL apply"; FAIL_APPLY=1; sed -n 1,20p "$WORK/apply.log"; fi
 grep -q 'venda-resumo-email OK' "$WORK/apply.log" 2>/dev/null || grep -E 'FALHOU|ERRO|ERROR' "$WORK/apply.log" | sed -n 1,3p
 
 INICIO="$(Pq -c "SELECT inicio FROM public.venda_braco_sorteio")"
@@ -466,6 +470,7 @@ eq "M1c PRE recusa corpo alheio" "$(printf '%s' "$SAIDA_M1C" | grep -c 'PRE FALH
 eq "M1d anon nao le as tabelas novas" "$(estado "SET ROLE anon; SELECT 1 FROM public.venda_resumo_envio LIMIT 1")" "42501"
 eq "M1e farmer nao le a tabela de bracos (RLS)" "$(Pq -c "$(como "$F1" "SELECT count(*) FROM public.venda_braco_comprador")")" "0"
 
+FAIL=$((FAIL + FAIL_APPLY))
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "FIM-OK venda-resumo-email"
