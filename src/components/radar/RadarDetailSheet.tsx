@@ -3,7 +3,10 @@ import { AvisoVinculoCredito } from '@/components/credito-vinculo/AvisoVinculoCr
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
+import { useRegisterShortcuts, type Shortcut } from '@/components/shell/ShortcutsRegistry';
+import { useRegisterCommands, type Command } from '@/components/shell/CommandsRegistry';
 import { Textarea } from '@/components/ui/textarea';
 import { cadastravelNoOmie } from '@/lib/radar/sugeridos';
 import type { AcaoContato } from '@/lib/radar/ui-helpers';
@@ -174,6 +177,37 @@ export function RadarDetailSheet({
   }, [cnpjAberto]);
   // Revisão 2026-11-11 (item 4): com CNPJ na URL e a leitura a caminho, a ficha abre JÁ, com esqueleto — antes não
   // aparecia nada até a resposta (o vendedor via a fila e achava que o link não tinha funcionado).
+  // Revisão 2026-11-11 (item 17): atalhos da ficha pelo registro do app (o diálogo `?` e o Cmd-K os descobrem) — sem
+  // listener `keydown` solto. `n` próximo · `r` registrar contato · `c` copiar o telefone principal.
+  const [pedidoMenu, setPedidoMenu] = useState(0);
+  const telAtalho = empresa ? telefonePrincipal(empresa) : null;
+  const acoesAtalho = useMemo(() => {
+    if (!cnpjAberto) return null;
+    const copiar = async () => {
+      if (!telAtalho) { toast.info('Este lead não tem telefone'); return; }
+      try {
+        await navigator.clipboard.writeText(telAtalho);
+        void registrarIntencaoContato(cnpjAberto, 'copiar');
+        toast.success('Telefone copiado', { description: telAtalho });
+      } catch {
+        toast.error('Não consegui copiar', { description: `Disque ${telAtalho} pelo seu aparelho.` });
+      }
+    };
+    return { proximo: () => onProximo?.(), registrar: () => setPedidoMenu((n) => n + 1), copiar: () => void copiar() };
+  }, [cnpjAberto, telAtalho, onProximo]);
+  const atalhos = useMemo<Shortcut[]>(() => (acoesAtalho ? [
+    { keys: 'n', label: 'Próximo lead', group: 'Radar', scope: 'page', handler: acoesAtalho.proximo },
+    { keys: 'r', label: 'Registrar contato', group: 'Radar', scope: 'page', handler: acoesAtalho.registrar },
+    { keys: 'c', label: 'Copiar telefone', group: 'Radar', scope: 'page', handler: acoesAtalho.copiar },
+  ] : []), [acoesAtalho]);
+  useRegisterShortcuts(atalhos);
+  const comandos = useMemo<Command[]>(() => (acoesAtalho ? [
+    { id: 'radar.proximo-lead', label: 'Radar: próximo lead', group: 'Ações', hint: 'N', perform: (fechar) => { fechar(); acoesAtalho.proximo(); } },
+    { id: 'radar.registrar-contato', label: 'Radar: registrar contato', group: 'Ações', hint: 'R', perform: (fechar) => { fechar(); acoesAtalho.registrar(); } },
+    { id: 'radar.copiar-telefone', label: 'Radar: copiar telefone', group: 'Ações', hint: 'C', perform: (fechar) => { fechar(); acoesAtalho.copiar(); } },
+  ] : []), [acoesAtalho]);
+  useRegisterCommands(comandos);
+
   if (!empresa) {
     if (!carregandoCnpj) return null;
     return (
@@ -273,7 +307,7 @@ export function RadarDetailSheet({
         </div>
         {discagem ? (
           <div className="mt-3">
-            <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data} nota={nota} campoNota={campoNota} hojeISO={hojeISO}
+            <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data} nota={nota} campoNota={campoNota} hojeISO={hojeISO} pedidoAbrir={pedidoMenu}
               onRegistrado={aposRegistro} onDesfeito={aposDesfazer}
               ligar={telPrincipal ? <RadarTelefoneAcao telefone={telPrincipal} variant="full" discreto={!!principalContabil} cnpj={empresa.cnpj} /> : null}
               avisoContabil={principalContabil ? (
@@ -290,7 +324,7 @@ export function RadarDetailSheet({
                 Próximo <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             ) : <span />}
-            <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} hojeISO={hojeISO} onRegistrado={aposRegistro} onDesfeito={aposDesfazer} />
+            <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} hojeISO={hojeISO} pedidoAbrir={pedidoMenu} onRegistrado={aposRegistro} onDesfeito={aposDesfazer} />
           </div>
           </div>
         )}

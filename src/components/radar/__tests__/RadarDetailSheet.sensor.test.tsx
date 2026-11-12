@@ -112,3 +112,24 @@ describe('RadarDetailSheet — formatação e acessibilidade (revisão 2026-11-1
     expect(dialogo.textContent).not.toContain('2025-03-01');
   });
 });
+
+describe('RadarDetailSheet — atalhos (revisão 2026-11-11, item 17)', () => {
+  it('pelo registro do app: "n" chama o próximo; "c" copia o telefone e grava a intenção "copiar"', async () => {
+    lente = false; rpc.mockClear();
+    const { ShortcutsRegistryProvider } = await import('@/components/shell/ShortcutsRegistry');
+    const onProximo = vi.fn();
+    const writeText = vi.fn(async () => undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const empresa = { ...lead('11222333000181'), telefone1: '3732220001' } as unknown as RadarEmpresa;
+    render(
+      <ShortcutsRegistryProvider>
+        <RadarDetailSheet empresa={empresa} hojeISO="2026-11-06" onClose={() => {}} onProximo={onProximo} />
+      </ShortcutsRegistryProvider>,
+    );
+    fireEvent.keyDown(window, { key: 'n' });
+    expect(onProximo).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(window, { key: 'c' });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('3732220001'));
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith('radar_registrar_intencao', expect.objectContaining({ p_cnpj: '11222333000181', p_canal: 'copiar' })));
+  });
+});

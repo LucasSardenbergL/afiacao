@@ -136,3 +136,12 @@ describe('RadarOutcomeMenu — variante "botoes" do modo discagem (revisão 2026
     expect(await screen.findByPlaceholderText(/motivo/i)).toBeTruthy();
   });
 });
+
+describe('RadarOutcomeMenu — atalho "r" (revisão 2026-11-11, item 17)', () => {
+  it('o pedido da ficha abre o menu "Registrar contato"', async () => {
+    const { rerender } = render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} pedidoAbrir={0} />);
+    expect(screen.queryByText(/não atendeu/i)).toBeNull();
+    rerender(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} pedidoAbrir={1} />);
+    expect(await screen.findByText(/não atendeu/i)).toBeTruthy();
+  });
+});

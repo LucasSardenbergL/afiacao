@@ -89,7 +89,10 @@ export function RadarOutcomeMenu({
   onDesfeito,
   hojeISO,
   variante = 'menu',
+  pedidoAbrir = 0,
 }: {
+  /** Muda = o atalho `r` da ficha pediu (item 17): abre o menu (ou foca o 1º botão, na variante 'botoes'). */
+  pedidoAbrir?: number;
   cnpj: string;
   /** Dia BRT da página (`useHojeBRT`). Ausente: o dia BRT pelo relógio do aparelho, na hora de abrir. */
   hojeISO?: string;
@@ -229,6 +232,14 @@ export function RadarOutcomeMenu({
     <p className="text-xs text-status-error" role="alert" data-testid="radar-desfecho-falha">{falhaDialogo}</p>
   );
 
+  const [menuAberto, setMenuAberto] = useState(false);
+  const primeiroBotaoRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (pedidoAbrir === 0 || isImpersonating) return;
+    if (variante === 'botoes') primeiroBotaoRef.current?.focus();
+    else setMenuAberto(true);
+  }, [pedidoAbrir, variante, isImpersonating]);
+
   const abrirDescarte = () => {
     // O motivo NÃO é apagado aqui: depois de uma falha, reabrir traz o texto de volta (item 2).
     setFalhaDialogo(null);
@@ -241,7 +252,7 @@ export function RadarOutcomeMenu({
     <>
       {variante === 'botoes' ? (
         <div className="flex flex-wrap gap-2" role="group" aria-label="Desfecho da ligação" data-testid="radar-desfechos-diretos">
-          <Button type="button" variant="outline" className="min-h-11" disabled={bloqueado} title={tituloBloqueado}
+          <Button ref={primeiroBotaoRef} type="button" variant="outline" className="min-h-11" disabled={bloqueado} title={tituloBloqueado}
             onClick={() => void registrar('contatado_sem_resposta', nota)}>
             <PhoneMissed className="w-4 h-4 mr-2" /> Não atendeu
           </Button>
@@ -253,7 +264,7 @@ export function RadarOutcomeMenu({
           </Button>
         </div>
       ) : (
-      <DropdownMenu>
+      <DropdownMenu open={menuAberto} onOpenChange={setMenuAberto}>
         <DropdownMenuTrigger asChild>
           <Button
             variant="outline"
