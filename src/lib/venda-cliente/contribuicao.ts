@@ -72,8 +72,8 @@ export type Contribuicao =
       limite: number;
       offset: number;
       taxaCapital: { oben: number | null; colacor: number | null };
-      /** null quando a janela não tem nenhum item (sem linha, a RPC não monta o total). */
-      total: MetricasContribuicao | null;
+      /** Sempre presente: o agrupamento `()` da RPC monta o total mesmo sem item (contagens 0, somas null). */
+      total: MetricasContribuicao;
       porEmpresa: Record<string, MetricasContribuicao>;
       totalLinhas: number;
       linhas: LinhaContribuicao[];
@@ -112,6 +112,12 @@ function numOuNulo(o: Obj, k: string, onde: string): number | null {
   if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`${onde}: "${k}" não é número`);
   return v;
 }
+/** Contagem: inteiro seguro ≥ 0 (count(*) nunca é fração, negativo ou null). */
+function contagemOk(o: Obj, k: string, onde: string): number {
+  const v = num(o, k, onde);
+  if (!Number.isSafeInteger(v) || v < 0) throw new Error(`${onde}: "${k}" não é contagem`);
+  return v;
+}
 function bool(o: Obj, k: string, onde: string): boolean {
   const v = campo(o, k, onde);
   if (typeof v !== 'boolean') throw new Error(`${onde}: "${k}" não é booleano`);
@@ -137,7 +143,7 @@ const VALORES = [
 function metricas(v: Json | undefined, onde: string): MetricasContribuicao {
   const o = obj(v, onde);
   const m: Record<string, number | null> = {};
-  for (const k of CONTAGENS) m[k] = num(o, k, onde);
+  for (const k of CONTAGENS) m[k] = contagemOk(o, k, onde);
   for (const k of VALORES) m[k] = numOuNulo(o, k, onde);
   return m as unknown as MetricasContribuicao;
 }
@@ -153,7 +159,6 @@ export function lerContribuicao(data: Json | undefined): Contribuicao {
     return { indisponivel: true, janela, eixo, desde, ate, motivo: str(o, 'motivo', 'venda_contribuicao') };
   }
   const taxa = obj(campo(o, 'taxa_capital', 'venda_contribuicao'), 'venda_contribuicao.taxa_capital');
-  const totalBruto = campo(o, 'total', 'venda_contribuicao');
   const porEmpresaObj = obj(campo(o, 'por_empresa', 'venda_contribuicao'), 'venda_contribuicao.por_empresa');
   const porEmpresa: Record<string, MetricasContribuicao> = {};
   for (const [k, v] of Object.entries(porEmpresaObj)) porEmpresa[k] = metricas(v, `por_empresa.${k}`);
@@ -177,15 +182,15 @@ export function lerContribuicao(data: Json | undefined): Contribuicao {
     ate,
     empresa: strOuNulo(o, 'empresa', 'venda_contribuicao'),
     ordem: umDe(ORDENS, str(o, 'ordem', 'venda_contribuicao'), 'venda_contribuicao.ordem'),
-    limite: num(o, 'limite', 'venda_contribuicao'),
-    offset: num(o, 'offset', 'venda_contribuicao'),
+    limite: contagemOk(o, 'limite', 'venda_contribuicao'),
+    offset: contagemOk(o, 'offset', 'venda_contribuicao'),
     taxaCapital: {
       oben: numOuNulo(taxa, 'oben', 'taxa_capital'),
       colacor: numOuNulo(taxa, 'colacor', 'taxa_capital'),
     },
-    total: totalBruto === null ? null : metricas(totalBruto, 'total'),
+    total: metricas(campo(o, 'total', 'venda_contribuicao'), 'total'),
     porEmpresa,
-    totalLinhas: num(o, 'total_linhas', 'venda_contribuicao'),
+    totalLinhas: contagemOk(o, 'total_linhas', 'venda_contribuicao'),
     linhas,
   };
 }
@@ -204,13 +209,15 @@ export function fracao(parte: number | null, todo: number | null): number | null
  *  - 'completa'  : há contribuição computada (sobre a interseção);
  *  - 'sem_taxa'  : há prazo identificado mas a empresa não tem taxa de capital configurada;
  *  - 'sem_prazo' : nenhum pedido com título casado;
- *  - 'sem_custo' : nenhum item com receita E custo conhecidos.
+ *  - 'sem_custo' : nenhum item com receita E custo conhecidos;
+ *  - 'sem_intersecao': há custo e há prazo, mas em itens DIFERENTES — nenhum item reúne as três pernas.
  */
-export type SituacaoContribuicao = 'completa' | 'sem_taxa' | 'sem_prazo' | 'sem_custo';
+export type SituacaoContribuicao = 'completa' | 'sem_taxa' | 'sem_prazo' | 'sem_custo' | 'sem_intersecao';
 export function situacaoContribuicao(m: MetricasContribuicao): SituacaoContribuicao {
   if (m.contribuicao !== null) return 'completa';
   if (m.receita_com_custo === null) return 'sem_custo';
-  if (m.pedidos_taxa_ausente > 0 && m.pedidos_prazo_ok === 0) return 'sem_taxa';
+  if (m.pedidos_prazo_ok > 0) return 'sem_intersecao';
+  if (m.pedidos_taxa_ausente > 0) return 'sem_taxa';
   return 'sem_prazo';
 }
 

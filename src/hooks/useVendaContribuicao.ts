@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -25,7 +25,8 @@ export function useVendaContribuicao(f: FiltroContribuicao) {
     queryKey: ['venda-contribuicao', user?.id ?? 'anon', f.janela, f.eixo, f.empresa, f.ordem, f.limite, f.offset],
     enabled: isMaster,
     staleTime: 5 * 60_000,
-    placeholderData: keepPreviousData,
+    // SEM placeholderData: com keepPreviousData a tela mostrava o payload do eixo ANTERIOR sob o cabeçalho
+    // do novo (Codex, revisão de código) — trocar filtro mostra o esqueleto, nunca número de outro escopo.
     queryFn: async (): Promise<Contribuicao> => {
       const { data, error } = await supabase.rpc('venda_contribuicao', {
         p_janela: f.janela,

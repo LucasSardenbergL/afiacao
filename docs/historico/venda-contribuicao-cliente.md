@@ -111,10 +111,23 @@ O CR do DRE (`fin_dre_competencia_base`, origem `CR`) é exatamente a soma dos t
    conferência do DRE acima.
 3. **Eixo vendedor** — quando a Entrega 2 criar a autoria do pedido, trocar o ramo `indisponivel` pela coluna.
 
+## Revisão Codex de código (2ª consulta)
+
+1 P1 e 7 P2, todos tratados menos um: título com cliente Omie NULO passava (`bool_or` ignora NULL; o writer grava
+NULL) → `IS NOT TRUE`, com cenários "todas as parcelas nulas" e "uma confere, outra nula"; preço NULL caía em
+desconto → `sem_preco`; a borda TS aceitava `total:null` e contagem fracionária → lança; `keepPreviousData` mostrava
+o payload do eixo anterior sob o cabeçalho novo → removido, e cabeçalho/detalhe vêm do eixo da RESPOSTA; SKU de duas
+empresas rotulado com uma só → "N empresas"; interseção vazia lida como "sem título" → `sem_intersecao`; os três
+percentuais ganharam oráculo e uma sabotagem por denominador.
+
+**Não tratado (declarado):** snapshot ENTRE páginas. Cada página é uma tupla consistente; páginas de instantes
+diferentes podem repetir/omitir uma linha se o sync escrever no meio. Nenhum número de decisão é montado juntando
+páginas (os totais vêm da mesma tupla de cada página). Fechar exigiria materializar uma geração — só se o uso pedir.
+
 ## Prova
 
-`db/test-venda-contribuicao.sh`: 49 asserts (gate, ACL, parâmetros, cardinalidade, cada perna e cada motivo de
-degradação, janelas inclusivas, comprador canônico, ponte, paginação, ordem), 15 sabotagens — todas vermelhas no
+`db/test-venda-contribuicao.sh`: 58 asserts (gate, ACL, parâmetros, cardinalidade, cada perna e cada motivo de
+degradação, janelas inclusivas, comprador canônico, ponte, paginação, ordem), 20 sabotagens — todas vermelhas no
 assert declarado, com controle verde na mesma invocação, em `LC_ALL=C` e `pt_BR.UTF-8`. Testes TS:
 `src/lib/venda-cliente/__tests__/contribuicao.test.ts` (borda) e
 `src/components/venda-cliente/painel/__tests__/AbaContribuicao.estados.test.tsx` (falha ≠ R$ 0, eixo indisponível,

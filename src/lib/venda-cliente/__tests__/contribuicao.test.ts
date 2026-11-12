@@ -37,6 +37,20 @@ describe('lerContribuicao — borda do jsonb', () => {
     expect(() => lerContribuicao(resposta({ total: metricasJson({ itens: null }) }))).toThrow('"itens" não é número');
   });
 
+  it('total null, contagem fracionária ou negativa lançam (resposta contraditória não vira "sem venda")', () => {
+    expect(() => lerContribuicao(resposta({ total: null }))).toThrow('total: não é objeto');
+    expect(() => lerContribuicao(resposta({ total: metricasJson({ itens: 1.5 }) }))).toThrow('"itens" não é contagem');
+    expect(() => lerContribuicao(resposta({ total_linhas: -1 }))).toThrow('"total_linhas" não é contagem');
+  });
+
+  it('total legítimo SEM item (contagens 0, somas null) é aceito', () => {
+    const vazio = metricasJson({ itens: 0, receita_liquida: null, contribuicao: null, margem_bruta_pct: null });
+    const r = lerContribuicao(resposta({ total: vazio, por_empresa: {}, linhas: [], total_linhas: 0 }));
+    if (r.indisponivel) throw new Error('esperava disponível');
+    expect(r.total.itens).toBe(0);
+    expect(r.total.receita_liquida).toBeNull();
+  });
+
   it('valor fora do domínio lança', () => {
     expect(() => lerContribuicao(resposta({ eixo: 'regiao' }))).toThrow('valor fora do domínio');
   });
@@ -49,12 +63,13 @@ describe('lerContribuicao — borda do jsonb', () => {
 
 describe('regras de apresentação', () => {
   const base = lerContribuicao(resposta());
-  if (base.indisponivel || !base.total) throw new Error('fixture');
+  if (base.indisponivel) throw new Error('fixture');
   const m: MetricasContribuicao = base.total;
 
   it('situação: completa / sem taxa / sem prazo / sem custo', () => {
     expect(situacaoContribuicao(m)).toBe('completa');
     expect(situacaoContribuicao({ ...m, contribuicao: null, pedidos_prazo_ok: 0, pedidos_taxa_ausente: 3 })).toBe('sem_taxa');
+    expect(situacaoContribuicao({ ...m, contribuicao: null, pedidos_prazo_ok: 1, pedidos_taxa_ausente: 0 })).toBe('sem_intersecao');
     expect(situacaoContribuicao({ ...m, contribuicao: null, pedidos_prazo_ok: 0, pedidos_taxa_ausente: 0 })).toBe('sem_prazo');
     expect(situacaoContribuicao({ ...m, contribuicao: null, receita_com_custo: null })).toBe('sem_custo');
   });

@@ -52,6 +52,8 @@ function notaContribuicao(m: MetricasContribuicao): string {
       return 'indisponível: nenhum item com receita e custo conhecidos';
     case 'sem_prazo':
       return 'indisponível: nenhum pedido com título casado';
+    case 'sem_intersecao':
+      return 'indisponível: nenhum item reúne receita, custo e prazo conhecidos';
   }
 }
 
@@ -119,7 +121,12 @@ function detalheLinha(eixo: Eixo, l: LinhaContribuicao): string | null {
     const partes = [typeof d.data === 'string' ? d.data.split('-').reverse().join('/') : null, typeof d.comprador === 'string' ? d.comprador : null];
     return partes.filter(Boolean).join(' · ') || null;
   }
-  if (eixo === 'sku') return [typeof d.empresa === 'string' ? ROTULO_EMPRESA[d.empresa] ?? d.empresa : null, typeof d.familia === 'string' ? d.familia : null].filter(Boolean).join(' · ') || null;
+  if (eixo === 'sku') {
+    // empresa singular só quando o SKU vendeu em UMA empresa; senão a contagem (o agregado é das duas)
+    const emp = typeof d.empresa === 'string' ? ROTULO_EMPRESA[d.empresa] ?? d.empresa
+      : typeof d.empresas === 'number' && d.empresas > 1 ? `${d.empresas} empresas` : null;
+    return [emp, typeof d.familia === 'string' ? d.familia : null].filter(Boolean).join(' · ') || null;
+  }
   if (eixo === 'cliente' && typeof d.empresas === 'number' && d.empresas > 1) return `${d.empresas} empresas`;
   return null;
 }
@@ -213,6 +220,7 @@ export function AbaContribuicao() {
     );
   }
 
+  // Cabeçalho e detalhe pelo eixo da RESPOSTA, não o da URL: nunca rotular um escopo com o nome de outro.
   const ultimaPagina = Math.max(0, Math.ceil(d.totalLinhas / POR_PAGINA) - 1);
   const empresas = Object.keys(d.porEmpresa).sort();
 
@@ -220,7 +228,7 @@ export function AbaContribuicao() {
     <div className={cn('space-y-4', q.isFetching && 'opacity-70')}>
       {filtros}
       {legenda}
-      {d.total === null || d.total.itens === 0 ? (
+      {d.total.itens === 0 ? (
         <EmptyState tone="operational" icon={Scale} title="Sem venda na janela" description={`${d.desde} a ${d.ate}`} />
       ) : (
         <>
@@ -240,7 +248,7 @@ export function AbaContribuicao() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>{ROTULO_EIXO[eixo]}</TableHead>
+                    <TableHead>{ROTULO_EIXO[d.eixo]}</TableHead>
                     <TableHead className="text-right">Receita líquida</TableHead>
                     <TableHead className="text-right">Desconto</TableHead>
                     <TableHead className="text-right">Margem bruta</TableHead>
@@ -252,7 +260,7 @@ export function AbaContribuicao() {
                 </TableHeader>
                 <TableBody>
                   {d.linhas.map((l) => {
-                    const det = detalheLinha(eixo, l);
+                    const det = detalheLinha(d.eixo, l);
                     return (
                       <TableRow key={l.chave}>
                         <TableCell className="max-w-[280px]">
@@ -290,7 +298,7 @@ export function AbaContribuicao() {
 
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>
-              {d.totalLinhas} {ROTULO_EIXO[eixo].toLowerCase()}(s) · {d.desde.split('-').reverse().join('/')} a{' '}
+              {d.totalLinhas} {ROTULO_EIXO[d.eixo].toLowerCase()}(s) · {d.desde.split('-').reverse().join('/')} a{' '}
               {d.ate.split('-').reverse().join('/')} · cobertura = receita com custo E prazo ÷ receita líquida
             </span>
             <div className="flex items-center gap-1">

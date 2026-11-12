@@ -62,6 +62,15 @@ describe('AbaContribuicao — estados', () => {
     expect(registrarNoLedger).not.toHaveBeenCalled();
   });
 
+  it('SKU vendido nas DUAS empresas mostra "2 empresas", nunca uma só', () => {
+    resp = {
+      data: dados({ eixo: 'sku', linhas: [{ chave: '1001', rotulo: 'SELADORA X', detalhe: { empresa: null, empresas: 2, familia: 'Seladora' }, ...metricasJson() }] }),
+      isPending: false, isError: false, error: null, isFetching: false,
+    };
+    renderAba();
+    expect(screen.getByText('2 empresas · Seladora')).toBeInTheDocument();
+  });
+
   it('colacor sem taxa: selo, motivo e "—" no lugar da contribuição; a linha sem contribuição mostra "—"', () => {
     resp = { data: dados(), isPending: false, isError: false, error: null, isFetching: false };
     renderAba();
