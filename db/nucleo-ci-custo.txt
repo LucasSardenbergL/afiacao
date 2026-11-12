@@ -22,8 +22,8 @@
 # docs/historico/ci-provas-sql-venda-repasse-faixas.md
 # Exceção (2026-11-12): UM run (43145558990): `fin-consolidado-ic` = 324 (normal 5 + faixas 164 e 155),
 # `radar-privacidade-j` = 240 (9 + 111 + 120; 327 no 43112361077, com mais disputa) e `tint-corante-giro` =
-# 104 (era 236, com JIT; agora `jit=off`). A `tint-fase5-watchdog` ganhou `jit=off` no mesmo PR (240 s nesse run):
-# o custo dela é re-medido depois. docs/historico/ci-provas-sql-fin-consolidado-faixas-e-tint-jit.md
+# 104 (era 236, com JIT; agora `jit=off`). `tint-fase5-watchdog` = 15 (era 240 com JIT), medida no run
+# 43147391328, depois do `jit=off`. docs/historico/ci-provas-sql-fin-consolidado-faixas-e-tint-jit.md
 # Re-meça quando a pior parte destoar das outras ou entrar prova cara nova (o `comm` de
 # docs/historico/ci-fila-de-runners.md lista as provas sem custo): para cada job `provas-sql (i)` de
 # um run verde, baixe o log pela API (`gh run view --log` em paralelo volta VAZIO sob limite),
@@ -201,7 +201,7 @@ db/test-tint-fase5-desativacao.sh 5
 db/test-tint-fase5-watchdog-v4.sh 95
 db/test-tint-fase5-watchdog-v5.sh 104
 db/test-tint-fase5-watchdog-v6.sh 31
-db/test-tint-fase5-watchdog.sh 232
+db/test-tint-fase5-watchdog.sh 15
 db/test-tint-formulas-rls-initplan.sh 1
 db/test-tint-gate-custo-staff.sh 1
 db/test-tint-gate-revalida.sh 5

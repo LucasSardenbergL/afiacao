@@ -51,4 +51,9 @@ Continuação de `ci-provas-sql-radar-privacidade-faixas.md`. Depois do #3857, a
   `radar-medicao` e, agora, `tint-corante-giro` e `tint-fase5-watchdog`. Ligar `jit=off` no `pg-harness`
   para todas seria fechar a classe, e fica para outra entrega, medida.
 
-<!-- MEDIDO-2 -->
+- **CI, 2º run do PR (43147391328), com a watchdog já em `jit=off`:** a pior parte caiu de **388 para 323 s**
+  (−65 s). Por unidade: `tint-fase5-watchdog` **240 → 15 s**, `tint-corante-giro` 83 s, `fin-consolidado-ic`
+  com faixas de 114 e 107 s, e `radar-privacidade-j` com faixas de 93 e 102 s.
+- **O novo piso:** a parte 2 (323 s) é puxada pela `hoje-sp-views-defaults --falsificar`, com **303 s**, na faixa
+  SERIAL. É a frente das esperas K1/K2 em paralelo, que o `/codex` já recomendou. A próxima da fila é a
+  `sayerlack-cancelado-com-compra-viva --falsificar`, com 256 s.
