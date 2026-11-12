@@ -325,7 +325,9 @@ export function useRadarAcaoEmLote() {
         track(evento, { total: cnpjs.length, ok: resultados.length - falhas.length, falhas: falhas.length });
         // Descarte em lote: a amostra entra na invalidação (o lead de controle descartado saía da fila só no F5).
         await invalidarRadar(qc, { reiniciarLista: true });
-        return { ok: resultados.length - falhas.length, falhas };
+        // `valores`: o retorno de cada item que deu certo (o descarte em lote guarda os ids para o "Desfazer" — item 15).
+        const valores = resultados.flatMap((r) => (r.status === 'ok' ? [r.valor] : []));
+        return { ok: resultados.length - falhas.length, falhas, valores };
       } finally {
         setRodando(false);
       }
