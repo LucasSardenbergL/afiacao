@@ -586,14 +586,15 @@ describe('bloqueantesOpacos — exclusao silenciosa le como cobertura total', ()
   // A REGRESSAO que originou tudo: o #2364 pos `bash db/roda-nucleo-ci.sh` num job bloqueante e
   // `gatesCandidatos` nao o viu — o cabecalho seguiu dizendo "28 gate(s)" e ninguem soube.
   // Desde 2026-10-01 o nucleo roda em PARTES (matriz do `provas-sql`) e a UNIAO dos recibos delas mora
-  // em `provas-sql-uniao`. As duas pontas sao opacas e as duas tem de estar no contador: a uniao so
-  // reprova o PR porque esta em `validate.needs`.
+  // em `provas-sql-uniao` — desde 2026-11-12, num step do proprio `validate` (o job saiu: era um salto
+  // de fila a mais). As duas pontas sao opacas e as duas tem de estar no contador: a uniao reprova o
+  // PR porque o agregador le o `outcome` dela como o job virtual `provas-sql-uniao`.
   it('o ci.yml de VERDADE: o nucleo SQL do #2364 esta fora do censo e DENTRO do contador', () => {
     expect(gatesCandidatos(ci).some((g) => /nucleo/.test(g.nome)), 'o censo nao o nomeia').toBe(false);
     const nucleo = bloqueantesOpacos(ci).filter((o) => o.comando.includes('roda-nucleo-ci.sh'));
     expect(nucleo.map((o) => o.job).sort(), 'o contador tem de ver as partes E a uniao').toEqual([
       'provas-sql',
-      'provas-sql-uniao',
+      'validate',
     ]);
   });
 
@@ -602,7 +603,7 @@ describe('bloqueantesOpacos — exclusao silenciosa le como cobertura total', ()
   // denominador + guard nominal de `provas-sql`) e e exatamente o que este contador existe para
   // manter visivel. Se um dia alguem o silenciar por allowlist, este teste fica vermelho.
   it('o agregador do validate esta DENTRO do contador — nao ha filtro por nome', () => {
-    const agregador = bloqueantesOpacos(ci).find((o) => o.job === 'validate');
+    const agregador = bloqueantesOpacos(ci).find((o) => o.job === 'validate' && o.step.startsWith('Todos os jobs passaram'));
     expect(agregador, 'o step do required check tem de aparecer').toBeDefined();
     expect(agregador!.step).toContain('Todos os jobs passaram');
   });

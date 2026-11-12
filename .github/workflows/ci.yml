@@ -1714,7 +1714,7 @@ jobs:
       # Ele também exige, por prova, o mínimo de asserts declarado em `db/nucleo-ci.txt`:
       # o fechamento das provas é `[ "$FAIL" -eq 0 ]`, que TAMBÉM aceita PASS=0, e uma
       # prova truncada sairia 0. Falsificação: o step seguinte.
-      # O RECIBO da parte nasce só se o conjunto dela fechou; o artefato o leva ao `provas-sql-uniao`.
+      # O RECIBO da parte nasce só se o conjunto dela fechou; o artefato o leva à união (steps do `validate`).
       - name: Núcleo de provas SQL executadas (db/nucleo-ci.txt)
         env:
           NUCLEO_PARTE: ${{ strategy.job-index }}/${{ strategy.job-total }}
@@ -1766,59 +1766,6 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # A UNIÃO das partes (2026-10-01). A matriz do `provas-sql` agrega `success` quando as N partes
-  # saem verdes — inclusive a parte cujo step do núcleo foi PULADO (um `if:` novo, uma condição que
-  # mudou de tipo). Este job não sobe banco: baixa o recibo de cada parte e exige o CONJUNTO contra o
-  # manifesto (`db/roda-nucleo-ci.sh --uniao`; cada regra tem caso no db/falsifica-nucleo-ci.sh), e o
-  # recibo do harness da 1ª parte. `!cancelled()` em vez do default: com uma parte vermelha ele roda
-  # mesmo assim e diz o porquê — o default o pularia, e o `validate` só leria "skipped".
-  # Pula JUNTO com as partes, pela MESMA condição (escopo com `roda` explicitamente 'false'): rodar
-  # sobre partes puladas reprovaria por "terminou skipped". O `validate` confere os dois pulos.
-  provas-sql-uniao:
-    needs: [provas-sql-escopo, provas-sql]
-    if: ${{ !cancelled() && needs.provas-sql-escopo.outputs.roda != 'false' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v5
-
-      # Antes de qualquer recibo: a matriz inteira terminou em success? Parte vermelha, cancelada no
-      # teto ou que nem começou deixa os recibos das OUTRAS — e eles não bastam.
-      - name: As partes terminaram em success?
-        env:
-          RESULTADO_PARTES: ${{ needs.provas-sql.result }}
-        run: |
-          if [ "$RESULTADO_PARTES" != success ]; then
-            echo "::error::provas-sql terminou '${RESULTADO_PARTES:-<vazio>}' — alguma parte não fechou (vermelha, estourou o teto ou não rodou); veja o job dela"
-            exit 1
-          fi
-          echo "PARTES_OK resultado=$RESULTADO_PARTES"
-
-      - name: Recibos das partes
-        uses: actions/download-artifact@v8
-        with:
-          pattern: nucleo-recibo-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/recibos
-
-      - name: União das partes — cada unidade do núcleo concluída exatamente uma vez?
-        run: |
-          set -euo pipefail
-          bash db/roda-nucleo-ci.sh --uniao "$RUNNER_TEMP/recibos"
-          # O dente do runner rodou na 1ª parte? Sem o recibo dele, "não reprovou" é ausência de dado.
-          h="$RUNNER_TEMP/recibos/harness.txt"
-          [ -f "$h" ] || { echo "::error::sem recibo do harness do núcleo (1ª parte): o dente do runner não rodou"; exit 1; }
-          linha="$(cat "$h")"
-          printf '%s' "$linha" | grep -qxE 'HARNESS_NUCLEO_OK casos=[0-9]+ piso=[0-9]+' \
-            || { echo "::error::recibo do harness malformado: $(printf '%s' "$linha" | head -c 200)"; exit 1; }
-          casos="$(printf '%s' "$linha" | sed -E 's/.* casos=([0-9]+) .*/\1/')"
-          piso="$(printf '%s' "$linha" | sed -E 's/.* piso=([0-9]+)$/\1/')"
-          [ "$casos" -ge "$piso" ] || { echo "::error::harness com $casos caso(s), abaixo do piso $piso"; exit 1; }
-          echo "$linha"
-
   # ─── FAIL-FAST (fatia B do programa "merge mais rápido", 2026-11-09) ─────────────────────────────
   # Medido em 06–09/11 (236 runs de PR): 33% do runner-min foi em commit superado, e 22 cancelamentos
   # vieram de um push DEPOIS de um vermelho real — em que as 5 partes do `provas-sql` (11–17 min cada)
@@ -1854,7 +1801,7 @@ jobs:
 
   validate:
     if: always()
-    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks, evals-falsificacao, falsificacao, docs-escopo, docs-gates, provas-sql-escopo, provas-sql, provas-sql-uniao]
+    needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks, evals-falsificacao, falsificacao, docs-escopo, docs-gates, provas-sql-escopo, provas-sql]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue. actions:read p/ revalidar, pela
@@ -1865,9 +1812,75 @@ jobs:
       actions: read
 
     steps:
+      # ─── A UNIÃO das partes (2026-10-01; DENTRO do `validate` desde 2026-11-12) ──────────────────
+      # A matriz do `provas-sql` agrega `success` quando as N partes saem verdes — inclusive a parte
+      # cujo step do núcleo foi PULADO (um `if:` novo, uma condição que mudou de tipo). Os steps abaixo
+      # não sobem banco: baixam o recibo de cada parte e exigem o CONJUNTO contra o manifesto
+      # (`db/roda-nucleo-ci.sh --uniao`; cada regra tem caso no db/falsifica-nucleo-ci.sh), e o recibo
+      # do harness da 1ª parte.
+      #
+      # Por que aqui e não num job `provas-sql-uniao` próprio, como foi até 2026-11-12: o job era UM
+      # salto de fila a mais entre a última parte e o required check (medido 26–234 s por PR com SQL)
+      # para ~10 s de trabalho. O desenho é o mesmo do job, só mudou de casa:
+      #  - a MESMA condição de antes (`!cancelled()` + escopo com `roda` não 'false'): com uma parte
+      #    vermelha a união roda e diz o porquê; com as partes puladas pelo escopo, ela pula junto;
+      #  - união vermelha reprova o job na hora (sem continue-on-error), e o `outcome` dela vai também
+      #    ao agregador, que o trata como o job virtual `provas-sql-uniao`: denominador, guarda nominal
+      #    e a regra "skipped só com o escopo justificando" ficam idênticos. Outcome vazio = ❌.
+      # Leitores pela API de runs (o E14 em scripts/provas-sql-escopo.ts e o `recibo_confere` abaixo)
+      # aceitam o job antigo `provas-sql-uniao` success OU, sem ele, o `validate` success.
+      # Antes de qualquer recibo: a matriz inteira terminou em success? Parte vermelha, cancelada no
+      # teto ou que nem começou deixa os recibos das OUTRAS — e eles não bastam. Os 3 steps seguintes
+      # têm `success() &&`: com este vermelho eles pulam, e a união chega `skipped` ao agregador (❌).
+      - name: As partes terminaram em success?
+        id: partes
+        if: ${{ !cancelled() && needs.provas-sql-escopo.outputs.roda != 'false' }}
+        env:
+          RESULTADO_PARTES: ${{ needs.provas-sql.result }}
+        run: |
+          if [ "$RESULTADO_PARTES" != success ]; then
+            echo "::error::provas-sql terminou '${RESULTADO_PARTES:-<vazio>}' — alguma parte não fechou (vermelha, estourou o teto ou não rodou); veja o job dela"
+            exit 1
+          fi
+          echo "PARTES_OK resultado=$RESULTADO_PARTES"
+
+      - uses: actions/checkout@v5
+        if: ${{ success() && needs.provas-sql-escopo.outputs.roda != 'false' }}
+
+      - name: Recibos das partes
+        if: ${{ success() && needs.provas-sql-escopo.outputs.roda != 'false' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: nucleo-recibo-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/recibos
+
+      - name: União das partes — cada unidade do núcleo concluída exatamente uma vez?
+        id: uniao
+        if: ${{ success() && needs.provas-sql-escopo.outputs.roda != 'false' }}
+        run: |
+          set -euo pipefail
+          bash db/roda-nucleo-ci.sh --uniao "$RUNNER_TEMP/recibos"
+          # O dente do runner rodou na 1ª parte? Sem o recibo dele, "não reprovou" é ausência de dado.
+          h="$RUNNER_TEMP/recibos/harness.txt"
+          [ -f "$h" ] || { echo "::error::sem recibo do harness do núcleo (1ª parte): o dente do runner não rodou"; exit 1; }
+          linha="$(cat "$h")"
+          printf '%s' "$linha" | grep -qxE 'HARNESS_NUCLEO_OK casos=[0-9]+ piso=[0-9]+' \
+            || { echo "::error::recibo do harness malformado: $(printf '%s' "$linha" | head -c 200)"; exit 1; }
+          casos="$(printf '%s' "$linha" | sed -E 's/.* casos=([0-9]+) .*/\1/')"
+          piso="$(printf '%s' "$linha" | sed -E 's/.* piso=([0-9]+)$/\1/')"
+          [ "$casos" -ge "$piso" ] || { echo "::error::harness com $casos caso(s), abaixo do piso $piso"; exit 1; }
+          echo "$linha"
+
+      # `!cancelled()` e não o `success()` implícito: com a união (ou um step dela) vermelha o job JÁ
+      # reprovou — os steps não têm continue-on-error, de propósito: o censo do exclusividade-gate lê
+      # continue-on-error como não-bloqueante —, e este roda mesmo assim só para mostrar a tabela
+      # inteira de jobs. Ele nunca desfaz um vermelho: o resultado do job é o pior dos steps.
       - name: Todos os jobs passaram? (exige 'success' POSITIVO de cada um)
+        if: ${{ !cancelled() }}
         env:
           RESULTADOS: ${{ toJSON(needs) }}
+          UNIAO: ${{ steps.uniao.outcome }}
           EVENTO: ${{ github.event_name }}
           REF: ${{ github.ref }}
           ESCOPO_DOCS: ${{ inputs.provas_escopo_docs }}
@@ -1877,6 +1890,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # A união das partes mora nos steps acima (até 2026-11-12 era o job `provas-sql-uniao`): o
+          # `outcome` dela entra aqui como esse job VIRTUAL, e daí em diante nada muda — conta no
+          # denominador, tem guarda nominal e só passa `skipped` com o escopo das provas justificando.
+          # Outcome vazio (o step nem foi avaliado) cai no ❌ do laço, como resultado vazio de job.
+          # A chave já existir em `needs` = alguém recriou o job: o agregador não escolhe entre os dois.
+          if printf '%s' "$RESULTADOS" | jq -e 'has("provas-sql-uniao")' >/dev/null; then
+            echo "::error::'provas-sql-uniao' voltou a ser job do needs — a união mora nos steps deste job; tire um dos dois."
+            exit 1
+          fi
+          RESULTADOS="$(printf '%s' "$RESULTADOS" | jq -c --arg u "${UNIAO:-}" '. + {"provas-sql-uniao": {result: $u, outputs: {}}}')"
+          # Partes `success` EXIGEM a união `success`, com ou sem pulo justificado pelo escopo (parecer
+          # Codex, 2026-11-12): o leitor pela API (E14 e recibo) infere "união verde" de partes verdes +
+          # `validate` verde, e esta linha torna a inferência uma invariante, não coerência entre `if:`.
+          if [ "$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql"].result // ""')" = success ] && [ "${UNIAO:-}" != success ]; then
+            echo "::error::as partes do provas-sql terminaram success e a união não ('${UNIAO:-<vazio>}') — partes sem união conferida não provam o núcleo."
+            exit 1
+          fi
           esperados=13
           total=0; falhou=0; viu_provas_sql=0; viu_uniao=0; viu_falsificacao=0; viu_escopo=0
           # O ÚNICO skipped aceito: `provas-sql` e `provas-sql-uniao` pulados porque o escopo DISSE que
@@ -1925,7 +1955,9 @@ jobs:
                and .head_branch == $ref and .head_repository.full_name == $repo' >/dev/null || return 1
             printf '%s' "$jobs" | jq -e \
               '(.total_count | type) == "number" and .total_count <= (.jobs | length)
-               and ([.jobs[] | select(.name == "provas-sql-uniao")] | length == 1 and .[0].conclusion == "success")
+               and ([.jobs[] | select(.name == "provas-sql-uniao")] as $u
+                    | if ($u | length) > 0 then ($u | length == 1 and .[0].conclusion == "success")
+                      else ([.jobs[] | select(.name == "validate")] | length == 1 and .[0].conclusion == "success") end)
                and ([.jobs[] | select(.name | test("^provas-sql \\([0-9]+\\)$"))] | length > 0 and all(.conclusion == "success"))' \
               >/dev/null || return 1
           }
