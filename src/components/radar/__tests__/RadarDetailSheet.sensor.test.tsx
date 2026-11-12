@@ -79,6 +79,12 @@ describe('RadarDetailSheet — sensor da ficha aberta', () => {
     const comCelular = () => ({ ...lead('11222333000181'), telefone1: '(37) 99999-1234' }) as unknown as RadarEmpresa;
     const intencoes = () => rpc.mock.calls.filter((c) => c[0] === 'radar_registrar_intencao').map((c) => c[1]);
 
+    it('e-mail (mailto) grava a intenção "email" — revisão 2026-11-11, item 18', () => {
+      render(ficha({ ...lead('11222333000181'), email: 'compras@lead.com.br' } as unknown as RadarEmpresa));
+      fireEvent.click(screen.getByRole('link', { name: /compras@lead\.com\.br/ }));
+      expect(intencoes()).toEqual([{ p_cnpj: '11222333000181', p_canal: 'email' }]);
+    });
+
     it('WhatsApp grava a intenção com o CNPJ da ficha', () => {
       render(ficha(comCelular()));
       fireEvent.click(screen.getByTestId('radar-whatsapp'));

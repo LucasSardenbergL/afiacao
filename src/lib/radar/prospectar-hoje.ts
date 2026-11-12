@@ -143,6 +143,13 @@ export function lerProspectarHoje(data: unknown, origem: string): ProspectarHoje
 
 const RE_DIA = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Uma página de `radar_meus_retornos` (revisão 2026-11-11, item 8): a MESMA forma dos retornos do card, nunca nula. */
+export function lerPaginaRetornos(v: unknown, origem: string): NonNullable<ProspectarHoje['retornos']> {
+  const r = lerRetornos(v, origem);
+  if (!r) falha(origem, 'retornos');
+  return r;
+}
+
 function lerRetornos(v: unknown, origem: string): ProspectarHoje['retornos'] {
   if (v === undefined || v === null) return null;
   if (!ehObj(v) || !Array.isArray(v.itens)) falha(origem, 'retornos');
