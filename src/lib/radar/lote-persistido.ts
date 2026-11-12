@@ -8,6 +8,7 @@
 import { CNPJ_RE } from '@/lib/radar/normalizar';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { ehMotivoDivergencia, type MotivoDivergencia } from '@/lib/radar/conflito-cadastro';
+import { TEXTO_INELEGIVEL, type MotivoInelegivel } from '@/lib/radar/cadastro-omie';
 
 export type EstadoItemLote =
   | { status: 'aguardando' }
@@ -18,6 +19,9 @@ export type EstadoItemLote =
   // `conflitoId` = registro no servidor (migration 20261027160000); null/ausente = NÃO sincronizado (lote antigo
   // ou o registro falhou) — o aviso só existe nesta aba até `divergentesNaoSincronizados` subir.
   | { status: 'divergente'; motivo: string; erro: string; codigo: string | null; conflitoId?: number | null }
+  // O SERVIDOR recusou criar (revisão 2026-11-11, item 5): o lead não é elegível agora (RFB não ativa, já cliente,
+  // descartado…). TERMINAL e resolvido: nada foi criado no ERP e repetir não muda — não é pendência nem segura o lote.
+  | { status: 'recusado'; motivo: MotivoInelegivel; erro: string }
   | { status: 'nao_iniciado' };
 
 export interface ItemLote {
@@ -39,7 +43,8 @@ export function serializarLote(lote: LotePersistido): string {
   return JSON.stringify(lote);
 }
 
-const STATUS = new Set(['aguardando', 'ok', 'falha', 'nao_iniciado', 'divergente']);
+const STATUS = new Set(['aguardando', 'ok', 'falha', 'nao_iniciado', 'divergente', 'recusado']);
+const MOTIVOS_RECUSA = new Set<string>(Object.keys(TEXTO_INELEGIVEL));
 
 /** Devolve null em JSON inválido, versão diferente ou shape estranho — nunca lança. */
 export function parsearLote(raw: string | null): LotePersistido | null {
@@ -54,6 +59,8 @@ export function parsearLote(raw: string | null): LotePersistido | null {
       if (typeof i.cnpj !== 'string' || !CNPJ_RE.test(i.cnpj)) return null;
       const estado = i.estado as Partial<EstadoItemLote> | undefined;
       if (!estado || typeof estado.status !== 'string' || !STATUS.has(estado.status)) return null;
+      // Recusa com motivo fora do vocabulário: forma estranha, como qualquer outra (nunca um "recusado" sem nome).
+      if (estado.status === 'recusado' && !MOTIVOS_RECUSA.has(String((estado as { motivo?: unknown }).motivo))) return null;
       itens.push({ cnpj: i.cnpj, nome: typeof i.nome === 'string' ? i.nome : i.cnpj, estado: estado as EstadoItemLote });
     }
     return { v: 1, iniciadoEm: o.iniciadoEm, itens };
@@ -64,7 +71,7 @@ export function parsearLote(raw: string | null): LotePersistido | null {
 
 /** Itens que uma retomada ainda pode RETENTAR (nem ok, nem conflito terminal). */
 export function itensPendentes(lote: LotePersistido): ItemLote[] {
-  return lote.itens.filter((i) => i.estado.status !== 'ok' && i.estado.status !== 'divergente');
+  return lote.itens.filter((i) => i.estado.status !== 'ok' && i.estado.status !== 'divergente' && i.estado.status !== 'recusado');
 }
 
 /** Conflitos de vínculo que pedem um humano no Omie — ficam até o usuário esquecer o lote. */
@@ -79,7 +86,7 @@ export function divergentesNaoSincronizados(lote: LotePersistido): ItemLote[] {
 
 /** Lote "acabado" = TUDO ok → pode ser esquecido sozinho. Um conflito só sai por descarte explícito. */
 export function loteConcluido(lote: LotePersistido): boolean {
-  return lote.itens.every((i) => i.estado.status === 'ok');
+  return lote.itens.every((i) => i.estado.status === 'ok' || i.estado.status === 'recusado');
 }
 
 /**

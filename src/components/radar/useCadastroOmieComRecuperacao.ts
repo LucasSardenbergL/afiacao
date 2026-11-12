@@ -1,7 +1,7 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 import { useRadarCadastrarOmie } from '@/queries/useRadarAcoesLead';
-import { DivergenciaCadastro, ehSemConfirmacaoDoServidor, FalhaCadastro, type OpcoesCadastro } from '@/lib/radar/cadastro-omie';
+import { DivergenciaCadastro, ehSemConfirmacaoDoServidor, FalhaCadastro, InelegivelCadastro, TEXTO_INELEGIVEL, type OpcoesCadastro } from '@/lib/radar/cadastro-omie';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
@@ -74,6 +74,12 @@ export function useCadastroOmieComRecuperacao(cnpj: string) {
             action: { label: 'Tentar de novo', onClick: novamente({ retentativa: true }) },
           });
           return registrar('indeterminado');
+        }
+        if (e instanceof InelegivelCadastro) {
+          // O SERVIDOR recusou criar (revisão 2026-11-11, item 5): o lead não é elegível agora. Nada foi criado no ERP
+          // e repetir não muda — sem "Tentar de novo". A retentativa leva o mesmo `alvo` (com `exigirEmConversa`).
+          toast.info('Não cadastrei no Omie', { description: `${TEXTO_INELEGIVEL[e.motivo][0].toUpperCase()}${TEXTO_INELEGIVEL[e.motivo].slice(1)}. Nada foi criado no ERP.` });
+          return registrar('nao_elegivel');
         }
         if (e instanceof DivergenciaCadastro) {
           // Conflito de identidade Radar×Omie (RD001/RD002/lookup divergente): nada foi regravado e repetir não

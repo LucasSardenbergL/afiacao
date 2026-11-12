@@ -52,5 +52,17 @@ export function telefoneSemConfirmacao(
   return telefonePadraoCadastro(opcoesTelefoneCadastro(e, leitura));
 }
 
+/**
+ * E-mail da Receita que vai ao ERP sem confirmação na tela (revisão 2026-11-11, item 7). Só com a leitura da
+ * contabilidade em mãos e o e-mail NÃO marcado como dela: leitura ausente/falha (`null`) não envia — o e-mail da RFB é
+ * muitas vezes o do escritório contábil, e o ERP ficaria com o contato errado.
+ */
+export function emailSemConfirmacao(e: { email?: string | null }, leitura: LeituraContatoContabil | null): string | null {
+  if (!e.email || !leitura) return null;
+  // Só a classificação NEGATIVA explícita libera (parecer Codex do código, 2026-11-12, P1): e-mail sem classificação
+  // ou com `efetivo` nulo NÃO é "não é da contabilidade" — `contabilDoCampo` devolve null nos três casos.
+  return leitura.contatos.get('email')?.efetivo === false ? e.email : null;
+}
+
 /** Valor do Select/RadioGroup para "não enviar telefone" (o rádio não aceita null). */
 export const SEM_TELEFONE = '__sem_telefone__';

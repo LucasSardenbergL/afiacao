@@ -6,7 +6,7 @@ import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { depsCadastroSupabase } from '@/queries/useRadarAcoesLead';
-import { cadastrarEmpresaNoOmie, DivergenciaCadastro, ehThrottlingOmie, FalhaCadastro } from '@/lib/radar/cadastro-omie';
+import { cadastrarEmpresaNoOmie, DivergenciaCadastro, ehThrottlingOmie, FalhaCadastro, InelegivelCadastro } from '@/lib/radar/cadastro-omie';
 import { executarEmLote, resumirLote, CONCORRENCIA_LOTE, TETO_LOTE, type ResultadoItem } from '@/lib/radar/lote';
 import { sqlstateDe } from '@/lib/radar/conflito-cadastro';
 import { invalidarRadar } from '@/lib/radar/invalidar-cache';
@@ -185,7 +185,10 @@ export function useRadarLoteOmie() {
             atualizarItem(item.cnpj, { status: 'ok', ...r });
             return r;
           } catch (e) {
-            if (e instanceof DivergenciaCadastro) {
+            if (e instanceof InelegivelCadastro) {
+              // Recusa do SERVIDOR (revisão 2026-11-11, item 5): terminal, com o motivo; nada foi criado no ERP.
+              atualizarItem(item.cnpj, { status: 'recusado', motivo: e.motivo, erro: e.message });
+            } else if (e instanceof DivergenciaCadastro) {
               atualizarItem(item.cnpj, { status: 'divergente', motivo: e.motivo, erro: e.message, codigo: e.codigoRecebido, conflitoId: e.conflito?.id ?? null });
             } else if (e instanceof FalhaCadastro) {
               atualizarItem(item.cnpj, { status: 'falha', etapa: e.etapa, erro: e.message, codigo: e.codigo, codigoVisto: e.codigoVisto });
