@@ -26,12 +26,12 @@ import { buscarEmpresaRadarFresca } from '@/queries/useRadarEmpresa';
  * A invalidação não é aguardada por quem chama: o retorno só assenta depois da troca na fila (os testes esperam).
  */
 /** Agregados e ledgers do vendedor que UM contato/desfazer/cadastro move — relidos ativamente. */
-export const RELER_POR_LEAD: ReadonlySet<unknown> = new Set([
+const RELER_POR_LEAD: ReadonlySet<unknown> = new Set([
   'kpis', 'funil', 'sugeridos', 'amostra', 'ineditos', 'prospectar-hoje', 'atendimentos-ativos',
   'conflitos-cadastro', 'sucessoes', 'sucessao-plano',
 ]);
 /** Chaves `['radar', <tipo>, cnpj, …]` de UM lead: relidas só quando o CNPJ é o do lead tocado. */
-export const RELER_DO_LEAD: ReadonlySet<unknown> = new Set([
+const RELER_DO_LEAD: ReadonlySet<unknown> = new Set([
   'empresa', 'contatos', 'possiveis-vinculos', 'contato-contabil', 'telefone-compartilhado',
 ]);
 

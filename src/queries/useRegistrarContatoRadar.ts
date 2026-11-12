@@ -36,7 +36,7 @@ export function useRegistrarContatoRadar() {
 }
 
 /** RPC `desfazer_contato_radar` (usada pelo desfazer individual e pelo "Desfazer" do descarte em lote). */
-export async function desfazerContatoRadar(id: string) {
+async function desfazerContatoRadar(id: string) {
   const { data, error } = await supabase.rpc('desfazer_contato_radar', { p_id: id });
   if (error) throw error;
   return lerDesfazer(data, 'desfazer_contato_radar');
