@@ -1501,6 +1501,10 @@ jobs:
       # como flaky, que é como um gate morre. O piso + o registro da versão dão o
       # determinismo que importa sem essa fragilidade.
       - name: PostgreSQL 17 (PGDG) + pgvector — instala e confere a versão
+        # Orçamento TOTAL do step (E20): caminho normal ~12 s; o fallback com o mirror sem DNS (~200 s
+        # de update) ainda cabe. Os `timeout` internos somam mais que isto de propósito — o teto que
+        # vale é este, e estourá-lo REPROVA (o job é obrigatório), nunca segue verde.
+        timeout-minutes: 8
         run: |
           set -euo pipefail
           # ── Retry das TRÊS chamadas de rede deste step ────────────────────────────────────────
@@ -1548,12 +1552,36 @@ jobs:
             ls -la /etc/apt/sources.list.d/ || true
             sudo rm -f /etc/apt/sources.list.d/*google* /etc/apt/sources.list.d/*chrome* \
                        /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*msprod* || true
-            tentar "apt-get update" sudo apt-get update -qq
+            # O update é SÓ do PGDG (E20, plano v9). Incidente: de 13:47 a 16:50 UTC de 2026-11-11
+            # (runs 43032304371 a 43061738486) o `azure.archive.ubuntu.com` ficou sem DNS, e o update
+            # de TODAS as fontes esperou ~200 s por parte (mediana do step 12 s → 210 s, × 16 partes ≈
+            # 53 runner-min por run) e saiu 0 com `W:` — o `tentar` não viu nada. As três peças que o
+            # job instala vêm do PGDG (o log desses runs só tem `Selecting … postgresql-client-17,
+            # postgresql-17, postgresql-17-pgvector`); as dependências do Ubuntu já estão na imagem.
+            # `List-Cleanup=0` preserva os índices das outras fontes (sem ele o apt APAGA os que não
+            # estão na config desta chamada). `--error-on=any`: aviso no PGDG é falha, e vai ao retry.
+            # `Acquire::Retries=0`: o retry é do `tentar`; dois laços aninhados multiplicam a espera.
+            # ORÇAMENTO: cada chamada tem `timeout`, e o step inteiro tem `timeout-minutes`.
+            atualizar_pgdg() {
+              sudo timeout 60 apt-get update -qq --error-on=any \
+                -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/pgdg.list \
+                -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 -o Acquire::Retries=0
+            }
             # O pgvector vai na MESMA chamada, de propósito: continua sendo uma camada de rede só,
             # coberta pelo mesmo retry, e o pacote do PG17 só existe no PGDG (o repo do Ubuntu não
             # o tem). Quem confere que ele CARREGA é o step seguinte — este texto roda no lab do
             # retry (scripts/lab-retry-pgdg/) com dublês, onde não há servidor para perguntar.
-            tentar "apt-get install postgresql-17 + pgvector" sudo apt-get install -y -qq postgresql-17 postgresql-17-pgvector
+            instalar() { sudo timeout 180 apt-get install -y -qq postgresql-17 postgresql-17-pgvector; }
+            tentar "apt-get update (só PGDG)" atualizar_pgdg
+            # FALLBACK DELIMITADO: se uma imagem nova do runner pedir dependência do Ubuntu que não
+            # traz, o install com só o índice do PGDG falha — então, UMA vez, o update das fontes base
+            # (o desenho de antes, com teto) e o install sob o `tentar`, fail-closed como sempre. O 1º
+            # `instalar` fica em condição só para decidir o fallback; o veredito é do segundo.
+            if ! instalar; then
+              echo "::warning::install só com o índice do PGDG falhou — fallback: update das fontes base (teto 240 s)"
+              sudo timeout 240 apt-get update -qq
+              tentar "apt-get install postgresql-17 + pgvector" instalar
+            fi
           fi
           instalada="$(/usr/lib/postgresql/17/bin/initdb --version)"
           echo "  $instalada"
