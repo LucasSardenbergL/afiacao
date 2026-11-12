@@ -114,9 +114,13 @@ const DEFAULTS: RadarUrlState = {
   perto: '',
 };
 
-/** O que um favorito guarda: os filtros da URL, sem a vista, a visão nem o `perto` (navegação, não filtro). */
+/**
+ * O que um favorito guarda: os filtros da URL sem a vista e a visão (navegação). O `perto` ENTRA (revisão 2026-11-11,
+ * item 9): é a intenção territorial — um favorito "Toda a região" (perto=nao) aplicado sem ela voltava a ser recortado
+ * pela cidade nº 1 do território. Favorito antigo, sem a chave, cai no default '' (automático), como era.
+ */
 const { vista: _vista, visao: _visao, perto: _perto, ...PADRAO_FILTROS } = DEFAULTS;
-const PADRAO_FAVORITO: FiltrosSalvos = PADRAO_FILTROS;
+const PADRAO_FAVORITO: FiltrosSalvos = { ...PADRAO_FILTROS, perto: DEFAULTS.perto };
 
 function narrowPreset(v: string): PresetRadar {
   return v === 'estabelecidas' || v === 'novas' ? v : 'score';
@@ -555,7 +559,7 @@ export default function RadarClientes() {
               filtros={filtros}
               set={setFiltros}
               lote={lote}
-              acoes={<RadarFavoritos atuais={filtrosAtuais} padrao={PADRAO_FAVORITO} onAplicar={(f) => set({ ...PADRAO_FAVORITO, ...f })} />}
+              acoes={<RadarFavoritos atuais={{ ...filtrosAtuais, perto }} padrao={PADRAO_FAVORITO} onAplicar={(f) => set({ ...PADRAO_FAVORITO, ...f })} />}
             />
             <RadarChipsLote
               soIneditos={filtros.soIneditos}

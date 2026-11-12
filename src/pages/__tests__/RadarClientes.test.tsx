@@ -125,8 +125,12 @@ vi.mock('@/queries/useRadarLote', async (importOriginal) => {
 
 // ── filhos pesados → stubs ───────────────────────────────────────────────────────────────────
 vi.mock('@/components/radar/RadarKpis', () => ({ RadarKpis: () => null, RadarChipsLote: () => null }));
+const favoritos = vi.hoisted(() => ({ props: null as null | { atuais: Record<string, unknown>; padrao: Record<string, unknown>; onAplicar: (f: Record<string, unknown>) => void } }));
 vi.mock('@/components/radar/RadarFavoritos', () => ({ RadarFavoritos: () => null }));
-vi.mock('@/components/radar/RadarFiltros', () => ({ RadarFiltros: () => null }));
+vi.mock('@/components/radar/RadarFiltros', () => ({
+  // O favorito é passado como `acoes` (elemento): guarda as props dele sem montar nada (a tela segue igual).
+  RadarFiltros: ({ acoes }: { acoes?: { props?: unknown } }) => { if (acoes?.props) favoritos.props = acoes.props as typeof favoritos.props; return null; },
+}));
 vi.mock('@/components/radar/RadarAmostraRegra', () => ({ RadarAmostraRegra: () => null }));
 vi.mock('@/components/radar/RadarRankingCidades', () => ({ RadarRankingCidades: () => null }));
 vi.mock('@/components/radar/RadarConflitosCadastro', () => ({
@@ -799,6 +803,26 @@ describe('RadarClientes — deep link do e-mail e da ficha (revisão 2026-11-11,
     await act(async () => { soltar(lead(CNPJ)); });
     expect(await screen.findByTestId('ficha-cnpj')).toHaveTextContent(CNPJ);
     expect(screen.queryByTestId('ficha-carregando')).toBeNull();
+  });
+});
+
+describe('RadarClientes — favorito guarda a intenção territorial (revisão 2026-11-11, item 9)', () => {
+  beforeEach(() => { favoritos.props = null; });
+  it('"Toda a região" (perto=nao) entra no favorito e volta ao aplicar', async () => {
+    fonte.territorio = [{ municipioCodigo: '3122306', municipioNome: 'DIVINOPOLIS', uf: 'MG', clientes: 358 }];
+    fonte.paginas = [[lead('A')]];
+    montar('/radar?perto=nao');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    // Os favoritos moram no painel "Mais filtros e território", recolhido de início.
+    fireEvent.click(screen.getByRole('button', { name: /Mais filtros e território/ }));
+    await waitFor(() => expect(favoritos.props).not.toBeNull());
+    expect(favoritos.props?.atuais.perto).toBe('nao');
+    const salvo = { ...favoritos.props!.atuais };
+    // Sai da "toda a região" (volta ao automático) e reaplica o favorito: a intenção volta junto.
+    act(() => { favoritos.props!.onAplicar({ ...favoritos.props!.padrao, perto: '' }); });
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).not.toContain('perto=nao'));
+    act(() => { favoritos.props!.onAplicar(salvo); });
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).toContain('perto=nao'));
   });
 });
 
