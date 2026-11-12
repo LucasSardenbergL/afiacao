@@ -29,7 +29,7 @@ Deno.test("nem cron nem master: recusa", async () => {
 
 Deno.test("o index usa o gate compartilhado, não um gate próprio (sem consulta crua a user_roles)", async () => {
   const fonte = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
-  if (!/autorizarIngest\(req, \{ cron: authorizeCron, master: authorizeMaster \}\)/.test(fonte)) {
+  if (!/autorizarIngest\(req, \{ cron: \(r\) => authorizeCron\(r\), master: \(r\) => authorizeMaster\(r\) \}\)/.test(fonte)) {
     throw new Error("index.ts não compõe authorizeCron + authorizeMaster via autorizarIngest");
   }
   if (/from\("user_roles"\)/.test(fonte)) throw new Error("index.ts ainda lê user_roles à mão");

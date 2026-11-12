@@ -22,7 +22,7 @@ const MES_RE = /^\d{4}-\d{2}$/;
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   // Gate: `x-cron-secret` OU master (JWT master ou Bearer service role) — os gates compartilhados (`gate.ts`).
-  if (!(await autorizarIngest(req, { cron: authorizeCron, master: authorizeMaster }))) return json({ error: "unauthorized" }, 401);
+  if (!(await autorizarIngest(req, { cron: (r) => authorizeCron(r), master: (r) => authorizeMaster(r) }))) return json({ error: "unauthorized" }, 401);
 
   let body: Record<string, unknown>;
   try { body = await req.json(); } catch { return json({ error: "body inválido" }, 400); }
