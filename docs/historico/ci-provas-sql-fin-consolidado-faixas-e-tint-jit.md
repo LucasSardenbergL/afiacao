@@ -38,4 +38,17 @@ Continuação de `ci-provas-sql-radar-privacidade-faixas.md`. Depois do #3857, a
 
 ## Medido
 
-<!-- MEDIDO -->
+- **Local:** runner com o manifesto das 2 provas (`NUCLEO_WORKERS=3`): `SQL_PROOF_OK provas=2/2
+  falsificacoes=2/2`, exit 0, com as faixas 1–35 (202 s) e 36–70 (194 s). `db/falsifica-nucleo-ci.sh` deu
+  exit 0 e `FALSIFICACAO: OK=115 XX=0` tanto em C quanto em pt_BR.
+- **CI, 1º run do PR (43145558990), step Núcleo:** `tint-corante-giro` normal **236 → 104 s**, o JIT
+  confirmado. As faixas da `fin-consolidado-ic` levaram **164 e 155 s** (antes, uma unidade de 286). Mas a
+  pior parte foi **399 s** (parte 13), porque a partição mudou e outra prova normal passou a puxar: a
+  `tint-fase5-watchdog` (**240 s** no CI contra 34 s no Mac sem JIT, a mesma assinatura). Ela ganhou `jit=off`
+  no mesmo PR. A `rls-has-role-initplan-classe` (289 s no CI, 186 s local) é volume, não JIT, e ficou de fora.
+- **A classe:** prova que roda o PG17 do PGDG sem `jit=off` paga a compilação LLVM em todo plano caro, e o
+  Mac não tem JIT para mostrar isso. As que já espelham a prod: `radar-funil`, `radar-funil-agenda`,
+  `radar-medicao` e, agora, `tint-corante-giro` e `tint-fase5-watchdog`. Ligar `jit=off` no `pg-harness`
+  para todas seria fechar a classe, e fica para outra entrega, medida.
+
+<!-- MEDIDO-2 -->
