@@ -47,3 +47,7 @@ Repita a consulta da fatia A (`docs/historico/ci-arquivos-gerados-sem-conflito.m
 numa janela de 3 a 4 dias após o merge. Separe os cancelados por causa (sync da `main`, push de
 código após vermelho, push só de docs). O sinal desta fatia é a queda das duas últimas causas,
 hoje 22 e 17 em 236 runs.
+
+**Medido em 12/11:** [ci-cancelados-por-causa.md](ci-cancelados-por-causa.md). Pushes de conserto
+após vermelho caíram de 22 para 2 e pushes só de docs de 17 para 2 (102 runs, ~40 h). Atenção: 15
+dos 24 `cancelled` da janela eram o `fail-fast` se cancelando, não push.
