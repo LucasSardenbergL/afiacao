@@ -157,7 +157,7 @@ case "${SABOTAGEM:-}" in
   sem_validacao)       sabotar 's/  \) THEN\n    RAISE EXCEPTION .VENDEDOR_PAYLOAD_INVALIDO: codigo_pedido/  ) AND false THEN\n    RAISE EXCEPTION \x27VENDEDOR_PAYLOAD_INVALIDO: codigo_pedido/'; desliga_pos ;;
   sem_dup)             sabotar 's/IF v_recebidos <> v_distintos THEN/IF false THEN/'; desliga_pos ;;
   pct_zero)            sabotar 's/CASE WHEN coalesce\(sum\(pedidos\), 0\) = 0 THEN NULL/CASE WHEN coalesce(sum(pedidos), 0) = 0 THEN 0/'; desliga_pos ;;
-  sem_gate_cobertura)  sabotar 's/IF NOT \(coalesce\(auth\.role\(\), .. \) = .service_role./IF false AND NOT (coalesce(auth.role(), \x27\x27) = \x27service_role\x27/'; desliga_pos ;;
+  sem_gate_cobertura)  sabotar 's/IF NOT \(coalesce\(auth\.role\(\), ..\) = .service_role./IF false AND NOT (coalesce(auth.role(), \x27\x27) = \x27service_role\x27/'; desliga_pos ;;
   pos_not_null)        sabotar 's/ALTER TABLE public\.sales_orders ALTER COLUMN created_by DROP NOT NULL;/-- sabotado/' ;;
   pos_grant_update)    sabotar 's/UPDATE não — escritor único é a RPC\.\nGRANT SELECT \(vendedor_omie_codigo, vendedor_user_id, vendedor_lido_em\)/UPDATE não — escritor único é a RPC.\nGRANT UPDATE (vendedor_user_id) ON public.sales_orders TO authenticated;\nGRANT SELECT (vendedor_omie_codigo, vendedor_user_id, vendedor_lido_em)/' ;;
   *) echo "INFRA: sabotagem desconhecida '$SABOTAGEM'"; exit 2 ;;
