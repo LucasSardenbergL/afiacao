@@ -83,6 +83,11 @@ export function splitCnaesSecundarios(v: string): string[] {
   return v.split(',').map((c) => c.trim()).filter((c) => /^\d{7}$/.test(c));
 }
 
+/** Tira os acentos (NFD + marcas combinantes) e o cedilha; mantém o resto (hífen, apóstrofo, caixa). */
+export function semAcento(v: string): string {
+  return v.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 /** Trim + colapsa espaços múltiplos. Retorna null para string vazia ou só espaços.
  *  Strip de caracteres de controle (U+0000–U+001F, ex.: NUL) antes do colapso —
  *  evita rejeição de chunk no Postgres ao inserir em colunas text. */
