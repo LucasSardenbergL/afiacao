@@ -67,8 +67,17 @@ describe('criarNoOmie: o e-mail da Receita só vai com a contabilidade conferida
     warn.mockRestore();
   });
 
-  it('ficha com telefone escolhido: a contabilidade é lida mesmo assim, por causa do e-mail', async () => {
+  it('e-mail SEM classificação (ou efetivo nulo): não vai — só a negativa explícita libera (Codex, P1)', async () => {
     contabil({ data: [], error: null });
+    await depsCadastroSupabase.criarNoOmie(EMPRESA);
+    expect(enviado().email).toBeUndefined();
+    contabil({ data: [linha('email', null)], error: null });
+    await depsCadastroSupabase.criarNoOmie(EMPRESA);
+    expect(enviado().email).toBeUndefined();
+  });
+
+  it('ficha com telefone escolhido: a contabilidade é lida mesmo assim, por causa do e-mail', async () => {
+    contabil({ data: [linha('email', false)], error: null });
     await depsCadastroSupabase.criarNoOmie({ ...EMPRESA, telefoneCadastro: null, exigirEmConversa: true });
     expect(rpc.mock.calls.map((c) => c[0])).toContain('radar_contato_contabil_da_empresa');
     expect(enviado()).toMatchObject({ email: 'compras@lead103.com.br', radar: { exigir_em_conversa: true } });

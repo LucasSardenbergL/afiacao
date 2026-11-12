@@ -7,7 +7,7 @@
  * a sugestão é o 1º número que NÃO é da contabilidade (e nenhum, se todos são).
  * `contabil === null` = não sei (sinal não calculado ou leitura que falhou): a tela não afirma nada.
  */
-import { contabilDoCampo, type CampoContato, type LeituraContatoContabil } from '@/lib/radar/contato-contabil';
+import type { CampoContato, LeituraContatoContabil } from '@/lib/radar/contato-contabil';
 
 export interface OpcaoTelefone {
   campo: Extract<CampoContato, 'telefone1' | 'telefone2'>;
@@ -59,7 +59,9 @@ export function telefoneSemConfirmacao(
  */
 export function emailSemConfirmacao(e: { email?: string | null }, leitura: LeituraContatoContabil | null): string | null {
   if (!e.email || !leitura) return null;
-  return contabilDoCampo(leitura, 'email') ? null : e.email;
+  // Só a classificação NEGATIVA explícita libera (parecer Codex do código, 2026-11-12, P1): e-mail sem classificação
+  // ou com `efetivo` nulo NÃO é "não é da contabilidade" — `contabilDoCampo` devolve null nos três casos.
+  return leitura.contatos.get('email')?.efetivo === false ? e.email : null;
 }
 
 /** Valor do Select/RadioGroup para "não enviar telefone" (o rádio não aceita null). */
