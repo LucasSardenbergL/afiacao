@@ -126,7 +126,14 @@ echo "── A6 a saída repetida cita o -D DESTA chamada (como o initdb real fa
 d6=0; grep -qF "$TMP/c/b" "$TMP/b.out" && d6=$((d6+1)); grep -qF "$TMP/c/a" "$TMP/b.out" && d6=$((d6+10))
 eq A6 "saída da cópia cita c/b e não c/a" "$d6" "1"
 
-echo "── A7 -D não-vazio: o initdb REAL recusa, e a cópia não pode atropelar"
+echo "── A7 -D já existente: vazio é cópia (modo 700); não-vazio, o initdb REAL recusa"
+# A chave do "vazio existente" é outra (a saída do initdb difere); o 1º par a esquenta, senão o
+# não-vazio cairia no real-gera e a recusa viria de graça, sem provar a guarda.
+mkdir -p "$TMP/c/vz1" "$TMP/c/vz2"
+ini -D "$TMP/c/vz1" -U postgres -E UTF8 --locale=C > /dev/null 2>&1
+ini -D "$TMP/c/vz2" -U postgres -E UTF8 --locale=C > /dev/null 2>&1
+eq A7a "dir vazio existente: cópia, modo 700, cluster sobe" \
+  "$(tail -n 1 "$INITDB_TEMPLATE_LOG" | cut -f1)/$(perl -e 'printf "%o", (stat shift)[2] & 07777' "$TMP/c/vz2")/$(q "$TMP/c/vz2" "SELECT 1")" "copia/700/1"
 mkdir -p "$TMP/c/cheio"; echo x > "$TMP/c/cheio/arquivo"
 ini -D "$TMP/c/cheio" -U postgres -E UTF8 --locale=C > "$TMP/cheio.out" 2>&1; rc7=$?
 eq A7 "exit ≠ 0 e o diretório segue sem cluster" "$([ "$rc7" -ne 0 ] && echo nz)/$([ -f "$TMP/c/cheio/PG_VERSION" ] && echo tem || echo sem)" "nz/sem"
