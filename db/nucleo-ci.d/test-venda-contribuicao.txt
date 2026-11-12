@@ -1,0 +1,4 @@
+# Venda por cliente, rodada 2, entrega 3: demonstrativo de contribuição (só master) — receita líquida do desconto,
+# CMC da posição anterior × atual marcado × ausente, custo do prazo dos títulos casados (exclusividade contra TODOS
+# os pedidos, cliente conferido, tolerância de valor), piso pelo preço líquido, janelas, paginação. 15 sabotagens.
+db/test-venda-contribuicao.sh 49  falsificar=15
