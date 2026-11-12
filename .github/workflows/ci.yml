@@ -1696,7 +1696,6 @@ jobs:
           echo "PGBIN_OVERRIDE=$shim" >> "$GITHUB_ENV"
           echo "INITDB_TEMPLATE_DIR=$RUNNER_TEMP/initdb-template" >> "$GITHUB_ENV"
           echo "INITDB_TEMPLATE_LOG=$RUNNER_TEMP/initdb-template.tsv" >> "$GITHUB_ENV"   # MEDICAO-TEMPORARIA
-          echo "INITDB_TEMPLATE=0" >> "$GITHUB_ENV"   # MEDICAO-TEMPORARIA braço A
           resolvido="$(PGBIN_OVERRIDE="$shim" PGVER=17 bash -c '. db/lib/pg-harness.sh; printf %s "$PGBIN"')"
           [ "$resolvido" = "$shim" ] \
             || { echo "::error::o pg-harness resolveu '$resolvido', não o shim '$shim'"; exit 1; }
