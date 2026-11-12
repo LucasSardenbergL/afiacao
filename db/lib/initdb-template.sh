@@ -63,6 +63,9 @@ while [ "$i" -lt "${#args[@]}" ]; do
     -D) i=$((i + 1)); [ "$i" -lt "${#args[@]}" ] || _real "$@"; [ -z "$dir" ] || _real "$@"; dir="${args[$i]}" ;;
     -U|-E|-A|-c)
       i=$((i + 1)); [ "$i" -lt "${#args[@]}" ] || _real "$@"
+      # -c só os dois do shim: outro GUC (ex.: shared_preload_libraries) traz dependência que o
+      # initdb real valida no bootstrap — fora do contrato provado, vai ao real
+      if [ "$a" = -c ]; then case "${args[$i]}" in fsync=off|full_page_writes=off) ;; *) _real "$@" ;; esac; fi
       chave+=("$a" "${args[$i]}") ;;
     --locale=*) chave+=("$a") ;;
     --encoding=*|--auth=*|--no-sync) chave+=("$a") ;;
@@ -77,8 +80,11 @@ if [ "${INITDB_TEMPLATE:-1}" = 0 ] || [ -z "${INITDB_TEMPLATE_DIR:-}" ]; then _r
 modo_real="fora-da-lista"
 dir_arg="$dir"   # como o initdb o imprime
 case "$dir" in /*) ;; *) dir="$PWD/$dir" ;; esac
+# -D symlink → real: o `cp -a` copiaria o LINK, e o template seguiria as mutações do 1º cluster
+[ -L "$dir" ] && _real "$@"
 if [ -e "$dir" ]; then
-  [ -d "$dir" ] && [ -z "$(ls -A "$dir" 2>/dev/null)" ] || _real "$@"
+  # vazio só com `ls` bem-sucedido: erro de leitura (ex.: modo 0300) não é "vazio"
+  [ -d "$dir" ] && conteudo="$(ls -A "$dir" 2>/dev/null)" && [ -z "$conteudo" ] || _real "$@"
   vazio_existe=1
 else
   [ -d "$(dirname "$dir")" ] || _real "$@"

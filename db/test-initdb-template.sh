@@ -16,7 +16,7 @@ SHIM_FONTE="$REPO_ROOT/db/lib/initdb-template.sh"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
-  SABOTAGENS="locale_fora_da_chave:A4 usuario_fora_da_chave:A5 saida_sem_trocar_o_D:A6 aceita_dir_nao_vazio:A7 ignora_argumento_desconhecido:A8 desligado_ignorado:A10"
+  SABOTAGENS="locale_fora_da_chave:A4 usuario_fora_da_chave:A5 saida_sem_trocar_o_D:A6 aceita_dir_nao_vazio:A7 ignora_argumento_desconhecido:A8 desligado_ignorado:A10 ambiente_fora_da_chave:A11 template_e_link_do_1o:A12 aceita_D_symlink:A13"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-initdb-template.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -74,8 +74,11 @@ case "${SABOTAGEM:-}" in
   locale_fora_da_chave)          _sabota 's/--locale=\*\) chave\+=\("\$a"\) ;;/--locale=*) ;;/' ;;
   usuario_fora_da_chave)         _sabota 's/-U\|-E\|-A\|-c\)/-U) i=\$((i + 1)) ;;\n    -E|-A|-c)/' ;;
   saida_sem_trocar_o_D)          _sabota 's/"\$\{out\/\/"\$marca"\/\$dir_arg\}"/"\$out"/' ;;
-  aceita_dir_nao_vazio)          _sabota 's/\[ -d "\$dir" \] && \[ -z "\$\(ls -A "\$dir" 2>\/dev\/null\)" \] \|\| _real "\$@"/:/' ;;
-  ignora_argumento_desconhecido) _sabota 's/\*\) _real "\$@" ;;/*) ;;/' ;;
+  aceita_dir_nao_vazio)          _sabota 's/\[ -d "\$dir" \] && conteudo=.*\|\| _real "\$@"/:/' ;;
+  ambiente_fora_da_chave)        _sabota 's/^amb="\$\(env .*$/amb=""/m' ;;
+  template_e_link_do_1o)         _sabota 's/cp -a "\$dir" "\$tmp\/data"/ln -s "\$dir" "\$tmp\/data"/' ;;
+  aceita_D_symlink)              _sabota 's/\[ -L "\$dir" \] && _real "\$@"/:/' ;;
+  ignora_argumento_desconhecido) _sabota 's/^    \*\) _real "\$@" ;;$/    *) ;;/m' ;;
   desligado_ignorado)            _sabota 's/if \[ "\$\{INITDB_TEMPLATE:-1\}" = 0 \] \|\| /if /' ;;
   *) echo "SABOTAGEM desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
@@ -146,11 +149,30 @@ echo "── A9 corrida: 3 primeiras chamadas simultâneas numa chave virgem"
 for n in 1 2 3; do ini -D "$TMP/c/r$n" -U postgres -E UTF8 --locale=en_US.UTF-8 > /dev/null 2>&1 & done
 wait
 ok9=0; for n in 1 2 3; do [ -f "$TMP/c/r$n/PG_VERSION" ] && ok9=$((ok9+1)); done
+ini -D "$TMP/c/r4" -U postgres -E UTF8 --locale=en_US.UTF-8 > /dev/null 2>&1
+eq A9b "4ª chamada da chave da corrida é cópia e o cluster responde" "$(tail -n 1 "$INITDB_TEMPLATE_LOG" | cut -f1)/$(q "$TMP/c/r4" "SELECT datcollate FROM pg_database WHERE datname='postgres'")" "copia/en_US.UTF-8"
 eq A9 "3 clusters criados e nenhum .gera órfão" "$ok9/$(find "$INITDB_TEMPLATE_DIR" -maxdepth 1 -name '.gera.*' | wc -l | tr -d ' ')" "3/0"
 
 echo "── A10 INITDB_TEMPLATE=0 desliga: initdb real mesmo com template pronto"
 INITDB_TEMPLATE=0 ini -D "$TMP/c/z" -U postgres -E UTF8 --locale=C > /dev/null 2>&1
 eq A10 "modo da última chamada" "$(tail -n 1 "$INITDB_TEMPLATE_LOG" | cut -f1)" "desligado"
+
+echo "── A11 o ambiente é chave: TZ diferente com a mesma linha de comando não reaproveita"
+TZ=America/Sao_Paulo ini -D "$TMP/c/t1" -U postgres -E UTF8 --locale=C > /dev/null 2>&1
+TZ=America/Sao_Paulo ini -D "$TMP/c/t2" -U postgres -E UTF8 --locale=C > /dev/null 2>&1
+TZ=Asia/Tokyo ini -D "$TMP/c/t3" -U postgres -E UTF8 --locale=C > /dev/null 2>&1
+eq A11 "TimeZone do cluster segue o TZ da chamada" "$(q "$TMP/c/t2" "SHOW TimeZone")/$(q "$TMP/c/t3" "SHOW TimeZone")" "America/Sao_Paulo/Asia/Tokyo"
+
+echo "── A12 isolamento: o que a 1ª prova faz no cluster dela não aparece na próxima cópia"
+ini -D "$TMP/c/i1" -U postgres -E UTF8 --locale=C --auth=trust > /dev/null 2>&1
+q "$TMP/c/i1" "CREATE ROLE vazou_do_primeiro" > /dev/null
+ini -D "$TMP/c/i2" -U postgres -E UTF8 --locale=C --auth=trust > /dev/null 2>&1
+eq A12 "role criada no 1º cluster não existe na cópia" "$(q "$TMP/c/i2" "SELECT count(*) FROM pg_roles WHERE rolname='vazou_do_primeiro'")" "0"
+
+echo "── A13 -D symlink → initdb real (a cópia copiaria o link)"
+mkdir -p "$TMP/c/alvo"; ln -s "$TMP/c/alvo" "$TMP/c/link"
+ini -D "$TMP/c/link" -U postgres -E UTF8 --locale=C > /dev/null 2>&1
+eq A13 "modo da chamada com -D symlink" "$(tail -n 1 "$INITDB_TEMPLATE_LOG" | cut -f1)" "fora-da-lista"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "✅ test-initdb-template: todos os asserts passaram"
