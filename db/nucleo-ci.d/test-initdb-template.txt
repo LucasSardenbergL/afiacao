@@ -1,4 +1,4 @@
 # Shim do initdb com template de cluster (db/lib/initdb-template.sh): a cópia é o MESMO cluster que o initdb
 # real daria — locale, -U e saída por chave; dir não-vazio, argumento desconhecido e INITDB_TEMPLATE=0 caem no
 # real; 3 primeiras chamadas simultâneas não corrompem o template. O --falsificar sabota uma CÓPIA do shim.
-db/test-initdb-template.sh                 16  falsificar=9
+db/test-initdb-template.sh                 15  falsificar=9
