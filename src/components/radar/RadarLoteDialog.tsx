@@ -1,5 +1,6 @@
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, XCircle, CircleDashed, Loader2, Building2, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, XCircle, CircleDashed, Loader2, Building2, ShieldCheck } from 'lucide-react';
+import { TEXTO_INELEGIVEL } from '@/lib/radar/cadastro-omie';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -21,6 +22,7 @@ function IconeItem({ item, sit }: { item: ItemLote; sit: SituacaoConflito }) {
     case 'falha': return <XCircle className="w-4 h-4 text-status-error shrink-0" />;
     case 'divergente': return <AlertTriangle className="w-4 h-4 text-status-warning shrink-0" />;
     case 'nao_iniciado': return <CircleDashed className="w-4 h-4 text-muted-foreground shrink-0" />;
+    case 'recusado': return <Ban className="w-4 h-4 text-muted-foreground shrink-0" />;
     default: return <Loader2 className="w-4 h-4 text-muted-foreground shrink-0 animate-spin" />;
   }
 }
@@ -37,6 +39,8 @@ function detalheItem(item: ItemLote, sit: SituacaoConflito, servidorIndisponivel
   if (e.status === 'falha') return `${e.etapa === 'radar' ? 'Omie OK, falhou gravar no Radar' : 'falhou no Omie'}: ${e.erro}`;
   if (e.status === 'divergente') return `conflito de vínculo — confira no Omie, nada foi regravado: ${e.erro}`;
   if (e.status === 'nao_iniciado') return 'não iniciado (lote parado)';
+  // Revisão 2026-11-11 (item 5): o servidor recusou criar — nada foi ao ERP, e não é pendência.
+  if (e.status === 'recusado') return `não cadastrado: ${TEXTO_INELEGIVEL[e.motivo]} (nada foi criado no Omie)`;
   return 'aguardando…';
 }
 

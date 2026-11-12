@@ -43,3 +43,25 @@ describe('lote-persistido', () => {
     expect(parsearLote(serializarLote(comConflito))).toEqual(comConflito);
   });
 });
+
+describe('lote-persistido — item recusado pelo servidor (revisão 2026-11-11, item 5)', () => {
+  const comRecusa: LotePersistido = {
+    v: 1, iniciadoEm: '2026-11-12T10:00:00Z',
+    itens: [
+      { cnpj: '12345678000195', nome: 'A', estado: { status: 'ok', codigo: '1', jaExistia: false, recuperado: false } },
+      { cnpj: '22345678000195', nome: 'B', estado: { status: 'recusado', motivo: 'rfb_nao_ativa', erro: 'Não cadastrado: a situação na Receita não está ativa.' } },
+    ],
+  };
+
+  it('sobrevive ao storage, não é pendência e não segura o lote (concluído)', () => {
+    const lido = parsearLote(serializarLote(comRecusa));
+    expect(lido).toEqual(comRecusa);
+    expect(itensPendentes(lido!)).toEqual([]);
+    expect(loteConcluido(lido!)).toBe(true);
+  });
+
+  it('recusa com motivo fora do vocabulário: forma estranha → null', () => {
+    const torto = { ...comRecusa, itens: [{ cnpj: '22345678000195', nome: 'B', estado: { status: 'recusado', motivo: 'inventado', erro: 'x' } }] };
+    expect(parsearLote(JSON.stringify(torto))).toBeNull();
+  });
+});

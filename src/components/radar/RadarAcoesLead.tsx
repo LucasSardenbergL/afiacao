@@ -84,7 +84,7 @@ export function RadarAcoesLead({ empresa, conversaSalva = false }: {
 
   const doCadastrar = () => {
     setConfirmOmie(false);
-    const alvo: EmpresaParaCadastro = { ...empresa, telefoneCadastro: telEscolhido };
+    const alvo: EmpresaParaCadastro = { ...empresa, telefoneCadastro: telEscolhido, exigirEmConversa: true };
     track('radar.cadastro_telefone_escolhido', {
       opcoes: opcoesTel.length,
       enviado: telAtual ? telAtual.campo : 'nenhum',

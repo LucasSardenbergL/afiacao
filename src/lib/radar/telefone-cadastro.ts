@@ -7,7 +7,7 @@
  * a sugestão é o 1º número que NÃO é da contabilidade (e nenhum, se todos são).
  * `contabil === null` = não sei (sinal não calculado ou leitura que falhou): a tela não afirma nada.
  */
-import type { CampoContato, LeituraContatoContabil } from '@/lib/radar/contato-contabil';
+import { contabilDoCampo, type CampoContato, type LeituraContatoContabil } from '@/lib/radar/contato-contabil';
 
 export interface OpcaoTelefone {
   campo: Extract<CampoContato, 'telefone1' | 'telefone2'>;
@@ -50,6 +50,16 @@ export function telefoneSemConfirmacao(
   leitura: LeituraContatoContabil | null,
 ): string | null {
   return telefonePadraoCadastro(opcoesTelefoneCadastro(e, leitura));
+}
+
+/**
+ * E-mail da Receita que vai ao ERP sem confirmação na tela (revisão 2026-11-11, item 7). Só com a leitura da
+ * contabilidade em mãos e o e-mail NÃO marcado como dela: leitura ausente/falha (`null`) não envia — o e-mail da RFB é
+ * muitas vezes o do escritório contábil, e o ERP ficaria com o contato errado.
+ */
+export function emailSemConfirmacao(e: { email?: string | null }, leitura: LeituraContatoContabil | null): string | null {
+  if (!e.email || !leitura) return null;
+  return contabilDoCampo(leitura, 'email') ? null : e.email;
 }
 
 /** Valor do Select/RadioGroup para "não enviar telefone" (o rádio não aceita null). */

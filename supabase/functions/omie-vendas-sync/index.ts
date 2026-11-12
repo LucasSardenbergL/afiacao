@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
+import { complementoParaCadastro, emailParaCadastro, lerExigenciaRadar, verificarElegibilidadeRadar } from "./radar-cadastro.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "../_shared/lookup-cliente-estrito.ts";
@@ -2945,7 +2946,7 @@ Deno.serve(async (req) => {
       }
 
       case "criar_cliente": {
-        const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato } = params;
+        const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato, email, complemento, radar } = params;
         if (!docCriar || !razao_social) throw new Error("Documento e razão social são obrigatórios");
         const docClean = documentoParaCadastro(docCriar);
         // Lookup anti-duplicação ESTRITO (retroativo Codex): com o null
@@ -2972,6 +2973,19 @@ Deno.serve(async (req) => {
             confirmacao_registrada: linhaLookup ? await gravarConfirmacao(supabaseAdmin, linhaLookup) : null,
           };
           break;
+        }
+        // Radar (revisão 2026-11-11, item 5): só a CRIAÇÃO exige o lead elegível AGORA — o lookup acima, que reconcilia
+        // um cliente já existente, vale sempre (radar-cadastro.ts). Recusa é resposta de REGRA (não retentável).
+        const exigenciaRadar = lerExigenciaRadar(radar);
+        if (exigenciaRadar) {
+          const veredito = await verificarElegibilidadeRadar({
+            lerLead: (doc) => supabaseAdmin.from("radar_empresas")
+              .select("ja_cliente, omie_codigo_cliente, rfb_situacao, prospeccao_status").eq("cnpj", doc).maybeSingle(),
+          }, docClean, exigenciaRadar);
+          if (!veredito.ok) {
+            result = { success: false, code: "RADAR_INELEGIVEL", motivo: veredito.motivo, error: `RADAR_INELEGIVEL: ${veredito.motivo}` };
+            break;
+          }
         }
         // Create the client. Chave de integração DETERMINÍSTICA por
         // conta+documento (era Date.now()): se dois caminhos tentarem criar o
@@ -3000,6 +3014,11 @@ Deno.serve(async (req) => {
         if (cep) clienteParams.cep = String(cep).replace(/\D/g, "");
         if (telefone) clienteParams.telefone1_numero = telefone;
         if (contato) clienteParams.contato = contato;
+        // Item 7: e-mail e complemento da Receita. Inválido/longo = omitido (radar-cadastro.ts), nunca truncado.
+        const emailCadastro = emailParaCadastro(email);
+        if (emailCadastro) clienteParams.email = emailCadastro;
+        const complementoCadastro = complementoParaCadastro(complemento);
+        if (complementoCadastro) clienteParams.complemento = complementoCadastro;
         console.log(`[Omie Vendas][${account}] Criando cliente (${docClean.length === 11 ? "CPF" : "CNPJ"})`); // sem nome/documento: PII (M-36)
         const createRes = await callOmieVendasApi("geral/clientes/", "IncluirCliente", clienteParams, account);
         const createResTyped = createRes as { codigo_cliente_omie?: number; nCodCli?: number } | null;
