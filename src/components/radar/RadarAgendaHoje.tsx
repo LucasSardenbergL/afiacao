@@ -18,7 +18,7 @@ import { mensagemDeErro } from '@/lib/erro-mensagem';
  * Sensor no ledger (`radar_agenda_uso`): 'vista' 1×/dia com o denominador; 'aberta' por item.
  */
 export function RadarAgendaHoje({ hojeISO, onAbrir }: {
-  /** Dia BRT da página: a 'vista' é 1 por dia, e a virada do dia relê. */
+  /** Dia BRT da página: a 'vista' é 1 por dia. A leitura relê na virada pela chave do hook (`useHojeBRT`). */
   hojeISO: string;
   onAbrir: (cnpj: string) => Promise<void>;
 }) {
