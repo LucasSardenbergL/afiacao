@@ -441,8 +441,9 @@ TODOS="$(como authenticated "$V1" "SELECT public.radar_meus_retornos(NULL, 0, 50
 eq "R1 radar_meus_retornos = a agenda do card: mesmo total e mesmos itens, na mesma ordem" \
    "$(printf '%s' "$TODOS" | python3 -I -c "import json,sys; d=json.load(sys.stdin); print(d['total'], [i['cnpj'] for i in d['itens']])")" \
    "$(printf '%s' "$CARD" | python3 -I -c "import json,sys; d=json.load(sys.stdin)['retornos']; print(d['total'], [i['cnpj'] for i in d['itens']])")"
-eq "R2 página além do fim: itens vazios e o total de sempre" \
-   "$(como authenticated "$V1" "SELECT (r->>'total') || ':' || jsonb_array_length(r->'itens') FROM (SELECT public.radar_meus_retornos(NULL, 50, 50) AS r) x" | tail -1)" "1:0"
+# Na FRONTEIRA: offset = total (1) já passou do último — off-by-one no filtro do offset devolveria o item de novo.
+eq "R2 página seguinte à última (offset = total): itens vazios e o total de sempre" \
+   "$(como authenticated "$V1" "SELECT (r->>'total') || ':' || jsonb_array_length(r->'itens') FROM (SELECT public.radar_meus_retornos(NULL, 1, 50) AS r) x" | tail -1)" "1:0"
 eq "R3 limite fora da faixa é contido (0 → 1 item; offset negativo → 0)" \
    "$(como authenticated "$V1" "SELECT jsonb_array_length(public.radar_meus_retornos(NULL, -5, 0)->'itens')" | tail -1)" "1"
 prefixo "R4 vendedor pedindo os retornos de OUTRO vendedor: 42501" \
