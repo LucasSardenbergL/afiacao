@@ -21,6 +21,7 @@
 #   C1    cobertura (master): números por conta e pct
 #   C2    cobertura de período vazio → pct NULL (ausente ≠ 0)
 #   C3    cobertura não-master → 42501 · C4 service_role passa
+#   D1    db/2026-11-13-desfabricar-autor-importado.sql: importados sem autor, app intacto, backup fiel
 #
 # Uso:  bash db/test-vendedor-pedido-omie.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #       HARNESS_LC_ALL=pt_BR.UTF-8 bash db/test-vendedor-pedido-omie.sh   (2º locale)
@@ -34,7 +35,7 @@ SLUG="vendedor-pedido-omie"
 export LC_ALL="${HARNESS_LC_ALL:-C}" LANG="${HARNESS_LC_ALL:-C}"
 MIG_ORIG="$REPO_ROOT/supabase/migrations/20261113120000_vendedor_pedido_omie.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=25
+TOTAL_ESPERADO=26
 
 if [ "${1:-}" = "--falsificar" ]; then
   # nome:VERMELHOS:VERDES-de-controle   (ID!MARCA = vermelho de execução com a marca)
@@ -48,7 +49,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               pct_zero:C2:C1
               sem_gate_cobertura:C3:C1
               pos_not_null:MIG!P1 FALHOU
-              pos_grant_update:MIG!P5 FALHOU"
+              pos_grant_update:MIG!P5 FALHOU
+              desfabrica_app:D1:C1"
   falhas=0
   echo "═══ CONTROLE (sem sabotagem) ═══"
   if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}-controle.log" 2>&1; then
@@ -139,6 +141,8 @@ echo "═══ setup pronto (PG17 :$PORT, LC_ALL=$LC_ALL${SABOTAGEM:+, SABOTAGE
 
 MIG="$TMPD/mig.sql"
 cp "$MIG_ORIG" "$MIG"
+DESF="$TMPD/desf.sql"
+cp "$REPO_ROOT/db/2026-11-13-desfabricar-autor-importado.sql" "$DESF"
 sabotar() { # $1 = expressão perl; exige que MUDE o arquivo (sabotagem que não casa = teatro)
   local antes depois
   antes="$(md5 -q "$MIG" 2>/dev/null || md5sum "$MIG" | cut -d' ' -f1)"
@@ -160,6 +164,9 @@ case "${SABOTAGEM:-}" in
   sem_gate_cobertura)  sabotar 's/IF NOT \(coalesce\(auth\.role\(\), ..\) = .service_role./IF false AND NOT (coalesce(auth.role(), \x27\x27) = \x27service_role\x27/'; desliga_pos ;;
   pos_not_null)        sabotar 's/ALTER TABLE public\.sales_orders ALTER COLUMN created_by DROP NOT NULL;/-- sabotado/' ;;
   pos_grant_update)    sabotar 's/UPDATE não — escritor único é a RPC\.\nGRANT SELECT \(vendedor_omie_codigo, vendedor_user_id, vendedor_lido_em\)/UPDATE não — escritor único é a RPC.\nGRANT UPDATE (vendedor_user_id) ON public.sales_orders TO authenticated;\nGRANT SELECT (vendedor_omie_codigo, vendedor_user_id, vendedor_lido_em)/' ;;
+  desfabrica_app)      perl -0pi -e 's/ WHERE so\.hash_payload LIKE .omie\\_%.\n   AND so\.created_by IS NOT NULL\nON CONFLICT/ WHERE so.created_by IS NOT NULL\nON CONFLICT/' "$DESF"
+                       perl -0pi -e 's/ WHERE so\.hash_payload LIKE .omie\\_%.\n   AND so\.created_by IS NOT NULL\n   AND EXISTS/ WHERE so.created_by IS NOT NULL\n   AND EXISTS/' "$DESF"
+                       cmp -s "$DESF" "$REPO_ROOT/db/2026-11-13-desfabricar-autor-importado.sql" && { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada"; exit 2; } ;;
   *) echo "INFRA: sabotagem desconhecida '$SABOTAGEM'"; exit 2 ;;
 esac
 
@@ -266,6 +273,16 @@ eq C4 "service_role passa" "$C4" "3"
 OBEN="$(cob 00000000-0000-0000-0000-0000000000f1 "SELECT (e->>'pedidos')||'|'||(e->>'lidos')||'|'||(e->>'com_codigo')||'|'||(e->>'com_vendedor')||'|'||(e->>'pct_com_vendedor') FROM jsonb_array_elements(public.venda_cobertura_vendedor('2026-10-01','2026-10-31')->'por_conta') e WHERE e->>'account'='oben'")"
 eq C5 "cobertura oben (5 pedidos, 3 lidos, 3 códigos, 3 vendedores)" "$OBEN" "5|3|3|3|60.0"
 erro C6 "período > 400 dias" 22023 COBERTURA_PERIODO "SET test.role = 'service_role'; SELECT public.venda_cobertura_vendedor('2024-01-01','2026-01-01')"
+
+# ── D1: o script do acervo ──────────────────────────────────────────────────────────────────
+ANTES_D="$(Pq -c "SELECT count(*) FROM public.sales_orders WHERE hash_payload LIKE 'omie\\_%' AND created_by IS NOT NULL")"
+if out="$(P -q -f "$DESF" 2>&1)" && printf '%s' "$out" | grep -q DESFABRICAR_AUTOR_IMPORTADO_OK; then
+  D1="$ANTES_D|$(Pq -c "SELECT count(*) FROM public.sales_orders WHERE hash_payload LIKE 'omie\\_%' AND created_by IS NOT NULL")|$(Pq -c "SELECT count(*) FROM public.sales_orders WHERE hash_payload IS NULL AND created_by = '00000000-0000-0000-0000-0000000000e1'")|$(Pq -c "SELECT count(*) FROM private.bkp_sales_orders_created_by_20261113 WHERE created_by = '00000000-0000-0000-0000-0000000000e1'")"
+  P -q -f "$DESF" >/dev/null 2>&1 || D1="$D1|reaplicar-falhou"
+  eq D1 "acervo: antes|depois|app com autor|backup (e re-aplicar seguro)" "$D1" "5|0|1|5"
+else
+  bad "D1 script do acervo falhou: $(printf '%s' "$out" | grep -m1 ERROR)"
+fi
 
 echo "═══ $PASS ✅ · $FAIL ❌ (esperado $TOTAL_ESPERADO ✅) ═══"
 [ "$FAIL" = 0 ] && [ "$PASS" = "$TOTAL_ESPERADO" ] || exit 1
