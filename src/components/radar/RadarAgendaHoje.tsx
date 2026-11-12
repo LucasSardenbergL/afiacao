@@ -8,6 +8,7 @@ import { diaMes } from '@/lib/radar/atendimento';
 import { resumoAgendaHoje } from '@/lib/radar/agenda-hoje';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { desatualizado, estadoDeLeitura } from '@/lib/leitura/estado-de-leitura';
 
 /**
  * Pacote L (item 3): a agenda "Hoje" dentro do /radar — os retornos marcados para hoje (ou atrasados) e as posses que
@@ -41,7 +42,16 @@ export function RadarAgendaHoje({ hojeISO, onAbrir }: {
       </p>
     );
   }
+  // Revisão 2026-11-11 (item 3): sem rede e sem nada em mãos, a agenda sumia — o mesmo silêncio de "nada para hoje".
+  if (estadoDeLeitura(q) === 'sem-rede') {
+    return (
+      <p className="text-xs text-status-warning" data-testid="radar-agenda-sem-rede">
+        Sem conexão: não consegui ver seus retornos e posses de hoje. A leitura volta sozinha quando a rede voltar.
+      </p>
+    );
+  }
   if (!resumo || resumo.vazia) return null;
+  const dadosAnteriores = desatualizado(q, true) === 'sem-rede';
 
   const abrir = (cnpj: string, tipo: 'retorno' | 'posse') => {
     track('radar.agenda_hoje_aberta', { tipo });
@@ -55,6 +65,11 @@ export function RadarAgendaHoje({ hojeISO, onAbrir }: {
         <h2 className="text-lg font-display leading-tight">Hoje</h2>
         <p className="text-xs text-muted-foreground" data-testid="radar-agenda-resumo">{resumo.rotulo}</p>
       </div>
+      {dadosAnteriores && (
+        <p className="text-xs text-status-warning" data-testid="radar-agenda-dados-anteriores">
+          Sem conexão: esta é a agenda da última leitura.
+        </p>
+      )}
       {resumo.retornos.length > 0 && (
         <ul className="space-y-1">
           {resumo.retornos.map((r) => (

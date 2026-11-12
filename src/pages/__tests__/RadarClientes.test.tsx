@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { QueryClient, QueryClientProvider, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
@@ -715,5 +715,38 @@ describe('RadarClientes — releitura da fila que falha com páginas na tela (pa
     fireEvent.click(within(screen.getByTestId('ficha')).getByText('Próximo'));
     await waitFor(() => expect(screen.getByTestId('radar-erro-pagina')).toBeTruthy());
     expect(screen.queryByTestId('radar-fila-desatualizada')).toBeNull();
+  });
+});
+
+describe('RadarClientes — sem rede não é vazio (revisão 2026-11-11, item 3)', () => {
+  afterEach(() => onlineManager.setOnline(true));
+
+  it('abrir sem rede: "consulta pausada", nunca "Nenhuma empresa nesta fila" nem esqueleto sem fim', async () => {
+    onlineManager.setOnline(false);
+    fonte.paginas = [[lead('A')]];
+    montar();
+    expect(await screen.findByTestId('radar-fila-sem-rede')).toBeTruthy();
+    expect(screen.queryByText('Nenhuma empresa nesta fila')).toBeNull();
+    expect(fonte.leiturasLista).toBe(0);
+    onlineManager.setOnline(true);
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    expect(screen.queryByTestId('radar-fila-sem-rede')).toBeNull();
+  });
+
+  it('a rede cai com a fila na tela: as linhas ficam, com o aviso de "dados anteriores"', async () => {
+    fonte.paginas = [[lead('A'), lead('B')]];
+    const { qc } = montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B']));
+    onlineManager.setOnline(false);
+    void qc.invalidateQueries({ queryKey: ['radar', 'lista'] });
+    expect(await screen.findByTestId('radar-fila-dados-anteriores')).toBeTruthy();
+    expect(cnpjsNaLista()).toEqual(['A', 'B']);
+  });
+
+  it('ausência CONFIRMADA (a RPC respondeu vazio) segue sendo "Nenhuma empresa nesta fila"', async () => {
+    fonte.paginas = [];
+    montar();
+    expect(await screen.findByText('Nenhuma empresa nesta fila')).toBeTruthy();
+    expect(screen.queryByTestId('radar-fila-sem-rede')).toBeNull();
   });
 });

@@ -41,6 +41,8 @@ import { registrarFichaEntregue } from '@/queries/useRadarRegistroEmpurrado';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { escolherFichaAberta } from '@/lib/radar/ficha-aberta';
 import { EmptyState } from '@/components/EmptyState';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { desatualizado, estadoDeLeitura } from '@/lib/leitura/estado-de-leitura';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -164,8 +166,16 @@ export default function RadarClientes() {
   // Quantos do recorte são "para visitar": desligado, do agregado (quando o recorte cabe nele); ligado, da própria fila.
   const contagemVisitar = useRadarParaVisitarContagem(filtros, hojeISO, { desligado: meus || aguardandoTerritorio });
   const rotuloContagemVisitar = contagemVisitar.rotulo;
+  // Revisão 2026-11-11 (item 3): sem rede NÃO é vazio. A consulta pausada (pending + paused: `isLoading` e `isError`
+  // falsos) caía em "Nenhuma empresa nesta fila"; e o território pausado deixava o esqueleto sem fim. Três estados:
+  // ausência CONFIRMADA (a RPC respondeu vazio), consulta PAUSADA sem nada em mãos, e DADOS ANTERIORES com a
+  // atualização pausada (as linhas ficam, com o aviso).
+  const territorioSemRede = aguardandoTerritorio && territorio.fetchStatus === 'paused';
+  const temPaginas = Boolean(q.data?.pages.length);
+  const filaSemRede = territorioSemRede || (!temPaginas && estadoDeLeitura(q) === 'sem-rede');
+  const filaDadosAnteriores = desatualizado(q, temPaginas) === 'sem-rede';
   // Fila ainda sem recorte (território a caminho) conta como carregando — senão a tela mostraria "nenhuma empresa".
-  const carregandoFila = q.isLoading || aguardandoTerritorio;
+  const carregandoFila = (q.isLoading || aguardandoTerritorio) && !filaSemRede;
   const kpis = useRadarKpis();
   const loteOmie = useRadarLoteOmie();
   // Lote VIGENTE (foto da RFB) — UMA leitura, compartilhada com a fila (que a lê pelo cache),
@@ -609,6 +619,11 @@ export default function RadarClientes() {
             <div className="p-3 space-y-2">
               {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
             </div>
+          ) : filaSemRede ? (
+            <div className="p-3 space-y-1">
+              <AvisoLeituraFalhou oque="a fila de prospecção" estado="sem-rede" variante="bloco" testId="radar-fila-sem-rede" />
+              <p className="text-xs text-muted-foreground">A consulta está pausada e volta sozinha quando a conexão voltar.</p>
+            </div>
           ) : q.isError && semPaginas ? (
             // Só sem NENHUMA página: falha na página seguinte preserva a lista (rodapé abaixo) — pacote A5.
             <EmptyState
@@ -633,7 +648,14 @@ export default function RadarClientes() {
               {/* Pacote I (Codex, achado 13): releitura que FALHOU com páginas já na tela (invalidação depois de um
                   contato/cadastro, refetch comum) — as linhas são da leitura anterior e a tela DIZ. A falha da página
                   SEGUINTE tem o próprio rodapé, abaixo. */}
-              {q.isError && !q.isFetchNextPageError && (
+              {filaDadosAnteriores && (
+                <div className="flex items-center gap-2 border-b border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs" data-testid="radar-fila-dados-anteriores">
+                  <span className="flex-1 text-status-warning">
+                    Sem conexão: as linhas abaixo são da leitura anterior. A atualização volta sozinha quando a rede voltar.
+                  </span>
+                </div>
+              )}
+              {!filaDadosAnteriores && q.isError && !q.isFetchNextPageError && (
                 <div className="flex items-center gap-2 border-b border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs" data-testid="radar-fila-desatualizada">
                   <span className="flex-1 text-status-warning">
                     Não consegui atualizar a fila: as linhas abaixo são da leitura anterior e podem estar desatualizadas.
