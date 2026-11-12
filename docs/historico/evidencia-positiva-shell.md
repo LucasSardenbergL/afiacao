@@ -695,6 +695,18 @@ não há produtor concorrente nem `pipefail` no caminho. O `case` acima também 
 #3809. Na varredura de 2026-11-11, `db/test-*.sh` tinha **172** vereditos `| [command ]grep -q`
 em pipe e ~36 `$(… | head -1)` atribuídos sem `|| true` (entre eles `db/lib/pg-harness.sh:50`).
 
+**Classe fechada no #3838** (118 arquivos de `db/test-*.sh` + `db/lib/*.sh`): `grep -q … <<<"$x"`,
+`<<<"$(cmd)"` quando o produtor é comando, `head -1` → `sed -n 1p` (drena) e `head -c N` →
+`{ head -c N; cat >/dev/null; }` em atribuição. Duas lições do caminho:
+- **Registro que prende linha verbatim acompanha o conserto:** `scripts/falsificar-exige-assert-gate.ts`
+  guarda o bloco do juiz linha a linha; a troca `head -1` → `sed -n 1p` no
+  `test-oportunidade-erro-terminal` derrubou o vitest até a âncora acompanhar.
+- **A bateria fora do núcleo achou 2 falsificações podres que a main já tinha** (#3855): alvo chumbado
+  numa baseline que esvaziou (`test-authz-reescrita-falsificacao`, agora lido da própria baseline) e
+  motivo buscado por `ERROR` quando o psql em pt_BR escreve `ERRO:` (`test-recebimento-associacao-sombra`).
+  Rodar a bateria local: em SÉRIE (duas falsificações que sabotam o worktree em paralelo se contaminam)
+  e sem `heavy` em volta de teste que chama `heavy` por dentro (vaga única → deadlock de 30 min por passo).
+
 ### 17. Flag que NÃO EXISTE no BSD + `2>/dev/null` — o erro morre no cano posto por higiene
 
 A #6 é a flag homônima que faz **outra coisa**. Esta é a irmã mais silenciosa: a flag **não existe**,
