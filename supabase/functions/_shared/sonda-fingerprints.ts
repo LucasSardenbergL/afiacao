@@ -72,7 +72,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "omie-webhook": "08cdf40788b99bc6096e17ac7166ded10896cbf37339743ecbe46d799805f266",
   "pedido-programado-enviar": "c4e2a9ed647e5fc0096b55ddcce3e20668d0f88363eeda82e1909962d3b178a0",
   "pedido-programado-extrair": "c44d3881d8e7b8170f51e94f4d10546d76ea220a4859356d8d21dddf034b9cbb",
-  "picking-fila-omie": "6b176460a687ff08fe49e0709d5346d0c446aa2592292507496781ce0b6c08c9",
+  "picking-fila-omie": "88be5fe7c8544e387942d7dff2a070c6d8e1fcfa115f230d1f9647a34faf7625",
   "posthog-error-webhook": "817851fa67c009a177382ddfb5b5eef88e48ac17ccf6f7f6093f9fff4b7d34d5",
   "process-nfe": "86d782b3dbd4c29f5a90a2a75e5624452c909fd19d10c57f3425c7e4c08ac9e9",
   "process-recurring-orders": "271b4f67552c97e75f5290f8f7b79fdb6b4db38c0a7b5852dd10ca3e68ccbb1c",
