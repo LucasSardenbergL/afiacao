@@ -248,7 +248,7 @@ export function RadarDetailSheet({
         </div>
         {discagem ? (
           <div className="mt-3">
-            <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data} nota={nota} campoNota={campoNota}
+            <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data} nota={nota} campoNota={campoNota} hojeISO={hojeISO}
               onRegistrado={aposRegistro} onDesfeito={aposDesfazer}
               ligar={telPrincipal ? <RadarTelefoneAcao telefone={telPrincipal} variant="full" discreto={!!principalContabil} cnpj={empresa.cnpj} /> : null}
               avisoContabil={principalContabil ? (
@@ -265,7 +265,7 @@ export function RadarDetailSheet({
                 Próximo <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             ) : <span />}
-            <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} onRegistrado={aposRegistro} onDesfeito={aposDesfazer} />
+            <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} hojeISO={hojeISO} onRegistrado={aposRegistro} onDesfeito={aposDesfazer} />
           </div>
           </div>
         )}

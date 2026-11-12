@@ -22,6 +22,9 @@ describe('retorno — dia civil BRT, mesma regra do servidor', () => {
   it('chips: hoje existe, exatamente um vem marcado e é o padrão', () => {
     const o = opcoesRetorno('2026-11-09');
     expect(o.map((x) => x.rotulo)).toEqual(['Hoje', 'Amanhã', 'Em 3 dias', 'Em 1 semana', 'Em 2 semanas']);
+    // Sexta (revisão 2026-11-11, item 21): "Amanhã" seria sábado — vai à segunda, e o rótulo diz.
+    expect(opcoesRetorno('2026-11-13')[1]).toEqual({ rotulo: 'Próximo dia útil', dia: '2026-11-16', padrao: false });
+    expect(opcoesRetorno('2026-11-14')[1]).toEqual({ rotulo: 'Próximo dia útil', dia: '2026-11-16', padrao: false });
     expect(o.filter((x) => x.padrao).map((x) => x.dia)).toEqual(['2026-11-16']);
     expect(o[0].dia).toBe('2026-11-09');
   });
