@@ -30,6 +30,7 @@
 #  APAGINA    páginas cobrem o eixo inteiro, sem repetição, na ordem estável
 #  AORDEM     desconto_desc põe o maior desconto primeiro
 #  AVENDEDOR  eixo vendedor responde indisponível
+#  AVALIDA    a query de validação pós-apply (db/valida-venda-contribuicao.sql) dá 6 ✅ contra a migration real
 #
 #   bash db/test-venda-contribuicao.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   LOCALE_TESTE=pt_BR.UTF-8 bash db/test-venda-contribuicao.sh     # mesma prova no outro locale (marcas ASCII)
@@ -483,6 +484,11 @@ eq "AORDEM desconto_desc: o O1 (desconto 50) primeiro" \
 
 # AVENDEDOR
 eq "AVENDEDOR indisponivel" "$(rpc "'12m','vendedor'" "j->>'indisponivel'")" "true"
+
+# AVALIDA — a query de validação entregue ao founder (db/valida-venda-contribuicao.sql) roda AQUI contra a
+# migration real: 6 ✅ (o validador também é código — database.md §4 "O VALIDADOR mente").
+eq "AVALIDA validador pos-apply: 6 de 6 itens ok" \
+   "$(Pq -f "$REPO_ROOT/db/valida-venda-contribuicao.sql" | grep -c '✅')" "6"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
