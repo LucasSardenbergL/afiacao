@@ -1680,6 +1680,9 @@ jobs:
       # a prova que precisar de durabilidade pede e recebe.
       # Conferência POSITIVA: o harness resolve o shim e o servidor diz `off`/`off`/`on`.
       # Medição: docs/historico/ci-provas-sql-durabilidade-off.md
+      # O shim também troca o initdb por `cp -a` de um TEMPLATE DE CLUSTER por chave (argumentos +
+      # ambiente); fora do contrato, initdb real. Prova: db/test-initdb-template.sh (no núcleo).
+      # Medição (−12,8 job-min/run): docs/historico/ci-provas-sql-initdb-template.md
       - name: Cluster de prova sem fsync — shim do initdb e conferência
         run: |
           set -euo pipefail
@@ -1690,9 +1693,11 @@ jobs:
           rm "$shim/initdb"
           # As flags vão DEPOIS de "$@": o initdb só reconhece `--version` como 1º argumento,
           # e o pg-harness confere a major por `initdb --version`.
-          printf '#!/bin/sh\nexec %s/initdb "$@" --no-sync -c fsync=off -c full_page_writes=off\n' "$real" > "$shim/initdb"
+          printf '#!/bin/sh\nINITDB_REAL=%s exec bash %s/db/lib/initdb-template.sh "$@" --no-sync -c fsync=off -c full_page_writes=off\n' \
+            "$real" "$GITHUB_WORKSPACE" > "$shim/initdb"
           chmod +x "$shim/initdb"
           echo "PGBIN_OVERRIDE=$shim" >> "$GITHUB_ENV"
+          echo "INITDB_TEMPLATE_DIR=$RUNNER_TEMP/initdb-template" >> "$GITHUB_ENV"
           resolvido="$(PGBIN_OVERRIDE="$shim" PGVER=17 bash -c '. db/lib/pg-harness.sh; printf %s "$PGBIN"')"
           [ "$resolvido" = "$shim" ] \
             || { echo "::error::o pg-harness resolveu '$resolvido', não o shim '$shim'"; exit 1; }
