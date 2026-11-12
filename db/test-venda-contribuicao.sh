@@ -4,32 +4,32 @@
 # `public.venda_contribuicao` (a porta, só master). Registro: docs/historico/venda-contribuicao-cliente.md.
 #
 # O que prova EXECUTANDO (PL/pgSQL é late-bound):
-#  A-GATE      master lê; employee COM papel estratégico (cap_custo_ler = true) → 42501; farmer, cliente e
+#  AGATE      master lê; employee COM papel estratégico (cap_custo_ler = true) → 42501; farmer, cliente e
 #              sem sessão → 42501
-#  A-ACL       anon não executa a porta; authenticated não executa o motor (catálogo)
-#  A-PARAM     janela, limite e ordem inválidos → 22023
-#  A-CARD      uma linha por order_items.id (inclusive 2 linhas do mesmo SKU no mesmo pedido e item sem piso)
-#  A-DESC      receita líquida = bruto − desconto da linha
-#  A-NAOAPUR   desconto NULL ⇒ receita NULL e contribuição NULL (nunca a receita cheia)
-#  A-INVALIDO  desconto maior que o bruto ⇒ 'invalido', receita NULL
-#  A-CUSTODATA CMC da posição anterior ≤ dia do pedido (nem a posição futura, nem o custo atual)
-#  A-CUSTOVELHO posição com 45+ dias ⇒ custo atual MARCADO
-#  A-SEMCUSTO  sem custo ⇒ custo e contribuição NULL (nunca 0)
-#  A-PRAZO     S = Σ vᵢ(1+r)^(−dᵢ/365)/Σvᵢ com pesos por VALOR; custo do prazo e prazo médio
-#  A-TAXA      colacor sem configuração ⇒ 'taxa_ausente' (prazo médio conhecido, custo NULL); paridade da taxa
+#  AACL       anon não executa a porta; authenticated não executa o motor (catálogo)
+#  APARAM     janela, limite e ordem inválidos → 22023
+#  ACARD      uma linha por order_items.id (inclusive 2 linhas do mesmo SKU no mesmo pedido e item sem piso)
+#  ADESC      receita líquida = bruto − desconto da linha
+#  ANAOAPUR   desconto NULL ⇒ receita NULL e contribuição NULL (nunca a receita cheia)
+#  AINVALIDO  desconto maior que o bruto ⇒ 'invalido', receita NULL
+#  ACUSTODATA CMC da posição anterior ≤ dia do pedido (nem a posição futura, nem o custo atual)
+#  ACUSTOVELHO posição com 45+ dias ⇒ custo atual MARCADO
+#  ASEMCUSTO  sem custo ⇒ custo e contribuição NULL (nunca 0)
+#  APRAZO     S = Σ vᵢ(1+r)^(−dᵢ/365)/Σvᵢ com pesos por VALOR; custo do prazo e prazo médio
+#  ATAXA      colacor sem configuração ⇒ 'taxa_ausente' (prazo médio conhecido, custo NULL); paridade da taxa
 #              do motor com public.fin_regua_custo_capital
-#  A-AMBIG     título que casa com 2 pedidos ⇒ 'ambiguo', MESMO com o outro pedido fora da janela pedida
-#  A-VALOR     Σ títulos ≠ total ⇒ 'valor_nao_bate'
-#  A-CLIENTE   título de outro cliente Omie ⇒ 'cliente_nao_confere'
-#  A-SEMTIT    pedido sem número ⇒ 'sem_titulo'
-#  A-PISO      abaixo do piso pelo preço LÍQUIDO; gap = piso×qtd − receita; item sem política: piso NULL
-#  A-JANELA    12m = 365 datas e 90d = 90 datas, inclusivas
-#  A-CANON     o alias ativo soma no comprador canônico
-#  A-PONTE     receita − custo − prazo da INTERSEÇÃO = contribuição; total = Σ das linhas
-#  A-NULL      linha de eixo sem nenhuma linha computável ⇒ contribuição JSON null
-#  A-PAGINA    páginas cobrem o eixo inteiro, sem repetição, na ordem estável
-#  A-ORDEM     desconto_desc põe o maior desconto primeiro
-#  A-VENDEDOR  eixo vendedor responde indisponível
+#  AAMBIG     título que casa com 2 pedidos ⇒ 'ambiguo', MESMO com o outro pedido fora da janela pedida
+#  AVALOR     Σ títulos ≠ total ⇒ 'valor_nao_bate'
+#  ACLIENTE   título de outro cliente Omie ⇒ 'cliente_nao_confere'
+#  ASEMTIT    pedido sem número ⇒ 'sem_titulo'
+#  APISO      abaixo do piso pelo preço LÍQUIDO; gap = piso×qtd − receita; item sem política: piso NULL
+#  AJANELA    12m = 365 datas e 90d = 90 datas, inclusivas
+#  ACANON     o alias ativo soma no comprador canônico
+#  APONTE     receita − custo − prazo da INTERSEÇÃO = contribuição; total = Σ das linhas
+#  ANULL      linha de eixo sem nenhuma linha computável ⇒ contribuição JSON null
+#  APAGINA    páginas cobrem o eixo inteiro, sem repetição, na ordem estável
+#  AORDEM     desconto_desc põe o maior desconto primeiro
+#  AVENDEDOR  eixo vendedor responde indisponível
 #
 #   bash db/test-venda-contribuicao.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   LOCALE_TESTE=pt_BR.UTF-8 bash db/test-venda-contribuicao.sh     # mesma prova no outro locale (marcas ASCII)
@@ -42,7 +42,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261113130000_venda_contribuicao_cliente.sq
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca.
-  SABOTAGENS="gate_so_cap:A-GATE desconto_ignorado:A-DESC desconto_null_zero:A-NAOAPUR custo_zero:A-SEMCUSTO snapshot_futuro:A-CUSTODATA sem_idade:A-CUSTOVELHO peso_igual:A-PRAZO tolerancia_off:A-VALOR exclusividade_na_janela:A-AMBIG cliente_off:A-CLIENTE piso_inner_join:A-CARD piso_bruto:A-PISO janela_errada:A-JANELA alias_ignorado:A-CANON acl_aberta:POST!POS_3"
+  SABOTAGENS="gate_so_cap:AGATE desconto_ignorado:ADESC desconto_null_zero:ANAOAPUR custo_zero:ASEMCUSTO snapshot_futuro:ACUSTODATA sem_idade:ACUSTOVELHO peso_igual:APRAZO tolerancia_off:AVALOR exclusividade_na_janela:AAMBIG cliente_off:ACLIENTE piso_inner_join:ACARD piso_bruto:APISO janela_errada:AJANELA alias_ignorado:ACANON acl_aberta:POST!POS_3"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-contribuicao.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -185,7 +185,7 @@ AS \$function\$
 \$function\$;
 REVOKE ALL ON FUNCTION private.cap_custo_ler(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION private.cap_custo_ler(uuid) TO authenticated, service_role;
-CREATE TABLE public.profiles (user_id uuid, name text);
+CREATE TABLE public.profiles (user_id uuid, name text, razao_social text);
 
 CREATE TABLE public.sales_orders (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), customer_user_id uuid, status text,
   deleted_at timestamptz, account text, omie_numero_pedido text, total numeric, order_date_kpi date,
@@ -252,7 +252,7 @@ END;
 
 INSERT INTO public.user_roles VALUES ('$M','master'), ('$E','employee'), ('$V','employee'), ('$C','customer');
 INSERT INTO public.commercial_roles VALUES ('$E','estrategico'), ('$V','farmer');
-INSERT INTO public.profiles VALUES ('$K1','Marcenaria Um'), ('$K2','Industria Dois'), ('$K3','Moveis Tres');
+INSERT INTO public.profiles VALUES ('$K1','Contato Um','Marcenaria Um'), ('$K2','Industria Dois',''), ('$K3','Moveis Tres',NULL);
 SQL
 
 # ── Apply (postcondição DO \$post\$ roda aqui) ────────────────────────────────────────────────────────────────
@@ -358,131 +358,131 @@ rpc() { # $1 = args, $2 = expressão sobre j
   Pq -c "$(como "$M" "SELECT $2 FROM (SELECT public.venda_contribuicao($1) AS j) x;")"
 }
 
-# A-GATE
-eq "A-GATE master le" "$(rpc "'12m','empresa'" "j->>'indisponivel'")" "false"
-eq "A-GATE employee estrategico (cap_custo_ler) -> 42501" "$(estado "$(como "$E" "SELECT public.venda_contribuicao();")")" "42501"
-eq "A-GATE farmer -> 42501" "$(estado "$(como "$V" "SELECT public.venda_contribuicao();")")" "42501"
-eq "A-GATE cliente -> 42501" "$(estado "$(como "$C" "SELECT public.venda_contribuicao();")")" "42501"
-eq "A-GATE sem sessao -> 42501" "$(estado "$(como "" "SELECT public.venda_contribuicao();")")" "42501"
+# AGATE
+eq "AGATE master le" "$(rpc "'12m','empresa'" "j->>'indisponivel'")" "false"
+eq "AGATE employee estrategico (cap_custo_ler) -> 42501" "$(estado "$(como "$E" "SELECT public.venda_contribuicao();")")" "42501"
+eq "AGATE farmer -> 42501" "$(estado "$(como "$V" "SELECT public.venda_contribuicao();")")" "42501"
+eq "AGATE cliente -> 42501" "$(estado "$(como "$C" "SELECT public.venda_contribuicao();")")" "42501"
+eq "AGATE sem sessao -> 42501" "$(estado "$(como "" "SELECT public.venda_contribuicao();")")" "42501"
 
-# A-ACL (catálogo)
-eq "A-ACL anon nao executa a porta" \
+# AACL (catálogo)
+eq "AACL anon nao executa a porta" \
    "$(Pq -c "SELECT has_function_privilege('anon', 'public.venda_contribuicao(text,text,text,text,integer,integer)', 'EXECUTE')")" "f"
-eq "A-ACL authenticated nao executa o motor" \
+eq "AACL authenticated nao executa o motor" \
    "$(Pq -c "SELECT has_function_privilege('authenticated', 'private.venda_contribuicao_linhas(date,date)', 'EXECUTE')")" "f"
-eq "A-ACL motor sem PUBLIC" \
+eq "AACL motor sem PUBLIC" \
    "$(Pq -c "SELECT has_function_privilege('public', 'private.venda_contribuicao_linhas(date,date)', 'EXECUTE')")" "f"
 
-# A-PARAM
-eq "A-PARAM janela invalida -> 22023" "$(estado "$(como "$M" "SELECT public.venda_contribuicao('6m');")")" "22023"
-eq "A-PARAM limite 0 -> 22023" "$(estado "$(como "$M" "SELECT public.venda_contribuicao('12m','cliente',NULL,'contribuicao_asc',0,0);")")" "22023"
-eq "A-PARAM limite 201 -> 22023" "$(estado "$(como "$M" "SELECT public.venda_contribuicao('12m','cliente',NULL,'contribuicao_asc',201,0);")")" "22023"
-eq "A-PARAM ordem invalida -> 22023" "$(estado "$(como "$M" "SELECT public.venda_contribuicao('12m','cliente',NULL,'lucro');")")" "22023"
+# APARAM
+eq "APARAM janela invalida -> 22023" "$(estado "$(como "$M" "SELECT public.venda_contribuicao('6m');")")" "22023"
+eq "APARAM limite 0 -> 22023" "$(estado "$(como "$M" "SELECT public.venda_contribuicao('12m','cliente',NULL,'contribuicao_asc',0,0);")")" "22023"
+eq "APARAM limite 201 -> 22023" "$(estado "$(como "$M" "SELECT public.venda_contribuicao('12m','cliente',NULL,'contribuicao_asc',201,0);")")" "22023"
+eq "APARAM ordem invalida -> 22023" "$(estado "$(como "$M" "SELECT public.venda_contribuicao('12m','cliente',NULL,'lucro');")")" "22023"
 
-# A-CARD — universo 12m: I1 I2 I5 I3 I4 I6 I7 I8 I9 I11 I10 I14 I15 I17 + o item do O15 = 15 (fora: O8, O9, O13)
-eq "A-CARD linhas = itens distintos = 15 (inclui item colacor sem politica)" \
+# ACARD — universo 12m: I1 I2 I5 I3 I4 I6 I7 I8 I9 I11 I10 I14 I15 I17 + o item do O15 = 15 (fora: O8, O9, O13)
+eq "ACARD linhas = itens distintos = 15 (inclui item colacor sem politica)" \
    "$(motor "$M12" "count(*) || '/' || count(DISTINCT order_item_id)")" "15/15"
-eq "A-CARD duas linhas do mesmo SKU no mesmo pedido" \
+eq "ACARD duas linhas do mesmo SKU no mesmo pedido" \
    "$(motor "$M12" "count(*)" "x.omie_codigo_produto = 1001 AND x.omie_numero_pedido = '500'")" "2"
 
 O1="'$(pid "'$D'::date" oben 500)'"
-# A-DESC
-eq "A-DESC receita liquida de I1 = 1000 - 50" \
+# ADESC
+eq "ADESC receita liquida de I1 = 1000 - 50" \
    "$(motor "$M12" "receita_bruta || ' ' || desconto || ' ' || receita_liquida" "x.sales_order_id = $O1 AND x.quantidade = 10")" "1000 50 950"
-# A-NAOAPUR
-eq "A-NAOAPUR desconto NULL: status, receita e contribuicao NULL" \
+# ANAOAPUR
+eq "ANAOAPUR desconto NULL: status, receita e contribuicao NULL" \
    "$(motor "$M12" "desconto_status || ' ' || (receita_liquida IS NULL) || ' ' || (contribuicao IS NULL)" "x.omie_numero_pedido = '501' AND x.omie_codigo_produto = 1001")" "nao_apurado true true"
-# A-INVALIDO
-eq "A-INVALIDO desconto > bruto" \
+# AINVALIDO
+eq "AINVALIDO desconto > bruto" \
    "$(motor "$M12" "desconto_status || ' ' || (receita_liquida IS NULL)" "x.omie_numero_pedido = '802'")" "invalido true"
-# A-CUSTODATA
-eq "A-CUSTODATA I1 usa a posicao D-10 (40), nao a futura (99) nem a atual (50)" \
+# ACUSTODATA
+eq "ACUSTODATA I1 usa a posicao D-10 (40), nao a futura (99) nem a atual (50)" \
    "$(motor "$M12" "custo_unit || ' ' || custo_fonte || ' ' || (custo_posicao = '$D'::date - 10)" "x.sales_order_id = $O1 AND x.quantidade = 10")" "40 cmc_data true"
-# A-CUSTOVELHO
-eq "A-CUSTOVELHO I2 com posicao de 50 dias cai no atual marcado (30)" \
+# ACUSTOVELHO
+eq "ACUSTOVELHO I2 com posicao de 50 dias cai no atual marcado (30)" \
    "$(motor "$M12" "custo_unit || ' ' || custo_fonte || ' ' || (custo_posicao IS NULL)" "x.sales_order_id = $O1 AND x.omie_codigo_produto = 1002")" "30 atual true"
-# A-SEMCUSTO
-eq "A-SEMCUSTO I4: custo, custo_total e contribuicao NULL; fonte NULL" \
+# ASEMCUSTO
+eq "ASEMCUSTO I4: custo, custo_total e contribuicao NULL; fonte NULL" \
    "$(motor "$M12" "(custo_unit IS NULL) || ' ' || (custo_total IS NULL) || ' ' || (contribuicao IS NULL) || ' ' || (custo_fonte IS NULL)" "x.omie_codigo_produto = 1003")" "true true true true"
 
-# A-PRAZO (O1: 770 a 30d + 330 a 90d, r = 0,1775). Esperado calculado por fora.
+# APRAZO (O1: 770 a 30d + 330 a 90d, r = 0,1775). Esperado calculado por fora.
 ESP_FATOR="$(Pq -c "SELECT round((770*power(1.1775, -30/365.0) + 330*power(1.1775, -90/365.0)) / 1100, 10)")"
-eq "A-PRAZO status e fator do O1 (pesos por valor)" \
+eq "APRAZO status e fator do O1 (pesos por valor)" \
    "$(motor "$M12" "DISTINCT prazo_status || ' ' || round(fator_pv, 10)" "x.sales_order_id = $O1")" "ok $ESP_FATOR"
-eq "A-PRAZO prazo medio ponderado = (770*30+330*90)/1100" \
+eq "APRAZO prazo medio ponderado = (770*30+330*90)/1100" \
    "$(motor "$M12" "DISTINCT round(prazo_medio_dias, 4)" "x.sales_order_id = $O1")" "$(Pq -c "SELECT round((770*30+330*90)/1100.0, 4)")"
-eq "A-PRAZO custo do prazo do O1 = 1100 x (1 - S)" \
+eq "APRAZO custo do prazo do O1 = 1100 x (1 - S)" \
    "$(motor "$M12" "round(sum(custo_prazo), 6)" "x.sales_order_id = $O1")" "$(Pq -c "SELECT round(1100 * (1 - (770*power(1.1775, -30/365.0) + 330*power(1.1775, -90/365.0)) / 1100), 6)")"
-eq "A-PRAZO a vista (O2): fator 1, custo do prazo 0 na linha com receita" \
+eq "APRAZO a vista (O2): fator 1, custo do prazo 0 na linha com receita" \
    "$(motor "$M12" "prazo_status || ' ' || round(fator_pv, 6) || ' ' || round(custo_prazo, 6)" "x.omie_codigo_produto = 1003")" "ok 1.000000 0.000000"
 
-# A-TAXA
-eq "A-TAXA colacor sem config: taxa_ausente, prazo medio 30, custo do prazo NULL" \
+# ATAXA
+eq "ATAXA colacor sem config: taxa_ausente, prazo medio 30, custo do prazo NULL" \
    "$(motor "$M12" "prazo_status || ' ' || round(prazo_medio_dias) || ' ' || (custo_prazo IS NULL) || ' ' || (contribuicao IS NULL)" "x.empresa = 'colacor'")" "taxa_ausente 30 true true"
-eq "A-TAXA paridade: o motor usa a MESMA taxa de fin_regua_custo_capital (via fator do O1)" \
+eq "ATAXA paridade: o motor usa a MESMA taxa de fin_regua_custo_capital (via fator do O1)" \
    "$(Pq -c "$(como "$M" "SELECT round(power(1 + public.fin_regua_custo_capital('oben'), -30/365.0) * 770/1100 + power(1 + public.fin_regua_custo_capital('oben'), -90/365.0) * 330/1100, 10)")")" "$ESP_FATOR"
-eq "A-TAXA porta expoe a taxa: oben 0.1775, colacor null" \
+eq "ATAXA porta expoe a taxa: oben 0.1775, colacor null" \
    "$(rpc "'12m','empresa'" "round((j->'taxa_capital'->>'oben')::numeric, 4) || ' ' || jsonb_typeof(j->'taxa_capital'->'colacor')")" "0.1775 null"
 
-# A-AMBIG
-eq "A-AMBIG 12m: os dois pedidos do titulo compartilhado ficam ambiguos" \
+# AAMBIG
+eq "AAMBIG 12m: os dois pedidos do titulo compartilhado ficam ambiguos" \
    "$(motor "$M12" "string_agg(DISTINCT prazo_status, ',')" "x.omie_numero_pedido = '700'")" "ambiguo"
-eq "A-AMBIG 90d: o O5 segue ambiguo com o O4 FORA da janela pedida" \
+eq "AAMBIG 90d: o O5 segue ambiguo com o O4 FORA da janela pedida" \
    "$(motor "'$HOJE'::date - 89, '$HOJE'::date" "string_agg(DISTINCT prazo_status, ',') || ' ' || count(*)" "x.omie_numero_pedido = '700'")" "ambiguo 1"
-# A-VALOR / A-CLIENTE / A-SEMTIT
-eq "A-VALOR titulo 250 para total 300" "$(motor "$M12" "DISTINCT prazo_status" "x.omie_numero_pedido = '800'")" "valor_nao_bate"
-eq "A-CLIENTE titulo de outro cliente Omie" "$(motor "$M12" "DISTINCT prazo_status" "x.omie_numero_pedido = '801'")" "cliente_nao_confere"
-eq "A-SEMTIT pedido sem numero" "$(motor "$M12" "DISTINCT prazo_status" "x.data_pedido = '$D'::date - 1")" "sem_titulo"
-eq "A-SEMTIT o CANCELADO nao entra na soma do O1 (senao valor nao bateria)" \
+# AVALOR / ACLIENTE / ASEMTIT
+eq "AVALOR titulo 250 para total 300" "$(motor "$M12" "DISTINCT prazo_status" "x.omie_numero_pedido = '800'")" "valor_nao_bate"
+eq "ACLIENTE titulo de outro cliente Omie" "$(motor "$M12" "DISTINCT prazo_status" "x.omie_numero_pedido = '801'")" "cliente_nao_confere"
+eq "ASEMTIT pedido sem numero" "$(motor "$M12" "DISTINCT prazo_status" "x.data_pedido = '$D'::date - 1")" "sem_titulo"
+eq "ASEMTIT o CANCELADO nao entra na soma do O1 (senao valor nao bateria)" \
    "$(motor "$M12" "DISTINCT prazo_status" "x.sales_order_id = $O1")" "ok"
 
-# A-PISO
-eq "A-PISO I2 abaixo do piso: 25 < 30x1,3; gap = 39x2 - 50 = 28" \
+# APISO
+eq "APISO I2 abaixo do piso: 25 < 30x1,3; gap = 39x2 - 50 = 28" \
    "$(motor "$M12" "abaixo_piso || ' ' || round(gap_piso, 4)" "x.sales_order_id = $O1 AND x.omie_codigo_produto = 1002")" "true 28.0000"
-eq "A-PISO I1 pelo preco LIQUIDO 95 >= 52: nao abaixo, gap 0" \
+eq "APISO I1 pelo preco LIQUIDO 95 >= 52: nao abaixo, gap 0" \
    "$(motor "$M12" "abaixo_piso || ' ' || round(gap_piso, 4)" "x.sales_order_id = $O1 AND x.quantidade = 10")" "false 0.0000"
-eq "A-PISO I10 abaixo: gap = 40x1,3 - 10 = 42" \
+eq "APISO I10 abaixo: gap = 40x1,3 - 10 = 42" \
    "$(motor "$M12" "abaixo_piso || ' ' || round(gap_piso, 4)" "x.data_pedido = '$D'::date - 1")" "true 42.0000"
-eq "A-PISO preco liquido decide: 20 com desconto 10 fica abaixo de 13 (o bruto 20 nao ficaria)" \
+eq "APISO preco liquido decide: 20 com desconto 10 fica abaixo de 13 (o bruto 20 nao ficaria)" \
    "$(Pq -c "UPDATE public.order_items SET unit_price = 20, desconto_valor = 10 WHERE omie_codigo_produto = 1004 AND sales_order_id = (SELECT id FROM public.sales_orders WHERE omie_numero_pedido = '801'); SELECT 1" >/dev/null; motor "$M12" "abaixo_piso" "x.omie_numero_pedido = '801'")" "t"
-eq "A-PISO item colacor sem politica: piso, abaixo e gap NULL, linha presente" \
+eq "APISO item colacor sem politica: piso, abaixo e gap NULL, linha presente" \
    "$(motor "$M12" "count(*) || ' ' || bool_and(piso_markup IS NULL AND abaixo_piso IS NULL AND gap_piso IS NULL)" "x.empresa = 'colacor'")" "1 true"
 
-# A-JANELA
-eq "A-JANELA 12m: desde = hoje - 364; O12 dentro, O13 fora" \
+# AJANELA
+eq "AJANELA 12m: desde = hoje - 364; O12 dentro, O13 fora" \
    "$(rpc "'12m','pedido','oben','receita_desc',200,0" "(j->>'desde')::date = '$HOJE'::date - 364")$(motor "'$HOJE'::date - 364, '$HOJE'::date" "count(*)" "x.data_pedido IN ('$HOJE'::date - 364, '$HOJE'::date - 365)")" "t1"
-eq "A-JANELA 90d: desde = hoje - 89; O14 dentro, O15 fora (pela porta)" \
+eq "AJANELA 90d: desde = hoje - 89; O14 dentro, O15 fora (pela porta)" \
    "$(rpc "'90d','pedido','oben','receita_desc',200,0" "((j->>'desde')::date = '$HOJE'::date - 89) || ' ' || (SELECT count(*) FROM jsonb_array_elements(j->'linhas') e WHERE (e->'detalhe'->>'data')::date IN ('$HOJE'::date - 89, '$HOJE'::date - 90))")" "true 1"
 
-# A-CANON
-eq "A-CANON K1 soma o pedido do alias K1A: 2 pedidos, rotulo do canonico" \
+# ACANON
+eq "ACANON K1 soma o pedido do alias K1A: 2 pedidos, rotulo do canonico" \
    "$(rpc "'12m','cliente'" "(SELECT (e->>'pedidos') || ' ' || (e->>'rotulo') FROM jsonb_array_elements(j->'linhas') e WHERE e->>'chave' = '$K1')")" "2 Marcenaria Um"
 
-# A-PONTE
+# APONTE
 PONTE="$(rpc "'12m','empresa'" "abs((j->'total'->>'receita_contribuicao')::numeric - (j->'total'->>'custo_contribuicao')::numeric - (j->'total'->>'custo_prazo_contribuicao')::numeric - (j->'total'->>'contribuicao')::numeric) <= 0.02")"
-eq "A-PONTE receita - custo - prazo da intersecao = contribuicao (+-0,02 de arredondamento)" "$PONTE" "t"
-eq "A-PONTE total da porta = soma das linhas do motor" \
+eq "APONTE receita - custo - prazo da intersecao = contribuicao (+-0,02 de arredondamento)" "$PONTE" "t"
+eq "APONTE total da porta = soma das linhas do motor" \
    "$(rpc "'12m','empresa'" "(j->'total'->>'contribuicao')::numeric")" "$(motor "$M12" "round(sum(contribuicao), 2)")"
-eq "A-PONTE cobertura de custo por fonte no total: data 4 / atual 10 / sem 1" \
+eq "APONTE cobertura de custo por fonte no total: data 4 / atual 10 / sem 1" \
    "$(rpc "'12m','empresa'" "concat_ws('/', j->'total'->>'itens_custo_data', j->'total'->>'itens_custo_atual', j->'total'->>'itens_sem_custo')")" "4/10/1"
 
-# A-NULL
-eq "A-NULL K3 (so pedidos ambiguos): contribuicao e custo_prazo JSON null, margem conhecida" \
+# ANULL
+eq "ANULL K3 (so pedidos ambiguos): contribuicao e custo_prazo JSON null, margem conhecida" \
    "$(rpc "'12m','cliente'" "(SELECT jsonb_typeof(e->'contribuicao') || ' ' || jsonb_typeof(e->'custo_prazo') || ' ' || (e->>'margem_bruta') FROM jsonb_array_elements(j->'linhas') e WHERE e->>'chave' = '$K3')")" "null null 60.00"
 
-# A-PAGINA
+# APAGINA
 TOTAL_PED="$(rpc "'12m','pedido'" "j->>'total_linhas'")"
 PAGS="$(for off in 0 3 6 9 12; do rpc "'12m','pedido',NULL,'contribuicao_asc',3,$off" "(SELECT string_agg(e->>'chave', ',' ORDER BY ord) FROM jsonb_array_elements(j->'linhas') WITH ORDINALITY t(e, ord))"; done | tr '\n' ',' )"
 TUDO="$(rpc "'12m','pedido',NULL,'contribuicao_asc',200,0" "(SELECT string_agg(e->>'chave', ',' ORDER BY ord) FROM jsonb_array_elements(j->'linhas') WITH ORDINALITY t(e, ord))")"
-eq "A-PAGINA 12m tem 12 pedidos" "$TOTAL_PED" "12"
-eq "A-PAGINA paginas de 3 reproduzem a lista inteira na mesma ordem" "$(printf '%s' "$PAGS" | sed 's/,,*/,/g; s/,$//')" "$TUDO"
+eq "APAGINA 12m tem 12 pedidos" "$TOTAL_PED" "12"
+eq "APAGINA paginas de 3 reproduzem a lista inteira na mesma ordem" "$(printf '%s' "$PAGS" | sed 's/,,*/,/g; s/,$//')" "$TUDO"
 
-# A-ORDEM
-eq "A-ORDEM desconto_desc: o O1 (desconto 50) primeiro" \
+# AORDEM
+eq "AORDEM desconto_desc: o O1 (desconto 50) primeiro" \
    "$(rpc "'12m','pedido',NULL,'desconto_desc',1,0" "j->'linhas'->0->>'chave' = $O1::text || '' AND (j->'linhas'->0->>'desconto')::numeric = 50")" "t"
 
-# A-VENDEDOR
-eq "A-VENDEDOR indisponivel" "$(rpc "'12m','vendedor'" "j->>'indisponivel'")" "true"
+# AVENDEDOR
+eq "AVENDEDOR indisponivel" "$(rpc "'12m','vendedor'" "j->>'indisponivel'")" "true"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

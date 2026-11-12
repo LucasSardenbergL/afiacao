@@ -423,7 +423,7 @@ BEGIN
   eixo AS (
     SELECT m.*,
            CASE p_eixo
-             WHEN 'cliente' THEN COALESCE(pr.name, '(sem nome)')
+             WHEN 'cliente' THEN COALESCE(nullif(btrim(pr.razao_social), ''), pr.name, '(sem nome)')
              WHEN 'pedido'  THEN m.empresa_min || ' #' || COALESCE(m.np_min, '?')
              WHEN 'sku'     THEN COALESCE(m.descricao_min, m.chave)
              ELSE m.chave
@@ -431,7 +431,7 @@ BEGIN
            CASE p_eixo
              WHEN 'pedido'  THEN jsonb_build_object('empresa', m.empresa_min, 'numero', m.np_min,
                                                     'data', m.data_min, 'comprador_id', m.comprador_min,
-                                                    'comprador', pc.name)
+                                                    'comprador', COALESCE(nullif(btrim(pc.razao_social), ''), pc.name))
              WHEN 'sku'     THEN jsonb_build_object('empresa', m.empresa_min, 'familia', m.familia_min)
              WHEN 'cliente' THEN jsonb_build_object('empresas', m.n_empresas)
              ELSE '{}'::jsonb
