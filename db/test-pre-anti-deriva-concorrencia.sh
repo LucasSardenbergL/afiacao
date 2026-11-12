@@ -205,8 +205,10 @@ trap cleanup EXIT
 
 PASS=0; FAIL=0
 ok()        { PASS=$((PASS + 1)); echo "  ✅ $1 OK — $2"; }
-bad()       { FAIL=$((FAIL + 1)); echo "  ❌ $1 FALHOU — $2"; }
-erro_exec() { FAIL=$((FAIL + 1)); echo "  ❌ $1 ERRO_DE_EXECUCAO — $2"; }
+bad()       { FAIL=$((FAIL + 1)); DIAG="${DIAG:-}DIAG ❌ $1 FALHOU — ${2:0:300}
+"; echo "  ❌ $1 FALHOU — $2"; }
+erro_exec() { FAIL=$((FAIL + 1)); DIAG="${DIAG:-}DIAG ❌ $1 ERRO — ${2:0:300}
+"; echo "  ❌ $1 ERRO_DE_EXECUCAO — $2"; }
 # Valor vazio, erro de psql ou veredito "não consegui observar" não é resultado: ERRO_DE_EXECUCAO.
 eq() {
   case "$3" in
@@ -779,7 +781,7 @@ for L in C P; do
   case " $NIVEIS " in *" executor "*)  roda_nivel_executor "$L" ;; esac
 done
 
-echo "PASS=$PASS FAIL=$FAIL (esperados $TOTAL_ESPERADO)"
+printf "%b" "${DIAG:-}"; echo "PASS=$PASS FAIL=$FAIL (esperados $TOTAL_ESPERADO)"
 if [ "$FAIL" -eq 0 ] && [ "$PASS" -ne "$TOTAL_ESPERADO" ]; then
   echo "❌ executou $PASS asserts, o denominador é $TOTAL_ESPERADO — bloco que não rodou é vermelho"
   exit 1
