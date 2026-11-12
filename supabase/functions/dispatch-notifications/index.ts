@@ -241,16 +241,23 @@ async function createCalendarEvent(accessToken: string, alerta: AlertaRow): Prom
   return json.id as string;
 }
 
+/** Pixel do resumo de venda: registra a 1ª abertura do envio (service_role). Falha só vai ao log, sem o token. */
+async function registrarAbertura(token: string): Promise<void> {
+  const { error } = await createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
+    .rpc('venda_resumo_registrar_abertura', { p_token: token });
+  if (error) console.error(`[dispatch-notifications] pixel: falha ao registrar abertura: ${error.message}`);
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   // Pixel de abertura do resumo de venda: ANTES do gate (o cliente de e-mail não tem sessão). Só GET com token uuid;
   // a resposta é o mesmo GIF exista o token ou não (sem oráculo) e o token não vai para o log.
+  // Caminho disjunto da sonda: o pixel é GET com `abertura`; a sonda é POST `{"probe":true}` — nenhuma requisição
+  // passa pelos dois, e a sonda continua IO-free (o IO do pixel mora em `registrarAbertura`, fora do handler).
   const tokenAbertura = tokenDeAbertura(req.method, req.url);
   if (tokenAbertura) {
-    const { error: abErr } = await createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
-      .rpc('venda_resumo_registrar_abertura', { p_token: tokenAbertura });
-    if (abErr) console.error(`[dispatch-notifications] pixel: falha ao registrar abertura: ${abErr.message}`);
+    await registrarAbertura(tokenAbertura);
     return new Response(PIXEL_GIF, { status: 200, headers: CABECALHOS_PIXEL });
   }
 

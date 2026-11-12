@@ -319,11 +319,13 @@ eq "S3c TRUNCATE braco → 55000" "$(estado "TRUNCATE public.venda_braco_comprad
 eq "S3d UPDATE sorteio → 55000" "$(estado "UPDATE public.venda_braco_sorteio SET fracao_controle = 0.2 WHERE id = 1")" "55000"
 
 # Compradores de teste por braço (a régua decide; escolhidos pela régua, não forçados)
-CTRL=($(Pq -c "SELECT comprador_id FROM public.venda_braco_comprador WHERE braco = 'controle' ORDER BY comprador_id LIMIT 3"))
-TRAT=($(Pq -c "SELECT comprador_id FROM public.venda_braco_comprador WHERE braco = 'tratamento' ORDER BY comprador_id LIMIT 8"))
+mapfile -t CTRL < <(Pq -c "SELECT comprador_id FROM public.venda_braco_comprador WHERE braco = 'controle' ORDER BY comprador_id LIMIT 3")
+mapfile -t TRAT < <(Pq -c "SELECT comprador_id FROM public.venda_braco_comprador WHERE braco = 'tratamento' ORDER BY comprador_id LIMIT 8")
+[ "${#CTRL[@]}" -eq 3 ] && [ "${#TRAT[@]}" -eq 8 ] || { echo "FAIL setup: bracos insuficientes (${#CTRL[@]}/${#TRAT[@]})"; FAIL_APPLY=1; }
 NOVO="$(Pq -c "SELECT md5('novo' || g)::uuid FROM generate_series(1,500) g WHERE private.venda_braco_u('venda-r2-controle-2026-11-12', md5('novo' || g)::uuid) < 0.15 LIMIT 1")"
 
 # ── B1: trigger do braço ────────────────────────────────────────────────────────────────────────────────────────
+# shellcheck disable=SC2016  # as aspas simples de ${4:+, '$4'} são SQL literal dentro de aspas duplas: $4 expande
 ins() { # $1 fase $2 dia $3 comprador [$4 braco]
   Pq -c "INSERT INTO public.venda_sugestao (tipo, fase, dia_referencia, farmer_user_id, comprador_id, empresa, omie_codigo_produto${4:+, braco})
          VALUES ('recompra', '$1', '$2', '$F2', '$3', 'colacor', 99${4:+, '$4'}) RETURNING coalesce(braco, 'NULL')"; }
