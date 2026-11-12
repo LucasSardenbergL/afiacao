@@ -157,6 +157,43 @@ describe('invalidarRadar com cnpj — a fila troca a linha, não relê as págin
     s1(); s2(); f.sair();
   });
 
+  it('allowlist (revisão 2026-11-11, item 1): os selos por página e as chaves de OUTRO lead só ficam velhos', async () => {
+    const f = montarFila(qc, [...pagina('A', 50), ...pagina('B', 50)]);
+    await carregarPaginas(f, 2);
+    const chamadas: Record<string, number> = {};
+    const observar = (chave: readonly unknown[]) => {
+      const nome = chave.map(String).join('|');
+      chamadas[nome] = 0;
+      const o = new QueryObserver(qc, { queryKey: chave, queryFn: async () => { chamadas[nome]++; return []; } });
+      return o.subscribe(() => {});
+    };
+    const saidas = [
+      observar(['radar', 'irmaos', ['A0', 'A1']]), observar(['radar', 'irmaos', ['B0', 'B1']]),
+      observar(['radar', 'vinculos-lista', ['A0', 'A1']]), observar(['radar', 'vinculos-lista', ['B0', 'B1']]),
+      observar(['radar', 'contatos', 'A1']), observar(['radar', 'contatos', 'B7']),
+      observar(['radar', 'kpis']), observar(['radar', 'prospectar-hoje', 'eu']),
+      observar(['radar', 'chave-que-nasceu-depois']),
+    ];
+    await vi.waitFor(() => expect(Object.values(chamadas).every((n) => n === 1)).toBe(true));
+
+    lerEmpresaRadar.mockResolvedValue(lead('A1', { prospeccao_status: 'em_conversa' }));
+    await invalidarRadar(qc, { cnpj: 'A1' });
+    await vi.waitFor(() => expect(chamadas['radar|kpis']).toBe(2));
+    await vi.waitFor(() => expect(chamadas['radar|prospectar-hoje|eu']).toBe(2));
+    await vi.waitFor(() => expect(chamadas['radar|contatos|A1']).toBe(2));
+    // Nenhuma RPC por página: 2 páginas × (irmãos + vínculos) = 4 leituras que antes saíam a cada contato.
+    expect(chamadas['radar|irmaos|A0,A1']).toBe(1);
+    expect(chamadas['radar|irmaos|B0,B1']).toBe(1);
+    expect(chamadas['radar|vinculos-lista|A0,A1']).toBe(1);
+    expect(chamadas['radar|vinculos-lista|B0,B1']).toBe(1);
+    expect(chamadas['radar|contatos|B7']).toBe(1);
+    expect(chamadas['radar|chave-que-nasceu-depois']).toBe(1);
+    // …mas ficam velhas: a próxima montagem relê.
+    expect(qc.getQueryState(['radar', 'irmaos', ['A0', 'A1']])?.isInvalidated).toBe(true);
+    expect(f.leituras).toEqual([0, 50]);
+    saidas.forEach((s) => s()); f.sair();
+  });
+
   it('sem cnpj (desfazer, ações sem lead definido): o comportamento de antes — relê todas as páginas', async () => {
     const f = montarFila(qc, [...pagina('A', 50), ...pagina('B', 50), ...pagina('C', 3)]);
     await carregarPaginas(f, 3);

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 /**
  * Radar D1 + H — o link do e-mail semanal (/radar/abrir/:envio/:cnpj) grava o CLIQUE e, quando o lead foi lido no
@@ -25,13 +26,16 @@ function Destino() {
   return <p data-testid="destino">{l.pathname + l.search}</p>;
 }
 function abrir(caminho: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter initialEntries={[caminho]}>
-      <Routes>
-        <Route path="/radar/abrir/:envio/:cnpj" element={<RadarAbrirEmail />} />
-        <Route path="/radar" element={<Destino />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[caminho]}>
+        <Routes>
+          <Route path="/radar/abrir/:envio/:cnpj" element={<RadarAbrirEmail />} />
+          <Route path="/radar" element={<Destino />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 const chamadas = (nome: string) => rpc.mock.calls.filter((c) => c[0] === nome);
@@ -50,13 +54,13 @@ afterEach(() => {
 });
 
 describe('RadarAbrirEmail', () => {
-  it('grava o clique, lê o lead, grava a ficha entregue e cai na ficha', async () => {
+  it('grava o clique, lê o lead pela chave da ficha e cai nela com origem=email — a ENTREGA fica para o /radar', async () => {
     abrir(`/radar/abrir/${ENVIO}/${CNPJ}`);
-    expect(await screen.findByTestId('destino')).toHaveTextContent(`/radar?cnpj=${CNPJ}`);
-    await waitFor(() => expect(chamadas('radar_registrar_ficha_entregue')).toHaveLength(1));
+    expect(await screen.findByTestId('destino')).toHaveTextContent(`/radar?cnpj=${CNPJ}&origem=email&envio=${ENVIO}`);
     const args = { p_origem: 'email', p_cnpj: CNPJ, p_envio: ENVIO };
-    expect(chamadas('radar_registrar_abertura_empurrada')).toEqual([['radar_registrar_abertura_empurrada', args]]);
-    expect(chamadas('radar_registrar_ficha_entregue')).toEqual([['radar_registrar_ficha_entregue', args]]);
+    await waitFor(() => expect(chamadas('radar_registrar_abertura_empurrada')).toEqual([['radar_registrar_abertura_empurrada', args]]));
+    // Revisão 2026-11-11 (item 4): antes a entrega era gravada aqui, antes de existir ficha na tela.
+    expect(chamadas('radar_registrar_ficha_entregue')).toHaveLength(0);
     expect(lerEmpresa).toHaveBeenCalledWith(CNPJ);
     expect(chamadas('radar_registrar_falha_sensor')).toHaveLength(0);
   });

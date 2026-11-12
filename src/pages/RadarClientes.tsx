@@ -13,7 +13,7 @@ import { useRadarMeuTerritorio } from '@/queries/useRadarMeuTerritorio';
 import {
   PERTO_DESLIGADO, cidadeDoTerritorioAtiva, patchMexeEmLugar, recorteDaCidade, territorioAutomatico,
 } from '@/lib/radar/territorio';
-import { tituloMunicipio } from '@/lib/radar/prospectar-hoje';
+import { lerLinkDoEmail, tituloMunicipio } from '@/lib/radar/prospectar-hoje';
 import { diaMes } from '@/lib/radar/atendimento';
 import { useRadarIrmaos } from '@/queries/useRadarIrmaos';
 import { useHojeBRT } from '@/lib/radar/useHojeBRT';
@@ -41,6 +41,8 @@ import { registrarFichaEntregue } from '@/queries/useRadarRegistroEmpurrado';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { escolherFichaAberta } from '@/lib/radar/ficha-aberta';
 import { EmptyState } from '@/components/EmptyState';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { desatualizado, estadoDeLeitura } from '@/lib/leitura/estado-de-leitura';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -164,8 +166,16 @@ export default function RadarClientes() {
   // Quantos do recorte são "para visitar": desligado, do agregado (quando o recorte cabe nele); ligado, da própria fila.
   const contagemVisitar = useRadarParaVisitarContagem(filtros, hojeISO, { desligado: meus || aguardandoTerritorio });
   const rotuloContagemVisitar = contagemVisitar.rotulo;
+  // Revisão 2026-11-11 (item 3): sem rede NÃO é vazio. A consulta pausada (pending + paused: `isLoading` e `isError`
+  // falsos) caía em "Nenhuma empresa nesta fila"; e o território pausado deixava o esqueleto sem fim. Três estados:
+  // ausência CONFIRMADA (a RPC respondeu vazio), consulta PAUSADA sem nada em mãos, e DADOS ANTERIORES com a
+  // atualização pausada (as linhas ficam, com o aviso).
+  const territorioSemRede = aguardandoTerritorio && territorio.fetchStatus === 'paused';
+  const temPaginas = Boolean(q.data?.pages.length);
+  const filaSemRede = territorioSemRede || (!temPaginas && estadoDeLeitura(q) === 'sem-rede');
+  const filaDadosAnteriores = desatualizado(q, temPaginas) === 'sem-rede';
   // Fila ainda sem recorte (território a caminho) conta como carregando — senão a tela mostraria "nenhuma empresa".
-  const carregandoFila = q.isLoading || aguardandoTerritorio;
+  const carregandoFila = (q.isLoading || aguardandoTerritorio) && !filaSemRede;
   const kpis = useRadarKpis();
   const loteOmie = useRadarLoteOmie();
   // Lote VIGENTE (foto da RFB) — UMA leitura, compartilhada com a fila (que a lê pelo cache),
@@ -193,9 +203,11 @@ export default function RadarClientes() {
   // (a mesma lição do A6). O objeto é relido da lista a cada render (não fica velho).
   // `origem=card` (pacote I): a ficha veio do card "prospectar hoje" — também navegação, fora da chave e dos favoritos.
   // Qualquer troca de ficha a apaga: só a ficha aberta PELO link conta como entregue pelo card.
-  const [urlFicha, setUrlFicha] = useUrlState<{ cnpj: string; origem: string }>({ cnpj: '', origem: '' });
+  // `origem=email&envio=` (revisão 2026-11-11, item 4): veio do link do e-mail semanal — a ficha entregue é gravada aqui,
+  // quando ela aparece, e não mais no /radar/abrir (que gravava antes de haver ficha na tela).
+  const [urlFicha, setUrlFicha] = useUrlState<{ cnpj: string; origem: string; envio: string }>({ cnpj: '', origem: '', envio: '' });
   const abertaCnpj = urlFicha.cnpj || null;
-  const setAbertaCnpj = useCallback((c: string | null) => setUrlFicha({ cnpj: c ?? '', origem: '' }), [setUrlFicha]);
+  const setAbertaCnpj = useCallback((c: string | null) => setUrlFicha({ cnpj: c ?? '', origem: '', envio: '' }), [setUrlFicha]);
   const abertaSnapshot = useRef<RadarEmpresa | null>(null);
   // Posição do lead aberto na última vez em que estava na lista: se ele sair (contato registrado → refetch), o
   // "Próximo" segue de onde o vendedor estava, não do topo. Presa ao CNPJ (pacote F, achado 6): a posição de OUTRO
@@ -286,12 +298,19 @@ export default function RadarClientes() {
   const { isImpersonating } = useImpersonation();
   const fichaCardGravada = useRef<string | null>(null);
   useEffect(() => {
-    if (urlFicha.origem !== 'card' || !abertaCnpj || aberta?.cnpj !== abertaCnpj) return;
+    if ((urlFicha.origem !== 'card' && urlFicha.origem !== 'email') || !abertaCnpj || aberta?.cnpj !== abertaCnpj) return;
     if (fichaCardGravada.current === abertaCnpj) return;
     fichaCardGravada.current = abertaCnpj;
-    if (!isImpersonating) void registrarFichaEntregue({ origem: 'card', cnpj: abertaCnpj });
-    setUrlFicha({ origem: '' });
-  }, [urlFicha.origem, abertaCnpj, aberta, isImpersonating, setUrlFicha]);
+    if (!isImpersonating) {
+      if (urlFicha.origem === 'card') void registrarFichaEntregue({ origem: 'card', cnpj: abertaCnpj });
+      else {
+        // O envio vem da URL: só o formato que o link do e-mail produz (o mesmo validador do /radar/abrir).
+        const link = lerLinkDoEmail(urlFicha.envio, abertaCnpj);
+        if (link) void registrarFichaEntregue({ origem: 'email', envio: link.envio, cnpj: link.cnpj });
+      }
+    }
+    setUrlFicha({ origem: '', envio: '' });
+  }, [urlFicha.origem, urlFicha.envio, abertaCnpj, aberta, isImpersonating, setUrlFicha]);
 
   const abrir = useCallback((e: RadarEmpresa) => { abertaSnapshot.current = e; setAbertaCnpj(e.cnpj); }, [setAbertaCnpj]);
   // Ficha de um CNPJ que pode não estar na fila (já-cliente, descartado): lê o lead inteiro antes de abrir, pela MESMA
@@ -609,6 +628,11 @@ export default function RadarClientes() {
             <div className="p-3 space-y-2">
               {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
             </div>
+          ) : filaSemRede ? (
+            <div className="p-3 space-y-1">
+              <AvisoLeituraFalhou oque="a fila de prospecção" estado="sem-rede" variante="bloco" testId="radar-fila-sem-rede" />
+              <p className="text-xs text-muted-foreground">A consulta está pausada e volta sozinha quando a conexão voltar.</p>
+            </div>
           ) : q.isError && semPaginas ? (
             // Só sem NENHUMA página: falha na página seguinte preserva a lista (rodapé abaixo) — pacote A5.
             <EmptyState
@@ -633,7 +657,14 @@ export default function RadarClientes() {
               {/* Pacote I (Codex, achado 13): releitura que FALHOU com páginas já na tela (invalidação depois de um
                   contato/cadastro, refetch comum) — as linhas são da leitura anterior e a tela DIZ. A falha da página
                   SEGUINTE tem o próprio rodapé, abaixo. */}
-              {q.isError && !q.isFetchNextPageError && (
+              {filaDadosAnteriores && (
+                <div className="flex items-center gap-2 border-b border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs" data-testid="radar-fila-dados-anteriores">
+                  <span className="flex-1 text-status-warning">
+                    Sem conexão: as linhas abaixo são da leitura anterior. A atualização volta sozinha quando a rede voltar.
+                  </span>
+                </div>
+              )}
+              {!filaDadosAnteriores && q.isError && !q.isFetchNextPageError && (
                 <div className="flex items-center gap-2 border-b border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs" data-testid="radar-fila-desatualizada">
                   <span className="flex-1 text-status-warning">
                     Não consegui atualizar a fila: as linhas abaixo são da leitura anterior e podem estar desatualizadas.
@@ -683,6 +714,7 @@ export default function RadarClientes() {
       <RadarLoteDialog lote={loteOmie} open={gestor && loteAberto} onClose={() => setLoteAberto(false)} />
       <RadarDetailSheet
         empresa={aberta}
+        carregandoCnpj={abertaCnpj && !aberta ? abertaCnpj : null}
         hojeISO={hojeISO}
         onClose={() => setAbertaCnpj(null)}
         onProximo={() => void proximo()}

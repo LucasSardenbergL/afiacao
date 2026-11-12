@@ -14,8 +14,10 @@ import type { RadarEmpresa } from '@/queries/useRadarLista';
  */
 export function RadarModoDiscagem({
   empresa, ligar, compartilhado, compartilhadoFalhou = false, avisoContabil = null, onProximo, nota, campoNota, onRegistrado,
-  onDesfeito,
+  onDesfeito, hojeISO,
 }: {
+  /** Dia BRT da página — o "Quando retomar?" parte dele. */
+  hojeISO?: string;
   /** Nota do próximo registro (B4) e o campo que a edita — o estado é da ficha. */
   nota?: string;
   campoNota?: ReactNode;
@@ -57,7 +59,7 @@ export function RadarModoDiscagem({
       {campoNota}
       <div className="flex flex-wrap items-center gap-2">
         {tel && ligar}
-        <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} onDesfeito={onDesfeito}
+        <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} onDesfeito={onDesfeito} hojeISO={hojeISO}
           onRegistrado={onRegistrado ?? (() => onProximo?.())} />
         {onProximo && (
           <Button variant="ghost" size="touch" onClick={onProximo} className="ml-auto" title="Pular para o próximo lead da lista">

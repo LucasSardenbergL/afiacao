@@ -6,7 +6,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
  * errada: 'vista' gravada a cada render (o denominador inflaria), 'vista' gravada com a agenda vazia, item que não
  * abre a ficha, ou leitura que falhou virando agenda vazia (sumiria calada).
  */
-const estado: { data: unknown; isError: boolean; error: unknown } = { data: null, isError: false, error: null };
+const estado: { data: unknown; isError: boolean; error: unknown; status?: string; fetchStatus?: string } = { data: null, isError: false, error: null };
 vi.mock('@/queries/useRadarProspectarHoje', () => ({
   useRadarProspectarHoje: () => ({ ...estado, isFetching: false, isLoading: false, refetch: vi.fn() }),
 }));
@@ -25,7 +25,10 @@ const DADOS = {
     expiraEm: '2026-11-10T15:00:00Z' }], vencidas7d: 0 },
 };
 
-beforeEach(() => { registrar.mockClear(); estado.data = null; estado.isError = false; estado.error = null; });
+beforeEach(() => {
+  registrar.mockClear(); estado.data = null; estado.isError = false; estado.error = null;
+  estado.status = undefined; estado.fetchStatus = undefined;
+});
 
 describe('RadarAgendaHoje', () => {
   it('mostra retorno e posse, grava "vista" UMA vez por dia com o denominador, e o clique abre e grava "aberta"', () => {
@@ -62,5 +65,27 @@ describe('RadarAgendaHoje', () => {
     render(<RadarAgendaHoje hojeISO="2026-11-09" onAbrir={() => Promise.resolve()} />);
     expect(screen.getByTestId('radar-agenda-erro').textContent).toContain('Não consegui ler');
     expect(registrar).not.toHaveBeenCalled();
+  });
+});
+
+describe('RadarAgendaHoje — sem rede (revisão 2026-11-11, item 3)', () => {
+  it('pausada sem nada em mãos: DIZ que não conseguiu ver a agenda (antes sumia, igual a "nada para hoje")', () => {
+    Object.assign(estado, { data: undefined, status: 'pending', fetchStatus: 'paused' });
+    render(<RadarAgendaHoje hojeISO="2026-11-09" onAbrir={() => Promise.resolve()} />);
+    expect(screen.getByTestId('radar-agenda-sem-rede')).toBeTruthy();
+    expect(registrar).not.toHaveBeenCalled();
+  });
+
+  it('pausada COM a leitura anterior: mostra a agenda e avisa que é a da última leitura', () => {
+    Object.assign(estado, { data: DADOS, status: 'success', fetchStatus: 'paused' });
+    render(<RadarAgendaHoje hojeISO="2026-11-09" onAbrir={() => Promise.resolve()} />);
+    expect(screen.getByTestId('radar-agenda-hoje')).toBeTruthy();
+    expect(screen.getByTestId('radar-agenda-dados-anteriores')).toBeTruthy();
+  });
+
+  it('respondeu vazio (ausência confirmada): não ocupa espaço', () => {
+    Object.assign(estado, { data: { ...DADOS, retornos: { total: 0, itens: [] }, posses: { vencendo: [], vencidas7d: 0 } }, status: 'success', fetchStatus: 'idle' });
+    const { container } = render(<RadarAgendaHoje hojeISO="2026-11-09" onAbrir={() => Promise.resolve()} />);
+    expect(container.innerHTML).toBe('');
   });
 });
