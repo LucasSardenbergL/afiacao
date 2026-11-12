@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
@@ -121,8 +122,17 @@ export function useRadarLoteOmie() {
     if (uid) escreverEstado(uid, { lote: novo });
   }, [uid]);
 
-  // Desmontar a página PARA novos disparos (o item em voo termina e persiste pelo store).
-  useEffect(() => () => { if (uid) controladores.get(uid)?.abort(); }, [uid]);
+  // Desmontar a página PARA novos disparos (o item em voo termina e persiste pelo store). Revisão 2026-11-11 (item 16):
+  // a pausa era SILENCIOSA — quem saía da tela achava que o lote seguia. Agora a saída AVISA, e o banner da volta
+  // ("Ver / retomar") continua sendo o caminho de retomar.
+  useEffect(() => () => {
+    const ac = uid ? controladores.get(uid) : undefined;
+    if (!ac || ac.signal.aborted) return;
+    ac.abort();
+    toast.warning('Lote de cadastro no Omie pausado', {
+      description: 'Você saiu do Radar: o item em andamento termina; os outros ficam para retomar quando você voltar.',
+    });
+  }, [uid]);
 
   const atualizarItem = useCallback((cnpj: string, estado: EstadoItemLote) => {
     const atual = loteAtual();
