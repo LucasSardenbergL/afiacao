@@ -37,6 +37,7 @@
 #   LOCALE_TESTE=pt_BR.UTF-8 bash db/test-fin-consolidado-ic.sh   # o outro locale (rode os dois)
 #   SABOTAGEM=<nome> bash db/test-fin-consolidado-ic.sh            # tem de ficar VERMELHA
 #   bash db/test-fin-consolidado-ic.sh --falsificar                # controle verde + cada sabotagem vermelha
+#   NUCLEO_FAIXA=1/2 bash db/test-fin-consolidado-ic.sh --falsificar   # só a 1ª metade; o CI roda as 2
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -60,8 +61,24 @@ if [ "${1:-}" = "--falsificar" ]; then
     echo "❌ controle VERMELHO — falsificação abortada (log: $LOGDIR/controle.log)"; tail -15 "$LOGDIR/controle.log"; exit 1
   fi
   echo "✅ controle verde"
-  falhas=0; n_sab=0
+  # FAIXA (NUCLEO_FAIXA=i/k, passada por db/roda-nucleo-ci.sh quando o manifesto diz `faixas=k`): roda só a
+  # fatia CANÔNICA i de k das sabotagens — da ((i-1)·T/k)+1 à (i·T/k), divisão inteira, T = todas — depois do
+  # MESMO controle verde. O runner confere a linha `FAIXA:` contra a conta dele; sem a variável, roda as T.
+  # Faixa malformada ABORTA: rodar todas ou nenhuma em silêncio esconderia a fatia errada. O LOGDIR e o WORK
+  # são de cada invocação (mktemp) e a porta é do slot do worker, então as k faixas juntas não disputam nada.
+  total_sab=$(( $(printf '%s\n' "$SABOTAGENS" | wc -w) ))   # contar sem um 2º laço sobre a lista (R2 do falsificar-exige-assert)
+  sab_de=1; sab_ate=$total_sab
+  if [ -n "${NUCLEO_FAIXA:-}" ]; then
+    if ! [[ "$NUCLEO_FAIXA" =~ ^[1-9]/[2-9]$ ]] || [ "${NUCLEO_FAIXA%/*}" -gt "${NUCLEO_FAIXA#*/}" ]; then
+      echo "❌ NUCLEO_FAIXA inválida: '$NUCLEO_FAIXA' (i/k, 1 ≤ i ≤ k, 2 ≤ k ≤ 9)"; exit 1
+    fi
+    f_i="${NUCLEO_FAIXA%/*}"; f_k="${NUCLEO_FAIXA#*/}"
+    sab_de=$(( (f_i - 1) * total_sab / f_k + 1 )); sab_ate=$(( f_i * total_sab / f_k ))
+  fi
+  falhas=0; n_sab=0; i=0
   for par in $SABOTAGENS; do
+    i=$((i+1))
+    [ "$i" -ge "$sab_de" ] && [ "$i" -le "$sab_ate" ] || continue
     s="${par%%:*}"; a="${par#*:}"; n_sab=$((n_sab+1))
     if SABOTAGEM="$s" bash "$0" > "$LOGDIR/$s.log" 2>&1; then
       echo "❌ $s: suíte ficou VERDE"; falhas=$((falhas+1)); continue
@@ -75,6 +92,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "❌ $s: vermelho, mas não no $a (log: $LOGDIR/$s.log)"; falhas=$((falhas+1))
     fi
   done
+  [ -z "${NUCLEO_FAIXA:-}" ] || echo "FAIXA: $NUCLEO_FAIXA sabotagens $sab_de-$sab_ate de $total_sab"   # conferida por db/roda-nucleo-ci.sh
   echo "SABOTAGENS: $((n_sab - falhas)) vermelhas / $falhas falhas"
   [ "$falhas" -eq 0 ] && exit 0 || exit 1
 fi
