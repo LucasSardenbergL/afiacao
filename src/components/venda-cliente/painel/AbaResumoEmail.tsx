@@ -103,7 +103,7 @@ function Ritual({ dias }: { dias: DiaResumo[] }) {
   );
 }
 
-export function ConteudoResumoEmail({ r }: { r: ResumoPainel }) {
+function ConteudoResumoEmail({ r }: { r: ResumoPainel }) {
   const ef = r.efeito;
   return (
     <div className="space-y-5">

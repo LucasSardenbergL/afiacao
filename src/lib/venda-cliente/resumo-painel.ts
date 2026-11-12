@@ -7,7 +7,7 @@ import type { Json } from '@/integrations/supabase/types';
 export type StatusResumo = 'medindo' | 'acesso_pendente' | 'manter' | 'desligar';
 const STATUS: readonly StatusResumo[] = ['medindo', 'acesso_pendente', 'manter', 'desligar'];
 
-export interface SorteioResumo {
+interface SorteioResumo {
   inicio: string;
   fracao_controle: number;
   algoritmo: string;
@@ -32,7 +32,7 @@ export interface DiaResumo {
   copia_status: string | null;
 }
 
-export interface FarmerResumo {
+interface FarmerResumo {
   farmer_user_id: string;
   nome: string;
   primeiro_envio: string | null;
@@ -55,7 +55,7 @@ export interface BracoEfeito {
   taxa: number | null;
 }
 
-export interface BracoAA {
+interface BracoAA {
   virou: number;
   nao_virou: number;
   taxa: number | null;
