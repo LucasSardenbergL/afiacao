@@ -9,7 +9,9 @@ UNION ALL
 SELECT CASE WHEN count(*) = 0 THEN '✅ V2 todo braço segue a régua md5-32-v1'
             ELSE '❌ V2 ' || count(*) || ' braços fora da régua' END
   FROM public.venda_braco_comprador b, public.venda_braco_sorteio s
- WHERE b.u <> private.venda_braco_u(s.semente, b.comprador_id) OR (b.braco = 'controle') <> (b.u < s.fracao_controle)
+ -- a régua por extenso (o claude_ro não executa private.venda_braco_u — o REVOKE está certo)
+ WHERE b.u <> (('x' || substr(md5(s.semente || ':' || b.comprador_id::text), 1, 8))::bit(32)::bigint)::numeric / 4294967296
+    OR (b.braco = 'controle') <> (b.u < s.fracao_controle)
 UNION ALL
 SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.venda_sugestao'::regclass
                             AND tgname = 'venda_sugestao_braco_trg' AND tgenabled = 'O')
