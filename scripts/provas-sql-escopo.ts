@@ -232,9 +232,15 @@ export interface JobDoRun {
  * As provas DESTE run terminaram verdes? Exige a união `success` (ela confere que a matriz agregou
  * `success` e que cada unidade do núcleo foi concluída exatamente uma vez) e, junto, ≥1 parte
  * `provas-sql (k)` com TODAS em `success`. Parte ou união `skipped` (run que o escopo pulou) não é base.
+ *
+ * Desde 2026-11-12 a união é um step do `validate`, não um job: run SEM o job `provas-sql-uniao`
+ * conta a união pelo `validate` `success` (com as partes em `success` elas rodaram, logo o step da
+ * união rodou, e o agregador só sai verde com ele verde). É mais estrito que o job antigo, porque o
+ * `validate` exige também os não-SQL — o lado seguro. Run antigo, com o job, segue lido por ele.
  */
 export function provasVerdes(jobs: readonly JobDoRun[]): boolean {
-  const uniao = jobs.filter((j) => j.name === 'provas-sql-uniao');
+  const legado = jobs.filter((j) => j.name === 'provas-sql-uniao');
+  const uniao = legado.length > 0 ? legado : jobs.filter((j) => j.name === 'validate');
   const partes = jobs.filter((j) => PARTE_RE.test(j.name));
   return (
     uniao.length === 1 &&

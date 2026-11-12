@@ -83,11 +83,13 @@ describe('ci.yml — validate aceita os 8 pesados skipped só com o escopo só-d
     // só-docs decida o veredito (senão o caso reprova pelas provas, não pelo que testa).
     r['provas-sql-escopo'] = { result: 'success', outputs: provas === 'skipped' ? { roda: 'false', modo: 'inerte' } : { roda: 'true' } };
     r['provas-sql'] = { result: provas, outputs: {} };
-    r['provas-sql-uniao'] = { result: provas, outputs: {} };
     return JSON.stringify(r);
   }
+  // A união é step do `validate` desde 2026-11-12: chega ao agregador como `UNIAO` (o `outcome`), e
+  // acompanha as partes — pula com elas, passa com elas.
   function roda(evento: string, resultados: string): number {
-    const env = { PATH: process.env.PATH ?? '', EVENTO: evento, REF: 'refs/pull/1/merge', ESCOPO_DOCS: '', RESULTADOS: resultados };
+    const uniao = (JSON.parse(resultados) as Record<string, { result: string }>)['provas-sql'].result;
+    const env = { PATH: process.env.PATH ?? '', EVENTO: evento, REF: 'refs/pull/1/merge', ESCOPO_DOCS: '', RESULTADOS: resultados, UNIAO: uniao };
     return spawnSync('bash', ['-c', passo!.run!], { env, encoding: 'utf8' }).status ?? -1;
   }
 

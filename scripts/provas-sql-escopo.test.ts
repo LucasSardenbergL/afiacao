@@ -286,6 +286,25 @@ describe('provas-sql-escopo — provasVerdes (o que conta como base)', () => {
   ] as [string, JobDoRun[]][])('%s NÃO é base', (_n, jobs) => {
     expect(provasVerdes(jobs)).toBe(false);
   });
+
+  // Desde 2026-11-12 a união é step do `validate`: o run novo não tem o job, e o `validate` responde.
+  it('run SEM o job da união: partes success e validate success é base', () => {
+    expect(provasVerdes([...PARTES_OK, { name: 'validate', conclusion: 'success' }])).toBe(true);
+  });
+
+  it.each([
+    ['validate failure', [...PARTES_OK, { name: 'validate', conclusion: 'failure' }]],
+    ['validate null (em andamento)', [...PARTES_OK, { name: 'validate', conclusion: null }]],
+    ['validate skipped', [...PARTES_OK, { name: 'validate', conclusion: 'skipped' }]],
+    ['dois validate', [...PARTES_OK, { name: 'validate', conclusion: 'success' }, { name: 'validate', conclusion: 'success' }]],
+    ['validate success e partes skipped', [{ name: 'provas-sql (1)', conclusion: 'skipped' }, { name: 'validate', conclusion: 'success' }]],
+    [
+      'o job legado da união decide quando existe (união failure, validate success)',
+      [...PARTES_OK, { name: 'provas-sql-uniao', conclusion: 'failure' }, { name: 'validate', conclusion: 'success' }],
+    ],
+  ] as [string, JobDoRun[]][])('run novo: %s NÃO é base', (_n, jobs) => {
+    expect(provasVerdes(jobs)).toBe(false);
+  });
 });
 
 describe('provas-sql-escopo — provasExecutadas e os corpos da API', () => {
@@ -480,8 +499,20 @@ describe('ci.yml — validate aceita o skip das provas só onde o escopo pode pu
       'provas-sql-uniao': { result: provas, outputs: {} },
     });
   }
+  // A união mora nos steps do `validate` (2026-11-12): o fixture segue descrevendo-a como o job
+  // `provas-sql-uniao` em `needs`, e este helper a move para o `UNIAO` (o `outcome` do step), que é
+  // como o agregador a recebe de verdade. `UNIAO` explícito no env vence.
   function roda(env: Record<string, string>, path = process.env.PATH ?? ''): number {
-    const r = spawnSync('bash', ['-c', passo!.run!], { env: { PATH: path, ...env }, encoding: 'utf8' });
+    const e = { ...env };
+    if (e.RESULTADOS) {
+      const n = JSON.parse(e.RESULTADOS) as Record<string, { result: string }>;
+      if (n['provas-sql-uniao'] && !('UNIAO' in e)) {
+        e.UNIAO = n['provas-sql-uniao'].result;
+        delete n['provas-sql-uniao'];
+        e.RESULTADOS = JSON.stringify(n);
+      }
+    }
+    const r = spawnSync('bash', ['-c', passo!.run!], { env: { PATH: path, ...e }, encoding: 'utf8' });
     return r.status ?? -1;
   }
   const MAIN = { EVENTO: 'workflow_dispatch', REF: 'refs/heads/main', ESCOPO_DOCS: 'true' };
@@ -570,6 +601,42 @@ describe('ci.yml — validate aceita o skip das provas só onde o escopo pode pu
     } finally {
       gh.limpa();
     }
+  });
+
+  it.skipIf(!temJq)('recibo de run NOVO (sem o job da união; validate success) passa; com validate failure, não', () => {
+    const novo = { total_count: 6, jobs: jobsOk.jobs.filter((j) => j.name !== 'provas-sql-uniao') };
+    const verde = ghFalso({ '800': { run: runOk, jobs: novo } });
+    const vermelho = ghFalso({
+      '800': { run: runOk, jobs: { ...novo, jobs: novo.jobs.map((j) => (j.name === 'validate' ? { ...j, conclusion: 'failure' } : j)) } },
+    });
+    try {
+      expect(roda({ ...PR_ENV, RESULTADOS: REAPROVEITOU }, verde.path)).toBe(0);
+      expect(roda({ ...PR_ENV, RESULTADOS: REAPROVEITOU }, vermelho.path)).toBe(1);
+    } finally {
+      verde.limpa();
+      vermelho.limpa();
+    }
+  });
+
+  it.skipIf(!temJq)('a união: outcome vazio, failure ou a chave de volta em needs reprovam (o job virtual)', () => {
+    const tudo = needs({ result: 'success', roda: 'true' }, 'success');
+    const n = JSON.parse(tudo) as Record<string, unknown>;
+    delete n['provas-sql-uniao'];
+    const semUniao = JSON.stringify(n);
+    const ev = { EVENTO: 'push', REF: 'refs/heads/main', ESCOPO_DOCS: '' };
+    expect(roda({ ...ev, RESULTADOS: semUniao, UNIAO: 'success' })).toBe(0);
+    expect(roda({ ...ev, RESULTADOS: semUniao, UNIAO: '' })).toBe(1);
+    expect(roda({ ...ev, RESULTADOS: semUniao })).toBe(1);
+    expect(roda({ ...ev, RESULTADOS: semUniao, UNIAO: 'failure' })).toBe(1);
+    expect(roda({ ...ev, RESULTADOS: semUniao, UNIAO: 'skipped' })).toBe(1);
+    expect(roda({ ...ev, RESULTADOS: semUniao, UNIAO: 'cancelled' })).toBe(1);
+    // Partes success com a união skipped e o escopo dizendo que pulou: estado contraditório, reprova.
+    const contraditorio = JSON.parse(needs({ result: 'success', roda: 'false', modo: 'inerte' }, 'success')) as Record<string, unknown>;
+    delete contraditorio['provas-sql-uniao'];
+    const pr = { EVENTO: 'pull_request', REF: 'refs/pull/1/merge', ESCOPO_DOCS: '' };
+    expect(roda({ ...pr, RESULTADOS: JSON.stringify(contraditorio), UNIAO: 'skipped' })).toBe(1);
+    // O job recriado em `needs` ao lado do step: o agregador recusa escolher.
+    expect(roda({ ...ev, RESULTADOS: tudo, UNIAO: 'success' })).toBe(1);
   });
 
   it.skipIf(!temJq).each([
