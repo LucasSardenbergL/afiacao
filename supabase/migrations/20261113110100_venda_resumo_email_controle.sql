@@ -385,12 +385,31 @@ BEGIN
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon, authenticated, service_role', t);
     EXECUTE format('GRANT SELECT ON public.%I TO authenticated, service_role', t);
-    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', t || '_select_master', t);
-    EXECUTE format('CREATE POLICY %I ON public.%I FOR SELECT TO authenticated '
-                   'USING ((SELECT public.has_role(auth.uid(), ''master''::public.app_role)))', t || '_select_master', t);
   END LOOP;
 END
 $acl$;
+
+DROP POLICY IF EXISTS "venda_braco_sorteio_select_master" ON public.venda_braco_sorteio;
+CREATE POLICY "venda_braco_sorteio_select_master" ON public.venda_braco_sorteio FOR SELECT TO authenticated
+  USING ((SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+DROP POLICY IF EXISTS "venda_braco_comprador_select_master" ON public.venda_braco_comprador;
+CREATE POLICY "venda_braco_comprador_select_master" ON public.venda_braco_comprador FOR SELECT TO authenticated
+  USING ((SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+DROP POLICY IF EXISTS "venda_resumo_config_select_master" ON public.venda_resumo_config;
+CREATE POLICY "venda_resumo_config_select_master" ON public.venda_resumo_config FOR SELECT TO authenticated
+  USING ((SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+DROP POLICY IF EXISTS "venda_resumo_selecao_select_master" ON public.venda_resumo_selecao;
+CREATE POLICY "venda_resumo_selecao_select_master" ON public.venda_resumo_selecao FOR SELECT TO authenticated
+  USING ((SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+DROP POLICY IF EXISTS "venda_resumo_item_select_master" ON public.venda_resumo_item;
+CREATE POLICY "venda_resumo_item_select_master" ON public.venda_resumo_item FOR SELECT TO authenticated
+  USING ((SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+DROP POLICY IF EXISTS "venda_resumo_envio_select_master" ON public.venda_resumo_envio;
+CREATE POLICY "venda_resumo_envio_select_master" ON public.venda_resumo_envio FOR SELECT TO authenticated
+  USING ((SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
+DROP POLICY IF EXISTS "venda_resumo_link_select_master" ON public.venda_resumo_link;
+CREATE POLICY "venda_resumo_link_select_master" ON public.venda_resumo_link FOR SELECT TO authenticated
+  USING ((SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
 
 -- ════════════════════════════════ 4. RESUMO — funções ═══════════════════════════════════════════════════════
 
@@ -572,6 +591,7 @@ DECLARE
   v_teste      boolean := p_teste_para IS NOT NULL;
   v_app        text;
   v_inicio     date;
+  v_edge       text;
   r            record;
   d            record;
   k            record;
@@ -605,8 +625,23 @@ BEGIN
   SELECT NULLIF(btrim(cc.value), '') INTO v_app FROM public.company_config cc WHERE cc.key = 'app_url_publica';
   v_app := rtrim(COALESCE(v_app, c_app_padrao), '/');
   SELECT s.inicio INTO v_inicio FROM public.venda_braco_sorteio s WHERE s.id = 1;
+  -- ORDEM (gate de runtime, não só de apply): a dispatch-notifications ANTERIOR à v1.3 não conhece venda_resumo_envio —
+  -- mandaria o resumo ao endereço padrão com o corpo técnico e marcaria `notificado`, e o sensor contaria como entregue
+  -- à farmer. Só enfileira com a atestação MAIS RECENTE da edge (ledger + janela viva, a leitura de
+  -- scripts/pendencias-deploy.ts) fora das versões antigas. Vale também para um rollback futuro da edge.
+  WITH tudo AS (
+    SELECT a.request_id, a.edge, a.versao, a.observado_em FROM public.deploy_atestacoes a
+    UNION ALL
+    SELECT j.request_id, j.edge, j.versao, j.observado_em FROM public.deploy_atestacoes_janela_viva() j
+  )
+  SELECT t.versao INTO v_edge FROM tudo t
+   WHERE t.edge = 'dispatch-notifications'
+   ORDER BY t.observado_em DESC, t.request_id DESC
+   LIMIT 1;
 
-  IF v_app !~ c_url_ok THEN
+  IF v_edge IS NULL OR v_edge IN ('v1.0-sensor-inicial', 'v1.1-resumo-param-so-no-app', 'v1.2-radar-leads-vendedor') THEN
+    v_out := jsonb_build_object('dia', p_dia, 'erro', 'edge_desatualizada', 'versao_atestada', v_edge);
+  ELSIF v_app !~ c_url_ok THEN
     v_out := jsonb_build_object('dia', p_dia, 'erro', 'app_url_publica_invalida');
   ELSIF NOT v_teste AND (v_inicio IS NULL OR p_dia < v_inicio) THEN
     v_out := jsonb_build_object('dia', p_dia, 'erro', 'antes_do_inicio', 'inicio', v_inicio);

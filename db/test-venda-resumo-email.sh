@@ -38,7 +38,7 @@ for f in "$MIG" "$MIG_JSON" "$MIG_MOSTRADA" "$MIG_PAINEL" "$MIG_LISTA"; do [ -f 
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca exata.
-  SABOTAGENS="hash_int:S1a lista_ve_controle:L1a mostrada_controle:L1b policy_aberta:POST!P8_FALHOU selecao_so_tratamento:R1b email_com_controle:R1c braco_livre:B1d preparar_aberto:POST!P6_FALHOU clique_qualquer:C1c mostrada_por_outro:C1e oferta_nao_atendeu:P1d contato_antes:P1c painel_com_controle:V1b inicio_hoje:S2b nome_sem_coalesce:R1c"
+  SABOTAGENS="hash_int:S1a lista_ve_controle:L1a mostrada_controle:L1b policy_aberta:POST!P8_FALHOU selecao_so_tratamento:R1b email_com_controle:R1c braco_livre:B1d preparar_aberto:POST!P6_FALHOU clique_qualquer:C1c mostrada_por_outro:C1e oferta_nao_atendeu:P1d contato_antes:P1c painel_com_controle:V1b inicio_hoje:S2b nome_sem_coalesce:R1c sem_gate_edge:R1m"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-resumo.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -155,6 +155,7 @@ case "${SABOTAGEM:-}" in
        AND s.dia_referencia >= v_ini AND s.dia_referencia < v_fim" ;;
   inicio_hoje)          sabotar "  v_inicio := v_hoje + CASE extract(isodow FROM v_hoje)::int WHEN 5 THEN 3 WHEN 6 THEN 2 ELSE 1 END;" \
                                 "  v_inicio := v_hoje;" ;;
+  sem_gate_edge)        sabotar "  IF v_edge IS NULL OR v_edge IN ('v1.0-sensor-inicial', 'v1.1-resumo-param-so-no-app', 'v1.2-radar-leads-vendedor') THEN" "  IF false THEN" ;;
   nome_sem_coalesce)    sabotar "  v_nome := COALESCE(v_nome, 'Cliente sem nome no cadastro');" "" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
@@ -266,6 +267,11 @@ INSERT INTO public.user_roles VALUES ('$M','master'), ('$F1','employee'), ('$F2'
 INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES ('$F1','farmer'), ('$F2','farmer'), ('$M','master');
 INSERT INTO public.profiles (user_id, name, email) VALUES ('$F1','REGINA SILVA','regina@exemplo.test'),
   ('$F2','Tatyana','tatyana@exemplo.test'), ('$M','Lucas','founder@exemplo.test');
+CREATE TABLE public.deploy_atestacoes (request_id bigint, observado_em timestamptz, edge text, versao text, fonte text, via text);
+CREATE FUNCTION public.deploy_atestacoes_janela_viva() RETURNS TABLE (request_id bigint, observado_em timestamptz, edge text,
+  versao text, fonte text, via text) LANGUAGE sql STABLE AS \$\$ SELECT NULL::bigint, NULL::timestamptz, NULL::text, NULL::text,
+  NULL::text, NULL::text WHERE false \$\$;
+INSERT INTO public.deploy_atestacoes VALUES (1, now() - interval '1 day', 'dispatch-notifications', 'v1.2-radar-leads-vendedor', 'x', 'sonda');
 CREATE TABLE public.prova_antes (j jsonb);
 GRANT ALL ON public.prova_antes TO authenticated;
 SQL
@@ -370,6 +376,8 @@ eq "L1d master le o controle" "$(Pq -c "$(como "$M" "SELECT count(*) > 0 FROM pu
 eq "L1e linha anterior ao inicio segue na lista" "$(Pq -c "$(como "$F1" "SELECT jsonb_array_length(public.venda_minhas_sugestoes('$HOJE') -> 'compradores')")")" "1"
 
 # ── R1: o preparo ───────────────────────────────────────────────────────────────────────────────────────────────
+eq "R1m edge atestada antiga (v1.2) → erro sem escrita" "$(Pq -c "SELECT public.venda_resumo_preparar('$D') ->> 'erro'")|$(Pq -c "SELECT count(*) FROM public.fornecedor_alerta")|$(Pq -c "SELECT count(*) FROM public.venda_resumo_selecao")" "edge_desatualizada|0|0"
+P -q -c "INSERT INTO public.deploy_atestacoes VALUES (2, now(), 'dispatch-notifications', 'v1.3-resumo-venda-pixel', 'x', 'sonda')"
 eq "R1a antes do inicio → erro sem escrita" "$(Pq -c "SELECT public.venda_resumo_preparar('$HOJE') ->> 'erro'")|$(Pq -c "SELECT count(*) FROM public.venda_resumo_envio")" "antes_do_inicio|0"
 eq "R1a2 sem lista do dia → erro" "$(Pq -c "SELECT public.venda_resumo_preparar(DATE '$D' + 1) ->> 'erro'")" "lista_do_dia_ausente"
 OUT="$(Pq -c "SELECT public.venda_resumo_preparar('$D')::text")"
@@ -390,7 +398,7 @@ eq "R1j falha → tentativa 2 so da farmer" "$(Pq -c "SELECT string_agg(tipo || 
 P -q -c "INSERT INTO public.venda_gerador_execucao (dia_referencia, fase, linhas) VALUES ('$HOJE', 'ativa', 1)"
 P -q -c "SELECT public.venda_resumo_preparar('$HOJE', '$M')" > /dev/null
 eq "R1k teste: antes do inicio, sem selecao nova, tipo teste" "$(Pq -c "SELECT count(*) FROM public.venda_resumo_envio WHERE tipo = 'teste' AND dia = '$HOJE'") $(Pq -c "SELECT count(*) FROM public.venda_resumo_selecao")" "1 8"
-eq "R1l acoes_execucoes registra cada rodada" "$(Pq -c "SELECT count(*) FILTER (WHERE status = 'sucesso') || ' ' || count(*) FILTER (WHERE status = 'erro') FROM public.acoes_execucoes WHERE acao = 'venda.resumo_email'")" "4 2"
+eq "R1l acoes_execucoes registra cada rodada" "$(Pq -c "SELECT count(*) FILTER (WHERE status = 'sucesso') || ' ' || count(*) FILTER (WHERE status = 'erro') FROM public.acoes_execucoes WHERE acao = 'venda.resumo_email'")" "4 3"
 
 # ── C1: clique ──────────────────────────────────────────────────────────────────────────────────────────────────
 ENV_F="$(Pq -c "SELECT id FROM public.venda_resumo_envio WHERE tipo = 'farmer' AND tentativa = 2")"
