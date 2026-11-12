@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { onlineManager } from '@tanstack/react-query';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
@@ -117,5 +117,22 @@ describe('RadarOutcomeMenu — "Quando retomar?" (item 21)', () => {
     await screen.findByTestId('radar-desfecho-falha');
     expect(screen.getByRole('alertdialog')).toBeTruthy();
     expect(screen.getByRole('button', { name: /tentar de novo/i })).toBeTruthy();
+  });
+});
+
+describe('RadarOutcomeMenu — variante "botoes" do modo discagem (revisão 2026-11-11, item 11)', () => {
+  it('desfechos como botões diretos: "Não atendeu" registra num toque; "Em conversa" abre a data; "Descartar" o motivo', async () => {
+    registrar.mockResolvedValue({ id: 'c3', deduped: false });
+    render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} variante="botoes" hojeISO="2026-11-10" />);
+    expect(screen.queryByRole('button', { name: /registrar contato/i })).toBeNull();
+    const grupo = screen.getByRole('group', { name: 'Desfecho da ligação' });
+    fireEvent.click(within(grupo).getByRole('button', { name: /não atendeu/i }));
+    await waitFor(() => expect(registrar).toHaveBeenCalledWith(expect.objectContaining({ acao: 'contatado_sem_resposta' })));
+    fireEvent.click(within(grupo).getByRole('button', { name: /em conversa/i }));
+    expect(await screen.findByText('Quando retomar a conversa?')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /cancelar/i }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    fireEvent.click(within(grupo).getByRole('button', { name: /descartar/i }));
+    expect(await screen.findByPlaceholderText(/motivo/i)).toBeTruthy();
   });
 });

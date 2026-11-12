@@ -59,7 +59,7 @@ export function RadarModoDiscagem({
       {campoNota}
       <div className="flex flex-wrap items-center gap-2">
         {tel && ligar}
-        <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} onDesfeito={onDesfeito} hojeISO={hojeISO}
+        <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} nota={nota} onDesfeito={onDesfeito} hojeISO={hojeISO} variante="botoes"
           onRegistrado={onRegistrado ?? (() => onProximo?.())} />
         {onProximo && (
           <Button variant="ghost" size="touch" onClick={onProximo} className="ml-auto" title="Pular para o próximo lead da lista">

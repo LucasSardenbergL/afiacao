@@ -88,10 +88,14 @@ export function RadarOutcomeMenu({
   onRegistrado,
   onDesfeito,
   hojeISO,
+  variante = 'menu',
 }: {
   cnpj: string;
   /** Dia BRT da página (`useHojeBRT`). Ausente: o dia BRT pelo relógio do aparelho, na hora de abrir. */
   hojeISO?: string;
+  /** 'botoes' (modo discagem, revisão 2026-11-11, item 11): os desfechos da ligação como botões diretos — um toque, não
+   *  abrir um menu a cada lead. 'menu' (padrão): o dropdown "Registrar contato". */
+  variante?: 'menu' | 'botoes';
   /** Dados do lead — "Virou cliente" só aparece habilitado com o vínculo Omie. */
   empresa?: RadarEmpresa;
   /** Nota opcional do contato (B4). */
@@ -225,8 +229,30 @@ export function RadarOutcomeMenu({
     <p className="text-xs text-status-error" role="alert" data-testid="radar-desfecho-falha">{falhaDialogo}</p>
   );
 
+  const abrirDescarte = () => {
+    // O motivo NÃO é apagado aqui: depois de uma falha, reabrir traz o texto de volta (item 2).
+    setFalhaDialogo(null);
+    setConfirmDescartar(true);
+  };
+  const bloqueado = reg.isPending || isImpersonating;
+  const tituloBloqueado = isImpersonating ? 'Indisponível em modo Ver como' : undefined;
+
   return (
     <>
+      {variante === 'botoes' ? (
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Desfecho da ligação" data-testid="radar-desfechos-diretos">
+          <Button type="button" variant="outline" className="min-h-11" disabled={bloqueado} title={tituloBloqueado}
+            onClick={() => void registrar('contatado_sem_resposta', nota)}>
+            <PhoneMissed className="w-4 h-4 mr-2" /> Não atendeu
+          </Button>
+          <Button type="button" variant="outline" className="min-h-11" disabled={bloqueado} title={tituloBloqueado} onClick={abrirRetorno}>
+            <MessageCircle className="w-4 h-4 mr-2" /> Em conversa…
+          </Button>
+          <Button type="button" variant="outline" className="min-h-11 text-status-error" disabled={bloqueado} title={tituloBloqueado} onClick={abrirDescarte}>
+            <Ban className="w-4 h-4 mr-2" /> Descartar
+          </Button>
+        </div>
+      ) : (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -257,18 +283,12 @@ export function RadarOutcomeMenu({
             );
           })}
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="text-status-error"
-            onClick={() => {
-              // O motivo NÃO é apagado aqui: depois de uma falha, reabrir traz o texto de volta (item 2).
-              setFalhaDialogo(null);
-              setConfirmDescartar(true);
-            }}
-          >
+          <DropdownMenuItem className="text-status-error" onClick={abrirDescarte}>
             <Ban className="w-4 h-4 mr-2" /> Descartar
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
 
       <AlertDialog open={pedirRetorno} onOpenChange={setPedirRetorno}>
         <AlertDialogContent>
