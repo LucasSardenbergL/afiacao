@@ -74,7 +74,7 @@ Era a assinatura do sync, não autoria. Medir oferta ou conversão por farmer em
 
 1. **Migration** `20261113120000`, que é aditiva e compatível com a edge velha. Comando:
    `bun run db:aplicar supabase/migrations/20261113120000_vendedor_pedido_omie.sql`. O ensaio na prod
-   passou (sha `1ab7ca8f…`, ROLLBACK). O apply real é do founder: o classificador de permissão da sessão
+   passou (sha `1cf0994d…`, ROLLBACK). O apply real é do founder: o classificador de permissão da sessão
    negou o `db:aplicar`.
 2. **Edge** `omie-vendas-sync` v1.37, depois da migration. Com `created_by NOT NULL` o import novo seria
    recusado.
