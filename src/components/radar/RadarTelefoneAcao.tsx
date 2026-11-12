@@ -24,6 +24,7 @@ export function RadarTelefoneAcao({
   className,
   discreto = false,
   cnpj,
+  aoAgir,
 }: {
   telefone: string | null | undefined;
   /** 'icon' = ícone compacto (linha, telefone da ficha); 'full' = botão com texto (modo discagem). */
@@ -33,6 +34,8 @@ export function RadarTelefoneAcao({
   discreto?: boolean;
   /** O lead do telefone: com ele, o toque vira intenção de contato no ledger (radar_eventos). */
   cnpj?: string;
+  /** Depois de ligar/copiar (revisão 2026-11-11, item 12): a linha abre a ficha, onde o desfecho é registrado. */
+  aoAgir?: () => void;
 }) {
   const isTouch = useIsTouchDevice();
   const digitos = normalizeBrPhone(telefone);
@@ -41,6 +44,9 @@ export function RadarTelefoneAcao({
   const tomCheio = discreto ? 'outline' : 'default';
   const classeDiscreta = discreto ? 'text-muted-foreground' : undefined;
 
+  // Revisão 2026-11-11 (item 10): no toque o ícone tem 44×44 — a âncora tinha 32 px de largura (o CSS global só garante
+  // a largura mínima a <button>, e o `tel:` é <a>).
+  const tamanhoToque = 'h-11 w-11';
   if (isTouch) {
     const conteudo = (
       <>
@@ -51,18 +57,19 @@ export function RadarTelefoneAcao({
     // Mesmo sinal do write-guard (não o contexto): a linha também renderiza fora do provider da lente.
     if (isLensActive()) {
       return (
-        <Button size={icone ? 'icon' : 'sm'} variant="ghost" disabled className={cn(icone && 'h-8 w-8', className)}
+        <Button size={icone ? 'icon' : 'sm'} variant="ghost" disabled className={cn(icone && tamanhoToque, className)}
           title="Ligação indisponível em modo Ver como" aria-label="Ligar">
           {conteudo}
         </Button>
       );
     }
     return (
-      <Button asChild size={icone ? 'icon' : 'sm'} variant={icone ? 'ghost' : tomCheio} className={cn(icone && 'h-8 w-8', classeDiscreta, className)}>
+      <Button asChild size={icone ? 'icon' : 'sm'} variant={icone ? 'ghost' : tomCheio} className={cn(icone && tamanhoToque, !icone && 'min-h-11', classeDiscreta, className)}>
         <a href={`tel:${digitos}`} aria-label="Ligar pelo celular" title="Abre o discador do seu celular"
           onClick={() => {
             track('radar.telefone_acao', { acao: 'ligar_celular' });
             if (cnpj) void registrarIntencaoContato(cnpj, 'ligar');
+            aoAgir?.();
           }}>
           {conteudo}
         </a>
@@ -76,6 +83,7 @@ export function RadarTelefoneAcao({
       track('radar.telefone_acao', { acao: 'copiar' });
       if (cnpj) void registrarIntencaoContato(cnpj, 'copiar');
       toast.success('Telefone copiado', { description: telefone });
+      aoAgir?.();
     } catch {
       // Sem permissão de área de transferência: o número continua visível para digitar.
       toast.error('Não consegui copiar', { description: `Disque ${telefone} pelo seu aparelho.` });

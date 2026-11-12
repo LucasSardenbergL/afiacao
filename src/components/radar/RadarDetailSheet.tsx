@@ -34,7 +34,7 @@ import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estad
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useRadarContatos, LIMITE_HISTORICO_RADAR } from '@/queries/useRadarContatos';
 import {
-  formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloStatus, tomStatus, seloRfb, scoreUI,
+  formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloIdade, formatarDataIso, rotuloStatus, tomStatus, seloRfb, scoreUI,
   selosFilial, textoFilialFicha, telefonePrincipal, type IrmaosRaiz, type EstadoIrmaos,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
@@ -261,6 +261,8 @@ export function RadarDetailSheet({
               <Selo tom={rfb.tom} title={rfb.titulo} className="font-normal" data-testid="selo-rfb">{rfb.texto}</Selo>
             )}
           </SheetTitle>
+          {/* Revisão 2026-11-11 (item 20): o diálogo precisa de descrição acessível (o Radix avisa sem ela). */}
+          <SheetDescription className="sr-only">Ficha do lead: dados da Receita, contatos e registro do desfecho.</SheetDescription>
         </SheetHeader>
         <div className="mt-3 flex items-center justify-between gap-2">
           <RadarAtendimentoLead cnpj={empresa.cnpj} jaCliente={empresa.ja_cliente} />
@@ -333,7 +335,7 @@ export function RadarDetailSheet({
             {empresa.cnae_descricao ? ` — ${empresa.cnae_descricao}` : ''}
           </Linha>
           <Linha label="Abertura">
-            {empresa.data_abertura ?? '—'} {idade != null ? `(${idade} anos)` : ''}
+            {empresa.data_abertura ? formatarDataIso(empresa.data_abertura) : '—'} {idade != null ? `(${rotuloIdade(idade)})` : ''}
           </Linha>
           <Linha label="Porte">{rotuloPorte(empresa.porte)}</Linha>
           <Linha label="Capital">{formatarCapital(empresa.capital_social)}</Linha>

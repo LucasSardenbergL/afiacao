@@ -80,6 +80,18 @@ function CampoTextoAdiado({
   );
 }
 
+type FiltroContato = 'telefone' | 'algum' | 'todos';
+const OPCOES_CONTATO: { v: FiltroContato; rotulo: string; titulo: string }[] = [
+  { v: 'telefone', rotulo: 'Com telefone', titulo: 'Só quem tem telefone na RFB' },
+  { v: 'algum', rotulo: 'Com algum contato', titulo: 'Telefone ou e-mail na RFB (padrão)' },
+  { v: 'todos', rotulo: 'Todos', titulo: 'Inclui quem não tem telefone nem e-mail na RFB' },
+];
+/** O estado de contato que a URL diz: "com telefone" vence; "incluir sem contato" sem telefone = todos. */
+export function filtroContato(f: { comTelefone?: boolean; incluirSemContato?: boolean }): FiltroContato {
+  if (f.comTelefone) return 'telefone';
+  return f.incluirSemContato === true ? 'todos' : 'algum';
+}
+
 export function RadarFiltros({
   filtros,
   set,
@@ -94,6 +106,7 @@ export function RadarFiltros({
   acoes?: ReactNode;
 }) {
   const regiao = filtros.regiao ?? 'brasil';
+  const contatoAtual = filtroContato(filtros);
   const escolherRegiao = (r: 'atuacao' | 'brasil') => {
     if (r === regiao) return;
     track('radar.regiao_trocada', { regiao: r, uf: filtros.uf || null });
@@ -102,10 +115,13 @@ export function RadarFiltros({
   };
   return (
     <div className="space-y-3">
-      {/* Modos de ordenação (rótulo = a ordem que a fila tem) */}
+      {/* Modos de ordenação (rótulo = a ordem que a fila tem). `aria-pressed` + grupo (revisão 2026-11-11, item 20): o
+          leitor de tela diz qual ordem está valendo — antes só a cor mudava. */}
       <div className="flex flex-wrap gap-2 items-center">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Ordem da fila">
         <Button
           variant={filtros.preset === 'score' ? 'default' : 'outline'}
+          aria-pressed={filtros.preset === 'score'}
           size="sm"
           onClick={() => set({ preset: 'score' as PresetRadar })}
           title="Ordena pelo score de lead (0–100, recalculado 1×/dia); quem não tem score fica por último"
@@ -114,6 +130,7 @@ export function RadarFiltros({
         </Button>
         <Button
           variant={filtros.preset === 'novas' ? 'default' : 'outline'}
+          aria-pressed={filtros.preset === 'novas'}
           size="sm"
           onClick={() => set({ preset: 'novas' as PresetRadar })}
           title="Ordena pela data de abertura na RFB, da mais recente para a mais antiga (não filtra o lote)"
@@ -122,12 +139,14 @@ export function RadarFiltros({
         </Button>
         <Button
           variant={filtros.preset === 'estabelecidas' ? 'default' : 'outline'}
+          aria-pressed={filtros.preset === 'estabelecidas'}
           size="sm"
           onClick={() => set({ preset: 'estabelecidas' as PresetRadar })}
           title="Abertas há 5 anos ou mais, por capital social"
         >
           {ROTULO_PRESET.estabelecidas}
         </Button>
+        </div>
         {acoes && <div className="ml-auto flex gap-2">{acoes}</div>}
       </div>
 
@@ -226,31 +245,29 @@ export function RadarFiltros({
           </Label>
         </div>
 
-        {/* Toggle só com telefone */}
-        <div className="flex items-center gap-2">
-          <Switch
-            id="radar-com-telefone"
-            checked={filtros.comTelefone}
-            onCheckedChange={(checked) => set({ comTelefone: checked })}
-          />
-          <Label htmlFor="radar-com-telefone" className="text-sm cursor-pointer">
-            Só com telefone
-          </Label>
-        </div>
-
-        {/* Lead sem telefone E sem e-mail não tem por onde ser trabalhado: fica fora por padrão. */}
-        <div className="flex items-center gap-2">
-          <Switch
-            id="radar-sem-contato"
-            checked={filtros.incluirSemContato === true}
-            onCheckedChange={(checked) => {
-              track('radar.sem_contato_toggle', { ativo: checked });
-              set({ incluirSemContato: checked });
-            }}
-          />
-          <Label htmlFor="radar-sem-contato" className="text-sm cursor-pointer" title="Inclui quem não tem telefone nem e-mail na RFB">
-            Incluir sem contato
-          </Label>
+        {/* Contato (revisão 2026-11-11, item 19): UM seletor no lugar de "Só com telefone" + "Incluir sem contato" — os
+            dois se sobrepunham (telefone implica contato) com polaridades opostas. Mesmos params de URL e de RPC. Padrão:
+            "com algum contato" (lead sem telefone E sem e-mail não tem por onde ser trabalhado). */}
+        <div className="inline-flex rounded-md border p-0.5" role="group" aria-label="Contato">
+          {OPCOES_CONTATO.map((o) => (
+            <Button
+              key={o.v}
+              variant={contatoAtual === o.v ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-7"
+              aria-pressed={contatoAtual === o.v}
+              title={o.titulo}
+              onClick={() => {
+                if (o.v === contatoAtual) return;
+                track('radar.filtro_contato', { valor: o.v });
+                set(o.v === 'telefone' ? { comTelefone: true, incluirSemContato: false }
+                  : o.v === 'todos' ? { comTelefone: false, incluirSemContato: true }
+                  : { comTelefone: false, incluirSemContato: false });
+              }}
+            >
+              {o.rotulo}
+            </Button>
+          ))}
         </div>
 
         {/* Toggle de LOTE: a fila é a FOTO VIGENTE (ultimo_lote = lote vigente); quem saiu do dump só entra
