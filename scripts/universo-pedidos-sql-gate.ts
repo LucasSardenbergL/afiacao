@@ -64,6 +64,7 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   // ── escritor ────────────────────────────────────────────────────────────────────────────────
   'public.aplicar_edicao_pedido_omie': { tipo: 'escritor', motivo: 'edição de UM pedido (lê e regrava por id)' },
   'public.criar_pedidos_com_itens': { tipo: 'escritor', motivo: 'importador Omie: insere/deduplica por hash' },
+  'public.sales_orders_registrar_vendedor_omie': { tipo: 'escritor', motivo: 'atribuição: grava o codVend em TODO importado da conta, cancelado inclusive (quem vendeu não depende do status)' },
   'public.pedido_total_liquido_converter': { tipo: 'escritor', motivo: 'conversão de total líquido: regrava pedidos por id' },
   'public.reconciliar_pedidos_omie': { tipo: 'escritor', motivo: 'sincronização Omie: reconcilia TODO status, cancelado inclusive' },
   // ── propósito ───────────────────────────────────────────────────────────────────────────────

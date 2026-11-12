@@ -127,7 +127,7 @@ BEGIN
     INTO v_recebidos, v_distintos
     FROM jsonb_array_elements(p_pedidos) x;
   -- O mesmo pedido duas vezes no lote: qual vendedor vale? Ambíguo — recusa em vez de sortear.
-  IF v_recebidos <> v_distintos THEN
+  IF v_recebidos IS DISTINCT FROM v_distintos THEN
     RAISE EXCEPTION 'VENDEDOR_PAYLOAD_DUPLICADO: % elementos, % pedidos distintos', v_recebidos, v_distintos
       USING ERRCODE = '22023';
   END IF;
@@ -185,7 +185,8 @@ REVOKE ALL ON FUNCTION public.sales_orders_registrar_vendedor_omie(text, jsonb) 
 GRANT EXECUTE ON FUNCTION public.sales_orders_registrar_vendedor_omie(text, jsonb) TO service_role;
 
 -- ── 4. a cobertura ─────────────────────────────────────────────────────────────────────────
--- Universo: pedidos IMPORTADOS do Omie (hash_payload omie_*), não apagados, não cancelados, com
+-- Universo: pedidos IMPORTADOS do Omie (hash_payload omie_*) no universo de VENDA canônico
+-- (status NOT IN STATUS_NAO_VENDA de src/lib/farmer/universo-pedidos.ts + deleted_at IS NULL), com
 -- order_date_kpi em [p_de, p_ate]. `pct_com_vendedor` é NULL quando não há pedido (ausente ≠ 0).
 -- Gate: master (o mesmo do venda_painel) ou service_role (o resumo por e-mail roda na edge).
 CREATE OR REPLACE FUNCTION public.venda_cobertura_vendedor(p_de date, p_ate date)
@@ -212,8 +213,7 @@ BEGIN
     SELECT so.account, so.total, so.vendedor_omie_codigo, so.vendedor_user_id, so.vendedor_lido_em
       FROM public.sales_orders so
      WHERE so.hash_payload LIKE 'omie\_%'
-       AND so.deleted_at IS NULL
-       AND so.status IS DISTINCT FROM 'cancelado'
+       AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento') AND so.deleted_at IS NULL
        AND so.order_date_kpi BETWEEN p_de AND p_ate
   ),
   por_conta AS (
@@ -238,7 +238,7 @@ BEGIN
     'de', p_de,
     'ate', p_ate,
     'eixo', 'order_date_kpi',
-    'universo', 'importados do Omie (hash_payload omie_*), nao apagados, nao cancelados',
+    'universo', 'importados do Omie (hash_payload omie_*) no universo de venda canonico (STATUS_NAO_VENDA + deleted_at)',
     'total', (SELECT jsonb_build_object(
                 'pedidos', coalesce(sum(pedidos), 0),
                 'lidos', coalesce(sum(lidos), 0),
@@ -279,32 +279,32 @@ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns
               WHERE table_schema = 'public' AND table_name = 'sales_orders'
                 AND column_name = 'created_by' AND is_nullable = 'NO') THEN
-    RAISE EXCEPTION 'P1 FALHOU: sales_orders.created_by segue NOT NULL — a edge nova falharia todo insert';
+    RAISE EXCEPTION 'P1_FALHOU: sales_orders.created_by segue NOT NULL — a edge nova falharia todo insert';
   END IF;
   IF (SELECT count(*) FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'sales_orders'
-         AND column_name IN ('vendedor_omie_codigo', 'vendedor_user_id', 'vendedor_lido_em')) <> 3 THEN
-    RAISE EXCEPTION 'P2 FALHOU: faltam colunas do vendedor em sales_orders';
+         AND column_name IN ('vendedor_omie_codigo', 'vendedor_user_id', 'vendedor_lido_em')) IS DISTINCT FROM 3 THEN
+    RAISE EXCEPTION 'P2_FALHOU: faltam colunas do vendedor em sales_orders';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
                   WHERE conrelid = 'public.sales_orders'::regclass
                     AND conname = 'sales_orders_vendedor_coerente' AND convalidated) THEN
-    RAISE EXCEPTION 'P3 FALHOU: CHECK sales_orders_vendedor_coerente ausente ou NOT VALID';
+    RAISE EXCEPTION 'P3_FALHOU: CHECK sales_orders_vendedor_coerente ausente ou NOT VALID';
   END IF;
   IF NOT has_column_privilege('authenticated', 'public.sales_orders', 'vendedor_user_id', 'SELECT') THEN
-    RAISE EXCEPTION 'P4 FALHOU: authenticated sem SELECT em sales_orders.vendedor_user_id (some do PostgREST)';
+    RAISE EXCEPTION 'P4_FALHOU: authenticated sem SELECT em sales_orders.vendedor_user_id (some do PostgREST)';
   END IF;
   IF has_column_privilege('authenticated', 'public.sales_orders', 'vendedor_user_id', 'UPDATE') THEN
-    RAISE EXCEPTION 'P5 FALHOU: authenticated pode UPDATE vendedor_user_id — escritor deixaria de ser único';
+    RAISE EXCEPTION 'P5_FALHOU: authenticated pode UPDATE vendedor_user_id — escritor deixaria de ser único';
   END IF;
   IF has_function_privilege('anon', 'public.sales_orders_registrar_vendedor_omie(text, jsonb)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.sales_orders_registrar_vendedor_omie(text, jsonb)', 'EXECUTE')
      OR NOT has_function_privilege('service_role', 'public.sales_orders_registrar_vendedor_omie(text, jsonb)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'P6 FALHOU: ACL do escritor errada (só service_role executa)';
+    RAISE EXCEPTION 'P6_FALHOU: ACL do escritor errada (só service_role executa)';
   END IF;
   IF has_function_privilege('anon', 'public.venda_cobertura_vendedor(date, date)', 'EXECUTE')
      OR NOT has_function_privilege('authenticated', 'public.venda_cobertura_vendedor(date, date)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'P7 FALHOU: ACL da cobertura errada (anon fora, authenticated dentro com gate master)';
+    RAISE EXCEPTION 'P7_FALHOU: ACL da cobertura errada (anon fora, authenticated dentro com gate master)';
   END IF;
   RAISE NOTICE 'vendedor_pedido_omie: created_by nullable, 3 colunas + CHECK, escritor service_role, cobertura master';
 END

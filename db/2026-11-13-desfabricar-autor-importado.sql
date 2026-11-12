@@ -57,7 +57,7 @@ BEGIN
   -- Zero com autor ⇒ todo anulado passou pelo filtro do backup (o UPDATE exige a linha lá).
   SELECT count(*) INTO v_resta
     FROM public.sales_orders WHERE hash_payload LIKE 'omie\_%' AND created_by IS NOT NULL;
-  IF v_resta <> 0 THEN
+  IF v_resta IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'POS FALHOU: % importado(s) ainda com created_by', v_resta;
   END IF;
   RAISE NOTICE 'desfabricar_autor_importado: 0 importados com autor';

@@ -48,8 +48,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               sem_dup:E5:E1,V1
               pct_zero:C2:C1
               sem_gate_cobertura:C3:C1
-              pos_not_null:MIG!P1 FALHOU
-              pos_grant_update:MIG!P5 FALHOU
+              pos_not_null:MIG!P1_FALHOU
+              pos_grant_update:MIG!P5_FALHOU
               desfabrica_app:D1:C1"
   falhas=0
   echo "═══ CONTROLE (sem sabotagem) ═══"
@@ -60,8 +60,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   [ "$n" = "$TOTAL_ESPERADO" ] || { echo "❌ CONTROLE rodou $n asserts, esperado $TOTAL_ESPERADO"; exit 1; }
   echo "  ✅ controle verde ($n asserts)"
   i=0
-  IFS=$'\n'
-  for linha in $(echo "$SABOTAGENS" | sed -E 's/^ +//'); do
+  for linha in $SABOTAGENS; do
     i=$((i+1))
     nome="${linha%%:*}"; resto="${linha#*:}"; reds="${resto%%:*}"
     case "$resto" in *:*) greens="${resto#*:}" ;; *) greens="" ;; esac
@@ -70,23 +69,20 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "❌ $nome: harness VERDE com a sabotagem — assert sem dente"; falhas=$((falhas+1)); continue
     fi
     antes=$falhas
-    IFS=','
-    for a in $reds; do
+    for a in ${reds//,/ }; do
       case "$a" in
-        *!*) id="${a%%!*}"; marca="${a#*!}"
-             grep -q "^  ❌ $id .*$marca" "$log" || { echo "❌ $nome: $id devia falhar com a marca [$marca]"; falhas=$((falhas+1)); } ;;
+        *!*) id="${a%%!*}"; marca="${a#*!}"   # vermelho de EXECUÇÃO: o erro tem de trazer a marca
+             grep -q "^  ❌ $id .*ERROR:  $marca:" "$log" || { echo "❌ $nome: $id devia falhar com a marca $marca"; falhas=$((falhas+1)); } ;;
         *)   grep -q "^  ❌ $a " "$log" || { echo "❌ $nome: $a devia estar VERMELHO"; falhas=$((falhas+1)); } ;;
       esac
     done
-    for a in $greens; do
+    for a in ${greens//,/ }; do
       [ -n "$a" ] || continue
       grep -q "^  ✅ $a " "$log" || { echo "❌ $nome: $a (controle) devia seguir VERDE"; falhas=$((falhas+1)); }
     done
-    IFS=$'\n'
     [ "$falhas" = "$antes" ] || continue
     echo "  ✅ $nome → vermelho em [$reds]${greens:+, verde em [$greens]}"
   done
-  unset IFS
   [ "$falhas" = 0 ] || { echo "❌ FALSIFICAÇÃO FALHOU ($falhas)"; exit 1; }
   echo "✅ FALSIFICAÇÃO OK — todas as sabotagens ficaram vermelhas onde deviam"
   exit 0
@@ -150,7 +146,7 @@ sabotar() { # $1 = expressão perl; exige que MUDE o arquivo (sabotagem que não
   depois="$(md5 -q "$MIG" 2>/dev/null || md5sum "$MIG" | cut -d' ' -f1)"
   [ "$antes" != "$depois" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada"; exit 2; }
 }
-desliga_pos() { sabotar "s/RAISE EXCEPTION 'P(\\d) FALHOU/RAISE NOTICE 'P\$1 FALHOU/g"; }
+desliga_pos() { sabotar "s/RAISE EXCEPTION 'P(\\d)_FALHOU/RAISE NOTICE 'P\${1}_FALHOU/g"; }
 case "${SABOTAGEM:-}" in
   "") ;;
   sem_drop_not_null)   sabotar 's/ALTER TABLE public\.sales_orders ALTER COLUMN created_by DROP NOT NULL;/-- sabotado/'; desliga_pos ;;
@@ -159,7 +155,7 @@ case "${SABOTAGEM:-}" in
   reescreve_sempre)    sabotar 's/AND \(so\.vendedor_lido_em IS NULL\n/AND (true OR so.vendedor_lido_em IS NULL\n/'; desliga_pos ;;
   sem_isolamento_conta) sabotar 's/ON so\.account = p_account\n       AND so\.omie_pedido_id = l\.codigo_pedido\n       AND so\.hash_payload LIKE .omie\\_%./ON so.omie_pedido_id = l.codigo_pedido/'; desliga_pos ;;
   sem_validacao)       sabotar 's/  \) THEN\n    RAISE EXCEPTION .VENDEDOR_PAYLOAD_INVALIDO: codigo_pedido/  ) AND false THEN\n    RAISE EXCEPTION \x27VENDEDOR_PAYLOAD_INVALIDO: codigo_pedido/'; desliga_pos ;;
-  sem_dup)             sabotar 's/IF v_recebidos <> v_distintos THEN/IF false THEN/'; desliga_pos ;;
+  sem_dup)             sabotar 's/IF v_recebidos IS DISTINCT FROM v_distintos THEN/IF false THEN/'; desliga_pos ;;
   pct_zero)            sabotar 's/CASE WHEN coalesce\(sum\(pedidos\), 0\) = 0 THEN NULL/CASE WHEN coalesce(sum(pedidos), 0) = 0 THEN 0/'; desliga_pos ;;
   sem_gate_cobertura)  sabotar 's/IF NOT \(coalesce\(auth\.role\(\), ..\) = .service_role./IF false AND NOT (coalesce(auth.role(), \x27\x27) = \x27service_role\x27/'; desliga_pos ;;
   pos_not_null)        sabotar 's/ALTER TABLE public\.sales_orders ALTER COLUMN created_by DROP NOT NULL;/-- sabotado/' ;;
