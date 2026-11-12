@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useAuth } from '@/contexts/AuthContext';
+import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, FILTROS_MEUS_ATENDIMENTOS, CHAVE_VISAO_MEUS, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
 import { dicaDoChip, useRadarParaVisitarContagem } from '@/queries/useRadarContatoContabil';
@@ -166,7 +167,12 @@ export default function RadarClientes() {
   // um dia para o outro não fica pedindo a fila de ontem.
   const hojeISO = useHojeBRT();
 
-  const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus, aguardar: aguardandoTerritorio });
+  // Revisão 2026-11-11 (item 14): staff SEM a capacidade de prospectar (a rota só exige staff) via a fila falhar com
+  // "Não foi possível carregar" — a RPC recusa. A fila nem é pedida, e a tela diz que é falta de acesso.
+  const { role: papel, commercialRole, loading: authCarregando } = useAuth();
+  const podeProspectar = podeProspectarRadar({ role: papel, commercialRole });
+  const semAcesso = !authCarregando && !podeProspectar;
+  const q = useRadarLista(filtrosDaLista, hojeISO, { soMeus: meus, aguardar: aguardandoTerritorio || !podeProspectar });
   // Quantos do recorte são "para visitar": desligado, do agregado (quando o recorte cabe nele); ligado, da própria fila.
   const contagemVisitar = useRadarParaVisitarContagem(filtros, hojeISO, { desligado: meus || aguardandoTerritorio });
   const rotuloContagemVisitar = contagemVisitar.rotulo;
@@ -443,6 +449,17 @@ export default function RadarClientes() {
     setFiltros(origem === 'mapa' ? { ...patch, vista: 'lista' } : patch);
     if (ajuste) toast.info(ajuste);
   };
+
+  if (semAcesso) {
+    return (
+      <div className="p-4" data-testid="radar-sem-acesso">
+        <EmptyState
+          tone="operational" icon={Radar} title="Sem acesso ao Radar de Clientes"
+          description="A prospecção é dos vendedores (farmer, hunter, closer) e da gestão comercial. Se você deveria ver esta tela, peça ao gestor o seu papel comercial."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 space-y-4 max-w-6xl mx-auto pb-24">
