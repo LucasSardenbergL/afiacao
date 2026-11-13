@@ -160,7 +160,9 @@ export function FilaDoDia() {
     // Erro ≠ dia limpo: sem isto, RLS negada/rede ruim virava "carteira em
     // dia" — falso-verde num motor de receita (a vendedora deixava de ligar).
     if (isError) {
+      // A ficha do deep link (?ficha=) abre mesmo com a fila em erro: ela só precisa do compradorId.
       return (
+        <>
         <Card className="p-6">
           <p className="text-sm font-medium">Não consegui carregar sua fila.</p>
           <p className="text-2xs text-muted-foreground mt-1">
@@ -168,6 +170,8 @@ export function FilaDoDia() {
           </p>
           <Button size="sm" variant="outline" className="mt-3" onClick={retry}>Tentar de novo</Button>
         </Card>
+        {ficha}
+        </>
       );
     }
     // Onda desligada: a mensagem própria, nunca "nada a fazer".

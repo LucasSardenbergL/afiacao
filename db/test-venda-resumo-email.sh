@@ -30,15 +30,16 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261113110100_venda_resumo_email_controle.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20261113140000_venda_resumo_email_revisao.sql"   # revisão do code review (13/11)
 MIG_JSON="$REPO_ROOT/supabase/migrations/20261108000000_cliente_sucessao_consumidores.sql"
 MIG_MOSTRADA="$REPO_ROOT/supabase/migrations/20261020174221_venda_cliente_espinha.sql"
 MIG_PAINEL="$REPO_ROOT/supabase/migrations/20261108010000_venda_painel_heranca.sql"
 MIG_LISTA="$REPO_ROOT/supabase/migrations/20261028220003_venda_lista_acesso.sql"
-for f in "$MIG" "$MIG_JSON" "$MIG_MOSTRADA" "$MIG_PAINEL" "$MIG_LISTA"; do [ -f "$f" ] || { echo "ausente: $f"; exit 1; }; done
+for f in "$MIG" "$MIG2" "$MIG_JSON" "$MIG_MOSTRADA" "$MIG_PAINEL" "$MIG_LISTA"; do [ -f "$f" ] || { echo "ausente: $f"; exit 1; }; done
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca exata.
-  SABOTAGENS="hash_int:S1a lista_ve_controle:L1a mostrada_controle:L1b policy_aberta:POST!P8_FALHOU selecao_so_tratamento:R1b email_com_controle:R1c braco_livre:B1d preparar_aberto:POST!P6_FALHOU clique_qualquer:C1c mostrada_por_outro:C1e oferta_nao_atendeu:P1d contato_antes:P1c painel_com_controle:V1b inicio_hoje:S2b nome_sem_coalesce:R1c sem_gate_edge:R1m"
+  SABOTAGENS="hash_int:S1a lista_ve_controle:L1a mostrada_controle:L1b policy_aberta:POST!P8_FALHOU selecao_so_tratamento:R1b email_com_controle:R1c braco_livre:B1d preparar_aberto:POST!P6_FALHOU clique_qualquer:C1c mostrada_por_outro:C1e oferta_nao_atendeu:P1d contato_antes:P1c painel_com_controle:V1b inicio_hoje:S2b nome_sem_coalesce:R1c sem_gate_edge:R1m saudacao_crua:R1o gate_denylist:R1p oferta_retocada:P1c ic_wald:P1k"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-resumo.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -92,6 +93,8 @@ cleanup() {
 trap cleanup EXIT
 
 cp "$MIG" "$MIG_USADA"
+MIG2_USADA="$WORK/mig2.sql"
+cp "$MIG2" "$MIG2_USADA"
 # Os predecessores: o CREATE de cada função recortado da migration que o pôs em prod (o T0 confere o md5).
 python3 -I - "$PRED_SQL" "$MIG_JSON" "$MIG_MOSTRADA" "$MIG_PAINEL" "$MIG_LISTA" <<'PY'
 import re, sys
@@ -112,14 +115,17 @@ out = [recorta(mj, "CREATE OR REPLACE FUNCTION private._venda_sugestoes_json"),
 open(dst, "w", encoding="utf-8").write("\n".join(out))
 PY
 
-sabotar() { # $1 = de, $2 = para (literal; substitui TODAS as ocorrências; padrão ausente = erro)
-  python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
+sabotar() { # $1 = de, $2 = para (literal; TODAS as ocorrências; padrão ausente = erro)
+  # Onde o padrão está na REVISÃO (20261113140000), sabota lá: é ela que deixa o corpo vivo (a 1ª é recriada por cima).
+  python3 -I - "$MIG2_USADA" "$MIG_USADA" "$1" "$2" <<'PY'
 import sys
-p, de, para = sys.argv[1:]
-s = open(p, encoding="utf-8").read()
-if de not in s:
-    sys.exit("padrao ausente: " + de)
-open(p, "w", encoding="utf-8").write(s.replace(de, para))
+p2, p1, de, para = sys.argv[1:]
+for p in (p2, p1):
+    s = open(p, encoding="utf-8").read()
+    if de in s:
+        open(p, "w", encoding="utf-8").write(s.replace(de, para))
+        sys.exit(0)
+sys.exit("padrao ausente: " + de)
 PY
 }
 case "${SABOTAGEM:-}" in
@@ -148,14 +154,21 @@ case "${SABOTAGEM:-}" in
   mostrada_por_outro)   sabotar "  IF v_dest AND l.tipo = 'farmer' AND l.selecao_id IS NOT NULL THEN" "  IF v_dest AND l.selecao_id IS NOT NULL THEN"
                         sabotar "       AND s.farmer_user_id = v_uid AND s.fase = 'ativa' AND s.braco IS DISTINCT FROM 'controle'" "       AND s.fase = 'ativa' AND s.braco IS DISTINCT FROM 'controle'" ;;
   oferta_nao_atendeu)   sabotar "o.resultado IN ('vendeu', 'vai_pedir', 'sem_interesse')" "o.resultado IS NOT NULL" ;;
-  contato_antes)        sabotar "         AND vc.atualizado_em >= COALESCE(o.enviado_em, 'infinity'::timestamptz)
+  contato_antes)        sabotar "         AND vc.criado_em >= COALESCE(o.enviado_em, 'infinity'::timestamptz)
 " "" ;;
+  oferta_retocada)      sabotar "         AND vc.criado_em >= COALESCE(o.enviado_em, 'infinity'::timestamptz)" "         AND vc.atualizado_em >= COALESCE(o.enviado_em, 'infinity'::timestamptz)" ;;
+  saudacao_crua)        sabotar "      v_saud := CASE WHEN v_nome ~ '^[^0-9_@.[:space:]]+\$' THEN v_nome END;" "      v_saud := v_nome;" ;;
+  gate_denylist)        sabotar "  IF v_edge IS NULL OR v_edge !~ '^v[0-9]+\\.[0-9]+-'
+     OR (substring(v_edge FROM '^v([0-9]+)\\.')::int, substring(v_edge FROM '^v[0-9]+\\.([0-9]+)-')::int) < (1, 3) THEN" "  IF v_edge IS NULL OR v_edge IN ('v1.0-sensor-inicial', 'v1.1-resumo-param-so-no-app', 'v1.2-radar-leads-vendedor') THEN" ;;
+  ic_wald)              sabotar "    v_lo := v_dif - sqrt((t.p - w1.lo) ^ 2 + (w0.hi - c.p) ^ 2);
+    v_hi := v_dif + sqrt((w1.hi - t.p) ^ 2 + (c.p - w0.lo) ^ 2);" "    v_lo := v_dif - 1.96 * sqrt(t.p * (1 - t.p) / t.n + c.p * (1 - c.p) / c.n);
+    v_hi := v_dif + 1.96 * sqrt(t.p * (1 - t.p) / t.n + c.p * (1 - c.p) / c.n);" ;;
   painel_com_controle)  sabotar "     WHERE s.fase = 'ativa' AND s.braco IS DISTINCT FROM 'controle'
        AND s.dia_referencia >= v_ini AND s.dia_referencia < v_fim" "     WHERE s.fase = 'ativa' AND true
        AND s.dia_referencia >= v_ini AND s.dia_referencia < v_fim" ;;
   inicio_hoje)          sabotar "  v_inicio := v_hoje + CASE extract(isodow FROM v_hoje)::int WHEN 5 THEN 3 WHEN 6 THEN 2 ELSE 1 END;" \
                                 "  v_inicio := v_hoje;" ;;
-  sem_gate_edge)        sabotar "  IF v_edge IS NULL OR v_edge IN ('v1.0-sensor-inicial', 'v1.1-resumo-param-so-no-app', 'v1.2-radar-leads-vendedor') THEN" "  IF false THEN" ;;
+  sem_gate_edge)        sabotar "  IF v_edge IS NULL OR v_edge !~ '^v[0-9]+\\.[0-9]+-'" "  IF false AND v_edge !~ '^v[0-9]+\\.[0-9]+-'" ;;
   nome_sem_coalesce)    sabotar "  v_nome := COALESCE(v_nome, 'Cliente sem nome no cadastro');" "" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
@@ -173,6 +186,17 @@ for cab, velho in (("CREATE OR REPLACE FUNCTION private._venda_sugestoes_json", 
     s = s.replace(velho, hashlib.md5(s[j:k].encode()).hexdigest())
 open(p, "w", encoding="utf-8").write(s)
 PY2
+  python3 -I - "$MIG2_USADA" <<'PY3'
+import hashlib, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+for cab, velho in (("CREATE OR REPLACE FUNCTION public.venda_resumo_preparar(", "31a29f5d85d1d52e600c6ee808969fd8"),
+                   ("CREATE OR REPLACE FUNCTION private.venda_resumo_oportunidades(", "2de7b60b5546ca1610daf25529dcea36"),
+                   ("CREATE OR REPLACE FUNCTION public.venda_resumo_painel(", "715e028256fb813fa5416299593810e0")):
+    i = s.index(cab); j = s.index("AS $$", i) + len("AS $$"); k = s.index("\n$$;", j) + 1
+    s = s.replace(velho, hashlib.md5(s[j:k].encode()).hexdigest())
+open(p, "w", encoding="utf-8").write(s)
+PY3
 }
 if [ -n "${SABOTAGEM:-}" ]; then reassinar; echo "SABOTAGEM ATIVA: $SABOTAGEM"; fi
 
@@ -294,6 +318,7 @@ P -q -c "INSERT INTO public.venda_sugestao (tipo, fase, dia_referencia, farmer_u
 
 # ── a migration ─────────────────────────────────────────────────────────────────────────────────────────────────
 if ! P -q -f "$MIG_USADA" > "$WORK/apply.log" 2>&1; then echo "FAIL apply"; FAIL_APPLY=1; sed -n 1,20p "$WORK/apply.log"; fi
+if ! P -q -f "$MIG2_USADA" > "$WORK/apply2.log" 2>&1; then echo "FAIL apply revisao"; FAIL_APPLY=1; grep -E 'ERRO|ERROR|FALHOU' "$WORK/apply2.log" | sed -n 1,5p; fi
 grep -q 'venda-resumo-email OK' "$WORK/apply.log" 2>/dev/null || grep -E 'FALHOU|ERRO|ERROR' "$WORK/apply.log" | sed -n 1,3p
 
 INICIO="$(Pq -c "SELECT inicio FROM public.venda_braco_sorteio")"
@@ -319,8 +344,9 @@ eq "S3c TRUNCATE braco → 55000" "$(estado "TRUNCATE public.venda_braco_comprad
 eq "S3d UPDATE sorteio → 55000" "$(estado "UPDATE public.venda_braco_sorteio SET fracao_controle = 0.2 WHERE id = 1")" "55000"
 
 # Compradores de teste por braço (a régua decide; escolhidos pela régua, não forçados)
-mapfile -t CTRL < <(Pq -c "SELECT comprador_id FROM public.venda_braco_comprador WHERE braco = 'controle' ORDER BY comprador_id LIMIT 3")
-mapfile -t TRAT < <(Pq -c "SELECT comprador_id FROM public.venda_braco_comprador WHERE braco = 'tratamento' ORDER BY comprador_id LIMIT 8")
+# Laço `read`, não `mapfile`: o bash do macOS é o 3.2 (sem mapfile) — e lá a falta dele saía 0 com a suíte morta.
+CTRL=(); while IFS= read -r x; do CTRL+=("$x"); done < <(Pq -c "SELECT comprador_id FROM public.venda_braco_comprador WHERE braco = 'controle' ORDER BY comprador_id LIMIT 3")
+TRAT=(); while IFS= read -r x; do TRAT+=("$x"); done < <(Pq -c "SELECT comprador_id FROM public.venda_braco_comprador WHERE braco = 'tratamento' ORDER BY comprador_id LIMIT 8")
 [ "${#CTRL[@]}" -eq 3 ] && [ "${#TRAT[@]}" -eq 8 ] || { echo "FAIL setup: bracos insuficientes (${#CTRL[@]}/${#TRAT[@]})"; FAIL_APPLY=1; }
 NOVO="$(Pq -c "SELECT md5('novo' || g)::uuid FROM generate_series(1,500) g WHERE private.venda_braco_u('venda-r2-controle-2026-11-12', md5('novo' || g)::uuid) < 0.15 LIMIT 1")"
 
@@ -402,6 +428,20 @@ P -q -c "SELECT public.venda_resumo_preparar('$HOJE', '$M')" > /dev/null
 eq "R1k teste: antes do inicio, sem selecao nova, tipo teste" "$(Pq -c "SELECT count(*) FROM public.venda_resumo_envio WHERE tipo = 'teste' AND dia = '$HOJE'") $(Pq -c "SELECT count(*) FROM public.venda_resumo_selecao")" "1 8"
 eq "R1l acoes_execucoes registra cada rodada" "$(Pq -c "SELECT count(*) FILTER (WHERE status = 'sucesso') || ' ' || count(*) FILTER (WHERE status = 'erro') FROM public.acoes_execucoes WHERE acao = 'venda.resumo_email'")" "4 3"
 
+# ── R1o/R1p: revisão do code review (20261113140000) ───────────────────────────────────────────────────────────
+# Saudação só com nome de gente: profiles.name que é username (dígitos) vira "Bom dia!" (a Tatyana em prod).
+P -q -c "UPDATE public.profiles SET name = 'reginasilva2002' WHERE user_id = '$F1'"
+P -q -c "SELECT public.venda_resumo_preparar('$D', '$M')" > /dev/null
+MSG="$(Pq -c "SELECT fa.mensagem FROM public.fornecedor_alerta fa JOIN public.venda_resumo_envio e ON e.alerta_id = fa.id WHERE e.tipo = 'teste' AND e.dia = '$D' ORDER BY e.tentativa DESC LIMIT 1")"
+eq "R1o saudacao: username vira 'Bom dia!' (sem o token cru)" "$(tem 'Bom dia!') $(tem 'Bom dia, Reginasilva2002')" "sim nao"
+P -q -c "UPDATE public.profiles SET name = 'REGINA SILVA' WHERE user_id = '$F1'"
+# Gate por NÚMERO de versão: hotfix fora da forma (v1.2b-…) bloqueia; versão futura (v1.4-…) passa.
+P -q -c "INSERT INTO public.deploy_atestacoes VALUES (3, now() + interval '1 minute', 'dispatch-notifications', 'v1.2b-hotfix', 'x', 'sonda')"
+G1="$(Pq -c "SELECT coalesce(public.venda_resumo_preparar('$HOJE', '$M') ->> 'erro', 'ok')")"
+P -q -c "INSERT INTO public.deploy_atestacoes VALUES (4, now() + interval '2 minutes', 'dispatch-notifications', 'v1.4-futura', 'x', 'sonda')"
+G2="$(Pq -c "SELECT coalesce(public.venda_resumo_preparar('$HOJE', '$M') ->> 'erro', 'ok')")"
+eq "R1p gate: v1.2b-hotfix bloqueia, v1.4 passa" "$G1 $G2" "edge_desatualizada ok"
+
 # ── C1: clique ──────────────────────────────────────────────────────────────────────────────────────────────────
 ENV_F="$(Pq -c "SELECT id FROM public.venda_resumo_envio WHERE tipo = 'farmer' AND tentativa = 2")"
 ENV_C="$(Pq -c "SELECT id FROM public.venda_resumo_envio WHERE tipo = 'copia'")"
@@ -431,7 +471,9 @@ UPDATE public.fornecedor_alerta SET status = 'notificado', email_enviado_em = no
 INSERT INTO public.venda_contato (farmer_user_id, comprador_id, dia, resultado, criado_em, atualizado_em) VALUES
   ('$F1', '${TRAT[0]}', '$D', 'vai_pedir', now(), now()),
   ('$F1', '${TRAT[1]}', '$D', 'nao_atendeu', now(), now()),
-  ('$F1', '${TRAT[2]}', '$D', 'sem_interesse', now() - interval '3 hours', now() - interval '3 hours');
+  ('$F1', '${TRAT[2]}', '$D', 'sem_interesse', now() - interval '3 hours', now() - interval '3 hours'),
+  -- criado ANTES do envio e re-tocado depois (upsert "último toque vence"): não é oferta do resumo (revisão 13/11)
+  ('$F1', '${TRAT[5]}', '$D', 'vai_pedir', now() - interval '3 hours', now());
 SQL
 PAINEL="$(Pq -c "$(como "$M" "SELECT public.venda_resumo_painel('$D', '$D')::text")")"
 pj() { printf '%s' "$PAINEL" | python3 -I -c "import json,sys; j=json.load(sys.stdin); print($1)"; }
@@ -452,6 +494,16 @@ SQL
 PAINEL="$(Pq -c "$(como "$M" "SELECT public.venda_resumo_painel('$D', '$D')::text")")"
 eq "P1g efeito tratamento: 5 maduros, 1 converteu" "$(pj "j['efeito']['tratamento']['maduros'], j['efeito']['tratamento']['converteram'], j['efeito']['tratamento']['taxa']")" "5 1 0.2"
 eq "P1h efeito controle: nao_medivel fora da taxa" "$(pj "j['efeito']['controle']['maduros'], j['efeito']['controle']['nao_medivel'], j['efeito']['controle']['taxa']")" "3 1 0.0"
+# IC95 de Newcombe (Wilson por braço), conferido FORA do banco: tratamento 1/5, controle 0/2 (Wald daria outro).
+IC_PY="$(python3 -I -c "
+import math
+z=1.96
+def w(p,n):
+    c=(p+z*z/(2*n))/(1+z*z/n); m=z*math.sqrt(p*(1-p)/n+z*z/(4*n*n))/(1+z*z/n); return c-m,c+m
+p1,n1,p0,n0=0.2,5,0.0,2
+l1,u1=w(p1,n1); l0,u0=w(p0,n0); d=p1-p0
+print(round(d-math.sqrt((p1-l1)**2+(u0-p0)**2),4), round(d+math.sqrt((u1-p1)**2+(p0-l0)**2),4))")"
+eq "P1k IC95 Newcombe da diferenca" "$(pj "' '.join(str(x) for x in j['efeito']['ic95'])")" "$IC_PY"
 eq "P1i A/A historico por braco tem os dois" "$(pj "sorted(j['aa_historico'].keys())")" "['controle', 'tratamento']"
 # contato atribuído a UMA oportunidade: TRAT[4] entregue em D (sem contato em D) e em D+1 (útil); o contato de D+1
 # cai na janela das duas — conta só na de D+1 (sem a régua, D contaria 2)
