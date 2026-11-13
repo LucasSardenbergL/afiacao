@@ -639,6 +639,12 @@ executa() {
   if [ "$rc" -ne 0 ]; then
     falhas+=("$rotulo: exit $rc")
     printf '  ❌ %-44s exit=%s (%ss)\n' "$rotulo" "$rc" "$dur"
+    # O placar só diz QUANTOS caíram; quais caíram fica no meio do log, fora do recorte do fim
+    # (run 43284897053: "PASS=54 FAIL=2" sem nenhum ❌ visível). Mostra os asserts vermelhos primeiro.
+    if grep -q '❌' "$log"; then
+      echo "     ── asserts vermelhos (até 20) ──"
+      grep '❌' "$log" | head -20 | sed 's/^/     /'
+    fi
     echo "     ── últimas linhas ──"
     tail -12 "$log" | sed 's/^/     /'
     return 0
