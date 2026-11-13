@@ -2989,7 +2989,9 @@ Deno.serve(async (req) => {
         const exigenciaRadar = lerExigenciaRadar(radar);
         if (exigenciaRadar) {
           const veredito = await verificarElegibilidadeRadar({
-            lerLead: (doc) => supabaseAdmin.from("radar_empresas")
+            // `async` + await: devolve uma Promise de verdade (o builder do PostgREST é só thenable — o typecheck do
+            // Lovable acusava TS2739 aqui; em runtime já funcionava).
+            lerLead: async (doc) => await supabaseAdmin.from("radar_empresas")
               .select("ja_cliente, omie_codigo_cliente, rfb_situacao, prospeccao_status").eq("cnpj", doc).maybeSingle(),
           }, docClean, exigenciaRadar);
           if (!veredito.ok) {
