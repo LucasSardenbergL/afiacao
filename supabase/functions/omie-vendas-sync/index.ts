@@ -10,6 +10,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
 import { concluirSyncPedidosIncremental } from "./desfecho-pedidos.ts";
+import { contadoresVendedorZerados, registrarVendedoresDaPagina } from "./vendedor-pedido.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
@@ -163,6 +164,8 @@ interface OmiePedidoVendaProduto {
   cabecalho?: OmiePedidoCabecalho;
   det?: OmieDetalheItem[];
   infoCadastro?: { dInc?: string };
+  // `codVend` = vendedor do PRÓPRIO pedido (não do cadastro do cliente) → ./vendedor-pedido.ts
+  informacoes_adicionais?: { codVend?: unknown } | null;
 }
 
 interface OmieListarPedidosResponse {
@@ -1108,6 +1111,8 @@ async function syncPedidos(
   // janela do cron. Sem ele, o pedido pulado some em silêncio quando a data sai da janela.
   let pedidosDescontoIlegivel = 0;
   const amostraDescontoIlegivel: number[] = [];
+  // QUEM VENDEU (./vendedor-pedido.ts): sensor com denominador — lidos/atualizados/falhas por run.
+  const vendedorAcc = contadoresVendedorZerados();
   let leasePerdido = false;          // o banco recusou o heartbeat: outro worker tomou a janela
   let reachedEnd = false;            // true SÓ no fim real do Omie (null = "Não existem registros", ou página vazia)
   let lastErrorKind: 'rate_limit' | 'transient' | 'http' | null = null;
@@ -1216,15 +1221,10 @@ async function syncPedidos(
   const productMap = await carregarProductMap(supabase as unknown as BancoPostgrest, account);
   console.log(`[sync_pedidos][${account}] Product map: ${productMap.size}`);
 
-  // System user for created_by
-  const { data: adminProfile } = await supabase
-    .from('profiles')
-    .select('user_id')
-    .eq('is_employee', true)
-    .limit(1)
-    .single();
-  const systemUserId = adminProfile?.user_id;
-  if (!systemUserId) throw new Error('Nenhum funcionário encontrado para created_by');
+  // `created_by` de pedido IMPORTADO é NULL: o sync não é autor. Antes ia aqui o 1º
+  // `profiles.is_employee` do PostgREST (`limit(1)` sem ORDER BY) — 30.447 de 32.310 importados
+  // atribuídos à Tatyana em prod (2026-11-12), assinatura do sync lida como autoria. Quem VENDEU
+  // é `vendedor_user_id`, pelo `codVend` do pedido (./vendedor-pedido.ts, migration 20261113120000).
 
   // Cache for client address/phone (populated during ConsultarCliente calls)
   const clientAddressCache = new Map<number, { address: string; phone: string }>();
@@ -1565,7 +1565,7 @@ async function syncPedidos(
 
       pedidosRpc.push({
         customer_user_id: customerUserId,
-        created_by: systemUserId,
+        created_by: null,
         items: itemsJson,
         subtotal,
         // `discount` do CABEÇALHO segue 0: o desconto já está DENTRO do subtotal/total (é do item,
@@ -1637,6 +1637,16 @@ async function syncPedidos(
       }
     }
 
+    // Vendedor da página INTEIRA (novo e já existente — o escritor casa só o que está no banco e
+    // só escreve o que mudou). Depois da RPC dos pedidos: pedido novo já existe. Falha aqui não
+    // derruba o import (pedido é dinheiro; vendedor é atribuição) — fica em `vendedor_falhas`.
+    await registrarVendedoresDaPagina(
+      (fn, args) => supabase.rpc(fn, args),
+      account,
+      pedidos,
+      vendedorAcc,
+    );
+
     console.log(`[sync_pedidos][${account}] Página ${pagina}/${totalPaginas} — ${pedidosRpc.length} processados, ${skippedNoClient} sem cliente, ${pedidosDescontoIlegivel} não publicados por desconto ilegível (acumulado)`);
     pagina++;
     pagesProcessed++;
@@ -1645,7 +1655,7 @@ async function syncPedidos(
   // Completude = FIM REAL alcançado (null/página vazia), NUNCA pagina>totalPaginas.
   // Pausa (transitório/erro) ou budget de página esgotado ⟹ complete=false, retoma do `pagina`.
   const complete = reachedEnd && !leasePerdido;
-  return { leasePerdido, totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, itensLidos, itensComIdentidade, pedidosIdentidadeAmbigua, pedidosDescontoIlegivel, amostraDescontoIlegivel, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
+  return { leasePerdido, totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, itensLidos, itensComIdentidade, pedidosIdentidadeAmbigua, pedidosDescontoIlegivel, amostraDescontoIlegivel, ...vendedorAcc, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
 }
 
 // ── Reparo dos órfãos PRESOS (pai sem itens, fora da janela do cron) ──────────────────
@@ -1678,7 +1688,7 @@ async function repararOrfaosItens(
   // Busca os pais por hash_payload determinístico (omie_<account>_<pid>), NÃO por omie_pedido_id:
   // (account, omie_pedido_id) é duplicado por design (push×pull, ver onda1_fase0) → buscar por id
   // pegaria a linha errada (ex.: a do push com hash_payload NULL). O hash é único (índice parcial).
-  const paiByHash = new Map<string, { customer_user_id: string; created_by: string; hash_payload: string; order_date_kpi: string | null }>();
+  const paiByHash = new Map<string, { customer_user_id: string; created_by: string | null; hash_payload: string; order_date_kpi: string | null }>();
   for (let i = 0; i < pedidoIds.length; i += 300) {
     const hashes = pedidoIds.slice(i, i + 300).map((pid) => `omie_${account}_${pid}`);
     const { data: pais } = await supabase
@@ -4104,6 +4114,69 @@ Deno.serve(async (req) => {
           });
         }
         result = saidaPedidos.corpo;
+        break;
+      }
+
+      case "backfill_vendedor": {
+        // BACKFILL de QUEM VENDEU (./vendedor-pedido.ts) sobre o acervo já importado. Só lê o
+        // `ListarPedidos` (100/pág, SEM ConsultarCliente — ~1-2s/pág, não os ~40s do sync) e chama o
+        // escritor único, que só toca o que mudou: re-rodar é seguro. Sem `date_from/date_to` pagina o
+        // acervo INTEIRO da conta. Responde `proxima_pagina` (null = fim real do Omie) — o chamador
+        // re-invoca com `start_page` até `completo:true`. Só cron (x-cron-secret): é escrita em massa.
+        if (__auth.via !== "cron") {
+          return new Response(JSON.stringify({ error: "backfill_vendedor: só cron (x-cron-secret)" }), {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const ORCAMENTO_MS = 100_000; // net.http_post do disparo usa timeout 150s; folga p/ a última página
+        const t0Backfill = Date.now();
+        const inicioBackfill = Math.max(1, Math.trunc(Number(params.start_page) || 1));
+        const maxPaginasBackfill = Math.min(200, Math.max(1, Math.trunc(Number(params.max_pages) || 60)));
+        const accBackfill = contadoresVendedorZerados();
+        let paginaBackfill = inicioBackfill;
+        let paginasLidasBackfill = 0;
+        let pedidosLidosBackfill = 0;
+        let fimBackfill = false;
+        let paradaBackfill: string | null = null;
+        while (paginasLidasBackfill < maxPaginasBackfill) {
+          if (Date.now() - t0Backfill > ORCAMENTO_MS) { paradaBackfill = "orcamento_tempo"; break; }
+          const paramsLista: Record<string, unknown> = { pagina: paginaBackfill, registros_por_pagina: 100, filtrar_apenas_inclusao: "N" };
+          if (params.date_from) paramsLista.filtrar_por_data_de = params.date_from;
+          if (params.date_to) paramsLista.filtrar_por_data_ate = params.date_to;
+          let lista: OmieGenericResponse | null;
+          try {
+            lista = await callOmieVendasApi("produtos/pedido/", "ListarPedidos", paramsLista, account, { throwOnTransient: true });
+          } catch (e) {
+            const msg = (e as Error).message || "";
+            // Transitório esgotado = PAUSA (retoma desta página), nunca "fim".
+            if (msg.startsWith("OMIE_TRANSIENT")) { paradaBackfill = classifyOmieTransient(msg); break; }
+            throw e;
+          }
+          const classe = classifyPedidosPage(lista, paginaBackfill);
+          if (classe === "end") { fimBackfill = true; break; }
+          if (classe === "anomaly") { paradaBackfill = "anomalia"; break; }
+          const pedidosPagina = (lista!.pedido_venda_produto as OmiePedidoVendaProduto[] | undefined) || [];
+          pedidosLidosBackfill += pedidosPagina.length;
+          const falhasAntes = accBackfill.vendedor_falhas;
+          await registrarVendedoresDaPagina((fn, args) => supabaseAdmin.rpc(fn, args), account, pedidosPagina, accBackfill);
+          // Escritor falhou: PARA nesta página (não avança) — retomar daqui refaz só ela.
+          if (accBackfill.vendedor_falhas > falhasAntes) { paradaBackfill = "escritor_falhou"; break; }
+          paginaBackfill++;
+          paginasLidasBackfill++;
+        }
+        result = {
+          success: paradaBackfill === null || paradaBackfill === "orcamento_tempo",
+          account,
+          start_page: inicioBackfill,
+          proxima_pagina: fimBackfill ? null : paginaBackfill,
+          completo: fimBackfill,
+          parada: paradaBackfill,
+          paginas_lidas: paginasLidasBackfill,
+          pedidos_lidos: pedidosLidosBackfill,
+          duracao_ms: Date.now() - t0Backfill,
+          ...accBackfill,
+        };
         break;
       }
 
