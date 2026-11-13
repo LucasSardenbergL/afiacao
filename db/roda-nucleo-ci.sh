@@ -639,6 +639,12 @@ executa() {
   if [ "$rc" -ne 0 ]; then
     falhas+=("$rotulo: exit $rc")
     printf '  ❌ %-44s exit=%s (%ss)\n' "$rotulo" "$rc" "$dur"
+    # Os asserts vermelhos ficam no meio do log, e o `tail` sozinho os esconde: a main do PG 17.12
+    # (2026-11-12) mostrou `FAIL=2` sem dizer quais, e o log da prova não sai do runner.
+    if grep -q '❌' "$log"; then
+      echo "     ── asserts vermelhos ──"
+      grep '❌' "$log" | head -20 | sed 's/^/     /'
+    fi
     echo "     ── últimas linhas ──"
     tail -12 "$log" | sed 's/^/     /'
     return 0
