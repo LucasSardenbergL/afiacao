@@ -430,6 +430,25 @@ CARD="$(como authenticated "$V1" "SELECT public.radar_prospectar_hoje()" | tail 
 eq "G3d card: retornos com total, posses vencidas_7d conta a aberta já vencida, e as chaves de antes seguem lá" \
    "$(printf '%s' "$CARD" | python3 -I -c "import json,sys; d=json.load(sys.stdin); print(d['retornos']['total'], d['posses']['vencidas_7d'], len(d['posses']['vencendo']), len(d['leads']), sorted(d.keys()))")" \
    "1 1 0 1 ['leads', 'posses', 'retornos', 'territorio', 'territorio_motivo']"
+
+# ── O3b (revisão 2026-11-11, item 8; migration 20261113110100): radar_meus_retornos EXECUTADA sobre a MESMA agenda ──
+# Só a função nova sai do arquivo (o resto do O3b é do pacote M, que este fixture não carrega): o CREATE e o ACL.
+MIG_O3B="$REPO_ROOT/supabase/migrations/20261113110100_radar_retornos_paginados_intencao_email.sql"
+awk '/^CREATE OR REPLACE FUNCTION public.radar_meus_retornos/{f=1} f{print} f&&/^GRANT EXECUTE ON FUNCTION public.radar_meus_retornos/{exit}' \
+  "$MIG_O3B" > "$(dirname "$DATA")/o3b-retornos.sql"
+P -q -1 -f "$(dirname "$DATA")/o3b-retornos.sql" >/dev/null
+TODOS="$(como authenticated "$V1" "SELECT public.radar_meus_retornos(NULL, 0, 50)" | tail -1)"
+eq "R1 radar_meus_retornos = a agenda do card: mesmo total e mesmos itens, na mesma ordem" \
+   "$(printf '%s' "$TODOS" | python3 -I -c "import json,sys; d=json.load(sys.stdin); print(d['total'], [i['cnpj'] for i in d['itens']])")" \
+   "$(printf '%s' "$CARD" | python3 -I -c "import json,sys; d=json.load(sys.stdin)['retornos']; print(d['total'], [i['cnpj'] for i in d['itens']])")"
+# Na FRONTEIRA: offset = total (1) já passou do último — off-by-one no filtro do offset devolveria o item de novo.
+eq "R2 página seguinte à última (offset = total): itens vazios e o total de sempre" \
+   "$(como authenticated "$V1" "SELECT (r->>'total') || ':' || jsonb_array_length(r->'itens') FROM (SELECT public.radar_meus_retornos(NULL, 1, 50) AS r) x" | tail -1)" "1:0"
+eq "R3 limite fora da faixa é contido (0 → 1 item; offset negativo → 0)" \
+   "$(como authenticated "$V1" "SELECT jsonb_array_length(public.radar_meus_retornos(NULL, -5, 0)->'itens')" | tail -1)" "1"
+prefixo "R4 vendedor pedindo os retornos de OUTRO vendedor: 42501" \
+   "$(erro_como authenticated "$V1" "SELECT public.radar_meus_retornos('$V2', 0, 10)")" "42501"
+eq "R5 anon não executa" "$(Pq -c "SELECT has_function_privilege('anon', 'public.radar_meus_retornos(uuid,integer,integer)', 'execute')")" "f"
 TICK="$(Pq -c "SELECT public.radar_posses_vencer_tick()")"
 eq "G3e tick fecha a posse vencida (106) como 'expirado' no instante do vencimento e deixa as vivas abertas" \
    "$(campo "$TICK" fechadas)|$(Pq -c "SELECT string_agg(left(cnpj,3)||':'||COALESCE(motivo_encerramento,'aberta'), ',' ORDER BY cnpj) FROM public.radar_atendimentos")|$(Pq -c "SELECT encerrado_em = assumido_em + interval '7 days' FROM public.radar_atendimentos WHERE cnpj = '10600000000101'")" \

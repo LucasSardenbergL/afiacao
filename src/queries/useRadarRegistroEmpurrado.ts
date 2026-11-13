@@ -84,7 +84,8 @@ export async function registrarCardExibido(cnpjs: readonly string[]): Promise<Re
   return r;
 }
 
-export type CanalIntencao = 'ligar' | 'whatsapp' | 'copiar';
+// 'email' (revisão 2026-11-11, item 18; migration 20261113110100): o mailto da ficha também é intenção.
+export type CanalIntencao = 'ligar' | 'whatsapp' | 'copiar' | 'email';
 
 /**
  * Intenção de contato na ficha (pacote M): tocar em Ligar (celular), WhatsApp ou Copiar telefone. Vai ao ledger do

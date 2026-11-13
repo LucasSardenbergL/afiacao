@@ -393,7 +393,8 @@ export function RadarDetailSheet({
           <Linha label="E-mail">
             {empresa.email ? (
               <span className="inline-flex items-center gap-1.5 flex-wrap min-w-0">
-                <a className="inline-flex items-center gap-1 underline truncate" href={`mailto:${empresa.email}`}>
+                <a className="inline-flex items-center gap-1 underline truncate" href={`mailto:${empresa.email}`}
+                  onClick={() => { track('radar.email_ficha', {}); void registrarIntencaoContato(empresa.cnpj, 'email'); }}>
                   <Mail className="w-3 h-3" />{empresa.email}
                 </a>
                 <RadarContatoContabil cnpj={empresa.cnpj} campo="email" contato={leituraContabil?.contatos.get('email')} />

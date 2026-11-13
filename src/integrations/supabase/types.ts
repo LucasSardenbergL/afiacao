@@ -25925,6 +25925,10 @@ export type Database = {
         }
       }
       radar_lote_publicando: { Args: never; Returns: string }
+      radar_meus_retornos: {
+        Args: { p_limit?: number; p_offset?: number; p_vendedor?: string }
+        Returns: Json
+      }
       radar_meu_territorio: {
         Args: { p_top?: number; p_vendedor?: string }
         Returns: {

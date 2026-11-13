@@ -381,6 +381,23 @@ prefixo "A3g a forma da intenção é constraint do ledger (23514)" \
                              VALUES ('intencao', 'humano', now(), '$V1', '$L1', 'sms', 'x:1')")" "23514"
 eq "A3h o elegível sem intenção tem 0 (não NULL) depois da 1ª" "$(funil intencoes "$V2")" "0"
 
+# ── O3b (revisão 2026-11-11, item 18; migration 20261113110100): canal 'email' — aplicada SOBRE o pacote M, 2× ─────
+# Sob sabotagem do corpo de M a PRE do O3b recusaria (corpo vivo estranho): o bloco só roda no controle.
+if [ -z "${SABOTAGEM:-}" ]; then
+  MIG_O3B="$REPO_ROOT/supabase/migrations/20261113110100_radar_retornos_paginados_intencao_email.sql"
+  for i in 1 2; do
+    if ! P -q -1 -f "$MIG_O3B" > "$TMPD/apply-o3b$i.log" 2>&1; then cat "$TMPD/apply-o3b$i.log"; echo "APLICAÇÃO DO O3b ($i) FALHOU"; exit 1; fi
+    grep -q "O3b ok" "$TMPD/apply-o3b$i.log" || { echo "O3b $i SEM O MARCADOR DA POSTCONDIÇÃO"; exit 1; }
+  done
+  eq "B1 O3b: a PRE aceita o corpo de M (predecessor revisado = md5 da PROD) e o apply é idempotente (2×)" ok ok
+  eq "B2 intenção pelo e-mail grava" "$(como authenticated "$V1" "SELECT public.radar_registrar_intencao('$L1', 'email') ->> 'registrado'")" "true"
+  eq "B3 a 2ª pelo e-mail no mesmo dia é idempotente" "$(como authenticated "$V1" "SELECT public.radar_registrar_intencao('$L1', 'email') ->> 'registrado'")" "false"
+  prefixo "B4 canal fora da lista segue recusado (22023)" "$(erro_como authenticated "$V1" "SELECT public.radar_registrar_intencao('$L1', 'sms')")" "22023 canal invalido"
+  prefixo "B5 a constraint segue barrando canal estranho no ledger (23514)" \
+     "$(erro_como postgres "" "INSERT INTO public.radar_eventos (evento, origem, ocorrido_em, user_id, cnpj, acao, fonte_id)
+                               VALUES ('intencao', 'humano', now(), '$V1', '$L1', 'sms', 'x:o3b')")" "23514"
+fi
+
 # ── A4: a adoção ───────────────────────────────────────────────────────────────────────────────────────────
 P -q -c "INSERT INTO public.radar_eventos (evento, origem, ocorrido_em, user_id, cnpj, fonte_id) VALUES
            ('abriu', 'humano', now() - interval '1 day', '$V1', '$L2', 'outbox:ontem'),
