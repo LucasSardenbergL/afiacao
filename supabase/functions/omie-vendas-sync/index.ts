@@ -1641,7 +1641,7 @@ async function syncPedidos(
     // só escreve o que mudou). Depois da RPC dos pedidos: pedido novo já existe. Falha aqui não
     // derruba o import (pedido é dinheiro; vendedor é atribuição) — fica em `vendedor_falhas`.
     await registrarVendedoresDaPagina(
-      (fn, args) => supabase.rpc(fn, args),
+      supabase,
       account,
       pedidos,
       vendedorAcc,
@@ -4161,7 +4161,7 @@ Deno.serve(async (req) => {
           const pedidosPagina = (lista!.pedido_venda_produto as OmiePedidoVendaProduto[] | undefined) || [];
           pedidosLidosBackfill += pedidosPagina.length;
           const falhasAntes = accBackfill.vendedor_falhas;
-          await registrarVendedoresDaPagina((fn, args) => supabaseAdmin.rpc(fn, args), account, pedidosPagina, accBackfill);
+          await registrarVendedoresDaPagina(supabaseAdmin, account, pedidosPagina, accBackfill);
           // Escritor falhou: PARA nesta página (não avança) — retomar daqui refaz só ela.
           if (accBackfill.vendedor_falhas > falhasAntes) { paradaBackfill = "escritor_falhou"; break; }
           paginaBackfill++;

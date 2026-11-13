@@ -105,10 +105,17 @@ export function contadoresVendedorZerados(): ContadoresVendedor {
   };
 }
 
-type ChamadaRpc = (
-  fn: string,
-  args: Record<string, unknown>,
-) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+/**
+ * O cliente Supabase (ou um dublê no teste). O nome da RPC fica LITERAL aqui dentro — não chega
+ * por parâmetro — para o `preflight:rpcs` enxergá-lo: nome vindo de fora é indireção, e o
+ * `pendencias:pacote` recusa liberar o deploy de edge com lista de RPC incompleta.
+ */
+interface ClienteRpc {
+  rpc(
+    fn: "sales_orders_registrar_vendedor_omie",
+    args: { p_account: string; p_pedidos: VendedorDoPedido[] },
+  ): PromiseLike<{ data: unknown; error: { message: string } | null }>;
+}
 
 /**
  * Registra o vendedor de UMA página. Falha do escritor NÃO derruba o import do pedido (o pedido é
@@ -117,7 +124,7 @@ type ChamadaRpc = (
  * por 5 dias; ou o backfill) refaz — o escritor é idempotente.
  */
 export async function registrarVendedoresDaPagina(
-  rpc: ChamadaRpc,
+  cliente: ClienteRpc,
   account: string,
   pedidos: PedidoComVendedor[],
   acc: ContadoresVendedor,
@@ -127,7 +134,7 @@ export async function registrarVendedoresDaPagina(
   acc.vendedor_nao_lidos += naoLidos;
   acc.vendedor_ambiguos += ambiguos;
   if (lote.length === 0) return;
-  const { data, error } = await rpc("sales_orders_registrar_vendedor_omie", {
+  const { data, error } = await cliente.rpc("sales_orders_registrar_vendedor_omie", {
     p_account: account,
     p_pedidos: lote,
   });

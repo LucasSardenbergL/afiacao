@@ -55,13 +55,13 @@ Deno.test("lote: duplicado concordante entra 1 vez; discordante SAI (ambíguo), 
 Deno.test("registrar: acumula contadores e códigos sem mapa sem repetir", async () => {
   const acc = contadoresVendedorZerados();
   const chamadas: unknown[] = [];
-  const rpc = (fn: string, args: Record<string, unknown>) => {
+  const rpc = { rpc: (fn: string, args: unknown) => {
     chamadas.push({ fn, args });
     return Promise.resolve({
       data: { recebidos: 2, casados: 2, atualizados: 1, fora_do_banco: 0, codigos_sem_mapa: [777] },
       error: null,
     });
-  };
+  } };
   await registrarVendedoresDaPagina(rpc, "oben", [ped(1, { codVend: 777 }), ped(2, { codVend: 842 })], acc);
   await registrarVendedoresDaPagina(rpc, "oben", [ped(3, { codVend: 777 }), ped(4)], acc);
   assertEquals(chamadas[0], {
@@ -77,7 +77,7 @@ Deno.test("registrar: acumula contadores e códigos sem mapa sem repetir", async
 Deno.test("registrar: falha do escritor é CONTADA e logada com a marca — não lança", async () => {
   const acc = contadoresVendedorZerados();
   const logs: string[] = [];
-  const rpc = () => Promise.resolve({ data: null, error: { message: "function does not exist" } });
+  const rpc = { rpc: () => Promise.resolve({ data: null, error: { message: "function does not exist" } }) };
   await registrarVendedoresDaPagina(rpc, "colacor", [ped(1, { codVend: 5 }), ped(2, { codVend: 6 })], acc, (m) => logs.push(m));
   assertEquals(acc.vendedor_falhas, 2);
   assertEquals(acc.vendedor_lidos, 0);
@@ -87,7 +87,7 @@ Deno.test("registrar: falha do escritor é CONTADA e logada com a marca — não
 Deno.test("registrar: página sem pedido lido não chama o banco", async () => {
   const acc = contadoresVendedorZerados();
   let chamou = false;
-  const rpc = () => { chamou = true; return Promise.resolve({ data: {}, error: null }); };
+  const rpc = { rpc: () => { chamou = true; return Promise.resolve({ data: {}, error: null }); } };
   await registrarVendedoresDaPagina(rpc, "oben", [ped(1), ped(undefined, { codVend: 3 })], acc);
   assertEquals(chamou, false);
   assertEquals(acc.vendedor_nao_lidos, 2);
