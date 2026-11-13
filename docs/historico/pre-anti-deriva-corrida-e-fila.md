@@ -35,7 +35,7 @@ A #2629 fechou o buraco com uma trava antes da PRE (um ALTER sem efeito). A `202
 | cenário | resultado |
 |---|---|
 | função, sem trava (M0) | B commita no meio e some; A sai 0 com a PÓS verde |
-| função, com trava (M1–M3) | B espera A e falha alto com `XX000 tuple concurrently updated`; o corpo de A fica |
+| função, com trava (M1–M3) | B espera A e falha alto com `XX000 tuple concurrently updated` (PG ≤ 17.11) ou `40P01` deadlock (PG ≥ 17.12, lock de objeto novo no `ProcedureCreate`); o corpo de A fica |
 | função, com trava e B também no molde (M5) | B fica preso no **próprio** ALTER da trava e falha alto antes da PRE dele |
 | view, sem trava (V0) | mesma corrida: `pg_get_viewdef` na PRE **não** trava a própria view |
 | view, com trava (V1/V2) | B espera e, **sem PRE, aplica por cima quando A termina**: não falha |
@@ -154,3 +154,15 @@ Não houve P0. A revisão **concedeu**:
 `service_role` **e** `sandbox_exec_fzvklzpomgnyikkfkzai` têm `EXECUTE` em `aplicar_sql`. O `sandbox_exec` é o papel do builder do Lovable, que recebeu um GRANT em massa em 14/08 e tem LOGIN, BYPASSRLS e `INSERT` no ledger; o `service_role` também insere no ledger, com BYPASSRLS. Os dois podem gravar uma tentativa e chamar a porta, ou seja, executar SQL arbitrário como `postgres`. O problema é anterior a esta entrega: o bootstrap revogou PUBLIC, anon e authenticated, e o `CREATE OR REPLACE` preserva a ACL. Fechar é uma decisão de autorização do founder, e precisa ser fechado nas DUAS pontas: a porta e o `INSERT` no ledger.
 
 **Decidido em 2026-10-01:** o founder escolheu fechar as duas pontas para `service_role` e `sandbox_exec`. Medido nesse dia: a ACL da porta tem os GRANTs DIRETOS (`service_role=X`, `sandbox_exec_fzvklzpomgnyikkfkzai=X`, além de `claude_rw=X` e do dono), e nenhum código do app ou edge chama a função (só o `types.ts` gerado a lista). O fechamento vai num PR próprio, com prova PG17, apply pelo `db:aplicar` e validação por fora.
+
+## 2026-11-12 — o PGDG subiu para 17.12 e o M2 virou deadlock
+
+O CI vermelho veio com o mesmo código, sem mudança entre os runs. O run 43202257011 instalou o PG 17.11 e passou. O 43270643595, o 43288994654 e os seguintes instalaram o 17.12 e fecharam em `PASS=54 FAIL=2`: CM2 e PM2 deram `veio [rcB=3|B=40P01]`. O placar escondia os asserts porque o runner do núcleo só mostrava `tail -12`. Agora ele lista as linhas `❌` antes do fim do log.
+
+**Causa, lida no fonte.** No 17.12, o `ProcedureCreate` (`pg_proc.c`) passou a chamar `LockDatabaseObject(ProcedureRelationId, oid, AccessExclusiveLock)` antes do `heap_update`. O `ALTER FUNCTION` da trava continua sem esse lock e só segura a tupla. O ciclo se forma assim:
+- B pega o lock de objeto e espera a tupla de A.
+- O `CREATE OR REPLACE` de A espera o lock de B.
+
+O detector roda **uma vez** por espera, um `deadlock_timeout` depois de ela começar. A vítima é quem checa primeiro com o ciclo já formado. Por isso a prova fixa `deadlock_timeout` em 60s para A e 3s para B: B vira a vítima sem depender do relógio do runner. Se isso falhar, o M3 fica vermelho. O M2 espera `40P01` com o servidor em 17.12 ou mais e `XX000` abaixo disso.
+
+A propriedade P não muda: ninguém some calado. Prod (17.6) segue no regime XX000 até o Supabase subir de minor.

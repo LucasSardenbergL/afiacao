@@ -46,6 +46,14 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
   // 2026-10-16 — Raio-X do estoque parado (PR 1 da fase B): grava a foto saldo×cmc lida de
   // inventory_position como DEFINER e desliga o SKU no motor (sku_parametros). Mesmo gate de quem
   // já lê inventory_position em prod (policy cap_custo_ler) — employee comum recebe 42501.
+  // 2026-11-12 — Venda por cliente, rodada 2, entrega 3: demonstrativo de contribuição (receita líquida,
+  // custo, margem, custo do prazo). Lê custo como DEFINER; só do founder: cap_custo_ler E has_role master
+  // (cap_custo_ler sozinha admite employee estratégico). Prova: db/test-venda-contribuicao.sh (A-GATE).
+  'public.venda_contribuicao': {
+    sensitive: true,
+    requiredGate: { allOf: [{ call: 'cap_custo_ler' }, { call: 'has_role', roles: ['master'] }] },
+    motivo: 'contribuição por cliente/pedido/SKU: custo, margem e custo do prazo — só o master',
+  },
   'public.raio_x_decidir': {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
@@ -467,6 +475,12 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // Provado em db/test-margem-cliente-helper-compartilhado.sh (L1-L5): anon/authenticated/PUBLIC
   // com has_function_privilege=f, service_role=t, e a função residindo em `private`.
   'private.margem_cliente_agregada',
+
+  // 2026-11-12 — Venda por cliente, rodada 2, entrega 3: o MOTOR da contribuição (custo × receita × prazo
+  // por linha) mora em `private`, sem gate de JWT por desenho (roda na pós-condição, sem sessão). Quem fecha
+  // é o REVOKE (PUBLIC, anon, authenticated) e a única porta é `public.venda_contribuicao` (cap_custo_ler +
+  // master). Provado em db/test-venda-contribuicao.sh (AACL) e na pós-condição POS 2.
+  'private.venda_contribuicao_linhas',
 
   // 2026-07-22 — FU4-F fase 3. TERCEIRA CATEGORIA (gate de FILTRO/PROJEÇÃO; ver cabeçalho).
   // ⚠️ O parser não a flagou sozinha: o corpo não cita `product_costs`/`cost_price`, porque ela
