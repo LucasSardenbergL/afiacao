@@ -383,6 +383,19 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'helper do sensor de ruptura da Oben (lê inventory_position/sku_estoque_atual como DEFINER) — só o trigger de order_items e o cron da prateleira',
   },
+  // 2026-11-12 — Venda por cliente, rodada 2, entrega 3: demonstrativo de contribuição (custo, margem, prazo).
+  // A porta é só do master (cap_custo_ler E has_role master); o motor é do owner. ACL declarado e provado em
+  // db/test-venda-contribuicao.sh (A-ACL + pós-condição POS 2/3).
+  'public.venda_contribuicao': {
+    fechadaPor: '20261113130000_venda_contribuicao_cliente.sql',
+    permitido: PORTA_GATE,
+    motivo: 'contribuição por cliente/pedido/SKU com custo e margem; gate private.cap_custo_ler + master',
+  },
+  'private.venda_contribuicao_linhas': {
+    fechadaPor: '20261113130000_venda_contribuicao_cliente.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'motor da contribuição por linha (custo, margem, prazo) — sem gate de JWT, só o owner executa',
+  },
   'private.margem_cliente_agregada': {
     fechadaPor: '20260726160000_margem_reconciliacao_universo_unico.sql',
     permitido: PORTA_FECHADA,

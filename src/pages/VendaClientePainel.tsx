@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { AbaContribuicao } from '@/components/venda-cliente/painel/AbaContribuicao';
 import { AbaRepasses } from '@/components/venda-cliente/painel/AbaRepasses';
 import { AvisoNaoCausal } from '@/components/venda-cliente/painel/AvisoNaoCausal';
 import { PainelOndas } from '@/components/venda-cliente/painel/PainelOndas';
@@ -89,6 +90,7 @@ export default function VendaClientePainel() {
         <TabsList>
           <TabsTrigger value="adocao">Adoção</TabsTrigger>
           <TabsTrigger value="repasses">Repasses</TabsTrigger>
+          <TabsTrigger value="contribuicao">Contribuição</TabsTrigger>
         </TabsList>
 
         <TabsContent value="adocao" className="space-y-5">
@@ -138,6 +140,11 @@ export default function VendaClientePainel() {
               onAction={() => void painel.refetch()}
             />
           )}
+        </TabsContent>
+
+        <TabsContent value="contribuicao">
+          {/* Só monta quando a aba está ativa: a RPC custeia a janela inteira a cada chamada. */}
+          {url.aba === 'contribuicao' ? <AbaContribuicao /> : null}
         </TabsContent>
       </Tabs>
     </div>

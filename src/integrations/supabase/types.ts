@@ -27192,6 +27192,17 @@ export type Database = {
         Args: { p_comprador: string }
         Returns: Json
       }
+      venda_contribuicao: {
+        Args: {
+          p_eixo?: string
+          p_empresa?: string
+          p_janela?: string
+          p_limite?: number
+          p_offset?: number
+          p_ordem?: string
+        }
+        Returns: Json
+      }
       venda_fechar_desfechos: { Args: { p_hoje?: string }; Returns: number }
       venda_gate_credito: {
         Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
