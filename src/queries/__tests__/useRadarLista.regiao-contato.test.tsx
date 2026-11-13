@@ -109,6 +109,11 @@ describe('parametrosDaLista — termos, CNAE, ordem e página', () => {
   it('busca e município: aparados e sanitizados; só-curinga ou vazio = sem filtro', () => {
     expect(params({ busca: '  Marcenaria (SC), ' }).p_busca).toBe('Marcenaria SC');
     expect(params({ municipio: ' pomerode ' }).p_municipio).toBe('pomerode');
+    // Revisão 2026-11-11 (item 13): o dump RFB guarda o município SEM acento (medido: 0 de 5.201 nomes em radar_empresas)
+    // — "são joão" não casava "SAO JOAO". O que se digita perde o acento antes do ILIKE; hífen e apóstrofo ficam.
+    expect(params({ municipio: 'São João del Rei' }).p_municipio).toBe('Sao Joao del Rei');
+    expect(params({ municipio: 'Conceição do Lago-Açu' }).p_municipio).toBe('Conceicao do Lago-Acu');
+    expect(params({ municipio: "Estrela d'Oeste" }).p_municipio).toBe("Estrela d'Oeste");
     expect(params({ busca: '%%' }).p_busca).toBeUndefined();
     expect(params({ busca: '*' }).p_busca).toBeUndefined();
     expect(params({ busca: '   ', municipio: '' }).p_busca).toBeUndefined();

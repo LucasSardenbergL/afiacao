@@ -416,6 +416,7 @@ export const MODULOS: ModuloApp[] = [
       "src/queries/__tests__/useRadarLote.esquecer.test.tsx",
       "src/queries/__tests__/useRadarLote.remontar.test.tsx",
       "src/queries/__tests__/useRadarLote.recusado.test.tsx",
+      "src/queries/__tests__/useRadarLote.sair.test.tsx",
       "src/pages/__tests__/RadarClientes.test.tsx",
       "src/queries/__tests__/useRadarConflitosCadastro.paginacao.test.ts",
       "src/queries/__tests__/useRegistrarContatoRadar.retorno.test.ts",

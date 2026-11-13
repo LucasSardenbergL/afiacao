@@ -6,6 +6,7 @@ import { lerLoteVigente, useRadarLoteVigente } from '@/queries/useRadarLoteVigen
 import { recorteDeLote, type LoteIngest } from '@/lib/radar/lote-vigente';
 import { LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
 import type { Database } from '@/integrations/supabase/types';
+import { semAcento } from '@/lib/radar/normalizar';
 
 export type RadarEmpresa = Database['public']['Tables']['radar_empresas']['Row'];
 
@@ -105,10 +106,11 @@ export function parametrosDaLista(
   const recorte = recorteDeLote(lote, filtros);
   return {
     p_busca: termo(filtros.busca),
-    // Município: o banco guarda em MAIÚSCULAS (dump RFB); ILIKE parcial. Limitação conhecida: não é
-    // acento-insensitive ("sao" não casa "SÃO") — v2 com unaccent. Cidade escolhida pelo código: exata, e o
-    // nome digitado sai (código mal formado vai assim mesmo: a RPC grita 22023 em vez de contar zero).
-    p_municipio: filtros.municipioCodigo ? undefined : termo(filtros.municipio),
+    // Município: o banco guarda em MAIÚSCULAS e SEM acento (dump RFB — medido 2026-11-12: 0 de 5.201 nomes com acento);
+    // ILIKE parcial. O que se digita perde o acento antes (revisão 2026-11-11, item 13: "são joão" não casava "SAO
+    // JOAO"). Cidade escolhida pelo código: exata, e o nome digitado sai (código mal formado vai assim mesmo: a RPC
+    // grita 22023 em vez de contar zero).
+    p_municipio: filtros.municipioCodigo ? undefined : termo(semAcento(filtros.municipio)),
     p_municipio_codigo: filtros.municipioCodigo || undefined,
     p_uf: recorteUf.tipo === 'uf' ? recorteUf.uf : undefined,
     p_ufs: recorteUf.tipo === 'lista' ? [...recorteUf.ufs] : undefined,

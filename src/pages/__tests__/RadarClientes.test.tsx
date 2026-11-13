@@ -33,8 +33,14 @@ const toastMock = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), success: vi
 vi.mock('sonner', () => ({ toast: toastMock }));
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
+// Vendedor (farmer) por padrão: a tela é da prospecção (revisão 2026-11-11, item 14 — sem papel comercial = sem acesso).
+const auth = vi.hoisted(() => ({
+  padrao: { user: { id: 'u1' }, isMaster: false, isGestorComercial: false, role: 'employee', commercialRole: 'farmer' as string | null, loading: false },
+  atual: null as unknown,
+}));
+auth.atual = auth.padrao;
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'u1' }, isMaster: false, isGestorComercial: false, role: 'employee', commercialRole: null }),
+  useAuth: () => auth.atual,
 }));
 vi.mock('@/hooks/useInfiniteScroll', () => ({ useInfiniteScroll: () => () => {} }));
 
@@ -125,8 +131,12 @@ vi.mock('@/queries/useRadarLote', async (importOriginal) => {
 
 // ── filhos pesados → stubs ───────────────────────────────────────────────────────────────────
 vi.mock('@/components/radar/RadarKpis', () => ({ RadarKpis: () => null, RadarChipsLote: () => null }));
+const favoritos = vi.hoisted(() => ({ props: null as null | { atuais: Record<string, unknown>; padrao: Record<string, unknown>; onAplicar: (f: Record<string, unknown>) => void } }));
 vi.mock('@/components/radar/RadarFavoritos', () => ({ RadarFavoritos: () => null }));
-vi.mock('@/components/radar/RadarFiltros', () => ({ RadarFiltros: () => null }));
+vi.mock('@/components/radar/RadarFiltros', () => ({
+  // O favorito é passado como `acoes` (elemento): guarda as props dele sem montar nada (a tela segue igual).
+  RadarFiltros: ({ acoes }: { acoes?: { props?: unknown } }) => { if (acoes?.props) favoritos.props = acoes.props as typeof favoritos.props; return null; },
+}));
 vi.mock('@/components/radar/RadarAmostraRegra', () => ({ RadarAmostraRegra: () => null }));
 vi.mock('@/components/radar/RadarRankingCidades', () => ({ RadarRankingCidades: () => null }));
 vi.mock('@/components/radar/RadarConflitosCadastro', () => ({
@@ -136,6 +146,8 @@ vi.mock('@/components/radar/RadarConflitosCadastro', () => ({
   ),
 }));
 vi.mock('@/components/radar/RadarLoteDialog', () => ({ RadarLoteDialog: () => null }));
+// A agenda "Hoje" tem testes próprios (RadarAgendaHoje.sensor); aqui a leitura dela (supabase falso) só faria ruído.
+vi.mock('@/components/radar/RadarAgendaHoje', () => ({ RadarAgendaHoje: () => null }));
 vi.mock('@/components/radar/RadarMapa', () => ({ default: () => <div data-testid="mapa">mapa</div> }));
 vi.mock('@/components/radar/RadarLinha', () => ({
   RadarLinha: ({ empresa, selecionada, onSelecionar, onAbrir }: {
@@ -219,6 +231,7 @@ beforeEach(() => {
   fonte.falharTerritorio = false;
   fonte.travaLista = null;
   lente.isImpersonating = false;
+  auth.atual = auth.padrao;
 });
 
 describe('RadarClientes — fila do vendedor', () => {
@@ -799,6 +812,44 @@ describe('RadarClientes — deep link do e-mail e da ficha (revisão 2026-11-11,
     await act(async () => { soltar(lead(CNPJ)); });
     expect(await screen.findByTestId('ficha-cnpj')).toHaveTextContent(CNPJ);
     expect(screen.queryByTestId('ficha-carregando')).toBeNull();
+  });
+});
+
+describe('RadarClientes — favorito guarda a intenção territorial (revisão 2026-11-11, item 9)', () => {
+  beforeEach(() => { favoritos.props = null; });
+  it('"Toda a região" (perto=nao) entra no favorito e volta ao aplicar', async () => {
+    fonte.territorio = [{ municipioCodigo: '3122306', municipioNome: 'DIVINOPOLIS', uf: 'MG', clientes: 358 }];
+    fonte.paginas = [[lead('A')]];
+    montar('/radar?perto=nao');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    // Os favoritos moram no painel "Mais filtros e território", recolhido de início.
+    fireEvent.click(screen.getByRole('button', { name: /Mais filtros e território/ }));
+    await waitFor(() => expect(favoritos.props).not.toBeNull());
+    expect(favoritos.props?.atuais.perto).toBe('nao');
+    const salvo = { ...favoritos.props!.atuais };
+    // Sai da "toda a região" (volta ao automático) e reaplica o favorito: a intenção volta junto.
+    act(() => { favoritos.props!.onAplicar({ ...favoritos.props!.padrao, perto: '' }); });
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).not.toContain('perto=nao'));
+    act(() => { favoritos.props!.onAplicar(salvo); });
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).toContain('perto=nao'));
+  });
+});
+
+describe('RadarClientes — sem acesso (revisão 2026-11-11, item 14)', () => {
+  it('staff sem papel comercial: estado "sem acesso", e a fila NEM é pedida (antes: erro genérico)', async () => {
+    auth.atual = { ...auth.padrao, commercialRole: null };
+    fonte.paginas = [[lead('A')]];
+    montar();
+    expect(await screen.findByTestId('radar-sem-acesso')).toBeTruthy();
+    expect(screen.queryByText('Não foi possível carregar a fila')).toBeNull();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fonte.leiturasLista).toBe(0);
+  });
+
+  it('enquanto o papel carrega, não afirma "sem acesso"', () => {
+    auth.atual = { ...auth.padrao, commercialRole: null, role: null, loading: true };
+    montar();
+    expect(screen.queryByTestId('radar-sem-acesso')).toBeNull();
   });
 });
 
