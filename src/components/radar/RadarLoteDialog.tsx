@@ -92,6 +92,7 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
             {rodando
               ? `Cadastrando ${progresso.feitos + 1 > progresso.total ? progresso.total : progresso.feitos + 1} de ${progresso.total}…`
               : `${confirmados === null ? `${progresso.ok} ok nesta aba (conflitos não conferidos)` : `${confirmados} de ${progresso.total} confirmados`} · ${progresso.falhas} falha(s) · ${progresso.naoIniciados} não iniciado(s)${comConflito ? ` · ${comConflito} conflito(s)` : ''}`}
+            {rodando && ' Sair do Radar agora PAUSA os itens que ainda não começaram (dá para retomar depois).'}
           </DialogDescription>
         </DialogHeader>
 

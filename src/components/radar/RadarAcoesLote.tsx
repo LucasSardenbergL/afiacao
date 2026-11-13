@@ -12,7 +12,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
 import { hojeSP } from '@/lib/time/sp-day';
 import { csvEmpresas, limitarSelecao, TETO_LOTE } from '@/lib/radar/lote';
-import { registrarContatoRadar } from '@/queries/useRegistrarContatoRadar';
+import { desfazerContatoRadar, registrarContatoRadar } from '@/queries/useRegistrarContatoRadar';
 import { useRadarAcaoEmLote, type useRadarLoteOmie } from '@/queries/useRadarLote';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { RadarComparar, MAX_COMPARAR } from '@/components/radar/RadarComparar';
@@ -77,9 +77,24 @@ export function RadarAcoesLote({
     const nota = motivo.trim() || undefined;
     const r = await acao.executar(cnpjs, (cnpj) => registrarContatoRadar({ cnpj, acao: 'descartado', nota }), 'radar.lote_descartado');
     onRemover(cnpjs.filter((c) => !r.falhas.some((f) => f.item === c)));
-    if (r.falhas.length === 0) toast.success(`${r.ok} lead(s) descartado(s)`);
-    else toast.warning(`${r.ok} descartado(s) · ${r.falhas.length} falharam (continuam selecionados)`, { description: r.falhas[0]?.erro });
+    // Revisão 2026-11-11 (item 15): o descarte em lote ganha "Desfazer", como o individual. Só os registros que ESTE lote
+    // gravou (o deduplicado é de um registro anterior — desfazê-lo apagaria um descarte que não é deste lote).
+    const ids = (r.valores ?? []).filter((v) => !v.deduped).map((v) => v.id);
+    const desfazer = ids.length > 0 ? { action: { label: 'Desfazer', onClick: () => void desfazerLote(ids) } } : {};
+    if (r.falhas.length === 0) toast.success(`${r.ok} lead(s) descartado(s)`, desfazer);
+    else toast.warning(`${r.ok} descartado(s) · ${r.falhas.length} falharam (continuam selecionados)`, { description: r.falhas[0]?.erro, ...desfazer });
     setMotivo('');
+  };
+
+  const desfazerLote = async (ids: string[]) => {
+    const d = await acao.executar(ids, (id) => desfazerContatoRadar(id), 'radar.lote_descarte_desfeito');
+    // `deleted: false` = o servidor não apagou (o lead mudou depois): conta como não desfeito, sem fingir sucesso.
+    const desfeitos = d.valores.filter((v) => v.deleted).length;
+    const naoDesfeitos = ids.length - desfeitos;
+    if (naoDesfeitos === 0) toast.success(`${desfeitos} descarte(s) desfeito(s)`);
+    else toast.warning(`${desfeitos} desfeito(s) · ${naoDesfeitos} não`, {
+      description: d.falhas[0]?.erro ?? 'Alguns leads mudaram depois do descarte e ficaram como estão.',
+    });
   };
 
   const exportar = () => {

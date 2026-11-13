@@ -1,7 +1,7 @@
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import {
-  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, telefonePrincipal, seloRfb, scoreUI, selosFilial,
+  idadeEmAnos, rotuloIdade, rotuloPorte, rotuloStatus, tomStatus, telefonePrincipal, seloRfb, scoreUI, selosFilial,
   type EstadoIrmaos, type IrmaosRaiz,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
@@ -116,12 +116,14 @@ export function RadarLinha({
       <div className="text-right text-xs text-muted-foreground shrink-0">
         <div className="flex items-center justify-end gap-1.5">
           <Selo tom={score.tom} title={score.detalhe} className="font-tabular" data-testid="radar-score">{score.texto}</Selo>
-          <span>{idade != null ? `${idade} anos` : '—'} · {rotuloPorte(empresa.porte)}</span>
+          <span>{rotuloIdade(idade) ?? '—'} · {rotuloPorte(empresa.porte)}</span>
         </div>
         <Selo tom={tomStatus(empresa.prospeccao_status)} className="mt-0.5">{rotuloStatus(empresa.prospeccao_status)}</Selo>
       </div>
-      <div className="w-8 flex justify-center">
-        {tel && <RadarTelefoneAcao telefone={tel} />}
+      {/* Revisão 2026-11-11: alvo de toque ≥ 44×44 (item 10) e o toque vai ao ledger com o CNPJ e abre a ficha, onde o
+          desfecho é registrado (item 12). */}
+      <div className="w-11 flex justify-center">
+        {tel && <RadarTelefoneAcao telefone={tel} cnpj={empresa.cnpj} aoAgir={onAbrir} />}
       </div>
     </div>
   );
