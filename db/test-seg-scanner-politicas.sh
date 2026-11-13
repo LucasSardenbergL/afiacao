@@ -8,12 +8,12 @@
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIGRATION="${MIGRATION:-$REPO_ROOT/supabase/migrations/20261113120000_seg_scanner_politicas_select_abertas.sql}"
-PGVER=17
-PGBIN="${PGBIN:-/opt/homebrew/opt/postgresql@${PGVER}/bin}"
-PORT="${PORT:-5447}"
+export PGVER=17
+PORT="${PGPORT_TEST:-${PORT:-5447}}"
 DATA="$(mktemp -d /tmp/pgtest-segscan.XXXXXX)/data"
 export LC_ALL="${LC_ALL:-C}" LANG="${LANG:-C}"
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
@@ -99,8 +99,9 @@ conta() {
             -c "SET ROLE $1; SELECT count(*) FROM $4" | tail -1
 }
 FALHAS=0
+PASSOU=0
 espera() {  # espera <descricao> <esperado> <obtido>
-  if [ "$2" = "$3" ]; then echo "  OK  $1 = $3"; else echo "  FALHOU $1: esperado $2, obtido $3"; FALHAS=$((FALHAS+1)); fi
+  if [ "$2" = "$3" ]; then echo "  OK  $1 = $3"; PASSOU=$((PASSOU+1)); else echo "  FALHOU $1: esperado $2, obtido $3"; FALHAS=$((FALHAS+1)); fi
 }
 U_A=00000000-0000-0000-0000-00000000000a
 U_B=00000000-0000-0000-0000-00000000000b
@@ -111,25 +112,26 @@ APROVADOS="default_prices omie_servicos tool_specifications"
 
 echo "→ staff-only…"
 for t in $STAFF_ONLY; do
-  espera "employee lê $t"              2 "$(conta authenticated employee $U_S public.$t)"
-  espera "master lê $t"                2 "$(conta authenticated master   $U_S public.$t)"
-  espera "customer aprovado NÃO lê $t" 0 "$(conta authenticated customer $U_A public.$t)"
-  espera "anon NÃO lê $t"              0 "$(conta anon '' '' public.$t)"
+  espera "employee lê $t"              2 "$(conta authenticated employee "$U_S" "public.$t")"
+  espera "master lê $t"                2 "$(conta authenticated master   "$U_S" "public.$t")"
+  espera "customer aprovado NÃO lê $t" 0 "$(conta authenticated customer "$U_A" "public.$t")"
+  espera "anon NÃO lê $t"              0 "$(conta anon '' '' "public.$t")"
 done
 echo "→ staff ou aprovado…"
 for t in $APROVADOS; do
-  espera "employee lê $t"                 2 "$(conta authenticated employee $U_S public.$t)"
-  espera "customer aprovado lê $t"        2 "$(conta authenticated customer $U_A public.$t)"
-  espera "customer NÃO aprovado NÃO lê $t" 0 "$(conta authenticated customer $U_B public.$t)"
-  espera "anon NÃO lê $t"                 0 "$(conta anon '' '' public.$t)"
+  espera "employee lê $t"                 2 "$(conta authenticated employee "$U_S" "public.$t")"
+  espera "customer aprovado lê $t"        2 "$(conta authenticated customer "$U_A" "public.$t")"
+  espera "customer NÃO aprovado NÃO lê $t" 0 "$(conta authenticated customer "$U_B" "public.$t")"
+  espera "anon NÃO lê $t"                 0 "$(conta anon '' '' "public.$t")"
 done
-espera "customer aprovado lê só módulo ATIVO"   1 "$(conta authenticated customer $U_A public.training_modules)"
-espera "não aprovado NÃO lê training_modules"   0 "$(conta authenticated customer $U_B public.training_modules)"
+espera "customer aprovado lê só módulo ATIVO"   1 "$(conta authenticated customer "$U_A" public.training_modules)"
+espera "não aprovado NÃO lê training_modules"   0 "$(conta authenticated customer "$U_B" public.training_modules)"
 espera "anon NÃO lê training_modules"           0 "$(conta anon '' '' public.training_modules)"
 echo "→ exceção declarada e avatars…"
 espera "anon segue lendo tool_categories (cadastro pré-login)" 2 "$(conta anon '' '' public.tool_categories)"
 espera "anon NÃO lista avatars"                 0 "$(conta anon '' '' storage.objects)"
-espera "dono vê só o próprio avatar"            1 "$(conta authenticated customer $U_A storage.objects)"
+espera "dono vê só o próprio avatar"            1 "$(conta authenticated customer "$U_A" storage.objects)"
 
+echo "RESULTADO: $PASSOU ok / $FALHAS fail"
 if [ "$FALHAS" -ne 0 ]; then echo "✗ db/test-seg-scanner-politicas.sh — $FALHAS falha(s)"; exit 1; fi
 echo "✓ db/test-seg-scanner-politicas.sh — PASSOU"
