@@ -15658,7 +15658,7 @@ export type Database = {
           atendimento_id: string | null
           checkout_id: string | null
           created_at: string
-          created_by: string
+          created_by: string | null
           customer_address: string | null
           customer_document: string | null
           customer_phone: string | null
@@ -15683,6 +15683,9 @@ export type Database = {
           subtotal: number
           total: number
           updated_at: string
+          vendedor_lido_em: string | null
+          vendedor_omie_codigo: number | null
+          vendedor_user_id: string | null
           whatsapp_conversation_id: string | null
           whatsapp_proposta_dedupe: string | null
         }
@@ -15691,7 +15694,7 @@ export type Database = {
           atendimento_id?: string | null
           checkout_id?: string | null
           created_at?: string
-          created_by: string
+          created_by?: string | null
           customer_address?: string | null
           customer_document?: string | null
           customer_phone?: string | null
@@ -15716,6 +15719,9 @@ export type Database = {
           subtotal?: number
           total?: number
           updated_at?: string
+          vendedor_lido_em?: string | null
+          vendedor_omie_codigo?: number | null
+          vendedor_user_id?: string | null
           whatsapp_conversation_id?: string | null
           whatsapp_proposta_dedupe?: string | null
         }
@@ -15724,7 +15730,7 @@ export type Database = {
           atendimento_id?: string | null
           checkout_id?: string | null
           created_at?: string
-          created_by?: string
+          created_by?: string | null
           customer_address?: string | null
           customer_document?: string | null
           customer_phone?: string | null
@@ -15749,6 +15755,9 @@ export type Database = {
           subtotal?: number
           total?: number
           updated_at?: string
+          vendedor_lido_em?: string | null
+          vendedor_omie_codigo?: number | null
+          vendedor_user_id?: string | null
           whatsapp_conversation_id?: string | null
           whatsapp_proposta_dedupe?: string | null
         }
@@ -26826,6 +26835,10 @@ export type Database = {
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
       sales_orders_instante_envio: { Args: never; Returns: string }
+      sales_orders_registrar_vendedor_omie: {
+        Args: { p_account: string; p_pedidos: Json }
+        Returns: Json
+      }
       sayerlack__portal_leitura_conteudo: {
         Args: { p_leitura: Json }
         Returns: Json
@@ -27170,6 +27183,10 @@ export type Database = {
           city_norm: string
           uf: string
         }[]
+      }
+      venda_cobertura_vendedor: {
+        Args: { p_ate: string; p_de: string }
+        Returns: Json
       }
       venda_complemento_comprador: {
         Args: { p_comprador: string }
