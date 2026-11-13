@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Json } from '@/integrations/supabase/types';
 import { lerResumoPainel } from '../resumo-painel';
 
-// Forma montada por `venda_resumo_painel` (migration 20261113110100) — chaves sempre presentes, exceto os braços.
+// Forma montada por `venda_resumo_painel` (migration 20261113110200) — chaves sempre presentes, exceto os braços.
 function base(): { [k: string]: Json } {
   return {
     periodo: { de: '2026-11-13', ate: '2026-11-20' },

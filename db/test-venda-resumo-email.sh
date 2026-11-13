@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prova PG17 da 20261113110100_venda_resumo_email_controle (venda R2 · Entrega 1): grupo controle estável + resumo
+# Prova PG17 da 20261113110200_venda_resumo_email_controle (venda R2 · Entrega 1): grupo controle estável + resumo
 # diário por e-mail + sensor com denominador.
 #
 # O que prova EXECUTANDO (PL/pgSQL é late-bound):
@@ -29,7 +29,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIG="$REPO_ROOT/supabase/migrations/20261113110100_venda_resumo_email_controle.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261113110200_venda_resumo_email_controle.sql"
 MIG2="$REPO_ROOT/supabase/migrations/20261113140000_venda_resumo_email_revisao.sql"   # revisão do code review (13/11)
 MIG_JSON="$REPO_ROOT/supabase/migrations/20261108000000_cliente_sucessao_consumidores.sql"
 MIG_MOSTRADA="$REPO_ROOT/supabase/migrations/20261020174221_venda_cliente_espinha.sql"

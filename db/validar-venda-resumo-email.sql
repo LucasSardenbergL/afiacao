@@ -1,4 +1,4 @@
--- Validação pós-apply (READ-ONLY, psql-ro) da 20261113110100_venda_resumo_email_controle.
+-- Validação pós-apply (READ-ONLY, psql-ro) da 20261113110200_venda_resumo_email_controle.
 --   ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1 -f db/validar-venda-resumo-email.sql
 -- Esperado: todas as linhas ✅ e a linha final FIM-VALIDACAO.
 SELECT CASE WHEN s.semente = 'venda-r2-controle-2026-11-12' AND s.fracao_controle = 0.15 AND s.algoritmo = 'md5-32-v1'

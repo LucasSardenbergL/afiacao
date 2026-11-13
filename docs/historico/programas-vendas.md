@@ -368,7 +368,7 @@ não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor únic
 
 **Por quê.** Medido em prod: a lista do Meu Dia nunca foi aberta (`venda_lista_acesso` = 0 desde 28/10); as farmers vivem no Omie. O canal vai até elas: e-mail às 7h (seg–sex) com 5–8 clientes para ligar, e o founder revisa com elas 10 min/dia nos 10 primeiros dias úteis.
 
-**O que entrou** (migration `20261113110100_venda_resumo_email_controle`, edge `dispatch-notifications` v1.3, front):
+**O que entrou** (migration `20261113110200_venda_resumo_email_controle`, edge `dispatch-notifications` v1.3, front):
 - **Grupo controle** reaberto (spec §12.1): sorteio `md5-32-v1` imutável, braço por comprador canônico, `venda_sugestao.braco` escrito só pelo trigger. O controle some da lista, da ficha, do `marcar_mostrada`, da policy da farmer e da adoção do `venda_painel`.
 - **Resumo**: `venda_resumo_preparar` (cron `venda-resumo-email`, 09:35 UTC) grava a seleção nos DOIS braços (controle = contrafactual) e enfileira um `fornecedor_alerta` por farmer + cópia ao founder; a `dispatch-notifications` (cron */30 já existente, timeout 60 s) envia. Cada oportunidade: cliente, telefone, até 3 SKUs com quantidade, último preço praticado (nunca custo), cadência, família de complemento, motivo e link `/meu-dia/abrir/<token>`.
 - **Sensor**: entrega = alerta `notificado` (envio aceito); abertura = pixel GET anônimo (sinal fraco); clique = rota autenticada, conta só do destinatário e marca `mostrada_em` dos itens que o e-mail mostrou; oferta = contato efetivo (vendeu/vai pedir/sem interesse) depois do envio até o próximo dia útil, atribuído a uma oportunidade só. Painel: aba "Resumo por e-mail" em `/admin/venda-cliente`.

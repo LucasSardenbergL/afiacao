@@ -7,7 +7,7 @@
 // vendedor ou o `email_teste` da config. Alerta sem envio → endereço padrão, como sempre foi.
 //
 // Venda R2 · Entrega 1 (2026-11-12): o RESUMO DIÁRIO de venda segue a mesma régua, com a tabela própria
-// `venda_resumo_envio` (fechada ao JWT; escritor único `venda_resumo_preparar()`, migration 20261113110100), que traz
+// `venda_resumo_envio` (fechada ao JWT; escritor único `venda_resumo_preparar()`, migration 20261113110200), que traz
 // também o token do pixel de abertura (`abertura.ts`). Os dois mapas se juntam em `mapaDestinatarios`.
 //
 // Módulo PURO: a edge decide com ele e o `destinatario_test.ts` prova a régua.
