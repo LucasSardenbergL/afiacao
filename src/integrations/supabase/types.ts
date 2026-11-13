@@ -20283,6 +20283,63 @@ export type Database = {
         }
         Relationships: []
       }
+      venda_braco_comprador: {
+        Row: {
+          atribuido_em: string
+          braco: string
+          comprador_id: string
+          origem: string
+          u: number
+        }
+        Insert: {
+          atribuido_em?: string
+          braco: string
+          comprador_id: string
+          origem: string
+          u: number
+        }
+        Update: {
+          atribuido_em?: string
+          braco?: string
+          comprador_id?: string
+          origem?: string
+          u?: number
+        }
+        Relationships: []
+      }
+      venda_braco_sorteio: {
+        Row: {
+          algoritmo: string
+          fracao_controle: number
+          id: number
+          inicio: string
+          n_inicial: number
+          n_inicial_controle: number
+          realizado_em: string
+          semente: string
+        }
+        Insert: {
+          algoritmo: string
+          fracao_controle: number
+          id?: number
+          inicio: string
+          n_inicial: number
+          n_inicial_controle: number
+          realizado_em?: string
+          semente: string
+        }
+        Update: {
+          algoritmo?: string
+          fracao_controle?: number
+          id?: number
+          inicio?: string
+          n_inicial?: number
+          n_inicial_controle?: number
+          realizado_em?: string
+          semente?: string
+        }
+        Relationships: []
+      }
       venda_config: {
         Row: {
           atualizado_em: string
@@ -20741,6 +20798,191 @@ export type Database = {
           },
         ]
       }
+      venda_resumo_config: {
+        Row: {
+          ativo: boolean
+          atualizado_em: string
+          copia_user_id: string | null
+          farmer_user_id: string
+          max_cidade: number
+          max_oportunidades: number
+        }
+        Insert: {
+          ativo?: boolean
+          atualizado_em?: string
+          copia_user_id?: string | null
+          farmer_user_id: string
+          max_cidade?: number
+          max_oportunidades?: number
+        }
+        Update: {
+          ativo?: boolean
+          atualizado_em?: string
+          copia_user_id?: string | null
+          farmer_user_id?: string
+          max_cidade?: number
+          max_oportunidades?: number
+        }
+        Relationships: []
+      }
+      venda_resumo_envio: {
+        Row: {
+          aberto_em: string | null
+          alerta_id: number
+          criado_em: string
+          destinatario_email: string
+          destinatario_user_id: string
+          dia: string
+          farmer_user_id: string
+          id: string
+          n_oportunidades: number
+          tentativa: number
+          tipo: string
+          token_abertura: string
+        }
+        Insert: {
+          aberto_em?: string | null
+          alerta_id: number
+          criado_em?: string
+          destinatario_email: string
+          destinatario_user_id: string
+          dia: string
+          farmer_user_id: string
+          id?: string
+          n_oportunidades: number
+          tentativa?: number
+          tipo: string
+          token_abertura?: string
+        }
+        Update: {
+          aberto_em?: string | null
+          alerta_id?: number
+          criado_em?: string
+          destinatario_email?: string
+          destinatario_user_id?: string
+          dia?: string
+          farmer_user_id?: string
+          id?: string
+          n_oportunidades?: number
+          tentativa?: number
+          tipo?: string
+          token_abertura?: string
+        }
+        Relationships: []
+      }
+      venda_resumo_item: {
+        Row: {
+          ordem: number
+          selecao_id: string
+          sugestao_id: string
+        }
+        Insert: {
+          ordem: number
+          selecao_id: string
+          sugestao_id: string
+        }
+        Update: {
+          ordem?: number
+          selecao_id?: string
+          sugestao_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "venda_resumo_item_selecao_id_fkey"
+            columns: ["selecao_id"]
+            isOneToOne: false
+            referencedRelation: "venda_resumo_selecao"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      venda_resumo_link: {
+        Row: {
+          clicado_em: string | null
+          clicado_por: string | null
+          comprador_id: string
+          envio_id: string
+          posicao: number
+          selecao_id: string | null
+          token: string
+        }
+        Insert: {
+          clicado_em?: string | null
+          clicado_por?: string | null
+          comprador_id: string
+          envio_id: string
+          posicao: number
+          selecao_id?: string | null
+          token?: string
+        }
+        Update: {
+          clicado_em?: string | null
+          clicado_por?: string | null
+          comprador_id?: string
+          envio_id?: string
+          posicao?: number
+          selecao_id?: string | null
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "venda_resumo_link_envio_id_fkey"
+            columns: ["envio_id"]
+            isOneToOne: false
+            referencedRelation: "venda_resumo_envio"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "venda_resumo_link_selecao_id_fkey"
+            columns: ["selecao_id"]
+            isOneToOne: false
+            referencedRelation: "venda_resumo_selecao"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      venda_resumo_selecao: {
+        Row: {
+          braco: string
+          comprador_id: string
+          criado_em: string
+          dia: string
+          farmer_user_id: string
+          grupo: string
+          id: string
+          motivo_entrada: string
+          posicao: number
+          valor_ref_total: number | null
+          versao_ranking: string
+        }
+        Insert: {
+          braco: string
+          comprador_id: string
+          criado_em?: string
+          dia: string
+          farmer_user_id: string
+          grupo: string
+          id?: string
+          motivo_entrada: string
+          posicao: number
+          valor_ref_total?: number | null
+          versao_ranking: string
+        }
+        Update: {
+          braco?: string
+          comprador_id?: string
+          criado_em?: string
+          dia?: string
+          farmer_user_id?: string
+          grupo?: string
+          id?: string
+          motivo_entrada?: string
+          posicao?: number
+          valor_ref_total?: number | null
+          versao_ranking?: string
+        }
+        Relationships: []
+      }
       venda_situacao: {
         Row: {
           calculado_em: string
@@ -20771,6 +21013,7 @@ export type Database = {
       venda_sugestao: {
         Row: {
           avaliado_em: string | null
+          braco: string | null
           comprador_id: string
           desfecho: string | null
           desfecho_motivo: string | null
@@ -20796,6 +21039,7 @@ export type Database = {
         }
         Insert: {
           avaliado_em?: string | null
+          braco?: string | null
           comprador_id: string
           desfecho?: string | null
           desfecho_motivo?: string | null
@@ -20821,6 +21065,7 @@ export type Database = {
         }
         Update: {
           avaliado_em?: string | null
+          braco?: string | null
           comprador_id?: string
           desfecho?: string | null
           desfecho_motivo?: string | null
@@ -25925,10 +26170,6 @@ export type Database = {
         }
       }
       radar_lote_publicando: { Args: never; Returns: string }
-      radar_meus_retornos: {
-        Args: { p_limit?: number; p_offset?: number; p_vendedor?: string }
-        Returns: Json
-      }
       radar_meu_territorio: {
         Args: { p_top?: number; p_vendedor?: string }
         Returns: {
@@ -25937,6 +26178,10 @@ export type Database = {
           municipio_nome: string
           uf: string
         }[]
+      }
+      radar_meus_retornos: {
+        Args: { p_limit?: number; p_offset?: number; p_vendedor?: string }
+        Returns: Json
       }
       radar_penetracao_por_municipio: {
         Args: {
@@ -27257,7 +27502,10 @@ export type Database = {
       }
       venda_repasse_candidatos: { Args: never; Returns: Json }
       venda_resumo_abrir: { Args: { p_token: string }; Returns: Json }
-      venda_resumo_painel: { Args: { p_ate: string; p_de: string }; Returns: Json }
+      venda_resumo_painel: {
+        Args: { p_ate: string; p_de: string }
+        Returns: Json
+      }
       venda_resumo_preparar: {
         Args: { p_dia?: string; p_teste_para?: string }
         Returns: Json
