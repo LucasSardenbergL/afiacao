@@ -384,7 +384,7 @@ cenario_m() { # <parte1> <arquivo de B> <alvo f|v> [controle]
   # B=3s e A=60s, B checa com o ciclo formado e é a vítima; se A atrasar mais de 3s, B não vê
   # ciclo, A morre aos 60s e o M3 fica VERMELHO (alto, não flaky-verde). Em < 17.12 não há ciclo
   # e os dois valores são inertes.
-  manda_A "SET deadlock_timeout = '1s';" "SELECT 'A_PID=' || pg_backend_pid();" "BEGIN;" "\\i $p1" "\\! touch $WORK/a.pronta"
+  manda_A "SET deadlock_timeout = '60s';" "SELECT 'A_PID=' || pg_backend_pid();" "BEGIN;" "\\i $p1" "\\! touch $WORK/a.pronta"
   if ! espera_arquivo "$WORK/a.pronta" "$PID_A"; then
     fecha_A; echo "NAO_PAROU:$(tr '\n' ' ' < "$WORK/a.out" | head -c 200)"; return
   fi
@@ -396,7 +396,7 @@ cenario_m() { # <parte1> <arquivo de B> <alvo f|v> [controle]
              CREATE OR REPLACE VIEW public.trava_outra_v WITH (security_invoker = on) AS SELECT 'outra2'::text AS x;
              SELECT 'LIVRE';" 2>&1 | tr '\n' ' ' | sed 's/ *$//' || true)"
   fi
-  PGOPTIONS="-c deadlock_timeout=60s" roda_B "$bsql"
+  PGOPTIONS="-c deadlock_timeout=3s" roda_B "$bsql"
   obs="$(observa_B "$apid")"
   manda_A "\\i $PARTE2" "COMMIT;" "SELECT 'A_FIM_OK';"
   fecha_A
