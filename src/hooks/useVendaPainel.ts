@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import type { CandidatoRepasse, PainelVenda } from '@/lib/venda-cliente/painel';
 import { lerCandidatos, lerPainel } from '@/lib/venda-cliente/painel-rpc';
+import { lerResumoPainel, type ResumoPainel } from '@/lib/venda-cliente/resumo-painel';
 
 // As 4 RPCs estão no types.ts gerado. Os dois retornos `jsonb` passam pela borda `painel-rpc.ts`,
 // que lê por forma e lança fora dela, em vez do cast que os afirmava.
@@ -21,6 +22,24 @@ export function useVendaPainel(de: string, ate: string) {
       const { data, error } = await supabase.rpc('venda_painel', { p_de: de, p_ate: ate });
       if (error) throw error;
       return lerPainel(data);
+    },
+  });
+}
+
+/**
+ * Resumo diário por e-mail + grupo controle (`venda_resumo_painel`, master — venda R2 · Entrega 1). O retorno `jsonb`
+ * passa pela borda `resumo-painel.ts` (lê por forma e lança fora dela).
+ */
+export function useVendaResumoPainel(de: string, ate: string) {
+  const { user, isMaster } = useAuth();
+  return useQuery({
+    queryKey: ['venda-resumo-painel', user?.id ?? 'anon', de, ate],
+    enabled: isMaster,
+    staleTime: 60_000,
+    queryFn: async (): Promise<ResumoPainel> => {
+      const { data, error } = await supabase.rpc('venda_resumo_painel', { p_de: de, p_ate: ate });
+      if (error) throw error;
+      return lerResumoPainel(data);
     },
   });
 }

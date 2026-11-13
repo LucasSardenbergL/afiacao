@@ -25,8 +25,12 @@ export const respostaSonda = criarRespostaSonda("dispatch-notifications");
  * `v1.2-radar-leads-vendedor` = Radar D1 (2026-11-06): o alerta com linha em `radar_email_vendedor_envios` vai para o
  * vendedor daquele envio, com corpo próprio e links clicáveis; o resto segue no `NOTIFICATION_EMAIL_TO`. Régua em
  * `destinatario.ts`.
+ *
+ * `v1.3-resumo-venda-pixel` = venda R2 · Entrega 1 (2026-11-12): o alerta com linha em `venda_resumo_envio` vai para a
+ * farmer (ou a cópia do founder) com o corpo do vendedor + pixel de abertura; GET `?abertura=<uuid>` antes do gate
+ * registra a abertura e devolve um GIF. Régua em `destinatario.ts` e `abertura.ts`.
  */
-export const VERSAO = "v1.2-radar-leads-vendedor";
+export const VERSAO = "v1.3-resumo-venda-pixel";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

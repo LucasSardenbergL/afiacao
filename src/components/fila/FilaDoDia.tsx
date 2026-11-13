@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { CalendarClock } from 'lucide-react';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +17,7 @@ import { spBusinessDate } from '@/lib/time/sp-day';
 import { marcarSeNovoNoDia, chaveDiaExibida, resumoFontes } from '@/lib/fila/telemetria';
 import { LinkTelefone } from '@/components/venda-cliente/LinkTelefone';
 import { FichaLigacao } from '@/components/venda-cliente/FichaLigacao';
+import { lerFichaDaUrl } from '@/lib/venda-cliente/resumo-link';
 import { AcaoOutcomeMenu } from './AcaoOutcomeMenu';
 
 const CATEGORIA_UI: Record<CategoriaAcao, { label: string; cls: string }> = {
@@ -110,6 +111,23 @@ export function FilaDoDia() {
     track('fila.painel_aberto', { fonte: a.fonte, dedupeKey: a.dedupeKey });
   };
 
+  // Deep link do resumo por e-mail (/meu-dia?ficha=<comprador>, vindo de /meu-dia/abrir/:token): abre a ficha do
+  // comprador assim que a fila carrega — pela linha da fila se ele está nela, senão direto pelo id (e-mail de outro
+  // dia, lista que mudou). O parâmetro sai da URL depois (voltar não reabre).
+  const [busca, setBusca] = useSearchParams();
+  const fichaDaUrl = lerFichaDaUrl(busca.get('ficha'));
+  const [fichaDireta, setFichaDireta] = useState<string | null>(null);
+  useEffect(() => {
+    if (!fichaDaUrl || isLoading) return;
+    const alvo = acoes.find((a) => a.clienteUserId === fichaDaUrl);
+    if (alvo) abrirFicha(alvo);
+    else setFichaDireta(fichaDaUrl);
+    const prox = new URLSearchParams(busca);
+    prox.delete('ficha');
+    setBusca(prox, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fichaDaUrl, isLoading]);
+
   // fila.exibida: 1×/dia/sessão (NÃO por render) — mede exposição, não re-render.
   useEffect(() => {
     if (isLoading || visiveis.length === 0) return;
@@ -130,11 +148,11 @@ export function FilaDoDia() {
 
   const ficha = (
     <FichaLigacao
-      compradorId={itemAtivo?.clienteUserId ?? null}
+      compradorId={itemAtivo?.clienteUserId ?? fichaDireta}
       nome={itemAtivo?.clienteNome}
       telefone={itemAtivo?.telefone}
       motivo={itemAtivo?.motivo}
-      onClose={() => setItemAtivo(null)}
+      onClose={() => { setItemAtivo(null); setFichaDireta(null); }}
     />
   );
 
@@ -142,7 +160,9 @@ export function FilaDoDia() {
     // Erro ≠ dia limpo: sem isto, RLS negada/rede ruim virava "carteira em
     // dia" — falso-verde num motor de receita (a vendedora deixava de ligar).
     if (isError) {
+      // A ficha do deep link (?ficha=) abre mesmo com a fila em erro: ela só precisa do compradorId.
       return (
+        <>
         <Card className="p-6">
           <p className="text-sm font-medium">Não consegui carregar sua fila.</p>
           <p className="text-2xs text-muted-foreground mt-1">
@@ -150,13 +170,16 @@ export function FilaDoDia() {
           </p>
           <Button size="sm" variant="outline" className="mt-3" onClick={retry}>Tentar de novo</Button>
         </Card>
+        {ficha}
+        </>
       );
     }
     // Onda desligada: a mensagem própria, nunca "nada a fazer".
     if (recompra.tipo === 'onda_desligada') {
-      return <AvisoRecompra estado={recompra} />;
+      return <><AvisoRecompra estado={recompra} />{ficha}</>;
     }
     return (
+      <>
       <Card className="p-6">
         <p className="text-sm font-medium">Ninguém na sua lista hoje.</p>
         <p className="text-2xs text-muted-foreground mt-1">
@@ -164,6 +187,8 @@ export function FilaDoDia() {
         </p>
         <Button asChild size="sm" variant="ghost" className="mt-3"><Link to="/admin/customers">Ver clientes</Link></Button>
       </Card>
+      {ficha}
+      </>
     );
   }
 

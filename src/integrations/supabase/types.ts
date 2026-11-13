@@ -27256,6 +27256,16 @@ export type Database = {
         Returns: string
       }
       venda_repasse_candidatos: { Args: never; Returns: Json }
+      venda_resumo_abrir: { Args: { p_token: string }; Returns: Json }
+      venda_resumo_painel: { Args: { p_ate: string; p_de: string }; Returns: Json }
+      venda_resumo_preparar: {
+        Args: { p_dia?: string; p_teste_para?: string }
+        Returns: Json
+      }
+      venda_resumo_registrar_abertura: {
+        Args: { p_token: string }
+        Returns: boolean
+      }
       venda_revogar_repasse: { Args: { p_id: string }; Returns: undefined }
       venda_situacao_em: {
         Args: { p_data: string }
