@@ -39,7 +39,7 @@ for f in "$MIG" "$MIG2" "$MIG_JSON" "$MIG_MOSTRADA" "$MIG_PAINEL" "$MIG_LISTA"; 
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca exata.
-  SABOTAGENS="hash_int:S1a lista_ve_controle:L1a mostrada_controle:L1b policy_aberta:POST!P8_FALHOU selecao_so_tratamento:R1b email_com_controle:R1c braco_livre:B1d preparar_aberto:POST!P6_FALHOU clique_qualquer:C1c mostrada_por_outro:C1e oferta_nao_atendeu:P1d contato_antes:P1c painel_com_controle:V1b inicio_hoje:S2b nome_sem_coalesce:R1c sem_gate_edge:R1m saudacao_crua:R1o gate_denylist:R1p oferta_retocada:P1c ic_wald:P1k"
+  SABOTAGENS="hash_int:S1a lista_ve_controle:L1a mostrada_controle:L1b policy_aberta:POST!P8_FALHOU selecao_so_tratamento:R1b email_com_controle:R1c braco_livre:B1d preparar_aberto:POST!R2_FALHOU clique_qualquer:C1c mostrada_por_outro:C1e oferta_nao_atendeu:P1d contato_antes:P1c painel_com_controle:V1b inicio_hoje:S2b nome_sem_coalesce:R1c sem_gate_edge:R1m saudacao_crua:R1o gate_denylist:R1p oferta_retocada:P1c ic_wald:P1k"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-resumo.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -168,7 +168,8 @@ case "${SABOTAGEM:-}" in
        AND s.dia_referencia >= v_ini AND s.dia_referencia < v_fim" ;;
   inicio_hoje)          sabotar "  v_inicio := v_hoje + CASE extract(isodow FROM v_hoje)::int WHEN 5 THEN 3 WHEN 6 THEN 2 ELSE 1 END;" \
                                 "  v_inicio := v_hoje;" ;;
-  sem_gate_edge)        sabotar "  IF v_edge IS NULL OR v_edge !~ '^v[0-9]+\\.[0-9]+-'" "  IF false AND v_edge !~ '^v[0-9]+\\.[0-9]+-'" ;;
+  sem_gate_edge)        sabotar "  IF v_edge IS NULL OR v_edge !~ '^v[0-9]+\\.[0-9]+-'
+     OR (substring(v_edge FROM '^v([0-9]+)\\.')::int, substring(v_edge FROM '^v[0-9]+\\.([0-9]+)-')::int) < (1, 3) THEN" "  IF false THEN" ;;
   nome_sem_coalesce)    sabotar "  v_nome := COALESCE(v_nome, 'Cliente sem nome no cadastro');" "" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac

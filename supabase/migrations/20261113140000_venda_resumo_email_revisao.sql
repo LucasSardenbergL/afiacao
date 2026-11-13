@@ -518,6 +518,8 @@ BEGIN
      OR has_function_privilege('anon', 'private.venda_wilson(numeric,integer)', 'EXECUTE')
      OR has_function_privilege('anon', 'public.venda_resumo_painel(date,date)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.venda_resumo_preparar(date,uuid)', 'EXECUTE')
+     OR has_function_privilege('anon', 'public.venda_resumo_preparar(date,uuid)', 'EXECUTE')
+     OR has_function_privilege('public', 'public.venda_resumo_preparar(date,uuid)', 'EXECUTE')
      OR NOT has_function_privilege('authenticated', 'public.venda_resumo_painel(date,date)', 'EXECUTE')
      OR NOT has_function_privilege('service_role', 'public.venda_resumo_preparar(date,uuid)', 'EXECUTE') THEN
     RAISE EXCEPTION 'R2 FALHOU: ACL fora do desenho';
