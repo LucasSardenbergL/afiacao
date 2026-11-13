@@ -72,6 +72,27 @@ As alternativas custam latência ou qualidade:
 - Qualquer das duas mexe no `ci.yml`, que a sessão `ci-main-cede-a-vez` está editando. Fica
   registrado aqui como candidata para quando houver a medida acima, não como corte agora.
 
+### Medida e experimento (12/11, mesma sessão): o corte no 1º vermelho também não é grátis
+
+- **A medida pedida acima:** em 13 dos 14 autocancelamentos com vermelho fora das provas SQL,
+  houve **um job vermelho só**. Só 1 (`v9-e20-pgdg-so`: `testes` e depois `mutation-check`)
+  mostrou uma 2ª falha durante a espera. O motivo "o autor ver TODAS as falhas não-SQL" quase
+  nunca se paga: a espera custou ~636 job-min para revelar 1 falha extra.
+- **O corte óbvio, que tem um defeito:** cada job faria `gh run cancel` num passo `if: failure()`.
+  O experimento descartável `exp-cancel-no-vermelho` (run 43288551883, branch sem PR, apagado
+  depois) usou 4 jobs: A falha e cancela; A2 falha, cancela e espera 15 s; B é lento; C falha
+  sozinho em paralelo. **Os 4 terminaram `cancelled`**, inclusive o A, que falhou primeiro, e o
+  C, que nem chegou a reportar a própria falha. O job que reprovou deixa de aparecer como
+  `failure`: o `validate` e o Auto-fix passariam a ver "testes: cancelled" e teriam de abrir o
+  log para achar a causa. Isso gera mais ciclo de push, que custa um run inteiro (~100+ job-min)
+  e é exatamente o que este programa quer cortar.
+- **Alternativa de vigia em paralelo** (um job consultando a API até o 1º `failure` e então
+  cancelando): o job que reprovou terminaria antes, como `failure`. Mas a vigia ocupa um runner
+  em TODO run de PR, inclusive nos verdes. São ~7 job-min × ~100 runs, mais ou menos o mesmo que
+  ela economiza, e um slot a menos no teto de 40. E é máquina nova sem incidente.
+- **Decisão:** o `fail-fast` fica como está. Se um dia a espera passar a ser medida em latência
+  de PR (fila), e não em job-min, a vigia volta à mesa com esse número.
+
 ## Por que a causa B não tem corte grátis novo
 
 A regra de 09/11 está funcionando. Na medição de 06–09/11 (236 runs, ~4 dias), houve **22** pushes
