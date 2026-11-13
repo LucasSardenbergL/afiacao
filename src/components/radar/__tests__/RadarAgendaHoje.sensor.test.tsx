@@ -13,6 +13,13 @@ vi.mock('@/queries/useRadarProspectarHoje', () => ({
 const registrar = vi.fn((_v: unknown) => Promise.resolve({ ok: true, registrado: true }));
 vi.mock('@/queries/useRadarAgendaUso', () => ({ registrarUsoAgenda: (v: unknown) => registrar(v) }));
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
+const todos = { pages: [{ total: 23, itens: [] as unknown[] }], fetchNextPage: vi.fn(), hasNextPage: false };
+vi.mock('@/queries/useRadarMeusRetornos', () => ({
+  useRadarMeusRetornos: (aberto: boolean) => ({
+    data: aberto ? { pages: todos.pages } : undefined, status: aberto ? 'success' : 'pending', fetchStatus: 'idle',
+    isLoading: false, isError: false, error: null, hasNextPage: todos.hasNextPage, isFetchingNextPage: false, fetchNextPage: todos.fetchNextPage,
+  }),
+}));
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
 
 import { RadarAgendaHoje } from '../RadarAgendaHoje';
@@ -89,3 +96,22 @@ describe('RadarAgendaHoje — sem rede (revisão 2026-11-11, item 3)', () => {
     expect(container.innerHTML).toBe('');
   });
 });
+
+describe('RadarAgendaHoje — "Ver todos" os retornos (revisão 2026-11-11, item 8)', () => {
+  it('com mais retornos do que os da agenda: "Ver todos" abre a lista inteira e o item abre a ficha', async () => {
+    const item = (n: number) => ({ cnpj: `1${String(n).padStart(13, '0')}`, razaoSocial: `Lead ${n}`, nomeFantasia: null, municipioNome: 'DIVINOPOLIS',
+      uf: 'MG', tipo: 'conversa', retornoEm: '2026-11-07', atrasado: true, nota: null });
+    todos.pages = [{ total: 23, itens: Array.from({ length: 23 }, (_, i) => item(i)) }];
+    Object.assign(estado, { data: { ...DADOS, retornos: { total: 23, itens: [item(0)] } }, status: 'success', fetchStatus: 'idle' });
+    const onAbrir = vi.fn(() => Promise.resolve());
+    render(<RadarAgendaHoje hojeISO="2026-11-09" onAbrir={onAbrir} />);
+    expect(screen.getByTestId('radar-agenda-rodape').textContent).toContain('+22 retornos além destes');
+    fireEvent.click(screen.getByTestId('radar-agenda-ver-todos'));
+    expect(await screen.findByText('Todos os seus retornos (23)')).toBeTruthy();
+    const itens = screen.getAllByTestId('radar-retorno-todos-item');
+    expect(itens).toHaveLength(23);
+    fireEvent.click(itens[5]);
+    expect(onAbrir).toHaveBeenCalledWith('10000000000005');
+  });
+});
+

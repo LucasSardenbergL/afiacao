@@ -51,6 +51,8 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // Radar pacote F (migration 20261107220500) — STABLE, só lê: o território que vira o recorte "Perto dos seus
   // clientes" da fila do /radar (na lente, o da persona vista).
   'radar_meu_territorio',
+  // Radar O3b (migration 20261113110100) — STABLE, só lê: todos os retornos vencidos, paginados (o "Ver todos" da agenda).
+  'radar_meus_retornos',
   // Radar D1 (migration 20261107140001) — STABLE, só lê: o painel do e-mail semanal (só master). As escritas
   // (radar_email_semanal_definir/_cron) ficam BLOQUEADAS na lente.
   'radar_email_semanal_painel',

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { CalendarClock, Hourglass } from 'lucide-react';
 import { useRadarProspectarHoje } from '@/queries/useRadarProspectarHoje';
@@ -8,6 +8,7 @@ import { diaMes } from '@/lib/radar/atendimento';
 import { resumoAgendaHoje } from '@/lib/radar/agenda-hoje';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { RadarRetornosTodos } from './RadarRetornosTodos';
 import { desatualizado, estadoDeLeitura } from '@/lib/leitura/estado-de-leitura';
 
 /**
@@ -26,6 +27,7 @@ export function RadarAgendaHoje({ hojeISO, onAbrir }: {
   const q = useRadarProspectarHoje(true);
   const resumo = q.data ? resumoAgendaHoje(q.data) : null;
   const vistaDoDia = useRef<string | null>(null);
+  const [verTodos, setVerTodos] = useState(false);
 
   useEffect(() => {
     if (!resumo || resumo.vazia || vistaDoDia.current === hojeISO) return;
@@ -109,8 +111,18 @@ export function RadarAgendaHoje({ hojeISO, onAbrir }: {
             resumo.retornosFora > 0 ? `+${resumo.retornosFora} retorno${resumo.retornosFora === 1 ? '' : 's'} além destes` : null,
             resumo.vencidas7d > 0 ? `${resumo.vencidas7d} posse${resumo.vencidas7d === 1 ? '' : 's'} venceu${resumo.vencidas7d === 1 ? '' : 'ram'} nos últimos 7 dias` : null,
           ].filter(Boolean).join(' · ')}
+          {resumo.retornosFora > 0 && (
+            <>
+              {' · '}
+              <button type="button" className="underline" data-testid="radar-agenda-ver-todos" onClick={() => setVerTodos(true)}>
+                Ver todos
+              </button>
+            </>
+          )}
         </p>
       )}
+      <RadarRetornosTodos aberto={verTodos} onFechar={() => setVerTodos(false)}
+        onAbrir={(cnpj) => { setVerTodos(false); abrir(cnpj, 'retorno'); }} />
       {q.isFetching && !q.isLoading && <span className="sr-only">Atualizando a agenda</span>}
     </section>
   );

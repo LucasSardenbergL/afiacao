@@ -28,7 +28,7 @@ import { buscarEmpresaRadarFresca } from '@/queries/useRadarEmpresa';
 /** Agregados e ledgers do vendedor que UM contato/desfazer/cadastro move — relidos ativamente. */
 const RELER_POR_LEAD: ReadonlySet<unknown> = new Set([
   'kpis', 'funil', 'sugeridos', 'amostra', 'ineditos', 'prospectar-hoje', 'atendimentos-ativos',
-  'conflitos-cadastro', 'sucessoes', 'sucessao-plano',
+  'conflitos-cadastro', 'sucessoes', 'sucessao-plano', 'meus-retornos',
 ]);
 /** Chaves `['radar', <tipo>, cnpj, …]` de UM lead: relidas só quando o CNPJ é o do lead tocado. */
 const RELER_DO_LEAD: ReadonlySet<unknown> = new Set([
