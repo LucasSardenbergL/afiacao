@@ -24,6 +24,8 @@
 # `radar-privacidade-j` = 240 (9 + 111 + 120; 327 no 43112361077, com mais disputa) e `tint-corante-giro` =
 # 104 (era 236, com JIT; agora `jit=off`). `tint-fase5-watchdog` = 15 (era 240 com JIT), medida no run
 # 43147391328, depois do `jit=off`. docs/historico/ci-provas-sql-fin-consolidado-faixas-e-tint-jit.md
+# Exceção (2026-11-12): UM run (43198804946): `hoje-sp-views-defaults` = 239 (normal 7 + `--falsificar` 232;
+# era 309), com K1/K2 em 2 sessões B simultâneas. docs/historico/ci-provas-sql-radar-privacidade-faixas.md
 # Re-meça quando a pior parte destoar das outras ou entrar prova cara nova (o `comm` de
 # docs/historico/ci-fila-de-runners.md lista as provas sem custo): para cada job `provas-sql (i)` de
 # um run verde, baixe o log pela API (`gh run view --log` em paralelo volta VAZIO sob limite),
@@ -96,7 +98,7 @@ db/test-grupos-caca-cnpj-alfanumerico.sh 36
 db/test-hoje-sp-data-ciclo.sh 206
 db/test-hoje-sp-sessao-utc-precos-piso.sh 30
 db/test-hoje-sp-sete-funcoes.sh 34
-db/test-hoje-sp-views-defaults.sh 309
+db/test-hoje-sp-views-defaults.sh 239
 db/test-importar-nfe-recebimento.sh 16
 db/test-margem-cliente-janela-12m.sh 3
 db/test-melhorias-rpcs.sh 64

@@ -48,3 +48,24 @@ o mesmo T entre as faixas é estender o gate; fica para quando houver uma prova 
 - Runner com o manifesto só da prova, `NUCLEO_WORKERS=3` (M2 disputado, load ~15): normal 12 s, `--falsificar 1/2`
   13 sabotagens em 167 s, `2/2` 14 em 192 s, cada uma com o seu controle verde; `SQL_PROOF_OK provas=1/1
   falsificacoes=2/2`, exit 0.
+
+## hoje-sp: K1/K2 em paralelo — entregue (#3867, 2026-11-12)
+
+A alavanca local que o `/codex` pediu para medir antes da partição por bloco.
+
+- **O que mudou:** cada uma das sondas K1 (`fin_aging_pagar`) e K2 (`priority_score_log`) roda numa sessão B
+  própria, ao mesmo tempo, contra a mesma A parada no fim da pré-condição. As duas esperas de
+  `lock_timeout=1500` correm juntas. Fica igual: os dois `eq`, os dois timeouts, a marca de cada um
+  (`BARROU`, `PASSOU`, ou o erro como VALOR, que vira `ERRO_DE_EXECUCAO`) e as sabotagens `sem_trava:K1,K2` e
+  `trava_na_ordem_errada:K3:K1,K2`. Cada sonda escreve no seu arquivo, e o assert lê depois do `wait`.
+- **JIT conferido antes:** com `auto_explain`, o maior custo estimado de plano da prova é 36.793, abaixo do
+  `jit_above_cost` (100.000). O JIT não dispara, então `jit=off` não seria alavanca aqui, ao contrário da
+  `tint-corante-giro`.
+- **Medido no CI** (run 43198804946, 16 × 3): `--falsificar` 232 s (era ~303), normal 7 s, ou seja 239 s
+  contra 309 na tabela. O ganho de ~70 s supera a estimativa de ~50 s (1,5 s × 34 invocações, mais o ruído).
+  Local, a falsificação inteira deu 33/33 vermelhas, com o controle verde.
+- **Já não é o piso.** Maiores unidades nesse run: `rls-has-role-initplan-classe` NORMAL 279 s (a tabela
+  diz 218), `cliente-sucessao-plano --falsificar` 264 s, `venda-repasse 2/2` 236 s, e só depois a `hoje-sp`.
+  A `sayerlack-cancelado-com-compra-viva --falsificar` deu 187 s e não virou a pior, então não foi partida.
+  A pior PARTE (11, 348 s) é carga do pool, sem unidade acima de 165 s. Com a tabela atualizada, a
+  partição reequilibra. A partição por bloco sai da mesa enquanto nenhuma prova serial for o piso.

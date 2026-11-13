@@ -368,10 +368,16 @@ barra() {   # <sql> — 'BARROU' se B tomou lock_timeout (55P03); 'PASSOU' se co
     END \$f\$;
     SELECT pg_temp.barra(\$q\$$1\$q\$);" 2>&1 || true
 }
-eq K1 "com A parada após a pré-condição, B não mexe na view" \
-  "$(barra "ALTER VIEW public.fin_aging_pagar SET (security_invoker = on)")" BARROU
-eq K2 "... nem na tabela de um DEFAULT" \
-  "$(barra "ALTER TABLE public.priority_score_log ALTER COLUMN score_date SET STATISTICS -1")" BARROU
+# K1 e K2 sondam objetos DISTINTOS com a mesma A aberta: cada uma numa sessão B própria, ao MESMO tempo — as
+# duas esperas de lock_timeout correm juntas (uma no lugar de duas, × cada invocação do --falsificar). Cada
+# sonda tem o seu arquivo e o seu assert; o `wait` por PID não engole nada (barra() já devolve o erro como VALOR).
+barra "ALTER VIEW public.fin_aging_pagar SET (security_invoker = on)" > "$TMPD/k1.out" &
+PID_K1=$!
+barra "ALTER TABLE public.priority_score_log ALTER COLUMN score_date SET STATISTICS -1" > "$TMPD/k2.out" &
+PID_K2=$!
+wait "$PID_K1" "$PID_K2" || true
+eq K1 "com A parada após a pré-condição, B não mexe na view" "$(cat "$TMPD/k1.out")" BARROU
+eq K2 "... nem na tabela de um DEFAULT" "$(cat "$TMPD/k2.out")" BARROU
 printf 'ROLLBACK;\n\\q\n' >&7
 exec 7>&-
 wait "$PID_A" || true
