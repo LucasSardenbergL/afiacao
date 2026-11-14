@@ -405,7 +405,7 @@ async function syncClienteOmie(
 
   // Sem vínculo fresco na view (ausência ou código inseguro) → buscar no Omie por CPF/CNPJ com
   // registros_por_pagina:2 para detectar duplicata-CNPJ (o :1 antigo pegava só o 1º = last-write-wins).
-  console.log(`[Omie] Sem vínculo fresco na view p/ colacor_sc; buscando no Omie por ${documentClean.length === 14 ? "CNPJ" : "CPF"} (documento fora do log — LGPD)`);
+  console.log(`[Omie] Sem vínculo fresco na view p/ colacor_sc; buscando no Omie por CPF/CNPJ (documento fora do log — LGPD)`);
   const searchResult = await callOmieApi(
     "geral/clientes/",
     "ListarClientes",

@@ -117,10 +117,12 @@ describe('gate: IA paga aberta a qualquer JWT precisa de cota', () => {
   it('ancora em instâncias conhecidas — regex podre não passa despercebida', () => {
     const porNome = new Map(edgesDeIaPaga().map((e) => [e.nome, e]));
 
-    // As âncoras da classe: IA paga, abertas a qualquer JWT válido, com cota.
-    // `generate-bundle-argument` entra aqui porque seu gate guarda SÓ a sonda — se um dia o
-    // detector voltar a lê-lo como dominante, é o falso-negativo renascendo.
-    for (const nome of ['elevenlabs-transcribe', 'identify-tool', 'generate-bundle-argument']) {
+    // A âncora da classe: IA paga sem gate de papel DOMINANTE (por AST), com cota.
+    // `identify-tool` e `generate-bundle-argument` saíram daqui em 2026-11-13 (scanner Lovable):
+    // o 1º passou a ler user_roles/profiles.is_approved em toda requisição; o 2º, a passar o DISPARO
+    // também por authorizeCronOrStaff — sonda e disparo cobertos, o detector lê "dominante". As duas
+    // viraram âncora do lado dominante COM cota, abaixo.
+    for (const nome of ['elevenlabs-transcribe']) {
       const e = porNome.get(nome);
       expect(e, `${nome} sumiu da população de IA paga — regex de provedor podre?`).toBeDefined();
       expect(
@@ -128,6 +130,15 @@ describe('gate: IA paga aberta a qualquer JWT precisa de cota', () => {
         `${nome} passou a ter gate de papel dominando o handler — revise o recorte do gate`,
       ).toBe(false);
       expect(e!.consomeCota, `${nome} perdeu a cota — é exatamente a regressão deste gate`).toBe(true);
+    }
+
+    // Âncora do lado dominante COM cota (scanner Lovable 2026-11-13): identify-tool (leitura INLINE
+    // de user_roles + is_approved) e generate-bundle-argument (helper nos dois ramos).
+    for (const nome of ['identify-tool', 'generate-bundle-argument']) {
+      const e = porNome.get(nome);
+      expect(e, `${nome} sumiu da população de IA paga — regex de provedor podre?`).toBeDefined();
+      expect(e!.gateDominante, `${nome} perdeu o gate de papel dominante`).toBe(true);
+      expect(e!.consomeCota, `${nome} perdeu a cota`).toBe(true);
     }
 
     // Âncora do lado isento: gate dominante sem cota é legítimo e precisa continuar visível.

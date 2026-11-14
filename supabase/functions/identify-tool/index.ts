@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const ehStaff = (rolesRes.data ?? []).length > 0;
+    const ehStaff = Array.isArray(rolesRes.data) && rolesRes.data.length > 0;
     if (!ehStaff && perfilRes.data?.is_approved !== true) {
       return new Response(JSON.stringify({ error: "Cadastro aguardando aprovação" }), {
         status: 403,
