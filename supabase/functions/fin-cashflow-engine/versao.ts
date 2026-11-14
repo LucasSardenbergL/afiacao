@@ -54,7 +54,11 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // plano v7; o mapa de baixas relido 3× derrubou o realista da colacor em 2026-11-05). Cálculo e
 // gravação por cenário idênticos aos de `cenario` (paridade em multi-cenario_test.ts). A migration
 // do cron que passa a mandar `cenarios` EXIGE esta versão atestada no ledger ANTES de aplicar.
-export const VERSAO = "v2.3-carga-unica-cenarios";
+// v2.3 → v2.4: expõe o CP aberto vencido antes da segunda corrente, que fica FORA de todas as semanas
+// (cp_vencido_fora_projecao na resposta + 7 colunas cp_vencido_fora_* no snapshot, migration
+// 20261114120000). Só medida: semanas, saídas e saldos IDÊNTICOS (decisão do founder, 14/11/2026;
+// prova em cp-vencido-fora_test.ts). O INSERT nomeia as colunas: a migration vai ANTES do deploy.
+export const VERSAO = "v2.4-cp-vencido-visivel";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
