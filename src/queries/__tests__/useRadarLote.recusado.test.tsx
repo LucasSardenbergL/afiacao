@@ -75,6 +75,6 @@ describe('useRadarLoteOmie — recusa do servidor', () => {
     expect(h.result.current.progresso).toMatchObject({ pendentes: 0, recusados: 2, puladosPosse: 1, ok: 1 });
     expect(deps.registrarNoRadar).toHaveBeenCalledTimes(1);
     expect(deps.registrarNoRadar).toHaveBeenCalledWith(ATIVA.cnpj, '901', false);
-    expect(track).toHaveBeenCalledWith('radar.lote_cadastrado_omie', expect.objectContaining({ total: 3, recusados: 2, pulados_posse: 1 }));
+    expect(track).toHaveBeenCalledWith('radar.lote_cadastrado_omie', expect.objectContaining({ total: 3, lote_total: 3, lote_recusados: 2, lote_pulados_posse: 1 }));
   });
 });

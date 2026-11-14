@@ -231,11 +231,15 @@ export function useRadarLoteOmie() {
       }
 
       const resumo = resumirLote(resultados as ResultadoItem<ItemLote, { jaExistia: boolean }>[], (v) => v.jaExistia);
-      const recusas = contarRecusas(loteAtual());
+      const loteFinal = loteAtual();
+      const recusas = contarRecusas(loteFinal);
       track('radar.lote_cadastrado_omie', {
         total: itens.length, criados: resumo.criados, ja_existiam: resumo.ja_existiam,
-        // `falhas` segue contando a recusa (é o `falha` do executarEmLote); `recusados`/`pulados_posse` a separam.
-        falhas: resumo.falhas + indisponiveis.size, recusados: recusas.recusados, pulados_posse: recusas.puladosPosse,
+        falhas: resumo.falhas + indisponiveis.size,
+        // `total`/`falhas` são DESTA execução (na retomada, só os pendentes — e `falhas` inclui as recusas, que o runner
+        // vê como lançamento). Os `lote_*` são do lote INTEIRO, mesmo denominador (parecer Codex 2026-11-14, P2):
+        // `lote_pulados_posse` ⊂ `lote_recusados` ⊂ `lote_total`.
+        lote_total: loteFinal?.itens.length ?? null, lote_recusados: recusas.recusados, lote_pulados_posse: recusas.puladosPosse,
         divergentes_no_lote: loteAtual() ? itensDivergentes(loteAtual() as LotePersistido).length : 0, nao_iniciados: resumo.cancelados, retomada,
         parou_por_throttling: resultados.some((r) => r.status === 'falha' && ehThrottlingOmie(new Error(r.erro))),
       });

@@ -91,19 +91,70 @@ export function posseDeOutro(documento: string, data: unknown): { donoNome: stri
   return { donoNome: nome.length > 0 && nome.length <= NOME_DONO_MAX ? nome : null };
 }
 
+/** O LEAD (radar_empresas) está elegível agora? Leitura que falha LANÇA. Não olha posse (`verificarPosseRadar`). */
 export async function verificarElegibilidadeRadar(
   banco: BancoRadar, documento: string, ex: ExigenciaRadar,
 ): Promise<VereditoRadar> {
   const { data, error } = await banco.lerLead(documento);
   if (error) throw new Error(`RADAR_ELEGIBILIDADE_INDETERMINADA: não consegui reler o lead no Radar — nada foi criado (${error.message})`);
   const motivo = motivoInelegivelRadar(data, ex);
-  if (motivo) return { ok: false, motivo };
-  if (!ex.respeitarPosse) return { ok: true };
+  return motivo ? { ok: false, motivo } : { ok: true };
+}
+
+/** O lead está em posse ativa de OUTRO vendedor? Sem client do usuário, erro ou forma estranha: LANÇA. */
+export async function verificarPosseRadar(banco: BancoRadar, documento: string): Promise<VereditoRadar> {
   if (!banco.lerPosse) throw posseIndeterminada("chamada sem usuário");
   const posse = await banco.lerPosse(documento);
   if (posse.error) throw posseIndeterminada(posse.error.message);
   const deOutro = posseDeOutro(documento, posse.data);
   return deOutro ? { ok: false, motivo: "posse_de_outro", donoNome: deOutro.donoNome } : { ok: true };
+}
+
+export interface RecusaRadar {
+  success: false;
+  code: "RADAR_INELEGIVEL";
+  motivo: MotivoInelegivelRadar;
+  dono_nome?: string | null;
+  error: string;
+}
+
+/** Resposta de REGRA ao navegador. O `error` é o que um front sem o motivo no vocabulário mostra (build velho). */
+export function respostaRecusaRadar(v: { motivo: MotivoInelegivelRadar; donoNome?: string | null }): RecusaRadar {
+  if (v.motivo === "posse_de_outro") {
+    const quem = v.donoNome ?? "outro vendedor";
+    return {
+      success: false, code: "RADAR_INELEGIVEL", motivo: v.motivo, dono_nome: v.donoNome ?? null,
+      error: `RADAR_INELEGIVEL: posse_de_outro — em atendimento por ${quem}; nada foi criado no Omie`,
+    };
+  }
+  return { success: false, code: "RADAR_INELEGIVEL", motivo: v.motivo, error: `RADAR_INELEGIVEL: ${v.motivo}` };
+}
+
+/**
+ * A CRIAÇÃO do `criar_cliente` (depois do lookup estrito que não achou o cliente), na ordem que protege o ERP:
+ *   1. o LEAD elegível (só com `radar`) — antes de qualquer outra chamada ao Omie;
+ *   2. `preparar` (razão fiscal pelas outras contas, parâmetros) — pode levar segundos (retries do Omie);
+ *   3. a POSSE (só com `respeitarPosse`) — IMEDIATAMENTE antes da inclusão, para encolher a janela em que outro
+ *      vendedor assume o lead depois da leitura (parecer Codex 2026-11-14, P2; a posse é macia, sem trava no HTTP);
+ *   4. `incluir` (IncluirCliente) — só se nada recusou e nada lançou.
+ */
+export async function criarClienteComRegraRadar<P, R>(o: {
+  exigencia: ExigenciaRadar | null;
+  banco: BancoRadar;
+  documento: string;
+  preparar: () => Promise<P>;
+  incluir: (preparo: P) => Promise<R>;
+}): Promise<{ recusa: RecusaRadar } | { criado: R; preparo: P }> {
+  if (o.exigencia) {
+    const lead = await verificarElegibilidadeRadar(o.banco, o.documento, o.exigencia);
+    if (!lead.ok) return { recusa: respostaRecusaRadar(lead) };
+  }
+  const preparo = await o.preparar();
+  if (o.exigencia?.respeitarPosse) {
+    const posse = await verificarPosseRadar(o.banco, o.documento);
+    if (!posse.ok) return { recusa: respostaRecusaRadar(posse) };
+  }
+  return { criado: await o.incluir(preparo), preparo };
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
