@@ -70,7 +70,7 @@ BEGIN
     END IF;
   END LOOP;
   IF (SELECT count(*) FROM pg_constraint WHERE conrelid = 'public.fin_projecao_snapshots'::regclass
-      AND conname IN ('fin_projecao_snapshots_cp_vencido_faixa_ck', 'fin_projecao_snapshots_cp_vencido_coerencia_ck')) <> 2 THEN
+      AND conname IN ('fin_projecao_snapshots_cp_vencido_faixa_ck', 'fin_projecao_snapshots_cp_vencido_coerencia_ck')) IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'P2 FALHOU: CHECKs de faixa/coerencia ausentes';
   END IF;
   -- Nenhum DEFAULT: ausente tem de continuar NULL (um DEFAULT 0 fabricaria "zero vencido" nos snapshots antigos).
