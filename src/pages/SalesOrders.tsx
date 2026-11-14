@@ -29,6 +29,7 @@ const SalesOrders = () => {
     setAccountFilter,
     search,
     setSearch,
+    limparFiltros,
     selectedIds,
     toggleSelect,
     clearSelection,
@@ -106,8 +107,7 @@ const SalesOrders = () => {
           actionLabel={search.trim() || accountFilter !== 'all' ? 'Limpar filtros' : 'Novo pedido'}
           onAction={() => {
             if (search.trim() || accountFilter !== 'all') {
-              setSearch('');
-              setAccountFilter('all');
+              limparFiltros();
             } else {
               navigate('/sales/new');
             }

@@ -48,6 +48,8 @@ export function useSalesOrders() {
   const accountFilter: Account = ehEmpresa(filtros.empresa) ? filtros.empresa : 'all';
   const setSearch = (q: string) => setFiltros({ q });
   const setAccountFilter = (empresa: Account) => setFiltros({ empresa });
+  // Uma escrita só: as duas chaves mudam juntas na URL.
+  const limparFiltros = () => setFiltros({ q: '', empresa: 'all' });
   // Seleção guarda a LINHA, não só o id: trocar a busca tira o pedido da tela, e o bulk delete ainda
   // precisa dele (omie_pedido_id, origin).
   const [selecionados, setSelecionados] = useState<Map<string, OrderFeedRow>>(new Map());
@@ -339,6 +341,7 @@ export function useSalesOrders() {
     setAccountFilter,
     search,
     setSearch,
+    limparFiltros,
     selectedIds,
     toggleSelect,
     clearSelection,
