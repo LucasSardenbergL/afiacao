@@ -182,6 +182,8 @@ export function useRadarLoteOmie() {
       const indisponiveis = new Map(semSnapshot.map((s) => [s.cnpj, s.erro]));
       for (const [cnpj, erro] of indisponiveis) atualizarItem(cnpj, { status: 'falha', etapa: 'omie', erro, codigo: null });
       const executaveis = itens.filter((i) => !indisponiveis.has(i.cnpj));
+      // Recusas DESTA execução: o runner as vê como lançamento (o `throw e` abaixo), mas não são falha — saem de `falhas`.
+      const recusadosNestaExecucao = new Set<string>();
 
       const resultados = await executarEmLote(
         executaveis,
@@ -205,6 +207,7 @@ export function useRadarLoteOmie() {
             return r;
           } catch (e) {
             if (e instanceof InelegivelCadastro) {
+              recusadosNestaExecucao.add(item.cnpj);
               // Recusa do SERVIDOR (revisão 2026-11-11, item 5): terminal, com o motivo; nada foi criado no ERP.
               // Posse de outro vendedor (2026-11-14): o lote PULA o lead — o nome de quem atende vai junto.
               atualizarItem(item.cnpj, {
@@ -235,10 +238,11 @@ export function useRadarLoteOmie() {
       const recusas = contarRecusas(loteFinal);
       track('radar.lote_cadastrado_omie', {
         total: itens.length, criados: resumo.criados, ja_existiam: resumo.ja_existiam,
-        falhas: resumo.falhas + indisponiveis.size,
-        // `total`/`falhas` são DESTA execução (na retomada, só os pendentes — e `falhas` inclui as recusas, que o runner
-        // vê como lançamento). Os `lote_*` são do lote INTEIRO, mesmo denominador (parecer Codex 2026-11-14, P2):
-        // `lote_pulados_posse` ⊂ `lote_recusados` ⊂ `lote_total`.
+        falhas: resumo.falhas - recusadosNestaExecucao.size + indisponiveis.size,
+        recusados: recusadosNestaExecucao.size,
+        // `total`/`falhas`/`recusados` são DESTA execução (na retomada, só os pendentes); `falhas` NÃO inclui as recusas
+        // (Codex código 2026-11-14, P2: antes, um pulado por posse contava também como falha). Os `lote_*` são do lote
+        // INTEIRO, mesmo denominador (parecer de desenho, P2): `lote_pulados_posse` ⊂ `lote_recusados` ⊂ `lote_total`.
         lote_total: loteFinal?.itens.length ?? null, lote_recusados: recusas.recusados, lote_pulados_posse: recusas.puladosPosse,
         divergentes_no_lote: loteAtual() ? itensDivergentes(loteAtual() as LotePersistido).length : 0, nao_iniciados: resumo.cancelados, retomada,
         parou_por_throttling: resultados.some((r) => r.status === 'falha' && ehThrottlingOmie(new Error(r.erro))),

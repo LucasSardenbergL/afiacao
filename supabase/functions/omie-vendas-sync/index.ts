@@ -279,7 +279,10 @@ async function callOmieVendasApi(
   // deadline: fim ABSOLUTO (ms) imposto pelo chamador, quando ele cabe antes do teto de 140s desta chamada — o
   // lookup estrito do cliente divide UM prazo entre as páginas e deixa tempo para o Incluir* que vem depois
   // (Codex P2, v1.28). Estourou numa leitura → OMIE_TRANSIENT (nunca ausência).
-  opts?: { throwOnTransient?: boolean; deadline?: number },
+  // antesDeReenviar: roda DEPOIS do backoff e ANTES de cada reenvio — o IncluirCliente do lote revalida a posse do
+  // Radar aqui (Codex código 2026-11-14, P1: o reenvio pós rate-limit criava o cliente de um lead que outro vendedor
+  // assumiu durante a espera). Lançou → nada é reenviado e o erro sobe ao chamador.
+  opts?: { throwOnTransient?: boolean; deadline?: number; antesDeReenviar?: () => Promise<void> },
 ): Promise<OmieGenericResponse | null> {
   const { APP_KEY, APP_SECRET } = getCredentials(account);
 
@@ -372,6 +375,7 @@ async function callOmieVendasApi(
         if (attempt < maxRetries && prazoCabe && cabeEspera(Date.now(), deadline, delay)) {
           console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'}, waiting ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
           await new Promise(r => setTimeout(r, delay));
+          if (opts?.antesDeReenviar) await opts.antesDeReenviar();
           continue;
         }
         if (envioAmbiguo) throw erroEscritaAmbigua(call, account, fs);
@@ -3044,9 +3048,12 @@ Deno.serve(async (req) => {
               : null,
           },
           preparar: prepararCliente,
-          incluir: async (clienteParams) => {
+          incluir: async (clienteParams, antesDeReenviar) => {
             console.log(`[Omie Vendas][${account}] Criando cliente (${docClean.length === 11 ? "CPF" : "CNPJ"})`); // sem nome/documento: PII (M-36)
-            return await callOmieVendasApi("geral/clientes/", "IncluirCliente", clienteParams, account);
+            return await callOmieVendasApi(
+              "geral/clientes/", "IncluirCliente", clienteParams, account,
+              antesDeReenviar ? { antesDeReenviar } : undefined,
+            );
           },
         });
         if ("recusa" in fluxo) {

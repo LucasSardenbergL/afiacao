@@ -130,20 +130,31 @@ function respostaRecusaRadar(v: { motivo: MotivoInelegivelRadar; donoNome?: stri
   return { success: false, code: "RADAR_INELEGIVEL", motivo: v.motivo, error: `RADAR_INELEGIVEL: ${v.motivo}` };
 }
 
+/** A posse virou de OUTRO durante o backoff do Omie: o orquestrador a converte na mesma recusa. */
+class PosseMudouNoReenvio extends Error {
+  constructor(readonly veredito: { motivo: MotivoInelegivelRadar; donoNome?: string | null }) {
+    super("RADAR_POSSE_MUDOU_NO_REENVIO");
+  }
+}
+
 /**
  * A CRIAÇÃO do `criar_cliente` (depois do lookup estrito que não achou o cliente), na ordem que protege o ERP:
  *   1. o LEAD elegível (só com `radar`) — antes de qualquer outra chamada ao Omie;
  *   2. `preparar` (razão fiscal pelas outras contas, parâmetros) — pode levar segundos (retries do Omie);
  *   3. a POSSE (só com `respeitarPosse`) — IMEDIATAMENTE antes da inclusão, para encolher a janela em que outro
  *      vendedor assume o lead depois da leitura (parecer Codex 2026-11-14, P2; a posse é macia, sem trava no HTTP);
- *   4. `incluir` (IncluirCliente) — só se nada recusou e nada lançou.
+ *   4. `incluir` (IncluirCliente) — só se nada recusou e nada lançou. Recebe `antesDeReenviar` (com `respeitarPosse`):
+ *      o helper do Omie o chama depois do backoff de rate-limit e ANTES de cada reenvio, e a posse é relida ali —
+ *      senão um lead assumido por outro durante a espera era criado no reenvio (Codex código 2026-11-14, P1). Só o
+ *      rate-limit reenvia uma inclusão (o Omie RECUSOU a anterior; transitório ambíguo de Incluir* lança indeterminada),
+ *      então a recusa no reenvio é honesta: nada foi criado.
  */
 export async function criarClienteComRegraRadar<P, R>(o: {
   exigencia: ExigenciaRadar | null;
   banco: BancoRadar;
   documento: string;
   preparar: () => Promise<P>;
-  incluir: (preparo: P) => Promise<R>;
+  incluir: (preparo: P, antesDeReenviar: (() => Promise<void>) | null) => Promise<R>;
 }): Promise<{ recusa: RecusaRadar } | { criado: R; preparo: P }> {
   if (o.exigencia) {
     const lead = await verificarElegibilidadeRadar(o.banco, o.documento, o.exigencia);
@@ -154,7 +165,18 @@ export async function criarClienteComRegraRadar<P, R>(o: {
     const posse = await verificarPosseRadar(o.banco, o.documento);
     if (!posse.ok) return { recusa: respostaRecusaRadar(posse) };
   }
-  return { criado: await o.incluir(preparo), preparo };
+  const antesDeReenviar = o.exigencia?.respeitarPosse
+    ? async () => {
+      const posse = await verificarPosseRadar(o.banco, o.documento);
+      if (!posse.ok) throw new PosseMudouNoReenvio(posse);
+    }
+    : null;
+  try {
+    return { criado: await o.incluir(preparo, antesDeReenviar), preparo };
+  } catch (e) {
+    if (e instanceof PosseMudouNoReenvio) return { recusa: respostaRecusaRadar(e.veredito) };
+    throw e;
+  }
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

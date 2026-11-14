@@ -165,15 +165,74 @@ Deno.test("verificarPosseRadar: livre, meu e de outro (o veredito que o fluxo us
     { ok: false, motivo: "posse_de_outro", donoNome: "Ana Farmer" });
 });
 
-// A LIGAÇÃO no index.ts (parecer Codex 2026-11-14, P1): o único IncluirCliente da edge sai do `incluir` do fluxo com a
-// regra do Radar — chamá-lo por fora pularia lead e posse sem nenhum teste acima ficar vermelho.
+// O REENVIO (Codex código 2026-11-14, P1): o helper do Omie repete a inclusão depois do backoff de rate-limit. Sem
+// reler a posse ali, um lead assumido por outro DURANTE a espera era criado no 2º envio.
+/** `incluir` falso que imita o helper: N rate-limits (cada um chama `antesDeReenviar` antes de reenviar) e cria. */
+async function criarComReenvios(exigencia: ExigenciaRadar, posses: RespostaPosse[], rateLimits: number) {
+  const log: string[] = [];
+  let n = 0;
+  const banco: BancoRadar = {
+    lerLead: () => Promise.resolve({ data: LEAD, error: null }),
+    lerPosse: () => { const p = posses[Math.min(n, posses.length - 1)]; n++; log.push(`posse#${n}`); return Promise.resolve(p); },
+  };
+  const r = await criarClienteComRegraRadar({
+    exigencia, banco, documento: DOC,
+    preparar: () => Promise.resolve({ razao: "X" }),
+    incluir: async (_p, antesDeReenviar) => {
+      for (let k = 0; k < rateLimits; k++) {
+        log.push(`envio#${k + 1}:rate-limit`);
+        if (antesDeReenviar) await antesDeReenviar();
+      }
+      log.push(`envio#${rateLimits + 1}:criado`);
+      return { codigo_cliente_omie: 77 };
+    },
+  });
+  return { r, log };
+}
+const LIVRE: RespostaPosse = { data: [], error: null };
+const DA_ANA: RespostaPosse = { data: [linhaPosse()], error: null };
+
+Deno.test("reenvio: outro vendedor assume DURANTE o backoff → recusa posse_de_outro e o reenvio NÃO acontece", async () => {
+  const { r, log } = await criarComReenvios(LOTE, [LIVRE, DA_ANA], 1);
+  assertEquals(r, { recusa: {
+    success: false, code: "RADAR_INELEGIVEL", motivo: "posse_de_outro", dono_nome: "Ana Farmer",
+    error: "RADAR_INELEGIVEL: posse_de_outro — em atendimento por Ana Farmer; nada foi criado no Omie",
+  } });
+  assertEquals(log, ["posse#1", "envio#1:rate-limit", "posse#2"]);
+});
+
+Deno.test("reenvio: posse segue livre em cada reenvio → relida antes de CADA um, e cria", async () => {
+  const { r, log } = await criarComReenvios(LOTE, [LIVRE], 2);
+  assertEquals("criado" in r && r.criado, { codigo_cliente_omie: 77 });
+  assertEquals(log, ["posse#1", "envio#1:rate-limit", "posse#2", "envio#2:rate-limit", "posse#3", "envio#3:criado"]);
+});
+
+Deno.test("reenvio: posse INDETERMINADA no reenvio → lança RADAR_POSSE_INDETERMINADA, nada criado", async () => {
+  let lancou = "";
+  try {
+    await criarComReenvios(LOTE, [LIVRE, { data: null, error: { message: "42501" } }], 1);
+  } catch (e) { lancou = e instanceof Error ? e.message : String(e); }
+  if (!lancou.includes("RADAR_POSSE_INDETERMINADA")) throw new Error(`esperava RADAR_POSSE_INDETERMINADA, veio: ${lancou || "nenhum lançamento"}`);
+});
+
+Deno.test("reenvio: a FICHA não recebe antesDeReenviar (posse segue macia ali)", async () => {
+  const { r, log } = await criarComReenvios(FICHA, [DA_ANA], 1);
+  assertEquals("criado" in r, true);
+  assertEquals(log, ["envio#1:rate-limit", "envio#2:criado"]);
+});
+
+// A LIGAÇÃO no index.ts (parecer Codex 2026-11-14, P1; reforçada no parecer de código, P2): o único IncluirCliente da
+// edge sai do `incluir` do fluxo, com a exigência lida do payload, a posse lida pelo client do CHAMADOR (anon + JWT) e o
+// `antesDeReenviar` repassado ao helper — que o chama antes de cada reenvio.
+function fonteSemComentario(src: string): string {
+  return src.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+}
 Deno.test("index.ts: o único IncluirCliente mora no `incluir:` do criarClienteComRegraRadar, e a recusa faz break", async () => {
-  const src = (await Deno.readTextFile(new URL("./index.ts", import.meta.url)))
-    .split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+  const src = fonteSemComentario(await Deno.readTextFile(new URL("./index.ts", import.meta.url)));
   const chamadas = src.split('"IncluirCliente"').length - 1;
   assertEquals(chamadas, 1, `esperava 1 chamada a "IncluirCliente" em código, achei ${chamadas}`);
   const ini = src.indexOf("await criarClienteComRegraRadar({");
-  const incluir = src.indexOf("incluir: async (clienteParams) => {", ini);
+  const incluir = src.indexOf("incluir: async (clienteParams, antesDeReenviar) => {", ini);
   const fim = src.indexOf('if ("recusa" in fluxo) {', ini);
   const call = src.indexOf('"IncluirCliente"');
   if (!(ini >= 0 && incluir > ini && call > incluir && fim > call)) {
@@ -181,6 +240,34 @@ Deno.test("index.ts: o único IncluirCliente mora no `incluir:` do criarClienteC
   }
   const ramo = src.slice(fim, src.indexOf("}", fim + 30) + 1);
   if (!ramo.includes("result = fluxo.recusa;") || !ramo.includes("break;")) throw new Error(`ramo da recusa sem result/break: ${ramo}`);
+  const chamada = src.slice(ini, fim);
+  for (const trecho of [
+    "exigencia: exigenciaRadar,",
+    'lerPosse: clienteDoUsuario\n',
+    'await clienteDoUsuario.rpc("radar_atendimentos_ativos")',
+    "antesDeReenviar ? { antesDeReenviar } : undefined",
+  ]) if (!chamada.includes(trecho)) throw new Error(`a chamada do fluxo perdeu: ${trecho}`);
+  if (!/clienteDoUsuario\.rpc\("radar_atendimentos_ativos"\)\s*\.eq\("cnpj", doc\)\.order\("cnpj", \{ ascending: true \}\)\.limit\(2\)/.test(chamada)) {
+    throw new Error("a leitura da posse perdeu o filtro do lead (.eq cnpj doc) ou o limite de 2 linhas");
+  }
+  if ((src.split('rpc("radar_atendimentos_ativos")').length - 1) !== 1) throw new Error("a posse é lida por outro client além do chamador");
+  if (!src.includes("const exigenciaRadar = lerExigenciaRadar(radar);")) throw new Error("exigência não vem do payload `radar`");
+  if (!src.includes("const clienteDoUsuario = supabaseDoUsuario;")) throw new Error("clienteDoUsuario não é o client do chamador");
+});
+
+Deno.test("index.ts: supabaseDoUsuario só recebe o client anon + JWT do chamador; o helper relê antes de cada reenvio", async () => {
+  const src = fonteSemComentario(await Deno.readTextFile(new URL("./index.ts", import.meta.url)));
+  const atrib = src.match(/supabaseDoUsuario = [^;]+;/g) ?? [];
+  assertEquals(atrib, ["supabaseDoUsuario = supabase;"]);
+  const ondeAtrib = src.indexOf("supabaseDoUsuario = supabase;");
+  const criacao = src.lastIndexOf("const supabase = createClient(", ondeAtrib);
+  const bloco = src.slice(criacao, ondeAtrib);
+  if (criacao < 0 || !bloco.includes('Deno.env.get("SUPABASE_ANON_KEY")!') || !bloco.includes("Authorization: authHeader")
+    || bloco.includes("SERVICE_ROLE")) {
+    throw new Error(`supabaseDoUsuario não vem do client anon com o JWT do chamador: ${bloco.slice(0, 300)}`);
+  }
+  const laco = /await new Promise\(r => setTimeout\(r, delay\)\);\s*if \(opts\?\.antesDeReenviar\) await opts\.antesDeReenviar\(\);\s*continue;/;
+  if (!laco.test(src)) throw new Error("o helper do Omie não chama antesDeReenviar entre o backoff e o reenvio");
 });
 
 Deno.test("e-mail: aparado, sintaxe mínima, ≤ 500; inválido é OMITIDO (não derruba o cadastro)", () => {
