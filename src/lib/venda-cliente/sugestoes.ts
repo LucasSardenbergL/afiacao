@@ -35,7 +35,7 @@ export interface SugestaoItem {
   sistema?: SistemaDaSugestao | null;
 }
 
-export interface SistemaDaSugestao {
+interface SistemaDaSugestao {
   papel: 'catalisador' | 'diluente';
   baseOmieCodigoProduto: number | null;
   baseDescricao: string | null;

@@ -7,11 +7,11 @@
 
 export const EMPRESAS_SISTEMA = ['oben', 'colacor'] as const;
 export type EmpresaSistema = (typeof EMPRESAS_SISTEMA)[number];
-export type PapelSistema = 'catalisador' | 'diluente';
-export type StatusPar = 'pendente' | 'confirmado' | 'rejeitado' | 'nao_sei';
+type PapelSistema = 'catalisador' | 'diluente';
+type StatusPar = 'pendente' | 'confirmado' | 'rejeitado' | 'nao_sei';
 export type DecisaoPar = Exclude<StatusPar, 'pendente'>;
 
-export interface ProdutoPar {
+interface ProdutoPar {
   omieCodigoProduto: number;
   descricao: string | null;
 }
@@ -53,7 +53,7 @@ export interface FilaSistemas {
   decididos: ParDecidido[];
 }
 
-export interface SensorFila {
+interface SensorFila {
   empresa: string;
   mostrados: number;
   confirmados: number;
@@ -70,7 +70,7 @@ export interface SensorPedidos {
   taxa: number | null;
 }
 
-export interface SensorSugestoes {
+interface SensorSugestoes {
   braco: string;
   geradas: number;
   mostradas: number;
