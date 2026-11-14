@@ -72,13 +72,20 @@ SQL
   eq "recusa NaN" "$(Pq -c "SELECT public.t_tenta(\$\$${ins} 1, 'NaN', '2025-10-10', 5, 0, 0, 0)\$\$)")" "23514" A9
   eq "recusa negativo" "$(Pq -c "SELECT public.t_tenta(\$\$${ins} 1, 5, '2025-10-10', 6, -1, 0, 0)\$\$)")" "23514" A10
   eq "nenhuma coluna com DEFAULT" "$(Pq -c "SELECT count(*) FROM information_schema.columns WHERE table_name='fin_projecao_snapshots' AND column_name LIKE 'cp\_vencido\_fora\_%' AND column_default IS NOT NULL")" "0" A11
+  # Reaplicar DEPOIS de o cron gravar snapshot v2.4 antigo (2 h) — o caso do --ensaio pós-deploy.
+  P -c "INSERT INTO public.fin_projecao_snapshots (company, cenario, horizon_weeks, dados, snapshot_at, cp_vencido_fora_qtd, cp_vencido_fora_total, cp_vencido_fora_mais_antigo, cp_vencido_fora_ate_30, cp_vencido_fora_31_60, cp_vencido_fora_61_180, cp_vencido_fora_acima_180) VALUES ('oben','realista',13,'[]', now() - interval '2 hours', 1, 5, '2025-10-10', 5, 0, 0, 0)"
+  if saida="$(P -1 -f "$mig" 2>&1)"; then
+    case "$saida" in *FIN-PROJECAO-SNAPSHOTS-CP-VENCIDO-OK*) ok "A13 reaplica com snapshot v2.4 de 2 h";; *) bad "A13 sem marcador" A13;; esac
+  else
+    bad "A13 reaplicar com snapshot v2.4 antigo abortou" A13
+  fi
   eq "7 colunas" "$(Pq -c "SELECT count(*) FROM information_schema.columns WHERE table_name='fin_projecao_snapshots' AND column_name LIKE 'cp\_vencido\_fora\_%'")" "7" A12
 }
 
 echo "═══ CONTROLE (migration real) ═══"
 rodada "$MIG" controle
 CONTROLE_PASS=$PASS; CONTROLE_FAIL=$FAIL
-[ "$CONTROLE_FAIL" -eq 0 ] && [ "$CONTROLE_PASS" -eq 13 ] || { echo "CONTROLE NÃO VERDE ($CONTROLE_PASS ok, $CONTROLE_FAIL falha) — falsificação abortada"; exit 1; }
+[ "$CONTROLE_FAIL" -eq 0 ] && [ "$CONTROLE_PASS" -eq 14 ] || { echo "CONTROLE NÃO VERDE ($CONTROLE_PASS ok, $CONTROLE_FAIL falha) — falsificação abortada"; exit 1; }
 
 # Falsificação: cada sabotagem DECLARA o assert que a acusa; o juiz exige exatamente esse.
 falsificar() {
@@ -92,7 +99,10 @@ falsificar() {
 }
 falsificar S1-SEM-SOMA " A5" '/= cp_vencido_fora_total$/d'
 falsificar S2-SEM-DATA " A7" 's/AND cp_vencido_fora_mais_antigo IS NOT NULL)))/)))/'
+# S4: o assert com corte de tempo que o Codex derrubou (reaplicar depois do cron abortava).
+falsificar S4-CORTE-DE-TEMPO " A13" "s/^  IF NOT EXISTS (SELECT 1 FROM pg_class/  IF EXISTS (SELECT 1 FROM public.fin_projecao_snapshots WHERE cp_vencido_fora_qtd IS NOT NULL AND snapshot_at < now() - interval '1 hour') THEN RAISE EXCEPTION 'P9'; END IF;\\
+  IF NOT EXISTS (SELECT 1 FROM pg_class/"
 falsificar S3-DEFAULT-ZERO " A0" 's/ADD COLUMN IF NOT EXISTS cp_vencido_fora_qtd integer,/ADD COLUMN IF NOT EXISTS cp_vencido_fora_qtd integer DEFAULT 0,/'
 
-echo "═══ RESULTADO: controle $CONTROLE_PASS/13 verde · 3 sabotagens acusadas pelo assert declarado ═══"
+echo "═══ RESULTADO: controle $CONTROLE_PASS/14 verde · 4 sabotagens acusadas pelo assert declarado ═══"
 echo "EXECUTOU-ATE-O-FIM"

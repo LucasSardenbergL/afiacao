@@ -79,13 +79,10 @@ BEGIN
                AND column_name LIKE 'cp\_vencido\_fora\_%' AND column_default IS NOT NULL) THEN
     RAISE EXCEPTION 'P3 FALHOU: coluna cp_vencido_fora_* com DEFAULT';
   END IF;
-  -- Snapshots antigos seguem NULL (não medidos) — o CHECK de coerência os aceita como "tudo ausente".
-  IF EXISTS (SELECT 1 FROM public.fin_projecao_snapshots WHERE cp_vencido_fora_qtd IS NOT NULL
-             AND snapshot_at < now() - interval '1 hour') THEN
-    RAISE EXCEPTION 'P4 FALHOU: snapshot antigo com cp_vencido_fora_* preenchido';
-  END IF;
+  -- Sem assert com corte de tempo sobre os dados: reaplicar (ou --ensaio) depois que o cron já gravou
+  -- snapshots v2.4 é legítimo; a coerência de cada linha é garantida pelos CHECKs acima (achado Codex).
   IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = 'public.fin_projecao_snapshots'::regclass AND relrowsecurity) THEN
-    RAISE EXCEPTION 'P5 FALHOU: fin_projecao_snapshots sem RLS';
+    RAISE EXCEPTION 'P4 FALHOU: fin_projecao_snapshots sem RLS';
   END IF;
   RAISE NOTICE 'FIN-PROJECAO-SNAPSHOTS-CP-VENCIDO-OK';
 END
