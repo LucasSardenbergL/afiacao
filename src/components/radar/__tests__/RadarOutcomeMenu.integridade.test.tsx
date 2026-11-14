@@ -106,7 +106,7 @@ describe('RadarOutcomeMenu — "virou cliente" só com o cliente confirmado', ()
     registrar.mockRejectedValue({ code: 'P0001', message: 'RADAR_VIROU_CLIENTE_SEM_CONFIRMACAO' });
     render(<RadarOutcomeMenu cnpj={lead.cnpj} empresa={lead} />);
     await abrirMenuEClicar(/não atendeu/i);
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Não foi possível registrar'));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Não foi possível registrar', expect.objectContaining({ description: 'RADAR_VIROU_CLIENTE_SEM_CONFIRMACAO' })));
     expect(toast.warning).not.toHaveBeenCalled();
   });
 });
@@ -119,7 +119,7 @@ describe('RadarOutcomeMenu — o "Desfazer" diz o que o servidor fez', () => {
     await abrirMenuEClicar(/não atendeu/i);
     await waitFor(() => expect(acaoDoToast()).toBeDefined());
     acaoDoToast()?.onClick();
-    await waitFor(() => expect(desfazer).toHaveBeenCalledWith('c1'));
+    await waitFor(() => expect(desfazer).toHaveBeenCalledWith({ id: 'c1', cnpj: lead.cnpj }));
   }
 
   it('dono do status: "Desfeito"', async () => {
@@ -145,6 +145,9 @@ describe('RadarOutcomeMenu — o "Desfazer" diz o que o servidor fez', () => {
     document.body.innerHTML = '';
     registrar.mockResolvedValue({ id: 'c1', deduped: false });
     await registrarEDesfazer(new Error('RD006'));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Não foi possível desfazer'));
+    // Revisão 2026-11-11 (item 2): a falha diz o que o servidor disse e oferece "Tentar de novo".
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Não foi possível desfazer', expect.objectContaining({
+      description: 'RD006', action: expect.objectContaining({ label: 'Tentar de novo' }),
+    })));
   });
 });

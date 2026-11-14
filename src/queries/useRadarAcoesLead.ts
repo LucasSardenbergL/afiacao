@@ -13,7 +13,7 @@ import {
 } from '@/lib/radar/cadastro-omie';
 import { parsearConflito, parsearEstadoCadastro, parsearRegistroV2 } from '@/lib/radar/conflito-cadastro';
 import { lerContatoContabil, type LeituraContatoContabil } from '@/lib/radar/contato-contabil';
-import { telefoneSemConfirmacao } from '@/lib/radar/telefone-cadastro';
+import { emailSemConfirmacao, telefoneSemConfirmacao } from '@/lib/radar/telefone-cadastro';
 
 
 /**
@@ -22,7 +22,14 @@ import { telefoneSemConfirmacao } from '@/lib/radar/telefone-cadastro';
  * envio pela mesma regra da confirmação (`telefoneSemConfirmacao`), e o `telefone1 || telefone2` daqui só sobra para
  * quem monta o payload sem passar por ele.
  */
-export type EmpresaParaCadastro = RadarEmpresa & { telefoneCadastro?: string | null };
+export type EmpresaParaCadastro = RadarEmpresa & {
+  telefoneCadastro?: string | null;
+  /** E-mail que vai ao ERP (revisão 2026-11-11, item 7): decidido pelo `criarNoOmie` com a leitura da contabilidade
+   *  (`emailSemConfirmacao`); `null` = não enviar. Ausente no payload = não enviar. */
+  emailCadastro?: string | null;
+  /** A ficha do vendedor só cadastra quem está EM CONVERSA — o SERVIDOR confere (item 5); o lote não exige. */
+  exigirEmConversa?: boolean;
+};
 
 /**
  * Payload da edge `omie-vendas-sync` action `criar_cliente` (conta Oben). `razaoFiscal` = a da Receita (a de MEI tem o
@@ -42,6 +49,11 @@ export function montarPayloadCriarCliente(e: EmpresaParaCadastro, razaoFiscal?: 
     estado: e.uf || undefined,
     cep: e.cep || undefined,
     telefone: e.telefoneCadastro !== undefined ? e.telefoneCadastro || undefined : e.telefone1 || e.telefone2 || undefined,
+    // Item 7: a edge normaliza (≤ 60 / sintaxe e ≤ 500) e OMITE o que não serve — nunca trunca.
+    complemento: e.complemento || undefined,
+    email: e.emailCadastro || undefined,
+    // Item 5: liga a releitura do lead NA EDGE, entre o lookup estrito e o IncluirCliente.
+    radar: { exigir_em_conversa: e.exigirEmConversa === true },
   };
 }
 
@@ -73,9 +85,16 @@ export const depsCadastroSupabase: DepsCadastro<EmpresaParaCadastro> = {
     const { data, error } = await supabase.rpc('radar_razao_social_para_cadastro', { p_cnpj: e.cnpj });
     const razao = escolherRazaoFiscal(e.razao_social, { data, erroCodigo: error ? (error.code ?? 'desconhecido') : null, erro: error });
     // Sem escolha na tela (lote do gestor, retentativa): não manda às cegas o telefone da contabilidade.
-    const alvo: EmpresaParaCadastro = e.telefoneCadastro !== undefined || !(e.telefone1 || e.telefone2)
-      ? e
-      : { ...e, telefoneCadastro: telefoneSemConfirmacao(e, await lerContabilParaCadastro(e.cnpj)) };
+    const precisaTelefone = e.telefoneCadastro === undefined && Boolean(e.telefone1 || e.telefone2);
+    const precisaEmail = e.emailCadastro === undefined && Boolean(e.email);
+    const contabil = precisaTelefone || precisaEmail ? await lerContabilParaCadastro(e.cnpj) : null;
+    const alvo: EmpresaParaCadastro = {
+      ...e,
+      ...(precisaTelefone ? { telefoneCadastro: telefoneSemConfirmacao(e, contabil) } : {}),
+      // E-mail só com a leitura da contabilidade FEITA e negativa (parecer Codex 2026-11-12, P1): leitura que falhou
+      // não vira "não é da contabilidade".
+      ...(precisaEmail ? { emailCadastro: emailSemConfirmacao(e, contabil) } : {}),
+    };
     return invokeFunction<unknown>('omie-vendas-sync', montarPayloadCriarCliente(alvo, razao));
   },
   registrarNoRadar: async (cnpj, codigo, jaExistia) => {

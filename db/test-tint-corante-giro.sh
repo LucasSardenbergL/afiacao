@@ -42,7 +42,11 @@ trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale="$LOC" >/dev/null 2>&1
 # PG DESCARTÁVEL: durabilidade desligada e clone de template por FILE_COPY (ver test-tint-promocao-assincrona.sh).
-"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $SOCK -c lc_messages=$LOC -c fsync=off -c full_page_writes=off -c synchronous_commit=off" \
+# jit = off como em PROD (`SHOW jit` = off, psql-ro 2026-11-11). O PG17 do PGDG no runner vem com JIT ligado, e o
+# plano de tint_corante_giro_em (CTEs + P90 por janela deslizante: custo estimado > jit_above_cost) era compilado
+# pelo LLVM em CADA uma das 33 chamadas — o modo normal levava 236 s no CI contra ~100 s no Mac sem JIT (mesmo
+# caso da db/test-radar-funil.sh). Desligar não muda o resultado de nenhuma consulta, só o tempo.
+"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k $SOCK -c lc_messages=$LOC -c fsync=off -c full_page_writes=off -c synchronous_commit=off -c jit=off" \
   -l "$TMP/pg.log" -w start >/dev/null
 PA() { PGOPTIONS="-c client_min_messages=warning" "$PGBIN/psql" -X -p "$PORT" -h "$SOCK" -U postgres -v ON_ERROR_STOP=1 "$@"; }
 echo "PG: $("$PGBIN/postgres" --version) · locale=$LOC"

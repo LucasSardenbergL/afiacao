@@ -122,7 +122,7 @@ open(p, "w", encoding="utf-8").write(s)
 PY
 }
 # Régua de md5 "este" de cada função (literal marcado com `-- este:<nome>` na PRE e na PÓS) → md5 vivo.
-este_de() { grep -oE "'[0-9a-f]{32}' /\* este:$1 \*/" "$MIG" | grep -oE '[0-9a-f]{32}' | head -1; }
+este_de() { grep -oE "'[0-9a-f]{32}' /\* este:$1 \*/" "$MIG" | grep -oE '[0-9a-f]{32}' | sed -n 1p; }
 neutralizar() { # $1 = nome, $2 = identidade
   sabotar "$MIG_USADA" "'$(este_de "$1")'" "(SELECT md5(q.prosrc) FROM pg_catalog.pg_proc q WHERE q.oid = to_regprocedure('public.$2'))"
 }

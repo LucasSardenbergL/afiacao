@@ -1,4 +1,5 @@
-import { useQueries } from '@tanstack/react-query';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { chaveEstavelDaPagina } from '@/queries/useRadarIrmaos';
 import { supabase } from '@/integrations/supabase/client';
 import { lerResumoVinculo, type EstadoVinculos, type ResumoVinculoLista } from '@/lib/radar/vinculos';
 
@@ -16,9 +17,10 @@ export interface VinculosDaFila {
  * Erro ou forma inesperada marcam a página como 'falhou' — nunca "sem vínculo".
  */
 export function useRadarVinculosLista(paginas: { cnpj: string }[][]): VinculosDaFila {
+  const qc = useQueryClient();
   return useQueries({
     queries: paginas.map((pagina) => {
-      const cnpjs = pagina.map((e) => e.cnpj);
+      const cnpjs = chaveEstavelDaPagina(qc, 'vinculos-lista', pagina.map((e) => e.cnpj));
       return {
         queryKey: ['radar', 'vinculos-lista', cnpjs],
         enabled: cnpjs.length > 0,

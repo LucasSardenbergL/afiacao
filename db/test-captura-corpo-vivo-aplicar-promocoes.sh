@@ -116,13 +116,13 @@ else
   falha "C2c efeito DIVERGIU: $(diff "$TMPROOT/ef_ref.txt" "$TMPROOT/ef_pos.txt" | head -4)"
 fi
 # [H4]: o item ajustado a mao NAO pode ter recebido promocao...
-if "${PSQL[@]}" -A -t -d c2 -c "SELECT coalesce(modo_promocao,'NULO') FROM pedido_compra_item WHERE id=2;" | grep -qx 'NULO'; then
+if grep -qx 'NULO' <<<"$("${PSQL[@]}" -A -t -d c2 -c "SELECT coalesce(modo_promocao,'NULO') FROM pedido_compra_item WHERE id=2;")"; then
   ok "C2d [H4] item ajustado_humano ficou INTOCADO pela promocao"
 else
   falha "C2d [H4] item ajustado a mao foi alterado pela promocao"
 fi
 # ...e o CONTROLE anti-vacuidade: o item nao-ajustado TEM de ter recebido, senao C2d/C2c sao vazios
-if "${PSQL[@]}" -A -t -d c2 -c "SELECT coalesce(modo_promocao,'NULO') FROM pedido_compra_item WHERE id=1;" | grep -qx 'flat'; then
+if grep -qx 'flat' <<<"$("${PSQL[@]}" -A -t -d c2 -c "SELECT coalesce(modo_promocao,'NULO') FROM pedido_compra_item WHERE id=1;")"; then
   ok "C2e controle: o item nao-ajustado RECEBEU a promocao (C2c/C2d nao sao vacuos)"
 else
   falha "C2e o seed nao aplicou promocao em ninguem — C2c/C2d passariam por vacuidade"

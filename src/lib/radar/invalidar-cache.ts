@@ -18,10 +18,27 @@ import { buscarEmpresaRadarFresca } from '@/queries/useRadarEmpresa';
  *     `aplicarLeadNasPaginas`; quando não dá para decidir daqui, relê como antes;
  *   - o MAPA e o RANKING (agregados por município, lidos de tabela pré-calculada) só ficam velhos: um contato
  *     não move a contagem de agora, e a próxima abertura relê;
- *   - todo o resto sob `['radar']` (ficha, KPIs, atendimentos, sugeridos, amostra…) relê como antes.
+ *   - relê agora SÓ o que um contato muda (`RELER_POR_LEAD`, allowlist — revisão 2026-11-11, item 1): os contadores
+ *     e a posse do vendedor, e as chaves POR LEAD (`RELER_DO_LEAD`) do próprio CNPJ;
+ *   - todo o resto sob `['radar']` só fica velho (`refetchType: 'none'`): os selos por página da fila (irmãos e
+ *     vínculos — uma RPC por página carregada, 20 RPCs por contato com 10 páginas), o mapa, o ranking, as chaves de
+ *     OUTROS leads e as chaves que nascerem depois. A próxima montagem relê.
  * A invalidação não é aguardada por quem chama: o retorno só assenta depois da troca na fila (os testes esperam).
  */
-const AGREGADOS_GEO = new Set<unknown>(['contagem-municipios', 'penetracao-municipios']);
+/** Agregados e ledgers do vendedor que UM contato/desfazer/cadastro move — relidos ativamente. */
+const RELER_POR_LEAD: ReadonlySet<unknown> = new Set([
+  'kpis', 'funil', 'sugeridos', 'amostra', 'ineditos', 'prospectar-hoje', 'atendimentos-ativos',
+  'conflitos-cadastro', 'sucessoes', 'sucessao-plano', 'meus-retornos',
+]);
+/** Chaves `['radar', <tipo>, cnpj, …]` de UM lead: relidas só quando o CNPJ é o do lead tocado. */
+const RELER_DO_LEAD: ReadonlySet<unknown> = new Set([
+  'empresa', 'contatos', 'possiveis-vinculos', 'contato-contabil', 'telefone-compartilhado',
+]);
+
+function releAoTocar(chave: readonly unknown[], cnpj: string): boolean {
+  if (RELER_POR_LEAD.has(chave[1])) return true;
+  return RELER_DO_LEAD.has(chave[1]) && chave[2] === cnpj;
+}
 
 export async function invalidarRadar(
   qc: QueryClient,
@@ -39,11 +56,11 @@ export async function invalidarRadar(
   }
   void qc.invalidateQueries({
     queryKey: ['radar'],
-    predicate: (q) => q.queryKey[1] !== 'lista' && !AGREGADOS_GEO.has(q.queryKey[1]),
+    predicate: (q) => q.queryKey[1] !== 'lista' && releAoTocar(q.queryKey, cnpj),
   });
   void qc.invalidateQueries({
     queryKey: ['radar'],
-    predicate: (q) => AGREGADOS_GEO.has(q.queryKey[1]),
+    predicate: (q) => q.queryKey[1] !== 'lista' && !releAoTocar(q.queryKey, cnpj),
     refetchType: 'none',
   });
   await atualizarLeadNaFila(qc, cnpj);

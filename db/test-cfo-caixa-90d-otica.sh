@@ -91,7 +91,7 @@ L_INI="$(awk '/^-- \(c\) /{print NR; exit}' "$SKILL_SQL")"
 L_FIM="$(awk '/^-- \(d\) /{print NR; exit}' "$SKILL_SQL")"
 BLOCO="$(awk '/^-- \(c\) /{f=1} /^-- \(d\) /{f=0} f' "$SKILL_SQL")"
 if [ "$N_INI" = "1" ] && [ "$N_FIM" = "1" ] && [ "$L_INI" -lt "$L_FIM" ] \
-   && printf '%s' "$BLOCO" | grep -q 'FROM fin_movimentacoes'; then
+   && grep -q 'FROM fin_movimentacoes' <<<"$BLOCO"; then
   ok "A0 bloco (c) extraído entre marcadores únicos e em ordem (linhas $L_INI..$L_FIM)"
 else
   bad "A0 extração inválida — '-- (c) ' ×$N_INI, '-- (d) ' ×$N_FIM; o recorte não é o bloco (c)"

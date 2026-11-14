@@ -250,7 +250,7 @@ BEGIN
 END \$\$;
 SQL
 )
-if echo "$SAB" | grep -q 'SABOTAGEM_PASSOU'; then
+if grep -q 'SABOTAGEM_PASSOU' <<<"$SAB"; then
   echo "  OK B3 — policy furada deixou o employee-dono adulterar (ROW_COUNT=1) → o assert B2 REALMENTE guarda (não é teatro)"
 else
   echo "  B3 FALHOU: mesmo com a policy FURADA o employee NÃO conseguiu o UPDATE — o assert B2 NÃO está testando a RLS."
@@ -284,7 +284,7 @@ BEGIN
 END \$\$;
 SQL
 )
-if echo "$REST" | grep -q 'RLS_RESTAURADA'; then
+if grep -q 'RLS_RESTAURADA' <<<"$REST"; then
   echo "  OK B3 (restauração) — RLS master-only de volta, employee-dono barrado novamente (ROW_COUNT=0)"
 else
   echo "  B3 FALHOU (restauração): RLS não voltou. saída: $REST"

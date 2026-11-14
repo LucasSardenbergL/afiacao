@@ -8,8 +8,15 @@
 # $TMPDIR, porque o lab nao e root. Cada substituicao e conferida POSITIVAMENTE (guarda 1): se uma
 # delas casar zero vezes, o lab estaria medindo o sistema de verdade — ou nada — e aborta.
 #
-# Rede: ZERO. curl/apt-get/lsb_release/sleep sao dublês no PATH. O dublê de `sudo` faz `exec "$@"`,
-# entao `sudo curl` resolve para o dublê de curl.
+# Rede: ZERO. curl/apt-get/lsb_release/sleep/timeout sao dublês no PATH. O dublê de `sudo` faz
+# `exec "$@"`, entao `sudo curl` resolve para o dublê de curl.
+#
+# Desde o E20 (plano v9) o step tem TRES chamadas de apt-get, e o dublê as separa pelos argumentos:
+#   APTPGDG (update com `Dir::Etc::sourcelist=…/pgdg.list`), APTBASE (update das fontes base — so no
+#   fallback) e APTINS (install). O que o lab NAO prova, dito de frente: resolucao de dependencia nem
+#   que o apt de verdade preserva as outras listas. Isso so o runner prova (a instalacao real das 16
+#   partes de `provas-sql`); aqui se prova o FLUXO — qual chamada acontece, quantas vezes, com que
+#   opcoes, sob `timeout`, e o veredito de cada falha.
 #
 # Os cenarios existem para separar as duas metades do retry, que falham por motivos OPOSTOS:
 #   · RETENTA  (C1-C4): falha transitoria tem de virar VERDE, com a re-tentativa no log. Um retry
@@ -111,6 +118,14 @@ echo "  (lab: sleep $* engolido)" >&2
 exit 0
 EOS
 
+# `timeout` dublado: marca o teto no ambiente e executa o resto. O apt-get dublê registra o teto
+# que recebeu — "toda chamada de rede tem teto" vira assercao (C9), nao promessa do comentario.
+cat > "$BIN/timeout" <<'EOS'
+#!/usr/bin/env bash
+LAB_SOB_TIMEOUT="$1"; export LAB_SOB_TIMEOUT; shift
+exec "$@"
+EOS
+
 # Dublê generico de camada: conta a invocacao e decide pelo par LAB_<CAMADA>_{FALHAS,EXIT}.
 # FALHAS=sempre  -> quebrado permanentemente.  FALHAS=<n> -> falha as n primeiras, depois passa.
 cat > "$BIN/_camada" <<'EOS'
@@ -144,6 +159,9 @@ cat > "$BIN/apt-get" <<'EOS'
 #!/usr/bin/env bash
 sub="update"
 for a in "$@"; do case "$a" in update|install) sub="$a"; break ;; esac; done
+camada=APTBASE
+case "$sub $*" in install*) camada=APTINS ;; *"Dir::Etc::sourcelist="*pgdg.list*) camada=APTPGDG ;; esac
+printf '%s timeout=%s %s\n' "$camada" "${LAB_SOB_TIMEOUT:-nenhum}" "$*" >> "$LAB_CONT/args"
 if [ "$sub" = "install" ]; then
   LAB_MSG_ERRO="E: Unable to fetch some archives." \
     "$LAB_BIN/_camada" APTINS "$@" || exit $?
@@ -155,7 +173,13 @@ if [ "$sub" = "install" ]; then
   chmod +x "$LAB_SANDBOX/usr/lib/postgresql/17/bin/initdb"
   exit 0
 fi
-LAB_MSG_ERRO="E: Hash Sum mismatch" "$LAB_BIN/_camada" APTUPD "$@" || exit $?
+if [ "$camada" = APTPGDG ]; then
+  LAB_MSG_ERRO="E: Failed to fetch https://apt.postgresql.org/pub/repos/apt/dists/noble-pgdg/InRelease" \
+    "$LAB_BIN/_camada" APTPGDG "$@" || exit $?
+  exit 0
+fi
+LAB_MSG_ERRO="E: base: Temporary failure resolving 'azure.archive.ubuntu.com'" \
+  "$LAB_BIN/_camada" APTBASE "$@" || exit $?
 exit 0
 EOS
 
@@ -224,18 +248,20 @@ espera_conta() {
 # recorta — e o C0 entra SEMPRE, porque e' o controle que separa "a guarda caiu" de "o lab caiu".
 # O subconjunto vai IMPRESSO no cabecalho: run recortado que se passasse por completo seria
 # cobertura que some sozinha, e o verde continuaria chegando.
-CENARIOS="${LAB_CENARIOS:-C1 C2 C3 C4 C5 C6 C7 C8}"
+CENARIOS="${LAB_CENARIOS:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10}"
 quer() { case " C0 $CENARIOS " in *" $1 "*) return 0 ;; esac; return 1; }
 
 echo "── lab retry PGDG · alvo: ${YML#"$RAIZ_REPO"/} · cenarios: C0 $CENARIOS ──"
 
-# C0 — CONTROLE. Sem sabotagem: verde, uma chamada por camada, e NENHUMA re-tentativa no log.
+# C0 — CONTROLE. Sem sabotagem: verde, uma chamada por camada, NENHUMA re-tentativa no log e as
+# fontes base INTOCADAS (o E20 inteiro: o caminho normal nao depende do mirror do Ubuntu).
 # Sem esta linha de base, os cenarios seguintes nao provam nada: um lab sempre-vermelho
 # "detectaria" toda sabotagem, e um sempre-verde aprovaria todas.
 roda
 verde "C0 controle — sem falha, step verde"
 espera_conta CURL 1   "C0 controle — curl chamado 1x"
-espera_conta APTUPD 1 "C0 controle — apt-get update chamado 1x"
+espera_conta APTPGDG 1 "C0 controle — apt-get update do PGDG chamado 1x"
+espera_conta APTBASE 0 "C0 controle — fontes base NAO atualizadas (o mirror do Ubuntu fica fora)"
 espera_conta APTINS 1 "C0 controle — apt-get install chamado 1x"
 case "$SAIDA" in
   *"↻"*) falhou "C0 controle — logou re-tentativa sem nenhuma falha" ;;
@@ -254,19 +280,26 @@ if quer C1; then
 fi
 
 if quer C2; then
-  roda LAB_APTUPD_FALHAS=1 LAB_APTUPD_EXIT=100
+  roda LAB_APTPGDG_FALHAS=1 LAB_APTPGDG_EXIT=100
   verde "C2 apt-get update transitorio — step verde"
-  espera_conta APTUPD 2 "C2 apt-get update transitorio — chamado 2x"
+  espera_conta APTPGDG 2 "C2 apt-get update transitorio — chamado 2x"
   case "$SAIDA" in
-    *"↻ apt-get update: OK na tentativa 2/3"*) passou "C2 apt-get update transitorio — re-tentativa registrada" ;;
+    *"↻ apt-get update (só PGDG): OK na tentativa 2/3"*) passou "C2 apt-get update transitorio — re-tentativa registrada" ;;
     *) falhou "C2 apt-get update transitorio — verde, mas sem a linha de re-tentativa" ;;
   esac
 fi
 
+# C3 — o install falha 2x: a 1a decide o FALLBACK (update das fontes base, uma vez) e a 2a cai no
+# retry do `tentar`, que acerta na 2a tentativa. Exercita os dois mecanismos novos do E20 juntos.
 if quer C3; then
-  roda LAB_APTINS_FALHAS=1 LAB_APTINS_EXIT=100
+  roda LAB_APTINS_FALHAS=2 LAB_APTINS_EXIT=100
   verde "C3 apt-get install transitorio — step verde"
-  espera_conta APTINS 2 "C3 apt-get install transitorio — chamado 2x"
+  espera_conta APTINS 3 "C3 apt-get install transitorio — chamado 3x (1 + fallback com retry)"
+  espera_conta APTBASE 1 "C3 apt-get install transitorio — fallback atualizou as fontes base 1x"
+  case "$SAIDA" in
+    *"::warning::install só com o índice do PGDG falhou — fallback"*) passou "C3 fallback anunciado no log" ;;
+    *) falhou "C3 fallback sem o ::warning:: no log" ;;
+  esac
   case "$SAIDA" in
     *"↻ apt-get install postgresql-17 + pgvector: OK na tentativa 2/3"*) passou "C3 apt-get install transitorio — re-tentativa registrada" ;;
     *) falhou "C3 apt-get install transitorio — verde, mas sem a linha de re-tentativa" ;;
@@ -289,7 +322,7 @@ if quer C5; then
   roda LAB_CURL_FALHAS=sempre LAB_CURL_EXIT=56
   vermelho "C5 curl PERMANENTE — reprova com o exit do curl" 56 "curl da chave do PGDG falhou nas 3 tentativas"
   espera_conta CURL 3 "C5 curl PERMANENTE — tentou 3x (e parou)"
-  espera_conta APTUPD 0 "C5 curl PERMANENTE — nao seguiu para o apt-get (fail-closed de verdade)"
+  espera_conta APTPGDG 0 "C5 curl PERMANENTE — nao seguiu para o apt-get (fail-closed de verdade)"
   case "$SAIDA" in
     *"Failure when receiving data from the peer"*) passou "C5 curl PERMANENTE — erro real do curl visivel no log" ;;
     *) falhou "C5 curl PERMANENTE — reprovou sem mostrar o erro da ferramenta" ;;
@@ -306,16 +339,17 @@ if quer C5; then
 fi
 
 if quer C6; then
-  roda LAB_APTUPD_FALHAS=sempre LAB_APTUPD_EXIT=100
-  vermelho "C6 apt-get update PERMANENTE — reprova com o exit do apt" 100 "apt-get update falhou nas 3 tentativas"
-  espera_conta APTUPD 3 "C6 apt-get update PERMANENTE — tentou 3x"
+  roda LAB_APTPGDG_FALHAS=sempre LAB_APTPGDG_EXIT=100
+  vermelho "C6 apt-get update PERMANENTE — reprova com o exit do apt" 100 "apt-get update (só PGDG) falhou nas 3 tentativas"
+  espera_conta APTPGDG 3 "C6 apt-get update PERMANENTE — tentou 3x"
   espera_conta APTINS 0 "C6 apt-get update PERMANENTE — nao seguiu para o install"
+  espera_conta APTBASE 0 "C6 apt-get update PERMANENTE — PGDG quebrado NAO cai no fallback (nao e o caso dele)"
 fi
 
 if quer C7; then
   roda LAB_APTINS_FALHAS=sempre LAB_APTINS_EXIT=100
   vermelho "C7 apt-get install PERMANENTE — reprova com o exit do apt" 100 "apt-get install postgresql-17 + pgvector falhou nas 3 tentativas"
-  espera_conta APTINS 3 "C7 apt-get install PERMANENTE — tentou 3x"
+  espera_conta APTINS 4 "C7 apt-get install PERMANENTE — 1 + 3 do retry pos-fallback"
 fi
 
 # C8 — exatamente 3 falhas: nao existe quarta tentativa. Separa "o teto e 3" de "o teto e alto".
@@ -323,6 +357,36 @@ if quer C8; then
   roda LAB_CURL_FALHAS=3 LAB_CURL_EXIT=56
   vermelho "C8 curl falha exatamente 3x — reprova (nao ha 4a tentativa)" 56 "falhou nas 3 tentativas"
   espera_conta CURL 3 "C8 curl falha 3x — curl chamado 3x"
+fi
+
+# C9 — ORCAMENTO e ESCOPO das chamadas de rede, num caminho que passa pelas TRES (install falha 1x,
+# entao ha update do PGDG, install, update base e install de novo). Cada linha abaixo e' uma
+# propriedade do E20 que o falsificador remove sozinha.
+if quer C9; then
+  roda LAB_APTINS_FALHAS=1 LAB_APTINS_EXIT=100
+  verde "C9 caminho com fallback — step verde"
+  args="$(cat "$CONT/args" 2>/dev/null)"
+  pgdg="$(printf '%s\n' "$args" | grep '^APTPGDG ' || true)"
+  case "$pgdg" in *"--error-on=any"*) passou "C9 update do PGDG com --error-on=any (aviso vira falha)" ;;
+    *) falhou "C9 update do PGDG sem --error-on=any — W: sai 0 e o tentar nao ve" ;; esac
+  case "$pgdg" in *"Dir::Etc::sourceparts=-"*) passou "C9 update do PGDG sem as outras fontes (sourceparts=-)" ;;
+    *) falhou "C9 update do PGDG ainda le sources.list.d inteiro (o mirror volta ao caminho)" ;; esac
+  case "$pgdg" in *"APT::Get::List-Cleanup=0"*) passou "C9 update do PGDG preserva os outros indices" ;;
+    *) falhou "C9 update do PGDG sem List-Cleanup=0 — o apt apaga os indices das outras fontes" ;; esac
+  if printf '%s\n' "$args" | grep -q 'timeout=nenhum'; then
+    falhou "C9 chamada de apt-get SEM timeout: $(printf '%s\n' "$args" | grep 'timeout=nenhum' | head -1 | cut -c1-80)"
+  else
+    passou "C9 toda chamada de apt-get sob timeout ($(printf '%s\n' "$args" | grep -c .) chamadas)"
+  fi
+fi
+
+# C10 — o FALLBACK tambem e' fail-closed: fontes base quebradas depois de um install falho REPROVAM
+# com o exit do apt, sem retry (o teto de 240 s ja e' o orcamento dele) e sem um 2o install.
+if quer C10; then
+  roda LAB_APTINS_FALHAS=1 LAB_APTINS_EXIT=100 LAB_APTBASE_FALHAS=sempre LAB_APTBASE_EXIT=100
+  vermelho "C10 fallback com fontes base PERMANENTE — reprova com o exit do apt" 100 "E: base: Temporary failure resolving"
+  espera_conta APTBASE 1 "C10 fallback PERMANENTE — 1 chamada so (sem multiplicar a espera)"
+  espera_conta APTINS 1 "C10 fallback PERMANENTE — nao tentou instalar de novo"
 fi
 
 echo ""

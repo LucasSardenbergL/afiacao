@@ -143,6 +143,13 @@ export function lerProspectarHoje(data: unknown, origem: string): ProspectarHoje
 
 const RE_DIA = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Uma página de `radar_meus_retornos` (revisão 2026-11-11, item 8): a MESMA forma dos retornos do card, nunca nula. */
+export function lerPaginaRetornos(v: unknown, origem: string): NonNullable<ProspectarHoje['retornos']> {
+  const r = lerRetornos(v, origem);
+  if (!r) falha(origem, 'retornos');
+  return r;
+}
+
 function lerRetornos(v: unknown, origem: string): ProspectarHoje['retornos'] {
   if (v === undefined || v === null) return null;
   if (!ehObj(v) || !Array.isArray(v.itens)) falha(origem, 'retornos');
@@ -188,8 +195,12 @@ export function nomeDoLead(l: Pick<LeadProspectarHoje, 'nomeFantasia' | 'razaoSo
 /** Deep link da ficha no Radar (formato do pacote B5: `/radar?cnpj=`). `origem: 'card'` marca a ficha aberta pelo card
  *  "prospectar hoje": o /radar grava a ficha entregue no funil (`ficha_card`) quando ela abre. O link do e-mail não
  *  leva origem (a página dele grava a própria ficha antes do redirect). */
-export function linkFichaRadar(cnpj: string, origem?: 'card'): string {
-  return `/radar?cnpj=${encodeURIComponent(cnpj)}${origem ? `&origem=${origem}` : ''}`;
+export function linkFichaRadar(cnpj: string, origem?: 'card' | { email: string }): string {
+  const base = `/radar?cnpj=${encodeURIComponent(cnpj)}`;
+  if (!origem) return base;
+  // E-mail (revisão 2026-11-11, item 4): a ficha entregue é gravada pelo /radar quando ela APARECE, com o envio.
+  if (typeof origem === 'object') return `${base}&origem=email&envio=${encodeURIComponent(origem.email)}`;
+  return `${base}&origem=${origem}`;
 }
 
 /** "Divinópolis (358) · Nova Serrana (266)" — o porquê do território, com a contagem que o decide. */

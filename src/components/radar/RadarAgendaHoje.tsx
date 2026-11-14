@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { CalendarClock, Hourglass } from 'lucide-react';
 import { useRadarProspectarHoje } from '@/queries/useRadarProspectarHoje';
@@ -8,6 +8,8 @@ import { diaMes } from '@/lib/radar/atendimento';
 import { resumoAgendaHoje } from '@/lib/radar/agenda-hoje';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { RadarRetornosTodos } from './RadarRetornosTodos';
+import { desatualizado, estadoDeLeitura } from '@/lib/leitura/estado-de-leitura';
 
 /**
  * Pacote L (item 3): a agenda "Hoje" dentro do /radar — os retornos marcados para hoje (ou atrasados) e as posses que
@@ -18,13 +20,14 @@ import { mensagemDeErro } from '@/lib/erro-mensagem';
  * Sensor no ledger (`radar_agenda_uso`): 'vista' 1×/dia com o denominador; 'aberta' por item.
  */
 export function RadarAgendaHoje({ hojeISO, onAbrir }: {
-  /** Dia BRT da página: a 'vista' é 1 por dia, e a virada do dia relê. */
+  /** Dia BRT da página: a 'vista' é 1 por dia. A leitura relê na virada pela chave do hook (`useHojeBRT`). */
   hojeISO: string;
   onAbrir: (cnpj: string) => Promise<void>;
 }) {
   const q = useRadarProspectarHoje(true);
   const resumo = q.data ? resumoAgendaHoje(q.data) : null;
   const vistaDoDia = useRef<string | null>(null);
+  const [verTodos, setVerTodos] = useState(false);
 
   useEffect(() => {
     if (!resumo || resumo.vazia || vistaDoDia.current === hojeISO) return;
@@ -41,7 +44,16 @@ export function RadarAgendaHoje({ hojeISO, onAbrir }: {
       </p>
     );
   }
+  // Revisão 2026-11-11 (item 3): sem rede e sem nada em mãos, a agenda sumia — o mesmo silêncio de "nada para hoje".
+  if (estadoDeLeitura(q) === 'sem-rede') {
+    return (
+      <p className="text-xs text-status-warning" data-testid="radar-agenda-sem-rede">
+        Sem conexão: não consegui ver seus retornos e posses de hoje. A leitura volta sozinha quando a rede voltar.
+      </p>
+    );
+  }
   if (!resumo || resumo.vazia) return null;
+  const dadosAnteriores = desatualizado(q, true) === 'sem-rede';
 
   const abrir = (cnpj: string, tipo: 'retorno' | 'posse') => {
     track('radar.agenda_hoje_aberta', { tipo });
@@ -55,6 +67,11 @@ export function RadarAgendaHoje({ hojeISO, onAbrir }: {
         <h2 className="text-lg font-display leading-tight">Hoje</h2>
         <p className="text-xs text-muted-foreground" data-testid="radar-agenda-resumo">{resumo.rotulo}</p>
       </div>
+      {dadosAnteriores && (
+        <p className="text-xs text-status-warning" data-testid="radar-agenda-dados-anteriores">
+          Sem conexão: esta é a agenda da última leitura.
+        </p>
+      )}
       {resumo.retornos.length > 0 && (
         <ul className="space-y-1">
           {resumo.retornos.map((r) => (
@@ -94,8 +111,18 @@ export function RadarAgendaHoje({ hojeISO, onAbrir }: {
             resumo.retornosFora > 0 ? `+${resumo.retornosFora} retorno${resumo.retornosFora === 1 ? '' : 's'} além destes` : null,
             resumo.vencidas7d > 0 ? `${resumo.vencidas7d} posse${resumo.vencidas7d === 1 ? '' : 's'} venceu${resumo.vencidas7d === 1 ? '' : 'ram'} nos últimos 7 dias` : null,
           ].filter(Boolean).join(' · ')}
+          {resumo.retornosFora > 0 && (
+            <>
+              {' · '}
+              <button type="button" className="underline" data-testid="radar-agenda-ver-todos" onClick={() => setVerTodos(true)}>
+                Ver todos
+              </button>
+            </>
+          )}
         </p>
       )}
+      <RadarRetornosTodos aberto={verTodos} onFechar={() => setVerTodos(false)}
+        onAbrir={(cnpj) => { setVerTodos(false); abrir(cnpj, 'retorno'); }} />
       {q.isFetching && !q.isLoading && <span className="sr-only">Atualizando a agenda</span>}
     </section>
   );

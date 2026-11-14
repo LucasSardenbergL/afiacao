@@ -227,8 +227,24 @@ Quem faz: migration no envelope seguro → eu; fora dele → founder no SQL Edit
 
 | Pergunta | Decisão |
 |---|---|
-| Grupo controle | **Sem controle.** Todos os atrasados entram na lista |
+| Grupo controle | ~~**Sem controle.** Todos os atrasados entram na lista~~ — **revertida em 12/11/2026** (rodada 2, abaixo) |
 | Linha de base | **Reconstrução dos 12 meses anteriores + sombra curta** para conferir (founder: "pode fazer como você preferir") |
 | Tudo no dia 1 × ondas | **3 ondas** (§8) |
 | Preço alvo | **Só repasses aprovados** pelo founder |
 | Lista do dia | **Cidades com entrega amanhã + maiores atrasos** do resto da carteira (união) |
+
+### 12.1 Rodada 2 — decisões do founder (2026-11-12)
+
+Medido em prod em 12/11: `venda_lista_acesso` com 0 linhas desde 28/10 (as farmers nunca abriram a lista), `venda_contato` 0, `venda_repasse_aprovado` 0; a recompra ativa converte 6,2% sem sugestão mostrada (orgânico). Diagnóstico (Codex + Fable): o gargalo é **canal**, não motor — elas trabalham no Omie.
+
+| Pergunta | Decisão |
+|---|---|
+| Ordem da rodada 2 | (1) resumo diário por e-mail + ritual do founder · (2) autoria correta do pedido sincronizado · (3) demonstrativo de contribuição · (4) fila tinta→catalisador · (5) repasse só em demanda viva |
+| Grupo controle | **REABERTO: ~15% dos compradores canônicos.** Muda a decisão de 20/10. O controle não aparece no e-mail nem na lista do Meu Dia/ficha; o gerador continua gravando as linhas dele, com o braço em coluna dedicada (`venda_sugestao.braco`), para medir desfecho (intenção de tratar) |
+| Ritual | O founder revisa o resumo com as farmers **10 min/dia nos 10 primeiros dias úteis** (recebe uma cópia de cada resumo, com links próprios que não contam como clique delas) |
+| Critério de desligar o canal | Ofertadas ÷ oportunidades entregues **< 50% após 10 dias úteis com e-mail** → desligar. Sem nenhum dia de acesso validado, o status é "acesso pendente" (o problema é login/canal, não a lista) |
+
+**Como ficou o sorteio (Entrega 1, migration `20261113110200`):** régua `md5-32-v1` — u = 32 primeiros bits de md5(`venda-r2-controle-2026-11-12`:comprador)/2³²; controle ⇔ u < 0,15. Singleton imutável (`venda_braco_sorteio`) e braço por comprador imutável (`venda_braco_comprador`); comprador novo recebe o braço na 1ª aparição pela mesma régua. Início = 13/11/2026 (1º dia útil do e-mail): antes dele nenhuma linha tem braço. **O sorteio inicial deu 59 de 279 compradores no controle (21%)**, acima dos 15% esperados (~2,9 desvios; os decis de u são uniformes e outra semente daria 16,5% — é acaso, não a régua). A semente **não foi trocada** depois de ver o resultado: escolher a semente pelo desfecho invalidaria o sorteio (Codex). A aleatorização segue válida; o custo é ~6% a mais de compradores fora do e-mail.
+
+**O que se compara:** o ranking do e-mail (até 5 das cidades com entrega amanhã + maiores atrasos, até 8) roda sobre **os dois braços**; o controle que cairia no e-mail é gravado como contrafactual ("seria enviado") em `venda_resumo_selecao`. Unidade = comprador na 1ª seleção desde o início, desfecho das linhas de recompra daquele dia, só coorte madura (14 dias fechados); `nao_medivel` fora da taxa e mostrado por braço; IC95 da diferença. Com ~280 compradores o poder é baixo: inconclusivo ≠ sem efeito. A/A no histórico como diagnóstico do sorteio.
+

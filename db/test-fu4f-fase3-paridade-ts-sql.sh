@@ -150,14 +150,14 @@ for marca in \
   "deleted_at IS NULL" \
   "cu.cod = oi.omie_codigo_produto" \
   "round(" ; do
-  printf '%s' "$FN_MARGEM" | command grep -qF "$marca" || { echo "   FAIL fidelidade(margem): prod nao contem <$marca>"; falha_fid=1; }
+  command grep -qF "$marca" <<<"$FN_MARGEM" || { echo "   FAIL fidelidade(margem): prod nao contem <$marca>"; falha_fid=1; }
 done
 for marca in \
   "percentile_cont(0.10)" \
   "percentile_cont(0.90)" \
   "greatest(r.p90 - r.p10, 0.01" \
   "cap_carteira_ler" ; do
-  printf '%s' "$FN_FAIXA" | command grep -qF "$marca" || { echo "   FAIL fidelidade(faixa): prod nao contem <$marca>"; falha_fid=1; }
+  command grep -qF "$marca" <<<"$FN_FAIXA" || { echo "   FAIL fidelidade(faixa): prod nao contem <$marca>"; falha_fid=1; }
 done
 if [ "$falha_fid" -ne 0 ]; then
   echo "FAIL: a funcao em PROD divergiu da replica deste harness — atualize a replica antes de confiar no numero"

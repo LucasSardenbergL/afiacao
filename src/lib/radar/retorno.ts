@@ -49,11 +49,18 @@ export function opcoesRetorno(hoje: string): OpcaoRetorno[] {
   const padrao = retornoPadrao(hoje);
   return [
     { rotulo: 'Hoje', dia: hoje, padrao: false },
-    { rotulo: 'Amanhã', dia: somarDias(hoje, 1), padrao: false },
+    // Revisão 2026-11-11 (item 21): "Amanhã" numa sexta caía no sábado — vai ao próximo dia útil e o rótulo diz.
+    proximoDiaUtil(hoje),
     { rotulo: 'Em 3 dias', dia: diaUtil(somarDias(hoje, 3)), padrao: false },
     { rotulo: 'Em 1 semana', dia: padrao, padrao: true },
     { rotulo: 'Em 2 semanas', dia: diaUtil(somarDias(hoje, 14)), padrao: false },
   ];
+}
+
+function proximoDiaUtil(hoje: string): OpcaoRetorno {
+  const amanha = somarDias(hoje, 1);
+  const dia = diaUtil(amanha);
+  return { rotulo: dia === amanha ? 'Amanhã' : 'Próximo dia útil', dia, padrao: false };
 }
 
 /** Dentro da faixa que o servidor aceita? (comparação de string vale: o formato é fixo). */

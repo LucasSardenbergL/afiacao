@@ -1,0 +1,34 @@
+# Radar, revisão de 11/11/2026 (Fable 5.2 + Codex): 22 itens em 6 PRs (2026-11-13)
+
+A revisão foi feita sobre a main `25ba82997`. Cada item foi conferido contra a main antes de ser implementado. O veredito, item a item, está na tabela do corpo de cada PR.
+
+## PRs e camadas de deploy
+
+| PR | Itens | Camadas | Estado |
+|---|---|---|---|
+| #3861 O2: desfecho, offline, cache | 1, 2, 3, 4, 6, 21 (21 parcial: o fuso já era SP) | Publish | no ar, prova por bytes |
+| #3862 O4: gate da `radar-ingest` | 22 (o comentário "da linha 166" **não reproduzido**: o impreciso era o da linha 21) | edge v1.9 | no ar, atestada por sonda |
+| #3866 O1: cadastro no Omie | 5, 7 | edge `omie-vendas-sync` v1.36 + Publish | no ar |
+| #3868 O1b: tipo do `lerLead` | erro TS2739 que o O1 introduziu (achado pelo typecheck do Lovable no deploy) | edge `omie-vendas-sync` v1.38 (no ar como v1.39, ver abaixo) | no ar, sonda 2026-11-14 00:27 UTC (fonte `7cbdf28f2fbd`) |
+| #3870 O3a: discagem, UX, a11y | 9 a 17, 19, 20 (16 parcial: o aborto era intencional, faltava avisar) | Publish | no ar, prova por bytes |
+| #3871 O3b: retornos paginados, intenção pelo e-mail | 8, 18 | migration `20261113110100` (envelope `db:aplicar`, conferida por psql-ro) + Publish | no ar, bundle `index-BjOtSKJV.js` com `radar_meus_retornos` no chunk `RadarClientes` |
+
+## Contratos que ficam
+
+- **Invalidação depois de um contato**: `src/lib/radar/invalidar-cache.ts` relê só a allowlist `RELER_POR_LEAD`, mais `RELER_DO_LEAD` do próprio CNPJ. O resto sob `['radar']` fica velho (`refetchType: 'none'`). **Query nova que um contato muda tem de entrar na allowlist**, senão a tela fica com o dado antigo. O O3b acrescentou `meus-retornos`.
+- **Elegibilidade do cadastro vive na edge** (`omie-vendas-sync/radar-cadastro.ts`). A checagem fica entre o lookup estrito e o `IncluirCliente`, e só roda com `radar` no payload. A recusa vira `RADAR_INELEGIVEL` e, no front, `InelegivelCadastro`, que não é retentável. No lote, o item fica `recusado`. O e-mail só vai ao Omie quando a classificação contábil é negativa explícita (`efetivo === false`). O `null` não basta: foi o P1 do Codex.
+- **A agenda tem o dia na chave**: `['radar','prospectar-hoje', alvo, hojeBRT]`.
+- **Retornos além do card**: RPC `radar_meus_retornos(p_vendedor, p_offset, p_limit)`, STABLE e na allowlist da lente.
+
+## O que custou tempo (lições)
+
+- **Uma edge deployada pode ter erro de tipo que o CI tolera.** O `edges:typecheck` tolera 78 erros conhecidos por classe. O O1 trocou um TS2739 tolerado por outro igual, e quem acusou foi o typecheck do Lovable no deploy. A correção foi um PR à parte (#3868). Conte por classe **antes e depois** (`TS2739:2 → 1`), não só "0 classe-crash".
+- **Colisão de VERSAO entre PRs paralelos na mesma edge.** O #3872 mergeou com `v1.37-vendedor-do-pedido` enquanto o #3868 esperava com `v1.37-radar-lerlead-promise`. No merge da main, a VERSAO vai para a próxima livre (v1.38), o fingerprint é regravado e a citação de linha nos docs anda junto (`docs:citacoes`).
+- **Um único deploy cobre a leva.** O `pendencias:pacote` recusou a main com o #3872 (exit 3: RPC chamada por nome não literal, lista de pré-condições incompleta). Depois do #3880, um único deploy a partir da main (v1.39) subiu as três mudanças. Deployar a v1.38 antes não teria sido possível, e seria redundante.
+- **`deriva:corpo:prod` vermelho por PR alheio em voo**: migration aplicada antes do merge (#3873). O Publish esperou o merge, e o gate voltou a verde sem nenhuma intervenção.
+- **O sensor de edição dá `EDICAO_DETECTADA` pelo `commit_sha` da resposta** mesmo quando o único commit do bot é a regeneração do `types.ts`, que é tolerada. Leia a linha dos commits: com 0 fora dos gerados e 36/36 hashes, nada foi editado à mão.
+- **O CI da main ficou vermelho** por `test-pre-anti-deriva-concorrencia` (deadlock 40P01 no PG 17.12, consertado no #3877). Os PRs ficaram BLOCKED. O caminho foi esperar o conserto e fazer `gh pr update-branch`, sem `--admin`.
+
+## Pendente de decisão do founder
+
+- O lote do gestor deve pular lead em posse ativa de OUTRO vendedor? O Codex recomendou que sim, e hoje o lote não pula.

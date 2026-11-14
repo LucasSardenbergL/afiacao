@@ -11,14 +11,14 @@ import type { Tables } from '@/integrations/supabase/types';
 import { useFarmerAlgorithmConfig, FARMER_ALGORITHM_CONFIG_KEY } from '@/hooks/useFarmerAlgorithmConfig';
 import type { AlgorithmConfig } from '@/lib/scoring/configAlgoritmo';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
-import { fetchAllPages } from '@/lib/postgrest';
+import { fetchAllKeyset, fetchAllPages, POSTGREST_PAGE_SIZE } from '@/lib/postgrest';
 import { resolveProductIdsFromItems } from '@/lib/scoring/margin';
 import { calcularHealthScore } from '@/lib/scoring/healthScore';
 import type { FaixaMargem } from '@/lib/scoring/faixaMargem';
 
 type FarmerCallRow = Pick<
   Tables<'farmer_calls'>,
-  'customer_user_id' | 'call_result' | 'is_whatsapp' | 'whatsapp_replied' | 'created_at'
+  'id' | 'customer_user_id' | 'call_result' | 'is_whatsapp' | 'whatsapp_replied' | 'created_at'
 >;
 type ProfileRow = Pick<Tables<'profiles'>, 'user_id' | 'name' | 'phone'>;
 // O jsonb real de sales_orders.items é pt-BR (omie_codigo_produto/quantidade/valor_unitario);
@@ -99,6 +99,46 @@ function percentile(arr: number[], p: number): number {
   const hi = Math.ceil(idx);
   if (lo === hi) return sorted[lo];
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+/**
+ * Quantos UUIDs vão num `.in('user_id', …)`. O teto é a URL, não a capa de linhas. Medido pelo
+ * Codex com o builder instalado e a query exata: 100 → 4.040 bytes, 150 → 5.990, 200 → 7.940
+ * (perto de 8 KB). 100 deixa folga para proxy e CDN.
+ */
+const LOTE_PROFILES = 100;
+
+/**
+ * Os profiles dos clientes do universo, em lotes (plano v9, C18).
+ *
+ * Antes era UMA request com o `.in` de todos os clientes distintos de `sales_orders`, sem
+ * `.range()` e com o `error` descartado. Em prod (11/11/2026) são 1.245 clientes e 1.214 profiles:
+ * a capa silenciosa de 1.000 do PostgREST devolvia 1.000, e o `if (!profile) return` mais abaixo
+ * tirava os outros 214 do score, sem erro e sem aviso. Se a request caísse (a URL tinha ~46 KB),
+ * o erro descartado virava `profiles = []` e a carteira inteira sumia.
+ *
+ * Cada lote passa por `fetchAllPages`: erro ou `data: null` LANÇAM (o catch do hook preserva o
+ * último resultado bom), e a paginação dentro do lote cobre a capa mesmo se o lote crescer.
+ * Profile AUSENTE de verdade não é falha: os aliases fiscais `@placeholder.local` não têm
+ * `profiles` (CLAUDE.md, cliente do grupo), e o cliente sem profile segue fora do score como já era.
+ * Sequencial de propósito: concorrência aqui é a aceleração que o v9 deixou para medir por papel.
+ */
+async function lerProfilesEmLotes(customerIds: readonly string[]): Promise<ProfileRow[]> {
+  const profiles: ProfileRow[] = [];
+  for (let i = 0; i < customerIds.length; i += LOTE_PROFILES) {
+    const lote = customerIds.slice(i, i + LOTE_PROFILES);
+    const linhas = await fetchAllPages((de, ate) =>
+      supabase
+        .from('profiles')
+        .select('user_id, name, phone')
+        .in('user_id', lote)
+        .order('user_id', { ascending: true })
+        .range(de, ate),
+      'profiles/scoring',
+    );
+    profiles.push(...linhas);
+  }
+  return profiles;
 }
 
 // ─── Main Hook ───────────────────────────────────────────────────────
@@ -353,19 +393,27 @@ export const useFarmerScoring = (farmerId?: string) => {
       });
 
       // 3. Load farmer calls for contact rates
-      const { data: callsData } = await supabase
-        .from('farmer_calls')
-        .select('customer_user_id, call_result, is_whatsapp, whatsapp_replied, created_at')
-        .eq('farmer_id', targetFarmerId);
-      const calls = (callsData ?? []) as FarmerCallRow[];
+      // `fetchAllKeyset`, não `.select()` cru (plano v9, C18): o `{ data }` sem o `error` fazia da
+      // falha de leitura um "nenhuma ligação" — taxa de contato zerada para a carteira inteira,
+      // indistinguível de um farmer que não ligou. Falha ou `data: null` LANÇA e cai no catch
+      // (último resultado bom preservado). Cursor por `id` (uuid) e não offset: ligação gravada ou
+      // apagada durante a leitura não desloca a página seguinte (achado do Codex no C18).
+      const calls: FarmerCallRow[] = await fetchAllKeyset(
+        (apos) => {
+          let q = supabase
+            .from('farmer_calls')
+            .select('id, customer_user_id, call_result, is_whatsapp, whatsapp_replied, created_at')
+            .eq('farmer_id', targetFarmerId);
+          if (apos !== null) q = q.gt('id', apos);
+          return q.order('id', { ascending: true }).limit(POSTGREST_PAGE_SIZE);
+        },
+        (c) => c.id,
+        'farmer_calls/scoring',
+      );
 
       // 4. Load customer profiles
       const customerIds = [...new Set(salesOrders.map((o) => o.customer_user_id))];
-      const { data: profilesData } = await supabase
-        .from('profiles')
-        .select('user_id, name, phone')
-        .in('user_id', customerIds);
-      const profiles = (profilesData ?? []) as ProfileRow[];
+      const profiles = await lerProfilesEmLotes(customerIds);
       const profileMap = new Map<string, { name: string; phone: string | null }>();
       profiles.forEach((p) => profileMap.set(p.user_id, { name: p.name, phone: p.phone }));
 

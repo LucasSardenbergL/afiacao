@@ -377,11 +377,18 @@ cenario_m() { # <parte1> <arquivo de B> <alvo f|v> [controle]
   local p1="$1" bsql="$2" alvo="$3" ctl="${4:-}" obs rcb stb a final livre=""
   reset_m
   abre_A
-  manda_A "SELECT 'A_PID=' || pg_backend_pid();" "BEGIN;" "\\i $p1" "\\! touch $WORK/a.pronta"
+  # deadlock_timeout A=60s · B=3s: no PG >= 17.12 o M2 é um DEADLOCK (ver roda_nivel_migration) e
+  # o detector roda UMA vez por espera, deadlock_timeout depois de ela começar — morre quem checa
+  # primeiro COM o ciclo já formado. B começa a esperar antes de A; com o default (1s nos dois) a
+  # vítima dependeria de A entrar na espera em menos de 1s depois de B (relógio do runner). Com
+  # B=3s e A=60s, B checa com o ciclo formado e é a vítima; se A atrasar mais de 3s, B não vê
+  # ciclo, A morre aos 60s e o M3 fica VERMELHO (alto, não flaky-verde). Em < 17.12 não há ciclo
+  # e os dois valores são inertes.
+  manda_A "SET deadlock_timeout = '60s';" "SELECT 'A_PID=' || pg_backend_pid();" "BEGIN;" "\\i $p1" "\\! touch $WORK/a.pronta"
   if ! espera_arquivo "$WORK/a.pronta" "$PID_A"; then
     fecha_A; echo "NAO_PAROU:$(tr '\n' ' ' < "$WORK/a.out" | head -c 200)"; return
   fi
-  local apid; apid="$(sed -n 's/^A_PID=//p' "$WORK/a.out" | head -1)"
+  local apid; apid="$(sed -n 's/^A_PID=//p' "$WORK/a.out" | sed -n 1p)"
   if [ -n "$ctl" ]; then
     # controle inócuo: com A parado segurando a trava, OUTRA função e OUTRA view se recriam na hora
     livre="$(P -c "SET lock_timeout = '3s';
@@ -389,7 +396,7 @@ cenario_m() { # <parte1> <arquivo de B> <alvo f|v> [controle]
              CREATE OR REPLACE VIEW public.trava_outra_v WITH (security_invoker = on) AS SELECT 'outra2'::text AS x;
              SELECT 'LIVRE';" 2>&1 | tr '\n' ' ' | sed 's/ *$//' || true)"
   fi
-  roda_B "$bsql"
+  PGOPTIONS="-c deadlock_timeout=3s" roda_B "$bsql"
   obs="$(observa_B "$apid")"
   manda_A "\\i $PARTE2" "COMMIT;" "SELECT 'A_FIM_OK';"
   fecha_A
@@ -421,15 +428,27 @@ cenario_m4() {
 }
 
 roda_nivel_migration() { # <C|P>
-  local L="$1" v
+  local L="$1" v svn st_m2
   echo "── nível MIGRATION ($L) ──"
+  # Como B (CREATE OR REPLACE sem molde) falha no M2 depende da MINOR do servidor:
+  #   < 17.12: B espera a TUPLA de pg_proc que o ALTER da trava de A segura e, quando A commita,
+  #            cai com XX000 "tuple concurrently updated".
+  #  >= 17.12: ProcedureCreate passou a tomar LockDatabaseObject(pg_proc, oid, AccessExclusive)
+  #            ANTES do heap_update (pg_proc.c, release 17.12). B pega esse lock e espera a tupla de
+  #            A; o CREATE OR REPLACE de A espera o lock de B → ciclo → B cai com 40P01 (deadlock).
+  #            O ALTER FUNCTION da trava NÃO toma o lock novo, por isso o M5 segue XX000.
+  # Medido no CI: run 43202257011 (PG 17.11) verde; 43270643595 e 43288994654 (PG 17.12) com
+  # CM2/PM2 "veio [rcB=3|B=40P01]", mesmo código. A propriedade P não muda: B falha alto, A fica.
+  svn="$(Q "SHOW server_version_num")"
+  case "$svn" in ''|*[!0-9]*) echo "ABORTA: server_version_num ilegível [$svn]"; exit 3 ;; esac
+  if [ "$svn" -ge 170012 ]; then st_m2=40P01; else st_m2=XX000; fi
   v="$(cenario_m "$PARTE1_SEM" "$B_F" f)"
   eq "${L}M0" "função SEM trava: B commita no meio, some, e A sai verde (a corrida existe)" \
     "$v" "obs=TERMINOU|rcB=0|B=sem_erro|A=OK|final=este|P=VIOLADA"
 
   v="$(cenario_m "$PARTE1_COM" "$B_F" f ctl)"
   eq "${L}M1" "função COM trava: B fica preso em A" "${v%%|*}" "obs=BLOQUEADO"
-  eq "${L}M2" "... e falha alto (XX000) quando A commita" "$(cut -d'|' -f2,3 <<<"$v")" "rcB=3|B=XX000"
+  eq "${L}M2" "... e falha alto ($st_m2 no PG $svn) quando A commita" "$(cut -d'|' -f2,3 <<<"$v")" "rcB=3|B=$st_m2"
   eq "${L}M3" "... P vale, com o corpo de A no ar" "$(cut -d'|' -f4,5,6 <<<"$v")" "A=OK|final=este|P=VALE"
   eq "${L}C1" "controle: a trava de A não prende OUTRA função nem OUTRA view" "${v##*|}" "ctl=LIVRE"
 
@@ -564,7 +583,7 @@ fila_apos_commit() {
     > "$WORK/fila-commit.sql"
   RWV -f "$WORK/fila-commit.sql" > "$WORK/fila-commit.out" 2>&1 || true
   grep -q 'FIM_APLICACAO_OK' "$WORK/fila-commit.out" && fim=FIM_APLICACAO_OK
-  locks="$(sed -n 's/^LOCKS=//p' "$WORK/fila-commit.out" | head -1)"
+  locks="$(sed -n 's/^LOCKS=//p' "$WORK/fila-commit.out" | sed -n 1p)"
   echo "$fim|locks=${locks:-?}"
 }
 # E14/E14b: o delta com a porta nova QUEBRADA num trecho que só roda ao EXECUTAR (late-bound),
@@ -606,7 +625,7 @@ cenario_e15() {
   if ! espera_arquivo "$WORK/a.pronta" "$PID_A"; then
     fecha_A; echo "NAO_PAROU:$(tr '\n' ' ' < "$WORK/a.out" | head -c 200)"; return
   fi
-  apid="$(sed -n 's/^A_PID=//p' "$WORK/a.out" | head -1)"
+  apid="$(sed -n 's/^A_PID=//p' "$WORK/a.out" | sed -n 1p)"
   roda_B "$bsql"
   obs="$(observa_B "$apid")"
   manda_A "ROLLBACK;"
@@ -657,7 +676,7 @@ cenario_r0() {
           "COMMIT;" "SELECT 'A_FIM_OK';"
   fecha_A
   local leu a=ERRO
-  leu="$(sed -n 's/^LEU=//p' "$WORK/a.out" | head -1)"
+  leu="$(sed -n 's/^LEU=//p' "$WORK/a.out" | sed -n 1p)"
   grep -q '^A_FIM_OK$' "$WORK/a.out" && a=OK
   echo "leu=${leu:-nada}|S=$a|final=$(qual_f)"
 }

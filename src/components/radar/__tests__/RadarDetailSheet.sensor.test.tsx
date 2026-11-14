@@ -79,6 +79,12 @@ describe('RadarDetailSheet — sensor da ficha aberta', () => {
     const comCelular = () => ({ ...lead('11222333000181'), telefone1: '(37) 99999-1234' }) as unknown as RadarEmpresa;
     const intencoes = () => rpc.mock.calls.filter((c) => c[0] === 'radar_registrar_intencao').map((c) => c[1]);
 
+    it('e-mail (mailto) grava a intenção "email" — revisão 2026-11-11, item 18', () => {
+      render(ficha({ ...lead('11222333000181'), email: 'compras@lead.com.br' } as unknown as RadarEmpresa));
+      fireEvent.click(screen.getByRole('link', { name: /compras@lead\.com\.br/ }));
+      expect(intencoes()).toEqual([{ p_cnpj: '11222333000181', p_canal: 'email' }]);
+    });
+
     it('WhatsApp grava a intenção com o CNPJ da ficha', () => {
       render(ficha(comCelular()));
       fireEvent.click(screen.getByTestId('radar-whatsapp'));
@@ -98,5 +104,38 @@ describe('RadarDetailSheet — sensor da ficha aberta', () => {
       fireEvent.click(screen.getByTestId('radar-whatsapp'));
       expect(intencoes()).toHaveLength(0);
     });
+  });
+});
+
+describe('RadarDetailSheet — formatação e acessibilidade (revisão 2026-11-11, item 20)', () => {
+  it('o diálogo tem descrição acessível; a abertura sai em dd/mm/aaaa e a idade no singular', () => {
+    const empresa = { ...lead('11222333000181'), data_abertura: '2025-03-01' } as unknown as RadarEmpresa;
+    render(<RadarDetailSheet empresa={empresa} hojeISO="2026-06-01" onClose={() => {}} />);
+    const dialogo = screen.getByRole('dialog');
+    const desc = dialogo.getAttribute('aria-describedby');
+    expect(desc && document.getElementById(desc)?.textContent).toMatch(/Ficha do lead/);
+    expect(dialogo.textContent).toContain('01/03/2025 (1 ano)');
+    expect(dialogo.textContent).not.toContain('2025-03-01');
+  });
+});
+
+describe('RadarDetailSheet — atalhos (revisão 2026-11-11, item 17)', () => {
+  it('pelo registro do app: "n" chama o próximo; "c" copia o telefone e grava a intenção "copiar"', async () => {
+    lente = false; rpc.mockClear();
+    const { ShortcutsRegistryProvider } = await import('@/components/shell/ShortcutsRegistry');
+    const onProximo = vi.fn();
+    const writeText = vi.fn(async () => undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const empresa = { ...lead('11222333000181'), telefone1: '3732220001' } as unknown as RadarEmpresa;
+    render(
+      <ShortcutsRegistryProvider>
+        <RadarDetailSheet empresa={empresa} hojeISO="2026-11-06" onClose={() => {}} onProximo={onProximo} />
+      </ShortcutsRegistryProvider>,
+    );
+    fireEvent.keyDown(window, { key: 'n' });
+    expect(onProximo).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(window, { key: 'c' });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('3732220001'));
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith('radar_registrar_intencao', expect.objectContaining({ p_cnpj: '11222333000181', p_canal: 'copiar' })));
   });
 });

@@ -158,7 +158,7 @@ INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_cora
 SQL
 # 2+3) re-roda e EXIGE o 23505 (duplicate key) — a SQLSTATE real do PG, não uma sentinela inventada.
 FALSO=$(P0 -tA -c "SELECT tint_promote_sync_run('20000000-0000-0000-0000-0000000000ff');" 2>&1 || true)
-if echo "$FALSO" | grep -qiE "23505|duplicate key value|tint_formula_itens_formula_id_corante_id_key"; then
+if grep -qiE "23505|duplicate key value|tint_formula_itens_formula_id_corante_id_key" <<<"$FALSO"; then
   ok "F1 falsificação TEM DENTE: sem o dedup, o INSERT estoura 23505 (duplicate key) e derruba o run"
 else
   bad "F1 falsificação FRACA: esperava 23505/duplicate key, veio [$FALSO]"

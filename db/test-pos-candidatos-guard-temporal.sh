@@ -288,8 +288,8 @@ pos_falsifica() { # $1=nome  $2=sql sabotado  $3=trecho ASCII exclusivo da mensa
   # ⚠️ capturar ANTES de filtrar: sob `set -o pipefail` o psql que aborta (exit!=0) derruba o pipeline
   # inteiro, e o grep nunca decide nada -- todo ramo caia no else, mascarando um dente que existia.
   out="$(P -f "$2" 2>&1 || true)"
-  if printf '%s\n' "$out" | command grep -qF 'guard-temporal:'; then
-    if printf '%s\n' "$out" | command grep -qF "$3"; then ok "$1 -> apply abortado com a mensagem certa"
+  if command grep -qF 'guard-temporal:' <<<"$out"; then
+    if command grep -qF "$3" <<<"$out"; then ok "$1 -> apply abortado com a mensagem certa"
     else bad "$1 -- abortou por OUTRO ramo: $(printf '%s\n' "$out" | command grep -F 'guard-temporal:' | head -1)"; fi
   else
     bad "$1 -- a migration NAO abortou pela pos/pre-condicao: a defesa nao tem dente"

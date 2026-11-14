@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  InelegivelCadastro,
   validarRespostaCriarCliente,
   cadastrarEmpresaNoOmie,
   documentoCadastravelNoOmie,
@@ -422,5 +423,36 @@ describe('escolherRazaoFiscal (pacote J: a razão de MEI é guardada mascarada)'
   it('a máscara reconhecida é a da migration (sufixo ***dddddd**), não 11 dígitos', () => {
     expect(RAZAO_MASCARADA.test(MASC)).toBe(true);
     expect(RAZAO_MASCARADA.test('PEDRO ALVES COSTA 12345678901')).toBe(false);
+  });
+});
+
+describe('cadastrarEmpresaNoOmie — recusa de elegibilidade do SERVIDOR (revisão 2026-11-11, item 5)', () => {
+  const recusa = (motivo: string) => vi.fn(async () => ({ success: false, code: 'RADAR_INELEGIVEL', motivo, error: `RADAR_INELEGIVEL: ${motivo}` }));
+
+  it('a edge recusou criar: InelegivelCadastro com o motivo — não é FalhaCadastro (não retentável) e o Radar não grava', async () => {
+    const d = deps({ criarNoOmie: recusa('rfb_nao_ativa') });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(InelegivelCadastro);
+    expect(err).not.toBeInstanceOf(FalhaCadastro);
+    expect((err as InelegivelCadastro).motivo).toBe('rfb_nao_ativa');
+    expect(d.registrarNoRadar).not.toHaveBeenCalled();
+    expect(d.registrarConflito).not.toHaveBeenCalled();
+  });
+
+  it('motivo fora do vocabulário: falha comum (retentável), nunca recusa terminal sem nome', async () => {
+    const err = await cadastrarEmpresaNoOmie(empresa, deps({ criarNoOmie: recusa('motivo_novo') })).catch((e) => e);
+    expect(err).toBeInstanceOf(FalhaCadastro);
+    expect(err).not.toBeInstanceOf(InelegivelCadastro);
+  });
+
+  it('retomada com o vínculo já gravado: reconcilia SEM chamar a edge (a recusa nunca trava a recuperação)', async () => {
+    const d = deps({ lerEstado: estado('555'), criarNoOmie: recusa('descartado') });
+    await expect(cadastrarEmpresaNoOmie(empresa, d, { retentativa: true })).resolves.toEqual({ codigo: '555', jaExistia: true, recuperado: true });
+    expect(d.criarNoOmie).not.toHaveBeenCalled();
+  });
+
+  it('o lookup da edge ACHOU o cliente (created:false): reconcilia, mesmo com o lead mudado', async () => {
+    const d = deps({ criarNoOmie: vi.fn(async () => ({ success: true, created: false, codigo_cliente: 888 })) });
+    await expect(cadastrarEmpresaNoOmie(empresa, d, { retentativa: true })).resolves.toMatchObject({ codigo: '888', jaExistia: true });
   });
 });

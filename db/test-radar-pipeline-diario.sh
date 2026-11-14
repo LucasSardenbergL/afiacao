@@ -199,7 +199,7 @@ Pq -c "DELETE FROM public.acoes_execucoes" >/dev/null
 # F1 antes do apply real: corpo vivo divergente aborta na PRE e o vivo fica intacto.
 Pq -c "ALTER FUNCTION public.radar_score_recalcular() RENAME TO radar_score_recalcular_orig" >/dev/null
 Pq -c "CREATE FUNCTION public.radar_score_recalcular() RETURNS jsonb LANGUAGE sql AS \$\$ SELECT '{}'::jsonb \$\$" >/dev/null
-if P -q -f "$MIG_USADA" > "$(dirname "$DATA")/f1.log" 2>&1; then F1="aplicou"; else F1="$(grep -o 'PRE FALHOU' "$(dirname "$DATA")/f1.log" | head -1)"; fi
+if P -q -f "$MIG_USADA" > "$(dirname "$DATA")/f1.log" 2>&1; then F1="aplicou"; else F1="$(grep -o 'PRE FALHOU' "$(dirname "$DATA")/f1.log" | sed -n 1p)"; fi
 eq "F1a corpo divergente → PRE aborta" "$F1" "PRE FALHOU"
 eq "F1b o vivo divergente ficou intacto" "$(Pq -c "SELECT prosrc FROM pg_proc WHERE oid = to_regprocedure('public.radar_score_recalcular()')")" " SELECT '{}'::jsonb "
 eq "F1c nada do arquivo ficou (sem estado)" "$(Pq -c "SELECT to_regclass('public.radar_score_estado') IS NULL")" "t"

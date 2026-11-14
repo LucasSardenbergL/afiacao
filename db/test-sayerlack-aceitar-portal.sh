@@ -320,7 +320,7 @@ r="$(C "$P1" "$(L 2140603 "$NOVO" "$TOT" "30 DIAS" 2)" 2)"; D1="$(printf '%s' "$
 eq "R0 a releitura do portal abre a divergência com o gate" "$(printf '%s' "$r" | campo divergente)|$(GATE "$P1")" "true|$D1"
 # A marca do ramo, não só "lançou 42501": a RPC de custo também barra não-staff (2ª camada) e esconderia o gate.
 marca_staff() { local o; o="$(AXerr "$P1" "$D1" "Confirmado com o vendedor" "$CLI")"; printf '%s' "$(printf '%s' "$o" | sqlstate)"
-  if printf '%s' "$o" | grep -qF '[ACEITAR-STAFF]'; then printf '|marca'; else printf '|sem-marca'; fi; }
+  if grep -qF '[ACEITAR-STAFF]' <<<"$o"; then printf '|marca'; else printf '|sem-marca'; fi; }
 eq "R1 não-staff (customer) = 42501 do gate da RPC [ACEITAR-STAFF]" "$(marca_staff)" "42501|marca"
 eq "R2 justificativa curta = 22023" "$(AXerr "$P1" "$D1" "curta" | sqlstate)" "22023"
 eq "R3 divergência que a tela NÃO viu (id antigo): divergencia_mudou" "$(AX "$P1" 999 | campo motivo)" "divergencia_mudou"

@@ -3,11 +3,14 @@
 // Sequencial: NUNCA processa alertas em paralelo.
 // Tipos só-no-app (./politica-email.ts) são encerrados como `ignorado`, sem e-mail.
 // Destinatário por alerta (./destinatario.ts): o e-mail semanal de leads do Radar vai para o vendedor.
+// Resumo diário de venda (venda R2): mesmo caminho do vendedor + pixel de abertura (./abertura.ts) — o ÚNICO
+// caminho anônimo da edge é o GET do pixel, que só registra a abertura e devolve um GIF.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { authorizeCronOrStaff } from '../_shared/auth.ts';
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from './versao.ts';
 import { separarPorCanal } from './politica-email.ts';
-import { destinatarioDe, falhaDeLeituraAborta, htmlDoVendedor, mapaDestinatarios } from './destinatario.ts';
+import { destinatarioDe, falhaDeLeituraAborta, htmlDoVendedor, mapaDestinatarios, mapaPixels } from './destinatario.ts';
+import { CABECALHOS_PIXEL, PIXEL_GIF, tokenDeAbertura, urlDoPixel } from './abertura.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -238,8 +241,25 @@ async function createCalendarEvent(accessToken: string, alerta: AlertaRow): Prom
   return json.id as string;
 }
 
+/** Pixel do resumo de venda: registra a 1ª abertura do envio (service_role). Falha só vai ao log, sem o token. */
+async function registrarAbertura(token: string): Promise<void> {
+  const { error } = await createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
+    .rpc('venda_resumo_registrar_abertura', { p_token: token });
+  if (error) console.error(`[dispatch-notifications] pixel: falha ao registrar abertura: ${error.message}`);
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
+  // Pixel de abertura do resumo de venda: ANTES do gate (o cliente de e-mail não tem sessão). Só GET com token uuid;
+  // a resposta é o mesmo GIF exista o token ou não (sem oráculo) e o token não vai para o log.
+  // Caminho disjunto da sonda: o pixel é GET com `abertura`; a sonda é POST `{"probe":true}` — nenhuma requisição
+  // passa pelos dois, e a sonda continua IO-free (o IO do pixel mora em `registrarAbertura`, fora do handler).
+  const tokenAbertura = tokenDeAbertura(req.method, req.url);
+  if (tokenAbertura) {
+    await registrarAbertura(tokenAbertura);
+    return new Response(PIXEL_GIF, { status: 200, headers: CABECALHOS_PIXEL });
+  }
 
   // Auth gate: x-cron-secret OR service_role OR staff JWT.
   // Para path manual (staff JWT), exigir role=admin explicitamente.
@@ -385,7 +405,22 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
-  const destinos = mapaDestinatarios(enviosErr ? [] : (envios ?? []));
+  // Resumo diário de venda (venda R2): mesma régua, tabela própria, + o token do pixel de abertura.
+  const { data: resumos, error: resumosErr } = await supabase
+    .from('venda_resumo_envio')
+    .select('alerta_id, destinatario_email, token_abertura')
+    .in('alerta_id', porEmail.map((a) => a.id));
+  if (falhaDeLeituraAborta(resumosErr)) {
+    const msg = `Falha ao ler venda_resumo_envio: ${resumosErr?.message ?? 'erro desconhecido'}`;
+    console.error(`[dispatch-notifications] ${msg}`);
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  const linhasResumo = resumosErr ? [] : (resumos ?? []);
+  const destinos = mapaDestinatarios([...(enviosErr ? [] : (envios ?? [])), ...linhasResumo]);
+  const pixels = mapaPixels(linhasResumo);
 
   // 2. Obter access token
   const tokenResult = await getAccessToken();
@@ -407,8 +442,10 @@ Deno.serve(async (req) => {
   for (const a of porEmail) {
     try {
       const subject = subjectFor(a.severidade, a.titulo);
-      const destino = destinatarioDe(a.id, destinos, EMAIL_TO!);
-      const html = destino.doVendedor ? htmlDoVendedor(a.titulo, a.mensagem) : buildHtmlBody(a);
+      const destino = destinatarioDe(a.id, destinos, EMAIL_TO!, pixels);
+      const html = destino.doVendedor
+        ? htmlDoVendedor(a.titulo, a.mensagem, urlDoPixel(SUPABASE_URL, destino.pixel))
+        : buildHtmlBody(a);
 
       const gmailId = await sendGmail(accessToken, from, destino.to, subject, html);
 

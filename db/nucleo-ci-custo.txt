@@ -20,6 +20,12 @@
 # 2/2 201. A soma subiu (as 2 faixas disputam a parte e cada uma paga um controle), mas a MAIOR unidade
 # caiu de 371 s (mediana) para ~200 s, e as faixas dividem a parte como qualquer unidade do pool.
 # docs/historico/ci-provas-sql-venda-repasse-faixas.md
+# Exceção (2026-11-12): UM run (43145558990): `fin-consolidado-ic` = 324 (normal 5 + faixas 164 e 155),
+# `radar-privacidade-j` = 240 (9 + 111 + 120; 327 no 43112361077, com mais disputa) e `tint-corante-giro` =
+# 104 (era 236, com JIT; agora `jit=off`). `tint-fase5-watchdog` = 15 (era 240 com JIT), medida no run
+# 43147391328, depois do `jit=off`. docs/historico/ci-provas-sql-fin-consolidado-faixas-e-tint-jit.md
+# Exceção (2026-11-12): UM run (43198804946): `hoje-sp-views-defaults` = 239 (normal 7 + `--falsificar` 232;
+# era 309), com K1/K2 em 2 sessões B simultâneas. docs/historico/ci-provas-sql-radar-privacidade-faixas.md
 # Re-meça quando a pior parte destoar das outras ou entrar prova cara nova (o `comm` de
 # docs/historico/ci-fila-de-runners.md lista as provas sem custo): para cada job `provas-sql (i)` de
 # um run verde, baixe o log pela API (`gh run view --log` em paralelo volta VAZIO sob limite),
@@ -77,7 +83,7 @@ db/test-fcs-ftp-escrita-fechada.sh 11
 db/test-fcs-margem-coluna-fechada.sh 2
 db/test-fin-ciclo-coorte-maturacao.sh 12
 db/test-fin-ciclo-fornecedor.sh 17
-db/test-fin-consolidado-ic.sh 235
+db/test-fin-consolidado-ic.sh 324
 db/test-fin-cr-reconciliacao.sh 37
 db/test-fin-dre-fora-dre.sh 2
 db/test-fin-encargos-titulo.sh 8
@@ -92,7 +98,7 @@ db/test-grupos-caca-cnpj-alfanumerico.sh 36
 db/test-hoje-sp-data-ciclo.sh 206
 db/test-hoje-sp-sessao-utc-precos-piso.sh 30
 db/test-hoje-sp-sete-funcoes.sh 34
-db/test-hoje-sp-views-defaults.sh 309
+db/test-hoje-sp-views-defaults.sh 239
 db/test-importar-nfe-recebimento.sh 16
 db/test-margem-cliente-janela-12m.sh 3
 db/test-melhorias-rpcs.sh 64
@@ -146,7 +152,7 @@ db/test-radar-pipeline-diario.sh 32
 db/test-radar-placar.sh 50
 db/test-radar-posse-l.sh 2
 db/test-radar-possiveis-vinculos.sh 15
-db/test-radar-privacidade-j.sh 206
+db/test-radar-privacidade-j.sh 240
 db/test-radar-publicacao-curta.sh 93
 db/test-radar-recruzamento-diario.sh 10
 db/test-radar-recruzar-origem-omie.sh 5
@@ -192,12 +198,12 @@ db/test-telemetria-vitals.sh 1
 db/test-tint-canonica.sh 7
 db/test-tint-cobertura-lista-email.sh 13
 db/test-tint-consumo-corante.sh 41
-db/test-tint-corante-giro.sh 216
+db/test-tint-corante-giro.sh 104
 db/test-tint-fase5-desativacao.sh 5
 db/test-tint-fase5-watchdog-v4.sh 95
 db/test-tint-fase5-watchdog-v5.sh 104
 db/test-tint-fase5-watchdog-v6.sh 31
-db/test-tint-fase5-watchdog.sh 232
+db/test-tint-fase5-watchdog.sh 15
 db/test-tint-formulas-rls-initplan.sh 1
 db/test-tint-gate-custo-staff.sh 1
 db/test-tint-gate-revalida.sh 5

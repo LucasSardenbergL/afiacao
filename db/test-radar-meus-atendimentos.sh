@@ -365,7 +365,7 @@ eq "N1 sem p_incluir_ja_clientes o já-cliente some (o front passa true)" \
    "$(lista "p_so_meus => true, p_limit => 50")" "$(oraculo "'a1_ativo','a1_renovado'")"
 
 # C — ACL da assinatura nova; a antiga sumiu.
-estado_sob() { local s; s="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE $1; $2" 2>&1 | sed -nE 's/^(ERROR|ERRO): +([0-9A-Z]{5}):.*/\2/p' | head -1)"; printf '%s' "${s:-LEU}"; }
+estado_sob() { local s; s="$(P -qAt -v VERBOSITY=verbose -c "SET ROLE $1; $2" 2>&1 | sed -nE 's/^(ERROR|ERRO): +([0-9A-Z]{5}):.*/\2/p' | sed -n 1p)"; printf '%s' "${s:-LEU}"; }
 eq "C1 authenticated chama a visão" "$(estado_sob authenticated "SELECT count(*) FROM public.radar_lista(p_so_meus => true)")" "LEU"
 eq "C2 anon não chama a lista nova (42501)" "$(estado_sob anon "SELECT count(*) FROM public.radar_lista(p_so_meus => true)")" "42501"
 eq "C3 ACL: authenticated sim, anon não" \

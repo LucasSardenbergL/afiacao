@@ -123,7 +123,7 @@ Pq() { P -qAt "$@"; }
 estado() {
   local saida
   if saida="$(P -qAt -v VERBOSITY=verbose -c "$1" 2>&1)"; then echo "verde"; return; fi
-  printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | head -1 | grep -oE '[0-9A-Z]{5}:$' | tr -d ':' || echo "sem-codigo"
+  printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | sed -n 1p | grep -oE '[0-9A-Z]{5}:$' | tr -d ':' || echo "sem-codigo"
 }
 M=00000000-0000-0000-0000-0000000000ee; E1=00000000-0000-0000-0000-0000000000e1; CUST=00000000-0000-0000-0000-0000000000cc
 como() { printf "SET ROLE authenticated; SET request.jwt.claim.sub = '%s'; %s" "$1" "$2"; }
@@ -182,8 +182,8 @@ SQL
 
 aplicar() { { P -v ON_ERROR_STOP=1 -f "$MIG_USADA" && P -v ON_ERROR_STOP=1 -f "$MIG2_USADA"; } 2>&1; }
 SAIDA_APPLY="$(aplicar)" || { echo "$SAIDA_APPLY" | tail -20; echo "POST/APPLY FALHOU"; exit 1; }
-printf '%s\n' "$SAIDA_APPLY" | grep -q "clientes_import_rodada pronta" || { echo "APPLY sem NOTICE de postcondição"; exit 1; }
-printf '%s\n' "$SAIDA_APPLY" | grep -q "clientes_import varredura diaria pronta" || { echo "APPLY sem NOTICE da varredura diária"; exit 1; }
+grep -q "clientes_import_rodada pronta" <<<"$SAIDA_APPLY" || { echo "APPLY sem NOTICE de postcondição"; exit 1; }
+grep -q "clientes_import varredura diaria pronta" <<<"$SAIDA_APPLY" || { echo "APPLY sem NOTICE da varredura diária"; exit 1; }
 
 PASS=0; FAIL=0
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }

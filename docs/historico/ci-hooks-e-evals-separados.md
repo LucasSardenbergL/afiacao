@@ -33,3 +33,19 @@ ainda não separa o efeito dos 2 runners da leva — quem decide é a amostra n�
 **Incidente no mesmo run (fora do escopo):** 3 partes do `provas-sql` travaram no `apt-get update` do
 PGDG até o timeout de 25 min (attempt 1); o `tentar` repete a falha mas nenhuma tentativa tem prazo
 próprio, e mirror que TRAVA em vez de falhar segura o job inteiro. Re-run dos falhos passou.
+
+## Desfecho do programa (amostra sem provas SQL)
+Coletados os runs de PR verdes com `provas-sql` pulado depois do #3837: só **2** em ~4 h
+(43074539735, 43077059264) — abaixo do n≥5 pedido; a decisão abaixo não depende do n.
+
+| run | duração `falsificacao (1)` | maior `testes` | fila dos não-SQL | quem fechou o run | CI concorrentes |
+|---|---|---|---|---|---|
+| 43074539735 | 243 s (fim em 490 s; run fechou em 560 s) | 182 s | 207–338 s | `falsificacao (4)`, 182 s + 338 s de fila | 7 |
+| 43077059264 | 247 s (fim em 500 s; run fechou em 736 s) | 185 s | 274–448 s | `falsificacao (2)`, 197 s + 439 s de fila | 7 |
+
+**Decisão: o `codex-async` NÃO vai para 3 partes; o programa para aqui.** A duração ainda deixa a
+`falsificacao (1)` ~60 s acima do maior shard de `testes`, mas em nenhum dos dois runs ela definiu o
+fim: quem define é a FILA (200–450 s, todos os jobs), causada por 6–7 runs de CI simultâneos de
+outras sessões disputando o limite de concorrência da conta. Cortar ~70 s de um job que não está no
+caminho crítico não move o merge. A alavanca agora é a fila (concorrência de runs), não o tempo de
+job — tema da sessão `ci-fila-do-actions-no-pi`, fora deste programa.

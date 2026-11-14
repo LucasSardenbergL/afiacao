@@ -118,7 +118,7 @@ Pq() { P -qAt "$@"; }
 estado() {
   local saida
   if saida="$(P -qAt -v VERBOSITY=verbose -c "$1" 2>&1)"; then echo "verde"; return; fi
-  printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | head -1 | grep -oE '[0-9A-Z]{5}:$' | tr -d ':' || echo "sem-codigo"
+  printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | sed -n 1p | grep -oE '[0-9A-Z]{5}:$' | tr -d ':' || echo "sem-codigo"
 }
 
 F1=00000000-0000-0000-0000-0000000000f1; F2=00000000-0000-0000-0000-0000000000f2; M=00000000-0000-0000-0000-0000000000ee
@@ -278,7 +278,7 @@ eq "H6 farmer -> 42501" "$(estado "$(como "$F1" "SELECT public.venda_painel('$W'
 
 # M5 PÓS que falha desfaz o CREATE (psql -1 = uma transação, como o SQL Editor): volta ao corpo anterior e reaplica
 P -q -f "$MIG_ANTES" > /dev/null
-MD5_NOVO="$(grep -oE "IS DISTINCT FROM '[0-9a-f]{32}'" "$MIG_USADA" | head -1 | grep -oE '[0-9a-f]{32}')"
+MD5_NOVO="$(grep -oE "IS DISTINCT FROM '[0-9a-f]{32}'" "$MIG_USADA" | sed -n 1p | grep -oE '[0-9a-f]{32}')"
 sed "s/IS DISTINCT FROM '$MD5_NOVO'/IS DISTINCT FROM 'pos-quebrada'/" "$MIG_USADA" > "$(dirname "$DATA")/mig-pos-quebrada.sql"
 SAIDA_M5="$(P -1 -q -f "$(dirname "$DATA")/mig-pos-quebrada.sql" 2>&1 || true)"
 eq "M5 POS quebrada aborta e o corpo anterior fica (rollback)" \

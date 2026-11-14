@@ -283,7 +283,10 @@ describe('corpus real — nenhuma CREATE POLICY custom fica fora do inventário'
 
     expect(buracos).toEqual([]);
     expect(ocorrencias).toBeGreaterThan(400); // sanidade: as policies foram vistas
-    expect(dinamicas).toBe(3); // as 3 EXECUTE format conhecidas — mudou? revise o descarte
+    // as 5 EXECUTE format conhecidas — mudou? revise o descarte. 4ª e 5ª:
+    // 20261113120000_seg_scanner_politicas_select_abertas.sql (laços *_select_staff ×11 e
+    // *_select_aprovados ×4; já aplicada, imutável — a validação dela é a query do PR #3879).
+    expect(dinamicas).toBe(5);
   });
 });
 

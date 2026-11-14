@@ -62,4 +62,24 @@ describe('useRadarVinculosLista', () => {
     const { result } = renderHook(() => useRadarVinculosLista([]), { wrapper });
     expect(result.current.estadoDe('11111111000101')).toBe('carregando');
   });
+
+  it('lead que sai da página (contato registrado): mesma chave, zero RPC nova e nenhum selo volta a "carregando"', async () => {
+    resposta = { data: [], error: null };
+    const TRES = [...PAGINA, { cnpj: '13333333000101' }];
+    // Um QueryClient só para o teste inteiro (o `wrapper` acima cria um por render).
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const fixo = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+    const { result, rerender } = renderHook(({ p }) => useRadarVinculosLista([p]), { wrapper: fixo, initialProps: { p: TRES } });
+    await waitFor(() => expect(result.current.estadoDe('13333333000101')).toBe('ok'));
+    expect(chamadas).toHaveLength(1);
+    rerender({ p: TRES.filter((e) => e.cnpj !== '12222222000101') });
+    expect(result.current.estadoDe('11111111000101')).toBe('ok');
+    expect(result.current.estadoDe('13333333000101')).toBe('ok');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(chamadas).toHaveLength(1);
+    // Página com CNPJ que o cache não cobre: chave própria e uma RPC, como antes.
+    rerender({ p: [...PAGINA, { cnpj: '14444444000101' }] });
+    await waitFor(() => expect(chamadas).toHaveLength(2));
+  });
 });
+

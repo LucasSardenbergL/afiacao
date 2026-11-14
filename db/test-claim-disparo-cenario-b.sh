@@ -290,7 +290,7 @@ UPDATE public.pedido_compra_sugerido
 COMMIT;
 SQL
 )" || true
-if printf '%s' "$C8" | grep -q 'CANCEL-COM-DISPARO-PENDENTE'; then
+if grep -q 'CANCEL-COM-DISPARO-PENDENTE' <<<"$C8"; then
   ok "C8 a porta de correcao pos-disparo NAO libera pendencia de disparo (o veto nao tem porta)"
 else
   bad "C8 a porta liberou um cancelamento com disparo pendente: $(printf '%s' "$C8" | head -c 200)"
@@ -559,7 +559,7 @@ fi
 # nao a cadeia inteira. Sem este par, F1b passaria tambem num banco onde nada mais funciona.
 F1C="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
       -c "SET test.role='service_role'; SELECT public.corrigir_cancelamento_pos_disparo(7,'lucas','motivo_invalido','evidencia');" 2>&1)" || true
-if printf '%s' "$F1C" | grep -q 'CANCEL-POS-DISPARO-MOTIVO'; then
+if grep -q 'CANCEL-POS-DISPARO-MOTIVO' <<<"$F1C"; then
   ok "F1c CONTROLE: na MESMA sabotagem o gate de motivo do #2309 ainda recusa -- a sabotagem foi cirurgica"
 else
   bad "F1c a sabotagem derrubou a cadeia inteira, nao so o meu trigger: $(printf '%s' "$F1C" | head -c 160)"
@@ -638,7 +638,7 @@ semear
 P -q -c "SELECT public.reposicao_claim_disparo(2,'producao@r1');" >/dev/null
 F4B="$("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -tA \
       -c "UPDATE public.pedido_compra_sugerido SET status='cancelado' WHERE id=2;" 2>&1)" || true
-if printf '%s' "$F4B" | grep -q 'CANCEL-COM-DISPARO-PENDENTE'; then
+if grep -q 'CANCEL-COM-DISPARO-PENDENTE' <<<"$F4B"; then
   ok "F4b CONTROLE: na MESMA sabotagem o veto ainda dispara para 'cancelado' -- a sabotagem foi cirurgica"
 else
   bad "F4b a sabotagem desligou o trigger inteiro, nao so o prefixo: $(printf '%s' "$F4B" | head -c 160)"

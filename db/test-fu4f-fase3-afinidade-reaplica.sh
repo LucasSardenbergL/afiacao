@@ -95,7 +95,7 @@ for v in NaN Infinity; do
 done
 
 echo "── REGRESSÃO: o bug original (INSERT sem as NOT NULL) dá 23502, não 23514 ──"
-err="$(psql -q -c "INSERT INTO public.farmer_bundle_recommendations (bundle_products,affinity_bundle) VALUES ('[]'::jsonb,'NaN'::numeric)" 2>&1 | command grep -oE '23502|null value in column' | head -1)"
+err="$(psql -q -c "INSERT INTO public.farmer_bundle_recommendations (bundle_products,affinity_bundle) VALUES ('[]'::jsonb,'NaN'::numeric)" 2>&1 | command grep -oE '23502|null value in column' | sed -n 1p)"
 if [ -n "$err" ]; then
   echo "  OK   [B5 forma antiga do A7 morre em not_null_violation] (a causa do abort em prod)"; ok=$((ok+1))
 else
@@ -135,9 +135,9 @@ if diff -q "$MIG" "$TMP/s3.sql" >/dev/null; then
   echo "  FAIL [S3] a sabotagem NÃO foi aplicada — o resultado não provaria nada"; fail=$((fail+1))
 else
   saida="$(psql -q -f "$TMP/s3.sql" 2>&1)"
-  if echo "$saida" | command grep -q "A8 FALHOU"; then
+  if command grep -q "A8 FALHOU" <<<"$saida"; then
     echo "  FAIL [S3] caiu por A8 — a FK não mascarou, a justificativa de omitir cai"; fail=$((fail+1))
-  elif echo "$saida" | command grep -qE "23503|foreign key|chave estrangeira"; then
+  elif command grep -qE "23503|foreign key|chave estrangeira" <<<"$saida"; then
     echo "  OK   [S3 CHECK frouxo + product_id → FK MASCARA o defeito (23503, não 'A8 FALHOU')]"; ok=$((ok+1))
   else
     echo "  FAIL [S3] desfecho inesperado"; echo "$saida" | tail -3 | sed 's/^/       /'; fail=$((fail+1))

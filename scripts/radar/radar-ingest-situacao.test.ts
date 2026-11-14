@@ -62,7 +62,7 @@ describe("edge radar-ingest — situação cadastral (texto)", () => {
   });
 
   it("[E5] VERSAO bumpada para a carga em staging e EFEITO diz que a edge não aplica a situação", () => {
-    expect(versao).toContain('export const VERSAO = "v1.8-chunk-recuperavel";');
+    expect(versao).toContain('export const VERSAO = "v1.9-gate-compartilhado";');
     expect(versao).toContain("radar-aplicar-situacao-diario");
     expect(versao).toContain("radar-publicar-lote");
   });

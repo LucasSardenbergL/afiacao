@@ -97,7 +97,7 @@ _cv_alternativas() { local IFS='|'; printf '%s' "$*"; }
 # diretório sem migrations, versão fora do formato, grep que não leu (exit 2), CV_INICIO ausente e as
 # duas listas vazias abortam com exit 1. Cadeia vazia é resultado legítimo — o snapshot já é a versão viva.
 cv_cadeia() {
-  local dir="$1" f base v rc fns tabs sp='[[:space:]]' fim='([^a-z0-9_"]|$)' padrao='' achou_inicio=0
+  local dir="$1" f base v rc corpo fns tabs sp='[[:space:]]' fim='([^a-z0-9_"]|$)' padrao='' achou_inicio=0
   fns="$(_cv_alternativas "${CV_FUNCOES[@]+"${CV_FUNCOES[@]}"}")"
   tabs="$(_cv_alternativas "${CV_TABELAS[@]+"${CV_TABELAS[@]}"}")"
   [ -n "$fns$tabs" ] || { echo "cv_cadeia: CV_FUNCOES e CV_TABELAS vazias — nada a guardar" >&2; return 1; }
@@ -118,7 +118,10 @@ cv_cadeia() {
     [ "$v" = "$CV_INICIO" ] && achou_inicio=1
     [ "$v" -lt "$CV_INICIO" ] && continue
     _cv_fora "$base" && continue
-    if sed -E 's/--.*$//' "$f" | tr '\n' ' ' | grep -qiE "$padrao"; then
+    # Corpo capturado ANTES do veredito: `sed | tr | grep -q` sob pipefail troca o "achou" do grep pelo
+    # SIGPIPE (141) do tr quando o casamento vem antes do fim (docs/historico/evidencia-positiva-shell.md).
+    corpo="$(sed -E 's/--.*$//' "$f" | tr '\n' ' ')" || { echo "cv_cadeia: sed não leu $base" >&2; return 1; }
+    if grep -qiE "$padrao" <<<"$corpo"; then
       printf '%s\n' "$f"
     else
       rc=$?
@@ -167,10 +170,15 @@ CV_PREDECESSORAS=(
 #     private.radar_razao_mascarada do formato livre (20261112100000) e as edges novas em deploy_atestacoes; nada disso
 #     está no snapshot de 10-15. O trigger só reescreve o name. Prova que cobre:
 #     db/test-clientes-mei-cpf-mascarado.sh (com --falsificar, nos dois locales).
+#   · 20261113110200 (venda R2 · resumo por e-mail + grupo controle) recria private._venda_sugestoes_json e põe trigger
+#     e policy em venda_sugestao, mas a PRE exige também o corpo de prod de venda_painel e venda_marcar_mostrada, e a
+#     PÓS exige cron.job e as tabelas novas — fora do snapshot de 10-15 e de toda cadeia guardada. Prova que cobre:
+#     db/test-venda-resumo-email.sh (corpos de prod com md5 conferido, --falsificar, nos dois locales).
 CV_FORA=(
   "20261111100000_radar_acompanhamento_pacote_g.sql"
   "20261111134000_radar_posse_pacote_l.sql"
   "20261113090000_clientes_mei_cpf_mascarado.sql"
+  "20261113110200_venda_resumo_email_controle.sql"
 )
 _cv_fora() {
   local x

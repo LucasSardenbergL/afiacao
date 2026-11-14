@@ -115,25 +115,25 @@ nok()  { echo "  FAIL $1 — $2"; FALHOU=1; }
 suite() {
   local db="$1" p b s1 s2
   p="$(plano_cap "$db")"
-  if printf '%s' "$p" | grep -q 'idx_tint_sync_runs_limpezas_24h' && ! printf '%s' "$p" | grep -q 'Seq Scan'; then
+  if grep -q 'idx_tint_sync_runs_limpezas_24h' <<<"$p" && ! grep -q 'Seq Scan' <<<"$p"; then
     ok CAP_IDX; else nok CAP_IDX "$(printf '%s' "$p" | tr '\n' ' ')"; fi
   b="$(buffers_cap "$db")"
   if [ "$b" -gt 0 ] && [ "$b" -lt 300 ]; then ok "CAP_BUF ($b buffers)"; else nok CAP_BUF "$b buffers"; fi
   s1="$(soma_cap "$db" on)"; s2="$(soma_cap "$db" off)"
   if [ -n "$s1" ] && [ "$s1" = "$s2" ] && [ "$s1" -gt 0 ]; then ok "CAP_IGUAL (soma $s1)"; else nok CAP_IGUAL "seq=$s1 idx=$s2"; fi
   p="$(plano_sql "$db" "SELECT * FROM tint_sync_runs ORDER BY started_at DESC LIMIT 200")"
-  if printf '%s' "$p" | grep -q 'Index Scan Backward using idx_tint_sync_runs_started_at'; then
+  if grep -q 'Index Scan Backward using idx_tint_sync_runs_started_at' <<<"$p"; then
     ok FRONT_RUNS; else nok FRONT_RUNS "$(printf '%s' "$p" | tr '\n' ' ')"; fi
   p="$(plano_sql "$db" "SELECT id, errors FROM tint_sync_runs WHERE account = 'oben' AND sync_type = 'formulas'
                         AND started_at >= now() - interval '30 days' ORDER BY started_at DESC, id LIMIT 1000")"
-  if printf '%s' "$p" | grep -q 'idx_tint_sync_runs_conta_tipo_inicio' && ! printf '%s' "$p" | grep -q 'Seq Scan'; then
+  if grep -q 'idx_tint_sync_runs_conta_tipo_inicio' <<<"$p" && ! grep -q 'Seq Scan' <<<"$p"; then
     ok FRONT_DASH; else nok FRONT_DASH "$(printf '%s' "$p" | tr '\n' ' ')"; fi
 }
 
 echo "== controle: sem a migration"
 PA -q -d postgres -c "CREATE DATABASE ctrl TEMPLATE tpl" >/dev/null
 p="$(plano_cap ctrl)"
-if printf '%s' "$p" | grep -q 'Seq Scan on tint_sync_runs'; then ok CTRL_SEQ; else nok CTRL_SEQ "$(printf '%s' "$p" | tr '\n' ' ')"; fi
+if grep -q 'Seq Scan on tint_sync_runs' <<<"$p"; then ok CTRL_SEQ; else nok CTRL_SEQ "$(printf '%s' "$p" | tr '\n' ' ')"; fi
 b0="$(buffers_cap ctrl)"; echo "  info buffers sem índice: $b0"
 
 echo "== migration real"
@@ -153,7 +153,7 @@ if cmp -s "$MIG" "$TMP/f1.sql"; then echo "  F1 sabotagem não aplicou (sed sem 
 PA -q -d postgres -c "CREATE DATABASE f1 TEMPLATE tpl" >/dev/null
 aplica f1 "$TMP/f1.sql" || { echo "  F1 apply falhou: $(cat "$TMP/aplica.err")"; FALS_OK=0; }
 saida="$(FALHOU=0; suite f1)"
-if printf '%s\n' "$saida" | grep -q '^  FAIL FRONT_RUNS'; then echo "  ok   F1 (started_at trocado) derrubou FRONT_RUNS"; else echo "  F1 NÃO derrubou FRONT_RUNS"; FALS_OK=0; fi
+if grep -q '^  FAIL FRONT_RUNS' <<<"$saida"; then echo "  ok   F1 (started_at trocado) derrubou FRONT_RUNS"; else echo "  F1 NÃO derrubou FRONT_RUNS"; FALS_OK=0; fi
 # F2: predicado parcial diferente → A2 aborta
 sed "s/WHERE metadata ? 'receitas_limpas';/WHERE metadata ? 'recalculadas';/" "$MIG" > "$TMP/f2.sql"
 if cmp -s "$MIG" "$TMP/f2.sql"; then echo "  F2 sabotagem não aplicou (sed sem efeito)"; FALS_OK=0; fi

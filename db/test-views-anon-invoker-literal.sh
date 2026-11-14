@@ -252,7 +252,7 @@ SELECT count(*) FROM $2;
 COMMIT;
 SQL
 )"
-  if echo "$out" | grep -qi 'permission denied'; then echo "DENIED"; return; fi
+  if grep -qi 'permission denied' <<<"$out"; then echo "DENIED"; return; fi
   echo "$out" | grep -E '^[0-9]+$' | tail -1
 }
 como_customer() { _conta "SET LOCAL ROLE authenticated; SET LOCAL test.role='authenticated'; SET LOCAL test.uid = '11111111-1111-1111-1111-111111111111';" "$1"; }

@@ -363,3 +363,23 @@ não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor únic
   dois locales; `sem_convive` derruba também o TR2 — prova de que a trava lê a mesma regra da lista.
 - **Histórico público do #3469**: o branch remoto foi apagado; os commits intermediários e as revisões antigas da
   descrição do PR (com nomes de clientes) só saem pela UI do GitHub (revisões) e pelo suporte do GitHub (refs do PR).
+
+## Venda por cliente R2 · Entrega 1 — resumo diário por e-mail + grupo controle (2026-11-12)
+
+**Por quê.** Medido em prod: a lista do Meu Dia nunca foi aberta (`venda_lista_acesso` = 0 desde 28/10); as farmers vivem no Omie. O canal vai até elas: e-mail às 7h (seg–sex) com 5–8 clientes para ligar, e o founder revisa com elas 10 min/dia nos 10 primeiros dias úteis.
+
+**O que entrou** (migration `20261113110200_venda_resumo_email_controle`, edge `dispatch-notifications` v1.3, front):
+- **Grupo controle** reaberto (spec §12.1): sorteio `md5-32-v1` imutável, braço por comprador canônico, `venda_sugestao.braco` escrito só pelo trigger. O controle some da lista, da ficha, do `marcar_mostrada`, da policy da farmer e da adoção do `venda_painel`.
+- **Resumo**: `venda_resumo_preparar` (cron `venda-resumo-email`, 09:35 UTC) grava a seleção nos DOIS braços (controle = contrafactual) e enfileira um `fornecedor_alerta` por farmer + cópia ao founder; a `dispatch-notifications` (cron */30 já existente, timeout 60 s) envia. Cada oportunidade: cliente, telefone, até 3 SKUs com quantidade, último preço praticado (nunca custo), cadência, família de complemento, motivo e link `/meu-dia/abrir/<token>`.
+- **Sensor**: entrega = alerta `notificado` (envio aceito); abertura = pixel GET anônimo (sinal fraco); clique = rota autenticada, conta só do destinatário e marca `mostrada_em` dos itens que o e-mail mostrou; oferta = contato efetivo (vendeu/vai pedir/sem interesse) depois do envio até o próximo dia útil, atribuído a uma oportunidade só. Painel: aba "Resumo por e-mail" em `/admin/venda-cliente`.
+
+**Ordem garantida no SQL, não no README.** A edge anterior à v1.3 mandaria o resumo ao endereço padrão e marcaria `notificado` — o sensor contaria como entregue à farmer. O preparo só enfileira se a atestação mais recente da edge (ledger + janela viva) não for uma das versões antigas; vale também para rollback.
+
+**Lições de método (pegas pela prova, não em prod):**
+- **NULL que apaga o e-mail inteiro.** `SELECT … INTO v_nome` de um comprador sem linha em `profiles` deixa NULL (o `COALESCE` dentro do SELECT só age com linha), e `texto := … || v_nome || …` zerava o bloco — e o corpo do e-mail ia NULL para a fila, em silêncio. Correção: COALESCE depois do SELECT + guard `22004` se bloco/corpo sair NULL.
+- **O trap EXIT vê `$?` = 0 depois de `unbound variable`** (bash local, medido): a sabotagem `hash_int` matou a suíte no meio e a falsificação leu "VERDE". Capturar o `rc` no trap não basta — o trap agora só sai verde com o marcador `TERMINOU=1` do fim da suíte. Mesma família de `docs/historico/evidencia-positiva-shell.md`.
+- **Camada redundante fica verde.** Sabotar só o `tipo = 'farmer'` do clique não acusou nada: o filtro `farmer_user_id = quem clicou` já barra a cópia do founder. A sabotagem passou a derrubar as duas.
+
+**Sorteio**: 59 de 279 no controle (21%, acaso ~2,9 dp; semente mantida — ver spec §12.1). **Codex 1×** (desenho do sorteio/medição): 12 pontos incorporados (hash sem sinal, braço na transição de fase, unidade comprador + coorte madura, oferta ≠ tentativa, contato depois do envio, "envio aceito", prazo de calendário). O ponto que ele não viu: o e-mail leva 8 de ~50 compradores/dia, então comparar braços na lista inteira diluiria o efeito — daí a seleção sobre os dois braços.
+
+**Prova**: `db/test-venda-resumo-email.sh` (69 asserts, 16 sabotagens no `--falsificar`, `LC_ALL=C` e `pt_BR.UTF-8`).

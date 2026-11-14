@@ -1,0 +1,6 @@
+# Venda R2 · Entrega 1 (20261113110200 + revisão 20261113140000): grupo controle estável (hash md5-32 sem sinal, sorteio imutável, braço pelo
+# trigger), o controle fora do que a farmer vê (lista, mostrada, policy, painel), o resumo por e-mail (seleção nos dois
+# braços, só tratamento no e-mail, cópia com tokens próprios, idempotência, tentativa após falha) e o sensor (clique
+# só do destinatário, abertura, ofertadas ≠ tentativas, contato antes do envio fora, atribuição única). 16 sabotagens
+# no --falsificar; o trap só sai verde com o marcador de fim (unbound variable mascarava o rc).
+db/test-venda-resumo-email.sh               72  falsificar=20

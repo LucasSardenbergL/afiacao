@@ -382,7 +382,7 @@ SELECT count(*) FROM public.farmer_geracao_execucoes WHERE farmer_id='$FARMER_A'
 SQL
 )
 eq "W3 o farmer LÊ as próprias execuções (a revogação é só de escrita)" \
-   "$(printf '%s' "$R" | tail -1 | tr -d '[:space:]' | command grep -qE '^[0-9]+$' && echo ok || echo nao)" "ok"
+   "$(command grep -qE '^[0-9]+$' <<<"$(printf '%s' "$R" | tail -1 | tr -d '[:space:]')" && echo ok || echo nao)" "ok"
 
 echo "── regressão do #1756 (as RPCs foram RECRIADAS: nada pode ter se perdido) ──"
 

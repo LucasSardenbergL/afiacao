@@ -1,0 +1,4 @@
+# Scanner Lovable Security (2026-11-13): as 15 SELECT com USING (true) viram staff-only (11) ou staff-ou-aprovado (4,
+# training_modules mantendo is_active); company_cnpjs staff-only; LIST público de avatars removido; tool_categories
+# segue pública (cadastro pré-login). Asserts por persona sob SET ROLE authenticated/anon + GUC, migration aplicada 2x.
+db/test-seg-scanner-politicas.sh 62

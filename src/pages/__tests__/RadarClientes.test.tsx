@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
-import { QueryClient, QueryClientProvider, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider, onlineManager, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
@@ -33,8 +33,14 @@ const toastMock = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), success: vi
 vi.mock('sonner', () => ({ toast: toastMock }));
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
+// Vendedor (farmer) por padrão: a tela é da prospecção (revisão 2026-11-11, item 14 — sem papel comercial = sem acesso).
+const auth = vi.hoisted(() => ({
+  padrao: { user: { id: 'u1' }, isMaster: false, isGestorComercial: false, role: 'employee', commercialRole: 'farmer' as string | null, loading: false },
+  atual: null as unknown,
+}));
+auth.atual = auth.padrao;
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'u1' }, isMaster: false, isGestorComercial: false, role: 'employee', commercialRole: null }),
+  useAuth: () => auth.atual,
 }));
 vi.mock('@/hooks/useInfiniteScroll', () => ({ useInfiniteScroll: () => () => {} }));
 
@@ -114,7 +120,8 @@ vi.mock('@/queries/useRadarConflitosCadastro', () => ({ lerEmpresaRadar }));
 vi.mock('@/queries/useRadarAcoesLead', () => ({ depsCadastroSupabase: {} }));
 // Pacote I: o sensor da ficha entregue pelo card e a lente "Ver como".
 const registrarFichaEntregue = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
-vi.mock('@/queries/useRadarRegistroEmpurrado', () => ({ registrarFichaEntregue }));
+const registrarAberturaEmpurrada = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
+vi.mock('@/queries/useRadarRegistroEmpurrado', () => ({ registrarFichaEntregue, registrarAberturaEmpurrada, reportarFalhaSensor: vi.fn() }));
 const lente = vi.hoisted(() => ({ isImpersonating: false }));
 vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => lente }));
 vi.mock('@/queries/useRadarLote', async (importOriginal) => {
@@ -124,8 +131,12 @@ vi.mock('@/queries/useRadarLote', async (importOriginal) => {
 
 // ── filhos pesados → stubs ───────────────────────────────────────────────────────────────────
 vi.mock('@/components/radar/RadarKpis', () => ({ RadarKpis: () => null, RadarChipsLote: () => null }));
+const favoritos = vi.hoisted(() => ({ props: null as null | { atuais: Record<string, unknown>; padrao: Record<string, unknown>; onAplicar: (f: Record<string, unknown>) => void } }));
 vi.mock('@/components/radar/RadarFavoritos', () => ({ RadarFavoritos: () => null }));
-vi.mock('@/components/radar/RadarFiltros', () => ({ RadarFiltros: () => null }));
+vi.mock('@/components/radar/RadarFiltros', () => ({
+  // O favorito é passado como `acoes` (elemento): guarda as props dele sem montar nada (a tela segue igual).
+  RadarFiltros: ({ acoes }: { acoes?: { props?: unknown } }) => { if (acoes?.props) favoritos.props = acoes.props as typeof favoritos.props; return null; },
+}));
 vi.mock('@/components/radar/RadarAmostraRegra', () => ({ RadarAmostraRegra: () => null }));
 vi.mock('@/components/radar/RadarRankingCidades', () => ({ RadarRankingCidades: () => null }));
 vi.mock('@/components/radar/RadarConflitosCadastro', () => ({
@@ -135,6 +146,8 @@ vi.mock('@/components/radar/RadarConflitosCadastro', () => ({
   ),
 }));
 vi.mock('@/components/radar/RadarLoteDialog', () => ({ RadarLoteDialog: () => null }));
+// A agenda "Hoje" tem testes próprios (RadarAgendaHoje.sensor); aqui a leitura dela (supabase falso) só faria ruído.
+vi.mock('@/components/radar/RadarAgendaHoje', () => ({ RadarAgendaHoje: () => null }));
 vi.mock('@/components/radar/RadarMapa', () => ({ default: () => <div data-testid="mapa">mapa</div> }));
 vi.mock('@/components/radar/RadarLinha', () => ({
   RadarLinha: ({ empresa, selecionada, onSelecionar, onAbrir }: {
@@ -147,8 +160,8 @@ vi.mock('@/components/radar/RadarLinha', () => ({
   ),
 }));
 vi.mock('@/components/radar/RadarDetailSheet', () => ({
-  RadarDetailSheet: ({ empresa, onProximo }: { empresa: RadarEmpresa | null; onProximo?: () => void }) =>
-    empresa ? (
+  RadarDetailSheet: ({ empresa, onProximo, carregandoCnpj }: { empresa: RadarEmpresa | null; onProximo?: () => void; carregandoCnpj?: string | null }) =>
+    !empresa && carregandoCnpj ? <div data-testid="ficha-carregando">{carregandoCnpj}</div> : empresa ? (
       <div data-testid="ficha">
         <span data-testid="ficha-cnpj">{empresa.cnpj}</span>
         <span data-testid="ficha-estado">{`${empresa.prospeccao_status}|${empresa.ja_cliente ? 'cliente' : 'lead'}`}</span>
@@ -182,6 +195,7 @@ vi.mock('@/components/radar/RadarAcoesLote', async () => {
 });
 
 import RadarClientes from '../RadarClientes';
+import RadarAbrirEmail from '../RadarAbrirEmail';
 
 function lead(cnpj: string, extra: Partial<RadarEmpresa> = {}): RadarEmpresa {
   return {
@@ -217,6 +231,7 @@ beforeEach(() => {
   fonte.falharTerritorio = false;
   fonte.travaLista = null;
   lente.isImpersonating = false;
+  auth.atual = auth.padrao;
 });
 
 describe('RadarClientes — fila do vendedor', () => {
@@ -717,3 +732,124 @@ describe('RadarClientes — releitura da fila que falha com páginas na tela (pa
     expect(screen.queryByTestId('radar-fila-desatualizada')).toBeNull();
   });
 });
+
+describe('RadarClientes — sem rede não é vazio (revisão 2026-11-11, item 3)', () => {
+  afterEach(() => onlineManager.setOnline(true));
+
+  it('abrir sem rede: "consulta pausada", nunca "Nenhuma empresa nesta fila" nem esqueleto sem fim', async () => {
+    onlineManager.setOnline(false);
+    fonte.paginas = [[lead('A')]];
+    montar();
+    expect(await screen.findByTestId('radar-fila-sem-rede')).toBeTruthy();
+    expect(screen.queryByText('Nenhuma empresa nesta fila')).toBeNull();
+    expect(fonte.leiturasLista).toBe(0);
+    onlineManager.setOnline(true);
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    expect(screen.queryByTestId('radar-fila-sem-rede')).toBeNull();
+  });
+
+  it('a rede cai com a fila na tela: as linhas ficam, com o aviso de "dados anteriores"', async () => {
+    fonte.paginas = [[lead('A'), lead('B')]];
+    const { qc } = montar();
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B']));
+    onlineManager.setOnline(false);
+    void qc.invalidateQueries({ queryKey: ['radar', 'lista'] });
+    expect(await screen.findByTestId('radar-fila-dados-anteriores')).toBeTruthy();
+    expect(cnpjsNaLista()).toEqual(['A', 'B']);
+  });
+
+  it('ausência CONFIRMADA (a RPC respondeu vazio) segue sendo "Nenhuma empresa nesta fila"', async () => {
+    fonte.paginas = [];
+    montar();
+    expect(await screen.findByText('Nenhuma empresa nesta fila')).toBeTruthy();
+    expect(screen.queryByTestId('radar-fila-sem-rede')).toBeNull();
+  });
+});
+
+describe('RadarClientes — deep link do e-mail e da ficha (revisão 2026-11-11, item 4)', () => {
+  const ENVIO = '0f2b6c1e-3a4d-4b5e-8f60-1a2b3c4d5e6f';
+  const CNPJ = '00000000000191';
+
+  it('do /radar/abrir até a ficha: UMA leitura do lead, e a entrega só é gravada com a ficha na tela', async () => {
+    fonte.paginas = [[lead('A')]];
+    let soltar: (e: RadarEmpresa) => void = () => {};
+    lerEmpresaRadar.mockImplementation(() => new Promise<RadarEmpresa>((r) => { soltar = r; }));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[`/radar/abrir/${ENVIO}/${CNPJ}`]}>
+          <Routes>
+            <Route path="/radar/abrir/:envio/:cnpj" element={<RadarAbrirEmail />} />
+            <Route path="/radar" element={<><RadarClientes /><Onde /></>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(registrarAberturaEmpurrada).toHaveBeenCalledTimes(1));
+    expect(registrarFichaEntregue).not.toHaveBeenCalled();
+    await act(async () => { soltar(lead(CNPJ)); });
+    expect(await screen.findByTestId('ficha-cnpj')).toHaveTextContent(CNPJ);
+    await waitFor(() => expect(registrarFichaEntregue).toHaveBeenCalledWith({ origem: 'email', envio: ENVIO, cnpj: CNPJ }));
+    expect(registrarFichaEntregue).toHaveBeenCalledTimes(1);
+    // O /radar abriu a ficha pelo cache que o /radar/abrir aqueceu.
+    expect(lerEmpresaRadar).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).toBe(`?cnpj=${CNPJ}`));
+  });
+
+  it('envio adulterado na URL: abre a ficha, mas não grava entrega', async () => {
+    lerEmpresaRadar.mockResolvedValue(lead(CNPJ));
+    montar(`/radar?cnpj=${CNPJ}&origem=email&envio=nao-e-uuid`);
+    expect(await screen.findByTestId('ficha-cnpj')).toHaveTextContent(CNPJ);
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).toBe(`?cnpj=${CNPJ}`));
+    expect(registrarFichaEntregue).not.toHaveBeenCalled();
+  });
+
+  it('CNPJ na URL com a leitura a caminho: o sheet abre com esqueleto (antes não aparecia nada)', async () => {
+    let soltar: (e: RadarEmpresa) => void = () => {};
+    lerEmpresaRadar.mockImplementation(() => new Promise<RadarEmpresa>((r) => { soltar = r; }));
+    montar(`/radar?cnpj=${CNPJ}`);
+    expect(await screen.findByTestId('ficha-carregando')).toHaveTextContent(CNPJ);
+    await act(async () => { soltar(lead(CNPJ)); });
+    expect(await screen.findByTestId('ficha-cnpj')).toHaveTextContent(CNPJ);
+    expect(screen.queryByTestId('ficha-carregando')).toBeNull();
+  });
+});
+
+describe('RadarClientes — favorito guarda a intenção territorial (revisão 2026-11-11, item 9)', () => {
+  beforeEach(() => { favoritos.props = null; });
+  it('"Toda a região" (perto=nao) entra no favorito e volta ao aplicar', async () => {
+    fonte.territorio = [{ municipioCodigo: '3122306', municipioNome: 'DIVINOPOLIS', uf: 'MG', clientes: 358 }];
+    fonte.paginas = [[lead('A')]];
+    montar('/radar?perto=nao');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A']));
+    // Os favoritos moram no painel "Mais filtros e território", recolhido de início.
+    fireEvent.click(screen.getByRole('button', { name: /Mais filtros e território/ }));
+    await waitFor(() => expect(favoritos.props).not.toBeNull());
+    expect(favoritos.props?.atuais.perto).toBe('nao');
+    const salvo = { ...favoritos.props!.atuais };
+    // Sai da "toda a região" (volta ao automático) e reaplica o favorito: a intenção volta junto.
+    act(() => { favoritos.props!.onAplicar({ ...favoritos.props!.padrao, perto: '' }); });
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).not.toContain('perto=nao'));
+    act(() => { favoritos.props!.onAplicar(salvo); });
+    await waitFor(() => expect(screen.getByTestId('onde').textContent).toContain('perto=nao'));
+  });
+});
+
+describe('RadarClientes — sem acesso (revisão 2026-11-11, item 14)', () => {
+  it('staff sem papel comercial: estado "sem acesso", e a fila NEM é pedida (antes: erro genérico)', async () => {
+    auth.atual = { ...auth.padrao, commercialRole: null };
+    fonte.paginas = [[lead('A')]];
+    montar();
+    expect(await screen.findByTestId('radar-sem-acesso')).toBeTruthy();
+    expect(screen.queryByText('Não foi possível carregar a fila')).toBeNull();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fonte.leiturasLista).toBe(0);
+  });
+
+  it('enquanto o papel carrega, não afirma "sem acesso"', () => {
+    auth.atual = { ...auth.padrao, commercialRole: null, role: null, loading: true };
+    montar();
+    expect(screen.queryByTestId('radar-sem-acesso')).toBeNull();
+  });
+});
+

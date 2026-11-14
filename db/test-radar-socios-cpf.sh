@@ -252,7 +252,7 @@ P -q -f "$MIG_USADA" > "$(dirname "$DATA")/apply2.log" 2>&1 || { echo "FAIL X1 r
 
 PASS=0; FAIL=0
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
-tem() { if printf '%s' "$2" | grep -qF -- "$3"; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — [$3] ausente em [$2]"; FAIL=$((FAIL+1)); fi; }
+tem() { if grep -qF -- "$3" <<<"$2"; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — [$3] ausente em [$2]"; FAIL=$((FAIL+1)); fi; }
 
 # E1: sem lote vigente, a base é a de antes (exceto o nome de perfil-MEI saneado, que E2 cobre).
 foto_base > "$(dirname "$DATA")/base-depois.txt"

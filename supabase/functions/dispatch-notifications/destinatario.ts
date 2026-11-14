@@ -6,6 +6,10 @@
 // único escritor é `radar_avisar_vendedores()` (migration 20261106181000), que resolve o e-mail do `profiles` do
 // vendedor ou o `email_teste` da config. Alerta sem envio → endereço padrão, como sempre foi.
 //
+// Venda R2 · Entrega 1 (2026-11-12): o RESUMO DIÁRIO de venda segue a mesma régua, com a tabela própria
+// `venda_resumo_envio` (fechada ao JWT; escritor único `venda_resumo_preparar()`, migration 20261113110200), que traz
+// também o token do pixel de abertura (`abertura.ts`). Os dois mapas se juntam em `mapaDestinatarios`.
+//
 // Módulo PURO: a edge decide com ele e o `destinatario_test.ts` prova a régua.
 
 export interface EnvioVendedor {
@@ -17,6 +21,15 @@ export interface Destino {
   to: string;
   /** true = e-mail de leads ao vendedor: corpo próprio, sem o cabeçalho técnico (empresa/tipo/metadata). */
   doVendedor: boolean;
+  /** Só no resumo de venda: token do pixel de abertura do envio. */
+  pixel?: string;
+}
+
+/** Linha de `venda_resumo_envio` que a edge lê: destinatário e token do pixel. */
+export interface EnvioResumo {
+  alerta_id: number;
+  destinatario_email: string | null;
+  token_abertura: string | null;
 }
 
 const EMAIL_OK = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -31,9 +44,28 @@ export function mapaDestinatarios(envios: readonly EnvioVendedor[]): Map<number,
   return mapa;
 }
 
-export function destinatarioDe(alertaId: number, mapa: ReadonlyMap<number, string>, padrao: string): Destino {
+/** Índice alerta → token do pixel, só dos envios do resumo de venda com destinatário válido (o e-mail entra no mapa
+ * de destinatários por `mapaDestinatarios(radar.concat(resumos))`). */
+export function mapaPixels(resumos: readonly EnvioResumo[]): Map<number, string> {
+  const mapa = new Map<number, string>();
+  for (const e of resumos) {
+    const email = typeof e.destinatario_email === "string" ? e.destinatario_email.trim() : "";
+    const token = typeof e.token_abertura === "string" ? e.token_abertura.trim() : "";
+    if (Number.isFinite(e.alerta_id) && EMAIL_OK.test(email) && token) mapa.set(Number(e.alerta_id), token);
+  }
+  return mapa;
+}
+
+export function destinatarioDe(
+  alertaId: number,
+  mapa: ReadonlyMap<number, string>,
+  padrao: string,
+  pixels?: ReadonlyMap<number, string>,
+): Destino {
   const doVendedor = mapa.get(alertaId);
-  return doVendedor ? { to: doVendedor, doVendedor: true } : { to: padrao, doVendedor: false };
+  if (!doVendedor) return { to: padrao, doVendedor: false };
+  const pixel = pixels?.get(alertaId);
+  return pixel ? { to: doVendedor, doVendedor: true, pixel } : { to: doVendedor, doVendedor: true };
 }
 
 /**
@@ -58,10 +90,11 @@ function escapar(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/** Corpo do e-mail do vendedor: o texto do SQL, escapado, com os links clicáveis. */
-export function htmlDoVendedor(titulo: string, mensagem: string | null): string {
+/** Corpo do e-mail do vendedor: o texto do SQL, escapado, com os links clicáveis (+ o pixel, se houver). */
+export function htmlDoVendedor(titulo: string, mensagem: string | null, urlPixel?: string | null): string {
   const corpo = escapar(mensagem ?? "")
     .replace(/https:\/\/[^\s<>"'&]+/g, (url) => `<a href="${url}">${url}</a>`)
     .replace(/\n/g, "<br/>");
-  return `<h2>${escapar(titulo)}</h2><p>${corpo}</p>`;
+  const pixel = urlPixel ? `<img src="${escapar(urlPixel)}" width="1" height="1" alt="" style="display:none"/>` : "";
+  return `<h2>${escapar(titulo)}</h2><p>${corpo}</p>${pixel}`;
 }

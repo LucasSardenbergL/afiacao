@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { authorizeCron } from "../_shared/auth.ts";
+import { authorizeCron, authorizeMaster } from "../_shared/auth.ts";
+import { autorizarIngest } from "./gate.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { motivoDescarte, type MotivoDescarte } from "./cnpj.ts";
 import { validarLinhaSituacao, type LinhaSituacao, type MotivoDescarteSituacao } from "./situacao.ts";
@@ -18,27 +19,15 @@ const json = (body: unknown, status = 200) =>
 
 const MES_RE = /^\d{4}-\d{2}$/;
 
-// Espelho fino do authorizeCronOrStaff: cron-secret OU staff master via JWT.
-async function autorizado(req: Request): Promise<boolean> {
-  if (authorizeCron(req).ok) return true;
-  const auth = req.headers.get("Authorization");
-  if (!auth?.startsWith("Bearer ")) return false;
-  const supa = createClient(SUPABASE_URL, SERVICE_KEY, { global: { headers: { Authorization: auth } } });
-  const { data: { user } } = await supa.auth.getUser();
-  if (!user) return false;
-  const admin = createClient(SUPABASE_URL, SERVICE_KEY);
-  const { data } = await admin.from("user_roles").select("role").eq("user_id", user.id).eq("role", "master");
-  return (data?.length ?? 0) > 0;
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-  if (!(await autorizado(req))) return json({ error: "unauthorized" }, 401);
+  // Gate: `x-cron-secret` OU master (JWT master ou Bearer service role) — os gates compartilhados (`gate.ts`).
+  if (!(await autorizarIngest(req, { cron: (r) => authorizeCron(r), master: (r) => authorizeMaster(r) }))) return json({ error: "unauthorized" }, 401);
 
   let body: Record<string, unknown>;
   try { body = await req.json(); } catch { return json({ error: "body inválido" }, 400); }
   // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem tocar
-  // banco — antes do client. O `autorizado` acima já aceita `x-cron-secret`.
+  // banco — antes do client. O gate acima (`autorizarIngest`) já aceita `x-cron-secret`.
   const decisaoSonda = classificarSonda(body);
   if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO), 200);
   if (decisaoSonda.tipo === "ambiguo") return json({ versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);

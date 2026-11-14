@@ -397,7 +397,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
         'P -v ON_ERROR_STOP=1 -q -f "$SAB" >/dev/null 2>&1 || { echo "…"; exit 1; }',
         'OUT="$(OFERTADOS)"',
         String.raw`SAIDA="$(printf '%s\n' "$OUT" | tail -1)"`,
-        String.raw`RET="$(printf '%s\n' "$OUT" | tail -2 | head -1)"`,
+        String.raw`RET="$(printf '%s\n' "$OUT" | tail -2 | sed -n 1p)"`,
         'HI="$(P -At -v ON_ERROR_STOP=1 -c "…")"',
         'MED="$SAIDA|ret=$RET|hi=$HI"',
         `if [ "$BLOCO" = "1" ]; then DECL='NENHUM|ret=0|0|0|0|{promo_flat}|hi=0|0'; else DECL='NENHUM|ret=1|1|200|0|{promo_flat}|hi=1|0'; fi`,
@@ -944,7 +944,7 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
     motivo: 'LAB-VERMELHO + o controle C0 do lab VERDE (quebrar o lab não é quebrar a guarda) + CADA caso declarado vermelho, por locale',
     mede: ['SAI'],
     ancoras: [
-      'roda_lab() { ALVO_YML="$1" ALVO_TENTAR="$2" LC_ALL="$3" LAB_CENARIOS="${4:-C1 C2 C3 C4 C5 C6 C7 C8}" bash "$L/lab.sh" 2>&1; }',
+      'roda_lab() { ALVO_YML="$1" ALVO_TENTAR="$2" LC_ALL="$3" LAB_CENARIOS="${4:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10}" bash "$L/lab.sh" 2>&1; }',
       [
         'SAI="$(roda_lab "$TMP/controle.yml" "$TMP/controle-tentar.sh" "$loc")"',
         'case "$SAI" in',

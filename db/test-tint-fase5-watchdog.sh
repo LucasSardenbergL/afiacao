@@ -53,7 +53,9 @@ trap cleanup EXIT
 # autoanalyze —, e estatística no meio da execução (ANALYZE após o seed, medido por ablação) troca o
 # plano, a partir da 3ª suíte, por um ~7× mais lento. Com os índices de prod da ZONA 1 e sem
 # estatística, cada varredura fica em ~0,03s nas 7 suítes. Não muda o que a varredura DEVOLVE.
-"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp -c autovacuum=off" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
+# jit = off como em PROD (`SHOW jit` = off, psql-ro 2026-11-11): o PG17 do PGDG no runner vem com JIT ligado e a
+# prova levava 240 s no CI contra 34 s no Mac sem JIT (docs/historico/ci-provas-sql-fin-consolidado-faixas-e-tint-jit.md).
+"$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp -c autovacuum=off -c jit=off" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 P()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -tA "$@"; }

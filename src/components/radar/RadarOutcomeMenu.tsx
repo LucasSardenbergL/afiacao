@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { toast } from 'sonner';
+import { onlineManager } from '@tanstack/react-query';
 import { CheckCircle2, MessageCircle, PhoneMissed, Ban, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -30,6 +31,7 @@ import {
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ACOES_CONTATO, type AcaoContato } from '@/lib/radar/ui-helpers';
 import { sqlstateDe } from '@/lib/radar/conflito-cadastro';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { textoPosseDoContato } from '@/lib/radar/atendimento';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
@@ -72,6 +74,12 @@ const LABEL_OK: Record<AcaoContato, string> = {
  *
  * Resposta tardia não age sobre OUTRA ficha (Codex, código 2026-10-20): a ficha avança ou fecha enquanto a RPC
  * está em voo — o contato fica gravado (o toast diz), mas o `onRegistrado` não dispara sobre o lead errado.
+ *
+ * Revisão 2026-11-11 (item 2): os diálogos ("Quando retomar?", "Descartar") só fecham com o servidor CONFIRMANDO. Antes
+ * o `AlertDialogAction` fechava no clique, a falha virava um toast genérico e reabrir o descarte apagava o motivo
+ * digitado. Agora: o botão fica em "Gravando…", a falha aparece DENTRO do diálogo (`mensagemDeErro`) com "Tentar de
+ * novo", o motivo só some quando o descarte grava, e sem rede o texto é próprio — nada é enviado (a mutação ficaria
+ * pausada sem resposta). Item 21: o "hoje" é o da PÁGINA (`hojeISO`) e "Amanhã" respeita o dia útil.
  */
 export function RadarOutcomeMenu({
   cnpj,
@@ -79,8 +87,18 @@ export function RadarOutcomeMenu({
   nota,
   onRegistrado,
   onDesfeito,
+  hojeISO,
+  variante = 'menu',
+  pedidoAbrir = 0,
 }: {
+  /** Muda = o atalho `r` da ficha pediu (item 17): abre o menu (ou foca o 1º botão, na variante 'botoes'). */
+  pedidoAbrir?: number;
   cnpj: string;
+  /** Dia BRT da página (`useHojeBRT`). Ausente: o dia BRT pelo relógio do aparelho, na hora de abrir. */
+  hojeISO?: string;
+  /** 'botoes' (modo discagem, revisão 2026-11-11, item 11): os desfechos da ligação como botões diretos — um toque, não
+   *  abrir um menu a cada lead. 'menu' (padrão): o dropdown "Registrar contato". */
+  variante?: 'menu' | 'botoes';
   /** Dados do lead — "Virou cliente" só aparece habilitado com o vínculo Omie. */
   empresa?: RadarEmpresa;
   /** Nota opcional do contato (B4). */
@@ -95,10 +113,13 @@ export function RadarOutcomeMenu({
   const { isImpersonating } = useImpersonation();
   const [confirmDescartar, setConfirmDescartar] = useState(false);
   const [motivo, setMotivo] = useState('');
+  /** Falha do último envio feito por um diálogo — fica nele, ao lado do "Tentar de novo". */
+  const [falhaDialogo, setFalhaDialogo] = useState<string | null>(null);
   // G1: o passo "Quando retomar?" do "em conversa". A sugestão vem marcada (a mesma data que o servidor usaria).
   const [pedirRetorno, setPedirRetorno] = useState(false);
-  const [hoje, setHoje] = useState(() => hojeBRT());
-  const [retorno, setRetorno] = useState(() => retornoPadrao(hojeBRT()));
+  const diaDaPagina = () => hojeISO ?? hojeBRT();
+  const [hoje, setHoje] = useState(diaDaPagina);
+  const [retorno, setRetorno] = useState(() => retornoPadrao(diaDaPagina()));
   const cnpjAtualRef = useRef(cnpj);
   cnpjAtualRef.current = cnpj;
   const montadoRef = useRef(true);
@@ -112,7 +133,7 @@ export function RadarOutcomeMenu({
   // restaurar não é "desfeito": o lead mudou depois (outro vendedor, o cadastro, a RFB) e o status atual ficou.
   const desfazer = async (id: string, alvo: string) => {
     try {
-      const u = await undo.mutateAsync(id);
+      const u = await undo.mutateAsync({ id, cnpj: alvo });
       if (u.deleted && aindaNoAlvo(alvo)) onDesfeito?.();
       if (!u.deleted) toast.error('Não foi possível desfazer');
       else if (u.statusRestaurado === false) {
@@ -121,21 +142,41 @@ export function RadarOutcomeMenu({
         });
       } else if (u.posseDesfeita) toast.success('Desfeito', { description: 'O lead voltou a ficar livre.' });
       else toast.success('Desfeito');
-    } catch {
-      toast.error('Não foi possível desfazer');
+    } catch (e) {
+      toast.error('Não foi possível desfazer', {
+        description: descreverFalha(e),
+        action: { label: 'Tentar de novo', onClick: () => void desfazer(id, alvo) },
+      });
     }
   };
 
   const abrirRetorno = () => {
-    const h = hojeBRT();
+    const h = diaDaPagina();
     setHoje(h);
     setRetorno(retornoPadrao(h));
+    setFalhaDialogo(null);
     setPedirRetorno(true);
   };
 
-  const registrar = async (acao: AcaoContato, texto?: string, dataRetorno?: string) => {
+  /**
+   * Grava o desfecho. `true` = o servidor respondeu (gravou, deduplicou ou recusou por REGRA — a resposta não muda
+   * repetindo, então o diálogo fecha e o toast diz o porquê); `false` = não houve resposta utilizável (sem rede, erro):
+   * o diálogo de origem segue aberto com o texto, e a falha fica nele (`noDialogo`) ou num toast com "Tentar de novo".
+   */
+  const registrar = async (acao: AcaoContato, texto?: string, dataRetorno?: string, noDialogo = false): Promise<boolean> => {
     const alvo = cnpj;
     const notaFinal = texto?.trim() || undefined;
+    const falhar = (descricao: string) => {
+      if (noDialogo) setFalhaDialogo(descricao);
+      else toast.error('Não foi possível registrar', {
+        description: descricao,
+        action: { label: 'Tentar de novo', onClick: () => void registrar(acao, texto, dataRetorno) },
+      });
+      return false;
+    };
+    // Sem rede a mutação PAUSA (networkMode 'online') e a promessa não volta até a rede voltar: o diálogo ficaria
+    // "Gravando…" sem fim. Nada é enviado; o texto fica onde está.
+    if (!onlineManager.isOnline()) return falhar(TEXTO_SEM_REDE);
     try {
       const r = await reg.mutateAsync({ cnpj: alvo, acao, nota: notaFinal, retorno: dataRetorno });
       // Banco anterior ao pacote G não diz: a dedupe não gravava nada, então com nota ela NÃO foi gravada.
@@ -157,6 +198,7 @@ export function RadarOutcomeMenu({
         });
       }
       if (aindaNoAlvo(alvo)) onRegistrado?.(acao, { deduped: r.deduped, notaGravada, notaEnviada: notaFinal });
+      return true;
     } catch (e) {
       // Recusas de REGRA (pela SQLSTATE, nunca pela mensagem): nada foi gravado e repetir não muda a resposta.
       const estado = sqlstateDe(e);
@@ -173,14 +215,56 @@ export function RadarOutcomeMenu({
           description: 'Só o gestor muda o status de um cliente cadastrado.',
         });
       } else {
-        toast.error('Não foi possível registrar');
+        return falhar(descreverFalha(e));
       }
+      return true;
     }
   };
 
+  /** Botão de confirmação dos diálogos: segura o diálogo aberto até a resposta; fecha só quando houve resposta. */
+  const confirmar = (envio: () => Promise<boolean>, fechar: () => void) => async (ev: MouseEvent) => {
+    ev.preventDefault();
+    setFalhaDialogo(null);
+    if (await envio()) fechar();
+  };
+  const rotuloConfirmar = (padrao: string) => (reg.isPending ? 'Gravando…' : falhaDialogo ? 'Tentar de novo' : padrao);
+  const avisoFalha = falhaDialogo && (
+    <p className="text-xs text-status-error" role="alert" data-testid="radar-desfecho-falha">{falhaDialogo}</p>
+  );
+
+  const [menuAberto, setMenuAberto] = useState(false);
+  const primeiroBotaoRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (pedidoAbrir === 0 || isImpersonating) return;
+    if (variante === 'botoes') primeiroBotaoRef.current?.focus();
+    else setMenuAberto(true);
+  }, [pedidoAbrir, variante, isImpersonating]);
+
+  const abrirDescarte = () => {
+    // O motivo NÃO é apagado aqui: depois de uma falha, reabrir traz o texto de volta (item 2).
+    setFalhaDialogo(null);
+    setConfirmDescartar(true);
+  };
+  const bloqueado = reg.isPending || isImpersonating;
+  const tituloBloqueado = isImpersonating ? 'Indisponível em modo Ver como' : undefined;
+
   return (
     <>
-      <DropdownMenu>
+      {variante === 'botoes' ? (
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Desfecho da ligação" data-testid="radar-desfechos-diretos">
+          <Button ref={primeiroBotaoRef} type="button" variant="outline" className="min-h-11" disabled={bloqueado} title={tituloBloqueado}
+            onClick={() => void registrar('contatado_sem_resposta', nota)}>
+            <PhoneMissed className="w-4 h-4 mr-2" /> Não atendeu
+          </Button>
+          <Button type="button" variant="outline" className="min-h-11" disabled={bloqueado} title={tituloBloqueado} onClick={abrirRetorno}>
+            <MessageCircle className="w-4 h-4 mr-2" /> Em conversa…
+          </Button>
+          <Button type="button" variant="outline" className="min-h-11 text-status-error" disabled={bloqueado} title={tituloBloqueado} onClick={abrirDescarte}>
+            <Ban className="w-4 h-4 mr-2" /> Descartar
+          </Button>
+        </div>
+      ) : (
+      <DropdownMenu open={menuAberto} onOpenChange={setMenuAberto}>
         <DropdownMenuTrigger asChild>
           <Button
             variant="outline"
@@ -210,17 +294,12 @@ export function RadarOutcomeMenu({
             );
           })}
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="text-status-error"
-            onClick={() => {
-              setMotivo('');
-              setConfirmDescartar(true);
-            }}
-          >
+          <DropdownMenuItem className="text-status-error" onClick={abrirDescarte}>
             <Ban className="w-4 h-4 mr-2" /> Descartar
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
 
       <AlertDialog open={pedirRetorno} onOpenChange={setPedirRetorno}>
         <AlertDialogContent>
@@ -245,16 +324,18 @@ export function RadarOutcomeMenu({
               Escolha uma data entre hoje e {RETORNO_MAX_DIAS} dias.
             </p>
           )}
+          {avisoFalha}
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel disabled={reg.isPending}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              disabled={!retornoValido(retorno, hoje)}
-              onClick={() => {
-                track('radar.retorno_definido', { dias: diasAte(retorno, hoje), sugestao_aceita: retorno === retornoPadrao(hoje) });
-                void registrar('em_conversa', nota, retorno);
-              }}
+              disabled={!retornoValido(retorno, hoje) || reg.isPending}
+              onClick={confirmar(async () => {
+                const ok = await registrar('em_conversa', nota, retorno, true);
+                if (ok) track('radar.retorno_definido', { dias: diasAte(retorno, hoje), sugestao_aceita: retorno === retornoPadrao(hoje) });
+                return ok;
+              }, () => setPedirRetorno(false))}
             >
-              Marcar em conversa
+              {rotuloConfirmar('Marcar em conversa')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -273,14 +354,31 @@ export function RadarOutcomeMenu({
             onChange={(e) => setMotivo(e.target.value)}
             placeholder="Motivo (opcional)"
           />
+          {avisoFalha}
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void registrar('descartado', motivo.trim() || nota)}>
-              Descartar
+            <AlertDialogCancel disabled={reg.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={reg.isPending}
+              onClick={confirmar(async () => {
+                const ok = await registrar('descartado', motivo.trim() || nota, undefined, true);
+                if (ok) setMotivo('');
+                return ok;
+              }, () => setConfirmDescartar(false))}
+            >
+              {rotuloConfirmar('Descartar')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </>
   );
+}
+
+/** Texto de quem tentou registrar sem rede: diz que NADA foi enviado e o que fazer. */
+export const TEXTO_SEM_REDE = 'Sem conexão: nada foi enviado. O texto continua aqui — tente de novo quando a rede voltar.';
+
+/** A descrição acionável da falha: o que o servidor disse, ou a queda de rede no meio do envio. */
+function descreverFalha(e: unknown): string {
+  if (!onlineManager.isOnline()) return TEXTO_SEM_REDE;
+  return mensagemDeErro(e) ?? 'Erro desconhecido. Tente de novo em instantes.';
 }

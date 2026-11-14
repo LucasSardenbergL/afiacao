@@ -216,7 +216,7 @@ sess() {
 }
 cl() { echo "{\"sub\":\"$1\",\"role\":\"authenticated\"}"; }
 # erro vira valor distinto (nunca mascara): devolve o SQLSTATE-marcador em ASCII
-sqlstate() { if echo "$1" | grep -q "42501"; then echo "42501"; elif echo "$1" | grep -q "P0001"; then echo "P0001"; else echo "$1"; fi; }
+sqlstate() { if grep -q "42501" <<<"$1"; then echo "42501"; elif grep -q "P0001" <<<"$1"; then echo "P0001"; else echo "$1"; fi; }
 
 run_ciclo() { sess "$(cl "$U_MASTER")" "SELECT (gerar_pedidos_sugeridos_ciclo('$1','$2')).skus_incluidos" | grep -i "error" | head -3; }
 qf() { Pq -c "SELECT COALESCE((SELECT pci.qtde_final::text FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id=pci.pedido_id WHERE pcs.empresa='$1' AND pcs.data_ciclo='$2' AND pci.sku_codigo_omie='$3' AND pcs.status='pendente_aprovacao' LIMIT 1),'AUSENTE')"; }

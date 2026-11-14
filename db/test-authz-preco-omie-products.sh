@@ -325,7 +325,7 @@ S5_OUT="$(P -q -f "$MIG" 2>&1)" && S5_RC=0 || S5_RC=$?
 if [ "$S5_RC" -eq 0 ]; then
   echo "  FAIL [S5] a migration APLICOU com policy desconhecida presente -- a precondicao nao dispara"
   FAIL=$((FAIL+1))
-elif printf '%s' "$S5_OUT" | command grep -q 'precondicao FALHOU'; then
+elif command grep -q 'precondicao FALHOU' <<<"$S5_OUT"; then
   echo "  OK   [S5] a migration ABORTOU PELA PRECONDICAO (tem dente)"
   FALS=$((FALS+1))
 else

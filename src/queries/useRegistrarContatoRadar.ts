@@ -35,15 +35,19 @@ export function useRegistrarContatoRadar() {
   });
 }
 
+/** RPC `desfazer_contato_radar` (usada pelo desfazer individual e pelo "Desfazer" do descarte em lote). */
+export async function desfazerContatoRadar(id: string) {
+  const { data, error } = await supabase.rpc('desfazer_contato_radar', { p_id: id });
+  if (error) throw error;
+  return lerDesfazer(data, 'desfazer_contato_radar');
+}
+
 export function useDesfazerContatoRadar() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
-      const { data, error } = await supabase.rpc('desfazer_contato_radar', { p_id: id });
-      if (error) throw error;
-      return lerDesfazer(data, 'desfazer_contato_radar');
-    },
-    // Desfazer pode devolver o lead a um recorte de onde ele saiu (ex.: descarte desfeito): a fila relê inteira.
-    onSuccess: () => { void invalidarRadar(qc); },
+    mutationFn: (v: { id: string; cnpj?: string | null }) => desfazerContatoRadar(v.id),
+    // Com o CNPJ, a mesma invalidação cirúrgica do registro (revisão 2026-11-11, item 1): o lead que volta a um
+    // recorte de onde saiu (descarte desfeito) cai no ramo "reler" da fila; os selos por página só ficam velhos.
+    onSuccess: (_d, v) => { void invalidarRadar(qc, { cnpj: v.cnpj ?? null }); },
   });
 }
