@@ -1,0 +1,4 @@
+# Rescan Lovable Security, lote 1 (2026-11-13): customer_visit_scores perde INSERT/UPDATE/DELETE de anon/authenticated
+# e as policies de escrita `OR farmer_id = auth.uid()`. CONTROLE pré-migration (o customer insere) + 42501 pós, leitura
+# do staff e escrita do service_role preservadas, migration aplicada 2x.
+db/test-seg-cvs-escrita.sh 8

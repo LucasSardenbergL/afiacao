@@ -78,19 +78,17 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Authenticate user
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    // Gate de STAFF também no DISPARO (scanner Lovable 2026-11-13): a ferramenta é do vendedor
+    // (`src/components/farmer/bundles`); antes o disparo só exigia `getUser()`, então um customer
+    // não aprovado gastava IA paga e injetava texto no prompt. Cron/service_role passam: quem tem
+    // esses segredos já tem acesso total, e são eles que o controle da `sonda:cron-prova` usa para
+    // provar que o harness chega ao POST da IA (sem isso a prova vira INVERIFICAVEL).
+    const authDisparo = await authorizeCronOrStaff(req);
+    if (!authDisparo.ok) return authDisparo.response;
+    if (authDisparo.via === 'staff' && !authDisparo.userId) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
-    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
-      global: { headers: { Authorization: authHeader } },
-      auth: { persistSession: false },
-    });
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
+    const user = { id: authDisparo.userId ?? null };
 
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
     if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");
@@ -109,23 +107,19 @@ Deno.serve(async (req) => {
     // COTA — depois da validação do corpo (requisição malformada não queima cota) e antes de
     // qualquer chamada à Anthropic; os dois `mode` abaixo passam por aqui.
     //
-    // O gate de staff desta edge (`authorizeCronOrStaff`, acima) guarda SÓ o ramo da sonda: o
-    // caminho de DISPARO chegava à Anthropic com `getUser()` pelado, sem role e sem
-    // `is_approved`. Como `/auth` é cadastro público e sem convite, "JWT válido" inclui um
-    // customer não aprovado, barrado em TODA a UI — que ainda assim gastava o orçamento da
-    // organização em laço. Mesma classe do #2086 (`elevenlabs-transcribe`), mesmo par.
+    // Desde 2026-11-13 o disparo exige staff (acima); a cota segue como rede contra laço de um
+    // usuário staff — mesma classe do #2086 (`elevenlabs-transcribe`), mesmo par. Cron/service_role
+    // não têm usuário a quem cobrar: são chamadores de confiança (detêm o segredo) e não consomem.
     const userId = user.id;
-    if (typeof userId !== 'string' || !userId) {
-      return new Response(JSON.stringify({ error: 'Token inválido' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
-
-    const supabaseCota = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const cota = await consumirCota(supabaseCota, userId, 'generate-bundle-argument', 'argumentações de bundle');
-    if (!cota.permitido) {
-      return new Response(JSON.stringify({ error: cota.mensagem }), {
-        status: cota.http,
-        headers: { ...corsHeaders, ...headersDeCota(cota), 'Content-Type': 'application/json' },
-      });
+    if (typeof userId === 'string' && userId) {
+      const supabaseCota = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+      const cota = await consumirCota(supabaseCota, userId, 'generate-bundle-argument', 'argumentações de bundle');
+      if (!cota.permitido) {
+        return new Response(JSON.stringify({ error: cota.mensagem }), {
+          status: cota.http,
+          headers: { ...corsHeaders, ...headersDeCota(cota), 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // ─── MODE: diagnostic_questions ─────────────────────────────

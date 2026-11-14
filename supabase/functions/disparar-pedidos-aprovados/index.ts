@@ -1928,7 +1928,7 @@ Deno.serve(async (req: Request) => {
     const modo: "dry_run" | "producao" =
       (cfg?.modo_disparo_pedidos === "producao") ? "producao" : "dry_run";
     const staffEmail = cfg?.email_notificacoes ?? "";
-    console.log(`[disparar-pedidos] modo=${modo} staffEmail=${staffEmail}`);
+    console.log(`[disparar-pedidos] modo=${modo} staffEmail=${staffEmail ? "configurado" : "vazio"}`);
 
     // 2. Pedidos aprovados (com dados do fornecedor)
     let aprovadosQuery = db
