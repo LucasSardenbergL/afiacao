@@ -131,7 +131,6 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/kb-extract-specs/index.ts', 2],
   ['supabase/functions/kb-ingest-document/index.ts', 1],
   ['supabase/functions/melhoria-triagem/index.ts', 1],
-  ['supabase/functions/nvoip-calls/index.ts', 2],
   ['supabase/functions/omie-analytics-sync/index.ts', 3],
   ['supabase/functions/omie-financeiro/index.ts', 1],
   ['supabase/functions/omie-malha-sync/index.ts', 2],
@@ -153,7 +152,6 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/tint-sync-agent/index.ts', 3], // 6→3 (2026-09-25): completeSyncRun confere o UPDATE; saíram os 2 update({status:'error'}) do promote no HTTP
   ['supabase/functions/visit-score-recalc-client/index.ts', 1],
   ['supabase/functions/whatsapp-inbound/index.ts', 4],
-  ['supabase/functions/whatsapp-send-template/index.ts', 2],
 ]);
 
 function desvios(medido: Map<string, number>, baseline: ReadonlyMap<string, number>) {

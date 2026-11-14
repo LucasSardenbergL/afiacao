@@ -131,10 +131,19 @@ function isStopKeyword(body: string | null | undefined): boolean {
     .toUpperCase().replace(/[^A-Z\s]/g, "").trim();
   return STOP_KEYWORDS.has(t);
 }
-// "PARAR"→opt_out (LGPD, precede); opt_out é sticky; 1ª resposta (unknown)→opt_in.
+// "VOLTAR" é o ÚNICO jeito de sair do opt_out: o próprio cliente pede. O staff não reverte
+// (trigger trg_whatsapp_conversations_guarda_opt_in, migration 20261114210026).
+const REJOIN_KEYWORDS = new Set(["VOLTAR"]);
+function isRejoinKeyword(body: string | null | undefined): boolean {
+  if (!body) return false;
+  const t = body.normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toUpperCase().replace(/[^A-Z\s]/g, "").trim();
+  return REJOIN_KEYWORDS.has(t);
+}
+// "PARAR"→opt_out (LGPD, precede); opt_out é sticky — só "VOLTAR" o desfaz; 1ª resposta (unknown)→opt_in.
 function nextOptInStatus(current: string, body: string | null): "unknown" | "opt_in" | "opt_out" {
   if (isStopKeyword(body)) return "opt_out";
-  if (current === "opt_out") return "opt_out";
+  if (current === "opt_out") return isRejoinKeyword(body) ? "opt_in" : "opt_out";
   if (current === "opt_in") return "opt_in";
   return "opt_in";
 }
@@ -190,11 +199,24 @@ async function processMessage(supabase: SupabaseClient, msg: ParsedInbound) {
   const isNew = Array.isArray(inserted) && inserted.length > 0;
   if (isNew) {
     const nowIso = new Date().toISOString();
+    const proximo = nextOptInStatus(currentOptIn, msg.body);
     await supabase.from("whatsapp_conversations")
       .update({
         status: "aberta", last_inbound_at: nowIso, last_message_at: nowIso,
-        opt_in_status: nextOptInStatus(currentOptIn, msg.body),
+        opt_in_status: proximo,
       }).eq("id", conversationId);
+    // O consentimento é do TELEFONE: o whatsapp-send-template bloqueia por QUALQUER variante do
+    // número. O "VOLTAR" do cliente libera todas elas, senão uma variante esquecida em opt_out
+    // seguiria barrando os templates (parecer Codex 2026-11-14).
+    if (currentOptIn === "opt_out" && proximo === "opt_in") {
+      const variantes = waPhoneCandidates(msg.fromPhone);
+      if (variantes.length > 0) {
+        const { error: vErr } = await supabase.from("whatsapp_conversations")
+          .update({ opt_in_status: "opt_in" })
+          .in("phone_key", variantes).eq("opt_in_status", "opt_out");
+        if (vErr) console.error("[whatsapp-inbound] VOLTAR nas variantes falhou", vErr.code);
+      }
+    }
   }
 }
 

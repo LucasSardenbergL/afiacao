@@ -102,24 +102,17 @@ Deno.serve(async (req) => {
 
     // ─── Get or refresh OAuth token ───
     async function getAccessToken(): Promise<string> {
-      // Check if we have a valid cached token in company_config
-      const { data: tokenData } = await supabase
-        .from("company_config")
-        .select("value")
-        .eq("key", "nvoip_access_token")
-        .maybeSingle();
-
-      const { data: expiresData } = await supabase
-        .from("company_config")
-        .select("value")
-        .eq("key", "nvoip_token_expires_at")
-        .maybeSingle();
-
-      const { data: refreshData } = await supabase
-        .from("company_config")
-        .select("value")
-        .eq("key", "nvoip_refresh_token")
-        .maybeSingle();
+      // Cache do OAuth em nvoip_oauth_cache (só service_role). Saiu de company_config, que o
+      // staff lê pelo client (lote 2 do scanner, 2026-11-14). Uma leitura só, 3 chaves.
+      const { data: cache, error: cacheErr } = await supabase
+        .from("nvoip_oauth_cache")
+        .select("key, value")
+        .in("key", ["nvoip_access_token", "nvoip_refresh_token", "nvoip_token_expires_at"]);
+      if (cacheErr) console.error("nvoip_oauth_cache leitura falhou (gera token novo):", cacheErr.code);
+      const cacheMap = new Map((cache ?? []).map((r: { key: string; value: string }) => [r.key, r.value]));
+      const tokenData = { value: cacheMap.get("nvoip_access_token") };
+      const expiresData = { value: cacheMap.get("nvoip_token_expires_at") };
+      const refreshData = { value: cacheMap.get("nvoip_refresh_token") };
 
       const now = Date.now();
       const expiresAt = expiresData?.value ? parseInt(expiresData.value) : 0;
@@ -175,17 +168,11 @@ Deno.serve(async (req) => {
       const expiresAt = Date.now() + (tokenResp.expires_in || 86400) * 1000;
 
       const upsert = async (key: string, value: string) => {
-        const { data: existing } = await sb
-          .from("company_config")
-          .select("id")
-          .eq("key", key)
-          .maybeSingle();
-
-        if (existing) {
-          await sb.from("company_config").update({ value, updated_at: new Date().toISOString() }).eq("key", key);
-        } else {
-          await sb.from("company_config").insert({ key, value });
-        }
+        const { error } = await sb
+          .from("nvoip_oauth_cache")
+          .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" });
+        // Cache é otimização: falhar ao gravar não derruba a ligação (o token já está em mãos).
+        if (error) console.error(`nvoip_oauth_cache gravação falhou (${key}):`, error.code);
       };
 
       await upsert("nvoip_access_token", tokenResp.access_token);

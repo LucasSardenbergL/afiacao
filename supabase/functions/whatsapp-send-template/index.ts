@@ -1,7 +1,8 @@
 // Edge: whatsapp-send-template — envio de template HSM (fora da janela de 24h).
 // Regras: (1) só staff/service_role (cron 403 — o motor de rota entra via service_role no PR do disparo);
-// (2) opt_out NUNCA recebe template (LGPD); (3) idempotência dedupe-first: reserva a dedupe_key
-// no banco ANTES do POST — retry legítimo só re-envia registro 'failed'.
+// (2) opt_out NUNCA recebe template (LGPD); (3) reserva ATÔMICA no banco ANTES do POST
+// (whatsapp_template_reservar): idempotência pela dedupe_key, retry só de recusa provada (4xx),
+// teto diário. Resultado incerto (rede, 5xx) nunca reenvia sozinho.
 // Espelhos de src/lib/whatsapp/template-payload.ts e inbound.ts (Deno não importa do src/).
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
@@ -151,61 +152,112 @@ Deno.serve(async (req) => {
 
   const conv = await resolveConversa(supabase, { conversationId, phoneE164 });
   if ("erro" in conv) return json({ error: conv.erro }, conv.status);
-  // LGPD: opt_out NUNCA recebe proativo — nem template pago.
+  // LGPD: opt_out NUNCA recebe proativo — nem template pago. O consentimento é do TELEFONE, não
+  // da linha: confere toda conversa com qualquer variante do número (com/sem o 9, com/sem 55).
   if (conv.opt_in_status === "opt_out") return json({ error: "opt_out", detail: "cliente pediu PARAR" }, 409);
+  const variantes = waPhoneCandidates(conv.phone_e164);
+  if (variantes.length === 0) return json({ error: "telefone inválido" }, 400);
+  const { data: bloqueios, error: bErr } = await supabase.from("whatsapp_conversations")
+    .select("id").in("phone_key", variantes).eq("opt_in_status", "opt_out").limit(1);
+  if (bErr) return json({ error: "falha ao conferir opt-out", detail: bErr.message }, 500); // fail-closed
+  if ((bloqueios ?? []).length > 0) return json({ error: "opt_out", detail: "cliente pediu PARAR" }, 409);
+  // O que vai na reserva é EXATAMENTE o que vai no POST (já sanitizado).
+  const paramsEnviados = bodyParams.map(sanitizeTemplateParam);
 
-  // Idempotência dedupe-first: reserva ANTES do POST. Duplicata → 409 sem reenviar.
-  // Registro anterior 'failed' → retry legítimo reutiliza a MESMA reserva.
-  const insRes = await supabase.from("whatsapp_template_sends").insert({
-    template_nome: t.nome, conversation_id: conv.id, phone_e164: conv.phone_e164,
-    body_params: bodyParams, dedupe_key: dedupeKey, status: "queued", origem,
-    disparado_por: auth.via === "staff" ? auth.userId : null,
-  }).select("id").single();
-  let sendId: string | null = (insRes.data as { id: string } | null)?.id ?? null;
-  if (insRes.error) {
-    const dup = insRes.error.code === "23505";
-    if (!dup) return json({ error: "falha ao reservar envio", detail: insRes.error.message }, 500);
-    const { data: existing } = await supabase.from("whatsapp_template_sends")
-      .select("id, status, wa_message_id").eq("dedupe_key", dedupeKey).single();
-    const ex = existing as { id: string; status: string; wa_message_id: string | null } | null;
-    if (!ex || ex.status !== "failed") {
-      return json({ error: "duplicate", detail: "dedupe_key já usada", existing: ex }, 409);
-    }
-    sendId = ex.id; // retry de envio que falhou: reusa a reserva
-    await supabase.from("whatsapp_template_sends")
-      .update({ status: "queued", erro: null }).eq("id", ex.id);
+  // Reserva ATÔMICA no banco (RPC whatsapp_template_reservar, migration 20261114210026): numa
+  // transação só, idempotência pela dedupe_key + retry só de recusa PROVADA (compare-and-set em
+  // 'failed' com retry_seguro) + teto diário. Antes eram 3 idas separadas, e dois retries
+  // concorrentes postavam o mesmo template pago DUAS vezes. Uma reserva autoriza UM POST.
+  const { data: resv, error: resvErr } = await supabase.rpc("whatsapp_template_reservar", {
+    p_dedupe_key: dedupeKey, p_template_nome: t.nome, p_conversation_id: conv.id,
+    p_phone_e164: conv.phone_e164, p_body_params: paramsEnviados, p_origem: origem,
+    p_disparado_por: auth.via === "staff" ? auth.userId : null,
+  });
+  // Erro de RPC (inclusive teto mal configurado) = nada sai (fail-closed).
+  if (resvErr) return json({ error: "falha ao reservar envio", detail: resvErr.message }, 500);
+  const linhas = (Array.isArray(resv) ? resv : []) as Array<{
+    resultado: string; send_id: string | null; status_existente: string | null; claim_token: string | null;
+  }>;
+  if (linhas.length !== 1) return json({ error: "falha ao reservar envio", detail: "reserva ambígua" }, 500);
+  const r = linhas[0];
+  if (r.resultado === "teto_excedido") {
+    return json({ error: "teto_diario", detail: "teto diário de templates atingido — tente amanhã" }, 429);
   }
+  if (r.resultado === "duplicata") {
+    return json({ error: "duplicate", detail: "dedupe_key já usada",
+      existing: { id: r.send_id, status: r.status_existente } }, 409);
+  }
+  if (r.resultado === "conflito_payload") {
+    return json({ error: "conflito_payload", detail: "dedupe_key já usada para outro destinatário/template" }, 409);
+  }
+  if (r.resultado !== "reservado" || !r.send_id || !r.claim_token) {
+    return json({ error: "falha ao reservar envio", detail: `resultado inesperado: ${r.resultado}` }, 500);
+  }
+  const sendId = r.send_id;
+  const token = r.claim_token;
+  // Finaliza só a tentativa DESTA reserva: id + token + 'queued'. Uma tentativa atrasada não
+  // sobrescreve a seguinte. Conta as linhas: 0 linhas é falha de persistência, não sucesso.
+  // Perder a finalização NUNCA autoriza novo envio (a linha segue 'queued', bloqueada).
+  const finalizar = async (campos: Record<string, unknown>): Promise<boolean> => {
+    const { data, error } = await supabase.from("whatsapp_template_sends").update(campos)
+      .eq("id", sendId).eq("tentativa_id", token).eq("status", "queued").select("id");
+    const ok = !error && Array.isArray(data) && data.length === 1;
+    if (!ok) console.error("[whatsapp-send-template] finalização não gravou 1 linha", sendId, error?.code ?? "0 linhas");
+    return ok;
+  };
 
   const to = conv.phone_e164.replace(/\D/g, "");
-  const payload = buildTemplatePayload({ to, templateName: t.nome, languageCode: t.idioma, bodyParams });
-  const resp = await fetch(`${D360_BASE}/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "D360-API-KEY": D360_KEY },
-    body: JSON.stringify(payload),
-  });
-  const result = await resp.json().catch(() => ({}));
+  const payload = buildTemplatePayload({ to, templateName: t.nome, languageCode: t.idioma, bodyParams: paramsEnviados });
+  let resp: Response;
+  try {
+    resp = await fetch(`${D360_BASE}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "D360-API-KEY": D360_KEY },
+      body: JSON.stringify(payload),
+      // Redirect 307/308 repetiria o POST (método e corpo preservados): uma reserva = UM POST.
+      redirect: "error",
+    });
+  } catch (e) {
+    // Rede caiu: NÃO sabemos se a Meta aceitou. failed SEM retry_seguro — fica bloqueado para
+    // conciliação, nunca reenvia sozinho (cobrar 2× é pior que não reenviar).
+    await finalizar({ status: "failed", retry_seguro: false,
+      erro: `incerto: ${e instanceof Error ? e.message : "falha de rede"}`.slice(0, 500) });
+    return json({ error: "send_incerto", detail: "falha de rede ao enviar — confira antes de reenviar" }, 502);
+  }
+  const result: unknown = await resp.json().catch(() => null);
   if (!resp.ok) {
     console.error("[whatsapp-send-template] 360dialog erro", resp.status, result);
-    await supabase.from("whatsapp_template_sends")
-      .update({ status: "failed", erro: `HTTP ${resp.status} ${JSON.stringify(result).slice(0, 500)}` })
-      .eq("id", sendId!);
-    return json({ error: "send_failed", status: resp.status, detail: result }, 502);
+    // Recusa PROVADA = 4xx COM erro estruturado do provedor e sem id de mensagem. Corpo
+    // ilegível, 5xx ou id presente = incerto → failed sem retry (parecer Codex 2026-11-14).
+    const r4 = (result ?? {}) as { error?: unknown; errors?: unknown; meta?: unknown; messages?: unknown };
+    const temErroEstruturado = typeof result === "object" && result !== null &&
+      (r4.error !== undefined || r4.errors !== undefined || r4.meta !== undefined);
+    const recusaProvada = resp.status >= 400 && resp.status < 500 && temErroEstruturado &&
+      r4.messages === undefined;
+    await finalizar({ status: "failed", retry_seguro: recusaProvada,
+      erro: `HTTP ${resp.status} ${JSON.stringify(result).slice(0, 500)}` });
+    return json({ error: recusaProvada ? "send_failed" : "send_incerto", status: resp.status, detail: result }, 502);
   }
 
-  const waId = (result as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null;
+  const waIdBruto = (result as { messages?: Array<{ id?: unknown }> } | null)?.messages?.[0]?.id;
+  const waId = typeof waIdBruto === "string" && waIdBruto.trim() !== "" ? waIdBruto : null;
+  if (!waId) {
+    // 2xx fora do contrato (sem id): não dá para afirmar 'sent' nem reenviar.
+    await finalizar({ status: "failed", retry_seguro: false, erro: "incerto: 2xx sem id de mensagem" });
+    return json({ error: "send_incerto", detail: "provedor respondeu sem id de mensagem — confira antes de reenviar" }, 502);
+  }
   const nowIso = new Date().toISOString();
   // Mensagem JÁ saiu: falha de persistência não falha o request (logar alto), padrão do whatsapp-send.
-  const { error: updErr } = await supabase.from("whatsapp_template_sends")
-    .update({ status: "sent", wa_message_id: waId, erro: null }).eq("id", sendId!);
-  const preview = renderTemplatePreview(t.corpo_referencia, bodyParams);
+  const finalizouSent = await finalizar({ status: "sent", wa_message_id: waId, erro: null });
+  const preview = renderTemplatePreview(t.corpo_referencia, paramsEnviados);
   const { error: msgErr } = await supabase.from("whatsapp_messages").insert({
     conversation_id: conv.id, wa_message_id: waId, direction: "out", type: "template",
     body: preview, status: "sent", sender_user_id: auth.via === "staff" ? auth.userId : null, wa_timestamp: nowIso,
   });
   const { error: convErr } = await supabase.from("whatsapp_conversations")
     .update({ last_message_at: nowIso, status: "aguardando_cliente" }).eq("id", conv.id);
-  if (updErr || msgErr || convErr) {
-    console.error("[whatsapp-send-template] persistência falhou (msg já enviada)", updErr, msgErr, convErr);
+  if (!finalizouSent || msgErr || convErr) {
+    console.error("[whatsapp-send-template] persistência falhou (msg já enviada)", finalizouSent, msgErr, convErr);
   }
-  return json({ ok: true, wa_message_id: waId, conversationId: conv.id, persisted: !updErr && !msgErr && !convErr });
+  return json({ ok: true, wa_message_id: waId, conversationId: conv.id, persisted: finalizouSent && !msgErr && !convErr });
 });

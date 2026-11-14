@@ -90,6 +90,7 @@ import * as whatsappSend from "../whatsapp-send/versao.ts";
 import * as whatsappTemplate from "../whatsapp-send-template/versao.ts";
 import * as enviarPush from "../enviar-push/versao.ts";
 import * as nvoipCalls from "../nvoip-calls/versao.ts";
+import * as nvoipSipCreds from "../nvoip-sip-creds/versao.ts";
 import * as dispatchNotif from "../dispatch-notifications/versao.ts";
 import * as sondaRelay from "../sonda-relay/versao.ts";
 import * as identifyTool from "../identify-tool/versao.ts";
@@ -290,6 +291,7 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "whatsapp-send-template", mod: whatsappTemplate },
   { nome: "enviar-push", mod: enviarPush },
   { nome: "nvoip-calls", mod: nvoipCalls },
+  { nome: "nvoip-sip-creds", mod: nvoipSipCreds },
   { nome: "dispatch-notifications", mod: dispatchNotif },
   { nome: "sonda-relay", mod: sondaRelay },
   // 12ª leva — as 4 que queimam COTA DE IA. Ficaram de fora das 11 anteriores justamente as
