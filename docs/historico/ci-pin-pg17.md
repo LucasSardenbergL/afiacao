@@ -65,4 +65,20 @@ Não acatado, com motivo:
 
 ## Evidência no runner
 
-Registrada após o merge, com a linha do log de um run real: ver a seção seguinte (PR de docs).
+Run 43544443097 do PR #3892, `provas-sql (1)`, step `PostgreSQL 17 (PGDG)`, 2026-11-14T02:09Z. O
+step levou ~13 s, igual à mediana de antes:
+
+```
+  pacotes: postgresql-17=17.12-1.pgdg24.04+1 postgresql-client-17=17.12-1.pgdg24.04+1 postgresql-17-pgvector=0.8.7-1.pgdg24.04+2
+  initdb (PostgreSQL) 17.12 (Ubuntu 17.12-1.pgdg24.04+1)
+  postgresql-client-17 17.12-1.pgdg24.04+1
+  postgresql-17-pgvector 0.8.7-1.pgdg24.04+2
+  PG17_PIN_OK minor=17.12 pgvector=0.8.7
+```
+
+O caminho do apt-archive não rodou: a 17.12 ainda está no índice principal. Ele só tem prova no lab
+(C11/C15). O `schedule` sem pin só vai ter evidência no 1º cron depois do merge.
+
+Lição do 1º run: o juiz `scripts/falsificar-exige-assert-gate.ts` guarda as **linhas literais** do
+`falsifica.sh` como âncoras. Mudou a lista default de cenários do `roda_lab`, a âncora tem de mudar
+junto, senão `testes (3)` reprova.
