@@ -47,7 +47,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "identify-tool": "4e1f44fc3648bcb6ab67cae26ff1fb5c46ed49819017b1d8f54c6feb5f6b1128",
   "melhoria-triagem": "35cbe72aa5011af552a1d0f8bc2771983dc2a13161f454f9d3d2c3537aa7ad8d",
   "monthly-report": "578a6e8963a0f1fd0fee9bc8fbd971892b9cdae5128894e40e74d9989cc4d7ab",
-  "nvoip-calls": "2b3934215e43fae406b6c270bd6a319f9cef3b91c02d02c25bf6890fe2657435",
+  "nvoip-calls": "c57d99d050f0e465d5db5f7a344bbd80d4e016e224986149215628d0b19046da",
   "omie-analytics-sync": "409a1b64e69f5aafb2feaddc607faef8bd3dc6f375c67dcda4a9146de3735a38",
   "omie-cliente": "d4ca09feed9e115f8fdfb347d5800aafa8c1b89e7da5ee520fc32eb96a832bd0",
   "omie-cron-diario": "70c8565470c24909c9f06bd8ff1ee31ad8faff3ce5826f0f76ebb7c5c37fe9fc",
@@ -94,7 +94,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "tint-sync-agent": "0bff5f3cee0ea8e94db8a23788edd6091845a05029af3f152d10dc2c9cb0b7a6",
   "visit-score-recalc-batch": "fc6e87d83a3d700cf802731a40ac10098be412a11e6e95e7826efb1364114a95",
   "visit-score-recalc-client": "3f5ae6defc90dcd9aff0318bc96a971150477fa99b2fa66f1cb0986ddc1a87fa",
-  "whatsapp-inbound": "dff68bcafe9edc89673ce4cd7755c721b87a1ffa833eea6874f3a7214c2d17a7",
+  "whatsapp-inbound": "0f20ead2f339789b6bf64958fdc18e2f6490951a1f7f32ad185a744140c72a79",
   "whatsapp-send": "dea0911c8768412918d9730b76b0f8231ef74042715a587c003dd80f00917ecf",
-  "whatsapp-send-template": "a4fec739b2c2695fe4954c03c6c7b134f41bba910eec8e2769427a4a5dfa7f02",
+  "whatsapp-send-template": "ed9742c22fb49621d7c5404d2ade3266be774288d55975679c0c57fbdf3afc81",
 };

@@ -111,7 +111,6 @@ const G5_BASELINE: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/omie-financeiro/index.ts', 2],
   ['supabase/functions/omie-sync-vendas-items/index.ts', 1],
   ['supabase/functions/visit-score-recalc-client/index.ts', 2],
-  ['supabase/functions/whatsapp-send-template/index.ts', 1],
 ]);
 
 function contarPorArquivo(padrao: RegExp): Map<string, number> {

@@ -199,11 +199,24 @@ async function processMessage(supabase: SupabaseClient, msg: ParsedInbound) {
   const isNew = Array.isArray(inserted) && inserted.length > 0;
   if (isNew) {
     const nowIso = new Date().toISOString();
+    const proximo = nextOptInStatus(currentOptIn, msg.body);
     await supabase.from("whatsapp_conversations")
       .update({
         status: "aberta", last_inbound_at: nowIso, last_message_at: nowIso,
-        opt_in_status: nextOptInStatus(currentOptIn, msg.body),
+        opt_in_status: proximo,
       }).eq("id", conversationId);
+    // O consentimento é do TELEFONE: o whatsapp-send-template bloqueia por QUALQUER variante do
+    // número. O "VOLTAR" do cliente libera todas elas, senão uma variante esquecida em opt_out
+    // seguiria barrando os templates (parecer Codex 2026-11-14).
+    if (currentOptIn === "opt_out" && proximo === "opt_in") {
+      const variantes = waPhoneCandidates(msg.fromPhone);
+      if (variantes.length > 0) {
+        const { error: vErr } = await supabase.from("whatsapp_conversations")
+          .update({ opt_in_status: "opt_in" })
+          .in("phone_key", variantes).eq("opt_in_status", "opt_out");
+        if (vErr) console.error("[whatsapp-inbound] VOLTAR nas variantes falhou", vErr.code);
+      }
+    }
   }
 }
 
