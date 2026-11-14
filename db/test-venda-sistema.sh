@@ -34,10 +34,23 @@ for f in "$MIG" "$MIG_GERAR" "$MIG_FECHAR" "$MIG_E1"; do [ -f "$f" ] || { echo "
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca exata.
-  SABOTAGENS="cita_sem_fronteira:C1a fila_sem_share:F1b fila_sem_gate:F1a fila_sem_teto_bp:F1d decidir_sem_gate:D1a \
-gerar_pendente:G1b gerar_sem_par_dias:G1d gerar_sem_base_dias:G1e gerar_sem_cooldown:G1g gerar_sem_onda:G1h \
-json_revogado:J1d bloco_revogado:E1c fechar_itt:X1b fechar_revogado:X1c fechar_sem_irmao:X1a \
-fechar_janela:X1f fila_anon:POST!P5_FALHOU"
+  SABOTAGENS="cita_sem_fronteira:C1a
+fila_sem_share:F1b
+fila_sem_gate:F1a
+fila_sem_teto_bp:F1d
+decidir_sem_gate:D1a
+gerar_pendente:G1b
+gerar_sem_par_dias:G1d
+gerar_sem_base_dias:G1e
+gerar_sem_cooldown:G1g
+gerar_sem_onda:G1h
+json_revogado:J1d
+bloco_revogado:E1c
+fechar_itt:X1b
+fechar_revogado:X1c
+fechar_sem_irmao:X1a
+fechar_janela:X1f
+fila_anon:POST!P5_FALHOU"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-sistema.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -388,7 +401,7 @@ eq "F1i empresa invalida = 22023" "$(estado "$(como "$M" "SELECT public.venda_si
 eq "F1j colacor sem pedido: fila vazia" "$(Pq -c "$(como "$M" "SELECT jsonb_array_length(public.venda_sistema_fila('colacor') -> 'candidatos')")")" "0"
 
 pid() { Pq -c "SELECT id FROM public.venda_sistema_par WHERE base_codigo = $1 AND par_codigo = $2"; }
-P_CAT1="$(pid 101 201)"; P_CAT2="$(pid 101 203)"; P_DIL="$(pid 101 301)"; P_THIN="$(pid 102 302)"
+P_CAT1="$(pid 101 201)"; P_CAT2="$(pid 101 203)"; P_THIN="$(pid 102 302)"
 
 # ── D1: decidir ─────────────────────────────────────────────────────────────────────────────────────────────────
 dec() { Pq -c "$(como "$M" "SELECT public.venda_sistema_decidir($1, '$2')::text")"; }
@@ -402,7 +415,6 @@ dec "$P_THIN" confirmado > /dev/null
 # A outra embalagem (202) confirmada numa leitura anterior: nunca foi candidata (1 pedido junto), entra pela porta.
 P -q -c "INSERT INTO public.venda_sistema_par (empresa, base_codigo, par_codigo, papel, status, evidencia, decidido_por, decidido_em)
          VALUES ('oben', 101, 202, 'catalisador', 'confirmado', '{\"juntos\":1}', '$M', now())"
-P_QT="$(pid 101 202)"
 eq "D1e trilha gravada com quem decidiu" "$(Pq -c "SELECT count(*), bool_and(decidido_por = '$M') FROM public.venda_sistema_par_decisao")" "3|t"
 eq "D1f trilha append-only" "$(estado "DELETE FROM public.venda_sistema_par_decisao")" "55000"
 FILA="$(Pq -c "$(como "$M" "SELECT public.venda_sistema_fila('oben')::text")")"

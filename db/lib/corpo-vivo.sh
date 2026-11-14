@@ -174,11 +174,16 @@ CV_PREDECESSORAS=(
 #     e policy em venda_sugestao, mas a PRE exige também o corpo de prod de venda_painel e venda_marcar_mostrada, e a
 #     PÓS exige cron.job e as tabelas novas — fora do snapshot de 10-15 e de toda cadeia guardada. Prova que cobre:
 #     db/test-venda-resumo-email.sh (corpos de prod com md5 conferido, --falsificar, nos dois locales).
+#   · 20261113213317 (venda R2 · falta completar o sistema) recria venda_gerar_lista, venda_fechar_desfechos e
+#     private._venda_sugestoes_json, mas a PRE exige o corpo de prod da 20261113110200 (fora, acima) e de
+#     private.venda_resumo_bloco, e a PÓS exige as tabelas novas e o venda_config da Entrega 1. Prova que cobre:
+#     db/test-venda-sistema.sh (corpos de prod com md5 conferido, --falsificar, nos dois locales).
 CV_FORA=(
   "20261111100000_radar_acompanhamento_pacote_g.sql"
   "20261111134000_radar_posse_pacote_l.sql"
   "20261113090000_clientes_mei_cpf_mascarado.sql"
   "20261113110200_venda_resumo_email_controle.sql"
+  "20261113213317_venda_sistema_completo.sql"
 )
 _cv_fora() {
   local x
