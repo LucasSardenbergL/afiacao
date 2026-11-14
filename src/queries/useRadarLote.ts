@@ -25,6 +25,15 @@ import {
   type LotePersistido,
 } from '@/lib/radar/lote-persistido';
 
+/** Recusas do servidor no lote; `puladosPosse` = as do lead em atendimento por OUTRO vendedor (2026-11-14). */
+function contarRecusas(lote: LotePersistido | null): { recusados: number; puladosPosse: number } {
+  const recusados = (lote?.itens ?? []).filter((i) => i.estado.status === 'recusado');
+  return {
+    recusados: recusados.length,
+    puladosPosse: recusados.filter((i) => i.estado.status === 'recusado' && i.estado.motivo === 'posse_de_outro').length,
+  };
+}
+
 // Trava de execução POR USUÁRIO fora do React: sobrevive a unmount/remount da página (voltar
 // e entrar de novo não pode disparar um 2º runner sobre o mesmo lote — P1 do review Codex).
 const execucoesEmVoo = new Set<string>();
@@ -173,6 +182,8 @@ export function useRadarLoteOmie() {
       const indisponiveis = new Map(semSnapshot.map((s) => [s.cnpj, s.erro]));
       for (const [cnpj, erro] of indisponiveis) atualizarItem(cnpj, { status: 'falha', etapa: 'omie', erro, codigo: null });
       const executaveis = itens.filter((i) => !indisponiveis.has(i.cnpj));
+      // Recusas DESTA execução: o runner as vê como lançamento (o `throw e` abaixo), mas não são falha — saem de `falhas`.
+      const recusadosNestaExecucao = new Set<string>();
 
       const resultados = await executarEmLote(
         executaveis,
@@ -196,8 +207,13 @@ export function useRadarLoteOmie() {
             return r;
           } catch (e) {
             if (e instanceof InelegivelCadastro) {
+              recusadosNestaExecucao.add(item.cnpj);
               // Recusa do SERVIDOR (revisão 2026-11-11, item 5): terminal, com o motivo; nada foi criado no ERP.
-              atualizarItem(item.cnpj, { status: 'recusado', motivo: e.motivo, erro: e.message });
+              // Posse de outro vendedor (2026-11-14): o lote PULA o lead — o nome de quem atende vai junto.
+              atualizarItem(item.cnpj, {
+                status: 'recusado', motivo: e.motivo, erro: e.message,
+                ...(e.motivo === 'posse_de_outro' ? { donoNome: e.donoNome } : {}),
+              });
             } else if (e instanceof DivergenciaCadastro) {
               atualizarItem(item.cnpj, { status: 'divergente', motivo: e.motivo, erro: e.message, codigo: e.codigoRecebido, conflitoId: e.conflito?.id ?? null });
             } else if (e instanceof FalhaCadastro) {
@@ -218,9 +234,16 @@ export function useRadarLoteOmie() {
       }
 
       const resumo = resumirLote(resultados as ResultadoItem<ItemLote, { jaExistia: boolean }>[], (v) => v.jaExistia);
+      const loteFinal = loteAtual();
+      const recusas = contarRecusas(loteFinal);
       track('radar.lote_cadastrado_omie', {
         total: itens.length, criados: resumo.criados, ja_existiam: resumo.ja_existiam,
-        falhas: resumo.falhas + indisponiveis.size,
+        falhas: resumo.falhas - recusadosNestaExecucao.size + indisponiveis.size,
+        recusados: recusadosNestaExecucao.size,
+        // `total`/`falhas`/`recusados` são DESTA execução (na retomada, só os pendentes); `falhas` NÃO inclui as recusas
+        // (Codex código 2026-11-14, P2: antes, um pulado por posse contava também como falha). Os `lote_*` são do lote
+        // INTEIRO, mesmo denominador (parecer de desenho, P2): `lote_pulados_posse` ⊂ `lote_recusados` ⊂ `lote_total`.
+        lote_total: loteFinal?.itens.length ?? null, lote_recusados: recusas.recusados, lote_pulados_posse: recusas.puladosPosse,
         divergentes_no_lote: loteAtual() ? itensDivergentes(loteAtual() as LotePersistido).length : 0, nao_iniciados: resumo.cancelados, retomada,
         parou_por_throttling: resultados.some((r) => r.status === 'falha' && ehThrottlingOmie(new Error(r.erro))),
       });
@@ -308,8 +331,9 @@ export function useRadarLoteOmie() {
     const falhas = lote.itens.filter((i) => i.estado.status === 'falha').length;
     const naoIniciados = lote.itens.filter((i) => i.estado.status === 'nao_iniciado').length;
     const divergentes = itensDivergentes(lote).length;
+    const { recusados, puladosPosse } = contarRecusas(lote);
     return {
-      total, feitos: total - aguardando, ok, falhas, naoIniciados, aguardando, divergentes,
+      total, feitos: total - aguardando, ok, falhas, naoIniciados, aguardando, divergentes, recusados, puladosPosse,
       naoSincronizados: divergentesNaoSincronizados(lote).length,
       pendentes: itensPendentes(lote).length, concluido: loteConcluido(lote),
     };

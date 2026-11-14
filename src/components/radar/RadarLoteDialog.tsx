@@ -1,6 +1,6 @@
 import { toast } from 'sonner';
 import { AlertTriangle, Ban, CheckCircle2, XCircle, CircleDashed, Loader2, Building2, ShieldCheck } from 'lucide-react';
-import { TEXTO_INELEGIVEL } from '@/lib/radar/cadastro-omie';
+import { textoRecusa } from '@/lib/radar/cadastro-omie';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -40,7 +40,9 @@ function detalheItem(item: ItemLote, sit: SituacaoConflito, servidorIndisponivel
   if (e.status === 'divergente') return `conflito de vínculo — confira no Omie, nada foi regravado: ${e.erro}`;
   if (e.status === 'nao_iniciado') return 'não iniciado (lote parado)';
   // Revisão 2026-11-11 (item 5): o servidor recusou criar — nada foi ao ERP, e não é pendência.
-  if (e.status === 'recusado') return `não cadastrado: ${TEXTO_INELEGIVEL[e.motivo]} (nada foi criado no Omie)`;
+  // Posse de outro vendedor (2026-11-14): o lote PULOU o lead — não é recusa do lead, é de quem o atende.
+  if (e.status === 'recusado' && e.motivo === 'posse_de_outro') return `pulado: ${textoRecusa(e.motivo, e.donoNome)} (nada foi criado no Omie)`;
+  if (e.status === 'recusado') return `não cadastrado: ${textoRecusa(e.motivo)} (nada foi criado no Omie)`;
   return 'aguardando…';
 }
 
@@ -91,7 +93,7 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
           <DialogDescription>
             {rodando
               ? `Cadastrando ${progresso.feitos + 1 > progresso.total ? progresso.total : progresso.feitos + 1} de ${progresso.total}…`
-              : `${confirmados === null ? `${progresso.ok} ok nesta aba (conflitos não conferidos)` : `${confirmados} de ${progresso.total} confirmados`} · ${progresso.falhas} falha(s) · ${progresso.naoIniciados} não iniciado(s)${comConflito ? ` · ${comConflito} conflito(s)` : ''}`}
+              : `${confirmados === null ? `${progresso.ok} ok nesta aba (conflitos não conferidos)` : `${confirmados} de ${progresso.total} confirmados`} · ${progresso.falhas} falha(s) · ${progresso.naoIniciados} não iniciado(s)${progresso.recusados ? ` · ${progresso.recusados} recusado(s) pelo servidor${progresso.puladosPosse ? ` (${progresso.puladosPosse} em atendimento por outro vendedor)` : ''}` : ''}${comConflito ? ` · ${comConflito} conflito(s)` : ''}`}
             {rodando && ' Sair do Radar agora PAUSA os itens que ainda não começaram (dá para retomar depois).'}
           </DialogDescription>
         </DialogHeader>

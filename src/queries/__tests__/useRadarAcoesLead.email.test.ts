@@ -101,7 +101,9 @@ describe('contrato com a edge omie-vendas-sync (lida como texto)', () => {
   it('e-mail e complemento chegam ao IncluirCliente, e a elegibilidade roda ANTES dele', () => {
     expect(bloco).toMatch(/clienteParams\.email = emailCadastro/);
     expect(bloco).toMatch(/clienteParams\.complemento = complementoCadastro/);
-    const elegibilidade = bloco.indexOf('verificarElegibilidadeRadar(');
+    // Lead → preparação → posse → IncluirCliente: a ORDEM interna é provada no Deno (radar-cadastro_test.ts, fluxo real);
+    // aqui, que o fluxo com a regra do Radar vem depois do lookup estrito e envolve o único IncluirCliente.
+    const elegibilidade = bloco.indexOf('criarClienteComRegraRadar(');
     expect(elegibilidade).toBeGreaterThan(bloco.indexOf('buscarClienteEstrito(docClean'));
     expect(elegibilidade).toBeLessThan(bloco.indexOf('"IncluirCliente"'));
   });

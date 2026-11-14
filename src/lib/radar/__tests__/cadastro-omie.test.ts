@@ -451,6 +451,24 @@ describe('cadastrarEmpresaNoOmie — recusa de elegibilidade do SERVIDOR (revis�
     expect(d.criarNoOmie).not.toHaveBeenCalled();
   });
 
+  it('posse de OUTRO vendedor (lote, 2026-11-14): recusa terminal com o nome de quem atende', async () => {
+    const d = deps({ criarNoOmie: vi.fn(async () => ({
+      success: false, code: 'RADAR_INELEGIVEL', motivo: 'posse_de_outro', dono_nome: ' Ana Farmer ', error: 'RADAR_INELEGIVEL: posse_de_outro',
+    })) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(InelegivelCadastro);
+    expect(err).not.toBeInstanceOf(FalhaCadastro);
+    expect(err).toMatchObject({ motivo: 'posse_de_outro', donoNome: 'Ana Farmer', message: 'Não cadastrado: em atendimento por Ana Farmer.' });
+    expect(d.registrarNoRadar).not.toHaveBeenCalled();
+    // Sem nome (perfil sem nome, ou forma estranha): recusa do mesmo jeito, com o texto genérico.
+    for (const dono of [undefined, null, '', 42]) {
+      const semNome = await cadastrarEmpresaNoOmie(empresa, deps({ criarNoOmie: vi.fn(async () => ({
+        success: false, code: 'RADAR_INELEGIVEL', motivo: 'posse_de_outro', dono_nome: dono, error: 'x',
+      })) })).catch((e) => e);
+      expect(semNome).toMatchObject({ motivo: 'posse_de_outro', donoNome: null, message: 'Não cadastrado: em atendimento por outro vendedor.' });
+    }
+  });
+
   it('o lookup da edge ACHOU o cliente (created:false): reconcilia, mesmo com o lead mudado', async () => {
     const d = deps({ criarNoOmie: vi.fn(async () => ({ success: true, created: false, codigo_cliente: 888 })) });
     await expect(cadastrarEmpresaNoOmie(empresa, d, { retentativa: true })).resolves.toMatchObject({ codigo: '888', jaExistia: true });

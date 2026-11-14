@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
-import { complementoParaCadastro, emailParaCadastro, lerExigenciaRadar, verificarElegibilidadeRadar } from "./radar-cadastro.ts";
+import { complementoParaCadastro, criarClienteComRegraRadar, emailParaCadastro, lerExigenciaRadar } from "./radar-cadastro.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "../_shared/lookup-cliente-estrito.ts";
@@ -279,7 +279,10 @@ async function callOmieVendasApi(
   // deadline: fim ABSOLUTO (ms) imposto pelo chamador, quando ele cabe antes do teto de 140s desta chamada — o
   // lookup estrito do cliente divide UM prazo entre as páginas e deixa tempo para o Incluir* que vem depois
   // (Codex P2, v1.28). Estourou numa leitura → OMIE_TRANSIENT (nunca ausência).
-  opts?: { throwOnTransient?: boolean; deadline?: number },
+  // antesDeReenviar: roda DEPOIS do backoff e ANTES de cada reenvio — o IncluirCliente do lote revalida a posse do
+  // Radar aqui (Codex código 2026-11-14, P1: o reenvio pós rate-limit criava o cliente de um lead que outro vendedor
+  // assumiu durante a espera). Lançou → nada é reenviado e o erro sobe ao chamador.
+  opts?: { throwOnTransient?: boolean; deadline?: number; antesDeReenviar?: () => Promise<void> },
 ): Promise<OmieGenericResponse | null> {
   const { APP_KEY, APP_SECRET } = getCredentials(account);
 
@@ -372,6 +375,7 @@ async function callOmieVendasApi(
         if (attempt < maxRetries && prazoCabe && cabeEspera(Date.now(), deadline, delay)) {
           console.log(`[Omie Vendas][${account}] ${isRateLimit ? 'Rate limit' : 'Transient error'}, waiting ${delay/1000}s (attempt ${attempt + 1}/${maxRetries})`);
           await new Promise(r => setTimeout(r, delay));
+          if (opts?.antesDeReenviar) await opts.antesDeReenviar();
           continue;
         }
         if (envioAmbiguo) throw erroEscritaAmbigua(call, account, fs);
@@ -2749,6 +2753,8 @@ Deno.serve(async (req) => {
 
     // Resolve userId quando vier JWT staff; cron/service_role passam sem user.
     let userId: string | null = null;
+    // Client com o JWT do CHAMADOR (staff): lê o que depende de quem chama — a posse do Radar (`eh_meu` no banco).
+    let supabaseDoUsuario: typeof supabaseAdmin | null = null;
     if (__auth.via === "staff" && authHeader?.startsWith("Bearer ")) {
       const supabase = createClient(
         Deno.env.get("SUPABASE_URL")!,
@@ -2759,6 +2765,7 @@ Deno.serve(async (req) => {
         authHeader.replace("Bearer ", "")
       );
       userId = user?.id ?? null;
+      if (userId) supabaseDoUsuario = supabase;
     }
 
     const { action, account: rawAccount, ...params } = await req.json();
@@ -2986,53 +2993,74 @@ Deno.serve(async (req) => {
         }
         // Radar (revisão 2026-11-11, item 5): só a CRIAÇÃO exige o lead elegível AGORA — o lookup acima, que reconcilia
         // um cliente já existente, vale sempre (radar-cadastro.ts). Recusa é resposta de REGRA (não retentável).
+        // Posse (2026-11-14): o lote do gestor PULA o lead em atendimento por OUTRO vendedor — lida IMEDIATAMENTE antes
+        // do IncluirCliente, pela RPC canônica com a identidade do chamador. A ORDEM mora em criarClienteComRegraRadar.
         const exigenciaRadar = lerExigenciaRadar(radar);
-        if (exigenciaRadar) {
-          const veredito = await verificarElegibilidadeRadar({
+        const clienteDoUsuario = supabaseDoUsuario;
+        const prepararCliente = async () => {
+          // Create the client. Chave de integração DETERMINÍSTICA por
+          // conta+documento (era Date.now()): se dois caminhos tentarem criar o
+          // mesmo cliente, o Omie rejeita a 2ª por integração duplicada
+          // ("já cadastrado") em vez de aceitar uma duplicata.
+          // Razão com o CPF mascarado (perfil de cliente MEI, lead do Radar em build velho) nunca vira cadastro no ERP:
+          // vira a razão FISCAL do mesmo documento na outra conta, pelo lookup estrito, ou a action recusa
+          // (_shared/razao-fiscal.ts). Fica DEPOIS do lookup desta conta: cliente que já existe resolve o código.
+          // Fontes: a outra conta de vendas e a Colacor SC (Afiação), nesta ordem — todas pelo lookup estrito.
+          const razaoFiscal = await razaoFiscalParaCadastro(String(razao_social), fontesDaRazaoFiscalVendas(account), async (conta) =>
+            (await buscarClienteEstrito(docClean, conta, listarClientesPorDocumento(docClean, conta as ContaLeitura)))?.razao_social ?? null);
+          const fantasia = typeof nome_fantasia === "string" && nome_fantasia.trim() !== "" && !temCpfMascarado(nome_fantasia)
+            ? nome_fantasia : razaoFiscal;
+          const clienteParams: Record<string, unknown> = {
+            codigo_cliente_integracao: `APP_${account.toUpperCase()}_${docClean}`,
+            razao_social: razaoFiscal,
+            nome_fantasia: fantasia,
+            cnpj_cpf: docClean,
+            pessoa_fisica: docClean.length <= 11 ? "S" : "N",
+          };
+          if (endereco) clienteParams.endereco = endereco;
+          if (endereco_numero) clienteParams.endereco_numero = endereco_numero;
+          if (bairro) clienteParams.bairro = bairro;
+          if (cidade) clienteParams.cidade = cidade;
+          if (estado) clienteParams.estado = estado;
+          if (cep) clienteParams.cep = String(cep).replace(/\D/g, "");
+          if (telefone) clienteParams.telefone1_numero = telefone;
+          if (contato) clienteParams.contato = contato;
+          // Item 7: e-mail e complemento da Receita. Inválido/longo = omitido (radar-cadastro.ts), nunca truncado.
+          const emailCadastro = emailParaCadastro(email);
+          if (emailCadastro) clienteParams.email = emailCadastro;
+          const complementoCadastro = complementoParaCadastro(complemento);
+          if (complementoCadastro) clienteParams.complemento = complementoCadastro;
+          return clienteParams;
+        };
+        const fluxo = await criarClienteComRegraRadar({
+          exigencia: exigenciaRadar,
+          documento: docClean,
+          banco: {
             // `async` + await: devolve uma Promise de verdade (o builder do PostgREST é só thenable — o typecheck do
             // Lovable acusava TS2739 aqui; em runtime já funcionava).
             lerLead: async (doc) => await supabaseAdmin.from("radar_empresas")
               .select("ja_cliente, omie_codigo_cliente, rfb_situacao, prospeccao_status").eq("cnpj", doc).maybeSingle(),
-          }, docClean, exigenciaRadar);
-          if (!veredito.ok) {
-            result = { success: false, code: "RADAR_INELEGIVEL", motivo: veredito.motivo, error: `RADAR_INELEGIVEL: ${veredito.motivo}` };
-            break;
-          }
+            // `.limit(2)`: 2 linhas bastam para acusar contrato quebrado (o índice único garante ≤ 1 posse aberta) — e
+            // esta edge não pagina à mão (gate _shared/paginacao-delegada_test.ts).
+            lerPosse: clienteDoUsuario
+              ? async (doc) => await clienteDoUsuario.rpc("radar_atendimentos_ativos")
+                .eq("cnpj", doc).order("cnpj", { ascending: true }).limit(2)
+              : null,
+          },
+          preparar: prepararCliente,
+          incluir: async (clienteParams, antesDeReenviar) => {
+            console.log(`[Omie Vendas][${account}] Criando cliente (${docClean.length === 11 ? "CPF" : "CNPJ"})`); // sem nome/documento: PII (M-36)
+            return await callOmieVendasApi(
+              "geral/clientes/", "IncluirCliente", clienteParams, account,
+              antesDeReenviar ? { antesDeReenviar } : undefined,
+            );
+          },
+        });
+        if ("recusa" in fluxo) {
+          result = fluxo.recusa;
+          break;
         }
-        // Create the client. Chave de integração DETERMINÍSTICA por
-        // conta+documento (era Date.now()): se dois caminhos tentarem criar o
-        // mesmo cliente, o Omie rejeita a 2ª por integração duplicada
-        // ("já cadastrado") em vez de aceitar uma duplicata.
-        // Razão com o CPF mascarado (perfil de cliente MEI, lead do Radar em build velho) nunca vira cadastro no ERP:
-        // vira a razão FISCAL do mesmo documento na outra conta, pelo lookup estrito, ou a action recusa
-        // (_shared/razao-fiscal.ts). Fica DEPOIS do lookup desta conta: cliente que já existe resolve o código.
-        // Fontes: a outra conta de vendas e a Colacor SC (Afiação), nesta ordem — todas pelo lookup estrito.
-        const razaoFiscal = await razaoFiscalParaCadastro(String(razao_social), fontesDaRazaoFiscalVendas(account), async (conta) =>
-          (await buscarClienteEstrito(docClean, conta, listarClientesPorDocumento(docClean, conta as ContaLeitura)))?.razao_social ?? null);
-        const fantasia = typeof nome_fantasia === "string" && nome_fantasia.trim() !== "" && !temCpfMascarado(nome_fantasia)
-          ? nome_fantasia : razaoFiscal;
-        const clienteParams: Record<string, unknown> = {
-          codigo_cliente_integracao: `APP_${account.toUpperCase()}_${docClean}`,
-          razao_social: razaoFiscal,
-          nome_fantasia: fantasia,
-          cnpj_cpf: docClean,
-          pessoa_fisica: docClean.length <= 11 ? "S" : "N",
-        };
-        if (endereco) clienteParams.endereco = endereco;
-        if (endereco_numero) clienteParams.endereco_numero = endereco_numero;
-        if (bairro) clienteParams.bairro = bairro;
-        if (cidade) clienteParams.cidade = cidade;
-        if (estado) clienteParams.estado = estado;
-        if (cep) clienteParams.cep = String(cep).replace(/\D/g, "");
-        if (telefone) clienteParams.telefone1_numero = telefone;
-        if (contato) clienteParams.contato = contato;
-        // Item 7: e-mail e complemento da Receita. Inválido/longo = omitido (radar-cadastro.ts), nunca truncado.
-        const emailCadastro = emailParaCadastro(email);
-        if (emailCadastro) clienteParams.email = emailCadastro;
-        const complementoCadastro = complementoParaCadastro(complemento);
-        if (complementoCadastro) clienteParams.complemento = complementoCadastro;
-        console.log(`[Omie Vendas][${account}] Criando cliente (${docClean.length === 11 ? "CPF" : "CNPJ"})`); // sem nome/documento: PII (M-36)
-        const createRes = await callOmieVendasApi("geral/clientes/", "IncluirCliente", clienteParams, account);
+        const createRes = fluxo.criado;
         const createResTyped = createRes as { codigo_cliente_omie?: number; nCodCli?: number } | null;
         const codigoCriado = createResTyped?.codigo_cliente_omie ?? createResTyped?.nCodCli ?? null;
         // Código null (rate-limit esgotado) = INDETERMINADO: não confirma nada (linhaConfirmacao devolve null).
