@@ -1542,7 +1542,7 @@ async function calcularComDados(
         // marca subtotal. 1 writer: este cron. Não em `premissas` (jsonb multi-chave, sinal money-path).
         // Fora de faixa vira ausência ANTES do INSERT: o CHECK da tabela nunca derruba o snapshot.
         ...colunasSerieEstoque(dados),
-        // v2.4: CP vencido fora da projeção em colunas DEDICADAS (migration 20261114120000), 1 writer:
+        // v2.4: CP vencido fora da projeção em colunas DEDICADAS (db/2026-11-14-fin-projecao-snapshots-cp-vencido.sql), 1 writer:
         // este cron. Só medida — o `dados` (semanas) acima não muda. Exige a migration aplicada ANTES.
         ...colunasCpVencidoFora(cp_vencido_fora),
       }),

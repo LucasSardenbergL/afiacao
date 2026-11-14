@@ -62,6 +62,8 @@ const DEMAIS = [
   cp(14, somarDias(HOJE, 30), 700, "A VENCER"),        // dentro do horizonte
   cp(15, somarDias(HOJE, 200), 650, "A VENCER"),       // depois do horizonte (13 semanas)
   cp(16, somarDias(HOJE, -60), 888, "CANCELADO"),      // a query já filtra
+  cp(17, somarDias(SEGUNDA, 13 * 7 - 1), 610, "A VENCER"), // horizonFim − 1 → última semana
+  cp(18, somarDias(SEGUNDA, 13 * 7), 620, "A VENCER"),     // horizonFim → fora, à DIREITA (não é vencido)
 ];
 
 const CRS = Array.from({ length: 30 }, (_, i) => ({
@@ -99,6 +101,7 @@ const RPCS: Record<string, unknown> = {
 
 // ── PostgREST falso ───────────────────────────────────────────────────────────────────────────
 let CPS: Array<Record<string, unknown>> = [];
+let falharCp = false;
 const snapshots: Array<Record<string, unknown>> = [];
 const json = (corpo: unknown, status = 200, extra: Record<string, string> = {}) =>
   new Response(JSON.stringify(corpo), { status, headers: { "content-type": "application/json", ...extra } });
@@ -125,7 +128,10 @@ h.responderForaDoGate(async (req) => {
   const caminho = url.pathname.replace("/rest/v1/", "");
   if (req.method === "GET") {
     if (caminho === "fin_contas_receber") return paginar(CRS, url);
-    if (caminho === "fin_contas_pagar") return paginar(CPS, url);
+    if (caminho === "fin_contas_pagar") {
+      if (falharCp) return json({ code: "57014", message: "canceling statement due to statement timeout" }, 500);
+      return paginar(CPS, url);
+    }
     if (caminho === "fin_config_cashflow") {
       const sel = url.searchParams.get("select") ?? "";
       return json([sel.includes("folha_categorias_codigos") ? { folha_categorias_codigos: ["2.10.01"] } : CONFIG]);
@@ -225,16 +231,52 @@ Deno.test("sem CP vencido: zero REAL (0 títulos, R$ 0, sem data) — não ausê
   igual(SEM.snapshot.cp_vencido_fora_total, 0, "cp_vencido_fora_total sem vencidos");
 });
 
-Deno.test("denominador: CP nas semanas + vencido fora + depois do horizonte = CP aberto total", () => {
+Deno.test("denominador: CP nas semanas + vencido fora + depois do horizonte = CP aberto total (valor e IDs)", () => {
   const semanas = COM.corpo.semanas as Semana[];
-  const fim = semanas[semanas.length - 1].fim;
-  const nasSemanas = semanas.reduce((s, w) => s + w.saidas.filter((x) => x.origem === "cp_omie").reduce((a, x) => a + x.valor, 0), 0);
+  const horizonFim = somarDias(semanas[semanas.length - 1].fim, 1);
+  igual(horizonFim, somarDias(SEGUNDA, 13 * 7), "horizonFim da fixture");
+  const cent = (v: number) => Math.round(v * 100);
   const abertos = [...VENCIDOS, ...DEMAIS].filter((c) =>
     c.data_vencimento && c.saldo > 0 && !["PAGO", "CANCELADO"].includes(c.status_titulo)
   );
-  const depois = abertos.filter((c) => (c.data_vencimento as string) > fim).reduce((a, c) => a + c.saldo, 0);
-  const total = abertos.reduce((a, c) => a + c.saldo, 0);
-  const fora = (COM.corpo.cp_vencido_fora_projecao as { total: number } | undefined)?.total;
-  if (fora === undefined) throw new Error("cp_vencido_fora_projecao ausente");
-  igual(Math.round((nasSemanas + fora + depois) * 100) / 100, Math.round(total * 100) / 100, "a soma não fecha com o CP aberto");
+  const idsSemanas = semanas.flatMap((w) => w.saidas.filter((x) => x.origem === "cp_omie").map((x) => x.id_origem));
+  const idsAntes = abertos.filter((c) => (c.data_vencimento as string) < SEGUNDA).map((c) => c.id);
+  const idsDepois = abertos.filter((c) => (c.data_vencimento as string) >= horizonFim).map((c) => c.id);
+  // Disjunção + cobertura: nenhuma duplicação compensa uma omissão.
+  const todos = [...idsSemanas, ...idsAntes, ...idsDepois];
+  igual(new Set(todos).size, todos.length, "um CP caiu em dois conjuntos");
+  igual([...todos].sort(), abertos.map((c) => c.id).sort(), "os três conjuntos não cobrem o CP aberto");
+  igual([...idsAntes].sort(), VENCIDOS.map((c) => c.id).sort(), "o conjunto 'antes da segunda' não é o dos VENCIDOS");
+  igual(idsSemanas.includes(uuid(17, 2)), true, "horizonFim − 1 devia estar na última semana");
+  igual(idsDepois.includes(uuid(18, 2)), true, "horizonFim devia estar fora, à direita");
+
+  const fora = (COM.corpo.cp_vencido_fora_projecao as { total: number; qtd: number } | undefined);
+  if (!fora) throw new Error("cp_vencido_fora_projecao ausente");
+  igual(fora.qtd, idsAntes.length, "qtd ≠ |antes da segunda|");
+  const nasSemanas = semanas.reduce((s, w) => s + w.saidas.filter((x) => x.origem === "cp_omie").reduce((a, x) => a + cent(x.valor), 0), 0);
+  const depois = abertos.filter((c) => (c.data_vencimento as string) >= horizonFim).reduce((a, c) => a + cent(c.saldo), 0);
+  const total = abertos.reduce((a, c) => a + cent(c.saldo), 0);
+  igual(nasSemanas + cent(fora.total) + depois, total, "a soma não fecha com o CP aberto");
+});
+
+Deno.test("leitura do CP falha: 500, nenhum snapshot e nenhum alerta gravados (nunca um zero)", async () => {
+  CPS = [...VENCIDOS, ...DEMAIS];
+  snapshots.length = 0;
+  h.limpar();
+  falharCp = true;
+  try {
+    const res = await handler(new Request(URL_EDGE, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-cron-secret": ENV_TESTE.CRON_SECRET },
+      body: JSON.stringify({ company: "oben", cenario: "realista", save_snapshot: true }),
+    }));
+    const corpo = await res.json() as Record<string, unknown>;
+    igual(res.status, 500, "status com o CP falhando");
+    igual("cp_vencido_fora_projecao" in corpo, false, "a resposta de erro não pode carregar a medida");
+    igual(snapshots.length, 0, "snapshot gravado com o CP falhando");
+    const alertas = h.chamadasForaDoGate().filter((r) => new URL(r.url).pathname.endsWith("/fin_alertas") && r.method !== "GET");
+    igual(alertas.length, 0, "alerta escrito com o CP falhando");
+  } finally {
+    falharCp = false;
+  }
 });
