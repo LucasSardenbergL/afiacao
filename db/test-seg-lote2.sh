@@ -130,9 +130,13 @@ espera "staff NÃO desfaz opt-out"          42501 "$(tenta authenticated "UPDATE
 espera "staff NÃO fabrica opt-in"          42501 "$(tenta authenticated "UPDATE public.whatsapp_conversations SET opt_in_status = 'opt_out' WHERE id = '$C2'")"
 espera "staff NÃO apaga conversa opt-out"  42501 "$(tenta authenticated "DELETE FROM public.whatsapp_conversations WHERE id = '$C1'")"
 espera "staff NÃO troca telefone do opt-out" 42501 "$(tenta authenticated "UPDATE public.whatsapp_conversations SET phone_key = '11900000000' WHERE id = '$C1'")"
-espera "staff NÃO insere conversa já opt-in" 42501 "$(tenta authenticated "INSERT INTO public.whatsapp_conversations (phone_key, opt_in_status) VALUES ('11988880000','opt_in')")"
+espera "staff NÃO move outra conversa p/ o telefone do opt-out" 42501 "$(tenta authenticated "UPDATE public.whatsapp_conversations SET phone_e164 = '+5511999990001' WHERE id = '$C2'")"
+espera "staff NÃO cria conversa (nem unknown, mesmo telefone)" 42501 "$(tenta authenticated "INSERT INTO public.whatsapp_conversations (phone_key, phone_e164) VALUES ('5511999990001','+5511999990001')")"
+espera "staff NÃO trunca conversas" 42501 "$(tenta authenticated "TRUNCATE public.whatsapp_conversations CASCADE")"
+espera "staff NÃO trunca envios (dedupe)" 42501 "$(tenta authenticated "TRUNCATE public.whatsapp_template_sends")"
 espera "staff segue editando status/operador" ok "$(tenta authenticated "UPDATE public.whatsapp_conversations SET status = 'fechada' WHERE id = '$C1'")"
-espera "staff segue inserindo conversa unknown" ok "$(tenta authenticated "INSERT INTO public.whatsapp_conversations (phone_key) VALUES ('11977770000')")"
+P -q -c "INSERT INTO public.whatsapp_conversations (phone_key) VALUES ('11977770000')"
+espera "servidor segue criando conversa" ok "$(tenta service_role "INSERT INTO public.whatsapp_conversations (phone_key) VALUES ('11966660000')")"
 espera "staff apaga conversa SEM opt-out" ok "$(tenta authenticated "DELETE FROM public.whatsapp_conversations WHERE phone_key = '11977770000'")"
 espera "opt-out segue opt_out" opt_out "$(q postgres "SELECT opt_in_status FROM public.whatsapp_conversations WHERE id = '$C1'")"
 espera "service_role (inbound VOLTAR) reverte" ok "$(tenta service_role "UPDATE public.whatsapp_conversations SET opt_in_status = 'opt_in' WHERE id = '$C3'")"
@@ -151,6 +155,9 @@ P -q -c "UPDATE public.whatsapp_template_sends SET status = 'failed', retry_segu
 espera "failed INCERTO não reenvia"      "duplicata|failed|false" "$(reserva k1 +5511999990002 "'$C2'" '["a"]')"
 P -q -c "UPDATE public.whatsapp_template_sends SET retry_seguro = true, erro = 'HTTP 400' WHERE dedupe_key = 'k1'"
 espera "failed com outro telefone = conflito" "conflito_payload|failed|false" "$(reserva k1 +5511000000000 "'$C2'" '["a"]')"
+P -q -c "UPDATE public.whatsapp_template_sends SET status = 'sent', retry_seguro = true WHERE dedupe_key = 'k1'"
+espera "linha não-failed nunca é reclamada (mesmo com retry_seguro)" "duplicata|sent|false" "$(reserva k1 +5511999990002 "'$C2'" '["a"]')"
+P -q -c "UPDATE public.whatsapp_template_sends SET status = 'failed' WHERE dedupe_key = 'k1'"
 TOK_ANTES="$(q postgres "SELECT tentativa_id FROM public.whatsapp_template_sends WHERE dedupe_key = 'k1'")"
 espera "failed PROVADO reenvia (recotado)" "reservado|queued|true" "$(reserva k1 +5511999990002 "'$C2'" '["b"]')"
 espera "retry troca o token e os params" "t|b|f|" \
@@ -216,7 +223,7 @@ espera "8 em paralelo, teto 3 → 5 recusados"  5 "$(cat "$OUTD"/* | grep -c '^t
 espera "só 3 linhas par* em sends" 3 "$(q postgres "SELECT count(*) FROM public.whatsapp_template_sends WHERE dedupe_key LIKE 'par%'")"
 rm -rf "$OUTD"
 
-ESPERADOS=46
+ESPERADOS=50
 echo "RESULTADO: $PASSOU ok / $FALHAS fail (esperados $ESPERADOS)"
 if [ "$FALHAS" -ne 0 ]; then echo "✗ db/test-seg-lote2.sh — $FALHAS falha(s)"; exit 1; fi
 if [ "$PASSOU" -ne "$ESPERADOS" ]; then echo "✗ db/test-seg-lote2.sh — rodou $PASSOU asserções, esperava $ESPERADOS"; exit 1; fi

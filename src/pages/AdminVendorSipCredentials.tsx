@@ -107,7 +107,7 @@ export default function AdminVendorSipCredentials() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Remover essa credencial SIP? O vendedor cairá no fallback (env vars).')) return;
+    if (!confirm('Remover essa credencial SIP? O vendedor fica sem ramal e não consegue ligar até ganhar outro.')) return;
     try {
       const { error } = await supabase.from('vendor_sip_credentials').delete().eq('id', id);
       if (error) throw error;
@@ -128,8 +128,8 @@ export default function AdminVendorSipCredentials() {
       <header>
         <h1 className="text-2xl font-display font-medium">Credenciais SIP por vendedor</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Atribua um ramal SIP individual pra cada vendedor. Sem atribuição, o vendedor usa o
-          ramal compartilhado (env vars NVOIP_SIP_USER / NVOIP_SIP_PASS).
+          Atribua um ramal SIP individual pra cada vendedor. Sem atribuição, o vendedor não liga: não existe
+          ramal compartilhado (cada ligação sai no ramal de quem liga).
         </p>
       </header>
 
@@ -199,7 +199,7 @@ export default function AdminVendorSipCredentials() {
             <Loader2 className="w-5 h-5 animate-spin" />
           ) : creds.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Nenhuma atribuição. Todos usam o fallback de env vars.
+              Nenhuma atribuição. Ninguém consegue ligar até ganhar um ramal.
             </p>
           ) : (
             <table className="w-full text-sm">

@@ -20,7 +20,8 @@
 
 ## Segredos & LGPD
 
-- **Credenciais SIP NUNCA em `VITE_*`** (vazaria no bundle público) — servidas pela Edge Function **`nvoip-sip-creds`** (auth + role employee/master via `authorizeCronOrStaff`). Env do server: `NVOIP_SIP_WSS`/`DOMAIN`/`USER`/`PASS`.
+- **Credenciais SIP NUNCA em `VITE_*`** (vazaria no bundle público) — servidas pela Edge Function **`nvoip-sip-creds`** (auth + role employee/master via `authorizeCronOrStaff`). **Ramal é POR VENDEDOR** (`vendor_sip_credentials`, master cadastra em `/admin/sip-credentials`): sem ramal próprio → 403. **Não existe ramal compartilhado** — o fallback para `NVOIP_SIP_USER`/`PASS` do env entregava a senha do ramal master a qualquer staff e foi removido no lote 2 do scanner (2026-11-14); env que sobra: `NVOIP_SIP_WSS`/`DOMAIN`.
+- **Token OAuth da Nvoip** (edge `nvoip-calls`, click-to-call legado) mora em `nvoip_oauth_cache` (só service_role), **nunca** em `company_config` — que o staff lê pelo client. Uma CHECK em `company_config` barra a volta.
 - **LGPD:** MP3 de aviso (`public/preroll/aviso-gravacao-lgpd.mp3`) é mixado no `localStream` via `mixPrerollWithMic` (Web Audio API); URL em `VITE_NVOIP_SIP_PREROLL_URL`.
 
 ## Cleanup crítico do microfone

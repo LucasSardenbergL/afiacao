@@ -205,6 +205,20 @@ describe('enviarProposta — envio SÓ pela edge + elo no orçamento (money-path
     expect(calls.inserts).toHaveLength(0);
   });
 
+  it('409 duplicate com send FAILED (resultado incerto) → não promete reenvio; nada gravado', async () => {
+    const { sb, calls } = mkSb({
+      invoke: { data: null, error: edgeErrorCtx(409, { error: 'duplicate', existing: { status: 'failed' } }) },
+    });
+    const r = await enviarProposta(baseParams(sb));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.motivo).toBe('edge');
+      expect(r.detalhe).toContain('resultado incerto');
+      expect(r.detalhe).not.toContain('reutiliza a reserva');
+    }
+    expect(calls.inserts).toHaveLength(0);
+  });
+
   it('409 opt_out → erro claro, NADA gravado (LGPD enforced na edge)', async () => {
     const { sb, calls } = mkSb({
       invoke: { data: null, error: edgeErrorCtx(409, { error: 'opt_out', detail: 'cliente pediu PARAR' }) },

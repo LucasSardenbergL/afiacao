@@ -16,8 +16,8 @@
 --     'opt_in' — ou apagar a conversa (a próxima vira 'unknown'), ou mudar o phone_key dela (o
 --     próximo envio cria conversa nova para o telefone) — e burlar o descadastro (LGPD). O
 --     trigger abaixo deixa só os papéis de servidor (service_role: a edge whatsapp-inbound, onde
---     o próprio cliente manda PARAR/VOLTAR) mexer no consentimento. O staff segue editando o
---     resto da conversa (status, operador).
+--     o próprio cliente manda PARAR/VOLTAR) mexer no consentimento e no telefone, e criar
+--     conversa. O staff segue editando o resto (status, operador). TRUNCATE sai do client.
 --
 -- (C) Retry e teto de template pago. A edge whatsapp-send-template lia a reserva 'failed' e
 --     depois a regravava 'queued' em duas idas separadas: dois retries concorrentes postavam o
@@ -72,12 +72,11 @@ BEGIN
     RETURN COALESCE(NEW, OLD);
   END IF;
 
+  -- Conversa só NASCE no servidor (inbound/send-template, com phone_key canônico): uma conversa
+  -- criada pelo client, com o MESMO telefone e consentimento 'unknown', contornaria o opt-out da
+  -- conversa original (parecer Codex 2026-11-14).
   IF TG_OP = 'INSERT' THEN
-    IF NEW.opt_in_status IS DISTINCT FROM 'unknown' THEN
-      RAISE EXCEPTION 'opt_in_status só muda pelo próprio cliente (inbound do WhatsApp)'
-        USING ERRCODE = '42501';
-    END IF;
-    RETURN NEW;
+    RAISE EXCEPTION 'conversa de WhatsApp só nasce no servidor' USING ERRCODE = '42501';
   END IF;
 
   IF TG_OP = 'UPDATE' THEN
@@ -85,11 +84,11 @@ BEGIN
       RAISE EXCEPTION 'opt_in_status só muda pelo próprio cliente (inbound do WhatsApp)'
         USING ERRCODE = '42501';
     END IF;
-    IF OLD.opt_in_status = 'opt_out'
-       AND (NEW.phone_key IS DISTINCT FROM OLD.phone_key
-            OR NEW.phone_e164 IS DISTINCT FROM OLD.phone_e164) THEN
-      RAISE EXCEPTION 'conversa com opt_out não troca de telefone pelo client'
-        USING ERRCODE = '42501';
+    -- Telefone é a identidade do consentimento: o client não o troca em conversa nenhuma (mover
+    -- o número de uma conversa 'unknown' para o de um opt-out também contornaria o descadastro).
+    IF NEW.phone_key IS DISTINCT FROM OLD.phone_key
+       OR NEW.phone_e164 IS DISTINCT FROM OLD.phone_e164 THEN
+      RAISE EXCEPTION 'telefone da conversa não muda pelo client' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
   END IF;
@@ -109,6 +108,10 @@ CREATE TRIGGER trg_whatsapp_conversations_guarda_opt_in
   FOR EACH ROW EXECUTE FUNCTION public.whatsapp_conversations_guarda_opt_in();
 
 REVOKE ALL ON FUNCTION public.whatsapp_conversations_guarda_opt_in() FROM PUBLIC, anon, authenticated;
+-- TRUNCATE não passa por trigger de linha nem por RLS: apagaria o opt-out (conversas) e as
+-- dedupe_keys (envios). Nenhum client precisa dele.
+REVOKE TRUNCATE, TRIGGER, REFERENCES ON public.whatsapp_conversations, public.whatsapp_template_sends
+  FROM PUBLIC, anon, authenticated;
 
 -- ---------- (C) reserva atômica do template pago ----------
 -- Colunas novas da reserva (0 linhas na PROD hoje; defaults bastam):
@@ -284,6 +287,12 @@ BEGIN
     RAISE EXCEPTION 'A6 FALHOU: service_role sem INSERT em nvoip_oauth_cache — nvoip-calls não cacheia';
   END IF;
 
+  FOREACH r IN ARRAY ARRAY['anon', 'authenticated'] LOOP
+    IF has_table_privilege(r, 'public.whatsapp_conversations', 'TRUNCATE')
+       OR has_table_privilege(r, 'public.whatsapp_template_sends', 'TRUNCATE') THEN
+      RAISE EXCEPTION 'B2 FALHOU: % tem TRUNCATE em conversas/envios — opt-out e dedupe apagáveis', r;
+    END IF;
+  END LOOP;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger
                   WHERE tgrelid = 'public.whatsapp_conversations'::regclass
                     AND tgname = 'trg_whatsapp_conversations_guarda_opt_in' AND tgenabled = 'O') THEN

@@ -126,7 +126,9 @@ export async function enviarProposta(params: EnviarPropostaParams): Promise<Envi
         return { ok: false, motivo: 'envio_em_andamento', detalhe: 'outro envio desta proposta está em andamento — aguarde alguns segundos e recote' };
       }
       if (statusSend === 'failed' || statusSend === null) {
-        return { ok: false, motivo: 'edge', detalhe: 'o envio anterior desta proposta falhou — recote e envie de novo (a edge reutiliza a reserva)' };
+        // A edge só devolve 'duplicate' de um 'failed' quando o resultado foi INCERTO (rede caiu,
+        // 5xx): a recusa provada (4xx) ela mesma reenvia. Reenviar às cegas pode cobrar 2×.
+        return { ok: false, motivo: 'edge', detalhe: 'o envio anterior desta proposta teve resultado incerto — confira no WhatsApp do cliente antes de mandar de novo (bloqueado para não cobrar 2×)' };
       }
       // sent/delivered/read: mensagem JÁ foi. Auto-conserto: se o envio anterior gravou o
       // send mas não o orçamento (falha pós-envio), grava agora — com nota de pós-retry.

@@ -131,10 +131,19 @@ function isStopKeyword(body: string | null | undefined): boolean {
     .toUpperCase().replace(/[^A-Z\s]/g, "").trim();
   return STOP_KEYWORDS.has(t);
 }
-// "PARAR"→opt_out (LGPD, precede); opt_out é sticky; 1ª resposta (unknown)→opt_in.
+// "VOLTAR" é o ÚNICO jeito de sair do opt_out: o próprio cliente pede. O staff não reverte
+// (trigger trg_whatsapp_conversations_guarda_opt_in, migration 20261114210026).
+const REJOIN_KEYWORDS = new Set(["VOLTAR"]);
+function isRejoinKeyword(body: string | null | undefined): boolean {
+  if (!body) return false;
+  const t = body.normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toUpperCase().replace(/[^A-Z\s]/g, "").trim();
+  return REJOIN_KEYWORDS.has(t);
+}
+// "PARAR"→opt_out (LGPD, precede); opt_out é sticky — só "VOLTAR" o desfaz; 1ª resposta (unknown)→opt_in.
 function nextOptInStatus(current: string, body: string | null): "unknown" | "opt_in" | "opt_out" {
   if (isStopKeyword(body)) return "opt_out";
-  if (current === "opt_out") return "opt_out";
+  if (current === "opt_out") return isRejoinKeyword(body) ? "opt_in" : "opt_out";
   if (current === "opt_in") return "opt_in";
   return "opt_in";
 }

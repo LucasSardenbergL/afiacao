@@ -11,6 +11,15 @@ describe('nextOptInStatus', () => {
   });
   it('opt_out é sticky (mensagem comum não reverte)', () => {
     expect(nextOptInStatus('opt_out', 'oi de novo')).toBe('opt_out');
+    expect(nextOptInStatus('opt_out', 'quero voltar a comprar')).toBe('opt_out');
+  });
+  it('só o próprio cliente sai do opt_out, mandando VOLTAR', () => {
+    expect(nextOptInStatus('opt_out', 'VOLTAR')).toBe('opt_in');
+    expect(nextOptInStatus('opt_out', ' voltar! ')).toBe('opt_in');
+  });
+  it('VOLTAR fora do opt_out não muda nada; PARAR segue precedendo', () => {
+    expect(nextOptInStatus('opt_in', 'voltar')).toBe('opt_in');
+    expect(nextOptInStatus('opt_out', 'PARAR')).toBe('opt_out');
   });
   it('opt_in continua opt_in', () => {
     expect(nextOptInStatus('opt_in', 'mais uma pergunta')).toBe('opt_in');

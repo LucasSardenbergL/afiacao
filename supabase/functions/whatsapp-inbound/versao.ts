@@ -35,7 +35,7 @@ export const respostaSonda = criarRespostaSonda("whatsapp-inbound");
 // createClient>` (schema `never` ⇒ o `deno check` do preview acusava as tabelas `whatsapp_*`, a isca
 // dos 3 incidentes). JS emitido byte-idêntico ao da v1.2; o bump é o que o `sonda:bump` exige.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.3-cliente-tipado-sem-isca";
+export const VERSAO = "v1.4-voltar-reinscreve";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
