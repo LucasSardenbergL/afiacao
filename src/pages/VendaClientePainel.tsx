@@ -9,6 +9,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { AbaContribuicao } from '@/components/venda-cliente/painel/AbaContribuicao';
 import { AbaRepasses } from '@/components/venda-cliente/painel/AbaRepasses';
 import { AbaResumoEmail } from '@/components/venda-cliente/painel/AbaResumoEmail';
+import { AbaSistemas } from '@/components/venda-cliente/painel/AbaSistemas';
 import { AvisoNaoCausal } from '@/components/venda-cliente/painel/AvisoNaoCausal';
 import { PainelOndas } from '@/components/venda-cliente/painel/PainelOndas';
 import { TabelaAdocao } from '@/components/venda-cliente/painel/TabelaAdocao';
@@ -93,6 +94,7 @@ export default function VendaClientePainel() {
           <TabsTrigger value="resumo">Resumo por e-mail</TabsTrigger>
           <TabsTrigger value="repasses">Repasses</TabsTrigger>
           <TabsTrigger value="contribuicao">Contribuição</TabsTrigger>
+          <TabsTrigger value="sistemas">Sistemas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="adocao" className="space-y-5">
@@ -151,6 +153,11 @@ export default function VendaClientePainel() {
         <TabsContent value="contribuicao">
           {/* Só monta quando a aba está ativa: a RPC custeia a janela inteira a cada chamada. */}
           {url.aba === 'contribuicao' ? <AbaContribuicao /> : null}
+        </TabsContent>
+
+        <TabsContent value="sistemas">
+          {/* Só monta quando ativa: a leitura da fila REGISTRA os candidatos mostrados (denominador do sensor). */}
+          {url.aba === 'sistemas' ? <AbaSistemas de={de} ate={ate} /> : null}
         </TabsContent>
       </Tabs>
     </div>

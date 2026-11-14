@@ -21,12 +21,13 @@ import { usePrecoAlvoComprador } from '@/hooks/usePrecoAlvoComprador';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { logger } from '@/lib/logger';
 import { formatPrecoOuAusente } from '@/lib/format';
-import { sugestoesDeComplemento, sugestoesDePreco, sugestoesDeRecompra } from '@/lib/venda-cliente/sugestoes';
+import { sugestoesDeComplemento, sugestoesDePreco, sugestoesDeRecompra, sugestoesDeSistema } from '@/lib/venda-cliente/sugestoes';
 import { alvoDaSugestao } from '@/lib/venda-cliente/preco';
 import { familiasHerdadas, textoHeranca } from '@/lib/venda-cliente/heranca';
 import { LinkTelefone } from './LinkTelefone';
 import { SecaoRecomprar } from './SecaoRecomprar';
 import { SecaoComplemento } from './SecaoComplemento';
+import { SecaoSistema } from './SecaoSistema';
 import { SecaoPreco } from './SecaoPreco';
 import { SecaoHistorico } from './SecaoHistorico';
 import { BotoesContato } from './BotoesContato';
@@ -73,6 +74,10 @@ export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: P
     [comprador, ondas.complemento],
   );
   const precos = useMemo(() => (comprador && ondas.preco ? sugestoesDePreco(comprador) : []), [comprador, ondas.preco]);
+  const sistemas = useMemo(
+    () => (comprador && ondas.sistema ? sugestoesDeSistema(comprador) : []),
+    [comprador, ondas.sistema],
+  );
   const complemento = useComplementoComprador(compradorId, complementos.length > 0 && !isImpersonating);
   const preco = usePrecoAlvoComprador(compradorId, precos.length > 0 && !isImpersonating);
   const heranca = useHerancaComprador(compradorId);
@@ -82,13 +87,14 @@ export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: P
   const telExibido = comprador?.telefone ?? telefone ?? null;
   const motivoExibido = comprador ? comprador.motivoEntrada : motivo ?? null;
 
-  // O que a farmer VÊ nesta abertura: recompra e complemento ao abrir; preço só quando o alvo
+  // O que a farmer VÊ nesta abertura: recompra, complemento e sistema ao abrir; preço só quando o alvo
   // foi de fato exibido (repasse confirmado ao vivo) — "mostrada" sem alvo na tela seria falsa.
   const idsExibidos = useMemo(() => [
     ...itens.map((s) => s.id),
     ...complementos.map((s) => s.id),
+    ...sistemas.map((s) => s.id),
     ...precos.filter((s) => alvoDaSugestao(s, preco.alvos) !== undefined).map((s) => s.id),
-  ], [itens, complementos, precos, preco.alvos]);
+  ], [itens, complementos, sistemas, precos, preco.alvos]);
 
   // 1 sensor por ABERTURA (não por render) e cada id marcado 1× por abertura: a ref zera quando
   // a ficha fecha ou troca de comprador.
@@ -156,6 +162,8 @@ export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: P
                 erro={complemento.erro}
                 herdadas={herdadasComplemento}
               />
+
+              <SecaoSistema ondaLigada={ondas.sistema} itens={sistemas} />
 
               <SecaoPreco
                 ondaLigada={ondas.preco}

@@ -27516,6 +27516,15 @@ export type Database = {
         Returns: boolean
       }
       venda_revogar_repasse: { Args: { p_id: string }; Returns: undefined }
+      venda_sistema_decidir: {
+        Args: { p_par_id: number; p_status: string }
+        Returns: Json
+      }
+      venda_sistema_fila: { Args: { p_empresa: string }; Returns: Json }
+      venda_sistema_sensor: {
+        Args: { p_ate: string; p_de: string }
+        Returns: Json
+      }
       venda_situacao_em: {
         Args: { p_data: string }
         Returns: {

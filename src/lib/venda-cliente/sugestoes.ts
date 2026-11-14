@@ -28,6 +28,17 @@ export interface SugestaoItem {
   heranca?: { de: string[] } | null;
   /** O valor de referência é o preço que a ANTIGA pagava (a nova não herda preço): rotular, não esconder. */
   valorRefDaAntiga?: boolean;
+  /**
+   * Só tipo 'sistema' (R2 · Entrega 4): o par confirmado pelo founder — o SKU da sugestão é o catalisador/diluente,
+   * a base é a tinta/verniz que o cliente comprou sem ele. `null` nos outros tipos (ou servidor anterior).
+   */
+  sistema?: SistemaDaSugestao | null;
+}
+
+interface SistemaDaSugestao {
+  papel: 'catalisador' | 'diluente';
+  baseOmieCodigoProduto: number | null;
+  baseDescricao: string | null;
 }
 
 export interface CompradorSugerido {
@@ -42,13 +53,15 @@ export interface CompradorSugerido {
   sugestoes: SugestaoItem[];
 }
 
-/** Liga/desliga das Ondas 2 e 3 no SERVIDOR (`venda_config`, avaliado por `venda_avaliar_ondas`). */
+/** Liga/desliga das Ondas 2 e 3 (e do "falta completar o sistema") no SERVIDOR (`venda_config`). */
 export interface OndasVenda {
   complemento: boolean;
   preco: boolean;
+  /** `onda_sistema` (migration 20261113213317). Ausente = servidor anterior = desligada. */
+  sistema: boolean;
 }
 
-export const ONDAS_DESLIGADAS: OndasVenda = { complemento: false, preco: false };
+export const ONDAS_DESLIGADAS: OndasVenda = { complemento: false, preco: false, sistema: false };
 
 export interface MinhasSugestoesResp {
   dia: string;
@@ -83,10 +96,24 @@ function ehObjeto(v: unknown): v is Record<string, unknown> {
  */
 function lerOndas(v: unknown): OndasVenda {
   if (v === undefined || v === null) return ONDAS_DESLIGADAS;
-  if (!ehObjeto(v) || typeof v.complemento !== 'boolean' || typeof v.preco !== 'boolean') {
+  if (!ehObjeto(v) || typeof v.complemento !== 'boolean' || typeof v.preco !== 'boolean'
+      || (v.sistema !== undefined && typeof v.sistema !== 'boolean')) {
     throw new Error('venda_minhas_sugestoes: ondas malformadas');
   }
-  return { complemento: v.complemento, preco: v.preco };
+  return { complemento: v.complemento, preco: v.preco, sistema: v.sistema === true };
+}
+
+/** O par do tipo 'sistema'. Ausente/null = sem par (a seção descarta). Presente com forma errada LANÇA. */
+function lerSistema(v: unknown): SistemaDaSugestao | null {
+  if (v === undefined || v === null) return null;
+  if (!ehObjeto(v) || (v.papel !== 'catalisador' && v.papel !== 'diluente')) {
+    throw new Error('venda_minhas_sugestoes: sistema malformado');
+  }
+  return {
+    papel: v.papel,
+    baseOmieCodigoProduto: numOuNull(v.base_omie_codigo_produto),
+    baseDescricao: textoOuNull(v.base_descricao),
+  };
 }
 
 /**
@@ -142,6 +169,7 @@ export function lerMinhasSugestoes(raw: unknown): MinhasSugestoesResp {
             cadenciaDias: numOuNull(s.cadencia_dias),
             heranca: lerHeranca(s.sucessao_origem, s.herdada_de),
             valorRefDaAntiga: lerBool(s.valor_ref_referencia_origem, 'valor_ref_referencia_origem'),
+            sistema: lerSistema(s.sistema),
           };
         }),
       };
@@ -162,6 +190,11 @@ export function sugestoesDeComplemento(c: CompradorSugerido): SugestaoItem[] {
 /** "Preço" (Onda 3): só SKU com repasse aprovado e vigente quando a lista foi gerada. */
 export function sugestoesDePreco(c: CompradorSugerido): SugestaoItem[] {
   return c.sugestoes.filter((s) => s.tipo === 'preco' && s.omieCodigoProduto != null);
+}
+
+/** "Falta completar o sistema" (R2 · Entrega 4): só par confirmado pelo founder; o servidor já tira o rejeitado. */
+export function sugestoesDeSistema(c: CompradorSugerido): SugestaoItem[] {
+  return c.sugestoes.filter((s) => s.tipo === 'sistema' && s.omieCodigoProduto != null && s.sistema != null);
 }
 
 /** "herdado de DIVIMOVEIS" — o rótulo curto da herança (null = própria). */

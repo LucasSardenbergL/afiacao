@@ -297,3 +297,33 @@ describe('FichaLigacao', () => {
   });
 });
 
+
+describe('FichaLigacao — falta completar o sistema (R2 · Entrega 4)', () => {
+  const comSistema: CompradorSugerido = {
+    ...comprador,
+    sugestoes: [
+      ...comprador.sugestoes,
+      { id: 's7', tipo: 'sistema', empresa: 'oben', omieCodigoProduto: 201, descricao: 'CATALISADOR FC.6975LT', familia: null,
+        qtdRef: null, valorRef: null, precoAlvo: null, cadenciaDias: null,
+        sistema: { papel: 'catalisador', baseOmieCodigoProduto: 101, baseDescricao: 'FUNDO PU FL.6673.00LT' } },
+    ],
+  };
+
+  it('onda ligada: mostra o par confirmado com a base e marca a sugestão como mostrada', () => {
+    compradorMock.mockReturnValue(comSistema);
+    ondasMock.mockReturnValue({ complemento: false, preco: false, sistema: true });
+    renderFicha();
+    const secao = screen.getByTestId('ficha-sistema');
+    expect(secao.textContent).toContain('CATALISADOR FC.6975LT');
+    expect(secao.textContent).toContain('Catalisador do FUNDO PU FL.6673.00LT, que o cliente comprou sem ele');
+    expect(rpcMock).toHaveBeenCalledWith('venda_marcar_mostrada', { p_ids: ['s1', 's2', 's7'] });
+  });
+
+  it('onda desligada (ou servidor anterior): a seção não existe e a sugestão NÃO é marcada mostrada', () => {
+    compradorMock.mockReturnValue(comSistema);
+    ondasMock.mockReturnValue({ complemento: false, preco: false, sistema: false });
+    renderFicha();
+    expect(screen.queryByTestId('ficha-sistema')).toBeNull();
+    expect(rpcMock).toHaveBeenCalledWith('venda_marcar_mostrada', { p_ids: ['s1', 's2'] });
+  });
+});
