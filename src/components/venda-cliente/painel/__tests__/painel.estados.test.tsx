@@ -337,7 +337,7 @@ describe('AbaRepasses — só demanda viva (20261113213000)', () => {
     expect(screen.getByText('Nenhum repasse aprovado ainda')).toBeTruthy();
   });
 
-  it('sensor com critério atingido mostra "desligar: perda ≥ ganho" e a razão ao preço novo', () => {
+  it('sensor com critério atingido pede revisão, mostra a razão ao preço novo e oferece Revogar no vigente', () => {
     candidatosResposta = [vivo];
     sensorResposta = [{
       id: 's1', comprador_id: 'c2', omie_codigo_produto: 1, descricao: 'LIXA VIVA', preco_alvo: 120,
@@ -348,7 +348,8 @@ describe('AbaRepasses — só demanda viva (20261113213000)', () => {
     }];
     renderAba();
     const sec = screen.getByRole('heading', { name: /Repasses aprovados — sensor/ }).closest('section') as HTMLElement;
-    expect(within(sec).getByText('desligar: perda ≥ ganho')).toBeTruthy();
+    expect(within(sec).getByText('critério atingido — revisar')).toBeTruthy();
+    expect(within(sec).getByRole('button', { name: 'Revogar' })).toBeTruthy();
     expect(within(sec).getByText('5 / 10')).toBeTruthy();
     expect(within(sec).getByText('50%')).toBeTruthy();
     expect(within(sec).queryByText('Nenhum repasse aprovado ainda')).toBeNull();

@@ -4,7 +4,9 @@ import { EmptyState } from '@/components/EmptyState';
 import { Badge } from '@/components/ui/badge';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { mensagemErroRepasse } from '@/hooks/useVendaPainel';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { mensagemErroRepasse, useRevogarRepasse } from '@/hooks/useVendaPainel';
 import {
   formatarPct,
   formatarPreco,
@@ -16,8 +18,8 @@ import {
 const QTD = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 });
 
 const CRITERIO: Record<CriterioDesligar, { rotulo: string; classe: string }> = {
-  atingido: { rotulo: 'desligar: perda ≥ ganho', classe: 'border-status-error/40 text-status-error' },
-  nao_atingido: { rotulo: 'manter: ganho > perda', classe: 'border-status-success/40 text-status-success' },
+  atingido: { rotulo: 'critério atingido — revisar', classe: 'border-status-error/40 text-status-error' },
+  nao_atingido: { rotulo: 'critério não atingido', classe: 'text-muted-foreground' },
   cedo: { rotulo: 'cedo (< 1 cadência)', classe: 'text-muted-foreground' },
   indisponivel: { rotulo: 'não dá para medir', classe: 'border-status-warning/40 text-status-warning' },
 };
@@ -49,6 +51,7 @@ export function SensorRepasses({
   sensor: UseQueryResult<SensorRepasse[]>;
   nomeDe: (id: string) => string;
 }) {
+  const revogar = useRevogarRepasse();
   return (
     <section className="space-y-2 pb-6" aria-labelledby="sensor-repasses">
       <div>
@@ -92,6 +95,7 @@ export function SensorRepasses({
                 <TableHead className="text-right">Ganho de preço</TableHead>
                 <TableHead className="text-right">Perda de volume</TableHead>
                 <TableHead>Critério de desligar</TableHead>
+                <TableHead className="w-24" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -135,6 +139,24 @@ export function SensorRepasses({
                     </Badge>
                     {s.motivo && (
                       <span className="block pt-0.5 text-xs text-muted-foreground">{MOTIVO[s.motivo] ?? s.motivo}</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {/* o SKU pode ter saído dos candidatos depois de comprar ao preço novo: a revogação mora aqui também */}
+                    {s.vigente && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={revogar.isPending}
+                        onClick={() =>
+                          revogar.mutate(s.id, {
+                            onSuccess: () => toast.success('Repasse revogado'),
+                            onError: (e) => toast.error('Não revogou', { description: mensagemErroRepasse(e) }),
+                          })
+                        }
+                      >
+                        Revogar
+                      </Button>
                     )}
                   </TableCell>
                 </TableRow>

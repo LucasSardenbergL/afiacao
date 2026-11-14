@@ -269,8 +269,8 @@ export interface SensorRepasse {
   razao_preco_novo: number | null;
   /** Volume que a cadência DA APROVAÇÃO previa para a janela; NULL sem linha de base. */
   qtd_esperada: number | null;
-  /** Σ qtd × (preço − último na aprovação) × (1 − alíquota), todas as linhas com preço. */
-  ganho_preco: number;
+  /** Σ qtd × (preço − último na aprovação) × (1 − alíquota), todas as linhas com preço; NULL se há quantidade sem preço. */
+  ganho_preco: number | null;
   /** (esperado − elegível)⁺ × margem unitária antiga; NULL sem custo/margem positiva/linha de base. */
   perda_volume: number | null;
   criterio_desligar: CriterioDesligar;

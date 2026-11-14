@@ -255,6 +255,7 @@ describe('lerSensor (20261113213000)', () => {
     const [i] = lerSensor([sensorItem({ razao_preco_novo: null, perda_volume: null, qtd_esperada: null,
       criterio_desligar: 'indisponivel', motivo: 'sem_linha_de_base' })]);
     expect(i.perda_volume).toBeNull();
+    expect(lerSensor([sensorItem({ ganho_preco: null })])[0].ganho_preco).toBeNull();
     expect(i.motivo).toBe('sem_linha_de_base');
   });
 

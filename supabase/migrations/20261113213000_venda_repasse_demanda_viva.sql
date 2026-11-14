@@ -48,7 +48,7 @@ BEGIN
     END IF;
     ALTER FUNCTION public.venda_repasse_sensor() SET search_path = public, pg_temp;
     SELECT md5(p.prosrc) INTO v_md5 FROM pg_catalog.pg_proc p WHERE p.oid = v_s;
-    IF v_md5 IS DISTINCT FROM '5791a40ad9fcfdabe08ebedc421595c0' THEN
+    IF v_md5 IS DISTINCT FROM 'c82b33288c3879dc6a1b63813dab78c3' THEN
       RAISE EXCEPTION 'PRE_TRAVA_SENSOR: % deriva — md5(prosrc)=% não é o corpo desta migration', v_s, v_md5;
     END IF;
   END IF;
@@ -362,7 +362,8 @@ $function$;
 --   qtd_ao_preco_novo   = a parte com preço líquido >= alvo (meio centavo de tolerância de arredondamento)
 --   razao_preco_novo    = qtd_ao_preco_novo / qtd_elegivel; NULL se elegível 0 ou se há quantidade sem preço
 --   ganho_preco         = Σ qtd × (preço − último na aprovação) × (1 − alíquota), TODAS as linhas com preço
---                         (aumento parcial conta; desconto abaixo do preço antigo entra negativo)
+--                         (aumento parcial conta; desconto abaixo do preço antigo entra negativo); NULL se há
+--                         quantidade sem preço (desconhecido, não o subtotal)
 --   perda_volume        = max(qtd_esperada − qtd_elegivel, 0) × (último × (1 − alíquota) − custo na aprovação)
 --                         qtd_esperada = qtd_ref × dias_janela / cadência — ambas CONGELADAS na aprovação
 --   criterio_desligar   = 'cedo' (janela < 1 cadência) · 'indisponivel' (sem linha de base, custo, margem
@@ -423,24 +424,27 @@ BEGIN
     SELECT m.*,
            CASE WHEN m.qtd_elegivel > 0 AND m.qtd_sem_preco = 0
                 THEN round(m.qtd_ao_preco_novo / m.qtd_elegivel, 4) END AS razao,
+           -- precisão cheia no cálculo; o arredondamento é só da saída (um intermediário arredondado inverte o
+           -- veredito na borda — parecer Codex 2026-11-13)
            CASE WHEN m.qtd_ref_na_aprovacao > 0 AND m.cadencia_na_aprovacao > 0
-                THEN round(m.qtd_ref_na_aprovacao * m.dias_janela / m.cadencia_na_aprovacao, 2) END AS qtd_esperada,
+                THEN m.qtd_ref_na_aprovacao * m.dias_janela / m.cadencia_na_aprovacao END AS qtd_esp,
            CASE WHEN m.custo_na_aprovacao > 0
                 THEN m.ultimo_preco_na_aprovacao * (1 - v_aliq) - m.custo_na_aprovacao END AS margem_unit,
-           round(m.ganho_bruto * (1 - v_aliq), 2) AS ganho
+           -- com quantidade sem preço o ganho é DESCONHECIDO (NULL), não o subtotal das linhas com preço
+           CASE WHEN m.qtd_sem_preco = 0 THEN m.ganho_bruto * (1 - v_aliq) END AS ganho
       FROM m
   ),
   w AS (
     SELECT v.*,
-           CASE WHEN v.qtd_esperada IS NOT NULL AND v.margem_unit > 0
-                THEN round(greatest(v.qtd_esperada - v.qtd_elegivel, 0) * v.margem_unit, 2) END AS perda
+           CASE WHEN v.qtd_esp IS NOT NULL AND v.margem_unit > 0
+                THEN greatest(v.qtd_esp - v.qtd_elegivel, 0) * v.margem_unit END AS perda
       FROM v
   ),
   z AS (
     SELECT w.*,
            CASE WHEN w.cadencia_na_aprovacao IS NULL OR w.qtd_ref_na_aprovacao IS NULL THEN 'indisponivel'
                 WHEN w.dias_janela < w.cadencia_na_aprovacao THEN 'cedo'
-                WHEN w.perda IS NULL OR w.qtd_sem_preco > 0 THEN 'indisponivel'
+                WHEN w.perda IS NULL OR w.ganho IS NULL THEN 'indisponivel'
                 WHEN w.perda > 0 AND w.perda >= w.ganho THEN 'atingido'
                 ELSE 'nao_atingido' END AS criterio,
            CASE WHEN w.cadencia_na_aprovacao IS NULL OR w.qtd_ref_na_aprovacao IS NULL THEN 'sem_linha_de_base'
@@ -469,9 +473,9 @@ BEGIN
            'qtd_ao_preco_novo',         z.qtd_ao_preco_novo,
            'qtd_sem_preco',             z.qtd_sem_preco,
            'razao_preco_novo',          z.razao,
-           'qtd_esperada',              z.qtd_esperada,
-           'ganho_preco',               z.ganho,
-           'perda_volume',              z.perda,
+           'qtd_esperada',              round(z.qtd_esp, 2),
+           'ganho_preco',               round(z.ganho, 2),
+           'perda_volume',              round(z.perda, 2),
            'criterio_desligar',         z.criterio,
            'motivo',                    z.motivo
          ) ORDER BY (z.revogado_em IS NULL AND z.valido_ate >= v_hoje) DESC, z.aprovado_em DESC, z.id), '[]'::jsonb)
@@ -513,7 +517,7 @@ BEGIN
   END LOOP;
   IF (SELECT count(*) FROM pg_temp.repasse_vivo_retrato) <> 2 THEN RAISE EXCEPTION 'POS: retrato incompleto'; END IF;
   -- sensor: corpo desta migration, DEFINER com search_path fixo, fechado a anon/PUBLIC, aberto a authenticated
-  IF (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure(v_s)) IS DISTINCT FROM '5791a40ad9fcfdabe08ebedc421595c0' THEN
+  IF (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure(v_s)) IS DISTINCT FROM 'c82b33288c3879dc6a1b63813dab78c3' THEN
     RAISE EXCEPTION 'POS: % md5(prosrc) não é o corpo desta migration', v_s;
   END IF;
   IF (SELECT NOT prosecdef OR coalesce(array_to_string(proconfig, ','), '-') <> 'search_path=public, pg_temp'
@@ -528,10 +532,13 @@ BEGIN
   IF (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure(v_h)) IS DISTINCT FROM '880fde236d6a1fce766018c38e42ddee' THEN
     RAISE EXCEPTION 'POS: % mudou — esta migration não recria a regra única', v_h;
   END IF;
-  -- as 4 colunas da linha de base existem, nulas e sem default (ausente ≠ zero)
+  -- as 4 colunas da linha de base existem com o TIPO certo (numeric sem escala; date), nulas e sem default
+  -- (ausente ≠ zero; uma coluna preexistente integer arredondaria a cadência congelada — parecer Codex)
   IF (SELECT count(*) FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'venda_repasse_aprovado'
-         AND column_name IN ('cadencia_na_aprovacao', 'qtd_ref_na_aprovacao', 'ultima_compra_na_aprovacao', 'custo_na_aprovacao')
+         AND ((column_name IN ('cadencia_na_aprovacao', 'qtd_ref_na_aprovacao', 'custo_na_aprovacao')
+               AND data_type = 'numeric' AND numeric_precision IS NULL AND numeric_scale IS NULL)
+              OR (column_name = 'ultima_compra_na_aprovacao' AND data_type = 'date'))
          AND is_nullable = 'YES' AND column_default IS NULL) <> 4 THEN
     RAISE EXCEPTION 'POS_COLUNAS: linha de base do sensor incompleta em venda_repasse_aprovado';
   END IF;

@@ -322,7 +322,7 @@ function sensor(v: Json, i: number): SensorRepasse {
     qtd_sem_preco: num(o, 'qtd_sem_preco', onde),
     razao_preco_novo: razao,
     qtd_esperada: numOuNulo(o, 'qtd_esperada', onde),
-    ganho_preco: num(o, 'ganho_preco', onde),
+    ganho_preco: numOuNulo(o, 'ganho_preco', onde),
     perda_volume: numOuNulo(o, 'perda_volume', onde),
     criterio_desligar: criterio as CriterioDesligar,
     motivo: strOuNulo(o, 'motivo', onde),

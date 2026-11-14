@@ -38,7 +38,7 @@ MIG_SUBST="$REPO_ROOT/supabase/migrations/20261031233000_venda_repasse_substitui
 MIG_TRAVA="$REPO_ROOT/supabase/migrations/20261111170000_venda_repasse_trava_substituido.sql"
 MIG_VIVO="${MIG:-$REPO_ROOT/supabase/migrations/20261113213000_venda_repasse_demanda_viva.sql}"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=45
+TOTAL_ESPERADO=47
 
 # ── Falsificação ─────────────────────────────────────────────────────────────────────────────
 # nome:vermelhos:verdes. As de corpo não tocam o que a PÓS confere além do md5 (que vira NOTICE na cópia
@@ -57,6 +57,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               ganho_so_alvo:S6:S5,S2
               perda_zero_atinge:S12:S4,S11
               sem_preco_conta:S13:S14,S2
+              round_intermediario:S2,S17:S5,S4
+              ganho_sem_preco:S13,S18:S14,S4
               porta_master:G1,G3:G2,G4
               pos_acl_sensor:MIG!POS_ACL_SENSOR
               pre_helper:MIG!PRE_HELPER
@@ -347,6 +349,8 @@ case "${SABOTAGEM:-}" in
   ganho_so_alvo)     sabotar "s/FILTER \(WHERE private\.regua_num_finito\(l\.preco_unit_liquido\)\), 0\) AS ganho_bruto/FILTER (WHERE l.preco_unit_liquido >= ap.preco_alvo - 0.005), 0) AS ganho_bruto/"; desliga_md5 ;;
   perda_zero_atinge) sabotar "s/WHEN w\.perda > 0 AND w\.perda >= w\.ganho/WHEN w.perda >= w.ganho/"; desliga_md5 ;;
   sem_preco_conta)   sabotar "s/WHEN m\.qtd_elegivel > 0 AND m\.qtd_sem_preco = 0/WHEN m.qtd_elegivel > 0/"; desliga_md5 ;;
+  round_intermediario) sabotar "s/THEN m\.qtd_ref_na_aprovacao \* m\.dias_janela \/ m\.cadencia_na_aprovacao END AS qtd_esp,/THEN round(m.qtd_ref_na_aprovacao * m.dias_janela \/ m.cadencia_na_aprovacao, 2) END AS qtd_esp,/"; desliga_md5 ;;
+  ganho_sem_preco)   sabotar "s/CASE WHEN m\.qtd_sem_preco = 0 THEN m\.ganho_bruto \* \(1 - v_aliq\) END AS ganho/m.ganho_bruto * (1 - v_aliq) AS ganho/"; desliga_md5 ;;
   porta_master)      sabotar "s/IF v_uid IS NULL OR NOT public\.has_role\(v_uid, 'master'::public\.app_role\)$/IF v_uid IS NULL/"; desliga_md5 ;;
   pos_acl_sensor)    sabotar "/^REVOKE ALL ON FUNCTION public\.venda_repasse_sensor\(\) FROM PUBLIC, anon;$/d" ;;
   pre_helper|pre_trava) ;;
@@ -418,7 +422,12 @@ BEGIN
        ((hoje - 28)::timestamp + interval '10 hours') AT TIME ZONE 'America/Sao_Paulo', NULL, NULL, 14, 10, hoje - 29, 60),
     -- S-g: uma linha SEM preço (desconto não apurado) → razão NULL, indisponível
     (md5('sg')::uuid, md5('rv:s-g')::uuid, 'oben', 7301, 110, 100, hoje + 30, mst,
-       ((hoje - 30)::timestamp + interval '10 hours') AT TIME ZONE 'America/Sao_Paulo', NULL, NULL, 14, 10, hoje - 31, 60);
+       ((hoje - 30)::timestamp + interval '10 hours') AT TIME ZONE 'America/Sao_Paulo', NULL, NULL, 14, 10, hoje - 31, 60),
+    -- S-h borda de arredondamento (parecer Codex): ref 1, cadência 3, janela 4 → esperado 1,333…; vendeu 1 a 236,83;
+    -- margem 200×0,9 − 80 = 100 → perda 33,33 ≥ ganho 36,83×0,9 = 33,147 → atingido (com o esperado arredondado
+    -- a 1,33 a perda viraria 33,00 e o veredito se inverteria)
+    (md5('sh')::uuid, md5('rv:s-h')::uuid, 'oben', 7301, 230, 200, hoje + 30, mst,
+       ((hoje - 4)::timestamp + interval '10 hours') AT TIME ZONE 'America/Sao_Paulo', NULL, NULL, 3, 1, hoje - 5, 80);
   PERFORM pg_temp.compra(md5('rv:s-a')::uuid, 7301, hoje - 60, 10, 120, 0);   -- dia da aprovação: fora da janela
   PERFORM pg_temp.compra(md5('rv:s-a')::uuid, 7301, hoje - 30, 10, 120, 0);
   PERFORM pg_temp.compra(md5('rv:s-b')::uuid, 7301, hoje - 25, 10, 110, 0);
@@ -431,6 +440,7 @@ BEGIN
   PERFORM pg_temp.compra(md5('rv:s-f')::uuid, 7301, hoje - 1,  10, 100, 0);
   PERFORM pg_temp.compra(md5('rv:s-g')::uuid, 7301, hoje - 20, 10, 110, 0);
   PERFORM pg_temp.compra(md5('rv:s-g')::uuid, 7301, hoje - 10, 10, 110, NULL); -- preço líquido NULL
+  PERFORM pg_temp.compra(md5('rv:s-h')::uuid, 7301, hoje - 2,  1, 236.83, 0);
 END $sen$;
 SET session_replication_role = origin;
 ALTER TABLE public.sales_orders ENABLE TRIGGER ALL;
@@ -488,8 +498,8 @@ sen() { # $1 = id semeado (md5 de 'sa'…), $2 = chave
 }
 eq S1 "S-a: elegível 10 (o dia da aprovação fica fora), ao preço novo 10, razão 1" \
   "$(sen sa qtd_elegivel)|$(sen sa qtd_ao_preco_novo)|$(sen sa razao_preco_novo)" "10|10|1.0000"
-eq S2 "S-a: esperado 10×60/14 = 42,86; perda (42,86−10)×30 = 985,80; ganho 10×20×0,9 = 180" \
-  "$(sen sa qtd_esperada)|$(sen sa perda_volume)|$(sen sa ganho_preco)" "42.86|985.80|180.00"
+eq S2 "S-a: esperado 10×60/14 = 42,857…; perda (42,857…−10)×30 = 985,71 (precisão cheia); ganho 10×20×0,9 = 180" \
+  "$(sen sa qtd_esperada)|$(sen sa perda_volume)|$(sen sa ganho_preco)" "42.86|985.71|180.00"
 eq S3 "S-a: perda >= ganho → critério de desligar ATINGIDO" "$(sen sa criterio_desligar)" "atingido"
 eq S4 "S-b: elegível 30, ao preço novo 20, razão 0,6667" \
   "$(sen sb qtd_elegivel)|$(sen sb qtd_ao_preco_novo)|$(sen sb razao_preco_novo)" "30|20|0.6667"
@@ -505,10 +515,14 @@ eq S12 "S-f: perda 0 não atinge o critério (0 >= 0 não desliga)" "$(sen sf cr
 eq S13 "S-g: quantidade sem preço → razão NULL e indisponível" \
   "$(sen sg qtd_sem_preco)|$(sen sg razao_preco_novo)|$(sen sg criterio_desligar)|$(sen sg motivo)" "10|(null)|indisponivel|quantidade_sem_preco"
 eq S14 "S-g: a quantidade sem preço CONTA no elegível" "$(sen sg qtd_elegivel)|$(sen sg qtd_ao_preco_novo)" "20|10"
-eq S15 "sensor lista as 7 semeadas + a aprovada agora, vigentes primeiro" \
-  "$(Pq -c "SELECT count(*) || '|' || bool_and(o <= 7 OR NOT (e->>'vigente')::boolean) FROM jsonb_array_elements(\$j\$$(cat "$SEN")\$j\$::jsonb) WITH ORDINALITY AS t(e, o)")" "8|true"
+eq S15 "sensor lista as 8 semeadas + a aprovada agora, vigentes primeiro" \
+  "$(Pq -c "SELECT count(*) || '|' || (max(o) FILTER (WHERE (e->>'vigente')::boolean) < min(o) FILTER (WHERE NOT (e->>'vigente')::boolean))::text FROM jsonb_array_elements(\$j\$$(cat "$SEN")\$j\$::jsonb) WITH ORDINALITY AS t(e, o)")" "9|true"
 eq S16 "a aprovada agora aparece com a linha de base e janela 0 → cedo" \
   "$(Pq -c "SELECT (e->>'dias_janela') || '|' || (e->>'criterio_desligar') FROM jsonb_array_elements(\$j\$$(cat "$SEN")\$j\$::jsonb) e WHERE e->>'comprador_id' = '$VR'")" "0|cedo"
+
+eq S17 "S-h: borda de arredondamento — perda 33,33 >= ganho 33,15 → atingido" \
+  "$(sen sh criterio_desligar)|$(sen sh perda_volume)|$(sen sh ganho_preco)" "atingido|33.33|33.15"
+eq S18 "S-g: com quantidade sem preço o ganho é DESCONHECIDO (NULL), não o subtotal" "$(sen sg ganho_preco)" "(null)"
 
 # ── portas ──
 neg G1 "estratégico (tem cap de custo, não é master) no sensor → 42501" "$EST" insufficient_privilege "requer master" "PERFORM public.venda_repasse_sensor()"
