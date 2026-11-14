@@ -1,6 +1,6 @@
 # CP atrasado some da projeção de caixa (diagnóstico de 2026-10-28 a 2026-10-31)
 
-**Estado:** diagnóstico medido, **sem correção**. A correção depende de uma decisão do founder (abaixo). Achado durante a rodada oficial do orçamento de compra (LucasSardenbergL/afiacao#3327).
+**Estado (14/11/2026):** o founder decidiu **só tornar visível** (seção "Visibilidade entregue", no fim). O saldo projetado **não** muda e esses títulos seguem fora de todas as semanas até a conferência título a título decidir entre as opções abaixo. Achado durante a rodada oficial do orçamento de compra (LucasSardenbergL/afiacao#3327).
 
 ## O defeito
 
@@ -42,3 +42,13 @@ select count(*), round(sum(saldo)) from fin_contas_pagar
 where company = 'oben' and status_titulo = 'ATRASADO'
   and data_vencimento < date_trunc('week', current_date)::date;
 ```
+
+## Visibilidade entregue (engine v2.4, 14/11/2026)
+
+O founder decidiu, em 14/11, **só tornar visível** até a conferência título a título. Nenhum saldo ou saída projetada muda.
+
+- **Motor (`fin-cashflow-engine` v2.4):** `cp-vencido.ts` mede, dentro de `gerarSemanas` e com o mesmo `semanaInicio`, o CP aberto (`isOpenTitleStatus`, saldo > 0) com vencimento antes da segunda corrente. Devolve contagem, total, vencimento mais antigo e R$ por faixa de atraso (até 30, 31 a 60, 61 a 180, mais de 180 dias), somando em centavos inteiros para Σ faixas = total.
+- **Onde aparece:** `cp_vencido_fora_projecao` na resposta (o painel de 13 semanas avisa quando o total é maior que 0) e 7 colunas `cp_vencido_fora_*` no `fin_projecao_snapshots` (`db/2026-11-14-fin-projecao-snapshots-cp-vencido.sql`, um único escritor, que é o cron). NULL quer dizer não medido (snapshot anterior). Os 3 cenários repetem a mesma exposição, então a série lê o `realista`.
+- **Prova:** com e sem os CP vencidos, as semanas são idênticas (`cp-vencido-fora_test.ts`, falsificado). Main e branch dão respostas e as 15 escritas idênticas fora do campo novo. A migration foi provada em PG17 com 3 sabotagens.
+- **Medido em 14/11 (mesmo predicado):** oben 164 títulos e R$ 687.207,50; colacor 184 e R$ 337.742,94; colacor_sc 91 e R$ 125.026,33. A colacor e a colacor_sc também têm o buraco.
+- **Re-medir pelo snapshot:** `select company, cp_vencido_fora_qtd, cp_vencido_fora_total, cp_vencido_fora_mais_antigo from fin_projecao_snapshots where cenario = 'realista' and cp_vencido_fora_qtd is not null order by snapshot_at desc limit 3;`
