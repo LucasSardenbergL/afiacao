@@ -9,6 +9,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Bar, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { formatBRL, formatSemana } from '@/lib/financeiro/cashflow-format';
 
+/** YYYY-MM-DD → DD/MM/AAAA, sem passar por Date (sem fuso). */
+function formatDataBR(iso: string): string {
+  const [aa, mm, dd] = iso.split('-');
+  return `${dd}/${mm}/${aa}`;
+}
+
 export function Fluxo13Semanas() {
   const { activeCompany } = useCompany();
   const [cenario, setCenario] = useState<Cenario>('realista');
@@ -34,6 +40,7 @@ export function Fluxo13Semanas() {
     ? FAIXAS_ORDEM.some(f => curvas[f] && curvas[f].confianca === 'baixa')
     : false;
   const temPonte = (data.apos_horizonte ?? 0) > 0 || (data.ar_impaired ?? 0) > 0;
+  const cpVencido = data.cp_vencido_fora_projecao ?? null;
 
   return (
     <div className="space-y-4">
@@ -51,6 +58,21 @@ export function Fluxo13Semanas() {
       {data.confianca_dados?.saldo_inicial && (
         <div className="rounded-md border border-status-warning-fg/30 bg-status-warning-bg px-3 py-2 text-xs text-status-warning">
           ⚠ {data.confianca_dados.saldo_inicial}
+        </div>
+      )}
+
+      {/* Engine v2.4: CP vencido antes da segunda corrente não cai em semana nenhuma — as saídas abaixo
+          NÃO o incluem, por decisão (14/11/2026) até a conferência título a título. Só avisa com
+          total > 0; ausente/null (edge anterior) não afirma zero nem aviso. */}
+      {cpVencido && cpVencido.total > 0 && (
+        <div
+          data-testid="cp-vencido-fora-projecao"
+          className="rounded-md border border-status-warning-fg/30 bg-status-warning-bg px-3 py-2 text-xs text-status-warning"
+        >
+          ⚠ {formatBRL(cpVencido.total)} em {cpVencido.qtd} {cpVencido.qtd === 1 ? 'título' : 'títulos'} de contas a pagar
+          vencidos antes desta semana
+          {cpVencido.vencimento_mais_antigo && <> (o mais antigo vence em {formatDataBR(cpVencido.vencimento_mais_antigo)})</>}
+          {' '}— fora da projeção — conferência pendente.
         </div>
       )}
 

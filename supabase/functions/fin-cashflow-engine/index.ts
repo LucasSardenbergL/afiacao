@@ -40,6 +40,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 // PME honesto (2026-10-18): estoque = inventário manual recente OU estoque de GIRO do Omie
 // (sem imobilizado/uso e consumo); CMV = 12 meses fechados exigidos. Ausente → null + motivo.
 import { calcularPme, cmvTtmFechado, colunasSerieEstoque, resolverEstoque, type EstoqueOmie } from "./estoque-pme.ts";
+import { colunasCpVencidoFora, medirCpVencidoForaProjecao, type CpVencidoForaProjecao } from "./cp-vencido.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -984,6 +985,9 @@ type ResultadoSemanas = {
   semanas: Semana[];
   apos_horizonte: number; // R$ esperado a entrar DEPOIS das 13 semanas (não vira caixa projetado)
   ar_impaired: number;    // R$ de perda esperada sobre o CR aberto ((1 − taxa) × saldo)
+  // v2.4: CP aberto vencido antes da segunda corrente — fora de TODAS as semanas. Só medida: não
+  // entra em saída nem em saldo até a conferência (decisão do founder, 14/11/2026). Ver cp-vencido.ts.
+  cp_vencido_fora: CpVencidoForaProjecao | null;
 };
 
 function gerarSemanas(
@@ -1101,7 +1105,10 @@ function gerarSemanas(
     saldoAtual = saldo_final;
   }
 
-  return { semanas, apos_horizonte, ar_impaired };
+  // Com o MESMO `semanaInicio`/`hoje` do laço acima (complemento exato do filtro de CP). Só medida.
+  const cp_vencido_fora = medirCpVencidoForaProjecao(dados.cps, semanaInicio, hoje, isOpenTitleStatus);
+
+  return { semanas, apos_horizonte, ar_impaired, cp_vencido_fora };
 }
 
 type NCG = {
@@ -1478,7 +1485,7 @@ async function calcularComDados(
 ) {
   const taxas = calcularTaxasHistoricas(dados.crs);
   const premissas = aplicarCenario(taxas, cenario, dados.config, dados.curvas_aging);
-  const { semanas, apos_horizonte, ar_impaired } = gerarSemanas(dados, premissas, horizon);
+  const { semanas, apos_horizonte, ar_impaired, cp_vencido_fora } = gerarSemanas(dados, premissas, horizon);
   const ncg = calcularNCG(dados);
   // Fase 3 (B2): saída operacional projetada do horizonte → dias_cobertura.
   const saidasHorizonte = semanas.reduce((s, w) => s + w.total_saidas, 0);
@@ -1535,6 +1542,9 @@ async function calcularComDados(
         // marca subtotal. 1 writer: este cron. Não em `premissas` (jsonb multi-chave, sinal money-path).
         // Fora de faixa vira ausência ANTES do INSERT: o CHECK da tabela nunca derruba o snapshot.
         ...colunasSerieEstoque(dados),
+        // v2.4: CP vencido fora da projeção em colunas DEDICADAS (db/2026-11-14-fin-projecao-snapshots-cp-vencido.sql), 1 writer:
+        // este cron. Só medida — o `dados` (semanas) acima não muda. Exige a migration aplicada ANTES.
+        ...colunasCpVencidoFora(cp_vencido_fora),
       }),
     );
   }
@@ -1617,6 +1627,8 @@ async function calcularComDados(
     apos_horizonte,
     ar_impaired,
     curvas_aging: dados.curvas_aging,
+    // v2.4: CP aberto vencido antes da segunda corrente, FORA da projeção (o painel avisa quando > 0).
+    cp_vencido_fora_projecao: cp_vencido_fora,
     // Degradação honesta: leitura que falhou mas não derruba o cálculo entra aqui com o
     // motivo (fonte + código). Vazio = nenhuma degradação. O que NÃO pode virar zero
     // lança e não chega a este ponto — a resposta 200 nunca carrega número fabricado.

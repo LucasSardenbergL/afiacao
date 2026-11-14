@@ -65,6 +65,14 @@ export type CashflowResult = {
   // `saldo_inicial`: não-null quando alguma conta entrou com saldo DATADO (extrato que falhou) —
   // as semanas partem dele. Também está em `motivos`.
   confianca_dados?: { motivos: string[]; saldo_inicial?: string | null };
+  // Engine v2.4: CP aberto vencido antes da segunda corrente, FORA de todas as semanas (só medida —
+  // não entra em saldo até a conferência). Ausente (edge anterior) ou null = não medido: não é zero.
+  cp_vencido_fora_projecao?: {
+    qtd: number;
+    total: number;
+    vencimento_mais_antigo: string | null;
+    faixas: { ate_30: number; de_31_a_60: number; de_61_a_180: number; acima_180: number };
+  } | null;
   // Onda 2: ponte de horizonte + curvas de aging calibradas (timing + confiança)
   apos_horizonte?: number;
   ar_impaired?: number;
