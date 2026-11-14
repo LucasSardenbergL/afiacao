@@ -946,3 +946,18 @@ criasse a divergência, e ninguém voltou a ela depois da 5.2.
   `limpeza-fonte` reprovava 7/71 linhas de código).
 - **Deploy:** `sayerlack-importar-pedido-portal` (v1.14-condicoes-opcoes-completas) e
   `sayerlack-varrer-pedidos-portal` (só fingerprint, `_shared` comum). Nenhuma migration e nenhum Publish.
+
+## 2.6 — de-para das condições: fechado sem mapear o "(C)" (2026-11-14)
+
+- **Inventário** (evidência 21, 13/11, v1.14, com as 163 opções do portal):
+  - **Em uso:** só "70 - 7 DIAS", em 4 de 4 leituras com condição. Ela vai para **A07 "Para 7 dias"**, o único
+    código do catálogo OBEN para 7 dias. Os 6 pedidos importados desde 11/11 saíram com A07.
+  - **Os códigos "(C)"** (A84 13 d, A30 30 d, B23 4 d, D43 6 d, V06 30/60/75) não recebem nenhuma opção do portal
+    de forma simples.
+  - **As opções de 30 dias do portal são todas especiais:** 300 BNDES, 301 fora dezena, 304 3 irmãos, e as mistas
+    com entrada 9953, 9955, 9958 e 9971.
+  - **30 dias simples** também existe sem "(C)" no catálogo: T54 "Para 30 dias".
+- **Resíduo:** a única linha de `sayerlack_condicao_portal_de_para` ("30 DIAS"→T54) nunca casa com texto do portal,
+  que usa o formato "NN - …". Fica como está porque é inofensiva. O plano citava "→A30", o que estava desatualizado.
+- **Decisão do founder:** não mapear o "(C)" agora. Condição que não casa continua recusada com IP007, com a
+  condição lida na mensagem (fail-closed), e cada caso concreto é decidido quando aparecer.

@@ -248,7 +248,7 @@ Não reapresentei como novidades os contratos compostos, o bloqueio do default �
 **2) O que ainda falta do plano**
 
 > ⚠️ **Retrato de 2026-11-08, ANTES das entregas.** Os FALTA/PARCIAL abaixo não são o estado atual: conferido contra a
-> main em 2026-11-10, tudo foi entregue (ver §Andamento), exceto o **2.6** — falta o inventário reconciliado das
+> main em 2026-11-10, tudo foi entregue (ver §Andamento), exceto o **2.6** (✅ fechado em 2026-11-14, ver a linha 2.6 abaixo) — faltava o inventário reconciliado das
 > condições do portal, que depende do significado do "(C)" (🧭 founder; até lá vale o fail-closed IP007). O 1.4 ficou
 > como sensor no card (6.8), sem alerta no `data_health`, como decidido acima.
 
@@ -265,7 +265,7 @@ Não reapresentei como novidades os contratos compostos, o bloqueio do default �
 | **2.3** Orientação e abrir pedido | **FEITO** | Mensagem de PO manual: `I:451`; link: `UI/importar-portal.ts:59`. | — |
 | **2.4** CP006 acionável | **PARCIAL** | Informa NCM e procedimento (`L:245`), mas aponta para runbook inexistente (`L:252`). | P2/P |
 | **2.5** Ledger de tentativas | **FEITO** | Abertura, origem e fechamento: `I:363`, `I:619`, `I:645`. É best-effort; recusas de entrada anteriores à abertura ficam fora. | — |
-| **2.6** De-para explícito | **PARCIAL** | Tradutor e tabela existem; única semente é `30 DIAS → A30`: `M2:42`, `M2:75`. Não há inventário reconciliado de todas as condições. | P1/M |
+| **2.6** De-para explícito | **FECHADO (2026-11-14)** | Inventário real (163 opções do portal, v1.14): a única condição em uso é "70 - 7 DIAS" → A07, sem ambiguidade. Nenhuma opção cai nos códigos "(C)" (A84/A30/B23/D43/V06). O founder decidiu não mapear o "(C)": condição nova segue recusada com IP007. | — |
 | **2.7** Resolver pendência imediatamente | **FEITO** | PO confirmado resolve pendência em `I:390`, `I:398`, `I:425`. | — |
 | **3.1** Zero exige prova | **FEITO** | `R:425`, `R:430`: zero só passa com total anunciado zero. | — |
 | **3.2** Total e `info_portal` | **FEITO** | Fontes ampliadas: `V:198`, `V:203`; consistência em `R:392`. | — |
