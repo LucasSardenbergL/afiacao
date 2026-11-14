@@ -78,7 +78,7 @@ function posseIndeterminada(detalhe: string): Error {
 }
 
 /** Linhas da RPC → livre (null) ou o nome do dono alheio. Qualquer forma fora do contrato LANÇA (nunca "livre"). */
-export function posseDeOutro(documento: string, data: unknown): { donoNome: string | null } | null {
+function posseDeOutro(documento: string, data: unknown): { donoNome: string | null } | null {
   if (!Array.isArray(data)) throw posseIndeterminada("a leitura não devolveu uma lista");
   if (data.length === 0) return null;
   // Índice único parcial (cnpj) WHERE encerrado_em IS NULL: 2+ posses abertas do mesmo lead é contrato quebrado.
@@ -119,7 +119,7 @@ export interface RecusaRadar {
 }
 
 /** Resposta de REGRA ao navegador. O `error` é o que um front sem o motivo no vocabulário mostra (build velho). */
-export function respostaRecusaRadar(v: { motivo: MotivoInelegivelRadar; donoNome?: string | null }): RecusaRadar {
+function respostaRecusaRadar(v: { motivo: MotivoInelegivelRadar; donoNome?: string | null }): RecusaRadar {
   if (v.motivo === "posse_de_outro") {
     const quem = v.donoNome ?? "outro vendedor";
     return {

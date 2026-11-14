@@ -38,7 +38,7 @@ const MOTIVOS_INELEGIVEL = new Set<string>(Object.keys(TEXTO_INELEGIVEL));
 
 const NOME_DONO_MAX = 200;
 /** `dono_nome` da recusa por posse: texto não vazio e curto, senão null (o texto diz "outro vendedor"). */
-export function nomeDonoDaResposta(v: unknown): string | null {
+function nomeDonoDaResposta(v: unknown): string | null {
   if (typeof v !== 'string') return null;
   const t = v.trim();
   return t.length > 0 && t.length <= NOME_DONO_MAX ? t : null;
