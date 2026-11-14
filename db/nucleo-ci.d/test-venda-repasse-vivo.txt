@@ -1,0 +1,5 @@
+# Repasse só em demanda viva (20261113213000, rodada 2 Entrega 5): parado e sem cadência sem sugerido/valor e com
+# a aprovação recusada; total do painel só do vivo; ordem por compra recente; encaminhamento do parado à lista da
+# farmer; sensor do repasse aprovado (razão ao preço novo, perda de volume × ganho com linha de base congelada).
+# Aplica a cadeia do repasse SEM sabotagem e sabota só a cópia da migration nova.
+db/test-venda-repasse-vivo.sh              47  falsificar=19

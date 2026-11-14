@@ -387,3 +387,41 @@ não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor únic
 **Prova**: `db/test-venda-resumo-email.sh` (72 asserts, 20 sabotagens no `--falsificar`, `LC_ALL=C` e `pt_BR.UTF-8`).
 
 **No ar (13–14/11):** migrations aplicadas por `db:aplicar` (recibos #1108 e #1110; a 1ª foi renomeada de `…110100` para `…110200` porque colidia com o Radar O3b). Edge `dispatch-notifications` `v1.3-resumo-venda-pixel` deployada pelo MCP (8/8 hashes, sensor de edição `SEM_EDICAO`) e atestada no ledger às 00:30Z (`CONFERE`). Publish: o bundle servido já tinha a rota `meu-dia/abrir`. E-mail de teste (`venda_resumo_preparar('2026-11-13', <master>)`): 2 alertas (6 e 5 oportunidades), nenhuma menção a custo, saudações "Bom dia!" / "Bom dia, Regina!". Despacho pelo cron */30: os 2 `notificado` às 01:00:38Z. Um pixel gravou `aberto_em` **3 s** depois do envio — pré-carga de imagem do provedor, não leitura: confirma que abertura é sinal fraco e não entra no critério.
+
+## Venda por cliente R2 · Entrega 5 — repasse só em demanda viva (2026-11-13)
+
+- **Decisão** (rodada 2 aprovada pelo founder em 12/11 + parecer Codex): anualizar a cadência de item PARADO é
+  receita imaginária; parado é recompra perdida/reativação, não preço. Migration `20261113213000` (aplicada pela
+  sessão via `db:aplicar`, recibo #1119; validada por `psql-ro` com `db/validar-venda-repasse-vivo.sql` → ✅).
+- **Régua de "vivo" = a vigente** (`private._venda_repasse_situacao`, não recriada): `comprando` = dias sem
+  comprar ≤ 2× a cadência. Medido: comprando tem `due_ratio` ≤ 1,95, parado ≥ 2,11. Parado, substituído e
+  **sem cadência** saem do repasse: sem sugerido, sem valor anual e a aprovação é RECUSADA no servidor
+  (`REPASSE_PARADO` / `REPASSE_SEM_CADENCIA`, 22023). Reverte a decisão de 09/11 ("parado e sem cadência seguem
+  aprováveis"); sem cadência entrou por precisão > recall (Codex: ausência de prova não autoriza repasse).
+- **Recuperável antes × depois** (prod, 13/11, mesma base de candidatos):
+
+  | situação | itens | antes (R$/ano) | depois (R$/ano) |
+  | --- | --- | --- | --- |
+  | comprando (vivo) | 26 (16 com sugerido) | 1.523,91 | **1.523,91** |
+  | parado | 50 (31 com sugerido) | 24.244,49 | — (0 sugeridos) |
+  | substituído | 6 | — | — |
+  | **total do painel** | 82 | **25.768,40** | **1.523,91** |
+
+  (O R$ 35,0 mil/ano citado na abertura da rodada é de uma data anterior; os 61 parados de então viraram 50.)
+- **Encaminhamento do parado:** o gerador JÁ o cobre — `atrasado` = 2×dias ≥ 3×cadência, sem teto; medido 56 de 57
+  parados sugeridos como recompra ativa nos 7 dias anteriores (o restante sem farmer na carteira). Não se mexeu no
+  gerador; a lista mostra a prova (`recompra_sugerida_em`: 49 de 50 parados na lista da farmer em 13/11). Ressalva
+  Codex: fora da rota, a seleção é limitada por `teto_maiores_atrasos` — 56/57 não garante cobertura futura.
+- **Ordem:** vivo primeiro pela compra mais recente (data DESC, não `due_ratio`), depois valor.
+- **Sensor** `venda_repasse_sensor()` (master + cap de custo), por versão aprovada: vendido ao preço novo ÷ elegível
+  e critério de desligar (perda de volume ≥ ganho de preço, base tributária igual). Linha de base CONGELADA na
+  aprovação (4 colunas novas em `venda_repasse_aprovado`; a cadência atual absorveria a queda que se quer medir).
+  Janela = (dia da aprovação, menor entre revogação, validade e hoje]; ganho com quantidade sem preço = NULL; precisão
+  cheia no cálculo; perda 0 não "atinge". Rótulo é "critério atingido — revisar", nunca causal; Revogar mora também
+  no sensor. Em 13/11: 0 aprovações → sensor vazio (1ª leitura útil = 1 cadência após a 1ª aprovação).
+- **Prova:** `db/test-venda-repasse-vivo.sh` (núcleo, fragmento próprio) — 47 asserts, 19 sabotagens vermelhas com
+  conjunto exato e controle verde, nos DOIS locales. Codex 2× (desenho: trava sem cadência, linha de base congelada,
+  janela; código: 5 P2 — ganho desconhecido virava 0, arredondamento intermediário invertia o veredito, revogar no
+  sensor, rótulos, tipo das colunas na PÓS — todos corrigidos).
+- **Deploy:** migration ✅ (sessão) · Publish = founder (a aba nova exige a migration — já aplicada; o front antigo
+  convive: parado aparece sem sugerido e o Aprovar dele é recusado pelo servidor).

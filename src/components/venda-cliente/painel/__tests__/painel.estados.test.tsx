@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { LinhaPainel, PainelVenda, CandidatoRepasse } from '@/lib/venda-cliente/painel';
+import type { LinhaPainel, PainelVenda, CandidatoRepasse, SensorRepasse } from '@/lib/venda-cliente/painel';
 
 /**
  * Estados que o founder não pode ler errado: "não consegui medir" no lugar de 0%, o aviso de que
@@ -15,6 +15,7 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: vi.fn(), fro
 
 let painelResposta: { data?: PainelVenda; isLoading: boolean; isError: boolean; error: unknown };
 let candidatosResposta: CandidatoRepasse[] = [];
+let sensorResposta: SensorRepasse[] = [];
 vi.mock('@/hooks/useVendaPainel', async (orig) => {
   const real = await orig<typeof import('@/hooks/useVendaPainel')>();
   return {
@@ -24,6 +25,7 @@ vi.mock('@/hooks/useVendaPainel', async (orig) => {
     useRepasseCandidatos: () => ({ data: candidatosResposta, isLoading: false, isError: false, error: null, refetch: vi.fn() }),
     useNomesCompradores: () => ({ data: new Map([['c1', 'Marcenaria Y'], ['c2', 'Marcenaria X']]) }),
     useRevogarRepasse: () => ({ mutate: vi.fn(), isPending: false }),
+    useRepasseSensor: () => ({ data: sensorResposta, isLoading: false, isError: false, error: null, refetch: vi.fn() }),
   };
 });
 
@@ -193,7 +195,7 @@ describe('DialogAprovarRepasse', () => {
     status_defasagem: 'defasado', motivo: null, abaixo_piso: false, ultimo_preco: 100,
     data_ultima_compra: '2026-09-01', preco_sugerido: 95, alta_custo_perc: 8, valor_anual_recuperavel: null,
     n_pedidos: 5, cadencia_dias: 30, qtd_sugerida: 4, situacao_compra: 'comprando', dias_sem_comprar: 50,
-    substituto: null, repasse_atual: null,
+    demanda_viva: true, recompra_sugerida_em: null, substituto: null, repasse_atual: null,
   };
 
   it('aprovar com preço abaixo do último bloqueia o botão', () => {
@@ -215,11 +217,11 @@ describe('AbaRepasses — situação de compra (20261031233000)', () => {
     status_defasagem: 'defasado', motivo: null, abaixo_piso: false, ultimo_preco: 100,
     data_ultima_compra: '2026-10-20', preco_sugerido: 110, alta_custo_perc: 8, valor_anual_recuperavel: 500,
     n_pedidos: 5, cadencia_dias: 14, qtd_sugerida: 4, situacao_compra: 'comprando', dias_sem_comprar: 11,
-    substituto: null, repasse_atual: null,
+    demanda_viva: true, recompra_sugerida_em: null, substituto: null, repasse_atual: null,
   };
   const substituido: CandidatoRepasse = {
     ...base, comprador_id: 'c1', omie_codigo_produto: 2, descricao: 'DILUENTE PU DFA.4128LT',
-    preco_sugerido: null, valor_anual_recuperavel: null, situacao_compra: 'substituido', dias_sem_comprar: 144,
+    preco_sugerido: null, valor_anual_recuperavel: null, situacao_compra: 'substituido', demanda_viva: false, dias_sem_comprar: 144,
     substituto: {
       omie_codigo_produto: 3, codigo: 'PRD03666', descricao: 'DILUENTE PU DFA.4080LT',
       primeira_compra: '2026-06-24', ultima_compra: '2026-10-27', dias_com_compra: 7,
@@ -246,7 +248,10 @@ describe('AbaRepasses — situação de compra (20261031233000)', () => {
   });
 
   it('sem cadência vai para o grupo próprio, não para "Segue comprando"', () => {
-    candidatosResposta = [base, { ...base, comprador_id: 'c1', omie_codigo_produto: 9, situacao_compra: null, dias_sem_comprar: 100 }];
+    candidatosResposta = [base, {
+      ...base, comprador_id: 'c1', omie_codigo_produto: 9, situacao_compra: null, demanda_viva: false,
+      preco_sugerido: null, valor_anual_recuperavel: null, dias_sem_comprar: 100,
+    }];
     render(
       <QueryClientProvider client={new QueryClient()}>
         <AbaRepasses disponivel hoje="2026-10-31" />
@@ -269,6 +274,94 @@ describe('AbaRepasses — situação de compra (20261031233000)', () => {
     const sub = grupo(/Substituído — não é repasse/);
     expect(within(sub).getByRole('button', { name: 'Revogar' })).toBeTruthy();
     expect(within(sub).queryByRole('button', { name: 'Alterar' })).toBeNull();
+  });
+});
+
+describe('AbaRepasses — só demanda viva (20261113213000)', () => {
+  const vivo: CandidatoRepasse = {
+    comprador_id: 'c2', empresa: 'oben', omie_codigo_produto: 1, descricao: 'LIXA VIVA',
+    status_defasagem: 'defasado', motivo: null, abaixo_piso: false, ultimo_preco: 100,
+    data_ultima_compra: '2026-11-09', preco_sugerido: 110, alta_custo_perc: 8, valor_anual_recuperavel: 1523.91,
+    n_pedidos: 5, cadencia_dias: 14, qtd_sugerida: 4, situacao_compra: 'comprando', dias_sem_comprar: 4,
+    demanda_viva: true, recompra_sugerida_em: null, substituto: null, repasse_atual: null,
+  };
+  const parado: CandidatoRepasse = {
+    ...vivo, comprador_id: 'c1', omie_codigo_produto: 2, descricao: 'LIXA PARADA', preco_sugerido: null,
+    valor_anual_recuperavel: null, situacao_compra: 'parado', demanda_viva: false, dias_sem_comprar: 40,
+    recompra_sugerida_em: '2026-11-12',
+  };
+
+  function grupo(titulo: RegExp) {
+    return screen.getByRole('heading', { name: titulo }).closest('section') as HTMLElement;
+  }
+  function renderAba() {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AbaRepasses disponivel hoje="2026-11-13" />
+      </QueryClientProvider>,
+    );
+  }
+
+  beforeEach(() => { sensorResposta = []; });
+
+  it('o potencial soma só o vivo; o parado aparece à parte, sem valor, como recompra perdida', () => {
+    candidatosResposta = [vivo, parado];
+    renderAba();
+    expect(screen.getByTestId('resumo-vivo')).toHaveTextContent(/R\$\s?1\.524/);
+    expect(screen.getByTestId('resumo-vivo')).toHaveTextContent('1 item vivos');
+    expect(screen.getByTestId('resumo-parado')).toHaveTextContent('1 item');
+    expect(screen.getByTestId('resumo-parado')).toHaveTextContent('1 já na lista da farmer');
+    expect(screen.getByTestId('resumo-parado')).not.toHaveTextContent(/R\$/);
+  });
+
+  it('parado NÃO oferece Aprovar e mostra que está na lista da farmer; o vivo oferece (detector)', () => {
+    candidatosResposta = [vivo, parado];
+    renderAba();
+    expect(within(grupo(/Segue comprando/)).getByRole('button', { name: 'Aprovar' })).toBeTruthy();
+    const p = grupo(/Possível recompra perdida/);
+    expect(within(p).queryByRole('button', { name: 'Aprovar' })).toBeNull();
+    expect(within(p).getByText('na lista da farmer em 12/11/26')).toBeTruthy();
+  });
+
+  it('vivos sem nenhum valor calculável: potencial "—", nunca R$ 0', () => {
+    candidatosResposta = [{ ...vivo, valor_anual_recuperavel: null }];
+    renderAba();
+    expect(screen.getByTestId('resumo-vivo')).toHaveTextContent('—');
+    expect(screen.getByTestId('resumo-vivo')).toHaveTextContent('1 sem valor (fora da soma)');
+    expect(screen.getByTestId('resumo-vivo')).not.toHaveTextContent(/R\$/);
+  });
+
+  it('sensor sem aprovação mostra o estado vazio', () => {
+    candidatosResposta = [vivo];
+    renderAba();
+    expect(screen.getByText('Nenhum repasse aprovado ainda')).toBeTruthy();
+  });
+
+  it('sensor com critério atingido pede revisão, mostra a razão ao preço novo e oferece Revogar no vigente', () => {
+    candidatosResposta = [vivo];
+    sensorResposta = [{
+      id: 's1', comprador_id: 'c2', omie_codigo_produto: 1, descricao: 'LIXA VIVA', preco_alvo: 120,
+      ultimo_preco_na_aprovacao: 100, aprovado_em: '2026-09-14T13:00:00+00:00', valido_ate: '2026-12-13',
+      revogado_em: null, vigente: true, dias_janela: 60, cadencia_na_aprovacao: 14, qtd_elegivel: 10,
+      qtd_ao_preco_novo: 5, qtd_sem_preco: 0, razao_preco_novo: 0.5, qtd_esperada: 42.86, ganho_preco: 180,
+      perda_volume: 985.8, criterio_desligar: 'atingido', motivo: null,
+    }];
+    renderAba();
+    const sec = screen.getByRole('heading', { name: /Repasses aprovados — sensor/ }).closest('section') as HTMLElement;
+    expect(within(sec).getByText('critério atingido — revisar')).toBeTruthy();
+    expect(within(sec).getByRole('button', { name: 'Revogar' })).toBeTruthy();
+    expect(within(sec).getByText('5 / 10')).toBeTruthy();
+    expect(within(sec).getByText('50%')).toBeTruthy();
+    expect(within(sec).queryByText('Nenhum repasse aprovado ainda')).toBeNull();
+  });
+});
+
+describe('mensagemErroRepasse — parado e sem cadência (20261113213000)', () => {
+  it('traduz as duas recusas novas', () => {
+    expect(mensagemErroRepasse({ message: 'REPASSE_PARADO: o cliente nao compra o SKU 1 ha 40 dias' }))
+      .toBe('O cliente parou de comprar este SKU (mais de 2× a cadência) — é recompra, não repasse.');
+    expect(mensagemErroRepasse({ message: 'REPASSE_SEM_CADENCIA: sem cadencia' }))
+      .toBe('Sem cadência de compra para provar que a demanda está viva — não é repasse.');
   });
 });
 

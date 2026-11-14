@@ -27501,6 +27501,7 @@ export type Database = {
         Returns: string
       }
       venda_repasse_candidatos: { Args: never; Returns: Json }
+      venda_repasse_sensor: { Args: never; Returns: Json }
       venda_resumo_abrir: { Args: { p_token: string }; Returns: Json }
       venda_resumo_painel: {
         Args: { p_ate: string; p_de: string }

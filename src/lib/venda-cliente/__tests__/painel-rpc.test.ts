@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Json } from '@/integrations/supabase/types';
-import { lerCandidatos, lerPainel } from '../painel-rpc';
+import { lerCandidatos, lerPainel, lerSensor } from '../painel-rpc';
 
 type Obj = { [k: string]: Json | undefined };
 
@@ -102,6 +102,8 @@ const candidato = (over: Obj = {}): Obj => ({
   cadencia_dias: 30,
   qtd_sugerida: 20,
   situacao_compra: 'comprando',
+  demanda_viva: true,
+  recompra_sugerida_em: null,
   dias_sem_comprar: 12,
   substituto: null,
   repasse_atual: null,
@@ -146,11 +148,12 @@ describe('lerCandidatos', () => {
 
   it('lê a situação de compra e o substituto', () => {
     const [c] = lerCandidatos([
-      candidato({ situacao_compra: 'substituido', substituto, preco_sugerido: null, valor_anual_recuperavel: null }),
+      candidato({ situacao_compra: 'substituido', substituto, preco_sugerido: null, valor_anual_recuperavel: null, demanda_viva: false }),
     ]);
     expect(c.situacao_compra).toBe('substituido');
     expect(c.substituto).toEqual(substituto);
-    expect(lerCandidatos([candidato({ situacao_compra: null })])[0].situacao_compra).toBeNull();
+    const semCad = candidato({ situacao_compra: null, demanda_viva: false, preco_sugerido: null, valor_anual_recuperavel: null });
+    expect(lerCandidatos([semCad])[0].situacao_compra).toBeNull();
   });
 
   it('situação desconhecida, ausente ou incoerente com o substituto LANÇA', () => {
@@ -159,8 +162,37 @@ describe('lerCandidatos', () => {
     expect(() => lerCandidatos([semSituacao])).toThrow(/sem "situacao_compra"/);
     expect(() => lerCandidatos([candidato({ situacao_compra: 'substituido' })])).toThrow(/incoerente com o substituto/);
     expect(() => lerCandidatos([candidato({ substituto })])).toThrow(/incoerente com o substituto/);
-    expect(() => lerCandidatos([candidato({ situacao_compra: 'substituido', substituto: { ...substituto, dias_com_compra: '7' } })]))
+    expect(() => lerCandidatos([candidato({ situacao_compra: 'substituido', demanda_viva: false, preco_sugerido: null, valor_anual_recuperavel: null, substituto: { ...substituto, dias_com_compra: '7' } })]))
       .toThrow(/substituto: "dias_com_compra" não é número/);
+  });
+
+  it('só a demanda viva é repasse (20261113213000): parado lê sem sugerido/valor e com a data da lista da farmer', () => {
+    const parado = candidato({
+      situacao_compra: 'parado', demanda_viva: false, preco_sugerido: null, valor_anual_recuperavel: null,
+      recompra_sugerida_em: '2026-11-12', dias_sem_comprar: 40,
+    });
+    const [c] = lerCandidatos([parado]);
+    expect(c.demanda_viva).toBe(false);
+    expect(c.recompra_sugerida_em).toBe('2026-11-12');
+    expect(lerCandidatos([candidato()])[0].demanda_viva).toBe(true);
+  });
+
+  it('fora da demanda viva com sugerido OU valor LANÇA (corpo antigo não entra na soma do painel)', () => {
+    const parado = { situacao_compra: 'parado', demanda_viva: false, preco_sugerido: null, valor_anual_recuperavel: null };
+    expect(() => lerCandidatos([candidato({ ...parado, preco_sugerido: 11.2 })])).toThrow(/fora da demanda viva com/);
+    expect(() => lerCandidatos([candidato({ ...parado, valor_anual_recuperavel: 840 })])).toThrow(/fora da demanda viva com/);
+    // detector: o mesmo parado sem sugerido nem valor é lido
+    expect(lerCandidatos([candidato(parado)])).toHaveLength(1);
+  });
+
+  it('demanda_viva incoerente com a situação ou ausente LANÇA', () => {
+    expect(() => lerCandidatos([candidato({ demanda_viva: false })])).toThrow(/demanda_viva incoerente com situacao_compra "comprando"/);
+    expect(() => lerCandidatos([candidato({ situacao_compra: 'parado', preco_sugerido: null, valor_anual_recuperavel: null })]))
+      .toThrow(/demanda_viva incoerente com situacao_compra "parado"/);
+    const { demanda_viva: _d, ...semViva } = candidato();
+    expect(() => lerCandidatos([semViva])).toThrow(/sem "demanda_viva"/);
+    const { recompra_sugerida_em: _r, ...semEnc } = candidato();
+    expect(() => lerCandidatos([semEnc])).toThrow(/sem "recompra_sugerida_em"/);
   });
 
   it('resposta que não é lista LANÇA', () => {
@@ -203,5 +235,36 @@ describe('lerPainel — parte herdada (sucessor declarado, 20261108010000)', () 
       .toThrow('venda_painel.linhas[0].herdadas: não é objeto');
     expect(() => lerPainel(painel({ linhas: [linha({ herdadas, taxa_ativa_propria: 0.5, ...proprias, base_sombra_propria: null })] })))
       .toThrow('venda_painel.linhas[0].base_sombra_propria: não é objeto');
+  });
+});
+
+const sensorItem = (over: Obj = {}): Obj => ({
+  id: 's1', comprador_id: 'c1', empresa: 'oben', omie_codigo_produto: 123, descricao: 'LIXA',
+  preco_alvo: 120, ultimo_preco_na_aprovacao: 100, aprovado_em: '2026-09-14T13:00:00+00:00', valido_ate: '2026-12-13',
+  revogado_em: null, vigente: true, dias_janela: 60, cadencia_na_aprovacao: 14, qtd_elegivel: 10,
+  qtd_ao_preco_novo: 10, qtd_sem_preco: 0, razao_preco_novo: 1, qtd_esperada: 42.86, ganho_preco: 180,
+  perda_volume: 985.8, criterio_desligar: 'atingido', motivo: null,
+  ...over,
+});
+
+describe('lerSensor (20261113213000)', () => {
+  it('lê a versão aprovada; razão e perda NULL são contrato', () => {
+    const [s] = lerSensor([sensorItem()]);
+    expect(s.criterio_desligar).toBe('atingido');
+    expect(s.razao_preco_novo).toBe(1);
+    const [i] = lerSensor([sensorItem({ razao_preco_novo: null, perda_volume: null, qtd_esperada: null,
+      criterio_desligar: 'indisponivel', motivo: 'sem_linha_de_base' })]);
+    expect(i.perda_volume).toBeNull();
+    expect(lerSensor([sensorItem({ ganho_preco: null })])[0].ganho_preco).toBeNull();
+    expect(i.motivo).toBe('sem_linha_de_base');
+  });
+
+  it('critério desconhecido, razão fora de [0,1], quantidade em texto ou chave ausente LANÇA', () => {
+    expect(() => lerSensor([sensorItem({ criterio_desligar: 'desligado' })])).toThrow(/criterio_desligar "desligado" desconhecido/);
+    expect(() => lerSensor([sensorItem({ razao_preco_novo: 1.5 })])).toThrow(/fora de \[0, 1\]/);
+    expect(() => lerSensor([sensorItem({ qtd_elegivel: '10' })])).toThrow(/"qtd_elegivel" não é número/);
+    const { ganho_preco: _g, ...semGanho } = sensorItem();
+    expect(() => lerSensor([semGanho])).toThrow(/sem "ganho_preco"/);
+    expect(() => lerSensor(null)).toThrow(/formato inesperado/);
   });
 });
