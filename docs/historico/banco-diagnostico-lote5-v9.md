@@ -8,10 +8,10 @@
 
 | Item | Veredito | Em uma linha |
 |---|---|---|
-| **§1 delta de 24 h** | 🔄 **T0 gravado; falta a T1** | T0 = **11/11 17:20:24 UTC**. **A T1 sai a partir de 12/11 17:21 UTC (14:21 em Brasília).** O número que decide a instância Mini ainda não existe: sem T1 não há baseline de dia inteiro |
-| **B4** índices da lista do Radar | **Recriar com `NULLS LAST`; não dropar** | O desencontro é a causa: o mesmo SELECT na ordem do índice vira `Index Scan` (custo 11 e 24 contra ~110 e ~103 mil). Sem o conserto, os presets *novas* e *estabelecidas* ordenam 250–325 mil linhas por página. Roteiro pronto em [radar-indices-lista-nulls-last.md](../runbooks/radar-indices-lista-nulls-last.md) (**founder**, SQL Editor) |
-| **B5** `cron.job_run_details` | **Nada a fazer agora** | Heap de 45 MB, 100% em cache: **0 bloco lido do disco** em 15 seq scans medidos. Os 5,7 GiB acumulados são histórico. Índice **não é possível** pelo SQL Editor (o dono é `supabase_admin`). Dos 8 corpos que citam a tabela, só **1 função** a lê de verdade (`get_carteira_saude`, de uma tela) |
-| **D15** promoção de catálogo do tint | **Não é problema de leitura** | 0,12 s, **0 bloco de temp relation lido ou escrito**, 0,83 MiB de WAL por promoção. O trabalho caro é a promoção de **fórmulas** (323 s no p50, 2 por dia), medida na T1 |
+| **§1 delta** | ✅ **T0 e T1 lidos** | Janela **11/11 17:20:24 → 14/11 00:49:42 UTC = 55,5 h** (a T1 foi lida depois do prazo: são **2 ciclos diários completos**, não 24 h). **12,5 GiB/dia** de blocos lidos fora do `shared_buffers` (533 MiB/h; hit 99,45%), **55% de `tint_*`**, 15% de `radar_*`. Nenhum job falhou nem estourou timeout na janela. É 2,3× a extrapolação da janela limpa (5,5 GiB/dia) e ~74% abaixo dos 48 GiB/dia pré-R2. Detalhe na §5 |
+| **B4** índices da lista do Radar | **Recriar com `NULLS LAST`; não dropar** | O desencontro é a causa: o mesmo SELECT na ordem do índice vira `Index Scan` (custo 11 e 24 contra ~110 e ~103 mil). Sem o conserto, os presets *novas* e *estabelecidas* ordenam 250–325 mil linhas por página. **Mas a T1 mostra a lista sem uso:** `idx_scan` +0 nos três índices `idx_radar_lista_*`, o `score` inclusive, em 55,5 h. Ganho condicional, **não urgente**. Roteiro pronto em [radar-indices-lista-nulls-last.md](../runbooks/radar-indices-lista-nulls-last.md) (**founder**, SQL Editor) |
+| **B5** `cron.job_run_details` | **Nada a fazer** | Heap de 45 MB. Em janela calma, 0 bloco lido em 15 seq scans; **na T1 (55,5 h) foram 40.312 blocos = 138 MiB/dia = 1,1% da leitura** (+176 seq scans, 76/dia), quando as rajadas expulsam a tabela do cache. Índice **não é possível** pelo SQL Editor (o dono é `supabase_admin`). Dos 8 corpos que citam a tabela, só **1 função** a lê de verdade (`get_carteira_saude`, de uma tela) |
+| **D15** promoção de catálogo do tint | **Não é problema de leitura; é ~1/3 do WAL** | 0,12 s, **0 bloco de temp relation lido ou escrito**, 0,83 MiB de WAL por promoção ⇒ 1.075 promoções na T1 ≈ 32% do WAL. O trabalho caro é a promoção de **fórmulas**: ~1,37 GiB de temp relation lidos e ~0,61 GiB escritos por run, e `tint_*` é 55% da leitura do banco |
 
 ## 1. O delta de 24 h (§1 e §4 do plano)
 
@@ -29,15 +29,9 @@
 
 `pg_stat_*` não zera em restart limpo (✔ `stats_reset` vazio): o cumulativo vale como ponto de partida para o delta, nunca como taxa.
 
-### Como fechar (quem retomar)
+### T1 lida (14/11 00:49:42 UTC)
 
-```bash
-cd /Users/lucassardenberg/Projetos/afiacao/.claude/worktrees/v9-diagnostico-banco-62d341/docs/historico/dados/banco-lote5-v9
-~/.config/afiacao/psql-ro -q -v ON_ERROR_STOP=1 -f leitura-24h.sql > leitura-T1.out; echo exit=$?; tail -1 leitura-T1.out
-python3 -I delta.py leitura-T0.out leitura-T1.out --descontar public.radar_empresas=187022
-```
-
-Depois ajuste `:t1` em [`t1-extras.sql`](dados/banco-lote5-v9/t1-extras.sql) (o `TS` do T1) e rode: dá as promoções por tipo, os runs de fórmulas e jobs com falha/timeout na janela. **Só vale com exit 0 e `#FIM-OK` nos dois.** Com a T1, preencher a §5 e responder à pergunta do Mini.
+A T1 saiu depois do prazo de 24 h: a janela é de **55,49 h (2,31 dias)**, com os dois ciclos completos de madrugada (purge do staging às 05:23, agregado do Radar às 06:35) dos dias 12 e 13. Os números por dia dividem por 2,31. Saídas cruas: [`leitura-T1.out`](dados/banco-lote5-v9/leitura-T1.out), [`delta-T0-T1.out`](dados/banco-lote5-v9/delta-T0-T1.out) (`delta.py` com `--descontar public.radar_empresas=187022`), [`t1-extras.out`](dados/banco-lote5-v9/t1-extras.out) e [`t1-tint-tamanhos.out`](dados/banco-lote5-v9/t1-tint-tamanhos.out); todas com exit 0 e `#FIM-OK`. Resultado na §5.
 
 ### O desconto que precisa constar (erro meu)
 
@@ -71,7 +65,7 @@ G e H são o contrafactual que o Codex pediu: **o mesmo SELECT, só trocando a o
 
 **Consequência:** cada página do preset *novas* lê o heap inteiro da `radar_empresas` (**93.511 páginas, 731 MB**; a tabela com índices tem 1.427 MB) e ordena 250–325 mil linhas de 808 bytes. O preset *estabelecidas* ordena 125–160 mil. A RPC nasceu em 03/11 (migration `20261103131500`, citada em `useRadarLista.ts`); antes a lista lia pelo PostgREST.
 
-**Veredito: recriar com `NULLS LAST`, não dropar.** Dropar tira ~101 MB de disco (não é memória: o parecer do Codex vale) mas deixa os dois presets lendo 731 MB por página. O custo de manter é escrita em cada carga mensal (o mesmo de hoje, porque os índices já existem). **Quanto isso pesa de verdade depende de quanto os presets são usados**, e isso só se vê no delta de 24 h (`radar_empresas` `seq_scan` e `idx_scan` dos três índices, no `delta.py`); com 1 usuário nos sensores, pode ser pouco. Por isso o conserto é de **baixo risco e ganho condicional**, não urgente. Não medi o tempo real (`ANALYZE` leria 731 MB e sujaria a T1); se o founder quiser o número, rodar **depois** da T1.
+**Veredito: recriar com `NULLS LAST`, não dropar.** Dropar tira ~101 MB de disco (não é memória: o parecer do Codex vale) mas deixa os dois presets lendo 731 MB por página. O custo de manter é escrita em cada carga mensal (o mesmo de hoje, porque os índices já existem). **Quanto isso pesa de verdade depende de quanto os presets são usados**, e isso só se vê no delta de 24 h (`radar_empresas` `seq_scan` e `idx_scan` dos três índices, no `delta.py`); com 1 usuário nos sensores, pode ser pouco. **A T1 respondeu: não há uso.** Em 55,5 h o `idx_scan` ficou em **+0 nos três** `idx_radar_lista_*` (o `score`, que casa com a query, inclusive): a lista do Radar não foi exercida na janela. Os `seq_scan` de `radar_empresas` (+8, 2 deles meus) vêm de outros leitores, não dos presets. Por isso o conserto é de **baixo risco e ganho condicional**, **não urgente**. Não medi o tempo real (`ANALYZE` leria 731 MB e sujaria a T1); se o founder quiser o número, rodar **depois** da T1.
 
 **Roteiro:** [`docs/runbooks/radar-indices-lista-nulls-last.md`](../runbooks/radar-indices-lista-nulls-last.md): pré-voo, `CREATE INDEX CONCURRENTLY` com nome novo (`_nl`), prova de que o plano usa o índice sem `Sort`, só então `DROP INDEX CONCURRENTLY` do antigo e `RENAME`; reversão. Um bloco por execução (`CONCURRENTLY` não roda em transação). **Não aplicado.**
 
@@ -95,9 +89,9 @@ G e H são o contrafactual que o Codex pediu: **o mesmo SELECT, só trocando a o
 
 **Medido:** amostra do contador a cada 5 s por 11,7 min ([`b5-amostra-seqscan.out`](dados/banco-lote5-v9/b5-amostra-seqscan.out)): `seq_scan` 1629 → 1644 (**+15**), `seq_tup_read` +1,8 M, `idx_scan` +0 e, no teste de 11 min da §1, **`heap_blks_read` +0 e 85.850 hits**. As varreduras **não** acompanham o marco dos crons de 5 min (nenhuma em :35:00; o último incremento antes é :34:11 e o seguinte :36:11), o que é coerente com o código: os watchdogs não leem a tabela. A amostra não cobre o marco de 30 min (:00/:30) nem o de 10 e 15 min de forma conclusiva. Caem em pares com ~10 s de intervalo, fora de padrão de cron. **Quem faz as outras não foi identificado:** `claude_ro` não vê `pg_stat_statements` (`extensions` negado) nem a `query` de outras sessões, e eu mesmo fiz ≥ 4 delas nesta sessão. A suspeita é de `psql-ro` de sessões-irmãs; é suspeita, não achado.
 
-**Leitura do número do plano:** os "1.563 seq scans e 744 mil blocos lidos (5,7 GiB)" são **acumulado de ≥ 11 dias, com cache frio nas primeiras horas após o restart de 31/10**: hoje a tabela inteira cabe e fica no cache (reads 0 contra 85.850 hits na janela medida). O custo de 15 varreduras a 5,7 mil blocos é **CPU/hit, não disco**. Os "0,5 GiB/dia" do plano **não se reproduzem agora**; a T1 confirma ou nega no dia inteiro (linha `cron.job_run_details` do `delta.py`).
+**Leitura do número do plano, com a T1:** os "1.563 seq scans e 744 mil blocos lidos (5,7 GiB)" são acumulado de ≥ 11 dias. Na janela calma (15 varreduras) a tabela esteve toda em cache (reads 0). **Na T1 de 55,5 h não foi zero**: `heap_blks_read` **+40.312** (315 MiB, **138 MiB/dia**), `seq_scan` **+176** (76/dia), `seq_tup_read` +23 M, `idx_scan` +0 e `n_tup_del` +32.265 (o purge diário). São **1,1%** da leitura do banco (0,5 GiB/dia do plano era a ordem de grandeza errada: o real é 0,13 GiB/dia). A tabela só vai ao disco quando uma rajada (promoção de fórmulas, staging) expulsa ela do `shared_buffers`.
 
-**Veredito: nada a fazer agora.** Opções, só se a T1 mostrar leitura física relevante: (a) encurtar a retenção dos dois ticks de 15 s via `cron.alter_job` do job 137 (o job é do `postgres`; `DELETE` sem `VACUUM` não encolhe o arquivo, mas reduz as linhas varridas e o autovacuum de hoje já roda diariamente); (b) trocar o LATERAL de `get_carteira_saude` por um único `DISTINCT ON`: 4 varreduras viram 1, mas é função de tela de baixo uso. Nenhuma justificada por número.
+**Veredito: nada a fazer** (1,1% da leitura, e índice não é opção do founder). Opções, se um dia pesar: (a) encurtar a retenção dos dois ticks de 15 s via `cron.alter_job` do job 137 (o job é do `postgres`; `DELETE` sem `VACUUM` não encolhe o arquivo, mas reduz as linhas varridas e o autovacuum de hoje já roda diariamente); (b) trocar o LATERAL de `get_carteira_saude` por um único `DISTINCT ON`: 4 varreduras viram 1, mas é função de tela de baixo uso. Nenhuma justificada pelo número da T1.
 
 ## 4. D15 — as 22 tabelas temporárias da promoção do tint
 
@@ -126,13 +120,28 @@ G e H são o contrafactual que o Codex pediu: **o mesmo SELECT, só trocando a o
 | transações | ~19 |
 | duração | 0,12 s (p50) |
 
-Extrapolando: ~555 promoções/dia ≈ **~460 MiB/dia de WAL** e ~370 mil linhas de catálogo criadas e apagadas. Os catálogos seguem pequenos e saudáveis (✔ [`d15-catalogo.out`](dados/banco-lote5-v9/d15-catalogo.out): `pg_attribute` 3,3 MB, 508 autovacuums; `pg_depend` 1,6 MB; `pg_class` 1,2 MB; `temp_buffers` 8 MB). A T1 dará a fração do WAL diário que isso representa (cumulativo: 25,9 GB).
+Extrapolando: ~555 promoções/dia ≈ **~460 MiB/dia de WAL** e ~370 mil linhas de catálogo criadas e apagadas. Os catálogos seguem pequenos e saudáveis (✔ [`d15-catalogo.out`](dados/banco-lote5-v9/d15-catalogo.out): `pg_attribute` 3,3 MB, 508 autovacuums; `pg_depend` 1,6 MB; `pg_class` 1,2 MB; `temp_buffers` 8 MB). Na T1: **1.075 promoções de `catalogs` × 0,83 MiB ≈ 892 MiB de 2.789 MiB de WAL = ~32% do WAL da janela** (1.206 MiB/dia no total).
 
-**Veredito:** o diagnóstico que o Codex reabriu (buffers locais) **fecha negativo para `catalogs`**: as temporárias são minúsculas, **não geram IO local**, a promoção leva 0,12 s, e o custo é só metadado e ~0,8 MiB de WAL. Não justifica refatorar (menos ainda em money-path). **O trabalho caro é a promoção de `formulas`** (323 s no p50, 2 por dia, lendo o staging de ~590 MB): o `pg_stat_io` de temp relation acumulou **3,3 M leituras (25,5 GiB) e 1,3 M escritas (10,2 GiB)**, que não podem vir das `catalogs`. Para atribuir a uma promoção de fórmulas, a T1 traz o delta de temp relation contra o número de runs de fórmulas da janela (`t1-extras.sql`); sem essa janela eu não invento o número por run. O staging inchado (T2/`VACUUM FULL`, founder) é o remédio já proposto para o custo de leitura dele.
+**Veredito:** o diagnóstico que o Codex reabriu (buffers locais) **fecha negativo para `catalogs`**: as temporárias são minúsculas, **não geram IO local**, a promoção leva 0,12 s, e o custo é só metadado e ~0,8 MiB de WAL. Não justifica refatorar (menos ainda em money-path). **O trabalho caro é a promoção de `formulas`** (323 s no p50, 2 por dia, lendo o staging de ~590 MB). Na T1 houve **3 promoções de fórmulas** (12/11 10:05, 13/11 10:09 e 11:21) e 1.075 de `catalogs` (que gastam ~0 de temp relation). O `pg_stat_io` de temp relation na janela: **526.494 leituras (4.113 MiB) e 234.012 escritas (1.828 MiB)**, ou seja, **~1,37 GiB lidos e ~0,61 GiB escritos por promoção de fórmulas**, assumindo que toda temp relation da janela é do tint (não há outro gerador conhecido; não separei). `temp_bytes` (sort/hash em arquivo): 2,5 GB na janela, 581 arquivos. As tabelas `tint_*` somaram **16,2 GiB = 55%** da leitura, e o `tint_staging_*` sozinho 5,8 GiB: o T2 (`VACUUM FULL` do staging, founder) continua sendo o remédio já proposto para esse pedaço.
 
 ## 5. Resultado da T1 e a decisão sobre a instância Mini
 
-**⏳ Pendente.** Preencher aqui, com a saída do `delta.py` e do `t1-extras.sql` colada (exit 0, `#FIM-OK`): janela exata; `blks_read` e MiB/dia, com o bruto e o descontado; `temp_bytes`; WAL/dia; temp relation por run de fórmulas; top 15 de `pg_statio` com `radar_contatos` e `radar_empresas`; `seq_scan` de `cron.job_run_details` e `radar_empresas`; jobs com falha/timeout.
+**Janela:** 11/11 17:20:24 → 14/11 00:49:42 UTC = **55,49 h**. Bruto 3.976.031 blocos; descontados 187.022 (minhas duas consultas em `radar_empresas`); **líquido 3.789.009 blocos = 29.602 MiB = 533 MiB/h = 12.803 MiB/dia (12,5 GiB/dia)**. `blks_hit` 679,6 M, **hit 99,446%**. Atenção ao denominador: é uma janela de 2,3 dias, com 3 runs de fórmulas (o normal são ~2 por dia: 12/11 à tarde não teve).
+
+| de onde vem a leitura (líquido) | MiB na janela | % | MiB/dia |
+|---|---:|---:|---:|
+| `tint_*` (promoção, staging, sync_runs, errors) | 16.189 | 54,6% | 7.002 |
+| `radar_*` | 4.580 | 15,5% | 1.981 |
+| `sales_orders` (2.320 seq scans) | 1.684 | 5,7% | 728 |
+| catálogos `pg_catalog` | 1.487 | 5,0% | 643 |
+| `net._http_response` | 507 | 1,7% | 219 |
+| `cron.job_run_details` | 321 | 1,1% | 139 |
+
+Top 15 por tabela: `tint_formulas` 4.278 MiB, `radar_empresas` 3.141 (descontado), `tint_formula_itens` 3.088, `tint_staging_formulas` 2.926, `sales_orders` 1.684, `tint_staging_formula_itens` 1.481, **`tint_sync_runs` 1.451**, `tint_staging_skus` 1.401, `radar_contatos` 1.042, `tint_sync_errors` 661, `net._http_response` 506, `fin_movimentacoes` 452, `pg_class` 418, `venda_items_history` 384, `venda_sugestao` 363. `radar_contatos`: 451 MiB/dia (o 19,6 MiB por rodada de expurgo × 24, como o plano previa). **Novo, fora do escopo:** `tint_sync_runs` tem **87 MB** e leu 1,45 GiB (~17 leituras do heap inteiro, 1,38 M `idx_scan`, 113.784 deletes): candidato a diagnóstico próprio, não investigado aqui.
+
+Outros contadores da janela: `temp_bytes` **1.041 MiB/dia** (2,5 GB, 581 arquivos); WAL **1.206 MiB/dia** (50 MiB/h; 12,8 M registros, 703 mil FPI); checkpointer 663 por tempo e 3 por demanda. `pg_stat_io` do cliente: `relation` normal 20,3 GiB, `bulkread` (seq scan) 6,7 GiB, temp relation 4,1 GiB lidos. **Jobs com falha ou timeout na janela: nenhum** (consulta a `cron.job_run_details` por `status <> 'succeeded'` voltou vazia, com exit 0 e `#FIM-OK`). O tick de promoção (job 187) gastou 799 s em 13.267 execuções, o mais longo com 309 s.
+
+**O que isso diz sobre os números do plano:** o plano extrapolou ~5,5 GiB/dia da janela limpa de 19 min; o dia inteiro leu **12,5 GiB/dia, 2,3× mais**, porque a janela limpa excluía justamente as rajadas do tint e do Radar (o Codex avisou). Contra os 48 GiB/dia de antes do R2, a leitura caiu ~74%. Mais da metade é o tint, não o Radar.
 
 Critério do v7 (a decisão é do founder): aviso de "high load", horas destacadas nos cards de CPU, Memory ou Disk, ou job falhando por timeout ⇒ **(a) Small**; nada disso ⇒ **(c) aceitar**. O delta de 24 h é evidência de carga de leitura, **não substitui** os cards do painel do Lovable. Bloco lido fora do `shared_buffers` também não é IO físico (cache do SO), e `track_io_timing` está off: sem tempo de IO medido, "MiB lidos" é teto, não latência.
 
@@ -141,4 +150,6 @@ Critério do v7 (a decisão é do founder): aviso de "high load", horas destacad
 - Não rodei `EXPLAIN ANALYZE` (leria 731 MB e contaminaria a T1) nem chamei função que grava.
 - Não criei índice no schema `cron` (a negativa vem do catálogo).
 - Não identifiquei as sessões que leem `cron.job_run_details` fora de cron.
-- A parte de WAL/temp relation **por run de fórmulas** depende da T1.
+- A atribuição da temp relation às promoções de fórmulas é por exclusão (não há outro gerador conhecido), não por medida direta por run.
+- A T1 foi lida 55,5 h depois do T0, não 24 h; as taxas por dia dividem por 2,31 e não separam dia útil de fim de semana (a janela vai de quarta 17:20 a sábado 00:49 UTC, e inclui a sexta inteira).
+- Não investiguei o `tint_sync_runs` (1,45 GiB lidos numa tabela de 87 MB).

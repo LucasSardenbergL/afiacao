@@ -1,0 +1,48 @@
+janela: 2026-11-11 17:20:24.746946 -> 2026-11-14 00:49:42.034016 UTC = 55.49 h
+(bruto: blks_read 3976031; descontado 187022 blocos de consultas do diagnóstico)
+pg_stat_database: blks_read 3789009 (29602 MiB, 533 MiB/h) | blks_hit 679551609 | hit% 99.446 | temp_bytes 2523609879 | temp_files 581 | xact 419476
+WAL: records 12796703 fpi 703498 bytes 2789 MiB (50.3 MiB/h)
+checkpointer: timed 663 req 3 buffers_written 665294
+
+pg_stat_io (delta, reads/writes/hits/evictions/extends, MiB lidos/escritos):
+  autovacuum worker    relation       normal     reads=7440 (58 MiB) writes=0 hits=3498169 evict=7312 ext=76
+  autovacuum worker    relation       vacuum     reads=320530 (2504 MiB) writes=43639 hits=913888 evict=70333 ext=0
+  background worker    relation       bulkread   reads=149549 (1168 MiB) writes=3 hits=9488 evict=192 ext=0
+  background worker    relation       normal     reads=19023 (149 MiB) writes=167 hits=98266 evict=19023 ext=0
+  background writer    relation       normal     reads=0 (0 MiB) writes=75446 hits=0 evict=0 ext=0
+  checkpointer         relation       normal     reads=0 (0 MiB) writes=665302 hits=0 evict=0 ext=0
+  client backend       relation       bulkread   reads=861159 (6728 MiB) writes=31 hits=99559 evict=2521 ext=0
+  client backend       relation       normal     reads=2599518 (20309 MiB) writes=5628 hits=678159573 evict=2605655 ext=7608
+  client backend       temp relation  normal     reads=526494 (4113 MiB) writes=234012 hits=5048507 evict=587772 ext=77166
+  walsender            relation       normal     reads=248 (2 MiB) writes=0 hits=30054 evict=248 ext=0
+
+Top 15 tabelas por blocos lidos fora do shared_buffers (heap+idx+toast):
+  soma de todas as tabelas: 3794334 blocos = 29643 MiB
+  public.tint_formulas                           4278.4 MiB (heap 397870 idx 149769 toast 0) hits 33072669 seq_scans 2
+  public.radar_empresas                          3141.1 MiB (heap 365989 idx 36068 toast 0) hits 3037868 seq_scans 8
+  public.tint_formula_itens                      3088.2 MiB (heap 311023 idx 84261 toast 0) hits 10293867 seq_scans 0
+  public.tint_staging_formulas                   2926.4 MiB (heap 362096 idx 12481 toast 0) hits 3179493 seq_scans 8
+  public.sales_orders                            1684.0 MiB (heap 200757 idx 14640 toast 149) hits 7954452 seq_scans 2320
+  public.tint_staging_formula_itens              1481.0 MiB (heap 152743 idx 36820 toast 0) hits 5244798 seq_scans 9
+  public.tint_sync_runs                          1451.2 MiB (heap 158766 idx 26993 toast 0) hits 1461086 seq_scans 3
+  public.tint_staging_skus                       1400.7 MiB (heap 104129 idx 75157 toast 0) hits 1019184 seq_scans 4
+  public.radar_contatos                          1042.4 MiB (heap 133072 idx 360 toast 0) hits 7688 seq_scans 56
+  public.tint_sync_errors                         661.3 MiB (heap 80273 idx 4377 toast 0) hits 229259 seq_scans 0
+  net._http_response                              506.1 MiB (heap 64147 idx 15 toast 621) hits 57017324 seq_scans 16809
+  public.fin_movimentacoes                        452.0 MiB (heap 50866 idx 6986 toast 0) hits 244649 seq_scans 3
+  pg_catalog.pg_class                             417.9 MiB (heap 1105 idx 52380 toast 0) hits 68530688 seq_scans 316077
+  public.venda_items_history                      384.1 MiB (heap 47181 idx 1978 toast 0) hits 134591751 seq_scans 100
+  public.venda_sugestao                           362.9 MiB (heap 43767 idx 2686 toast 0) hits 97203 seq_scans 17
+
+Índices do Radar / titular_mei (idx_scan delta):
+  public.idx_radar_lista_novas                 scans +0 (total 2) tamanho 43 MiB
+  public.idx_radar_lista_estab                 scans +0 (total 0) tamanho 58 MiB
+  public.idx_radar_lista_score                 scans +0 (total 146) tamanho 57 MiB
+  public.idx_radar_empresas_titular_mei_norm   scans +0 (total 0) tamanho 10 MiB
+  public.idx_radar_empresas_titular_mei        scans +0 (total 0) tamanho 25 MiB
+
+cron.job_run_details: heap_read 40312 idx_read 622 toast 0 hits 1034471 | seq_scan +176 seq_tup_read +23065275 idx_scan +0 ins +0 upd +0 del +32265
+
+public.radar_empresas: heap_read 553011 idx_read 36068 toast 0 hits 3037868 | seq_scan +8 seq_tup_read +2865105 idx_scan +371584 ins +0 upd +0 del +0
+
+public.radar_contatos: heap_read 133072 idx_read 360 toast 0 hits 7688 | seq_scan +56 seq_tup_read +3601024 idx_scan +112 ins +0 upd +0 del +0

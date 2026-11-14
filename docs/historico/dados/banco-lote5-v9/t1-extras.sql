@@ -4,7 +4,7 @@
 \pset tuples_only on
 \pset fieldsep ' | '
 \set t0 '2026-11-11 17:20:24+00'
-\set t1 '2026-11-12 17:21:00+00'
+\set t1 '2026-11-14 00:49:42+00'
 \echo '## promoções do tint na janela (por tipo)'
 SELECT sync_type, count(*), sum(total_records), sum(inserts) FROM public.tint_sync_runs WHERE promovido_em >= :'t0' AND promovido_em < :'t1' GROUP BY 1 ORDER BY 2 DESC;
 \echo '## runs de fórmulas na janela (início, registros, inserts, fim da promoção)'
