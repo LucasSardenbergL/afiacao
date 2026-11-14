@@ -536,6 +536,9 @@ roda o `mutation-check` (`mutcheck=false`): a rede de todos os contratos `.mut` 
   opostas e a distinção decide o que fazer (detalhe: `docs/historico/ci-validate-timeout-15min.md`).
 - Não deu tempo de esperar → entregue o link do run na mensagem de fecho como pendência com
   destino (o `schedule` diário das 09:17 UTC pega de qualquer forma, mas só no dia seguinte).
+- A sessão mergeou um conserto COMUM (main/CI vermelho para todos)? → re-empurre os PRs presos no
+  mesmo job, ou avise a sessão dona; `gh run rerun` reusa a `main` velha (`docs/agent/worktrees.md`
+  §Conserto comum mergeado — #3877: ~9 h de PRs parados sem ninguém re-empurrar).
 
 **Como separar as duas causas de `cancelled` — pergunte ao run, não ao seu palpite.** O
 discriminante é POSITIVO: **quantos steps chegaram a executar**.

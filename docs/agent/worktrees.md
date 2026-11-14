@@ -406,7 +406,26 @@ docs no meio do CI. Evidência em `docs/historico/disciplina-de-push.md`. Regra,
    empurre depois do verde (o auto-merge espera o `validate` de novo, mas sem ter jogado fora um
    run quase pronto).
 4. **Merge da `main` no branch:** só com conflito (`mergeStateStatus` DIRTY) ou dependência real
-   (o PR precisa de algo que acabou de mergear). "Ficar em dia" não é motivo: o squash já junta.
+   (o PR precisa de algo que acabou de mergear). "Ficar em dia" não é motivo: o squash já junta, e a
+   proteção da `main` é `strict:false` (não exige branch atualizado), então esse merge **só cancela
+   o run em voo**. Medido em 12–13/11: +8 min no #3873, +4 no #3880, +15 no #3868.
+5. **Não re-rode vermelho que também está vermelho na `main`.** Antes do `gh run rerun`, confira o
+   mesmo job no último run da `main` (`gh run list --branch main --workflow CI -L 3`). Vermelho lá
+   também = determinístico; o rerun gasta a parte inteira e volta vermelho. Espere o conserto comum
+   (ou faça-o) e siga a §Conserto comum mergeado, abaixo.
+
+### Conserto comum mergeado: re-empurre os PRs que ele destravou (2026-11-13)
+
+Quando um PR seu conserta algo **comum** (main ou CI vermelho para todos), o trabalho só termina
+quando os PRs presos por aquilo voltarem a rodar. O CI de um PR não reroda sozinho quando a `main`
+muda. Depois do #3877 (deadlock do PG 17.12, `provas-sql (10)` vermelho em todo PR com SQL por
+19,6 h), os PRs presos ficaram **~9 h** parados porque ninguém re-empurrou (#3874: o push seguinte
+veio 8h54 depois). Regra, sem máquina: assim que o conserto mergear, liste os PRs abertos
+(`gh pr list --state open`) e, para cada um com o **mesmo job** vermelho, faça um push novo:
+`git commit --allow-empty -m "ci: re-roda após <conserto>"` e `git push`. **`gh run rerun` não
+serve:** ele reusa o `github.sha` do evento original, ou seja, o merge commit com a `main` VELHA, e
+volta vermelho. Se o PR é de outra sessão, avise a dona (`SendMessage`) em vez de mexer no branch
+dela.
 
 ## Higiene de RAM/Node (M2 8GB satura; **swap em uso = RAM cheia**)
 
