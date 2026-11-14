@@ -29,6 +29,15 @@ A revisão foi feita sobre a main `25ba82997`. Cada item foi conferido contra a 
 - **O sensor de edição dá `EDICAO_DETECTADA` pelo `commit_sha` da resposta** mesmo quando o único commit do bot é a regeneração do `types.ts`, que é tolerada. Leia a linha dos commits: com 0 fora dos gerados e 36/36 hashes, nada foi editado à mão.
 - **O CI da main ficou vermelho** por `test-pre-anti-deriva-concorrencia` (deadlock 40P01 no PG 17.12, consertado no #3877). Os PRs ficaram BLOCKED. O caminho foi esperar o conserto e fazer `gh pr update-branch`, sem `--admin`.
 
-## Pendente de decisão do founder
+## Decidido depois: o lote pula lead em posse de outro vendedor (2026-11-14)
 
-- O lote do gestor deve pular lead em posse ativa de OUTRO vendedor? O Codex recomendou que sim, e hoje o lote não pula.
+O founder respondeu "Sim, pular". A regra entrou na edge `omie-vendas-sync` v1.40 (`radar-cadastro.ts`), com o front acompanhando.
+
+- **Onde vive**: no servidor, como motivo `posse_de_outro` do `RADAR_INELEGIVEL`. O `criar_cliente` passou a seguir a ordem de `criarClienteComRegraRadar`: lead elegível, depois a preparação (razão fiscal), depois a posse **imediatamente antes** do `IncluirCliente`, e só então a inclusão. É o único `IncluirCliente` da edge, e um teste Deno lê o `index.ts` para garantir isso.
+- **Escopo**: só o cadastro que não exige conversa, que é o do lote (`respeitarPosse = !exigirEmConversa`, derivado em `lerExigenciaRadar`). O build do lote que já está nos navegadores manda `exigir_em_conversa: false`, então a regra vale assim que a edge sobe, sem esperar o PWA. A ficha individual não mudou, porque o founder só decidiu o lote.
+- **Leitura da posse**: a RPC canônica `radar_atendimentos_ativos` com o JWT do chamador (`.eq('cnpj')` e `.limit(2)`). Não precisou de migration, a definição de "ativa" é a mesma da tela, e o `eh_meu` é calculado no banco. Posse desconhecida (erro, chamada sem usuário, forma estranha, 2+ linhas, outro CNPJ) **lança** `RADAR_POSSE_INDETERMINADA`: nada é criado e o item fica como falha retentável, nunca como "livre".
+- **Front**: o item vira `recusado` com `donoNome` e aparece como "pulado: em atendimento por <nome>". Não é pendência nem é retentado. O resumo do diálogo conta recusados e pulados. O evento `radar.lote_cadastrado_omie` ganhou `lote_total`, `lote_recusados` e `lote_pulados_posse`, todos com o denominador do lote inteiro, porque o `total` é o da execução.
+- **Residuais aceitos** (Codex P1, calibrados):
+  - O build velho do front não conhece o motivo e trata a recusa como falha retentável. A edge recusa de novo enquanto a posse estiver ativa, e o `error` já diz "em atendimento por <nome>; nada foi criado no Omie". Se a posse caiu antes da retentativa, o lead está livre e o cadastro é legítimo.
+  - Um leitor antigo do `localStorage` descarta o lote que tem o motivo novo. É a mesma classe de quando o `recusado` nasceu (#3866), e versionar a chave não ajuda o leitor antigo.
+- **Prova**: Deno com o fluxo real e só a I/O falsa (ordem das chamadas, zero `incluir` na recusa ou na posse indeterminada) e vitest com o hook real do lote. A falsificação teve 3 controles verdes (Deno em `C` e `pt_BR`, vitest) e 12/12 sabotagens vermelhas.

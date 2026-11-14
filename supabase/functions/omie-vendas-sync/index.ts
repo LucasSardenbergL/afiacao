@@ -2750,7 +2750,7 @@ Deno.serve(async (req) => {
     // Resolve userId quando vier JWT staff; cron/service_role passam sem user.
     let userId: string | null = null;
     // Client com o JWT do CHAMADOR (staff): lê o que depende de quem chama — a posse do Radar (`eh_meu` no banco).
-    let supabaseDoUsuario: ReturnType<typeof createClient> | null = null;
+    let supabaseDoUsuario: typeof supabaseAdmin | null = null;
     if (__auth.via === "staff" && authHeader?.startsWith("Bearer ")) {
       const supabase = createClient(
         Deno.env.get("SUPABASE_URL")!,
