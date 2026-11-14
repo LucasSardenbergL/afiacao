@@ -76,6 +76,10 @@ interface Cenario {
   vincular?: () => Resposta | "rede";
   /** RPC do 5.2 (default: o pedido do app bate com a leitura). */
   conferir?: () => Resposta | "rede";
+  /** sync_state de pedidos de compra OBEN (default: complete há 10 min = espelho fresco). */
+  sync?: () => Resposta;
+  /** Evidências ANTERIORES do protocolo (default: nenhuma = 1ª tentativa). */
+  anteriores?: () => Resposta;
 }
 
 function montar(c: Cenario) {
@@ -91,6 +95,8 @@ function montar(c: Cenario) {
       return { corpo: p ? [p] : [] };
     },
     "rest:purchase_orders_tracking": () => c.pos?.() ?? { corpo: [] },
+    "GET rest:sync_state": () => c.sync?.() ?? { corpo: { status: "complete", last_sync_at: new Date(Date.now() - 10 * 60_000).toISOString() } },
+    "GET rest:sayerlack_portal_evidencia": () => c.anteriores?.() ?? { corpo: [] },
     "PATCH rest:sayerlack_varredura_falha": () => c.pendencia?.() ?? { status: 204, corpo: null },
     "GET rest:sayerlack_varredura_falha": () => ({ corpo: [] }),
     "POST rest:sayerlack_varredura_falha": () => c.pendencia?.() ?? { status: 201, corpo: null },
@@ -585,4 +591,51 @@ Deno.test("C16: re-disparo de pedido já no app com condição ausente explica a
   igual([r.corpo.ok, r.corpo.motivo, r.corpo.causa_condicao, r.corpo.pedido_id], [false, "condicao_ilegivel", "fora_do_detalhe", 501], "resposta");
   igual(falso.de(DISPARO).length + falso.de("rpc:sayerlack_conferir_portal").length, 0, "sem conferência nem disparo");
   igual(String(r.corpo.mensagem).includes('"/login"'), true, "diz a página que abriu");
+});
+
+// Revisão final (Codex P1 + Fable P1, 2026-11-14): PO lançado à mão só aparece no espelho depois do sync. Com o espelho
+// velho, "não achei PO manual" não prova nada — recusa em vez de criar um 2º PO.
+const SYNC_VELHO = () => ({ corpo: { status: "complete", last_sync_at: new Date(Date.now() - 3 * 3600_000).toISOString() } });
+
+Deno.test("revisão final: re-disparo com espelho do Omie velho (>2 h) recusa sem disparar e mantém o #id", async () => {
+  const falso = montar({ porProtocolo: () => pedido(), porId: () => pedido(), sync: SYNC_VELHO });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.motivo, r.corpo.pedido_id], [false, "espelho_omie_defasado", 501], "resposta");
+  igual([falso.de(DISPARO).length, falso.de("rpc:sayerlack_conferir_portal").length], [0, 0], "zero conferência e zero disparo");
+});
+
+Deno.test("revisão final: re-disparo com sync que não terminou (status running) também recusa", async () => {
+  const falso = montar({
+    porProtocolo: () => pedido(), porId: () => pedido(),
+    sync: () => ({ corpo: { status: "running", last_sync_at: new Date().toISOString() } }),
+  });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.motivo], [false, "espelho_omie_defasado"], "resposta");
+  igual(falso.de(DISPARO).length, 0, "zero disparo");
+});
+
+Deno.test("revisão final: protocolo já tentado antes + espelho velho NÃO grava nem dispara", async () => {
+  const falso = montar({ porProtocolo: () => null, anteriores: () => ({ corpo: [{ id: 7 }] }), sync: SYNC_VELHO });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.motivo], [false, "espelho_omie_defasado"], "resposta");
+  igual([falso.de("rpc:sayerlack_importar_pedido_portal").length, falso.de(DISPARO).length], [0, 0], "zero gravação e zero disparo");
+});
+
+Deno.test("revisão final: protocolo já tentado antes + espelho fresco segue a importação normal", async () => {
+  let criado = false;
+  const falso = montar({
+    porProtocolo: () => null, anteriores: () => ({ corpo: [{ id: 7 }] }),
+    porId: () => (criado ? pedido({ id: 777, status: "enviado", omie_pedido_compra_id: "9001", omie_pedido_compra_numero: "PO-9001" }) : null),
+    disparo: () => { criado = true; return { corpo: { ok: true } }; },
+  });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.etapa, r.corpo.pedido_id], [true, "concluido", 777], "resposta");
+  igual(falso.de(DISPARO).length, 1, "um disparo");
+});
+
+Deno.test("revisão final: protocolo com menos de 6 dígitos é recusado na entrada", async () => {
+  const falso = montar({ porProtocolo: () => null });
+  const r = await importar({ protocolo: "21482" });
+  igual(r.corpo.ok, false, "recusa");
+  igual(falso.de(BROWSERLESS).length, 0, "zero portal");
 });

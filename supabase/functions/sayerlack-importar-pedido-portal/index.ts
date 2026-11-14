@@ -41,7 +41,7 @@ const SAYERLACK_PORTAL_URL = Deno.env.get("SAYERLACK_PORTAL_URL");
 const SAYERLACK_PORTAL_CLIENTE_CODIGO = Deno.env.get("SAYERLACK_PORTAL_CLIENTE_CODIGO");
 const BROWSERLESS_TOKEN = Deno.env.get("BROWSERLESS_TOKEN");
 
-const PROTOCOLO_RE = /^\d{3,12}$/;
+const PROTOCOLO_RE = /^\d{6,12}$/;
 /** Pedido já importado que ainda não virou PO pode ser re-disparado por aqui (retry do Omie). */
 const STATUS_REDISPARAVEIS = new Set(["aprovado_aguardando_disparo", "falha_envio"]);
 
@@ -76,9 +76,13 @@ export default async ({ page, context }) => {
     return allowed;
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Falha diz ONDE parou (caminho/título, sem query). O screenshot saiu: o Deno nunca o lia e ele gastava a folga final.
   const falha = async (erroTipo, erro, extra) => {
-    const screenshot = await page.screenshot({ type: 'jpeg', quality: 60, encoding: 'base64' }).catch(() => null);
-    return { data: Object.assign({ success: false, erroTipo, erro, trace }, extra || {}), type: 'application/json', screenshot };
+    const onde = await Promise.race([
+      page.evaluate(() => ({ caminho: String(location.pathname || '').substring(0, 120), titulo: String(document.title || '').substring(0, 80) })),
+      sleep(1000).then(() => null),
+    ]).catch(() => null);
+    return { data: Object.assign({ success: false, erroTipo, erro, onde, trace }, extra || {}), type: 'application/json' };
   };
 
   const fillInput = async (selector, value) => {
@@ -117,16 +121,26 @@ ${ABRIR_CONSULTA_PEDIDOS}
     if (filtro.ini !== String(protocolo) || filtro.fim !== String(protocolo)) {
       return await falha('FILTRO_NAO_APLICADO', 'Número do pedido não ficou no filtro', { filtro });
     }
+    // Sem a data desde 2020, vale o default do portal (último mês) e pedido antigo vira "não encontrado" falso.
+    if (filtro.emissao !== '2020-01-01') {
+      return await falha('FILTRO_NAO_APLICADO', 'Data de emissão inicial não ficou no filtro', { filtro });
+    }
     // Trocar o cliente pode disparar uma consulta própria do portal: deixa ela assentar para a resposta esperada
     // abaixo ser a do NOSSO clique, não a da troca de filtro.
     await sleep(1500);
     // Clica e espera a RESPOSTA da consulta (POST /order-viewer/form/list), com 1 nova tentativa se ela não sair,
     // em vez de desistir às cegas em 8 s de tabela vazia.
     const clicarEsperar = async (rotulo) => {
+      // Amarrada ao NOSSO nº (a troca de cliente dispara outra consulta) e só vale com HTTP 2xx (500 não é resposta).
       const resp = page.waitForResponse(
-        (r) => r.url().indexOf('/order-viewer/form/list') !== -1 && r.request().method() === 'POST',
+        (r) => {
+          if (r.url().indexOf('/order-viewer/form/list') === -1 || r.request().method() !== 'POST') return false;
+          const corpo = r.request().postData();
+          return !corpo || corpo.indexOf(String(protocolo)) !== -1;
+        },
         { timeout: budgetFor('resposta-' + rotulo, 60000) },
-      ).then((r) => ({ ok: true, status: r.status() })).catch((e) => ({ ok: false, erro: String((e && e.message) || e).substring(0, 120) }));
+      ).then((r) => ({ ok: r.status() >= 200 && r.status() < 300, status: r.status() }))
+        .catch((e) => ({ ok: false, erro: String((e && e.message) || e).substring(0, 120) }));
       await page.evaluate(clicarFiltrarDom);
       return await resp;
     };
@@ -145,16 +159,25 @@ ${ABRIR_CONSULTA_PEDIDOS}
 
     let consulta = { ok: false, headers: [], linhas: [], processando: false };
     const tFiltro = Date.now();
+    let estavel = false;
+    let voltas = 0;
+    let erroLeitura = null;
     for (let i = 0; i < 60; i++) {
+      voltas = i + 1;
       await sleep(500);
       budgetFor('poll-consulta', 1000);
-      consulta = await lerConsulta().catch(() => consulta);
+      consulta = await lerConsulta().catch((e) => { erroLeitura = String((e && e.message) || e).substring(0, 120); return consulta; });
       const achou = consulta.linhas.some((l) => Object.keys(l).some((k) => l[k] === String(protocolo)));
-      if (achou && !consulta.processando) break;
+      if (consulta.ok && achou && !consulta.processando) { estavel = true; break; }
       // A resposta já chegou: 4 s para o DataTables redesenhar; vazia depois disso é vazia de verdade.
-      if (Date.now() - tFiltro > 4000 && !consulta.processando && consulta.linhas.length === 0) break;
+      if (consulta.ok && Date.now() - tFiltro > 4000 && !consulta.processando && consulta.linhas.length === 0) { estavel = true; break; }
     }
-    trace.push({ step: 'consulta_lida', headers: consulta.headers, n_linhas: consulta.linhas.length, t: Date.now() - t0 });
+    trace.push({ step: 'consulta_lida', headers: consulta.headers, n_linhas: consulta.linhas.length, ok: consulta.ok,
+      processando: consulta.processando, estavel, voltas, erro: erroLeitura, t: Date.now() - t0 });
+    // Tabela que não estabilizou NÃO é "não encontrado" nem leitura válida (inclusive no só-situação): recusa, tente de novo.
+    if (!estavel) {
+      return await falha('CONSULTA_ILEGIVEL', 'A tabela da consulta não estabilizou (tente de novo)', { voltas, erro_leitura: erroLeitura });
+    }
     // Só situação (varredura, B3): a consulta basta — itens e detalhe não podem derrubar a gravação de um 6 já lido.
     if (somenteSituacao) {
       return { data: { success: true, consulta: { headers: consulta.headers, linhas: consulta.linhas }, itens: null, condicao: null, condicoes_opcoes: [], trace }, type: 'application/json' };
@@ -162,10 +185,13 @@ ${ABRIR_CONSULTA_PEDIDOS}
 
     // Itens: GET de leitura do próprio portal. Se vier vazio sem o pedido aberto, carrega a página de detalhe
     // (só GET — o que o founder faz à mão) e lê de novo. Nenhum clique na tela de detalhe.
-    const buscarItens = () => page.evaluate(async (nr) => {
+    const buscarItens = () => page.evaluate(async (nr, prazo) => {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), prazo);
       try {
         const r = await fetch('/order-creation/busca-itens-pedido/' + encodeURIComponent(nr), {
           credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
+          signal: ctrl.signal,
         });
         const txt = await r.text();
         let json = null;
@@ -173,8 +199,12 @@ ${ABRIR_CONSULTA_PEDIDOS}
         return { status: r.status, json, raw: json ? null : txt.substring(0, 300) };
       } catch (e) {
         return { status: 0, json: null, raw: String((e && e.message) || e) };
+      } finally {
+        clearTimeout(tm);
       }
-    }, protocolo);
+    }, protocolo, budgetFor('itens', 20000));
+    // Diagnóstico dos itens que NÃO vieram (HTML de login, JSON inválido, rede): curto e sem query.
+    const diagItens = (b) => (b && !b.json ? String(b.raw || '').substring(0, 120) : null);
     const temItens = (b) => !!(b && b.json && b.json.success === true && Array.isArray(b.json.itens) && b.json.itens.length > 0);
 
     // Tela de DETALHE: pelo CLIQUE no link do nº na linha da consulta (GET, só leitura) — o goto direto não chega ao
@@ -182,29 +212,34 @@ ${ABRIR_CONSULTA_PEDIDOS}
     // falhar de novo, o trace diz ONDE o robô estava (antes era cego: só 'condicao: null').
     const abrirDetalhe = async (via) => {
       const nav = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: budgetFor('detalhe-nav-' + via, 20000) }).catch(() => null);
-      const clicou = await page.evaluate(clicarDetalhePedidoDom, String(protocolo)).catch(() => false);
-      const respClique = clicou ? await nav : null;
-      let resp = respClique;
-      if (page.url().indexOf('/order-creation-form-edit/') === -1) {
+      // O clique navega: o evaluate pode LANÇAR (contexto destruído) tendo clicado. Lançou ⇒ espera a navegação antes de
+      // decidir pelo goto (o caminho provado quebrado), e o erro vai ao trace.
+      let erroClique = null;
+      const clicou = await page.evaluate(clicarDetalhePedidoDom, String(protocolo))
+        .catch((e) => { erroClique = String((e && e.message) || e).substring(0, 120); return null; });
+      let resp = clicou === false ? null : await nav;
+      const alvoDetalhe = '/order-creation-form-edit/' + String(protocolo) + '/';
+      if (page.url().indexOf(alvoDetalhe) === -1) {
         resp = await page.goto(portalUrl + '/order-creation-form-edit/' + encodeURIComponent(protocolo) + '/route/order-viewer',
           { waitUntil: 'domcontentloaded', timeout: budgetFor('detalhe-goto-' + via, 30000) });
       }
       // Espera o portal terminar de carregar opções e itens antes de ler o select (nunca ler a opção-padrão de passagem).
-      await page.waitForNetworkIdle({ idleTime: 750, timeout: budgetFor('detalhe-idle-' + via, 10000) }).catch(() => null);
+      const idleOk = await page.waitForNetworkIdle({ idleTime: 750, timeout: budgetFor('detalhe-idle-' + via, 10000) })
+        .then(() => true).catch(() => false);
       // C16: status e caminho FINAL (redirect para login/home aparece aqui), sem query.
-      trace.push({ step: 'detalhe_aberto', via, via_clique: clicou, status: resp ? resp.status() : null, caminho: (function() { try { return new URL(page.url()).pathname; } catch (e) { return null; } })(), t: Date.now() - t0 });
+      trace.push({ step: 'detalhe_aberto', via, via_clique: clicou, erro_clique: erroClique, idle_ok: idleOk, status: resp ? resp.status() : null, caminho: (function() { try { return new URL(page.url()).pathname; } catch (e) { return null; } })(), t: Date.now() - t0 });
     };
 
     let itens = null;
     const achouNaConsulta = consulta.linhas.some((l) => Object.keys(l).some((k) => l[k] === String(protocolo)));
     if (achouNaConsulta) {
       itens = await buscarItens();
-      trace.push({ step: 'itens_direto', status: itens.status, ok: temItens(itens), t: Date.now() - t0 });
+      trace.push({ step: 'itens_direto', status: itens.status, ok: temItens(itens), erro: diagItens(itens), t: Date.now() - t0 });
       if (!temItens(itens)) {
         await abrirDetalhe('itens');
         await sleep(1000);
         itens = await buscarItens();
-        trace.push({ step: 'itens_pos_detalhe', status: itens.status, ok: temItens(itens), t: Date.now() - t0 });
+        trace.push({ step: 'itens_pos_detalhe', status: itens.status, ok: temItens(itens), erro: diagItens(itens), t: Date.now() - t0 });
       }
     }
 
@@ -217,7 +252,18 @@ ${ABRIR_CONSULTA_PEDIDOS}
     if (achouNaConsulta && temItens(itens)) {
       if (page.url().indexOf('/order-creation-form-edit/') === -1) await abrirDetalhe('condicao');
       condicao = await page.waitForFunction(lerCondicaoSelecionadaDom, { timeout: budgetFor('condicao', 15000), polling: 250 }).then((h) => h.jsonValue()).catch(() => null);
-      trace.push({ step: 'condicao', condicao, t: Date.now() - t0 });
+      // A condição só vale lida na tela DESTE pedido e ESTÁVEL: uma 2ª amostra 1,2 s depois tem de repetir o texto (o
+      // portal pode mostrar uma seleção de passagem antes de aplicar a do pedido). Divergiu ou outra tela ⇒ sem condição
+      // (o Deno recusa; ausente nunca vira condição). Revisão final Codex+Fable, 2026-11-14.
+      const naTelaDoPedido = page.url().indexOf('/order-creation-form-edit/' + String(protocolo) + '/') !== -1;
+      let condicao2 = null;
+      if (condicao) {
+        await sleep(1200);
+        condicao2 = await page.evaluate(lerCondicaoSelecionadaDom).catch(() => null);
+      }
+      const condicaoEstavel = !!condicao && condicao2 === condicao && naTelaDoPedido;
+      trace.push({ step: 'condicao', condicao, condicao2, na_tela_do_pedido: naTelaDoPedido, estavel: condicaoEstavel, t: Date.now() - t0 });
+      if (!condicaoEstavel) condicao = null;
       // Lista de opções do select (só leitura): insumo do de-para condição do portal → Omie (D-2).
       condicoesOpcoes = await page.evaluate(lerCondicoesOpcoesDom).catch(() => []);
       // C16: sem condição, o retrato da tela vai para a evidência — 13 leituras recusaram sem dizer o que a tela tinha.
@@ -547,6 +593,16 @@ async function tratar(
           mensagem: mensagemNaoVinculado(protocolo, existente.id, poManual.numero_pedido ?? null, vinculo),
         });
       }
+      // Sem PO manual no ESPELHO: só vale se o espelho estiver fresco. PO lançado à mão depois do último sync seria
+      // invisível aqui e o re-disparo criaria um 2º PO (Codex P1 + Fable P1, revisão final 2026-11-14).
+      const sync = await syncPedidosCompras(db);
+      if (!sync.fresco) {
+        return json({
+          ok: false, etapa: "importacao", ja_existia: true, pedido_id: existente.id, protocolo, status: existente.status,
+          motivo: "espelho_omie_defasado", sync_pedidos_em: sync.em,
+          mensagem: mensagemEspelhoDefasado(protocolo, sync.em),
+        });
+      }
       redisparar = existente;
     }
 
@@ -755,6 +811,18 @@ async function tratar(
       });
     }
 
+    // Protocolo que já teve tentativa antes (o app pode ter orientado lançar à mão): o IP006 da RPC só enxerga PO
+    // manual que o sync já trouxe — com o espelho velho, recusa em vez de arriscar 2º PO (revisão final 2026-11-14).
+    if (await houveTentativaAnterior(db, protocolo, evid.evidencia_id ?? null)) {
+      const sync = await syncPedidosCompras(db);
+      if (!sync.fresco) {
+        return json({
+          ok: false, etapa: "importacao", protocolo, motivo: "espelho_omie_defasado", sync_pedidos_em: sync.em,
+          mensagem: mensagemEspelhoDefasado(protocolo, sync.em),
+        });
+      }
+    }
+
     // 3. Grava (tudo-ou-nada) com a prova de custo.
     const { data: rpcData, error: rpcErr } = await db.rpc("sayerlack_importar_pedido_portal", {
       p_protocolo: protocolo,
@@ -941,6 +1009,33 @@ async function fecharRegistro(
  * Grava a evidência (7.2) — INSERT-only na tabela imutável. Fail-open: a evidência é auditoria, nunca derruba nem
  * muda a importação; a falha fica no ledger (`evidencia_gravada: false`) e no log.
  */
+/** Espelho de POs do Omie "fresco" = último sync COMPLETE de pedidos de compra OBEN há menos de 2 h (mesmo teto do 7.1). */
+const SYNC_FRESCO_MS = 2 * 60 * 60 * 1000;
+async function syncPedidosCompras(db: Db): Promise<{ fresco: boolean; em: string | null }> {
+  const { data, error } = await db.from("sync_state").select("status, last_sync_at")
+    .eq("entity_type", "pedidos_compra").eq("account", "oben").maybeSingle();
+  if (error) throw new Error(`Leitura do sync de pedidos de compra: ${error.message}`);
+  const r = data as { status?: string | null; last_sync_at?: string | null } | null;
+  const em = r?.status === "complete" && r.last_sync_at ? r.last_sync_at : null;
+  const ms = em ? Date.parse(em) : NaN;
+  return { fresco: Number.isFinite(ms) && Date.now() - ms < SYNC_FRESCO_MS, em };
+}
+
+/** Já houve leitura deste protocolo ANTES da atual (evidência imutável)? Erro de leitura lança — nunca vira "não houve". */
+async function houveTentativaAnterior(db: Db, protocolo: string, evidenciaAtual: number | null): Promise<boolean> {
+  let q = db.from("sayerlack_portal_evidencia").select("id").eq("protocolo", protocolo);
+  if (evidenciaAtual !== null) q = q.lt("id", evidenciaAtual);
+  const { data, error } = await q.limit(1);
+  if (error) throw new Error(`Leitura das tentativas anteriores: ${error.message}`);
+  return Array.isArray(data) && data.length > 0;
+}
+
+function mensagemEspelhoDefasado(protocolo: string, em: string | null): string {
+  return `O pedido ${protocolo} já teve tentativa antes, e o espelho de pedidos de compra do Omie está sem sync recente ` +
+    `(${em ? "último: " + em : "sem sync completo"}). Se alguém lançou o PO à mão, ele ainda não apareceria aqui e ` +
+    `eu criaria um segundo. Espere o próximo sync de pedidos de compra e importe de novo.`;
+}
+
 async function gravarEvidencia(db: Db, linha: Record<string, unknown>): Promise<number | null> {
   try {
     // Codex P1: a evidência está ANTES da gravação da situação e do disparo — um INSERT pendurado não pode segurá-los.

@@ -17,7 +17,8 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
 /** v1.12 (2026-11-11, C16): retrato da tela sem condição na evidência + causa na recusa — docs/historico/sayerlack-condicao-ilegivel-c16.md */
 /** v1.13 (2026-11-11) — detalhe aberto pelo CLIQUE no link do nº (o goto direto não chegava; condição ilegível). */
 /** v1.14 (2026-11-11) — lê TODAS as opções de condição do portal (163; o teto 80 cortava o inventário do de-para). */
-export const VERSAO = "v1.14-condicoes-opcoes-completas";
+/** v1.15 (2026-11-14) — revisão final Codex+Fable: consulta/condição fail-closed, espelho do Omie fresco antes de re-tentar. */
+export const VERSAO = "v1.15-revisao-final";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
