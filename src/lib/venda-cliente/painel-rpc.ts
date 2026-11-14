@@ -8,7 +8,8 @@
 //     nunca um número fabricado.
 import type { Json } from '@/integrations/supabase/types';
 import type {
-  CandidatoRepasse, ContagemDesfecho, HerdadasLinha, LinhaPainel, PainelVenda, SituacaoCompraRepasse,
+  CandidatoRepasse, ContagemDesfecho, CriterioDesligar, HerdadasLinha, LinhaPainel, PainelVenda,
+  SensorRepasse, SituacaoCompraRepasse,
 } from './painel';
 
 type Obj = { [k: string]: Json | undefined };
@@ -238,6 +239,15 @@ function candidato(v: Json, i: number): CandidatoRepasse {
   if ((situacao === 'substituido') !== (sub !== null)) {
     throw new Error(`${onde}: situacao_compra "${situacao}" incoerente com o substituto`);
   }
+  // só a demanda viva é repasse (20261113213000): fora dela a função NÃO produz sugerido nem valor —
+  // se chegar, é corpo antigo/desconhecido e a tela não pode somá-lo ao recuperável
+  const viva = bool(o, 'demanda_viva', onde);
+  if (viva !== (situacao === 'comprando')) {
+    throw new Error(`${onde}: demanda_viva incoerente com situacao_compra "${situacao}"`);
+  }
+  if (!viva && (o.preco_sugerido !== null || o.valor_anual_recuperavel !== null)) {
+    throw new Error(`${onde}: item fora da demanda viva com preço sugerido ou valor anual`);
+  }
   return {
     comprador_id: str(o, 'comprador_id', onde),
     empresa,
@@ -255,6 +265,8 @@ function candidato(v: Json, i: number): CandidatoRepasse {
     cadencia_dias: numOuNulo(o, 'cadencia_dias', onde),
     qtd_sugerida: numOuNulo(o, 'qtd_sugerida', onde),
     situacao_compra: situacao as SituacaoCompraRepasse | null,
+    demanda_viva: viva,
+    recompra_sugerida_em: strOuNulo(o, 'recompra_sugerida_em', onde),
     dias_sem_comprar: numOuNulo(o, 'dias_sem_comprar', onde),
     substituto: sub && {
       omie_codigo_produto: num(sub, 'omie_codigo_produto', ondeSub),
@@ -277,4 +289,47 @@ function candidato(v: Json, i: number): CandidatoRepasse {
 export function lerCandidatos(data: Json | null): CandidatoRepasse[] {
   if (!Array.isArray(data)) throw new Error('venda_repasse_candidatos devolveu formato inesperado');
   return data.map(candidato);
+}
+
+// ── venda_repasse_sensor ──────────────────────────────────────────────────────────────────────
+
+const CRITERIOS: readonly CriterioDesligar[] = ['cedo', 'indisponivel', 'atingido', 'nao_atingido'];
+
+function sensor(v: Json, i: number): SensorRepasse {
+  const onde = `venda_repasse_sensor[${i}]`;
+  const o = obj(v, onde);
+  const criterio = str(o, 'criterio_desligar', onde);
+  if (!CRITERIOS.includes(criterio as CriterioDesligar)) {
+    throw new Error(`${onde}: criterio_desligar "${criterio}" desconhecido`);
+  }
+  const razao = numOuNulo(o, 'razao_preco_novo', onde);
+  if (razao !== null && (razao < 0 || razao > 1)) throw new Error(`${onde}: razao_preco_novo fora de [0, 1]`);
+  return {
+    id: str(o, 'id', onde),
+    comprador_id: str(o, 'comprador_id', onde),
+    omie_codigo_produto: num(o, 'omie_codigo_produto', onde),
+    descricao: strOuNulo(o, 'descricao', onde),
+    preco_alvo: num(o, 'preco_alvo', onde),
+    ultimo_preco_na_aprovacao: num(o, 'ultimo_preco_na_aprovacao', onde),
+    aprovado_em: str(o, 'aprovado_em', onde),
+    valido_ate: str(o, 'valido_ate', onde),
+    revogado_em: strOuNulo(o, 'revogado_em', onde),
+    vigente: bool(o, 'vigente', onde),
+    dias_janela: num(o, 'dias_janela', onde),
+    cadencia_na_aprovacao: numOuNulo(o, 'cadencia_na_aprovacao', onde),
+    qtd_elegivel: num(o, 'qtd_elegivel', onde),
+    qtd_ao_preco_novo: num(o, 'qtd_ao_preco_novo', onde),
+    qtd_sem_preco: num(o, 'qtd_sem_preco', onde),
+    razao_preco_novo: razao,
+    qtd_esperada: numOuNulo(o, 'qtd_esperada', onde),
+    ganho_preco: num(o, 'ganho_preco', onde),
+    perda_volume: numOuNulo(o, 'perda_volume', onde),
+    criterio_desligar: criterio as CriterioDesligar,
+    motivo: strOuNulo(o, 'motivo', onde),
+  };
+}
+
+export function lerSensor(data: Json | null): SensorRepasse[] {
+  if (!Array.isArray(data)) throw new Error('venda_repasse_sensor devolveu formato inesperado');
+  return data.map(sensor);
 }

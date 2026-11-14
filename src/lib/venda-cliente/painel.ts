@@ -188,6 +188,13 @@ export interface CandidatoRepasse {
   qtd_sugerida: number | null;
   /** Ainda compra o SKU? NULL = sem cadência para afirmar (20261031233000). */
   situacao_compra: SituacaoCompraRepasse | null;
+  /**
+   * Demanda viva = situação 'comprando' (dias sem comprar ≤ 2× a cadência). Só ela é repasse:
+   * fora dela não há preço sugerido, valor anual nem Aprovar (20261113213000).
+   */
+  demanda_viva: boolean;
+  /** Último dia em que o SKU entrou na lista ATIVA da farmer como recompra (NULL = sem registro). */
+  recompra_sugerida_em: string | null;
   dias_sem_comprar: number | null;
   /** SKU de outra base, mesma família, que entrou depois que o candidato parou (só em 'substituido'). */
   substituto: SubstitutoRepasse | null;
@@ -198,6 +205,76 @@ export interface CandidatoRepasse {
     revogado: boolean;
     vigente: boolean;
   } | null;
+}
+
+export interface ResumoRepasses {
+  /** Demanda viva: o potencial anual soma só os itens com valor calculável. */
+  vivo: { itens: number; comValor: number; semValor: number; total: number | null };
+  /** Parou de comprar (> 2× a cadência, sem substituto): possível recompra perdida — sem valor. */
+  parado: { itens: number; compradores: number; naListaDaFarmer: number };
+}
+
+/**
+ * Totais da aba Repasses. Ausente ≠ zero: com itens vivos e nenhum valor calculável, o total é
+ * `null` ("—"), nunca R$ 0; sem nenhum item vivo, o total é 0 de verdade. O parado não tem valor
+ * anualizado em lugar nenhum (anualizar cadência de quem parou é receita imaginária).
+ */
+export function resumirRepasses(lista: readonly CandidatoRepasse[]): ResumoRepasses {
+  const vivos = lista.filter((c) => c.demanda_viva);
+  const comValor = vivos.filter((c) => c.valor_anual_recuperavel !== null);
+  const parados = lista.filter((c) => c.situacao_compra === 'parado');
+  return {
+    vivo: {
+      itens: vivos.length,
+      comValor: comValor.length,
+      semValor: vivos.length - comValor.length,
+      total:
+        vivos.length === 0
+          ? 0
+          : comValor.length === 0
+            ? null
+            : comValor.reduce((s, c) => s + (c.valor_anual_recuperavel as number), 0),
+    },
+    parado: {
+      itens: parados.length,
+      compradores: new Set(parados.map((c) => c.comprador_id)).size,
+      naListaDaFarmer: parados.filter((c) => c.recompra_sugerida_em !== null).length,
+    },
+  };
+}
+
+export type CriterioDesligar = 'cedo' | 'indisponivel' | 'atingido' | 'nao_atingido';
+
+/** Uma versão aprovada de repasse e o que aconteceu depois (`venda_repasse_sensor`, 20261113213000). */
+export interface SensorRepasse {
+  id: string;
+  comprador_id: string;
+  omie_codigo_produto: number;
+  descricao: string | null;
+  preco_alvo: number;
+  ultimo_preco_na_aprovacao: number;
+  aprovado_em: string;
+  valido_ate: string;
+  revogado_em: string | null;
+  vigente: boolean;
+  /** Dias de pedido contados: (dia da aprovação, menor entre revogação, validade e hoje]. */
+  dias_janela: number;
+  cadencia_na_aprovacao: number | null;
+  /** Tudo o que o comprador comprou do SKU na janela, com ou sem preço apurado. */
+  qtd_elegivel: number;
+  /** Parte comprada a preço ≥ alvo. */
+  qtd_ao_preco_novo: number;
+  qtd_sem_preco: number;
+  /** qtd_ao_preco_novo ÷ qtd_elegivel; NULL se nada elegível ou se há quantidade sem preço. */
+  razao_preco_novo: number | null;
+  /** Volume que a cadência DA APROVAÇÃO previa para a janela; NULL sem linha de base. */
+  qtd_esperada: number | null;
+  /** Σ qtd × (preço − último na aprovação) × (1 − alíquota), todas as linhas com preço. */
+  ganho_preco: number;
+  /** (esperado − elegível)⁺ × margem unitária antiga; NULL sem custo/margem positiva/linha de base. */
+  perda_volume: number | null;
+  criterio_desligar: CriterioDesligar;
+  motivo: string | null;
 }
 
 export type ValidacaoAprovacao = { ok: true } | { ok: false; motivo: string };

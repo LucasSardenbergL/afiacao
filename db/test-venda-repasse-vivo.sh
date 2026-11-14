@@ -44,16 +44,16 @@ TOTAL_ESPERADO=45
 # nome:vermelhos:verdes. As de corpo não tocam o que a PÓS confere além do md5 (que vira NOTICE na cópia
 # sabotada), então a migration aplica e o dente provado é o do ASSERT. As pre_/pos_ provam o dente da PRE/PÓS.
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="parado_sugere:V3,V5:V1,V2
-              parado_valor:V4,V6:V1,V3
-              sem_trava_parado:A3:A1,A4
+  SABOTAGENS="parado_sugere:V3,V5,V12:V1,V2
+              parado_valor:V4,V6,V11:V1,V3
+              sem_trava_parado:A3,A6:A1,A4
               sem_trava_semcad:A4:A1,A3
               ordem_valor:O1:O2,V1
               enc_fase:V9:V8,V10
               enc_empresa:V9:V8,V10
-              base_nao_congela:A2:A1
+              base_nao_congela:A2,S16:A1
               janela_coalesce:S9:S8,S1
-              inclui_dia_aprov:S1,S2,S3,S4:S5,S6
+              inclui_dia_aprov:S1,S2:S5,S6
               ganho_so_alvo:S6:S5,S2
               perda_zero_atinge:S12:S4,S11
               sem_preco_conta:S13:S14,S2

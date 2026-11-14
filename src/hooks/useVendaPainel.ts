@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import type { CandidatoRepasse, PainelVenda } from '@/lib/venda-cliente/painel';
-import { lerCandidatos, lerPainel } from '@/lib/venda-cliente/painel-rpc';
+import type { CandidatoRepasse, PainelVenda, SensorRepasse } from '@/lib/venda-cliente/painel';
+import { lerCandidatos, lerPainel, lerSensor } from '@/lib/venda-cliente/painel-rpc';
 import { lerResumoPainel, type ResumoPainel } from '@/lib/venda-cliente/resumo-painel';
 
 // As 4 RPCs estão no types.ts gerado. Os dois retornos `jsonb` passam pela borda `painel-rpc.ts`,
@@ -62,6 +62,25 @@ export function useRepasseCandidatos(disponivel: boolean) {
   });
 }
 
+/**
+ * Sensor dos repasses aprovados (`venda_repasse_sensor`, 20261113213000: master + cap_custo_ler):
+ * o que foi vendido ao preço novo ÷ o elegível, e o critério de desligar. `disponivel=false`
+ * enquanto a RPC não existe no banco — a seção diz isso, não mostra lista vazia.
+ */
+export function useRepasseSensor(disponivel: boolean) {
+  const { user, isMaster } = useAuth();
+  return useQuery({
+    queryKey: ['venda-repasse-sensor', user?.id ?? 'anon'],
+    enabled: isMaster && disponivel,
+    staleTime: 60_000,
+    queryFn: async (): Promise<SensorRepasse[]> => {
+      const { data, error } = await supabase.rpc('venda_repasse_sensor');
+      if (error) throw error;
+      return lerSensor(data);
+    },
+  });
+}
+
 /** Nomes dos compradores (profiles), em lotes — a lista de candidatos só traz o id. */
 export function useNomesCompradores(ids: string[]) {
   const chave = [...new Set(ids)].sort();
@@ -114,7 +133,10 @@ export function useAprovarRepasse() {
       if (!data) throw new Error('venda_aprovar_repasse não devolveu o id');
       return data;
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['venda-repasse-candidatos'] }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['venda-repasse-candidatos'] });
+      void qc.invalidateQueries({ queryKey: ['venda-repasse-sensor'] });
+    },
   });
 }
 
@@ -125,7 +147,10 @@ export function useRevogarRepasse() {
       const { error } = await supabase.rpc('venda_revogar_repasse', { p_id: id });
       if (error) throw error;
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['venda-repasse-candidatos'] }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['venda-repasse-candidatos'] });
+      void qc.invalidateQueries({ queryKey: ['venda-repasse-sensor'] });
+    },
   });
 }
 
@@ -137,6 +162,8 @@ export function mensagemErroRepasse(e: unknown): string {
   if (msg.includes('REPASSE_ALVO_TETO')) return 'Alvo acima de 2× o último preço — confira a digitação.';
   if (msg.includes('REPASSE_SEM_ULTIMO')) return 'Sem último preço praticado provado para este comprador/SKU.';
   if (msg.includes('REPASSE_VALIDADE')) return 'Validade fora do intervalo (amanhã até 1 ano).';
+  if (msg.includes('REPASSE_PARADO')) return 'O cliente parou de comprar este SKU (mais de 2× a cadência) — é recompra, não repasse.';
+  if (msg.includes('REPASSE_SEM_CADENCIA')) return 'Sem cadência de compra para provar que a demanda está viva — não é repasse.';
   if (msg.includes('REPASSE_SUBSTITUIDO')) return 'O cliente trocou este SKU por outro da mesma função — substituído não é repasse.';
   if (msg.includes('42501') || msg.includes('requer master')) return 'Só o master aprova repasses.';
   return msg;
