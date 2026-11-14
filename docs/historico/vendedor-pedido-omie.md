@@ -145,8 +145,15 @@ sync de 2h da edge nova, que já rodou antes do backfill.
   - Oben `8689670844`: 8 pedidos, de 2024-10 a 2024-11;
   - Oben `12172845668`: 1 pedido, de 2026-08-31.
 
-  Mapear esses códigos é decisão do master no `omie_vendedor_map`. Ao mapear, basta reler a conta com
-  `backfill_vendedor`: o escritor resolve o usuário de novo, porque `vendedor_user_id` difere.
+  Consultados no Omie (`ConsultarVendedor`, 2026-11-14), **nenhum é um vendedor com usuário no sistema**:
+  - `400071282` e `8689670844` = "COLACOR", o vendedor-casa das duas contas;
+  - `3710549150` = "JARDEL", inativo e sem `profiles` de funcionário;
+  - `403955513` = "Devi PDV_01", inativo;
+  - `12172845668` = "ZEKI TESTE", inativo.
+
+  Por isso ficam NULL de propósito: atribuir a uma pessoa seria fabricar. Se um dia algum for mapeado no
+  `omie_vendedor_map`, basta reler a conta com `backfill_vendedor`; o escritor resolve o usuário de novo,
+  porque `vendedor_user_id` difere.
 - **Lidos sem código** (o Omie não traz vendedor no pedido): Colacor 290, Oben 8.
 - **Não lidos:** 28 pedidos, quase todos `importado`, que o `ListarPedidos` não devolveu. O sync de 2h os pega
   se reaparecerem.
