@@ -324,6 +324,7 @@ export const MODULOS: ModuloApp[] = [
       "src/components/venda-cliente/**",
       "src/hooks/useVendaPainel.ts",
       "src/hooks/useVendaContribuicao.ts",
+      "src/hooks/useVendaSistemas.ts",
       "src/pages/VendaClientePainel.tsx",
       "src/components/fila/**",
       "src/components/venda-cliente/**",

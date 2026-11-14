@@ -16,7 +16,7 @@ const pronta: EstadoRecompra = {
   tipo: 'pronta',
   resp: {
     dia: '2026-10-21',
-    ondas: { complemento: false, preco: false },
+    ondas: { complemento: false, preco: false, sistema: false },
     compradores: [{
       compradorId: 'c1', nome: 'A', telefone: null, motivoEntrada: 'maior atraso da carteira', valorRefTotal: null,
       sugestoes: [{ id: 's1', tipo: 'recompra', empresa: 'oben', omieCodigoProduto: 1, descricao: null, familia: null, qtdRef: null, valorRef: null, precoAlvo: null, cadenciaDias: null }],
@@ -65,7 +65,7 @@ describe('useFilaAcoes', () => {
 
   it('Onda 2 ligada no servidor: o Mix/Gap sai da fila (vive na ficha) e o erro dele não vira erro da fila', () => {
     const ligada: EstadoRecompra = pronta.tipo === 'pronta'
-      ? { tipo: 'pronta', resp: { ...pronta.resp, ondas: { complemento: true, preco: false } } }
+      ? { tipo: 'pronta', resp: { ...pronta.resp, ondas: { complemento: true, preco: false, sistema: false } } }
       : pronta;
     recompraMock.mockReturnValue({ estado: ligada, refetch: vi.fn() });
     mixMock.mockReturnValue({

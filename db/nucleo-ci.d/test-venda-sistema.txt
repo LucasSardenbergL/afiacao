@@ -1,0 +1,5 @@
+# Venda R2 · Entrega 4 (20261113213317): fila de pares tinta/verniz → catalisador/diluente confirmados pelo founder
+# e o tipo 'sistema' em venda_sugestao — só par CONFIRMADO gera (pendente nunca), dois braços com o braço do trigger,
+# outra embalagem confirmada suprime e completa, anti-repetição na janela, rejeitar depois some da ficha/e-mail na hora
+# e fecha a aberta como par_revogado, controle medido (ITT), sensor com denominador. 17 sabotagens no --falsificar.
+db/test-venda-sistema.sh                    63  falsificar=17

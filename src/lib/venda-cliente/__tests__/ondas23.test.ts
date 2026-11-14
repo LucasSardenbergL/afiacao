@@ -18,13 +18,13 @@ const base = {
 describe('lerMinhasSugestoes — ondas e tipos (Task 9)', () => {
   it('lê as ondas do servidor e a cadência da recompra', () => {
     const r = lerMinhasSugestoes({ ...base, ondas: { recompra: true, complemento: true, preco: false } });
-    expect(r.ondas).toEqual({ complemento: true, preco: false });
+    expect(r.ondas).toEqual({ complemento: true, preco: false, sistema: false });
     expect(sugestoesDeRecompra(r.compradores[0]).map((s) => s.cadenciaDias)).toEqual([30]);
   });
 
   it('ondas ausentes (servidor anterior à migration) → seções desligadas, a lista segue', () => {
     const r = lerMinhasSugestoes(base);
-    expect(r.ondas).toEqual({ complemento: false, preco: false });
+    expect(r.ondas).toEqual({ complemento: false, preco: false, sistema: false });
     expect(r.compradores).toHaveLength(1);
   });
 
