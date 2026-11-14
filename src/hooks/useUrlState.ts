@@ -53,46 +53,53 @@ export function useUrlState<S extends StateShape>(
   // Se o caller mudar shape entre renders, ignoramos (warning silencioso).
   const defaultsRef = useRef(defaults);
 
-  const state = useMemo(() => {
+  // Params CORRENTES, incluindo escritas ainda não renderizadas. O `setSearchParams(fn)` do
+  // react-router 6 NÃO é um updater enfileirado: o `fn` recebe os params DO RENDER. Duas chamadas
+  // no mesmo tick (ex.: "Limpar filtros" = setSearch('') + setAccountFilter('all')) liam a mesma
+  // base e a segunda regravava o valor antigo da primeira. A ref compõe as escritas em sequência;
+  // navegação de fora (voltar, link) chega como `params` novo e reancora a ref.
+  const correnteRef = useRef(params);
+  const ultimoRenderRef = useRef(params);
+  if (ultimoRenderRef.current !== params) {
+    ultimoRenderRef.current = params;
+    correnteRef.current = params;
+  }
+
+  const ler = useCallback((fonte: URLSearchParams): S => {
     const out: Record<string, unknown> = {};
     for (const key in defaultsRef.current) {
-      const raw = params.get(key);
-      out[key] = deserialize(raw, defaultsRef.current[key] as Primitive | Primitive[]);
+      out[key] = deserialize(fonte.get(key), defaultsRef.current[key] as Primitive | Primitive[]);
     }
     return out as S;
-  }, [params]);
+  }, []);
+
+  const state = useMemo(() => ler(params), [ler, params]);
 
   const setState = useCallback(
     (next: Partial<S> | ((prev: S) => S)) => {
-      setParams(
-        (prev) => {
-          const merged: S =
-            typeof next === 'function'
-              ? (next as (p: S) => S)(state)
-              : ({ ...state, ...next } as S);
-          const updated = new URLSearchParams(prev);
-          for (const key in defaultsRef.current) {
-            const value = serialize(merged[key] as Primitive | Primitive[]);
-            if (value === null) updated.delete(key);
-            else updated.set(key, value);
-          }
-          return updated;
-        },
-        { replace: true },
-      );
+      const base = correnteRef.current;
+      const anterior = ler(base);
+      const merged: S =
+        typeof next === 'function'
+          ? (next as (p: S) => S)(anterior)
+          : ({ ...anterior, ...next } as S);
+      const updated = new URLSearchParams(base);
+      for (const key in defaultsRef.current) {
+        const value = serialize(merged[key] as Primitive | Primitive[]);
+        if (value === null) updated.delete(key);
+        else updated.set(key, value);
+      }
+      correnteRef.current = updated;
+      setParams(updated, { replace: true });
     },
-    [setParams, state],
+    [setParams, ler],
   );
 
   const reset = useCallback(() => {
-    setParams(
-      (prev) => {
-        const updated = new URLSearchParams(prev);
-        for (const key in defaultsRef.current) updated.delete(key);
-        return updated;
-      },
-      { replace: true },
-    );
+    const updated = new URLSearchParams(correnteRef.current);
+    for (const key in defaultsRef.current) updated.delete(key);
+    correnteRef.current = updated;
+    setParams(updated, { replace: true });
   }, [setParams]);
 
   return [state, setState, reset];

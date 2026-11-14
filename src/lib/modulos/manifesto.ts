@@ -294,6 +294,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/leitoresObenProof.fatia3.test.ts",
       "src/pages/__tests__/UnifiedOrder.catalisador-erro-honesto.test.tsx",
       "src/pages/__tests__/SalesQuotes.accountGuard.test.tsx",
+      "src/pages/__tests__/SalesOrders.limpar-filtros.test.tsx",
       "src/pages/__tests__/SalesQuotes.priceGuard.test.tsx",
       "src/pages/__tests__/displayReaders.viewFresca.test.ts",
       "src/pages/__tests__/writersCarteiraRpc.fatia4.test.ts",
@@ -1040,6 +1041,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/contexts/__tests__/AuthContext.cargo-semeia-cache.test.tsx",
+      "src/hooks/__tests__/useUrlState.composicao.test.tsx",
       "src/components/shell/__tests__/badge-de-contagem.test.tsx",
       "src/components/shell/__tests__/useContagensDoShell.badge-leitura.test.tsx",
       "src/components/notificacoes/__tests__/useNotificacoes.stats-leitura.test.tsx",
