@@ -76,14 +76,15 @@ Era a assinatura do sync, não autoria. Medir oferta ou conversão por farmer em
    `bun run db:aplicar supabase/migrations/20261113120000_vendedor_pedido_omie.sql`. O ensaio na prod
    passou (sha `1cf0994d…`, ROLLBACK). O apply real é do founder: o classificador de permissão da sessão
    negou o `db:aplicar`.
-2. **Edge** `omie-vendas-sync` v1.37, depois da migration. Com `created_by NOT NULL` o import novo seria
+2. **Edge** `omie-vendas-sync` (no ar: v1.39), depois da migration. Com `created_by NOT NULL` o import novo seria
    recusado.
 3. **Acervo:** `bun run db:aplicar db/2026-11-13-desfabricar-autor-importado.sql`, depois do deploy
    atestado. Antes disso, a edge velha re-fabricaria. O valor antigo fica em
    `private.bkp_sales_orders_created_by_20261113`.
 4. **Backfill do vendedor:** action `backfill_vendedor`, só via cron-secret. Ela pagina o `ListarPedidos`
    inteiro da conta, 100 pedidos por página, sem `ConsultarCliente`, com orçamento de 100s, e responde
-   `proxima_pagina`. Repita com `start_page` até `completo:true`. **Uma invocação por conta por vez**,
+   `proxima_pagina`. Repita com `start_page` até `completo:true`. **Uma invocação por vez, no total**
+   (duas em paralelo, mesmo de contas diferentes, voltaram 502 do gateway em ~20 s, sem gravar nada),
    porque chamadas concorrentes na mesma conta Omie batem no rate-limit (sync.md); fuja dos minutos :05 e
    :20 das horas pares. Disparo (SQL Editor):
 
@@ -107,6 +108,45 @@ SELECT account, count(*) pedidos, count(vendedor_lido_em) lidos, count(vendedor_
   FROM sales_orders WHERE hash_payload LIKE 'omie\_%' AND deleted_at IS NULL GROUP BY 1;
 ```
 
-## Estado na entrega
+## Estado na entrega (2026-11-14, medido por psql-ro)
 
-Ver o corpo do PR. Os números de antes e depois do backfill entram aqui quando ele rodar.
+**Sequência executada:**
+
+- migration `20261113120000` (recibo #1107);
+- #3872 mergeado, e depois o #3880. O #3880 deixa o nome da RPC literal em `vendedor-pedido.ts`: o wrapper
+  `(fn,args)=>rpc(fn,args)` era indireção, o `preflight:rpcs` saía com exit 3 e o `pendencias:pacote` não emitia a
+  colagem;
+- deploy da edge v1.39 pelo agente do Lovable: 36/36 hashes conferidos, sensor `SEM_EDICAO`, atestado pela sonda
+  (relé) no `pendencias:deploy`;
+- acervo `db/2026-11-13-desfabricar-autor-importado.sql` (recibo #1115);
+- `backfill_vendedor`: Oben com 7 invocações e 135 páginas; Colacor com 11 invocações e 223 páginas. Zero
+  `vendedor_falhas` e zero `vendedor_ambiguos` em todas.
+
+**Antes e depois** (importados não apagados; antes = 2026-11-14 00:27Z, depois = 01:08Z):
+
+| conta | pedidos | com autor (antes → depois) | lidos (antes → depois) | com vendedor (antes → depois) |
+|---|---|---|---|---|
+| colacor | 19.964 | 19.964 → **0** | 38 → 19.953 | 38 → **14.987 (75,1%)** |
+| oben | 12.367 | 12.367 → **0** | 88 → 12.350 | 88 → **12.333 (99,7%)** |
+| total | 32.331 | 32.331 → 0 | 126 → 32.303 | 126 → 27.320 (84,5%) |
+
+O backup `private.bkp_sales_orders_created_by_20261113` tem 32.331 linhas. Os 126 lidos do "antes" vieram do
+sync de 2h da edge nova, que já rodou antes do backfill.
+
+**No eixo que a Entrega 1 lê** (universo canônico, `order_date_kpi ≥ 2026-09-01`): 1.212 pedidos, dos quais
+1.198 têm vendedor (98,8%). Colacor 275/282, Oben 923/930. Por vendedor: REGINA 262 + 911 e Lucas 13 + 12.
+
+**O que fica NULL, e por quê** (ausente ≠ zero):
+
+- **Códigos sem mapa** em `omie_vendedor_map`. São 4.685 pedidos, quase todos HISTÓRICOS:
+  - Colacor `400071282`: 4.603 pedidos, de 2020-04 a 2025-06;
+  - Colacor `3710549150`: 70 pedidos, de 2020 a 2021;
+  - Colacor `403955513`: 3 pedidos;
+  - Oben `8689670844`: 8 pedidos, de 2024-10 a 2024-11;
+  - Oben `12172845668`: 1 pedido, de 2026-08-31.
+
+  Mapear esses códigos é decisão do master no `omie_vendedor_map`. Ao mapear, basta reler a conta com
+  `backfill_vendedor`: o escritor resolve o usuário de novo, porque `vendedor_user_id` difere.
+- **Lidos sem código** (o Omie não traz vendedor no pedido): Colacor 290, Oben 8.
+- **Não lidos:** 28 pedidos, quase todos `importado`, que o `ListarPedidos` não devolveu. O sync de 2h os pega
+  se reaparecerem.
