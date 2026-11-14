@@ -66,7 +66,7 @@ Edge `sayerlack-importar-pedido-portal` + `importar-portal.ts` + diálogo.
 2.5 **Ledger das tentativas do botão** (Fable B3): toda recusa e todo sucesso do botão gravam linha (reusar
     `sayerlack_varredura_falha` com `origem='botao'`, ou `acoes_execucoes` — decidir no início pela leitura do schema),
     com sqlstate, motivo, duração. Substitui a dependência do PostHog.
-2.6 **Mapeamento "30 DIAS"** conforme D-2 (só se o founder decidir mudar).
+2.6 **Mapeamento "30 DIAS"** conforme D-2 (só se o founder decidir mudar). ✅ **Fechado em 2026-11-14 sem mapear o "(C)"** (inventário em `docs/historico/importar-pedido-portal-sayerlack.md` §2.6).
 2.7 **Resolver a pendência na hora** (Codex B3): importação bem-sucedida (botão ou cron) marca resolvida a linha
     aberta do protocolo em `sayerlack_varredura_falha`, sem esperar a próxima rodada.
 
