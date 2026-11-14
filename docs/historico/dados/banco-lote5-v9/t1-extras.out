@@ -1,0 +1,11 @@
+## promoções do tint na janela (por tipo)
+catalogs | 1075 | 71380 | 0
+formulas | 3 | 145 | 717360
+## runs de fórmulas na janela (início, registros, inserts, fim da promoção)
+11-12 10:05:41 | 16 | 218884 | 10:09:27
+11-13 10:09:01 | 128 | 490208 | 10:15:11
+11-13 11:21:38 | 1 | 8268 | 11:23:27
+## duração do tick de promoção (job 187) na janela
+13267 | 798.9 | 309.3
+## jobs do cron com falha/timeout na janela (critério de decisão do Mini: job falhando por timeout)
+#FIM-OK
