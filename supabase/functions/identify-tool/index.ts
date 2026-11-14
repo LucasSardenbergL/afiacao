@@ -88,6 +88,28 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Staff OU customer APROVADO (scanner Lovable 2026-11-13): o cadastro em /auth é público, então
+    // "JWT válido" incluía o customer recém-cadastrado, barrado em toda a UI, que ainda assim gastava
+    // IA paga. Fail-closed: erro de leitura = recusa (mesma regra do AuthContext).
+    const supabaseGate = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const [rolesRes, perfilRes] = await Promise.all([
+      supabaseGate.from("user_roles").select("role").eq("user_id", user.id).in("role", ["employee", "master"]).limit(1),
+      supabaseGate.from("profiles").select("is_approved").eq("user_id", user.id).maybeSingle(),
+    ]);
+    if (rolesRes.error || perfilRes.error) {
+      return new Response(JSON.stringify({ error: "Não autorizado" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const ehStaff = (rolesRes.data ?? []).length > 0;
+    if (!ehStaff && perfilRes.data?.is_approved !== true) {
+      return new Response(JSON.stringify({ error: "Cadastro aguardando aprovação" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
     if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not configured");
 
@@ -136,8 +158,17 @@ Deno.serve(async (req) => {
     }
 
     // Build categories context for the AI
+    // Texto vindo do REQUEST entra no system prompt: teto por campo e sem quebra de linha, para que
+    // um item não carregue um bloco de instruções (scanner Lovable 2026-11-13, prompt injection).
+    const curto = (v: unknown, max: number) =>
+      typeof v === "string" ? v.replace(/[\r\n]+/g, " ").slice(0, max) : "";
     const categoriesContext = (categories || [])
-      .map((c: { name: string; description?: string }) => `- ${c.name}${c.description ? ` (${c.description})` : ''}`)
+      .map((c: { name?: unknown; description?: unknown } | null) => {
+        const nome = curto(c?.name, 80);
+        const desc = curto(c?.description, 200);
+        return nome ? `- ${nome}${desc ? ` (${desc})` : ''}` : '';
+      })
+      .filter(Boolean)
       .join('\n');
 
     const systemPrompt = `Você é um especialista em identificação de ferramentas de corte industriais (serras, facas, lâminas, brocas, fresas, etc.) usadas em marcenarias, serralharias e indústrias.

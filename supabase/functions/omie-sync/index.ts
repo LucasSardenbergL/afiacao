@@ -405,7 +405,7 @@ async function syncClienteOmie(
 
   // Sem vínculo fresco na view (ausência ou código inseguro) → buscar no Omie por CPF/CNPJ com
   // registros_por_pagina:2 para detectar duplicata-CNPJ (o :1 antigo pegava só o 1º = last-write-wins).
-  console.log(`[Omie] Sem vínculo fresco na view p/ colacor_sc; buscando no Omie por CPF/CNPJ: ${documentClean}`);
+  console.log(`[Omie] Sem vínculo fresco na view p/ colacor_sc; buscando no Omie por ${documentClean.length === 14 ? "CNPJ" : "CPF"} (documento fora do log — LGPD)`);
   const searchResult = await callOmieApi(
     "geral/clientes/",
     "ListarClientes",
@@ -434,13 +434,13 @@ async function syncClienteOmie(
       // Fail-closed: 2+ cadastros DISTINTOS no mesmo CNPJ/CPF → não chuta (o 1º seria last-write-wins,
       // podendo mandar o pedido pro cliente errado). Precisão>recall no money-path.
       throw new Error(
-        `CNPJ/CPF (${documentClean}) tem 2+ cadastros distintos na conta colacor_sc — cadastro ambíguo, ` +
+        `O CNPJ/CPF informado tem 2+ cadastros distintos na conta colacor_sc — cadastro ambíguo, ` +
         `pedido bloqueado por segurança. Entre em contato conosco para consolidar o cadastro.`
       );
     }
     // sem-vinculo | codigo-inseguro → cliente não utilizável para pedido.
     throw new Error(
-      `Cliente não encontrado no Omie com o CPF/CNPJ informado (${documentClean}). ` +
+      `Cliente não encontrado no Omie com o CPF/CNPJ informado. ` +
       `Por favor, verifique se você está cadastrado como cliente ou entre em contato conosco.`
     );
   }

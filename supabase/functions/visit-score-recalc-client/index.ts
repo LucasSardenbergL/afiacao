@@ -566,11 +566,30 @@ Deno.serve(async (req) => {
   }
 
   // Single mode
-  if (!body.customer_user_id || !body.farmer_id) {
-    return jsonError('customer_user_id e farmer_id obrigatorios (ou drain_queue=true)', 400);
+  if (!body.customer_user_id) {
+    return jsonError('customer_user_id obrigatorio (ou drain_queue=true)', 400);
   }
 
-  const r = await recalcOne(supabase, body.customer_user_id, body.farmer_id);
+  // Dono do score (scanner Lovable 2026-11-13, "staff can change another customer's visit
+  // scores"): o `farmer_id` do corpo só é aceito de cron/service_role — o batch já o resolve de
+  // carteira_assignments. Para STAFF ele é IGNORADO e o dono vem da carteira, senão um employee
+  // reatribui o score de qualquer cliente a quem quiser e mexe no roteiro do vendedor.
+  let farmerId: string | undefined = body.farmer_id;
+  if (auth.via === 'staff') {
+    const { data: dono, error: donoErr } = await supabase
+      .from('carteira_assignments')
+      .select('owner_user_id')
+      .eq('customer_user_id', body.customer_user_id)
+      .maybeSingle();
+    if (donoErr) return jsonError('falha ao ler o dono da carteira', 500);
+    if (!dono?.owner_user_id) return jsonError('cliente sem dono na carteira', 422);
+    farmerId = dono.owner_user_id;
+  }
+  if (!farmerId) {
+    return jsonError('farmer_id obrigatorio para cron/service_role', 400);
+  }
+
+  const r = await recalcOne(supabase, body.customer_user_id, farmerId);
   return new Response(JSON.stringify(r), {
     status: r.error ? 500 : 200,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },

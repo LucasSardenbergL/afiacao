@@ -945,7 +945,7 @@ Deno.serve(async (req) => {
               // INSERT no espelho `omie_clientes`, que grava SEM conta (rótulo 'colacor' default, falso).
               // A conta aqui é 'oben' e não é chute: o único chamador deste case é o fluxo de vendas OBEN
               // (`useUnifiedOrder.handleStaffAddTool`), e a resolução logo acima usa `.eq("account","oben")`.
-              console.log(`[criar_perfil_local] Found existing profile by document ${docLimpo}, linking to user ${matchedUserId}`);
+              console.log(`[criar_perfil_local] Found existing profile by document (fora do log — LGPD), linking to user ${matchedUserId}`);
               const { error: mappingError } = await adminClient.rpc("register_carteira_member", {
                 p_user_id: matchedUserId,
                 p_account: "oben",
