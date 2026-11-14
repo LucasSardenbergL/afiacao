@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // Credencial SIP é POR VENDEDOR (vendor_sip_credentials). Não existe mais o fallback para o ramal
 // compartilhado do env (NVOIP_SIP_USER/PASS): ele entregava a senha do ramal master a qualquer
@@ -18,6 +19,16 @@ Deno.serve(async (req) => {
 
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
+
+  // ⚠️ SONDA DE VERSÃO — depois do gate (cron alcança pelo `x-cron-secret`) e ANTES de qualquer
+  // leitura de credencial: a resposta da sonda não carrega segredo nenhum.
+  const corpoBruto: unknown = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO), 200);
+  if (decisaoSonda.tipo === "ambiguo") {
+    return json({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
+  }
+
   // Ramal é de uma PESSOA: o cron (sem usuário) não tem ramal para receber.
   if (!auth.userId) {
     return json({ error: "Credencial SIP é por vendedor — chamada sem usuário recusada" }, 403);

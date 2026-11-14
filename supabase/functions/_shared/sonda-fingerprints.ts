@@ -48,6 +48,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "melhoria-triagem": "35cbe72aa5011af552a1d0f8bc2771983dc2a13161f454f9d3d2c3537aa7ad8d",
   "monthly-report": "578a6e8963a0f1fd0fee9bc8fbd971892b9cdae5128894e40e74d9989cc4d7ab",
   "nvoip-calls": "c57d99d050f0e465d5db5f7a344bbd80d4e016e224986149215628d0b19046da",
+  "nvoip-sip-creds": "0768033ac39c6b1e4b6712e1a10e59c4e52d667880571c58f65c7c693f0b1268",
   "omie-analytics-sync": "409a1b64e69f5aafb2feaddc607faef8bd3dc6f375c67dcda4a9146de3735a38",
   "omie-cliente": "d4ca09feed9e115f8fdfb347d5800aafa8c1b89e7da5ee520fc32eb96a832bd0",
   "omie-cron-diario": "70c8565470c24909c9f06bd8ff1ee31ad8faff3ce5826f0f76ebb7c5c37fe9fc",
