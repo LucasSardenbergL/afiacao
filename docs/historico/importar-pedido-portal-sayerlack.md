@@ -961,3 +961,41 @@ criasse a divergência, e ninguém voltou a ela depois da 5.2.
   que usa o formato "NN - …". Fica como está porque é inofensiva. O plano citava "→A30", o que estava desatualizado.
 - **Decisão do founder:** não mapear o "(C)" agora. Condição que não casa continua recusada com IP007, com a
   condição lida na mensagem (fail-closed), e cada caso concreto é decidido quando aparecer.
+
+## v1.15 — revisão final Codex + Fable 5.2 (2026-11-14)
+
+Revisões independentes, cada uma lendo o código sem a conclusão da outra. **Nenhuma achou P0.**
+
+**O que entrou** (só na edge, sem migration):
+- **Condição fail-closed** (Codex e Fable, P1). Passa a valer só:
+  - lida na tela DESTE pedido (o caminho contém `/<nº>/`);
+  - e repetida numa 2ª amostra, 1,2 s depois.
+  Fora disso não há condição, e o Deno recusa. O trace grava `idle_ok`, `condicao2`, `estavel` e `na_tela_do_pedido`.
+- **Consulta fail-closed** (Codex e Fable):
+  - a resposta precisa ser HTTP 2xx e estar amarrada ao nosso nº (`postData`);
+  - tabela que não estabiliza vira `CONSULTA_ILEGIVEL` ("tente de novo"), e não mais um "não encontrado" falso.
+  - O trace grava `ok`, `processando`, `voltas` e `erro`.
+- **Espelho do Omie fresco** (Codex e Fable, P1). Antes de re-disparar, ou de reimportar um protocolo que já teve
+  tentativa, exige o último sync COMPLETE de pedidos de compra OBEN há menos de 2 h. Fora disso, recusa
+  `espelho_omie_defasado` ("espere o próximo sync"). Motivo: um PO lançado à mão só aparece depois do sync, e o
+  re-disparo criaria um 2º PO. A guarda roda DEPOIS da leitura, então cancelado e faturado continuam respondendo
+  pelo portal.
+- **Clique que derruba o contexto** (Fable): o script aguarda a navegação antes de cair no `goto`, e o erro vai ao
+  trace.
+- **Filtro de emissão** conferido também na importação (a varredura já conferia).
+- **Diagnóstico:** erro dos itens no trace, `fetch` dos itens com prazo, e a falha devolve caminho e título no lugar
+  do screenshot que o Deno nunca lia.
+- **Protocolo** com mínimo de 6 dígitos (o `LIKE` com `limit(50)` não perde mais o contrato exato).
+
+**Provas:**
+- Deno 83/83, com 5 testes novos.
+- Falsificação: com o sync sempre fresco, 3 vermelhos; sem a checagem de tentativa anterior, 1; com o regex de 3
+  dígitos, 1. Controle verde antes e depois.
+- `edges:typecheck`, `edges:sintaxe`, `sonda:bump`, `sonda:fingerprint` e vitest 642/642.
+
+**Ficaram como decisão do founder** (exigem migration no money-path):
+- **Codex 1:** conferência sem retrato prévio. São **0 casos hoje**: os 224 pedidos com protocolo já têm PO.
+- **Codex 2:** cancelamento observado antes de o pedido existir no app. É uma corrida teórica, sem caso medido.
+
+**Não coberto por teste:** a orquestração real do navegador (template). Só o parse e as funções DOM são testados.
+A prova dela é a próxima leitura real em prod.
