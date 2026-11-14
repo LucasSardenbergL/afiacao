@@ -21,8 +21,8 @@ export type EtapaCadastro = 'omie' | 'radar';
 
 /** Por que o SERVIDOR recusou criar o cliente (edge `criar_cliente`, revisão 2026-11-11, item 5). */
 export type MotivoInelegivel =
-  | 'lead_inexistente' | 'ja_cliente' | 'ja_vinculado_omie' | 'rfb_nao_ativa' | 'descartado' | 'nao_em_conversa';
-const MOTIVOS_INELEGIVEL = new Set<string>(['lead_inexistente', 'ja_cliente', 'ja_vinculado_omie', 'rfb_nao_ativa', 'descartado', 'nao_em_conversa']);
+  | 'lead_inexistente' | 'ja_cliente' | 'ja_vinculado_omie' | 'rfb_nao_ativa' | 'descartado' | 'nao_em_conversa'
+  | 'posse_de_outro';
 
 export const TEXTO_INELEGIVEL: Record<MotivoInelegivel, string> = {
   lead_inexistente: 'a empresa não está mais no Radar',
@@ -31,7 +31,23 @@ export const TEXTO_INELEGIVEL: Record<MotivoInelegivel, string> = {
   rfb_nao_ativa: 'a situação na Receita não está ativa',
   descartado: 'o lead foi descartado',
   nao_em_conversa: 'o lead não está mais em conversa',
+  // Decisão do founder (2026-11-14): o lote do gestor PULA o lead em atendimento por outro vendedor.
+  posse_de_outro: 'em atendimento por outro vendedor',
 };
+const MOTIVOS_INELEGIVEL = new Set<string>(Object.keys(TEXTO_INELEGIVEL));
+
+const NOME_DONO_MAX = 200;
+/** `dono_nome` da recusa por posse: texto não vazio e curto, senão null (o texto diz "outro vendedor"). */
+export function nomeDonoDaResposta(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t.length > 0 && t.length <= NOME_DONO_MAX ? t : null;
+}
+
+/** O motivo legível da recusa — o da posse leva o NOME de quem atende quando o servidor o deu. */
+export function textoRecusa(motivo: MotivoInelegivel, donoNome?: string | null): string {
+  return motivo === 'posse_de_outro' && donoNome ? `em atendimento por ${donoNome}` : TEXTO_INELEGIVEL[motivo];
+}
 
 /**
  * O servidor RECUSOU criar o cliente: o lead não é elegível agora (relido sob a edge, entre o lookup estrito e o
@@ -40,10 +56,13 @@ export const TEXTO_INELEGIVEL: Record<MotivoInelegivel, string> = {
  */
 export class InelegivelCadastro extends Error {
   motivo: MotivoInelegivel;
-  constructor(motivo: MotivoInelegivel) {
-    super(`Não cadastrado: ${TEXTO_INELEGIVEL[motivo]}.`);
+  /** Só em `posse_de_outro`: quem atende o lead (null = o servidor não deu o nome). */
+  donoNome: string | null;
+  constructor(motivo: MotivoInelegivel, donoNome: string | null = null) {
+    super(`Não cadastrado: ${textoRecusa(motivo, donoNome)}.`);
     this.name = 'InelegivelCadastro';
     this.motivo = motivo;
+    this.donoNome = motivo === 'posse_de_outro' ? donoNome : null;
   }
 }
 
@@ -124,11 +143,11 @@ export function validarRespostaCriarCliente(data: unknown): RespostaValidada {
   if (!data || typeof data !== 'object') {
     throw new Error('OMIE_RESPOSTA_INDETERMINADA: a edge não devolveu um objeto');
   }
-  const d = data as { success?: unknown; created?: unknown; codigo_cliente?: unknown; error?: unknown; code?: unknown; motivo?: unknown };
+  const d = data as { success?: unknown; created?: unknown; codigo_cliente?: unknown; error?: unknown; code?: unknown; motivo?: unknown; dono_nome?: unknown };
   // Recusa de REGRA do servidor (item 5): motivo conhecido = inelegível; motivo fora do vocabulário cai na falha comum
   // (retentável) em vez de virar recusa terminal sem nome.
   if (d.success === false && d.code === 'RADAR_INELEGIVEL' && typeof d.motivo === 'string' && MOTIVOS_INELEGIVEL.has(d.motivo)) {
-    throw new InelegivelCadastro(d.motivo as MotivoInelegivel);
+    throw new InelegivelCadastro(d.motivo as MotivoInelegivel, nomeDonoDaResposta(d.dono_nome));
   }
   if (d.success === false) {
     throw new Error(`FALHA_OMIE: ${typeof d.error === 'string' && d.error ? d.error : 'falha no cadastro Omie'}`);

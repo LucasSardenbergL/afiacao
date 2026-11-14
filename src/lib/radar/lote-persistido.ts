@@ -21,7 +21,9 @@ export type EstadoItemLote =
   | { status: 'divergente'; motivo: string; erro: string; codigo: string | null; conflitoId?: number | null }
   // O SERVIDOR recusou criar (revisão 2026-11-11, item 5): o lead não é elegível agora (RFB não ativa, já cliente,
   // descartado…). TERMINAL e resolvido: nada foi criado no ERP e repetir não muda — não é pendência nem segura o lote.
-  | { status: 'recusado'; motivo: MotivoInelegivel; erro: string }
+  // `donoNome`: só na recusa por posse (`posse_de_outro`, o lote PULA o lead em atendimento por outro vendedor —
+  // 2026-11-14); ausente em lote persistido antes disso.
+  | { status: 'recusado'; motivo: MotivoInelegivel; erro: string; donoNome?: string | null }
   | { status: 'nao_iniciado' };
 
 export interface ItemLote {
@@ -61,6 +63,10 @@ export function parsearLote(raw: string | null): LotePersistido | null {
       if (!estado || typeof estado.status !== 'string' || !STATUS.has(estado.status)) return null;
       // Recusa com motivo fora do vocabulário: forma estranha, como qualquer outra (nunca um "recusado" sem nome).
       if (estado.status === 'recusado' && !MOTIVOS_RECUSA.has(String((estado as { motivo?: unknown }).motivo))) return null;
+      if (estado.status === 'recusado') {
+        const dono = (estado as { donoNome?: unknown }).donoNome;
+        if (dono !== undefined && dono !== null && typeof dono !== 'string') return null;
+      }
       itens.push({ cnpj: i.cnpj, nome: typeof i.nome === 'string' ? i.nome : i.cnpj, estado: estado as EstadoItemLote });
     }
     return { v: 1, iniciadoEm: o.iniciadoEm, itens };

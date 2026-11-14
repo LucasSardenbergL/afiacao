@@ -60,6 +60,19 @@ describe('lote-persistido — item recusado pelo servidor (revisão 2026-11-11, 
     expect(loteConcluido(lido!)).toBe(true);
   });
 
+  it('posse de outro (2026-11-14): o nome de quem atende sobrevive ao storage; tipo estranho → null', () => {
+    const pulado: LotePersistido = { ...comRecusa, itens: [...comRecusa.itens, {
+      cnpj: '32345678000195', nome: 'C',
+      estado: { status: 'recusado', motivo: 'posse_de_outro', erro: 'Não cadastrado: em atendimento por Ana.', donoNome: 'Ana' },
+    }] };
+    const lido = parsearLote(serializarLote(pulado));
+    expect(lido).toEqual(pulado);
+    expect(itensPendentes(lido!)).toEqual([]);
+    expect(loteConcluido(lido!)).toBe(true);
+    const torto = { ...pulado, itens: [{ ...pulado.itens[2], estado: { ...pulado.itens[2].estado, donoNome: 7 } }] };
+    expect(parsearLote(JSON.stringify(torto))).toBeNull();
+  });
+
   it('recusa com motivo fora do vocabulário: forma estranha → null', () => {
     const torto = { ...comRecusa, itens: [{ cnpj: '22345678000195', nome: 'B', estado: { status: 'recusado', motivo: 'inventado', erro: 'x' } }] };
     expect(parsearLote(JSON.stringify(torto))).toBeNull();

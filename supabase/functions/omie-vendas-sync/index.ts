@@ -2749,6 +2749,8 @@ Deno.serve(async (req) => {
 
     // Resolve userId quando vier JWT staff; cron/service_role passam sem user.
     let userId: string | null = null;
+    // Client com o JWT do CHAMADOR (staff): lê o que depende de quem chama — a posse do Radar (`eh_meu` no banco).
+    let supabaseDoUsuario: ReturnType<typeof createClient> | null = null;
     if (__auth.via === "staff" && authHeader?.startsWith("Bearer ")) {
       const supabase = createClient(
         Deno.env.get("SUPABASE_URL")!,
@@ -2759,6 +2761,7 @@ Deno.serve(async (req) => {
         authHeader.replace("Bearer ", "")
       );
       userId = user?.id ?? null;
+      if (userId) supabaseDoUsuario = supabase;
     }
 
     const { action, account: rawAccount, ...params } = await req.json();
@@ -2988,14 +2991,25 @@ Deno.serve(async (req) => {
         // um cliente já existente, vale sempre (radar-cadastro.ts). Recusa é resposta de REGRA (não retentável).
         const exigenciaRadar = lerExigenciaRadar(radar);
         if (exigenciaRadar) {
+          const clienteDoUsuario = supabaseDoUsuario;
           const veredito = await verificarElegibilidadeRadar({
             // `async` + await: devolve uma Promise de verdade (o builder do PostgREST é só thenable — o typecheck do
             // Lovable acusava TS2739 aqui; em runtime já funcionava).
             lerLead: async (doc) => await supabaseAdmin.from("radar_empresas")
               .select("ja_cliente, omie_codigo_cliente, rfb_situacao, prospeccao_status").eq("cnpj", doc).maybeSingle(),
+            // Posse (lote pula lead em atendimento por OUTRO, 2026-11-14): RPC canônica com a identidade do chamador.
+            // `.range(0, 1)`: 2 linhas bastam para acusar contrato quebrado (o índice único garante ≤ 1 posse aberta).
+            lerPosse: clienteDoUsuario
+              ? async (doc) => await clienteDoUsuario.rpc("radar_atendimentos_ativos")
+                .eq("cnpj", doc).order("cnpj", { ascending: true }).range(0, 1)
+              : null,
           }, docClean, exigenciaRadar);
           if (!veredito.ok) {
-            result = { success: false, code: "RADAR_INELEGIVEL", motivo: veredito.motivo, error: `RADAR_INELEGIVEL: ${veredito.motivo}` };
+            result = {
+              success: false, code: "RADAR_INELEGIVEL", motivo: veredito.motivo,
+              ...(veredito.motivo === "posse_de_outro" ? { dono_nome: veredito.donoNome ?? null } : {}),
+              error: `RADAR_INELEGIVEL: ${veredito.motivo}`,
+            };
             break;
           }
         }
