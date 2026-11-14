@@ -391,7 +391,7 @@ Deno.serve(async (req: Request) => {
       if (r.ok) {
         emailStatus = "sent";
         emailDetail = respText;
-        console.log(`[gerar-pedidos-diario] Email enviado para ${recipient}`);
+        console.log(`[gerar-pedidos-diario] Email enviado (destinatário fora do log)`);
       } else {
         emailStatus = "failed";
         emailDetail = `[${r.status}] ${respText}`;

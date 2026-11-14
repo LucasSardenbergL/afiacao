@@ -47,7 +47,7 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 //   na Oben). O lookup do criar_cliente_afiacao (o da conta e o da razão fiscal) passa a ser o ESTRITO de
 //   `_shared/lookup-cliente-estrito.ts`: pagina, 2+ códigos = AMBIGUO, contagem contraditória = INDETERMINADO (MÉDIO 2
 //   do Codex no #3803).
-export const VERSAO = "v1.12-razao-exibida-sem-cpf";
+export const VERSAO = "v1.13-documento-fora-do-log";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

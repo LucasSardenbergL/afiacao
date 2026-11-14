@@ -37,6 +37,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:46:37.881Z"
    },
+   "140c6a5a2b5c761c0360944bcc1b22c8645548b95fb9561d1c7ebde8074e6256@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "dce3b9951ecb6e364501691a6f5d09ed6a63025b",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:48:40.805Z"
+   },
    "18a27f1dc09da98e093db0ebd2a5fb5e7ad4c7d6b1f54239c98b8d366164598d@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "003c0a1bbd7c4496010973cacfdabdfa0d2530c2",
     "veredito": "PASSA",
@@ -1130,6 +1137,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:49:20.704Z"
    },
+   "cd056c4984acf7995efc3242cd1e88c1aef46bd5ac44f938e90d864108b31f79@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "b92ba2598a385d515edfb942d132d82d9f2a2cc7",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:49:36.976Z"
+   },
    "d4d50399d17b21624501c3e1c452e7ea4f492c3920d63735c00b1e936061803d@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "38fad4509ec610b379f827c4aea10d0291665b41",
     "veredito": "PASSA",
@@ -1150,6 +1164,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:49:19.829Z"
+   },
+   "dd8f0ada2dc58b31707e09d929c0e5e7adbd68b9eddc01b93c97d26b68f27322@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "ec3adf6f670308c7d7f55e3ec4fb0d7bc4a9b89f",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:49:37.436Z"
    },
    "dfabdedfe7a1db2f93fd44d82c82efc1c48154fde836807a86437bd29f51ec0d@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "662f7a2432864f94307fa846eabb68d622a63c97",
@@ -1306,6 +1327,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:53:25.550Z"
+   },
+   "cae8aa68f059b244656879d4a050cab4dbf2c87623c979716388026fa328e55f@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@94f37039d2976a38": {
+    "sha": "626f2f23485f9224757cfca7503357183409e8be",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:55:10.960Z"
    },
    "dafa2e506bf0d833af1730b0d6f9f51f25bebde59caa80c007846cdb60b3fb0d@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@94f37039d2976a38": {
     "sha": "d8cf071522d3621da85e7ecafc3ca1153ef13644",
@@ -1546,6 +1574,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:50:11.466Z"
+   },
+   "bba99a973472ad11bb710827eeba74a33f6d3e85ee53da174126552b9aa8521b@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "1cc43beb3def2d315a4e55b1e6dcc9c72e3041ae",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:49:54.280Z"
    },
    "c54dd401e327ed9e996c14ec044b6c1de4002a321d5ed28a3ba86f56fa8244f6@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "fa66bd8783c64e351dd137d1b3a28a12453be9e3",
@@ -1999,6 +2034,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:53:05.012Z"
    },
+   "39859eccdb84e67bcf9c3ed6fc30156d813deba55aab673fdc8d25e1d1ec7fd9@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@40f25f3d239ceb44": {
+    "sha": "9e9c340cb10b04e0de3e379e01c90695fd899302",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:23.016Z"
+   },
    "3c413dc1e9c60ab014ccc5958af5da2265e44c09ba4d881db813ba0786ed732c@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@40f25f3d239ceb44": {
     "sha": "ac3e77c4164190af0b6ff8ac8783bb42dd43d140",
     "veredito": "PASSA",
@@ -2012,6 +2054,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:53:11.080Z"
+   },
+   "409a1b64e69f5aafb2feaddc607faef8bd3dc6f375c67dcda4a9146de3735a38@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@40f25f3d239ceb44": {
+    "sha": "eeb30778ba74de6adfb161c120f58a4c23263394",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:23.317Z"
    },
    "41b647e5ae2b5f8343b7465b60b255ae433a0c4f104010a73c9b45cf2bda0491@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@40f25f3d239ceb44": {
     "sha": "31b785b270ea98eb5ec3cb10b9762e92f1a8f744",
@@ -2089,6 +2138,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:53:14.053Z"
+   },
+   "57530e42894a1cb1c4b482eda082cd74c434f5ba909434af3e68cbdbece49d5d@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@40f25f3d239ceb44": {
+    "sha": "54abaa103202344a66be9be3d9c934b64827c9c3",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:23.596Z"
    },
    "57edcf7418a96c12f6c67954056b58d3cad9238ae48551343b606c8c92761916@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@40f25f3d239ceb44": {
     "sha": "1a4272c765c5626c5ae731f7cb38ee03af885305",
@@ -2285,6 +2341,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:53:16.714Z"
+   },
+   "9ed00326ee862457e83a6542f9e2fc3bfacaf6cbeec5fc8317f8aa4a12867cab@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@40f25f3d239ceb44": {
+    "sha": "5c0ec50323c80ed7047d6e467bd5e3ff2d2dee91",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:22.443Z"
    },
    "a11020a5a937b0a37d2e49e0935b2f9f02599e9710104bc6e2853e2602769a0e@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@40f25f3d239ceb44": {
     "sha": "f6febeb7ec2907c861f752443e59c27b6157527c",
@@ -2516,6 +2579,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:53:15.962Z"
+   },
+   "f9d49160f50e8f7f5898c92f83b490abb18e96ee233213ccf6fd88f996fa8bf4@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@40f25f3d239ceb44": {
+    "sha": "36a401d1fda346cbee2912b8c40297a04cef18d3",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:22.730Z"
    },
    "fdbf044434f7e53145a2f8941a8c1797f2d011d8dbd5b8d42d672f1f63e0b4df@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@40f25f3d239ceb44": {
     "sha": "3e142e3d36781e84abbaa58aed47a26e9cf281ed",
@@ -3374,6 +3444,13 @@
     "controle": "sem-gate",
     "em": "2026-10-13T22:53:36.334Z"
    },
+   "08e45b91714d439e8d3645b7b14bd4f52834eb33ace361aa8405cf06307c475c@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "7724a6f64b07bfdd620c6216de187e46f242a107",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:40.149Z"
+   },
    "12c222a035c780569edefae4456ba4c5457ec020890f07acd0e142ef50d4dae3@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "7e076f1f782c623ecbe18bc344ca22a613ce2999",
     "veredito": "PASSA",
@@ -3409,6 +3486,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:53:34.247Z"
    },
+   "2f1e342dff995abe11941206a99150dd09a35820c80f23320a1612a0c2b3c56b@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "9cba5f42d3dba51d0fe1e19e8fc524e35212c43c",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:39.922Z"
+   },
    "33d2a4428da6f9a79ec862a8f0827f3fd416bdbb2cae335a2d13800200bf87d8@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "118b10655794250931df7e7d87ad5a1a822de5c0",
     "veredito": "PASSA",
@@ -3429,6 +3513,13 @@
     "motivo": "",
     "controle": "sem-gate",
     "em": "2026-10-13T22:53:36.533Z"
+   },
+   "3cb7a9510d752ac5d723a8060b32f1059958c03c36accff322bb1fc051a363f9@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "0ff4e7cf24e82ad8edff665ce6e3dc87d45ae78a",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:40.861Z"
    },
    "4bc7abf8118105ea162dc3914ddb91e10f637c67d0b4e8cc6fa744b8f21619b3@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "6d0d7023c7d6ca75fdb0c00ae9bba5d16a1521ff",
@@ -3535,6 +3626,20 @@
     "controle": "controle",
     "em": "2026-10-13T22:53:33.493Z"
    },
+   "b235cbd1dd85f2940695efd723102e38e478e6efb4e0a3d729cd6c5de8482c7b@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "0ce5f4b1ee30f2d5bcb9f2eb98e3a15006c4a959",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:39.461Z"
+   },
+   "b66fa7e5e1188208eb4cd533f1a0084116bf7ede5f14df9354136235ee9301ae@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "5b43928a30d40ca782ed240fcad00e70db85bc66",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:40.379Z"
+   },
    "b7347a6533f5fc254e5d62d34319020475b18712c377934cf2f2b293bdb3321a@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "b631e769f366c01859bf3550f82b356ec797d931",
     "veredito": "PASSA",
@@ -3548,6 +3653,13 @@
     "motivo": "SyntaxError: Expected '}', got '<eof>'\n    |\n658 | });\n    |    ~\n    at file:///var/folders/cz/94l8x0rn6hqfk080j49r247r0000gn/T/closure-omie-sync-nfes-recebidas-ILFewL/supabase/functions/omie-sync-nf",
     "controle": "inconclusivo",
     "em": "2026-10-13T22:53:36.123Z"
+   },
+   "c5bc1fab21c25f8cf7c0f0f3a69c8a7c9b6489bd5aa5197c6b89c4919c400b4b@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "6363dc8b5d9538dfa53e8c5be556eaa45cd5a1e6",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:40.620Z"
    },
    "c8d1053106f939c16ffb411d7f12f00c750afe29b47a7d3aea55324b392ddb9a@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "333892b34be6ffed43d173651bcd9cc1b1ef21f6",
@@ -3576,6 +3688,13 @@
     "motivo": "",
     "controle": "sem-gate",
     "em": "2026-10-13T22:53:35.824Z"
+   },
+   "d73623448b413c6867b463e47bf19bcf14297cc3a7a62fdb7c385b1ab4b2a8b5@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
+    "sha": "46868e125f1519fd311618c3e5e510a6b6ddbcf7",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:39.686Z"
    },
    "dab8877b1055eaf3fc1f5aa49ef7c469667ce9968e989167d277eebd36d9a6bf@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2160984c3a7a2c5d": {
     "sha": "4954df31222cc8f980b205323fd2c52819c8f30d",
@@ -3704,6 +3823,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:51:25.962Z"
+   },
+   "11b664bf74c84367de43a18a073a8c5efba42139c695ef3cb394755945ef8287@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "bfa8c429ec5336057f9fbf4b6bb5fcb2ebc05691",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:52.782Z"
    },
    "1403f3ab6ec67d50c712adf04febf107398dd608f07bca57c54c3a24eaf4bc47@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "9a7f55f9cadaf0a2eb1b757ccc0cf36d358e50a0",
@@ -4020,6 +4146,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:51:28.122Z"
    },
+   "4a322a3952bd6bd830844623d856733f6b2b1d7473f220052b68791235e7906e@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "e98b13e72e9d4c7c5573c39a2b7157863ec72b0e",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:50.642Z"
+   },
    "4b33e79c5299a79f2c331521e5b022c4ca336f0aace65339fd0843961d213413@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "b9fb8d98238388c4a9eb9b6db6e61309bd335aff",
     "veredito": "PASSA",
@@ -4069,12 +4202,26 @@
     "controle": "controle",
     "em": "2026-10-13T22:51:27.789Z"
    },
+   "506793aa95d5cb3da4f7c9a516c6d84a6bd81c1f7bd338bbb4e9fd3512f467b8@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "36a401d1fda346cbee2912b8c40297a04cef18d3",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:45.700Z"
+   },
    "50a13d26897e183bf51b9506d63baae2665131b5e52b1d018c23bcfb5db75e70@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "8b698d8bd378bc94088aff19a493d3f94d45f9d5",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:51:23.533Z"
+   },
+   "511c926bb6c4fa2cc8d26e1a835918c454957f2b9e952e035112e4018d098b10@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "75dbcc82eed5e558c1369e0c9aea1c684aa4d471",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:47.734Z"
    },
    "51eef63fac0675b0fbdf554c26d5c09015c8615a7896f4d123c51b9b0f3e277a@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "8267ee2d82d4975564594e5a78634529118fafb2",
@@ -4089,6 +4236,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:51:17.077Z"
+   },
+   "52a595695768e0fdb9a1fbb75ee73ca01f3fd55b6436859bb6e9837d2de1c8d4@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "e0f60cc520d29e4af3cda218ebc4dcfff40e14df",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:46.842Z"
    },
    "5414c1d10c1a33b373583b48e5bac4b536327c2f00868877ddc4670d328736d6@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "b07fa09f2a2df3670fbee3d5e4bace0d62ee6f78",
@@ -4300,6 +4454,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:51:25.114Z"
    },
+   "731d77fa8e03ff32c27883629457501f7c6866f19a17008daf5f37e4116d4089@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "24b9eb604240b9d45bfeee257d7d0facce1dc463",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:52.454Z"
+   },
    "73e489f7f74561ed3bda8510b32badd4243a3dd72ef3668018be640ba4a754f2@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "4f49f8745342924a45f26a22bd4852f4d7d74939",
     "veredito": "PASSA",
@@ -4328,12 +4489,26 @@
     "controle": "controle",
     "em": "2026-10-13T22:51:20.284Z"
    },
+   "7cbdf28f2fbd6d26681222340a4790abc1fda1d4b66416e400442376bfe5312c@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "dbf2fb4bc96a76fdd93b31f883de148f70bb79f6",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:50.293Z"
+   },
    "7d7b0f424e2eff820d243ce560e85e07f5fa22ee665a612f5c235b52603be19a@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "006d762043b96694ce7b48b81852002f49a27cea",
     "veredito": "PASSA",
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:51:17.718Z"
+   },
+   "7e1907afd7ea47e7139a069366402b61491456e42fbb6b9124099f04847686f2@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "6049250a5417865244e8fc6257e625c6cf05a595",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:51.758Z"
    },
    "7e6a00aa7d3dc8ac9b4aa5a175a7f13e27a8a6ac2efa4141fc78b6d31eb000c4@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "cf1ac9167935595f948d211ae189a9ad96b35bdf",
@@ -4362,6 +4537,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:51:27.233Z"
+   },
+   "7fcbfd11e1950b49806099f4e45c95d0071b849d8101e5379a8fcb9cb484af46@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "e26f28dcc4cdee1c570e09047c427b83b3918e66",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:48.821Z"
    },
    "7ff449fd6fb3a7c29fd90aba8a06d7ca403691c522c6a8e879865fb769e7b3ce@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "09050af035c0e3fca10e091a1333fb5876614529",
@@ -4432,6 +4614,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:51:27.906Z"
+   },
+   "8614bcfc04413a204eae1b10900ff8747ff2c591bae5d5ed946fa21894a98936@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "9e9c340cb10b04e0de3e379e01c90695fd899302",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:46.059Z"
    },
    "86a106bb6ef57c10907faca90abd05a2b027a7fe70d342be4c32d990dc58e805@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "1cab89d4927a518c3df701f3dfc6d93b48813d6a",
@@ -4524,6 +4713,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:51:39.694Z"
    },
+   "94e365455882dd1aebf6a01e2fa19fd64029dd0774708274a5ec2757decbf6dd@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "46af29890f1e770b02f7b580d45390da35001e13",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:48.467Z"
+   },
    "95525b9ae11ffb21a9adc4d53276a3e02c6094c09b24847ddc8be51936afae8f@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "07c33cb8d4ce28286bf7a8e9be9412a440242831",
     "veredito": "PASSA",
@@ -4537,6 +4733,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:51:35.102Z"
+   },
+   "9647a22edd8574190102daec8f0f3bd493b9c70733c3468413f9ac356914a3b8@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "f4eae81f3b1571a8683da160e5a6bebf8a47e5c0",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:49.185Z"
    },
    "97f554af4400fc7e1c10d1364a673b0b73c54e5743a40b7fdb1025b028cbb6c1@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "ccf4c96986808129fd9f39a678faf216c3414497",
@@ -4650,6 +4853,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:51:28.584Z"
    },
+   "a7ad453d042bc44186313b376f834cddaa7e7ffd1b83768d6be966ecebb397b8@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "fca92fe97cfea8d0f7c76233ca1679304cc5c1ed",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:46.465Z"
+   },
    "a935f68683e13cad0715b2181de20dd98ec8a667d3863128d3dc10f96c5aa955@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "8e06ae6741ddecab6380dad0cadf1c40d49f3318",
     "veredito": "PASSA",
@@ -4678,6 +4888,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:51:18.670Z"
    },
+   "ac4a443ff951894d4fe02fe041076638ccc0fb5fad48f7019350bcbfc7d917cc@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "2f43f457182e69f04f726f530e909eea35f8a654",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:51.016Z"
+   },
    "ac8eda06e84f2da5dd3d552c54dd2f855d55f010b82d6e8d60c20302300f126f@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "1da9c975a3f238fc09d412cf610330fb1df7cdaf",
     "veredito": "PASSA",
@@ -4691,6 +4908,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:51:37.730Z"
+   },
+   "ad542403c9f231e7ff13a68c266a803172a68936f01c08b0217104548b5683c4@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "eb1ef1b3ebd3857ab6135e257a959bd747a84a8a",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:49.542Z"
    },
    "ae2419b3b2e79e92ba3bc3c2aaf0f8d8e110d7bce1b3a275daaeeab0cfde6547@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "8ca827ec5ea467e7fb1001b28f19ae1df2cb8b1b",
@@ -4797,6 +5021,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:51:30.546Z"
    },
+   "bf42911cfd9b1e31529bbd0bb5028bd75118da3e46656aa8377100e6b4091c36@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "a7397ff13f9010bb15207acab9b59b9ae8bcff94",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:49.894Z"
+   },
    "c0e2efc8da7af13f90bbeb73ea14eff6bab3e54867b52357ade2c43c250d8ee5@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "a16ebd14f7b8803bfa43b1a86f101c82dcb042fd",
     "veredito": "PASSA",
@@ -4810,6 +5041,20 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:51:38.380Z"
+   },
+   "c1428e8751e3c6d6bd978ab2c5981f6a5927a008ecaa8edcfd4834fd82f46f62@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "01cb04a6288ad92f9954c77f131323ff1d796251",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:47.234Z"
+   },
+   "c3b35bba30dca0cda850bcf61cd2fa8f26ad043ccea74da646978d5400e3eb03@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "5c0ec50323c80ed7047d6e467bd5e3ff2d2dee91",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:45.344Z"
    },
    "c3f5020f6096cafb1f3bcefdf15536b4b97a802504c814962f46e452491c516a@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "03a0de4b19eed005338f91bc65da725c139c4c70",
@@ -4895,6 +5140,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:51:17.580Z"
    },
+   "d37178a490e6e3b768b991f60644b6e38ff86e9614d7aaeca0c22059f8045590@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "477a5d47818df9e1c0b594809493ef4e69d115ff",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:51.393Z"
+   },
    "d3d715b1a622da7e7e7bb60b49c8e5896f8e1913f40053e207a3e64a2e210c59@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "4fc4fa0934c9be29dd737563bd464e4dac8e3a33",
     "veredito": "PASSA",
@@ -4958,6 +5210,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:51:37.945Z"
    },
+   "e0d38071bc4ab351016310f91a1fcceb2463b3968d14df32f3a26afb2af1298c@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "3e757a7a04bafef3d0f69a59989c494686a7b218",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:48.101Z"
+   },
    "e4d38f947dee95328fa1aa62f449b1bad79c16a344513135c1edc00e2f4a9901@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "9e38e4686bcf3707b1fd102eb9b78fa772ea9a71",
     "veredito": "PASSA",
@@ -4971,6 +5230,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:51:24.718Z"
+   },
+   "e5d6cc3c78e4f8187c63d0f6825119a6071d8b30a6c41cc08f8cd8477ef1011a@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
+    "sha": "7c34773468c58fb89430172150124a83ddbe19d7",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:50:52.119Z"
    },
    "e73849ab02ecf5e45326d0ae68687b5c1fb7fc5eeef5a89dce9919d7eff16224@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@2eb50ef836f529f6": {
     "sha": "cd056f22700e40ad5a48c1aab793d60bfbc04dc9",
@@ -5157,6 +5423,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-14T00:04:38.288Z"
+   },
+   "88be5fe7c8544e387942d7dff2a070c6d8e1fcfa115f230d1f9647a34faf7625@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@1cba267427c0e179": {
+    "sha": "a5cbf603bbc3d5dd0660cd0a8755974f3ced41cb",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:51:55.134Z"
    },
    "8a7abe058b6b96ce2ed91af3c4a0f308149b810e91b4fcb6abbef6f36439693b@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@1cba267427c0e179": {
     "sha": "e9b48a68b8995d34dfcae20138d4ff42f3d91eab",
@@ -5649,6 +5922,13 @@
     "controle": "controle",
     "em": "2026-10-13T22:46:08.578Z"
    },
+   "18f452eb3fe28ea21389d3501ff9825e7053af2d05b36db88c0681fc7a0404a6@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@45ec5df81a1c3bba": {
+    "sha": "464a9c647936038e8ed6ea722aa6d48df2a58909",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:48:22.664Z"
+   },
    "52b19667808fe5b0e343624fa58886935029e887a10c0f87bf2327f01619fec7@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@45ec5df81a1c3bba": {
     "sha": "20d37b021764fa67e1e879ba09aa108328980d18",
     "veredito": "PASSA",
@@ -6014,6 +6294,13 @@
     "motivo": "",
     "controle": "controle",
     "em": "2026-10-13T22:47:58.472Z"
+   },
+   "bfc9909a405bcee1c817d0c90991e24182498c88efee14dcd10394364b70c10e@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@95e7e02fa3e62e96": {
+    "sha": "e4f5341a142ee1cb190ba140882dcdad5b26a2b5",
+    "veredito": "PASSA",
+    "motivo": "",
+    "controle": "controle",
+    "em": "2026-11-14T01:49:15.773Z"
    },
    "c40eb6ae65684a046636a00cfc05d67ae623a0ac55f5c22ae6900a97c77f986d@6bf43f361b85c3d3685fab1f093709cff1424caaaeccc313525618d5439258b9:86d84cb3b339c208@95e7e02fa3e62e96": {
     "sha": "c4d6b062a3d2fbd6aca0b8ffba49c7cc59bd91a8",

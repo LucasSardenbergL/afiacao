@@ -52,7 +52,7 @@ export const respostaSonda = criarRespostaSonda("omie-cliente");
  * `v1.9-busca-staff-sem-cpf` (2026-11-11): `pesquisar_clientes` e `consultar_cliente` devolvem a razão e o
  * fantasia com o CPF de MEI mascarado (busca do staff, M1 da revisão do Fable).
  */
-export const VERSAO = "v1.9-busca-staff-sem-cpf";
+export const VERSAO = "v1.10-documento-fora-do-log";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
