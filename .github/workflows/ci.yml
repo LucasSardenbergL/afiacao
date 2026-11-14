@@ -1466,6 +1466,15 @@ jobs:
         parte: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     permissions:
       contents: read
+    # PIN da minor do PG17 — o ÚNICO lugar destas versões; bump é deliberado, por PR. Incidente #3877:
+    # o PGDG subiu 17.11 → 17.12 sem aviso e `provas-sql (10)` ficou vermelho em TODO PR com SQL de
+    # 2026-11-12 17:33Z a 11-13 13:08Z (19,6 h; 7 PRs parados 18–36 h) por um deadlock 40P01 que só a
+    # minor nova expunha. O run de `schedule` (cron diário da main) IGNORA o pin e instala a mais nova:
+    # é ele quem acusa a minor nova (Issue `ci-main-red`) antes de ela virar vermelho em todo PR.
+    # Valor = prefixo da versão do pacote Debian (`17.12` casa `17.12-1.pgdg24.04+1`, qualquer rebuild).
+    env:
+      PG17_MINOR: '17.12'
+      PGVECTOR_VERSAO: '0.8.7'
 
     steps:
       # fetch-depth: 0 entrou quando a prova chamava a CLI do gerador, cujo guard fail-CLOSED
@@ -1496,10 +1505,12 @@ jobs:
       # gate reprovava PR sadio — "gate cuja VERDADE depende da versão do runner não é
       # gate, é sorteio". Aqui o piso é o que PRODUÇÃO roda (17.6 = 170006, medido via
       # psql-ro), conferido pelo runner perguntando `server_version_num` ao servidor.
-      # Não se pina a minor exata de propósito: o PGDG remove pacotes antigos do índice,
-      # e um pin assim viraria vermelho por AMBIENTE — o que ensinaria a tratar este job
-      # como flaky, que é como um gate morre. O piso + o registro da versão dão o
-      # determinismo que importa sem essa fragilidade.
+      # A minor É pinada desde o #3877 (`env:` do job, acima). O medo antigo — "o PGDG remove
+      # pacotes antigos do índice e o pin viraria vermelho por AMBIENTE" — tem saída: o índice
+      # principal guarda só as ~3 últimas minors (medido 2026-11-13: 17.10/17.11/17.12), mas o
+      # `apt-archive.postgresql.org` (suite `<codename>-pgdg-archive`, MESMA chave ACCC4CF8) guarda
+      # TODAS (17.6…17.11 no mesmo dia). O step resolve a versão no índice principal e, só se o pin
+      # tiver saído de lá, consulta o arquivo UMA vez — fail-closed se nem lá houver.
       - name: PostgreSQL 17 (PGDG) + pgvector — instala e confere a versão
         # Orçamento TOTAL do step (E20): caminho normal ~12 s; o fallback com o mirror sem DNS (~200 s
         # de update) ainda cabe. Os `timeout` internos somam mais que isto de propósito — o teto que
@@ -1531,6 +1542,16 @@ jobs:
           # os steps do shellcheck pinado usam o MESMO helper (steps não compartilham funções), e o
           # lab (scripts/lab-retry-pgdg/) embute esse arquivo no texto deste step para prová-lo.
           . scripts/lib/tentar.sh
+          # Pin (#3877, `env:` do job): fora do `schedule` ele é OBRIGATÓRIO — vazio aqui seria instalar
+          # a mais nova calado, o modo de falha que o pin existe para fechar. No `schedule` é ignorado
+          # de propósito: o cron diário da main é quem instala a minor nova e a acusa.
+          if [ "${GITHUB_EVENT_NAME:-}" = schedule ]; then
+            echo "  schedule: pin ignorado (pin dos PRs: PG ${PG17_MINOR:-?} / pgvector ${PGVECTOR_VERSAO:-?}) — instalando a minor mais nova"
+            PIN_DOS_PRS="${PG17_MINOR:-?}"; PG17_MINOR=""
+          else
+            : "${PG17_MINOR:?pin ausente: defina PG17_MINOR no env: do job provas-sql}"
+            : "${PGVECTOR_VERSAO:?pin ausente: defina PGVECTOR_VERSAO no env: do job provas-sql}"
+          fi
           if [ ! -x /usr/lib/postgresql/17/bin/initdb ]; then
             sudo install -d /usr/share/postgresql-common/pgdg
             tentar "curl da chave do PGDG" \
@@ -1571,8 +1592,51 @@ jobs:
             # coberta pelo mesmo retry, e o pacote do PG17 só existe no PGDG (o repo do Ubuntu não
             # o tem). Quem confere que ele CARREGA é o step seguinte — este texto roda no lab do
             # retry (scripts/lab-retry-pgdg/) com dublês, onde não há servidor para perguntar.
-            instalar() { sudo timeout 180 apt-get install -y -qq postgresql-17 postgresql-17-pgvector; }
+            instalar() { sudo timeout 180 apt-get install -y -qq "${PACOTES[@]}"; }
             tentar "apt-get update (só PGDG)" atualizar_pgdg
+            # ── PIN (#3877) ──────────────────────────────────────────────────────────────────────────
+            # `apt-get install pkg=versao` exige a versão Debian COMPLETA; o pin é só o prefixo (sobrevive
+            # a rebuild `+1`→`+2` e à troca de codename do runner, que um pin `…pgdg24.04+1` faria virar
+            # vermelho em TODO PR). `madison` lista do mais novo ao mais velho e é consulta LOCAL ao
+            # índice (sem rede). Dois desfechos DISTINTOS: versão ausente (return 1 → tenta o archive)
+            # e ferramenta que falhou (return 2 → reprova). Chamado em `if`/`||`, o `set -e` não vale
+            # dentro dele: por isso cada passo propaga o próprio status.
+            versao_no_indice() {
+              local saida
+              saida="$(apt-cache madison "$1")" || { echo "::error::apt-cache madison $1 falhou" >&2; return 2; }
+              printf '%s\n' "$saida" | awk -v p="$2-" '{ v=$3 } index(v, p) == 1 { print v; exit }'
+            }
+            resolver() {
+              V_PG="$(versao_no_indice postgresql-17 "$PG17_MINOR")" || return 2
+              V_CLI="$(versao_no_indice postgresql-client-17 "$PG17_MINOR")" || return 2
+              V_VEC="$(versao_no_indice postgresql-17-pgvector "$PGVECTOR_VERSAO")" || return 2
+              [ -n "$V_PG" ] && [ -n "$V_CLI" ] && [ -n "$V_VEC" ]
+            }
+            if [ -z "$PG17_MINOR" ]; then
+              PACOTES=(postgresql-17 postgresql-17-pgvector)
+            else
+              rc_res=0; resolver || rc_res=$?
+              [ "$rc_res" -le 1 ] || exit 1
+              if [ "$rc_res" -eq 1 ]; then
+                echo "::warning::pin PG $PG17_MINOR / pgvector $PGVECTOR_VERSAO fora do índice principal do PGDG — consultando o apt-archive"
+                echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+          https://apt-archive.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg-archive main" \
+                  | sudo tee /etc/apt/sources.list.d/pgdg-archive.list >/dev/null
+                atualizar_arquivo() {
+                  sudo timeout 90 apt-get update -qq --error-on=any \
+                    -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/pgdg-archive.list \
+                    -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 -o Acquire::Retries=0
+                }
+                tentar "apt-get update (apt-archive do PGDG)" atualizar_arquivo
+                rc_res=0; resolver || rc_res=$?
+                [ "$rc_res" -le 1 ] || exit 1
+                [ "$rc_res" -eq 0 ] || {
+                  echo "::error::pin PG17_MINOR=$PG17_MINOR / PGVECTOR_VERSAO=$PGVECTOR_VERSAO não existe nem no apt-archive (pg='$V_PG' cli='$V_CLI' vec='$V_VEC') — corrija o env: do job provas-sql"
+                  exit 1; }
+              fi
+              PACOTES=("postgresql-17=$V_PG" "postgresql-client-17=$V_CLI" "postgresql-17-pgvector=$V_VEC")
+            fi
+            echo "  pacotes: ${PACOTES[*]}"
             # FALLBACK DELIMITADO: se uma imagem nova do runner pedir dependência do Ubuntu que não
             # traz, o install com só o índice do PGDG falha — então, UMA vez, o update das fontes base
             # (o desenho de antes, com teto) e o install sob o `tentar`, fail-closed como sempre. O 1º
@@ -1587,6 +1651,27 @@ jobs:
           echo "  $instalada"
           printf '%s' "$instalada" | grep -qE '\(PostgreSQL\) 17\.' || {
             echo "::error::initdb não é PostgreSQL 17: $instalada"; exit 1; }
+          # Conferência POSITIVA do pin: o que roda é a minor pinada, não "algum 17". O espaço final
+          # impede `17.1` de casar `17.12`.
+          # Os DOIS outros pacotes também: PG certo com pgvector (ou client) de outra versão passaria
+          # pelo initdb calado.
+          if [ -n "$PG17_MINOR" ]; then
+            case "$instalada " in
+              *"(PostgreSQL) $PG17_MINOR "*) ;;
+              *) echo "::error::initdb não é a minor pinada $PG17_MINOR: $instalada"; exit 1 ;;
+            esac
+            for par in "postgresql-client-17 $PG17_MINOR" "postgresql-17-pgvector $PGVECTOR_VERSAO"; do
+              pacote="${par% *}"; quer="${par#* }"
+              tem="$(dpkg-query -W -f='${Version}' "$pacote")"
+              case "$tem" in
+                "$quer"-*) echo "  $pacote $tem" ;;
+                *) echo "::error::$pacote instalado é '$tem', o pin é $quer"; exit 1 ;;
+              esac
+            done
+            echo "  PG17_PIN_OK minor=$PG17_MINOR pgvector=$PGVECTOR_VERSAO"
+          else
+            echo "::notice::schedule sem pin instalou: $instalada (pin dos PRs: ${PIN_DOS_PRS:-?}) — se as provas passaram, o bump do env: é um PR deliberado"
+          fi
 
       # O pgvector do step acima, conferido POSITIVAMENTE e por fora das provas: o arquivo de
       # controle existe E o servidor carrega a extensão e responde com uma distância. As provas tint
@@ -2085,8 +2170,11 @@ jobs:
               `- Commit: \`${sha}\` — ${msg}`,
               `- Autor: ${author}`,
               `- Run: ${runUrl}`,
+              `- Evento: \`${context.eventName}\``,
               '',
-              'Provável reversão por commit direto do Lovable (sem PR/CI). Restauração rápida: `docs/agent/deploy.md`.',
+              context.eventName === 'schedule'
+                ? 'Run do `schedule`, que instala o PG17 SEM o pin (#3877). Se só `provas-sql` falhou, suspeite da minor nova do PGDG: compare a versão no log do step `PostgreSQL 17` com o `PG17_MINOR` do job (`docs/historico/ci-pin-pg17.md`). Esta Issue só fecha com um `schedule` verde — run com pin verde não prova a minor nova.'
+                : 'Provável reversão por commit direto do Lovable (sem PR/CI). Restauração rápida: `docs/agent/deploy.md`.',
             ].join('\n');
             const open = await github.rest.issues.listForRepo({ owner, repo, state: 'open', labels: label, per_page: 1 });
             if (open.data.length > 0) {
@@ -2108,6 +2196,19 @@ jobs:
             const label = 'ci-main-red';
             const open = await github.rest.issues.listForRepo({ owner, repo, state: 'open', labels: label, per_page: 100 });
             for (const issue of open.data) {
+              // Pin do PG17 (#3877): o `schedule` testa a minor MAIS NOVA, os outros runs a pinada. Um
+              // verde com pin não desmente o vermelho sem pin — se a falha mais recente da Issue veio
+              // do `schedule`, só outro `schedule` verde a fecha. A falha mais recente é o último
+              // comentário 🔴 (ou o corpo, se não houver).
+              if (context.eventName !== 'schedule') {
+                const coms = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: issue.number, per_page: 100 });
+                const falhas = [issue.body || '', ...coms.map((c) => c.body || '')].filter((b) => b.startsWith('🔴'));
+                const ultima = falhas[falhas.length - 1] || '';
+                if (ultima.includes('- Evento: `schedule`')) {
+                  core.info(`#${issue.number}: última falha veio do schedule (PG17 sem pin) — fica aberta até um schedule verde`);
+                  continue;
+                }
+              }
               await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: `✅ CI da \`main\` voltou a verde em \`${sha}\`. Fechando automaticamente.` });
               await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed' });
             }
