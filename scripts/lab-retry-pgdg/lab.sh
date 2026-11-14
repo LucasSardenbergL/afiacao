@@ -169,6 +169,7 @@ case "$sub $*" in
 esac
 printf '%s timeout=%s %s\n' "$camada" "${LAB_SOB_TIMEOUT:-nenhum}" "$*" >> "$LAB_CONT/args"
 if [ "$sub" = "install" ]; then
+  printf '%s\n' "$*" > "$LAB_CONT/ultimo-install"
   LAB_MSG_ERRO="E: Unable to fetch some archives." \
     "$LAB_BIN/_camada" APTINS "$@" || exit $?
   # Instalar POSTGRESQL-17 e' o que faz o initdb passar a existir — e' assim que o step sai do
@@ -178,6 +179,15 @@ if [ "$sub" = "install" ]; then
   minor="${LAB_MAIS_NOVA:-17.13}"
   for a in "$@"; do case "$a" in postgresql-17=*) v="${a#postgresql-17=}"; minor="${v%%-*}" ;; esac; done
   minor="${LAB_INITDB_FORCA:-$minor}"
+  # O que o `dpkg-query` dublê vai responder: a versao PEDIDA (`pkg=versao`) ou, sem `=`, a mais nova
+  # do indice. LAB_VEC_FORCA simula o pgvector de outra versao.
+  set -- $LAB_IDX_PG; nova_pg="$1"; set -- $LAB_IDX_VEC; nova_vec="$1"
+  printf '%s' "$nova_pg" > "$LAB_CONT/dpkg-postgresql-client-17"
+  printf '%s' "$nova_vec" > "$LAB_CONT/dpkg-postgresql-17-pgvector"
+  for a in $(cat "$LAB_CONT/ultimo-install"); do
+    case "$a" in *=*) printf '%s' "${a#*=}" > "$LAB_CONT/dpkg-${a%%=*}" ;; esac
+  done
+  [ -n "${LAB_VEC_FORCA:-}" ] && printf '%s' "$LAB_VEC_FORCA" > "$LAB_CONT/dpkg-postgresql-17-pgvector"
   mkdir -p "$LAB_SANDBOX/usr/lib/postgresql/17/bin"
   printf '#!/usr/bin/env bash\necho "initdb (PostgreSQL) %s (Ubuntu %s-1.pgdg24.04+1)"\n' "$minor" "$minor" \
     > "$LAB_SANDBOX/usr/lib/postgresql/17/bin/initdb"
@@ -214,6 +224,14 @@ esac
 for v in $idx $arq; do
   printf ' %s | %s | https://apt.postgresql.org/pub/repos/apt noble-pgdg/main amd64 Packages\n' "$2" "$v"
 done
+EOS
+
+# `dpkg-query -W -f='${Version}' <pkg>`: devolve o que o install dublê registrou.
+cat > "$BIN/dpkg-query" <<'EOS'
+#!/usr/bin/env bash
+pkg="${!#}"
+[ -f "$LAB_CONT/dpkg-$pkg" ] || { echo "dpkg-query: no packages found matching $pkg" >&2; exit 1; }
+cat "$LAB_CONT/dpkg-$pkg"
 EOS
 
 chmod +x "$BIN"/*
@@ -286,7 +304,7 @@ espera_conta() {
 # recorta — e o C0 entra SEMPRE, porque e' o controle que separa "a guarda caiu" de "o lab caiu".
 # O subconjunto vai IMPRESSO no cabecalho: run recortado que se passasse por completo seria
 # cobertura que some sozinha, e o verde continuaria chegando.
-CENARIOS="${LAB_CENARIOS:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10 C11 C12 C13 C14 C15 C16}"
+CENARIOS="${LAB_CENARIOS:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10 C11 C12 C13 C14 C15 C16 C17 C18}"
 quer() { case " C0 $CENARIOS " in *" $1 "*) return 0 ;; esac; return 1; }
 
 echo "── lab retry PGDG · alvo: ${YML#"$RAIZ_REPO"/} · cenarios: C0 $CENARIOS ──"
@@ -474,6 +492,17 @@ fi
 if quer C16; then
   roda LAB_INITDB_FORCA=17.1
   vermelho "C16 initdb de outra minor — reprova na conferencia do pin" 1 "não é a minor pinada 17.12"
+fi
+
+# C17 — o sentido que o espaco final protege: pin 17.1 (do archive) e initdb 17.12 tem de REPROVAR.
+if quer C17; then
+  roda PG17_MINOR=17.1 LAB_INITDB_FORCA=17.12
+  vermelho "C17 pin 17.1 com initdb 17.12 — reprova (prefixo nao basta)" 1 "não é a minor pinada 17.1"
+fi
+# C18 — PG certo, pgvector de outra versao: a conferencia dos pacotes reprova.
+if quer C18; then
+  roda LAB_VEC_FORCA=0.8.8-1.pgdg24.04+1
+  vermelho "C18 pgvector fora do pin — reprova" 1 "postgresql-17-pgvector instalado é '0.8.8-1.pgdg24.04+1', o pin é 0.8.7"
 fi
 
 echo ""

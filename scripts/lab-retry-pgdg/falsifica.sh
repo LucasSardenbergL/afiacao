@@ -75,7 +75,7 @@ PY
 # fora da lista passaria despercebida AQUI — quem cobre isso e' o lab completo, que roda inteiro no
 # controle desta mesma invocacao e no `test:hooks`.
 # roda_lab <yml> <tentar> <locale> [cenarios]
-roda_lab() { ALVO_YML="$1" ALVO_TENTAR="$2" LC_ALL="$3" LAB_CENARIOS="${4:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10 C11 C12 C13 C14 C15 C16}" bash "$L/lab.sh" 2>&1; }
+roda_lab() { ALVO_YML="$1" ALVO_TENTAR="$2" LC_ALL="$3" LAB_CENARIOS="${4:-C1 C2 C3 C4 C5 C6 C7 C8 C9 C10 C11 C12 C13 C14 C15 C16 C17 C18}" bash "$L/lab.sh" 2>&1; }
 
 # ── (0) CONTROLE — antes de qualquer sabotagem, na mesma invocacao ───────────────────────────────
 cp "$ORIG" "$TMP/controle.yml"
@@ -203,21 +203,34 @@ prova yml "S10 update do fallback sem timeout (orcamento furado)" \
   "C9"
 
 # S11-S14 — o PIN (#3877), uma camada por vez.
+# shellcheck disable=SC2016  # `$` = texto procurado no ci.yml (ver S1)
 prova yml "S11 conferencia do pin aceita qualquer minor" \
-  '*"(PostgreSQL) $PG17_MINOR "*) echo' '*) echo' \
-  "C16"
+  '*"(PostgreSQL) $PG17_MINOR "*) ;;' '*) ;;' \
+  "C16 C17"
 
 prova yml "S12 sem o fallback do apt-archive (pin que saiu do indice vira vermelho)" \
   'tentar "apt-get update (apt-archive do PGDG)" atualizar_arquivo' 'true' \
   "C11 C15"
 
+# shellcheck disable=SC2016  # `$` = texto procurado no ci.yml (ver S1)
 prova yml "S13 schedule deixa de ignorar o pin (a minor nova nunca e' acusada)" \
   'PIN_DOS_PRS="${PG17_MINOR:-?}"; PG17_MINOR=""' 'PIN_DOS_PRS="${PG17_MINOR:-?}"' \
   "C13"
 
+# shellcheck disable=SC2016  # `$` = texto procurado no ci.yml (ver S1)
 prova yml "S14 pin vazio fora do schedule passa calado (instala a mais nova)" \
   ': "${PG17_MINOR:?pin ausente: defina PG17_MINOR no env: do job provas-sql}"' ': "${PG17_MINOR:=}"' \
   "C14"
+
+# shellcheck disable=SC2016  # `$` = texto procurado no ci.yml (ver S1)
+prova yml "S15 sem o espaco final na conferencia (17.1 casa 17.12)" \
+  '*"(PostgreSQL) $PG17_MINOR "*)' '*"(PostgreSQL) $PG17_MINOR"*)' \
+  "C17"
+
+# shellcheck disable=SC2016  # `$` = texto procurado no ci.yml (ver S1)
+prova yml "S16 conferencia do pgvector aceita qualquer versao" \
+  '"$quer"-*) echo' '*) echo' \
+  "C18"
 
 echo ""
 echo "── resultado: $ok ok · $ruim falha(s) ──"
