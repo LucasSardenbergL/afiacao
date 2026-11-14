@@ -20749,42 +20749,54 @@ export type Database = {
         Row: {
           aprovado_em: string
           aprovado_por: string
+          cadencia_na_aprovacao: number | null
           comprador_id: string
+          custo_na_aprovacao: number | null
           empresa: string
           id: string
           omie_codigo_produto: number
           preco_alvo: number
+          qtd_ref_na_aprovacao: number | null
           revogado_em: string | null
           revogado_por: string | null
           substitui_id: string | null
+          ultima_compra_na_aprovacao: string | null
           ultimo_preco_na_aprovacao: number
           valido_ate: string
         }
         Insert: {
           aprovado_em?: string
           aprovado_por: string
+          cadencia_na_aprovacao?: number | null
           comprador_id: string
+          custo_na_aprovacao?: number | null
           empresa: string
           id?: string
           omie_codigo_produto: number
           preco_alvo: number
+          qtd_ref_na_aprovacao?: number | null
           revogado_em?: string | null
           revogado_por?: string | null
           substitui_id?: string | null
+          ultima_compra_na_aprovacao?: string | null
           ultimo_preco_na_aprovacao: number
           valido_ate: string
         }
         Update: {
           aprovado_em?: string
           aprovado_por?: string
+          cadencia_na_aprovacao?: number | null
           comprador_id?: string
+          custo_na_aprovacao?: number | null
           empresa?: string
           id?: string
           omie_codigo_produto?: number
           preco_alvo?: number
+          qtd_ref_na_aprovacao?: number | null
           revogado_em?: string | null
           revogado_por?: string | null
           substitui_id?: string | null
+          ultima_compra_na_aprovacao?: string | null
           ultimo_preco_na_aprovacao?: number
           valido_ate?: string
         }
@@ -20983,6 +20995,77 @@ export type Database = {
         }
         Relationships: []
       }
+      venda_sistema_par: {
+        Row: {
+          base_codigo: number
+          decidido_em: string | null
+          decidido_por: string | null
+          empresa: string
+          evidencia: Json
+          id: number
+          mostrado_em: string
+          papel: string
+          par_codigo: number
+          status: string
+        }
+        Insert: {
+          base_codigo: number
+          decidido_em?: string | null
+          decidido_por?: string | null
+          empresa: string
+          evidencia: Json
+          id?: never
+          mostrado_em?: string
+          papel: string
+          par_codigo: number
+          status?: string
+        }
+        Update: {
+          base_codigo?: number
+          decidido_em?: string | null
+          decidido_por?: string | null
+          empresa?: string
+          evidencia?: Json
+          id?: never
+          mostrado_em?: string
+          papel?: string
+          par_codigo?: number
+          status?: string
+        }
+        Relationships: []
+      }
+      venda_sistema_par_decisao: {
+        Row: {
+          decidido_em: string
+          decidido_por: string
+          id: number
+          par_id: number
+          status: string
+        }
+        Insert: {
+          decidido_em?: string
+          decidido_por: string
+          id?: never
+          par_id: number
+          status: string
+        }
+        Update: {
+          decidido_em?: string
+          decidido_por?: string
+          id?: never
+          par_id?: number
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "venda_sistema_par_decisao_par_id_fkey"
+            columns: ["par_id"]
+            isOneToOne: false
+            referencedRelation: "venda_sistema_par"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       venda_situacao: {
         Row: {
           calculado_em: string
@@ -21031,6 +21114,7 @@ export type Database = {
           preco_anterior: number | null
           qtd_ref: number | null
           sales_order_id: string | null
+          sistema_par_id: number | null
           sucessao_origem: Json | null
           tipo: string
           valor_realizado: number | null
@@ -21057,6 +21141,7 @@ export type Database = {
           preco_anterior?: number | null
           qtd_ref?: number | null
           sales_order_id?: string | null
+          sistema_par_id?: number | null
           sucessao_origem?: Json | null
           tipo: string
           valor_realizado?: number | null
@@ -21083,13 +21168,22 @@ export type Database = {
           preco_anterior?: number | null
           qtd_ref?: number | null
           sales_order_id?: string | null
+          sistema_par_id?: number | null
           sucessao_origem?: Json | null
           tipo?: string
           valor_realizado?: number | null
           valor_ref?: number | null
           valor_ref_referencia_origem?: boolean
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "venda_sugestao_sistema_par_id_fkey"
+            columns: ["sistema_par_id"]
+            isOneToOne: false
+            referencedRelation: "venda_sistema_par"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       venda_sugestao_substituida: {
         Row: {
