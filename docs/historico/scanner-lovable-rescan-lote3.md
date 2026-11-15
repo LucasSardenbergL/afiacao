@@ -1,0 +1,43 @@
+# Rescan do scanner Lovable Security — lote 3 (2026-11-15)
+
+Continuação do [lote 2](scanner-lovable-rescan-lote2.md). O lote tem duas partes: os 3 itens que a triagem anterior já tinha separado como reais, e a triagem dos 4 achados que a varredura de 2026-11-14 trouxe de novo. Cada um foi conferido na PROD via `psql-ro` e no código antes de qualquer conserto. Os três não-óbvios passaram pela 2ª opinião do Codex (gpt-6-astra, reasoning high, 82 s).
+
+## O que entrou
+
+| Achado | Correção |
+|---|---|
+| 🟠 `03689f08`: o `gmail-webhook-receiver` salvava anexo sem limite de tamanho | `gmail-webhook-receiver` v1.1: o corpo é lido em stream com teto de 42 MB e devolve 413 sem alocar o resto. Os tetos são 30 MB por anexo em base64 (o mesmo do extrator), 40 MB por mensagem e 20 anexos. O maior e-mail registrado tinha 11. Estourar um teto recusa a mensagem INTEIRA antes do 1º upload, e ela fica `rejeitado`. Como o dedupe devolve 400 a cada retry, o Apps Script não entra em laço. O ramo de suspensão vem antes do teto, então o alerta de compra não se perde por causa de um anexo grande |
+| 🟠 A IA do extrator via vision não tinha cota | `promocao-extrair-via-vision` v1.2: o principal staff consome `ia_consumir_cota` (30/h e 100/dia por usuário). O uso medido teve pico de 11/h e de 12/dia. Cron e service_role (o webhook) não têm usuário e ficam limitados pelos tetos do webhook. O seed vem antes da edge na migration `20261115213000`, porque sem a linha a RPC nega |
+| 🟡 O número discado no `nvoip-calls` não era validado | `nvoip-calls` v1.3: aceita só número brasileiro discável (celular com 11 dígitos, fixo com 10 e 0800), com `+55`, `55` ou zero de longa distância, e devolve o formato nacional que a Nvoip já recebia. Recusa internacional, tarifado (0900/0300/0500), código curto e símbolo de DTMF. O número segue **livre**, por decisão do founder (prospecção) |
+| 🟠 `ec253a34`: dava para injetar HTML no e-mail de novo pedido | `omie-sync` v1.14: o nome do cliente, o e-mail, o telefone, o documento, o nº da OS e os itens passam por `_shared/escape-html.ts` |
+| 🟡 `43bd6b91`: `cobranca_dona` servia de oráculo da carteira | A função é SECDEF, devolve o uuid da dona de qualquer cliente, e authenticated tinha EXECUTE, inclusive customer. Na migration `20261115213100`, as 3 policies SELECT de cobrança passam a usar o booleano `cobranca_sou_dona(company, codigo)`, que só responde pelo próprio `auth.uid()`. O EXECUTE de authenticated em `cobranca_dona` sai, e as 4 funções SECDEF seguem chamando como postgres |
+
+## Triagem dos 4 achados novos
+
+| Código | Veredito | Por quê |
+|---|---|---|
+| `ec253a34` | **Real**, corrigido | O texto digitado entrava cru no HTML do e-mail da equipe |
+| `43bd6b91` | **Real** e baixo (só um uuid), corrigido | O Codex concordou e propôs o conserto do booleano. Um gate "é staff" deixaria o vazamento entre vendedores |
+| `7330d2bc` | **Desenho**, aceitar | `rag-search` exige employee ou master, e a RLS de PROD já dá a esses papéis SELECT em `rag_chunks` e `customer_processes`. A edge não amplia nada. É a mesma classe de `1e1b16869`/`84389ac7` |
+| `b339bb5b` | **Baixo**, decisão do founder | A edge grava o `codigo_vendedor` que vem do body, mas a policy `Staff can manage account map` (ALL para employee) já deixa o employee gravar a coluna direto pelo PostgREST. Corrigir só a edge seria teatro. O Codex achou um efeito real: o `carteira-rebuild` deriva a dona (`carteira_assignments.owner_user_id`) desse mapa. Se o employee **não** deve reatribuir carteira, o conserto é sistêmico: fechar a escrita direta no mapa e resolver o vendedor pela Omie no servidor. É escopo próprio, não cabe aqui |
+
+## Lições
+
+- **O guard de colisão de migration leu o HEAD de OUTRO checkout.** O `wt:preflight` barrou a migration da cobrança como "EM VOO em 27 worktrees". A causa: o checkout principal estava num HEAD destacado e antigo, sem a `20261031210000_cobranca_fila.sql`, e o guard tomou esse HEAD por histórico. A conferência por worktree (`git status` e grep de migration não commitada) e por PR deu zero concorrência. Foi falso positivo, e não houve dano.
+- **A ordem das asserções decide se uma sabotagem antiga continua vermelha.** A prova da cobrança já tinha a sabotagem `revoke_dona` casando no C9e (o estado original). Aplicar a migration nova antes do C9e faria essa sabotagem ficar VERDE, porque o REVOKE novo cobriria o removido. O bloco D entra depois do C9e e antes do C10.
+- **Uma sabotagem só prova algo se o dado de base distingue os lados.** A 1ª versão sabotava a policy da promessa, mas V1 já via as 2 promessas existentes, então a sabotagem ficaria verde. A troca foi para a de evento, em que V1 vê 20 de 22.
+
+## Prova
+
+- `db/test-cobranca-fila.sh` (PG17) ganhou o bloco D. D0 fixa a linha de base por papel. D1 confere a ACL. D2 prova que a chamada direta a `cobranca_dona` dá 42501 para customer e vendedora. D3 e D4 provam que as leituras de caso, promessa, evento e fila ficam IDÊNTICAS antes e depois. D5 prova que `sou_dona` responde só pelo chamador, D6 que `registrar` segue funcionando e D7 que a migration é idempotente. O controle tem 68 asserções e 0 falhas. Há 4 sabotagens novas: a da ACL (pega na postcondição), a do helper aberto, a da policy sem o ramo da gestão e a do evento de outro caso.
+- Testes Deno: `limites-anexo_test.ts` (9), `numero-destino_test.ts` (5) e `escape-html_test.ts` (2). `test:edges` deu 2645/0.
+
+## Deploy
+
+Pendente: será registrado no PR de sonda.
+
+## Fica para o founder
+
+- Marcar como **aceitos por desenho** no scanner: `7330d2bc`. Também `78952df6` e `f14d9731`, que vêm do lote 2 e são críticos, e por isso só se marcam pela tela de Segurança.
+- Decidir o `b339bb5b`: o employee pode ou não reatribuir a carteira pelo mapa da Omie? Se puder, é aceito por desenho. Se não, abre-se o conserto sistêmico.
+- Marcar como corrigidos, depois do próximo rescan: `03689f08`, `ec253a34` e `43bd6b91`.

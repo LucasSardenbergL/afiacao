@@ -18,6 +18,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { conferirTetosAnexos, lerCorpoComTeto } from "./limites-anexo.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -117,8 +118,21 @@ Deno.serve(async (req: Request) => {
 
   // Corpo lido ANTES do segredo só para a sonda; a falha de parse continua virando 400 depois do
   // segredo (requisição sem segredo segue recebendo 401, como antes).
-  let parseFalhou = false;
-  const corpoBruto: unknown = await req.json().catch(() => { parseFalhou = true; return null; });
+  // Lido em stream com teto (scanner `03689f08`): corpo acima de TETO_CORPO_BYTES é 413 antes de
+  // qualquer coisa, sem alocar o resto. O 413 não revela nada sem o segredo: só diz "grande demais".
+  const leitura = await lerCorpoComTeto(req.body);
+  if (!leitura.ok && leitura.motivo === "corpo_grande") {
+    return jsonResponse(413, { error: "Corpo grande demais" });
+  }
+  let parseFalhou = !leitura.ok;
+  let corpoBruto: unknown = null;
+  if (leitura.ok) {
+    try {
+      corpoBruto = JSON.parse(leitura.texto);
+    } catch {
+      parseFalhou = true;
+    }
+  }
   // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem
   // tocar banco. `classificarSonda` decide fail-closed (a string "true" do SQL Editor é ambígua → 400).
   // GATE PRÓPRIO: o gate desta edge não aceita `x-cron-secret`, então só um corpo de SONDA desvia para
@@ -213,7 +227,7 @@ Deno.serve(async (req: Request) => {
       status: "processando",
       tipo_documento: rule?.tipo_documento ?? null,
       detalhes: {
-        attachments_count: body.attachments?.length ?? 0,
+        attachments_count: Array.isArray(body.attachments) ? body.attachments.length : 0,
         body_preview: body.bodyText?.slice(0, 500) ?? null,
       },
     })
@@ -279,6 +293,29 @@ Deno.serve(async (req: Request) => {
       alertas_criados: alertaId ? [alertaId] : [],
       suspensao: true,
     });
+  }
+
+  // 6b. Tetos de anexo (scanner `03689f08`), antes do primeiro upload. Vem DEPOIS da suspensão,
+  // que não toca anexo: o alerta de compra não se perde por causa de um anexo grande. Estourou → a mensagem
+  // INTEIRA é recusada e fica `rejeitado`; o dedupe acima devolve 400 a cada retry, então o Apps
+  // Script não entra em laço reenviando o mesmo e-mail gigante.
+  const tetos = conferirTetosAnexos(body.attachments);
+  if (!tetos.ok) {
+    const { error: rejErr } = await supabase
+      .from("gmail_webhook_log")
+      .update({
+        status: "rejeitado",
+        processado_em: new Date().toISOString(),
+        erro: `Anexos acima do teto: ${tetos.erro}`,
+      })
+      .eq("id", logId);
+    // Sem o `rejeitado` gravado o log fica `processando`, e o dedupe responderia 200 ao retry:
+    // falha alto em vez de fingir que a recusa ficou registrada.
+    if (rejErr) {
+      console.error("[gmail-webhook] Falha ao marcar rejeitado por teto:", rejErr.message);
+      return jsonResponse(500, { error: "Erro registrando a recusa por teto", log_id: logId });
+    }
+    return jsonResponse(413, { error: `Anexos acima do teto: ${tetos.erro}`, log_id: logId });
   }
 
   // 7. Processa anexos (PDF / imagem) em paralelo

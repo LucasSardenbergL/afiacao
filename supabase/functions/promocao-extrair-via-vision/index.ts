@@ -30,6 +30,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 // falhava em resolver no boot do edge runtime → RUNTIME_ERROR sem linha/stack.
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
 import {
   anotarRejeicoes,
   type BlocoAnexo,
@@ -490,6 +491,32 @@ Deno.serve(async (req: Request) => {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+  }
+
+  // COTA (scanner Lovable Security, lote 3) — depois da validação (requisição malformada não queima
+  // cota) e antes do storage e da Anthropic. Só o principal STAFF consome: ele tem usuário, e é por
+  // ele que um laço de uploads esgotaria o orçamento ORGANIZACIONAL da Anthropic. Cron e
+  // service_role (o gmail-webhook-receiver) não têm usuário; o webhook já é limitado pelos tetos de
+  // anexo dele. Sem linha em `ia_uso_limite` a RPC nega (fail-closed): o seed vem ANTES do deploy.
+  if (__auth.via === "staff") {
+    if (!__auth.userId) {
+      return new Response(JSON.stringify({ error: "usuário não identificado" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const cota = await consumirCota(
+      supabase,
+      __auth.userId,
+      "promocao-extrair-via-vision",
+      "extrações de documento",
+    );
+    if (!cota.permitido) {
+      return new Response(JSON.stringify({ error: cota.mensagem }), {
+        status: cota.http,
+        headers: { ...corsHeaders, ...headersDeCota(cota), "Content-Type": "application/json" },
+      });
+    }
   }
 
   console.log(

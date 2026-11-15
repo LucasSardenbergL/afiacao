@@ -9,6 +9,7 @@ import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts
 import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
 import { montarParcelasOS } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { escapeHtml } from "../_shared/escape-html.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
 // Origem fixa "*" (igual ao `_shared/auth.ts`; a auth é por Bearer, não cookie): o secret ALLOWED_ORIGIN
@@ -237,9 +238,10 @@ async function sendOrderNotificationEmail(
   }
 
   try {
-    // Formatar lista de itens
+    // Formatar lista de itens. Todo valor do body passa por escapeHtml (scanner `ec253a34`): o
+    // nome do cliente e o item digitado chegavam crus ao HTML do e-mail da equipe.
     const itemsList = orderItems
-      .map(item => `• ${item.quantity}x ${item.toolName || item.category}`)
+      .map(item => `• ${escapeHtml(item.quantity)}x ${escapeHtml(item.toolName || item.category)}`)
       .join("<br>");
 
     const emailHtml = `
@@ -249,12 +251,12 @@ async function sendOrderNotificationEmail(
         </h2>
         
         <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <h3 style="color: #16213e; margin-top: 0;">Ordem de Serviço: ${osNumber}</h3>
+          <h3 style="color: #16213e; margin-top: 0;">Ordem de Serviço: ${escapeHtml(osNumber)}</h3>
           
-          <p><strong>Cliente:</strong> ${nomeCliente}</p>
-          ${profileData.email ? `<p><strong>Email:</strong> ${profileData.email}</p>` : ""}
-          ${profileData.phone ? `<p><strong>Telefone:</strong> ${profileData.phone}</p>` : ""}
-          ${profileData.document ? `<p><strong>Documento:</strong> ${profileData.document}</p>` : ""}
+          <p><strong>Cliente:</strong> ${escapeHtml(nomeCliente)}</p>
+          ${profileData.email ? `<p><strong>Email:</strong> ${escapeHtml(profileData.email)}</p>` : ""}
+          ${profileData.phone ? `<p><strong>Telefone:</strong> ${escapeHtml(profileData.phone)}</p>` : ""}
+          ${profileData.document ? `<p><strong>Documento:</strong> ${escapeHtml(profileData.document)}</p>` : ""}
         </div>
         
         <div style="margin: 20px 0;">
