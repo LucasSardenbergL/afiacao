@@ -29,9 +29,11 @@ MIG="$REPO_ROOT/supabase/migrations/20261031210000_cobranca_fila.sql"
 MIG_VIEWS="$REPO_ROOT/supabase/migrations/20261014120000_fin_ciclo_cliente_views.sql"
 # Régua com nome pela fonte da fila (QA pós-Publish 2026-11-01): aplicada ANTES do C8d (o C1d re-aplica a MIG original).
 MIG_NOME="$REPO_ROOT/supabase/migrations/20261101120000_cobranca_regua_nome_cliente.sql"
+# Oráculo da dona fechado (scanner 43bd6b91, lote 3): aplicada ANTES do C10, DEPOIS do C9e (que prova o estado original).
+MIG_DONA="$REPO_ROOT/supabase/migrations/20261115213100_seg_lote3_cobranca_sou_dona.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="gate_fila:C2e dona_ve_tudo:C2b sela_duas_vezes:C1d contato_muda_estado:C4a quitado_sem_conciliar:C6a cancelar_sem_gestao:C6c coorte_so_vencida:POST!P6_FALHOU pode_agir_aberto:C3c dona_nula_fail_open:C3d evento_em_contato:C7a regua_d2_vencido:C8b regua_nome_fonte:C8d revoke_dona:POST!P2_FALHOU tabela_insert_auth:POST!P3_FALHOU dona_de_abertura:C11a disputa_por_promessa:C12"
+  SABOTAGENS="gate_fila:C2e dona_ve_tudo:C2b sela_duas_vezes:C1d contato_muda_estado:C4a quitado_sem_conciliar:C6a cancelar_sem_gestao:C6c coorte_so_vencida:POST!P6_FALHOU pode_agir_aberto:C3c dona_nula_fail_open:C3d evento_em_contato:C7a regua_d2_vencido:C8b regua_nome_fonte:C8d revoke_dona:POST!P2_FALHOU tabela_insert_auth:POST!P3_FALHOU dona_de_abertura:C11a disputa_por_promessa:C12 dona_auth_aberta:DPOST!DPOST_FALHOU sou_dona_aberta:D3 caso_sem_gestao:D3 dona_le_evento_de_outro:D3"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-cobranca-fila.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -73,10 +75,12 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-cobranca-fila.XXXXXX")"
 DATA="$WORK/data"
 MIG_USADA="$WORK/mig.sql"
 MIG_NOME_USADA="$WORK/mig-nome.sql"
+MIG_DONA_USADA="$WORK/mig-dona.sql"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 cp "$MIG" "$MIG_USADA"
 cp "$MIG_NOME" "$MIG_NOME_USADA"
+cp "$MIG_DONA" "$MIG_DONA_USADA"
 
 sabotar() {
   python3 -I - "${ALVO:-$MIG_USADA}" "$1" "$2" <<'PY'
@@ -118,6 +122,13 @@ case "${SABOTAGEM:-}" in
     SELECT v.dias_vencido_max INTO v_dias" ;;
   regua_d2_vencido)     sabotar "(r.data_vencimento = v_hoje + 2 AND r.status_titulo IN ('A VENCER', 'VENCE HOJE'))" "(r.data_vencimento = v_hoje + 2)" ;;
   regua_nome_fonte)     ALVO="$MIG_NOME_USADA" sabotar "(SELECT max(nullif(btrim(p.name), '')) FROM public.omie_customer_account_map m" "(SELECT NULL::text FROM public.omie_customer_account_map m" ;;
+  dona_auth_aberta)     ALVO="$MIG_DONA_USADA" sabotar "REVOKE ALL ON FUNCTION public.cobranca_dona(text, bigint) FROM PUBLIC, anon, authenticated;" "REVOKE ALL ON FUNCTION public.cobranca_dona(text, bigint) FROM PUBLIC, anon;" ;;
+  sou_dona_aberta)      ALVO="$MIG_DONA_USADA" sabotar "  SELECT coalesce(public.cobranca_dona(p_company, p_codigo) = (SELECT auth.uid()), false)" "  SELECT true" ;;
+  caso_sem_gestao)      ALVO="$MIG_DONA_USADA" sabotar "  USING (public.cobranca_sou_dona(company, omie_codigo_cliente)
+         OR coalesce((SELECT private.pode_ver_carteira_completa((SELECT auth.uid()))), false));" "  USING (public.cobranca_sou_dona(company, omie_codigo_cliente));" ;;
+  dona_le_evento_de_outro) ALVO="$MIG_DONA_USADA" sabotar "CREATE POLICY \"cobranca_evento_select\" ON public.cobranca_evento FOR SELECT
+  USING (EXISTS (SELECT 1 FROM public.cobranca_caso c WHERE c.id = caso_id" "CREATE POLICY \"cobranca_evento_select\" ON public.cobranca_evento FOR SELECT
+  USING (EXISTS (SELECT 1 FROM public.cobranca_caso c WHERE true" ;;
   revoke_dona)          sabotar "REVOKE ALL ON FUNCTION public.cobranca_dona(text, bigint) FROM PUBLIC, anon;" "" ;;
   dona_de_abertura)     sabotar "    SELECT p.*, public.cobranca_dona(p.company, p.omie_codigo_cliente) AS dona" "    SELECT p.*, coalesce((SELECT c.dona_user_id FROM public.cobranca_caso c WHERE c.id = p.caso_id), public.cobranca_dona(p.company, p.omie_codigo_cliente)) AS dona"
                         sabotar "  UPDATE public.cobranca_caso SET dona_user_id = public.cobranca_dona(v_company, v_codigo) WHERE id = v_caso.id;" "" ;;
@@ -332,6 +343,29 @@ reg "$V1" '{"company":"oben","omie_codigo_cliente":30,"acao":"estado","para_esta
 eq "C12 disputa -> promessa sem nota -> 22023" "$(reg_estado "$V1" '{"company":"oben","omie_codigo_cliente":30,"acao":"promessa","promessa_data":"'"$AMANHA"'","promessa_valor":10}')" "22023"
 # C13 coorte: atual pelos titulos congelados (cliente 30: 3001 ainda aberto 800 → 800→800; cliente 10: tudo recebido → 300→0)
 eq "C13 coorte atual pelos congelados: 30 = 800->800; corte_em = hoje" "$(Pq -c "$(como "$M" "SELECT saldo_inicial_coorte||'->'||saldo_atual_coorte||'/'||(coorte_corte_em = '$H'::date) FROM public.cobranca_fila('oben') WHERE omie_codigo_cliente=30")")" "800->800/true"
+
+# D — oráculo da dona fechado (scanner 43bd6b91): a migration 20261115213100 troca as 3 policies para o booleano
+# cobranca_sou_dona e tira cobranca_dona de authenticated. Prova: ACL, chamada direta 42501, e as LEITURAS de cada
+# papel IDÊNTICAS antes e depois (caso, promessa, evento, fila) — a troca não pode mudar quem vê o quê.
+leituras() {
+  local u out=""
+  for u in "$V1" "$V2" "$V3" "$M" "$CUST"; do
+    out="$out$(Pq -c "$(como "$u" "SELECT (SELECT count(*) FROM public.cobranca_caso)||'/'||(SELECT count(*) FROM public.cobranca_promessa)||'/'||(SELECT count(*) FROM public.cobranca_evento)")");"
+  done
+  printf '%s' "$out"
+}
+fila_staff() { printf '%s|%s|%s' "$(fila_ordem "$V1")" "$(fila_ordem "$V2")" "$(fila_ordem "$M")"; }
+ANTES_LEIT="$(leituras)"; ANTES_FILA="$(fila_staff)"
+eq "D0 linha de base por papel (V1 dona, V2/V3 nada, master tudo, customer nada) e fila nao vazia" "$ANTES_LEIT|$([ -n "$ANTES_FILA" ] && echo fila)" "4/2/20;0/0/0;0/0/0;5/2/22;0/0/0;|fila"
+if ! P -q -f "$MIG_DONA_USADA" > "$WORK/apply-dona.log" 2>&1; then cat "$WORK/apply-dona.log"; echo "APLICACAO FALHOU (dona): DPOST FALHOU"; exit 1; fi
+grep -q "POST-OK seg_lote3_cobranca_sou_dona" "$WORK/apply-dona.log" || { cat "$WORK/apply-dona.log"; echo "APLICACAO FALHOU (dona): sem POST-OK"; exit 1; }
+eq "D1 ACL: dona fechada p/ authenticated e anon, aberta p/ service_role; sou_dona aberta p/ authenticated, fechada p/ anon" "$(Pq -c "SELECT has_function_privilege('authenticated','public.cobranca_dona(text,bigint)','EXECUTE')::text||has_function_privilege('anon','public.cobranca_dona(text,bigint)','EXECUTE')::text||has_function_privilege('service_role','public.cobranca_dona(text,bigint)','EXECUTE')::text||has_function_privilege('authenticated','public.cobranca_sou_dona(text,bigint)','EXECUTE')::text||has_function_privilege('anon','public.cobranca_sou_dona(text,bigint)','EXECUTE')::text")" "falsefalsetruetruefalse"
+eq "D2 customer e vendedora chamando cobranca_dona direto -> 42501" "$(estado "$(como "$CUST" "SELECT public.cobranca_dona('oben', 30);")")|$(estado "$(como "$V2" "SELECT public.cobranca_dona('oben', 30);")")" "42501|42501"
+eq "D3 leituras de caso/promessa/evento por papel identicas antes e depois" "$(leituras)" "$ANTES_LEIT"
+eq "D4 fila (SECDEF chama cobranca_dona como postgres) identica antes e depois" "$(fila_staff)" "$ANTES_FILA"
+eq "D5 sou_dona responde so pelo chamador: V1 dona do 30, V2 nao, customer nao" "$(Pq -c "$(como "$V1" "SELECT public.cobranca_sou_dona('oben', 30)::text")")|$(Pq -c "$(como "$V2" "SELECT public.cobranca_sou_dona('oben', 30)::text")")|$(Pq -c "$(como "$CUST" "SELECT public.cobranca_sou_dona('oben', 30)::text")")" "true|false|false"
+eq "D6 registrar segue funcionando para a dona apos o REVOKE" "$(reg_estado "$V1" '{"company":"oben","omie_codigo_cliente":30,"acao":"nota","nota":"apos lote 3"}')" "verde"
+eq "D7 re-apply da migration da dona e idempotente (POST-OK de novo)" "$(P -q -f "$MIG_DONA_USADA" 2>&1 | grep -c "POST-OK seg_lote3_cobranca_sou_dona")" "1"
 
 # C10 re-apply
 FOTO="$(Pq -c "SELECT (SELECT count(*) FROM public.cobranca_caso)||'/'||(SELECT count(*) FROM public.cobranca_evento)||'/'||(SELECT count(*) FROM public.cobranca_promessa)")"

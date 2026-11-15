@@ -12,7 +12,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("promocao-extrair-via-vision");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-reverte-bot-lovable";
+export const VERSAO = "v1.2-cota-ia";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

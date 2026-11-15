@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { validarNumeroDestino } from "./numero-destino.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -191,8 +192,17 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Clean phone number - keep only digits
-      const cleanPhone = called.replace(/\D/g, "");
+      // Formato validado no servidor (scanner Lovable Security, lote 3): só número brasileiro
+      // discável, no formato nacional. O número continua LIVRE (decisão do founder: prospecção);
+      // o que se barra é internacional, tarifado e lixo.
+      const destino = validarNumeroDestino(called);
+      if (!destino.ok) {
+        return new Response(JSON.stringify({ error: destino.erro }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const cleanPhone = destino.numero;
 
       const accessToken = await getAccessToken();
       const resp = await fetch(`${NVOIP_BASE}/calls/`, {
