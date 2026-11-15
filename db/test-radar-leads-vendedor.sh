@@ -445,6 +445,12 @@ eq "A5 p_n é limitado a 5 e a posição é 1..n" \
    "$(Pq -c "SELECT count(*)||':'||min(posicao)||'-'||max(posicao) FROM private.radar_leads_do_vendedor('$V1', 50, NULL, timestamptz '2026-11-09 11:00+00')")" \
    "5:1-5"
 
+# O card D2 (radar_prospectar_hoje) NÃO recebe p_agora: lê now(). As posses da fixture estão
+# ANCORADAS em 2026-11-09 11:00 UTC (ver o INSERT de radar_atendimentos); com o relógio real a posse
+# de 7 dias do 107 venceu em 2026-11-15 11:00 UTC e o A6d reprovou em todo PR. No bloco A6 as posses
+# andam junto com o relógio (delta now() − âncora) e voltam à âncora no fim, para o A13 seguir ancorado.
+P -q -c "UPDATE public.radar_atendimentos SET assumido_em = assumido_em + (now() - timestamptz '2026-11-09 11:00+00')"
+
 # ── Card D2: radar_prospectar_hoje ────────────────────────────────────────────────────────────────────────
 prefixo "A6a anon não executa radar_prospectar_hoje (ACL)" \
    "$(erro_como anon '' "SELECT public.radar_prospectar_hoje()")" "42501 permission denied for function radar_prospectar_hoje"
@@ -468,6 +474,9 @@ prefixo "A6h customer com cargo residual não grava 'servido': 42501" \
 eq "A6i gestor sem carteira (próprio card): 0 leads, 0 território" \
    "$(como authenticated "$G" "SELECT jsonb_array_length(x->'leads')||':'||jsonb_array_length(x->'territorio') FROM public.radar_prospectar_hoje() x" | tail -1)" \
    "0:0"
+
+P -q -c "UPDATE public.radar_atendimentos SET assumido_em = assumido_em - (now() - timestamptz '2026-11-09 11:00+00')"
+# (o delta usa now() de OUTRA transação: a volta erra por segundos, muito abaixo da janela de 1 dia/7 dias)
 
 # ── Cron e e-mail semanal ─────────────────────────────────────────────────────────────────────────────────
 eq "A8a cron nasce DESLIGADO, segunda 11:00 UTC, comando exato" \
