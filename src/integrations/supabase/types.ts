@@ -8822,6 +8822,24 @@ export type Database = {
           },
         ]
       }
+      nvoip_oauth_cache: {
+        Row: {
+          key: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: []
+      }
       observacoes_excluidas: {
         Row: {
           data_observacao: string
@@ -21623,8 +21641,11 @@ export type Database = {
           id: string
           origem: string
           phone_e164: string
+          reservado_em: string
+          retry_seguro: boolean
           status: string
           template_nome: string
+          tentativa_id: string
           wa_message_id: string | null
         }
         Insert: {
@@ -21637,8 +21658,11 @@ export type Database = {
           id?: string
           origem?: string
           phone_e164: string
+          reservado_em?: string
+          retry_seguro?: boolean
           status?: string
           template_nome: string
+          tentativa_id?: string
           wa_message_id?: string | null
         }
         Update: {
@@ -21651,8 +21675,11 @@ export type Database = {
           id?: string
           origem?: string
           phone_e164?: string
+          reservado_em?: string
+          retry_seguro?: boolean
           status?: string
           template_nome?: string
+          tentativa_id?: string
           wa_message_id?: string | null
         }
         Relationships: [
@@ -21671,6 +21698,21 @@ export type Database = {
             referencedColumns: ["nome"]
           },
         ]
+      }
+      whatsapp_template_teto_diario: {
+        Row: {
+          dia: string
+          reservas: number
+        }
+        Insert: {
+          dia: string
+          reservas?: number
+        }
+        Update: {
+          dia?: string
+          reservas?: number
+        }
+        Relationships: []
       }
       whatsapp_templates: {
         Row: {
@@ -27728,6 +27770,23 @@ export type Database = {
         Returns: number
       }
       whatsapp_sla_digest_tick: { Args: never; Returns: undefined }
+      whatsapp_template_reservar: {
+        Args: {
+          p_body_params: Json
+          p_conversation_id: string
+          p_dedupe_key: string
+          p_disparado_por: string
+          p_origem: string
+          p_phone_e164: string
+          p_template_nome: string
+        }
+        Returns: {
+          claim_token: string
+          resultado: string
+          send_id: string
+          status_existente: string
+        }[]
+      }
     }
     Enums: {
       app_role: "master" | "employee" | "customer"
