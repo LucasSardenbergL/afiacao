@@ -62,7 +62,7 @@ export async function lerCorpoComTeto(
   return { ok: true, texto: new TextDecoder().decode(junto) };
 }
 
-export interface AnexoMedido {
+interface AnexoMedido {
   filename?: unknown;
   contentBase64?: unknown;
 }
