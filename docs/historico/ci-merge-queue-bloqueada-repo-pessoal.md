@@ -26,7 +26,7 @@ do gatilho `schedule`) já a apontava como a solução "melhor".
 |---|---|
 | A) Transferir o repo para uma org gratuita | **Não agora.** Destrava a fila nativa, mas o GitHub App do Lovable e o sync bidirecional (o caminho do Publish) precisam ser reconectados. Guias de terceiros dizem que transferir quebra o sync e que o Lovable pode exigir repo novo. É risco de deploy para evitar ~2h50 de main vermelha. |
 | B) Fila de terceiro (Mergify, Trunk) | Não adotada: App externo com grant OAuth, dependência nova. |
-| C) "Require branches to be up to date" (`strict: true`) | **Inviável:** quem atualizaria o branch é o `GITHUB_TOKEN`, e push do token não dispara CI (anti-loop do GitHub). Todo PR travaria esperando um `validate` que nunca roda. |
+| C) "Require branches to be up to date" (`strict: true`) | **Inviável:** quem atualizaria o branch é o `GITHUB_TOKEN`, e push do token não dispara CI (anti-loop do GitHub). Todo PR travaria esperando um `validate` que nunca roda. Reavaliada em 2026-11-16 com o contorno via `workflow_dispatch` e medição de 14 dias: **não vale** ([ci-branch-atualizada-nao-vale.md](ci-branch-atualizada-nao-vale.md)). |
 | D) Fechar o E3 e manter a rede atual | **Escolhida.** CI na main após cada merge (`auto-merge.yml`, job `ci-na-main-pos-merge`) + cron diário 09:17 UTC + Issue `ci-main-red`. |
 
 **Reabrir quando:** o repo passar a ser de organização (por outro motivo) ou o incidente se repetir

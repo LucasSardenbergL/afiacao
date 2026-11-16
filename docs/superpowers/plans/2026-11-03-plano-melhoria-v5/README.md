@@ -84,7 +84,7 @@ Base (✔ `gh run`): PR p50 **24,4 min** de parede; caminho crítico = `provas-s
 | 6 | F1 → F5 — chunk em paralelo ao auth e prefetch na sidebar | — | sessão + **Publish** |
 | 7 | F3 — `vendor-ui` por alcance | build antes/depois | sessão + **Publish** |
 | 8 | CI-GIT + E1 — checkout raso e `provas-sql` com escopo | 2ª opinião (E1) | sessão |
-| 9 | E3 — merge queue · 🚧 **bloqueado pela plataforma** (repo pessoal; `docs/historico/ci-merge-queue-bloqueada-repo-pessoal.md`) | lote 8; Codex | — |
+| 9 | E3 — merge queue · 🚧 **bloqueado pela plataforma** (repo pessoal; `docs/historico/ci-merge-queue-bloqueada-repo-pessoal.md`); opção C ("branch atualizada") medida em 2026-11-16 e **descartada**: 0 de 12 episódios pós-02/11 eram combinação (`docs/historico/ci-branch-atualizada-nao-vale.md`) | lote 8; Codex | — |
 | 10 | D3 fatia 1 — `cliente_classificacao` com diff | prova PG17 + Codex | sessão escreve migration; aplicação no envelope ou pelo founder |
 | 11 | D1 — HOT em CP (e CR depois do B3) | B3 observado; prova PG17 | idem |
 | — | D4, D5, F2 | datas/amostra (§2) | diagnóstico, sem PR |
