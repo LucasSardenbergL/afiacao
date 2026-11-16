@@ -2764,6 +2764,48 @@ function blocoHandleStaffAddTool(s: string): string {
   return fim < 0 ? resto : resto.slice(0, fim);
 }
 
+describe('guardrail money-path: vínculo novo do employee só com o código conferido na Omie (b339bb5b residual)', () => {
+  const src = read(OMIE_CLIENTE);
+  const caso = (nome: string) => {
+    const i = src.indexOf(`case "${nome}": {`);
+    if (i < 0) throw new Error(`case ${nome} não encontrado no omie-cliente`);
+    const resto = src.slice(i + 10);
+    const fim = resto.search(/\n {6}case "/);
+    return fim < 0 ? resto : resto.slice(0, fim);
+  };
+
+  it('criar_perfil_local: o employee confere o código na Omie da conta OBEN antes de casar perfil ou criar placeholder', () => {
+    const c = caso('criar_perfil_local');
+    const iConf = c.indexOf('conferirCodigoNaOmie(');
+    expect(iConf, 'FALHA ABERTA: criar_perfil_local não confere mais o código na Omie').toBeGreaterThan(0);
+    expect(c.slice(iConf, iConf + 300), 'a conferência deixou de usar a credencial da conta oben')
+      .toMatch(/callOmieNaConta\("oben", "geral\/clientes\/", "ConsultarCliente"/);
+    expect(iConf, 'a conferência precisa vir ANTES da criação do usuário placeholder')
+      .toBeLessThan(c.indexOf('auth.admin.createUser'));
+    expect(c, 'conferência que não passou precisa devolver erro (nada criado)')
+      .toMatch(/if \(conferencia\.tipo !== "conferido"\) \{[\s\S]{0,200}return jsonRes/);
+    expect(c, 'o perfil precisa ser casado pelo documento DA OMIE, não pelo do body')
+      .toMatch(/if \(documentoBase\) \{\s*const docLimpo = normalizarDocumento\(documentoBase\)/);
+    expect(c, 'o employee precisa cair na admissão conferida (o master segue na RPC)')
+      .toMatch(/chamadorEhMaster\s*\?\s*adminClient\.rpc\("register_carteira_member"[\s\S]{0,300}:\s*adminClient\.rpc\("admitir_vinculo_conferido"/);
+    expect(c, 'FALHA ABERTA: o employee voltou a gravar vínculo com o próprio JWT').not.toMatch(/exigirClienteDoChamador/);
+  });
+
+  it('vincular_aprovado: staff-only, lê o documento do CADASTRO e confere na conta colacor_sc', () => {
+    expect(src, 'vincular_aprovado fora do gate de staff').toMatch(/STAFF_ONLY_ACTIONS = new Set\(\[[\s\S]{0,400}"vincular_aprovado"/);
+    const c = caso('vincular_aprovado');
+    expect(c, 'o documento precisa vir do profiles, não do body').toMatch(/\.from\("profiles"\)\.select\("document"\)\.eq\("user_id", userId\)/);
+    expect(c, 'FALHA ABERTA: vincular_aprovado aceita código do body').not.toMatch(/body\.codigo/);
+    expect(c, 'gate already_linked na MESMA fonte e conta do writer (par indivisível)')
+      .toMatch(/\.from\("omie_customer_account_map"\)[\s\S]{0,120}\.eq\("account", "colacor_sc"\)/);
+    expect(c, 'erro de leitura do vínculo não pode virar "sem vínculo"').toMatch(/if \(vinculoErro\) return jsonRes/);
+    expect(c, 'a busca e a conferência usam a credencial da conta colacor_sc')
+      .toMatch(/callOmieNaConta\("colacor_sc", "geral\/clientes\/", "ListarClientes"[\s\S]*callOmieNaConta\("colacor_sc", "geral\/clientes\/", "ConsultarCliente"/);
+    expect(c, 'a admissão é na conta colacor_sc').toMatch(/admitir_vinculo_conferido", \{[\s\S]{0,80}p_account: "colacor_sc"/);
+    expect(c, 'falha da Omie é pendente (503), nunca vínculo').toMatch(/listagem\.tipo === "falha"\) return jsonRes\(\{ status: "pendente"/);
+  });
+});
+
 describe('guardrail money-path: omie-cliente lê a proof fresca account-correta (Fatia 3-edges PR-A)', () => {
   const src = read(OMIE_CLIENTE);
 
@@ -2785,13 +2827,19 @@ describe('guardrail money-path: omie-cliente lê a proof fresca account-correta 
     ).toBe(0);
     // Contar 0 sozinho não prova que os writers sobreviveram — some-los deixaria o cliente sem vínculo
     // nenhum, falha silenciosa pior que o espelho poluído.
+    // v1.12 (b339bb5b residual): o criar_perfil_local tem UM writer (`vincular`), que é a RPC para o master
+    // e a admissão conferida para o employee; o sync_all_clients segue na RPC. Total da RPC: 2.
     expect(
       count(src, '.rpc("register_carteira_member"'),
-      'REGRESSÃO: os 3 writers de vínculo do omie-cliente não são mais 3 (perdeu um caminho de admissão?)',
-    ).toBe(3);
+      'REGRESSÃO: os writers de vínculo pela RPC do omie-cliente não são mais 2 (criar_perfil_local/master e sync_all_clients)',
+    ).toBe(2);
+    expect(
+      count(src, '.rpc("admitir_vinculo_conferido"'),
+      'REGRESSÃO: a admissão conferida não está nos 2 caminhos do employee (criar_perfil_local e vincular_aprovado)',
+    ).toBe(2);
     // A conta de cada writer é o que impede anexar o cliente ao vendedor de OUTRA conta: os 2 do
-    // criar_perfil_local são 'oben' (o chamador é o fluxo de vendas OBEN) e o do sync_all_clients usa a
-    // conta do run. Nenhum pode virar literal errado nem cair no default.
+    // criar_perfil_local (master e employee) são 'oben' (o chamador é o fluxo de vendas OBEN) e o do
+    // sync_all_clients usa a conta do run. Nenhum pode virar literal errado nem cair no default.
     expect(
       (src.match(/p_account:\s*"oben"/g) ?? []).length,
       'REGRESSÃO: os writers do criar_perfil_local perderam a conta oben (chamador é o fluxo OBEN)',
@@ -2999,11 +3047,16 @@ describe('guardrail money-path: omie-cliente não fabrica identidade (hardening 
     // que reprova continua sendo um ramo do `mappingError` que NÃO responde 409 (ou seja, que
     // engole o erro e devolve `user_id` como sucesso), e a contagem `toBe(2)` segue exigindo que
     // os DOIS ramos respondam. Falsificado apagando o 409 de um ramo: cai para 1 e fica vermelho.
+    // v1.12 (b339bb5b residual): os 2 ramos respondem pelo helper `respostaFalhaVinculo`, que devolve 409
+    // ao master e o status de `traduzirErroAdmissao` (409/422/500, nunca 2xx: conferencia-vinculo_test.ts)
+    // ao employee. O que reprova segue sendo um ramo do `mappingError` que não responde erro.
     expect(
-      (bloco.match(/if \(mappingError\)[\s\S]{0,700}?(?:status:\s*409|,\s*409\)\s*;)/g) ?? []).length,
+      (bloco.match(/if \(mappingError\) \{[\s\S]{0,200}?return respostaFalhaVinculo\(mappingError/g) ?? []).length,
       'REGRESSÃO: algum dos 2 ramos do criar_perfil_local voltou a engolir o erro do vínculo e devolver ' +
         'user_id como sucesso — a UI anexaria a ferramenta ao cliente ERRADO',
     ).toBe(2);
+    expect(bloco, 'o helper de falha do vínculo deixou de responder erro ao master (409) e ao employee')
+      .toMatch(/const respostaFalhaVinculo = [\s\S]{0,300}jsonRes\(\{ error: t\.motivo, \.\.\.extra \}, t\.status\)[\s\S]{0,500}\}, 409\);/);
     expect(
       bloco,
       'REGRESSÃO: sumiu a mensagem que nomeia a colisão de código (23505) — o operador perde a causa',
