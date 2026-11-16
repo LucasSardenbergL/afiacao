@@ -6,9 +6,11 @@
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ExecucaoGate } from './lib/exclusividade';
-import { EDGE, MATRIZ, raizes, rodar, sh, commitar, ciYml, montarFixture, medir, matrizGravada } from './exclusividade-medir.fixture';
+import { EDGE, MATRIZ, raizes, rodar, sh, commitar, ciYml, montarFixture, medir, matrizGravada, limparRaizes } from './exclusividade-medir.fixture';
+
+afterAll(limparRaizes);
 
 describe('[fora-da-rodada] motor — o `exclusividade` vermelho SO por GATE_NOVO desta rodada sai da rodada, e so ele', () => {
   const BASE = ['g:barato', 'g:pega', 'exclusividade'];

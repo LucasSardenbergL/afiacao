@@ -18,9 +18,11 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BINARIOS_DAS_DEPS, SCHEMA_VERSION, type Matriz } from './lib/exclusividade';
-import { EDGE, VERSAO, MAPA, MATRIZ, PADRAO, DEFS_PADRAO, ENXUTO, DEFS_ENXUTO, raizes, rodar, sh, commitar, binFalso, instalarDeps, montarFixture, medir, matrizGravada } from './exclusividade-medir.fixture';
+import { EDGE, VERSAO, MAPA, MATRIZ, PADRAO, DEFS_PADRAO, ENXUTO, DEFS_ENXUTO, raizes, rodar, sh, commitar, binFalso, instalarDeps, montarFixture, medir, matrizGravada, limparRaizes } from './exclusividade-medir.fixture';
+
+afterAll(limparRaizes);
 
 describe('motor — a rodada limpa (o CONTROLE de todos os cenarios de aborto abaixo)', () => {
   let raiz = '';

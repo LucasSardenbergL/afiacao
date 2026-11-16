@@ -6,8 +6,10 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { MOTOR, EDGE, ENXUTO, DEFS_ENXUTO, rodar, montarFixture, medir, matrizGravada, contextoTeto } from './exclusividade-medir.fixture';
+import { afterAll, describe, expect, it } from 'vitest';
+import { MOTOR, EDGE, ENXUTO, DEFS_ENXUTO, rodar, montarFixture, medir, matrizGravada, contextoTeto, limparRaizes } from './exclusividade-medir.fixture';
+
+afterAll(limparRaizes);
 
 describe('motor — o TETO vincula: o gate cortado nao sobrevive ao motor, nem a arvore dele', () => {
   /**
@@ -16,7 +18,8 @@ describe('motor — o TETO vincula: o gate cortado nao sobrevive ao motor, nem a
    * for preciso. O teto passa a ser do GRUPO: TERM no prazo, a carencia para quem trata o sinal, KILL no
    * que sobrar. docs/historico/exclusividade-media-outra-coisa.md
    */
-  const { CARENCIA, FOLGA, arquivoDePids, lerPids, sobreviventes, ambiente, defsDe } = contextoTeto();
+  const { matarOrfaos, CARENCIA, FOLGA, arquivoDePids, lerPids, sobreviventes, ambiente, defsDe } = contextoTeto();
+  afterAll(matarOrfaos);
 
   it('Ctrl-C com um gate em voo: o motor sai 130 na hora, mata a arvore do gate e desfaz a sabotagem', async () => {
     const pids = arquivoDePids();

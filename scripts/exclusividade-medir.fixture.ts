@@ -3,8 +3,9 @@
  *
  * A suite era UM arquivo de ~55 s no CI, o mais lento do vitest e o piso do fast-path dos PRs so de
  * docs. Foi dividida em 4 arquivos (o vitest paraleliza entre arquivos, nunca dentro de um); os
- * helpers vieram para ca sem mudar uma linha de logica. O `afterAll` de limpeza registra no arquivo
- * que importa. docs/historico/ci-escopo-so-docs.md
+ * helpers vieram para ca sem mudar uma linha de logica. Este modulo NAO importa `vitest` (o gate de
+ * suite orfa do `hooks-guard-cobertura.test.ts` o leria como suite): os `afterAll` de limpeza ficam em
+ * cada arquivo de teste, chamando `limparRaizes` / `matarOrfaos`. docs/historico/ci-escopo-so-docs.md
  */
 import { spawn } from 'node:child_process';
 import {
@@ -18,8 +19,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-
-import { afterAll } from 'vitest';
 
 import { BINARIOS_DAS_DEPS, lerMatriz, type Matriz } from './lib/exclusividade';
 
@@ -245,9 +244,10 @@ descuidado | ${EDGE} | s/^original$/SABOTADO/
 `;
 
 export const raizes: string[] = [];
-afterAll(() => {
+/** Registre com `afterAll(limparRaizes)` em cada arquivo de teste. */
+export function limparRaizes(): void {
   for (const r of raizes) rmSync(r, { recursive: true, force: true });
-});
+}
 
 interface Saida {
   status: number | null;
@@ -365,7 +365,7 @@ export const matrizGravada = (raiz: string): Matriz => {
 
 /**
  * Os helpers do bloco do TETO (antes locais ao `describe`), agora dividido em dois arquivos. Chame
- * DENTRO do `describe`: o `afterAll` que mata orfaos registra nele, como antes.
+ * DENTRO do `describe` e registre `afterAll(matarOrfaos)` nele, como era antes.
  */
 export function contextoTeto() {
   const TETO = 4000;
@@ -373,7 +373,7 @@ export function contextoTeto() {
   /** Folga para a carga da maquina — e ainda bem abaixo dos 30s que o gate dura sem corte. */
   const FOLGA = 3000;
   const arquivos: string[] = [];
-  afterAll(() => {
+  const matarOrfaos = () => {
     // Higiene sob falsificacao: um motor sabotado deixa orfaos, e eles nao vazam para o resto da suite.
     for (const p of arquivos.flatMap(lerPids)) {
       try {
@@ -382,7 +382,7 @@ export function contextoTeto() {
         /* ja morreu */
       }
     }
-  });
+  };
   const arquivoDePids = () => {
     const dir = mkdtempSync(join(tmpdir(), 'excl-teto-'));
     raizes.push(dir);
@@ -417,5 +417,5 @@ export function contextoTeto() {
   };
   const ambiente = (pids: string) => ({ EXCL_TIMEOUT_MS: String(TETO), EXCL_CARENCIA_MS: String(CARENCIA), PIDS_TETO: pids });
   const defsDe = (suspeito: string) => `# @origem: f\n# @suspeito: ${suspeito}\nd | ${EDGE} | s/^original$/SABOTADO/\n`;
-  return { TETO, CARENCIA, FOLGA, arquivoDePids, lerPids, sobreviventes, msDe, ambiente, defsDe };
+  return { TETO, CARENCIA, FOLGA, matarOrfaos, arquivoDePids, lerPids, sobreviventes, msDe, ambiente, defsDe };
 }

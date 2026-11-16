@@ -3,8 +3,10 @@
  * de la explica o fixture); a divisao tirou o arquivo de ~55 s do caminho critico do vitest
  * (docs/historico/ci-escopo-so-docs.md).
  */
-import { describe, expect, it } from 'vitest';
-import { montarFixture, medir, contextoTeto } from './exclusividade-medir.fixture';
+import { afterAll, describe, expect, it } from 'vitest';
+import { montarFixture, medir, contextoTeto, limparRaizes } from './exclusividade-medir.fixture';
+
+afterAll(limparRaizes);
 
 describe('motor — o TETO vincula: o gate cortado nao sobrevive ao motor, nem a arvore dele', () => {
   /**
@@ -13,7 +15,8 @@ describe('motor — o TETO vincula: o gate cortado nao sobrevive ao motor, nem a
    * for preciso. O teto passa a ser do GRUPO: TERM no prazo, a carencia para quem trata o sinal, KILL no
    * que sobrar. docs/historico/exclusividade-media-outra-coisa.md
    */
-  const { TETO, CARENCIA, FOLGA, arquivoDePids, lerPids, sobreviventes, msDe, ambiente, defsDe } = contextoTeto();
+  const { matarOrfaos, TETO, CARENCIA, FOLGA, arquivoDePids, lerPids, sobreviventes, msDe, ambiente, defsDe } = contextoTeto();
+  afterAll(matarOrfaos);
 
   it('gate SURDO ao TERM, e o neto tambem: cortado em teto + carencia — o teto VINCULA', async () => {
     const pids = arquivoDePids();
