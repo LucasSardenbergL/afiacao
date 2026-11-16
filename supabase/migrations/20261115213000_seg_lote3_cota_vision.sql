@@ -8,7 +8,6 @@
 -- 2026-11-15): pico de 11 extrações por hora e 12 por dia pela UI. O teto fica em 30/h e 100/dia
 -- por usuário (folga de ~3x). ON CONFLICT DO NOTHING: se o founder já ajustou, o ajuste vence.
 -- ============================================================
-BEGIN;
 
 INSERT INTO public.ia_uso_limite (funcao, limite_hora, limite_dia)
 VALUES ('promocao-extrair-via-vision', 30, 100)
@@ -24,4 +23,3 @@ BEGIN
 END
 $post$;
 
-COMMIT;
