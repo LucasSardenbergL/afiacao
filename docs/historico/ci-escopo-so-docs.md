@@ -132,4 +132,6 @@ Três mudanças. Nenhum teste nem gate saiu do caminho pré-merge: mudou ONDE ro
 
 ### Depois
 
-<!-- medição: preenchida pelo run do PR e pelo 1º PR só-docs pós-merge -->
+**Custo para PR com código** (run 43837364380 do #3917): as 3 partes do `docs-gates` duraram 16, 20 e 15 s, ~51 s de runner e 3 vagas de job por PR. Nenhuma ficou no caminho crítico, já que os pesados duram 96–249 s.
+
+**Caminho só-docs:** medido no próprio PR desta seção, o 1º PR só-docs depois do #3917 (números abaixo).
