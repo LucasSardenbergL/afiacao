@@ -201,6 +201,7 @@ rpc() { printf "SELECT public.register_carteira_member('%s'::uuid, 'oben', %s, %
 
 # ── A0: o furo de ANTES (corpo real da migration 20260821192817 + o ACL de então) ──
 sed -n '169,208p' "$MIG_ANTES" > "$WORK/rpc-antes.sql"
+# shellcheck disable=SC2016  # o $ é literal: casa a linha que fecha o corpo da função ($function$;)
 grep -q '^\$function\$;$' "$WORK/rpc-antes.sql" || { echo "recorte da RPC de antes saiu errado"; exit 1; }
 P -q -f "$WORK/rpc-antes.sql"
 P -q -c "REVOKE ALL ON FUNCTION public.register_carteira_member(uuid,text,bigint,bigint) FROM PUBLIC, anon; GRANT EXECUTE ON FUNCTION public.register_carteira_member(uuid,text,bigint,bigint) TO authenticated, service_role;"
