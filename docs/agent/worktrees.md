@@ -413,6 +413,12 @@ docs no meio do CI. Evidência em `docs/historico/disciplina-de-push.md`. Regra,
    mesmo job no último run da `main` (`gh run list --branch main --workflow CI -L 3`). Vermelho lá
    também = determinístico; o rerun gasta a parte inteira e volta vermelho. Espere o conserto comum
    (ou faça-o) e siga a §Conserto comum mergeado, abaixo.
+6. **Draft verde → ready mergeia em segundos (2026-11-16, rodada 7).** O CI roda em PR draft, e
+   `ready_for_review` não re-roda o CI: só dispara o `auto-merge.yml`. Se o PR ficou em draft para
+   segurar (decisão do founder, deploy manual a combinar) e o `validate` do head ATUAL já está
+   verde, tirar do draft mergeia em ~15-40 s (estimado). **Não** use draft como WIP com pushes
+   frequentes: cada push com SQL custa ~121 job-min e dois PRs com provas já lotam os 40 slots. E
+   não é o "lock" de draft vazio rejeitado na §Rejeitados acima: o draft aqui tem o código final.
 
 ### Conserto comum mergeado: re-empurre os PRs que ele destravou (2026-11-13)
 
