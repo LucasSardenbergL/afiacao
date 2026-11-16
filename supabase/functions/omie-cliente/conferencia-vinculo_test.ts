@@ -1,6 +1,6 @@
 // Sem rede (`--no-remote` do test:edges): assert inline.
 import {
-  codigoUnicoDaListagem,
+  codigoUnicoDoDocumento,
   conferirCodigoNaOmie,
   statusDaConferencia,
   traduzirErroAdmissao,
@@ -48,16 +48,30 @@ Deno.test("conferir: código inválido (string, zero, negativo, fração) → in
   assertEquals(chamou, false);
 });
 
-Deno.test("listagem: 1 código → unico; 2 códigos → ambiguo; vazio/'nenhum registro' → nenhum; fault → falha", () => {
-  const u = codigoUnicoDaListagem({ clientes_cadastro: [{ codigo_cliente_omie: 7 }] });
+Deno.test("documento: pagina ate a pagina VAZIA; código repetido é único; 2º código em OUTRA página é ambíguo", async () => {
+  const paginas = (ps: Array<Record<string, unknown>>) => (n: number) => Promise.resolve(ps[n - 1] ?? { clientes_cadastro: [] });
+  const u = await codigoUnicoDoDocumento(paginas([{ clientes_cadastro: [{ codigo_cliente_omie: 7 }, { codigo_cliente_omie: 7 }] }]));
   assertEquals(u.tipo, "unico");
   if (u.tipo === "unico") assertEquals(u.codigo, 7);
-  assertEquals(codigoUnicoDaListagem({ clientes_cadastro: [{ codigo_cliente_omie: 7 }, { codigo_cliente_omie: 7 }] }).tipo, "unico");
-  assertEquals(codigoUnicoDaListagem({ clientes_cadastro: [{ codigo_cliente_omie: 7 }, { codigo_cliente_omie: 8 }] }).tipo, "ambiguo");
-  assertEquals(codigoUnicoDaListagem({ clientes_cadastro: [] }).tipo, "nenhum");
-  assertEquals(codigoUnicoDaListagem({ faultstring: "ERROR: Nenhum registro encontrado" }).tipo, "nenhum");
-  assertEquals(codigoUnicoDaListagem({ faultstring: "Application key inválida" }).tipo, "falha");
-  assertEquals(codigoUnicoDaListagem({ clientes_cadastro: [{}] }).tipo, "falha");
+  // Codex P1: a 1ª página só com o 7 não prova nada — o 8 está na página 2.
+  const amb = await codigoUnicoDoDocumento(paginas([
+    { total_de_paginas: 1, clientes_cadastro: [{ codigo_cliente_omie: 7 }] },
+    { clientes_cadastro: [{ codigo_cliente_omie: 8 }] },
+  ]));
+  assertEquals(amb.tipo, "ambiguo");
+  assertEquals((await codigoUnicoDoDocumento(paginas([{ clientes_cadastro: [] }]))).tipo, "nenhum");
+  assertEquals((await codigoUnicoDoDocumento(paginas([{ faultstring: "ERROR: Nenhum registro encontrado" }]))).tipo, "nenhum");
+});
+
+Deno.test("documento: fault desconhecida, contrato sem lista, código inválido, rede e teto → falha (nunca nenhum/único)", async () => {
+  const uma = (r: unknown) => () => Promise.resolve(r as Record<string, unknown>);
+  assertEquals((await codigoUnicoDoDocumento(uma({ faultstring: "Application key inválida" }))).tipo, "falha");
+  assertEquals((await codigoUnicoDoDocumento(uma({}))).tipo, "falha");
+  assertEquals((await codigoUnicoDoDocumento(uma(null))).tipo, "falha");
+  assertEquals((await codigoUnicoDoDocumento(uma({ clientes_cadastro: [{}] }))).tipo, "falha");
+  assertEquals((await codigoUnicoDoDocumento(() => Promise.reject(new Error("timeout")))).tipo, "falha");
+  // Nunca termina (sempre o mesmo código, nunca página vazia): estoura o teto → falha.
+  assertEquals((await codigoUnicoDoDocumento(uma({ clientes_cadastro: [{ codigo_cliente_omie: 7 }] }))).tipo, "falha");
 });
 
 Deno.test("traduzirErroAdmissao: cada SQLSTATE da migration tem motivo e status; o resto é 500", () => {

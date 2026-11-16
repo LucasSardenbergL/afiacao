@@ -8,7 +8,7 @@ import { deveInterromperPagina, podeIniciarPagina } from "./orcamento.ts";
 import { linhaPerfilPlaceholder } from "./perfil-placeholder.ts";
 import {
   type ClienteOmieConsultado,
-  codigoUnicoDaListagem,
+  codigoUnicoDoDocumento,
   conferirCodigoNaOmie,
   statusDaConferencia,
   traduzirErroAdmissao,
@@ -900,18 +900,13 @@ Deno.serve(async (req) => {
           break;
         }
 
-        let listagem: ReturnType<typeof codigoUnicoDaListagem>;
-        try {
-          listagem = codigoUnicoDaListagem(
-            await callOmieNaConta("colacor_sc", "geral/clientes/", "ListarClientes", {
-              pagina: 1,
-              registros_por_pagina: 2,
-              clientesFiltro: { cnpj_cpf: docCadastro },
-            }),
-          );
-        } catch (e) {
-          listagem = { tipo: "falha", motivo: `A Omie não respondeu à busca por documento: ${mensagemDeErro(e) ?? "erro desconhecido"}` };
-        }
+        const listagem = await codigoUnicoDoDocumento((pagina) =>
+          callOmieNaConta("colacor_sc", "geral/clientes/", "ListarClientes", {
+            pagina,
+            registros_por_pagina: 50,
+            clientesFiltro: { cnpj_cpf: docCadastro },
+          })
+        );
         if (listagem.tipo === "falha") return jsonRes({ status: "pendente", error: listagem.motivo }, 503);
         if (listagem.tipo === "nenhum") {
           result = { status: "nao_encontrado" };

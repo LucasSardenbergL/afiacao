@@ -96,8 +96,20 @@ const AdminApprovals = () => {
       const { data, error } = await supabase.functions.invoke('omie-cliente', {
         body: { action: 'vincular_aprovado', user_id: profileUserId },
       });
-      const status: string | undefined = data?.status;
-      const motivo: string = data?.error ?? mensagemDeErro(error) ?? 'Falha ao conferir o vínculo na Omie.';
+      // Em 409/422/503 o supabase-js devolve `data: null` e o corpo {status, error} fica AINDA POR LER na
+      // Response de `error.context` (Codex): sem isto, pendente e recusado caíam todos em "erro genérico".
+      let corpo: { status?: unknown; error?: unknown } | null = data ?? null;
+      const ctx = (error as { context?: unknown } | null)?.context;
+      if (!corpo && ctx && typeof (ctx as Response).clone === 'function') {
+        try {
+          corpo = await (ctx as Response).clone().json();
+        } catch {
+          corpo = null; // corpo não-JSON: segue como erro genérico
+        }
+      }
+      const status = typeof corpo?.status === 'string' ? corpo.status : undefined;
+      const motivo: string = (typeof corpo?.error === 'string' ? corpo.error : null)
+        ?? mensagemDeErro(error) ?? 'Falha ao conferir o vínculo na Omie.';
 
       if (status === 'vinculado') return { tipo: 'linked' };
       if (status === 'ja_vinculado') return { tipo: 'already_linked' };

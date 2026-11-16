@@ -81,32 +81,72 @@ export type ResultadoListagem =
   | { tipo: "ambiguo" }
   | { tipo: "falha"; motivo: string };
 
+export type PaginaListagem =
+  | { tipo: "linhas"; codigos: number[] }
+  | { tipo: "fim" }
+  | { tipo: "falha"; motivo: string };
+
 /**
- * Código ÚNICO do documento numa conta, a partir do ListarClientes (filtro cnpj_cpf, 2 por página).
- * Dois códigos distintos para o mesmo documento é ambíguo (o sync também trata assim) → não admite.
- * Não confia em total_de_registros: conta o que veio.
+ * Uma página do ListarClientes (filtro cnpj_cpf). Fim = página VAZIA ou fault "nenhum registro" — não
+ * página curta nem total_de_paginas (Codex: a 1ª página não prova código único). Resposta sem o campo
+ * de lista e sem fault é contrato quebrado → falha, nunca "nenhum".
  */
-export function codigoUnicoDaListagem(resposta: {
+export function classificarPaginaListagem(resposta: {
   faultstring?: string;
   clientes_cadastro?: Array<{ codigo_cliente_omie?: number }>;
   clientes_cadastro_resumido?: Array<{ codigo_cliente_omie?: number; codigo_cliente?: number }>;
-}): ResultadoListagem {
-  if (typeof resposta?.faultstring === "string" && resposta.faultstring !== "") {
+} | null | undefined): PaginaListagem {
+  if (!resposta || typeof resposta !== "object") {
+    return { tipo: "falha", motivo: "A Omie devolveu uma resposta vazia na busca por documento." };
+  }
+  if (typeof resposta.faultstring === "string" && resposta.faultstring !== "") {
     return FAULT_NAO_CADASTRADO.test(resposta.faultstring)
-      ? { tipo: "nenhum" }
+      ? { tipo: "fim" }
       : { tipo: "falha", motivo: `A Omie recusou a busca por documento: ${resposta.faultstring}` };
   }
-  const linhas = resposta?.clientes_cadastro ?? resposta?.clientes_cadastro_resumido ?? [];
-  const codigos = new Set<number>();
+  const linhas = resposta.clientes_cadastro ?? resposta.clientes_cadastro_resumido;
+  if (!Array.isArray(linhas)) {
+    return { tipo: "falha", motivo: "A Omie devolveu a busca por documento sem a lista de clientes." };
+  }
+  if (linhas.length === 0) return { tipo: "fim" };
+  const codigos: number[] = [];
   for (const l of linhas) {
-    const c = (l as { codigo_cliente_omie?: number; codigo_cliente?: number }).codigo_cliente_omie
+    const c = (l as { codigo_cliente_omie?: number }).codigo_cliente_omie
       ?? (l as { codigo_cliente?: number }).codigo_cliente;
     if (!codigoOmieValido(c)) return { tipo: "falha", motivo: "A Omie devolveu um cliente sem código válido." };
-    codigos.add(c);
+    codigos.push(c);
   }
-  if (codigos.size === 0) return { tipo: "nenhum" };
-  if (codigos.size > 1) return { tipo: "ambiguo" };
-  return { tipo: "unico", codigo: [...codigos][0] };
+  return { tipo: "linhas", codigos };
+}
+
+/** Teto de páginas da busca por documento: estourar sem página vazia é falha, não "único". */
+export const MAX_PAGINAS_BUSCA_DOCUMENTO = 5;
+
+/**
+ * Código ÚNICO do documento numa conta, paginando até a página VAZIA (com teto). Dois códigos
+ * distintos para o mesmo documento é ambíguo (o sync também trata assim) → não admite.
+ */
+export async function codigoUnicoDoDocumento(
+  listarPagina: (pagina: number) => Promise<Parameters<typeof classificarPaginaListagem>[0]>,
+): Promise<ResultadoListagem> {
+  const codigos = new Set<number>();
+  for (let pagina = 1; pagina <= MAX_PAGINAS_BUSCA_DOCUMENTO; pagina++) {
+    let p: PaginaListagem;
+    try {
+      p = classificarPaginaListagem(await listarPagina(pagina));
+    } catch (e) {
+      return { tipo: "falha", motivo: `A Omie não respondeu à busca por documento: ${mensagemDeErro(e) ?? "erro desconhecido"}` };
+    }
+    if (p.tipo === "falha") return p;
+    if (p.tipo === "fim") {
+      if (codigos.size === 0) return { tipo: "nenhum" };
+      if (codigos.size > 1) return { tipo: "ambiguo" };
+      return { tipo: "unico", codigo: [...codigos][0] };
+    }
+    for (const c of p.codigos) codigos.add(c);
+    if (codigos.size > 1) return { tipo: "ambiguo" };
+  }
+  return { tipo: "falha", motivo: "A busca por documento na Omie não terminou dentro do teto de páginas." };
 }
 
 /** Motivo legível e status HTTP para o erro da `admitir_vinculo_conferido` (SQLSTATE da migration). */
