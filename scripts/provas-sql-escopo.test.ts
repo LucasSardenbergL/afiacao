@@ -493,7 +493,8 @@ describe('ci.yml — validate aceita o skip das provas só onde o escopo pode pu
       falsificacao: ok,
       // Escopo só-docs neutro (PR com código: os 8 rodaram) — os cenários dele moram em docs-escopo.test.ts.
       'docs-escopo': { result: 'success', outputs: { so_docs: 'false' } },
-      'docs-gates': { result: 'skipped', outputs: {} },
+      // O docs-gates não tem `if`: fora do só-docs ele sai `success` sem testar (as partes não marcam).
+      'docs-gates': { result: 'success', outputs: {} },
       'provas-sql-escopo': { result: escopo.result, outputs },
       'provas-sql': { result: provas, outputs: {} },
       'provas-sql-uniao': { result: provas, outputs: {} },
