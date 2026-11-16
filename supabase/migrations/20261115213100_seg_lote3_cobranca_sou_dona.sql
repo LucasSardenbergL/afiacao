@@ -17,11 +17,10 @@
 --     A semântica das policies não muda: `coalesce(dona = uid, false)` vira o mesmo coalesce
 --     dentro do helper, e o ramo da gestão fica intacto.
 --
--- Idempotente (CREATE OR REPLACE, DROP POLICY IF EXISTS) e numa transação só: as
--- policies trocam ANTES do REVOKE, senão a leitura de cobrança quebraria no meio. Postcondição
+-- Idempotente (CREATE OR REPLACE, DROP POLICY IF EXISTS) e atômico (o envelope `db:aplicar` dá a transação; colado no SQL Editor, rode o arquivo
+-- inteiro de uma vez): as policies trocam ANTES do REVOKE, senão a leitura de cobrança quebraria no meio. Postcondição
 -- no fim aborta tudo se algo não ficou como deve.
 -- ============================================================
-BEGIN;
 
 -- ── (B) Booleano da dona para as policies; cobranca_dona fecha ────────────
 CREATE OR REPLACE FUNCTION public.cobranca_sou_dona(p_company text, p_codigo bigint)
@@ -99,4 +98,3 @@ BEGIN
 END
 $post$;
 
-COMMIT;
