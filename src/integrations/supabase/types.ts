@@ -6064,6 +6064,13 @@ export type Database = {
           cenario: string
           cmv_ttm: number | null
           company: string
+          cp_vencido_fora_31_60: number | null
+          cp_vencido_fora_61_180: number | null
+          cp_vencido_fora_acima_180: number | null
+          cp_vencido_fora_ate_30: number | null
+          cp_vencido_fora_mais_antigo: string | null
+          cp_vencido_fora_qtd: number | null
+          cp_vencido_fora_total: number | null
           dados: Json
           dias_cobertura: number | null
           estoque_cobertura_ok: boolean | null
@@ -6081,6 +6088,13 @@ export type Database = {
           cenario: string
           cmv_ttm?: number | null
           company: string
+          cp_vencido_fora_31_60?: number | null
+          cp_vencido_fora_61_180?: number | null
+          cp_vencido_fora_acima_180?: number | null
+          cp_vencido_fora_ate_30?: number | null
+          cp_vencido_fora_mais_antigo?: string | null
+          cp_vencido_fora_qtd?: number | null
+          cp_vencido_fora_total?: number | null
           dados: Json
           dias_cobertura?: number | null
           estoque_cobertura_ok?: boolean | null
@@ -6098,6 +6112,13 @@ export type Database = {
           cenario?: string
           cmv_ttm?: number | null
           company?: string
+          cp_vencido_fora_31_60?: number | null
+          cp_vencido_fora_61_180?: number | null
+          cp_vencido_fora_acima_180?: number | null
+          cp_vencido_fora_ate_30?: number | null
+          cp_vencido_fora_mais_antigo?: string | null
+          cp_vencido_fora_qtd?: number | null
+          cp_vencido_fora_total?: number | null
           dados?: Json
           dias_cobertura?: number | null
           estoque_cobertura_ok?: boolean | null
@@ -24625,6 +24646,10 @@ export type Database = {
           saldo: number
           telefone: string
         }[]
+      }
+      cobranca_sou_dona: {
+        Args: { p_codigo: number; p_company: string }
+        Returns: boolean
       }
       cockpit_itens_snapshot: {
         Args: {
