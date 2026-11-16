@@ -20,7 +20,7 @@ Fica em aberto o que depende de data, amostra ou plataforma:
 | D5: índices com 0 scans | ~550 MB sem leitura em 4,5 d: `radar_empresas` (`idx_radar_muni_cover` 150 MB, `lista_estab` 58, `lista_novas` 43), `health_score_history` (104 + 25), `priority_score_log` (65 + 17), `tint_formulas` `idx_tint_formulas_nome_cor` 81 | Releitura em **2026-11-07 10:33 UTC**. O Radar tem uso mensal: não decidir DROP com menos de um ciclo |
 | B1 (v4): expurgo semanal dos scores | 451 k linhas > 60 d ainda presentes. O cron de domingo 04:30 nasceu em 02/11 | 1ª passada em **2026-11-08** |
 | Lotes de tela do v4/v5: ganho pelos web-vitals | Sem leitura de campo. O build servido (`index-7Jev-eUC`) ainda não tem linha em `telemetria_vitals`, e o Publish de #3603 não foi verificado | ~2026-11-09, separando por **build adotado**. Chegar à data não garante amostra |
-| F2: TTFB | Sensor com 1 usuário (ver §1) | Reabre com amostra de mais de 1 usuário |
+| F2: TTFB | ✅ **DIAGNOSTICADO** (2026-11-16, [ttfb-navegacao-f2-v5.md](../../../historico/ttfb-navegacao-f2-v5.md)). O sensor não tem defeito: `auth.sessions` mostra **1 pessoa** usando o app desde 02/11. O 1,5 s é a abertura fria de 1 navegador (84% da amostra, 0 de 260 ≤ 100 ms). Recarga com o SW quente dá 5 ms. Nada a fazer no código | Reabre com ≥ 3 usuários × ≥ 30 TTFB de `navegacao` em 14 dias e p75 > 800 ms em ≥ 2 (query no histórico) |
 | Lote 9 E3: merge queue | 🚧 Bloqueado pela plataforma: repo de conta pessoal ([histórico](../../../historico/ci-merge-queue-bloqueada-repo-pessoal.md)) | — |
 
 ## 1. Como ler
