@@ -11,6 +11,7 @@ import { hojeSP } from "../_shared/hoje-sp.ts";
 import { dataPrevisaoOmie } from "./previsao.ts";
 import { abririaEnvioNovoAoPortal, ehRecusaDefinitivaPortal, MENSAGEM_PORTAL_FECHADO, mensagemRecusaDefinitiva, portalSayerlackFechado } from "./janela-portal.ts";
 import { montarProdutosIncluir } from "./produto-po.ts";
+import { esperaPermitidaMs } from "./espera-split.ts";
 import { montarObservacaoPo, transportadoraDosItensBrutos } from "./transportadora-portal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
@@ -2167,11 +2168,17 @@ Deno.serve(async (req: Request) => {
         p.split_parent_id
       ) {
         const splitTag = `Lote ${p.split_lote ?? "?"}/${p.split_total ?? "?"} de #${p.split_parent_id}`;
-        console.log(`[disparar-pedidos] PR8/PR10: aguardando #${p.id} (${splitTag}) sair de enviando_portal antes do próximo filho...`);
+        // Orçamento SOMADO das esperas (./espera-split.ts): 2 filhos × 90 s estouravam os 150 s
+        // da edge (504 em 2026-11-16, split #4421). Esgotado, segue sem esperar.
         const tWait = Date.now();
-        const finalStatus = await aguardarPortalTerminar(db, p.id, 90_000);
-        const waitMs = Date.now() - tWait;
-        console.log(`[disparar-pedidos] PR8/PR10: #${p.id} portal terminou em ${waitMs}ms com status_envio_portal=${finalStatus ?? "TIMEOUT"}`);
+        const esperaMs = esperaPermitidaMs(startedAt, tWait);
+        if (esperaMs === 0) {
+          console.log(`[disparar-pedidos] PR8/PR10: orçamento de espera esgotado — #${p.id} (${splitTag}) segue sem esperar o portal`);
+        } else {
+          const finalStatus = await aguardarPortalTerminar(db, p.id, esperaMs);
+          const waitMs = Date.now() - tWait;
+          console.log(`[disparar-pedidos] PR8/PR10: #${p.id} portal terminou em ${waitMs}ms com status_envio_portal=${finalStatus ?? "TIMEOUT"}`);
+        }
       }
 
       // 5. Se produção e Omie OK: notificar fornecedor

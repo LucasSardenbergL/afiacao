@@ -57,4 +57,7 @@ v1.14 (2026-11-09, revisão 2, 5.2 fatia 1) — o claim (migration 2026111115000
 app aberta (`bloqueio: alterado_no_portal`). Com pendência de disparo aberta, a régua é a do cancelado no portal:
 conciliação SÓ POR CONSULTA (PO confirmado ⇒ registra e avisa que o PO saiu com o pedido antigo; não achou ⇒ nada
 muda). Sem pendência, nada vai ao Omie.
+v1.16 (2026-11-16) — a espera entre FILHOS de split Sayerlack/OBEN (PR8/PR10, até 90 s cada) ganha orçamento SOMADO de
+100 s por execução (`espera-split.ts`); esgotado, o próximo filho segue sem esperar o portal. Dois filhos (split #4421 →
+#4425/#4426) estouravam o IDLE_TIMEOUT de 150 s: o disparo concluía, mas a tela recebia 504. Sem pré-condição de banco.
 ```
