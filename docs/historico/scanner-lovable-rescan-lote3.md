@@ -19,11 +19,30 @@ Continuação do [lote 2](scanner-lovable-rescan-lote2.md). O lote tem duas part
 | `ec253a34` | **Real**, corrigido | O texto digitado entrava cru no HTML do e-mail da equipe |
 | `43bd6b91` | **Real** e baixo (só um uuid), corrigido | O Codex concordou e propôs o conserto do booleano. Um gate "é staff" deixaria o vazamento entre vendedores |
 | `7330d2bc` | **Desenho**, aceitar | `rag-search` exige employee ou master, e a RLS de PROD já dá a esses papéis SELECT em `rag_chunks` e `customer_processes`. A edge não amplia nada. É a mesma classe de `1e1b16869`/`84389ac7` |
-| `b339bb5b` | **Baixo**, decisão do founder | A edge grava o `codigo_vendedor` que vem do body, mas a policy `Staff can manage account map` (ALL para employee) já deixa o employee gravar a coluna direto pelo PostgREST. Corrigir só a edge seria teatro. O Codex achou um efeito real: o `carteira-rebuild` deriva a dona (`carteira_assignments.owner_user_id`) desse mapa. Se o employee **não** deve reatribuir carteira, o conserto é sistêmico: fechar a escrita direta no mapa e resolver o vendedor pela Omie no servidor. É escopo próprio, não cabe aqui |
+| `b339bb5b` | **Real**, corrigido em PR próprio (decisão do founder: "quem troca o vendedor responsável pelo cliente sou apenas eu") | Veja a seção abaixo |
+
+## `b339bb5b`: só o master troca a dona da carteira
+
+O vendedor do mapa (`omie_customer_account_map.omie_codigo_vendedor`) decide a dona: o `carteira-rebuild` deriva o `owner_user_id` dele, cruzado com o `omie_vendedor_map`. Na PROD, o employee mexia na posse por 5 caminhos, levantados pelo Fable e pelas 4 rodadas do Codex:
+
+1. a policy ALL do mapa;
+2. a RPC `register_carteira_member` (INVOKER), chamada pela tela de aprovações;
+3. o `codigo_vendedor` vindo do body no `criar_perfil_local`;
+4. a policy ALL do ledger da carteira: excluir um clone ou mudar o `identity_state` e disparar o rebuild muda a dona;
+5. a RPC renovando o TTL de 7 dias da view fresca e permutando códigos Omie entre clientes.
+
+Conserto: migration `20261116090000_seg_b339_vendedor_so_master.sql` e `omie-cliente` v1.11.
+
+- A RPC vira SECURITY DEFINER com gate de papel. Servidor e master seguem como antes. O employee admite o cliente, mas não escolhe o vendedor, não renova o TTL e não troca o código de um vínculo existente. Essa última trava fica no `ON CONFLICT ... WHERE`, que é atômico. Customer e qualquer outro papel recebem 42501.
+- O mapa e o ledger passam a ter master ALL e staff SELECT. TRUNCATE sai de anon e authenticated nas 4 tabelas da posse, e a escrita sai de anon.
+- A edge chama a RPC com o JWT do chamador quando ele não é master, para que o gate valha também pela edge. Sem JWT, falha fechada.
+
+Prova: `db/test-seg-b339-vendedor-so-master.sh` (PG17). O controle A0 mostra o furo de antes, e há 20 asserções com claims avulsas e em JSON. As 9 sabotagens ficaram vermelhas em C e em pt_BR.
+
+**Risco residual, decisão do founder:** o employee ainda admite um vínculo NOVO com um código Omie livre. É isso que permite aprovar um cadastro e vender para cliente novo. Se esse código for o que o Omie passou a usar para outro cliente V, o sync deixa de revalidar V e, quando o TTL vence, a dona de V cai para Hunter. O employee não escolhe a dona, mas pode fazer V perder a dona. Fechar isso exige validar o código no Omie, no servidor, antes de o vínculo do employee valer (admissão pendente). É escopo próprio.
 
 ## Lições
 
-- **O SQL feito para o `db:aplicar` não leva `BEGIN;`/`COMMIT;`.** A transação é do envelope, e o corpo roda via EXECUTE, onde esses comandos são proibidos. As migrations do #3909 saíram com envelope próprio, pensadas para o SQL Editor. O ensaio recusou (rc=2), e o conserto veio no #3910, depois que o #3909 já tinha auto-mergeado. Quando a migration vai pelo envelope, escreva sem BEGIN desde o início.
 - **O guard de colisão de migration leu o HEAD de OUTRO checkout.** O `wt:preflight` barrou a migration da cobrança como "EM VOO em 27 worktrees". A causa: o checkout principal estava num HEAD destacado e antigo, sem a `20261031210000_cobranca_fila.sql`, e o guard tomou esse HEAD por histórico. A conferência por worktree (`git status` e grep de migration não commitada) e por PR deu zero concorrência. Foi falso positivo, e não houve dano.
 - **A ordem das asserções decide se uma sabotagem antiga continua vermelha.** A prova da cobrança já tinha a sabotagem `revoke_dona` casando no C9e (o estado original). Aplicar a migration nova antes do C9e faria essa sabotagem ficar VERDE, porque o REVOKE novo cobriria o removido. O bloco D entra depois do C9e e antes do C10.
 - **Uma sabotagem só prova algo se o dado de base distingue os lados.** A 1ª versão sabotava a policy da promessa, mas V1 já via as 2 promessas existentes, então a sabotagem ficaria verde. A troca foi para a de evento, em que V1 vê 20 de 22.
@@ -33,16 +52,11 @@ Continuação do [lote 2](scanner-lovable-rescan-lote2.md). O lote tem duas part
 - `db/test-cobranca-fila.sh` (PG17) ganhou o bloco D. D0 fixa a linha de base por papel. D1 confere a ACL. D2 prova que a chamada direta a `cobranca_dona` dá 42501 para customer e vendedora. D3 e D4 provam que as leituras de caso, promessa, evento e fila ficam IDÊNTICAS antes e depois. D5 prova que `sou_dona` responde só pelo chamador, D6 que `registrar` segue funcionando e D7 que a migration é idempotente. O controle tem 68 asserções e 0 falhas. Há 4 sabotagens novas: a da ACL (pega na postcondição), a do helper aberto, a da policy sem o ramo da gestão e a do evento de outro caso.
 - Testes Deno: `limites-anexo_test.ts` (9), `numero-destino_test.ts` (5) e `escape-html_test.ts` (2). `test:edges` deu 2645/0.
 
-## Deploy (4 edges, uma onda, 2,1 créditos)
+## Deploy
 
-- **Migrations pelo envelope `db:aplicar`**, com o aval do founder, antes das edges. Os ensaios fizeram ROLLBACK com POST-OK. Em seguida foram aplicadas a `20261115213000` (tentativa #1132) e a `20261115213100` (#1133). Na validação por fora via psql-ro, a cota ficou 30/100, `cobranca_dona` ficou com authenticated=f, anon=f e service_role=t, e as 3 policies usam `cobranca_sou_dona`.
-- O pacote `1111f9aae9eb` saiu contra `d2ce79319`, com 38/38 hashes. Antes do envio, o `list_messages` não mostrou outro pedido dessas edges. O bot respondeu "No files were edited."
-- O sensor de edição saiu com **exit 1** (`EDICAO_DETECTADA`), já assentado (5,0 min), porque a resposta do MCP trazia `edit_id`/`commit_sha`. Esse sha (`d8728bdfd`, "Work in progress") é o ÚNICO commit do bot desde o envio, e o próprio sensor o lista como tolerado: só `src/integrations/supabase/types.ts`, +25 linhas, regenerado do schema (`cobranca_sou_dona` e as colunas `cp_vencido_fora_*` do #3903). Não tocou em edge nem em código, e nada foi revertido. O sensor não distingue o sinal da resposta que aponta para um commit tolerado, então o veredito exige ler o `git show --stat` do sha. Sem dano, sem conserto aqui.
-- Sonda pelo envelope `db/sonda-seg-lote3-20261116.sql`, na tentativa #1135: 4 DEPLOY CONFIRMADO, com versão e fonte batendo. O `pendencias:deploy` saiu com exit 0.
-- Sem Publish: nada em `src/`.
+Pendente: será registrado no PR de sonda.
 
 ## Fica para o founder
 
 - Marcar como **aceitos por desenho** no scanner: `7330d2bc`. Também `78952df6` e `f14d9731`, que vêm do lote 2 e são críticos, e por isso só se marcam pela tela de Segurança.
-- Decidir o `b339bb5b`: o employee pode ou não reatribuir a carteira pelo mapa da Omie? Se puder, é aceito por desenho. Se não, abre-se o conserto sistêmico.
 - Marcar como corrigidos, depois do próximo rescan: `03689f08`, `ec253a34` e `43bd6b91`.

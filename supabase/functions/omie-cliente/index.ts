@@ -729,6 +729,18 @@ Deno.serve(async (req) => {
       return jsonRes({ error: "Ação inválida" }, 400);
     }
 
+    // Só o master escolhe o vendedor responsável (achado b339bb5b; decisão do founder). Fica true
+    // apenas quando o gate abaixo LÊ o papel master do chamador; qualquer outro caminho é false.
+    let chamadorEhMaster = false;
+    // Cliente com o JWT de QUEM CHAMOU, para a RPC de carteira: chamada como service_role, a RPC não
+    // distingue o employee (Codex, 3ª rodada), e o employee permutaria códigos ou renovaria o TTL.
+    let clienteDoChamador: ReturnType<typeof createClient> | null = null;
+    // Fail-closed: sem o JWT do chamador, a RPC de carteira NÃO cai para o service_role.
+    const exigirClienteDoChamador = () => {
+      if (!clienteDoChamador) throw new Error("sem o JWT do chamador para a RPC de carteira");
+      return clienteDoChamador;
+    };
+
     // buscar_por_documento is allowed without auth (used during signup)
     // All other actions require authentication
     if (rodada) {
@@ -749,6 +761,7 @@ Deno.serve(async (req) => {
       if (authError || !user) {
         return jsonRes({ error: "Token inválido" }, 401);
       }
+      clienteDoChamador = supabaseAuth;
 
       // Staff-only gate for sensitive/privileged actions. Only buscar_por_documento
       // remains JWT-only (used by the public client lookup flow with rate limit).
@@ -773,6 +786,7 @@ Deno.serve(async (req) => {
         }
         const allowed = new Set(["employee", "master"]);
         const hasStaff = (roleRows ?? []).some((r: { role: string }) => allowed.has(r.role));
+        chamadorEhMaster = (roleRows ?? []).some((r: { role: string }) => r.role === "master");
         if (!hasStaff) {
           return jsonRes({ error: "Acesso restrito a equipe interna" }, 403);
         }
@@ -946,11 +960,13 @@ Deno.serve(async (req) => {
               // A conta aqui é 'oben' e não é chute: o único chamador deste case é o fluxo de vendas OBEN
               // (`useUnifiedOrder.handleStaffAddTool`), e a resolução logo acima usa `.eq("account","oben")`.
               console.log(`[criar_perfil_local] Found existing profile by document (fora do log — LGPD), linking to user ${matchedUserId}`);
-              const { error: mappingError } = await adminClient.rpc("register_carteira_member", {
+              const { error: mappingError } = await (chamadorEhMaster ? adminClient : exigirClienteDoChamador()).rpc("register_carteira_member", {
                 p_user_id: matchedUserId,
                 p_account: "oben",
                 p_omie_codigo_cliente: cliente.codigo_cliente,
-                p_omie_codigo_vendedor: cliente.codigo_vendedor || null,
+                // b339bb5b: o vendedor do BODY só vale se quem chama é o master. Do employee ele é
+                // ignorado (null): o COALESCE da RPC preserva o atual, e o omie-analytics-sync grava o do Omie.
+                p_omie_codigo_vendedor: chamadorEhMaster ? (cliente.codigo_vendedor || null) : null,
               });
               // [HOTFIX Codex-B] FAIL-LOUD. Antes isto só logava e devolvia user_id como SUCESSO — o
               // tratamento herdado de quando o destino era o espelho poluído, onde um erro era inócuo.
@@ -1009,11 +1025,12 @@ Deno.serve(async (req) => {
 
         // Admite o placeholder recém-criado na carteira (ledger + proof). Mesma conta 'oben' do ramo
         // acima — é o mesmo case, mesmo chamador (fluxo de vendas OBEN).
-        const { error: mappingError } = await adminClient.rpc("register_carteira_member", {
+        const { error: mappingError } = await (chamadorEhMaster ? adminClient : exigirClienteDoChamador()).rpc("register_carteira_member", {
           p_user_id: newUserId,
           p_account: "oben",
           p_omie_codigo_cliente: cliente.codigo_cliente,
-          p_omie_codigo_vendedor: cliente.codigo_vendedor || null,  // Already extracted by frontend from recomendacoes
+          // b339bb5b: só o master escolhe o vendedor pelo body (mesmo motivo do ramo acima).
+          p_omie_codigo_vendedor: chamadorEhMaster ? (cliente.codigo_vendedor || null) : null,
         });
 
         // [HOTFIX Codex-B] FAIL-LOUD, mesmo motivo do ramo acima — e aqui é PIOR: o auth user e o
