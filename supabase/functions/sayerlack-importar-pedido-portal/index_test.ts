@@ -145,6 +145,50 @@ Deno.test("1ª importação: grava pedido, grava a situação de novo pós-criar
   igual([l.situacao_gravada, l.pedido_id, l.condicoes_opcoes], ["aceita", 777, ["70 - 7 DIAS", "30 DIAS"]], "ledger");
 });
 
+Deno.test("Codex 2 (v1.16): a importação manda o início da leitura e a evidência grava a situação lida", async () => {
+  const falso = montar({ porProtocolo: () => null });
+  const antes = Date.now();
+  await importar();
+  const rpc = falso.de("rpc:sayerlack_importar_pedido_portal");
+  igual(rpc.length, 1, "uma gravação");
+  const lidoDe = (rpc[0].corpo as { p_lido_de?: unknown }).p_lido_de;
+  igual(typeof lidoDe === "string" && Date.parse(lidoDe) >= antes - 1000 && Date.parse(lidoDe) <= Date.now(), true, `p_lido_de ISO desta leitura (${lidoDe})`);
+  const ev = falso.de("rest:sayerlack_portal_evidencia", "POST");
+  igual(ev.length, 1, "uma evidência");
+  const e = ev[0].corpo as { situacao_codigo?: unknown; lido_de?: unknown };
+  igual([e.situacao_codigo, e.lido_de], ["5", lidoDe], "situação lida (5 - Suspenso, a do cenário) e o MESMO lido_de na evidência");
+});
+
+Deno.test("Codex 2 (v1.16): cancelado lido vai à evidência como '6'; ilegível vai como null (ausente ≠ aberto)", async () => {
+  const cancelado = montar({ porProtocolo: () => null, browserless: () => portal("6 - Cancelado") });
+  await importar();
+  igual((cancelado.de("rest:sayerlack_portal_evidencia", "POST")[0].corpo as { situacao_codigo?: unknown }).situacao_codigo, "6", "cancelado");
+  igual(cancelado.de("rpc:sayerlack_importar_pedido_portal").length, 0, "cancelado não importa");
+  const ilegivel = montar({ porProtocolo: () => null, browserless: () => portal("Situação nova sem código") });
+  await importar();
+  igual((ilegivel.de("rest:sayerlack_portal_evidencia", "POST")[0].corpo as { situacao_codigo?: unknown }).situacao_codigo, null, "ilegível");
+});
+
+Deno.test("Codex 2 (v1.16, P1-2): '6' lido com a evidência falhando — 2ª tentativa e, ainda falhando, pendência da varredura", async () => {
+  const falha = montar({ porProtocolo: () => null, browserless: () => portal("6 - Cancelado"), evidencia: () => erroBanco("57014", "statement timeout", 500) });
+  await importar();
+  igual(falha.de("rest:sayerlack_portal_evidencia", "POST").length, 2, "duas tentativas de gravar o '6'");
+  const seg = falha.de("rest:sayerlack_portal_evidencia", "POST")[1].corpo as Record<string, unknown>;
+  igual([seg.situacao_codigo, "consulta_linhas" in seg, "trace" in seg], ["6", false, false], "2ª tentativa = linha MÍNIMA do veto");
+  igual(falha.de("rest:sayerlack_varredura_falha", "POST").length, 1, "pendência aberta para a varredura reler");
+  const segunda = montar({ porProtocolo: () => null, browserless: () => portal("5 - Suspenso"), evidencia: () => erroBanco("57014", "statement timeout", 500) });
+  await importar();
+  igual(segunda.de("rest:sayerlack_portal_evidencia", "POST").length, 1, "situação ≠ 6: evidência segue fail-open, sem 2ª tentativa");
+});
+
+Deno.test("Codex 2 (v1.16): IP010 da RPC (cancelado por outra leitura) é recusa reconhecida, sem disparo", async () => {
+  const falso = montar({ porProtocolo: () => null, importar: () => erroBanco("IP010", "[cancelado_no_portal] lido cancelado depois") });
+  const r = await importar();
+  igual([r.corpo.ok, r.corpo.sqlstate, r.corpo.desfecho], [false, "IP010", undefined], "resposta");
+  igual(String(r.corpo.mensagem).includes("CANCELADO no portal"), true, `mensagem do IP010 (${r.corpo.mensagem})`);
+  igual(falso.de(DISPARO).length, 0, "nenhum disparo de PO");
+});
+
 Deno.test("existente sem PO cancelado no portal: relê, recusa o re-disparo e mantém o #id", async () => {
   const falso = montar({ porProtocolo: () => pedido(), browserless: () => portal("6 - Cancelado") });
   const r = await importar();
