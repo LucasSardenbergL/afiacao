@@ -60,4 +60,6 @@ muda). Sem pendência, nada vai ao Omie.
 v1.16 (2026-11-16) — a espera entre FILHOS de split Sayerlack/OBEN (PR8/PR10, até 90 s cada) ganha orçamento SOMADO de
 100 s por execução (`espera-split.ts`); esgotado, o próximo filho segue sem esperar o portal. Dois filhos (split #4421 →
 #4425/#4426) estouravam o IDLE_TIMEOUT de 150 s: o disparo concluía, mas a tela recebia 504. Sem pré-condição de banco.
+      DEPLOY CONFIRMADO 2026-11-16 ~11:50Z (pacote d1fbba86d893 @ 60c11a3b2, 18/18 hashes; sensor SEM_EDICAO;
+      sonda db/sonda-disparar-v116-20261116.sql, fingerprint 58c79158…).
 ```
