@@ -132,4 +132,33 @@ Três mudanças. Nenhum teste nem gate saiu do caminho pré-merge: mudou ONDE ro
 
 ### Depois
 
-<!-- medição: preenchida pelo run do PR e pelo 1º PR só-docs pós-merge -->
+**Custo para PR com código** (run 43837364380 do #3917): as 3 partes do `docs-gates` duraram 16, 20 e 15 s, ~51 s de runner e 3 vagas de job por PR. Nenhuma ficou no caminho crítico, já que os pesados duram 96–249 s.
+
+**Caminho só-docs:** medido no próprio PR desta seção, o #3918, 1º PR só-docs depois do #3917. É o run 43851634100, com a mesma régua do #3897.
+
+| | antes (#3897) | depois (#3918) |
+|---|---|---|
+| push → `validate` concluído | 131–137 s | **94 s** (push 10:44:59 → fim do `validate` 10:46:33 UTC) |
+| parede do run (criação → fim) | — | 84 s |
+| caminho crítico | `docs-escopo` 14 → `docs-gates` 124 → `validate` 7 | `docs-gates (1)` 70 → `validate` 7 (o `docs-escopo`, 8 s, ficou em paralelo) |
+| vitest de docs | 85 s num job | 49 / 28 / 43 s nas partes 1/2/3 (Duration do vitest: 48 / 26 / 42 s) |
+
+O `validate` registrou `partes=rodou,rodou,rodou → pulou_pesados=1`. As saídas por parte da matriz agregaram como no exemplo oficial do GitHub.
+
+A cobertura no CI é idêntica à local: 43 + 40 + 42 = **125 arquivos** e 869 + 1.582 + 1.201 = **3.652 testes**.
+
+**Onde ficou o resto (parte 1, 70 s):**
+- setup 1 s;
+- checkout 8 s;
+- bun 1 s;
+- install 5 s;
+- 5 gates 3 s;
+- vitest 49 s, dos quais **collect 22,7 s**: o vitest importa e transforma os 43 arquivos antes de rodar.
+
+Fora dos jobs, o GitHub levou 10 s do push à criação do run, mais 3 s até o 1º job, e 4 s do fim do `docs-gates` ao início do `validate`.
+
+**Ficou em 94 s, não nos ~60 s estimados**, por dois motivos:
+1. **Desbalanço das partes.** A parte 2 terminou 21 s antes da 1. Os pesos de `PESO_SEGUNDOS` vieram da M2 sob carga, e o reporter do vitest no CI não imprime duração por arquivo, então não dá para recalibrar só pelo log.
+2. **`collect` de ~17–23 s por parte.** É custo fixo de importar os arquivos, e não divide com mais partes.
+
+Rebalancear de verdade daria ~−8 s: as três partes em ~40 s. Exige medir a duração por arquivo no CI, com `--reporter=json` ou similar, e fica fora deste PR.
