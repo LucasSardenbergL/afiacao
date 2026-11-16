@@ -88,11 +88,13 @@ PY
 }
 # Cada sabotagem abre UMA camada e mantém a postcondição de pé (os marcadores de texto continuam no
 # corpo), para que o vermelho venha do COMPORTAMENTO — exceto authenticated_executa, que é a do ACL.
+# employee_grava_novo abre DUAS travas: sabotar só o `IF NOT FOUND` fica VERDE (medido), porque o
+# `IS DISTINCT FROM` com código atual NULL também barra o vínculo novo com 42501 — 2ª camada, redundante.
 case "${SABOTAGEM:-}" in
   '') ;;
   employee_grava_novo)       sabotar "    IF NOT FOUND THEN
       RAISE EXCEPTION 'register_carteira_member: vínculo novo do employee" "    IF false THEN
-      RAISE EXCEPTION 'register_carteira_member: vínculo novo do employee" ; sabotar "    RETURN;  -- employee: mesmo código, sem escrita" "    IF FOUND THEN RETURN; END IF;  -- RETURN;  -- employee: mesmo código, sem escrita" ;;
+      RAISE EXCEPTION 'register_carteira_member: vínculo novo do employee" ; sabotar "    ELSIF v_codigo_atual IS DISTINCT FROM p_omie_codigo_cliente THEN" "    ELSIF v_codigo_atual <> p_omie_codigo_cliente THEN" ; sabotar "    RETURN;  -- employee: mesmo código, sem escrita" "    IF FOUND THEN RETURN; END IF;  -- RETURN;  -- employee: mesmo código, sem escrita" ;;
   employee_mesmo_codigo_escreve) sabotar "    RETURN;  -- employee: mesmo código, sem escrita" "    NULL;  -- RETURN;  -- employee: mesmo código, sem escrita" ;;
   employee_troca_codigo)     sabotar "    ELSIF v_codigo_atual IS DISTINCT FROM p_omie_codigo_cliente THEN" "    ELSIF false THEN" ;;
   doc_diverge_passa)         sabotar "  IF v_doc_local <> v_doc_omie THEN" "  IF false THEN" ;;
