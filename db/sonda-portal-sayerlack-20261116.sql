@@ -1,3 +1,4 @@
+-- 2026-11-16 ~08:20 SP: re-sonda da predecessora (prova de 49.8 h > teto 6 h) antes do deploy de disparar-pedidos-aprovados v1.16 (#3920).
 -- PASSO 1 — dispara as 1 edge(s) baratas da leva. Exige ESCRITA: lê o vault e
 --          faz INSERT, e o wrapper read-only recusa os dois — o que NÃO é o mesmo que
 --          "só o founder consegue". Caminho da SESSÃO: commite este .sql em db/ e rode
