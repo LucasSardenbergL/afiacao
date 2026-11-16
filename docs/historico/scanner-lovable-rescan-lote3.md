@@ -23,6 +23,7 @@ Continuação do [lote 2](scanner-lovable-rescan-lote2.md). O lote tem duas part
 
 ## Lições
 
+- **O SQL feito para o `db:aplicar` não leva `BEGIN;`/`COMMIT;`.** A transação é do envelope, e o corpo roda via EXECUTE, onde esses comandos são proibidos. As migrations do #3909 saíram com envelope próprio, pensadas para o SQL Editor. O ensaio recusou (rc=2), e o conserto veio no #3910, depois que o #3909 já tinha auto-mergeado. Quando a migration vai pelo envelope, escreva sem BEGIN desde o início.
 - **O guard de colisão de migration leu o HEAD de OUTRO checkout.** O `wt:preflight` barrou a migration da cobrança como "EM VOO em 27 worktrees". A causa: o checkout principal estava num HEAD destacado e antigo, sem a `20261031210000_cobranca_fila.sql`, e o guard tomou esse HEAD por histórico. A conferência por worktree (`git status` e grep de migration não commitada) e por PR deu zero concorrência. Foi falso positivo, e não houve dano.
 - **A ordem das asserções decide se uma sabotagem antiga continua vermelha.** A prova da cobrança já tinha a sabotagem `revoke_dona` casando no C9e (o estado original). Aplicar a migration nova antes do C9e faria essa sabotagem ficar VERDE, porque o REVOKE novo cobriria o removido. O bloco D entra depois do C9e e antes do C10.
 - **Uma sabotagem só prova algo se o dado de base distingue os lados.** A 1ª versão sabotava a policy da promessa, mas V1 já via as 2 promessas existentes, então a sabotagem ficaria verde. A troca foi para a de evento, em que V1 vê 20 de 22.
@@ -32,9 +33,13 @@ Continuação do [lote 2](scanner-lovable-rescan-lote2.md). O lote tem duas part
 - `db/test-cobranca-fila.sh` (PG17) ganhou o bloco D. D0 fixa a linha de base por papel. D1 confere a ACL. D2 prova que a chamada direta a `cobranca_dona` dá 42501 para customer e vendedora. D3 e D4 provam que as leituras de caso, promessa, evento e fila ficam IDÊNTICAS antes e depois. D5 prova que `sou_dona` responde só pelo chamador, D6 que `registrar` segue funcionando e D7 que a migration é idempotente. O controle tem 68 asserções e 0 falhas. Há 4 sabotagens novas: a da ACL (pega na postcondição), a do helper aberto, a da policy sem o ramo da gestão e a do evento de outro caso.
 - Testes Deno: `limites-anexo_test.ts` (9), `numero-destino_test.ts` (5) e `escape-html_test.ts` (2). `test:edges` deu 2645/0.
 
-## Deploy
+## Deploy (4 edges, uma onda, 2,1 créditos)
 
-Pendente: será registrado no PR de sonda.
+- **Migrations pelo envelope `db:aplicar`**, com o aval do founder, antes das edges. Os ensaios fizeram ROLLBACK com POST-OK. Em seguida foram aplicadas a `20261115213000` (tentativa #1132) e a `20261115213100` (#1133). Na validação por fora via psql-ro, a cota ficou 30/100, `cobranca_dona` ficou com authenticated=f, anon=f e service_role=t, e as 3 policies usam `cobranca_sou_dona`.
+- O pacote `1111f9aae9eb` saiu contra `d2ce79319`, com 38/38 hashes. Antes do envio, o `list_messages` não mostrou outro pedido dessas edges. O bot respondeu "No files were edited."
+- O sensor de edição saiu com **exit 1** (`EDICAO_DETECTADA`), já assentado (5,0 min), porque a resposta do MCP trazia `edit_id`/`commit_sha`. Esse sha (`d8728bdfd`, "Work in progress") é o ÚNICO commit do bot desde o envio, e o próprio sensor o lista como tolerado: só `src/integrations/supabase/types.ts`, +25 linhas, regenerado do schema (`cobranca_sou_dona` e as colunas `cp_vencido_fora_*` do #3903). Não tocou em edge nem em código, e nada foi revertido. O sensor não distingue o sinal da resposta que aponta para um commit tolerado, então o veredito exige ler o `git show --stat` do sha. Sem dano, sem conserto aqui.
+- Sonda pelo envelope `db/sonda-seg-lote3-20261116.sql`, na tentativa #1135: 4 DEPLOY CONFIRMADO, com versão e fonte batendo. O `pendencias:deploy` saiu com exit 0.
+- Sem Publish: nada em `src/`.
 
 ## Fica para o founder
 
