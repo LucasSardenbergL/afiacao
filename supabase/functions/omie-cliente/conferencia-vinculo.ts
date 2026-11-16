@@ -10,6 +10,8 @@
 //
 // Puro (sem rede, sem Supabase): testado em conferencia-vinculo_test.ts.
 
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+
 /** O que a Omie devolve no ConsultarCliente e esta conferência lê. */
 export interface ClienteOmieConsultado {
   codigo_cliente_omie?: number;
@@ -47,7 +49,7 @@ export async function conferirCodigoNaOmie(
   try {
     resposta = await consultar(codigo);
   } catch (e) {
-    return { tipo: "falha", motivo: `A Omie não respondeu à conferência do código ${codigo}: ${e instanceof Error ? e.message : String(e)}` };
+    return { tipo: "falha", motivo: `A Omie não respondeu à conferência do código ${codigo}: ${mensagemDeErro(e) ?? "erro desconhecido"}` };
   }
   if (!resposta || typeof resposta !== "object") {
     return { tipo: "falha", motivo: `A Omie devolveu uma resposta vazia para o código ${codigo}.` };

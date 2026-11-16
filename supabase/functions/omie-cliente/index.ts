@@ -910,7 +910,7 @@ Deno.serve(async (req) => {
             }),
           );
         } catch (e) {
-          listagem = { tipo: "falha", motivo: `A Omie não respondeu à busca por documento: ${mensagemDeErro(e)}` };
+          listagem = { tipo: "falha", motivo: `A Omie não respondeu à busca por documento: ${mensagemDeErro(e) ?? "erro desconhecido"}` };
         }
         if (listagem.tipo === "falha") return jsonRes({ status: "pendente", error: listagem.motivo }, 503);
         if (listagem.tipo === "nenhum") {

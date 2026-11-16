@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { Loader2, Check, X, UserCheck, Clock, Link2, AlertTriangle } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { documentoParaBuscarNoOmie } from '@/lib/omie/documento-cliente';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 interface PendingUser {
   id: string;
@@ -96,7 +97,7 @@ const AdminApprovals = () => {
         body: { action: 'vincular_aprovado', user_id: profileUserId },
       });
       const status: string | undefined = data?.status;
-      const motivo: string = data?.error ?? (error instanceof Error ? error.message : 'Falha ao conferir o vínculo na Omie.');
+      const motivo: string = data?.error ?? mensagemDeErro(error) ?? 'Falha ao conferir o vínculo na Omie.';
 
       if (status === 'vinculado') return { tipo: 'linked' };
       if (status === 'ja_vinculado') return { tipo: 'already_linked' };
