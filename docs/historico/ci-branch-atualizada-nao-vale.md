@@ -36,9 +36,9 @@ do último run de CI do PR e o merge dele. Mediana de 1 commit, máximo 26.
 
 | PR | n | mediana | média |
 |---|---|---|---|
-| só `docs/`/`*.md` | 86 | 45 | 38 |
-| toca `src/`, `supabase/`, `db/`, `scripts/` ou config | 161 | 150 | 141 |
-| todos (amostra de 249 dos 338) | 249 | — | 106 |
+| só `docs/`/`*.md` | 120 | 45 | 53 |
+| toca `src/`, `supabase/`, `db/`, `scripts/` ou config | 216 | 148 | 139 |
+| todos | 338 | — | 109 |
 
 **Simulação de eventos discretos** sobre os 338 PRs, com os merges do bot do Lovable fixos no horário
 real. "Atraso" é o tempo a mais até o merge em relação ao real. "Sem prova" é merge que estourou o
@@ -52,7 +52,7 @@ teto de updates e entrou atrás.
 | PR **e** delta da main tocam código/config | paralelo | 1 | 109 | 74 | +13 min | +36 |
 | PR **e** delta não são só docs | serial | ∞ | 151 | 0 | +382 min | +687 |
 
-A variante mais barata que ainda prova todo merge custa ~150 × 141 ≈ **21.000 runner-min em 14 dias**
+A variante mais barata que ainda prova todo merge custa ~150 × 139 ≈ **21.000 runner-min em 14 dias**
 e +6 h de atraso médio por PR. Com teto, fica mais barata, mas deixa dezenas de merges sem prova, ou
 seja, não previne o incidente. Os números são **piso**: o modelo não põe os re-runs na fila de 20 jobs
 do plano Free (que já é o gargalo, `ci-fila-de-runners.md`), e o re-run via dispatch roda as provas
