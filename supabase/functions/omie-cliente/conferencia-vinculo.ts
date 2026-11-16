@@ -30,7 +30,7 @@ export type ConferenciaOmie =
 // recusa): credencial, limite de consumo e instabilidade não dizem nada sobre o código.
 const FAULT_NAO_CADASTRADO = /n[ãa]o cadastrad|n[ãa]o encontrad|n[ãa]o localizad|n[ãa]o exist|nenhum registro/i;
 
-export function codigoOmieValido(codigo: unknown): codigo is number {
+function codigoOmieValido(codigo: unknown): codigo is number {
   return typeof codigo === "number" && Number.isSafeInteger(codigo) && codigo > 0;
 }
 
@@ -120,7 +120,7 @@ export function classificarPaginaListagem(resposta: {
 }
 
 /** Teto de páginas da busca por documento: estourar sem página vazia é falha, não "único". */
-export const MAX_PAGINAS_BUSCA_DOCUMENTO = 5;
+const MAX_PAGINAS_BUSCA_DOCUMENTO = 5;
 
 /**
  * Código ÚNICO do documento numa conta, paginando até a página VAZIA (com teto). Dois códigos
