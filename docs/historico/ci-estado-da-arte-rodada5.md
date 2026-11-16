@@ -56,7 +56,8 @@ estão em 265-295 s, e exige refazer a falsificação de uma prova de RLS. Não 
 **Encerrada a otimização grátis.** Ordem do que resta (ganhos estimados):
 1. **Grátis:** ticket ao GitHub Support pedindo teto 40→60 ([limites](https://docs.github.com/en/actions/reference/limits)). Cenário de −3 a −6 min em rajada, zero com fila vazia. É com o founder.
 2. **Pago:** [Namespace](https://namespace.so/pricing.md), mantendo a conta pessoal. O plano
-   Developer não tem mensalidade, então o piloto é barato. Fable propõe piloto só nas provas-sql
+   Developer não tem mensalidade, mas **como capacidade fixa não é barato** (corrigido na rodada 7,
+   abaixo: R$2-7 mil/mês no volume real); só um piloto de medição cabe em ~R$100. Fable propõe piloto só nas provas-sql
    de PR; Codex propõe capacidade complementar para o CI pós-merge (64 vCPU no Team = 16 runners de
    4 vCPU, que não substituem os 40). Medir antes de assinar.
 3. **Pago:** GitHub Team (60 slots, US$4/usuário/mês). Risco alto na transferência: Lovable,
@@ -72,3 +73,26 @@ estão em 265-295 s, e exige refazer a falsificação de uma prova de RLS. Não 
 
 Para adotar qualquer mudança: melhora ≥ 10% no p90 push→validate, cobertura idêntica e intervalo p90
 entre vereditos da main ≤ 65 min. Base da simulação de fila: [ci-fila-actions-decisao-nao-mexer.md](ci-fila-actions-decisao-nao-mexer.md).
+
+## Rodada 6 (2026-11-16): merge em menos de 1 minuto?
+
+**Não para todo PR.** O fixo do GitHub (agendar + `validate` + squash) já é 25-45 s, e o job que
+manda em cada classe executa 87 s (docs, vitest de 122 arquivos), 215-243 s (sem SQL,
+`falsificacao (1)`) e 269 s (com SQL). Recibo por tree-hash e cache geral são máquina meta sem
+incidente; 100+ jobs curtos e runners maiores custam R$4-15 mil/mês sem chegar à meta. Só restou o
+caminho rápido de PR só de docs (alvo ~55-65 s, em sessão própria) e a prática draft verde → ready
+(`docs/agent/worktrees.md` §Disciplina de push, item 6).
+
+## Rodada 7 (2026-11-16): inventário do que é grátis ou quase
+
+Fable e Codex cruzaram todas as propostas das rodadas 1-6 com a `main`. Tudo com ganho comprovado
+está feito; o `mutation-check` fora do `validate.needs` é decisão documentada (incidente #2380), não
+lacuna. Decisões que faltavam escrever:
+
+| Proposta | Decisão | Por quê (estimado) | Reabrir se |
+|---|---|---|---|
+| Imagem do CI pré-montada no GHCR (PG17, pgvector, locales) | **Não fazer** | −12 a +18 s com fila vazia (pode piorar); o risco de PGDG que ela cobria já foi coberto pelo pin do #3892; apt saudável custa 10-14 s ([ci-e20-apt-so-pgdg.md](ci-e20-apt-so-pgdg.md)) | apt passar de 60 s ou novo incidente de repositório com o pin ativo |
+| Consolidar jobs com steps paralelos internos (`parallel`/`wait-all`, jun/2026) | **Não agora** | 0-18 s com fila vazia; em rajada ataca a mesma fila que o ticket 40→60, sem mexer no CI; risco médio de isolamento e propagação de falha | ticket negado **e** gatilho de fila acima disparado |
+| Reduzir as ~179 mil chamadas `psql` por run ([medição](ci-provas-sql-medicao-preparacao.md)) | **Não fazer sem perfil novo** | 0-30 s com fila vazia, sem ganho comprovado; 3-7 dias; risco alto para transações, roles e asserts | unidade indivisível > 330 s com perfil mostrando o harness como causa |
+| Namespace Developer como capacidade | **Não é "muito baixo custo"** | volume medido 09-16/11: 43.577 job-min em 7 dias (≈201 mil/mês). A US$0,006-0,012/min ([preços](https://namespace.so/pricing.md), lidos em 16/11): só provas-sql de PR ≈ R$2.000-4.000/mês; todo o CI ≈ R$6.650-13.300/mês. Teto de 32 vCPU = 8 runners de 4 vCPU | piloto de medição de até ~R$100 (10-40 runs) é compra: decisão do founder |
+| Ticket ao Support 40→60 | **Enviado em 2026-11-14** pelo founder | — | registrar aqui a resposta |
