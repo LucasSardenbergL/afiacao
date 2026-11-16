@@ -93,3 +93,43 @@ Medido no 1º PR só-docs pós-merge (#3832, run 43054539932; o #3830 mergeou em
 | runner no lugar dos 7 jobs não-SQL | 2.245–2.517 s | **162 s** (`docs-escopo` 9 + `docs-gates` 153) |
 
 Os 7 jobs vieram `skipped`, e o `validate` aceitou o pulo (`success`). O caminho crítico agora é o `docs-gates`: install, 5 gates e o vitest dos 122 arquivos. O custo para os PRs que não são só-docs foi medido no próprio #3830: `docs-escopo` de ~9 s em série antes dos 7 jobs.
+
+## Fast-path (2026-11-16): `docs-gates` em paralelo e em 3 partes
+
+**Antes** (PR #3897, rodada 6): a cadeia era serial, `docs-escopo` (14 s) → `docs-gates` (124 s) → `validate` (7 s), ou ~131–137 s do push ao `validate`. Dentro do `docs-gates`, o vitest levava 85 s sobre 122 arquivos e 3.632 testes. Só o `scripts/exclusividade-medir.test.ts` levava 55 s: o vitest paraleliza entre arquivos, nunca dentro de um, e esse arquivo era o piso.
+
+Três mudanças. Nenhum teste nem gate saiu do caminho pré-merge: mudou ONDE rodam, não SE rodam.
+
+1. **`docs-gates` sem `needs`.** Cada parte decide o escopo sozinha, no step `escopo`, com o mesmo `scripts/docs-escopo.ts --evento` e o mesmo SHA do `docs-escopo`. Ela roda em paralelo com ele, não atrás. Fora do só-docs, a parte sai verde sem instalar nem testar: todo step depois do `escopo` tem `if: steps.escopo.outputs.so_docs == 'true'`.
+   - Problema: o `success` do `docs-gates`, sozinho, deixou de provar que os testes rodaram. Uma parte que discordasse do `docs-escopo` sairia verde sem testar.
+   - Correção: o último step de cada parte grava `parte_<i>=rodou`, e só chega lá com tudo verde. No pulo, o `validate` exige as 3 marcas (`rodou,rodou,rodou`). Faltou uma, o pulo não vale e os pesados `skipped` reprovam no laço.
+   - Não é sensor novo. É o mesmo invariante que antes vinha do `if: needs.docs-escopo…` ("so_docs=true ⇒ docs-gates rodou"), agora carregado por saída de job. Uma saída por parte, porque a matriz agrega `parte_1..3`, como no exemplo oficial do GitHub de outputs em matriz.
+   - O `docs-gates` `skipped` deixou de ser aceito em qualquer cenário: ele não tem mais `if`.
+2. **Matriz de 3 partes** (`--testes --parte i/3`, um step estático por parte, como no `testes`).
+   - A partição é LPT determinística sobre a mesma seleção (`particionar`). O peso vem de `PESO_SEGUNDOS`, os 16 arquivos lentos; o resto pesa 1.
+   - Bytes não servem de proxy: o `sonda-versao-sql`, de 165 KB, leva 12 s; o `mapa-coerente-na-ref`, de 15 KB, leva 27 s.
+   - Tabela velha só desbalanceia as partes, nunca tira arquivo.
+   - O `docs-escopo.test.ts` prova, na árvore real, que as partes são disjuntas e não-vazias e que a união é a seleção. Prova também que matriz, steps, saídas e `validate` casam no mesmo N.
+   - Os 5 gates de docs rodam só na parte 1 (~2 s).
+3. **`exclusividade-medir.test.ts` dividido em 4 arquivos.** Os helpers foram para `scripts/exclusividade-medir.fixture.ts` sem mudar lógica, e os helpers do bloco TETO viraram `contextoTeto()`.
+   - O TETO é ~39 s de espera de relógio em 5 testes e ficou em 2 arquivos (`-teto-1`, `-teto-2`). O `[fora-da-rodada]` tem o próprio arquivo; o resto, inclusive o `[deps-instaladas]` do `.mut`, fica no original.
+   - Medido na M2: 48/48 testes com títulos idênticos (diff vazio). O arquivo mais lento caiu de 86 s para 19,5 s.
+   - Não removi o arquivo da seleção por "provar que não lê docs/". O PRONTO exige cobertura idêntica, então cada parte cita este doc e continua no superconjunto textual.
+
+**Cobertura** (M2, as 3 partes rodadas uma a uma): 43 + 40 + 42 = **125 arquivos**, ou seja, os 122 de antes mais as 3 partes novas (`comm` vazio fora delas). São 869 + 1.582 + 1.201 = **3.652 testes**: os 3.632 de antes mais 20 novos do próprio `docs-escopo.test.ts` (40 → 60).
+
+**Falsificação** (commit antes, controle verde 60/60 na mesma invocação, uma camada por vez): todas as 8 camadas ficaram **vermelhas**.
+- `validate` ignora as marcas;
+- `validate` volta a aceitar `docs-gates` `skipped`;
+- a marca perde o `if`;
+- o teste da parte 2 perde a condição do escopo;
+- `particionar` perde um arquivo;
+- `particionar` duplica um arquivo;
+- `lerParte` aceita i > N;
+- `docs-gates` volta a ter `needs: docs-escopo`.
+
+**Custo para PR que não é só-docs:** 3 jobs a mais, que só fazem checkout, bun e escopo, e saem verdes. O número do run do PR está na tabela abaixo.
+
+### Depois
+
+<!-- medição: preenchida pelo run do PR e pelo 1º PR só-docs pós-merge -->
