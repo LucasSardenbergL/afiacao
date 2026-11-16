@@ -39,7 +39,13 @@ Conserto: migration `20261116090000_seg_b339_vendedor_so_master.sql` e `omie-cli
 
 Prova: `db/test-seg-b339-vendedor-so-master.sh` (PG17). O controle A0 mostra o furo de antes, e há 20 asserções com claims avulsas e em JSON. As 9 sabotagens ficaram vermelhas em C e em pt_BR.
 
-**Risco residual, decisão do founder:** o employee ainda admite um vínculo NOVO com um código Omie livre. É isso que permite aprovar um cadastro e vender para cliente novo. Se esse código for o que o Omie passou a usar para outro cliente V, o sync deixa de revalidar V e, quando o TTL vence, a dona de V cai para Hunter. O employee não escolhe a dona, mas pode fazer V perder a dona. Fechar isso exige validar o código no Omie, no servidor, antes de o vínculo do employee valer (admissão pendente). É escopo próprio.
+**Deploy ([#3912](https://github.com/LucasSardenbergL/afiacao/pull/3912), em 2026-11-16, 2 créditos):**
+
+- Migration pelo envelope, na tentativa #1137. O ensaio fez ROLLBACK com POST-OK. Na validação por fora via psql-ro, a RPC ficou DEFINER com `search_path` vazio e sem anon, as policies novas estão no mapa e no ledger, o TRUNCATE saiu dos papéis de client e as 26.647 linhas ficaram intactas.
+- O pacote `fabf12c02964` (`omie-cliente`) saiu contra `56bf1f116`, com 16/16 hashes. O envio estourou o tempo do cliente e não foi reenviado: a mensagem foi achada pelo `list_messages` e acompanhada pelo `get_message`.
+- Sonda `db/sonda-seg-b339-20261116.sql`, na tentativa #1141: DEPLOY CONFIRMADO em `v1.11-vendedor-so-master`. O `pendencias:deploy` saiu com exit 0.
+
+**Risco residual, aceito pelo founder ("Sim, deploy assim"):** o employee ainda admite um vínculo NOVO com um código Omie livre. É isso que permite aprovar um cadastro e vender para cliente novo. Se esse código for o que o Omie passou a usar para outro cliente V, o sync deixa de revalidar V e, quando o TTL vence, a dona de V cai para Hunter. O employee não escolhe a dona, mas pode fazer V perder a dona. Fechar isso exige validar o código no Omie, no servidor, antes de o vínculo do employee valer (admissão pendente). É escopo próprio.
 
 ## Lições
 
@@ -59,4 +65,5 @@ Pendente: será registrado no PR de sonda.
 ## Fica para o founder
 
 - Marcar como **aceitos por desenho** no scanner: `7330d2bc`. Também `78952df6` e `f14d9731`, que vêm do lote 2 e são críticos, e por isso só se marcam pela tela de Segurança.
-- Marcar como corrigidos, depois do próximo rescan: `03689f08`, `ec253a34` e `43bd6b91`.
+- Marcar como corrigidos, depois do próximo rescan: `03689f08`, `ec253a34`, `43bd6b91` e `b339bb5b`.
+- Próximo passo do `b339bb5b`, sem dono ainda: a admissão pendente, com o código conferido no Omie pelo servidor antes de o vínculo do employee valer.
