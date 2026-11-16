@@ -476,6 +476,8 @@ interface Evidencia {
   sessao_browserless?: boolean;
   /** 7.2: id da linha em `sayerlack_portal_evidencia` (null = não gravou; fail-open). */
   evidencia_id?: number | null;
+  /** Codex 2 (v1.16): o "6" lido precisou da 2ª tentativa de evidência — e se ela ficou gravada. Ausente = 1ª bastou. */
+  evidencia_cancelado?: "regravada" | "nao_gravada";
 }
 
 /** Correlação da evidência (7.2): a linha do ledger desta tentativa e quem a pediu. */
@@ -654,7 +656,8 @@ async function tratar(
     }
     const lidoAte = new Date().toISOString();
     // 7.2: o que o portal mostrou fica gravado ANTES de qualquer decisão (sucesso, recusa ou falha de leitura).
-    evid.evidencia_id = await gravarEvidencia(db, {
+    const situacaoLida = situacaoObservada(envelope.consulta?.linhas ?? [], protocolo)?.codigo ?? null;
+    const linhaEvidencia = {
       execucao_id: ctxEvid.execucaoId,
       protocolo,
       pedido_id: pedidoConhecido?.id ?? null,
@@ -672,7 +675,27 @@ async function tratar(
       condicao: typeof envelope.condicao === "string" ? envelope.condicao : null,
       condicoes_opcoes: Array.isArray(envelope.condicoes_opcoes) ? envelope.condicoes_opcoes : null,
       trace: cortarTrace(envelope.trace),
-    });
+      // Codex 2 (v1.16): a situação LIDA, em coluna dedicada — é o que a importação de OUTRA leitura consulta (IP010)
+      // quando este cancelamento chega antes de o pedido existir (o escritor da situação só faz UPDATE no pedido).
+      situacao_codigo: situacaoLida,
+    };
+    evid.evidencia_id = await gravarEvidencia(db, linhaEvidencia);
+    // Codex 2 (P1-2): a evidência é fail-open, mas um "6" que não ficou gravado é o veto que some quando o pedido ainda
+    // não existe — a importação (IP010) e o claim só consultam a EVIDÊNCIA. Tenta de novo com a linha MÍNIMA do veto
+    // (sem os jsonb da tela: o que pesa no INSERT; rodada 2) — o prazo pode ter vencido com o INSERT esperando a
+    // importação em voo do MESMO protocolo, e duplicar a linha imutável é inofensivo. Ainda falhando, pelo BOTÃO abre
+    // a pendência da varredura para reler (pela varredura, a rodada já relê; regravar a fila a monopolizaria — B3).
+    if (situacaoLida === "6" && evid.evidencia_id == null) {
+      evid.evidencia_id = await gravarEvidencia(db, {
+        execucao_id: linhaEvidencia.execucao_id, protocolo, pedido_id: linhaEvidencia.pedido_id, origem: linhaEvidencia.origem,
+        somente_situacao: somenteSituacao, lido_de: lidoDe, lido_ate: lidoAte, http_status: linhaEvidencia.http_status,
+        leitura_ok: linhaEvidencia.leitura_ok, situacao_codigo: situacaoLida,
+      });
+      evid.evidencia_cancelado = evid.evidencia_id == null ? "nao_gravada" : "regravada";
+      if (evid.evidencia_id == null && situacoesPermitidas === null && !somenteSituacao) {
+        await abrirPendenciaSituacaoNaoGravada(db, protocolo);
+      }
+    }
     console.log(`[importar-portal] ${protocolo}: Browserless ${Date.now() - t0}ms http=${httpStatus}${httpErr ? ` erro=${httpErr}` : ""} tipo=${envelope.erroTipo ?? "-"}`);
 
     // Pedido já gravado: toda recusa daqui em diante carrega o #id e diz que NÃO re-disparou (o pedido existe).
@@ -831,6 +854,8 @@ async function tratar(
       p_itens: lido.itens.map((i) => ({ sku_portal: i.sku_portal, qtde_portal: i.qtde_portal, valor_mercadoria: i.valor_mercadoria })),
       p_operador: operador,
       p_condicao_portal: String(envelope.condicao).trim(),
+      // Codex 2 (v1.16): o início DESTA leitura — cancelamento visto por outra leitura depois dele recusa (IP010).
+      p_lido_de: lidoDe,
     });
     const itensResumo = lido.itens.map((i) => ({ sku_portal: i.sku_portal, descricao: i.descricao, qtde_portal: i.qtde_portal, valor_mercadoria: i.valor_mercadoria }));
     if (rpcErr) {

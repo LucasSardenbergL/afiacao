@@ -18,7 +18,10 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
 /** v1.13 (2026-11-11) — detalhe aberto pelo CLIQUE no link do nº (o goto direto não chegava; condição ilegível). */
 /** v1.14 (2026-11-11) — lê TODAS as opções de condição do portal (163; o teto 80 cortava o inventário do de-para). */
 /** v1.15 (2026-11-14) — revisão final Codex+Fable: consulta/condição fail-closed, espelho do Omie fresco antes de re-tentar. */
-export const VERSAO = "v1.15-revisao-final";
+/** v1.16 (2026-11-16) — Codex revisão final, achado 2: a situação lida vai à evidência (`situacao_codigo`, coluna
+ *  dedicada) e a importação manda o início da leitura (`p_lido_de`): a RPC recusa (IP010) se outra leitura viu o
+ *  protocolo cancelado depois. Rótulo da diferença `sem_referencia_app` (achado 1). */
+export const VERSAO = "v1.16-cancelado-antes-do-pedido";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

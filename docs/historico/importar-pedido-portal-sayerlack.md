@@ -999,3 +999,40 @@ Revisões independentes, cada uma lendo o código sem a conclusão da outra. **N
 
 **Não coberto por teste:** a orquestração real do navegador (template). Só o parse e as funções DOM são testados.
 A prova dela é a próxima leitura real em prod.
+
+## Codex 1 e 2 da revisão final — conferência sem retrato e cancelado antes do pedido (2026-11-16)
+
+Os dois P1 do parecer Codex que a v1.15 deixou para decisão do founder (exigiam migration no money-path).
+
+**Codex 1 — conferência sem retrato não se compara consigo mesma** ([#3913](https://github.com/LucasSardenbergL/afiacao/pull/3913), migration `20261116120000` aplicada, tentativa #1139):
+- Sem retrato, a 1ª leitura semeava o retrato batendo só SKU/quantidade. Agora o ramo sem retrato (`[SEM-RETRATO-REF]`)
+  compara também contra o que o disparador mandaria ao Omie: unitário sem IPI provado × `qtde_final` (pedido inteiro
+  decomposto, coerente e de quantidade inteira), `valor_total_portal_provado` do protocolo e `condicao_pagamento_codigo`.
+- **Mudança sobre o brief (Codex rodada 1, P1):** referência ausente vira DIFERENÇA (`sem_referencia_app` / `condicao`),
+  não recusa. A recusa não gravava gate, e o disparador chamado direto (o claim aceita `falha_envio`) sairia com os
+  valores do app. Quem resolve é o "Aceitar o portal". P2 do Codex: quantidade fracionária não é referência (o PO
+  manda `ceil`).
+- Prova: `db/test-sayerlack-conferir-sem-retrato.sh` 21/21 em C e pt_BR; `--falsificar` 11/11. Codex rodada 2: sem P0/P1.
+
+**Codex 2 — cancelamento observado antes de o pedido existir** (PR B, migration `20261116130000`, edge v1.16):
+- A evidência ganhou `situacao_codigo` (coluna dedicada, insert-only). A importação ganhou o 7º argumento `p_lido_de`
+  e, sob o advisory lock do protocolo, recusa com IP010 `[cancelado_no_portal]` se outra leitura viu "6" depois. A
+  assinatura de 6 args virou wrapper (marco NULL), sem DROP.
+- **Codex rodada 1 (3 P1; founder decidiu ampliar):**
+  - (a) O INSERT da evidência "6" toma a MESMA advisory lock (trigger ALWAYS) — senão Y grava entre a checagem e o
+    commit de X e o registrador não acha o pedido.
+  - (b) O pedido importado guarda `importado_portal_lido_de` e `reposicao_claim_disparo` recusa, no mesmo WHERE que
+    grava, evidência "6" posterior.
+  - (c) A edge re-tenta a evidência de um "6" com a linha MÍNIMA do veto e, falhando, abre a pendência da varredura.
+- **Codex rodada 2 (2 P1 + 1 P2):** o claim toma a MESMA advisory lock por protocolo ANTES do UPDATE (o
+  EvalPlanQual não renova a visibilidade da evidência); o veto ignora cancelamento seguido de leitura re-aberta.
+- **Codex rodada 3 (1 P1):** importado pelo wrapper (marco NULL, edge v1.15) também é vetado — qualquer "6" registrado.
+- **Codex rodada 4 (1 P1, legado):** evidência anterior à migration não tem `situacao_codigo` (imutável: sem backfill).
+  Medido 0 importados disparáveis (10 importados) e a PRE **aborta** se aparecer algum.
+- **Fica para o PR seguinte (residual registrado):** a varredura descarta cancelado de protocolo ainda sem pedido
+  (`observacoesDaLista` exige `protocolosNoApp`) — preexistente.
+- **Limite conhecido:** a janela entre aplicar a migration e deployar a v1.16 (a v1.15 não grava `situacao_codigo`).
+- Prova: `db/test-sayerlack-importar-cancelado.sh` 23/23 em C e pt_BR, `--falsificar` 14/14 (3 cenários de 2 conexões:
+  cancelamento durante a espera do lock, o INSERT do "6" esperando a importação em voo, o claim esperando o INSERT do
+  "6"). Deno 87/87 com 4 sabotagens vermelhas; os 6 gates de edge em exit 0; vitest 1252/1252 (2 suítes que caíram por
+  timeout de carga re-rodadas isoladas: 124/124).

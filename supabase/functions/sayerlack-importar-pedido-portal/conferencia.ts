@@ -78,6 +78,7 @@ const ROTULO: Record<string, string> = {
   condicao: "condição de pagamento",
   item_sem_mapa_portal: "item do app sem SKU do portal",
   pedido_sem_itens: "pedido do app sem itens",
+  sem_referencia_app: "pedido do app sem o preço provado do portal",
 };
 
 /** Resumo curto das diferenças para a mensagem (no máximo 4; o resto vai no campo `diferencas`). */
