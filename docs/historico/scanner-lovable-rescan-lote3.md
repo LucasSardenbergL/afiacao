@@ -47,6 +47,21 @@ Prova: `db/test-seg-b339-vendedor-so-master.sh` (PG17). O controle A0 mostra o f
 
 **Risco residual, aceito pelo founder ("Sim, deploy assim"):** o employee ainda admite um vínculo NOVO com um código Omie livre. É isso que permite aprovar um cadastro e vender para cliente novo. Se esse código for o que o Omie passou a usar para outro cliente V, o sync deixa de revalidar V e, quando o TTL vence, a dona de V cai para Hunter. O employee não escolhe a dona, mas pode fazer V perder a dona. Fechar isso exige validar o código no Omie, no servidor, antes de o vínculo do employee valer (admissão pendente). É escopo próprio.
 
+### Residual fechado: vínculo novo do employee só com o código conferido na Omie (2026-11-16)
+
+Pedido do founder, numa sessão própria. Conserto: migration `20261116180000_seg_b339_vinculo_conferido.sql` e `omie-cliente` v1.12 (`v1.12-vinculo-conferido`).
+
+- `register_carteira_member`, ramo do employee: **não grava mais nada**. Um vínculo novo recebe 42501, porque passa pela conferência. Um código diferente do vínculo existente também recebe 42501, como no #3912. No mesmo código, a chamada retorna sem escrever. O Codex mostrou que o upsert de antes reclassificava o `source` e APAGAVA a `evidence_document_normalized`, o que neutralizava a revogação do sync. Servidor e master não mudam.
+- `admitir_vinculo_conferido`, nova: SECURITY DEFINER, e só o service_role executa. A edge chama depois de ler NA OMIE o documento do código, com `ConsultarCliente` na credencial da conta do vínculo; o `callOmieApi` default é sempre colacor_sc. A função admite só quando o CPF/CNPJ da Omie é o do cadastro (VC001 se não for) e nenhum OUTRO cadastro tem esse documento (VC002, contra o customer que copia o documento de V no próprio perfil). Sem documento de um dos lados, VC003. Ela grava o documento conferido como evidência, não escolhe vendedor e não renova o TTL. Uma corrida idêntica volta `ja_vinculado`; colisão com outro cadastro re-lança 23505.
+- Edge: `criar_perfil_local` (fluxo OBEN), para o não-master, confere o código ANTES de casar perfil ou criar placeholder, e usa o documento e os dados da Omie, não os do body. A ação nova `vincular_aprovado`, só para staff, serve a tela de aprovações: lê o documento do cadastro, acha o código ÚNICO dele na Colacor SC (dois códigos para o mesmo documento é ambíguo e é recusado), confere e admite. Falha da Omie volta 503 `pendente` sem gravar nada; recusa volta 422 ou 409 com motivo legível, sem o documento de terceiros.
+- `AdminApprovals.tsx` não chama mais a RPC nem manda código: invoca `vincular_aprovado` e mostra pendente ou recusado.
+
+Achado colateral: o auto-vínculo da aprovação estava **morto**. `buscar_por_documento` devolve `{existe, razao_social}`, e a tela lia `found`/`codigo_cliente`, então nunca ligava. Na PROD não havia nenhuma linha `rpc` em oben ou colacor_sc. O furo era a RPC exposta, e não o fluxo da tela. Com esta entrega, o auto-vínculo volta a funcionar, conferido.
+
+Prova: `db/test-seg-b339-vinculo-conferido.sh` (PG17, sobre a migration do #3912). O controle A0 mostra o furo de antes, e há 18 asserções. As 9 sabotagens ficaram vermelhas em C e em pt_BR, com o controle verde na mesma invocação. Sabotar só o `IF NOT FOUND` ficou VERDE, porque o `IS DISTINCT FROM`, com o código atual NULL, também barra o vínculo novo: é uma 2ª camada, redundante, e a sabotagem abre as duas. Testes Deno: `conferencia-vinculo_test.ts` (7). Gates de texto em `edge-money-path-invariants`, falsificados trocando a admissão do employee pela RPC.
+
+Fora do escopo, como follow-up: a unicidade NORMALIZADA de `profiles.document` no banco (hoje há 0 duplicados em 16.091); o vendedor NULL até o `omie-analytics-sync` preencher, que é comportamento de antes; a aprovação de acesso separada da admissão. Também `is_approved`: a RLS de `profiles` só deixa o master dar UPDATE, então a aprovação feita por um employee não grava.
+
 ## Lições
 
 - **O guard de colisão de migration leu o HEAD de OUTRO checkout.** O `wt:preflight` barrou a migration da cobrança como "EM VOO em 27 worktrees". A causa: o checkout principal estava num HEAD destacado e antigo, sem a `20261031210000_cobranca_fila.sql`, e o guard tomou esse HEAD por histórico. A conferência por worktree (`git status` e grep de migration não commitada) e por PR deu zero concorrência. Foi falso positivo, e não houve dano.
@@ -66,4 +81,4 @@ Pendente: será registrado no PR de sonda.
 
 - Marcar como **aceitos por desenho** no scanner: `7330d2bc`. Também `78952df6` e `f14d9731`, que vêm do lote 2 e são críticos, e por isso só se marcam pela tela de Segurança.
 - Marcar como corrigidos, depois do próximo rescan: `03689f08`, `ec253a34`, `43bd6b91` e `b339bb5b`.
-- Próximo passo do `b339bb5b`, sem dono ainda: a admissão pendente, com o código conferido no Omie pelo servidor antes de o vínculo do employee valer.
+- O residual do `b339bb5b` (admissão com o código conferido na Omie) foi fechado na seção acima.
