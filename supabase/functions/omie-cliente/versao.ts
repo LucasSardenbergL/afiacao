@@ -51,8 +51,14 @@ export const respostaSonda = criarRespostaSonda("omie-cliente");
  *
  * `v1.9-busca-staff-sem-cpf` (2026-11-11): `pesquisar_clientes` e `consultar_cliente` devolvem a razão e o
  * fantasia com o CPF de MEI mascarado (busca do staff, M1 da revisão do Fable).
+ *
+ * `v1.12-vinculo-conferido` (2026-11-16, residual do b339bb5b): o vínculo NOVO do employee só vale com o
+ * código conferido NA OMIE pelo servidor (ConsultarCliente com a credencial da conta) e admitido pela
+ * `admitir_vinculo_conferido` (migration 20261116180000). `criar_perfil_local` usa o documento e os dados
+ * da Omie, não os do body; ação nova `vincular_aprovado` (tela de aprovações). Sem resposta da Omie, nada
+ * é gravado.
  */
-export const VERSAO = "v1.11-vendedor-so-master";
+export const VERSAO = "v1.12-vinculo-conferido";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

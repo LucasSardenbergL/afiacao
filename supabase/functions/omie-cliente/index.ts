@@ -7,6 +7,13 @@ import { deveReporTelefone, telefoneCompleto, telefoneOmie } from "./telefone.ts
 import { deveInterromperPagina, podeIniciarPagina } from "./orcamento.ts";
 import { linhaPerfilPlaceholder } from "./perfil-placeholder.ts";
 import {
+  type ClienteOmieConsultado,
+  codigoUnicoDoDocumento,
+  conferirCodigoNaOmie,
+  statusDaConferencia,
+  traduzirErroAdmissao,
+} from "./conferencia-vinculo.ts";
+import {
   type AvancoRodada,
   type CursorRodada,
   interpretarAcquire,
@@ -258,6 +265,24 @@ function getOmieAccounts(): OmieAccountConfig[] {
     }
   }
   return accounts;
+}
+
+// Chamada Omie com a credencial de UMA conta nomeada pelo slug (b339bb5b residual): a conferência do
+// código precisa da credencial da conta do vínculo — o `callOmieApi` default é sempre colacor_sc, e o
+// mesmo número de código é OUTRO cliente em outra conta. Sem a credencial, LANÇA (falha, nunca "ok").
+async function callOmieNaConta(
+  account: OmieAccountSlug,
+  endpoint: string,
+  call: string,
+  params: Record<string, unknown>,
+): Promise<OmieListResponse> {
+  const conta = CONTAS_ESPERADAS.find((c) => c.account === account);
+  const appKey = conta ? Deno.env.get(conta.envKey) : undefined;
+  const appSecret = conta ? Deno.env.get(conta.envSecret) : undefined;
+  if (!conta || !appKey || !appSecret) {
+    throw new Error(`Credenciais do Omie da conta ${account} não configuradas`);
+  }
+  return callOmieApiWithCredentials(endpoint, call, params, appKey, appSecret);
 }
 
 // Contas do grupo cuja credencial não está configurada nesta edge. Falha PERMANENTE de
@@ -732,14 +757,10 @@ Deno.serve(async (req) => {
     // Só o master escolhe o vendedor responsável (achado b339bb5b; decisão do founder). Fica true
     // apenas quando o gate abaixo LÊ o papel master do chamador; qualquer outro caminho é false.
     let chamadorEhMaster = false;
-    // Cliente com o JWT de QUEM CHAMOU, para a RPC de carteira: chamada como service_role, a RPC não
-    // distingue o employee (Codex, 3ª rodada), e o employee permutaria códigos ou renovaria o TTL.
-    let clienteDoChamador: ReturnType<typeof createClient> | null = null;
-    // Fail-closed: sem o JWT do chamador, a RPC de carteira NÃO cai para o service_role.
-    const exigirClienteDoChamador = () => {
-      if (!clienteDoChamador) throw new Error("sem o JWT do chamador para a RPC de carteira");
-      return clienteDoChamador;
-    };
+    // v1.12 (b339bb5b residual): o employee não grava mais vínculo pela RPC de carteira com o próprio
+    // JWT (a v1.11 fazia isso). O vínculo novo dele passa pela conferência do código na Omie e pela
+    // `admitir_vinculo_conferido` (service_role, que só o servidor executa) — ver criar_perfil_local e
+    // vincular_aprovado.
 
     // buscar_por_documento is allowed without auth (used during signup)
     // All other actions require authentication
@@ -761,7 +782,6 @@ Deno.serve(async (req) => {
       if (authError || !user) {
         return jsonRes({ error: "Token inválido" }, 401);
       }
-      clienteDoChamador = supabaseAuth;
 
       // Staff-only gate for sensitive/privileged actions. Only buscar_por_documento
       // remains JWT-only (used by the public client lookup flow with rate limit).
@@ -773,6 +793,7 @@ Deno.serve(async (req) => {
         "sync_addresses",
         "buscar_logos_empresas",
         "validar_vendedor",
+        "vincular_aprovado",
       ]);
       if (STAFF_ONLY_ACTIONS.has(action)) {
         const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -844,6 +865,86 @@ Deno.serve(async (req) => {
           })),
           total: searchResult.total,
         };
+        break;
+      }
+
+      case "vincular_aprovado": {
+        // Tela de aprovações (AdminApprovals): vincula o cadastro aprovado ao cliente Omie da Colacor SC
+        // pelo CPF/CNPJ DO CADASTRO. Antes o browser recebia o código e chamava a RPC de carteira com ele,
+        // ou seja, o código vinha do browser (b339bb5b residual). Agora o servidor lê o documento, acha o
+        // código ÚNICO dele na Omie, confere com ConsultarCliente e admite pela admitir_vinculo_conferido.
+        // Sem resposta da Omie: status 'pendente', nada gravado. Ausente ≠ ok.
+        const userId = body.user_id;
+        if (typeof userId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+          return jsonRes({ error: "user_id inválido" }, 400);
+        }
+        const adminVinculo = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+        const { data: perfil, error: perfilErro } = await adminVinculo
+          .from("profiles").select("document").eq("user_id", userId).maybeSingle();
+        if (perfilErro) return jsonRes({ status: "erro", error: `Falha ao ler o cadastro: ${perfilErro.message}` }, 500);
+        if (!perfil) return jsonRes({ status: "erro", error: "Cadastro não encontrado" }, 404);
+        const docCadastro = perfil.document ? normalizarDocumento(perfil.document) : "";
+        if (docCadastro.length < 11) {
+          result = { status: "sem_documento" };
+          break;
+        }
+
+        const { data: vinculoAtual, error: vinculoErro } = await adminVinculo
+          .from("omie_customer_account_map").select("omie_codigo_cliente")
+          .eq("user_id", userId).eq("account", "colacor_sc").maybeSingle();
+        // Erro de leitura NÃO é "sem vínculo": seguiria tentando admitir por cima de um vínculo existente.
+        if (vinculoErro) return jsonRes({ status: "erro", error: `Falha ao ler o vínculo: ${vinculoErro.message}` }, 500);
+        if (vinculoAtual) {
+          result = { status: "ja_vinculado", codigo_cliente: vinculoAtual.omie_codigo_cliente };
+          break;
+        }
+
+        const listagem = await codigoUnicoDoDocumento((pagina) =>
+          callOmieNaConta("colacor_sc", "geral/clientes/", "ListarClientes", {
+            pagina,
+            registros_por_pagina: 50,
+            clientesFiltro: { cnpj_cpf: docCadastro },
+          })
+        );
+        if (listagem.tipo === "falha") return jsonRes({ status: "pendente", error: listagem.motivo }, 503);
+        if (listagem.tipo === "nenhum") {
+          result = { status: "nao_encontrado" };
+          break;
+        }
+        if (listagem.tipo === "ambiguo") {
+          return jsonRes({
+            status: "recusado",
+            error: "Este CPF/CNPJ tem mais de um código na Omie da Colacor SC: o vínculo fica para o master resolver.",
+          }, 422);
+        }
+
+        const conferencia = await conferirCodigoNaOmie(
+          (codigo) =>
+            callOmieNaConta("colacor_sc", "geral/clientes/", "ConsultarCliente", {
+              codigo_cliente_omie: codigo,
+            }) as unknown as Promise<ClienteOmieConsultado>,
+          listagem.codigo,
+        );
+        if (conferencia.tipo !== "conferido") {
+          return jsonRes({
+            status: conferencia.tipo === "falha" ? "pendente" : "recusado",
+            error: conferencia.motivo,
+          }, statusDaConferencia(conferencia));
+        }
+
+        const { data: admissao, error: admissaoErro } = await adminVinculo.rpc("admitir_vinculo_conferido", {
+          p_user_id: userId,
+          p_account: "colacor_sc",
+          p_omie_codigo_cliente: listagem.codigo,
+          p_documento_omie: conferencia.documento,
+        });
+        if (admissaoErro) {
+          const t = traduzirErroAdmissao(admissaoErro);
+          console.error(`[vincular_aprovado] admissão recusada (${admissaoErro.code}) para o user ${userId}`);
+          return jsonRes({ status: t.status >= 500 ? "erro" : "recusado", error: t.motivo }, t.status);
+        }
+        result = { status: admissao === "ja_vinculado" ? "ja_vinculado" : "vinculado", codigo_cliente: listagem.codigo };
         break;
       }
 
@@ -919,9 +1020,68 @@ Deno.serve(async (req) => {
           break;
         }
 
+        // b339bb5b (residual): o vínculo NOVO do employee só vale com o código conferido NA OMIE pelo
+        // servidor. O documento e os dados do body não decidem nada: a Omie (credencial da conta oben)
+        // diz de quem é o código, e é o documento DELA que casa o perfil, monta o placeholder e vai para a
+        // `admitir_vinculo_conferido`, que ainda o compara com o cadastro. Sem resposta, nada é criado
+        // (ausente ≠ ok). O master segue como antes: é ele quem troca a dona.
+        let clienteBase: OmieCliente & { telefone?: string } = cliente;
+        let documentoBase: string | undefined = cliente.cnpj_cpf;
+        if (!chamadorEhMaster) {
+          const conferencia = await conferirCodigoNaOmie(
+            (codigo) =>
+              callOmieNaConta("oben", "geral/clientes/", "ConsultarCliente", {
+                codigo_cliente_omie: codigo,
+              }) as unknown as Promise<ClienteOmieConsultado>,
+            cliente.codigo_cliente,
+          );
+          if (conferencia.tipo !== "conferido") {
+            console.error(`[criar_perfil_local] conferência do código ${cliente.codigo_cliente}: ${conferencia.tipo}`);
+            return jsonRes({ error: conferencia.motivo, conferencia: conferencia.tipo }, statusDaConferencia(conferencia));
+          }
+          const doOmie = conferencia.cliente as unknown as OmieCliente;
+          clienteBase = {
+            ...doOmie,
+            codigo_cliente: cliente.codigo_cliente,
+            telefone: telefoneOmie(doOmie.telefone1_ddd, doOmie.telefone1_numero) ?? undefined,
+          };
+          documentoBase = conferencia.documento;
+        }
+
+        // O writer do vínculo deste case. Master: a RPC, como sempre (o vendedor do body só vale para ele).
+        // Employee: a admissão conferida — não escolhe vendedor (o omie-analytics-sync grava o da Omie).
+        const vincular = (userId: string) =>
+          chamadorEhMaster
+            ? adminClient.rpc("register_carteira_member", {
+              p_user_id: userId,
+              p_account: "oben",
+              p_omie_codigo_cliente: cliente.codigo_cliente,
+              p_omie_codigo_vendedor: cliente.codigo_vendedor || null,
+            })
+            : adminClient.rpc("admitir_vinculo_conferido", {
+              p_user_id: userId,
+              p_account: "oben",
+              p_omie_codigo_cliente: cliente.codigo_cliente,
+              p_documento_omie: documentoBase,
+            });
+        // [HOTFIX Codex-B] FAIL-LOUD: erro de vínculo nunca devolve user_id como sucesso — a UI anexaria
+        // a ferramenta ao cliente ERRADO (useUnifiedOrder.handleStaffAddTool usa o user_id de volta).
+        const respostaFalhaVinculo = (mappingError: { code?: string; message?: string }, extra: Record<string, unknown> = {}) => {
+          if (!chamadorEhMaster) {
+            const t = traduzirErroAdmissao(mappingError);
+            return jsonRes({ error: t.motivo, ...extra }, t.status);
+          }
+          return jsonRes({
+            error: mappingError.code === "23505"
+              ? `O código Omie ${cliente.codigo_cliente} já está vinculado a outro usuário na conta oben — vínculo bloqueado por segurança.`
+              : `Falha ao registrar o vínculo do cliente: ${mappingError.message}`,
+            ...extra,
+          }, 409);
+        };
+
         // Check if a profile with the same document (CPF/CNPJ) already exists
-        if (cliente.cnpj_cpf) {
-          const docLimpo = normalizarDocumento(cliente.cnpj_cpf);
+        if (documentoBase) {
+          const docLimpo = normalizarDocumento(documentoBase);
           if (docLimpo.length >= 11) {
             // Caminho rápido: o documento é gravado já normalizado por este edge e pelo
             // sync_all_clients, então o match direto resolve o caso comum sem varrer a tabela.
@@ -960,26 +1120,11 @@ Deno.serve(async (req) => {
               // A conta aqui é 'oben' e não é chute: o único chamador deste case é o fluxo de vendas OBEN
               // (`useUnifiedOrder.handleStaffAddTool`), e a resolução logo acima usa `.eq("account","oben")`.
               console.log(`[criar_perfil_local] Found existing profile by document (fora do log — LGPD), linking to user ${matchedUserId}`);
-              const { error: mappingError } = await (chamadorEhMaster ? adminClient : exigirClienteDoChamador()).rpc("register_carteira_member", {
-                p_user_id: matchedUserId,
-                p_account: "oben",
-                p_omie_codigo_cliente: cliente.codigo_cliente,
-                // b339bb5b: o vendedor do BODY só vale se quem chama é o master. Do employee ele é
-                // ignorado (null): o COALESCE da RPC preserva o atual, e o omie-analytics-sync grava o do Omie.
-                p_omie_codigo_vendedor: chamadorEhMaster ? (cliente.codigo_vendedor || null) : null,
-              });
-              // [HOTFIX Codex-B] FAIL-LOUD. Antes isto só logava e devolvia user_id como SUCESSO — o
-              // tratamento herdado de quando o destino era o espelho poluído, onde um erro era inócuo.
-              // Com a UNIQUE(codigo,account) fail-closed da proof, `23505` significa "este código Omie
-              // pertence a OUTRO user nesta conta". Devolver sucesso faz a UI seguir e anexar a
-              // ferramenta ao cliente ERRADO (useUnifiedOrder.handleStaffAddTool usa o user_id de volta).
+              const { error: mappingError } = await vincular(matchedUserId);
+              // `23505` = "este código Omie pertence a OUTRO user nesta conta" (UNIQUE fail-closed da proof).
               if (mappingError) {
                 console.error("[criar_perfil_local] Mapping error:", mappingError);
-                return jsonRes({
-                  error: mappingError.code === "23505"
-                    ? `O código Omie ${cliente.codigo_cliente} já está vinculado a outro usuário na conta oben — vínculo bloqueado por segurança.`
-                    : `Falha ao registrar o vínculo do cliente: ${mappingError.message}`,
-                }, 409);
+                return respostaFalhaVinculo(mappingError);
               }
               result = { user_id: matchedUserId };
               break;
@@ -1011,11 +1156,11 @@ Deno.serve(async (req) => {
           .from("profiles")
           .insert(linhaPerfilPlaceholder({
             userId: newUserId,
-            nomeFantasia: cliente.nome_fantasia,
-            razaoSocial: cliente.razao_social,
-            email: cliente.email,
-            phone: telefoneCompleto(cliente.telefone),
-            document: cliente.cnpj_cpf ? normalizarDocumento(cliente.cnpj_cpf) : null,
+            nomeFantasia: clienteBase.nome_fantasia,
+            razaoSocial: clienteBase.razao_social,
+            email: clienteBase.email,
+            phone: telefoneCompleto(clienteBase.telefone),
+            document: documentoBase ? normalizarDocumento(documentoBase) : null,
           }));
 
         if (profileError) {
@@ -1025,13 +1170,7 @@ Deno.serve(async (req) => {
 
         // Admite o placeholder recém-criado na carteira (ledger + proof). Mesma conta 'oben' do ramo
         // acima — é o mesmo case, mesmo chamador (fluxo de vendas OBEN).
-        const { error: mappingError } = await (chamadorEhMaster ? adminClient : exigirClienteDoChamador()).rpc("register_carteira_member", {
-          p_user_id: newUserId,
-          p_account: "oben",
-          p_omie_codigo_cliente: cliente.codigo_cliente,
-          // b339bb5b: só o master escolhe o vendedor pelo body (mesmo motivo do ramo acima).
-          p_omie_codigo_vendedor: chamadorEhMaster ? (cliente.codigo_vendedor || null) : null,
-        });
+        const { error: mappingError } = await vincular(newUserId);
 
         // [HOTFIX Codex-B] FAIL-LOUD, mesmo motivo do ramo acima — e aqui é PIOR: o auth user e o
         // profile já foram criados em transações anteriores, então devolver sucesso entregaria à UI um
@@ -1040,16 +1179,11 @@ Deno.serve(async (req) => {
         // reconciliação (o erro nomeia o código, que é a chave para achá-lo).
         if (mappingError) {
           console.error("[criar_perfil_local] Mapping error (placeholder já criado:", newUserId, "):", mappingError);
-          return jsonRes({
-            error: mappingError.code === "23505"
-              ? `O código Omie ${cliente.codigo_cliente} já está vinculado a outro usuário na conta oben — vínculo bloqueado por segurança.`
-              : `Falha ao registrar o vínculo do cliente: ${mappingError.message}`,
-            placeholder_user_id: newUserId,
-          }, 409);
+          return respostaFalhaVinculo(mappingError, { placeholder_user_id: newUserId });
         }
 
         // Upsert address from Omie data
-        await upsertAddressFromOmie(adminClient, newUserId, cliente);
+        await upsertAddressFromOmie(adminClient, newUserId, clienteBase);
 
         result = { user_id: newUserId };
         break;

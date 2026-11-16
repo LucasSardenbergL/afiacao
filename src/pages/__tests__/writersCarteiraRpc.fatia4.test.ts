@@ -49,7 +49,10 @@ describe('Fatia 4: writers de vínculo do frontend saíram do espelho omie_clien
     ).not.toMatch(/\.rpc\(\s*['"]register_carteira_member/);
   });
 
-  it('AdminApprovals grava o vínculo pela RPC, na conta colacor_sc', () => {
+  // b339bb5b (residual, migration 20261116180000): a aprovação não grava mais o vínculo do browser. A RPC
+  // recusa vínculo novo do employee (42501); quem admite é a edge, com o código conferido na Omie. O gate
+  // `already_linked` e o writer vivem juntos na edge (par indivisível) — ver edge-money-path-invariants.
+  it('AdminApprovals delega o vínculo à edge (vincular_aprovado) e não manda código', () => {
     const src = read(APPROVALS);
     expect(
       src,
@@ -57,27 +60,16 @@ describe('Fatia 4: writers de vínculo do frontend saíram do espelho omie_clien
     ).not.toMatch(/from\('omie_clientes'\)/);
     expect(
       src,
+      'FALHA ABERTA: a aprovação voltou a chamar a RPC de carteira do browser — o código volta a vir do ' +
+        'browser e um código de OUTRO cliente derruba a dona dele para Hunter',
+    ).not.toMatch(/\.rpc\(\s*['"]register_carteira_member/);
+    expect(
+      src,
       'REGRESSÃO: sumiu o writer de vínculo da aprovação (cliente aprovado ficaria sem carteira)',
-    ).toMatch(/\.rpc\('register_carteira_member'/);
-    // `buscar_por_documento` consulta a conta colacor_sc (credencial default do omie-cliente). Gravar em
-    // outra conta anexaria o cliente ao vendedor errado — comissão para quem não vendeu.
+    ).toMatch(/action: 'vincular_aprovado', user_id: profileUserId \}/);
     expect(
       src,
-      'REGRESSÃO: a aprovação não grava mais na conta colacor_sc (a que buscar_por_documento consulta)',
-    ).toMatch(/register_carteira_member'[\s\S]{0,220}p_account:\s*'colacor_sc'/);
-  });
-
-  it('o gate `already_linked` consulta a MESMA fonte que o writer grava (par indivisível)', () => {
-    const src = read(APPROVALS);
-    expect(
-      src,
-      'REGRESSÃO: o gate already_linked voltou a checar o espelho enquanto o writer grava na proof — ' +
-        'a checagem passa a mentir e a aprovação re-registra por cima',
-    ).toMatch(/from\('omie_customer_account_map'\)[\s\S]{0,220}\.eq\('account', 'colacor_sc'\)/);
-    // Fail-closed: erro na checagem não pode virar "não vinculado" silencioso.
-    expect(
-      src,
-      'REGRESSÃO: o gate voltou a engolir o erro da checagem (erro → segue como se não houvesse vínculo)',
-    ).toMatch(/existingError/);
+      'FALHA ABERTA: a aprovação voltou a escrever direto no mapa de vínculos',
+    ).not.toMatch(/from\('omie_customer_account_map'\)\s*\.(insert|upsert|update)/);
   });
 });

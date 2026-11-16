@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { Loader2, Check, X, UserCheck, Clock, Link2, AlertTriangle } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { documentoParaBuscarNoOmie } from '@/lib/omie/documento-cliente';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 interface PendingUser {
   id: string;
@@ -79,75 +80,49 @@ const AdminApprovals = () => {
     }
   };
 
-  const tryLinkOmie = async (profileUserId: string, document: string | null, _name: string): Promise<'linked' | 'no_data' | 'already_linked' | 'not_found' | 'error'> => {
-    if (!document) return 'no_data';
+  type ResultadoVinculo =
+    | { tipo: 'linked' | 'no_data' | 'already_linked' | 'not_found' }
+    | { tipo: 'pendente' | 'recusado' | 'error'; motivo: string };
 
-    const normalizedDoc = documentoParaBuscarNoOmie(document);
-    if (!normalizedDoc) return 'no_data';
+  // b339bb5b (residual): o vínculo do cadastro aprovado é decidido NO SERVIDOR. A edge lê o CPF/CNPJ do
+  // cadastro, acha o código único dele na Omie da Colacor SC, confere com ConsultarCliente e só então
+  // admite (admitir_vinculo_conferido). O browser não manda código nenhum: antes ele recebia o código e
+  // chamava a RPC de carteira com ele, e um código de OUTRO cliente fazia a dona dele cair para Hunter.
+  // O gate `already_linked` e o writer vivem juntos na edge (par indivisível, Fatia 4).
+  const tryLinkOmie = async (profileUserId: string, document: string | null): Promise<ResultadoVinculo> => {
+    if (!document || !documentoParaBuscarNoOmie(document)) return { tipo: 'no_data' };
 
     try {
-      // [P0-B-bis Fatia 4] O gate e o writer abaixo são um PAR INDIVISÍVEL: o que a checagem consulta
-      // tem de ser onde o vínculo é gravado, senão `already_linked` mente e a aprovação re-registra.
-      // Ambos saíram do espelho `omie_clientes` para a proof account-correta. `buscar_por_documento`
-      // consulta a conta colacor_sc (credencial default de `omie-cliente`), que no espelho aparecia sob
-      // o rótulo fabricado 'colacor' — na proof a conta é nomeada pelo que ela É: 'colacor_sc'.
-      const { data: existing, error: existingError } = await supabase
-        .from('omie_customer_account_map')
-        .select('id')
-        .eq('user_id', profileUserId)
-        .eq('account', 'colacor_sc')
-        .limit(1);
-
-      // Fail-closed: engolir o erro faria a checagem devolver "não vinculado" e o writer tentaria
-      // registrar por cima de um vínculo existente.
-      if (existingError) {
-        console.error('Error checking existing omie link:', existingError);
-        return 'error';
-      }
-
-      if (existing && existing.length > 0) return 'already_linked';
-
-      // Search Omie by document
       const { data, error } = await supabase.functions.invoke('omie-cliente', {
-        body: { action: 'buscar_por_documento', documento: normalizedDoc },
+        body: { action: 'vincular_aprovado', user_id: profileUserId },
       });
-
-      if (error) {
-        console.error('Error searching Omie by document:', error);
-        return 'error';
-      }
-
-      if (data?.found && data?.codigo_cliente) {
-        // Client exists in Omie — admite o membro na carteira pelas DUAS pontas (ledger + proof) via
-        // RPC. `omie_codigo_cliente_integracao` foi DESCARTADO (resíduo §9 do design): 41 das 6909
-        // linhas do espelho o tinham, todas de março, e nenhum leitor o consome.
-        // `p_omie_codigo_vendedor` tem DEFAULT NULL na função (prod): omitir ≡ mandar null.
-        const { error: rpcError } = await supabase.rpc('register_carteira_member', {
-          p_user_id: profileUserId,
-          p_account: 'colacor_sc',
-          p_omie_codigo_cliente: data.codigo_cliente,
-          p_omie_codigo_vendedor: data.codigo_vendedor ?? undefined,
-        });
-
-        if (rpcError) {
-          // 23505 = UNIQUE(omie_codigo_cliente, account): o código já é de OUTRO user nesta conta.
-          // Fail-closed deliberado da RPC — não roubamos o vínculo alheio (mandaria pedido ao cliente
-          // errado). Não é 'already_linked' (o gate acima já provou que ESTE user não tem vínculo).
-          if (rpcError.code === '23505') {
-            console.error('Código Omie já vinculado a outro usuário nesta conta:', rpcError);
-            return 'error';
-          }
-          console.error('Error registering carteira member:', rpcError);
-          return 'error';
+      // Em 409/422/503 o supabase-js devolve `data: null` e o corpo {status, error} fica AINDA POR LER na
+      // Response de `error.context` (Codex): sem isto, pendente e recusado caíam todos em "erro genérico".
+      let corpo: { status?: unknown; error?: unknown } | null = data ?? null;
+      const ctx = (error as { context?: unknown } | null)?.context;
+      if (!corpo && ctx && typeof (ctx as Response).clone === 'function') {
+        try {
+          corpo = await (ctx as Response).clone().json();
+        } catch {
+          corpo = null; // corpo não-JSON: segue como erro genérico
         }
-
-        return 'linked';
       }
+      const status = typeof corpo?.status === 'string' ? corpo.status : undefined;
+      const motivo: string = (typeof corpo?.error === 'string' ? corpo.error : null)
+        ?? mensagemDeErro(error) ?? 'Falha ao conferir o vínculo na Omie.';
 
-      return 'not_found';
+      if (status === 'vinculado') return { tipo: 'linked' };
+      if (status === 'ja_vinculado') return { tipo: 'already_linked' };
+      if (status === 'nao_encontrado') return { tipo: 'not_found' };
+      if (status === 'sem_documento') return { tipo: 'no_data' };
+      // Ausente ≠ ok: sem resposta da Omie o vínculo fica pendente (não existe) e o motivo aparece.
+      if (status === 'pendente') return { tipo: 'pendente', motivo };
+      if (status === 'recusado') return { tipo: 'recusado', motivo };
+      console.error('Error linking Omie:', error ?? data);
+      return { tipo: 'error', motivo };
     } catch (err) {
       console.error('Error in tryLinkOmie:', err);
-      return 'error';
+      return { tipo: 'error', motivo: 'Falha ao conferir o vínculo na Omie.' };
     }
   };
 
@@ -163,12 +138,12 @@ const AdminApprovals = () => {
       if (error) throw error;
 
       // Step 2: Try Omie link (non-blocking)
-      const omieResult = await tryLinkOmie(pendingUser.user_id, pendingUser.document, pendingUser.name);
+      const omieResult = await tryLinkOmie(pendingUser.user_id, pendingUser.document);
 
       setPendingUsers(prev => prev.filter(u => u.user_id !== pendingUser.user_id));
 
       // Step 3: Show feedback
-      switch (omieResult) {
+      switch (omieResult.tipo) {
         case 'linked':
           toast.success('Aprovado e vinculado ao Omie ✓', {
             description: `${pendingUser.name} foi aprovado e vinculado automaticamente.`,
@@ -189,9 +164,19 @@ const AdminApprovals = () => {
             description: 'Sem CPF/CNPJ para busca automática no Omie.',
           });
           break;
+        case 'pendente':
+          toast.warning('Aprovado — vínculo Omie pendente', {
+            description: `${omieResult.motivo} O vínculo não foi criado; o sync liga quando a Omie responder.`,
+          });
+          break;
+        case 'recusado':
+          toast.error('Aprovado — vínculo Omie recusado', {
+            description: omieResult.motivo,
+          });
+          break;
         case 'error':
           toast.error('Aprovado — erro no vínculo Omie', {
-            description: 'O usuário foi aprovado, mas a vinculação Omie falhou. Tente vincular manualmente.',
+            description: `O usuário foi aprovado, mas a vinculação Omie falhou: ${omieResult.motivo}`,
           });
           break;
       }
