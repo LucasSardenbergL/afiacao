@@ -37,6 +37,7 @@ Continuação do [lote 2](scanner-lovable-rescan-lote2.md). O lote tem duas part
 
 - **Migrations pelo envelope `db:aplicar`**, com o aval do founder, antes das edges. Os ensaios fizeram ROLLBACK com POST-OK. Em seguida foram aplicadas a `20261115213000` (tentativa #1132) e a `20261115213100` (#1133). Na validação por fora via psql-ro, a cota ficou 30/100, `cobranca_dona` ficou com authenticated=f, anon=f e service_role=t, e as 3 policies usam `cobranca_sou_dona`.
 - O pacote `1111f9aae9eb` saiu contra `d2ce79319`, com 38/38 hashes. Antes do envio, o `list_messages` não mostrou outro pedido dessas edges. O bot respondeu "No files were edited."
+- O sensor de edição saiu com **exit 1** (`EDICAO_DETECTADA`), já assentado (5,0 min), porque a resposta do MCP trazia `edit_id`/`commit_sha`. Esse sha (`d8728bdfd`, "Work in progress") é o ÚNICO commit do bot desde o envio, e o próprio sensor o lista como tolerado: só `src/integrations/supabase/types.ts`, +25 linhas, regenerado do schema (`cobranca_sou_dona` e as colunas `cp_vencido_fora_*` do #3903). Não tocou em edge nem em código, e nada foi revertido. O sensor não distingue o sinal da resposta que aponta para um commit tolerado, então o veredito exige ler o `git show --stat` do sha. Sem dano, sem conserto aqui.
 - Sonda pelo envelope `db/sonda-seg-lote3-20261116.sql`, na tentativa #1135: 4 DEPLOY CONFIRMADO, com versão e fonte batendo. O `pendencias:deploy` saiu com exit 0.
 - Sem Publish: nada em `src/`.
 
