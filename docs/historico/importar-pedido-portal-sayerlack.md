@@ -1042,3 +1042,29 @@ Os dois P1 do parecer Codex que a v1.15 deixou para decisão do founder (exigiam
   contra `33d1b985b`, "No files were edited.", 1,4 crédito. Sonda pós-deploy
   (`db/2026-11-16-sonda-disparo-sayerlack-importar-v116.sql`, tentativa #1155): request 23666, `v1.16-cancelado-antes-do-pedido`,
   **DEPLOY CONFIRMADO**. `pendencias:deploy` exit 0.
+
+## Vigia 5.4 — carência do envio no `sayerlack_cancelado_com_po` (2026-11-17)
+
+- **Incidente** (`fornecedor_alerta` 624, 638 e 642; psql-ro): o e-mail "pedido com compra em aberto sem nenhuma leitura
+  da situacao no portal" era **alarme falso por construção**. O ramo `stale` contava como "sem leitura" todo pedido da
+  cobertura com `observado_ate IS NULL`; o pedido entra na cobertura no instante do disparo (protocolo + PO), o
+  watchdog roda `*/30` e a varredura só 12:30/17:30/22:30 SP. Desde o nascimento do source (08/11): 5 janelas de
+  disparo pelo app → 5 episódios `critical` (o 1º dentro do episódio de estreia; depois 09/11 14:30, 09/11 20:00,
+  16/11 08:00, 17/11 06:30), todos fechados no 1º tique depois da varredura seguinte. Pedidos importados pela própria
+  varredura (11/11, 13/11): zero. No 642 eram o #4448 (06:24) e o #4447 (06:30), com o tique às 06:30:01.
+- **Conserto** (`20261117080000_data_health_sayerlack_carencia_do_envio.sql`; só o corpo do compute, sem DDL): o
+  pedido **nunca lido** só é cobrado quando foi enviado ANTES do dia útil exigido — o envio é a 1ª observação e passa
+  pela MESMA régua das leituras (enviado no dia D vale até as 14:00 do dia útil seguinte). Sem data de envio não há
+  carência (cobra). Não muda: leitura atrasada, pedido antigo nunca lido, o ramo `broken`, a função de cobertura (a
+  varredura segue lendo o pedido novo o quanto antes), a message do `stale` e o `v_sources`. A message do `ok` passa a
+  dizer quantos aguardam a 1ª leitura.
+- **Trade-off aceito:** buraco real de leitura num pedido novo é acusado no dia útil seguinte às 14:00, não em 30 min.
+  A alternativa (cobrar depois da 1ª rodada efetiva posterior à entrada, lendo `acoes_execucoes`) detectaria antes, mas
+  acopla o check ao ledger e exige o instante de entrada na cobertura, que a função não devolve.
+- **Prova:** `db/test-data-health-sayerlack-carencia-do-envio.sh` — 25/25 em C e pt_BR, `--falsificar` 10/10 nos dois.
+  N0 reproduz o alerta 642 sobre o corpo de PROD (md5 `1262b632…`) antes de aplicar; depois: terça 06:30 ok, quarta
+  15:00 stale (a carência vence), sexta à noite só cobra segunda 14:00, dia de SP na virada, antigo nunca lido segue
+  stale, sem data cobra, vizinho atrasado não é escondido, `broken` continua vencendo.
+- **Lição (→ `docs/agent/sync.md`, Sentinela):** check de cobertura nasce com a carência do objeto novo.
+- **Achado à parte, fora desta entrega:** em 4 das 6 últimas noites úteis a rodada das 22:30 gravou `prova_leitura='ok'`
+  com 0 linhas; em 09/11 a mesma rodada trouxe 4 situações na janela menor da leitura estendida — lista vazia falsa.
