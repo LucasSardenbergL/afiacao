@@ -1,0 +1,22 @@
+# FORMA da rota /catalogs no index.ts da edge tint-sync-agent: só delega ao builder de lista fechada
+# (scanner Lovable Security, deep scan 2026-11-17, lote 6 — docs/historico/scanner-lovable-rescan-lote6.md).
+# @src: supabase/functions/tint-sync-agent/index.ts
+# @test: src/__tests__/tint-catalogo-colunas-fechadas.test.ts
+# @compile_cmd: true
+# Rode: bash scripts/mutcheck-all.sh   (o alvo é Deno e o teste lê o arquivo como TEXTO: `true` no compila)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# O builder é provado em Deno (tint-catalogo-staging.mut). Aqui, cada linha é um jeito de o index.ts
+# deixar de usá-lo, de a recusa deixar de aparecer para o conector, ou de surgir outro escritor para
+# as cinco tabelas. EXPECT preenchido por MEDIÇÃO.
+#
+PEGA | o item cru vai direto ao insert (cópia cega de volta)   | s/bulkInsert\(config\.tabela, montado\.linhas, 500,/bulkInsert(config.tabela, (body[entityType] || []), 500,/
+PEGA | laço de cópia por nome dinâmico de volta no ramo        | s/const config = STAGING_DO_CATALOGO\[entityType\];/const config = STAGING_DO_CATALOGO[entityType]; for (const [k, v] of Object.entries(body)) { void k; void v; }/
+PEGA | outro escritor para uma das cinco tabelas               | s/received \+= montado\.recebidos;/received += montado.recebidos; await sb.from("tint_staging_produtos").insert(body.produtos);/
+PEGA | recusa não conta como erro (conector confirma o lote)   | s/errors \+= montado\.recusados;/errors += 0;/
+PEGA | recusa some do errors[] da resposta                     | s/errorDetails\.push\(\{ entity_type: entityType, entity_id: null, message: motivo \}\);/;/
+PEGA | recebidos deixa de contar o recusado                    | s/received \+= montado\.recebidos;/received += montado.linhas.length;/
+PEGA | o item cru vai para o log da recusa                     | s/detalheDaRecusaDeCatalogo\(entityType, montado\)\)\.catch/body[entityType]).catch/
+PEGA | recusa sem registro em tint_sync_errors                 | s/await logError\(runId, entityType, null, motivo, /await Promise.resolve(/
+PEGA | simulação passa a espalhar o body no insert de corante  | s/^(\s+)descricao: c\.descricao, preco_litro: c\.preco_litro,$/$1descricao: c.descricao, preco_litro: c.preco_litro, ...body,/
+PEGA | simulação passa a escolher created_at                   | s/^(\s+)raw_data: c, staging_status: "pending",$/$1raw_data: c, staging_status: "pending", created_at: "2099-01-01",/

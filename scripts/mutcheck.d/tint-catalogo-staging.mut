@@ -1,0 +1,50 @@
+# Lista FECHADA de colunas na linha de staging da rota /catalogs da edge tint-sync-agent
+# (scanner Lovable Security, deep scan 2026-11-17, lote 6 — docs/historico/scanner-lovable-rescan-lote6.md).
+# @src: supabase/functions/tint-sync-agent/catalogo-staging.ts
+# @test: supabase/functions/tint-sync-agent/catalogo-staging_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# Cada linha é um jeito de o item voltar a escolher coluna de controle (created_at e id decidem o
+# "mais recente" da promoção e da purga), de a recusa deixar de ser barulhenta, ou de a linha do
+# conector real mudar. EXPECT preenchido por MEDIÇÃO.
+#
+# Fora deste contrato, por mexer em DUAS linhas: abrir as duas camadas juntas (filtro + cópia por
+# lista), que é o furo de volta. Medida à mão numa cópia, com controle verde na mesma invocação —
+# registro no doc do lote 6.
+#
+# ── as duas camadas ──
+PEGA      | filtro de campo fora some (aceita o item)            | s/const estranhos = Object\.keys\(item\)\.filter\(\(k\) => !permitidas\.includes\(k\)\);/const estranhos: string[] = [];/
+SOBREVIVE | 2a camada sozinha: copia toda chave do item ACEITO   | s/for \(const coluna of permitidas\) \{/for (const coluna of Object.keys(item)) {/
+PEGA      | limpa e aceita: item com campo fora vira linha       | if (\/^\s+continue;$\/ && ++$n == 2) { s\/continue;\/;\/ }
+# ── a lista ──
+PEGA      | created_at entra na lista de corantes                | s/colunas: \["id_corante_sayersystem", "descricao", "preco_litro", "custo", "volume_ml"\],/colunas: ["id_corante_sayersystem", "descricao", "preco_litro", "custo", "volume_ml", "created_at"],/
+PEGA      | id entra na lista de produtos                        | s/colunas: \["cod_produto", "descricao"\],/colunas: ["cod_produto", "descricao", "id"],/
+PEGA      | chave de bases trocada                               | s/chave: "id_base_sayersystem",/chave: "descricao",/
+PEGA      | tabela de corantes trocada                           | s/tabela: "tint_staging_corantes",/tabela: "tint_staging_produtos",/
+# ── a linha do conector real não muda ──
+PEGA      | coluna ausente vira chave undefined na linha         | s/if \(Object\.prototype\.hasOwnProperty\.call\(item, coluna\)\) linha\[coluna\] = item\[coluna\];/linha[coluna] = item[coluna];/
+PEGA      | chave ausente deixa de virar ''                      | s/linha\[cfg\.chave\] = item\[cfg\.chave\] \|\| "";/linha[cfg.chave] = item[cfg.chave];/
+PEGA      | raw_data deixa de ser o item                         | s/raw_data: item,/raw_data: null,/
+PEGA      | staging_status diferente                             | s/staging_status: "pending",/staging_status: "promoted",/
+PEGA      | account sai do lugar errado do contexto              | s/account: ctx\.account,/account: ctx.storeCode,/
+PEGA      | sync_run_id sai do lugar errado do contexto          | s/sync_run_id: ctx\.runId,/sync_run_id: ctx.account,/
+# ── item que não é objeto ──
+PEGA      | qualquer coisa passa por objeto (estoura no null)    | s/return typeof v === "object" && v !== null && !Array\.isArray\(v\);/return true;/
+PEGA      | array passa por objeto                               | s/ && !Array\.isArray\(v\);/;/
+PEGA      | null passa por objeto                                | s/ && v !== null && / && /
+# ── a recusa conta ──
+PEGA      | recusa de não-objeto não conta                       | if (\/saida\.recusados\+\+;\/ && ++$n == 1) { s\/saida\.recusados\+\+;\/;\/ }
+PEGA      | recusa por campo fora não conta                      | if (\/saida\.recusados\+\+;\/ && ++$n == 2) { s\/saida\.recusados\+\+;\/;\/ }
+PEGA      | lote que não é lista é aceito calado                 | s/saida\.recusados = 1;/saida.recusados = 0;/
+PEGA      | lote malformado sem a marca                          | s/saida\.loteMalformado = true;/saida.loteMalformado = false;/
+PEGA      | recebidos zera                                       | s/saida\.recebidos = itens\.length;/saida.recebidos = 0;/
+# ── o que vai para o log ──
+PEGA      | teto de nomes some                                   | s/\.slice\(0, TETO_CAMPOS_NO_LOG\)/.slice(0, 9999)/
+PEGA      | nome longo não é cortado                             | s/fora\.add\(k\.slice\(0, TETO_NOME_DE_CAMPO\)\)/fora.add(k)/
+PEGA      | nomes fora de ordem                                  | s/\[\.\.\.fora\]\.sort\(\)/[...fora]/
+PEGA      | mensagem sem os nomes dos campos                     | s/m\.camposFora\.join\(", "\)/m.camposFora.length/
+PEGA      | detalhe sem a lista de campos                        | s/campos_fora: m\.camposFora,/campos_fora: [],/
+PEGA      | motivo do detalhe invertido                          | s/m\.loteMalformado \? "lote_nao_e_lista" : "campo_fora_do_contrato"/m.loteMalformado ? "campo_fora_do_contrato" : "lote_nao_e_lista"/
