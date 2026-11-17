@@ -18,7 +18,7 @@
 # ── as duas camadas ──
 PEGA      | filtro de campo fora some (aceita o item)            | s/const estranhos = Object\.keys\(item\)\.filter\(\(k\) => !permitidas\.includes\(k\)\);/const estranhos: string[] = [];/
 SOBREVIVE | 2a camada sozinha: copia toda chave do item ACEITO   | s/for \(const coluna of permitidas\) \{/for (const coluna of Object.keys(item)) {/
-PEGA      | limpa e aceita: item com campo fora vira linha       | if (\/^\s+continue;$\/ && ++$n == 2) { s\/continue;\/;\/ }
+PEGA      | limpa e aceita: item com campo fora vira linha       | if (/^\s+continue;$/ && ++$n == 2) { s/continue;/;/ }
 # ── a lista ──
 PEGA      | created_at entra na lista de corantes                | s/colunas: \["id_corante_sayersystem", "descricao", "preco_litro", "custo", "volume_ml"\],/colunas: ["id_corante_sayersystem", "descricao", "preco_litro", "custo", "volume_ml", "created_at"],/
 PEGA      | id entra na lista de produtos                        | s/colunas: \["cod_produto", "descricao"\],/colunas: ["cod_produto", "descricao", "id"],/
@@ -36,8 +36,8 @@ PEGA      | qualquer coisa passa por objeto (estoura no null)    | s/return type
 PEGA      | array passa por objeto                               | s/ && !Array\.isArray\(v\);/;/
 PEGA      | null passa por objeto                                | s/ && v !== null && / && /
 # ── a recusa conta ──
-PEGA      | recusa de não-objeto não conta                       | if (\/saida\.recusados\+\+;\/ && ++$n == 1) { s\/saida\.recusados\+\+;\/;\/ }
-PEGA      | recusa por campo fora não conta                      | if (\/saida\.recusados\+\+;\/ && ++$n == 2) { s\/saida\.recusados\+\+;\/;\/ }
+PEGA      | recusa de não-objeto não conta                       | if (/saida\.recusados\+\+;/ && ++$n == 1) { s/saida\.recusados\+\+;/;/ }
+PEGA      | recusa por campo fora não conta                      | if (/saida\.recusados\+\+;/ && ++$n == 2) { s/saida\.recusados\+\+;/;/ }
 PEGA      | lote que não é lista é aceito calado                 | s/saida\.recusados = 1;/saida.recusados = 0;/
 PEGA      | lote malformado sem a marca                          | s/saida\.loteMalformado = true;/saida.loteMalformado = false;/
 PEGA      | recebidos zera                                       | s/saida\.recebidos = itens\.length;/saida.recebidos = 0;/
