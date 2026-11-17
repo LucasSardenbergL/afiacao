@@ -1,0 +1,38 @@
+# Lista FECHADA de colunas do staging da rota /catalogs da `tint-sync-agent`
+# (scanner Lovable Security, deep scan 2026-11-17, lote 6 — money-path).
+# @src: supabase/functions/tint-sync-agent/catalogo-rows.ts
+# @test: supabase/functions/tint-sync-agent/catalogo-rows_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# Cada linha é um jeito de o agente voltar a escolher uma coluna do SERVIDOR (o furo: `created_at`
+# decide qual linha de staging vence na promoção, no preço e na purga), ou de a edge passar a
+# fabricar/converter valor que o agente não mandou. EXPECT preenchido por MEDIÇÃO.
+#
+# ── coluna do servidor de volta à lista do agente ──
+PEGA | created_at entra pela lista de corantes          | s/colunas: \["id_corante_sayersystem", "descricao", "preco_litro", "custo", "volume_ml"\]/colunas: ["id_corante_sayersystem", "descricao", "preco_litro", "custo", "volume_ml", "created_at"]/
+PEGA | id entra pela lista de produtos                  | s/colunas: \["cod_produto", "descricao"\]/colunas: ["cod_produto", "descricao", "id"]/
+PEGA | matched_id entra pela lista de skus              | s/colunas: \["cod_produto", "id_base", "id_embalagem"\]/colunas: ["cod_produto", "id_base", "id_embalagem", "matched_id"]/
+PEGA | created_at sai da declaracao "do servidor"       | s/^  "created_at",$/  "criado_em",/
+# ── a copia generica de volta (o furo original) ──
+PEGA | copia TODA chave do item                         | s/for \(const coluna of config\.colunas\) \{/for (const coluna of Object.keys(item)) {/
+PEGA | propriedade herdada entra                        | s/if \(Object\.prototype\.hasOwnProperty\.call\(item, coluna\)\) row\[coluna\] = item\[coluna\];/if (coluna in item) row[coluna] = item[coluna];/
+# ── o que e do servidor passa a vir do item ──
+PEGA | sync_run_id do item vence                        | s/sync_run_id: runId,/sync_run_id: (item.sync_run_id as string) ?? runId,/
+PEGA | account do item vence                            | s/^    account,$/    account: (item.account as string) ?? account,/
+PEGA | store_code do item vence                         | s/store_code: storeCode,/store_code: (item.store_code as string) ?? storeCode,/
+PEGA | staging_status do item vence                     | s/staging_status: "pending",/staging_status: (item.staging_status as string) ?? "pending",/
+PEGA | raw_data deixa de ser o item inteiro             | s/raw_data: item,/raw_data: { ...item },/
+# ── a edge fabrica ou converte valor ──
+PEGA | ausente vira null explicito                      | s/if \(Object\.prototype\.hasOwnProperty\.call\(item, coluna\)\) row\[coluna\] = item\[coluna\];/row[coluna] = item[coluna] ?? null;/
+PEGA | texto vira numero                                | s/\) row\[coluna\] = item\[coluna\];/) row[coluna] = typeof item[coluna] === "string" ? Number(item[coluna]) : item[coluna];/
+PEGA | valor falsy (0, '') e descartado                 | s/if \(Object\.prototype\.hasOwnProperty\.call\(item, coluna\)\) row\[coluna\] = item\[coluna\];/if (item[coluna]) row[coluna] = item[coluna];/
+# ── a chave da entidade ──
+PEGA | chave ignora o item.id                           | s/\|\| item\.id \|\| "";/|| "";/
+PEGA | chave prefere o item.id                          | s/\(item\[config\.chave\] as string \| undefined\) \|\| item\.id/item.id || (item[config.chave] as string | undefined)/
+PEGA | chave ausente vira null                          | s/\|\| item\.id \|\| "";/|| item.id || null;/
+# ── tabela e chave por entidade ──
+PEGA | corantes gravados na tabela de produtos          | s/tabela: "tint_staging_corantes"/tabela: "tint_staging_produtos"/
+PEGA | chave de bases trocada                           | s/chave: "id_base_sayersystem"/chave: "descricao"/

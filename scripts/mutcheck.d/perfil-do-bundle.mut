@@ -1,0 +1,19 @@
+# Perfil do cliente no system prompt do `generate-bundle-argument`
+# (scanner Lovable Security, deep scan 2026-11-17, lote 6).
+# @src: supabase/functions/generate-bundle-argument/argumento-helpers.ts
+# @test: supabase/functions/generate-bundle-argument/argumento-helpers_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# Cada linha é um jeito de o texto do body voltar ao system prompt, ou de um perfil que ninguém
+# classificou chegar ao modelo como classificado. EXPECT preenchido por MEDIÇÃO.
+#
+PEGA | perfil aceita qualquer texto                     | s/\(PERFIS_CLIENTE as readonly string\[\]\)\.includes\(valor\)/true/
+PEGA | nao classificado vira "misto"                    | s/    : PERFIL_NAO_INFORMADO;/    : "misto";/
+PEGA | rotulo do nao informado muda                     | s/export const PERFIL_NAO_INFORMADO = "nao_informado";/export const PERFIL_NAO_INFORMADO = "desconhecido";/
+PEGA | "nao_informado" entra na lista de perfis         | s/^  "misto",$/  "misto", "nao_informado",/
+PEGA | um perfil valido some da lista                   | s/^  "orientado_produtividade",$/  "orientado_velocidade",/
+PEGA | a regra manda tratar como misto                  | s/e não presuma um perfil/e trate como misto/
+PEGA | a regra cita outro rotulo                        | s/`- Se "\$\{PERFIL_NAO_INFORMADO\}":/`- Se "sem_perfil":/
