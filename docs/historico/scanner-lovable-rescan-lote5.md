@@ -143,12 +143,38 @@ Conferido na PROD via `psql-ro` em 2026-11-17, pela sessão do lote 4 e de novo 
 
 E no repo, na `main`: o único chamador é `limparPushDoDevice()` (`src/lib/push/device.ts:42`), no logout. A `enviar-push` só aceita o cron (`authorizeCron`), não devolve endpoint em nenhum corpo de resposta e, na falha, loga só os 48 primeiros caracteres dele.
 
-Ficaram **2 achados ativos**, os deste lote. Eles só saem da lista quando o scanner reler o código. Até o próximo deep scan rodar, "vão sair" é previsão, a mesma da "Correção do lote 4".
+Ficaram **2 achados ativos**, os deste lote. Eles só saem da lista quando o scanner relê o código, então até o deep scan seguinte "vão sair" era previsão, a mesma da "Correção do lote 4". Ele rodou no mesmo dia e confirmou: seção abaixo.
+
+## O deep scan depois do deploy
+
+O 2º deep scan do dia rodou pelo Chrome do founder, com o OK dele, e só pelo botão "Run deep scan": disparado às 20:25Z, pronto às 20:38Z. Antes do clique o painel tinha 2 achados ativos, os dois deste lote, e 11 ignorados.
+
+**Os 2 deste lote saíram.** "Employee can overwrite another author's document" e "Some actions can reach other users' records" não aparecem mais, nem entre os ativos nem entre os ignorados. Os ignorados seguem 11, e os 3 marcados neste lote continuam lá. O scanner releu `kb-ingest-document` e `extrair-sinais-ligacao` com o gate de dono e não reabriu nenhum dos dois.
+
+**O mesmo scan trouxe 5 achados novos.** Nenhum foi triado aqui: é assunto do próximo lote. Abaixo, o que o painel aponta, com cada linha conferida na `main` (`85af31e2f`). As citações são atuais, ao contrário da do `b339bb5b`.
+
+| Título no painel | Onde | O que o código faz nesse ponto |
+|---|---|---|
+| Any signed-in user can inflate their gamification score (Critical) | `src/hooks/useGamificationScore.ts:160-164` | O cliente calcula o score e faz upsert em `gamification_scores` |
+| Anyone can disrupt biometric sign-in (Warning) | `supabase/functions/biometric-auth/index.ts:92-101` | A ação de challenge recebe `credentialId` do body e faz upsert em `webauthn_challenges` por `credential_id`. O painel diz que esse caminho não exige identidade; o `authorizeCronOrStaff` da edge é só o da sonda (`:55-58`) |
+| Anyone with a sync credential can alter catalog records (Warning) | `supabase/functions/tint-sync-agent/index.ts:426` | `sb.from(table).insert(chunk)`. O painel diz que toda propriedade do item recebido vai para a tabela de staging |
+| Staff users can override bundle argument model instructions (Warning) | `supabase/functions/generate-bundle-argument/index.ts:285-295` | `customerProfile` vem do body (`:100`) e entra no system prompt (`:137`, `:249`) |
+| Request data is embedded in the system prompt (Warning) | `supabase/functions/copilot-analyze/index.ts:213` | O trecho citado é a resposta de erro. A interpolação que o painel descreve está em outras linhas: `customerContext` e `bundleContext` vêm do body (`:123`) e entram no system prompt (`:176`, `:179`) |
+
+Medido na PROD via `psql-ro` às 20:41Z, só para dar tamanho ao Critical:
+
+- `gamification_scores` tem RLS ligada e **3 linhas**. As policies "Users can upsert their own score" (INSERT) e "Users can update their own score" (UPDATE) liberam a linha em que `auth.uid() = user_id`: a premissa do scanner sobre a policy confere. Nenhuma função ou view do schema `public` lê a tabela.
+- `webauthn_challenges` tem RLS ligada, uma policy que nega tudo a `anon` e `authenticated`, e 0 linhas.
+
+Isso não diz se cada um é furo ou desenho. Duas pistas para quem triar:
+
+- As duas edges de IA chamam `authorizeCronOrStaff` (`generate-bundle-argument:66` e `:86`, `copilot-analyze:34`), e o próprio painel descreve o chamador delas como staff e o da `tint-sync-agent` como quem tem o token de sync da loja.
+- Entre os ignorados já há um achado da mesma classe dos dois de prompt ("Any staff member can inject system prompt instructions"). Não foi conferido se é o mesmo caminho com outro título.
 
 ## Fica para o founder
 
-- **Deep scan:** rodar de novo e conferir que os 2 deste lote saíram.
-- **`devDependencies` do bot:** enquanto o sandbox do Lovable estiver com aquelas duas dependências pendentes, o commit pode voltar num próximo deploy, e cada volta custa um PR de revert. E enquanto o revert não entra, o `knip` deixa vermelho todo PR aberto a partir da `main`. A alternativa é aceitá-las no repo, o que exige dispensá-las no `knip`. Não foi medido se o CI consegue instalá-las.
+- **Os 5 achados novos do deep scan** (seção acima): não triados. Ficam para o próximo lote.
+- **`devDependencies` do bot:** enquanto o sandbox do Lovable estiver com aquelas duas dependências pendentes, o commit pode voltar num próximo deploy, e cada volta custa um PR de revert. E enquanto o revert não entra, o `knip` deixa vermelho todo PR aberto a partir da `main`. A alternativa é aceitá-las no repo, o que exige dispensá-las no `knip`. Não foi medido se o CI consegue instalá-las. Dado novo: o deploy seguinte pelo MCP (`sayerlack-varrer-pedidos-portal`, às 15:59Z, de outra entrega) fechou com "Estado dos arquivos limpo" no chat do Lovable, e até as 20:40Z a `main` não tinha commit do bot depois do `54667707a`. Não prova que não volta: aquele deploy saiu 17 minutos depois de o bot ter esvaziado o sandbox.
 - **Follow-ups que este lote deixou à vista**, nenhum tratado aqui:
   - policy de INSERT de `kb_documents` não amarra `created_by = auth.uid()` (raiz do TOCTOU acima);
   - `sinais-batch` aceita staff: um employee dispara a varredura, que extrai as ligações pendentes de todos com o transcript gravado. O resultado é o que o cron produziria; o que ele controla é o momento e o custo;
