@@ -22,6 +22,15 @@ import {
 } from "./promocao-fila.ts";
 // Lote de /catalogs sem entidade gravável: ack sem run (catalogo-vazio_test.ts) — NÃO reimplementar inline.
 import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.ts";
+// Linha de staging do catálogo com LISTA FECHADA de colunas (catalogo-staging_test.ts): o item não
+// escolhe coluna de controle (created_at, id…) — NÃO reimplementar inline.
+import {
+  detalheDaRecusaDeCatalogo,
+  ENTIDADES_COM_LINHA_DE_CATALOGO,
+  mensagemDaRecusaDeCatalogo,
+  montarLinhasDeCatalogo,
+  STAGING_DO_CATALOGO,
+} from "./catalogo-staging.ts";
 // Giro de corante (Fase 1, PR B): /preparations com manifesto, saneado (sem `cliente`) e tudo-ou-nada,
 // e /preparations/plano (preparacoes_test.ts) — NÃO reimplementar inline.
 import { type DepsPreparacoes, modoPromove, processarPreparacoes, respostaDoPlano } from "./preparacoes.ts";
@@ -48,22 +57,8 @@ const corsHeaders = {
 
 // ─── Type definitions ───
 
-/** Item bruto enviado pelo agente (catalogo: produtos, bases, embalagens, skus, corantes) */
-interface TintCatalogItem {
-  id?: string;
-  cod_produto?: string;
-  id_base?: string;
-  id_embalagem?: string;
-  id_base_sayersystem?: string;
-  id_embalagem_sayersystem?: string;
-  id_corante_sayersystem?: string;
-  descricao?: string;
-  volume_ml?: number;
-  preco_litro?: number;
-  /** Custo do corante (de PRECO_CORANTE) */
-  custo?: number;
-  [k: string]: unknown;
-}
+// O item de catálogo (produtos, bases, embalagens, skus, corantes) não tem mais tipo aberto aqui:
+// as colunas que ele pode preencher são a lista fechada de ./catalogo-staging.ts.
 
 /** Preço de base por embalagem (de PRECO_BASEEMB) */
 interface TintPrecosBaseItem {
@@ -484,47 +479,30 @@ Deno.serve(async (req) => {
       const updates = 0, ignored = 0;
       const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
 
-      const stagingTables: Record<string, { table: string; keyField: string }> = {
-        produtos: { table: "tint_staging_produtos", keyField: "cod_produto" },
-        bases: { table: "tint_staging_bases", keyField: "id_base_sayersystem" },
-        embalagens: { table: "tint_staging_embalagens", keyField: "id_embalagem_sayersystem" },
-        skus: { table: "tint_staging_skus", keyField: "cod_produto" },
-        corantes: { table: "tint_staging_corantes", keyField: "id_corante_sayersystem" },
-      };
-
       let received = 0;
 
-      // Change 3: bulk insert for catalog entities (chunks of 500)
-      for (const [entityType, config] of Object.entries(stagingTables)) {
-        const items: TintCatalogItem[] = (body[entityType] as TintCatalogItem[] | undefined) || [];
-        received += items.length;
-
-        const rows: Record<string, unknown>[] = items.map((item) => {
-          const entityKey = (item[config.keyField] as string | undefined) || item.id || "";
-          const row: Record<string, unknown> = {
-            sync_run_id: runId,
-            account: agent.account,
-            store_code: agent.storeCode,
-            raw_data: item,
-            staging_status: "pending",
-          };
-          // Copy all item fields, excluding those already set
-          for (const [k, v] of Object.entries(item)) {
-            if (k in row) continue;
-            row[k] = v;
-          }
-          row[config.keyField] = entityKey;
-          if (item.descricao) row.descricao = item.descricao;
-          if (item.volume_ml !== undefined) row.volume_ml = item.volume_ml;
-          if (item.preco_litro !== undefined) row.preco_litro = item.preco_litro;
-          // Change 3+4: passthrough custo and volume_ml for corantes
-          if (item.custo !== undefined) row.custo = item.custo;
-          if (item.id_base) row.id_base = item.id_base;
-          if (item.id_embalagem) row.id_embalagem = item.id_embalagem;
-          return row;
+      // Lista FECHADA de colunas por entidade (catalogo-staging.ts; scanner Lovable, lote 6). O item
+      // só preenche as colunas de catálogo da sua tabela; com campo fora da lista ele é recusado
+      // inteiro, conta como erro e fica em tint_sync_errors. Antes a linha recebia TODA propriedade
+      // do item, inclusive `created_at` e `id`, que decidem o "mais recente" da promoção e da purga.
+      for (const entityType of ENTIDADES_COM_LINHA_DE_CATALOGO) {
+        const config = STAGING_DO_CATALOGO[entityType];
+        const montado = montarLinhasDeCatalogo(entityType, body[entityType], {
+          runId,
+          account: agent.account,
+          storeCode: agent.storeCode,
         });
+        received += montado.recebidos;
 
-        const { insertedCount } = await bulkInsert(config.table, rows, 500, (chunk, err) => {
+        if (montado.recusados > 0) {
+          const motivo = mensagemDaRecusaDeCatalogo(montado);
+          errors += montado.recusados;
+          errorDetails.push({ entity_type: entityType, entity_id: null, message: motivo });
+          await logError(runId, entityType, null, motivo, detalheDaRecusaDeCatalogo(entityType, montado)).catch(() => {});
+        }
+
+        // Change 3: bulk insert for catalog entities (chunks of 500)
+        const { insertedCount } = await bulkInsert(config.tabela, montado.linhas, 500, (chunk, err) => {
           errors += chunk.length;
           errorDetails.push({ entity_type: entityType, entity_id: null, message: err.message });
           // fire-and-forget logError for the chunk
