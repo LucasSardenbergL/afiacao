@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# wt-clean.sh — libera disco/RAM apagando node_modules de worktrees PARADOS.
+# wt-clean.sh — apaga o node_modules de worktrees PARADOS.
 #
-# Cada worktree do Afiação tem seu próprio node_modules (~580 MB). Com dezenas de
-# worktrees, isso vira vários GB em disco e pressão de RAM ao rodar test/build na
-# M2 8GB. Este comando varre TODOS os worktrees e apaga o node_modules dos que
+# Cada worktree do Afiação tem seu próprio node_modules (~580 MB pela conta do
+# `du`). Este comando varre TODOS os worktrees e apaga o node_modules dos que
 # estão parados — sem destruir nada: pra voltar a usar é só `bun install`.
+# O que ele devolve é DISCO, e bem menos do que o `du` sugere (regra 3). RAM ele
+# não devolve: memória presa mora em processo (`wt:reap`), não em node_modules.
 #
 # SEGURANÇA (desenhada com o codex):
 #   - pula o worktree ATUAL (a sessão que você está usando agora);
@@ -15,8 +16,8 @@
 #   - pula worktree `locked` (o lock é intenção humana de preservar);
 #   - pula node_modules que é symlink (não é cópia descartável).
 #
-# ⚠️ Este script APAGA. Duas regras vieram do #1838 e da varredura dos irmãos —
-# as duas travadas por `scripts/test-wt-clean.sh`:
+# ⚠️ Este script APAGA. Três regras, todas travadas por `scripts/test-wt-clean.sh`
+# (as duas primeiras vieram do #1838 e da varredura dos irmãos):
 #
 #   1. Sonda de segurança AUSENTE é fail-CLOSED, não "sem medida". Medido: com
 #      `lsof` devolvendo 127 (não-macOS, ou PATH capado), `active_file` fica
@@ -30,6 +31,13 @@
 #      intenção de degradar, nunca chegava a rodar. E o `du` não tinha teto:
 #      node_modules em máquina saturada custa 6-8s cada. Agora tem teto e quem
 #      não foi medido entra como "sem medida", nunca como 0 MB.
+#   3. A soma de `du` é tamanho APARENTE, não disco a recuperar. O bun instala
+#      por clone do cache global (`clonefile`, o default no macOS) e o `du` conta
+#      em cada worktree os blocos que elas dividem. Medido em 2026-11-17: o
+#      dry-run prometia ~77605 MB em 121 worktrees, o founder autorizou por esse
+#      número, e o disco livre subiu 1923 MB. Por isso o relatório diz
+#      "APARENTES", e o `--yes` mede o `df` antes e depois e imprime o ganho de
+#      verdade. `df` que não responde vira "sem medida", nunca 0 MB.
 #
 # Uso:
 #   bun run wt:clean                          # DRY-RUN: só mostra o que faria
@@ -45,7 +53,7 @@ for arg in "$@"; do
     --yes | -y) YES=1 ;;
     --include-current) INCLUDE_CURRENT=1 ;;
     -h | --help)
-      sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -105,6 +113,15 @@ planned=0
 sem_medida=0
 cur_wt=""
 cur_locked=0
+
+# --- disco livre ANTES (regra 3) --------------------------------------------
+# Só o --yes mede: é o único modo que muda o disco. O dry-run não tem o que
+# comparar, e estimar o ganho a partir do `du` é exatamente o defeito da regra 3.
+livre_antes=""
+livre_depois=""
+if [ "$YES" -eq 1 ]; then
+  livre_antes="$(df_livre_mb "$self")" || livre_antes=""
+fi
 
 flush() {
   [ -n "$cur_wt" ] || return 0
@@ -175,17 +192,27 @@ while IFS= read -r line; do
   esac
 done < <(git worktree list --porcelain)
 flush
-wait 2>/dev/null || true
+wait 2>/dev/null || true # só depois de TODO `rm` terminar o `df` de baixo vale
+if [ "$YES" -eq 1 ]; then
+  livre_depois="$(df_livre_mb "$self")" || livre_depois=""
+fi
 
 echo
 medidos=$((planned - sem_medida))
 piso=""
 [ "$sem_medida" -gt 0 ] && piso=" (piso — medidos: ${medidos} de ${planned})"
 if [ "$YES" -eq 1 ]; then
-  echo "✅ liberados ~${freed} MB em ${planned} worktree(s)${piso}. Pra reusar um: cd lá + bun install."
+  echo "✅ apagado o node_modules de ${planned} worktree(s) — ~${freed} MB APARENTES${piso} (soma de du). Pra reusar um: cd lá + bun install."
+  if [ -n "$livre_antes" ] && [ -n "$livre_depois" ]; then
+    printf '   disco livre de VERDADE (df): %s MB → %s MB (%+d MB).\n' "$livre_antes" "$livre_depois" "$((livre_depois - livre_antes))"
+  else
+    echo "   disco livre de VERDADE: sem medida (o df não respondeu) — não é 0 MB, é dado que falta."
+  fi
+  echo "   O aparente não é o que volta: o bun instala por clone do cache (APFS) e o du conta em cada pasta os blocos que elas dividem."
 else
-  echo "DRY-RUN: liberaria ~${freed} MB em ${planned} worktree(s)${piso}."
-  echo "         Rode 'bun run wt:clean --yes' pra executar."
+  echo "DRY-RUN: apagaria o node_modules de ${planned} worktree(s) — ~${freed} MB APARENTES${piso} (soma de du)."
+  echo "         O disco que volta é uma fração disso (clone do cache do bun em APFS): medido em 2026-11-17, 77605 MB aparentes devolveram 1923 MB."
+  echo "         Rode 'bun run wt:clean --yes' pra executar — ele mede o disco livre antes e depois."
 fi
 if [ "$sem_medida" -gt 0 ]; then
   echo "         sem medida: ${sem_medida} — não é 0 MB, é dado que falta (o total acima é PISO)."

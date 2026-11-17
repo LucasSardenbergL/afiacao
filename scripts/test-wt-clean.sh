@@ -21,6 +21,15 @@
 #      e o `${sz:-0}` fabricava ZERO para o não-medido (money-path §2: ausente ≠
 #      zero). Sem teto, ainda: node_modules em máquina saturada custa 6-8s cada.
 #
+#   3. A soma de `du` NÃO é o disco que volta. Medido em 2026-11-17 num `--yes`
+#      de verdade: o dry-run dizia "liberaria ~77605 MB em 121 worktree(s)", o
+#      founder autorizou por esse número, e o `df` subiu 1923 MB (o bun instala
+#      por clone do cache; o `du` conta os blocos compartilhados em cada pasta).
+#      O relatório passa a chamar a soma de APARENTE, e o `--yes` imprime o `df`
+#      antes e depois. O stub de `df` devolve um ganho (700 MB) de propósito
+#      DIFERENTE da soma do `du` (1000 MB): se o script trocar um pelo outro, o
+#      caso 9 fica vermelho. `df` que falha vira "sem medida", nunca 0 MB (caso 10).
+#
 # Uso: bash scripts/test-wt-clean.sh   (exit 0 = tudo verde)
 set -u
 
@@ -89,9 +98,23 @@ esac
 exit 0
 STUB
 
-chmod +x "$stub/git" "$stub/du" "$stub/lsof"
+# df: DF_MODO = ok | falha. No `ok`, a 1ª leitura (antes) dá 1000 MB livres e a
+# 2ª (depois) dá 1700 MB: ganho REAL de 700 MB, diferente dos 4 x 250 = 1000 MB
+# que o `du` soma. O contador mora no fixture e é zerado a cada `roda`.
+cat >"$stub/df" <<STUB
+#!/bin/sh
+[ "\${DF_MODO:-ok}" = "falha" ] && exit 1
+n="\$(cat "$fix/df.n" 2>/dev/null || echo 0)"
+echo \$((n + 1)) >"$fix/df.n"
+if [ "\$n" -eq 0 ]; then kb=1024000; else kb=1740800; fi
+echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
+echo "/dev/fake 99999999 1 \$kb 1% /"
+STUB
+
+chmod +x "$stub/git" "$stub/du" "$stub/lsof" "$stub/df"
 
 roda() {
+  rm -f "$fix/df.n"
   PATH="$stub:$PATH" bash "$ALVO" "$@" 2>&1
   echo "EXIT=$?"
 }
@@ -216,7 +239,7 @@ if [ "$(nm_vivos)" = "0" ]; then
 else
   falha "--yes saudavel → sobraram $(nm_vivos) node_modules"
 fi
-if printf '%s' "$saida" | command grep -q '✅ liberados'; then
+if printf '%s' "$saida" | command grep -q 'apagado o node_modules de 4 worktree(s)'; then
   ok "--yes saudavel → imprime o resumo do que fez"
 else
   falha "--yes saudavel → morreu antes do resumo (o dano fica invisivel)"
@@ -238,10 +261,90 @@ if [ "$(nm_vivos)" = "0" ]; then
 else
   falha "--yes + du falho → parou no meio: sobraram $(nm_vivos) node_modules"
 fi
-if printf '%s' "$saida" | command grep -q '✅ liberados'; then
+if printf '%s' "$saida" | command grep -q 'apagado o node_modules de 4 worktree(s)'; then
   ok "--yes + du falho → ainda imprime o resumo do que fez"
 else
   falha "--yes + du falho → apagou e nao contou (dano invisivel)"
+fi
+
+# ── caso 9 — --yes: o ganho de DISCO vem do `df`, nunca da soma do `du` ─────
+# O `du` soma 4 x 250 = 1000 MB; o `df` do stub sobe de 1000 para 1700 MB.
+# Quem relata 1000 como disco recuperado esta repetindo o defeito de 2026-11-17.
+semear
+saida="$(roda --yes)"
+linha_df="$(printf '%s' "$saida" | linha_de 'disco livre de VERDADE (df)')"
+case "$linha_df" in
+  *'(df): 1000 MB '*' 1700 MB (+700 MB).'*)
+    ok "--yes → imprime o df antes/depois e o ganho real (+700 MB)"
+    ;;
+  *) falha "--yes → nao imprimiu o ganho real medido pelo df (veio: ${linha_df:-nada})" ;;
+esac
+if printf '%s' "$saida" | command grep -q '~1000 MB APARENTES'; then
+  ok "--yes → a soma do du sai rotulada como APARENTE"
+else
+  falha "--yes → a soma do du nao esta rotulada como aparente"
+fi
+if printf '%s' "$saida" | command grep -q 'liberados'; then
+  falha "--yes → voltou a chamar a soma do du de 'liberados'"
+else
+  ok "--yes → nao chama a soma do du de 'liberados'"
+fi
+
+# ── caso 10 — --yes com `df` FALHANDO: sem medida, nunca 0 MB ───────────────
+# O `df` e ornamental como o `du`: nao decide o que apagar e nao pode matar o
+# script. Mas ausente ≠ zero: "+0 MB" aqui seria ganho FABRICADO.
+semear
+saida="$(DF_MODO=falha roda --yes)"
+if [ "${saida##*EXIT=}" = "0" ] && [ "$(nm_vivos)" = "0" ]; then
+  ok "--yes + df falho → sai 0 e apaga os 4 assim mesmo"
+else
+  falha "--yes + df falho → EXIT=${saida##*EXIT=}, sobraram $(nm_vivos) node_modules"
+fi
+if printf '%s' "$saida" | command grep -q 'disco livre de VERDADE: sem medida'; then
+  ok "--yes + df falho → declara 'sem medida' para o disco"
+else
+  falha "--yes + df falho → nao declarou a falta da medida do disco"
+fi
+if printf '%s' "$saida" | command grep -q -e '(df): ' -e '+0 MB'; then
+  falha "--yes + df falho → fabricou uma leitura de disco que nao fez"
+else
+  ok "--yes + df falho → nao fabrica leitura nem ganho zero"
+fi
+if printf '%s' "$saida" | command grep -q 'apagado o node_modules de 4 worktree(s)'; then
+  ok "--yes + df falho → ainda imprime o resumo do que fez"
+else
+  falha "--yes + df falho → apagou e nao contou (dano invisivel)"
+fi
+
+# ── caso 11 — dry-run: nao promete disco e nao mede o que nao mudou ─────────
+semear
+saida="$(roda)"
+linha_dry="$(printf '%s' "$saida" | linha_de 'DRY-RUN:')"
+case "$linha_dry" in
+  *'DRY-RUN: apagaria o node_modules de 4 worktree(s) '*' ~1000 MB APARENTES (soma de du).'*)
+    ok "dry-run → a soma do du sai como APARENTE"
+    ;;
+  *) falha "dry-run → nao rotulou a soma do du como aparente (veio: ${linha_dry:-nada})" ;;
+esac
+if printf '%s' "$saida" | command grep -q 'liberaria'; then
+  falha "dry-run → voltou a prometer 'liberaria' com a soma do du"
+else
+  ok "dry-run → nao promete 'liberaria'"
+fi
+if printf '%s' "$saida" | command grep -q '77605 MB aparentes devolveram 1923 MB'; then
+  ok "dry-run → carrega a calibragem medida (77605 → 1923 MB)"
+else
+  falha "dry-run → perdeu a calibragem que explica o tamanho da diferenca"
+fi
+if [ -e "$fix/df.n" ] || printf '%s' "$saida" | command grep -q 'disco livre de VERDADE'; then
+  falha "dry-run → mediu ou relatou disco sem ter apagado nada"
+else
+  ok "dry-run → nao chama o df nem relata ganho de disco"
+fi
+if [ "$(nm_vivos)" = "4" ]; then
+  ok "dry-run → os 4 node_modules continuam INTACTOS"
+else
+  falha "dry-run → apagou $((4 - $(nm_vivos))) node_modules sem --yes"
 fi
 
 echo
