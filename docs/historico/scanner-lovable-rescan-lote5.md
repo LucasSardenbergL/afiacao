@@ -8,7 +8,7 @@ Continuação do [lote 4](scanner-lovable-rescan-lote4.md). O deep scan de 2026-
 |---|---|---|
 | Employee can overwrite another author's document (Critical) | **Real**, corrigido aqui | `kb-ingest-document` |
 | Some actions can reach other users' records (Warning, 2 caminhos) | **Real**, corrigido aqui | `extrair-sinais-ligacao` |
-| Any staff member can redirect customer ownership (`b339bb5b`) | Já corrigido; o scanner cita código que não existe mais | Seção "Correção do lote 4" |
+| Any staff member can redirect customer ownership (`b339bb5b`) | Já corrigido; o scanner cita o código de antes do conserto. A chamada com o vendedor do body ficou restrita ao master | Seção "Correção do lote 4" |
 | Your app can be used to send messages or spend your money | Desenho (decisão do founder no [lote 3](scanner-lovable-rescan-lote3.md): o número discado segue livre e é validado) | `nvoip-calls` |
 | Any signed-in user can disable another user's push alerts | **Desenho**, documentado na própria migration. A 1ª leitura deste lote dizia "real e baixo" e estava errada | Seção "O painel depois do lote" |
 
@@ -92,7 +92,9 @@ Um sexto ponto virou mitigação: uma falha transitória da sonda deixaria o upl
 
 ## Correção do lote 4
 
-O lote 4 previa que os 4 corrigidos sairiam da lista no rescan. **Saíram 3.** O `b339bb5b` ficou, com evidência velha: o painel cita `supabase/functions/omie-cliente/index.ts:949-954` com `p_user_id: matchedUserId`. Esse trecho é o do commit anterior ao #3912 (`1b27f6b7c^`, conferido). Na `main` há 0 ocorrências, e a `omie-cliente` servida é a `v1.12-vinculo-conferido`. Não há o que consertar. A lição: "vai sair no próximo rescan" era previsão, e o scanner pode reapresentar um achado com o código que ele leu antes.
+O lote 4 previa que os 4 corrigidos sairiam da lista no rescan. **Saíram 3.** O `b339bb5b` ficou, com evidência velha: o painel cita `supabase/functions/omie-cliente/index.ts:949-954` com `p_user_id: matchedUserId`. Esse trecho é o do commit anterior ao #3912 (`1b27f6b7c^`, conferido). Na `main` há 0 ocorrências dessa forma, as linhas 949-954 são outro trecho, e a `omie-cliente` servida é a `v1.12-vinculo-conferido`. Não há o que consertar.
+
+Precisão, apontada pela sessão do lote 4 e conferida na `main`: "o código não existe mais" seria dizer demais. A chamada a `register_carteira_member` com o vendedor do body continua existindo no case `criar_perfil_local`, nas linhas 1054-1060, **só no ramo `chamadorEhMaster`**. O papel é lido no servidor (linha 810) e o default é `false`. O employee vai pela `admitir_vinculo_conferido`, que não recebe vendedor. O certo é: a chamada ficou restrita ao master. A lição: "vai sair no próximo rescan" era previsão, e o scanner pode reapresentar um achado com o código que ele leu antes.
 
 ## Lições
 
@@ -123,7 +125,7 @@ Enquanto o commit do bot esteve na `main` (das 15:42Z às 16:00Z, 18 minutos), o
 
 ## O painel depois do lote
 
-Conferido em 2026-11-17, pelo Chrome do founder. Às 15:42Z o painel mostrava 5 achados ativos e 9 ignorados; às 15:48Z, 2 ativos e 11 ignorados. Os 3 achados que não eram deste lote **foram para "Ignored findings" nesse intervalo, marcados pela conta do founder**. Esta sessão abriu os detalhes para ler o motivo e não clicou em mais nada: o gesto não foi dela.
+Conferido em 2026-11-17, pelo Chrome do founder. Às 15:42Z o painel mostrava 5 achados ativos e 9 ignorados; às 15:48Z, 2 ativos e 11 ignorados. Os 3 achados que não eram deste lote **foram para "Ignored findings" nesse intervalo, marcados pela conta do founder**. Quem marcou foi a sessão do lote 4, pelo Claude in Chrome, com o OK do founder: ele respondeu sim à mesma pergunta nas duas sessões. Esta sessão chegou depois, abriu os detalhes para ler o motivo e não clicou em mais nada. O contador foi de 9 para 11, e não 12, porque o grupo da Nvoip já estava entre os ignorados com 1 caminho.
 
 | Achado | Ignorado em (hora local) | Motivo registrado no painel, resumido |
 |---|---|---|
@@ -131,7 +133,15 @@ Conferido em 2026-11-17, pelo Chrome do founder. Às 15:42Z o painel mostrava 5 
 | Your app can be used to send messages or spend your money (3 caminhos em `nvoip-calls`) | 15/11, 20:08 para `index.ts:211-221` (lote 3); 17/11, 12:45 para `:208-218` e `:207:7` | Desenho, decisão do founder no lote 3: staff liga para qualquer número. Desde a `nvoip-calls` v1.3 o número é validado |
 | Any signed-in user can disable another user's push alerts | 17/11, 12:46 | Desenho, documentado na migration `20260610200000_push_vendedora.sql` |
 
-**Correção deste registro sobre o push.** A 1ª versão dizia "real e baixo, conserto é migration". Está errado. A migration declara o desenho em dois lugares: no bloco 1b (`:47-52`), o endpoint pertence a quem está logado no device agora; no comentário da função (`:82-84`), apagar por endpoint sem filtro de usuário é necessário quando quem desloga já não é o dono da linha. É o caso do device compartilhado de balcão. Filtrar por dono quebraria a limpeza do logout, e o push da pessoa anterior continuaria chegando a quem logou depois. O que sobra de risco exige conhecer o endpoint de outro device. Conferido aqui, na migration e não na PROD: a policy `push_subscriptions_own` é own-only e as duas RPCs devolvem `void`. O motivo do painel também afirma que a função de envio só aceita o cron; isso não foi conferido aqui.
+**Correção deste registro sobre o push.** A 1ª versão dizia "real e baixo, conserto é migration". Está errado. A migration declara o desenho em dois lugares: no bloco 1b (`:47-52`), o endpoint pertence a quem está logado no device agora; no comentário da função (`:82-84`), apagar por endpoint sem filtro de usuário é necessário quando quem desloga já não é o dono da linha. É o caso do device compartilhado de balcão. Filtrar por dono quebraria a limpeza do logout, e o push da pessoa anterior continuaria chegando a quem logou depois. O que sobra de risco exige conhecer o endpoint de outro device, e não foi achado caminho que o exponha a outro usuário.
+
+Conferido na PROD via `psql-ro` em 2026-11-17, pela sessão do lote 4 e de novo por esta (o papel da conexão tem `BYPASSRLS`, então a contagem é real):
+
+- `delete_push_subscription(text)` é SECURITY DEFINER, devolve `void` e tem o corpo da migration. EXECUTE negado a `anon`, concedido a `authenticated`.
+- `push_subscriptions` tem RLS ligada, a policy own-only `push_subscriptions_own`, `UNIQUE (endpoint)` e **0 linhas**.
+- Só duas funções citam a tabela (`delete_push_subscription` e `upsert_push_subscription`), as duas `void`. Nenhuma view ou matview a cita.
+
+E no repo, na `main`: o único chamador é `limparPushDoDevice()` (`src/lib/push/device.ts:42`), no logout. A `enviar-push` só aceita o cron (`authorizeCron`), não devolve endpoint em nenhum corpo de resposta e, na falha, loga só os 48 primeiros caracteres dele.
 
 Ficaram **2 achados ativos**, os deste lote. Eles só saem da lista quando o scanner reler o código. Até o próximo deep scan rodar, "vão sair" é previsão, a mesma da "Correção do lote 4".
 
