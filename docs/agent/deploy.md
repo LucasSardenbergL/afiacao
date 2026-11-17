@@ -186,6 +186,10 @@ editou → revert por PR com bump de `VERSAO`). O sensor É o `git log origin/ma
 (`INSTRUCAO_POS_ENVIO`: Passo 2 do pacote e stderr do `pendencias:prompt`). O `bun lint` dos arquivos
 tocados já roda sozinho: o push do bot dispara o CI, e o vermelho abre a Issue `ci-main-red` (no #2541,
 14 min depois do push). [Narrativa](../historico/agente-lovable-conserta-o-que-nao-pediram.md).
+**O commit do bot nem sempre é "conserto"** (4× até 2026-11-17): ele traz só `+2 devDependencies @lovable.dev/vite-plugin-*`
+em `package.json`/`bun.lock`, pendentes no sandbox — o agente diz que não commitou, a plataforma empurra. Enquanto
+isso está na `main`, o `knip` reprova TODO branch novo (`Unused devDependencies (2)`): o revert é urgente, e `knip`
+vermelho logo depois de um deploy tem essa causa antes de qualquer outra ([caso](../historico/scanner-lovable-rescan-lote5.md#deploy)).
 **A colagem só sai do `montarPrompt`** (`pendencias:prompt <edge>` aceita qualquer edge pelo nome). A
 skill de deploy ensinava 3 moldes à mão, sem escopo nem conferência, e o `[COLAGEM_SO_DO_GERADOR]` barra a volta deles.
 **Quem reacorda o agente depois do fecho pode ser a PLATAFORMA** (medido em 2026-09-27 19:37Z).

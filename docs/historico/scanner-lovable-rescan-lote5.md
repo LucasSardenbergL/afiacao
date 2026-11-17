@@ -10,7 +10,7 @@ Continuação do [lote 4](scanner-lovable-rescan-lote4.md). O deep scan de 2026-
 | Some actions can reach other users' records (Warning, 2 caminhos) | **Real**, corrigido aqui | `extrair-sinais-ligacao` |
 | Any staff member can redirect customer ownership (`b339bb5b`) | Já corrigido; o scanner cita código que não existe mais | Seção "Correção do lote 4" |
 | Your app can be used to send messages or spend your money | Desenho (decisão do founder no [lote 3](scanner-lovable-rescan-lote3.md): o número discado segue livre e é validado) | `nvoip-calls` |
-| Any signed-in user can disable another user's push alerts | Real e baixo, **não tratado** (fora do escopo desta entrega) | Seção "Fica para o founder" |
+| Any signed-in user can disable another user's push alerts | **Desenho**, documentado na própria migration. A 1ª leitura deste lote dizia "real e baixo" e estava errada | Seção "O painel depois do lote" |
 
 ## O que entrou
 
@@ -101,15 +101,44 @@ O lote 4 previa que os 4 corrigidos sairiam da lista no rescan. **Saíram 3.** O
 - **Nome genérico de topo num módulo novo de `_shared/` reprova a canária de OUTRA edge.** O `canaria:bump` resolve `_shared/` por símbolo, em texto. Um `const UUID` no módulo novo entrou na superfície da `identidade_probe` da `omie-vendas-sync`, que cita "não-UUID", e o gate pediu bump de `contrato` numa edge que o PR não toca. Só apareceu depois do commit, porque o gate compara com a `main`. Os símbolos de topo do módulo ganharam nomes exclusivos.
 - **O harness de handler não alcança edge que importa SDK fora do `node_modules`.** `openai`, `pdf-parse` e `@anthropic-ai/sdk` não resolvem sob `--no-remote`. A ligação dessas edges se prova por AST, e o comportamento, no primitivo e no banco.
 - **Sabotagem que muda mais de uma coisa prova outra coisa.** A 1ª `sonda_sem_filtro` trocava o SET para não bater em colisão de PK, e com isso deixou de mostrar o perigo real. A versão fiel mostra: sem o filtro, o documento do próprio chamador perde o id.
+- **Antes de chamar um achado de "real", ler o comentário da migration que criou o objeto.** O do push foi registrado aqui como "real e baixo" lendo só o corpo de `delete_push_subscription`. O comentário logo acima da função (`20260610200000_push_vendedora.sql:82-84`) e o bloco 1b (`:47-52`) dizem que apagar por endpoint sem filtro de dono é o desenho. A correção está em "O painel depois do lote".
 
 ## Deploy
 
-Pendente: será registrado no PR de sonda. Camada única: as 2 edges. Sem migration e sem Publish.
+Camada única: as 2 edges. Sem migration e sem Publish. Feito em 2026-11-17, depois do merge do #3935 (`5d327d9f3`).
+
+| Passo | Evidência |
+|---|---|
+| Ledger antes | `bun run pendencias:deploy`: as duas em "NUNCA atestada", o esperado para edge recém-instrumentada |
+| Pacote | `bun scripts/pendencias-pacote.ts kb-ingest-document extrair-sinais-ligacao`, contra `origin/main@5bf5a9ed0`. Pré-condição de banco satisfeita (nenhuma RPC literal na leva) |
+| Envio | `send_message` às 15:40Z. A colagem recebida pelo Lovable foi comparada com o Passo 2 do pacote: igual, 3.828 caracteres. O agente conferiu 13/13 hashes e publicou as duas. Custo: 1,8 crédito |
+| Sensor | `lovable-sensor-edicao`: **`EDICAO_DETECTADA`** (exit 1). Ver abaixo |
+| Sonda | `db/sonda-seg-lote5-20261117.sql` pelo `db:aplicar`: ensaio, depois a tentativa #1163. Requests 24522 e 24523, HTTP 200 |
+| Veredito | **DEPLOY CONFIRMADO** nas duas: `v1.0-dono-pela-rls`, `fonte` igual à do mapa da `main` |
+| Ledger depois | `deploy_atestacoes` tem as duas linhas, `via = sonda`: observadas às 15:53:39Z e registradas às 16:00:02Z pelo cron `deploy-atestacoes-colher`. `pendencias:deploy` lista as duas em "confere", cobertura 87/87. Ele ainda saiu 1 por outra edge, de outra entrega (`sayerlack-varrer-pedidos-portal` v1.13) |
+
+**O bot empurrou `bun.lock` e `package.json` na `main`.** O agente fechou com `No files were edited.` e disse que não commitaria as mudanças que já estavam no sandbox. A plataforma as empurrou mesmo assim, no commit `54667707a` ("Deployou 2 funções verbatim"): +2 `devDependencies` (`@lovable.dev/vite-plugin-dev-server-bridge` e `@lovable.dev/vite-plugin-hmr-gate`), que nada no repo importa, e 66 linhas de lock. As edges não foram tocadas: o commit só tem esses dois arquivos, e o pai dele é o commit de onde saíram os hashes conferidos. O revert, byte a byte, é o #3939, mergeado como `2ec7f2944`. É a 4ª ocorrência do mesmo par de arquivos (#3821 e mais duas em 2026-11-11).
+
+Enquanto o commit do bot esteve na `main` (das 15:42Z às 16:00Z, 18 minutos), o gate `knip` reprovava em qualquer branch aberto a partir dela: `Unused devDependencies (2)`, as duas do Lovable. Medido num branch só de docs: vermelho sobre `54667707a`, verde depois do rebase sobre o revert.
+
+## O painel depois do lote
+
+Conferido em 2026-11-17, pelo Chrome do founder. Às 15:42Z o painel mostrava 5 achados ativos e 9 ignorados; às 15:48Z, 2 ativos e 11 ignorados. Os 3 achados que não eram deste lote **foram para "Ignored findings" nesse intervalo, marcados pela conta do founder**. Esta sessão abriu os detalhes para ler o motivo e não clicou em mais nada: o gesto não foi dela.
+
+| Achado | Ignorado em (hora local) | Motivo registrado no painel, resumido |
+|---|---|---|
+| Any staff member can redirect customer ownership (`b339bb5b`) | 17/11, 12:43 | Evidência velha: corrigido no #3912 e no #3925, `omie-cliente` v1.12 no ar. As linhas 949-954 não têm mais a chamada |
+| Your app can be used to send messages or spend your money (3 caminhos em `nvoip-calls`) | 15/11, 20:08 para `index.ts:211-221` (lote 3); 17/11, 12:45 para `:208-218` e `:207:7` | Desenho, decisão do founder no lote 3: staff liga para qualquer número. Desde a `nvoip-calls` v1.3 o número é validado |
+| Any signed-in user can disable another user's push alerts | 17/11, 12:46 | Desenho, documentado na migration `20260610200000_push_vendedora.sql` |
+
+**Correção deste registro sobre o push.** A 1ª versão dizia "real e baixo, conserto é migration". Está errado. A migration declara o desenho em dois lugares: no bloco 1b (`:47-52`), o endpoint pertence a quem está logado no device agora; no comentário da função (`:82-84`), apagar por endpoint sem filtro de usuário é necessário quando quem desloga já não é o dono da linha. É o caso do device compartilhado de balcão. Filtrar por dono quebraria a limpeza do logout, e o push da pessoa anterior continuaria chegando a quem logou depois. O que sobra de risco exige conhecer o endpoint de outro device. Conferido aqui, na migration e não na PROD: a policy `push_subscriptions_own` é own-only e as duas RPCs devolvem `void`. O motivo do painel também afirma que a função de envio só aceita o cron; isso não foi conferido aqui.
+
+Ficaram **2 achados ativos**, os deste lote. Eles só saem da lista quando o scanner reler o código. Até o próximo deep scan rodar, "vão sair" é previsão, a mesma da "Correção do lote 4".
 
 ## Fica para o founder
 
-- **Painel:** ignorar `b339bb5b` (evidência velha, motivo "This is wrong") e o da Nvoip (desenho). Depois do deploy, rodar o deep scan de novo e conferir que os 2 deste lote saíram.
-- **Push (`delete_push_subscription`)**: a função é SECDEF e apaga por endpoint sem conferir o dono. A RLS de `push_subscriptions` só mostra a linha ao dono, então o ataque exige conhecer o endpoint alheio. Risco baixo. Só a migration foi lida, não a PROD. Conserto é migration, em lote próprio se o founder quiser.
+- **Deep scan:** rodar de novo e conferir que os 2 deste lote saíram.
+- **`devDependencies` do bot:** enquanto o sandbox do Lovable estiver com aquelas duas dependências pendentes, o commit pode voltar num próximo deploy, e cada volta custa um PR de revert. E enquanto o revert não entra, o `knip` deixa vermelho todo PR aberto a partir da `main`. A alternativa é aceitá-las no repo, o que exige dispensá-las no `knip`. Não foi medido se o CI consegue instalá-las.
 - **Follow-ups que este lote deixou à vista**, nenhum tratado aqui:
   - policy de INSERT de `kb_documents` não amarra `created_by = auth.uid()` (raiz do TOCTOU acima);
   - `sinais-batch` aceita staff: um employee dispara a varredura, que extrai as ligações pendentes de todos com o transcript gravado. O resultado é o que o cron produziria; o que ele controla é o momento e o custo;
