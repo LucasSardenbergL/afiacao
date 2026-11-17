@@ -1,0 +1,46 @@
+# Gate de DONO das edges que gravam com service-role num id vindo do body
+# (scanner Lovable Security, deep scan 2026-11-17, lote 5 — `kb-ingest-document` e `extrair-sinais-ligacao`).
+# @src: supabase/functions/_shared/dono-pela-rls.ts
+# @test: supabase/functions/_shared/dono-pela-rls_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# Cada linha é um jeito de o gate dizer "pode" a quem não pode, de a sonda deixar de ser a pergunta
+# inócua que ela é, ou de o gate ficar aberto quando falta contexto. EXPECT preenchido por MEDIÇÃO.
+#
+# Fora deste contrato, por ser mutação de várias linhas: tirar o try/catch do descarte do corpo.
+# Ela foi medida à mão numa cópia (vermelha em "descartar o corpo FALHA") — registro em
+# docs/historico/scanner-lovable-rescan-lote5.md.
+#
+# ── quem dispensa a sonda ──
+PEGA | staff passa como servidor (gate sempre ok)      | s/principal\.via === "service_role"\) return \{ ok: true, por: "servidor" \};/principal.via === "service_role" || principal.via === "staff") return { ok: true, por: "servidor" };/
+PEGA | principal desconhecido nasce com acesso         | s/console\.error\("\[dono-pela-rls\] principal desconhecido[^"]*"\);/return { ok: true, por: "servidor" };/
+# ── o que a sonda conclui ──
+PEGA | zero linha vira "pode"                          | s/if \(linhas\.length === 0\) return \{ tipo: "nao_pode" \};/if (linhas.length === 0) return { tipo: "pode" };/
+PEGA | 403 do banco vira "pode"                        | s/if \(res\.status === 403\) \{/if (res.status === 403) return { tipo: "pode" }; if (res.status === 403) {/
+PEGA | HTTP de erro vira "pode"                        | s/return \{ tipo: "sem_veredito", motivo: `HTTP \$\{res\.status\}`, transitorio: res\.status >= 500 \|\| res\.status === 429 \};/return { tipo: "pode" };/
+PEGA | resposta que nao e lista vira "pode"            | s/return \{ tipo: "sem_veredito", motivo: "resposta [^"]*", transitorio: false \};/return { tipo: "pode" };/
+PEGA | linha de OUTRO id passa                         | s/if \(linhas\.length !== 1 \|\| typeof devolvido !== "string" \|\| devolvido\.toLowerCase\(\) !== alvo\) \{/if (linhas.length !== 1) {/
+PEGA | DUAS linhas passam                              | s/if \(linhas\.length !== 1 \|\| typeof devolvido !== "string" \|\| devolvido\.toLowerCase\(\) !== alvo\) \{/if (typeof devolvido !== "string" || devolvido.toLowerCase() !== alvo) {/
+PEGA | fetch que lanca vira "pode"                     | s/return \{ tipo: "sem_veredito", motivo: err instanceof Error \? err\.name : "erro", transitorio: true \};/return { tipo: "pode" };/
+PEGA | corpo ilegivel vira "pode"                      | s/return \{ tipo: "sem_veredito", motivo: "corpo [^"]*", transitorio: true \};/return { tipo: "pode" };/
+# ── a forma da sonda ──
+PEGA | id sem validar uuid vai para a URL              | s/if \(typeof id !== "string" \|\| !FORMA_DE_UUID\.test\(id\)\) \{/if (typeof id !== "string") {/
+PEGA | sonda SEM o filtro da PK                        | s/\?id=eq\.\$\{alvo\}&select=id/?select=id/
+PEGA | corpo sem a PK                                  | s/body: JSON\.stringify\(\{ id: alvo \}\),/body: JSON.stringify({}),/
+PEGA | sonda com a service-role no Authorization       | s/Authorization: authHeader,/Authorization: `Bearer \$\{Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")\}`,/
+PEGA | apikey service-role                             | s/apikey: anonKey,/apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? anonKey,/
+PEGA | Prefer return=minimal (sem linha de volta)      | s/Prefer: "return=representation",/Prefer: "return=minimal",/
+PEGA | sem o schema explicito                          | s/"Content-Profile": "public",/"X-Sem-Perfil": "x",/
+PEGA | uuid sem normalizar para minusculas             | s/const alvo = id\.toLowerCase\(\);/const alvo = id;/
+# ── fechado quando falta contexto ──
+PEGA | staff sem Bearer segue                          | s/return recusaDoGateDeDono\(401, DONO_SEM_JWT, "[^"]*"\);/return { ok: true, por: "rls" };/
+PEGA | sem anon key segue                              | s/const anonKey = Deno\.env\.get\("SUPABASE_ANON_KEY"\);/const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "sem-anon";/
+# ── repeticao e teto ──
+PEGA | sem repeticao em falha transitoria              | s/const TENTATIVAS_DA_SONDA_DE_DONO = 2;/const TENTATIVAS_DA_SONDA_DE_DONO = 1;/
+PEGA | repete 5 vezes                                  | s/const TENTATIVAS_DA_SONDA_DE_DONO = 2;/const TENTATIVAS_DA_SONDA_DE_DONO = 5;/
+PEGA | repete ate o "nao" do banco                     | s/if \(veredito\.tipo !== "sem_veredito" \|\| !veredito\.transitorio\) break;/if (veredito.tipo === "pode") break;/
+PEGA | repete o que nao e transitorio                  | s/if \(veredito\.tipo !== "sem_veredito" \|\| !veredito\.transitorio\) break;/if (veredito.tipo !== "sem_veredito") break;/
+PEGA | o teto nao cobre a leitura do corpo             | s/linhas = await Promise\.race\(\[res\.json\(\), estourou\]\);/linhas = await res.json();/
