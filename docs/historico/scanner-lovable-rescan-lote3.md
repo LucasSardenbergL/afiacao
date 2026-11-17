@@ -60,6 +60,15 @@ Achado colateral: o auto-vínculo da aprovação estava **morto**. `buscar_por_d
 
 Prova: `db/test-seg-b339-vinculo-conferido.sh` (PG17, sobre a migration do #3912). O controle A0 mostra o furo de antes, e há 18 asserções. As 9 sabotagens ficaram vermelhas em C e em pt_BR, com o controle verde na mesma invocação. Sabotar só o `IF NOT FOUND` ficou VERDE, porque o `IS DISTINCT FROM`, com o código atual NULL, também barra o vínculo novo: é uma 2ª camada, redundante, e a sabotagem abre as duas. Testes Deno: `conferencia-vinculo_test.ts` (7). Gates de texto em `edge-money-path-invariants`, falsificados trocando a admissão do employee pela RPC.
 
+**Deploy ([#3925](https://github.com/LucasSardenbergL/afiacao/pull/3925), em 2026-11-16/17, 1,5 crédito):**
+
+- Migration aplicada pelo `db:aplicar`: o ensaio deu POST-OK, a tentativa #1150 virou recibo, e a validação por psql-ro confirmou o ramo novo do employee na RPC e a `admitir_vinculo_conferido` DEFINER, executável só pelo service_role. Ela foi ANTES da edge, como manda o pacote. Entre a migration e a edge, a v1.11 fazia o employee receber 42501 no vínculo novo, um erro fechado.
+- A edge saiu pelo `pendencias-pacote` (`f9aef70c25d8`, verbatim, 17/17 hashes, "No files were edited"). O `sayerlack-importar-pedido-portal` v1.16, também pendente, ficou fora da leva: é do #3923, de outra sessão.
+- Sonda `db/sonda-seg-b339-vinculo-conferido-20261116.sql`, na tentativa #1154: DEPLOY CONFIRMADO em `v1.12-vinculo-conferido`, com o fingerprint batendo.
+- Sensor do bot, 5,3 min após o envio: `EDICAO_DETECTADA`, mas só porque a resposta trazia `commit_sha`. O commit apontado (`33d1b985b`) é a regeração do `types.ts`, que é tolerada: entraram a `admitir_vinculo_conferido` e o overload do sayerlack que já estão na PROD. Nada a reverter, como em [baixa-po-sombra-associacao.md](baixa-po-sombra-associacao.md).
+- `pendencias:deploy`: a `omie-cliente` confere. O que sobra é o `sayerlack-importar-pedido-portal`, do #3923.
+- Publish do front (`AdminApprovals.tsx`): é do founder.
+
 Fora do escopo, como follow-up: a unicidade NORMALIZADA de `profiles.document` no banco (hoje há 0 duplicados em 16.091); o vendedor NULL até o `omie-analytics-sync` preencher, que é comportamento de antes; a aprovação de acesso separada da admissão. Também `is_approved`: a RLS de `profiles` só deixa o master dar UPDATE, então a aprovação feita por um employee não grava.
 
 ## Lições
