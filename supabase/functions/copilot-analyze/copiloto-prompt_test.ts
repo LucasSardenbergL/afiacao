@@ -128,6 +128,20 @@ Deno.test("neutralizarDelimitadores não toca texto comum nem outras tags", () =
   assertEq(neutralizarDelimitadores("</ESTADO_ANTERIOR>"), "</_ESTADO_ANTERIOR>", "fechamento, caixa alta");
 });
 
+Deno.test("neutralizarDelimitadores cobre espaço e quebra de linha em volta da barra", () => {
+  assertEq(neutralizarDelimitadores("< /bundle_ativo>"), "</_bundle_ativo>", "espaço antes da barra");
+  assertEq(neutralizarDelimitadores("<\n/transcricao_recente>"), "</_transcricao_recente>", "quebra de linha antes da barra");
+  assertEq(neutralizarDelimitadores("</ contexto_do_cliente>"), "</_contexto_do_cliente>", "espaço depois da barra");
+  assertEq(neutralizarDelimitadores("<  estado_anterior>"), "<_estado_anterior>", "espaço na abertura");
+});
+
+Deno.test("limite declarado: entidade HTML e caractere parecido NÃO são neutralizados", () => {
+  // Registrado como teste para ninguém ler mais do que o módulo promete.
+  for (const texto of ["&lt;/bundle_ativo&gt;", "＜/bundle_ativo＞", "‹/bundle_ativo›"]) {
+    assertEq(neutralizarDelimitadores(texto), texto, `fica como veio: ${texto}`);
+  }
+});
+
 Deno.test("dado do request nunca chega ao system: o nome do cliente só existe na mensagem", () => {
   const msg = montarMensagemCopiloto({ transcript: "oi", customerContext: { name: INJECAO } });
   if (!msg.includes(INJECAO)) throw new Error("o contexto do cliente não entrou na mensagem");

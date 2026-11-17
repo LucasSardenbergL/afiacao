@@ -12,10 +12,16 @@
 //   · generate-bundle-argument e copilot-analyze — o `system` de toda chamada à Anthropic é
 //     texto fixo, ou um template que só interpola nome de uma lista fechada. Nada do body.
 //
-// Fronteira, dita aqui para ninguém ler mais do que o teste prova: é análise sintática deste
-// arquivo. Alias (`const x = customerProfile` seguido de `${x}`), getter e Proxy ficam fora —
-// por isso a lista do que pode ser interpolado é FECHADA por nome e a origem de cada nome é
-// conferida (import do módulo certo, ou uma declaração só, com o inicializador exato).
+// Fronteira, dita aqui para ninguém ler mais do que o teste prova: é análise SINTÁTICA do
+// `index.ts`. O que ela confere: o inicializador de cada variável que vira `system` ou linha; que
+// essas variáveis são `const`; que o objeto passado ao `messages.create` não tem spread e tem um
+// `system` só; e que a variável das linhas não é tocada entre o builder e o `bulkInsert`.
+// O que fica fora: alias (`const x = customerProfile` seguido de `${x}` — por isso a lista do que
+// pode ser interpolado é FECHADA por nome, com a origem de cada nome conferida), getter, Proxy,
+// mutação feita dentro de uma função chamada, e tudo o que não é este arquivo. Na
+// `tint-sync-agent` quem cobre o que sobra é o teste que EXECUTA o handler (`index_test.ts`):
+// ele olha o corpo do POST que sai. As duas edges de IA não têm esse teste — importam o SDK da
+// Anthropic por `npm:` e não carregam na suíte offline.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
@@ -60,6 +66,25 @@ function declaracoesDe(sf: ts.SourceFile, nome: string): ts.VariableDeclaration[
   return achadas;
 }
 
+function ehConst(d: ts.VariableDeclaration): boolean {
+  return ts.isVariableDeclarationList(d.parent) && (d.parent.flags & ts.NodeFlags.Const) !== 0;
+}
+
+/** Quantas vezes `nome` aparece como VARIÁVEL (não como nome de propriedade) no bloco que o declara. */
+function usosNoBloco(decl: ts.VariableDeclaration, nome: string): number {
+  let bloco: ts.Node = decl;
+  while (bloco.parent && !ts.isBlock(bloco) && !ts.isSourceFile(bloco)) bloco = bloco.parent;
+  let usos = 0;
+  visitar(bloco, (n) => {
+    if (!ts.isIdentifier(n) || n.text !== nome) return;
+    const pai = n.parent;
+    if (ts.isPropertyAccessExpression(pai) && pai.name === n) return;
+    if (ts.isPropertyAssignment(pai) && pai.name === n) return;
+    usos += 1;
+  });
+  return usos;
+}
+
 // ─── tint-sync-agent: de onde vêm as linhas do bulkInsert ──────────────────────────────────────
 
 const MODULO_CATALOGO = './catalogo-rows.ts';
@@ -88,11 +113,18 @@ function problemasDoBulkInsert(fonte: string): string[] {
     const decl = decls[decls.length - 1];
     const ini = decl?.initializer;
     if (
-      !ini || !ts.isCallExpression(ini) || !ts.isPropertyAccessExpression(ini.expression) ||
+      !decl || !ini || !ts.isCallExpression(ini) || !ts.isPropertyAccessExpression(ini.expression) ||
       ini.expression.name.text !== 'map' || ini.arguments.length !== 1 || !ts.isArrowFunction(ini.arguments[0])
     ) {
       problemas.push(`bulkInsert(${linhas.text}): as linhas não saem de um .map(arrow) declarado antes da chamada`);
       continue;
+    }
+    if (!ehConst(decl)) problemas.push(`bulkInsert(${linhas.text}): a variável das linhas não é const`);
+    // Declaração + argumento do bulkInsert = 2. Um 3º uso é a linha sendo tocada depois do builder
+    // (`rows.forEach((r) => { r.created_at = ... })`).
+    const usos = usosNoBloco(decl, linhas.text);
+    if (usos !== 2) {
+      problemas.push(`bulkInsert(${linhas.text}): a variável das linhas é usada além da declaração e do bulkInsert (${usos} usos)`);
     }
     const corpo = ini.arguments[0].body;
     if (ts.isCallExpression(corpo)) {
@@ -171,10 +203,16 @@ function problemasDoSystem(fonte: string, regra: RegraSystem): string[] {
     const prop = arg && ts.isObjectLiteralExpression(arg)
       ? arg.properties.find((p) => ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === 'system')
       : undefined;
-    if (!prop || !ts.isPropertyAssignment(prop)) {
+    if (!arg || !ts.isObjectLiteralExpression(arg) || !prop || !ts.isPropertyAssignment(prop)) {
       problemas.push('messages.create sem `system: <expr>` no objeto literal');
       return;
     }
+    // Um `...{ system: x }` depois, ou um 2º `system:`, sobrescreveria o que foi conferido.
+    if (arg.properties.some((p) => ts.isSpreadAssignment(p))) {
+      problemas.push('spread no objeto do messages.create — poderia sobrescrever o system');
+    }
+    const quantos = arg.properties.filter((p) => p.name?.getText(sf).replace(/["']/g, '') === 'system').length;
+    if (quantos !== 1) problemas.push(`mais de um \`system\` no objeto do messages.create (${quantos})`);
     const valor = prop.initializer;
     if (!ts.isIdentifier(valor)) {
       problemas.push(...problemasDoTemplate(valor, sf, regra, 'system inline'));
@@ -189,6 +227,7 @@ function problemasDoSystem(fonte: string, regra: RegraSystem): string[] {
     const decls = declaracoesDe(sf, valor.text);
     if (decls.length === 0) problemas.push(`system: ${valor.text} não tem declaração neste arquivo nem é constante permitida`);
     for (const d of decls) {
+      if (!ehConst(d)) problemas.push(`system: ${valor.text} não é const (poderia ser regravado com dado do body)`);
       if (!d.initializer) problemas.push(`system: ${valor.text} declarado sem inicializador`);
       else problemas.push(...problemasDoTemplate(d.initializer, sf, regra, `system ${valor.text}`));
     }
@@ -241,6 +280,7 @@ function problemasDaMensagemDoCopiloto(fonte: string): string[] {
   if (!ini || !ts.isCallExpression(ini) || !ts.isIdentifier(ini.expression) || ini.expression.text !== 'montarMensagemCopiloto') {
     problemas.push('mensagemUsuario não nasce de montarMensagemCopiloto(...)');
   }
+  if (!ehConst(decls[0])) problemas.push('mensagemUsuario não é const');
   if (!importadoDe(sf, 'montarMensagemCopiloto', MODULO_PROMPT)) {
     problemas.push(`montarMensagemCopiloto não é o importado de ${MODULO_PROMPT}`);
   }
@@ -295,6 +335,8 @@ describe('lote 6 do scanner — tint-sync-agent: a linha de staging não sai do 
     ['created_at com nome fixo no objeto de precos_base', 'cod_produto: item.cod_produto ?? null,', 'created_at: item.created_at, cod_produto: item.cod_produto ?? null,', 'coluna do servidor com nome fixo'],
     ['builder vindo de outro módulo', 'from "./catalogo-rows.ts";', 'from "./outro-modulo.ts";', `não é o importado de ${MODULO_CATALOGO}`],
     ['os itens crus do payload no lugar das linhas', 'tabela, rows, 500', 'tabela, items, 500', 'não saem de um .map(arrow)'],
+    ['linha tocada DEPOIS do builder', 'const { insertedCount } = await bulkInsert(STAGING_CATALOGO[entityType].tabela, rows, 500,', 'rows.forEach((r, i) => { r.created_at = items[i].created_at; }); const { insertedCount } = await bulkInsert(STAGING_CATALOGO[entityType].tabela, rows, 500,', 'usada além da declaração e do bulkInsert (3 usos)'],
+    ['linhas em variável regravável', 'const rows: Record<string, unknown>[] = items.map((item) =>', 'let rows: Record<string, unknown>[] = items.map((item) =>', 'não é const'],
     ['linhas como expressão, sem variável', 'tabela, rows, 500', 'tabela, items as never, 500', 'não é um identificador'],
   ])('mutante: %s → vermelho', (_nome, de, para, marca) => {
     const problemas = problemasDoBulkInsert(mutar(fonte, de, para));
@@ -319,6 +361,9 @@ describe('lote 6 do scanner — generate-bundle-argument: o system só interpola
     ['perfil cru do body no system', 'PERFIL DO CLIENTE: ${perfil}', 'PERFIL DO CLIENTE: ${customerProfile}', 'interpola customerProfile'],
     ['campo do cliente no system', 'PERFIL DO CLIENTE: ${perfil}', 'PERFIL DO CLIENTE: ${customer.name}', 'interpola customer.name'],
     ['system concatenado com dado do body', 'system: systemPrompt,', 'system: systemPrompt + String(customer.name),', 'não é texto fixo nem template'],
+    ['system regravável', 'const systemPrompt = `Você é um consultor especialista em venda consultiva', 'let systemPrompt = `Você é um consultor especialista em venda consultiva', 'não é const'],
+    ['spread sobrescrevendo o system', 'system: systemPrompt,', 'system: systemPrompt, ...{ system: String(customerProfile) },', 'spread no objeto do messages.create'],
+    ['segundo system no mesmo objeto', 'system: systemPrompt,', 'system: systemPrompt, system: String(customerProfile),', 'mais de um `system`'],
   ])('mutante: %s → vermelho', (_nome, de, para, marca) => {
     expect(problemasDoSystem(mutar(fonte, de, para), REGRA_BUNDLE).join('\n')).toContain(marca);
   });
@@ -354,6 +399,8 @@ describe('lote 6 do scanner — copilot-analyze: system fixo, dado do request na
   it.each([
     ['system com o contexto do cliente', 'system: SYSTEM_PROMPT_COPILOTO,', 'system: `Contexto: ${customerContext}`,', 'interpola customerContext'],
     ['system montado por função', 'system: SYSTEM_PROMPT_COPILOTO,', 'system: montarSystem(customerContext),', 'não é texto fixo nem template'],
+    ['spread sobrescrevendo o system', 'system: SYSTEM_PROMPT_COPILOTO,', 'system: SYSTEM_PROMPT_COPILOTO, ...{ system: transcript },', 'spread no objeto do messages.create'],
+    ['segundo system no mesmo objeto', 'system: SYSTEM_PROMPT_COPILOTO,', 'system: SYSTEM_PROMPT_COPILOTO, system: transcript,', 'mais de um `system`'],
     ['constante vinda de outro módulo', 'SYSTEM_PROMPT_COPILOTO } from "./copiloto-prompt.ts";', 'SYSTEM_PROMPT_COPILOTO } from "./outro-modulo.ts";', `não é o importado de ${MODULO_PROMPT}`],
   ])('mutante: %s → vermelho', (_nome, de, para, marca) => {
     expect(problemasDoSystem(mutar(fonte, de, para), REGRA_COPILOTO).join('\n')).toContain(marca);
@@ -362,6 +409,7 @@ describe('lote 6 do scanner — copilot-analyze: system fixo, dado do request na
   it.each([
     ['transcrição crua na mensagem', "content: mensagemUsuario }", "content: `Transcrição recente:\\n${transcript}` }", 'content da mensagem não é mensagemUsuario'],
     ['mensagem montada sem o módulo', 'const mensagemUsuario = montarMensagemCopiloto({', 'const mensagemUsuario = JSON.stringify({', 'não nasce de montarMensagemCopiloto'],
+    ['mensagem regravável', 'const mensagemUsuario = montarMensagemCopiloto({', 'let mensagemUsuario = montarMensagemCopiloto({', 'mensagemUsuario não é const'],
   ])('mutante: %s → vermelho', (_nome, de, para, marca) => {
     expect(problemasDaMensagemDoCopiloto(mutar(fonte, de, para)).join('\n')).toContain(marca);
   });

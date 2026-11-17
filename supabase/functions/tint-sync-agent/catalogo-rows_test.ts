@@ -64,8 +64,10 @@ Deno.test("colunas do servidor NUNCA saem do item — created_at, id e matched_i
     assertEq(row.account, CONTA, `${entidade}: account`);
     assertEq(row.store_code, LOJA, `${entidade}: store_code`);
     assertEq(row.staging_status, "pending", `${entidade}: staging_status`);
-    // raw_data é o item INTEIRO, o mesmo objeto — o que foi descartado continua como evidência.
-    assertEq(row.raw_data, item, `${entidade}: raw_data é o item recebido`);
+    // raw_data é o item INTEIRO — o que foi descartado continua lá, como evidência. Compara o
+    // CONTEÚDO: o que importa é o que vai gravado, não ser o mesmo objeto em memória.
+    assertEq(JSON.stringify(row.raw_data), JSON.stringify(item), `${entidade}: raw_data é o item recebido`);
+    assertEq((row.raw_data as TintCatalogItem).created_at, "2099-01-01T00:00:00Z", `${entidade}: a coluna forjada segue no raw_data`);
   }
 });
 
@@ -293,4 +295,9 @@ Deno.test("chavesDescartadas: nome longo é truncado (o nome vem do agente)", ()
   assertEq(saida.length, 1, "uma chave");
   assertEq(saida[0].length, MAX_TAMANHO_DE_CHAVE_NO_AVISO, "tamanho truncado");
   assertEq(MAX_TAMANHO_DE_CHAVE_NO_AVISO, 60, "teto");
+});
+
+Deno.test("chavesDescartadas: controle e separador de linha no nome viram '?' (o nome vai para o log)", () => {
+  const item = JSON.parse('{"cod_produto":"P1","a\\nb":1,"c\\u2028d":2,"e\\u0000f":3,"normal":4}') as TintCatalogItem;
+  assertEq(chavesDescartadas("produtos", [item]).join(","), "a?b,c?d,e?f,normal", "nomes saneados");
 });

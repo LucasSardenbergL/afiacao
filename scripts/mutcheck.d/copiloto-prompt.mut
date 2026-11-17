@@ -23,7 +23,8 @@ PEGA | delimitador nao e neutralizado                   | s/return texto\.replac
 PEGA | bloco nao neutraliza o conteudo                  | s/\$\{neutralizarDelimitadores\(conteudo\)\}/\$\{conteudo\}/
 PEGA | neutraliza so a 1a ocorrencia                    | s/, "gi"\);/, "i");/
 PEGA | neutralizacao sensivel a caixa                   | s/, "gi"\);/, "g");/
-PEGA | neutraliza so abertura (fechamento passa)        | s/"<\$1_\$2"/"<\$1\$2"/
+PEGA | a troca nao altera o nome do bloco               | s/"<\$1_\$2"/"<\$1\$2"/
+PEGA | espaco antes da barra deixa de ser coberto       | s#<\\\\s\*\(/\?\)#<(/?)#
 # ── ausência não vira dado ──
 PEGA | contexto ausente vira objeto vazio               | s/: "Não disponível"\)/: "{}")/
 PEGA | bundle ausente vira vazio                        | s/: "Nenhum"\)/: "")/

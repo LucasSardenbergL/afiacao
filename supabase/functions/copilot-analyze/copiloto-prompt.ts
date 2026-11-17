@@ -76,11 +76,15 @@ export function intencaoAnterior(valor: unknown): string {
   return typeof valor === "string" && INTENCOES_DA_TOOL.includes(valor) ? valor : ESTADO_DESCONHECIDO;
 }
 
-const RE_DELIMITADOR = new RegExp(`<(/?)\\s*(${BLOCOS_DE_DADO.join("|")})`, "gi");
+const RE_DELIMITADOR = new RegExp(`<\\s*(/?)\\s*(${BLOCOS_DE_DADO.join("|")})`, "gi");
 
 /**
  * Tira do TEXTO de um bloco a capacidade de abrir ou fechar um bloco: `</transcricao_recente>`
- * dentro da fala do cliente vira `</_transcricao_recente>`, que não é delimitador.
+ * dentro da fala do cliente vira `</_transcricao_recente>`, que não é delimitador. Cobre maiúsculas
+ * e espaço ou quebra de linha em volta da barra.
+ *
+ * Limite declarado: entidade HTML (`&lt;/transcricao_recente&gt;`) e caractere parecido (`＜`)
+ * passam como vieram. O delimitador é uma fronteira de leitura para o modelo, não um parser.
  */
 export function neutralizarDelimitadores(texto: string): string {
   return texto.replace(RE_DELIMITADOR, "<$1_$2");

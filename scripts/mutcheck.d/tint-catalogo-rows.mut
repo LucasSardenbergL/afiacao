@@ -24,7 +24,8 @@ PEGA | sync_run_id do item vence                        | s/sync_run_id: runId,/
 PEGA | account do item vence                            | s/^    account,$/    account: (item.account as string) ?? account,/
 PEGA | store_code do item vence                         | s/store_code: storeCode,/store_code: (item.store_code as string) ?? storeCode,/
 PEGA | staging_status do item vence                     | s/staging_status: "pending",/staging_status: (item.staging_status as string) ?? "pending",/
-PEGA | raw_data deixa de ser o item inteiro             | s/raw_data: item,/raw_data: { ...item },/
+PEGA | raw_data perde a coluna forjada (a evidencia)     | s/raw_data: item,/raw_data: { ...item, created_at: undefined },/
+PEGA | raw_data vira so a chave da entidade              | s/raw_data: item,/raw_data: { chave: item[config.chave] },/
 # ── a edge fabrica ou converte valor ──
 PEGA | ausente vira null explicito                      | s/if \(Object\.prototype\.hasOwnProperty\.call\(item, coluna\)\) row\[coluna\] = item\[coluna\];/row[coluna] = item[coluna] ?? null;/
 PEGA | texto vira numero                                | s/\) row\[coluna\] = item\[coluna\];/) row[coluna] = typeof item[coluna] === "string" ? Number(item[coluna]) : item[coluna];/
@@ -40,5 +41,7 @@ PEGA | chave de bases trocada                           | s/chave: "id_base_saye
 PEGA | aviso nao lista coluna do servidor               | s/if \(gravadas\.has\(chave\)\) continue;/if (gravadas.has(chave) || chave === "created_at") continue;/
 PEGA | id nunca e avisado (mesmo sobrando)              | s/if \(chave === "id" && idViraChave\) continue;/if (chave === "id") continue;/
 PEGA | id avisado mesmo quando e a chave                | s/if \(chave === "id" && idViraChave\) continue;//
-PEGA | nome da chave sem truncar                        | s/descartadas\.add\(chave\.slice\(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO\)\);/descartadas.add(chave);/
+PEGA | nome da chave sem truncar                        | s/descartadas\.add\(nomeParaLog\(chave\)\.slice\(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO\)\);/descartadas.add(nomeParaLog(chave));/
+PEGA | nome da chave sem sanear (quebra de linha no log) | s/descartadas\.add\(nomeParaLog\(chave\)\.slice\(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO\)\);/descartadas.add(chave.slice(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO));/
+PEGA | separador de linha Unicode passa pelo saneamento  | s/ \|\| cp === 0x2028 \|\| cp === 0x2029 \? "\?" : c;/ ? "?" : c;/
 PEGA | aviso sem ordenar                                | s/return \[\.\.\.descartadas\]\.sort\(\);/return [...descartadas];/

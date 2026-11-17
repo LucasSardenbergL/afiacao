@@ -140,6 +140,16 @@ export function montarStagingCatalogoRow(
 /** Tamanho máximo de cada nome devolvido por `chavesDescartadas` (o nome vem do agente). */
 export const MAX_TAMANHO_DE_CHAVE_NO_AVISO = 60;
 
+/** Controle e separador de linha (inclusive U+2028/U+2029) viram `?`: o nome vai para uma linha de log. */
+function nomeParaLog(chave: string): string {
+  let saida = "";
+  for (const c of chave) {
+    const cp = c.codePointAt(0) ?? 0;
+    saida += cp < 0x20 || cp === 0x7f || cp === 0x2028 || cp === 0x2029 ? "?" : c;
+  }
+  return saida;
+}
+
 /**
  * Nomes das chaves que os itens trouxeram e a lista fechada NÃO gravou (as do servidor
  * inclusive), sem repetição, em ordem e truncados. Alimenta o aviso de log do index.
@@ -161,7 +171,7 @@ export function chavesDescartadas(
     for (const chave of Object.keys(item)) {
       if (gravadas.has(chave)) continue;
       if (chave === "id" && idViraChave) continue;
-      descartadas.add(chave.slice(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO));
+      descartadas.add(nomeParaLog(chave).slice(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO));
     }
   }
   return [...descartadas].sort();
