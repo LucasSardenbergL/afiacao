@@ -55,6 +55,7 @@ import {
   type PedidoDisparadoLido,
   pedidosAReconciliar,
   provarLeitura,
+  type ProvaLeitura,
   carenciaTravada,
   reconsultasForaDaJanela,
   observacoesDaLista,
@@ -66,6 +67,7 @@ import {
   coberturaPendente,
   type PedidoACobrir,
 } from "./varredura.ts";
+import { classificarFiltroDoPedido, contarLinhasNaResposta, criarRastreioConsulta } from "./consulta-rastreio.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -104,6 +106,10 @@ export default async ({ page, context }) => {
   const lerSituacoesDom = ${lerSituacoesDom.toString()};
   const lerTabelaConsultaDom = ${lerTabelaConsultaDom.toString()};
   const lerTodasAsPaginas = ${lerTodasAsPaginas.toString()};
+  // De qual PEDIDO veio cada resposta da consulta (v1.13): ./consulta-rastreio.ts.
+  const criarRastreioConsulta = ${criarRastreioConsulta.toString()};
+  const classificarFiltroDoPedido = ${classificarFiltroDoPedido.toString()};
+  const contarLinhasNaResposta = ${contarLinhasNaResposta.toString()};
 
   const HARD_CEILING_MS = 150000;
   const RETURN_GUARD_MS = 2000;
@@ -118,9 +124,19 @@ export default async ({ page, context }) => {
     return allowed;
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // O que a página consultava em volta do nosso último clique (v1.13): vai junto em toda saída, sucesso ou falha —
+  // o trace não é guardado, e sem isto a próxima leitura estranha chega ao registro sem evidência.
+  let consultasVistas = null;
+  // A linha do tempo é fotografada NA SAÍDA: a resposta que derruba a leitura costuma chegar depois do clique.
+  let fotografarConsultas = null;
+  let erroDeOuvinte = null;
+  const consultasNaSaida = () => (consultasVistas
+    ? Object.assign({}, consultasVistas, fotografarConsultas ? { linha_do_tempo: fotografarConsultas() } : {}, erroDeOuvinte ? { ouvinte_erro: erroDeOuvinte } : {})
+    : null);
   const falha = async (erroTipo, erro, extra) => {
     const screenshot = await page.screenshot({ type: 'jpeg', quality: 60, encoding: 'base64' }).catch(() => null);
-    return { data: Object.assign({ success: false, erroTipo, erro, trace }, extra || {}), type: 'application/json', screenshot };
+    const vistas = consultasNaSaida();
+    return { data: Object.assign({ success: false, erroTipo, erro, trace }, vistas ? { consultas: vistas } : {}, extra || {}), type: 'application/json', screenshot };
   };
   const fillInput = async (selector, value) => {
     await page.click(selector);
@@ -140,6 +156,57 @@ export default async ({ page, context }) => {
       d.dismiss().catch(function() {});
     });
 
+    // Toda consulta que a PÁGINA fizer (ao abrir a tela, ao trocar um filtro, no nosso clique) passa por aqui, desde
+    // ANTES de a tela abrir: é o que deixa saber de qual pedido veio cada resposta. O total é o ANUNCIADO pelo próprio
+    // portal (DataTables server-side) — só o FILTRADO: recordsTotal é o universo antes dos filtros (Codex P2).
+    const consultas = criarRastreioConsulta();
+    const ehConsulta = (rq) => rq.url().indexOf('/order-viewer/form/list') !== -1 && rq.method() === 'POST';
+    // O pedido levava o NOSSO filtro? Decidido pelos CAMPOS que o pedido mandou (./consulta-rastreio.ts): true = os
+    // quatro campos batem; false = a emissão (ou a entrega) é outra data — é outra consulta; null = não deu para saber
+    // (o que o portal manda no POST nunca foi observado). A entrega 2020-01-01 é a que aplicarFiltrosConsultaDom põe.
+    const NOSSO_FILTRO = { emissao: String(emissaoDesde), entrega: '2020-01-01', cliente: String(clienteCodigo), exibir: '1' };
+    const levaNossoFiltro = (rq) => {
+      let corpo = null;
+      try { corpo = rq.postData(); } catch (e) { corpo = null; }
+      return classificarFiltroDoPedido(String(rq.url()), corpo, NOSSO_FILTRO);
+    };
+    fotografarConsultas = () => consultas.linhaDoTempo();
+    // Impressão do CORPO INTEIRO de uma resposta: duas respostas iguais desenham a mesma tabela. O corpo todo, e não
+    // um campo dele: resposta com as linhas noutro campo ganharia a mesma impressão de qualquer outra de igual total
+    // (Codex, rodada 3). Sem corpo legível não há impressão — e resposta sem impressão conta como divergente.
+    const assinar = (s) => {
+      let h = 2166136261;
+      for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+      return (h >>> 0).toString(16) + ':' + s.length;
+    };
+    // Ouvinte que lança derrubaria o script inteiro: aqui nada escapa — mas o erro fica MARCADO, e leitura com erro
+    // de observação não vale (Codex, rodada 3: o ouvinte que falha antes de registrar um pedido tira aquela consulta
+    // do rastreio, e a resposta dela mexeria na tabela sem ninguém ver).
+    const marcarErroDeOuvinte = (e) => { if (!erroDeOuvinte) erroDeOuvinte = String((e && e.message) || e).substring(0, 120); };
+    const semDerrubar = (f) => (x) => { try { f(x); } catch (e) { marcarErroDeOuvinte(e); } };
+    page.on('request', semDerrubar((rq) => { if (ehConsulta(rq)) consultas.pedida(rq, levaNossoFiltro(rq), Date.now()); }));
+    page.on('requestfailed', semDerrubar((rq) => { if (ehConsulta(rq)) consultas.falhou(rq, Date.now()); }));
+    page.on('response', semDerrubar((r) => {
+      const rq = r.request();
+      if (!ehConsulta(rq)) return;
+      const status = r.status();
+      r.text().then((t) => t, () => null).then((corpo) => {
+        let j = null;
+        try { j = typeof corpo === 'string' ? JSON.parse(corpo) : null; } catch (e) { j = null; }
+        let total = null; let chaves = null; let sucesso = null; let mensagem = null; let assinatura = null;
+        if (j && typeof j === 'object' && !Array.isArray(j)) {
+          chaves = Object.keys(j).slice(0, 20);
+          const cand = [j.recordsFiltered, j.iTotalDisplayRecords];
+          for (let k = 0; k < cand.length; k++) { if (cand[k] !== undefined && cand[k] !== null) { total = cand[k]; break; } }
+          // success CRU: ausente = null; presente e não booleano segue como veio (a prova só aceita true).
+          if (j.success !== undefined && j.success !== null) sucesso = typeof j.success === 'object' ? 'objeto' : j.success;
+          if (typeof j.message === 'string' && j.message) mensagem = j.message.substring(0, 120);
+        }
+        if (typeof corpo === 'string' && corpo.length > 0) assinatura = assinar(corpo);
+        consultas.respondida(rq, { ok: status < 400, status, total, chaves, sucesso, mensagem, assinatura, corpo: typeof corpo === 'string' ? corpo : null }, Date.now());
+      }).catch(marcarErroDeOuvinte);
+    }));
+
     // === Login ===
 ${ABRIR_CONSULTA_PEDIDOS}
     // As situações que o portal oferece (para a lista fechada de importáveis ser decidida com o dado real).
@@ -157,65 +224,133 @@ ${ABRIR_CONSULTA_PEDIDOS}
     if (filtro.ini) return await falha('FILTRO_NAO_APLICADO', 'Número do pedido inicial não ficou em branco', { filtro });
     await sleep(1500);
 
+    // A página consulta por conta própria, com o que estiver no formulário na hora (filtros padrão ⇒ vazia para a
+    // OBEN). Com uma dessas em voo no nosso clique, a resposta DELA chegava primeiro e o "0 de 0" dela virava a prova
+    // (6 das 20 rodadas das 22:30, 22/10–16/11/2026). Então: espera a página se aquietar antes de clicar...
+    const assentar = async (rotulo) => {
+      const ate = Date.now() + budgetFor('assentar-' + rotulo, 20000);
+      while (Date.now() < ate) {
+        if (consultas.emVoo() === 0) return true;
+        while (consultas.emVoo() > 0 && Date.now() < ate) await sleep(100);
+        // A resposta acabou de chegar: tempo de a página desenhá-la e religar o botão antes do clique.
+        await sleep(500);
+      }
+      return consultas.emVoo() === 0;
+    };
+    // ...e só vale a resposta do 1º pedido feito DEPOIS do clique — o que o clique gerou. Resposta de pedido anterior
+    // nunca vale por ele, chegue quando chegar.
     const esperarConsulta = async (rotulo, acao) => {
-      const resp = page.waitForResponse(
-        (r) => r.url().indexOf('/order-viewer/form/list') !== -1 && r.request().method() === 'POST',
-        { timeout: budgetFor('resposta-' + rotulo, 45000) },
-      ).then(async (r) => {
-        // Total ANUNCIADO pelo próprio portal (DataTables server-side: recordsFiltered/recordsTotal) — a prova de que a
-        // lista veio inteira (Onda 3: 2 rodadas leram 0 linhas e deram sucesso). Corpo ilegível ⇒ só as chaves no trace.
-        let total = null; let chaves = null;
-        try {
-          const j = await r.json();
-          if (j && typeof j === 'object' && !Array.isArray(j)) {
-            chaves = Object.keys(j).slice(0, 20);
-            // Só o FILTRADO: recordsTotal é o universo antes dos filtros (Codex P2) e daria erro permanente.
-            const cand = [j.recordsFiltered, j.iTotalDisplayRecords];
-            for (let k = 0; k < cand.length; k++) { if (cand[k] !== undefined && cand[k] !== null) { total = cand[k]; break; } }
-          }
-        } catch (e) { chaves = null; }
-        return { ok: r.status() < 400, status: r.status(), total, chaves };
-      }).catch((e) => ({ ok: false, erro: String((e && e.message) || e).substring(0, 120) }));
+      const tAntes = Date.now();
+      const emVooAntes = consultas.emVoo();
+      const assentou = await assentar(rotulo);
+      const tClique = Date.now();
+      const antes = consultas.clicar(tClique);
       await page.evaluate(acao);
-      return await resp;
+      const ate = tClique + budgetFor('resposta-' + rotulo, 45000);
+      let r = null;
+      while (Date.now() < ate) {
+        r = consultas.respostaDoClique();
+        if (r) break;
+        await sleep(100);
+      }
+      const vinculo = {
+        rotulo, antes, em_voo_antes: emVooAntes, assentou, espera_ms: tClique - tAntes,
+        depois: consultas.depoisDoClique(), resposta_ms: Date.now() - tClique, linha_do_tempo: consultas.linhaDoTempo(),
+      };
+      consultasVistas = vinculo;
+      if (!r) return { ok: false, erro: consultas.depoisDoClique() === 0 ? 'o clique não gerou consulta' : 'a consulta do clique não teve resposta', vinculo };
+      return { ok: r.ok, status: r.status, pedido: r.pedido, total: r.total, chaves: r.chaves, sucesso: r.sucesso, mensagem: r.mensagem, corpo: r.corpo, vinculo };
     };
     const clicarFiltrar = () => { const b = document.querySelector('#getFilterData'); if (b) b.click(); };
+    let tentativa = 1;
+    let anterior = null;
     let resp = await esperarConsulta('filtrar-1', clicarFiltrarDom);
-    if (!resp.ok) resp = await esperarConsulta('filtrar-2', clicarFiltrarDom);
-    trace.push({ step: 'consulta_resposta', resp, t: Date.now() - t0 });
+    if (!resp.ok) {
+      tentativa = 2;
+      anterior = { erro: resp.erro || ('HTTP ' + resp.status), vinculo: resp.vinculo };
+      resp = await esperarConsulta('filtrar-2', clicarFiltrarDom);
+    }
+    trace.push({ step: 'consulta_resposta', resp, tentativa, anterior, t: Date.now() - t0 });
+    // Vai ao ledger, com sucesso ou falha: quantas consultas a página já tinha feito, se alguma estava em voo quando
+    // íamos clicar e quanto se esperou por ela — a medida direta da condição do incidente, que antes não ficava em
+    // lugar nenhum — e o que deu errado na 1ª tentativa, quando houve 2.
+    const consultasDoFiltrar = Object.assign({ tentativa }, resp.vinculo, anterior ? { anterior } : {});
+    consultasVistas = consultasDoFiltrar;
     if (!resp.ok) return await falha('CONSULTA_SEM_RESPOSTA', 'O portal não respondeu à consulta (2 tentativas)');
 
     const lerPagina = () => page.evaluate(lerTabelaConsultaDom);
+    let motivoInstavel = null;
     const lerEstavel = async () => {
       let p = { ok: false, headers: [], linhas: [], processando: true, info: null, temProxima: false };
       for (let i = 0; i < 20; i++) {
         await sleep(500);
         budgetFor('poll-pagina', 1000);
         p = await lerPagina().catch(() => p);
-        if (p.ok && !p.processando) return p;
+        // A tabela só é NOSSA se nada mais mexeu nela: sem outra resposta de conteúdo diferente chegada depois do
+        // nosso clique (contagem igual não prova que as linhas são as da nossa resposta) e sem consulta em voo.
+        const outras = consultas.divergentes();
+        if (outras > 0) { motivoInstavel = outras + ' outra(s) consulta(s) da página responderam depois do nosso clique'; return null; }
+        if (p.ok && !p.processando && consultas.emVoo() === 0) return p;
+        motivoInstavel = !p.ok ? 'tabela ausente' : (p.processando ? 'tabela processando' : 'consulta da página em voo');
       }
-      // Tabela ausente ou ainda processando depois de 10 s: a página NÃO foi lida — nunca vira "lista completa".
+      // Tabela ausente, processando ou disputada depois de 10 s: a página NÃO foi lida — nunca vira "lista completa".
       return null;
     };
 
-    const lida = await lerTodasAsPaginas(
-      lerEstavel,
-      (n) => esperarConsulta('pagina-' + n, clicarProximaPaginaDom),
-      30,
-    );
-    if (!lida.ok && lida.erroTipo === 'CONSULTA_ILEGIVEL') return await falha('CONSULTA_ILEGIVEL', 'Tabela da consulta não estabilizou (ausente ou processando)');
+    // Cada página tem de ser da MESMA consulta (Codex, rodada 2: a "próxima" respondida por outra consulta entrava
+    // na lista): o pedido dela não leva outro filtro e anuncia o mesmo total da 1ª página.
+    let motivoPagina = null;
+    const avancarNaConsulta = (primeira, rotulo, corpos) => async (n) => {
+      const r = await esperarConsulta(rotulo + n, clicarProximaPaginaDom);
+      if (!r.ok) return r;
+      if (consultas.filtroDo(r.pedido) === false) { motivoPagina = 'o pedido da página ' + n + ' levava outro filtro'; return { ok: false }; }
+      if (String(r.total) !== String(primeira.total)) { motivoPagina = 'a página ' + n + ' anunciou ' + r.total + ' e a 1ª ' + primeira.total; return { ok: false }; }
+      corpos.push(r.corpo || '');
+      return r;
+    };
+    const corposLidos = [resp.corpo || ''];
+    const lida = await lerTodasAsPaginas(lerEstavel, avancarNaConsulta(resp, 'pagina-', corposLidos), 30);
+    if (!lida.ok && lida.erroTipo === 'CONSULTA_ILEGIVEL') return await falha('CONSULTA_ILEGIVEL', 'Tabela da consulta não estabilizou (' + (motivoInstavel || 'ausente ou processando') + ')');
     const linhas = lida.linhas;
     const paginas = lida.paginas;
-    if (!lida.ok && lida.erroTipo === 'PAGINACAO_SEM_RESPOSTA') return await falha('PAGINACAO_SEM_RESPOSTA', 'O portal não respondeu à página ' + (paginas + 1), { paginas, n_linhas: linhas.length });
-    if (!lida.ok && lida.erroTipo === 'PAGINACAO_ILEGIVEL') return await falha('PAGINACAO_ILEGIVEL', 'Página ' + (paginas + 1) + ' da consulta não estabilizou', { paginas, n_linhas: linhas.length });
+    if (!lida.ok && lida.erroTipo === 'PAGINACAO_SEM_RESPOSTA') return await falha('PAGINACAO_SEM_RESPOSTA', 'O portal não respondeu à página ' + (paginas + 1) + (motivoPagina ? ' (' + motivoPagina + ')' : ''), { paginas, n_linhas: linhas.length });
+    if (!lida.ok && lida.erroTipo === 'PAGINACAO_ILEGIVEL') return await falha('PAGINACAO_ILEGIVEL', 'Página ' + (paginas + 1) + ' da consulta não estabilizou (' + (motivoInstavel || 'ausente ou processando') + ')', { paginas, n_linhas: linhas.length });
     const headers = lida.primeira.headers;
     const infoInicial = lida.primeira.info;
     const dtTotalInicial = lida.primeira.dtTotal;
     trace.push({ step: 'consulta_lida', headers, paginas, n_linhas: linhas.length, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, dt_total: dtTotalInicial, t: Date.now() - t0 });
     if (!lida.ok) return await falha('PAGINACAO_INCOMPLETA', 'Mais de 30 páginas na consulta — lista não lida inteira', { paginas });
 
+    // 0 linhas é a única resposta que não traz evidência própria (linha lida carrega nº e data; "nenhuma" não): só
+    // vale REPETIDA. A mesma consulta, de novo, com a página quieta — quem compara as duas é o Deno (provarLeitura).
+    let zeroRepetido = null;
+    if (linhas.length === 0) {
+      const resp2 = await esperarConsulta('repete-zero', clicarFiltrarDom);
+      const lida2 = resp2.ok
+        ? await lerTodasAsPaginas(lerEstavel, avancarNaConsulta(resp2, 'repete-zero-pagina-', []), 30)
+        : null;
+      zeroRepetido = {
+        linhas: lida2 && lida2.ok ? lida2.linhas.length : null, total: resp2.ok ? resp2.total : null,
+        sucesso: resp2.ok ? resp2.sucesso : null, filtro: resp2.ok ? consultas.filtroDo(resp2.pedido) : null,
+      };
+      trace.push({ step: 'zero_repetido', resp: resp2, zero_repetido: zeroRepetido, t: Date.now() - t0 });
+    }
+
+    // Medida, ainda sem veto: quantas das linhas lidas na tabela têm o seu número no corpo da resposta do clique. Se o
+    // portal manda o nº do pedido no JSON (nunca observado), isto vira a prova de que a tabela lida É a da resposta.
+    const linhasNaResposta = contarLinhasNaResposta(linhas, corposLidos.join(' '));
+    consultasVistas = consultasDoFiltrar;
+    // Erro em ouvinte de rede = nem toda consulta da página foi observada: a leitura não vale.
+    if (erroDeOuvinte) return await falha('CONSULTA_NAO_OBSERVADA', 'Um ouvinte de rede do script falhou (' + erroDeOuvinte + '): as consultas da página não foram todas observadas');
+
     return {
-      data: { success: true, headers, linhas, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, dt_total: dtTotalInicial, paginas, situacoes, filtro, trace },
+      data: {
+        success: true, headers, linhas, info: infoInicial, resposta_total: resp.total, resposta_chaves: resp.chaves, dt_total: dtTotalInicial, paginas, situacoes, filtro, trace,
+        // v1.13: resp só existe como resposta do pedido que o NOSSO clique gerou (esperarConsulta) — é o que o Deno exige.
+        resposta_do_clique: true, resposta_sucesso: resp.sucesso, resposta_mensagem: resp.mensagem,
+        filtro_no_pedido: consultas.filtroDo(resp.pedido), consultas: consultasNaSaida(), zero_repetido: zeroRepetido,
+        linhas_na_resposta: linhasNaResposta,
+      },
       type: 'application/json',
     };
   } catch (e) {
@@ -237,6 +372,19 @@ interface BrowserlessData {
   resposta_chaves?: string[] | null;
   /** page.info().recordsDisplay da instância DataTables da tabela lida. */
   dt_total?: unknown;
+  /** v1.13: `true` só quando o total veio da resposta ao pedido que o NOSSO clique em Filtrar gerou. */
+  resposta_do_clique?: unknown;
+  /** v1.13: `success` e `message` do corpo dessa resposta (o portal responde erro com lista e totais zerados). */
+  resposta_sucesso?: unknown;
+  resposta_mensagem?: unknown;
+  /** v1.13: o pedido do nosso clique levava o nosso filtro? `false` = é de outra consulta; `null` = não deu para saber. */
+  filtro_no_pedido?: unknown;
+  /** v1.13: as consultas que a página fez em volta do nosso clique (`em_voo_antes` > 0 = a condição do incidente). */
+  consultas?: unknown;
+  /** v1.13: `{ linhas, total, sucesso, filtro }` da consulta repetida — só quando a 1ª leu 0 linhas. */
+  zero_repetido?: unknown;
+  /** v1.13 (medida, sem veto): quantas das linhas lidas têm o nº no corpo da resposta do nosso clique. */
+  linhas_na_resposta?: unknown;
   paginas?: number;
   situacoes?: { valor: string; texto: string }[];
   trace?: unknown[];
@@ -295,6 +443,18 @@ async function carregarAReconciliar(db: Db, apenas?: number): Promise<{ lista: P
   const vistosDesde = new Set(vistos.filter((v) => Number(v.visto_seq) >= Number(marcador.seq))
     .map((v) => idDoPo(v.omie_codigo_pedido)).filter((s): s is string => s !== null));
   return { lista: pedidosAReconciliar(pedidos, marcador, vistosDesde), marcador };
+}
+
+/** A prova de UMA leitura do portal. As 3 leituras da rodada (lista, cobertura e reconciliação) passam por aqui: sem
+ *  a resposta presa ao nosso clique nenhuma delas decide, e 0 linhas só com a consulta repetida (v1.13). */
+function provarEnvelope(env: BrowserlessData, lista: { ilegiveis: number; repetidos: string[] }): ProvaLeitura {
+  return provarLeitura({
+    headers: env.headers ?? [], linhasLidas: (env.linhas ?? []).length,
+    respostaTotal: env.resposta_total, dtTotal: env.dt_total, info: env.info,
+    ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
+    respostaDoClique: env.resposta_do_clique, respostaSucesso: env.resposta_sucesso, filtroNoPedido: env.filtro_no_pedido,
+    zeroRepetido: env.zero_repetido,
+  });
 }
 
 /** Uma leitura da Consulta Pedidos (Browserless) a partir de `emissaoDesde`. Não lança por resposta ruim: devolve
@@ -750,19 +910,23 @@ Deno.serve(async (req: Request) => {
     console.log(`[varrer-portal] Browserless ${Date.now() - t0}ms tipo=${envelope.erroTipo ?? "-"} linhas=${envelope.linhas?.length ?? "-"}`);
     if (envelope.success !== true) {
       causaPreProtocolo = `leitura:${envelope.erroTipo ?? "desconhecido"}`;
+      // v1.13: o que a página consultava vai ao registro também na falha (o trace do script não é guardado).
+      if (envelope.consultas != null) resumoFinal = { ...resumoFinal, emissao_desde: emissaoDesde, consultas_portal: envelope.consultas };
       throw new Error(`Leitura do portal falhou (${envelope.erroTipo ?? "?"}): ${envelope.erro ?? "sem detalhe"}`);
     }
 
     // 1b. PROVA de leitura completa (Onda 3, 3.1–3.4): colunas certas, total anunciado = linhas lidas (0 só com "0 de
     //     0"), nenhuma linha ilegível ou repetida. Lista sem prova não decide nada — nem "não há pedido".
     const lista = lerListaConsulta(envelope.linhas ?? []);
-    const prova = provarLeitura({
-      headers: envelope.headers ?? [], linhasLidas: (envelope.linhas ?? []).length,
-      respostaTotal: envelope.resposta_total, dtTotal: envelope.dt_total, info: envelope.info, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
-    });
+    const prova = provarEnvelope(envelope, lista);
     resumoFinal = {
       modo, versao: VERSAO, emissao_desde: emissaoDesde, paginas: envelope.paginas ?? null, info_portal: envelope.info ?? null,
       total_anunciado: prova.ok ? prova.total : (envelope.resposta_total ?? null), dt_total: envelope.dt_total ?? null, resposta_chaves: envelope.resposta_chaves ?? null,
+      // v1.13: o que o portal disse na resposta do NOSSO clique e o que a página consultava em volta dele — a próxima
+      // lista vazia chega ao ledger com a evidência (antes só as CHAVES da resposta ficavam).
+      resposta_sucesso: envelope.resposta_sucesso ?? null, resposta_mensagem: envelope.resposta_mensagem ?? null,
+      filtro_no_pedido: envelope.filtro_no_pedido ?? null, linhas_na_resposta: envelope.linhas_na_resposta ?? null,
+      consultas_portal: envelope.consultas ?? null, zero_repetido: envelope.zero_repetido ?? null,
       linhas_lidas: (envelope.linhas ?? []).length, lidos: lista.pedidos.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
       cabecalhos: envelope.headers ?? [], ilegiveis_detalhe: lista.ilegiveis_detalhe.slice(0, 20),
       // Rodada bloqueada não é "efetiva": o vigia exige prova_leitura='ok' e ela NÃO importou — o nome é outro.
@@ -1168,10 +1332,7 @@ Deno.serve(async (req: Request) => {
       return { ...resumo, leitura_falhou: `${env.erroTipo ?? "?"}: ${env.erro ?? "sem detalhe"}` };
     }
     const lida = lerListaConsulta(env.linhas ?? []);
-    const prova = provarLeitura({
-      headers: env.headers ?? [], linhasLidas: (env.linhas ?? []).length, respostaTotal: env.resposta_total, dtTotal: env.dt_total, info: env.info,
-      ilegiveis: lida.ilegiveis, repetidos: lida.repetidos,
-    });
+    const prova = provarEnvelope(env, lida);
     const parcial = !prova.ok && (prova.motivo === "linhas_ilegiveis" || prova.motivo === "protocolo_repetido");
     if (!prova.ok && !parcial) {
       falhasCobertura.push(`leitura estendida sem prova (${prova.motivo})`);
@@ -1220,10 +1381,7 @@ Deno.serve(async (req: Request) => {
       // vale aqui também — total anunciado = linhas lidas, sem ilegível nem repetido.
       if (env.success !== true) return { ...resumoRec, leitura_falhou: `${env.erroTipo ?? "?"}: ${env.erro ?? "sem detalhe"}` };
       const lida = lerListaConsulta(env.linhas ?? []);
-      const provaRec = provarLeitura({
-        headers: env.headers ?? [], linhasLidas: (env.linhas ?? []).length, respostaTotal: env.resposta_total, dtTotal: env.dt_total, info: env.info,
-        ilegiveis: lida.ilegiveis, repetidos: lida.repetidos,
-      });
+      const provaRec = provarEnvelope(env, lida);
       // Onda 5A: a situação vai ao pedido ANTES de decidir a reconciliação. Leitura provada grava tudo; com linha
       // ilegível/repetida (o resto é legível), só os 6 — bloquear é seguro, liberar não (Codex 5A rodadas 8-9).
       const parcial = !provaRec.ok && (provaRec.motivo === "linhas_ilegiveis" || provaRec.motivo === "protocolo_repetido");

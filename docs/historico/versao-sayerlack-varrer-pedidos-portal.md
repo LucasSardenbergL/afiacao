@@ -59,3 +59,26 @@ v1.11 (2026-11-08) — revisão 2, 4.3: `sessoes_browserless.importacao` conta s
 (v1.9+) respondeu `sessao_browserless: true`. `false` vai para `importacao_sem_sessao` (já com PO, recusa antes do
 portal). Sem o campo vai para `importacao_indeterminada`, e então `total` é null, com a faixa
 `total_minimo`/`total_maximo`. Ausente nunca vira zero. Deploy da importadora antes.
+
+v1.12 (2026-11-08) — revisão 2, 7.1: reconsulta de pedido do app sem PO com PO manual no Omie chama a RPC
+`sayerlack_vincular_po_manual`: casou ⇒ vincula, audita e resolve a pendência (`po_manual_vinculado`); não casou ou
+erro ⇒ a pendência fica com `vinculo_motivo`. Nunca re-dispara. Migration 20261111110000 antes.
+
+v1.13 (2026-11-17) — o "0 de 0" de OUTRA consulta não é prova. Incidente: 6 das 20 rodadas das 22:30 SP (22/10 a
+16/11) gravaram `sucesso` com 0 linhas, 4 delas com `prova_leitura='ok'`. A página do portal consulta por conta
+própria e o script tomava a primeira resposta de `/order-viewer/form/list` depois do clique pela nossa.
+- O script prende cada resposta ao PEDIDO que a gerou (`consulta-rastreio.ts`): espera a página se aquietar antes de
+  clicar, e só vale a resposta do 1º pedido feito DEPOIS do clique (o que o clique gerou).
+- O filtro do pedido é lido pelos CAMPOS que ele mandou (`classificarFiltroDoPedido`): emissão ou entrega INICIAL
+  com outra data = outra consulta; os 4 campos (nome exato) batendo = nossa; o resto = não deu para saber.
+- A tabela só é lida sem consulta em voo e sem outra resposta, de conteúdo diferente, chegada depois do clique
+  (contagem igual não prova que as linhas são as da nossa resposta). Na paginação, cada "próxima" tem de ter o mesmo
+  total e não levar outro filtro. 0 linhas faz o script REPETIR a consulta.
+- `provarLeitura`: sem `resposta_do_clique`, ou com o pedido do clique levando outro filtro ⇒ `resposta_sem_vinculo`;
+  0 linhas sem `success: true`, sem o nosso filtro no pedido ou sem a repetição confirmando ⇒ `zero_lidos_sem_prova`;
+  repetição com linha ⇒ `zero_nao_confirmado`.
+- Ledger, no sucesso e na falha: `consultas_portal` (linha do tempo das consultas da página; `em_voo_antes` > 0 = a
+  condição do incidente), `filtro_no_pedido`, `resposta_sucesso`, `resposta_mensagem`, `zero_repetido` e a medida
+  `linhas_na_resposta`. Ouvinte de evento que lança não derruba o script e invalida a leitura
+  (`CONSULTA_NAO_OBSERVADA`).
+- Sem migration. Detalhe e parecer do Codex em `varredura-portal-zero-de-outra-consulta.md`.

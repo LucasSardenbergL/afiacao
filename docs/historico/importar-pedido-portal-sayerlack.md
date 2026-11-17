@@ -272,6 +272,9 @@ Incidente que justifica a máquina (regra de máquina meta): **2 de 46 rodadas l
 - **Codex**: 1ª rodada 1 P1 + 5 P2; 2ª 4 P2; 3ª 1 P2 (erro de banco na reserva virava adiamento verde) — todos
   consertados. Deno `varredura_test.ts` 28 (falsificado: sem a checagem de total e sem a de 0 lidos, vermelho).
 - Changelog do `VERSAO` em `docs/historico/versao-sayerlack-varrer-pedidos-portal.md`.
+- **A prova tinha um furo (v1.13, 2026-11-17):** o "0 de 0" que ela aceitava podia ser de OUTRA consulta da página do
+  portal — 4 rodadas das 22:30 gravaram `prova_leitura='ok'` com lista falsamente vazia. Causa, evidência e conserto em
+  [varredura-portal-zero-de-outra-consulta.md](varredura-portal-zero-de-outra-consulta.md).
 
 ## Deploy das Ondas 2 e 3 (2026-11-07)
 
