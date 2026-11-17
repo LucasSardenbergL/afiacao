@@ -9,12 +9,13 @@ import {
   BLOCOS_DE_DADO,
   ESTADO_DESCONHECIDO,
   faseAnterior,
+  FASES_DA_TOOL as FASES,
   intencaoAnterior,
+  INTENCOES_DA_TOOL as INTENCOES,
   montarMensagemCopiloto,
   neutralizarDelimitadores,
   SYSTEM_PROMPT_COPILOTO,
 } from "./copiloto-prompt.ts";
-import { FASES, INTENCOES } from "./copiloto-tools.ts";
 
 function assertEq(atual: unknown, esperado: unknown, msg: string) {
   if (!Object.is(atual, esperado)) {
@@ -41,6 +42,13 @@ Deno.test("system prompt é texto fixo: declara os 4 blocos como dado e não car
 });
 
 Deno.test("system prompt lista exatamente os valores do enum da tool (fase e intenção)", () => {
+  // Enum vazio faria toda fase/intenção virar "desconhecida" em silêncio.
+  assertEq(FASES.join(","), "abertura,diagnostico,exploracao,proposta,fechamento", "fases da tool");
+  assertEq(
+    INTENCOES.join(","),
+    "interesse,objecao_preco,objecao_tecnica,falta_urgencia,comparacao_concorrente,indiferenca",
+    "intenções da tool",
+  );
   for (const v of [...FASES, ...INTENCOES]) {
     if (!SYSTEM_PROMPT_COPILOTO.includes(`"${v}"`)) throw new Error(`system não lista "${v}" do enum da tool`);
   }

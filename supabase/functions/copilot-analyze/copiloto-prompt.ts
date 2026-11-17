@@ -15,7 +15,11 @@
 // Isto reduz a superfície, não a zera: a transcrição é fala do cliente e continua sendo lida pelo
 // modelo. O que protege o vendedor de uma leitura fabricada segue sendo a tool forçada e o
 // `normalizarAnalise` (copiloto-tools.ts).
-import { FASES, INTENCOES } from "./copiloto-tools.ts";
+import { TOOL_COPILOTO } from "./copiloto-tools.ts";
+
+/** Fases e intenções válidas: as do enum da PRÓPRIA tool — uma lista só, sem cópia para divergir. */
+export const FASES_DA_TOOL: readonly string[] = TOOL_COPILOTO.input_schema.properties.phase.enum;
+export const INTENCOES_DA_TOOL: readonly string[] = TOOL_COPILOTO.input_schema.properties.intent.enum;
 
 /** Os blocos de dado da mensagem, na ordem em que aparecem. */
 export const BLOCOS_DE_DADO = [
@@ -64,12 +68,12 @@ export const ESTADO_DESCONHECIDO = "desconhecida";
 
 /** Só um valor do enum da tool passa; qualquer outra coisa (texto livre, objeto, ausente) vira "desconhecida". */
 export function faseAnterior(valor: unknown): string {
-  return typeof valor === "string" && (FASES as readonly string[]).includes(valor) ? valor : ESTADO_DESCONHECIDO;
+  return typeof valor === "string" && FASES_DA_TOOL.includes(valor) ? valor : ESTADO_DESCONHECIDO;
 }
 
 /** Idem para a intenção anterior. */
 export function intencaoAnterior(valor: unknown): string {
-  return typeof valor === "string" && (INTENCOES as readonly string[]).includes(valor) ? valor : ESTADO_DESCONHECIDO;
+  return typeof valor === "string" && INTENCOES_DA_TOOL.includes(valor) ? valor : ESTADO_DESCONHECIDO;
 }
 
 const RE_DELIMITADOR = new RegExp(`<(/?)\\s*(${BLOCOS_DE_DADO.join("|")})`, "gi");

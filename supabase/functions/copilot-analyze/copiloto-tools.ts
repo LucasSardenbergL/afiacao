@@ -16,7 +16,7 @@
 // mostra que a análise não veio. Sem leitura é pior que leitura errada? Não —
 // leitura errada é pior, porque ela AGE sobre ela.
 
-export const INTENCOES = [
+const INTENCOES = [
   "interesse",
   "objecao_preco",
   "objecao_tecnica",
@@ -25,7 +25,7 @@ export const INTENCOES = [
   "indiferenca",
 ] as const;
 
-export const FASES = [
+const FASES = [
   "abertura",
   "diagnostico",
   "exploracao",
