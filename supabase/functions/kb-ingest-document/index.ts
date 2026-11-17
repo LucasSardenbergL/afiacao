@@ -3,7 +3,9 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import OpenAI from "npm:openai@^4.65.0";
 import pdfParse from "npm:pdf-parse@1.1.1";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { exigirDonoPelaRls } from "../_shared/dono-pela-rls.ts";
 import { chunkText } from "./chunk-text.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 interface IngestRequest {
   documentId: string;
@@ -15,6 +17,23 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // SONDA DE VERSÃO — depois do gate (o cron a alcança pelo `x-cron-secret`) e ANTES de qualquer
+  // credencial, leitura ou escrita. O corpo é lido UMA vez, aqui; `undefined` marca JSON inválido,
+  // que segue respondendo 400 no ponto de sempre, mais abaixo.
+  const corpoBruto: unknown = await req.json().catch(() => undefined);
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
@@ -25,23 +44,29 @@ Deno.serve(async (req) => {
     );
   }
 
-  const supabase = createClient(supabaseUrl, serviceKey);
-  const openai = new OpenAI({ apiKey: openaiKey });
-
-  let body: IngestRequest;
-  try {
-    body = await req.json();
-  } catch {
+  if (corpoBruto === undefined) {
     return new Response(JSON.stringify({ error: "Invalid JSON" }), {
       status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+  const body = (corpoBruto ?? {}) as IngestRequest;
 
   if (!body.documentId) {
     return new Response(JSON.stringify({ error: "documentId required" }), {
       status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+
+  // Gate de DONO (scanner Lovable, lote 5). Daqui para baixo tudo roda com service-role, que ignora
+  // a RLS — inclusive o `markError`, que também escreve. Staff só passa se a policy de UPDATE de
+  // `kb_documents` (master OU autor) deixa ESTE usuário alterar ESTE documento; quem responde é o
+  // banco, com o JWT dele. cron e service_role não têm usuário e seguem como antes. A recusa sai
+  // ANTES de o cliente service-role existir: nenhuma leitura, embedding ou escrita vem antes.
+  const dono = await exigirDonoPelaRls(req, auth, "kb_documents", body.documentId);
+  if (!dono.ok) return dono.response;
+
+  const supabase = createClient(supabaseUrl, serviceKey);
+  const openai = new OpenAI({ apiKey: openaiKey });
 
   // Helper: marca status='error' e retorna response
   async function markError(msg: string, statusCode = 500): Promise<Response> {

@@ -99,6 +99,8 @@ import * as copilotAnalyze from "../copilot-analyze/versao.ts";
 import * as elevenlabsTranscribe from "../elevenlabs-transcribe/versao.ts";
 import * as cronDiario from "../omie-cron-diario/versao.ts";
 import * as whatsappInbound from "../whatsapp-inbound/versao.ts";
+import * as kbIngestDocument from "../kb-ingest-document/versao.ts";
+import * as extrairSinaisLigacao from "../extrair-sinais-ligacao/versao.ts";
 import { SONDA_CRON_ALVOS } from "./sonda-cron-alvos.ts";
 
 /**
@@ -322,6 +324,11 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // 2026-11-08 — nasce instrumentada (5.3): consulta o Omie e encerra no app pedido aceito no portal e cancelado no
   // fornecedor. Não escreve no Omie nem no portal; o efeito caro é encerrar (cancelado_humano) um pedido.
   { nome: "sayerlack-encerrar-cancelado-portal", mod: encerrarCanceladoPortal },
+  // 2026-11-17 — lote 5 do rescan do scanner Lovable Security: as duas ganharam o gate de dono
+  // (`_shared/dono-pela-rls.ts`) e, com ele, a sonda — sem marcador o deploy do conserto não seria
+  // julgável. Ambas escrevem com service-role num registro cujo id vem do body.
+  { nome: "kb-ingest-document", mod: kbIngestDocument },
+  { nome: "extrair-sinais-ligacao", mod: extrairSinaisLigacao },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -411,6 +418,11 @@ const ESCRITA_NOSSO_BANCO = [
   // escreve o `opt_in_status` — é ali que o STOP do cliente vira `opt_out` (LGPD) — além do status
   // de entrega dos templates. Entra em GATE_PROPRIO: o gate dela é o `x-whatsapp-secret`.
   "whatsapp-inbound",
+  // Lote 5 do scanner (2026-11-17): `kb-ingest-document` paga embedding, insere `kb_chunks` e grava o
+  // status do documento; `extrair-sinais-ligacao` paga o LLM e grava `farmer_calls.sinais_ligacao`,
+  // o que enfileira recálculo de score. Um `probe` mal grafado cairia nesse fluxo.
+  "kb-ingest-document",
+  "extrair-sinais-ligacao",
 ];
 
 /**

@@ -4,6 +4,8 @@ import Anthropic from "npm:@anthropic-ai/sdk@^0.93.0";
 // RUNTIME_ERROR sem linha/stack (módulo não carrega). npm: é o que o projeto roda.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
+import { exigirDonoPelaRls } from "../_shared/dono-pela-rls.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 // Idempotência por CONTEÚDO: (source_transcript_hash + prompt_version). Bump PROMPT_VERSION
 // quando o SYSTEM_PROMPT/TOOL mudar de forma que invalide extrações anteriores → força re-extração.
@@ -108,6 +110,22 @@ Deno.serve(async (req) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
+  // SONDA DE VERSÃO — depois do gate (o cron a alcança pelo `x-cron-secret`) e ANTES de qualquer
+  // credencial, leitura, chamada ao LLM ou escrita. O corpo é lido UMA vez, aqui.
+  const body = await req.json().catch(() => null);
+  const decisaoSonda = classificarSonda(body);
+  if (decisaoSonda.tipo === "sonda") {
+    return new Response(JSON.stringify(respostaSonda(VERSAO)), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (decisaoSonda.tipo === "ambiguo") {
+    return new Response(
+      JSON.stringify({ ok: false, versao: VERSAO, error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {
     return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY não configurada" }), {
@@ -116,8 +134,9 @@ Deno.serve(async (req) => {
     });
   }
 
-  const body = await req.json().catch(() => null);
-  const { callId, transcript, customerUserId, farmerId } = body ?? {};
+  // `customerUserId`/`farmerId` ainda chegam no body (front e sinais-batch mandam) e são IGNORADOS:
+  // a identidade do envelope sai da LINHA da ligação, lida abaixo.
+  const { callId, transcript } = body ?? {};
   if (!callId || !transcript) {
     return new Response(JSON.stringify({ error: "callId e transcript obrigatórios" }), {
       status: 400,
@@ -125,23 +144,50 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Gate de DONO (scanner Lovable, lote 5). Daqui para baixo tudo roda com service-role, que ignora
+  // a RLS: a leitura de idempotência, a gravação do envelope e a do erro. Staff só passa se a policy
+  // de UPDATE de `farmer_calls` (dono da ligação OU quem tem `cap_carteira_escrever`) deixa ESTE
+  // usuário alterar ESTA ligação; quem responde é o banco, com o JWT dele. O cron (`sinais-batch`)
+  // e o service_role não têm usuário e seguem como antes. A recusa sai ANTES de o cliente
+  // service-role existir: nenhuma leitura, chamada ao LLM ou escrita vem antes — nem o retorno
+  // `ja_extraido`, que confirmaria a quem não é dono o conteúdo de uma ligação alheia.
+  const dono = await exigirDonoPelaRls(req, auth, "farmer_calls", callId);
+  if (!dono.ok) return dono.response;
+
   const admin = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     { auth: { persistSession: false } },
   );
 
-  // transcript vem no BODY (não re-lê do banco) → evita race de replicação do INSERT do front.
+  // O transcript vem no BODY (é o que o front acabou de gravar na linha); do banco a edge lê só a
+  // idempotência e a identidade da ligação, logo abaixo.
   const transcriptText = typeof transcript === "string" ? transcript : JSON.stringify(transcript);
   const hash = await sha256(transcriptText);
 
-  // Idempotência por conteúdo: já extraído com este hash + prompt_version? pula (não chama o LLM).
-  const { data: existente } = await admin
+  // A LINHA da ligação: a idempotência e os ids do envelope saem dela, não do body. Erro de leitura
+  // não é ausência: sem saber o que está gravado a edge não chama o LLM nem escreve.
+  const { data: ligacao, error: leituraErro } = await admin
     .from("farmer_calls")
-    .select("sinais_ligacao")
+    .select("sinais_ligacao, customer_user_id, farmer_id")
     .eq("id", callId)
     .maybeSingle();
-  const env = existente?.sinais_ligacao as Record<string, unknown> | null;
+  if (leituraErro) {
+    console.error("[extrair-sinais-ligacao] leitura da ligação falhou:", leituraErro.message);
+    return new Response(JSON.stringify({ error: "Falha ao ler a ligação", code: "LIGACAO_LEITURA_FALHOU" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (!ligacao) {
+    return new Response(JSON.stringify({ error: "Ligação não encontrada", code: "LIGACAO_NAO_ENCONTRADA" }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  // Idempotência por conteúdo: já extraído com este hash + prompt_version? pula (não chama o LLM).
+  const env = ligacao.sinais_ligacao as Record<string, unknown> | null;
   if (
     env &&
     env.status === "extraido" &&
@@ -179,8 +225,8 @@ Deno.serve(async (req) => {
       extracted_at: new Date().toISOString(),
       status: "extraido",
       error: null,
-      customer_user_id: customerUserId ?? null,
-      farmer_id: farmerId ?? null,
+      customer_user_id: ligacao.customer_user_id ?? null,
+      farmer_id: ligacao.farmer_id ?? null,
       sinais: tu.input,
     };
 
@@ -200,7 +246,8 @@ Deno.serve(async (req) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : "erro";
     console.error("[extrair-sinais-ligacao]", msg);
-    // Erro NÃO-silencioso: grava status='erro' pra a varredura (sinais-batch) reprocessar.
+    // Erro NÃO-silencioso: grava status='erro'. A varredura (sinais-batch) NÃO reprocessa este caso:
+    // ela só pega `sinais_ligacao IS NULL`, e o envelope de erro deixa a coluna preenchida.
     // status='erro' NÃO enfileira recalc (o trigger exige status='extraido').
     await admin
       .from("farmer_calls")
