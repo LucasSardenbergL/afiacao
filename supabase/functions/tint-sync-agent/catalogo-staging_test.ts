@@ -43,6 +43,13 @@ function assertTrue(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
 }
 
+/** Linhas iguais em CONTEÚDO e em CONJUNTO DE CHAVES. Chave com valor undefined some do JSON, mas o
+ *  supabase-js monta `columns=` pelas chaves do objeto: ela viraria coluna explícita no insert. */
+function assertMesmasLinhas(atual: Record<string, unknown>[], esperado: Record<string, unknown>[], msg: string) {
+  assertEq(atual, esperado, msg);
+  assertEq(atual.map((l) => Object.keys(l).sort()), esperado.map((l) => Object.keys(l).sort()), `${msg} (chaves)`);
+}
+
 /** O algoritmo ANTIGO da rota (index.ts da v1.3), copiado: referência da equivalência. */
 function linhaAntiga(entidade: EntidadeComLinhaDeCatalogo, item: Record<string, unknown>): Record<string, unknown> {
   const keyField = STAGING_DO_CATALOGO[entidade].chave;
@@ -83,7 +90,7 @@ Deno.test("as 5 formas reais do conector viram a MESMA linha do algoritmo antigo
     const m = montarLinhasDeCatalogo(e, [item], CTX);
     assertEq(m.recusados, 0, `${e}: nada recusado`);
     assertEq(m.recebidos, 1, `${e}: recebidos`);
-    assertEq(m.linhas, [linhaAntiga(e, item)], `${e}: linha`);
+    assertMesmasLinhas(m.linhas, [linhaAntiga(e, item)], `${e}: linha`);
   }
 });
 
@@ -116,7 +123,7 @@ Deno.test("toda combinação de colunas permitidas, com null/0/'' no valor, é i
         });
         const m = montarLinhasDeCatalogo(e, [item], CTX);
         assertEq(m.recusados, 0, `${e} máscara ${mascara} giro ${giro}: recusou item honesto`);
-        assertEq(m.linhas, [linhaAntiga(e, item)], `${e} máscara ${mascara} giro ${giro}`);
+        assertMesmasLinhas(m.linhas, [linhaAntiga(e, item)], `${e} máscara ${mascara} giro ${giro}`);
         casos++;
       }
     }
@@ -176,10 +183,10 @@ Deno.test("campo desconhecido e coluna de OUTRA entidade recusam o item", () => 
 Deno.test("lote misto: aceitos entram na ordem, recusados contam, recebidos é o total", () => {
   const itens = [
     { cod_produto: "A", descricao: "primeiro" },
-    { cod_produto: "B", descricao: "forjado", created_at: "2099-01-01" },
+    { cod_produto: "B", id: "11111111-1111-1111-1111-111111111111" },
     { cod_produto: "C" },
     null,
-    { cod_produto: "D", id: "11111111-1111-1111-1111-111111111111" },
+    { cod_produto: "D", descricao: "forjado", created_at: "2099-01-01" },
     { cod_produto: "E", descricao: "último" },
   ];
   const m = montarLinhasDeCatalogo("produtos", itens, CTX);
@@ -187,7 +194,7 @@ Deno.test("lote misto: aceitos entram na ordem, recusados contam, recebidos é o
   assertEq(m.linhas.map((l) => l.cod_produto), ["A", "C", "E"], "aceitos, na ordem");
   assertEq(m.recusados, 3, "recusados");
   assertEq(m.naoObjeto, 1, "não-objeto");
-  assertEq(m.camposFora, ["created_at", "id"], "campos fora, ordenados");
+  assertEq(m.camposFora, ["created_at", "id"], "campos fora, ORDENADOS (chegaram como id, created_at)");
   assertEq(m.loteMalformado, false, "lote é lista");
 });
 
@@ -225,7 +232,7 @@ Deno.test("chave ausente ou falsy vira '' — como era", () => {
   for (const item of [{ descricao: "sem chave" }, { cod_produto: null }, { cod_produto: 0 }, { cod_produto: "" }]) {
     const m = montarLinhasDeCatalogo("produtos", [item], CTX);
     assertEq(m.linhas[0].cod_produto, "", `chave de ${canon(item)}`);
-    assertEq(m.linhas, [linhaAntiga("produtos", item)], `igual ao antigo: ${canon(item)}`);
+    assertMesmasLinhas(m.linhas, [linhaAntiga("produtos", item)], `igual ao antigo: ${canon(item)}`);
   }
 });
 
