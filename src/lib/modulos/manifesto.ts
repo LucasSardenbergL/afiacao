@@ -1048,6 +1048,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/anthropic-cliente-gate.test.ts",
       "src/__tests__/omie-cliente-gate.test.ts",
       "src/__tests__/edge-dono-pela-rls-gate.test.ts",
+      "src/__tests__/edge-seg-lote6-gate.test.ts",
       "src/__tests__/edge-import-entre-funcoes-gate.test.ts",
       "src/__tests__/app-route-dedupe.test.ts",
       "src/lib/__tests__/preload-rota.test.tsx",
