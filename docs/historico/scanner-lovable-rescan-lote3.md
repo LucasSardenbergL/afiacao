@@ -67,7 +67,7 @@ Prova: `db/test-seg-b339-vinculo-conferido.sh` (PG17, sobre a migration do #3912
 - Sonda `db/sonda-seg-b339-vinculo-conferido-20261116.sql`, na tentativa #1154: DEPLOY CONFIRMADO em `v1.12-vinculo-conferido`, com o fingerprint batendo.
 - Sensor do bot, 5,3 min após o envio: `EDICAO_DETECTADA`, mas só porque a resposta trazia `commit_sha`. O commit apontado (`33d1b985b`) é a regeração do `types.ts`, que é tolerada: entraram a `admitir_vinculo_conferido` e o overload do sayerlack que já estão na PROD. Nada a reverter, como em [baixa-po-sombra-associacao.md](baixa-po-sombra-associacao.md).
 - `pendencias:deploy`: a `omie-cliente` confere. O que sobra é o `sayerlack-importar-pedido-portal`, do #3923.
-- Publish do front (`AdminApprovals.tsx`): é do founder.
+- Publish do front (`AdminApprovals.tsx`), feito pelo founder e conferido pelos bytes servidos em `steu.lovable.app`: o chunk `AdminApprovals-F7o56aA8.js` chama `vincular_aprovado` e não tem `register_carteira_member`. Isso prova a disponibilidade, não a adoção: o service worker só troca de build quando o cliente clica.
 
 Fora do escopo, como follow-up: a unicidade NORMALIZADA de `profiles.document` no banco (hoje há 0 duplicados em 16.091); o vendedor NULL até o `omie-analytics-sync` preencher, que é comportamento de antes; a aprovação de acesso separada da admissão. Também `is_approved`: a RLS de `profiles` só deixa o master dar UPDATE, então a aprovação feita por um employee não grava.
 
