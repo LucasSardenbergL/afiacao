@@ -1092,6 +1092,22 @@ Os dois P1 do parecer Codex que a v1.15 deixou para decisão do founder (exigiam
   15:00 stale (a carência vence), sexta à noite só cobra segunda 14:00, dia de SP na virada e sob fuso de sessão
   UTC−11/UTC+14, antigo nunca lido segue stale, sem envio confirmado cobra, envio futuro cobra, já lido com envio
   regravado segue pela leitura, vizinho atrasado não é escondido, `broken` continua vencendo.
+- **Aplicada em produção (2026-11-17 09:11 SP)** pelo envelope: `bun run db:aplicar
+  db/2026-11-17-data-health-sayerlack-carencia-do-envio.sql` — sha256 `696e0c58…`, commit `bcf97a051`, tentativa
+  **#1159** virou recibo; PÓS: `ok | … 22 pedido(s) com compra em aberto, 2 recem-enviado(s) aguardando a 1a leitura`.
+  2ª testemunha (`psql-ro`, outra conexão): md5 vivo `cfe7e1e4…`, STABLE/SECURITY DEFINER/`search_path` e ACL
+  intactos; watchdog, heartbeat e cobertura com os md5 de antes. PR #3934 mergeado 09:18 (CI 41/0), e o sha256 do
+  arquivo na main é o mesmo do aplicado. Aplicada 7 min ANTES do merge (o executor exige arquivo commitado, não
+  mergeado; sem edge na entrega, a regra "deploy só depois do merge" não se aplica).
+- **Efeito no dado:** o episódio do alerta 642 (aberto 06:30) fechou no tique das **09:30:00** — três horas antes da
+  varredura das 12:30, ou seja, fechou pelo conserto e não pela leitura; 27 checks avaliados, 0 falhos; nenhum
+  `fornecedor_alerta` novo do source.
+- **Sinal a medir (query, não recado)** — o conserto vale se, havendo disparo pelo app, não sair alerta:
+  `SELECT (SELECT count(*) FROM fornecedor_alerta WHERE titulo = '[Saúde de dados] sayerlack_cancelado_com_po' AND
+  criado_em > '2026-11-17 12:11+00') AS alertas, (SELECT count(DISTINCT (enviado_portal_em AT TIME ZONE
+  'America/Sao_Paulo')::date) FROM pedido_compra_sugerido WHERE empresa = 'OBEN' AND importado_portal_em IS NULL AND
+  enviado_portal_em > '2026-11-17 12:11+00') AS dias_com_disparo;` — esperado `alertas = 0` com `dias_com_disparo ≥ 1`.
+  Alerta com "sem nenhuma leitura" depois disso é buraco REAL de leitura (pedido enviado antes do dia útil exigido).
 - **Lição (→ `docs/agent/sync.md`, Sentinela):** check de cobertura nasce com a carência do objeto novo.
 - **Achado à parte, fora desta entrega:** em 4 das 6 últimas noites úteis a rodada das 22:30 gravou `prova_leitura='ok'`
   com 0 linhas; em 09/11 a mesma rodada trouxe 4 situações na janela menor da leitura estendida — lista vazia falsa.
