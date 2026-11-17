@@ -421,11 +421,37 @@ export function totalAnunciado(fonte: { respostaTotal?: unknown; dtTotal?: unkno
 
 export type ProvaLeitura =
   | { ok: true; total: number }
-  | { ok: false; motivo: "colunas_ausentes" | "total_nao_anunciado" | "total_divergente" | "zero_lidos_sem_prova" | "lidos_diferente_do_total" | "linhas_ilegiveis" | "protocolo_repetido"; detalhe: string };
+  | { ok: false; motivo: "colunas_ausentes" | "resposta_sem_vinculo" | "total_nao_anunciado" | "total_divergente" | "zero_lidos_sem_prova" | "zero_nao_confirmado" | "lidos_diferente_do_total" | "linhas_ilegiveis" | "protocolo_repetido"; detalhe: string };
+
+// ── v1.13 (2026-11-17): o "0 de 0" de OUTRA consulta não é prova ──────────────────────────────────────────────────
+// Incidente: 6 das 20 rodadas das 22:30 SP (22/10 a 16/11) gravaram sucesso com 0 linhas — 4 já com a prova acima
+// dando "ok". A página do portal consulta por conta própria (filtros padrão ⇒ vazia para a OBEN) e o script tomava a
+// primeira resposta que chegasse depois do clique como a nossa. `dt_total` e o texto de info são nulos em 100% das
+// rodadas de prod, então a prova inteira pendia dessa única resposta.
 
 /**
- * A leitura só decide se for COMPLETA e LEGÍVEL: as colunas obrigatórias existem, o portal anunciou o total, o número
- * de linhas lidas é esse total (0 só com "0 de 0" explícito), e nenhuma linha foi descartada como ilegível ou repetida.
+ * O que a consulta REPETIDA trouxe quando a 1ª leu 0 linhas (o script repete o clique em Filtrar). Ela só confirma se
+ * for uma leitura tão boa quanto a 1ª tem de ser: 0 linhas, 0 anunciadas, `success: true` e o nosso filtro no pedido
+ * (Codex, P0: uma repetição que responde erro com a lista zerada confirmava o zero).
+ */
+function zeroConfirmado(repetido: unknown): "confirmado" | "nao_confirmado" | "sem_repeticao" {
+  if (!repetido || typeof repetido !== "object") return "sem_repeticao";
+  const { linhas, total, sucesso, filtro } = repetido as { linhas?: unknown; total?: unknown; sucesso?: unknown; filtro?: unknown };
+  const n = inteiroNaoNegativo(linhas);
+  const t = inteiroNaoNegativo(total);
+  if ((n !== null && n > 0) || (t !== null && t > 0)) return "nao_confirmado";
+  return n === 0 && t === 0 && sucesso === true && filtro === true ? "confirmado" : "sem_repeticao";
+}
+
+/**
+ * A leitura só decide se for COMPLETA, LEGÍVEL e NOSSA: as colunas obrigatórias existem, o total veio da resposta à
+ * consulta que o NOSSO clique gerou, o número de linhas lidas é esse total, e nenhuma linha foi descartada como
+ * ilegível ou repetida. 0 linhas é a única resposta que não carrega evidência própria: só vale com prova POSITIVA de
+ * tudo — `success: true` do portal, o nosso filtro no pedido, e a consulta REPETIDA respondendo 0 de novo.
+ *
+ * Com linhas lidas, `success` e o filtro do pedido ficam no registro mas não reprovam sozinhos, de propósito: os
+ * valores que o portal manda nunca foram observados em prod, e exigir o que nunca se viu derrubaria rodadas boas. O
+ * que reprova com qualquer contagem é o que se SABE errado — o pedido do clique levar outro filtro (`false`).
  */
 export function provarLeitura(entrada: {
   headers: readonly string[];
@@ -435,11 +461,25 @@ export function provarLeitura(entrada: {
   info?: unknown;
   ilegiveis: number;
   repetidos: readonly string[];
+  /** `true` só quando o script prendeu a resposta ao pedido que o NOSSO clique em Filtrar gerou. */
+  respostaDoClique?: unknown;
+  /** Campo `success` da resposta do portal, cru (`true` = respondeu; `false` = envelope de erro; `null` = sem o campo). */
+  respostaSucesso?: unknown;
+  /** O pedido do nosso clique levava o nosso filtro? `true` · `false` (é de OUTRA consulta) · `null` (não deu para saber). */
+  filtroNoPedido?: unknown;
+  /** `{ linhas, total, sucesso, filtro }` da consulta repetida; só existe quando a 1ª leu 0 linhas. */
+  zeroRepetido?: unknown;
 }): ProvaLeitura {
   const faltam = COLUNAS_OBRIGATORIAS.filter((c) =>
     !entrada.headers.some((h) => (c.exato ? norm(h) === norm(c.prefixo) : norm(h).startsWith(norm(c.prefixo)))));
   if (faltam.length > 0) {
     return { ok: false, motivo: "colunas_ausentes", detalhe: `colunas ausentes na consulta: ${faltam.map((c) => c.rotulo).join(", ")} (cabeçalhos lidos: ${entrada.headers.filter(Boolean).join(" | ") || "nenhum"})` };
+  }
+  if (entrada.respostaDoClique !== true) {
+    return { ok: false, motivo: "resposta_sem_vinculo", detalhe: "o total anunciado não está preso à consulta do nosso clique em Filtrar — pode ser a resposta de outra consulta da página" };
+  }
+  if (entrada.filtroNoPedido === false) {
+    return { ok: false, motivo: "resposta_sem_vinculo", detalhe: "o pedido que respondeu ao nosso clique não levava o nosso filtro (emissão e cliente) — é outra consulta da página" };
   }
   const total = totalAnunciado({ respostaTotal: entrada.respostaTotal, dtTotal: entrada.dtTotal, info: entrada.info });
   if (total === "divergente") {
@@ -452,6 +492,21 @@ export function provarLeitura(entrada: {
   }
   if (entrada.linhasLidas !== total) {
     return { ok: false, motivo: "lidos_diferente_do_total", detalhe: `${entrada.linhasLidas} linha(s) lida(s) contra ${total} anunciada(s) pelo portal` };
+  }
+  if (total === 0) {
+    if (entrada.respostaSucesso !== true) {
+      return { ok: false, motivo: "zero_lidos_sem_prova", detalhe: `0 linhas lidas e o portal não afirmou sucesso (success=${JSON.stringify(entrada.respostaSucesso ?? null)}) — lista vazia de um erro não prova que não há pedido` };
+    }
+    if (entrada.filtroNoPedido !== true) {
+      return { ok: false, motivo: "zero_lidos_sem_prova", detalhe: "0 linhas lidas sem confirmar que o pedido levava o nosso filtro — pode ser a lista vazia de outra consulta" };
+    }
+    const repetido = zeroConfirmado(entrada.zeroRepetido);
+    if (repetido === "nao_confirmado") {
+      return { ok: false, motivo: "zero_nao_confirmado", detalhe: `a consulta respondeu 0 linhas e, repetida, não respondeu 0 de novo (${JSON.stringify(entrada.zeroRepetido)})` };
+    }
+    if (repetido === "sem_repeticao") {
+      return { ok: false, motivo: "zero_lidos_sem_prova", detalhe: `0 linhas lidas e a consulta repetida não confirmou (${JSON.stringify(entrada.zeroRepetido ?? null)}) — um único "0 de 0" não prova que não há pedido` };
+    }
   }
   if (entrada.ilegiveis > 0) {
     return { ok: false, motivo: "linhas_ilegiveis", detalhe: `${entrada.ilegiveis} linha(s) sem nº de pedido legível` };

@@ -53,12 +53,20 @@ function linha(pedido: string, situacao: string, emissao = "10/11/2026") {
     "Data Emissão": emissao, "Data Entrega": "26/11/2026", "Vlr Mercadori": "100,0000", "Vlr Total": "106,5000",
   };
 }
-function portal(linhas: Record<string, string>[], total: number | null = linhas.length): Resposta {
+/**
+ * O que o script do navegador devolve numa leitura bem formada (v1.13): o total preso à consulta do NOSSO clique
+ * (`resposta_do_clique`), o portal afirmando sucesso, o nosso filtro no pedido e, com 0 linhas, a consulta repetida
+ * respondendo 0 de novo (`zero_repetido`). `extra` sobrescreve campos para os casos em que a leitura NÃO prova.
+ */
+function portal(linhas: Record<string, string>[], total: number | null = linhas.length, extra: Record<string, unknown> = {}): Resposta {
   return {
     corpo: {
       data: {
         success: true, headers: HEADERS, linhas, paginas: 1, situacoes: [],
         resposta_total: total, dt_total: total, info: total == null ? null : `Mostrando 1 até ${total} de ${total} registros`,
+        resposta_do_clique: true, resposta_sucesso: true, filtro_no_pedido: true,
+        zero_repetido: linhas.length === 0 && total === 0 ? { linhas: 0, total: 0, sucesso: true, filtro: true } : null,
+        ...extra,
       },
     },
   };
@@ -160,6 +168,63 @@ Deno.test("0 linhas sem total anunciado: rodada VERMELHA com a causa, nada decid
     igual(escritas(falso).length, 0, "sem escrita");
     const fecho = falso.de("rest:acoes_execucoes", "PATCH")[0].corpo as { status: string };
     igual(fecho.status, "erro", "ledger em erro");
+  }));
+
+// v1.13 — incidente das 22:30 (09, 12, 13 e 16/11/2026): `sucesso` + `prova_leitura='ok'` com 0 linhas. O "0 de 0" era
+// de uma consulta que a própria página do portal fez; o script o tomava pela resposta do nosso clique.
+for (const [rotulo, extra, causa] of [
+  ["o total não está preso ao nosso clique (script anterior à v1.13)", { resposta_do_clique: undefined }, "prova:resposta_sem_vinculo"],
+  ["o pedido do clique levava OUTRO filtro", { filtro_no_pedido: false }, "prova:resposta_sem_vinculo"],
+  ["não deu para saber o que o pedido levava", { filtro_no_pedido: null }, "prova:zero_lidos_sem_prova"],
+  ["a consulta não foi repetida", { zero_repetido: null }, "prova:zero_lidos_sem_prova"],
+  ["a consulta repetida trouxe 8 linhas", { zero_repetido: { linhas: 8, total: 8, sucesso: true, filtro: true } }, "prova:zero_nao_confirmado"],
+  ["a consulta repetida respondeu ERRO com a lista zerada (Codex P0)", { zero_repetido: { linhas: 0, total: 0, sucesso: false, filtro: true } }, "prova:zero_lidos_sem_prova"],
+  ["o portal respondeu com o envelope de erro (success=false)", { resposta_sucesso: false, resposta_mensagem: "Erro ao consultar pedidos" }, "prova:zero_lidos_sem_prova"],
+  ["o portal não afirmou sucesso (resposta sem o campo success)", { resposta_sucesso: null }, "prova:zero_lidos_sem_prova"],
+] as const) {
+  Deno.test(`0 linhas com "0 de 0" anunciado, mas ${rotulo}: rodada VERMELHA, nunca prova_leitura='ok'`, () =>
+    comRelogio(QUARTA, async () => {
+      const falso = montar({ browserless: () => portal([], 0, extra) });
+      const r = await varrer("importar");
+      igual([r.status, r.corpo.ok, r.corpo.causa_pre_protocolo], [500, false, causa], "vermelha com a causa");
+      const fecho = falso.de("rest:acoes_execucoes", "PATCH")[0].corpo as { status: string; detalhes: Record<string, unknown> };
+      igual([fecho.status, fecho.detalhes.prova_leitura], ["erro", causa.replace("prova:", "")], "ledger em erro, sem prova");
+      igual(escritas(falso).length, 0, "nada decidido sobre uma lista vazia sem prova");
+    }));
+}
+
+Deno.test("0 linhas com \"0 de 0\" preso ao nosso clique e repetido: verde, com a evidência no ledger (controle)", () =>
+  comRelogio(QUARTA, async () => {
+    const consultas = { tentativa: 1, antes: 1, em_voo_antes: 0, assentou: true, espera_ms: 0, depois: 1, resposta_ms: 250 };
+    const falso = montar({ browserless: () => portal([], 0, { consultas }) });
+    const r = await varrer("importar");
+    igual([r.status, r.corpo.ok, r.corpo.prova_leitura, r.corpo.lidos], [200, true, "ok", 0], "0 de 0 provado");
+    const fecho = falso.de("rest:acoes_execucoes", "PATCH")[0].corpo as { status: string; detalhes: Record<string, unknown> };
+    igual([fecho.detalhes.resposta_sucesso, fecho.detalhes.filtro_no_pedido, fecho.detalhes.zero_repetido, fecho.detalhes.consultas_portal],
+      [true, true, { linhas: 0, total: 0, sucesso: true, filtro: true }, consultas], "o que o portal disse e o que a página consultava");
+  }));
+
+for (const [rotulo, extra] of [
+  ["sem o vínculo com o nosso clique", { resposta_do_clique: false }],
+  ["com o pedido do clique levando OUTRO filtro (Codex P0)", { filtro_no_pedido: false }],
+] as const) {
+  Deno.test(`linhas com o total batendo, mas ${rotulo}: vermelha, sem gravar situação`, () =>
+    comRelogio(QUARTA, async () => {
+      const falso = montar({ browserless: () => portal([linha("2141200", "6 - Cancelado")], 1, extra), pedidosNoApp: [NO_APP_CANCELADO] });
+      const r = await varrer("importar");
+      igual([r.status, r.corpo.causa_pre_protocolo], [500, "prova:resposta_sem_vinculo"], "vermelha");
+      igual(falso.de("rpc:sayerlack_registrar_situacao_portal").length, 0, "nada gravado");
+    }));
+}
+
+Deno.test("leitura que falha no navegador: o que a página consultava vai ao ledger junto com a causa", () =>
+  comRelogio(QUARTA, async () => {
+    const consultas = { rotulo: "filtrar-2", antes: 1, em_voo_antes: 1, assentou: false, depois: 0 };
+    const falso = montar({ browserless: () => ({ corpo: { data: { success: false, erroTipo: "CONSULTA_SEM_RESPOSTA", erro: "O portal não respondeu à consulta (2 tentativas)", consultas } } }) });
+    const r = await varrer("importar");
+    igual([r.status, r.corpo.causa_pre_protocolo], [500, "leitura:CONSULTA_SEM_RESPOSTA"], "vermelha");
+    const fecho = falso.de("rest:acoes_execucoes", "PATCH")[0].corpo as { status: string; detalhes: Record<string, unknown> };
+    igual([fecho.status, fecho.detalhes.consultas_portal], ["erro", consultas], "a evidência da falha fica no registro");
   }));
 
 Deno.test("lidos ≠ total anunciado (página perdida): vermelha, sem gravar situação", () =>

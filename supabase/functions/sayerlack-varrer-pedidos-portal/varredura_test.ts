@@ -236,15 +236,80 @@ Deno.test("marcador: só autoriza encerrar até 26 h do fim do run válido", () 
 
 // ── Onda 3 (2026-11-07): rodada nunca verde sem prova ──
 const HEADERS = ["Pedido", "Pedido Cliente", "Situação", "Data Emissão", "Vlr Mercadoria", "Vlr Total"];
-const base = { headers: HEADERS, ilegiveis: 0, repetidos: [] as string[] };
+// `respostaDoClique: true` = o script prendeu o total à consulta do NOSSO clique (v1.13); sem isso nada prova.
+const base = { headers: HEADERS, ilegiveis: 0, repetidos: [] as string[], respostaDoClique: true as unknown };
+// 0 linhas só vale com prova POSITIVA de tudo: `success: true`, o nosso filtro no pedido e a repetição igual.
+const ZERO_DE_NOVO = { linhas: 0, total: 0, sucesso: true, filtro: true };
+const zeroProvado = { ...base, linhasLidas: 0, respostaTotal: 0 as unknown, respostaSucesso: true as unknown, filtroNoPedido: true as unknown, zeroRepetido: ZERO_DE_NOVO as unknown };
 
 Deno.test("prova: 0 linhas SEM total anunciado é erro (incidente 23/10 e 03/11: 0 lidos e sucesso)", () => {
   const r = provarLeitura({ ...base, linhasLidas: 0 });
   assertEquals(r.ok ? "ok" : r.motivo, "zero_lidos_sem_prova");
 });
-Deno.test("prova: 0 linhas COM o portal dizendo 0 de 0 é sucesso", () => {
-  assertEquals(provarLeitura({ ...base, linhasLidas: 0, respostaTotal: 0 }), { ok: true, total: 0 });
-  assertEquals(provarLeitura({ ...base, linhasLidas: 0, info: "Mostrando 0 até 0 de 0 registros" }), { ok: true, total: 0 });
+Deno.test("prova: 0 linhas COM o portal dizendo 0 de 0 — e dizendo de novo na consulta repetida — é sucesso", () => {
+  assertEquals(provarLeitura(zeroProvado), { ok: true, total: 0 });
+  assertEquals(provarLeitura({ ...zeroProvado, respostaTotal: undefined, info: "Mostrando 0 até 0 de 0 registros", zeroRepetido: { ...ZERO_DE_NOVO, total: "0" } }), { ok: true, total: 0 });
+});
+
+// ── v1.13 (2026-11-17): o "0 de 0" de outra consulta não é prova ──
+// Incidente: 4 rodadas das 22:30 (09, 12, 13 e 16/11) gravaram prova_leitura='ok' com 0 linhas; o total (0) era de
+// uma consulta que a própria página do portal tinha feito, não da nossa.
+Deno.test("prova: total que não está preso ao NOSSO clique não prova nada — com 0 linhas ou com o total batendo", () => {
+  for (const vinculo of [undefined, null, false, "true", 1]) {
+    const zero = provarLeitura({ ...zeroProvado, respostaDoClique: vinculo });
+    assertEquals(zero.ok ? "ok" : zero.motivo, "resposta_sem_vinculo");
+    const cheia = provarLeitura({ ...base, respostaDoClique: vinculo, linhasLidas: 9, respostaTotal: 9 });
+    assertEquals(cheia.ok ? "ok" : cheia.motivo, "resposta_sem_vinculo");
+  }
+  // Controle: o mesmo, com o vínculo, prova.
+  assertEquals(provarLeitura({ ...base, linhasLidas: 9, respostaTotal: 9 }), { ok: true, total: 9 });
+});
+Deno.test("prova: pedido do clique que SABIDAMENTE levava outro filtro não prova — com qualquer contagem (Codex P0)", () => {
+  const cheia = provarLeitura({ ...base, linhasLidas: 9, respostaTotal: 9, filtroNoPedido: false });
+  assertEquals(cheia.ok ? "ok" : cheia.motivo, "resposta_sem_vinculo");
+  assertEquals(!cheia.ok && cheia.detalhe.includes("não levava o nosso filtro"), true);
+  const zero = provarLeitura({ ...zeroProvado, filtroNoPedido: false });
+  assertEquals(zero.ok ? "ok" : zero.motivo, "resposta_sem_vinculo");
+  // Com linhas, "não deu para saber" (null: o portal pode não expor o filtro no pedido) não reprova sozinho.
+  assertEquals(provarLeitura({ ...base, linhasLidas: 9, respostaTotal: 9, filtroNoPedido: null }), { ok: true, total: 9 });
+});
+Deno.test("prova: 0 linhas sem confirmar que o pedido levava o nosso filtro é erro (não deu para saber ≠ levava)", () => {
+  for (const filtro of [undefined, null, "true", 1]) {
+    const r = provarLeitura({ ...zeroProvado, filtroNoPedido: filtro });
+    assertEquals(r.ok ? "ok" : r.motivo, "zero_lidos_sem_prova");
+  }
+});
+Deno.test("prova: um único 0 de 0 não basta — sem a consulta repetida (ou com ela ilegível) é erro", () => {
+  for (const repetido of [undefined, null, "0", { linhas: null, total: null }, { ...ZERO_DE_NOVO, total: null }, { linhas: 0, sucesso: true, filtro: true }, { total: 0, sucesso: true, filtro: true }, { ...ZERO_DE_NOVO, linhas: -1 }]) {
+    const r = provarLeitura({ ...zeroProvado, zeroRepetido: repetido });
+    assertEquals(r.ok ? "ok" : r.motivo, "zero_lidos_sem_prova");
+  }
+});
+Deno.test("prova: a repetição só confirma se ELA também for leitura boa — erro do portal ou outro filtro nela não confirmam (Codex P0)", () => {
+  for (const repetido of [
+    { ...ZERO_DE_NOVO, sucesso: false }, // 1ª vazia por tropeço, 2ª respondendo o envelope de erro com a lista zerada
+    { ...ZERO_DE_NOVO, sucesso: null }, { ...ZERO_DE_NOVO, sucesso: "true" }, { linhas: 0, total: 0, filtro: true },
+    { ...ZERO_DE_NOVO, filtro: false }, { ...ZERO_DE_NOVO, filtro: null }, { linhas: 0, total: 0, sucesso: true },
+  ]) {
+    const r = provarLeitura({ ...zeroProvado, zeroRepetido: repetido });
+    assertEquals(r.ok ? "ok" : r.motivo, "zero_lidos_sem_prova");
+  }
+});
+Deno.test("prova: 0 linhas e a MESMA consulta repetida trazendo linha é zero_nao_confirmado", () => {
+  for (const repetido of [{ ...ZERO_DE_NOVO, linhas: 8, total: 8 }, { ...ZERO_DE_NOVO, total: 8 }, { linhas: 8, total: null }, { ...ZERO_DE_NOVO, linhas: "3" }]) {
+    const r = provarLeitura({ ...zeroProvado, zeroRepetido: repetido });
+    assertEquals(r.ok ? "ok" : r.motivo, "zero_nao_confirmado");
+  }
+});
+Deno.test("prova: 0 linhas só com success === true do portal — false, ausente, texto ou número não afirmam sucesso", () => {
+  for (const sucesso of [false, undefined, null, "false", "true", 0, 1]) {
+    const r = provarLeitura({ ...zeroProvado, respostaSucesso: sucesso });
+    assertEquals(r.ok ? "ok" : r.motivo, "zero_lidos_sem_prova");
+  }
+  const erro = provarLeitura({ ...zeroProvado, respostaSucesso: false });
+  assertEquals(!erro.ok && erro.detalhe.includes("success=false"), true);
+  // Com linhas lidas e total batendo, o campo não reprova sozinho (a linha lida é a evidência; o valor vai ao registro).
+  assertEquals(provarLeitura({ ...base, linhasLidas: 3, respostaTotal: 3, respostaSucesso: false }), { ok: true, total: 3 });
 });
 Deno.test("prova: lidos tem de ser o total anunciado (página perdida ⇒ erro)", () => {
   const r = provarLeitura({ ...base, linhasLidas: 10, respostaTotal: 23 });
@@ -352,11 +417,11 @@ Deno.test("B1: situação/data ilegíveis são PRODUZIDAS como ilegíveis pela l
     ["2141101:situacao", "2141102:emissao", "2141103:situacao", "2141103:emissao", "2141104:situacao"]);
   // O pedido de nº legível segue na lista, sem código (nunca candidato, nunca observação de situação).
   assertEquals(lista.pedidos.map((p) => `${p.protocolo}:${p.situacao_codigo}`), ["2141100:1", "2141101:null", "2141102:1", "2141103:null", "2141104:null"]);
-  const prova = provarLeitura({ headers: CAB, linhasLidas: linhas.length, respostaTotal: linhas.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos });
+  const prova = provarLeitura({ headers: CAB, linhasLidas: linhas.length, respostaTotal: linhas.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos, respostaDoClique: true });
   assertEquals(prova.ok ? "ok" : prova.motivo, "linhas_ilegiveis");
   // E a lista toda legível prova ok (controle: a reprovação acima é DA ilegibilidade).
   const boa = lerListaConsulta([linhas[0]]);
-  const provaBoa = provarLeitura({ headers: CAB, linhasLidas: 1, respostaTotal: 1, ilegiveis: boa.ilegiveis, repetidos: boa.repetidos });
+  const provaBoa = provarLeitura({ headers: CAB, linhasLidas: 1, respostaTotal: 1, ilegiveis: boa.ilegiveis, repetidos: boa.repetidos, respostaDoClique: true });
   assertEquals(provaBoa.ok ? "ok" : provaBoa.motivo, "ok");
 });
 

@@ -162,6 +162,7 @@ describe("paginação da varredura", () => {
     const prova = provarLeitura({
       headers: r.primeira.headers, linhasLidas: r.linhas.length, info: r.primeira.info, dtTotal: r.primeira.dtTotal,
       ilegiveis: lista.ilegiveis, repetidos: lista.repetidos,
+      respostaDoClique: true, // o vínculo com o clique é do script (v1.13); aqui o assunto é a paginação
     });
     expect(prova).toEqual({ ok: true, total: 3 });
   });
@@ -173,6 +174,7 @@ describe("paginação da varredura", () => {
     // a leitura de 2 com o portal anunciando 3 NÃO prova a lista (página perdida)
     const prova = provarLeitura({
       headers: r.primeira!.headers, linhasLidas: r.linhas.length, info: r.primeira!.info, ilegiveis: 0, repetidos: [],
+      respostaDoClique: true,
     });
     expect(prova).toMatchObject({ ok: false, motivo: "lidos_diferente_do_total" });
   });

@@ -17,11 +17,13 @@ export const respostaSonda = criarRespostaSonda("sayerlack-varrer-pedidos-portal
  * O CHANGELOG de cada versão vive em `docs/historico/versao-sayerlack-varrer-pedidos-portal.md`.
  */
 /**
- * v1.12 (2026-11-08, revisão 2, 7.1) — reconsulta de pedido do app sem PO com PO manual no Omie chama a RPC
- * `sayerlack_vincular_po_manual`: casou ⇒ vincula, audita e resolve a pendência (`po_manual_vinculado`); não casou ou
- * erro ⇒ a pendência fica com `vinculo_motivo`. Nunca re-dispara. Migration 20261111110000 antes.
+ * v1.13 (2026-11-17) — o "0 de 0" de OUTRA consulta não é prova: só vale a resposta do pedido que o NOSSO clique em
+ * Filtrar gerou (a página do portal consulta por conta própria; 6 das 20 rodadas das 22:30 gravaram sucesso com 0
+ * linhas). O script espera a página se aquietar antes de clicar e não lê tabela que outra consulta possa ter mexido;
+ * pedido que levava outro filtro reprova; 0 linhas só com success=true, o nosso filtro no pedido e a consulta REPETIDA
+ * respondendo 0 de novo. O que a página consultava vai ao registro, no sucesso e na falha. Sem migration.
  */
-export const VERSAO = "v1.12-vincula-po-manual";
+export const VERSAO = "v1.13-resposta-do-nosso-clique";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
