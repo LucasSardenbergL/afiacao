@@ -57,6 +57,27 @@ describe('tint-sync-agent /catalogs — linha de staging só pelo builder de lis
     expect(catalogs).toContain('received += montado.recebidos;');
   });
 
+  it('a forma do lote é conferida ANTES do teto de tamanho, do atalho do lote sem item e do run', () => {
+    const iForma = catalogs.indexOf('erroDeFormaDoLoteDeCatalogo(body)');
+    const iTeto = catalogs.indexOf('validateBatchSize(body');
+    const iAtalho = catalogs.indexOf('itensGravaveis(body) === 0');
+    const iRun = catalogs.indexOf('createSyncRun(agent, "catalogs")');
+    expect(iForma).toBeGreaterThan(-1);
+    expect(iTeto).toBeGreaterThan(iForma);
+    expect(iAtalho).toBeGreaterThan(iTeto);
+    expect(iRun).toBeGreaterThan(iAtalho);
+    expect(catalogs).toContain('if (erroDeForma) return json({ ok: false, error: erroDeForma }, 400);');
+  });
+
+  it('a recusa confere se o registro gravou, e avisa no console quando não', () => {
+    expect(catalogs).toContain('.catch(() => false);');
+    expect(catalogs).toContain('if (!registrou) {');
+    expect(INDEX).toMatch(/async function logError\([^)]*\): Promise<boolean> \{/);
+    const corpoDoLog = INDEX.slice(INDEX.indexOf('async function logError('), INDEX.indexOf('function buildResponse('));
+    expect(corpoDoLog).toContain('const { error } = await sb.from("tint_sync_errors").insert({');
+    expect(corpoDoLog).toContain('return !error;');
+  });
+
   it('a recusa fica em tint_sync_errors, esperada, e sem o item cru', () => {
     expect(catalogs).toContain(
       'await logError(runId, entityType, null, motivo, detalheDaRecusaDeCatalogo(entityType, montado))',
@@ -98,5 +119,36 @@ describe('tint-sync-agent /catalogs — linha de staging só pelo builder de lis
     expect(INDEX).toMatch(/import\s*\{[^}]*\bmontarLinhasDeCatalogo\b[^}]*\}\s*from\s*"\.\/catalogo-staging\.ts"/);
     expect(INDEX).not.toContain('TintCatalogItem');
     expect(INDEX).not.toContain('[k: string]: unknown;\n}\n\nfunction json');
+  });
+});
+
+describe('tint-sync-agent /keys-snapshot — o generated_at não é escolha livre do emissor', () => {
+  // Parente do conserto de /catalogs (2ª opinião do Codex, lote 6): `tint_apply_keys_snapshot` pula
+  // todo snapshot com generated_at <= último aplicado, então um generated_at no futuro travava os
+  // honestos. A semântica do validador é provada em `snapshot-gerado-em_test.ts` (Deno).
+  const snapshot = ramo('path === "keys-snapshot"', 'path === "simulate"');
+
+  it('o ramo valida o generated_at contra o relógio do servidor ANTES de gravar', () => {
+    const iValida = snapshot.indexOf('validarGeradoEmDoSnapshot(generated_at, Date.now())');
+    const iInsert = snapshot.indexOf('sb.from("tint_keys_snapshots").insert(');
+    expect(iValida).toBeGreaterThan(-1);
+    expect(iInsert).toBeGreaterThan(iValida);
+    expect(snapshot).toContain('if (!geradoEm.ok) {');
+    expect(snapshot).toContain('return json({ ok: false, error: geradoEm.erro }, 400);');
+  });
+
+  it('o que vai ao banco é o valor validado, nunca o generated_at cru', () => {
+    const insert = snapshot.slice(
+      snapshot.indexOf('sb.from("tint_keys_snapshots").insert('),
+      snapshot.indexOf('insertErr.code'),
+    );
+    expect(insert).toContain('generated_at: geradoEm.geradoEm,');
+    expect(insert).not.toMatch(/^\s*generated_at,\s*$/m);
+    expect(insert).not.toMatch(/generated_at:\s*generated_at\b/);
+    expect(insert).not.toContain('...');
+  });
+
+  it('o index.ts importa o validador do módulo puro', () => {
+    expect(INDEX).toMatch(/import\s*\{\s*validarGeradoEmDoSnapshot\s*\}\s*from\s*"\.\/snapshot-gerado-em\.ts"/);
   });
 });

@@ -128,7 +128,8 @@ Deno.test("toda combinação de colunas permitidas, com null/0/'' no valor, é i
       }
     }
   }
-  // 2 entidades de 2 colunas, 2 de 3 e 1 de 5: (4 + 4 + 8 + 8 + 32) × 6 valores.
+  // 2 entidades de 2 colunas, 2 de 3 e 1 de 5: (4 + 4 + 8 + 8 + 32) máscaras × 6 GIROS de valor.
+  // Não é o produto cartesiano das atribuições: cada giro desloca a mesma fila de valores.
   assertEq(casos, 336, "não-vacuidade: quantos casos rodaram");
 });
 
@@ -242,18 +243,26 @@ Deno.test("PROPRIEDADE: nenhuma linha tem coluna fora das 5 do servidor + as da 
     "id_corante_sayersystem", "volume_ml", "preco_litro", "custo", "id", "created_at", "matched_id",
     "sync_run_id", "account", "store_code", "raw_data", "staging_status", "qualquer", "__proto__",
   ];
-  // gerador determinístico (LCG): o teste é reproduzível e não depende de Math.random.
+  // Gerador determinístico de Park–Miller: o produto fica abaixo de 2^53, então a conta é exata.
+  // (A 1ª versão usava um multiplicador que estourava a precisão do Number: 1.996 das 2.000
+  // iterações geravam uma chave só, 12 conjuntos distintos — achado da 2ª opinião do Codex.)
   let semente = 20261117;
-  const prox = () => (semente = (semente * 1103515245 + 12345) % 2147483648);
+  const prox = () => (semente = (semente * 48271) % 2147483647);
   let aceitos = 0, recusados = 0;
+  const conjuntos = new Set<string>();
   for (const e of ENTIDADES_COM_LINHA_DE_CATALOGO) {
     const permitidas = new Set<string>([...DO_SERVIDOR, ...STAGING_DO_CATALOGO[e].colunas]);
     const daEntidade = new Set<string>(STAGING_DO_CATALOGO[e].colunas);
+    let aceitosDaEntidade = 0, recusadosDaEntidade = 0;
+    const tamanhos = new Set<number>();
     for (let n = 0; n < 400; n++) {
       const item: Record<string, unknown> = Object.create(null);
       const quantas = prox() % 4;
+      const colunasDaEntidade = STAGING_DO_CATALOGO[e].colunas as readonly string[];
       for (let i = 0; i <= quantas; i++) {
-        const k = VOCAB[prox() % VOCAB.length];
+        // metade das chaves sai das colunas da entidade: sem esse viés quase todo item seria recusado
+        // (2 colunas permitidas num vocabulário de 20) e o lado "aceito" da propriedade ficaria vazio.
+        const k = prox() % 2 === 0 ? colunasDaEntidade[prox() % colunasDaEntidade.length] : VOCAB[prox() % VOCAB.length];
         Object.defineProperty(item, k, { value: `v${prox() % 9}`, enumerable: true, writable: true, configurable: true });
       }
       const limpo = { ...item };   // objeto comum, com as mesmas chaves próprias
@@ -265,10 +274,16 @@ Deno.test("PROPRIEDADE: nenhuma linha tem coluna fora das 5 do servidor + as da 
         assertEq([linha.sync_run_id, linha.account, linha.store_code, linha.staging_status], ["R", "A", "S", "pending"], `${e} #${n}: servidor`);
         assertTrue(linha.raw_data === limpo, `${e} #${n}: raw_data é o item`);
       }
-      if (todasDaEntidade) aceitos++; else recusados++;
+      if (todasDaEntidade) { aceitos++; aceitosDaEntidade++; } else { recusados++; recusadosDaEntidade++; }
+      tamanhos.add(Object.keys(limpo).length);
+      conjuntos.add(`${e}:${Object.keys(limpo).sort().join(",")}`);
     }
+    // cobertura POR entidade: os dois lados aparecem, e itens de 1, 2, 3 e 4 chaves também
+    assertTrue(aceitosDaEntidade >= 50 && recusadosDaEntidade >= 50, `não-vacuidade ${e}: aceitos=${aceitosDaEntidade}, recusados=${recusadosDaEntidade}`);
+    assertEq([...tamanhos].sort(), [1, 2, 3, 4], `não-vacuidade ${e}: tamanhos de item gerados`);
   }
-  assertTrue(aceitos >= 100 && recusados >= 100, `não-vacuidade: aceitos=${aceitos}, recusados=${recusados}`);
+  assertTrue(aceitos >= 250 && recusados >= 250, `não-vacuidade: aceitos=${aceitos}, recusados=${recusados}`);
+  assertTrue(conjuntos.size >= 300, `não-vacuidade: só ${conjuntos.size} conjuntos distintos de chaves`);
 });
 
 Deno.test("recusa: nomes ordenados, sem repetição, com teto de quantidade e de tamanho; detalhe sem o item cru", () => {
@@ -279,6 +294,11 @@ Deno.test("recusa: nomes ordenados, sem repetição, com teto de quantidade e de
   const m = montarLinhasDeCatalogo("produtos", muitos, CTX);
   assertEq(m.recusados, 32, "recusados");
   assertEq(m.camposFora.length, TETO_CAMPOS_NO_LOG, "teto de nomes");
+  // o teto vale DURANTE a coleta: um item só, com milhares de chaves estranhas, não infla o conjunto
+  const gordo: Record<string, unknown> = { cod_produto: "A" };
+  for (let i = 0; i < 5000; i++) gordo[`k${String(i).padStart(4, "0")}`] = i;
+  const g = montarLinhasDeCatalogo("produtos", [gordo], CTX);
+  assertEq([g.recusados, g.camposFora.length, g.camposFora[0], g.camposFora[19]], [1, TETO_CAMPOS_NO_LOG, "k0000", "k0019"], "item de 5.000 chaves");
   assertEq(m.camposFora.slice(0, 3), ["campo_00", "campo_01", "campo_02"], "ordenados, sem repetir");
   assertTrue(m.camposFora.every((c) => c.length <= TETO_NOME_DE_CAMPO), "teto de tamanho do nome");
   const semTeto = montarLinhasDeCatalogo("produtos", [{ cod_produto: "C", ["x".repeat(500)]: 3 }], CTX);

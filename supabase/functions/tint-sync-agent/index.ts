@@ -21,7 +21,7 @@ import {
   updateConfirmou,
 } from "./promocao-fila.ts";
 // Lote de /catalogs sem entidade gravável: ack sem run (catalogo-vazio_test.ts) — NÃO reimplementar inline.
-import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.ts";
+import { ackSemRun, ENTIDADES_CATALOGO, erroDeFormaDoLoteDeCatalogo, itensGravaveis } from "./catalogo-vazio.ts";
 // Linha de staging do catálogo com LISTA FECHADA de colunas (catalogo-staging_test.ts): o item não
 // escolhe coluna de controle (created_at, id…) — NÃO reimplementar inline.
 import {
@@ -31,6 +31,9 @@ import {
   montarLinhasDeCatalogo,
   STAGING_DO_CATALOGO,
 } from "./catalogo-staging.ts";
+// O `generated_at` de /keys-snapshot é o relógio de precedência do snapshot: formato fechado e sem
+// adiantamento além da tolerância (snapshot-gerado-em_test.ts) — NÃO reimplementar inline.
+import { validarGeradoEmDoSnapshot } from "./snapshot-gerado-em.ts";
 // Giro de corante (Fase 1, PR B): /preparations com manifesto, saneado (sem `cliente`) e tudo-ou-nada,
 // e /preparations/plano (preparacoes_test.ts) — NÃO reimplementar inline.
 import { type DepsPreparacoes, modoPromove, processarPreparacoes, respostaDoPlano } from "./preparacoes.ts";
@@ -372,8 +375,9 @@ Deno.serve(async (req) => {
     return true;
   }
 
-  async function logError(runId: string, entityType: string, entityId: string | null, msg: string, details?: unknown, raw?: unknown) {
-    await sb.from("tint_sync_errors").insert({
+  /** Devolve true só se o insert CONFIRMOU: o supabase-js não lança em erro de banco, resolve com `error`. */
+  async function logError(runId: string, entityType: string, entityId: string | null, msg: string, details?: unknown, raw?: unknown): Promise<boolean> {
+    const { error } = await sb.from("tint_sync_errors").insert({
       sync_run_id: runId,
       entity_type: entityType,
       entity_id: entityId,
@@ -381,6 +385,7 @@ Deno.serve(async (req) => {
       error_details: details ? JSON.parse(JSON.stringify(details)) : null,
       raw_data: raw ? JSON.parse(JSON.stringify(raw)) : null,
     });
+    return !error;
   }
 
   function buildResponse(runId: string, stats: { received: number; inserts: number; updates: number; ignored: number; errors: number; errorDetails: { entity_type: string; entity_id: string | null; message: string }[] }) {
@@ -464,6 +469,11 @@ Deno.serve(async (req) => {
       const start = Date.now();
       const body = await req.json();
 
+      // Forma do lote ANTES de qualquer atalho (catalogo-vazio.ts): corpo que não é objeto, ou
+      // entidade gravável que não veio como lista, é 400 — nunca o ack limpo do lote sem item.
+      const erroDeForma = erroDeFormaDoLoteDeCatalogo(body);
+      if (erroDeForma) return json({ ok: false, error: erroDeForma }, 400);
+
       // Change 3+4: also validate precos_base batch size
       const batchErr = validateBatchSize(body, [...ENTIDADES_CATALOGO]);
       if (batchErr) return json({ ok: false, error: batchErr }, 400);
@@ -498,7 +508,11 @@ Deno.serve(async (req) => {
           const motivo = mensagemDaRecusaDeCatalogo(montado);
           errors += montado.recusados;
           errorDetails.push({ entity_type: entityType, entity_id: null, message: motivo });
-          await logError(runId, entityType, null, motivo, detalheDaRecusaDeCatalogo(entityType, montado)).catch(() => {});
+          // O registro é tentativa: a recusa já está em errors[] da resposta, com ou sem ele.
+          const registrou = await logError(runId, entityType, null, motivo, detalheDaRecusaDeCatalogo(entityType, montado)).catch(() => false);
+          if (!registrou) {
+            console.error(`[tint-sync-agent] recusa de catálogo (${entityType}) não registrada em tint_sync_errors`);
+          }
         }
 
         // Change 3: bulk insert for catalog entities (chunks of 500)
@@ -728,8 +742,12 @@ Deno.serve(async (req) => {
       if (!snapshot_id || typeof snapshot_id !== "string") {
         return json({ ok: false, error: "snapshot_id required" }, 400);
       }
-      if (!generated_at) {
-        return json({ ok: false, error: "generated_at required" }, 400);
+      // O relógio de precedência do snapshot não é escolha livre do emissor (snapshot-gerado-em.ts):
+      // formato fechado e sem adiantamento além da tolerância. Um generated_at em 2099 avançava
+      // last_keys_snapshot_at, e todo snapshot honesto seguinte era pulado como "fora de ordem".
+      const geradoEm = validarGeradoEmDoSnapshot(generated_at, Date.now());
+      if (!geradoEm.ok) {
+        return json({ ok: false, error: geradoEm.erro }, 400);
       }
       if (!Number.isInteger(total_chunks) || !Number.isInteger(chunk_index)) {
         return json({ ok: false, error: "total_chunks and chunk_index must be integers" }, 400);
@@ -757,7 +775,7 @@ Deno.serve(async (req) => {
         store_code: agent.storeCode,
         snapshot_id,
         entity,
-        generated_at,
+        generated_at: geradoEm.geradoEm,
         total_chunks,
         chunk_index,
         keys,

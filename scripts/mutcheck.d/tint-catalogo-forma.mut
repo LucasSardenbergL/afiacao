@@ -20,3 +20,11 @@ PEGA | o item cru vai para o log da recusa                     | s/detalheDaRecu
 PEGA | recusa sem registro em tint_sync_errors                 | s/await logError\(runId, entityType, null, motivo, /await Promise.resolve(/
 PEGA | simulação passa a espalhar o body no insert de corante  | s/^(\s+)descricao: c\.descricao, preco_litro: c\.preco_litro,$/$1descricao: c.descricao, preco_litro: c.preco_litro, ...body,/
 PEGA | simulação passa a escolher created_at                   | s/^(\s+)raw_data: c, staging_status: "pending",$/$1raw_data: c, staging_status: "pending", created_at: "2099-01-01",/
+# ── ajustes da 2ª opinião: forma do lote, registro da recusa e o relógio do snapshot ──
+PEGA | entidade malformada volta a cair no ack limpo           | s/if \(erroDeForma\) return json\(\{ ok: false, error: erroDeForma \}, 400\);/;/
+PEGA | forma do lote deixa de ser conferida                    | s/const erroDeForma = erroDeFormaDoLoteDeCatalogo\(body\);/const erroDeForma = null;/
+PEGA | falha do registro da recusa passa calada                | s/if \(!registrou\) \{/if (false) {/
+PEGA | logError diz que gravou sem conferir o erro             | s/return !error;/return true;/
+PEGA | generated_at cru volta a ir ao banco                    | s/generated_at: geradoEm\.geradoEm,/generated_at,/
+PEGA | generated_at recusado segue adiante                     | s/if \(!geradoEm\.ok\) \{/if (false) {/
+PEGA | validação do generated_at sem o relógio do servidor     | s/validarGeradoEmDoSnapshot\(generated_at, Date\.now\(\)\)/validarGeradoEmDoSnapshot(generated_at, 0)/

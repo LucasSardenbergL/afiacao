@@ -14,10 +14,12 @@
 //     controle da linha (sync_run_id, account, store_code, raw_data, staging_status) vêm do
 //     servidor; `id` e `created_at` ficam com o default do banco; `matched_id` não se preenche.
 //   · item com QUALQUER campo fora da lista é RECUSADO inteiro: não vira linha, conta como erro e
-//     a edge registra em tint_sync_errors. Não se "limpa e aceita": o conector só confirma o lote
-//     com error_count = 0 (connector/sayersync/sync.go), então a recusa segue barulhenta, como já
-//     era o PGRST204 da cópia cega para campo que não é coluna. Limpar calado esconderia um campo
-//     novo (ou um nome digitado errado) que nunca chegaria à coluna.
+//     a edge tenta registrar em tint_sync_errors. Não se "limpa e aceita": o conector só confirma
+//     o lote com error_count = 0 e só então avança a marca da entidade (connector/sayersync/
+//     sync.go), então a recusa segue barulhenta, como já era o PGRST204 da cópia cega para campo
+//     que não é coluna. Limpar calado esconderia um campo novo (ou um nome digitado errado) que
+//     nunca chegaria à coluna. Enquanto durar a incompatibilidade, a entidade é reenviada a cada
+//     ciclo; as outras entidades seguem.
 //   · valor de coluna é pass-through (null, 0 e '' preservados): validade é papel do banco.
 //   · chave ausente ou falsy vira '' — como era.
 //   · campo novo de catálogo exige entrar AQUI, depois da migration da coluna e antes do binário.
@@ -86,7 +88,7 @@ export interface LinhasDeCatalogoMontadas {
   linhas: Record<string, unknown>[];
   /** Itens recusados (não viraram linha). Lote que não é array conta 1. */
   recusados: number;
-  /** Nomes de campo fora do contrato vistos nos recusados: ordenados, sem repetição, com teto. */
+  /** Nomes de campo fora do contrato vistos nos recusados: os primeiros até o teto, sem repetição, ordenados. */
   camposFora: string[];
   /** Quantos dos recusados não eram objeto. */
   naoObjeto: number;
@@ -138,7 +140,11 @@ export function montarLinhasDeCatalogo(
     const estranhos = Object.keys(item).filter((k) => !permitidas.includes(k));
     if (estranhos.length > 0) {
       saida.recusados++;
-      for (const k of estranhos) fora.add(k.slice(0, TETO_NOME_DE_CAMPO));
+      // O teto vale DURANTE a coleta: um item com milhares de chaves não infla o conjunto.
+      for (const k of estranhos) {
+        if (fora.size >= TETO_CAMPOS_NO_LOG) break;
+        fora.add(k.slice(0, TETO_NOME_DE_CAMPO));
+      }
       continue;
     }
     // A linha nasce só com nomes LITERAIS: nenhuma chave do item vira nome de coluna.
@@ -155,7 +161,7 @@ export function montarLinhasDeCatalogo(
     linha[cfg.chave] = item[cfg.chave] || "";
     saida.linhas.push(linha);
   }
-  saida.camposFora = [...fora].sort().slice(0, TETO_CAMPOS_NO_LOG);
+  saida.camposFora = [...fora].sort();
   return saida;
 }
 

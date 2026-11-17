@@ -42,7 +42,7 @@ PEGA      | lote que não é lista é aceito calado                 | s/saida\.r
 PEGA      | lote malformado sem a marca                          | s/saida\.loteMalformado = true;/saida.loteMalformado = false;/
 PEGA      | recebidos zera                                       | s/saida\.recebidos = itens\.length;/saida.recebidos = 0;/
 # ── o que vai para o log ──
-PEGA      | teto de nomes some                                   | s/\.slice\(0, TETO_CAMPOS_NO_LOG\)/.slice(0, 9999)/
+PEGA      | teto de nomes some (coleta sem limite)               | s/if \(fora\.size >= TETO_CAMPOS_NO_LOG\) break;/if (false) break;/
 PEGA      | nome longo não é cortado                             | s/fora\.add\(k\.slice\(0, TETO_NOME_DE_CAMPO\)\)/fora.add(k)/
 PEGA      | nomes fora de ordem                                  | s/\[\.\.\.fora\]\.sort\(\)/[...fora]/
 PEGA      | mensagem sem os nomes dos campos                     | s/m\.camposFora\.join\(", "\)/m.camposFora.length/

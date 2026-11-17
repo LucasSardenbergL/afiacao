@@ -25,6 +25,26 @@ export function itensGravaveis(body: Record<string, unknown>): number {
   return n;
 }
 
+/**
+ * Erro de FORMA do lote de /catalogs, ou null. O corpo tem de ser um objeto, e cada entidade
+ * gravável, quando vem, tem de ser lista (`null` e ausência são "o lote não traz essa entidade").
+ *
+ * Roda ANTES do atalho de `itensGravaveis`: sozinha no lote, uma entidade que veio como objeto não
+ * conta item, caía no ack sem run e o conector recebia `ok` com `error_count = 0` — confirmação
+ * limpa de um lote que ninguém gravou (2ª opinião do Codex no lote 6 do scanner, 2026-11-17).
+ */
+export function erroDeFormaDoLoteDeCatalogo(body: unknown): string | null {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return "body must be a JSON object";
+  }
+  const lote = body as Record<string, unknown>;
+  for (const k of ENTIDADES_CATALOGO) {
+    const v = lote[k];
+    if (v !== undefined && v !== null && !Array.isArray(v)) return `${k}: must be an array`;
+  }
+  return null;
+}
+
 /** O ack de um lote sem run: o mesmo corpo de antes, sem sync_run_id. Também o do reenvio idêntico de
  *  /formulas (formula-identica.ts), com `recebidos` = ignorados e o motivo próprio. */
 export function ackSemRun(

@@ -3,7 +3,7 @@
 //
 // Money-path: o ack sem run SÓ pode sair com zero item gravável. Um item gravável que caísse aqui
 // seria um lote cacheado pelo conector (hash no 200) e nunca gravado — o dado some calado.
-import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.ts";
+import { ackSemRun, ENTIDADES_CATALOGO, erroDeFormaDoLoteDeCatalogo, itensGravaveis } from "./catalogo-vazio.ts";
 
 function assertEq(atual: unknown, esperado: unknown, msg: string) {
   if (JSON.stringify(atual) !== JSON.stringify(esperado)) {
@@ -36,4 +36,31 @@ Deno.test("ack sem run: ok, sem erro, sem run — o que o conector confere para 
   const a = ackSemRun("chave-1");
   assertEq([a.ok, a.error_count, a.errors, a.sync_run_id, a.batch_id], [true, 0, [], null, "chave-1"], "ack");
   assertEq(ackSemRun(null).batch_id, null, "sem idempotency key");
+});
+
+Deno.test("forma do lote: objeto com listas (ou sem a entidade, ou com null) não tem erro", () => {
+  assertEq(erroDeFormaDoLoteDeCatalogo({}), null, "vazio");
+  assertEq(erroDeFormaDoLoteDeCatalogo({ padracores: { qualquer: 1 } }), null, "entidade que a rota não grava não é conferida");
+  assertEq(erroDeFormaDoLoteDeCatalogo({ produtos: [], skus: [{}] }), null, "listas");
+  assertEq(erroDeFormaDoLoteDeCatalogo({ produtos: null, bases: undefined }), null, "null e undefined são ausência");
+  for (const k of ENTIDADES_CATALOGO) {
+    assertEq(erroDeFormaDoLoteDeCatalogo({ [k]: [{ x: 1 }] }), null, `entidade ${k} como lista`);
+  }
+});
+
+Deno.test("forma do lote: CADA entidade gravável que não vem como lista é erro — inclusive sozinha no lote", () => {
+  for (const k of ENTIDADES_CATALOGO) {
+    for (const torto of [{ cod_produto: "A" }, "texto", 7, true, 0, ""]) {
+      // sozinha no lote ela conta 0 item gravável: sem esta conferência caía no ack limpo
+      assertEq(itensGravaveis({ [k]: torto }), 0, `não-vacuidade: ${k} torta conta 0 gravável`);
+      assertEq(erroDeFormaDoLoteDeCatalogo({ [k]: torto }), `${k}: must be an array`, `${k} = ${JSON.stringify(torto)}`);
+      assertEq(erroDeFormaDoLoteDeCatalogo({ produtos: [{ cod_produto: "A" }], [k]: torto })?.endsWith(": must be an array"), true, `${k} torta ao lado de entidade válida`);
+    }
+  }
+});
+
+Deno.test("forma do lote: corpo que não é objeto é erro", () => {
+  for (const torto of [null, undefined, [], [{ produtos: [] }], "texto", 7, true]) {
+    assertEq(erroDeFormaDoLoteDeCatalogo(torto), "body must be a JSON object", `corpo ${JSON.stringify(torto)}`);
+  }
 });
