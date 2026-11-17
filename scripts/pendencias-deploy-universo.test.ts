@@ -43,15 +43,17 @@ describe('lerUniverso — o denominador HONESTO, medido na ref real (#2824)', ()
     // Lote C) e foi para o teste de baixo. Depois foi a `fin-period-override`, que também ganhou
     // sonda (M-26, 3ª leva — ela é do financeiro, ATIVO; o "congelado" daqui estava errado). O
     // controle vivo passou a `kb-ingest-document` (insert via PostgREST, knowledge-base CONGELADO
-    // no manifesto — estável sem marcador até alguém descongelar o módulo).
-    const controle = u.semMarcador.find((e) => e.edge === 'kb-ingest-document');
+    // no manifesto) — que ganhou sonda no lote 5 do scanner Lovable (2026-11-17), junto com o gate
+    // de dono, e também foi para o teste de baixo. O controle agora é a `kb-extract-specs`, do
+    // mesmo módulo congelado, que grava via PostgREST e segue sem marcador.
+    const controle = u.semMarcador.find((e) => e.edge === 'kb-extract-specs');
     expect(controle, 'o controle saiu da lista — se foi instrumentado, troque por outra edge que escreve').toBeDefined();
     expect(controle?.escrita).toBe('postgrest');
   });
 
-  it('as instrumentadas (as 4 do #2824 + a `tint-omie-sync`, do M-26) NÃO aparecem aqui', () => {
+  it('as instrumentadas (as 4 do #2824 + a `tint-omie-sync`, do M-26, + as 2 do lote 5 do scanner) NÃO aparecem aqui', () => {
     const nomes = u.semMarcador.map((e) => e.edge);
-    for (const e of ['omie-analytics-sync', 'omie-sync-metadados', 'omie-vendas-sync', 'sync-reprocess', 'tint-omie-sync', 'fin-period-override']) {
+    for (const e of ['omie-analytics-sync', 'omie-sync-metadados', 'omie-vendas-sync', 'sync-reprocess', 'tint-omie-sync', 'fin-period-override', 'kb-ingest-document', 'extrair-sinais-ligacao']) {
       expect(nomes).not.toContain(e);
     }
   });
