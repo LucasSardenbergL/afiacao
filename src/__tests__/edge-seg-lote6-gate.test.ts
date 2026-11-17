@@ -64,6 +64,8 @@ function declaracoesDe(sf: ts.SourceFile, nome: string): ts.VariableDeclaration[
 
 const MODULO_CATALOGO = './catalogo-rows.ts';
 const BUILDER_CATALOGO = 'montarStagingCatalogoRow';
+/** O banco preenche por default; se a edge as escreve, o valor só pode ter vindo do payload. */
+const COLUNAS_SO_DO_BANCO = new Set(['id', 'created_at', 'matched_id']);
 
 function problemasDoBulkInsert(fonte: string): string[] {
   const sf = parse(fonte);
@@ -116,6 +118,8 @@ function problemasDoBulkInsert(fonte: string): string[] {
         problemas.push(`bulkInsert(${linhas.text}): spread no objeto da linha (${junta(prop.getText(sf))}) — o payload escolheria coluna`);
       } else if (!ts.isPropertyAssignment(prop) || ts.isComputedPropertyName(prop.name)) {
         problemas.push(`bulkInsert(${linhas.text}): chave de coluna que não é nome fixo (${junta(prop.getText(sf)).slice(0, 60)})`);
+      } else if (COLUNAS_SO_DO_BANCO.has(prop.name.getText(sf).replace(/["']/g, ''))) {
+        problemas.push(`bulkInsert(${linhas.text}): coluna do servidor com nome fixo no objeto da linha (${prop.name.getText(sf)})`);
       }
     }
   }
@@ -288,6 +292,7 @@ describe('lote 6 do scanner — tint-sync-agent: a linha de staging não sai do 
     ['tabela fixa, descasada da entidade', 'STAGING_CATALOGO[entityType].tabela, rows', '"tint_staging_corantes", rows', 'não é a da entidade do builder'],
     ['spread no objeto de precos_base', 'cod_produto: item.cod_produto ?? null,', '...item,', 'spread no objeto da linha'],
     ['chave computada no objeto de precos_base', 'cod_produto: item.cod_produto ?? null,', '[chave]: item.cod_produto,', 'não é nome fixo'],
+    ['created_at com nome fixo no objeto de precos_base', 'cod_produto: item.cod_produto ?? null,', 'created_at: item.created_at, cod_produto: item.cod_produto ?? null,', 'coluna do servidor com nome fixo'],
     ['builder vindo de outro módulo', 'from "./catalogo-rows.ts";', 'from "./outro-modulo.ts";', `não é o importado de ${MODULO_CATALOGO}`],
     ['os itens crus do payload no lugar das linhas', 'tabela, rows, 500', 'tabela, items, 500', 'não saem de um .map(arrow)'],
     ['linhas como expressão, sem variável', 'tabela, rows, 500', 'tabela, items as never, 500', 'não é um identificador'],

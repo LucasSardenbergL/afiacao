@@ -6,8 +6,10 @@
 // inteiro, e quem tem o token de sync escolhia essa coluna. Estes testes travam a lista fechada:
 // do item só saem colunas de negócio; o que é do servidor nunca vem do agente.
 import {
+  chavesDescartadas,
   COLUNAS_DO_SERVIDOR_NO_STAGING,
   ENTIDADES_STAGING_CATALOGO,
+  MAX_TAMANHO_DE_CHAVE_NO_AVISO,
   montarStagingCatalogoRow,
   STAGING_CATALOGO,
   type EntidadeStagingCatalogo,
@@ -220,6 +222,10 @@ Deno.test("agente real: a linha nova é IGUAL à legada, chave a chave", () => {
     ["skus", { cod_produto: "P1", id_base: "B1", id_embalagem: "E1" }],
     ["corantes", { id_corante_sayersystem: "C1", descricao: "Amarelo", volume_ml: 1000 }],
     ["corantes", { id_corante_sayersystem: "C1", descricao: "Amarelo", volume_ml: 1000, custo: 85.4, preco_litro: 120 }],
+    // Linha SÓ de preço do corante (connector/sayersync/sync.go: id + custo/volume presentes, sem descrição).
+    ["corantes", { id_corante_sayersystem: "C1", custo: 85.4, volume_ml: 1000 }],
+    ["corantes", { id_corante_sayersystem: "C1", custo: 85.4 }],
+    ["corantes", { id_corante_sayersystem: "C1" }],
   ];
   for (const [entidade, item] of casos) {
     const nova = montarStagingCatalogoRow(entidade, item, RUN, CONTA, LOJA);
@@ -238,4 +244,53 @@ Deno.test("controle da caracterização: a legada ACEITAVA o created_at do agent
   if ("created_at" in nova) throw new Error("a nova ainda copia created_at");
   // O dado de negócio do mesmo item continua entrando: o agente segue podendo mandar custo.
   assertEq(nova.custo, 0.01, "custo do item entra");
+});
+
+Deno.test("lote heterogêneo: a união das colunas do chunk é a mesma da legada", () => {
+  // O bulk insert manda `columns` = união das chaves do chunk e o PostgREST grava NULL no que
+  // faltar. Misturar linha descritiva com linha só de preço não pode mudar essa união.
+  const itens: TintCatalogItem[] = [
+    { id_corante_sayersystem: "C1", descricao: "Amarelo", volume_ml: 1000 },
+    { id_corante_sayersystem: "C2", custo: 85.4 },
+    { id_corante_sayersystem: "C3", custo: 12, volume_ml: 950 },
+  ];
+  const uniao = (linhas: Record<string, unknown>[]) => [...new Set(linhas.flatMap((l) => Object.keys(l)))].sort().join(",");
+  const novas = itens.map((i) => montarStagingCatalogoRow("corantes", i, RUN, CONTA, LOJA));
+  const legadas = itens.map((i) => linhaLegada("id_corante_sayersystem", i));
+  assertEq(uniao(novas), uniao(legadas), "união das colunas do chunk");
+  assertEq(
+    uniao(novas),
+    "account,custo,descricao,id_corante_sayersystem,raw_data,staging_status,store_code,sync_run_id,volume_ml",
+    "união esperada",
+  );
+});
+
+Deno.test("chavesDescartadas: nomeia o que a lista não gravou — do servidor e desconhecido —, sem repetir", () => {
+  const itens: TintCatalogItem[] = [
+    itemHostil({ id_corante_sayersystem: "C1", custo: 1 }),
+    itemHostil({ id_corante_sayersystem: "C2", campo_novo_do_conector: 7 }),
+  ];
+  assertEq(
+    chavesDescartadas("corantes", itens).join(","),
+    "account,campo_novo_do_conector,coluna_que_nao_existe,created_at,id,matched_id,raw_data,staging_status,store_code,sync_run_id",
+    "chaves descartadas",
+  );
+  // Coluna de negócio de OUTRA entidade também é descarte nesta (produtos não tem custo).
+  assertEq(chavesDescartadas("produtos", [{ cod_produto: "P1", custo: 5 }]).join(","), "custo", "custo em produtos");
+});
+
+Deno.test("chavesDescartadas: agente real não gera aviso; `id` usado como chave não é descarte", () => {
+  assertEq(chavesDescartadas("corantes", [{ id_corante_sayersystem: "C1", descricao: "A", volume_ml: 1, custo: 2, preco_litro: 3 }]).length, 0, "corante completo");
+  assertEq(chavesDescartadas("skus", [{ cod_produto: "P1", id_base: "B1", id_embalagem: "E1" }]).length, 0, "sku");
+  assertEq(chavesDescartadas("bases", []).length, 0, "lote vazio");
+  assertEq(chavesDescartadas("bases", [{ id: "B9", descricao: "x" }]).length, 0, "id como chave da entidade");
+  assertEq(chavesDescartadas("bases", [{ id: "B9", id_base_sayersystem: "B1" }]).join(","), "id", "id sobrando ao lado da chave");
+});
+
+Deno.test("chavesDescartadas: nome longo é truncado (o nome vem do agente)", () => {
+  const longo = "x".repeat(500);
+  const saida = chavesDescartadas("produtos", [{ cod_produto: "P1", [longo]: 1 }]);
+  assertEq(saida.length, 1, "uma chave");
+  assertEq(saida[0].length, MAX_TAMANHO_DE_CHAVE_NO_AVISO, "tamanho truncado");
+  assertEq(MAX_TAMANHO_DE_CHAVE_NO_AVISO, 60, "teto");
 });

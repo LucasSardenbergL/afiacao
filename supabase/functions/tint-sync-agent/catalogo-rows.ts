@@ -28,7 +28,11 @@
 // O que NÃO muda para o agente real: ele só envia colunas desta lista (medido nas 3.000 linhas
 // mais recentes de cada tabela), então a linha gravada é a mesma. Muda para item com campo fora
 // da lista: antes o PostgREST recusava o LOTE inteiro de até 500 linhas (coluna inexistente);
-// agora o campo é ignorado e a linha entra.
+// agora o campo é ignorado e a linha entra — e o index avisa no log (`chavesDescartadas`),
+// porque o conector não reenvia o lote depois que a lista for atualizada. Muda também para o
+// item que traz `id` no lugar da chave da entidade: antes o `id` ia junto para a coluna `id`
+// (uuid) e derrubava o lote se não fosse uuid; agora ele só vira a chave. Não é autoridade
+// nova: o agente já podia mandar o mesmo valor na chave da entidade.
 
 /** Item bruto de catálogo enviado pelo agente (qualquer das 5 entidades). */
 export interface TintCatalogItem {
@@ -131,4 +135,34 @@ export function montarStagingCatalogoRow(
   }
   row[config.chave] = (item[config.chave] as string | undefined) || item.id || "";
   return row;
+}
+
+/** Tamanho máximo de cada nome devolvido por `chavesDescartadas` (o nome vem do agente). */
+export const MAX_TAMANHO_DE_CHAVE_NO_AVISO = 60;
+
+/**
+ * Nomes das chaves que os itens trouxeram e a lista fechada NÃO gravou (as do servidor
+ * inclusive), sem repetição, em ordem e truncados. Alimenta o aviso de log do index.
+ *
+ * `raw_data` guarda a evidência, mas não avisa ninguém: se o conector passar a mandar um campo
+ * de negócio que a lista não conhece, o lote é confirmado sem ele e não é reenviado depois.
+ * `id` só conta como descartado quando o item também traz a chave da entidade — sem ela, o `id`
+ * é usado como chave.
+ */
+export function chavesDescartadas(
+  entidade: EntidadeStagingCatalogo,
+  itens: readonly TintCatalogItem[],
+): string[] {
+  const config: StagingCatalogoConfig = STAGING_CATALOGO[entidade];
+  const gravadas = new Set<string>(config.colunas);
+  const descartadas = new Set<string>();
+  for (const item of itens) {
+    const idViraChave = !item[config.chave];
+    for (const chave of Object.keys(item)) {
+      if (gravadas.has(chave)) continue;
+      if (chave === "id" && idViraChave) continue;
+      descartadas.add(chave.slice(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO));
+    }
+  }
+  return [...descartadas].sort();
 }

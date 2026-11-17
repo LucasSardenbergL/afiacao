@@ -25,6 +25,7 @@ import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.
 // Linha de staging de /catalogs: lista FECHADA de colunas por entidade (catalogo-rows_test.ts).
 // Colunas do servidor (`created_at`, `id`, `matched_id`) nunca saem do item — NÃO reimplementar inline.
 import {
+  chavesDescartadas,
   ENTIDADES_STAGING_CATALOGO,
   montarStagingCatalogoRow,
   STAGING_CATALOGO,
@@ -493,6 +494,15 @@ Deno.serve(async (req) => {
         const rows: Record<string, unknown>[] = items.map((item) =>
           montarStagingCatalogoRow(entityType, item, runId, agent.account, agent.storeCode)
         );
+        // Campo que a lista fechada não gravou: avisa no log. O conector não reenvia o lote, então
+        // um campo novo de negócio (ou uma coluna do servidor mandada de propósito) não pode sumir calado.
+        const descartadas = chavesDescartadas(entityType, items);
+        if (descartadas.length > 0) {
+          console.warn(
+            "[tint-sync-agent] /catalogs: campos fora da lista fechada ignorados",
+            JSON.stringify({ entidade: entityType, itens: items.length, chaves: descartadas.slice(0, 20), outras: Math.max(0, descartadas.length - 20) }),
+          );
+        }
 
         const { insertedCount } = await bulkInsert(STAGING_CATALOGO[entityType].tabela, rows, 500, (chunk, err) => {
           errors += chunk.length;
