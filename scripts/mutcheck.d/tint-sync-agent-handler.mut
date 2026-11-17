@@ -1,0 +1,27 @@
+# O HANDLER da `tint-sync-agent` executado com PostgREST falso: o que sai pelo fio
+# (scanner Lovable Security, lote 6 — achado do Codex na consulta de desenho; money-path).
+# @src: supabase/functions/tint-sync-agent/index.ts
+# @test: supabase/functions/tint-sync-agent/index_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: true
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# `@compile_cmd: true` de propósito: o `index.ts` importa o supabase-js por `npm:` e o type-check
+# dele é do gate `edges:typecheck` (lock próprio). O teste carrega o módulo por import computado,
+# então cada mutante é julgado pelo que a rota FAZ — é a mutação no CONSUMIDOR que os contratos
+# dos módulos puros (tint-catalogo-rows.mut, tint-snapshot-relogio.mut) não alcançam.
+# EXPECT preenchido por MEDIÇÃO.
+#
+# ── /catalogs: coluna do servidor de volta à linha entregue ao banco ──
+PEGA | created_at acrescentado DEPOIS do builder         | s/^          montarStagingCatalogoRow\(entityType, item, runId, agent\.account, agent\.storeCode\)$/          ({ ...montarStagingCatalogoRow(entityType, item, runId, agent.account, agent.storeCode), created_at: item.created_at })/
+PEGA | a rota volta a copiar o item (o furo)            | s/^          montarStagingCatalogoRow\(entityType, item, runId, agent\.account, agent\.storeCode\)$/          ({ ...item, sync_run_id: runId, account: agent.account, store_code: agent.storeCode, raw_data: item, staging_status: "pending" })/
+PEGA | bulkInsert reexpande o raw_data na linha         | s/const \{ error \} = await sb\.from\(table\)\.insert\(chunk\);/const { error } = await sb.from(table).insert(chunk.map((r) => ({ ...(r.raw_data as object), ...r })));/
+PEGA | precos_base aceita created_at do item            | s/^          margem_pct: item\.margem_pct \?\? null,$/          margem_pct: item.margem_pct ?? null, created_at: item.created_at,/
+PEGA | precos_base aceita o sync_run_id do item         | s/^          margem_pct: item\.margem_pct \?\? null,$/          margem_pct: item.margem_pct ?? null, sync_run_id: item.sync_run_id,/
+# ── /keys-snapshot: o relógio do agente ──
+PEGA | generated_at recusado e gravado mesmo assim      | s/if \(!relogio\.ok\) return json\(\{ ok: false, error: relogio\.erro \}, 400\);/if (!relogio.ok) console.warn(relogio.erro);/
+PEGA | veredito do relogio nem e pedido                 | s/const relogio = validarGeneratedAt\(generated_at, Date\.now\(\)\);/const relogio: { ok: boolean; erro?: string } = { ok: true };/
+PEGA | relogio do servidor adiantado em 1 dia           | s/validarGeneratedAt\(generated_at, Date\.now\(\)\)/validarGeneratedAt(generated_at, Date.now() + 86_400_000)/
+# ── controle do fake de auth ──
+PEGA | token da loja nao e conferido                    | s/if \(!data\.sync_token \|\| !timingSafeEq\(String\(data\.sync_token\), syncToken\)\) return null;/if (!data.sync_token) return null;/

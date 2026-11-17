@@ -36,3 +36,9 @@ PEGA | chave ausente vira null                          | s/\|\| item\.id \|\| "
 # ── tabela e chave por entidade ──
 PEGA | corantes gravados na tabela de produtos          | s/tabela: "tint_staging_corantes"/tabela: "tint_staging_produtos"/
 PEGA | chave de bases trocada                           | s/chave: "id_base_sayersystem"/chave: "descricao"/
+# ── o aviso do que foi descartado (o conector não reenvia o lote) ──
+PEGA | aviso nao lista coluna do servidor               | s/if \(gravadas\.has\(chave\)\) continue;/if (gravadas.has(chave) || chave === "created_at") continue;/
+PEGA | id nunca e avisado (mesmo sobrando)              | s/if \(chave === "id" && idViraChave\) continue;/if (chave === "id") continue;/
+PEGA | id avisado mesmo quando e a chave                | s/if \(chave === "id" && idViraChave\) continue;//
+PEGA | nome da chave sem truncar                        | s/descartadas\.add\(chave\.slice\(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO\)\);/descartadas.add(chave);/
+PEGA | aviso sem ordenar                                | s/return \[\.\.\.descartadas\]\.sort\(\);/return [...descartadas];/
