@@ -177,6 +177,12 @@ concurrency:
   group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('ci-dispatch-{0}', github.ref) || format('ci-{0}-{1}', github.event_name, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Runner FIXADO em ubuntu-24.04 (2026-11-17). O `ubuntu-latest` virou ubuntu-26.04 entre o run verde
+# da main às 19:33 de 16/11 (Image: ubuntu-24.04) e o vermelho de 01:12 de 17/11 (Image: ubuntu-26.04).
+# A 26.04 não traz o Postgres pré-instalado, e o eval `sonda-veredito-401` da skill lovable-deploy-verify
+# usa o initdb do RUNNER (não o PG17 do PGDG do job de provas): hooks, gates-e-falsificacao,
+# evals-falsificacao e falsificacao (4) caíram com VIA_NAO_OBSERVAVEL. O PGDG instala pelo codinome
+# da distro. Migrar para a 26.04 é uma decisão própria: primeiro o Postgres explícito nesses jobs.
 jobs:
   # ─── Job 1/4 — typecheck (medido: ~53s) ─────────────────────────────────────
   typecheck:
@@ -184,7 +190,7 @@ jobs:
     # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
     needs: docs-escopo
     if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -255,7 +261,7 @@ jobs:
     # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
     needs: docs-escopo
     if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -327,7 +333,7 @@ jobs:
     # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
     needs: docs-escopo
     if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     permissions:
       contents: read
@@ -576,7 +582,7 @@ jobs:
     # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
     needs: docs-escopo
     if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     permissions:
       contents: read
@@ -619,7 +625,7 @@ jobs:
     # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
     needs: docs-escopo
     if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -679,7 +685,7 @@ jobs:
     # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
     needs: docs-escopo
     if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -718,7 +724,7 @@ jobs:
     # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
     needs: docs-escopo
     if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 15 → 25 (2026-09-25): em 58 runs, p50 707s · p90 808s · pior 841s = 93% do teto ANTES das
     # 2 sabotagens novas do codex-async (~+85s; runner lento ~+110s) — com 15, 9–18% dos runs
     # VERDES morreriam no relógio. Folga sobre o PIOR observado, não sobre o típico:
@@ -844,7 +850,7 @@ jobs:
       # que este step existe.
       #
       # Dependências no runner: python3 (http.server das fixtures + o eval do classify) e git
-      # (fixture do guard --pai). Ambos vêm no ubuntu-latest, mas o que garante o step não é a
+      # (fixture do guard --pai). Ambos vêm no ubuntu-24.04, mas o que garante o step não é a
       # presença e sim o comportamento na AUSÊNCIA — com um python3 quebrado no PATH os DOIS modos
       # saem exit 2 ("servidor de fixtures não subiu") antes de qualquer caso: fail-CLOSED, nunca
       # verde por dependência faltando (`command -v` não bastaria: presente-porém-quebrada esvazia
@@ -1063,7 +1069,7 @@ jobs:
     # `so_docs=true` (aí o `docs-gates` roda os gates e testes que leem docs/). Escopo falho → roda.
     needs: docs-escopo
     if: ${{ !cancelled() && !(needs.docs-escopo.result == 'success' && needs.docs-escopo.outputs.so_docs == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Fatia maior ~6 min medida (5,8 de alvos + preâmbulo); 15 deixa ~2,5× de folga e segue acima
     # do pior alvo isolado. Timeout é ausência de dado (docs/historico/timeout-de-job-e-ausencia-de-dado.md).
     timeout-minutes: 15
@@ -1168,7 +1174,7 @@ jobs:
   # é a main: fora de PR os 8 jobs rodam integralmente. Step OPACO pelo mesmo motivo do
   # `provas-sql-escopo` — decide escopo, não reprova conteúdo.
   docs-escopo:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       contents: read
@@ -1202,7 +1208,7 @@ jobs:
   # Os nomes de script repetem os do `gates-e-falsificacao`, que vem antes no arquivo e é o dono no
   # censo do `gates:frescura` (que deduplica por nome).
   docs-gates:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -1276,7 +1282,7 @@ jobs:
         run: echo "parte_${PARTE}=rodou" >> "$GITHUB_OUTPUT"
 
   provas-sql-escopo:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # `checks: read` (fatia C, 2026-11-09): o recibo de um run anterior do MESMO PR é lido da anotação
     # que o escopo DAQUELE run deixou (API de check-runs) — ver o bloco "Recibo do MESMO PR" do script.
@@ -1453,7 +1459,7 @@ jobs:
   provas-sql:
     needs: [provas-sql-escopo]
     if: ${{ !cancelled() && needs.provas-sql-escopo.outputs.roda != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -1914,7 +1920,7 @@ jobs:
   fail-fast:
     needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks, evals-falsificacao, falsificacao, docs-gates]
     if: ${{ failure() && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     permissions:
       actions: write
@@ -1934,7 +1940,7 @@ jobs:
   validate:
     if: always()
     needs: [typecheck, testes, edges-e-build, sonda-cron-prova, gates-e-falsificacao, hooks, evals-falsificacao, falsificacao, docs-escopo, docs-gates, provas-sql-escopo, provas-sql]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue. actions:read p/ revalidar, pela
     # API, o run-recibo quando o escopo reaproveitou as provas de um run anterior do PR (fatia C).
@@ -2273,7 +2279,7 @@ jobs:
   # é o precedente dos 4 vazios no mesmo pixel (docs/historico/fase-sem-sinal.md §2).
   authz-sentinela:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -2367,7 +2373,7 @@ jobs:
   # Issue `mutcheck-cobertura`. Fail-closed: o script nunca sai ≠ 0, e o `mutation-check` só pula
   # com `roda` EXPLICITAMENTE 'false' — saída ausente (job de escopo quebrado) roda.
   mutcheck-escopo:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.mutcheck }}
     permissions:
@@ -2406,7 +2412,7 @@ jobs:
   # PRs alheias num repo multi-sessão. Promova a required (igual ao lint) quando os
   # .mut amadurecerem. `--selftest` valida a própria ferramenta. Ver CLAUDE.md §13.
   mutation-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Mesmo motivo do teto do `validate` (leia o comentário lá): timeout aqui seria ausência de
     # dado vestida de reprovação. Medido em 2026-09-07 sobre 28 runs: 346s a 533s — o pior já
     # consumia 89% do teto de 10min, um runner lento de distância do mesmo falso-vermelho. 15min
@@ -2551,7 +2557,7 @@ jobs:
   mutcheck-sensor:
     needs: [mutcheck-escopo, mutation-check]
     if: ${{ always() && github.ref == 'refs/heads/main' && needs.mutation-check.result != 'skipped' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
