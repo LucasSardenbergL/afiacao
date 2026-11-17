@@ -1036,3 +1036,9 @@ Os dois P1 do parecer Codex que a v1.15 deixou para decisão do founder (exigiam
   cancelamento durante a espera do lock, o INSERT do "6" esperando a importação em voo, o claim esperando o INSERT do
   "6"). Deno 87/87 com 4 sabotagens vermelhas; os 6 gates de edge em exit 0; vitest 1252/1252 (2 suítes que caíram por
   timeout de carga re-rodadas isoladas: 124/124).
+- **Deploy (2026-11-17):** a onda saiu retida pela ordem entre edges (a prova da predecessora
+  `disparar-pedidos-aprovados` tinha 13,4 h > teto 6 h); sondada de novo (`db/2026-11-16-sonda-disparo-disparar-v116-pre-sayerlack-v116.sql`,
+  tentativa #1152, request 23655, DEPLOY CONFIRMADO) e, passados 10 min, liberada. Colagem pelo MCP: 14/14 hashes
+  contra `33d1b985b`, "No files were edited.", 1,4 crédito. Sonda pós-deploy
+  (`db/2026-11-16-sonda-disparo-sayerlack-importar-v116.sql`, tentativa #1155): request 23666, `v1.16-cancelado-antes-do-pedido`,
+  **DEPLOY CONFIRMADO**. `pendencias:deploy` exit 0.
