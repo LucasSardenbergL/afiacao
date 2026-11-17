@@ -23,6 +23,8 @@ const URL_EDGE = `${ENV_TESTE.SUPABASE_URL}/functions/v1/qualquer`;
 const req = (headers: Record<string, string> = { Authorization: "Bearer jwt-employee" }) =>
   new Request(URL_EDGE, { method: "POST", headers });
 const STAFF = { via: "staff" as const };
+/** Sem espera entre tentativas e com teto curto: o teste não dorme 300 ms nem 10 s. */
+const RAPIDO = { esperaMs: 0, tetoMs: 40 };
 
 const json = (corpo: unknown, status = 200) =>
   new Response(JSON.stringify(corpo), { status, headers: { "content-type": "application/json" } });
@@ -76,6 +78,7 @@ Deno.test("staff DONO: a sonda devolve a linha → ok por rls; a sonda é o PATC
   igual(sonda.headers.get("Authorization"), "Bearer jwt-employee", "Authorization é o do chamador");
   igual(sonda.headers.get("apikey"), ANON, "apikey é a anon");
   igual(sonda.headers.get("Prefer"), "return=representation", "Prefer");
+  igual(sonda.headers.get("Content-Profile"), "public", "schema explícito, como o supabase-js");
   for (const [nome, valor] of sonda.headers) {
     if (valor.includes(ENV_TESTE.SUPABASE_SERVICE_ROLE_KEY)) {
       throw new Error(`a service-role saiu no header ${nome}: com ela a sonda diria "pode" para qualquer um`);
@@ -83,43 +86,102 @@ Deno.test("staff DONO: a sonda devolve a linha → ok por rls; a sonda é o PATC
   }
 });
 
-Deno.test("staff NÃO-dono: a RLS filtra e a sonda volta vazia → 403 DONO_SEM_PERMISSAO", async () => {
+Deno.test("staff NÃO-dono: a RLS filtra e a sonda volta vazia → 403 DONO_SEM_PERMISSAO, sem repetir", async () => {
   h.limpar();
   h.responderForaDoGate(() => json([]));
-  await recusou(await exigirDonoPelaRls(req(), STAFF, "kb_documents", ID), 403, DONO_SEM_PERMISSAO, "lista vazia");
-  igual(h.chamadas.length, 1, "só a sonda saiu");
+  await recusou(await exigirDonoPelaRls(req(), STAFF, "kb_documents", ID, RAPIDO), 403, DONO_SEM_PERMISSAO, "lista vazia");
+  igual(h.chamadas.length, 1, "o banco respondeu não: uma sonda só");
 });
 
-Deno.test("PostgREST responde 403 (42501) → 403 DONO_SEM_PERMISSAO", async () => {
+Deno.test("PostgREST responde 403 (42501) → 403 DONO_SEM_PERMISSAO, sem repetir", async () => {
   h.limpar();
   h.responderForaDoGate(() => json({ code: "42501", message: "new row violates row-level security policy" }, 403));
-  await recusou(await exigirDonoPelaRls(req(), STAFF, "farmer_calls", ID), 403, DONO_SEM_PERMISSAO, "403 do banco");
+  await recusou(await exigirDonoPelaRls(req(), STAFF, "farmer_calls", ID, RAPIDO), 403, DONO_SEM_PERMISSAO, "403 do banco");
+  igual(h.chamadas.length, 1, "uma sonda só");
 });
 
-Deno.test("sonda sem veredito → 503 DONO_GATE_INDISPONIVEL (fechado), nunca ok", async () => {
-  const semVeredito: Array<[string, () => Response]> = [
-    ["HTTP 500", () => json({ message: "boom" }, 500)],
+Deno.test("sonda sem veredito e NÃO transitória → 503 fechado na 1ª, nunca ok", async () => {
+  const definitivos: Array<[string, () => Response]> = [
     ["HTTP 401 (JWT expirou entre o gate e a sonda)", () => json({ code: "PGRST301" }, 401)],
     ["HTTP 404 (tabela fora do schema cache)", () => json({ code: "PGRST205" }, 404)],
+    ["HTTP 400", () => json({ code: "22P02" }, 400)],
     ["200 com objeto em vez de lista", () => json({ id: ID })],
-    ["200 com corpo que não é JSON", () => new Response("<html>", { status: 200 })],
     ["200 com DUAS linhas", () => json([{ id: ID }, { id: ID }])],
     ["200 com a linha de OUTRO id", () => json([{ id: "11111111-2222-4333-8444-555555555555" }])],
     ["200 com linha sem id", () => json([{}])],
+    ["200 com linha nula", () => json([null])],
   ];
-  for (const [nome, resposta] of semVeredito) {
+  for (const [nome, resposta] of definitivos) {
     h.limpar();
     h.responderForaDoGate(resposta);
-    await recusou(await exigirDonoPelaRls(req(), STAFF, "kb_documents", ID), 503, DONO_GATE_INDISPONIVEL, nome);
+    await recusou(await exigirDonoPelaRls(req(), STAFF, "kb_documents", ID, RAPIDO), 503, DONO_GATE_INDISPONIVEL, nome);
+    igual(h.chamadas.length, 1, `${nome}: repetir não muda a resposta, uma sonda só`);
   }
 });
 
-Deno.test("fetch lança (rede/timeout) → 503 DONO_GATE_INDISPONIVEL", async () => {
+Deno.test("falha TRANSITÓRIA (5xx, 429, rede, corpo ilegível) → repete UMA vez; persistindo, 503 fechado", async () => {
+  const transitorios: Array<[string, () => Response]> = [
+    ["HTTP 500", () => json({ message: "boom" }, 500)],
+    ["HTTP 503", () => json({ message: "indisponível" }, 503)],
+    ["HTTP 429", () => json({ message: "devagar" }, 429)],
+    ["200 com corpo que não é JSON", () => new Response("<html>", { status: 200 })],
+    ["fetch lança (rede)", () => {
+      throw new TypeError("connection reset");
+    }],
+  ];
+  for (const [nome, resposta] of transitorios) {
+    h.limpar();
+    h.responderForaDoGate(resposta);
+    await recusou(await exigirDonoPelaRls(req(), STAFF, "kb_documents", ID, RAPIDO), 503, DONO_GATE_INDISPONIVEL, nome);
+    igual(h.chamadas.length, 2, `${nome}: duas sondas, não mais`);
+  }
+});
+
+Deno.test("falha transitória na 1ª e resposta na 2ª → vale a 2ª (dono passa; não-dono 403)", async () => {
+  for (const [segunda, esperado] of [[[{ id: ID }], "pode"], [[], "nao"]] as const) {
+    h.limpar();
+    let n = 0;
+    h.responderForaDoGate(() => (++n === 1 ? json({ message: "boom" }, 500) : json(segunda)));
+    const r = await exigirDonoPelaRls(req(), STAFF, "kb_documents", ID, RAPIDO);
+    if (esperado === "pode") igual(r, { ok: true, por: "rls" }, "dono passa na 2ª");
+    else await recusou(r, 403, DONO_SEM_PERMISSAO, "não-dono na 2ª");
+    igual(h.chamadas.length, 2, "duas sondas");
+    igual(h.chamadas[1].url, h.chamadas[0].url, "a repetição é a MESMA pergunta");
+  }
+});
+
+Deno.test("o teto cobre a LEITURA DO CORPO: headers 200 e corpo que não termina → 503, sem pendurar", async () => {
   h.limpar();
-  h.responderForaDoGate(() => {
-    throw new TypeError("connection reset");
-  });
-  await recusou(await exigirDonoPelaRls(req(), STAFF, "kb_documents", ID), 503, DONO_GATE_INDISPONIVEL, "fetch lançou");
+  h.responderForaDoGate(() =>
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("[")); // começa e nunca fecha
+        },
+      }),
+      { status: 200 },
+    )
+  );
+  const inicio = Date.now();
+  await recusou(await exigirDonoPelaRls(req(), STAFF, "kb_documents", ID, RAPIDO), 503, DONO_GATE_INDISPONIVEL, "corpo pendurado");
+  const levou = Date.now() - inicio;
+  if (levou > 2_000) throw new Error(`o gate ficou ${levou} ms pendurado no corpo: o teto não cobriu a leitura`);
+  igual(h.chamadas.length, 2, "transitório: repetiu uma vez");
+});
+
+Deno.test("descartar o corpo FALHA (stream quebrado) → o gate devolve a recusa do status, não lança", async () => {
+  const corpoQueQuebraAoCancelar = () =>
+    new ReadableStream({
+      cancel() {
+        throw new Error("stream quebrado");
+      },
+    });
+  h.limpar();
+  h.responderForaDoGate(() => new Response(corpoQueQuebraAoCancelar(), { status: 403 }));
+  await recusou(await exigirDonoPelaRls(req(), STAFF, "kb_documents", ID, RAPIDO), 403, DONO_SEM_PERMISSAO, "403 com stream quebrado");
+  h.limpar();
+  h.responderForaDoGate(() => new Response(corpoQueQuebraAoCancelar(), { status: 404 }));
+  await recusou(await exigirDonoPelaRls(req(), STAFF, "kb_documents", ID, RAPIDO), 503, DONO_GATE_INDISPONIVEL, "404 com stream quebrado");
 });
 
 Deno.test("id que não é uuid → 400 DONO_ID_INVALIDO e ZERO fetch (nada vai para a URL)", async () => {
@@ -130,6 +192,7 @@ Deno.test("id que não é uuid → 400 DONO_ID_INVALIDO e ZERO fetch (nada vai p
     "",
     123,
     { id: ID },
+    [ID],
     "abc",
     `${ID}&select=*`,
     `${ID},id.neq.x`,
@@ -205,5 +268,18 @@ Deno.test("fronteira: x-cron-secret (sinais-batch) → via cron, segue sem sonda
   const auth = await authorizeCronOrStaff(r0);
   if (!auth.ok) throw new Error("cron tinha de passar");
   igual(await exigirDonoPelaRls(r0, auth, "farmer_calls", ID), { ok: true, por: "servidor" }, "cron segue");
+  igual(h.chamadas.length, 0, "zero fetch");
+});
+
+Deno.test("fronteira: Bearer SERVICE_ROLE é `service_role`, nunca `staff` (a chave não chega à sonda como JWT de usuário)", async () => {
+  h.limpar();
+  h.responderForaDoGate(() => {
+    throw new Error("service_role não sonda");
+  });
+  const r0 = req({ Authorization: `Bearer ${ENV_TESTE.SUPABASE_SERVICE_ROLE_KEY}` });
+  const auth = await authorizeCronOrStaff(r0);
+  if (!auth.ok) throw new Error("service_role tinha de passar");
+  igual(auth.via, "service_role", "via");
+  igual(await exigirDonoPelaRls(r0, auth, "kb_documents", ID), { ok: true, por: "servidor" }, "segue sem sondar");
   igual(h.chamadas.length, 0, "zero fetch");
 });

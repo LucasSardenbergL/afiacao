@@ -4,8 +4,9 @@
 // suíte Deno (`dono-pela-rls_test.ts`) e o oráculo no banco (`db/test-seg-lote5-dono-pela-rls.sh`).
 // Nenhuma das duas vê o `index.ts` das edges — elas importam SDKs (`npm:openai`, `npm:pdf-parse`,
 // `npm:@anthropic-ai/sdk`) que a suíte offline não resolve. O que sobra para provar aqui é a
-// LIGAÇÃO: o gate certo, com a decisão CONSUMIDA, DOMINANDO todo efeito do handler. Um primitivo
-// perfeito que a edge chama e ignora deixa o furo aberto com todo teste dele verde.
+// LIGAÇÃO: o gate certo, com a decisão CONSUMIDA, DOMINANDO todo efeito do handler, sobre o MESMO
+// registro que o resto do handler processa. Um primitivo perfeito que a edge chama e ignora deixa
+// o furo aberto com todo teste dele verde.
 //
 // Por AST (parser do TypeScript), não regex: a pergunta é "esta instrução roda em TODA requisição,
 // antes de qualquer efeito?", e contagem de chaves no texto quebra em template literal — as duas
@@ -13,6 +14,10 @@
 //
 // Cada exigência tem um MUTANTE abaixo: a fonte real é sabotada em memória e o detector tem de
 // devolver a marca daquele ramo. Detector que passa mutante é detector cego.
+//
+// O limite, declarado: isto NÃO é análise geral de JavaScript. Getter, Proxy e alias arbitrário de
+// objeto do servidor ficam fora. O que ele trava é a forma do handler e a identidade dos nomes que
+// carregam a decisão (o gate, a autenticação, o principal, o request e o id do registro).
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
@@ -25,25 +30,30 @@ type Alvo = {
   arquivo: string;
   /** Literal da tabela no gate — nunca vem do body. */
   tabela: string;
-  /** A expressão do id: a MESMA no gate e em todo `.eq("id", …)` do arquivo. */
-  idExpr: string;
+  /** O identificador escalar do id: o MESMO no gate e em todo `.eq("id", …)` do arquivo. */
+  id: string;
+  /** A instrução do topo do handler que declara o id, com `const`. */
+  declaracaoDoId: string;
 };
 
 const KB: Alvo = {
   arquivo: 'supabase/functions/kb-ingest-document/index.ts',
   tabela: 'kb_documents',
-  idExpr: 'body.documentId',
+  id: 'documentId',
+  declaracaoDoId: 'const documentId = body.documentId;',
 };
 const SINAIS: Alvo = {
   arquivo: 'supabase/functions/extrair-sinais-ligacao/index.ts',
   tabela: 'farmer_calls',
-  idExpr: 'callId',
+  id: 'callId',
+  declaracaoDoId: 'const { callId, transcript } = body ?? {};',
 };
 
 /**
  * O que pode ser CHAMADO antes do gate de dono: autenticação, leitura de env, parse do body, a
  * sonda de versão e a montagem de respostas. Lista fechada — qualquer outra chamada antes do gate
- * (cliente service-role, SDK pago, `.from`, `fetch`) reprova. Chamada nova aqui é decisão de PR.
+ * (cliente service-role, SDK pago, `.from`, `fetch`, `Object.assign`) reprova. Chamada nova aqui é
+ * decisão de PR.
  */
 const PERMITIDAS_ANTES_DO_GATE = new Set([
   'authorizeCronOrStaff',
@@ -57,17 +67,23 @@ const PERMITIDAS_ANTES_DO_GATE = new Set([
   'new Response',
 ]);
 
+/** De onde têm de vir as duas funções que decidem. Homônimo local não é a mesma função. */
+const ORIGEM = {
+  authorizeCronOrStaff: '../_shared/auth.ts',
+  exigirDonoPelaRls: '../_shared/dono-pela-rls.ts',
+} as const;
+
 const junta = (texto: string) => texto.replace(/\s+/g, ' ').trim();
 
-function handlerDoServe(sf: ts.SourceFile): ts.Block | null {
-  const achados: ts.Block[] = [];
+function handlerDoServe(sf: ts.SourceFile): { corpo: ts.Block; parametros: string[] } | null {
+  const achados: { corpo: ts.Block; parametros: string[] }[] = [];
   let chamadas = 0;
   const visitar = (no: ts.Node) => {
     if (ts.isCallExpression(no) && junta(no.expression.getText(sf)) === 'Deno.serve') {
       chamadas++;
       const [arg] = no.arguments;
       if (arg && (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) && ts.isBlock(arg.body)) {
-        achados.push(arg.body);
+        achados.push({ corpo: arg.body, parametros: arg.parameters.map((p) => junta(p.name.getText(sf))) });
       }
     }
     ts.forEachChild(no, visitar);
@@ -95,13 +111,52 @@ const ehAtribuicao = (kind: ts.SyntaxKind) =>
   kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
 
 /**
+ * Quantas vezes cada nome é DECLARADO no arquivo, em qualquer escopo e por qualquer forma: import,
+ * `const`/`let`/`var` (inclusive por destructuring), função, classe, parâmetro e variável de catch.
+ * Um nome protegido declarado 2× é sombra: o uso mais abaixo pode se referir à outra declaração.
+ */
+function declaracoesPorNome(sf: ts.SourceFile): Map<string, number> {
+  const contagem = new Map<string, number>();
+  const conta = (nome: ts.Node | undefined) => {
+    if (!nome) return;
+    if (ts.isIdentifier(nome)) {
+      contagem.set(nome.text, (contagem.get(nome.text) ?? 0) + 1);
+    } else if (ts.isObjectBindingPattern(nome) || ts.isArrayBindingPattern(nome)) {
+      for (const el of nome.elements) if (ts.isBindingElement(el)) conta(el.name);
+    }
+  };
+  const visitar = (no: ts.Node) => {
+    if (ts.isVariableDeclaration(no) || ts.isParameter(no)) conta(no.name);
+    if (ts.isFunctionDeclaration(no) || ts.isClassDeclaration(no) || ts.isFunctionExpression(no)) conta(no.name);
+    if (ts.isCatchClause(no)) conta(no.variableDeclaration?.name);
+    if (ts.isImportClause(no)) conta(no.name);
+    if (ts.isImportSpecifier(no) || ts.isNamespaceImport(no)) conta(no.name);
+    ts.forEachChild(no, visitar);
+  };
+  visitar(sf);
+  return contagem;
+}
+
+/** O nome é importado, sem apelido, exatamente do módulo esperado? */
+function importadoDe(sf: ts.SourceFile, nome: string, modulo: string): boolean {
+  return sf.statements.some((st) =>
+    ts.isImportDeclaration(st)
+    && ts.isStringLiteral(st.moduleSpecifier)
+    && st.moduleSpecifier.text === modulo
+    && !!st.importClause?.namedBindings
+    && ts.isNamedImports(st.importClause.namedBindings)
+    && st.importClause.namedBindings.elements.some((el) => el.name.text === nome && !el.propertyName));
+}
+
+/**
  * Problemas de ligação do gate de dono na fonte de uma edge. Lista vazia = ligado certo.
  * Cada código é a MARCA de um ramo (os mutantes abaixo casam por ela).
  */
 function problemasDaLigacao(fonte: string, alvo: Alvo): string[] {
   const sf = ts.createSourceFile('index.ts', fonte, ts.ScriptTarget.ESNext, true);
-  const corpo = handlerDoServe(sf);
-  if (!corpo) return ['HANDLER_NAO_ENCONTRADO'];
+  const handler = handlerDoServe(sf);
+  if (!handler) return ['HANDLER_NAO_ENCONTRADO'];
+  const { corpo } = handler;
   const instrucoes = corpo.statements.map((s) => junta(s.getText(sf)));
   const problemas: string[] = [];
 
@@ -114,7 +169,7 @@ function problemasDaLigacao(fonte: string, alvo: Alvo): string[] {
   // 2. O gate de dono: instrução do TOPO do handler (fora de if/try/laço/helper), com await, na
   //    tabela certa e no id certo — e a instrução SEGUINTE consome a decisão com return.
   const totalDeChamadas = chamadasEm(sf, sf).filter((n) => n === 'exigirDonoPelaRls').length;
-  const formaDoGate = `const dono = await exigirDonoPelaRls(req, auth, "${alvo.tabela}", ${alvo.idExpr});`;
+  const formaDoGate = `const dono = await exigirDonoPelaRls(req, auth, "${alvo.tabela}", ${alvo.id});`;
   const iDono = instrucoes.indexOf(formaDoGate);
   if (totalDeChamadas === 0) {
     problemas.push('DONO_AUSENTE');
@@ -132,22 +187,25 @@ function problemasDaLigacao(fonte: string, alvo: Alvo): string[] {
         if (!PERMITIDAS_ANTES_DO_GATE.has(nome)) problemas.push(`EFEITO_ANTES_DO_GATE:${nome}`);
       }
     }
+    // 4. O id é um escalar `const` declarado no topo do handler, ANTES do gate.
+    const iId = instrucoes.indexOf(alvo.declaracaoDoId);
+    if (iId < 0 || iId > iDono) problemas.push('ALVO_NAO_E_CONST_DO_TOPO');
   }
 
-  // 4. O gate é o IMPORTADO do módulo compartilhado, não um homônimo declarado no arquivo.
-  if (!/^import \{ exigirDonoPelaRls \} from "\.\.\/_shared\/dono-pela-rls\.ts";$/m.test(fonte)) {
-    problemas.push('DONO_NAO_E_O_COMPARTILHADO');
+  // 5. As duas funções que decidem são as IMPORTADAS dos módulos compartilhados, e os nomes que
+  //    carregam a decisão têm UMA declaração só no arquivo — sem sombra em bloco aninhado, sem
+  //    homônimo local, sem destructuring que troque a função.
+  const declaracoes = declaracoesPorNome(sf);
+  for (const [nome, modulo] of Object.entries(ORIGEM)) {
+    if (!importadoDe(sf, nome, modulo) || declaracoes.get(nome) !== 1) problemas.push(`GATE_SOMBREADO:${nome}`);
   }
-  const declaraHomonimo = (no: ts.Node): boolean =>
-    ((ts.isFunctionDeclaration(no) || ts.isVariableDeclaration(no) || ts.isParameter(no))
-      && !!no.name && ts.isIdentifier(no.name) && no.name.text === 'exigirDonoPelaRls')
-    || ts.forEachChild(no, declaraHomonimo) === true;
-  if (declaraHomonimo(sf)) problemas.push('DONO_NAO_E_O_COMPARTILHADO');
+  if (handler.parametros.length !== 1 || handler.parametros[0] !== 'req') problemas.push('HANDLER_SEM_REQ');
+  for (const nome of ['req', 'auth', 'dono', alvo.id]) {
+    if (declaracoes.get(nome) !== 1) problemas.push(`NOME_SOMBREADO:${nome}`);
+  }
 
-  // 5. O principal e o alvo que o gate conferiu são os que o resto do handler usa: ninguém regrava
-  //    `auth`, `req` ou a raiz da expressão do id (`auth.via = "cron"` antes do gate o abriria).
-  const raizDoId = alvo.idExpr.split('.')[0];
-  const protegidos = new Set(['auth', 'req', raizDoId]);
+  // 6. Ninguém regrava o principal, o request nem o id (`auth.via = "cron"` antes do gate o abriria).
+  const protegidos = new Set(['auth', 'req', alvo.id]);
   const raizDe = (no: ts.Node): string => {
     // Desembrulha acesso, `!`, parênteses e cast: `(auth as X).via = …` grava em `auth` do mesmo jeito.
     let atual = no;
@@ -175,12 +233,12 @@ function problemasDaLigacao(fonte: string, alvo: Alvo): string[] {
   };
   procuraAtribuicao(corpo);
 
-  // 6. O registro PROCESSADO é o registro AUTORIZADO: todo `.eq("id", …)` usa a expressão do gate.
+  // 7. O registro PROCESSADO é o registro AUTORIZADO: todo `.eq("id", …)` usa o id do gate.
   const visitar = (no: ts.Node) => {
     if (ts.isCallExpression(no) && ts.isPropertyAccessExpression(no.expression) && no.expression.name.text === 'eq') {
       const [coluna, valor] = no.arguments;
       if (coluna && ts.isStringLiteralLike(coluna) && coluna.text === 'id' && valor) {
-        if (junta(valor.getText(sf)) !== alvo.idExpr) problemas.push('ALVO_DIFERENTE_DO_GATE');
+        if (junta(valor.getText(sf)) !== alvo.id) problemas.push('ALVO_DIFERENTE_DO_GATE');
       }
     }
     ts.forEachChild(no, visitar);
@@ -190,7 +248,7 @@ function problemasDaLigacao(fonte: string, alvo: Alvo): string[] {
   return problemas;
 }
 
-/** Identificadores usados como VALOR em algum lugar da fonte (comentário e string não contam). */
+/** Identificadores usados em algum lugar da fonte (comentário e string não contam). */
 function identificadoresUsados(fonte: string): Set<string> {
   const sf = ts.createSourceFile('index.ts', fonte, ts.ScriptTarget.ESNext, true);
   const nomes = new Set<string>();
@@ -225,16 +283,17 @@ function mutar(fonte: string, de: string, para: string): string {
 
 describe.each([KB, SINAIS])('gate de dono LIGADO em $arquivo', (alvo) => {
   const fonte = ler(alvo.arquivo);
-  const gate = `  const dono = await exigirDonoPelaRls(req, auth, "${alvo.tabela}", ${alvo.idExpr});\n`;
+  const gate = `  const dono = await exigirDonoPelaRls(req, auth, "${alvo.tabela}", ${alvo.id});\n`;
   const decisao = '  if (!dono.ok) return dono.response;\n';
+  const inicioDoTry = '\n  try {\n';
 
   it('a fonte real passa: gate no topo do handler, decisão consumida, nenhum efeito antes', () => {
     expect(problemasDaLigacao(fonte, alvo)).toEqual([]);
   });
 
   it('o cliente service-role só nasce DEPOIS do gate', () => {
-    expect(fonte.indexOf('createClient(')).toBeGreaterThan(fonte.indexOf(gate));
     expect(fonte.indexOf(gate)).toBeGreaterThan(-1);
+    expect(fonte.indexOf('createClient(')).toBeGreaterThan(fonte.indexOf(gate));
   });
 
   it('mutante: gate removido → DONO_AUSENTE', () => {
@@ -277,7 +336,12 @@ describe.each([KB, SINAIS])('gate de dono LIGADO em $arquivo', (alvo) => {
   });
 
   it('mutante: gate autoriza OUTRO id → DONO_FORA_DA_FORMA', () => {
-    const m = mutar(fonte, gate, gate.replace(alvo.idExpr, 'body.outroId'));
+    const m = mutar(fonte, gate, gate.replace(`${alvo.id});`, 'body.outroId);'));
+    expect(problemasDaLigacao(m, alvo)).toContain('DONO_FORA_DA_FORMA');
+  });
+
+  it('mutante: principal literal no gate (`{ via: "cron" }`) → DONO_FORA_DA_FORMA', () => {
+    const m = mutar(fonte, gate, gate.replace('(req, auth,', '(req, { via: "cron" },'));
     expect(problemasDaLigacao(m, alvo)).toContain('DONO_FORA_DA_FORMA');
   });
 
@@ -300,33 +364,6 @@ describe.each([KB, SINAIS])('gate de dono LIGADO em $arquivo', (alvo) => {
     expect(problemasDaLigacao(m, alvo).some((p) => p.startsWith('EFEITO_ANTES_DO_GATE:'))).toBe(true);
   });
 
-  it('mutante: gate duplicado → DONO_DUPLICADO', () => {
-    const m = mutar(fonte, decisao, `${decisao}  await exigirDonoPelaRls(req, auth, "${alvo.tabela}", "x");\n`);
-    expect(problemasDaLigacao(m, alvo)).toContain('DONO_DUPLICADO');
-  });
-
-  it('mutante: principal forjado antes do gate (`auth.via = "cron"`) → PRINCIPAL_OU_ALVO_REATRIBUIDO', () => {
-    const cru = mutar(fonte, gate, `  auth.via = "cron";\n${gate}`);
-    expect(problemasDaLigacao(cru, alvo)).toContain('PRINCIPAL_OU_ALVO_REATRIBUIDO');
-    // Com cast a raiz fica embrulhada — o detector desembrulha parênteses e `as`.
-    const comCast = mutar(fonte, gate, `  (auth as { via: string }).via = "cron";\n${gate}`);
-    expect(problemasDaLigacao(comCast, alvo)).toContain('PRINCIPAL_OU_ALVO_REATRIBUIDO');
-  });
-
-  it('mutante: alvo trocado DEPOIS do gate (regrava a raiz do id) → PRINCIPAL_OU_ALVO_REATRIBUIDO', () => {
-    const raiz = alvo.idExpr.split('.')[0];
-    const cru = mutar(fonte, decisao, `${decisao}  ${raiz}.x = "outro";\n`);
-    expect(problemasDaLigacao(cru, alvo)).toContain('PRINCIPAL_OU_ALVO_REATRIBUIDO');
-    const comCast = mutar(fonte, decisao, `${decisao}  (${raiz} as Record<string, unknown>) = {};\n`);
-    expect(problemasDaLigacao(comCast, alvo)).toContain('PRINCIPAL_OU_ALVO_REATRIBUIDO');
-  });
-
-  it('mutante: gate homônimo declarado no arquivo (sombra o compartilhado) → DONO_NAO_E_O_COMPARTILHADO', () => {
-    const semImport = mutar(fonte, 'import { exigirDonoPelaRls } from "../_shared/dono-pela-rls.ts";\n', '');
-    const m = `${semImport}\nasync function exigirDonoPelaRls(..._a: unknown[]) { return { ok: true as const, response: new Response() }; }\n`;
-    expect(problemasDaLigacao(m, alvo)).toContain('DONO_NAO_E_O_COMPARTILHADO');
-  });
-
   it('mutante: efeito por template etiquetado antes do gate → EFEITO_ANTES_DO_GATE', () => {
     const m = mutar(fonte, gate, `  await sql\`update kb_documents set status = 'error'\`;\n${gate}`);
     expect(problemasDaLigacao(m, alvo)).toContain('EFEITO_ANTES_DO_GATE:etiqueta sql');
@@ -337,12 +374,94 @@ describe.each([KB, SINAIS])('gate de dono LIGADO em $arquivo', (alvo) => {
     expect(problemasDaLigacao(m, alvo)).toContain('EFEITO_ANTES_DO_GATE:import');
   });
 
+  it('mutante: `Object.assign(auth, { via: "cron" })` antes do gate → EFEITO_ANTES_DO_GATE:Object.assign', () => {
+    const m = mutar(fonte, gate, `  Object.assign(auth, { via: "cron" });\n${gate}`);
+    expect(problemasDaLigacao(m, alvo)).toContain('EFEITO_ANTES_DO_GATE:Object.assign');
+  });
+
+  it('mutante: gate duplicado → DONO_DUPLICADO', () => {
+    const m = mutar(fonte, decisao, `${decisao}  await exigirDonoPelaRls(req, auth, "${alvo.tabela}", "x");\n`);
+    expect(problemasDaLigacao(m, alvo)).toContain('DONO_DUPLICADO');
+  });
+
+  it('mutante: principal forjado antes do gate (`auth.via = "cron"`, cru e com cast) → PRINCIPAL_OU_ALVO_REATRIBUIDO', () => {
+    const cru = mutar(fonte, gate, `  auth.via = "cron";\n${gate}`);
+    expect(problemasDaLigacao(cru, alvo)).toContain('PRINCIPAL_OU_ALVO_REATRIBUIDO');
+    // Com cast a raiz fica embrulhada — o detector desembrulha parênteses e `as`.
+    const comCast = mutar(fonte, gate, `  (auth as { via: string }).via = "cron";\n${gate}`);
+    expect(problemasDaLigacao(comCast, alvo)).toContain('PRINCIPAL_OU_ALVO_REATRIBUIDO');
+  });
+
+  it('mutante: id regravado depois do gate → PRINCIPAL_OU_ALVO_REATRIBUIDO', () => {
+    const m = mutar(fonte, decisao, `${decisao}  (${alvo.id} as string) = "outro";\n`);
+    expect(problemasDaLigacao(m, alvo)).toContain('PRINCIPAL_OU_ALVO_REATRIBUIDO');
+  });
+
+  it('mutante: id declarado com `let` (regravável) → ALVO_NAO_E_CONST_DO_TOPO', () => {
+    const m = mutar(fonte, `  ${alvo.declaracaoDoId}\n`, `  ${alvo.declaracaoDoId.replace('const ', 'let ')}\n`);
+    expect(problemasDaLigacao(m, alvo)).toContain('ALVO_NAO_E_CONST_DO_TOPO');
+  });
+
+  it('mutante: id SOMBREADO dentro do try (os filtros passam a olhar outro registro) → NOME_SOMBREADO', () => {
+    const m = mutar(fonte, inicioDoTry, `${inicioDoTry}    const ${alvo.id} = "id-de-outro-registro";\n`);
+    expect(problemasDaLigacao(m, alvo)).toContain(`NOME_SOMBREADO:${alvo.id}`);
+  });
+
+  it('mutante: id sombreado por destructuring ou por parâmetro de helper → NOME_SOMBREADO', () => {
+    const porDestructuring = mutar(fonte, inicioDoTry, `${inicioDoTry}    const { ${alvo.id} } = { ${alvo.id}: "outro" };\n`);
+    expect(problemasDaLigacao(porDestructuring, alvo)).toContain(`NOME_SOMBREADO:${alvo.id}`);
+    const porParametro = mutar(fonte, decisao, `${decisao}  const grava = async (${alvo.id}: string) => ${alvo.id};\n`);
+    expect(problemasDaLigacao(porParametro, alvo)).toContain(`NOME_SOMBREADO:${alvo.id}`);
+  });
+
+  it('mutante: `auth` sombreado num bloco aninhado → NOME_SOMBREADO:auth', () => {
+    const m = mutar(fonte, inicioDoTry, `${inicioDoTry}    const auth = { ok: true, via: "cron" };\n`);
+    expect(problemasDaLigacao(m, alvo)).toContain('NOME_SOMBREADO:auth');
+  });
+
+  it('mutante: gate homônimo local (função içada, sem o import) → GATE_SOMBREADO:exigirDonoPelaRls', () => {
+    const semImport = mutar(fonte, 'import { exigirDonoPelaRls } from "../_shared/dono-pela-rls.ts";\n', '');
+    const m = `${semImport}\nasync function exigirDonoPelaRls(..._a: unknown[]) { return { ok: true as const, response: new Response() }; }\n`;
+    expect(problemasDaLigacao(m, alvo)).toContain('GATE_SOMBREADO:exigirDonoPelaRls');
+  });
+
+  it('mutante: gate trocado por destructuring de um objeto permissivo → GATE_SOMBREADO:exigirDonoPelaRls', () => {
+    const semImport = mutar(fonte, 'import { exigirDonoPelaRls } from "../_shared/dono-pela-rls.ts";\n', '');
+    const m = `${semImport}\nconst { exigirDonoPelaRls } = { exigirDonoPelaRls: async (..._a: unknown[]) => ({ ok: true as const, response: new Response() }) };\n`;
+    expect(problemasDaLigacao(m, alvo)).toContain('GATE_SOMBREADO:exigirDonoPelaRls');
+  });
+
+  it('mutante: gate importado de OUTRO módulo → GATE_SOMBREADO:exigirDonoPelaRls', () => {
+    const m = mutar(fonte, 'from "../_shared/dono-pela-rls.ts";', 'from "./dono-de-mentira.ts";');
+    expect(problemasDaLigacao(m, alvo)).toContain('GATE_SOMBREADO:exigirDonoPelaRls');
+  });
+
+  it('mutante: `authorizeCronOrStaff` local içada que devolve via "cron" → GATE_SOMBREADO:authorizeCronOrStaff', () => {
+    const m = `${fonte}\nfunction authorizeCronOrStaff(_r: Request) { return { ok: true as const, via: "cron" as const }; }\n`;
+    expect(problemasDaLigacao(m, alvo)).toContain('GATE_SOMBREADO:authorizeCronOrStaff');
+  });
+
   it('mutante: uma escrita mira OUTRO id que não o autorizado → ALVO_DIFERENTE_DO_GATE', () => {
-    const alvoDaEscrita = `.eq("id", ${alvo.idExpr})`;
+    const alvoDaEscrita = `.eq("id", ${alvo.id})`;
     const i = fonte.lastIndexOf(alvoDaEscrita);
     expect(i).toBeGreaterThan(-1);
     const m = `${fonte.slice(0, i)}.eq("id", body.outroId)${fonte.slice(i + alvoDaEscrita.length)}`;
     expect(problemasDaLigacao(m, alvo)).toContain('ALVO_DIFERENTE_DO_GATE');
+  });
+});
+
+describe('kb-ingest-document: os chunks entram no documento AUTORIZADO', () => {
+  const fonte = ler(KB.arquivo);
+
+  it('`document_id` dos chunks é o id do gate, e o handler não volta a ler `body.documentId` depois de capturá-lo', () => {
+    expect(inicializadoresDe(fonte, 'document_id')).toEqual(['documentId']);
+    // 2 leituras: a validação (`if (!body.documentId)`) e a captura no escalar.
+    expect(fonte.split('body.documentId').length - 1).toBe(2);
+  });
+
+  it('mutante: chunk gravado no id do body → o detector acusa', () => {
+    const m = mutar(fonte, 'document_id: documentId,', 'document_id: body.documentId,');
+    expect(inicializadoresDe(m, 'document_id')).not.toEqual(['documentId']);
   });
 });
 

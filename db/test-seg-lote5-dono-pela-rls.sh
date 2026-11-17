@@ -22,7 +22,8 @@
 #  K2  employee que NÃO é o autor → zero linha, e nada na linha muda (nem updated_at).
 #  K3  master → devolve a linha.
 #  K4  customer (sem papel de staff) e K5 anon → zero linha, sem erro.
-#  K6  id inexistente → zero linha.
+#  K6  id inexistente → zero linha. K6c: idem para quem tem UM documento só, e o id dele não muda
+#      (é o assert que cai sem o filtro: a sonda regravaria a PK do documento do próprio chamador).
 #  K7  a sonda do autor não muda valor: só o updated_at anda (trigger BEFORE UPDATE de PROD).
 #  K8  o filho com FK (kb_chunks) sobrevive à regravação da PK com o mesmo valor.
 #  F1  dono da ligação (farmer_id) → devolve a linha.      F2  outro employee → zero linha.
@@ -32,6 +33,13 @@
 #  F6  a sonda NÃO dispara os triggers de recálculo (são `UPDATE OF <coluna>`).
 #  F7  o filho com FK (farmer_agenda) sobrevive.
 #  X1  USING passa e WITH CHECK reprova → 42501 (o PostgREST responde 403; o gate devolve 403).
+#  X2  LIMITE DECLARADO: regra por VALOR de coluna. A sonda (no-op) passa e a escrita real que viria
+#      depois é negada. A edge grava por service-role depois da sonda, então não veria essa regra.
+#      Nas duas tabelas de PROD não há WITH CHECK por valor.
+#
+# O que a prova NÃO pega, por desenho: abrir só o WITH CHECK de `farmer_calls` deixa tudo verde. Na
+# sonda a linha nova é igual à velha, então quem decide é o USING. X1 e X2 mostram o mecanismo numa
+# tabela auxiliar.
 #
 # Uso:
 #   bash db/test-seg-lote5-dono-pela-rls.sh > /tmp/t.log 2>&1; echo "exit=$?"
@@ -46,7 +54,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # `fc_update_aberta` fica vermelha em F4, e NÃO em F2: o employee sem leitura (E2) é barrado também
   # pela policy de SELECT, então abrir só a de UPDATE não o alcança. Quem a policy de UPDATE barra
   # SOZINHA é quem lê sem poder escrever (gestor, dona da carteira). F2 só cai abrindo as duas.
-  SABOTAGENS="kb_update_aberta:K2 kb_sem_ramo_do_autor:K1 kb_sem_ramo_do_master:K3 kb_sem_rls:K2 sonda_muda_valor:K7 fc_update_aberta:F4 fc_tudo_aberto:F2 fc_sem_ramo_do_dono:F1 fc_update_igual_ao_select:F5 trigger_em_todo_update:F6 sonda_sem_filtro:K2"
+  SABOTAGENS="kb_update_aberta:K2 kb_sem_ramo_do_autor:K1 kb_sem_ramo_do_master:K3 kb_sem_rls:K2 sonda_muda_valor:K7 fc_update_aberta:F4 fc_tudo_aberto:F2 fc_sem_ramo_do_dono:F1 fc_update_igual_ao_select:F5 trigger_em_todo_update:F6 sonda_sem_filtro:K6c"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-lote5.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -126,13 +134,14 @@ sql_sonda() { # $1=tabela $2=id
   if [ "$SONDA_FILTRA" = "sim" ]; then
     printf "UPDATE public.%s SET id = '%s'%s WHERE id = '%s' RETURNING id;" "$1" "$2" "$SONDA_SET_EXTRA" "$2"
   else
-    # sabotagem: sem o filtro, o UPDATE alcança TODA linha que a RLS deixa — e devolve linha a quem
-    # não é dono DAQUELA. (Com a PK no SET isso daria 23505 havendo 2+ linhas; por isso o SET some.)
-    printf "UPDATE public.%s SET updated_at = updated_at RETURNING '%s'::uuid;" "$1" "$2"
+    # sabotagem FIEL: o mesmo SET e o mesmo RETURNING, só sem o WHERE. O UPDATE alcança toda linha
+    # que a RLS deixa o chamador alterar e regrava a PK DELA com o id perguntado.
+    printf "UPDATE public.%s SET id = '%s'%s RETURNING id;" "$1" "$2" "$SONDA_SET_EXTRA"
   fi
 }
-sonda()      { Pq -c "$(como "$1" "$(sql_sonda "$2" "$3")")" 2>&1 | head -1; }
-sonda_anon() { Pq -c "$(como_anon "$(sql_sonda "$1" "$2")")" 2>&1 | head -1; }
+# A resposta INTEIRA numa linha (o gate exige exatamente uma linha devolvida; `head -1` esconderia 2).
+sonda()      { Pq -c "$(como "$1" "$(sql_sonda "$2" "$3")")" 2>&1 | paste -sd' ' -; }
+sonda_anon() { Pq -c "$(como_anon "$(sql_sonda "$1" "$2")")" 2>&1 | paste -sd' ' -; }
 # SQLSTATE de um comando que tem de FALHAR ("verde" se passou).
 estado() {
   local saida
@@ -148,6 +157,7 @@ DC=00000000-0000-0000-0000-0000000000dc   # employee, DONA DA CARTEIRA do client
 CU=00000000-0000-0000-0000-0000000000c0   # customer
 CL=00000000-0000-0000-0000-0000000000c1   # o cliente da ligação
 DOC=11111111-1111-4111-8111-111111111111
+DOC_E2=33333333-3333-4333-8333-333333333333   # o ÚNICO documento do E2
 LIG=22222222-2222-4222-8222-222222222222
 NAOEXISTE=99999999-9999-4999-8999-999999999999
 
@@ -237,8 +247,7 @@ CREATE TABLE public.farmer_calls (
   farmer_id uuid NOT NULL,
   customer_user_id uuid,
   entities_extracted jsonb,
-  sinais_ligacao jsonb,
-  updated_at timestamptz NOT NULL DEFAULT now()   -- só para a sabotagem sonda_sem_filtro ter coluna neutra
+  sinais_ligacao jsonb
 );
 CREATE TABLE public.farmer_agenda (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), call_id uuid REFERENCES public.farmer_calls(id));
 CREATE TABLE public.disparos_de_trigger (nome text NOT NULL, call_id uuid NOT NULL);
@@ -261,6 +270,13 @@ ALTER TABLE public.so_using ENABLE ROW LEVEL SECURITY;
 CREATE POLICY so_using_select ON public.so_using FOR SELECT USING (true);
 CREATE POLICY so_using_update ON public.so_using FOR UPDATE USING (true) WITH CHECK (dono = auth.uid());
 
+-- ── X2: regra por VALOR de coluna (o limite declarado da sonda) ────────────────────────────────
+CREATE TABLE public.por_valor (id uuid PRIMARY KEY, dono uuid NOT NULL, marca text NOT NULL);
+ALTER TABLE public.por_valor ENABLE ROW LEVEL SECURITY;
+CREATE POLICY por_valor_select ON public.por_valor FOR SELECT USING (true);
+CREATE POLICY por_valor_update ON public.por_valor FOR UPDATE
+  USING (dono = auth.uid()) WITH CHECK (dono = auth.uid() AND marca <> 'fechado');
+
 -- Como em PROD: anon e authenticated têm o privilégio de TABELA; a barreira é a RLS.
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 
@@ -272,7 +288,7 @@ INSERT INTO public.carteira_assignments VALUES ('$CL','$DC');
 INSERT INTO public.kb_documents (id, title, status, created_by, updated_at)
   VALUES ('$DOC', 'Boletim do E1', 'ready', '$E1', '2026-01-01T00:00:00Z'),
          (gen_random_uuid(), 'Outro boletim do E1', 'ready', '$E1', '2026-01-01T00:00:00Z'),
-         (gen_random_uuid(), 'Boletim do E2', 'ready', '$E2', '2026-01-01T00:00:00Z');
+         ('$DOC_E2', 'Boletim do E2', 'ready', '$E2', '2026-01-01T00:00:00Z');
 INSERT INTO public.kb_chunks (document_id, chunk_index) VALUES ('$DOC', 0), ('$DOC', 1);
 INSERT INTO public.farmer_calls (id, farmer_id, customer_user_id) VALUES
   ('$LIG', '$E1', '$CL'),
@@ -280,6 +296,7 @@ INSERT INTO public.farmer_calls (id, farmer_id, customer_user_id) VALUES
   (gen_random_uuid(), '$E2', NULL);
 INSERT INTO public.farmer_agenda (call_id) VALUES ('$LIG');
 INSERT INTO public.so_using VALUES ('$DOC', '$E1');
+INSERT INTO public.por_valor VALUES ('$DOC', '$E1', 'aberto');
 DELETE FROM public.disparos_de_trigger;   -- os INSERTs acima dispararam; a contagem começa aqui
 SQL
 
@@ -291,7 +308,7 @@ valores_doc() { Pq -c "SELECT title || '|' || status || '|' || coalesce(status_e
 echo "── kb_documents ──"
 # K0 roda numa transação com ROLLBACK: o controle do furo não pode sujar as asserções seguintes.
 eq "K0 CONTROLE do furo: service_role altera documento alheio" \
-  "$(Pq -c "BEGIN; $(como_sr "UPDATE public.kb_documents SET status = 'error' WHERE id = '$DOC' RETURNING status;") ROLLBACK;" 2>&1 | head -1)" "error"
+  "$(Pq -c "BEGIN; $(como_sr "UPDATE public.kb_documents SET status = 'error' WHERE id = '$DOC' RETURNING status;") ROLLBACK;" 2>&1 | paste -sd' ' -)" "error"
 
 ANTES="$(foto_doc)"
 eq "K2 employee NÃO-autor: zero linha" "$(sonda "$E2" kb_documents "$DOC")" ""
@@ -300,6 +317,9 @@ eq "K4 customer: zero linha, sem erro" "$(sonda "$CU" kb_documents "$DOC")" ""
 eq "K5 anon: zero linha, sem erro" "$(sonda_anon kb_documents "$DOC")" ""
 eq "K6 id inexistente: zero linha" "$(sonda "$E1" kb_documents "$NAOEXISTE")" ""
 eq "K6b ... e nada mudou" "$(foto_doc)" "$ANTES"
+eq "K6c quem tem UM documento só e pergunta por id inexistente: zero linha" "$(sonda "$E2" kb_documents "$NAOEXISTE")" ""
+eq "K6d ... e o documento dele continua com o id dele" \
+  "$(Pq -c "SELECT count(*) FROM public.kb_documents WHERE id = '$DOC_E2' AND created_by = '$E2'")" "1"
 
 VALORES="$(valores_doc)"
 eq "K1 AUTOR: a sonda devolve a linha" "$(sonda "$E1" kb_documents "$DOC")" "$DOC"
@@ -331,9 +351,14 @@ eq "F7 a agenda (FK) sobrevive à regravação da PK" \
 
 echo "── WITH CHECK ──"
 eq "X1a dono passa no WITH CHECK" \
-  "$(Pq -c "$(como "$E1" "UPDATE public.so_using SET id = '$DOC' WHERE id = '$DOC' RETURNING id;")" 2>&1 | head -1)" "$DOC"
+  "$(Pq -c "$(como "$E1" "UPDATE public.so_using SET id = '$DOC' WHERE id = '$DOC' RETURNING id;")" 2>&1 | paste -sd' ' -)" "$DOC"
 eq "X1 USING passa e WITH CHECK reprova → 42501 (o PostgREST responde 403)" \
   "$(estado "$(como "$E2" "UPDATE public.so_using SET id = '$DOC' WHERE id = '$DOC' RETURNING id;")")" "42501"
+
+eq "X2a LIMITE: com regra por valor, a sonda (no-op) do dono PASSA" \
+  "$(Pq -c "$(como "$E1" "UPDATE public.por_valor SET id = '$DOC' WHERE id = '$DOC' RETURNING id;")" 2>&1 | paste -sd' ' -)" "$DOC"
+eq "X2 LIMITE: ... e a escrita real que viria depois é NEGADA (42501) — a sonda não vê regra por valor" \
+  "$(estado "$(como "$E1" "UPDATE public.por_valor SET marca = 'fechado' WHERE id = '$DOC' RETURNING id;")")" "42501"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
