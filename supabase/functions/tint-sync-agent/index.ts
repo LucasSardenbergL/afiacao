@@ -22,6 +22,14 @@ import {
 } from "./promocao-fila.ts";
 // Lote de /catalogs sem entidade gravável: ack sem run (catalogo-vazio_test.ts) — NÃO reimplementar inline.
 import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.ts";
+// Linha de staging de /catalogs: lista FECHADA de colunas por entidade (catalogo-rows_test.ts).
+// Colunas do servidor (`created_at`, `id`, `matched_id`) nunca saem do item — NÃO reimplementar inline.
+import {
+  ENTIDADES_STAGING_CATALOGO,
+  montarStagingCatalogoRow,
+  STAGING_CATALOGO,
+  type TintCatalogItem,
+} from "./catalogo-rows.ts";
 // Giro de corante (Fase 1, PR B): /preparations com manifesto, saneado (sem `cliente`) e tudo-ou-nada,
 // e /preparations/plano (preparacoes_test.ts) — NÃO reimplementar inline.
 import { type DepsPreparacoes, modoPromove, processarPreparacoes, respostaDoPlano } from "./preparacoes.ts";
@@ -49,21 +57,7 @@ const corsHeaders = {
 // ─── Type definitions ───
 
 /** Item bruto enviado pelo agente (catalogo: produtos, bases, embalagens, skus, corantes) */
-interface TintCatalogItem {
-  id?: string;
-  cod_produto?: string;
-  id_base?: string;
-  id_embalagem?: string;
-  id_base_sayersystem?: string;
-  id_embalagem_sayersystem?: string;
-  id_corante_sayersystem?: string;
-  descricao?: string;
-  volume_ml?: number;
-  preco_litro?: number;
-  /** Custo do corante (de PRECO_CORANTE) */
-  custo?: number;
-  [k: string]: unknown;
-}
+// TintCatalogItem migrou para ./catalogo-rows.ts (scanner lote 6).
 
 /** Preço de base por embalagem (de PRECO_BASEEMB) */
 interface TintPrecosBaseItem {
@@ -484,47 +478,21 @@ Deno.serve(async (req) => {
       const updates = 0, ignored = 0;
       const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
 
-      const stagingTables: Record<string, { table: string; keyField: string }> = {
-        produtos: { table: "tint_staging_produtos", keyField: "cod_produto" },
-        bases: { table: "tint_staging_bases", keyField: "id_base_sayersystem" },
-        embalagens: { table: "tint_staging_embalagens", keyField: "id_embalagem_sayersystem" },
-        skus: { table: "tint_staging_skus", keyField: "cod_produto" },
-        corantes: { table: "tint_staging_corantes", keyField: "id_corante_sayersystem" },
-      };
-
       let received = 0;
 
       // Change 3: bulk insert for catalog entities (chunks of 500)
-      for (const [entityType, config] of Object.entries(stagingTables)) {
+      for (const entityType of ENTIDADES_STAGING_CATALOGO) {
         const items: TintCatalogItem[] = (body[entityType] as TintCatalogItem[] | undefined) || [];
         received += items.length;
 
-        const rows: Record<string, unknown>[] = items.map((item) => {
-          const entityKey = (item[config.keyField] as string | undefined) || item.id || "";
-          const row: Record<string, unknown> = {
-            sync_run_id: runId,
-            account: agent.account,
-            store_code: agent.storeCode,
-            raw_data: item,
-            staging_status: "pending",
-          };
-          // Copy all item fields, excluding those already set
-          for (const [k, v] of Object.entries(item)) {
-            if (k in row) continue;
-            row[k] = v;
-          }
-          row[config.keyField] = entityKey;
-          if (item.descricao) row.descricao = item.descricao;
-          if (item.volume_ml !== undefined) row.volume_ml = item.volume_ml;
-          if (item.preco_litro !== undefined) row.preco_litro = item.preco_litro;
-          // Change 3+4: passthrough custo and volume_ml for corantes
-          if (item.custo !== undefined) row.custo = item.custo;
-          if (item.id_base) row.id_base = item.id_base;
-          if (item.id_embalagem) row.id_embalagem = item.id_embalagem;
-          return row;
-        });
+        // Lista fechada (catalogo-rows.ts): do item só saem as colunas de negócio da entidade.
+        // Copiar o item inteiro deixava o agente escolher `created_at`, a chave que decide qual
+        // linha vence na promoção, no preço e na purga.
+        const rows: Record<string, unknown>[] = items.map((item) =>
+          montarStagingCatalogoRow(entityType, item, runId, agent.account, agent.storeCode)
+        );
 
-        const { insertedCount } = await bulkInsert(config.table, rows, 500, (chunk, err) => {
+        const { insertedCount } = await bulkInsert(STAGING_CATALOGO[entityType].tabela, rows, 500, (chunk, err) => {
           errors += chunk.length;
           errorDetails.push({ entity_type: entityType, entity_id: null, message: err.message });
           // fire-and-forget logError for the chunk
