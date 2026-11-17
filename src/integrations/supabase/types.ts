@@ -10279,6 +10279,7 @@ export type Database = {
           horario_geracao: string | null
           id: number
           importado_portal_em: string | null
+          importado_portal_lido_de: string | null
           importado_portal_por: string | null
           justificativa_cancelamento: string | null
           mensagem_bloqueio: string | null
@@ -10352,6 +10353,7 @@ export type Database = {
           horario_geracao?: string | null
           id?: number
           importado_portal_em?: string | null
+          importado_portal_lido_de?: string | null
           importado_portal_por?: string | null
           justificativa_cancelamento?: string | null
           mensagem_bloqueio?: string | null
@@ -10425,6 +10427,7 @@ export type Database = {
           horario_geracao?: string | null
           id?: number
           importado_portal_em?: string | null
+          importado_portal_lido_de?: string | null
           importado_portal_por?: string | null
           justificativa_cancelamento?: string | null
           mensagem_bloqueio?: string | null
@@ -16100,6 +16103,7 @@ export type Database = {
           origem: string
           pedido_id: number | null
           protocolo: string
+          situacao_codigo: string | null
           somente_situacao: boolean
           trace: Json | null
         }
@@ -16121,6 +16125,7 @@ export type Database = {
           origem: string
           pedido_id?: number | null
           protocolo: string
+          situacao_codigo?: string | null
           somente_situacao?: boolean
           trace?: Json | null
         }
@@ -16142,6 +16147,7 @@ export type Database = {
           origem?: string
           pedido_id?: number | null
           protocolo?: string
+          situacao_codigo?: string | null
           somente_situacao?: boolean
           trace?: Json | null
         }
@@ -24223,6 +24229,15 @@ export type Database = {
         Args: { p_spec_id: string; p_valor: string }
         Returns: Json
       }
+      admitir_vinculo_conferido: {
+        Args: {
+          p_account: string
+          p_documento_omie: string
+          p_omie_codigo_cliente: number
+          p_user_id: string
+        }
+        Returns: string
+      }
       afiacao_os_sync_kick: { Args: never; Returns: Json }
       analytics_ledger_registrar: {
         Args: { p_chave: string; p_evento: string; p_props?: Json }
@@ -27309,17 +27324,30 @@ export type Database = {
         }
         Returns: Json
       }
-      sayerlack_importar_pedido_portal: {
-        Args: {
-          p_condicao_portal: string
-          p_data_entrega: string
-          p_itens: Json
-          p_operador: string
-          p_protocolo: string
-          p_valor_total: number
-        }
-        Returns: Json
-      }
+      sayerlack_importar_pedido_portal:
+        | {
+            Args: {
+              p_condicao_portal: string
+              p_data_entrega: string
+              p_itens: Json
+              p_operador: string
+              p_protocolo: string
+              p_valor_total: number
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_condicao_portal: string
+              p_data_entrega: string
+              p_itens: Json
+              p_lido_de: string
+              p_operador: string
+              p_protocolo: string
+              p_valor_total: number
+            }
+            Returns: Json
+          }
       sayerlack_ipi_itens: {
         Args: { p_pedido_id: number }
         Returns: {
