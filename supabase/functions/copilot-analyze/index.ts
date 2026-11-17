@@ -12,6 +12,7 @@ import { classificarFlag, erroFlagAmbigua } from "../_shared/sonda-versao.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { executarCanaria } from "./canaria.ts";
 import { normalizarAnalise, TOOL_COPILOTO } from "./copiloto-tools.ts";
+import { montarMensagemCopiloto, SYSTEM_PROMPT_COPILOTO } from "./copiloto-prompt.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 
 // Origem fixa "*" (igual ao `_shared/auth.ts`; a auth é por Bearer, não cookie): o secret ALLOWED_ORIGIN
@@ -156,38 +157,18 @@ Deno.serve(async (req) => {
       );
     }
 
-    const systemPrompt = `Você é um copiloto comercial em tempo real para um vendedor (Farmer) de uma empresa de afiação de ferramentas industriais.
-
-Analise a transcrição da conversa e preencha:
-
-1. "intent": Uma das opções: "interesse", "objecao_preco", "objecao_tecnica", "falta_urgencia", "comparacao_concorrente", "indiferenca"
-2. "phase": Uma das opções: "abertura", "diagnostico", "exploracao", "proposta", "fechamento"
-3. "direction": "positivo", "neutro" ou "risco" — baseado no sentimento geral
-4. "direction_reasons": Array de strings curtas explicando o sinal
-5. "suggestion": Uma ÚNICA sugestão concisa (máx 3 linhas) de próxima ação para o vendedor. Pode ser:
-   - Pergunta diagnóstica
-   - Resposta técnica
-   - Argumento econômico
-   - Alternativa de abordagem
-6. "suggestion_type": "pergunta_diagnostica", "resposta_tecnica", "argumento_economico", "alternativa_abordagem"
-7. "confidence": 0-100 confiança na análise
-
-Contexto do cliente:
-${customerContext ? JSON.stringify(customerContext) : 'Não disponível'}
-
-Bundle ativo:
-${bundleContext ? JSON.stringify(bundleContext) : 'Nenhum'}
-
-Fase anterior: ${currentPhase || 'desconhecida'}
-Intenção anterior: ${currentIntent || 'desconhecida'}
-
-IMPORTANTE:
-- Responda SEMPRE usando a função analisar_conversa.
-- A sugestão deve ser personalizada com base no perfil do cliente.
-- Limite a 1 sugestão por vez para não sobrecarregar o vendedor.
-- Se o cliente é sensível a preço, foque em ROI e economia.
-- Se orientado a qualidade, foque em durabilidade e precisão.
-- Se orientado a produtividade, foque em ganho de tempo e eficiência.`;
+    // INSTRUÇÃO × DADO (scanner Lovable, lote 6): o system prompt é a constante de
+    // `copiloto-prompt.ts`, sem interpolação. Tudo o que veio do body — contexto do cliente,
+    // bundle, fase e intenção anteriores, transcrição — vai na mensagem, em blocos que o system
+    // declara como dado. Antes o contexto (que carrega o `name` do cadastro do cliente) entrava
+    // como instrução do copiloto.
+    const mensagemUsuario = montarMensagemCopiloto({
+      transcript,
+      customerContext,
+      bundleContext,
+      currentPhase,
+      currentIntent,
+    });
 
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
@@ -198,12 +179,12 @@ IMPORTANTE:
         max_tokens: 1500,
         // Baixa variabilidade: é leitura de conversa em andamento, não redação.
         temperature: 0.3,
-        system: systemPrompt,
+        system: SYSTEM_PROMPT_COPILOTO,
         tools: [TOOL_COPILOTO],
         // `type:'tool'` sozinho não desliga chamada paralela — duas leituras da
         // mesma conversa e o consumo pegaria só a primeira.
         tool_choice: { type: 'tool', name: TOOL_COPILOTO.name, disable_parallel_tool_use: true },
-        messages: [{ role: 'user', content: `Transcrição recente:\n${transcript}` }],
+        messages: [{ role: 'user', content: mensagemUsuario }],
       });
     } catch (e: unknown) {
       const status = statusDoErro(e);

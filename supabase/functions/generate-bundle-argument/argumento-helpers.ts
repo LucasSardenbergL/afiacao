@@ -106,3 +106,32 @@ e não construa argumento econômico sobre ele. Em especial, "Gasto médio mensa
 autoriza tratar o cliente como sensível a preço. Se um argumento seu dependeria de um dado não
 medido, escreva o argumento sem número em vez de inventar um valor plausível. Um número inventado
 que chega à vendedora como medido é pior do que a ausência do dado.`;
+
+/** Os 4 perfis que o prompt conhece — o `CustomerProfile` de `src/hooks/useBundleArguments.ts`. */
+export const PERFIS_CLIENTE = [
+  "sensivel_preco",
+  "orientado_qualidade",
+  "orientado_produtividade",
+  "misto",
+] as const;
+
+/** Rótulo que entra no system prompt quando o body não traz um dos 4 perfis. */
+export const PERFIL_NAO_INFORMADO = "nao_informado";
+
+/**
+ * O que do `customerProfile` do body pode entrar no SYSTEM prompt (scanner Lovable, lote 6).
+ *
+ * Só um dos 4 literais passa. Qualquer outra coisa — texto livre, objeto, ausente — vira
+ * "nao_informado": o valor do request nunca é interpolado na instrução do modelo. Não vira
+ * "misto": perfil que ninguém classificou não é um perfil misto, e dizer isso ao modelo seria
+ * fabricar a classificação.
+ */
+export function perfilParaPrompt(valor: unknown): string {
+  return typeof valor === "string" && (PERFIS_CLIENTE as readonly string[]).includes(valor)
+    ? valor
+    : PERFIL_NAO_INFORMADO;
+}
+
+/** A linha do system prompt que diz ao modelo o que fazer com o perfil não informado. */
+export const REGRA_PERFIL_NAO_INFORMADO =
+  `- Se "${PERFIL_NAO_INFORMADO}": o perfil não foi classificado — balance os argumentos e não presuma um perfil`;
