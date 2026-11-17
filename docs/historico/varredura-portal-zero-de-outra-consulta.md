@@ -200,6 +200,24 @@ Os pareceres crus estão na pasta de notas da sessão (fora do repo).
 - **Importadora** (`sayerlack-importar-pedido-portal`): tem a mesma espera. Desde a v1.15 exige o nº do pedido no
   `postData`, com `!corpo ||` como escape; o caso de 10/11 é anterior. Sem evidência nova desde 13/11.
 
+## Deploy (2026-11-17)
+
+- **Decisão:** `bun run pendencias:deploy` às 15:38Z, com o PR 3937 mergeado em `5bf5a9ed0`: exit 1, só esta edge em
+  `DIVERGE_P1` (`v1.12-vincula-po-manual` no ar). Sem migration e sem Publish (o PR não toca `src/`).
+- **Onda retida pela ordem entre edges** (pacote `b8f0ff827cb4`, exit 3): a prova da predecessora
+  `sayerlack-importar-pedido-portal` tinha 14,1 h (teto 6 h, exigência do #3109). Sondada de novo
+  (`db/2026-11-17-sonda-disparo-sayerlack-importar-pre-varrer-v113.sql`, tentativa #1161, request 24512,
+  `v1.16-cancelado-antes-do-pedido`, DEPLOY CONFIRMADO) e, passados 10 min, liberada (pacote `f3d30b2f46c8`, exit 0).
+- **Colagem pelo MCP** às 15:59Z, contra `origin/main@54667707a` (a main tinha andado: commit do bot no deploy de
+  outra sessão, só `package.json` e `bun.lock`, revertido no #3939). 16/16 hashes conferidos pelo agente,
+  `deploy_edge_functions`, "No files were edited.", 1 crédito. Sensor de edição 5,3 min depois: `SEM_EDICAO`, 0
+  commits do bot desde o envio.
+- **Sonda pós-deploy** (`db/2026-11-17-sonda-disparo-sayerlack-varrer-v113.sql`, tentativa #1165): request 24538,
+  `v1.13-resposta-do-nosso-clique`, fonte `964eaf62…`, **DEPLOY CONFIRMADO**. `pendencias:deploy` exit 0, 87 de 87
+  edges em `CONFERE`.
+- **O que o deploy não prova:** a leitura no portal real. A última rodada da v1.12 foi a de 17/11 12:30 SP (7 linhas).
+  A 1ª da v1.13 é a de 17/11 17:30 SP; a que responde ao incidente é a das 22:30 SP. A query está abaixo.
+
 ## Como conferir em prod
 
 O denominador é a rodada da v1.13 com portal aberto.
