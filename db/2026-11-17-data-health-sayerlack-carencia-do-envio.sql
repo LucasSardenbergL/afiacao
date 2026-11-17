@@ -1,4 +1,4 @@
--- Copia SEM ENVELOPE de supabase/migrations/20261117080000_data_health_sayerlack_carencia_do_envio.sql para o
+-- Copia SEM ENVELOPE de supabase/migrations/20261117090000_data_health_sayerlack_carencia_do_envio.sql para o
 -- `bun run db:aplicar` (a transacao e do executor). Mesmos bytes, menos o BEGIN;/COMMIT; — a POS confere o
 -- md5(prosrc) do compute, e db/test-data-health-sayerlack-carencia-do-envio.sh (G4) prova a igualdade.
 -- =============================================================================
@@ -12,12 +12,16 @@
 -- 09/11 20:00, 16/11 08:00 e 17/11 06:30), todos fechados no 1o tique depois da varredura seguinte; os pedidos
 -- importados pela propria varredura (11/11 e 13/11) nao abriram nenhum.
 --
--- CONSERTO (sem maquina nova: o MESMO source, um predicado): o pedido NUNCA lido so e cobrado quando foi enviado
--- ANTES do dia util exigido. O envio e a 1a observacao (o portal aceitou e devolveu o protocolo naquele instante) e
--- passa pela MESMA regua das leituras: enviado no dia D vale ate as 14:00 do dia util seguinte. Sem data de envio nao
--- ha carencia (cobra). NAO muda: leitura atrasada, pedido antigo nunca lido, o ramo `broken` (cancelado com PO), a
--- funcao de cobertura (a varredura segue lendo o pedido novo o quanto antes), a message do stale (fingerprint),
--- source, dominio, severidade e o v_sources do watchdog/heartbeat.
+-- CONSERTO (sem maquina nova: o MESMO source, um predicado): o pedido NUNCA lido nao e cobrado enquanto o envio
+-- CONFIRMADO ao portal (enviado_portal_em, em dia de SP) estiver entre o dia util exigido e hoje. O envio e a 1a
+-- observacao (o portal aceitou e devolveu o protocolo naquele instante) e passa pela MESMA regua das leituras:
+-- enviado no dia D vale ate as 14:00 do dia util seguinte. Envio ausente, futuro ou infinito nao da carencia (cobra),
+-- e a data do ciclo nao substitui o envio (2a opiniao do Codex, itens 1 e 2). O piso da carencia le o carimbo com 10
+-- min de margem, para a regravacao em corrida perto da meia-noite nao empurrar o envio para o dia seguinte (Codex,
+-- rodada 2). NAO muda: leitura atrasada (a data do
+-- envio nao entra quando ha leitura), pedido antigo nunca lido, o ramo `broken` (cancelado com PO), a funcao de
+-- cobertura (a varredura segue lendo o pedido novo o quanto antes), a message do stale (fingerprint), source,
+-- dominio, severidade e o v_sources do watchdog/heartbeat.
 -- Trade-off: buraco real de leitura num pedido novo e acusado no dia util seguinte as 14:00, nao em 30 min.
 -- A message do `ok` passa a dizer quantos aguardam a 1a leitura (nao afirma "lidos no dia util" do que nao foi lido).
 --
@@ -36,17 +40,21 @@ BEGIN
 END
 $trava$;
 
--- PRE: md5 EXATO do corpo vivo em {predecessor de PROD (psql-ro 2026-11-17 = 20261111140000), este}; e a cobertura
--- devolve a data de envio que a carencia le.
+-- PRE: md5 EXATO do corpo vivo em {predecessor de PROD (psql-ro 2026-11-17 = 20261111140000), este}; e existem a
+-- cobertura (com pedido_id e observado_ate) e a coluna do envio que a carencia le.
 DO $pre$
 DECLARE
   v_vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public._data_health_compute()'));
   v_cob  oid  := to_regprocedure('public.sayerlack_cobertura_situacao_portal()');
 BEGIN
-  IF v_cob IS NULL OR pg_catalog.pg_get_function_result(v_cob) NOT LIKE '%enviado_em date%' THEN
-    RAISE EXCEPTION 'PRE FALHOU: sayerlack_cobertura_situacao_portal() ausente ou sem a coluna enviado_em date (aplique 20261110120000 antes)';
+  IF v_cob IS NULL OR pg_catalog.pg_get_function_result(v_cob) NOT LIKE '%pedido_id bigint%observado_ate timestamp with time zone%' THEN
+    RAISE EXCEPTION 'PRE FALHOU: sayerlack_cobertura_situacao_portal() ausente ou sem pedido_id/observado_ate (aplique 20261110120000 antes)';
   END IF;
-  IF v_vivo IS NULL OR v_vivo NOT IN ('1262b63277d50a475949800d1cde15cd', '00b385d0ee253380b8df4a259e122d8c') THEN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'pedido_compra_sugerido'
+                    AND column_name = 'enviado_portal_em' AND data_type = 'timestamp with time zone') THEN
+    RAISE EXCEPTION 'PRE FALHOU: pedido_compra_sugerido.enviado_portal_em ausente ou nao e timestamptz';
+  END IF;
+  IF v_vivo IS NULL OR v_vivo NOT IN ('1262b63277d50a475949800d1cde15cd', 'cfe7e1e49d8ac4e66cf0d7fb0a2003cd') THEN
     RAISE EXCEPTION 'PRE FALHOU: _data_health_compute vivo (md5 %) nao e o predecessor revisado nem este', v_vivo;
   END IF;
 END
@@ -1679,11 +1687,13 @@ AS $function$
     --   · stale: algum pedido da COBERTURA (sayerlack_cobertura_situacao_portal: com PO não faturado nem encerrado)
     --     sem leitura da situação no portal desde o dia útil exigido (mesma régua do sayerlack_varredura_portal) —
     --     sem leitura, um cancelamento tardio passaria mudo (Codex desenho P1 #3).
-    --     [2026-11-17] CARENCIA DO ENVIO: o pedido NUNCA lido so e cobrado quando foi enviado ANTES do dia util
-    --     exigido. O envio e a 1a observacao (o portal aceitou e devolveu o protocolo naquele instante) e passa pela
-    --     MESMA regua das leituras; a varredura so roda 12:30/17:30/22:30 SP, entao cobrar leitura do pedido
-    --     disparado as 06:24 no tique das 06:30 era alarme falso por construcao (alertas 624, 638 e 642). Sem data
-    --     de envio nao ha carencia (cobra). Pedido antigo nunca lido e leitura atrasada seguem stale como antes.
+    --     [2026-11-17] CARENCIA DO ENVIO: o pedido NUNCA lido nao e cobrado enquanto o envio CONFIRMADO ao portal
+    --     (enviado_portal_em, em dia de SP) estiver entre o dia util exigido e hoje. O envio e a 1a observacao (o
+    --     portal aceitou e devolveu o protocolo naquele instante) e passa pela MESMA regua das leituras; a varredura
+    --     so roda 12:30/17:30/22:30 SP, entao cobrar leitura do pedido disparado as 06:24 no tique das 06:30 era
+    --     alarme falso por construcao (alertas 624, 638 e 642). Envio ausente, futuro ou infinito nao da carencia
+    --     (cobra), e a data do ciclo nao substitui o envio. Com leitura, a data do envio nao entra: leitura
+    --     atrasada e pedido antigo nunca lido seguem stale como antes.
     --   · ok: o resto.
     -- MESSAGE SEM IDADE CORRENTE: broken cita o incidente; stale cita a leitura mais velha (só muda com leitura nova).
     SELECT 'sayerlack_cancelado_com_po'::text, 'estoque'::text,
@@ -1772,14 +1782,25 @@ AS $function$
                left(string_agg(c.protocolo || ' (#' || c.pedido_id || ')', '; ' ORDER BY c.observado_ate NULLS FIRST, c.pedido_id)
                       FILTER (WHERE c.devida), 600) AS lista
           FROM (
-            -- devida = leitura COBRAVEL e atrasada. Com leitura: a regua de sempre. Nunca lido: so quando o envio e
-            -- anterior ao dia util exigido (dia de SP, o mesmo de enviado_em); sem data de envio, cobra.
-            SELECT k.pedido_id, k.protocolo, k.observado_ate,
-                   CASE WHEN k.observado_ate IS NOT NULL THEN k.observado_ate < ex.exigido_desde
-                        ELSE COALESCE(k.enviado_em < (ex.exigido_desde AT TIME ZONE 'America/Sao_Paulo')::date, true) END AS devida,
-                   (k.observado_ate IS NULL
-                    AND COALESCE(k.enviado_em >= (ex.exigido_desde AT TIME ZONE 'America/Sao_Paulo')::date, false)) AS em_carencia
-              FROM public.sayerlack_cobertura_situacao_portal() k
+            -- devida = leitura COBRAVEL e atrasada. Com leitura: a regua de sempre (a data do envio nao entra).
+            -- Nunca lido: cobra, salvo na carencia do envio.
+            SELECT q.pedido_id, q.protocolo, q.observado_ate, q.em_carencia,
+                   CASE WHEN q.observado_ate IS NOT NULL THEN q.observado_ate < ex.exigido_desde
+                        ELSE NOT q.em_carencia END AS devida
+              FROM (
+                -- em_carencia: nunca lido E envio confirmado dentro de [dia util exigido, hoje] (dias de SP).
+                -- O PISO le o carimbo com 10 min de margem: ele e gravado no retorno do envio e pode ser regravado
+                -- em corrida (envio em voo de ate ~5 min x conciliacao manual do mesmo protocolo); sem a margem, a
+                -- regravacao de 23:59:50 para 00:00:10 empurraria o envio para o dia seguinte (Codex, rodada 2).
+                SELECT k.pedido_id, k.protocolo, k.observado_ate,
+                       (k.observado_ate IS NULL
+                        AND COALESCE((SELECT ((p.enviado_portal_em - interval '10 minutes') AT TIME ZONE 'America/Sao_Paulo')::date
+                                               >= (ex.exigido_desde AT TIME ZONE 'America/Sao_Paulo')::date
+                                         AND (p.enviado_portal_em AT TIME ZONE 'America/Sao_Paulo')::date
+                                               <= (now() AT TIME ZONE 'America/Sao_Paulo')::date
+                                        FROM public.pedido_compra_sugerido p WHERE p.id = k.pedido_id), false)) AS em_carencia
+                  FROM public.sayerlack_cobertura_situacao_portal() k
+              ) q
           ) c
       ) cob
     ) cc
@@ -1805,7 +1826,7 @@ DECLARE
 BEGIN
   SELECT p.oid, md5(p.prosrc) AS vivo, p.provolatile, p.prosecdef, p.proconfig INTO r
     FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public._data_health_compute()');
-  IF r.oid IS NULL OR r.vivo IS DISTINCT FROM '00b385d0ee253380b8df4a259e122d8c' THEN
+  IF r.oid IS NULL OR r.vivo IS DISTINCT FROM 'cfe7e1e49d8ac4e66cf0d7fb0a2003cd' THEN
     RAISE EXCEPTION 'P1_FALHOU: _data_health_compute vivo (md5 %) nao e este', r.vivo;
   END IF;
   IF r.provolatile IS DISTINCT FROM 's' OR r.prosecdef IS NOT TRUE OR r.proconfig IS DISTINCT FROM ARRAY['search_path=public, pg_temp'] THEN

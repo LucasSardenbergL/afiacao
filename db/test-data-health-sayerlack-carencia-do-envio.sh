@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prova PG17 da migration 20261117080000_data_health_sayerlack_carencia_do_envio: o source sayerlack_cancelado_com_po
+# Prova PG17 da migration 20261117090000_data_health_sayerlack_carencia_do_envio: o source sayerlack_cancelado_com_po
 # do _data_health_compute deixa de cobrar leitura do portal do pedido RECÉM-ENVIADO (alertas 624, 638 e 642).
 #   Montagem: stubs + a CADEIA VIVA do trio (db/lib/data-health-vivo.sh) SEM esta migration → o compute chega ao md5
 #   EXATO de PROD de 2026-11-17 (A1), e só então a migration real aplica sobre ele. Relógio controlado (public.now()
@@ -10,10 +10,17 @@
 #   N5  fim de semana: enviado sexta à noite só é cobrado segunda às 14:00;
 #   N6  o dia é o de SP: enviado 23:30 de segunda é de segunda (cobra na terça 15:00); 00:30 de terça, não;
 #   N7  pedido ANTIGO nunca lido segue stale na hora (a carência não é anistia);
-#   N8  sem data de envio não há carência (cobra); só com data_ciclo, vale a data do ciclo;
+#   N8  sem envio confirmado não há carência: nem sem data alguma, nem só com a data do ciclo (cobra);
 #   N9  carência não esconde a leitura atrasada do vizinho, não entra na lista nem troca a message;
 #   N10-N11 message do ok: com e sem pedido em carência;   N12 lido uma vez, volta à régua de sempre;
 #   N13 broken (cancelado com PO) continua vencendo;        N14 message do stale constante com o relógio;
+#   2ª opinião do Codex (2026-11-17):
+#   N15 envio no futuro ou 'infinity' não dá carência;      N16 com leitura, a data do envio não entra (nem na message);
+#   N17 duas leituras atrasadas: a message cita a MAIS VELHA; N18 nunca lido vencido + leitura atrasada ⇒ 'sem nenhuma';
+#   N19 fronteira 13:59:59/14:00:00;   N20 leitura exatamente à meia-noite exigida conta; 1 s antes, não;
+#   N21 fuso da SESSÃO (UTC−11 e UTC+14) não muda o dia do envio (piso e teto), o dia exigido nem o "hoje";
+#   Codex rodada 2: N22 a carência é POR pedido (dois nunca lidos, só o antigo é cobrado);
+#   N23 carimbo regravado em corrida de qui 23:59:50 para sex 00:00:10 não empurra a cobrança de sexta para segunda;
 #   G   re-aplicar = no-op; PRE recusa corpo estranho; ACL de PROD preservada; cópia de db/ = migration sem envelope.
 #   bash db/test-data-health-sayerlack-carencia-do-envio.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   HARNESS_LOCALE=pt_BR.UTF-8 bash db/test-data-health-sayerlack-carencia-do-envio.sh   (2º idioma do servidor)
@@ -27,7 +34,7 @@ PORT="${PGPORT_TEST:-5741}"
 SLUG="data-health-sayerlack-carencia-do-envio"
 LOC="${HARNESS_LOCALE:-C}"
 export LC_ALL=C LANG=C          # o CLIENTE fica em C (o postmaster aborta sem isso); o idioma do SERVIDOR vem de $LOC
-MIG="$REPO_ROOT/supabase/migrations/20261117080000_data_health_sayerlack_carencia_do_envio.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261117090000_data_health_sayerlack_carencia_do_envio.sql"
 MIG_DB="$REPO_ROOT/db/2026-11-17-data-health-sayerlack-carencia-do-envio.sql"
 MD5_PROD_COMPUTE="1262b63277d50a475949800d1cde15cd"   # psql-ro 2026-11-17 (= 20261111140000)
 
@@ -35,7 +42,10 @@ if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. Sabotagem de corpo recalcula o md5 'este' (PRE/PÓS aceitam o corpo
   # errado): só o assert de comportamento pode pegar.
   SABOTAGENS="sem_carencia:N1 conta_carencia:N1 message_sem_carencia:N1b carencia_curta:N2 carencia_longa:N4
-    carencia_eterna:N7 sem_data_perdoa:N8 lista_com_carencia:N9 mais_velha_com_carencia:N9 pre_cega:G2"
+    carencia_eterna:N7 sem_data_perdoa:N8 fallback_ciclo:N8 lista_com_carencia:N9 mais_velha_com_carencia:N9
+    sem_teto:N15 lido_ganha_carencia:N16 carencia_conta_lido:N16b mais_nova:N17 nunca_lido_some:N18 meia_noite:N20
+    envio_fuso_sessao:N21a exigido_fuso_sessao:N21b hoje_fuso_sessao:N21c envio_teto_fuso_sessao:N21d
+    correlacao:N22 sem_margem:N23 pre_cega:G2"
   N_TOT=0; F_TOT=0; LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"; porta=$PORT
   echo "== CONTROLE =="
   if ! PGPORT_TEST=$porta SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1 || ! grep -q "^PASS=[1-9][0-9]* FAIL=0$" "$LOGDIR/controle.log"; then
@@ -91,20 +101,45 @@ open(p, "w", encoding="utf-8").write(s.replace(antes, depois))
 PY
   echo "SABOTAGEM ATIVA: ${SABOTAGEM:-}"
 }
-DIA_EXIGIDO="(ex.exigido_desde AT TIME ZONE 'America/Sao_Paulo')::date"
+PISO=">= (ex.exigido_desde AT TIME ZONE 'America/Sao_Paulo')::date"
+TETO="<= (now() AT TIME ZONE 'America/Sao_Paulo')::date"
+ENVIO_PISO="((p.enviado_portal_em - interval '10 minutes') AT TIME ZONE 'America/Sao_Paulo')::date"
+ENVIO_TETO="AND (p.enviado_portal_em AT TIME ZONE 'America/Sao_Paulo')::date"
+FECHO="FROM public.pedido_compra_sugerido p WHERE p.id = k.pedido_id), false)) AS em_carencia"
+SUBQ="(SELECT $ENVIO_PISO
+                                               $PISO
+                                         $ENVIO_TETO
+                                               $TETO
+                                        FROM public.pedido_compra_sugerido p WHERE p.id = k.pedido_id)"
+LIDO="CASE WHEN q.observado_ate IS NOT NULL THEN q.observado_ate < ex.exigido_desde"
 case "${SABOTAGEM:-}" in
   "") ;;
-  sem_carencia)            sab_corpo "ELSE COALESCE(k.enviado_em < $DIA_EXIGIDO, true) END AS devida," "ELSE true END AS devida," ;;
+  sem_carencia)            sab_corpo "ELSE NOT q.em_carencia END AS devida" "ELSE true END AS devida" ;;
   conta_carencia)          sab_corpo "count(*) FILTER (WHERE c.devida) AS n_sem_leitura," "count(*) FILTER (WHERE c.devida OR c.em_carencia) AS n_sem_leitura," ;;
   message_sem_carencia)    sab_corpo "WHEN cc.n_carencia > 0
            THEN 'Portal Sayerlack: nenhum cancelado com compra viva; '" "WHEN false
            THEN 'Portal Sayerlack: nenhum cancelado com compra viva; '" ;;
-  carencia_curta)          sab_corpo "ELSE COALESCE(k.enviado_em < $DIA_EXIGIDO, true) END AS devida," "ELSE COALESCE(k.enviado_em <= $DIA_EXIGIDO, true) END AS devida," ;;
-  carencia_longa)          sab_corpo "ELSE COALESCE(k.enviado_em < $DIA_EXIGIDO, true) END AS devida," "ELSE COALESCE(k.enviado_em < $DIA_EXIGIDO - 1, true) END AS devida," ;;
-  carencia_eterna)         sab_corpo "ELSE COALESCE(k.enviado_em < $DIA_EXIGIDO, true) END AS devida," "ELSE false END AS devida," ;;
-  sem_data_perdoa)         sab_corpo "ELSE COALESCE(k.enviado_em < $DIA_EXIGIDO, true) END AS devida," "ELSE COALESCE(k.enviado_em < $DIA_EXIGIDO, false) END AS devida," ;;
+  carencia_curta)          sab_corpo "$PISO" "> (ex.exigido_desde AT TIME ZONE 'America/Sao_Paulo')::date" ;;
+  carencia_longa)          sab_corpo "$PISO" "$PISO - 1" ;;
+  carencia_eterna)         sab_corpo "ELSE NOT q.em_carencia END AS devida" "ELSE false END AS devida" ;;
+  sem_data_perdoa)         sab_corpo "$FECHO" "FROM public.pedido_compra_sugerido p WHERE p.id = k.pedido_id), true)) AS em_carencia" ;;
+  fallback_ciclo)          sab_corpo "$SUBQ" "(k.enviado_em $PISO AND k.enviado_em $TETO)" ;;
   lista_com_carencia)      sab_corpo "FILTER (WHERE c.devida), 600) AS lista" "FILTER (WHERE c.devida OR c.em_carencia), 600) AS lista" ;;
   mais_velha_com_carencia) sab_corpo "CASE WHEN bool_or(c.observado_ate IS NULL) FILTER (WHERE c.devida)" "CASE WHEN bool_or(c.observado_ate IS NULL) FILTER (WHERE c.devida OR c.em_carencia)" ;;
+  sem_teto)                sab_corpo "$TETO" "<= 'infinity'::date" ;;
+  lido_ganha_carencia)     sab_corpo "$LIDO" "$LIDO AND NOT EXISTS (SELECT 1 FROM public.pedido_compra_sugerido p2 WHERE p2.id = q.pedido_id AND (p2.enviado_portal_em AT TIME ZONE 'America/Sao_Paulo')::date >= (ex.exigido_desde AT TIME ZONE 'America/Sao_Paulo')::date)" ;;
+  carencia_conta_lido)     sab_corpo "(k.observado_ate IS NULL
+                        AND COALESCE(" "(true
+                        AND COALESCE(" ;;
+  mais_nova)               sab_corpo "ELSE min(c.observado_ate) FILTER (WHERE c.devida) END AS leitura_mais_velha," "ELSE max(c.observado_ate) FILTER (WHERE c.devida) END AS leitura_mais_velha," ;;
+  nunca_lido_some)         sab_corpo "CASE WHEN bool_or(c.observado_ate IS NULL) FILTER (WHERE c.devida)" "CASE WHEN bool_and(c.observado_ate IS NULL) FILTER (WHERE c.devida)" ;;
+  meia_noite)              sab_corpo "THEN q.observado_ate < ex.exigido_desde" "THEN q.observado_ate <= ex.exigido_desde" ;;
+  envio_fuso_sessao)       sab_corpo "$ENVIO_PISO" "(p.enviado_portal_em - interval '10 minutes')::date" ;;
+  exigido_fuso_sessao)     sab_corpo "$PISO" ">= ex.exigido_desde::date" ;;
+  hoje_fuso_sessao)        sab_corpo "$TETO" "<= now()::date" ;;
+  envio_teto_fuso_sessao)  sab_corpo "$ENVIO_TETO" "AND p.enviado_portal_em::date" ;;
+  correlacao)              sab_corpo "WHERE p.id = k.pedido_id)" "WHERE p.id >= k.pedido_id)" ;;
+  sem_margem)              sab_corpo "(p.enviado_portal_em - interval '10 minutes')" "(p.enviado_portal_em - interval '0 minutes')" ;;
   pre_cega)                python3 -I - "$MIG_USADA" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p, encoding="utf-8").read()
@@ -195,7 +230,9 @@ TER0630='2026-11-17 06:30-03'   # terça antes das 14:00 SP: exige leitura desde
 TER1500='2026-11-17 15:00-03'   # terça depois das 14:00: exige desde 00:00 de TERÇA
 QUA1000='2026-11-18 10:00-03'   # quarta antes das 14:00: exige desde 00:00 de TERÇA
 QUA1500='2026-11-18 15:00-03'   # quarta depois das 14:00: exige desde 00:00 de QUARTA
-cc() { Pq -q -c "SET test.agora = '$2'" -c "SELECT $1 FROM public._data_health_compute() WHERE source = 'sayerlack_cancelado_com_po';"; }
+cc() {  # $1 expressão, $2 agora, $3 fuso da SESSÃO (default UTC, o do runner do CI; o corpo converte para SP sozinho)
+  Pq -q -c "SET TimeZone = '${3:-UTC}'" -c "SET test.agora = '$2'" -c "SELECT $1 FROM public._data_health_compute() WHERE source = 'sayerlack_cancelado_com_po';"
+}
 limpa() {  # TRUNCATE não dispara os triggers de linha (o só-resolve do incidente inclusive)
   P -q -c "TRUNCATE public.pedido_compra_sugerido; TRUNCATE public.purchase_orders_tracking;
            TRUNCATE public.sayerlack_incidente_cancelado_com_po; TRUNCATE public.sayerlack_encerramento_cancelado_portal;"
@@ -257,7 +294,7 @@ ped 4503 2152003 12213020003 NULL NULL
 n8a="$(cc "$SEM_LEITURA" "$TER0630")"
 limpa
 ped 4504 2152004 12213020004 NULL "'2026-11-17'"
-eq "N8 sem data de envio nao ha carencia (cobra); so com data_ciclo, vale a data do ciclo" "$n8a|$(cc status "$TER0630")" "stale|NULL|true|ok"
+eq "N8 sem envio confirmado nao ha carencia: sem data alguma cobra; so com a data do ciclo de hoje, cobra tambem" "$n8a|$(cc status "$TER0630")" "stale|NULL|true|stale"
 
 limpa
 ped 4448 2151001 12213018994 "'2026-11-17 06:24-03'" "'2026-11-17'"
@@ -290,6 +327,78 @@ limpa
 ped 4448 2151001 12213018994 "'2026-11-17 06:24-03'" "'2026-11-17'"
 eq "N14 a message do stale e constante com o relogio (fingerprint do watchdog)" \
    "$([ "$(cc message "$QUA1500")" = "$(cc message '2026-11-18 22:00-03')" ] && echo igual || echo mudou)" "igual"
+
+# ── 2ª opinião do Codex (2026-11-17): teto da carência, ramo dos já lidos, agregados, fronteiras e fuso ───────
+limpa
+ped 4505 2152005 12213020005 "'2026-11-18 10:00-03'" "'2026-11-18'"
+n15a="$(cc status "$TER1500")"
+limpa
+ped 4506 2152006 12213020006 "'infinity'" NULL
+eq "N15 envio no futuro (amanha) ou 'infinity' nao da carencia: cobra" "$n15a|$(cc status "$TER1500")" "stale|stale"
+
+limpa
+ped 4448 2151001 12213018994 "'2026-11-17 06:24-03'" "'2026-11-17'"
+sit 4448 1 '2026-11-16 12:35-03'
+eq "N16 com leitura, a data do envio nao entra: lido segunda, envio regravado terca => stale com a data da leitura" \
+   "$(cc "status || '|' || (message LIKE '%desde 16/11/2026 12:35 BRT%')::text" "$TER1500")" "stale|true"
+sit 4448 1 '2026-11-17 12:35-03'
+eq "N16b ...e pedido ja lido nao e contado como 'aguardando a 1a leitura'" "$(cc "status || '|' || message" "$TER1500")" \
+   "ok|${MSG_OK}1 pedido(s) com compra em aberto lidos no dia util"
+
+limpa
+ped 4122 2147219 12206725360 "'2026-11-05 06:22-03'" "'2026-11-05'"
+ped 4123 2147222 12206725409 "'2026-11-05 06:46-03'" "'2026-11-05'"
+sit 4122 1 '2026-11-12 17:35-03'
+sit 4123 1 '2026-11-13 17:35-03'
+eq "N17 duas leituras atrasadas: a message cita a MAIS VELHA" \
+   "$(cc "status || '|' || (message LIKE '%desde 12/11/2026 17:35 BRT%')::text" "$TER1500")" "stale|true"
+
+limpa
+ped 4201 2141201 12203460000 "'2026-10-29 10:00-03'" "'2026-10-29'"
+ped 4123 2147222 12206725409 "'2026-11-05 06:46-03'" "'2026-11-05'"
+sit 4123 1 '2026-11-13 17:35-03'
+eq "N18 nunca lido vencido + leitura atrasada: vence o 'sem nenhuma leitura', age NULL" "$(cc "$SEM_LEITURA" "$TER1500")" "stale|NULL|true"
+
+limpa
+ped 4507 2152007 12213020007 "'2026-11-16 10:00-03'" "'2026-11-16'"
+eq "N19 fronteira das 14:00: enviado segunda, terca 13:59:59 ok e 14:00:00 stale" \
+   "$(cc status '2026-11-17 13:59:59-03')|$(cc status '2026-11-17 14:00:00-03')" "ok|stale"
+
+limpa
+ped 4122 2147219 12206725360 "'2026-11-05 06:22-03'" "'2026-11-05'"
+sit 4122 1 '2026-11-17 00:00:00-03'
+n20a="$(cc status "$TER1500")"
+sit 4122 1 '2026-11-16 23:59:59-03'
+eq "N20 leitura exatamente a meia-noite exigida conta; 1 s antes, nao" "$n20a|$(cc status "$TER1500")" "ok|stale"
+
+OESTE='Pacific/Pago_Pago'    # UTC-11: 00:30 de terca em SP ainda e segunda la
+LESTE='Pacific/Kiritimati'   # UTC+14: 15:00 de terca em SP ja e quarta la
+limpa
+ped 4502 2152002 12213020002 "'2026-11-17 00:30-03'" "'2026-11-17'"
+eq "N21a fuso da sessao a oeste: o dia do ENVIO segue o de SP (00:30 de terca e terca)" "$(cc status "$TER1500" "$OESTE")" "ok"
+limpa
+ped 4507 2152007 12213020007 "'2026-11-16 10:00-03'" "'2026-11-16'"
+eq "N21b fuso da sessao a oeste: o dia EXIGIDO segue o de SP (enviado segunda cobra na terca 15:00)" "$(cc status "$TER1500" "$OESTE")" "stale"
+limpa
+ped 4508 2152008 12213020008 "'2026-11-18 00:30-03'" "'2026-11-18'"
+eq "N21c fuso da sessao a leste: o HOJE segue o de SP (envio de amanha nao da carencia)" "$(cc status "$TER1500" "$LESTE")" "stale"
+
+limpa
+ped 4509 2152009 12213020009 "'2026-11-17 12:00-03'" "'2026-11-17'"
+eq "N21d fuso da sessao a leste: o TETO le o dia do envio em SP (enviado hoje 12:00 segue em carencia)" "$(cc status "$TER1500" "$LESTE")" "ok"
+
+# ── Codex rodada 2 ──────────────────────────────────────────────────────────────────────────────────────────
+limpa
+ped 4201 2141201 12203460000 "'2026-10-29 10:00-03'" "'2026-10-29'"
+ped 4448 2151001 12213018994 "'2026-11-17 06:24-03'" "'2026-11-17'"
+eq "N22 a carencia e POR pedido: dois nunca lidos, so o antigo e cobrado e so ele entra na lista" \
+   "$(cc "$SEM_LEITURA || '|' || (probable_cause LIKE '%2141201 (#4201)%')::text || '|' || (probable_cause LIKE '%2151001%')::text" "$TER1500")" \
+   "stale|NULL|true|true|false"
+
+limpa
+ped 4510 2152010 12213020010 "'2026-11-20 00:00:10-03'" "'2026-11-19'"
+eq "N23 carimbo regravado em corrida (qui 23:59:50 -> sex 00:00:10): sexta 10:00 ok, sexta 15:00 ja cobra" \
+   "$(cc status '2026-11-20 10:00-03')|$(cc status '2026-11-20 15:00-03')" "ok|stale"
 
 # Desliga o relógio: as guardas rodam no compute EXATAMENTE como a migration o deixou.
 relogio_desliga

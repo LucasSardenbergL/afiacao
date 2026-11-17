@@ -1,6 +1,8 @@
-# Data health · sayerlack_cancelado_com_po (20261117080000): carência do envio — o pedido nunca lido só é cobrado a
+# Data health · sayerlack_cancelado_com_po (20261117090000): carência do envio — o pedido nunca lido só é cobrado a
 # partir do dia útil seguinte ao envio (alertas 624, 638 e 642 eram alarme falso por construção). Relógio controlado:
-# o pedido do alerta 642 antes e depois, vencimento da carência, fim de semana, dia de SP, antigo nunca lido, sem data
-# de envio, vizinho atrasado, message do ok, broken vencendo, PRE anti-deriva e cópia sem envelope
+# o pedido do alerta 642 antes e depois, vencimento da carência, fim de semana, dia de SP, antigo nunca lido, sem envio
+# confirmado, envio futuro, já lido com envio regravado, agregados (mais velha / nunca lido), fronteira das 14:00,
+# meia-noite exigida, fuso da sessão, carência por pedido, carimbo regravado em corrida, message do ok, broken
+# vencendo, PRE anti-deriva e cópia sem envelope
 # (docs/historico/importar-pedido-portal-sayerlack.md).
-db/test-data-health-sayerlack-carencia-do-envio.sh  25  falsificar=10
+db/test-data-health-sayerlack-carencia-do-envio.sh  38  falsificar=23
