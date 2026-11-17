@@ -1042,3 +1042,56 @@ Os dois P1 do parecer Codex que a v1.15 deixou para decisão do founder (exigiam
   contra `33d1b985b`, "No files were edited.", 1,4 crédito. Sonda pós-deploy
   (`db/2026-11-16-sonda-disparo-sayerlack-importar-v116.sql`, tentativa #1155): request 23666, `v1.16-cancelado-antes-do-pedido`,
   **DEPLOY CONFIRMADO**. `pendencias:deploy` exit 0.
+
+## Vigia 5.4 — carência do envio no `sayerlack_cancelado_com_po` (2026-11-17)
+
+- **Incidente** (`fornecedor_alerta` 624, 638 e 642; psql-ro): o e-mail "pedido com compra em aberto sem nenhuma leitura
+  da situacao no portal" era **alarme falso por construção**. O ramo `stale` contava como "sem leitura" todo pedido da
+  cobertura com `observado_ate IS NULL`; o pedido entra na cobertura no instante do disparo (protocolo + PO), o
+  watchdog roda `*/30` e a varredura só 12:30/17:30/22:30 SP. Desde o nascimento do source (08/11): 5 janelas de
+  disparo pelo app → 5 episódios `critical` (o 1º dentro do episódio de estreia; depois 09/11 14:30, 09/11 20:00,
+  16/11 08:00, 17/11 06:30), todos fechados no 1º tique depois da varredura seguinte. Pedidos importados pela própria
+  varredura (11/11, 13/11): zero. No 642 eram o #4448 (06:24) e o #4447 (06:30), com o tique às 06:30:01.
+- **Conserto** (`20261117090000_data_health_sayerlack_carencia_do_envio.sql`; só o corpo do compute, sem DDL): o
+  pedido **nunca lido** não é cobrado enquanto o envio CONFIRMADO ao portal (`enviado_portal_em`, em dia de SP) estiver
+  entre o dia útil exigido e hoje — o envio é a 1ª observação e passa pela MESMA régua das leituras (enviado no dia D
+  vale até as 14:00 do dia útil seguinte). Envio ausente, futuro ou `infinity` não dá carência, e a data do ciclo não
+  substitui o envio. Não muda: leitura atrasada (com leitura, a data do envio não entra), pedido antigo nunca lido, o
+  ramo `broken`, a função de cobertura (a varredura segue lendo o pedido novo o quanto antes), a message do `stale` e
+  o `v_sources`. A message do `ok` passa a dizer quantos aguardam a 1ª leitura.
+- **Trade-off aceito:** buraco real de leitura num pedido novo é acusado no dia útil seguinte às 14:00, não em 30 min
+  (pior caso medido pelo Codex: envio sexta 06:24 e cancelamento às 07:00 com a varredura omitindo o protocolo ficam
+  mudos até segunda 14:00 — o mesmo atraso que uma leitura válida de sexta 06:24 já permitia; é o SLA diário do
+  source). A alternativa (cobrar depois da 1ª rodada efetiva posterior à entrada, lendo `acoes_execucoes`) detectaria
+  antes, mas acopla o check ao ledger e exige o instante de entrada na cobertura, que a função não devolve.
+- **2ª opinião (Codex, gpt-6-astra · max · 635 s): "corrigir antes", 3 itens, todos incorporados.** (1) P1: a 1ª versão
+  dava carência a envio no FUTURO sem teto (e `infinity` para sempre) → carência só com o envio em
+  `[dia exigido, hoje]`. (2) P2: a data do ciclo (`data_ciclo`, fallback da cobertura) não é observação do portal →
+  a carência lê `enviado_portal_em` direto; e a hipótese "a data é regravada com o mesmo protocolo e renova a
+  carência" foi conferida nos escritores: são 3 (edge de envio, conciliação manual, RPC de importação), todos gravam
+  a data no MESMO statement do protocolo e pulam a linha que já tem protocolo, e o protocolo é imutável por trigger
+  (`20261108120000`). Residual sem guarda no banco: corrida sub-minuto entre envio em voo e conciliação manual, e
+  UPDATE direto de staff (RLS) — nenhum dos dois renova sozinho a cada dia útil. (3) P2: três mutantes passavam pela prova (carência no ramo dos já lidos,
+  `min→max`, `bool_or→bool_and`) e faltavam as fronteiras → +10 asserts e +10 sabotagens.
+- **Codex rodada 2 (256 s): itens 1 e 3 resolvidos, nenhum defeito novo no SQL; "corrigir antes" por 1 resíduo.**
+  (a) P2: a corrida sub-minuto entre o envio em voo e a conciliação manual pode REGRAVAR o carimbo de qui 23:59:50
+  para sex 00:00:10 e empurrar a cobrança de sexta 14:00 para segunda 14:00 (72 h). Ele pediu CAS nos escritores;
+  resolvi NO CHECK, sem tocar as edges: o piso da carência lê o carimbo com **10 min de margem** (um envio fica em
+  voo até ~5 min: timeout HTTP de 300 s; o watchdog marca indeterminado aos 5 min), então a regravação em corrida
+  não muda mais o dia do envio. Assert N23 reproduz o cenário dele; a sabotagem `sem_margem` fica vermelha nele.
+  (b) P3: faltava provar que a carência é POR pedido (mutante `p.id >= k.pedido_id`) → N22 + sabotagem `correlacao`.
+  Sem 3ª rodada (sem gatilho nomeado; `money-path.md`). **Limite conhecido que fica:** os escritores de
+  `enviado_portal_em` seguem sem CAS e a coluna sem guarda no banco — UPDATE direto de staff pode regravá-la.
+- **Processo:** a 1ª versão foi commitada no branch (para o ensaio, que exige arquivo commitado) como
+  `20261117080000_…`; depois do parecer ela saiu do branch e a versão final entrou como arquivo NOVO
+  (`20261117090000_…`). A v1 nunca foi aplicada (só ensaio com ROLLBACK; ledger `inedito`) nem chegou à main.
+- **Ensaio em produção** (`bun run db:aplicar … --ensaio`, ROLLBACK): com o corpo novo o source fica `ok` —
+  "21 pedido(s) com compra em aberto, 2 recem-enviado(s) aguardando a 1a leitura" — e a prod seguiu com o md5 antigo.
+- **Prova:** `db/test-data-health-sayerlack-carencia-do-envio.sh` — 38/38 em C e pt_BR, `--falsificar` 23/23 nos dois.
+  N0 reproduz o alerta 642 sobre o corpo de PROD (md5 `1262b632…`) antes de aplicar; depois: terça 06:30 ok, quarta
+  15:00 stale (a carência vence), sexta à noite só cobra segunda 14:00, dia de SP na virada e sob fuso de sessão
+  UTC−11/UTC+14, antigo nunca lido segue stale, sem envio confirmado cobra, envio futuro cobra, já lido com envio
+  regravado segue pela leitura, vizinho atrasado não é escondido, `broken` continua vencendo.
+- **Lição (→ `docs/agent/sync.md`, Sentinela):** check de cobertura nasce com a carência do objeto novo.
+- **Achado à parte, fora desta entrega:** em 4 das 6 últimas noites úteis a rodada das 22:30 gravou `prova_leitura='ok'`
+  com 0 linhas; em 09/11 a mesma rodada trouxe 4 situações na janela menor da leitura estendida — lista vazia falsa.
