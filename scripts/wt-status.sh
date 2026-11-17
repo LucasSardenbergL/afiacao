@@ -105,7 +105,7 @@ swap="$(sysctl -n vm.swapusage 2>/dev/null || true)"
 [ -n "$swap" ] && echo "  swap:       $swap"
 case "$swap" in
   *used\ =\ 0.00M*) : ;;
-  *used*) echo "  ⚠️  swap em uso = RAM saturada. Feche apps/sessões ou rode wt:clean." ;;
+  *used*) echo "  ⚠️  swap em uso = RAM saturada. Feche apps/sessões ou rode wt:reap (wt:clean devolve disco, não RAM)." ;;
 esac
 
 echo
@@ -206,7 +206,7 @@ sem_medida=$((sem_teto + sem_erro))
 if [ "$medidos" -gt 0 ]; then
   piso=""
   if [ "$sem_medida" -gt 0 ]; then piso=" (piso — só o que foi medido)"; fi
-  echo "  medidos: ${medidos} de ${n_cand} worktree(s) com node_modules — ~${total} MB${piso}"
+  echo "  medidos: ${medidos} de ${n_cand} worktree(s) com node_modules — ~${total} MB APARENTES${piso}"
 else
   echo "  medidos: 0 de ${n_cand} worktree(s) com node_modules — nenhuma medida (ausente ≠ zero)"
 fi
@@ -261,6 +261,11 @@ echo
 if [ "$total" -gt 2000 ]; then
   aprox="~"
   if [ "$sem_medida" -gt 0 ]; then aprox="≥"; fi
-  echo "💡 ${aprox}${total} MB presos em node_modules de worktrees parados."
-  echo "   Rode 'bun run wt:clean' (dry-run) pra ver quanto dá pra liberar agora."
+  # APARENTE, não "preso": a soma de `du` conta em cada worktree os blocos que o
+  # bun clona do cache global (`clonefile`). Em 2026-11-17 esta dica dizia
+  # "≥23541 MB presos", o `wt:clean` prometia ~77605 MB, e apagar tudo devolveu
+  # 1923 MB de disco. O número segue útil como contagem; não como promessa.
+  echo "💡 ${aprox}${total} MB APARENTES em node_modules de worktrees parados (soma de du)."
+  echo "   O disco que volta ao apagar é uma fração disso: o bun instala por clone do cache (APFS)."
+  echo "   Medido em 2026-11-17: 77605 MB aparentes devolveram 1923 MB. 'bun run wt:clean' (dry-run) lista quem seria limpo."
 fi

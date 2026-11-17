@@ -298,6 +298,34 @@ else
   falha "sonda de orfaos falhando → silenciou; ausencia de dado virou aprovacao"
 fi
 
+# ── caso 7 — a dica final NAO promete disco (2026-11-17) ───────────────────
+# A soma de `du` é tamanho APARENTE: o bun instala por clone do cache e o `du`
+# conta em cada pasta os blocos que elas dividem. A dica dizia "≥23541 MB presos"
+# no dia em que apagar ~77605 MB aparentes devolveu 1923 MB de disco.
+rm -f "$fix/du.n"
+saida="$(DU_MODO=primeiro-ok roda)"
+dica="$(printf '%s' "$saida" | command grep -A2 '4321 MB APARENTES em node_modules')"
+if [ -n "$dica" ]; then
+  ok "dica final → a soma do du sai como APARENTE"
+else
+  falha "dica final → nao rotulou a soma do du como aparente"
+fi
+if printf '%s' "$saida" | command grep -q -e 'presos em node_modules' -e 'pra liberar agora'; then
+  falha "dica final → voltou a prometer disco 'preso' / 'pra liberar'"
+else
+  ok "dica final → nao promete disco 'preso' nem 'pra liberar'"
+fi
+if printf '%s' "$dica" | command grep -q '77605 MB aparentes devolveram 1923 MB'; then
+  ok "dica final → carrega a calibragem medida (77605 → 1923 MB)"
+else
+  falha "dica final → perdeu a calibragem que explica a diferenca"
+fi
+if printf '%s' "$saida" | secao_nm | command grep -q 'MB APARENTES (piso'; then
+  ok "secao node_modules → o total parcial sai como APARENTE e como piso"
+else
+  falha "secao node_modules → o total nao esta rotulado como aparente"
+fi
+
 echo
 if [ "$falhas" -eq 0 ]; then
   echo "✅ test-wt-status: tudo verde"

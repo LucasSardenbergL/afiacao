@@ -93,6 +93,27 @@ medida_humana() {
   esac
 }
 
+# df_livre_mb <dir> — ecoa os MB LIVRES do volume onde <dir> mora e sai 0 se MEDIU.
+# Não mediu ⇒ nada no stdout e exit ≠ 0 (ausente ≠ zero, como no `du_mb`).
+#
+# Existe porque o `du` NÃO enxerga bloco compartilhado. O bun instala por CLONE do
+# cache global (`bun install --help`: `--backend` "clonefile" é o default no
+# macOS), então a soma de `du` dos node_modules conta os MESMOS blocos uma vez por
+# worktree: é tamanho APARENTE, não disco a recuperar. Medido em 2026-11-17, num
+# `wt:clean --yes` de verdade: 121 worktrees, 77605 MB pela soma de `du`, e o
+# disco livre subiu 1923 MB. Quem diz quanto disco voltou é o `df` antes e
+# depois, nunca o `du`.
+#
+# O `awk` lê até o EOF (regra 1 do #1838: `head` fecharia o pipe cedo).
+df_livre_mb() {
+  local alvo="$1" kb
+  kb="$(df -Pk "$alvo" 2>/dev/null | awk 'NR==2 { print $4 }')" || return 1
+  case "$kb" in
+    '' | *[!0-9]*) return 1 ;; # o `df` respondeu lixo → não medido, não zero
+  esac
+  printf '%s' "$((kb / 1024))"
+}
+
 # hash_arquivo <path> — ecoa um digest, ou sai 1 se NÃO HÁ sonda de hash.
 # `md5 -q` é macOS; o CI é Ubuntu. Sem os três, sair 1 é o que permite ao
 # chamador ser fail-closed em vez de comparar duas strings vazias e concluir
