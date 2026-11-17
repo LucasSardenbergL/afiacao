@@ -30,6 +30,8 @@ import {
   STAGING_CATALOGO,
   type TintCatalogItem,
 } from "./catalogo-rows.ts";
+// `generated_at` do /keys-snapshot: legível e não à frente do servidor (snapshot-relogio_test.ts).
+import { validarGeneratedAt } from "./snapshot-relogio.ts";
 // Giro de corante (Fase 1, PR B): /preparations com manifesto, saneado (sem `cliente`) e tudo-ou-nada,
 // e /preparations/plano (preparacoes_test.ts) — NÃO reimplementar inline.
 import { type DepsPreparacoes, modoPromove, processarPreparacoes, respostaDoPlano } from "./preparacoes.ts";
@@ -721,6 +723,11 @@ Deno.serve(async (req) => {
       if (!generated_at) {
         return json({ ok: false, error: "generated_at required" }, 400);
       }
+      // O `generated_at` é o relógio da ORIGEM e é por ele que o banco ordena os snapshots
+      // (`tint_apply_keys_snapshot` pula o que vier <= ao último aplicado). Instante ilegível ou
+      // no futuro além da tolerância não entra: um 2099 congelaria as retiradas para sempre.
+      const relogio = validarGeneratedAt(generated_at, Date.now());
+      if (!relogio.ok) return json({ ok: false, error: relogio.erro }, 400);
       if (!Number.isInteger(total_chunks) || !Number.isInteger(chunk_index)) {
         return json({ ok: false, error: "total_chunks and chunk_index must be integers" }, 400);
       }
