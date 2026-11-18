@@ -159,6 +159,7 @@ if Pdb -q -f "$MIG" >"$TMPD/i1.log" 2>&1; then ok I1 reaplicou reaplicou; else o
 
 # ── sabotagens de COMPORTAMENTO, aplicadas no banco depois da migration real ──
 fn_sabotada() {  # <de> <para> — recria a função com UMA troca
+  # shellcheck disable=SC2016  # '$fn$' é o delimitador literal do corpo da função, não expansão
   sed -n '/^CREATE OR REPLACE FUNCTION public.reposicao_po_a_baixar/,/^\$fn\$;/p' "$MIG" > "$TMPD/fn.sql"
   trocar "$TMPD/fn.sql" "$TMPD/fn2.sql" "$1" "$2"
   Pdb -q -f "$TMPD/fn2.sql"

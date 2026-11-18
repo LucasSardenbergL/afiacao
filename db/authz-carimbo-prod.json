@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-18T18:20:32.006Z",
-  "sourceHead": "76ed1a6128ed07767cfe289836068085e7ad81f6",
+  "medidoEm": "2026-11-18T18:29:26.760Z",
+  "sourceHead": "47945b3da2afdc6996e6a4a6b38d99512dcb7453",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,19 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 86 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 88 definição(ões) lida(s) para 86 chave(s) da allowlist.",
-      "contratoFingerprint": "7f96a5e8371ad47bc0d2ee4cedd4cc219f88dd0498fb69c7c14082b339597686",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 88 definição(ões) lida(s) para 87 chave(s) da allowlist.",
+      "contratoFingerprint": "547e4833ee7cd30219ef9c24776c0608e31b8e38c1780b126df756e7afd40e1e",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": []
+      "achados": [
+        {
+          "id": "e79eedc47c645514",
+          "linha": "❌ public.reposicao_po_a_baixar — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_po_a_baixar está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-11-18",
+          "ultimaVez": "2026-11-18"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -102,7 +109,7 @@
       "script": "deriva:corpo:prod",
       "exit": 0,
       "resumo": "✅ deriva-corpo — 564 identidade(s) batem com o repo (485 em dia, 66 só cosméticas, 12 aceitas na baseline) e 34 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 564 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@ec8c6277a (fetch ok) · prod 2026-11-18 18:21:01.246082Z",
+      "denominador": "🔎 deriva-corpo — 564 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@ec8c6277a (fetch ok) · prod 2026-11-18 18:29:55.469027Z",
       "contratoFingerprint": "4243a14825376b5053104b01074ed80be3bef325628041fd534ada298a610487",
       "auditorFingerprint": "3b1f38be117c2aafd7804b36b20e2de39cee5565430fc752349d4ddddcb76fd0",
       "achados": []
