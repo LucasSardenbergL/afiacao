@@ -775,6 +775,79 @@ export default async ({ page, context }) => {
     await sleep(500);
     trace.push({ step: 'cliente_selecionado', t: Date.now() - t0 });
 
+    // === Lote mínimo (spec 2026-11-18-sayerlack-lote-minimo-portal, Fase 0) ===
+    // O portal recusa a linha com "Quantidade informada menor que o lote minimo de venda (N)".
+    // Antes isso passava calado (ou virava erro retentável repetido 3x). Fontes lidas: corpo do
+    // POST do salvar-item, alertas VISÍVEIS do DOM e diálogos nativos. Casou → aborta ANTES do
+    // Efetivar com erro NÃO retentável (efetivarAttempted segue false).
+    // Diálogos nativos: só REGISTRADOS — nunca aceitos/dispensados aqui (sem mudança de comportamento).
+    const dialogosVistos = [];
+    page.on('dialog', function(d) {
+      try { dialogosVistos.push(String(d.message() || '').substring(0, 500)); } catch (e) { /* diagnóstico */ }
+    });
+    const lerAlertasPortal = async () => {
+      try {
+        return await page.evaluate(function() {
+          const sel = '.alert, .alert-danger, .swal2-html-container, .swal2-title, .toast, [role="alert"], .invalid-feedback';
+          const textos = Array.from(document.querySelectorAll(sel))
+            .filter(function(el) { return el.offsetParent !== null; })
+            .map(function(el) { return (el.innerText || '').trim().substring(0, 500); })
+            .filter(function(t) { return t.length > 0; })
+            .slice(0, 10);
+          // Diagnóstico: a última linha da grade lida POR CABEÇALHO (UN, Cap Emb, Qtd Fat, Qtd UN...),
+          // e o cabeçalho da coluna onde a qtde é digitada (td 7) — evidência, não trava o envio.
+          let linha = null;
+          const ths = Array.from(document.querySelectorAll('#datatable_itens thead th'))
+            .map(function(th) { return (th.innerText || '').replace(/\\s+/g, ' ').trim(); });
+          const tr = document.querySelector('#datatable_itens tbody tr:nth-last-child(1)');
+          if (tr) {
+            linha = { colunaDigitada: ths[6] || null };
+            Array.from(tr.querySelectorAll('td')).forEach(function(td, idx) {
+              const inp = td.querySelector('input, select');
+              const v = inp ? (inp.value || '') : (td.innerText || '');
+              linha[ths[idx] || ('col' + idx)] = String(v).trim().substring(0, 80);
+            });
+          }
+          return { textos: textos, linha: linha };
+        });
+      } catch (e) {
+        return { textos: [], linha: null }; // sem DOM legível → só corpo/diálogo contam
+      }
+    };
+    // Só conta evidência NOVA desde 'antes' (alerta velho de outro item não aborta este).
+    const detectarLoteMinimo = async (bodyText, antes) => {
+      await sleep(300); // o alerta do portal renderiza logo após a resposta do POST
+      const dom = await lerAlertasPortal();
+      const novosDom = (dom.textos || []).filter(function(x) { return !antes.textos.has(x); });
+      const novosDialogos = dialogosVistos.slice(antes.dialogos);
+      const achado = extrairLoteMinimoPortal([bodyText].concat(novosDom, novosDialogos));
+      return achado ? { achado: achado, linha: dom.linha } : null;
+    };
+    const abortarLoteMinimo = async (det, idx, item) => {
+      const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+      trace.push({ step: 'lote_minimo_recusa', t: Date.now() - t0, item: idx, lote: det.achado.lote });
+      const sku = item ? item.sku_portal : null;
+      return {
+        data: {
+          success: false,
+          erro: 'Portal recusou ' + (item ? 'o item ' + idx + ' (SKU ' + sku + ')' : 'um item (SKU nao identificado)') +
+            ': ' + det.achado.trecho + (item ? ' - qtde enviada ' + String(item.qtde) + ' UN' : ''),
+          erroTipo: 'LOTE_MINIMO_PORTAL',
+          skuFalho: sku,
+          loteMinimo: {
+            skuPortal: sku,
+            lote: det.achado.lote,
+            trecho: det.achado.trecho,
+            qtdeEnviada: item ? Number(item.qtde) : null,
+            linha: det.linha,
+          },
+          trace,
+        },
+        type: 'application/json',
+        screenshot: errorScreenshot,
+      };
+    };
+
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       // PR2: aborta cedo se não há janela para os itens restantes + submit.
@@ -989,74 +1062,21 @@ export default async ({ page, context }) => {
       ).then(async (r) => {
         // Corpo do POST: o portal pode recusar o item no próprio JSON (ex.: lote mínimo).
         let body = null;
-        try { body = String(await r.text()).substring(0, 2000); } catch (e) { body = null; }
+        // Deadline próprio: o timeout do waitForResponse não cobre o corpo (Codex P2).
+        try {
+          const txt = await Promise.race([r.text(), sleep(2000).then(() => null)]);
+          body = txt === null ? null : String(txt).substring(0, 2000);
+        } catch (e) { body = null; }
         return { ok: true, status: r.status(), body: body };
       }).catch(() => ({ ok: false, body: null }));
 
-      // Lote mínimo (spec 2026-11-18-sayerlack-lote-minimo-portal): o portal recusa a linha com
-      // "Quantidade informada menor que o lote minimo de venda (N)". Antes isso passava calado
-      // (ou virava erro retentável repetido 3x). Lê corpo do POST + alertas visíveis; casou →
-      // aborta ANTES do Efetivar com erro NÃO retentável (efetivarAttempted segue false).
-      const detectarLoteMinimo = async (bodyText) => {
-        await sleep(300); // o alerta do portal renderiza logo após a resposta do POST
-        let domInfo = { textos: [], linha: null };
-        try {
-          domInfo = await page.evaluate(function() {
-            const sel = '.alert, .alert-danger, .swal2-html-container, .swal2-title, .toast, [role="alert"], .invalid-feedback';
-            const textos = Array.from(document.querySelectorAll(sel))
-              .filter(function(el) { return el.offsetParent !== null; })
-              .map(function(el) { return (el.innerText || '').trim().substring(0, 500); })
-              .filter(function(t) { return t.length > 0; })
-              .slice(0, 10);
-            // Diagnóstico: a última linha da grade lida POR CABEÇALHO (UN, Cap Emb, Qtd Fat, Qtd UN...).
-            let linha = null;
-            const ths = Array.from(document.querySelectorAll('#datatable_itens thead th'))
-              .map(function(th) { return (th.innerText || '').replace(/\\s+/g, ' ').trim(); });
-            const tr = document.querySelector('#datatable_itens tbody tr:nth-last-child(1)');
-            if (tr) {
-              linha = {};
-              Array.from(tr.querySelectorAll('td')).forEach(function(td, idx) {
-                const inp = td.querySelector('input, select');
-                const v = inp ? (inp.value || '') : (td.innerText || '');
-                linha[ths[idx] || ('col' + idx)] = String(v).trim().substring(0, 80);
-              });
-            }
-            return { textos: textos, linha: linha };
-          });
-        } catch (e) { /* sem DOM legível → só o corpo do POST conta */ }
-        const achado = extrairLoteMinimoPortal([bodyText].concat(domInfo.textos || []));
-        return achado ? { achado: achado, linha: domInfo.linha } : null;
-      };
-      const abortarLoteMinimo = async (det) => {
-        const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
-        trace.push({ step: 'item_' + i + '_lote_minimo', t: Date.now() - t0, lote: det.achado.lote });
-        return {
-          data: {
-            success: false,
-            erro: 'Portal recusou o item ' + i + ' (SKU ' + item.sku_portal + '): ' + det.achado.trecho +
-              ' - qtde enviada ' + String(item.qtde) + ' UN',
-            erroTipo: 'LOTE_MINIMO_PORTAL',
-            skuFalho: item.sku_portal,
-            loteMinimo: {
-              skuPortal: item.sku_portal,
-              lote: det.achado.lote,
-              trecho: det.achado.trecho,
-              qtdeEnviada: Number(item.qtde),
-              linha: det.linha,
-            },
-            trace,
-          },
-          type: 'application/json',
-          screenshot: errorScreenshot,
-        };
-      };
-
+      const alertasAntes = { textos: new Set((await lerAlertasPortal()).textos || []), dialogos: dialogosVistos.length };
       let saveConfirm = armarSaveWait('item-' + i + '-save-confirm');
       await page.click('#btnGravarItem');
       let saveResult = await saveConfirm;
 
-      const loteDet1 = await detectarLoteMinimo(saveResult.body);
-      if (loteDet1) return await abortarLoteMinimo(loteDet1);
+      const loteDet1 = await detectarLoteMinimo(saveResult.body, alertasAntes);
+      if (loteDet1) return await abortarLoteMinimo(loteDet1, i, item);
 
       if (!saveResult.ok) {
         // Retry: portal ignorou o click. Tenta de novo.
@@ -1065,8 +1085,8 @@ export default async ({ page, context }) => {
         await page.click('#btnGravarItem');
         saveResult = await saveConfirm;
 
-        const loteDet2 = await detectarLoteMinimo(saveResult.body);
-        if (loteDet2) return await abortarLoteMinimo(loteDet2);
+        const loteDet2 = await detectarLoteMinimo(saveResult.body, alertasAntes);
+        if (loteDet2) return await abortarLoteMinimo(loteDet2, i, item);
 
         if (!saveResult.ok) {
           // Falhou 2x — POST do save nunca saiu. Aborta o pedido com erro
@@ -1280,6 +1300,12 @@ export default async ({ page, context }) => {
       };
     });
     trace.push({ step: 'pre_click_efetivar_diag', t: Date.now() - t0, diag: preClickDiag });
+
+    // Recusa por lote mínimo que apareceu DEPOIS da checagem do item (Codex P1): última varredura
+    // antes do Efetivar. Qualquer mensagem de lote mínimo visível agora é prova suficiente —
+    // sem atribuição de SKU (a mensagem não traz), o alerta diz "nao identificado".
+    const loteFinal = await detectarLoteMinimo(null, { textos: new Set(), dialogos: 0 });
+    if (loteFinal) return await abortarLoteMinimo(loteFinal, null, null);
 
     // === PR3: wait composto pós-submit ===
     // Arma os 4 sinais ANTES do click — qualquer um que cumpra ganha. Ignora
