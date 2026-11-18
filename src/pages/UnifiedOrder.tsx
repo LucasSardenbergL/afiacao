@@ -4,6 +4,7 @@ import { CheckCircle, Building2, Scissors, Wifi, Palette } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { track } from '@/lib/analytics';
+import { caminhoInternoSeguro } from '@/lib/destino-pos-login';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RecommendationsPanel } from '@/components/RecommendationsPanel';
 import { AddToolDialog } from '@/components/AddToolDialog';
@@ -179,8 +180,9 @@ const UnifiedOrder = () => {
   const preselectedRef = useRef(false);
 
   // returnTo da fila (G1 Fase 3): só path interno (guard anti-open-redirect, vem da URL).
-  const returnToRaw = searchParams.get('returnTo');
-  const returnTo = returnToRaw && returnToRaw.startsWith('/') && !returnToRaw.startsWith('//') ? returnToRaw : null;
+  // O guard é o mesmo do login: o caseiro deixava passar `/\host`, que o navegador lê como `//host`
+  // e o react-router <6.30.6 manda para `location.assign` quando o pushState recusa a outra origem.
+  const returnTo = caminhoInternoSeguro(searchParams.get('returnTo'));
 
   /* ─── "Repetir pedido" (?repeat=<sales_order_id>) ───
    * One-shot após cliente + catálogo prontos (padrão do deep-link): busca o
