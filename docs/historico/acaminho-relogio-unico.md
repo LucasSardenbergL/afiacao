@@ -124,12 +124,16 @@ reprovado: o máximo da empresa avança sem publicar o pendente do membro. A dec
 garante que a listagem com `cExibeTodos=S` foi completa, e o motor já lia `COALESCE(sea.estoque_fisico, 0) = 0` para o
 membro sem linha. O físico do grupo não muda; passam a existir o pendente e o retrato do dia. A marca de dono é
 `fonte_sync = 'PO_sem_posicao_ListarPosEstoque'`.
-- **Linha nossa → UPDATE a cada run confiável, inclusive para 0.** O UPDATE leva a marca no `WHERE` e devolve
-  RETURNING. Se um run paralelo regravou a posição real, o UPDATE não acha a linha e não a toca.
-- **Sem linha → INSERT … ON CONFLICT DO NOTHING**, só com pendente > 0. Linha de OUTRA origem nunca é tocada: a
-  varredura completa ainda pode pular uma linha (LIMITE em `fisico.ts`), e zerar um físico lido antes seria fabricar.
-- **PO do APP deduplicado** (o `em_transito` o conta): o membro ausente sem linha nasce com o par (0, 0, hoje). Sem o
-  retrato, o motor corta o `em_transito` em `D − 7`, e com o sync atrasado o PO fica 0× (Codex, 2ª rodada).
+- **Linha nossa → UPDATE a cada run confiável, inclusive para 0.** O `WHERE` leva a marca e o relógio
+  (`ultima_sincronizacao <` início da coleta do PO deste run), e o UPDATE devolve RETURNING. Se um run paralelo
+  regravou a posição real, ou um run mais novo publicou retrato depois da coleta deste, a linha fica intacta.
+- **Sem linha → INSERT … ON CONFLICT DO NOTHING para TODO membro atual ausente**, com ou sem PO. O pendente é
+  `pendenteMembros ?? 0` (o 0 é legítimo sob o C1). Linha de OUTRA origem nunca é tocada: a varredura completa ainda
+  pode pular uma linha (LIMITE em `fisico.ts`), e zerar um físico lido antes seria fabricar.
+- **Por que o retrato é incondicional:** o PO do APP é deduplicado do pendente, porque o `em_transito` o conta. Sem o
+  retrato, o motor corta o `em_transito` em `D − 7`, e com o sync atrasado o PO fica 0× (Codex, 2ª rodada). Detectar o
+  PO do app pelos itens do Omie falhava com item vazio ou sem `nCodProd` (Codex, 3ª rodada). O retrato incondicional
+  não depende disso.
 - **Só membro ATUAL:** o index passa `membrosGrupo`, e passa `undefined` se a leitura da equivalência falhou. Sem ela
   nada é lido nem escrito. Antes, `membrosErro` deixava `pendenteMembros` vazio e zeraria as linhas nossas às cegas.
 - **Ficam fora:**
@@ -155,11 +159,20 @@ inseridas (teste do PostgREST).
 - O ex-membro ganhava retrato fresco.
 - O ilegível ausente não entrava na contagem.
 
-Todos foram consertados. Fora de escopo, apontado por ele, há um preexistente: na COLACOR, o
+Todos foram consertados.
+
+**Codex, 3ª rodada (high, 150s): REPROVA, três P1.**
+- **0×, consertado:** a coleta do `dedup_app` dependia do `nCodProd` do item. Agora o retrato é incondicional.
+- **0×, consertado:** um run mais velho zerava o retrato de um run mais novo. Agora o UPDATE é condicionado ao relógio.
+- **2×, fora de escopo, preexistente:** o ramo portal do `em_transito` (`sucesso_portal`/`enviado_portal` com
+  protocolo e número Omie nulo) conta **sem corte de data**, e a dedup da edge só cobre a janela de 7 dias. Isso já
+  afeta habilitados e membros listados pelo upsert normal. Foi reportado como bug separado.
+
+Fora de escopo, também apontado por ele, há um preexistente: na COLACOR, o
 `computePendenteViaListarSaldo` devolve o `Map` no lugar de `{pendente, pendenteMembros}`. Hoje é inalcançável (a
 COLACOR não tem habilitado) e fica como follow-up.
 
-**Prova** (Deno, `publicacao_test.ts`, 105/0):
+**Prova** (Deno, `publicacao_test.ts`, 106/0):
 - O teste antigo "membro que não veio no retrato não é escrito" virou a expectativa nova. O vermelho antes do conserto
   deu 5 falhas.
 - A sequência do Codex (10→10→4→0 e 10→16) roda numa tabela em memória que persiste entre runs. Também estão
@@ -172,7 +185,8 @@ COLACOR não tem habilitado) e fica como follow-up.
 - A forma do adaptador está no vitest: marca no `WHERE`, `ignoreDuplicates`, completude da leitura, coleta do
   `dedup_app` e `membrosGrupo` só com a equivalência lida.
 - Falsificação com controle verde na MESMA invocação. Na 1ª etapa, 7 sabotagens deram vermelho. Na 2ª, as 9 deram
-  vermelho; na 3ª, 14, somando PO do app, membro atual, `membrosErro`, `aplicado` com conflito e contagem de ilegíveis.
+  vermelho; na 3ª, 14, somando PO do app, membro atual, `membrosErro`, `aplicado` com conflito e contagem de ilegíveis. Na 4ª,
+  15, somando insert só com PO, retrato sem o início da coleta e update sem o relógio.
   Uma sabotagem ficou verde e expôs camada não exercida sozinha (a leitura das linhas nossas mascarada pelo conflito):
   ganhou um teste isolado. As da 2ª etapa:
   - sem reconciliar;
