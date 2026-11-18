@@ -3,8 +3,9 @@
 --
 -- O guard src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts exige que este arquivo, do CREATE OR
 -- REPLACE até o FIM, seja IGUAL ao trecho da ÚLTIMA migration que recria a função (a que vence em prod).
--- Desde 2026-11-01 essa migration é a 20261101090000_reposicao_compra_suspensa.sql (o motor RESPEITA a suspensão de
--- compra registrada em reposicao_compra_suspensa e loga a compra evitada; antes, a 20261010210000 — desconto do
+-- Desde 2026-11-18 essa migration é a 20261118120000_reposicao_acaminho_relogio_do_sync.sql (o corte dos pedidos do
+-- app no em_transito passa a ser o do retrato do sync — [RELÓGIO ÚNICO]); antes, a 20261101090000 — o motor
+-- RESPEITA a suspensão de compra registrada em reposicao_compra_suspensa e loga a compra evitada; antes, a 20261010210000 — desconto do
 -- vendido em pedido aberto — e a 20261009194000 — #2849, unidades WP). O que vem depois do $function$; é a cauda
 -- autocontida que o motor exige (tabelas da suspensão com RLS, coluna do marker, pós-condição). Histórico: git log.
 -- Spec original (embalagem no motor, 2026-06-26): docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
@@ -90,11 +91,22 @@ BEGIN
     SELECT pcs2.empresa, pci.sku_codigo_omie::text AS sku_codigo_omie, SUM(pci.qtde_final) AS qtde
     FROM pedido_compra_item pci
     JOIN pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
+    -- [RELÓGIO ÚNICO] o retrato que o motor lê (1 linha por SKU: pkey empresa+sku — o LEFT JOIN não duplica item).
+    LEFT JOIN sku_estoque_atual sea_c ON sea_c.empresa = pcs2.empresa AND sea_c.sku_codigo_omie = pci.sku_codigo_omie::text
     WHERE pcs2.empresa = p_empresa
       AND (
         -- [SIMULADO] 'disparado_simulado' É pedido real: o dry_run da edge chama IncluirPedCompra no Omie.
         -- Fora desta lista ele sumia do "a caminho" (o 2º ramo exige nº Omie NULL) → compra dupla.
-        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido') AND pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')
+        -- [RELÓGIO ÚNICO] O corte dos pedidos do app é o do SYNC que publicou o pendente, não o do ciclo. O
+        -- omie-sync-estoque tira do pendente os pedidos do app com data_ciclo >= (dia SP em que rodou) − 7 e grava
+        -- ultima_sincronizacao na MESMA linha e no MESMO upsert do pendente; cortar aqui pelo dia do ciclo deixava o
+        -- vão [S−7, D−8] fora dos dois lados quando o sync do dia falhava = contado 0× = COMPRA DUPLA (medido:
+        -- 06/11 e 11/11/2026, 6 e 3 pedidos no vão). Dia do retrato com 1 h de folga (run que cruza a meia-noite
+        -- grava depois de ler: erra para contar 2×, o lado recuperável) e nunca depois do corte de antes (LEAST:
+        -- este conserto só ACRESCENTA a caminho). Retrato sem data (NULL): LEAST ignora NULL = o corte de antes. Por SKU: o
+        -- upsert do sync é por linha (gravação parcial deixa linhas de retratos diferentes).
+        -- Prova: db/test-acaminho-relogio-unico.sh.
+        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido') AND pcs2.data_ciclo >= (LEAST(p_data_ciclo, ((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date) - 7)
          -- [FANTASMA] Erro TERMINAL do portal NÃO é estoque a caminho. 'erro_nao_retentavel' só é alcançado
          -- com efetivarAttempted=false — o resultado AMBÍGUO tem estado PRÓPRIO (aceito_portal_sem_protocolo
          -- / indeterminado_requer_conciliacao), então este status significa "nada foi colocado no fornecedor".
@@ -763,6 +775,13 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
                   WHERE c.relname = 'uq_reposicao_compra_suspensa_ativa' AND i.indisunique AND i.indpred IS NOT NULL) THEN
     RAISE EXCEPTION 'POS-CS6 FALHOU: índice único parcial da suspensão ativa ausente';
+  END IF;
+  -- [RELÓGIO ÚNICO] o corte do em_transito é o do retrato, no CÓDIGO (comentário limpo antes: o predicado certo só
+  -- num comentário com o velho no código não passa — falsificado em db/test-acaminho-relogio-unico.sh).
+  IF position($c$pcs2.data_ciclo >= (LEAST(p_data_ciclo, ((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date) - 7)$c$
+              IN regexp_replace(v_src, '--[^\n]*', '', 'g')) = 0
+     OR position($c$pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')$c$ IN regexp_replace(v_src, '--[^\n]*', '', 'g')) > 0 THEN
+    RAISE EXCEPTION 'POS-RU1 FALHOU: o em_transito do motor não corta pelo relógio do retrato (sea_c.ultima_sincronizacao) — dois relógios = compra dupla quando o sync falha';
   END IF;
   RAISE NOTICE 'COMPRA-SUSPENSA-MOTOR-OK';
 END
