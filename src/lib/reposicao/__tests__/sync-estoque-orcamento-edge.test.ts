@@ -117,7 +117,7 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     expect(fonte).toContain('.filter((sku) => !habilitadoMap.has(sku))');
     expect(fonte).toContain('const ehMembro = (sku: string) => membrosGrupo.has(sku);');
     expect(fonte).toContain('criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado, ehMembro)');
-    expect(fonte).toContain('membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro }');
+    expect(fonte).toContain('membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro,');
     // O PAR: o pendente dos membros vem da MESMA varredura (OBEN e COLACOR), e o coletor observa o que o motor conta.
     expect(fonte).toContain('computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, conv, supabase, deadline)');
     expect(fonte).toContain('computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, ehMembro, deadline)');
