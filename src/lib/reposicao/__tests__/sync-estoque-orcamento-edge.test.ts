@@ -41,7 +41,8 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     expect(fontePublicacao).not.toMatch(/Promise\.(all|allSettled|race|any)\(/);
     // a única escrita no par é o adaptador entregue à publicação — que decide QUANDO ela acontece
     expect(fonte.slice(iHandler)).not.toContain('from("sku_estoque_atual")');
-    expect(fonte.match(/from\("sku_estoque_atual"\)/g)).toHaveLength(1);
+    // v1.11: o upsert do par e, para o membro fora do físico, o insert-se-ausente e o update condicionado — todos nos adaptadores
+    expect(fonte.match(/from\("sku_estoque_atual"\)/g)).toHaveLength(3);
   });
 
   it('na publicação: gate do físico → fase do PO → gate do pendente → gravação, nessa ordem', () => {
@@ -52,7 +53,7 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
       'exigirPendenteConfiavel(pend, fasePoMs);',
       'await gravarEstoque(ops, e, linhas);',
       'await inativarNaoEncontrados(ops, e);',
-      'await publicarObservacao(ops, e, pend, gravacaoCompleta && gm.confirmados === linhasMembros.length, pendenteGravado);',
+      'await publicarObservacao(ops, e, pend, aplicado, pendenteGravado);',
     ].map((p) => fontePublicacao.indexOf(p, iConcluir));
     expect(iConcluir).toBeGreaterThan(0);
     for (let i = 0; i < passos.length; i++) expect(passos[i]).toBeGreaterThan(i === 0 ? iConcluir : passos[i - 1]);
@@ -116,7 +117,7 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     expect(fonte).toContain('.filter((sku) => !habilitadoMap.has(sku))');
     expect(fonte).toContain('const ehMembro = (sku: string) => membrosGrupo.has(sku);');
     expect(fonte).toContain('criarAcumuladorFisico((sku) => habilitadoMap.has(sku), totalEsperado, ehMembro)');
-    expect(fonte).toContain('membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro }');
+    expect(fonte).toContain('membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro,');
     // O PAR: o pendente dos membros vem da MESMA varredura (OBEN e COLACOR), e o coletor observa o que o motor conta.
     expect(fonte).toContain('computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, conv, supabase, deadline)');
     expect(fonte).toContain('computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, ehMembro, deadline)');
@@ -206,7 +207,7 @@ describe('omie-sync-estoque — deadline cabe no teto do cron', () => {
     expect(fim).toBeGreaterThan(ini);
     const adaptadores = fonte.slice(ini, fim);
     const chamadas = adaptadores.match(/supabase\s*\.\s*(from|rpc)\(/g) ?? [];
-    expect(chamadas).toHaveLength(7);
+    expect(chamadas).toHaveLength(9);
     expect(adaptadores.match(/\.abortSignal\(s\)/g)).toHaveLength(chamadas.length);
     // e a leitura do em_transito na fase do PO, que antes podia pendurar o run até o kill do cron
     const iEmTransito = fonte.indexOf('async function fetchEmTransitoKeys(');
@@ -236,9 +237,56 @@ describe('omie-sync-estoque — o registro leva o resumo dos membros de grupo', 
     const registro = new Set(fonte.slice(ini, fim).match(/"[a-z_]+"/g)?.map((c) => c.slice(1, -1)) ?? []);
     const doResumo = [...new Set(fontePublicacao.match(/\bmembros_grupo_[a-z_]+(?=\s*:)/g) ?? [])];
     expect(doResumo.sort()).toEqual([
-      'membros_grupo_encontrados', 'membros_grupo_erro', 'membros_grupo_falhas',
+      'membros_grupo_ausentes_com_po', 'membros_grupo_ausentes_falhas',
+      'membros_grupo_ausentes_inseridos', 'membros_grupo_ausentes_ja_com_linha', 'membros_grupo_ausentes_reconciliados', 'membros_grupo_encontrados', 'membros_grupo_erro', 'membros_grupo_falhas',
       'membros_grupo_gravados', 'membros_grupo_ilegiveis', 'membros_grupo_sem_pendente',
     ]);
     expect(doResumo.filter((c) => !registro.has(c))).toEqual([]);
   });
 });
+
+// v1.11 (Codex P1 2026-11-18): a linha do membro ausente com PO é reconciliada por UPDATE — e só a linha que a PRÓPRIA
+// edge criou. O Deno executa a decisão com um fake; a condição de dono no WHERE mora no adaptador real, que só o texto vê.
+describe('omie-sync-estoque — o update do membro ausente só toca a linha nossa', () => {
+  it('o adaptador atualizarLinhaSemPosicao filtra empresa, sku, a marca de dono E o relógio, e prova pela RETURNING', () => {
+    const ini = fonte.indexOf('atualizarLinhaSemPosicao: async');
+    const fim = fonte.indexOf('lerInativacoes: async', ini);
+    expect(ini).toBeGreaterThan(0);
+    expect(fim).toBeGreaterThan(ini);
+    const corpo = fonte.slice(ini, fim);
+    expect(corpo).toContain('.update(linha)');
+    expect(corpo).toContain('.eq("empresa", empresa)');
+    expect(corpo).toContain('.eq("sku_codigo_omie", String(linha.sku_codigo_omie))');
+    expect(corpo).toContain('.eq("fonte_sync", FONTE_SEM_POSICAO)');
+    // Codex P1 (3ª rodada): run mais velho nunca regrava o retrato de um run mais novo
+    expect(corpo).toContain('.lt("ultima_sincronizacao", retratoAntesDe)');
+    expect(corpo).toContain('.select("sku_codigo_omie")');
+    expect(corpo).not.toMatch(/\.upsert\(/);
+  });
+
+  it('o insert do membro ausente nunca sobrescreve (ignoreDuplicates)', () => {
+    expect(fonte).toContain('.upsert(linhas, { onConflict: "empresa,sku_codigo_omie", ignoreDuplicates: true })');
+  });
+
+  // Codex P1 (4ª rodada): o 2º ramo da CTE em_transito (portal, SEM corte de data) também sai do pendente — senão o PO
+  // AFI-<id> aberto no Omie conta 2× (pendente + em_transito). O MESMO predicado da RPC, com prova de completude.
+  it('fetchEmTransitoKeys deduplica também o ramo portal da em_transito, sem corte de data e com prova de completude', () => {
+    const ini = fonte.indexOf('async function fetchEmTransitoKeys(');
+    const fim = fonte.indexOf('return { numeros, codInts };', ini);
+    expect(ini).toBeGreaterThan(0);
+    expect(fim).toBeGreaterThan(ini);
+    const corpo = fonte.slice(fonte.indexOf('const portal = await supabase', ini), fim);
+    expect(corpo).toContain('.in("status_envio_portal", ["sucesso_portal", "enviado_portal"])');
+    expect(corpo).toContain('.not("portal_protocolo", "is", null)');
+    expect(corpo).toContain('.is("omie_pedido_compra_numero", null)');
+    expect(corpo).toContain('.not("status", "in", "(cancelado,expirado_sem_aprovacao)")');
+    expect(corpo).not.toContain('data_ciclo');
+    expect(corpo).toContain('portal.count !== portal.data.length');
+    expect(corpo).toContain('codInts.add(`AFI-${r.id}`)');
+  });
+
+  it('o run sem a leitura da equivalência não passa o grupo à publicação (nada de ausente é escrito)', () => {
+    expect(fonte).toContain('membrosGrupo: membrosErro === null ? membrosGrupo : undefined },');
+  });
+});
+

@@ -72,7 +72,9 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * Só o PO DO APP (carimbo cCodIntPed AFI-<id>) converte: o PO lançado à mão no Omie já vem em litros (founder).
  */
 // v1.10: PR(d) da baixa de PO — etapa desconhecida com saldo (ou sem itens legíveis) recusa o run (etapa-desconhecida.ts).
-export const VERSAO = "v1.10-etapa-desconhecida-recusa";
+// v1.11: membro de grupo com PO aberto AUSENTE do ListarPosEstoque ganha o par (físico 0, pendente) por INSERT … ON
+// CONFLICT DO NOTHING — sem linha, o motor contava o PO 0× depois de D−7 e o grupo recomprava (furo do #3969).
+export const VERSAO = "v1.11-membro-ausente-com-po";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

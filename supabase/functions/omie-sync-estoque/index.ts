@@ -22,7 +22,9 @@ import { criarAcumuladorFisico } from "./fisico.ts";
 import {
   convDaOrigem, convPendentePorSku, type LinhaEquivalencia, quantidadesEmUnidadeOmie, recusaPorUnidade,
 } from "./unidade-omie.ts";
-import { comPrazo, concluirRun, linhaMarcador, MARKER_FULL, type OpsPublicacao } from "./publicacao.ts";
+import {
+  comPrazo, concluirRun, FONTE_SEM_POSICAO, linhaMarcador, MARKER_FULL, type OpsPublicacao,
+} from "./publicacao.ts";
 
 const corsHeaders = {
   ...sharedCors,
@@ -368,6 +370,28 @@ async function fetchEmTransitoKeys(
     if (r.omie_pedido_compra_numero) numeros.add(String(r.omie_pedido_compra_numero).trim());
     codInts.add(`AFI-${r.id}`);
   }
+  // 2º ramo da CTE em_transito (portal): sucesso/enviado ao portal, com protocolo, SEM número Omie e não cancelado —
+  // a RPC conta SEM corte de data. Fora daqui, um PO AFI-<id> dele aberto no Omie entrava no pendente E no em_transito:
+  // 2× (Codex P1 2026-11-18, 4ª rodada; com o retrato do membro ausente da v1.11, o 2× alcançaria membros sem linha).
+  // `.not(... "in")` é NULL-blind como o NOT IN da RPC (status NULL fora nos dois). Sem prova de completude (teto do
+  // PostgREST) a dedup falharia calada → erro, fatal como toda a fase do PO.
+  const prazoPortal = timeoutRequestMs(Date.now(), deadline, FETCH_TIMEOUT_MS);
+  if (prazoPortal === 0) throw new Error("em_transito (portal) query: deadline do run atingido antes da leitura");
+  const portal = await supabase
+    .from("pedido_compra_sugerido")
+    .select("id", { count: "exact" })
+    .eq("empresa", "OBEN")
+    .in("status_envio_portal", ["sucesso_portal", "enviado_portal"])
+    .not("portal_protocolo", "is", null)
+    .is("omie_pedido_compra_numero", null)
+    .not("status", "in", "(cancelado,expirado_sem_aprovacao)")
+    .limit(1000) // teto explícito do PostgREST; o count exact abaixo prova que veio tudo
+    .abortSignal(AbortSignal.timeout(prazoPortal));
+  if (portal.error) throw new Error(`em_transito (portal) query: ${portal.error.message}`);
+  if (!Array.isArray(portal.data) || portal.count !== portal.data.length) {
+    throw new Error(`em_transito (portal) query: ${Array.isArray(portal.data) ? portal.data.length : "?"} de ${portal.count ?? "?"} linhas`);
+  }
+  for (const r of portal.data as Array<{ id: string }>) codInts.add(`AFI-${r.id}`);
   return { numeros, codInts };
 }
 
@@ -612,6 +636,43 @@ function opsDoBanco(
         (s) => supabase.from("sku_estoque_atual").upsert(linhas, { onConflict: "empresa,sku_codigo_omie" }).abortSignal(s),
         prazoMs,
       ),
+    // ignoreDuplicates = ON CONFLICT DO NOTHING; o select devolve SÓ as linhas que o INSERT gravou (RETURNING).
+    inserirEstoqueSeAusente: async (linhas, prazoMs) => {
+      let inseridos: string[] = [];
+      const r = await comPrazo(async (s) => {
+        const res = await supabase
+          .from("sku_estoque_atual")
+          .upsert(linhas, { onConflict: "empresa,sku_codigo_omie", ignoreDuplicates: true })
+          .select("sku_codigo_omie")
+          .abortSignal(s);
+        // Sem data (ou não-array) = nenhuma linha PROVADA como inserida — fail-closed: não entra no pendente gravado.
+        if (!res.error && Array.isArray(res.data)) {
+          inseridos = (res.data as Array<{ sku_codigo_omie: unknown }>).map((x) => String(x.sku_codigo_omie));
+        }
+        return res;
+      }, prazoMs);
+      return { ...r, inseridos: r.erro === null ? inseridos : [] };
+    },
+    // A marca de dono e o relógio vão no WHERE: a linha que um run paralelo regravou com a posição real — ou com um
+    // retrato mais novo que a coleta deste run — não é tocada.
+    atualizarLinhaSemPosicao: async (linha, retratoAntesDe, prazoMs) => {
+      let atualizado = false;
+      const r = await comPrazo(async (s) => {
+        const res = await supabase
+          .from("sku_estoque_atual")
+          .update(linha)
+          .eq("empresa", empresa)
+          .eq("sku_codigo_omie", String(linha.sku_codigo_omie))
+          .eq("fonte_sync", FONTE_SEM_POSICAO)
+          // Run mais velho nunca regrava o retrato de um run que publicou depois do início da coleta deste.
+          .lt("ultima_sincronizacao", retratoAntesDe)
+          .select("sku_codigo_omie")
+          .abortSignal(s);
+        if (!res.error && Array.isArray(res.data)) atualizado = res.data.length === 1;
+        return res;
+      }, prazoMs);
+      return { ...r, atualizado: r.erro === null && atualizado };
+    },
     lerInativacoes: async (codigos, prazoMs) => {
       let datas = new Map<string, string | null>();
       const r = await comPrazo(async (s) => {
@@ -719,7 +780,9 @@ const CHAVES_REGISTRO = [
   "pendente_problemas", "varredura_truncada", "observacao_publicada", "desfecho", "upsert_sem_confirmacao",
   "upsert_nao_tentados", "inativacao_falhou", "linhas_sem_local", "paginas_sem_total",
   "membros_grupo_encontrados", "membros_grupo_erro", "membros_grupo_gravados", "membros_grupo_falhas",
-  "membros_grupo_ilegiveis", "membros_grupo_sem_pendente",
+  "membros_grupo_ilegiveis", "membros_grupo_sem_pendente", "membros_grupo_ausentes_com_po",
+  "membros_grupo_ausentes_inseridos", "membros_grupo_ausentes_ja_com_linha", "membros_grupo_ausentes_falhas",
+  "membros_grupo_ausentes_reconciliados",
 ] as const;
 
 function detalhesDoRegistro(resumo: Record<string, unknown>): Record<string, unknown> {
@@ -964,7 +1027,9 @@ Deno.serve(async (req) => {
         empresa,
         habilitados: habilitadoMap,
         fisico: { veredito: vereditoFisico, encontrados: fisico.encontrados, paginas: totalPaginas, faseMs: faseFisicoMs,
-          membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro },
+          membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro,
+          // Sem a leitura da equivalência não se sabe quem é membro: nenhuma linha de ausente é escrita (publicacao.ts).
+          membrosGrupo: membrosErro === null ? membrosGrupo : undefined },
         iniciadoEm: startedAt.getTime(),
         limiteCauda: deadline + FOLGA_CAUDA_MS,
         prazos: {

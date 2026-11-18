@@ -111,3 +111,130 @@ Codex reproduziu o caso D−8: o motor anterior contava 0 e o novo conta 4. Tria
 | migration | `20261118120000_reposicao_acaminho_relogio_do_sync.sql` (nome custom, **não auto-aplica**) | sessão via `bun run db:aplicar` (envelope: PRE md5, POS-RU1, transação) ou founder no SQL Editor |
 | edge | nenhuma | — |
 | Publish | nenhum (sem mudança em `src/`) | — |
+
+## Conserto na edge: o membro ausente do físico com PO aberto (omie-sync-estoque v1.11)
+
+**Furo** (achado do Codex no #3969 e confirmado no código): o lote dos membros de grupo em `publicacao.ts` só gravava
+os SKUs que vieram no `ListarPosEstoque`. Membro com PO aberto e **fora** da listagem ficava sem linha em
+`sku_estoque_atual`; com isso o pendente dele se perdia, e o pedido do app caía no corte `D − 7`. Resultado: o PO era
+contado **0×** e o grupo recomprava. O #3973 tentou o conserto no motor (fallback no último retrato da empresa) e foi
+reprovado: o máximo da empresa avança sem publicar o pendente do membro. A decisão do founder foi consertar na edge.
+
+**Desenho.** O par gravado é (físico 0, pendente da MESMA varredura de PO, já aprovada pelo C1). O 0 não fabrica: o C2
+garante que a listagem com `cExibeTodos=S` foi completa, e o motor já lia `COALESCE(sea.estoque_fisico, 0) = 0` para o
+membro sem linha. O físico do grupo não muda; passam a existir o pendente e o retrato do dia. A marca de dono é
+`fonte_sync = 'PO_sem_posicao_ListarPosEstoque'`.
+- **INSERT … ON CONFLICT DO NOTHING para TODO membro atual ausente**, com ou sem PO, com RETURNING. O pendente é
+  `pendenteMembros ?? 0` (o 0 é legítimo sob o C1).
+- **O que o RETURNING omitiu (a linha já existia) → UPDATE.** O `WHERE` leva a marca e o relógio
+  (`ultima_sincronizacao <` início da coleta do PO deste run), e o UPDATE também devolve RETURNING. Isso:
+  - reconcilia a linha nossa a cada run, inclusive para 0;
+  - faz o perdedor de dois inserts simultâneos ainda reconciliar;
+  - deixa intacta a linha de OUTRA origem (a varredura completa ainda pode pular uma linha, LIMITE em `fisico.ts`, e
+    zerar um físico lido antes seria fabricar);
+  - deixa intacto o retrato publicado por um run mais novo depois da coleta deste.
+- **O retrato gravado é o INÍCIO da coleta do PO** (`tPo`), no insert e no update, o mesmo valor do filtro `<`. O
+  run que começou depois vence nas duas ordens de escrita (Codex, 5ª rodada). É também o instante em que a edge lê as
+  chaves de dedup do `em_transito`.
+- **Sem leitura prévia das linhas nossas.** A 3ª versão lia as linhas nossas antes. O update no conflito a tornou
+  redundante, então ela saiu: menos uma falha possível.
+- **Por que o retrato é incondicional:** o PO do APP é deduplicado do pendente, porque o `em_transito` o conta. Sem o
+  retrato, o motor corta o `em_transito` em `D − 7`, e com o sync atrasado o PO fica 0× (Codex, 2ª rodada). Detectar o
+  PO do app pelos itens do Omie falhava com item vazio ou sem `nCodProd` (Codex, 3ª rodada). O retrato incondicional
+  não depende disso.
+- **Só membro ATUAL:** o index passa `membrosGrupo`, e passa `undefined` se a leitura da equivalência falhou. Sem ela
+  nada é lido nem escrito. Antes, `membrosErro` deixava `pendenteMembros` vazio e zeraria as linhas nossas às cegas.
+- **Ficam fora:**
+  - o físico ilegível (ele veio na listagem);
+  - o item de PO ilegível (sem par; entra na contagem `membros_grupo_ilegiveis`);
+  - o ex-membro.
+- **Dedup do ramo portal do `em_transito` (Codex, 4ª rodada).** O `fetchEmTransitoKeys` ganhou o predicado do 2º
+  ramo da CTE: `status_envio_portal IN (sucesso_portal, enviado_portal)`, protocolo não nulo, número Omie nulo, status
+  fora de cancelado/expirado e **sem corte de data**. Ele usa `.limit(1000)` + `count exact` e lança se faltar linha.
+  Antes, um PO `AFI-<id>` desse ramo, aberto no Omie, entrava no pendente E no `em_transito` (2×). Isso já afetava
+  habilitados e membros listados, e o retrato novo o estenderia aos membros sem linha. Em prod hoje há 0 pedidos nesse
+  ramo.
+- **Observação:** só SKUs com RETURNING entram no pendente gravado. Falha **ou conflito** tira o `pendente_aplicado`
+  (Codex P2, 2ª rodada).
+- **Desfecho:** não muda.
+- **Resumo e registro:** ganham `membros_grupo_ausentes_{com_po,inseridos,reconciliados,ja_com_linha,falhas,erro}`.
+
+**Codex, 1ª rodada (gpt-6.2-astra, high, 79s): REPROVA, P1.** Só com o INSERT … DO NOTHING, a linha criada pela edge
+congelava. Ele executou 4 runs, com a varredura `10 → 10 → 4 → 0`, e a linha ficou em 10 nos quatro. Isso conta 2× a
+entrega recebida e 0× um PO novo. O P2 da mesma rodada: a observação era suprimida quando o RETURNING vinha vazio.
+Daí veio a reconciliação da linha nossa. Ele confirmou que `ignoreDuplicates` + `select` devolve só as linhas
+inseridas (teste do PostgREST).
+
+**Codex, 2ª rodada (high, 1880s): REPROVA, P1 e P2.** O P1 da 1ª rodada foi fechado. Faltavam:
+- **P1:** o membro com só PO do app deduplicado ficava sem retrato.
+- **P2:** um UPDATE para 0 que perdia a corrida ainda dava `aplicado: true`.
+- O ex-membro ganhava retrato fresco.
+- O ilegível ausente não entrava na contagem.
+
+Todos foram consertados.
+
+**Codex, 3ª rodada (high, 150s): REPROVA, três P1.**
+- **0×, consertado:** a coleta do `dedup_app` dependia do `nCodProd` do item. Agora o retrato é incondicional.
+- **0×, consertado:** um run mais velho zerava o retrato de um run mais novo. Agora o UPDATE é condicionado ao relógio.
+- **2×, preexistente:** o ramo portal do `em_transito` conta **sem corte de data**, e a dedup da edge só cobria a
+  janela de 7 dias. Primeiro foi tratado como fora de escopo; na 4ª rodada o Codex pediu o conserto antes do deploy, e
+  ele entrou aqui (ver Desenho).
+
+**Codex, 4ª rodada (high, 95s): REPROVA, dois P1, ambos consertados.**
+- **0×:** o perdedor de dois INSERTs simultâneos não reconciliava. Agora o UPDATE condicionado roda no conflito.
+- **2×:** o ramo portal; entrou a dedup.
+
+**Codex, 5ª rodada (high, 89s): REPROVA, dois P1.**
+- **0×, consertado:** com coletas sobrepostas, a linha guardava o FIM da coleta de A e o filtro usava o INÍCIO da de
+  B. Agora o retrato é o início da coleta.
+- **0× transitório, aceito como P2 na 6ª:** um pedido do portal com mais de 7 dias, deduplicado, recebe o número Omie
+  e vira `disparado`. Sai dos dois ramos da CTE até o próximo sync publicar o pendente do SKU. Sem a dedup, o mesmo PO
+  ficava 2× pela vida inteira. Fechar a janela exige o motor saber que o último retrato deduplicou o PO, o que pede
+  migration e fica fora daqui. O cron 31/124 roda em UTC 09:05 e 09:40–19:40 a cada 2h, ou seja, SP 06h05 e
+  06h40–16h40. O maior intervalo agendado é de 13h25, e uma falha de publicação pode prolongá-lo.
+
+**Codex, 6ª rodada (high, 35s): APROVA.** Fechou o P1 da sobreposição e aceitou o 0× do portal como P2 residual. Nas
+palavras dele, só esta edge periódica não consegue garantir a passagem de 1× para 1×.
+
+Fora de escopo, também apontado por ele, há um preexistente: na COLACOR, o
+`computePendenteViaListarSaldo` devolve o `Map` no lugar de `{pendente, pendenteMembros}`. Hoje é inalcançável (a
+COLACOR não tem habilitado) e fica como follow-up.
+
+**Prova** (Deno, `publicacao_test.ts`, 104/0, depois de sair a leitura das linhas nossas):
+- O teste antigo "membro que não veio no retrato não é escrito" virou a expectativa nova. O vermelho antes do conserto
+  deu 5 falhas.
+- A sequência do Codex (10→10→4→0 e 10→16) roda numa tabela em memória que persiste entre runs. Também estão
+  cobertos:
+  - a linha de outra origem, que fica intacta;
+  - a corrida, que não toca a posição real e mantém a observação fail-closed;
+  - a leitura das linhas nossas que falha;
+  - o membro que voltou à listagem;
+  - o membro que virou habilitado.
+- A forma do adaptador está no vitest: marca no `WHERE`, `ignoreDuplicates`, completude da leitura, coleta do
+  `dedup_app` e `membrosGrupo` só com a equivalência lida.
+- Falsificação com controle verde na MESMA invocação. Na 1ª etapa, 7 sabotagens deram vermelho. Na 2ª, as 9 deram
+  vermelho; na 3ª, 14, somando PO do app, membro atual, `membrosErro`, `aplicado` com conflito e contagem de ilegíveis. Na 4ª,
+  15, somando insert só com PO, retrato sem o início da coleta e update sem o relógio. Na 5ª, 15 contra o código da 4ª rodada e, depois do conserto da 5ª, 16:
+  conflito sem update, dedup do portal ausente ou com corte de data, SKU fora do grupo e as anteriores que seguem
+  válidas.
+  Uma sabotagem ficou verde e expôs camada não exercida sozinha (a leitura das linhas nossas mascarada pelo conflito):
+  ganhou um teste isolado. As da 2ª etapa:
+  - sem reconciliar;
+  - 0 virando o valor velho;
+  - insert sem excluir as linhas nossas;
+  - linhas nossas sem o filtro de ausente;
+  - aplicado ignorando a leitura;
+  - conflito contado como gravado (esta pegou um buraco no teste da corrida, já fechado);
+  - update sem a marca;
+  - leitura sem a prova de completude.
+- A guarda redundante "não está em `encontrados`" foi removida: nenhum teste a provava.
+
+**Residual (aceito):**
+- 0× transitório do portal → `disparado` (acima). Follow-up no motor.
+- Membro ausente com linha de OUTRA origem mantém o par velho. Ele é coerente no tempo, e o corte pelo retrato velho
+  conta os pedidos do app desde então. Aparece em `membros_grupo_ausentes_ja_com_linha`.
+- Linha nossa de ex-membro vai a pendente 0. O motor não a lê, porque ela está fora da equivalência.
+- Linha nossa com PO ilegível fica velha.
+
+**Deploy:** só a edge `omie-sync-estoque` (v1.11), decidida por `bun run pendencias:deploy`. Sem migration e sem
+Publish.
