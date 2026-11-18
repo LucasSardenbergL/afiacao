@@ -95,8 +95,43 @@ Deno.test("formato fora do RFC 3339 com fuso é recusado (JavaScript e Postgres 
 });
 
 Deno.test("campos fora do calendário são recusados como data inválida", () => {
-  for (const v of ["2026-13-01T00:00:00Z", "2026-11-17T25:00:00Z", "2026-11-17T03:61:00Z", "2026-00-10T00:00:00Z"]) {
+  const INVALIDAS = [
+    "2026-13-01T00:00:00Z", "2026-00-10T00:00:00Z",   // mês
+    "2026-11-00T00:00:00Z", "2026-11-31T00:00:00Z",   // dia que o mês não tem
+    "2026-02-30T00:00:00Z", "2026-02-29T00:00:00Z",   // fevereiro (2026 não é bissexto) — Date.parse rolaria para março
+    "0000-01-01T00:00:00Z",                           // ano zero: o Postgres recusa
+    "2026-11-17T24:00:00Z", "2026-11-17T25:00:00Z",   // hora
+    "2026-11-17T03:60:00Z", "2026-11-17T03:61:00Z",   // minuto
+    "2026-11-17T03:03:60Z",                           // segundo
+    "2026-11-17T24:00:00.5Z",                         // hora 24 com fração
+  ];
+  for (const v of INVALIDAS) {
     assertEq(validarGeradoEmDoSnapshot(v, AGORA), { ok: false, erro: "generated_at is not a valid date" }, v);
+  }
+  // não-vacuidade: os vizinhos válidos passam (29 de fevereiro de ano bissexto, último segundo do dia)
+  for (const v of ["2024-02-29T00:00:00Z", "2026-11-16T23:59:59Z", "2026-02-28T12:00:00Z", "0001-01-01T00:00:00Z"]) {
+    assertEq(validarGeradoEmDoSnapshot(v, AGORA).ok, true, v);
+  }
+});
+
+Deno.test("fuso fora da faixa é recusado; os extremos que existem passam", () => {
+  for (const v of ["2026-11-17T03:03:41+23:59", "2026-11-17T03:03:41-15:00", "2026-11-17T03:03:41+14:01", "2026-11-17T03:03:41+03:60"]) {
+    assertEq(validarGeradoEmDoSnapshot(v, AGORA), { ok: false, erro: "generated_at is not a valid date" }, v);
+  }
+  // todos no PASSADO do relógio fixo (03:07:30Z do dia 17): o que se testa aqui é a faixa do fuso
+  for (const v of ["2026-11-17T03:03:41+14:00", "2026-11-16T03:03:41-12:00", "2026-11-17T03:03:41-00:00", "2026-11-16T23:33:41-03:30"]) {
+    assertEq(validarGeradoEmDoSnapshot(v, AGORA).ok, true, v);
+  }
+  // e o fuso extremo válido ainda obedece ao teto: 03:03:41-12:00 do dia 17 é 15:03:41Z, no futuro
+  assertEq(validarGeradoEmDoSnapshot("2026-11-17T03:03:41-12:00", AGORA), { ok: false, erro: "generated_at is in the future" }, "fuso válido, instante futuro");
+});
+
+Deno.test("a fração de segundo entra na conta do teto", () => {
+  // teto = 03:17:30,000Z. Com a fração ignorada, 30,999999999 s passaria como 30 s.
+  assertEq(validarGeradoEmDoSnapshot("2026-11-17T03:17:30.000Z", AGORA).ok, true, "no teto, com fração zero");
+  assertEq(validarGeradoEmDoSnapshot("2026-11-17T03:17:29.999999999Z", AGORA).ok, true, "1 ns antes do teto");
+  for (const v of ["2026-11-17T03:17:30.999999999Z", "2026-11-17T03:17:30.001Z", "2026-11-17T03:17:30.5Z"]) {
+    assertEq(validarGeradoEmDoSnapshot(v, AGORA), { ok: false, erro: "generated_at is in the future" }, v);
   }
 });
 

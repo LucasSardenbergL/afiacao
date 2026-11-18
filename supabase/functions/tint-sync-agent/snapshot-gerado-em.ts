@@ -9,8 +9,10 @@
 //
 // Contrato (cada linha tem teste em snapshot-gerado-em_test.ts):
 //   · só RFC 3339 com data, hora e fuso explícitos (o que o conector manda: `time.RFC3339`, com o
-//     relógio do PG de origem — connector/sayersync/sync.go). Formato fechado para o JavaScript e
-//     o Postgres lerem o MESMO instante: o valor que segue para o banco é o texto original.
+//     relógio do PG de origem — connector/sayersync/sync.go). Formato fechado e calendário
+//     conferido campo a campo (dia que existe, hora até 23, segundo até 59, fuso até ±14:00), para
+//     o JavaScript e o Postgres lerem o MESMO instante: o valor que segue para o banco é o texto
+//     original.
 //   · instante adiantado em mais de ADIANTAMENTO_MAXIMO_DO_SNAPSHOT_MS em relação ao relógio do
 //     servidor é RECUSADO (400). Não se "corrige para agora": inventar o instante da fotografia
 //     mexeria na ordem que a promoção usa. Passado não tem piso: snapshot antigo já é pulado.
@@ -25,7 +27,10 @@ export const ADIANTAMENTO_MAXIMO_DO_SNAPSHOT_MS = 10 * 60_000;
 
 /** Data, hora e fuso explícitos; fração de segundo opcional (até nanossegundo). */
 const RFC3339_DO_SNAPSHOT =
-  /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|([+-])(\d{2}):(\d{2}))$/;
+
+/** Maior deslocamento de fuso aceito: ±14:00, o maior que existe (o Postgres iria até ±15:59). */
+const FUSO_MAXIMO_DO_SNAPSHOT_MIN = 14 * 60;
 
 export type GeradoEmDoSnapshot =
   | { ok: true; geradoEm: string }
@@ -42,15 +47,29 @@ export function validarGeradoEmDoSnapshot(valor: unknown, agoraMs: number): Gera
   if (typeof valor !== "string") {
     return { ok: false, erro: "generated_at must be an RFC 3339 timestamp string" };
   }
-  const partes = RFC3339_DO_SNAPSHOT.exec(valor);
-  if (!partes) {
+  const p = RFC3339_DO_SNAPSHOT.exec(valor);
+  if (!p) {
     return { ok: false, erro: "generated_at must be an RFC 3339 timestamp with timezone (YYYY-MM-DDTHH:MM:SSZ)" };
   }
-  // A fração de segundo fica fora da conta: o que se compara é o instante com folga de minutos.
-  const instante = Date.parse(`${partes[1]}T${partes[2]}${partes[3]}`);
-  if (!Number.isFinite(instante)) {
+  const ano = Number(p[1]), mes = Number(p[2]), dia = Number(p[3]);
+  const hora = Number(p[4]), minuto = Number(p[5]), segundo = Number(p[6]);
+  const fracaoMs = p[7] ? Number(`0.${p[7]}`) * 1000 : 0;
+  const fusoMin = p[8] === "Z" ? 0 : (p[9] === "-" ? -1 : 1) * (Number(p[10]) * 60 + Number(p[11]));
+
+  // Calendário conferido campo a campo, e não por Date.parse: ele rola 30 de fevereiro para março e
+  // aceita o ano 0000, que o Postgres recusa — a rota responderia 500 no lugar do 400. Hora 24 e
+  // segundo 60, que o Postgres normaliza, ficam de fora: o conector não os produz.
+  const civil = new Date(0);
+  civil.setUTCFullYear(ano, mes - 1, dia);
+  civil.setUTCHours(hora, minuto, segundo, 0);
+  const camposNaFaixa = ano >= 1 && mes >= 1 && mes <= 12 && dia >= 1 && hora <= 23 && minuto <= 59 && segundo <= 59;
+  const diaExiste = civil.getUTCFullYear() === ano && civil.getUTCMonth() === mes - 1 && civil.getUTCDate() === dia;
+  const fusoNaFaixa = p[8] === "Z" || (Number(p[11]) <= 59 && Math.abs(fusoMin) <= FUSO_MAXIMO_DO_SNAPSHOT_MIN);
+  if (!camposNaFaixa || !diaExiste || !fusoNaFaixa) {
     return { ok: false, erro: "generated_at is not a valid date" };
   }
+  // A fração entra na conta: sem ela, 30,999999999 s passaria como 30 s cravados no teto.
+  const instante = civil.getTime() - fusoMin * 60_000 + fracaoMs;
   if (!Number.isFinite(agoraMs)) {
     return { ok: false, erro: "server clock unavailable" };
   }

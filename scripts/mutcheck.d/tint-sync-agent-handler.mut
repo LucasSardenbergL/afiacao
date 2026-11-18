@@ -1,0 +1,36 @@
+# O HANDLER de /catalogs e /keys-snapshot da edge tint-sync-agent, EXECUTADO com PostgREST simulado
+# (lote 6 do scanner, 2ª opinião do Codex — docs/historico/scanner-lovable-rescan-lote6.md).
+# @src: supabase/functions/tint-sync-agent/index.ts
+# @test: supabase/functions/tint-sync-agent/index_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: true
+# Rode: bash scripts/mutcheck-all.sh   (o teste importa o index.ts por import computado; `true` no compila)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# O teste de FORMA (tint-catalogo-forma.mut) confere texto. Este contrato confere o que o CONECTOR
+# recebe e o que vai ao banco: cada linha é uma regressão que o texto deixava passar ou só pegava
+# por coincidência de formatação. EXPECT preenchido por MEDIÇÃO.
+#
+# ── a recusa aparece para o conector ──
+PEGA      | recusa nunca entra no ramo (> vira <)                 | s/if \(montado\.recusados > 0\) \{/if (montado.recusados < 0) {/
+PEGA      | recusa não conta como erro                            | s/errors \+= montado\.recusados;/errors += 0;/
+PEGA      | recusa some do errors[] da resposta                   | s/errorDetails\.push\(\{ entity_type: entityType, entity_id: null, message: motivo \}\);/;/
+PEGA      | recebidos deixa de contar o recusado                  | s/received \+= montado\.recebidos;/received += montado.linhas.length;/
+# ── o que vai ao banco ──
+PEGA      | item cru vai direto ao insert (cópia cega de volta)   | s/bulkInsert\(config\.tabela, montado\.linhas, 500,/bulkInsert(config.tabela, (body[entityType] || []), 500,/
+PEGA      | escritor a mais para a tabela da entidade             | s/received \+= montado\.recebidos;/received += montado.recebidos; await sb.from(config.tabela).insert([{ sync_run_id: runId }]);/
+PEGA      | loja da linha sai do corpo                            | s/storeCode: agent\.storeCode,/storeCode: body.store_code,/
+PEGA      | conta da linha sai do corpo                           | if (/^\s+account: agent\.account,$/ && ++$n == 2) { s/agent\.account/body.account/ }
+PEGA      | run da linha sai do corpo                             | s/^(\s+)runId,$/$1runId: body.sync_run_id,/
+# ── a forma do lote ──
+PEGA      | entidade que não é lista volta a ser confirmada       | s/if \(erroDeForma\) return json\(\{ ok: false, error: erroDeForma \}, 400\);/;/
+# ── o registro da recusa ──
+PEGA      | aviso do registro que falhou é apagado                | s/console\.error\(`\[tint-sync-agent\] recusa de catálogo \(\$\{entityType\}\) não registrada em tint_sync_errors`\);/;/
+PEGA      | logError diz que gravou sem conferir o erro           | s/return !error;/return true;/
+PEGA      | registro da recusa leva o lote cru                    | s/detalheDaRecusaDeCatalogo\(entityType, montado\)\)\.catch/body[entityType]).catch/
+PEGA      | recusa sem registro em tint_sync_errors               | s/await logError\(runId, entityType, null, motivo, /await Promise.resolve(/
+# ── o relógio do snapshot ──
+PEGA      | generated_at recusado segue adiante                   | s/if \(!geradoEm\.ok\) \{/if (false) {/
+PEGA      | validação do snapshot com relógio infinito            | s/validarGeradoEmDoSnapshot\(generated_at, Date\.now\(\)\)/validarGeradoEmDoSnapshot(generated_at, Number.MAX_SAFE_INTEGER)/
+PEGA      | validação do snapshot com relógio zerado              | s/validarGeradoEmDoSnapshot\(generated_at, Date\.now\(\)\)/validarGeradoEmDoSnapshot(generated_at, 0)/
+SOBREVIVE | generated_at cru no insert, DEPOIS de validado        | s/generated_at: geradoEm\.geradoEm,/generated_at,/

@@ -17,13 +17,16 @@
 #      função inteira está provado em db/test-tint-promote-latest-indexado.sh.
 #
 # Uso:  db/test-seg-lote6-triagem.sh               (LOCALE_TESTE=C|pt_BR.UTF-8, PGPORT_TEST=<porta>)
-#       db/test-seg-lote6-triagem.sh --falsificar  (controle verde + 3 sabotagens, nos dois locales)
+#       db/test-seg-lote6-triagem.sh --falsificar  (controle verde + 5 sabotagens, nos dois locales)
 #
 # Sabotagens (cada uma é também o ESTADO que fecharia o achado):
 #   gam_sem_escrita_do_dono   sem as 2 policies de escrita do dono     → caem A1, A2 e A6
 #   webauthn_com_unique       com UNIQUE (credential_id)               → cai B1
 #   tint_data_do_servidor     a linha entra com created_at do servidor → caem C2 e C3 (C1 não: a
 #                             linha mais nova continua vencendo — é a autoridade normal do conector)
+# E duas de NÃO-VACUIDADE (a 1ª escrita some sem erro; o assert tem de notar que nada foi gravado):
+#   gam_insert_descartado     gatilho descarta o INSERT de score 999999     → cai A1
+#   webauthn_ctl_1a_descartada gatilho descarta o 1º desafio do controle    → cai B2
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,7 +41,8 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "CONTROLE vermelho em $loc — abortando antes de sabotar"; tail -5 "$LOGDIR/controle.log"; exit 3
     fi
     echo "controle verde ($loc)"
-    for par in "gam_sem_escrita_do_dono:A1_ A2_ A6_" "webauthn_com_unique:B1_" "tint_data_do_servidor:C2_ C3_"; do
+    for par in "gam_sem_escrita_do_dono:A1_ A2_ A6_" "webauthn_com_unique:B1_" "tint_data_do_servidor:C2_ C3_" \
+               "gam_insert_descartado:A1_" "webauthn_ctl_1a_descartada:B2_"; do
       sab="${par%%:*}"; esperados="${par#*:}"
       if SABOTAGEM="$sab" LOCALE_TESTE="$loc" bash "$0" > "$LOGDIR/sab.log" 2>&1; then
         echo "FALHA: sabotagem $sab ficou VERDE ($loc)"; falhas=$((falhas + 1)); continue
@@ -75,11 +79,15 @@ trap cleanup EXIT
 GAM_ESCRITA_DO_DONO="sim"                     # as 2 policies de escrita do dono existem (PROD)
 WEBAUTHN_UNIQUE=""                            # PROD: só índice não único em credential_id
 FORJA_CREATED_AT="'2099-01-01T00:00:00Z'"     # o created_at que o item escolhia (edge v1.3)
+GAM_GATILHO=""                                # não-vacuidade: descarta em silêncio o INSERT do A1
+CTL_GATILHO=""                                # não-vacuidade: descarta em silêncio o 1º desafio do B2
 case "${SABOTAGEM:-}" in
   '') ;;
   gam_sem_escrita_do_dono) GAM_ESCRITA_DO_DONO="nao" ;;
   webauthn_com_unique)     WEBAUTHN_UNIQUE="ALTER TABLE public.webauthn_challenges ADD UNIQUE (credential_id);" ;;
   tint_data_do_servidor)   FORJA_CREATED_AT="DEFAULT" ;;
+  gam_insert_descartado)   GAM_GATILHO="CREATE TRIGGER t_descarta BEFORE INSERT ON public.gamification_scores FOR EACH ROW WHEN (NEW.total_score = 999999) EXECUTE FUNCTION public._descarta();" ;;
+  webauthn_ctl_1a_descartada) CTL_GATILHO="CREATE TRIGGER t_descarta BEFORE INSERT ON public.webauthn_challenges_ctl FOR EACH ROW WHEN (NEW.challenge = 'desafio-A') EXECUTE FUNCTION public._descarta();" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -z "${SABOTAGEM:-}" ] || echo "SABOTAGEM ATIVA: $SABOTAGEM"
@@ -88,7 +96,8 @@ esac
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$WORK/pg.log" -w start >/dev/null
 P() { "$PGBIN/psql" -X -q -v ON_ERROR_STOP=1 -p "$PORT" -h /tmp -U postgres -d postgres "$@"; }
 
-P -v gam_escrita="$GAM_ESCRITA_DO_DONO" -v webauthn_unique="$WEBAUTHN_UNIQUE" -v forja_created_at="$FORJA_CREATED_AT" >/dev/null <<'SQL'
+P -v gam_escrita="$GAM_ESCRITA_DO_DONO" -v webauthn_unique="$WEBAUTHN_UNIQUE" -v forja_created_at="$FORJA_CREATED_AT" \
+  -v gam_gatilho="$GAM_GATILHO" -v ctl_gatilho="$CTL_GATILHO" >/dev/null <<'SQL'
 -- ───────── infra mínima ─────────
 CREATE ROLE anon NOLOGIN;
 CREATE ROLE authenticated NOLOGIN;
@@ -104,6 +113,8 @@ CREATE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS bo
   LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
   AS $function$ SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role) $function$;
 CREATE TABLE public._veredito (nome text PRIMARY KEY, ok boolean NOT NULL, detalhe text);
+-- só as sabotagens de não-vacuidade a usam: um BEFORE INSERT que devolve NULL descarta a linha SEM erro
+CREATE FUNCTION public._descarta() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RETURN NULL; END $f$;
 GRANT ALL ON public._veredito TO anon, authenticated;
 
 -- ───────── A. gamification_scores como na PROD ─────────
@@ -141,6 +152,8 @@ SELECT (:'gam_escrita' = 'nao') AS tira_escrita_do_dono \gset
   DROP POLICY "Users can update their own score" ON public.gamification_scores;
 \endif
 
+:gam_gatilho
+
 -- atores: C1 é conta SEM papel nenhum (cadastro recém-feito, não aprovado); E1 é employee
 INSERT INTO public.user_roles VALUES ('00000000-0000-0000-0000-0000000000e1', 'employee');
 -- linha honesta do C2, gravada pelo dono da tabela
@@ -151,18 +164,23 @@ INSERT INTO public.gamification_scores (user_id, total_score, level, level_name)
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000c1', false);
 DO $$
-DECLARE v_state text := 'OK';
+DECLARE v_state text := 'OK'; v_total numeric; v_level int; v_nome text;
 BEGIN
   BEGIN
     INSERT INTO public.gamification_scores (user_id, total_score, level, level_name)
       VALUES ('00000000-0000-0000-0000-0000000000c1', 999999, 99, 'TEXTO LIVRE DO CLIENTE');
   EXCEPTION WHEN insufficient_privilege THEN v_state := SQLSTATE;
   END;
-  INSERT INTO public._veredito VALUES ('A1_cliente_insere_propria_linha_forjada', v_state = 'OK', v_state);
+  -- "não deu erro" não basta: relê, como o próprio dono, o que ficou gravado
+  SELECT total_score, level, level_name INTO v_total, v_level, v_nome
+    FROM public.gamification_scores WHERE user_id = '00000000-0000-0000-0000-0000000000c1';
+  INSERT INTO public._veredito VALUES ('A1_cliente_insere_propria_linha_forjada',
+    coalesce(v_state = 'OK' AND v_total = 999999 AND v_level = 99 AND v_nome = 'TEXTO LIVRE DO CLIENTE', false),
+    v_state || '; gravado=' || coalesce(v_total::text, 'NADA') || '/' || coalesce(v_level::text, '-') || '/' || coalesce(v_nome, '-'));
 END $$;
 -- A2: o upsert do hook (onConflict user_id) regrava a própria linha
 DO $$
-DECLARE v_state text := 'OK';
+DECLARE v_state text := 'OK'; v_total numeric; v_level int; v_nome text;
 BEGIN
   BEGIN
     INSERT INTO public.gamification_scores (user_id, total_score, level, level_name)
@@ -170,7 +188,11 @@ BEGIN
       ON CONFLICT (user_id) DO UPDATE SET total_score = EXCLUDED.total_score, level = EXCLUDED.level, level_name = EXCLUDED.level_name;
   EXCEPTION WHEN insufficient_privilege THEN v_state := SQLSTATE;
   END;
-  INSERT INTO public._veredito VALUES ('A2_cliente_upsert_proprio', v_state = 'OK', v_state);
+  SELECT total_score, level, level_name INTO v_total, v_level, v_nome
+    FROM public.gamification_scores WHERE user_id = '00000000-0000-0000-0000-0000000000c1';
+  INSERT INTO public._veredito VALUES ('A2_cliente_upsert_proprio',
+    coalesce(v_state = 'OK' AND v_total = 100 AND v_level = 5 AND v_nome = 'Parceiro Estratégico', false),
+    v_state || '; gravado=' || coalesce(v_total::text, 'NADA') || '/' || coalesce(v_level::text, '-') || '/' || coalesce(v_nome, '-'));
 END $$;
 -- A3: a mesma conta NÃO insere linha de outro usuário (esperado 42501; outro erro aborta a prova)
 DO $$
@@ -232,6 +254,7 @@ CREATE INDEX idx_webauthn_challenges_credential_id ON public.webauthn_challenges
 -- gêmea de CONTROLE: a mesma tabela COM a unicidade que o upsert pressupõe
 CREATE TABLE public.webauthn_challenges_ctl (LIKE public.webauthn_challenges INCLUDING DEFAULTS);
 ALTER TABLE public.webauthn_challenges_ctl ADD PRIMARY KEY (id), ADD UNIQUE (credential_id);
+:ctl_gatilho
 
 -- B1: o upsert da edge (PostgREST: INSERT ... ON CONFLICT (credential_id) DO UPDATE) na tabela da PROD
 DO $$
@@ -249,20 +272,24 @@ BEGIN
 END $$;
 -- B2 (controle): com UNIQUE(credential_id) o MESMO comando grava, e a 2ª chamada troca o desafio
 DO $$
-DECLARE v_state text := 'OK'; v_n int; v_ch text;
+DECLARE v_state text := 'OK'; v_n1 int; v_ch1 text; v_n int; v_ch text;
 BEGIN
   BEGIN
     INSERT INTO public.webauthn_challenges_ctl (credential_id, challenge, expires_at)
       VALUES ('cred-da-vitima', 'desafio-A', now() + interval '5 minutes')
       ON CONFLICT (credential_id) DO UPDATE SET challenge = EXCLUDED.challenge, expires_at = EXCLUDED.expires_at;
+    -- a 1ª gravação tem de estar lá ANTES da 2ª: senão "o desafio final é o do terceiro" não prova troca
+    SELECT count(*), max(challenge) INTO v_n1, v_ch1 FROM public.webauthn_challenges_ctl;
     INSERT INTO public.webauthn_challenges_ctl (credential_id, challenge, expires_at)
       VALUES ('cred-da-vitima', 'desafio-do-terceiro', now() + interval '5 minutes')
       ON CONFLICT (credential_id) DO UPDATE SET challenge = EXCLUDED.challenge, expires_at = EXCLUDED.expires_at;
   EXCEPTION WHEN invalid_column_reference THEN v_state := SQLSTATE;
   END;
   SELECT count(*), max(challenge) INTO v_n, v_ch FROM public.webauthn_challenges_ctl;
-  INSERT INTO public._veredito VALUES ('B2_controle_com_unique_o_desafio_e_trocado', v_state = 'OK' AND v_n = 1 AND v_ch = 'desafio-do-terceiro',
-    'sqlstate=' || v_state || '; linhas=' || v_n::text || '; desafio=' || coalesce(v_ch, 'NULL'));
+  INSERT INTO public._veredito VALUES ('B2_controle_com_unique_o_desafio_e_trocado',
+    coalesce(v_state = 'OK' AND v_n1 = 1 AND v_ch1 = 'desafio-A' AND v_n = 1 AND v_ch = 'desafio-do-terceiro', false),
+    'sqlstate=' || v_state || '; depois da 1a=' || coalesce(v_n1::text, '?') || ' linha(s) com ' || coalesce(v_ch1, 'NULL')
+      || '; no fim=' || v_n::text || ' linha(s) com ' || coalesce(v_ch, 'NULL'));
 END $$;
 
 -- ───────── C. tint_staging_corantes como na PROD ─────────

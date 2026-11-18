@@ -708,7 +708,10 @@ Deno.serve(async (req) => {
               await escritaCritica(`${tabela}.insert`, sb.from(tabela).insert(linhas.slice(i, i + MAX_BATCH_ITEMS)));
             }
           },
-          logError: (runId, tipo, id, msg, det) => logError(runId, tipo, id, msg, det),
+          // `logError` devolve se gravou; o contrato de /preparations (DepsPreparacoes) é Promise<void>.
+          logError: async (runId, tipo, id, msg, det) => {
+            await logError(runId, tipo, id, msg, det);
+          },
           completeSyncRun: (runId, stats, status, resp, extra) => completeSyncRun(runId, stats, status, resp, extra),
           concluirEEnfileirar: async (runId, stats, resp) => {
             const r = await concluirEEnfileirarCorpo(agent, runId, stats, resp);

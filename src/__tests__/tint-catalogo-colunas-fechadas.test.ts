@@ -5,9 +5,10 @@ import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
 // Scanner Lovable, lote 6 — a rota `/catalogs` da edge tint-sync-agent copiava TODA propriedade do
 // item para a linha de staging, e `created_at`/`id` decidem o "mais recente" da promoção e da purga.
-// A semântica do conserto é provada EXECUTANDO o builder em `catalogo-staging_test.ts` (Deno); este
-// teste fixa a FORMA do index.ts, que o Deno não exercita: a rota só delega ao módulo de lista
-// fechada, conta a recusa como erro e não tem outro caminho de escrita para essas cinco tabelas.
+// A semântica do conserto é provada EXECUTANDO: o builder em `catalogo-staging_test.ts` e o handler
+// inteiro, com PostgREST simulado, em `tint-sync-agent/index_test.ts` (Deno). Este teste fixa a FORMA
+// do index.ts — a rota só delega ao módulo de lista fechada e não tem outro caminho de escrita para
+// essas cinco tabelas — e é texto: sozinho ele NÃO prova o que o conector recebe.
 
 const RAIZ = resolve(__dirname, '../..');
 const INDEX = removerComentarios(
@@ -82,7 +83,14 @@ describe('tint-sync-agent /catalogs — linha de staging só pelo builder de lis
     expect(catalogs).toContain(
       'await logError(runId, entityType, null, motivo, detalheDaRecusaDeCatalogo(entityType, montado))',
     );
-    const recusa = catalogs.slice(catalogs.indexOf('if (montado.recusados > 0)'), catalogs.indexOf('bulkInsert(config.tabela'));
+    // Os dois limites do recorte são conferidos: com `indexOf` devolvendo -1 o recorte sairia vazio
+    // e as negações abaixo passariam sem olhar nada (achado da 2ª opinião do Codex).
+    const iRecusa = catalogs.indexOf('if (montado.recusados > 0) {');
+    const iInsert = catalogs.indexOf('bulkInsert(config.tabela');
+    expect(iRecusa, 'o ramo da recusa, com a condição `> 0`').toBeGreaterThan(-1);
+    expect(iInsert).toBeGreaterThan(iRecusa);
+    const recusa = catalogs.slice(iRecusa, iInsert);
+    expect(recusa).toContain('errors += montado.recusados;');
     expect(recusa).not.toMatch(/\b(body|item|itens|raw|linhas)\b/);
   });
 
