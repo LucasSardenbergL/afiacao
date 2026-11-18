@@ -10592,6 +10592,85 @@ export type Database = {
           },
         ]
       }
+      pedido_portal_ajuste_qtde: {
+        Row: {
+          criado_em: string
+          criado_por: string
+          empresa: string
+          evidencia: Json
+          id: number
+          lote_minimo: number
+          pedido_id: number
+          pedido_item_id: number
+          portal_protocolo: string | null
+          qtde_omie: number
+          qtde_portal_lancada: number
+          qtde_portal_necessaria: number
+          sku_codigo_omie: string | null
+          sku_portal: string
+          status: string
+          status_envio: string
+        }
+        Insert: {
+          criado_em?: string
+          criado_por?: string
+          empresa: string
+          evidencia?: Json
+          id?: number
+          lote_minimo: number
+          pedido_id: number
+          pedido_item_id: number
+          portal_protocolo?: string | null
+          qtde_omie: number
+          qtde_portal_lancada: number
+          qtde_portal_necessaria: number
+          sku_codigo_omie?: string | null
+          sku_portal: string
+          status?: string
+          status_envio: string
+        }
+        Update: {
+          criado_em?: string
+          criado_por?: string
+          empresa?: string
+          evidencia?: Json
+          id?: number
+          lote_minimo?: number
+          pedido_id?: number
+          pedido_item_id?: number
+          portal_protocolo?: string | null
+          qtde_omie?: number
+          qtde_portal_lancada?: number
+          qtde_portal_necessaria?: number
+          sku_codigo_omie?: string | null
+          sku_portal?: string
+          status?: string
+          status_envio?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pedido_portal_ajuste_qtde_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "pedido_compra_sugerido"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pedido_portal_ajuste_qtde_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "v_des_pedidos_em_transito"
+            referencedColumns: ["pedido_id"]
+          },
+          {
+            foreignKeyName: "pedido_portal_ajuste_qtde_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: false
+            referencedRelation: "vw_cancelamento_pos_disparo_sem_evidencia"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pedido_total_liquido_conversoes: {
         Row: {
           account: string
@@ -27257,21 +27336,21 @@ export type Database = {
       reposicao_po_a_baixar: {
         Args: { p_empresa: string }
         Returns: {
-          classe: string | null
+          classe: string
           empresa: string
           evidencia_desatualizada: boolean
-          evidencia_em: string | null
-          fornecedor_nome: string | null
-          motivos: string[] | null
-          nf_recebida_em: string | null
-          nid_receb: number | null
-          numero_nfe: string | null
-          numero_pedido: string | null
-          omie_codigo_pedido: number | null
-          pedidos_sugeridos: string[] | null
-          run_iniciado_em: string | null
+          evidencia_em: string
+          fornecedor_nome: string
+          motivos: string[]
+          nf_recebida_em: string
+          nid_receb: number
+          numero_nfe: string
+          numero_pedido: string
+          omie_codigo_pedido: number
+          pedidos_sugeridos: string[]
+          run_iniciado_em: string
           tipo: string
-          unidades_contadas: number | null
+          unidades_contadas: number
         }[]
       }
       reposicao_po_observado_publicar: {
