@@ -695,6 +695,7 @@ export const MODULOS: ModuloApp[] = [
       "src/components/reposicao/corantes/__tests__/CorantesTab.test.tsx",
       "src/components/reposicao/__tests__/SkuDetailSheet.leitura.test.tsx",
       "src/components/reposicao/revisao/__tests__/useRevisaoParametros.leitura.test.tsx",
+      "src/components/reposicao/revisao/__tests__/useRevisaoParametros.busca.test.tsx",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },

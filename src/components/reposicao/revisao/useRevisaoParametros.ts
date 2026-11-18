@@ -25,7 +25,7 @@ import {
   descontinuarPayload,
   statusFiltroDaUrl,
 } from "@/lib/reposicao/sku-param";
-import { ilikeContainsPattern } from "@/lib/postgrest";
+import { eqInt, ilike, ilikeContainsPattern, orFilter } from "@/lib/postgrest";
 import { buscarForaDoMotor, fecharReativacoesPendentes } from "@/components/reposicao/foraDoMotor/api";
 import { PAGE_SIZE, type SkuSugeridoView } from "./types";
 
@@ -65,7 +65,8 @@ export function useRevisaoParametros() {
         if (debouncedSearch.trim()) {
           const s = debouncedSearch.trim();
           if (/^\d+$/.test(s)) {
-            q = q.eq("sku_codigo_omie", Number(s));
+            // Só dígitos pode ser o código Omie OU um trecho da descrição ("6468" em "F ACAB FL20.6468.00QT").
+            q = q.or(orFilter(eqInt("sku_codigo_omie", s), ilike("sku_descricao", s)));
           } else {
             const pat = ilikeContainsPattern(s);
             if (pat) q = q.ilike("sku_descricao", pat);
@@ -134,7 +135,8 @@ export function useRevisaoParametros() {
         if (debouncedSearch.trim()) {
           const s = debouncedSearch.trim();
           if (/^\d+$/.test(s)) {
-            q = q.eq("sku_codigo_omie", Number(s));
+            // Só dígitos pode ser o código Omie OU um trecho da descrição ("6468" em "F ACAB FL20.6468.00QT").
+            q = q.or(orFilter(eqInt("sku_codigo_omie", s), ilike("sku_descricao", s)));
           } else {
             const pat = ilikeContainsPattern(s);
             if (pat) q = q.ilike("sku_descricao", pat);
@@ -229,7 +231,8 @@ export function useRevisaoParametros() {
       if (debouncedSearch.trim()) {
         const s = debouncedSearch.trim();
         if (/^\d+$/.test(s)) {
-          q = q.eq("sku_codigo_omie", Number(s));
+          // Só dígitos pode ser o código Omie OU um trecho da descrição ("6468" em "F ACAB FL20.6468.00QT").
+          q = q.or(orFilter(eqInt("sku_codigo_omie", s), ilike("sku_descricao", s)));
         } else {
           const pat = ilikeContainsPattern(s);
           if (pat) q = q.ilike("sku_descricao", pat);
