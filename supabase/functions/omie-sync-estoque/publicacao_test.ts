@@ -46,6 +46,8 @@ interface Cenario {
   pendente?: ResultadoPendente | Error;
   /** Resposta de cada upsertEstoque, pela ordem das chamadas (o que faltar é OK). */
   estoque?: Array<ResultadoEscrita | ((linhas: Record<string, unknown>[]) => ResultadoEscrita)>;
+  /** ms que a coleta do PO (lerPendente) consome do relógio — o fim da coleta ≠ o início. */
+  custoPoMs?: number;
   /** ms que cada upsertEstoque consome do relógio. */
   custoEstoqueMs?: number;
   lerInativacoes?: string | null;
@@ -75,6 +77,7 @@ function criarFake(c: Cenario = {}) {
     agora: () => relogio,
     lerPendente: () => {
       efeitos.push("lerPendente");
+      relogio += c.custoPoMs ?? 0;
       const p = c.pendente ?? { pendente: new Map([["101", 5]]), confiavel: true, problemas: [], observacao: null };
       return p instanceof Error ? Promise.reject(p) : Promise.resolve(p);
     },
@@ -775,7 +778,7 @@ Deno.test("Codex P1 (5ª): coletas sobrepostas — o run que começou DEPOIS ven
     }],
   ]);
   // B começa a coleta em T0+50s (o relógio do fake) e lê um PO manual de 4: perde o insert, reconcilia pelo update.
-  const f = criarFake({ pendente: pendDe(4), tabela });
+  const f = criarFake({ pendente: pendDe(4), tabela, custoPoMs: 10_000 });
   await concluirRun(f.ops, entrada({ membros: ["555"] }));
   igual(tabela.get("555")?.estoque_pendente_entrada, 4, "o PO de B entra");
   igual(tabela.get("555")?.ultima_sincronizacao, new Date(T0 + 50_000).toISOString(), "retrato = início da coleta de B");
