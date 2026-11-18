@@ -133,6 +133,9 @@ membro sem linha. O físico do grupo não muda; passam a existir o pendente e o 
   - deixa intacta a linha de OUTRA origem (a varredura completa ainda pode pular uma linha, LIMITE em `fisico.ts`, e
     zerar um físico lido antes seria fabricar);
   - deixa intacto o retrato publicado por um run mais novo depois da coleta deste.
+- **O retrato gravado é o INÍCIO da coleta do PO** (`tPo`), no insert e no update, o mesmo valor do filtro `<`. O
+  run que começou depois vence nas duas ordens de escrita (Codex, 5ª rodada). É também o instante em que a edge lê as
+  chaves de dedup do `em_transito`.
 - **Sem leitura prévia das linhas nossas.** A 3ª versão lia as linhas nossas antes. O update no conflito a tornou
   redundante, então ela saiu: menos uma falha possível.
 - **Por que o retrato é incondicional:** o PO do APP é deduplicado do pendente, porque o `em_transito` o conta. Sem o
@@ -181,6 +184,18 @@ Todos foram consertados.
 - **0×:** o perdedor de dois INSERTs simultâneos não reconciliava. Agora o UPDATE condicionado roda no conflito.
 - **2×:** o ramo portal; entrou a dedup.
 
+**Codex, 5ª rodada (high, 89s): REPROVA, dois P1.**
+- **0×, consertado:** com coletas sobrepostas, a linha guardava o FIM da coleta de A e o filtro usava o INÍCIO da de
+  B. Agora o retrato é o início da coleta.
+- **0× transitório, aceito como P2 na 6ª:** um pedido do portal com mais de 7 dias, deduplicado, recebe o número Omie
+  e vira `disparado`. Sai dos dois ramos da CTE até o próximo sync publicar o pendente do SKU. Sem a dedup, o mesmo PO
+  ficava 2× pela vida inteira. Fechar a janela exige o motor saber que o último retrato deduplicou o PO, o que pede
+  migration e fica fora daqui. O cron 31/124 roda em UTC 09:05 e 09:40–19:40 a cada 2h, ou seja, SP 06h05 e
+  06h40–16h40. O maior intervalo agendado é de 13h25, e uma falha de publicação pode prolongá-lo.
+
+**Codex, 6ª rodada (high, 35s): APROVA.** Fechou o P1 da sobreposição e aceitou o 0× do portal como P2 residual. Nas
+palavras dele, só esta edge periódica não consegue garantir a passagem de 1× para 1×.
+
 Fora de escopo, também apontado por ele, há um preexistente: na COLACOR, o
 `computePendenteViaListarSaldo` devolve o `Map` no lugar de `{pendente, pendenteMembros}`. Hoje é inalcançável (a
 COLACOR não tem habilitado) e fica como follow-up.
@@ -199,7 +214,7 @@ COLACOR não tem habilitado) e fica como follow-up.
   `dedup_app` e `membrosGrupo` só com a equivalência lida.
 - Falsificação com controle verde na MESMA invocação. Na 1ª etapa, 7 sabotagens deram vermelho. Na 2ª, as 9 deram
   vermelho; na 3ª, 14, somando PO do app, membro atual, `membrosErro`, `aplicado` com conflito e contagem de ilegíveis. Na 4ª,
-  15, somando insert só com PO, retrato sem o início da coleta e update sem o relógio. Na 5ª, 15 contra o código final:
+  15, somando insert só com PO, retrato sem o início da coleta e update sem o relógio. Na 5ª, 15 contra o código da 4ª rodada e, depois do conserto da 5ª, 16:
   conflito sem update, dedup do portal ausente ou com corte de data, SKU fora do grupo e as anteriores que seguem
   válidas.
   Uma sabotagem ficou verde e expôs camada não exercida sozinha (a leitura das linhas nossas mascarada pelo conflito):
@@ -215,6 +230,7 @@ COLACOR não tem habilitado) e fica como follow-up.
 - A guarda redundante "não está em `encontrados`" foi removida: nenhum teste a provava.
 
 **Residual (aceito):**
+- 0× transitório do portal → `disparado` (acima). Follow-up no motor.
 - Membro ausente com linha de OUTRA origem mantém o par velho. Ele é coerente no tempo, e o corte pelo retrato velho
   conta os pedidos do app desde então. Aparece em `membros_grupo_ausentes_ja_com_linha`.
 - Linha nossa de ex-membro vai a pendente 0. O motor não a lê, porque ela está fora da equivalência.
