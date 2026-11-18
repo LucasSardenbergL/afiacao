@@ -217,7 +217,10 @@ END;
 $$;
 
 -- Mesma semântica de somarDiasUteis (supabase/functions/disparar-pedidos-aprovados/previsao.ts): p_n ≤ 0 devolve
--- p_de; senão avança dia a dia contando seg–sex, e aqui também pula os dias FECHADOS do fornecedor na empresa.
+-- p_de; senão avança dia a dia contando seg–sex. Fornecedor fechado = sáb/dom ∪ calendario_feriados tipo='nacional'
+-- ∪ linhas do fornecedor na empresa (feriado municipal/estadual NÃO fecha fornecedor de outra praça).
+-- calendario_feriados é lido sob a RLS de quem chama (INVOKER): policy staff_calendario_feriados_select = master|
+-- employee (medido em prod, 2026-11-18) — o mesmo recorte do gate abaixo; a prova checa isso como employee.
 CREATE OR REPLACE FUNCTION public.calendario_somar_dias_uteis_fornecedor(p_empresa text, p_fornecedor text, p_de date, p_n int)
 RETURNS date
 LANGUAGE plpgsql
@@ -247,6 +250,8 @@ BEGIN
       RETURN NULL;   -- fornecedor fechado por mais de um ano: não inventa data
     END IF;
     IF extract(isodow FROM v_d) < 6
+       AND NOT EXISTS (SELECT 1 FROM public.calendario_feriados fe
+                        WHERE fe.data = v_d AND fe.tipo = 'nacional')
        AND NOT EXISTS (SELECT 1 FROM public.calendario_operacao_fornecedor f
                         WHERE f.data = v_d AND f.empresa = p_empresa
                           AND lower(btrim(f.fornecedor_nome)) = lower(btrim(p_fornecedor))) THEN
@@ -319,6 +324,10 @@ BEGIN
       RAISE EXCEPTION '[CALENDARIO-POST] anon com privilegio na tabela %', v_t;
     END IF;
   END LOOP;
+
+  IF to_regclass('public.calendario_feriados') IS NULL THEN
+    RAISE EXCEPTION '[CALENDARIO-POST] calendario_feriados ausente (lida por calendario_somar_dias_uteis_fornecedor)';
+  END IF;
 
   IF (SELECT count(*) FROM pg_trigger
        WHERE tgname IN ('calendario_operacao_empresa_log', 'calendario_operacao_fornecedor_log')

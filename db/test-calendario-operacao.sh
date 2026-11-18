@@ -16,11 +16,12 @@ MIG="$REPO_ROOT/supabase/migrations/20261119100000_calendario_operacao.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca.
-  SABOTAGENS="sem_lower_btrim:AFORN2 sem_corte_d3:ASEMNF_CORTE sem_revoke_anon:POST!anon_executa
+  SABOTAGENS="sem_lower_btrim:AFORN2b sem_corte_d3:ASEMNF_CORTE sem_revoke_anon:POST!anon_executa
     sem_revoke_anon_sem_post:AANON1 sem_revoke_public:POST!PUBLIC_executa
     sem_revoke_public_sem_post:APUBLIC1 teto_60_off:AREC7 fechado_peso_off:ANEG2 escrita_employee:ARLS3
     leitura_aberta:ARLS1 gate_customer_off:AGATE1 log_trigger_off:ALOG1 recebimento_sem_empresa:AREC9
-    nf_sem_empresa:ASEMNF1 colacor_nao_vazio:ASEMNF_COLACOR fornecedor_sem_empresa:AFORN5"
+    nf_sem_empresa:ASEMNF1 colacor_nao_vazio:ASEMNF_COLACOR fornecedor_sem_empresa:AFORN5
+    feriado_nacional_off:AFERIADO_NAC feriado_municipal_fecha:AFERIADO_MUNI feriados_rls_so_master:AFERIADO_EMP"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-calendario-operacao.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -77,6 +78,7 @@ PY
 REV_ANON="REVOKE ALL ON FUNCTION public.calendario_proximo_dia_recebimento(text, date) FROM PUBLIC, anon;"
 POST_ANON="IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN"
 POST_PUBLIC="IF has_function_privilege('public', v_fn, 'EXECUTE') THEN"
+FERIADOS_ROLE_EXTRA="employee"   # 4º termo da policy de prod de calendario_feriados
 case "${SABOTAGEM:-}" in
   "") ;;
   sem_lower_btrim)       sabotar "lower(btrim(f.fornecedor_nome)) = lower(btrim(p_fornecedor))" "f.fornecedor_nome = p_fornecedor" ;;
@@ -106,9 +108,22 @@ case "${SABOTAGEM:-}" in
   nf_sem_empresa)        sabotar "WHERE v.empresa = p_empresa AND v.data_emissao = g.d::date" "WHERE v.data_emissao = g.d::date" ;;
   colacor_nao_vazio)     sabotar "IF p_empresa IS DISTINCT FROM 'OBEN'" "IF p_empresa IS NULL" ;;
   fornecedor_sem_empresa) sabotar "WHERE f.data = v_d AND f.empresa = p_empresa" "WHERE f.data = v_d" ;;
+  feriado_nacional_off)  sabotar "AND NOT EXISTS (SELECT 1 FROM public.calendario_feriados fe
+                        WHERE fe.data = v_d AND fe.tipo = 'nacional')
+" "" ;;
+  feriado_municipal_fecha) sabotar "WHERE fe.data = v_d AND fe.tipo = 'nacional')" "WHERE fe.data = v_d)" ;;
+  # Sabota a FIXTURE (a policy de prod de calendario_feriados), não a migration: prova que o AFERIADO_EMP pega uma
+  # RLS que esconda os feriados do employee — a função INVOKER os ignoraria em silêncio.
+  feriados_rls_so_master) FERIADOS_ROLE_EXTRA="master" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
+# HOJE_TESTE=AAAA-MM-DD simula o "hoje" de SP (na cópia da migration e no teste) — prova a janela móvel do
+# calendario_dias_sem_nf contra as datas fixas da carga (revisão I2). Sem a variável, usa o relógio real.
+if [ -n "${HOJE_TESTE:-}" ]; then
+  sabotar "(now() AT TIME ZONE 'America/Sao_Paulo')::date - 3" "'$HOJE_TESTE'::date - 3"
+  echo "HOJE SIMULADO: $HOJE_TESTE"
+fi
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale="$LOC" >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$(dirname "$DATA")/pg.log" -w start >/dev/null
@@ -156,6 +171,14 @@ INSERT INTO public.user_roles VALUES ('$M','master'), ('$E','employee'), ('$C','
 CREATE TABLE public.pedido_compra_sugerido (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), empresa text, fornecedor_nome text);
 -- Em prod é VIEW security_invoker sobre venda_items_history (RLS staff); aqui uma tabela com as colunas lidas.
 CREATE TABLE public.v_venda_items_history_efetivo (empresa text, data_emissao date, nfe_numero text);
+GRANT SELECT ON public.v_venda_items_history_efetivo TO authenticated;
+-- calendario_feriados (módulo de tarefas): colunas, PK e policy de PROD (pg_get_expr, psql-ro 2026-11-18).
+CREATE TABLE public.calendario_feriados (data date PRIMARY KEY, nome text NOT NULL, tipo text NOT NULL DEFAULT 'nacional',
+  observacoes text);
+ALTER TABLE public.calendario_feriados ENABLE ROW LEVEL SECURITY;
+CREATE POLICY staff_calendario_feriados_select ON public.calendario_feriados FOR SELECT TO authenticated
+  USING (( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role) OR ( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role)
+      OR ( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role) OR ( SELECT has_role(auth.uid(), '$FERIADOS_ROLE_EXTRA'::app_role) AS has_role));
 SQL
 
 # ── Migration REAL, duas vezes (idempotência: IF NOT EXISTS / OR REPLACE / ADD COLUMN IF NOT EXISTS) ────────
@@ -167,6 +190,39 @@ eq "ACOL1 pedido_compra_sugerido.data_recebimento_prevista date NULL" \
    "$(Pq -c "SELECT data_type||'/'||is_nullable FROM information_schema.columns WHERE table_name='pedido_compra_sugerido' AND column_name='data_recebimento_prevista'")" "date/YES"
 eq "ACOL2 pedido_compra_sugerido.recebimento_ajustado_calendario boolean NULL" \
    "$(Pq -c "SELECT data_type||'/'||is_nullable FROM information_schema.columns WHERE table_name='pedido_compra_sugerido' AND column_name='recebimento_ajustado_calendario'")" "boolean/YES"
+
+# Roda ANTES das fixtures de data FIXA (recesso 18/12–03/01, 07–08/12): a janela móvel [hoje-30, hoje] nunca
+# encontra linha da OBEN que não seja dela, seja qual for o hoje do CI (bomba-relógio da revisão, I2). Ao fim, as
+# linhas W2/W3 saem para não colidir com a carga fixa. O NOT EXISTS na escolha dos W é cinto-e-suspensório.
+# ── calendario_dias_sem_nf (relativo ao HOJE de SP) — ANTES da carga fixa ───────────────────────────────────────────────────────────
+HOJE="${HOJE_TESTE:-$(Pq -c "SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date")}"
+read -r W1 W2 W3 <<<"$(Pq -c "SELECT string_agg(d::text, ' ' ORDER BY d DESC) FROM (
+  SELECT g::date d FROM generate_series('$HOJE'::date - 30, '$HOJE'::date - 3, '1 day') g
+   WHERE extract(isodow FROM g) < 6
+     AND NOT EXISTS (SELECT 1 FROM public.calendario_operacao_empresa c WHERE c.data = g::date AND c.empresa = 'OBEN')
+   ORDER BY g DESC LIMIT 3) x")"
+P -q <<SQL
+INSERT INTO public.calendario_operacao_empresa (data, empresa, status, peso, motivo, origem) VALUES
+  ('$W2', 'OBEN', 'pendente_dado', 0, 'dia sem NF', 'deteccao'),
+  ('$W3', 'OBEN', 'fechado', 0, 'ponte', 'emenda');
+-- NF em todo dia útil da janela até hoje-3, MENOS W1/W2/W3; nenhuma em (hoje-3, hoje].
+INSERT INTO public.v_venda_items_history_efetivo (empresa, data_emissao, nfe_numero)
+SELECT 'OBEN', g::date, '1' FROM generate_series('$HOJE'::date - 30, '$HOJE'::date - 3, '1 day') g
+ WHERE extract(isodow FROM g) < 6 AND g::date NOT IN ('$W1', '$W2', '$W3');
+-- NF da COLACOR em W1: não pode "cobrir" o dia da OBEN.
+INSERT INTO public.v_venda_items_history_efetivo VALUES ('COLACOR', '$W1', '9');
+SQL
+nf() { Pq -c "SELECT COALESCE(string_agg(d::text, ',' ORDER BY d), '') FROM public.calendario_dias_sem_nf($1) d"; }
+eq "APRECOND ha dia util sem NF em (hoje-3, hoje] (o corte tem dente)" \
+   "$(Pq -c "SELECT count(*) > 0 FROM generate_series('$HOJE'::date - 2, '$HOJE'::date, '1 day') g WHERE extract(isodow FROM g) < 6")" "t"
+eq "ASEMNF1 so o dia util sem NF e sem linha (nem pendente_dado, nem fechado, nem fds)" \
+   "$(nf "'OBEN','$HOJE'::date - 30, '$HOJE'::date")" "$W1"
+eq "ASEMNF_CORTE nada depois de hoje-3 (inclui hoje-1)" \
+   "$(Pq -c "SELECT count(*) FROM public.calendario_dias_sem_nf('OBEN', '$HOJE'::date - 30, '$HOJE'::date) d WHERE d > '$HOJE'::date - 3")" "0"
+eq "ASEMNF_COLACOR empresa != OBEN -> vazio" "$(nf "'COLACOR','$HOJE'::date - 30, '$HOJE'::date")" ""
+
+P -q -c "DELETE FROM public.calendario_operacao_empresa WHERE empresa = 'OBEN' AND data IN ('$W2', '$W3')"
+eq "ASEMNF_LIMPO sem linha da OBEN antes da carga fixa" "$(Pq -c "SELECT count(*) FROM public.calendario_operacao_empresa")" "0"
 
 # ── Carga (sessão sem JWT = SQL Editor) ─────────────────────────────────────────────────────────────────────
 P -q <<'SQL'
@@ -189,7 +245,12 @@ INSERT INTO public.calendario_operacao_fornecedor (data, empresa, fornecedor_nom
 SELECT g::date, 'OBEN', 'Fornecedor X', 'ferias coletivas', 'manual' FROM generate_series('2026-12-21'::date, '2027-01-03'::date, '1 day') g;
 INSERT INTO public.calendario_operacao_fornecedor (data, empresa, fornecedor_nome, motivo, origem) VALUES
   ('2026-12-25', 'OBEN', 'Sayerlack', 'natal', 'feriado'),
-  ('2027-01-01', 'OBEN', 'Sayerlack', 'ano novo', 'feriado');
+  ('2027-01-01', 'OBEN', 'Sayerlack', 'ano novo', 'feriado'),
+  ('2027-01-04', 'OBEN', 'Sayerlack', 'inventario', 'manual');   -- fechamento PRÓPRIO, fora de feriado (AFORN2b)
+-- Feriados: 25/12 e 01/01 nacionais; 24/12 municipal (não fecha fornecedor).
+INSERT INTO public.calendario_feriados (data, nome, tipo) VALUES
+  ('2026-12-25', 'Natal', 'nacional'), ('2027-01-01', 'Confraternizacao', 'nacional'),
+  ('2026-12-24', 'Vespera municipal', 'municipal');
 SQL
 
 # ── calendario_proximo_dia_recebimento ────────────────────────────────────────────────────────────────────────
@@ -212,34 +273,14 @@ eq "AFORN1 X fechado 21/12-03/01: 17/12 + 3 uteis -> 05/01" "$(s "'OBEN','Fornec
 eq "AFORN2 '  SAYERLACK ' casa 'Sayerlack': 23/12 + 2 -> 28/12" "$(s "'OBEN','  SAYERLACK ','2026-12-23',2")" "2026-12-28"
 eq "AFORN3 p_n=0 num sabado devolve o sabado"              "$(s "'OBEN','Sayerlack','2026-12-19',0")" "2026-12-19"
 eq "AFORN4 p_n negativo devolve p_de"                      "$(s "'OBEN','Sayerlack','2026-12-19',-2")" "2026-12-19"
-eq "AFORN5 fechamento da Sayerlack na OBEN nao vale na COLACOR" "$(s "'COLACOR','Sayerlack','2026-12-23',2")" "2026-12-25"
+eq "AFORN2b lower(btrim) num fechamento proprio (04/01, nao feriado): 01/01 + 1 -> 05/01" "$(s "'OBEN',' sayerlack  ','2027-01-01',1")" "2027-01-05"
+eq "AFORN5 fechamento do X na OBEN nao vale na COLACOR"     "$(s "'COLACOR','Fornecedor X','2026-12-17',3")" "2026-12-22"
+eq "AFERIADO_NAC fornecedor sem linha pula 25/12 nacional: 23/12 + 2 -> 28/12" "$(s "'OBEN','Outro','2026-12-23',2")" "2026-12-28"
+eq "AFERIADO_MUNI feriado municipal (24/12) NAO fecha fornecedor: 23/12 + 1 -> 24/12" "$(s "'OBEN','Outro','2026-12-23',1")" "2026-12-24"
+eq "AFERIADO_EMP employee (INVOKER sob RLS de calendario_feriados) ve o feriado nacional" \
+   "$(Pq -c "$(como "$E" "SELECT public.calendario_somar_dias_uteis_fornecedor('OBEN','Outro','2026-12-23',2)")" | tail -1)" "2026-12-28"
 eq "AFORN6 fornecedor NULL -> NULL (ausente != sem fechamento)" "$(s "'OBEN',NULL,'2026-12-23',2")" "NULL"
 eq "AFORN7 fornecedor sem linha = somarDiasUteis puro"     "$(s "'OBEN','Outro','2026-12-17',3")" "2026-12-22"
-
-# ── calendario_dias_sem_nf (relativo ao HOJE de SP) ───────────────────────────────────────────────────────────
-HOJE="$(Pq -c "SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date")"
-read -r W1 W2 W3 <<<"$(Pq -c "SELECT string_agg(d::text, ' ' ORDER BY d DESC) FROM (
-  SELECT g::date d FROM generate_series('$HOJE'::date - 30, '$HOJE'::date - 3, '1 day') g
-   WHERE extract(isodow FROM g) < 6 ORDER BY g DESC LIMIT 3) x")"
-P -q <<SQL
-INSERT INTO public.calendario_operacao_empresa (data, empresa, status, peso, motivo, origem) VALUES
-  ('$W2', 'OBEN', 'pendente_dado', 0, 'dia sem NF', 'deteccao'),
-  ('$W3', 'OBEN', 'fechado', 0, 'ponte', 'emenda');
--- NF em todo dia útil da janela até hoje-3, MENOS W1/W2/W3; nenhuma em (hoje-3, hoje].
-INSERT INTO public.v_venda_items_history_efetivo (empresa, data_emissao, nfe_numero)
-SELECT 'OBEN', g::date, '1' FROM generate_series('$HOJE'::date - 30, '$HOJE'::date - 3, '1 day') g
- WHERE extract(isodow FROM g) < 6 AND g::date NOT IN ('$W1', '$W2', '$W3');
--- NF da COLACOR em W1: não pode "cobrir" o dia da OBEN.
-INSERT INTO public.v_venda_items_history_efetivo VALUES ('COLACOR', '$W1', '9');
-SQL
-nf() { Pq -c "SELECT COALESCE(string_agg(d::text, ',' ORDER BY d), '') FROM public.calendario_dias_sem_nf($1) d"; }
-eq "APRECOND ha dia util sem NF em (hoje-3, hoje] (o corte tem dente)" \
-   "$(Pq -c "SELECT count(*) > 0 FROM generate_series('$HOJE'::date - 2, '$HOJE'::date, '1 day') g WHERE extract(isodow FROM g) < 6")" "t"
-eq "ASEMNF1 so o dia util sem NF e sem linha (nem pendente_dado, nem fechado, nem fds)" \
-   "$(nf "'OBEN','$HOJE'::date - 30, '$HOJE'::date")" "$W1"
-eq "ASEMNF_CORTE nada depois de hoje-3 (inclui hoje-1)" \
-   "$(Pq -c "SELECT count(*) FROM public.calendario_dias_sem_nf('OBEN', '$HOJE'::date - 30, '$HOJE'::date) d WHERE d > '$HOJE'::date - 3")" "0"
-eq "ASEMNF_COLACOR empresa != OBEN -> vazio" "$(nf "'COLACOR','$HOJE'::date - 30, '$HOJE'::date")" ""
 
 # ── Negativos (SQLSTATE exata) ───────────────────────────────────────────────────────────────────────────────
 ins() { echo "INSERT INTO public.calendario_operacao_empresa (data, empresa, status, peso, motivo, origem) VALUES ($1)"; }
