@@ -258,6 +258,8 @@ describe('omie-sync-estoque — o update do membro ausente só toca a linha noss
     expect(corpo).toContain('.eq("empresa", empresa)');
     expect(corpo).toContain('.eq("sku_codigo_omie", String(linha.sku_codigo_omie))');
     expect(corpo).toContain('.eq("fonte_sync", FONTE_SEM_POSICAO)');
+    // Codex P1 (3ª rodada): run mais velho nunca regrava o retrato de um run mais novo
+    expect(corpo).toContain('.lt("ultima_sincronizacao", retratoAntesDe)');
     expect(corpo).toContain('.select("sku_codigo_omie")');
     expect(corpo).not.toMatch(/\.upsert\(/);
   });
@@ -269,12 +271,7 @@ describe('omie-sync-estoque — o update do membro ausente só toca a linha noss
     expect(corpo).toContain('if (res.count !== linhas.length) throw');
   });
 
-  it('o PO do APP deduplicado anota o membro (retrato do dia) ANTES do continue, e o run sem equivalência não passa o grupo', () => {
-    const ini = fonte.indexOf('if (ehApp) {');
-    const fim = fonte.indexOf('coletor.registrar(cabObs, itensObs, "dedup_app");', ini);
-    expect(ini).toBeGreaterThan(0);
-    expect(fim).toBeGreaterThan(ini);
-    expect(fonte.slice(ini, fim)).toContain('if (sku && !habilitadoMap.has(sku) && membro(sku)) membrosComPoApp.add(sku);');
+  it('o run sem a leitura da equivalência não passa o grupo à publicação (nada de ausente é escrito)', () => {
     expect(fonte).toContain('membrosGrupo: membrosErro === null ? membrosGrupo : undefined },');
   });
 });

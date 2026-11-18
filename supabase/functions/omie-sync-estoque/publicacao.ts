@@ -80,8 +80,6 @@ export interface ResultadoPendente {
   pendenteMembros?: Map<string, number>;
   /** Membro com item de PO inválido: fora do lote (o par ficaria incompleto) — nunca barra os habilitados. */
   membrosPendenteIlegiveis?: string[];
-  /** Membros com item num PO do APP deduplicado (o em_transito o conta): sem pendente, mas precisam do retrato do dia. */
-  membrosComPoApp?: string[];
 }
 
 export interface OpsPublicacao {
@@ -101,8 +99,15 @@ export interface OpsPublicacao {
   /** SKUs da empresa com fonte_sync = FONTE_SEM_POSICAO (as linhas que esta edge criou). Leitura que não prova
    * completude (teto do PostgREST) é erro. */
   lerLinhasSemPosicao(prazoMs: number): Promise<ResultadoLeitura<Set<string>>>;
-  /** UPDATE … WHERE empresa, sku E fonte_sync = FONTE_SEM_POSICAO; `atualizado` = o RETURNING devolveu a linha. */
-  atualizarLinhaSemPosicao(linha: Record<string, unknown>, prazoMs: number): Promise<ResultadoEscrita & { atualizado: boolean }>;
+  /**
+   * UPDATE … WHERE empresa, sku, fonte_sync = FONTE_SEM_POSICAO E ultima_sincronizacao < `retratoAntesDe` (o início da
+   * coleta do PO deste run); `atualizado` = o RETURNING devolveu a linha.
+   */
+  atualizarLinhaSemPosicao(
+    linha: Record<string, unknown>,
+    retratoAntesDe: string,
+    prazoMs: number,
+  ): Promise<ResultadoEscrita & { atualizado: boolean }>;
   /** sku → data_inativacao já gravada. */
   lerInativacoes(codigos: string[], prazoMs: number): Promise<ResultadoLeitura<Map<string, string | null>>>;
   upsertStatus(linhas: Record<string, unknown>[], prazoMs: number): Promise<ResultadoEscrita>;
@@ -249,6 +254,7 @@ async function reconciliarAusentes(
   e: EntradaPublicacao,
   inserir: Record<string, unknown>[],
   atualizar: Record<string, unknown>[],
+  retratoAntesDe: string,
 ): Promise<Reconciliacao> {
   const r: Reconciliacao = { gravados: new Set(), inseridos: 0, atualizados: 0, conflitos: 0, falhas: 0 };
   for (const linha of atualizar) {
@@ -257,7 +263,7 @@ async function reconciliarAusentes(
       r.falhas++;
       continue;
     }
-    const ru = await ops.atualizarLinhaSemPosicao(linha, prazo);
+    const ru = await ops.atualizarLinhaSemPosicao(linha, retratoAntesDe, prazo);
     if (ru.erro !== null) {
       r.falhas++;
       ops.log("error", `update do membro ausente ${skuDa(linha)}${ru.semConfirmacao ? " (prazo, sem confirmação)" : ""}: ${ru.erro}`);
@@ -492,14 +498,15 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   // físico é publicável aqui (C2 passou: a varredura com cExibeTodos=S foi COMPLETA), e o membro não veio nela — sem
   // posição. O PAR é (0, pendente da MESMA varredura): o motor já lia COALESCE(físico, 0) = 0 para o membro sem linha,
   // então o 0 não muda o físico do grupo — passa a existir o pendente e o retrato do dia.
-  //   • Sem linha → INSERT … ON CONFLICT DO NOTHING, só com pendente > 0 (sem PO não há o que proteger). Linha de OUTRA
-  //     origem NUNCA é sobrescrita: a varredura completa ainda pode pular uma linha (LIMITE em fisico.ts), e zerar um
-  //     físico lido antes seria fabricar.
+  //   • Sem linha → INSERT … ON CONFLICT DO NOTHING para TODO membro atual ausente, com ou sem PO: o PO do APP é
+  //     deduplicado do pendente (o em_transito o conta) e, sem o retrato do dia, o motor corta o em_transito em D−7 —
+  //     com o sync atrasado, o PO fica 0×. Detectar o PO do app pelos itens do Omie falhava com item sem nCodProd
+  //     (Codex, 2ª e 3ª rodadas); o retrato incondicional não depende disso. Linha de OUTRA origem NUNCA é sobrescrita:
+  //     a varredura completa ainda pode pular uma linha (LIMITE em fisico.ts), e zerar um físico lido antes seria fabricar.
   //   • Linha NOSSA (fonte_sync = FONTE_SEM_POSICAO) → reconciliada a CADA run confiável, inclusive para 0 (Codex P1
   //     2026-11-18: sem isso a linha congelava — 10→4→0 ficava 10, contando 2× a entrega e 0× um PO novo). O UPDATE leva
-  //     a marca no WHERE: se um run paralelo gravou a posição real, ele não acha a linha e não a toca.
-  //   • PO do APP deduplicado (o em_transito o conta) → a linha nasce com pendente 0: sem o retrato do dia o motor corta
-  //     o em_transito em D−7 e, com o sync atrasado, o PO fica 0× (Codex P1 2026-11-18, 2ª rodada).
+  //     no WHERE a marca (um run paralelo que gravou a posição real tira a linha do alcance) e o relógio: só regrava
+  //     retrato ANTERIOR ao início da coleta do PO deste run — um run mais velho nunca zera o de um run mais novo.
   //   • Só MEMBRO ATUAL (a leitura da equivalência): ex-membro não ganha retrato fresco; sem a leitura (membrosGrupo
   //     ausente, ou pendenteMembros vazio por não saber quem é membro), NADA é escrito — zeraria a linha nossa às cegas.
   //   • Físico ilegível NÃO é ausente (ele veio na listagem); item de PO ilegível = sem par.
@@ -507,7 +514,6 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   const grupo = e.fisico.membrosErro ? undefined : e.fisico.membrosGrupo;
   const naListagem = new Set([...membros.keys(), ...(e.fisico.membrosIlegiveis ?? [])]);
   const ausente = (codigo: string) => grupo?.has(codigo) === true && !naListagem.has(codigo) && !ilegiveisPo.has(codigo);
-  const comPoApp = new Set(pend.membrosComPoApp ?? []);
   const parSemPosicao = (codigo: string, qtd: number) => ({
     empresa: e.empresa,
     sku_codigo_omie: codigo,
@@ -533,11 +539,10 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   const atualizarAusentes = pm === undefined ? [] : [...nossas]
     .filter(ausente)
     .map((codigo) => parSemPosicao(codigo, pm.get(codigo) ?? 0));
-  const inserirAusentesLinhas = pm === undefined ? [] : [...new Set([...pm.keys(), ...comPoApp])]
-    .map((codigo) => [codigo, pm.get(codigo) ?? 0] as const)
-    .filter(([codigo, qtd]) => (qtd > 0 || comPoApp.has(codigo)) && ausente(codigo) && !nossas.has(codigo))
-    .map(([codigo, qtd]) => parSemPosicao(codigo, qtd));
-  const ra = await reconciliarAusentes(ops, e, inserirAusentesLinhas, atualizarAusentes);
+  const inserirAusentesLinhas = pm === undefined || grupo === undefined ? [] : [...grupo]
+    .filter((codigo) => ausente(codigo) && !nossas.has(codigo))
+    .map((codigo) => parSemPosicao(codigo, pm.get(codigo) ?? 0));
+  const ra = await reconciliarAusentes(ops, e, inserirAusentesLinhas, atualizarAusentes, new Date(tPo).toISOString());
   const linhasAusentes = [...atualizarAusentes, ...inserirAusentesLinhas];
 
   // A observação conta o que o motor contou (habilitados ∪ membros com par ∪ ausentes CONFIRMADOS); o pendente só vale

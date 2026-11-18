@@ -401,7 +401,7 @@ async function computePendenteViaPedidosCompra(
   deadline: number,
 ): Promise<{
   pendente: Map<string, number>; confiavel: boolean; problemas: string[];
-  pendenteMembros: Map<string, number>; membrosPendenteIlegiveis: string[]; membrosComPoApp: string[];
+  pendenteMembros: Map<string, number>; membrosPendenteIlegiveis: string[];
   observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean;
   coletaIntegra: boolean; perdaColeta: string | null;
 }> {
@@ -419,7 +419,6 @@ async function computePendenteViaPedidosCompra(
   // tira só o membro (sem par, sem linha) — nunca entra em `problemas`, que barraria a rodada dos habilitados.
   const itemsMembros: PoItemOmie[] = [];
   const membrosPendenteIlegiveis = new Set<string>();
-  const membrosComPoApp = new Set<string>();
   const etapasInesperadas = new Set<string>();
   // [fix double-buy 2026-06-20] PAGINA ATÉ A PÁGINA VAZIA — não confiar em nTotalPaginas (Omie SUB-REPORTA →
   // lia só a 1ª página → POs aprovadas além dela sumiam → pendente subestimado → motor re-sugeria = double-buy).
@@ -484,12 +483,6 @@ async function computePendenteViaPedidosCompra(
           problemas.push(`PO app↔manual divergente entre páginas (${aliases.join(",")}) — double-count`);
         }
         for (const a of aliases) posComoApp.add(a);
-        // v1.11 (Codex P1 2026-11-18): o membro deste PO não entra no pendente (o em_transito o conta), mas PRECISA do
-        // retrato do dia — sem linha, o motor corta o em_transito em D−7 e o PO fica 0× quando o sync atrasa.
-        for (const it of itensObs) {
-          const sku = String(it.nCodProd ?? "").trim();
-          if (sku && !habilitadoMap.has(sku) && membro(sku)) membrosComPoApp.add(sku);
-        }
         coletor.registrar(cabObs, itensObs, "dedup_app");
         continue;
       }
@@ -579,7 +572,7 @@ async function computePendenteViaPedidosCompra(
   );
   return {
     pendente, confiavel, problemas,
-    pendenteMembros, membrosPendenteIlegiveis: [...membrosPendenteIlegiveis], membrosComPoApp: [...membrosComPoApp],
+    pendenteMembros, membrosPendenteIlegiveis: [...membrosPendenteIlegiveis],
     observados: coletor.linhas, janelaDe: inicioJanela, janelaAte: fimJanela,
     varreduraCompleta: fim && problemas.length === 0,
     coletaIntegra: coletor.integra, perdaColeta: coletor.perda,
@@ -656,8 +649,9 @@ function opsDoBanco(
       }, prazoMs);
       return { erro: r.erro, dados: r.erro === null ? nossas : new Set<string>() };
     },
-    // A marca de dono vai no WHERE: a linha que um run paralelo regravou com a posição real não é tocada.
-    atualizarLinhaSemPosicao: async (linha, prazoMs) => {
+    // A marca de dono e o relógio vão no WHERE: a linha que um run paralelo regravou com a posição real — ou com um
+    // retrato mais novo que a coleta deste run — não é tocada.
+    atualizarLinhaSemPosicao: async (linha, retratoAntesDe, prazoMs) => {
       let atualizado = false;
       const r = await comPrazo(async (s) => {
         const res = await supabase
@@ -666,6 +660,8 @@ function opsDoBanco(
           .eq("empresa", empresa)
           .eq("sku_codigo_omie", String(linha.sku_codigo_omie))
           .eq("fonte_sync", FONTE_SEM_POSICAO)
+          // Run mais velho nunca regrava o retrato de um run que publicou depois do início da coleta deste.
+          .lt("ultima_sincronizacao", retratoAntesDe)
           .select("sku_codigo_omie")
           .abortSignal(s);
         if (!res.error && Array.isArray(res.data)) atualizado = res.data.length === 1;
@@ -1017,11 +1013,7 @@ Deno.serve(async (req) => {
           }
           const conv = convPendente.conv;
           const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, conv, supabase, deadline);
-          const doMembro = {
-            pendenteMembros: r.pendenteMembros,
-            membrosPendenteIlegiveis: r.membrosPendenteIlegiveis,
-            membrosComPoApp: r.membrosComPoApp,
-          };
+          const doMembro = { pendenteMembros: r.pendenteMembros, membrosPendenteIlegiveis: r.membrosPendenteIlegiveis };
           return { pendente: r.pendente, confiavel: r.confiavel, problemas: r.problemas, observacao: r, ...doMembro };
         }
         const s = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, ehMembro, deadline);
