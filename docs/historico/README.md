@@ -8,6 +8,7 @@ Registro consultável de **PRs/bugs/programas/auditorias já entregues** — a n
 
 | Arquivo | O que tem |
 | --- | --- |
+| [acaminho-relogio-unico.md](acaminho-relogio-unico.md) | 2026-11-18, money-path: o "a caminho" do motor tinha dois relógios (sync corta pedidos do app no dia em que roda, motor no dia do ciclo) → sync atrasado = pedido do app contado 0× = compra dupla (06/11 e 11/11, 6 e 3 pedidos no vão). Conserto: motor corta por SKU em `ultima_sincronizacao` (migration 20261118120000, prova db/test-acaminho-relogio-unico.sh). |
 | [scanner-lovable-rescan-lote1.md](scanner-lovable-rescan-lote1.md) | 2026-11-13/14, rescan do scanner Lovable Security, lote 1 (#3893): escrita aberta em `customer_visit_scores` fechada por migration + 6 edges de IA/PII; deploy em 2 ondas pela predecessora velha no ledger, sem redeploy; lotes 2 e 3 listados |
 | [scanner-lovable-rescan-lote2.md](scanner-lovable-rescan-lote2.md) | 2026-11-14/15, rescan do scanner Lovable Security, lote 2 (#3904): token Nvoip fora de `company_config`, sem ramal SIP compartilhado, opt-out do WhatsApp só pelo cliente, reserva atômica e teto de template pago; 4 edges numa onda pelo pacote por nome (1ª sonda vazaria segredo) |
 | [scanner-lovable-rescan-lote3.md](scanner-lovable-rescan-lote3.md) | 2026-11-15, rescan do scanner Lovable Security, lote 3: tetos de anexo no webhook Gmail, cota de IA no extrator via vision, número discado validado (livre), HTML escapado no e-mail de pedido e oráculo `cobranca_dona` fechado; triagem dos 4 achados novos (1 desenho, 1 decisão do founder) |
