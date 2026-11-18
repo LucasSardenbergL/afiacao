@@ -52,11 +52,14 @@ interface Cenario {
   lerEventos?: string | null;
   inserirEventos?: ResultadoEscrita;
   observacao?: ResultadoEscrita | Error;
+  /** Resposta do inserirEstoqueSeAusente; default = o banco devolve TODOS como inseridos (não havia linha). */
+  ausente?: (linhas: Record<string, unknown>[]) => ResultadoEscrita & { inseridos: string[] };
 }
 
 function criarFake(c: Cenario = {}) {
   const efeitos: string[] = [];
   const linhasEstoque: Record<string, unknown>[][] = [];
+  const linhasAusentes: Record<string, unknown>[][] = [];
   const marcadores: Record<string, unknown>[] = [];
   const observacoes: Record<string, unknown>[] = [];
   let relogio = T0 + 50_000;
@@ -74,6 +77,11 @@ function criarFake(c: Cenario = {}) {
       relogio += c.custoEstoqueMs ?? 0;
       const r = c.estoque?.[chamadaEstoque++];
       return Promise.resolve(r === undefined ? OK : typeof r === "function" ? r(linhas) : r);
+    },
+    inserirEstoqueSeAusente: (linhas) => {
+      efeitos.push(`inserirAusente:${linhas.map((l) => l.sku_codigo_omie).join(",")}`);
+      linhasAusentes.push(linhas);
+      return Promise.resolve(c.ausente ? c.ausente(linhas) : { ...OK, inseridos: linhas.map((l) => String(l.sku_codigo_omie)) });
     },
     lerInativacoes: (codigos) => {
       efeitos.push(`lerInativacoes:${codigos.join(",")}`);
@@ -104,7 +112,7 @@ function criarFake(c: Cenario = {}) {
     },
     log: () => {},
   };
-  return { ops, efeitos, linhasEstoque, marcadores, observacoes, avancar: (ms: number) => (relogio += ms) };
+  return { ops, efeitos, linhasEstoque, linhasAusentes, marcadores, observacoes, avancar: (ms: number) => (relogio += ms) };
 }
 
 // Habilitados 101, 102, 103 (achados no físico) e 104 (não aparece → inativação).
@@ -432,11 +440,113 @@ Deno.test("membro de grupo: falha ao gravar NÃO muda o desfecho dos habilitados
   igual([r.membros_grupo_gravados, r.membros_grupo_falhas], [0, 1], "a falha aparece no resumo");
 });
 
-Deno.test("membro de grupo que não veio no retrato não é escrito", async () => {
+// Membro com PO aberto AUSENTE do retrato (ListarPosEstoque com cExibeTodos=S, varredura COMPLETA — o C2 já passou):
+// sem linha em sku_estoque_atual o motor perde o pendente dele, e o pedido do app só conta até D−7 — o PO é contado 0× e
+// o grupo recompra (furo do #3969, achado do Codex). A edge INSERE o par (físico 0, pendente) só onde NÃO há linha: o
+// motor já lia COALESCE(físico, 0) = 0 para o membro sem linha, então o 0 não muda o físico do grupo — só passa a existir
+// o pendente e o retrato do dia. Linha existente nunca é sobrescrita (ON CONFLICT DO NOTHING).
+const doSku = (lotes: Record<string, unknown>[][], sku: string) => lotes.flat().filter((l) => l.sku_codigo_omie === sku);
+
+Deno.test("membro com PO aberto ausente do retrato: INSERE o par (físico 0, pendente) sem sobrescrever", async () => {
   const f = criarFake({ pendente: pendenteComMembros(new Map([["555", 2]])) });
   const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
-  igual(f.linhasEstoque.some((lote) => lote.some((l) => l.sku_codigo_omie === "555")), false, "nada do 555");
-  igual([r.membros_grupo_encontrados, r.membros_grupo_gravados], [0, 0], "resumo");
+  igual(doSku(f.linhasEstoque, "555").length, 0, "nunca pelo upsert (sobrescreveria linha existente)");
+  const l = doSku(f.linhasAusentes, "555");
+  igual(l.length, 1, "uma linha do 555 no insert-se-ausente");
+  igual(
+    [l[0].estoque_fisico, l[0].estoque_disponivel, l[0].estoque_pendente_entrada, l[0].empresa],
+    [0, 0, 2, "OBEN"],
+    "físico 0, disponível 0, pendente da MESMA varredura",
+  );
+  igual(typeof l[0].ultima_sincronizacao, "string", "retrato do dia no mesmo insert");
+  igual(l[0].fonte_sync, "PO_sem_posicao_ListarPosEstoque", "fonte distinta do físico lido");
+  igual(f.efeitos.indexOf("inserirAusente:555") > f.efeitos.indexOf("upsertEstoque:103"), true, "depois dos habilitados");
+  igual(
+    [r.membros_grupo_encontrados, r.membros_grupo_gravados, r.membros_grupo_ausentes_com_po, r.membros_grupo_ausentes_inseridos],
+    [0, 0, 1, 1],
+    "resumo",
+  );
+  igual(r.desfecho, "completo", "desfecho dos habilitados");
+});
+
+Deno.test("controle: membro ausente do retrato SEM PO aberto não ganha linha (nada a proteger)", async () => {
+  const f = criarFake({ pendente: pendenteComMembros(new Map([["555", 0]])) });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555", "556"] }));
+  igual(f.linhasAusentes.flat().length, 0, "nenhum insert");
+  igual(r.membros_grupo_ausentes_com_po, 0, "resumo");
+});
+
+Deno.test("membro ausente com item de PO ilegível: sem par, sem linha", async () => {
+  const f = criarFake({ pendente: pendenteComMembros(new Map([["555", 2]]), ["555"]) });
+  await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(doSku(f.linhasAusentes, "555").length, 0, "nada do 555");
+});
+
+Deno.test("membro com físico ILEGÍVEL não é 'ausente': ele veio na listagem — nunca vira físico 0", async () => {
+  const f = criarFake({ pendente: pendenteComMembros(new Map([["555", 2]])) });
+  const en = entrada({ membros: ["555"] });
+  await concluirRun(f.ops, { ...en, fisico: { ...en.fisico, membrosIlegiveis: ["555"] } });
+  igual(doSku(f.linhasAusentes, "555").length, 0, "nada do 555");
+});
+
+Deno.test("membro ausente sem o recorte dos membros na varredura do PO: nada é inserido", async () => {
+  const f = criarFake();
+  await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(f.linhasAusentes.flat().length, 0, "nenhum insert");
+});
+
+Deno.test("membro ausente que JÁ tem linha: o banco não insere; não entra no pendente gravado da observação", async () => {
+  const pend: ResultadoPendente = {
+    ...pendenteComMembros(new Map([["555", 2]])),
+    observacao: {
+      observados: [observado(101, 5), observado(555, 2)],
+      janelaDe: "2025-10-06",
+      janelaAte: "2027-02-03",
+      varreduraCompleta: true,
+      coletaIntegra: true,
+      perdaColeta: null,
+    },
+  };
+  const f = criarFake({ pendente: pend, ausente: () => ({ ...OK, inseridos: [] }) });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual([r.membros_grupo_ausentes_com_po, r.membros_grupo_ausentes_inseridos, r.membros_grupo_ausentes_ja_com_linha], [1, 0, 1], "resumo");
+  igual([r.observacao_publicada, r.observacao_motivo], [false, "observacao_diverge_do_pendente"], "fail-closed");
+});
+
+Deno.test("membro ausente INSERIDO entra no pendente gravado: a observação publica e vale como aplicada", async () => {
+  const pend: ResultadoPendente = {
+    ...pendenteComMembros(new Map([["555", 2]])),
+    observacao: {
+      observados: [observado(101, 5), observado(555, 2)],
+      janelaDe: "2025-10-06",
+      janelaAte: "2027-02-03",
+      varreduraCompleta: true,
+      coletaIntegra: true,
+      perdaColeta: null,
+    },
+  };
+  const f = criarFake({ pendente: pend });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual([r.observacao_publicada, f.observacoes[0]?.pendente_aplicado], [true, true], "publicada e aplicada");
+});
+
+Deno.test("membro ausente: falha do insert não muda o desfecho, fica no resumo e tira o 'aplicado'", async () => {
+  const pend: ResultadoPendente = {
+    ...pendenteComMembros(new Map([["555", 2]])),
+    observacao: {
+      observados: [observado(101, 5)],
+      janelaDe: "2025-10-06",
+      janelaAte: "2027-02-03",
+      varreduraCompleta: true,
+      coletaIntegra: true,
+      perdaColeta: null,
+    },
+  };
+  const f = criarFake({ pendente: pend, ausente: () => ({ erro: "boom", semConfirmacao: false, inseridos: [] }) });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(r.desfecho, "completo", "desfecho");
+  igual([r.membros_grupo_ausentes_inseridos, r.membros_grupo_ausentes_falhas], [0, 1], "a falha aparece no resumo");
+  igual(f.observacoes[0]?.pendente_aplicado, false, "o lote dos ausentes não confirmou");
 });
 
 Deno.test("membros de grupo não lidos: o resumo diz o erro e null, nunca '0 membros'", async () => {

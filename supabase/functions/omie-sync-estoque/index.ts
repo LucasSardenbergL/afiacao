@@ -612,6 +612,22 @@ function opsDoBanco(
         (s) => supabase.from("sku_estoque_atual").upsert(linhas, { onConflict: "empresa,sku_codigo_omie" }).abortSignal(s),
         prazoMs,
       ),
+    // ignoreDuplicates = ON CONFLICT DO NOTHING; o select devolve SÓ as linhas que o INSERT gravou (RETURNING).
+    inserirEstoqueSeAusente: async (linhas, prazoMs) => {
+      let inseridos: string[] = [];
+      const r = await comPrazo(async (s) => {
+        const res = await supabase
+          .from("sku_estoque_atual")
+          .upsert(linhas, { onConflict: "empresa,sku_codigo_omie", ignoreDuplicates: true })
+          .select("sku_codigo_omie")
+          .abortSignal(s);
+        if (!res.error) {
+          inseridos = ((res.data ?? []) as Array<{ sku_codigo_omie: unknown }>).map((x) => String(x.sku_codigo_omie));
+        }
+        return res;
+      }, prazoMs);
+      return { ...r, inseridos: r.erro === null ? inseridos : [] };
+    },
     lerInativacoes: async (codigos, prazoMs) => {
       let datas = new Map<string, string | null>();
       const r = await comPrazo(async (s) => {
@@ -719,7 +735,8 @@ const CHAVES_REGISTRO = [
   "pendente_problemas", "varredura_truncada", "observacao_publicada", "desfecho", "upsert_sem_confirmacao",
   "upsert_nao_tentados", "inativacao_falhou", "linhas_sem_local", "paginas_sem_total",
   "membros_grupo_encontrados", "membros_grupo_erro", "membros_grupo_gravados", "membros_grupo_falhas",
-  "membros_grupo_ilegiveis", "membros_grupo_sem_pendente",
+  "membros_grupo_ilegiveis", "membros_grupo_sem_pendente", "membros_grupo_ausentes_com_po",
+  "membros_grupo_ausentes_inseridos", "membros_grupo_ausentes_ja_com_linha", "membros_grupo_ausentes_falhas",
 ] as const;
 
 function detalhesDoRegistro(resumo: Record<string, unknown>): Record<string, unknown> {

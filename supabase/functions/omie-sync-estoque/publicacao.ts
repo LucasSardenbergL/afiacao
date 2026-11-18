@@ -88,6 +88,14 @@ export interface OpsPublicacao {
   /** Fase do PO. LANÇA em erro de varredura — fatal por desenho (Codex P1 2026-06-20). */
   lerPendente(): Promise<ResultadoPendente>;
   upsertEstoque(linhas: Record<string, unknown>[], prazoMs: number): Promise<ResultadoEscrita>;
+  /**
+   * INSERT … ON CONFLICT DO NOTHING em sku_estoque_atual: nunca sobrescreve linha existente. `inseridos` = os SKUs que
+   * o banco DEVOLVEU como inseridos (RETURNING) — a única prova de que o par entrou; vazio em erro.
+   */
+  inserirEstoqueSeAusente(
+    linhas: Record<string, unknown>[],
+    prazoMs: number,
+  ): Promise<ResultadoEscrita & { inseridos: string[] }>;
   /** sku → data_inativacao já gravada. */
   lerInativacoes(codigos: string[], prazoMs: number): Promise<ResultadoLeitura<Map<string, string | null>>>;
   upsertStatus(linhas: Record<string, unknown>[], prazoMs: number): Promise<ResultadoEscrita>;
@@ -208,6 +216,35 @@ async function gravarEstoque(ops: OpsPublicacao, e: EntradaPublicacao, linhas: R
     }
   }
   return g;
+}
+
+// Insert-se-ausente dos membros com PO fora do retrato, em lotes, com o prazo da cauda. Sem fallback individual: são
+// poucos (0 em prod em 2026-11-18) e a falha não muda o desfecho. Lote com erro, sem confirmação ou não tentado conta
+// TODO como falha (o banco pode ter gravado no abortado — só `inseridos` devolvido pelo RETURNING prova a linha).
+async function inserirAusentes(
+  ops: OpsPublicacao,
+  e: EntradaPublicacao,
+  linhas: Record<string, unknown>[],
+): Promise<{ inseridos: Set<string>; falhas: number }> {
+  const inseridos = new Set<string>();
+  let falhas = 0;
+  for (let i = 0; i < linhas.length; i += e.chunk) {
+    const lote = linhas.slice(i, i + e.chunk);
+    const prazo = prazoCauda(ops, e);
+    if (prazo === 0) {
+      falhas += lote.length;
+      continue;
+    }
+    const r = await ops.inserirEstoqueSeAusente(lote, prazo);
+    if (r.erro !== null) {
+      falhas += lote.length;
+      ops.log("error", `insert dos membros ausentes ${i}-${i + lote.length}${r.semConfirmacao ? " (prazo, sem confirmação)" : ""}: ${r.erro}`);
+      continue;
+    }
+    const doLote = new Set(lote.map(skuDa));
+    for (const sku of r.inseridos) if (doLote.has(sku)) inseridos.add(sku);
+  }
+  return { inseridos, falhas };
 }
 
 interface Inativacao {
@@ -406,11 +443,40 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   const gm = await gravarEstoque(ops, e, linhasMembros);
   const membrosIlegiveis = new Set([...(e.fisico.membrosIlegiveis ?? []), ...[...membros.keys()].filter((c) => ilegiveisPo.has(c))]);
 
-  // A observação conta o que o motor contou (habilitados ∪ membros com par); o pendente só vale como aplicado se os dois
-  // lotes gravaram inteiros.
+  // v1.11 — membro com PO aberto AUSENTE do retrato. Sem linha em sku_estoque_atual o motor perdia o pendente dele, e o
+  // pedido do app só contava até D−7 (corte pelo retrato do SKU, #3969): o PO era contado 0× e o grupo recomprava. O
+  // físico é publicável aqui (C2 passou: a varredura com cExibeTodos=S foi COMPLETA), e o membro não veio nela — sem
+  // posição. Grava o PAR (0, pendente da MESMA varredura) SÓ onde não há linha (ON CONFLICT DO NOTHING): o motor já lia
+  // COALESCE(físico, 0) = 0 para o membro sem linha, então o 0 não muda o físico do grupo — passa a existir o pendente e
+  // o retrato do dia. Linha existente NUNCA é sobrescrita: a varredura completa ainda pode pular uma linha (LIMITE em
+  // fisico.ts), e zerar um físico lido antes seria fabricar. Só pendente > 0 (sem PO não há o que proteger); físico
+  // ilegível NÃO é ausente (ele veio na listagem); item de PO ilegível = sem par.
+  const naListagem = new Set([...membros.keys(), ...(e.fisico.membrosIlegiveis ?? [])]);
+  const linhasAusentes = pendMembros === undefined ? [] : [...pendMembros]
+    .filter(([codigo, qtd]) => qtd > 0 && !naListagem.has(codigo) && !ilegiveisPo.has(codigo) && !e.fisico.encontrados.has(codigo))
+    .map(([codigo, qtd]) => ({
+      empresa: e.empresa,
+      sku_codigo_omie: codigo,
+      estoque_fisico: 0,
+      estoque_disponivel: 0,
+      ultima_sincronizacao: agoraIso,
+      fonte_sync: "PO_sem_posicao_ListarPosEstoque",
+      estoque_pendente_entrada: qtd,
+    }));
+  const ga = await inserirAusentes(ops, e, linhasAusentes);
+
+  // A observação conta o que o motor contou (habilitados ∪ membros com par ∪ ausentes INSERIDOS); o pendente só vale
+  // como aplicado se os três lotes gravaram inteiros.
   const pendenteGravado = new Map(pend.pendente);
   for (const l of linhasMembros) pendenteGravado.set(l.sku_codigo_omie, l.estoque_pendente_entrada);
-  const obs = await publicarObservacao(ops, e, pend, gravacaoCompleta && gm.confirmados === linhasMembros.length, pendenteGravado);
+  for (const l of linhasAusentes) if (ga.inseridos.has(l.sku_codigo_omie)) pendenteGravado.set(l.sku_codigo_omie, l.estoque_pendente_entrada);
+  const obs = await publicarObservacao(
+    ops,
+    e,
+    pend,
+    gravacaoCompleta && gm.confirmados === linhasMembros.length && ga.falhas === 0,
+    pendenteGravado,
+  );
 
   const desfecho: Desfecho = gravacaoCompleta && inat.completa ? "completo" : "parcial";
   const duracaoMs = ops.agora() - e.iniciadoEm;
@@ -449,6 +515,10 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
     membros_grupo_falhas: linhasMembros.length - gm.confirmados,
     membros_grupo_ilegiveis: membrosIlegiveis.size,
     ...(pendMembros === undefined && membros.size > 0 ? { membros_grupo_sem_pendente: true } : {}),
+    membros_grupo_ausentes_com_po: linhasAusentes.length,
+    membros_grupo_ausentes_inseridos: ga.inseridos.size,
+    membros_grupo_ausentes_ja_com_linha: linhasAusentes.length - ga.inseridos.size - ga.falhas,
+    membros_grupo_ausentes_falhas: ga.falhas,
   };
   ops.log("log", `resumo: ${JSON.stringify(resumo)}`);
 
