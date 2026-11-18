@@ -26,7 +26,10 @@ SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
 TOTAL_ESPERADO=34
 
 # ── MODO --falsificar ────────────────────────────────────────────────────────────────────────────────────────────
-# Cada sabotagem declara o ÚNICO assert que a acusa. Controle verde PRIMEIRO, na mesma invocação.
+# Cada sabotagem declara o ÚNICO assert que a acusa (POS!<marca> = a postcondição da migration, `+` = espaço).
+# Controle verde PRIMEIRO, na mesma invocação. Sabotagem que muda o TEXTO de uma view também desliga a trava de texto
+# (md5 na PRE e na PÓS) — senão a camada externa a barra e o assert comportamental nunca é exercido (uma camada por vez;
+# a própria trava de texto é falsificada à parte por pre_frouxa).
 SABOTAGENS="
 guarda_06:F05
 teto:F04
@@ -34,13 +37,13 @@ pendente_conta:F06
 meia_equipe_zero:F07
 tudo_fechado_zera:F08
 neutro_aritmetica:V01
-sombra_alimenta:POS!em_sombra
+sombra_alimenta:POS!em+sombra
 chave_ignorada:V04
 guc_lixo_vale:V06
 colacor_ajusta:V07
-anon_executa:POS!calendario_fator_demanda_executavel_por_anon
+anon_executa:POS!calendario_fator_demanda+executavel+por+anon
 job_guc_vaza:S03
-pre_frouxa:M02
+pre_frouxa:M2
 "
 if [ "${1:-}" = "--falsificar" ]; then
   LOGD="$(mktemp -d "${TMPDIR:-/tmp}/falsif-${SLUG}.XXXXXX")"
@@ -55,7 +58,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     SABOTAGEM="$s" PGPORT_TEST=$((PORT + i)) bash "$0" >"$log" 2>&1 && rc=0 || rc=$?
     nfalhas=$(grep -cE ' (FALHOU|ERRO_DE_EXECUCAO) — ' "$log" || true)
     case "$alvo" in
-      POS!*) marca="${alvo#POS!}"; marca="${marca//_/ }"; acusou=0; grep -q "POS FALHOU: ${marca}" "$log" && acusou=1; nfalhas=1 ;;
+      POS!*) marca="${alvo#POS!}"; marca="${marca//+/ }"; acusou=0; grep -q "POS FALHOU: ${marca}" "$log" && acusou=1; nfalhas=1 ;;
       *)     acusou=0; grep -q "❌ ${alvo} FALHOU — " "$log" && acusou=1 ;;
     esac
     if [ "$rc" -ne 0 ] && grep -q "SABOTAGEM ATIVA: $s" "$log" && [ "$acusou" -eq 1 ] && [ "$nfalhas" -eq 1 ]; then
@@ -89,6 +92,12 @@ open(f, "w").write(t.replace(de, para, 1))
 PY
 }
 MIG_USADA="$TMPD/mig.sql"; cp "$MIG" "$MIG_USADA"
+MIG_PRE="$TMPD/mig-pre.sql"; cp "$MIG" "$MIG_PRE"   # o M2 ensaia a PRE do arquivo do repo (só pre_frouxa a sabota)
+sem_trava_de_texto() {
+  sabotar_em "$MIG_USADA" "IF v_par NOT IN (" "IF false AND v_par NOT IN ("
+  sabotar_em "$MIG_USADA" "IF v_est NOT IN (" "IF false AND v_est NOT IN ("
+  sabotar_em "$MIG_USADA" "  IF md5(pg_get_viewdef('public.v_sku_parametros_sugeridos'::regclass, true)) IS DISTINCT FROM" "  IF false AND md5(pg_get_viewdef('public.v_sku_parametros_sugeridos'::regclass, true)) IS DISTINCT FROM"
+}
 if [ -n "$SABOTAGEM" ]; then
   echo "SABOTAGEM ATIVA: $SABOTAGEM"
   case "$SABOTAGEM" in
@@ -97,15 +106,15 @@ if [ -n "$SABOTAGEM" ]; then
     pendente_conta)    sabotar_em "$MIG_USADA" "WHERE c.status IS DISTINCT FROM 'pendente_dado')" "WHERE true)" ;;
     meia_equipe_zero)  sabotar_em "$MIG_USADA" "IN ('aberto', 'meia_equipe')" "IN ('aberto')" ;;
     tudo_fechado_zera) sabotar_em "$MIG_USADA" "WHEN a.u = 0 OR a.w::numeric / a.u < 0.6 THEN 1::numeric" "WHEN a.u = 0 THEN 1::numeric WHEN a.w = 0 THEN 0::numeric WHEN a.w::numeric / a.u < 0.6 THEN 1::numeric" ;;
-    neutro_aritmetica) sabotar_em "$MIG_USADA" "AND fcal.fator <> 1::numeric THEN round(c.demanda_media_diaria * fcal.fator, 4)" "THEN round(c.demanda_media_diaria * fcal.fator, 4) + CASE WHEN fcal.fator = 1::numeric THEN 0.0001 ELSE 0::numeric END" ;;
-    sombra_alimenta)   sabotar_em "$MIG_USADA" "WHEN cch.modo = 'valendo'::text AND fcal.fator IS NOT NULL" "WHEN fcal.fator IS NOT NULL" ;;
-    chave_ignorada)    sabotar_em "$MIG_USADA" "WHERE cc.key = 'reposicao_demanda_calendario_oben_ativa'::text" "WHERE cc.key = 'reposicao_demanda_calendario_oben_ativa_x'::text" ;;
-    guc_lixo_vale)     sabotar_em "$MIG_USADA" "= ANY (ARRAY['sombra'::text, 'valendo'::text])" "= ANY (ARRAY['sombra'::text, 'valendo'::text, 'xyz'::text])" ;;
-    colacor_ajusta)    sabotar_em "$MIG_USADA" "LEFT JOIN calendario_fator fcal ON fcal.empresa_cal = c.empresa" "LEFT JOIN calendario_fator fcal ON true" ;;
+    neutro_aritmetica) sabotar_em "$MIG_USADA" "AND fcal.fator <> 1::numeric THEN round(c.demanda_media_diaria * fcal.fator, 4)" "THEN round(c.demanda_media_diaria * fcal.fator, 4) + CASE WHEN fcal.fator = 1::numeric THEN 0.0001 ELSE 0::numeric END" ; sem_trava_de_texto ;;
+    sombra_alimenta)   sabotar_em "$MIG_USADA" "WHEN cch.modo = 'valendo'::text AND fcal.fator IS NOT NULL" "WHEN fcal.fator IS NOT NULL" ; sem_trava_de_texto ;;
+    chave_ignorada)    sabotar_em "$MIG_USADA" "WHERE cc.key = 'reposicao_demanda_calendario_oben_ativa'::text" "WHERE cc.key = 'reposicao_demanda_calendario_oben_ativa_x'::text" ; sem_trava_de_texto ;;
+    guc_lixo_vale)     sabotar_em "$MIG_USADA" "= ANY (ARRAY['sombra'::text, 'valendo'::text])" "= ANY (ARRAY['sombra'::text, 'valendo'::text, 'xyz'::text])" ; sem_trava_de_texto ;;
+    colacor_ajusta)    sabotar_em "$MIG_USADA" "LEFT JOIN calendario_fator fcal ON fcal.empresa_cal = c.empresa" "LEFT JOIN calendario_fator fcal ON true" ; sem_trava_de_texto ;;
     anon_executa)      sabotar_em "$MIG_USADA" "GRANT EXECUTE ON FUNCTION public.calendario_fator_demanda(text, date) TO authenticated, service_role;" "GRANT EXECUTE ON FUNCTION public.calendario_fator_demanda(text, date) TO authenticated, service_role, anon;" ;;
     job_guc_vaza)      sabotar_em "$MIG_USADA" "SET \"reposicao.demanda_calendario_forcar\" = ''" "" ; sabotar_em "$MIG_USADA" "  PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', '', true);
   IF to_regclass" "  IF to_regclass" ;;
-    pre_frouxa)        sabotar_em "$MIG_USADA" "IF v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a'" "IF false AND v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a'" ;;
+    pre_frouxa)        sabotar_em "$MIG_PRE" "IF v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a'" "IF false AND v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a'" ;;
     *) echo "SABOTAGEM DESCONHECIDA: $SABOTAGEM"; exit 2 ;;
   esac
 fi
@@ -227,7 +236,7 @@ eq M1 "migration 2× com postcondição" "$(printf '%s\n%s' "$SAIDA1" "$SAIDA2" 
 
 # M2: a PRE recusa uma view viva que não é a predecessora nem a nova (estatisticas com 5 casas).
 PRE_TESTE="$TMPD/pre.sql"
-python3 -I - "$MIG_USADA" "$PRE_TESTE" <<'PY2'
+python3 -I - "$MIG_PRE" "$PRE_TESTE" <<'PY2'
 import sys
 src, dst = sys.argv[1:3]
 m = open(src).read()
@@ -238,7 +247,7 @@ assert alheia != m[i:j], "variante alheia igual a nova"
 open(dst, "w").write(alheia + "\n" + m)
 PY2
 R="$(PGOPTIONS="-c search_path=public,pg_catalog -c test.agora=2027-01-20T15:00:00Z" P -q --single-transaction -f "$PRE_TESTE" 2>&1 || true)"
-case "$R" in *"PRE FALHOU: v_sku_demanda_estatisticas"*) eq M2 "PRE aborta view alheia" recusou recusou ;; *) eq M2 "PRE aborta view alheia" "aplicou" recusou ;; esac
+case "$R" in *"PRE FALHOU: v_sku_"*) eq M2 "PRE aborta view alheia" recusou recusou ;; *) eq M2 "PRE aborta view alheia" "aplicou" recusou ;; esac
 
 # ── F: a função do fator ─────────────────────────────────────────────────────────────────────────────────────────
 F() { Ler 2027-01-20T15:00:00Z "SELECT dias_base||'|'||dias_efetivos||'|'||dias_pendentes||'|'||coalesce(round(fator_bruto,4)::text,'NULL')||'|'||round(fator,4)||'|'||baixa_confianca FROM public.calendario_fator_demanda('OBEN', '$1')"; }
