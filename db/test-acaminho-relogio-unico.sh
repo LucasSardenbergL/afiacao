@@ -30,7 +30,15 @@ DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 : "${LC_ALL:=C}"; export LC_ALL LANG="$LC_ALL"
 MIG_VIVA="$REPO_ROOT/supabase/migrations/20261101090000_reposicao_compra_suspensa.sql"
 MIG="$REPO_ROOT/supabase/migrations/20261118120000_reposicao_acaminho_relogio_do_sync.sql"
-FIXTURE="$REPO_ROOT/db/embalagem-motor-rpc.sql"
+# FIXADA na 20261118120000 (a fixture viva db/embalagem-motor-rpc.sql seguiu para a 20261119130000): o motor
+# desta prova é o trecho CREATE→fim DESTA migration — que o guard de paridade exigiu igual à fixture quando
+# ela era a última. A evolução [MEMBRO SEM LINHA] tem a prova própria: db/test-acaminho-membro-sem-linha.sh.
+FIXTURE="$(mktemp "/tmp/fx-${SLUG}.XXXXXX")"
+python3 - "$MIG" "$FIXTURE" <<'PY_FX' || { echo "INFRA: nao extraí o motor da $MIG"; exit 1; }
+import sys
+t = open(sys.argv[1]).read()
+open(sys.argv[2], "w").write(t[t.index("CREATE OR REPLACE FUNCTION public.gerar_pedidos_sugeridos_ciclo"):])
+PY_FX
 # md5(prosrc) do motor na PROD (psql-ro, 2026-11-18) — o pré-voo: a viva do repo É a da prod.
 MD5_PROD_VIVA="93b2407ddde45cbb068478f5acf86c85"
 
@@ -335,7 +343,7 @@ P -q -f "$FIXTURE" >/dev/null
 run_ciclo "$D"
 eq "RST fixture restaurada = mapa novo" "$(mapa "$D")" "$ESPERADO_NOVA"
 
-rm -rf "$SAB_DIR" "$RPC_ERR"
+rm -rf "$SAB_DIR" "$RPC_ERR" "$FIXTURE"
 echo ""
 echo "=== RESULTADO: PASS=$PASS FAIL=$FAIL ==="
 [ "$FAIL" -eq 0 ] || exit 1
