@@ -4,7 +4,8 @@
  * Quatro tipos, cada um com uma decisão humana atrás:
  *  - `emenda_sem_decisao`  feriado em terça/quinta cujo dia-ponte (segunda antes / sexta depois)
  *                          NÃO tem linha na tabela da empresa. Todas aparecem; `urgente` se o dia-ponte
- *                          está a ≤ 90 dias.
+ *                          está a ≤ 90 dias. Feriado = `calendario_feriados` (nacionais) ∪ as linhas da
+ *                          empresa com origem 'feriado' e status 'fechado' (MUNICIPAIS: só vivem ali).
  *  - `dia_sem_nf`          cada data devolvida por `calendario_dias_sem_nf` (dia útil passado, sem linha
  *                          e sem NF) E cada linha `pendente_dado` que ainda não foi decidida na tela
  *                          (origem ≠ 'manual' — a carga histórica traz 7 dessas, e a RPC não as devolve
@@ -34,7 +35,7 @@ export type Pendencia = {
 export type EntradaPendencias = {
   hoje: string;
   feriados: { data: string; nome: string }[];
-  diasEmpresa: { data: string; status: string; origem: string }[];
+  diasEmpresa: { data: string; status: string; origem: string; motivo?: string | null }[];
   diasSemNf: string[];
   ultimoDiaCadastrado: string | null;
   fornecedoresHabilitados?: string[];
@@ -80,10 +81,17 @@ const fmtBr = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.sli
 export function calcularPendencias(e: EntradaPendencias): Pendencia[] {
   const out: Pendencia[] = [];
   const comLinha = new Set(e.diasEmpresa.map((d) => d.data));
-  const feriadoEm = new Set(e.feriados.map((f) => f.data));
+  // Feriados municipais só existem como linha da empresa (origem 'feriado', fechado): sem eles, a ponte de um
+  // municipal em terça/quinta nunca vira pendência. calendario_feriados vence no nome quando as duas fontes têm a data.
+  const feriados = new Map<string, string>();
+  for (const d of e.diasEmpresa) {
+    if (d.origem === 'feriado' && d.status === 'fechado') feriados.set(d.data, d.motivo?.trim() || 'Feriado municipal');
+  }
+  for (const f of e.feriados) feriados.set(f.data, f.nome);
+  const feriadoEm = new Set(feriados.keys());
 
   // (a) emendas
-  for (const f of e.feriados) {
+  for (const f of [...feriados].map(([data, nome]) => ({ data, nome })).sort((a, b) => a.data.localeCompare(b.data))) {
     const dow = diaDaSemanaIso(f.data);
     if (dow !== 2 && dow !== 4) continue;
     const ponte = dow === 2 ? addDias(f.data, -1) : addDias(f.data, 1);

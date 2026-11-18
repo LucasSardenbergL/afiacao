@@ -65,6 +65,39 @@ describe('calcularPendencias — emenda', () => {
   });
 });
 
+describe('calcularPendencias — emenda de feriado MUNICIPAL (linha da empresa, origem feriado)', () => {
+  // Carga real: 01/06/2027 (terça) São Firmino é linha origem='feriado' fechada; a ponte 31/05 foi decidida (emenda).
+  const saoFirmino = { data: '2027-06-01', status: 'fechado', origem: 'feriado', motivo: 'São Firmino (municipal, Lei 744/1967)' };
+
+  it('sem a decisão de 31/05/2027 → pendência de emenda na segunda 31/05, com o nome do municipal', () => {
+    const ps = calcularPendencias(entrada({ diasEmpresa: [saoFirmino] }));
+    const em = doTipo(ps, 'emenda_sem_decisao');
+    expect(em.map((p) => p.data)).toEqual(['2027-05-31']);
+    expect(em[0].texto).toContain('São Firmino');
+  });
+
+  it('CONTROLE: com a decisão de 31/05/2027 (emenda) → nenhuma pendência', () => {
+    const ps = calcularPendencias(
+      entrada({ diasEmpresa: [{ data: '2027-05-31', status: 'fechado', origem: 'emenda' }, saoFirmino] }),
+    );
+    expect(doTipo(ps, 'emenda_sem_decisao')).toHaveLength(0);
+  });
+
+  it('linha de feriado ABERTA (empresa trabalha) não conta como feriado', () => {
+    const ps = calcularPendencias(entrada({ diasEmpresa: [{ ...saoFirmino, status: 'aberto' }] }));
+    expect(doTipo(ps, 'emenda_sem_decisao')).toHaveLength(0);
+  });
+
+  it('mesma data nos dois: calendario_feriados vence no nome e não duplica a pendência', () => {
+    const ps = calcularPendencias(
+      entrada({ feriados: [{ data: '2027-06-01', nome: 'Nome nacional' }], diasEmpresa: [saoFirmino] }),
+    );
+    const em = doTipo(ps, 'emenda_sem_decisao');
+    expect(em).toHaveLength(1);
+    expect(em[0].texto).toContain('Nome nacional');
+  });
+});
+
 describe('calcularPendencias — dia sem NF', () => {
   it('cada data da RPC vira pendência, e a linha pendente_dado não decidida também', () => {
     const ps = calcularPendencias(
