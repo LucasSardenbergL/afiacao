@@ -61,8 +61,8 @@ export function addMeses(iso: string, n: number): string {
   const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
   const alvo = new Date(Date.UTC(y, m - 1 + n, 1));
   const ultimo = new Date(Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0)).getUTCDate();
-  alvo.setUTCDate(Math.min(d, ultimo));
-  return alvo.toISOString().slice(0, 10);
+  const dia = Math.min(d, ultimo);
+  return `${alvo.getUTCFullYear()}-${String(alvo.getUTCMonth() + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
 }
 
 /**

@@ -14,6 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPages } from '@/lib/postgrest';
 import { addDias } from '@/lib/time/sp-day';
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { useAuth } from '@/contexts/AuthContext';
 import { datasDoPeriodo, pesoDoStatus, type LinhaDiaEmpresa, type StatusDia } from '@/lib/reposicao/calendario/grade';
 
@@ -186,7 +187,7 @@ export function useSalvarDiaEmpresa() {
       toast.success('Dia salvo no calendário');
       void invalidar();
     },
-    onError: (e) => toast.error('Não foi possível salvar o dia', { description: e instanceof Error ? e.message : String(e) }),
+    onError: (e) => toast.error('Não foi possível salvar o dia', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo.' }),
   });
 }
 
@@ -208,7 +209,7 @@ export function useRemoverDiaEmpresa() {
       toast.success('Dia voltou para a regra base');
       void invalidar();
     },
-    onError: (e) => toast.error('Não foi possível remover o dia', { description: e instanceof Error ? e.message : String(e) }),
+    onError: (e) => toast.error('Não foi possível remover o dia', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo.' }),
   });
 }
 
@@ -239,7 +240,7 @@ export function useIncluirPeriodoFornecedor() {
       toast.success(`Período incluído (${n} dia(s))`);
       void invalidar();
     },
-    onError: (e) => toast.error('Não foi possível incluir o período', { description: e instanceof Error ? e.message : String(e) }),
+    onError: (e) => toast.error('Não foi possível incluir o período', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo.' }),
   });
 }
 
@@ -264,6 +265,6 @@ export function useRemoverPeriodoFornecedor() {
       toast.success(`Período removido (${n} dia(s))`);
       void invalidar();
     },
-    onError: (e) => toast.error('Não foi possível remover o período', { description: e instanceof Error ? e.message : String(e) }),
+    onError: (e) => toast.error('Não foi possível remover o período', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo.' }),
   });
 }
