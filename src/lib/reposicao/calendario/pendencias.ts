@@ -15,7 +15,7 @@
  */
 import { addDias } from '@/lib/time/sp-day';
 
-export type TipoPendencia =
+type TipoPendencia =
   | 'emenda_sem_decisao'
   | 'dia_sem_nf'
   | 'calendario_curto'
@@ -41,8 +41,8 @@ export type EntradaPendencias = {
   fechamentosFornecedor?: { data: string; fornecedor_nome: string }[];
 };
 
-export const DIAS_URGENCIA_EMENDA = 90;
-export const DIAS_URGENCIA_RECESSO_FORNECEDOR = 90;
+const DIAS_URGENCIA_EMENDA = 90;
+const DIAS_URGENCIA_RECESSO_FORNECEDOR = 90;
 
 /** 1 = segunda … 7 = domingo (ISO), em UTC puro — a data é de calendário, sem fuso. */
 export function diaDaSemanaIso(iso: string): number {
@@ -51,7 +51,7 @@ export function diaDaSemanaIso(iso: string): number {
 }
 
 /** Diferença em dias de calendário `b − a`. */
-export function diasEntre(a: string, b: string): number {
+function diasEntre(a: string, b: string): number {
   const ms = Date.parse(`${b.slice(0, 10)}T00:00:00Z`) - Date.parse(`${a.slice(0, 10)}T00:00:00Z`);
   return Math.round(ms / 86_400_000);
 }

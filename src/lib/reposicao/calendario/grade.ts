@@ -39,12 +39,12 @@ export function pesoDoStatus(status: StatusDia): number {
   return status === 'fechado' ? 0 : 1;
 }
 
-export function ehStatusDia(s: string): s is StatusDia {
+function ehStatusDia(s: string): s is StatusDia {
   return (STATUS_DIA as readonly string[]).includes(s);
 }
 
 /** Regra base: dia SEM linha é aberto de segunda a sexta e fechado no sábado e no domingo. */
-export function statusRegraBase(iso: string): StatusDia {
+function statusRegraBase(iso: string): StatusDia {
   return diaDaSemanaIso(iso) >= 6 ? 'fechado' : 'aberto';
 }
 
