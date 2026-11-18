@@ -22,6 +22,20 @@ import {
 } from "./promocao-fila.ts";
 // Lote de /catalogs sem entidade gravável: ack sem run (catalogo-vazio_test.ts) — NÃO reimplementar inline.
 import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.ts";
+// Linha de staging de /catalogs: lista FECHADA de colunas por entidade (catalogo-rows_test.ts).
+// Colunas do servidor (`created_at`, `id`, `matched_id`) nunca saem do item, e item com campo fora
+// da lista é recusado inteiro — NÃO reimplementar inline.
+import {
+  comLimite,
+  ENTIDADES_STAGING_CATALOGO,
+  erroDeFormaDoLote,
+  MAX_CAMPOS_NA_RECUSA,
+  mensagemDeRecusa,
+  separarLoteDeCatalogo,
+  STAGING_CATALOGO,
+} from "./catalogo-rows.ts";
+// `generated_at` do /keys-snapshot: legível e não à frente do servidor (snapshot-relogio_test.ts).
+import { validarGeneratedAt } from "./snapshot-relogio.ts";
 // Giro de corante (Fase 1, PR B): /preparations com manifesto, saneado (sem `cliente`) e tudo-ou-nada,
 // e /preparations/plano (preparacoes_test.ts) — NÃO reimplementar inline.
 import { type DepsPreparacoes, modoPromove, processarPreparacoes, respostaDoPlano } from "./preparacoes.ts";
@@ -48,22 +62,7 @@ const corsHeaders = {
 
 // ─── Type definitions ───
 
-/** Item bruto enviado pelo agente (catalogo: produtos, bases, embalagens, skus, corantes) */
-interface TintCatalogItem {
-  id?: string;
-  cod_produto?: string;
-  id_base?: string;
-  id_embalagem?: string;
-  id_base_sayersystem?: string;
-  id_embalagem_sayersystem?: string;
-  id_corante_sayersystem?: string;
-  descricao?: string;
-  volume_ml?: number;
-  preco_litro?: number;
-  /** Custo do corante (de PRECO_CORANTE) */
-  custo?: number;
-  [k: string]: unknown;
-}
+// TintCatalogItem (item bruto de catálogo) migrou para ./catalogo-rows.ts (scanner lote 6).
 
 /** Preço de base por embalagem (de PRECO_BASEEMB) */
 interface TintPrecosBaseItem {
@@ -98,6 +97,8 @@ function json(data: unknown, status = 200) {
 
 /** Max items per batch per entity type */
 const MAX_BATCH_ITEMS = 1000;
+/** Teto de espera pelo registro da recusa de catálogo em tint_sync_errors (auxiliar: não segura a resposta). */
+const LIMITE_DO_REGISTRO_DE_RECUSA_MS = 3000;
 /** Max total payload size (5 MB) */
 const MAX_PAYLOAD_BYTES = 5 * 1024 * 1024;
 
@@ -469,6 +470,11 @@ Deno.serve(async (req) => {
       const start = Date.now();
       const body = await req.json();
 
+      // Forma do lote ANTES de qualquer atalho: corpo que não é objeto, ou entidade gravável que
+      // não veio como lista, é 400 — nunca o ack limpo do lote sem item (catalogo-rows.ts).
+      const erroDeForma = erroDeFormaDoLote(body);
+      if (erroDeForma) return json({ ok: false, error: erroDeForma }, 400);
+
       // Change 3+4: also validate precos_base batch size
       const batchErr = validateBatchSize(body, [...ENTIDADES_CATALOGO]);
       if (batchErr) return json({ ok: false, error: batchErr }, 400);
@@ -484,47 +490,28 @@ Deno.serve(async (req) => {
       const updates = 0, ignored = 0;
       const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
 
-      const stagingTables: Record<string, { table: string; keyField: string }> = {
-        produtos: { table: "tint_staging_produtos", keyField: "cod_produto" },
-        bases: { table: "tint_staging_bases", keyField: "id_base_sayersystem" },
-        embalagens: { table: "tint_staging_embalagens", keyField: "id_embalagem_sayersystem" },
-        skus: { table: "tint_staging_skus", keyField: "cod_produto" },
-        corantes: { table: "tint_staging_corantes", keyField: "id_corante_sayersystem" },
-      };
-
       let received = 0;
+      const registrosDeRecusa: Promise<unknown>[] = [];
 
       // Change 3: bulk insert for catalog entities (chunks of 500)
-      for (const [entityType, config] of Object.entries(stagingTables)) {
-        const items: TintCatalogItem[] = (body[entityType] as TintCatalogItem[] | undefined) || [];
+      for (const entityType of ENTIDADES_STAGING_CATALOGO) {
+        const items: unknown[] = (body[entityType] as unknown[] | undefined) || [];
         received += items.length;
 
-        const rows: Record<string, unknown>[] = items.map((item) => {
-          const entityKey = (item[config.keyField] as string | undefined) || item.id || "";
-          const row: Record<string, unknown> = {
-            sync_run_id: runId,
-            account: agent.account,
-            store_code: agent.storeCode,
-            raw_data: item,
-            staging_status: "pending",
-          };
-          // Copy all item fields, excluding those already set
-          for (const [k, v] of Object.entries(item)) {
-            if (k in row) continue;
-            row[k] = v;
-          }
-          row[config.keyField] = entityKey;
-          if (item.descricao) row.descricao = item.descricao;
-          if (item.volume_ml !== undefined) row.volume_ml = item.volume_ml;
-          if (item.preco_litro !== undefined) row.preco_litro = item.preco_litro;
-          // Change 3+4: passthrough custo and volume_ml for corantes
-          if (item.custo !== undefined) row.custo = item.custo;
-          if (item.id_base) row.id_base = item.id_base;
-          if (item.id_embalagem) row.id_embalagem = item.id_embalagem;
-          return row;
-        });
+        // Lista fechada (catalogo-rows.ts): do item só saem as colunas de negócio da entidade.
+        // Copiar o item inteiro deixava o agente escolher `created_at`, a chave que decide qual
+        // linha vence na promoção, no preço e na purga. Item com campo fora da lista não vira
+        // linha: conta como erro, e com erro o conector não confirma o lote e reenvia a entidade.
+        const lote = separarLoteDeCatalogo(entityType, items, runId, agent.account, agent.storeCode);
+        if (lote.recusados > 0) {
+          const motivo = mensagemDeRecusa(lote);
+          errors += lote.recusados;
+          errorDetails.push({ entity_type: entityType, entity_id: null, message: motivo });
+          // O registro é auxiliar (a recusa já está em errors[]): dispara agora e NÃO segura a gravação dos itens limpos.
+          registrosDeRecusa.push(logError(runId, entityType, null, motivo, { campos: lote.camposRecusados.slice(0, MAX_CAMPOS_NA_RECUSA), itens_recusados: lote.recusados, nao_objetos: lote.naoObjetos }).catch(() => {}));
+        }
 
-        const { insertedCount } = await bulkInsert(config.table, rows, 500, (chunk, err) => {
+        const { insertedCount } = await bulkInsert(STAGING_CATALOGO[entityType].tabela, lote.linhas, 500, (chunk, err) => {
           errors += chunk.length;
           errorDetails.push({ entity_type: entityType, entity_id: null, message: err.message });
           // fire-and-forget logError for the chunk
@@ -557,6 +544,12 @@ Deno.serve(async (req) => {
           logError(runId, "precos_base", null, err.message, err, { chunk_size: chunk.length }).catch(() => {});
         });
         inserts += precosInserted;
+      }
+
+      // Os registros de recusa correram em paralelo com o staging. Espera por eles com teto: se
+      // tint_sync_errors não responder, o conector ainda recebe a recusa em errors[] da resposta.
+      if (registrosDeRecusa.length > 0 && !(await comLimite(Promise.all(registrosDeRecusa), LIMITE_DO_REGISTRO_DE_RECUSA_MS))) {
+        console.error(`[tint-sync-agent] /catalogs: registro da recusa em tint_sync_errors não confirmou em ${LIMITE_DO_REGISTRO_DE_RECUSA_MS} ms (run ${runId})`);
       }
 
       const resp = buildResponse(runId, { received, inserts, updates, ignored, errors, errorDetails });
@@ -753,6 +746,11 @@ Deno.serve(async (req) => {
       if (!generated_at) {
         return json({ ok: false, error: "generated_at required" }, 400);
       }
+      // O `generated_at` é o relógio da ORIGEM e é por ele que o banco ordena os snapshots
+      // (`tint_apply_keys_snapshot` pula o que vier <= ao último aplicado). Instante ilegível ou
+      // no futuro além da tolerância não entra: um 2099 congelaria as retiradas para sempre.
+      const relogio = validarGeneratedAt(generated_at, Date.now());
+      if (!relogio.ok) return json({ ok: false, error: relogio.erro }, 400);
       if (!Number.isInteger(total_chunks) || !Number.isInteger(chunk_index)) {
         return json({ ok: false, error: "total_chunks and chunk_index must be integers" }, 400);
       }

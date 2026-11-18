@@ -199,6 +199,11 @@ Headers: x-sync-token, x-store-code
                   Envia produtos, bases, embalagens, SKUs e corantes alterados desde o último checkpoint.
                   Dados vão para staging — NÃO altera tabelas oficiais.
                 </p>
+                <p className="text-sm text-muted-foreground">
+                  Só os campos listados abaixo são aceitos. Um item com campo fora da lista é recusado inteiro:
+                  não é gravado, conta em <code>error_count</code> e aparece em <code>errors</code> com o nome do campo.
+                  Cada entidade presente tem de ser uma lista; se não for, o lote é recusado com 400.
+                </p>
 
                 <h4 className="font-semibold text-sm">Campos por entidade</h4>
                 <Accordion type="multiple">
@@ -208,8 +213,6 @@ Headers: x-sync-token, x-store-code
                       <FieldTable fields={[
                         { name: 'cod_produto', type: 'string', required: true, desc: 'Código do produto no SAYER (ex: WFO0098)' },
                         { name: 'descricao', type: 'string', required: true, desc: 'Nome/descrição do produto' },
-                        { name: 'ativo', type: 'boolean', required: false, desc: 'Se o produto está ativo (default true)' },
-                        { name: 'updated_at', type: 'ISO 8601', required: false, desc: 'Timestamp da última alteração no banco local' },
                       ]} />
                     </AccordionContent>
                   </AccordionItem>
@@ -219,7 +222,6 @@ Headers: x-sync-token, x-store-code
                       <FieldTable fields={[
                         { name: 'id_base_sayersystem', type: 'string', required: true, desc: 'ID da base no SAYER' },
                         { name: 'descricao', type: 'string', required: true, desc: 'Nome da base' },
-                        { name: 'ativo', type: 'boolean', required: false, desc: 'Default true' },
                       ]} />
                     </AccordionContent>
                   </AccordionItem>
@@ -507,7 +509,7 @@ Headers:
                 <FieldTable fields={[
                   { name: 'entity', type: 'string', required: true, desc: 'Entidade do snapshot — atualmente apenas "formulas"' },
                   { name: 'snapshot_id', type: 'string (UUID)', required: true, desc: 'Identificador único desta rodada de snapshot. Todos os chunks do mesmo dia devem ter o mesmo snapshot_id.' },
-                  { name: 'generated_at', type: 'ISO 8601', required: true, desc: 'Timestamp de quando o snapshot foi gerado no SAYER' },
+                  { name: 'generated_at', type: 'RFC 3339', required: true, desc: 'Instante em que o snapshot foi gerado no SAYER, com fuso (ex.: 2026-11-17T03:03:41Z). Recusado com 400 se for ilegível ou estiver mais de 10 minutos à frente do relógio do servidor.' },
                   { name: 'total_chunks', type: 'integer', required: true, desc: 'Número total de chunks neste snapshot. Permite ao servidor saber quando recebeu tudo.' },
                   { name: 'chunk_index', type: 'integer', required: true, desc: 'Índice deste chunk (0-based). Deve cobrir 0 até total_chunks-1.' },
                   { name: 'keys', type: 'string[]', required: true, desc: 'Array de chaves lógicas neste chunk. Máximo 50.000 por chunk.' },

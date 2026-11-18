@@ -1,0 +1,28 @@
+# `generated_at` do /keys-snapshot da `tint-sync-agent`: legível, no calendário e não à frente do servidor
+# (scanner Lovable Security, lote 6 — achado do Codex na consulta de desenho; money-path).
+# @src: supabase/functions/tint-sync-agent/snapshot-relogio.ts
+# @test: supabase/functions/tint-sync-agent/snapshot-relogio_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# Cada linha é um jeito de o agente voltar a reservar o futuro (o banco ordena os snapshots por
+# `generated_at` e pula o que vier <= ao último aplicado), ou de um instante que o parser recusa
+# passar. A leitura do instante é do `instanteNs` (./preparacoes.ts), que tem contrato próprio;
+# aqui está o que ESTE módulo decide em cima dela. EXPECT preenchido por MEDIÇÃO.
+#
+# ── o futuro ──
+PEGA | futuro deixa de ser recusado                     | s/if \(ns > limiteNs\) \{/if (false) {/
+PEGA | fronteira exclusiva (o limite exato e recusado)  | s/if \(ns > limiteNs\) \{/if (ns >= limiteNs) {/
+PEGA | compara com o lado errado (recusa o passado)     | s/if \(ns > limiteNs\) \{/if (ns < limiteNs) {/
+PEGA | tolerancia vira 10 horas                         | s/export const TOLERANCIA_FUTURO_MS = 10 \* 60_000;/export const TOLERANCIA_FUTURO_MS = 10 * 60 * 60_000;/
+PEGA | tolerancia vira zero                             | s/export const TOLERANCIA_FUTURO_MS = 10 \* 60_000;/export const TOLERANCIA_FUTURO_MS = 0;/
+PEGA | tolerancia subtraida em vez de somada            | s/Math\.floor\(agoraMs\) \+ TOLERANCIA_FUTURO_MS/Math.floor(agoraMs) - TOLERANCIA_FUTURO_MS/
+PEGA | limite na escala errada (micro em vez de nano)   | s/\* 1_000_000n;/* 1_000n;/
+# ── o que o parser recusa não passa ──
+PEGA | instante ilegivel vira a epoca (passado, passa)  | s/const ns = instanteNs\(valor\);/const ns = instanteNs(valor) ?? 0n;/
+PEGA | fuso acima de 15h aceito                         | s/ \|\| RE_FUSO_FORA_DO_POSTGRES\.test\(valor as string\)//
+PEGA | guarda do fuso so olha 16 a 19h                  | s#\(1\[6-9\]\|2\\d\)#(1[6-9])#
+# ── a mensagem ──
+PEGA | a recusa nao informa o relogio do servidor       | s/\(server clock: \$\{new Date\(agoraMs\)\.toISOString\(\)\}\)/(server clock)/

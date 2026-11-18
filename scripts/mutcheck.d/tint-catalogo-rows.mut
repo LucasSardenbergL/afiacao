@@ -1,0 +1,70 @@
+# Lista FECHADA de colunas do staging da rota /catalogs da `tint-sync-agent`
+# (scanner Lovable Security, deep scan 2026-11-17, lote 6 — money-path).
+# @src: supabase/functions/tint-sync-agent/catalogo-rows.ts
+# @test: supabase/functions/tint-sync-agent/catalogo-rows_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
+#
+# Cada linha é um jeito de o agente voltar a escolher uma coluna do SERVIDOR (o furo: `created_at`
+# decide qual linha de staging vence na promoção, no preço e na purga), ou de a edge passar a
+# fabricar/converter valor que o agente não mandou. EXPECT preenchido por MEDIÇÃO.
+#
+# ── coluna do servidor de volta à lista do agente ──
+PEGA | created_at entra pela lista de corantes          | s/colunas: \["id_corante_sayersystem", "descricao", "preco_litro", "custo", "volume_ml"\]/colunas: ["id_corante_sayersystem", "descricao", "preco_litro", "custo", "volume_ml", "created_at"]/
+PEGA | id entra pela lista de produtos                  | s/colunas: \["cod_produto", "descricao"\]/colunas: ["cod_produto", "descricao", "id"]/
+PEGA | matched_id entra pela lista de skus              | s/colunas: \["cod_produto", "id_base", "id_embalagem"\]/colunas: ["cod_produto", "id_base", "id_embalagem", "matched_id"]/
+PEGA | created_at sai da declaracao "do servidor"       | s/^  "created_at",$/  "criado_em",/
+# ── a copia generica de volta (o furo original) ──
+PEGA | copia TODA chave do item                         | s/for \(const coluna of config\.colunas\) \{/for (const coluna of Object.keys(item)) {/
+PEGA | propriedade herdada entra                        | s/if \(Object\.prototype\.hasOwnProperty\.call\(item, coluna\)\) row\[coluna\] = item\[coluna\];/if (coluna in item) row[coluna] = item[coluna];/
+# ── o que e do servidor passa a vir do item ──
+PEGA | sync_run_id do item vence                        | s/sync_run_id: runId,/sync_run_id: (item.sync_run_id as string) ?? runId,/
+PEGA | account do item vence                            | s/^    account,$/    account: (item.account as string) ?? account,/
+PEGA | store_code do item vence                         | s/store_code: storeCode,/store_code: (item.store_code as string) ?? storeCode,/
+PEGA | staging_status do item vence                     | s/staging_status: "pending",/staging_status: (item.staging_status as string) ?? "pending",/
+PEGA | raw_data perde a coluna forjada (a evidencia)     | s/raw_data: item,/raw_data: { ...item, created_at: undefined },/
+PEGA | raw_data vira so a chave da entidade              | s/raw_data: item,/raw_data: { chave: item[config.chave] },/
+# ── a edge fabrica ou converte valor ──
+PEGA | ausente vira null explicito                      | s/if \(Object\.prototype\.hasOwnProperty\.call\(item, coluna\)\) row\[coluna\] = item\[coluna\];/row[coluna] = item[coluna] ?? null;/
+PEGA | texto vira numero                                | s/\) row\[coluna\] = item\[coluna\];/) row[coluna] = typeof item[coluna] === "string" ? Number(item[coluna]) : item[coluna];/
+PEGA | valor falsy (0, '') e descartado                 | s/if \(Object\.prototype\.hasOwnProperty\.call\(item, coluna\)\) row\[coluna\] = item\[coluna\];/if (item[coluna]) row[coluna] = item[coluna];/
+# ── a chave da entidade ──
+PEGA | chave ignora o item.id                           | s/\|\| item\.id \|\| "";/|| "";/
+PEGA | chave prefere o item.id                          | s/\(item\[config\.chave\] as string \| undefined\) \|\| item\.id/item.id || (item[config.chave] as string | undefined)/
+PEGA | chave ausente vira null                          | s/\|\| item\.id \|\| "";/|| item.id || null;/
+# ── tabela e chave por entidade ──
+PEGA | corantes gravados na tabela de produtos          | s/tabela: "tint_staging_corantes"/tabela: "tint_staging_produtos"/
+PEGA | chave de bases trocada                           | s/chave: "id_base_sayersystem"/chave: "descricao"/
+# ── o aviso do que foi descartado (o conector não reenvia o lote) ──
+PEGA | aviso nao lista coluna do servidor               | s/if \(gravadas\.has\(chave\)\) continue;/if (gravadas.has(chave) || chave === "created_at") continue;/
+PEGA | id nunca e avisado (mesmo sobrando)              | s/if \(chave === "id" && idViraChave\) continue;/if (chave === "id") continue;/
+PEGA | id avisado mesmo quando e a chave                | s/if \(chave === "id" && idViraChave\) continue;//
+PEGA | nome da chave sem truncar                        | s/if \(pontos >= MAX_TAMANHO_DE_CHAVE_NO_AVISO\) break;/if (false) break;/
+PEGA | nome da chave sem sanear (controle no jsonb)      | s/saida \+= inseguro \? "\?" : c;/saida += c;/
+PEGA | separador de linha Unicode passa pelo saneamento  | s/ \|\| cp === 0x2028 \|\| cp === 0x2029 \|\| / || /
+PEGA | substituto isolado passa pelo saneamento          | s/ \|\| \(cp >= 0xd800 && cp <= 0xdfff\);/;/
+PEGA | corte por unidade UTF-16 (parte o emoji ao meio)  | s/descartadas\.add\(nomeSeguro\(chave\)\);/descartadas.add(chave.slice(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO));/
+PEGA | aviso sem ordenar                                | s/return \[\.\.\.descartadas\]\.sort\(\);/return [...descartadas];/
+# ── a recusa do item (o lote com campo fora da lista não é confirmado ao conector) ──
+PEGA | item com campo fora da lista vira linha          | s/^    if \(fora\.length > 0\) \{$/    if (false) {/
+PEGA | texto e numero aceitos como item                 | s/return typeof v === "object" && v !== null && !Array\.isArray\(v\);/return v !== null \&\& v !== undefined \&\& !Array.isArray(v);/
+PEGA | lista aceita como item                           | s/return typeof v === "object" && v !== null && !Array\.isArray\(v\);/return typeof v === "object" \&\& v !== null;/
+PEGA | nao-objeto nao entra na contagem de nao-objetos  | s/^      naoObjetos \+= 1;$/      naoObjetos += 0;/
+PEGA | campos da recusa sem ordenar                     | s/camposRecusados: \[\.\.\.campos\]\.sort\(\), naoObjetos \};/camposRecusados: [...campos], naoObjetos };/
+PEGA | campo recusado nao e guardado                    | s/for \(const campo of fora\) campos\.add\(campo\);/void fora;/
+# ── a mensagem da recusa ──
+PEGA | mensagem sem a contagem de itens                 | s/return `\$\{lote\.recusados\} item\(ns\) recusado\(s\): /return `item(ns) recusado(s): /
+PEGA | mensagem sem o nome dos campos                   | s/partes\.push\(`campo\(s\) fora da lista da entidade: \$\{nomes\}/partes.push(`campo(s) fora da lista da entidade/
+PEGA | mensagem sem o teto de nomes                     | s/lote\.camposRecusados\.slice\(0, MAX_CAMPOS_NA_RECUSA\)\.join\(", "\);/lote.camposRecusados.join(", ");/
+PEGA | mensagem cala os nao-objetos                     | s/if \(lote\.naoObjetos > 0\) partes\.push/if (false) partes.push/
+# ── a forma do lote ──
+PEGA | objeto aceito no lugar da lista                  | s/if \(valor !== undefined && valor !== null && !Array\.isArray\(valor\)\) return/if (false) return/
+PEGA | null deixa de valer como ausente                 | s/if \(valor !== undefined && valor !== null && !Array\.isArray\(valor\)\) return/if (valor !== undefined \&\& !Array.isArray(valor)) return/
+PEGA | corpo que nao e objeto passa                     | s/if \(typeof body !== "object" \|\| body === null \|\| Array\.isArray\(body\)\) return "body must be a JSON object";/if (typeof body !== "object" || body === null) return "body must be a JSON object";/
+PEGA | forma confere so as 5 entidades de linha         | s/for \(const entidade of ENTIDADES_CATALOGO\) \{/for (const entidade of ENTIDADES_STAGING_CATALOGO) {/
+# ── o teto de espera do registro auxiliar ──
+PEGA | estouro do limite devolve "terminou"             | s/return vencedor !== estourou;/return true;/
+PEGA | timer do limite nao e desarmado                  | s/if \(timer !== undefined\) clearTimeout\(timer\);/void timer;/
+PEGA | o limite e ignorado (espera a promessa)          | s/timer = setTimeout\(\(\) => resolve\(estourou\), ms\);/timer = setTimeout(() => resolve(estourou), ms * 1000);/

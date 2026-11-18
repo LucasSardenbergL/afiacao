@@ -12,7 +12,13 @@ import {
   TOOL_ARGUMENTO,
   TOOL_PERGUNTAS,
 } from "./argumento-tools.ts";
-import { blocoCliente, type ContextoCliente, REGRA_DADO_AUSENTE } from "./argumento-helpers.ts";
+import {
+  blocoCliente,
+  type ContextoCliente,
+  perfilParaPrompt,
+  REGRA_DADO_AUSENTE,
+  REGRA_PERFIL_NAO_INFORMADO,
+} from "./argumento-helpers.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -100,9 +106,13 @@ Deno.serve(async (req) => {
     const { bundle, customer, customerProfile, mode } = corpoBruto as {
       bundle: BundleDoPrompt;
       customer: ContextoCliente;
-      customerProfile: string;
+      customerProfile: unknown;
       mode?: string;
     };
+    // `customerProfile` vem do body e entra no SYSTEM prompt dos dois modos: só um dos 4
+    // perfis passa (scanner Lovable, lote 6). Texto livre vira "nao_informado" — o valor do
+    // request nunca é interpolado na instrução do modelo.
+    const perfil = perfilParaPrompt(customerProfile);
 
     // COTA — depois da validação do corpo (requisição malformada não queima cota) e antes de
     // qualquer chamada à Anthropic; os dois `mode` abaixo passam por aqui.
@@ -134,11 +144,12 @@ METODOLOGIA SPIN:
 - Implicação: Explorar impacto financeiro ou operacional da fricção
 - Direcionamento: Preparar o cliente para considerar o bundle
 
-PERFIL DO CLIENTE: ${customerProfile}
+PERFIL DO CLIENTE: ${perfil}
 - Se "sensivel_preco": foque perguntas em custos, desperdício, ROI
 - Se "orientado_qualidade": foque em acabamento, precisão, conformidade
 - Se "orientado_produtividade": foque em tempo de parada, velocidade, eficiência
 - Se "misto": balance entre custo e qualidade
+${REGRA_PERFIL_NAO_INFORMADO}
 
 REGRAS:
 - Máximo 4 perguntas principais (1 por tipo SPIN)
@@ -246,11 +257,12 @@ REGRAS:
 - Antecipe objeções comuns
 - Seja conciso e direto
 
-PERFIL DO CLIENTE: ${customerProfile}
+PERFIL DO CLIENTE: ${perfil}
 - Se "sensivel_preco": foque em economia, ROI, redução de custo por peça
 - Se "orientado_qualidade": foque em acabamento, precisão, vida útil
 - Se "orientado_produtividade": foque em velocidade, uptime, menos paradas
 - Se "misto": balance todos os argumentos
+${REGRA_PERFIL_NAO_INFORMADO}
 
 ${REGRA_DADO_AUSENTE}
 
