@@ -89,7 +89,9 @@ ALTER TABLE public.pedido_compra_sugerido ADD COLUMN IF NOT EXISTS recebimento_a
 COMMENT ON COLUMN public.pedido_compra_sugerido.data_recebimento_prevista IS
   'Data prevista de recebimento já ajustada ao calendário de operação (NULL = não calculada).';
 COMMENT ON COLUMN public.pedido_compra_sugerido.recebimento_ajustado_calendario IS
-  'true = o calendário mudou a data prevista; false = calculada e sem ajuste; NULL = não calculada.';
+  'true = o dia fechado da EMPRESA empurrou o recebimento além da promessa do fornecedor (data_recebimento_prevista > '
+  'promessa); false = calculada pelo calendário e recebida no próprio dia da promessa (o recesso do FORNECEDOR pode '
+  'ter movido a promessa e ainda assim dar false); NULL = não calculada (legado ou calendário indisponível).';
 
 -- ── 2) Log por trigger ───────────────────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.calendario_operacao__registrar_log()
@@ -357,6 +359,10 @@ BEGIN
     END IF;
     IF NOT has_function_privilege('authenticated', v_fn, 'EXECUTE') THEN
       RAISE EXCEPTION '[CALENDARIO-POST] authenticated sem EXECUTE em %', v_sig;
+    END IF;
+    -- A edge (service_role) sem EXECUTE cairia no legado PARA SEMPRE, em silêncio (só um console.warn).
+    IF NOT has_function_privilege('service_role', v_fn, 'EXECUTE') THEN
+      RAISE EXCEPTION '[CALENDARIO-POST] EXECUTE ausente para service_role em %', v_sig;
     END IF;
   END LOOP;
 END
