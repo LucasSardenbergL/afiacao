@@ -28,8 +28,16 @@ const TIPOS: readonly TipoPoABaixar[] = ['po_contado_com_nf', 'nf_pendente'];
  */
 export function ehAcessoNegadoFila(erro: unknown): boolean {
   if (erro == null || typeof erro !== 'object') return false;
-  const e = erro as { code?: unknown; message?: unknown };
-  return e.code === '42501' && typeof e.message === 'string' && e.message.includes('reposicao_po_a_baixar: acesso negado');
+  const e = erro as { code?: unknown; message?: unknown; cause?: unknown };
+  if (e.code === '42501' && typeof e.message === 'string' && e.message.includes('reposicao_po_a_baixar: acesso negado')) {
+    return true;
+  }
+  // a leitura é paginada: o fetchAllPages embrulha o erro do PostgREST como `cause` (1 nível, sem recursão)
+  if (e.cause != null && typeof e.cause === 'object') {
+    const c = e.cause as { code?: unknown; message?: unknown };
+    return c.code === '42501' && typeof c.message === 'string' && c.message.includes('reposicao_po_a_baixar: acesso negado');
+  }
+  return false;
 }
 
 function textoOuNull(v: unknown): string | null {

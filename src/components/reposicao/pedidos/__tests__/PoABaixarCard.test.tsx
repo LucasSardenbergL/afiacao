@@ -67,6 +67,11 @@ describe('ehAcessoNegadoFila — qual gate negou', () => {
     expect(ehAcessoNegadoFila({ code: '42501', message: 'reposicao_pos_candidatos: acesso negado' })).toBe(false);
     expect(ehAcessoNegadoFila(null)).toBe(false);
   });
+  it('reconhece o negado embrulhado como `cause` pela leitura paginada', () => {
+    const negado = { code: '42501', message: 'reposicao_po_a_baixar: acesso negado' };
+    expect(ehAcessoNegadoFila(Object.assign(new Error('fetchAllPages: página 0 falhou'), { cause: negado }))).toBe(true);
+    expect(ehAcessoNegadoFila(Object.assign(new Error('x'), { cause: { code: '500', message: 'boom' } }))).toBe(false);
+  });
 });
 
 describe('PoABaixarCard — estados em que dá para mentir', () => {

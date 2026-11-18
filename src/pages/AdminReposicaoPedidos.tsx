@@ -45,6 +45,7 @@ import { acaoLinhaAtencao, particionarAtencao } from '@/components/reposicao/ped
 import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
 import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
 import { PoABaixarCard } from '@/components/reposicao/pedidos/PoABaixarCard';
+import { fetchAllPages } from '@/lib/postgrest';
 import { ehAcessoNegadoFila, normalizarFila, ordenarFila, type ItemPoABaixar } from '@/components/reposicao/pedidos/po-a-baixar';
 import { PedidosPortalCard } from '@/components/reposicao/pedidos/PedidosPortalCard';
 import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarcador, ordenarCandidatos, type Frescor, type MarcadorPos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
@@ -476,9 +477,19 @@ export default function AdminReposicaoPedidos() {
   } = useQuery({
     queryKey: ['pedidos-ciclo', 'po-a-baixar', EMPRESA, user?.id],
     queryFn: async (): Promise<ItemPoABaixar[]> => {
-      const { data, error } = await supabase.rpc('reposicao_po_a_baixar', { p_empresa: EMPRESA });
-      if (error) throw error;
-      return ordenarFila(normalizarFila(data));
+      // Paginada: a capa de 1.000 do PostgREST vale para .rpc(). Ordem ESTÁVEL entre páginas: (tipo, PO, NF)
+      // é única — cada PO aparece 1x como contado, cada NF 1x como pendente.
+      const linhas = await fetchAllPages(
+        (de, ate) =>
+          supabase
+            .rpc('reposicao_po_a_baixar', { p_empresa: EMPRESA })
+            .order('tipo', { ascending: true })
+            .order('omie_codigo_pedido', { ascending: true, nullsFirst: true })
+            .order('nid_receb', { ascending: true, nullsFirst: true })
+            .range(de, ate),
+        'reposicao_po_a_baixar/pedidos',
+      );
+      return ordenarFila(normalizarFila(linhas));
     },
     enabled: Boolean(user?.id),
     retry: false,
