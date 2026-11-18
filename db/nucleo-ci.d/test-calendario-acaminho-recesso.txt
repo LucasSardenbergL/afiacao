@@ -1,0 +1,4 @@
+# Calendário de operação (Etapa 1, Task 4): o recesso (18/12/2026–03/01/2027) não faz o motor recomprar pedido a
+# caminho. Pedido disparado em 10/12 sai do em_transito em D+8 (fronteira 17/12 vs 18/12 travada); no ciclo de 04/01
+# quem segura é o pendente Omie (C1); sem ele (sync sem o PO) a recompra é CONHECIDA e fixada (C2). 7 sabotagens.
+db/test-calendario-acaminho-recesso.sh 9  falsificar=7
