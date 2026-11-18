@@ -41,7 +41,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     rel_sem_conserto:ARELOGIOD1 rel_corte_velho:POST!nao_corta_pelo_relogio_do_retrato
     rel_corte_velho_sem_post:ARELOGIOD1 rel_sem_folga_sem_post:ARELOGIOFOLGA rel_utc_sem_post:ARELOGIOFOLGA
     rel_sem_least_sem_post:ARELOGIOLEAST rel_null_alarga_sem_post:ARELOGIONULL rel_pre_deriva:POST!PRE_FALHOU
-    rel_acl_anon:POST!anon_executa_calendario_antecipar_avaliacao rel_acl_estranho:POST!EXECUTE_concedido_fora"
+    rel_acl_anon:POST!anon_executa_a_avaliacao_de_antecipar rel_acl_estranho:POST!EXECUTE_concedido_fora"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-calendario-operacao.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -104,6 +104,12 @@ rel_sem_guardas() {
   sabotar_rel "RAISE EXCEPTION 'PRE FALHOU: calendario_antecipar_avaliacao" "RAISE NOTICE 'SABOTADO: calendario_antecipar_avaliacao"
   sabotar_rel "RAISE EXCEPTION 'POS FALHOU: antecipar nao corta" "RAISE NOTICE 'SABOTADO: antecipar nao corta"
   sabotar_rel "RAISE EXCEPTION 'POS FALHOU: corpo vivo" "RAISE NOTICE 'SABOTADO: corpo vivo"
+}
+# Desliga a ACL da PÓS do relógio: nos "_sem_post" de ACL da Task 4b ela seria a camada que acusa, não o assert.
+rel_sem_guardas_acl() {
+  sabotar_rel "RAISE EXCEPTION 'POS FALHOU: PUBLIC executa" "RAISE NOTICE 'SABOTADO: PUBLIC executa"
+  sabotar_rel "RAISE EXCEPTION 'POS FALHOU: anon executa" "RAISE NOTICE 'SABOTADO: anon executa"
+  sabotar_rel "RAISE EXCEPTION 'POS FALHOU: EXECUTE concedido fora" "RAISE NOTICE 'SABOTADO: EXECUTE concedido fora"
 }
 # Só o predicado do CORPO (o prefixo não existe na PÓS).
 REL_PRED="'concluido_recebido') AND pcs2.data_ciclo >= (LEAST(p_hoje, ((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date) - 7)"
@@ -190,11 +196,13 @@ case "${SABOTAGEM:-}" in
   ant_revoke_anon)       sabotar_ant "FROM PUBLIC, anon;" "FROM PUBLIC;" ;;
   ant_revoke_anon_sem_post)
                          sabotar_ant "FROM PUBLIC, anon;" "FROM PUBLIC;"
-                         sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN" ;;
+                         sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN"
+                         rel_sem_guardas_acl ;;
   ant_revoke_public_sem_post)
                          sabotar_ant "FROM PUBLIC, anon;" "FROM anon;"
                          sabotar_ant "IF has_function_privilege('public', v_fn, 'EXECUTE') THEN" "IF false THEN"
-                         sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN" ;;
+                         sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN"
+                         rel_sem_guardas_acl ;;
   # Onda final (P1a): trânsito do app = em_transito do motor, uma regra por vez.
   ant_sem_transito_app)  sabotar_ant " + COALESCE(et.qtde, 0))" ")" ;;
   ant_transito_janela_off) sabotar_ant " AND pcs2.data_ciclo >= (p_hoje - INTERVAL '7 days')" ""

@@ -182,10 +182,10 @@ BEGIN
   END IF;
   -- ACL (REPLACE preserva; conferir mesmo assim). PUBLIC antes de anon: anon herda de PUBLIC.
   IF has_function_privilege('public', v_fn, 'EXECUTE') THEN
-    RAISE EXCEPTION 'POS FALHOU: PUBLIC executa calendario_antecipar_avaliacao';
+    RAISE EXCEPTION 'POS FALHOU: PUBLIC executa a avaliacao de antecipar';
   END IF;
   IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN
-    RAISE EXCEPTION 'POS FALHOU: anon executa calendario_antecipar_avaliacao';
+    RAISE EXCEPTION 'POS FALHOU: anon executa a avaliacao de antecipar';
   END IF;
   IF NOT has_function_privilege('authenticated', v_fn, 'EXECUTE')
      OR NOT has_function_privilege('service_role', v_fn, 'EXECUTE') THEN
