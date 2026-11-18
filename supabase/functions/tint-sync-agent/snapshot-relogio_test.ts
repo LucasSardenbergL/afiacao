@@ -68,6 +68,15 @@ Deno.test("o fuso do texto é respeitado: -03:00 no futuro é futuro", () => {
   assertEq(instanteDoTexto("2026-11-17T03:30:00.5Z")?.ms, Date.parse("2026-11-17T03:30:00.500Z"), "fração curta é décimo, não milésimo");
 });
 
+Deno.test("os MINUTOS do fuso contam (a mutação que os ignorava sobrevivia)", () => {
+  assertEq(instanteDoTexto("2026-11-17T03:30:00+05:30")?.ms, Date.parse("2026-11-16T22:00:00Z"), "instante com +05:30");
+  assertEq(instanteDoTexto("2026-11-17T03:30:00-00:45")?.ms, Date.parse("2026-11-17T04:15:00Z"), "instante com -00:45");
+  // 03:40 em +00:30 é 03:10Z: dentro da folga das 03:08:05Z. Lido sem os 30 minutos seria 03:40Z, futuro.
+  assertEq(validarGeneratedAt("2026-11-17T03:40:00+00:30", AGORA).ok, true, "+00:30 traz o instante para dentro da folga");
+  // 03:00 em -00:30 é 03:30Z: futuro. Lido sem os 30 minutos seria 03:00Z, passado.
+  recusaCom("2026-11-17T03:00:00-00:30", "in the future", "-00:30 leva o instante para o futuro");
+});
+
 Deno.test("o que não é RFC 3339 estrito com fuso é recusado — nada é adivinhado", () => {
   for (const ruim of [
     "2026-11-17T03:03:41", // sem fuso: ambíguo
