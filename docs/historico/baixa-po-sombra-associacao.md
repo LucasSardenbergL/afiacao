@@ -67,3 +67,8 @@ Codex aprovou na 4ª rodada (P1 0 · P2 0 · P3 0). Provas: Deno 55/55 com 35 sa
   — a linha fica com a leitura velha e o card segue avisando. NF apagada no Omie fica assim para sempre, e é o certo.
 - `results.sombra.pendentes` = `{listadas, reconsultadas, falhas_consulta, ja_lidas_no_run, puladas_por_tempo,
   erro_listagem}`. As relidas entram em `processadas`: a revisita da janela larga não repete a consulta.
+- **Deploy e medição (2026-11-18):** deploy pela sessão via MCP (19/19 hashes, 21:02Z; o push do bot com as 2
+  devDependencies foi revertido no #3980); ledger atestou `v1.11-sombra-rele-pendentes` pela sonda do cron das 22:37Z.
+  1º run (22:15Z): `pendentes` = 20 listadas, 16 relidas, 4 já lidas no run, 0 falhas, 0 puladas — as 16 congeladas
+  (18/10 a 16/11) já estavam **concluídas** no Omie e saíram de pendente. Restaram 4 pendentes reais, todas lidas no run;
+  0 pendente com `observado_em` > 36 h.
