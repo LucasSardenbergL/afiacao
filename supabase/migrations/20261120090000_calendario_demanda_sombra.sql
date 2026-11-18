@@ -573,7 +573,7 @@ CREATE POLICY reposicao_demanda_calendario_sombra_sel ON public.reposicao_demand
 -- Job (owner-only, sem gate de JWT: pg_cron roda sem auth.uid). Lê a view DUAS vezes com o modo FORÇADO pela GUC — a
 -- mesma fórmula nos dois lados — e só grava o SKU que (a) tem exatamente 1 linha em cada leitura (a view herda
 -- ambiguidade de cadastro, ex.: grupo de produção com 2 fornecedores) e (b) tem os MESMOS insumos nas duas (d cru,
--- σ, LT, σ_LT, z): em READ COMMITTED cada instrução tem snapshot próprio, e uma NF entre as leituras viraria "efeito
+-- σ, LT, σ_LT, z, status, mínimo, lote EOQ, custo de pedido, preço): em READ COMMITTED cada instrução tem snapshot próprio, e uma NF entre as leituras viraria "efeito
 -- do calendário". O resto é descartado e contado no NOTICE — nunca aborta o dia. A GUC volta a '' no fim (sem SET no
 -- cabeçalho: no Supabase o postgres não é superusuário e o PG15+ recusa GUC customizada em CREATE FUNCTION … SET —
 -- 42501 no ensaio de 2026-11-18); erro aborta a transação inteira.
@@ -588,6 +588,7 @@ DECLARE
   v_hoje  date;   -- o dia que a VIEW calculou (calculado_em), não um relógio à parte
   v_n     integer;
   v_lidos integer;
+  v_guc   text := current_setting('reposicao.demanda_calendario_forcar', true);   -- restaurada no fim
 BEGIN
   IF p_empresa IS DISTINCT FROM 'OBEN' THEN
     RAISE EXCEPTION 'sombra do calendario: so OBEN tem historico de venda (empresa %)', p_empresa USING ERRCODE = '22023';
@@ -599,6 +600,7 @@ BEGIN
     SELECT v.sku_codigo_omie, v.demanda_media_diaria, v.demanda_sigma_diario, v.lead_time_medio, v.lead_time_desvio,
            v.z_aplicado, v.estoque_seguranca_sugerido, v.ponto_pedido_sugerido, v.estoque_maximo_sugerido,
            v.status_sugestao, v.fator_calendario, v.calendario_baixa_confianca, v.calculado_em,
+           v.minimo_operacional, v.qtde_compra_ciclo_sugerida, v.custo_pedido_aplicado, v.preco_item_eoq,
            count(*) OVER (PARTITION BY v.sku_codigo_omie) AS n_linhas
       FROM public.v_sku_parametros_sugeridos v
      WHERE v.empresa = p_empresa;
@@ -624,6 +626,11 @@ BEGIN
      AND v.lead_time_desvio            IS NOT DISTINCT FROM l.lead_time_desvio
      AND v.z_aplicado                  IS NOT DISTINCT FROM l.z_aplicado
      AND v.fator_calendario            IS NOT DISTINCT FROM l.fator_calendario
+     AND v.status_sugestao             IS NOT DISTINCT FROM l.status_sugestao
+     AND v.minimo_operacional          IS NOT DISTINCT FROM l.minimo_operacional
+     AND v.qtde_compra_ciclo_sugerida  IS NOT DISTINCT FROM l.qtde_compra_ciclo_sugerida
+     AND v.custo_pedido_aplicado       IS NOT DISTINCT FROM l.custo_pedido_aplicado
+     AND v.preco_item_eoq              IS NOT DISTINCT FROM l.preco_item_eoq
   ON CONFLICT (data_ref, empresa, sku_codigo_omie) DO UPDATE SET
     fator_calendario           = EXCLUDED.fator_calendario,
     calendario_baixa_confianca = EXCLUDED.calendario_baixa_confianca,
@@ -639,7 +646,7 @@ BEGIN
     registrado_em              = clock_timestamp();
   GET DIAGNOSTICS v_n = ROW_COUNT;
 
-  PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', '', true);
+  PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', coalesce(v_guc, ''), true);
   IF to_regclass('pg_temp.sombra_calendario_legado') IS NOT NULL THEN DROP TABLE pg_temp.sombra_calendario_legado; END IF;
   IF v_n < v_lidos THEN
     RAISE NOTICE 'sombra do calendario: % de % SKU(s) gravados; o resto foi descartado (linha duplicada na view ou insumo mudou entre as leituras)', v_n, v_lidos;

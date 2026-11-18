@@ -99,7 +99,6 @@ function principal(): void {
   console.log('| data-base | fator (U/W) | SKUs com PP (ativos e habilitados) | paridade PP F0 | viés cru | viés ajust. | venda no LT > PP: cru → ajust. (deixam de exceder) | ΔPP total (un) | capital adicional R$ | SKUs sem cmc |');
   console.log('|---|---|---|---|---|---|---|---|---|---|');
   for (const D of bases) {
-    if (addDias(D, 59) > dados.dataExtracao) throw new Error(`horizonte de ${D} passa da extração (${dados.dataExtracao}): dia sem dado viraria venda zero`);
     const f = fatorCalendario(cal, addDias(D, -90), D);
     const linhas: LinhaSku[] = [];
     let paridadeOk = 0;
@@ -115,6 +114,8 @@ function principal(): void {
       const dias30 = Array.from({ length: 30 }, (_, i) => addDias(D, i));
       const diasLt: string[] = [];
       for (let d = D; diasLt.length < Math.ceil(g.lt); d = addDias(d, 1)) if (ehDiaUtil(d)) diasLt.push(d);
+      const ultimo = [dias30[dias30.length - 1], diasLt[diasLt.length - 1]].sort().pop() as string;
+      if (ultimo > dados.dataExtracao) throw new Error(`horizonte de ${D} (SKU ${s.sku}) passa da extração (${dados.dataExtracao}): dia sem dado viraria venda zero`);
       linhas.push({ sku: s.sku, d0: g.demanda, d1, pp0, pp1, real30: somar(s.sku, dias30), realLt: somar(s.sku, diasLt), cmc: s.cmc });
     }
     const real = linhas.reduce((a, l) => a + l.real30, 0);
