@@ -12,3 +12,4 @@ PEGA | dados voltam ao system                           | s/system: SYSTEM_PROMP
 PEGA | mensagem é só o texto cru                        | s/messages: \[\{ role: "user", content: mensagemDoPedido \}\],/messages: [{ role: "user", content: text }],/
 PEGA | cliente sem aprovação passa do gate              | s/if \(!ehStaff && perfilRes\.data\?\.is_approved !== true\) \{/if (false) {/
 PEGA | erro ao ler o perfil deixa passar                | s/if \(rolesRes\.error \|\| perfilRes\.error\) \{/if (rolesRes.error) {/
+PEGA | papel customer conta como staff               | s/\.in\("role", \["employee", "master"\]\)//

@@ -13,3 +13,4 @@
 PEGA | categorias voltam ao system                      | s/system: SYSTEM_PROMPT_FERRAMENTA,/system: SYSTEM_PROMPT_FERRAMENTA + textoDoPedido,/
 PEGA | mensagem perde o bloco de categorias             | s/\{ type: "text", text: textoDoPedido \},/{ type: "text", text: "Identifique esta ferramenta na imagem:" },/
 PEGA | cliente sem aprovação passa do gate              | s/if \(!ehStaff && perfilRes\.data\?\.is_approved !== true\) \{/if (false) {/
+PEGA | papel customer conta como staff               | s/\.in\("role", \["employee", "master"\]\)//

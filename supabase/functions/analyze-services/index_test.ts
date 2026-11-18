@@ -115,12 +115,19 @@ Deno.test("analyze-services: cliente aprovado passa (uso legítimo da /new-order
   igual(ia.chamadas.length, 1, "o modelo não foi chamado para o cliente aprovado");
 });
 
-for (const [rotulo, estado] of [["sem aprovação", false], ["sem perfil", null]] as const) {
+for (
+  const [rotulo, estado, jwt] of [
+    ["sem aprovação", false, "jwt-sem-papel"],
+    ["sem perfil", null, "jwt-sem-papel"],
+    // Papel `customer` em user_roles: o filtro `.in(role, [employee, master])` é o que o barra.
+    ["com papel customer e sem aprovação", false, "jwt-customer"],
+  ] as const
+) {
   Deno.test(`analyze-services: cliente ${rotulo} é recusado ANTES da cota e do modelo`, async () => {
     h.limpar();
     ia.limpar();
     aprovado = estado;
-    const res = await pedir("jwt-sem-papel", CORPO);
+    const res = await pedir(jwt, CORPO);
     const corpo = await res.json();
     aprovado = true;
     igual(res.status, 403, `cliente ${rotulo} passou do gate`);

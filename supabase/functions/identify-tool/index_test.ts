@@ -103,12 +103,14 @@ Deno.test("identify-tool: lista só com itens sem nome também vira 'nenhuma cat
   }
 });
 
-Deno.test("identify-tool: cliente sem aprovação continua barrado antes do modelo (controle do gate)", async () => {
-  ia.limpar();
-  aprovado = false;
-  const res = await pedir("jwt-sem-papel", CORPO);
-  await res.body?.cancel();
-  aprovado = true;
-  igual(res.status, 403, "cliente sem aprovação passou do gate");
-  igual(ia.chamadas.length, 0, "o modelo foi chamado para um cliente sem aprovação");
-});
+for (const jwt of ["jwt-sem-papel", "jwt-customer"]) {
+  Deno.test(`identify-tool: cliente sem aprovação (${jwt}) continua barrado antes do modelo (controle do gate)`, async () => {
+    ia.limpar();
+    aprovado = false;
+    const res = await pedir(jwt, CORPO);
+    await res.body?.cancel();
+    aprovado = true;
+    igual(res.status, 403, "cliente sem aprovação passou do gate");
+    igual(ia.chamadas.length, 0, "o modelo foi chamado para um cliente sem aprovação");
+  });
+}
