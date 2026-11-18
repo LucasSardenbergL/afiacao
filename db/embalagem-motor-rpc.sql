@@ -3,7 +3,8 @@
 --
 -- O guard src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts exige que este arquivo, do CREATE OR
 -- REPLACE até o FIM, seja IGUAL ao trecho da ÚLTIMA migration que recria a função (a que vence em prod).
--- Desde 2026-11-18 essa migration é a 20261118120000_reposicao_acaminho_relogio_do_sync.sql (o corte dos pedidos do
+-- Desde 2026-11-18 essa migration é a 20261119130000_reposicao_acaminho_membro_sem_linha.sql (SKU sem retrato
+-- próprio corta pelo último retrato da empresa — [MEMBRO SEM LINHA]); antes, a 20261118120000 (o corte dos pedidos do
 -- app no em_transito passa a ser o do retrato do sync — [RELÓGIO ÚNICO]); antes, a 20261101090000 — o motor
 -- RESPEITA a suspensão de compra registrada em reposicao_compra_suspensa e loga a compra evitada; antes, a 20261010210000 — desconto do
 -- vendido em pedido aberto — e a 20261009194000 — #2849, unidades WP). O que vem depois do $function$; é a cauda
@@ -93,6 +94,8 @@ BEGIN
     JOIN pedido_compra_sugerido pcs2 ON pcs2.id = pci.pedido_id
     -- [RELÓGIO ÚNICO] o retrato que o motor lê (1 linha por SKU: pkey empresa+sku — o LEFT JOIN não duplica item).
     LEFT JOIN sku_estoque_atual sea_c ON sea_c.empresa = pcs2.empresa AND sea_c.sku_codigo_omie = pci.sku_codigo_omie::text
+    -- [MEMBRO SEM LINHA] o último retrato da empresa (1 linha: agregado sem GROUP BY), para o SKU sem retrato próprio.
+    LEFT JOIN (SELECT max(ultima_sincronizacao) AS ult FROM sku_estoque_atual WHERE empresa = p_empresa) sea_e ON TRUE
     WHERE pcs2.empresa = p_empresa
       AND (
         -- [SIMULADO] 'disparado_simulado' É pedido real: o dry_run da edge chama IncluirPedCompra no Omie.
@@ -103,10 +106,14 @@ BEGIN
         -- vão [S−7, D−8] fora dos dois lados quando o sync do dia falhava = contado 0× = COMPRA DUPLA (medido:
         -- 06/11 e 11/11/2026, 6 e 3 pedidos no vão). Dia do retrato com 1 h de folga (run que cruza a meia-noite
         -- grava depois de ler: erra para contar 2×, o lado recuperável) e nunca depois do corte de antes (LEAST:
-        -- este conserto só ACRESCENTA a caminho). Retrato sem data (NULL): LEAST ignora NULL = o corte de antes. Por SKU: o
+        -- este conserto só ACRESCENTA a caminho). Retrato sem data: ver [MEMBRO SEM LINHA]. Por SKU: o
         -- upsert do sync é por linha (gravação parcial deixa linhas de retratos diferentes).
+        -- [MEMBRO SEM LINHA] SKU sem retrato próprio (membro de grupo cujo PO o sync pulou e cuja linha não gravou,
+        -- ou linha sem data): vale o último retrato da EMPRESA, o do run que o pulou. Sem ele o corte voltava ao
+        -- dia do ciclo = 0× no vão com o sync atrasado (Codex, PR #3969). Só ACRESCENTA (LEAST); sem retrato
+        -- nenhum na empresa = o corte de antes.
         -- Prova: db/test-acaminho-relogio-unico.sh.
-        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido') AND pcs2.data_ciclo >= (LEAST(p_data_ciclo, ((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date) - 7)
+        (pcs2.status IN ('aprovado_aguardando_disparo','disparado','disparado_simulado','concluido_recebido') AND pcs2.data_ciclo >= (LEAST(p_data_ciclo, ((COALESCE(sea_c.ultima_sincronizacao, sea_e.ult) - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date) - 7)
          -- [FANTASMA] Erro TERMINAL do portal NÃO é estoque a caminho. 'erro_nao_retentavel' só é alcançado
          -- com efetivarAttempted=false — o resultado AMBÍGUO tem estado PRÓPRIO (aceito_portal_sem_protocolo
          -- / indeterminado_requer_conciliacao), então este status significa "nada foi colocado no fornecedor".
@@ -778,10 +785,10 @@ BEGIN
   END IF;
   -- [RELÓGIO ÚNICO] o corte do em_transito é o do retrato, no CÓDIGO (comentário limpo antes: o predicado certo só
   -- num comentário com o velho no código não passa — falsificado em db/test-acaminho-relogio-unico.sh).
-  IF position($c$pcs2.data_ciclo >= (LEAST(p_data_ciclo, ((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date) - 7)$c$
+  IF position($c$pcs2.data_ciclo >= (LEAST(p_data_ciclo, ((COALESCE(sea_c.ultima_sincronizacao, sea_e.ult) - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date) - 7)$c$
               IN regexp_replace(v_src, '--[^\n]*', '', 'g')) = 0
      OR position($c$pcs2.data_ciclo >= (p_data_ciclo - INTERVAL '7 days')$c$ IN regexp_replace(v_src, '--[^\n]*', '', 'g')) > 0 THEN
-    RAISE EXCEPTION 'POS-RU1 FALHOU: o em_transito do motor não corta pelo relógio do retrato (sea_c.ultima_sincronizacao) — dois relógios = compra dupla quando o sync falha';
+    RAISE EXCEPTION 'POS-RU1 FALHOU: o em_transito do motor não corta pelo relógio do retrato (COALESCE(sea_c.ultima_sincronizacao, sea_e.ult)) — dois relógios = compra dupla quando o sync falha';
   END IF;
   RAISE NOTICE 'COMPRA-SUSPENSA-MOTOR-OK';
 END
