@@ -551,10 +551,11 @@ Deno.serve(async (req) => {
       // Os registros de recusa correram em paralelo com o staging. Espera por eles com teto: se
       // tint_sync_errors não responder, o conector ainda recebe a recusa em errors[] da resposta.
       // "Respondeu" não é "gravou": o insert que o banco recusa resolve com `error`, sem lançar.
-      const gravados = Promise.all(registrosDeRecusa);
+      let todosGravaram = true;
+      const gravados = Promise.all(registrosDeRecusa).then((rs) => { todosGravaram = !rs.includes(false); });
       if (registrosDeRecusa.length > 0 && !(await comLimite(gravados, LIMITE_DO_REGISTRO_DE_RECUSA_MS))) {
         console.error(`[tint-sync-agent] /catalogs: registro da recusa em tint_sync_errors não confirmou em ${LIMITE_DO_REGISTRO_DE_RECUSA_MS} ms (run ${runId})`);
-      } else if (registrosDeRecusa.length > 0 && (await gravados).includes(false)) {
+      } else if (!todosGravaram) {
         console.error(`[tint-sync-agent] /catalogs: registro da recusa em tint_sync_errors NÃO foi gravado (run ${runId})`);
       }
 
