@@ -117,6 +117,7 @@ export const CATRACA_SQL: Readonly<Record<string, number>> = {
   'db/2026-10-20-venda-reconstrucao-historica-lote-10d-02.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
   'db/2026-10-20-venda-reconstrucao-historica-lote-10d-03.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
   'db/2026-10-20-venda-reconstrucao-historica-lote-10d-04.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/aplicar-calendario-operacao-1-esquema.sql': 2,   // aplicado (db:aplicar, recibo #1173) — cópia sem envelope da migration 20261119100000; os 2 sítios são `(SELECT count(*) …) <> N`, que nunca é NULL; bytes congelados pelo sha do ledger
   'db/aplicar-cancelar-orfa-4c19af2a.sql': 7,
   'db/aplicar-data-health-sync-reprocess-saude.sql': 8,
   'db/aplicar-desconto-escritores.sql': 1,

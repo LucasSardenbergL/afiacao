@@ -28,3 +28,15 @@ Edge antes da carga não quebra, mas grava "sem ajuste" falso em pedido de dezem
 - **Se o sync falhar, a garantia não vale** (caso C2 da prova: PO fora da varredura ⇒ recompra, comportamento fixado com nome explícito). É risco de dado, não do recesso.
 - A "costura de 1 dia" entre o corte do sync (hojeSP−7) e o do motor (`p_data_ciclo`−7) fica para sessão própria.
 - O "antecipar" herda a mesma costura (usa a regra do motor com `p_hoje`).
+
+## Aplicação em produção (2026-11-18)
+
+Pelo `bun run db:aplicar` (ensaio com ROLLBACK verde antes de cada apply), a partir das cópias sem envelope `db/aplicar-calendario-operacao-{1-esquema,2-antecipar,3-carga}.sql` (idênticas às originais exceto `BEGIN;`/`COMMIT;` — o executor fornece a transação):
+
+| Peça | sha256 (prefixo) | Tentativa/recibo |
+|---|---|---|
+| migration 20261119100000 | `9890393b` | #1173 |
+| migration 20261119120000 | `6e092b70` | #1175 |
+| carga 2025–2030 (NOTICE `POST carga calendario OK`) | `0c69b921` | #1177 |
+
+2ª testemunha (psql-ro, `fim|ok`): 3 tabelas com RLS; 2 colunas em `pedido_compra_sugerido`; 6 RPCs com EXECUTE para `authenticated`/`service_role` e sem `anon`; empresa por origem OBEN/COLACOR = emenda 16/16 · escala 148/148 · feriado 34/34 · historico 33/26 · manual 12/12; fornecedor 616 linhas / 7 razões sociais; nacionais 10/ano em 2027–2030; recesso 18/12/2026–03/01/2027 com 11 dias úteis fechados e 04/01/2027 sem linha (aberto); Sayerlack fechada só 25/12 e 01/01. Pendentes: edge `disparar-pedidos-aprovados` v1.17 (ledger `pendencias:deploy`) e Publish.
