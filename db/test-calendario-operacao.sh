@@ -2,6 +2,7 @@
 # Prova PG17 — calendário de operação (Etapa 1, Task 1): esquema, RLS, log por trigger e as 3 funções de data
 # (calendario_proximo_dia_recebimento · calendario_somar_dias_uteis_fornecedor · calendario_dias_sem_nf).
 # Task 4b: calendario_itens_antecipar (migration 20261119120000), bloco AANT* com hoje fixado em 2026-12-01.
+# Relógio do sync: 20261119140000 (trânsito do app = em_transito do motor 20261118120000), bloco ARELOGIO*.
 # Spec: docs/superpowers/specs/2026-11-18-calendario-operacao-design.md §6.1.
 #
 # Rodar:  bash db/test-calendario-operacao.sh > log 2>&1; echo "exit=$?"   (NÃO pipe pra tail — engole o exit)
@@ -15,6 +16,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261119100000_calendario_operacao.sql"
 MIG_ANT="$REPO_ROOT/supabase/migrations/20261119120000_calendario_antecipar_recesso.sql"   # Task 4b
+MIG_REL="$REPO_ROOT/supabase/migrations/20261119140000_calendario_antecipar_relogio_do_sync.sql"   # relógio do sync
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca.
@@ -35,7 +37,11 @@ if [ "${1:-}" = "--falsificar" ]; then
     ant_transito_null_blind:AANT1 ant_transito_sem_portal:AANT1 ant_transito_sem_empresa:AANT_COLACOR
     ant_grupo_off:AANT1 ant_compras_gate_off:AANT_COMPRAS ant_svc_revoke:POST!EXECUTE_ausente_para
     res_conta_cobre:ARES1 prev_portal_off:APREV1 prev_lt_default:APREV_LT_NULL prev_receb_null:APREV_NULL
-    svc_revoke_100000:POST!EXECUTE_ausente_para"
+    svc_revoke_100000:POST!EXECUTE_ausente_para
+    rel_sem_conserto:ARELOGIOD1 rel_corte_velho:POST!nao_corta_pelo_relogio_do_retrato
+    rel_corte_velho_sem_post:ARELOGIOD1 rel_sem_folga_sem_post:ARELOGIOFOLGA rel_utc_sem_post:ARELOGIOFOLGA
+    rel_sem_least_sem_post:ARELOGIOLEAST rel_null_alarga_sem_post:ARELOGIONULL rel_pre_deriva:POST!PRE_FALHOU
+    rel_acl_anon:POST!anon_executa_a_avaliacao_de_antecipar rel_acl_estranho:POST!EXECUTE_concedido_fora"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-calendario-operacao.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -75,14 +81,40 @@ export LC_ALL="$LOC" LANG="$LOC"
 DATA="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-calendario-operacao.XXXXXX")/data"
 MIG_USADA="$(dirname "$DATA")/mig.sql"
 MIG_ANT_USADA="$(dirname "$DATA")/mig-ant.sql"
+MIG_REL_USADA="$(dirname "$DATA")/mig-rel.sql"
 # shellcheck disable=SC2329  # invocada via trap
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 
 cp "$MIG" "$MIG_USADA"
 cp "$MIG_ANT" "$MIG_ANT_USADA"
+cp "$MIG_REL" "$MIG_REL_USADA"
 sabotar() { sabotar_em "$MIG_USADA" "$@"; }
-sabotar_ant() { sabotar_em "$MIG_ANT_USADA" "$@"; }   # sabota a migration da Task 4b
+# Sabota a migration da Task 4b. O corpo VIVO de calendario_antecipar_avaliacao é o da 20261119140000 (aplicada
+# depois): se o padrão também está lá, sabota as duas e desliga as guardas dela — senão o REPLACE desfaria a sabotagem.
+REL_GUARDAS_OFF=0
+sabotar_ant() {
+  sabotar_em "$MIG_ANT_USADA" "$@"
+  if contem "$MIG_REL_USADA" "$1"; then sabotar_em "$MIG_REL_USADA" "$@"; REL_GUARDAS_OFF=1; fi
+}
+contem() { python3 -I -c 'import sys; sys.exit(0 if sys.argv[2] in open(sys.argv[1], encoding="utf-8").read() else 1)' "$1" "$2"; }
+sabotar_rel() { sabotar_em "$MIG_REL_USADA" "$@"; }   # sabota a migration do relógio do sync
+# Desliga PRE e PÓS do relógio (viram NOTICE): a sabotagem do CORPO chega viva aos asserts — o "_sem_post".
+rel_sem_guardas() {
+  sabotar_rel "RAISE EXCEPTION 'PRE FALHOU: calendario_antecipar_avaliacao" "RAISE NOTICE 'SABOTADO: calendario_antecipar_avaliacao"
+  sabotar_rel "RAISE EXCEPTION 'POS FALHOU: antecipar nao corta" "RAISE NOTICE 'SABOTADO: antecipar nao corta"
+  sabotar_rel "RAISE EXCEPTION 'POS FALHOU: corpo vivo" "RAISE NOTICE 'SABOTADO: corpo vivo"
+}
+# Desliga a ACL da PÓS do relógio: nos "_sem_post" de ACL da Task 4b ela seria a camada que acusa, não o assert.
+rel_sem_guardas_acl() {
+  sabotar_rel "RAISE EXCEPTION 'POS FALHOU: PUBLIC executa" "RAISE NOTICE 'SABOTADO: PUBLIC executa"
+  sabotar_rel "RAISE EXCEPTION 'POS FALHOU: anon executa" "RAISE NOTICE 'SABOTADO: anon executa"
+  sabotar_rel "RAISE EXCEPTION 'POS FALHOU: EXECUTE concedido fora" "RAISE NOTICE 'SABOTADO: EXECUTE concedido fora"
+}
+# Só o predicado do CORPO (o prefixo não existe na PÓS).
+REL_PRED="'concluido_recebido') AND pcs2.data_ciclo >= (LEAST(p_hoje, ((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date) - 7)"
+REL_PRED_VELHO="'concluido_recebido') AND pcs2.data_ciclo >= (p_hoje - INTERVAL '7 days')"
+APLICA_REL=1
 sabotar_em() { # $1 = arquivo, $2 = de, $3 = para (literal; substitui TODAS as ocorrências; padrão ausente = erro)
   python3 -I - "$1" "$2" "$3" <<'PY'
 import sys
@@ -164,14 +196,17 @@ case "${SABOTAGEM:-}" in
   ant_revoke_anon)       sabotar_ant "FROM PUBLIC, anon;" "FROM PUBLIC;" ;;
   ant_revoke_anon_sem_post)
                          sabotar_ant "FROM PUBLIC, anon;" "FROM PUBLIC;"
-                         sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN" ;;
+                         sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN"
+                         rel_sem_guardas_acl ;;
   ant_revoke_public_sem_post)
                          sabotar_ant "FROM PUBLIC, anon;" "FROM anon;"
                          sabotar_ant "IF has_function_privilege('public', v_fn, 'EXECUTE') THEN" "IF false THEN"
-                         sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN" ;;
+                         sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN"
+                         rel_sem_guardas_acl ;;
   # Onda final (P1a): trânsito do app = em_transito do motor, uma regra por vez.
   ant_sem_transito_app)  sabotar_ant " + COALESCE(et.qtde, 0))" ")" ;;
-  ant_transito_janela_off) sabotar_ant " AND pcs2.data_ciclo >= (p_hoje - INTERVAL '7 days')" "" ;;
+  ant_transito_janela_off) sabotar_ant " AND pcs2.data_ciclo >= (p_hoje - INTERVAL '7 days')" ""
+                         sabotar_rel "$REL_PRED" "'concluido_recebido')"; REL_GUARDAS_OFF=1 ;;   # a janela viva é a do relógio
   ant_transito_erro_terminal_off) sabotar_ant "AND pcs2.status_envio_portal IS NOT DISTINCT FROM 'erro_nao_retentavel'" "AND false" ;;
   ant_transito_null_blind) sabotar_ant "IS NOT DISTINCT FROM 'erro_nao_retentavel'" "= 'erro_nao_retentavel'" ;;
   ant_transito_sem_portal) sabotar_ant "OR (pcs2.status_envio_portal IN ('sucesso_portal','enviado_portal')" "OR (false" ;;
@@ -193,8 +228,26 @@ case "${SABOTAGEM:-}" in
   svc_revoke_100000)     sabotar "$REV_ANON" "REVOKE ALL ON FUNCTION public.calendario_proximo_dia_recebimento(text, date) FROM PUBLIC, anon, service_role;"
                          sabotar "GRANT EXECUTE ON FUNCTION public.calendario_proximo_dia_recebimento(text, date) TO authenticated, service_role;" \
                                  "GRANT EXECUTE ON FUNCTION public.calendario_proximo_dia_recebimento(text, date) TO authenticated;" ;;
+  # Relógio do sync (20261119140000): o corte do trânsito do app = o do motor 20261118120000, uma regra por vez.
+  rel_sem_conserto)      APLICA_REL=0 ;;   # a versão ANTERIOR (só a 20261119120000): o caso D-1/D-8 fica vermelho
+  rel_corte_velho)       sabotar_rel "$REL_PRED" "$REL_PRED_VELHO" ;;
+  rel_corte_velho_sem_post) sabotar_rel "$REL_PRED" "$REL_PRED_VELHO"; rel_sem_guardas ;;
+  rel_sem_folga_sem_post) sabotar_rel "$REL_PRED" "'concluido_recebido') AND pcs2.data_ciclo >= (LEAST(p_hoje, ((sea_c.ultima_sincronizacao) AT TIME ZONE 'America/Sao_Paulo')::date) - 7)"
+                         rel_sem_guardas ;;
+  rel_utc_sem_post)      sabotar_rel "$REL_PRED" "'concluido_recebido') AND pcs2.data_ciclo >= (LEAST(p_hoje, ((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'UTC')::date) - 7)"
+                         rel_sem_guardas ;;
+  rel_sem_least_sem_post) sabotar_rel "$REL_PRED" "'concluido_recebido') AND pcs2.data_ciclo >= (COALESCE(((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date, p_hoje) - 7)"
+                         rel_sem_guardas ;;
+  rel_null_alarga_sem_post) sabotar_rel "$REL_PRED" "'concluido_recebido') AND pcs2.data_ciclo >= (LEAST(p_hoje, COALESCE(((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date, p_hoje - 30)) - 7)"
+                         rel_sem_guardas ;;
+  rel_pre_deriva)        sabotar_rel "v_vivo NOT IN ('aed4c41f86f6c2c1795a6619f7bd480c'" "v_vivo NOT IN ('00000000000000000000000000000000'" ;;
+  rel_acl_anon)          sabotar_rel "-- PÓS: o corte novo no CÓDIGO" "GRANT EXECUTE ON FUNCTION public.calendario_antecipar_avaliacao(text, date, date) TO anon;
+-- PÓS: o corte novo no CÓDIGO" ;;
+  rel_acl_estranho)      sabotar_rel "-- PÓS: o corte novo no CÓDIGO" "GRANT EXECUTE ON FUNCTION public.calendario_antecipar_avaliacao(text, date, date) TO sem_grant;
+-- PÓS: o corte novo no CÓDIGO" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
+[ "$REL_GUARDAS_OFF" -eq 1 ] && rel_sem_guardas
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
 # HOJE_TESTE=AAAA-MM-DD simula o "hoje" de SP (na cópia da migration e no teste) — prova a janela móvel do
 # calendario_dias_sem_nf contra as datas fixas da carga (revisão I2). Sem a variável, usa o relógio real.
@@ -285,7 +338,7 @@ CREATE POLICY staff_calendario_feriados_select ON public.calendario_feriados FOR
 CREATE TABLE public.sku_parametros (id bigserial PRIMARY KEY, empresa text NOT NULL, sku_codigo_omie bigint NOT NULL,
   sku_descricao text, fornecedor_nome text, demanda_media_diaria numeric, lt_medio_dias_uteis numeric, ativo boolean);
 CREATE TABLE public.sku_estoque_atual (empresa text NOT NULL, sku_codigo_omie text NOT NULL, estoque_fisico numeric NOT NULL,
-  estoque_pendente_entrada numeric, PRIMARY KEY (empresa, sku_codigo_omie));
+  estoque_pendente_entrada numeric, ultima_sincronizacao timestamptz, PRIMARY KEY (empresa, sku_codigo_omie));
 ALTER TABLE public.sku_parametros ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sku_estoque_atual ENABLE ROW LEVEL SECURITY;
 CREATE POLICY staff_sku_parametros_select ON public.sku_parametros FOR SELECT TO authenticated
@@ -300,6 +353,11 @@ PGOPTIONS="-c client_min_messages=warning" P -q -f "$MIG_USADA" >/dev/null
 # Task 4b: a migration do sinal "antecipar", também 2× (depende das funções de data acima).
 PGOPTIONS="-c client_min_messages=warning" P -q -f "$MIG_ANT_USADA" >/dev/null
 PGOPTIONS="-c client_min_messages=warning" P -q -f "$MIG_ANT_USADA" >/dev/null
+# Relógio do sync: SEM BEGIN/COMMIT (vai pelo db:aplicar, que dá a transação) — aqui `-1` faz o papel do executor; 2×.
+if [ "$APLICA_REL" -eq 1 ]; then
+  PGOPTIONS="-c client_min_messages=warning" P -q -1 -f "$MIG_REL_USADA" >/dev/null
+  PGOPTIONS="-c client_min_messages=warning" P -q -1 -f "$MIG_REL_USADA" >/dev/null
+fi
 eq "AIDEMP migration aplicada 2x sem erro" "ok" "ok"
 
 eq "ACOL1 pedido_compra_sugerido.data_recebimento_prevista date NULL" \
@@ -546,6 +604,39 @@ eq "ARES3 resumo listados = linhas da lista (mesma logica)" \
 eq "ARES_JANELA sem fechamento na janela -> 0/0/0 (universo vazio, nao 'sem dado')" "$(res "'OBEN','2027-01-10','2027-01-04'")" "R=0/0/0"
 eq "ARES_GATE employee sem compras -> 42501 tambem no resumo" \
    "$(estado "$(como "$E" "SELECT * FROM public.calendario_itens_antecipar_resumo('OBEN','2027-01-03','2026-12-01')")")" "42501"
+
+# ── Relógio do sync (20261119140000): o corte do trânsito do app = o do motor 20261118120000 ───────────────────────
+# Motor em D = 01/12 (p_hoje). Cada SKU: Fornecedor X, demanda 0.1, fisico 1 (cob 10 < 45 = listado); +4 do app = cob
+# 50 (cobre). O corte é POR SKU: LEAST(D, dia SP de (ultima_sincronizacao - 1 h)) - 7.
+#   1018 retrato D-1 (30/11 12:00 SP), pedido D-8 (23/11): motor conta (corte 23/11) -> cobre; versão anterior: listado.
+#   1019 retrato 01/12 00:30 SP: a folga de 1 h o leva a 30/11 (corte 23/11) -> conta. Sem folga ou em UTC: 01/12, não conta.
+#   1020 retrato DEPOIS de D (05/12), pedido 25/11: LEAST segura o corte em 24/11 -> conta. Sem LEAST: 28/11, não conta.
+#   1021 retrato NULL, pedido 23/11: corte de antes (24/11) -> NÃO conta, listado (NULL nunca alarga a janela).
+P -q <<'SQL'
+INSERT INTO public.sku_parametros (empresa, sku_codigo_omie, sku_descricao, fornecedor_nome, demanda_media_diaria, lt_medio_dias_uteis, ativo) VALUES
+  ('OBEN', 1018, 'retrato D-1, app D-8',       'Fornecedor X', 0.1, 10, true),
+  ('OBEN', 1019, 'retrato 00:30 SP, folga 1h', 'Fornecedor X', 0.1, 10, true),
+  ('OBEN', 1020, 'retrato depois de D (LEAST)', 'Fornecedor X', 0.1, 10, true),
+  ('OBEN', 1021, 'retrato NULL, app D-8',      'Fornecedor X', 0.1, 10, true);
+INSERT INTO public.sku_estoque_atual (empresa, sku_codigo_omie, estoque_fisico, estoque_pendente_entrada, ultima_sincronizacao) VALUES
+  ('OBEN', '1018', 1, 0, '2026-11-30 12:00:00-03'), ('OBEN', '1019', 1, 0, '2026-12-01 00:30:00-03'),
+  ('OBEN', '1020', 1, 0, '2026-12-05 12:00:00-03'), ('OBEN', '1021', 1, 0, NULL);
+INSERT INTO public.pedido_compra_sugerido (id, empresa, fornecedor_nome, status, data_ciclo, status_envio_portal, portal_protocolo, omie_pedido_compra_numero) VALUES
+  (6, 'OBEN', 'Fornecedor X', 'disparado', '2026-11-23', NULL, NULL, '777'),   -- D-8
+  (7, 'OBEN', 'Fornecedor X', 'disparado', '2026-11-25', NULL, NULL, '778');   -- D-6
+INSERT INTO public.pedido_compra_item (pedido_id, sku_codigo_omie, qtde_final) VALUES
+  (6, '1018', 4), (6, '1019', 4), (7, '1020', 4), (6, '1021', 4);
+SQL
+mot() { Pq -c "SELECT COALESCE(string_agg(sku_codigo_omie||':'||motivo||':'||cobertura_dias::numeric(10,2), ','), 'AUSENTE') FROM public.calendario_antecipar_avaliacao('OBEN','2027-01-03','2026-12-01') WHERE sku_codigo_omie = $1"; }
+eq "ARELOGIOD1 retrato D-1 + pedido D-8: conta o pedido como o motor (cobre, cob 50)" "$(mot 1018)" "1018:cobre:50.00"
+eq "ARELOGIOFOLGA retrato 00:30 SP: folga de 1 h no fuso de SP -> conta (cobre)" "$(mot 1019)" "1019:cobre:50.00"
+eq "ARELOGIOLEAST retrato depois de D: LEAST segura o corte em D-7 -> conta (cobre)" "$(mot 1020)" "1020:cobre:50.00"
+eq "ARELOGIONULL retrato NULL: corte de antes, pedido D-8 NAO conta (listado, cob 10)" "$(mot 1021)" "1021:listado:10.00"
+eq "ARELOGIOLISTA a lista OBEN ganha so o 1021 (1018/1019/1020 cobertos pelo trânsito)" \
+   "$(ant "'OBEN','2027-01-03','2026-12-01'")" "L=1011:10.00:45,1014:10.00:45,1015:10.00:45,1021:10.00:45,1001:20.00:45,1012:44.50:45"
+eq "ARELOGIORES resumo: 19 avaliados, 6 listados, 6 sem dado" "$(res "'OBEN','2027-01-03','2026-12-01'")" "R=19/6/6"
+eq "ARELOGIOACL avaliacao: EXECUTE so authenticated/service_role (REPLACE preservou a ACL)" \
+   "$(Pq -c "SELECT has_function_privilege('authenticated', 'public.calendario_antecipar_avaliacao(text,date,date)', 'EXECUTE') AND has_function_privilege('service_role', 'public.calendario_antecipar_avaliacao(text,date,date)', 'EXECUTE') AND NOT has_function_privilege('anon', 'public.calendario_antecipar_avaliacao(text,date,date)', 'EXECUTE') AND NOT has_function_privilege('sem_grant', 'public.calendario_antecipar_avaliacao(text,date,date)', 'EXECUTE')")" "t"
 
 # ── calendario_previsao_pedido (P1c): a MESMA regra da edge v1.17, antes do disparo ─────────────────────────────
 prev() { Pq -c "SELECT 'P=' || COALESCE(promessa::text,'NULL')||'/'||COALESCE(recebimento::text,'NULL') FROM public.calendario_previsao_pedido($1)"; }
