@@ -332,6 +332,6 @@ eq S05 "grupo com 2 fornecedores: a sombra não aborta e descarta só o SKU amb�
   "$(Ler 2027-01-21T15:00:00Z "SELECT (SELECT count(*) FROM public.v_sku_parametros_sugeridos WHERE sku_codigo_omie = 1001) || '|' || (SELECT coalesce(string_agg(sku_codigo_omie::text, ','), 'nenhum') FROM public.reposicao_demanda_calendario_sombra WHERE data_ref = '2027-01-21')")" "2|1002"
 
 echo
-echo "TOTAL: $PASS PASS / $FAIL FALHAS (esperado $TOTAL_ESPERADO PASS)"
+echo "PASS=$PASS  FAIL=$FAIL  (esperado $TOTAL_ESPERADO PASS)"
 [ "$FAIL" -eq 0 ] && [ "$PASS" -eq "$TOTAL_ESPERADO" ] || exit 1
 echo "FIM-OK ${SLUG}"
