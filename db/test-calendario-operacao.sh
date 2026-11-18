@@ -359,6 +359,30 @@ eq "ATAB_LOG authenticated so le o log (nada de escrita por privilegio)" \
 eq "ATRG trigger de log nao e executavel por PUBLIC/anon/authenticated" \
    "$(Pq -c "SELECT bool_or(has_function_privilege(r, 'public.calendario_operacao__registrar_log()', 'EXECUTE')) FROM unnest(ARRAY['sem_grant','anon','authenticated']) r")" "f"
 
+# ── Carga inicial 2025–2030 (Task 2): arquivo REAL, 2× (idempotência), contagens exatas ──────────────────────
+CARGA="$REPO_ROOT/db/carga-calendario-operacao-2025-2030.sql"
+P -q -c "TRUNCATE public.calendario_operacao_empresa, public.calendario_operacao_fornecedor; DELETE FROM public.calendario_feriados WHERE data >= '2027-01-01'" >/dev/null
+LOGC0="$(Pq -c "SELECT count(*) FROM public.calendario_operacao_log")"
+PGOPTIONS="-c client_min_messages=warning" P -q -f "$CARGA" >/dev/null
+eq "ACARGA1 empresa: linhas por origem/empresa" \
+   "$(Pq -c "SELECT string_agg(origem||'/'||empresa||'='||n, ' ' ORDER BY origem, empresa) FROM (SELECT origem, empresa, count(*) n FROM public.calendario_operacao_empresa GROUP BY 1,2) x")" \
+   "emenda/COLACOR=16 emenda/OBEN=16 escala/COLACOR=148 escala/OBEN=148 feriado/COLACOR=34 feriado/OBEN=34 historico/COLACOR=26 historico/OBEN=33 manual/COLACOR=12 manual/OBEN=12"
+eq "ACARGA2 fornecedor: total e fornecedores distintos" \
+   "$(Pq -c "SELECT count(*)||'/'||count(DISTINCT fornecedor_nome) FROM public.calendario_operacao_fornecedor")" "616/7"
+eq "ACARGA3 feriados nacionais 2027 = 10 e Corpus 2027 fora da calendario_feriados" \
+   "$(Pq -c "SELECT (SELECT count(*) FROM public.calendario_feriados WHERE data BETWEEN '2027-01-01' AND '2027-12-31' AND tipo='nacional')||'/'||(SELECT count(*) FROM public.calendario_feriados WHERE data='2027-05-27')")" "10/0"
+eq "ACARGA4 1 linha de log por linha carregada" \
+   "$(Pq -c "SELECT (SELECT count(*) FROM public.calendario_operacao_log) - $LOGC0 - (SELECT count(*) FROM public.calendario_operacao_empresa) - (SELECT count(*) FROM public.calendario_operacao_fornecedor)")" "0"
+eq "ACARGA5 fechado => peso 0 e meia_equipe/pendente_dado => peso 1" \
+   "$(Pq -c "SELECT count(*) FROM public.calendario_operacao_empresa WHERE (status='fechado') <> (peso=0)")" "0"
+eq "ACARGA6 dia de volta 04/01/2027 aberto (sem linha) e recesso 18/12/2026 fechado" \
+   "$(Pq -c "SELECT (SELECT count(*) FROM public.calendario_operacao_empresa WHERE data='2027-01-04')||'/'||(SELECT status FROM public.calendario_operacao_empresa WHERE data='2026-12-18' AND empresa='OBEN')")" "0/fechado"
+LOGC1="$(Pq -c "SELECT count(*) FROM public.calendario_operacao_log")"
+P -q -c "UPDATE public.calendario_operacao_empresa SET motivo='edicao do founder' WHERE data='2026-12-18' AND empresa='OBEN'" >/dev/null
+PGOPTIONS="-c client_min_messages=warning" P -q -f "$CARGA" >/dev/null
+eq "ACARGA7 re-rodar nao insere nem sobrescreve edicao (log so +1 do UPDATE)" \
+   "$(Pq -c "SELECT (SELECT count(*) FROM public.calendario_operacao_log) - $LOGC1 || '/' || (SELECT motivo FROM public.calendario_operacao_empresa WHERE data='2026-12-18' AND empresa='OBEN')")" "1/edicao do founder"
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "FIM-OK calendario-operacao"
