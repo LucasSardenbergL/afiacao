@@ -247,27 +247,27 @@ DECLARE
   n int; r record;
 BEGIN
   SELECT count(*) INTO n FROM _carga_emp;
-  IF n <> esp_emp THEN RAISE EXCEPTION 'POST carga calendario: carga de empresa tem % linhas (esperado %)', n, esp_emp; END IF;
+  IF n IS DISTINCT FROM esp_emp THEN RAISE EXCEPTION 'POST carga calendario: carga de empresa tem % linhas (esperado %)', n, esp_emp; END IF;
   FOR r IN SELECT * FROM (VALUES
 ${esperadoOrigem}
   ) e(origem, empresa, n) LOOP
     SELECT count(*) INTO n FROM _carga_emp WHERE origem = r.origem AND empresa = r.empresa;
-    IF n <> r.n THEN RAISE EXCEPTION 'POST carga calendario: % / % tem % linhas na carga (esperado %)', r.origem, r.empresa, n, r.n; END IF;
+    IF n IS DISTINCT FROM r.n THEN RAISE EXCEPTION 'POST carga calendario: % / % tem % linhas na carga (esperado %)', r.origem, r.empresa, n, r.n; END IF;
   END LOOP;
   SELECT count(*) INTO n FROM _carga_forn;
-  IF n <> esp_forn THEN RAISE EXCEPTION 'POST carga calendario: carga de fornecedor tem % linhas (esperado %)', n, esp_forn; END IF;
+  IF n IS DISTINCT FROM esp_forn THEN RAISE EXCEPTION 'POST carga calendario: carga de fornecedor tem % linhas (esperado %)', n, esp_forn; END IF;
   SELECT count(*) INTO n FROM _carga_fer;
-  IF n <> esp_nac THEN RAISE EXCEPTION 'POST carga calendario: carga de feriados tem % linhas (esperado %)', n, esp_nac; END IF;
+  IF n IS DISTINCT FROM esp_nac THEN RAISE EXCEPTION 'POST carga calendario: carga de feriados tem % linhas (esperado %)', n, esp_nac; END IF;
 
   SELECT count(*) INTO n FROM _carga_emp c JOIN public.calendario_operacao_empresa t USING (data, empresa);
-  IF n <> esp_emp THEN RAISE EXCEPTION 'POST carga calendario: destino tem % das % chaves de empresa', n, esp_emp; END IF;
+  IF n IS DISTINCT FROM esp_emp THEN RAISE EXCEPTION 'POST carga calendario: destino tem % das % chaves de empresa', n, esp_emp; END IF;
   SELECT count(*) INTO n FROM _carga_forn c JOIN public.calendario_operacao_fornecedor t USING (data, empresa, fornecedor_nome);
-  IF n <> esp_forn THEN RAISE EXCEPTION 'POST carga calendario: destino tem % das % chaves de fornecedor', n, esp_forn; END IF;
+  IF n IS DISTINCT FROM esp_forn THEN RAISE EXCEPTION 'POST carga calendario: destino tem % das % chaves de fornecedor', n, esp_forn; END IF;
   SELECT count(*) INTO n FROM _carga_fer c JOIN public.calendario_feriados t ON t.data = c.data AND t.tipo = 'nacional';
-  IF n <> esp_nac THEN RAISE EXCEPTION 'POST carga calendario: destino tem % dos % feriados nacionais', n, esp_nac; END IF;
+  IF n IS DISTINCT FROM esp_nac THEN RAISE EXCEPTION 'POST carga calendario: destino tem % dos % feriados nacionais', n, esp_nac; END IF;
   FOR r IN SELECT y FROM generate_series(2027, 2030) y LOOP
     SELECT count(*) INTO n FROM _carga_fer WHERE extract(year FROM data) = r.y;
-    IF n <> 10 THEN RAISE EXCEPTION 'POST carga calendario: carga com % nacionais em % (esperado 10)', n, r.y; END IF;
+    IF n IS DISTINCT FROM 10 THEN RAISE EXCEPTION 'POST carga calendario: carga com % nacionais em % (esperado 10)', n, r.y; END IF;
     SELECT count(*) INTO n FROM public.calendario_feriados WHERE extract(year FROM data) = r.y AND tipo = 'nacional';
     IF n < 10 THEN RAISE EXCEPTION 'POST carga calendario: destino com % nacionais em % (esperado >= 10)', n, r.y; END IF;
   END LOOP;
