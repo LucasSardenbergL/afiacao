@@ -149,12 +149,14 @@ falsificar "cache-control-removido" "cache_control" \
       cache_control: { type: "ephemeral" },' \
   '      text: montarBlocoEstavel(searchCustomer),'
 
+# shellcheck disable=SC2016  # o `${…}` é texto TS da sabotagem, não expansão de shell
 falsificar "neutralizacao-removida" "delimitador neutralizado" \
   '${BLOCOS_CONSULTA.bloco("dados_desta_consulta", conteudo)}' \
   '<dados_desta_consulta>
 ${conteudo}
 </dados_desta_consulta>'
 
+# shellcheck disable=SC2016  # o `${…}` é texto TS da sabotagem, não expansão de shell
 falsificar "cadastro-fora-do-bloco" "o reancoramento fica FORA" \
   '${dados.historicoCompras}${clientes}`;
 
