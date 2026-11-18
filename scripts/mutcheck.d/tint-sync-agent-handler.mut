@@ -21,9 +21,9 @@ PEGA | precos_base aceita o sync_run_id do item         | s/^          margem_pc
 # ── /catalogs: item recusado não é confirmado ao conector ──
 PEGA | item recusado nao conta em error_count            | s/^          errors \+= lote\.recusados;$/          errors += 0;/
 PEGA | recusa fora de errors[] da resposta              | s/^          errorDetails\.push\(\{ entity_type: entityType, entity_id: null, message: motivo \}\);$/          void motivo;/
-PEGA | recusa nao registrada em tint_sync_errors        | s/^          registrosDeRecusa\.push\(logError\(runId, entityType, null, motivo, .*\)\.catch\(\(\) => \{\}\)\);$/          void motivo;/
-PEGA | registro da recusa volta a segurar o staging     | s/^          registrosDeRecusa\.push\(logError\((.*)\)\.catch\(\(\) => \{\}\)\);$/          await logError($1).catch(() => {});/
-PEGA | a resposta nao espera o registro da recusa       | s/!\(await comLimite\(Promise\.all\(registrosDeRecusa\), LIMITE_DO_REGISTRO_DE_RECUSA_MS\)\)/false/
+PEGA | recusa nao registrada em tint_sync_errors        | s/^          registrosDeRecusa\.push\(logError\(runId, entityType, null, motivo, .*\)\.catch\(\(\) => false\)\);$/          void motivo;/
+PEGA | registro da recusa volta a segurar o staging     | s/^          registrosDeRecusa\.push\(logError\((.*)\)\.catch\(\(\) => false\)\);$/          await logError($1).catch(() => false);/
+PEGA | a resposta nao espera o registro da recusa       | s/!\(await comLimite\(gravados, LIMITE_DO_REGISTRO_DE_RECUSA_MS\)\)/false/
 PEGA | registro da recusa leva o item cru               | s/nao_objetos: lote\.naoObjetos \}\)\.catch/nao_objetos: lote.naoObjetos }, items).catch/
 # ── /catalogs: forma do lote ──
 PEGA | forma do lote nao e conferida                    | s/if \(erroDeForma\) return json\(\{ ok: false, error: erroDeForma \}, 400\);/if (erroDeForma) console.warn(erroDeForma);/
@@ -35,3 +35,7 @@ PEGA | relogio do servidor adiantado em 2 min           | s/validarGeneratedAt\(
 PEGA | relogio do servidor atrasado em 2 min            | s/validarGeneratedAt\(generated_at, Date\.now\(\)\)/validarGeneratedAt(generated_at, Date.now() - 120_000)/
 # ── controle do fake de auth ──
 PEGA | token da loja nao e conferido                    | s/if \(!data\.sync_token \|\| !timingSafeEq\(String\(data\.sync_token\), syncToken\)\) return null;/if (!data.sync_token) return null;/
+# ── o registro da recusa é conferido (v1.5) ──
+PEGA | logError diz que gravou sem conferir o erro           | s/return !error;/return true;/
+PEGA | registro recusado pelo banco passa calado             | s/\} else if \(!todosGravaram\) \{/} else if (false) {/
+PEGA | falha do registro vira "gravou"                       | s/nao_objetos: lote\.naoObjetos \}\)\.catch\(\(\) => false\)\);/nao_objetos: lote.naoObjetos }).then(() => true));/

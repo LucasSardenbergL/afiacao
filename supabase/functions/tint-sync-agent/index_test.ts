@@ -40,6 +40,8 @@ const escritas: Escrita[] = [];
 let registrosRespondidos = 0;
 /** Quando ligado, o fake só responde `tint_sync_errors` depois que o staging de precos_base chegou. */
 let segurar: { liberar: () => void; solto: Promise<void>; estourou: boolean } | null = null;
+/** Quando ligado, o fake RECUSA o insert em `tint_sync_errors` (o supabase-js resolve com `error`, sem lançar). */
+let recusarRegistro = false;
 
 /** PostgREST mínimo: devolve o que cada passo da rota espera e guarda TODA escrita. */
 h.responderForaDoGate(async (r) => {
@@ -71,6 +73,7 @@ h.responderForaDoGate(async (r) => {
       await new Promise((res) => setTimeout(res, 20));
     }
     registrosRespondidos += 1;
+    if (recusarRegistro) return json({ code: "XX000", message: "falha simulada do registro" }, 500);
     return new Response(null, { status: 201 });
   }
   if (tabela === "tint_staging_precos_base" && segurar) segurar.liberar();
@@ -91,6 +94,7 @@ function zerar() {
   escritas.length = 0;
   registrosRespondidos = 0;
   segurar = null;
+  recusarRegistro = false;
   h.limpar();
 }
 
@@ -364,4 +368,28 @@ Deno.test("/keys-snapshot: 9 minutos à frente ainda entra (a folga é de 10)", 
   await r.body?.cancel();
   igual(r.status, 200, "status");
   igual(escritas.filter((e) => e.tabela === "tint_keys_snapshots").length, 1, "1 insert");
+});
+
+Deno.test("/catalogs: registro da recusa que o banco NÃO grava — a recusa segue na resposta e o console avisa", async () => {
+  const avisos: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => { avisos.push(args.map(String).join(" ")); };
+  try {
+    // controle: com o registro gravando, nenhum aviso
+    zerar();
+    const ok = await h.handler()(pedir("catalogs", { produtos: [{ cod_produto: "P1", created_at: "2099-01-01T00:00:00Z" }] }));
+    igual([ok.status, (await ok.json()).error_count], [200, 1], "controle: recusa na resposta");
+    igual(avisos.filter((a) => a.includes("NÃO foi gravado")).length, 0, "controle: sem aviso quando o registro grava");
+
+    zerar();
+    recusarRegistro = true;
+    const r = await h.handler()(pedir("catalogs", { produtos: [{ cod_produto: "P1", created_at: "2099-01-01T00:00:00Z" }] }));
+    const corpo = await r.json();
+    igual([r.status, corpo.error_count, corpo.errors.length], [200, 1, 1], "a recusa não depende do registro");
+    igual(registros().length, 1, "o registro foi tentado");
+    igual(avisos.filter((a) => a.includes("registro da recusa em tint_sync_errors NÃO foi gravado")).length, 1, `um aviso no console (vieram: ${JSON.stringify(avisos)})`);
+  } finally {
+    console.error = original;
+    zerar();
+  }
 });

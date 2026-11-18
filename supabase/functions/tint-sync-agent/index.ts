@@ -378,8 +378,9 @@ Deno.serve(async (req) => {
     return true;
   }
 
-  async function logError(runId: string, entityType: string, entityId: string | null, msg: string, details?: unknown, raw?: unknown) {
-    await sb.from("tint_sync_errors").insert({
+  /** Devolve true só se o insert CONFIRMOU: o supabase-js não lança em erro de banco, resolve com `error`. */
+  async function logError(runId: string, entityType: string, entityId: string | null, msg: string, details?: unknown, raw?: unknown): Promise<boolean> {
+    const { error } = await sb.from("tint_sync_errors").insert({
       sync_run_id: runId,
       entity_type: entityType,
       entity_id: entityId,
@@ -387,6 +388,7 @@ Deno.serve(async (req) => {
       error_details: details ? JSON.parse(JSON.stringify(details)) : null,
       raw_data: raw ? JSON.parse(JSON.stringify(raw)) : null,
     });
+    return !error;
   }
 
   function buildResponse(runId: string, stats: { received: number; inserts: number; updates: number; ignored: number; errors: number; errorDetails: { entity_type: string; entity_id: string | null; message: string }[] }) {
@@ -491,7 +493,7 @@ Deno.serve(async (req) => {
       const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
 
       let received = 0;
-      const registrosDeRecusa: Promise<unknown>[] = [];
+      const registrosDeRecusa: Promise<boolean>[] = [];
 
       // Change 3: bulk insert for catalog entities (chunks of 500)
       for (const entityType of ENTIDADES_STAGING_CATALOGO) {
@@ -508,7 +510,7 @@ Deno.serve(async (req) => {
           errors += lote.recusados;
           errorDetails.push({ entity_type: entityType, entity_id: null, message: motivo });
           // O registro é auxiliar (a recusa já está em errors[]): dispara agora e NÃO segura a gravação dos itens limpos.
-          registrosDeRecusa.push(logError(runId, entityType, null, motivo, { campos: lote.camposRecusados.slice(0, MAX_CAMPOS_NA_RECUSA), itens_recusados: lote.recusados, nao_objetos: lote.naoObjetos }).catch(() => {}));
+          registrosDeRecusa.push(logError(runId, entityType, null, motivo, { campos: lote.camposRecusados.slice(0, MAX_CAMPOS_NA_RECUSA), itens_recusados: lote.recusados, nao_objetos: lote.naoObjetos }).catch(() => false));
         }
 
         const { insertedCount } = await bulkInsert(STAGING_CATALOGO[entityType].tabela, lote.linhas, 500, (chunk, err) => {
@@ -548,8 +550,13 @@ Deno.serve(async (req) => {
 
       // Os registros de recusa correram em paralelo com o staging. Espera por eles com teto: se
       // tint_sync_errors não responder, o conector ainda recebe a recusa em errors[] da resposta.
-      if (registrosDeRecusa.length > 0 && !(await comLimite(Promise.all(registrosDeRecusa), LIMITE_DO_REGISTRO_DE_RECUSA_MS))) {
+      // "Respondeu" não é "gravou": o insert que o banco recusa resolve com `error`, sem lançar.
+      let todosGravaram = true;
+      const gravados = Promise.all(registrosDeRecusa).then((rs) => { todosGravaram = !rs.includes(false); });
+      if (registrosDeRecusa.length > 0 && !(await comLimite(gravados, LIMITE_DO_REGISTRO_DE_RECUSA_MS))) {
         console.error(`[tint-sync-agent] /catalogs: registro da recusa em tint_sync_errors não confirmou em ${LIMITE_DO_REGISTRO_DE_RECUSA_MS} ms (run ${runId})`);
+      } else if (!todosGravaram) {
+        console.error(`[tint-sync-agent] /catalogs: registro da recusa em tint_sync_errors NÃO foi gravado (run ${runId})`);
       }
 
       const resp = buildResponse(runId, { received, inserts, updates, ignored, errors, errorDetails });
@@ -709,7 +716,10 @@ Deno.serve(async (req) => {
               await escritaCritica(`${tabela}.insert`, sb.from(tabela).insert(linhas.slice(i, i + MAX_BATCH_ITEMS)));
             }
           },
-          logError: (runId, tipo, id, msg, det) => logError(runId, tipo, id, msg, det),
+          // `logError` devolve se gravou; o contrato de /preparations (DepsPreparacoes) é Promise<void>.
+          logError: async (runId, tipo, id, msg, det) => {
+            await logError(runId, tipo, id, msg, det);
+          },
           completeSyncRun: (runId, stats, status, resp, extra) => completeSyncRun(runId, stats, status, resp, extra),
           concluirEEnfileirar: async (runId, stats, resp) => {
             const r = await concluirEEnfileirarCorpo(agent, runId, stats, resp);
