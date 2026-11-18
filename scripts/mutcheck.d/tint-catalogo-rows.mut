@@ -47,7 +47,7 @@ PEGA | separador de linha Unicode passa pelo saneamento  | s/ \|\| cp === 0x2028
 PEGA | aviso sem ordenar                                | s/return \[\.\.\.descartadas\]\.sort\(\);/return [...descartadas];/
 # ── a recusa do item (o lote com campo fora da lista não é confirmado ao conector) ──
 PEGA | item com campo fora da lista vira linha          | s/^    if \(fora\.length > 0\) \{$/    if (false) {/
-PEGA | item nao-objeto deixa de ser recusado            | s/^    if \(!ehObjetoSimples\(item\)\) \{$/    if (false) {/
+PEGA | texto e numero aceitos como item                 | s/return typeof v === "object" && v !== null && !Array\.isArray\(v\);/return v !== null \&\& v !== undefined \&\& !Array.isArray(v);/
 PEGA | lista aceita como item                           | s/return typeof v === "object" && v !== null && !Array\.isArray\(v\);/return typeof v === "object" \&\& v !== null;/
 PEGA | nao-objeto nao entra na contagem de nao-objetos  | s/^      naoObjetos \+= 1;$/      naoObjetos += 0;/
 PEGA | campos da recusa sem ordenar                     | s/camposRecusados: \[\.\.\.campos\]\.sort\(\), naoObjetos \};/camposRecusados: [...campos], naoObjetos };/
