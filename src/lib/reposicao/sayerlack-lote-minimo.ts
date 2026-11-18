@@ -113,7 +113,7 @@ const MOTIVOS_LOTE: Record<string, string> = {
   recusa_ambigua: 'a linha ficou aberta com um alerta de lote que nao da para atribuir ao item',
 };
 
-export function descreverMotivoLote(motivo: string | null | undefined): string {
+function descreverMotivoLote(motivo: string | null | undefined): string {
   if (!motivo) return 'recusa sem ajuste automatico';
   return MOTIVOS_LOTE[motivo] || ('motivo ' + motivo);
 }
