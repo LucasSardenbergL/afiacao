@@ -1,0 +1,15 @@
+# Instrução × dado e o gate de aprovação no handler da `analyze-services` (scanner Lovable Security, lote 7).
+# @src: supabase/functions/analyze-services/index.ts
+# @test: supabase/functions/analyze-services/index_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: true
+# Rode: bash scripts/mutcheck-all.sh
+# `@compile_cmd: true` de propósito (o mesmo do tint-sync-agent-handler.mut): o `index.ts` importa o
+# SDK da Anthropic e o supabase-js por `npm:`, e o type-check dele é do gate `edges:typecheck`. Cada
+# mutante daqui é válido em tipo, então o vermelho é do teste, não do carregamento.
+#
+PEGA | dados voltam ao system                           | s/system: SYSTEM_PROMPT_SERVICOS,/system: SYSTEM_PROMPT_SERVICOS + mensagemDoPedido,/
+PEGA | mensagem é só o texto cru                        | s/messages: \[\{ role: "user", content: mensagemDoPedido \}\],/messages: [{ role: "user", content: text }],/
+PEGA | cliente sem aprovação passa do gate              | s/if \(!ehStaff && perfilRes\.data\?\.is_approved !== true\) \{/if (false) {/
+PEGA | erro ao ler o perfil deixa passar                | s/if \(rolesRes\.error \|\| perfilRes\.error\) \{/if (rolesRes.error) {/
+PEGA | papel customer conta como staff               | s/\.in\("role", \["employee", "master"\]\)//

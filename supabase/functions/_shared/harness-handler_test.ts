@@ -67,7 +67,12 @@ async function responderGate(r: Request): Promise<Response | null> {
   }
   const m = /user_id=eq\.([^&]+)/.exec(url.search);
   const u = Object.values(USUARIOS_TESTE).find((x) => x.id === m?.[1]);
-  return new Response(JSON.stringify((u?.roles ?? []).map((role) => ({ role }))), { status: 200 });
+  // Respeita o `.in("role", [...])` quando a edge filtra (lote 7, achado do Codex): sem isto, apagar o
+  // filtro do gate deixava `customer` passar como staff e o teste continuava verde.
+  const filtro = /(?:^|&)role=in\.\(([^)]*)\)/.exec(decodeURIComponent(url.search.replace(/^\?/, "")));
+  const aceitos = filtro ? filtro[1].split(",").map((r) => r.replace(/^"|"$/g, "")) : null;
+  const roles = (u?.roles ?? []).filter((role) => aceitos === null || aceitos.includes(role));
+  return new Response(JSON.stringify(roles.map((role) => ({ role }))), { status: 200 });
 }
 
 export function instalarHarness(env: Record<string, string> = ENV_TESTE): Harness {

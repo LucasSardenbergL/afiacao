@@ -1,0 +1,16 @@
+# Instrução × dado no handler da `identify-tool` (scanner Lovable Security, lote 7 — o achado ATIVO
+# "Caller-supplied category text enters the system prompt").
+# @src: supabase/functions/identify-tool/index.ts
+# @test: supabase/functions/identify-tool/index_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: true
+# Rode: bash scripts/mutcheck-all.sh   (o runner sai das diretivas acima — vitest não conhece Deno.test)
+# `@compile_cmd: true` de propósito (o mesmo do tint-sync-agent-handler.mut): o `index.ts` importa o
+# SDK da Anthropic e o supabase-js por `npm:`, e o type-check dele é do gate `edges:typecheck`. Cada
+# mutante daqui é válido em tipo, então o vermelho é do teste, não do carregamento.
+# PEGA = a suíte DEVE matar. O teste EXECUTA o handler com o SDK da Anthropic falso.
+#
+PEGA | categorias voltam ao system                      | s/system: SYSTEM_PROMPT_FERRAMENTA,/system: SYSTEM_PROMPT_FERRAMENTA + textoDoPedido,/
+PEGA | mensagem perde o bloco de categorias             | s/\{ type: "text", text: textoDoPedido \},/{ type: "text", text: "Identifique esta ferramenta na imagem:" },/
+PEGA | cliente sem aprovação passa do gate              | s/if \(!ehStaff && perfilRes\.data\?\.is_approved !== true\) \{/if (false) {/
+PEGA | papel customer conta como staff               | s/\.in\("role", \["employee", "master"\]\)//

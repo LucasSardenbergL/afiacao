@@ -1,0 +1,10 @@
+# O módulo do prompt da `identify-tool` (scanner Lovable Security, lote 7).
+# @src: supabase/functions/identify-tool/ferramenta-prompt.ts
+# @test: supabase/functions/identify-tool/index_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh
+#
+PEGA | bloco sem neutralizar o conteúdo                 | s/BLOCOS_FERRAMENTA\.bloco\("categorias_cadastradas", formatarCategorias\(categories\)\)/"<categorias_cadastradas>\\n" + formatarCategorias(categories) + "\\n<\/categorias_cadastradas>"/
+PEGA | descrição da categoria some                      | s/return nome \? `- \$\{nome\}\$\{desc \? ` \(\$\{desc\}\)` : ""\}` : "";/return nome ? `- \${nome}` : "";/
+PEGA | sem categorias o bloco vem vazio                 | s/return linhas\.length > 0 \? linhas\.join\("\\n"\) : SEM_CATEGORIAS;/return linhas.join("\\n");/
