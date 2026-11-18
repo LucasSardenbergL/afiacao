@@ -124,12 +124,17 @@ reprovado: o máximo da empresa avança sem publicar o pendente do membro. A dec
 garante que a listagem com `cExibeTodos=S` foi completa, e o motor já lia `COALESCE(sea.estoque_fisico, 0) = 0` para o
 membro sem linha. O físico do grupo não muda; passam a existir o pendente e o retrato do dia. A marca de dono é
 `fonte_sync = 'PO_sem_posicao_ListarPosEstoque'`.
-- **Linha nossa → UPDATE a cada run confiável, inclusive para 0.** O `WHERE` leva a marca e o relógio
-  (`ultima_sincronizacao <` início da coleta do PO deste run), e o UPDATE devolve RETURNING. Se um run paralelo
-  regravou a posição real, ou um run mais novo publicou retrato depois da coleta deste, a linha fica intacta.
-- **Sem linha → INSERT … ON CONFLICT DO NOTHING para TODO membro atual ausente**, com ou sem PO. O pendente é
-  `pendenteMembros ?? 0` (o 0 é legítimo sob o C1). Linha de OUTRA origem nunca é tocada: a varredura completa ainda
-  pode pular uma linha (LIMITE em `fisico.ts`), e zerar um físico lido antes seria fabricar.
+- **INSERT … ON CONFLICT DO NOTHING para TODO membro atual ausente**, com ou sem PO, com RETURNING. O pendente é
+  `pendenteMembros ?? 0` (o 0 é legítimo sob o C1).
+- **O que o RETURNING omitiu (a linha já existia) → UPDATE.** O `WHERE` leva a marca e o relógio
+  (`ultima_sincronizacao <` início da coleta do PO deste run), e o UPDATE também devolve RETURNING. Isso:
+  - reconcilia a linha nossa a cada run, inclusive para 0;
+  - faz o perdedor de dois inserts simultâneos ainda reconciliar;
+  - deixa intacta a linha de OUTRA origem (a varredura completa ainda pode pular uma linha, LIMITE em `fisico.ts`, e
+    zerar um físico lido antes seria fabricar);
+  - deixa intacto o retrato publicado por um run mais novo depois da coleta deste.
+- **Sem leitura prévia das linhas nossas.** A 3ª versão lia as linhas nossas antes. O update no conflito a tornou
+  redundante, então ela saiu: menos uma falha possível.
 - **Por que o retrato é incondicional:** o PO do APP é deduplicado do pendente, porque o `em_transito` o conta. Sem o
   retrato, o motor corta o `em_transito` em `D − 7`, e com o sync atrasado o PO fica 0× (Codex, 2ª rodada). Detectar o
   PO do app pelos itens do Omie falhava com item vazio ou sem `nCodProd` (Codex, 3ª rodada). O retrato incondicional
@@ -140,8 +145,12 @@ membro sem linha. O físico do grupo não muda; passam a existir o pendente e o 
   - o físico ilegível (ele veio na listagem);
   - o item de PO ilegível (sem par; entra na contagem `membros_grupo_ilegiveis`);
   - o ex-membro.
-- **Leitura das linhas nossas com prova de completude** (`count exact`). Se a leitura falha, nada é atualizado, o erro
-  vai ao resumo e o run não vale como "aplicado".
+- **Dedup do ramo portal do `em_transito` (Codex, 4ª rodada).** O `fetchEmTransitoKeys` ganhou o predicado do 2º
+  ramo da CTE: `status_envio_portal IN (sucesso_portal, enviado_portal)`, protocolo não nulo, número Omie nulo, status
+  fora de cancelado/expirado e **sem corte de data**. Ele usa `.limit(1000)` + `count exact` e lança se faltar linha.
+  Antes, um PO `AFI-<id>` desse ramo, aberto no Omie, entrava no pendente E no `em_transito` (2×). Isso já afetava
+  habilitados e membros listados, e o retrato novo o estenderia aos membros sem linha. Em prod hoje há 0 pedidos nesse
+  ramo.
 - **Observação:** só SKUs com RETURNING entram no pendente gravado. Falha **ou conflito** tira o `pendente_aplicado`
   (Codex P2, 2ª rodada).
 - **Desfecho:** não muda.
@@ -164,15 +173,19 @@ Todos foram consertados.
 **Codex, 3ª rodada (high, 150s): REPROVA, três P1.**
 - **0×, consertado:** a coleta do `dedup_app` dependia do `nCodProd` do item. Agora o retrato é incondicional.
 - **0×, consertado:** um run mais velho zerava o retrato de um run mais novo. Agora o UPDATE é condicionado ao relógio.
-- **2×, fora de escopo, preexistente:** o ramo portal do `em_transito` (`sucesso_portal`/`enviado_portal` com
-  protocolo e número Omie nulo) conta **sem corte de data**, e a dedup da edge só cobre a janela de 7 dias. Isso já
-  afeta habilitados e membros listados pelo upsert normal. Foi reportado como bug separado.
+- **2×, preexistente:** o ramo portal do `em_transito` conta **sem corte de data**, e a dedup da edge só cobria a
+  janela de 7 dias. Primeiro foi tratado como fora de escopo; na 4ª rodada o Codex pediu o conserto antes do deploy, e
+  ele entrou aqui (ver Desenho).
+
+**Codex, 4ª rodada (high, 95s): REPROVA, dois P1, ambos consertados.**
+- **0×:** o perdedor de dois INSERTs simultâneos não reconciliava. Agora o UPDATE condicionado roda no conflito.
+- **2×:** o ramo portal; entrou a dedup.
 
 Fora de escopo, também apontado por ele, há um preexistente: na COLACOR, o
 `computePendenteViaListarSaldo` devolve o `Map` no lugar de `{pendente, pendenteMembros}`. Hoje é inalcançável (a
 COLACOR não tem habilitado) e fica como follow-up.
 
-**Prova** (Deno, `publicacao_test.ts`, 106/0):
+**Prova** (Deno, `publicacao_test.ts`, 104/0, depois de sair a leitura das linhas nossas):
 - O teste antigo "membro que não veio no retrato não é escrito" virou a expectativa nova. O vermelho antes do conserto
   deu 5 falhas.
 - A sequência do Codex (10→10→4→0 e 10→16) roda numa tabela em memória que persiste entre runs. Também estão
@@ -186,7 +199,9 @@ COLACOR não tem habilitado) e fica como follow-up.
   `dedup_app` e `membrosGrupo` só com a equivalência lida.
 - Falsificação com controle verde na MESMA invocação. Na 1ª etapa, 7 sabotagens deram vermelho. Na 2ª, as 9 deram
   vermelho; na 3ª, 14, somando PO do app, membro atual, `membrosErro`, `aplicado` com conflito e contagem de ilegíveis. Na 4ª,
-  15, somando insert só com PO, retrato sem o início da coleta e update sem o relógio.
+  15, somando insert só com PO, retrato sem o início da coleta e update sem o relógio. Na 5ª, 15 contra o código final:
+  conflito sem update, dedup do portal ausente ou com corte de data, SKU fora do grupo e as anteriores que seguem
+  válidas.
   Uma sabotagem ficou verde e expôs camada não exercida sozinha (a leitura das linhas nossas mascarada pelo conflito):
   ganhou um teste isolado. As da 2ª etapa:
   - sem reconciliar;
