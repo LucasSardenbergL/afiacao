@@ -149,7 +149,7 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/sayerlack-captura-precos/index.ts', 1],
   ['supabase/functions/scoring-recalc-client/index.ts', 1],
   ['supabase/functions/sync-reprocess/index.ts', 1],
-  ['supabase/functions/tint-sync-agent/index.ts', 3], // 6→3 (2026-09-25): completeSyncRun confere o UPDATE; saíram os 2 update({status:'error'}) do promote no HTTP
+  ['supabase/functions/tint-sync-agent/index.ts', 2], // 3→2 (2026-11-17, lote 6 do scanner): logError confere o `error` do insert e devolve se gravou · 6→3 (2026-09-25): completeSyncRun confere o UPDATE; saíram os 2 update({status:'error'}) do promote no HTTP
   ['supabase/functions/visit-score-recalc-client/index.ts', 1],
   ['supabase/functions/whatsapp-inbound/index.ts', 4],
 ]);
