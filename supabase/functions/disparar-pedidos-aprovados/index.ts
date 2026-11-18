@@ -8,7 +8,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { chamarOmie } from "../_shared/omie-cliente.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
-import { previsaoComCalendario } from "./previsao.ts";
+import { colunasRecebimentoCalendario, previsaoComCalendario } from "./previsao.ts";
 import { abririaEnvioNovoAoPortal, ehRecusaDefinitivaPortal, MENSAGEM_PORTAL_FECHADO, mensagemRecusaDefinitiva, portalSayerlackFechado } from "./janela-portal.ts";
 import { montarProdutosIncluir } from "./produto-po.ts";
 import { esperaPermitidaMs } from "./espera-split.ts";
@@ -1437,13 +1437,8 @@ async function processarPedido(
         // Calendário de operação: recebimento ajustado do nosso lado (o dDtPrevisao do Omie é a promessa).
         // No legado (calendário indisponível) as duas chaves NÃO entram — ficam NULL, nunca "sem ajuste" — e
         // um bundle publicado antes da migration 20261119100000 não manda coluna desconhecida ao PostgREST
-        // (que recusaria o update e deixaria o PO `disparado_sem_registro`).
-        ...(previsao.dataRecebimentoPrevista !== null
-          ? {
-            data_recebimento_prevista: previsao.dataRecebimentoPrevista,
-            recebimento_ajustado_calendario: previsao.ajustado,
-          }
-          : {}),
+        // (que recusaria o update e deixaria o PO `disparado_sem_registro`). Testado em previsao_test.ts.
+        ...colunasRecebimentoCalendario(previsao),
         canal_usado: result.canal,
         resposta_canal: {
           ...overrideTag,

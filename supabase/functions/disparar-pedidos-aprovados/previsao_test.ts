@@ -6,7 +6,7 @@
 // O relógio é INJETADO (`agora`). Calendário de referência (conferido à mão a partir de 01/01/2024 =
 // segunda): 30/09/2026 é quarta, 01/10 quinta, 02/10 sexta, 03/10 sábado, 04/10 domingo, 05/10 segunda;
 // 31/12/2026 é quinta e 01/01/2027 sexta.
-import { dataPrevisaoOmie, previsaoComCalendario, somarDiasUteis } from "./previsao.ts";
+import { colunasRecebimentoCalendario, dataPrevisaoOmie, previsaoComCalendario, somarDiasUteis } from "./previsao.ts";
 
 function assertEquals(a: unknown, b: unknown, msg: string) {
   if (a !== b) throw new Error(`${msg}: esperava ${JSON.stringify(b)}, veio ${JSON.stringify(a)}`);
@@ -224,4 +224,33 @@ Deno.test("calendário: RPC devolve data malformada → legado (não vira dDtPre
     "2026-12-21",
     "proximo malformado",
   );
+});
+
+// ── colunasRecebimentoCalendario: o spread condicional do patch do desfecho ──
+
+Deno.test("patch do desfecho: legado ⇒ as duas chaves AUSENTES (não null, não false)", () => {
+  const patch = { status: "disparado", ...colunasRecebimentoCalendario({ dataRecebimentoPrevista: null, ajustado: null }) };
+  assertEquals("data_recebimento_prevista" in patch, false, "data_recebimento_prevista ausente");
+  assertEquals("recebimento_ajustado_calendario" in patch, false, "recebimento_ajustado_calendario ausente");
+  assertEquals(Object.keys(patch).join(","), "status", "só as chaves de sempre");
+});
+
+Deno.test("patch do desfecho: calendário ok ⇒ as duas chaves PRESENTES com os valores", () => {
+  const ajustado = colunasRecebimentoCalendario({ dataRecebimentoPrevista: "2027-01-04", ajustado: true });
+  assertEquals(ajustado.data_recebimento_prevista, "2027-01-04", "data presente");
+  assertEquals(ajustado.recebimento_ajustado_calendario, true, "ajustado presente");
+  const semAjuste = colunasRecebimentoCalendario({ dataRecebimentoPrevista: "2026-12-09", ajustado: false });
+  assertEquals("recebimento_ajustado_calendario" in semAjuste, true, "false também é chave presente");
+  assertEquals(semAjuste.recebimento_ajustado_calendario, false, "false preservado");
+});
+
+Deno.test("patch do desfecho: o resultado REAL do legado de previsaoComCalendario não leva as chaves", async () => {
+  const r = await previsaoComCalendario({
+    portalDataEntrega: null,
+    ltDias: 3,
+    agora: new Date("2026-12-01T15:00:00Z"),
+    somarFornecedor: () => Promise.reject(new Error("rpc ausente")),
+    proximoRecebimento: () => Promise.resolve("2026-12-04"),
+  });
+  assertEquals(Object.keys(colunasRecebimentoCalendario(r)).length, 0, "legado ⇒ patch sem colunas do calendário");
 });

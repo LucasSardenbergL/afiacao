@@ -87,3 +87,17 @@ export async function previsaoComCalendario(e: {
     return legado(mensagemDeErro(err) ?? "erro sem mensagem");
   }
 }
+
+/**
+ * As colunas do calendário que entram no update do desfecho. Legado (`dataRecebimentoPrevista` null) ⇒ objeto
+ * VAZIO: as chaves ficam AUSENTES (NULL no banco, nunca "sem ajuste") e um bundle publicado antes da migration
+ * 20261119100000 não manda coluna desconhecida ao PostgREST — que recusaria o update e deixaria o PO
+ * `disparado_sem_registro`.
+ */
+export function colunasRecebimentoCalendario(p: {
+  dataRecebimentoPrevista: string | null;
+  ajustado: boolean | null;
+}): { data_recebimento_prevista?: string; recebimento_ajustado_calendario?: boolean | null } {
+  if (p.dataRecebimentoPrevista === null) return {};
+  return { data_recebimento_prevista: p.dataRecebimentoPrevista, recebimento_ajustado_calendario: p.ajustado };
+}
