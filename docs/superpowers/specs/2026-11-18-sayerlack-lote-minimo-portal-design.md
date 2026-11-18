@@ -212,7 +212,9 @@ O founder decidiu que o e-mail sai do Gmail pessoal dele. É a **mesma caixa** q
 1. ~~Unidade do "20"~~: **respondida**, é Qtd UN (§2).
 2. ~~Caixa de e-mail~~: **respondida**, é o Gmail pessoal do founder; o Apps Script está vivo (§6).
 3. ~~Como cancelar~~: **respondida**, é uma resposta no thread do CRS; a Sayerlack cancela sozinha.
-4. **Se a Sayerlack faturar o lote mesmo após pedir a redução:** aceitamos o estoque extra ou devolvemos?
+4. ~~Faturou o lote mesmo assim~~: **respondida**, decisão do founder caso a caso. Quando a NF ou o pedido importado
+   vier com `qtde_portal` em vez de `qtde_omie`, o sistema alerta com o trecho da resposta do CRS e o founder decide
+   entre aceitar o estoque e cancelar/devolver. Nada é automático nesse ramo.
 5. ~~Prazo~~: **respondido**, é 1 dia útil para alerta e cobrança.
 6. ~~Pedido separado~~: **respondida**, sim. O item abaixo do lote vai sozinho num pedido de portal, então
    cancelar não derruba os outros SKUs.
