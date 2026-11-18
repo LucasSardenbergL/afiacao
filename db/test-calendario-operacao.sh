@@ -88,7 +88,8 @@ case "${SABOTAGEM:-}" in
   sem_revoke_public)     sabotar "$REV_ANON" "REVOKE ALL ON FUNCTION public.calendario_proximo_dia_recebimento(text, date) FROM anon;" ;;
   sem_revoke_public_sem_post)
                          sabotar "$REV_ANON" "REVOKE ALL ON FUNCTION public.calendario_proximo_dia_recebimento(text, date) FROM anon;"
-                         sabotar "$POST_PUBLIC" "IF false THEN" ;;
+                         sabotar "$POST_PUBLIC" "IF false THEN"
+                         sabotar "$POST_ANON" "IF false THEN" ;;   # anon herda de PUBLIC: os dois checks acusariam
   teto_60_off)           sabotar "(p_data + 59)::timestamp" "(p_data + 400)::timestamp" ;;
   fechado_peso_off)      sabotar "CHECK (status <> 'fechado' OR peso = 0)" "CHECK (true)" ;;
   escrita_employee)      sabotar "WITH CHECK ((SELECT public.has_role(auth.uid(), 'master'::public.app_role)));" \
