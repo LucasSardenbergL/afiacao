@@ -44,6 +44,8 @@ import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMin
 import { acaoLinhaAtencao, particionarAtencao } from '@/components/reposicao/pedidos/shared';
 import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
 import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
+import { PoABaixarCard } from '@/components/reposicao/pedidos/PoABaixarCard';
+import { ehAcessoNegadoFila, normalizarFila, ordenarFila, type ItemPoABaixar } from '@/components/reposicao/pedidos/po-a-baixar';
 import { PedidosPortalCard } from '@/components/reposicao/pedidos/PedidosPortalCard';
 import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarcador, ordenarCandidatos, type Frescor, type MarcadorPos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
@@ -463,6 +465,27 @@ export default function AdminReposicaoPedidos() {
     const id = setInterval(() => setAgoraMs(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
+
+  // [PO A BAIXAR] Fila só-leitura: PO que o motor conta "a caminho" com NF já recebida + NF pendente no Omie
+  // com proposta da sombra (spec baixa-pedido-compra §19). Mesmo contrato de leitura do bloco acima: chave
+  // por principal, sem retry, negado para de polar, falha vira aviso (nunca ausência).
+  const {
+    data: filaPoABaixar,
+    error: erroPoABaixar,
+    isLoading: apurandoPoABaixar,
+  } = useQuery({
+    queryKey: ['pedidos-ciclo', 'po-a-baixar', EMPRESA, user?.id],
+    queryFn: async (): Promise<ItemPoABaixar[]> => {
+      const { data, error } = await supabase.rpc('reposicao_po_a_baixar', { p_empresa: EMPRESA });
+      if (error) throw error;
+      return ordenarFila(normalizarFila(data));
+    },
+    enabled: Boolean(user?.id),
+    retry: false,
+    refetchInterval: (q) => (ehAcessoNegadoFila(q.state.error) ? false : 5 * 60_000),
+    staleTime: 60_000,
+  });
+  const falhouPoABaixar = erroPoABaixar != null && !ehAcessoNegadoFila(erroPoABaixar);
 
   const negadoPosSumidos = ehAcessoNegado(erroPosSumidos) || ehAcessoNegado(erroMarcador);
   const falhouListaPos = erroPosSumidos != null && !ehAcessoNegado(erroPosSumidos);
@@ -1194,6 +1217,12 @@ export default function AdminReposicaoPedidos() {
       <CaixaCompraCard pedidos={pedidos ?? []} />
 
       {!poSumidoPedeAcao && poSumidoCard}
+
+      <PoABaixarCard
+        itens={filaPoABaixar ?? []}
+        falhaApuracao={falhouPoABaixar}
+        apurando={apurandoPoABaixar}
+      />
 
       </section>
 
