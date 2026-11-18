@@ -115,7 +115,8 @@ function principal(): void {
       const diasLt: string[] = [];
       for (let d = D; diasLt.length < Math.ceil(g.lt); d = addDias(d, 1)) if (ehDiaUtil(d)) diasLt.push(d);
       const ultimo = [dias30[dias30.length - 1], diasLt[diasLt.length - 1]].sort().pop() as string;
-      if (ultimo > dados.dataExtracao) throw new Error(`horizonte de ${D} (SKU ${s.sku}) passa da extração (${dados.dataExtracao}): dia sem dado viraria venda zero`);
+      // o dia da extração está INCOMPLETO (extraído durante o expediente): só conta dia já encerrado.
+      if (ultimo >= dados.dataExtracao) throw new Error(`horizonte de ${D} (SKU ${s.sku}) alcança o dia da extração (${dados.dataExtracao}, incompleto): dia sem dado viraria venda zero`);
       linhas.push({ sku: s.sku, d0: g.demanda, d1, pp0, pp1, real30: somar(s.sku, dias30), realLt: somar(s.sku, diasLt), cmc: s.cmc });
     }
     const real = linhas.reduce((a, l) => a + l.real30, 0);
