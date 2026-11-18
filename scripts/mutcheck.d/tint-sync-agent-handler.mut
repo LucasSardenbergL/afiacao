@@ -35,3 +35,7 @@ PEGA | relogio do servidor adiantado em 2 min           | s/validarGeneratedAt\(
 PEGA | relogio do servidor atrasado em 2 min            | s/validarGeneratedAt\(generated_at, Date\.now\(\)\)/validarGeneratedAt(generated_at, Date.now() - 120_000)/
 # ── controle do fake de auth ──
 PEGA | token da loja nao e conferido                    | s/if \(!data\.sync_token \|\| !timingSafeEq\(String\(data\.sync_token\), syncToken\)\) return null;/if (!data.sync_token) return null;/
+# ── o registro da recusa é conferido (v1.5) ──
+PEGA | logError diz que gravou sem conferir o erro           | s/return !error;/return true;/
+PEGA | registro recusado pelo banco passa calado             | s/\(await gravados\)\.includes\(false\)/(await gravados).includes(null as never)/
+PEGA | falha do registro vira "gravou"                       | s/nao_objetos: lote\.naoObjetos \}\)\.catch\(\(\) => false\)\);/nao_objetos: lote.naoObjetos }).then(() => true));/
