@@ -2,7 +2,7 @@
 // A RPC `reposicao_po_a_baixar` é a fonte; aqui só normalizamos na FRONTEIRA (a resposta entra por cast)
 // e decidimos ordem e texto. Nada aqui escreve no Omie.
 
-export type TipoPoABaixar = 'po_contado_com_nf' | 'nf_pendente';
+type TipoPoABaixar ='po_contado_com_nf' | 'nf_pendente';
 
 export interface ItemPoABaixar {
   tipo: TipoPoABaixar;

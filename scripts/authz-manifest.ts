@@ -382,6 +382,13 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
     motivo: 'marcador de frescor do detector de PO (run_id/seq/finalizado_em) p/ authenticated; master-only pelo mesmo cap_compras_ler da irmã',
   },
+  // Fila "PO a baixar no Omie" (spec baixa-pedido-compra §19): lê espelho de POs (fornecedor/NF) + conjunto
+  // observado pelo motor + sombra da associação. Mesmo gate initplan das irmãs acima.
+  'public.reposicao_po_a_baixar': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'fila PO a baixar — fornecedor/NF/POs sugeridos p/ authenticated; mesmo cap_compras_ler das irmãs do detector de PO',
+  },
   // ⚠️ ATP fase 1.1 (migration 20260806225052): existe uma 5ª função que ESCREVE em
   // estoque_reservas e NÃO tem gate — `private.expirar_reservas_vencidas_job()`. É
   // DE PROPÓSITO e não é furo: pg_cron nativo roda SEM JWT, então auth.role() e
