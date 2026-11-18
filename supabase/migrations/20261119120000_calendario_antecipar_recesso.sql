@@ -109,10 +109,10 @@ BEGIN
   END IF;
   -- PUBLIC antes de anon: anon herda de PUBLIC, então PUBLIC aberto acusaria "anon" e esconderia a causa.
   IF has_function_privilege('public', v_fn, 'EXECUTE') THEN
-    RAISE EXCEPTION '[CALENDARIO-ANTECIPAR-POST] PUBLIC executa calendario_itens_antecipar';
+    RAISE EXCEPTION '[CALENDARIO-ANTECIPAR-POST] PUBLIC executa a RPC de antecipar';
   END IF;
   IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN
-    RAISE EXCEPTION '[CALENDARIO-ANTECIPAR-POST] anon executa calendario_itens_antecipar';
+    RAISE EXCEPTION '[CALENDARIO-ANTECIPAR-POST] anon executa a RPC de antecipar';
   END IF;
   IF NOT has_function_privilege('authenticated', v_fn, 'EXECUTE') THEN
     RAISE EXCEPTION '[CALENDARIO-ANTECIPAR-POST] authenticated sem EXECUTE em calendario_itens_antecipar';

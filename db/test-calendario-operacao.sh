@@ -29,7 +29,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     ant_sem_pendente:AANT1 ant_pendente_null_vira_zero:AANT1 ant_lt_null_vira_zero:AANT1 ant_lt_floor:AANT1
     ant_demanda_zero_entra:AANT1 ant_chegada_null_fabricada:AANT_COLACOR ant_fornecedor_fechado_off:AANT1
     ant_janela_off:AANT_JANELA ant_sem_lower_btrim:AANT1 ant_sem_empresa:AANT1 ant_nao_estrito:AANT1
-    ant_ativo_off:AANT1 ant_gate_off:AANT_GATE ant_revoke_anon:POST!ANTECIPAR-POST]_anon
+    ant_ativo_off:AANT1 ant_gate_off:AANT_GATE ant_revoke_anon:POST!anon_executa_a_RPC_de_antecipar
     ant_revoke_anon_sem_post:AANT_ANON ant_revoke_public_sem_post:AANT_PUBLIC"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-calendario-operacao.XXXXXX")"
   echo "== CONTROLE =="
