@@ -852,12 +852,20 @@ export default async ({ page, context }) => {
     const detectarLoteMinimo = async (bodyText, antes) => {
       await sleep(300); // o alerta do portal renderiza logo após a resposta do POST
       const dom = await lerAlertasPortal();
-      const novosDom = (antes.textos
+      // Codex P0 (diff): nó NOVO com texto que JÁ estava visível pode ser o portal re-renderizando o alerta de OUTRO
+      // item — não prova recusa DESTE. Só texto novo (ou corpo/diálogo novo) atribui; o resto vira 'ambiguo'.
+      const textosNovos = antes.textos
         ? (dom.textos || []).filter(function(x) { return !antes.textos.has(x); })
-        : []).concat(dom.novos || []);
+        : [];
+      const reRender = antes.textos
+        ? (dom.novos || []).filter(function(x) { return antes.textos.has(x); })
+        : (dom.novos || []);
+      const novosDom = textosNovos.concat(antes.textos ? [] : reRender);
       const novosDialogos = dialogosVistos.slice(antes.dialogos);
       const achado = extrairLoteMinimoPortal([bodyText].concat(novosDom, novosDialogos));
-      return achado ? { achado: achado, linha: dom.linha } : null;
+      if (achado) return { achado: achado, linha: dom.linha, ambiguo: false };
+      const achadoReRender = antes.textos ? extrairLoteMinimoPortal(reRender) : null;
+      return achadoReRender ? { achado: achadoReRender, linha: dom.linha, ambiguo: true } : null;
     };
     // motivo (Fase 1): por que NÃO subiu ao lote / não provou o ajuste (null = recusa da Fase 0). Sempre ANTES
     // do Efetivar → efetivarAttempted segue false → erro_nao_retentavel, nada colocado.
@@ -1217,6 +1225,7 @@ export default async ({ page, context }) => {
       // === Fase 1: subir ao lote (decisão do founder, 2026-11-18 — sem teto de valor) ===
       // Redigita Qtd UN = lote na linha AINDA em edição, grava de novo (sem 2º clique cego: timeout do save não
       // prova clique perdido) e só aceita com a linha CONFIRMADA e a grade até aqui batendo por cabeçalho.
+      if (loteDet && loteDet.ambiguo) return await abortarLoteMinimo(loteDet, i, item, 'recusa_ambigua');
       if (loteDet) {
         const dec = decidirAjusteLote(loteDet.achado.lote, Number(item.qtde), loteAplicado[i] !== undefined);
         if (dec.acao !== 'ajustar') return await abortarLoteMinimo(loteDet, i, item, dec.motivo);
@@ -1460,14 +1469,7 @@ export default async ({ page, context }) => {
     } else {
       const loteNovo = await detectarLoteMinimo(null, { textos: null, dialogos: dialogosBaseFinal });
       if (loteNovo) return await abortarLoteMinimo(loteNovo, null, null, 'recusa_apos_ajuste');
-      const provaFinal = provarGradeAjustada(await lerGradeProva(), esperadosAte(items.length - 1));
-      trace.push({ step: 'prova_grade_pre_efetivar', ok: provaFinal.ok, motivo: provaFinal.ok ? null : provaFinal.motivo, ajustes: ajustesLote.length, t: Date.now() - t0 });
-      if (!provaFinal.ok) {
-        return await abortarLoteMinimo(
-          { achado: { lote: ajustesLote[0].lote, trecho: 'prova da grade antes do Efetivar' }, linha: null },
-          null, null, 'grade_divergente', provaFinal,
-        );
-      }
+      // A prova da GRADE inteira roda mais abaixo, colada no clique (Codex P1: janela prova→clique mínima).
     }
 
     // === PR3: wait composto pós-submit ===
@@ -1489,6 +1491,20 @@ export default async ({ page, context }) => {
     // Sayerlack. Setar ANTES do click (não depois): se o próprio click pendurar
     // ou lançar, efetivarAttempted já é true → classificação cai em indeterminado
     // (conservador), nunca em retentável.
+    // Fase 1: com ajuste de lote, a GRADE inteira prova AQUI — a última leitura antes da fronteira money-path —
+    // linha i ↔ item i, nenhuma em edição, Qtd UN como texto = lote (ajustado) ou qtde. Furo → aborta ANTES do
+    // efetivarAttempted (nada colocado). Sem ajuste, nada muda.
+    if (ajustesLote.length > 0) {
+      const provaFinal = provarGradeAjustada(await lerGradeProva(), esperadosAte(items.length - 1));
+      trace.push({ step: 'prova_grade_pre_efetivar', ok: provaFinal.ok, motivo: provaFinal.ok ? null : provaFinal.motivo, ajustes: ajustesLote.length, t: Date.now() - t0 });
+      if (!provaFinal.ok) {
+        signalPromise.catch(function() { return null; }); // o sinal armado fica órfão; nada foi clicado
+        return await abortarLoteMinimo(
+          { achado: { lote: ajustesLote[0].lote, trecho: 'prova da grade antes do Efetivar' }, linha: null },
+          null, null, 'grade_divergente', provaFinal,
+        );
+      }
+    }
     efetivarAttempted = true;
     await page.click('#btnSalvarNovoPedido');
     trace.push({ step: 'efetivar_clicked', t: Date.now() - t0, postSubmitBudget, remaining: remainingMs() });
@@ -2406,6 +2422,9 @@ async function processarPedido(
   // PO (Codex P0): ledger que não gravou (ou ajuste ilegível) → indeterminado → conciliação, PO não sai sozinho.
   // Com efetivarAttempted === false nada foi colocado: sem ledger.
   const ajustesLeitura = lerAjustesLoteDaEvidencia(evidence, itemsPortal);
+  // Codex P1: o script desta versão SEMPRE devolve ajustesLote (array; [] no pedido comum). Clique feito e campo
+  // ausente = envelope parcial/estranho → não se prova "zero ajustes" → conta como ilegível (vai a conciliação).
+  if (efetivarAttempted === true && !Array.isArray(evidence?.ajustesLote)) ajustesLeitura.invalidos += 1;
   const teveAjusteLote = ajustesLeitura.validos.length > 0 || ajustesLeitura.invalidos > 0;
   let erroAjusteLote: string | null = null;
   if (
@@ -2625,7 +2644,7 @@ async function registrarAjustesLote(
         qtde_portal_necessaria: a.qtdeOriginal,
         qtde_portal_lancada: a.lote,
         lote_minimo: a.lote,
-        portal_protocolo: ctx.protocolo,
+        portal_protocolo: ctx.protocolo == null ? null : String(ctx.protocolo),
         status_envio: ctx.statusEnvio,
         evidencia: ctx.evidencia,
       };
@@ -2637,14 +2656,23 @@ async function registrarAjustesLote(
         ok = false;
         console.error(`[envio-portal] Pedido #${pedido.id}: ledger de ajuste de lote falhou (${error.code ?? "sem código"}):`, error.message);
       } else {
+        // 2ª testemunha (Codex P1): relê e compara CAMPO A CAMPO — uma linha antiga preservada pelo ignoreDuplicates
+        // (outro lote, outro protocolo) não pode passar por "gravado".
         const ids = linhas.map((l) => l.pedido_item_id);
-        const { count, error: eLeitura } = await supabase.from("pedido_portal_ajuste_qtde")
-          .select("id", { count: "exact", head: true })
+        const { data: lidas, error: eLeitura } = await supabase.from("pedido_portal_ajuste_qtde")
+          .select("pedido_item_id, sku_portal, qtde_portal_necessaria, qtde_portal_lancada, lote_minimo, portal_protocolo")
           .eq("pedido_id", pedido.id)
           .in("pedido_item_id", ids);
-        if (eLeitura || count !== linhas.length) {
+        const porItem = new Map(((lidas ?? []) as Array<Record<string, unknown>>).map((r) => [Number(r.pedido_item_id), r]));
+        const divergentes = linhas.filter((l) => {
+          const r = porItem.get(l.pedido_item_id);
+          return !r || r.sku_portal !== l.sku_portal || Number(r.qtde_portal_necessaria) !== l.qtde_portal_necessaria
+            || Number(r.qtde_portal_lancada) !== l.qtde_portal_lancada || Number(r.lote_minimo) !== l.lote_minimo
+            || (r.portal_protocolo ?? null) !== (l.portal_protocolo ?? null);
+        });
+        if (eLeitura || divergentes.length > 0) {
           ok = false;
-          console.error(`[envio-portal] Pedido #${pedido.id}: ledger de ajuste não provado na releitura (count=${String(count)} ≠ ${linhas.length})`, eLeitura?.message ?? "");
+          console.error(`[envio-portal] Pedido #${pedido.id}: ledger de ajuste não provado na releitura (${divergentes.length} divergente(s))`, eLeitura?.message ?? "");
         }
       }
     } catch (e) {
