@@ -112,7 +112,7 @@ if [ -n "$SABOTAGEM" ]; then
     guc_lixo_vale)     sabotar_em "$MIG_USADA" "= ANY (ARRAY['sombra'::text, 'valendo'::text])" "= ANY (ARRAY['sombra'::text, 'valendo'::text, 'xyz'::text])" ; sem_trava_de_texto ;;
     colacor_ajusta)    sabotar_em "$MIG_USADA" "LEFT JOIN calendario_fator fcal ON fcal.empresa_cal = c.empresa" "LEFT JOIN calendario_fator fcal ON true" ; sem_trava_de_texto ;;
     anon_executa)      sabotar_em "$MIG_USADA" "GRANT EXECUTE ON FUNCTION public.calendario_fator_demanda(text, date) TO authenticated, service_role;" "GRANT EXECUTE ON FUNCTION public.calendario_fator_demanda(text, date) TO authenticated, service_role, anon;" ;;
-    job_guc_vaza)      sabotar_em "$MIG_USADA" "SET \"reposicao.demanda_calendario_forcar\" = ''" "" ; sabotar_em "$MIG_USADA" "  PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', '', true);
+    job_guc_vaza)      sabotar_em "$MIG_USADA" "  PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', '', true);
   IF to_regclass" "  IF to_regclass" ;;
     pre_frouxa)        sabotar_em "$MIG_PRE" "IF v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a'" "IF false AND v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a'" ;;
     *) echo "SABOTAGEM DESCONHECIDA: $SABOTAGEM"; exit 2 ;;

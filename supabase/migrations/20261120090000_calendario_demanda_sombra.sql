@@ -569,14 +569,14 @@ CREATE POLICY reposicao_demanda_calendario_sombra_sel ON public.reposicao_demand
   USING ((SELECT public.has_role(auth.uid(), 'master'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 -- Job (owner-only, sem gate de JWT: pg_cron roda sem auth.uid). Lê a view com o modo FORÇADO pela GUC — a mesma
--- fórmula nos dois lados. O SET da GUC no cabeçalho confina o set_config ao escopo da função.
+-- fórmula nos dois lados. A GUC volta a '' no fim (sem SET no cabeçalho: no Supabase o postgres não é superusuário e
+-- o PG15+ recusa GUC customizada em CREATE FUNCTION … SET — 42501 no ensaio de 2026-11-18); erro aborta a transação.
 CREATE OR REPLACE FUNCTION public.reposicao_demanda_calendario_sombra_registrar(p_empresa text DEFAULT 'OBEN')
 RETURNS integer
 LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = public, pg_catalog
-SET "reposicao.demanda_calendario_forcar" = ''
 AS $fn$
 DECLARE
   v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
