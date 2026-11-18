@@ -90,7 +90,14 @@ cp "$MIG" "$MIG_USADA"
 cp "$MIG_ANT" "$MIG_ANT_USADA"
 cp "$MIG_REL" "$MIG_REL_USADA"
 sabotar() { sabotar_em "$MIG_USADA" "$@"; }
-sabotar_ant() { sabotar_em "$MIG_ANT_USADA" "$@"; }   # sabota a migration da Task 4b
+# Sabota a migration da Task 4b. O corpo VIVO de calendario_antecipar_avaliacao é o da 20261119140000 (aplicada
+# depois): se o padrão também está lá, sabota as duas e desliga as guardas dela — senão o REPLACE desfaria a sabotagem.
+REL_GUARDAS_OFF=0
+sabotar_ant() {
+  sabotar_em "$MIG_ANT_USADA" "$@"
+  if contem "$MIG_REL_USADA" "$1"; then sabotar_em "$MIG_REL_USADA" "$@"; REL_GUARDAS_OFF=1; fi
+}
+contem() { python3 -I -c 'import sys; sys.exit(0 if sys.argv[2] in open(sys.argv[1], encoding="utf-8").read() else 1)' "$1" "$2"; }
 sabotar_rel() { sabotar_em "$MIG_REL_USADA" "$@"; }   # sabota a migration do relógio do sync
 # Desliga PRE e PÓS do relógio (viram NOTICE): a sabotagem do CORPO chega viva aos asserts — o "_sem_post".
 rel_sem_guardas() {
@@ -190,7 +197,8 @@ case "${SABOTAGEM:-}" in
                          sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN" ;;
   # Onda final (P1a): trânsito do app = em_transito do motor, uma regra por vez.
   ant_sem_transito_app)  sabotar_ant " + COALESCE(et.qtde, 0))" ")" ;;
-  ant_transito_janela_off) sabotar_ant " AND pcs2.data_ciclo >= (p_hoje - INTERVAL '7 days')" "" ;;
+  ant_transito_janela_off) sabotar_ant " AND pcs2.data_ciclo >= (p_hoje - INTERVAL '7 days')" ""
+                         sabotar_rel "$REL_PRED" "'concluido_recebido')"; REL_GUARDAS_OFF=1 ;;   # a janela viva é a do relógio
   ant_transito_erro_terminal_off) sabotar_ant "AND pcs2.status_envio_portal IS NOT DISTINCT FROM 'erro_nao_retentavel'" "AND false" ;;
   ant_transito_null_blind) sabotar_ant "IS NOT DISTINCT FROM 'erro_nao_retentavel'" "= 'erro_nao_retentavel'" ;;
   ant_transito_sem_portal) sabotar_ant "OR (pcs2.status_envio_portal IN ('sucesso_portal','enviado_portal')" "OR (false" ;;
@@ -231,6 +239,7 @@ case "${SABOTAGEM:-}" in
 -- PÓS: o corte novo no CÓDIGO" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
+[ "$REL_GUARDAS_OFF" -eq 1 ] && rel_sem_guardas
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
 # HOJE_TESTE=AAAA-MM-DD simula o "hoje" de SP (na cópia da migration e no teste) — prova a janela móvel do
 # calendario_dias_sem_nf contra as datas fixas da carga (revisão I2). Sem a variável, usa o relógio real.
