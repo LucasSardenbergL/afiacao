@@ -1,0 +1,4 @@
+# Calendário de operação (Etapa 2): fator U/W da demanda (OBEN), guardas W/U<0,6 e teto 1,35, pendente_dado fora de U e
+# W, meia_equipe = 1; v_sku_parametros_sugeridos troca o d só com a chave ligada (sombra = predecessora da prod, md5
+# conferido); estatisticas crua + fator; ACL da função; job da sombra idempotente com GUC confinada. 13 sabotagens.
+db/test-calendario-demanda.sh 34  falsificar=13
