@@ -78,12 +78,14 @@ export function useDiasSemNf(empresa: EmpresaCalendario, hoje: string) {
         (de, ate) =>
           supabase
             .rpc('calendario_dias_sem_nf', { p_empresa: empresa, p_de: addDias(hoje, -365), p_ate: hoje })
-            // SETOF date: a coluna leva o nome da função.
-            .order('calendario_dias_sem_nf', { ascending: true })
+            // SEM `.order` de propósito: ordenar SETOF date pelo nome da função é contrato do PostgREST
+            // nunca provado aqui, e se ele recusar o painel inteiro cai. A janela é de 366 dias ⇒ no
+            // máximo 366 linhas, sempre UMA página (< 1.000): `.range` sem ordem não repete nem omite
+            // linha entre páginas porque não há segunda página. A ordem é feita no cliente.
             .range(de, ate),
         'calendario_dias_sem_nf',
       );
-      return linhas.map((d) => String(d).slice(0, 10));
+      return [...new Set(linhas.map((d) => String(d).slice(0, 10)))].sort();
     },
   });
 }

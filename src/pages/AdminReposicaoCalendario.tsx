@@ -466,7 +466,12 @@ function PainelPendencias({
                           empresa,
                           data: p.data,
                           status: s,
-                          motivo: s === 'fechado' ? 'Emenda de feriado' : 'Emenda decidida: sem ponte',
+                          motivo:
+                            s === 'fechado'
+                              ? 'Emenda de feriado: empresa fechada'
+                              : s === 'meia_equipe'
+                                ? 'Emenda de feriado: meia equipe'
+                                : 'Emenda de feriado decidida: dia normal de trabalho',
                           origem: 'emenda',
                           contexto: 'emenda',
                         })
