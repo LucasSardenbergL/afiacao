@@ -7,6 +7,7 @@
 // do item só saem colunas de negócio; o que é do servidor nunca vem do agente.
 import {
   chavesDescartadas,
+  comLimite,
   COLUNAS_DO_SERVIDOR_NO_STAGING,
   ENTIDADES_STAGING_CATALOGO,
   erroDeFormaDoLote,
@@ -398,4 +399,59 @@ Deno.test("erroDeFormaDoLote: entidade gravável que não é lista recusa o lote
   for (const corpo of [null, undefined, "x", 5, [], [{ produtos: [] }]]) {
     assertEq(erroDeFormaDoLote(corpo), "body must be a JSON object", `corpo ${JSON.stringify(corpo)}`);
   }
+});
+
+// ─── O nome do campo vai para jsonb: corte por ponto de código, sem substituto isolado ────────
+
+/** Texto que o `jsonb` do Postgres aceita: nenhum substituto UTF-16 sem o par. */
+function bemFormado(texto: string): boolean {
+  return !/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(texto);
+}
+
+Deno.test("chavesDescartadas: o corte do nome não parte um emoji ao meio (o jsonb recusaria o resto)", () => {
+  // 59 letras + emoji: cortar em 60 unidades UTF-16 deixava o 1º substituto do emoji sozinho.
+  const nome = "a".repeat(59) + "😀" + "resto";
+  const saida = chavesDescartadas("produtos", [{ cod_produto: "P1", [nome]: 1 }]);
+  assertEq(saida.length, 1, "uma chave");
+  if (!bemFormado(saida[0])) throw new Error("o nome cortado ficou com substituto isolado: " + JSON.stringify(saida[0]));
+  assertEq(saida[0], "a".repeat(59) + "😀", "60 pontos de código, com o emoji inteiro");
+  assertEq([...saida[0]].length, MAX_TAMANHO_DE_CHAVE_NO_AVISO, "tamanho em pontos de código");
+});
+
+Deno.test("chavesDescartadas: substituto isolado que já vem no nome vira '?'", () => {
+  const item = JSON.parse('{"cod_produto":"P1","a\\ud83db":1,"c\\udc00d":2}') as TintCatalogItem;
+  const saida = chavesDescartadas("produtos", [item]);
+  assertEq(saida.join(","), "a?b,c?d", "substitutos isolados saneados");
+  for (const nome of saida) if (!bemFormado(nome)) throw new Error("nome mal formado: " + JSON.stringify(nome));
+});
+
+// ─── comLimite: o registro auxiliar não segura a resposta ─────────────────────────────────────
+
+Deno.test("comLimite: promessa que termina a tempo → true, e o timer é desarmado", async () => {
+  // Limite longo de propósito: se o timer não for desarmado, o teste acusa vazamento.
+  assertEq(await comLimite(Promise.resolve("x"), 60_000), true, "resolvida");
+  assertEq(await comLimite(new Promise((r) => setTimeout(r, 5)), 60_000), true, "resolvida depois de 5 ms");
+});
+
+Deno.test("comLimite: promessa que não termina → false depois do limite, sem esperar por ela", async () => {
+  let soltar: () => void = () => {};
+  const presa = new Promise<void>((r) => {
+    soltar = r;
+  });
+  const antes = Date.now();
+  assertEq(await comLimite(presa, 30), false, "estourou o limite");
+  const decorrido = Date.now() - antes;
+  if (decorrido < 25 || decorrido > 2_000) throw new Error(`esperou ${decorrido} ms para um limite de 30`);
+  soltar();
+  await presa;
+});
+
+Deno.test("comLimite: promessa que rejeita propaga a rejeição (quem chama é que engole)", async () => {
+  let pegou = "";
+  try {
+    await comLimite(Promise.reject(new Error("falhou")), 60_000);
+  } catch (e) {
+    pegou = e instanceof Error ? e.message : String(e);
+  }
+  assertEq(pegou, "falhou", "rejeição propagada, com o timer desarmado");
 });

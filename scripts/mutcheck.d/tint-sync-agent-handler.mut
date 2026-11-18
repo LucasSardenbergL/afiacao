@@ -21,7 +21,9 @@ PEGA | precos_base aceita o sync_run_id do item         | s/^          margem_pc
 # ── /catalogs: item recusado não é confirmado ao conector ──
 PEGA | item recusado nao conta em error_count            | s/^          errors \+= lote\.recusados;$/          errors += 0;/
 PEGA | recusa fora de errors[] da resposta              | s/^          errorDetails\.push\(\{ entity_type: entityType, entity_id: null, message: motivo \}\);$/          void motivo;/
-PEGA | recusa nao registrada em tint_sync_errors        | s/^          await logError\(runId, entityType, null, motivo, .*\)\.catch\(\(\) => \{\}\);$/          await Promise.resolve();/
+PEGA | recusa nao registrada em tint_sync_errors        | s/^          registrosDeRecusa\.push\(logError\(runId, entityType, null, motivo, .*\)\.catch\(\(\) => \{\}\)\);$/          void motivo;/
+PEGA | registro da recusa volta a segurar o staging     | s/^          registrosDeRecusa\.push\(logError\((.*)\)\.catch\(\(\) => \{\}\)\);$/          await logError($1).catch(() => {});/
+PEGA | a resposta nao espera o registro da recusa       | s/!\(await comLimite\(Promise\.all\(registrosDeRecusa\), LIMITE_DO_REGISTRO_DE_RECUSA_MS\)\)/false/
 PEGA | registro da recusa leva o item cru               | s/nao_objetos: lote\.naoObjetos \}\)\.catch/nao_objetos: lote.naoObjetos }, items).catch/
 # ── /catalogs: forma do lote ──
 PEGA | forma do lote nao e conferida                    | s/if \(erroDeForma\) return json\(\{ ok: false, error: erroDeForma \}, 400\);/if (erroDeForma) console.warn(erroDeForma);/

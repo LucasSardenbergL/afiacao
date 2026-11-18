@@ -26,6 +26,7 @@ import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.
 // Colunas do servidor (`created_at`, `id`, `matched_id`) nunca saem do item, e item com campo fora
 // da lista é recusado inteiro — NÃO reimplementar inline.
 import {
+  comLimite,
   ENTIDADES_STAGING_CATALOGO,
   erroDeFormaDoLote,
   MAX_CAMPOS_NA_RECUSA,
@@ -96,6 +97,8 @@ function json(data: unknown, status = 200) {
 
 /** Max items per batch per entity type */
 const MAX_BATCH_ITEMS = 1000;
+/** Teto de espera pelo registro da recusa de catálogo em tint_sync_errors (auxiliar: não segura a resposta). */
+const LIMITE_DO_REGISTRO_DE_RECUSA_MS = 3000;
 /** Max total payload size (5 MB) */
 const MAX_PAYLOAD_BYTES = 5 * 1024 * 1024;
 
@@ -488,6 +491,7 @@ Deno.serve(async (req) => {
       const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
 
       let received = 0;
+      const registrosDeRecusa: Promise<unknown>[] = [];
 
       // Change 3: bulk insert for catalog entities (chunks of 500)
       for (const entityType of ENTIDADES_STAGING_CATALOGO) {
@@ -503,7 +507,8 @@ Deno.serve(async (req) => {
           const motivo = mensagemDeRecusa(lote);
           errors += lote.recusados;
           errorDetails.push({ entity_type: entityType, entity_id: null, message: motivo });
-          await logError(runId, entityType, null, motivo, { campos: lote.camposRecusados.slice(0, MAX_CAMPOS_NA_RECUSA), itens_recusados: lote.recusados, nao_objetos: lote.naoObjetos }).catch(() => {});
+          // O registro é auxiliar (a recusa já está em errors[]): dispara agora e NÃO segura a gravação dos itens limpos.
+          registrosDeRecusa.push(logError(runId, entityType, null, motivo, { campos: lote.camposRecusados.slice(0, MAX_CAMPOS_NA_RECUSA), itens_recusados: lote.recusados, nao_objetos: lote.naoObjetos }).catch(() => {}));
         }
 
         const { insertedCount } = await bulkInsert(STAGING_CATALOGO[entityType].tabela, lote.linhas, 500, (chunk, err) => {
@@ -539,6 +544,12 @@ Deno.serve(async (req) => {
           logError(runId, "precos_base", null, err.message, err, { chunk_size: chunk.length }).catch(() => {});
         });
         inserts += precosInserted;
+      }
+
+      // Os registros de recusa correram em paralelo com o staging. Espera por eles com teto: se
+      // tint_sync_errors não responder, o conector ainda recebe a recusa em errors[] da resposta.
+      if (registrosDeRecusa.length > 0 && !(await comLimite(Promise.all(registrosDeRecusa), LIMITE_DO_REGISTRO_DE_RECUSA_MS))) {
+        console.error(`[tint-sync-agent] /catalogs: registro da recusa em tint_sync_errors não confirmou em ${LIMITE_DO_REGISTRO_DE_RECUSA_MS} ms (run ${runId})`);
       }
 
       const resp = buildResponse(runId, { received, inserts, updates, ignored, errors, errorDetails });

@@ -36,6 +36,10 @@ interface Escrita {
   corpo: unknown;
 }
 const escritas: Escrita[] = [];
+/** Quantas respostas de `tint_sync_errors` o fake JÁ devolveu (a rota tem de esperar por elas, com teto). */
+let registrosRespondidos = 0;
+/** Quando ligado, o fake só responde `tint_sync_errors` depois que o staging de precos_base chegou. */
+let segurar: { liberar: () => void; solto: Promise<void>; estourou: boolean } | null = null;
 
 /** PostgREST mínimo: devolve o que cada passo da rota espera e guarda TODA escrita. */
 h.responderForaDoGate(async (r) => {
@@ -55,6 +59,21 @@ h.responderForaDoGate(async (r) => {
   }
 
   escritas.push({ tabela, metodo: r.method, colunas: url.searchParams.get("columns"), corpo: await r.json().catch(() => null) });
+  if (tabela === "tint_sync_errors") {
+    if (segurar) {
+      // Segura o registro até a ÚLTIMA escrita de staging chegar. Se a rota esperar pelo registro
+      // antes de gravar o staging, isto só solta pelo teto — e o teste acusa.
+      const s = segurar;
+      let teto: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([s.solto, new Promise<void>((res) => { teto = setTimeout(() => { s.estourou = true; res(); }, 1_500); })]);
+      if (teto !== undefined) clearTimeout(teto);
+    } else {
+      await new Promise((res) => setTimeout(res, 20));
+    }
+    registrosRespondidos += 1;
+    return new Response(null, { status: 201 });
+  }
+  if (tabela === "tint_staging_precos_base" && segurar) segurar.liberar();
   if (tabela === "tint_sync_runs" && r.method === "POST") return json(querObjeto ? { id: RUN } : [{ id: RUN }], 201);
   if (tabela === "tint_sync_runs" && r.method === "PATCH") return json([{ id: RUN }]);
   return new Response(null, { status: 201 });
@@ -70,6 +89,8 @@ function pedir(rota: string, corpo: unknown, token = TOKEN): Request {
 
 function zerar() {
   escritas.length = 0;
+  registrosRespondidos = 0;
+  segurar = null;
   h.limpar();
 }
 
@@ -183,14 +204,50 @@ Deno.test("/catalogs: item com coluna do servidor é RECUSADO — não vira linh
   const precos = staging()[1].corpo as Record<string, unknown>[];
   igual([precos[0].custo, precos[0].imposto_pct, precos[0].margem_pct], [50, 10, 30], "precos_base: negócio entra");
 
-  // A recusa fica registrada, uma linha por entidade, com os nomes e sem o item.
-  igual(registros().map((e) => (e.corpo as Record<string, unknown>).entity_type), ["produtos", "bases", "embalagens", "skus", "corantes"], "tint_sync_errors por entidade");
+  // A recusa fica registrada, uma linha por entidade, com os nomes e sem o item — e a rota ESPEROU
+  // o banco responder os 5 registros antes de devolver a resposta ao conector.
+  igual(registros().map((e) => String((e.corpo as Record<string, unknown>).entity_type)).sort(), ["bases", "corantes", "embalagens", "produtos", "skus"], "tint_sync_errors por entidade");
+  igual(registrosRespondidos, 5, "os 5 registros responderam antes da resposta da rota");
   for (const e of registros()) {
     const linha = e.corpo as Record<string, unknown>;
     igual(linha.sync_run_id, RUN, "registro no run do servidor");
     igual(linha.error_details, { campos: ["created_at", "id", "matched_id"], itens_recusados: 1, nao_objetos: 0 }, "detalhe da recusa");
     igual(linha.raw_data, null, "o item recusado não é copiado para o registro");
   }
+});
+
+Deno.test("/catalogs: o registro da recusa não segura a gravação dos itens limpos", async () => {
+  zerar();
+  let liberar: () => void = () => {};
+  const solto = new Promise<void>((res) => {
+    liberar = res;
+  });
+  segurar = { liberar, solto, estourou: false };
+  const r = await h.handler()(pedir("catalogs", LOTE_HOSTIL));
+  const corpo = await r.json();
+  const estourou = segurar.estourou;
+  segurar = null;
+  igual(r.status, 200, `status (corpo: ${JSON.stringify(corpo)})`);
+  // O fake só responde tint_sync_errors depois que o staging de precos_base chega. Se a rota
+  // esperasse o registro ANTES de gravar, isso nunca aconteceria e o fake soltaria pelo teto.
+  igual(estourou, false, "o staging chegou enquanto os registros da recusa ainda estavam pendentes");
+  igual(staging().map((e) => e.tabela), ["tint_staging_corantes", "tint_staging_precos_base"], "os itens limpos foram gravados");
+  igual([corpo.error_count, registrosRespondidos], [5, 5], "recusa na resposta e os 5 registros confirmados");
+});
+
+Deno.test("/catalogs: nome de campo com emoji na fronteira do corte não derruba o fechamento do run", async () => {
+  zerar();
+  const nome = "a".repeat(59) + "😀";
+  const r = await h.handler()(pedir("catalogs", { produtos: [{ cod_produto: "P1", [nome]: 1 }, { cod_produto: "P2" }] }));
+  const corpo = await r.json();
+  igual(r.status, 200, "status");
+  const mensagem = String((corpo.errors as { message: string }[])[0].message);
+  // O que vai para o jsonb (resposta guardada do run e tint_sync_errors) não pode ter substituto isolado.
+  for (const e of escritas) {
+    const texto = JSON.stringify(e.corpo);
+    if (/\\ud[89ab][0-9a-f]{2}(?!\\ud[c-f][0-9a-f]{2})/i.test(texto)) throw new Error(`${e.tabela}: substituto isolado no corpo gravado: ${texto.slice(0, 200)}`);
+  }
+  if (!mensagem.endsWith(nome)) throw new Error("o nome saiu cortado no meio do emoji: " + JSON.stringify(mensagem));
 });
 
 Deno.test("/catalogs: controle — o lote hostil trazia mesmo as colunas proibidas", () => {

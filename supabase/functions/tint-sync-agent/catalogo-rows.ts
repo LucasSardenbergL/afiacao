@@ -147,15 +147,25 @@ export function montarStagingCatalogoRow(
   return row;
 }
 
-/** Tamanho máximo de cada nome devolvido por `chavesDescartadas` (o nome vem do agente). */
+/** Tamanho máximo, em PONTOS DE CÓDIGO, de cada nome devolvido por `chavesDescartadas` (o nome vem do agente). */
 export const MAX_TAMANHO_DE_CHAVE_NO_AVISO = 60;
 
-/** Controle e separador de linha (inclusive U+2028/U+2029) viram `?`: o nome vai para uma linha de log. */
-function nomeParaLog(chave: string): string {
+/**
+ * O nome do campo vem do agente e vai para `errors[]`, para `tint_sync_errors` e para a resposta
+ * guardada do run (jsonb). Controle, separador de linha (inclusive U+2028/U+2029) e substituto
+ * isolado viram `?`, e o corte é por ponto de código: cortar por unidade UTF-16 parte um emoji ao
+ * meio e deixa um substituto isolado, que o `jsonb` do Postgres recusa — o fechamento do run
+ * falharia por causa do nome de um campo.
+ */
+function nomeSeguro(chave: string): string {
   let saida = "";
+  let pontos = 0;
   for (const c of chave) {
+    if (pontos >= MAX_TAMANHO_DE_CHAVE_NO_AVISO) break;
     const cp = c.codePointAt(0) ?? 0;
-    saida += cp < 0x20 || cp === 0x7f || cp === 0x2028 || cp === 0x2029 ? "?" : c;
+    const inseguro = cp < 0x20 || cp === 0x7f || cp === 0x2028 || cp === 0x2029 || (cp >= 0xd800 && cp <= 0xdfff);
+    saida += inseguro ? "?" : c;
+    pontos += 1;
   }
   return saida;
 }
@@ -179,7 +189,7 @@ export function chavesDescartadas(
     for (const chave of Object.keys(item)) {
       if (gravadas.has(chave)) continue;
       if (chave === "id" && idViraChave) continue;
-      descartadas.add(nomeParaLog(chave).slice(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO));
+      descartadas.add(nomeSeguro(chave));
     }
   }
   return [...descartadas].sort();
@@ -262,4 +272,25 @@ export function erroDeFormaDoLote(body: unknown): string | null {
     if (valor !== undefined && valor !== null && !Array.isArray(valor)) return `${entidade}: must be an array`;
   }
   return null;
+}
+
+/**
+ * Espera `promessa` por no máximo `ms`. Devolve true se ela terminou a tempo. Serve ao registro da
+ * recusa: ele é auxiliar (a recusa já vai em `errors[]` da resposta), então não pode segurar a
+ * resposta ao conector além de um teto. O timer é sempre desarmado.
+ */
+export async function comLimite(promessa: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const estourou = Symbol("estourou");
+  try {
+    const vencedor = await Promise.race([
+      promessa.then(() => null),
+      new Promise<symbol>((resolve) => {
+        timer = setTimeout(() => resolve(estourou), ms);
+      }),
+    ]);
+    return vencedor !== estourou;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

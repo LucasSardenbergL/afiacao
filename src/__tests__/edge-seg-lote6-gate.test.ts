@@ -20,7 +20,8 @@
 // e tem um `system` só; e que o lote e as linhas não são tocados entre a montagem e o `bulkInsert`.
 // O que fica fora: alias (`const x = customerProfile` seguido de `${x}` — por isso a lista do que
 // pode ser interpolado é FECHADA por nome, com a origem de cada nome conferida), getter, Proxy,
-// mutação feita dentro de uma função chamada, e tudo o que não é este arquivo. Na
+// mutação feita dentro de uma função chamada, e tudo o que não é este arquivo. Nome declarado duas
+// vezes no arquivo é recusado como ambíguo, em vez de resolvido por posição. Na
 // `tint-sync-agent` quem cobre o que sobra é o teste que EXECUTA o handler (`index_test.ts`):
 // ele olha o corpo do POST que sai. As duas edges de IA não têm esse teste — importam o SDK da
 // Anthropic por `npm:` e não carregam na suíte offline.
@@ -113,10 +114,14 @@ function problemasDoLote(
     return [`bulkInsert: o 2º argumento não é <lote>.linhas nem um identificador (${junta(acesso.getText(sf)).slice(0, 60)})`];
   }
   const nome = acesso.expression.text;
-  const decls = declaracoesDe(sf, nome).filter((d) => d.getStart(sf) < chamada.getStart(sf));
-  const decl = decls[decls.length - 1];
-  const ini = decl?.initializer;
-  if (!decl || !ini || !ts.isCallExpression(ini) || !ts.isIdentifier(ini.expression) || ini.expression.text !== SEPARADOR) {
+  // Uma declaração SÓ no arquivo. Com duas (a 2ª num bloco morto, por exemplo) a análise escolheria
+  // uma por posição textual e olharia os usos do bloco errado — a linha poderia ser tocada no bloco
+  // de verdade com tudo verde.
+  const todas = declaracoesDe(sf, nome);
+  if (todas.length !== 1) return [`bulkInsert(${nome}.linhas): ${todas.length} declarações de ${nome} no arquivo (ambíguo)`];
+  const decl = todas[0];
+  const ini = decl.initializer;
+  if (decl.getStart(sf) > chamada.getStart(sf) || !ini || !ts.isCallExpression(ini) || !ts.isIdentifier(ini.expression) || ini.expression.text !== SEPARADOR) {
     return [`bulkInsert(${nome}.linhas): ${nome} não nasce de ${SEPARADOR}(...)`];
   }
   if (!ehConst(decl)) problemas.push(`bulkInsert(${nome}.linhas): ${nome} não é const`);
@@ -148,11 +153,12 @@ function problemasDoLote(
 /** As linhas vêm de uma variável `const x = itens.map((item) => ({ chaves fixas }))`, usada só no bulkInsert. */
 function problemasDoLiteral(sf: ts.SourceFile, chamada: ts.CallExpression, linhas: ts.Identifier): string[] {
   const problemas: string[] = [];
-  const decls = declaracoesDe(sf, linhas.text).filter((d) => d.getStart(sf) < chamada.getStart(sf));
-  const decl = decls[decls.length - 1];
-  const ini = decl?.initializer;
+  const todas = declaracoesDe(sf, linhas.text);
+  if (todas.length !== 1) return [`bulkInsert(${linhas.text}): ${todas.length} declarações de ${linhas.text} no arquivo (ambíguo)`];
+  const decl = todas[0];
+  const ini = decl.initializer;
   if (
-    !decl || !ini || !ts.isCallExpression(ini) || !ts.isPropertyAccessExpression(ini.expression) ||
+    decl.getStart(sf) > chamada.getStart(sf) || !ini || !ts.isCallExpression(ini) || !ts.isPropertyAccessExpression(ini.expression) ||
     ini.expression.name.text !== 'map' || ini.arguments.length !== 1 || !ts.isArrowFunction(ini.arguments[0])
   ) {
     return [`bulkInsert(${linhas.text}): as linhas não saem de um .map(arrow) declarado antes da chamada`];
@@ -396,6 +402,7 @@ describe('lote 6 do scanner — tint-sync-agent: a linha de staging não sai do 
     ['linha tocada DEPOIS do separador', CHAMADA, `lote.linhas.forEach((l) => { l.created_at = "2099-01-01"; }); ${CHAMADA}`, 'uso do lote fora do permitido'],
     ['linhas do lote trocadas por atribuição', CHAMADA, `lote.linhas = items as never; ${CHAMADA}`, 'uso do lote fora do permitido'],
     ['lote regravável', 'const lote = separarLoteDeCatalogo(', 'let lote = separarLoteDeCatalogo(', 'lote não é const'],
+    ['declaração homônima num bloco morto + linha tocada no bloco de verdade', CHAMADA, `if (false) { const lote = ${LOTE}; void lote; } if (lote.linhas.length) lote.linhas[0].created_at = "2099-01-01T00:00:00Z"; ${CHAMADA}`, '2 declarações de lote no arquivo (ambíguo)'],
     ['tabela fixa, descasada da entidade', 'STAGING_CATALOGO[entityType].tabela, lote.linhas', '"tint_staging_corantes", lote.linhas', 'não é a da entidade do lote'],
     ['separador vindo de outro módulo', '} from "./catalogo-rows.ts";', '} from "./outro-modulo.ts";', `não é o importado de ${MODULO_CATALOGO}`],
     ['spread no objeto de precos_base', 'cod_produto: item.cod_produto ?? null,', '...item,', 'spread no objeto da linha'],

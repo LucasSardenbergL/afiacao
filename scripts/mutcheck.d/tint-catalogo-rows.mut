@@ -41,9 +41,11 @@ PEGA | chave de bases trocada                           | s/chave: "id_base_saye
 PEGA | aviso nao lista coluna do servidor               | s/if \(gravadas\.has\(chave\)\) continue;/if (gravadas.has(chave) || chave === "created_at") continue;/
 PEGA | id nunca e avisado (mesmo sobrando)              | s/if \(chave === "id" && idViraChave\) continue;/if (chave === "id") continue;/
 PEGA | id avisado mesmo quando e a chave                | s/if \(chave === "id" && idViraChave\) continue;//
-PEGA | nome da chave sem truncar                        | s/descartadas\.add\(nomeParaLog\(chave\)\.slice\(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO\)\);/descartadas.add(nomeParaLog(chave));/
-PEGA | nome da chave sem sanear (quebra de linha no log) | s/descartadas\.add\(nomeParaLog\(chave\)\.slice\(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO\)\);/descartadas.add(chave.slice(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO));/
-PEGA | separador de linha Unicode passa pelo saneamento  | s/ \|\| cp === 0x2028 \|\| cp === 0x2029 \? "\?" : c;/ ? "?" : c;/
+PEGA | nome da chave sem truncar                        | s/if \(pontos >= MAX_TAMANHO_DE_CHAVE_NO_AVISO\) break;/if (false) break;/
+PEGA | nome da chave sem sanear (controle no jsonb)      | s/saida \+= inseguro \? "\?" : c;/saida += c;/
+PEGA | separador de linha Unicode passa pelo saneamento  | s/ \|\| cp === 0x2028 \|\| cp === 0x2029 \|\| / || /
+PEGA | substituto isolado passa pelo saneamento          | s/ \|\| \(cp >= 0xd800 && cp <= 0xdfff\);/;/
+PEGA | corte por unidade UTF-16 (parte o emoji ao meio)  | s/descartadas\.add\(nomeSeguro\(chave\)\);/descartadas.add(chave.slice(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO));/
 PEGA | aviso sem ordenar                                | s/return \[\.\.\.descartadas\]\.sort\(\);/return [...descartadas];/
 # ── a recusa do item (o lote com campo fora da lista não é confirmado ao conector) ──
 PEGA | item com campo fora da lista vira linha          | s/^    if \(fora\.length > 0\) \{$/    if (false) {/
@@ -62,3 +64,7 @@ PEGA | objeto aceito no lugar da lista                  | s/if \(valor !== undef
 PEGA | null deixa de valer como ausente                 | s/if \(valor !== undefined && valor !== null && !Array\.isArray\(valor\)\) return/if (valor !== undefined \&\& !Array.isArray(valor)) return/
 PEGA | corpo que nao e objeto passa                     | s/if \(typeof body !== "object" \|\| body === null \|\| Array\.isArray\(body\)\) return "body must be a JSON object";/if (typeof body !== "object" || body === null) return "body must be a JSON object";/
 PEGA | forma confere so as 5 entidades de linha         | s/for \(const entidade of ENTIDADES_CATALOGO\) \{/for (const entidade of ENTIDADES_STAGING_CATALOGO) {/
+# ── o teto de espera do registro auxiliar ──
+PEGA | estouro do limite devolve "terminou"             | s/return vencedor !== estourou;/return true;/
+PEGA | timer do limite nao e desarmado                  | s/if \(timer !== undefined\) clearTimeout\(timer\);/void timer;/
+PEGA | o limite e ignorado (espera a promessa)          | s/timer = setTimeout\(\(\) => resolve\(estourou\), ms\);/timer = setTimeout(() => resolve(estourou), ms * 1000);/
