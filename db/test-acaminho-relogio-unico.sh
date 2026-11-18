@@ -215,7 +215,8 @@ eq "C1 viva: mapa do ciclo (G1/G2/M1 recomprados = 0x)" "$(mapa "$D")" "$ESPERAD
 eq "C2 viva: o a caminho do G1 e ZERO — o pedido de 4 sumiu dos dois lados" "$(qac "$D" 9701)" "0"
 
 if [ -f "$MIG" ]; then
-  P -q -f "$MIG" >/dev/null
+  # sobre o PREDECESSOR (o caminho da prod): tem de passar, senao a fixture abaixo mascararia uma PRE quebrada
+  if P -q -f "$MIG" >/dev/null; then ok "A0 migration aplica sobre o predecessor (rc=0)"; else bad "A0 migration FALHOU sobre o predecessor"; echo "PASS=$PASS FAIL=$FAIL"; exit 1; fi
   echo "migration aplicada: $(basename "$MIG")"
   P -q -f "$FIXTURE" >/dev/null
   eq "D1 fixture viva = a migration nova (mesmo prosrc)" "$(fsrc)" "$(P -q -f "$MIG" >/dev/null && fsrc)"
@@ -307,14 +308,26 @@ else
   bad "POS-RU1 NAO barrou o corte revertido (rc=$prc): $(head -c 300 "$SAB_DIR/post-sab.log")"
 fi
 eq "POS rollback: motor vivo intacto apos o abort" "$(fsrc)" "$MD5_NOVA"
-# a POS limpa comentario antes de procurar: o corte certo so em COMENTARIO + o velho no codigo tem de abortar
-OLD="$CORTE_NOVO" NEW="(p_data_ciclo - INTERVAL '7 days') -- $CORTE_NOVO" troca "$MIG" "$SAB_DIR/post-com.sql" \
+# a POS limpa comentario antes de procurar: o predicado certo INTEIRO so em COMENTARIO + no codigo um equivalente
+# do velho que escapa a comparacao literal ("- 7" em vez de "- INTERVAL '7 days'") tem de abortar. So a camada da
+# limpeza pega este mutante (o ramo "velho literal presente" nao casa) — provado abaixo tirando a limpeza.
+OLD="$CORTE_NOVO" NEW="(p_data_ciclo - 7) -- pcs2.data_ciclo >= $CORTE_NOVO" troca "$MIG" "$SAB_DIR/post-com.sql" \
   || bad "POS comentario: OLD nao casou 1 vez"
 P -1 -q -f "$SAB_DIR/post-com.sql" > "$SAB_DIR/post-com.log" 2>&1; prc=$?
 if [ "$prc" -ne 0 ] && grep -q "POS-RU1 FALHOU" "$SAB_DIR/post-com.log"; then
   ok "POS-RU1 nao se engana com o corte so em comentario (rc=$prc)"
 else
   bad "POS-RU1 enganada pelo comentario (rc=$prc)"
+fi
+# controle da camada: a MESMA migration-mutante com a POS sem a limpeza de comentario tem de PASSAR (rc=0)
+perl -0pe '$n = s/regexp_replace\(v_src, \x27--\[\^\\n\]\*\x27, \x27\x27, \x27g\x27\)/v_src/g; END { exit($n == 2 ? 0 : 3) }' \
+  "$SAB_DIR/post-com.sql" > "$SAB_DIR/post-com-sem-limpeza.sql"; lrc=$?
+if [ "$lrc" -ne 0 ]; then
+  bad "POS sem limpeza: a limpeza nao casou exatamente 2 vezes (rc=$lrc)"
+else
+  P -1 -q -f "$SAB_DIR/post-com-sem-limpeza.sql" > "$SAB_DIR/post-com-sl.log" 2>&1; prc=$?
+  if [ "$prc" -eq 0 ]; then ok "POS sem a limpeza deixa passar o mutante do comentario (a limpeza e a camada que pega)"
+  else bad "POS sem a limpeza ainda barrou (rc=$prc) — o teste do comentario nao isola a limpeza"; fi
 fi
 
 # restauracao nao e teatro: a fixture de volta reproduz o mapa novo

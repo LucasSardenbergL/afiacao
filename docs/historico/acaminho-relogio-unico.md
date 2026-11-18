@@ -81,6 +81,29 @@ LEFT JOIN sku_estoque_atual sea_c ON sea_c.empresa = pcs2.empresa AND sea_c.sku_
 - O recesso (18/12/2026–03/01/2027) segue dependendo do sync para o físico. Este conserto só garante que o pedido
   do app não suma do a caminho quando o sync falha.
 
+## Parecer Codex (gpt-6.2-astra, reasoning max, 2026-11-18): APROVAR COM MUDANÇAS, nenhum P0
+
+Codex reproduziu o caso D−8: o motor anterior contava 0 e o novo conta 4. Triagem:
+
+- **Aceito:**
+  - a 1ª aplicação sobre o predecessor agora tem o rc conferido (A0);
+  - o mutante do comentário passa a isolar a limpeza: o predicado novo inteiro só no comentário e um equivalente do
+    velho (`- 7`) no código;
+  - um controle prova que, **sem** a limpeza, o mutante passa. Prova: 27/0 nos dois locales.
+- **Retrato velho conta desde o retrato (P1, mantido por desenho).** O próprio Codex desaconselha um teto
+  `GREATEST(…, D−N)`, porque ele reabre o 0× numa interrupção longa. A checagem decisiva que ele pediu, medida em
+  prod (psql-ro): há **0** linhas com retrato velho em grupo com âncora habilitada, e os 2 SKUs afetados não são
+  habilitados nem estão em grupo. Hoje isso não muda nenhuma decisão de compra.
+- **Fora deste PR (preexistentes; o motor novo nunca conta menos que o de antes):**
+  - membro de grupo **sem linha** em `sku_estoque_atual`: o `LEFT JOIN` dá NULL e o corte volta ao do ciclo (0× no
+    vão);
+  - disparo tardio entre syncs: o pedido ganha o nº Omie depois da leitura do sync;
+  - PO numerado parado na etapa 10;
+  - `gerar_pedidos_oportunidade_ciclo` usa a anti-duplicação `p_data_ciclo − 7` (o mesmo relógio duplo, mas na
+    oferta antecipada);
+  - o histórico do carimbo sem o pendente: remendo WP01 e edge v1.5.
+  Uma coluna dedicada `pendente_corte_app` (gravada pela edge) é o desenho de longo prazo que o Codex sugere.
+
 ## Deploy
 
 | camada | o quê | quem |
