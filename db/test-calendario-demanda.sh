@@ -231,7 +231,7 @@ ANTES_EST="$(Ler 2027-01-20T15:00:00Z "SELECT md5(string_agg(t::text, '|' ORDER 
 aplicar() { PGOPTIONS="-c search_path=public,pg_catalog -c test.agora=2027-01-20T15:00:00Z" P -q --single-transaction -f "$1" 2>&1; }
 SAIDA1="$(aplicar "$MIG_USADA" || true)"
 SAIDA2="$(aplicar "$MIG_USADA" || true)"
-case "$SAIDA1$SAIDA2" in *ERROR*) echo "INFRA: migration falhou: $(printf '%s' "$SAIDA1$SAIDA2" | grep -m3 ERROR)"; exit 1 ;; esac
+case "$SAIDA1$SAIDA2" in *ERROR:*|*ERRO:*) echo "INFRA: migration falhou: $(printf '%s' "$SAIDA1$SAIDA2" | grep -m3 -E "ERROR:|ERRO:")"; exit 1 ;; esac
 eq M1 "migration 2× com postcondição" "$(printf '%s\n%s' "$SAIDA1" "$SAIDA2" | grep -c 'POST calendario demanda OK')" 2
 
 # M2: a PRE recusa uma view viva que não é a predecessora nem a nova (estatisticas com 5 casas).
