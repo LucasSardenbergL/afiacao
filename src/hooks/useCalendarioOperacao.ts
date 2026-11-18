@@ -150,6 +150,31 @@ export function useItensAntecipar(empresa: EmpresaCalendario, fimRecesso: string
   });
 }
 
+export type ResumoAntecipar = { avaliados: number; listados: number; sem_dado: number };
+
+/**
+ * Contagem do MESMO universo da lista (a RPC compartilha a lógica): sem ela, lista vazia viraria "nada a antecipar"
+ * mesmo com todos os SKUs fora por falta de dado. Linha ausente LANÇA (ausente ≠ zero).
+ */
+export function useResumoAntecipar(empresa: EmpresaCalendario, fimRecesso: string | null) {
+  return useQuery({
+    queryKey: [RAIZ, 'antecipar-resumo', empresa, fimRecesso],
+    enabled: fimRecesso !== null,
+    queryFn: async (): Promise<ResumoAntecipar> => {
+      const { data, error } = await supabase.rpc('calendario_itens_antecipar_resumo', {
+        p_empresa: empresa,
+        p_fim_recesso: fimRecesso as string,
+      });
+      if (error) throw error;
+      const linha = Array.isArray(data) ? data[0] : undefined;
+      if (!linha || linha.avaliados == null || linha.listados == null || linha.sem_dado == null) {
+        throw new Error('Resumo do antecipar veio sem linha — contagem indisponível.');
+      }
+      return { avaliados: Number(linha.avaliados), listados: Number(linha.listados), sem_dado: Number(linha.sem_dado) };
+    },
+  });
+}
+
 /* ─── escritas ─── */
 
 export type SalvarDia = {

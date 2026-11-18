@@ -117,6 +117,61 @@ describe('AdminReposicaoCalendario — leitura que falha não vira vazio', () =>
     expect(screen.queryByText('Nada a antecipar')).toBeNull();
   });
 
+  const COM_RECESSO = {
+    data: [{ data: '2026-12-24', status: 'fechado', peso: 0, motivo: 'recesso', origem: 'escala' }],
+    error: null,
+  };
+
+  it('lista vazia + resumo com SEM DADO > 0: NÃO é "Nada a antecipar"', async () => {
+    porFonte = {
+      calendario_operacao_empresa: COM_RECESSO,
+      'rpc:calendario_itens_antecipar_resumo': { data: [{ avaliados: 7, listados: 0, sem_dado: 7 }], error: null },
+    };
+    renderPagina();
+    expect(await screen.findByText('Nenhum item listado — mas há itens sem dados')).toBeTruthy();
+    expect(screen.getByText(/0 listado\(s\) de 7 avaliado\(s\); 7 sem dados suficientes/)).toBeTruthy();
+    expect(screen.queryByText('Nada a antecipar')).toBeNull();
+  });
+
+  it('lista vazia + resumo que FALHA: aviso de contagem, NÃO "Nada a antecipar"', async () => {
+    porFonte = { calendario_operacao_empresa: COM_RECESSO, 'rpc:calendario_itens_antecipar_resumo': FALHA };
+    renderPagina();
+    expect((await screen.findByTestId('aviso-antecipar-resumo')).getAttribute('data-estado')).toBe('erro');
+    expect(screen.queryByText('Nada a antecipar')).toBeNull();
+  });
+
+  it('lista vazia + resumo SEM linha (ausente ≠ zero): aviso, NÃO "Nada a antecipar"', async () => {
+    porFonte = { calendario_operacao_empresa: COM_RECESSO };
+    renderPagina();
+    expect(await screen.findByTestId('aviso-antecipar-resumo')).toBeTruthy();
+    expect(screen.queryByText('Nada a antecipar')).toBeNull();
+  });
+
+  it('CONTROLE: lista vazia + resumo sem nenhum sem-dado → "Nada a antecipar" com a contagem', async () => {
+    porFonte = {
+      calendario_operacao_empresa: COM_RECESSO,
+      'rpc:calendario_itens_antecipar_resumo': { data: [{ avaliados: 3, listados: 0, sem_dado: 0 }], error: null },
+    };
+    renderPagina();
+    expect(await screen.findByText('Nada a antecipar')).toBeTruthy();
+    expect(screen.getByText(/0 listado\(s\) de 3 avaliado\(s\)/)).toBeTruthy();
+  });
+
+  it('cobertura exibida com 1 casa (numeric de divisão chega com muitas casas)', async () => {
+    porFonte = {
+      calendario_operacao_empresa: COM_RECESSO,
+      'rpc:calendario_itens_antecipar': {
+        data: [{ sku_codigo_omie: 1, sku_descricao: 'Verniz', fornecedor_nome: 'F', cobertura_dias: 12.3456789, dias_ate_chegada_pos_recesso: 45 }],
+        error: null,
+      },
+      'rpc:calendario_itens_antecipar_resumo': { data: [{ avaliados: 4, listados: 1, sem_dado: 2 }], error: null },
+    };
+    renderPagina();
+    expect(await screen.findByText('12,3')).toBeTruthy();
+    expect(screen.queryByText('12.3456789')).toBeNull();
+    expect(screen.getByTestId('resumo-antecipar').textContent).toMatch(/1 listado\(s\) de 4 avaliado\(s\); 2 sem dados/);
+  });
+
   it('quem não é master não vê ações de escrita', async () => {
     auth = { isMaster: false, user: { id: 'u-employee' } };
     renderPagina();

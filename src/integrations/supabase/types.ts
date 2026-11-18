@@ -24539,6 +24539,17 @@ export type Database = {
           omie_codigo_produto: number
         }[]
       }
+      calendario_antecipar_avaliacao: {
+        Args: { p_empresa: string; p_fim_recesso: string; p_hoje?: string }
+        Returns: {
+          cobertura_dias: number
+          dias_ate_chegada_pos_recesso: number
+          fornecedor_nome: string
+          motivo: string
+          sku_codigo_omie: number
+          sku_descricao: string
+        }[]
+      }
       calendario_dias_sem_nf: {
         Args: { p_ate: string; p_de: string; p_empresa: string }
         Returns: string[]
@@ -24551,6 +24562,27 @@ export type Database = {
           fornecedor_nome: string
           sku_codigo_omie: number
           sku_descricao: string
+        }[]
+      }
+      calendario_itens_antecipar_resumo: {
+        Args: { p_empresa: string; p_fim_recesso: string; p_hoje?: string }
+        Returns: {
+          avaliados: number
+          listados: number
+          sem_dado: number
+        }[]
+      }
+      calendario_previsao_pedido: {
+        Args: {
+          p_empresa: string
+          p_fornecedor: string
+          p_hoje?: string
+          p_lt: number
+          p_portal_data: string
+        }
+        Returns: {
+          promessa: string
+          recebimento: string
         }[]
       }
       calendario_proximo_dia_recebimento: {

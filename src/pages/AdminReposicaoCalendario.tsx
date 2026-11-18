@@ -37,10 +37,12 @@ import {
   useFornecedoresHabilitados,
   useIncluirPeriodoFornecedor,
   useItensAntecipar,
+  useResumoAntecipar,
   useRemoverDiaEmpresa,
   useRemoverPeriodoFornecedor,
   useSalvarDiaEmpresa,
   type EmpresaCalendario,
+  type ResumoAntecipar,
 } from '@/hooks/useCalendarioOperacao';
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -71,6 +73,7 @@ export default function AdminReposicaoCalendario() {
 
   const recesso = useMemo(() => (diasEmpresa.data ? fimDoRecesso(diasEmpresa.data, hoje) : null), [diasEmpresa.data, hoje]);
   const antecipar = useItensAntecipar(empresa, recesso);
+  const resumoAntecipar = useResumoAntecipar(empresa, recesso);
 
   const [diaAberto, setDiaAberto] = useState<CelulaGrade | null>(null);
   const [prefillFornecedor, setPrefillFornecedor] = useState<PrefillFornecedor | null>(null);
@@ -195,7 +198,7 @@ export default function AdminReposicaoCalendario() {
         prefill={prefillFornecedor}
       />
 
-      <CartaoAntecipar diasEmpresa={diasEmpresa} recesso={recesso} antecipar={antecipar} />
+      <CartaoAntecipar diasEmpresa={diasEmpresa} recesso={recesso} antecipar={antecipar} resumo={resumoAntecipar} />
 
       <DialogoDia
         celula={diaAberto}
@@ -687,19 +690,39 @@ function CartaoFornecedores({
 
 /* ─── antecipar ─── */
 
+const fmtCobertura = (n: number) => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+
+function textoResumo(r: ResumoAntecipar): string {
+  return (
+    `${r.listados} listado(s) de ${r.avaliados} avaliado(s); ${r.sem_dado} sem dados suficientes ` +
+    '(sem demanda, LT, estoque ou chegada, ou SKU de grupo de embalagem).'
+  );
+}
+
 function CartaoAntecipar({
   diasEmpresa,
   recesso,
   antecipar,
+  resumo,
 }: {
   diasEmpresa: FatiaDeQuery & { data: unknown };
   recesso: string | null;
   antecipar: QueryDe<
     { sku_codigo_omie: number; sku_descricao: string; fornecedor_nome: string; cobertura_dias: number; dias_ate_chegada_pos_recesso: number }[]
   >;
+  resumo: QueryDe<ResumoAntecipar>;
 }) {
   const estDias = estadoDeLeitura(fatia(diasEmpresa));
   const est = estadoDeLeitura(fatia(antecipar));
+  const estRes = estadoDeLeitura(fatia(resumo));
+  // Linha de contagem: sempre explícita — sem o resumo, diz que não conseguiu contar (nunca omite).
+  const linhaResumo = naoConsegui(estRes) ? (
+    <AvisoLeituraFalhou oque="a contagem de itens avaliados" estado={estRes} testId="aviso-antecipar-resumo" />
+  ) : resumo.data ? (
+    <p className="text-xs text-muted-foreground" data-testid="resumo-antecipar">
+      {textoResumo(resumo.data)}
+    </p>
+  ) : null;
   let corpo: ReactNode;
   if (naoConsegui(estDias)) {
     corpo = <AvisoLeituraFalhou oque="o recesso da empresa (sem ele não dá para listar o que antecipar)" estado={estDias} testId="aviso-recesso" />;
@@ -719,14 +742,30 @@ function CartaoAntecipar({
   } else if (!antecipar.data) {
     corpo = <PageSkeleton variant="list" />;
   } else if (antecipar.data.length === 0) {
-    corpo = (
-      <EmptyState
-        tone="operational"
-        icon={PackageSearch}
-        title="Nada a antecipar"
-        description="Nenhum item ativo acaba antes da primeira chegada possível depois do recesso."
-      />
-    );
+    // Lista vazia só é "nada a antecipar" com a contagem em mãos e ZERO sem dado: senão é "não sei", não "nada".
+    if (naoConsegui(estRes)) {
+      corpo = linhaResumo;
+    } else if (!resumo.data) {
+      corpo = <PageSkeleton variant="list" />;
+    } else if (resumo.data.sem_dado > 0) {
+      corpo = (
+        <EmptyState
+          tone="operational"
+          icon={PackageSearch}
+          title="Nenhum item listado — mas há itens sem dados"
+          description={textoResumo(resumo.data)}
+        />
+      );
+    } else {
+      corpo = (
+        <EmptyState
+          tone="operational"
+          icon={PackageSearch}
+          title="Nada a antecipar"
+          description={`Nenhum item ativo acaba antes da primeira chegada possível depois do recesso. ${textoResumo(resumo.data)}`}
+        />
+      );
+    }
   } else {
     corpo = (
       <Table>
@@ -747,13 +786,19 @@ function CartaoAntecipar({
               </TableCell>
               <TableCell>{i.fornecedor_nome}</TableCell>
               <TableCell className={cn('text-right tabular-nums', i.cobertura_dias < 0 && 'text-status-error')}>
-                {i.cobertura_dias}
+                {fmtCobertura(i.cobertura_dias)}
               </TableCell>
               <TableCell className="text-right tabular-nums">{i.dias_ate_chegada_pos_recesso}</TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
+    );
+    corpo = (
+      <div className="space-y-2">
+        {linhaResumo}
+        {corpo}
+      </div>
     );
   }
   return (
