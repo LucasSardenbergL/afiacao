@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Prova PG17 — calendário de operação (Etapa 1, Task 1): esquema, RLS, log por trigger e as 3 funções de data
 # (calendario_proximo_dia_recebimento · calendario_somar_dias_uteis_fornecedor · calendario_dias_sem_nf).
+# Task 4b: calendario_itens_antecipar (migration 20261119120000), bloco AANT* com hoje fixado em 2026-12-01.
 # Spec: docs/superpowers/specs/2026-11-18-calendario-operacao-design.md §6.1.
 #
 # Rodar:  bash db/test-calendario-operacao.sh > log 2>&1; echo "exit=$?"   (NÃO pipe pra tail — engole o exit)
@@ -13,6 +14,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261119100000_calendario_operacao.sql"
+MIG_ANT="$REPO_ROOT/supabase/migrations/20261119120000_calendario_antecipar_recesso.sql"   # Task 4b
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca.
@@ -23,7 +25,12 @@ if [ "${1:-}" = "--falsificar" ]; then
     nf_sem_empresa:ASEMNF1 colacor_nao_vazio:ASEMNF_COLACOR fornecedor_sem_empresa:AFORN5
     feriado_nacional_off:AFERIADO_NAC feriado_municipal_fecha:AFERIADO_MUNI feriados_rls_so_master:AFERIADO_EMP
     carga_sem_linha_empresa:POST!carga_calendario carga_sem_linha_fornecedor:POST!carga_calendario
-    carga_sem_nacional_2030:POST!carga_calendario"
+    carga_sem_nacional_2030:POST!carga_calendario
+    ant_sem_pendente:AANT1 ant_pendente_null_vira_zero:AANT1 ant_lt_null_vira_zero:AANT1 ant_lt_floor:AANT1
+    ant_demanda_zero_entra:AANT1 ant_chegada_null_fabricada:AANT_COLACOR ant_fornecedor_fechado_off:AANT1
+    ant_janela_off:AANT_JANELA ant_sem_lower_btrim:AANT1 ant_sem_empresa:AANT1 ant_nao_estrito:AANT1
+    ant_ativo_off:AANT1 ant_gate_off:AANT_GATE ant_revoke_anon:POST!ANTECIPAR-POST]_anon
+    ant_revoke_anon_sem_post:AANT_ANON ant_revoke_public_sem_post:AANT_PUBLIC"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-calendario-operacao.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -62,13 +69,17 @@ LOC="${LOCALE_TESTE:-C}"
 export LC_ALL="$LOC" LANG="$LOC"
 DATA="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-calendario-operacao.XXXXXX")/data"
 MIG_USADA="$(dirname "$DATA")/mig.sql"
+MIG_ANT_USADA="$(dirname "$DATA")/mig-ant.sql"
 # shellcheck disable=SC2329  # invocada via trap
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 
 cp "$MIG" "$MIG_USADA"
-sabotar() { # $1 = de, $2 = para (literal; substitui TODAS as ocorrências; padrão ausente = erro)
-  python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
+cp "$MIG_ANT" "$MIG_ANT_USADA"
+sabotar() { sabotar_em "$MIG_USADA" "$@"; }
+sabotar_ant() { sabotar_em "$MIG_ANT_USADA" "$@"; }   # sabota a migration da Task 4b
+sabotar_em() { # $1 = arquivo, $2 = de, $3 = para (literal; substitui TODAS as ocorrências; padrão ausente = erro)
+  python3 -I - "$1" "$2" "$3" <<'PY'
 import sys
 p, de, para = sys.argv[1:]
 s = open(p, encoding="utf-8").read()
@@ -122,6 +133,35 @@ case "${SABOTAGEM:-}" in
   carga_sem_linha_empresa) CARGA_SABOTAR="  ('2027-02-09', 'OBEN', 'meia_equipe'" ;;
   carga_sem_linha_fornecedor) CARGA_SABOTAR="  ('2026-12-22', 'OBEN', 'MASTERCOL" ;;
   carga_sem_nacional_2030) CARGA_SABOTAR="  ('2030-11-02', 'Finados'" ;;
+  # Task 4b (calendario_itens_antecipar). Camadas redundantes (filtro IS NOT NULL + aritmética NULL) só ficam
+  # vermelhas sabotadas JUNTAS — sabotar uma só deixaria verde por construção (NULL < x é NULL).
+  ant_sem_pendente)      sabotar_ant "(sea.estoque_fisico + sea.estoque_pendente_entrada)" "(sea.estoque_fisico)" ;;
+  ant_pendente_null_vira_zero)
+                         sabotar_ant "(sea.estoque_fisico + sea.estoque_pendente_entrada)" "(sea.estoque_fisico + COALESCE(sea.estoque_pendente_entrada, 0))"
+                         sabotar_ant "AND sea.estoque_pendente_entrada IS NOT NULL" "AND true" ;;
+  ant_lt_null_vira_zero) sabotar_ant "ceil(sp.lt_medio_dias_uteis)::int" "COALESCE(ceil(sp.lt_medio_dias_uteis)::int, 0)"
+                         sabotar_ant "AND sp.lt_medio_dias_uteis IS NOT NULL" "AND true" ;;
+  ant_lt_floor)          sabotar_ant "ceil(sp.lt_medio_dias_uteis)::int" "floor(sp.lt_medio_dias_uteis)::int" ;;
+  ant_demanda_zero_entra) sabotar_ant "AND sp.demanda_media_diaria > 0" "AND sp.demanda_media_diaria >= 0" ;;
+  ant_chegada_null_fabricada)
+                         sabotar_ant "(b.chegada - p_hoje)" "(COALESCE(b.chegada, p_fim_recesso + 60) - p_hoje)"
+                         sabotar_ant "WHERE b.chegada IS NOT NULL" "WHERE true" ;;
+  ant_fornecedor_fechado_off) sabotar_ant "AND EXISTS (SELECT 1 FROM public.calendario_operacao_fornecedor f" \
+                                         "AND true OR EXISTS (SELECT 1 FROM public.calendario_operacao_fornecedor f" ;;
+  ant_janela_off)        sabotar_ant "AND f.data BETWEEN p_hoje AND p_fim_recesso" "AND true" ;;
+  ant_sem_lower_btrim)   sabotar_ant "lower(btrim(f.fornecedor_nome)) = lower(btrim(sp.fornecedor_nome))" "f.fornecedor_nome = sp.fornecedor_nome" ;;
+  ant_sem_empresa)       sabotar_ant "WHERE sp.empresa = p_empresa" "WHERE true" ;;
+  ant_nao_estrito)       sabotar_ant "AND b.cobertura < (b.chegada - p_hoje)" "AND b.cobertura <= (b.chegada - p_hoje)" ;;
+  ant_ativo_off)         sabotar_ant "AND sp.ativo IS TRUE" "AND true" ;;
+  ant_gate_off)          sabotar_ant "IF v_uid IS NOT NULL AND NOT (" "IF false AND NOT (" ;;
+  ant_revoke_anon)       sabotar_ant "FROM PUBLIC, anon;" "FROM PUBLIC;" ;;
+  ant_revoke_anon_sem_post)
+                         sabotar_ant "FROM PUBLIC, anon;" "FROM PUBLIC;"
+                         sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN" ;;
+  ant_revoke_public_sem_post)
+                         sabotar_ant "FROM PUBLIC, anon;" "FROM anon;"
+                         sabotar_ant "IF has_function_privilege('public', v_fn, 'EXECUTE') THEN" "IF false THEN"
+                         sabotar_ant "IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN" "IF false THEN" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
@@ -186,11 +226,26 @@ ALTER TABLE public.calendario_feriados ENABLE ROW LEVEL SECURITY;
 CREATE POLICY staff_calendario_feriados_select ON public.calendario_feriados FOR SELECT TO authenticated
   USING (( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role) OR ( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role)
       OR ( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role) OR ( SELECT has_role(auth.uid(), '$FERIADOS_ROLE_EXTRA'::app_role) AS has_role));
+-- Lidas por calendario_itens_antecipar (Task 4b): colunas e tipos de PROD (psql-ro, 2026-11-18) — sea.sku_codigo_omie
+-- é TEXT, sp.sku_codigo_omie é BIGINT; RLS de leitura staff (master|employee) como em prod.
+CREATE TABLE public.sku_parametros (id bigserial PRIMARY KEY, empresa text NOT NULL, sku_codigo_omie bigint NOT NULL,
+  sku_descricao text, fornecedor_nome text, demanda_media_diaria numeric, lt_medio_dias_uteis numeric, ativo boolean);
+CREATE TABLE public.sku_estoque_atual (empresa text NOT NULL, sku_codigo_omie text NOT NULL, estoque_fisico numeric NOT NULL,
+  estoque_pendente_entrada numeric, PRIMARY KEY (empresa, sku_codigo_omie));
+ALTER TABLE public.sku_parametros ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sku_estoque_atual ENABLE ROW LEVEL SECURITY;
+CREATE POLICY staff_sku_parametros_select ON public.sku_parametros FOR SELECT TO authenticated
+  USING (( SELECT (has_role(( SELECT auth.uid()), 'master'::app_role) OR has_role(( SELECT auth.uid()), 'employee'::app_role))));
+CREATE POLICY staff_sku_estoque_atual_select ON public.sku_estoque_atual FOR SELECT TO authenticated
+  USING (( SELECT has_role(auth.uid(), 'master'::app_role)) OR ( SELECT has_role(auth.uid(), 'employee'::app_role)));
 SQL
 
 # ── Migration REAL, duas vezes (idempotência: IF NOT EXISTS / OR REPLACE / ADD COLUMN IF NOT EXISTS) ────────
 PGOPTIONS="-c client_min_messages=warning" P -q -f "$MIG_USADA" >/dev/null
 PGOPTIONS="-c client_min_messages=warning" P -q -f "$MIG_USADA" >/dev/null
+# Task 4b: a migration do sinal "antecipar", também 2× (depende das funções de data acima).
+PGOPTIONS="-c client_min_messages=warning" P -q -f "$MIG_ANT_USADA" >/dev/null
+PGOPTIONS="-c client_min_messages=warning" P -q -f "$MIG_ANT_USADA" >/dev/null
 eq "AIDEMP migration aplicada 2x sem erro" "ok" "ok"
 
 eq "ACOL1 pedido_compra_sugerido.data_recebimento_prevista date NULL" \
@@ -350,6 +405,63 @@ eq "AGATE4 employee le a mesma resposta do SQL Editor" \
    "$(Pq -c "$(como "$E" "SELECT public.calendario_proximo_dia_recebimento('OBEN','2026-12-19')")" | tail -1)" "2027-01-04"
 eq "AGATE5 service_role (edge, JWT sem sub) chama e enxerga o calendario" \
    "$(Pq -c "SET ROLE service_role; SELECT public.calendario_somar_dias_uteis_fornecedor('OBEN','Fornecedor X','2026-12-17',3)" | tail -1)" "2027-01-05"
+
+# ── calendario_itens_antecipar (Task 4b) — hoje FIXADO em 2026-12-01 via p_hoje; fim do recesso 03/01/2027 ──────
+# Fornecedor X (OBEN) fechado 21/12–03/01 (carga acima). 03/01 (dom) + 10 uteis do X = sex 15/01, dia aberto da
+# OBEN -> chegada 15/01 = 45 dias corridos desde 01/12. Entra se (fisico + pendente) / demanda < 45.
+P -q <<'SQL'
+INSERT INTO public.calendario_operacao_fornecedor (data, empresa, fornecedor_nome, motivo, origem) VALUES
+  ('2026-12-24', 'COLACOR', 'Fornecedor Y', 'ferias', 'manual');
+INSERT INTO public.sku_parametros (empresa, sku_codigo_omie, sku_descricao, fornecedor_nome, demanda_media_diaria, lt_medio_dias_uteis, ativo) VALUES
+  ('OBEN', 1001, 'cob 20 (15 fis + 5 pend)', 'Fornecedor X',    1,    10,   true),
+  ('OBEN', 1002, 'cob 80',                   'Fornecedor X',    1,    10,   true),
+  ('OBEN', 1003, 'demanda NULL',             'Fornecedor X',    NULL, 10,   true),
+  ('OBEN', 1004, 'demanda 0',                'Fornecedor X',    0,    10,   true),
+  ('OBEN', 1005, 'LT NULL',                  'Fornecedor X',    1,    NULL, true),
+  ('OBEN', 1006, 'pendente NULL',            'Fornecedor X',    1,    10,   true),
+  ('OBEN', 1007, 'sem linha de estoque',     'Fornecedor X',    1,    10,   true),
+  ('OBEN', 1008, 'fornecedor sem recesso',   'Outro',           1,    10,   true),
+  ('OBEN', 1009, 'inativo',                  'Fornecedor X',    1,    10,   false),
+  ('OBEN', 1010, 'cob 45 = borda',           'Fornecedor X',    2,    10,   true),
+  ('OBEN', 1011, 'caixa/espaco, LT 9.2',     ' FORNECEDOR X ',  1,    9.2,  true),
+  ('OBEN', 1012, 'cob 44.5',                 'Fornecedor X',    2,    10,   true),
+  ('COLACOR', 2001, 'Y LT 10 cob 1',         'Fornecedor Y',    1,    10,   true),
+  ('COLACOR', 2002, 'Y LT 41 -> chegada NULL', 'Fornecedor Y',  1,    41,   true),
+  ('COLACOR', 2003, 'X sem recesso na COLACOR', 'Fornecedor X', 1,    10,   true);
+INSERT INTO public.sku_estoque_atual (empresa, sku_codigo_omie, estoque_fisico, estoque_pendente_entrada) VALUES
+  ('OBEN', '1001', 15, 5), ('OBEN', '1002', 80, 0), ('OBEN', '1003', 1, 0), ('OBEN', '1004', 1, 0),
+  ('OBEN', '1005', 1, 0),  ('OBEN', '1006', 1, NULL), ('OBEN', '1008', 1, 0), ('OBEN', '1009', 1, 0),
+  ('OBEN', '1010', 90, 0), ('OBEN', '1011', 10, 0), ('OBEN', '1012', 89, 0),
+  ('COLACOR', '2001', 1, 0), ('COLACOR', '2002', 1, 0), ('COLACOR', '2003', 1, 0);
+SQL
+# Prefixo "L=" : lista vazia vira "L=", erro da query vira "" — vazio por ERRO nunca casa com vazio esperado.
+ant() { Pq -c "SELECT 'L=' || COALESCE(string_agg(sku_codigo_omie||':'||cobertura_dias::numeric(10,2)||':'||dias_ate_chegada_pos_recesso, ',' ORDER BY cobertura_dias, sku_codigo_omie), '') FROM public.calendario_itens_antecipar($1)"; }
+ANT_OBEN="L=1011:10.00:45,1001:20.00:45,1012:44.50:45"
+eq "APRE_ANT X: 03/01 + 10 uteis -> 15/01 e recebimento OBEN 15/01" \
+   "$(Pq -c "SELECT public.calendario_proximo_dia_recebimento('OBEN', public.calendario_somar_dias_uteis_fornecedor('OBEN','Fornecedor X','2027-01-03',10))")" "2027-01-15"
+eq "AANT1 OBEN: so cob 10 (lower/btrim, ceil LT), 20 (fis+pend) e 44.5 < 45; fora: 80, borda 45, NULLs, inativo, Outro" \
+   "$(ant "'OBEN','2027-01-03','2026-12-01'")" "$ANT_OBEN"
+eq "AANT_EXCL OBEN: 12 SKUs na fixture, 3 listados (9 excluidos — contagem visivel)" \
+   "$(Pq -c "SELECT (SELECT count(*) FROM public.sku_parametros WHERE empresa='OBEN')||'/'||(SELECT count(*) FROM public.calendario_itens_antecipar('OBEN','2027-01-03','2026-12-01'))")" "12/3"
+eq "AANT_COLACOR so o Y de LT 10; LT 41 -> chegada NULL (teto 60) fica FORA; X sem recesso na COLACOR fora" \
+   "$(ant "'COLACOR','2027-01-03','2026-12-01'")" "L=2001:1.00:45"
+eq "AANT_JANELA hoje 04/01, fim 10/01: X sem dia fechado na janela -> vazio" \
+   "$(ant "'OBEN','2027-01-10','2027-01-04'")" "L="
+eq "AANT_NULL empresa NULL -> vazio" "$(ant "NULL,'2027-01-03','2026-12-01'")" "L="
+eq "AANT_DEFAULT p_hoje default = hoje de Sao Paulo" \
+   "$(Pq -c "SELECT pg_get_function_arguments('public.calendario_itens_antecipar(text,date,date)'::regprocedure) LIKE '%p_hoje date DEFAULT ((now() AT TIME ZONE ''America/Sao_Paulo''::text))::date%'")" "t"
+eq "AANT_EMP employee (INVOKER sob RLS de sku_*) ve a mesma lista" \
+   "$(Pq -c "$(como "$E" "SELECT string_agg(sku_codigo_omie::text, ',' ORDER BY cobertura_dias) FROM public.calendario_itens_antecipar('OBEN','2027-01-03','2026-12-01')")" | tail -1)" "1011,1001,1012"
+eq "AANT_GATE customer chamando itens_antecipar -> 42501" \
+   "$(estado "$(como "$C" "SELECT * FROM public.calendario_itens_antecipar('OBEN','2027-01-03','2026-12-01')")")" "42501"
+eq "AANT_ANON anon NAO executa calendario_itens_antecipar" \
+   "$(Pq -c "SELECT has_function_privilege('anon', 'public.calendario_itens_antecipar(text,date,date)', 'EXECUTE')")" "f"
+eq "AANT_PUBLIC PUBLIC NAO executa calendario_itens_antecipar" \
+   "$(Pq -c "SELECT has_function_privilege('sem_grant', 'public.calendario_itens_antecipar(text,date,date)', 'EXECUTE')")" "f"
+eq "AANT_AUTH authenticated e service_role executam calendario_itens_antecipar" \
+   "$(Pq -c "SELECT has_function_privilege('authenticated', 'public.calendario_itens_antecipar(text,date,date)', 'EXECUTE') AND has_function_privilege('service_role', 'public.calendario_itens_antecipar(text,date,date)', 'EXECUTE')")" "t"
+eq "AANT_ANON_EXEC anon chamando de fato -> 42501 (sem EXECUTE)" \
+   "$(estado "SET ROLE anon; SELECT * FROM public.calendario_itens_antecipar('OBEN','2027-01-03','2026-12-01')")" "42501"
 
 # ── ACL: REVOKE nas DUAS pontas (PUBLIC e anon), EXECUTE para authenticated e service_role ────────────────────
 for fn in "calendario_proximo_dia_recebimento(text,date)" "calendario_somar_dias_uteis_fornecedor(text,text,date,integer)" "calendario_dias_sem_nf(text,date,date)"; do
