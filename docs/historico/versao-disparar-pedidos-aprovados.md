@@ -62,4 +62,9 @@ v1.16 (2026-11-16) — a espera entre FILHOS de split Sayerlack/OBEN (PR8/PR10, 
 #4425/#4426) estouravam o IDLE_TIMEOUT de 150 s: o disparo concluía, mas a tela recebia 504. Sem pré-condição de banco.
       DEPLOY CONFIRMADO 2026-11-16 ~11:50Z (pacote d1fbba86d893 @ 60c11a3b2, 18/18 hashes; sensor SEM_EDICAO;
       sonda db/sonda-disparar-v116-20261116.sql, fingerprint 58c79158…).
+v1.17 (2026-11-18, calendário de operação etapa 1) — os dias úteis do dDtPrevisao passam a ser os do FORNECEDOR
+(`calendario_somar_dias_uteis_fornecedor`: fim de semana, feriado nacional, recesso cadastrado); o dDtPrevisao segue
+sendo a promessa dele. A data em que a empresa recebe (`calendario_proximo_dia_recebimento`, 1º dia aberto ≥ promessa)
+vai para `data_recebimento_prevista`/`recebimento_ajustado_calendario` no mesmo update do desfecho. RPC com erro/null
+⇒ resultado inteiro legado (colunas null). PRÉ-CONDIÇÃO DE BANCO: migration 20261119100000 aplicada ANTES do deploy.
 ```

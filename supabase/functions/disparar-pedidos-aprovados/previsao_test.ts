@@ -6,7 +6,7 @@
 // O relógio é INJETADO (`agora`). Calendário de referência (conferido à mão a partir de 01/01/2024 =
 // segunda): 30/09/2026 é quarta, 01/10 quinta, 02/10 sexta, 03/10 sábado, 04/10 domingo, 05/10 segunda;
 // 31/12/2026 é quinta e 01/01/2027 sexta.
-import { dataPrevisaoOmie, somarDiasUteis } from "./previsao.ts";
+import { dataPrevisaoOmie, previsaoComCalendario, somarDiasUteis } from "./previsao.ts";
 
 function assertEquals(a: unknown, b: unknown, msg: string) {
   if (a !== b) throw new Error(`${msg}: esperava ${JSON.stringify(b)}, veio ${JSON.stringify(a)}`);
@@ -116,4 +116,112 @@ Deno.test("INVARIANTE, hora a hora em 2026–2027: novo(t) = velho no servidor �
   // acaso (o fim de semana não conta) — por isso aqui só se exige que a região do defeito exista.
   if (mudouLt0 !== 730 * 3) throw new Error(`lt=0: a noite deveria mudar ${730 * 3} vezes, mudou ${mudouLt0}`);
   if (mudouComLt === 0) throw new Error("lt>0: nenhuma noite mudou — a varredura não alcança o defeito");
+});
+
+// ── previsaoComCalendario: a promessa do fornecedor e o recebimento pelo calendário de operação ──
+// As RPCs (calendario_somar_dias_uteis_fornecedor / calendario_proximo_dia_recebimento) entram como
+// stubs que GRAVAM os argumentos: o teste prova o que vai ao banco, não só o que volta.
+
+type Chamada = [string, ...unknown[]];
+
+function stubs(o: {
+  somar?: (de: string, n: number) => Promise<string | null>;
+  proximo?: (d: string) => Promise<string | null>;
+}) {
+  const chamadas: Chamada[] = [];
+  return {
+    chamadas,
+    somarFornecedor: (de: string, n: number) => {
+      chamadas.push(["somar", de, n]);
+      return o.somar ? o.somar(de, n) : Promise.resolve(null);
+    },
+    proximoRecebimento: (d: string) => {
+      chamadas.push(["proximo", d]);
+      return o.proximo ? o.proximo(d) : Promise.resolve(null);
+    },
+  };
+}
+
+function assertChamadas(veio: Chamada[], esperado: Chamada[], msg: string) {
+  assertEquals(JSON.stringify(veio), JSON.stringify(esperado), msg);
+}
+
+// Nos testes de falha do RECEBIMENTO a promessa do stub (28/12, recesso do fornecedor) DIFERE do legado
+// (21/12 + 2 úteis = 23/12): só assim "promessa nova com recebimento nulo" fica vermelho (falsificado).
+// 2026-12-01T02:00Z = 30/11/2026 23:00 em SP (o hoje é o de SP, nunca o UTC).
+const NOITE_30_11 = new Date("2026-12-01T02:00:00Z");
+
+Deno.test("calendário, ramo portal: promessa 23/12 (portal + 2 úteis) e recebimento 04/01 → ajustado=true", async () => {
+  const s = stubs({
+    somar: () => Promise.resolve("2026-12-23"),
+    proximo: () => Promise.resolve("2027-01-04"),
+  });
+  const r = await previsaoComCalendario({ portalDataEntrega: "2026-12-21", ltDias: 7, agora: NOITE_30_11, ...s });
+  assertEquals(r.dDtPrevisao, "23/12/2026", "dDtPrevisao = a promessa do fornecedor");
+  assertEquals(r.dataRecebimentoPrevista, "2027-01-04", "recebimento");
+  assertEquals(r.ajustado, true, "ajustado");
+  assertChamadas(s.chamadas, [["somar", "2026-12-21", 2], ["proximo", "2026-12-23"]], "chamadas");
+});
+
+Deno.test("calendário, ramo fallback: hoje SP + ltDias; promessa 10/12 = recebimento → ajustado=false", async () => {
+  const s = stubs({
+    somar: () => Promise.resolve("2026-12-10"),
+    proximo: () => Promise.resolve("2026-12-10"),
+  });
+  const r = await previsaoComCalendario({ portalDataEntrega: null, ltDias: 7, agora: NOITE_30_11, ...s });
+  assertEquals(r.dDtPrevisao, "10/12/2026", "dDtPrevisao");
+  assertEquals(r.dataRecebimentoPrevista, "2026-12-10", "recebimento");
+  assertEquals(r.ajustado, false, "ajustado");
+  assertChamadas(s.chamadas, [["somar", "2026-11-30", 7], ["proximo", "2026-12-10"]], "conta do HOJE em SP");
+});
+
+Deno.test("calendário: portal malformado cai no ramo fallback (mesma regra do legado)", async () => {
+  const s = stubs({ somar: () => Promise.resolve("2026-12-10"), proximo: () => Promise.resolve("2026-12-10") });
+  await previsaoComCalendario({ portalDataEntrega: "21/12/2026", ltDias: 3, agora: NOITE_30_11, ...s });
+  assertChamadas(s.chamadas, [["somar", "2026-11-30", 3], ["proximo", "2026-12-10"]], "fallback");
+});
+
+async function assertLegado(
+  s: ReturnType<typeof stubs>,
+  portalDataEntrega: unknown,
+  msg: string,
+): Promise<void> {
+  const entrada = { portalDataEntrega, ltDias: 7, agora: NOITE_30_11 };
+  const r = await previsaoComCalendario({ ...entrada, ...s });
+  assertEquals(r.dDtPrevisao, dataPrevisaoOmie(entrada), `${msg}: dDtPrevisao legado`);
+  assertEquals(r.dataRecebimentoPrevista, null, `${msg}: recebimento null`);
+  assertEquals(r.ajustado, null, `${msg}: ajustado null`);
+}
+
+Deno.test("calendário: somarFornecedor LANÇA → resultado INTEIRO legado, sem throw, e não consulta o recebimento", async () => {
+  const s = stubs({ somar: () => Promise.reject(new Error("rpc caiu")), proximo: () => Promise.resolve("2027-01-04") });
+  await assertLegado(s, "2026-12-21", "somar lança");
+  assertChamadas(s.chamadas, [["somar", "2026-12-21", 2]], "não chamou o recebimento");
+});
+
+Deno.test("calendário: somarFornecedor devolve null → legado", async () => {
+  await assertLegado(stubs({ somar: () => Promise.resolve(null) }), null, "somar null");
+});
+
+Deno.test("calendário: proximoRecebimento LANÇA → legado (nunca promessa nova com recebimento nulo)", async () => {
+  const s = stubs({ somar: () => Promise.resolve("2026-12-28"), proximo: () => Promise.reject(new Error("timeout")) });
+  await assertLegado(s, "2026-12-21", "proximo lança");
+});
+
+Deno.test("calendário: proximoRecebimento devolve null (sem dia aberto em 60) → legado", async () => {
+  const s = stubs({ somar: () => Promise.resolve("2026-12-28"), proximo: () => Promise.resolve(null) });
+  await assertLegado(s, "2026-12-21", "proximo null");
+});
+
+Deno.test("calendário: RPC devolve data malformada → legado (não vira dDtPrevisao nem coluna)", async () => {
+  await assertLegado(
+    stubs({ somar: () => Promise.resolve("23/12/2026"), proximo: () => Promise.resolve("2026-12-23") }),
+    "2026-12-21",
+    "somar malformado",
+  );
+  await assertLegado(
+    stubs({ somar: () => Promise.resolve("2026-12-28"), proximo: () => Promise.resolve("2027-1-4") }),
+    "2026-12-21",
+    "proximo malformado",
+  );
 });
