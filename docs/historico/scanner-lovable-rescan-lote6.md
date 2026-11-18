@@ -273,6 +273,20 @@ Camada única do conserto das edges: as 3 edges. Feito em 2026-11-18 (UTC), depo
 
 **O bot empurrou `bun.lock` e `package.json` na `main` de novo.** Commit `58cd59b07` ("Deployed 3 tint-edge funcs"): as mesmas 2 `devDependencies` do lote 5, e 66 linhas de lock. As edges não foram tocadas. O agente escreveu que os dois arquivos já estavam modificados no sandbox e que não os commitaria; a plataforma empurrou assim mesmo. É a 5ª ocorrência. O revert, byte a byte contra o pai do commit, vai no PR da gamificação.
 
+### Segundo deploy da `tint-sync-agent`: v1.5 (2026-11-18)
+
+Depois do merge do #3951 (`4eda73ab3`), pela sessão paralela, por decisão do founder ("Fazer agora"). Camada única, sem migration e sem Publish.
+
+| Passo | Evidência |
+|---|---|
+| Ledger antes | `pendencias:deploy`: só a `tint-sync-agent` pendente, `v1.4-catalogo-lista-fechada` em produção e `v1.5-registro-da-recusa-conferido` na `main` |
+| Pacote | `bun scripts/pendencias-pacote.ts tint-sync-agent` → `cf12d381f240`, contra `origin/main@4eda73ab3`. Pré-condição de banco satisfeita |
+| Envio | `send_message` às 02:22:39Z. O cliente estourou o tempo e a mensagem não foi reenviada: foi achada pelo `list_messages`, igual ao Passo 2 do pacote, e acompanhada pelo `get_message`. O agente conferiu 13/13 hashes e publicou. Custo: 2,9 créditos |
+| Sonda | `db/sonda-seg-lote6-v15-20261118.sql` pelo `db:aplicar`: ensaio, depois a tentativa #1169. Request 25147, HTTP 200 às 02:24:56Z |
+| Veredito | **DEPLOY CONFIRMADO**: `versao` `v1.5-registro-da-recusa-conferido` e `fonte` igual à do mapa da `main` (`1994b3eb…2456`) |
+
+O agente fechou com `No files were edited.` e `git status` limpo. A plataforma pediu três vezes que ele corrigisse erros de typecheck antigos de outras edges, e ele só os listou.
+
 ## Fica para o founder
 
 - **Colar a migration da gamificação** no SQL Editor (bloco no PR). Sem ela o furo continua aberto.
