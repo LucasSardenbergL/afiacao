@@ -672,6 +672,27 @@ Deno.test("leitura das linhas nossas falha: nada é atualizado, o erro vai ao re
   igual(f.observacoes[0]?.pendente_aplicado, false, "não aplicado");
 });
 
+Deno.test("leitura das linhas nossas falha SEM nenhum conflito: só ela já tira o 'aplicado'", async () => {
+  const tabela = new Map<string, Record<string, unknown>>([
+    ["555", { sku_codigo_omie: "555", estoque_fisico: 0, estoque_pendente_entrada: 10, fonte_sync: FONTE_SEM_POSICAO }],
+  ]);
+  const pend: ResultadoPendente = {
+    ...pendenteComMembros(new Map()),
+    observacao: {
+      observados: [observado(101, 5)],
+      janelaDe: "2025-10-06",
+      janelaAte: "2027-02-03",
+      varreduraCompleta: true,
+      coletaIntegra: true,
+      perdaColeta: null,
+    },
+  };
+  const f = criarFake({ pendente: pend, tabela, lerNossas: "boom" });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual([r.membros_grupo_ausentes_ja_com_linha, r.membros_grupo_ausentes_falhas], [0, 0], "sem conflito nem falha");
+  igual(f.observacoes[0]?.pendente_aplicado, false, "a linha nossa não foi reconciliada: não aplicado");
+});
+
 Deno.test("linha nossa de membro que VOLTOU à listagem: vale o par lido (upsert), sem update de ausente", async () => {
   const tabela = new Map<string, Record<string, unknown>>([
     ["999", { sku_codigo_omie: "999", estoque_fisico: 0, estoque_pendente_entrada: 10, fonte_sync: FONTE_SEM_POSICAO }],
