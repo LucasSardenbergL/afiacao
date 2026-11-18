@@ -107,15 +107,30 @@ está em `reposicao.md` §Mínimo forçado.
 
 ### Fase 2 — portal ≠ Omie + e-mail ao CRS + leitura da resposta
 
+**Fluxo decidido pelo founder (2026-11-18)**
+
+1. O pedido entra no portal com o lote (Qtd UN) e o PO do Omie com a quantidade real.
+2. **Logo em seguida**, no mesmo ciclo do envio, sai o e-mail ao CRS pedindo a alteração. A resposta costuma vir no
+   mesmo dia.
+3. **Sem resposta em 1 dia útil**, o sistema alerta o founder e **cobra** respondendo no mesmo thread.
+4. **Se a resposta for "não é possível alterar"**, respondemos no thread **pedindo o cancelamento**, e a Sayerlack
+   cancela sozinha. Não existe ação de cancelamento no portal.
+5. A varredura já lê "6 - Cancelado". O encerramento do nosso lado (PO e pedido) segue pelo caminho auditado que já
+   existe.
+
 **Ledger novo** `pedido_portal_ajuste_qtde`, com RLS e 1 escritor por transição:
 
 | coluna | |
 |---|---|
 | `pedido_id`, `pedido_item_id`, `sku_portal` | |
-| `qtde_portal`, `qtde_omie`, `unidade` | o par divergente, explícito |
-| `status` | `rascunho` → `email_enviado` → `aceito` · `recusado` · `sem_resposta` · `cancelado` · `lote_aceito` |
-| `email_message_id`, `email_enviado_em`, `resposta_recebida_em`, `resposta_classificacao`, `resposta_trecho` | trilha |
-| `decidido_por`, `decidido_em` | toda transição terminal tem dono humano (Fases 1–2) |
+| `qtde_portal`, `qtde_omie` | o par divergente, explícito, em Qtd UN |
+| `status` | `email_enviado` → `aceito` · `recusado` → `cancelamento_pedido` → `cancelado` · `lote_aceito` |
+| `gmail_thread_id`, `email_message_id`, `email_enviado_em`, `cobrado_em`, `resposta_recebida_em`, `resposta_classificacao`, `resposta_trecho` | trilha |
+| `decidido_por`, `decidido_em` | dono de cada transição: `sistema` ou o user |
+
+**Proposta: o item abaixo do lote vai num pedido de portal SEPARADO.** Hoje ele entraria no mesmo pedido Sayerlack dos
+outros 9 SKUs, e "cancelar o pedido" derrubaria a compra inteira. Com o item isolado, o cancelamento afeta só ele. É
+a pergunta aberta nº 6.
 
 **Envio do PO com qtde diferente**
 
@@ -125,48 +140,67 @@ está em `reposicao.md` §Mínimo forçado.
   acusar diferença.
 - **Onde mais aparece:** a conferência de recebimento. Se a Sayerlack faturar o lote, a NF chega com 20 e o PO diz 1.
 
-**E-mail ao CRS**
+**E-mail ao CRS — sai do Gmail pessoal do founder**
 
-- **Canal:** Gmail API, o mecanismo de `dispatch-notifications`, a partir de uma caixa real da OBEN monitorada pelo
-  Apps Script.
-- **Não usar Resend:** o remetente atual é o sandbox `onboarding@resend.dev`. É inadequado para fornecedor, e a resposta
-  não voltaria para caixa nenhuma.
-- **Assunto com token de correlação:** `Alteração de quantidade — Pedido Sayerlack <protocolo> [AFI-<id>]`.
-- **Corpo:** pedido, SKU, descrição, quantidade lançada → quantidade desejada, com pedido de confirmação.
-- **Fase 2a:** o sistema monta o rascunho e o founder clica "Enviar". Mandar mensagem em nome da empresa é ação externa.
-- **Fase 2b:** envio automático, só depois de N rascunhos enviados sem edição.
+O founder decidiu que o e-mail sai do Gmail pessoal dele. É a **mesma caixa** que o Apps Script do
+`gmail-webhook-receiver` monitora (§6), então a resposta volta para dentro do sistema.
+
+**Envio**
+- Pela Gmail API (`users/me/messages/send`), o mecanismo de `dispatch-notifications`.
+- Verificar antes de implementar:
+  - o refresh token já configurado é dessa conta e tem escopo `gmail.send`;
+  - se não for, o founder gera um token novo e o grava no Supabase secrets, nunca no chat.
+- Guarda o `threadId` devolvido no ledger.
+
+**Destinatário e assunto**
+- Para: crs@sayerlack.com.br.
+- Assunto: `Alteração de quantidade — Pedido Sayerlack <protocolo> [AFI-<id>]`.
+
+**Corpo (template fixo, sem LLM)**
+- pedido Sayerlack, SKU e descrição;
+- "lançado 20 UN pelo lote mínimo, precisamos de 1 UN";
+- pedido de confirmação.
+
+**Cobrança**
+- Resposta no mesmo thread: "Bom dia, conseguem confirmar a alteração do pedido <protocolo>?".
+- Sai automaticamente quando `dias_uteis_entre(email_enviado_em, now()) >= 1`. A função já existe em prod.
+- Ao mesmo tempo, `fornecedor_alerta` para o founder.
+- Segunda cobrança sem resposta → só alerta, para não virar spam ao fornecedor.
 
 **Resposta do CRS**
 
-1. Adicionar `crs@sayerlack.com.br` ao mapa `REMETENTES` do `gmail-webhook-receiver`. Hoje a edge rejeita remetente
-   fora do mapa, e a doc a marca como "órfã provável": **confirmar antes** que o Apps Script está vivo e qual caixa
-   monitora.
-2. Correlacionar pelo token `[AFI-<id>]` ou pelo protocolo no assunto. Sem correlação, vai para a fila manual, nunca
-   para um palpite.
-3. Classificar o `bodyText` com Anthropic direto (`MODELO_PADRAO`, tool-use não forçado) em `aceito` | `recusado` |
-   `ambiguo`, guardando o trecho citado.
-4. **Fase 2 não cancela sozinha.**
-   - `recusado` vai para a fila "decidir", com as opções "cancelar o pedido" e "aceitar o lote".
-   - `aceito` só marca o ledger. A prova final é a NF ou o pedido importado do portal com a qtde reduzida.
-5. **Sem resposta** em X dias úteis (a definir; o lead time do grupo é a referência) → alerta.
+- **Quem responde:** o crs@ **nunca** escreveu para essa caixa (0 de 8.771 e-mails no log). A resposta pode vir de uma
+  pessoa, como as caixas pessoais da Sayerlack que aparecem no log. Logo, correlacionar por **thread**, não por
+  remetente.
+- **Correlação:**
+  - o Apps Script passa a enviar `threadId` (e `inReplyTo`) no payload; hoje o payload não tem esses campos e o
+    script vive fora do repo, então o founder ou a sessão edita no Google;
+  - o webhook aceita qualquer remetente `@sayerlack.com.br` **cujo thread esteja no ledger**;
+  - sem thread conhecido, cai no comportamento atual (mapa `REMETENTES`).
+- **Classificação:** só a parte NOVA do `bodyText`, sem o texto citado, com Anthropic direto (`MODELO_PADRAO`, tool-use
+  não forçado), em `aceito` | `recusado` | `ambiguo`, guardando o trecho citado.
+- **Ações por classificação:**
+  - `aceito` → marca o ledger. A prova final é a NF ou o pedido importado do portal com 1 UN.
+  - `recusado` → **resposta de cancelamento no thread** (Fase 2a: um clique do founder; Fase 3: automática).
+  - `ambiguo` → alerta o founder com o trecho e não age.
 
-**Cancelar, quando decidido**
+**Depois do cancelamento**
 
-- O cancelamento na Sayerlack é por e-mail ao CRS ou pelo portal. Hoje **nenhuma edge escreve cancelamento no portal**.
-- O PO do Omie é cancelado ou encerrado pelo caminho auditado que já existe.
-- A varredura já lê "6 - Cancelado" e o `sayerlack-encerrar-cancelado-portal` já encerra, restrito a master. Reusar,
-  não duplicar.
+- A necessidade de 1 UN continua, e o motor vai sugerir de novo no próximo ciclo.
+- O ledger marca o SKU com "redução recusada em <data>". A tela de decisão mostra isso, para não repetir o mesmo
+  pedido ao CRS em loop.
+- O founder escolhe entre comprar o lote, comprar de outra fonte ou esperar.
 
-### Fase 3 — cancelamento automático (o que o founder pediu), condicionado a sinal
+### Fase 3 — resposta de cancelamento automática, condicionada a sinal
 
-- **Só abre** depois de a Fase 2 medir a taxa de acerto do classificador **com denominador**: N respostas,
-  M classificadas certo, revisadas pelo founder.
-- **Conflito com decisão anterior:** o encerramento por cancelamento foi decidido como **auditado, não automático**
-  (`sayerlack-encerrar-cancelado-portal`). A Fase 3 precisa de nova decisão explícita do founder sobre essa regra.
-- **Mesmo na Fase 3:**
-  - só `recusado` com confiança alta e trecho citado;
-  - nunca `ambiguo`;
-  - notificação com "desfazer" durante uma janela antes do efeito no Omie.
+- **O que muda:** a resposta "pedimos o cancelamento" a um `recusado` sai **sem clique**.
+- **Abre quando:** a Fase 2a medir a taxa de acerto do classificador **com denominador**: N respostas, M aceitas pelo
+  founder sem correção.
+- **Por que esperar:** um "não" mal lido cancela uma compra necessária.
+- **Mesmo automática:**
+  - só `recusado` com confiança alta e trecho citado; `ambiguo` nunca;
+  - o founder é notificado na hora, com o trecho.
+- **O encerramento no Omie continua pelo caminho auditado.** Mudar essa regra é decisão separada.
 
 ## 4. Fora de escopo
 
@@ -177,19 +211,28 @@ está em `reposicao.md` §Mínimo forçado.
 ## 5. Perguntas abertas para o founder
 
 1. ~~Unidade do "20"~~: **respondida**, é Qtd UN (§2).
-2. **Caixa de e-mail:** de qual caixa sai o e-mail ao CRS e onde a resposta chega? O Apps Script do
-   `gmail-webhook-receiver` ainda está vivo?
-3. **Cancelar na Sayerlack:** é por e-mail ao CRS ou existe ação no portal?
+2. ~~Caixa de e-mail~~: **respondida**, é o Gmail pessoal do founder; o Apps Script está vivo (§6).
+3. ~~Como cancelar~~: **respondida**, é uma resposta no thread do CRS; a Sayerlack cancela sozinha.
 4. **Se a Sayerlack faturar o lote mesmo após pedir a redução:** aceitamos o estoque extra ou devolvemos?
-5. **Prazo de "sem resposta":** quantos dias úteis?
+5. ~~Prazo~~: **respondido**, é 1 dia útil para alerta e cobrança.
+6. **O item abaixo do lote vai num pedido de portal separado?** É o que recomendo: sem isso, cancelar derruba os outros
+   SKUs do pedido.
 
-## 6. Deploy e verificação (por fase)
+## 6. Evidência — automação de e-mail viva (`psql-ro`, 2026-11-18)
+
+- `gmail_webhook_log`: 8.771 linhas; último recebimento em 2026-11-18 12:50 UTC (hoje).
+- O Apps Script repassa a caixa **inteira**; só o mapa `REMETENTES` decide o que é processado. Nos últimos 30 dias:
+  1.063 `rejeitado` e 1 `sucesso`.
+- Remetentes `@sayerlack.com.br` já vistos: pedidos@, filialsp@, financeiro@ e caixas pessoais. **crs@: zero.**
+- **Ressalva:** ninguém olhava a edge, a ponto de ela estar marcada como "órfã provável". A Fase 2 dá dono a ela.
+
+## 7. Deploy e verificação (por fase)
 
 | Fase | Camadas | Quem |
 |---|---|---|
 | 0 | edge `enviar-pedido-portal-sayerlack` (bump `VERSAO` + fingerprint); espelho em `src/` (Publish só se a tela mudar) | sessão abre o PR; deploy da edge segue `pendencias:deploy` |
 | 1 | migration (colunas em `sku_fornecedor_externo`) + tela + Publish | migration pelo ritual `lovable-db-operator`; Publish pelo founder |
-| 2 | migration (ledger + RLS) + `disparar-pedidos-aprovados` + `gmail-webhook-receiver` + edge nova de rascunho/envio + secrets Gmail | idem; secrets no Supabase pelo founder |
+| 2 | migration (ledger + RLS + cron de cobrança) + `disparar-pedidos-aprovados` + `gmail-webhook-receiver` + edge nova de envio/cobrança + Apps Script (threadId) + secret Gmail da conta do founder | idem; secret e Apps Script pelo founder |
 
 **Money-path:** Fases 1 e 2 passam por `/codex` (Caminho B) antes da implementação, com prova SQL em PG17
 executando, não só criando.
