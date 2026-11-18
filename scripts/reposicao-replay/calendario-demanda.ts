@@ -10,7 +10,7 @@
 //     where empresa='OBEN' order by data" | grep -E '^[0-9]{4}-' > $REPLAY_DADOS/calendario_operacao_oben.csv
 //
 // O fator é o MESMO da função SQL calendario_fator_demanda (U/W, guardas W/U < 0,6 e teto 1,35, pendente_dado fora),
-// sobre a janela do numerador do F0 do cron ([d − 90, d), o que o atualizador lê de madrugada). O σ e o LT ficam os
+// sobre a MESMA janela da SQL ([d − 90, d]: o estado do dia d já é conhecido de madrugada — Codex P1-7). O σ e o LT ficam os
 // do diagnóstico (a spec não os toca; o fallback de σ é d_cru × 0,5, como na view).
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -81,7 +81,7 @@ function principal(): void {
   const args = process.argv.slice(2);
   const iDados = args.indexOf('--dados');
   const dir = iDados >= 0 ? args[iDados + 1] : (process.env.REPLAY_DADOS ?? join(homedir(), '.cache/afiacao/reposicao-replay'));
-  const datas = args.filter((a, i) => /^\d{4}-\d{2}-\d{2}$/.test(a) && i !== iDados + 1);
+  const datas = args.filter((a, i) => /^\d{4}-\d{2}-\d{2}$/.test(a) && !(iDados >= 0 && i === iDados + 1));
   const bases = datas.length ? datas : ['2026-01-19', '2026-02-02', '2026-03-02', '2026-03-16', '2026-04-06', '2026-09-01'];
   const dados = carregarDados(dir);
   const cal = lerCalendario(readFileSync(join(dir, 'calendario_operacao_oben.csv'), 'utf8'));
@@ -96,13 +96,15 @@ function principal(): void {
   const somar = (sku: string, dias: string[]): number => dias.reduce((s, d) => s + (vendas.get(sku)?.get(d) ?? 0), 0);
 
   console.log(`# Replay §7-E2 — demanda ajustada pelo calendário\n\nDados: ${dir} (extração ${dados.dataExtracao}, hash ${dados.hashDados.slice(0, 12)})\n`);
-  console.log('| data-base | fator (U/W) | SKUs com PP | paridade PP F0 | viés cru | viés ajust. | rupturas cru → ajust. (evitadas) | ΔPP total (un) | capital adicional R$ | SKUs sem cmc |');
+  console.log('| data-base | fator (U/W) | SKUs com PP (ativos e habilitados) | paridade PP F0 | viés cru | viés ajust. | venda no LT > PP: cru → ajust. (deixam de exceder) | ΔPP total (un) | capital adicional R$ | SKUs sem cmc |');
   console.log('|---|---|---|---|---|---|---|---|---|---|');
   for (const D of bases) {
-    const f = fatorCalendario(cal, addDias(D, -90), addDias(D, -1));
+    if (addDias(D, 59) > dados.dataExtracao) throw new Error(`horizonte de ${D} passa da extração (${dados.dataExtracao}): dia sem dado viraria venda zero`);
+    const f = fatorCalendario(cal, addDias(D, -90), D);
     const linhas: LinhaSku[] = [];
     let paridadeOk = 0;
     for (const s of dados.skus.values()) {
+      if (!s.ativo || !s.habilitado) continue;   // coorte: o que o motor compra hoje
       const g = diagnosticoF0(dados, s.sku, D, { calibracao: false });
       if (g.status !== 'OK' || g.demanda === null || g.lt === null || g.sigmaLt === null || g.z === null) continue;
       const base = { sigmaD: g.sigmaD ?? g.demanda * 0.5, lt: g.lt, sigmaLt: g.sigmaLt, z: g.z, minimoOperacional: g.minimoOperacional ?? 0 };
@@ -130,7 +132,7 @@ function principal(): void {
       ...linhas.map((l) => [l.sku, l.d0, l.d1, l.pp0, l.pp1, l.real30, l.realLt, l.cmc ?? '', l.cmc === null ? '' : ((l.pp1 - l.pp0) * l.cmc).toFixed(2)].join('|'))];
     writeFileSync(join(dir, `calendario-demanda-${D}.csv`), `${csv.join('\n')}\n`);
   }
-  console.log('\nViés = Σ(d × 30) / Σ(venda realizada nos 30 dias corridos a partir da data-base), SKUs com status OK. Ruptura (proxy) = venda realizada nos ceil(LT) dias úteis seguintes > PP. Capital = ΔPP × cmc de hoje (sem cmc fica fora da soma e é contado).');
+  console.log('\nViés = Σ(d × 30) / Σ(venda realizada nos 30 dias corridos a partir da data-base), SKUs com status OK. "Venda no LT > PP" = a venda realizada nos ceil(LT) dias úteis seguintes passou do PP sugerido — NÃO é ruptura (ignora posição e recebimentos); é o sinal de que o gatilho estava baixo. Capital = ΔPP × cmc de hoje (sem cmc fica fora da soma e é contado).');
 }
 
 if (import.meta.main) principal();

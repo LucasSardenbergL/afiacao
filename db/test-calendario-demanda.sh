@@ -23,7 +23,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261120090000_calendario_demanda_sombra.sql
 MIG_CAL="$REPO_ROOT/supabase/migrations/20261119100000_calendario_operacao.sql"
 FIX="$REPO_ROOT/db/fixtures/calendario-demanda-predecessoras-prod-20261118.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=34
+TOTAL_ESPERADO=36
 
 # ── MODO --falsificar ────────────────────────────────────────────────────────────────────────────────────────────
 # Cada sabotagem declara o ÚNICO assert que a acusa (POS!<MARCA> = a postcondição da migration, que imprime [MARCA]).
@@ -44,6 +44,8 @@ colacor_ajusta:V07
 anon_executa:POS!POS_ACL_ANON
 job_guc_vaza:S03
 pre_frouxa:M2
+eoq_ajustado:V11
+acl_sombra:POS!POS_ACL_SOMBRA
 "
 if [ "${1:-}" = "--falsificar" ]; then
   LOGD="$(mktemp -d "${TMPDIR:-/tmp}/falsif-${SLUG}.XXXXXX")"
@@ -58,10 +60,10 @@ if [ "${1:-}" = "--falsificar" ]; then
     SABOTAGEM="$s" PGPORT_TEST=$((PORT + i)) bash "$0" >"$log" 2>&1 && rc=0 || rc=$?
     nfalhas=$(grep -cE ' (FALHOU|ERRO_DE_EXECUCAO) — ' "$log" || true)
     case "$alvo" in
-      POS!*) marca="${alvo#POS!}"; acusou=0; grep -q "POS FALHOU \[${marca}\]" "$log" && acusou=1; nfalhas=1 ;;
-      *)     acusou=0; grep -q "❌ ${alvo} FALHOU — " "$log" && acusou=1 ;;
+      POS!*) marca="${alvo#POS!}"; acusou=0; esperadas=0; grep -q "POS FALHOU \[${marca}\]" "$log" && acusou=1 ;;
+      *)     acusou=0; esperadas=1; grep -q "❌ ${alvo} FALHOU — " "$log" && acusou=1 ;;
     esac
-    if [ "$rc" -ne 0 ] && grep -q "SABOTAGEM ATIVA: $s" "$log" && [ "$acusou" -eq 1 ] && [ "$nfalhas" -eq 1 ]; then
+    if [ "$rc" -ne 0 ] && grep -q "SABOTAGEM ATIVA: $s" "$log" && [ "$acusou" -eq 1 ] && [ "$nfalhas" -eq "$esperadas" ]; then
       vermelhas=$((vermelhas+1)); echo "  🔴 $s → $alvo (dente)"
     else
       falhas=$((falhas+1)); echo "  ⚠️  $s: esperado só ${alvo} FALHOU; rc=$rc, falhas=$nfalhas"; grep -E ' (FALHOU|ERRO_DE_EXECUCAO) — |INFRA' "$log" | head -5
@@ -109,11 +111,13 @@ if [ -n "$SABOTAGEM" ]; then
     neutro_aritmetica) sabotar_em "$MIG_USADA" "AND fcal.fator <> 1::numeric THEN round(c.demanda_media_diaria * fcal.fator, 4)" "THEN round(c.demanda_media_diaria * fcal.fator, 4) + CASE WHEN fcal.fator = 1::numeric THEN 0.0001 ELSE 0::numeric END" ; sem_trava_de_texto ;;
     sombra_alimenta)   sabotar_em "$MIG_USADA" "WHEN cch.modo = 'valendo'::text AND fcal.fator IS NOT NULL" "WHEN fcal.fator IS NOT NULL" ; sem_trava_de_texto ;;
     chave_ignorada)    sabotar_em "$MIG_USADA" "WHERE cc.key = 'reposicao_demanda_calendario_oben_ativa'::text" "WHERE cc.key = 'reposicao_demanda_calendario_oben_ativa_x'::text" ; sem_trava_de_texto ;;
-    guc_lixo_vale)     sabotar_em "$MIG_USADA" "= ANY (ARRAY['sombra'::text, 'valendo'::text])" "= ANY (ARRAY['sombra'::text, 'valendo'::text, 'xyz'::text])" ; sem_trava_de_texto ;;
+    guc_lixo_vale)     sabotar_em "$MIG_USADA" "= ANY (ARRAY['sombra'::text, 'valendo'::text])" "= ANY (ARRAY['sombra'::text, 'valendo'::text, 'xyz'::text])" ; sabotar_em "$MIG_USADA" "WHEN cch.modo = 'valendo'::text AND fcal.fator IS NOT NULL" "WHEN cch.modo <> 'sombra'::text AND fcal.fator IS NOT NULL" ; sem_trava_de_texto ;;
     colacor_ajusta)    sabotar_em "$MIG_USADA" "LEFT JOIN calendario_fator fcal ON fcal.empresa_cal = c.empresa" "LEFT JOIN calendario_fator fcal ON true" ; sem_trava_de_texto ;;
     anon_executa)      sabotar_em "$MIG_USADA" "GRANT EXECUTE ON FUNCTION public.calendario_fator_demanda(text, date) TO authenticated, service_role;" "GRANT EXECUTE ON FUNCTION public.calendario_fator_demanda(text, date) TO authenticated, service_role, anon;" ;;
     job_guc_vaza)      sabotar_em "$MIG_USADA" "  PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', '', true);
   IF to_regclass" "  IF to_regclass" ;;
+    eoq_ajustado)      sabotar_em "$MIG_USADA" "com_calculos.d_legado > 0::numeric THEN ceil(sqrt(2.0 * (COALESCE(com_calculos.d_legado, 0::numeric)" "com_calculos.d > 0::numeric THEN ceil(sqrt(2.0 * (COALESCE(com_calculos.d, 0::numeric)" ; sem_trava_de_texto ;;
+    acl_sombra)        sabotar_em "$MIG_USADA" "  GRANT SELECT ON public.reposicao_demanda_calendario_sombra TO authenticated;" "  GRANT SELECT ON public.reposicao_demanda_calendario_sombra TO authenticated; GRANT INSERT ON public.reposicao_demanda_calendario_sombra TO service_role;" ;;
     pre_frouxa)        sabotar_em "$MIG_PRE" "IF v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a'" "IF false AND v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a'" ;;
     *) echo "SABOTAGEM DESCONHECIDA: $SABOTAGEM"; exit 2 ;;
   esac
@@ -224,7 +228,8 @@ fechar 2025-11-28 5 meia_equipe   # meia equipe = peso 1 nesta entrega
 COLS="empresa, sku_codigo_omie, demanda_media_diaria, demanda_sigma_diario, status_sugestao, estoque_minimo_sugerido, ponto_pedido_sugerido, qtde_compra_ciclo_sugerida, estoque_maximo_sugerido, cobertura_alvo_dias, estoque_seguranca_sugerido"
 digital() { echo "SELECT count(*) || ':' || md5(string_agg(t::text, '|' ORDER BY t::text)) FROM (SELECT $COLS FROM public.v_sku_parametros_sugeridos) t"; }
 ANTES_REC="$(Ler 2027-01-20T15:00:00Z "$(digital)")"
-ANTES_NEU="$(Ler 2026-09-04T15:00:00Z "$(digital)")"
+SEM_FUTURO="DELETE FROM public.venda_items_history WHERE data_emissao > '2026-09-04'"
+ANTES_NEU="$(Ler 2026-09-04T15:00:00Z "BEGIN; $SEM_FUTURO; $(digital); ROLLBACK;")"
 ANTES_EST="$(Ler 2027-01-20T15:00:00Z "SELECT md5(string_agg(t::text, '|' ORDER BY t::text)) FROM (SELECT empresa, sku_codigo_omie, demanda_total_90d, demanda_media_diaria, valor_total_90d FROM public.v_sku_demanda_estatisticas) t")"
 
 # ── A migration (2×: idempotência) ───────────────────────────────────────────────────────────────────────────────
@@ -266,7 +271,7 @@ LIGA="INSERT INTO public.company_config (key, value) VALUES ('reposicao_demanda_
 DESLIGA="DELETE FROM public.company_config WHERE key = 'reposicao_demanda_calendario_oben_ativa'"
 D1001="SELECT demanda_media_diaria||'|'||demanda_media_diaria_legado||'|'||demanda_media_diaria_calendario||'|'||calendario_modo FROM public.v_sku_parametros_sugeridos WHERE empresa='OBEN' AND sku_codigo_omie=1001"
 Ler 2027-01-20T15:00:00Z "$LIGA" >/dev/null
-eq V01 "janela limpa + chave LIGADA: colunas antigas idênticas à predecessora" "$(Ler 2026-09-04T15:00:00Z "$(digital)")" "$ANTES_NEU"
+eq V01 "janela limpa + chave LIGADA: colunas antigas idênticas à predecessora" "$(Ler 2026-09-04T15:00:00Z "BEGIN; $SEM_FUTURO; $(digital); ROLLBACK;")" "$ANTES_NEU"
 Ler 2027-01-20T15:00:00Z "$DESLIGA" >/dev/null
 eq V02 "recesso + chave DESLIGADA (sombra): idêntico à predecessora" "$(Ler 2027-01-20T15:00:00Z "$(digital)")" "$ANTES_REC"
 eq V03 "status OK com PP na semente (o V01/V02 enxergam PP)" "$(Ler 2027-01-20T15:00:00Z "SELECT status_sugestao||'|'||(ponto_pedido_sugerido > 0) FROM public.v_sku_parametros_sugeridos WHERE empresa='OBEN' AND sku_codigo_omie=1001")" "OK|true"
@@ -278,7 +283,7 @@ PPV="$(Ler 2027-01-20T15:00:00Z "$PP1001" -c reposicao.demanda_calendario_forcar
 PPS="$(Ler 2027-01-20T15:00:00Z "$PP1001" -c reposicao.demanda_calendario_forcar=sombra)"
 eq V05 "modo valendo sobe o PP do SKU OK (mesma fórmula, d maior)" "$(Ler 2027-01-20T15:00:00Z "SELECT ('${PPV}'::numeric > '${PPS}'::numeric)::text")" true
 Ler 2027-01-20T15:00:00Z "$DESLIGA" >/dev/null
-eq V06 "GUC lixo ('xyz') com chave desligada ⇒ sombra" "$(Ler 2027-01-20T15:00:00Z "$D1001" -c reposicao.demanda_calendario_forcar=xyz | cut -d'|' -f4)" sombra
+eq V06 "GUC lixo ('xyz') com chave desligada ⇒ sombra e d = legado" "$(Ler 2027-01-20T15:00:00Z "SELECT (demanda_media_diaria = demanda_media_diaria_legado)||'|'||calendario_modo FROM public.v_sku_parametros_sugeridos WHERE empresa='OBEN' AND sku_codigo_omie=1001" -c reposicao.demanda_calendario_forcar=xyz)" "true|sombra"
 eq V07 "COLACOR: fator NULL e d intocado mesmo forçado" \
   "$(Ler 2027-01-20T15:00:00Z "SELECT coalesce(fator_calendario::text,'NULL')||'|'||(demanda_media_diaria = demanda_media_diaria_legado)||'|'||coalesce(calendario_modo,'NULL') FROM public.v_sku_parametros_sugeridos WHERE empresa='COLACOR' AND sku_codigo_omie=2001" -c reposicao.demanda_calendario_forcar=valendo)" "NULL|true|NULL"
 eq V08 "GUC 'valendo' força sem a chave (é como o job lê)" "$(Ler 2027-01-20T15:00:00Z "$D1001" -c reposicao.demanda_calendario_forcar=valendo | cut -d'|' -f4)" valendo
@@ -286,7 +291,10 @@ eq V09 "estatisticas crua: colunas antigas idênticas, fator só OBEN" \
   "$(Ler 2027-01-20T15:00:00Z "SELECT md5(string_agg(t::text, '|' ORDER BY t::text)) FROM (SELECT empresa, sku_codigo_omie, demanda_total_90d, demanda_media_diaria, valor_total_90d FROM public.v_sku_demanda_estatisticas) t")|$(Ler 2027-01-20T15:00:00Z "SELECT string_agg(empresa||'='||coalesce(round(fator_calendario,4)::text,'NULL'), ',' ORDER BY empresa, sku_codigo_omie) FROM public.v_sku_demanda_estatisticas")" \
   "$ANTES_EST|COLACOR=NULL,OBEN=1.2037,OBEN=1.2037"
 eq V10 "o d ajustado nunca é NULL nem zero onde o legado não é" \
-  "$(Ler 2027-01-20T15:00:00Z "SELECT count(*) FROM public.v_sku_parametros_sugeridos WHERE demanda_media_diaria_legado > 0 AND NOT (demanda_media_diaria_calendario > 0)" -c reposicao.demanda_calendario_forcar=valendo)" 0
+  "$(Ler 2027-01-20T15:00:00Z "SELECT count(*) FROM public.v_sku_parametros_sugeridos WHERE empresa = 'OBEN' AND (demanda_media_diaria_calendario > 0) IS NOT TRUE" -c reposicao.demanda_calendario_forcar=valendo)" 0
+Q1001="SELECT qtde_compra_ciclo_sugerida FROM public.v_sku_parametros_sugeridos WHERE empresa='OBEN' AND sku_codigo_omie=1001"
+eq V11 "EOQ intacto: lote igual nos dois modos com fator > 1" \
+  "$(Ler 2027-01-20T15:00:00Z "$Q1001" -c reposicao.demanda_calendario_forcar=valendo)" "$(Ler 2027-01-20T15:00:00Z "$Q1001" -c reposicao.demanda_calendario_forcar=sombra)"
 
 # ── A: autorização ───────────────────────────────────────────────────────────────────────────────────────────────
 eq A01 "anon sem EXECUTE (catálogo) e PUBLIC fora" \
@@ -314,6 +322,11 @@ eq S03 "o job não deixa a GUC 'valendo' viva na sessão" \
   "$(Ler 2027-01-20T15:00:00Z "BEGIN; $JOB; SELECT 'G=' || coalesce(nullif(current_setting('reposicao.demanda_calendario_forcar', true), ''), 'vazia'); ROLLBACK;" | grep -o 'G=.*')" G=vazia
 eq S04 "job recusa COLACOR com 22023" \
   "$(Ler 2027-01-20T15:00:00Z "DO \$x\$ BEGIN PERFORM public.reposicao_demanda_calendario_sombra_registrar('COLACOR'); RAISE NOTICE 'X-PASSOU'; EXCEPTION WHEN invalid_parameter_value THEN RAISE NOTICE 'X-NEGOU'; END \$x\$" | grep -o 'X-[A-Z]*')" X-NEGOU
+
+Ler 2027-01-21T15:00:00Z "INSERT INTO public.fornecedor_grupo_producao (id, empresa, fornecedor_nome, grupo_codigo, lt_producao_dias, lt_producao_unidade) VALUES (2, 'OBEN', 'FORN DOIS', 'G1', 12, 'uteis')" >/dev/null
+Ler 2027-01-21T15:00:00Z "$JOB" >/dev/null
+eq S05 "grupo com 2 fornecedores: a sombra não aborta e descarta só o SKU ambíguo" \
+  "$(Ler 2027-01-21T15:00:00Z "SELECT (SELECT count(*) FROM public.v_sku_parametros_sugeridos WHERE sku_codigo_omie = 1001) || '|' || (SELECT coalesce(string_agg(sku_codigo_omie::text, ','), 'nenhum') FROM public.reposicao_demanda_calendario_sombra WHERE data_ref = '2027-01-21')")" "2|1002"
 
 echo
 echo "TOTAL: $PASS PASS / $FAIL FALHAS (esperado $TOTAL_ESPERADO PASS)"

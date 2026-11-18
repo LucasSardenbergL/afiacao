@@ -13,7 +13,9 @@
 --   a própria coluna, sem aritmética). Guardas: W/U < 0,6 (ou U = 0) ⇒ fator 1 + baixa_confianca (nunca extrapola
 --   janela quase toda fechada, nunca zera); teto do fator 1,35. Pesos só 0/1 (meia_equipe = 1) nesta entrega.
 --   `d` já vem arredondado a 4 casas do legado: round(round(S/90,4) × fator, 4) difere de round(S/90 × fator, 4)
---   em no máximo 1 unidade da 4ª casa — a precisão da própria coluna; escolhido para não ler a cadeia 2×.
+--   em no máximo 1 unidade da 4ª casa — a precisão da própria coluna; escolhido para não ler a cadeia 2× (Codex P2:
+--   na borda isso pode mover um PP em 1 unidade, para cima ou para baixo — aceito e registrado).
+--   EOQ intacto: qc_eoq usa o d CRU (d_legado); o d ajustado alimenta SS/PP/máximo/cobertura.
 --
 -- Onde entra (ponto ÚNICO): CTE `base` de v_sku_parametros_sugeridos. v_sku_demanda_estatisticas fica CRUA e só ganha
 --   `fator_calendario` no fim. NÃO muda: sigma (inclusive o fallback d × 0,5, que segue no d cru), rajada, EOQ, LT,
@@ -37,6 +39,7 @@
 
 -- TRAVA, antes de ler: ALTER sem efeito (a opção VIVA) nas duas views que a PRE guarda, na ordem dos LEITORES
 -- (parametros → abc → estatisticas): um CREATE concorrente espera esta transação e lê o estado novo.
+SET LOCAL lock_timeout = '10s';   -- leitor em ordem inversa (estatisticas → parametros) não segura o apply: falha e reaplica
 ALTER VIEW public.v_sku_parametros_sugeridos SET (security_invoker = on);
 ALTER VIEW public.v_sku_demanda_estatisticas SET (security_invoker = on);
 
@@ -46,7 +49,7 @@ DECLARE
   v_par text := md5(pg_get_viewdef('public.v_sku_parametros_sugeridos'::regclass, true));
   v_est text := md5(pg_get_viewdef('public.v_sku_demanda_estatisticas'::regclass, true));
 BEGIN
-  IF v_par NOT IN ('cb7f8b8b2286ca815c0a76ea8aa412de', '916987eaaeddd95b35c01f5a685c349f') THEN
+  IF v_par NOT IN ('cb7f8b8b2286ca815c0a76ea8aa412de', 'cec8b64723d20a5400deace2ea34838c') THEN
     RAISE EXCEPTION 'PRE FALHOU: v_sku_parametros_sugeridos viva (md5 %) nao e a predecessora revisada nem esta', v_par;
   END IF;
   IF v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a', '5cc2c267e2ecbe64c393f15e531a770a') THEN
@@ -445,7 +448,7 @@ CREATE OR REPLACE VIEW public.v_sku_parametros_sugeridos WITH (security_invoker 
             ceil(com_calculos.z_aplicado * com_calculos.sigma_lt_d) AS ss_calculado,
             ceil(COALESCE(com_calculos.d, 0::numeric) * COALESCE(com_calculos.lt, 10::numeric) + com_calculos.z_aplicado * com_calculos.sigma_lt_d) AS pp_calculado,
                 CASE
-                    WHEN com_calculos.preco_item_eoq > 0::numeric AND com_calculos.cm_anual > 0::numeric AND com_calculos.d > 0::numeric THEN ceil(sqrt(2.0 * (COALESCE(com_calculos.d, 0::numeric) * 252::numeric) * com_calculos.cp / (com_calculos.cm_anual * com_calculos.preco_item_eoq)))
+                    WHEN com_calculos.preco_item_eoq > 0::numeric AND com_calculos.cm_anual > 0::numeric AND com_calculos.d_legado > 0::numeric THEN ceil(sqrt(2.0 * (COALESCE(com_calculos.d_legado, 0::numeric) * 252::numeric) * com_calculos.cp / (com_calculos.cm_anual * com_calculos.preco_item_eoq)))
                     ELSE 1::numeric
                 END AS qc_eoq,
             com_calculos.d_legado,
@@ -540,7 +543,9 @@ CREATE OR REPLACE VIEW public.v_sku_parametros_sugeridos WITH (security_invoker 
             ELSE 6
         END), valor_total_180d DESC NULLS LAST;
 
--- ── Sombra: d/SS/PP/máximo nos dois modos, por dia. Só o job escreve (sem policy de escrita); staff lê.
+-- ── Sombra: d/SS/PP/máximo nos dois modos, por dia. Só o job escreve; staff lê pela policy. SEM custo/preço na
+--    tabela: o job lê como dono (cmc incluso) e a policy não carrega o cap_custo_ler — o capital (ΔPP × custo) é
+--    calculado na hora, por quem pode ler custo (sonda psql-ro), nunca gravado aqui.
 CREATE TABLE IF NOT EXISTS public.reposicao_demanda_calendario_sombra (
   data_ref                   date        NOT NULL,
   empresa                    text        NOT NULL,
@@ -548,7 +553,6 @@ CREATE TABLE IF NOT EXISTS public.reposicao_demanda_calendario_sombra (
   fator_calendario           numeric,
   calendario_baixa_confianca boolean,
   status_sugestao            text,
-  preco_item_eoq             numeric,
   demanda_legado             numeric,
   demanda_calendario         numeric,
   ss_legado                  numeric,
@@ -561,26 +565,29 @@ CREATE TABLE IF NOT EXISTS public.reposicao_demanda_calendario_sombra (
   PRIMARY KEY (data_ref, empresa, sku_codigo_omie)
 );
 ALTER TABLE public.reposicao_demanda_calendario_sombra ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.reposicao_demanda_calendario_sombra FROM PUBLIC, anon, authenticated;
-GRANT SELECT ON public.reposicao_demanda_calendario_sombra TO authenticated;
 DROP POLICY IF EXISTS reposicao_demanda_calendario_sombra_sel ON public.reposicao_demanda_calendario_sombra;
 CREATE POLICY reposicao_demanda_calendario_sombra_sel ON public.reposicao_demanda_calendario_sombra
   FOR SELECT TO authenticated
   USING ((SELECT public.has_role(auth.uid(), 'master'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)));
 
--- Job (owner-only, sem gate de JWT: pg_cron roda sem auth.uid). Lê a view com o modo FORÇADO pela GUC — a mesma
--- fórmula nos dois lados. A GUC volta a '' no fim (sem SET no cabeçalho: no Supabase o postgres não é superusuário e
--- o PG15+ recusa GUC customizada em CREATE FUNCTION … SET — 42501 no ensaio de 2026-11-18); erro aborta a transação.
+-- Job (owner-only, sem gate de JWT: pg_cron roda sem auth.uid). Lê a view DUAS vezes com o modo FORÇADO pela GUC — a
+-- mesma fórmula nos dois lados — e só grava o SKU que (a) tem exatamente 1 linha em cada leitura (a view herda
+-- ambiguidade de cadastro, ex.: grupo de produção com 2 fornecedores) e (b) tem os MESMOS insumos nas duas (d cru,
+-- σ, LT, σ_LT, z): em READ COMMITTED cada instrução tem snapshot próprio, e uma NF entre as leituras viraria "efeito
+-- do calendário". O resto é descartado e contado no NOTICE — nunca aborta o dia. A GUC volta a '' no fim (sem SET no
+-- cabeçalho: no Supabase o postgres não é superusuário e o PG15+ recusa GUC customizada em CREATE FUNCTION … SET —
+-- 42501 no ensaio de 2026-11-18); erro aborta a transação inteira.
 CREATE OR REPLACE FUNCTION public.reposicao_demanda_calendario_sombra_registrar(p_empresa text DEFAULT 'OBEN')
 RETURNS integer
 LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
-SET search_path = public, pg_catalog
+SET search_path = pg_catalog, public, pg_temp
 AS $fn$
 DECLARE
-  v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
-  v_n    integer;
+  v_hoje  date;   -- o dia que a VIEW calculou (calculado_em), não um relógio à parte
+  v_n     integer;
+  v_lidos integer;
 BEGIN
   IF p_empresa IS DISTINCT FROM 'OBEN' THEN
     RAISE EXCEPTION 'sombra do calendario: so OBEN tem historico de venda (empresa %)', p_empresa USING ERRCODE = '22023';
@@ -589,27 +596,38 @@ BEGIN
   IF to_regclass('pg_temp.sombra_calendario_legado') IS NOT NULL THEN DROP TABLE pg_temp.sombra_calendario_legado; END IF;
   PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', 'sombra', true);
   CREATE TEMP TABLE sombra_calendario_legado ON COMMIT DROP AS
-    SELECT v.sku_codigo_omie, v.demanda_media_diaria, v.estoque_seguranca_sugerido, v.ponto_pedido_sugerido,
-           v.estoque_maximo_sugerido, v.status_sugestao, v.preco_item_eoq, v.fator_calendario,
-           v.calendario_baixa_confianca
+    SELECT v.sku_codigo_omie, v.demanda_media_diaria, v.demanda_sigma_diario, v.lead_time_medio, v.lead_time_desvio,
+           v.z_aplicado, v.estoque_seguranca_sugerido, v.ponto_pedido_sugerido, v.estoque_maximo_sugerido,
+           v.status_sugestao, v.fator_calendario, v.calendario_baixa_confianca, v.calculado_em,
+           count(*) OVER (PARTITION BY v.sku_codigo_omie) AS n_linhas
       FROM public.v_sku_parametros_sugeridos v
      WHERE v.empresa = p_empresa;
+  SELECT count(DISTINCT sku_codigo_omie), max(calculado_em) INTO v_lidos, v_hoje FROM pg_temp.sombra_calendario_legado;
 
   PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', 'valendo', true);
   INSERT INTO public.reposicao_demanda_calendario_sombra AS s (
-    data_ref, empresa, sku_codigo_omie, fator_calendario, calendario_baixa_confianca, status_sugestao, preco_item_eoq,
+    data_ref, empresa, sku_codigo_omie, fator_calendario, calendario_baixa_confianca, status_sugestao,
     demanda_legado, demanda_calendario, ss_legado, ss_calendario, pp_legado, pp_calendario, max_legado, max_calendario)
   SELECT v_hoje, p_empresa, l.sku_codigo_omie, l.fator_calendario, l.calendario_baixa_confianca, l.status_sugestao,
-         l.preco_item_eoq, l.demanda_media_diaria, v.demanda_media_diaria, l.estoque_seguranca_sugerido,
-         v.estoque_seguranca_sugerido, l.ponto_pedido_sugerido, v.ponto_pedido_sugerido, l.estoque_maximo_sugerido,
-         v.estoque_maximo_sugerido
+         l.demanda_media_diaria, v.demanda_media_diaria, l.estoque_seguranca_sugerido, v.estoque_seguranca_sugerido,
+         l.ponto_pedido_sugerido, v.ponto_pedido_sugerido, l.estoque_maximo_sugerido, v.estoque_maximo_sugerido
     FROM pg_temp.sombra_calendario_legado l
-    JOIN public.v_sku_parametros_sugeridos v ON v.empresa = p_empresa AND v.sku_codigo_omie = l.sku_codigo_omie
+    JOIN (SELECT x.*, count(*) OVER (PARTITION BY x.sku_codigo_omie) AS n_linhas
+            FROM public.v_sku_parametros_sugeridos x
+           WHERE x.empresa = p_empresa) v
+      ON v.sku_codigo_omie = l.sku_codigo_omie
+   WHERE l.n_linhas = 1 AND v.n_linhas = 1
+     AND v.calculado_em = v_hoje AND l.calculado_em = v_hoje
+     AND v.demanda_media_diaria_legado IS NOT DISTINCT FROM l.demanda_media_diaria
+     AND v.demanda_sigma_diario        IS NOT DISTINCT FROM l.demanda_sigma_diario
+     AND v.lead_time_medio             IS NOT DISTINCT FROM l.lead_time_medio
+     AND v.lead_time_desvio            IS NOT DISTINCT FROM l.lead_time_desvio
+     AND v.z_aplicado                  IS NOT DISTINCT FROM l.z_aplicado
+     AND v.fator_calendario            IS NOT DISTINCT FROM l.fator_calendario
   ON CONFLICT (data_ref, empresa, sku_codigo_omie) DO UPDATE SET
     fator_calendario           = EXCLUDED.fator_calendario,
     calendario_baixa_confianca = EXCLUDED.calendario_baixa_confianca,
     status_sugestao            = EXCLUDED.status_sugestao,
-    preco_item_eoq             = EXCLUDED.preco_item_eoq,
     demanda_legado             = EXCLUDED.demanda_legado,
     demanda_calendario         = EXCLUDED.demanda_calendario,
     ss_legado                  = EXCLUDED.ss_legado,
@@ -623,11 +641,44 @@ BEGIN
 
   PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', '', true);
   IF to_regclass('pg_temp.sombra_calendario_legado') IS NOT NULL THEN DROP TABLE pg_temp.sombra_calendario_legado; END IF;
+  IF v_n < v_lidos THEN
+    RAISE NOTICE 'sombra do calendario: % de % SKU(s) gravados; o resto foi descartado (linha duplicada na view ou insumo mudou entre as leituras)', v_n, v_lidos;
+  END IF;
   RETURN v_n;
 END
 $fn$;
 
-REVOKE ALL ON FUNCTION public.reposicao_demanda_calendario_sombra_registrar(text) FROM PUBLIC, anon, authenticated, service_role;
+-- ACL por ALLOWLIST (default ACL do public dá EXECUTE/INSERT a service_role e sandbox_exec_<ref>, com BYPASSRLS —
+-- db/aplicar-sql-acl-allowlist.sql): job só do dono; tabela: escrita só do dono, SELECT só authenticated (policy) e
+-- claude_ro. PUBLIC vai pelo nome (grantee 0 no aclexplode).
+DO $acl$
+DECLARE
+  r record;
+BEGIN
+  REVOKE ALL ON FUNCTION public.reposicao_demanda_calendario_sombra_registrar(text) FROM PUBLIC;
+  REVOKE ALL ON public.reposicao_demanda_calendario_sombra FROM PUBLIC;
+  FOR r IN
+    SELECT DISTINCT a.grantee::regrole AS papel
+      FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+     WHERE p.oid = 'public.reposicao_demanda_calendario_sombra_registrar(text)'::regprocedure
+       AND a.grantee <> 0 AND a.grantee <> p.proowner
+  LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.reposicao_demanda_calendario_sombra_registrar(text) FROM %s', r.papel);
+  END LOOP;
+  FOR r IN
+    SELECT DISTINCT a.grantee::regrole AS papel
+      FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+     WHERE c.oid = 'public.reposicao_demanda_calendario_sombra'::regclass
+       AND a.grantee <> 0 AND a.grantee <> c.relowner
+  LOOP
+    EXECUTE format('REVOKE ALL ON public.reposicao_demanda_calendario_sombra FROM %s', r.papel);
+  END LOOP;
+  GRANT SELECT ON public.reposicao_demanda_calendario_sombra TO authenticated;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'claude_ro') THEN
+    GRANT SELECT ON public.reposicao_demanda_calendario_sombra TO claude_ro;
+  END IF;
+END
+$acl$;
 
 DO $cron$
 BEGIN
@@ -644,6 +695,7 @@ DECLARE
   v_fn  regprocedure := to_regprocedure('public.calendario_fator_demanda(text, date)');
   v_job regprocedure := to_regprocedure('public.reposicao_demanda_calendario_sombra_registrar(text)');
   v_n   bigint;
+  v_papeis text;
 BEGIN
   IF v_fn IS NULL OR v_job IS NULL THEN
     RAISE EXCEPTION 'POS FALHOU: funcao ausente (fator % / job %)', v_fn, v_job;
@@ -665,11 +717,21 @@ BEGIN
          AND 'security_invoker=on' = ANY (reloptions)) <> 2 THEN
     RAISE EXCEPTION 'POS FALHOU: security_invoker=on ausente numa das views (bypass de RLS)';
   END IF;
-  IF md5(pg_get_viewdef('public.v_sku_parametros_sugeridos'::regclass, true)) IS DISTINCT FROM '916987eaaeddd95b35c01f5a685c349f'
+  IF md5(pg_get_viewdef('public.v_sku_parametros_sugeridos'::regclass, true)) IS DISTINCT FROM 'cec8b64723d20a5400deace2ea34838c'
      OR md5(pg_get_viewdef('public.v_sku_demanda_estatisticas'::regclass, true)) IS DISTINCT FROM '5cc2c267e2ecbe64c393f15e531a770a' THEN
     RAISE EXCEPTION 'POS FALHOU: texto das views nao e o deste arquivo (par % / est %)',
       md5(pg_get_viewdef('public.v_sku_parametros_sugeridos'::regclass, true)),
       md5(pg_get_viewdef('public.v_sku_demanda_estatisticas'::regclass, true));
+  END IF;
+  -- Allowlist medida pelo has_*_privilege (enxerga herança): fora o dono, ninguém executa o job nem escreve a sombra.
+  SELECT string_agg(r.rolname, ', ') INTO v_papeis
+    FROM pg_roles r
+   WHERE NOT r.rolsuper AND r.rolname NOT LIKE 'pg\_%'
+     AND r.oid <> (SELECT proowner FROM pg_proc WHERE oid = v_job)
+     AND (has_function_privilege(r.oid, v_job, 'EXECUTE')
+          OR has_table_privilege(r.oid, 'public.reposicao_demanda_calendario_sombra', 'INSERT, UPDATE, DELETE, TRUNCATE'));
+  IF v_papeis IS NOT NULL THEN
+    RAISE EXCEPTION 'POS FALHOU [POS_ACL_SOMBRA]: job/sombra executavel ou gravavel por %', v_papeis;
   END IF;
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.reposicao_demanda_calendario_sombra'::regclass) THEN
     RAISE EXCEPTION 'POS FALHOU: RLS desligada na tabela da sombra';
