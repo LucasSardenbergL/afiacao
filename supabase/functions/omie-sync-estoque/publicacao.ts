@@ -453,7 +453,7 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   // ilegível NÃO é ausente (ele veio na listagem); item de PO ilegível = sem par.
   const naListagem = new Set([...membros.keys(), ...(e.fisico.membrosIlegiveis ?? [])]);
   const linhasAusentes = pendMembros === undefined ? [] : [...pendMembros]
-    .filter(([codigo, qtd]) => qtd > 0 && !naListagem.has(codigo) && !ilegiveisPo.has(codigo) && !e.fisico.encontrados.has(codigo))
+    .filter(([codigo, qtd]) => qtd > 0 && !naListagem.has(codigo) && !ilegiveisPo.has(codigo))
     .map(([codigo, qtd]) => ({
       empresa: e.empresa,
       sku_codigo_omie: codigo,

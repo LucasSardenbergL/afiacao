@@ -111,3 +111,47 @@ Codex reproduziu o caso D−8: o motor anterior contava 0 e o novo conta 4. Tria
 | migration | `20261118120000_reposicao_acaminho_relogio_do_sync.sql` (nome custom, **não auto-aplica**) | sessão via `bun run db:aplicar` (envelope: PRE md5, POS-RU1, transação) ou founder no SQL Editor |
 | edge | nenhuma | — |
 | Publish | nenhum (sem mudança em `src/`) | — |
+
+## Conserto na edge: o membro ausente do físico com PO aberto (omie-sync-estoque v1.11)
+
+**Furo** (achado do Codex no #3969 e confirmado no código): o lote dos membros de grupo em `publicacao.ts` só gravava
+os SKUs que vieram no `ListarPosEstoque`. Membro com PO aberto e **fora** da listagem ficava sem linha em
+`sku_estoque_atual`; com isso o pendente dele se perdia, e o pedido do app caía no corte `D − 7`. Resultado: o PO era
+contado **0×** e o grupo recomprava. O #3973 tentou o conserto no motor (fallback no último retrato da empresa) e foi
+reprovado: o máximo da empresa avança sem publicar o pendente do membro. A decisão do founder foi consertar na edge.
+
+**Desenho:**
+- **Quem entra:** membro com `pendente > 0` na MESMA varredura de PO (já passou pelo C1), ausente da listagem (nem em
+  `membros` nem em `membrosIlegiveis` do físico) e sem item de PO ilegível.
+- **O que entra:** o par (físico 0, pendente) por `INSERT … ON CONFLICT DO NOTHING` (upsert `ignoreDuplicates` +
+  `select` = RETURNING).
+- **Por que o 0 não fabrica:** o C2 garante que a listagem com `cExibeTodos=S` foi completa. O motor já lia
+  `COALESCE(sea.estoque_fisico, 0) = 0` para o membro sem linha, então o físico do grupo não muda. O que passa a existir
+  é o pendente e o retrato do dia.
+- **Linha existente nunca é sobrescrita.** Varredura completa ainda pode pular uma linha (LIMITE em `fisico.ts`), e
+  zerar um físico lido antes seria fabricar.
+- **Observação:** só os SKUs devolvidos pelo RETURNING entram no pendente gravado. Falha ou abort do insert tira o
+  `pendente_aplicado`.
+- **Desfecho:** não muda (como no lote dos membros). O resumo e o `acoes_execucoes.detalhes` ganham
+  `membros_grupo_ausentes_{com_po,inseridos,ja_com_linha,falhas}`.
+
+**Prova** (Deno, `publicacao_test.ts`):
+- 8 testes novos. O antigo "membro que não veio no retrato não é escrito" virou a expectativa nova.
+- Vermelho antes do conserto: 5 falhas.
+- Verde depois: 91/0 na pasta da edge.
+- Falsificação com controle verde na MESMA invocação: 7 sabotagens, cada uma deu vermelho:
+  - sem `qtd > 0`;
+  - sem a exclusão do físico ilegível;
+  - sem a exclusão do PO ilegível;
+  - pendente gravado sem a prova do RETURNING;
+  - aplicado sem checar falhas;
+  - insert desligado;
+  - físico ≠ 0.
+- A guarda redundante "não é habilitado" foi removida: nenhum teste a provava, porque o index já exclui os
+  habilitados dos membros.
+
+**Residual (aceito):** membro ausente que JÁ tem linha velha mantém o par velho. Ele é coerente no tempo, e o corte
+pelo retrato velho conta os pedidos do app desde então. Ele aparece em `membros_grupo_ausentes_ja_com_linha`.
+
+**Deploy:** só a edge `omie-sync-estoque` (v1.11), decidida por `bun run pendencias:deploy`. Sem migration e sem
+Publish.
