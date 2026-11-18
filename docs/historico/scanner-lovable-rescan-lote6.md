@@ -127,7 +127,9 @@ O que isso alcança hoje:
 - O módulo "Loja / Afiação (cliente)" está congelado no manifesto desde 2026-10-12, com as rotas escondidas.
 - O score não libera desconto, benefício nem acesso.
 
-Fechar de verdade pede duas coisas: tirar o `upsert` do hook e remover as duas policies de escrita do cliente. A segunda é `DROP POLICY`, que é colagem do founder no SQL Editor. O efeito de produto é o ranking do staff deixar de ser alimentado. Ele hoje só tem as 3 linhas de staff, e a alternativa correta para quando o módulo voltar é o cálculo no servidor. A outra saída é marcar o achado como ignorado, com este registro como motivo. A escolha é do founder.
+Fechar de verdade pede duas coisas: tirar o `upsert` do hook e remover as duas policies de escrita do cliente. O efeito de produto é o ranking do staff deixar de ser alimentado. Ele hoje só tem as 3 linhas de staff, e a alternativa correta para quando o módulo voltar é o cálculo no servidor.
+
+**Decisão do founder (2026-11-17): fechar.** O `upsert` saiu de `useGamificationScore.ts`, que segue calculando o score para a tela. A migration `20261117225200_seg_lote6_gamificacao_sem_escrita_do_cliente.sql` remove "Users can upsert their own score" e "Users can update their own score", com postcondição: nenhuma policy de escrita fora da de staff, as 3 que ficam presentes, RLS ligada. É `DROP POLICY`, então é colagem do founder no SQL Editor; o pré-voo na PROD mostrou as 5 policies como previsto. Enquanto ela não for colada, o furo segue aberto pela API: tirar o `upsert` do front não fecha nada sozinho.
 
 ## Parentes conferidos
 
@@ -249,9 +251,27 @@ O que nada disto prova: default, constraint e RLS do banco de verdade, a promoç
 - **Reapontar citação pela ocorrência mais próxima erra quando a âncora aparece em duas linhas vizinhas.** O gate passou com a citação do insert apontando para o delete. A conferência que vale é ler a linha citada.
 - **Tocar um módulo que a canária exercita pede bump de contrato, mesmo sem mudar comportamento.** Exportar duas constantes de `copiloto-tools.ts` reprovou o `canaria:bump`. A lista de fases e intenções passou a sair do schema da própria tool, e o módulo ficou intacto.
 
+## Deploy
+
+Camada única do conserto das edges: as 3 edges. Feito em 2026-11-18 (UTC), depois do merge do #3947 (`5d6198811`).
+
+| Passo | Evidência |
+|---|---|
+| Ledger antes | `bun run pendencias:deploy`: as 3 em "DEPLOY PENDENTE declarado", e só elas |
+| Pacote | `bun scripts/pendencias-pacote.ts tint-sync-agent copilot-analyze generate-bundle-argument`, contra `origin/main@a0a4b1ac6`. Pré-condição de banco satisfeita |
+| Envio | `send_message` às 01:48:50Z. A chamada estourou o tempo do lado do cliente; a mensagem foi localizada por `list_messages` e **não** foi reenviada. O agente conferiu 35/35 hashes em 26 arquivos e publicou as três. Custo: 3 créditos |
+| Sensor | `lovable-sensor-edicao`: **`EDICAO_DETECTADA`** (exit 1). Ver abaixo |
+| Sonda da `tint-sync-agent` | `db/sonda-seg-lote6-20261117.sql` pelo `db:aplicar`: ensaio, depois a tentativa #1167. Request 25125, HTTP 200, **DEPLOY CONFIRMADO**: `v1.4-catalogo-lista-fechada`, `fonte` igual à do mapa da `main` |
+| Ledger depois | `pendencias:deploy`: `tint-sync-agent` em "confere", vista por sonda. `copilot-analyze` e `generate-bundle-argument` ainda pendentes às 01:57Z: as duas são do cron de sonda, e o ledger só as vê depois que ele passa |
+| O sync real | Depois do deploy, 5 runs de catálogo fecharam `complete` com zero erro (o último às 01:50:29Z), e nenhuma linha de staging tem data futura. O conector de verdade passou pela lista fechada sem recusa |
+
+**O bot empurrou `bun.lock` e `package.json` na `main` de novo.** Commit `58cd59b07` ("Deployed 3 tint-edge funcs"): as mesmas 2 `devDependencies` do lote 5, e 66 linhas de lock. As edges não foram tocadas. O agente escreveu que os dois arquivos já estavam modificados no sandbox e que não os commitaria; a plataforma empurrou assim mesmo. É a 5ª ocorrência. O revert, byte a byte contra o pai do commit, vai no PR da gamificação.
+
 ## Fica para o founder
 
-- **Gamificação:** fechar (tirar a escrita do cliente) ou ignorar no painel.
+- **Colar a migration da gamificação** no SQL Editor (bloco no PR). Sem ela o furo continua aberto.
+- **`copilot-analyze` e `generate-bundle-argument` no ledger:** conferir com `bun run pendencias:deploy` depois que o cron de sonda passar. Até lá, "publicado pelo Lovable" não é prova de que o bundle novo está servindo.
+
 - **Login biométrico inoperante:** consertar o fluxo inteiro ou tirar a opção da tela de perfil.
 - **Marcar como ignorado no painel**, com o OK dele: o da biometria. Os dois de prompt e o do tintométrico devem sair sozinhos no próximo deep scan; como no lote 5, isso é previsão até o scan rodar.
 - **O branch da sessão paralela** (`origin/claude/seg-lote6-triagem-deep-scan`, sem PR) tem duas coisas que não vieram para cá: uma prova PG17 dos fatos da triagem (`db/test-seg-lote6-triagem.sh`: a escrita do dono em `gamification_scores`, o `42P10` da biometria, a linha de `created_at` forjado vencendo e escapando da purga) e o `logError` da `tint-sync-agent` conferindo o erro do próprio insert. As duas são independentes deste conserto.
