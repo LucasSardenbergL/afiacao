@@ -112,7 +112,7 @@ Codex reproduziu o caso D−8: o motor anterior contava 0 e o novo conta 4. Tria
 | edge | nenhuma | — |
 | Publish | nenhum (sem mudança em `src/`) | — |
 
-## Residuais tratados (PR seguinte, 2026-11-18): migration `20261119130000_reposicao_acaminho_membro_sem_linha.sql`
+## Residuais tratados (PR seguinte, 2026-11-18): migration `20261119140000_reposicao_acaminho_membro_sem_linha.sql`
 
 - **Membro sem linha (consertado).** O SKU sem retrato próprio passa a cortar pelo **último retrato da empresa**:
   `COALESCE(sea_c.ultima_sincronizacao, máx. da empresa)`. Esse é o run do sync que pulou o PO do membro. Antes, o
@@ -136,6 +136,6 @@ Codex reproduziu o caso D−8: o motor anterior contava 0 e o novo conta 4. Tria
 
 | camada | o quê | quem |
 |---|---|---|
-| migration | `20261119130000_reposicao_acaminho_membro_sem_linha.sql` (PRE md5 `48ae5fd1…` → `cc792038…`, POS-RU1) | sessão via `bun run db:aplicar` pós-merge |
+| migration | `20261119140000_reposicao_acaminho_membro_sem_linha.sql` (PRE md5 `48ae5fd1…` → `cc792038…`, POS-RU1) | sessão via `bun run db:aplicar` pós-merge |
 | edge | nenhuma | — |
 | Publish | nenhum | — |

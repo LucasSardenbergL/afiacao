@@ -30,7 +30,7 @@ DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 : "${LC_ALL:=C}"; export LC_ALL LANG="$LC_ALL"
 MIG_VIVA="$REPO_ROOT/supabase/migrations/20261101090000_reposicao_compra_suspensa.sql"
 MIG="$REPO_ROOT/supabase/migrations/20261118120000_reposicao_acaminho_relogio_do_sync.sql"
-# FIXADA na 20261118120000 (a fixture viva db/embalagem-motor-rpc.sql seguiu para a 20261119130000): o motor
+# FIXADA na 20261118120000 (a fixture viva db/embalagem-motor-rpc.sql seguiu para a 20261119140000): o motor
 # desta prova é o trecho CREATE→fim DESTA migration — que o guard de paridade exigiu igual à fixture quando
 # ela era a última. A evolução [MEMBRO SEM LINHA] tem a prova própria: db/test-acaminho-membro-sem-linha.sh.
 FIXTURE="$(mktemp "/tmp/fx-${SLUG}.XXXXXX")"

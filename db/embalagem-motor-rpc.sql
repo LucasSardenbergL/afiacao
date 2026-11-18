@@ -3,7 +3,7 @@
 --
 -- O guard src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts exige que este arquivo, do CREATE OR
 -- REPLACE até o FIM, seja IGUAL ao trecho da ÚLTIMA migration que recria a função (a que vence em prod).
--- Desde 2026-11-18 essa migration é a 20261119130000_reposicao_acaminho_membro_sem_linha.sql (SKU sem retrato
+-- Desde 2026-11-18 essa migration é a 20261119140000_reposicao_acaminho_membro_sem_linha.sql (SKU sem retrato
 -- próprio corta pelo último retrato da empresa — [MEMBRO SEM LINHA]); antes, a 20261118120000 (o corte dos pedidos do
 -- app no em_transito passa a ser o do retrato do sync — [RELÓGIO ÚNICO]); antes, a 20261101090000 — o motor
 -- RESPEITA a suspensão de compra registrada em reposicao_compra_suspensa e loga a compra evitada; antes, a 20261010210000 — desconto do

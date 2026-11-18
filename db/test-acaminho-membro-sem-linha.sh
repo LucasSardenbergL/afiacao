@@ -25,7 +25,7 @@ DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 : "${LC_ALL:=C}"; export LC_ALL LANG="$LC_ALL"
 MIG_BASE="$REPO_ROOT/supabase/migrations/20261101090000_reposicao_compra_suspensa.sql"
 MIG_VIVA="$REPO_ROOT/supabase/migrations/20261118120000_reposicao_acaminho_relogio_do_sync.sql"
-MIG="$REPO_ROOT/supabase/migrations/20261119130000_reposicao_acaminho_membro_sem_linha.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261119140000_reposicao_acaminho_membro_sem_linha.sql"
 FIXTURE="$REPO_ROOT/db/embalagem-motor-rpc.sql"
 # md5(prosrc) do motor na PROD (psql-ro, 2026-11-18, após aplicar a 20261118120000) — o pré-voo.
 MD5_PROD_VIVA="48ae5fd128ff81ab38c860e092a86a64"
