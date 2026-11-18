@@ -47,6 +47,17 @@ No modo **só foto** do `analyze-unified-order`, o candidato vindo de `profiles`
 - **Desenho** (gpt-6-astra · max · 409 s · 186.390 tokens). O padrão foi aprovado nas 3 edges e o gate não quebra chamador ativo. A sugestão adotada foi neutralizar com todos os nomes novos e manter o helper em `_shared/`. Também apontou o que cobrir nos testes (texto, texto + foto e só foto, com canários do banco) e o que adaptar (invariante "DOIS blocos" e `falsificar-prompt-cache.sh`). Ficou uma divergência consciente: o Codex sugeriu subir para o system a cauda constante do bloco de dados ("FIM DOS DADOS…", checklist, "Responda SEMPRE…"). Ela ficou na mensagem, **fora** do bloco `<dados_desta_consulta>`, logo depois dele. É texto constante, mantém a recência que o #1622 buscou, e o system declara que só o conteúdo do bloco é dado.
 - **Código, adversarial** (gpt-6-astra · max · 332 s · 172.759 tokens): **nada bloqueante**. Não achou dado do request ou do cadastro no `system` das 4 chamadas, nem fuga literal dos delimitadores. Reintroduzir dados no `system`, em memória, derrubou os testes das 3 edges. Orçamento, ordem, variante e fallbacks do `analyze-unified-order` estão preservados. Manter a cauda na mensagem "não é erro". Um **P2 de cobertura**, que ele reproduziu: o `user_roles` falso do `harness-handler_test.ts` ignorava o `.in("role", …)`, e apagar o filtro do gate deixava os testes verdes. Corrigido aqui: o falso passou a respeitar o filtro, os dois gates ganharam o caso `jwt-customer` não aprovado, e a mutação "papel customer conta como staff" entrou nos dois `.mut`.
 
-## Deploy
+## Deploy (2026-11-18): DEPLOY CONFIRMADO nas 3 edges
 
-Depois do merge, decidido por `bun run pendencias:deploy`. Sem migration. Sem Publish: nenhum arquivo de `src/` muda comportamento.
+Depois do merge do #3954 (`f7281b895`, 03:16Z). Camada única: sem migration e sem Publish, porque nenhum arquivo de `src/` muda comportamento.
+
+| Passo | Evidência |
+|---|---|
+| Ledger antes | `pendencias:deploy` (exit 1): as 3 edges pendentes, mais nenhuma |
+| Pacote | `pendencias-pacote.ts` → `28db7222bad7`, contra `origin/main@f7281b895`. Pré-condição de banco satisfeita (`ia_consumir_cota`). Nenhuma ordem entre edges foi declarada, e nenhuma é necessária: não há dependência entre as 3 |
+| Envio | `send_message` às 10:38:58Z. O cliente estourou o tempo e a mensagem não foi reenviada. Ela foi achada pelo `list_messages` (uma única cópia, igual ao Passo 2) e acompanhada pelo `get_message`. O agente conferiu 38/38 hashes (27 arquivos distintos) e publicou as 3. Custo: 2,5 créditos |
+| Sonda | `db/sonda-seg-lote7-20261118.sql` pelo `db:aplicar`: primeiro o ensaio, depois a tentativa #1171. Requests 25603, 25604 e 25605, todos com HTTP 200 |
+| Veredito | **DEPLOY CONFIRMADO** nas 3: `v1.1-aprovado-e-dados-na-mensagem`, `v1.11-dados-na-mensagem` e `v1.2-categorias-na-mensagem`, com a `fonte` igual à do mapa da `main`. O `pendencias:deploy` de depois saiu com **0** |
+| Sensor | `lovable-sensor-edicao.ts`, 6,1 min depois do envio: **EDICAO_DETECTADA**. O commit `80f72d88e` ("Published 3 functions verbatim") acrescentou as devDependencies `@lovable.dev/vite-plugin-dev-server-bridge` e `@lovable.dev/vite-plugin-hmr-gate` em `package.json`/`bun.lock`. Nenhuma edge foi tocada. Revertido neste PR |
+
+O agente disse que as mudanças em `package.json`/`bun.lock` "já existiam antes da tarefa". O commit é dele mesmo assim: o workspace as empurrou junto com o deploy. É a mesma classe dos lotes anteriores.
