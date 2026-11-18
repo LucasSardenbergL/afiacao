@@ -116,7 +116,10 @@ if [ -n "$SABOTAGEM" ]; then
     anon_executa)      sabotar_em "$MIG_USADA" "GRANT EXECUTE ON FUNCTION public.calendario_fator_demanda(text, date) TO authenticated, service_role;" "GRANT EXECUTE ON FUNCTION public.calendario_fator_demanda(text, date) TO authenticated, service_role, anon;" ;;
     job_guc_vaza)      sabotar_em "$MIG_USADA" "  PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', coalesce(v_guc, ''), true);
   IF to_regclass" "  IF to_regclass" ;;
-    eoq_ajustado)      sabotar_em "$MIG_USADA" "com_calculos.d_legado > 0::numeric THEN ceil(sqrt(2.0 * (COALESCE(com_calculos.d_legado, 0::numeric)" "com_calculos.d > 0::numeric THEN ceil(sqrt(2.0 * (COALESCE(com_calculos.d, 0::numeric)" ; sem_trava_de_texto ;;
+    eoq_ajustado)      sabotar_em "$MIG_USADA" "com_calculos.d_legado > 0::numeric THEN ceil(sqrt(2.0 * (COALESCE(com_calculos.d_legado, 0::numeric)" "com_calculos.d > 0::numeric THEN ceil(sqrt(2.0 * (COALESCE(com_calculos.d, 0::numeric)" ; sem_trava_de_texto
+                       # o job também barra lote diferente entre leituras (camada 2): desligada aqui, uma camada por vez
+                       sabotar_em "$MIG_USADA" "     AND v.qtde_compra_ciclo_sugerida  IS NOT DISTINCT FROM l.qtde_compra_ciclo_sugerida
+" "" ;;
     acl_sombra)        sabotar_em "$MIG_USADA" "  GRANT SELECT ON public.reposicao_demanda_calendario_sombra TO authenticated;" "  GRANT SELECT ON public.reposicao_demanda_calendario_sombra TO authenticated; GRANT INSERT ON public.reposicao_demanda_calendario_sombra TO service_role;" ;;
     pre_frouxa)        sabotar_em "$MIG_PRE" "IF v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a'" "IF false AND v_est NOT IN ('f05c5621d0254b746c6ada8cb0c9d22a'" ;;
     *) echo "SABOTAGEM DESCONHECIDA: $SABOTAGEM"; exit 2 ;;
