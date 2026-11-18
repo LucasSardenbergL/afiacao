@@ -61,3 +61,7 @@ Depois do merge do #3954 (`f7281b895`, 03:16Z). Camada única: sem migration e s
 | Sensor | `lovable-sensor-edicao.ts`, 6,1 min depois do envio: **EDICAO_DETECTADA**. O commit `80f72d88e` ("Published 3 functions verbatim") acrescentou as devDependencies `@lovable.dev/vite-plugin-dev-server-bridge` e `@lovable.dev/vite-plugin-hmr-gate` em `package.json`/`bun.lock`. Nenhuma edge foi tocada. Revertido neste PR |
 
 O agente disse que as mudanças em `package.json`/`bun.lock` "já existiam antes da tarefa". O commit é dele mesmo assim: o workspace as empurrou junto com o deploy. É a mesma classe dos lotes anteriores.
+
+## Painel depois da entrega (2026-11-18 ~10:55Z, print do founder, só leitura)
+
+O deep scan rodou ~1 h antes do print, com o #3954 já na `main`, e o painel mostrou **"No active issues"**. O achado ativo do lote, "Caller-supplied category text enters the system prompt", **não está** entre os 12 ignorados, o que mostra que o scanner o deu por resolvido e que ninguém o ignorou. Os 12 ignorados são os mesmos de antes. Entre eles continua o "Request categories are inserted into the system prompt", que o código deste lote também fecha. Nenhum botão de correção nem "Unignore" foi clicado. Fora do escopo: "Project dependencies · 59 packages · 91 known issues".
