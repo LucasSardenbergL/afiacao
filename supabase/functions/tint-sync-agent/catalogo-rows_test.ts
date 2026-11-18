@@ -427,10 +427,31 @@ Deno.test("chavesDescartadas: substituto isolado que já vem no nome vira '?'", 
 
 // ─── comLimite: o registro auxiliar não segura a resposta ─────────────────────────────────────
 
-Deno.test("comLimite: promessa que termina a tempo → true, e o timer é desarmado", async () => {
-  // Limite longo de propósito: se o timer não for desarmado, o teste acusa vazamento.
+Deno.test("comLimite: promessa que termina a tempo → true", async () => {
   assertEq(await comLimite(Promise.resolve("x"), 60_000), true, "resolvida");
   assertEq(await comLimite(new Promise((r) => setTimeout(r, 5)), 60_000), true, "resolvida depois de 5 ms");
+});
+
+Deno.test("comLimite: o timer do limite é desarmado nos três desfechos", async () => {
+  // O Deno 2 NÃO acusa timer pendente ao fim do teste (medido: um setTimeout de 60 s solto passa
+  // verde), então "o teste acusaria o vazamento" seria teatro. Aqui se CONTA o desarme: sem ele,
+  // cada recusa deixaria um timer de 3 s vivo na edge depois da resposta.
+  const original = globalThis.clearTimeout;
+  let desarmes = 0;
+  globalThis.clearTimeout = ((id?: number) => {
+    desarmes += 1;
+    return original(id);
+  }) as typeof clearTimeout;
+  try {
+    await comLimite(Promise.resolve("x"), 60_000);
+    assertEq(desarmes, 1, "terminou a tempo: desarmou");
+    await comLimite(new Promise(() => {}), 10);
+    assertEq(desarmes, 2, "estourou o limite: desarmou");
+    await comLimite(Promise.reject(new Error("x")), 60_000).catch(() => {});
+    assertEq(desarmes, 3, "rejeitou: desarmou");
+  } finally {
+    globalThis.clearTimeout = original;
+  }
 });
 
 Deno.test("comLimite: promessa que não termina → false depois do limite, sem esperar por ela", async () => {
@@ -453,5 +474,5 @@ Deno.test("comLimite: promessa que rejeita propaga a rejeição (quem chama é q
   } catch (e) {
     pegou = e instanceof Error ? e.message : String(e);
   }
-  assertEq(pegou, "falhou", "rejeição propagada, com o timer desarmado");
+  assertEq(pegou, "falhou", "rejeição propagada");
 });
