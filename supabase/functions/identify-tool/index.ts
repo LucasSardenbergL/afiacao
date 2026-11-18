@@ -11,6 +11,7 @@ import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { naoIdentificada, normalizarFerramenta, TOOL_FERRAMENTA } from "./ferramenta-tools.ts";
+import { montarTextoFerramenta, SYSTEM_PROMPT_FERRAMENTA } from "./ferramenta-prompt.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -157,38 +158,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Build categories context for the AI
-    // Texto vindo do REQUEST entra no system prompt: teto por campo e sem quebra de linha, para que
-    // um item não carregue um bloco de instruções (scanner Lovable 2026-11-13, prompt injection).
-    const curto = (v: unknown, max: number) =>
-      typeof v === "string" ? v.replace(/[\r\n]+/g, " ").slice(0, max) : "";
-    const categoriesContext = (categories || [])
-      .map((c: { name?: unknown; description?: unknown } | null) => {
-        const nome = curto(c?.name, 80);
-        const desc = curto(c?.description, 200);
-        return nome ? `- ${nome}${desc ? ` (${desc})` : ''}` : '';
-      })
-      .filter(Boolean)
-      .join('\n');
-
-    const systemPrompt = `Você é um especialista em identificação de ferramentas de corte industriais (serras, facas, lâminas, brocas, fresas, etc.) usadas em marcenarias, serralharias e indústrias.
-
-Analise a imagem enviada e identifique a ferramenta, preenchendo:
-- "identified": true/false (se conseguiu identificar)
-- "category_name": nome da categoria mais provável (deve corresponder a uma das categorias cadastradas abaixo)
-- "confidence": "alta", "media" ou "baixa"
-- "description": descrição breve do que foi identificado
-- "specs_detected": objeto com especificações que você consegue identificar visualmente (como diâmetro aproximado, número de dentes, tipo de material, geometria do dente, etc.)
-- "suggested_services": array de strings com serviços sugeridos (ex: "Afiação", "Retífica", "Troca de dentes")
-
-Categorias cadastradas no sistema:
-${categoriesContext || 'Nenhuma categoria fornecida'}
-
-IMPORTANTE: 
-- Seja preciso na identificação.
-- Se não conseguir identificar com certeza, indique confidence "baixa".
-- O category_name DEVE corresponder exatamente a uma das categorias listadas acima quando possível.
-- Responda SEMPRE usando a função identificar_ferramenta.`;
+    // As categorias vêm do REQUEST: vão na MENSAGEM, no bloco <categorias_cadastradas>; o system é
+    // a constante SYSTEM_PROMPT_FERRAMENTA (scanner Lovable, lote 7 — ver ferramenta-prompt.ts).
+    const textoDoPedido = montarTextoFerramenta(categories);
 
     // Media type vem dos MAGIC BYTES. O gateway antigo sniffava o conteúdo e
     // engolia o rótulo fixo `image/jpeg`; a Anthropic valida o declarado — e a
@@ -207,13 +179,13 @@ IMPORTANTE:
       resposta = await anthropic.messages.create({
         model: MODELO_PADRAO,
         max_tokens: 1500,
-        system: systemPrompt,
+        system: SYSTEM_PROMPT_FERRAMENTA,
         tools: [TOOL_FERRAMENTA],
         tool_choice: { type: "tool", name: TOOL_FERRAMENTA.name, disable_parallel_tool_use: true },
         messages: [{
           role: "user",
           content: [
-            { type: "text", text: "Identifique esta ferramenta na imagem:" },
+            { type: "text", text: textoDoPedido },
             anexo.bloco,
           ],
         }],

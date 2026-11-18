@@ -11,6 +11,7 @@ import { consumirCota, headersDeCota } from "../_shared/ia-cota.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { normalizarItens, TOOL_SERVICOS } from "./servico-tools.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { montarMensagemServicos, SYSTEM_PROMPT_SERVICOS } from "./servico-prompt.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -92,6 +93,29 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Staff OU customer APROVADO (scanner Lovable, lote 7) — o mesmo gate da `identify-tool` (lote 1).
+    // O cadastro em /auth é público: "JWT válido" incluía o customer recém-cadastrado, que a UI
+    // barra (`ProtectedRoute` exige `isApproved`; a tela é a /new-order e a /sales/new) e que ainda
+    // assim gastava IA paga aqui. Fail-closed: erro de leitura = recusa (mesma regra do AuthContext).
+    const supabaseGate = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const [rolesRes, perfilRes] = await Promise.all([
+      supabaseGate.from("user_roles").select("role").eq("user_id", user.id).in("role", ["employee", "master"]).limit(1),
+      supabaseGate.from("profiles").select("is_approved").eq("user_id", user.id).maybeSingle(),
+    ]);
+    if (rolesRes.error || perfilRes.error) {
+      return new Response(
+        JSON.stringify({ error: "Não autorizado" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    const ehStaff = Array.isArray(rolesRes.data) && rolesRes.data.length > 0;
+    if (!ehStaff && perfilRes.data?.is_approved !== true) {
+      return new Response(
+        JSON.stringify({ error: "Cadastro aguardando aprovação" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Já parseado acima (para a sonda); o throw do corpo inválido é relançado no ponto antigo.
     if (erroParseCorpo !== null) throw erroParseCorpo;
     const { text, userTools } = corpoBruto;
@@ -128,8 +152,8 @@ Deno.serve(async (req) => {
 
     // COTA — depois da validação (requisição malformada não queima cota) e antes
     // da Anthropic. Também poupa a consulta de serviços quando a cota já estourou.
-    // O gate acima só exige JWT válido: sem isto, um cliente repetindo pedidos
-    // com 100 ferramentas esgota o orçamento da ORGANIZAÇÃO — os limites da
+    // O gate acima deixa passar todo cliente aprovado: sem isto, um cliente repetindo
+    // pedidos com 100 ferramentas esgota o orçamento da ORGANIZAÇÃO — os limites da
     // Anthropic não são por usuário da aplicação.
     const cota = await consumirCota(supabase, user.id, "analyze-services", "análises de pedido");
     if (!cota.permitido) {
@@ -153,42 +177,10 @@ Deno.serve(async (req) => {
       throw new Error("Erro ao buscar serviços disponíveis");
     }
 
-    const servicosLista = servicos?.map(s => `- ${s.omie_codigo_servico}: ${s.descricao}`).join("\n") || "";
-
-    // Formatar lista de ferramentas do usuário
+    // Ferramentas do body, serviços do banco e o texto do pedido vão na MENSAGEM, em blocos de dado;
+    // o system é a constante SYSTEM_PROMPT_SERVICOS (scanner Lovable, lote 7 — servico-prompt.ts).
     const tools = userTools as UserTool[] || [];
-    const ferramentasLista = tools.map(t => {
-      const nome = t.generated_name || t.custom_name || t.tool_categories?.name || "Ferramenta";
-      const categoria = t.tool_categories?.name || "";
-      return `- ID: ${t.id} | Nome: ${nome} | Categoria: ${categoria} | Qtd cadastrada: ${t.quantity || 1}`;
-    }).join("\n") || "Nenhuma ferramenta cadastrada";
-
-    const systemPrompt = `Você é um assistente especializado em serviços de afiação de ferramentas industriais.
-
-Sua tarefa é analisar o texto do cliente e identificar:
-1. Quais FERRAMENTAS CADASTRADAS ele quer afiar
-2. Qual SERVIÇO deve ser aplicado a cada ferramenta
-
-FERRAMENTAS CADASTRADAS DO CLIENTE:
-${ferramentasLista}
-
-SERVIÇOS DISPONÍVEIS:
-${servicosLista}
-
-REGRAS IMPORTANTES:
-1. PRIORIZE identificar as ferramentas cadastradas do cliente pelo nome ou categoria
-2. Para cada ferramenta identificada, encontre o serviço compatível (a descrição do serviço deve conter o nome da CATEGORIA da ferramenta)
-3. Se o cliente mencionar quantidade, use-a. Caso contrário, use a quantidade cadastrada ou 1
-4. Se o cliente mencionar observações (danos, lascados, urgência), inclua no campo notes
-5. Se não conseguir identificar nenhuma ferramenta ou serviço, retorne arrays vazios
-6. Seja flexível com sinônimos e variações de nomes
-
-EXEMPLOS:
-- "quero afiar minhas serras" → identifique todas as ferramentas que tenham "serra" no nome ou categoria
-- "afia a faca 250mm" → identifique a ferramenta específica com 250mm
-- "preciso de afiação urgente da serra, está lascada" → notes: "urgente, lascada"
-
-Responda SEMPRE usando a função suggest_services.`;
+    const mensagemDoPedido = montarMensagemServicos({ ferramentas: tools, servicos, texto: text });
 
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
@@ -197,13 +189,13 @@ Responda SEMPRE usando a função suggest_services.`;
       resposta = await anthropic.messages.create({
         model: MODELO_PADRAO,
         max_tokens: 2000,
-        system: systemPrompt,
+        system: SYSTEM_PROMPT_SERVICOS,
         tools: [TOOL_SERVICOS],
         // `type:'tool'` sozinho não desliga chamada paralela: o modelo poderia
         // devolver um bloco por ferramenta e o consumo pegaria só o primeiro,
         // montando um pedido PARCIAL com cara de completo.
         tool_choice: { type: "tool", name: TOOL_SERVICOS.name, disable_parallel_tool_use: true },
-        messages: [{ role: "user", content: text }],
+        messages: [{ role: "user", content: mensagemDoPedido }],
       });
     } catch (e: unknown) {
       const status = statusDoErro(e);

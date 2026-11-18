@@ -22,6 +22,7 @@ import {
   acumularUsoCache,
   criarAcumuladorCache,
   MIN_CHARS_BLOCO_ESTAVEL,
+  montarBlocoDinamico,
   montarSystemBlocks,
   pagaEscritaSemNuncaLer,
   resumirUsoCache,
@@ -835,24 +836,25 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ─── Build system prompt (2 blocos: regras estáveis + dados variáveis) ───
-    // A ordem é INVERTIDA em relação ao #1608 de propósito: as REGRAS vêm
-    // primeiro (prefixo cacheável) e os DADOS depois. O porquê, as duas variantes
-    // de cache e as referências posicionais reescritas estão em prompt-sistema.ts.
+    // ─── Prompt: system = regras estáveis; dados = 1º texto da MENSAGEM do usuário ───
+    // As REGRAS vêm primeiro (prefixo cacheável) e os DADOS depois — desde a v1.11 fora do
+    // system, dentro de <dados_desta_consulta> (scanner Lovable, lote 7). O porquê, as duas
+    // variantes de cache e as referências posicionais reescritas estão em prompt-sistema.ts.
     // `!!` porque `searchCustomer` chega do corpo da requisição como a STRING do
     // termo de busca, não como boolean — o prompt sempre a consumiu por truthiness
     // (`searchCustomer ? A : B`), então normalizar aqui é o que o runtime JÁ fazia
     // e os bytes do prefixo cacheado não mudam (pinado em prompt-sistema_test.ts).
     // Sem ele o parâmetro declarado `boolean` mente, e a mentira fica invisível
     // enquanto o corpo for `any`.
-    const blocosSistema = montarSystemBlocks(!!searchCustomer, {
+    const blocosSistema = montarSystemBlocks(!!searchCustomer);
+    const blocoEstavel = blocosSistema[0];
+    const textoDosDados = montarBlocoDinamico(!!searchCustomer, {
       produtosLista,
       ferramentasLista,
       servicosLista,
       historicoCompras,
       customerSection,
     });
-    const blocoEstavel = blocosSistema[0];
 
     // Piso de erosão: enxugar as regras abaixo do mínimo do modelo faz a API
     // parar de cachear em SILÊNCIO (sem erro, `cache_creation_input_tokens: 0`).
@@ -863,20 +865,21 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Concatenação usada SÓ para orçar as imagens: os dois blocos viajam no
+    // Concatenação usada SÓ para orçar as imagens: o system e o texto dos dados viajam no
     // MESMO corpo de request, então ambos descontam do orçamento.
-    const systemPrompt = blocosSistema.map((b) => b.text).join("\n");
+    const textoOrcado = [...blocosSistema.map((b) => b.text), textoDosDados].join("\n");
 
-    const conteudoUsuario: BlocoConteudo[] = [];
+    // O 1º bloco da mensagem é SEMPRE o dos dados; o pedido do vendedor (texto e fotos) vem depois.
+    const conteudoUsuario: BlocoConteudo[] = [{ type: "text", text: textoDosDados }];
     let imagensRejeitadas: ImagemRejeitada[] = [];
 
     if (allImages.length > 0) {
       // Media type vem dos MAGIC BYTES. O gateway antigo sniffava o conteúdo e
       // engolia o rótulo fixo `image/jpeg`; a Anthropic valida o declarado.
-      // O system prompt (catálogo + candidatos) entra no MESMO corpo de request,
-      // então desconta do orçamento antes de acomodar as fotos.
-      const bytesSystem = new TextEncoder().encode(systemPrompt).byteLength;
-      const preparadas = prepararImagens(allImages, bytesSystem);
+      // O system e o bloco de dados (catálogo + candidatos) entram no MESMO corpo de
+      // request, então descontam do orçamento antes de acomodar as fotos.
+      const bytesTexto = new TextEncoder().encode(textoOrcado).byteLength;
+      const preparadas = prepararImagens(allImages, bytesTexto);
       imagensRejeitadas = preparadas.rejeitadas;
 
       // Nenhuma foto legível e nenhum texto: não há o que analisar. Responder
@@ -995,9 +998,9 @@ Deno.serve(async (req) => {
       resposta = await anthropic.messages.create({
         model: MODELO,
         max_tokens: MAX_TOKENS,
-        // Prompt caching por PREFIXO: o bloco 0 (regras estáveis) leva o
-        // `cache_control: ephemeral`; o bloco 1 (catálogo, serviços, histórico,
-        // candidatos) NÃO leva, porque muda a cada request. Como a ordem de
+        // Prompt caching por PREFIXO: o único bloco do system (regras estáveis) leva o
+        // `cache_control: ephemeral`; os dados (catálogo, serviços, histórico, candidatos)
+        // vão na mensagem, depois do prefixo, porque mudam a cada request. Como a ordem de
         // renderização é `tools` → `system` → `messages`, o `input_schema` da
         // tool entra no MESMO prefixo cacheado, de graça.
         system: blocosSistema,
