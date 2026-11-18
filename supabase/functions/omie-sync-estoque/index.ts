@@ -22,7 +22,9 @@ import { criarAcumuladorFisico } from "./fisico.ts";
 import {
   convDaOrigem, convPendentePorSku, type LinhaEquivalencia, quantidadesEmUnidadeOmie, recusaPorUnidade,
 } from "./unidade-omie.ts";
-import { comPrazo, concluirRun, linhaMarcador, MARKER_FULL, type OpsPublicacao } from "./publicacao.ts";
+import {
+  comPrazo, concluirRun, FONTE_SEM_POSICAO, linhaMarcador, MARKER_FULL, type OpsPublicacao,
+} from "./publicacao.ts";
 
 const corsHeaders = {
   ...sharedCors,
@@ -629,6 +631,41 @@ function opsDoBanco(
       }, prazoMs);
       return { ...r, inseridos: r.erro === null ? inseridos : [] };
     },
+    lerLinhasSemPosicao: async (prazoMs) => {
+      let nossas = new Set<string>();
+      const r = await comPrazo(async (s) => {
+        const res = await supabase
+          .from("sku_estoque_atual")
+          .select("sku_codigo_omie", { count: "exact" })
+          .eq("empresa", empresa)
+          .eq("fonte_sync", FONTE_SEM_POSICAO)
+          .abortSignal(s);
+        const linhas = exigirLeitura(res, "sku_estoque_atual (linhas sem posição)");
+        if (linhas === null) throw new Error("sku_estoque_atual: leitura sem dados e sem erro");
+        // Teto do PostgREST: sem a prova de que veio tudo, uma linha nossa ficaria sem reconciliar (congelada).
+        if (res.count !== linhas.length) throw new Error(`sku_estoque_atual: ${linhas.length} de ${res.count ?? "?"} linhas sem posição`);
+        nossas = new Set(linhas.map((x: { sku_codigo_omie: unknown }) => String(x.sku_codigo_omie)));
+        return { error: null };
+      }, prazoMs);
+      return { erro: r.erro, dados: r.erro === null ? nossas : new Set<string>() };
+    },
+    // A marca de dono vai no WHERE: a linha que um run paralelo regravou com a posição real não é tocada.
+    atualizarLinhaSemPosicao: async (linha, prazoMs) => {
+      let atualizado = false;
+      const r = await comPrazo(async (s) => {
+        const res = await supabase
+          .from("sku_estoque_atual")
+          .update(linha)
+          .eq("empresa", empresa)
+          .eq("sku_codigo_omie", String(linha.sku_codigo_omie))
+          .eq("fonte_sync", FONTE_SEM_POSICAO)
+          .select("sku_codigo_omie")
+          .abortSignal(s);
+        if (!res.error && Array.isArray(res.data)) atualizado = res.data.length === 1;
+        return res;
+      }, prazoMs);
+      return { ...r, atualizado: r.erro === null && atualizado };
+    },
     lerInativacoes: async (codigos, prazoMs) => {
       let datas = new Map<string, string | null>();
       const r = await comPrazo(async (s) => {
@@ -738,6 +775,7 @@ const CHAVES_REGISTRO = [
   "membros_grupo_encontrados", "membros_grupo_erro", "membros_grupo_gravados", "membros_grupo_falhas",
   "membros_grupo_ilegiveis", "membros_grupo_sem_pendente", "membros_grupo_ausentes_com_po",
   "membros_grupo_ausentes_inseridos", "membros_grupo_ausentes_ja_com_linha", "membros_grupo_ausentes_falhas",
+  "membros_grupo_ausentes_reconciliados", "membros_grupo_ausentes_erro",
 ] as const;
 
 function detalhesDoRegistro(resumo: Record<string, unknown>): Record<string, unknown> {

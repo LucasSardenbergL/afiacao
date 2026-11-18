@@ -96,6 +96,11 @@ export interface OpsPublicacao {
     linhas: Record<string, unknown>[],
     prazoMs: number,
   ): Promise<ResultadoEscrita & { inseridos: string[] }>;
+  /** SKUs da empresa com fonte_sync = FONTE_SEM_POSICAO (as linhas que esta edge criou). Leitura que não prova
+   * completude (teto do PostgREST) é erro. */
+  lerLinhasSemPosicao(prazoMs: number): Promise<ResultadoLeitura<Set<string>>>;
+  /** UPDATE … WHERE empresa, sku E fonte_sync = FONTE_SEM_POSICAO; `atualizado` = o RETURNING devolveu a linha. */
+  atualizarLinhaSemPosicao(linha: Record<string, unknown>, prazoMs: number): Promise<ResultadoEscrita & { atualizado: boolean }>;
   /** sku → data_inativacao já gravada. */
   lerInativacoes(codigos: string[], prazoMs: number): Promise<ResultadoLeitura<Map<string, string | null>>>;
   upsertStatus(linhas: Record<string, unknown>[], prazoMs: number): Promise<ResultadoEscrita>;
@@ -218,33 +223,67 @@ async function gravarEstoque(ops: OpsPublicacao, e: EntradaPublicacao, linhas: R
   return g;
 }
 
-// Insert-se-ausente dos membros com PO fora do retrato, em lotes, com o prazo da cauda. Sem fallback individual: são
-// poucos (0 em prod em 2026-11-18) e a falha não muda o desfecho. Lote com erro, sem confirmação ou não tentado conta
-// TODO como falha (o banco pode ter gravado no abortado — só `inseridos` devolvido pelo RETURNING prova a linha).
-async function inserirAusentes(
+/** fonte_sync das linhas que a PRÓPRIA edge cria para o membro com PO fora do retrato — a marca de dono da reconciliação. */
+export const FONTE_SEM_POSICAO = "PO_sem_posicao_ListarPosEstoque";
+
+interface Reconciliacao {
+  /** SKUs cujo par (0, pendente) o banco CONFIRMOU neste run (RETURNING do insert ou do update). */
+  gravados: Set<string>;
+  inseridos: number;
+  atualizados: number;
+  /** Insert que bateu em linha existente de OUTRA origem, ou update que não achou mais a linha nossa (corrida). */
+  conflitos: number;
+  falhas: number;
+}
+
+// Membros fora do retrato, com o prazo da cauda. Linha NOSSA (fonte_sync = FONTE_SEM_POSICAO) → UPDATE condicionado à
+// marca (reconcilia o pendente a cada varredura confiável, inclusive para 0); sem linha nossa → INSERT … ON CONFLICT DO
+// NOTHING. Sem fallback individual: são poucos (0 em prod em 2026-11-18) e a falha não muda o desfecho. Lote com erro,
+// sem confirmação ou não tentado conta como falha — só o RETURNING prova a linha.
+async function reconciliarAusentes(
   ops: OpsPublicacao,
   e: EntradaPublicacao,
-  linhas: Record<string, unknown>[],
-): Promise<{ inseridos: Set<string>; falhas: number }> {
-  const inseridos = new Set<string>();
-  let falhas = 0;
-  for (let i = 0; i < linhas.length; i += e.chunk) {
-    const lote = linhas.slice(i, i + e.chunk);
+  inserir: Record<string, unknown>[],
+  atualizar: Record<string, unknown>[],
+): Promise<Reconciliacao> {
+  const r: Reconciliacao = { gravados: new Set(), inseridos: 0, atualizados: 0, conflitos: 0, falhas: 0 };
+  for (const linha of atualizar) {
     const prazo = prazoCauda(ops, e);
     if (prazo === 0) {
-      falhas += lote.length;
+      r.falhas++;
       continue;
     }
-    const r = await ops.inserirEstoqueSeAusente(lote, prazo);
-    if (r.erro !== null) {
-      falhas += lote.length;
-      ops.log("error", `insert dos membros ausentes ${i}-${i + lote.length}${r.semConfirmacao ? " (prazo, sem confirmação)" : ""}: ${r.erro}`);
+    const ru = await ops.atualizarLinhaSemPosicao(linha, prazo);
+    if (ru.erro !== null) {
+      r.falhas++;
+      ops.log("error", `update do membro ausente ${skuDa(linha)}${ru.semConfirmacao ? " (prazo, sem confirmação)" : ""}: ${ru.erro}`);
+    } else if (ru.atualizado) {
+      r.atualizados++;
+      r.gravados.add(skuDa(linha));
+    } else {
+      r.conflitos++;
+    }
+  }
+  for (let i = 0; i < inserir.length; i += e.chunk) {
+    const lote = inserir.slice(i, i + e.chunk);
+    const prazo = prazoCauda(ops, e);
+    if (prazo === 0) {
+      r.falhas += lote.length;
+      continue;
+    }
+    const ri = await ops.inserirEstoqueSeAusente(lote, prazo);
+    if (ri.erro !== null) {
+      r.falhas += lote.length;
+      ops.log("error", `insert dos membros ausentes ${i}-${i + lote.length}${ri.semConfirmacao ? " (prazo, sem confirmação)" : ""}: ${ri.erro}`);
       continue;
     }
     const doLote = new Set(lote.map(skuDa));
-    for (const sku of r.inseridos) if (doLote.has(sku)) inseridos.add(sku);
+    const inseridos = ri.inseridos.filter((sku) => doLote.has(sku));
+    for (const sku of inseridos) r.gravados.add(sku);
+    r.inseridos += inseridos.length;
+    r.conflitos += lote.length - inseridos.length;
   }
-  return { inseridos, falhas };
+  return r;
 }
 
 interface Inativacao {
@@ -446,31 +485,53 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   // v1.11 — membro com PO aberto AUSENTE do retrato. Sem linha em sku_estoque_atual o motor perdia o pendente dele, e o
   // pedido do app só contava até D−7 (corte pelo retrato do SKU, #3969): o PO era contado 0× e o grupo recomprava. O
   // físico é publicável aqui (C2 passou: a varredura com cExibeTodos=S foi COMPLETA), e o membro não veio nela — sem
-  // posição. Grava o PAR (0, pendente da MESMA varredura) SÓ onde não há linha (ON CONFLICT DO NOTHING): o motor já lia
-  // COALESCE(físico, 0) = 0 para o membro sem linha, então o 0 não muda o físico do grupo — passa a existir o pendente e
-  // o retrato do dia. Linha existente NUNCA é sobrescrita: a varredura completa ainda pode pular uma linha (LIMITE em
-  // fisico.ts), e zerar um físico lido antes seria fabricar. Só pendente > 0 (sem PO não há o que proteger); físico
-  // ilegível NÃO é ausente (ele veio na listagem); item de PO ilegível = sem par.
+  // posição. O PAR é (0, pendente da MESMA varredura): o motor já lia COALESCE(físico, 0) = 0 para o membro sem linha,
+  // então o 0 não muda o físico do grupo — passa a existir o pendente e o retrato do dia.
+  //   • Sem linha → INSERT … ON CONFLICT DO NOTHING, só com pendente > 0 (sem PO não há o que proteger). Linha de OUTRA
+  //     origem NUNCA é sobrescrita: a varredura completa ainda pode pular uma linha (LIMITE em fisico.ts), e zerar um
+  //     físico lido antes seria fabricar.
+  //   • Linha NOSSA (fonte_sync = FONTE_SEM_POSICAO) → reconciliada a CADA run confiável, inclusive para 0 (Codex P1
+  //     2026-11-18: sem isso a linha congelava — 10→4→0 ficava 10, contando 2× a entrega e 0× um PO novo). O UPDATE leva
+  //     a marca no WHERE: se um run paralelo gravou a posição real, ele não acha a linha e não a toca.
+  //   • Físico ilegível NÃO é ausente (ele veio na listagem); item de PO ilegível = sem par; habilitado não é membro.
+  //   • Sem saber quais linhas são nossas (leitura falhou), nada é atualizado e o run não vale como "aplicado".
   const naListagem = new Set([...membros.keys(), ...(e.fisico.membrosIlegiveis ?? [])]);
-  const linhasAusentes = pendMembros === undefined ? [] : [...pendMembros]
-    .filter(([codigo, qtd]) => qtd > 0 && !naListagem.has(codigo) && !ilegiveisPo.has(codigo))
-    .map(([codigo, qtd]) => ({
-      empresa: e.empresa,
-      sku_codigo_omie: codigo,
-      estoque_fisico: 0,
-      estoque_disponivel: 0,
-      ultima_sincronizacao: agoraIso,
-      fonte_sync: "PO_sem_posicao_ListarPosEstoque",
-      estoque_pendente_entrada: qtd,
-    }));
-  const ga = await inserirAusentes(ops, e, linhasAusentes);
+  const ausente = (codigo: string) => !naListagem.has(codigo) && !ilegiveisPo.has(codigo) && !e.habilitados.has(codigo);
+  const parSemPosicao = (codigo: string, qtd: number) => ({
+    empresa: e.empresa,
+    sku_codigo_omie: codigo,
+    estoque_fisico: 0,
+    estoque_disponivel: 0,
+    ultima_sincronizacao: agoraIso,
+    fonte_sync: FONTE_SEM_POSICAO,
+    estoque_pendente_entrada: qtd,
+  });
+  let nossas = new Set<string>();
+  let erroNossas: string | null = null;
+  if (pendMembros !== undefined) {
+    const prazo = prazoCauda(ops, e);
+    const lidas = prazo === 0 ? { erro: "sem tempo no run", dados: new Set<string>() } : await ops.lerLinhasSemPosicao(prazo);
+    if (lidas.erro === null) nossas = lidas.dados;
+    else {
+      erroNossas = lidas.erro;
+      ops.log("error", `linhas ${FONTE_SEM_POSICAO} não lidas — nenhuma reconciliada: ${lidas.erro}`);
+    }
+  }
+  const atualizarAusentes = pendMembros === undefined ? [] : [...nossas]
+    .filter(ausente)
+    .map((codigo) => parSemPosicao(codigo, pendMembros.get(codigo) ?? 0));
+  const inserirAusentesLinhas = pendMembros === undefined ? [] : [...pendMembros]
+    .filter(([codigo, qtd]) => qtd > 0 && ausente(codigo) && !nossas.has(codigo))
+    .map(([codigo, qtd]) => parSemPosicao(codigo, qtd));
+  const ra = await reconciliarAusentes(ops, e, inserirAusentesLinhas, atualizarAusentes);
+  const linhasAusentes = [...atualizarAusentes, ...inserirAusentesLinhas];
 
-  // A observação conta o que o motor contou (habilitados ∪ membros com par ∪ ausentes INSERIDOS); o pendente só vale
-  // como aplicado se os três lotes gravaram inteiros.
+  // A observação conta o que o motor contou (habilitados ∪ membros com par ∪ ausentes CONFIRMADOS); o pendente só vale
+  // como aplicado se os três lotes gravaram inteiros e as linhas nossas foram lidas.
   const pendenteGravado = new Map(pend.pendente);
   for (const l of linhasMembros) pendenteGravado.set(l.sku_codigo_omie, l.estoque_pendente_entrada);
-  for (const l of linhasAusentes) if (ga.inseridos.has(l.sku_codigo_omie)) pendenteGravado.set(l.sku_codigo_omie, l.estoque_pendente_entrada);
-  const aplicado = gravacaoCompleta && gm.confirmados === linhasMembros.length && ga.falhas === 0;
+  for (const l of linhasAusentes) if (ra.gravados.has(l.sku_codigo_omie)) pendenteGravado.set(l.sku_codigo_omie, l.estoque_pendente_entrada);
+  const aplicado = gravacaoCompleta && gm.confirmados === linhasMembros.length && ra.falhas === 0 && erroNossas === null;
   const obs = await publicarObservacao(ops, e, pend, aplicado, pendenteGravado);
 
   const desfecho: Desfecho = gravacaoCompleta && inat.completa ? "completo" : "parcial";
@@ -510,10 +571,12 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
     membros_grupo_falhas: linhasMembros.length - gm.confirmados,
     membros_grupo_ilegiveis: membrosIlegiveis.size,
     ...(pendMembros === undefined && membros.size > 0 ? { membros_grupo_sem_pendente: true } : {}),
-    membros_grupo_ausentes_com_po: linhasAusentes.length,
-    membros_grupo_ausentes_inseridos: ga.inseridos.size,
-    membros_grupo_ausentes_ja_com_linha: linhasAusentes.length - ga.inseridos.size - ga.falhas,
-    membros_grupo_ausentes_falhas: ga.falhas,
+    membros_grupo_ausentes_com_po: linhasAusentes.filter((l) => l.estoque_pendente_entrada > 0).length,
+    membros_grupo_ausentes_inseridos: ra.inseridos,
+    membros_grupo_ausentes_reconciliados: ra.atualizados,
+    membros_grupo_ausentes_ja_com_linha: ra.conflitos,
+    membros_grupo_ausentes_falhas: ra.falhas,
+    membros_grupo_ausentes_erro: erroNossas,
   };
   ops.log("log", `resumo: ${JSON.stringify(resumo)}`);
 

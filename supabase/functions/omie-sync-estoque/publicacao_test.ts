@@ -6,6 +6,7 @@ import {
   comPrazo,
   concluirRun,
   type EntradaPublicacao,
+  FONTE_SEM_POSICAO,
   MARCA_GRAVACAO,
   MARCA_PENDENTE,
   MARKER_FULL,
@@ -54,15 +55,23 @@ interface Cenario {
   observacao?: ResultadoEscrita | Error;
   /** Resposta do inserirEstoqueSeAusente; default = o banco devolve TODOS como inseridos (não havia linha). */
   ausente?: (linhas: Record<string, unknown>[]) => ResultadoEscrita & { inseridos: string[] };
+  /** sku_estoque_atual em memória (PK sku): persiste entre runs; upsert/insert/update/leitura agem sobre ela. */
+  tabela?: Map<string, Record<string, unknown>>;
+  /** Erro da leitura das linhas sem posição. */
+  lerNossas?: string;
+  /** Relógio inicial (runs sucessivos avançam o dia). */
+  t0?: number;
 }
 
 function criarFake(c: Cenario = {}) {
   const efeitos: string[] = [];
   const linhasEstoque: Record<string, unknown>[][] = [];
   const linhasAusentes: Record<string, unknown>[][] = [];
+  const linhasAtualizadas: Record<string, unknown>[] = [];
   const marcadores: Record<string, unknown>[] = [];
   const observacoes: Record<string, unknown>[] = [];
-  let relogio = T0 + 50_000;
+  let relogio = (c.t0 ?? T0) + 50_000;
+  const tabela = c.tabela;
   let chamadaEstoque = 0;
   const ops: OpsPublicacao = {
     agora: () => relogio,
@@ -74,6 +83,7 @@ function criarFake(c: Cenario = {}) {
     upsertEstoque: (linhas) => {
       efeitos.push(`upsertEstoque:${linhas.map((l) => l.sku_codigo_omie).join(",")}`);
       linhasEstoque.push(linhas);
+      for (const l of linhas) tabela?.set(String(l.sku_codigo_omie), { ...l });
       relogio += c.custoEstoqueMs ?? 0;
       const r = c.estoque?.[chamadaEstoque++];
       return Promise.resolve(r === undefined ? OK : typeof r === "function" ? r(linhas) : r);
@@ -81,7 +91,25 @@ function criarFake(c: Cenario = {}) {
     inserirEstoqueSeAusente: (linhas) => {
       efeitos.push(`inserirAusente:${linhas.map((l) => l.sku_codigo_omie).join(",")}`);
       linhasAusentes.push(linhas);
-      return Promise.resolve(c.ausente ? c.ausente(linhas) : { ...OK, inseridos: linhas.map((l) => String(l.sku_codigo_omie)) });
+      if (c.ausente) return Promise.resolve(c.ausente(linhas));
+      const novos = linhas.filter((l) => !tabela?.has(String(l.sku_codigo_omie)));
+      for (const l of novos) tabela?.set(String(l.sku_codigo_omie), { ...l });
+      return Promise.resolve({ ...OK, inseridos: novos.map((l) => String(l.sku_codigo_omie)) });
+    },
+    lerLinhasSemPosicao: () => {
+      efeitos.push("lerNossas");
+      if (c.lerNossas) return Promise.resolve({ erro: c.lerNossas, dados: new Set<string>() });
+      const nossas = [...(tabela ?? new Map()).values()].filter((l) => l.fonte_sync === FONTE_SEM_POSICAO);
+      return Promise.resolve({ erro: null, dados: new Set(nossas.map((l) => String(l.sku_codigo_omie))) });
+    },
+    atualizarLinhaSemPosicao: (linha) => {
+      const sku = String(linha.sku_codigo_omie);
+      efeitos.push(`atualizarNossa:${sku}`);
+      linhasAtualizadas.push(linha);
+      const atual = tabela?.get(sku);
+      if (atual?.fonte_sync !== FONTE_SEM_POSICAO) return Promise.resolve({ ...OK, atualizado: false });
+      tabela!.set(sku, { ...linha });
+      return Promise.resolve({ ...OK, atualizado: true });
     },
     lerInativacoes: (codigos) => {
       efeitos.push(`lerInativacoes:${codigos.join(",")}`);
@@ -112,7 +140,7 @@ function criarFake(c: Cenario = {}) {
     },
     log: () => {},
   };
-  return { ops, efeitos, linhasEstoque, linhasAusentes, marcadores, observacoes, avancar: (ms: number) => (relogio += ms) };
+  return { ops, efeitos, linhasEstoque, linhasAusentes, linhasAtualizadas, marcadores, observacoes, avancar: (ms: number) => (relogio += ms) };
 }
 
 // Habilitados 101, 102, 103 (achados no físico) e 104 (não aparece → inativação).
@@ -547,6 +575,107 @@ Deno.test("membro ausente: falha do insert não muda o desfecho, fica no resumo 
   igual(r.desfecho, "completo", "desfecho");
   igual([r.membros_grupo_ausentes_inseridos, r.membros_grupo_ausentes_falhas], [0, 1], "a falha aparece no resumo");
   igual(f.observacoes[0]?.pendente_aplicado, false, "o lote dos ausentes não confirmou");
+});
+
+// Codex P1 (2026-11-18): o INSERT … DO NOTHING sozinho congelava a linha que a própria edge criou — a varredura trazia
+// 10 → 10 → 4 → 0 e a linha ficava em 10 (2× a entrega recebida; 0× um PO novo). A linha NOSSA é reconciliada a cada run.
+const DIA = 1_000; // "dia" curto: o limite da cauda da entrada() é fixo; basta o retrato avançar
+const pendDe = (q: number) => pendenteComMembros(q > 0 ? new Map([["555", q]]) : new Map());
+
+Deno.test("Codex P1: runs sucessivos reconciliam a linha nossa — 10 → 10 → 4 → 0, com o retrato avançando", async () => {
+  const tabela = new Map<string, Record<string, unknown>>();
+  const vistos: Array<[unknown, unknown]> = [];
+  for (const [dia, q] of [[0, 10], [1, 10], [2, 4], [3, 0]] as const) {
+    const f = criarFake({ pendente: pendDe(q), tabela, t0: T0 + dia * DIA });
+    await concluirRun(f.ops, entrada({ membros: ["555"] }));
+    const l = tabela.get("555");
+    vistos.push([l?.estoque_pendente_entrada, l?.ultima_sincronizacao]);
+  }
+  igual(vistos.map((v) => v[0]), [10, 10, 4, 0], "o pendente acompanha a varredura, inclusive a baixa para 0");
+  igual(new Set(vistos.map((v) => v[1])).size, 4, "o retrato avança a cada run");
+  igual(tabela.get("555")?.fonte_sync, FONTE_SEM_POSICAO, "continua nossa");
+});
+
+Deno.test("Codex P1: PO novo somado ao velho entra (16), nunca fica no valor do 1º insert", async () => {
+  const tabela = new Map<string, Record<string, unknown>>();
+  await concluirRun(criarFake({ pendente: pendDe(10), tabela }).ops, entrada({ membros: ["555"] }));
+  const f = criarFake({ pendente: pendDe(16), tabela, t0: T0 + DIA });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(tabela.get("555")?.estoque_pendente_entrada, 16, "16");
+  igual(
+    [r.membros_grupo_ausentes_reconciliados, r.membros_grupo_ausentes_inseridos, r.membros_grupo_ausentes_ja_com_linha],
+    [1, 0, 0],
+    "pelo update, sem insert redundante",
+  );
+});
+
+Deno.test("linha de OUTRA origem (físico lido antes) nunca é tocada pelo membro ausente", async () => {
+  const tabela = new Map<string, Record<string, unknown>>([
+    ["555", { sku_codigo_omie: "555", estoque_fisico: 7, estoque_pendente_entrada: 1, fonte_sync: "ListarPosEstoque" }],
+  ]);
+  const f = criarFake({ pendente: pendDe(3), tabela });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual([tabela.get("555")?.estoque_fisico, tabela.get("555")?.estoque_pendente_entrada], [7, 1], "intacta");
+  igual(f.linhasAtualizadas.length, 0, "nenhum update");
+  igual(r.membros_grupo_ausentes_ja_com_linha, 1, "o conflito aparece no resumo");
+});
+
+Deno.test("corrida: a linha nossa foi regravada com a posição real entre a leitura e o update — o update não a toca", async () => {
+  const tabela = new Map<string, Record<string, unknown>>([
+    ["555", { sku_codigo_omie: "555", estoque_fisico: 0, estoque_pendente_entrada: 10, fonte_sync: FONTE_SEM_POSICAO }],
+  ]);
+  const f = criarFake({ pendente: pendDe(4), tabela });
+  const ler = f.ops.lerLinhasSemPosicao;
+  f.ops.lerLinhasSemPosicao = async (p) => {
+    const r = await ler(p);
+    tabela.set("555", { sku_codigo_omie: "555", estoque_fisico: 9, estoque_pendente_entrada: 4, fonte_sync: "ListarPosEstoque" });
+    return r;
+  };
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(tabela.get("555")?.estoque_fisico, 9, "a posição real fica");
+  igual([r.membros_grupo_ausentes_reconciliados, r.membros_grupo_ausentes_ja_com_linha], [0, 1], "resumo");
+});
+
+Deno.test("leitura das linhas nossas falha: nada é atualizado, o erro vai ao resumo e o run não vale como aplicado", async () => {
+  const tabela = new Map<string, Record<string, unknown>>([
+    ["555", { sku_codigo_omie: "555", estoque_fisico: 0, estoque_pendente_entrada: 10, fonte_sync: FONTE_SEM_POSICAO }],
+  ]);
+  const pend: ResultadoPendente = {
+    ...pendDe(4),
+    observacao: {
+      observados: [observado(101, 5)],
+      janelaDe: "2025-10-06",
+      janelaAte: "2027-02-03",
+      varreduraCompleta: true,
+      coletaIntegra: true,
+      perdaColeta: null,
+    },
+  };
+  const f = criarFake({ pendente: pend, tabela, lerNossas: "boom" });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(f.linhasAtualizadas.length, 0, "nenhum update às cegas");
+  igual(tabela.get("555")?.estoque_pendente_entrada, 10, "o insert não sobrescreve");
+  igual([r.membros_grupo_ausentes_erro, r.desfecho], ["boom", "completo"], "resumo");
+  igual(f.observacoes[0]?.pendente_aplicado, false, "não aplicado");
+});
+
+Deno.test("linha nossa de membro que VOLTOU à listagem: vale o par lido (upsert), sem update de ausente", async () => {
+  const tabela = new Map<string, Record<string, unknown>>([
+    ["999", { sku_codigo_omie: "999", estoque_fisico: 0, estoque_pendente_entrada: 10, fonte_sync: FONTE_SEM_POSICAO }],
+  ]);
+  const f = criarFake({ pendente: pendenteComMembros(new Map([["999", 3]])), tabela });
+  await concluirRun(f.ops, entrada({ membros: ["999"] }));
+  igual(f.linhasAtualizadas.length, 0, "nenhum update de ausente");
+  igual([tabela.get("999")?.estoque_fisico, tabela.get("999")?.estoque_pendente_entrada, tabela.get("999")?.fonte_sync], [1, 3, "ListarPosEstoque"], "o par lido");
+});
+
+Deno.test("linha nossa de SKU que virou habilitado: nunca reconciliada como membro", async () => {
+  const tabela = new Map<string, Record<string, unknown>>([
+    ["104", { sku_codigo_omie: "104", estoque_fisico: 0, estoque_pendente_entrada: 10, fonte_sync: FONTE_SEM_POSICAO }],
+  ]);
+  const f = criarFake({ pendente: pendenteComMembros(new Map()), tabela });
+  await concluirRun(f.ops, entrada());
+  igual(f.linhasAtualizadas.length, 0, "nenhum update");
 });
 
 Deno.test("membros de grupo não lidos: o resumo diz o erro e null, nunca '0 membros'", async () => {

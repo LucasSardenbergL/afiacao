@@ -41,8 +41,8 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     expect(fontePublicacao).not.toMatch(/Promise\.(all|allSettled|race|any)\(/);
     // a única escrita no par é o adaptador entregue à publicação — que decide QUANDO ela acontece
     expect(fonte.slice(iHandler)).not.toContain('from("sku_estoque_atual")');
-    // v1.11: o upsert do par e o insert-se-ausente do membro com PO fora do físico — os dois nos adaptadores
-    expect(fonte.match(/from\("sku_estoque_atual"\)/g)).toHaveLength(2);
+    // v1.11: o upsert do par e, para o membro com PO fora do físico, o insert-se-ausente, a leitura das linhas nossas e o update condicionado — todos nos adaptadores
+    expect(fonte.match(/from\("sku_estoque_atual"\)/g)).toHaveLength(4);
   });
 
   it('na publicação: gate do físico → fase do PO → gate do pendente → gravação, nessa ordem', () => {
@@ -207,7 +207,7 @@ describe('omie-sync-estoque — deadline cabe no teto do cron', () => {
     expect(fim).toBeGreaterThan(ini);
     const adaptadores = fonte.slice(ini, fim);
     const chamadas = adaptadores.match(/supabase\s*\.\s*(from|rpc)\(/g) ?? [];
-    expect(chamadas).toHaveLength(8);
+    expect(chamadas).toHaveLength(10);
     expect(adaptadores.match(/\.abortSignal\(s\)/g)).toHaveLength(chamadas.length);
     // e a leitura do em_transito na fase do PO, que antes podia pendurar o run até o kill do cron
     const iEmTransito = fonte.indexOf('async function fetchEmTransitoKeys(');
@@ -237,10 +237,36 @@ describe('omie-sync-estoque — o registro leva o resumo dos membros de grupo', 
     const registro = new Set(fonte.slice(ini, fim).match(/"[a-z_]+"/g)?.map((c) => c.slice(1, -1)) ?? []);
     const doResumo = [...new Set(fontePublicacao.match(/\bmembros_grupo_[a-z_]+(?=\s*:)/g) ?? [])];
     expect(doResumo.sort()).toEqual([
-      'membros_grupo_ausentes_com_po', 'membros_grupo_ausentes_falhas', 'membros_grupo_ausentes_inseridos',
-      'membros_grupo_ausentes_ja_com_linha', 'membros_grupo_encontrados', 'membros_grupo_erro', 'membros_grupo_falhas',
+      'membros_grupo_ausentes_com_po', 'membros_grupo_ausentes_erro', 'membros_grupo_ausentes_falhas',
+      'membros_grupo_ausentes_inseridos', 'membros_grupo_ausentes_ja_com_linha', 'membros_grupo_ausentes_reconciliados', 'membros_grupo_encontrados', 'membros_grupo_erro', 'membros_grupo_falhas',
       'membros_grupo_gravados', 'membros_grupo_ilegiveis', 'membros_grupo_sem_pendente',
     ]);
     expect(doResumo.filter((c) => !registro.has(c))).toEqual([]);
   });
 });
+
+// v1.11 (Codex P1 2026-11-18): a linha do membro ausente com PO é reconciliada por UPDATE — e só a linha que a PRÓPRIA
+// edge criou. O Deno executa a decisão com um fake; a condição de dono no WHERE mora no adaptador real, que só o texto vê.
+describe('omie-sync-estoque — o update do membro ausente só toca a linha nossa', () => {
+  it('o adaptador atualizarLinhaSemPosicao filtra empresa, sku E a marca de dono, e prova pela RETURNING', () => {
+    const ini = fonte.indexOf('atualizarLinhaSemPosicao: async');
+    const fim = fonte.indexOf('lerInativacoes: async', ini);
+    expect(ini).toBeGreaterThan(0);
+    expect(fim).toBeGreaterThan(ini);
+    const corpo = fonte.slice(ini, fim);
+    expect(corpo).toContain('.update(linha)');
+    expect(corpo).toContain('.eq("empresa", empresa)');
+    expect(corpo).toContain('.eq("sku_codigo_omie", String(linha.sku_codigo_omie))');
+    expect(corpo).toContain('.eq("fonte_sync", FONTE_SEM_POSICAO)');
+    expect(corpo).toContain('.select("sku_codigo_omie")');
+    expect(corpo).not.toMatch(/\.upsert\(/);
+  });
+
+  it('o insert do membro ausente nunca sobrescreve (ignoreDuplicates) e a leitura das nossas prova completude', () => {
+    expect(fonte).toContain('.upsert(linhas, { onConflict: "empresa,sku_codigo_omie", ignoreDuplicates: true })');
+    const ini = fonte.indexOf('lerLinhasSemPosicao: async');
+    const corpo = fonte.slice(ini, fonte.indexOf('atualizarLinhaSemPosicao: async', ini));
+    expect(corpo).toContain('if (res.count !== linhas.length) throw');
+  });
+});
+
