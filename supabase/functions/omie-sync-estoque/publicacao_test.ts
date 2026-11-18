@@ -763,6 +763,24 @@ Deno.test("Codex P1 (3ª): run mais VELHO não regrava o retrato que um run mais
   igual(f.observacoes[0]?.pendente_aplicado, false, "não aplicado");
 });
 
+Deno.test("Codex P1 (5ª): coletas sobrepostas — o run que começou DEPOIS vence, nas duas ordens de escrita", async () => {
+  // A começou a coleta em T0+45s (e terminou depois do início de B); gravou 0 com o retrato = início da coleta de A.
+  const tabela = new Map<string, Record<string, unknown>>([
+    ["555", {
+      sku_codigo_omie: "555",
+      estoque_fisico: 0,
+      estoque_pendente_entrada: 0,
+      fonte_sync: FONTE_SEM_POSICAO,
+      ultima_sincronizacao: new Date(T0 + 45_000).toISOString(),
+    }],
+  ]);
+  // B começa a coleta em T0+50s (o relógio do fake) e lê um PO manual de 4: perde o insert, reconcilia pelo update.
+  const f = criarFake({ pendente: pendDe(4), tabela });
+  await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(tabela.get("555")?.estoque_pendente_entrada, 4, "o PO de B entra");
+  igual(tabela.get("555")?.ultima_sincronizacao, new Date(T0 + 50_000).toISOString(), "retrato = início da coleta de B");
+});
+
 Deno.test("membro AUSENTE com item de PO ilegível entra na contagem de ilegíveis", async () => {
   const f = criarFake({ pendente: pendenteComMembros(new Map(), ["555"]) });
   const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));

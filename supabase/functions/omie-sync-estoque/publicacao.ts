@@ -520,16 +520,20 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   const ausente = (codigo: string) => !naListagem.has(codigo) && !ilegiveisPo.has(codigo);
   // O pendente dos membros só vale aqui com a leitura da equivalência (ver acima) — `pm` undefined = nada se escreve.
   const pm = grupo === undefined ? undefined : pendMembros;
+  // O retrato do ausente é o INÍCIO da coleta do PO (não o fim): o update compara início com início, e o run que
+  // começou depois vence em qualquer sobreposição (Codex P1, 5ª rodada: com o fim, A que começou antes e terminou depois
+  // do início de B barrava o update de B, e o PO de B ficava 0×). É também o instante da leitura das chaves de dedup.
+  const inicioColetaIso = new Date(tPo).toISOString();
   const linhasAusentes = pm === undefined || grupo === undefined ? [] : [...grupo].filter(ausente).map((codigo) => ({
     empresa: e.empresa,
     sku_codigo_omie: codigo,
     estoque_fisico: 0,
     estoque_disponivel: 0,
-    ultima_sincronizacao: agoraIso,
+    ultima_sincronizacao: inicioColetaIso,
     fonte_sync: FONTE_SEM_POSICAO,
     estoque_pendente_entrada: pm.get(codigo) ?? 0,
   }));
-  const ra = await reconciliarAusentes(ops, e, linhasAusentes, new Date(tPo).toISOString());
+  const ra = await reconciliarAusentes(ops, e, linhasAusentes, inicioColetaIso);
 
   // A observação conta o que o motor contou (habilitados ∪ membros com par ∪ ausentes CONFIRMADOS); o pendente só vale
   // como aplicado se os três lotes gravaram inteiros.
