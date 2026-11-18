@@ -268,5 +268,14 @@ describe('omie-sync-estoque — o update do membro ausente só toca a linha noss
     const corpo = fonte.slice(ini, fonte.indexOf('atualizarLinhaSemPosicao: async', ini));
     expect(corpo).toContain('if (res.count !== linhas.length) throw');
   });
+
+  it('o PO do APP deduplicado anota o membro (retrato do dia) ANTES do continue, e o run sem equivalência não passa o grupo', () => {
+    const ini = fonte.indexOf('if (ehApp) {');
+    const fim = fonte.indexOf('coletor.registrar(cabObs, itensObs, "dedup_app");', ini);
+    expect(ini).toBeGreaterThan(0);
+    expect(fim).toBeGreaterThan(ini);
+    expect(fonte.slice(ini, fim)).toContain('if (sku && !habilitadoMap.has(sku) && membro(sku)) membrosComPoApp.add(sku);');
+    expect(fonte).toContain('membrosGrupo: membrosErro === null ? membrosGrupo : undefined },');
+  });
 });
 

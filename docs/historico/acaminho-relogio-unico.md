@@ -120,38 +120,59 @@ os SKUs que vieram no `ListarPosEstoque`. Membro com PO aberto e **fora** da lis
 contado **0×** e o grupo recomprava. O #3973 tentou o conserto no motor (fallback no último retrato da empresa) e foi
 reprovado: o máximo da empresa avança sem publicar o pendente do membro. A decisão do founder foi consertar na edge.
 
-**Desenho:**
-- **Quem entra:** membro com `pendente > 0` na MESMA varredura de PO (já passou pelo C1), ausente da listagem (nem em
-  `membros` nem em `membrosIlegiveis` do físico) e sem item de PO ilegível.
-- **O que entra:** o par (físico 0, pendente) por `INSERT … ON CONFLICT DO NOTHING` (upsert `ignoreDuplicates` +
-  `select` = RETURNING).
-- **Por que o 0 não fabrica:** o C2 garante que a listagem com `cExibeTodos=S` foi completa. O motor já lia
-  `COALESCE(sea.estoque_fisico, 0) = 0` para o membro sem linha, então o físico do grupo não muda. O que passa a existir
-  é o pendente e o retrato do dia.
-- **Linha existente nunca é sobrescrita.** Varredura completa ainda pode pular uma linha (LIMITE em `fisico.ts`), e
-  zerar um físico lido antes seria fabricar.
-- **Observação:** só os SKUs devolvidos pelo RETURNING entram no pendente gravado. Falha ou abort do insert tira o
-  `pendente_aplicado`.
-- **Desfecho:** não muda (como no lote dos membros). O resumo e o `acoes_execucoes.detalhes` ganham
-  `membros_grupo_ausentes_{com_po,inseridos,ja_com_linha,falhas}`.
+**Desenho.** O par gravado é (físico 0, pendente da MESMA varredura de PO, já aprovada pelo C1). O 0 não fabrica: o C2
+garante que a listagem com `cExibeTodos=S` foi completa, e o motor já lia `COALESCE(sea.estoque_fisico, 0) = 0` para o
+membro sem linha. O físico do grupo não muda; passam a existir o pendente e o retrato do dia. A marca de dono é
+`fonte_sync = 'PO_sem_posicao_ListarPosEstoque'`.
+- **Linha nossa → UPDATE a cada run confiável, inclusive para 0.** O UPDATE leva a marca no `WHERE` e devolve
+  RETURNING. Se um run paralelo regravou a posição real, o UPDATE não acha a linha e não a toca.
+- **Sem linha → INSERT … ON CONFLICT DO NOTHING**, só com pendente > 0. Linha de OUTRA origem nunca é tocada: a
+  varredura completa ainda pode pular uma linha (LIMITE em `fisico.ts`), e zerar um físico lido antes seria fabricar.
+- **Ficam fora:**
+  - o físico ilegível (ele veio na listagem);
+  - o item de PO ilegível (sem par);
+  - o habilitado.
+- **Leitura das linhas nossas com prova de completude** (`count exact`). Se a leitura falha, nada é atualizado, o erro
+  vai ao resumo e o run não vale como "aplicado".
+- **Observação:** só SKUs com RETURNING entram no pendente gravado. Falha tira o `pendente_aplicado`.
+- **Desfecho:** não muda.
+- **Resumo e registro:** ganham `membros_grupo_ausentes_{com_po,inseridos,reconciliados,ja_com_linha,falhas,erro}`.
 
-**Prova** (Deno, `publicacao_test.ts`):
-- 8 testes novos. O antigo "membro que não veio no retrato não é escrito" virou a expectativa nova.
-- Vermelho antes do conserto: 5 falhas.
-- Verde depois: 91/0 na pasta da edge.
-- Falsificação com controle verde na MESMA invocação: 7 sabotagens, cada uma deu vermelho:
-  - sem `qtd > 0`;
-  - sem a exclusão do físico ilegível;
-  - sem a exclusão do PO ilegível;
-  - pendente gravado sem a prova do RETURNING;
-  - aplicado sem checar falhas;
-  - insert desligado;
-  - físico ≠ 0.
-- A guarda redundante "não é habilitado" foi removida: nenhum teste a provava, porque o index já exclui os
-  habilitados dos membros.
+**Codex, 1ª rodada (gpt-6.2-astra, high, 79s): REPROVA, P1.** Só com o INSERT … DO NOTHING, a linha criada pela edge
+congelava. Ele executou 4 runs, com a varredura `10 → 10 → 4 → 0`, e a linha ficou em 10 nos quatro. Isso conta 2× a
+entrega recebida e 0× um PO novo. O P2 da mesma rodada: a observação era suprimida quando o RETURNING vinha vazio.
+Daí veio a reconciliação da linha nossa. Ele confirmou que `ignoreDuplicates` + `select` devolve só as linhas
+inseridas (teste do PostgREST).
 
-**Residual (aceito):** membro ausente que JÁ tem linha velha mantém o par velho. Ele é coerente no tempo, e o corte
-pelo retrato velho conta os pedidos do app desde então. Ele aparece em `membros_grupo_ausentes_ja_com_linha`.
+**Prova** (Deno, `publicacao_test.ts`, 98/0):
+- O teste antigo "membro que não veio no retrato não é escrito" virou a expectativa nova. O vermelho antes do conserto
+  deu 5 falhas.
+- A sequência do Codex (10→10→4→0 e 10→16) roda numa tabela em memória que persiste entre runs. Também estão
+  cobertos:
+  - a linha de outra origem, que fica intacta;
+  - a corrida, que não toca a posição real e mantém a observação fail-closed;
+  - a leitura das linhas nossas que falha;
+  - o membro que voltou à listagem;
+  - o membro que virou habilitado.
+- A forma do adaptador está no vitest: marca no `WHERE`, `ignoreDuplicates` e completude da leitura.
+- Falsificação com controle verde na MESMA invocação. Na 1ª etapa, 7 sabotagens deram vermelho. Na 2ª, as 9 deram
+  vermelho:
+  - sem reconciliar;
+  - 0 virando o valor velho;
+  - insert sem excluir as linhas nossas;
+  - linhas nossas sem o filtro de ausente;
+  - sem excluir o habilitado;
+  - aplicado ignorando a leitura;
+  - conflito contado como gravado (esta pegou um buraco no teste da corrida, já fechado);
+  - update sem a marca;
+  - leitura sem a prova de completude.
+- A guarda redundante "não está em `encontrados`" foi removida: nenhum teste a provava.
+
+**Residual (aceito):**
+- Membro ausente com linha de OUTRA origem mantém o par velho. Ele é coerente no tempo, e o corte pelo retrato velho
+  conta os pedidos do app desde então. Aparece em `membros_grupo_ausentes_ja_com_linha`.
+- Linha nossa de ex-membro vai a pendente 0. O motor não a lê, porque ela está fora da equivalência.
+- Linha nossa com PO ilegível fica velha.
 
 **Deploy:** só a edge `omie-sync-estoque` (v1.11), decidida por `bun run pendencias:deploy`. Sem migration e sem
 Publish.

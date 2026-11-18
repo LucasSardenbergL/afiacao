@@ -401,7 +401,7 @@ async function computePendenteViaPedidosCompra(
   deadline: number,
 ): Promise<{
   pendente: Map<string, number>; confiavel: boolean; problemas: string[];
-  pendenteMembros: Map<string, number>; membrosPendenteIlegiveis: string[];
+  pendenteMembros: Map<string, number>; membrosPendenteIlegiveis: string[]; membrosComPoApp: string[];
   observados: LinhaObservada[]; janelaDe: string; janelaAte: string; varreduraCompleta: boolean;
   coletaIntegra: boolean; perdaColeta: string | null;
 }> {
@@ -419,6 +419,7 @@ async function computePendenteViaPedidosCompra(
   // tira só o membro (sem par, sem linha) — nunca entra em `problemas`, que barraria a rodada dos habilitados.
   const itemsMembros: PoItemOmie[] = [];
   const membrosPendenteIlegiveis = new Set<string>();
+  const membrosComPoApp = new Set<string>();
   const etapasInesperadas = new Set<string>();
   // [fix double-buy 2026-06-20] PAGINA ATÉ A PÁGINA VAZIA — não confiar em nTotalPaginas (Omie SUB-REPORTA →
   // lia só a 1ª página → POs aprovadas além dela sumiam → pendente subestimado → motor re-sugeria = double-buy).
@@ -483,6 +484,12 @@ async function computePendenteViaPedidosCompra(
           problemas.push(`PO app↔manual divergente entre páginas (${aliases.join(",")}) — double-count`);
         }
         for (const a of aliases) posComoApp.add(a);
+        // v1.11 (Codex P1 2026-11-18): o membro deste PO não entra no pendente (o em_transito o conta), mas PRECISA do
+        // retrato do dia — sem linha, o motor corta o em_transito em D−7 e o PO fica 0× quando o sync atrasa.
+        for (const it of itensObs) {
+          const sku = String(it.nCodProd ?? "").trim();
+          if (sku && !habilitadoMap.has(sku) && membro(sku)) membrosComPoApp.add(sku);
+        }
         coletor.registrar(cabObs, itensObs, "dedup_app");
         continue;
       }
@@ -572,7 +579,7 @@ async function computePendenteViaPedidosCompra(
   );
   return {
     pendente, confiavel, problemas,
-    pendenteMembros, membrosPendenteIlegiveis: [...membrosPendenteIlegiveis],
+    pendenteMembros, membrosPendenteIlegiveis: [...membrosPendenteIlegiveis], membrosComPoApp: [...membrosComPoApp],
     observados: coletor.linhas, janelaDe: inicioJanela, janelaAte: fimJanela,
     varreduraCompleta: fim && problemas.length === 0,
     coletaIntegra: coletor.integra, perdaColeta: coletor.perda,
@@ -1010,7 +1017,11 @@ Deno.serve(async (req) => {
           }
           const conv = convPendente.conv;
           const r = await computePendenteViaPedidosCompra(appKey, appSecret, habilitadoMap, ehMembro, conv, supabase, deadline);
-          const doMembro = { pendenteMembros: r.pendenteMembros, membrosPendenteIlegiveis: r.membrosPendenteIlegiveis };
+          const doMembro = {
+            pendenteMembros: r.pendenteMembros,
+            membrosPendenteIlegiveis: r.membrosPendenteIlegiveis,
+            membrosComPoApp: r.membrosComPoApp,
+          };
           return { pendente: r.pendente, confiavel: r.confiavel, problemas: r.problemas, observacao: r, ...doMembro };
         }
         const s = await computePendenteViaSaldoPendente(appKey, appSecret, habilitadoMap, ehMembro, deadline);
@@ -1020,7 +1031,9 @@ Deno.serve(async (req) => {
         empresa,
         habilitados: habilitadoMap,
         fisico: { veredito: vereditoFisico, encontrados: fisico.encontrados, paginas: totalPaginas, faseMs: faseFisicoMs,
-          membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro },
+          membros: fisico.membros, membrosIlegiveis: fisico.membrosIlegiveis, membrosErro,
+          // Sem a leitura da equivalência não se sabe quem é membro: nenhuma linha de ausente é escrita (publicacao.ts).
+          membrosGrupo: membrosErro === null ? membrosGrupo : undefined },
         iniciadoEm: startedAt.getTime(),
         limiteCauda: deadline + FOLGA_CAUDA_MS,
         prazos: {

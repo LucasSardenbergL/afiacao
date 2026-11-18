@@ -171,6 +171,7 @@ function entrada(opts: {
       encontrados: acc.encontrados,
       membros: acc.membros,
       membrosIlegiveis: acc.membrosIlegiveis,
+      membrosGrupo: membros,
       paginas: paginas.length,
       faseMs: 45_000,
     },
@@ -688,6 +689,82 @@ Deno.test("linha nossa de SKU que virou habilitado: nunca reconciliada como memb
   const f = criarFake({ pendente: pendenteComMembros(new Map()), tabela });
   await concluirRun(f.ops, entrada());
   igual(f.linhasAtualizadas.length, 0, "nenhum update");
+});
+
+// Codex, 2ª rodada (2026-11-18): o PO do APP é deduplicado do pendente (o em_transito o conta) — o membro ausente sem
+// linha ficava sem retrato, e o motor cortava o em_transito em D−7: com o sync atrasado, o PO ficava 0×.
+const comPoApp = (skus: string[], pendMembros = new Map<string, number>()): ResultadoPendente => ({
+  ...pendenteComMembros(pendMembros),
+  membrosComPoApp: skus,
+});
+
+Deno.test("Codex P1 (2ª): membro ausente só com PO do APP deduplicado ganha o retrato (0, 0, hoje)", async () => {
+  const tabela = new Map<string, Record<string, unknown>>();
+  const f = criarFake({ pendente: comPoApp(["555"]), tabela });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  const l = tabela.get("555");
+  igual([l?.estoque_fisico, l?.estoque_pendente_entrada, l?.fonte_sync], [0, 0, FONTE_SEM_POSICAO], "o par do retrato");
+  igual(typeof l?.ultima_sincronizacao, "string", "com o retrato do dia");
+  igual(r.membros_grupo_ausentes_inseridos, 1, "resumo");
+});
+
+Deno.test("PO do APP de SKU fora do grupo (ou habilitado) não cria linha", async () => {
+  const f = criarFake({ pendente: comPoApp(["777", "101"]) });
+  await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(f.linhasAusentes.flat().length, 0, "nenhum insert");
+});
+
+Deno.test("leitura da equivalência falhou: nenhuma linha de ausente é lida, inserida ou zerada", async () => {
+  const tabela = new Map<string, Record<string, unknown>>([
+    ["555", { sku_codigo_omie: "555", estoque_fisico: 0, estoque_pendente_entrada: 10, fonte_sync: FONTE_SEM_POSICAO }],
+  ]);
+  const f = criarFake({ pendente: comPoApp(["556"]), tabela });
+  const en = entrada({ membros: ["555", "556"] });
+  await concluirRun(f.ops, { ...en, fisico: { ...en.fisico, membrosErro: "boom" } });
+  igual([f.linhasAtualizadas.length, f.linhasAusentes.flat().length], [0, 0], "nada escrito");
+  igual(f.efeitos.includes("lerNossas"), false, "nem lido");
+  igual(tabela.get("555")?.estoque_pendente_entrada, 10, "a linha nossa não é zerada às cegas");
+});
+
+Deno.test("ex-membro (fora da equivalência atual): a linha nossa não ganha retrato fresco", async () => {
+  const tabela = new Map<string, Record<string, unknown>>([
+    ["777", { sku_codigo_omie: "777", estoque_fisico: 0, estoque_pendente_entrada: 10, fonte_sync: FONTE_SEM_POSICAO }],
+  ]);
+  const f = criarFake({ pendente: pendenteComMembros(new Map()), tabela });
+  await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(f.linhasAtualizadas.length, 0, "nenhum update");
+});
+
+Deno.test("Codex P2 (2ª): update para 0 que perde a corrida tira o 'aplicado'", async () => {
+  const tabela = new Map<string, Record<string, unknown>>([
+    ["555", { sku_codigo_omie: "555", estoque_fisico: 0, estoque_pendente_entrada: 4, fonte_sync: FONTE_SEM_POSICAO }],
+  ]);
+  const pend: ResultadoPendente = {
+    ...pendenteComMembros(new Map()),
+    observacao: {
+      observados: [observado(101, 5)],
+      janelaDe: "2025-10-06",
+      janelaAte: "2027-02-03",
+      varreduraCompleta: true,
+      coletaIntegra: true,
+      perdaColeta: null,
+    },
+  };
+  const f = criarFake({ pendente: pend, tabela });
+  const ler = f.ops.lerLinhasSemPosicao;
+  f.ops.lerLinhasSemPosicao = async (p) => {
+    const r = await ler(p);
+    tabela.set("555", { sku_codigo_omie: "555", estoque_fisico: 0, estoque_pendente_entrada: 4, fonte_sync: "ListarPosEstoque" });
+    return r;
+  };
+  await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(f.observacoes[0]?.pendente_aplicado, false, "o 0 não foi gravado: não aplicado");
+});
+
+Deno.test("membro AUSENTE com item de PO ilegível entra na contagem de ilegíveis", async () => {
+  const f = criarFake({ pendente: pendenteComMembros(new Map(), ["555"]) });
+  const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
+  igual(r.membros_grupo_ilegiveis, 1, "o resumo não diz 0");
 });
 
 Deno.test("membros de grupo não lidos: o resumo diz o erro e null, nunca '0 membros'", async () => {

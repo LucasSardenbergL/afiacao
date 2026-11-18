@@ -80,6 +80,8 @@ export interface ResultadoPendente {
   pendenteMembros?: Map<string, number>;
   /** Membro com item de PO inválido: fora do lote (o par ficaria incompleto) — nunca barra os habilitados. */
   membrosPendenteIlegiveis?: string[];
+  /** Membros com item num PO do APP deduplicado (o em_transito o conta): sem pendente, mas precisam do retrato do dia. */
+  membrosComPoApp?: string[];
 }
 
 export interface OpsPublicacao {
@@ -123,6 +125,8 @@ export interface EntradaPublicacao {
     membrosIlegiveis?: readonly string[];
     /** A leitura dos membros falhou: o resumo diz isso em vez de "0 membros". */
     membrosErro?: string | null;
+    /** TODOS os membros de grupo NÃO habilitados, da leitura da equivalência; ausente = a leitura falhou. */
+    membrosGrupo?: ReadonlySet<string>;
     paginas: number;
     faseMs: number;
   };
@@ -480,7 +484,8 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
       estoque_pendente_entrada: pendMembros.get(codigo) ?? 0,
     }));
   const gm = await gravarEstoque(ops, e, linhasMembros);
-  const membrosIlegiveis = new Set([...(e.fisico.membrosIlegiveis ?? []), ...[...membros.keys()].filter((c) => ilegiveisPo.has(c))]);
+  // Todo membro com item de PO ilegível (listado ou ausente do físico): ficou sem par, e o resumo diz quantos.
+  const membrosIlegiveis = new Set([...(e.fisico.membrosIlegiveis ?? []), ...ilegiveisPo]);
 
   // v1.11 — membro com PO aberto AUSENTE do retrato. Sem linha em sku_estoque_atual o motor perdia o pendente dele, e o
   // pedido do app só contava até D−7 (corte pelo retrato do SKU, #3969): o PO era contado 0× e o grupo recomprava. O
@@ -493,10 +498,16 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   //   • Linha NOSSA (fonte_sync = FONTE_SEM_POSICAO) → reconciliada a CADA run confiável, inclusive para 0 (Codex P1
   //     2026-11-18: sem isso a linha congelava — 10→4→0 ficava 10, contando 2× a entrega e 0× um PO novo). O UPDATE leva
   //     a marca no WHERE: se um run paralelo gravou a posição real, ele não acha a linha e não a toca.
-  //   • Físico ilegível NÃO é ausente (ele veio na listagem); item de PO ilegível = sem par; habilitado não é membro.
+  //   • PO do APP deduplicado (o em_transito o conta) → a linha nasce com pendente 0: sem o retrato do dia o motor corta
+  //     o em_transito em D−7 e, com o sync atrasado, o PO fica 0× (Codex P1 2026-11-18, 2ª rodada).
+  //   • Só MEMBRO ATUAL (a leitura da equivalência): ex-membro não ganha retrato fresco; sem a leitura (membrosGrupo
+  //     ausente, ou pendenteMembros vazio por não saber quem é membro), NADA é escrito — zeraria a linha nossa às cegas.
+  //   • Físico ilegível NÃO é ausente (ele veio na listagem); item de PO ilegível = sem par.
   //   • Sem saber quais linhas são nossas (leitura falhou), nada é atualizado e o run não vale como "aplicado".
+  const grupo = e.fisico.membrosErro ? undefined : e.fisico.membrosGrupo;
   const naListagem = new Set([...membros.keys(), ...(e.fisico.membrosIlegiveis ?? [])]);
-  const ausente = (codigo: string) => !naListagem.has(codigo) && !ilegiveisPo.has(codigo) && !e.habilitados.has(codigo);
+  const ausente = (codigo: string) => grupo?.has(codigo) === true && !naListagem.has(codigo) && !ilegiveisPo.has(codigo);
+  const comPoApp = new Set(pend.membrosComPoApp ?? []);
   const parSemPosicao = (codigo: string, qtd: number) => ({
     empresa: e.empresa,
     sku_codigo_omie: codigo,
@@ -508,7 +519,9 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   });
   let nossas = new Set<string>();
   let erroNossas: string | null = null;
-  if (pendMembros !== undefined) {
+  // O pendente dos membros só vale aqui com a leitura da equivalência (ver acima) — `pm` undefined = nada se escreve.
+  const pm = grupo === undefined ? undefined : pendMembros;
+  if (pm !== undefined) {
     const prazo = prazoCauda(ops, e);
     const lidas = prazo === 0 ? { erro: "sem tempo no run", dados: new Set<string>() } : await ops.lerLinhasSemPosicao(prazo);
     if (lidas.erro === null) nossas = lidas.dados;
@@ -517,11 +530,12 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
       ops.log("error", `linhas ${FONTE_SEM_POSICAO} não lidas — nenhuma reconciliada: ${lidas.erro}`);
     }
   }
-  const atualizarAusentes = pendMembros === undefined ? [] : [...nossas]
+  const atualizarAusentes = pm === undefined ? [] : [...nossas]
     .filter(ausente)
-    .map((codigo) => parSemPosicao(codigo, pendMembros.get(codigo) ?? 0));
-  const inserirAusentesLinhas = pendMembros === undefined ? [] : [...pendMembros]
-    .filter(([codigo, qtd]) => qtd > 0 && ausente(codigo) && !nossas.has(codigo))
+    .map((codigo) => parSemPosicao(codigo, pm.get(codigo) ?? 0));
+  const inserirAusentesLinhas = pm === undefined ? [] : [...new Set([...pm.keys(), ...comPoApp])]
+    .map((codigo) => [codigo, pm.get(codigo) ?? 0] as const)
+    .filter(([codigo, qtd]) => (qtd > 0 || comPoApp.has(codigo)) && ausente(codigo) && !nossas.has(codigo))
     .map(([codigo, qtd]) => parSemPosicao(codigo, qtd));
   const ra = await reconciliarAusentes(ops, e, inserirAusentesLinhas, atualizarAusentes);
   const linhasAusentes = [...atualizarAusentes, ...inserirAusentesLinhas];
@@ -531,7 +545,10 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   const pendenteGravado = new Map(pend.pendente);
   for (const l of linhasMembros) pendenteGravado.set(l.sku_codigo_omie, l.estoque_pendente_entrada);
   for (const l of linhasAusentes) if (ra.gravados.has(l.sku_codigo_omie)) pendenteGravado.set(l.sku_codigo_omie, l.estoque_pendente_entrada);
-  const aplicado = gravacaoCompleta && gm.confirmados === linhasMembros.length && ra.falhas === 0 && erroNossas === null;
+  // Conflito (linha de outra origem, ou corrida no update) também tira o "aplicado": a observação não enxerga um 0 que
+  // não foi gravado (Codex P2 2026-11-18, 2ª rodada).
+  const aplicado = gravacaoCompleta && gm.confirmados === linhasMembros.length && ra.falhas === 0 && ra.conflitos === 0 &&
+    erroNossas === null;
   const obs = await publicarObservacao(ops, e, pend, aplicado, pendenteGravado);
 
   const desfecho: Desfecho = gravacaoCompleta && inat.completa ? "completo" : "parcial";
