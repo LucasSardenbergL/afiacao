@@ -15,7 +15,7 @@
 # Uso:
 #   scripts/codex-async.sh [-m MODELO] [-r low|medium|high|xhigh|max|ultra] [-t SEGUNDOS] "PROMPT"
 #   echo "PROMPT" | scripts/codex-async.sh -r max -
-# Defaults: -m gpt-6-astra · -r max · -t 1200 (20min hard-stop)
+# Defaults: -m gpt-6.2-astra · -r max · -t 1200 (20min hard-stop)
 #
 # Garantias:
 #   - preflight (binário + auth + SALDO da cota) ANTES de gastar tempo/quota, com instrução clara;
@@ -40,7 +40,10 @@
 #     scripts/test-codex-async-nuvem.sh).
 set -u
 
-# gpt-6-astra exige codex-cli ≥ 0.153.1 (lançado 2026-09-03; o cask `codex` do brew subiu
+# 2026-11-18: default → gpt-6.2-astra (ordem do founder: "GPT 6.2 Astra" no max). O codex-cli
+# 0.153.4 recusava o slug (400 model_not_found, fora do catálogo); 0.170.0 serve: ping
+# `--model gpt-6.2-astra -c model_reasoning_effort="max" --sandbox read-only` rc=0.
+# Histórico — gpt-6-astra exige codex-cli ≥ 0.153.1 (lançado 2026-09-03; o cask `codex` do brew subiu
 # 0.144.1 → 0.153.4 em 2026-09-05). Ping `codex exec --model gpt-6-astra -c
 # model_reasoning_effort="max" --sandbox read-only "responda apenas: OK"`, 2026-09-05,
 # codex-cli 0.153.4, conta paga (plan_type=prolite): rc=0 (6s).
@@ -71,7 +74,7 @@ set -u
 # do tier de baixo — e foi justamente isso que fez a heurística "se ALGUM modelo passa, o
 # login está OK" dar o login por bom. Ela é falsa: um token pode estar VÁLIDO e mentir
 # sobre o plano. Trocar de modelo "resolve" o sintoma e esconde a causa.
-modelo="gpt-6-astra"; reasoning="max"; timeout_s=1200
+modelo="gpt-6.2-astra"; reasoning="max"; timeout_s=1200
 while getopts "m:r:t:" opt; do
   case "$opt" in
     m) modelo="$OPTARG" ;;
@@ -674,7 +677,7 @@ for backoff in "${backoffs[@]}"; do
     echo "  ⚠️ Outro modelo responder NÃO inocenta o login: os tiers de baixo (terra/luna)" >&2
     echo "     seguem servidos com o plano rebaixado. Foi essa inferência que custou 2 dias." >&2
     echo "  2) Só depois troque o modelo com -m, ou ajuste 'model =' em \${CODEX_HOME:-~/.codex}/config.toml;" >&2
-    echo "     medidos OK (conta paga): gpt-6-astra (2026-09-05, exige codex-cli ≥ 0.153.1);" >&2
+    echo "     medidos OK (conta paga): gpt-6.2-astra (2026-11-18, exige codex-cli ≥ 0.170.0); gpt-6-astra (2026-09-05);" >&2
     echo "     gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna (2026-08-23)." >&2
     echo "  (não é cota nem falha transitória: esperar e repetir não consertam nenhum dos dois.)" >&2
     exit 78
