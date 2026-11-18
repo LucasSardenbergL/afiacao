@@ -3,7 +3,7 @@
 #
 #   I  a migration aplica com a postcondição OK (I0) e re-aplicar é seguro (I1)
 #   F  po_contado_com_nf: PO contado pelo motor + NF no espelho aparece (F1); contado sem NF não (F2); com NF mas
-#      EXCLUÍDO da contagem não (F3); só o último run VÁLIDO conta — run mais novo inválido é ignorado e PO só de run
+#      EXCLUÍDO da contagem (contribuição 0) não (F3); só o último run VÁLIDO conta — run mais novo inválido é ignorado e PO só de run
 #      antigo não aparece (F4)
 #   S  nf_pendente: sombra pendente sem NF no espelho aparece, com os POs abertos do contrato e sem o PO encerrado
 #      (S1); NF já recebida no espelho some (S2); sombra velha vem MARCADA desatualizada (S3); classe fora da fila
@@ -28,7 +28,7 @@ TOTAL_ESPERADO=15
 
 # ── --falsificar: controle VERDE na mesma invocação, depois cada sabotagem (uma camada por vez) tem de acusar.
 # Formato <nome>:<VERMELHOS>[:<VERDES>]; `ID!MARCA` exige a marca do motivo no vermelho.
-SABOTAGENS="sem_filtro_nf:F2:F1 sem_exclusao:F3:F1 run_qualquer:F4:F1 sombra_ignora_espelho:S2:S1
+SABOTAGENS="sem_filtro_nf:F2:F1 sem_having:F3:F1 run_qualquer:F4,F1:F2 sombra_ignora_espelho:S2:S1
             sem_marca_velha:S3:S1 gate_aberto:G1:G2 empresa_vaza:E1:F1
             pc_sem_definer:I0!SECURITY pc_anon_executa:I0!anon"
 if [ "${1:-}" = "--falsificar" ]; then
@@ -165,7 +165,7 @@ fn_sabotada() {  # <de> <para> — recria a função com UMA troca
 }
 case "$SABOTAGEM" in
   sem_filtro_nf) fn_sabotada '   WHERE p.t4_data_recebimento IS NOT NULL' '   WHERE true' ;;
-  sem_exclusao) fn_sabotada '     WHERE i.exclusao IS NULL' '     WHERE true' ;;
+  sem_having) fn_sabotada '    HAVING sum(i.contribuicao) > 0' '    HAVING true' ;;
   run_qualquer) fn_sabotada 'WHERE r.empresa = v_empresa AND r.varredura_completa AND r.pendente_aplicado' 'WHERE r.empresa = v_empresa' ;;
   sombra_ignora_espelho) fn_sabotada '                        AND pr.t4_data_recebimento IS NOT NULL);' '                        AND false);' ;;
   sem_marca_velha) fn_sabotada "s.observado_em < now() - interval '36 hours'" 'false' ;;

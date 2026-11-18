@@ -66,7 +66,8 @@ BEGIN
   ), contado AS (
     SELECT i.omie_codigo_pedido AS cod, max(i.numero_pedido) AS num, sum(i.contribuicao) AS unidades
       FROM run JOIN public.reposicao_po_observado_item i ON i.run_id = run.run_id
-     WHERE i.exclusao IS NULL
+     -- sem `WHERE exclusao IS NULL`: o CHECK reposicao_po_observado_item_excluido_nao_contribui já zera a
+     -- contribuição do item excluído, então o HAVING abaixo é o filtro (a falsificação provou o WHERE redundante).
      GROUP BY i.omie_codigo_pedido
     HAVING sum(i.contribuicao) > 0
   )
