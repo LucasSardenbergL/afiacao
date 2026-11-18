@@ -63,7 +63,7 @@ O que a recusa deixa de rastro: uma linha por entidade em `tint_sync_errors`, co
 - **Item com `sync_run_id`, `account`, `store_code`, `raw_data` ou `staging_status`:** recusado. Antes, o campo era ignorado em silêncio e o resto do item entrava.
 - **Item que não é objeto:** recusado, sem estourar.
 - **Corpo que não é objeto, ou entidade gravável que não é lista:** 400, nada gravado. Antes, sozinha no lote, a entidade torta caía no ack limpo do lote sem item; ao lado de outra entidade, estourava um `TypeError` e a rota respondia 500 com o run aberto. `null` segue valendo como "o lote não traz essa entidade".
-- **`/keys-snapshot` com `generated_at` fora do RFC 3339 com fuso, ou adiantado em mais de 10 minutos:** 400. Antes, bastava o campo existir.
+- **`/keys-snapshot` com `generated_at` fora do RFC 3339 com fuso, com data que não existe, ou adiantado em mais de 10 minutos:** 400. Antes, bastava o campo existir. Hora 24 e segundo 60, que o Postgres normalizaria, também são recusados: o conector não os produz.
 - O fallback `item.id` como chave saiu. Com a cópia cega ele só passava quando o `id` era um uuid, que virava a chave primária da linha; qualquer outro valor derrubava o chunk. Nenhum item real traz `id`.
 - **Para o conector real, nada muda.** A linha gerada é idêntica à de antes para as formas medidas na PROD.
 
@@ -126,11 +126,11 @@ Fora da classe, vizinho, não tratado: `omie-sync`, ação `sync_order`, usa lis
 
 ## 2ª opinião (Codex)
 
-`Codex: desenho=gpt-6-astra·max·445s·201.562 tokens (prompt com RÉGUA:) · código=CODEX_CODIGO_PENDENTE · extra=nenhum`
+`Codex: desenho=gpt-6-astra·max·445s·201.562 tokens (prompt com RÉGUA:) · código=gpt-6-astra·max·477s·194.262 tokens · extra=nenhum`
 
-A consulta de desenho rodou com o conserto de `/catalogs` já escrito, e não antes do código, como manda o ritual. O parecer foi "aprovo com ajustes", sem P0.
+**Desenho.** A consulta rodou com o conserto de `/catalogs` já escrito, e não antes do código, como manda o ritual. O parecer foi "aprovo com ajustes", sem P0.
 
-**Adotado:**
+Adotado:
 
 - **P1, o relógio do snapshot** (seção acima). O conserto entrou neste PR por ser da mesma classe e da mesma edge.
 - **P2, entidade torta sozinha recebia confirmação limpa.** A conferência de forma passou para antes do atalho.
@@ -139,21 +139,29 @@ A consulta de desenho rodou com o conserto de `/catalogs` já escrito, e não an
 - **P2, o teto de nomes só cortava depois de acumular tudo.** Passou a valer durante a coleta.
 - **P2, o gerador do teste de propriedade cobria muito menos do que parecia.** O multiplicador estourava a precisão do `Number`: 1.996 das 2.000 iterações geravam uma chave só, 12 conjuntos distintos. Trocado por Park–Miller, com asserção de cobertura por entidade.
 
-**Não adotado, com motivo:**
+Não adotado, com motivo:
 
 - *Fechar sem promoção o run em que tudo foi recusado.* Mexe no fecho e no enfileiramento, que são money-path e estão fora do conserto. O run recusado é o rastro da recusa, e qualquer lote válido de um item já dispara uma promoção.
 - *Aplicar `MAX_PAYLOAD_BYTES`*, declarado e nunca usado. É anterior a este lote e pede medir antes os tamanhos legítimos.
 - *Trigger no banco forçando `created_at`.* O parecer também não recomendou: para os escritores que existem, a lista fechada resolve sem tocar o banco.
 
+**Código.** "Aprovo com ajustes", sem P0 nem P1. O revisor comparou 14 cenários do handler real com o da `main`, com o Supabase simulado em memória: para os lotes honestos, status, resposta e escritas coincidiram. Quatro P2, todos adotados:
+
+- **O teste de forma deixava passar a regressão mais grave.** Trocando `if (montado.recusados > 0)` por `< 0`, os 13 testes de texto passavam, e o handler respondia 200 com `error_count: 0` para um item recusado: o conector confirmaria o lote. Uma das verificações negativas recortava o texto a partir de um índice que ninguém conferia. Entrou `index_test.ts`: o handler de `/catalogs` e de `/keys-snapshot` executado de verdade, com o PostgREST simulado, conferindo a resposta e cada escrita.
+- **O validador do snapshot aceitava data fora do contrato que anunciava**: 30 de fevereiro, ano 0000, fuso `+23:59` e hora 24. O Postgres recusava e a rota respondia 500 no lugar do 400, sem gravar instante nenhum. E a fração de segundo ficava fora da conta do teto. O validador passou a conferir calendário e fuso campo a campo e a somar a fração.
+- **`logError` devolvendo boolean quebrou a tipagem do adaptador de `/preparations`** (TS2322, classe que o `edges:typecheck` tolera por desenho; quem viu foi o `deno check` do entrypoint). O adaptador voltou a devolver `Promise<void>`.
+- **A prova SQL não relia o que dizia ter gravado.** O A1 só conferia a ausência de erro, e o B2 não conferia a 1ª gravação antes da 2ª. Os dois passaram a reler o estado, e a falsificação ganhou duas sabotagens em que a 1ª escrita some sem erro.
+
 ## Prova
 
-- **Os fatos da triagem, no banco:** `db/test-seg-lote6-triagem.sh` (PG17). 12 asserções em três blocos (gamificação, biometria, staging do tintométrico), cada um com controle. O modo `--falsificar` roda o controle verde e três sabotagens na mesma invocação, em `C` e em `pt_BR.UTF-8`; cada sabotagem é também o estado que fecharia o achado, e derruba exatamente os asserts esperados. Não entrou no núcleo do CI: ela documenta a triagem, não guarda conserto de banco.
+- **Os fatos da triagem, no banco:** `db/test-seg-lote6-triagem.sh` (PG17). 12 asserções em três blocos (gamificação, biometria, staging do tintométrico), cada um com controle, e relendo o que foi gravado. O modo `--falsificar` roda o controle verde e cinco sabotagens na mesma invocação, em `C` e em `pt_BR.UTF-8`: três são o estado que fecharia cada achado, duas fazem a 1ª escrita sumir sem erro; cada uma derruba exatamente os asserts esperados. Não entrou no núcleo do CI: ela documenta a triagem, não guarda conserto de banco.
 - **O builder:** `catalogo-staging_test.ts` (15 testes Deno). Equivalência linha a linha com o algoritmo antigo, copiado dentro do teste, para as 5 formas reais e para 336 combinações de colunas permitidas com valores `null`, `0`, `''` e texto, comparando conteúdo e conjunto de chaves; cada coluna de controle em cada entidade (40 casos); propriedade com gerador determinístico (aceite se e só se todas as chaves são da entidade).
-- **O relógio do snapshot:** `snapshot-gerado-em_test.ts` (10 testes Deno), com a fronteira da tolerância ao segundo, o fuso entrando na conta e os formatos que o Postgres aceita e o validador recusa.
+- **O relógio do snapshot:** `snapshot-gerado-em_test.ts` (12 testes Deno), com a fronteira da tolerância ao segundo e à fração, o fuso entrando na conta, o calendário (30 de fevereiro, ano 0000, hora 24) e os formatos que o Postgres aceita e o validador recusa.
+- **O handler, executado:** `tint-sync-agent/index_test.ts` (13 testes Deno, PostgREST simulado pelo harness de handler). Lote honesto: resposta sem erro e exatamente as escritas de antes. Item forjado: `error_count` 1, `errors[]` nomeando o campo, nenhuma linha nem coluna `created_at` no staging, e o registro sem o valor do item. Conta, loja e run vêm do servidor mesmo com os nomes no corpo. Entidade que não é lista: 400 e zero escrita. Snapshot no futuro: 400 e zero escrita; honesto: grava o mesmo texto.
 - **A forma do `index.ts`:** `src/__tests__/tint-catalogo-colunas-fechadas.test.ts` (vitest, 13 testes, lê a edge como texto). A rota só delega ao builder, a recusa conta como erro, as cinco tabelas não têm outro escritor fora da simulação, a forma do lote vem antes do atalho, e o `generated_at` que vai ao banco é o validado.
 - **Dívida quitada no caminho:** `logError` passou a conferir o `error` do insert, e a linha de base do gate de escrita que falha calada desceu de 3 para 2 nesta edge (`escrita-critica-gate.test.ts`).
-- **Falsificação:** três contratos em `scripts/mutcheck.d/` (`tint-catalogo-staging`, `tint-snapshot-gerado-em`, `tint-catalogo-forma`): 54 mutações de uma linha, 53 pegas, com o controle verde na mesma invocação. A que sobrevive é "copiar todas as chaves do item já aceito", redundante com o filtro: a cópia por lista é a 2ª camada, e sozinha ela é inalcançável. As duas camadas abertas juntas, numa cópia fora do worktree: a linha sai com `created_at` em 2099 e 7 testes caem, em `C` e em `pt_BR.UTF-8`.
-- `test:edges` 2767/0 · `edges:typecheck` · `edges:sintaxe` · `sonda:fingerprint` (87 edges) · `sonda:bump` · `sonda:nova` · `sonda:autentica` · `canaria:bump` · `bun lint`.
+- **Falsificação:** quatro contratos em `scripts/mutcheck.d/` (`tint-catalogo-staging`, `tint-snapshot-gerado-em`, `tint-sync-agent-handler`, `tint-catalogo-forma`): 80 mutações de uma linha, 78 pegas, com o controle verde na mesma invocação. As duas que sobrevivem são equivalentes: "copiar todas as chaves do item já aceito" (a cópia por lista é a 2ª camada, e sozinha ela é inalcançável, porque o filtro já barrou as chaves estranhas) e "usar o `generated_at` cru no insert depois de validado" (é o mesmo valor). As duas camadas do builder abertas juntas, numa cópia fora do worktree: a linha sai com `created_at` em 2099 e 7 testes caem, em `C` e em `pt_BR.UTF-8`.
+- `test:edges` 2782/0 · `deno check` do entrypoint · `edges:typecheck` · `edges:sintaxe` · `sonda:fingerprint` (87 edges) · `sonda:bump` · `sonda:nova` · `sonda:autentica` · `canaria:bump` · `bun lint`.
 
 ## Lições
 
@@ -162,12 +170,19 @@ A consulta de desenho rodou com o conserto de `/catalogs` já escrito, e não an
 - **Guardar o item cru permitiu fechar o contrato sem adivinhar.** O `raw_data` do staging deu a medida exata do que o conector manda, em toda a retenção. Sem ele, a escolha entre recusar e limpar seria feita no escuro.
 - **Upsert com `onConflict` numa coluna sem índice único falha em silêncio quando ninguém confere o erro.** A edge de biometria respondeu sucesso por seis meses sem gravar um desafio.
 - **O teste de forma achou um escritor que a leitura não tinha achado.** "Nenhum outro escritor para estas tabelas" falhou na 1ª execução e mostrou a rota `simulate`.
+- **E o mesmo teste de forma não prova o que o conector recebe.** Ele conferia que as linhas certas existiam no texto, e passava com a condição da recusa invertida. Para edge cujo handler carrega offline, o teste que decide é o que executa o handler com o PostgREST simulado e confere resposta e escritas; o de texto fica para o que a execução não alcança.
+- **O gate de tipos das edges tolera TS2322.** Trocar o retorno de um helper compartilhado dentro do `index.ts` quebrou um adaptador, e o gate passou. Depois de mexer em assinatura, rode `deno check` no entrypoint.
 - **Gerador pseudoaleatório escrito à mão em JavaScript: confira a cobertura que ele entrega.** O produto estourou os 53 bits e o teste de propriedade rodava quase sempre o mesmo caso, verde.
 - **Dois vermelhos locais do vitest que não eram do diff.** A suíte completa saiu com código 1 duas vezes com a máquina saturada: uma por `Timeout calling "onTaskUpdate"` do próprio vitest, com todos os testes passando, e outra por um teste de hook que espera 30 ms fixos (`useTintCoresDoClienteUmToque`) e passa isolado. Nenhuma das duas rodadas contou como verde.
 
 ## Deploy
 
-DEPLOY_PENDENTE
+Camada única: a edge `tint-sync-agent`. Sem migration e sem Publish. Pendente no momento deste registro: será feito pela sessão depois do merge, pelo ritual de `docs/agent/deploy.md` (ledger, pacote por nome, MCP do Lovable, sensor, sonda), com o servidor da loja desligado, e registrado no PR da sonda.
+
+A conferência de produção do dia seguinte não pode ser só "sem erro":
+
+- Os dois 400 novos (forma do lote e `generated_at`) saem **antes** de o run existir e não deixam rastro no banco. Um defeito que recusasse lote honesto apareceria como **ausência**: de runs de catálogo e do snapshot do dia. A conferência é de presença, contra o patamar de antes (690 runs de catálogo em 24 horas; um snapshot por dia, aplicado).
+- A promoção sobrescreve `errors` e `inserts` do run. O que o conector recebeu está em `tint_sync_runs.idempotency_response` (`error_count` e `errors`), e a promoção concluída, em `promocao_status`.
 
 ## Fica para o founder
 
