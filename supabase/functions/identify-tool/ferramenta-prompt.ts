@@ -8,10 +8,10 @@
 // system é constante e as categorias vão na mensagem, no bloco `<categorias_cadastradas>`.
 import { criarBlocosDeDado, textoCurto } from "../_shared/bloco-de-dado.ts";
 
-export const BLOCOS_FERRAMENTA = criarBlocosDeDado(["categorias_cadastradas"] as const);
+const BLOCOS_FERRAMENTA = criarBlocosDeDado(["categorias_cadastradas"] as const);
 
 /** Texto quando o body não traz nenhuma categoria aproveitável (o de antes da v1.2). */
-export const SEM_CATEGORIAS = "Nenhuma categoria fornecida";
+const SEM_CATEGORIAS = "Nenhuma categoria fornecida";
 
 /** System prompt da identificação: texto FIXO. Nada do request entra aqui. */
 export const SYSTEM_PROMPT_FERRAMENTA =
@@ -34,7 +34,7 @@ IMPORTANTE:
 - Responda SEMPRE usando a função identificar_ferramenta.`;
 
 /** Uma linha por categoria com nome: `- nome (descrição)`, com o teto do lote 1 (80 e 200). */
-export function formatarCategorias(categories: unknown): string {
+function formatarCategorias(categories: unknown): string {
   if (!Array.isArray(categories)) return SEM_CATEGORIAS;
   const linhas = categories
     .map((c: { name?: unknown; description?: unknown } | null) => {

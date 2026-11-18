@@ -10,12 +10,12 @@
 // `userToolId` de ferramenta enviada e descarta item com campo ilegível (servico-tools.ts).
 import { criarBlocosDeDado, textoCurto } from "../_shared/bloco-de-dado.ts";
 
-export const BLOCOS_SERVICOS = criarBlocosDeDado(
+const BLOCOS_SERVICOS = criarBlocosDeDado(
   ["ferramentas_do_cliente", "servicos_disponiveis", "pedido_do_cliente"] as const,
 );
 
-export const SEM_FERRAMENTAS = "Nenhuma ferramenta cadastrada";
-export const SEM_SERVICOS = "Nenhum serviço disponível";
+const SEM_FERRAMENTAS = "Nenhuma ferramenta cadastrada";
+const SEM_SERVICOS = "Nenhum serviço disponível";
 
 /** System prompt da análise de serviços: texto FIXO. Nada do request nem do cadastro entra aqui. */
 export const SYSTEM_PROMPT_SERVICOS = `Você é um assistente especializado em serviços de afiação de ferramentas industriais.
@@ -60,7 +60,7 @@ export interface ServicoDisponivel {
 }
 
 /** Uma linha por ferramenta, no formato de antes da v1.1; nome e categoria numa linha e com teto. */
-export function formatarFerramentas(ferramentas: readonly FerramentaDoCliente[]): string {
+function formatarFerramentas(ferramentas: readonly FerramentaDoCliente[]): string {
   const linhas = ferramentas.map((t) => {
     const categoria = textoCurto(t?.tool_categories?.name, 80);
     const nome = textoCurto(t?.generated_name, 120) || textoCurto(t?.custom_name, 120) || categoria ||
@@ -73,7 +73,7 @@ export function formatarFerramentas(ferramentas: readonly FerramentaDoCliente[])
 }
 
 /** Uma linha por serviço ativo: `- código: descrição`. */
-export function formatarServicos(servicos: readonly ServicoDisponivel[] | null | undefined): string {
+function formatarServicos(servicos: readonly ServicoDisponivel[] | null | undefined): string {
   const linhas = (servicos ?? []).map((s) =>
     `- ${String(s?.omie_codigo_servico ?? "")}: ${textoCurto(s?.descricao, 300)}`
   );

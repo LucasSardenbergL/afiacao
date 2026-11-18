@@ -44,7 +44,7 @@
 import { criarBlocosDeDado } from "../_shared/bloco-de-dado.ts";
 
 /** O bloco de dado da mensagem do usuário (um só nome: o texto não consegue fechá-lo). */
-export const BLOCOS_CONSULTA = criarBlocosDeDado(["dados_desta_consulta"] as const);
+const BLOCOS_CONSULTA = criarBlocosDeDado(["dados_desta_consulta"] as const);
 
 /** Dados que mudam a cada request — tudo o que NÃO pode entrar no bloco cacheado. */
 export interface DadosVariaveis {
