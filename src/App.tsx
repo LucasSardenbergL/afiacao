@@ -138,6 +138,7 @@ const AdminReposicaoAlertas = lazyRota(() => import("./pages/AdminReposicaoAlert
 const AdminReposicaoGruposProducao = lazyRota(() => import("./pages/AdminReposicaoGruposProducao"));
 const AdminReposicaoSlaFornecedor = lazyRota(() => import("./pages/AdminReposicaoSlaFornecedor"));
 const AdminReposicaoCadeiaLogistica = lazyRota(() => import("./pages/AdminReposicaoCadeiaLogistica"));
+const AdminReposicaoCalendario = lazyRota(() => import("./pages/AdminReposicaoCalendario"));
 const AdminReposicaoPedidos = lazyRota(() => import("./pages/AdminReposicaoPedidos"));
 const AdminSkuMapeamento = lazyRota(() => import("./pages/AdminSkuMapeamento"));
 const AdminReposicaoPromocoes = lazyRota(() => import("./pages/AdminReposicaoPromocoes"));
@@ -350,6 +351,7 @@ const arvoreDeRotas = (
         <Route path="admin/reposicao/pedidos" element={<AdminReposicaoPedidos />} />
         <Route path="admin/sku-mapeamento" element={<AdminSkuMapeamento />} />
         <Route path="admin/reposicao/sla-fornecedor" element={<AdminReposicaoSlaFornecedor />} />
+        <Route path="admin/reposicao/calendario" element={<AdminReposicaoCalendario />} />
         <Route path="admin/reposicao/promocoes" element={<AdminReposicaoPromocoes />} />
         <Route path="admin/reposicao/promocoes/novo" element={<AdminReposicaoPromocaoDetail />} />
         <Route path="admin/reposicao/promocoes/:id" element={<AdminReposicaoPromocaoDetail />} />

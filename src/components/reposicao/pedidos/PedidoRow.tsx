@@ -9,6 +9,7 @@ import { StatusComMotivo, SplitInfo, PortalBadge } from './badges';
 import { OverrideMinimoButton } from './OverrideMinimoButton';
 import { podeCancelarPeloHumano } from './rejeitar-pedido';
 import { ItensPreviewLinha } from './ItensPreviewLinha';
+import { RecebeEmCalendario } from './RecebeEmCalendario';
 
 // memo (plano v4, lote 10 — C8): abrir a prévia de itens de UMA linha, ou o histórico, re-renderizava
 // todas as linhas. Os callbacks recebem o pedido para a página passar a MESMA função a todas as linhas.
@@ -87,6 +88,7 @@ export const PedidoRow = memo(function PedidoRow({
       <TableCell>
         <div className="font-medium">{p.fornecedor_nome}</div>
         <div className="text-xs text-muted-foreground">{p.grupo_codigo ?? '—'}</div>
+        <RecebeEmCalendario pedido={p} />
       </TableCell>
       <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
       <TableCell className="text-right tabular-nums font-medium">{formatBRL(p.valor_total)}</TableCell>
