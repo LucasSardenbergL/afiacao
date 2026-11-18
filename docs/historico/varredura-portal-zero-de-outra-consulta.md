@@ -216,7 +216,100 @@ Os pareceres crus estão na pasta de notas da sessão (fora do repo).
   `v1.13-resposta-do-nosso-clique`, fonte `964eaf62…`, **DEPLOY CONFIRMADO**. `pendencias:deploy` exit 0, 87 de 87
   edges em `CONFERE`.
 - **O que o deploy não prova:** a leitura no portal real. A última rodada da v1.12 foi a de 17/11 12:30 SP (7 linhas).
-  A 1ª da v1.13 é a de 17/11 17:30 SP; a que responde ao incidente é a das 22:30 SP. A query está abaixo.
+  A 1ª da v1.13 é a de 17/11 17:30 SP; a que responde ao incidente é a das 22:30 SP. As duas estão na seção seguinte.
+
+## Primeiras rodadas em prod
+
+### 17/11 17:30 SP, a 1ª da v1.13
+
+`acoes_execucoes` (rodada iniciada às 17:30:08 SP) e `net._http_response` 24850 (HTTP 200, `ok: true`), por psql-ro.
+
+- **Verde:** `sucesso`, `prova_leitura='ok'`, 7 linhas lidas = 7 anunciadas, 1 página, 14,7 s, 1 sessão Browserless
+  (as 4 últimas rodadas da v1.12 com portal aberto levaram de 11,5 a 25,8 s). 7 situações enviadas e aceitas;
+  cobertura sem pendente.
+- **O que o portal manda, visto pela 1ª vez:** `filtro_no_pedido: true` (o POST nomeia emissão inicial, entrega
+  inicial, cliente e exibir, e os quatro batem); `resposta_sucesso: true`, com a `message` "Consulta executada com
+  sucesso! "; `linhas_na_resposta: 7` (o JSON traz o nº do pedido das 7 linhas lidas).
+- **A consulta própria da tela, medida** (`consultas_portal.linha_do_tempo`, em ms relativos ao nosso clique), com
+  `antes: 1`, `em_voo_antes: 0`, `assentou: true`, `espera_ms: 0` e `tentativa: 1`:
+
+  | n | De quem | `filtro` | `total` | `sucesso` | Pedida | Respondida |
+  |---|---|---|---|---|---|---|
+  | 1 | da tela (`do_clique: false`) | `false` (outra data) | 0 | `true` | −1915 | −305 |
+  | 2 | do nosso clique | `true` | 7 | `true` | +22 | +1513 |
+
+A consulta da tela levou 1,6 s para responder, e do pedido dela até o nosso clique passaram 1,9 s (1,5 s deles são a
+espera fixa do script): sobraram 305 ms. A corrida não aconteceu nesta rodada.
+
+### 17/11 22:30 SP, a rodada do horário do incidente
+
+`acoes_execucoes` (rodada iniciada às 22:30:09 SP) e `net._http_response` 25109 (HTTP 200, `ok: true`), por psql-ro.
+
+- **Verde, com a condição do incidente presente:** `sucesso`, `prova_leitura='ok'`, 7 linhas lidas = 7 anunciadas =
+  7 na resposta, `filtro_no_pedido: true`, `resposta_sucesso: true`, 1 página, 14,2 s. E `em_voo_antes: 1`,
+  `espera_ms: 701`, `assentou: true`: a consulta própria da tela estava em voo quando o script ia clicar, e ele
+  esperou por ela.
+
+  | n | De quem | `filtro` | `total` | `sucesso` | Pedida | Respondida |
+  |---|---|---|---|---|---|---|
+  | 1 | da tela (`do_clique: false`) | `false` (outra data) | 0 | `true` | −2411 | −511 |
+  | 2 | do nosso clique | `true` | 7 | `true` | +13 | +1583 |
+
+- **O que a v1.12 faria aqui:** sem a espera, o clique sairia 701 ms antes, com a consulta da tela em voo. A resposta
+  dela (`recordsFiltered: 0`) chegaria 190 ms depois desse clique e seria a primeira depois dele: a que a v1.12
+  tomava como a da nossa consulta. É a assinatura da medida da importadora em 10/11 (resposta a 48 ms do clique); a
+  resposta da nossa própria consulta leva cerca de 1,5 s (1491 ms às 17:30, 1570 ms às 22:30).
+- **Tarde e noite, lado a lado:** a consulta da tela levou 1,6 s às 17:30 e 1,9 s às 22:30, e o script ficou pronto
+  para clicar 1,9 s e 1,7 s depois do pedido dela. Folga de 305 ms à tarde; 190 ms de atraso à noite.
+
+### O que as duas rodadas mudam no quadro "medido e inferência" da seção Causa
+
+- **Passa a medido:** a tela consulta por conta própria, com outro filtro, e o portal responde a ela
+  `recordsFiltered: 0` com `success: true`: é o "0 de 0" que virava a prova. E a corrida aconteceu às 22:30, na
+  navegação da própria varredura: essa consulta em voo no clique, a v1.13 esperando por ela e lendo as 7 linhas.
+- **Segue inferência:** que as 6 rodadas vazias tiveram esse mecanismo (o trace delas não foi guardado), e que a
+  noite é sistematicamente mais lenta: há uma medida por horário. A coluna `consulta_da_tela_em_voo` da query abaixo
+  acumula as próximas.
+- **A explicação concorrente** (o portal responder vazio à nossa própria consulta à noite) não apareceu: às 22:30 a
+  nossa consulta trouxe 7 linhas, como às 17:30. Não fica descartada para as noites passadas; a v1.13 cobre as duas
+  (0 linhas só com a repetição confirmando).
+- **Importadora:** a consulta própria da tela tem corpo no POST (foi classificada `false`, não `null`). O escape
+  `!corpo ||` da `sayerlack-importar-pedido-portal` não é alcançado por ela, e o vínculo pelo nº do pedido no
+  `postData` segura esse caso. Inferido da navegação da varredura, que usa a mesma tela; não medido na importadora.
+
+### Quando apertar os limites
+
+A 1ª rodada mostrou os três formatos de que os dois primeiros limites dependiam. Uma rodada não é denominador para
+veto: reprovar o que varia derruba rodada boa, e rodada sem prova não decide nada. O critério é **todas** as rodadas
+com portal aberto de cerca de uma semana, nos três horários (e com mais de 1 página, se aparecer), em
+`nos_tres_formatos = prova_ok`:
+
+```sql
+SELECT to_char(iniciado_em AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') AS horario,
+       count(*) AS rodadas,
+       count(*) FILTER (WHERE detalhes->>'prova_leitura' = 'ok') AS prova_ok,
+       count(*) FILTER (WHERE detalhes->>'filtro_no_pedido' = 'true'
+                          AND detalhes->>'resposta_sucesso' = 'true'
+                          AND detalhes->>'linhas_na_resposta' = detalhes->>'linhas_lidas') AS nos_tres_formatos,
+       count(*) FILTER (WHERE (detalhes->'consultas_portal'->>'em_voo_antes')::int >= 1) AS consulta_da_tela_em_voo,
+       max((detalhes->>'paginas')::int) AS max_paginas
+FROM public.acoes_execucoes
+WHERE acao = 'reposicao.varrer_portal_sayerlack' AND detalhes->>'versao' LIKE 'v1.13%'
+  AND NOT (detalhes ? 'pulado')
+GROUP BY 1 ORDER BY 1;
+```
+
+- Igual em todos os horários: `filtro_no_pedido` diferente de `true`, `success` diferente de `true` e
+  `linhas_na_resposta` diferente de `linhas_lidas` podem reprovar também com linhas lidas.
+- Qualquer diferença: olhar a rodada (`linha_do_tempo`, `resposta_chaves`) antes de apertar.
+
+Em 17/11, depois das duas primeiras rodadas:
+
+```
+ horario | rodadas | prova_ok | nos_tres_formatos | consulta_da_tela_em_voo | max_paginas
+ 17:30   |       1 |        1 |                 1 |                       0 |           1
+ 22:30   |       1 |        1 |                 1 |                       1 |           1
+```
 
 ## Como conferir em prod
 
