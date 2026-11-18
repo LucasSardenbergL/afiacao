@@ -104,6 +104,11 @@ export function initAnalytics(): void {
         // o prazo de retenção e `maskTextSelector: '*'` — e o teste-sentinela
         // em `analytics-privacidade.test.ts` obriga a passar por aqui.
         disable_session_recording: true,
+        // Modelo do aparelho (`$device_model`, Android Chromium): o posthog-js 1.394
+        // passou a mandar em TODO evento por padrão. Nenhuma decisão nossa usa isso, e
+        // mais um atributo do aparelho só ajuda a identificar a pessoa — minimização,
+        // mesma régua do replay acima.
+        disableDeviceModel: true,
         autocapture: {
           // Capturar clicks em botões e links automaticamente (sem precisar instrumentar tudo)
           dom_event_allowlist: ['click', 'submit', 'change'],
@@ -249,7 +254,13 @@ export function pageview(path: string): void {
  * Reset ao deslogar (limpa session, cria distinct_id novo).
  */
 export function resetAnalytics(): void {
-  withPosthog((p) => p.reset(), 'reset');
+  withPosthog((p) => {
+    p.reset();
+    // O `reset()` limpa o estado persistido, consentimento incluído: em dev/host
+    // local o opt-out do `loaded` sumiria até o próximo reload, e o logout passaria
+    // a mandar evento de máquina local para o PostHog de produção.
+    if (import.meta.env.DEV || ehHostLocal(window.location.hostname)) p.opt_out_capturing();
+  }, 'reset');
 }
 
 /**

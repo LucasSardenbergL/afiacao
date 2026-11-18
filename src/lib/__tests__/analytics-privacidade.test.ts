@@ -50,6 +50,16 @@ describe('analytics: Session Replay fica desligado', () => {
     }
   });
 
+  it('o modelo do aparelho fica de fora (posthog-js ≥1.394 manda por padrão)', () => {
+    expect(fonteSemComentarios()).toMatch(/disableDeviceModel\s*:\s*true/);
+  });
+
+  it('o reset() reaplica o opt-out de dev/host local', () => {
+    // O reset limpa o consentimento persistido; sem reaplicar, o logout em
+    // localhost voltaria a mandar evento para o projeto de produção.
+    expect(fonteSemComentarios()).toMatch(/p\.reset\(\);\s*if \(import\.meta\.env\.DEV \|\| ehHostLocal\(window\.location\.hostname\)\) p\.opt_out_capturing\(\);/);
+  });
+
   it('o stripper preservou o código — o gate não mediu um arquivo esvaziado', () => {
     // Sentinela do maior bloco contíguo descartado: se um `/*` dentro de string
     // fizesse o stripper comer o miolo do arquivo, as asserções acima ficariam

@@ -25,6 +25,17 @@ O aviso de "constructor injection" do mesmo pacote é da hidratação SSR, e o a
 - **`lodash` (via `recharts`).** O aviso é `_.template` com chaves de `imports` controladas pelo atacante e prototype pollution em `_.unset`/`_.omit`. O `recharts` não passa input de usuário a essas funções, e o app não importa `lodash`.
 - **Build e testes.** Sem caminho do usuário. Atualizações de rotina, sem urgência.
 
+## Seguimento: `posthog-js` 1.373.4 → 1.450.1 (mesmo dia)
+
+Feito no PR seguinte. Fecha os avisos de `dompurify` e `protobufjs`; o `bun audit` cai de 139 para 121. Sobra o `fflate` 0.4.8, porque o `posthog-js` não exige a 0.4.9 e o `bun update` só a traria como dependência direta, na 0.8. O aviso é de `unzipSync`; o PostHog usa o `fflate` só para comprimir o que envia.
+
+O CHANGELOG do intervalo (3.846 linhas, sem nenhuma seção de major) não quebra nenhuma opção que usamos. Do que passa a valer por padrão para quem não passa `defaults`:
+- **`$device_model` em todo evento (1.394, #3986)**: desligado com `disableDeviceModel: true`. Nenhuma decisão usa o modelo do aparelho, e é mais um atributo que ajuda a identificar a pessoa.
+- **Leitura dos cookies `_fbc`/`_fbp` da Meta (1.433, #4916)**: sem efeito, porque o app não tem Meta Pixel.
+- **`reset()` limpa o consentimento persistido (#4314)**: o logout agora reaplica o opt-out em dev e em host local. Sem isso, o QA em `localhost` voltaria a mandar evento ao projeto de produção depois do logout.
+
+Session replay, captura de exceções, heatmaps, console e rede: nada passa a ligar sozinho pelo SDK. O que o projeto liga pelo painel do PostHog, o changelog não cobre.
+
 ## Não clicar
 
 Não use os botões de correção automática do painel ("Try to fix"/"Update"). Eles editam o `package.json`/`bun.lock` direto na `main`, sem CI. É a mesma classe do push do bot revertido no #3955.
