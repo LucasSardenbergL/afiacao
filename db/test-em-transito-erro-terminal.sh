@@ -62,7 +62,8 @@ CREATE TABLE public.sku_parametros (empresa text, sku_codigo_omie bigint, sku_de
   ponto_pedido numeric, estoque_maximo numeric, minimo_forcado_manual numeric,
   habilitado_reposicao_automatica boolean, tipo_reposicao text,
   demanda_media_diaria numeric, classe_abc character(1), classe_forcada text);
-CREATE TABLE public.sku_estoque_atual (empresa text, sku_codigo_omie text, estoque_fisico numeric, estoque_pendente_entrada numeric, fonte_sync text);
+CREATE TABLE public.sku_estoque_atual (empresa text, sku_codigo_omie text, estoque_fisico numeric, estoque_pendente_entrada numeric, fonte_sync text,
+  ultima_sincronizacao timestamptz);  -- [RELOGIO UNICO 20261118120000] o em_transito do motor le a coluna
 CREATE TABLE public.sku_embalagem_equivalencia (empresa text, grupo_id uuid, sku_codigo_omie text, fator_para_base numeric, ativo boolean);
 CREATE TABLE public.sku_preco_fornecedor_capturado (empresa text, sku_codigo_omie text, preco numeric, status text, capturado_em timestamptz);
 CREATE TABLE public.sku_fornecedor_externo (empresa text, fornecedor_nome text, sku_omie text, sku_portal text, ativo boolean,

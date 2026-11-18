@@ -237,9 +237,13 @@ eq "F1 retrato posterior ao ciclo: nunca conta MENOS que o corte de antes" "$(qf
 eq "L2 retrato sem data: pedido recente segue contando"                    "$(qf "$D" 9709)" "AUSENTE"
 eq "R mapa completo"                                                       "$(mapa "$D")" "$ESPERADO_NOVA"
 
-echo "=== R2: fora de TODOS os cortes os 9 voltam a ser elegiveis (os AUSENTE vieram do a caminho) ==="
+echo "=== R2: retrato fresco num ciclo longe de tudo: os 9 voltam a ser elegiveis (os AUSENTE vieram do a caminho) ==="
+# com o retrato VELHO o pedido do app segue contando em qualquer ciclo (nao esta naquele pendente) — por isso o R2
+# refresca o retrato para o dia do ciclo; e o volta ao seed depois.
+P -q -c "CREATE TABLE r2_bkp AS SELECT sku_codigo_omie, ultima_sincronizacao FROM sku_estoque_atual; UPDATE sku_estoque_atual SET ultima_sincronizacao = '2027-01-20 09:05:00+00';" >/dev/null
 run_ciclo 2027-01-20
 eq "R2 9 SKUs sugeridos num ciclo longe de tudo" "$(Pq -c "SELECT count(*) FROM pedido_compra_item pci JOIN pedido_compra_sugerido pcs ON pcs.id=pci.pedido_id WHERE pcs.data_ciclo='2027-01-20' AND pcs.status='pendente_aprovacao'")" "9"
+P -q -c "UPDATE sku_estoque_atual s SET ultima_sincronizacao = b.ultima_sincronizacao FROM r2_bkp b WHERE b.sku_codigo_omie = s.sku_codigo_omie; DROP TABLE r2_bkp;" >/dev/null
 
 if [ ! -f "$MIG" ]; then
   echo ""; echo "=== RESULTADO (sem a migration nova): PASS=$PASS FAIL=$FAIL ==="
@@ -249,9 +253,10 @@ fi
 
 echo "=== FALSIFICACOES (cada uma: CONTROLE verde pelo MESMO caminho, depois sabotagem -> vermelho especifico) ==="
 SAB_DIR="$(mktemp -d "/tmp/sab-${SLUG}.XXXXXX")"
-# Substituicao LITERAL (perl \Q\E) que exige EXATAMENTE 1 ocorrencia — 0 ou 2 = a sabotagem mediria outra coisa.
+# Substituicao LITERAL (perl \Q\E) SO no corpo da funcao (ate o 1o $function$; — a POS repete o predicado de
+# proposito) e que exige EXATAMENTE 1 ocorrencia ali — 0 ou 2 = a sabotagem mediria outra coisa.
 troca() {  # $1=arquivo-in $2=arquivo-out ; OLD/NEW no ambiente
-  perl -ne 'BEGIN{$o=$ENV{OLD};$n=$ENV{NEW};$c=0} $c += s/\Q$o\E/$n/g; print; END{exit($c==1?0:3)}' "$1" > "$2"
+  perl -ne 'BEGIN{$o=$ENV{OLD};$n=$ENV{NEW};$c=0;$f=0} $c += s/\Q$o\E/$n/g unless $f; $f=1 if /^\$function\$;$/; print; END{exit($c==1?0:3)}' "$1" > "$2"
 }
 # carrega a fixture (cortada no fim da funcao: a POS barraria a sabotagem antes do comportamento ser medido —
 # o dente da POS e provado a parte) e roda o ciclo
@@ -272,28 +277,30 @@ falsifica() {  # $1=nome $2=sku $3=valor-verde $4=valor-sabotado $5=descricao ; 
   local v; v="$(qf "$D" "$sku")"
   if [ "$v" = "$sab" ]; then ok "FALSIF $nome pegou ($5: $sku verde [$c] -> sabotado [$v])"; else bad "FALSIF $nome NAO detectou ($sku sob sabotagem: esperado [$sab], veio [$v])"; fi
 }
-CORTE_NOVO="(LEAST(p_data_ciclo, COALESCE(((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date, p_data_ciclo)) - 7)"
+CORTE_NOVO="(LEAST(p_data_ciclo, ((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date) - 7)"
 
 OLD="$CORTE_NOVO" NEW="(p_data_ciclo - INTERVAL '7 days')" \
   falsifica F1-dois-relogios 9701 AUSENTE 4 "corte de volta no dia do ciclo = 0x no vao"
 OLD="(sea_c.ultima_sincronizacao - INTERVAL '1 hour')" NEW="(sea_c.ultima_sincronizacao)" \
   falsifica F2-sem-folga-meia-noite 9707 AUSENTE 4 "sem a folga, o run das 23:59 perde o D-8"
-OLD="LEAST(p_data_ciclo, COALESCE(" NEW="(COALESCE(" \
+OLD="LEAST(p_data_ciclo, " NEW="(" \
   falsifica F3-sem-least 9708 AUSENTE 4 "retrato posterior ao ciclo contaria MENOS que antes"
-OLD=")) - 7)" NEW=")) - 8)" \
+OLD="::date) - 7)" NEW="::date) - 8)" \
   falsifica F4-um-dia-a-mais 9704 3 AUSENTE "cortar 1 dia antes do sync conta 2x o que ja esta no pendente"
-OLD="::date, p_data_ciclo))" NEW="::date))" \
-  falsifica F5-null-sem-fallback 9709 AUSENTE 4 "retrato sem data sem fallback some com o pedido recente"
+# (sem F5 do NULL: LEAST ignora NULL — o fallback e da semantica do LEAST, coberto por L1/L2; a F3 tira o LEAST e o
+#  retrato sem data vira corte NULL, que o 9709 tambem acusaria)
 
 # Dente da POS (a outra camada): a migration REAL com o corte revertido tem de ABORTAR com a sentinela e deixar
-# o motor vivo INTACTO. CONTROLE: a migration intacta pelo mesmo caminho commita (rc 0).
+# o motor vivo INTACTO. CONTROLE: a migration intacta pelo mesmo caminho commita (rc 0). Parte da fixture REAL: a
+# PRE da migration (md5 do corpo vivo) barra com razao um motor que ficou sabotado.
+P -q -f "$FIXTURE" >/dev/null
 P -q -f "$MIG" >/dev/null 2>&1
 MD5_NOVA="$(fsrc)"
-P -q -f "$MIG" > "$SAB_DIR/post-ctl.log" 2>&1; prc=$?
+P -1 -q -f "$MIG" > "$SAB_DIR/post-ctl.log" 2>&1; prc=$?
 eq "POS controle: a migration intacta aplica de novo (idempotente, rc 0)" "$prc" "0"
 OLD="$CORTE_NOVO" NEW="(p_data_ciclo - INTERVAL '7 days')" troca "$MIG" "$SAB_DIR/post-sab.sql" \
   || bad "POS sabotagem: OLD nao casou 1 vez na migration"
-P -q -f "$SAB_DIR/post-sab.sql" > "$SAB_DIR/post-sab.log" 2>&1; prc=$?
+P -1 -q -f "$SAB_DIR/post-sab.sql" > "$SAB_DIR/post-sab.log" 2>&1; prc=$?
 if [ "$prc" -ne 0 ] && grep -q "POS-RU1 FALHOU" "$SAB_DIR/post-sab.log"; then
   ok "POS-RU1 abortou a migration com o corte revertido (rc=$prc)"
 else
@@ -303,7 +310,7 @@ eq "POS rollback: motor vivo intacto apos o abort" "$(fsrc)" "$MD5_NOVA"
 # a POS limpa comentario antes de procurar: o corte certo so em COMENTARIO + o velho no codigo tem de abortar
 OLD="$CORTE_NOVO" NEW="(p_data_ciclo - INTERVAL '7 days') -- $CORTE_NOVO" troca "$MIG" "$SAB_DIR/post-com.sql" \
   || bad "POS comentario: OLD nao casou 1 vez"
-P -q -f "$SAB_DIR/post-com.sql" > "$SAB_DIR/post-com.log" 2>&1; prc=$?
+P -1 -q -f "$SAB_DIR/post-com.sql" > "$SAB_DIR/post-com.log" 2>&1; prc=$?
 if [ "$prc" -ne 0 ] && grep -q "POS-RU1 FALHOU" "$SAB_DIR/post-com.log"; then
   ok "POS-RU1 nao se engana com o corte so em comentario (rc=$prc)"
 else
