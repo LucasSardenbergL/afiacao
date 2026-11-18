@@ -40,3 +40,7 @@ Pelo `bun run db:aplicar` (ensaio com ROLLBACK verde antes de cada apply), a par
 | carga 2025–2030 (NOTICE `POST carga calendario OK`) | `0c69b921` | #1177 |
 
 2ª testemunha (psql-ro, `fim|ok`): 3 tabelas com RLS; 2 colunas em `pedido_compra_sugerido`; 6 RPCs com EXECUTE para `authenticated`/`service_role` e sem `anon`; empresa por origem OBEN/COLACOR = emenda 16/16 · escala 148/148 · feriado 34/34 · historico 33/26 · manual 12/12; fornecedor 616 linhas / 7 razões sociais; nacionais 10/ano em 2027–2030; recesso 18/12/2026–03/01/2027 com 11 dias úteis fechados e 04/01/2027 sem linha (aberto); Sayerlack fechada só 25/12 e 01/01. Pendentes: edge `disparar-pedidos-aprovados` v1.17 (ledger `pendencias:deploy`) e Publish.
+
+## Deploy da edge (2026-11-18)
+
+`disparar-pedidos-aprovados` v1.16 → **v1.17-recebimento-calendario**, pelo pacote `7928f7ec5d9f` (`pendencias:pacote`, origin/main@`bc41cba7a`) enviado ao chat do Lovable via MCP às 19:39:02Z: 18/18 sha256 conferidos pelo agente, deploy aceito, custo 1,9 crédito. Sonda (`db/sonda-disparar-pedidos-aprovados-v117-20261118.sql`, db:aplicar recibo #1181): **DEPLOY CONFIRMADO** (versão e fonte esperadas). Sensor `lovable-sensor-edicao`: o bot empurrou `7984009f7` (+2 devDependencies `@lovable.dev/vite-plugin-*` em `package.json`/`bun.lock`) — revertido neste PR; `8d82d33c7` (só `types.ts` regenerado) é tolerado. Pendente: Publish do front.
