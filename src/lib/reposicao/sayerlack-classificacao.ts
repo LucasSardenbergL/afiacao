@@ -57,6 +57,10 @@ const ERROS_LOGICOS_PRE_SUBMIT: ReadonlySet<string> = new Set([
   "CLIENTE_NOT_FOUND",
   "SKU_NOT_FOUND",
   "GRUPO_LEADTIME_MISMATCH",
+  // Portal recusou o item no salvar-item: "menor que o lote mínimo de venda (N)".
+  // Retentar a MESMA quantidade repete a recusa; só sai com decisão humana
+  // (spec 2026-11-18-sayerlack-lote-minimo-portal). Detectado ANTES do Efetivar.
+  "LOTE_MINIMO_PORTAL",
 ]);
 
 const STATUS_CONHECIDOS: ReadonlySet<string> = new Set<EnvelopeStatus>([

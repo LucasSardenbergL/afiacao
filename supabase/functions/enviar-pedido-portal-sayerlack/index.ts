@@ -10,6 +10,12 @@ import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { classificarPosLogin, decidirAlertaPortal, ehFalhaSistemicaDoPortal } from "../_shared/sayerlack-pos-login.ts";
 import {
+  type ContextoLoteMinimo,
+  decidirAlertaLoteMinimo,
+  extrairLoteMinimoPortal,
+  lerLoteMinimoDaEvidencia,
+} from "../_shared/sayerlack-lote-minimo.ts";
+import {
   FatorAprovadoDivergenteError,
   FatorConversaoInvalidoError,
   indexarMapeamentos,
@@ -61,6 +67,7 @@ export default async ({ page, context }) => {
   // fica no page.evaluate abaixo porque ele roda no contexto da página e não
   // enxerga este escopo.
   const classificarPosLogin = ${classificarPosLogin.toString()};
+  const extrairLoteMinimoPortal = ${extrairLoteMinimoPortal.toString()};
   // Leitor do JSON do "Efetivar" (POST /order-creation/form/add → data.itens + data.value), interpolado
   // do ./captura-custo.ts via .toString() — fonte única testada em deno test (money-path: custo).
   const extrairAddJson = ${extrairAddJson.toString()};
@@ -363,7 +370,7 @@ export default async ({ page, context }) => {
     const erroLogicoPreSubmit =
       tipo === 'LOGIN_FAILED' || tipo === 'PASSWORD_CHANGE_REQUIRED'
       || tipo === 'CLIENTE_NOT_FOUND' || tipo === 'SKU_NOT_FOUND'
-      || tipo === 'GRUPO_LEADTIME_MISMATCH';
+      || tipo === 'GRUPO_LEADTIME_MISMATCH' || tipo === 'LOTE_MINIMO_PORTAL';
 
     if (data.success === true) {
       ok = true;
@@ -434,6 +441,8 @@ export default async ({ page, context }) => {
           // Sem isto não dá para MEDIR falso positivo da classificação depois do deploy
           // (Codex challenge, item e): o envelope só copia campos selecionados.
           posLoginCheck: data.posLoginCheck || null,
+          // Recusa por lote mínimo no salvar-item ({skuPortal, lote, trecho, qtdeEnviada, linha}).
+          loteMinimo: data.loteMinimo || null,
           trace: data.trace || trace,
         },
         elapsedMs,
@@ -977,11 +986,77 @@ export default async ({ page, context }) => {
           } catch (e) { return false; }
         },
         { timeout: budgetFor(label, 7_000, { minMs: 1_000 }) }
-      ).then((r) => ({ ok: true, status: r.status() })).catch(() => ({ ok: false }));
+      ).then(async (r) => {
+        // Corpo do POST: o portal pode recusar o item no próprio JSON (ex.: lote mínimo).
+        let body = null;
+        try { body = String(await r.text()).substring(0, 2000); } catch (e) { body = null; }
+        return { ok: true, status: r.status(), body: body };
+      }).catch(() => ({ ok: false, body: null }));
+
+      // Lote mínimo (spec 2026-11-18-sayerlack-lote-minimo-portal): o portal recusa a linha com
+      // "Quantidade informada menor que o lote minimo de venda (N)". Antes isso passava calado
+      // (ou virava erro retentável repetido 3x). Lê corpo do POST + alertas visíveis; casou →
+      // aborta ANTES do Efetivar com erro NÃO retentável (efetivarAttempted segue false).
+      const detectarLoteMinimo = async (bodyText) => {
+        await sleep(300); // o alerta do portal renderiza logo após a resposta do POST
+        let domInfo = { textos: [], linha: null };
+        try {
+          domInfo = await page.evaluate(function() {
+            const sel = '.alert, .alert-danger, .swal2-html-container, .swal2-title, .toast, [role="alert"], .invalid-feedback';
+            const textos = Array.from(document.querySelectorAll(sel))
+              .filter(function(el) { return el.offsetParent !== null; })
+              .map(function(el) { return (el.innerText || '').trim().substring(0, 500); })
+              .filter(function(t) { return t.length > 0; })
+              .slice(0, 10);
+            // Diagnóstico: a última linha da grade lida POR CABEÇALHO (UN, Cap Emb, Qtd Fat, Qtd UN...).
+            let linha = null;
+            const ths = Array.from(document.querySelectorAll('#datatable_itens thead th'))
+              .map(function(th) { return (th.innerText || '').replace(/\\s+/g, ' ').trim(); });
+            const tr = document.querySelector('#datatable_itens tbody tr:nth-last-child(1)');
+            if (tr) {
+              linha = {};
+              Array.from(tr.querySelectorAll('td')).forEach(function(td, idx) {
+                const inp = td.querySelector('input, select');
+                const v = inp ? (inp.value || '') : (td.innerText || '');
+                linha[ths[idx] || ('col' + idx)] = String(v).trim().substring(0, 80);
+              });
+            }
+            return { textos: textos, linha: linha };
+          });
+        } catch (e) { /* sem DOM legível → só o corpo do POST conta */ }
+        const achado = extrairLoteMinimoPortal([bodyText].concat(domInfo.textos || []));
+        return achado ? { achado: achado, linha: domInfo.linha } : null;
+      };
+      const abortarLoteMinimo = async (det) => {
+        const errorScreenshot = await page.screenshot({ type: 'png', encoding: 'base64' }).catch(() => null);
+        trace.push({ step: 'item_' + i + '_lote_minimo', t: Date.now() - t0, lote: det.achado.lote });
+        return {
+          data: {
+            success: false,
+            erro: 'Portal recusou o item ' + i + ' (SKU ' + item.sku_portal + '): ' + det.achado.trecho +
+              ' - qtde enviada ' + String(item.qtde) + ' UN',
+            erroTipo: 'LOTE_MINIMO_PORTAL',
+            skuFalho: item.sku_portal,
+            loteMinimo: {
+              skuPortal: item.sku_portal,
+              lote: det.achado.lote,
+              trecho: det.achado.trecho,
+              qtdeEnviada: Number(item.qtde),
+              linha: det.linha,
+            },
+            trace,
+          },
+          type: 'application/json',
+          screenshot: errorScreenshot,
+        };
+      };
 
       let saveConfirm = armarSaveWait('item-' + i + '-save-confirm');
       await page.click('#btnGravarItem');
       let saveResult = await saveConfirm;
+
+      const loteDet1 = await detectarLoteMinimo(saveResult.body);
+      if (loteDet1) return await abortarLoteMinimo(loteDet1);
 
       if (!saveResult.ok) {
         // Retry: portal ignorou o click. Tenta de novo.
@@ -989,6 +1064,9 @@ export default async ({ page, context }) => {
         saveConfirm = armarSaveWait('item-' + i + '-save-retry');
         await page.click('#btnGravarItem');
         saveResult = await saveConfirm;
+
+        const loteDet2 = await detectarLoteMinimo(saveResult.body);
+        if (loteDet2) return await abortarLoteMinimo(loteDet2);
 
         if (!saveResult.ok) {
           // Falhou 2x — POST do save nunca saiu. Aborta o pedido com erro
@@ -2267,6 +2345,7 @@ async function processarPedido(
     await alertarFornecedor(supabase, erroTipo, pedido.id, {
       esgotado: true,
       origemDivergente: evidence?.posLoginCheck?.origemDivergente === true,
+      loteMinimo: lerLoteMinimoDaEvidencia(evidence),
     });
     return r;
   }
@@ -2308,12 +2387,15 @@ async function alertarFornecedor(
   supabase: SupabaseClient,
   erroTipo: string | null,
   pedidoId: number,
-  ctx: { esgotado: boolean },
+  ctx: { esgotado: boolean; origemDivergente?: boolean; loteMinimo?: ContextoLoteMinimo | null },
 ): Promise<void> {
-  const alerta = decidirAlertaPortal(erroTipo, {
-    esgotado: ctx.esgotado,
-    portalUrl: SAYERLACK_PORTAL_URL,
-  });
+  // LOTE_MINIMO_PORTAL tem texto próprio (lote/SKU/qtde) e alerta na 1ª vez — ver _shared/sayerlack-lote-minimo.ts.
+  const alerta = erroTipo === "LOTE_MINIMO_PORTAL"
+    ? decidirAlertaLoteMinimo(ctx.loteMinimo ?? null)
+    : decidirAlertaPortal(erroTipo, {
+      esgotado: ctx.esgotado,
+      portalUrl: SAYERLACK_PORTAL_URL,
+    });
   if (!alerta) return;
 
   const { error } = await supabase.from("fornecedor_alerta").insert({

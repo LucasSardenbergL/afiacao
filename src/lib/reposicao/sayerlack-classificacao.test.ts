@@ -96,6 +96,13 @@ describe("classifyEnvelopeStatus — Camada 1 (Browserless)", () => {
     expect(r.needsReconciliation).toBe(false);
   });
 
+  it("LOTE_MINIMO_PORTAL (recusa no salvar-item, pré-Efetivar) → erro_nao_retentavel, não auto-retenta", () => {
+    const r = classifyEnvelopeStatus({ ...base, erroTipo: "LOTE_MINIMO_PORTAL", efetivarAttempted: false });
+    expect(r.status).toBe("erro_nao_retentavel");
+    expect(r.safeToRetry).toBe(false);
+    expect(r.needsReconciliation).toBe(false);
+  });
+
   it("GRUPO_LEADTIME_MISMATCH → erro_nao_retentavel", () => {
     const r = classifyEnvelopeStatus({ ...base, erroTipo: "GRUPO_LEADTIME_MISMATCH", efetivarAttempted: false });
     expect(r.status).toBe("erro_nao_retentavel");

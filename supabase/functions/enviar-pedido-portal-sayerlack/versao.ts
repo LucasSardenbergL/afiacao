@@ -25,7 +25,7 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * v1.13: lê a condição de pagamento do formulário do portal (só leitura) e a aplica ao pedido pela RPC
  * `sayerlack_aplicar_condicao_portal` antes do PO (D-1, pontos cegos Onda 2).
  */
-export const VERSAO = "v1.13-condicao-real-do-portal";
+export const VERSAO = "v1.14-lote-minimo-portal";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

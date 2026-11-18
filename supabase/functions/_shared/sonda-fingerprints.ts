@@ -29,7 +29,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "dispatch-notifications": "1128db7705fcab5998034aef7f7a3a1cebc297c65ac58894ea998892866f9cbe",
   "elevenlabs-scribe-token": "b2aade1fe56a14d70f0767e3abfe54ad3fed0608cedf22c76db74f569f2c23d9",
   "elevenlabs-transcribe": "c61046b0523d8e2196fd8eda02e4238040180b1a14be68aab4ca5135fbcbb0e0",
-  "enviar-pedido-portal-sayerlack": "f8e7af76505a3593d16eefb2ade8ea908fa5c86c7852427bb1f707715a60789b",
+  "enviar-pedido-portal-sayerlack": "ac2b4cb41616b91fe3ee56d011dd32df5be8650c4524fec5900013f7296a1456",
   "enviar-push": "38302707026818b24e43f4936dea80f7648c68b2c1351385c7ddd5e396bdd9d5",
   "extrair-sinais-ligacao": "eca9cc25b742126263e301466bf289f9fb97a04d8e127ef5bdd585a74f36e641",
   "fin-cashflow-engine": "0ba55d236329590cb5c52e225528bd7f8c9dfabc99e776f6978dd6ea78b4f5bf",
