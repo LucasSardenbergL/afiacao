@@ -25,17 +25,23 @@ O que o founder quer quando o lote é maior que a necessidade:
 2. Pedir ao CRS (crs@sayerlack.com.br), citando o nº do pedido Sayerlack, que reduza para a quantidade real.
 3. Se o CRS responder que não pode, cancelar o pedido.
 
-## 2. Pergunta aberta nº 1 — em que unidade está o "20"? (bloqueia a Fase 0)
+## 2. Unidade do lote — **Qtd UN** (confirmado pelo founder, 2026-11-18)
 
-Leitura da grade do print: UN = L, Cap Emb = 5, Qtd Fat = 5, Qtd UN = 1. O SKU é `00BB`, embalagem de 5 L.
+O número da mensagem "lote mínimo de venda (N)" está em **Qtd UN**, a unidade de embalagem do portal. **Não** é Qtd Fat
+(litros).
 
-**Hipótese:** o mínimo é em Qtd Fat (litros), ou seja, 20 L = **4 baldes**, não 20 baldes.
+No caso do gatilho:
 
-**Como provar sem efeito:** no portal, num pedido NÃO efetivado, digitar Qtd UN = 4 e ver se a mensagem some. Depois
-cancelar a linha, como a `sayerlack-captura-precos` já faz.
+- `00BB` é balde de 5 L, com Cap Emb = 5;
+- lote = **20 baldes = 100 L** (Qtd Fat 100) para uma necessidade de **1 balde**;
+- ao preço da grade, R$ 579,05 por balde, a diferença é de ~19 baldes, cerca de R$ 11 mil.
 
-A diferença entre 1→4 e 1→20 muda o custo da decisão e o texto do e-mail. A spec trata o lote sempre como
-`(valor, unidade)` capturado, nunca como número solto.
+É por isso que "pedir redução ao CRS" importa: comprar o lote seria quase 20× a necessidade.
+
+**Conversão para o Omie:** `lote_omie = lote_un_portal ÷ fator_conversao` (`sku_fornecedor_externo`; o fator é a
+unidade do portal por unidade do Omie). Sem fator aprovado, não converte: estado `NULL`, nunca um palpite.
+
+O portal digita a quantidade em Qtd UN. A Fase 0 também passa a afirmar isso **por cabeçalho**, não por posição.
 
 ## 3. Desenho por fases
 
@@ -69,14 +75,13 @@ retentar não muda o lote.
 - Variações de acento, vírgula e caixa, nos dois locales (`LC_ALL=C` e `pt_BR.UTF-8`).
 - Classificação falsificada: remover o tipo da lista e exigir vermelho.
 
-**Sinal para abrir a Fase 1:** ≥1 recusa real capturada com `(lote, unidade)` legível, de N envios no período.
+**Sinal para abrir a Fase 1:** ≥1 recusa real capturada com `lote` (Qtd UN) e `sku_portal` legíveis, de N envios no período.
 
 ### Fase 1 — o lote vira dado e a decisão vira tela
 
 **Onde mora o lote:** colunas novas em `sku_fornecedor_externo`, porque é ali que vive a unidade do portal:
 
-- `lote_minimo_portal numeric NULL`;
-- `lote_minimo_portal_unidade text` (`fat` | `un`);
+- `lote_minimo_portal numeric NULL`, sempre em **Qtd UN** do portal (§2);
 - `lote_minimo_capturado_em timestamptz`;
 - `lote_minimo_origem text` (`recusa_portal` | `manual`).
 
@@ -87,7 +92,7 @@ Por que não reaproveitar as colunas existentes:
 
 **1 escritor:** o envio (pela recusa) ou a tela (manual). Ausente = `NULL`, nunca `1` fabricado.
 
-**Na tela do pedido** (`/admin/reposicao/pedidos`), o item com qtde final abaixo do lote mostra "mínimo do portal: 4 UN"
+**Na tela do pedido** (`/admin/reposicao/pedidos`), o item com qtde final abaixo do lote mostra "mínimo do portal: 20 UN (100 L) · +R$ X sobre a necessidade"
 e três ações, sempre por **decisão humana**:
 
 | Ação | Portal | PO Omie | Efeito |
@@ -118,7 +123,7 @@ está em `reposicao.md` §Mínimo forçado.
 - Com ajuste aberto, o PO usa `qtde_omie` do ledger, e o portal usa `qtde_portal`.
 - A divergência é **intencional e registrada**. Toda tela de conciliação e recebimento deve ler o ledger antes de
   acusar diferença.
-- **Onde mais aparece:** a conferência de recebimento. Se a Sayerlack faturar o lote, a NF chega com 4 e o PO diz 1.
+- **Onde mais aparece:** a conferência de recebimento. Se a Sayerlack faturar o lote, a NF chega com 20 e o PO diz 1.
 
 **E-mail ao CRS**
 
@@ -171,7 +176,7 @@ está em `reposicao.md` §Mínimo forçado.
 
 ## 5. Perguntas abertas para o founder
 
-1. **Unidade do "20"** (§2): litros (4 baldes) ou unidades?
+1. ~~Unidade do "20"~~: **respondida**, é Qtd UN (§2).
 2. **Caixa de e-mail:** de qual caixa sai o e-mail ao CRS e onde a resposta chega? O Apps Script do
    `gmail-webhook-receiver` ainda está vivo?
 3. **Cancelar na Sayerlack:** é por e-mail ao CRS ou existe ação no portal?
