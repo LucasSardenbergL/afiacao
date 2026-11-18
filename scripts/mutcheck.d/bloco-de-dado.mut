@@ -1,0 +1,12 @@
+# O helper que põe dado do request num bloco delimitado da mensagem (scanner Lovable Security, lote 7).
+# @src: supabase/functions/_shared/bloco-de-dado.ts
+# @test: supabase/functions/_shared/bloco-de-dado_test.ts
+# @test_cmd: deno test --no-remote --allow-read=supabase/functions
+# @compile_cmd: deno check --no-remote
+# Rode: bash scripts/mutcheck-all.sh
+#
+PEGA | neutralizar não faz nada                         | s/const neutralizar = \(texto: string\) => texto\.replace\(re, "<\$1_\$2"\);/const neutralizar = (texto: string) => texto;/
+PEGA | regex sem a flag i (maiúscula passa)             | s/\$\{nomes\.join\("\|"\)\}\)`, "gi"\)/\${nomes.join("|")})`, "g")/
+PEGA | barra com espaço passa                           | s/`<\\\\s\*\(\/\?\)\\\\s\*\(/`<(\/?)(/
+PEGA | nome com metacaractere aceito                    | s/if \(!NOME_VALIDO\.test\(n\)\) throw/if (false) throw/
+PEGA | quebra de linha sobrevive no textoCurto          | s/v\.replace\(\/\[\\r\\n\]\+\/g, " "\)/v/

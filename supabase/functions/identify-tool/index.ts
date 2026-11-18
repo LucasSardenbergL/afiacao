@@ -212,7 +212,11 @@ Deno.serve(async (req) => {
     }
 
     const extraido = extrairToolUseUnico(resposta.content);
-    const nomesCategorias = (categories || []).map((c: { name: string }) => c.name).filter(Boolean);
+    // `c?.name` e só string: um item `null` no body derrubava o handler com 500 DEPOIS de pagar a
+    // chamada ao modelo (achado do teste do handler, lote 7).
+    const nomesCategorias = (categories || [])
+      .map((c: { name?: unknown } | null) => c?.name)
+      .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
     const parsed = extraido.ok ? normalizarFerramenta(extraido.input, nomesCategorias) : null;
 
     if (parsed === null) {

@@ -366,11 +366,27 @@ describe('guardrail money-path: analyze-unified-order mantém o prompt caching L
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it('o parâmetro `system` recebe os DOIS blocos (sem isso não há breakpoint de cache)', () => {
+  it('o parâmetro `system` recebe os blocos do montador (sem isso não há breakpoint de cache)', () => {
     expect(
       codigo,
       'system voltou a receber uma string única — o prefixo volta a começar pelo catálogo e todo cache é miss',
     ).toMatch(/system:\s*blocosSistema\b/);
+  });
+
+  // Scanner Lovable, lote 7 (v1.11): o system é SÓ o bloco estável e os dados (catálogo, cadastro,
+  // candidatos) são o 1º texto da MENSAGEM. A prova do corpo enviado é o teste que EXECUTA o handler
+  // (`analyze-unified-order/index_test.ts`); aqui fica o wiring, que aquele teste não vê num revert
+  // do Lovable que troque também o teste.
+  it('o system NÃO recebe os dados: o montador só leva a variante, e os dados abrem a mensagem', () => {
+    expect(codigo, 'montarSystemBlocks voltou a receber os dados do request').toMatch(
+      /montarSystemBlocks\(\s*!!searchCustomer\s*\)/,
+    );
+    expect(modulo, 'montarSystemBlocks voltou a aceitar os dados').toMatch(
+      /export function montarSystemBlocks\(searchCustomer: boolean\): \[BlocoTextoSistema\]/,
+    );
+    expect(codigo, 'os dados deixaram de ser o 1º bloco da mensagem').toMatch(
+      /conteudoUsuario: BlocoConteudo\[\] = \[\{ type: "text", text: textoDosDados \}\]/,
+    );
   });
 
   it('o cache_control ephemeral segue no bloco ESTÁVEL (a decisão do #1608 era não ter nenhum)', () => {

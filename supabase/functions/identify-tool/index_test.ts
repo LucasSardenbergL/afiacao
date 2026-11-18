@@ -93,6 +93,16 @@ Deno.test("identify-tool: sem categorias, o bloco diz que não há nenhuma (e o 
   }
 });
 
+Deno.test("identify-tool: lista só com itens sem nome também vira 'nenhuma categoria'", async () => {
+  ia.limpar();
+  const res = await pedir("jwt-employee", { imageBase64: PNG_1X1, categories: [{ name: "" }, null, { description: "só descrição" }] });
+  await res.body?.cancel();
+  igual(res.status, 200, "o handler não chegou ao fim");
+  if (!textoDasMensagens(ia.chamadas[0]).includes("<categorias_cadastradas>\nNenhuma categoria fornecida\n</categorias_cadastradas>")) {
+    throw new Error("lista sem nenhum nome deixou o bloco vazio, em vez de dizer que não há categoria");
+  }
+});
+
 Deno.test("identify-tool: cliente sem aprovação continua barrado antes do modelo (controle do gate)", async () => {
   ia.limpar();
   aprovado = false;
