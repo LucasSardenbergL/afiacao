@@ -30,6 +30,14 @@
 #      DIFERENTE da soma do `du` (1000 MB): se o script trocar um pelo outro, o
 #      caso 9 fica vermelho. `df` que falha vira "sem medida", nunca 0 MB (caso 10).
 #
+#   4. A re-checagem antes de apagar tem de RE-SONDAR o `lsof`. Até 2026-11-17 ela
+#      relia a foto tirada no início da varredura, então nunca mudava de resposta:
+#      a sessão aberta DURANTE a varredura perdia o node_modules. Os casos 12 e 13
+#      stubam um `lsof` cujo estado MUDA depois que a 1ª worktree foi apagada (a
+#      bravo ganha sessão viva; ou a sonda morre) e conferem no DISCO quem ficou.
+#      O gatilho é físico (o node_modules da alfa sumiu), não uma contagem de
+#      chamadas: o teste não depende de quantas vezes o script consulta o `lsof`.
+#
 # Uso: bash scripts/test-wt-clean.sh   (exit 0 = tudo verde)
 set -u
 
@@ -87,14 +95,25 @@ esac
 STUB
 
 # lsof: LSOF_MODO = ok | ativo (alfa com sessão viva) | quebrado (existe e falha)
+#                  | ativa-depois | quebra-depois
 # A consulta de CONTROLE (`-p <pid>`) é a que prova que a sonda responde.
+# Os dois modos "-depois" mudam de estado quando o node_modules da alfa (a 1ª da
+# varredura) já foi apagado — ou seja, no MEIO do --yes, depois da foto inicial:
+#   ativa-depois  → a bravo passa a ter sessão viva;
+#   quebra-depois → o controle passa a falhar (a sonda morreu).
 cat >"$stub/lsof" <<STUB
 #!/bin/sh
-[ "\${LSOF_MODO:-ok}" = "quebrado" ] && exit 127
+modo="\${LSOF_MODO:-ok}"
+[ "\$modo" = "quebrado" ] && exit 127
+meio=0
+[ -d "$fix/wt-alfa/node_modules" ] || meio=1
 case "\$*" in
-  *-p*) echo "n$fix/self"; exit 0 ;;   # controle: a sonda está viva
+  *-p*)   # controle: a sonda está viva?
+    [ "\$modo" = "quebra-depois" ] && [ "\$meio" -eq 1 ] && exit 127
+    echo "n$fix/self"; exit 0 ;;
 esac
-[ "\${LSOF_MODO:-ok}" = "ativo" ] && echo "n$fix/wt-alfa"
+[ "\$modo" = "ativo" ] && echo "n$fix/wt-alfa"
+[ "\$modo" = "ativa-depois" ] && [ "\$meio" -eq 1 ] && echo "n$fix/wt-bravo"
 exit 0
 STUB
 
@@ -346,6 +365,73 @@ if [ "$(nm_vivos)" = "4" ]; then
 else
   falha "dry-run → apagou $((4 - $(nm_vivos))) node_modules sem --yes"
 fi
+
+# quais node_modules do fixture continuam de pé, por nome (ex.: "bravo charlie")
+nm_quais() {
+  local w r=""
+  for w in alfa bravo charlie delta; do
+    [ -d "$fix/wt-$w/node_modules" ] && r="$r $w"
+  done
+  printf '%s' "${r# }"
+}
+
+# ── caso 12 — sessao que NASCE durante a varredura e poupada (fisico) ───────
+# A foto inicial do lsof nao ve ninguem. Depois que a alfa foi apagada, a bravo
+# passa a ter sessao viva. So uma re-sondagem de verdade enxerga isso: reler a
+# foto do inicio apaga a bravo debaixo da sessao.
+semear
+saida="$(LSOF_MODO=ativa-depois roda --yes)"
+if [ "$(nm_quais)" = "bravo" ]; then
+  ok "sessao aberta durante a varredura → o node_modules dela fica INTACTO"
+else
+  falha "sessao aberta durante a varredura → ficaram de pe: '$(nm_quais)' (esperado so 'bravo')"
+fi
+if printf '%s' "$saida" | linha_de 'wt-bravo' | command grep -q '(ficou ativo)'; then
+  ok "sessao aberta durante a varredura → relata 'ficou ativo'"
+else
+  falha "sessao aberta durante a varredura → nao relatou que a bravo ficou ativa"
+fi
+linha_res="$(printf '%s' "$saida" | linha_de 'apagado o node_modules de')"
+case "$linha_res" in
+  *'apagado o node_modules de 3 worktree(s) '*' ~750 MB APARENTES'*)
+    ok "sessao aberta durante a varredura → o resumo conta so o que apagou (3, 750 MB)"
+    ;;
+  *) falha "sessao aberta durante a varredura → resumo conta o que nao apagou (veio: ${linha_res:-nada})" ;;
+esac
+if [ "${saida##*EXIT=}" = "0" ]; then
+  ok "sessao aberta durante a varredura → sai 0 (poupar quem trabalha nao e falha)"
+else
+  falha "sessao aberta durante a varredura → EXIT=${saida##*EXIT=}"
+fi
+
+# ── caso 13 — lsof que MORRE no meio do --yes: fail-closed (fisico) ─────────
+# O controle responde no inicio e para de responder depois que a alfa foi
+# apagada. Sem saber quem trabalha, o resto NAO pode ser apagado — e o script
+# nao pode sair 0 dizendo que limpou.
+semear
+saida="$(LSOF_MODO=quebra-depois roda --yes)"
+if [ "$(nm_quais)" = "bravo charlie delta" ]; then
+  ok "lsof morre no meio → as 3 restantes ficam INTACTAS"
+else
+  falha "lsof morre no meio → apagou as cegas: ficaram de pe '$(nm_quais)' (esperado 'bravo charlie delta')"
+fi
+if [ "$(printf '%s' "$saida" | command grep -c 'lsof parou de responder: ')" = "3" ]; then
+  ok "lsof morre no meio → cada uma das 3 sai com o motivo"
+else
+  falha "lsof morre no meio → nao relatou as 3 que ficaram por falta de sonda"
+fi
+if [ "${saida##*EXIT=}" = "1" ]; then
+  ok "lsof morre no meio → sai 1 (pediram para limpar e parte ficou)"
+else
+  falha "lsof morre no meio → esperava EXIT=1, veio EXIT=${saida##*EXIT=}"
+fi
+linha_res="$(printf '%s' "$saida" | linha_de 'apagado o node_modules de')"
+case "$linha_res" in
+  *'apagado o node_modules de 1 worktree(s) '*' ~250 MB APARENTES'*)
+    ok "lsof morre no meio → o resumo conta so a que apagou (1, 250 MB)"
+    ;;
+  *) falha "lsof morre no meio → resumo conta o que nao apagou (veio: ${linha_res:-nada})" ;;
+esac
 
 echo
 if [ "$falhas" -eq 0 ]; then

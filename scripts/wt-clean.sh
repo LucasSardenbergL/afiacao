@@ -11,12 +11,13 @@
 #   - pula o worktree ATUAL (a sessão que você está usando agora);
 #   - pula worktree com sessão/processo VIVO (claude/bun/node/vite/tsx/vitest com
 #     o cwd lá dentro), detectado via lsof — não apaga debaixo de quem trabalha;
-#   - re-checa atividade imediatamente antes de apagar (fecha a corrida com um
-#     `bun install` que começou no meio) e faz rename atômico antes do rm;
+#   - re-SONDA a atividade imediatamente antes de apagar cada worktree (fecha a
+#     corrida com a sessão ou o `bun install` que começou no meio da varredura)
+#     e faz rename atômico antes do rm;
 #   - pula worktree `locked` (o lock é intenção humana de preservar);
 #   - pula node_modules que é symlink (não é cópia descartável).
 #
-# ⚠️ Este script APAGA. Três regras, todas travadas por `scripts/test-wt-clean.sh`
+# ⚠️ Este script APAGA. Quatro regras, todas travadas por `scripts/test-wt-clean.sh`
 # (as duas primeiras vieram do #1838 e da varredura dos irmãos):
 #
 #   1. Sonda de segurança AUSENTE é fail-CLOSED, não "sem medida". Medido: com
@@ -38,6 +39,14 @@
 #      número, e o disco livre subiu 1923 MB. Por isso o relatório diz
 #      "APARENTES", e o `--yes` mede o `df` antes e depois e imprime o ganho de
 #      verdade. `df` que não responde vira "sem medida", nunca 0 MB.
+#   4. A re-checagem tem de RE-SONDAR. Até 2026-11-17 ela chamava `is_active` de
+#      novo, mas `is_active` lia a mesma foto do `lsof` tirada no início: a
+#      "re-checagem" devolvia sempre a resposta da primeira vez, e uma sessão
+#      aberta durante a varredura (minutos: o `du` de cada worktree custa até o
+#      teto) perdia o node_modules. Achado lendo o código, sem dano medido. Agora
+#      cada remoção é precedida de uma sondagem nova (~0,1 s), e re-sondagem que
+#      não responde é fail-CLOSED: a worktree fica, e o script sai 1 dizendo
+#      quantas ficaram.
 #
 # Uso:
 #   bun run wt:clean                          # DRY-RUN: só mostra o que faria
@@ -53,7 +62,7 @@ for arg in "$@"; do
     --yes | -y) YES=1 ;;
     --include-current) INCLUDE_CURRENT=1 ;;
     -h | --help)
-      sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -85,32 +94,62 @@ else
   SONDA_ATIVIDADE=1
 fi
 
-active_file="$(mktemp)"
-trap 'rm -f "$active_file"' EXIT
-{
-  for proc in claude bun node vite tsx vitest esbuild npm; do
-    lsof -nP -a -c "$proc" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'
-  done
-} | while IFS= read -r d; do
-  [ -n "$d" ] || continue
-  rp "$d"
-done | sort -u >"$active_file" 2>/dev/null || true
+# Nomes de processo que contam como "tem gente trabalhando" numa worktree.
+PROCS_ATIVOS=(claude bun node vite tsx vitest esbuild npm)
 
+# cwds_ativos — ecoa, um por linha e canônico, o cwd de cada processo da lista.
+# UMA chamada de lsof: `-c` repetido é OU entre os nomes (man lsof: "joined in a
+# single ORed set"), e o `-a` casa esse conjunto com `-d cwd`. Medido em
+# 2026-11-17: devolve o mesmo conjunto das 8 chamadas separadas de antes, em
+# ~0,1 s — barato o bastante para repetir antes de CADA remoção (regra 4).
+# O exit do lsof NÃO serve de prova de saúde: ele sai 1 quando algum nome da
+# lista não tem processo, que é o caso normal. Quem prova que a sonda responde
+# é o `sonda_lsof_ok`.
+cwds_ativos() {
+  local args=() proc d
+  for proc in "${PROCS_ATIVOS[@]}"; do args+=(-c "$proc"); done
+  lsof -nP -a "${args[@]}" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' |
+    while IFS= read -r d; do
+      [ -n "$d" ] || continue
+      rp "$d"
+    done | sort -u
+}
+
+active_file="$(mktemp)" # a foto do INÍCIO da varredura
+agora_file="$(mktemp)"  # a foto de AGORA, refeita a cada re-checagem
+trap 'rm -f "$active_file" "$agora_file"' EXIT
+cwds_ativos >"$active_file" 2>/dev/null || true
+
+# is_active <wt> [lista] — ativo se algum cwd da lista é o worktree OU está
+# dentro dele. Sem o 2º argumento lê a foto do início; a re-checagem passa a de
+# agora.
 is_active() {
-  # ativo se algum processo tem cwd igual ao worktree OU dentro dele
-  local wt="$1" d
+  local wt="$1" lista="${2:-$active_file}" d
   while IFS= read -r d; do
     [ -n "$d" ] || continue
     [ "$d" = "$wt" ] && return 0
     case "$d/" in "$wt"/*) return 0 ;; esac
-  done <"$active_file"
+  done <"$lista"
   return 1
+}
+
+# recheca <wt> — re-SONDA o lsof agora, imediatamente antes de apagar (regra 4).
+# Sai 0 só com evidência POSITIVA: a sonda respondeu E ninguém está com o cwd na
+# worktree. 1 = ficou ativa depois da foto do início · 2 = a sonda parou de
+# responder (fail-CLOSED: sem saber quem trabalha, não apaga).
+recheca() {
+  local wt="$1"
+  sonda_lsof_ok || return 2
+  cwds_ativos >"$agora_file" 2>/dev/null || true
+  if is_active "$wt" "$agora_file"; then return 1; fi
+  return 0
 }
 
 # --- varre os worktrees -----------------------------------------------------
 freed=0
 planned=0
 sem_medida=0
+sem_sonda=0 # ficaram porque a re-sondagem não respondeu (regra 4)
 cur_wt=""
 cur_locked=0
 
@@ -125,7 +164,7 @@ fi
 
 flush() {
   [ -n "$cur_wt" ] || return 0
-  local wt nm reason="" sz rc trash
+  local wt nm reason="" sz rc trash rc_re
   wt="$(rp "$cur_wt")"
   nm="$wt/node_modules"
 
@@ -157,8 +196,19 @@ flush() {
   fi
 
   if [ "$YES" -eq 1 ]; then
-    if is_active "$wt"; then # re-checagem: fecha a corrida com install tardio
-      printf '  skip   %-52s (ficou ativo)\n' "${wt/#$HOME/~}"
+    # Regra 4: re-SONDA agora. A foto do início pode ter minutos, e a sessão
+    # aberta nesse meio não está nela.
+    recheca "$wt" && rc_re=0 || rc_re=$?
+    if [ "$rc_re" -ne 0 ]; then
+      if [ "$rc_re" -eq 1 ]; then
+        printf '  skip   %-52s (ficou ativo)\n' "${wt/#$HOME/~}"
+      else
+        printf '  skip   %-52s (lsof parou de responder: não apago às cegas)\n' "${wt/#$HOME/~}"
+        sem_sonda=$((sem_sonda + 1))
+      fi
+      # não foi apagada: sai da contagem do resumo, como no `mv` que falha
+      planned=$((planned - 1))
+      if [ "$rc" -eq 0 ]; then freed=$((freed - sz)); else sem_medida=$((sem_medida - 1)); fi
       cur_wt=""
       cur_locked=0
       return 0
@@ -220,4 +270,11 @@ fi
 if [ "$SONDA_ATIVIDADE" -eq 0 ]; then
   echo "⚠️  lsof não respondeu: NÃO sei quais worktrees têm sessão viva, então este dry-run" >&2
   echo "   não é confiável — qualquer 'would' pode ser de uma sessão em uso. O --yes aborta." >&2
+fi
+if [ "$sem_sonda" -gt 0 ]; then
+  # Regra 4, fail-CLOSED: o pedido era apagar e parte ficou por falta de sonda.
+  # Sair 0 aqui seria dizer "limpei" sem ter limpado.
+  echo "❌ ${sem_sonda} worktree(s) NÃO foram apagadas: o lsof parou de responder na re-checagem," >&2
+  echo "   e sem saber quem está trabalhando eu não apago. Rode de novo quando o lsof responder." >&2
+  exit 1
 fi
