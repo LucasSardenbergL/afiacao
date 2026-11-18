@@ -1177,20 +1177,50 @@ INSERT INTO public.calendario_feriados (data, nome, tipo, observacoes)
 SELECT data, nome, tipo, observacoes FROM _carga_fer
 ON CONFLICT (data) DO NOTHING;
 
--- Postcondição: toda chave da carga existe (nova ou preexistente) e os nacionais 2027 são exatamente 10.
+-- Postcondição com contagens ESPERADAS embutidas como constante (geradas junto com os VALUES, mas conferidas contra
+-- elas): carga incompleta (linha perdida no VALUES) e destino sem as chaves falham. Presença, não inserção: a 2ª
+-- execução e a edição do founder (ON CONFLICT DO NOTHING) não reprovam.
 DO $$
-DECLARE n_falta int; n_nac int;
+DECLARE
+  esp_emp  CONSTANT int := 479;
+  esp_forn CONSTANT int := 616;
+  esp_nac  CONSTANT int := 40;
+  n int; r record;
 BEGIN
-  SELECT count(*) INTO n_falta FROM _carga_emp c
-   WHERE NOT EXISTS (SELECT 1 FROM public.calendario_operacao_empresa t WHERE t.data = c.data AND t.empresa = c.empresa);
-  IF n_falta <> 0 THEN RAISE EXCEPTION 'POST carga calendario: % linhas de empresa ausentes', n_falta; END IF;
-  SELECT count(*) INTO n_falta FROM _carga_forn c
-   WHERE NOT EXISTS (SELECT 1 FROM public.calendario_operacao_fornecedor t
-                      WHERE t.data = c.data AND t.empresa = c.empresa AND t.fornecedor_nome = c.fornecedor_nome);
-  IF n_falta <> 0 THEN RAISE EXCEPTION 'POST carga calendario: % linhas de fornecedor ausentes', n_falta; END IF;
-  SELECT count(*) INTO n_nac FROM public.calendario_feriados
-   WHERE data BETWEEN '2027-01-01' AND '2027-12-31' AND tipo = 'nacional';
-  IF n_nac <> 10 THEN RAISE EXCEPTION 'POST carga calendario: feriados nacionais 2027 = % (esperado 10)', n_nac; END IF;
+  SELECT count(*) INTO n FROM _carga_emp;
+  IF n <> esp_emp THEN RAISE EXCEPTION 'POST carga calendario: carga de empresa tem % linhas (esperado %)', n, esp_emp; END IF;
+  FOR r IN SELECT * FROM (VALUES
+    ('emenda', 'COLACOR', 16),
+    ('emenda', 'OBEN', 16),
+    ('escala', 'COLACOR', 148),
+    ('escala', 'OBEN', 148),
+    ('feriado', 'COLACOR', 34),
+    ('feriado', 'OBEN', 34),
+    ('historico', 'COLACOR', 26),
+    ('historico', 'OBEN', 33),
+    ('manual', 'COLACOR', 12),
+    ('manual', 'OBEN', 12)
+  ) e(origem, empresa, n) LOOP
+    SELECT count(*) INTO n FROM _carga_emp WHERE origem = r.origem AND empresa = r.empresa;
+    IF n <> r.n THEN RAISE EXCEPTION 'POST carga calendario: % / % tem % linhas na carga (esperado %)', r.origem, r.empresa, n, r.n; END IF;
+  END LOOP;
+  SELECT count(*) INTO n FROM _carga_forn;
+  IF n <> esp_forn THEN RAISE EXCEPTION 'POST carga calendario: carga de fornecedor tem % linhas (esperado %)', n, esp_forn; END IF;
+  SELECT count(*) INTO n FROM _carga_fer;
+  IF n <> esp_nac THEN RAISE EXCEPTION 'POST carga calendario: carga de feriados tem % linhas (esperado %)', n, esp_nac; END IF;
+
+  SELECT count(*) INTO n FROM _carga_emp c JOIN public.calendario_operacao_empresa t USING (data, empresa);
+  IF n <> esp_emp THEN RAISE EXCEPTION 'POST carga calendario: destino tem % das % chaves de empresa', n, esp_emp; END IF;
+  SELECT count(*) INTO n FROM _carga_forn c JOIN public.calendario_operacao_fornecedor t USING (data, empresa, fornecedor_nome);
+  IF n <> esp_forn THEN RAISE EXCEPTION 'POST carga calendario: destino tem % das % chaves de fornecedor', n, esp_forn; END IF;
+  SELECT count(*) INTO n FROM _carga_fer c JOIN public.calendario_feriados t ON t.data = c.data AND t.tipo = 'nacional';
+  IF n <> esp_nac THEN RAISE EXCEPTION 'POST carga calendario: destino tem % dos % feriados nacionais', n, esp_nac; END IF;
+  FOR r IN SELECT y FROM generate_series(2027, 2030) y LOOP
+    SELECT count(*) INTO n FROM _carga_fer WHERE extract(year FROM data) = r.y;
+    IF n <> 10 THEN RAISE EXCEPTION 'POST carga calendario: carga com % nacionais em % (esperado 10)', n, r.y; END IF;
+    SELECT count(*) INTO n FROM public.calendario_feriados WHERE extract(year FROM data) = r.y AND tipo = 'nacional';
+    IF n < 10 THEN RAISE EXCEPTION 'POST carga calendario: destino com % nacionais em % (esperado >= 10)', n, r.y; END IF;
+  END LOOP;
   RAISE NOTICE 'POST carga calendario OK';
 END $$;
 

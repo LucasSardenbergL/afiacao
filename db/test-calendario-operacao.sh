@@ -21,7 +21,9 @@ if [ "${1:-}" = "--falsificar" ]; then
     sem_revoke_public_sem_post:APUBLIC1 teto_60_off:AREC7 fechado_peso_off:ANEG2 escrita_employee:ARLS3
     leitura_aberta:ARLS1 gate_customer_off:AGATE1 log_trigger_off:ALOG1 recebimento_sem_empresa:AREC9
     nf_sem_empresa:ASEMNF1 colacor_nao_vazio:ASEMNF_COLACOR fornecedor_sem_empresa:AFORN5
-    feriado_nacional_off:AFERIADO_NAC feriado_municipal_fecha:AFERIADO_MUNI feriados_rls_so_master:AFERIADO_EMP"
+    feriado_nacional_off:AFERIADO_NAC feriado_municipal_fecha:AFERIADO_MUNI feriados_rls_so_master:AFERIADO_EMP
+    carga_sem_linha_empresa:POST!carga_calendario carga_sem_linha_fornecedor:POST!carga_calendario
+    carga_sem_nacional_2030:POST!carga_calendario"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-calendario-operacao.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -78,6 +80,7 @@ PY
 REV_ANON="REVOKE ALL ON FUNCTION public.calendario_proximo_dia_recebimento(text, date) FROM PUBLIC, anon;"
 POST_ANON="IF has_function_privilege('anon', v_fn, 'EXECUTE') THEN"
 POST_PUBLIC="IF has_function_privilege('public', v_fn, 'EXECUTE') THEN"
+CARGA_SABOTAR=""
 FERIADOS_ROLE_EXTRA="employee"   # 4º termo da policy de prod de calendario_feriados
 case "${SABOTAGEM:-}" in
   "") ;;
@@ -115,6 +118,10 @@ case "${SABOTAGEM:-}" in
   # Sabota a FIXTURE (a policy de prod de calendario_feriados), não a migration: prova que o AFERIADO_EMP pega uma
   # RLS que esconda os feriados do employee — a função INVOKER os ignoraria em silêncio.
   feriados_rls_so_master) FERIADOS_ROLE_EXTRA="master" ;;
+  # Sabotam a CARGA (cópia do arquivo gerado): uma linha some do VALUES; a postcondição `POST carga calendario` TEM de abortar.
+  carga_sem_linha_empresa) CARGA_SABOTAR="  ('2027-02-09', 'OBEN', 'meia_equipe'" ;;
+  carga_sem_linha_fornecedor) CARGA_SABOTAR="  ('2026-12-22', 'OBEN', 'MASTERCOL" ;;
+  carga_sem_nacional_2030) CARGA_SABOTAR="  ('2030-11-02', 'Finados'" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
@@ -360,7 +367,12 @@ eq "ATRG trigger de log nao e executavel por PUBLIC/anon/authenticated" \
    "$(Pq -c "SELECT bool_or(has_function_privilege(r, 'public.calendario_operacao__registrar_log()', 'EXECUTE')) FROM unnest(ARRAY['sem_grant','anon','authenticated']) r")" "f"
 
 # ── Carga inicial 2025–2030 (Task 2): arquivo REAL, 2× (idempotência), contagens exatas ──────────────────────
-CARGA="$REPO_ROOT/db/carga-calendario-operacao-2025-2030.sql"
+CARGA="$(dirname "$DATA")/carga.sql"
+cp "$REPO_ROOT/db/carga-calendario-operacao-2025-2030.sql" "$CARGA"
+if [ -n "$CARGA_SABOTAR" ]; then
+  [ "$(grep -cF -- "$CARGA_SABOTAR" "$CARGA")" -ge 1 ] || { echo "padrao ausente na carga: $CARGA_SABOTAR"; exit 2; }
+  grep -vF -- "$CARGA_SABOTAR" "$CARGA" > "$CARGA.tmp"; mv "$CARGA.tmp" "$CARGA"
+fi
 P -q -c "TRUNCATE public.calendario_operacao_empresa, public.calendario_operacao_fornecedor; DELETE FROM public.calendario_feriados WHERE data >= '2027-01-01'" >/dev/null
 LOGC0="$(Pq -c "SELECT count(*) FROM public.calendario_operacao_log")"
 PGOPTIONS="-c client_min_messages=warning" P -q -f "$CARGA" >/dev/null

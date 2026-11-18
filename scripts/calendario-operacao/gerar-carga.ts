@@ -196,6 +196,7 @@ export function gerarSql(c: ReturnType<typeof gerarCarga>): string {
   const fer = c.feriadosNacionais.map((l) => `  (${q(l.data)}, ${q(l.nome)}, ${q(l.tipo)}, ${q(l.observacoes)})`).join(',\n');
   const porOrigem = new Map<string, number>();
   for (const l of c.empresa) porOrigem.set(`${l.origem}/${l.empresa}`, (porOrigem.get(`${l.origem}/${l.empresa}`) ?? 0) + 1);
+  const esperadoOrigem = [...porOrigem.entries()].sort().map(([k, n]) => { const [o, e] = k.split('/'); return `    (${q(o)}, ${q(e)}, ${n})`; }).join(',\n');
   const resumo = [...porOrigem.entries()].sort().map(([k, n]) => `--   ${k}: ${n}`).join('\n');
   return `-- Carga inicial 2025–2030 do calendário de operação (Etapa 1, Task 2). GERADO por
 -- scripts/calendario-operacao/gerar-carga.ts — não edite à mão; regere (\`bun scripts/calendario-operacao/gerar-carga.ts\`).
@@ -235,20 +236,41 @@ INSERT INTO public.calendario_feriados (data, nome, tipo, observacoes)
 SELECT data, nome, tipo, observacoes FROM _carga_fer
 ON CONFLICT (data) DO NOTHING;
 
--- Postcondição: toda chave da carga existe (nova ou preexistente) e os nacionais 2027 são exatamente 10.
+-- Postcondição com contagens ESPERADAS embutidas como constante (geradas junto com os VALUES, mas conferidas contra
+-- elas): carga incompleta (linha perdida no VALUES) e destino sem as chaves falham. Presença, não inserção: a 2ª
+-- execução e a edição do founder (ON CONFLICT DO NOTHING) não reprovam.
 DO $$
-DECLARE n_falta int; n_nac int;
+DECLARE
+  esp_emp  CONSTANT int := ${c.empresa.length};
+  esp_forn CONSTANT int := ${c.fornecedor.length};
+  esp_nac  CONSTANT int := ${c.feriadosNacionais.length};
+  n int; r record;
 BEGIN
-  SELECT count(*) INTO n_falta FROM _carga_emp c
-   WHERE NOT EXISTS (SELECT 1 FROM public.calendario_operacao_empresa t WHERE t.data = c.data AND t.empresa = c.empresa);
-  IF n_falta <> 0 THEN RAISE EXCEPTION 'POST carga calendario: % linhas de empresa ausentes', n_falta; END IF;
-  SELECT count(*) INTO n_falta FROM _carga_forn c
-   WHERE NOT EXISTS (SELECT 1 FROM public.calendario_operacao_fornecedor t
-                      WHERE t.data = c.data AND t.empresa = c.empresa AND t.fornecedor_nome = c.fornecedor_nome);
-  IF n_falta <> 0 THEN RAISE EXCEPTION 'POST carga calendario: % linhas de fornecedor ausentes', n_falta; END IF;
-  SELECT count(*) INTO n_nac FROM public.calendario_feriados
-   WHERE data BETWEEN '2027-01-01' AND '2027-12-31' AND tipo = 'nacional';
-  IF n_nac <> 10 THEN RAISE EXCEPTION 'POST carga calendario: feriados nacionais 2027 = % (esperado 10)', n_nac; END IF;
+  SELECT count(*) INTO n FROM _carga_emp;
+  IF n <> esp_emp THEN RAISE EXCEPTION 'POST carga calendario: carga de empresa tem % linhas (esperado %)', n, esp_emp; END IF;
+  FOR r IN SELECT * FROM (VALUES
+${esperadoOrigem}
+  ) e(origem, empresa, n) LOOP
+    SELECT count(*) INTO n FROM _carga_emp WHERE origem = r.origem AND empresa = r.empresa;
+    IF n <> r.n THEN RAISE EXCEPTION 'POST carga calendario: % / % tem % linhas na carga (esperado %)', r.origem, r.empresa, n, r.n; END IF;
+  END LOOP;
+  SELECT count(*) INTO n FROM _carga_forn;
+  IF n <> esp_forn THEN RAISE EXCEPTION 'POST carga calendario: carga de fornecedor tem % linhas (esperado %)', n, esp_forn; END IF;
+  SELECT count(*) INTO n FROM _carga_fer;
+  IF n <> esp_nac THEN RAISE EXCEPTION 'POST carga calendario: carga de feriados tem % linhas (esperado %)', n, esp_nac; END IF;
+
+  SELECT count(*) INTO n FROM _carga_emp c JOIN public.calendario_operacao_empresa t USING (data, empresa);
+  IF n <> esp_emp THEN RAISE EXCEPTION 'POST carga calendario: destino tem % das % chaves de empresa', n, esp_emp; END IF;
+  SELECT count(*) INTO n FROM _carga_forn c JOIN public.calendario_operacao_fornecedor t USING (data, empresa, fornecedor_nome);
+  IF n <> esp_forn THEN RAISE EXCEPTION 'POST carga calendario: destino tem % das % chaves de fornecedor', n, esp_forn; END IF;
+  SELECT count(*) INTO n FROM _carga_fer c JOIN public.calendario_feriados t ON t.data = c.data AND t.tipo = 'nacional';
+  IF n <> esp_nac THEN RAISE EXCEPTION 'POST carga calendario: destino tem % dos % feriados nacionais', n, esp_nac; END IF;
+  FOR r IN SELECT y FROM generate_series(2027, 2030) y LOOP
+    SELECT count(*) INTO n FROM _carga_fer WHERE extract(year FROM data) = r.y;
+    IF n <> 10 THEN RAISE EXCEPTION 'POST carga calendario: carga com % nacionais em % (esperado 10)', n, r.y; END IF;
+    SELECT count(*) INTO n FROM public.calendario_feriados WHERE extract(year FROM data) = r.y AND tipo = 'nacional';
+    IF n < 10 THEN RAISE EXCEPTION 'POST carga calendario: destino com % nacionais em % (esperado >= 10)', n, r.y; END IF;
+  END LOOP;
   RAISE NOTICE 'POST carga calendario OK';
 END $$;
 
