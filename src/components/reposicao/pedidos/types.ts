@@ -66,6 +66,8 @@ export interface PedidoSugerido {
   // Calendário de operação: a edge de disparo grava a chegada prevista e se o calendário (recesso/fechamento do
   // fornecedor ou da empresa) EMPURROU essa data. `select('*')` traz; antes da migration, ausentes.
   data_recebimento_prevista?: string | null;
+  // Entrega confirmada no portal do fornecedor (YYYY-MM-DD) — base da prévia "recebe em" antes do disparo.
+  portal_data_entrega?: string | null;
   recebimento_ajustado_calendario?: boolean | null;
   // Resposta do disparo (edge disparar-pedidos-aprovados). Em status='falha_envio',
   // resposta_canal.erro carrega o MOTIVO real da falha (ex.: "SKU(s) sem custo (preço

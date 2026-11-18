@@ -175,6 +175,65 @@ export function useResumoAntecipar(empresa: EmpresaCalendario, fimRecesso: strin
   });
 }
 
+/* ─── prévia "recebe em" do pedido ainda não disparado (spec §6.3.1) ─── */
+
+/**
+ * LT logístico por fornecedor (a MESMA fonte da edge: `fornecedor_habilitado_reposicao.lt_logistica_dias`, casada
+ * por nome EXATO). Nome repetido ⇒ `null` (ambíguo); LT NULL ⇒ `null` — a prévia NÃO usa o `?? 7` da edge.
+ */
+export function useLtFornecedores(empresa: string) {
+  return useQuery({
+    queryKey: [RAIZ, 'lt-fornecedores', empresa],
+    queryFn: async () => {
+      const linhas = await fetchAllPages<{ fornecedor_nome: string; lt_logistica_dias: number | null }>(
+        (de, ate) =>
+          supabase
+            .from('fornecedor_habilitado_reposicao')
+            .select('fornecedor_nome, lt_logistica_dias')
+            .eq('empresa', empresa)
+            .order('fornecedor_nome', { ascending: true })
+            .range(de, ate),
+        'fornecedor_habilitado_reposicao',
+      );
+      const mapa = new Map<string, number | null>();
+      for (const l of linhas) {
+        mapa.set(l.fornecedor_nome, mapa.has(l.fornecedor_nome) ? null : (l.lt_logistica_dias ?? null));
+      }
+      return mapa;
+    },
+    staleTime: 10 * 60_000,
+  });
+}
+
+export type PrevisaoPedido = { promessa: string | null; recebimento: string | null };
+
+/** Uma linha sempre (a RPC devolve NULL/NULL quando falta dado). Erro ou linha ausente LANÇA. */
+export function usePrevisaoPedido(p: {
+  empresa: string;
+  fornecedor: string;
+  portalData: string | null;
+  lt: number | null;
+  enabled: boolean;
+}) {
+  return useQuery({
+    queryKey: [RAIZ, 'previsao-pedido', p.empresa, p.fornecedor, p.portalData, p.lt],
+    enabled: p.enabled,
+    queryFn: async (): Promise<PrevisaoPedido> => {
+      const { data, error } = await supabase.rpc('calendario_previsao_pedido', {
+        p_empresa: p.empresa,
+        p_fornecedor: p.fornecedor,
+        // NULL é contrato da RPC (sem portal ⇒ hoje + LT; sem LT ⇒ NULL/NULL); o tipo gerado não marca nullable.
+        p_portal_data: p.portalData as string,
+        p_lt: p.lt as number,
+      });
+      if (error) throw error;
+      const linha = Array.isArray(data) ? data[0] : undefined;
+      if (!linha) throw new Error('Prévia do recebimento veio sem linha.');
+      return { promessa: linha.promessa ?? null, recebimento: linha.recebimento ?? null };
+    },
+  });
+}
+
 /* ─── escritas ─── */
 
 export type SalvarDia = {

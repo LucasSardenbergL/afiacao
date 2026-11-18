@@ -136,3 +136,23 @@ export function rotuloRecebeEm(p: {
   const d = p.data_recebimento_prevista;
   return `recebe em ${d.slice(8, 10)}/${d.slice(5, 7)}`;
 }
+
+/** Status em que o pedido AINDA não foi disparado: a data vem da prévia (RPC), não das colunas gravadas. */
+export const STATUS_PREVIA_RECEBIMENTO: readonly string[] = [
+  'pendente_aprovacao',
+  'aprovado_aguardando_disparo',
+  'bloqueado_guardrail',
+];
+
+/**
+ * Prévia "recebe em DD/MM (prévia)" do pedido não disparado. `indisponivel` = a RPC falhou ou não conseguiu calcular
+ * (NULL) — a tela diz isso em vez de calar. `null` = calculou e o calendário da empresa não empurra (nada a mostrar).
+ */
+export function rotuloPreviaRecebeEm(
+  p: { promessa: string | null; recebimento: string | null } | 'erro',
+): { tipo: 'recebe'; texto: string } | { tipo: 'indisponivel'; texto: string } | null {
+  if (p === 'erro' || !p.promessa || !p.recebimento) return { tipo: 'indisponivel', texto: 'previsão indisponível' };
+  if (p.recebimento === p.promessa) return null;
+  const d = p.recebimento;
+  return { tipo: 'recebe', texto: `recebe em ${d.slice(8, 10)}/${d.slice(5, 7)} (prévia)` };
+}
