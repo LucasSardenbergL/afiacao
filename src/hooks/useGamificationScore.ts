@@ -58,12 +58,12 @@ export function useGamificationScore(userId?: string) {
         supabase.from('orders').select('status, created_at').eq('user_id', targetUserId),
       ]);
 
-      // As CINCO leituras são insumo de um score que é PERSISTIDO logo abaixo
-      // (`upsert` em `gamification_scores`) e alimenta o ranking. Sem esta checagem, uma
-      // falha de RLS/timeout virava "0 ferramentas / 0 treinamentos / 0 indicações" e o
-      // score deflacionado ia para o banco como se fosse medição real — o mesmo padrão do
-      // cron que gravava caixa zero na âncora desta classe (#1600). Lançar cai no `catch`
-      // abaixo: `data` fica null, a tela não mostra score, e NADA é gravado.
+      // As CINCO leituras são insumo do score que a tela mostra. Sem esta checagem, uma falha
+      // de RLS/timeout virava "0 ferramentas / 0 treinamentos / 0 indicações" e o score
+      // deflacionado aparecia como se fosse medição real — o mesmo padrão do cron que gravava
+      // caixa zero na âncora desta classe (#1600). Lançar cai no `catch` abaixo: `data` fica
+      // null e a tela não mostra score. (Até 2026-11 o score também era gravado em
+      // `gamification_scores`; ver a nota no fim do cálculo.)
       //
       // Checagem NOMINAL (uma linha por resposta) e não um laço sobre um array de pares: o
       // gate desta classe resolve a origem do identificador e procura `<ident>.error` no
@@ -156,12 +156,12 @@ export function useGamificationScore(userId?: string) {
 
       setData(scoreData);
 
-      // Upsert to DB for ranking
-      await supabase.from('gamification_scores').upsert({
-        user_id: targetUserId,
-        ...scoreData,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'user_id' });
+      // O score NÃO é mais gravado em `gamification_scores` (scanner Lovable Security, lote 6 —
+      // docs/historico/scanner-lovable-rescan-lote6.md). O cálculo roda no navegador, e a policy
+      // deixava o próprio usuário gravar a linha dele: qualquer logado escrevia o score que
+      // quisesse direto pela API. As duas policies de escrita do cliente saíram junto com este
+      // upsert. Se o módulo voltar (está congelado no manifesto), o ranking tem de ser calculado
+      // no servidor — não religar a gravação pelo cliente.
 
     } catch (err) {
       console.error('Error computing gamification score:', err);
