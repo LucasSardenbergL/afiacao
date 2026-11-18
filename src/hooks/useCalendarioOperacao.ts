@@ -68,23 +68,26 @@ export function useFeriados() {
   });
 }
 
+/** Teto da janela da detecção (dias, inclusive hoje) — é o que mantém a RPC numa página só. */
+const JANELA_DIAS_SEM_NF = 366;
+
 /** Detecção de dia útil sem NF — a RPC só devolve algo para a OBEN (COLACOR: `enabled:false`). */
 export function useDiasSemNf(empresa: EmpresaCalendario, hoje: string) {
   return useQuery({
     queryKey: [RAIZ, 'dias-sem-nf', empresa, hoje],
     enabled: empresa === 'OBEN',
     queryFn: async () => {
-      const linhas = await fetchAllPages<string>(
-        (de, ate) =>
-          supabase
-            .rpc('calendario_dias_sem_nf', { p_empresa: empresa, p_de: addDias(hoje, -365), p_ate: hoje })
-            // SEM `.order` de propósito: ordenar SETOF date pelo nome da função é contrato do PostgREST
-            // nunca provado aqui, e se ele recusar o painel inteiro cai. A janela é de 366 dias ⇒ no
-            // máximo 366 linhas, sempre UMA página (< 1.000): `.range` sem ordem não repete nem omite
-            // linha entre páginas porque não há segunda página. A ordem é feita no cliente.
-            .range(de, ate),
-        'calendario_dias_sem_nf',
-      );
+      // Chamada ÚNICA, sem paginação: a janela é travada em 366 dias (hoje−365..hoje) e a RPC devolve no
+      // máximo 1 linha por dia ⇒ ≤ 366 linhas, abaixo da capa de 1.000 do PostgREST por construção.
+      // SEM `.order` de propósito: ordenar SETOF date pelo nome da função é contrato do PostgREST nunca
+      // provado aqui. A ordem é feita no cliente.
+      const { data, error } = await supabase.rpc('calendario_dias_sem_nf', {
+        p_empresa: empresa,
+        p_de: addDias(hoje, -JANELA_DIAS_SEM_NF + 1),
+        p_ate: hoje,
+      });
+      if (error) throw error;
+      const linhas = (data ?? []) as unknown as string[];
       return [...new Set(linhas.map((d) => String(d).slice(0, 10)))].sort();
     },
   });
