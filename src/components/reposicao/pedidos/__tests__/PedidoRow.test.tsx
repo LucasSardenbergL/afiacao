@@ -1,7 +1,34 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PedidoRow } from '../PedidoRow';
 import type { PedidoSugerido } from '../types';
+
+// Supabase mockado por fonte: a prévia "recebe em" (pedido não disparado) lê o LT e chama a RPC.
+type Resposta = { data: unknown; error: { message: string } | null };
+let previa: Resposta = { data: [{ promessa: null, recebimento: null }], error: null };
+let lts: Resposta = { data: [], error: null };
+const chamadasRpc: { nome: string; args: Record<string, unknown> }[] = [];
+function builder(resposta: () => Resposta) {
+  const q: Record<string, unknown> = {};
+  for (const m of ['select', 'order', 'range', 'eq']) q[m] = () => q;
+  q.then = (ok: (r: Resposta) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(resposta()).then(ok, ko);
+  return q;
+}
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: {
+    from: () => builder(() => lts),
+    rpc: (nome: string, args: Record<string, unknown>) => {
+      chamadasRpc.push({ nome, args });
+      return builder(() => previa);
+    },
+  },
+}));
+beforeEach(() => {
+  previa = { data: [{ promessa: null, recebimento: null }], error: null };
+  lts = { data: [], error: null };
+  chamadasRpc.length = 0;
+});
 
 function ped(partial: Partial<PedidoSugerido>): PedidoSugerido {
   return partial as unknown as PedidoSugerido;
@@ -13,7 +40,9 @@ function renderRow(
 ) {
   const onDisparar = vi.fn();
   const onOverride = opts?.onDispararIgnorandoMinimo;
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   const utils = render(
+    <QueryClientProvider client={qc}>
     <table>
       <tbody>
         <PedidoRow
@@ -26,7 +55,8 @@ function renderRow(
           disparando={false}
         />
       </tbody>
-    </table>,
+    </table>
+    </QueryClientProvider>,
   );
   return { onDisparar, ...utils };
 }
@@ -167,5 +197,51 @@ describe('PedidoRow — override do mínimo de faturamento ("Disparar mesmo assi
     fireEvent.click(screen.getByRole('button', { name: /Disparar mesmo assim/i }));
     fireEvent.click(screen.getByRole('button', { name: /Confirmar e disparar/i }));
     expect(over).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PedidoRow — "recebe em" antes do disparo (prévia pela RPC, spec §6.3.1)', () => {
+  const base = { id: 9, empresa: 'OBEN', fornecedor_nome: 'RENNER SAYERLACK S/A', num_skus: 1, valor_total: 10 };
+
+  it('pendente com portal: empresa fechada na promessa → "recebe em 04/01 (prévia)" e a RPC recebe o portal', async () => {
+    previa = { data: [{ promessa: '2026-12-23', recebimento: '2027-01-04' }], error: null };
+    renderRow(ped({ ...base, status: 'pendente_aprovacao', portal_data_entrega: '2026-12-21' }));
+    expect((await screen.findByTestId('previa-recebe-em')).textContent).toContain('recebe em 04/01 (prévia)');
+    expect(chamadasRpc[0]).toMatchObject({ nome: 'calendario_previsao_pedido', args: { p_empresa: 'OBEN', p_portal_data: '2026-12-21' } });
+  });
+
+  it('aprovado sem portal: usa o LT do fornecedor habilitado (nome exato)', async () => {
+    lts = { data: [{ fornecedor_nome: 'RENNER SAYERLACK S/A', lt_logistica_dias: 5 }], error: null };
+    previa = { data: [{ promessa: '2026-12-24', recebimento: '2027-01-04' }], error: null };
+    renderRow(ped({ ...base, status: 'aprovado_aguardando_disparo', portal_data_entrega: null }));
+    expect(await screen.findByTestId('previa-recebe-em')).toBeTruthy();
+    expect(chamadasRpc[0].args).toMatchObject({ p_portal_data: null, p_lt: 5 });
+  });
+
+  it('RPC com erro → "previsão indisponível", nunca silêncio', async () => {
+    previa = { data: null, error: { message: 'boom' } };
+    renderRow(ped({ ...base, status: 'bloqueado_guardrail', portal_data_entrega: '2026-12-21' }));
+    expect((await screen.findByTestId('previa-recebe-em-indisponivel')).textContent).toContain('previsão indisponível');
+    expect(screen.queryByTestId('previa-recebe-em')).toBeNull();
+  });
+
+  it('RPC devolve NULL (sem LT / sem calendário) → "previsão indisponível"', async () => {
+    renderRow(ped({ ...base, status: 'pendente_aprovacao', portal_data_entrega: '2026-12-21' }));
+    expect(await screen.findByTestId('previa-recebe-em-indisponivel')).toBeTruthy();
+  });
+
+  it('CONTROLE: recebimento = promessa → nada (o calendário não empurra)', async () => {
+    previa = { data: [{ promessa: '2026-12-09', recebimento: '2026-12-09' }], error: null };
+    renderRow(ped({ ...base, status: 'pendente_aprovacao', portal_data_entrega: '2026-12-07' }));
+    await vi.waitFor(() => expect(chamadasRpc.length).toBe(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId('previa-recebe-em')).toBeNull();
+    expect(screen.queryByTestId('previa-recebe-em-indisponivel')).toBeNull();
+  });
+
+  it('disparado: usa as colunas gravadas, sem chamar a RPC', () => {
+    renderRow(ped({ ...base, status: 'disparado', recebimento_ajustado_calendario: true, data_recebimento_prevista: '2027-01-05' }));
+    expect(screen.getByTestId('recebe-em-calendario').textContent).toContain('recebe em 05/01');
+    expect(chamadasRpc.length).toBe(0);
   });
 });

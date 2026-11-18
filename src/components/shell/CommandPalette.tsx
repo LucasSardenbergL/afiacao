@@ -13,7 +13,7 @@ import {
   LayoutDashboard, ShoppingCart, Users, Wrench, Package, Truck,
   BarChart3, DollarSign, Palette, Settings, BookOpen, PlusCircle,
   ClipboardList, FileCheck, Boxes, Beaker, Shield, User, Beaker as Bottle,
-  FileText, Loader2, Clock, X, Crown,
+  FileText, Loader2, Clock, X, Crown, CalendarDays,
 } from 'lucide-react';
 import {
   useCommandsRegistry,
@@ -98,6 +98,7 @@ export function CommandPalette() {
       { id: 'nav.estoque-recebimento', label: 'Recebimento (gestão)', group: 'Estoque', icon: Boxes, perform: go('/admin/estoque/recebimento') },
       // Reposição
             { id: 'nav.repo-pedidos', label: 'Pedidos de compra sugeridos', group: 'Reposição', icon: Truck, keywords: ['compras', 'comprador', 'cockpit'], perform: go('/admin/reposicao/pedidos') },
+      { id: 'nav.repo-calendario', label: 'Calendário de operação', group: 'Reposição', icon: CalendarDays, keywords: ['recesso', 'feriado', 'emenda', 'dias fechados'], perform: go('/admin/reposicao/calendario') },
       { id: 'nav.repo-alertas', label: 'Alertas de reposição', group: 'Reposição', icon: BarChart3, perform: go('/admin/reposicao/alertas') },
       // Fila do Top 61 do Raio-X: abre a aba já em mercadoria + Top 61 + pendentes e o 1º item (meta de 25/11).
       { id: 'nav.repo-raio-x-top61', label: 'Raio-X: decidir Top 61', group: 'Reposição', icon: BarChart3, keywords: ['estoque parado', 'encalhe', 'liquidar', 'baixo giro'], perform: go('/admin/reposicao/baixo-giro?aba=raio-x&rxTop=1&rxStatus=pendente&rxFila=1') },

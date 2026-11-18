@@ -271,6 +271,15 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 200, prova: '1 linha por CNPJ DISTINTO pedido (`SELECT … FROM pedidos`, `pedidos` = `DISTINCT unnest(p_cnpjs)`), e a função recusa com 22023 acima de 200 (`cardinality(p_cnpjs) > 200`, 20261021090000); o caller pede 1 página da fila (50)' }],
   ['buscar_skus_candidatos @ src/hooks/useProductSpecLink.ts',
     { tipo: 'estrutural', teto: 100, prova: '`LIMIT 100` constante no `RETURN QUERY` sobre `omie_products`' }],
+  // Calendário de operação (2026-11-18, 20261119100000/120000 — desta branch, conferidas no arquivo; ainda não em prod).
+  // `calendario_dias_sem_nf` é SETOF date: paginar exigiria `.order` pelo nome da função (contrato não provado) —
+  // e `.range` sem ordem é o G7 do paginacao-artesanal-gate. O teto é do caller, por construção, como LOTE_RPC_SKUS.
+  ['calendario_dias_sem_nf @ src/hooks/useCalendarioOperacao.ts',
+    { tipo: 'estrutural', teto: 366, prova: '`SELECT g.d FROM generate_series(p_de, p_ate, 1 day)` — ≤1 linha por dia; o hook passa a janela fixa JANELA_DIAS_SEM_NF=366 (hoje−365..hoje)' }],
+  ['calendario_itens_antecipar_resumo @ src/hooks/useCalendarioOperacao.ts',
+    { tipo: 'estrutural', teto: 1, prova: '`SELECT count(*), count(*) FILTER …, count(*) FILTER … FROM calendario_antecipar_avaliacao(…)` — agregado sem GROUP BY, 1 linha sempre (db/test-calendario-operacao.sh ARES*)' }],
+  ['calendario_previsao_pedido @ src/hooks/useCalendarioOperacao.ts',
+    { tipo: 'estrutural', teto: 1, prova: 'um `RETURN NEXT` fora de laço (db/test-calendario-operacao.sh APREV_1LINHA)' }],
 
   // ── Teto MEDIDO nos dados: 2ª fatia ────────────────────────────────────────────────────
   ['reposicao_pos_candidatos @ src/pages/AdminReposicaoPedidos.tsx',

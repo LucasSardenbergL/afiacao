@@ -484,6 +484,99 @@ export type Database = {
         }
         Relationships: []
       }
+      calendario_operacao_empresa: {
+        Row: {
+          atualizado_em: string
+          data: string
+          decidido_por: string | null
+          empresa: string
+          motivo: string | null
+          origem: string
+          peso: number
+          status: string
+        }
+        Insert: {
+          atualizado_em?: string
+          data: string
+          decidido_por?: string | null
+          empresa: string
+          motivo?: string | null
+          origem: string
+          peso: number
+          status: string
+        }
+        Update: {
+          atualizado_em?: string
+          data?: string
+          decidido_por?: string | null
+          empresa?: string
+          motivo?: string | null
+          origem?: string
+          peso?: number
+          status?: string
+        }
+        Relationships: []
+      }
+      calendario_operacao_fornecedor: {
+        Row: {
+          atualizado_em: string
+          data: string
+          decidido_por: string | null
+          empresa: string
+          fornecedor_nome: string
+          motivo: string | null
+          origem: string
+        }
+        Insert: {
+          atualizado_em?: string
+          data: string
+          decidido_por?: string | null
+          empresa: string
+          fornecedor_nome: string
+          motivo?: string | null
+          origem: string
+        }
+        Update: {
+          atualizado_em?: string
+          data?: string
+          decidido_por?: string | null
+          empresa?: string
+          fornecedor_nome?: string
+          motivo?: string | null
+          origem?: string
+        }
+        Relationships: []
+      }
+      calendario_operacao_log: {
+        Row: {
+          antes: Json | null
+          depois: Json | null
+          em: string
+          id: number
+          operacao: string
+          por: string | null
+          tabela: string
+        }
+        Insert: {
+          antes?: Json | null
+          depois?: Json | null
+          em?: string
+          id?: number
+          operacao: string
+          por?: string | null
+          tabela: string
+        }
+        Update: {
+          antes?: Json | null
+          depois?: Json | null
+          em?: string
+          id?: number
+          operacao?: string
+          por?: string | null
+          tabela?: string
+        }
+        Relationships: []
+      }
       call_log: {
         Row: {
           acknowledged_at: string | null
@@ -10266,6 +10359,7 @@ export type Database = {
           condicao_portal_lida: string | null
           criado_em: string | null
           data_ciclo: string
+          data_recebimento_prevista: string | null
           delta_vs_anterior_perc: number | null
           dias_parcelas: string | null
           disparo_claim_em: string | null
@@ -10308,6 +10402,7 @@ export type Database = {
           portal_situacao_protocolo: string | null
           portal_situacao_texto: string | null
           portal_tentativas: number | null
+          recebimento_ajustado_calendario: boolean | null
           resposta_canal: Json | null
           split_lote: number | null
           split_parent_id: number | null
@@ -10340,6 +10435,7 @@ export type Database = {
           condicao_portal_lida?: string | null
           criado_em?: string | null
           data_ciclo?: string
+          data_recebimento_prevista?: string | null
           delta_vs_anterior_perc?: number | null
           dias_parcelas?: string | null
           disparo_claim_em?: string | null
@@ -10382,6 +10478,7 @@ export type Database = {
           portal_situacao_protocolo?: string | null
           portal_situacao_texto?: string | null
           portal_tentativas?: number | null
+          recebimento_ajustado_calendario?: boolean | null
           resposta_canal?: Json | null
           split_lote?: number | null
           split_parent_id?: number | null
@@ -10414,6 +10511,7 @@ export type Database = {
           condicao_portal_lida?: string | null
           criado_em?: string | null
           data_ciclo?: string
+          data_recebimento_prevista?: string | null
           delta_vs_anterior_perc?: number | null
           dias_parcelas?: string | null
           disparo_claim_em?: string | null
@@ -10456,6 +10554,7 @@ export type Database = {
           portal_situacao_protocolo?: string | null
           portal_situacao_texto?: string | null
           portal_tentativas?: number | null
+          recebimento_ajustado_calendario?: boolean | null
           resposta_canal?: Json | null
           split_lote?: number | null
           split_parent_id?: number | null
@@ -24439,6 +24538,65 @@ export type Database = {
           descricao: string
           omie_codigo_produto: number
         }[]
+      }
+      calendario_antecipar_avaliacao: {
+        Args: { p_empresa: string; p_fim_recesso: string; p_hoje?: string }
+        Returns: {
+          cobertura_dias: number
+          dias_ate_chegada_pos_recesso: number
+          fornecedor_nome: string
+          motivo: string
+          sku_codigo_omie: number
+          sku_descricao: string
+        }[]
+      }
+      calendario_dias_sem_nf: {
+        Args: { p_ate: string; p_de: string; p_empresa: string }
+        Returns: string[]
+      }
+      calendario_itens_antecipar: {
+        Args: { p_empresa: string; p_fim_recesso: string; p_hoje?: string }
+        Returns: {
+          cobertura_dias: number
+          dias_ate_chegada_pos_recesso: number
+          fornecedor_nome: string
+          sku_codigo_omie: number
+          sku_descricao: string
+        }[]
+      }
+      calendario_itens_antecipar_resumo: {
+        Args: { p_empresa: string; p_fim_recesso: string; p_hoje?: string }
+        Returns: {
+          avaliados: number
+          listados: number
+          sem_dado: number
+        }[]
+      }
+      calendario_previsao_pedido: {
+        Args: {
+          p_empresa: string
+          p_fornecedor: string
+          p_hoje?: string
+          p_lt: number
+          p_portal_data: string
+        }
+        Returns: {
+          promessa: string
+          recebimento: string
+        }[]
+      }
+      calendario_proximo_dia_recebimento: {
+        Args: { p_data: string; p_empresa: string }
+        Returns: string
+      }
+      calendario_somar_dias_uteis_fornecedor: {
+        Args: {
+          p_de: string
+          p_empresa: string
+          p_fornecedor: string
+          p_n: number
+        }
+        Returns: string
       }
       cancelar_pedido_sugerido: {
         Args: {

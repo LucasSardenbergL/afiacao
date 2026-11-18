@@ -8,7 +8,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { chamarOmie } from "../_shared/omie-cliente.ts";
 import { hojeSP } from "../_shared/hoje-sp.ts";
-import { dataPrevisaoOmie } from "./previsao.ts";
+import { colunasRecebimentoCalendario, previsaoComCalendario } from "./previsao.ts";
 import { abririaEnvioNovoAoPortal, ehRecusaDefinitivaPortal, MENSAGEM_PORTAL_FECHADO, mensagemRecusaDefinitiva, portalSayerlackFechado } from "./janela-portal.ts";
 import { montarProdutosIncluir } from "./produto-po.ts";
 import { esperaPermitidaMs } from "./espera-split.ts";
@@ -1316,11 +1316,34 @@ async function processarPedido(
     // fallback de lead time logístico se não capturamos a data do portal
     // (ex.: caminho PR1.5 do recorder fallback, ou pedidos antigos antes da
     // coluna existir). O fallback conta a partir de HOJE em SP (`./previsao.ts`).
-    const dDtPrevisao = dataPrevisaoOmie({
+    // Calendário de operação (spec 2026-11-18): os dias úteis são os do FORNECEDOR (feriado nacional,
+    // recesso) e a data em que NÓS recebemos (1º dia aberto da empresa ≥ promessa) vai para
+    // `data_recebimento_prevista` no MESMO update do desfecho (f). RPC com erro → o helper volta INTEIRO ao
+    // legado (`dataPrevisaoOmie`, colunas null) — o calendário nunca impede a compra.
+    const previsao = await previsaoComCalendario({
       portalDataEntrega: pedido.portal_data_entrega,
       ltDias,
       agora: new Date(),
+      somarFornecedor: async (de, n) => {
+        const { data, error } = await db.rpc("calendario_somar_dias_uteis_fornecedor", {
+          p_empresa: pedido.empresa,
+          p_fornecedor: pedido.fornecedor_nome,
+          p_de: de,
+          p_n: n,
+        });
+        if (error) throw new Error(`calendario_somar_dias_uteis_fornecedor: ${mensagemDeErro(error) ?? "sem mensagem"}`);
+        return typeof data === "string" ? data : null;
+      },
+      proximoRecebimento: async (d) => {
+        const { data, error } = await db.rpc("calendario_proximo_dia_recebimento", {
+          p_empresa: pedido.empresa,
+          p_data: d,
+        });
+        if (error) throw new Error(`calendario_proximo_dia_recebimento: ${mensagemDeErro(error) ?? "sem mensagem"}`);
+        return typeof data === "string" ? data : null;
+      },
     });
+    const dDtPrevisao = previsao.dDtPrevisao;
 
     const cabecalho_incluir: Record<string, unknown> = {
       cCodIntPed: `AFI-${pedido.id}`,
@@ -1411,6 +1434,11 @@ async function processarPedido(
         // coluna intacta — o trigger usa GREATEST, que ignora NULL.
         omie_po_inexistente_antes_de: marcoPreOmie,
         horario_disparo_real: new Date().toISOString(),
+        // Calendário de operação: recebimento ajustado do nosso lado (o dDtPrevisao do Omie é a promessa).
+        // No legado (calendário indisponível) as duas chaves NÃO entram — ficam NULL, nunca "sem ajuste" — e
+        // um bundle publicado antes da migration 20261119100000 não manda coluna desconhecida ao PostgREST
+        // (que recusaria o update e deixaria o PO `disparado_sem_registro`). Testado em previsao_test.ts.
+        ...colunasRecebimentoCalendario(previsao),
         canal_usado: result.canal,
         resposta_canal: {
           ...overrideTag,

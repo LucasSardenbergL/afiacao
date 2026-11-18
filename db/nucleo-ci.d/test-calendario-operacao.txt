@@ -1,0 +1,7 @@
+# Calendário de operação (Etapa 1, Task 1): tabelas empresa/fornecedor/log, RLS staff-lê/master-escreve, trigger de
+# log, REVOKE de PUBLIC e anon nas 3 funções de data (próximo dia de recebimento com teto de 60 dias → NULL, dias
+# úteis do fornecedor com lower(btrim), dias sem NF até hoje(SP)−3). 22 sabotagens, uma camada por vez; feriado nacional fecha fornecedor (municipal não).
+# Task 4b: calendario_itens_antecipar (sinal "antecipar antes do recesso", só leitura) — +13 asserts, +16 sabotagens.
+# Onda final: antecipar soma o trânsito do app (em_transito do motor), resumo avaliados/listados/sem_dado, prévia
+# do recebimento (calendario_previsao_pedido) e service_role nas postcondições — +26 asserts, +14 sabotagens.
+db/test-calendario-operacao.sh 117  falsificar=52

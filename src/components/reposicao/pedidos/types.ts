@@ -63,6 +63,12 @@ export interface PedidoSugerido {
   // 5.2: divergência portal × app aberta (sayerlack_portal_divergencia.id). Não nula ⇒ o claim recusa; a saída é
   // aceitar o portal (sayerlack_aceitar_portal) ou o portal voltar. Escritor único: sayerlack_conferir_portal.
   portal_divergencia_aberta_id?: number | null;
+  // Calendário de operação: a edge de disparo grava a chegada prevista e se o calendário (recesso/fechamento do
+  // fornecedor ou da empresa) EMPURROU essa data. `select('*')` traz; antes da migration, ausentes.
+  data_recebimento_prevista?: string | null;
+  // Entrega confirmada no portal do fornecedor (YYYY-MM-DD) — base da prévia "recebe em" antes do disparo.
+  portal_data_entrega?: string | null;
+  recebimento_ajustado_calendario?: boolean | null;
   // Resposta do disparo (edge disparar-pedidos-aprovados). Em status='falha_envio',
   // resposta_canal.erro carrega o MOTIVO real da falha (ex.: "SKU(s) sem custo (preço
   // unitário 0)..."). Antes só era visível no banco — não aparecia na UI.

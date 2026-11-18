@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { ImpersonationBanner } from '@/components/impersonation/ImpersonationBanner';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Database, Library, Crosshair, ListChecks, Landmark, Banknote, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History, Lightbulb, Radar, AlertTriangle } from 'lucide-react';
+import { BookOpen, Lock, Calculator, Palette, LayoutDashboard, Users, ShoppingCart, Phone, BarChart3, Settings, ChevronLeft, ChevronRight, Bell, User, LogOut, Package, TrendingUp, Target, Menu, X, PlusCircle, Shield, Wrench, Award, DollarSign, UserCheck, FileCheck, Factory, Percent, Database, Library, Crosshair, ListChecks, Landmark, Banknote, UserX, ShieldCheck, MessageCircle, MessageSquareText, ClipboardList, History, Lightbulb, Radar, AlertTriangle, CalendarDays } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { AppShellProvider } from '@/contexts/AppShellContext';
@@ -163,6 +163,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Package, label: 'Embalagem econômica', path: '/admin/reposicao/embalagem', staffOnly: true },
       { icon: History, label: 'Mudanças automáticas', path: '/admin/reposicao/mudancas-automaticas', staffOnly: true },
       { icon: AlertTriangle, label: 'Baixo giro', path: '/admin/reposicao/baixo-giro', staffOnly: true },
+      { icon: CalendarDays, label: 'Calendário de operação', path: '/admin/reposicao/calendario', staffOnly: true },
     ],
   },
   {

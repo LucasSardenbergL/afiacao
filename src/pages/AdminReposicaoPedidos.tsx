@@ -31,6 +31,7 @@ import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { PedidoSugerido } from '@/components/reposicao/pedidos/types';
+import { RecebeEmCalendario } from '@/components/reposicao/pedidos/RecebeEmCalendario';
 import { EMPRESA, edgeSyncOk, formatBRL, frescorEstoque, interpretarRespostaDisparo, particionarCicloHoje, pedidosVisiveis, resumoSyncRecalc, selecionarUltimoRunSuprimido, type RespostaDisparo } from '@/components/reposicao/pedidos/shared';
 import { CycleIndicator } from '@/components/reposicao/pedidos/CycleIndicator';
 import { PedidoRow } from '@/components/reposicao/pedidos/PedidoRow';
@@ -922,6 +923,7 @@ export default function AdminReposicaoPedidos() {
                       <TableCell>
                         <div className="font-medium">{p.fornecedor_nome}</div>
                         <div className="text-xs text-muted-foreground">{p.grupo_codigo ?? '—'}</div>
+                        <RecebeEmCalendario pedido={p} />
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
                       <TableCell className="text-right tabular-nums font-medium">{formatBRL(p.valor_total)}</TableCell>
