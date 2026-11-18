@@ -27096,6 +27096,26 @@ export type Database = {
         Args: { p_pedido_id: number }
         Returns: number
       }
+      reposicao_po_a_baixar: {
+        Args: { p_empresa: string }
+        Returns: {
+          classe: string | null
+          empresa: string
+          evidencia_desatualizada: boolean
+          evidencia_em: string | null
+          fornecedor_nome: string | null
+          motivos: string[] | null
+          nf_recebida_em: string | null
+          nid_receb: number | null
+          numero_nfe: string | null
+          numero_pedido: string | null
+          omie_codigo_pedido: number | null
+          pedidos_sugeridos: string[] | null
+          run_iniciado_em: string | null
+          tipo: string
+          unidades_contadas: number | null
+        }[]
+      }
       reposicao_po_observado_publicar: {
         Args: { p_itens: Json; p_run: Json }
         Returns: number

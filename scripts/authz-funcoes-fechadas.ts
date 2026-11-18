@@ -318,6 +318,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'marcador de frescor do detector de PO; mesmo cap_compras_ler da irmã',
   },
+  'public.reposicao_po_a_baixar': {
+    fechadaPor: '20261118150731_reposicao_po_a_baixar.sql',
+    permitido: PORTA_GATE,
+    motivo: 'fila PO a baixar no Omie — fornecedor/NF/POs sugeridos; gate private.cap_compras_ler',
+  },
   'public.converter_sugestao_em_campanha_flat': {
     // a 20261001083000 é DROP + CREATE (assinatura nova) + REVOKE de PUBLIC/anon: a âncora vigente
     fechadaPor: '20261001083000_converter_campanha_flat_colunas_reais.sql',

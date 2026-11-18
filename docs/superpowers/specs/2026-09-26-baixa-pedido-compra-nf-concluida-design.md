@@ -1024,3 +1024,36 @@ A equipe associa no recebimento e conclui **junto** (§17.3: associar sem conclu
   antes de qualquer outra coisa, porque a recusa congela a sugestão de compra.
 - **Sucesso:** 1263/1273/1277 em "Recebido" e 1260/1261/1264 em "Recebido Parcialmente"; o pendente cai no mesmo run em
   que o físico sobe.
+
+### 18.2 Desfecho do piloto D4' (medido 2026-11-18, `psql-ro`)
+
+O piloto **não** foi feito por associação: os 6 POs (1260, 1261, 1263, 1264, 1273, 1277) foram **encerrados à mão** em
+2026-10-22. A associação nativa segue sem nenhum caso real medido.
+
+## 19. Fase 1 — fila "PO a baixar no Omie" (2026-11-18)
+
+**Pedido do founder:** baixa automática do PO quando a NF entra, pelo Omie ou pelo app. **Parecer do Codex
+(challenge, 2026-11-18):** começar pela fila assistida + teste do `xPed` na fonte; não associar nem concluir pelo
+cron (associar antes da entrada física tira saldo do "a caminho"; concluir antecipa estoque e contas a pagar).
+
+**Medição que mudou o escopo (2026-11-18):**
+- 541 POs encerrados à mão (507 em out = limpeza; 34 em nov). Em nov, NF→encerramento: mediana 1,8 d, máx 7,6 d.
+- Os "228 POs abertos sem NF" do espelho são **ruído**: 201 são de 2025 e ninguém os relê (fora da janela da
+  pesquisa). O conjunto que o motor **contou** no último run válido tem 12 POs, todos < 45 d e sem NF.
+- A sombra **congela** a NF pendente após ~3 dias (o cron só revisita essa janela): 14 de 20 "pendentes" já estavam
+  concluídas no espelho.
+
+**Entrega (só leitura, nada vai ao Omie):** RPC `reposicao_po_a_baixar(p_empresa)` + card na tela de pedidos.
+- `po_contado_com_nf`: PO com contribuição > 0 no último run válido do motor **e** NF recebida no espelho — o caso
+  money-path (o motor deixa de comprar). Pode ser parcial legítimo: a tela manda encerrar só com entrega total.
+- `nf_pendente`: sombra pendente (associavel/ambigua/orfa) sem NF recebida no espelho; leitura > 36 h vem marcada
+  `evidencia_desatualizada`, nunca afirmada como atual.
+- Prova: `db/test-reposicao-po-a-baixar.sh` (15 asserts; `--falsificar` 9/9 com dente em `C` e `pt_BR.UTF-8`).
+
+**Sinal da Fase 1 (query, não recado):** por semana, mediana e máximo de `encerrado_omie_em − t4_data_recebimento`
+(linha de base nov/2026: 1,8 d / 7,6 d) e quantos `po_contado_com_nf` existiam por run. Fase 2 (piloto assistido de
+associação, total + parcial) só depois de ≥ 2 semanas desse sinal.
+
+**Pendências registradas:** (1) a sombra deve revisitar NF pendente até o desfecho; (2) a credencial de
+`omie-nfe-recebimento` cai em OBEN para todo depósito ≠ `CC` (`index.ts:315`) — mapear antes de qualquer escrita;
+(3) teste do `xPed`/`nItemPed` com a Sayerlack (P4) é do founder.
