@@ -1,0 +1,90 @@
+# "A caminho" com um relógio só (2026-11-18) — money-path
+
+## Defeito
+
+O "a caminho" do motor de reposição (`gerar_pedidos_sugeridos_ciclo`, CTE `em_transito`) somava duas fontes com
+**relógios independentes**:
+
+| lado | quem | corte dos pedidos do app |
+|---|---|---|
+| pendente (`sku_estoque_atual.estoque_pendente_entrada`) | `omie-sync-estoque` (`fetchEmTransitoKeys`) | tira do pendente `data_ciclo >= hojeSP() − 7` **no dia S em que o sync roda** |
+| em_transito | motor | contava `data_ciclo >= p_data_ciclo − 7` (**D**, o dia do ciclo) |
+
+Com o motor em D lendo um retrato de S < D (o sync do dia falhou ou atrasou), todo pedido do app com `data_ciclo`
+em **[S−7, D−8]** ficava fora dos dois lados: o sync o tirou e o motor o cortou. Ele era contado **0×**, e o motor
+recomprava (**compra dupla**). O vão cresce 1 dia por dia sem sync. Com o sync em dia (motor 09:15 UTC, ~10 min após
+o sync das 09:05) o defeito não morde.
+
+## Medido em prod (psql-ro, 2026-11-18)
+
+- `acoes_execucoes` só tem registro do sync desde 2026-10-07 (42 dias, e não os 90 pedidos). Em todos os dias houve
+  algum sync com sucesso, mas **em 2 dias (06/11 e 11/11) o motor das 09:15 UTC rodou sem sync bem-sucedido no
+  mesmo dia**: o retrato era da véspera (16:40 SP). O vão (data_ciclo = D−8) tinha **6 e 3 pedidos do app** em
+  status contável. Em 11/11 o intraday das 10:15 UTC já leu o retrato novo; em 06/11 o sync só voltou 10:42 SP.
+- Falhas do sync no período: rate limit do Omie (redundância), timeout, deadline do run, SOAP 500.
+- Efeito do conserto **hoje** (sync em dia): +2 itens contados, ambos de SKUs **não habilitados** com retrato velho.
+  Nos SKUs ativos o efeito é zero.
+
+## Conserto (migration `20261118120000_reposicao_acaminho_relogio_do_sync.sql`)
+
+O motor corta **por SKU** no relógio do retrato que está lendo:
+
+```sql
+LEFT JOIN sku_estoque_atual sea_c ON sea_c.empresa = pcs2.empresa AND sea_c.sku_codigo_omie = pci.sku_codigo_omie::text
+... AND pcs2.data_ciclo >= (LEAST(p_data_ciclo, ((sea_c.ultima_sincronizacao - INTERVAL '1 hour') AT TIME ZONE 'America/Sao_Paulo')::date) - 7)
+```
+
+- **Por que `ultima_sincronizacao`:** o sync grava o pendente e `ultima_sincronizacao` na **mesma linha e no mesmo
+  upsert** (`publicacao.ts concluirRun`), logo depois de ler o PO. A linha só é escrita quando o pendente passou no
+  gate de confiança; se não passou, o run aborta antes de escrever. Por SKU porque a gravação é por linha: uma
+  gravação parcial deixa linhas de retratos diferentes.
+- **Lado seguro (precisão > recall do caixa):** contar 2× é subcompra (recuperável); contar 0× é compra dupla (queima
+  caixa). As duas folgas só **acrescentam** a caminho:
+  - `− 1 hour`: um run que cruza a meia-noite SP lê o PO no dia S e grava em S+1. Sem a folga o motor cortaria um dia
+    depois do sync (0×). Com a folga, um run genuíno entre 00:00 e 01:00 SP conta 2× o pedido da borda (os crons
+    rodam 06:05–16:40 SP).
+  - `LEAST(p_data_ciclo, …)`: o corte nunca fica depois do corte de antes (retrato posterior ao ciclo, como num
+    recálculo de data passada).
+  - Sem data (`NULL`): `LEAST` ignora NULL, então vale o corte de antes.
+- **Edge intocada:** o corte do sync já era o relógio certo; o conserto só faz o motor lê-lo. É uma camada de deploy
+  (a migration), sem a ordem migration→edge que uma coluna nova exigiria.
+
+## Prova
+
+`db/test-acaminho-relogio-unico.sh` (PG17, migrations reais):
+
+- **D0 pré-voo:** md5(prosrc) do motor da migration viva = o da prod (`93b2407d…`).
+- **Controle:** o motor vivo dá o mapa do defeito (G1/G2/M1 recomprados, a caminho 0).
+- **Sem a migration nova a prova fica vermelha** (4 RED). Com ela, verde em `LC_ALL=C` e `pt_BR.UTF-8` (25/0).
+- Cenários: G1 retrato da véspera · G2 3 dias sem sync · N1 pedido recente · N2/N3 **não conta 2×** o que já está no
+  pendente · L1/L2 retrato sem data · M1 meia-noite · F1 retrato posterior ao ciclo · R2 elegibilidade com retrato
+  fresco.
+- Falsificações com **controle verde na mesma invocação** (fixture intacta pelo mesmo caminho): F1 dois relógios ·
+  F2 sem folga · F3 sem LEAST · F4 um dia a mais (2×). Dente da **POS-RU1**: o corte revertido aborta, também quando o
+  predicado certo sobrevive só num comentário, e o motor fica intacto (aplicado com `--single-transaction`, como o
+  `db:aplicar`).
+- As 5 provas irmãs que carregam a fixture ganharam a coluna `ultima_sincronizacao` no stub (o motor é late-bound:
+  sem ela, quebrariam em runtime) e seguem verdes.
+
+## Limites conhecidos / onde mais
+
+- **Retrato velho = conta desde o retrato.** Um SKU cuja linha parou de ser atualizada (há 112, a mais velha de
+  abril/2026) passa a contar todo pedido do app desde S−7, `concluido_recebido` inclusive. É coerente com o retrato,
+  porque o físico também é daquela data, e erra para subcompra. Medido hoje: só SKUs não habilitados.
+- `atualizar_parametros_numericos_skus` tem o mesmo corte por `now()` SP − 7, mas só no **log** de posição/capital
+  do ajuste automático (`reposicao_param_auto_log`), fora da decisão de compra. Ficou fora deste PR.
+- **`calendario_antecipar_avaliacao`** (`20261119120000_calendario_antecipar_recesso.sql`, #3968, ainda **não
+  aplicada** em prod em 2026-11-18) copia o `em_transito` do motor com o corte velho (`p_hoje − 7`) e declara "Mudou
+  lá ⇒ muda aqui". É informativa (lista de antecipar), mas com o sync atrasado subconta o trânsito e recomendaria
+  antecipar o que já foi comprado. Ajuste de paridade fica com a sessão dona do calendário, antes de aplicar.
+  `db/test-calendario-acaminho-recesso.sh` fixa a 20261101090000 (motor velho): segue verde, mas não prova o novo.
+- O recesso (18/12/2026–03/01/2027) segue dependendo do sync para o físico. Este conserto só garante que o pedido
+  do app não suma do a caminho quando o sync falha.
+
+## Deploy
+
+| camada | o quê | quem |
+|---|---|---|
+| migration | `20261118120000_reposicao_acaminho_relogio_do_sync.sql` (nome custom, **não auto-aplica**) | sessão via `bun run db:aplicar` (envelope: PRE md5, POS-RU1, transação) ou founder no SQL Editor |
+| edge | nenhuma | — |
+| Publish | nenhum (sem mudança em `src/`) | — |
