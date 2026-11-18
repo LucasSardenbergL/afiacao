@@ -128,13 +128,18 @@ membro sem linha. O físico do grupo não muda; passam a existir o pendente e o 
   RETURNING. Se um run paralelo regravou a posição real, o UPDATE não acha a linha e não a toca.
 - **Sem linha → INSERT … ON CONFLICT DO NOTHING**, só com pendente > 0. Linha de OUTRA origem nunca é tocada: a
   varredura completa ainda pode pular uma linha (LIMITE em `fisico.ts`), e zerar um físico lido antes seria fabricar.
+- **PO do APP deduplicado** (o `em_transito` o conta): o membro ausente sem linha nasce com o par (0, 0, hoje). Sem o
+  retrato, o motor corta o `em_transito` em `D − 7`, e com o sync atrasado o PO fica 0× (Codex, 2ª rodada).
+- **Só membro ATUAL:** o index passa `membrosGrupo`, e passa `undefined` se a leitura da equivalência falhou. Sem ela
+  nada é lido nem escrito. Antes, `membrosErro` deixava `pendenteMembros` vazio e zeraria as linhas nossas às cegas.
 - **Ficam fora:**
   - o físico ilegível (ele veio na listagem);
-  - o item de PO ilegível (sem par);
-  - o habilitado.
+  - o item de PO ilegível (sem par; entra na contagem `membros_grupo_ilegiveis`);
+  - o ex-membro.
 - **Leitura das linhas nossas com prova de completude** (`count exact`). Se a leitura falha, nada é atualizado, o erro
   vai ao resumo e o run não vale como "aplicado".
-- **Observação:** só SKUs com RETURNING entram no pendente gravado. Falha tira o `pendente_aplicado`.
+- **Observação:** só SKUs com RETURNING entram no pendente gravado. Falha **ou conflito** tira o `pendente_aplicado`
+  (Codex P2, 2ª rodada).
 - **Desfecho:** não muda.
 - **Resumo e registro:** ganham `membros_grupo_ausentes_{com_po,inseridos,reconciliados,ja_com_linha,falhas,erro}`.
 
@@ -144,7 +149,17 @@ entrega recebida e 0× um PO novo. O P2 da mesma rodada: a observação era supr
 Daí veio a reconciliação da linha nossa. Ele confirmou que `ignoreDuplicates` + `select` devolve só as linhas
 inseridas (teste do PostgREST).
 
-**Prova** (Deno, `publicacao_test.ts`, 98/0):
+**Codex, 2ª rodada (high, 1880s): REPROVA, P1 e P2.** O P1 da 1ª rodada foi fechado. Faltavam:
+- **P1:** o membro com só PO do app deduplicado ficava sem retrato.
+- **P2:** um UPDATE para 0 que perdia a corrida ainda dava `aplicado: true`.
+- O ex-membro ganhava retrato fresco.
+- O ilegível ausente não entrava na contagem.
+
+Todos foram consertados. Fora de escopo, apontado por ele, há um preexistente: na COLACOR, o
+`computePendenteViaListarSaldo` devolve o `Map` no lugar de `{pendente, pendenteMembros}`. Hoje é inalcançável (a
+COLACOR não tem habilitado) e fica como follow-up.
+
+**Prova** (Deno, `publicacao_test.ts`, 105/0):
 - O teste antigo "membro que não veio no retrato não é escrito" virou a expectativa nova. O vermelho antes do conserto
   deu 5 falhas.
 - A sequência do Codex (10→10→4→0 e 10→16) roda numa tabela em memória que persiste entre runs. Também estão
@@ -154,14 +169,16 @@ inseridas (teste do PostgREST).
   - a leitura das linhas nossas que falha;
   - o membro que voltou à listagem;
   - o membro que virou habilitado.
-- A forma do adaptador está no vitest: marca no `WHERE`, `ignoreDuplicates` e completude da leitura.
+- A forma do adaptador está no vitest: marca no `WHERE`, `ignoreDuplicates`, completude da leitura, coleta do
+  `dedup_app` e `membrosGrupo` só com a equivalência lida.
 - Falsificação com controle verde na MESMA invocação. Na 1ª etapa, 7 sabotagens deram vermelho. Na 2ª, as 9 deram
-  vermelho:
+  vermelho; na 3ª, 14, somando PO do app, membro atual, `membrosErro`, `aplicado` com conflito e contagem de ilegíveis.
+  Uma sabotagem ficou verde e expôs camada não exercida sozinha (a leitura das linhas nossas mascarada pelo conflito):
+  ganhou um teste isolado. As da 2ª etapa:
   - sem reconciliar;
   - 0 virando o valor velho;
   - insert sem excluir as linhas nossas;
   - linhas nossas sem o filtro de ausente;
-  - sem excluir o habilitado;
   - aplicado ignorando a leitura;
   - conflito contado como gravado (esta pegou um buraco no teste da corrida, já fechado);
   - update sem a marca;
