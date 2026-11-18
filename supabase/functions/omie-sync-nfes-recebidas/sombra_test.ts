@@ -11,6 +11,8 @@ import {
   executarSombra,
   type ItemFilaSombra,
   novaSombraSummary,
+  type PendenteDaSombra,
+  type PortaPendentes,
   type PortaSombra,
   type SombraSummary,
 } from "./sombra.ts";
@@ -181,4 +183,79 @@ Deno.test("captura: UM teto para todos os lotes — mesmo sinal em cada leitura;
   const y = porta({ buscarPedidos: async () => { leituras++; await new Promise((r) => setTimeout(r, 30)); return new Map(); } });
   await capturarPedidosDaFila(lenta, y.p, sempre, 10);
   assertEquals([leituras, lenta.some((f) => f.pedidos !== undefined)], [1, false], "teto estourado: para e não anexa");
+});
+
+// ─── v1.11: revisita das pendentes antigas da tabela ─────────────────────────────────────────────────────────────
+const PEND: PendenteDaSombra = { nid_receb: 12196962110, numero_nfe: "000955263", chave_nfe: "4".repeat(44), fornecedor_codigo_omie: 8689681266 };
+const concluida = { ...detalhe, infoCadastro: { ...detalhe.infoCadastro, cRecebido: "S" } };
+
+function portaPendentes(lista: PendenteDaSombra[], consultar: PortaPendentes["consultar"]) {
+  const chamadas = { limite: [] as number[], consultas: [] as number[] };
+  const p: PortaPendentes = {
+    listarPendentes: async (n) => { chamadas.limite.push(n); return lista; },
+    consultar: async (id) => { chamadas.consultas.push(id); return await consultar(id); },
+  };
+  return { p, chamadas };
+}
+
+Deno.test("pendentes: pendente antiga é RELIDA e republicada com o carimbo da leitura nova — mesmo com a fila vazia", async () => {
+  const { p, chamadas } = porta();
+  const pp = portaPendentes([PEND], async () => ({ detalhe, lidoEm: "2026-11-18T20:00:00Z" }));
+  const r = novaSombraSummary();
+  await executarFaseSombra([], p, async () => new Set(), sempre, r, { empresa: "OBEN", porta: pp.p, lidasNoRun: new Set(), teto: 20 });
+  assertEquals([pp.chamadas.limite, pp.chamadas.consultas], [[20], [12196962110]]);
+  assertEquals([chamadas.publicar.length, chamadas.publicar[0].observado_em, chamadas.publicar[0].estado_nf, chamadas.publicar[0].empresa],
+    [1, "2026-11-18T20:00:00Z", "pendente", "OBEN"]);
+  assertEquals(r.pendentes, { listadas: 1, reconsultadas: 1, falhas_consulta: 0, ja_lidas_no_run: 0, puladas_por_tempo: 0, erro_listagem: false });
+  invariante(r);
+});
+
+Deno.test("pendentes: NF que CONCLUIU no Omie sai de pendente (publica concluida, sem buscar POs)", async () => {
+  const { p, chamadas } = porta({ buscarPedidos: async () => { throw new Error("não deveria buscar"); } });
+  const pp = portaPendentes([PEND], async () => ({ detalhe: concluida, lidoEm: "2026-11-18T20:00:00Z" }));
+  const r = novaSombraSummary();
+  await executarFaseSombra([], p, async () => new Set(), sempre, r, { empresa: "OBEN", porta: pp.p, lidasNoRun: new Set(), teto: 20 });
+  assertEquals([chamadas.publicar.length, chamadas.publicar[0].estado_nf, chamadas.buscar.length, r.leituras_po_falhas], [1, "concluida", 0, 0]);
+});
+
+Deno.test("pendentes: consulta que falha NÃO publica nada (ausência nunca vira concluída) e as seguintes seguem", async () => {
+  const falhas: Array<PortaPendentes["consultar"]> = [
+    async () => { throw new Error("Omie ConsultarRecebimento: faultstring Recebimento não encontrado"); },
+    async () => ({ detalhe, lidoEm: "" }),
+    async () => ({ detalhe: { ...detalhe, cabec: { ...detalhe.cabec, nIdReceb: 999 } }, lidoEm: "t" }),
+  ];
+  for (const f of falhas) {
+    const { p, chamadas } = porta();
+    const lista = [PEND, { ...PEND, nid_receb: 12196962111 }];
+    const pp = portaPendentes(lista, async (id) => id === PEND.nid_receb ? await f(id) : { detalhe: { ...detalhe, cabec: { ...detalhe.cabec, nIdReceb: id } }, lidoEm: "t2" });
+    const r = novaSombraSummary();
+    await executarFaseSombra([], p, async () => new Set(), sempre, r, { empresa: "OBEN", porta: pp.p, lidasNoRun: new Set(), teto: 20 });
+    assertEquals(chamadas.publicar.map((l) => l.nid_receb), [12196962111], "só a 2ª, que leu, publica");
+    assertEquals([r.pendentes?.falhas_consulta, r.pendentes?.reconsultadas, r.tentadas], [1, 1, 1]);
+    invariante(r);
+  }
+});
+
+Deno.test("pendentes: listagem que falha não lê nem publica; já lida no run não repete a consulta; relida entra em lidasNoRun", async () => {
+  const { p, chamadas } = porta();
+  const r = novaSombraSummary();
+  const quebrada: PortaPendentes = { listarPendentes: async () => { throw new Error("57014"); }, consultar: async () => { throw new Error("não deveria"); } };
+  await executarFaseSombra([], p, async () => new Set(), sempre, r, { empresa: "OBEN", porta: quebrada, lidasNoRun: new Set(), teto: 20 });
+  assertEquals([r.pendentes?.erro_listagem, chamadas.publicar.length, r.tentadas], [true, 0, 0]);
+
+  const lidas = new Set([PEND.nid_receb]);
+  const pp = portaPendentes([PEND, { ...PEND, nid_receb: 7 }], async (id) => ({ detalhe: { ...detalhe, cabec: { ...detalhe.cabec, nIdReceb: id } }, lidoEm: "t" }));
+  const r2 = novaSombraSummary();
+  await executarFaseSombra([], porta().p, async () => new Set(), sempre, r2, { empresa: "OBEN", porta: pp.p, lidasNoRun: lidas, teto: 20 });
+  assertEquals([pp.chamadas.consultas, r2.pendentes?.ja_lidas_no_run, [...lidas].sort((a, b) => a - b)], [[7], 1, [7, 12196962110]]);
+});
+
+Deno.test("pendentes: relógio esgota — as restantes ficam puladas e não tocam o Omie", async () => {
+  let agora = 0;
+  const { p } = porta({ publicar: async () => { agora += 10; return "gravada"; } });
+  const lista = [1, 2, 3].map((n) => ({ ...PEND, nid_receb: n }));
+  const pp = portaPendentes(lista, async (id) => ({ detalhe: { ...detalhe, cabec: { ...detalhe.cabec, nIdReceb: id } }, lidoEm: "t" }));
+  const r = novaSombraSummary();
+  await executarFaseSombra([], p, async () => new Set(), () => agora < 10, r, { empresa: "OBEN", porta: pp.p, lidasNoRun: new Set(), teto: 20 });
+  assertEquals([pp.chamadas.consultas, r.pendentes?.puladas_por_tempo, r.pendentes?.reconsultadas], [[1], 2, 1]);
 });

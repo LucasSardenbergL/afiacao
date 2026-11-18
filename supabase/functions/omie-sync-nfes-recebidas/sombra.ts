@@ -24,6 +24,8 @@ export interface SombraSummary {
   puladas_por_tempo: number;
   /** Contagem por classe das classificações deste run (não é o estado da tabela). */
   por_classe: Record<string, number>;
+  /** Revisita das pendentes antigas (v1.11). As reconsultadas entram em tentadas/gravadas como qualquer NF. */
+  pendentes?: PendentesSummary;
 }
 
 export function novaSombraSummary(): SombraSummary {
@@ -144,17 +146,111 @@ export async function capturarPedidosDaFila(
   for (const f of fila) f.pedidos = mapa;
 }
 
-/** Fase da sombra de uma empresa: roda DEPOIS de todo o trabalho prioritário do run, no tempo que sobrar. */
+// ─── Revisita das PENDENTES (v1.11) ───────────────────────────────────────────────────────────────────────────────
+// A fila acima só traz NFs da janela de 3 dias do laço: NF que fica pendente no Omie por mais tempo CONGELAVA na
+// tabela (medido 2026-11-18: 16 de 19 pendentes com leitura de 2 a 31 dias; o card "PO a baixar no Omie" as marca
+// `evidencia_desatualizada`). Agora a fase relê, por ConsultarRecebimento, as pendentes mais antigas da tabela até
+// virarem concluída/cancelada. Só LEITURA do Omie. Precisão > recall: consulta que falha (exceção, faultstring, resposta
+// de outra NF, carimbo ausente) NÃO publica nada — a linha fica com a leitura velha e o card segue avisando; ausência
+// nunca vira "concluída". O CAS por observado_em da RPC protege contra run atrasado. Os POs são lidos ao vivo (o
+// backfill já rodou): raw_data trocado só pode virar `po_sem_itens` (ambígua), nunca proposta falsa — o mesmo
+// caminho da fila quando a captura falha.
+
+/** Teto de reconsultas por run e empresa (mais antigas primeiro). ~3 s cada (1,1 s de rate-limit + Omie + PO +
+ *  RPC); o cron é de 2 h e o run típico dura ~25 s (fin_sync_log 2026-11-18), então 20 cabem sem apertar a revisita. */
+export const TETO_PENDENTES_POR_RUN = 20;
+
+export interface PendenteDaSombra {
+  nid_receb: number;
+  numero_nfe: string | null;
+  chave_nfe: string | null;
+  fornecedor_codigo_omie: number | null;
+}
+
+export interface PortaPendentes {
+  /** Linhas `estado_nf='pendente'` da empresa, `observado_em` mais antigo primeiro, no máximo `limite`. Lança em erro. */
+  listarPendentes(limite: number): Promise<PendenteDaSombra[]>;
+  /** ConsultarRecebimento da NF. `lidoEm` = carimbo antes do fetch da tentativa que respondeu. Lança em erro ou
+   *  faultstring — nunca devolve detalhe vazio como se fosse leitura. */
+  consultar(nIdReceb: number): Promise<{ detalhe: unknown; lidoEm: string }>;
+}
+
+interface PendentesSummary {
+  listadas: number;
+  reconsultadas: number;
+  falhas_consulta: number;
+  ja_lidas_no_run: number;
+  puladas_por_tempo: number;
+  erro_listagem: boolean;
+}
+
+function nIdDoDetalhe(detalhe: unknown): number | null {
+  const v = (detalhe as { cabec?: { nIdReceb?: unknown } } | null)?.cabec?.nIdReceb;
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+async function revisitarPendentes(
+  empresa: string,
+  revisita: { porta: PortaPendentes; lidasNoRun: Set<number>; teto: number },
+  porta: PortaSombra,
+  skus: ReadonlySet<string> | null,
+  temTempo: () => boolean,
+  resumo: SombraSummary,
+): Promise<void> {
+  const r: PendentesSummary = { listadas: 0, reconsultadas: 0, falhas_consulta: 0, ja_lidas_no_run: 0, puladas_por_tempo: 0, erro_listagem: false };
+  resumo.pendentes = r;
+  let lista: PendenteDaSombra[];
+  try {
+    lista = await revisita.porta.listarPendentes(revisita.teto);
+  } catch (err) {
+    r.erro_listagem = true;
+    console.warn(`[sync-nfes] sombra ${empresa}: listagem das pendentes falhou (nada relido): ${mensagemDeErro(err) ?? "erro sem mensagem"}`);
+    return;
+  }
+  r.listadas = lista.length;
+  for (let i = 0; i < lista.length; i++) {
+    const p = lista[i];
+    const nIdReceb = Number(p.nid_receb);
+    // Já lida neste run (laço da janela de 3 dias): a fila acima já a publicou; repetir seria REDUNDANT na Omie.
+    if (revisita.lidasNoRun.has(nIdReceb)) { r.ja_lidas_no_run++; continue; }
+    if (!temTempo()) { r.puladas_por_tempo += lista.length - i; return; }
+    revisita.lidasNoRun.add(nIdReceb);
+    let detalhe: unknown;
+    let lidoEm: string;
+    try {
+      ({ detalhe, lidoEm } = await revisita.porta.consultar(nIdReceb));
+      if (typeof lidoEm !== "string" || lidoEm === "") throw new Error("leitura sem carimbo");
+      const nid = nIdDoDetalhe(detalhe);
+      if (nid !== null && nid !== nIdReceb) throw new Error(`resposta de outra NF (nIdReceb=${nid})`);
+    } catch (err) {
+      r.falhas_consulta++;
+      console.warn(`[sync-nfes] sombra ${empresa} pendente nIdReceb=${nIdReceb}: consulta falhou (NÃO publica): ${mensagemDeErro(err) ?? "erro sem mensagem"}`);
+      continue;
+    }
+    r.reconsultadas++;
+    const nf: NFParaSombra = {
+      empresa, nIdReceb, numero_nfe: p.numero_nfe, chave_nfe: p.chave_nfe,
+      fornecedor_codigo_omie: p.fornecedor_codigo_omie == null ? null : Number(p.fornecedor_codigo_omie),
+    };
+    await executarSombra(porta, nf, detalhe, skus, lidoEm, temTempo, resumo);
+  }
+}
+
+/** Fase da sombra de uma empresa: roda DEPOIS de todo o trabalho prioritário do run, no tempo que sobrar. Com
+ *  `revisita`, depois da fila relê as pendentes antigas da tabela (acima). */
 export async function executarFaseSombra(
   fila: readonly ItemFilaSombra[],
   porta: PortaSombra,
   lerEquivalencias: () => Promise<ReadonlySet<string> | null>,
   temTempo: () => boolean,
   resumo: SombraSummary,
+  revisita?: { empresa: string; porta: PortaPendentes; lidasNoRun: Set<number>; teto: number },
 ): Promise<void> {
-  if (fila.length === 0) return;
+  if (fila.length === 0 && !revisita) return;
   if (!temTempo()) { resumo.puladas_por_tempo += fila.length; return; }
   let skus: ReadonlySet<string> | null;
   try { skus = await lerEquivalencias(); } catch { skus = null; }
   for (const f of fila) await executarSombra(porta, f.nf, f.detalhe, skus, f.observadoEm, temTempo, resumo, f.pedidos);
+  if (revisita) await revisitarPendentes(revisita.empresa, revisita, porta, skus, temTempo, resumo);
 }

@@ -64,6 +64,21 @@ describe('omie-sync-nfes-recebidas — sombra da associação', () => {
 
   it('publica pela RPC com prazo, nunca por escrita direta na tabela', () => {
     expect(fonte).toMatch(/\.rpc\("recebimento_associacao_sombra_publicar", \{ p: linha \}\)\s*\.abortSignal\(/);
-    expect(fonte).not.toMatch(/from\("recebimento_associacao_sombra"\)/);
+    // v1.11: a revisita das pendentes LÊ a tabela — todo `.from(...)` dela é seguido de `.select(`, nunca de escrita.
+    const usos = [...fonte.matchAll(/from\("recebimento_associacao_sombra"\)\s*\.(\w+)\(/g)].map((m) => m[1]);
+    expect(usos).toEqual(['select']);
+  });
+
+  it('v1.11: a fase relê as pendentes da tabela, só pendente, mais antigas primeiro, com teto e o carimbo da tentativa', () => {
+    const iPorta = fonte.indexOf('function criarPortaPendentes(');
+    const fim = fonte.indexOf('\nasync function ', iPorta);
+    const porta = fonte.slice(iPorta, fim);
+    expect(iPorta).toBeGreaterThan(0);
+    expect(porta).toMatch(/\.eq\("estado_nf", "pendente"\)/);
+    expect(porta).toMatch(/\.order\("observado_em", \{ ascending: true \}\)/);
+    expect(porta).toMatch(/\.limit\(limite\)/);
+    expect(porta).toMatch(/"ConsultarRecebimento", \{ nIdReceb \}, deadline, \(t\) => \{ lidoEm = t; \}\)/);
+    expect(porta).toMatch(/if \(!det \|\| det\.faultstring\) throw/);
+    expect(fonte).toMatch(/lidasNoRun: processadas, teto: TETO_PENDENTES_POR_RUN/);
   });
 });

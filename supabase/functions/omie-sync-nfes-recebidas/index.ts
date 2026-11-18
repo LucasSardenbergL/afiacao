@@ -44,7 +44,17 @@ import {
 } from "./reconciliacao.ts";
 import type { PedidoDoContrato } from "./associacao.ts";
 import { type DocumentoRevisita, lerJanelaExplicita, lerRevisitaDias, novaRevisitaSummary, type PortaRevisita, revisitarJanela, type RevisitaSummary } from "./revisita.ts";
-import { capturarPedidosDaFila, executarFaseSombra, type ItemFilaSombra, novaSombraSummary, type PortaSombra, type SombraSummary } from "./sombra.ts";
+import {
+  capturarPedidosDaFila,
+  executarFaseSombra,
+  type ItemFilaSombra,
+  novaSombraSummary,
+  type PendenteDaSombra,
+  type PortaPendentes,
+  type PortaSombra,
+  type SombraSummary,
+  TETO_PENDENTES_POR_RUN,
+} from "./sombra.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
@@ -570,6 +580,43 @@ function criarPortaSombra(supabase: SupabaseClient, empresa: Empresa): PortaSomb
         .abortSignal(AbortSignal.timeout(SOMBRA_PRAZO_MS));
       if (error) throw new Error(`publicar: ${error.message}`);
       return String(data);
+    },
+  };
+}
+
+/** Porta da revisita das pendentes (sombra.ts, v1.11): lê a tabela da sombra (só SELECT — quem escreve é a RPC) e
+ *  relê a NF no Omie. Mesmo deadline e mesmo carimbo-por-tentativa do laço principal. */
+function criarPortaPendentes(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  fornecedorCodigo: number | undefined,
+  t0: number,
+): PortaPendentes {
+  const { app_key, app_secret } = getCredentials(empresa);
+  const deadline = t0 + MAIN_LOOP_GUARD_MS;
+  return {
+    async listarPendentes(limite) {
+      let q = supabase
+        .from("recebimento_associacao_sombra")
+        .select("nid_receb, numero_nfe, chave_nfe, fornecedor_codigo_omie")
+        .eq("empresa", empresa)
+        .eq("estado_nf", "pendente");
+      if (fornecedorCodigo) q = q.eq("fornecedor_codigo_omie", fornecedorCodigo);
+      const { data, error } = await q
+        .order("observado_em", { ascending: true })
+        .order("nid_receb")
+        .limit(limite)
+        .abortSignal(AbortSignal.timeout(SOMBRA_PRAZO_MS));
+      if (error) throw new Error(`pendentes da sombra: ${error.message}`);
+      if (!Array.isArray(data)) throw new Error("pendentes da sombra: resposta sem lista");
+      return data as PendenteDaSombra[];
+    },
+    async consultar(nIdReceb) {
+      await sleep(RATE_LIMIT_DELAY_MS);
+      let lidoEm = "";
+      const det = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb }, deadline, (t) => { lidoEm = t; })) as OmieConsultarRecebimentoResponse;
+      if (!det || det.faultstring) throw new Error(`ConsultarRecebimento faultstring: ${String(det?.faultstring ?? "vazio")}`);
+      return { detalhe: det, lidoEm };
     },
   };
 }
@@ -1370,7 +1417,20 @@ Deno.serve(async (req) => {
         if (!aConcluir.some((c) => c.s === s)) continue;
         const r = novaSombraSummary();
         s.sombra = r;
-        await executarFaseSombra(fila, criarPortaSombra(supabase, empresa), () => lerSkusComEquivalencia(supabase, empresa), sombraTemTempo, r);
+        // v1.11: depois da fila, relê as pendentes antigas da tabela (a fila só conhece a janela de 3 dias).
+        // Marca as relidas em `processadas`: a revisita da janela larga, depois, não repete a consulta.
+        const processadas = processadasPorEmpresa.get(empresa) ?? new Set<number>();
+        processadasPorEmpresa.set(empresa, processadas);
+        await executarFaseSombra(fila, criarPortaSombra(supabase, empresa), () => lerSkusComEquivalencia(supabase, empresa), sombraTemTempo, r, {
+          empresa, porta: criarPortaPendentes(supabase, empresa, fornecedorCodigo, t0), lidasNoRun: processadas, teto: TETO_PENDENTES_POR_RUN,
+        });
+        if (r.pendentes) {
+          const p = r.pendentes;
+          console.log(
+            `[sync-nfes] ${empresa} sombra pendentes: listadas=${p.listadas} relidas=${p.reconsultadas} falhas=${p.falhas_consulta} ` +
+            `ja_no_run=${p.ja_lidas_no_run} tempo=${p.puladas_por_tempo} erro_listagem=${p.erro_listagem}`,
+          );
+        }
       }
     } catch (errSombra) {
       console.error(`[sync-nfes] fase da sombra erro (o vínculo segue): ${mensagemDeErro(errSombra) ?? "erro sem mensagem"}`);

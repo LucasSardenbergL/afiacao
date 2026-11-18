@@ -54,3 +54,16 @@ Codex aprovou na 4ª rodada (P1 0 · P2 0 · P3 0). Provas: Deno 55/55 com 35 sa
   - 000955580: `produto_ilegivel` (item sem produto Omie) + `quantidade_ilegivel` (conversão L → embalagem com 6 casas).
 - Piloto D4' real escolhido pelo founder em 2026-10-18: a equipe associa e conclui a 000955263 no Omie (3 POs total, 3
   parcial). Roteiro, foto do antes e resultado: spec §18.
+
+## v1.11 — a sombra relê as pendentes até o desfecho (2026-11-18)
+
+- **Defeito:** a fase da sombra só reavaliava a fila do laço (janela `dias=3`). NF pendente no Omie por mais tempo
+  congelava: em 2026-11-18, 16 de 19 linhas `estado_nf='pendente'` tinham leitura de 2 a 31 dias, e o card "PO a baixar
+  no Omie" (#3967) as marcava `evidencia_desatualizada`.
+- **Correção (`sombra.ts`, `criarPortaPendentes` no `index.ts`):** depois da fila, a fase lê da tabela as pendentes da
+  empresa (mais antigas por `observado_em`, teto 20/run), pula as já lidas no run, relê cada uma por
+  `ConsultarRecebimento` (carimbo da tentativa) e reclassifica pelo mesmo classificador. Só leitura do Omie.
+- **Precisão > recall:** consulta que falha (exceção, faultstring, carimbo ausente, resposta de outra NF) **não publica**
+  — a linha fica com a leitura velha e o card segue avisando. NF apagada no Omie fica assim para sempre, e é o certo.
+- `results.sombra.pendentes` = `{listadas, reconsultadas, falhas_consulta, ja_lidas_no_run, puladas_por_tempo,
+  erro_listagem}`. As relidas entram em `processadas`: a revisita da janela larga não repete a consulta.
