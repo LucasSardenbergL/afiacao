@@ -4,4 +4,5 @@
 # Task 4b: calendario_itens_antecipar (sinal "antecipar antes do recesso", só leitura) — +13 asserts, +16 sabotagens.
 # Onda final: antecipar soma o trânsito do app (em_transito do motor), resumo avaliados/listados/sem_dado, prévia
 # do recebimento (calendario_previsao_pedido) e service_role nas postcondições — +26 asserts, +14 sabotagens.
-db/test-calendario-operacao.sh 117  falsificar=52
+# Relógio do sync (20261119140000): trânsito do app com o corte por SKU do motor 20261118120000 — +7 asserts, +10 sabotagens.
+db/test-calendario-operacao.sh 124  falsificar=62
