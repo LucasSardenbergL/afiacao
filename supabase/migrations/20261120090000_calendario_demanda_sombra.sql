@@ -650,7 +650,7 @@ BEGIN
   END IF;
   IF has_function_privilege('anon', v_fn, 'EXECUTE')
      OR EXISTS (SELECT 1 FROM pg_proc p, aclexplode(p.proacl) a WHERE p.oid = v_fn AND a.grantee = 0) THEN
-    RAISE EXCEPTION 'POS FALHOU: calendario_fator_demanda executavel por anon/PUBLIC';
+    RAISE EXCEPTION 'POS FALHOU [POS_ACL_ANON]: calendario_fator_demanda executavel por anon/PUBLIC';
   END IF;
   IF NOT has_function_privilege('authenticated', v_fn, 'EXECUTE')
      OR NOT has_function_privilege('service_role', v_fn, 'EXECUTE') THEN
@@ -680,7 +680,7 @@ BEGIN
    WHERE demanda_media_diaria IS DISTINCT FROM demanda_media_diaria_legado;
   PERFORM pg_catalog.set_config('reposicao.demanda_calendario_forcar', '', true);
   IF v_n <> 0 THEN
-    RAISE EXCEPTION 'POS FALHOU: em sombra % linha(s) servem d diferente do legado', v_n;
+    RAISE EXCEPTION 'POS FALHOU [POS_SOMBRA]: em sombra % linha(s) servem d diferente do legado', v_n;
   END IF;
   IF to_regprocedure('cron.schedule(text, text, text)') IS NOT NULL
      AND NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'reposicao-demanda-calendario-sombra') THEN

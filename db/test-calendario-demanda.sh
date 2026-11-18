@@ -26,7 +26,7 @@ SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
 TOTAL_ESPERADO=34
 
 # ── MODO --falsificar ────────────────────────────────────────────────────────────────────────────────────────────
-# Cada sabotagem declara o ÚNICO assert que a acusa (POS!<marca> = a postcondição da migration, `+` = espaço).
+# Cada sabotagem declara o ÚNICO assert que a acusa (POS!<MARCA> = a postcondição da migration, que imprime [MARCA]).
 # Controle verde PRIMEIRO, na mesma invocação. Sabotagem que muda o TEXTO de uma view também desliga a trava de texto
 # (md5 na PRE e na PÓS) — senão a camada externa a barra e o assert comportamental nunca é exercido (uma camada por vez;
 # a própria trava de texto é falsificada à parte por pre_frouxa).
@@ -37,11 +37,11 @@ pendente_conta:F06
 meia_equipe_zero:F07
 tudo_fechado_zera:F08
 neutro_aritmetica:V01
-sombra_alimenta:POS!em+sombra
+sombra_alimenta:POS!POS_SOMBRA
 chave_ignorada:V04
 guc_lixo_vale:V06
 colacor_ajusta:V07
-anon_executa:POS!calendario_fator_demanda+executavel+por+anon
+anon_executa:POS!POS_ACL_ANON
 job_guc_vaza:S03
 pre_frouxa:M2
 "
@@ -58,7 +58,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     SABOTAGEM="$s" PGPORT_TEST=$((PORT + i)) bash "$0" >"$log" 2>&1 && rc=0 || rc=$?
     nfalhas=$(grep -cE ' (FALHOU|ERRO_DE_EXECUCAO) — ' "$log" || true)
     case "$alvo" in
-      POS!*) marca="${alvo#POS!}"; marca="${marca//+/ }"; acusou=0; grep -q "POS FALHOU: ${marca}" "$log" && acusou=1; nfalhas=1 ;;
+      POS!*) marca="${alvo#POS!}"; acusou=0; grep -q "POS FALHOU \[${marca}\]" "$log" && acusou=1; nfalhas=1 ;;
       *)     acusou=0; grep -q "❌ ${alvo} FALHOU — " "$log" && acusou=1 ;;
     esac
     if [ "$rc" -ne 0 ] && grep -q "SABOTAGEM ATIVA: $s" "$log" && [ "$acusou" -eq 1 ] && [ "$nfalhas" -eq 1 ]; then
