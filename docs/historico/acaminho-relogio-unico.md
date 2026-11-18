@@ -111,3 +111,31 @@ Codex reproduziu o caso D−8: o motor anterior contava 0 e o novo conta 4. Tria
 | migration | `20261118120000_reposicao_acaminho_relogio_do_sync.sql` (nome custom, **não auto-aplica**) | sessão via `bun run db:aplicar` (envelope: PRE md5, POS-RU1, transação) ou founder no SQL Editor |
 | edge | nenhuma | — |
 | Publish | nenhum (sem mudança em `src/`) | — |
+
+## Residuais tratados (PR seguinte, 2026-11-18): migration `20261119130000_reposicao_acaminho_membro_sem_linha.sql`
+
+- **Membro sem linha (consertado).** O SKU sem retrato próprio passa a cortar pelo **último retrato da empresa**:
+  `COALESCE(sea_c.ultima_sincronizacao, máx. da empresa)`. Esse é o run do sync que pulou o PO do membro. Antes, o
+  `LEFT JOIN` dava NULL e o corte voltava ao dia do ciclo, o que dava 0× no vão. Isso vale para o galão que "vive sem
+  sea próprio" e para a linha sem data.
+  - O conserto só acrescenta (`LEAST`). Se a empresa não tem retrato nenhum, vale o corte de antes.
+  - Medido em prod (psql-ro): hoje há 0 membros sem linha e 0 linhas sem data. É uma proteção latente.
+  - Prova: `db/test-acaminho-membro-sem-linha.sh`. Ela é vermelha contra a 20261118120000 (o grupo recompra) e verde
+    com a nova, 14/0 nos dois locales.
+    - F1 tira o fallback, F2 deixa o máximo vazar entre empresas, e as duas mordem com controle verde.
+    - O dente da POS-RU1 aborta a migration com o corte sem o fallback e faz rollback.
+  - `db/test-acaminho-relogio-unico.sh` passou a extrair o motor da própria 20261118120000, como já fazem as provas
+    do calendário, em vez de ler a fixture viva.
+- **Oportunidade (não é o relógio duplo; não mudou).** `v_oportunidade_economica_hoje` (`pg_get_viewdef` da prod) não
+  lê `sku_estoque_atual`, pendente nem `pedido_compra_item`: a quantidade vem da demanda (EOQ/cenário). A janela
+  `p_data_ciclo − 7` de `gerar_pedidos_oportunidade_ciclo` é uma heurística ("pedido normal recente bloqueia a
+  oferta") e não faz par com o pendente. Com o sync em dia, o pedido normal de D−8 também passa, e por isso o retrato
+  atrasado não muda a decisão da oportunidade.
+- **Seguem abertos e documentados:** disparo tardio entre syncs (nº Omie gravado depois da leitura) e PO numerado
+  parado na etapa 10.
+
+| camada | o quê | quem |
+|---|---|---|
+| migration | `20261119130000_reposicao_acaminho_membro_sem_linha.sql` (PRE md5 `48ae5fd1…` → `cc792038…`, POS-RU1) | sessão via `bun run db:aplicar` pós-merge |
+| edge | nenhuma | — |
+| Publish | nenhum | — |
