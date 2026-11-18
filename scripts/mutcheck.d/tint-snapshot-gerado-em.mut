@@ -1,6 +1,6 @@
 # O `generated_at` de /keys-snapshot (edge tint-sync-agent) não é escolha livre do emissor: formato
-# fechado e sem adiantamento além da tolerância (lote 6 do scanner, 2ª opinião do Codex —
-# docs/historico/scanner-lovable-rescan-lote6.md).
+# fechado, calendário conferido e sem adiantamento além da tolerância (lote 6 do scanner, 2ª opinião
+# do Codex — docs/historico/scanner-lovable-rescan-lote6.md).
 # @src: supabase/functions/tint-sync-agent/snapshot-gerado-em.ts
 # @test: supabase/functions/tint-sync-agent/snapshot-gerado-em_test.ts
 # @test_cmd: deno test --no-remote --allow-read=supabase/functions
@@ -9,19 +9,27 @@
 # PEGA = a suíte DEVE matar (gate de cobertura). SOBREVIVE = benigno conhecido. ? = exploratório.
 #
 # Cada linha é um jeito de um generated_at no futuro voltar a passar (e travar a desativação por
-# snapshot), de um formato que JavaScript e Postgres leem diferente passar, ou de o snapshot honesto
-# ser reescrito ou recusado. EXPECT preenchido por MEDIÇÃO.
+# snapshot), de uma data que o Postgres recusa ou lê diferente passar, ou de o snapshot honesto ser
+# reescrito ou recusado. EXPECT preenchido por MEDIÇÃO.
 #
 # ── o futuro ──
 PEGA | futuro deixa de ser recusado                          | s/if \(instante > agoraMs \+ ADIANTAMENTO_MAXIMO_DO_SNAPSHOT_MS\) \{/if (false) {/
 PEGA | no teto exato passa a recusar (> vira >=)             | s/if \(instante > agoraMs \+ ADIANTAMENTO_MAXIMO_DO_SNAPSHOT_MS\) \{/if (instante >= agoraMs + ADIANTAMENTO_MAXIMO_DO_SNAPSHOT_MS) {/
 PEGA | tolerância vira 10 horas                              | s/ADIANTAMENTO_MAXIMO_DO_SNAPSHOT_MS = 10 \* 60_000;/ADIANTAMENTO_MAXIMO_DO_SNAPSHOT_MS = 10 * 60 * 60_000;/
 PEGA | tolerância vira zero                                  | s/ADIANTAMENTO_MAXIMO_DO_SNAPSHOT_MS = 10 \* 60_000;/ADIANTAMENTO_MAXIMO_DO_SNAPSHOT_MS = 0;/
-PEGA | o fuso sai da conta do instante                       | s/\$\{partes\[1\]\}T\$\{partes\[2\]\}\$\{partes\[3\]\}/\$\{partes[1]\}T\$\{partes[2]\}Z/
+PEGA | o fuso sai da conta do instante                       | s/const instante = civil\.getTime\(\) - fusoMin \* 60_000 \+ fracaoMs;/const instante = civil.getTime() + fracaoMs;/
+PEGA | o sinal do fuso inverte                               | s/\(p\[9\] === "-" \? -1 : 1\)/(p[9] === "-" ? 1 : -1)/
+PEGA | a fração de segundo sai da conta                      | s/const instante = civil\.getTime\(\) - fusoMin \* 60_000 \+ fracaoMs;/const instante = civil.getTime() - fusoMin * 60_000;/
 PEGA | sem relógio do servidor aprova                        | s/if \(!Number\.isFinite\(agoraMs\)\) \{/if (false) {/
-# ── o formato ──
-PEGA | formato fora do RFC 3339 passa                        | s/const partes = RFC3339_DO_SNAPSHOT\.exec\(valor\);/const partes = RFC3339_DO_SNAPSHOT.exec(valor) ?? ["", valor.slice(0, 10), valor.slice(11, 19), "Z"];/
-PEGA | data fora do calendário passa                         | s/if \(!Number\.isFinite\(instante\)\) \{/if (false) {/
+# ── o formato e o calendário ──
+PEGA | espaço no lugar do T e espaço nas pontas passam       | s/const p = RFC3339_DO_SNAPSHOT\.exec\(valor\);/const p = RFC3339_DO_SNAPSHOT.exec(valor.trim().replace(" ", "T"));/
+PEGA | regex sem âncora de fim (lixo depois passa)           | s/\(\\d\{2\}\)\)\$\/;$/(\\d{2}))\/;/
+PEGA | regex sem âncora de início                            | s/^  \/\^\(\\d\{4\}\)/  \/(\\d{4})/
+PEGA | dia que o mês não tem passa (30 de fevereiro)         | s/if \(!camposNaFaixa \|\| !diaExiste \|\| !fusoNaFaixa\) \{/if (!camposNaFaixa || !fusoNaFaixa) {/
+PEGA | campo fora da faixa passa (minuto 60, ano 0000)       | s/if \(!camposNaFaixa \|\| !diaExiste \|\| !fusoNaFaixa\) \{/if (!diaExiste || !fusoNaFaixa) {/
+PEGA | fuso fora da faixa passa                              | s/if \(!camposNaFaixa \|\| !diaExiste \|\| !fusoNaFaixa\) \{/if (!camposNaFaixa || !diaExiste) {/
+PEGA | teto do fuso sobe para 24 h                           | s/FUSO_MAXIMO_DO_SNAPSHOT_MIN = 14 \* 60;/FUSO_MAXIMO_DO_SNAPSHOT_MIN = 24 * 60;/
+PEGA | minuto do fuso sem teto                               | s/\(Number\(p\[11\]\) <= 59 && /(/
 PEGA | ausente deixa de ser "required"                       | s/if \(valor === undefined \|\| valor === null \|\| valor === ""\) \{/if (false) {/
 # ── o snapshot honesto ──
 PEGA | o texto que vai ao banco é reescrito                  | s/return \{ ok: true, geradoEm: valor \};/return { ok: true, geradoEm: new Date(instante).toISOString() };/
