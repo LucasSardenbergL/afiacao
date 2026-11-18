@@ -24,8 +24,10 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * v1.12: gate de auth canônico (`_shared/auth.ts`) no lugar da cópia local; teste negativo de handler (lote H).
  * v1.13: lê a condição de pagamento do formulário do portal (só leitura) e a aplica ao pedido pela RPC
  * `sayerlack_aplicar_condicao_portal` antes do PO (D-1, pontos cegos Onda 2).
+ * v1.14: enxerga a recusa por lote mínimo e aborta (Fase 0). v1.15: sobe ao lote, prova pela grade, efetiva e
+ * registra a divergência portal ≠ Omie em `pedido_portal_ajuste_qtde` (Fase 1). Detalhe no changelog.
  */
-export const VERSAO = "v1.14-lote-minimo-portal";
+export const VERSAO = "v1.15-lote-minimo-ajuste";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

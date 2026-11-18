@@ -1,6 +1,6 @@
 # Lote mínimo do portal Sayerlack — design [money-path]
 
-> Status: **proposta, aguardando aprovação do founder** · 2026-11-18 · nenhuma linha de código ainda.
+> Status: Fase 0 no ar (#3963) · **Fase 1 revisada em implementação** (2026-11-18).
 > Gatilho: pedido 4485 (OBEN). O item VERNIZ PARA PISO YO20.1464.00BB precisa de 1 unidade. O portal recusou com
 > "Quantidade informada menor que o lote mínimo de venda (20)".
 
@@ -77,6 +77,74 @@ retentar não muda o lote.
 
 **Sinal para abrir a Fase 1:** ≥1 recusa real capturada com `lote` (Qtd UN) e `sku_portal` legíveis, de N envios no período.
 
+### Fase 1 (REVISADA 2026-11-18) — subir ao lote, efetivar e registrar a divergência
+
+> Substitui a "tela de 3 decisões" da versão anterior. Decisão do founder (2026-11-18): na recusa por lote,
+> o robô sobe a Qtd UN ao lote, segue e efetiva; o PO do Omie fica com a qtde REAL; a redução é pedida ao CRS
+> por e-mail (Fase 2). **Sem teto de valor** (o founder escolheu, avisado de que o 4505 subiria ~R$ 11 mil).
+
+**Sinal da Fase 0 (colhido, pedido 4505, 2026-11-18 18:54 UTC):** recusa do item 1 `YO20.1464.00BB`, lote 20,
+`efetivarAttempted=false`, alerta 653. A forma real do DOM, que muda o desenho:
+
+- O POST `save-tab-preco-session` volta `success:true` e **não leva quantidade** (só `it_codigo` + tabela). O lote
+  é validado no cliente: o corpo do POST nunca prova nada sobre a quantidade.
+- A recusa é um **alerta inline** (`alert-danger`, rodapé da grade), não modal. A linha **continua em edição**
+  (inputs de Qtd Fat/Qtd UN, botão de gravar), com Qtd UN = 1.
+- O alerta **continua visível** depois. Dois itens com o mesmo lote geram o MESMO texto. Texto não distingue
+  recusa nova de velha.
+
+**Logo, a prova autoritativa é a GRADE, nunca o texto.**
+
+**No Chrome remoto, por item recusado:**
+
+1. Valida o lote: inteiro, `lote > qtde enviada`, no máximo **1 ajuste por item**. Senão, aborta como hoje
+   (`LOTE_MINIMO_PORTAL`, `efetivarAttempted=false`, com `motivo`).
+2. Redigita Qtd UN = lote no input da linha em edição (mesmo seletor da digitação original, que a Fase 0 afirmou
+   ser "Qtd UN" por cabeçalho) e grava de novo, com o mesmo `armarSaveWait` e 1 retry.
+3. **Prova da linha:** espera a linha sair do modo edição (sem input visível) e lê Qtd UN **por cabeçalho** = lote.
+   Sem prova em ~6 s (inclui a recusa repetida, ou um 2º lote diferente) → aborta sem efetivar
+   (`motivo: ajuste_nao_confirmado`).
+4. Registra o ajuste `{idx, skuPortal, qtdeOriginal, lote, trecho, linhaAntes, linhaDepois}` numa lista do
+   closure (sobrevive a exceção pós-clique; o `buildEnvelope` a copia para `evidence.ajustesLote`).
+
+**Antes do Efetivar, se houve ajuste:** prova a **grade inteira** a partir do scrape por cabeçalho: nº de linhas =
+nº de itens; linha i ↔ item i pelo token de SKU; nenhuma linha em edição; Qtd UN inteira = lote (ajustado) ou
+qtde (demais). Qualquer furo → aborta sem efetivar (`motivo: grade_divergente`). Só com essa prova a varredura
+final ignora o alerta de lote ainda visível (é o alerta velho, já resolvido). Sem ajuste, a varredura final segue
+idêntica à Fase 0.
+
+**Recusa tardia:** se depois do save a linha não sair do modo edição, a detecção roda de novo (o alerta pode
+renderizar depois dos 300 ms). Num item ajustado, isso fica coberto pela prova da linha. No item comum, pela
+varredura final da Fase 0.
+
+**No Deno (pós-Browserless):**
+
+- `evidence.ajustesLote` vem do Chrome, logo **não é confiável**: `lerAjustesLoteDaEvidencia` (puro, `_shared` +
+  espelho em `src/`) aceita só a entrada com `idx` no intervalo, `skuPortal` = item `idx`, `qtdeOriginal` = a qtde
+  que esta execução enviou e `lote` inteiro > `qtdeOriginal`. Entrada ilegível com o pedido possivelmente colocado
+  → alerta **urgente** "conferir no portal", nunca ledger com número fabricado.
+- Com `efetivarAttempted !== false` (sucesso, aceito sem protocolo ou indeterminado) e ajuste válido: grava
+  `pedido_portal_ajuste_qtde` (1 linha por item, idempotente por `(pedido_id, pedido_item_id)`) e alerta o
+  founder com o texto pronto para o CRS. Com `efetivarAttempted === false`, nada foi colocado: sem ledger.
+- **PO do Omie:** já usa `ceil(qtde_final)` (`disparar-pedidos-aprovados/produto-po.ts:70`), e a edge não
+  escreve item, então o PO sai com a qtde REAL. A divergência portal ≠ Omie mora no ledger.
+- **Captura de custo:** pulada no pedido com ajuste. A RPC confere contra `qtde_final`, e o total cobrado é o do
+  lote. Fica `cego` com motivo próprio, nunca custo fabricado.
+
+**Ledger `pedido_portal_ajuste_qtde` (nasce nesta fase, a Fase 2 acrescenta a trilha do e-mail):**
+`pedido_id`, `pedido_item_id`, `empresa`, `sku_portal`, `sku_codigo_omie`, `qtde_omie` (unidade Omie = `qtde_final`),
+`qtde_portal_necessaria` e `qtde_portal_lancada` (Qtd UN), `lote_minimo`, `portal_protocolo`, `status_envio`,
+`status` (`pendente_email` → … Fase 2), `evidencia`, `criado_em`. RLS: leitura staff; escrita só service role
+(1 escritor, a edge).
+
+**Pedido separado:** com o fluxo automático, o item fica no MESMO pedido dos outros SKUs. A Fase 2 pede ao CRS a
+redução e, se recusada, o cancelamento **só do item**, não do pedido (a confirmar com o founder).
+
+**Sinal para a Fase 2:** ≥1 pedido real efetivado com ajuste no ledger, `qtde_portal_lancada` = lote e o PO do Omie
+com `qtde_omie`.
+
+<details><summary>Fase 1 original (substituída)</summary>
+
 ### Fase 1 — o lote vira dado e a decisão vira tela
 
 **Onde mora o lote:** colunas novas em `sku_fornecedor_externo`, porque é ali que vive a unidade do portal:
@@ -104,6 +172,8 @@ e três ações, sempre por **decisão humana**:
 O motor passa a **avisar** (não a arredondar) quando a sugestão fica abaixo do lote conhecido. Arredondar
 automaticamente é decisão de capital de giro e fica fora deste escopo: o histórico de superdimensionamento do motor
 está em `reposicao.md` §Mínimo forçado.
+
+</details>
 
 ### Fase 2 — portal ≠ Omie + e-mail ao CRS + leitura da resposta
 
