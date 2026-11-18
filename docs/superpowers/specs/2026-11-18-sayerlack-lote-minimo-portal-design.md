@@ -128,9 +128,8 @@ está em `reposicao.md` §Mínimo forçado.
 | `gmail_thread_id`, `email_message_id`, `email_enviado_em`, `cobrado_em`, `resposta_recebida_em`, `resposta_classificacao`, `resposta_trecho` | trilha |
 | `decidido_por`, `decidido_em` | dono de cada transição: `sistema` ou o user |
 
-**Proposta: o item abaixo do lote vai num pedido de portal SEPARADO.** Hoje ele entraria no mesmo pedido Sayerlack dos
-outros 9 SKUs, e "cancelar o pedido" derrubaria a compra inteira. Com o item isolado, o cancelamento afeta só ele. É
-a pergunta aberta nº 6.
+**Decidido (founder, 2026-11-18): o item abaixo do lote vai num pedido de portal SEPARADO.** Hoje ele entraria no mesmo pedido Sayerlack dos
+outros 9 SKUs, e "cancelar o pedido" derrubaria a compra inteira. Com o item isolado, o cancelamento afeta só ele.
 
 **Envio do PO com qtde diferente**
 
@@ -215,8 +214,8 @@ O founder decidiu que o e-mail sai do Gmail pessoal dele. É a **mesma caixa** q
 3. ~~Como cancelar~~: **respondida**, é uma resposta no thread do CRS; a Sayerlack cancela sozinha.
 4. **Se a Sayerlack faturar o lote mesmo após pedir a redução:** aceitamos o estoque extra ou devolvemos?
 5. ~~Prazo~~: **respondido**, é 1 dia útil para alerta e cobrança.
-6. **O item abaixo do lote vai num pedido de portal separado?** É o que recomendo: sem isso, cancelar derruba os outros
-   SKUs do pedido.
+6. ~~Pedido separado~~: **respondida**, sim. O item abaixo do lote vai sozinho num pedido de portal, então
+   cancelar não derruba os outros SKUs.
 
 ## 6. Evidência — automação de e-mail viva (`psql-ro`, 2026-11-18)
 
