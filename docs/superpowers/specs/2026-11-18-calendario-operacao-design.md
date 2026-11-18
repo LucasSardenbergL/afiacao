@@ -58,6 +58,7 @@ O calendário é também a base futura da gestão de férias por funcionário (f
 - **Guarda `W/U < 0,6`:** cai no `d` cru do legado (`S90/90`) + flag `baixa_confianca` — sem memória, nunca fabrica, nunca `null`. Com o calendário real (recesso ≈ 10 dias úteis em 64) a guarda é inalcançável; existe contra edição errada.
 - **COLACOR:** calendário cadastrável e usado na E1 (recebimento); **detecção de dia sem NF e E2 só para OBEN** (único histórico de venda). Sem histórico, a empresa não entra na E2.
 - **`calendario_feriados`:** recebe só feriados nacionais 2027–2030 (semântica atual do módulo de tarefas preservada); emendas e recesso **não** entram nela.
+- **`meia_equipe` não sobrescreve feriado/emenda fechado** (registrado na Etapa 1): a escala de meia equipe só preenche dia SEM linha; um dia já `fechado` por feriado ou emenda continua fechado.
 
 ### 4.2 Respostas do founder à checagem do construtor (2026-11-18)
 
@@ -94,6 +95,10 @@ A versão original de B ("dezembro compra menos por soma de pesos", peso 0,8, aj
 - Fornecedores: lista de períodos fechados por fornecedor.
 - Painel de **pendências**: (a) feriado terça/quinta sem decisão de emenda (alerta 90 dias + lista total); (b) **dia útil aberto sem nenhuma NF na empresa** (detecção diária, `origem='deteccao'`, status `pendente_dado`) → founder marca "fechado" ou "dado faltante"; (c) calendário com < 12 meses à frente.
 - Convenções do DS (useUrlState, EmptyState, sonner, `track('reposicao.calendario_*')`). Ação de importar via `useMutationComRegistro`.
+- **Decisões da Etapa 1 (2026-11-18, revisão final):**
+  - (a) A detecção de "dia útil sem NF" roda **ao abrir a tela** (consulta `calendario_dias_sem_nf`), **sem persistir** linha `origem='deteccao'`. O founder resolve na tela e é a **decisão** dele que persiste (linha `manual`/`fechado`/`pendente_dado`). Motivo: um job diário gravando `deteccao` seria um 2º escritor da tabela sem ganho — a consulta é barata e sempre atual.
+  - (b) **Não há botão "importar".** A carga 2025–2030 é SQL manual idempotente (`db/carga-calendario-operacao-2025-2030.sql`, postcondição `POST carga calendario OK`), aplicada uma vez no SQL Editor. O `useMutationComRegistro` fica para quando houver importação recorrente.
+  - (c) O alerta "recebe em" aparece **antes** do disparo como prévia (RPC `calendario_previsao_pedido`, mesma regra da edge) e, depois do disparo, pelas colunas gravadas.
 
 ### 6.3 Etapa 1 — dezembro (motor e chegada)
 

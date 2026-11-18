@@ -66,5 +66,8 @@ v1.17 (2026-11-18, calendário de operação etapa 1) — os dias úteis do dDtP
 (`calendario_somar_dias_uteis_fornecedor`: fim de semana, feriado nacional, recesso cadastrado); o dDtPrevisao segue
 sendo a promessa dele. A data em que a empresa recebe (`calendario_proximo_dia_recebimento`, 1º dia aberto ≥ promessa)
 vai para `data_recebimento_prevista`/`recebimento_ajustado_calendario` no mesmo update do desfecho. RPC com erro/null
-⇒ resultado inteiro legado (colunas null). PRÉ-CONDIÇÃO DE BANCO: migration 20261119100000 aplicada ANTES do deploy.
+⇒ resultado inteiro legado (colunas null). PRÉ-CONDIÇÃO DE BANCO, NESTA ORDEM, ANTES do deploy: migration
+20261119100000 → migration 20261119120000 → carga `db/carga-calendario-operacao-2025-2030.sql` (NOTICE
+`POST carga calendario OK`) → edge v1.17 → Publish. Edge antes da CARGA não quebra, mas grava "sem ajuste" falso
+(`recebimento_ajustado_calendario=false` com data sem recesso) em pedido de dezembro.
 ```
