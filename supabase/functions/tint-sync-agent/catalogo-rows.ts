@@ -26,13 +26,23 @@
 //   · Chave da entidade: `item[chave] || item.id || ''`, como sempre foi.
 //
 // O que NÃO muda para o agente real: ele só envia colunas desta lista (medido nas 3.000 linhas
-// mais recentes de cada tabela), então a linha gravada é a mesma. Muda para item com campo fora
-// da lista: antes o PostgREST recusava o LOTE inteiro de até 500 linhas (coluna inexistente);
-// agora o campo é ignorado e a linha entra — e o index avisa no log (`chavesDescartadas`),
-// porque o conector não reenvia o lote depois que a lista for atualizada. Muda também para o
-// item que traz `id` no lugar da chave da entidade: antes o `id` ia junto para a coluna `id`
-// (uuid) e derrubava o lote se não fosse uuid; agora ele só vira a chave. Não é autoridade
-// nova: o agente já podia mandar o mesmo valor na chave da entidade.
+// mais recentes de cada tabela e lido nos mapeadores do conector), então a linha gravada é a mesma.
+//
+// Item com campo fora da lista é RECUSADO inteiro (`separarLoteDeCatalogo`): não vira linha, conta
+// em `error_count`/`errors[]` e fica em `tint_sync_errors`. O conector só confirma o lote com
+// `error_count == 0`, então reenvia a entidade no ciclo seguinte. É o que a v1.3 já fazia, por
+// outro caminho: a coluna inexistente derrubava o lote de até 500 linhas (visto em campo em
+// 12/06, com o campo `ativo`). A diferença é a granularidade — agora só o item ofensor fica de
+// fora — e a mensagem, que nomeia o campo. Limpar o item e confirmar o lote descartaria em
+// silêncio o que o conector acredita ter entregue, e ele não reenvia depois.
+// A lista fechada do builder segue valendo por baixo: mesmo que alguém tire a recusa, coluna do
+// servidor não entra na linha.
+//
+// Muda para o item que traz `id` no lugar da chave da entidade: antes o `id` ia junto para a
+// coluna `id` (uuid) e derrubava o lote se não fosse uuid; agora ele só vira a chave. Não é
+// autoridade nova: o agente já podia mandar o mesmo valor na chave da entidade.
+
+import { ENTIDADES_CATALOGO } from "./catalogo-vazio.ts";
 
 /** Item bruto de catálogo enviado pelo agente (qualquer das 5 entidades). */
 export interface TintCatalogItem {
@@ -151,13 +161,11 @@ function nomeParaLog(chave: string): string {
 }
 
 /**
- * Nomes das chaves que os itens trouxeram e a lista fechada NÃO gravou (as do servidor
- * inclusive), sem repetição, em ordem e truncados. Alimenta o aviso de log do index.
+ * Nomes das chaves que os itens trouxeram e que NÃO estão na lista fechada da entidade (as do
+ * servidor inclusive), sem repetição, em ordem, saneados e truncados. É o que decide a recusa do
+ * item em `separarLoteDeCatalogo` e o que a mensagem de erro nomeia.
  *
- * `raw_data` guarda a evidência, mas não avisa ninguém: se o conector passar a mandar um campo
- * de negócio que a lista não conhece, o lote é confirmado sem ele e não é reenviado depois.
- * `id` só conta como descartado quando o item também traz a chave da entidade — sem ela, o `id`
- * é usado como chave.
+ * `id` só conta quando o item também traz a chave da entidade — sem ela, o `id` é usado como chave.
  */
 export function chavesDescartadas(
   entidade: EntidadeStagingCatalogo,
@@ -175,4 +183,83 @@ export function chavesDescartadas(
     }
   }
   return [...descartadas].sort();
+}
+
+function ehObjetoSimples(v: unknown): v is TintCatalogItem {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** O lote de UMA entidade, separado em linhas a gravar e itens recusados. */
+export interface LoteDeCatalogo {
+  /** Linhas dos itens aceitos, na ordem em que vieram. */
+  linhas: Record<string, unknown>[];
+  /** Quantos itens NÃO viraram linha (campo fora da lista, ou item que não é objeto). */
+  recusados: number;
+  /** Nomes dos campos fora da lista que causaram recusa, sem repetição e em ordem. */
+  camposRecusados: string[];
+  /** Dos recusados, quantos não eram um objeto (texto, número, lista, null). */
+  naoObjetos: number;
+}
+
+/**
+ * Separa o lote de uma entidade. O item só vira linha se for um objeto e não trouxer campo fora
+ * da lista fechada; senão é recusado INTEIRO. Recusar o campo e gravar o resto confirmaria ao
+ * conector uma entrega que não aconteceu.
+ */
+export function separarLoteDeCatalogo(
+  entidade: EntidadeStagingCatalogo,
+  itens: readonly unknown[],
+  runId: string,
+  account: string,
+  storeCode: string,
+): LoteDeCatalogo {
+  const linhas: Record<string, unknown>[] = [];
+  const campos = new Set<string>();
+  let recusados = 0;
+  let naoObjetos = 0;
+  for (const item of itens) {
+    if (!ehObjetoSimples(item)) {
+      recusados += 1;
+      naoObjetos += 1;
+      continue;
+    }
+    const fora = chavesDescartadas(entidade, [item]);
+    if (fora.length > 0) {
+      recusados += 1;
+      for (const campo of fora) campos.add(campo);
+      continue;
+    }
+    linhas.push(montarStagingCatalogoRow(entidade, item, runId, account, storeCode));
+  }
+  return { linhas, recusados, camposRecusados: [...campos].sort(), naoObjetos };
+}
+
+/** Quantos nomes de campo a mensagem e o registro da recusa carregam (o resto vira "+N"). */
+export const MAX_CAMPOS_NA_RECUSA = 20;
+
+/** Mensagem da recusa: vai em `errors[]` da resposta ao conector e em `tint_sync_errors`. */
+export function mensagemDeRecusa(lote: LoteDeCatalogo): string {
+  const partes: string[] = [];
+  if (lote.camposRecusados.length > 0) {
+    const nomes = lote.camposRecusados.slice(0, MAX_CAMPOS_NA_RECUSA).join(", ");
+    const outros = lote.camposRecusados.length - MAX_CAMPOS_NA_RECUSA;
+    partes.push(`campo(s) fora da lista da entidade: ${nomes}${outros > 0 ? ` (+${outros})` : ""}`);
+  }
+  if (lote.naoObjetos > 0) partes.push(`${lote.naoObjetos} item(ns) que não são objeto`);
+  return `${lote.recusados} item(ns) recusado(s): ${partes.join("; ")}`;
+}
+
+/**
+ * Forma do lote de /catalogs, conferida ANTES de qualquer atalho: o corpo tem de ser um objeto e
+ * toda entidade gravável presente tem de ser uma lista. `null` e ausente valem como "não veio".
+ * Sem isto, `{"corantes": {...}}` sozinho contava zero item gravável e recebia o ack limpo do lote
+ * sem run — o conector confirmava um lote que ninguém gravou.
+ */
+export function erroDeFormaDoLote(body: unknown): string | null {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return "body must be a JSON object";
+  for (const entidade of ENTIDADES_CATALOGO) {
+    const valor = (body as Record<string, unknown>)[entidade];
+    if (valor !== undefined && valor !== null && !Array.isArray(valor)) return `${entidade}: must be an array`;
+  }
+  return null;
 }

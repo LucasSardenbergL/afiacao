@@ -26,65 +26,32 @@
 // SEMPRE atrás do recebimento, entre 3min35s e 4min24s (é o tempo de gerar e enviar). Nenhum
 // snapshot legítimo chegou adiantado.
 //
-// O instante é calculado dos campos do texto, sem `Date.parse`: o parser do JavaScript aceita o
-// que o Postgres recusa ("2026-02-30" vira 2 de março) e descarta o que passa do milissegundo.
+// Quem lê o instante é o `instanteNs` de ./preparacoes.ts, o parser que esta edge já tinha:
+// RFC 3339 estrito com fuso, data que existe no calendário, precisão de nanossegundo. Um segundo
+// parser aqui teria regras próprias para a mesma pergunta. (`Date.parse` não serve: aceita o que
+// o Postgres recusa — "2026-02-30" vira 2 de março — e descarta o que passa do milissegundo.)
+import { instanteNs } from "./preparacoes.ts";
 
 /** Folga para relógio adiantado na origem. Passou disso, o snapshot é recusado (400). */
 export const TOLERANCIA_FUTURO_MS = 10 * 60_000;
 
-// RFC 3339 estrito, com fuso EXPLÍCITO: `T` e `Z` maiúsculos, fração de até 9 dígitos. É o que o
-// conector manda (`time.RFC3339`). Sem fuso o instante é ambíguo.
-const RE_RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:Z|([+-])(\d{2}):(\d{2}))$/;
-
-/** Maior deslocamento de fuso aceito (o Postgres recusa acima de 15h59). */
-const MAX_HORAS_DE_FUSO = 15;
+// O Postgres recusa fuso acima de 15h59; o `instanteNs` aceita até 23h59. Sem isto, o texto
+// passaria aqui e o banco responderia erro depois de a rota tentar gravar.
+const RE_FUSO_FORA_DO_POSTGRES = /[+-](1[6-9]|2\d):\d{2}$/;
 
 export type VeredictoRelogio = { ok: true } | { ok: false; erro: string };
-
-/** Instante do texto, em milissegundos inteiros + o resto abaixo do milissegundo (em nanossegundos). */
-export function instanteDoTexto(valor: string): { ms: number; restoNs: number } | null {
-  const m = RE_RFC3339.exec(valor);
-  if (!m) return null;
-  const [ano, mes, dia, hora, min, seg] = [m[1], m[2], m[3], m[4], m[5], m[6]].map(Number);
-  // O calendário é conferido por ida e volta: 30 de fevereiro, mês 13, 24:00:00 e segundo 60 não
-  // voltam iguais. Ano abaixo de 100 também não (o `Date.UTC` o lê como 19xx).
-  const base = new Date(Date.UTC(ano, mes - 1, dia, hora, min, seg));
-  if (
-    base.getUTCFullYear() !== ano || base.getUTCMonth() !== mes - 1 || base.getUTCDate() !== dia ||
-    base.getUTCHours() !== hora || base.getUTCMinutes() !== min || base.getUTCSeconds() !== seg
-  ) {
-    return null;
-  }
-  let deslocamentoMs = 0;
-  if (m[8] !== undefined) {
-    const horas = Number(m[9]);
-    const minutos = Number(m[10]);
-    if (horas > MAX_HORAS_DE_FUSO || minutos > 59) return null;
-    deslocamentoMs = (m[8] === "-" ? -1 : 1) * (horas * 60 + minutos) * 60_000;
-  }
-  const fracaoNs = m[7] === undefined ? 0 : Number(m[7].padEnd(9, "0"));
-  return {
-    // "+03:00" quer dizer que o relógio de parede está 3h À FRENTE do UTC: o instante é ANTES.
-    ms: base.getTime() - deslocamentoMs + Math.floor(fracaoNs / 1_000_000),
-    restoNs: fracaoNs % 1_000_000,
-  };
-}
 
 /**
  * `valor` é o `generated_at` do body; `agoraMs` é o relógio do SERVIDOR (`Date.now()`).
  * Não normaliza nem devolve o instante: quem passa é gravado exatamente como veio.
  */
 export function validarGeneratedAt(valor: unknown, agoraMs: number): VeredictoRelogio {
-  if (typeof valor !== "string" || !RE_RFC3339.test(valor)) {
+  const ns = instanteNs(valor);
+  if (ns === null || RE_FUSO_FORA_DO_POSTGRES.test(valor as string)) {
     return { ok: false, erro: "generated_at must be an RFC 3339 timestamp with timezone" };
   }
-  const instante = instanteDoTexto(valor);
-  if (instante === null) {
-    return { ok: false, erro: "generated_at is not a valid instant" };
-  }
-  const limiteMs = agoraMs + TOLERANCIA_FUTURO_MS;
-  // Fração abaixo do milissegundo conta: 1 ns além do limite é além do limite.
-  if (instante.ms > limiteMs || (instante.ms === limiteMs && instante.restoNs > 0)) {
+  const limiteNs = BigInt(Math.floor(agoraMs) + TOLERANCIA_FUTURO_MS) * 1_000_000n;
+  if (ns > limiteNs) {
     return {
       ok: false,
       erro: `generated_at is in the future (server clock: ${new Date(agoraMs).toISOString()})`,

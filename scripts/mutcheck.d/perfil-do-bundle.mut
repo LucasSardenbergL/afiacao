@@ -15,5 +15,5 @@ PEGA | nao classificado vira "misto"                    | s/    : PERFIL_NAO_INF
 PEGA | rotulo do nao informado muda                     | s/export const PERFIL_NAO_INFORMADO = "nao_informado";/export const PERFIL_NAO_INFORMADO = "desconhecido";/
 PEGA | "nao_informado" entra na lista de perfis         | s/^  "misto",$/  "misto", "nao_informado",/
 PEGA | um perfil valido some da lista                   | s/^  "orientado_produtividade",$/  "orientado_velocidade",/
-PEGA | a regra manda tratar como misto                  | s/e não presuma um perfil/e trate como misto/
+PEGA | a regra manda tratar como misto                  | s/não presuma um perfil e mantenha/trate como misto e mantenha/
 PEGA | a regra cita outro rotulo                        | s/`- Se "\$\{PERFIL_NAO_INFORMADO\}":/`- Se "sem_perfil":/

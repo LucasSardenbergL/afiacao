@@ -1,5 +1,5 @@
-# O HANDLER da `tint-sync-agent` executado com PostgREST falso: o que sai pelo fio
-# (scanner Lovable Security, lote 6 — achado do Codex na consulta de desenho; money-path).
+# O HANDLER da `tint-sync-agent` executado com PostgREST falso: o que sai pelo fio e o que a edge
+# responde ao conector (scanner Lovable Security, lote 6 — achado do Codex na consulta de desenho; money-path).
 # @src: supabase/functions/tint-sync-agent/index.ts
 # @test: supabase/functions/tint-sync-agent/index_test.ts
 # @test_cmd: deno test --no-remote --allow-read=supabase/functions
@@ -14,14 +14,22 @@
 # EXPECT preenchido por MEDIÇÃO.
 #
 # ── /catalogs: coluna do servidor de volta à linha entregue ao banco ──
-PEGA | created_at acrescentado DEPOIS do builder         | s/^          montarStagingCatalogoRow\(entityType, item, runId, agent\.account, agent\.storeCode\)$/          ({ ...montarStagingCatalogoRow(entityType, item, runId, agent.account, agent.storeCode), created_at: item.created_at })/
-PEGA | a rota volta a copiar o item (o furo)            | s/^          montarStagingCatalogoRow\(entityType, item, runId, agent\.account, agent\.storeCode\)$/          ({ ...item, sync_run_id: runId, account: agent.account, store_code: agent.storeCode, raw_data: item, staging_status: "pending" })/
-PEGA | bulkInsert reexpande o raw_data na linha         | s/const \{ error \} = await sb\.from\(table\)\.insert\(chunk\);/const { error } = await sb.from(table).insert(chunk.map((r) => ({ ...(r.raw_data as object), ...r })));/
+PEGA | a rota volta a copiar o item (o furo)            | s/const lote = separarLoteDeCatalogo\(entityType, items, runId, agent\.account, agent\.storeCode\);/const lote = { linhas: (items as Record<string, unknown>[]).map((item) => ({ ...item, sync_run_id: runId, account: agent.account, store_code: agent.storeCode, raw_data: item, staging_status: "pending" })), recusados: 0, camposRecusados: [] as string[], naoObjetos: 0 };/
+PEGA | created_at acrescentado DEPOIS do separador       | s/await bulkInsert\(STAGING_CATALOGO\[entityType\]\.tabela, lote\.linhas, 500,/await bulkInsert(STAGING_CATALOGO[entityType].tabela, lote.linhas.map((l) => ({ ...l, created_at: "2099-01-01T00:00:00Z" })), 500,/
 PEGA | precos_base aceita created_at do item            | s/^          margem_pct: item\.margem_pct \?\? null,$/          margem_pct: item.margem_pct ?? null, created_at: item.created_at,/
 PEGA | precos_base aceita o sync_run_id do item         | s/^          margem_pct: item\.margem_pct \?\? null,$/          margem_pct: item.margem_pct ?? null, sync_run_id: item.sync_run_id,/
+# ── /catalogs: item recusado não é confirmado ao conector ──
+PEGA | item recusado nao conta em error_count            | s/^          errors \+= lote\.recusados;$/          errors += 0;/
+PEGA | recusa fora de errors[] da resposta              | s/^          errorDetails\.push\(\{ entity_type: entityType, entity_id: null, message: motivo \}\);$/          void motivo;/
+PEGA | recusa nao registrada em tint_sync_errors        | s/^          await logError\(runId, entityType, null, motivo, .*\)\.catch\(\(\) => \{\}\);$/          await Promise.resolve();/
+PEGA | registro da recusa leva o item cru               | s/nao_objetos: lote\.naoObjetos \}\)\.catch/nao_objetos: lote.naoObjetos }, items).catch/
+# ── /catalogs: forma do lote ──
+PEGA | forma do lote nao e conferida                    | s/if \(erroDeForma\) return json\(\{ ok: false, error: erroDeForma \}, 400\);/if (erroDeForma) console.warn(erroDeForma);/
 # ── /keys-snapshot: o relógio do agente ──
 PEGA | generated_at recusado e gravado mesmo assim      | s/if \(!relogio\.ok\) return json\(\{ ok: false, error: relogio\.erro \}, 400\);/if (!relogio.ok) console.warn(relogio.erro);/
 PEGA | veredito do relogio nem e pedido                 | s/const relogio = validarGeneratedAt\(generated_at, Date\.now\(\)\);/const relogio: { ok: boolean; erro?: string } = { ok: true };/
 PEGA | relogio do servidor adiantado em 1 dia           | s/validarGeneratedAt\(generated_at, Date\.now\(\)\)/validarGeneratedAt(generated_at, Date.now() + 86_400_000)/
+PEGA | relogio do servidor adiantado em 2 min           | s/validarGeneratedAt\(generated_at, Date\.now\(\)\)/validarGeneratedAt(generated_at, Date.now() + 120_000)/
+PEGA | relogio do servidor atrasado em 2 min            | s/validarGeneratedAt\(generated_at, Date\.now\(\)\)/validarGeneratedAt(generated_at, Date.now() - 120_000)/
 # ── controle do fake de auth ──
 PEGA | token da loja nao e conferido                    | s/if \(!data\.sync_token \|\| !timingSafeEq\(String\(data\.sync_token\), syncToken\)\) return null;/if (!data.sync_token) return null;/

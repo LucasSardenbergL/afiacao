@@ -132,6 +132,7 @@ export function perfilParaPrompt(valor: unknown): string {
     : PERFIL_NAO_INFORMADO;
 }
 
-/** A linha do system prompt que diz ao modelo o que fazer com o perfil não informado. */
+/** A linha do system prompt que diz ao modelo o que fazer com o perfil não informado. O texto serve aos
+ *  dois modos (argumentação e perguntas diagnósticas), então não fala em "argumentos". */
 export const REGRA_PERFIL_NAO_INFORMADO =
-  `- Se "${PERFIL_NAO_INFORMADO}": o perfil não foi classificado — balance os argumentos e não presuma um perfil`;
+  `- Se "${PERFIL_NAO_INFORMADO}": o perfil não foi classificado — não presuma um perfil e mantenha uma abordagem equilibrada`;

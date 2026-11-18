@@ -45,3 +45,20 @@ PEGA | nome da chave sem truncar                        | s/descartadas\.add\(no
 PEGA | nome da chave sem sanear (quebra de linha no log) | s/descartadas\.add\(nomeParaLog\(chave\)\.slice\(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO\)\);/descartadas.add(chave.slice(0, MAX_TAMANHO_DE_CHAVE_NO_AVISO));/
 PEGA | separador de linha Unicode passa pelo saneamento  | s/ \|\| cp === 0x2028 \|\| cp === 0x2029 \? "\?" : c;/ ? "?" : c;/
 PEGA | aviso sem ordenar                                | s/return \[\.\.\.descartadas\]\.sort\(\);/return [...descartadas];/
+# ── a recusa do item (o lote com campo fora da lista não é confirmado ao conector) ──
+PEGA | item com campo fora da lista vira linha          | s/^    if \(fora\.length > 0\) \{$/    if (false) {/
+PEGA | item nao-objeto deixa de ser recusado            | s/^    if \(!ehObjetoSimples\(item\)\) \{$/    if (false) {/
+PEGA | lista aceita como item                           | s/return typeof v === "object" && v !== null && !Array\.isArray\(v\);/return typeof v === "object" \&\& v !== null;/
+PEGA | nao-objeto nao entra na contagem de nao-objetos  | s/^      naoObjetos \+= 1;$/      naoObjetos += 0;/
+PEGA | campos da recusa sem ordenar                     | s/camposRecusados: \[\.\.\.campos\]\.sort\(\), naoObjetos \};/camposRecusados: [...campos], naoObjetos };/
+PEGA | campo recusado nao e guardado                    | s/for \(const campo of fora\) campos\.add\(campo\);/void fora;/
+# ── a mensagem da recusa ──
+PEGA | mensagem sem a contagem de itens                 | s/return `\$\{lote\.recusados\} item\(ns\) recusado\(s\): /return `item(ns) recusado(s): /
+PEGA | mensagem sem o nome dos campos                   | s/partes\.push\(`campo\(s\) fora da lista da entidade: \$\{nomes\}/partes.push(`campo(s) fora da lista da entidade/
+PEGA | mensagem sem o teto de nomes                     | s/lote\.camposRecusados\.slice\(0, MAX_CAMPOS_NA_RECUSA\)\.join\(", "\);/lote.camposRecusados.join(", ");/
+PEGA | mensagem cala os nao-objetos                     | s/if \(lote\.naoObjetos > 0\) partes\.push/if (false) partes.push/
+# ── a forma do lote ──
+PEGA | objeto aceito no lugar da lista                  | s/if \(valor !== undefined && valor !== null && !Array\.isArray\(valor\)\) return/if (false) return/
+PEGA | null deixa de valer como ausente                 | s/if \(valor !== undefined && valor !== null && !Array\.isArray\(valor\)\) return/if (valor !== undefined \&\& !Array.isArray(valor)) return/
+PEGA | corpo que nao e objeto passa                     | s/if \(typeof body !== "object" \|\| body === null \|\| Array\.isArray\(body\)\) return "body must be a JSON object";/if (typeof body !== "object" || body === null) return "body must be a JSON object";/
+PEGA | forma confere so as 5 entidades de linha         | s/for \(const entidade of ENTIDADES_CATALOGO\) \{/for (const entidade of ENTIDADES_STAGING_CATALOGO) {/

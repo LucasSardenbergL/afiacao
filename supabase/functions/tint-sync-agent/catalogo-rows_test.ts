@@ -9,6 +9,10 @@ import {
   chavesDescartadas,
   COLUNAS_DO_SERVIDOR_NO_STAGING,
   ENTIDADES_STAGING_CATALOGO,
+  erroDeFormaDoLote,
+  MAX_CAMPOS_NA_RECUSA,
+  mensagemDeRecusa,
+  separarLoteDeCatalogo,
   MAX_TAMANHO_DE_CHAVE_NO_AVISO,
   montarStagingCatalogoRow,
   STAGING_CATALOGO,
@@ -300,4 +304,98 @@ Deno.test("chavesDescartadas: nome longo é truncado (o nome vem do agente)", ()
 Deno.test("chavesDescartadas: controle e separador de linha no nome viram '?' (o nome vai para o log)", () => {
   const item = JSON.parse('{"cod_produto":"P1","a\\nb":1,"c\\u2028d":2,"e\\u0000f":3,"normal":4}') as TintCatalogItem;
   assertEq(chavesDescartadas("produtos", [item]).join(","), "a?b,c?d,e?f,normal", "nomes saneados");
+});
+
+// ─── Recusa do item (o lote com campo fora da lista não é confirmado ao conector) ─────────────
+
+Deno.test("separarLoteDeCatalogo: item com campo fora da lista é recusado INTEIRO; o vizinho limpo entra", () => {
+  const limpo: TintCatalogItem = { id_corante_sayersystem: "C2", volume_ml: 950, custo: 12 };
+  const lote = separarLoteDeCatalogo(
+    "corantes",
+    [itemHostil({ id_corante_sayersystem: "C1", custo: 0.01 }), limpo, { id_corante_sayersystem: "C3", campo_novo: 1 }],
+    RUN,
+    CONTA,
+    LOJA,
+  );
+  assertEq(lote.recusados, 2, "recusados");
+  assertEq(lote.naoObjetos, 0, "nenhum não-objeto");
+  assertEq(lote.linhas.length, 1, "só o item limpo vira linha");
+  assertEq(lote.linhas[0].id_corante_sayersystem, "C2", "a linha é a do item limpo");
+  assertEq(lote.linhas[0].custo, 12, "com o dado dele");
+  // A recusa é do item inteiro: o custo do item hostil NÃO chega ao staging.
+  if (lote.linhas.some((l) => l.id_corante_sayersystem === "C1" || l.id_corante_sayersystem === "C3")) {
+    throw new Error("item recusado virou linha: " + JSON.stringify(lote.linhas));
+  }
+  assertEq(
+    lote.camposRecusados.join(","),
+    "account,campo_novo,coluna_que_nao_existe,created_at,id,matched_id,raw_data,staging_status,store_code,sync_run_id",
+    "campos que causaram a recusa",
+  );
+});
+
+Deno.test("separarLoteDeCatalogo: agente real passa inteiro, na ordem, sem recusa", () => {
+  const itens: TintCatalogItem[] = [
+    { id_corante_sayersystem: "C1", descricao: "Amarelo", volume_ml: 1000 },
+    { id_corante_sayersystem: "C2", custo: 85.4 },
+    { id_corante_sayersystem: "C3" },
+  ];
+  const lote = separarLoteDeCatalogo("corantes", itens, RUN, CONTA, LOJA);
+  assertEq(lote.recusados, 0, "recusados");
+  assertEq(lote.camposRecusados.length, 0, "campos recusados");
+  assertEq(lote.linhas.map((l) => l.id_corante_sayersystem).join(","), "C1,C2,C3", "ordem preservada");
+  // A linha de cada item é exatamente a do builder.
+  for (let i = 0; i < itens.length; i++) {
+    const esperada = montarStagingCatalogoRow("corantes", itens[i], RUN, CONTA, LOJA);
+    if (!igualProfundo(lote.linhas[i], esperada)) throw new Error(`linha ${i} difere da do builder`);
+  }
+  assertEq(separarLoteDeCatalogo("bases", [], RUN, CONTA, LOJA).linhas.length, 0, "lote vazio");
+});
+
+Deno.test("separarLoteDeCatalogo: item que não é objeto é recusado, não vira linha de chave vazia", () => {
+  const lote = separarLoteDeCatalogo("produtos", ["abc", [1, 2], null, 5, true, { cod_produto: "P1" }], RUN, CONTA, LOJA);
+  assertEq(lote.recusados, 5, "recusados");
+  assertEq(lote.naoObjetos, 5, "todos por não serem objeto");
+  assertEq(lote.camposRecusados.length, 0, "sem nome de campo: não havia objeto para ler");
+  assertEq(lote.linhas.length, 1, "o objeto válido entra");
+  assertEq(lote.linhas[0].cod_produto, "P1", "com a chave dele");
+});
+
+Deno.test("separarLoteDeCatalogo: `id` no lugar da chave não é recusa; `id` sobrando ao lado da chave é", () => {
+  assertEq(separarLoteDeCatalogo("bases", [{ id: "B9", descricao: "x" }], RUN, CONTA, LOJA).recusados, 0, "id como chave");
+  const sobrando = separarLoteDeCatalogo("bases", [{ id: "B9", id_base_sayersystem: "B1" }], RUN, CONTA, LOJA);
+  assertEq(sobrando.recusados, 1, "id ao lado da chave");
+  assertEq(sobrando.camposRecusados.join(","), "id", "o campo recusado é o id");
+});
+
+Deno.test("mensagemDeRecusa: conta os itens e nomeia os campos; acima do teto vira +N", () => {
+  const lote = separarLoteDeCatalogo("produtos", [{ cod_produto: "P1", ativo: true }, { cod_produto: "P2", ativo: false, updated_at: "x" }, "abc"], RUN, CONTA, LOJA);
+  assertEq(
+    mensagemDeRecusa(lote),
+    "3 item(ns) recusado(s): campo(s) fora da lista da entidade: ativo, updated_at; 1 item(ns) que não são objeto",
+    "mensagem",
+  );
+  const muitos: Record<string, unknown> = { cod_produto: "P1" };
+  for (let i = 0; i < MAX_CAMPOS_NA_RECUSA + 3; i++) muitos[`campo_${String(i).padStart(2, "0")}`] = i;
+  const msg = mensagemDeRecusa(separarLoteDeCatalogo("produtos", [muitos], RUN, CONTA, LOJA));
+  if (!msg.endsWith("campo_19 (+3)")) throw new Error("teto de nomes não aplicado: " + msg);
+  assertEq(MAX_CAMPOS_NA_RECUSA, 20, "teto");
+  // Só não-objeto: a mensagem não inventa a parte dos campos.
+  assertEq(
+    mensagemDeRecusa(separarLoteDeCatalogo("produtos", [null], RUN, CONTA, LOJA)),
+    "1 item(ns) recusado(s): 1 item(ns) que não são objeto",
+    "mensagem só de não-objeto",
+  );
+});
+
+Deno.test("erroDeFormaDoLote: entidade gravável que não é lista recusa o lote; null e ausente não", () => {
+  assertEq(erroDeFormaDoLote({ produtos: [], corantes: [{ id_corante_sayersystem: "C1" }] }), null, "listas");
+  assertEq(erroDeFormaDoLote({}), null, "lote sem entidade");
+  assertEq(erroDeFormaDoLote({ corantes: null, precos_base: undefined }), null, "null e ausente valem como não veio");
+  assertEq(erroDeFormaDoLote({ padracores: { a: 1 } }), null, "entidade que a rota não grava não é conferida");
+  assertEq(erroDeFormaDoLote({ corantes: { id_corante_sayersystem: "C1" } }), "corantes: must be an array", "objeto no lugar da lista");
+  assertEq(erroDeFormaDoLote({ produtos: [], skus: "x" }), "skus: must be an array", "texto no lugar da lista");
+  assertEq(erroDeFormaDoLote({ precos_base: 0 }), "precos_base: must be an array", "precos_base também é conferido");
+  for (const corpo of [null, undefined, "x", 5, [], [{ produtos: [] }]]) {
+    assertEq(erroDeFormaDoLote(corpo), "body must be a JSON object", `corpo ${JSON.stringify(corpo)}`);
+  }
 });

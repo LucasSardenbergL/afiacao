@@ -1682,10 +1682,13 @@ func mapProduto(row map[string]any) map[string]any {
 	if strings.TrimSpace(ident) == "" {
 		ident = id
 	}
-	// ⚠️ NÃO mandar campo que a staging não tem: a edge espalha TODOS os campos
-	// do item no INSERT de tint_staging_produtos (cod_produto/descricao/raw_data...);
-	// um campo extra ("ativo") derruba o LOTE INTEIRO com erro de coluna — visto em
-	// CAMPO (12/06): "sendInBatches produto: 20 erro(s) de item no lote 0-20".
+	// ⚠️ NÃO mandar campo que a staging não tem. Até a edge v1.3 ela espalhava TODOS os campos
+	// do item no INSERT de tint_staging_produtos (cod_produto/descricao/raw_data...), e um campo
+	// extra ("ativo") derrubava o LOTE INTEIRO com erro de coluna — visto em CAMPO (12/06):
+	// "sendInBatches produto: 20 erro(s) de item no lote 0-20". Da v1.4 em diante a edge tem
+	// lista FECHADA de colunas por entidade (tint-sync-agent/catalogo-rows.ts): o ITEM com campo
+	// fora da lista é recusado, conta em error_count e o lote não é confirmado. Campo novo entra
+	// na lista da edge ANTES de sair daqui.
 	return map[string]any{
 		"cod_produto": ident,
 		"descricao":   toString(row["descricao"]),

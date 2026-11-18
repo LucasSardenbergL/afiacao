@@ -5,7 +5,11 @@
 // O que está em jogo: o banco ordena os snapshots de chaves por `generated_at` e pula como "fora
 // de ordem" o que vier com valor menor ou igual ao último aplicado. Um valor no futuro distante
 // congelava a sincronização das retiradas do catálogo.
-import { instanteDoTexto, TOLERANCIA_FUTURO_MS, validarGeneratedAt } from "./snapshot-relogio.ts";
+//
+// A leitura do instante é do `instanteNs` (./preparacoes.ts, com teste próprio). Aqui se prova o
+// que este módulo decide em cima dela: a fronteira da folga, o lado da comparação, a escala, e que
+// o que o parser recusa não passa.
+import { TOLERANCIA_FUTURO_MS, validarGeneratedAt } from "./snapshot-relogio.ts";
 
 function assertEq(atual: unknown, esperado: unknown, msg: string) {
   if (!Object.is(atual, esperado)) {
@@ -27,7 +31,7 @@ Deno.test("formato real do conector (RFC 3339, ~4 min atrás) passa", () => {
   assertEq(validarGeneratedAt("2026-11-17T03:03:41Z", AGORA).ok, true, "Z");
   assertEq(validarGeneratedAt("2026-11-17T00:03:41-03:00", AGORA).ok, true, "offset -03:00 (mesmo instante)");
   assertEq(validarGeneratedAt("2026-11-17T03:03:41.123456Z", AGORA).ok, true, "fração de microssegundo");
-  assertEq(validarGeneratedAt("2026-11-17T03:03:41.123456789Z", AGORA).ok, true, "fração de nanossegundo");
+  assertEq(validarGeneratedAt("2026-11-17T03:03:41.123456000Z", AGORA).ok, true, "9 dígitos com zeros além do micro");
 });
 
 Deno.test("passado distante passa: quem decide 'fora de ordem' é o banco", () => {
@@ -46,16 +50,18 @@ Deno.test("futuro distante é recusado, com o relógio do servidor na mensagem",
 Deno.test("a tolerância é de 10 minutos, e a fronteira é inclusiva", () => {
   assertEq(TOLERANCIA_FUTURO_MS, 600_000, "tolerância");
   assertEq(validarGeneratedAt(iso(AGORA + 5 * 60_000), AGORA).ok, true, "5 min à frente passa");
+  assertEq(validarGeneratedAt(iso(AGORA + 9 * 60_000), AGORA).ok, true, "9 min à frente passa");
   assertEq(validarGeneratedAt(iso(AGORA + TOLERANCIA_FUTURO_MS), AGORA).ok, true, "exatamente na tolerância passa");
   recusaCom(iso(AGORA + TOLERANCIA_FUTURO_MS + 1), "in the future", "1 ms além da tolerância");
+  recusaCom(iso(AGORA + 11 * 60_000), "in the future", "11 min à frente");
 });
 
-Deno.test("fração abaixo do milissegundo conta: 1 ns além da tolerância é recusado", () => {
+Deno.test("fração abaixo do milissegundo conta: 1 microssegundo além da tolerância é recusado", () => {
   // 03:18:05 é exatamente AGORA + 10 min. O `Date.parse` jogava fora o que passa do milissegundo.
-  assertEq(validarGeneratedAt("2026-11-17T03:18:05.000000000Z", AGORA).ok, true, "fração zero, na fronteira");
+  assertEq(validarGeneratedAt("2026-11-17T03:18:05.000000Z", AGORA).ok, true, "fração zero, na fronteira");
   recusaCom("2026-11-17T03:18:05.000999Z", "in the future", "999 microssegundos além");
-  recusaCom("2026-11-17T03:18:05.000000001Z", "in the future", "1 nanossegundo além");
-  assertEq(validarGeneratedAt("2026-11-17T03:18:04.999999999Z", AGORA).ok, true, "1 ns antes da fronteira");
+  recusaCom("2026-11-17T03:18:05.000001Z", "in the future", "1 microssegundo além");
+  assertEq(validarGeneratedAt("2026-11-17T03:18:04.999999Z", AGORA).ok, true, "1 microssegundo antes da fronteira");
 });
 
 Deno.test("o fuso do texto é respeitado: -03:00 no futuro é futuro", () => {
@@ -63,14 +69,9 @@ Deno.test("o fuso do texto é respeitado: -03:00 no futuro é futuro", () => {
   recusaCom("2026-11-17T03:30:00-03:00", "in the future", "offset que joga o instante para frente");
   // O mesmo relógio de parede com +03:00 é 00:30Z, no passado.
   assertEq(validarGeneratedAt("2026-11-17T03:30:00+03:00", AGORA).ok, true, "offset que joga para trás");
-  assertEq(instanteDoTexto("2026-11-17T03:30:00+03:00")?.ms, Date.parse("2026-11-17T00:30:00Z"), "instante com +03:00");
-  assertEq(instanteDoTexto("2026-11-17T03:30:00-03:00")?.ms, Date.parse("2026-11-17T06:30:00Z"), "instante com -03:00");
-  assertEq(instanteDoTexto("2026-11-17T03:30:00.5Z")?.ms, Date.parse("2026-11-17T03:30:00.500Z"), "fração curta é décimo, não milésimo");
 });
 
-Deno.test("os MINUTOS do fuso contam (a mutação que os ignorava sobrevivia)", () => {
-  assertEq(instanteDoTexto("2026-11-17T03:30:00+05:30")?.ms, Date.parse("2026-11-16T22:00:00Z"), "instante com +05:30");
-  assertEq(instanteDoTexto("2026-11-17T03:30:00-00:45")?.ms, Date.parse("2026-11-17T04:15:00Z"), "instante com -00:45");
+Deno.test("os MINUTOS do fuso contam", () => {
   // 03:40 em +00:30 é 03:10Z: dentro da folga das 03:08:05Z. Lido sem os 30 minutos seria 03:40Z, futuro.
   assertEq(validarGeneratedAt("2026-11-17T03:40:00+00:30", AGORA).ok, true, "+00:30 traz o instante para dentro da folga");
   // 03:00 em -00:30 é 03:30Z: futuro. Lido sem os 30 minutos seria 03:00Z, passado.
@@ -86,6 +87,8 @@ Deno.test("o que não é RFC 3339 estrito com fuso é recusado — nada é adivi
     "2026-11-17T03:03:41+00", // fuso só com hora
     "2026-11-17T03:03:41.Z", // fração vazia
     "2026-11-17T03:03:41.1234567890Z", // fração com 10 dígitos
+    "2026-11-17T03:03:41.123456789Z", // além do microssegundo: o Postgres arredondaria
+    "2026-11-17T03:18:05.000000001Z", // idem, na fronteira da folga
     "2026-11-17",
     "2099",
     "ontem",
@@ -119,11 +122,12 @@ Deno.test("texto com a forma certa e instante que não existe é recusado ANTES 
     "2026-11-17T03:60:00Z", // minuto 60
     "2026-11-17T03:03:60Z", // segundo 60
     "2026-13-45T25:61:61Z",
-    "0099-01-01T00:00:00Z", // ano abaixo de 100
+    "0099-01-01T00:00:00Z", // ano fora da faixa
     "2026-11-17T03:03:41+16:00", // fuso além do que o Postgres aceita
+    "2026-11-17T03:03:41-23:00", // idem
     "2026-11-17T03:03:41-03:60", // minuto de fuso 60
   ]) {
-    recusaCom(ruim, "not a valid instant", `entrada ${ruim}`);
+    recusaCom(ruim, "RFC 3339", `entrada ${ruim}`);
   }
   // Controle: o vizinho válido de cada caso passa.
   for (const bom of ["2024-02-29T00:00:00Z", "2025-11-30T23:59:59Z", "2026-11-17T03:03:41+15:59", "2026-11-16T03:03:41-03:59"]) {

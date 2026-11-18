@@ -23,13 +23,15 @@ import {
 // Lote de /catalogs sem entidade gravável: ack sem run (catalogo-vazio_test.ts) — NÃO reimplementar inline.
 import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.ts";
 // Linha de staging de /catalogs: lista FECHADA de colunas por entidade (catalogo-rows_test.ts).
-// Colunas do servidor (`created_at`, `id`, `matched_id`) nunca saem do item — NÃO reimplementar inline.
+// Colunas do servidor (`created_at`, `id`, `matched_id`) nunca saem do item, e item com campo fora
+// da lista é recusado inteiro — NÃO reimplementar inline.
 import {
-  chavesDescartadas,
   ENTIDADES_STAGING_CATALOGO,
-  montarStagingCatalogoRow,
+  erroDeFormaDoLote,
+  MAX_CAMPOS_NA_RECUSA,
+  mensagemDeRecusa,
+  separarLoteDeCatalogo,
   STAGING_CATALOGO,
-  type TintCatalogItem,
 } from "./catalogo-rows.ts";
 // `generated_at` do /keys-snapshot: legível e não à frente do servidor (snapshot-relogio_test.ts).
 import { validarGeneratedAt } from "./snapshot-relogio.ts";
@@ -59,8 +61,7 @@ const corsHeaders = {
 
 // ─── Type definitions ───
 
-/** Item bruto enviado pelo agente (catalogo: produtos, bases, embalagens, skus, corantes) */
-// TintCatalogItem migrou para ./catalogo-rows.ts (scanner lote 6).
+// TintCatalogItem (item bruto de catálogo) migrou para ./catalogo-rows.ts (scanner lote 6).
 
 /** Preço de base por embalagem (de PRECO_BASEEMB) */
 interface TintPrecosBaseItem {
@@ -466,6 +467,11 @@ Deno.serve(async (req) => {
       const start = Date.now();
       const body = await req.json();
 
+      // Forma do lote ANTES de qualquer atalho: corpo que não é objeto, ou entidade gravável que
+      // não veio como lista, é 400 — nunca o ack limpo do lote sem item (catalogo-rows.ts).
+      const erroDeForma = erroDeFormaDoLote(body);
+      if (erroDeForma) return json({ ok: false, error: erroDeForma }, 400);
+
       // Change 3+4: also validate precos_base batch size
       const batchErr = validateBatchSize(body, [...ENTIDADES_CATALOGO]);
       if (batchErr) return json({ ok: false, error: batchErr }, 400);
@@ -485,26 +491,22 @@ Deno.serve(async (req) => {
 
       // Change 3: bulk insert for catalog entities (chunks of 500)
       for (const entityType of ENTIDADES_STAGING_CATALOGO) {
-        const items: TintCatalogItem[] = (body[entityType] as TintCatalogItem[] | undefined) || [];
+        const items: unknown[] = (body[entityType] as unknown[] | undefined) || [];
         received += items.length;
 
         // Lista fechada (catalogo-rows.ts): do item só saem as colunas de negócio da entidade.
         // Copiar o item inteiro deixava o agente escolher `created_at`, a chave que decide qual
-        // linha vence na promoção, no preço e na purga.
-        const rows: Record<string, unknown>[] = items.map((item) =>
-          montarStagingCatalogoRow(entityType, item, runId, agent.account, agent.storeCode)
-        );
-        // Campo que a lista fechada não gravou: avisa no log. O conector não reenvia o lote, então
-        // um campo novo de negócio (ou uma coluna do servidor mandada de propósito) não pode sumir calado.
-        const descartadas = chavesDescartadas(entityType, items);
-        if (descartadas.length > 0) {
-          console.warn(
-            "[tint-sync-agent] /catalogs: campos fora da lista fechada ignorados",
-            JSON.stringify({ entidade: entityType, itens: items.length, chaves: descartadas.slice(0, 20), outras: Math.max(0, descartadas.length - 20) }),
-          );
+        // linha vence na promoção, no preço e na purga. Item com campo fora da lista não vira
+        // linha: conta como erro, e com erro o conector não confirma o lote e reenvia a entidade.
+        const lote = separarLoteDeCatalogo(entityType, items, runId, agent.account, agent.storeCode);
+        if (lote.recusados > 0) {
+          const motivo = mensagemDeRecusa(lote);
+          errors += lote.recusados;
+          errorDetails.push({ entity_type: entityType, entity_id: null, message: motivo });
+          await logError(runId, entityType, null, motivo, { campos: lote.camposRecusados.slice(0, MAX_CAMPOS_NA_RECUSA), itens_recusados: lote.recusados, nao_objetos: lote.naoObjetos }).catch(() => {});
         }
 
-        const { insertedCount } = await bulkInsert(STAGING_CATALOGO[entityType].tabela, rows, 500, (chunk, err) => {
+        const { insertedCount } = await bulkInsert(STAGING_CATALOGO[entityType].tabela, lote.linhas, 500, (chunk, err) => {
           errors += chunk.length;
           errorDetails.push({ entity_type: entityType, entity_id: null, message: err.message });
           // fire-and-forget logError for the chunk
