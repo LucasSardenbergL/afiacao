@@ -470,13 +470,8 @@ export async function concluirRun(ops: OpsPublicacao, e: EntradaPublicacao): Pro
   const pendenteGravado = new Map(pend.pendente);
   for (const l of linhasMembros) pendenteGravado.set(l.sku_codigo_omie, l.estoque_pendente_entrada);
   for (const l of linhasAusentes) if (ga.inseridos.has(l.sku_codigo_omie)) pendenteGravado.set(l.sku_codigo_omie, l.estoque_pendente_entrada);
-  const obs = await publicarObservacao(
-    ops,
-    e,
-    pend,
-    gravacaoCompleta && gm.confirmados === linhasMembros.length && ga.falhas === 0,
-    pendenteGravado,
-  );
+  const aplicado = gravacaoCompleta && gm.confirmados === linhasMembros.length && ga.falhas === 0;
+  const obs = await publicarObservacao(ops, e, pend, aplicado, pendenteGravado);
 
   const desfecho: Desfecho = gravacaoCompleta && inat.completa ? "completo" : "parcial";
   const duracaoMs = ops.agora() - e.iniciadoEm;

@@ -41,7 +41,8 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
     expect(fontePublicacao).not.toMatch(/Promise\.(all|allSettled|race|any)\(/);
     // a única escrita no par é o adaptador entregue à publicação — que decide QUANDO ela acontece
     expect(fonte.slice(iHandler)).not.toContain('from("sku_estoque_atual")');
-    expect(fonte.match(/from\("sku_estoque_atual"\)/g)).toHaveLength(1);
+    // v1.11: o upsert do par e o insert-se-ausente do membro com PO fora do físico — os dois nos adaptadores
+    expect(fonte.match(/from\("sku_estoque_atual"\)/g)).toHaveLength(2);
   });
 
   it('na publicação: gate do físico → fase do PO → gate do pendente → gravação, nessa ordem', () => {
@@ -52,7 +53,7 @@ describe('omie-sync-estoque — o par (físico, pendente) e a semântica fatal d
       'exigirPendenteConfiavel(pend, fasePoMs);',
       'await gravarEstoque(ops, e, linhas);',
       'await inativarNaoEncontrados(ops, e);',
-      'await publicarObservacao(ops, e, pend, gravacaoCompleta && gm.confirmados === linhasMembros.length, pendenteGravado);',
+      'await publicarObservacao(ops, e, pend, aplicado, pendenteGravado);',
     ].map((p) => fontePublicacao.indexOf(p, iConcluir));
     expect(iConcluir).toBeGreaterThan(0);
     for (let i = 0; i < passos.length; i++) expect(passos[i]).toBeGreaterThan(i === 0 ? iConcluir : passos[i - 1]);
@@ -206,7 +207,7 @@ describe('omie-sync-estoque — deadline cabe no teto do cron', () => {
     expect(fim).toBeGreaterThan(ini);
     const adaptadores = fonte.slice(ini, fim);
     const chamadas = adaptadores.match(/supabase\s*\.\s*(from|rpc)\(/g) ?? [];
-    expect(chamadas).toHaveLength(7);
+    expect(chamadas).toHaveLength(8);
     expect(adaptadores.match(/\.abortSignal\(s\)/g)).toHaveLength(chamadas.length);
     // e a leitura do em_transito na fase do PO, que antes podia pendurar o run até o kill do cron
     const iEmTransito = fonte.indexOf('async function fetchEmTransitoKeys(');
@@ -236,7 +237,8 @@ describe('omie-sync-estoque — o registro leva o resumo dos membros de grupo', 
     const registro = new Set(fonte.slice(ini, fim).match(/"[a-z_]+"/g)?.map((c) => c.slice(1, -1)) ?? []);
     const doResumo = [...new Set(fontePublicacao.match(/\bmembros_grupo_[a-z_]+(?=\s*:)/g) ?? [])];
     expect(doResumo.sort()).toEqual([
-      'membros_grupo_encontrados', 'membros_grupo_erro', 'membros_grupo_falhas',
+      'membros_grupo_ausentes_com_po', 'membros_grupo_ausentes_falhas', 'membros_grupo_ausentes_inseridos',
+      'membros_grupo_ausentes_ja_com_linha', 'membros_grupo_encontrados', 'membros_grupo_erro', 'membros_grupo_falhas',
       'membros_grupo_gravados', 'membros_grupo_ilegiveis', 'membros_grupo_sem_pendente',
     ]);
     expect(doResumo.filter((c) => !registro.has(c))).toEqual([]);

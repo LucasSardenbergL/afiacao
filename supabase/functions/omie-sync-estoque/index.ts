@@ -621,8 +621,9 @@ function opsDoBanco(
           .upsert(linhas, { onConflict: "empresa,sku_codigo_omie", ignoreDuplicates: true })
           .select("sku_codigo_omie")
           .abortSignal(s);
-        if (!res.error) {
-          inseridos = ((res.data ?? []) as Array<{ sku_codigo_omie: unknown }>).map((x) => String(x.sku_codigo_omie));
+        // Sem data (ou não-array) = nenhuma linha PROVADA como inserida — fail-closed: não entra no pendente gravado.
+        if (!res.error && Array.isArray(res.data)) {
+          inseridos = (res.data as Array<{ sku_codigo_omie: unknown }>).map((x) => String(x.sku_codigo_omie));
         }
         return res;
       }, prazoMs);
