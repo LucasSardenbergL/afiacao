@@ -94,7 +94,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "sync-reprocess": "bfc9909a405bcee1c817d0c90991e24182498c88efee14dcd10394364b70c10e",
   "tactical-plans-batch": "eb330ac3c195d6303b6133026b408c63981811e4c5cdc770de83d355aa0a597e",
   "tint-omie-sync": "cb02d31f30329f4ebb93643e382bbb98b69cc2073e02a3cf272ea822614cbaae",
-  "tint-sync-agent": "f2cc8636337f6134ec1d2378052b2b916d63a454fd479bf635b0bddfaf371e50",
+  "tint-sync-agent": "f95709b620000059691e6ac5e943fb93b5dbd07553ba287314c2905896c2ce00",
   "visit-score-recalc-batch": "fc6e87d83a3d700cf802731a40ac10098be412a11e6e95e7826efb1364114a95",
   "visit-score-recalc-client": "3f5ae6defc90dcd9aff0318bc96a971150477fa99b2fa66f1cb0986ddc1a87fa",
   "whatsapp-inbound": "0f20ead2f339789b6bf64958fdc18e2f6490951a1f7f32ad185a744140c72a79",
