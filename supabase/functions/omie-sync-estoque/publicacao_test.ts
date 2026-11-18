@@ -624,7 +624,18 @@ Deno.test("corrida: a linha nossa foi regravada com a posição real entre a lei
   const tabela = new Map<string, Record<string, unknown>>([
     ["555", { sku_codigo_omie: "555", estoque_fisico: 0, estoque_pendente_entrada: 10, fonte_sync: FONTE_SEM_POSICAO }],
   ]);
-  const f = criarFake({ pendente: pendDe(4), tabela });
+  const pend: ResultadoPendente = {
+    ...pendDe(4),
+    observacao: {
+      observados: [observado(101, 5), observado(555, 4)],
+      janelaDe: "2025-10-06",
+      janelaAte: "2027-02-03",
+      varreduraCompleta: true,
+      coletaIntegra: true,
+      perdaColeta: null,
+    },
+  };
+  const f = criarFake({ pendente: pend, tabela });
   const ler = f.ops.lerLinhasSemPosicao;
   f.ops.lerLinhasSemPosicao = async (p) => {
     const r = await ler(p);
@@ -634,6 +645,7 @@ Deno.test("corrida: a linha nossa foi regravada com a posição real entre a lei
   const r = await concluirRun(f.ops, entrada({ membros: ["555"] }));
   igual(tabela.get("555")?.estoque_fisico, 9, "a posição real fica");
   igual([r.membros_grupo_ausentes_reconciliados, r.membros_grupo_ausentes_ja_com_linha], [0, 1], "resumo");
+  igual(r.observacao_publicada, false, "o update não provou o par: fora do pendente gravado (fail-closed)");
 });
 
 Deno.test("leitura das linhas nossas falha: nada é atualizado, o erro vai ao resumo e o run não vale como aplicado", async () => {
