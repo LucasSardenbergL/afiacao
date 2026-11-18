@@ -63,7 +63,10 @@ export const EDGE = "omie-sync-nfes-recebidas";
 // `{dataDe, dataAte}`. O caminho diário (`revisita_dias`) não era afetado.
 // v1.10: a revisita preenche o t4 da NF CONHECIDA e recebida (mesma chave, t4 nulo, ≠ CANCELADO) — o backfill
 // grava `nid_receb` antes do recebimento e nunca mais volta à linha. `results.revisita` ganha `t4_preenchidos`.
-export const VERSAO = "v1.10-revisita-preenche-t4";
+// v1.11: a fase da sombra relê (ConsultarRecebimento, só leitura) as NFs que a tabela ainda tem `pendente`, as mais
+// antigas primeiro, até 20 por run — antes congelavam ao sair da janela de 3 dias. Consulta que falha não publica.
+// `results.sombra` ganha `pendentes`.
+export const VERSAO = "v1.11-sombra-rele-pendentes";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.
