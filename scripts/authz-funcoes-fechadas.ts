@@ -211,6 +211,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'foto interna (saldo×cmc, fornecedor, cobertura) só pelas RPCs gateadas — REVOKE de anon/authenticated',
   },
+  'private.reposicao_po_a_baixar_registrar_episodios': {
+    fechadaPor: '20261120100000_reposicao_po_a_baixar_pares_e_decisao.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'writer único dos episódios do sensor PO a baixar — só pg_cron e a RPC de decisão gateada; REVOKE de anon/authenticated',
+  },
   'public.fin_estoque_giro_valor': {
     fechadaPor: '20261018200000_fin_ciclo_giro_sku.sql',
     permitido: PORTA_GATE,
@@ -322,6 +327,16 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     fechadaPor: '20261118150731_reposicao_po_a_baixar.sql',
     permitido: PORTA_GATE,
     motivo: 'fila PO a baixar no Omie — fornecedor/NF/POs sugeridos; gate private.cap_compras_ler',
+  },
+  'public.reposicao_po_a_baixar_v2': {
+    fechadaPor: '20261120100000_reposicao_po_a_baixar_pares_e_decisao.sql',
+    permitido: PORTA_GATE,
+    motivo: 'fila PO a baixar v2 — pares item a item da sombra + decisão vigente; gate private.cap_compras_ler',
+  },
+  'public.reposicao_po_a_baixar_registrar_decisao': {
+    fechadaPor: '20261120100000_reposicao_po_a_baixar_pares_e_decisao.sql',
+    permitido: PORTA_GATE,
+    motivo: 'writer único da declaração da equipe na fila PO a baixar (sensor); gate uid + private.cap_compras_ler',
   },
   'public.converter_sugestao_em_campanha_flat': {
     // a 20261001083000 é DROP + CREATE (assinatura nova) + REVOKE de PUBLIC/anon: a âncora vigente

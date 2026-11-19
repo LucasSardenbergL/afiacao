@@ -15222,6 +15222,140 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_po_a_baixar_decisao: {
+        Row: {
+          chave: string
+          classe_na_decisao: string | null
+          decidido_em: string
+          decisao: string
+          empresa: string
+          episodio_id: number
+          evidencia_desatualizada: boolean
+          evidencia_em: string | null
+          id: number
+          intencao: string
+          operador: string
+          proposta_versao: string
+          tipo: string
+        }
+        Insert: {
+          chave: string
+          classe_na_decisao?: string | null
+          decidido_em?: string
+          decisao: string
+          empresa: string
+          episodio_id: number
+          evidencia_desatualizada: boolean
+          evidencia_em?: string | null
+          id?: number
+          intencao: string
+          operador: string
+          proposta_versao: string
+          tipo: string
+        }
+        Update: {
+          chave?: string
+          classe_na_decisao?: string | null
+          decidido_em?: string
+          decisao?: string
+          empresa?: string
+          episodio_id?: number
+          evidencia_desatualizada?: boolean
+          evidencia_em?: string | null
+          id?: number
+          intencao?: string
+          operador?: string
+          proposta_versao?: string
+          tipo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reposicao_po_a_baixar_decisao_episodio_id_fkey"
+            columns: ["episodio_id"]
+            isOneToOne: false
+            referencedRelation: "reposicao_po_a_baixar_episodio"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reposicao_po_a_baixar_episodio: {
+        Row: {
+          aberto_em: string
+          chave: string
+          classe_atual: string | null
+          classe_na_entrada: string | null
+          desatualizada_atual: boolean
+          desatualizada_na_entrada: boolean
+          desfecho_classe: string | null
+          desfecho_estado_nf: string | null
+          desfecho_lido_em: string | null
+          desfecho_nf_casada_espelho: boolean | null
+          desfecho_po_encerrado_em: string | null
+          desfecho_vinculo: string | null
+          empresa: string
+          evidencia_em_atual: string | null
+          fechado_em: string | null
+          id: number
+          numero_nfe: string | null
+          numero_pedido: string | null
+          origem: string
+          proposta_versao_atual: string
+          sombra_primeira_observacao_em: string | null
+          tipo: string
+          visto_por_ultimo_em: string
+        }
+        Insert: {
+          aberto_em: string
+          chave: string
+          classe_atual?: string | null
+          classe_na_entrada?: string | null
+          desatualizada_atual: boolean
+          desatualizada_na_entrada: boolean
+          desfecho_classe?: string | null
+          desfecho_estado_nf?: string | null
+          desfecho_lido_em?: string | null
+          desfecho_nf_casada_espelho?: boolean | null
+          desfecho_po_encerrado_em?: string | null
+          desfecho_vinculo?: string | null
+          empresa: string
+          evidencia_em_atual?: string | null
+          fechado_em?: string | null
+          id?: number
+          numero_nfe?: string | null
+          numero_pedido?: string | null
+          origem: string
+          proposta_versao_atual: string
+          sombra_primeira_observacao_em?: string | null
+          tipo: string
+          visto_por_ultimo_em: string
+        }
+        Update: {
+          aberto_em?: string
+          chave?: string
+          classe_atual?: string | null
+          classe_na_entrada?: string | null
+          desatualizada_atual?: boolean
+          desatualizada_na_entrada?: boolean
+          desfecho_classe?: string | null
+          desfecho_estado_nf?: string | null
+          desfecho_lido_em?: string | null
+          desfecho_nf_casada_espelho?: boolean | null
+          desfecho_po_encerrado_em?: string | null
+          desfecho_vinculo?: string | null
+          empresa?: string
+          evidencia_em_atual?: string | null
+          fechado_em?: string | null
+          id?: number
+          numero_nfe?: string | null
+          numero_pedido?: string | null
+          origem?: string
+          proposta_versao_atual?: string
+          sombra_primeira_observacao_em?: string | null
+          tipo?: string
+          visto_por_ultimo_em?: string
+        }
+        Relationships: []
+      }
       reposicao_po_last_seen: {
         Row: {
           empresa: Database["public"]["Enums"]["empresa_reposicao"]
@@ -27348,6 +27482,43 @@ export type Database = {
           numero_pedido: string
           omie_codigo_pedido: number
           pedidos_sugeridos: string[]
+          run_iniciado_em: string
+          tipo: string
+          unidades_contadas: number
+        }[]
+      }
+      reposicao_po_a_baixar_registrar_decisao: {
+        Args: {
+          p_chave: string
+          p_decisao: string
+          p_empresa: string
+          p_intencao: string
+          p_proposta_versao: string
+          p_tipo: string
+        }
+        Returns: Json
+      }
+      reposicao_po_a_baixar_v2: {
+        Args: { p_empresa: string }
+        Returns: {
+          chave: string
+          classe: string
+          decisao_vigente: string
+          decisao_vigente_em: string
+          empresa: string
+          evidencia_desatualizada: boolean
+          evidencia_em: string
+          fornecedor_nome: string
+          motivos: string[]
+          nf_recebida_em: string
+          nid_receb: number
+          numero_nfe: string
+          numero_pedido: string
+          omie_codigo_pedido: number
+          pares: Json
+          pares_retidos: string
+          pedidos_sugeridos: string[]
+          proposta_versao: string
           run_iniciado_em: string
           tipo: string
           unidades_contadas: number

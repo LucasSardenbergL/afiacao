@@ -1363,9 +1363,12 @@ export const LACUNAS_POR_GRUPO: LacunaGrupo[] = [
     // para authenticated) e reposicao_compra_suspensa_log (19 linhas, SELECT+INSERT), de 20261101090000. Os
     // números delas (foto_cmc/foto_valor, preco_unitario/valor_evitado) são FOTO do custo cuja fonte
     // (cmc_*/product_costs) já está curada — derivado, não fonte; e o gate é o predicado já congelado.
-    tabelasNoGrafo: 16,
-    tabelasMd5: '6aa2a2b512d2451202c4f0ea6944f3c2',
-    medidoEm: '2026-11-03',
+    // 2026-11-19: 16 → 18, nenhuma curada. Entraram reposicao_po_a_baixar_episodio e reposicao_po_a_baixar_decisao
+    // (20261120100000, sensor da fila "PO a baixar no Omie"): SELECT-only para authenticated, sem policy de escrita
+    // (writers SECURITY DEFINER). Não carregam custo/preço — episódio e declaração da equipe; o gate é o predicado.
+    tabelasNoGrafo: 18,
+    tabelasMd5: 'f7d084a40cc4891704b08af860eb150f',
+    medidoEm: '2026-11-19',
     motivo:
       'Reposição/compras: parâmetro, log, run e suspensão do motor. UMA delas (`pedido_compra_item`) foi ' +
       'curada na 3ª rodada porque ARRASTA o predicado para o eixo 3 — congelar o corpo de ' +
