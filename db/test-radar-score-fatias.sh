@@ -310,7 +310,7 @@ INI7="$(Pq -c "SELECT iniciada_em FROM public.radar_score_passada")"
 Pq -c "INSERT INTO public.radar_ingest_state VALUES ('2026-11','complete','2026-11-16 18:07+00')" >/dev/null
 # Como a publicação: a foto nova troca o rótulo (e bumpa updated_at) das que continuam no dump.
 Pq -c "UPDATE public.radar_empresas SET ultimo_lote = '2026-11', updated_at = clock_timestamp() WHERE ultimo_lote = '2026-10'" >/dev/null
-J7="$(R 5 0)"
+R 5 0 >/dev/null
 eq "B7a lote novo → passada recomeça (lote novo, rodada 1, cursor na 1ª faixa, início novo)" \
   "$(Pq -c "SELECT lote||'/'||rodadas||'/'||proxima_pagina||'/'||(iniciada_em > '$INI7'::timestamptz) FROM public.radar_score_passada")" "2026-11/1/5/true"
 
