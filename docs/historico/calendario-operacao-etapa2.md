@@ -46,3 +46,11 @@ Leitura: março melhora (0,75 → 0,94 em 16/03). **Janeiro e fevereiro passam d
 - **Virar a chave** (decisão do founder, prazo 05/01/2027): `INSERT INTO company_config (key, value) VALUES ('reposicao_demanda_calendario_oben_ativa', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true'`. Reverter: `DELETE … WHERE key = 'reposicao_demanda_calendario_oben_ativa'` (efeito no próximo cálculo do atualizador).
 - Replay: congelar TSB e mascarar ADI/CV² em dia fechado (§6.4, último item) — não muda produção.
 - Prova não cobre leitura da view por papel (o snapshot não carrega GRANTs); o catálogo (A02) e a PÓS cobrem o EXECUTE.
+
+## Aplicação em produção (2026-11-18)
+
+- PR #3983 mergeado (`3a61ccb19`, bytes da migration idênticos na main). `bun run db:aplicar` com ensaio fresco verde: **recibo #1196** (sha256 `416da5a6…`).
+- 2ª testemunha (psql-ro, `fim|ok`): md5 das views = o do arquivo (`cec8b647…` / `5cc2c267…`); `calendario_fator_demanda` sem anon, com authenticated/claude_ro; job executável só por `postgres`; cron `reposicao-demanda-calendario-sombra` `20 10 * * *` ativo.
+- Sonda `db/sonda-calendario-demanda-sombra.sql`: chave ausente (= sombra); fator de hoje 65/62 = 1,0484 (fechados 07/09, 12/10, 02/11 na janela 20/08–18/11); **neutralidade servida 356/356** (d = legado em toda linha); efeito no param-auto no mesmo snapshot: 12 SKUs mudariam PP/máx em sombra (o atualizador faria de qualquer jeito) × 29 valendo ⇒ **+17 pela virada**; fusível igual (1).
+- 1ª execução manual do job (`db/executar-sombra-calendario-20261118.sql`, **recibo #1198**, antes do 1º cron, porque PL/pgSQL só falha ao executar): 356 SKUs gravados, 0 descartados, 167 OK; **ΔPP +32 un ≈ R$ 2.017**, Δmáximo ≈ R$ 2.017 (EOQ intacto: o máximo sobe só o que o PP sobe).
+- Pendente: virar a chave (founder, até 05/01/2027); acompanhar a sombra diária pela sonda em dezembro.
