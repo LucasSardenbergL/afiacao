@@ -27516,6 +27516,7 @@ export type Database = {
           numero_pedido: string
           omie_codigo_pedido: number
           pares: Json
+          pares_retidos: string
           pedidos_sugeridos: string[]
           proposta_versao: string
           run_iniciado_em: string

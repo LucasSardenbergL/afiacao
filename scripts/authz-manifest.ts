@@ -428,6 +428,13 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // anon/authenticated executarem; prova no harness (`authenticated NAO executa a foto interna`). Se um dia
   // ganhar GRANT para authenticated, PRECISA de gate e sai daqui.
   'public._reposicao_compra_foto',
+  // Fila "PO a baixar no Omie" — writer ÚNICO dos episódios do sensor (2026-11-18, migration 20261120100000). Lê o
+  // espelho de POs (fornecedor/NF) pela lógica da fila e grava `reposicao_po_a_baixar_episodio`. NÃO é exposta ao
+  // app: só o pg_cron (`reposicao-po-a-baixar-episodios`, como postgres) e a RPC gateada
+  // `reposicao_po_a_baixar_registrar_decisao` a chamam. Fecha por PRIVILÉGIO — `REVOKE ALL … FROM PUBLIC, anon,
+  // authenticated` + postcondição que ABORTA se anon/authenticated executarem + prova E5 em
+  // db/test-reposicao-po-a-baixar-decisao.sh (sabotagem `pc_writer_publico`). Ganhou GRANT? Precisa de gate e sai daqui.
+  'private.reposicao_po_a_baixar_registrar_episodios',
   // Venda por cliente — job de desfecho (2026-10-20, migration 20261020174221). Lê
   // `order_items.unit_price`/`desconto_valor` para decidir se a sugestão `tipo=preco` bateu o alvo
   // e somar `valor_realizado`, mas NÃO é customer-facing: só o cron (`venda-fechar-desfechos`,

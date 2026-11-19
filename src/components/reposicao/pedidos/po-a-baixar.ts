@@ -36,6 +36,8 @@ export interface ItemPoABaixar {
   pedidosSugeridos: string[];
   /** Só para `associavel` com evidência fresca; `null` = sem par a copiar (candidatos + motivos). */
   pares: ParPoABaixar[] | null;
+  /** Por que uma NF associável NÃO trouxe par (o par existe na sombra, mas a tela o retém). */
+  paresRetidos: 'evidencia_desatualizada' | 'po_encerrado_no_omie' | null;
   evidenciaEm: string | null;
   evidenciaDesatualizada: boolean;
   /** Versão do que a tela mostra como proposta — vai junto da decisão (o servidor recusa se mudou). */
@@ -127,6 +129,8 @@ export function normalizarFila(linhas: unknown): ItemPoABaixar[] {
       motivos: listaDeTexto(r.motivos),
       pedidosSugeridos: listaDeTexto(r.pedidos_sugeridos),
       pares: normalizarPares(r.pares),
+      paresRetidos:
+        r.pares_retidos === 'evidencia_desatualizada' || r.pares_retidos === 'po_encerrado_no_omie' ? r.pares_retidos : null,
       evidenciaEm: textoOuNull(r.evidencia_em),
       // só `true` explícito marca; qualquer outra coisa não afirma frescor nem velhice — trata como velha
       // se a evidência nem veio (fail-closed: a tela pede conferência em vez de afirmar estado atual).

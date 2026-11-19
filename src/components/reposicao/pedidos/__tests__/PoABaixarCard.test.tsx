@@ -165,6 +165,15 @@ describe('Entrega A — pares, motivos e decisão', () => {
     expect(screen.getByText(/Candidatos: PO 1329, 1334/)).toBeInTheDocument();
   });
 
+  it('card: par retido por PO encerrado não vira tabela, vira aviso', () => {
+    const itens = normalizarFila([{ ...associavel, pares: null, pares_retidos: 'po_encerrado_no_omie' }]);
+    expect(itens[0].paresRetidos).toBe('po_encerrado_no_omie');
+    render(<PoABaixarCard itens={itens} />);
+    fireEvent.click(screen.getByText(/PO a baixar no Omie/));
+    expect(screen.queryByText('PRD02372')).toBeNull();
+    expect(screen.getByText(/consta como ENCERRADO no Omie/)).toBeInTheDocument();
+  });
+
   it('card: sem onDecidir não há botão; com onDecidir, o clique leva item e decisão', () => {
     const { unmount } = render(<PoABaixarCard itens={normalizarFila([associavel])} />);
     fireEvent.click(screen.getByText(/PO a baixar no Omie/));

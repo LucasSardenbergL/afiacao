@@ -13,6 +13,10 @@
 --        lista do PO, código/descrição do produto, quantidade, unidade, cobertura total/parcial. SÓ para
 --        `associavel` com evidência FRESCA (≤ 36 h) — para ambigua/orfa/velha sai NULL e a tela mostra candidatos +
 --        motivos (precisão > recall: par velho copiado no Omie é pior que par nenhum).
+--      · `pares_retidos` — por que uma `associavel` NÃO trouxe par: 'evidencia_desatualizada' ou
+--        'po_encerrado_no_omie' (algum PO do par está no conjunto de encerrados do Omie — encerrado_omie_em). A sombra
+--        julga a etapa pelo raw_data do PO, que pode estar velho; a passada de encerrados é mais nova. Medido em
+--        2026-11-18: o ÚNICO par associável de prod (NF 000959992 → PO 1330) aponta para PO visto encerrado em 11/11.
 --      · `fornecedor_nome` nas nf_pendente (a v1 devolvia NULL): o nome do PO mais recente do mesmo
 --        (empresa, fornecedor_codigo_omie) no espelho — a mesma fonte do nome no tipo po_contado_com_nf.
 --      · `chave` (omie_codigo_pedido | nid_receb, em texto) e `proposta_versao` = md5 do que a tela MOSTRA como
@@ -137,6 +141,7 @@ RETURNS TABLE(
   motivos text[],
   pedidos_sugeridos text[],
   pares jsonb,
+  pares_retidos text,
   evidencia_em timestamptz,
   evidencia_desatualizada boolean,
   run_iniciado_em timestamptz,
@@ -171,7 +176,7 @@ BEGIN
            coalesce(p.numero_pedido, c.num) AS f_numero_pedido, c.cod AS f_cod, p.fornecedor_nome AS f_fornecedor,
            c.unidades AS f_unidades, p.nfe_numero AS f_nfe, p.nid_receb AS f_nid, p.t4_data_recebimento AS f_nf_em,
            NULL::text AS f_classe, NULL::text[] AS f_motivos, NULL::text[] AS f_sugeridos, NULL::jsonb AS f_pares,
-           run.iniciado_em AS f_evid, false AS f_velha, run.iniciado_em AS f_run
+           NULL::text AS f_retido, run.iniciado_em AS f_evid, false AS f_velha, run.iniciado_em AS f_run
       FROM contado c
       CROSS JOIN run
       JOIN public.purchase_orders_tracking p
@@ -196,8 +201,8 @@ BEGIN
                AND po.omie_codigo_pedido > 0
                AND po.encerrado_omie_em IS NULL
                AND po.numero_contrato_fornecedor = ANY (s.contratos)),
-           -- os pares SÓ para associavel com evidência fresca; o resto sai NULL (a tela mostra candidatos + motivos)
-           CASE WHEN s.classe = 'associavel' AND s.observado_em >= now() - interval '36 hours' THEN (
+           -- os pares SÓ para associavel com evidência fresca e sem PO encerrado; o resto sai NULL (candidatos + motivos)
+           CASE WHEN s.classe = 'associavel' AND ret.motivo IS NULL THEN (
              SELECT coalesce(jsonb_agg(jsonb_build_object(
                       'seq_nf', pr.par -> 'nSequencia',
                       'numero_pedido', coalesce(pd.numero_pedido, pop.numero_pedido),
@@ -228,8 +233,20 @@ BEGIN
                   WHERE e.elem ->> 'nCodItem' = pr.par ->> 'nIdItPedido'
                   LIMIT 1) it ON true
            ) END,
+           ret.motivo,
            s.observado_em, s.observado_em < now() - interval '36 hours', NULL::timestamptz
       FROM public.recebimento_associacao_sombra s
+      CROSS JOIN LATERAL (
+        SELECT CASE
+                 WHEN s.classe <> 'associavel' THEN NULL
+                 WHEN s.observado_em < now() - interval '36 hours' THEN 'evidencia_desatualizada'
+                 WHEN EXISTS (
+                   SELECT 1
+                     FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.pares) = 'array' THEN s.pares ELSE '[]'::jsonb END) pe
+                     JOIN public.purchase_orders_tracking xe
+                       ON xe.empresa::text = v_empresa AND xe.omie_codigo_pedido::text = pe ->> 'nIdPedido'
+                    WHERE xe.encerrado_omie_em IS NOT NULL) THEN 'po_encerrado_no_omie'
+               END AS motivo) ret
      WHERE s.empresa = v_empresa
        AND s.estado_nf = 'pendente'
        AND s.classe IN ('associavel', 'ambigua', 'orfa')
@@ -239,10 +256,10 @@ BEGIN
                           AND pr.t4_data_recebimento IS NOT NULL)
   )
   SELECT f.f_tipo, v_empresa, f.f_chave, f.f_numero_pedido, f.f_cod, f.f_fornecedor, f.f_unidades,
-         f.f_nfe, f.f_nid, f.f_nf_em, f.f_classe, f.f_motivos, f.f_sugeridos, f.f_pares,
+         f.f_nfe, f.f_nid, f.f_nf_em, f.f_classe, f.f_motivos, f.f_sugeridos, f.f_pares, f.f_retido,
          f.f_evid, f.f_velha, f.f_run,
          md5(jsonb_build_array(f.f_tipo, f.f_chave, f.f_classe, to_jsonb(f.f_motivos), to_jsonb(f.f_sugeridos),
-                               f.f_pares, f.f_unidades, f.f_nfe, f.f_velha)::text)
+                               f.f_pares, f.f_retido, f.f_unidades, f.f_nfe, f.f_velha)::text)
     FROM f;
 END
 $fn$;
@@ -265,6 +282,7 @@ RETURNS TABLE(
   motivos text[],
   pedidos_sugeridos text[],
   pares jsonb,
+  pares_retidos text,
   evidencia_em timestamptz,
   evidencia_desatualizada boolean,
   run_iniciado_em timestamptz,
@@ -291,7 +309,7 @@ BEGIN
 
   RETURN QUERY
   SELECT q.tipo, q.empresa, q.chave, q.numero_pedido, q.omie_codigo_pedido, q.fornecedor_nome, q.unidades_contadas,
-         q.numero_nfe, q.nid_receb, q.nf_recebida_em, q.classe, q.motivos, q.pedidos_sugeridos, q.pares,
+         q.numero_nfe, q.nid_receb, q.nf_recebida_em, q.classe, q.motivos, q.pedidos_sugeridos, q.pares, q.pares_retidos,
          q.evidencia_em, q.evidencia_desatualizada, q.run_iniciado_em, q.proposta_versao,
          dv.decisao, dv.decidido_em
     FROM private._po_a_baixar_fila(v_empresa) q
@@ -531,6 +549,18 @@ BEGIN
                    AND j.schedule = '17 * * * *' AND j.username = current_user) THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: cron reposicao-po-a-baixar-episodios ausente/inativo/com outro dono';
   END IF;
+  -- o corpo aplicado é BYTE A BYTE o do arquivo (o apply vai pelo MCP: a transcrição é o risco)
+  FOR r IN SELECT x.f, x.esperado, (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure(x.f)) AS vivo
+             FROM (VALUES
+               ('private._po_a_baixar_fila(text)', '49226caa6c948e2ef7cab90de6720789'),
+               ('public.reposicao_po_a_baixar_v2(text)', '815194e9955e529541d4b7f39fc3cced'),
+               ('private.reposicao_po_a_baixar_registrar_episodios(text,text)', 'f523756dc0c4f31583a2d04fc24ac6ec'),
+               ('public.reposicao_po_a_baixar_registrar_decisao(text,text,text,text,text,uuid)', '74c96bf76c292a0a50a8e222c657f65a')
+             ) AS x(f, esperado) LOOP
+    IF r.vivo IS DISTINCT FROM r.esperado THEN
+      RAISE EXCEPTION 'POSTCONDICAO FALHOU: corpo de % (md5 %) difere do arquivo (md5 %) - transcricao?', r.f, r.vivo, r.esperado;
+    END IF;
+  END LOOP;
   RAISE NOTICE 'POSTCONDICAO OK: fila v2 + episodios + decisao (SECURITY DEFINER, search_path fixo, RLS, cron horario)';
 END
 $post$;

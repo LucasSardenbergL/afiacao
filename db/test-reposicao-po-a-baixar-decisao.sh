@@ -4,7 +4,8 @@
 #   I  a migration aplica com a postcondição OK (I0) e re-aplicar é seguro (I1)
 #   P  pares/proposta (v2): associavel fresca traz o par com o item do PO resolvido no espelho (P1); ambigua não traz
 #      par (P2); associavel VELHA não traz par (P3); fornecedor da NF = nome do PO mais recente do mesmo código (P4);
-#      proposta_versao não muda quando só o instante da leitura muda (P5) e muda quando a proposta muda (P6)
+#      proposta_versao não muda quando só o instante da leitura muda (P5) e muda quando a proposta muda (P6);
+#      associavel cujo PO consta ENCERRADO no Omie retém o par com o motivo (P7)
 #   V  a v2 devolve o mesmo conjunto de itens que a v1 (V1)
 #   G  gate da v2: authenticated sem capacidade → 42501 (G1); anon → 42501 (G2)
 #   E  episódios: 1ª execução marca carga_inicial (E1); item novo depois abre como cron (E2); saída fecha o episódio
@@ -31,16 +32,16 @@ MIG_V1="$REPO_ROOT/supabase/migrations/20261118150731_reposicao_po_a_baixar.sql"
 MIG_OBS="$REPO_ROOT/supabase/migrations/20261005131331_reposicao_po_observado_pelo_motor.sql"
 MIG_SOMBRA="$REPO_ROOT/supabase/migrations/20261017040000_recebimento_associacao_sombra.sql"
 SENSOR="$REPO_ROOT/db/sensor-po-a-baixar.sql"
-TOTAL_ESPERADO=27
+TOTAL_ESPERADO=28
 
 # ── --falsificar: controle VERDE na mesma invocação, depois cada sabotagem (uma camada por vez) tem de acusar.
 # Formato <nome>:<VERMELHOS>[:<VERDES>]; `ID!MARCA` exige a marca do motivo no vermelho.
 SABOTAGENS="pares_sem_frescor:P3:P1 pares_item_errado:P1:P2 fornecedor_qualquer:P4:P1
-            versao_com_instante:P5:P6 versao_cega:P6:P5 gate_v2_aberto:G1:G2
+            versao_com_instante:P5:P6 versao_cega:P6:P5 retencao_sem_encerrado:P7:P1 gate_v2_aberto:G1:G2
             carga_sempre_cron:E1:E2 sem_fechar:E3:E1 reentrada_herda:D10:D9
             decisao_sem_versao:D4:D1 decisao_sem_fila:D5:D1 decisao_cron_decide:D7:D6 retry_sem_atalho:D2:D1
             sensor_confirma_parcial:S1:E3
-            pc_writer_publico:I0!writer pc_sem_rls:I0!RLS pc_cron_ausente:I0!cron"
+            pc_writer_publico:I0!writer pc_sem_rls:I0!RLS pc_cron_ausente:I0!cron pc_corpo_divergente:I0!transcricao"
 if [ "${1:-}" = "--falsificar" ]; then
   falhas=0
   rodar() {  # <nome> <porta> → as linhas de veredito do filho
@@ -173,6 +174,7 @@ MIG_USADA="$MIG"
 case "$SABOTAGEM" in
   pc_writer_publico) trocar "$MIG" "$TMPD/m.sql" 'REVOKE ALL ON FUNCTION private.reposicao_po_a_baixar_registrar_episodios(text, text) FROM PUBLIC, anon, authenticated;' 'GRANT EXECUTE ON FUNCTION private.reposicao_po_a_baixar_registrar_episodios(text, text) TO authenticated;' ;;
   pc_sem_rls) trocar "$MIG" "$TMPD/m.sql" 'ALTER TABLE public.reposicao_po_a_baixar_decisao ENABLE ROW LEVEL SECURITY;' '' ;;
+  pc_corpo_divergente) trocar "$MIG" "$TMPD/m.sql" "RAISE EXCEPTION 'reposicao_po_a_baixar_registrar_decisao: item saiu da fila'" "RAISE EXCEPTION 'reposicao_po_a_baixar_registrar_decisao: item saiu  da fila'" ;;
   pc_cron_ausente) trocar "$MIG" "$TMPD/m.sql" "SELECT cron.schedule('reposicao-po-a-baixar-episodios', '17 * * * *'," "SELECT cron.schedule('reposicao-po-a-baixar-episodios', '18 * * * *'," ;;
 esac
 [ -f "$TMPD/m.sql" ] && MIG_USADA="$TMPD/m.sql"
@@ -200,10 +202,11 @@ EPI=private.reposicao_po_a_baixar_registrar_episodios
 DEC=public.reposicao_po_a_baixar_registrar_decisao
 V2=public.reposicao_po_a_baixar_v2
 case "$SABOTAGEM" in
-  pares_sem_frescor) fn_sabotada "$FILA" "CASE WHEN s.classe = 'associavel' AND s.observado_em >= now() - interval '36 hours' THEN (" "CASE WHEN s.classe IN ('associavel') THEN (" ;;
+  pares_sem_frescor) fn_sabotada "$FILA" "WHEN s.observado_em < now() - interval '36 hours' THEN 'evidencia_desatualizada'" "WHEN false THEN 'evidencia_desatualizada'" ;;
   pares_item_errado) fn_sabotada "$FILA" "WHERE e.elem ->> 'nCodItem' = pr.par ->> 'nIdItPedido'" 'WHERE true' ;;
   fornecedor_qualquer) fn_sabotada "$FILA" 'ORDER BY pf.omie_codigo_pedido DESC' 'ORDER BY pf.omie_codigo_pedido ASC' ;;
-  versao_com_instante) fn_sabotada "$FILA" 'f.f_pares, f.f_unidades, f.f_nfe, f.f_velha)::text)' 'f.f_pares, f.f_unidades, f.f_nfe, f.f_velha, f.f_evid)::text)' ;;
+  versao_com_instante) fn_sabotada "$FILA" 'f.f_pares, f.f_retido, f.f_unidades, f.f_nfe, f.f_velha)::text)' 'f.f_pares, f.f_retido, f.f_unidades, f.f_nfe, f.f_velha, f.f_evid)::text)' ;;
+  retencao_sem_encerrado) fn_sabotada "$FILA" 'WHERE xe.encerrado_omie_em IS NOT NULL) THEN' 'WHERE false) THEN' ;;
   versao_cega) fn_sabotada "$FILA" 'to_jsonb(f.f_motivos), to_jsonb(f.f_sugeridos),' 'to_jsonb(f.f_sugeridos),' ;;
   gate_v2_aberto) fn_sabotada "$V2" '(SELECT private.cap_compras_ler((SELECT auth.uid()))) IS NOT TRUE' 'false' ;;
   carga_sempre_cron) fn_sabotada "$EPI" "CASE WHEN v_primeira THEN 'carga_inicial' ELSE p_origem END" 'p_origem' ;;
@@ -234,6 +237,7 @@ INSERT INTO public.purchase_orders_tracking (empresa, omie_codigo_pedido, numero
  ('OBEN', 21, '1021', 'Sayerlack Antiga', 77, NULL, NULL, NULL, 'C21', NULL,
   '{"produtos_consulta":[{"nCodItem":2100,"cProduto":"PRD1","cDescricao":"A"},{"nCodItem":2101,"cProduto":"PRD9","cDescricao":"BASE X"}]}'),
  ('OBEN', 22, '1022', 'RENNER SAYERLACK', 77, NULL, NULL, NULL, 'C22', NULL, NULL),
+ ('OBEN', 23, '1023', 'RENNER SAYERLACK', 77, NULL, NULL, NULL, 'C23', now() - interval '7 days', NULL),
  ('COLACOR', 99, '9999', 'Outro', 88, NULL, NULL, NULL, 'C21', NULL, NULL);
 INSERT INTO public.recebimento_associacao_sombra (empresa, nid_receb, numero_nfe, fornecedor_codigo_omie, estado_nf, vinculo, classe, motivos, contratos, pares, pedidos, versao_classificador, observado_em) VALUES
  ('OBEN', 8001, '000801', 77, 'pendente', 'nenhum', 'ambigua', ARRAY['quantidade_menor_que_saldo'], ARRAY['C21'], '[]', '[]', 'v', now() - interval '2 hours'),
@@ -243,7 +247,10 @@ INSERT INTO public.recebimento_associacao_sombra (empresa, nid_receb, numero_nfe
   '[{"nIdPedido":21,"numero_pedido":"1021","cobertura":"parcial"}]', 'v', now() - interval '30 minutes'),
  ('OBEN', 8006, '000806', 77, 'pendente', 'nenhum', 'associavel', ARRAY[]::text[], ARRAY['C21'],
   '[{"nSequencia":1,"nIdPedido":21,"nIdItPedido":2101,"quantidade":1,"unidade":"UN"}]',
-  '[{"nIdPedido":21,"numero_pedido":"1021","cobertura":"parcial"}]', 'v', now() - interval '3 days');
+  '[{"nIdPedido":21,"numero_pedido":"1021","cobertura":"parcial"}]', 'v', now() - interval '3 days'),
+ ('OBEN', 8008, '000808', 77, 'pendente', 'nenhum', 'associavel', ARRAY[]::text[], ARRAY['C23'],
+  '[{"nSequencia":1,"nIdPedido":23,"nIdItPedido":2301,"quantidade":1,"unidade":"UN"}]',
+  '[{"nIdPedido":23,"numero_pedido":"1023","cobertura":"total"}]', 'v', now() - interval '20 minutes');
 SQL
 
 V2Q="SET ROLE service_role; SELECT public._prova(\$q\$SELECT string_agg(%s, ';' ORDER BY 1) FROM public.reposicao_po_a_baixar_v2('OBEN') %s\$q\$);"
@@ -261,7 +268,8 @@ episodios() { Q "SELECT private.reposicao_po_a_baixar_registrar_episodios('OBEN'
 # ── P — pares e proposta ──
 ok P1 "1|1021|2|PRD9|BASE X|2|UN|parcial" "$(v2 "(pares->0->>'seq_nf')||'|'||(pares->0->>'numero_pedido')||'|'||(pares->0->>'item_po')||'|'||(pares->0->>'codigo_produto')||'|'||(pares->0->>'descricao')||'|'||(pares->0->>'quantidade')||'|'||(pares->0->>'unidade')||'|'||(pares->0->>'cobertura')" "WHERE chave='8005'")"
 ok P2 "ERA_NULL" "$(v2 "coalesce(pares::text, 'ERA_NULL')" "WHERE chave='8001'")"
-ok P3 "ERA_NULL" "$(v2 "coalesce(pares::text, 'ERA_NULL')" "WHERE chave='8006'")"
+ok P3 "ERA_NULL|evidencia_desatualizada" "$(v2 "coalesce(pares::text, 'ERA_NULL')||'|'||coalesce(pares_retidos, 'ERA_NULL')" "WHERE chave='8006'")"
+ok P7 "ERA_NULL|po_encerrado_no_omie" "$(v2 "coalesce(pares::text, 'ERA_NULL')||'|'||coalesce(pares_retidos, 'ERA_NULL')" "WHERE chave='8008'")"
 ok P4 "RENNER SAYERLACK" "$(v2 "fornecedor_nome" "WHERE chave='8005'")"
 antes="$(v2 "proposta_versao" "WHERE chave='8005'")"
 Pdb -q -c "UPDATE public.recebimento_associacao_sombra SET observado_em = now() - interval '10 minutes' WHERE nid_receb = 8005;"
@@ -283,7 +291,7 @@ ok G2 SQLSTATE:42501 "$(Q "SET ROLE anon; SELECT public._prova(\$q\$SELECT count
 
 # ── E — 1ª execução: tudo o que está na fila vira carga_inicial ──
 episodios
-ok E1 "5|5" "$(Q "SELECT (SELECT count(*) FROM public.reposicao_po_a_baixar_episodio WHERE origem = 'carga_inicial' AND fechado_em IS NULL)||'|'||(SELECT count(*) FROM public.reposicao_po_a_baixar_v2('OBEN'));")"
+ok E1 "6|6" "$(Q "SELECT (SELECT count(*) FROM public.reposicao_po_a_baixar_episodio WHERE origem = 'carga_inicial' AND fechado_em IS NULL)||'|'||(SELECT count(*) FROM public.reposicao_po_a_baixar_v2('OBEN'));")"
 ok E5 SQLSTATE:42501 "$(Q "SET ROLE authenticated; SET test.uid = '$A'; SELECT public._prova(\$q\$SELECT private.reposicao_po_a_baixar_registrar_episodios('OBEN', 'cron')::text\$q\$);")"
 
 # ── D — decisões ──
@@ -311,10 +319,10 @@ ok D5 SQLSTATE:PB001 "$(decidir "$A" nf_pendente 8005 nao_se_aplica "$pv8005" '6
 ok D2 true "$(decidir "$A" nf_pendente 8005 associei "$pv8005" '11111111-1111-4111-8111-111111111111')"
 
 # ── S — a query do sensor sobre este cenário ──
-# carga_inicial das NFs: 8001 (fresca), 8003 (velha), 8005 (fresca, decidida e confirmada), 8006 (velha) → 4 elegíveis,
-# 2 frescas, 3 em aberto, 1 decidida, 1 declarada resolvida, 1 verificável, 1 confirmada, concordância 1.000
+# carga_inicial das NFs: 8001 (fresca), 8003 (velha), 8005 (fresca, decidida e confirmada), 8006 (velha), 8008 (fresca)
+# → 5 elegíveis, 3 frescas, 4 em aberto, 1 decidida, 1 declarada resolvida, 1 verificável, 1 confirmada, concordância 1.000
 if Pdb -At -F '|' -f "$SENSOR_USADO" >"$TMPD/sensor.out" 2>&1 && grep -q '^SENSOR-PO-A-BAIXAR-EXECUTOU$' "$TMPD/sensor.out"; then
-  ok S1 "OBEN|nf_pendente|carga_inicial|4|2|3|1|1|1|1|1.000" "$(grep -m1 '^OBEN|nf_pendente|carga_inicial|' "$TMPD/sensor.out" | cut -d'|' -f1-11)"
+  ok S1 "OBEN|nf_pendente|carga_inicial|5|3|4|1|1|1|1|1.000" "$(grep -m1 '^OBEN|nf_pendente|carga_inicial|' "$TMPD/sensor.out" | cut -d'|' -f1-11)"
 else
   ok S1 executou "falhou: $(grep -m1 -E 'ERRO|ERROR' "$TMPD/sensor.out" | cut -c1-300)"
 fi

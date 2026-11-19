@@ -152,6 +152,16 @@ function Linha({
       </div>
       <p className="text-sm">{passosDaAcao(item)}</p>
       {comPares && item.pares && <TabelaPares pares={item.pares} />}
+      {item.paresRetidos === 'po_encerrado_no_omie' && (
+        <p className="text-xs text-status-warning">
+          Par item a item retido: um PO do par consta como ENCERRADO no Omie. Confira o PO antes de associar.
+        </p>
+      )}
+      {item.paresRetidos === 'evidencia_desatualizada' && (
+        <p className="text-xs text-muted-foreground">
+          Par item a item retido: a última leitura desta NF é antiga. Confira no Omie antes de associar.
+        </p>
+      )}
       {!contado && !comPares && item.pedidosSugeridos.length > 0 && (
         <p className="text-xs text-muted-foreground">
           Candidatos: PO {item.pedidosSugeridos.join(', ')} — sem par item a item, confira no Omie.
