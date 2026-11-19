@@ -32,8 +32,15 @@ assert(a >= 0 && b > a, "bloco do gate de grupo não encontrado no código mater
 const bloco = materializado.slice(a, b);
 
 type Linha = { sku_portal: string; prz_ent_raw: string };
-// deno-lint-ignore no-explicit-any
-type Resultado = { data: any } | null;
+type Mismatch = {
+  sku_portal: string; sku_identificado: boolean; prz_ent: number; prz_ent_raw: string; prz_ent_exato: boolean;
+  lt_esperado: number;
+};
+type GrupoLeadtime = {
+  header_prz: string; linhas_total: number; linhas_validadas: number; linhas_exatas: number; enviados: string[];
+  mismatches: Mismatch[];
+};
+type Resultado = { data: { erroTipo: string; grupoLeadtime: GrupoLeadtime } } | null;
 const rodarGate = (linhas: Linha[], lt = 8): Resultado => {
   const fn = new Function("ltEsperado", "scrape", "linhasPortal", "trace", "skusConhecidos",
     bloco + "\nreturn null;");
@@ -66,7 +73,7 @@ Deno.test("materializado: '5-8' não é exato e uma '8-12' que o gate leu como 8
   ]);
   assert(r !== null, "gate não recusou");
   const g = r.data.grupoLeadtime;
-  assertEquals(g.mismatches.map((x: { prz_ent_exato: boolean }) => x.prz_ent_exato), [false]);
+  assertEquals(g.mismatches.map((x) => x.prz_ent_exato), [false]);
   assertEquals([g.linhas_total, g.linhas_validadas, g.linhas_exatas], [2, 2, 0]);
 });
 
