@@ -141,6 +141,12 @@ BEGIN
   IF v_id IS NOT NULL THEN
     RETURN v_id;
   END IF;
+  -- Quarentena: troca RECUSADA pelo portal há < 6h ⇒ não abre outra (cada rodada autentica com a
+  -- senha atual; repetir em laço é o caminho do bloqueio da conta). NULL = não solicitada.
+  IF EXISTS (SELECT 1 FROM public.sayerlack_senha_rotacao
+              WHERE status = 'falhou' AND concluido_em > now() - interval '6 hours') THEN
+    RETURN NULL;
+  END IF;
   BEGIN
     INSERT INTO public.sayerlack_senha_rotacao (status, gatilho)
     VALUES ('solicitada', left(p_gatilho, 200))

@@ -198,6 +198,11 @@ SQL
   [ "$(Pq -c "SELECT string_agg(name, ',' ORDER BY name) FROM vault.secrets" | tail -1)" = "sayerlack_portal_pass" ] \
     && echo "PASS F2" || { echo "FAIL F2 vault apos falhar"; FALHAS=$((FALHAS+1)); }
   ok F3 "SELECT origem = 'vault' AND senha = 'SenhaManual777' FROM public.sayerlack_senha_portal_credencial()"
+  # Q — quarentena: com troca recusada há < 6h, solicitar NÃO abre rodada (devolve NULL) e as edges seguem.
+  ok Q1 "SELECT public.sayerlack_senha_portal_solicitar('apos-falha') IS NULL"
+  ok Q2 "SELECT bloqueio IS NULL FROM public.sayerlack_senha_portal_credencial()"
+  Pq -c "UPDATE public.sayerlack_senha_rotacao SET concluido_em = now() - interval '7 hours' WHERE id = '$R3'" >/dev/null
+  ok Q3 "SELECT public.sayerlack_senha_portal_solicitar('depois-da-quarentena') IS NOT NULL"
 
   # I — re-aplicar
   if P -q -f "$MIG" >/dev/null 2>"/tmp/${SLUG}-reapply.err"; then echo "PASS I1"; else echo "FAIL I1"; cat "/tmp/${SLUG}-reapply.err"; FALHAS=$((FALHAS+1)); fi
@@ -256,5 +261,8 @@ sabota email_senha_de_outra_versao "  IF v_val IS NULL OR v_val_rot IS DISTINCT 
     RETURN;  -- ativa" "  IF v_val IS NULL THEN
     RETURN;  -- ativa" "A4"
 sabota helper_vault_aberto "REVOKE ALL ON FUNCTION public._sayerlack_vault_ler(text) FROM PUBLIC, anon, authenticated, service_role;" "REVOKE ALL ON FUNCTION public._sayerlack_vault_ler(text) FROM PUBLIC, anon, authenticated;" "aplicar"
+sabota sem_quarentena "  IF EXISTS (SELECT 1 FROM public.sayerlack_senha_rotacao
+              WHERE status = 'falhou'" "  IF false AND EXISTS (SELECT 1 FROM public.sayerlack_senha_rotacao
+              WHERE status = 'falhou'" "Q1"
 echo "RESUMO_FALSIFICACAO vivas=$VIVAS"
 [ "$VIVAS" -eq 0 ]
