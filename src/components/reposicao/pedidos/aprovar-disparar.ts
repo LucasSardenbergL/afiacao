@@ -48,6 +48,20 @@ function erroDoJsonb(data: unknown): string | null {
   return null;
 }
 
+// Traduz a recusa de negócio do RPC para o que o operador precisa fazer. O caso que importa é
+// o pedido que SUMIU: o motor regera os pendentes (~2h, ou no "Recalcular" manual) e um modal
+// aberto continua mostrando o id velho — "pedido não encontrado" cru não diz isso.
+export function mensagemRecusaAprovacao(erro: string): string {
+  if (/n[ãa]o encontrado/i.test(erro)) {
+    return 'Este pedido não existe mais: o motor regerou a lista. Nada foi aprovado — feche e abra o pedido novo.';
+  }
+  const estado = /j[áa] est[áa] no estado (\S+)/i.exec(erro);
+  if (estado) {
+    return `Nada foi aprovado: o pedido já está em "${estado[1]}". Recarregue a lista.`;
+  }
+  return `Aprovação recusada: ${erro}`;
+}
+
 export async function aprovarEDisparar(
   { pedidoId, empresa, usuario }: AprovarDispararParams,
   client: AprovarDispararClient = defaultClient,
@@ -64,7 +78,7 @@ export async function aprovarEDisparar(
   const erroNegocio = erroDoJsonb(rpcData);
   if (erroNegocio) {
     logger.error('Aprovação recusada pela regra de negócio (jsonb error)', { erro: erroNegocio, pedidoId });
-    return { ok: false, tipo: 'error', mensagem: `Erro ao aprovar: ${erroNegocio}` };
+    return { ok: false, tipo: 'error', mensagem: mensagemRecusaAprovacao(erroNegocio) };
   }
 
   // 2. APROVAR = DISPARAR NA HORA. Best-effort: falha do disparo não reverte a aprovação.

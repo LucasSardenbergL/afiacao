@@ -21,6 +21,9 @@ import {
 
 export type Linha = PedidoItem & { _qtd: number; _preco: number; _valor: number };
 
+const PEDIDO_SUMIU =
+  'Este pedido não existe mais (o motor regerou a lista) — nada foi salvo. Feche e abra o pedido novo.';
+
 interface UseDetalhesModalArgs {
   pedido: PedidoSugerido | null;
   open: boolean;
@@ -186,11 +189,13 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
       // valor_linha null que montarUpdateItem grava nessas linhas (ausente ≠ zero).
       // Não trocar o `?? 0` do _valor por propagação de null (viraria NaN no total). Codex 019f146d.
       const novoTotal = linhas.reduce((acc, l) => acc + l._valor, 0);
-      const { error: errPed } = await supabase
+      const { data: pedAtualizado, error: errPed } = await supabase
         .from('pedido_compra_sugerido')
         .update({ valor_total: novoTotal, atualizado_em: new Date().toISOString() })
-        .eq('id', pedido.id);
+        .eq('id', pedido.id)
+        .select('id');
       if (errPed) throw errPed;
+      if ((pedAtualizado ?? []).length === 0) throw new Error(PEDIDO_SUMIU);
     },
     onSuccess: () => {
       toast.success('Ajustes salvos');
@@ -215,7 +220,7 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
   const salvarCondicaoMutation = useMutation({
     mutationFn: async () => {
       if (!pedido || !condicaoSelecionada) return;
-      const { error } = await supabase
+      const { data: atualizado, error } = await supabase
         .from('pedido_compra_sugerido')
         .update({
           condicao_pagamento_codigo: condicaoSelecionada.codigo,
@@ -224,8 +229,12 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
           condicao_origem: 'manual_humano',
           atualizado_em: new Date().toISOString(),
         })
-        .eq('id', pedido.id);
+        .eq('id', pedido.id)
+        .select('id');
       if (error) throw error;
+      // 0 linhas = o pedido não existe mais (regerado) ou a RLS barrou. Sem isto o toast dizia
+      // "Condição de pagamento salva" sem nada gravado.
+      if ((atualizado ?? []).length === 0) throw new Error(PEDIDO_SUMIU);
     },
     onSuccess: () => {
       toast.success('Condição de pagamento salva');
@@ -268,9 +277,16 @@ export function useDetalhesModal({ pedido, open, onOpenChange, onApproved }: Use
       });
     },
     onSuccess: (result) => {
+      if (result && !result.ok) {
+        // Aprovação RECUSADA: o modal fica aberto. Fechar aqui parecia "aprovado" (4493/4497,
+        // 2026-11-18) — o toast some em segundos e o operador seguia achando que tinha ido.
+        toast.error(result.mensagem, { duration: 15000 });
+        queryClient.invalidateQueries({ queryKey: ['pedidos-ciclo'] });
+        return;
+      }
       if (result) {
-        const { ok, tipo, mensagem } = result;
-        if (!ok || tipo === 'error') toast.error(mensagem);
+        const { tipo, mensagem } = result;
+        if (tipo === 'error') toast.error(mensagem);
         else if (tipo === 'warning') toast.warning(mensagem);
         else if (tipo === 'info') toast.info(mensagem);
         else toast.success(mensagem);
