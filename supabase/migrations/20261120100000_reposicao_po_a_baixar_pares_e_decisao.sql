@@ -44,7 +44,7 @@
 --      · A declaração é SENSOR, não verdade: não muda o motor de reposição nem a fila — a fila só sai por releitura.
 -- Gate cron-or-staff NULL-aware (uid presente exige cap_compras_ler) na v2, igual à v1.
 -- ============================================================
-BEGIN;
+-- sem BEGIN/COMMIT: aplica-se por `bun run db:aplicar` (a transação e o recibo são do executor)
 
 -- ── tabelas do sensor ──────────────────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.reposicao_po_a_baixar_episodio (
@@ -565,4 +565,3 @@ BEGIN
 END
 $post$;
 
-COMMIT;
