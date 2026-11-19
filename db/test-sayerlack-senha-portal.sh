@@ -145,6 +145,11 @@ SQL
   [ "$(Pq -c "SELECT count(*) FROM vault.secrets WHERE name='sayerlack_portal_pass_pendente' AND description='$R1'" | tail -1)" = "1" ] \
     && echo "PASS D4" || { echo "FAIL D4 candidata nao presa a rodada"; FALHAS=$((FALHAS+1)); }
 
+  # D5 — candidata de OUTRA rodada no Vault: promover a rodada aberta tem que recusar (P0002).
+  Pq -c "UPDATE vault.secrets SET description = gen_random_uuid()::text WHERE name = 'sayerlack_portal_pass_pendente'" >/dev/null
+  erro D5 P0002 service_role "PERFORM public.sayerlack_senha_portal_promover('$R1')"
+  Pq -c "UPDATE vault.secrets SET description = '$R1' WHERE name = 'sayerlack_portal_pass_pendente'" >/dev/null
+
   # P — promover
   ok P1 "SELECT public.sayerlack_senha_portal_promover('$R1') = ARRAY[4505]::bigint[]"
   [ "$(Pq -c "SELECT string_agg(name||'='||secret||'@'||description, ',' ORDER BY name) FROM vault.secrets" | tail -1)" = "sayerlack_portal_pass=Candidata1234abcd@$R1" ] \
@@ -174,7 +179,10 @@ SQL
   ok A2 "SELECT origem = 'vault' AND senha = 'SenhaManual777' FROM public.sayerlack_senha_portal_credencial()"
   [ "$(Pq -c "SELECT count(*) FROM vault.secrets WHERE name='sayerlack_portal_pass_pendente'" | tail -1)" = "0" ] \
     && echo "PASS A3" || { echo "FAIL A3 candidata sobreviveu a adocao"; FALHAS=$((FALHAS+1)); }
+  # A4: rodada concluída com e-mail ainda pendente, mas a ativa já é OUTRA versão (adotada) → nada a enviar.
+  Pq -c "UPDATE public.sayerlack_senha_rotacao SET email_pendente = true WHERE id = '$R1'" >/dev/null
   ok A4 "SELECT count(*) = 0 FROM public.sayerlack_senha_portal_email_pendente()"   # senha velha nunca vai por e-mail
+  Pq -c "UPDATE public.sayerlack_senha_rotacao SET email_pendente = false WHERE id = '$R1'" >/dev/null
 
   # Órfã antes do POST: re-assumida como 'trocar'
   local R3
@@ -233,7 +241,7 @@ PY
 }
 # Sem o REVOKE em laço, a postcondição A3 aborta o apply (é ela o alvo).
 sabota credencial_aberta "    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated', f);" "    NULL;" "aplicar"
-sabota promover_sem_dona "  IF v_cand IS NULL OR v_cand_rot IS DISTINCT FROM p_rotacao::text THEN" "  IF v_cand IS NULL THEN" "D1"
+sabota promover_sem_dona "  IF v_cand IS NULL OR v_cand_rot IS DISTINCT FROM p_rotacao::text THEN" "  IF v_cand IS NULL THEN" "D5"
 sabota reenfileira_apos_clique "       AND u.evidence->>'efetivarAttempted' = 'false'" "" "P3"
 sabota reenfileira_ultima_qualquer "    SELECT DISTINCT ON (t.pedido_id) t.pedido_id, t.evidence
       FROM public.pedidos_portal_tentativas t
