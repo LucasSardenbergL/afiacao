@@ -580,6 +580,12 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'encerra recusa definitiva do portal após 3 dias (#3169) — cron reposicao-encerrar-recusas-definitivas',
   },
+  'public.reposicao_regrupar_por_recusa_portal': {
+    fechadaPor: '20261120100000_reposicao_regrupo_por_recusa_portal.sql',
+    permitido: PORTA_FECHADA,
+    motivo:
+      'regrupo Sayerlack por Prz Ent (#4505): corrige sku_grupo_producao e CANCELA o pedido recusado — edge enviar-pedido-portal-sayerlack v1.16, service_role. Aberta a authenticated, qualquer sessão cancelaria pedido aprovado e mudaria cadastro',
+  },
   'public.reposicao_persistir_qtde_inteira': {
     fechadaPor: '20260606190000_reposicao_qtde_inteira_persist.sql',
     permitido: PORTA_FECHADA,
