@@ -464,6 +464,9 @@ export default async ({ page, context }) => {
           posLoginCheck: data.posLoginCheck || null,
           // Recusa por lote mínimo no salvar-item ({skuPortal, lote, trecho, qtdeEnviada, linha}).
           loteMinimo: data.loteMinimo || null,
+          // v1.16: prova do gate de grupo ({lt_esperado, header_prz, linhas_total, linhas_validadas, mismatches[]}).
+          // Lida SÓ pelo servidor (reposicao_regrupar_por_recusa_portal) a partir de pedidos_portal_tentativas.
+          grupoLeadtime: data.grupoLeadtime || null,
           // Fase 1: ajustes ao lote feitos nesta execução (closure — vale em QUALQUER caminho, inclusive exceção).
           ajustesLote: ajustesLote.slice(),
           efetivarPayloadCampos: efetivarPayloadCampos,
@@ -1371,13 +1374,32 @@ export default async ({ page, context }) => {
         validados++;
         var prz = Number(mm[0]);
         if (prz !== ltEsperado) {
-          mismatches.push({ sku_portal: linhasPortal[li].sku_portal || ('linha ' + (li + 1)), prz_ent: prz, lt_esperado: ltEsperado });
+          // v1.16 (regrupo): prova estruturada p/ a RPC reposicao_regrupar_por_recusa_portal. Só célula que é um
+          // inteiro EXATO ("5", nunca "5-8"/"5 dias") e linha com SKU identificado podem corrigir cadastro; o resto
+          // continua recusando o envio (gate igual), mas a RPC recusa corrigir (fail-closed).
+          var przRaw = String(linhasPortal[li].prz_ent_raw || '');
+          mismatches.push({
+            sku_portal: linhasPortal[li].sku_portal || ('linha ' + (li + 1)),
+            sku_identificado: !!linhasPortal[li].sku_portal,
+            linha: li + 1,
+            prz_ent: prz,
+            prz_ent_raw: przRaw.slice(0, 60),
+            prz_ent_exato: /^\s*\d+\s*$/.test(przRaw),
+            lt_esperado: ltEsperado,
+          });
         }
       }
       if (mismatches.length > 0) {
         var listaMm = mismatches.map(function(x){ return x.sku_portal + ' (Prz ' + x.prz_ent + ' != ' + x.lt_esperado + ')'; }).join('; ');
+        var grupoLeadtime = {
+          lt_esperado: ltEsperado,
+          header_prz: String((scrape.headers || [])[scrape.przIdx] || '').slice(0, 40),
+          linhas_total: linhasPortal.length,
+          linhas_validadas: validados,
+          mismatches: mismatches,
+        };
         return {
-          data: { success: false, erro: 'Grupo errado (Prz Ent != lead time do grupo): ' + listaMm + '. Confira o de-para/grupo.', erroTipo: 'GRUPO_LEADTIME_MISMATCH', mismatches: mismatches, trace: trace },
+          data: { success: false, erro: 'Grupo errado (Prz Ent != lead time do grupo): ' + listaMm + '. Confira o de-para/grupo.', erroTipo: 'GRUPO_LEADTIME_MISMATCH', mismatches: mismatches, grupoLeadtime: grupoLeadtime, trace: trace },
           type: 'application/json',
         };
       }
@@ -1768,6 +1790,8 @@ interface ProcessResult {
   duracao_ms: number;
   // erroTipo do envelope — o lote usa para o circuit breaker de falha sistêmica.
   erro_tipo?: string | null;
+  // v1.16: desfecho da RPC reposicao_regrupar_por_recusa_portal (só em GRUPO_LEADTIME_MISMATCH).
+  regrupo?: { cancelado?: boolean; motivo?: string } | null;
 }
 
 interface PostgrestErrorLike {
@@ -1899,9 +1923,10 @@ async function gravarTentativa(
     browserlessResponseMs: number | null;
     erro: string | null;
   },
-): Promise<void> {
+): Promise<string | null> {
+  // Devolve o id da tentativa gravada (null = não gravou). v1.16: o regrupo identifica a recusa por ESTE id.
   try {
-    const { error } = await supabase.from("pedidos_portal_tentativas").insert({
+    const { data, error } = await supabase.from("pedidos_portal_tentativas").insert({
       pedido_id: pedidoId,
       iniciado_em: params.iniciadoEm,
       concluido_em: new Date().toISOString(),
@@ -1910,12 +1935,16 @@ async function gravarTentativa(
       evidence: params.evidence ?? {},
       browserless_response_ms: params.browserlessResponseMs,
       erro: params.erro,
-    });
+    }).select("id").maybeSingle();
     if (error) {
       console.error(`[envio-portal] Pedido #${pedidoId}: falha ao gravar tentativa de auditoria:`, error.message);
+      return null;
     }
+    const id = (data as { id?: unknown } | null)?.id;
+    return typeof id === "string" ? id : null;
   } catch (e) {
     console.error(`[envio-portal] Pedido #${pedidoId}: excecao ao gravar tentativa de auditoria:`, e instanceof Error ? e.message : String(e));
+    return null;
   }
 }
 
@@ -2319,6 +2348,8 @@ async function processarPedido(
   // Helper local: aplica a transicao de estado, grava a linha de auditoria
   // e fecha o ProcessResult. Fonte unica de UPDATE em pedido_compra_sugerido
   // pos-Browserless.
+  // Id da tentativa gravada pela ÚLTIMA aplicarTransicao desta execução (v1.16 — regrupo por recusa do portal).
+  let tentativaIdTransicao: string | null = null;
   const aplicarTransicao = async (
     statusFinal: string,
     opts: {
@@ -2351,7 +2382,7 @@ async function processarPedido(
       update.portal_data_entrega = portalDataEntrega;
     }
     await supabase.from("pedido_compra_sugerido").update(update).eq("id", pedido.id);
-    await gravarTentativa(supabase, pedido.id, {
+    tentativaIdTransicao = await gravarTentativa(supabase, pedido.id, {
       iniciadoEm,
       statusResultado: statusFinal,
       elapsedMs: typeof envelope?.elapsedMs === "number" ? envelope.elapsedMs : (Date.now() - t0),
@@ -2586,6 +2617,14 @@ async function processarPedido(
     const erroMsg: string = evidence?.erro ?? "Falha logica do automador";
     const r = await aplicarTransicao("erro_nao_retentavel", { erro: erroMsg });
     r.erro_tipo = erroTipo;
+    // v1.16 — regrupo: o portal provou (Prz Ent) que o SKU está no grupo errado. O SERVIDOR decide tudo a partir
+    // da tentativa gravada (fail-closed): corrige sku_grupo_producao e cancela este pedido; o próximo ciclo do motor
+    // regera no grupo certo para nova aprovação humana. Best-effort: falha aqui mantém o alerta de hoje.
+    if (erroTipo === "GRUPO_LEADTIME_MISMATCH" && efetivarAttempted === false && tentativaIdTransicao) {
+      const regrupo = await regruparPorRecusaPortal(supabase, pedido.id, tentativaIdTransicao);
+      if (regrupo) r.regrupo = regrupo;
+      if (regrupo?.cancelado === true) return r;
+    }
     await alertarFornecedor(supabase, erroTipo, pedido.id, {
       esgotado: true,
       origemDivergente: evidence?.posLoginCheck?.origemDivergente === true,
@@ -2716,6 +2755,30 @@ async function registrarAjustesLote(
 // `erro_nao_retentavel` que cobria só LOGIN_FAILED — e a falha de 2026-08-20 chegou
 // como EXCEPTION, por fora dele. O `{ error }` é capturado porque um alerta que falha
 // em silêncio é a mesma classe de bug que este PR conserta.
+// v1.16 — chama a RPC do regrupo (service_role). Devolve o jsonb da RPC, ou null em erro (o chamador alerta como hoje).
+// Quando a RPC cancela, ELA grava o alerta de desfecho (mesma transação) — a edge não duplica.
+async function regruparPorRecusaPortal(
+  supabase: SupabaseClient,
+  pedidoId: number,
+  tentativaId: string,
+): Promise<{ cancelado?: boolean; motivo?: string } | null> {
+  try {
+    const { data, error } = await supabase.rpc("reposicao_regrupar_por_recusa_portal", {
+      p_pedido_id: pedidoId,
+      p_tentativa_id: tentativaId,
+    });
+    if (error) {
+      console.error(`[envio-portal] Pedido #${pedidoId}: regrupo falhou:`, error.message);
+      return null;
+    }
+    console.log(`[envio-portal] Pedido #${pedidoId}: regrupo ->`, JSON.stringify(data));
+    return (data && typeof data === "object") ? data as { cancelado?: boolean; motivo?: string } : null;
+  } catch (e) {
+    console.error(`[envio-portal] Pedido #${pedidoId}: excecao no regrupo:`, e instanceof Error ? e.message : String(e));
+    return null;
+  }
+}
+
 async function alertarFornecedor(
   supabase: SupabaseClient,
   erroTipo: string | null,
