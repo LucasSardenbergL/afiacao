@@ -9,7 +9,7 @@ vi.mock('@/lib/logger', () => ({
 }));
 
 import { supabase } from '@/integrations/supabase/client';
-import { aprovarEDisparar } from '../aprovar-disparar';
+import { aprovarEDisparar, mensagemRecusaAprovacao } from '../aprovar-disparar';
 
 const mockedRpc = vi.mocked(supabase.rpc);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
@@ -116,5 +116,29 @@ describe('aprovarEDisparar', () => {
     expect(r.ok).toBe(true);
     expect(r.tipo).toBe('success');
     expect(r.mensagem).toContain('iniciado');
+  });
+});
+
+describe('mensagemRecusaAprovacao', () => {
+  it('pedido apagado pela regeração do motor → diz que regerou e que nada foi aprovado', () => {
+    const m = mensagemRecusaAprovacao('pedido não encontrado');
+    expect(m).toContain('o motor regerou a lista');
+    expect(m).toContain('Nada foi aprovado');
+  });
+
+  it('pedido em outro estado → nomeia o estado', () => {
+    expect(mensagemRecusaAprovacao('pedido já está no estado cancelado_humano')).toContain('"cancelado_humano"');
+  });
+
+  it('recusa desconhecida → preserva o texto do servidor', () => {
+    expect(mensagemRecusaAprovacao('pedido não está pendente')).toBe('Aprovação recusada: pedido não está pendente');
+  });
+
+  it('via aprovarEDisparar: "pedido não encontrado" chega traduzido, sem disparar', async () => {
+    mockedRpc.mockResolvedValue({ data: { error: 'pedido não encontrado' }, error: null } as never);
+    const r = await aprovarEDisparar(params);
+    expect(mockedInvoke).not.toHaveBeenCalled();
+    expect(r.ok).toBe(false);
+    expect(r.mensagem).toContain('o motor regerou a lista');
   });
 });

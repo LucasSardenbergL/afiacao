@@ -212,6 +212,13 @@ export function DetalhesModal({
           </div>
         )}
 
+        {podeEditar && motivoBloqueioAprov && (
+          // Visível de propósito: o `title` do botão desabilitado nunca aparece
+          // (`disabled:pointer-events-none` no Button), e o bloqueio parecia clique perdido.
+          <p role="status" className="text-sm text-status-warning text-right">
+            {motivoBloqueioAprov}
+          </p>
+        )}
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Fechar</Button>
           {(podeEditar || podeEditarPreco) && (

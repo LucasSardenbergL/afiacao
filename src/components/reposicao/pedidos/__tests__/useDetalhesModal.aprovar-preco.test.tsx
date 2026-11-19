@@ -21,10 +21,14 @@ import { useDetalhesModal } from '../useDetalhesModal';
 interface Op { table: string; op: 'select' | 'update' | 'disparo'; payload?: unknown; filtros: [string, unknown][]; selectApos?: boolean }
 let ops: Op[] = [];
 let updateRetornaVazio = false;
+let pedidoUpdateVazio = false;
 const ITEM_BASE = { id: 501, pedido_id: 1, sku_codigo_omie: '123', sku_descricao: 'Tinta X', qtde_final: 10, qtde_sugerida: 10, valor_linha: null as number | null };
 let itemFixture: Record<string, unknown> = { ...ITEM_BASE, preco_unitario: null };
 const tabelas = (): Record<string, unknown[]> => ({
-  omie_condicao_pagamento_catalogo: [{ codigo: '001', descricao: 'À vista', num_parcelas: 1, dias_parcelas: '0' }],
+  omie_condicao_pagamento_catalogo: [
+    { codigo: '001', descricao: 'À vista', num_parcelas: 1, dias_parcelas: '0' },
+    { codigo: 'A07', descricao: '7 dias', num_parcelas: 1, dias_parcelas: '7' },
+  ],
   pedido_compra_item: [itemFixture],
 });
 
@@ -41,7 +45,7 @@ function builder(table: string) {
       ops.push(op);
       const out = op.op === 'select'
         ? { data: tabelas()[table] ?? [], error: null }
-        : { data: op.selectApos ? (updateRetornaVazio ? [] : [{ id: 501 }]) : null, error: null };
+        : { data: op.selectApos ? (updateRetornaVazio || (pedidoUpdateVazio && table === 'pedido_compra_sugerido') ? [] : [{ id: 501 }]) : null, error: null };
       return Promise.resolve(out).then(res, rej);
     },
   };
@@ -65,15 +69,15 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 const updatesDe = (table: string) => ops.filter((o) => o.table === table && o.op === 'update');
 
-async function montarPronto() {
-  const r = renderHook(() => useDetalhesModal({ pedido, open: true, onOpenChange: vi.fn(), onApproved: vi.fn() }), { wrapper });
+async function montarPronto(onOpenChange = vi.fn(), onApproved = vi.fn()) {
+  const r = renderHook(() => useDetalhesModal({ pedido, open: true, onOpenChange, onApproved }), { wrapper });
   await waitFor(() => expect(r.result.current.linhas).toHaveLength(1));
   await waitFor(() => expect(r.result.current.condicaoSelecionada?.codigo).toBe('001'));
   return r;
 }
 
 beforeEach(() => {
-  ops = []; updateRetornaVazio = false; itemFixture = { ...ITEM_BASE, preco_unitario: null };
+  ops = []; updateRetornaVazio = false; pedidoUpdateVazio = false; itemFixture = { ...ITEM_BASE, preco_unitario: null };
   vi.mocked(supabase.from).mockReset().mockImplementation(builder as never);
   vi.mocked(aprovarEDisparar).mockReset().mockImplementation(async () => {
     ops.push({ table: 'edge', op: 'disparo', filtros: [] }); // mesmo log: ordem testável
@@ -133,5 +137,41 @@ describe('useDetalhesModal.aprovarMutation — "Aprovar e disparar" não descart
     await expect(act(async () => { await result.current.aprovarMutation.mutateAsync(); })).rejects.toThrow(/outra pessoa/);
     expect(aprovarEDisparar).not.toHaveBeenCalled();
     expect(updatesDe('pedido_compra_sugerido')).toEqual([]);
+  });
+});
+
+describe('useDetalhesModal — recusa não se disfarça de aprovação (4493/4497, 2026-11-18)', () => {
+  it('RPC recusa (ok:false): o modal NÃO fecha e onApproved NÃO roda', async () => {
+    vi.mocked(aprovarEDisparar).mockResolvedValue({ ok: false, tipo: 'error', mensagem: 'Este pedido não existe mais' });
+    const onOpenChange = vi.fn();
+    const onApproved = vi.fn();
+    const { result } = await montarPronto(onOpenChange, onApproved);
+    await act(async () => { await result.current.aprovarMutation.mutateAsync(); });
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(onApproved).not.toHaveBeenCalled();
+    const { toast } = await import('sonner');
+    expect(toast.error).toHaveBeenCalledWith('Este pedido não existe mais', expect.anything());
+  });
+
+  it('aprovado (ok:true): o modal fecha (regressão)', async () => {
+    const onOpenChange = vi.fn();
+    const onApproved = vi.fn();
+    const { result } = await montarPronto(onOpenChange, onApproved);
+    await act(async () => { await result.current.aprovarMutation.mutateAsync(); });
+    expect(onApproved).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('trocar a condição num pedido que sumiu (UPDATE 0 linhas): erro visível e NADA dispara', async () => {
+    pedidoUpdateVazio = true;
+    const { result } = await montarPronto();
+    act(() => result.current.setCondicaoCodigo('A07'));
+    await waitFor(() => expect(result.current.condicaoSelecionada?.codigo).toBe('A07'));
+    let msg = '';
+    try { await act(async () => { await result.current.aprovarMutation.mutateAsync(); }); } catch (e) { msg = String(e); }
+    expect(msg).toMatch(/não existe mais/);
+    expect(aprovarEDisparar).not.toHaveBeenCalled();
+    const upd = ops.filter((o) => o.table === 'pedido_compra_sugerido' && o.op === 'update');
+    expect(upd.map((o) => o.selectApos), 'sem .select() o 0-linhas é invisível').toEqual([true]);
   });
 });
