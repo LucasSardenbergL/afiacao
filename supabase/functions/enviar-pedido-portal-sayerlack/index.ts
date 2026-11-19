@@ -1368,7 +1368,10 @@ export default async ({ page, context }) => {
     if (typeof ltEsperado === 'number' && Number.isInteger(ltEsperado) && scrape.ok && scrape.przIdx >= 0 && linhasPortal.length > 0) {
       var mismatches = [];
       var validados = 0;
+      var exatas = 0;
       for (var li = 0; li < linhasPortal.length; li++) {
+        // v1.16: célula inteira = inteiro exato ("5"; nunca "5-8"). Sem barra invertida (template literal).
+        if (/^[0-9]+$/.test(String(linhasPortal[li].prz_ent_raw || '').trim())) exatas++;
         var mm = (linhasPortal[li].prz_ent_raw || '').match(/-?\\d+/);
         if (!mm) continue;
         validados++;
@@ -1384,7 +1387,7 @@ export default async ({ page, context }) => {
             linha: li + 1,
             prz_ent: prz,
             prz_ent_raw: przRaw.slice(0, 60),
-            prz_ent_exato: /^\s*\d+\s*$/.test(przRaw),
+            prz_ent_exato: /^[0-9]+$/.test(przRaw.trim()),
             lt_esperado: ltEsperado,
           });
         }
@@ -1396,6 +1399,9 @@ export default async ({ page, context }) => {
           header_prz: String((scrape.headers || [])[scrape.przIdx] || '').slice(0, 40),
           linhas_total: linhasPortal.length,
           linhas_validadas: validados,
+          linhas_exatas: exatas,
+          // SKUs que ESTA execução digitou (de-para vivo, normalizado) — a RPC só corrige SKU que está aqui.
+          enviados: skusConhecidos.slice(0, 200),
           mismatches: mismatches,
         };
         return {
@@ -2774,7 +2780,7 @@ async function regruparPorRecusaPortal(
     console.log(`[envio-portal] Pedido #${pedidoId}: regrupo ->`, JSON.stringify(data));
     return (data && typeof data === "object") ? data as { cancelado?: boolean; motivo?: string } : null;
   } catch (e) {
-    console.error(`[envio-portal] Pedido #${pedidoId}: excecao no regrupo:`, e instanceof Error ? e.message : String(e));
+    console.error(`[envio-portal] Pedido #${pedidoId}: excecao no regrupo:`, mensagemDeErro(e) ?? "erro sem mensagem");
     return null;
   }
 }

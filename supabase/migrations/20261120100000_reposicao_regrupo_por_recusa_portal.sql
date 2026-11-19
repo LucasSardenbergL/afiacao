@@ -154,14 +154,23 @@ BEGIN
       v_motivo := 'prova_ausente_ou_divergente'; EXIT decidir;
     END IF;
 
-    -- Grade inteira lida (nenhuma linha pulada por Prz Ent ilegível).
+    -- Grade inteira lida: nenhuma linha pulada, TODA célula Prz Ent um inteiro exato (uma "8-12" que o gate leu
+    -- como 8 some dos mismatches — Codex P1) e 1 linha por item do pedido (o DOM pode devolver menos linhas).
     IF NOT (jsonb_typeof(v_g -> 'linhas_total') = 'number'
             AND (v_g ->> 'linhas_total') ~ '^[0-9]+$'
             AND (v_g ->> 'linhas_total')::int > 0
             AND v_g -> 'linhas_validadas' = v_g -> 'linhas_total'
+            AND v_g -> 'linhas_exatas' = v_g -> 'linhas_total'
+            AND (v_g ->> 'linhas_total')::int = (SELECT count(*) FROM public.pedido_compra_item i WHERE i.pedido_id = p_pedido_id)
+            AND jsonb_typeof(v_g -> 'enviados') = 'array'
             AND jsonb_typeof(v_g -> 'mismatches') = 'array'
             AND jsonb_array_length(v_g -> 'mismatches') > 0) IS TRUE THEN
       v_motivo := 'grade_incompleta'; EXIT decidir;
+    END IF;
+
+    -- A coluna lida tem de ser a de ENTREGA ("Prz Ent"): o seletor aceita qualquer "prz|prazo" (Codex P0-4).
+    IF NOT (COALESCE(v_g ->> 'header_prz', '') ~* '^[[:space:]]*prz[.]?[[:space:]]*ent') THEN
+      v_motivo := 'cabecalho_nao_e_prz_ent'; EXIT decidir;
     END IF;
 
     -- LT do grupo do pedido, AO VIVO, tem de ser o que o portal comparou.
@@ -175,9 +184,10 @@ BEGIN
     END IF;
 
     FOR v_m IN SELECT e FROM jsonb_array_elements(v_g -> 'mismatches') AS t(e) LOOP
+      -- A célula BRUTA é conferida aqui (não confiamos no flag prz_ent_exato da edge): "5-8", "5 dias", " " ≠ "5".
       IF NOT (v_m -> 'sku_identificado' = 'true'::jsonb
-              AND v_m -> 'prz_ent_exato' = 'true'::jsonb
               AND (v_m ->> 'prz_ent') ~ '^[0-9]{1,3}$'
+              AND btrim(COALESCE(v_m ->> 'prz_ent_raw', '')) = (v_m ->> 'prz_ent')
               AND (v_m ->> 'lt_esperado') = v_lt_pedido::text) IS TRUE THEN
         v_motivo := 'mismatch_sem_identidade_ou_prz_inexato'; EXIT decidir;
       END IF;
@@ -186,27 +196,31 @@ BEGIN
       IF v_key = '' OR v_prz = v_lt_pedido THEN
         v_motivo := 'mismatch_invalido'; EXIT decidir;
       END IF;
+      IF NOT (v_g -> 'enviados') ? v_key THEN
+        v_motivo := 'sku_nao_enviado_nesta_execucao'; EXIT decidir;
+      END IF;
 
-      -- SKU do portal → exatamente 1 item do pedido (sku selado na aprovação; sem selo, de-para ativo exato).
+      -- SKU do portal → exatamente 1 item do pedido. A edge digita o de-para VIVO: exige o vivo (ativo, fornecedor
+      -- exato) = SKU recusado E, se houver selo da aprovação, o selo também (troca A↔B no de-para: Codex P0-3).
       SELECT count(*), min(i.sku_codigo_omie) INTO v_n, v_sku
         FROM public.pedido_compra_item i
        WHERE i.pedido_id = p_pedido_id
-         AND (upper(btrim(i.sku_portal_aprovado)) = v_key
-              OR (NULLIF(btrim(i.sku_portal_aprovado), '') IS NULL
-                  AND EXISTS (SELECT 1 FROM public.sku_fornecedor_externo e
-                               WHERE e.empresa = v_ped.empresa AND e.fornecedor_nome = v_ped.fornecedor_nome
-                                 AND e.sku_omie = i.sku_codigo_omie AND e.ativo
-                                 AND upper(btrim(e.sku_portal)) = v_key)));
+         AND EXISTS (SELECT 1 FROM public.sku_fornecedor_externo e
+                      WHERE e.empresa = v_ped.empresa AND e.fornecedor_nome = v_ped.fornecedor_nome
+                        AND e.sku_omie = i.sku_codigo_omie AND e.ativo
+                        AND upper(btrim(e.sku_portal)) = v_key)
+         AND (NULLIF(btrim(i.sku_portal_aprovado), '') IS NULL
+              OR upper(btrim(i.sku_portal_aprovado)) = v_key);
       IF v_n <> 1 THEN v_motivo := 'sku_portal_nao_casa_1_item'; EXIT decidir; END IF;
 
       IF v_planos @> jsonb_build_array(jsonb_build_object('sku', v_sku)) THEN
         v_motivo := 'sku_repetido'; EXIT decidir;
       END IF;
 
-      -- Membro de equivalência ativa → revisão humana da família (o motor usa o grupo da âncora).
+      -- Membro de equivalência ativa → revisão humana da família (o motor usa o grupo da âncora). MESMO predicado
+      -- do motor (empresa em minúsculas, só `ativo` — vigente_ate não entra lá): Codex P0-1.
       IF EXISTS (SELECT 1 FROM public.sku_embalagem_equivalencia q
-                  WHERE q.empresa = v_ped.empresa AND q.sku_codigo_omie = v_sku AND q.ativo
-                    AND (q.vigente_ate IS NULL OR q.vigente_ate >= current_date)) THEN
+                  WHERE lower(q.empresa) = lower(v_ped.empresa) AND q.sku_codigo_omie = v_sku AND q.ativo) THEN
         v_motivo := 'sku_em_grupo_de_equivalencia'; EXIT decidir;
       END IF;
 
@@ -291,7 +305,7 @@ BEGIN
   VALUES (v_ped.empresa, v_ped.fornecedor_nome, 'outro', 'atencao',
           format('Pedido #%s cancelado: SKU no grupo errado (corrigido)', p_pedido_id),
           format('O portal Sayerlack recusou o pedido #%s (nada foi colocado no portal). Grupo corrigido pelo Prz Ent: %s. '
-                 || 'O próximo ciclo do motor regera os itens no grupo certo para a sua aprovação. '
+                 || 'Os itens que continuarem necessários voltam no próximo ciclo do motor, já no grupo certo, para a sua aprovação. '
                  || 'Ponto de pedido e máximo são recalculados na madrugada: um pedido regerado hoje ainda usa a quantidade do prazo antigo.',
                  p_pedido_id, v_lista),
           'pendente_notificacao',
@@ -303,10 +317,40 @@ BEGIN
 END;
 $function$;
 
-REVOKE EXECUTE ON FUNCTION public.reposicao_regrupar_por_recusa_portal(bigint, uuid) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.reposicao_regrupar_por_recusa_portal(bigint, uuid) FROM anon;
-REVOKE EXECUTE ON FUNCTION public.reposicao_regrupar_por_recusa_portal(bigint, uuid) FROM authenticated;
-GRANT  EXECUTE ON FUNCTION public.reposicao_regrupar_por_recusa_portal(bigint, uuid) TO service_role;
+-- ACL por ALLOWLIST (o default ACL do public dá EXECUTE/INSERT/TRUNCATE a anon, authenticated, service_role e
+-- sandbox_exec_<ref>; RLS não cobre TRUNCATE — Codex P0-5). Função: só owner + service_role. Tabela: escrita só do
+-- owner (a função é DEFINER), SELECT para authenticated (via policy) e claude_ro. PUBLIC vai pelo nome.
+DO $acl$
+DECLARE
+  r record;
+BEGIN
+  REVOKE ALL ON FUNCTION public.reposicao_regrupar_por_recusa_portal(bigint, uuid) FROM PUBLIC;
+  REVOKE ALL ON public.reposicao_regrupo_audit FROM PUBLIC;
+  REVOKE ALL ON SEQUENCE public.reposicao_regrupo_audit_id_seq FROM PUBLIC;
+  FOR r IN
+    SELECT DISTINCT a.grantee::regrole AS papel
+      FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+     WHERE p.oid = 'public.reposicao_regrupar_por_recusa_portal(bigint, uuid)'::regprocedure
+       AND a.grantee <> 0 AND a.grantee <> p.proowner
+  LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION public.reposicao_regrupar_por_recusa_portal(bigint, uuid) FROM %s', r.papel);
+  END LOOP;
+  FOR r IN
+    SELECT DISTINCT a.grantee::regrole AS papel
+      FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+     WHERE c.oid IN ('public.reposicao_regrupo_audit'::regclass, 'public.reposicao_regrupo_audit_id_seq'::regclass)
+       AND a.grantee <> 0 AND a.grantee <> c.relowner
+  LOOP
+    EXECUTE format('REVOKE ALL ON public.reposicao_regrupo_audit FROM %s', r.papel);
+    EXECUTE format('REVOKE ALL ON SEQUENCE public.reposicao_regrupo_audit_id_seq FROM %s', r.papel);
+  END LOOP;
+  GRANT EXECUTE ON FUNCTION public.reposicao_regrupar_por_recusa_portal(bigint, uuid) TO service_role;
+  GRANT SELECT ON public.reposicao_regrupo_audit TO authenticated;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'claude_ro') THEN
+    GRANT SELECT ON public.reposicao_regrupo_audit TO claude_ro;
+  END IF;
+END
+$acl$;
 
 COMMENT ON FUNCTION public.reposicao_regrupar_por_recusa_portal(bigint, uuid) IS
   'Regrupo Sayerlack v1: corrige sku_grupo_producao pelo Prz Ent do portal e cancela o pedido recusado (fail-closed; sem herança de aprovação). Só service_role (edge enviar-pedido-portal-sayerlack).';
@@ -323,9 +367,19 @@ BEGIN
                   WHERE n.nspname = 'public' AND p.proname = 'reposicao_regrupar_por_recusa_portal' AND p.prosecdef) THEN
     RAISE EXCEPTION 'A2 FALHOU: reposicao_regrupar_por_recusa_portal ausente ou não é SECURITY DEFINER';
   END IF;
-  IF has_function_privilege('anon', 'public.reposicao_regrupar_por_recusa_portal(bigint, uuid)', 'EXECUTE')
-     OR has_function_privilege('authenticated', 'public.reposicao_regrupar_por_recusa_portal(bigint, uuid)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'A3 FALHOU: anon/authenticated podem executar o regrupo (cancela pedido e muda cadastro)';
+  IF EXISTS (SELECT 1 FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+              WHERE p.oid = 'public.reposicao_regrupar_por_recusa_portal(bigint, uuid)'::regprocedure
+                AND a.grantee <> p.proowner
+                AND (a.grantee = 0 OR a.grantee::regrole::text <> 'service_role')) THEN
+    RAISE EXCEPTION 'A3 FALHOU: regrupo executável fora de owner/service_role (cancela pedido e muda cadastro)';
+  END IF;
+  IF NOT has_function_privilege('service_role', 'public.reposicao_regrupar_por_recusa_portal(bigint, uuid)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'A3b FALHOU: service_role sem EXECUTE — a edge não consegue chamar';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+              WHERE c.oid = 'public.reposicao_regrupo_audit'::regclass AND a.grantee <> c.relowner
+                AND (a.grantee = 0 OR a.privilege_type <> 'SELECT')) THEN
+    RAISE EXCEPTION 'A3c FALHOU: auditoria do regrupo com escrita/TRUNCATE fora do owner';
   END IF;
   -- Execução (late-binding): pedido inexistente devolve o motivo sem escrever nada.
   v_r := public.reposicao_regrupar_por_recusa_portal(-1, gen_random_uuid());

@@ -93,17 +93,30 @@ CREATE SCHEMA t;
 CREATE FUNCTION t.mm(p_sku text, p_prz int, p_raw text DEFAULT NULL, p_ident boolean DEFAULT true) RETURNS jsonb
 LANGUAGE sql AS $$
   SELECT jsonb_build_object('sku_portal', p_sku, 'sku_identificado', p_ident, 'linha', 1, 'prz_ent', p_prz,
-    'prz_ent_raw', COALESCE(p_raw, p_prz::text), 'prz_ent_exato', COALESCE(p_raw, p_prz::text) ~ '^\s*\d+\s*$',
+    'prz_ent_raw', COALESCE(p_raw, p_prz::text), 'prz_ent_exato', btrim(COALESCE(p_raw, p_prz::text)) ~ '^[0-9]+$',
     'lt_esperado', 8) $$;
-CREATE FUNCTION t.ev(p_mms jsonb, p_total int DEFAULT 1, p_valid int DEFAULT NULL, p_efet boolean DEFAULT false) RETURNS jsonb
+-- Espelha o envelope da edge v1.16 (linhas_exatas, enviados = SKUs que a execução digitou, normalizados).
+CREATE FUNCTION t.ev(p_mms jsonb, p_total int DEFAULT 1, p_valid int DEFAULT NULL, p_efet boolean DEFAULT false,
+                     p_exatas int DEFAULT NULL, p_enviados jsonb DEFAULT NULL, p_header text DEFAULT 'Prz Ent') RETURNS jsonb
 LANGUAGE sql AS $$
   SELECT jsonb_build_object('efetivarAttempted', p_efet, 'erroTipo', 'GRUPO_LEADTIME_MISMATCH',
     'statusFinal', 'erro_nao_retentavel',
-    'grupoLeadtime', jsonb_build_object('lt_esperado', 8, 'header_prz', 'Prz Ent', 'linhas_total', p_total,
-       'linhas_validadas', COALESCE(p_valid, p_total), 'mismatches', p_mms)) $$;
+    'grupoLeadtime', jsonb_build_object('lt_esperado', 8, 'header_prz', p_header, 'linhas_total', p_total,
+       'linhas_validadas', COALESCE(p_valid, p_total), 'linhas_exatas', COALESCE(p_exatas, p_total),
+       'enviados', COALESCE(p_enviados, (SELECT COALESCE(jsonb_agg(upper(e ->> 'sku_portal')), '[]'::jsonb)
+                                           FROM jsonb_array_elements(p_mms) e WHERE e -> 'sku_identificado' = 'true'::jsonb)),
+       'mismatches', p_mms)) $$;
+-- Item extra (com de-para vivo e grupo) num pedido já criado.
+CREATE FUNCTION t.item(p_id bigint, p_sku text, p_portal text, p_live text DEFAULT NULL) RETURNS void LANGUAGE sql AS $$
+  INSERT INTO public.pedido_compra_item (pedido_id, sku_codigo_omie, sku_portal_aprovado) VALUES (p_id, p_sku, p_portal);
+  INSERT INTO public.sku_fornecedor_externo (empresa, fornecedor_nome, sku_omie, sku_portal, ativo)
+  VALUES ('OBEN', 'RENNER SAYERLACK S/A', p_sku, COALESCE(p_live, p_portal), true);
+  INSERT INTO public.sku_grupo_producao VALUES ('OBEN', p_sku, 'sayerlack_normal', now(), 'x') ON CONFLICT DO NOTHING;
+$$;
 -- Pedido recusado + item + tentativa com a MESMA prova (o caso feliz); os negativos estragam UMA coisa.
 CREATE FUNCTION t.pedido(p_id bigint, p_sku text, p_portal text, p_grupo_sku text, p_ev jsonb,
-                         p_forn text DEFAULT 'RENNER SAYERLACK S/A', p_grupo_ped text DEFAULT 'sayerlack_normal')
+                         p_forn text DEFAULT 'RENNER SAYERLACK S/A', p_grupo_ped text DEFAULT 'sayerlack_normal',
+                         p_live text DEFAULT NULL)
 RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
   INSERT INTO public.pedido_compra_sugerido (id, empresa, fornecedor_nome, grupo_codigo, status, status_envio_portal,
@@ -111,6 +124,9 @@ BEGIN
   VALUES (p_id, 'OBEN', p_forn, p_grupo_ped, 'aprovado_aguardando_disparo', 'erro_nao_retentavel',
     'Grupo errado (Prz Ent != lead time do grupo)', jsonb_build_object('evidence', p_ev));
   INSERT INTO public.pedido_compra_item (pedido_id, sku_codigo_omie, sku_portal_aprovado) VALUES (p_id, p_sku, p_portal);
+  -- de-para VIVO (o que a edge digita): por padrão = o selo.
+  INSERT INTO public.sku_fornecedor_externo (empresa, fornecedor_nome, sku_omie, sku_portal, ativo)
+  VALUES ('OBEN', p_forn, p_sku, COALESCE(p_live, p_portal), true);
   INSERT INTO public.sku_grupo_producao VALUES ('OBEN', p_sku, p_grupo_sku, now() - interval '9 days', 'auto_default_sayerlack')
     ON CONFLICT DO NOTHING;
   INSERT INTO public.pedidos_portal_tentativas (id, pedido_id, iniciado_em, concluido_em, status_resultado, evidence)
@@ -150,9 +166,7 @@ INSERT INTO public.fornecedor_grupo_producao (empresa, fornecedor_nome, grupo_co
 SELECT t.pedido(501, 'A1', 'YC.1400FP', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('YC.1400FP', 5))));
 SELECT t.pedido(502, 'A2', 'P2', 'sayerlack_rapido', t.ev(jsonb_build_array(t.mm('P2', 5))));
 -- R3 sem selo (sku_portal_aprovado NULL): casa pelo de-para ATIVO do fornecedor exato
-SELECT t.pedido(503, 'A3', NULL, 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P3', 5))));
-INSERT INTO public.sku_fornecedor_externo (empresa, fornecedor_nome, sku_omie, sku_portal, ativo) VALUES
-  ('OBEN', 'RENNER SAYERLACK S/A', 'A3', 'P3', true);
+SELECT t.pedido(503, 'A3', NULL, 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P3', 5))), p_live => 'P3');
 -- N1 pedido com efetivarAttempted=true
 SELECT t.pedido(511, 'B1', 'P11', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P11', 5))));
 UPDATE public.pedido_compra_sugerido SET portal_resposta = jsonb_set(portal_resposta, '{evidence,efetivarAttempted}', 'true') WHERE id = 511;
@@ -165,13 +179,15 @@ INSERT INTO public.pedidos_portal_tentativas (id, pedido_id, iniciado_em, conclu
 VALUES (gen_random_uuid(), 514, now(), now(), 'enviando_portal', '{}');
 -- N5 grade parcial (1 linha com Prz ilegível foi pulada)
 SELECT t.pedido(515, 'B5', 'P15', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P15', 5)), 2, 1));
+SELECT t.item(515, 'B5b', 'P15B');
 -- N6 SKU não identificado (mesmo com sku_portal que casaria)
 SELECT t.pedido(516, 'B6', 'P16', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P16', 5, NULL, false))));
 -- N7 célula "5-8": o gate leu 5, mas não é inteiro exato
 SELECT t.pedido(517, 'B7', 'P17', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P17', 5, '5-8'))));
 -- N8 membro de equivalência ativa
 SELECT t.pedido(518, 'B8', 'P18', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P18', 5))));
-INSERT INTO public.sku_embalagem_equivalencia (empresa, sku_codigo_omie, ativo, vigente_ate) VALUES ('OBEN', 'B8', true, NULL);
+-- como o MOTOR lê: empresa em minúsculas, vigente_ate vencido não exclui (Codex P0-1)
+INSERT INTO public.sku_embalagem_equivalencia (empresa, sku_codigo_omie, ativo, vigente_ate) VALUES ('oben', 'B8', true, '2020-01-01');
 -- N9 Prz 3 não casa grupo · N10 SKU num 3º grupo
 SELECT t.pedido(519, 'B9', 'P19', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P19', 3))));
 SELECT t.pedido(520, 'B10', 'P20', 'sayerlack_outro', t.ev(jsonb_build_array(t.mm('P20', 5))));
@@ -181,10 +197,24 @@ UPDATE public.pedido_compra_sugerido SET portal_resposta = jsonb_set(portal_resp
 -- N12 all-or-nothing: o 1º mismatch é válido, o 2º não → nada muda (B12 continua normal)
 SELECT t.pedido(522, 'B12', 'P22', 'sayerlack_normal',
   t.ev(jsonb_build_array(t.mm('P22', 5), t.mm('linha 2', 5, NULL, false)), 2));
+SELECT t.item(522, 'B12b', 'P22B');
 -- N13 SKU do portal não casa item
 SELECT t.pedido(523, 'B13', 'P23', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('NAOEXISTE', 5))));
 -- N14 Prz 5 casa DOIS grupos (FORN2)
 SELECT t.pedido(524, 'B14', 'P24', 'f2_c', t.ev(jsonb_build_array(t.mm('P24', 5))), 'FORN2', 'f2_c');
+-- N15 coluna lida não é a de ENTREGA · N16 de-para trocado (selo S16, vivo L16) · N17 uma célula "8-12"
+SELECT t.pedido(525, 'B15', 'P25', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P25', 5)), p_header => 'Prazo Pgto'));
+SELECT t.pedido(526, 'B16', 'S16', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('L16', 5))), p_live => 'L16');
+SELECT t.pedido(527, 'B17', 'P27', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P27', 5)), 2, 2, false, 1));
+SELECT t.item(527, 'B17b', 'P27B');
+-- N18 DOM devolveu 1 linha, o pedido tem 2 itens · N19 dois itens casam o mesmo SKU do portal
+SELECT t.pedido(528, 'B18', 'P28', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P28', 5))));
+SELECT t.item(528, 'B18b', 'P28B');
+SELECT t.pedido(529, 'B19', 'P29', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P29', 5)), 2));
+SELECT t.item(529, 'B19b', 'P29');
+-- N20 SKU recusado fora dos que ESTA execução digitou · N21 célula bruta "6" ≠ prz_ent 5
+SELECT t.pedido(530, 'B20', 'P30', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P30', 5)), p_enviados => '["OUTRO"]'));
+SELECT t.pedido(531, 'B21', 'P31', 'sayerlack_normal', t.ev(jsonb_build_array(t.mm('P31', 5, '6'))));
 UPDATE public.pedido_compra_sugerido SET disparo_claim_em = now() WHERE id = 512;
 UPDATE public.pedido_compra_sugerido SET portal_protocolo = '2134225' WHERE id = 513;
 SQL
@@ -197,7 +227,11 @@ NEGATIVOS="N1|511|B1|estado_do_pedido_mudou N2|512|B2|estado_do_pedido_mudou N3|
 N4|514|B4|tentativa_nao_e_a_mais_recente N5|515|B5|grade_incompleta N6|516|B6|mismatch_sem_identidade_ou_prz_inexato
 N7|517|B7|mismatch_sem_identidade_ou_prz_inexato N8|518|B8|sku_em_grupo_de_equivalencia N9|519|B9|prz_ent_nao_casa_1_grupo
 N10|520|B10|grupo_atual_inesperado N11|521|B11|prova_ausente_ou_divergente N12|522|B12|mismatch_sem_identidade_ou_prz_inexato
-N13|523|B13|sku_portal_nao_casa_1_item N14|524|B14|prz_ent_nao_casa_1_grupo"
+N13|523|B13|sku_portal_nao_casa_1_item N14|524|B14|prz_ent_nao_casa_1_grupo
+N15|525|B15|cabecalho_nao_e_prz_ent N16|526|B16|sku_portal_nao_casa_1_item N17|527|B17|grade_incompleta
+N18|528|B18|grade_incompleta N19|529|B19|sku_portal_nao_casa_1_item N20|530|B20|sku_nao_enviado_nesta_execucao
+N21|531|B21|mismatch_sem_identidade_ou_prz_inexato"
+N_NEG=$(wc -w <<<"$NEGATIVOS" | tr -d ' ')
 
 # Roda TODOS os casos numa base recém-semeada; imprime "ok <ID>" / "FALHA <ID> <detalhe>".
 rodar_casos() {
@@ -267,8 +301,8 @@ while read -r linha; do
   case "$linha" in ok\ *) ok "${linha#ok }" ;; *) bad "$linha" ;; esac
 done < "$RODADA/base.log"
 eq "N12b all-or-nothing: nenhuma auditoria de regrupado no #522" "$(Pq -c "SELECT count(*) FROM reposicao_regrupo_audit WHERE pedido_id=522 AND resultado<>'recusado';")" "0"
-eq "N0 recusas auditadas com motivo"         "$(Pq -c "SELECT count(*) FROM reposicao_regrupo_audit WHERE resultado='recusado' AND motivo IS NOT NULL;")" "14"
-eq "N0b nenhum alerta escrito por recusa"     "$(Pq -c "SELECT count(*) FROM fornecedor_alerta WHERE (metadata->>'pedido_id')::bigint BETWEEN 511 AND 524;")" "0"
+eq "N0 recusas auditadas com motivo"         "$(Pq -c "SELECT count(*) FROM reposicao_regrupo_audit WHERE resultado='recusado' AND motivo IS NOT NULL;")" "$N_NEG"
+eq "N0b nenhum alerta escrito por recusa"     "$(Pq -c "SELECT count(*) FROM fornecedor_alerta WHERE (metadata->>'pedido_id')::bigint BETWEEN 511 AND 531;")" "0"
 
 # ── A: ACL ─────────────────────────────────────────────────────────────────────
 echo "-- grupo A: ACL --"
@@ -295,8 +329,9 @@ eq "A1c controle: service_role executa" "$A1C" "pedido_inexistente"
 
 # ── F: FALSIFICAÇÃO — uma condição por vez, controle verde na MESMA invocação ─
 echo "-- grupo F: falsificação --"
-SABOTAGENS="efetivar:N1 claim:N2 protocolo:N3 recente:N4 grade:N5 identificado:N6 exato:N7 equivalencia:N8
-grupo0:N9 grupo2:N14 inesperado:N10 prova:N11 item:N13 lock:L1"
+SABOTAGENS="efetivar:N1 claim:N2 protocolo:N3 recente:N4 grade:N5 identificado:N6 equivalencia:N8
+emp_lower:N8 grupo0:N9 grupo2:N14 inesperado:N10 prova:N11 item0:N13 item2:N19 lock:L1 cabecalho:N15 selo:N16
+exatas:N17 itens_total:N18 enviados:N20 bruta:N7,N21"
 registradas=""
 registra() {
   case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1)" >&2; exit 2 ;; esac
@@ -308,13 +343,20 @@ registra protocolo    "s#AND NULLIF(btrim(v_ped.portal_protocolo), '') IS NULL##
 registra recente      "s#IF EXISTS (SELECT 1 FROM public.pedidos_portal_tentativas x#IF false AND EXISTS (SELECT 1 FROM public.pedidos_portal_tentativas x#"
 registra grade        "s#AND v_g -> 'linhas_validadas' = v_g -> 'linhas_total'##"
 registra identificado "s#IF NOT (v_m -> 'sku_identificado' = 'true'::jsonb#IF NOT (true#"
-registra exato        "s#AND v_m -> 'prz_ent_exato' = 'true'::jsonb##"
 registra equivalencia "s#IF EXISTS (SELECT 1 FROM public.sku_embalagem_equivalencia q#IF false AND EXISTS (SELECT 1 FROM public.sku_embalagem_equivalencia q#"
 registra grupo0       "s#IF v_n <> 1 THEN v_motivo := 'prz_ent_nao_casa_1_grupo'#IF v_n > 1 THEN v_motivo := 'prz_ent_nao_casa_1_grupo'#"
 registra grupo2       "s#IF v_n <> 1 THEN v_motivo := 'prz_ent_nao_casa_1_grupo'#IF v_n = 0 THEN v_motivo := 'prz_ent_nao_casa_1_grupo'#"
 registra inesperado   "s#IF v_atual = v_ped.grupo_codigo THEN#IF true THEN#"
 registra prova        "s#OR (v_ped.portal_resposta -> 'evidence' -> 'grupoLeadtime') IS DISTINCT FROM v_g THEN#THEN#"
-registra item         "s#IF v_n <> 1 THEN v_motivo := 'sku_portal_nao_casa_1_item'#IF false THEN v_motivo := 'sku_portal_nao_casa_1_item'#"
+registra item0        "s#IF v_n <> 1 THEN v_motivo := 'sku_portal_nao_casa_1_item'#IF v_n > 1 THEN v_motivo := 'sku_portal_nao_casa_1_item'#"
+registra item2        "s#IF v_n <> 1 THEN v_motivo := 'sku_portal_nao_casa_1_item'#IF v_n = 0 THEN v_motivo := 'sku_portal_nao_casa_1_item'#"
+registra emp_lower    "s#WHERE lower(q.empresa) = lower(v_ped.empresa)#WHERE q.empresa = v_ped.empresa#"
+registra cabecalho    "s#IF NOT (COALESCE(v_g ->> 'header_prz', '')#IF false AND (COALESCE(v_g ->> 'header_prz', '')#"
+registra selo         "s#AND (NULLIF(btrim(i.sku_portal_aprovado), '') IS NULL#AND (true#"
+registra exatas       "s#AND v_g -> 'linhas_exatas' = v_g -> 'linhas_total'##"
+registra itens_total  "s#AND (v_g ->> 'linhas_total')::int = (SELECT count(\*) FROM public.pedido_compra_item i WHERE i.pedido_id = p_pedido_id)##"
+registra enviados     "s#IF NOT (v_g -> 'enviados') ? v_key THEN#IF false THEN#"
+registra bruta        "s#AND btrim(COALESCE(v_m ->> 'prz_ent_raw', '')) = (v_m ->> 'prz_ent')##"
 registra lock         "s#PERFORM pg_advisory_xact_lock(hashtext('gerar_pedidos_sugeridos_ciclo:' || lower(v_empresa)));##"
 
 COPIA="$RODADA/sab.sql"
