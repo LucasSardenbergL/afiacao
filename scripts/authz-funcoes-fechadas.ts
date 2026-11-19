@@ -211,6 +211,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'foto interna (saldo×cmc, fornecedor, cobertura) só pelas RPCs gateadas — REVOKE de anon/authenticated',
   },
+  'private.reposicao_po_a_baixar_registrar_episodios': {
+    fechadaPor: '20261120100000_reposicao_po_a_baixar_pares_e_decisao.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'writer único dos episódios do sensor PO a baixar — só pg_cron e a RPC de decisão gateada; REVOKE de anon/authenticated',
+  },
   'public.fin_estoque_giro_valor': {
     fechadaPor: '20261018200000_fin_ciclo_giro_sku.sql',
     permitido: PORTA_GATE,
