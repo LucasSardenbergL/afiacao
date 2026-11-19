@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-19T01:18:26.426Z",
-  "sourceHead": "7c4b466c971adfc43856256e3e6c8ba6a64fc1df",
+  "medidoEm": "2026-11-19T01:24:34.976Z",
+  "sourceHead": "0cec7518b803d39b6e29e3fcb7ee09d2012071b7",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 88 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 90 definição(ões) lida(s) para 88 chave(s) da allowlist.",
-      "contratoFingerprint": "8e9ab1c9434b353e07d2b101bfb62e7cf6ac944dfaf00fc41b25f17f7b44f91f",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 91 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 93 definição(ões) lida(s) para 91 chave(s) da allowlist.",
+      "contratoFingerprint": "506a0f06360350f2081357b8c0dcbdc4c564b00790ea3eb50e315e8080b5b6a8",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -30,9 +30,9 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 37 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 38 definição(ões) lida(s) para 37 chave(s) do manifest.",
-      "contratoFingerprint": "737b92df70b2323353ed2892b5bab0ac5019da63089801f6ee8fdaee848abdce",
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 39 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 40 definição(ões) lida(s) para 39 chave(s) do manifest.",
+      "contratoFingerprint": "1cd5de277d4f7d00a3027bbc51481f3df945263bfc830ab35e76469c057c7789",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
@@ -48,9 +48,9 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 1,
-      "resumo": "audit-rls — 7 divergencia(s) entre a RLS de prod e o contrato (scripts/authz-rls-esperado.ts).",
+      "resumo": "audit-rls — 6 divergencia(s) entre a RLS de prod e o contrato (scripts/authz-rls-esperado.ts).",
       "denominador": null,
-      "contratoFingerprint": "5782353702c86a00e2ebb5b13b8db291ace51568e93782ad9f28304e7ce5b225",
+      "contratoFingerprint": "8b2ed46571616bc3bf9287fa3d5d5f77a560d3cb27555c342ef7b36d011b56ec",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
       "achados": [
         {
@@ -88,20 +88,14 @@
           "linha": "❌ [LACUNA_GRUPO_MUDOU] private.carteira_visivel_para: o grupo ENCOLHEU — 0 tabela(s) em prod contra 8 declarada(s) (medido em 2026-08-28). 0 curada(s), 0 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: .",
           "primeiraVez": "2026-11-06",
           "ultimaVez": "2026-11-19"
-        },
-        {
-          "id": "b3390e844228bed0",
-          "linha": "❌ [LACUNA_GRUPO_MUDOU] private.cap_compras_ler: o grupo CRESCEU — 18 tabela(s) em prod contra 16 declarada(s) (medido em 2026-11-03). 1 curada(s), 17 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: pedido_compra_item, reposicao_alerta_pedido_minimo, reposicao_auto_aprovacao_log, reposicao_cold_start_log, reposicao_compra_suspensa, reposicao_compra_suspensa_log, reposicao_depara_auto_log, reposicao_estoque_nao_confirmado_log, reposicao_motor_run, reposicao_param_auto_log, reposicao_param_auto_run, reposicao_param_fila_log, reposicao_param_pin, reposicao_pedidos_compra_run, reposicao_po_a_baixar_decisao, reposicao_po_a_baixar_episodio, reposicao_po_last_seen, reposicao_teto_cobertura_log.",
-          "primeiraVez": "2026-11-19",
-          "ultimaVez": "2026-11-19"
         }
       ]
     },
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 575 identidade(s) batem com o repo (496 em dia, 66 só cosméticas, 12 aceitas na baseline) e 34 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 575 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@bb7efbc68 (fetch ok) · prod 2026-11-19 01:18:56.934123Z",
+      "resumo": "✅ deriva-corpo — 577 identidade(s) batem com o repo (498 em dia, 66 só cosméticas, 12 aceitas na baseline) e 34 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 577 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@55cb7c64e (fetch ok) · prod 2026-11-19 01:25:07.067035Z",
       "contratoFingerprint": "4243a14825376b5053104b01074ed80be3bef325628041fd534ada298a610487",
       "auditorFingerprint": "3b1f38be117c2aafd7804b36b20e2de39cee5565430fc752349d4ddddcb76fd0",
       "achados": []

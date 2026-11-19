@@ -389,6 +389,18 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
     motivo: 'fila PO a baixar — fornecedor/NF/POs sugeridos p/ authenticated; mesmo cap_compras_ler das irmãs do detector de PO',
   },
+  // Entrega A da fila (20261120100000): a v2 (= v1 + pares item a item da sombra, proposta_versao, decisão vigente) e
+  // o writer ÚNICO da declaração da equipe (sensor). A de decisão nega uid NULL (cron não decide), ≠ da leitura.
+  'public.reposicao_po_a_baixar_v2': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'fila PO a baixar v2 — fornecedor/NF/POs/pares item a item p/ authenticated; mesmo cap_compras_ler da v1',
+  },
+  'public.reposicao_po_a_baixar_registrar_decisao': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'grava a declaração da equipe (associei/encerrei/parcial/não se aplica) no ledger do sensor; cap_compras_ler e uid obrigatório',
+  },
   // ⚠️ ATP fase 1.1 (migration 20260806225052): existe uma 5ª função que ESCREVE em
   // estoque_reservas e NÃO tem gate — `private.expirar_reservas_vencidas_job()`. É
   // DE PROPÓSITO e não é furo: pg_cron nativo roda SEM JWT, então auth.role() e
@@ -416,6 +428,13 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // anon/authenticated executarem; prova no harness (`authenticated NAO executa a foto interna`). Se um dia
   // ganhar GRANT para authenticated, PRECISA de gate e sai daqui.
   'public._reposicao_compra_foto',
+  // Fila "PO a baixar no Omie" — writer ÚNICO dos episódios do sensor (2026-11-18, migration 20261120100000). Lê o
+  // espelho de POs (fornecedor/NF) pela lógica da fila e grava `reposicao_po_a_baixar_episodio`. NÃO é exposta ao
+  // app: só o pg_cron (`reposicao-po-a-baixar-episodios`, como postgres) e a RPC gateada
+  // `reposicao_po_a_baixar_registrar_decisao` a chamam. Fecha por PRIVILÉGIO — `REVOKE ALL … FROM PUBLIC, anon,
+  // authenticated` + postcondição que ABORTA se anon/authenticated executarem + prova E5 em
+  // db/test-reposicao-po-a-baixar-decisao.sh (sabotagem `pc_writer_publico`). Ganhou GRANT? Precisa de gate e sai daqui.
+  'private.reposicao_po_a_baixar_registrar_episodios',
   // Venda por cliente — job de desfecho (2026-10-20, migration 20261020174221). Lê
   // `order_items.unit_price`/`desconto_valor` para decidir se a sugestão `tipo=preco` bateu o alvo
   // e somar `valor_realizado`, mas NÃO é customer-facing: só o cron (`venda-fechar-desfechos`,
