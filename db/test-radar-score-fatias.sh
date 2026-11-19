@@ -103,7 +103,9 @@ case "${SABOTAGEM:-}" in
               v_pas.iniciada_em)" "      VALUES (1, v_pas.lote, v_pas.lote_iniciado_em, v_pas.versao_formula, v_fp_upd, v_fp_jc,
               v_pas.iniciada_em)" ;;
   sem_cursor)           cegar_md5; sabotar "  v_pag := v_pas.proxima_pagina;" "  v_pag := 0;" ;;
-  passada_nao_reinicia) cegar_md5; sabotar "     AND (v_pas.lote IS DISTINCT FROM v_vigente" "     AND (false" ;;
+  passada_nao_reinicia) cegar_md5; sabotar "  IF v_tem_passada
+     AND (v_pas.lote IS DISTINCT FROM v_vigente" "  IF false AND v_tem_passada
+     AND (v_pas.lote IS DISTINCT FROM v_vigente" ;;
   noop_sem_throttle)    cegar_md5; sabotar "    IF COALESCE(v_registrar, true) THEN" "    IF true THEN" ;;
   throttle_cego_lote)   cegar_md5; sabotar "    SELECT (e.detalhes->>'lote_vigente') IS DISTINCT FROM v_vigente INTO v_registrar" "    SELECT false INTO v_registrar" ;;
   gate_descarta_passada) cegar_md5; sabotar "  IF NOT v_tem_passada
