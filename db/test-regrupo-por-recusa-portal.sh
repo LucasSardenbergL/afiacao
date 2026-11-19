@@ -136,7 +136,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261120100000_reposicao_regrupo_por_recusa_
 [ -s "$MIG" ] || { echo "INFRA: migration ausente: $MIG"; exit 1; }
 
 semear() {
-  P -q <<'SQL'
+  P -q >/dev/null <<'SQL'
 TRUNCATE public.pedido_compra_sugerido, public.pedido_compra_item, public.sku_fornecedor_externo,
          public.sku_grupo_producao, public.fornecedor_grupo_producao, public.sku_embalagem_equivalencia,
          public.pedidos_portal_tentativas, public.fornecedor_alerta;
@@ -296,7 +296,7 @@ eq "A1c controle: service_role executa" "$A1C" "pedido_inexistente"
 # ── F: FALSIFICAÇÃO — uma condição por vez, controle verde na MESMA invocação ─
 echo "-- grupo F: falsificação --"
 SABOTAGENS="efetivar:N1 claim:N2 protocolo:N3 recente:N4 grade:N5 identificado:N6 exato:N7 equivalencia:N8
-grupo1:N9,N14 inesperado:N10 prova:N11 item:N13 lock:L1"
+grupo0:N9 grupo2:N14 inesperado:N10 prova:N11 item:N13 lock:L1"
 registradas=""
 registra() {
   case " $registradas " in *" $1 "*) echo "registra: nome REPETIDO ($1)" >&2; exit 2 ;; esac
@@ -310,7 +310,8 @@ registra grade        "s#AND v_g -> 'linhas_validadas' = v_g -> 'linhas_total'##
 registra identificado "s#IF NOT (v_m -> 'sku_identificado' = 'true'::jsonb#IF NOT (true#"
 registra exato        "s#AND v_m -> 'prz_ent_exato' = 'true'::jsonb##"
 registra equivalencia "s#IF EXISTS (SELECT 1 FROM public.sku_embalagem_equivalencia q#IF false AND EXISTS (SELECT 1 FROM public.sku_embalagem_equivalencia q#"
-registra grupo1       "s#IF v_n <> 1 THEN v_motivo := 'prz_ent_nao_casa_1_grupo'#IF v_n = 0 THEN v_motivo := 'prz_ent_nao_casa_1_grupo'#"
+registra grupo0       "s#IF v_n <> 1 THEN v_motivo := 'prz_ent_nao_casa_1_grupo'#IF v_n > 1 THEN v_motivo := 'prz_ent_nao_casa_1_grupo'#"
+registra grupo2       "s#IF v_n <> 1 THEN v_motivo := 'prz_ent_nao_casa_1_grupo'#IF v_n = 0 THEN v_motivo := 'prz_ent_nao_casa_1_grupo'#"
 registra inesperado   "s#IF v_atual = v_ped.grupo_codigo THEN#IF true THEN#"
 registra prova        "s#OR (v_ped.portal_resposta -> 'evidence' -> 'grupoLeadtime') IS DISTINCT FROM v_g THEN#THEN#"
 registra item         "s#IF v_n <> 1 THEN v_motivo := 'sku_portal_nao_casa_1_item'#IF false THEN v_motivo := 'sku_portal_nao_casa_1_item'#"
