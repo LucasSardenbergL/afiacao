@@ -1,7 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { PoABaixarCard } from '../PoABaixarCard';
-import { ehAcessoNegadoFila, normalizarFila, ordenarFila, passosDaAcao, type ItemPoABaixar } from '../po-a-baixar';
+import {
+  decisoesDoTipo,
+  ehAcessoNegadoFila,
+  motivoLegivel,
+  normalizarFila,
+  ordenarFila,
+  passosDaAcao,
+  recusaDaDecisao,
+  type ItemPoABaixar,
+} from '../po-a-baixar';
 
 const contado = {
   tipo: 'po_contado_com_nf', empresa: 'OBEN', numero_pedido: '1310', omie_codigo_pedido: 99, fornecedor_nome: 'Sayerlack',
@@ -14,6 +23,13 @@ const pendente = {
   unidades_contadas: null, numero_nfe: '000959973', nid_receb: 8001, nf_recebida_em: null, classe: 'ambigua',
   motivos: ['quantidade_menor_que_saldo'], pedidos_sugeridos: ['1329', '1334'], evidencia_em: '2026-11-18T16:15:00Z',
   evidencia_desatualizada: false, run_iniciado_em: null,
+};
+const associavel = {
+  ...pendente, chave: '8005', numero_nfe: '000959992', nid_receb: 8005, classe: 'associavel', motivos: [],
+  pedidos_sugeridos: ['1330'], fornecedor_nome: 'RENNER SAYERLACK S/A', proposta_versao: 'v-abc',
+  pares: [{ seq_nf: 1, numero_pedido: '1330', item_po: 2, codigo_produto: 'PRD02372', descricao: 'BASE BRIL 05',
+            quantidade: 2, unidade: 'UN', cobertura: 'parcial' }],
+  decisao_vigente: null, decisao_vigente_em: null,
 };
 
 describe('normalizarFila — fronteira da RPC', () => {
@@ -106,5 +122,72 @@ describe('PoABaixarCard — estados em que dá para mentir', () => {
     expect(screen.getByText(/motor ainda conta 12 un\. a caminho/)).toBeInTheDocument();
     expect(screen.getByText(/Nada aqui é feito no Omie automaticamente/)).toBeInTheDocument();
     expect(screen.getByText(/entrega parcial/)).toBeInTheDocument();
+  });
+});
+
+describe('Entrega A — pares, motivos e decisão', () => {
+  it('normaliza os pares; null (não veio par) ≠ [] e quantidade ilegível vira null, nunca 0', () => {
+    const [a] = normalizarFila([associavel]);
+    expect(a.pares).toEqual([{ seqNf: 1, numeroPedido: '1330', itemPo: 2, codigoProduto: 'PRD02372', descricao: 'BASE BRIL 05',
+                               quantidade: 2, unidade: 'UN', cobertura: 'parcial' }]);
+    expect(normalizarFila([{ ...associavel, pares: null }])[0].pares).toBeNull();
+    expect(normalizarFila([{ ...associavel, pares: [{ quantidade: 'x', cobertura: 'meio' }] }])[0].pares?.[0])
+      .toMatchObject({ quantidade: null, cobertura: null });
+    expect(normalizarFila([{ ...associavel, decisao_vigente: 'apaguei' }])[0].decisaoVigente).toBeNull();
+  });
+
+  it('traduz os motivos crus que a equipe via', () => {
+    for (const m of ['item_sem_contrato', 'sku_com_equivalencia_de_embalagem', 'unidade_divergente', 'contrato_em_varios_pos', 'item_nao_movimenta_estoque']) {
+      expect(motivoLegivel(m)).not.toContain('_');
+      expect(motivoLegivel(m)).not.toBe(m.replace(/_/g, ' '));
+    }
+  });
+
+  it('encerrei só para PO, associei só para NF', () => {
+    expect(decisoesDoTipo('po_contado_com_nf')).toEqual(['encerrei', 'parcial_aguardo_saldo', 'nao_se_aplica']);
+    expect(decisoesDoTipo('nf_pendente')).toEqual(['associei', 'parcial_aguardo_saldo', 'nao_se_aplica']);
+  });
+
+  it('recusa de domínio vira frase; o resto é falha (null)', () => {
+    expect(recusaDaDecisao({ code: 'PB001' })).toMatch(/saiu da fila/);
+    expect(recusaDaDecisao({ code: 'PB002' })).toMatch(/proposta mudou/);
+    expect(recusaDaDecisao({ code: '500' })).toBeNull();
+    expect(recusaDaDecisao(null)).toBeNull();
+  });
+
+  it('card: associável mostra a tabela de pares e o fornecedor; ambígua mostra candidatos', () => {
+    render(<PoABaixarCard itens={normalizarFila([associavel, pendente])} />);
+    fireEvent.click(screen.getByText(/PO a baixar no Omie/));
+    expect(screen.getByText('PRD02372')).toBeInTheDocument();
+    expect(screen.getByText('2º')).toBeInTheDocument();
+    expect(screen.getByText(/parcial — sobra saldo/)).toBeInTheDocument();
+    expect(screen.getByText(/RENNER SAYERLACK S\/A/)).toBeInTheDocument();
+    expect(screen.getByText(/Candidatos: PO 1329, 1334/)).toBeInTheDocument();
+  });
+
+  it('card: sem onDecidir não há botão; com onDecidir, o clique leva item e decisão', () => {
+    const { unmount } = render(<PoABaixarCard itens={normalizarFila([associavel])} />);
+    fireEvent.click(screen.getByText(/PO a baixar no Omie/));
+    expect(screen.queryByRole('button', { name: 'Associei no Omie' })).toBeNull();
+    unmount();
+    const onDecidir = vi.fn();
+    render(<PoABaixarCard itens={normalizarFila([associavel])} onDecidir={onDecidir} />);
+    fireEvent.click(screen.getByText(/PO a baixar no Omie/));
+    expect(screen.queryByRole('button', { name: 'Encerrei no Omie' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Associei no Omie' }));
+    expect(onDecidir).toHaveBeenCalledWith(expect.objectContaining({ chave: '8005', propostaVersao: 'v-abc' }), 'associei');
+  });
+
+  it('card: item sem proposta_versao não oferece botão (o banco recusaria); decisão vigente aparece', () => {
+    const onDecidir = vi.fn();
+    render(
+      <PoABaixarCard
+        itens={normalizarFila([{ ...associavel, proposta_versao: null }, { ...pendente, chave: '8001', proposta_versao: 'v1', decisao_vigente: 'nao_se_aplica', decisao_vigente_em: '2026-11-18T12:00:00Z' }])}
+        onDecidir={onDecidir}
+      />,
+    );
+    fireEvent.click(screen.getByText(/PO a baixar no Omie/));
+    expect(screen.getAllByRole('button', { name: 'Associei no Omie' })).toHaveLength(1);
+    expect(screen.getByText(/Marcado:/)).toBeInTheDocument();
   });
 });

@@ -48,6 +48,7 @@ import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
 import { PoABaixarCard } from '@/components/reposicao/pedidos/PoABaixarCard';
 import { fetchAllPages } from '@/lib/postgrest';
 import { ehAcessoNegadoFila, normalizarFila, ordenarFila, type ItemPoABaixar } from '@/components/reposicao/pedidos/po-a-baixar';
+import { useDecisaoPoABaixar } from '@/components/reposicao/pedidos/useDecisaoPoABaixar';
 import { PedidosPortalCard } from '@/components/reposicao/pedidos/PedidosPortalCard';
 import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarcador, ordenarCandidatos, type Frescor, type MarcadorPos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
@@ -478,17 +479,16 @@ export default function AdminReposicaoPedidos() {
   } = useQuery({
     queryKey: ['pedidos-ciclo', 'po-a-baixar', EMPRESA, user?.id],
     queryFn: async (): Promise<ItemPoABaixar[]> => {
-      // Paginada: a capa de 1.000 do PostgREST vale para .rpc(). Ordem ESTÁVEL entre páginas: (tipo, PO, NF)
-      // é única — cada PO aparece 1x como contado, cada NF 1x como pendente.
+      // Paginada: a capa de 1.000 do PostgREST vale para .rpc(). Ordem ESTÁVEL entre páginas: (tipo, chave)
+      // é única — cada PO aparece 1x como contado, cada NF 1x como pendente. v2 = v1 + pares/proposta/decisão.
       const linhas = await fetchAllPages(
         (de, ate) =>
           supabase
-            .rpc('reposicao_po_a_baixar', { p_empresa: EMPRESA })
+            .rpc('reposicao_po_a_baixar_v2', { p_empresa: EMPRESA })
             .order('tipo', { ascending: true })
-            .order('omie_codigo_pedido', { ascending: true, nullsFirst: true })
-            .order('nid_receb', { ascending: true, nullsFirst: true })
+            .order('chave', { ascending: true })
             .range(de, ate),
-        'reposicao_po_a_baixar/pedidos',
+        'reposicao_po_a_baixar_v2/pedidos',
       );
       return ordenarFila(normalizarFila(linhas));
     },
@@ -498,6 +498,7 @@ export default function AdminReposicaoPedidos() {
     staleTime: 60_000,
   });
   const falhouPoABaixar = erroPoABaixar != null && !ehAcessoNegadoFila(erroPoABaixar);
+  const decisaoPoABaixar = useDecisaoPoABaixar(EMPRESA);
 
   const negadoPosSumidos = ehAcessoNegado(erroPosSumidos) || ehAcessoNegado(erroMarcador);
   const falhouListaPos = erroPosSumidos != null && !ehAcessoNegado(erroPosSumidos);
@@ -1235,6 +1236,8 @@ export default function AdminReposicaoPedidos() {
         itens={filaPoABaixar ?? []}
         falhaApuracao={falhouPoABaixar}
         apurando={apurandoPoABaixar}
+        onDecidir={decisaoPoABaixar.decidir}
+        decidindo={decisaoPoABaixar.decidindo}
       />
 
       </section>

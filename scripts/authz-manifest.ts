@@ -389,6 +389,18 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
     motivo: 'fila PO a baixar — fornecedor/NF/POs sugeridos p/ authenticated; mesmo cap_compras_ler das irmãs do detector de PO',
   },
+  // Entrega A da fila (20261120100000): a v2 (= v1 + pares item a item da sombra, proposta_versao, decisão vigente) e
+  // o writer ÚNICO da declaração da equipe (sensor). A de decisão nega uid NULL (cron não decide), ≠ da leitura.
+  'public.reposicao_po_a_baixar_v2': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'fila PO a baixar v2 — fornecedor/NF/POs/pares item a item p/ authenticated; mesmo cap_compras_ler da v1',
+  },
+  'public.reposicao_po_a_baixar_registrar_decisao': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'grava a declaração da equipe (associei/encerrei/parcial/não se aplica) no ledger do sensor; cap_compras_ler e uid obrigatório',
+  },
   // ⚠️ ATP fase 1.1 (migration 20260806225052): existe uma 5ª função que ESCREVE em
   // estoque_reservas e NÃO tem gate — `private.expirar_reservas_vencidas_job()`. É
   // DE PROPÓSITO e não é furo: pg_cron nativo roda SEM JWT, então auth.role() e

@@ -323,6 +323,16 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'fila PO a baixar no Omie — fornecedor/NF/POs sugeridos; gate private.cap_compras_ler',
   },
+  'public.reposicao_po_a_baixar_v2': {
+    fechadaPor: '20261120100000_reposicao_po_a_baixar_pares_e_decisao.sql',
+    permitido: PORTA_GATE,
+    motivo: 'fila PO a baixar v2 — pares item a item da sombra + decisão vigente; gate private.cap_compras_ler',
+  },
+  'public.reposicao_po_a_baixar_registrar_decisao': {
+    fechadaPor: '20261120100000_reposicao_po_a_baixar_pares_e_decisao.sql',
+    permitido: PORTA_GATE,
+    motivo: 'writer único da declaração da equipe na fila PO a baixar (sensor); gate uid + private.cap_compras_ler',
+  },
   'public.converter_sugestao_em_campanha_flat': {
     // a 20261001083000 é DROP + CREATE (assinatura nova) + REVOKE de PUBLIC/anon: a âncora vigente
     fechadaPor: '20261001083000_converter_campanha_flat_colunas_reais.sql',
