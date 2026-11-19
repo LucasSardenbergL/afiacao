@@ -6,16 +6,18 @@
 #   A1  EQUIVALÊNCIA numa chamada só: (score, motivos, versão) = predecessora; completa e grava a marca
 #   A2  EQUIVALÊNCIA em fatias (5 páginas, orçamento 0): mesma foto, avaliados = nº de linhas (sem dupla
 #       contagem) e a passada termina em ≤ páginas/5 + 1 chamadas (o cursor anda)
-#   A3  chamada PARCIAL: parcial=true, lote_em_calculo, SEM lote_vigente, cursor gravado, marca intocada
-#   B4  "nada mudou" registra no máximo 1× em 20 h
+#   A3  chamada PARCIAL: parcial=true, lote_em_calculo, SEM lote_vigente, cursor gravado, marca intocada, e
+#       registro em radar.score_recalcular_parcial — o ledger do score (leitores) não ganha linha
+#   B4  "nada mudou" registra no máximo 1× em 20 h — salvo se o último registro não anunciar este lote (B4c)
+#   B12 passada ativa + impressão que volta a bater com a marca antiga → a passada CONTINUA (Codex ALTO 2)
 #   B6  escrita no meio da passada → a marca leva a impressão do INÍCIO e a rodada seguinte recalcula
 #   B7  lote novo no meio da passada → a passada recomeça do zero com o lote novo
 #   B8  publicação em andamento → adiado, passada intocada
 #   B9  outra rodada com a trava → adiado (não espera)
-#   B3  passada com pulado (guarda de versão) NÃO grava a marca
+#   B3  passada com pulado (guarda de versão) NÃO grava a marca nem carimba lote_vigente (B3c, Codex ALTO 1)
 #   B10 linha travada por outro escritor → a chamada encerra em `trava` com as faixas anteriores gravadas
 #   G1  linha com score_em ≥ início da passada não é recalculada nem contada (o filtro anti-dupla-contagem)
-#   C1  os 2 jobs: horário, comando com SET statement_timeout e dono postgres
+#   C1  os 2 jobs: horário, comando com SET statement_timeout e dono postgres; o aviso do lote vai p/ 09:05 (C1b)
 #   D1  radar_score_passada com RLS e fechada: authenticated recebe 42501 · D2 ACL da função preservado
 #   E1  a faixa desce por Tid Range Scan (auto_explain dentro da função)
 #   F1  PRE: corpo vivo divergente ABORTA a migration e deixa o vivo intacto
@@ -31,7 +33,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261120140000_radar_score_em_fatias.sql"
 PRED="$REPO_ROOT/db/fixtures/radar-score-predecessora-prod-20261119.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_filtro_passada:G1a,G1b carimba_parcial:A3b sem_orcamento:A3a marca_impressao_fim:B6 sem_cursor:A2c passada_nao_reinicia:B7a noop_sem_throttle:B4a grava_com_pulados:B3 trava_espera:B9 sem_tratar_trava:B10a passada_aberta:D1"
+  SABOTAGENS="sem_filtro_passada:G1a,G1b carimba_parcial:A3c sem_orcamento:A3a marca_impressao_fim:B6 sem_cursor:A2c passada_nao_reinicia:B7a noop_sem_throttle:B4a throttle_cego_lote:B4c gate_descarta_passada:B12 grava_com_pulados:B3 pulados_carimba:B3c trava_espera:B9 sem_tratar_trava:B10a passada_aberta:D1 aviso_cedo:C1b"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-score-fatias.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -93,14 +95,25 @@ cegar_md5() { CORPO=1; sabotar "    RAISE EXCEPTION 'P1 FALHOU: radar_score_reca
 case "${SABOTAGEM:-}" in
   "") ;;
   sem_filtro_passada)   cegar_md5; sabotar "          AND (e.score_em IS NULL OR e.score_em < v_pas.iniciada_em)" "" ;;
-  carimba_parcial)      cegar_md5; sabotar "             'lote_em_calculo', v_vigente," "             'lote_vigente', v_vigente," ;;
-  sem_orcamento)        cegar_md5; sabotar "    IF v_fatias > 0 AND clock_timestamp() - v_ini > c_orcamento THEN" "    IF false THEN" ;;
+  carimba_parcial)      cegar_md5; sabotar "CASE WHEN v_interrompido IS NULL THEN 'radar.score_recalcular' ELSE 'radar.score_recalcular_parcial' END" "'radar.score_recalcular'" ;;
+  sem_orcamento)        cegar_md5; sabotar "    IF v_fatias > 0
+       AND (clock_timestamp()" "    IF false
+       AND (clock_timestamp()" ;;
   marca_impressao_fim)  cegar_md5; sabotar "      VALUES (1, v_pas.lote, v_pas.lote_iniciado_em, v_pas.versao_formula, v_pas.max_updated_at, v_pas.ja_cliente_n,
               v_pas.iniciada_em)" "      VALUES (1, v_pas.lote, v_pas.lote_iniciado_em, v_pas.versao_formula, v_fp_upd, v_fp_jc,
               v_pas.iniciada_em)" ;;
   sem_cursor)           cegar_md5; sabotar "  v_pag := v_pas.proxima_pagina;" "  v_pag := 0;" ;;
   passada_nao_reinicia) cegar_md5; sabotar "     AND (v_pas.lote IS DISTINCT FROM v_vigente" "     AND (false" ;;
-  noop_sem_throttle)    cegar_md5; sabotar "    IF NOT EXISTS (SELECT 1 FROM public.acoes_execucoes e" "    IF true OR NOT EXISTS (SELECT 1 FROM public.acoes_execucoes e" ;;
+  noop_sem_throttle)    cegar_md5; sabotar "    IF COALESCE(v_registrar, true) THEN" "    IF true THEN" ;;
+  throttle_cego_lote)   cegar_md5; sabotar "    SELECT (e.detalhes->>'lote_vigente') IS DISTINCT FROM v_vigente INTO v_registrar" "    SELECT false INTO v_registrar" ;;
+  gate_descarta_passada) cegar_md5; sabotar "  IF NOT v_tem_passada
+     AND v_tem_estado
+" "  IF v_tem_estado
+" ;;
+  pulados_carimba)      cegar_md5; sabotar "      v_resumo := (v_resumo - 'lote_vigente') || jsonb_build_object('lote_em_calculo', v_vigente);
+" "" ;;
+  aviso_cedo)           sabotar "  PERFORM cron.alter_job(job_id := v_id, schedule := '5 9 * * *');" "  NULL;"
+                        sabotar "    RAISE EXCEPTION 'P4 FALHOU: radar-avisar-lote-diario" "    RAISE NOTICE 'P4 FALHOU: radar-avisar-lote-diario" ;;
   grava_com_pulados)    cegar_md5; sabotar "    IF t_a_alterar - t_alterados = 0 THEN" "    IF true THEN" ;;
   trava_espera)         cegar_md5; sabotar "  IF NOT pg_try_advisory_xact_lock(20261105, 1) THEN" "  PERFORM pg_advisory_xact_lock(20261105, 1);
   IF false THEN" ;;
@@ -160,6 +173,7 @@ CREATE FUNCTION cron.alter_job(job_id bigint, schedule text DEFAULT NULL, comman
   UPDATE cron.job SET schedule = COALESCE(alter_job.schedule, job.schedule), command = COALESCE(alter_job.command, job.command),
          active = COALESCE(alter_job.active, job.active) WHERE jobid = job_id $$;
 SELECT FROM cron.schedule('radar-score-recalcular-diario', '30 6 * * *', 'SELECT public.radar_score_recalcular();');
+SELECT FROM cron.schedule('radar-avisar-lote-diario', '45 6 * * *', 'SELECT public.radar_avisar_lote();');
 
 INSERT INTO public.radar_ingest_state VALUES
   ('2026-08','complete','2026-08-19 16:31+00'), ('2026-10','complete','2026-10-27 16:20+00');
@@ -256,14 +270,15 @@ eq "A1c avaliados = linhas, pulados 0, marca gravada" \
 # A2/A3: em fatias de 5 páginas, 1 faixa por chamada.
 reset_score
 Pq -c "DELETE FROM public.radar_score_estado" >/dev/null
+NREG_A3="$(Pq -c "SELECT count(*) FROM public.acoes_execucoes WHERE acao='radar.score_recalcular'")"
 J3="$(R 5 0)"
 eq "A3a 1ª chamada é PARCIAL (orçamento) e grava o cursor" \
   "$(J "$J3" parcial)/$(J "$J3" interrompido)/$(Pq -c "SELECT proxima_pagina||'/'||rodadas FROM public.radar_score_passada")" "true/orcamento/5/1"
 eq "A3b parcial: lote_em_calculo, SEM lote_vigente (leitores não veem lote pontuado)" \
   "$(J "$J3" lote_em_calculo)/$(TEM "$J3" lote_vigente)" "2026-10/f"
-eq "A3c parcial não grava a marca e registra sucesso/automatica" \
-  "$(Pq -c "SELECT count(*) FROM public.radar_score_estado")/$(Pq -c "SELECT status||'/'||origem||'/'||(detalhes->>'parcial') FROM public.acoes_execucoes WHERE acao='radar.score_recalcular' ORDER BY id DESC LIMIT 1")" \
-  "0/sucesso/automatica/true"
+eq "A3c parcial não grava a marca, registra em radar.score_recalcular_parcial e NÃO no ledger do score" \
+  "$(Pq -c "SELECT count(*) FROM public.radar_score_estado")/$(Pq -c "SELECT status||'/'||origem||'/'||(detalhes->>'parcial') FROM public.acoes_execucoes WHERE acao='radar.score_recalcular_parcial' ORDER BY id DESC LIMIT 1")/$(Pq -c "SELECT count(*) - $NREG_A3 FROM public.acoes_execucoes WHERE acao='radar.score_recalcular'")" \
+  "0/sucesso/automatica/true/0"
 RA2="$(ate_completar 5 0 600)"; K2="${RA2%%|*}"; JA2="${RA2#*|}"
 if [ "$JA2" = "NAO_COMPLETOU" ]; then
   eq "A2c a passada em fatias completa" "NAO_COMPLETOU depois de $K2 chamadas" "completa"
@@ -289,6 +304,24 @@ JB="$(R)"
 eq "B4b sem registro há 21 h → registra 1 (sucesso, lote_vigente, recalculou=false)" \
   "$(Pq -c "SELECT count(*) - $N0 FROM public.acoes_execucoes WHERE acao='radar.score_recalcular'")/$(Pq -c "SELECT status||'/'||(detalhes->>'lote_vigente')||'/'||(detalhes->>'recalculou') FROM public.acoes_execucoes WHERE acao='radar.score_recalcular' ORDER BY id DESC LIMIT 1")" \
   "1/sucesso/2026-10/false"
+Pq -c "UPDATE public.acoes_execucoes SET detalhes = jsonb_set(detalhes, '{lote_vigente}', '\"2026-08\"') WHERE id = (SELECT max(id) FROM public.acoes_execucoes WHERE acao='radar.score_recalcular')" >/dev/null
+N1="$(Pq -c "SELECT count(*) FROM public.acoes_execucoes WHERE acao='radar.score_recalcular'")"
+R >/dev/null
+eq "B4c último registro < 20 h que NÃO anuncia este lote → registra de novo" \
+  "$(Pq -c "SELECT count(*) - $N1 FROM public.acoes_execucoes WHERE acao='radar.score_recalcular'")/$(Pq -c "SELECT detalhes->>'lote_vigente' FROM public.acoes_execucoes WHERE acao='radar.score_recalcular' ORDER BY id DESC LIMIT 1")" \
+  "1/2026-10"
+
+# B12: passada ativa + impressão que VOLTA a bater com a marca antiga → a passada continua (não é descartada).
+ALVO12="$(Pq -c "SELECT cnpj FROM public.radar_empresas WHERE NOT ja_cliente AND municipio_codigo IS NOT NULL ORDER BY cnpj LIMIT 1 OFFSET 3")"
+eq "ALVO12' alvo da prova existe" "$([ -n "$ALVO12" ] && echo sim || echo nao)" "sim"
+Pq -c "UPDATE public.radar_empresas SET ja_cliente = true WHERE cnpj = '$ALVO12'" >/dev/null
+R 5 0 >/dev/null
+Pq -c "UPDATE public.radar_empresas SET ja_cliente = false WHERE cnpj = '$ALVO12'" >/dev/null
+J12="$(R 5 0)"
+eq "B12 impressão volta à da marca com passada ativa → continua (rodada 2, cursor 10)" \
+  "$(J "$J12" recalculou)/$(Pq -c "SELECT coalesce((SELECT rodadas||'/'||proxima_pagina FROM public.radar_score_passada), 'sem passada')")" "true/2/10"
+R12="$(ate_completar 5 0 600)"
+eq "B12' a passada retomada completa" "$( [ "${R12#*|}" = NAO_COMPLETOU ] && echo nao || echo sim)" "sim"
 
 # B6: escrita numa faixa JÁ feita, no meio da passada → a marca leva a impressão do início → recalcula depois.
 Pq -c "DELETE FROM public.radar_score_estado" >/dev/null
@@ -350,6 +383,9 @@ J3B="$(R)"
 eq "B3a a passada teve 1 pulado" "$(J "$J3B" pulados)" "1"
 eq "B3 passada com pulados NÃO grava a marca (e a passada se encerra)" \
   "$(Pq -c "SELECT count(*) FROM public.radar_score_estado")/$(Pq -c "SELECT count(*) FROM public.radar_score_passada")" "0/0"
+eq "B3c conclusão com pulados NÃO carimba lote_vigente (leitor vê pendente)" \
+  "$(TEM "$J3B" lote_vigente)/$(J "$J3B" lote_em_calculo)/$(Pq -c "SELECT (detalhes ? 'lote_vigente')::text FROM public.acoes_execucoes WHERE acao='radar.score_recalcular' ORDER BY id DESC LIMIT 1")" \
+  "f/2026-11/false"
 Pq -c "DROP TRIGGER _t_pula ON public.radar_empresas" >/dev/null
 
 # B10: linha travada por outro escritor → a chamada encerra em `trava`; as faixas anteriores ficam gravadas.
@@ -389,6 +425,9 @@ Pq -c "UPDATE public.radar_empresas SET score_em = NULL WHERE cnpj = '$ALVOG'" >
 eq "C1 jobs: horário, comando novo, ativos, dono postgres" \
   "$(Pq -c "SELECT string_agg(jobname||'|'||schedule||'|'||command||'|'||active||'|'||username, ' ; ' ORDER BY jobname) FROM cron.job WHERE jobname LIKE 'radar-score-%'")" \
   "radar-score-recalcular-continua|*/5 7-8 * * *|SET statement_timeout = '3min'; SELECT public.radar_score_recalcular();|true|postgres ; radar-score-recalcular-diario|30,35,40,45,50,55 6 * * *|SET statement_timeout = '3min'; SELECT public.radar_score_recalcular();|true|postgres"
+
+eq "C1b o aviso do lote sai depois da janela do score" \
+  "$(Pq -c "SELECT schedule||'|'||command FROM cron.job WHERE jobname = 'radar-avisar-lote-diario'")" "5 9 * * *|SELECT public.radar_avisar_lote();"
 
 # D1/D2: fronteira. SQLSTATE por marcador ASCII (a mensagem muda com o locale); outro erro propaga.
 D1="$(P -qAt 2>&1 <<'SQL' || true

@@ -12,31 +12,37 @@
 -- Como a rodada é UM comando, ela nunca grava nada, nunca grava a marca, e repete o mesmo cálculo todo dia.
 --
 -- O QUE MUDA (só radar_score_recalcular; fórmula, pesos e versão 'v3' IDÊNTICOS — prova de equivalência A1):
---   1. Uma "passada" percorre radar_empresas por faixas FÍSICAS de 1.000 páginas (TID Range Scan: leitura
---      sequencial; a faixa por CNPJ via índice seriam ~584k leituras aleatórias). Cada chamada processa faixas
---      até ~50 s de orçamento e grava o cursor em radar_score_passada; a próxima chamada continua dali.
+--   1. Uma "passada" percorre radar_empresas por faixas FÍSICAS de páginas (TID Range Scan: leitura sequencial;
+--      a faixa por CNPJ via índice seriam ~584k leituras aleatórias), de tamanho ADAPTATIVO (250 páginas no
+--      início, mira 1–4 s por faixa). Cada chamada processa faixas até ~45 s com margem (não abre faixa se o
+--      gasto + 2× a última passar disso) e grava o cursor em radar_score_passada; a próxima continua dali.
+--      Com passada ativa e válida o gate não é consultado (Codex ALTO 2: impressão que volta a coincidir com a
+--      marca antiga descartaria notas gravadas pela metade).
 --      A passada nasce com a impressão digital do INÍCIO (lote, fórmula, max(updated_at), nº de já-clientes,
 --      filenode e nº de páginas). Lote/fórmula/arquivo físico diferente → passada recomeça do zero.
 --   2. A marca (radar_score_estado) só é gravada quando a passada TERMINA com 0 pulados, e com a impressão do
 --      INÍCIO dela: o que mudou durante a passada deixa max(updated_at) > marca e a rodada seguinte recalcula.
 --   3. Linha já pontuada NESTA passada (score_em >= início) é pulada: o UPDATE não-HOT move a versão nova
 --      para página adiante, e sem isso ela seria contada duas vezes no resumo.
---   4. Rodada PARCIAL registra `parcial: true` e `lote_em_calculo` — NUNCA `lote_vigente`. Os leitores
+--   4. Rodada PARCIAL registra em OUTRA acao (radar.score_recalcular_parcial), com `lote_em_calculo`. Os leitores
 --      (radar_avisar_lote, useRadarSugeridos) tratam o lote como "score calculado" pelo `lote_vigente` da última
---      rodada `sucesso`: carimbar lote parcial fabricaria cobertura.
+--      `radar.score_recalcular` `sucesso`, e useRadarLista reinicia a fila pelo id dela: só a conclusão entra
+--      ali. Conclusão com pulados também NÃO carimba `lote_vigente` (a predecessora carimbava — Codex ALTO 1).
 --   5. Trava de linha: lock_timeout 5 s; faixa que não pega a trava (lock_not_available/deadlock) encerra a
 --      chamada com o que já fez (subtransação por faixa) — nunca espera até o statement_timeout.
 --   6. Trava da rodada: pg_try_advisory_xact_lock (antes: espera). Outra rodada em curso → `adiado`.
---   7. A rodada "nada mudou" só registra em acoes_execucoes se não houver registro nas últimas 20 h (o cron
---      agora repete): continua 1 registro por dia, e a fila (useRadarLista, que reinicia pelo id da última
---      rodada) não reinicia a cada 5 min.
+--   7. A rodada "nada mudou" só registra em acoes_execucoes se o último registro das últimas 20 h não anunciar
+--      ESTE lote (o cron agora repete): continua 1 registro por dia, e a fila não reinicia a cada 5 min.
 --   8. muni/uf (nº de já-clientes) lidos 1× por chamada, logo depois da impressão digital, num jsonb.
---   Tamanho da faixa e orçamento: GUCs de sessão opcionais radar.score_paginas_fatia / radar.score_orcamento
---   (operação e prova); sem elas, 1.000 páginas e 50 s.
+--   9. Faixa que escreve abre subtransação com XID: no máximo 60 por chamada (64+ transborda o PGPROC).
+--   Tamanho da faixa e orçamento: GUCs de sessão opcionais radar.score_paginas_fatia (fixa, sem adaptar) /
+--   radar.score_orcamento (operação e prova); sem elas, adaptativo e 45 s.
 --   Cron: o radar-score-recalcular-diario passa a rodar de 5 em 5 min das 06:30 às 06:55 UTC (mantém a ordem
 --   do pipeline: depois do aplicar-situacao 06:05 e do recruzar 06:15), e o NOVO radar-score-recalcular-continua
---   de 5 em 5 min das 07:00 às 08:55. Comando com SET statement_timeout = '3min' (margem; o orçamento é 50 s).
---   Sem passada pendente, cada tick é o gate (~0,5 s, pelos índices).
+--   de 5 em 5 min das 07:00 às 08:55. Comando com SET statement_timeout = '3min' (margem; o orçamento é 45 s; o
+--   pg_cron de prod roda por libpq — job com SET já passou de 120 s, agregado 2m50s em 18/11). Sem passada
+--   pendente, cada tick é o gate (~0,5 s, pelos índices). O radar-avisar-lote-diario sai das 06:45 para 09:05,
+--   depois da janela do score (o aviso é único por lote e não se repete com o ranking).
 --
 -- Recria função VIVA no molde TRAVA → PRE → CREATE → PÓS (predecessora = corpo de prod de 2026-11-19,
 -- md5 49c21fef6ab031b2ffe0d0367f86560e, db/fixtures/radar-score-predecessora-prod-20261119.sql). Arquivo para
@@ -58,7 +64,7 @@ DECLARE
   v_vivo text;
 BEGIN
   SELECT md5(p.prosrc) INTO v_vivo FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.radar_score_recalcular()');
-  IF v_vivo IS NULL OR v_vivo NOT IN ('49c21fef6ab031b2ffe0d0367f86560e', 'e59283a5aee6da2c26245e840f5e0ada') THEN
+  IF v_vivo IS NULL OR v_vivo NOT IN ('49c21fef6ab031b2ffe0d0367f86560e', '8a0f2beb39821287844f222bd394a8fc') THEN
     RAISE EXCEPTION 'PRE FALHOU: radar_score_recalcular vivo (md5 %) não é o predecessor revisado nem este', v_vivo;
   END IF;
   IF to_regclass('public.radar_score_estado') IS NULL THEN
@@ -108,13 +114,19 @@ DECLARE
   -- sem mudar o nº de já-clientes, fica invisível ao max(updated_at) — a rede de 7 dias é o teto da
   -- defasagem (Codex MÉDIO 1; os escritores reais são a ingestão, que muda o lote, e o cadastro de 1 linha).
   c_validade       CONSTANT interval := interval '6 days 23 hours';
-  -- Fatias (20261120140000): faixa física de páginas por comando e orçamento por chamada. 1.000 páginas ≈ 6 mil
-  -- linhas; no pior caso medido no Mini (2,9 ms por linha regravada, aplicar_situacao de 17/11) ≈ 18 s por
-  -- faixa → a chamada fica em ~70 s, abaixo dos 120 s do servidor. GUC de sessão sobrepõe (operação e prova).
-  c_paginas_fatia  CONSTANT integer := GREATEST(1, COALESCE(
-                     NULLIF(current_setting('radar.score_paginas_fatia', true), '')::integer, 1000));
+  -- Fatias (20261120140000): faixa física de páginas por comando, ADAPTATIVA (começa em 250 páginas ≈ 1.500
+  -- linhas; mira 1–4 s por faixa, como a publicação em passos) e orçamento por chamada com MARGEM: não abre
+  -- faixa nova se o tempo gasto + 2× a última faixa passar do orçamento. Um 57014 desfaria a chamada inteira
+  -- (a função é uma transação só), por isso o teto real é 120 s e o orçamento fica bem abaixo dele.
+  -- GUC de sessão (operação e prova): radar.score_paginas_fatia fixa o tamanho (sem adaptar); radar.score_orcamento.
+  c_paginas_guc    CONSTANT integer := NULLIF(current_setting('radar.score_paginas_fatia', true), '')::integer;
+  c_paginas_ini    CONSTANT integer := 250;
+  c_paginas_max    CONSTANT integer := 2000;
   c_orcamento      CONSTANT interval := COALESCE(
-                     NULLIF(current_setting('radar.score_orcamento', true), '')::interval, interval '50 seconds');
+                     NULLIF(current_setting('radar.score_orcamento', true), '')::interval, interval '45 seconds');
+  -- Faixa que ESCREVE abre subtransação com XID (o bloco EXCEPTION); acima de 64 na mesma transação o PGPROC
+  -- transborda (suboverflow) e a visibilidade das OUTRAS sessões passa a consultar pg_subtrans. Teto abaixo disso.
+  c_max_fatias_escritas CONSTANT integer := 60;
   -- A rodada "nada mudou" registra no máximo 1× nesta janela (o cron repete de 5 em 5 min de manhã).
   c_registro_noop  CONSTANT interval := interval '20 hours';
   v_est            public.radar_score_estado%ROWTYPE;
@@ -132,6 +144,11 @@ DECLARE
   v_ate_tid        tid;
   v_interrompido   text;
   v_fatias         integer := 0;
+  v_fatias_escritas integer := 0;
+  v_tam            integer;
+  v_t0             timestamptz;
+  v_ult            interval := interval '0';
+  v_registrar      boolean;
   v_alterados_rod  bigint := 0;
   -- contagens da faixa
   f_avaliados bigint; f_a_alterar bigint; f_alterados bigint; f_com_score bigint;
@@ -173,14 +190,30 @@ BEGIN
   SELECT * INTO v_est FROM public.radar_score_estado WHERE id = 1;
   v_tem_estado := FOUND;
 
-  IF v_tem_estado
+  -- Passada em curso VÁLIDA (mesma foto, fórmula e arquivo físico) é lida ANTES do gate: com ela ativa o gate
+  -- não é consultado. Sem isso, uma impressão que VOLTA a coincidir com a marca antiga (já-cliente promovido e
+  -- depois expurgado, sem bump) descartaria a passada com notas já gravadas pela metade (Codex ALTO 2).
+  v_filenode := pg_relation_filenode('public.radar_empresas'::regclass);
+  SELECT * INTO v_pas FROM public.radar_score_passada WHERE id = 1;
+  v_tem_passada := FOUND;
+  IF v_tem_passada
+     AND (v_pas.lote IS DISTINCT FROM v_vigente
+          OR v_pas.lote_iniciado_em IS DISTINCT FROM v_vigente_inicio
+          OR v_pas.versao_formula IS DISTINCT FROM c_versao
+          OR v_pas.filenode IS DISTINCT FROM v_filenode) THEN
+    -- Foto, fórmula ou arquivo físico (VACUUM FULL/CLUSTER) mudou: as faixas feitas não valem mais.
+    v_tem_passada := false;
+  END IF;
+
+  IF NOT v_tem_passada
+     AND v_tem_estado
      AND v_est.lote IS NOT DISTINCT FROM v_vigente
      AND v_est.lote_iniciado_em IS NOT DISTINCT FROM v_vigente_inicio
      AND v_est.versao_formula IS NOT DISTINCT FROM c_versao
      AND v_est.max_updated_at IS NOT DISTINCT FROM v_fp_upd
      AND v_est.ja_cliente_n IS NOT DISTINCT FROM v_fp_jc
      AND v_est.calculado_em > v_ini - c_validade THEN
-    -- Nada a fazer: passada que tenha sobrado perdeu o objeto.
+    -- Nada a fazer: passada que tenha sobrado (inválida) perdeu o objeto.
     DELETE FROM public.radar_score_passada WHERE id = 1;
     v_resumo := jsonb_build_object(
       'lote_vigente', v_vigente,
@@ -191,8 +224,14 @@ BEGIN
       'duracao_ms', round(extract(epoch FROM clock_timestamp() - v_ini) * 1000)::integer);
     -- O registro diário continua (data_health e radar_avisar_lote leem lote_vigente da última rodada), mas
     -- 1× por janela: o cron repete de manhã e cada registro novo reinicia a fila da tela (useRadarLista).
-    IF NOT EXISTS (SELECT 1 FROM public.acoes_execucoes e
-                    WHERE e.acao = 'radar.score_recalcular' AND e.iniciado_em > v_ini - c_registro_noop) THEN
+    -- Registra mesmo dentro da janela se o último registro NÃO anuncia este lote (ex.: o INSERT da conclusão
+    -- falhou no fail-open, ou a conclusão teve pulados) — o leitor vê a última linha, não a marca.
+    SELECT (e.detalhes->>'lote_vigente') IS DISTINCT FROM v_vigente INTO v_registrar
+      FROM public.acoes_execucoes e
+     WHERE e.acao = 'radar.score_recalcular' AND e.iniciado_em > v_ini - c_registro_noop
+     ORDER BY e.iniciado_em DESC
+     LIMIT 1;
+    IF COALESCE(v_registrar, true) THEN
       BEGIN
         INSERT INTO public.acoes_execucoes
           (acao, origem, iniciado_em, finalizado_em, status, detalhes)
@@ -206,17 +245,6 @@ BEGIN
   END IF;
 
   -- PASSADA: continua a que está em curso, ou abre uma nova com a impressão digital de AGORA.
-  v_filenode := pg_relation_filenode('public.radar_empresas'::regclass);
-  SELECT * INTO v_pas FROM public.radar_score_passada WHERE id = 1;
-  v_tem_passada := FOUND;
-  IF v_tem_passada
-     AND (v_pas.lote IS DISTINCT FROM v_vigente
-          OR v_pas.lote_iniciado_em IS DISTINCT FROM v_vigente_inicio
-          OR v_pas.versao_formula IS DISTINCT FROM c_versao
-          OR v_pas.filenode IS DISTINCT FROM v_filenode) THEN
-    -- Foto, fórmula ou arquivo físico (VACUUM FULL/CLUSTER) mudou: as faixas feitas não valem mais.
-    v_tem_passada := false;
-  END IF;
   IF NOT v_tem_passada THEN
     v_pas.id               := 1;
     v_pas.lote             := v_vigente;
@@ -263,12 +291,15 @@ BEGIN
            GROUP BY e.uf) x;
 
   v_pag := v_pas.proxima_pagina;
+  v_tam := GREATEST(1, COALESCE(c_paginas_guc, c_paginas_ini));
   WHILE v_pag < v_pas.paginas LOOP
-    IF v_fatias > 0 AND clock_timestamp() - v_ini > c_orcamento THEN
+    IF v_fatias > 0
+       AND (clock_timestamp() - v_ini + 2 * v_ult > c_orcamento OR v_fatias_escritas >= c_max_fatias_escritas) THEN
       v_interrompido := 'orcamento';
       EXIT;
     END IF;
-    v_ate     := LEAST(v_pag + c_paginas_fatia, v_pas.paginas);
+    v_t0      := clock_timestamp();
+    v_ate     := LEAST(v_pag + v_tam, v_pas.paginas);
     v_de_tid  := format('(%s,0)', v_pag)::tid;
     v_ate_tid := format('(%s,0)', v_ate)::tid;
     BEGIN
@@ -457,11 +488,23 @@ BEGIN
     t_0 := t_0 + f_0;  t_20 := t_20 + f_20;  t_40 := t_40 + f_40;  t_60 := t_60 + f_60;  t_80 := t_80 + f_80;
     v_alterados_rod := v_alterados_rod + f_alterados;
     v_fatias := v_fatias + 1;
+    IF f_alterados > 0 THEN
+      v_fatias_escritas := v_fatias_escritas + 1;
+    END IF;
     v_pag := v_ate;
+    v_ult := clock_timestamp() - v_t0;
+    IF c_paginas_guc IS NULL THEN
+      IF v_ult > interval '4 seconds' THEN
+        v_tam := GREATEST(10, v_tam / 2);
+      ELSIF v_ult < interval '1 second' THEN
+        v_tam := LEAST(c_paginas_max, v_tam + v_tam / 2);
+      END IF;
+    END IF;
   END LOOP;
 
   IF v_interrompido IS NULL THEN
-    -- Passada COMPLETA: resumo da passada inteira, marca com a impressão do INÍCIO dela.
+    -- Passada COMPLETA: resumo da passada inteira, marca com a impressão do INÍCIO dela. Contagens são da
+    -- passada (somadas por faixa): com escritor concorrente movendo linhas entre faixas podem sair aproximadas.
     v_resumo := jsonb_build_object(
              'lote_vigente', v_vigente,
              'versao_formula', c_versao,
@@ -477,7 +520,8 @@ BEGIN
                '0-19', t_0, '20-39', t_20, '40-59', t_40, '60-79', t_60, '80-100', t_80),
              'passada', jsonb_build_object(
                'iniciada_em', v_pas.iniciada_em, 'rodadas', v_pas.rodadas, 'paginas', v_pas.paginas,
-               'alterados_nesta_rodada', v_alterados_rod),
+               'alterados_nesta_rodada', v_alterados_rod,
+               'duracao_ms', round(extract(epoch FROM clock_timestamp() - v_pas.iniciada_em) * 1000)::bigint),
              'duracao_ms', round(extract(epoch FROM clock_timestamp() - v_ini) * 1000)::integer);
 
     -- Grava a impressão digital SÓ com passada limpa: linha pulada pela guarda de versão (mudou depois do
@@ -493,11 +537,15 @@ BEGIN
              ja_cliente_n = EXCLUDED.ja_cliente_n, calculado_em = EXCLUDED.calculado_em;
     ELSE
       DELETE FROM public.radar_score_estado WHERE id = 1;
+      -- Com pulado a passada NÃO cobriu o lote: sem `lote_vigente` (a predecessora carimbava — Codex ALTO 1).
+      -- A próxima chamada, sem marca, abre outra passada.
+      v_resumo := (v_resumo - 'lote_vigente') || jsonb_build_object('lote_em_calculo', v_vigente);
     END IF;
     DELETE FROM public.radar_score_passada WHERE id = 1;
   ELSE
-    -- Passada PARCIAL: guarda o cursor e as contagens; a próxima chamada continua. Sem `lote_vigente`: os
-    -- leitores tomam a última rodada `sucesso` com lote_vigente como "este lote está pontuado".
+    -- Passada PARCIAL: guarda o cursor e as contagens; a próxima chamada continua. Registra em OUTRA acao
+    -- (radar.score_recalcular_parcial): os leitores do ledger do score (radar_avisar_lote, useRadarSugeridos,
+    -- useRadarLista — que reinicia a fila pelo id) só veem conclusões.
     v_resumo := jsonb_build_object(
              'lote_em_calculo', v_vigente,
              'versao_formula', c_versao,
@@ -532,7 +580,8 @@ BEGIN
     INSERT INTO public.acoes_execucoes
       (acao, origem, iniciado_em, finalizado_em, status, detalhes)
     VALUES
-      ('radar.score_recalcular', 'automatica', v_ini, clock_timestamp(), 'sucesso', v_resumo);
+      (CASE WHEN v_interrompido IS NULL THEN 'radar.score_recalcular' ELSE 'radar.score_recalcular_parcial' END,
+       'automatica', v_ini, clock_timestamp(), 'sucesso', v_resumo);
   EXCEPTION WHEN OTHERS THEN
     NULL;
   END;
@@ -561,6 +610,15 @@ BEGIN
   ELSE
     PERFORM cron.alter_job(job_id := v_id, schedule := '*/5 7-8 * * *', command := c_cmd);
   END IF;
+
+  -- O aviso único do lote (radar_avisar_lote) lia o score às 06:45; com a passada em fatias o lote novo pode só
+  -- terminar depois — o aviso sairia "Score: pendente" e não se repete. Passa para depois da janela do score.
+  v_id := NULL;
+  SELECT jobid INTO v_id FROM cron.job WHERE jobname = 'radar-avisar-lote-diario';
+  IF v_id IS NULL THEN
+    RAISE EXCEPTION 'TRAVA: cron radar-avisar-lote-diario ausente';
+  END IF;
+  PERFORM cron.alter_job(job_id := v_id, schedule := '5 9 * * *');
 END
 $job$;
 
@@ -571,7 +629,7 @@ DECLARE
 BEGIN
   -- P1: a função viva é ESTE arquivo (md5 exato do prosrc) e leva o lock_timeout próprio.
   IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.radar_score_recalcular()'))
-     IS DISTINCT FROM 'e59283a5aee6da2c26245e840f5e0ada' THEN
+     IS DISTINCT FROM '8a0f2beb39821287844f222bd394a8fc' THEN
     RAISE EXCEPTION 'P1 FALHOU: radar_score_recalcular vivo não é o corpo deste arquivo';
   END IF;
   IF NOT COALESCE((SELECT proconfig @> ARRAY['lock_timeout=5s'] AND prosecdef
@@ -601,6 +659,9 @@ BEGIN
          AND ((jobname = 'radar-score-recalcular-diario'   AND schedule = '30,35,40,45,50,55 6 * * *')
            OR (jobname = 'radar-score-recalcular-continua' AND schedule = '*/5 7-8 * * *'))) <> 2 THEN
     RAISE EXCEPTION 'P4 FALHOU: jobs do score ausentes, inativos, divergentes ou sem dono postgres';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'radar-avisar-lote-diario' AND schedule = '5 9 * * *') THEN
+    RAISE EXCEPTION 'P4 FALHOU: radar-avisar-lote-diario não está depois da janela do score (5 9 * * *)';
   END IF;
 END
 $post$;
