@@ -104,7 +104,7 @@ export default async ({ page, context }) => {
     const clicou = trace.some((x) => x.step === 'clicou_trocar');
     let s = null;
     try { s = await sinais(); } catch (_) { s = null; }
-    return { data: { cliqueFeito: clicou, erro: String(e && e.message || e).substring(0, 300), sinais: s, trace }, type: 'application/json' };
+    return { data: { cliqueFeito: clicou, erro: ((e && e.message) ? String(e.message) : 'erro sem mensagem').substring(0, 300), sinais: s, trace }, type: 'application/json' };
   }
 };`;
 
@@ -144,7 +144,7 @@ export default async ({ page, context }) => {
     const r = classificarPosLogin(sinais);
     return { data: { tipo: r.tipo, url: sinais.url, menuLinks: sinais.menuLinks }, type: 'application/json' };
   } catch (e) {
-    return { data: { tipo: 'erro', erro: String(e && e.message || e).substring(0, 300) }, type: 'application/json' };
+    return { data: { tipo: 'erro', erro: ((e && e.message) ? String(e.message) : 'erro sem mensagem').substring(0, 300) }, type: 'application/json' };
   }
 };`;
 
@@ -178,11 +178,12 @@ async function provarLogin(senha: string): Promise<{ tipo: TipoLogin; url?: stri
 }
 
 // deno-lint-ignore no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any;
 
 async function rpc(db: Db, fn: string, args?: Record<string, unknown>) {
   const { data, error } = await db.rpc(fn, args ?? {});
-  if (error) throw new Error(`${fn}: ${error.message ?? String(error)}`);
+  if (error) throw new Error(`${fn}: ${mensagemDeErro(error) ?? "erro sem mensagem"}`);
   return data;
 }
 
@@ -347,6 +348,7 @@ Deno.serve(async (req) => {
       (e) => console.error("[rotacionar-senha] erro", mensagemDeErro(e)),
     );
     // deno-lint-ignore no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rt = (globalThis as any).EdgeRuntime;
     if (rt?.waitUntil) {
       rt.waitUntil(trabalho);

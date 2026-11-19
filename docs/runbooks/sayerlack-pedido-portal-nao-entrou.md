@@ -146,6 +146,18 @@ Sintoma: toda rodada falha antes do protocolo (`causa_pre_protocolo` = `leitura:
 arquivo). Trocou a senha no portal → atualize `SAYERLACK_PORTAL_PASS` nos secrets e rode a varredura em
 `modo=listar` para conferir antes do próximo cron.
 
+**Desde 2026-11-19 a senha vive no Vault** (`sayerlack_portal_pass`; o env é só bootstrap enquanto o Vault está vazio)
+e **senha EXPIRADA é trocada sozinha** pela edge `sayerlack-rotacionar-senha`: ela troca no formulário TOTVS, prova a
+nova com login real no portal, manda a senha por e-mail para `SAYERLACK_SENHA_EMAIL_PARA` e devolve à fila os pedidos
+parados só por isso. Estado em `sayerlack_senha_rotacao` (staff lê; nunca contém senha). Enquanto houver rodada
+`solicitada`/`em_andamento`/`ambigua`, **as 4 edges do portal não logam** (respondem `CREDENCIAL_BLOQUEADA`).
+
+- Rodada `ambigua` (alerta urgente "ficou INCERTA") ou `falhou` (portal recusou; quarentena de 6h sem nova troca):
+  troque a senha à mão no portal, atualize `SAYERLACK_PORTAL_PASS` e chame a edge com `{"acao":"adotar_env"}` — ela
+  PROVA o login com a senha do env antes de adotar e fecha a rodada. Senha que não chega ao dashboard não é adotada (409).
+- Ver o estado: `select status, etapa, erro, gatilho, solicitado_em, concluido_em, email_enviado_em,
+  pedidos_reenfileirados from sayerlack_senha_rotacao order by solicitado_em desc limit 5;`
+
 ## Cota do Browserless
 
 Cada leitura da lista e cada importação abre uma sessão (`BROWSERLESS_TOKEN`). Sintoma: `leitura:REDE` /

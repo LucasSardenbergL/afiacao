@@ -6,7 +6,10 @@
 // FAIL-CLOSED: erro na RPC, linha ausente ou rotação em curso ⇒ NÃO loga. Logar com senha velha
 // durante uma rotação é o que gasta tentativas de login e pode bloquear a conta (Codex P1).
 
+import { mensagemDeErro } from "./erro-mensagem.ts";
+
 // deno-lint-ignore no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = { rpc: (fn: string, args?: Record<string, unknown>) => any };
 
 export type Credencial =
@@ -52,9 +55,9 @@ export async function obterSenhaPortal(db: Db, envPass: string | null | undefine
   try {
     const { data, error } = await db.rpc("sayerlack_senha_portal_credencial");
     const linha = Array.isArray(data) ? (data[0] as LinhaCredencial | undefined) : (data as LinhaCredencial | null);
-    return decidirCredencial(linha ?? null, error ? String(error.message ?? error) : null, envPass);
+    return decidirCredencial(linha ?? null, error ? (mensagemDeErro(error) ?? "erro sem mensagem") : null, envPass);
   } catch (e) {
-    return decidirCredencial(null, e instanceof Error ? e.message : String(e), envPass);
+    return decidirCredencial(null, mensagemDeErro(e) ?? "erro sem mensagem", envPass);
   }
 }
 
@@ -70,11 +73,11 @@ export async function solicitarRotacaoSenha(
 ): Promise<{ solicitada: boolean; motivo?: string }> {
   try {
     const { data, error } = await db.rpc("sayerlack_senha_portal_solicitar", { p_gatilho: gatilho.slice(0, 200) });
-    if (error) return { solicitada: false, motivo: String(error.message ?? error) };
+    if (error) return { solicitada: false, motivo: mensagemDeErro(error) ?? "erro sem mensagem" };
     // NULL = quarentena (troca recusada há < 6h): não dispara nada, o alerta humano segue valendo.
     if (data === null || data === undefined) return { solicitada: false, motivo: "quarentena_pos_falha" };
   } catch (e) {
-    return { solicitada: false, motivo: e instanceof Error ? e.message : String(e) };
+    return { solicitada: false, motivo: mensagemDeErro(e) ?? "erro sem mensagem" };
   }
   await dispararRotacionador(cfg, gatilho);
   return { solicitada: true };

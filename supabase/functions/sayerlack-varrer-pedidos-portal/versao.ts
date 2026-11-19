@@ -23,7 +23,7 @@ export const respostaSonda = criarRespostaSonda("sayerlack-varrer-pedidos-portal
  * pedido que levava outro filtro reprova; 0 linhas só com success=true, o nosso filtro no pedido e a consulta REPETIDA
  * respondendo 0 de novo. O que a página consultava vai ao registro, no sucesso e na falha. Sem migration.
  */
-export const VERSAO = "v1.13-resposta-do-nosso-clique";
+export const VERSAO = "v1.14-senha-do-vault";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

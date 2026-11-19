@@ -29,7 +29,7 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * v1.16: recusa GRUPO_LEADTIME_MISMATCH grava a prova estruturada (`grupoLeadtime`) e chama a RPC
  * `reposicao_regrupar_por_recusa_portal`: corrige o grupo do SKU e cancela o pedido (o ciclo regera).
  */
-export const VERSAO = "v1.16-regrupo-prz-ent";
+export const VERSAO = "v1.17-senha-do-vault";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

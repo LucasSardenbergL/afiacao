@@ -33,7 +33,7 @@ export const respostaSonda = criarRespostaSonda("sayerlack-captura-precos");
  * discriminação perdida — reata só o sentido positivo, do próximo deploy em diante
  * (`docs/historico/sonda-marcador-congelado.md`).
  */
-export const VERSAO = "v1.1-pos-login-na-captura";
+export const VERSAO = "v1.2-senha-do-vault";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

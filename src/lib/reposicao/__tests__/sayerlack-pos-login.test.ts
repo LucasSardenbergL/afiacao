@@ -151,6 +151,14 @@ describe('decidirAlertaPortal — o alerta que faltou no incidente', () => {
     expect(a!.severidade).toBe('urgente');
     expect(a!.titulo).toContain('senha');
     expect(a!.mensagem).toContain('SAYERLACK_PORTAL_PASS');
+    // Senha EXPIRADA tem rotação automática: o alerta diz isso e dá a saída humana (adotar_env).
+    expect(a!.mensagem).toContain('troca automatica de senha foi solicitada');
+    expect(a!.mensagem).toContain('"acao":"adotar_env"');
+  });
+
+  it('LOGIN_FAILED (senha ERRADA) não promete troca automática', () => {
+    const a = decidirAlertaPortal('LOGIN_FAILED', { esgotado: false, portalUrl: 'http://p' });
+    expect(a!.mensagem).not.toContain('troca automatica');
   });
 
   it('LOGIN_FAILED mantém o alerta que já existia', () => {
