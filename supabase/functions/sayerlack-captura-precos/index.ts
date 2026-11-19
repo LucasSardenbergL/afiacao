@@ -36,6 +36,7 @@ import {
 } from "../_shared/embalagem-captura-helpers.ts";
 import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { obterSenhaPortal, redispararSeParada, solicitarRotacaoSenha } from "../_shared/sayerlack-credencial.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("VITE_SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -890,13 +891,18 @@ Deno.serve(async (req) => {
 
   const secretsFaltando = [
     ["SAYERLACK_PORTAL_USER", SAYERLACK_PORTAL_USER],
-    ["SAYERLACK_PORTAL_PASS", SAYERLACK_PORTAL_PASS],
     ["SAYERLACK_PORTAL_URL", SAYERLACK_PORTAL_URL],
     ["SAYERLACK_PORTAL_CLIENTE_CODIGO", SAYERLACK_PORTAL_CLIENTE_CODIGO],
     ["BROWSERLESS_TOKEN", BROWSERLESS_TOKEN],
   ].filter(([, v]) => !v).map(([k]) => k);
   if (secretsFaltando.length > 0) {
     return jsonResponse(500, { ok: false, erro: `secrets ausentes: ${secretsFaltando.join(", ")}` });
+  }
+  // Senha do Vault (env só bootstrap). Rotação em curso / Vault ilegível ⇒ não loga, não abre run.
+  const cred = await obterSenhaPortal(supabase, SAYERLACK_PORTAL_PASS);
+  if (!cred.ok) {
+    await redispararSeParada(cred, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_ROLE_KEY }, "captura-precos:parada");
+    return jsonResponse(cred.erroTipo === "CREDENCIAL_BLOQUEADA" ? 200 : 503, { ok: false, bloqueado: true, erro_tipo: cred.erroTipo, motivo: cred.motivo });
   }
 
   // Guard de execução (lock + idempotência mensal + circuit-breaker do dia).
@@ -1040,7 +1046,7 @@ Deno.serve(async (req) => {
             code: BROWSERLESS_FUNCTION,
             context: {
               user: SAYERLACK_PORTAL_USER,
-              pass: SAYERLACK_PORTAL_PASS,
+              pass: cred.senha,
               portalUrl: SAYERLACK_PORTAL_URL,
               clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO,
               items: comDepara.map((a) => ({ sku_portal: a.sku_portal })),
@@ -1080,6 +1086,9 @@ Deno.serve(async (req) => {
       : httpStatus < 200 || httpStatus >= 300 ? `browserless HTTP ${httpStatus}`
       : envelope.success === false ? `${envelope.erroTipo ?? "ERRO"}: ${envelope.erro ?? "sem detalhe"}`
       : null;
+    if (envelope.success === false && envelope.erroTipo === "PASSWORD_CHANGE_REQUIRED") {
+      await solicitarRotacaoSenha(supabase, "captura-precos", { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_ROLE_KEY });
+    }
 
     // Classificação por embalagem (helper puro espelhado) + linhas sintéticas p/
     // cobertura total do alvo no run-log (sem-de-para / não-processado / sem retorno).

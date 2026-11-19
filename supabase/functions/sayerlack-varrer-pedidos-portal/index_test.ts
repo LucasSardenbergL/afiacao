@@ -85,10 +85,14 @@ interface Cenario {
   pos?: Record<string, unknown>[];
   /** RPC do 7.1 (default do "*": corpo null ⇒ a edge trata como erro, sem vínculo). */
   vincular?: () => Resposta;
+  /** Credencial do portal (default: Vault sem ativa ⇒ bootstrap pelo env, como antes da rotação). */
+  credencial?: () => Resposta;
 }
 
 function montar(c: Cenario) {
   const rotas: Record<string, Rota> = {
+    "rpc:sayerlack_senha_portal_credencial": () =>
+      c.credencial?.() ?? { corpo: [{ senha: null, origem: "env_bootstrap", bloqueio: null, rotacao_id: null }] },
     "POST rest:acoes_execucoes": () => ({ status: 201, corpo: [{ id: "exec-1" }] }),
     "PATCH rest:acoes_execucoes": () => ({ status: 204, corpo: null }),
     "GET rest:pedido_compra_sugerido": (ch) =>
@@ -126,8 +130,20 @@ async function varrer(modo: string) {
 function escritas(falso: ReturnType<typeof montar>) {
   return falso.chamadas.filter((c) =>
     c.rota !== BROWSERLESS && c.metodo !== "GET" && c.rota !== "rest:acoes_execucoes" &&
-    c.rota !== "rpc:sayerlack_cobertura_situacao_portal");
+    c.rota !== "rpc:sayerlack_cobertura_situacao_portal" &&
+    // leitura da senha (função STABLE): POST só porque toda RPC do PostgREST é POST
+    c.rota !== "rpc:sayerlack_senha_portal_credencial");
 }
+
+Deno.test("rotação de senha em curso: a varredura NÃO abre o navegador nem toca pedido", () =>
+  comRelogio(QUARTA, async () => {
+    const falso = montar({
+      credencial: () => ({ corpo: [{ senha: null, origem: null, bloqueio: "rotacao_em_andamento", rotacao_id: "r-1" }] }),
+    });
+    await varrer("importar");
+    igual(falso.de(BROWSERLESS).length, 0, "sem Browserless");
+    igual(falso.de(IMPORTADORA).length, 0, "não importa");
+  }));
 
 const NO_APP_CANCELADO = { id: 601, portal_protocolo: "2141200", status: "enviado", omie_pedido_compra_id: "9100", atualizado_em: "2026-11-10T12:00:00Z", enviado_portal_em: "2026-11-10T12:00:00Z", portal_data_entrega: "2026-11-26" };
 

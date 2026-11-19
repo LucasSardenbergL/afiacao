@@ -69,6 +69,7 @@ import {
 } from "./varredura.ts";
 import { classificarFiltroDoPedido, contarLinhasNaResposta, criarRastreioConsulta } from "./consulta-rastreio.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { obterSenhaPortal, redispararSeParada, solicitarRotacaoSenha } from "../_shared/sayerlack-credencial.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -459,7 +460,7 @@ function provarEnvelope(env: BrowserlessData, lista: { ilegiveis: number; repeti
 
 /** Uma leitura da Consulta Pedidos (Browserless) a partir de `emissaoDesde`. Não lança por resposta ruim: devolve
  *  `success:false` com o tipo do erro (rede/abort lançam — quem chama decide). */
-async function lerPortal(emissaoDesde: string): Promise<BrowserlessData> {
+async function lerPortal(emissaoDesde: string, senhaPortal: string): Promise<BrowserlessData> {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 185_000);
   let envelope: BrowserlessData;
@@ -471,7 +472,7 @@ async function lerPortal(emissaoDesde: string): Promise<BrowserlessData> {
       body: JSON.stringify({
         code: BROWSERLESS_FUNCTION,
         context: {
-          user: SAYERLACK_PORTAL_USER, pass: SAYERLACK_PORTAL_PASS, portalUrl: SAYERLACK_PORTAL_URL,
+          user: SAYERLACK_PORTAL_USER, pass: senhaPortal, portalUrl: SAYERLACK_PORTAL_URL,
           clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO, emissaoDesde,
         },
       }),
@@ -809,7 +810,9 @@ Deno.serve(async (req: Request) => {
   // a importadora DIZ (`sessao_browserless`): já com PO, recusa antes do portal e config ausente não abrem sessão.
   // Sem o campo (importadora antiga, corpo não-JSON, timeout) é INDETERMINADO — nunca zero, nunca um fabricado.
   const sessoes = { leitura_portal: 0, importacao: 0, importacao_sem_sessao: 0, importacao_indeterminada: 0 };
-  const lerPortalContado = (desde: string) => { sessoes.leitura_portal += 1; return lerPortal(desde); };
+  // Preenchida depois da credencial (Vault; env só bootstrap) — nenhuma leitura acontece antes dela.
+  let senhaPortal = "";
+  const lerPortalContado = (desde: string) => { sessoes.leitura_portal += 1; return lerPortal(desde, senhaPortal); };
   const importarContado = async (protocolo: string, situacoes: string[], somenteSituacao = false) => {
     let r: Awaited<ReturnType<typeof importar>>;
     try {
@@ -890,7 +893,7 @@ Deno.serve(async (req: Request) => {
     const bloqueio = motivoBloqueio(await pedidosEmVoo(db));
 
     const faltando = [
-      ["SAYERLACK_PORTAL_USER", SAYERLACK_PORTAL_USER], ["SAYERLACK_PORTAL_PASS", SAYERLACK_PORTAL_PASS],
+      ["SAYERLACK_PORTAL_USER", SAYERLACK_PORTAL_USER],
       ["SAYERLACK_PORTAL_URL", SAYERLACK_PORTAL_URL], ["SAYERLACK_PORTAL_CLIENTE_CODIGO", SAYERLACK_PORTAL_CLIENTE_CODIGO],
       ["BROWSERLESS_TOKEN", BROWSERLESS_TOKEN],
     ].filter(([, v]) => !v).map(([k]) => k);
@@ -898,6 +901,14 @@ Deno.serve(async (req: Request) => {
       causaPreProtocolo = "config_ausente";
       throw new Error(`Configuração ausente: ${faltando.join(", ")}`);
     }
+    // Rotação de senha em curso / Vault ilegível ⇒ não loga (a varredura falha registrada e roda de novo no cron).
+    const cred = await obterSenhaPortal(db, SAYERLACK_PORTAL_PASS);
+    if (!cred.ok) {
+      await redispararSeParada(cred, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_ROLE_KEY }, "varrer-pedidos-portal:parada");
+      causaPreProtocolo = cred.erroTipo === "CREDENCIAL_BLOQUEADA" ? "credencial_em_rotacao" : "credencial_indisponivel";
+      throw new Error(cred.motivo);
+    }
+    senhaPortal = cred.senha;
 
     // 1. Lê a lista no portal.
     const hoje = hojeSP();
@@ -909,6 +920,9 @@ Deno.serve(async (req: Request) => {
     const lidoAte = new Date().toISOString();
     console.log(`[varrer-portal] Browserless ${Date.now() - t0}ms tipo=${envelope.erroTipo ?? "-"} linhas=${envelope.linhas?.length ?? "-"}`);
     if (envelope.success !== true) {
+      if (envelope.erroTipo === "POS_LOGIN_NAO_DASHBOARD" && String(envelope.erro ?? "").includes("troca_de_senha")) {
+        await solicitarRotacaoSenha(db, "varrer-pedidos-portal", { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_ROLE_KEY });
+      }
       causaPreProtocolo = `leitura:${envelope.erroTipo ?? "desconhecido"}`;
       // v1.13: o que a página consultava vai ao registro também na falha (o trace do script não é guardado).
       if (envelope.consultas != null) resumoFinal = { ...resumoFinal, emissao_desde: emissaoDesde, consultas_portal: envelope.consultas };

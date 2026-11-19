@@ -369,6 +369,7 @@ function montar(c: CenarioPortal) {
     // Pedidos do app por protocolo: só os das linhas alheias existem (a leitura de pedidos em voo vem vazia).
     "GET rest:pedido_compra_sugerido": (ch) =>
       ({ corpo: (ch.params.get("portal_protocolo") ?? "").includes(ALHEIAS[0].Pedido) ? NO_APP_DAS_ALHEIAS : [] }),
+    "rpc:sayerlack_senha_portal_credencial": () => ({ corpo: [{ senha: null, origem: "env_bootstrap", bloqueio: null, rotacao_id: null }] }),
     "rpc:sayerlack_registrar_situacao_portal": () => ({ corpo: { aceitos: [], ignorados: 0 } }),
     "rpc:sayerlack_cobertura_situacao_portal": () => ({ corpo: [] }),
     [BROWSERLESS]: async (ch): Promise<Resposta> => {
