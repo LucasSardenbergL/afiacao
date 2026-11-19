@@ -14749,6 +14749,60 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_demanda_calendario_sombra: {
+        Row: {
+          calendario_baixa_confianca: boolean | null
+          data_ref: string
+          demanda_calendario: number | null
+          demanda_legado: number | null
+          empresa: string
+          fator_calendario: number | null
+          max_calendario: number | null
+          max_legado: number | null
+          pp_calendario: number | null
+          pp_legado: number | null
+          registrado_em: string
+          sku_codigo_omie: number
+          ss_calendario: number | null
+          ss_legado: number | null
+          status_sugestao: string | null
+        }
+        Insert: {
+          calendario_baixa_confianca?: boolean | null
+          data_ref: string
+          demanda_calendario?: number | null
+          demanda_legado?: number | null
+          empresa: string
+          fator_calendario?: number | null
+          max_calendario?: number | null
+          max_legado?: number | null
+          pp_calendario?: number | null
+          pp_legado?: number | null
+          registrado_em?: string
+          sku_codigo_omie: number
+          ss_calendario?: number | null
+          ss_legado?: number | null
+          status_sugestao?: string | null
+        }
+        Update: {
+          calendario_baixa_confianca?: boolean | null
+          data_ref?: string
+          demanda_calendario?: number | null
+          demanda_legado?: number | null
+          empresa?: string
+          fator_calendario?: number | null
+          max_calendario?: number | null
+          max_legado?: number | null
+          pp_calendario?: number | null
+          pp_legado?: number | null
+          registrado_em?: string
+          sku_codigo_omie?: number
+          ss_calendario?: number | null
+          ss_legado?: number | null
+          status_sugestao?: string | null
+        }
+        Relationships: []
+      }
       reposicao_depara_auto_log: {
         Row: {
           criado_em: string
@@ -15247,7 +15301,7 @@ export type Database = {
           episodio_id: number
           evidencia_desatualizada: boolean
           evidencia_em?: string | null
-          id?: number
+          id?: never
           intencao: string
           operador: string
           proposta_versao: string
@@ -15262,7 +15316,7 @@ export type Database = {
           episodio_id?: number
           evidencia_desatualizada?: boolean
           evidencia_em?: string | null
-          id?: number
+          id?: never
           intencao?: string
           operador?: string
           proposta_versao?: string
@@ -15320,7 +15374,7 @@ export type Database = {
           empresa: string
           evidencia_em_atual?: string | null
           fechado_em?: string | null
-          id?: number
+          id?: never
           numero_nfe?: string | null
           numero_pedido?: string | null
           origem: string
@@ -15345,7 +15399,7 @@ export type Database = {
           empresa?: string
           evidencia_em_atual?: string | null
           fechado_em?: string | null
-          id?: number
+          id?: never
           numero_nfe?: string | null
           numero_pedido?: string | null
           origem?: string
@@ -15475,6 +15529,51 @@ export type Database = {
           skus_divergentes?: number
           varredura_completa?: boolean
           versao_edge?: string
+        }
+        Relationships: []
+      }
+      reposicao_regrupo_audit: {
+        Row: {
+          criado_em: string
+          grupo_de: string | null
+          grupo_para: string | null
+          id: number
+          lt_esperado: number | null
+          motivo: string | null
+          pedido_id: number
+          prz_ent: number | null
+          resultado: string
+          sku_codigo_omie: string | null
+          sku_portal: string | null
+          tentativa_id: string | null
+        }
+        Insert: {
+          criado_em?: string
+          grupo_de?: string | null
+          grupo_para?: string | null
+          id?: number
+          lt_esperado?: number | null
+          motivo?: string | null
+          pedido_id: number
+          prz_ent?: number | null
+          resultado: string
+          sku_codigo_omie?: string | null
+          sku_portal?: string | null
+          tentativa_id?: string | null
+        }
+        Update: {
+          criado_em?: string
+          grupo_de?: string | null
+          grupo_para?: string | null
+          id?: number
+          lt_esperado?: number | null
+          motivo?: string | null
+          pedido_id?: number
+          prz_ent?: number | null
+          resultado?: string
+          sku_codigo_omie?: string | null
+          sku_portal?: string | null
+          tentativa_id?: string | null
         }
         Relationships: []
       }
@@ -23679,6 +23778,7 @@ export type Database = {
           demanda_media_diaria: number | null
           demanda_total_90d: number | null
           empresa: string | null
+          fator_calendario: number | null
           num_ordens: number | null
           qtde_desvio_por_ordem: number | null
           qtde_media_por_ordem: number | null
@@ -23886,6 +23986,8 @@ export type Database = {
       v_sku_parametros_sugeridos: {
         Row: {
           calculado_em: string | null
+          calendario_baixa_confianca: boolean | null
+          calendario_modo: string | null
           classe_abc_proposta: string | null
           classe_consolidada: string | null
           classe_xyz_proposta: string | null
@@ -23894,12 +23996,15 @@ export type Database = {
           custo_capital_efetivo_perc: number | null
           custo_pedido_aplicado: number | null
           demanda_media_diaria: number | null
+          demanda_media_diaria_calendario: number | null
+          demanda_media_diaria_legado: number | null
           demanda_sigma_diario: number | null
           dias_com_movimento: number | null
           empresa: string | null
           estoque_maximo_sugerido: number | null
           estoque_minimo_sugerido: number | null
           estoque_seguranca_sugerido: number | null
+          fator_calendario: number | null
           fonte_fornecedor: string | null
           fonte_leadtime: string | null
           fonte_lt: string | null
@@ -24766,6 +24871,19 @@ export type Database = {
       calendario_dias_sem_nf: {
         Args: { p_ate: string; p_de: string; p_empresa: string }
         Returns: string[]
+      }
+      calendario_fator_demanda: {
+        Args: { p_data_fim: string; p_empresa: string }
+        Returns: {
+          baixa_confianca: boolean
+          dias_base: number
+          dias_efetivos: number
+          dias_pendentes: number
+          fator: number
+          fator_bruto: number
+          janela_fim: string
+          janela_inicio: string
+        }[]
       }
       calendario_itens_antecipar: {
         Args: { p_empresa: string; p_fim_recesso: string; p_hoje?: string }
@@ -27435,6 +27553,10 @@ export type Database = {
           selo_ok: boolean
         }[]
       }
+      reposicao_demanda_calendario_sombra_registrar: {
+        Args: { p_empresa?: string }
+        Returns: number
+      }
       reposicao_encerrar_recusas_definitivas: {
         Args: { p_dias?: number }
         Returns: Json
@@ -27584,6 +27706,10 @@ export type Database = {
           p_janela_de: string
           p_seq: number
         }
+        Returns: Json
+      }
+      reposicao_regrupar_por_recusa_portal: {
+        Args: { p_pedido_id: number; p_tentativa_id: string }
         Returns: Json
       }
       reposicao_ruptura_prateleira_registrar: {
