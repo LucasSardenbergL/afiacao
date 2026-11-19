@@ -611,6 +611,7 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   'public.envio_portal_claim_ids', // claim por lista positiva de ids — edges `disparar-pedidos-aprovados` e `enviar-pedido-portal-sayerlack`
   'public.iniciar_envio_portal_pre_claim', // pré-claim antes do disparo — edge `disparar-pedidos-aprovados`
   'public.reposicao_encerrar_recusas_definitivas', // encerra recusa definitiva do portal após 3 dias (#3169) — cron `reposicao-encerrar-recusas-definitivas`; REVOKE PUBLIC/anon/authenticated + postcondição has_function_privilege na migration 20261011150000
+  'public.reposicao_regrupar_por_recusa_portal', // regrupo Sayerlack por Prz Ent (#4505): corrige sku_grupo_producao e cancela o pedido recusado (fail-closed) — edge `enviar-pedido-portal-sayerlack` v1.16, service_role; ACL por allowlist + postcondição aclexplode (20261120100000)
   'public.reposicao_persistir_qtde_inteira', // arredonda/persiste qtde inteira do pedido — edge `disparar-pedidos-aprovados`
   'public.reposicao_claim_disparo', // claim antes do IncluirPedCompra (Cenário B do TOCTOU) — edge `disparar-pedidos-aprovados`, service_role
   'public.sayerlack__incidente_pelo_pedido', // trigger da 5.4 (RETURNS trigger): abre/fecha o incidente de cancelado com PO no estado do pedido; REVOKE PUBLIC/anon/authenticated (20261110120000)

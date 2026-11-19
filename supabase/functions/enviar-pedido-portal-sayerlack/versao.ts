@@ -26,8 +26,10 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * `sayerlack_aplicar_condicao_portal` antes do PO (D-1, pontos cegos Onda 2).
  * v1.14: enxerga a recusa por lote mínimo e aborta (Fase 0). v1.15: sobe ao lote, prova pela grade, efetiva e
  * registra a divergência portal ≠ Omie em `pedido_portal_ajuste_qtde` (Fase 1). Detalhe no changelog.
+ * v1.16: recusa GRUPO_LEADTIME_MISMATCH grava a prova estruturada (`grupoLeadtime`) e chama a RPC
+ * `reposicao_regrupar_por_recusa_portal`: corrige o grupo do SKU e cancela o pedido (o ciclo regera).
  */
-export const VERSAO = "v1.15-lote-minimo-ajuste";
+export const VERSAO = "v1.16-regrupo-prz-ent";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

@@ -59,7 +59,11 @@ export function PortalDrawer({
   const reenviarMutation = useMutation({
     mutationFn: async () => {
       if (!pedido) return;
-      const { error } = await supabase
+      // CAS no estado que o operador VIU: com o modal aberto, um retry pode ter entrado em voo (enviando_portal).
+      // Gravar só pelo id abria uma 2ª execução concorrente — duas no portal ao mesmo tempo, e o regrupo
+      // automático (edge v1.16) poderia cancelar enquanto a outra já clicou em Efetivar (Codex P0-2).
+      const estadoVisto = pedido.status_envio_portal ?? null;
+      const base = supabase
         .from('pedido_compra_sugerido')
         .update({
           status_envio_portal: 'pendente_envio_portal',
@@ -68,7 +72,14 @@ export function PortalDrawer({
           portal_erro: null,
         })
         .eq('id', pedido.id);
+      const { data, error } = await (estadoVisto === null
+        ? base.is('status_envio_portal', null)
+        : base.eq('status_envio_portal', estadoVisto)
+      ).select('id');
       if (error) throw error;
+      if (!data || data.length === 0) {
+        throw new Error('O estado do envio mudou desde que você abriu esta tela. Feche e abra de novo para conferir.');
+      }
     },
     onSuccess: () => {
       toast.success('Pedido marcado para reenvio. O cron / disparo manual fará o envio.');
