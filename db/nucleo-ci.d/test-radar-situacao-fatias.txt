@@ -1,0 +1,6 @@
+# Radar — foto RFB da situação cadastral em fatias por CNPJ (20261120170000 + 20261120180000, fatia adaptativa sem GUC; 27m43s de 30 min no Mini em 17/11,
+# 573 mil linhas não-HOT num UPDATE só): equivalência com a predecessora de prod numa chamada (escritor que move linhas
+# no meio), lote novo no meio (a passada termina no dela = predecessora com os 2 lotes em sequência), superado sem
+# passada, parcial fora do ledger e sem marca, travas de rodada/fatia/linha do lote/conclusão sem erro e com o estado
+# final da predecessora, job 2-59/5 0-5,7-10 com statement_timeout, RLS/ACL, PK do cursor, PRE das 2 funções.
+db/test-radar-situacao-fatias.sh           34  falsificar=17 faixas=2
