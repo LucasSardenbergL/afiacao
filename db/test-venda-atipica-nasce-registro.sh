@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Teste PG17 da migration 20261120180001 (venda atípica nasce status='registrado', não 'pendente').
+# Teste PG17 da migration 20261120180002 (venda atípica nasce status='registrado', não 'pendente').
 # Semeia um SKU com pico de venda + estoque pendente de prod, roda o corpo ANTIGO do snapshot como
 # CONTROLE (o pico tem de nascer 'pendente'), aplica a migration e afirma: nasce registrado, sem
 # decisão fabricada, backfill só da venda_atipica pendente, aceito/lt_atipico/sku_sem_grupo/Omie
@@ -9,7 +9,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIG="${MIG_OVERRIDE:-$REPO_ROOT/supabase/migrations/20261120180001_venda_atipica_nasce_registro.sql}"
+MIG="${MIG_OVERRIDE:-$REPO_ROOT/supabase/migrations/20261120180002_venda_atipica_nasce_registro_dia_sp.sql}"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PORT_OVERRIDE:-5447}"

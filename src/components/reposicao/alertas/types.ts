@@ -46,7 +46,7 @@ export const tiposDaVisao = (visao: Visao): readonly string[] =>
   visao === "fila" ? TIPOS_FILA : TIPOS_REGISTRO;
 
 // Status com que cada visão abre. A fila é "o que espera decisão" (pendente). O registro abre em
-// todos: a venda atípica nasce 'registrado' (migration 20261120180001), e abrir em "pendente"
+// todos: a venda atípica nasce 'registrado' (migration 20261120180002), e abrir em "pendente"
 // esconderia justamente o que a visão existe para mostrar.
 export const statusPadraoDaVisao = (visao: Visao): string =>
   visao === "fila" ? "pendente" : "__all__";

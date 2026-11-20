@@ -1,6 +1,12 @@
 -- ============================================================================================
 -- Venda atípica nasce REGISTRO, não fila (eventos_outlier.status = 'registrado').
 --
+-- Substitui a 20261120180001 (aplicada em prod pelo db:aplicar, recibo #1232, mas nunca mergeada):
+-- mesmo conteúdo, com a janela de 180 dias no DIA DE SP escrito na expressão, como pede o gate
+-- relogio-nu-da-sessao. O comportamento não muda: o único chamador é o cron detectar-outliers-diario,
+-- 07:30 UTC (04:30 BRT), quando o dia é o mesmo nos dois fusos. A PRE aceita o corpo que a 180001
+-- deixou em prod; o backfill já rodou lá e aqui é no-op idempotente.
+--
 -- PROBLEMA (prod, 2026-11-20): 142 dos 236 eventos 'pendente' são venda_atipica e ficam assim
 -- para sempre. Ninguém os trata, porque não há o que decidir: o "crítico" mede só o tamanho do
 -- pedido (z > 5 contra 180 dias), aceitar não move o motor (spec 2026-07-16) e a tela já classifica
@@ -38,13 +44,13 @@ BEGIN
 END
 $trava$;
 
--- PRE: md5 do prosrc vivo ∈ {predecessor (prod 2026-11-20), este}. Ausente ABORTA.
+-- PRE: md5 do prosrc vivo ∈ {predecessor original, o da 20261120180001 (prod hoje), este}. Ausente ABORTA.
 DO $pre$
 DECLARE
   v_vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
                    WHERE p.oid = to_regprocedure('public.detectar_outliers_empresa(text)'));
 BEGIN
-  IF v_vivo IS NULL OR v_vivo NOT IN ('0e1a15546f5212bf873fdaaba7eaabb6', 'd51d3c9824616fc950ec45bbdc687185') THEN
+  IF v_vivo IS NULL OR v_vivo NOT IN ('0e1a15546f5212bf873fdaaba7eaabb6', 'd51d3c9824616fc950ec45bbdc687185', '28acbbe7243cabe06e10b03ccbce92f6') THEN
     RAISE EXCEPTION 'PRE FALHOU: detectar_outliers_empresa vivo (md5 %) não é o predecessor revisado nem este', v_vivo;
   END IF;
 END
@@ -71,7 +77,7 @@ BEGIN
       AVG(quantidade) as media_qtde_por_venda,
       STDDEV_SAMP(quantidade) as desvio_qtde_por_venda
     FROM venda_items_history
-    WHERE data_emissao >= CURRENT_DATE - INTERVAL '180 days' AND quantidade > 0
+    WHERE data_emissao >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - INTERVAL '180 days' AND quantidade > 0
     GROUP BY empresa::text, sku_codigo_omie::text
     HAVING COUNT(*) >= 5
   ),
@@ -89,7 +95,7 @@ BEGIN
       ON e.empresa = v.empresa::text
       AND e.sku_codigo_omie = v.sku_codigo_omie::text
     WHERE v.empresa::text = p_empresa
-      AND v.data_emissao >= CURRENT_DATE - INTERVAL '180 days'
+      AND v.data_emissao >= (now() AT TIME ZONE 'America/Sao_Paulo')::date - INTERVAL '180 days'
       AND v.quantidade > 0
       AND e.desvio_qtde_por_venda > 0
       AND (v.quantidade - e.media_qtde_por_venda) / e.desvio_qtde_por_venda > 3
@@ -251,7 +257,7 @@ UPDATE public.eventos_outlier
 DO $pos$
 BEGIN
   IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
-       WHERE p.oid = to_regprocedure('public.detectar_outliers_empresa(text)')) IS DISTINCT FROM 'd51d3c9824616fc950ec45bbdc687185' THEN
+       WHERE p.oid = to_regprocedure('public.detectar_outliers_empresa(text)')) IS DISTINCT FROM '28acbbe7243cabe06e10b03ccbce92f6' THEN
     RAISE EXCEPTION 'POS FALHOU: detectar_outliers_empresa não é o corpo desta migration';
   END IF;
   IF EXISTS (SELECT 1 FROM public.eventos_outlier WHERE tipo = 'venda_atipica' AND status = 'pendente') THEN

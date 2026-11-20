@@ -110,7 +110,7 @@ describe("buscarStats", () => {
     expect(new Date(gte?.[1][1] as string).getHours()).toBe(0);
   });
 
-  it("venda atípica conta pendente E registrado (nasce 'registrado' desde a 20261120180001)", async () => {
+  it("venda atípica conta pendente E registrado (nasce 'registrado' desde a 20261120180002)", async () => {
     resposta.mockImplementation(() => ({ count: 1, error: null }));
     await buscarStats();
     const ins = chamadas.filter(([m]) => m === "in").map(([, a]) => a);

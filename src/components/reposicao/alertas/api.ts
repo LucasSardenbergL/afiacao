@@ -27,7 +27,7 @@ export async function buscarStats(agora: Date = new Date()): Promise<OutlierStat
       pendentes("sku_sem_grupo"),
       pendentes("lt_atipico"),
       contar((q) => q.eq("status", "pendente").eq("tipo", "lt_atipico").eq("severidade", "critico")),
-      // Venda atípica nasce 'registrado' (migration 20261120180001); 'pendente' cobre o estoque de
+      // Venda atípica nasce 'registrado' (migration 20261120180002); 'pendente' cobre o estoque de
       // antes dela. Contar só pendente zeraria o card do Registro sem que nada mudasse de fato.
       contar((q) => q.eq("tipo", "venda_atipica").in("status", ["pendente", "registrado"])),
       pendentes("sku_inativado_omie"),
