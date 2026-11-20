@@ -11,7 +11,12 @@ const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
 
 function mockUpdate(eqResult: { error: unknown }) {
-  const eqFn = vi.fn().mockResolvedValue(eqResult);
+  // .eq() encadeável e "aguardável" (o rollback filtra por id E pelo carimbo)
+  const encadeado: { eq: ReturnType<typeof vi.fn>; then: Promise<unknown>['then'] } = {
+    eq: vi.fn(),
+    then: (ok, erro) => Promise.resolve(eqResult).then(ok, erro),
+  };
+  const eqFn = encadeado.eq.mockImplementation(() => encadeado);
   const updateFn = vi.fn().mockReturnValue({ eq: eqFn });
   mockedFrom.mockReturnValue({ update: updateFn } as never);
   return { updateFn, eqFn };
@@ -48,5 +53,14 @@ describe('softDeleteOrder', () => {
     expect(r).toEqual({ ok: false, stage: 'omie', message: 'omie down' });
     expect(updateFn).toHaveBeenCalledTimes(2); // soft-delete + rollback
     expect(updateFn).toHaveBeenLastCalledWith({ deleted_at: null });
+  });
+
+  it('rollback filtra pelo carimbo que ESTA chamada gravou — não desfaz marca de outra exclusão', async () => {
+    const { updateFn, eqFn } = mockUpdate({ error: null });
+    mockedInvoke.mockResolvedValue({ data: null, error: { message: 'omie down' } } as never);
+    await softDeleteOrder(order);
+    const carimbo = (updateFn.mock.calls[0][0] as { deleted_at: string }).deleted_at;
+    expect(typeof carimbo).toBe('string');
+    expect(eqFn.mock.calls).toEqual([['id', 'ord-1'], ['id', 'ord-1'], ['deleted_at', carimbo]]);
   });
 });

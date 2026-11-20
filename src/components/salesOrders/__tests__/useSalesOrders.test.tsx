@@ -65,6 +65,7 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 
+import { supabase } from '@/integrations/supabase/client';
 import { FEED_PAGE_SIZE, useSalesOrders } from '../useSalesOrders';
 
 const TOTAL = 6000;
@@ -236,5 +237,127 @@ describe('useSalesOrders — seleção e exclusão', () => {
     await waitFor(() => expect(pedidosDoFeed().length).toBeGreaterThan(0));
     await waitFor(() => expect(result.current.totalCount).toBe(TOTAL - 1));
     expect(result.current.orders).toHaveLength(FEED_PAGE_SIZE);
+  });
+});
+
+// Corrida apontada pelo Codex na revisão do #4030: exclusão individual e em lote do MESMO pedido
+// se sobrepondo (os dois cliques saem do mesmo render, antes do optimistic tirar a linha).
+describe('useSalesOrders — exclusão concorrente do mesmo pedido', () => {
+  const invoke = vi.mocked(supabase.functions.invoke);
+  type Resp = { data: unknown; error: unknown };
+  const chamadasExcluir = (id: string) =>
+    invoke.mock.calls.filter(([nome, opts]) =>
+      nome === 'omie-vendas-sync' && (opts as { body?: { action?: string; sales_order_id?: string } })?.body?.action === 'excluir_pedido'
+      && (opts as { body: { sales_order_id: string } }).body.sales_order_id === id);
+  /** O Omie fica pendurado até o teste soltar — a janela da corrida fica aberta de propósito. */
+  function omiePendurado(resp: Resp = { data: { success: true }, error: null }) {
+    let soltar!: () => void;
+    const pendente = new Promise<Resp>((r) => { soltar = () => r(resp); });
+    invoke.mockImplementation((async (nome: string) =>
+      nome === 'omie-vendas-sync' ? pendente : { data: { logos: {} }, error: null }) as never);
+    return () => soltar();
+  }
+  const updatesDeSalesOrders = () => fake.pedidos.filter((p) => p.tabela === 'sales_orders' && p.update);
+
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockImplementation((async () => ({ data: { logos: {} }, error: null })) as never);
+  });
+
+  it('individual + lote no mesmo instante: o Omie é chamado UMA vez e a trava solta no fim', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const alvo = result.current.orders[0];
+    act(() => result.current.toggleSelect(alvo, true));
+    const soltarOmie = omiePendurado();
+    let individual!: Promise<void>;
+    let lote!: Promise<void>;
+    act(() => {
+      individual = result.current.deleteOrder(alvo);
+      lote = result.current.deleteSelected();
+    });
+    await waitFor(() => expect(result.current.excluindoIds.has(alvo.id)).toBe(true));
+    soltarOmie();
+    await act(async () => { await Promise.all([individual, lote]); });
+    expect(chamadasExcluir(alvo.id)).toHaveLength(1);
+    expect(result.current.excluindoIds.size).toBe(0);
+  });
+
+  it('lote em voo + individual do mesmo pedido: o individual não dispara outra exclusão', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const [alvo, outro] = result.current.orders;
+    act(() => { result.current.toggleSelect(alvo, true); result.current.toggleSelect(outro, true); });
+    const soltarOmie = omiePendurado();
+    let lote!: Promise<void>;
+    act(() => { lote = result.current.deleteSelected(); });
+    await waitFor(() => expect(chamadasExcluir(alvo.id)).toHaveLength(1));
+    await act(() => result.current.deleteOrder(alvo)); // ex.: linha velha de outro ponto da tela
+    soltarOmie();
+    await act(async () => { await lote; });
+    expect(chamadasExcluir(alvo.id)).toHaveLength(1);
+    expect(chamadasExcluir(outro.id)).toHaveLength(1);
+    expect(result.current.excluindoIds.size).toBe(0);
+  });
+
+  it('lote parcialmente travado: leva só o livre, solta só o seu, e o travado segue travado (Codex P3)', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const [a, b] = result.current.orders;
+    // Omie pendurado POR pedido: cada um termina quando o teste mandar.
+    const soltarPor = new Map<string, () => void>();
+    invoke.mockImplementation((async (nome: string, opts: { body?: { sales_order_id?: string } }) => {
+      if (nome !== 'omie-vendas-sync') return { data: { logos: {} }, error: null };
+      const id = opts.body!.sales_order_id!;
+      return new Promise<Resp>((r) => soltarPor.set(id, () => r({ data: { success: true }, error: null })));
+    }) as never);
+    act(() => { result.current.toggleSelect(a, true); result.current.toggleSelect(b, true); });
+    let individual!: Promise<void>;
+    let lote!: Promise<void>;
+    act(() => { individual = result.current.deleteOrder(a); }); // A travado pelo individual
+    act(() => { lote = result.current.deleteSelected(); });     // lote [A, B] leva só B
+    await waitFor(() => expect(soltarPor.has(b.id)).toBe(true));
+    act(() => soltarPor.get(b.id)!());
+    await act(async () => { await lote; });
+    expect(result.current.excluindoIds.has(a.id)).toBe(true);  // o lote NÃO soltou o A
+    expect(result.current.excluindoIds.has(b.id)).toBe(false);
+    await waitFor(() => expect(soltarPor.has(a.id)).toBe(true));
+    act(() => soltarPor.get(a.id)!());
+    await act(async () => { await individual; });
+    expect(chamadasExcluir(a.id)).toHaveLength(1);
+    expect(chamadasExcluir(b.id)).toHaveLength(1);
+    expect(result.current.excluindoIds.size).toBe(0);
+  });
+
+  it('rollback individual só desfaz a marca que ESTA exclusão gravou (filtra pelo carimbo)', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const alvo = result.current.orders[0];
+    invoke.mockImplementation((async (nome: string) =>
+      nome === 'omie-vendas-sync' ? { data: null, error: { message: 'omie down' } } : { data: { logos: {} }, error: null }) as never);
+    fake.pedidos = [];
+    await act(() => result.current.deleteOrder(alvo));
+    const [marca, rollback] = updatesDeSalesOrders();
+    const carimbo = (marca.update as { deleted_at: string }).deleted_at;
+    expect(typeof carimbo).toBe('string');
+    expect(rollback.update).toEqual({ deleted_at: null });
+    expect(rollback.filtros).toEqual([['eq', 'id', alvo.id], ['eq', 'deleted_at', carimbo]]);
+  });
+
+  it('rollback do lote só desfaz a marca que ESTE lote gravou (filtra pelo carimbo)', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const alvo = result.current.orders[0];
+    act(() => result.current.toggleSelect(alvo, true));
+    invoke.mockImplementation((async (nome: string) =>
+      nome === 'omie-vendas-sync' ? { data: null, error: { message: 'omie down' } } : { data: { logos: {} }, error: null }) as never);
+    fake.pedidos = [];
+    await act(() => result.current.deleteSelected());
+    const [marca, rollback] = updatesDeSalesOrders();
+    const carimbo = (marca.update as { deleted_at: string }).deleted_at;
+    expect(typeof carimbo).toBe('string');
+    expect(rollback.update).toEqual({ deleted_at: null });
+    expect(rollback.in).toEqual(['id', [alvo.id]]);
+    expect(rollback.filtros).toEqual([['eq', 'deleted_at', carimbo]]);
   });
 });

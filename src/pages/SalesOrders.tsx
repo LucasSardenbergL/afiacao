@@ -44,6 +44,7 @@ const SalesOrders = () => {
     totalCount,
     deleteOrder,
     deleteSelected,
+    excluindoIds,
     handleShareOrder,
     printOrder,
     prefetchDetail,
@@ -162,6 +163,7 @@ const SalesOrders = () => {
                     onSelectChange={(v) => toggleSelect(order, v)}
                     onShare={() => handleShareOrder(order)}
                     onDelete={() => deleteOrder(order)}
+                    excluindo={order.origin === 'sales' && excluindoIds.has(order.id)}
                     onNavigate={navigate}
                     onOpenDetail={() => setDetailRow(order)}
                     onPrint={() => printOrder(order)}

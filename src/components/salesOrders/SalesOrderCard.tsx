@@ -57,6 +57,8 @@ interface SalesOrderCardProps {
   onSelectChange: (checked: boolean) => void;
   onShare: () => void;
   onDelete: () => void;
+  /** Exclusão deste pedido em voo: o "Excluir…" fica travado e diz "Excluindo…". */
+  excluindo?: boolean;
   onNavigate: (path: string) => void;
   onOpenDetail: () => void;
   onPrint: () => void;
@@ -71,6 +73,7 @@ export function SalesOrderCard({
   onSelectChange,
   onShare,
   onDelete,
+  excluindo = false,
   onNavigate,
   onOpenDetail,
   onPrint,
@@ -212,9 +215,10 @@ export function SalesOrderCard({
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onSelect={() => setConfirmandoExclusao(true)}
+                  disabled={excluindo}
                   className="text-status-error focus:text-status-error"
                 >
-                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Excluir…
+                  <Trash2 className="mr-2 h-3.5 w-3.5" /> {excluindo ? 'Excluindo…' : 'Excluir…'}
                 </DropdownMenuItem>
               </>
             )}
@@ -234,7 +238,7 @@ export function SalesOrderCard({
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancelar</AlertDialogCancel>
-              <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              <AlertDialogAction onClick={onDelete} disabled={excluindo} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                 Excluir
               </AlertDialogAction>
             </AlertDialogFooter>

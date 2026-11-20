@@ -10,12 +10,15 @@ export type SoftDeleteResult =
  *  1. UPDATE sales_orders SET deleted_at=now() (audit trail antes do Omie).
  *  2. Omie excluir_pedido.
  *  3. Se o Omie falha, rollback (deleted_at=null) — pedido volta a ativo.
- * Não mexe em cache/UI (responsabilidade do caller).
+ * O rollback só desfaz a marca que ESTA chamada gravou (`deleted_at` = o carimbo dela): se outra
+ * exclusão do mesmo pedido re-carimbou no meio, a marca é dela e quem decide é o desfecho dela.
+ * Não mexe em cache/UI (responsabilidade do caller — a trava por pedido mora no hook).
  */
 export async function softDeleteOrder(order: { id: string; omie_pedido_id: number | null }): Promise<SoftDeleteResult> {
+  const carimbo = new Date().toISOString();
   const { error: softErr } = await supabase
     .from('sales_orders')
-    .update({ deleted_at: new Date().toISOString() })
+    .update({ deleted_at: carimbo })
     .eq('id', order.id);
   if (softErr) return { ok: false, stage: 'supabase', message: softErr.message };
 
@@ -24,7 +27,11 @@ export async function softDeleteOrder(order: { id: string; omie_pedido_id: numbe
   });
   if (omieErr) {
     const message = (await mensagemDoErroEdge(omieErr)) ?? omieErr.message ?? String(omieErr);
-    const { error: rollbackErr } = await supabase.from('sales_orders').update({ deleted_at: null }).eq('id', order.id);
+    const { error: rollbackErr } = await supabase
+      .from('sales_orders')
+      .update({ deleted_at: null })
+      .eq('id', order.id)
+      .eq('deleted_at', carimbo);
     if (rollbackErr) {
       // o pedido continua no ERP mas ficou ESCONDIDO no app — dizer, nunca engolir
       return { ok: false, stage: 'omie', message: `${message} — e o pedido ficou oculto no app (falha ao desfazer: ${rollbackErr.message}). Avise o suporte.` };
