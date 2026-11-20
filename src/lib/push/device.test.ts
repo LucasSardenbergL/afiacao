@@ -8,7 +8,11 @@
  * Monta `window.PushManager`/`Notification`/`navigator.serviceWorker` para simular o suporte a
  * push. Escapou do grep por escrever `window` sem ponto (`defineGlobal(window, ...)`).
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+
+// Mock "achatado" de propósito: `vi.mocked(supabase.rpc)` carrega a união de TODAS as RPCs do types.ts, e a cada
+// RPC nova ela cresce até o TS2589 ("excessively deep") — medido quando o types.ts ganhou as RPCs do e-mail ao CRS.
+const rpcAchatado = () => vi.mocked(supabase.rpc) as unknown as Mock<(...args: unknown[]) => unknown>;
 
 // device.ts (e o logger que ele importa) tocam o supabase client no topo do
 // módulo — mockamos o mínimo pra o import não quebrar e pra observar a RPC.
@@ -77,7 +81,7 @@ describe('limparPushDoDevice — logout best-effort', () => {
 
     await limparPushDoDevice();
 
-    expect(vi.mocked(supabase.rpc)).toHaveBeenCalledWith('delete_push_subscription', {
+    expect(rpcAchatado()).toHaveBeenCalledWith('delete_push_subscription', {
       p_endpoint: 'https://push/abc',
     });
     expect(unsubscribe).toHaveBeenCalledOnce();
@@ -88,6 +92,6 @@ describe('limparPushDoDevice — logout best-effort', () => {
 
     await limparPushDoDevice();
 
-    expect(vi.mocked(supabase.rpc)).not.toHaveBeenCalled();
+    expect(rpcAchatado()).not.toHaveBeenCalled();
   });
 });
