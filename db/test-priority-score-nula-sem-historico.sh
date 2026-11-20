@@ -58,6 +58,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     echo "ok $s -> vermelho em $a"
   done
   echo "FALSIFICACAO: $((n_sab - falhas))/$n_sab sabotagens acusadas pelo assert certo"
+  echo "SABOTAGENS: $((n_sab - falhas)) vermelhas / $falhas falhas"
   [ "$falhas" -eq 0 ] || exit 1
   echo "FALSIFICACAO_PRIORITY_NULA_OK"
   exit 0
