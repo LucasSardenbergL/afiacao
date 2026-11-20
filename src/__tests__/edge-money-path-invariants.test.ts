@@ -5168,6 +5168,33 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     expect(exclusao.slice(existe, del), 'PV achado: recupera o vínculo e LANÇA (não apaga)').toMatch(/\.rpc\("atp_confirmar_pv"[\s\S]*throw new Error\(/);
     expect(exclusao, 'a janela de envio em curso precede a consulta').toMatch(/JANELA_ENVIO_EM_CURSO_MS[\s\S]*"ConsultarPedido"/);
   });
+
+  // Codex 2026-11-20 (P1): sem rastro ATP a consulta indeterminada SEGUIA para o DELETE físico.
+  it('consulta indeterminada RECUSA sempre — com ou sem rastro ATP (só a ausência afirmada apaga)', () => {
+    const ini = exclusao.indexOf('if (consulta.tipo === "indeterminado") {');
+    expect(ini, 'sentinela: achei o ramo indeterminado').toBeGreaterThan(-1);
+    const fim = exclusao.indexOf('if (consulta.tipo === "existe")', ini);
+    const ramo = exclusao.slice(ini, fim);
+    expect(ramo, 'REGRESSÃO: o ramo indeterminado não lança').toMatch(/throw new Error\(/);
+    // o throw não pode ficar condicionado ao rastro: tira os `if (...) { ... }` aninhados (contando
+    // chaves — o corpo tem `${...}`) e exige que o throw SOBREVIVA no nível do ramo
+    const semIfs = (() => {
+      let corpo = ramo.slice('if (consulta.tipo === "indeterminado") {'.length);
+      for (let i = corpo.search(/\bif\s*\(/); i > -1; i = corpo.search(/\bif\s*\(/)) {
+        let j = corpo.indexOf('{', i);
+        // `if` sem chaves (ex.: `if (x) throw ...`) não é removível: sobra e reprova abaixo
+        if (j === -1 || corpo.slice(i, j).includes(';')) break;
+        let prof = 1;
+        while (prof > 0 && ++j < corpo.length) prof += corpo[j] === '{' ? 1 : corpo[j] === '}' ? -1 : 0;
+        corpo = corpo.slice(0, i) + corpo.slice(j + 1);
+      }
+      return corpo;
+    })();
+    expect(semIfs, 'REGRESSÃO: a recusa voltou a depender do rastro ATP').toMatch(/throw new Error\(/);
+    // nada condicional sobra no nível do ramo: `if` sem chaves, ternário ou `&&` antes do throw
+    expect(semIfs, 'REGRESSÃO: condicional sem chaves no ramo indeterminado').not.toMatch(/\bif\s*\(|\?[^.]|&&/);
+    expect(ramo, 'REGRESSÃO: o ramo voltou a "seguir" para o DELETE').not.toMatch(/seguindo/);
+  });
 });
 
 // ── Exclusão de pedido no Omie (2026-10-11, founder + Codex): o app NÃO cancela no ERP ──
