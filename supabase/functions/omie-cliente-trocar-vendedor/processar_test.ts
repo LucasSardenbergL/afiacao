@@ -286,3 +286,12 @@ Deno.test("verificar decide o 'indeterminado': nada gravado → 'erro_omie'; gra
     igual(m.espelho.length, gravou ? 1 : 0, `espelho gravou=${gravou}`);
   }
 });
+
+Deno.test("fault na escrita + releitura sem o cliente → 'indeterminado' (nunca 'erro_omie'), e o bloco PARA", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN)], [2, cadastro(2, TATY_OBEN)]]);
+  const m = montar({ omie, candidatos: [cand(1), cand(2)], aoAlterar: () => { omie.delete(1); return { fault: "timeout" }; } });
+  const r = await processarBloco(params(APLICAR), m.d, OPC);
+  igual(r.itens.map((i) => i.status), ["indeterminado"], "indeterminado");
+  igual(m.recibos.get(1)!.status, "indeterminado", "recibo");
+  igual(m.chamadas.includes("Consultar:2"), false, "parou");
+});
