@@ -528,8 +528,8 @@ describe('guardrail money-path: trava de crédito Fase 2 (gate + log durável + 
     expect(src, 'a probe deveria expor gate_no_ar (existência do gate no build deployado)').toContain('gate_no_ar');
     expect(
       src,
-      'a probe não chama mais a RPC venda_gate_credito — deixou de provar mordida',
-    ).toMatch(/case "credito_gate_probe":[\s\S]{0,700}venda_gate_credito/);
+      'a probe não CHAMA mais a RPC do gate do grupo — deixou de provar mordida (comentário não conta)',
+    ).toMatch(/case "credito_gate_probe":[\s\S]{0,2500}\.rpc\("venda_gate_credito_grupo"/);
   });
 
   it('CANÁRIA read-only: a probe NÃO cria PV nem chama o Omie (dry-run seguro mesmo com gate fora do ar)', () => {

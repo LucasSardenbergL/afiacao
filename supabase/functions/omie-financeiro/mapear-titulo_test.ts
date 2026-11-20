@@ -15,3 +15,11 @@ Deno.test("lixo não numérico → null", () => assertEquals(valorDocumentoTitul
 Deno.test("negativo → null", () => assertEquals(valorDocumentoTitulo({ valor_documento: -5 }), null));
 Deno.test("valor_documento ilegível cai no nValorTitulo", () =>
   assertEquals(valorDocumentoTitulo({ valor_documento: "abc", nValorTitulo: 80 }), 80));
+Deno.test("false com fallback → usa o fallback (nunca 0)", () =>
+  assertEquals(valorDocumentoTitulo({ valor_documento: false, nValorTitulo: 500 }), 500));
+Deno.test("[] com fallback → usa o fallback (nunca 0)", () =>
+  assertEquals(valorDocumentoTitulo({ valor_documento: [], nValorTitulo: 500 }), 500));
+Deno.test("false sozinho → null", () => assertEquals(valorDocumentoTitulo({ valor_documento: false }), null));
+Deno.test("true/objeto → null", () => assertEquals(valorDocumentoTitulo({ valor_documento: true, nValorTitulo: {} }), null));
+Deno.test("string com vírgula decimal não é aceita (Omie manda ponto) → null", () =>
+  assertEquals(valorDocumentoTitulo({ valor_documento: "1.234,50" }), null));

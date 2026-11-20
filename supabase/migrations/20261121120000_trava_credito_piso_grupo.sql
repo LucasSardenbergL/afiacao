@@ -7,14 +7,28 @@
 -- Medido em prod (psql-ro, 2026-11-20): em 90 d, 93 pedidos (26 clientes,
 -- R$ 143.507) saíram numa conta do grupo para cliente com vencido > 60 d em OUTRA.
 --
--- Grupo = canônico + aliases fiscais com vínculo 'active' (customer_canonical_alias),
--- expandidos para os pares de omie_customer_account_map. 'inactive'/'conflict' NÃO
--- expandem (não fabrica vínculo — precisão > recall), mas o par do próprio pedido
--- sempre entra no escopo.
+-- Grupo = a RAIZ é o dono do PAR comprovado do pedido (omie_customer_account_map por
+-- (account, código) — o código vem da derivação por DOCUMENTO na edge), NUNCA o UUID gravado
+-- no pedido (sales_orders.customer_user_id pode ser o do VENDEDOR — P1 review Codex 2026-11-20).
+-- Da raiz: canônico + aliases fiscais 'active' (customer_canonical_alias) → seus pares no mapa.
+-- 'inactive'/'conflict' NÃO expandem (precisão > recall); o par do pedido sempre entra.
+-- Titularidade medida (psql-ro 2026-11-20): 1.633/1.633 aliases active têm o MESMO documento
+-- do profile do canônico; nenhum alias tem par próprio no mapa nem título fora dele.
+-- Exceção ANTERIOR a esta virada (aprovada vendo só o par) NÃO cobre dívida de OUTRA empresa.
 --
 -- venda_gate_credito(text,bigint,uuid) fica INTACTA: rollback = a edge volta a chamá-la.
 -- Prova PG17: db/test-trava-credito-piso-grupo.sh (asserts + falsificação).
 -- ============================================================
+
+-- Marco da virada: exceções criadas ANTES dele foram aprovadas vendo só a dívida do PAR.
+-- 1 linha, gravada quando a migration é aplicada (idempotente: re-aplicar não move o marco).
+CREATE TABLE IF NOT EXISTS public.credito_virada_grupo (
+  id boolean PRIMARY KEY DEFAULT true CHECK (id),
+  aplicada_em timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.credito_virada_grupo ENABLE ROW LEVEL SECURITY;
+-- sem policy: só as funções SECURITY DEFINER leem.
+INSERT INTO public.credito_virada_grupo (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION public.credito_grupo_pares(p_user_id uuid)
 RETURNS TABLE(company text, omie_codigo_cliente bigint, user_id uuid, origem text)
@@ -57,8 +71,7 @@ GRANT EXECUTE ON FUNCTION public.credito_grupo_pares(uuid) TO service_role;
 CREATE OR REPLACE FUNCTION public.venda_gate_credito_grupo(
   p_sales_order_id uuid,
   p_company text,
-  p_codigo bigint,
-  p_customer_user_id uuid
+  p_codigo bigint
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -75,21 +88,37 @@ DECLARE
   v_mais_antigo date;
   v_pares jsonb;
   v_excecao_id uuid;
+  v_excecao_criada timestamptz;
+  v_vencido_outros numeric;
+  v_virada timestamptz;
 BEGIN
   -- Corte em data civil de São Paulo (não UTC da sessão).
   v_corte := ((now() AT TIME ZONE 'America/Sao_Paulo')::date - 60);
 
-  SELECT EXISTS (SELECT 1 FROM public.credito_grupo_pares(p_customer_user_id))
+  -- Sem par comprovado não há raiz → nada a avaliar (a edge segura a EDIÇÃO nesse caso).
+  IF p_company IS NULL OR p_codigo IS NULL OR p_codigo <= 0 THEN
+    RETURN jsonb_build_object('bloqueado', false, 'vencido', null, 'titulos', 0,
+                              'vencimento_mais_antigo', null, 'excecao_id', null,
+                              'pares', '[]'::jsonb, 'grupo_resolvido', false,
+                              'motivo', 'sem_codigo');
+  END IF;
+
+  SELECT EXISTS (SELECT 1 FROM public.omie_customer_account_map m
+                  WHERE m.account = p_company AND m.omie_codigo_cliente = p_codigo)
     INTO v_grupo_resolvido;
 
-  -- Escopo = par do pedido ∪ pares do grupo (UNION deduplica → título conta 1 vez).
+  -- Escopo = par do pedido ∪ pares do grupo de CADA dono do par (UNION deduplica → título conta 1 vez).
   -- Vocabulário de status espelha OPEN_TITLE_STATUSES (src/lib/financeiro/titulo-status.ts).
-  WITH escopo AS (
+  WITH raizes AS (
+    SELECT DISTINCT m.user_id
+      FROM public.omie_customer_account_map m
+     WHERE m.account = p_company AND m.omie_codigo_cliente = p_codigo
+  ),
+  escopo AS (
     SELECT p_company AS company, p_codigo AS codigo
-     WHERE p_company IS NOT NULL AND p_codigo IS NOT NULL AND p_codigo > 0
     UNION
     SELECT g.company, g.omie_codigo_cliente
-      FROM public.credito_grupo_pares(p_customer_user_id) g
+      FROM raizes r, LATERAL public.credito_grupo_pares(r.user_id) g
   ),
   por_par AS (
     SELECT e.company, e.codigo,
@@ -115,15 +144,6 @@ BEGIN
     INTO v_n_escopo, v_vencido, v_titulos, v_mais_antigo, v_pares
     FROM por_par pp;
 
-  -- Sem nenhum par avaliável não há evidência possível → não bloqueia (precisão > recall).
-  -- A edge decide o que fazer com 'sem_codigo' (na edição com aumento provado, segura).
-  IF v_n_escopo = 0 THEN
-    RETURN jsonb_build_object('bloqueado', false, 'vencido', null, 'titulos', 0,
-                              'vencimento_mais_antigo', null, 'excecao_id', null,
-                              'pares', '[]'::jsonb, 'grupo_resolvido', v_grupo_resolvido,
-                              'motivo', 'sem_codigo');
-  END IF;
-
   IF v_vencido <= 0 THEN
     RETURN jsonb_build_object('bloqueado', false, 'vencido', 0, 'titulos', 0,
                               'vencimento_mais_antigo', null, 'excecao_id', null,
@@ -133,15 +153,27 @@ BEGIN
 
   -- Exceção aprovada PARA ESTE PEDIDO **E O PAR DO PEDIDO**, dentro da validade
   -- (mesma regra de venda_gate_credito; o gestor aprova vendo a dívida do grupo — ver UI).
-  IF p_company IS NOT NULL AND p_codigo IS NOT NULL THEN
-    SELECT x.id INTO v_excecao_id
-      FROM public.venda_excecao_credito x
-     WHERE x.sales_order_id = p_sales_order_id
-       AND x.company = p_company
-       AND x.omie_codigo_cliente = p_codigo
-       AND x.valido_ate > now()
-     ORDER BY x.created_at DESC
-     LIMIT 1;
+  SELECT x.id, x.created_at INTO v_excecao_id, v_excecao_criada
+    FROM public.venda_excecao_credito x
+   WHERE x.sales_order_id = p_sales_order_id
+     AND x.company = p_company
+     AND x.omie_codigo_cliente = p_codigo
+     AND x.valido_ate > now()
+   ORDER BY x.created_at DESC
+   LIMIT 1;
+
+  -- Exceção antiga + dívida em OUTRO par → não cobre (o gestor não viu essa dívida).
+  SELECT COALESCE(sum((e->>'vencido')::numeric), 0) INTO v_vencido_outros
+    FROM jsonb_array_elements(v_pares) e
+   WHERE NOT (e->>'company' = p_company AND (e->>'codigo')::bigint = p_codigo);
+  SELECT aplicada_em INTO v_virada FROM public.credito_virada_grupo;
+  -- Sem marco (linha apagada) → trata TODA exceção como antiga (lado seguro: não cobre o grupo).
+  IF v_excecao_id IS NOT NULL AND (v_virada IS NULL OR v_excecao_criada < v_virada) AND v_vencido_outros > 0 THEN
+    RETURN jsonb_build_object(
+      'bloqueado', true, 'vencido', v_vencido, 'titulos', v_titulos,
+      'vencimento_mais_antigo', v_mais_antigo, 'excecao_id', null,
+      'pares', v_pares, 'grupo_resolvido', v_grupo_resolvido,
+      'motivo', 'excecao_anterior_nao_cobre_grupo');
   END IF;
 
   RETURN jsonb_build_object(
@@ -157,5 +189,5 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint, uuid) FROM anon, authenticated, PUBLIC;
-GRANT EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint, uuid) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint) FROM anon, authenticated, PUBLIC;
+GRANT EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint) TO service_role;

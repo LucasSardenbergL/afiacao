@@ -24,6 +24,28 @@ export interface ContextoBloqueioCredito {
   pares?: Array<{ company: 'oben' | 'colacor' | 'colacor_sc'; vencido: number }>;
 }
 
+const EMPRESAS_GRUPO = ['oben', 'colacor', 'colacor_sc'] as const;
+
+/**
+ * Pares do grupo gravados pela edge no `detalhe` do log de bloqueio
+ * ("pares: colacor_sc/202=500, oben/100=150") — para o gestor REMOTO ver a dívida por empresa.
+ * Item ilegível é DESCARTADO (nunca vira R$ 0); nada legível → undefined (a UI mostra só o total).
+ */
+export function paresDoDetalheLog(detalhe: string | null | undefined): ContextoBloqueioCredito['pares'] {
+  if (!detalhe?.startsWith('pares: ')) return undefined;
+  const pares = detalhe
+    .slice('pares: '.length)
+    .split(', ')
+    .map((item) => {
+      const m = /^([a-z_]+)\/\d+=(\d+(?:\.\d+)?)$/.exec(item.trim());
+      if (!m || !(EMPRESAS_GRUPO as readonly string[]).includes(m[1])) return null;
+      const vencido = Number(m[2]);
+      return vencido > 0 ? { company: m[1] as (typeof EMPRESAS_GRUPO)[number], vencido } : null;
+    })
+    .filter((p): p is NonNullable<typeof p> => p !== null);
+  return pares.length > 0 ? pares : undefined;
+}
+
 /** Último bloqueio registrado pelo gate para o pedido (evidência p/ o fluxo /sales). */
 export function useBloqueioCreditoLog(salesOrderId: string, enabled: boolean) {
   return useQuery({
@@ -32,7 +54,7 @@ export function useBloqueioCreditoLog(salesOrderId: string, enabled: boolean) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('venda_bloqueio_credito_log')
-        .select('company, omie_codigo_cliente, vencido, titulos, created_at')
+        .select('company, omie_codigo_cliente, vencido, titulos, detalhe, created_at')
         .eq('sales_order_id', salesOrderId)
         .in('acao', ['bloqueado', 'bloqueado_edicao'])
         .order('created_at', { ascending: false })

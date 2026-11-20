@@ -170,7 +170,7 @@ VALUES ('$S1', 'oben', 101, 'cliente quita sexta', now() + interval '3 days', '1
 RESET ROLE;
 SQL
 }
-gate() { Pq -c "SELECT public.venda_gate_credito_grupo('$1', $2, $3, $4);"; }
+gate() { Pq -c "SELECT public.venda_gate_credito_grupo('$1', $2, $3);"; }
 J() { python3 -c "import sys,json; d=json.load(sys.stdin); v=d$1; print(v)"; }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -179,59 +179,73 @@ J() { python3 -c "import sys,json; d=json.load(sys.stdin); v=d$1; print(v)"; }
 asserts() {
   P -q -c "DELETE FROM public.venda_excecao_credito;"
   titulos
-  eq "A1 sem vencido em nenhum par → passa" "$(gate "$S1" "'oben'" 101 "'$C'" | J "['motivo']")" "sem_vencido_60d"
+  eq "A1 sem vencido em nenhum par → passa" "$(gate "$S1" "'oben'" 101 | J "['motivo']")" "sem_vencido_60d"
 
   titulos "oben:101:75:300"
-  local g; g=$(gate "$S1" "'oben'" 101 "'$C'")
+  local g; g=$(gate "$S1" "'oben'" 101)
   eq "A2 vencido no par do pedido → bloqueia" "$(echo "$g" | J "['bloqueado']")" "True"
   eq "A2b pares lista 1 empresa" "$(echo "$g" | J "['pares'].__len__()")" "1"
 
   titulos "colacor_sc:202:75:500"
-  g=$(gate "$S1" "'oben'" 101 "'$C'")
+  g=$(gate "$S1" "'oben'" 101)
   eq "A3 vencido SÓ na colacor_sc (alias active), pedido na oben → bloqueia [o furo]" "$(echo "$g" | J "['bloqueado']")" "True"
   eq "A3b par culpado = colacor_sc" "$(echo "$g" | J "['pares'][0]['company']")" "colacor_sc"
   eq "A3c vencido somado = 500" "$(echo "$g" | J "['vencido']")" "500"
   eq "A3d grupo_resolvido" "$(echo "$g" | J "['grupo_resolvido']")" "True"
 
-  eq "A4 chamado pelo ALIAS resolve o canônico → bloqueia" "$(gate "$S1" "'colacor_sc'" 202 "'$A1'" | J "['bloqueado']")" "True"
+  eq "A4 par do pedido de um ALIAS active resolve o canônico → bloqueia" "$(gate "$S1" "'colacor_sc'" 202 | J "['bloqueado']")" "True"
   titulos "oben:101:75:120"
-  eq "A4b alias enxerga a dívida do canônico" "$(gate "$S1" "'colacor_sc'" 202 "'$A1'" | J "['vencido']")" "120"
+  eq "A4b alias enxerga a dívida do canônico" "$(gate "$S1" "'colacor_sc'" 202 | J "['vencido']")" "120"
 
   titulos "oben:101:59:300"
-  eq "A5 vencido 59 d não bloqueia (corte SP)" "$(gate "$S1" "'oben'" 101 "'$C'" | J "['bloqueado']")" "False"
+  eq "A5 vencido 59 d não bloqueia (corte SP)" "$(gate "$S1" "'oben'" 101 | J "['bloqueado']")" "False"
+  titulos "oben:101:60:300"
+  eq "A5c vencido EXATO 60 d não bloqueia (fronteira <)" "$(gate "$S1" "'oben'" 101 | J "['bloqueado']")" "False"
   titulos "oben:101:61:300"
-  eq "A5b vencido 61 d bloqueia" "$(gate "$S1" "'oben'" 101 "'$C'" | J "['bloqueado']")" "True"
+  eq "A5b vencido 61 d bloqueia" "$(gate "$S1" "'oben'" 101 | J "['bloqueado']")" "True"
 
   titulos "colacor:303:75:700" "colacor:404:75:800"
-  eq "A6 alias CONFLICT/INACTIVE não expandem → passa" "$(gate "$S1" "'oben'" 101 "'$C'" | J "['bloqueado']")" "False"
-  eq "A6b mas o par do próprio pedido (colacor 303) é avaliado" "$(gate "$S1" "'colacor'" 303 "'$A2'" | J "['vencido']")" "700"
+  eq "A6 alias CONFLICT/INACTIVE não expandem → passa" "$(gate "$S1" "'oben'" 101 | J "['bloqueado']")" "False"
+  eq "A6b mas o par do próprio pedido (colacor 303) é avaliado" "$(gate "$S1" "'colacor'" 303 | J "['vencido']")" "700"
 
   titulos "oben:999:75:900"
-  eq "A6c dívida de cliente sem vínculo não vaza para o grupo" "$(gate "$S1" "'oben'" 101 "'$C'" | J "['bloqueado']")" "False"
+  eq "A6c dívida de cliente sem vínculo não vaza para o grupo" "$(gate "$S1" "'oben'" 101 | J "['bloqueado']")" "False"
 
   titulos "oben:101:75:100" "colacor_sc:202:80:50"
-  eq "A6d dívida de 2 empresas soma (150)" "$(gate "$S1" "'oben'" 101 "'$C'" | J "['vencido']")" "150"
-  eq "A6e título contado 1 vez quando par do pedido ∈ grupo" "$(gate "$S1" "'oben'" 101 "'$C'" | J "['titulos']")" "2"
+  eq "A6d dívida de 2 empresas soma (150)" "$(gate "$S1" "'oben'" 101 | J "['vencido']")" "150"
+  eq "A6e título contado 1 vez quando par do pedido ∈ grupo" "$(gate "$S1" "'oben'" 101 | J "['titulos']")" "2"
 
   titulos "colacor_sc:202:75:500"
   P -q -c "DELETE FROM public.venda_excecao_credito;"
   excecao_s1_oben
-  eq "A7 exceção do (pedido, par) libera mesmo com dívida no grupo" "$(gate "$S1" "'oben'" 101 "'$C'" | J "['motivo']")" "excecao_valida"
-  eq "A7b exceção NÃO vaza para outro pedido" "$(gate "$S2" "'oben'" 101 "'$C'" | J "['bloqueado']")" "True"
-  eq "A7c exceção NÃO vaza para outro par no mesmo pedido" "$(gate "$S1" "'colacor_sc'" 202 "'$C'" | J "['bloqueado']")" "True"
+  eq "A7 exceção do (pedido, par) libera mesmo com dívida no grupo" "$(gate "$S1" "'oben'" 101 | J "['motivo']")" "excecao_valida"
+  eq "A7b exceção NÃO vaza para outro pedido" "$(gate "$S2" "'oben'" 101 | J "['bloqueado']")" "True"
+  eq "A7c exceção NÃO vaza para outro par no mesmo pedido" "$(gate "$S1" "'colacor_sc'" 202 | J "['bloqueado']")" "True"
 
   local f
-  for f in "credito_grupo_pares(uuid)" "venda_gate_credito_grupo(uuid,text,bigint,uuid)"; do
+  for f in "credito_grupo_pares(uuid)" "venda_gate_credito_grupo(uuid,text,bigint)"; do
     eq "A8 anon NÃO executa $f" "$(Pq -c "SELECT has_function_privilege('anon','public.$f','EXECUTE');")" "f"
     eq "A8 authenticated NÃO executa $f" "$(Pq -c "SELECT has_function_privilege('authenticated','public.$f','EXECUTE');")" "f"
     eq "A8 service_role executa $f" "$(Pq -c "SELECT has_function_privilege('service_role','public.$f','EXECUTE');")" "t"
   done
 
-  titulos
-  eq "A9 sem código, user com par mas sem título → passa" "$(gate "$S1" "'oben'" NULL "'$X'::uuid" | J "['motivo']")" "sem_vencido_60d"
-  eq "A9b sem código e user nulo → sem_codigo" "$(gate "$S1" "'oben'" NULL "NULL::uuid" | J "['motivo']")" "sem_codigo"
   titulos "colacor_sc:202:75:500"
-  eq "A9c sem código MAS grupo vencido → bloqueia" "$(gate "$S1" "'oben'" NULL "'$C'" | J "['bloqueado']")" "True"
+  eq "A9 sem código → sem_codigo (nunca avalia 'qualquer par')" "$(gate "$S1" "'oben'" NULL | J "['motivo']")" "sem_codigo"
+  titulos "oben:555:75:400"
+  local g9; g9=$(gate "$S1" "'oben'" 555)
+  eq "A9b par sem dono no mapa: avalia só o par" "$(echo "$g9" | J "['vencido']")" "400"
+  eq "A9c … e grupo_resolvido=false" "$(echo "$g9" | J "['grupo_resolvido']")" "False"
+  titulos "colacor_sc:202:75:500"
+  eq "A10 raiz = dono do PAR: pedido no par de X não puxa dívida de C" "$(gate "$S1" "'oben'" 999 | J "['bloqueado']")" "False"
+
+  # exceção ANTERIOR à virada (aprovada vendo só o par) não cobre dívida de outra empresa
+  P -q -c "DELETE FROM public.venda_excecao_credito;"
+  excecao_s1_oben
+  P -q -c "UPDATE public.venda_excecao_credito SET created_at = now() - interval '1 day';"
+  eq "A7d exceção antiga + dívida só em OUTRA empresa → bloqueia" "$(gate "$S1" "'oben'" 101 | J "['motivo']")" "excecao_anterior_nao_cobre_grupo"
+  titulos "oben:101:75:300"
+  eq "A7e exceção antiga + dívida só no próprio par → libera" "$(gate "$S1" "'oben'" 101 | J "['motivo']")" "excecao_valida"
+  P -q -c "DELETE FROM public.venda_excecao_credito;"
 }
 
 echo "── asserts (controle) ──"
@@ -265,35 +279,43 @@ P -q -c "DELETE FROM public.venda_excecao_credito;"
 titulos "colacor_sc:202:75:500"
 sabota "F1 sem expansão de alias" \
   "t.replace(\"WHERE a.status = 'active'\n  )\n  SELECT\", \"WHERE false\n  )\n  SELECT\")" \
-  "gate '$S1' \"'oben'\" 101 \"'$C'\" | J \"['bloqueado']\"" "True"
+  "gate '$S1' \"'oben'\" 101 | J \"['bloqueado']\"" "True"
 
 titulos "colacor:303:75:700"
 sabota "F2 expande também CONFLICT" \
   "t.replace(\"JOIN canon c ON a.canonical_user_id = c.cid\n     WHERE a.status = 'active'\", \"JOIN canon c ON a.canonical_user_id = c.cid\n     WHERE a.status IN ('active','conflict')\")" \
-  "gate '$S1' \"'oben'\" 101 \"'$C'\" | J \"['bloqueado']\"" "False"
+  "gate '$S1' \"'oben'\" 101 | J \"['bloqueado']\"" "False"
 
-titulos "oben:101:59:300"
-sabota "F3 corte 58 d (off-by-one)" \
-  "t.replace(\"::date - 60)\", \"::date - 58)\")" \
-  "gate '$S1' \"'oben'\" 101 \"'$C'\" | J \"['bloqueado']\"" "False"
+titulos "oben:101:60:300"
+sabota "F3 fronteira < virou <=" \
+  "t.replace(\"AND f.data_vencimento < v_corte\", \"AND f.data_vencimento <= v_corte\")" \
+  "gate '$S1' \"'oben'\" 101 | J \"['bloqueado']\"" "False"
 
 titulos "colacor_sc:202:75:500"
 excecao_s1_oben
 sabota "F4 exceção sem filtro de par" \
-  "t.replace(\"AND x.company = p_company\n       AND x.omie_codigo_cliente = p_codigo\n\", \"\")" \
-  "gate '$S1' \"'colacor_sc'\" 202 \"'$C'\" | J \"['bloqueado']\"" "True"
+  "t.replace(\"AND x.company = p_company\n     AND x.omie_codigo_cliente = p_codigo\n\", \"\")" \
+  "gate '$S1' \"'colacor_sc'\" 202 | J \"['bloqueado']\"" "True"
 P -q -c "DELETE FROM public.venda_excecao_credito;"
 
 titulos "oben:101:75:100" "colacor_sc:202:80:50"
 sabota "F5 UNION ALL (título contado 2x)" \
-  "t.replace(\"WHERE p_company IS NOT NULL AND p_codigo IS NOT NULL AND p_codigo > 0\n    UNION\n\", \"WHERE p_company IS NOT NULL AND p_codigo IS NOT NULL AND p_codigo > 0\n    UNION ALL\n\")" \
-  "gate '$S1' \"'oben'\" 101 \"'$C'\" | J \"['titulos']\"" "2"
+  "t.replace(\"SELECT p_company AS company, p_codigo AS codigo\n    UNION\n\", \"SELECT p_company AS company, p_codigo AS codigo\n    UNION ALL\n\")" \
+  "gate '$S1' \"'oben'\" 101 | J \"['titulos']\"" "2"
 
 sabota "F6 REVOKE esquecido (authenticated executa)" \
-  "t.replace(\"REVOKE EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint, uuid) FROM anon, authenticated, PUBLIC;\", \"GRANT EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint, uuid) TO authenticated;\")" \
-  "Pq -c \"SELECT has_function_privilege('authenticated','public.venda_gate_credito_grupo(uuid,text,bigint,uuid)','EXECUTE');\"" "f"
+  "t.replace(\"REVOKE EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint) FROM anon, authenticated, PUBLIC;\", \"GRANT EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint) TO authenticated;\")" \
+  "Pq -c \"SELECT has_function_privilege('authenticated','public.venda_gate_credito_grupo(uuid,text,bigint)','EXECUTE');\"" "f"
 # F6 deixou o GRANT a authenticated colado (CREATE OR REPLACE preserva ACL) → limpa explicitamente
-P -q -c "REVOKE EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid,text,bigint,uuid) FROM authenticated;"
+P -q -c "REVOKE EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid,text,bigint) FROM authenticated;"
+titulos "colacor_sc:202:75:500"
+excecao_s1_oben
+P -q -c "UPDATE public.venda_excecao_credito SET created_at = now() - interval '1 day';"
+sabota "F7 sem a regra da virada (exceção antiga cobre o grupo)" \
+  "t.replace(\"(v_virada IS NULL OR v_excecao_criada < v_virada) AND\", \"false AND\")" \
+  "gate '$S1' \"'oben'\" 101 | J \"['motivo']\"" "excecao_anterior_nao_cobre_grupo"
+P -q -c "DELETE FROM public.venda_excecao_credito;"
+
 rm -rf "$SAB"
 
 echo "── re-prova pós-restauração ──"

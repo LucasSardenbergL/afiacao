@@ -270,6 +270,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/__tests__/edge-money-path-invariants.test.ts",
+      "src/hooks/__tests__/excecao-credito-pares-do-log.test.ts",
       "src/components/unified-order/__tests__/TierClienteBadge.estados.test.tsx",
       "src/components/unified-order/__tests__/CustomerSearch.teclado.test.tsx",
       "src/pages/__tests__/SalesProducts.catalogo-paginado.test.tsx",

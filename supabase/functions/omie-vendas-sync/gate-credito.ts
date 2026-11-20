@@ -2,8 +2,8 @@
 // Specs: docs/superpowers/specs/trava-credito-fase2.md (v1) +
 //        docs/superpowers/specs/2026-11-20-credito-ia-design.md §9.3/§9.4 (PR 1, 2026-11-20).
 // Prova PG17 da RPC: db/test-trava-credito-piso-grupo.sh. Regras:
-//  - piso = vencido > 60 d em QUALQUER par do grupo (canônico + aliases active), sem exceção
-//    deste pedido para o par do pedido;
+//  - piso = vencido > 60 d em QUALQUER par do grupo do DONO do par comprovado (canônico + aliases
+//    active), sem exceção deste pedido para o par. Nunca o UUID do pedido (pode ser o do vendedor);
 //  - FAIL-CLOSED: gate que não responde SEGURA o envio (`credito_indisponivel`) — antes liberava
 //    com log (P1 Codex 2026-11-20). O log de indisponibilidade é best-effort: o desfecho já é segurar;
 //  - bloqueio exige log DURÁVEL (a aprovação remota do gestor lê o último log do pedido).
@@ -52,21 +52,20 @@ export async function gateCredito(
   supabase: ClienteGate,
   args: {
     company: "oben" | "colacor";
+    /** Código Omie COMPROVADO do cliente nesta conta — o grupo é expandido a partir dele. */
     codigo: number | null;
-    customerUserId: string | null;
     salesOrderId: string;
     userId: string | null;
     contexto: "criacao" | "edicao";
   },
 ): Promise<DesfechoGate> {
-  const { company, codigo, customerUserId, salesOrderId, userId, contexto } = args;
+  const { company, codigo, salesOrderId, userId, contexto } = args;
   let gate: GateCreditoResultado;
   try {
     const { data, error } = await supabase.rpc("venda_gate_credito_grupo", {
       p_sales_order_id: salesOrderId,
       p_company: company,
       p_codigo: codigo,
-      p_customer_user_id: customerUserId,
     });
     if (error) throw new Error(error.message);
     if (!data || typeof (data as { bloqueado?: unknown }).bloqueado !== "boolean") {

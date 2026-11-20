@@ -46,7 +46,6 @@ function cliente(opts: {
 const ARGS = {
   company: "oben" as const,
   codigo: 101,
-  customerUserId: "c0000000-0000-0000-0000-000000000001",
   salesOrderId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
   userId: "u1",
   contexto: "criacao" as const,
@@ -81,7 +80,7 @@ Deno.test("T2c RPC devolve payload sem 'bloqueado' → SEGURA (não lê undefine
   assertEquals(r.permitido === false && r.motivo, "credito_indisponivel");
 });
 
-Deno.test("T3 RPC do grupo chamada com o cliente local (p_customer_user_id) e o par do pedido", async () => {
+Deno.test("T3 RPC do grupo chamada SÓ com o par comprovado (sem UUID do pedido)", async () => {
   const { c, chamadas } = cliente({ rpc: { data: { ...BLOQUEADO, bloqueado: false, pares: [] }, error: null } });
   await gateCredito(c, ARGS);
   assertEquals(chamadas[0].nome, "venda_gate_credito_grupo");
@@ -89,7 +88,6 @@ Deno.test("T3 RPC do grupo chamada com o cliente local (p_customer_user_id) e o 
     p_sales_order_id: ARGS.salesOrderId,
     p_company: "oben",
     p_codigo: 101,
-    p_customer_user_id: ARGS.customerUserId,
   });
 });
 

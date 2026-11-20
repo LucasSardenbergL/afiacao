@@ -3061,7 +3061,6 @@ Deno.serve(async (req) => {
         const credito = await gateCredito(supabaseAdmin, {
           company: account,
           codigo: ident.codigo_cliente,
-          customerUserId: soRow?.customer_user_id ?? null,
           salesOrderId: sales_order_id,
           userId,
           contexto: "criacao",
@@ -3531,23 +3530,31 @@ Deno.serve(async (req) => {
           parcelaNova: editParcela,
           parcelaOmie: omieParcelaEdit,
         })) {
-          // Sem codigo_cliente no consult, o GRUPO do cliente local ainda pode ser avaliado
-          // (antes: liberava com log). Grupo também vazio → 'sem_codigo' → SEGURA (fail-closed).
+          // Sem codigo_cliente no consult não há par COMPROVADO para expandir o grupo → a edição
+          // fica INDETERMINADA e é segurada (antes: liberava com log). P1 review Codex 2026-11-20.
+          if (omieCodigoClienteEdit === null) {
+            const { error: logErr } = await supabaseAdmin.from("venda_bloqueio_credito_log").insert({
+              company: editAccount,
+              omie_codigo_cliente: null,
+              sales_order_id: editSoId,
+              acao: "gate_indisponivel",
+              user_id: userId,
+              detalhe: "edicao: ConsultarPedido sem codigo_cliente — gate não avaliável, edição SEGURADA",
+            });
+            if (logErr) console.warn(`[gate-credito] log gate_indisponivel (edição sem código) falhou: ${logErr.message}`);
+            throw new Error(
+              `${MENSAGEM_CREDITO_INDISPONIVEL} (edição: cliente do pedido não identificado no Omie)`,
+            );
+          }
           const creditoEdit = await gateCredito(supabaseAdmin, {
             company: editAccount,
             codigo: omieCodigoClienteEdit,
-            customerUserId: (existingOrder as { customer_user_id?: string | null }).customer_user_id ?? null,
             salesOrderId: editSoId,
             userId,
             contexto: "edicao",
           });
           if (!creditoEdit.permitido && creditoEdit.motivo === "credito_indisponivel") {
             throw new Error(`${MENSAGEM_CREDITO_INDISPONIVEL} (${creditoEdit.detalhe})`);
-          }
-          if (creditoEdit.permitido && creditoEdit.gate.motivo === "sem_codigo") {
-            throw new Error(
-              `${MENSAGEM_CREDITO_INDISPONIVEL} (edição: cliente do pedido não identificado no Omie nem no grupo)`,
-            );
           }
           if (!creditoEdit.permitido) {
             result = { success: false, blocked: "credito", contexto: "edicao", gate: creditoEdit.gate };
@@ -4197,13 +4204,12 @@ Deno.serve(async (req) => {
           };
           break;
         }
-        // PR 1 (2026-11-20): prova o gate do GRUPO — `customer_user_id` opcional faz a probe
-        // morder por dívida em OUTRA conta do grupo (o furo fechado).
+        // PR 1 (2026-11-20): prova o gate do GRUPO — um `codigo` cuja dívida esteja SÓ numa conta
+        // irmã do grupo prova a mordida do furo fechado.
         const { data, error } = await supabaseAdmin.rpc("venda_gate_credito_grupo", {
           p_sales_order_id: crypto.randomUUID(),
           p_company: account,
           p_codigo: codigoProbe,
-          p_customer_user_id: typeof params.customer_user_id === "string" ? params.customer_user_id : null,
         });
         if (error) throw new Error(`credito_gate_probe: RPC venda_gate_credito_grupo falhou: ${error.message}`);
         const gp = data as { bloqueado?: boolean; motivo?: string } | null;

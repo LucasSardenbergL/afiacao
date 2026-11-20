@@ -25,8 +25,7 @@ import {
   useAprovarExcecaoCredito,
   useBloqueioCreditoLog,
   useExcecaoCreditoVigente,
-  type ContextoBloqueioCredito,
-} from '@/hooks/useExcecaoCredito';
+  type ContextoBloqueioCredito, paresDoDetalheLog } from '@/hooks/useExcecaoCredito';
 import { formatBRL, formatDate } from '@/lib/reposicao';
 import { track } from '@/lib/analytics';
 
@@ -107,6 +106,7 @@ export function ExcecaoCreditoDialog({
           nomeCliente: nomeCliente || 'Cliente',
           vencido: logQuery.data.vencido,
           titulos: logQuery.data.titulos,
+          pares: paresDoDetalheLog(logQuery.data.detalhe),
         }
       : null);
 

@@ -3,10 +3,15 @@
 // saldo 0 → o título vencido sumia da trava de crédito (P1 Codex 2026-11-20, spec crédito-IA §9.5).
 // Hoje há 0 títulos assim em prod (psql-ro 2026-11-20): o furo é latente, a guarda é na origem.
 
+// Só número ou string DECIMAL aceitos: `Number(false)`, `Number([])` e `Number("")` dão 0 (P1 review
+// Codex 2026-11-20 — `false`/`[]` com nValorTitulo: 500 viravam R$ 0).
+const DECIMAL = /^\s*\d+(\.\d+)?\s*$/;
+
 function numeroOuNull(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "string" && v.trim() === "") return null;
-  const n = typeof v === "number" ? v : Number(v);
+  let n: number;
+  if (typeof v === "number") n = v;
+  else if (typeof v === "string" && DECIMAL.test(v)) n = Number(v);
+  else return null;
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
