@@ -13928,6 +13928,39 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_situacao_passada: {
+        Row: {
+          cursor_cnpj: string
+          fatias_concluidas: boolean
+          fechamento: string
+          fotos: number
+          id: number
+          iniciada_em: string
+          lote: string
+          rodadas: number
+        }
+        Insert: {
+          cursor_cnpj: string
+          fatias_concluidas: boolean
+          fechamento: string
+          fotos: number
+          id?: number
+          iniciada_em: string
+          lote: string
+          rodadas: number
+        }
+        Update: {
+          cursor_cnpj?: string
+          fatias_concluidas?: boolean
+          fechamento?: string
+          fotos?: number
+          id?: number
+          iniciada_em?: string
+          lote?: string
+          rodadas?: number
+        }
+        Relationships: []
+      }
       radar_socios: {
         Row: {
           cpf_mascarado: string
@@ -16743,6 +16776,27 @@ export type Database = {
           request_id?: number | null
           status_envio_portal_no_disparo?: string | null
           tentativa_no_disparo?: number | null
+        }
+        Relationships: []
+      }
+      sayerlack_senha_portal_leituras: {
+        Row: {
+          id: number
+          lido_em: string
+          user_id: string
+          versao: string | null
+        }
+        Insert: {
+          id?: never
+          lido_em?: string
+          user_id: string
+          versao?: string | null
+        }
+        Update: {
+          id?: never
+          lido_em?: string
+          user_id?: string
+          versao?: string | null
         }
         Relationships: []
       }
