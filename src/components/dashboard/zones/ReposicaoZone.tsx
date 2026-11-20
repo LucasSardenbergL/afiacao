@@ -23,13 +23,13 @@ export function ReposicaoZone() {
       {!isLoading && !isError && (
         <>
           <CockpitKpiRow kpis={kpis} />
-          {/* Lista vazia por FALHA não é "Sem alertas ativos.": a leitura não aconteceu. Com parte lida, mostra o
+          {/* Lista vazia por FALHA não é "Nenhum pedido aguardando aprovação.": a leitura não aconteceu. Com parte lida, mostra o
               que veio e avisa que falta. */}
           {(!erroTopo || topItems.length > 0) && (
-            <CockpitTopList zone="reposicao" items={topItems} emptyLabel="Sem alertas ativos." />
+            <CockpitTopList zone="reposicao" items={topItems} emptyLabel="Nenhum pedido aguardando aprovação." />
           )}
           {erroTopo && (
-            <AvisoLeituraFalhou oque="os alertas de reposição" estado="erro" className="mx-4" testId="aviso-topo-falhou" />
+            <AvisoLeituraFalhou oque="os pedidos aguardando aprovação" estado="erro" className="mx-4" testId="aviso-topo-falhou" />
           )}
         </>
       )}

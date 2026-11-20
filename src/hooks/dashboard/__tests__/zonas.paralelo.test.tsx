@@ -118,7 +118,7 @@ describe('zonas da home — leituras independentes saem juntas', () => {
       esperadas: [
         'pedido_compra_sugerido:id',
         'eventos_outlier:id',
-        'eventos_outlier:id, tipo, sku_descricao, severidade:critico',
+        'pedido_compra_sugerido:id, fornecedor_nome, empresa, valor_total, num_skus',
         'fornecedor_aumento_anunciado:id',
       ],
     },
