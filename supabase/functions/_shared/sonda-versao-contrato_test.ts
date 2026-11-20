@@ -28,6 +28,7 @@ import * as capturaPrecos from "../sayerlack-captura-precos/versao.ts";
 import * as importarPedidoPortal from "../sayerlack-importar-pedido-portal/versao.ts";
 import * as varrerPedidosPortal from "../sayerlack-varrer-pedidos-portal/versao.ts";
 import * as encerrarCanceladoPortal from "../sayerlack-encerrar-cancelado-portal/versao.ts";
+import * as trocarVendedorOmie from "../omie-cliente-trocar-vendedor/versao.ts";
 import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
 import * as omieCliente from "../omie-cliente/versao.ts";
 import * as recommendMod from "../recommend/versao.ts";
@@ -327,6 +328,8 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // 2026-11-08 — nasce instrumentada (5.3): consulta o Omie e encerra no app pedido aceito no portal e cancelado no
   // fornecedor. Não escreve no Omie nem no portal; o efeito caro é encerrar (cancelado_humano) um pedido.
   { nome: "sayerlack-encerrar-cancelado-portal", mod: encerrarCanceladoPortal },
+  // 2026-11-20 — nasce instrumentada: ALTERA no Omie o vendedor do cadastro de clientes (AlterarCliente, em lote).
+  { nome: "omie-cliente-trocar-vendedor", mod: trocarVendedorOmie },
   // 2026-11-17 — lote 5 do rescan do scanner Lovable Security: as duas ganharam o gate de dono
   // (`_shared/dono-pela-rls.ts`) e, com ele, a sonda — sem marcador o deploy do conserto não seria
   // julgável. Ambas escrevem com service-role num registro cujo id vem do body.
@@ -1713,5 +1716,12 @@ Deno.test("sayerlack-encerrar-cancelado-portal: o EFEITO diz que ENCERRA e que n
   // O efeito caro é encerrar o pedido no app (sem volta pela tela); a recusa da sonda tem de dizer isso e o Omie.
   if (!/encerra/i.test(encerrarCanceladoPortal.EFEITO) || !/omie/i.test(encerrarCanceladoPortal.EFEITO)) {
     throw new Error(`EFEITO não menciona o encerramento e o Omie: ${encerrarCanceladoPortal.EFEITO}`);
+  }
+});
+
+Deno.test("omie-cliente-trocar-vendedor: o EFEITO diz que ALTERA o vendedor no Omie", () => {
+  // O efeito caro é regravar o cadastro do cliente no ERP; a recusa da sonda tem de dizer isso.
+  if (!/altera/i.test(trocarVendedorOmie.EFEITO) || !/omie/i.test(trocarVendedorOmie.EFEITO) || !/vendedor/i.test(trocarVendedorOmie.EFEITO)) {
+    throw new Error(`EFEITO não menciona a alteração do vendedor no Omie: ${trocarVendedorOmie.EFEITO}`);
   }
 });
