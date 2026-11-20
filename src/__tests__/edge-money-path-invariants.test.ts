@@ -5176,8 +5176,18 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     const fim = exclusao.indexOf('if (consulta.tipo === "existe")', ini);
     const ramo = exclusao.slice(ini, fim);
     expect(ramo, 'REGRESSÃO: o ramo indeterminado não lança').toMatch(/throw new Error\(/);
-    // o throw não pode ficar condicionado ao rastro: nenhum `if` envolvendo o throw
-    const semIfs = ramo.slice('if (consulta.tipo === "indeterminado") {'.length).replace(/if \([^)]*\) \{[^{}]*\}/g, '');
+    // o throw não pode ficar condicionado ao rastro: tira os `if (...) { ... }` aninhados (contando
+    // chaves — o corpo tem `${...}`) e exige que o throw SOBREVIVA no nível do ramo
+    const semIfs = (() => {
+      let corpo = ramo.slice('if (consulta.tipo === "indeterminado") {'.length);
+      for (let i = corpo.indexOf('if ('); i > -1; i = corpo.indexOf('if (')) {
+        let j = corpo.indexOf('{', i);
+        let prof = 1;
+        while (prof > 0 && ++j < corpo.length) prof += corpo[j] === '{' ? 1 : corpo[j] === '}' ? -1 : 0;
+        corpo = corpo.slice(0, i) + corpo.slice(j + 1);
+      }
+      return corpo;
+    })();
     expect(semIfs, 'REGRESSÃO: a recusa voltou a depender do rastro ATP').toMatch(/throw new Error\(/);
     expect(ramo, 'REGRESSÃO: o ramo voltou a "seguir" para o DELETE').not.toMatch(/seguindo/);
   });
