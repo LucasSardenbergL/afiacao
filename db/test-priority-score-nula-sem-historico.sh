@@ -64,6 +64,8 @@ if [ "${1:-}" = "--falsificar" ]; then
   exit 0
 fi
 
+export PGVER=17
+# shellcheck disable=SC1091  # caminho resolvido em runtime a partir de REPO_ROOT
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 PORT="${PGPORT_TEST:-5497}"
 SLUG="priority-nula-$$"
