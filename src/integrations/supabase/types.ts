@@ -8574,6 +8574,129 @@ export type Database = {
           },
         ]
       }
+      meta_potencial_carteira: {
+        Row: {
+          account: string
+          customer_user_id: string
+          mes: string
+          owner_user_id: string | null
+          segmento: string
+          versao: number
+        }
+        Insert: {
+          account: string
+          customer_user_id: string
+          mes: string
+          owner_user_id?: string | null
+          segmento: string
+          versao: number
+        }
+        Update: {
+          account?: string
+          customer_user_id?: string
+          mes?: string
+          owner_user_id?: string | null
+          segmento?: string
+          versao?: number
+        }
+        Relationships: []
+      }
+      meta_potencial_mensal: {
+        Row: {
+          account: string
+          base: number
+          calculado_em: string
+          esp_c: number | null
+          esp_d: number | null
+          id: number
+          inc_b: number
+          inc_c: number
+          inc_cross: number | null
+          inc_d: number
+          indice_sazonal: number | null
+          mes: string
+          meta: number | null
+          n_a: number
+          n_b: number
+          n_c: number
+          n_d: number
+          novos: number | null
+          owner_ativo: boolean
+          owner_user_id: string | null
+          taxa_c: number | null
+          taxa_d: number | null
+          versao: number
+        }
+        Insert: {
+          account: string
+          base: number
+          calculado_em?: string
+          esp_c?: number | null
+          esp_d?: number | null
+          id?: number
+          inc_b: number
+          inc_c: number
+          inc_cross?: number | null
+          inc_d: number
+          indice_sazonal?: number | null
+          mes: string
+          meta?: number | null
+          n_a: number
+          n_b: number
+          n_c: number
+          n_d: number
+          novos?: number | null
+          owner_ativo: boolean
+          owner_user_id?: string | null
+          taxa_c?: number | null
+          taxa_d?: number | null
+          versao: number
+        }
+        Update: {
+          account?: string
+          base?: number
+          calculado_em?: string
+          esp_c?: number | null
+          esp_d?: number | null
+          id?: number
+          inc_b?: number
+          inc_c?: number
+          inc_cross?: number | null
+          inc_d?: number
+          indice_sazonal?: number | null
+          mes?: string
+          meta?: number | null
+          n_a?: number
+          n_b?: number
+          n_c?: number
+          n_d?: number
+          novos?: number | null
+          owner_ativo?: boolean
+          owner_user_id?: string | null
+          taxa_c?: number | null
+          taxa_d?: number | null
+          versao?: number
+        }
+        Relationships: []
+      }
+      meta_potencial_visualizacao: {
+        Row: {
+          dia: string
+          n: number
+          user_id: string
+        }
+        Insert: {
+          dia: string
+          n?: number
+          user_id: string
+        }
+        Update: {
+          dia?: string
+          n?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       municipio_geo: {
         Row: {
           lat: number
@@ -9064,6 +9187,72 @@ export type Database = {
           documento?: string
           id?: never
           origem?: string
+        }
+        Relationships: []
+      }
+      omie_cliente_vendedor_troca: {
+        Row: {
+          account: string
+          atualizado_em: string
+          criado_em: string
+          customer_user_id: string | null
+          erro: string | null
+          espelho_ok: boolean | null
+          execucao_id: string
+          executado_por: string
+          hash_antes: string | null
+          hash_depois: string | null
+          id: number
+          lote: string
+          modo: string
+          omie_codigo_cliente: number
+          recomendacoes_antes: Json | null
+          status: string
+          vendedor_alvo: number
+          vendedor_antes: number | null
+          vendedor_depois: number | null
+        }
+        Insert: {
+          account: string
+          atualizado_em?: string
+          criado_em?: string
+          customer_user_id?: string | null
+          erro?: string | null
+          espelho_ok?: boolean | null
+          execucao_id: string
+          executado_por: string
+          hash_antes?: string | null
+          hash_depois?: string | null
+          id?: number
+          lote: string
+          modo: string
+          omie_codigo_cliente: number
+          recomendacoes_antes?: Json | null
+          status: string
+          vendedor_alvo: number
+          vendedor_antes?: number | null
+          vendedor_depois?: number | null
+        }
+        Update: {
+          account?: string
+          atualizado_em?: string
+          criado_em?: string
+          customer_user_id?: string | null
+          erro?: string | null
+          espelho_ok?: boolean | null
+          execucao_id?: string
+          executado_por?: string
+          hash_antes?: string | null
+          hash_depois?: string | null
+          id?: number
+          lote?: string
+          modo?: string
+          omie_codigo_cliente?: number
+          recomendacoes_antes?: Json | null
+          status?: string
+          vendedor_alvo?: number
+          vendedor_antes?: number | null
+          vendedor_depois?: number | null
         }
         Relationships: []
       }
@@ -24935,6 +25124,57 @@ export type Database = {
         Returns: boolean
       }
       _fin_estoque_tipo_fora: { Args: { p_tipo: string }; Returns: boolean }
+      _meta_potencial_calcular: {
+        Args: { p_mes: string }
+        Returns: {
+          account: string
+          base: number
+          esp_c: number
+          esp_d: number
+          inc_b: number
+          inc_c: number
+          inc_cross: number
+          inc_d: number
+          indice_sazonal: number
+          meta: number
+          n_a: number
+          n_b: number
+          n_c: number
+          n_d: number
+          novos: number
+          owner_ativo: boolean
+          owner_user_id: string
+          taxa_c: number
+          taxa_d: number
+        }[]
+      }
+      _meta_potencial_clientes: {
+        Args: { p_corte: string }
+        Returns: {
+          account: string
+          customer_user_id: string
+          n6: number
+          real_mes: number
+          rev6: number
+          segmento: string
+          tick12: number
+        }[]
+      }
+      _meta_potencial_dia_util: {
+        Args: { p_account: string; p_dia: string }
+        Returns: boolean
+      }
+      _meta_potencial_estreias: {
+        Args: { p_corte: string }
+        Returns: {
+          account: string
+          valor: number
+        }[]
+      }
+      _meta_potencial_mes_em: {
+        Args: { p_hoje: string; p_user: string }
+        Returns: Json
+      }
       _push_enviar: {
         Args: {
           p_corpo: string
@@ -26747,6 +26987,7 @@ export type Database = {
         Args: { p_termo: string }
         Returns: Json
       }
+      meta_potencial_mes: { Args: never; Returns: Json }
       minha_carteira: {
         Args: never
         Returns: {
