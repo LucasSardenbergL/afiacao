@@ -1,6 +1,7 @@
 # Foto RFB do Radar perto do teto (27m43s de 30 min em 17/11/2026) → aplicação em fatias
 
-**Migration:** `supabase/migrations/20261120170000_radar_situacao_em_fatias.sql` · **Prova:**
+**Migrations:** `supabase/migrations/20261120170000_radar_situacao_em_fatias.sql` (recibo db:aplicar #1224) e
+`20261120180000_radar_situacao_fatias_guc.sql` (a correção abaixo) · **Prova:**
 `db/test-radar-situacao-fatias.sh` · **Fixture:** `db/fixtures/radar-situacao-pendente-prod-20261120.sql` (corpos
 vivos, md5 `a99fd7db…` da pendente e `3b99d4dd…` da função de aplicação) · **Medição em prod:**
 `db/2026-11-20-radar-situacao-tick-medido.sql` (só `--ensaio`).
@@ -90,6 +91,20 @@ A 1ª versão usava cursor físico (TID Range Scan, como o score). O parecer ach
 | MÉDIO 9: B10b/B11b fracos | aceito | B10b exige 0 linha pendente nas fatias feitas; B11c compara o estado inteiro com a predecessora |
 | BAIXO 10: GUC enorme estoura `integer` | aceito | GUC limitada a 1–100.000 |
 
+## A medição em prod pegou o que a prova não via
+
+Logo depois do apply da 20261120170000, o `db/2026-11-20-radar-situacao-tick-medido.sql` em ensaio (ROLLBACK)
+mostrou **40.578 fatias numa chamada de 45 s**, uma por CNPJ. A trava da GUC de tamanho (Codex BAIXO 10) era
+`LEAST(100000, GREATEST(1, NULLIF(…)::integer))`. Sem a GUC, que é o caso do cron, isso dá **1**, porque `GREATEST` e
+`LEAST` ignoram NULL. A fatia ficava fixa em 1 e não adaptava. A prova definia a GUC em toda chamada, então o caminho
+de prod ficou fora dela. Não houve efeito: nenhum lote pendente entre os dois applies. A 20261120180000 troca só essa
+linha por um `CASE` (ausente → NULL → adaptativo). A prova ganhou G1, uma chamada sem a GUC em que a 1ª fatia tem
+1.000 CNPJs, e a sabotagem que devolve a expressão velha fica vermelha nela.
+
+**Lição:** a prova tem de exercer o caminho EXATO do chamador de prod. Aqui é o cron sem GUC, e não só a GUC que
+facilita o teste. `GREATEST`/`LEAST` com argumento possivelmente NULL é fabricação silenciosa, da família de
+`Number(null) === 0`.
+
 ## Folga
 
 - Por chamada: ≤ ~45 s de fatias, num teto de 5 min (~15%). A conclusão é a reconciliação (~8 s) mais os descartes.
@@ -100,7 +115,7 @@ A 1ª versão usava cursor físico (TID Range Scan, como o score). O parecer ach
 
 ## Prova
 
-`db/test-radar-situacao-fatias.sh`, PG17, nos dois locales, 33 asserts e 16 sabotagens com controle verde na mesma
+`db/test-radar-situacao-fatias.sh`, PG17, nos dois locales, 34 asserts e 17 sabotagens com controle verde na mesma
 invocação. Ela parte dos corpos de prod (A0, md5), roda a predecessora numa chamada só numa cópia do banco e a passada
 em fatias (100 CNPJs por chamada, orçamento 0) noutra, com um escritor que move de página todas as linhas ainda não
 feitas. Depois compara componente por componente: fotos e `updated_at`, contatos, alerta, `alertado_em`, marca e

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prova PG17 da migration 20261120170000_radar_situacao_em_fatias (medido em 2026-11-20: o cron
+# Prova PG17 das migrations 20261120170000_radar_situacao_em_fatias e 20261120180000_radar_situacao_fatias_guc (medido em 2026-11-20: o cron
 # radar-aplicar-situacao-diario levou 27m43s de 30 min no Mini em 17/11, regravando 573 mil linhas de radar_empresas
 # num UPDATE só). Parte dos corpos VIVOS de prod (fixture lida via psql-ro em 2026-11-20), aplica a migration REAL
 # duas vezes e assevera:
@@ -23,6 +23,7 @@
 #       sem abrir passada nova (B13b)
 #   C1  job: horário, comando com SET statement_timeout, ativo, dono postgres
 #   D1  radar_situacao_passada com RLS e fechada (authenticated → 42501) · D2 ACL e proconfig da função
+#   G1  sem a GUC de tamanho (o cron), a fatia é adaptativa: começa em 1.000 CNPJs, nunca 1 (20261120180000)
 #   E1  a fatia lê o lote pelo PK (cnpj, lote) a partir do cursor (auto_explain na função)
 #   F1  PRE: corpo vivo divergente da pendente ABORTA · F2 corpo vivo divergente da função de aplicação ABORTA
 # Fora da prova (por construção, sem como forçar a corrida): o "mais novo" lido no mesmo snapshot do FOR (Codex ALTO 2).
@@ -35,10 +36,11 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261120170000_radar_situacao_em_fatias.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20261120180000_radar_situacao_fatias_guc.sql"
 PRED="$REPO_ROOT/db/fixtures/radar-situacao-pendente-prod-20261120.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="marca_parcial:A3 sem_cursor:A2c sem_orcamento:A2a sem_guarda_lote:A1a sem_distinct:A1a,A1e abandona_passada:B7a aplica_superado:B8 trava_espera:B9 sem_tratar_trava:B10a conclusao_sem_tratar_trava:B11a validade_trava_lote:B13 ignora_trava_do_lote:B13b parcial_no_ledger:A2b conclusao_sem_funcao:A5 passada_aberta:D1 janela_errada:C1"
+  SABOTAGENS="marca_parcial:A3 sem_cursor:A2c sem_orcamento:A2a sem_guarda_lote:A1a sem_distinct:A1a,A1e abandona_passada:B7a aplica_superado:B8 trava_espera:B9 sem_tratar_trava:B10a conclusao_sem_tratar_trava:B11a validade_trava_lote:B13 ignora_trava_do_lote:B13b parcial_no_ledger:A2b conclusao_sem_funcao:A5 passada_aberta:D1 janela_errada:C1 guc_nula_vira_1:G1"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-sit-fatias.XXXXXX")"
   total_sab=$(( $(printf '%s\n' "$SABOTAGENS" | wc -w) ))
   sab_de=1; sab_ate=$total_sab
@@ -89,13 +91,18 @@ DATA="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-radar-sit-fatias.XXXXXX")/data"
 LOCALE_TESTE="${LOCALE_TESTE:-C}"
 export LC_ALL="$LOCALE_TESTE" LANG="$LOCALE_TESTE"
 MIG_USADA="$(dirname "$DATA")/mig.sql"
+MIG2_USADA="$(dirname "$DATA")/mig2.sql"
 PGLOG="$(dirname "$DATA")/pg.log"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 
 cp "$MIG" "$MIG_USADA"
-sabotar() { # $1 = de, $2 = para (literal; troca TODAS as ocorrências)
-  python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
+cp "$MIG2" "$MIG2_USADA"
+# $1 = de, $2 = para (literal; troca TODAS as ocorrências). O corpo VIVO é o da 20261120180000 (a 2ª): sabotagem de
+# corpo vai nela; ALVO_SAB=1 sabota a 1ª (tabela da passada e job, que só ela cria).
+sabotar() {
+  local alvo="$MIG2_USADA"; [ "${ALVO_SAB:-2}" = 1 ] && alvo="$MIG_USADA"
+  python3 -I - "$alvo" "$1" "$2" <<'PY'
 import sys
 p, de, para = sys.argv[1:]
 s = open(p, encoding="utf-8").read()
@@ -134,9 +141,12 @@ case "${SABOTAGEM:-}" in
       EXIT;" "      v_tem_passada := false;" ;;
   parcial_no_ledger)    cegar_md5; sabotar "      VALUES ('radar.aplicar_situacao_parcial'," "      VALUES ('radar.aplicar_situacao'," ;;
   conclusao_sem_funcao) cegar_md5; sabotar "        v_res := public.radar_aplicar_situacao(r.mes_referencia, p_agora);" "        v_res := jsonb_build_object('lote', r.mes_referencia, 'fotos_atualizadas', 0);" ;;
-  passada_aberta)       sabotar "REVOKE ALL ON TABLE public.radar_situacao_passada FROM PUBLIC, anon, authenticated;" "GRANT SELECT ON TABLE public.radar_situacao_passada TO authenticated;"
-                        sabotar "    RAISE EXCEPTION 'P2 FALHOU: radar_situacao_passada legível" "    RAISE NOTICE 'P2 FALHOU: radar_situacao_passada legível" ;;
-  janela_errada)        sabotar "'2-59/5 0-5,7-10 * * *'" "'5 6 * * *'" ;;
+  passada_aberta)       ALVO_SAB=1 sabotar "REVOKE ALL ON TABLE public.radar_situacao_passada FROM PUBLIC, anon, authenticated;" "GRANT SELECT ON TABLE public.radar_situacao_passada TO authenticated;"
+                        ALVO_SAB=1 sabotar "    RAISE EXCEPTION 'P2 FALHOU: radar_situacao_passada legível" "    RAISE NOTICE 'P2 FALHOU: radar_situacao_passada legível" ;;
+  janela_errada)        ALVO_SAB=1 sabotar "'2-59/5 0-5,7-10 * * *'" "'5 6 * * *'" ;;
+  guc_nula_vira_1)      cegar_md5; sabotar "CASE WHEN NULLIF(current_setting('radar.situacao_linhas_fatia', true), '') IS NULL THEN NULL
+                  ELSE LEAST(100000, GREATEST(1, current_setting('radar.situacao_linhas_fatia', true)::integer)) END;" "LEAST(100000, GREATEST(1,
+                  NULLIF(current_setting('radar.situacao_linhas_fatia', true), '')::integer));" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
@@ -303,9 +313,9 @@ eq "B7' a predecessora aplicou dezembro depois de novembro (sanidade)" \
   "1/2026-12/t"
 
 # ── Migration (2×: idempotente) ─────────────────────────────────────────────────────────────────────────
-PD base -q -f "$MIG_USADA" >/dev/null
-if [ "$CORPO" = 0 ]; then PD base -q -f "$MIG_USADA" >/dev/null; fi
-for db in nova nb nc nd; do PD postgres -qc "CREATE DATABASE $db TEMPLATE base"; done
+PD base -q -f "$MIG_USADA" >/dev/null; PD base -q -f "$MIG2_USADA" >/dev/null
+if [ "$CORPO" = 0 ]; then PD base -q -f "$MIG2_USADA" >/dev/null; fi   # a viva re-aplicada = no-op (PRE aceita o próprio md5)
+for db in nova nb nc nd ng; do PD postgres -qc "CREATE DATABASE $db TEMPLATE base"; done
 
 # Uma chamada em <db> com fatia ($2 CNPJs) e orçamento ($3).
 T() { PDq "$1" -c "SET statement_timeout = '60s'; SET radar.situacao_linhas_fatia = '$2'; SET radar.situacao_orcamento = '$3'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text"; }
@@ -460,6 +470,11 @@ while [ "$(PDq nb -c "SELECT coalesce((situacao_aplicada_fechamento = finalizado
 done
 eq "B7b novembro concluído e dezembro aplicado depois: estado = predecessora aplicando os dois em sequência" \
   "$(tudo nb)" "$(tudo pred7)"
+
+# G1: sem a GUC de tamanho (como no cron), a 1ª fatia é a adaptativa de 1.000 CNPJs — nunca 1 (20261120180000).
+JG="$(PDq ng -c "SET radar.situacao_orcamento = '0'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text")"
+eq "G1 sem GUC a 1ª fatia tem 1.000 CNPJs (1 fatia, cursor no 1.000º)" \
+  "$(J "$JG" parcial,fatias_nesta_rodada)/$(cursor ng)" "1/2026-11|$(pos 2026-11 1000)"
 
 # B8: sem passada, dois lotes pendentes → o mais velho é superado e o mais novo abre a passada.
 PDq nd -c "$DEZ_SQL" >/dev/null
