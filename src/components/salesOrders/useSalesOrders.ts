@@ -6,7 +6,7 @@
 // cada abertura (1,19 MB) e filtrava em JS — a busca não achava pedido fora desse recorte
 // (plano v4, lote 8 — C3). A busca compara com a coluna `busca` da view (migration 20261101221452).
 // Spec original da view: docs/superpowers/specs/2026-06-06-order-feed-view-unificada-design.md
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -222,7 +222,33 @@ export function useSalesOrders() {
   };
   const reconciliar = () => queryClient.invalidateQueries({ queryKey: feedKeyBase });
 
+  // Trava por pedido, COMPARTILHADA entre a exclusão individual e a em lote, e adquirida antes do
+  // 1º await: duas exclusões do MESMO pedido não se sobrepõem (cada uma re-carimbaria deleted_at e
+  // o rollback de uma brigaria com o desfecho da outra). O ref é a trava (síncrona); o estado só
+  // pinta o "Excluindo…" na UI.
+  const travaExclusao = useRef(new Set<string>());
+  const [excluindoIds, setExcluindoIds] = useState<ReadonlySet<string>>(() => new Set());
+  const travar = (ids: string[]): string[] => {
+    const livres = ids.filter((id) => !travaExclusao.current.has(id));
+    livres.forEach((id) => travaExclusao.current.add(id));
+    if (livres.length > 0) setExcluindoIds(new Set(travaExclusao.current));
+    return livres;
+  };
+  const soltar = (ids: string[]) => {
+    ids.forEach((id) => travaExclusao.current.delete(id));
+    setExcluindoIds(new Set(travaExclusao.current));
+  };
+
   const deleteOrder = async (row: OrderFeedRow) => {
+    if (travar([row.id]).length === 0) return; // já há uma exclusão deste pedido em voo
+    try {
+      await excluirUm(row);
+    } finally {
+      soltar([row.id]);
+    }
+  };
+
+  const excluirUm = async (row: OrderFeedRow) => {
     // Cancela refetch em voo: uma resposta antiga chegando após o optimistic
     // recolocaria o pedido excluído (codex P1).
     await queryClient.cancelQueries({ queryKey: feedKeyBase });
@@ -246,7 +272,22 @@ export function useSalesOrders() {
   // Bulk delete — sequencial pra não floodar o Omie. Mostra progresso.
   const deleteSelected = async () => {
     if (selecionados.size === 0) return;
-    const toDelete = [...selecionados.values()].filter((r) => r.origin === 'sales');
+    const candidatos = [...selecionados.values()].filter((r) => r.origin === 'sales');
+    // Pedido com exclusão já em voo fica com ela; o lote só leva os livres (e solta só os seus).
+    const livres = new Set(travar(candidatos.map((o) => o.id)));
+    const toDelete = candidatos.filter((o) => livres.has(o.id));
+    if (toDelete.length === 0) {
+      setSelecionados(new Map());
+      return;
+    }
+    try {
+      await excluirLote(toDelete);
+    } finally {
+      soltar([...livres]);
+    }
+  };
+
+  const excluirLote = async (toDelete: OrderFeedRow[]) => {
     const deleteIds = new Set(toDelete.map((o) => o.id));
     // Cancela refetch em voo (resposta antiga reporia os excluídos — codex P1).
     await queryClient.cancelQueries({ queryKey: feedKeyBase });
@@ -294,7 +335,12 @@ export function useSalesOrders() {
     // Rollback do soft-delete só pros que falharam no Omie
     let rollbackFalhou: string | null = null;
     if (failedIds.length > 0) {
-      const { error: rbErr } = await supabase.from('sales_orders').update({ deleted_at: null }).in('id', failedIds);
+      // Só desfaz a marca que ESTE lote gravou (mesmo carimbo) — nunca a de outra exclusão.
+      const { error: rbErr } = await supabase
+        .from('sales_orders')
+        .update({ deleted_at: null })
+        .in('id', failedIds)
+        .eq('deleted_at', nowIso);
       if (rbErr) rollbackFalhou = rbErr.message;
     }
     const detalhe = [
@@ -352,6 +398,7 @@ export function useSalesOrders() {
     totalCount,
     deleteOrder,
     deleteSelected,
+    excluindoIds,
     handleShareOrder,
     printOrder,
     prefetchDetail,
