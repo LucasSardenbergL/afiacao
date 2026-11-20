@@ -93,6 +93,7 @@ import * as enviarPush from "../enviar-push/versao.ts";
 import * as nvoipCalls from "../nvoip-calls/versao.ts";
 import * as nvoipSipCreds from "../nvoip-sip-creds/versao.ts";
 import * as dispatchNotif from "../dispatch-notifications/versao.ts";
+import * as emailCrsAjusteLote from "../email-crs-ajuste-lote/versao.ts";
 import * as sondaRelay from "../sonda-relay/versao.ts";
 import * as identifyTool from "../identify-tool/versao.ts";
 import * as analyzeServices from "../analyze-services/versao.ts";
@@ -331,6 +332,9 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // julgável. Ambas escrevem com service-role num registro cujo id vem do body.
   { nome: "kb-ingest-document", mod: kbIngestDocument },
   { nome: "extrair-sinais-ligacao", mod: extrairSinaisLigacao },
+  // Fase 2a do lote mínimo (2026-11-20): e-mail ao FORNECEDOR (crs@sayerlack) pelo Gmail do founder — irreversível
+  // fora do nosso banco. Gate `authorizeCronOrStaff`, como as da 11ª leva.
+  { nome: "email-crs-ajuste-lote", mod: emailCrsAjusteLote },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -416,6 +420,7 @@ const ESCRITA_NOSSO_BANCO = [
   "enviar-push",
   "nvoip-calls",
   "dispatch-notifications",
+  "email-crs-ajuste-lote",
   // 13ª leva: grava o webhook bruto em `whatsapp_webhook_events`, cria conversas e mensagens e
   // escreve o `opt_in_status` — é ali que o STOP do cliente vira `opt_out` (LGPD) — além do status
   // de entrega dos templates. Entra em GATE_PROPRIO: o gate dela é o `x-whatsapp-secret`.

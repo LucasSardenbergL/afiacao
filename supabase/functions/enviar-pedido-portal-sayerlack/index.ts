@@ -2600,6 +2600,11 @@ async function processarPedido(
     } catch (e) {
       console.error(`[envio-portal] Pedido #${pedido.id}: falha best-effort na captura de custo:`, e instanceof Error ? e.message : String(e));
     }
+    // Fase 2a (lote mínimo): com o sucesso_portal GRAVADO e o ledger provado, publica a autorização do e-mail ao CRS
+    // (1 por pedido). O banco reconfere tudo; recusa/erro aqui não envia nada e o varredor SQL alerta "envie à mão".
+    if (ajustesLeitura.validos.length > 0) {
+      await autorizarEmailCrs(supabase, pedido.id, envelope.protocolo ?? null, ajustesLeitura.validos.length);
+    }
     await registrarPedidoOmieAposPortal(pedido);
     return r;
   }
@@ -2664,6 +2669,31 @@ async function processarPedido(
   );
   rFinal.erro_tipo = evidence?.erroTipo ?? null;
   return rFinal;
+}
+
+// Fase 2a (lote mínimo): autoriza o e-mail automático ao CRS. Best-effort por desenho: falhar aqui = nenhum e-mail
+// automático (o seguro), e o ciclo SQL `ajuste_lote_email_ciclo` alerta o founder em 30 min para enviar à mão.
+async function autorizarEmailCrs(
+  supabase: SupabaseClient,
+  pedidoId: number,
+  protocolo: string | null,
+  nAjustes: number,
+): Promise<void> {
+  if (protocolo == null) return;
+  try {
+    const { data, error } = await supabase.rpc("ajuste_lote_email_autorizar", {
+      p_pedido_id: pedidoId,
+      p_protocolo: String(protocolo),
+      p_n_ajustes: nAjustes,
+    });
+    if (error) {
+      console.error(`[envio-portal] Pedido #${pedidoId}: autorizar e-mail ao CRS falhou (${error.code ?? "sem código"}): ${error.message}`);
+    } else {
+      console.log(`[envio-portal] Pedido #${pedidoId}: e-mail ao CRS -> ${String(data)}`);
+    }
+  } catch (e) {
+    console.error(`[envio-portal] Pedido #${pedidoId}: exceção ao autorizar e-mail ao CRS:`, mensagemDeErro(e));
+  }
 }
 
 // Fase 1 (lote mínimo): grava 1 linha por item ajustado em `pedido_portal_ajuste_qtde` (1 escritor: esta edge) e
@@ -2732,6 +2762,8 @@ async function registrarAjustesLote(
     ajustes: leitura.validos.map((a) => ({ ...a, descricao: itensList[a.idx]?.sku_descricao ?? null })),
     invalidos: leitura.invalidos,
     ledgerGravado: ok,
+    // Fase 2a: só o caminho que vai AUTORIZAR o envio (sucesso_portal + protocolo + ledger provado) diz "automático".
+    emailAutomatico: ok && ctx.statusEnvio === "sucesso_portal" && ctx.protocolo != null && leitura.validos.length > 0,
   });
   const { error: eAlerta } = await supabase.from("fornecedor_alerta").insert({
     empresa: "OBEN",

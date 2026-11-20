@@ -275,6 +275,20 @@ describe('decidirAlertaAjusteLote', () => {
     expect(a.mensagem).toContain('NAO gravou');
     expect(a.mensagem).toContain('2 ajuste(s) com evidencia ilegivel');
   });
+  it('Fase 2a: com envio automático, manda NÃO enviar à mão e não traz o texto para copiar', () => {
+    const a = decidirAlertaAjusteLote({ ...base, emailAutomatico: true });
+    expect(a.mensagem).toContain('SAI AUTOMATICAMENTE');
+    expect(a.mensagem).toContain('NAO envie a mao');
+    expect(a.mensagem).not.toContain('ACAO: enviar');
+    expect(a.titulo).toContain('e-mail ao CRS automatico');
+  });
+  it('Fase 2a: automático só vale com protocolo, ledger gravado e zero ilegível — senão volta ao manual', () => {
+    for (const x of [{ protocolo: null }, { ledgerGravado: false }, { invalidos: 1 }]) {
+      const a = decidirAlertaAjusteLote({ ...base, emailAutomatico: true, ...x });
+      expect(a.mensagem).toContain('ACAO: enviar a crs@sayerlack.com.br');
+      expect(a.mensagem).not.toContain('SAI AUTOMATICAMENTE');
+    }
+  });
 });
 
 describe('decidirAlertaLoteMinimo com motivo (Fase 1)', () => {

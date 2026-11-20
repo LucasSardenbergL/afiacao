@@ -242,25 +242,34 @@ export function lerAjustesLoteDaEvidencia(
 }
 
 /**
- * Alerta do pedido EFETIVADO com ajuste de lote: o founder pede a redução ao CRS (Fase 2 automatiza).
- * Traz o texto pronto do e-mail. `ledgerGravado=false` ou `invalidos>0` = divergência sem registro
- * confiável → conferir no portal (e o Deno segura o PO, ver index.ts).
+ * Alerta do pedido EFETIVADO com ajuste de lote. Com `emailAutomatico` (Fase 2a: protocolo + ledger provado +
+ * sucesso_portal), o e-mail ao CRS sai sozinho pela edge `email-crs-ajuste-lote` e o alerta diz para NÃO enviar à
+ * mão (dois responsáveis = dois e-mails). Sem ele, traz o texto pronto para o founder enviar. `ledgerGravado=false`
+ * ou `invalidos>0` = divergência sem registro confiável → conferir no portal (e o Deno segura o PO, ver index.ts).
  */
 export function decidirAlertaAjusteLote(p: {
   protocolo: string | null;
   ajustes: Array<{ skuPortal: string; qtdeOriginal: number; lote: number; descricao?: string | null }>;
   invalidos: number;
   ledgerGravado: boolean;
+  emailAutomatico?: boolean;
 }): { titulo: string; mensagem: string; severidade: 'urgente' | 'atencao' } {
   const proto = p.protocolo ? p.protocolo : '(SEM PROTOCOLO - conciliar)';
   const linhas = p.ajustes.map(function (a) {
     return a.skuPortal + (a.descricao ? ' (' + a.descricao + ')' : '') + ': lancado ' + a.lote +
       ' UN pelo lote minimo, precisamos de ' + a.qtdeOriginal + ' UN';
   });
+  const automatico = p.emailAutomatico === true && !!p.protocolo && p.ledgerGravado && p.invalidos === 0;
   let msg = 'Pedido Sayerlack ' + proto + ' efetivado com ajuste de lote minimo. ' + linhas.join('; ') + '. ' +
-    'O PO do Omie vai com a qtde REAL. ACAO: enviar a crs@sayerlack.com.br, assunto "Alteracao de quantidade - Pedido ' +
-    proto + '": "Bom dia, no pedido ' + proto + ' ' + linhas.join('; ') + '. Conseguem alterar para a quantidade ' +
-    'que precisamos? Se nao for possivel, pedimos o cancelamento desse(s) item(ns)."';
+    'O PO do Omie vai com a qtde REAL. ';
+  if (automatico) {
+    msg += 'O e-mail a crs@sayerlack.com.br pedindo a reducao SAI AUTOMATICAMENTE em ate 5 min - NAO envie a mao. ' +
+      'Voce recebe o aviso "e-mail ao CRS enviado"; se ele nao chegar, o sistema alerta.';
+  } else {
+    msg += 'ACAO: enviar a crs@sayerlack.com.br, assunto "Alteracao de quantidade - Pedido ' +
+      proto + '": "Bom dia, no pedido ' + proto + ' ' + linhas.join('; ') + '. Conseguem alterar para a quantidade ' +
+      'que precisamos? Se nao for possivel, pedimos o cancelamento desse(s) item(ns)."';
+  }
   if (!p.ledgerGravado) {
     msg += ' ATENCAO: o registro do ajuste NAO gravou no sistema; o pedido foi para conciliacao e o PO do Omie ' +
       'NAO foi criado automaticamente.';
@@ -269,7 +278,9 @@ export function decidirAlertaAjusteLote(p: {
     msg += ' ATENCAO: ' + p.invalidos + ' ajuste(s) com evidencia ilegivel - conferir as quantidades no portal.';
   }
   return {
-    titulo: 'Sayerlack: pedido efetivado acima da necessidade (lote minimo) - pedir reducao ao CRS',
+    titulo: automatico
+      ? 'Sayerlack: pedido efetivado acima da necessidade (lote minimo) - e-mail ao CRS automatico'
+      : 'Sayerlack: pedido efetivado acima da necessidade (lote minimo) - pedir reducao ao CRS',
     mensagem: msg,
     severidade: 'urgente',
   };

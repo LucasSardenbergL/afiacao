@@ -260,6 +260,26 @@ O founder decidiu que o e-mail sai do Gmail pessoal dele. É a **mesma caixa** q
   pedido ao CRS em loop.
 - O founder escolhe entre comprar o lote, comprar de outra fonte ou esperar.
 
+### Fase 2a — implementada (2026-11-20)
+
+Codex no desenho reprovou o estado **por item**; ficou **por pedido** (1 e-mail listando os itens):
+
+- `pedido_portal_ajuste_email` (1 linha por pedido) guarda a trilha: reserva, `enviado_em`, `gmail_thread_id`,
+  Message-ID proposto e observado, resposta vista, cobranças. Write-once por trigger; DELETE proibido.
+- **Só o produtor novo autoriza**: a edge do portal (v1.18) chama `ajuste_lote_email_autorizar` depois de gravar
+  `sucesso_portal` com o ledger provado. O banco reconfere status, protocolo e o conjunto de itens (congelado).
+  Pedido em conciliação/sem protocolo **nunca** recebe e-mail automático: o alerta diz "envie à mão" e o ciclo SQL
+  lembra em 30 min.
+- Edge nova `email-crs-ajuste-lote`: reservar (commit) → **um** POST no Gmail → confirmar. Só 4xx libera;
+  timeout/rede/5xx = indeterminado → alerta "confira os Enviados", nunca reenvio.
+- **Dia útil** = data local de SP, feriados de `calendario_feriados`, a partir das 08:00. A `dias_uteis_entre` de prod
+  ignora feriado e depende do TimeZone da sessão: não é usada (hoje, 20/11, é feriado).
+- **Resposta vista sem a 2b**: e-mail de `@sayerlack.com.br` no `gmail_webhook_log` com `[AFI-<id>]` ou o protocolo
+  no assunto suspende a cobrança e alerta o founder. Caixa sem log há 24h → a cobrança vira só alerta.
+- O pedido 4557 (portal 2152582), enviado à mão, entrou como `origem='manual'` (thread desconhecido): nunca é
+  elegível ao envio e a cobrança dele é só alerta.
+- Prova: `db/test-lote-minimo-email-crs.sh` (68 asserções, `LC_ALL=C` e pt_BR, `--falsificar` 10/10 com controle).
+
 ### Fase 3 — resposta de cancelamento automática, condicionada a sinal
 
 - **O que muda:** a resposta "pedimos o cancelamento" a um `recusado` sai **sem clique**.
