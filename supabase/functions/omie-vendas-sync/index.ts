@@ -4045,17 +4045,18 @@ Deno.serve(async (req) => {
           } catch (e) {
             consulta = classificarErroConsultaExclusao(e);
           }
-          // Passou pelo gate ⇒ o envio pode ter acontecido: só a ausência AFIRMADA libera. Sem rastro
-          // nenhum (rascunho; ou o caso raro de trilha que falhou junto com o write-back) a consulta é
-          // de melhor esforço — travar a exclusão de rascunho por uma resposta que não sabemos ler
-          // seria pior; a mensagem vai ao log para a régua aprender o texto real do Omie.
+          // Só a ausência AFIRMADA libera o DELETE — com ou sem rastro ATP (Codex 2026-11-20, P1).
+          // Antes, sem rastro a consulta indeterminada SEGUIA ("rascunho"), mas a falta de rastro não
+          // prova ausência de envio (trilha que falhou junto com o write-back): o DELETE apagava a
+          // linha com o PV vivo no Omie. Rascunho de verdade responde "Não existem registros" ⇒
+          // ausente; recusar só custa um "tente de novo" quando o Omie está fora ou ilegível.
           if (consulta.tipo === "indeterminado") {
-            if (ultimoGate !== null) {
-              throw new Error(
-                `Exclusão recusada: não deu para confirmar no Omie se o pedido ${cCodIntPed} existe (${consulta.detalhe}). Tente de novo em instantes.`,
-              );
+            if (ultimoGate === null) {
+              console.warn(`[Omie Vendas][${orderAccount}] exclusão sem rastro de envio: consulta de ${cCodIntPed} indeterminada (${consulta.detalhe}) — recusada`);
             }
-            console.warn(`[Omie Vendas][${orderAccount}] exclusão sem rastro de envio: consulta de ${cCodIntPed} indeterminada (${consulta.detalhe}) — seguindo`);
+            throw new Error(
+              `Exclusão recusada: não deu para confirmar no Omie se o pedido ${cCodIntPed} existe (${consulta.detalhe}). Tente de novo em instantes.`,
+            );
           }
           if (consulta.tipo === "existe") {
             const cab = (consulta.consulta as { pedido_venda_produto?: { cabecalho?: { numero_pedido?: unknown } }; cabecalho?: { numero_pedido?: unknown } })
