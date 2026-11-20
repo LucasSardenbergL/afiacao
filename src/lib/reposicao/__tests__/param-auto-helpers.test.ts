@@ -2,7 +2,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   passaValidacao, disparaFusivel, fingerprintMaterial, pinBloqueia,
-  impactoSimulado, decideStatus, type SugestaoParam, type LimiaresFusivel,
+  impactoSimulado, decideStatus, descreverSegurado, rotuloRecorrencia,
+  type SugestaoParam, type LimiaresFusivel,
 } from '@/lib/reposicao/param-auto-helpers';
 
 const LIM: LimiaresFusivel = { mult: 3 };
@@ -113,5 +114,32 @@ describe('decideStatus (precedência: NULL → validação → base → pin → 
   });
   it('sem_mudanca quando a sugestão tem campo NULL (status != OK → mantém anterior)', () => {
     expect(decideStatus({ antes: ok, sugestao: { ...ok, estoque_maximo: null }, pin: null, limiares: LIM })).toBe('sem_mudanca');
+  });
+});
+
+describe('descreverSegurado (tela mostra o BARRADO, não depois=antes)', () => {
+  it('caso real 2026-11-20 (DILUENTE PU): máx 2 barrado em 14 → fator 7', () => {
+    const r = descreverSegurado({ estoque_maximo_antes: 2, estoque_maximo_sugerido: 14, ponto_pedido_antes: 1, ponto_pedido_sugerido: 5 });
+    expect(r).toEqual({ maxAtual: 2, maxBarrado: 14, ppAtual: 1, ppBarrado: 5, fator: 7 });
+  });
+  it('sugerido ausente (run antigo) → null, nunca 0', () => {
+    const r = descreverSegurado({ estoque_maximo_antes: 2, estoque_maximo_sugerido: null, ponto_pedido_antes: 1, ponto_pedido_sugerido: null });
+    expect(r.maxBarrado).toBeNull();
+    expect(r.ppBarrado).toBeNull();
+    expect(r.fator).toBeNull();
+  });
+  it('base zero → fator null (sem divisão por zero)', () => {
+    expect(descreverSegurado({ estoque_maximo_antes: 0, estoque_maximo_sugerido: 9, ponto_pedido_antes: 0, ponto_pedido_sugerido: 3 }).fator).toBeNull();
+  });
+});
+
+describe('rotuloRecorrencia', () => {
+  it('1 ciclo → novo hoje', () => expect(rotuloRecorrencia(1, '2026-11-20')).toBe('novo hoje'));
+  it('repetido → ciclos + data BR', () =>
+    expect(rotuloRecorrencia(45, '2026-10-07T10:00:00Z')).toBe('segurado em 45 ciclos desde 07/10/2026'));
+  it('sem data → só ciclos', () => expect(rotuloRecorrencia(3, null)).toBe('segurado em 3 ciclos'));
+  it('contagem desconhecida → null (não afirma "novo")', () => {
+    expect(rotuloRecorrencia(null, '2026-11-20')).toBeNull();
+    expect(rotuloRecorrencia(0, null)).toBeNull();
   });
 });

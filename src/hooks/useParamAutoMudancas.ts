@@ -42,6 +42,15 @@ export interface ParamAutoLog {
   classe_consolidada: string | null;
   revertido_em: string | null;
   revertido_por: string | null;
+  /** O que o cálculo propôs; para segurado = o valor que o fusível BARROU. Null em runs antigos. */
+  ponto_pedido_sugerido: number | null;
+  estoque_maximo_sugerido: number | null;
+}
+
+/** Recorrência do segurado: quantos runs já seguraram o SKU e desde quando. */
+export interface RecorrenciaSegurado {
+  ciclos: number;
+  desde: string | null;
 }
 
 export function useParamAutoMudancas(empresa = 'OBEN') {
@@ -75,7 +84,7 @@ export function useParamAutoMudancas(empresa = 'OBEN') {
       const { data, error } = await supabase
         .from('reposicao_param_auto_log')
         .select(
-          'id,run_id,empresa,sku_codigo_omie,sku_descricao,status,ponto_pedido_antes,ponto_pedido_depois,estoque_minimo_antes,estoque_minimo_depois,estoque_maximo_antes,estoque_maximo_depois,estoque_seguranca_antes,estoque_seguranca_depois,cobertura_antes,cobertura_depois,impacto_rs,qtde_compra_antes,qtde_compra_depois,custo_unitario,demanda_media_diaria,classe_consolidada,revertido_em,revertido_por',
+          'id,run_id,empresa,sku_codigo_omie,sku_descricao,status,ponto_pedido_antes,ponto_pedido_depois,estoque_minimo_antes,estoque_minimo_depois,estoque_maximo_antes,estoque_maximo_depois,estoque_seguranca_antes,estoque_seguranca_depois,cobertura_antes,cobertura_depois,impacto_rs,qtde_compra_antes,qtde_compra_depois,custo_unitario,demanda_media_diaria,classe_consolidada,revertido_em,revertido_por,ponto_pedido_sugerido,estoque_maximo_sugerido',
         )
         .eq('run_id', runId!)
         .order('impacto_rs', { ascending: false, nullsFirst: false });
@@ -153,9 +162,51 @@ export function useParamAutoMudancas(empresa = 'OBEN') {
     onError: (e: Error) => toast.error(`Falha ao despinar: ${e.message}`),
   });
 
+  // Recorrência dos segurados do run atual. Poucos SKUs por run (medido: 0–2) → 2 consultas
+  // agregadas por SKU (count exato + 1ª data), sem trazer as linhas (não esbarra no teto de 1.000).
+  // Falha → sem rótulo (null), nunca "novo hoje" fabricado.
+  const skusSegurados = (logQuery.data ?? [])
+    .filter((l) => l.status === 'segurado')
+    .map((l) => l.sku_codigo_omie)
+    .sort();
+  const recorrenciaQuery = useQuery({
+    queryKey: ['param-auto-segurado-recorrencia', empresa, skusSegurados],
+    enabled: skusSegurados.length > 0,
+    queryFn: async (): Promise<Record<string, RecorrenciaSegurado>> => {
+      const pares = await Promise.all(
+        skusSegurados.map(async (sku) => {
+          const [contagem, primeiro] = await Promise.all([
+            supabase
+              .from('reposicao_param_auto_log')
+              .select('id', { count: 'exact', head: true })
+              .eq('empresa', empresa)
+              .eq('sku_codigo_omie', sku)
+              .eq('status', 'segurado'),
+            supabase
+              .from('reposicao_param_auto_log')
+              .select('criado_em')
+              .eq('empresa', empresa)
+              .eq('sku_codigo_omie', sku)
+              .eq('status', 'segurado')
+              .order('criado_em', { ascending: true })
+              .limit(1)
+              .maybeSingle(),
+          ]);
+          if (contagem.error) throw new Error(contagem.error.message);
+          if (primeiro.error) throw new Error(primeiro.error.message);
+          if (contagem.count == null) throw new Error('contagem de segurados indisponível');
+          return [sku, { ciclos: contagem.count, desde: primeiro.data?.criado_em ?? null }] as const;
+        }),
+      );
+      return Object.fromEntries(pares);
+    },
+    staleTime: 60_000,
+  });
+
   return {
     run: runQuery.data ?? null,
     logs: logQuery.data ?? [],
+    recorrenciaSegurados: recorrenciaQuery.data ?? null,
     isLoading: runQuery.isLoading || (!!runId && logQuery.isLoading),
     reverter,
     reverterTudo,

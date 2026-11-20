@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { useParamAutoMudancas, type ParamAutoLog } from '@/hooks/useParamAutoMudancas';
+import { descreverSegurado, rotuloRecorrencia } from '@/lib/reposicao/param-auto-helpers';
 
 const fmtRs = (n: number | null): string =>
   n == null ? '—' : n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -88,7 +89,7 @@ function LogRow({
 
 export default function ParamAutoMudancas() {
   const empresa = 'OBEN';
-  const { run, logs, isLoading, reverter, reverterTudo, despinar } = useParamAutoMudancas(empresa);
+  const { run, logs, recorrenciaSegurados, isLoading, reverter, reverterTudo, despinar } = useParamAutoMudancas(empresa);
 
   if (isLoading) return <PageSkeleton variant="list" />;
 
@@ -149,19 +150,37 @@ export default function ParamAutoMudancas() {
             Segurados pelo fusível — confira ({segurados.length})
           </h2>
           <p className="text-xs text-muted-foreground mb-3">
-            Estes SKUs tiveram sugestão fora dos limites de segurança (salto &gt;3× ou cobertura &gt;120 dias) e
-            NÃO foram alterados. Revise manualmente se a mudança for desejada.
+            O cálculo quis subir o estoque máximo destes SKUs mais de 3× de uma vez, e o fusível
+            NÃO aplicou. Os parâmetros atuais seguem valendo; ajuste à mão em Parâmetros se o salto fizer sentido.
           </p>
-          <ul className="space-y-1">
-            {segurados.map((l) => (
-              <li key={l.id} className="text-sm font-tabular flex items-baseline gap-2">
-                <span className="text-muted-foreground min-w-[120px]">{l.sku_codigo_omie}</span>
-                <span className="text-foreground truncate flex-1">{l.sku_descricao ?? ''}</span>
-                <span className="text-muted-foreground whitespace-nowrap">
-                  máx atual {fmtNum(l.estoque_maximo_antes)} · sugestão {fmtNum(l.estoque_maximo_depois)}
-                </span>
-              </li>
-            ))}
+          <ul className="space-y-2">
+            {segurados.map((l) => {
+              const d = descreverSegurado(l);
+              const rec = recorrenciaSegurados?.[l.sku_codigo_omie];
+              const rotulo = rotuloRecorrencia(rec?.ciclos ?? null, rec?.desde ?? null);
+              return (
+                <li key={l.id} className="text-sm flex flex-col sm:flex-row sm:items-baseline gap-x-3 gap-y-0.5">
+                  <span className="font-tabular text-muted-foreground sm:min-w-[120px]">{l.sku_codigo_omie}</span>
+                  <span className="text-foreground truncate flex-1">
+                    {l.sku_descricao ?? ''}
+                    {rotulo && (
+                      <span className="ml-2 text-xs text-muted-foreground">· {rotulo}</span>
+                    )}
+                  </span>
+                  <span className="font-tabular text-muted-foreground whitespace-nowrap">
+                    {d.maxBarrado == null ? (
+                      <>máx atual {fmtNum(d.maxAtual)} · valor barrado não registrado</>
+                    ) : (
+                      <>
+                        máx {fmtNum(d.maxAtual)} → <span className="text-foreground">{fmtNum(d.maxBarrado)}</span> barrado
+                        {d.fator != null && <> ({d.fator.toLocaleString('pt-BR')}×)</>}
+                        {d.ppBarrado != null && <> · PP {fmtNum(d.ppAtual)} → {fmtNum(d.ppBarrado)}</>}
+                      </>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}
