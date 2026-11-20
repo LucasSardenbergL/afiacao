@@ -34,3 +34,10 @@ a cada expiração. Cobrar HTTPS da Sayerlack.
   ilegível. A sabotagem "erro na RPC cai no env" é pega por 3 testes.
 - **Não provado em produção até a 1ª expiração real:** o texto exato de sucesso/recusa do TOTVS. Por isso a classificação
   é conservadora (o que não for inequívoco é ambíguo e para tudo).
+
+## 1ª troca real — recusada (2026-11-20, rodada `c36305cb`)
+
+- Disparo manual às 01:15 UTC: o POST saiu (`cliqueFeito: true`), e o TOTVS devolveu a tela de troca com termo de recusa. A rotacionadora seguiu o previsto: descartou a candidata, mandou o alerta urgente, não mandou e-mail e pôs 6 h de quarentena.
+- **Prova de que não houve lockout:** um único login com a senha do env (`adotar_env`) devolveu `troca_de_senha`. A senha antiga segue valendo e só está vencida, então a candidata descartada nunca virou a senha ativa.
+- **Lacuna:** o texto da tela não era gravado, e o motivo exato ficou desconhecido. A página pública de troca não expõe regra nenhuma (só `maxlength=50`). A hipótese é exigência de caractere especial, porque a senha gerada só tinha letras e dígitos.
+- **v1.1-especial-e-motivo-da-recusa:** a senha gerada passa a ter ≥1 especial de `@#$%*!`. O texto da tela pós-troca vai para o diagnóstico e para o alerta como `texto_tela`, com toda ocorrência das duas senhas trocada por `[senha]`. Na 2ª recusa o motivo fica escrito.

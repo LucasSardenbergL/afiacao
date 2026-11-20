@@ -86,7 +86,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "sayerlack-captura-precos": "c329326b1d20b33af6aaf1325eafc586ffa30f2bdff29cf7f68951fb43a57c37",
   "sayerlack-encerrar-cancelado-portal": "8aff4ee2063aed9e583b6f4d69f4c09b127aa7b4d6a39697e095ae5f7d4df768",
   "sayerlack-importar-pedido-portal": "b42fdb1c2b7f597c309952dd2c815e33404122e6c6606b6e63ce611d9dc015bf",
-  "sayerlack-rotacionar-senha": "512116a31f7ba14cad7e81bce41e516e62feb715ec730dbeb6e84b6c72f44d6f",
+  "sayerlack-rotacionar-senha": "bbaf319f92c9a6fecb6b1827145004516046c7f71e4008a8bc123e54a4829995",
   "sayerlack-varrer-pedidos-portal": "84de9b055de2e269f13f59ce4be25254a890cabfb10bd15359ecec3e4bab6dcb",
   "scoring-recalc-batch": "3899eef2be43073b93b47445f4b36f29860c29f00b6d244cd2cffd0092bce4c6",
   "scoring-recalc-client": "f98c463750baa862a5072f00bac1400d7d77ff3c5e7a544c79873cadab296295",
