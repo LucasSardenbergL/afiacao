@@ -21,7 +21,7 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
 /** v1.16 (2026-11-16) — Codex revisão final, achado 2: a situação lida vai à evidência (`situacao_codigo`, coluna
  *  dedicada) e a importação manda o início da leitura (`p_lido_de`): a RPC recusa (IP010) se outra leitura viu o
  *  protocolo cancelado depois. Rótulo da diferença `sem_referencia_app` (achado 1). */
-export const VERSAO = "v1.16-cancelado-antes-do-pedido";
+export const VERSAO = "v1.17-senha-do-vault";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

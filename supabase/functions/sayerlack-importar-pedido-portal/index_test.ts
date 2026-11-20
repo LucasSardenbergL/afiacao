@@ -80,10 +80,14 @@ interface Cenario {
   sync?: () => Resposta;
   /** Evidências ANTERIORES do protocolo (default: nenhuma = 1ª tentativa). */
   anteriores?: () => Resposta;
+  /** Credencial do portal (default: Vault sem ativa ⇒ bootstrap pelo env, como antes da rotação). */
+  credencial?: () => Resposta;
 }
 
 function montar(c: Cenario) {
   const rotas: Record<string, Rota> = {
+    "rpc:sayerlack_senha_portal_credencial": () =>
+      c.credencial?.() ?? { corpo: [{ senha: null, origem: "env_bootstrap", bloqueio: null, rotacao_id: null }] },
     "rest:profiles": () => ({ corpo: [{ name: "Operador de teste" }] }),
     "POST rest:acoes_execucoes": () => ({ status: 201, corpo: [{ id: "reg-1" }] }),
     "PATCH rest:acoes_execucoes": () => ({ status: 204, corpo: null }),
@@ -143,6 +147,25 @@ Deno.test("1ª importação: grava pedido, grava a situação de novo pós-criar
   igual((falso.de(DISPARO)[0].corpo as { pedido_id: number }).pedido_id, 777, "disparo do pedido criado");
   const l = ledger(falso);
   igual([l.situacao_gravada, l.pedido_id, l.condicoes_opcoes], ["aceita", 777, ["70 - 7 DIAS", "30 DIAS"]], "ledger");
+});
+
+Deno.test("rotação de senha em curso: não abre o navegador, não grava nem dispara (409)", async () => {
+  const falso = montar({
+    porProtocolo: () => null,
+    credencial: () => ({ corpo: [{ senha: null, origem: null, bloqueio: "rotacao_em_andamento", rotacao_id: "r-1" }] }),
+  });
+  const r = await importar();
+  igual([r.status, r.corpo.ok, r.corpo.erro_tipo], [409, false, "CREDENCIAL_BLOQUEADA"], "bloqueada");
+  igual(falso.de(BROWSERLESS).length, 0, "sem Browserless");
+  igual(falso.de("rpc:sayerlack_importar_pedido_portal").length, 0, "não grava");
+  igual(falso.de(DISPARO).length, 0, "não dispara");
+});
+
+Deno.test("Vault ilegível: fail-closed (503), nunca cai na senha do env", async () => {
+  const falso = montar({ porProtocolo: () => null, credencial: () => ({ status: 500, corpo: { message: "boom" } }) });
+  const r = await importar();
+  igual([r.status, r.corpo.erro_tipo], [503, "CREDENCIAL_INDISPONIVEL"], "indisponível");
+  igual(falso.de(BROWSERLESS).length, 0, "sem Browserless");
 });
 
 Deno.test("Codex 2 (v1.16): a importação manda o início da leitura e a evidência grava a situação lida", async () => {

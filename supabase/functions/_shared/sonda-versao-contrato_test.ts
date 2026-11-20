@@ -75,6 +75,7 @@ import * as recurringOrders from "../process-recurring-orders/versao.ts";
 import * as programadoExtrair from "../pedido-programado-extrair/versao.ts";
 import * as promocaoVision from "../promocao-extrair-via-vision/versao.ts";
 import * as tintOmieSync from "../tint-omie-sync/versao.ts";
+import * as sayerlackRotacionarSenha from "../sayerlack-rotacionar-senha/versao.ts";
 import * as scoringRecalc from "../scoring-recalc-client/versao.ts";
 import * as visitScoreRecalc from "../visit-score-recalc-client/versao.ts";
 import * as biometricAuth from "../biometric-auth/versao.ts";
@@ -272,6 +273,7 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   { nome: "promocao-extrair-via-vision", mod: promocaoVision },
   // M-26, 1ª leva do Lote C: escrita no nosso banco, sem prova de deploy até aqui.
   { nome: "tint-omie-sync", mod: tintOmieSync },
+  { nome: "sayerlack-rotacionar-senha", mod: sayerlackRotacionarSenha },
   { nome: "scoring-recalc-client", mod: scoringRecalc },
   { nome: "visit-score-recalc-client", mod: visitScoreRecalc },
   // M-26, 2ª leva: gate próprio que não aceita cron (pré-login público; segredo de webhook).

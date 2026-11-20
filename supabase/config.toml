@@ -115,6 +115,10 @@ verify_jwt = false
 [functions.sayerlack-varrer-pedidos-portal]
 verify_jwt = false
 
+# Gate próprio (authorizeCronOrStaff): aceita x-cron-secret do SQL Editor para {"acao":"adotar_env"}.
+[functions.sayerlack-rotacionar-senha]
+verify_jwt = false
+
 [functions.promocao-extrair-via-vision]
 verify_jwt = false
 

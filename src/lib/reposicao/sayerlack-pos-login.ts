@@ -239,6 +239,15 @@ const ACAO_SENHA =
   'Edge Functions Secrets, 3) Em /admin/reposicao/pedidos, clicar em "Forcar reenvio ao portal" ' +
   'no pedido afetado.';
 
+// Senha EXPIRADA (não errada): a edge `sayerlack-rotacionar-senha` troca sozinha, prova a nova com
+// login real, manda a senha por e-mail e reenfileira os pedidos parados. Humano só se ela não fechar.
+const ACAO_SENHA_EXPIRADA =
+  'A troca automatica de senha foi solicitada: a senha nova chega por e-mail quando for ' +
+  'confirmada no portal, e os pedidos parados por isso voltam sozinhos para a fila. ' +
+  'SE NAO CHEGAR em 30 min: 1) Trocar senha no portal Sayerlack, 2) Atualizar ' +
+  'SAYERLACK_PORTAL_PASS no Supabase Edge Functions Secrets, 3) chamar a edge ' +
+  'sayerlack-rotacionar-senha com {"acao":"adotar_env"}.';
+
 /**
  * Decide se um `erroTipo` do automador merece `fornecedor_alerta` — e com que texto.
  *
@@ -262,7 +271,7 @@ export function decidirAlertaPortal(
       titulo: 'Portal Sayerlack exige troca de senha',
       mensagem:
         'O login em ' + portal + ' foi aceito, mas o portal abriu a tela de TROCA DE SENHA em vez ' +
-        'do dashboard — o pedido nao foi enviado. ' + ACAO_SENHA,
+        'do dashboard — o pedido nao foi enviado. ' + ACAO_SENHA_EXPIRADA,
       severidade: 'urgente',
     };
   }

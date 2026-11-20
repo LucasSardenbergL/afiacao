@@ -27,6 +27,7 @@ import {
 } from "../_shared/sayerlack-portal-dom.ts";
 import { diagnosticarCondicaoDom } from "./condicao-dom.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { obterSenhaPortal, redispararSeParada, solicitarRotacaoSenha } from "../_shared/sayerlack-credencial.ts";
 import { mensagemNaoVinculado, mensagemVinculado, vincularPoManual } from "../_shared/sayerlack-vincular-po-manual.ts";
 import { explicarCondicaoAusente, lerPedidoPortal, mensagemCondicaoAusente, mensagemErroImportacao, situacaoFaturada, situacaoObservada, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
 import { comPrazo, cortarTrace, PRAZO_EVIDENCIA_MS } from "./evidencia.ts";
@@ -609,7 +610,7 @@ async function tratar(
     }
 
     const faltando = [
-      ["SAYERLACK_PORTAL_USER", SAYERLACK_PORTAL_USER], ["SAYERLACK_PORTAL_PASS", SAYERLACK_PORTAL_PASS],
+      ["SAYERLACK_PORTAL_USER", SAYERLACK_PORTAL_USER],
       ["SAYERLACK_PORTAL_URL", SAYERLACK_PORTAL_URL], ["SAYERLACK_PORTAL_CLIENTE_CODIGO", SAYERLACK_PORTAL_CLIENTE_CODIGO],
       ["BROWSERLESS_TOKEN", BROWSERLESS_TOKEN],
     ].filter(([, v]) => !v).map(([k]) => k);
@@ -619,6 +620,17 @@ async function tratar(
         ...(redisparar ? { ja_existia: true, pedido_id: redisparar.id, status: redisparar.status } : {}),
         mensagem: `Configuração ausente: ${faltando.join(", ")}` + (redisparar ? ` — não re-disparei o pedido #${redisparar.id}.` : ""),
       }, 500);
+    }
+
+    // Senha do Vault (env só bootstrap). Rotação em curso / Vault ilegível ⇒ não loga.
+    const cred = await obterSenhaPortal(db, SAYERLACK_PORTAL_PASS);
+    if (!cred.ok) {
+      await redispararSeParada(cred, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_ROLE_KEY }, "importar-pedido-portal:parada");
+      return json({
+        ok: false, etapa: "leitura", protocolo, bloqueado: true, erro_tipo: cred.erroTipo,
+        ...(redisparar ? { ja_existia: true, pedido_id: redisparar.id, status: redisparar.status } : {}),
+        mensagem: cred.motivo + (redisparar ? ` — não re-disparei o pedido #${redisparar.id}.` : ""),
+      }, cred.erroTipo === "CREDENCIAL_BLOQUEADA" ? 409 : 503);
     }
 
     // 1. Lê o pedido no portal. O intervalo [lidoDe, lidoAte] é o da OBSERVAÇÃO da situação (Onda 5A).
@@ -638,7 +650,7 @@ async function tratar(
         body: JSON.stringify({
           code: BROWSERLESS_FUNCTION,
           context: {
-            user: SAYERLACK_PORTAL_USER, pass: SAYERLACK_PORTAL_PASS, portalUrl: SAYERLACK_PORTAL_URL,
+            user: SAYERLACK_PORTAL_USER, pass: cred.senha, portalUrl: SAYERLACK_PORTAL_URL,
             clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO, protocolo, somenteSituacao,
           },
         }),
@@ -655,6 +667,9 @@ async function tratar(
       httpErr = mensagemDeErro(e) ?? "erro sem mensagem";
     }
     const lidoAte = new Date().toISOString();
+    if (envelope.erroTipo === "POS_LOGIN_NAO_DASHBOARD" && String(envelope.erro ?? "").includes("troca_de_senha")) {
+      await solicitarRotacaoSenha(db, "importar-pedido-portal", { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_ROLE_KEY });
+    }
     // 7.2: o que o portal mostrou fica gravado ANTES de qualquer decisão (sucesso, recusa ou falha de leitura).
     const situacaoLida = situacaoObservada(envelope.consulta?.linhas ?? [], protocolo)?.codigo ?? null;
     const linhaEvidencia = {

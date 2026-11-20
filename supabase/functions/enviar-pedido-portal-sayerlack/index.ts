@@ -36,6 +36,7 @@ import {
 } from "./captura-custo.ts";
 import { escritaCritica } from "../_shared/escrita-critica.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { obterSenhaPortal, redispararSeParada, solicitarRotacaoSenha } from "../_shared/sayerlack-credencial.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1957,6 +1958,7 @@ async function gravarTentativa(
 async function processarPedido(
   supabase: SupabaseClient,
   pedido: PedidoCandidato,
+  senhaPortal: string,
 ): Promise<ProcessResult> {
   const t0 = Date.now();
   const iniciadoEm = new Date(t0).toISOString();
@@ -2263,7 +2265,7 @@ async function processarPedido(
           code: BROWSERLESS_FUNCTION,
           context: {
             user: SAYERLACK_PORTAL_USER,
-            pass: SAYERLACK_PORTAL_PASS,
+            pass: senhaPortal,
             portalUrl: SAYERLACK_PORTAL_URL,
             clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO,
             items: itemsPortal,
@@ -2791,6 +2793,11 @@ async function alertarFornecedor(
   pedidoId: number,
   ctx: { esgotado: boolean; origemDivergente?: boolean; loteMinimo?: ContextoLoteMinimo | null },
 ): Promise<void> {
+  // Senha EXPIRADA: pede a rotação automática (linha durável + disparo da rotacionadora) antes do alerta.
+  if (erroTipo === "PASSWORD_CHANGE_REQUIRED") {
+    const r = await solicitarRotacaoSenha(supabase, `enviar-pedido-portal:${pedidoId}`, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_ROLE_KEY });
+    console.log(`[envio-portal] rotacao de senha solicitada=${r.solicitada}${r.motivo ? ` (${r.motivo})` : ""}`);
+  }
   // LOTE_MINIMO_PORTAL tem texto próprio (lote/SKU/qtde) e alerta na 1ª vez — ver _shared/sayerlack-lote-minimo.ts.
   const alerta = erroTipo === "LOTE_MINIMO_PORTAL"
     ? decidirAlertaLoteMinimo(ctx.loteMinimo ?? null)
@@ -2876,6 +2883,7 @@ async function runWatchdog(supabase: SupabaseClient, minutos = 5) {
 async function processCandidatos(
   supabase: SupabaseClient,
   candidatos: PedidoCandidato[],
+  senhaPortal: string,
 ): Promise<{ detalhes: ProcessResult[]; sucesso: number; falhasDef: number; falhasTmp: number; indeterminados: number }> {
   const detalhes: ProcessResult[] = [];
   let sucesso = 0;
@@ -2884,7 +2892,7 @@ async function processCandidatos(
   let indeterminados = 0;
   for (const p of candidatos) {
     try {
-      const r = await processarPedido(supabase, p);
+      const r = await processarPedido(supabase, p, senhaPortal);
       detalhes.push(r);
       // sucesso_portal/enviado_portal (legado) = confirmado no portal.
       if (r.status_final === "sucesso_portal" || r.status_final === "enviado_portal") sucesso++;
@@ -3017,10 +3025,23 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
     );
   }
-  if (!SAYERLACK_PORTAL_USER || !SAYERLACK_PORTAL_PASS || !SAYERLACK_PORTAL_URL || !SAYERLACK_PORTAL_CLIENTE_CODIGO) {
+  // A senha NÃO entra aqui: vem do Vault (env só como bootstrap) — ver obterSenhaPortal abaixo.
+  if (!SAYERLACK_PORTAL_USER || !SAYERLACK_PORTAL_URL || !SAYERLACK_PORTAL_CLIENTE_CODIGO) {
     return new Response(
       JSON.stringify({ error: "Secrets do portal Sayerlack incompletos" }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 },
+    );
+  }
+
+  // Credencial ANTES de reservar qualquer pedido: rotação de senha em curso (ou Vault ilegível) ⇒ não
+  // loga e não consome tentativa — os pedidos seguem na fila e voltam quando a senha nova for provada.
+  const cred = await obterSenhaPortal(supabase, SAYERLACK_PORTAL_PASS);
+  if (!cred.ok) {
+    await redispararSeParada(cred, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_ROLE_KEY }, "enviar-pedido-portal:fila-parada");
+    console.warn(`[envio-portal] ${cred.erroTipo}: ${cred.motivo}`);
+    return new Response(
+      JSON.stringify({ ok: false, bloqueado: true, erro_tipo: cred.erroTipo, motivo: cred.motivo, processados: 0 }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: cred.erroTipo === "CREDENCIAL_BLOQUEADA" ? 200 : 503 },
     );
   }
 
@@ -3142,7 +3163,7 @@ Deno.serve(async (req) => {
     }
 
     // Dispara em background SÓ os reservados. Erros vão para o log e o watchdog libera depois.
-    const bgTask = processCandidatos(supabase, candidatosClaimed)
+    const bgTask = processCandidatos(supabase, candidatosClaimed, cred.senha)
       .then((r) => {
         console.log(`[envio-portal][async] OK processados=${r.detalhes.length} sucesso=${r.sucesso} falhas=${r.falhasDef + r.falhasTmp} indeterminados=${r.indeterminados}`);
       })
@@ -3188,7 +3209,7 @@ Deno.serve(async (req) => {
   }
   const claimedSyncIds = new Set((claimedSync ?? []).map((r) => (r as { id: number }).id));
   const candidatosSync = candidatos.filter((c) => claimedSyncIds.has(c.id));
-  const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatosSync);
+  const { detalhes, sucesso, falhasDef, falhasTmp, indeterminados } = await processCandidatos(supabase, candidatosSync, cred.senha);
 
   // Se algum erro foi BROWSERLESS_TOKEN invalido, devolve 500
   const tokenInvalid = detalhes.find((d) => (d.erro ?? "").includes("BROWSERLESS_TOKEN invalido"));

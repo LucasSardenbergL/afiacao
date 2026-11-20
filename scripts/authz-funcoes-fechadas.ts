@@ -206,6 +206,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'único writer de reposicao_compra_suspensa; gate private.cap_compras_escrever (master)',
   },
+  'public.sayerlack_senha_portal_promover': {
+    fechadaPor: '20261120130000_sayerlack_senha_portal_vault.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'rotação da senha do portal Sayerlack: promove a senha no Vault e reenfileira os pedidos parados só pela senha — só a edge sayerlack-rotacionar-senha (service_role); REVOKE de PUBLIC/anon/authenticated',
+  },
   'public._reposicao_compra_foto': {
     fechadaPor: '20261101090000_reposicao_compra_suspensa.sql',
     permitido: PORTA_FECHADA,
