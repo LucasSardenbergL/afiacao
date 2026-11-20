@@ -5,6 +5,7 @@ import type { Json } from '@/integrations/supabase/types';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
+import { marcaParcelaManualVazia, podeSugerirParcela, type MarcaParcelaManual } from './parcela-manual';
 import { maskDocument } from '@/lib/format';
 import { eqText, orFilter } from '@/lib/postgrest';
 import { chaveDocumentoParaBusca } from '@/lib/omie/documento-cliente';
@@ -110,6 +111,17 @@ export function useCustomerSelection({
 
   const [selectedParcelaOben, setSelectedParcelaOben] = useState<string>('999');
   const [selectedParcelaColacor, setSelectedParcelaColacor] = useState<string>('999');
+  // A7 (rodada 2): escolha MANUAL por conta, carimbada com o token da seleção (ver parcela-manual.ts).
+  // Os setters EXPORTADOS (só a tela os chama) marcam; os resets/sugestões internos usam os crus.
+  const parcelaManualRef = useRef<MarcaParcelaManual>(marcaParcelaManualVazia());
+  const escolherParcelaOben = useCallback((v: string) => {
+    parcelaManualRef.current = { ...parcelaManualRef.current, oben: selectionTokenRef.current };
+    setSelectedParcelaOben(v);
+  }, []);
+  const escolherParcelaColacor = useCallback((v: string) => {
+    parcelaManualRef.current = { ...parcelaManualRef.current, colacor: selectionTokenRef.current };
+    setSelectedParcelaColacor(v);
+  }, []);
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
 
@@ -597,9 +609,13 @@ export function useCustomerSelection({
       setCustomerPriceDatesOben({ ...precosPorConta.datasOben });
       setCustomerPriceDatesColacor({ ...precosPorConta.datasColacor });
 
-      if (parcelaOben.data?.ultima_parcela) setSelectedParcelaOben(parcelaOben.data.ultima_parcela);
+      if (parcelaOben.data?.ultima_parcela && podeSugerirParcela(parcelaManualRef.current.oben, myToken)) {
+        setSelectedParcelaOben(parcelaOben.data.ultima_parcela);
+      }
       if (parcelaOben.data?.parcela_ranking) setCustomerParcelaRankingOben(parcelaOben.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
-      if (parcelaColacor.data?.ultima_parcela) setSelectedParcelaColacor(parcelaColacor.data.ultima_parcela);
+      if (parcelaColacor.data?.ultima_parcela && podeSugerirParcela(parcelaManualRef.current.colacor, myToken)) {
+        setSelectedParcelaColacor(parcelaColacor.data.ultima_parcela);
+      }
       if (parcelaColacor.data?.parcela_ranking) setCustomerParcelaRankingColacor(parcelaColacor.data.parcela_ranking.map((r: ParcelaRankingItem) => r.codigo));
 
       // Reflete os códigos por-conta já resolvidos pelos lookups (preço já visível).
@@ -744,8 +760,8 @@ export function useCustomerSelection({
     // Datas do último praticado (janela 180d da partida por tier)
     customerPriceDatesOben, customerPriceDatesColacor,
     // Parcelas
-    selectedParcelaOben, setSelectedParcelaOben,
-    selectedParcelaColacor, setSelectedParcelaColacor,
+    selectedParcelaOben, setSelectedParcelaOben: escolherParcelaOben,
+    selectedParcelaColacor, setSelectedParcelaColacor: escolherParcelaColacor,
     customerParcelaRankingOben,
     customerParcelaRankingColacor,
     // Addresses (lista vem do useQuery; selectedAddress permanece como state)

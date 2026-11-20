@@ -25,3 +25,15 @@ describe('decideCheckoutEnvelope', () => {
     expect(decideCheckoutEnvelope(withMeta, 'fp')).toBe('reuse');
   });
 });
+
+describe('assinaturaServicosAfiacao (A1)', () => {
+  it('é ordem-independente e muda com ferramenta/serviço/quantidade', async () => {
+    const { assinaturaServicosAfiacao } = await import('../checkout-envelope');
+    const a = { userToolId: 't1', codigoServico: 'S1', quantity: 1 };
+    const b = { userToolId: 't2', codigoServico: 'S2', quantity: 2 };
+    expect(assinaturaServicosAfiacao([a, b])).toBe(assinaturaServicosAfiacao([b, a]));
+    expect(assinaturaServicosAfiacao([a])).not.toBe(assinaturaServicosAfiacao([{ ...a, quantity: 2 }]));
+    expect(assinaturaServicosAfiacao([a])).not.toBe(assinaturaServicosAfiacao([{ ...a, userToolId: 't9' }]));
+    expect(assinaturaServicosAfiacao([a])).not.toBe(assinaturaServicosAfiacao([{ ...a, codigoServico: 'S9' }]));
+  });
+});

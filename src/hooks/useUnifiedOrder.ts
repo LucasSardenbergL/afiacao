@@ -14,7 +14,7 @@ import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection'
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoPartida } from '@/lib/pricing/precoPartida';
-import { submitOrder as submitOrderService, submitQuote as submitQuoteService } from '@/services/orderSubmission';
+import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
 import type { ContaPedido, PrazoDecisaoEstado, PrazoDecisaoPorConta } from '@/services/orderSubmission/prazoDecisao';
 import { track } from '@/lib/analytics';
@@ -26,6 +26,7 @@ import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+import { executarComTravaDeEnvio, protegerDuranteEnvio } from '@/services/orderSubmission/travaEnvio';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { chaveDocumentoParaBusca } from '@/lib/omie/documento-cliente';
@@ -200,6 +201,8 @@ export function useUnifiedOrder() {
   // e o re-render do disabled veria a MESMA closure com submitting=false e
   // dispararia 2 fluxos completos (= 2 PVs cobrados no Omie).
   const submittingRef = useRef(false);
+  // A6 (rodada 2): desfecho do ÚLTIMO envio (allConfirmed). Pendência de ERP não é "sucesso".
+  const [ultimoEnvioConfirmado, setUltimoEnvioConfirmado] = useState(false);
   // activeTab moved into useCart hook below
   const [readyByDate, setReadyByDate] = useState<string>('');
   const [defaultProductionAssigneeId, setDefaultProductionAssigneeId] = useState<string | null>(null);
@@ -329,10 +332,36 @@ export function useUnifiedOrder() {
     productItems, obenProductItems, colacorProductItems, serviceItems, cartProductIds,
     volumesOben, volumesColacor,
     obenSubtotal, colacorProdSubtotal, serviceSubtotal, totalEstimated,
+    addProductToCart: addProductToCartBruto, addTintProductToCart: addTintProductToCartBruto,
+    addServiceToCart: addServiceToCartBruto,
+    updateServiceServico: updateServiceServicoBruto, updateServiceNotes: updateServiceNotesBruto,
+    updateServicePhotos: updateServicePhotosBruto,
+    updateQuantity: updateQuantityBruto, updateProductPrice: updateProductPriceBruto,
+    updateTintDiscount: updateTintDiscountBruto, aplicarDescontoCores: aplicarDescontoCoresBruto,
+    removeFromCart: removeFromCartBruto, clearCart,
+  } = cartHook;
+  // A5 (rodada 2): com envio em voo, mudar o carrinho era perdido — o sucesso faz clearCart() e a
+  // edição posterior sumia sem aviso. Ponto ÚNICO: todo mutador que a tela (e os handlers de IA/voz/
+  // recomendação abaixo) usam passa por aqui; `clearCart`/`setCart` internos ficam de fora de propósito.
+  const mutadoresDoCarrinho = useMemo(() => protegerDuranteEnvio(submittingRef, {
+    addProductToCart: addProductToCartBruto, addTintProductToCart: addTintProductToCartBruto,
+    addServiceToCart: addServiceToCartBruto,
+    updateServiceServico: updateServiceServicoBruto, updateServiceNotes: updateServiceNotesBruto,
+    updateServicePhotos: updateServicePhotosBruto,
+    updateQuantity: updateQuantityBruto, updateProductPrice: updateProductPriceBruto,
+    updateTintDiscount: updateTintDiscountBruto, aplicarDescontoCores: aplicarDescontoCoresBruto,
+    removeFromCart: removeFromCartBruto,
+  }, () => toast.info('Aguarde o envio terminar para mudar o carrinho.')), [
+    addProductToCartBruto, addTintProductToCartBruto, addServiceToCartBruto,
+    updateServiceServicoBruto, updateServiceNotesBruto, updateServicePhotosBruto,
+    updateQuantityBruto, updateProductPriceBruto, updateTintDiscountBruto,
+    aplicarDescontoCoresBruto, removeFromCartBruto,
+  ]);
+  const {
     addProductToCart, addTintProductToCart, addServiceToCart,
     updateServiceServico, updateServiceNotes, updateServicePhotos,
-    updateQuantity, updateProductPrice, updateTintDiscount, aplicarDescontoCores, removeFromCart, clearCart,
-  } = cartHook;
+    updateQuantity, updateProductPrice, updateTintDiscount, aplicarDescontoCores, removeFromCart,
+  } = mutadoresDoCarrinho;
 
   // Reprecificação da FRONTEIRA (Codex P1-A): um item de produto comum pode nascer ANTES de
   // tier/mult firmarem — por QUALQUER via (lista, IA, recomendação, deep-link), não só a lista.
@@ -780,8 +809,8 @@ export function useUnifiedOrder() {
   // Submit — orchestrates state around the pure submit functions in services/orderSubmission
   const submitQuote = useCallback(async () => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
-    setSubmitting(true);
-    try {
+    // A3 (rodada 2): mesma trava por REF do submitOrder — o toque duplo gravava 2 orçamentos.
+    await executarComTravaDeEnvio(submittingRef, setSubmitting, async () => {
       const result = await submitQuoteService({
         customer: selectedCustomer,
         customerUserId,
@@ -795,24 +824,31 @@ export function useUnifiedOrder() {
         meta: { notes },
         supabase,
       });
-      if (result.success) {
+      const pendentes = result.contasPendentes ?? [];
+      if (result.success && pendentes.length === 0) {
         toast.success('Orçamento salvo', { description: result.results.join(' | ') });
         clearCart();
         setNotes('');
         navigate('/sales/quotes');
+      } else if (result.success) {
+        // A4 (rodada 2): orçamento misto com UMA conta falhando não é "salvo". Tira do carrinho só
+        // as linhas da conta gravada (reenviar não a duplica) e mantém as pendentes — sem navegar.
+        const salvas = new Set(result.contasSalvas ?? []);
+        setCart(prev => prev.filter(c => !(c.type === 'product' && salvas.has(c.account as 'oben' | 'colacor'))));
+        toast.warning(mensagemOrcamentoParcial([...salvas], pendentes), {
+          description: result.errors[0]?.message || 'Falha desconhecida',
+        });
       } else {
         toast.error('Erro ao salvar orçamento', {
           description: result.errors[0]?.message || 'Falha desconhecida',
         });
       }
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }, [
     selectedCustomer, cart.length, user, customerUserId,
     obenProductItems, colacorProductItems, obenSubtotal, colacorProdSubtotal,
     deliveryOption, addresses, selectedAddress, notes,
-    clearCart, navigate,
+    clearCart, navigate, setCart,
   ]);
 
   const submitOrder = useCallback(async (opts?: { atpBackorder?: { autorizado: true; motivo: string } }) => {
@@ -838,157 +874,167 @@ export function useUnifiedOrder() {
       toast.error(mensagemCondicoesIndisponiveis(bloqueioFormas));
       return;
     }
-    if (submittingRef.current) return; // re-entrância: ver comentário na declaração
-    submittingRef.current = true;
-    setSubmitting(true);
-    // Impressão digital do pedido de produto (oben+colacor) + cliente.
-    const customerKey = String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '');
-    const fpItems = [
-      ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
-      ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
-    ];
-    const fingerprint = computeCheckoutFingerprint(customerKey, fpItems);
-    const decision = decideCheckoutEnvelope(checkoutEnvRef.current, fingerprint);
-    if (decision === 'conflict') {
-      setSubmitting(false);
-      toast.error('Há um envio pendente para este cliente com outro carrinho', {
-        description: 'Reenvie o pedido pendente (mesmo carrinho) ou limpe o cliente para começar um novo.',
-      });
-      return;
-    }
-    if (decision === 'new') {
-      // CONGELA a metadata da ponte UMA VEZ, na criação do envelope. Anti-troca-de-cliente:
-      // a navegação SPA muda os query params sem remontar o estado do pedido, então uma ligação
-      // ENTRANTE de B durante o pedido de A NÃO pode herdar origem/atendimento de A. O helper só
-      // aplica a metadata da ligação quando ?customer== o cliente realmente selecionado; o submit
-      // lê SEMPRE do envelope abaixo, nunca da URL ao vivo.
-      const bridge = resolveBridgeMetadata({
-        urlCustomer: searchParams.get('customer'),
-        selectedCustomerUserId: customerUserId,
-        urlOrigem: searchParams.get('origem'),
-        urlAtendimento: searchParams.get('atendimento'),
-        isCustomerMode,
-      });
-      checkoutEnvRef.current = {
-        checkoutId: crypto.randomUUID(), fingerprint, committed: true,
-        customerUserId: customerUserId ?? null,
-        origem: bridge.origem,
-        atendimentoId: bridge.atendimentoId,
-      };
-    } else {
-      // reuse: mantém o MESMO checkoutId E a metadata da ponte CONGELADA na criação (não
-      // re-capturar da URL — o spread preserva origem/atendimento/customerUserId originais).
-      // commit trava a fp (editar o carrinho depois = conflito).
-      checkoutEnvRef.current = { ...checkoutEnvRef.current, committed: true } as CheckoutEnvelope;
-    }
-    persistCheckoutEnv(checkoutEnvRef.current);
-    const checkoutId = checkoutEnvRef.current.checkoutId;
-    try {
-      // Etapa 3 (spec preco-realtime): a seleção dispara o auto-cadastro em
-      // BACKGROUND; o join é AQUI — garante os códigos por-conta antes do
-      // envio, sem segurar o spinner da seleção. O retorno é o cliente
-      // PÓS-ensure DA SELEÇÃO CORRENTE (token-stamp; null se a retenção é de
-      // outra seleção) — a closure de selectedCustomer pode ser a cópia
-      // anterior aos códigos criados. O preflight fail-closed do
-      // submitOrderService segue como rede pra conta sem identidade.
-      const ensuredCustomer = await waitForAccountEnsure();
-      const effectiveCustomer = ensuredCustomer ?? selectedCustomer;
-      const result = await submitOrderService({
-        customer: effectiveCustomer,
-        customerUserId,
-        user,
-        cart: { obenProductItems, colacorProductItems, serviceItems },
-        subtotals: { oben: obenSubtotal, colacor: colacorProdSubtotal, service: serviceSubtotal },
-        volumes: { oben: volumesOben, colacor: volumesColacor },
-        payment: {
-          parcelaOben: selectedParcelaOben,
-          parcelaColacor: selectedParcelaColacor,
-          afiacaoMethod: afiacaoPaymentMethod,
-          formasPagamentoOben,
-          formasPagamentoColacor,
-        },
-        delivery: {
-          option: deliveryOption,
-          selectedAddress: addresses.find(a => a.id === selectedAddress),
-        },
-        meta: { notes, readyByDate, ordemCompra },
-        companyProfiles,
-        defaultProductionAssigneeId,
-        getServicePrice,
-        supabase,
-        isCustomerMode,
-        checkoutId,
-        // Lê do ENVELOPE congelado (nunca da URL ao vivo). Fallback defensivo p/ envelopes
-        // legados (criados antes desta fase, sem os campos da ponte).
-        origem: checkoutEnvRef.current.origem ?? (isCustomerMode ? 'web_customer' : 'web_staff'),
-        atendimentoId: checkoutEnvRef.current.atendimentoId ?? null,
-        atpBackorder: opts?.atpBackorder,
-        prazoDecisao: prazoDecisaoRef.current,
-      });
-      if (result.success && result.lastOrderData) {
-        setLastOrderData(result.lastOrderData);
-        // ATP fase 2: recusa de estoque abre o painel de DECISÃO no lugar do
-        // dialog de sucesso (o vendedor decide backorder ali; ao fechar, o
-        // resumo do envio abre). Sem recusa → fluxo normal.
-        const atp = result.bloqueioAtp ?? null;
-        setBloqueioAtp(atp);
-        if (atp) {
-          track('venda.atp_bloqueio_exibido', {
-            tipo: atp.tipo,
-            recusas: atp.recusas.length,
-            sem_override: atp.semOverride,
-          });
-        } else {
-          setOrderSuccessOpen(true);
-        }
-        const bloqueios = result.bloqueiosCredito ?? [];
-        setBloqueiosCredito(bloqueios);
-        for (const b of bloqueios) {
-          track('venda.bloqueio_credito_exibido', {
-            account: b.account, vencido: b.vencido, titulos: b.titulos,
-          });
-        }
-        if (result.allConfirmed) {
-          clearCart();
-          setNotes('');
-          checkoutEnvRef.current = null; persistCheckoutEnv(null); // sucesso TOTAL → próximo pedido = novo envelope
-        } else if (bloqueios.length > 0) {
-          // Trava de crédito: mensagem específica — "parcialmente enviado" esconderia a causa.
-          toast.warning('Envio bloqueado por crédito', {
-            description: 'O PV não foi criado no Omie. Um gestor pode aprovar uma exceção para este pedido — depois é só reenviar.',
-          });
-        } else {
-          // Sucesso PARCIAL: NÃO limpar o carrinho nem resetar o envelope — o retry (mesma fp)
-          // reusa a MESMA linha/chave e não duplica a conta de PRODUTO já enviada.
-          toast.warning('Pedido parcialmente enviado', {
-            description: serviceItems.length > 0
-              ? 'Os produtos não duplicam no reenvio. Atenção: a OS de afiação pode duplicar — confira no Omie.'
-              : 'Alguma conta ficou pendente no ERP. Reenvie — os produtos não duplicam.',
-          });
-        }
-        // Avisos não-bloqueio: "criado com avisos". Bloqueios (crédito/ATP/desconhecido)
-        // ficam FORA deste toast de sucesso (o PV não foi criado — dizê-lo "criado"
-        // seria mentira; o ATP já tem o painel de decisão).
-        const avisos = result.errors.filter(e =>
-          !e.step.startsWith('bloqueio_credito') &&
-          !e.step.startsWith('bloqueio_atp') &&
-          !e.step.startsWith('bloqueio_desconhecido'));
-        if (avisos.length > 0) {
-          toast.success('Pedido criado com avisos', {
-            description: avisos.map(e => e.message).join(' | '),
-          });
-        }
-      } else {
-        toast.error('Erro ao criar pedido', {
-          description: result.errors[0]?.message || 'Falha desconhecida',
+    // A2 (rodada 2): a trava liga e desliga SÓ em executarComTravaDeEnvio — o ramo 'conflict'
+    // abaixo fazia `return` sem soltar a ref e todo envio seguinte morria calado.
+    await executarComTravaDeEnvio(submittingRef, setSubmitting, async () => {
+      // Impressão digital do pedido de produto (oben+colacor) + cliente.
+      const customerKey = String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '');
+      const fpItems = [
+        ...obenProductItems.map(c => ({ account: 'oben', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
+        ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
+      ];
+      const fingerprint = computeCheckoutFingerprint(customerKey, fpItems);
+      const decision = decideCheckoutEnvelope(checkoutEnvRef.current, fingerprint);
+      if (decision === 'conflict') {
+        toast.error('Há um envio pendente para este cliente com outro carrinho', {
+          description: 'Reenvie o pedido pendente (mesmo carrinho) ou limpe o cliente para começar um novo.',
         });
+        return;
       }
-    } catch (error) {
-      toast.error('Erro ao criar pedido', { description: mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
-    } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
-    }
+      if (decision === 'new') {
+        // CONGELA a metadata da ponte UMA VEZ, na criação do envelope. Anti-troca-de-cliente:
+        // a navegação SPA muda os query params sem remontar o estado do pedido, então uma ligação
+        // ENTRANTE de B durante o pedido de A NÃO pode herdar origem/atendimento de A. O helper só
+        // aplica a metadata da ligação quando ?customer== o cliente realmente selecionado; o submit
+        // lê SEMPRE do envelope abaixo, nunca da URL ao vivo.
+        const bridge = resolveBridgeMetadata({
+          urlCustomer: searchParams.get('customer'),
+          selectedCustomerUserId: customerUserId,
+          urlOrigem: searchParams.get('origem'),
+          urlAtendimento: searchParams.get('atendimento'),
+          isCustomerMode,
+        });
+        checkoutEnvRef.current = {
+          checkoutId: crypto.randomUUID(), fingerprint, committed: true,
+          customerUserId: customerUserId ?? null,
+          origem: bridge.origem,
+          atendimentoId: bridge.atendimentoId,
+        };
+      } else {
+        // reuse: mantém o MESMO checkoutId E a metadata da ponte CONGELADA na criação (não
+        // re-capturar da URL — o spread preserva origem/atendimento/customerUserId originais).
+        // commit trava a fp (editar o carrinho depois = conflito).
+        checkoutEnvRef.current = { ...checkoutEnvRef.current, committed: true } as CheckoutEnvelope;
+      }
+      persistCheckoutEnv(checkoutEnvRef.current);
+      const checkoutId = checkoutEnvRef.current.checkoutId;
+      try {
+        // Etapa 3 (spec preco-realtime): a seleção dispara o auto-cadastro em
+        // BACKGROUND; o join é AQUI — garante os códigos por-conta antes do
+        // envio, sem segurar o spinner da seleção. O retorno é o cliente
+        // PÓS-ensure DA SELEÇÃO CORRENTE (token-stamp; null se a retenção é de
+        // outra seleção) — a closure de selectedCustomer pode ser a cópia
+        // anterior aos códigos criados. O preflight fail-closed do
+        // submitOrderService segue como rede pra conta sem identidade.
+        const ensuredCustomer = await waitForAccountEnsure();
+        const effectiveCustomer = ensuredCustomer ?? selectedCustomer;
+        const result = await submitOrderService({
+          customer: effectiveCustomer,
+          customerUserId,
+          user,
+          cart: { obenProductItems, colacorProductItems, serviceItems },
+          subtotals: { oben: obenSubtotal, colacor: colacorProdSubtotal, service: serviceSubtotal },
+          volumes: { oben: volumesOben, colacor: volumesColacor },
+          payment: {
+            parcelaOben: selectedParcelaOben,
+            parcelaColacor: selectedParcelaColacor,
+            afiacaoMethod: afiacaoPaymentMethod,
+            formasPagamentoOben,
+            formasPagamentoColacor,
+          },
+          delivery: {
+            option: deliveryOption,
+            selectedAddress: addresses.find(a => a.id === selectedAddress),
+          },
+          meta: { notes, readyByDate, ordemCompra },
+          companyProfiles,
+          defaultProductionAssigneeId,
+          getServicePrice,
+          supabase,
+          isCustomerMode,
+          checkoutId,
+          // Lê do ENVELOPE congelado (nunca da URL ao vivo). Fallback defensivo p/ envelopes
+          // legados (criados antes desta fase, sem os campos da ponte).
+          origem: checkoutEnvRef.current.origem ?? (isCustomerMode ? 'web_customer' : 'web_staff'),
+          atendimentoId: checkoutEnvRef.current.atendimentoId ?? null,
+          atpBackorder: opts?.atpBackorder,
+          prazoDecisao: prazoDecisaoRef.current,
+          // A1 (rodada 2): OS de Afiação já confirmada neste envelope → o service NÃO a recria.
+          afiacaoJaEnviada: checkoutEnvRef.current.afiacaoOs ?? null,
+          aoConfirmarOsAfiacao: (marca) => {
+            // Grava na hora (antes do fim do envio): sobrevive a exceção posterior e a refresh.
+            // Só no envelope DESTE envio — nunca carimbar um envelope trocado no meio.
+            if (checkoutEnvRef.current?.checkoutId !== checkoutId) return;
+            checkoutEnvRef.current = { ...checkoutEnvRef.current, afiacaoOs: marca };
+            persistCheckoutEnv(checkoutEnvRef.current);
+          },
+        });
+        if (result.success && result.lastOrderData) {
+          setLastOrderData(result.lastOrderData);
+          // A6 (rodada 2): o resumo e a limpeza do rascunho seguem o desfecho REAL do ERP.
+          setUltimoEnvioConfirmado(result.allConfirmed);
+          // ATP fase 2: recusa de estoque abre o painel de DECISÃO no lugar do
+          // dialog de sucesso (o vendedor decide backorder ali; ao fechar, o
+          // resumo do envio abre). Sem recusa → fluxo normal.
+          const atp = result.bloqueioAtp ?? null;
+          setBloqueioAtp(atp);
+          if (atp) {
+            track('venda.atp_bloqueio_exibido', {
+              tipo: atp.tipo,
+              recusas: atp.recusas.length,
+              sem_override: atp.semOverride,
+            });
+          } else {
+            setOrderSuccessOpen(true);
+          }
+          const bloqueios = result.bloqueiosCredito ?? [];
+          setBloqueiosCredito(bloqueios);
+          for (const b of bloqueios) {
+            track('venda.bloqueio_credito_exibido', {
+              account: b.account, vencido: b.vencido, titulos: b.titulos,
+            });
+          }
+          if (result.allConfirmed) {
+            clearCart();
+            setNotes('');
+            checkoutEnvRef.current = null; persistCheckoutEnv(null); // sucesso TOTAL → próximo pedido = novo envelope
+          } else if (bloqueios.length > 0) {
+            // Trava de crédito: mensagem específica — "parcialmente enviado" esconderia a causa.
+            toast.warning('Envio bloqueado por crédito', {
+              description: 'O PV não foi criado no Omie. Um gestor pode aprovar uma exceção para este pedido — depois é só reenviar.',
+            });
+          } else {
+            // Sucesso PARCIAL: NÃO limpar o carrinho nem resetar o envelope — o retry (mesma fp)
+            // reusa a MESMA linha/chave e não duplica a conta de PRODUTO já enviada.
+            toast.warning('Pedido parcialmente enviado', {
+              description: serviceItems.length === 0
+                ? 'Alguma conta ficou pendente no ERP. Reenvie — os produtos não duplicam.'
+                : checkoutEnvRef.current?.afiacaoOs
+                  ? 'Reenvie — nem os produtos nem a OS de afiação já criada duplicam.'
+                  : 'Os produtos não duplicam no reenvio. A OS de afiação não foi confirmada — confira no Omie antes de reenviar.',
+            });
+          }
+          // Avisos não-bloqueio: "criado com avisos". Bloqueios (crédito/ATP/desconhecido)
+          // ficam FORA deste toast de sucesso (o PV não foi criado — dizê-lo "criado"
+          // seria mentira; o ATP já tem o painel de decisão).
+          const avisos = result.errors.filter(e =>
+            !e.step.startsWith('bloqueio_credito') &&
+            !e.step.startsWith('bloqueio_atp') &&
+            !e.step.startsWith('bloqueio_desconhecido'));
+          if (avisos.length > 0) {
+            toast.success('Pedido criado com avisos', {
+              description: avisos.map(e => e.message).join(' | '),
+            });
+          }
+        } else {
+          toast.error('Erro ao criar pedido', {
+            description: result.errors[0]?.message || 'Falha desconhecida',
+          });
+        }
+      } catch (error) {
+        toast.error('Erro ao criar pedido', { description: mensagemDeErro(error) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
+      }
+    });
   }, [
     selectedCustomer, cart.length, user, customerUserId,
     obenProductItems, colacorProductItems, serviceItems,
@@ -1084,7 +1130,7 @@ export function useUnifiedOrder() {
     handleAddRecommendation, handleStaffAddTool,
     submitOrder, submitQuote, loadUserTools,
     // Order success
-    orderSuccessOpen, setOrderSuccessOpen, lastOrderData, bloqueiosCredito,
+    orderSuccessOpen, setOrderSuccessOpen, lastOrderData, bloqueiosCredito, ultimoEnvioConfirmado,
     bloqueioAtp, autorizarBackorderAtp, tentarNovamenteAtp, fecharBloqueioAtp,
     // Navigate
     navigate,

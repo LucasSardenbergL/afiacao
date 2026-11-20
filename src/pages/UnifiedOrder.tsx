@@ -321,7 +321,9 @@ const UnifiedOrder = () => {
     scopeKey: draftScope,
     state: draftPayload,
     shouldSave: h.cart.length > 0,
-    clearTrigger: h.orderSuccessOpen, // limpa quando o success dialog abrir = pedido enviado
+    // A6 (rodada 2): limpa SÓ quando o envio foi confirmado em TODAS as contas. Pendência de ERP
+    // (ou bloqueio) mantém o carrinho — apagar o rascunho perderia o pedido num refresh.
+    clearTrigger: h.orderSuccessOpen && h.ultimoEnvioConfirmado,
   });
 
   // Gate offline-first do envio: offline salva rascunho (já auto-salvo acima) e expõe
@@ -643,6 +645,7 @@ const UnifiedOrder = () => {
           total={h.lastOrderData.total}
           orderNumbers={h.lastOrderData.orderNumbers}
           printDataList={h.lastOrderData.printDataList}
+          envioConfirmado={h.ultimoEnvioConfirmado}
           onViewOrder={() => {
             h.setOrderSuccessOpen(false);
             h.navigate('/sales');

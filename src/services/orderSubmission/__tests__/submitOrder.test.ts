@@ -583,3 +583,55 @@ describe('submitOrder — gate ATP Oben (fase 2)', () => {
     expect(r.errors.some((e) => e.step === 'bloqueio_desconhecido_oben')).toBe(true);
   });
 });
+
+// ─── A1 (rodada 2): a OS de Afiação NÃO pode ser recriada no reenvio do MESMO envelope ───
+// O Omie não deduplica a OS (cCodIntOS leva Date.now()) e o orderId nasce novo a cada chamada:
+// "Tentar novamente" do ATP, backorder e reenvio após falha parcial criavam uma 2ª OS.
+describe('submitOrder — OS de Afiação no reenvio (A1)', () => {
+  const custAfiacao = { ...customer, codigo_cliente_afiacao: 300 } as OmieCustomer;
+
+  it('falha parcial (Oben pendente) + reenvio com a marca → a OS é criada UMA vez só', async () => {
+    const { client } = makeSupabase({
+      invokeImpl: () => ({ data: null, error: { message: 'Omie fora' } }),
+    });
+    const marcas: Array<{ assinatura: string; numero: string | null }> = [];
+    const base = {
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [serviceItem()] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    };
+    const r1 = await submitOrder(makeParams({ ...base, aoConfirmarOsAfiacao: (m) => marcas.push(m) }));
+    expect(r1.allConfirmed).toBe(false);
+    expect(marcas).toHaveLength(1);
+    expect(marcas[0].numero).toBe('OS1');
+
+    const r2 = await submitOrder(makeParams({ ...base, afiacaoJaEnviada: marcas[0] }));
+    expect(syncOrderToOmie).toHaveBeenCalledTimes(1);
+    expect(r2.results).toContain('OS OS1 (já enviada)');
+  });
+
+  it('marca de OUTRAS ferramentas → não recria nem finge "já enviada": afiacao_divergente', async () => {
+    const { client } = makeSupabase();
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      afiacaoJaEnviada: { assinatura: 'outra-ferramenta:SVC1:1', numero: 'OS9' },
+    }));
+    expect(syncOrderToOmie).not.toHaveBeenCalled();
+    expect(r.errors.map(e => e.step)).toContain('afiacao_divergente');
+    expect(r.allConfirmed).toBe(false);
+  });
+
+  it('OS NÃO confirmada (falha no Omie) → sem marca: o reenvio deve tentar de novo', async () => {
+    vi.mocked(syncOrderToOmie).mockResolvedValueOnce({ success: false, error: 'x' } as never);
+    const { client } = makeSupabase();
+    const marcas: unknown[] = [];
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      aoConfirmarOsAfiacao: (m) => marcas.push(m),
+    }));
+    expect(marcas).toHaveLength(0);
+    expect(r.errors.map(e => e.step)).toContain('sync_os_omie');
+  });
+});
