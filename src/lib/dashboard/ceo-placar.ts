@@ -25,7 +25,7 @@ export function formatarBRLCompacto(v: number | null | undefined): string {
   return BRL_COMPACTO.format(v);
 }
 
-export const EMPRESAS_GRUPO: readonly Company[] = ['oben', 'colacor', 'colacor_sc'];
+const EMPRESAS_GRUPO: readonly Company[] = ['oben', 'colacor', 'colacor_sc'];
 
 export function empresasDoEscopo(selection: CompanySelection): Company[] {
   return selection === 'all' ? [...EMPRESAS_GRUPO] : [selection];
