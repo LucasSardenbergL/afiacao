@@ -20,6 +20,8 @@ export interface ContextoBloqueioCredito {
   /** Snapshot do gate. null = não informado (nunca fabricar 0). */
   vencido: number | null;
   titulos: number | null;
+  /** Vencido por empresa do GRUPO (gate do grupo, fluxo do submit). Ausente = só o total. */
+  pares?: Array<{ company: 'oben' | 'colacor' | 'colacor_sc'; vencido: number }>;
 }
 
 /** Último bloqueio registrado pelo gate para o pedido (evidência p/ o fluxo /sales). */

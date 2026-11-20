@@ -8,6 +8,7 @@ import type {
   SubmitErrorEntry,
   LastOrderItem,
   BloqueioCreditoPedido,
+  ParVencidoCredito,
 } from './types';
 import type { ServiceCartItem } from '@/hooks/unifiedOrder/types';
 import {
@@ -30,7 +31,7 @@ import { nomeClienteExibicao } from '@/lib/omie/razao-exibicao';
 /** Resposta estruturada dos gates do edge (crédito Fase 2 / tint Fase 3 — não cria o PV). */
 interface GateCreditoPayload {
   blocked?: string;
-  gate?: { vencido?: number | null; titulos?: number | null } | null;
+  gate?: { vencido?: number | null; titulos?: number | null; pares?: unknown } | null;
   /** Fase 3: bloqueios do gate tintométrico (preço obsoleto/fórmula morta). */
   bloqueios?: Array<{ cor_id?: string; motivo?: string; detalhe?: string }>;
 }
@@ -48,10 +49,36 @@ function mensagemBloqueioTint(
   );
 }
 
+const NOME_EMPRESA: Record<ParVencidoCredito['company'], string> = {
+  oben: 'Oben',
+  colacor: 'Colacor',
+  colacor_sc: 'Colacor SC',
+};
+
+/** Pares do gate do grupo, validados — item malformado é DESCARTADO (nunca vira R$ 0). */
+function paresDoGate(gate?: { pares?: unknown } | null): ParVencidoCredito[] {
+  if (!Array.isArray(gate?.pares)) return [];
+  return gate.pares.filter((p): p is ParVencidoCredito => {
+    const q = p as Partial<ParVencidoCredito> | null;
+    return !!q && typeof q.company === 'string' && q.company in NOME_EMPRESA
+      && typeof q.vencido === 'number' && Number.isFinite(q.vencido) && q.vencido > 0;
+  });
+}
+
 function mensagemBloqueioCredito(
   conta: string,
-  gate?: { vencido?: number | null; titulos?: number | null } | null,
+  gate?: { vencido?: number | null; titulos?: number | null; pares?: unknown } | null,
 ): string {
+  const pares = paresDoGate(gate);
+  if (pares.length > 0) {
+    const porEmpresa = pares
+      .map((p) => `${NOME_EMPRESA[p.company]} R$ ${p.vencido.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+      .join(' · ');
+    return (
+      `Pedido ${conta} BLOQUEADO por crédito — vencido há 60+ dias no grupo: ${porEmpresa}. ` +
+      `O pedido ficou salvo: um gestor pode aprovar uma exceção para ESTE pedido e aí é só reenviar.`
+    );
+  }
   const valor =
     typeof gate?.vencido === 'number'
       ? ` — R$ ${gate.vencido.toFixed(2)} vencido há 60+ dias${gate?.titulos ? ` (${gate.titulos} título${gate.titulos > 1 ? 's' : ''})` : ''}`
@@ -312,6 +339,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
               nomeCliente: nomeClienteExibicao(customer),
               vencido: typeof gatePayload.gate?.vencido === 'number' ? gatePayload.gate.vencido : null,
               titulos: typeof gatePayload.gate?.titulos === 'number' ? gatePayload.gate.titulos : null,
+              pares: paresDoGate(gatePayload.gate),
             });
           } else if (gatePayload?.blocked === 'tint_preco') {
             // Gate tint Fase 3: preço obsoleto/fórmula morta — o edge NÃO criou o PV.
@@ -470,6 +498,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
             nomeCliente: nomeClienteExibicao(customer),
             vencido: typeof gatePayloadColacor.gate?.vencido === 'number' ? gatePayloadColacor.gate.vencido : null,
             titulos: typeof gatePayloadColacor.gate?.titulos === 'number' ? gatePayloadColacor.gate.titulos : null,
+            pares: paresDoGate(gatePayloadColacor.gate),
           });
         } else if (colacorBloqueadoDesconhecido) {
           // Fail-closed p/ bloqueio DESCONHECIDO no Colacor (inclui tint_preco,

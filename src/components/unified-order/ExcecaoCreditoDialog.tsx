@@ -52,6 +52,10 @@ const VALIDADE_DIAS = [
 ] as const;
 
 const contaLabel = (account: 'oben' | 'colacor') => (account === 'oben' ? 'Oben' : 'Colacor');
+const EMPRESA_LABEL = { oben: 'Oben', colacor: 'Colacor', colacor_sc: 'Colacor SC' } as const;
+/** "Colacor SC R$ 500,00 · Oben R$ 150,00" — a dívida pode estar em OUTRA empresa do grupo. */
+const porEmpresa = (ctx: ContextoBloqueioCredito) =>
+  (ctx.pares ?? []).map((p) => `${EMPRESA_LABEL[p.company]} ${formatBRL(p.vencido)}`).join(' · ');
 
 function resumoParaGestor(salesOrderId: string, ctx: ContextoBloqueioCredito): string {
   const valor = typeof ctx.vencido === 'number' ? formatBRL(ctx.vencido) : 'valor não informado';
@@ -60,6 +64,7 @@ function resumoParaGestor(salesOrderId: string, ctx: ContextoBloqueioCredito): s
     `Preciso de aprovação de exceção de crédito:\n` +
     `Cliente: ${ctx.nomeCliente} (código ${ctx.omieCodigoCliente} — conta ${contaLabel(ctx.account)})\n` +
     `Bloqueio: ${valor} vencido há 60+ dias${titulos}\n` +
+    (ctx.pares?.length ? `Por empresa do grupo: ${porEmpresa(ctx)}\n` : '') +
     `Pedido: ${salesOrderId}\n` +
     `Como aprovar: Pedidos → abrir o pedido do cliente → botão "Crédito" → Aprovar exceção. Depois eu reenvio o pedido.`
   );
@@ -166,6 +171,9 @@ export function ExcecaoCreditoDialog({
                 {ctx.titulos ? ` · ${ctx.titulos} título${ctx.titulos > 1 ? 's' : ''}` : ''}
                 {' '}· código Omie {ctx.omieCodigoCliente}
               </p>
+              {ctx.pares?.length ? (
+                <p className="text-muted-foreground">Por empresa do grupo: {porEmpresa(ctx)}</p>
+              ) : null}
             </div>
 
             {excecaoValida ? (

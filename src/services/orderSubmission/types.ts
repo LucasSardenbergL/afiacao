@@ -118,6 +118,17 @@ export interface BloqueioCreditoPedido {
   /** Snapshot computado pelo gate no edge. null = gate não informou (nunca fabricar 0). */
   vencido: number | null;
   titulos: number | null;
+  /** PR 1 crédito-IA: dívida vencida por empresa do GRUPO (o gate olha as 3). Ausente = edge antigo. */
+  pares?: ParVencidoCredito[];
+}
+
+/** Uma empresa do grupo com vencido > 60 d, como o gate venda_gate_credito_grupo devolve. */
+export interface ParVencidoCredito {
+  company: 'oben' | 'colacor' | 'colacor_sc';
+  codigo: number;
+  vencido: number;
+  titulos: number;
+  vencimento_mais_antigo: string | null;
 }
 
 export interface SubmitOrderResult {
