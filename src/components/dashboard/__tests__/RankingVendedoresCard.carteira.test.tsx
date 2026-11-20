@@ -28,8 +28,8 @@ describe('RankingVendedoresCard — régua da carteira', () => {
   it('[CARD-SUB] o subtítulo diz a régua', () => {
     comDados({ ranking: [{ id: 'V1', nome: 'Regina', receita: 1000, pedidos: 2 }] });
     render(<RankingVendedoresCard />);
-    expect(screen.getByText(/por dono da carteira · Oben/)).toBeTruthy();
-    expect(screen.queryByText(/quem lançou/)).toBeNull();
+    // Mede CARTEIRA, e diz isso: os 17 pedidos creditados à Tatyana foram lançados pela Regina.
+    expect(screen.getByText(/quem é dono do cliente — não quem lançou o pedido · Oben/)).toBeTruthy();
   });
 
   it('[CARD-SO-NV] mês só com carteira de não-vendedor: o card aparece, com a linha e o porquê', () => {

@@ -40,23 +40,23 @@ export function TeamKpiTiles() {
 
   const receita = (v: number | undefined): string =>
     isError ? '—' : isLoading || v === undefined ? '…' : formatBRL(v);
-  // `ativosHoje === null` = a leitura de atividade falhou (a receita, que lança, seguiu viva).
-  // Mostrar "—" em vez de "0": zero aqui seria lido como "o time parou".
-  const ativos =
-    isError || isLoading || !data
-      ? isError
-        ? '—'
-        : '…'
-      : data.ativosHoje === null
-        ? '—'
-        : String(data.ativosHoje);
-  const ativosSub = isError
+  // Vendedores = vendedor registrado no Omie nos pedidos do mês (quem VENDEU, não dono da carteira).
+  // Vem da MESMA leitura da receita: erro → "—", nunca "0" fabricado.
+  const vendedores = isError ? '—' : isLoading || !data ? '…' : String(data.vendedoresMes);
+  const vendedoresSub: ReactNode = isError
     ? 'indisponível'
     : data
-      ? data.ativosHoje === null
-        ? 'atividade indisponível'
-        : `ativos no app hoje · 7d: ${data.ativos7d}`
-      : 'ativos no app hoje';
+      ? (
+          <>
+            <div>hoje: {data.vendedoresHoje} · vendedor no Omie</div>
+            {data.pedidosSemVendedorMes > 0 && (
+              <div className="text-status-warning">
+                {data.pedidosSemVendedorMes} {data.pedidosSemVendedorMes === 1 ? 'pedido' : 'pedidos'} sem vendedor
+              </div>
+            )}
+          </>
+        )
+      : undefined;
   const escopoSub = `pedidos Omie · ${escopo}`;
   const mesSub: ReactNode = isError ? (
     'indisponível'
@@ -69,7 +69,7 @@ export function TeamKpiTiles() {
 
   return (
     <div className="grid grid-cols-3 gap-3">
-      <Tile icon={Users} label="Vendedores ativos" value={ativos} sub={isLoading && !isError ? undefined : ativosSub} />
+      <Tile icon={Users} label="Vendedores com pedido · mês" value={vendedores} sub={vendedoresSub} />
       <Tile icon={Briefcase} label="Receita time · hoje" value={receita(data?.receitaHoje)} sub={isError ? 'indisponível' : escopoSub} />
       <Tile icon={CalendarRange} label="Receita time · mês" value={receita(data?.receitaMes)} sub={mesSub} />
     </div>

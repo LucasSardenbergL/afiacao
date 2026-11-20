@@ -34,7 +34,7 @@ export function RankingVendedoresCard() {
       <Card className="p-4 text-xs text-muted-foreground">
         <div className="flex items-center gap-2">
           <Trophy className="w-4 h-4" />
-          Ranking de vendedores
+          Vendas por carteira
         </div>
         <p className="mt-2">Indisponível no momento.</p>
       </Card>
@@ -55,8 +55,8 @@ export function RankingVendedoresCard() {
         <div className="flex items-center gap-2">
           <Trophy className="w-4 h-4 text-muted-foreground" />
           <div>
-            <h2 className="text-base font-medium">Ranking de vendedores · mês</h2>
-            <p className="text-2xs text-muted-foreground">por dono da carteira · {escopo}</p>
+            <h2 className="text-base font-medium">Vendas por carteira · mês</h2>
+            <p className="text-2xs text-muted-foreground">quem é dono do cliente — não quem lançou o pedido · {escopo}</p>
           </div>
         </div>
       </CardHeader>

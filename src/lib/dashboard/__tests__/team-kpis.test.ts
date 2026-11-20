@@ -2,12 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   isPedidoValido,
   somarReceita,
-  contarAtivos,
+  contarVendedoresComPedido,
   montarRanking,
   rankingSemPedido,
   variacaoPct,
   type OrderRow,
-  type AtividadeRow,
+  type PedidoVendedorRow,
   type OrderRankRow,
   type RankingResult,
 } from '../team-kpis';
@@ -41,17 +41,24 @@ describe('team-kpis', () => {
     expect(somarReceita(orders, '2026-06-01', '2026-06-05')).toBe(1300); // faturado + enviado (mês)
   });
 
-  it('contarAtivos: distinct id com ts ≥ desde; ignora id/ts nulos', () => {
-    const linhas: AtividadeRow[] = [
-      { id: 'A', ts: '2026-06-04T12:00:00Z' },
-      { id: 'A', ts: '2026-06-04T15:00:00Z' }, // mesmo A
-      { id: 'B', ts: '2026-06-04T12:00:00Z' },
-      { id: 'C', ts: '2026-06-01T12:00:00Z' }, // antes da janela "hoje"
-      { id: null, ts: '2026-06-04T12:00:00Z' }, // sem id
-      { id: 'D', ts: null }, // sem ts
+  it('[VEND-OMIE] contarVendedoresComPedido: distinct vendedor do Omie; sem vendedor conta à parte', () => {
+    const p = (vendedor_user_id: string | null, order_date_kpi: string, status = 'faturado'): PedidoVendedorRow => ({
+      total: 100,
+      status,
+      order_date_kpi,
+      vendedor_user_id,
+    });
+    const orders = [
+      p('REGINA', '2026-11-20'),
+      p('REGINA', '2026-11-20'), // mesma vendedora
+      p('TATY', '2026-11-03'), // no mês, fora de "hoje"
+      p(null, '2026-11-20'), // sem vendedor → à parte, não vira vendedor fantasma
+      p('CRIS', '2026-11-20', 'cancelado'), // não é venda
+      p('ANTIGO', '2026-10-31'), // fora do mês
     ];
-    expect(contarAtivos(linhas, '2026-06-04T03:00:00.000Z')).toBe(2); // A, B
-    expect(contarAtivos(linhas, '2026-05-28T03:00:00.000Z')).toBe(3); // A, B, C
+    expect(contarVendedoresComPedido(orders, '2026-11-20', '2026-11-21')).toEqual({ vendedores: 1, pedidosSemVendedor: 1 });
+    expect(contarVendedoresComPedido(orders, '2026-11-01', '2026-11-21')).toEqual({ vendedores: 2, pedidosSemVendedor: 1 });
+    expect(contarVendedoresComPedido([], '2026-11-01', '2026-11-21')).toEqual({ vendedores: 0, pedidosSemVendedor: 0 });
   });
 
   // ── Ranking pelo DONO DA CARTEIRA (spec 2026-10-06) ──────────────────────────────────────────

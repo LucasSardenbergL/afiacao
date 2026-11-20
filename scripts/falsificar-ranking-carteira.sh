@@ -27,7 +27,7 @@ ALVOS=(
   src/lib/dashboard/__tests__/fetch-donos-carteira.test.ts
   src/lib/dashboard/__tests__/fetch-pedidos-mtd.test.ts
   src/hooks/__tests__/useTeamRanking.carteira.test.tsx
-  src/hooks/__tests__/useTeamKpis.atividade.test.tsx
+  src/hooks/__tests__/useTeamKpis.vendedor-omie.test.tsx
   src/components/dashboard/__tests__/RankingVendedoresCard.carteira.test.tsx
   src/components/dashboard/__tests__/TeamKpiTiles.no-app.test.tsx
 )
@@ -178,9 +178,7 @@ for LOC in C pt_BR.UTF-8; do
     'if (rankingSemPedido(data)) return null;' \
     'if (data.ranking.length === 0 && data.naoAtribuido.pedidos === 0) return null;' \
     '[CARD-SO-NV]'
-  sabotar 'S7 tile sem o filtro de hash_payload' src/hooks/useTeamKpis.ts \
-    "        .is('hash_payload', null)"$'\n' '' \
-    '[TK-HASH]'
+  # S7 (tile sem o filtro de hash_payload) saiu: o tile passou a contar o vendedor do Omie, sem a leitura de atividade no app.
   sabotar 'S8 hook manda lista vazia a carteira' src/hooks/useTeamRanking.ts \
     'fetchDonosCarteira(clienteIds)' \
     'fetchDonosCarteira([])' \

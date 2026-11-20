@@ -481,7 +481,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useDashboardCompany.test.ts",
       "src/hooks/__tests__/useSinalPositivacao.rotulos.test.tsx",
       "src/hooks/__tests__/useTeamRanking.carteira.test.tsx",
-      "src/hooks/__tests__/useTeamKpis.atividade.test.tsx",
+      "src/hooks/__tests__/useTeamKpis.vendedor-omie.test.tsx",
       "src/pages/__tests__/CarteiraBoard.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerBundles.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerDashboard.erro-honesto.test.tsx",
