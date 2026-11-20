@@ -686,3 +686,43 @@ A régua do Mini é a janela de 15 min **com a loja aberta**. A média de 14 dia
 - conexões acima de 48/60 com a loja aberta;
 - uma janela de loja reprovada **sem** apply, ensaio ou diagnóstico no horário (cruzar com `db_aplicacoes` e as sessões ativas);
 - um job de escrita em massa que não dê para fatiar como o #4000.
+
+## 2026-11-20 — o agregado diário do Radar para de reler `radar_empresas` (`20261120140000`)
+
+**Contexto:** depois do #3638 o recruzar e o score viraram no-op quando nada muda, mas o agregado das 06:35 UTC (`radar-agregado-recalcular`) seguia recalculando **completo** todo dia: o corte de "estabelecida" (data de SP − 5 anos) anda com o relógio. Eram 2 min 15 s a 3 min 33 s e ~2,6 GB de heap lido por dia.
+
+**Mudança:** migration `20261120140000_radar_agregado_incremental_corte`, aplicada por `db:aplicar` (tentativa #1215). Com a impressão digital igual, o recálculo move só as empresas com `data_abertura` em `(corte velho, corte novo + 1]`, pelo `idx_radar_empresas_fila` com varredura solta de `(lote, status)` e MERGE no fino e no `_sec`. Sem índice novo.
+- **Impressão digital, toda lida por índices:**
+  - `max(updated_at)`;
+  - nº de já-clientes;
+  - correções `count:max(id)`;
+  - md5 das exclusões;
+  - `calculado_em` da contabilidade.
+- **Volta ao completo quando:**
+  - a chamada é forçada;
+  - não há completo anterior;
+  - o lote, a contabilidade ou a impressão mudaram;
+  - o último completo tem mais de 6 d 12 h (rede);
+  - existe exclusão de escopo `contato`;
+  - o corte voltaria;
+  - o delta fica incoerente (`CHECK (n > 0)`, 21000);
+  - a impressão muda **durante** o delta.
+- **Codex (challenge, 92 s):** os 3 ALTOs foram adotados (escritores de privacidade sem `updated_at`, semente após ampliação de escopo, foto mista em READ COMMITTED). Fica aceita a heurística de commit fora de ordem, a mesma do #3638.
+- **Prova:** `db/test-radar-agregado-incremental.sh`, no núcleo do CI com 76 asserts nos locales C e pt_BR. O `--falsificar` roda com controle verde e 15 sabotagens. A equivalência com o completo no mesmo instante é byte a byte em 11 ticks, e o incremental faz 0 seq scans de `radar_empresas`.
+
+### Medida do depois (cron de 20/11 06:35 UTC, `pg_statio` 06:34:31 → 06:35:16, por `psql-ro`)
+
+| | antes (06/11–19/11) | depois (20/11) |
+|---|---|---|
+| duração do job (`cron.job_run_details`) | 2 min 15 s – 3 min 33 s | **6,4 s** |
+| `radar_empresas` heap lido | ~2,6 GB | **428 blocos (3,3 MB)** + idx 4.390 blocos (34 MB) |
+| `radar_agregado_cnae` / `_sec` | — | 3.018 / 3.886 blocos (24 / 30 MB): o seq scan do casamento do MERGE, previsto no EXPLAIN |
+| `radar_agregado_municipio` / `radar_contato_contabil` | — | 0 / 9 blocos |
+| banco inteiro na janela de 45 s | — | 18.360 blocos (143 MB), inclusive outros leitores |
+
+- **Foi incremental:** `radar_agregado_estado` tem `calculado_em` = 20/11 06:35:00.408 com `completo_em` ainda em 19/11 06:35:00.159. O completo teria regravado o `completo_em`. Corte 2021-11-20, com 584.587 empresas e 27.495 grupos.
+- **O que sobra (~92 MB):**
+  - o índice da impressão e da fila;
+  - o seq scan dos dois agregados no MERGE.
+
+  Não vale outra máquina: é menos de 4% do de antes. O completo volta no máximo a cada ~7 d 12 h, sempre às 06:35 UTC (03:35 SP), fora do horário de loja.
