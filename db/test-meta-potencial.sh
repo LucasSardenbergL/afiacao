@@ -121,24 +121,24 @@ eq "provisória já traz a linha da Regina" \
 
 # ── dia 3: congela ──
 eq "dia 3 → congelada" "$(Pq -c "SELECT public._meta_potencial_mes_em('2026-11-03', '$MASTER') ->> 'status'")" "congelada"
-R="SELECT %s FROM public.meta_potencial_mensal WHERE mes='2026-11-01' AND account='oben' AND owner_user_id='$REGINA'"
-eq "base Regina = 1000 (só A+B)" "$(Pq -c "$(printf "$R" 'base::int')")" "1000"
-eq "inc_c = 10% × 600" "$(Pq -c "$(printf "$R" 'inc_c')")" "60.00"
-eq "inc_d = 5% × 2000" "$(Pq -c "$(printf "$R" 'inc_d')")" "100.00"
-eq "contagens A/B/C/D" "$(Pq -c "$(printf "$R" "n_a||'/'||n_b||'/'||n_c||'/'||n_d")")" "1/0/1/1"
-eq "taxas, índice e estreia calibrados (não nulos)" "$(Pq -c "$(printf "$R" '(taxa_c IS NOT NULL AND taxa_d IS NOT NULL AND indice_sazonal IS NOT NULL AND inc_cross IS NOT NULL)::text')")" "true"
-eq "meta = soma × índice" "$(Pq -c "$(printf "$R" '(meta = round((base+esp_c+esp_d+novos+inc_c+inc_d+inc_b+inc_cross)*indice_sazonal,2))::text')")" "true"
-eq "Regina ativa" "$(Pq -c "$(printf "$R" 'owner_ativo::text')")" "true"
+R() { echo "SELECT $1 FROM public.meta_potencial_mensal WHERE mes='2026-11-01' AND account='oben' AND owner_user_id='$REGINA'"; }
+eq "base Regina = 1000 (só A+B)" "$(Pq -c "$(R 'base::int')")" "1000"
+eq "inc_c = 10% × 600" "$(Pq -c "$(R 'inc_c')")" "60.00"
+eq "inc_d = 5% × 2000" "$(Pq -c "$(R 'inc_d')")" "100.00"
+eq "contagens A/B/C/D" "$(Pq -c "$(R "n_a||'/'||n_b||'/'||n_c||'/'||n_d")")" "1/0/1/1"
+eq "taxas, índice e estreia calibrados (não nulos)" "$(Pq -c "$(R '(taxa_c IS NOT NULL AND taxa_d IS NOT NULL AND indice_sazonal IS NOT NULL AND inc_cross IS NOT NULL)::text')")" "true"
+eq "meta = soma × índice" "$(Pq -c "$(R '(meta = round((base+esp_c+esp_d+novos+inc_c+inc_d+inc_b+inc_cross)*indice_sazonal,2))::text')")" "true"
+eq "Regina ativa" "$(Pq -c "$(R 'owner_ativo::text')")" "true"
 eq "Colacor sem histórico → meta NULL" "$(Pq -c "SELECT count(*) FILTER (WHERE meta IS NULL)||'/'||count(*) FROM public.meta_potencial_mensal WHERE account='colacor'")" "2/2"
 eq "Colacor: C em < 6 cortes → taxa_c NULL" "$(Pq -c "SELECT count(*) FILTER (WHERE taxa_c IS NULL) FROM public.meta_potencial_mensal WHERE account='colacor'")" "2"
 eq "carteira congelada (3 da Regina na oben)" "$(Pq -c "SELECT count(*) FROM public.meta_potencial_carteira WHERE account='oben' AND owner_user_id='$REGINA'")" "3"
 
 # ── congelada não recalcula (sync tardio de outubro) e realizado é vivo ──
-META1="$(Pq -c "$(printf "$R" 'meta')")"
+META1="$(Pq -c "$(R 'meta')")"
 Pq -c "INSERT INTO public.sales_orders (customer_user_id, account, total, status, order_date_kpi, vendedor_user_id)
        VALUES ('$A1', 'oben', 99999, 'faturado', '2026-10-25', '$REGINA'), ('$A1', 'oben', 500, 'faturado', '2026-11-05', '$REGINA')" >/dev/null
 J="$(Pq -c "SELECT public._meta_potencial_mes_em('2026-11-06', '$MASTER')")"
-eq "meta não muda após pedido tardio" "$(Pq -c "$(printf "$R" 'meta')")" "$META1"
+eq "meta não muda após pedido tardio" "$(Pq -c "$(R 'meta')")" "$META1"
 eq "realizado vivo da Regina = 500" "$(Pq -c "SELECT (l->>'realizado')::numeric::int FROM jsonb_array_elements('$J'::jsonb -> 'linhas') l WHERE l->>'owner_user_id'='$REGINA' AND l->>'account'='oben'")" "500"
 eq "nome da dona" "$(Pq -c "SELECT l->>'owner_nome' FROM jsonb_array_elements('$J'::jsonb -> 'linhas') l WHERE l->>'owner_user_id'='$REGINA' AND l->>'account'='oben'")" "Regina"
 eq "1 linha por conta×dono (Regina + sem dono)" "$(Pq -c "SELECT count(*) FROM public.meta_potencial_mensal WHERE account='oben'")" "2"
