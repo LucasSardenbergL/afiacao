@@ -93,6 +93,7 @@ Crie estes todos (TodoWrite) e siga em ordem:
 6. **Chip** — no máximo um, título exato; sugestão, não gate
 7. **Resumo de fecho** — formato do Passo 7
 8. **wt:status** — higiene de RAM + oferta de limpeza
+9. **Botão Arquivar** — só com veredito `PODE ARQUIVAR`, e quem arquiva é o clique do founder (§Veredito final)
 
 ---
 
@@ -626,28 +627,27 @@ Veredito: PODE ARQUIVAR a sessão. / AINDA NÃO — falta (1)…
 (mesma RAM e mesmo disco que excluir) e ainda deixa a sessão reabrível — não há motivo para
 recomendar a via destrutiva.
 
-⚠️ **A menção ao auto-archive é CONDICIONAL — e os passos 1 e 6 já mediram as condições.**
-O nome exato é **"Auto-archive after PR merge or close"** e ele mora **só na UI do app desktop**
-(Settings → Claude Code): procurá-lo em `settings.json` não acha nada, e a ausência ali **não**
-significa desligado.
+🗄️ **Botão Arquivar no fim, nunca o auto-archive (decisão do founder, 2026-11-20).** O
+**"Auto-archive after PR merge or close"** (só na UI do app: Settings → Claude Code) fica
+**desligado e não se recomenda**. Ele dispara quando o PR mergeia (ou fecha) **e** o agente parou,
+o que neste repo não quer dizer entrega acabada. Três motivos:
+- **merge ≠ produção:** o auto-merge fecha o PR minutos depois do verde, com migration, edge, Publish
+  ou medida pós-merge ainda pendentes, e a sessão parada arquiva com a pendência viva;
+- **sessão com 2 ou mais PRs** arquiva no primeiro merge;
+- **não há setting, flag ou hook** que o torne condicional (levantado em 2026-08-26).
 
-**O gatilho é uma CONJUNÇÃO** (verificado em 2026-08-26, doc do desktop): PR mergeado *ou* fechado
-**E** a sessão *"finished running"*. Logo ele **não** arquiva sessão ocupada — a versão anterior
-deste rodapé temia isso e exagerava; corrigido. O que a doc **não** define é o que conta como
-"finished running" (subagente vivo? task enfileirada? chip pendente?) — então não afirme nada sobre
-isso.
+No lugar dele, o arquivamento é **o último passo do próprio `/fecho`, no clique do founder**:
+- **Com veredito `PODE ARQUIVAR`, no app desktop:** feche o turno com `wrap_up` com a pergunta
+  "Arquivo a sessão?" e os botões `[{action:"archive"}, {label:"Ainda não"}]`. Quem arquiva é o
+  clique dele. Não chame `archive_session` por conta própria, nem com o veredito limpo.
+- **Se ele responder com uma pendência em vez de clicar** (*"antes resolve X"*), ela entra na
+  sessão, é resolvida, e o veredito é refeito. O botão volta só se o novo veredito for limpo.
+- **Com veredito `AINDA NÃO`:** sem botão de arquivar. A pergunta do `wrap_up` é a da pendência mais
+  grave.
+- **Fora do app (CLI, nuvem):** não há botão. Diga "pode arquivar" e pare aí.
 
-**O que sobra é o que importa aqui:** "finished running" quer dizer *o agente parou*, não *a
-entrega acabou*. Neste repo **merge ≠ produção** — a sessão que mergeou um PR com migration dentro
-e está parada esperando o founder colar o SQL no Lovable satisfaz as duas condições e arquiva com a
-pendência viva. O evento de PR não enxerga SQL Editor, deploy de edge nem Publish. Só mencione o
-toggle quando a sessão fechou com **exatamente UM PR e zero camada manual pendente** — fora disso
-ele arquiva cedo demais. (Chip não clicado deixou de importar aqui: o de produto já tem issue, e o
-de continuação tem o briefing — passo 6.)
-
-**E não dá para torná-lo condicional:** não há setting, flag ou hook documentado que suprima ou
-adie o arquivamento (levantado em 2026-08-26). O ritual não controla o gatilho; controla a **ORDEM**
-— o veredito segura o arquivamento até as camadas manuais serem nomeadas.
+Arquivar é reversível: a sessão fica em Arquivadas e pode ser reaberta. Por isso o botão basta, e
+não é preciso confirmar de novo depois do clique.
 
 A classe: **recomendação embutida em ritual sai com a AUTORIDADE do ritual.** O founder lê "o
 fecho mandou", não "o agente sugeriu" — então recomendação daqui carrega a própria pré-condição
