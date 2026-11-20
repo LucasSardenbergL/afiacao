@@ -16,6 +16,9 @@ import {
   normalizarPorMaximo,
   valorMedido,
 } from "../_shared/score-ponderado.ts";
+// priority_score NULL para quem nunca comprou (sem_historico) — e o ramo salesRefreshFatal pelo status
+// persistido. Mesma razão de morar em `_shared`: testável sob --no-remote.
+import { prioridadeNoRefreshFatal, prioridadePorStatus } from "../_shared/prioridade-historico.ts";
 // Frequência de recompra (Venda por cliente, 1a): intervalo medido ou NULL, e a classe de saúde.
 // Espelho verbatim de src/lib/scoring/frequencia.ts — paridade em __tests__/frequencia.test.ts.
 import {
@@ -60,6 +63,8 @@ interface FarmerClientScoreRow {
   s_score: number | null;
   x_score: number | null;
   eff_score: number | null;
+  // Status PERSISTIDO (select *): decide a prioridade quando a RPC de vendas falha (salesRefreshFatal).
+  sales_history_status: string | null;
 }
 
 interface CustomerSalesSummaryRow {
@@ -81,7 +86,8 @@ interface FarmerClientScoreSeed {
   health_score: number;
   health_class: string;
   churn_risk: number;
-  priority_score: number;
+  // null = sem histórico de vendas: prioridade não se aplica (_shared/prioridade-historico.ts), nunca 67/0.
+  priority_score: number | null;
   days_since_last_purchase: number;
   avg_monthly_spend_180d: number;
   category_count: number;
@@ -119,7 +125,9 @@ interface ScoreUpdate {
   health_score: number;
   health_class: string;
   churn_risk: number;
-  priority_score: number;
+  // null = sem histórico de vendas: prioridade não se aplica (_shared/prioridade-historico.ts), nunca 67/0.
+  // Chave OBRIGATÓRIA na RPC (ausente = 23514 no lote); null explícito é aceito (migration 20261120210000).
+  priority_score: number | null;
   rf_score: number;
   // m_score (componente de MARGEM) é nulável desde o PR 3-zero: null = margem desconhecida, e
   // apply_score_updates o tirou do guard de obrigatórias justamente por isso. NÃO trocar por 0.
@@ -167,7 +175,8 @@ interface HealthHistoryRecord {
 interface PriorityLogRecord {
   customer_user_id: string;
   farmer_id: string;
-  priority_score: number;
+  // null = sem histórico de vendas: prioridade não se aplica (_shared/prioridade-historico.ts), nunca 67/0. Coluna nullable desde a migration 20261120210000.
+  priority_score: number | null;
   // null = `revenue_potential` não medido, logo o componente NÃO participou do priority_score (o
   // peso foi renormalizado). Gravar 0 aqui afirmaria "potencial apurado, deu zero" — e é o que as
   // 673.790 linhas do log dizem hoje, sem nunca ter havido produtor. Coluna nullable com DEFAULT 0
@@ -700,7 +709,9 @@ Deno.serve(async (req) => {
               health_score: 0,
               health_class: 'novo',
               churn_risk: 0,
-              priority_score: 0,
+              // NULL, não 0: recém-semeado ainda não foi computado. O compute logo abaixo, no MESMO run,
+              // grava o valor (calculado, ou NULL se sem_historico — _shared/prioridade-historico.ts).
+              priority_score: null,
               days_since_last_purchase: base.days_since_last_purchase,
               avg_monthly_spend_180d: base.avg_monthly_spend_180d,
               category_count: base.category_count,
@@ -949,7 +960,18 @@ Deno.serve(async (req) => {
         { valor: repurchaseComp, peso: ps_w.repurchase },
         { valor: goalComp, peso: ps_w.goal_proximity },
       ]);
-      const priorityScore = Math.round(priorityMedia ?? 0);
+      const priorityCalculada = Math.round(priorityMedia ?? 0);
+
+      // Status de histórico DESTE run (null = RPC de vendas falhou; a RPC preserva o do banco por COALESCE).
+      const statusDoRun = salesRefreshFatal
+        ? null
+        : deriveSalesHistoryStatus(salesMap.get(client.customer_user_id), salesActiveDays);
+      // Quem NUNCA comprou não tem prioridade de recompra: NULL, não o 67 que o churn=100 fabricava (acima do
+      // máximo dos ativos). No ramo fatal decide o status PERSISTIDO; status desconhecido preserva o anterior.
+      // Regra pura e testada em _shared/prioridade-historico.ts (este arquivo fica fora do --no-remote).
+      const priorityScore = statusDoRun != null
+        ? prioridadePorStatus(statusDoRun, priorityCalculada)
+        : prioridadeNoRefreshFatal(client.sales_history_status, priorityCalculada, valorMedido(client.priority_score));
 
       updates.push({
         id: client.id,
@@ -993,7 +1015,7 @@ Deno.serve(async (req) => {
         // salesRefreshFatal → overlay pulado → valor LIDO do banco → o UPDATE regrava o mesmo.
         avg_repurchase_interval: client.avg_repurchase_interval,
         // salesRefreshFatal → null → a RPC (COALESCE) preserva o valor atual (não fabrica por RPC ausente).
-        sales_history_status: salesRefreshFatal ? null : deriveSalesHistoryStatus(salesMap.get(client.customer_user_id), salesActiveDays),
+        sales_history_status: statusDoRun,
         calculated_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
