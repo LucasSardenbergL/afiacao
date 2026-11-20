@@ -3672,6 +3672,15 @@ describe('guardrail money-path: calculate-scores renormaliza via módulo testáv
       ).toBe(true);
     }
   });
+
+  it('sem_historico não volta a ganhar prioridade fabricada (67) nem 0 no seed', () => {
+    // A regra mora em _shared/prioridade-historico.ts (Deno-testada); o edge tem de USÁ-LA nos dois ramos
+    // (run saudável e salesRefreshFatal). Reinlinar devolve o 67 que o churn=100 fabricava.
+    expect(edge).toContain('../_shared/prioridade-historico.ts');
+    expect(edge).toMatch(/prioridadePorStatus\s*\(/);
+    expect(edge).toMatch(/prioridadeNoRefreshFatal\s*\(/);
+    expect(edge, 'o seed voltou a gravar priority_score 0').not.toMatch(/priority_score:\s*0\s*,/);
+  });
 });
 
 // ── computeAssociationRules: o universo do Apriori é PAGINADO, ORDENADO e FILTRADO ──────
