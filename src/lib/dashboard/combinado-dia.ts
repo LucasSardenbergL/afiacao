@@ -2,21 +2,24 @@
  * "Combinado do dia" — o mecanismo de adoção do Meu dia do CEO (plano Fable+Codex, 2026-11-20).
  *
  * O app já lista recompra atrasada e cobrança vencida, mas nada vira ação: o time vive no Omie/WhatsApp.
- * O combinado escolhe até 3 clientes por vendedora (cobrança recente primeiro — é caixa; depois recompra),
+ * O combinado escolhe até 3 clientes por vendedora (cobrança recente primeiro — é caixa; depois recompra e
+ * cliente esfriando),
  * e gera o texto que o CEO encaminha no WhatsApp. A vendedora devolve o desfecho no mesmo fio. Puro.
  */
 import type { FilaItem } from '@/lib/cobranca/cobranca-helpers';
 import type { CompradorSugerido } from '@/lib/venda-cliente/sugestoes';
+import { addDias } from '@/lib/time/sp-day';
 
 const MAX_ITENS_COMBINADO = 3;
 
 export interface ItemCombinado {
-  tipo: 'cobranca' | 'recompra';
+  tipo: 'cobranca' | 'recompra' | 'esfriando';
   empresa: string;
-  /** Chave do cliente: código Omie (cobrança) ou user_id do comprador (recompra) — para cruzar depois. */
+  /** Chave do cliente: código Omie (cobrança) ou user_id do cliente (recompra, esfriando) — para cruzar depois. */
   clienteRef: string;
   nome: string;
-  /** Valor de referência. `null` = desconhecido (recompra sem preço) — o texto diz "valor a confirmar", nunca R$ 0. */
+  /** Valor de referência: saldo vencido (cobrança), preço da recompra, ou o comprado em 12 meses (esfriando,
+   *  histórico — não somar com os outros). `null` = desconhecido — o texto diz "a confirmar", nunca R$ 0. */
   valor: number | null;
   /** Uma linha legível: o que fazer com o cliente. */
   detalhe: string;
@@ -97,20 +100,118 @@ function itemRecompra(c: CompradorSugerido): ItemCombinado {
   };
 }
 
+/** Pedido válido (status de venda, não apagado) — o que `clientesEsfriando` lê. */
+export interface PedidoEsfriando {
+  customer_user_id: string | null;
+  total: number | null;
+  order_date_kpi: string | null;
+  account: string | null;
+}
+
+/** Cliente que comprou no último ano e parou: a 3ª fonte do combinado. */
+export interface ClienteEsfriando {
+  clienteId: string;
+  /** Empresa da última compra. */
+  empresa: string;
+  ultimaCompra: string;
+  diasSemCompra: number;
+  /** Soma HISTÓRICA dos últimos 12 meses. `null` se algum pedido não tem total (ausente ≠ zero). Não é
+   *  potencial de venda de hoje: não somar à recompra nem à cobrança. */
+  receita12m: number | null;
+}
+
+/** Dias sem comprar a partir dos quais o cliente "esfria". */
+const DIAS_ESFRIANDO = 90;
+
+function diasEntre(deIso: string, ateIso: string): number {
+  const d = (s: string) => Date.UTC(Number(s.slice(0, 4)), Number(s.slice(5, 7)) - 1, Number(s.slice(8, 10)));
+  return Math.round((d(ateIso) - d(deIso)) / 86_400_000);
+}
+
 /**
- * Até 3 itens, alternando cobrança e recompra (cobrança primeiro: é caixa). Se uma lista acaba, a outra
- * completa. Lista vazia é "nada a combinar" SÓ quando as duas fontes foram lidas — quem chama decide isso.
+ * Clientes com compra em [hoje − 365, hoje] cuja última compra tem MAIS de 90 dias. Recebe só pedidos válidos
+ * (quem busca filtra status e `deleted_at`). Ordem: receita de 12 meses desc; desconhecida vai ao fim. Puro.
  */
-export function montarCombinado(cobrancas: FilaItem[], recompras: CompradorSugerido[]): ItemCombinado[] {
-  const c = cobrancas.map(itemCobranca);
-  const r = recompras.map(itemRecompra);
+export function clientesEsfriando(pedidos: PedidoEsfriando[], hoje: string): ClienteEsfriando[] {
+  const inicio = addDias(hoje, -365);
+  const porCliente = new Map<string, { ultima: string; empresa: string; receita: number | null }>();
+  for (const p of pedidos) {
+    const dia = p.order_date_kpi?.slice(0, 10);
+    if (!p.customer_user_id || !dia || dia < inicio || dia > hoje) continue;
+    const atual = porCliente.get(p.customer_user_id);
+    const valor = p.total == null ? null : Number(p.total);
+    if (!atual) {
+      porCliente.set(p.customer_user_id, { ultima: dia, empresa: p.account ?? '', receita: valor });
+      continue;
+    }
+    atual.receita = atual.receita == null || valor == null ? null : atual.receita + valor;
+    if (dia > atual.ultima) {
+      atual.ultima = dia;
+      atual.empresa = p.account ?? atual.empresa;
+    }
+  }
+  const out: ClienteEsfriando[] = [];
+  for (const [clienteId, c] of porCliente) {
+    const dias = diasEntre(c.ultima, hoje);
+    if (dias > DIAS_ESFRIANDO) {
+      out.push({ clienteId, empresa: c.empresa, ultimaCompra: c.ultima, diasSemCompra: dias, receita12m: c.receita });
+    }
+  }
+  return out.sort((a, b) => {
+    if (a.receita12m == null && b.receita12m == null) return a.clienteId.localeCompare(b.clienteId);
+    if (a.receita12m == null) return 1;
+    if (b.receita12m == null) return -1;
+    return b.receita12m - a.receita12m || a.clienteId.localeCompare(b.clienteId);
+  });
+}
+
+/**
+ * Os esfriando da carteira da vendedora, sem quem já está na recompra dela (o mesmo cliente não aparece
+ * duas vezes no combinado). `donos`: cliente → dono atual da carteira elegível. Puro.
+ */
+export function esfriandoDaVendedora(
+  lista: ClienteEsfriando[],
+  donos: Map<string, string>,
+  vendedoraId: string,
+  jaNaRecompra: ReadonlySet<string>,
+): ClienteEsfriando[] {
+  return lista.filter((c) => donos.get(c.clienteId) === vendedoraId && !jaNaRecompra.has(c.clienteId));
+}
+
+function itemEsfriando(c: ClienteEsfriando, nomes: ReadonlyMap<string, string>): ItemCombinado {
+  const quanto = c.receita12m != null ? `comprou ${brl(c.receita12m)} em 12 meses` : 'valor dos 12 meses a confirmar';
+  return {
+    tipo: 'esfriando',
+    empresa: c.empresa,
+    clienteRef: c.clienteId,
+    nome: nomes.get(c.clienteId) ?? 'cliente sem nome no cadastro',
+    valor: c.receita12m,
+    detalhe: `esfriando: sem comprar há ${c.diasSemCompra} dias · ${quanto}`,
+  };
+}
+
+/**
+ * Até 3 itens, em rodízio cobrança → recompra → esfriando (cobrança primeiro: é caixa). Fonte vazia passa a
+ * vez para a próxima. Lista vazia é "nada a combinar" SÓ quando todas as fontes foram lidas — quem chama decide.
+ */
+export function montarCombinado(
+  cobrancas: FilaItem[],
+  recompras: CompradorSugerido[],
+  esfriando: ClienteEsfriando[] = [],
+  nomesEsfriando: ReadonlyMap<string, string> = new Map(),
+): ItemCombinado[] {
+  const fontes = [
+    cobrancas.map(itemCobranca),
+    recompras.map(itemRecompra),
+    esfriando.map((c) => itemEsfriando(c, nomesEsfriando)),
+  ];
+  const pos = fontes.map(() => 0);
   const out: ItemCombinado[] = [];
-  let i = 0;
-  let j = 0;
-  while (out.length < MAX_ITENS_COMBINADO && (i < c.length || j < r.length)) {
-    const vezDaCobranca = out.length % 2 === 0;
-    if ((vezDaCobranca && i < c.length) || j >= r.length) out.push(c[i++]);
-    else out.push(r[j++]);
+  let vez = 0;
+  while (out.length < MAX_ITENS_COMBINADO && fontes.some((f, k) => pos[k] < f.length)) {
+    const k = vez % fontes.length;
+    if (pos[k] < fontes[k].length) out.push(fontes[k][pos[k]++]);
+    vez++;
   }
   return out;
 }

@@ -5,10 +5,16 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { hojeSP } from '@/lib/dashboard/sp-date';
-import { textoCombinado } from '@/lib/dashboard/combinado-dia';
+import { textoCombinado, type ItemCombinado } from '@/lib/dashboard/combinado-dia';
 import { useCombinadoDia, registrarCombinado, type CombinadoVendedora } from '@/hooks/dashboard/useCombinadoDia';
 
 const nomeEmpresa = (c: string): string => COMPANIES[c as Company]?.shortName ?? c;
+
+const COR_TIPO: Record<ItemCombinado['tipo'], string> = {
+  cobranca: 'text-status-warning',
+  recompra: 'text-status-info',
+  esfriando: 'text-muted-foreground',
+};
 
 function BlocoVendedora({ v }: { v: CombinadoVendedora }) {
   const [copiado, setCopiado] = useState(false);
@@ -50,7 +56,7 @@ function BlocoVendedora({ v }: { v: CombinadoVendedora }) {
         <div className="text-2xs text-muted-foreground mt-1">
           {v.fontesComErro.length > 0
             ? 'Sem itens das fontes que li — e algumas não li (abaixo). Não é "nada a fazer".'
-            : 'Nada a combinar hoje: sem cobrança até 45 dias nem recompra atrasada na carteira dela.'}
+            : 'Nada a combinar hoje: sem cobrança até 45 dias, recompra atrasada ou cliente esfriando na carteira dela.'}
         </div>
       ) : (
         <ol className="mt-1.5 space-y-1 list-decimal pl-4">
@@ -58,7 +64,7 @@ function BlocoVendedora({ v }: { v: CombinadoVendedora }) {
             <li key={`${it.tipo}:${it.empresa}:${it.clienteRef}`} className="text-xs leading-snug">
               <span className="font-medium">{it.nome}</span>{' '}
               <span className="text-muted-foreground">({nomeEmpresa(it.empresa)})</span> —{' '}
-              <span className={it.tipo === 'cobranca' ? 'text-status-warning' : 'text-status-info'}>{it.detalhe}</span>
+              <span className={COR_TIPO[it.tipo]}>{it.detalhe}</span>
             </li>
           ))}
         </ol>
@@ -73,7 +79,7 @@ function BlocoVendedora({ v }: { v: CombinadoVendedora }) {
 }
 
 /**
- * "Combinado do dia" no Meu dia do CEO: até 3 clientes por vendedora (cobrança recente + recompra atrasada) e o
+ * "Combinado do dia" no Meu dia do CEO: até 3 clientes por vendedora (cobrança recente, recompra atrasada, cliente esfriando) e o
  * texto pronto para encaminhar no WhatsApp. É o mecanismo de adoção: o time vive no Omie/WhatsApp, e o desfecho
  * volta no mesmo fio. Copiar grava a lista datada no ledger `combinado_dia` (sensor + base para medir resultado).
  */
@@ -88,8 +94,8 @@ export function CombinadoDoDiaCard() {
         <h2 className="text-base font-medium">Combinado do dia</h2>
       </div>
       <p className="text-2xs text-muted-foreground mb-3">
-        Até 3 clientes por vendedora: cobrança de até 45 dias (caixa) e recompra atrasada. Copie e mande no WhatsApp
-        dela; amanhã comece pelos retornos.
+        Até 3 clientes por vendedora: cobrança de até 45 dias (caixa), recompra atrasada e cliente que parou de comprar
+        há mais de 90 dias. Copie e mande no WhatsApp dela; amanhã comece pelos retornos.
       </p>
       {erroVendedoras ? (
         <div className="text-xs text-status-error">Não consegui ler a lista de vendedoras — combinado indisponível.</div>

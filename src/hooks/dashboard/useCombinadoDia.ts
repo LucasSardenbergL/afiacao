@@ -3,10 +3,68 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { track } from '@/lib/analytics';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
-import { hojeSP } from '@/lib/dashboard/sp-date';
+import { hojeSP, addDias } from '@/lib/dashboard/sp-date';
 import { useCobrancaFila } from '@/hooks/useCobranca';
 import { lerMinhasSugestoes } from '@/lib/venda-cliente/sugestoes';
-import { cobrancasDoDia, recomprasDoDia, montarCombinado, type ItemCombinado } from '@/lib/dashboard/combinado-dia';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
+import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
+import { fetchDonosCarteira } from '@/lib/dashboard/fetch-donos-carteira';
+import {
+  cobrancasDoDia,
+  recomprasDoDia,
+  montarCombinado,
+  clientesEsfriando,
+  esfriandoDaVendedora,
+  type ClienteEsfriando,
+  type ItemCombinado,
+  type PedidoEsfriando,
+} from '@/lib/dashboard/combinado-dia';
+
+const LOTE_NOMES = 150;
+
+interface EsfriandoLido {
+  lista: ClienteEsfriando[];
+  donos: Map<string, string>;
+  nomes: Map<string, string>;
+}
+
+/**
+ * Clientes esfriando do grupo inteiro (Oben + Colacor): pedidos válidos dos últimos 12 meses, paginados
+ * (6k+ linhas — o teto de 1.000 do PostgREST truncaria em silêncio), + dono atual da carteira e nome.
+ * Pedido e dono LANÇAM em erro (sem eles a lista mente); nome falho vira "sem nome", não esconde o cliente.
+ */
+function useEsfriando() {
+  return useQuery({
+    queryKey: ['combinado', 'esfriando', hojeSP()],
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<EsfriandoLido> => {
+      const hoje = hojeSP();
+      const pedidos = await fetchAllPagesComMensagem<PedidoEsfriando>(
+        (de, ate) =>
+          supabase
+            .from('sales_orders')
+            .select('customer_user_id, total, order_date_kpi, account')
+            .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+            .is('deleted_at', null)
+            .gte('order_date_kpi', addDias(hoje, -365))
+            .lte('order_date_kpi', hoje)
+            .order('id', { ascending: true })
+            .range(de, ate),
+        'sales_orders/combinado-esfriando',
+        'sales_orders (esfriando)',
+      );
+      const lista = clientesEsfriando(pedidos, hoje);
+      const ids = lista.map((c) => c.clienteId);
+      const donos = await fetchDonosCarteira(ids);
+      const nomes = new Map<string, string>();
+      for (let i = 0; i < ids.length; i += LOTE_NOMES) {
+        const { data } = await supabase.from('profiles').select('user_id, name').in('user_id', ids.slice(i, i + LOTE_NOMES));
+        for (const p of data ?? []) if (p.name) nomes.set(p.user_id, p.name);
+      }
+      return { lista, donos, nomes };
+    },
+  });
+}
 
 const ROLES_VENDEDOR = ['farmer', 'hunter', 'closer'] as const;
 
@@ -45,7 +103,7 @@ function useVendedoras() {
 
 /**
  * O combinado do dia de cada vendedora: cobrança (Oben e Colacor, até 45 dias, dela) + recompra atrasada
- * (`get_venda_sugestoes_for`, master-only no banco). Cada fonte falha sozinha e é DECLARADA — nunca vira
+ * (`get_venda_sugestoes_for`, master-only no banco) + clientes esfriando da carteira dela (sem os da recompra). Cada fonte falha sozinha e é DECLARADA — nunca vira
  * "nada a combinar".
  */
 export function useCombinadoDia(): { vendedoras: CombinadoVendedora[]; erroVendedoras: boolean; carregando: boolean } {
@@ -53,6 +111,7 @@ export function useCombinadoDia(): { vendedoras: CombinadoVendedora[]; erroVende
   const vend = useVendedoras();
   const oben = useCobrancaFila('oben');
   const colacor = useCobrancaFila('colacor');
+  const esf = useEsfriando();
   const lista = vend.data ?? [];
   const recompra = useQueries({
     queries: lista.map((v) => ({
@@ -72,15 +131,18 @@ export function useCombinadoDia(): { vendedoras: CombinadoVendedora[]; erroVende
     if (oben.isError) fontesComErro.push('cobrança Oben');
     if (colacor.isError) fontesComErro.push('cobrança Colacor');
     if (rq?.isError) fontesComErro.push('recompra');
+    if (esf.isError) fontesComErro.push('clientes esfriando');
     const fila = [...(oben.data ?? []), ...(colacor.data ?? [])];
     const cobrancas = cobrancasDoDia(fila, v.id, hoje);
     const recompras = recomprasDoDia(rq?.data?.compradores ?? []);
+    const naRecompra = new Set(recompras.map((c) => c.compradorId));
+    const esfriando = esf.data ? esfriandoDaVendedora(esf.data.lista, esf.data.donos, v.id, naRecompra) : [];
     return {
       id: v.id,
       nome: v.nome,
-      itens: montarCombinado(cobrancas, recompras),
+      itens: montarCombinado(cobrancas, recompras, esfriando, esf.data?.nomes),
       fontesComErro,
-      carregando: oben.isLoading || colacor.isLoading || !!rq?.isLoading,
+      carregando: oben.isLoading || colacor.isLoading || !!rq?.isLoading || esf.isLoading,
     };
   });
 

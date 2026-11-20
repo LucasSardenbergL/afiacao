@@ -34,6 +34,21 @@ const regina = (over: Partial<CombinadoVendedora> = {}): CombinadoVendedora => (
 describe('CombinadoDoDiaCard', () => {
   beforeEach(() => registrar.mockClear());
 
+  it('[CMB-ESFRIANDO] item esfriando aparece com o detalhe e vai ao ledger com o próprio tipo', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const esfriando = {
+      tipo: 'esfriando' as const, empresa: 'oben', clienteRef: 'u-9', nome: 'Marcenaria X', valor: 12452,
+      detalhe: 'esfriando: sem comprar há 111 dias · comprou R$ 12.452,00 em 12 meses',
+    };
+    estado = { vendedoras: [regina({ itens: [esfriando] })], erroVendedoras: false, carregando: false };
+    render(<CombinadoDoDiaCard />);
+    expect(screen.getByText(esfriando.detalhe)).toBeTruthy();
+    fireEvent.click(screen.getByText('Copiar para WhatsApp'));
+    await waitFor(() => expect(registrar).toHaveBeenCalledWith('R', [esfriando]));
+    expect((writeText.mock.calls[0] as unknown as [string])[0]).toContain('1. Marcenaria X (Oben): esfriando: sem comprar há 111 dias');
+  });
+
   it('[CMB-COPIA] copiar põe o texto no clipboard e grava no ledger', async () => {
     const writeText = vi.fn(async () => undefined);
     Object.assign(navigator, { clipboard: { writeText } });
