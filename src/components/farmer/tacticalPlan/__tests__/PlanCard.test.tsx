@@ -189,7 +189,7 @@ describe("PlanCard", () => {
     it("margem desconhecida exibe travessão, não 0,0%", () => {
       setup({ expanded: true, plan: makePlan({ currentMarginPct: null }) });
       expect(valorDaMetrica("Margem atual")).toBe("—");
-      expect(screen.queryByText("0.0%")).toBeNull();
+      expect(screen.queryByText("0,0%")).toBeNull();
       expect(screen.queryByText("0%")).toBeNull();
     });
 
@@ -202,7 +202,7 @@ describe("PlanCard", () => {
       // 53,47 é a média real medida em prod. O assert mira a ESCALA: se alguém voltar a tratar
       // a coluna como fração (o bug histórico), sairia "5347.0%".
       setup({ expanded: true, plan: makePlan({ currentMarginPct: 53.47 }) });
-      expect(screen.getByText("53.5%")).toBeTruthy();
+      expect(screen.getByText("53,5%")).toBeTruthy();
     });
   });
 
@@ -213,7 +213,7 @@ describe("PlanCard", () => {
 
     it("concedida: mostra margem, cluster e a simulação de margem em PERCENTUAL (não R$)", () => {
       setup({ expanded: true, plan: makePlan({ planType: "estrategico", expectedResult: cenarios }) });
-      expect(valorDaMetrica("Margem atual")).toBe("12.5%");
+      expect(valorDaMetrica("Margem atual")).toBe("12,5%");
       expect(valorDaMetrica("Média cluster")).toBe("15.0%");
       expect(valorDaMetrica("Cenário provável")).toBe("48%");
       expect(screen.queryByText(/R\$\s*48/)).toBeNull();

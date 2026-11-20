@@ -71,7 +71,7 @@ export function decodeHtmlEntities(text: string | null | undefined): string {
 export function formatMargemPct(v: number | null | undefined): string {
   if (v === null || v === undefined || Number.isNaN(v)) return '—';
   const rounded = Math.round(v);
-  return Math.abs(v - rounded) < 0.05 ? `${rounded}%` : `${v.toFixed(1)}%`;
+  return Math.abs(v - rounded) < 0.05 ? `${rounded}%` : `${v.toFixed(1).replace('.', ',')}%`;
 }
 
 /**

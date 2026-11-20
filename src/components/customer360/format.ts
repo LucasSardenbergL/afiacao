@@ -32,7 +32,7 @@ export function formatarFracaoPct(v: number | null | undefined): string {
   // Zero sem decimal ("0%" em vez de "0.0%"); outros valores com 1 decimal só se houver fração.
   if (pct === 0) return '0%';
   const rounded = Math.round(pct);
-  return Math.abs(pct - rounded) < 0.05 ? `${rounded}%` : `${pct.toFixed(1)}%`;
+  return Math.abs(pct - rounded) < 0.05 ? `${rounded}%` : `${pct.toFixed(1).replace('.', ',')}%`;
 }
 
 
