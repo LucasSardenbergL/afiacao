@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { ShoppingBag, AlertTriangle } from 'lucide-react';
+import { ShoppingBag } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { useDashboardCompany } from '@/hooks/useDashboardCompany';
@@ -10,20 +10,23 @@ import { formatCount } from '@/lib/dashboard/format';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
-// Valores gravados em eventos_outlier.severidade, na ordem de prioridade da lista de topo.
-const SEVERIDADES = ['critico', 'atencao', 'info'] as const;
+// "Pendências" = só os tipos de alerta que pedem DECISÃO (a "Fila" da tela de alertas — `TIPOS_FILA` em
+// src/components/reposicao/alertas/types.ts; cópia aqui porque a fronteira de módulos proíbe o import).
+// Venda atípica é REGISTRO (aceitar não move o motor) e contá-la inflava o card com 236 que ninguém trata.
+const TIPOS_PENDENCIA = ['sku_sem_grupo', 'lt_atipico'] as const;
 
-const SEVERIDADE_LABEL: Record<string, string> = { critico: 'Crítico', atencao: 'Atenção', info: 'Info' };
+const brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 
-const TIPO_LABEL: Record<string, string> = {
-  venda_atipica: 'Venda atípica',
-  lt_atipico: 'Lead time atípico',
-  sku_sem_grupo: 'SKU sem grupo',
-  sku_inativado_omie: 'Inativado no Omie',
-  sku_reativado_omie: 'Reativado no Omie',
+type SugeridoPendente = {
+  id: number;
+  fornecedor_nome: string | null;
+  empresa: string;
+  valor_total: number | null;
+  num_skus: number | null;
 };
 
-type AlertaPendente = { id: number; tipo: string; sku_descricao: string | null; severidade: string };
+/** Detalhe do pedido (Gerir pedidos abre por ?id= — `linkDoPedido` em reposicao/pedidos/importar-portal.ts). */
+const linkDoPedido = (id: number) => `/admin/reposicao/pedidos?id=${id}`;
 
 export function useReposicaoZone() {
   const { companies, mode } = useDashboardCompany();
@@ -45,13 +48,13 @@ export function useReposicaoZone() {
       // então cada bloco lança o seu para o `catch` ver (ausente ≠ zero, mesma regra do lote 5 na
       // zona Sistema). `erros` guarda o porquê, por bloco.
       let sugeridosProntos: number | null = null;
-      let alertasAtivos: number | null = null;
+      let pendencias: number | null = null;
       let aumentos7d: number | null = null;
       let topItems: TopListItem[] = [];
-      const erros: Record<'sugeridos' | 'alertas' | 'topAlertas' | 'aumentos', string | null> = {
+      const erros: Record<'sugeridos' | 'pendencias' | 'topSugeridos' | 'aumentos', string | null> = {
         sugeridos: null,
-        alertas: null,
-        topAlertas: null,
+        pendencias: null,
+        topSugeridos: null,
         aumentos: null,
       };
 
@@ -72,59 +75,56 @@ export function useReposicaoZone() {
         }
       };
 
-      const lerAlertas = async () => {
+      const lerPendencias = async () => {
         try {
-          // "Ativos" = aguardando decisão (status 'pendente'). Sem esse filtro o card contava a
-          // tabela inteira — inclusive aceitos/excluídos/resolvidos — e mostrava 511 com 238 pendentes.
+          // Aguardando decisão (status 'pendente') E de um tipo que pede decisão (TIPOS_PENDENCIA). Sem o
+          // status o card contava a tabela inteira (511 com 238 pendentes); sem o tipo, a venda atípica.
           const { count, error } = await supabase
             .from('eventos_outlier')
             .select('id', { count: 'exact', head: true })
-            .eq('status', 'pendente');
-          if (error) throw new Error(`eventos_outlier (alertas ativos): ${mensagemDeErro(error) ?? 'erro sem mensagem'}`);
-          if (count == null) throw new Error('eventos_outlier (alertas ativos): contagem ausente sem error — malformada');
-          alertasAtivos = count;
+            .eq('status', 'pendente')
+            .in('tipo', [...TIPOS_PENDENCIA]);
+          if (error) throw new Error(`eventos_outlier (pendências): ${mensagemDeErro(error) ?? 'erro sem mensagem'}`);
+          if (count == null) throw new Error('eventos_outlier (pendências): contagem ausente sem error — malformada');
+          pendencias = count;
         } catch (e) {
-          erros.alertas = mensagemDeErro(e) ?? 'eventos_outlier (alertas ativos): falha sem mensagem';
+          erros.pendencias = mensagemDeErro(e) ?? 'eventos_outlier (pendências): falha sem mensagem';
         }
       };
 
-      const lerTopAlertas = async () => {
+      const lerTopSugeridos = async () => {
         try {
-          // Lista de topo: pendentes, crítico antes de atenção antes de info (mais recente dentro de
-          // cada severidade). Uma leitura por severidade porque a ordem alfabética do texto não serve.
-          const porSeveridade = await Promise.all(
-            SEVERIDADES.map((sev) =>
-              supabase
-                .from('eventos_outlier')
-                .select('id, tipo, sku_descricao, severidade')
-                .eq('status', 'pendente')
-                .eq('severidade', sev)
-                .order('detectado_em', { ascending: false, nullsFirst: false })
-                .limit(3),
-            ),
-          );
-          // Uma severidade que falha deixaria a lista sem os críticos e com cara de completa.
-          porSeveridade.forEach((r, i) => {
-            if (r.error) throw new Error(`eventos_outlier (topo de alertas, ${SEVERIDADES[i]}): ${mensagemDeErro(r.error) ?? 'erro sem mensagem'}`);
-            if (!r.data) throw new Error(`eventos_outlier (topo de alertas, ${SEVERIDADES[i]}): data null sem error — malformada`);
+          // Lista de topo = os pedidos que esperam a SUA aprovação, cada um abrindo o próprio detalhe.
+          // Antes eram alertas de venda atípica: "crítico" ali é pedido grande, não risco, e o clique caía
+          // numa visão da tela de alertas que nem mostrava o item.
+          const { data: rows, error } = await supabase
+            .from('pedido_compra_sugerido')
+            .select('id, fornecedor_nome, empresa, valor_total, num_skus')
+            .eq('status', 'pendente_aprovacao')
+            .order('criado_em', { ascending: false, nullsFirst: false })
+            .order('id', { ascending: false })
+            .limit(3);
+          if (error) throw new Error(`pedido_compra_sugerido (topo de sugeridos): ${mensagemDeErro(error) ?? 'erro sem mensagem'}`);
+          if (!rows) throw new Error('pedido_compra_sugerido (topo de sugeridos): data null sem error — malformada');
+          topItems = (rows as SugeridoPendente[]).map((p) => {
+            // Ausente ≠ zero: valor/SKUs nulos somem da linha em vez de virar "R$ 0".
+            const partes = [
+              p.empresa,
+              p.num_skus == null ? null : `${p.num_skus} SKU${p.num_skus === 1 ? '' : 's'}`,
+              p.valor_total == null ? null : brl.format(p.valor_total),
+            ].filter(Boolean);
+            return {
+              id: String(p.id),
+              icon: ShoppingBag,
+              title: p.fornecedor_nome ?? `Pedido #${p.id}`,
+              subtitle: `Aguardando aprovação · ${partes.join(' · ')}`,
+              path: linkDoPedido(p.id),
+              itemType: 'pedido_compra_sugerido',
+            };
           });
-          const rows = porSeveridade.flatMap((r) => (r.data ?? []) as AlertaPendente[]);
-          topItems = rows.slice(0, 3).map((a) => ({
-            id: String(a.id),
-            icon: AlertTriangle,
-            title: a.sku_descricao ?? a.tipo ?? 'Alerta',
-            subtitle: `${TIPO_LABEL[a.tipo] ?? a.tipo} · ${SEVERIDADE_LABEL[a.severidade] ?? a.severidade}`,
-            path: '/admin/reposicao/alertas',
-            itemType: 'outlier_event',
-            badge: a.severidade === 'critico'
-              ? { label: 'crítico', intent: 'error' as const }
-              : a.severidade === 'atencao'
-                ? { label: 'atenção', intent: 'warning' as const }
-                : undefined,
-          }));
         } catch (e) {
           topItems = [];
-          erros.topAlertas = mensagemDeErro(e) ?? 'eventos_outlier (topo de alertas): falha sem mensagem';
+          erros.topSugeridos = mensagemDeErro(e) ?? 'pedido_compra_sugerido (topo de sugeridos): falha sem mensagem';
         }
       };
 
@@ -144,9 +144,9 @@ export function useReposicaoZone() {
 
       // Leituras independentes: saem juntas (plano v4, lote 10 — C2). Cada bloco degrada só o próprio
       // KPI, então o `Promise.all` nunca rejeita.
-      await Promise.all([lerSugeridos(), lerAlertas(), lerTopAlertas(), lerAumentos()]);
+      await Promise.all([lerSugeridos(), lerPendencias(), lerTopSugeridos(), lerAumentos()]);
 
-      return { sugeridosProntos, alertasAtivos, aumentos7d, topItems, erros, erroTopo: erros.topAlertas };
+      return { sugeridosProntos, pendencias, aumentos7d, topItems, erros, erroTopo: erros.topSugeridos };
     },
     staleTime: 60_000,
     refetchInterval: 60_000,
@@ -156,7 +156,7 @@ export function useReposicaoZone() {
     if (!data) return [];
     return [
       { label: 'Sugeridos prontos', value: data.sugeridosProntos === null ? '—' : formatCount(data.sugeridosProntos) },
-      { label: 'Alertas ativos', value: data.alertasAtivos === null ? '—' : formatCount(data.alertasAtivos) },
+      { label: 'Pendências', value: data.pendencias === null ? '—' : formatCount(data.pendencias) },
       { label: 'Aumentos 7d', value: data.aumentos7d === null ? '—' : formatCount(data.aumentos7d) },
     ];
   }, [data]);

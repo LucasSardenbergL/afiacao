@@ -26,9 +26,7 @@ const L = {
   conferidas: 'nfe_recebimentos:id',
   sugeridos: 'pedido_compra_sugerido:id',
   alertas: 'eventos_outlier:id',
-  topCritico: 'eventos_outlier:id, tipo, sku_descricao, severidade:critico',
-  topAtencao: 'eventos_outlier:id, tipo, sku_descricao, severidade:atencao',
-  topInfo: 'eventos_outlier:id, tipo, sku_descricao, severidade:info',
+  topSugeridos: 'pedido_compra_sugerido:id, fornecedor_nome, empresa, valor_total, num_skus',
   aumentos: 'fornecedor_aumento_anunciado:id',
   vendasDia: 'sales_orders:total, status, order_date_kpi',
   orcamentos: 'orders:id',
@@ -46,9 +44,7 @@ function padrao(): Record<string, Resposta> {
     [L.conferidas]: { data: null, count: 2, error: null },
     [L.sugeridos]: { data: null, count: 3, error: null },
     [L.alertas]: { data: null, count: 7, error: null },
-    [L.topCritico]: { data: [{ id: 1, tipo: 'venda_atipica', sku_descricao: 'Verniz PU', severidade: 'critico' }], error: null },
-    [L.topAtencao]: { data: [], error: null },
-    [L.topInfo]: { data: [], error: null },
+    [L.topSugeridos]: { data: [{ id: 1, fornecedor_nome: 'Fornecedor X', empresa: 'OBEN', valor_total: 1000, num_skus: 2 }], error: null },
     [L.aumentos]: { data: null, count: 1, error: null },
     [L.vendasDia]: { data: [], error: null },
     [L.orcamentos]: { data: null, count: 5, error: null },
@@ -217,9 +213,9 @@ describe('Reposição: leitura que falha vira "—", não 0', () => {
   it('controle: tudo lido → números medidos e prioridade de sugeridos', async () => {
     const z = await montar(useReposicaoZone);
     expect(kpi(z.kpis, 'Sugeridos prontos')).toBe('3');
-    expect(kpi(z.kpis, 'Alertas ativos')).toBe('7');
+    expect(kpi(z.kpis, 'Pendências')).toBe('7');
     expect(kpi(z.kpis, 'Aumentos 7d')).toBe('1');
-    expect(z.erros).toEqual({ sugeridos: null, alertas: null, topAlertas: null, aumentos: null });
+    expect(z.erros).toEqual({ sugeridos: null, pendencias: null, topSugeridos: null, aumentos: null });
     expect(z.priority?.item.id).toBe('sugeridos_pronto');
   });
 
@@ -229,7 +225,7 @@ describe('Reposição: leitura que falha vira "—", não 0', () => {
     respostas[L.aumentos] = { data: null, count: 0, error: null };
     const z = await montar(useReposicaoZone);
     expect(kpi(z.kpis, 'Sugeridos prontos')).toBe('0');
-    expect(kpi(z.kpis, 'Alertas ativos')).toBe('0');
+    expect(kpi(z.kpis, 'Pendências')).toBe('0');
     expect(kpi(z.kpis, 'Aumentos 7d')).toBe('0');
   });
 
@@ -239,7 +235,7 @@ describe('Reposição: leitura que falha vira "—", não 0', () => {
     expect(kpi(z.kpis, 'Sugeridos prontos')).toBe('—');
     expect(z.erros?.sugeridos).toBe(`pedido_compra_sugerido (sugeridos prontos): ${TIMEOUT}`);
     expect(z.priority).toBeNull();
-    expect(kpi(z.kpis, 'Alertas ativos')).toBe('7');
+    expect(kpi(z.kpis, 'Pendências')).toBe('7');
   });
 
   it('sugeridos malformado → "—" pelo guard de contagem', async () => {
@@ -248,11 +244,11 @@ describe('Reposição: leitura que falha vira "—", não 0', () => {
     expect(z.erros?.sugeridos).toBe('pedido_compra_sugerido (sugeridos prontos): contagem ausente sem error — malformada');
   });
 
-  it('alertas ativos com erro → "—" com a mensagem do ramo', async () => {
+  it('pendências com erro → "—" com a mensagem do ramo', async () => {
     respostas[L.alertas] = ERRO;
     const z = await montar(useReposicaoZone);
-    expect(kpi(z.kpis, 'Alertas ativos')).toBe('—');
-    expect(z.erros?.alertas).toBe(`eventos_outlier (alertas ativos): ${TIMEOUT}`);
+    expect(kpi(z.kpis, 'Pendências')).toBe('—');
+    expect(z.erros?.pendencias).toBe(`eventos_outlier (pendências): ${TIMEOUT}`);
   });
 
   it('aumentos com erro → "—" com a mensagem do ramo', async () => {
@@ -262,32 +258,31 @@ describe('Reposição: leitura que falha vira "—", não 0', () => {
     expect(z.erros?.aumentos).toBe(`fornecedor_aumento_anunciado (aumentos 7d): ${TIMEOUT}`);
   });
 
-  it('topo: a severidade crítica falhando não deixa uma lista "completa" sem os críticos', async () => {
-    respostas[L.topCritico] = ERRO;
-    respostas[L.topAtencao] = { data: [{ id: 2, tipo: 'lt_atipico', sku_descricao: 'Selador', severidade: 'atencao' }], error: null };
+  it('topo de sugeridos com erro → lista vazia com a mensagem do ramo', async () => {
+    respostas[L.topSugeridos] = ERRO;
     const z = await montar(useReposicaoZone);
-    expect(z.erros?.topAlertas).toBe(`eventos_outlier (topo de alertas, critico): ${TIMEOUT}`);
-    expect(z.erroTopo).toBe(z.erros?.topAlertas);
+    expect(z.erros?.topSugeridos).toBe(`pedido_compra_sugerido (topo de sugeridos): ${TIMEOUT}`);
+    expect(z.erroTopo).toBe(z.erros?.topSugeridos);
     expect(z.topItems).toEqual([]);
   });
 
-  it('topo: severidade malformada → mensagem de data null', async () => {
-    respostas[L.topInfo] = MALFORMADA;
+  it('topo de sugeridos malformado → mensagem de data null', async () => {
+    respostas[L.topSugeridos] = MALFORMADA;
     const z = await montar(useReposicaoZone);
-    expect(z.erros?.topAlertas).toBe('eventos_outlier (topo de alertas, info): data null sem error — malformada');
+    expect(z.erros?.topSugeridos).toBe('pedido_compra_sugerido (topo de sugeridos): data null sem error — malformada');
   });
 
-  it('tela: topo que falhou avisa em vez de "Sem alertas ativos."', async () => {
-    respostas[L.topCritico] = ERRO;
+  it('tela: topo que falhou avisa em vez de "Nenhum pedido aguardando aprovação."', async () => {
+    respostas[L.topSugeridos] = ERRO;
     render(<ReposicaoZone />, { wrapper: wrapper() });
     expect(await screen.findByTestId('aviso-topo-falhou')).toBeTruthy();
-    expect(screen.queryByText('Sem alertas ativos.')).toBeNull();
+    expect(screen.queryByText('Nenhum pedido aguardando aprovação.')).toBeNull();
   });
 
-  it('tela (controle): topo lido e vazio diz "Sem alertas ativos." sem aviso', async () => {
-    respostas[L.topCritico] = { data: [], error: null };
+  it('tela (controle): topo lido e vazio diz "Nenhum pedido aguardando aprovação." sem aviso', async () => {
+    respostas[L.topSugeridos] = { data: [], error: null };
     render(<ReposicaoZone />, { wrapper: wrapper() });
-    expect(await screen.findByText('Sem alertas ativos.')).toBeTruthy();
+    expect(await screen.findByText('Nenhum pedido aguardando aprovação.')).toBeTruthy();
     expect(screen.queryByTestId('aviso-topo-falhou')).toBeNull();
   });
 });
