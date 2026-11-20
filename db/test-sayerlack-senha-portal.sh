@@ -142,6 +142,7 @@ SQL
   erro D1 P0001 service_role "PERFORM public.sayerlack_senha_portal_promover(gen_random_uuid())"
   erro D2 P0001 service_role "PERFORM public.sayerlack_senha_portal_falhar(gen_random_uuid(), 'x', true)"
   # D4 confere como DONO (service_role não enxerga o vault):
+  # shellcheck disable=SC2015  # echo nao falha: o ramo || so roda quando o teste [ ] reprova
   [ "$(Pq -c "SELECT count(*) FROM vault.secrets WHERE name='sayerlack_portal_pass_pendente' AND description='$R1'" | tail -1)" = "1" ] \
     && echo "PASS D4" || { echo "FAIL D4 candidata nao presa a rodada"; FALHAS=$((FALHAS+1)); }
 
@@ -152,8 +153,10 @@ SQL
 
   # P — promover
   ok P1 "SELECT public.sayerlack_senha_portal_promover('$R1') = ARRAY[4505]::bigint[]"
+  # shellcheck disable=SC2015  # echo nao falha: o ramo || so roda quando o teste [ ] reprova
   [ "$(Pq -c "SELECT string_agg(name||'='||secret||'@'||description, ',' ORDER BY name) FROM vault.secrets" | tail -1)" = "sayerlack_portal_pass=Candidata1234abcd@$R1" ] \
     && echo "PASS P2" || { echo "FAIL P2 vault apos promover: $(Pq -c "SELECT string_agg(name||'@'||description, ',') FROM vault.secrets" | tail -1)"; FALHAS=$((FALHAS+1)); }
+  # shellcheck disable=SC2015  # echo nao falha: o ramo || so roda quando o teste [ ] reprova
   [ "$(Pq -c "SELECT string_agg(id||':'||status_envio_portal||':'||portal_tentativas, ',' ORDER BY id) FROM public.pedido_compra_sugerido" | tail -1)" = \
     "4505:pendente_envio_portal:0,4506:erro_nao_retentavel:1,4507:erro_nao_retentavel:1,4508:erro_nao_retentavel:1" ] \
     && echo "PASS P3" || { echo "FAIL P3 reenfileiramento: $(Pq -c "SELECT string_agg(id||':'||status_envio_portal, ',' ORDER BY id) FROM public.pedido_compra_sugerido" | tail -1)"; FALHAS=$((FALHAS+1)); }
@@ -177,6 +180,7 @@ SQL
   Pq -c "SET ROLE service_role; SELECT public.sayerlack_senha_portal_adotar('SenhaManual777', 'env')" >/dev/null
   ok A1 "SELECT status = 'resolvida_manual' FROM public.sayerlack_senha_rotacao WHERE id = '$R2'"
   ok A2 "SELECT origem = 'vault' AND senha = 'SenhaManual777' FROM public.sayerlack_senha_portal_credencial()"
+  # shellcheck disable=SC2015  # echo nao falha: o ramo || so roda quando o teste [ ] reprova
   [ "$(Pq -c "SELECT count(*) FROM vault.secrets WHERE name='sayerlack_portal_pass_pendente'" | tail -1)" = "0" ] \
     && echo "PASS A3" || { echo "FAIL A3 candidata sobreviveu a adocao"; FALHAS=$((FALHAS+1)); }
   # A4: rodada concluída com e-mail ainda pendente, mas a ativa já é OUTRA versão (adotada) → nada a enviar.
@@ -195,6 +199,7 @@ SQL
   Pq -c "SET ROLE service_role; SELECT public.sayerlack_senha_portal_gravar_candidata('$R3', 'Candidata4444xxxx')" >/dev/null
   Pq -c "SET ROLE service_role; SELECT public.sayerlack_senha_portal_falhar('$R3', 'portal recusou', true)" >/dev/null
   ok F1 "SELECT status = 'falhou' FROM public.sayerlack_senha_rotacao WHERE id = '$R3'"
+  # shellcheck disable=SC2015  # echo nao falha: o ramo || so roda quando o teste [ ] reprova
   [ "$(Pq -c "SELECT string_agg(name, ',' ORDER BY name) FROM vault.secrets" | tail -1)" = "sayerlack_portal_pass" ] \
     && echo "PASS F2" || { echo "FAIL F2 vault apos falhar"; FALHAS=$((FALHAS+1)); }
   ok F3 "SELECT origem = 'vault' AND senha = 'SenhaManual777' FROM public.sayerlack_senha_portal_credencial()"
