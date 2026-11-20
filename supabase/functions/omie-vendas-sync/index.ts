@@ -3251,6 +3251,18 @@ Deno.serve(async (req) => {
             // caller antigo, falha de TRANSPORTE: segue como hoje (o registro acima mede o furo)
           }
         }
+        // Claim ATÔMICO do envio (migration 20261120210002), o mais perto possível do IncluirPedido:
+        // carimba o pedido SÓ se ele não está marcado para exclusão. A leitura de deleted_at lá em
+        // cima é só o atalho; esta é a disputa de verdade com o excluir_pedido (lock de linha).
+        // Falha da RPC RECUSA: sem o carimbo a exclusão concorrente apagaria o pedido com o PV vivo.
+        const { data: reivindicou, error: claimErr } = await supabaseAdmin
+          .rpc("sales_order_reivindicar_envio", { p_sales_order_id: sales_order_id });
+        if (claimErr) {
+          throw new Error(`Envio recusado: não consegui reservar o pedido ${sales_order_id} para o envio (${claimErr.message}).`);
+        }
+        if (reivindicou !== true) {
+          throw new Error(`Envio recusado: o pedido ${sales_order_id} está sendo excluído.`);
+        }
         const pedido = await criarPedidoVenda(
           supabaseAdmin,
           sales_order_id,
@@ -4081,12 +4093,19 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Delete locally
-        const { error: delError } = await supabaseAdmin
-          .from("sales_orders")
-          .delete()
-          .eq("id", soId);
-        if (delError) throw delError;
+        // DELETE condicionado (migration 20261120210002): só apaga se nenhum envio reivindicou o
+        // pedido nos últimos 10 min. É o ponto ATÔMICO da corrida envio × exclusão — a consulta ao
+        // Omie acima pode dizer "ausente" porque o IncluirPedido ainda não gravou (Colacor não tem
+        // rastro ATP); o lock de linha faz o envio e a exclusão disputarem o MESMO pedido.
+        const { data: desfechoDel, error: delError } = await supabaseAdmin
+          .rpc("sales_order_excluir_sem_envio", { p_sales_order_id: soId });
+        if (delError) throw new Error(`Exclusão recusada: falha ao apagar o pedido (${delError.message}).`);
+        if (desfechoDel === "envio_em_curso") {
+          throw new Error("Exclusão recusada: o pedido está sendo enviado ao Omie agora. Tente de novo em alguns minutos.");
+        }
+        if (desfechoDel !== "excluido" && desfechoDel !== "ausente") {
+          throw new Error(`Exclusão recusada: resposta inesperada ao apagar o pedido (${String(desfechoDel)}).`);
+        }
 
         result = { success: true };
         break;
