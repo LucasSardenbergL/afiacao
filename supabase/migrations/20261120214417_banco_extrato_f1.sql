@@ -12,7 +12,7 @@
 --   SECAO 3  Storage: bucket banco-extratos + policies ........... Task 1
 --   SECAO 4  RPC banco_conta_registrar_ancora .................... Task 1
 --   SECAO 5  seed da conta Itau por empresa (derivada do Omie) ... Task 1
---   SECAO 6  RPCs do extrato (registrar / conferido / resumo) .... Task 2 (a vir)
+--   SECAO 6  RPCs do extrato (registrar / conferido / resumo) .... Task 2
 --   SECAO 7  sensores no ledger .................................. Task 7 (a vir)
 --   SECAO 8  foto diaria do saldo Omie ........................... Task 9b (a vir)
 --   SECAO 9  POS (postcondicao, sempre por ultimo) ............... Task 1 (+ as tasks seguintes)
@@ -118,7 +118,8 @@ CREATE TABLE IF NOT EXISTS public.banco_conta_omie (
 COMMENT ON TABLE public.banco_conta_omie IS 'banco_extrato_f1: vinculo conta bancaria -> omie_ncodcc (a principal + a Pix Itau).';
 
 -- Ancora de saldo ao fim do dia (decisao 4 do plano). Escrita: RPC banco_conta_registrar_ancora
--- (manual) e a RPC de registro do extrato (cnab, Task 2).
+-- (manual). A origem 'cnab' fica reservada: na F1 o saldo de um CNAB aceito ja entra em S(d) pelo
+-- proprio arquivo (saldo_abertura_centavos), sem copia em ancora.
 CREATE TABLE IF NOT EXISTS public.banco_conta_ancora (
   id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company                   text NOT NULL,
@@ -146,6 +147,10 @@ CREATE TABLE IF NOT EXISTS public.banco_extrato_arquivo (
   periodo_fim             date NOT NULL,
   saldo_inicial_centavos  bigint,
   saldo_final_centavos    bigint NOT NULL,
+  -- saldo ao fim da vespera do periodo, EFETIVO: o saldo_inicial do arquivo ou, sem ele, o derivado
+  -- (saldo_final - movimentos) que a continuidade conferiu. So existe em arquivo aceito; e a ancora
+  -- de S(d) e do saldo do resumo por dia (Task 2).
+  saldo_abertura_centavos bigint,
   qtd_linhas              integer NOT NULL CHECK (qtd_linhas >= 0),
   qtd_linhas_novas        integer NOT NULL,
   status                  text NOT NULL CHECK (status IN ('aceito','pendente_revisao','recusado')),
@@ -158,6 +163,9 @@ CREATE TABLE IF NOT EXISTS public.banco_extrato_arquivo (
   CONSTRAINT banco_extrato_arquivo_periodo_ck CHECK (periodo_fim >= periodo_inicio),
   CONSTRAINT banco_extrato_arquivo_novas_ck CHECK (qtd_linhas_novas BETWEEN 0 AND qtd_linhas),
   CONSTRAINT banco_extrato_arquivo_conferido_ck CHECK ((conferido_por IS NULL) = (conferido_em IS NULL)),
+  CONSTRAINT banco_extrato_arquivo_conferido_aceito_ck CHECK (conferido_por IS NULL OR status = 'aceito'),
+  CONSTRAINT banco_extrato_arquivo_abertura_ck CHECK ((status = 'aceito') = (saldo_abertura_centavos IS NOT NULL)
+    AND (saldo_inicial_centavos IS NULL OR saldo_abertura_centavos IS NULL OR saldo_abertura_centavos = saldo_inicial_centavos)),
   CONSTRAINT banco_extrato_arquivo_path_ck CHECK (starts_with(storage_path, banco_conta_id::text || '/')),
   CONSTRAINT banco_extrato_arquivo_conta_sha_key UNIQUE (banco_conta_id, sha256),
   CONSTRAINT banco_extrato_arquivo_id_conta_company_key UNIQUE (id, banco_conta_id, company),
@@ -272,6 +280,8 @@ BEGIN
   IF p_data >= v_hoje THEN
     RAISE EXCEPTION 'banco_conta_registrar_ancora: o dia % ainda esta aberto (hoje em SP: %)', p_data, v_hoje USING ERRCODE = '22023';
   END IF;
+  -- mesma trava do banco_extrato_registrar: a ancora nao entra no meio de uma avaliacao de continuidade
+  PERFORM pg_advisory_xact_lock(hashtext(p_banco_conta_id::text));
 
   INSERT INTO public.banco_conta_ancora (company, banco_conta_id, data, saldo_final_dia_centavos, origem, registrado_por)
   VALUES (v_company, p_banco_conta_id, p_data, p_saldo_centavos, 'manual', v_uid)
@@ -318,6 +328,531 @@ SELECT bc.id, l.company, l.omie_ncodcc
 ON CONFLICT DO NOTHING;
 
 -- ── SECAO 6 — RPCs do extrato (Task 2) ───────────────────────────────────────────────────────
+-- Uma fonte da verdade por dia:
+--   * cobertura de d  = existe arquivo ACEITO com d em [periodo_inicio, periodo_fim];
+--   * movimento de d  = as linhas gravadas de d (so o 1o aceito que cobre d grava; os seguintes
+--     provaram ter o MESMO multiconjunto e nao gravam nada nesse dia);
+--   * S(d) (saldo conhecido ao fim de d) = saldo_abertura do arquivo aceito + movimentos de
+--     periodo_inicio ate d, para d em [periodo_inicio - 1, periodo_fim], e as ancoras da conta.
+-- banco_extrato_saldos_conhecidos e o UNICO lugar que calcula S(d): o registrar confere contra ele
+-- e o resumo por dia le dele. SECURITY INVOKER: chamado pelo resumo (como o usuario) a RLS vale;
+-- chamado pelo registrar (DEFINER) le tudo da conta. Por isso tem EXECUTE para authenticated — e
+-- leitura pura, sob RLS, sem nada que o usuario ja nao leia nas tabelas.
+CREATE OR REPLACE FUNCTION public.banco_extrato_saldos_conhecidos(p_banco_conta_id uuid, p_de date, p_ate date)
+RETURNS TABLE (data date, saldo_centavos bigint, fonte text, fonte_id uuid)
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $fn$
+  WITH arq AS (
+    SELECT a.id, a.periodo_inicio, a.periodo_fim, a.saldo_abertura_centavos
+      FROM public.banco_extrato_arquivo a
+     WHERE a.banco_conta_id = p_banco_conta_id
+       AND a.status = 'aceito'
+       AND a.periodo_fim >= p_de
+       AND a.periodo_inicio - 1 <= p_ate
+  ), mov AS (
+    SELECT l.data AS d,
+           sum(CASE l.sentido WHEN 'C' THEN l.valor_centavos ELSE -l.valor_centavos END)::bigint AS m
+      FROM public.banco_extrato_linha l
+     WHERE l.banco_conta_id = p_banco_conta_id
+       AND l.data <= p_ate
+       AND l.data >= (SELECT min(arq.periodo_inicio) FROM arq)
+     GROUP BY l.data
+  )
+  -- dia coberto sem linha tem movimento ZERO de fato (o arquivo aceito diz que nada se moveu)
+  SELECT dd.d, arq.saldo_abertura_centavos
+               + coalesce((SELECT sum(mov.m) FROM mov WHERE mov.d BETWEEN arq.periodo_inicio AND dd.d), 0)::bigint,
+         'arquivo'::text, arq.id
+    FROM arq
+   CROSS JOIN LATERAL (
+     SELECT (arq.periodo_inicio - 1) + g AS d
+       FROM generate_series(0, arq.periodo_fim - arq.periodo_inicio + 1) g
+   ) dd
+   WHERE dd.d BETWEEN p_de AND p_ate
+  UNION ALL
+  SELECT an.data, an.saldo_final_dia_centavos, ('ancora_' || an.origem)::text, an.id
+    FROM public.banco_conta_ancora an
+   WHERE an.banco_conta_id = p_banco_conta_id
+     AND an.data BETWEEN p_de AND p_ate
+$fn$;
+REVOKE ALL ON FUNCTION public.banco_extrato_saldos_conhecidos(uuid, date, date) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.banco_extrato_saldos_conhecidos(uuid, date, date) TO authenticated, service_role;
+
+-- Auxiliares de contrato do payload (puras, so o registrar usa): data ISO estrita e centavos inteiros.
+-- NULL = invalido/ausente; nunca 0.
+CREATE OR REPLACE FUNCTION public.banco_extrato_aux_data(p text)
+RETURNS date
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF p IS NULL OR p !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN
+    RETURN NULL;
+  END IF;
+  RETURN p::date;  -- AAAA-MM-DD e inequivoco em qualquer DateStyle; 2026-02-30 -> 22008 -> NULL
+EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format THEN
+  RETURN NULL;
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.banco_extrato_aux_data(text) FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.banco_extrato_aux_centavos(p jsonb)
+RETURNS bigint
+LANGUAGE sql
+IMMUTABLE
+SET search_path = public, pg_temp
+AS $fn$
+  SELECT CASE WHEN jsonb_typeof(p) = 'number' AND p::text ~ '^-?[0-9]{1,18}$' THEN (p::text)::bigint END
+$fn$;
+REVOKE ALL ON FUNCTION public.banco_extrato_aux_centavos(jsonb) FROM PUBLIC, anon, authenticated;
+
+-- banco_extrato_registrar: decide se um extrato e aceito. Chamada SO pela edge (service_role).
+-- Ordem de decisao (a 1a que falha define o resultado), tudo sob a trava da conta:
+--   0 conta (company DERIVADA dela)  1 idempotencia por (conta, sha256)  2 identidade  3 dia corrente
+--   4 linhas  5 fechamento  6 formato/estrategia  7 sobreposicao  8 continuidade  9 aceite.
+-- pendente_revisao/recusado gravam o ARQUIVO (para a tela), nunca linhas.
+-- Erro de CONTRATO do payload (campo obrigatorio ausente/malformado, bug da edge e nao do arquivo)
+-- levanta 22023 e nao grava nada.
+CREATE OR REPLACE FUNCTION public.banco_extrato_registrar(p jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_conta_id     uuid;
+  v_company      text;
+  v_c_banco      text;
+  v_c_agencia    text;
+  v_c_conta      text;
+  v_c_formato    text;
+  v_c_estrategia text;
+  v_ext          jsonb;
+  v_linhas       jsonb;
+  v_formato      text;
+  v_estrategia   text;
+  v_sha          text;
+  v_path         text;
+  v_enviado_por  uuid;
+  v_hoje         date;
+  v_ini          date;
+  v_fim          date;
+  v_inicial      bigint;
+  v_final        bigint;
+  v_qtd          int;
+  v_arquivo_id   uuid;
+  v_status_ant   text;
+  v_status       text;
+  v_motivo       text;
+  v_detalhe      text;
+  v_abertura     bigint;
+  v_soma         bigint;
+  v_esperadas    int;
+  v_novas        int := 0;
+  v_banco        text;
+  v_agencia      text;
+  v_conta        text;
+  v_e            jsonb;
+  v_o            bigint;
+  v_d            date;
+  v_txt          text;
+  v_s            bigint;
+  v_n            bigint;
+  v_fonte        text;
+BEGIN
+  IF p IS NULL OR jsonb_typeof(p) <> 'object' THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (nao e objeto)' USING ERRCODE = '22023';
+  END IF;
+
+  -- 0. conta. A company vem DA CONTA, nunca do payload.
+  BEGIN
+    v_conta_id := (p->>'banco_conta_id')::uuid;
+  EXCEPTION WHEN invalid_text_representation THEN
+    v_conta_id := NULL;
+  END;
+  IF v_conta_id IS NULL THEN
+    RETURN jsonb_build_object('status', 'recusado', 'arquivo_id', NULL, 'motivo', 'conta_desconhecida',
+                              'detalhe', 'banco_conta_id ausente ou invalido', 'qtd_linhas_novas', 0);
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtext(v_conta_id::text));
+
+  SELECT c.company, c.banco_codigo, c.agencia_digitos, c.conta_digitos, c.formato, c.estrategia_chave
+    INTO v_company, v_c_banco, v_c_agencia, v_c_conta, v_c_formato, v_c_estrategia
+    FROM public.banco_conta c
+   WHERE c.id = v_conta_id AND c.ativo;
+  IF v_company IS NULL THEN
+    RETURN jsonb_build_object('status', 'recusado', 'arquivo_id', NULL, 'motivo', 'conta_desconhecida',
+                              'detalhe', 'conta bancaria inexistente ou inativa', 'qtd_linhas_novas', 0);
+  END IF;
+
+  -- contrato do payload
+  v_formato    := p->>'formato';
+  v_estrategia := p->>'estrategia_chave';
+  v_sha        := p->>'sha256';
+  v_path       := p->>'storage_path';
+  v_hoje       := public.banco_extrato_aux_data(p->>'hoje');
+  v_ext        := p->'extrato';
+  BEGIN
+    v_enviado_por := (p->>'enviado_por')::uuid;
+  EXCEPTION WHEN invalid_text_representation THEN
+    v_enviado_por := NULL;
+  END;
+  IF v_formato IS NULL OR v_formato NOT IN ('ofx', 'cnab240') THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (formato)' USING ERRCODE = '22023';
+  END IF;
+  IF v_estrategia IS NULL OR v_estrategia NOT IN ('id_bancario', 'tupla') THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (estrategia_chave)' USING ERRCODE = '22023';
+  END IF;
+  IF v_sha IS NULL OR v_sha !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (sha256)' USING ERRCODE = '22023';
+  END IF;
+  IF v_path IS NULL OR NOT starts_with(v_path, v_conta_id::text || '/') THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (storage_path fora da pasta da conta)' USING ERRCODE = '22023';
+  END IF;
+  IF v_enviado_por IS NULL OR v_hoje IS NULL THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (enviado_por/hoje)' USING ERRCODE = '22023';
+  END IF;
+  IF v_ext IS NULL OR jsonb_typeof(v_ext) <> 'object' THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (extrato)' USING ERRCODE = '22023';
+  END IF;
+  v_ini     := public.banco_extrato_aux_data(v_ext->>'periodo_inicio');
+  v_fim     := public.banco_extrato_aux_data(v_ext->>'periodo_fim');
+  v_final   := public.banco_extrato_aux_centavos(v_ext->'saldo_final_centavos');
+  v_inicial := public.banco_extrato_aux_centavos(v_ext->'saldo_inicial_centavos');
+  v_linhas  := v_ext->'linhas';
+  IF v_ini IS NULL OR v_fim IS NULL OR v_fim < v_ini THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (periodo)' USING ERRCODE = '22023';
+  END IF;
+  IF v_final IS NULL THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (saldo_final_centavos)' USING ERRCODE = '22023';
+  END IF;
+  -- saldo_inicial: ausente/null = SEM saldo inicial (nunca 0); presente e nao inteiro = contrato quebrado
+  IF v_inicial IS NULL AND coalesce(jsonb_typeof(v_ext->'saldo_inicial_centavos'), 'null') <> 'null' THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (saldo_inicial_centavos)' USING ERRCODE = '22023';
+  END IF;
+  IF v_linhas IS NULL OR jsonb_typeof(v_linhas) <> 'array' THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (linhas)' USING ERRCODE = '22023';
+  END IF;
+  v_qtd := jsonb_array_length(v_linhas);
+
+  -- 1. idempotencia: aceito = ja_importado; outro status = reavalia e atualiza ESSA linha.
+  SELECT a.id, a.status INTO v_arquivo_id, v_status_ant
+    FROM public.banco_extrato_arquivo a
+   WHERE a.banco_conta_id = v_conta_id AND a.sha256 = v_sha;
+  IF v_status_ant = 'aceito' THEN
+    RETURN jsonb_build_object('status', 'ja_importado', 'arquivo_id', v_arquivo_id, 'motivo', NULL,
+                              'detalhe', NULL, 'qtd_linhas_novas', 0);
+  END IF;
+
+  <<avalia>>
+  BEGIN
+    -- 2. identidade (so digitos)
+    v_banco   := regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g');
+    v_agencia := regexp_replace(coalesce(v_ext->>'agencia', ''), '[^0-9]', '', 'g');
+    v_conta   := regexp_replace(coalesce(v_ext->>'conta', ''), '[^0-9]', '', 'g');
+    IF v_banco = '' OR v_agencia = '' OR v_conta = '' THEN
+      v_status := 'recusado'; v_motivo := 'identidade_incompleta';
+      v_detalhe := format('banco=%s agencia=%s conta=%s', v_banco <> '', v_agencia <> '', v_conta <> '');
+      EXIT avalia;
+    END IF;
+    IF v_banco <> v_c_banco OR v_agencia <> v_c_agencia OR v_conta <> v_c_conta THEN
+      v_status := 'recusado'; v_motivo := 'conta_divergente';
+      v_detalhe := format('banco_confere=%s agencia_confere=%s conta_confere=%s',
+                          v_banco = v_c_banco, v_agencia = v_c_agencia, v_conta = v_c_conta);
+      EXIT avalia;
+    END IF;
+
+    -- 3. o dia corrente (SP, calculado pela edge) ainda esta aberto
+    IF v_fim >= v_hoje THEN
+      v_status := 'recusado'; v_motivo := 'periodo_inclui_dia_corrente';
+      v_detalhe := format('periodo_fim=%s hoje=%s', v_fim, v_hoje);
+      EXIT avalia;
+    END IF;
+
+    -- 4. linhas: forma, periodo e chave unica no proprio arquivo
+    FOR v_e, v_o IN SELECT t.e, t.o FROM jsonb_array_elements(v_linhas) WITH ORDINALITY t(e, o) LOOP
+      v_txt := NULL;
+      IF jsonb_typeof(v_e) <> 'object' THEN
+        v_txt := 'nao e objeto';
+      ELSE
+        v_d := public.banco_extrato_aux_data(v_e->>'data');
+        IF v_d IS NULL THEN
+          v_txt := 'data invalida';
+        ELSIF v_d < v_ini OR v_d > v_fim THEN
+          v_txt := format('data %s fora do periodo', v_d);
+        ELSIF coalesce(v_e->>'sentido', '') NOT IN ('C', 'D') THEN
+          v_txt := 'sentido invalido';
+        ELSIF public.banco_extrato_aux_centavos(v_e->'valor_centavos') IS NULL
+           OR public.banco_extrato_aux_centavos(v_e->'valor_centavos') <= 0 THEN
+          v_txt := 'valor_centavos invalido';
+        ELSIF jsonb_typeof(v_e->'chave') IS DISTINCT FROM 'string' OR v_e->>'chave' = '' THEN
+          v_txt := 'chave ausente';
+        ELSIF jsonb_typeof(v_e->'descricao') IS DISTINCT FROM 'string' THEN
+          v_txt := 'descricao ausente';
+        ELSIF coalesce(jsonb_typeof(v_e->'documento'), 'null') NOT IN ('null', 'string')
+           OR coalesce(jsonb_typeof(v_e->'id_bancario'), 'null') NOT IN ('null', 'string') THEN
+          v_txt := 'documento/id_bancario invalido';
+        END IF;
+      END IF;
+      IF v_txt IS NOT NULL THEN
+        v_status := 'recusado'; v_motivo := 'linha_invalida';
+        v_detalhe := format('linha %s: %s', v_o, v_txt);
+        EXIT avalia;
+      END IF;
+    END LOOP;
+    SELECT x.chave INTO v_txt
+      FROM jsonb_to_recordset(v_linhas) AS x(chave text)
+     GROUP BY x.chave HAVING count(*) > 1
+     ORDER BY x.chave LIMIT 1;
+    IF v_txt IS NOT NULL THEN
+      v_status := 'recusado'; v_motivo := 'linha_invalida';
+      v_detalhe := format('chave repetida no arquivo: %s', v_txt);
+      EXIT avalia;
+    END IF;
+
+    SELECT coalesce(sum(CASE x.sentido WHEN 'C' THEN x.valor_centavos ELSE -x.valor_centavos END), 0)::bigint
+      INTO v_soma
+      FROM jsonb_to_recordset(v_linhas) AS x(sentido text, valor_centavos bigint);
+
+    -- 5. fechamento em centavos (so com saldo inicial; sem ele, quem ancora e o passo 8)
+    IF v_inicial IS NOT NULL AND v_inicial + v_soma <> v_final THEN
+      v_status := 'recusado'; v_motivo := 'nao_fecha';
+      v_detalhe := format('diferenca_centavos=%s calculado=%s informado=%s',
+                          v_inicial + v_soma - v_final, v_inicial + v_soma, v_final);
+      EXIT avalia;
+    END IF;
+
+    -- 6. um formato e uma estrategia de chave por conta
+    IF (v_c_formato IS NOT NULL AND v_c_formato <> v_formato)
+       OR (v_c_estrategia IS NOT NULL AND v_c_estrategia <> v_estrategia) THEN
+      v_status := 'pendente_revisao'; v_motivo := 'formato_diferente';
+      v_detalhe := format('conta=%s/%s arquivo=%s/%s', v_c_formato, v_c_estrategia, v_formato, v_estrategia);
+      EXIT avalia;
+    END IF;
+
+    -- 7. sobreposicao: em todo dia ja coberto, o multiconjunto (chave, sentido, valor) do arquivo e
+    --    IGUAL ao das linhas gravadas (nas duas direcoes — subconjunto nao basta).
+    SELECT dd.d INTO v_d
+      FROM (SELECT v_ini + g AS d FROM generate_series(0, v_fim - v_ini) g) dd
+     WHERE EXISTS (SELECT 1 FROM public.banco_extrato_arquivo a
+                    WHERE a.banco_conta_id = v_conta_id AND a.status = 'aceito'
+                      AND dd.d BETWEEN a.periodo_inicio AND a.periodo_fim)
+       AND (EXISTS (SELECT x.chave, x.sentido, x.valor_centavos
+                      FROM jsonb_to_recordset(v_linhas) AS x(data date, sentido text, valor_centavos bigint, chave text)
+                     WHERE x.data = dd.d
+                    EXCEPT ALL
+                    SELECT l.chave, l.sentido::text, l.valor_centavos
+                      FROM public.banco_extrato_linha l
+                     WHERE l.banco_conta_id = v_conta_id AND l.data = dd.d)
+            OR EXISTS (SELECT l.chave, l.sentido::text, l.valor_centavos
+                         FROM public.banco_extrato_linha l
+                        WHERE l.banco_conta_id = v_conta_id AND l.data = dd.d
+                       EXCEPT ALL
+                       SELECT x.chave, x.sentido, x.valor_centavos
+                         FROM jsonb_to_recordset(v_linhas) AS x(data date, sentido text, valor_centavos bigint, chave text)
+                        WHERE x.data = dd.d))
+     ORDER BY dd.d LIMIT 1;
+    IF v_d IS NOT NULL THEN
+      v_status := 'pendente_revisao'; v_motivo := 'sobreposicao_divergente';
+      v_detalhe := format('data=%s', v_d);
+      EXIT avalia;
+    END IF;
+    -- ...e nenhuma chave de dia NOVO ja existe na conta em outro dia (o ON CONFLICT do aceite a
+    -- engoliria e o dia ficaria com menos linhas que o arquivo).
+    SELECT x.chave INTO v_txt
+      FROM jsonb_to_recordset(v_linhas) AS x(data date, chave text)
+     WHERE EXISTS (SELECT 1 FROM public.banco_extrato_linha l WHERE l.banco_conta_id = v_conta_id AND l.chave = x.chave)
+       AND NOT EXISTS (SELECT 1 FROM public.banco_extrato_arquivo a
+                        WHERE a.banco_conta_id = v_conta_id AND a.status = 'aceito'
+                          AND x.data BETWEEN a.periodo_inicio AND a.periodo_fim)
+     ORDER BY x.chave LIMIT 1;
+    IF v_txt IS NOT NULL THEN
+      v_status := 'pendente_revisao'; v_motivo := 'sobreposicao_divergente';
+      v_detalhe := format('chave ja gravada em outro dia: %s', v_txt);
+      EXIT avalia;
+    END IF;
+
+    -- 8. continuidade: N(d) = S(d) para TODO d em [inicio - 1, fim] em que S(d) existe (vespera,
+    --    dias comuns e o fim contra a abertura do arquivo que comeca em fim + 1).
+    --    Sem saldo inicial o arquivo e ancorado pelo FINAL: N(d) = final - movimentos depois de d,
+    --    e so vale se houver ao menos um S(d) para conferir.
+    v_abertura := coalesce(v_inicial, v_final - v_soma);
+    IF v_inicial IS NULL AND NOT EXISTS (SELECT 1 FROM public.banco_extrato_saldos_conhecidos(v_conta_id, v_ini - 1, v_fim)) THEN
+      v_status := 'pendente_revisao'; v_motivo := 'sem_saldo_inicial';
+      v_detalhe := format('nenhum saldo conhecido entre %s e %s (arquivo aceito ou ancora)', v_ini - 1, v_fim);
+      EXIT avalia;
+    END IF;
+    SELECT k.data, k.saldo_centavos, k.n, k.fonte INTO v_d, v_s, v_n, v_fonte
+      FROM (SELECT s.data, s.saldo_centavos, s.fonte,
+                   v_abertura + coalesce((SELECT sum(CASE x.sentido WHEN 'C' THEN x.valor_centavos ELSE -x.valor_centavos END)
+                                            FROM jsonb_to_recordset(v_linhas) AS x(data date, sentido text, valor_centavos bigint)
+                                           WHERE x.data <= s.data), 0)::bigint AS n
+              FROM public.banco_extrato_saldos_conhecidos(v_conta_id, v_ini - 1, v_fim) s) k
+     WHERE k.n <> k.saldo_centavos
+     ORDER BY k.data, k.fonte LIMIT 1;
+    IF v_d IS NOT NULL THEN
+      v_status := 'pendente_revisao'; v_motivo := 'descontinuidade_saldo';
+      v_detalhe := format('data=%s diferenca_centavos=%s arquivo=%s conhecido=%s fonte=%s', v_d, v_n - v_s, v_n, v_s, v_fonte);
+      EXIT avalia;
+    END IF;
+
+    -- 9. aceito
+    v_status := 'aceito'; v_motivo := NULL; v_detalhe := NULL;
+  END avalia;
+
+  IF v_status = 'aceito' THEN
+    SELECT count(*) INTO v_esperadas
+      FROM jsonb_to_recordset(v_linhas) AS x(data date)
+     WHERE NOT EXISTS (SELECT 1 FROM public.banco_extrato_arquivo a
+                        WHERE a.banco_conta_id = v_conta_id AND a.status = 'aceito'
+                          AND x.data BETWEEN a.periodo_inicio AND a.periodo_fim);
+  END IF;
+
+  IF v_arquivo_id IS NULL THEN
+    INSERT INTO public.banco_extrato_arquivo (company, banco_conta_id, formato, storage_path, sha256, periodo_inicio, periodo_fim,
+                                              saldo_inicial_centavos, saldo_final_centavos, saldo_abertura_centavos,
+                                              qtd_linhas, qtd_linhas_novas, status, motivo, detalhe, enviado_por)
+    VALUES (v_company, v_conta_id, v_formato, v_path, v_sha, v_ini, v_fim,
+            v_inicial, v_final, CASE WHEN v_status = 'aceito' THEN v_abertura END,
+            v_qtd, 0, v_status, v_motivo, v_detalhe, v_enviado_por)
+    RETURNING id INTO v_arquivo_id;
+  ELSE
+    -- reavaliacao do MESMO arquivo (mesmo hash): a linha e atualizada, nunca duplicada. O caminho e o
+    -- autor do 1o envio ficam (mesmos bytes).
+    UPDATE public.banco_extrato_arquivo
+       SET formato = v_formato, periodo_inicio = v_ini, periodo_fim = v_fim,
+           saldo_inicial_centavos = v_inicial, saldo_final_centavos = v_final,
+           saldo_abertura_centavos = CASE WHEN v_status = 'aceito' THEN v_abertura END,
+           qtd_linhas = v_qtd, qtd_linhas_novas = 0,
+           status = v_status, motivo = v_motivo, detalhe = v_detalhe
+     WHERE id = v_arquivo_id;
+  END IF;
+
+  IF v_status = 'aceito' THEN
+    -- so dias que nenhum OUTRO arquivo aceito cobre; cada linha conta uma vez
+    INSERT INTO public.banco_extrato_linha (company, banco_conta_id, arquivo_id, data, sentido, valor_centavos,
+                                            descricao, documento, id_bancario, chave)
+    SELECT v_company, v_conta_id, v_arquivo_id, x.data, x.sentido, x.valor_centavos, x.descricao, x.documento, x.id_bancario, x.chave
+      FROM jsonb_to_recordset(v_linhas) AS x(data date, sentido text, valor_centavos bigint, descricao text,
+                                             documento text, id_bancario text, chave text)
+     WHERE NOT EXISTS (SELECT 1 FROM public.banco_extrato_arquivo a
+                        WHERE a.banco_conta_id = v_conta_id AND a.status = 'aceito' AND a.id <> v_arquivo_id
+                          AND x.data BETWEEN a.periodo_inicio AND a.periodo_fim)
+    ON CONFLICT (banco_conta_id, chave) DO NOTHING;
+    GET DIAGNOSTICS v_novas = ROW_COUNT;
+    IF v_novas <> v_esperadas THEN
+      -- invariante: o passo 7 ja provou que nenhuma chave nova colide. Se colidiu, aborta TUDO.
+      RAISE EXCEPTION 'banco_extrato_registrar: invariante violada (% linhas novas esperadas, % gravadas)', v_esperadas, v_novas
+        USING ERRCODE = 'P0001';
+    END IF;
+    UPDATE public.banco_extrato_arquivo SET qtd_linhas_novas = v_novas WHERE id = v_arquivo_id;
+    UPDATE public.banco_conta
+       SET formato = coalesce(formato, v_formato), estrategia_chave = coalesce(estrategia_chave, v_estrategia)
+     WHERE id = v_conta_id;
+  END IF;
+
+  RETURN jsonb_build_object('status', v_status, 'arquivo_id', v_arquivo_id, 'motivo', v_motivo,
+                            'detalhe', v_detalhe, 'qtd_linhas_novas', v_novas);
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.banco_extrato_registrar(jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.banco_extrato_registrar(jsonb) TO service_role;
+
+-- banco_extrato_marcar_conferido: o financeiro atesta que conferiu um arquivo ACEITO. Autor = auth.uid()
+-- real; a company e a do arquivo. Ja conferido = idempotente (mantem o 1o autor).
+CREATE OR REPLACE FUNCTION public.banco_extrato_marcar_conferido(p_arquivo_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_uid      uuid := auth.uid();
+  v_company  text;
+  v_status   text;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'banco_extrato_marcar_conferido: sem usuario autenticado' USING ERRCODE = '42501';
+  END IF;
+  SELECT a.company, a.status INTO v_company, v_status
+    FROM public.banco_extrato_arquivo a WHERE a.id = p_arquivo_id FOR UPDATE;
+  IF v_company IS NULL THEN
+    RAISE EXCEPTION 'banco_extrato_marcar_conferido: arquivo inexistente' USING ERRCODE = 'P0002';
+  END IF;
+  IF NOT public.fin_user_can_access(v_company) THEN
+    RAISE EXCEPTION 'banco_extrato_marcar_conferido: sem acesso a empresa do arquivo' USING ERRCODE = '42501';
+  END IF;
+  IF v_status <> 'aceito' THEN
+    RAISE EXCEPTION 'banco_extrato_marcar_conferido: so arquivo aceito e conferido (status %)', v_status USING ERRCODE = '22023';
+  END IF;
+  UPDATE public.banco_extrato_arquivo
+     SET conferido_por = v_uid, conferido_em = now()
+   WHERE id = p_arquivo_id AND conferido_por IS NULL;
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.banco_extrato_marcar_conferido(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.banco_extrato_marcar_conferido(uuid) TO authenticated, service_role;
+
+-- banco_extrato_resumo_dia: um registro por dia de [p_de, p_ate], SOB RLS (INVOKER).
+-- Dia sem cobertura: coberto=false e os tres valores NULL (ausente != zero). Dia coberto sem movimento:
+-- 0, 0 e o saldo. O saldo vem de banco_extrato_saldos_conhecidos (fonte 'arquivo'); se dois arquivos
+-- aceitos divergirem no mesmo dia (nao deveria: a continuidade impede), o saldo e NULL, nunca um chute.
+CREATE OR REPLACE FUNCTION public.banco_extrato_resumo_dia(p_banco_conta_id uuid, p_de date, p_ate date)
+RETURNS TABLE (data date, coberto boolean, creditos_centavos bigint, debitos_centavos bigint, saldo_final_dia_centavos bigint)
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $fn$
+#variable_conflict use_column
+BEGIN
+  IF p_banco_conta_id IS NULL OR p_de IS NULL OR p_ate IS NULL THEN
+    RAISE EXCEPTION 'banco_extrato_resumo_dia: conta, de e ate sao obrigatorios' USING ERRCODE = '22004';
+  END IF;
+  IF p_ate < p_de OR p_ate - p_de > 400 THEN
+    RAISE EXCEPTION 'banco_extrato_resumo_dia: intervalo invalido (de % ate %, maximo 401 dias)', p_de, p_ate USING ERRCODE = '22023';
+  END IF;
+  RETURN QUERY
+  WITH dias AS (
+    SELECT p_de + g AS d FROM generate_series(0, p_ate - p_de) g
+  ), cob AS (
+    SELECT dias.d,
+           EXISTS (SELECT 1 FROM public.banco_extrato_arquivo a
+                    WHERE a.banco_conta_id = p_banco_conta_id AND a.status = 'aceito'
+                      AND dias.d BETWEEN a.periodo_inicio AND a.periodo_fim) AS coberto
+      FROM dias
+  ), mov AS (
+    SELECT l.data AS d,
+           sum(l.valor_centavos) FILTER (WHERE l.sentido = 'C')::bigint AS cred,
+           sum(l.valor_centavos) FILTER (WHERE l.sentido = 'D')::bigint AS deb
+      FROM public.banco_extrato_linha l
+     WHERE l.banco_conta_id = p_banco_conta_id AND l.data BETWEEN p_de AND p_ate
+     GROUP BY l.data
+  ), sal AS (
+    SELECT s.data AS d,
+           CASE WHEN count(DISTINCT s.saldo_centavos) = 1 THEN min(s.saldo_centavos) END AS saldo
+      FROM public.banco_extrato_saldos_conhecidos(p_banco_conta_id, p_de, p_ate) s
+     WHERE s.fonte = 'arquivo'
+     GROUP BY s.data
+  )
+  SELECT c.d,
+         c.coberto,
+         CASE WHEN c.coberto THEN coalesce(m.cred, 0) END,
+         CASE WHEN c.coberto THEN coalesce(m.deb, 0) END,
+         CASE WHEN c.coberto THEN s.saldo END
+    FROM cob c
+    LEFT JOIN mov m ON m.d = c.d
+    LEFT JOIN sal s ON s.d = c.d
+   ORDER BY c.d;
+END
+$fn$;
+REVOKE ALL ON FUNCTION public.banco_extrato_resumo_dia(uuid, date, date) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.banco_extrato_resumo_dia(uuid, date, date) TO authenticated, service_role;
+
 -- ── SECAO 7 — sensores no ledger (Task 7) ────────────────────────────────────────────────────
 -- ── SECAO 8 — foto diaria do saldo Omie (Task 9b) ────────────────────────────────────────────
 
@@ -393,6 +928,25 @@ BEGIN
                       WHERE o.company = a.company AND o.omie_ncodcc = a.omie_ncodcc AND b.banco_codigo = '341');
   IF v_lista IS NOT NULL THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU seed_vinculo: conta(s) Omie 341 ativa(s) sem vinculo: %.', v_lista;
+  END IF;
+
+  -- (6) RPCs do extrato (Task 2): SECURITY DEFINER so onde o desenho pede, e o ACL de cada uma.
+  --     assinatura | secdef | authenticated | service_role   (PUBLIC e anon: NUNCA)
+  SELECT string_agg(f.sig, ', ' ORDER BY f.sig) INTO v_lista
+    FROM (VALUES ('public.banco_extrato_registrar(jsonb)',                   true,  false, true),
+                 ('public.banco_extrato_marcar_conferido(uuid)',             true,  true,  true),
+                 ('public.banco_extrato_resumo_dia(uuid,date,date)',          false, true,  true),
+                 ('public.banco_extrato_saldos_conhecidos(uuid,date,date)',   false, true,  true),
+                 ('public.banco_extrato_aux_data(text)',                     false, false, NULL),
+                 ('public.banco_extrato_aux_centavos(jsonb)',                false, false, NULL)) f(sig, secdef, auth, srv)
+   WHERE to_regprocedure(f.sig) IS NULL
+      OR (SELECT pr.prosecdef FROM pg_proc pr WHERE pr.oid = to_regprocedure(f.sig)) IS DISTINCT FROM f.secdef
+      OR has_function_privilege('public', f.sig, 'EXECUTE')
+      OR has_function_privilege('anon', f.sig, 'EXECUTE')
+      OR has_function_privilege('authenticated', f.sig, 'EXECUTE') IS DISTINCT FROM f.auth
+      OR (f.srv IS NOT NULL AND has_function_privilege('service_role', f.sig, 'EXECUTE') IS DISTINCT FROM f.srv);
+  IF v_lista IS NOT NULL THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU rpc_extrato: % ausente(s), com SECURITY DEFINER trocado ou EXECUTE fora do desenho.', v_lista;
   END IF;
 END
 $post$;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Prova PG17 — F1 do extrato bancario Itau, Task 1: esquema, RLS, privilegios, bucket, ancora manual e seed.
-# Plano: docs/superpowers/plans/2026-11-20-f1-extrato-bancario-itau.md (Task 1).
+# Prova PG17 — F1 do extrato bancario Itau. Task 1: esquema, RLS, privilegios, bucket, ancora manual e seed.
+# Task 2: banco_extrato_registrar (ordem de decisao 0-9), marcar_conferido, resumo_dia, concorrencia (2 psql).
+# Plano: docs/superpowers/plans/2026-11-20-f1-extrato-bancario-itau.md (Tasks 1 e 2).
 # Migration sob prova: supabase/migrations/20261120214417_banco_extrato_f1.sql (aplicada INTEIRA, 2x).
 #
 # Fixtures: NENHUM numero real de agencia/conta. Agencia '0000'; contas '00000-0' (colacor) e '00000-1' (oben,
@@ -35,7 +36,20 @@ if [ "${1:-}" = "--falsificar" ]; then
     ancora_dia_aberto:t1_ancora_dia_aberto_negado
     ancora_sobrescreve:t1_ancora_divergente_negada
     pre_sem_duas_principais:t1_pre_duas_principais_aborta
-    tabela_sem_if_not_exists:t1_idempotente"
+    tabela_sem_if_not_exists:t1_idempotente
+    t2_sem_lock:t2_concorrencia
+    t2_sobreposicao_subconjunto:t2_sobreposicao_divergente_nao_grava_linha+t2_sobreposicao_divergente_compensada
+    t2_resumo_coalesce:t2_resumo_dia_sem_cobertura_null
+    t2_continuidade_so_vespera:t2_fora_de_ordem_dia2_confere_dia3
+    t2_reavalia_preso:t2_reavalia_recusado_dia_corrente+t2_reavalia_pendente_quando_ancora_chega
+    t2_company_do_payload:t2_company_do_payload_ignorada
+    t2_registrar_aberto:t2_rpc_fechada_para_authenticated+t1_migration_aplica
+    t2_conferido_sem_gate:t2_conferido_exige_acesso
+    t2_dia_corrente_aberto:t2_dia_corrente
+    t2_sem_fechamento:t2_nao_fecha_diferenca_1_centavo
+    t2_sem_exigir_ancora:t2_sem_saldo_inicial_sem_ancora
+    t2_ignora_banco:t2_outro_banco_mesmos_digitos
+    t2_chave_repetida_aceita:t2_chave_repetida_no_arquivo"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-banco-extrato-f1.XXXXXX")"
   echo "== CONTROLE (locale=${LOCALE_TESTE:-C}) =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -129,6 +143,33 @@ case "${SABOTAGEM:-}" in
   ancora_sobrescreve)   sabotar "IF v_saldo IS DISTINCT FROM p_saldo_centavos THEN" "IF false THEN" ;;
   pre_sem_duas_principais) sabotar "HAVING count(DISTINCT" "HAVING 0 * count(DISTINCT" ;;
   tabela_sem_if_not_exists) sabotar "CREATE TABLE IF NOT EXISTS public.banco_extrato_linha" "CREATE TABLE public.banco_extrato_linha" ;;
+  # ── Task 2 ──
+  # sem a trava da conta: a 2a sessao nao espera, colide no UNIQUE (23505) em vez de ja_importado
+  t2_sem_lock)          sabotar "  PERFORM pg_advisory_xact_lock(hashtext(v_conta_id::text));" "" ;;
+  # passo 7 por SUBCONJUNTO (gravadas contidas no arquivo): o lancamento a mais passa
+  t2_sobreposicao_subconjunto) sabotar "AND (EXISTS (SELECT x.chave, x.sentido, x.valor_centavos" "AND (false AND EXISTS (SELECT x.chave, x.sentido, x.valor_centavos" ;;
+  # resumo fabrica 0 em dia sem cobertura
+  t2_resumo_coalesce)   sabotar "CASE WHEN c.coberto THEN coalesce(m.cred, 0) END" "coalesce(m.cred, 0)" ;;
+  # passo 8 so olha a vespera (o sucessor/dias comuns somem)
+  t2_continuidade_so_vespera) sabotar "banco_extrato_saldos_conhecidos(v_conta_id, v_ini - 1, v_fim) s) k" "banco_extrato_saldos_conhecidos(v_conta_id, v_ini - 1, v_ini - 1) s) k" ;;
+  # passo 1 trata QUALQUER status como ja_importado (recusado/pendente ficam presos)
+  t2_reavalia_preso)    sabotar "IF v_status_ant = 'aceito' THEN" "IF v_status_ant IS NOT NULL THEN" ;;
+  # company lida do payload
+  t2_company_do_payload) sabotar "  -- contrato do payload
+" "  v_company := coalesce(p->>'company', v_company);
+  -- contrato do payload
+" ;;
+  t2_registrar_aberto)  sabotar "REVOKE ALL ON FUNCTION public.banco_extrato_registrar(jsonb) FROM PUBLIC, anon, authenticated;" \
+                                "GRANT EXECUTE ON FUNCTION public.banco_extrato_registrar(jsonb) TO authenticated;" ;;
+  t2_conferido_sem_gate) sabotar "IF NOT public.fin_user_can_access(v_company) THEN
+    RAISE EXCEPTION 'banco_extrato_marcar_conferido" "IF false THEN
+    RAISE EXCEPTION 'banco_extrato_marcar_conferido" ;;
+  t2_dia_corrente_aberto) sabotar "IF v_fim >= v_hoje THEN" "IF v_fim > v_hoje THEN" ;;
+  t2_sem_fechamento)    sabotar "IF v_inicial IS NOT NULL AND v_inicial + v_soma <> v_final THEN" "IF false THEN" ;;
+  # sem saldo inicial e sem nenhum S(d): o arquivo se ancora nele mesmo (tautologia) e passaria
+  t2_sem_exigir_ancora) sabotar "IF v_inicial IS NULL AND NOT EXISTS" "IF false AND NOT EXISTS" ;;
+  t2_ignora_banco)      sabotar "IF v_banco <> v_c_banco OR v_agencia <> v_c_agencia" "IF v_agencia <> v_c_agencia" ;;
+  t2_chave_repetida_aceita) sabotar "GROUP BY x.chave HAVING count(*) > 1" "GROUP BY x.chave HAVING count(*) > 99" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
@@ -285,9 +326,9 @@ eq "t1_arquivo_path_da_conta storage_path fora da pasta da conta e recusado (235
 # ── ZONA 3: fixture de extrato (como postgres) para os asserts de RLS ──
 P -q <<SQL || echo "FAIL t1_fixture_extrato — insercao falhou"
 INSERT INTO public.banco_extrato_arquivo (id, company, banco_conta_id, formato, storage_path, sha256, periodo_inicio, periodo_fim,
-  saldo_inicial_centavos, saldo_final_centavos, qtd_linhas, qtd_linhas_novas, status, enviado_por) VALUES
-  ('00000000-0000-0000-0000-0000000000f1', 'oben',    '$ID_OBEN', 'ofx', '$ID_OBEN/a.ofx', repeat('a', 64), '2026-11-02', '2026-11-03', 1000, 1500, 2, 2, 'aceito', '$U_STAFF'),
-  ('00000000-0000-0000-0000-0000000000f2', 'colacor', '$ID_COL',  'ofx', '$ID_COL/b.ofx',  repeat('b', 64), '2026-11-02', '2026-11-02', 0, 300, 1, 1, 'aceito', '$U_STAFF');
+  saldo_inicial_centavos, saldo_final_centavos, saldo_abertura_centavos, qtd_linhas, qtd_linhas_novas, status, enviado_por) VALUES
+  ('00000000-0000-0000-0000-0000000000f1', 'oben',    '$ID_OBEN', 'ofx', '$ID_OBEN/a.ofx', repeat('a', 64), '2026-11-02', '2026-11-03', 1000, 1500, 1000, 2, 2, 'aceito', '$U_STAFF'),
+  ('00000000-0000-0000-0000-0000000000f2', 'colacor', '$ID_COL',  'ofx', '$ID_COL/b.ofx',  repeat('b', 64), '2026-11-02', '2026-11-02', 0, 300, 0, 1, 1, 'aceito', '$U_STAFF');
 INSERT INTO public.banco_extrato_linha (company, banco_conta_id, arquivo_id, data, sentido, valor_centavos, descricao, chave) VALUES
   ('oben',    '$ID_OBEN', '00000000-0000-0000-0000-0000000000f1', '2026-11-02', 'C', 700, 'deposito', 'k1'),
   ('oben',    '$ID_OBEN', '00000000-0000-0000-0000-0000000000f1', '2026-11-03', 'D', 200, 'tarifa',   'k2'),
@@ -389,7 +430,7 @@ SNAP="SELECT md5(string_agg(x, E'\n' ORDER BY x)) FROM (
   UNION ALL SELECT 'pol:'||schemaname||'.'||tablename||':'||policyname||':'||cmd||':'||array_to_string(roles, ',')||':'||coalesce(qual,'')||':'||coalesce(with_check,'') FROM pg_policies WHERE policyname LIKE 'banco%'
   UNION ALL SELECT 'acl:'||relname||':'||relrowsecurity||':'||coalesce(relacl::text,'') FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relname LIKE 'banco\_%'
   UNION ALL SELECT 'bkt:'||id||':'||public||':'||file_size_limit||':'||allowed_mime_types::text FROM storage.buckets
-  UNION ALL SELECT 'fn:'||md5(prosrc)||':'||coalesce(proacl::text,'') FROM pg_proc WHERE proname = 'banco_conta_registrar_ancora'
+  UNION ALL SELECT 'fn:'||proname||':'||md5(prosrc)||':'||prosecdef||':'||coalesce(proacl::text,'') FROM pg_proc WHERE proname LIKE 'banco\_%'
 ) s(x)"
 S1=$(Pq -c "$SNAP" 2>&1)
 if P -q -f "$MIG_USADA" > "$(dirname "$DATA")/mig2.log" 2>&1; then RC2=0; else RC2=1; fi
@@ -397,6 +438,256 @@ S2=$(Pq -c "$SNAP" 2>&1)
 eq "t1_idempotente 2a aplicacao sai 0 e o estado (dados, policies, ACL, bucket, RPC) nao muda" "$RC2/$([ -n "$S1" ] && [ "$S1" = "$S2" ] && echo igual || echo "diferente:$(head -c 300 "$(dirname "$DATA")/mig2.log")")" "0/igual"
 eq "t1_rls_apos_reaplicar sem permissao segue lendo 0 linhas" \
    "$(como "$U_SEM" "SELECT count(*) FROM public.banco_extrato_linha" 2>&1)" "0"
+
+# ══ TASK 2: banco_extrato_registrar / marcar_conferido / resumo_dia ══════════════════════════════════════
+# Cada caso usa a SUA conta (oben, 341/0000/2000NN), para um nao contaminar a cobertura/saldo do outro.
+# Datas em outubro/2026; `hoje` vem no payload (a RPC nao usa now() para o dia corrente).
+echo "=== T2: RPCs do extrato ==="
+conta_nova() { # $1 = sufixo NN -> id da conta 341/0000/2000NN (oben)
+  Pq -c "INSERT INTO public.banco_conta (company, banco_codigo, agencia_digitos, conta_digitos, descricao) VALUES ('oben', '341', '0000', '2000$1', 't2') RETURNING id" 2>&1 | head -1
+}
+sha() { printf '%064x' "$1"; }
+# lin <data> <C|D> <valor> [ordinal] [documento] -> linha com chave tupla data|sentido|valor|documento|ordinal
+lin() {
+  printf '{"data":"%s","sentido":"%s","valor_centavos":%s,"descricao":"lanc %s","documento":%s,"id_bancario":null,"chave":"%s|%s|%s|%s|%s"}' \
+    "$1" "$2" "$3" "$3" "$([ -n "${5:-}" ] && printf '"%s"' "$5" || printf 'null')" "$1" "$2" "$3" "${5:-}" "${4:-1}"
+}
+# pay <shaN> <conta_id> <NN> <ini> <fim> <inicial|null> <final> <linhas>   (env: FORMATO ESTR HOJE_P BANCO AG CC_P EXTRA)
+pay() {
+  local cc="2000$3"
+  printf '{"banco_conta_id":"%s","formato":"%s","estrategia_chave":"%s","storage_path":"%s/%s.ofx","sha256":"%s","enviado_por":"%s","hoje":"%s"%s,"extrato":{"banco":"%s","agencia":"%s","conta":"%s","periodo_inicio":"%s","periodo_fim":"%s","saldo_inicial_centavos":%s,"saldo_final_centavos":%s,"linhas":[%s]}}' \
+    "$2" "${FORMATO:-ofx}" "${ESTR:-tupla}" "$2" "$(sha "$1")" "$(sha "$1")" "$U_STAFF" "${HOJE_P:-2026-11-20}" "${EXTRA:-}" \
+    "${BANCO:-341}" "${AG-0000}" "${CC_P:-${cc:0:5}-${cc:5}}" "$4" "$5" "$6" "$7" "$8"
+}
+RES_PADRAO="r->>'status'||'|'||coalesce(r->>'motivo','-')"
+# reg <json> [expr sobre r] -> chama a RPC como service_role (o unico papel com EXECUTE)
+reg() { Pq -c "SET ROLE service_role; SELECT ${2:-$RES_PADRAO} FROM (SELECT public.banco_extrato_registrar(\$j\$$1\$j\$::jsonb) r) s" 2>&1 | tail -1; }
+nlin() { Pq -c "SELECT count(*) FROM public.banco_extrato_linha WHERE banco_conta_id = '$1'" 2>&1; }
+narq() { Pq -c "SELECT count(*) FROM public.banco_extrato_arquivo WHERE banco_conta_id = '$1'" 2>&1; }
+arq_id() { Pq -c "SELECT id FROM public.banco_extrato_arquivo WHERE banco_conta_id = '$1' AND sha256 = '$(sha "$2")'" 2>&1; }
+D1=2026-10-01; D2=2026-10-02; D3=2026-10-03; D0=2026-09-30
+
+# ── aceite, fechamento e idempotencia ──
+C01=$(conta_nova 01)
+J=$(pay 101 "$C01" 01 $D1 $D2 1000 1300 "$(lin $D1 C 500),$(lin $D2 D 200)")
+eq "t2_aceita_e_fecha status/qtd_novas | linhas gravadas | formato e estrategia fixados | company | abertura" \
+   "$(reg "$J" "r->>'status'||'|'||coalesce(r->>'motivo','-')||'|'||(r->>'qtd_linhas_novas')")/$(nlin "$C01")/$(Pq -c "SELECT formato||'|'||estrategia_chave FROM public.banco_conta WHERE id='$C01'")/$(Pq -c "SELECT company||'|'||saldo_abertura_centavos||'|'||status FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C01'")" \
+   "aceito|-|2/2/ofx|tupla/oben|1000|aceito"
+ID01=$(arq_id "$C01" 101)
+eq "t2_reimport_mesmo_hash_ja_importado mesmo arquivo_id, 0 novas, nada duplicado" \
+   "$(reg "$J" "r->>'status'||'|'||(r->>'arquivo_id')||'|'||(r->>'qtd_linhas_novas')")/$(narq "$C01")/$(nlin "$C01")" \
+   "ja_importado|$ID01|0/1/2"
+
+C02=$(conta_nova 02)
+J=$(EXTRA=',"company":"colacor"' pay 102 "$C02" 02 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_company_do_payload_ignorada company do arquivo e das linhas = a da conta (oben)" \
+   "$(reg "$J")/$(Pq -c "SELECT string_agg(DISTINCT company, ',') FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C02'")/$(Pq -c "SELECT string_agg(DISTINCT company, ',') FROM public.banco_extrato_linha WHERE banco_conta_id='$C02'")" \
+   "aceito|-/oben/oben"
+
+# ── identidade ──
+C03=$(conta_nova 03)
+J=$(CC_P='99999-9' pay 103 "$C03" 03 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_conta_divergente arquivo de outra conta (que fecha) e recusado, grava o arquivo e nenhuma linha" \
+   "$(reg "$J")/$(nlin "$C03")/$(Pq -c "SELECT status||'|'||motivo||'|'||qtd_linhas_novas||'|'||(saldo_abertura_centavos IS NULL) FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C03'")" \
+   "recusado|conta_divergente/0/recusado|conta_divergente|0|true"
+ID03=$(arq_id "$C03" 103)
+C04=$(conta_nova 04)
+J=$(BANCO=756 pay 104 "$C04" 04 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_outro_banco_mesmos_digitos mesma agencia/conta em outro banco = conta_divergente" "$(reg "$J")/$(nlin "$C04")" "recusado|conta_divergente/0"
+J=$(AG='' pay 105 "$C04" 04 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_identidade_incompleta agencia ausente" "$(reg "$J")" "recusado|identidade_incompleta"
+J=$(pay 106 00000000-0000-0000-0000-00000000dead 99 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_conta_desconhecida sem arquivo gravado (arquivo_id nulo)" \
+   "$(reg "$J" "r->>'status'||'|'||(r->>'motivo')||'|'||coalesce(r->>'arquivo_id','NULL')")" "recusado|conta_desconhecida|NULL"
+
+# ── dia corrente e reavaliacao do mesmo hash ──
+C05=$(conta_nova 05)
+J=$(HOJE_P=$D2 pay 107 "$C05" 05 $D1 $D2 1000 1300 "$(lin $D1 C 500),$(lin $D2 D 200)")
+eq "t2_dia_corrente periodo_fim = hoje (SP, do payload) e recusado" "$(reg "$J")/$(nlin "$C05")" "recusado|periodo_inclui_dia_corrente/0"
+ID05=$(arq_id "$C05" 107)
+J=$(HOJE_P=$D3 pay 107 "$C05" 05 $D1 $D2 1000 1300 "$(lin $D1 C 500),$(lin $D2 D 200)")
+eq "t2_reavalia_recusado_dia_corrente o mesmo hash, amanha, e aceito na MESMA linha (count de arquivos nao muda)" \
+   "$(reg "$J" "r->>'status'||'|'||(r->>'arquivo_id')")/$(narq "$C05")/$(nlin "$C05")/$(Pq -c "SELECT coalesce(motivo,'-')||'|'||saldo_abertura_centavos FROM public.banco_extrato_arquivo WHERE id='$ID05'")" \
+   "aceito|$ID05/1/2/-|1000"
+
+# ── linhas e fechamento ──
+C06=$(conta_nova 06)
+J=$(pay 108 "$C06" 06 $D1 $D1 1000 1499 "$(lin $D1 C 500)")
+eq "t2_nao_fecha_diferenca_1_centavo recusado, o detalhe traz a diferenca, nenhuma linha" \
+   "$(reg "$J" "r->>'status'||'|'||(r->>'motivo')||'|'||(r->>'detalhe')")/$(nlin "$C06")" \
+   "recusado|nao_fecha|diferenca_centavos=1 calculado=1500 informado=1499/0"
+J=$(pay 109 "$C06" 06 $D1 $D1 1000 1500 "$(lin $D1 C 300),$(lin $D3 C 200)")
+eq "t2_linha_fora_do_periodo" "$(reg "$J" "r->>'motivo'||'|'||(r->>'detalhe')")" "linha_invalida|linha 2: data 2026-10-03 fora do periodo"
+J=$(pay 110 "$C06" 06 $D1 $D1 1000 1600 "$(lin $D1 C 100 7),$(lin $D1 C 400),$(lin $D1 C 100 7)")
+eq "t2_chave_repetida_no_arquivo" "$(reg "$J" "r->>'motivo'||'|'||(r->>'detalhe')")/$(nlin "$C06")" "linha_invalida|chave repetida no arquivo: 2026-10-01|C|100||7/0"
+J=$(pay 111 "$C06" 06 $D1 $D1 1000 1000 '{"data":"2026-10-01","sentido":"C","valor_centavos":12.5,"descricao":"x","documento":null,"id_bancario":null,"chave":"k"}')
+eq "t2_valor_nao_inteiro e linha_invalida (nao erro, nao arredonda)" "$(reg "$J" "r->>'motivo'||'|'||(r->>'detalhe')")" "linha_invalida|linha 1: valor_centavos invalido"
+eq "t2_payload_sem_saldo_final contrato quebrado = 22023, nada gravado" \
+   "$(estado '' service_role "SELECT public.banco_extrato_registrar('{\"banco_conta_id\":\"$C06\",\"formato\":\"ofx\",\"estrategia_chave\":\"tupla\",\"storage_path\":\"$C06/x.ofx\",\"sha256\":\"$(sha 112)\",\"enviado_por\":\"$U_STAFF\",\"hoje\":\"2026-11-20\",\"extrato\":{\"banco\":\"341\",\"agencia\":\"0000\",\"conta\":\"20000-6\",\"periodo_inicio\":\"2026-10-01\",\"periodo_fim\":\"2026-10-01\",\"saldo_inicial_centavos\":0,\"linhas\":[]}}'::jsonb)")/$(narq "$C06")" \
+   "22023/4"
+
+# ── formato / estrategia ──
+C07=$(conta_nova 07)
+J=$(pay 113 "$C07" 07 $D1 $D1 1000 1100 "$(lin $D1 C 100)")
+R1=$(reg "$J")
+J=$(FORMATO=cnab240 pay 114 "$C07" 07 $D2 $D2 1100 1050 "$(lin $D2 D 50)")
+J2=$(ESTR=id_bancario pay 115 "$C07" 07 $D2 $D2 1100 1050 "$(lin $D2 D 50)")
+eq "t2_formato_diferente cnab240 (e estrategia id_bancario) numa conta fixada em ofx/tupla: pendente, sem linha" \
+   "$R1/$(reg "$J")/$(reg "$J2")/$(nlin "$C07")" "aceito|-/pendente_revisao|formato_diferente/pendente_revisao|formato_diferente/1"
+
+# ── sobreposicao ──
+C08=$(conta_nova 08)
+R1=$(reg "$(pay 116 "$C08" 08 $D1 $D2 1000 1300 "$(lin $D1 C 500),$(lin $D2 D 200)")")
+J=$(pay 117 "$C08" 08 $D2 $D3 1500 1400 "$(lin $D2 D 200),$(lin $D3 C 100)")
+eq "t2_sobreposicao_igual_acrescenta_so_dias_novos o dia 2 (igual) nao regrava; so o dia 3 entra" \
+   "$R1/$(reg "$J" "r->>'status'||'|'||(r->>'qtd_linhas_novas')")/$(nlin "$C08")/$(Pq -c "SELECT count(*) FROM public.banco_extrato_linha WHERE banco_conta_id='$C08' AND data='$D2'")" \
+   "aceito|-/aceito|1/3/1"
+
+C09=$(conta_nova 09)
+R1=$(reg "$(pay 118 "$C09" 09 $D1 $D1 1000 700 "$(lin $D1 D 150 1),$(lin $D1 D 150 2)")" "r->>'status'||'|'||(r->>'qtd_linhas_novas')")
+J=$(pay 119 "$C09" 09 $D1 $D1 1000 700 "$(lin $D1 D 150 2),$(lin $D1 D 150 1)")
+eq "t2_tarifas_identicas_duas_linhas 2 tarifas iguais = 2 linhas (ordinal 1 e 2); reexportado com a ordem trocada acrescenta 0" \
+   "$R1/$(reg "$J" "r->>'status'||'|'||(r->>'qtd_linhas_novas')")/$(nlin "$C09")" "aceito|2/aceito|0/2"
+
+C10=$(conta_nova 10)
+R1=$(reg "$(pay 120 "$C10" 10 $D1 $D2 1000 1300 "$(lin $D1 C 500),$(lin $D2 D 200)")")
+J=$(pay 121 "$C10" 10 $D1 $D3 1000 1700 "$(lin $D1 C 500),$(lin $D2 D 200),$(lin $D2 C 300),$(lin $D3 C 100)")
+eq "t2_sobreposicao_divergente_nao_grava_linha um lancamento a mais num dia ja importado: pendente, nem o dia novo entra" \
+   "$R1/$(reg "$J" "r->>'status'||'|'||(r->>'motivo')||'|'||(r->>'detalhe')")/$(nlin "$C10")" \
+   "aceito|-/pendente_revisao|sobreposicao_divergente|data=2026-10-02/2"
+C19=$(conta_nova 19)
+R1=$(reg "$(pay 122 "$C19" 19 $D1 $D2 1000 1300 "$(lin $D1 C 500),$(lin $D2 D 200)")")
+J=$(pay 123 "$C19" 19 $D1 $D2 1000 1300 "$(lin $D1 C 500),$(lin $D2 D 200),$(lin $D2 C 300),$(lin $D2 D 300)")
+eq "t2_sobreposicao_divergente_compensada par C/D a mais (saldo igual) so o passo 7 pega" \
+   "$R1/$(reg "$J")/$(nlin "$C19")" "aceito|-/pendente_revisao|sobreposicao_divergente/2"
+
+# ── continuidade ──
+C11=$(conta_nova 11)
+R1=$(reg "$(pay 124 "$C11" 11 $D1 $D1 1000 1500 "$(lin $D1 C 500)")")
+J=$(pay 125 "$C11" 11 $D2 $D2 1600 1500 "$(lin $D2 D 100)")
+eq "t2_descontinuidade_saldo abertura do dia 2 != fechamento do dia 1: pendente, data e diferenca no detalhe" \
+   "$R1/$(reg "$J" "r->>'status'||'|'||(r->>'motivo')||'|'||(r->>'detalhe')")/$(nlin "$C11")" \
+   "aceito|-/pendente_revisao|descontinuidade_saldo|data=2026-10-01 diferenca_centavos=100 arquivo=1600 conhecido=1500 fonte=arquivo/1"
+
+C12=$(conta_nova 12)
+J=$(pay 126 "$C12" 12 $D2 $D3 null 600 "$(lin $D2 C 100)")
+eq "t2_sem_saldo_inicial_sem_ancora pendente, nenhuma linha, saldo inicial segue NULL (nunca 0)" \
+   "$(reg "$J")/$(nlin "$C12")/$(Pq -c "SELECT (saldo_inicial_centavos IS NULL)||'|'||(saldo_abertura_centavos IS NULL) FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C12'")" \
+   "pendente_revisao|sem_saldo_inicial/0/true|true"
+ID12=$(arq_id "$C12" 126)
+Pq -c "SET test.uid = '$U_OBEN'; SET ROLE authenticated; SELECT public.banco_conta_registrar_ancora('$C12', '$D1', 500)" >/dev/null 2>&1
+eq "t2_reavalia_pendente_quando_ancora_chega com a ancora do dia 1, o mesmo hash e aceito na MESMA linha" \
+   "$(reg "$J" "r->>'status'||'|'||(r->>'arquivo_id')")/$(narq "$C12")/$(nlin "$C12")/$(Pq -c "SELECT saldo_abertura_centavos FROM public.banco_extrato_arquivo WHERE id='$ID12'")" \
+   "aceito|$ID12/1/1/500"
+
+C13=$(conta_nova 13)
+Pq -c "SET test.uid = '$U_OBEN'; SET ROLE authenticated; SELECT public.banco_conta_registrar_ancora('$C13', '$D2', 2000)" >/dev/null 2>&1
+J=$(pay 127 "$C13" 13 $D1 $D3 null 1950 "$(lin $D1 C 100),$(lin $D3 D 50)")
+eq "t2_sem_saldo_inicial_com_ancora_aceita ancora no MEIO do periodo ancora o arquivo; abertura derivada" \
+   "$(reg "$J")/$(Pq -c "SELECT saldo_abertura_centavos||'|'||(saldo_inicial_centavos IS NULL) FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C13'")" \
+   "aceito|-/1900|true"
+
+C14=$(conta_nova 14)
+Pq -c "SET test.uid = '$U_OBEN'; SET ROLE authenticated; SELECT public.banco_conta_registrar_ancora('$C14', '$D0', 5000)" >/dev/null 2>&1
+J=$(pay 128 "$C14" 14 $D1 $D2 null 5100 "$(lin $D1 C 100)")
+eq "t2_ancora_manual_aceita_primeiro_ofx 1o OFX (sem saldo inicial) da conta, ancorado na vespera pela ancora manual" \
+   "$(reg "$J")/$(Pq -c "SELECT saldo_abertura_centavos FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C14'")/$(Pq -c "SELECT formato FROM public.banco_conta WHERE id='$C14'")" \
+   "aceito|-/5000/ofx"
+C20=$(conta_nova 20)
+Pq -c "SET test.uid = '$U_OBEN'; SET ROLE authenticated; SELECT public.banco_conta_registrar_ancora('$C20', '$D0', 5000)" >/dev/null 2>&1
+J=$(pay 129 "$C20" 20 $D1 $D1 null 5200 "$(lin $D1 C 100)")
+eq "t2_ancora_divergente arquivo sem inicial que nao bate com a ancora: descontinuidade" \
+   "$(reg "$J" "r->>'motivo'||'|'||(r->>'detalhe')")/$(nlin "$C20")" \
+   "descontinuidade_saldo|data=2026-09-30 diferenca_centavos=100 arquivo=5100 conhecido=5000 fonte=ancora_manual/0"
+
+# fora de ordem: dias 1 e 3 aceitos, depois o dia 2 (as DUAS fronteiras)
+C15=$(conta_nova 15)
+R1=$(reg "$(pay 130 "$C15" 15 $D1 $D1 1000 1100 "$(lin $D1 C 100)")")
+R3=$(reg "$(pay 131 "$C15" 15 $D3 $D3 1300 1350 "$(lin $D3 C 50)")")
+J=$(pay 132 "$C15" 15 $D2 $D2 1100 1200 "$(lin $D2 C 100)")
+eq "t2_fora_de_ordem_dia2_confere_dia3 o dia 2 fecha com o dia 1 mas nao com a abertura do dia 3" \
+   "$R1/$R3/$(reg "$J" "r->>'status'||'|'||(r->>'motivo')||'|'||(r->>'detalhe')")/$(nlin "$C15")" \
+   "aceito|-/aceito|-/pendente_revisao|descontinuidade_saldo|data=2026-10-02 diferenca_centavos=-100 arquivo=1200 conhecido=1300 fonte=arquivo/2"
+J=$(pay 133 "$C15" 15 $D2 $D2 1100 1300 "$(lin $D2 C 200)")
+eq "t2_fora_de_ordem_dia2_fecha_as_duas controle: o dia 2 que fecha com o 1 e com o 3 e aceito" "$(reg "$J")/$(nlin "$C15")" "aceito|-/3"
+
+C16=$(conta_nova 16)
+R1=$(reg "$(pay 134 "$C16" 16 $D1 $D1 1000 1100 "$(lin $D1 C 100)")")
+R3=$(reg "$(pay 135 "$C16" 16 $D3 $D3 1300 1350 "$(lin $D3 C 50)")")
+J=$(pay 136 "$C16" 16 $D2 $D2 null 1300 "$(lin $D2 C 200)")
+eq "t2_fora_de_ordem_sem_saldo_inicial OFX do dia 2 sem inicial, ancorado pelo dia 1, confere com o dia 3" \
+   "$R1/$R3/$(reg "$J")/$(Pq -c "SELECT saldo_abertura_centavos FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C16' AND sha256='$(sha 136)'")" \
+   "aceito|-/aceito|-/aceito|-/1100"
+
+# ── resumo por dia (SECURITY INVOKER, sob RLS) ──
+RESUMO_FMT="string_agg(to_char(data, 'YYYY-MM-DD')||':'||coberto||':'||coalesce(creditos_centavos::text, 'NULL')||':'||coalesce(debitos_centavos::text, 'NULL')||':'||coalesce(saldo_final_dia_centavos::text, 'NULL'), ' ' ORDER BY data)"
+eq "t2_resumo_dia_sem_cobertura_null dia fora da cobertura: coberto=false e creditos/debitos/saldo NULL (nao 0)" \
+   "$(como "$U_OBEN" "SELECT coberto||'|'||(creditos_centavos IS NULL)||'|'||(debitos_centavos IS NULL)||'|'||(saldo_final_dia_centavos IS NULL) FROM public.banco_extrato_resumo_dia('$C08', '$D0', '$D0')" 2>&1)" \
+   "false|true|true|true"
+eq "t2_resumo_dia_valores conta com 2 arquivos sobrepostos: cada linha conta uma vez, saldo ancorado na abertura" \
+   "$(como "$U_OBEN" "SELECT $RESUMO_FMT FROM public.banco_extrato_resumo_dia('$C08', '$D0', '2026-10-04')" 2>&1)" \
+   "2026-09-30:false:NULL:NULL:NULL 2026-10-01:true:500:0:1500 2026-10-02:true:0:200:1300 2026-10-03:true:100:0:1400 2026-10-04:false:NULL:NULL:NULL"
+C18=$(conta_nova 18)
+R1=$(reg "$(pay 137 "$C18" 18 $D1 $D3 1000 1100 "$(lin $D1 C 100)")")
+eq "t2_resumo_dia_coberto_sem_movimento_zero dia coberto sem lancamento: 0, 0 e o saldo" \
+   "$R1/$(como "$U_OBEN" "SELECT $RESUMO_FMT FROM public.banco_extrato_resumo_dia('$C18', '$D2', '$D2')" 2>&1)" \
+   "aceito|-/2026-10-02:true:0:0:1100"
+eq "t2_resumo_dia_rls sem permissao: nada coberto, tudo NULL" \
+   "$(como "$U_SEM" "SELECT $RESUMO_FMT FROM public.banco_extrato_resumo_dia('$C08', '$D1', '$D1')" 2>&1)" "2026-10-01:false:NULL:NULL:NULL"
+eq "t2_resumo_dia_anon_negado (42501)" \
+   "$(estado '' anon "SELECT * FROM public.banco_extrato_resumo_dia('$C08', '$D1', '$D1')")" "42501"
+
+# ── marcar conferido ──
+eq "t2_conferido_exige_acesso sem permissao financeira (42501)" \
+   "$(estado "$U_SEM" authenticated "SELECT public.banco_extrato_marcar_conferido('$ID01')")/$(Pq -c "SELECT conferido_por IS NULL FROM public.banco_extrato_arquivo WHERE id='$ID01'")" "42501/t"
+eq "t2_conferido_sem_usuario (42501)" "$(estado '' authenticated "SELECT public.banco_extrato_marcar_conferido('$ID01')")" "42501"
+eq "t2_conferido_grava autor = auth.uid(), com data" \
+   "$(estado "$U_OBEN" authenticated "SELECT public.banco_extrato_marcar_conferido('$ID01')")/$(Pq -c "SELECT conferido_por||'|'||(conferido_em IS NOT NULL) FROM public.banco_extrato_arquivo WHERE id='$ID01'")" \
+   "00000/$U_OBEN|true"
+eq "t2_conferido_idempotente 2a conferencia (outro usuario) mantem o 1o autor" \
+   "$(estado "$U_STAFF" authenticated "SELECT public.banco_extrato_marcar_conferido('$ID01')")/$(Pq -c "SELECT conferido_por FROM public.banco_extrato_arquivo WHERE id='$ID01'")" \
+   "00000/$U_OBEN"
+eq "t2_conferido_so_aceito arquivo recusado nao e conferido (22023)" \
+   "$(estado "$U_OBEN" authenticated "SELECT public.banco_extrato_marcar_conferido('$ID03')")/$(Pq -c "SELECT conferido_por IS NULL FROM public.banco_extrato_arquivo WHERE id='$ID03'")" "22023/t"
+eq "t2_conferido_inexistente (P0002)" \
+   "$(estado "$U_STAFF" authenticated "SELECT public.banco_extrato_marcar_conferido('00000000-0000-0000-0000-000000000000')")" "P0002"
+
+# ── ACL ──
+eq "t2_rpc_fechada_para_authenticated registrar: PUBLIC|anon|authenticated sem EXECUTE, service_role com, SECDEF" \
+   "$(Pq -c "SELECT has_function_privilege('public', 'public.banco_extrato_registrar(jsonb)', 'EXECUTE')||'|'||has_function_privilege('anon', 'public.banco_extrato_registrar(jsonb)', 'EXECUTE')||'|'||has_function_privilege('authenticated', 'public.banco_extrato_registrar(jsonb)', 'EXECUTE')||'|'||has_function_privilege('service_role', 'public.banco_extrato_registrar(jsonb)', 'EXECUTE')||'|'||(SELECT prosecdef FROM pg_proc WHERE oid = 'public.banco_extrato_registrar(jsonb)'::regprocedure)" 2>&1)" \
+   "false|false|false|true|true"
+eq "t2_rpc_authenticated_chamando_negado staff autenticado nao chama o registrar (42501)" \
+   "$(estado "$U_STAFF" authenticated "SELECT public.banco_extrato_registrar('{}'::jsonb)")" "42501"
+eq "t2_conferido_acl marcar_conferido: anon nao, authenticated sim, SECDEF; resumo INVOKER" \
+   "$(Pq -c "SELECT has_function_privilege('anon', 'public.banco_extrato_marcar_conferido(uuid)', 'EXECUTE')||'|'||has_function_privilege('authenticated', 'public.banco_extrato_marcar_conferido(uuid)', 'EXECUTE')||'|'||(SELECT prosecdef FROM pg_proc WHERE oid = 'public.banco_extrato_marcar_conferido(uuid)'::regprocedure)||'|'||(SELECT prosecdef FROM pg_proc WHERE oid = 'public.banco_extrato_resumo_dia(uuid,date,date)'::regprocedure)" 2>&1)" \
+   "false|true|true|false"
+
+# ── concorrencia: duas sessoes psql reais com o MESMO payload ──
+# A sessao 1 registra e segura a transacao 2s; a sessao 2 comeca 0.5s depois. ANTES=0 na sessao 2 prova que
+# ela comecou com a 1 ainda aberta (nao viu o arquivo). Sem a trava, a 2 colide no UNIQUE (23505).
+C17=$(conta_nova 17)
+JC=$(pay 138 "$C17" 17 $D1 $D1 1000 1300 "$(lin $D1 C 500),$(lin $D1 D 100 1),$(lin $D1 D 100 2)")
+TMPC="$(dirname "$DATA")"
+sess() { # $1 = segundos segurando a transacao
+  P -qAt 2>&1 <<SQL
+SELECT 'ANTES='||count(*) FROM public.banco_extrato_arquivo WHERE banco_conta_id = '$C17';
+BEGIN;
+SET LOCAL ROLE service_role;
+SELECT 'R='||(r->>'status')||'|'||(r->>'arquivo_id') FROM (SELECT public.banco_extrato_registrar(\$j\$$JC\$j\$::jsonb) r) s;
+SELECT pg_sleep($1);
+COMMIT;
+SQL
+}
+sess 2 > "$TMPC/conc1.log" & PID1=$!
+sleep 0.5
+sess 0 > "$TMPC/conc2.log" & PID2=$!
+wait "$PID1"; wait "$PID2"
+R_1=$(grep -o '^R=.*' "$TMPC/conc1.log" | cut -d= -f2-)
+R_2=$(grep -o '^R=.*' "$TMPC/conc2.log" | cut -d= -f2-)
+ID17=$(arq_id "$C17" 138)
+eq "t2_concorrencia 1 aceito + 1 ja_importado com o MESMO arquivo_id; 1 arquivo; linhas = as do arquivo; a 2a comecou com a 1a aberta" \
+   "${R_1:-ERRO:$(head -c 200 "$TMPC/conc1.log")}/${R_2:-ERRO:$(head -c 200 "$TMPC/conc2.log")}/$(narq "$C17")/$(nlin "$C17")/$(grep -o '^ANTES=.*' "$TMPC/conc2.log")" \
+   "aceito|$ID17/ja_importado|$ID17/1/3/ANTES=0"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
