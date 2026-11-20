@@ -10,6 +10,7 @@ import { UltimaExecucao } from '@/components/execucoes/UltimaExecucao';
 import { useRegisterCommands, type Command } from '@/components/shell/CommandsRegistry';
 import { formatBRL } from '@/components/reposicao/pedidos/shared';
 import { ImportarPedidoPortalDialog } from './ImportarPedidoPortalDialog';
+import { CopiarSenhaPortalButton } from './CopiarSenhaPortalButton';
 import { descreverDiferenca, lerDiferencas } from './aceitar-portal';
 import {
   CHAVE_PAINEL_PORTAL, esperaDaRodada, linkDoPedido, msAteReleituraPosCron, normalizarPainel, vereditoPainel, type PainelPortal,
@@ -90,6 +91,7 @@ export function PedidosPortalCard() {
               <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? 'animate-spin' : ''}`} aria-hidden />
             </Button>
             <ImportarPedidoPortalDialog />
+            <CopiarSenhaPortalButton />
           </div>
         </div>
         {data && (
