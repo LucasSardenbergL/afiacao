@@ -49,5 +49,15 @@ vem antes do lote.
 
 ## Codex
 
-Rodada 1, no código: 9 P1 e 3 P2, todos corrigidos com teste e falsificados (sabotagem → vermelho, com controle verde
-na mesma invocação).
+- **Rodada 1, no código:** 9 P1 e 3 P2.
+- **Rodada 2, nas correções:** 5 P1 e 2 P2:
+  - o AlterarCliente sem retry;
+  - o vínculo do órfão conferido logo antes de escrever;
+  - um fault com o vendedor intacto passando pela prova de hash;
+  - falha do espelho parando o bloco em todos os caminhos;
+  - exceção sem perder o `execucao_id`;
+  - vendedor ilegível ≠ vazio na releitura;
+  - o verificar alternando quem não consegue ler.
+
+Todos foram corrigidos com teste e falsificados: 14 sabotagens, uma camada por vez, todas vermelhas, com controle verde
+na mesma invocação.
