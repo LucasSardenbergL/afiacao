@@ -192,6 +192,8 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useSuggestedMapping.ts",
     ],
     testes: [
+      "src/lib/financeiro/extrato/__tests__/nucleo.test.ts",
+      "src/lib/financeiro/extrato/__tests__/nucleo.parity.test.ts",
       "src/__tests__/financeiro.test.ts",
       "src/pages/__tests__/FinanceiroAnalytics.baixa-indisponivel.test.tsx",
       "src/pages/__tests__/FinanceiroDashboard.coerencia-pos-sync.test.tsx",
