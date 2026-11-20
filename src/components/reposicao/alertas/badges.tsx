@@ -20,6 +20,8 @@ export const statusBadge = (status: string) => {
     excluido: { variant: "destructive", label: "Excluído" },
     ignorado: { variant: "secondary", label: "Ignorado" },
     resolvido_auto: { variant: "secondary", label: "Resolvido auto" },
+    // Venda atípica: nasce registro informativo, sem decisão (migration 20261120180001).
+    registrado: { variant: "outline", label: "Registrado" },
   };
   const cfg = map[status] ?? { variant: "outline" as BadgeVariant, label: status };
   return <Badge variant={cfg.variant}>{cfg.label}</Badge>;

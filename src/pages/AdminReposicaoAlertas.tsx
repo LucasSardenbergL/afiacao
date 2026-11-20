@@ -10,7 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { AlertTriangle } from "lucide-react";
 import {
-  PAGE_SIZE, tiposDaVisao, podeAceitarEmLote,
+  PAGE_SIZE, tiposDaVisao, statusPadraoDaVisao, podeAceitarEmLote,
   type EventoOutlier, type SkuInfo, type AcaoConfirm, type Visao,
 } from "@/components/reposicao/alertas/types";
 import { buscarStats, atribuirGrupoAosSkus } from "@/components/reposicao/alertas/api";
@@ -35,7 +35,8 @@ export default function AdminReposicaoAlertas() {
     visao: "fila",
     tipo: "__all__",
     sev: "__all__",
-    status: "pendente",
+    // Vazio = o padrão da visão (statusPadraoDaVisao): fila abre em "pendente", registro em "todos".
+    status: "",
     q: "",
     pagina: 1,
   });
@@ -49,13 +50,14 @@ export default function AdminReposicaoAlertas() {
   const setFiltroTipo = (tipo: string) => setFiltros({ tipo, pagina: 1 });
   const filtroSev = filtros.sev;
   const setFiltroSev = (sev: string) => setFiltros({ sev, pagina: 1 });
-  const filtroStatus = filtros.status;
+  const filtroStatus = filtros.status || statusPadraoDaVisao(visao);
   const setFiltroStatus = (status: string) => setFiltros({ status, pagina: 1 });
   const busca = filtros.q;
   const setBusca = (q: string) => setFiltros({ q, pagina: 1 });
-  // Trocar de visão zera tipo e página: o tipo de uma visão não existe na outra.
+  // Trocar de visão zera tipo, status e página: o tipo de uma visão não existe na outra, e o status
+  // volta ao padrão dela.
   const setVisao = (v: Visao) => {
-    setFiltros({ visao: v, tipo: "__all__", pagina: 1 });
+    setFiltros({ visao: v, tipo: "__all__", status: "", pagina: 1 });
     setSelecionados(new Set());
   };
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());

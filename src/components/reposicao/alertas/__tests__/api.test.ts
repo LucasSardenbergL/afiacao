@@ -7,7 +7,7 @@ const rpc = vi.fn();
 const chamadas: Array<[string, unknown[]]> = [];
 vi.mock("@/integrations/supabase/client", () => {
   const chain: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "gte", "insert"]) {
+  for (const m of ["select", "eq", "gte", "in", "insert"]) {
     chain[m] = (...a: unknown[]) => {
       chamadas.push([m, a]);
       return chain;
@@ -108,6 +108,13 @@ describe("buscarStats", () => {
     const gte = chamadas.find(([m]) => m === "gte");
     expect(gte?.[1][0]).toBe("decidido_em");
     expect(new Date(gte?.[1][1] as string).getHours()).toBe(0);
+  });
+
+  it("venda atípica conta pendente E registrado (nasce 'registrado' desde a 20261120180001)", async () => {
+    resposta.mockImplementation(() => ({ count: 1, error: null }));
+    await buscarStats();
+    const ins = chamadas.filter(([m]) => m === "in").map(([, a]) => a);
+    expect(ins).toEqual([["status", ["pendente", "registrado"]]]);
   });
 
   it("count null → erro (ausente ≠ zero: card mostraria 0 inventado)", async () => {
