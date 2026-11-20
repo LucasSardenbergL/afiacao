@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { valorDocumentoTitulo } from "./mapear-titulo.ts";
 import {
   type BancoTitulos,
   buscarTitulosCaixa,
@@ -945,7 +946,8 @@ async function syncContasReceber(
         data_vencimento: parseOmieDate(t.data_vencimento || t.dDtVenc),
         data_recebimento: parseOmieDate(t.data_recebimento || t.dDtPagamento),
         data_previsao: parseOmieDate(t.data_previsao),
-        valor_documento: t.valor_documento || t.nValorTitulo || 0,
+        // Ausente ≠ zero: título sem valor legível NÃO é gravado como R$ 0 (some da trava de crédito).
+        valor_documento: valorDocumentoTitulo(t),
         valor_recebido: t.valor_recebido || t.nValorPago || 0,
         // Idem, endpoint espelho (ver o bloco em syncContasPagar): em /financas/contareceber/ os
         // campos `desconto`/`juros`/`multa` pertencem à sub-tag `recebimento` ("Detalhes do
@@ -971,10 +973,15 @@ async function syncContasReceber(
       };
     });
 
-    const validRows = rows.filter((r) => r.omie_codigo_lancamento != null);
-    const skipped = rows.length - validRows.length;
+    const comCodigo = rows.filter((r) => r.omie_codigo_lancamento != null);
+    const validRows = comCodigo.filter((r) => r.valor_documento != null);
+    const skipped = rows.length - comCodigo.length;
+    const semValor = comCodigo.length - validRows.length;
     if (skipped > 0) console.log(`[Fin][${company}] CR p${pagina}: ${skipped} títulos sem código, ignorados`);
+    if (semValor > 0) console.warn(`[Fin][${company}] CR p${pagina}: ${semValor} título(s) sem valor_documento legível — NÃO gravados como R$ 0`);
     if (estrito) {
+      // Título sem valor no retrato que decide ausência: seria "não visto" → tratado como fantasma.
+      if (semValor > 0) throw new Error(`[Fin][${company}] CR p${pagina}: ${semValor} título(s) sem valor_documento no modo estrito — retrato não serve para decidir ausência`);
       // Título ilegível no retrato que decide ausência: o real dele ficaria "não visto" (Codex, desenho).
       if (skipped > 0) throw new Error(`[Fin][${company}] CR p${pagina}: ${skipped} título(s) sem código no modo estrito — retrato não serve para reconciliar`);
       lidos += validRows.length;
