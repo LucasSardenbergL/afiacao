@@ -96,6 +96,7 @@ export function AIInputArea({
             // ⌘/Ctrl+Enter analisa sem tirar a mão do teclado (Enter puro segue quebrando linha).
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && podeAnalisar) { e.preventDefault(); onAnalyze(); }
           }}
+          data-atalho="assistente-pedido"
           aria-label={hasCustomerSelected ? 'Descreva os itens do pedido' : 'Descreva o cliente e os itens do pedido'}
           placeholder={hasCustomerSelected
             ? "Ex: 10 discos de corte 7 pol., afiar as serras circulares"

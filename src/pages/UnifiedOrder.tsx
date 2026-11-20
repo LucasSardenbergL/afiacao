@@ -50,6 +50,7 @@ import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
 import { CartItemList } from '@/components/unified-order/CartItemList';
 import { CartSummaryBar } from '@/components/unified-order/CartSummaryBar';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
+import { useRegisterShortcuts } from '@/components/shell/ShortcutsRegistry';
 
 function OrderStepper({ step, isCustomerMode }: { step: number; isCustomerMode: boolean }) {
   const steps = isCustomerMode ? ['Itens', 'Revisão'] : ['Cliente', 'Itens', 'Revisão'];
@@ -72,6 +73,11 @@ function OrderStepper({ step, isCustomerMode }: { step: number; isCustomerMode: 
 }
 
 const SEM_DESCRICOES = new Map<number, string>();
+
+/** Foca o campo marcado com `data-atalho` (cada um existe uma vez por vez na tela). */
+function focarAtalho(alvo: 'busca-cliente' | 'busca-produto' | 'assistente-pedido') {
+  document.querySelector<HTMLElement>(`[data-atalho="${alvo}"]`)?.focus();
+}
 
 const UnifiedOrder = () => {
   const h = useUnifiedOrder();
@@ -105,6 +111,26 @@ const UnifiedOrder = () => {
   const [restoreOpen, setRestoreOpen] = useState(false);
   // Catálogo entregue à IA: memoizado pelas listas de origem (antes era copiado a cada render/tecla).
   const catalogoIA = useMemo(() => [...h.obenProducts, ...h.colacorProducts], [h.obenProducts, h.colacorProducts]);
+
+  // Atalhos do balcão (staff): pular entre cliente, produto e assistente sem o mouse. O "?" lista.
+  useRegisterShortcuts(useMemo(() => isCustomerMode ? [] : [
+    { keys: 'c', label: 'Buscar cliente', group: 'Novo pedido', scope: 'page' as const, handler: () => focarAtalho('busca-cliente') },
+    { keys: 'p', label: 'Buscar produto', group: 'Novo pedido', scope: 'page' as const, handler: () => focarAtalho('busca-produto') },
+    { keys: 'a', label: 'Assistente de pedido', group: 'Novo pedido', scope: 'page' as const, handler: () => focarAtalho('assistente-pedido') },
+  ], [isCustomerMode]));
+
+  // Cliente escolhido → foco segue para a busca de produto (o próximo passo). Só com teclado
+  // físico: no toque, focar abriria o teclado virtual por cima da tela.
+  const codigoClienteAtual = h.selectedCustomer?.codigo_cliente ?? null;
+  const codigoClienteAnterior = useRef(codigoClienteAtual);
+  useEffect(() => {
+    const anterior = codigoClienteAnterior.current;
+    codigoClienteAnterior.current = codigoClienteAtual;
+    if (codigoClienteAtual == null || codigoClienteAtual === anterior || isCustomerMode) return;
+    if (!window.matchMedia?.('(pointer: fine)').matches) return;
+    const id = requestAnimationFrame(() => focarAtalho('busca-produto'));
+    return () => cancelAnimationFrame(id);
+  }, [codigoClienteAtual, isCustomerMode]);
 
   // "Cores do cliente": histórico de cores + pré-preenchimento do dialog de tingir.
   const coresDoCliente = useCoresDoCliente(h.customerUserId);

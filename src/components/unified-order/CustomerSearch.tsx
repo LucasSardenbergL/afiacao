@@ -2,7 +2,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Search, User, Loader2, AlertTriangle } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -38,6 +38,33 @@ export function CustomerSearch({
   searchFalhou = false, onTentarDeNovo, itensNoCarrinho = 0,
 }: CustomerSearchProps) {
   const [confirmarTroca, setConfirmarTroca] = useState(false);
+  // Combobox: ↑/↓ percorrem os resultados sem sair do campo, Enter escolhe, Esc limpa.
+  const [ativo, setAtivo] = useState(-1);
+  const listaId = useId();
+  const listaRef = useRef<HTMLDivElement>(null);
+  const bloqueado = loadingCustomer || searchingCustomers;
+  // Lista nova (outro termo) → nada pré-destacado: Enter não escolhe às cegas o 1º de uma lista velha.
+  useEffect(() => { setAtivo(-1); }, [customers]);
+  useEffect(() => {
+    if (ativo < 0) return;
+    listaRef.current?.querySelector<HTMLElement>(`[data-indice="${ativo}"]`)?.scrollIntoView?.({ block: 'nearest' });
+  }, [ativo]);
+  const opcaoId = (c: OmieCustomer) => `${listaId}-${c.codigo_cliente}`;
+  const onTeclaBusca = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' && customers.length > 0) {
+      e.preventDefault(); setAtivo((i) => Math.min(i + 1, customers.length - 1));
+    } else if (e.key === 'ArrowUp' && customers.length > 0) {
+      e.preventDefault(); setAtivo((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      // Enter sem destaque só escolhe quando há UM resultado (inequívoco).
+      const alvo = ativo >= 0 ? customers[ativo] : customers.length === 1 ? customers[0] : undefined;
+      if (alvo && !bloqueado) { e.preventDefault(); onSelectCustomer(alvo); }
+    } else if (e.key === 'Escape' && customerSearch) {
+      e.preventDefault(); onSearchChange('');
+    }
+  };
+  // Teclado físico: foco já na busca. Toque: não abre o teclado virtual sozinho.
+  const focoAutomatico = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: fine)').matches;
   const termoValido = customerSearch.trim().length >= 2;
   const semResultado = termoValido && !searchingCustomers && !loadingCustomer && !searchFalhou && customers.length === 0;
   const pedirTroca = () => {
@@ -103,11 +130,18 @@ export function CustomerSearch({
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden />
               <Input
                 type="search"
+                role="combobox"
+                data-atalho="busca-cliente"
                 aria-label="Buscar cliente por nome ou CPF/CNPJ"
+                aria-autocomplete="list"
+                aria-expanded={customers.length > 0}
+                aria-controls={listaId}
+                aria-activedescendant={ativo >= 0 && customers[ativo] ? opcaoId(customers[ativo]) : undefined}
                 placeholder="Nome, fantasia ou CPF/CNPJ do cliente"
                 value={customerSearch}
                 onChange={e => onSearchChange(e.target.value)}
-                autoFocus
+                onKeyDown={onTeclaBusca}
+                autoFocus={focoAutomatico}
                 autoComplete="off"
                 className="pl-9 h-10"
               />
@@ -130,9 +164,31 @@ export function CustomerSearch({
               ) : null}
             </div>
             {customers.length > 0 && (
-              <div className={cn('border rounded-lg divide-y max-h-64 overflow-y-auto transition-opacity', searchingCustomers && 'opacity-50')}>
-                {customers.map(c => (
-                  <button type="button" key={c.codigo_cliente} className="w-full text-left px-3 py-2 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset transition-colors" onClick={() => onSelectCustomer(c)} disabled={loadingCustomer || searchingCustomers}>
+              <div
+                id={listaId}
+                ref={listaRef}
+                role="listbox"
+                aria-label="Clientes encontrados"
+                className={cn('border rounded-lg divide-y max-h-64 overflow-y-auto transition-opacity', searchingCustomers && 'opacity-50')}
+              >
+                {customers.map((c, i) => (
+                  <div
+                    key={c.codigo_cliente}
+                    id={opcaoId(c)}
+                    data-indice={i}
+                    role="option"
+                    aria-selected={i === ativo}
+                    aria-disabled={bloqueado || undefined}
+                    // mousedown não rouba o foco do campo (o combobox segue no teclado).
+                    onMouseDown={e => e.preventDefault()}
+                    onMouseEnter={() => setAtivo(i)}
+                    onClick={() => { if (!bloqueado) onSelectCustomer(c); }}
+                    className={cn(
+                      'w-full cursor-pointer text-left px-3 py-2 transition-colors [@media(pointer:coarse)]:py-3',
+                      i === ativo ? 'bg-muted' : 'hover:bg-muted/50',
+                      bloqueado && 'cursor-wait',
+                    )}
+                  >
                     <p className="text-sm font-medium">{decodeHtmlEntities(c.nome_fantasia || c.razao_social)}</p>
                     <div className="flex items-center gap-1 flex-wrap">
                       <span className="text-xs text-muted-foreground">{c.cnpj_cpf || 'Sem documento'}{c.contato ? ` • ${c.contato}` : ''}</span>
@@ -140,7 +196,7 @@ export function CustomerSearch({
                         <Badge key={i} variant="outline" className="text-[8px] px-1 py-0">{tag}</Badge>
                       ))}
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
