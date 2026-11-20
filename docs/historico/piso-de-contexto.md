@@ -420,6 +420,48 @@ proprietárias seguem só com o nome (`bi-colacor`, `cfo-colacor`, `reposicao-ca
 `doc2md`, `farmer-industrial`, `benchmark-externo`). A alavanca agora é o que fica instalado
 em `~/.claude/skills` — decisão do founder.
 
+### Skills user-level escondidas (2026-11-20, #2622)
+
+**Uso (120 dias, mesmo método: `Skill.input.skill`, `<command-name>`, `Agent.subagent_type`,
+2.138 transcripts dos quais 667 de subagentes, symlink `projects/projects` pulado):** controle
+positivo superpowers = 352 na mesma execução; o canal `<command-name>` está vivo (`/fecho`,
+`/compact`) mas não traz nenhuma skill user-level. Das 87 user-level sem override, **13 têm uso**
+(`codex` 44, `resolving-merge-conflicts` 31, `verify` 30, `browse` 24, `auto-ensino` 11, …).
+`/review` e `/qa` têm **zero** — mantidas por serem REQUIRED no CLAUDE.md, não por uso.
+
+**Aplicado:** 55 sem uso nem roteamento → `user-invocable-only`; 17 sem uso mas citadas no
+roteamento de `docs/agent/skills.md` → `name-only`. Mantidas: as 13 usadas + `review`, `qa`.
+
+**⚠️ O app NÃO lê o `skillOverrides` NOVO do worktree.** Com as 72 no `.claude/settings.json`
+do worktree (e depois no `settings.local.json`), 3 sessões novas do app — inclusive após
+reiniciar o app — listaram as mesmas 178 skills, enquanto as 53 entradas antigas seguiam
+valendo e o CLI 2.1.326 do próprio app, no mesmo cwd, aplicava as 72 (94 skills, 12/14
+proprietárias descritas). Hipótese não provada: o app lê o settings do checkout PRINCIPAL
+(que tem exatamente as 53 antigas) ou de um cache. **O que funcionou no app foi o
+`~/.claude/settings.json`** (as 72 lá; backup em `settings.json.bak-2622`). Ficam também no
+`.claude/settings.json` do repo — redundantes no app, efetivas no CLI.
+
+**Antes/depois — sessões NOVAS do app, 2.1.328 (o app se atualizou no restart; o "antes" foi
+re-medido nessa versão):**
+
+| | antes (overrides só no worktree, n=2) | depois (72 no global, n=1) |
+|---|---|---|
+| skills na lista | 178 | **125** |
+| chars da lista | 11.994 | 11.974 |
+| proprietárias com descrição (de 14) | 7 | **10** |
+| 1º request não-Haiku | 88.755 / 86.760 | 86.683 |
+
+Ganharam descrição: `benchmark-externo`, `bi-colacor`, `reposicao-caixa` (e `lgpd-data-mapping`);
+perderam: `health`, `supabase`, `vercel-react-best-practices` (já `name-only` por desenho).
+Seguem só com nome: `cfo-colacor`, `goal`, `doc2md`, `farmer-industrial`.
+
+**O piso não se move** — a lista continua no teto (~12k chars) e o 1º request varia ~2k entre
+sondas com lista idêntica (86,1k–88,8k), mais que qualquer efeito. A estimativa prévia de
+"~5,6k chars liberados" estava errada: das 55 escondidas, 53 estavam na lista e só 4 com
+descrição (**~1,4k chars** no total; as `name-only` liberaram mais ~0,4k), então o espaço
+liberado foi pequeno — o ganho é de roteamento (3 proprietárias a
+mais descritas), não de token, como a nº 3 já previa.
+
 ## Lição transferível
 
 > O piso não responde a cortes *dentro* de um bloco de orçamento — o orçamento se reabastece.

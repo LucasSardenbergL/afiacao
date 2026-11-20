@@ -55,5 +55,5 @@
     "src/components/NvoipDialer.tsx",
     "src/hooks/useNvoipCall.ts"
   ],
-  "ignoreDependencies": ["npm"]
+  "ignoreDependencies": ["npm", "@lovable.dev/vite-plugin-dev-server-bridge", "@lovable.dev/vite-plugin-hmr-gate"]
 }
