@@ -1,4 +1,4 @@
-# Scores (20261120210000): priority_score NULL explícito aceito e gravado sem COALESCE, chave AUSENTE derruba o
+# Scores (20261120210001): priority_score NULL explícito aceito e gravado sem COALESCE, chave AUSENTE derruba o
 # lote misto com 23514 e zero linhas, fencing 55000/22004 intacto, log nullable, trigger ignora só o 67→NULL
 # isolado de quem segue sem_historico (churn junto, 1ª venda, ativo→NULL e stale enfileiram), PRE anti-deriva.
 db/test-priority-score-nula-sem-historico.sh 34 falsificar=9
