@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: { rpc: vi.fn(), functions: { invoke: vi.fn() } },
@@ -11,7 +11,9 @@ vi.mock('@/lib/logger', () => ({
 import { supabase } from '@/integrations/supabase/client';
 import { aprovarEDisparar, mensagemRecusaAprovacao } from '../aprovar-disparar';
 
-const mockedRpc = vi.mocked(supabase.rpc);
+// Mock "achatado" de propósito: `vi.mocked(supabase.rpc)` carrega a união de TODAS as RPCs do types.ts, e a cada
+// RPC nova ela cresce até o TS2589 ("excessively deep") — medido quando o types.ts ganhou as RPCs do e-mail ao CRS.
+const mockedRpc = vi.mocked(supabase.rpc) as unknown as Mock<(...args: unknown[]) => unknown>;
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
 
 const params = { pedidoId: 130, empresa: 'OBEN', usuario: 'lucas@x.com' };
