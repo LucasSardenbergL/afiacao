@@ -38,18 +38,37 @@ export function somarReceita(orders: OrderRow[], deISO: string, ateISO: string):
     .reduce((s, o) => s + (o.total ?? 0), 0);
 }
 
-export interface AtividadeRow {
-  id: string | null;
-  ts: string | null;
+export interface PedidoVendedorRow extends OrderRow {
+  /** Vendedor registrado no Omie para o pedido (quem VENDEU — ≠ dono da carteira do cliente). */
+  vendedor_user_id: string | null;
 }
 
-/** Contagem distinct de `id` cujo `ts` (ISO) é ≥ `desdeUTC`. Ignora id/ts nulos. */
-export function contarAtivos(linhas: AtividadeRow[], desdeUTC: string): number {
+export interface VendedoresComPedido {
+  /** Vendedores distintos (Omie) com ≥1 pedido válido no período. */
+  vendedores: number;
+  /** Pedidos válidos do período SEM vendedor no Omie — exibidos à parte, nunca somados a ninguém. */
+  pedidosSemVendedor: number;
+}
+
+/**
+ * Quem vendeu no período, pelo vendedor que o Omie registra no pedido. Substitui a "atividade no app"
+ * (ligação/visita/pedido lançado no app), que em prod é 0 linha por desenho: o time vende no Omie.
+ * Pedido sem vendedor NÃO vira vendedor fantasma — é contado à parte.
+ */
+export function contarVendedoresComPedido(
+  orders: PedidoVendedorRow[],
+  deISO: string,
+  ateISO: string,
+): VendedoresComPedido {
   const set = new Set<string>();
-  for (const l of linhas) {
-    if (l.id && l.ts && l.ts >= desdeUTC) set.add(l.id);
+  let pedidosSemVendedor = 0;
+  for (const o of orders) {
+    if (!isPedidoValido(o.status) || o.order_date_kpi == null) continue;
+    if (o.order_date_kpi < deISO || o.order_date_kpi >= ateISO) continue;
+    if (o.vendedor_user_id) set.add(o.vendedor_user_id);
+    else pedidosSemVendedor += 1;
   }
-  return set.size;
+  return { vendedores: set.size, pedidosSemVendedor };
 }
 
 // ---------------------------------------------------------------------------

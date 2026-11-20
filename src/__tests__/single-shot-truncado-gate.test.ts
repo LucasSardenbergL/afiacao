@@ -75,7 +75,6 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/hooks/useExcecaoCredito.ts', 1], // 75:user_roles
   ['src/hooks/usePontoEquilibrio.ts', 2], // 227:fin_categorias 376:fin_categorias
   ['src/hooks/useRoutePlanner.ts', 1], // 333:profiles
-  ['src/hooks/useTeamKpis.ts', 1], // 57:farmer_calls
   ['src/hooks/useUnifiedOrder.ts', 1], // 122:omie_servicos
   ['src/pages/AdminApprovals.tsx', 2], // 45:user_roles 52:profiles
   ['src/pages/AdminReposicaoCadastros.tsx', 2], // 65:sku_parametros 279:pedido_compra_sugerido(LIMIT1000)
