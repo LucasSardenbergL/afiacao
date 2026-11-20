@@ -6,7 +6,7 @@
 //      paginar, ~1140 dos 2140 produtos colacor ativos ficariam invisíveis pra venda.
 //  Os dois espelham o caminho de CRIAÇÃO (useProductCatalog: paginateAll + buildExclusionQuery).
 //  O teste exercita o paginateAll/buildExclusionQuery REAIS contra um data source mockado.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 
 vi.mock('react-router-dom', () => ({
@@ -25,7 +25,9 @@ import { useSalesOrderEdit } from '../useSalesOrderEdit';
 const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
 // PR0.0-bis: loadOrder busca o omie_payload pelo canal staff SECDEF (fechado ao .select()).
-const mockedRpc = vi.mocked(supabase.rpc);
+// Mock "achatado" de propósito: `vi.mocked(supabase.rpc)` carrega a união de TODAS as RPCs do types.ts, e a cada
+// RPC nova ela cresce até o TS2589 ("excessively deep") — medido quando o types.ts ganhou as RPCs do e-mail ao CRS.
+const mockedRpc = vi.mocked(supabase.rpc) as unknown as Mock<(...args: unknown[]) => unknown>;
 
 /** Captura o valor passado a `.eq('account', X)` na query de omie_products. */
 const productsAccountEq = vi.fn();
