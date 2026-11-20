@@ -41,3 +41,9 @@ a cada expiração. Cobrar HTTPS da Sayerlack.
 - **Prova de que não houve lockout:** um único login com a senha do env (`adotar_env`) devolveu `troca_de_senha`. A senha antiga segue valendo e só está vencida, então a candidata descartada nunca virou a senha ativa.
 - **Lacuna:** o texto da tela não era gravado, e o motivo exato ficou desconhecido. A página pública de troca não expõe regra nenhuma (só `maxlength=50`). A hipótese é exigência de caractere especial, porque a senha gerada só tinha letras e dígitos.
 - **v1.1-especial-e-motivo-da-recusa:** a senha gerada passa a ter ≥1 especial de `@#$%*!`. O texto da tela pós-troca vai para o diagnóstico e para o alerta como `texto_tela`, com toda ocorrência das duas senhas trocada por `[senha]`. Na 2ª recusa o motivo fica escrito.
+
+## 2ª troca real — concluída (2026-11-20 11:16 UTC, v1.1)
+
+- Disparada depois da quarentena, já com a v1.1 (#4006). Ela trocou a senha, provou com login real até o dashboard, promoveu no Vault, mandou o e-mail às 11:16:53 e reenfileirou o **#4505** (`erro_nao_retentavel` → `pendente_envio_portal`).
+- Isso confirma a hipótese da 1ª recusa: o TOTVS exige **caractere especial**.
+- A partir daqui a fonte da verdade da senha é o Vault. O env `SAYERLACK_PORTAL_PASS` ficou velho, e só serve de bootstrap se o Vault for esvaziado.
