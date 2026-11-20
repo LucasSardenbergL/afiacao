@@ -234,7 +234,7 @@ export function useUnifiedOrder() {
   });
   const {
     customerSearch, setCustomerSearch,
-    customers, searchingCustomers,
+    customers, searchingCustomers, customerSearchFalhou, tentarBuscaDeNovo,
     selectedCustomer, setSelectedCustomer,
     loadingCustomer,
     customerUserId, setCustomerUserId,
@@ -460,8 +460,9 @@ export function useUnifiedOrder() {
   }, [colacorFormasQuery.data, colacorFormasQuery.isError, selectedParcelaColacor, customerParcelaRankingColacor]);
 
   const isCustomerMode = !authLoading && !isStaff;
+  // Índice no stepper da página: customer tem só ['Itens','Revisão'] (0/1); staff ['Cliente','Itens','Revisão'].
   const currentStep = isCustomerMode
-    ? (cart.length === 0 ? 1 : 2)
+    ? (cart.length === 0 ? 0 : 1)
     : (!selectedCustomer ? 0 : cart.length === 0 ? 1 : 2);
 
   // Staff: load default prices (servicos/categorias/formas/companyProfiles agora via react-query)
@@ -1035,7 +1036,7 @@ export function useUnifiedOrder() {
     // Auth
     authLoading, user, isStaff, isCustomerMode,
     // Customer
-    customerSearch, setCustomerSearch, customers, selectedCustomer, searchingCustomers,
+    customerSearch, setCustomerSearch, customers, selectedCustomer, searchingCustomers, customerSearchFalhou, tentarBuscaDeNovo,
     loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer,
     // Products
     obenProducts, colacorProducts, productSearch, setProductSearch,

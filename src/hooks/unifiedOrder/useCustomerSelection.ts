@@ -91,6 +91,10 @@ export function useCustomerSelection({
   const [customerSearch, setCustomerSearch] = useState('');
   const [customers, setCustomers] = useState<OmieCustomer[]>([]);
   const [searchingCustomers, setSearchingCustomers] = useState(false);
+  // Busca de cliente falhou (rede/edge) — ≠ "nenhum cliente encontrado" (ausente ≠ zero).
+  const [customerSearchFalhou, setCustomerSearchFalhou] = useState(false);
+  const [tentativaBusca, setTentativaBusca] = useState(0);
+  const tentarBuscaDeNovo = useCallback(() => setTentativaBusca((n) => n + 1), []);
 
   const [selectedCustomer, setSelectedCustomer] = useState<OmieCustomer | null>(null);
   const [loadingCustomer, setLoadingCustomer] = useState(false);
@@ -206,7 +210,10 @@ export function useCustomerSelection({
 
   /* ─── Customer search (debounced) ─── */
   useEffect(() => {
+    setCustomerSearchFalhou(false);
     if (customerSearch.length < 2) { setCustomers([]); return; }
+    // Resposta de um termo ANTERIOR (mais lenta que a do atual) não pode sobrescrever a lista.
+    let cancelado = false;
     const timeout = setTimeout(async () => {
       setSearchingCustomers(true);
       try {
@@ -231,19 +238,23 @@ export function useCustomerSelection({
               }
             }
           }
-          setCustomers(clientes);
+          if (!cancelado) setCustomers(clientes);
+        } else if (!cancelado) {
+          setCustomers([]);
+          setCustomerSearchFalhou(true);
         }
       } catch (e) {
+        if (!cancelado) { setCustomers([]); setCustomerSearchFalhou(true); }
         logger.error('Customer search failed', {
           stage: 'customer_search',
           searchTermLength: customerSearch.length,
           error: e,
         });
       }
-      finally { setSearchingCustomers(false); }
+      finally { if (!cancelado) setSearchingCustomers(false); }
     }, 500);
-    return () => clearTimeout(timeout);
-  }, [customerSearch]);
+    return () => { cancelado = true; clearTimeout(timeout); setSearchingCustomers(false); };
+  }, [customerSearch, tentativaBusca]);
 
   /* ─── Helpers ─── */
 
@@ -721,7 +732,7 @@ export function useCustomerSelection({
   return {
     // Search
     customerSearch, setCustomerSearch,
-    customers, searchingCustomers,
+    customers, searchingCustomers, customerSearchFalhou, tentarBuscaDeNovo,
     // Selection
     selectedCustomer, setSelectedCustomer,
     loadingCustomer,

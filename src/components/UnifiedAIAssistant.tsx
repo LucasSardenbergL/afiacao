@@ -64,10 +64,6 @@ export function UnifiedAIAssistant(props: UnifiedAIAssistantProps) {
           precoLoading={precoLoading}
         />
       )}
-
-      <p className="text-xs text-muted-foreground text-center">
-        🎙️ Voz &nbsp;·&nbsp; ⌨️ Texto &nbsp;·&nbsp; 📷 Fotos &nbsp;·&nbsp; 📎 Áudio — identifica cliente, produtos e serviços
-      </p>
     </div>
   );
 }

@@ -26,9 +26,16 @@ describe("resolveBreadcrumbs", () => {
   });
 
   it("surfaces backTo/backLabel from the leaf entry", () => {
+    const trail = resolveBreadcrumbs("/admin/customers/abc");
+    const leaf = trail[trail.length - 1];
+    expect(leaf.backTo).toBeTruthy();
+    expect(leaf.backLabel).toBeTruthy();
+  });
+
+  it("/sales/new não duplica o voltar: a trilha já leva a Pedidos", () => {
     const trail = resolveBreadcrumbs("/sales/new");
     const leaf = trail[trail.length - 1];
-    expect(leaf.backTo).toBe("/sales");
-    expect(leaf.backLabel).toBe("Pedidos");
+    expect(leaf.backTo).toBeUndefined();
+    expect(trail.map((c) => c.href)).toContain("/sales");
   });
 });
