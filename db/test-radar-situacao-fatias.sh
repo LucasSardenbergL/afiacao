@@ -308,7 +308,7 @@ if [ "$CORPO" = 0 ]; then PD base -q -f "$MIG_USADA" >/dev/null; fi
 for db in nova nb nc nd; do PD postgres -qc "CREATE DATABASE $db TEMPLATE base"; done
 
 # Uma chamada em <db> com fatia ($2 CNPJs) e orçamento ($3).
-T() { PDq "$1" -c "SET radar.situacao_linhas_fatia = '$2'; SET radar.situacao_orcamento = '$3'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text"; }
+T() { PDq "$1" -c "SET statement_timeout = '60s'; SET radar.situacao_linhas_fatia = '$2'; SET radar.situacao_orcamento = '$3'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text"; }
 cursor() { PDq "$1" -c "SELECT coalesce((SELECT lote || '|' || cursor_cnpj FROM public.radar_situacao_passada), '-')"; }
 N_LOTE="$(PDq nova -c "SELECT count(*) FROM public.radar_situacao_cadastral WHERE lote = '2026-11'")"
 LIMITE=$(( N_LOTE / 100 + 4 ))
@@ -394,7 +394,8 @@ B10_PID=$!
 until [ "$(PDq nc -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(9)%' AND state = 'active' AND pid <> pg_backend_pid()")" = "1" ]; do sleep 0.1; done
 sleep 0.3
 ERR10="$(dirname "$DATA")/b10.err"
-J10="$(T nc 100 '1 hour' 2>"$ERR10" || true)"
+# Orçamento folgado (2 fatias + a espera de 5 s), mas com teto: sabotagem que não anda não pode segurar a prova.
+J10="$(PDq nc -c "SET statement_timeout = '60s'; SET radar.situacao_linhas_fatia = '100'; SET radar.situacao_orcamento = '20 seconds'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text" 2>"$ERR10" || true)"
 if [ "$(PDq nc -c "SELECT pg_input_is_valid(\$j\$$J10\$j\$, 'jsonb')")" = "t" ]; then
   eq "B10a linha travada → parcial em 'trava' (não erro)" "$(J "$J10" parcial,interrompido)" "trava"
 else
