@@ -27,7 +27,7 @@ export const ROUTE_CRUMBS: RouteCrumb[] = [
 
   // Vendas
   { path: "/sales", crumb: "Pedidos" },
-  { path: "/sales/new", crumb: "Novo pedido", backTo: "/sales", backLabel: "Pedidos" },
+  { path: "/sales/new", crumb: "Novo pedido" },
 
   // Reposição (sessão)
   { path: "/admin/reposicao/sessao", crumb: "Reposição" },

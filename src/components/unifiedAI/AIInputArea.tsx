@@ -47,21 +47,21 @@ export function AIInputArea({
   onAnalyze,
   hasCustomerSelected,
 }: AIInputAreaProps) {
+  const temConteudo = text.trim().length > 0 || images.length > 0;
+  const podeAnalisar = temConteudo && !isProcessing;
+
   return (
     <>
       <input ref={fileInputRef} type="file" accept="image/*" capture="environment" multiple onChange={onImageSelect} className="hidden" />
       <input ref={audioInputRef} type="file" accept="audio/*" multiple onChange={onAudioFileSelect} className="hidden" />
 
-      <div className="flex items-center gap-2 text-primary">
-        <Sparkles className="w-5 h-5" />
-        <span className="font-semibold text-sm">Assistente de Pedido IA</span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <Sparkles className="w-4 h-4 text-primary" aria-hidden />
+        <span className="font-semibold text-sm">Assistente de pedido</span>
+        <span className="text-xs text-muted-foreground">
+          {hasCustomerSelected ? 'itens por voz, texto, foto ou áudio' : 'cliente e itens de uma vez — voz, texto, foto ou áudio'}
+        </span>
       </div>
-
-      <p className="text-sm text-muted-foreground">
-        {hasCustomerSelected
-          ? 'Diga, digite, tire fotos ou anexe áudios — a IA identifica produtos e serviços automaticamente.'
-          : 'Diga o nome do cliente, produtos e serviços — a IA identifica tudo automaticamente por voz, texto ou foto.'}
-      </p>
 
       {/* Image previews */}
       {images.length > 0 && (
@@ -69,17 +69,19 @@ export function AIInputArea({
           {images.map((img, idx) => (
             <div key={idx} className="relative rounded-lg overflow-hidden bg-muted w-20 h-20">
               <img src={img.preview} alt={`Foto ${idx + 1}`} className="w-full h-full object-cover" />
-              <button onClick={() => onRemoveImage(idx)} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-background/80 backdrop-blur flex items-center justify-center hover:bg-background">
-                <X className="w-3 h-3" />
+              <button type="button" aria-label={`Remover foto ${idx + 1}`} onClick={() => onRemoveImage(idx)} className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-background/80 backdrop-blur flex items-center justify-center hover:bg-background">
+                <X className="w-3 h-3" aria-hidden />
               </button>
             </div>
           ))}
           {images.length < 5 && (
             <button
+              type="button"
+              aria-label="Adicionar outra foto"
               onClick={() => fileInputRef.current?.click()}
               className="w-20 h-20 rounded-lg border-2 border-dashed border-muted-foreground/30 flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary transition-colors"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-5 h-5" aria-hidden />
             </button>
           )}
         </div>
@@ -90,12 +92,17 @@ export function AIInputArea({
         <textarea
           value={text}
           onChange={e => onTextChange(e.target.value)}
+          onKeyDown={e => {
+            // ⌘/Ctrl+Enter analisa sem tirar a mão do teclado (Enter puro segue quebrando linha).
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && podeAnalisar) { e.preventDefault(); onAnalyze(); }
+          }}
+          aria-label={hasCustomerSelected ? 'Descreva os itens do pedido' : 'Descreva o cliente e os itens do pedido'}
           placeholder={hasCustomerSelected
-            ? "Ex: 10 discos de corte 7 polegadas, afiar as serras circulares..."
-            : "Ex: Pedido do cliente Metalúrgica São Paulo, de Curitiba. 10 discos de corte 7pol..."
+            ? "Ex: 10 discos de corte 7 pol., afiar as serras circulares"
+            : "Ex: Metalúrgica São Paulo, Curitiba — 10 discos de corte 7 pol."
           }
           className={cn(
-            "w-full min-h-[80px] p-3 pr-28 rounded-lg border bg-background text-sm resize-none",
+            "w-full min-h-[64px] p-3 pr-32 sm:pr-28 rounded-lg border bg-background text-sm resize-none",
             "focus:outline-none focus:ring-2 focus:ring-ring",
             isRecording && "border-primary ring-2 ring-primary/20"
           )}
@@ -107,20 +114,22 @@ export function AIInputArea({
             type="button"
             onClick={() => audioInputRef.current?.click()}
             disabled={isProcessing}
-            className="p-2 rounded-full bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all"
+            className="p-2 rounded-full bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:pointer-events-none [@media(pointer:coarse)]:p-3"
             title="Anexar áudio"
+            aria-label="Anexar arquivo de áudio"
           >
-            <Paperclip className="w-4 h-4" />
+            <Paperclip className="w-4 h-4" aria-hidden />
           </button>
           {/* Camera button */}
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isProcessing}
-            className="p-2 rounded-full bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all"
+            className="p-2 rounded-full bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:pointer-events-none [@media(pointer:coarse)]:p-3"
             title="Tirar foto ou anexar imagem"
+            aria-label="Tirar foto ou anexar imagem"
           >
-            <Camera className="w-4 h-4" />
+            <Camera className="w-4 h-4" aria-hidden />
           </button>
           {/* Mic button */}
           <button
@@ -128,43 +137,51 @@ export function AIInputArea({
             onClick={() => isRecording ? onStopRecording() : onStartRecording()}
             disabled={isAnalyzing || isLoading || isTranscribing}
             className={cn(
-              "p-2 rounded-full transition-all",
+              "p-2 rounded-full transition-all disabled:opacity-50 disabled:pointer-events-none [@media(pointer:coarse)]:p-3",
               isRecording
                 ? "bg-destructive text-destructive-foreground animate-pulse"
                 : "bg-muted text-muted-foreground hover:bg-primary/10 hover:text-primary"
             )}
             title={isRecording ? 'Parar gravação' : 'Gravar áudio'}
+            aria-label={isRecording ? 'Parar gravação' : 'Gravar áudio'}
+            aria-pressed={isRecording}
           >
-            {isRecording ? <Square className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            {isRecording ? <Square className="w-4 h-4" aria-hidden /> : <Mic className="w-4 h-4" aria-hidden />}
           </button>
         </div>
       </div>
 
       {/* Recording */}
       {isRecording && (
-        <div className="flex items-center gap-2 text-destructive text-sm">
-          <div className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
+        <div role="status" className="flex items-center gap-2 text-destructive text-sm">
+          <div aria-hidden className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
           <span>Gravando... {formatDuration(recordingDuration)}</span>
         </div>
       )}
 
       {isTranscribing && (
-        <div className="flex items-center gap-2 text-primary text-sm">
-          <Loader2 className="w-4 h-4 animate-spin" />
+        <div role="status" className="flex items-center gap-2 text-primary text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
           <span>Transcrevendo áudio...</span>
         </div>
       )}
 
       {/* Analyze button */}
+      {/* Vazio: botão secundário (contorno) — o primário cinza-desabilitado parecia a ação da página. */}
       <Button
         onClick={onAnalyze}
-        disabled={(!text.trim() && images.length === 0) || isProcessing}
+        disabled={!podeAnalisar}
+        variant={temConteudo || isAnalyzing ? 'default' : 'outline'}
         className="w-full"
       >
         {isAnalyzing ? (
-          <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Analisando...</>
+          <><Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden />Analisando…</>
         ) : (
-          <><Sparkles className="w-4 h-4 mr-2" />{hasCustomerSelected ? 'Identificar Itens do Pedido' : 'Identificar Cliente e Itens'}</>
+          <>
+            <Sparkles className="w-4 h-4 mr-2" aria-hidden />
+            {hasCustomerSelected ? 'Identificar itens' : 'Identificar cliente e itens'}
+            {temConteudo && <kbd className="ml-2 hidden sm:inline text-[10px] opacity-70 font-sans" aria-hidden>⌘↵</kbd>}
+          </>
         )}
       </Button>
     </>

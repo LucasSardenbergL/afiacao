@@ -88,3 +88,17 @@ Prova PG17 6/6 (`db/test-ciclo-registro.sh`): cron/manual/rollback/fail-open/inv
 + falsificação. O harness pegou um bug real de desenho: `auth.uid()` no DECLARE fura o
 EXCEPTION (lição nova em `docs/agent/database.md`). Caption na página de Oportunidades fora do
 condicional do botão (mostra o "automática" diário). Fecha o programa "última execução".
+
+### Novo Pedido (`/sales/new`) — auditoria Fable + Codex (2026-11-20)
+
+Duas auditorias independentes (Fable: UX/código; Codex gpt-6.2-astra: engenharia) convergiram:
+Cliente (passo 1 do stepper) vinha DEPOIS do card da IA; breadcrumb com voltar duplicado
+(`routeCrumbs` `/sales/new` sem `backTo`); sidebar acendia "Pedidos" junto de "Novo pedido"
+(`startsWith` → `itemNavAtivo`, prefixo mais longo por segmento — também em `/salesforce`);
+stepper do modo cliente deslocado em 1. Bugs reais do Codex: resposta de busca de cliente
+ANTIGA sobrescrevia a atual e falha virava "lista vazia" (ausente ≠ zero → estado de erro
++ "Tentar de novo"); "Trocar" limpava carrinho sem confirmação; rascunho restaurava carrinho
+precificado de OUTRO cliente já selecionado (agora recusa). Resto: aria-label em botões só-ícone
+(IA + carrinho), `EmptyState` no carrinho, "Verificando cadastro…" em vez de "Sem cadastro"
+transitório, ⌘↵ na IA, catálogo da IA memoizado. Fora: combobox com setas na busca de cliente,
+atalhos globais, rótulos do seletor de pagamento (CartSummaryBar).

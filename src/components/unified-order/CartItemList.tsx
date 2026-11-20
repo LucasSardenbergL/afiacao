@@ -1,4 +1,5 @@
 import { Input } from '@/components/ui/input';
+import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -217,14 +218,19 @@ export function CartItemList({
                   </div>
                 )}
               </div>
-              <button onClick={() => onRemoveFromCart(cartIdx)}>
-                <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
+              <button
+                type="button"
+                onClick={() => onRemoveFromCart(cartIdx)}
+                aria-label={`Remover ${item.product.descricao}${item.tint_cor_id ? ` (cor ${item.tint_cor_id})` : ''}`}
+                className="group shrink-0 -m-1.5 p-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-3 [@media(pointer:coarse)]:-m-3"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-muted-foreground group-hover:text-destructive" aria-hidden />
               </button>
             </div>
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-0.5">
-                <Button size="sm" variant="outline" className="h-6 w-6 p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => onUpdateQuantity(cartIdx, -1)}>
-                  <Minus className="w-3 h-3" />
+                <Button size="sm" variant="outline" className="h-6 w-6 p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => onUpdateQuantity(cartIdx, -1)} aria-label={`Diminuir quantidade de ${item.product.descricao}`}>
+                  <Minus className="w-3 h-3" aria-hidden />
                 </Button>
                 <Input
                   type="text"
@@ -232,6 +238,7 @@ export function CartItemList({
                   pattern="[0-9]*"
                   min={1}
                   value={item.quantity}
+                  aria-label={`Quantidade de ${item.product.descricao}${item.tint_cor_id ? ` (cor ${item.tint_cor_id})` : ''}`}
                   onFocus={e => e.target.select()}
                   onChange={e => {
                     const newQty = parseInt(e.target.value) || 1;
@@ -240,8 +247,8 @@ export function CartItemList({
                   }}
                   className="h-6 w-12 text-xs text-center p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-14"
                 />
-                <Button size="sm" variant="outline" className="h-6 w-6 p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => onUpdateQuantity(cartIdx, 1)}>
-                  <Plus className="w-3 h-3" />
+                <Button size="sm" variant="outline" className="h-6 w-6 p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => onUpdateQuantity(cartIdx, 1)} aria-label={`Aumentar quantidade de ${item.product.descricao}`}>
+                  <Plus className="w-3 h-3" aria-hidden />
                 </Button>
               </div>
               <div className="flex items-center gap-0.5 flex-1">
@@ -285,7 +292,15 @@ export function CartItemList({
       </CardHeader>
       <CardContent className="overflow-y-auto flex-1 min-h-0">
         {cart.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-6">Nenhum item adicionado</p>
+          <EmptyState
+            tone="operational"
+            icon={ShoppingCart}
+            title="Carrinho vazio"
+            description={customerName
+              ? 'Adicione itens pelas abas ou pelo assistente.'
+              : 'Escolha o cliente para ver preços e adicionar itens.'}
+            className="py-6"
+          />
         ) : (
           <div className="space-y-3">
             {avisoCockpit && (

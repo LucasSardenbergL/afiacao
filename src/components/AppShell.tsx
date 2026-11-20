@@ -85,6 +85,7 @@ import { Filter, Star } from 'lucide-react';
 import { MODULOS } from '@/lib/modulos/manifesto';
 import { rotaCongelada } from '@/lib/modulos/congelamento';
 import { usePrefetchRota } from '@/lib/preload-rota';
+import { itemNavAtivo } from '@/lib/item-nav-ativo';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -246,6 +247,8 @@ const docNavSection: { title: string; items: NavItem[] } = {
 const navSections = [...unifiedNavSections, docNavSection]
   .map((s) => ({ ...s, items: s.items.filter((it) => !rotaCongelada(it.path, MODULOS)) }))
   .filter((s) => s.items.length > 0);
+/** Todos os paths do menu — o item ativo é o de prefixo mais longo (`/sales/new` não acende `/sales`). */
+const TODOS_PATHS_NAV = navSections.flatMap((s) => s.items.map((it) => it.path));
 
 // Badges de módulo congelado não fazem poll: o item sumiu da navegação e a tabela não tem uso.
 const TELEFONIA_CONGELADA = rotaCongelada('/telefonia', MODULOS) !== null;
@@ -596,10 +599,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
     [pedidosPendentes, pedidosPendentesIndisponivel, aumentosAtivos, aumentosAtivosIndisponivel, oportunidadesAtivas, negociacaoNovasCount, negociacaoNovasIndisponivel, notificacoesPendentes, notificacoesPendentesIndisponivel, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, melhoriasIndisponivel, isImpersonating],
   );
 
-  const isActive = (path: string) => {
-    if (path === '/') return location.pathname === '/';
-    return location.pathname.startsWith(path);
-  };
+  const isActive = (path: string) => itemNavAtivo(location.pathname, path, TODOS_PATHS_NAV);
 
   return (
     <aside
@@ -846,7 +846,7 @@ const MobileNav = React.memo(function MobileNav({ open, onClose }: { open: boole
                   </span>
                 </div>
                 {visibleItems.map((item) => {
-                  const active = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
+                  const active = itemNavAtivo(location.pathname, item.path, TODOS_PATHS_NAV);
                   const Icon = item.icon;
                   return (
                     <button

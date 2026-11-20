@@ -54,20 +54,24 @@ import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 function OrderStepper({ step, isCustomerMode }: { step: number; isCustomerMode: boolean }) {
   const steps = isCustomerMode ? ['Itens', 'Revisão'] : ['Cliente', 'Itens', 'Revisão'];
   return (
-    <div className="flex items-center gap-2 mb-4">
+    <ol aria-label="Etapas do pedido" className="flex items-center gap-2">
       {steps.map((s, i) => (
-        <div key={s} className="flex items-center gap-2">
+        <li key={s} className="flex items-center gap-2" aria-current={i === step ? 'step' : undefined}>
           <div className={cn('w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium transition-colors',
             i <= step ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
-            {i < step ? <CheckCircle className="w-3.5 h-3.5" /> : i + 1}
+            {i < step ? <CheckCircle className="w-3.5 h-3.5" aria-hidden /> : i + 1}
           </div>
-          <span className={cn('text-xs font-medium', i <= step ? 'text-foreground' : 'text-muted-foreground')}>{s}</span>
-          {i < steps.length - 1 && <div className={cn('w-8 h-px', i < step ? 'bg-primary' : 'bg-border')} />}
-        </div>
+          <span className={cn('text-xs font-medium', i <= step ? 'text-foreground' : 'text-muted-foreground')}>
+            {s}{i < step && <span className="sr-only"> (concluída)</span>}
+          </span>
+          {i < steps.length - 1 && <div aria-hidden className={cn('w-8 h-px', i < step ? 'bg-primary' : 'bg-border')} />}
+        </li>
       ))}
-    </div>
+    </ol>
   );
 }
+
+const SEM_DESCRICOES = new Map<number, string>();
 
 const UnifiedOrder = () => {
   const h = useUnifiedOrder();
@@ -99,6 +103,8 @@ const UnifiedOrder = () => {
     return montarSelosVendaAssistida([...fichasByKey.values()], catalogByKey, customerPricesByAccount, catalisadorByKey);
   }, [fichasByKey, catalisadorByKey, h.obenProducts, h.colacorProducts, h.customerPricesOben, h.customerPricesColacor]);
   const [restoreOpen, setRestoreOpen] = useState(false);
+  // Catálogo entregue à IA: memoizado pelas listas de origem (antes era copiado a cada render/tecla).
+  const catalogoIA = useMemo(() => [...h.obenProducts, ...h.colacorProducts], [h.obenProducts, h.colacorProducts]);
 
   // "Cores do cliente": histórico de cores + pré-preenchimento do dialog de tingir.
   const coresDoCliente = useCoresDoCliente(h.customerUserId);
@@ -323,7 +329,19 @@ const UnifiedOrder = () => {
   const handleRestore = () => {
     if (!draft) return;
     const { state } = draft;
+    // O carrinho do rascunho foi precificado para o cliente DELE: aplicar sobre outro cliente já
+    // selecionado (deep link, IA) misturaria preço/condição de um no pedido do outro (Codex P1).
+    const codigoRascunho = state.customerCodigoCliente ?? null;
+    const codigoAtual = h.selectedCustomer?.codigo_cliente ?? null;
+    if (codigoRascunho != null && codigoAtual != null && codigoRascunho !== codigoAtual) {
+      toast.error('Rascunho de outro cliente', {
+        description: `Ele é de ${state.customerName ?? 'outro cliente'}. Troque para esse cliente para restaurá-lo.`,
+      });
+      return;
+    }
     if (Array.isArray(state.cart)) h.setCart(state.cart);
+    // Sem cliente na tela: pré-busca o cliente do rascunho para a vendedora só confirmar.
+    if (codigoAtual == null && state.customerName) h.setCustomerSearch(state.customerName);
     if (typeof state.notes === 'string') h.setNotes(state.notes);
     if (typeof state.ordemCompra === 'string') h.setOrdemCompra(state.ordemCompra);
     setRestoreOpen(false);
@@ -348,20 +366,19 @@ const UnifiedOrder = () => {
 
   return (
     <div className="max-w-5xl mx-auto space-y-4 pb-6">
-      <div className="flex items-center gap-3">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-lg font-semibold">
+          <h1 className="font-display text-2xl font-medium tracking-tight">
             {isCustomerMode ? 'Nova Ordem de Serviço' : 'Novo Pedido'}
           </h1>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {isCustomerMode
               ? 'Solicite afiação para suas ferramentas.'
               : 'Produtos Oben, Colacor e Afiação em um único pedido.'}
           </p>
         </div>
-      </div>
-
-      <OrderStepper step={h.currentStep} isCustomerMode={isCustomerMode} />
+        <OrderStepper step={h.currentStep} isCustomerMode={isCustomerMode} />
+      </header>
 
       {/* Só staff vê o selo da venda assistida (`canSeeVendaAssistida={h.isStaff}`), então só
           staff vê o aviso — alarme para quem não vê o sintoma é ruído. */}
@@ -385,23 +402,8 @@ const UnifiedOrder = () => {
         </div>
       )}
 
-      <div className={cn('grid gap-4', showProductTabs ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1 lg:grid-cols-3')}>
-        <div className={cn(showProductTabs ? 'lg:col-span-2' : 'lg:col-span-2', 'space-y-4')}>
-          {/* AI Assistant — staff only */}
-          {showAIAssistant && (
-            <UnifiedAIAssistant
-              products={[...h.obenProducts, ...h.colacorProducts]}
-              userTools={h.userTools}
-              onItemsIdentified={h.handleUnifiedAIResult}
-              onCustomerIdentified={h.handleAICustomerSelect}
-              customerUserId={h.customerUserId}
-              hasCustomerSelected={!!h.selectedCustomer}
-              isLoading={h.submitting}
-              precoNascimentoPorId={h.precoNascimentoPorId}
-              precoLoading={h.precoPartidaLoading}
-            />
-          )}
-
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
           {/* Customer search — staff only */}
           {showCustomerSearch && (
             <CustomerSearch
@@ -411,6 +413,7 @@ const UnifiedOrder = () => {
               loadingCustomer={h.loadingCustomer} validatingVendedor={h.validatingVendedor}
               vendedorDivergencias={h.vendedorDivergencias}
               onSelectCustomer={h.selectCustomer} onClearCustomer={h.clearCustomer}
+              searchFalhou={h.customerSearchFalhou} onTentarDeNovo={h.tentarBuscaDeNovo} itensNoCarrinho={h.cart.length}
             />
           )}
 
@@ -426,6 +429,22 @@ const UnifiedOrder = () => {
                 customerName={h.selectedCustomer.nome_fantasia || h.selectedCustomer.razao_social}
               />
             </div>
+          )}
+
+          {/* Assistente IA — staff. Vem DEPOIS do Cliente: o passo 1 do stepper é Cliente e a busca
+              é o caminho mais comum; a IA segue identificando cliente+itens de uma vez. */}
+          {showAIAssistant && (
+            <UnifiedAIAssistant
+              products={catalogoIA}
+              userTools={h.userTools}
+              onItemsIdentified={h.handleUnifiedAIResult}
+              onCustomerIdentified={h.handleAICustomerSelect}
+              customerUserId={h.customerUserId}
+              hasCustomerSelected={!!h.selectedCustomer}
+              isLoading={h.submitting}
+              precoNascimentoPorId={h.precoNascimentoPorId}
+              precoLoading={h.precoPartidaLoading}
+            />
           )}
 
           {/* Cores já pedidas pelo cliente — busca + re-pedido (staff) */}
@@ -621,7 +640,7 @@ const UnifiedOrder = () => {
           Abre NO LUGAR do dialog de sucesso; ao fechar, o resumo do envio abre. */}
       <AtpBackorderDialog
         bloqueio={h.bloqueioAtp}
-        descricaoPorSku={new Map(h.obenProductItems.map(c => [c.product.omie_codigo_produto, c.product.descricao]))}
+        descricaoPorSku={h.bloqueioAtp ? new Map(h.obenProductItems.map(c => [c.product.omie_codigo_produto, c.product.descricao])) : SEM_DESCRICOES}
         enviando={h.submitting}
         onAutorizar={(motivo) => { void h.autorizarBackorderAtp(motivo); }}
         onTentarNovamente={() => { void h.tentarNovamenteAtp(); }}

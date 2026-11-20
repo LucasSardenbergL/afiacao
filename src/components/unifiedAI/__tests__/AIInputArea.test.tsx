@@ -30,19 +30,19 @@ function setup(overrides: Partial<React.ComponentProps<typeof AIInputArea>> = {}
 }
 
 describe('AIInputArea', () => {
-  it('rotula o botão analisar para "Identificar Cliente e Itens" sem cliente', () => {
+  it('rotula o botão analisar para "Identificar cliente e itens" sem cliente', () => {
     setup({ hasCustomerSelected: false });
-    expect(screen.getByRole('button', { name: /Identificar Cliente e Itens/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Identificar cliente e itens/ })).toBeTruthy();
   });
 
-  it('rotula o botão analisar para "Identificar Itens do Pedido" com cliente', () => {
+  it('rotula o botão analisar para "Identificar itens" com cliente', () => {
     setup({ hasCustomerSelected: true });
-    expect(screen.getByRole('button', { name: /Identificar Itens do Pedido/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Identificar itens$/ })).toBeTruthy();
   });
 
   it('dispara onTextChange ao digitar', () => {
     const props = setup();
-    const ta = screen.getByPlaceholderText(/Pedido do cliente/);
+    const ta = screen.getByLabelText(/Descreva o cliente e os itens/);
     fireEvent.change(ta, { target: { value: '10 discos' } });
     expect(props.onTextChange).toHaveBeenCalledWith('10 discos');
   });
