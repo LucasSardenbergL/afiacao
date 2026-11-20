@@ -429,6 +429,11 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
  * v2: auditar cada uma individualmente e cruzar com os grants reais.
  */
 export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
+  // Meta por potencial (2026-11-20, migration 20261120230000): helper que lê unit_price para o valor da estreia de
+  // família. Chamada SÓ por _meta_potencial_calcular ← _meta_potencial_mes_em ← meta_potencial_mes (gate master).
+  // Fecha por PRIVILÉGIO: REVOKE de PUBLIC, anon e authenticated, medido em prod via has_function_privilege
+  // (anon=f, authenticated=f em 2026-11-20); prova em db/test-meta-potencial.sh (ACL).
+  'public._meta_potencial_estreias',
   // Lote mínimo Sayerlack Fase 2a (2026-11-20, migration 20261120190000): trilha do e-mail ao CRS. Chamadas SÓ pelas
   // edges enviar-pedido-portal-sayerlack (autorizar) e email-crs-ajuste-lote (reservar/confirmar/falhou), ambas
   // service_role. Fecha por PRIVILÉGIO: REVOKE de PUBLIC, anon e authenticated + postcondição B3 que ABORTA se

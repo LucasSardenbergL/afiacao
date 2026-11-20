@@ -66,7 +66,7 @@ export function parseMetaResposta(raw: unknown): MetaResposta {
   };
 }
 
-export interface VendedoraMeta { id: string | null; nome: string; ativo: boolean; meta: number | null; realizado: number }
+interface VendedoraMeta { id: string | null; nome: string; ativo: boolean; meta: number | null; realizado: number }
 
 export interface MetaAgregada {
   status: MetaResposta['status'];
