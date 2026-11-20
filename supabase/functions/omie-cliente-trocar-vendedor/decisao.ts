@@ -104,13 +104,28 @@ export function lerParametros(corpo: unknown): { ok: true; p: Parametros } | { o
   return { ok: true, p: { modo, lote, conta: conta as Conta, limite, apos, clientes, escolhas, execucao_id } };
 }
 
-/** Vendedor do cadastro: `recomendacoes.codigo_vendedor`; ausente/0 = sem vendedor (null), nunca 0 fabricado. */
-export function vendedorDoCadastro(cad: Record<string, unknown>): number | null {
+/** Leitura do vendedor do cadastro: número, vazio (sem vendedor) ou ILEGÍVEL — ilegível nunca vira "vazio" (Codex P2). */
+export type LeituraVendedor = number | null | "ilegivel";
+
+/** `recomendacoes.codigo_vendedor`: ausente/null/0/"" = sem vendedor; inteiro > 0 ou string só de dígitos = código; o resto = ilegível. */
+export function lerVendedor(cad: Record<string, unknown>): LeituraVendedor {
   const rec = cad.recomendacoes;
-  if (!rec || typeof rec !== "object") return null;
+  if (rec === undefined || rec === null) return null;
+  if (typeof rec !== "object" || Array.isArray(rec)) return "ilegivel";
   const v = (rec as Record<string, unknown>).codigo_vendedor;
-  const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
-  return typeof n === "number" && Number.isSafeInteger(n) && n > 0 ? n : null;
+  if (v === undefined || v === null || v === 0 || v === "" || v === "0") return null;
+  if (typeof v === "number") return Number.isSafeInteger(v) && v > 0 ? v : "ilegivel";
+  if (typeof v === "string" && /^[0-9]+$/.test(v)) {
+    const n = Number(v);
+    return Number.isSafeInteger(n) && n > 0 ? n : "ilegivel";
+  }
+  return "ilegivel";
+}
+
+/** Atalho para quem só compara com um alvo: ilegível vira null (nunca casa com alvo > 0). */
+export function vendedorDoCadastro(cad: Record<string, unknown>): number | null {
+  const v = lerVendedor(cad);
+  return v === "ilegivel" ? null : v;
 }
 
 export type Veredito =
@@ -122,7 +137,8 @@ export type Veredito =
  * O que fazer com um cliente, dado o vendedor LIDO NO OMIE agora (não o do espelho).
  * saida_vendedora: só troca quem está num código de origem. orfaos: só troca quem está SEM vendedor.
  */
-export function decidir(lote: Lote, conta: Conta, atual: number | null, alvo: number): Veredito {
+export function decidir(lote: Lote, conta: Conta, atual: LeituraVendedor, alvo: number): Veredito {
+  if (atual === "ilegivel") return { tipo: "precondicao_falhou", motivo: "vendedor atual ilegível" };
   if (atual === alvo) return { tipo: "ja_certo" };
   if (lote === "saida_vendedora") {
     if (atual !== null && ORIGEM_SAIDA[conta].includes(atual)) return { tipo: "trocar" };
@@ -137,6 +153,12 @@ export function decidir(lote: Lote, conta: Conta, atual: number | null, alvo: nu
  * trocado — mandar `recomendacoes` parcial poderia zerar transportadora/boletos/parcelas. Nada mais vai (razão,
  * documento, endereço): o app não regrava dado fiscal (ver `_shared/razao-fiscal.ts`).
  */
+/** O objeto `recomendacoes` como estava (sem PII: códigos e flags) — vai ao recibo para permitir desfazer. */
+export function recomendacoesDe(cad: Record<string, unknown>): Record<string, unknown> | null {
+  const rec = cad.recomendacoes;
+  return rec && typeof rec === "object" && !Array.isArray(rec) ? { ...(rec as Record<string, unknown>) } : null;
+}
+
 export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Record<string, unknown> {
   const codigo = cad.codigo_cliente_omie;
   if (!ehInteiroPositivo(codigo)) throw new Error("cadastro sem codigo_cliente_omie");
@@ -160,7 +182,10 @@ export function textoParaHash(cad: Record<string, unknown>): string {
     ? { ...(resto.recomendacoes as Record<string, unknown>) }
     : resto.recomendacoes;
   if (rec && typeof rec === "object") delete (rec as Record<string, unknown>).codigo_vendedor;
-  return JSON.stringify(canonico({ ...resto, recomendacoes: rec }));
+  // Sem `recomendacoes` e `recomendacoes: {}` (só com o vendedor, que saiu do texto) são o MESMO cadastro: um órfão
+  // sem o objeto passa a ter `{codigo_vendedor}` depois da troca, e isso não pode virar falso 'divergente' (Codex P2).
+  const vazio = rec === null || rec === undefined || (typeof rec === "object" && Object.keys(rec as object).length === 0);
+  return JSON.stringify(canonico({ ...resto, recomendacoes: vazio ? undefined : rec }));
 }
 
 export async function hashCadastro(cad: Record<string, unknown>): Promise<string> {

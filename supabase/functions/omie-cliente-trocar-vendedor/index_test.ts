@@ -25,7 +25,7 @@ Deno.test("employee passa no gate da sonda mas NÃO troca vendedor (403, sem Omi
 
 Deno.test("aplicar sem a frase de confirmação: 400 sem chamar o Omie", async () => {
   h.limpar();
-  const r = await h.handler()(post({ "x-cron-secret": ENV_TESTE.CRON_SECRET }, { modo: "aplicar", lote: "saida_vendedora", conta: "oben" }));
+  const r = await h.handler()(post({ "x-cron-secret": ENV_TESTE.CRON_SECRET }, { modo: "aplicar", lote: "saida_vendedora", conta: "oben", autor: "teste" }));
   igual(r.status, 400, "status");
   igual(omieChamado(), false, "Omie não chamado");
   igual(h.chamadasForaDoGate().length, 0, "nada fora do gate");
@@ -33,7 +33,14 @@ Deno.test("aplicar sem a frase de confirmação: 400 sem chamar o Omie", async (
 
 Deno.test("conta sem credencial: 503 sem chamar o Omie", async () => {
   h.limpar();
-  const r = await h.handler()(post({ "x-cron-secret": ENV_TESTE.CRON_SECRET }, { modo: "dry_run", lote: "saida_vendedora", conta: "colacor_sc" }));
+  const r = await h.handler()(post({ "x-cron-secret": ENV_TESTE.CRON_SECRET }, { modo: "dry_run", lote: "saida_vendedora", conta: "colacor_sc", autor: "teste" }));
   igual(r.status, 503, "status");
+  igual(omieChamado(), false, "Omie não chamado");
+});
+
+Deno.test("cron-secret sem autor: 400 sem chamar o Omie (autoria no recibo)", async () => {
+  h.limpar();
+  const r = await h.handler()(post({ "x-cron-secret": ENV_TESTE.CRON_SECRET }, { modo: "dry_run", lote: "saida_vendedora", conta: "oben" }));
+  igual(r.status, 400, "status");
   igual(omieChamado(), false, "Omie não chamado");
 });

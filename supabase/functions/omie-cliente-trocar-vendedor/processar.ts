@@ -1,16 +1,22 @@
 // Fluxo de UM bloco da troca de vendedor, com rede e banco INJETADOS (o index.ts liga os reais; o teste, os falsos).
 //
 // Por cliente, no modo aplicar:
-//   1. ConsultarCliente → vendedor ATUAL no Omie (o espelho só escolhe os candidatos, nunca decide).
-//   2. decidir(): já certo → pula; vendedor inesperado → não toca.
-//   3. recibo 'indeterminado' ANTES de escrever (se a edge morrer no meio, o recibo diz "não sei", nunca some).
+//   1. ConsultarCliente → vendedor ATUAL no Omie (o espelho só escolhe os candidatos, nunca decide). A resposta tem
+//      de ser DO cliente pedido (mesmo codigo_cliente_omie), senão nada é escrito.
+//   2. decidir(): já certo → pula; vendedor inesperado ou ilegível → não toca.
+//   3. recibo 'indeterminado' ANTES de escrever (se a edge morrer no meio, o recibo diz "não sei", nunca some), com
+//      o `recomendacoes` de antes (permite desfazer).
 //   4. AlterarCliente com o `recomendacoes` inteiro, só o vendedor trocado.
-//   5. Releitura por ListarClientes (OUTRA chamada: o Omie recusa repetir o ConsultarCliente em <60s) → 'alterado'
-//      e o espelho `omie_customer_account_map` recebe o vendedor novo (sem isso o carteira-rebuild só veria a troca
-//      quando o import semanal revisitasse o cliente, >7 dias depois).
+//   5. Releitura por ListarClientes (OUTRA chamada: o Omie recusa repetir o ConsultarCliente em <60s) — SEMPRE, mesmo
+//      depois de fault, porque um retry que volta REDUNDANT pode esconder uma escrita feita. Alvo na releitura →
+//      'alterado' e o vendedor novo no espelho `omie_customer_account_map`; vendedor de antes + fault → 'erro_omie'.
 //   6. Depois de ≥61s do ConsultarCliente, um 2º ConsultarCliente → hash do cadastro sem vendedor/info igual ao de
 //      antes → 'verificado'. Hash diferente ou releitura sem o alvo → 'divergente' e o bloco PARA.
-// O que não couber no tempo fica 'alterado' e o modo verificar termina depois.
+// O que não couber no tempo fica 'alterado'/'indeterminado' e o modo verificar termina depois.
+//
+// Risco residual aceito (Codex P1, registrado no PR): se um operador editar o MESMO cadastro no ~1s entre o
+// ConsultarCliente e o AlterarCliente, o `recomendacoes` reenviado sobrescreve essa edição. O recibo guarda o
+// `recomendacoes` de antes, então dá para conferir e desfazer.
 
 import {
   type Conta,
@@ -19,10 +25,12 @@ import {
   type Dono,
   ESPERA_REDUNDANCIA_MS,
   hashCadastro,
+  lerVendedor,
   type Lote,
   NOME_ESPERADO,
   type Parametros,
   payloadAlterar,
+  recomendacoesDe,
   VENDEDOR,
   vendedorDoCadastro,
 } from "./decisao.ts";
@@ -47,6 +55,7 @@ export interface Recibo {
   vendedor_alvo: number;
   vendedor_depois?: number | null;
   status: StatusRecibo;
+  recomendacoes_antes?: Record<string, unknown> | null;
   hash_antes?: string | null;
   hash_depois?: string | null;
   espelho_ok?: boolean | null;
@@ -54,27 +63,38 @@ export interface Recibo {
   executado_por: string;
 }
 
-/** Resposta de uma chamada Omie já interpretada pelo adaptador. `indeterminada` = escrita sem desfecho conhecido. */
 export interface RespostaOmieSimples {
   corpo: Record<string, unknown> | null;
   fault: string | null;
+}
+
+export interface Pendente {
+  id: number;
+  omie_codigo_cliente: number;
+  customer_user_id: string | null;
+  status: "alterado" | "indeterminado";
+  vendedor_antes: number | null;
+  vendedor_alvo: number;
+  hash_antes: string | null;
+  /** ms epoch de quando o recibo nasceu (logo depois do 1º ConsultarCliente). */
+  criado_em_ms: number;
 }
 
 export interface Dependencias {
   consultarCliente(codigo: number): Promise<RespostaOmieSimples>;
   /** ListarClientes filtrado pelo código: a releitura que não colide com o REDUNDANT do ConsultarCliente. */
   relerCliente(codigo: number): Promise<RespostaOmieSimples>;
-  /** Lança `OmieEscritaIndeterminada` (ver `ehIndeterminada`) quando o desfecho é desconhecido. */
+  /** Lança uma exceção que `ehIndeterminada` reconhece quando o desfecho é desconhecido. */
   alterarCliente(payload: Record<string, unknown>): Promise<RespostaOmieSimples>;
   listarVendedores(): Promise<{ vendedores: { codigo?: unknown; nome?: unknown; inativo?: unknown }[] } | { erro: string }>;
   ehIndeterminada(e: unknown): boolean;
   candidatos(p: Parametros): Promise<Candidato[]>;
-  /** Grava o recibo e devolve o id. */
   registrar(r: Recibo): Promise<number>;
   atualizar(id: number, patch: Partial<Recibo>): Promise<void>;
-  /** UPDATE estreito do vendedor no espelho; true = 1 linha atualizada. */
+  /** UPDATE estreito do vendedor no espelho; true = exatamente 1 linha atualizada. */
   atualizarEspelho(conta: Conta, codigo: number, userId: string | null, alvo: number): Promise<boolean>;
-  pendentesVerificacao(execucaoId: string, conta: Conta): Promise<{ id: number; omie_codigo_cliente: number; hash_antes: string | null; vendedor_alvo: number }[]>;
+  /** TODOS os recibos 'alterado'/'indeterminado' da execução na conta (sem filtro de idade), em ordem de id. */
+  pendentesVerificacao(execucaoId: string, conta: Conta): Promise<Pendente[]>;
   agora(): number;
   dormir(ms: number): Promise<void>;
   novoId(): string;
@@ -88,6 +108,7 @@ export interface ItemResultado {
   vendedor_alvo: number;
   vendedor_depois: number | null;
   status: StatusRecibo;
+  espelho_ok: boolean | null;
   erro: string | null;
 }
 
@@ -98,11 +119,14 @@ export interface ResultadoBloco {
   conta: Conta;
   itens: ItemResultado[];
   contagem: Partial<Record<StatusRecibo, number>>;
-  /** Passe como `apos` na próxima chamada. null = nenhum candidato processado. */
+  /** Passe como `apos` na próxima chamada. O cursor PASSA por cima de falhas: elas ficam no recibo e numa nova
+   *  rodada a partir de apos=0 (idempotente: quem já trocou sai do conjunto de origem). */
   proximo_apos: number | null;
-  /** true = não sobrou candidato depois deste bloco (para o laço do driver). */
+  /** true = o cursor chegou ao fim dos candidatos (verificar: não sobrou pendente). Falhas não impedem o fim. */
   fim: boolean;
-  /** Motivo de o bloco ter parado ANTES do fim dos candidatos (divergência, indeterminação, tempo). */
+  /** Clientes deste bloco que pedem nova rodada ou conferência: erro_omie + indeterminado + alterado sem prova. */
+  pendentes: number;
+  /** Motivo de o bloco ter parado ANTES do fim (divergência, indeterminação, espelho, tempo, alvo). */
   parou: string | null;
 }
 
@@ -116,8 +140,9 @@ export interface OpcoesBloco {
 
 const texto = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-function cadastroDe(r: RespostaOmieSimples): Record<string, unknown> | null {
-  return r.fault === null && r.corpo && typeof r.corpo.codigo_cliente_omie === "number" ? r.corpo : null;
+/** O cadastro do ConsultarCliente — só se for DO cliente pedido (Codex P1: resposta de outro código não autoriza nada). */
+function cadastroDe(r: RespostaOmieSimples, codigo: number): Record<string, unknown> | null {
+  return r.fault === null && r.corpo && r.corpo.codigo_cliente_omie === codigo ? r.corpo : null;
 }
 
 function cadastroRelido(r: RespostaOmieSimples, codigo: number): Record<string, unknown> | null {
@@ -128,17 +153,28 @@ function cadastroRelido(r: RespostaOmieSimples, codigo: number): Record<string, 
   return achados.length === 1 ? achados[0] as Record<string, unknown> : null;
 }
 
+function contar(res: ResultadoBloco, s: StatusRecibo, delta = 1) {
+  res.contagem[s] = (res.contagem[s] ?? 0) + delta;
+}
+
+function fecharPendentes(res: ResultadoBloco) {
+  res.pendentes = res.itens.filter((i) => i.status === "erro_omie" || i.status === "indeterminado" || i.status === "alterado").length;
+}
+
 export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBloco): Promise<ResultadoBloco> {
   const inicio = d.agora();
   const decorrido = () => d.agora() - inicio;
-  const execucao_id = d.novoId();
+  const execucao_id = p.modo === "verificar" ? p.execucao_id! : d.novoId();
   const itens: ItemResultado[] = [];
   const res: ResultadoBloco = {
-    execucao_id, modo: p.modo, lote: p.lote, conta: p.conta, itens, contagem: {}, proximo_apos: null, fim: false, parou: null,
+    execucao_id, modo: p.modo, lote: p.lote, conta: p.conta, itens, contagem: {}, proximo_apos: null, fim: false, pendentes: 0, parou: null,
   };
-  const contar = (s: StatusRecibo, delta = 1) => { res.contagem[s] = (res.contagem[s] ?? 0) + delta; };
 
-  if (p.modo === "verificar") return await verificar(p, d, o, res);
+  if (p.modo === "verificar") {
+    await verificar(p, d, o, res);
+    fecharPendentes(res);
+    return res;
+  }
 
   // O alvo tem de existir, estar ativo e ter o nome esperado NA CONTA — antes de tocar qualquer cliente.
   const donos = new Set<Dono>(p.lote === "saida_vendedora" ? ["REGINA"] : (p.escolhas ?? []).map((e) => e.dono));
@@ -158,7 +194,7 @@ export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBl
     const alvo = VENDEDOR[cand.dono][p.conta];
     const item: ItemResultado = {
       omie_codigo_cliente: cand.omie_codigo_cliente, customer_user_id: cand.customer_user_id, nome_fantasia: null,
-      vendedor_antes: null, vendedor_alvo: alvo, vendedor_depois: null, status: "erro_omie", erro: null,
+      vendedor_antes: null, vendedor_alvo: alvo, vendedor_depois: null, status: "erro_omie", espelho_ok: null, erro: null,
     };
     const base: Omit<Recibo, "status"> = {
       execucao_id, lote: p.lote, modo: p.modo === "aplicar" ? "aplicar" : "dry_run", account: p.conta,
@@ -171,129 +207,155 @@ export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBl
 
     const lidoEm = d.agora();
     const r1 = await d.consultarCliente(cand.omie_codigo_cliente);
-    const cad = cadastroDe(r1);
+    const cad = cadastroDe(r1, cand.omie_codigo_cliente);
     if (!cad) {
-      item.erro = r1.fault ?? "ConsultarCliente sem cadastro legível";
+      item.erro = r1.fault ?? "ConsultarCliente sem o cadastro deste cliente";
       await d.registrar({ ...base, status: "erro_omie", erro: item.erro });
-      contar("erro_omie");
+      contar(res, "erro_omie");
       continue;
     }
     item.nome_fantasia = texto(cad.nome_fantasia);
-    const atual = vendedorDoCadastro(cad);
+    const leitura = lerVendedor(cad);
+    const atual = leitura === "ilegivel" ? null : leitura;
     item.vendedor_antes = atual;
     base.vendedor_antes = atual;
+    base.recomendacoes_antes = recomendacoesDe(cad);
     const hashAntes = await hashCadastro(cad);
-    const v = decidir(p.lote, p.conta, atual, alvo);
+    const v = decidir(p.lote, p.conta, leitura, alvo);
 
     if (v.tipo === "ja_certo") {
       item.status = "ja_certo";
       item.vendedor_depois = atual;
-      const espelho = p.modo === "aplicar" ? await d.atualizarEspelho(p.conta, cand.omie_codigo_cliente, cand.customer_user_id, alvo) : null;
-      await d.registrar({ ...base, status: "ja_certo", hash_antes: hashAntes, espelho_ok: espelho });
-      contar("ja_certo");
+      if (p.modo === "aplicar") item.espelho_ok = await d.atualizarEspelho(p.conta, cand.omie_codigo_cliente, cand.customer_user_id, alvo);
+      await d.registrar({ ...base, status: "ja_certo", hash_antes: hashAntes, espelho_ok: item.espelho_ok });
+      contar(res, "ja_certo");
       continue;
     }
     if (v.tipo === "precondicao_falhou") {
       item.status = "precondicao_falhou";
       item.erro = v.motivo;
       await d.registrar({ ...base, status: "precondicao_falhou", hash_antes: hashAntes, erro: v.motivo });
-      contar("precondicao_falhou");
+      contar(res, "precondicao_falhou");
       continue;
     }
     if (p.modo === "dry_run") {
       item.status = "planejado";
       await d.registrar({ ...base, status: "planejado", hash_antes: hashAntes });
-      contar("planejado");
+      contar(res, "planejado");
       continue;
     }
 
     // aplicar — o recibo nasce 'indeterminado' e só sai disso com prova.
     const id = await d.registrar({ ...base, status: "indeterminado", hash_antes: hashAntes });
-    let r2: RespostaOmieSimples;
+    let faultEscrita: string | null = null;
     try {
-      r2 = await d.alterarCliente(payloadAlterar(cad, alvo));
+      faultEscrita = (await d.alterarCliente(payloadAlterar(cad, alvo))).fault;
     } catch (e) {
       if (!d.ehIndeterminada(e)) throw e;
       item.status = "indeterminado";
       item.erro = "AlterarCliente sem desfecho conhecido";
       await d.atualizar(id, { erro: item.erro });
-      contar("indeterminado");
+      contar(res, "indeterminado");
       res.parou = `escrita indeterminada no cliente ${cand.omie_codigo_cliente}`;
       break;
     }
-    if (r2.fault !== null) {
-      item.status = "erro_omie";
-      item.erro = r2.fault;
-      await d.atualizar(id, { status: "erro_omie", erro: r2.fault });
-      contar("erro_omie");
-      continue;
-    }
+    // Releitura SEMPRE — inclusive depois de fault (um retry REDUNDANT pode esconder escrita feita; Codex P1).
     const relido = cadastroRelido(await d.relerCliente(cand.omie_codigo_cliente), cand.omie_codigo_cliente);
     const depois = relido ? vendedorDoCadastro(relido) : null;
     item.vendedor_depois = depois;
     if (depois !== alvo) {
-      item.status = "divergente";
-      item.erro = relido ? `releitura mostra vendedor ${depois ?? "vazio"}` : "releitura sem o cliente";
-      await d.atualizar(id, { status: "divergente", vendedor_depois: depois, erro: item.erro });
-      contar("divergente");
-      res.parou = `divergência no cliente ${cand.omie_codigo_cliente}`;
+      if (faultEscrita !== null && relido && depois === atual) {
+        item.status = "erro_omie"; // o Omie recusou e o cadastro segue como estava: nada gravado, segue o lote
+        item.erro = faultEscrita;
+        await d.atualizar(id, { status: "erro_omie", vendedor_depois: depois, erro: faultEscrita });
+        contar(res, "erro_omie");
+        continue;
+      }
+      item.status = faultEscrita !== null && !relido ? "indeterminado" : "divergente";
+      item.erro = relido ? `releitura mostra vendedor ${depois ?? "vazio"}${faultEscrita ? ` (fault: ${faultEscrita})` : ""}` : "releitura sem o cliente";
+      await d.atualizar(id, { status: item.status, vendedor_depois: depois, erro: item.erro });
+      contar(res, item.status);
+      res.parou = `${item.status === "divergente" ? "divergência" : "escrita indeterminada"} no cliente ${cand.omie_codigo_cliente}`;
       break;
     }
-    const espelho = await d.atualizarEspelho(p.conta, cand.omie_codigo_cliente, cand.customer_user_id, alvo);
+    item.espelho_ok = await d.atualizarEspelho(p.conta, cand.omie_codigo_cliente, cand.customer_user_id, alvo);
     item.status = "alterado";
-    await d.atualizar(id, { status: "alterado", vendedor_depois: depois, espelho_ok: espelho });
-    contar("alterado");
+    await d.atualizar(id, { status: "alterado", vendedor_depois: depois, espelho_ok: item.espelho_ok, erro: faultEscrita });
+    contar(res, "alterado");
     aVerificar.push({ id, item, hashAntes, lidoEm });
+    if (!item.espelho_ok) { res.parou = `espelho não atualizou no cliente ${cand.omie_codigo_cliente}`; break; }
   }
   res.fim = res.parou === null && processados === candidatos.length && candidatos.length < p.limite;
 
   // Prova de que a escrita não mexeu em mais nada: 2º ConsultarCliente ≥61s depois do 1º, hash igual.
   for (const x of aVerificar) {
-    if (res.parou && res.parou.startsWith("divergência")) break;
+    if (res.parou?.startsWith("divergência")) break;
     const espera = x.lidoEm + ESPERA_REDUNDANCIA_MS - d.agora();
     if (decorrido() + Math.max(0, espera) > o.orcamentoTotalMs) break; // fica 'alterado' → modo verificar
     if (espera > 0) await d.dormir(espera);
-    const cad = cadastroDe(await d.consultarCliente(x.item.omie_codigo_cliente));
+    const cad = cadastroDe(await d.consultarCliente(x.item.omie_codigo_cliente), x.item.omie_codigo_cliente);
     if (!cad) continue; // sem leitura não há prova: segue 'alterado'
     const hashDepois = await hashCadastro(cad);
+    contar(res, "alterado", -1);
     if (hashDepois === x.hashAntes && vendedorDoCadastro(cad) === x.item.vendedor_alvo) {
       x.item.status = "verificado";
       await d.atualizar(x.id, { status: "verificado", hash_depois: hashDepois });
-      contar("alterado", -1);
-      contar("verificado");
+      contar(res, "verificado");
     } else {
       x.item.status = "divergente";
       x.item.erro = "o cadastro mudou além do vendedor";
       await d.atualizar(x.id, { status: "divergente", hash_depois: hashDepois, erro: x.item.erro });
-      contar("alterado", -1);
-      contar("divergente");
+      contar(res, "divergente");
       res.parou = `divergência no cliente ${x.item.omie_codigo_cliente}`;
       res.fim = false;
     }
   }
+  fecharPendentes(res);
   return res;
 }
 
-async function verificar(p: Parametros, d: Dependencias, o: OpcoesBloco, res: ResultadoBloco): Promise<ResultadoBloco> {
+/**
+ * Modo verificar: termina a prova dos recibos 'alterado' e decide os 'indeterminado' pela leitura do Omie.
+ * indeterminado + vendedor de antes = nada gravado ('erro_omie'); + alvo e hash igual = 'verificado'; resto 'divergente'.
+ * `fim` só é true quando NÃO sobrou pendente nenhum (inclusive os novos demais para o ConsultarCliente).
+ */
+async function verificar(p: Parametros, d: Dependencias, o: OpcoesBloco, res: ResultadoBloco): Promise<void> {
   const inicio = d.agora();
   const pend = await d.pendentesVerificacao(p.execucao_id!, p.conta);
-  for (const x of pend.slice(0, p.limite)) {
-    if (d.agora() - inicio > o.orcamentoTotalMs) { res.parou = "orçamento de tempo do bloco"; break; }
+  let restam = 0;
+  let feitos = 0;
+  for (const x of pend) {
+    if (feitos >= p.limite || d.agora() - inicio > o.orcamentoTotalMs) { restam++; continue; }
+    if (d.agora() - x.criado_em_ms < ESPERA_REDUNDANCIA_MS) { restam++; continue; } // cedo demais: REDUNDANT
+    feitos++;
     const item: ItemResultado = {
-      omie_codigo_cliente: x.omie_codigo_cliente, customer_user_id: null, nome_fantasia: null, vendedor_antes: null,
-      vendedor_alvo: x.vendedor_alvo, vendedor_depois: null, status: "alterado", erro: null,
+      omie_codigo_cliente: x.omie_codigo_cliente, customer_user_id: x.customer_user_id, nome_fantasia: null,
+      vendedor_antes: x.vendedor_antes, vendedor_alvo: x.vendedor_alvo, vendedor_depois: null, status: x.status,
+      espelho_ok: null, erro: null,
     };
     res.itens.push(item);
-    const cad = cadastroDe(await d.consultarCliente(x.omie_codigo_cliente));
-    if (!cad) { item.erro = "ConsultarCliente sem cadastro legível"; continue; }
+    const cad = cadastroDe(await d.consultarCliente(x.omie_codigo_cliente), x.omie_codigo_cliente);
+    if (!cad) { item.erro = "ConsultarCliente sem o cadastro deste cliente"; restam++; continue; }
     const h = await hashCadastro(cad);
-    item.vendedor_depois = vendedorDoCadastro(cad);
-    const ok = x.hash_antes !== null && h === x.hash_antes && item.vendedor_depois === x.vendedor_alvo;
-    item.status = ok ? "verificado" : "divergente";
-    if (!ok) item.erro = "o cadastro mudou além do vendedor";
-    await d.atualizar(x.id, { status: item.status, hash_depois: h, vendedor_depois: item.vendedor_depois, erro: item.erro });
-    res.contagem[item.status] = (res.contagem[item.status] ?? 0) + 1;
+    const vend = vendedorDoCadastro(cad);
+    item.vendedor_depois = vend;
+    let status: StatusRecibo;
+    if (x.hash_antes !== null && h === x.hash_antes && vend === x.vendedor_alvo) {
+      status = "verificado";
+      if (x.status === "indeterminado") item.espelho_ok = await d.atualizarEspelho(p.conta, x.omie_codigo_cliente, x.customer_user_id, x.vendedor_alvo);
+    } else if (x.status === "indeterminado" && x.hash_antes !== null && h === x.hash_antes && vend === x.vendedor_antes) {
+      status = "erro_omie";
+      item.erro = "a escrita indeterminada não chegou ao Omie";
+    } else {
+      status = "divergente";
+      item.erro = "o cadastro mudou além do vendedor";
+    }
+    item.status = status;
+    await d.atualizar(x.id, {
+      status, hash_depois: h, vendedor_depois: vend, erro: item.erro,
+      ...(item.espelho_ok === null ? {} : { espelho_ok: item.espelho_ok }),
+    });
+    contar(res, status);
   }
-  res.fim = res.parou === null && pend.length <= p.limite;
-  return res;
+  res.fim = restam === 0;
 }

@@ -34,6 +34,8 @@ const TABELA = "omie_cliente_vendedor_troca";
 const CORPO_ILEGIVEL = Symbol("corpo-ilegivel");
 /** Intervalo mínimo entre chamadas Omie da mesma conta (o limite do Omie é por app_key). */
 const INTERVALO_OMIE_MS = 300;
+/** Prazo de UMA chamada lógica ao Omie (com retentativas): curto, para o orçamento do bloco valer (Codex P1). */
+const PRAZO_CHAMADA_OMIE_MS = 15_000;
 
 const ENV_CONTA: Record<Conta, string> = { oben: "OBEN", colacor: "COLACOR", colacor_sc: "COLACOR_SC" };
 
@@ -54,7 +56,7 @@ function montarDependencias(db: SupabaseClient, p: Parametros, cred: { appKey: s
     const falta = ultimaChamada + INTERVALO_OMIE_MS - Date.now();
     if (falta > 0) await dormir(falta);
     ultimaChamada = Date.now();
-    const r = await chamarOmie({ url, metodo, param, credenciais: cred }, { conta: p.conta, maxTentativas: 3 });
+    const r = await chamarOmie({ url, metodo, param, credenciais: cred }, { conta: p.conta, maxTentativas: 3, deadline: Date.now() + PRAZO_CHAMADA_OMIE_MS });
     const fault = r.faultstring ? redigirSegredo(r.faultstring) : (!r.ok ? `HTTP ${r.status}` : (r.corpo ? null : "resposta ilegível"));
     return { corpo: r.corpo, fault };
   }
@@ -74,7 +76,10 @@ function montarDependencias(db: SupabaseClient, p: Parametros, cred: { appKey: s
     },
     ehIndeterminada: ehEscritaIndeterminada,
     async candidatos(pp): Promise<Candidato[]> {
-      let q = db.from("omie_customer_account_map")
+      // saida_vendedora: espelho BRUTO — o filtro é o código de vendedor e a verdade é relida no Omie, cliente a cliente.
+      // orfaos: espelho FRESCO — a escolha do founder é por CLIENTE (user_id), e um vínculo vencido mandaria o vendedor
+      // escolhido para A ao código que hoje é de B (Codex P1).
+      let q = db.from(pp.lote === "orfaos" ? "omie_customer_account_map_fresco" : "omie_customer_account_map")
         .select("omie_codigo_cliente, user_id, omie_codigo_vendedor")
         .eq("account", pp.conta)
         .gt("omie_codigo_cliente", pp.apos)
@@ -107,9 +112,10 @@ function montarDependencias(db: SupabaseClient, p: Parametros, cred: { appKey: s
     },
     async atualizarEspelho(conta, codigo, userId, alvo) {
       // UPDATE estreito, de propósito, e não `register_carteira_member`: a RPC zera `evidence_document_normalized`
-      // (a prova do vínculo conferido) e reclassifica `source`. Aqui só o vendedor muda.
+      // (a prova do vínculo conferido) e reclassifica `source`. Aqui só o vendedor muda — nem `updated_at`, que é o
+      // TTL da view fresca: renovar recolocaria na carteira um vínculo vencido sem conferir o documento (Codex P1).
       let q = db.from("omie_customer_account_map")
-        .update({ omie_codigo_vendedor: alvo, updated_at: new Date().toISOString() })
+        .update({ omie_codigo_vendedor: alvo })
         .eq("account", conta).eq("omie_codigo_cliente", codigo);
       if (userId) q = q.eq("user_id", userId);
       const { data, error } = await q.select("id");
@@ -117,16 +123,21 @@ function montarDependencias(db: SupabaseClient, p: Parametros, cred: { appKey: s
       return (data ?? []).length === 1;
     },
     async pendentesVerificacao(execucaoId, conta) {
-      const limiteIdade = new Date(Date.now() - 61_000).toISOString();
       const { data, error } = await db.from(TABELA)
-        .select("id, omie_codigo_cliente, hash_antes, vendedor_alvo")
-        .eq("execucao_id", execucaoId).eq("account", conta).eq("status", "alterado")
-        .lt("atualizado_em", limiteIdade)
+        .select("id, omie_codigo_cliente, customer_user_id, status, vendedor_antes, vendedor_alvo, hash_antes, criado_em")
+        .eq("execucao_id", execucaoId).eq("account", conta).in("status", ["alterado", "indeterminado"])
         .order("id", { ascending: true })
-        .limit(p.limite + 1);
+        .limit(1000);
       if (error) throw new Error(`pendentes: ${error.message}`);
-      return (data ?? []).map((r: { id: number; omie_codigo_cliente: number; hash_antes: string | null; vendedor_alvo: number }) => ({
-        id: Number(r.id), omie_codigo_cliente: Number(r.omie_codigo_cliente), hash_antes: r.hash_antes, vendedor_alvo: Number(r.vendedor_alvo),
+      const linhas = data ?? [];
+      if (linhas.length >= 1000) throw new Error("pendentes: 1000+ recibos numa execução — acima do bloco máximo, algo está errado");
+      return linhas.map((r: Record<string, unknown>) => ({
+        id: Number(r.id), omie_codigo_cliente: Number(r.omie_codigo_cliente),
+        customer_user_id: (r.customer_user_id as string | null) ?? null,
+        status: r.status as "alterado" | "indeterminado",
+        vendedor_antes: r.vendedor_antes === null ? null : Number(r.vendedor_antes),
+        vendedor_alvo: Number(r.vendedor_alvo), hash_antes: (r.hash_antes as string | null) ?? null,
+        criado_em_ms: Date.parse(String(r.criado_em)),
       }));
     },
     agora: () => Date.now(),
@@ -163,7 +174,12 @@ Deno.serve(async (req) => {
       if (!(papeis ?? []).some((x: { role: string }) => x.role === "master")) return json({ versao: VERSAO, error: "só o master troca vendedor no Omie" }, 403);
       executadoPor = `master:${auth.userId}`;
     } else {
-      executadoPor = auth.via;
+      // cron-secret/service_role não identificam pessoa: o body tem de dizer quem disparou (Codex P2: autoria no recibo).
+      const autor = (corpo as Record<string, unknown>)?.autor;
+      if (typeof autor !== "string" || autor.trim().length < 2 || autor.length > 80) {
+        return json({ versao: VERSAO, error: "via cron/service_role, informe autor (quem disparou)" }, 400);
+      }
+      executadoPor = `${auth.via}:${autor.trim()}`;
     }
 
     const leitura = lerParametros(corpo);

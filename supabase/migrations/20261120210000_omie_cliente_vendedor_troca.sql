@@ -6,8 +6,8 @@
 -- A edge `omie-cliente-trocar-vendedor` regrava SÓ `recomendacoes.codigo_vendedor` (AlterarCliente) e deixa aqui
 -- uma linha por (execução, conta, cliente): o que leu antes, o que gravou e o que leu depois.
 --
--- Sem PII: o cadastro não é copiado. `hash_antes`/`hash_depois` são sha256 do cadastro canônico SEM o vendedor e
--- sem `info` (dAlt/hAlt/uAlt mudam a cada gravação). Hash igual = a escrita não mexeu em mais nada.
+-- Sem PII: o cadastro não é copiado (só `recomendacoes`, que são códigos e flags). `hash_antes`/`hash_depois` são
+-- sha256 do cadastro canônico SEM o vendedor e sem `info` (dAlt/hAlt/uAlt mudam a cada gravação). Hash igual = a escrita não mexeu em mais nada.
 --
 -- Escritor único: a edge (service_role). Leitura: psql/service_role (medição). Sem policy para o JWT, de propósito.
 -- ============================================================
@@ -33,9 +33,10 @@ CREATE TABLE IF NOT EXISTS public.omie_cliente_vendedor_troca (
                         'indeterminado',      -- escrita sem resposta conclusiva (transporte/tentativas esgotadas)
                         'erro_omie'           -- fault da API: nada gravado
                       )),
+  recomendacoes_antes jsonb,             -- o objeto recomendacoes lido antes (códigos/flags, sem PII): permite desfazer
   hash_antes          text,
   hash_depois         text,
-  espelho_ok          boolean,           -- register_carteira_member gravou o vendedor novo no espelho
+  espelho_ok          boolean,           -- o UPDATE estreito gravou o vendedor novo no espelho (omie_customer_account_map)
   erro                text,
   executado_por       text NOT NULL,
   criado_em           timestamptz NOT NULL DEFAULT now(),
@@ -44,11 +45,24 @@ CREATE TABLE IF NOT EXISTS public.omie_cliente_vendedor_troca (
 CREATE INDEX IF NOT EXISTS idx_ocvt_cliente ON public.omie_cliente_vendedor_troca (account, omie_codigo_cliente, criado_em DESC);
 CREATE INDEX IF NOT EXISTS idx_ocvt_execucao ON public.omie_cliente_vendedor_troca (execucao_id);
 CREATE INDEX IF NOT EXISTS idx_ocvt_pendente_verif ON public.omie_cliente_vendedor_troca (account, criado_em)
-  WHERE status = 'alterado';
+  WHERE status IN ('alterado', 'indeterminado');
 
 ALTER TABLE public.omie_cliente_vendedor_troca ENABLE ROW LEVEL SECURITY;
 -- Sem policy de propósito: só a edge (service_role) escreve; a medição lê como service_role/psql.
-REVOKE ALL ON TABLE public.omie_cliente_vendedor_troca FROM PUBLIC, anon, authenticated;
+-- A trilha não se apaga: o default ACL do Supabase dá TRUNCATE/DELETE a service_role e aos papéis sandbox_exec*, e a
+-- RLS não protege TRUNCATE. Revoga de TODOS e devolve só o que a edge usa (Codex P1).
+REVOKE ALL ON TABLE public.omie_cliente_vendedor_troca FROM PUBLIC, anon, authenticated, service_role;
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT rolname FROM pg_roles WHERE rolname LIKE 'sandbox_exec%' LOOP
+    EXECUTE format('REVOKE ALL ON TABLE public.omie_cliente_vendedor_troca FROM %I', r.rolname);
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'claude_ro') THEN
+    REVOKE ALL ON TABLE public.omie_cliente_vendedor_troca FROM claude_ro;
+    GRANT SELECT ON TABLE public.omie_cliente_vendedor_troca TO claude_ro;
+  END IF;
+END $$;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.omie_cliente_vendedor_troca TO service_role;
 
 COMMENT ON TABLE public.omie_cliente_vendedor_troca IS
