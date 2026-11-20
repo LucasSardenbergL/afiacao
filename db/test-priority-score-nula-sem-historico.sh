@@ -251,7 +251,7 @@ fi
 
 echo "=== T — trigger ==="
 Ps -c "DELETE FROM public.visit_score_recalc_queue"
-Ps -c "UPDATE public.farmer_client_scores f SET priority_score = 67, sales_history_status='sem_historico', churn_risk=100 FROM public.cli c WHERE c.uid=f.customer_user_id AND c.nome IN ('d','e')"
+Ps -c "UPDATE public.farmer_client_scores f SET priority_score = 67, sales_history_status='sem_historico', churn_risk=100, days_since_last_purchase=999 FROM public.cli c WHERE c.uid=f.customer_user_id AND c.nome IN ('d','e')"
 Ps -c "UPDATE public.farmer_client_scores f SET priority_score = NULL, sales_history_status='sem_historico', churn_risk=100 FROM public.cli c WHERE c.uid=f.customer_user_id AND c.nome='a'"
 Ps -c "UPDATE public.farmer_client_scores f SET priority_score = 30, sales_history_status='ativo' FROM public.cli c WHERE c.uid=f.customer_user_id AND c.nome='b'"
 Ps -c "UPDATE public.farmer_client_scores f SET priority_score = 40, sales_history_status='stale' FROM public.cli c WHERE c.uid=f.customer_user_id AND c.nome='c'"

@@ -11967,7 +11967,7 @@ export type Database = {
           goal_proximity_component: number | null
           id: string
           margin_potential_component: number | null
-          priority_score: number
+          priority_score: number | null
           repurchase_component: number | null
           score_date: string
         }
@@ -11980,7 +11980,7 @@ export type Database = {
           goal_proximity_component?: number | null
           id?: string
           margin_potential_component?: number | null
-          priority_score?: number
+          priority_score?: number | null
           repurchase_component?: number | null
           score_date?: string
         }
@@ -11993,7 +11993,7 @@ export type Database = {
           goal_proximity_component?: number | null
           id?: string
           margin_potential_component?: number | null
-          priority_score?: number
+          priority_score?: number | null
           repurchase_component?: number | null
           score_date?: string
         }

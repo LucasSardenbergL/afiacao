@@ -3680,6 +3680,13 @@ describe('guardrail money-path: calculate-scores renormaliza via módulo testáv
     expect(edge).toMatch(/prioridadePorStatus\s*\(/);
     expect(edge).toMatch(/prioridadeNoRefreshFatal\s*\(/);
     expect(edge, 'o seed voltou a gravar priority_score 0').not.toMatch(/priority_score:\s*0\s*,/);
+    // O que vai para o UPDATE e para o log é a prioridade GRAVADA (pós-regra), nunca a calculada: trocar
+    // uma pela outra no payload restaura o 67 com o helper intacto (achado Codex de código).
+    const gravadas = (edge.match(/^\s*priority_score:\s*priorityScore,/gm) ?? []).length;
+    expect(gravadas, 'update e log precisam AMBOS gravar priorityScore').toBe(2);
+    expect(edge, 'a calculada vazou para um payload').not.toMatch(/priority_score:\s*priorityCalculada/);
+    // Ramo fatal: o payload segue mandando o status do run (null quando a RPC de vendas falhou).
+    expect(edge).toMatch(/^\s*sales_history_status:\s*statusDoRun,/m);
   });
 });
 
