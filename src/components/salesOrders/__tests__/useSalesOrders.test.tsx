@@ -300,6 +300,35 @@ describe('useSalesOrders — exclusão concorrente do mesmo pedido', () => {
     expect(result.current.excluindoIds.size).toBe(0);
   });
 
+  it('lote parcialmente travado: leva só o livre, solta só o seu, e o travado segue travado (Codex P3)', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const [a, b] = result.current.orders;
+    // Omie pendurado POR pedido: cada um termina quando o teste mandar.
+    const soltarPor = new Map<string, () => void>();
+    invoke.mockImplementation((async (nome: string, opts: { body?: { sales_order_id?: string } }) => {
+      if (nome !== 'omie-vendas-sync') return { data: { logos: {} }, error: null };
+      const id = opts.body!.sales_order_id!;
+      return new Promise<Resp>((r) => soltarPor.set(id, () => r({ data: { success: true }, error: null })));
+    }) as never);
+    act(() => { result.current.toggleSelect(a, true); result.current.toggleSelect(b, true); });
+    let individual!: Promise<void>;
+    let lote!: Promise<void>;
+    act(() => { individual = result.current.deleteOrder(a); }); // A travado pelo individual
+    act(() => { lote = result.current.deleteSelected(); });     // lote [A, B] leva só B
+    await waitFor(() => expect(soltarPor.has(b.id)).toBe(true));
+    act(() => soltarPor.get(b.id)!());
+    await act(async () => { await lote; });
+    expect(result.current.excluindoIds.has(a.id)).toBe(true);  // o lote NÃO soltou o A
+    expect(result.current.excluindoIds.has(b.id)).toBe(false);
+    await waitFor(() => expect(soltarPor.has(a.id)).toBe(true));
+    act(() => soltarPor.get(a.id)!());
+    await act(async () => { await individual; });
+    expect(chamadasExcluir(a.id)).toHaveLength(1);
+    expect(chamadasExcluir(b.id)).toHaveLength(1);
+    expect(result.current.excluindoIds.size).toBe(0);
+  });
+
   it('rollback individual só desfaz a marca que ESTA exclusão gravou (filtra pelo carimbo)', async () => {
     const { result } = montar();
     await waitFor(() => expect(result.current.loading).toBe(false));
