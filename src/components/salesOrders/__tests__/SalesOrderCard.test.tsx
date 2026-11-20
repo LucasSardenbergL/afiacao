@@ -46,7 +46,8 @@ describe('SalesOrderCard (sales)', () => {
     expect(screen.getByText('ACME Ltda')).toBeTruthy();
     expect(screen.getByText('Oben')).toBeTruthy();
     expect(screen.getByText('Enviado ao Omie')).toBeTruthy();
-    expect(screen.getByText('R$ 100.00')).toBeTruthy();
+    // pt-BR: vírgula decimal (antes saía "R$ 100.00"); \u00a0 = espaço do Intl.
+    expect(screen.getByText(/^R\$\s100,00$/)).toBeTruthy();
     expect(screen.getByText('2 itens')).toBeTruthy();
     expect(screen.getByText('123')).toBeTruthy(); // PV sem zeros à esquerda
   });
@@ -86,13 +87,30 @@ describe('SalesOrderCard (sales)', () => {
     expect(screen.queryByTitle('Editar pedido')).toBeNull();
   });
 
-  it('confirmar exclusão dispara onDelete', () => {
+  it('excluir vem do menu "⋯" e só dispara onDelete após confirmar', () => {
     const props = setup(order());
-    // abre o AlertDialog pelo botão de lixeira (último botão do card)
-    const buttons = screen.getAllByRole('button');
-    fireEvent.click(buttons[buttons.length - 1]);
+    fireEvent.keyDown(screen.getByRole('button', { name: /Mais ações do pedido 123/ }), { key: 'Enter' });
+    fireEvent.click(screen.getByRole('menuitem', { name: /Excluir/ }));
+    expect(props.onDelete).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Excluir' }));
     expect(props.onDelete).toHaveBeenCalledTimes(1);
+    expect(props.onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it('concordância: 1 item (não "1 itens")', () => {
+    setup(order({ item_quantity: 1 }));
+    expect(screen.getByText('1 item')).toBeTruthy();
+  });
+
+  it('empresa desconhecida aparece como ela é — nunca vira "Oben"', () => {
+    setup(order({ account: 'nova_empresa' }));
+    expect(screen.getByText('nova_empresa')).toBeTruthy();
+    expect(screen.queryByText('Oben')).toBeNull();
+  });
+
+  it('mostra a prévia dos produtos do pedido', () => {
+    setup(order({ item_names: ['Verniz', 'Seladora', 'Thinner', 'Lixa'] }));
+    expect(screen.getByText(/Verniz, Seladora \+2/)).toBeTruthy();
   });
 
   it('não mostra editar quando status é faturado', () => {

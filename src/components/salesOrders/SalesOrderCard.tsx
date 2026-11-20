@@ -1,15 +1,54 @@
-// Card de um pedido (venda ou afiação) na listagem.
-// Extraído verbatim de src/pages/SalesOrders.tsx (god-component split).
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+// Linha de um pedido (venda ou afiação) na listagem.
+// Densa e escaneável: no desktop é uma linha de tabela (cliente · PV · empresa · status · total ·
+// ações); no celular, um card de 2 linhas. UM só markup — a grade muda de forma por breakpoint
+// (grid-template-areas), então nenhum dado aparece duplicado no DOM.
+import { useState } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Trash2, Share2, Pencil, Printer } from 'lucide-react';
-import { formatarDataPedido } from '@/lib/pedido/data-pedido';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Trash2, Share2, Pencil, Printer, MoreHorizontal } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { formatPrecoOuAusente } from '@/lib/format';
+import { horaDoPedido } from '@/lib/pedido/data-pedido';
 import { StatusBadge } from '@/components/StatusBadge';
 import type { OrderStatus } from '@/types';
-import { statusDoPedido, type OrderFeedRow } from './types';
+import { rotuloEmpresa, statusDoPedido, tomDoStatus, type OrderFeedRow, type TomStatus } from './types';
+
+/**
+ * Grade compartilhada entre a linha e o cabeçalho de colunas da listagem (SalesOrders) — as duas
+ * PRECISAM usar a mesma, senão as colunas desalinham. Literal completo: o Tailwind lê o fonte.
+ */
+export const GRADE_LINHA_PEDIDO =
+  "grid items-center gap-x-3 grid-cols-[1rem_auto_auto_minmax(0,1fr)_auto] [grid-template-areas:'check_cliente_cliente_cliente_total''check_pv_empresa_status_acoes'] md:grid-cols-[1rem_minmax(0,1fr)_4.5rem_5.5rem_8.5rem_7rem_7.5rem] md:[grid-template-areas:'check_cliente_pv_empresa_status_total_acoes']";
+
+const COR_DO_TOM: Record<TomStatus, { ponto: string; texto: string }> = {
+  success: { ponto: 'bg-status-success', texto: 'text-status-success' },
+  warning: { ponto: 'bg-status-warning', texto: 'text-status-warning' },
+  error: { ponto: 'bg-status-error', texto: 'text-status-error' },
+  info: { ponto: 'bg-status-info', texto: 'text-status-info' },
+  neutral: { ponto: 'bg-muted-foreground/40', texto: 'text-muted-foreground' },
+};
+
+/** Pedido de venda que ainda pode ser editado (mesma regra de antes — mudar é decisão de negócio). */
+const STATUS_NAO_EDITAVEIS = ['cancelado', 'entregue', 'faturado'];
+
+function rotuloItens(quantidade: number): string {
+  return `${quantidade.toLocaleString('pt-BR')} ${quantidade === 1 ? 'item' : 'itens'}`;
+}
+
+/** "Verniz, Seladora +2" — prévia do que foi vendido, pra achar o pedido de olho. */
+function previaProdutos(nomes: readonly string[]): string | null {
+  const limpos = nomes.filter((n) => n && n.trim());
+  if (limpos.length === 0) return null;
+  const primeiros = limpos.slice(0, 2).join(', ');
+  return limpos.length > 2 ? `${primeiros} +${limpos.length - 2}` : primeiros;
+}
 
 interface SalesOrderCardProps {
   order: OrderFeedRow;
@@ -37,132 +76,171 @@ export function SalesOrderCard({
   onPrint,
   onPrefetch,
 }: SalesOrderCardProps) {
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
   const isAfiacao = order.origin === 'afiacao';
-  const status = statusDoPedido(order.status);
-  // item_quantity da view = soma das quantidades (o mesmo que o reduce antigo fazia).
-  const totalItems = Number(order.item_quantity) || 0;
-  // Afiação opera sob Colacor SC (a view já manda account='colacor_sc'). O card
-  // mostra a empresa + badge secundário "Afiação" pra distinguir serviço de venda.
-  const orderAccount = order.account || 'oben';
-  const accountLabel = orderAccount === 'colacor_sc'
-    ? 'Colacor SC'
-    : orderAccount === 'colacor'
-      ? 'Colacor'
-      : 'Oben';
   const isSelectable = !isAfiacao; // só sales_orders são bulk-deletáveis
+  const podeEditar = !isAfiacao && !STATUS_NAO_EDITAVEIS.includes(order.status);
+  const status = statusDoPedido(order.status);
+  const cor = COR_DO_TOM[tomDoStatus(order.status)];
+  const pv = order.order_number ? order.order_number.replace(/^0+/, '') || '0' : null;
+  // item_quantity da view = soma das quantidades (o mesmo que o reduce antigo fazia).
+  const quantidade = Number(order.item_quantity);
+  const itens = Number.isFinite(quantidade) ? rotuloItens(quantidade) : null;
+  const produtos = previaProdutos(order.item_names ?? []);
+  const hora = horaDoPedido(order.created_at);
+  const detalhe = [produtos, hora].filter(Boolean).join(' · ');
+  const nomeAcessivel = pv ? `pedido ${pv} de ${customerName}` : `pedido de ${customerName}`;
+
+  const abrir = () => (isAfiacao ? onNavigate(`/orders/${order.id}`) : onOpenDetail());
+  const parar = (e: React.SyntheticEvent) => e.stopPropagation();
 
   return (
-    <Card className={`cursor-pointer hover:bg-muted/30 transition-colors ${checked ? 'ring-2 ring-foreground/20' : ''}`} onClick={() => (isAfiacao ? onNavigate(`/orders/${order.id}`) : onOpenDetail())} onMouseEnter={onPrefetch}>
-      <CardContent className="p-3">
-        <div className="flex items-start justify-between gap-2">
-          {isSelectable && (
-            <Checkbox
-              checked={checked}
-              onClick={(e) => e.stopPropagation()}
-              onCheckedChange={(v) => onSelectChange(!!v)}
-              className="mt-0.5"
-            />
+    <div
+      className={cn(
+        GRADE_LINHA_PEDIDO,
+        'group cursor-pointer gap-y-1 px-3 py-2.5 transition-colors hover:bg-muted/40 md:py-2',
+        checked && 'bg-muted/60 hover:bg-muted/60',
+      )}
+      onClick={abrir}
+      onMouseEnter={onPrefetch}
+    >
+      <div className="[grid-area:check] flex items-center self-center">
+        {isSelectable && (
+          <Checkbox
+            checked={checked}
+            onClick={parar}
+            onCheckedChange={(v) => onSelectChange(!!v)}
+            aria-label={`Selecionar ${nomeAcessivel}`}
+          />
+        )}
+      </div>
+
+      <div className="[grid-area:cliente] min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={(e) => {
+              parar(e);
+              abrir();
+            }}
+            className="min-h-0 truncate rounded-sm text-left text-sm font-medium hover:underline focus-visible:ring-offset-0"
+          >
+            {customerName}
+          </button>
+          {/* Afiação opera sob Colacor SC — a tag distingue serviço de venda. */}
+          {isAfiacao && (
+            <span className="shrink-0 rounded border border-dashed px-1 text-[11px] leading-4 text-muted-foreground">
+              Afiação
+            </span>
           )}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <p className="font-medium text-sm truncate">
-                {customerName}
-              </p>
-              <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">
-                {accountLabel}
-              </Badge>
-              {/* Badge secundário pra distinguir serviço de afiação dentro de SC */}
-              {isAfiacao && (
-                <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0 bg-muted/50 text-muted-foreground border-dashed">
-                  Afiação
-                </Badge>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {formatarDataPedido(order.created_at)}
-            </p>
-            {order.order_number && (
-              <p className="text-xs text-muted-foreground">
-                PV: <span className="font-tabular text-foreground">{order.order_number.replace(/^0+/, '') || '0'}</span>
-              </p>
-            )}
-          </div>
-          <div className="text-right shrink-0 space-y-1">
-            {isAfiacao ? (
-              <StatusBadge status={order.status as OrderStatus} size="sm" />
-            ) : (
-              <Badge variant={status.variant}>{status.label}</Badge>
-            )}
-            <p className="text-sm font-bold">R$ {Number(order.total).toFixed(2)}</p>
-            <p className="text-xs text-muted-foreground">{totalItems} itens</p>
-            <div className="flex gap-1 justify-end">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onShare();
-                }}
-                title="Compartilhar via WhatsApp"
-              >
-                <Share2 className="w-3.5 h-3.5" />
-              </Button>
-              {!isAfiacao && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onPrint();
-                  }}
-                  title="Imprimir pedido"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                </Button>
-              )}
-              {!isAfiacao && !['cancelado', 'entregue', 'faturado'].includes(order.status) && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onNavigate(`/sales/edit/${order.id}`);
-                  }}
-                  title="Editar pedido"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                </Button>
-              )}
-              {!isAfiacao && (
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={(e) => e.stopPropagation()}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Excluir pedido?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Esta ação não pode ser desfeita. O pedido será removido permanentemente do sistema.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                      <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                        Excluir
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              )}
-            </div>
-          </div>
         </div>
-      </CardContent>
-    </Card>
+        {detalhe && <p className="hidden truncate text-xs text-muted-foreground md:block">{detalhe}</p>}
+      </div>
+
+      <div className="[grid-area:pv] text-xs text-muted-foreground md:text-sm">
+        {pv ? (
+          <>
+            <span className="md:hidden">PV </span>
+            <span className="font-tabular text-foreground md:text-muted-foreground">{pv}</span>
+          </>
+        ) : (
+          <span className="hidden md:inline">—</span>
+        )}
+      </div>
+
+      <div className="[grid-area:empresa] truncate text-xs text-muted-foreground md:text-sm">
+        <span className="md:hidden" aria-hidden>· </span>
+        {rotuloEmpresa(order.account)}
+      </div>
+
+      <div className="[grid-area:status] min-w-0 pl-1 md:pl-0">
+        {isAfiacao ? (
+          <StatusBadge status={order.status as OrderStatus} size="sm" />
+        ) : (
+          <span className={cn('inline-flex items-center gap-1.5 text-xs md:text-sm', cor.texto)}>
+            <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', cor.ponto)} aria-hidden />
+            <span className="truncate">{status.label}</span>
+          </span>
+        )}
+      </div>
+
+      <div className="[grid-area:total] text-right">
+        <p className="font-tabular text-sm font-semibold">{formatPrecoOuAusente(Number(order.total))}</p>
+        {itens && <p className="text-[11px] leading-4 text-muted-foreground">{itens}</p>}
+      </div>
+
+      <div className="[grid-area:acoes] flex items-center justify-end gap-0.5" onClick={parar}>
+        {/* Atalhos no desktop: aparecem no hover/foco da linha; no toque, tudo fica no "⋯". */}
+        <div className="hidden items-center gap-0.5 transition-opacity md:flex md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
+          <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" onClick={onShare} title="Compartilhar via WhatsApp" aria-label={`Compartilhar ${nomeAcessivel}`}>
+            <Share2 className="h-3.5 w-3.5" />
+          </Button>
+          {!isAfiacao && (
+            <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" onClick={onPrint} title="Imprimir pedido" aria-label={`Imprimir ${nomeAcessivel}`}>
+              <Printer className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {podeEditar && (
+            <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" onClick={() => onNavigate(`/sales/edit/${order.id}`)} title="Editar pedido" aria-label={`Editar ${nomeAcessivel}`}>
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" aria-label={`Mais ações do ${nomeAcessivel}`}>
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={parar}>
+            {podeEditar && (
+              <DropdownMenuItem onSelect={() => onNavigate(`/sales/edit/${order.id}`)}>
+                <Pencil className="mr-2 h-3.5 w-3.5" /> Editar
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={onShare}>
+              <Share2 className="mr-2 h-3.5 w-3.5" /> Compartilhar no WhatsApp
+            </DropdownMenuItem>
+            {!isAfiacao && (
+              <DropdownMenuItem onSelect={onPrint}>
+                <Printer className="mr-2 h-3.5 w-3.5" /> Imprimir
+              </DropdownMenuItem>
+            )}
+            {!isAfiacao && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => setConfirmandoExclusao(true)}
+                  className="text-status-error focus:text-status-error"
+                >
+                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Excluir…
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {!isAfiacao && (
+        <AlertDialog open={confirmandoExclusao} onOpenChange={setConfirmandoExclusao}>
+          <AlertDialogContent onClick={parar}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Excluir o {nomeAcessivel}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                O pedido sai da listagem e é excluído também no Omie. Esta ação não pode ser desfeita
+                por aqui.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                Excluir
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+    </div>
   );
 }

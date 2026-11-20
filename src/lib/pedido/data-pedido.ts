@@ -37,3 +37,40 @@ export function formatarDataPedido(
   }
   return format(d, formatoComHora, { locale: ptBR });
 }
+
+/**
+ * Dia civil do pedido como `yyyy-MM-dd` (chave de agrupamento da listagem), ou `null` se a data é
+ * inválida. Data-pura do Omie usa o dia UTC (é a data do pedido, sem hora); pedido do wizard usa o
+ * dia LOCAL — o mesmo critério de `formatarDataPedido`, senão o grupo e a data exibida divergiriam.
+ */
+export function diaDoPedido(createdAt: string): string | null {
+  const d = new Date(createdAt);
+  if (Number.isNaN(d.getTime())) return null;
+  if (ehDataPuraUtc(d)) {
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
+  return format(d, 'yyyy-MM-dd');
+}
+
+/** Hora local do pedido ("14:32"), ou `null` quando ela não existe (data-pura do Omie, data inválida). */
+export function horaDoPedido(createdAt: string): string | null {
+  const d = new Date(createdAt);
+  if (Number.isNaN(d.getTime()) || ehDataPuraUtc(d)) return null;
+  return format(d, 'HH:mm');
+}
+
+/**
+ * Rótulo do cabeçalho de dia da listagem: "Hoje", "Ontem", "Seg, 17 nov" (mesmo ano) ou
+ * "17 nov 2025". `dia` é a chave de `diaDoPedido`; `hoje` também (injetável p/ teste).
+ */
+export function rotuloDiaPedido(dia: string, hoje: string = format(new Date(), 'yyyy-MM-dd')): string {
+  if (dia === hoje) return 'Hoje';
+  const [a, m, d] = dia.split('-').map(Number);
+  const data = new Date(a, m - 1, d);
+  const [ha, hm, hd] = hoje.split('-').map(Number);
+  const ontem = new Date(ha, hm - 1, hd - 1);
+  if (data.getTime() === ontem.getTime()) return 'Ontem';
+  const fmt = a === ha ? "EEE, d 'de' MMM" : "d 'de' MMM 'de' yyyy";
+  const txt = format(data, fmt, { locale: ptBR });
+  return txt.charAt(0).toUpperCase() + txt.slice(1);
+}

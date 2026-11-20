@@ -11,7 +11,7 @@ import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoD
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { resolverDescontoCupom } from '@/components/sales/print/descontoCupom';
 import { receitaLiquidaItem } from '@/lib/pedido/desconto-item';
-import { statusDoPedido, type SalesOrder } from './types';
+import { rotuloEmpresa, statusDoPedido, type SalesOrder } from './types';
 import { itemTotal } from './print';
 import { descontosDoPainel, type FatiaDescontosItens } from './descontosDoPainel';
 import { formatPrecoOuAusente } from '@/lib/format';
@@ -72,8 +72,7 @@ export function SalesOrderDetailSheet({
   onRepeat,
 }: SalesOrderDetailSheetProps) {
   const status = order ? statusDoPedido(order.status) : null;
-  const accountLabel =
-    order?.account === 'colacor_sc' ? 'Colacor SC' : order?.account === 'colacor' ? 'Colacor' : 'Oben';
+  const accountLabel = rotuloEmpresa(order?.account);
   const pv = order?.omie_numero_pedido ? order.omie_numero_pedido.replace(/^0+/, '') || '0' : null;
   // Trava de crédito (Fase 2): ponto de aprovação do gestor FORA do wizard — a
   // vendedora manda o resumo (WhatsApp), o gestor abre o pedido aqui e aprova.

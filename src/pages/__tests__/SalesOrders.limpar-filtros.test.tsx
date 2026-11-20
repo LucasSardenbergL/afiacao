@@ -37,6 +37,7 @@ vi.mock('@/components/salesOrders/useSalesOrders', () => ({
         setAccountFilter('all');
       },
       selectedIds: new Set<string>(),
+      linhasSelecionadas: [],
       toggleSelect: vi.fn(),
       clearSelection: vi.fn(),
       orders: [],

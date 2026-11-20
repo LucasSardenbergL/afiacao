@@ -124,3 +124,32 @@ export function statusDoPedido(status: string): { label: string; variant: 'defau
     variant: 'outline',
   };
 }
+
+/** Tom visual do status na listagem: cor só no que pede atenção; o resto fica neutro. */
+export type TomStatus = 'success' | 'warning' | 'error' | 'info' | 'neutral';
+
+const TOM_DO_STATUS: Record<string, TomStatus> = {
+  rascunho: 'warning',
+  enviado: 'info',
+  separacao: 'info',
+  faturado: 'success',
+  entregue: 'success',
+  cancelado: 'error',
+};
+
+export function tomDoStatus(status: string): TomStatus {
+  return TOM_DO_STATUS[status] ?? 'neutral';
+}
+
+/**
+ * Rótulo da empresa do pedido. Conta desconhecida aparece como ela é — nunca vira "Oben" por
+ * fallback (um pedido de outra empresa rotulado de Oben induz a vendedora a erro).
+ */
+export function rotuloEmpresa(account: string | null | undefined): string {
+  switch (account) {
+    case 'oben': return 'Oben';
+    case 'colacor': return 'Colacor';
+    case 'colacor_sc': return 'Colacor SC';
+    default: return account ? account : '—';
+  }
+}

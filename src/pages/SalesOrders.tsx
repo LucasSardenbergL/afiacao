@@ -1,16 +1,22 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ShoppingCart, Trash2, ChevronLeft, Loader2 } from 'lucide-react';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { cn } from '@/lib/utils';
+import { diaDoPedido, rotuloDiaPedido } from '@/lib/pedido/data-pedido';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
-import { decodeHtml, type OrderFeedRow } from '@/components/salesOrders/types';
+import { decodeHtml, rotuloEmpresa, type OrderFeedRow } from '@/components/salesOrders/types';
 import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
 import { useDescontosItensPedido } from '@/components/salesOrders/useDescontosItensPedido';
-import { SalesOrdersToolbar } from '@/components/salesOrders/SalesOrdersToolbar';
-import { SalesOrderCard } from '@/components/salesOrders/SalesOrderCard';
+import { SalesOrdersAcoes, SalesOrdersToolbar } from '@/components/salesOrders/SalesOrdersToolbar';
+import { GRADE_LINHA_PEDIDO, SalesOrderCard } from '@/components/salesOrders/SalesOrderCard';
 import { SalesOrderDetailSheet } from '@/components/salesOrders/SalesOrderDetailSheet';
 
 const SalesOrders = () => {
@@ -31,6 +37,7 @@ const SalesOrders = () => {
     setSearch,
     limparFiltros,
     selectedIds,
+    linhasSelecionadas,
     toggleSelect,
     clearSelection,
     orders,
@@ -54,6 +61,7 @@ const SalesOrders = () => {
   // Desconto de cada item (order_items) para o painel: a query vai INTEIRA, com o estado, para
   // "não consegui ler" não chegar lá como "sem desconto".
   const descontosItensQuery = useDescontosItensPedido(detailRow);
+  const [confirmandoLote, setConfirmandoLote] = useState(false);
 
   if (authLoading || loading) {
     return (
@@ -74,20 +82,26 @@ const SalesOrders = () => {
     );
   }
 
+  const comFiltro = !!search.trim() || accountFilter !== 'all';
+  const grupos = agruparPorDia(orders);
+  const alcance = alcanceDaExclusao(linhasSelecionadas, orders);
+
   return (
-    <div className="max-w-4xl mx-auto space-y-4 pb-6">
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <div>
-          <h1 className="text-lg font-semibold">Pedidos</h1>
-          <p className="text-xs text-muted-foreground">Gerencie todos os seus pedidos de venda e afiação</p>
+    <div className="max-w-6xl mx-auto space-y-4 pb-24">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground" onClick={() => navigate(-1)} aria-label="Voltar">
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <div className="min-w-0">
+            <h1 className="font-display text-2xl leading-tight">Pedidos</h1>
+            <p className="text-xs text-muted-foreground">Vendas e afiação das três empresas</p>
+          </div>
         </div>
+        <SalesOrdersAcoes onNavigate={navigate} />
       </div>
 
       <SalesOrdersToolbar
-        onNavigate={navigate}
         accountFilter={accountFilter}
         setAccountFilter={setAccountFilter}
         search={search}
@@ -98,15 +112,15 @@ const SalesOrders = () => {
       {orders.length === 0 ? (
         <EmptyState
           icon={ShoppingCart}
-          title={search.trim() || accountFilter !== 'all' ? 'Nenhum pedido com esses filtros' : 'Nenhum pedido ainda'}
+          title={comFiltro ? 'Nenhum pedido com esses filtros' : 'Nenhum pedido ainda'}
           description={
-            search.trim() || accountFilter !== 'all'
+            comFiltro
               ? 'Tente ajustar a busca ou trocar a aba de empresa.'
               : 'Crie seu primeiro pedido pra começar a operar.'
           }
-          actionLabel={search.trim() || accountFilter !== 'all' ? 'Limpar filtros' : 'Novo pedido'}
+          actionLabel={comFiltro ? 'Limpar filtros' : 'Novo pedido'}
           onAction={() => {
-            if (search.trim() || accountFilter !== 'all') {
+            if (comFiltro) {
               limparFiltros();
             } else {
               navigate('/sales/new');
@@ -114,23 +128,51 @@ const SalesOrders = () => {
           }}
         />
       ) : (
-        <div className="space-y-2">
-          {orders.map((order) => (
-            <SalesOrderCard
-              key={`${order.origin}-${order.id}`}
-              order={order}
-              customerName={decodeHtml(order.customer_name || 'Cliente')}
-              checked={selectedIds.has(order.id)}
-              onSelectChange={(v) => toggleSelect(order, v)}
-              onShare={() => handleShareOrder(order)}
-              onDelete={() => deleteOrder(order)}
-              onNavigate={navigate}
-              onOpenDetail={() => setDetailRow(order)}
-              onPrint={() => printOrder(order)}
-              onPrefetch={() => prefetchDetail(order)}
-            />
+        <div className={cn('rounded-lg border bg-card transition-opacity', buscando && 'opacity-60')}>
+          {/* Cabeçalho de colunas — só no desktop; usa a MESMA grade da linha. */}
+          <div
+            className={cn(
+              GRADE_LINHA_PEDIDO,
+              'hidden md:grid border-b px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground',
+            )}
+            aria-hidden
+          >
+            <span className="[grid-area:check]" />
+            <span className="[grid-area:cliente]">Cliente</span>
+            <span className="[grid-area:pv]">PV</span>
+            <span className="[grid-area:empresa]">Empresa</span>
+            <span className="[grid-area:status]">Status</span>
+            <span className="[grid-area:total] text-right">Total</span>
+            <span className="[grid-area:acoes]" />
+          </div>
+
+          {grupos.map((grupo) => (
+            <section key={grupo.dia} aria-label={grupo.rotulo}>
+              <h2 className="sticky top-0 z-[1] border-b bg-muted/70 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-muted/50">
+                {grupo.rotulo}
+              </h2>
+              <div className="divide-y">
+                {grupo.pedidos.map((order) => (
+                  <SalesOrderCard
+                    key={`${order.origin}-${order.id}`}
+                    order={order}
+                    customerName={decodeHtml(order.customer_name || 'Cliente')}
+                    // A seleção é por id de sales_orders: uma afiação com o mesmo id não acende junto.
+                    checked={order.origin === 'sales' && selectedIds.has(order.id)}
+                    onSelectChange={(v) => toggleSelect(order, v)}
+                    onShare={() => handleShareOrder(order)}
+                    onDelete={() => deleteOrder(order)}
+                    onNavigate={navigate}
+                    onOpenDetail={() => setDetailRow(order)}
+                    onPrint={() => printOrder(order)}
+                    onPrefetch={() => prefetchDetail(order)}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
-          <div ref={sentinelaRef} className="flex flex-col items-center gap-2 py-4 text-xs text-muted-foreground">
+
+          <div ref={sentinelaRef} className="flex flex-col items-center gap-2 border-t py-4 text-xs text-muted-foreground">
             {isFetchingNextPage && <Loader2 aria-label="Carregando mais pedidos" className="w-4 h-4 animate-spin" />}
             {nextPageError && (
               <Button variant="outline" size="sm" onClick={() => fetchNextPage()}>
@@ -154,14 +196,44 @@ const SalesOrders = () => {
             label: 'Excluir',
             icon: Trash2,
             variant: 'destructive',
-            onClick: () => {
-              if (confirm(`Excluir ${selectedIds.size} pedido(s)? Esta ação não pode ser desfeita.`)) {
-                deleteSelected();
-              }
-            },
+            onClick: () => setConfirmandoLote(true),
           },
         ]}
       />
+
+      {/* Exclusão em lote: mostra o ALCANCE (empresas e pedidos fora da tela atual) — a seleção
+          sobrevive à troca de busca/aba, e um "Excluir 5?" sem contexto apagaria o que ninguém vê. */}
+      <AlertDialog open={confirmandoLote} onOpenChange={setConfirmandoLote}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Excluir {plural(alcance.total, 'pedido', 'pedidos')}?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>{alcance.porEmpresa.map(([empresa, n]) => `${empresa}: ${n}`).join(' · ')}</p>
+                {alcance.foraDaTela > 0 && (
+                  <p className="font-medium text-status-warning">
+                    {alcance.foraDaTela === 1
+                      ? '1 pedido selecionado não está na lista atual (outra busca ou aba).'
+                      : `${alcance.foraDaTela} pedidos selecionados não estão na lista atual (outra busca ou aba).`}
+                  </p>
+                )}
+                <p>Os pedidos são excluídos também no Omie. Esta ação não pode ser desfeita por aqui.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteSelected()}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir {plural(alcance.total, 'pedido', 'pedidos')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <SalesOrderDetailSheet
         open={!!detailRow}
@@ -182,11 +254,50 @@ const SalesOrders = () => {
   );
 };
 
+function plural(n: number, um: string, varios: string): string {
+  return `${n.toLocaleString('pt-BR')} ${n === 1 ? um : varios}`;
+}
+
+interface GrupoDia {
+  dia: string;
+  rotulo: string;
+  pedidos: OrderFeedRow[];
+}
+
+// A lista vem ordenada por created_at DESC (useSalesOrders) → grupos contíguos, na ordem certa.
+// Data inválida não some: cai num grupo "Sem data" próprio.
+function agruparPorDia(pedidos: OrderFeedRow[]): GrupoDia[] {
+  const grupos: GrupoDia[] = [];
+  for (const p of pedidos) {
+    const dia = diaDoPedido(p.created_at) ?? 'sem-data';
+    const ultimo = grupos[grupos.length - 1];
+    if (ultimo && ultimo.dia === dia) ultimo.pedidos.push(p);
+    else grupos.push({ dia, rotulo: dia === 'sem-data' ? 'Sem data' : rotuloDiaPedido(dia), pedidos: [p] });
+  }
+  return grupos;
+}
+
+function alcanceDaExclusao(selecionadas: OrderFeedRow[], naTela: OrderFeedRow[]) {
+  const visiveis = new Set(naTela.filter((o) => o.origin === 'sales').map((o) => o.id));
+  const contagem = new Map<string, number>();
+  for (const o of selecionadas) {
+    const empresa = rotuloEmpresa(o.account);
+    contagem.set(empresa, (contagem.get(empresa) ?? 0) + 1);
+  }
+  return {
+    total: selecionadas.length,
+    porEmpresa: [...contagem.entries()],
+    foraDaTela: selecionadas.filter((o) => !visiveis.has(o.id)).length,
+  };
+}
+
 // O total só vem sem busca (com busca contaria os ~32 k de novo — ver useSalesOrders).
 function rodapeDaLista(carregados: number, total: number | null, temMais: boolean, comBusca: boolean): string {
   const n = (v: number) => v.toLocaleString('pt-BR');
-  if (total !== null) return carregados >= total ? `${n(total)} pedido(s)` : `${n(carregados)} de ${n(total)} pedido(s)`;
-  const rotulo = comBusca ? 'encontrado(s)' : 'pedido(s)';
+  if (total !== null) return carregados >= total ? `${n(total)} ${total === 1 ? 'pedido' : 'pedidos'}` : `${n(carregados)} de ${n(total)} pedidos`;
+  const rotulo = comBusca
+    ? (carregados === 1 ? 'encontrado' : 'encontrados')
+    : (carregados === 1 ? 'pedido' : 'pedidos');
   return temMais ? `${n(carregados)} ${rotulo} até aqui — role para ver mais` : `${n(carregados)} ${rotulo}`;
 }
 
