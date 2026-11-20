@@ -202,8 +202,8 @@ roteamento manda evitar ganharam descrição (`frontend-design`, `context-restor
 para `name-only`. **APLICADO** no `.claude/settings.json` (critério em `docs/agent/skills.md`).
 
 No app desktop a pressão é maior: os 19 plugins da conta claude.ai (~170 skills, fora do alcance
-de `skillOverrides`) deixam 12 das 14 proprietárias só com o nome — segue a pendência do founder
-em "Pendente de medição", abaixo.
+de `skillOverrides`) deixam 12 das 14 proprietárias só com o nome — medido e resolvido em
+"Plugins da conta claude.ai — desligados e medidos (2026-11-19)", abaixo.
 
 ## ✅ O que REALMENTE move o ponteiro: desabilitar o PLUGIN inteiro
 
@@ -379,20 +379,46 @@ O erro de origem foi comparar a coisa errada: "o subagente devolve 638 tokens co
 de um Read" é verdade e é **irrelevante** — o que importa não é o que ele devolve, é o que
 ele **cobra para rodar**, e isso ninguém tinha medido.
 
-## Pendente de medição — só o founder consegue (é na conta, não no repo)
+## Plugins da conta claude.ai — desligados e medidos (2026-11-19, #2622)
 
-172 das 337 skills da sessão do app vêm de plugins da conta claude.ai **nunca usados em 48
-dias** (`legal`, `marketing`, `engineering`, `finance`, `sales`, `data`, `human-resources`,
-`operations`, `product-management`, `customer-support`, `common-room`, `brand-voice`,
-`enterprise-search`, `design`, `figma`, `postiz`, `productivity`, `anthropic-skills`,
-`pdf-viewer`). Eles não existem no marketplace local (`~/.claude/plugins/marketplaces/`) —
-vêm do servidor, então **nenhum `settings.json` local os desliga** e a sonda do CLI não os
-enxerga. Trazem ainda 6 agents (`brand-voice:*`, `zapier:*` = 9.173 chars de `agent_listing`).
+**Uso (120 dias, Code + Cowork local, com controle positivo na mesma execução):** 18 dos 19
+plugins da conta com **zero** invocações (skill, slash, agent ou MCP — inclusive em
+subagentes); `engineering` teve 1. Controles acenderam (superpowers 262, Agent 211, slash 490,
+MCP 9) e um transcript sintético acendeu os 4 canais. Desligados na UI do claude.ai: os 18;
+ficou só `pdf-viewer`.
 
-Pela regra medida acima (o custo está no payload do plugin, não na lista), a estimativa é
-da ordem de alguns milhares de tokens — **estimativa, não medição**. Como testar de verdade:
-desligar na UI do claude.ai → abrir sessão NOVA → `scripts/tokens-report.sh --dias 1` e
-comparar o piso com os 67.244 registrados aqui.
+**Antes/depois — mesma versão do Code (2.1.326), sessões do app, 1º request não-Haiku:**
+
+| | antes (n=5, mesmo dia) | −16 plugins (n=1) | −18 plugins (n=1) |
+|---|---|---|---|
+| skills de plugin da conta na lista | 169 | 51 | **5** |
+| agentes de plugin | 6–12 | 0 | **0** |
+| proprietárias com descrição (de 14) | 2 | 7 | **7** |
+| piso do 1º request | mediana 93.472 (91,7k–97,0k) | 87.805 | **87.432** |
+
+Ganho: **~6k tokens (~6,5%)** de piso e **2 → 7** proprietárias com descrição. Tirar `sales`
+(36 skills) e `data` (10) a mais **não** mudou o piso nem as descrições: a lista tem teto de
+~12k chars e segue cheia — o custo que saiu veio do payload dos plugins (agentes e cia.), não
+da lista. Atenção à régua: o 67.244 do baseline é de jul/2026; o piso do app cresceu com as
+versões (~82k em out, ~93k em nov) — compare sempre na MESMA versão.
+
+**Premissa corrigida — "nenhum `settings.json` local os desliga":** existe a chave
+`syncClaudeAiPlugins: false` (e `syncClaudeAiSkills`, schema do binário 2.1.284), aplicada no
+`~/.claude/settings.json` do founder. Ela move `~/.claude/plugins/synced` para `.trash`, mas
+**NÃO governa o app desktop**: o app entrega os plugins da conta por outro caminho
+(`~/Library/Application Support/Claude/local-agent-mode-sessions/.../rpm/`) e a sessão
+"Teste" seguiu listando os 3 que ainda estavam ligados na conta. **No app, quem decide é a
+lista da conta no claude.ai.**
+
+**Viés do `tokens-report.sh` achado no caminho:** subagentes (`<sessao>/subagents/*.jsonl`)
+herdam o `sessionId` do pai e o piso só exclui Haiku — subagente Fable/Opus derruba o "piso
+da sessão". Para antes/depois, use o 1º request não-Haiku da sessão principal.
+
+**Próximo gargalo (não atacado):** na sessão "teste 2", 117 das 178 skills da lista são
+user-level (`~/.claude/skills`, quase todas gstack) e ocupam ~8,7k dos ~12k chars; por isso 7
+proprietárias seguem só com o nome (`bi-colacor`, `cfo-colacor`, `reposicao-caixa`, `goal`,
+`doc2md`, `farmer-industrial`, `benchmark-externo`). A alavanca agora é o que fica instalado
+em `~/.claude/skills` — decisão do founder.
 
 ## Lição transferível
 
