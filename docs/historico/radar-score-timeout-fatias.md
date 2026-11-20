@@ -133,10 +133,22 @@ observabilidade.
 
 ## Validação
 
-- Prova PG17 `db/test-radar-score-fatias.sh`: 45 PASS no controle; `--falsificar` com **16/16 sabotagens vermelhas** no assert declarado e controle verde na MESMA invocação, nos locales `C` e `pt_BR.UTF-8` (~10 min cada, em paralelo). No CI entra com `falsificar=16 faixas=3` (`db/nucleo-ci.d/test-radar-score-fatias.txt`). Uma sabotagem nasceu verde (`passada_nao_reinicia` desligava só o lote, e o `lote_iniciado_em` ainda pegava a troca: camada redundante) e passou a desligar o reinício inteiro..
+- Prova PG17 `db/test-radar-score-fatias.sh`: 45 PASS no controle; `--falsificar` com **16/16 sabotagens vermelhas** no assert declarado e controle verde na MESMA invocação, nos locales `C` e `pt_BR.UTF-8` (~10 min cada, em paralelo). No CI entra com `falsificar=16 faixas=3` (`db/nucleo-ci.d/test-radar-score-fatias.txt`). Uma sabotagem nasceu verde (`passada_nao_reinicia` desligava só o lote, e o `lote_iniciado_em` ainda pegava a troca: camada redundante) e passou a desligar o reinício inteiro.
 - Aplicação (`bun run db:aplicar`, ensaio 🟢 antes de cada uma): 20261120140000 → recibo **#1206**
   (sha256 `f646f8a4…`), e a 20261120150000 → recibo **#1209** (sha256 `d1af0207…`). 2ª testemunha via psql-ro:
   md5 do corpo `8a0f2beb…`, `lock_timeout=5s`, `radar_score_passada` com RLS e fechada para authenticated, ACL
   preservado (service_role sim, authenticated não), 3 jobs ativos como `postgres` nos horários novos.
 - 1ª chamada manual (recibo #1207): parcial por orçamento em 40,9 s, como medido acima.
-- Prova em prod: em observação desde 20/11 00:20 UTC — os ticks do cron (01:00–05:55 e 06:30–10:55 UTC) fecham a passada do lote 2026-11; o recibo (marca `radar_score_estado.lote = 2026-11`, ledger e zero `failed`) entra aqui num complemento.
+- **Prova em prod (20/11, lida por psql-ro às 03:11 UTC):** o cron fechou a passada do lote 2026-11 sozinho.
+  - `radar_score_estado` = `2026-11 | 2026-11-20 00:13:53 UTC`: a marca é a impressão do INÍCIO da passada
+    (`iniciada_em`, a chamada manual #1207), não a do fim. `radar_score_passada` ficou vazia.
+  - Ledger `radar.score_recalcular` `e0695b52…` (03:10:00–03:10:41): `lote_vigente = 2026-11`, `pulados = 0`,
+    **`alterados = 514.024`** de 584.587 avaliados (exatamente as 514.024 linhas medidas na causa), passada de
+    93.511 páginas em 28 rodadas (27 ticks do cron + a manual) e 2h56min de relógio (`duracao_ms` 10.607.919).
+    `radar_empresas` tem 514.024 linhas com `score_em` ≥ o início da passada.
+  - `cron.job_run_details` desde 00:20: **27 `succeeded`, 0 `failed`**, de 01:00 a 03:10. O tick típico é de
+    37–45 s. Dois fogem: um de 59 s (02:35) e um de 16 s (03:00). Os dois são parciais por `orcamento` (nenhum por
+    `trava`), ou seja, o freio projetou que a fatia seguinte estouraria os 45 s. A fatia densa custa mais que o
+    dobro da anterior, e por isso um tick passa do orçamento em ~14 s. Ainda assim fica a 1/3 dos 3 min do job.
+  - Ritmo médio real no Mini: 514.024 linhas / 27 ticks ≈ 19 mil por tick, ou ~2 ms por linha. Um lote mensal
+    novo fecha numa madrugada, dentro da janela 01:00–05:55.
