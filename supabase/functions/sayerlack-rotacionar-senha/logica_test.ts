@@ -18,13 +18,16 @@ import {
   MAX_RECONCILIACOES,
   montarEmailSenha,
   TAMANHO_SENHA,
+  textoDaTelaSemSegredo,
 } from "./logica.ts";
 
-Deno.test("gerarSenha: 16 chars, as 3 classes, sem caracteres ambíguos", () => {
+Deno.test("gerarSenha: 16 chars, as 4 classes (com especial), sem caracteres ambíguos", () => {
   for (let i = 0; i < 200; i++) {
     const s = gerarSenha("colacor");
     assertEquals(s.length, TAMANHO_SENHA);
     assert(/[A-Z]/.test(s) && /[a-z]/.test(s) && /[0-9]/.test(s), s);
+    assert(/[@#$%*!]/.test(s), "sem especial: " + s);
+    assert(/^[A-Za-z0-9@#$%*!]+$/.test(s), "caractere fora do alfabeto: " + s);
     assert(!/[0O1lI]/.test(s), s);
   }
 });
@@ -83,4 +86,17 @@ Deno.test("decidirReconciliacao: só dashboard promove; teto pede humano", () =>
 Deno.test("montarEmailSenha: leva usuário, senha e pedidos", () => {
   const e = montarEmailSenha("colacor", "Abc23456defGHJk9", [4505]);
   assert(e.texto.includes("colacor") && e.texto.includes("Abc23456defGHJk9") && e.texto.includes("#4505"));
+});
+
+Deno.test("textoDaTelaSemSegredo: apaga as duas senhas, colapsa espaço e corta", () => {
+  const t = textoDaTelaSemSegredo("Senha  Atu4l!x  rejeitada\n\nNova Nov@Senha99 invalida", ["Atu4l!x", "Nov@Senha99"]);
+  assertEquals(t, "Senha [senha] rejeitada Nova [senha] invalida");
+  const longo = textoDaTelaSemSegredo("a".repeat(700), [], 600);
+  assert(longo !== null && longo.length === 601 && longo.endsWith("…"), String(longo?.length));
+});
+
+Deno.test("textoDaTelaSemSegredo: sem texto vira null; segredo curto ou ausente não apaga nada", () => {
+  assertEquals(textoDaTelaSemSegredo(undefined, ["x"]), null);
+  assertEquals(textoDaTelaSemSegredo("   ", ["x"]), null);
+  assertEquals(textoDaTelaSemSegredo("abc def", [null, undefined, "ab"]), "abc def");
 });

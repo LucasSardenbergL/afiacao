@@ -11,7 +11,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("sayerlack-rotacionar-senha");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-rotacao-inicial";
+export const VERSAO = "v1.1-especial-e-motivo-da-recusa";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
