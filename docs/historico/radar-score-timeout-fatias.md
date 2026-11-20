@@ -120,6 +120,6 @@ observabilidade.
 
 ## Validação
 
-- Prova PG17 `db/test-radar-score-fatias.sh`: RECIBO_PROVA.
+- Prova PG17 `db/test-radar-score-fatias.sh`: 45 PASS no controle; `--falsificar` com **15/15 sabotagens vermelhas** no assert declarado e controle verde na MESMA invocação, nos locales `C` e `pt_BR.UTF-8` (579 s cada, em paralelo). No CI entra com `falsificar=15 faixas=3` (`db/nucleo-ci.d/test-radar-score-fatias.txt`). Uma sabotagem nasceu verde (`passada_nao_reinicia` desligava só o lote, e o `lote_iniciado_em` ainda pegava a troca: camada redundante) e passou a desligar o reinício inteiro..
 - Aplicação: RECIBO_APLICACAO.
 - Prova em prod: RECIBO_PROD.

@@ -35,14 +35,27 @@ PRED="$REPO_ROOT/db/fixtures/radar-score-predecessora-prod-20261119.sql"
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sem_filtro_passada:G1a,G1b carimba_parcial:A3c sem_orcamento:A3a marca_impressao_fim:B6 sem_cursor:A2c passada_nao_reinicia:B7a noop_sem_throttle:B4a throttle_cego_lote:B4c gate_descarta_passada:B12 grava_com_pulados:B3 pulados_carimba:B3c trava_espera:B9 sem_tratar_trava:B10a passada_aberta:D1 aviso_cedo:C1b"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-score-fatias.XXXXXX")"
+  # FAIXA (NUCLEO_FAIXA=i/k, passada por db/roda-nucleo-ci.sh quando o manifesto diz `faixas=k`): só a fatia
+  # CANÔNICA i de k das sabotagens — da ((i-1)·T/k)+1 à (i·T/k) — depois do MESMO controle verde. Malformada ABORTA.
+  total_sab=$(( $(printf '%s\n' "$SABOTAGENS" | wc -w) ))
+  sab_de=1; sab_ate=$total_sab
+  if [ -n "${NUCLEO_FAIXA:-}" ]; then
+    if ! printf '%s' "$NUCLEO_FAIXA" | grep -qE '^[1-9]/[2-9]$' || [ "${NUCLEO_FAIXA%/*}" -gt "${NUCLEO_FAIXA#*/}" ]; then
+      echo "❌ NUCLEO_FAIXA inválida: '$NUCLEO_FAIXA' (i/k, 1 ≤ i ≤ k, 2 ≤ k ≤ 9)"; exit 1
+    fi
+    f_i="${NUCLEO_FAIXA%/*}"; f_k="${NUCLEO_FAIXA#*/}"
+    sab_de=$(( (f_i - 1) * total_sab / f_k + 1 )); sab_ate=$(( f_i * total_sab / f_k ))
+  fi
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
     echo "❌ controle VERMELHO — falsificação abortada (log: $LOGDIR/controle.log)"; tail -15 "$LOGDIR/controle.log"; exit 1
   fi
   grep -q "RADAR_SCORE_FATIAS_PROVA_OK" "$LOGDIR/controle.log" || { echo "❌ controle sem marcador de fim"; exit 1; }
   echo "✅ controle verde ($(grep -c '^PASS ' "$LOGDIR/controle.log") PASS)"
-  SAB_V=0; SAB_F=0
+  SAB_V=0; SAB_F=0; i_sab=0
   for par in $SABOTAGENS; do
+    i_sab=$((i_sab+1))
+    [ "$i_sab" -ge "$sab_de" ] && [ "$i_sab" -le "$sab_ate" ] || continue
     s="${par%%:*}"; verm="${par#*:}"
     log="$LOGDIR/$s.log"
     if SABOTAGEM="$s" bash "$0" > "$log" 2>&1; then
@@ -61,6 +74,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       SAB_F=$((SAB_F+1)); echo "❌ $s: declarado {$verm}, faltou:$faltou (log: $log)"
     fi
   done
+  [ -z "${NUCLEO_FAIXA:-}" ] || echo "FAIXA: $NUCLEO_FAIXA sabotagens $sab_de-$sab_ate de $total_sab"   # conferida por db/roda-nucleo-ci.sh
   echo "SABOTAGENS: $SAB_V vermelhas / $SAB_F falhas"   # recibo exigido por db/roda-nucleo-ci.sh
   [ "$SAB_F" -eq 0 ] && exit 0 || exit 1
 fi
