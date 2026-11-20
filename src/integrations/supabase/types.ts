@@ -12722,10 +12722,12 @@ export type Database = {
           base_lote: string | null
           calculado_em: string
           cnaes_secundarios_cobertos: string[] | null
+          completo_em: string | null
           corte_estabelecida: string | null
           empresas: number
           grupos: number
           id: number
+          impressao: Json | null
           visitar_base_contabil: string | null
           visitar_calculado_em: string | null
         }
@@ -12734,10 +12736,12 @@ export type Database = {
           base_lote?: string | null
           calculado_em: string
           cnaes_secundarios_cobertos?: string[] | null
+          completo_em?: string | null
           corte_estabelecida?: string | null
           empresas: number
           grupos: number
           id?: number
+          impressao?: Json | null
           visitar_base_contabil?: string | null
           visitar_calculado_em?: string | null
         }
@@ -12746,10 +12750,12 @@ export type Database = {
           base_lote?: string | null
           calculado_em?: string
           cnaes_secundarios_cobertos?: string[] | null
+          completo_em?: string | null
           corte_estabelecida?: string | null
           empresas?: number
           grupos?: number
           id?: number
+          impressao?: Json | null
           visitar_base_contabil?: string | null
           visitar_calculado_em?: string | null
         }
