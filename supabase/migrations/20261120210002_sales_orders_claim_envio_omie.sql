@@ -11,7 +11,11 @@
 --   • sales_order_excluir_sem_envio: DELETE SÓ se não há reivindicação nos últimos 10 min (a vida de
 --     uma invocação de envio). Sob READ COMMITTED, o DELETE que espera o lock re-avalia o WHERE na
 --     versão nova (EvalPlanQual): o carimbo concorrente é VISTO e a linha fica.
--- Serviço: só a edge (service_role) chama. Sem RLS nova (coluna em tabela que já tem RLS).
+--   • policy sales_orders_delete_staff (o DELETE direto de orçamento/rascunho pelo front, ex.
+--     SalesQuotes) ganha a MESMA condição do claim — senão a exclusão de orçamento furava a disputa
+--     durante a conversão em pedido (Codex 2026-11-20, BLOQUEANTE). Cobre também build antigo.
+-- RPCs: só a edge (service_role). A coluna nova NÃO entra na allowlist de UPDATE por coluna de
+-- `authenticated` (migration 20260724120000): o cliente não consegue zerar o carimbo.
 -- ============================================================
 BEGIN;
 
@@ -62,6 +66,32 @@ BEGIN
 END;
 $$;
 
+-- Policy de DELETE: PRE anti-deriva (a PROD tem de estar na forma da 20260724120000 ou já nesta) →
+-- recria com a condição do claim. A recriação pega AccessExclusive em sales_orders por um instante.
+DO $pre$
+DECLARE v_qual text;
+BEGIN
+  SELECT qual INTO v_qual FROM pg_policies
+   WHERE schemaname = 'public' AND tablename = 'sales_orders' AND policyname = 'sales_orders_delete_staff';
+  IF v_qual IS NOT NULL AND (v_qual NOT LIKE '%cap_pedido_escrever%'
+                             OR v_qual NOT LIKE '%omie_pedido_id IS NULL%'
+                             OR v_qual NOT LIKE '%orcamento%rascunho%') THEN
+    RAISE EXCEPTION 'PRE FALHOU: sales_orders_delete_staff divergiu do esperado (%) — reconcilie antes de recriar', v_qual;
+  END IF;
+END
+$pre$;
+
+DROP POLICY IF EXISTS sales_orders_delete_staff ON public.sales_orders;
+CREATE POLICY sales_orders_delete_staff ON public.sales_orders
+  FOR DELETE TO authenticated
+  USING (
+    (SELECT private.cap_pedido_escrever((SELECT auth.uid())))
+    AND omie_pedido_id IS NULL
+    AND status IN ('orcamento', 'rascunho')
+    AND (envio_omie_reivindicado_em IS NULL
+         OR envio_omie_reivindicado_em < now() - interval '10 minutes')
+  );
+
 REVOKE ALL ON FUNCTION public.sales_order_reivindicar_envio(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.sales_order_excluir_sem_envio(uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.sales_order_reivindicar_envio(uuid) TO service_role;
@@ -90,7 +120,20 @@ BEGIN
      OR NOT has_function_privilege('service_role', 'public.sales_order_reivindicar_envio(uuid)', 'EXECUTE') THEN
     RAISE EXCEPTION 'A4 FALHOU: service_role sem EXECUTE — a edge não conseguiria chamar as RPCs';
   END IF;
-  RAISE NOTICE 'claim envio × exclusão: coluna + 2 RPCs (só service_role) OK';
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+     WHERE schemaname = 'public' AND tablename = 'sales_orders' AND policyname = 'sales_orders_delete_staff'
+       AND cmd = 'DELETE' AND roles = '{authenticated}'
+       AND qual LIKE '%envio_omie_reivindicado_em%' AND qual LIKE '%cap_pedido_escrever%'
+       AND qual LIKE '%omie_pedido_id IS NULL%'
+  ) THEN
+    RAISE EXCEPTION 'A5 FALHOU: policy de DELETE sem a condição do claim — orçamento em conversão apagável pelo front';
+  END IF;
+  IF has_column_privilege('authenticated', 'public.sales_orders', 'envio_omie_reivindicado_em', 'UPDATE')
+     OR has_column_privilege('anon', 'public.sales_orders', 'envio_omie_reivindicado_em', 'UPDATE') THEN
+    RAISE EXCEPTION 'A6 FALHOU: cliente pode reescrever envio_omie_reivindicado_em — zeraria o claim';
+  END IF;
+  RAISE NOTICE 'claim envio × exclusão: coluna + 2 RPCs (só service_role) + policy de DELETE OK';
 END
 $post$;
 

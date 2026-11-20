@@ -40,8 +40,25 @@ MIG="$REPO_ROOT/supabase/migrations/20261120210002_sales_orders_claim_envio_omie
 A='00000000-0000-0000-0000-00000000000a'
 
 P -q <<'SQL'
-CREATE TABLE public.sales_orders (id uuid PRIMARY KEY, deleted_at timestamptz);
+CREATE TABLE public.sales_orders (id uuid PRIMARY KEY, deleted_at timestamptz,
+  status text NOT NULL DEFAULT 'orcamento', omie_pedido_id bigint);
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
+-- O que a PROD tem (20260724120000): RLS, DELETE de orçamento/rascunho sem PID para quem escreve
+-- pedido, UPDATE só por coluna (deleted_at entre elas) — a coluna nova NÃO pode entrar.
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE OR REPLACE FUNCTION private.cap_pedido_escrever(uuid) RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT true $$;
+GRANT USAGE ON SCHEMA private TO authenticated;
+ALTER TABLE public.sales_orders ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, DELETE ON public.sales_orders TO authenticated;
+GRANT UPDATE (deleted_at, status) ON public.sales_orders TO authenticated;
+CREATE POLICY sales_orders_select_t ON public.sales_orders FOR SELECT TO authenticated USING (true);
+CREATE POLICY sales_orders_delete_staff ON public.sales_orders
+  FOR DELETE TO authenticated
+  USING (
+    (SELECT private.cap_pedido_escrever((SELECT auth.uid())))
+    AND omie_pedido_id IS NULL
+    AND status IN ('orcamento', 'rascunho')
+  );
 SQL
 P -q -f "$MIG" >/dev/null
 P -q -f "$MIG" >/dev/null   # idempotente: a 2ª colada não pode falhar
@@ -56,20 +73,24 @@ existe()  { Pq -c "SELECT count(*) FROM public.sales_orders WHERE id='$A';"; }
 # teste espera ela ENTRAR em espera de lock antes de soltar a 1ª — a corrida acontece de verdade.
 corrida() { # $1 = SQL da sessão 1 (segura) · $2 = SQL da sessão 2 (espera) · imprime o resultado da 2
   local out2; out2="$(mktemp)"
-  P -q -tA -c "BEGIN; $1; SELECT pg_sleep(3); COMMIT;" >/dev/null &
+  PGAPPNAME=s1 P -q -tA -c "BEGIN; $1; SELECT pg_sleep(3); COMMIT;" >/dev/null &
   local p1=$!
   for _ in $(seq 1 50); do
-    [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE 'BEGIN;%pg_sleep(3)%' AND wait_event='PgSleep';")" = 1 ] && break; sleep 0.1
+    [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='s1' AND wait_event='PgSleep';")" = 1 ] && break; sleep 0.1
   done
-  P -q -tA -c "$2" > "$out2" &
+  PGAPPNAME=s2 P -q -tA -c "$2" > "$out2" &
   local p2=$!
   local esperou=0
+  # prova literal da disputa: a s2 está BLOQUEADA PELA s1 (não só "alguém esperando lock")
   for _ in $(seq 1 50); do
-    [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock';")" = 1 ] && { esperou=1; break; }; sleep 0.05
+    [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity b WHERE b.application_name='s2'
+        AND (SELECT pid FROM pg_stat_activity WHERE application_name='s1') = ANY (pg_blocking_pids(b.pid));")" = 1 ] && { esperou=1; break; }; sleep 0.05
   done
   wait $p1; wait $p2
   echo "$esperou:$(tr -d '\n' < "$out2")"; rm -f "$out2"
 }
+
+FRONT_DELETE="SET ROLE authenticated; WITH d AS (DELETE FROM public.sales_orders WHERE id='$A' RETURNING 1) SELECT count(*) FROM d;"
 
 suite() {
   echo "── unitário ──"
@@ -92,6 +113,12 @@ suite() {
   reset NULL NULL   # caminho que não marca deleted_at antes (o envio disputa o lock de verdade)
   eq "C2 exclusão apaga 1º → o envio que ESPEROU o lock não reivindica" \
     "$(corrida "SELECT public.sales_order_excluir_sem_envio('$A')" "SELECT public.sales_order_reivindicar_envio('$A')")" "1:f"
+  reset NULL NULL
+  eq "C4 envio reivindica 1º → o DELETE do front (authenticated, RLS) que ESPEROU o lock não apaga o orçamento" \
+    "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "$FRONT_DELETE")" "1:0"
+  eq "C4b orçamento fica" "$(existe)" "1"
+  reset NULL "now() - interval '11 minutes'"
+  eq "U8 DELETE do front sem envio recente apaga" "$(Pq -q -c "$FRONT_DELETE")" "1"
   reset NULL NULL
   eq "C3 front marca deleted_at 1º → o envio que ESPEROU o lock não reivindica" \
     "$(corrida "UPDATE public.sales_orders SET deleted_at=now() WHERE id='$A'" "SELECT public.sales_order_reivindicar_envio('$A')")" "1:f"
@@ -128,10 +155,27 @@ reset NULL NULL
 eq "F1 exclusão sem condição APAGA apesar do envio em curso (o bug)" \
   "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "SELECT public.sales_order_excluir_sem_envio('$A')")" "1:excluido"
 reset "now()" NULL; eq "F2 claim sem condição reivindica pedido em exclusão (o bug)" "$(claim)" "t"
+P -q -c "DROP POLICY sales_orders_delete_staff ON public.sales_orders;
+  CREATE POLICY sales_orders_delete_staff ON public.sales_orders FOR DELETE TO authenticated
+  USING ((SELECT private.cap_pedido_escrever((SELECT auth.uid()))) AND omie_pedido_id IS NULL AND status IN ('orcamento','rascunho'));"
+P -q -f "$MIG" >/dev/null   # repõe as RPCs; e a policy SEM a condição volta a ser recriada…
+P -q -c "DROP POLICY sales_orders_delete_staff ON public.sales_orders;
+  CREATE POLICY sales_orders_delete_staff ON public.sales_orders FOR DELETE TO authenticated
+  USING ((SELECT private.cap_pedido_escrever((SELECT auth.uid()))) AND omie_pedido_id IS NULL AND status IN ('orcamento','rascunho'));"
+reset NULL NULL   # …por isso a sabotagem da policy é aplicada DEPOIS da migration
+eq "F4 policy sem a condição do claim deixa o front apagar durante o envio (o bug do Codex)" \
+  "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "$FRONT_DELETE")" "1:1"
+if P -q -c "GRANT UPDATE (envio_omie_reivindicado_em) ON public.sales_orders TO authenticated;" >/dev/null 2>&1 \
+   && ! P -q -f "$MIG" >/dev/null 2>&1; then ok "F5 postcondição A6 aborta a migration se o cliente puder reescrever o carimbo"
+else bad "F5 postcondição A6 não abortou com UPDATE do carimbo concedido a authenticated"; fi
+P -q -c "REVOKE UPDATE (envio_omie_reivindicado_em) ON public.sales_orders FROM authenticated;" >/dev/null
 P -q -f "$MIG" >/dev/null
 reset NULL NULL
 eq "F3 migration reaplicada fecha de novo" \
   "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "SELECT public.sales_order_excluir_sem_envio('$A')")" "1:envio_em_curso"
+reset NULL NULL
+eq "F3b policy reaplicada fecha o DELETE do front de novo" \
+  "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "$FRONT_DELETE")" "1:0"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
