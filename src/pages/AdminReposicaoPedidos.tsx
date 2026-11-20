@@ -54,7 +54,7 @@ import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarc
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
 import { createLeadingTrailingThrottle } from '@/lib/leading-trailing-throttle';
-import { ordenarFilaDoDia, resumirFilaDoDia } from '@/components/reposicao/pedidos/fila-do-dia';
+import { mesclarAprovadosSemDisparo, ordenarFilaDoDia, resumirFilaDoDia } from '@/components/reposicao/pedidos/fila-do-dia';
 import { DataHealthBanner } from '@/components/dataHealth/DataHealthBanner';
 import { ForaDoMotorBadge } from '@/components/reposicao/foraDoMotor/ForaDoMotorBadge';
 import { BaixoGiroBadge } from '@/components/reposicao/BaixoGiroBadge';
@@ -157,7 +157,27 @@ export default function AdminReposicaoPedidos() {
         .eq('data_ciclo', dataHoje)
         .order('fornecedor_nome', { ascending: true });
       if (error) throw error;
-      return (data ?? []) as PedidoSugerido[];
+      // Aprovado sem disparo de ciclo ANTERIOR continua sendo trabalho de hoje (ver
+      // mesclarAprovadosSemDisparo). Falhar aqui falha a lista inteira — sumir com ele calado
+      // é exatamente o defeito que esta leitura corrige.
+      const anteriores = await fetchAllPages(
+        (de, ate) =>
+          supabase
+            .from('pedido_compra_sugerido')
+            .select('*')
+            .eq('empresa', EMPRESA)
+            .eq('status', 'aprovado_aguardando_disparo')
+            .lt('data_ciclo', dataHoje)
+            .order('data_ciclo', { ascending: false })
+            .order('id', { ascending: true })
+            .range(de, ate),
+        'pedido_compra_sugerido/aprovados-sem-disparo-anteriores',
+      );
+      return mesclarAprovadosSemDisparo(
+        (data ?? []) as PedidoSugerido[],
+        anteriores as PedidoSugerido[],
+        dataHoje,
+      );
     },
     refetchInterval: 30_000,
   });
@@ -1061,6 +1081,7 @@ export default function AdminReposicaoPedidos() {
                         expandido={itensAbertos.has(p.id)}
                         onAlternarItens={alternarItens}
                         colunas={7}
+                        cicloDeHoje={dataHoje}
                       />
                     ))}
                   </TableBody>

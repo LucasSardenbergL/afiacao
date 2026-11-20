@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { motivoBloqueioAprovacao, ordenarFilaDoDia, resumirFilaDoDia } from '../fila-do-dia';
+import { mesclarAprovadosSemDisparo, motivoBloqueioAprovacao, ordenarFilaDoDia, resumirFilaDoDia } from '../fila-do-dia';
 
 const p = (status: string, valor_total: number | null, fornecedor_nome = 'X') => ({ status, valor_total, fornecedor_nome });
 
@@ -77,5 +77,38 @@ describe('motivoBloqueioAprovacao', () => {
   });
   it('bloqueia sem condição de pagamento', () => {
     expect(motivoBloqueioAprovacao({ ...ok, condicaoSelecionada: false })).toMatch(/condição de pagamento/);
+  });
+});
+
+describe('mesclarAprovadosSemDisparo — aprovado de ciclo anterior não some da lista de hoje (4505)', () => {
+  const hoje = '2026-11-20';
+  const q = (id: number, status: string, data_ciclo: string) => ({ id, status, data_ciclo });
+
+  it('junta o aprovado sem disparo de ciclo anterior e ele conta em "aprovados sem disparo"', () => {
+    const lista = mesclarAprovadosSemDisparo(
+      [q(4544, 'pendente_aprovacao', hoje)],
+      [q(4505, 'aprovado_aguardando_disparo', '2026-11-18')],
+      hoje,
+    );
+    expect(lista.map((x) => x.id)).toEqual([4544, 4505]);
+    expect(resumirFilaDoDia(lista.map((x) => ({ ...x, valor_total: 1 }))).aguardandoDisparo).toBe(1);
+  });
+
+  it('não duplica o que já veio no ciclo de hoje', () => {
+    const lista = mesclarAprovadosSemDisparo(
+      [q(10, 'aprovado_aguardando_disparo', hoje)],
+      [q(10, 'aprovado_aguardando_disparo', hoje)],
+      hoje,
+    );
+    expect(lista).toHaveLength(1);
+  });
+
+  it('ignora outro status e ciclo que não é anterior', () => {
+    const lista = mesclarAprovadosSemDisparo(
+      [],
+      [q(1, 'disparado', '2026-11-18'), q(2, 'expirado_sem_aprovacao', '2026-11-19'), q(3, 'aprovado_aguardando_disparo', '2026-11-21')],
+      hoje,
+    );
+    expect(lista).toEqual([]);
   });
 });
