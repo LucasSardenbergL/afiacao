@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # PROVA — priority_score NULL para sem_historico
-# Migration: supabase/migrations/20261120210000_priority_score_nula_sem_historico.sql
+# Migration: supabase/migrations/20261120210001_priority_score_nula_sem_historico.sql
 # Roda:  bash db/test-priority-score-nula-sem-historico.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #        (NUNCA `| tail` — o pipe engole o exit code)
 #        bash db/test-priority-score-nula-sem-historico.sh --falsificar   → controle verde + cada sabotagem
@@ -31,7 +31,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIG_REAL="$REPO_ROOT/supabase/migrations/20261120210000_priority_score_nula_sem_historico.sql"
+MIG_REAL="$REPO_ROOT/supabase/migrations/20261120210001_priority_score_nula_sem_historico.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
