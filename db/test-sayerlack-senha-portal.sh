@@ -17,12 +17,15 @@
 # ║   O  órfã       — em_andamento velha após POST vira ambígua (nunca 2º POST)   ║
 # ║   A  adotar     — saída humana fecha a ambígua                                ║
 # ║   F  falhar     — rejeição inequívoca descarta só a candidata da rodada       ║
-# ║   I  idempotência — re-aplicar a migration passa                              ║
+# ║   K  copiar     — botão do master (20261120160000): só master, Vault vazio é  ║
+# ║                   erro (nunca env), recusa em rotação aberta, audita quem leu ║
+# ║   I  idempotência — re-aplicar as migrations passa                            ║
 # ╚═══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIGRATION="$REPO_ROOT/supabase/migrations/20261120130000_sayerlack_senha_portal_vault.sql"
+MIGRATION_COPIAR="$REPO_ROOT/supabase/migrations/20261120160000_sayerlack_senha_portal_copiar.sql"
 PGVER=17
 PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
 PORT="${PGPORT_TEST:-5483}"
@@ -31,6 +34,7 @@ export LC_ALL="${HARNESS_LC_ALL:-C}" LANG="${HARNESS_LC_ALL:-C}"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 [ -f "$MIGRATION" ] || { echo "INFRA: migration ausente em $MIGRATION"; exit 1; }
+[ -f "$MIGRATION_COPIAR" ] || { echo "INFRA: migration ausente em $MIGRATION_COPIAR"; exit 1; }
 
 DATA=""
 parar_servidor() {
@@ -43,7 +47,7 @@ parar_servidor() {
 trap parar_servidor EXIT
 
 rodada() {
-  local MIG="$1"
+  local MIG="$1" MIG2="${2:-$MIGRATION_COPIAR}"
   parar_servidor
   DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
   "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
@@ -63,6 +67,14 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 ALTER ROLE service_role BYPASSRLS;  -- como na PROD
 DO $$ BEGIN CREATE TYPE public.app_role AS ENUM ('employee', 'customer', 'master'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS public.user_roles (user_id uuid, role public.app_role);
+CREATE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO '' AS $f$
+  SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role) $f$;
+-- master, employee (staff NÃO master) e customer
+INSERT INTO public.user_roles VALUES
+  ('00000000-0000-0000-0000-0000000000aa', 'master'),
+  ('00000000-0000-0000-0000-0000000000bb', 'employee'),
+  ('00000000-0000-0000-0000-0000000000cc', 'customer');
 
 -- Vault simulado com as MESMAS assinaturas da PROD (pg_proc 2026-11-19).
 CREATE SCHEMA vault;
@@ -100,6 +112,7 @@ INSERT INTO public.pedidos_portal_tentativas (pedido_id, iniciado_em, evidence) 
 SQL
 
   P -q -f "$MIG" >/dev/null 2>"/tmp/${SLUG}-apply.err" || { echo "FAIL aplicar"; cat "/tmp/${SLUG}-apply.err"; return 1; }
+  P -q -f "$MIG2" >/dev/null 2>"/tmp/${SLUG}-apply2.err" || { echo "FAIL aplicar"; cat "/tmp/${SLUG}-apply2.err"; return 1; }
   echo "PASS aplicar"
 
   local FALHAS=0
@@ -113,6 +126,22 @@ SQL
     r="$(Pq -c "SET ROLE $papel; DO \$t\$ BEGIN $sql; RAISE EXCEPTION 'SEM_ERRO'; EXCEPTION WHEN SQLSTATE '$estado' THEN RAISE NOTICE 'CASOU'; END \$t\$;" 2>&1)" || true
     if printf '%s' "$r" | grep -q "CASOU"; then echo "PASS $nome"; else echo "FAIL $nome → $(printf '%s' "$r" | tail -1)"; FALHAS=$((FALHAS+1)); fi
   }
+
+  local MASTER='00000000-0000-0000-0000-0000000000aa' EMP='00000000-0000-0000-0000-0000000000bb' CLI='00000000-0000-0000-0000-0000000000cc'
+  okm() {  # okm NOME UID "SQL que devolve t" — roda como authenticated com auth.uid()=UID
+    local nome="$1" uid="$2" sql="$3" r
+    r="$(Pq -c "SET ROLE authenticated; SET test.uid = '$uid'; $sql" 2>&1 | tail -1)" || true
+    if [ "$r" = "t" ]; then echo "PASS $nome"; else echo "FAIL $nome → $r"; FALHAS=$((FALHAS+1)); fi
+  }
+
+  # K — copiar senha (botão do master): acesso
+  erro K1 42501 anon "PERFORM public.sayerlack_senha_portal_copiar()"
+  erro K2 42501 authenticated "PERFORM public.sayerlack_senha_portal_copiar()"   # sem login (uid NULL)
+  erro K3 42501 "authenticated; SET test.uid = '$EMP'" "PERFORM public.sayerlack_senha_portal_copiar()"
+  erro K3b 42501 "authenticated; SET test.uid = '$CLI'" "PERFORM public.sayerlack_senha_portal_copiar()"
+  erro K8 42501 service_role "PERFORM public.sayerlack_senha_portal_copiar()"
+  # Vault vazio: erro claro (P0002), NUNCA a senha do env nem NULL copiado
+  erro K4 P0002 "authenticated; SET test.uid = '$MASTER'" "PERFORM public.sayerlack_senha_portal_copiar()"
 
   # G — acesso
   erro G1 42501 anon "PERFORM public.sayerlack_senha_portal_credencial()"
@@ -129,6 +158,8 @@ SQL
   R1="$(Pq -c "SET ROLE service_role; SELECT public.sayerlack_senha_portal_solicitar('teste')" | tail -1)"
   ok S1 "SELECT public.sayerlack_senha_portal_solicitar('de novo') = '$R1'::uuid"
   ok S2 "SELECT bloqueio = 'rotacao_solicitada' AND senha IS NULL AND origem IS NULL FROM public.sayerlack_senha_portal_credencial()"
+  # K5 — rotação aberta: o master também é recusado (a senha pode estar mudando)
+  erro K5 55000 "authenticated; SET test.uid = '$MASTER'" "PERFORM public.sayerlack_senha_portal_copiar()"
 
   # assumir → trocar; candidata
   ok C1 "SELECT modo = 'trocar' AND rotacao_id = '$R1'::uuid AND origem_atual = 'env_bootstrap' FROM public.sayerlack_senha_portal_assumir()"
@@ -161,6 +192,15 @@ SQL
     "4505:pendente_envio_portal:0,4506:erro_nao_retentavel:1,4507:erro_nao_retentavel:1,4508:erro_nao_retentavel:1" ] \
     && echo "PASS P3" || { echo "FAIL P3 reenfileiramento: $(Pq -c "SELECT string_agg(id||':'||status_envio_portal, ',' ORDER BY id) FROM public.pedido_compra_sugerido" | tail -1)"; FALHAS=$((FALHAS+1)); }
   ok P4 "SELECT status = 'concluida' AND email_pendente FROM public.sayerlack_senha_rotacao WHERE id = '$R1'"
+  # K6 — master copia a ATIVA; a leitura fica auditada (quem + versão, sem senha); só o master vê o log
+  ok K6a "SELECT count(*) = 0 FROM public.sayerlack_senha_portal_leituras"
+  okm K6 "$MASTER" "SELECT public.sayerlack_senha_portal_copiar() = 'Candidata1234abcd'"
+  # shellcheck disable=SC2015  # echo nao falha: o ramo || so roda quando o teste [ ] reprova
+  [ "$(Pq -c "SELECT count(*)||':'||max(user_id::text)||':'||max(versao) FROM public.sayerlack_senha_portal_leituras" | tail -1)" = "1:$MASTER:$R1" ] \
+    && echo "PASS K6b" || { echo "FAIL K6b auditoria: $(Pq -c "SELECT count(*) FROM public.sayerlack_senha_portal_leituras" | tail -1)"; FALHAS=$((FALHAS+1)); }
+  okm K7 "$EMP" "SELECT count(*) = 0 FROM public.sayerlack_senha_portal_leituras"
+  okm K7b "$MASTER" "SELECT count(*) = 1 FROM public.sayerlack_senha_portal_leituras"
+  erro K7c 42501 "authenticated; SET test.uid = '$MASTER'" "INSERT INTO public.sayerlack_senha_portal_leituras (user_id) VALUES (gen_random_uuid())"
   ok P5 "SELECT origem = 'vault' AND senha = 'Candidata1234abcd' AND bloqueio IS NULL FROM public.sayerlack_senha_portal_credencial()"
   ok P6 "SELECT senha = 'Candidata1234abcd' AND rotacao_id = '$R1'::uuid FROM public.sayerlack_senha_portal_email_pendente()"
   Pq -c "SET ROLE service_role; SELECT public.sayerlack_senha_portal_email_enviado('$R1')" >/dev/null
@@ -210,7 +250,7 @@ SQL
   ok Q3 "SELECT public.sayerlack_senha_portal_solicitar('depois-da-quarentena') IS NOT NULL"
 
   # I — re-aplicar
-  if P -q -f "$MIG" >/dev/null 2>"/tmp/${SLUG}-reapply.err"; then echo "PASS I1"; else echo "FAIL I1"; cat "/tmp/${SLUG}-reapply.err"; FALHAS=$((FALHAS+1)); fi
+  if P -q -f "$MIG" >/dev/null 2>"/tmp/${SLUG}-reapply.err" && P -q -f "$MIG2" >/dev/null 2>>"/tmp/${SLUG}-reapply.err"; then echo "PASS I1"; else echo "FAIL I1"; cat "/tmp/${SLUG}-reapply.err"; FALHAS=$((FALHAS+1)); fi
 
   [ "$FALHAS" -eq 0 ] || { echo "FALHAS=$FALHAS"; return 1; }
   echo "FIM_OK_SUITE"
@@ -229,9 +269,10 @@ if ! rodada "$SAB_DIR/controle.sql" >"$SAB_DIR/controle.log" 2>&1 || ! grep -q F
 fi
 echo "controle verde"
 VIVAS=0
-sabota() {
-  local nome="$1" de="$2" para="$3" alvo="$4" f="$SAB_DIR/$1.sql"
-  python3 - "$MIGRATION" "$f" "$de" "$para" <<'PY'
+sabota() {  # sabota NOME DE PARA ALVO [copiar] — o 5º arg sabota a migration do botão
+  local nome="$1" de="$2" para="$3" alvo="$4" f="$SAB_DIR/$1.sql" src="$MIGRATION"
+  [ "${5:-}" = "copiar" ] && src="$MIGRATION_COPIAR"
+  python3 - "$src" "$f" "$de" "$para" <<'PY'
 import sys
 src, dst, de, para = sys.argv[1:5]
 s = open(src).read()
@@ -240,7 +281,10 @@ if s.count(de) < 1:
 s = s.replace(de, para, 1)
 open(dst, "w").write(s)
 PY
-  if rodada "$f" >"$SAB_DIR/$nome.log" 2>&1; then
+  local ok_rodada=0
+  if [ "${5:-}" = "copiar" ]; then rodada "$MIGRATION" "$f" >"$SAB_DIR/$nome.log" 2>&1 || ok_rodada=1
+  else rodada "$f" >"$SAB_DIR/$nome.log" 2>&1 || ok_rodada=1; fi
+  if [ "$ok_rodada" -eq 0 ]; then
     echo "  SABOTAGEM VIVA: $nome (a suíte ficou verde)"; VIVAS=$((VIVAS+1))
   elif grep -q "FAIL $alvo" "$SAB_DIR/$nome.log"; then
     echo "  morta: $nome → $alvo vermelho"
@@ -269,5 +313,14 @@ sabota helper_vault_aberto "REVOKE ALL ON FUNCTION public._sayerlack_vault_ler(t
 sabota sem_quarentena "  IF EXISTS (SELECT 1 FROM public.sayerlack_senha_rotacao
               WHERE status = 'falhou'" "  IF false AND EXISTS (SELECT 1 FROM public.sayerlack_senha_rotacao
               WHERE status = 'falhou'" "Q1"
+# — botão do master (20261120160000)
+sabota gate_master_aberto "  IF v_uid IS NULL OR NOT public.has_role(v_uid, 'master'::public.app_role) THEN" "  IF v_uid IS NULL OR (false AND NOT public.has_role(v_uid, 'master'::public.app_role)) THEN" "K3" copiar
+sabota vault_vazio_copia_nada "  IF v_senha IS NULL THEN
+    RAISE EXCEPTION 'SEM_SENHA_NO_VAULT" "  IF false THEN
+    RAISE EXCEPTION 'SEM_SENHA_NO_VAULT" "K4" copiar
+sabota copia_durante_rotacao "  IF v_status IS NOT NULL THEN" "  IF false THEN" "K5" copiar
+sabota sem_auditoria "  INSERT INTO public.sayerlack_senha_portal_leituras (user_id, versao) VALUES (v_uid, v_versao);" "" "K6b" copiar
+sabota anon_executa "REVOKE ALL ON FUNCTION public.sayerlack_senha_portal_copiar() FROM PUBLIC, anon, service_role;" "REVOKE ALL ON FUNCTION public.sayerlack_senha_portal_copiar() FROM PUBLIC, service_role;" "aplicar" copiar
+sabota log_aberto_a_staff "  USING (public.has_role(auth.uid(), 'master'::public.app_role));" "  USING (true);" "K7" copiar
 echo "RESUMO_FALSIFICACAO vivas=$VIVAS"
 [ "$VIVAS" -eq 0 ]
