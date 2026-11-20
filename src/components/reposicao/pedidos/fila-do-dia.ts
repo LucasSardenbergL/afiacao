@@ -76,6 +76,22 @@ export function resumirFilaDoDia(lista: readonly PedidoDaFila[]): ResumoDoDia {
 }
 
 /**
+ * Aprovado que ainda não saiu NÃO pertence ao dia em que foi gerado: some da lista no dia
+ * seguinte e o contador "aprovados sem disparo" mente (4505, 2026-11-20 — aprovado no ciclo de
+ * 18/11, reenviado pelo founder, invisível em "Ciclo de hoje"). Junta à lista de hoje os
+ * aprovados sem disparo de ciclos ANTERIORES, sem duplicar o que já veio no ciclo de hoje.
+ */
+export function mesclarAprovadosSemDisparo<
+  T extends { id: number; status: string; data_ciclo: string },
+>(hoje: readonly T[], anteriores: readonly T[], dataHoje: string): T[] {
+  const ids = new Set(hoje.map((p) => p.id));
+  const pendentes = anteriores.filter(
+    (p) => p.status === 'aprovado_aguardando_disparo' && p.data_ciclo < dataHoje && !ids.has(p.id),
+  );
+  return [...hoje, ...pendentes];
+}
+
+/**
  * "Aprovar e disparar" só com os itens LIDOS: aprova-se o que se conferiu. Antes o botão só
  * exigia a condição de pagamento — com a leitura dos itens falhando a tabela ficava vazia e o
  * pedido podia ser disparado sem ninguém ter visto o que ia sair. Devolve o motivo do bloqueio

@@ -36,7 +36,7 @@ function ped(partial: Partial<PedidoSugerido>): PedidoSugerido {
 
 function renderRow(
   p: PedidoSugerido,
-  opts?: { onDispararIgnorandoMinimo?: () => void },
+  opts?: { onDispararIgnorandoMinimo?: () => void; cicloDeHoje?: string },
 ) {
   const onDisparar = vi.fn();
   const onOverride = opts?.onDispararIgnorandoMinimo;
@@ -53,6 +53,7 @@ function renderRow(
           onDisparar={onDisparar}
           onDispararIgnorandoMinimo={onOverride}
           disparando={false}
+          cicloDeHoje={opts?.cicloDeHoje}
         />
       </tbody>
     </table>
@@ -243,5 +244,21 @@ describe('PedidoRow — "recebe em" antes do disparo (prévia pela RPC, spec §6
     renderRow(ped({ ...base, status: 'disparado', recebimento_ajustado_calendario: true, data_recebimento_prevista: '2027-01-05' }));
     expect(screen.getByTestId('recebe-em-calendario').textContent).toContain('recebe em 05/01');
     expect(chamadasRpc.length).toBe(0);
+  });
+});
+
+describe('PedidoRow — pedido de ciclo anterior na lista de hoje', () => {
+  it('marca "do ciclo de dd/MM" quando o pedido é de ciclo anterior', () => {
+    renderRow(ped({ id: 4505, status: 'aprovado_aguardando_disparo', data_ciclo: '2026-11-18', fornecedor_nome: 'X' }), {
+      cicloDeHoje: '2026-11-20',
+    });
+    expect(screen.getByText('do ciclo de 18/11')).toBeTruthy();
+  });
+
+  it('não marca pedido do próprio ciclo', () => {
+    renderRow(ped({ id: 1, status: 'aprovado_aguardando_disparo', data_ciclo: '2026-11-20', fornecedor_nome: 'X' }), {
+      cicloDeHoje: '2026-11-20',
+    });
+    expect(screen.queryByText(/do ciclo de/)).toBeNull();
   });
 });

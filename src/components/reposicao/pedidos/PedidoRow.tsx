@@ -24,6 +24,7 @@ export const PedidoRow = memo(function PedidoRow({
   expandido = false,
   onAlternarItens,
   colunas = 7,
+  cicloDeHoje,
 }: {
   p: PedidoSugerido;
   onVerDetalhes: (p: PedidoSugerido) => void;
@@ -40,6 +41,8 @@ export const PedidoRow = memo(function PedidoRow({
   onAlternarItens?: (id: number) => void;
   /** Nº de colunas da tabela, para a linha da prévia ocupar a largura toda. */
   colunas?: number;
+  /** `yyyy-MM-dd` do ciclo exibido: pedido de ciclo anterior ganha a marca "do ciclo de dd/MM". */
+  cicloDeHoje?: string;
 }) {
   const verDetalhes = () => onVerDetalhes(p);
   const podeAprovar = p.status === 'pendente_aprovacao' || p.status === 'bloqueado_guardrail';
@@ -88,6 +91,11 @@ export const PedidoRow = memo(function PedidoRow({
       <TableCell>
         <div className="font-medium">{p.fornecedor_nome}</div>
         <div className="text-xs text-muted-foreground">{p.grupo_codigo ?? '—'}</div>
+        {cicloDeHoje && p.data_ciclo && p.data_ciclo < cicloDeHoje && (
+          <div className="text-xs text-status-warning">
+            do ciclo de {format(new Date(p.data_ciclo + 'T12:00:00'), 'dd/MM')}
+          </div>
+        )}
         <RecebeEmCalendario pedido={p} />
       </TableCell>
       <TableCell className="text-right tabular-nums">{p.num_skus}</TableCell>
