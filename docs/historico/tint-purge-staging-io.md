@@ -666,3 +666,23 @@ Ciclo das 06h UTC de 06/11, o 1º depois do `20261105150000` (#903, PR #3638). L
 - `seq_scan` não andou nenhuma vez, nem pelo agregado: a premissa "1 seq scan por dia" estava errada, ele lê o heap por índice/bitmap. Os ~2,56 GB de heap do dia batem com os 2,6 GB do agregado de antes. Não separo por minuto (sem série de 60 s hoje), então leituras de usuário também entram nesse total. Ainda assim, o dia inteiro leu menos que o agregado sozinho lia antes, e os ~3,8 GB do recruzar+score sumiram.
 - **Veredito:** sucesso no score (milissegundos, sem recalcular). No recruzar, sucesso parcial: caiu de 17,9 s para 5,5 s, mas ficou acima do teto de 5 s. A suspeita é o `UPDATE … EXISTS` de `radar_recruzar_ja_cliente()`, que é a **próxima fatia do recruzar**. Não foi corrigido aqui.
 - **O que ficou:** o agregado das 06:35 (~2,6 GB/dia, 3,5 min) continua sendo a fatia nº 1. Ele depende do relógio, então o caminho segue sendo ajustar só as empresas que cruzam o corte de 5 anos.
+
+## 2026-11-19 — 2 semanas no Mini: a média do período inteiro passa no critério
+
+**Medida** (psql-ro, `pg_stat_database` em delta): de 05/11 14:29:41 a 20/11 00:28:40 UTC, 14,4 dias. O banco não reiniciou no período (`pg_postmaster_start_time` = 31/10 10:33) e seguiu no Mini (`shared_buffers` 256MB, `max_connections` 60). A média entra **com tudo**: noites, cron pesado, applies, ensaios e diagnóstico das sessões.
+
+| Critério (por 15 min) | 14,4 dias no Mini | Teto | 05/11, 19 h antes das correções do Radar |
+|---|---|---|---|
+| Disco | **377 MB** | ≤ 400 MB | 693 MB |
+| Hit | **99,07%** | ≥ 99% | 97,36% |
+| Temp | **15 MB** | ≤ 100 MB | 102 MB |
+| Conexões (instante, 00:28 UTC) | 16/60 | ≤ 80% | 40/60 (14:29 UTC) |
+
+A régua do Mini é a janela de 15 min **com a loja aberta**. A média de 14 dias é mais dura: pega as noites de cron e os eventos pontuais, e mesmo assim passa. As janelas limpas medidas com a loja aberta já tinham passado com folga (04/11 18:54: 3,7 MB, 99,95%).
+
+**O primeiro custo real do Mini:** a regravação mensal do score do Radar. No lote 2026-11 foram 514 mil linhas, com escrita não-HOT nos 26 índices. No Small ela levava 101–115 s; no Mini, 12–25 min. Por isso estourou o `statement_timeout` de 120 s em 17, 18 e 19/11 e o score ficou parado no lote 2026-10. A correção é o score em fatias com cursor durável (PR #4000, `docs/historico/radar-score-timeout-fatias.md`). Não precisa mudar de porte. Ainda assim, isso mostra onde o Mini cobra: em **escrita em massa**, não em leitura. A régua de leitura não enxerga esse custo.
+
+**Veredito:** ficar no Mini. Os portes maiores não têm motivo: o que reprovava eram consultas ruins, já corrigidas uma a uma, e o conjunto do Radar (`radar_empresas`, ~1,2 GB) não cabe no cache nem do Small. Voltar ao Small só faz sentido em um destes casos:
+- conexões acima de 48/60 com a loja aberta;
+- uma janela de loja reprovada **sem** apply, ensaio ou diagnóstico no horário (cruzar com `db_aplicacoes` e as sessões ativas);
+- um job de escrita em massa que não dê para fatiar como o #4000.
