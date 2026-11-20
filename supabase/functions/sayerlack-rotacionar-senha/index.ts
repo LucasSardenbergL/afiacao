@@ -17,7 +17,7 @@
 //   { acao: "adotar_env" }  — saída humana: founder trocou à mão e pôs no env; a edge PROVA o login e adota.
 //   { probe: true }         — sonda de versão.
 //
-// A senha NUNCA vai para log, diagnóstico ou alerta — só para o Vault e para o e-mail do founder.
+// A senha NUNCA vai para log, diagnóstico ou alerta — só para o Vault e para o e-mail (founder + comercial Colacor).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
@@ -27,6 +27,7 @@ import {
   classificarResultadoTroca,
   decidirAposTroca,
   decidirReconciliacao,
+  destinatariosEmailSenha,
   gerarSenha,
   MAX_RECONCILIACOES,
   montarEmailSenha,
@@ -207,17 +208,25 @@ async function enviarEmailPendente(db: Db): Promise<string> {
   const linhas = await rpc(db, "sayerlack_senha_portal_email_pendente");
   const linha = Array.isArray(linhas) ? linhas[0] : null;
   if (!linha?.senha) return "nada_pendente";
-  if (!RESEND_API_KEY || !EMAIL_PARA) return "sem_config_email";
+  const destinatarios = destinatariosEmailSenha(EMAIL_PARA);
+  if (!RESEND_API_KEY || destinatarios.length === 0) return "sem_config_email";
   const { data: rot } = await db.from("sayerlack_senha_rotacao").select("pedidos_reenfileirados").eq("id", linha.rotacao_id).maybeSingle();
   const email = montarEmailSenha(SAYERLACK_PORTAL_USER ?? "", linha.senha, (rot?.pedidos_reenfileirados ?? []).map(Number));
-  const r = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_API_KEY}` },
-    body: JSON.stringify({ from: FROM_EMAIL, to: [EMAIL_PARA], subject: email.assunto, text: email.texto }),
-  }).catch(() => null);
-  if (!r || !r.ok) return "falha_envio";
+  // Um envio POR destinatário: se o Resend recusar um (ex.: 403 de remetente sem domínio verificado),
+  // os outros saem do mesmo jeito. Só "nenhum saiu" deixa pendente para repetir — repetir com 1 já
+  // entregue mandaria a senha de novo a quem já recebeu.
+  const falhas: string[] = [];
+  for (const para of destinatarios) {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${RESEND_API_KEY}` },
+      body: JSON.stringify({ from: FROM_EMAIL, to: [para], subject: email.assunto, text: email.texto }),
+    }).catch(() => null);
+    if (!r || !r.ok) falhas.push(para + " (HTTP " + (r ? r.status : "sem resposta") + ")");
+  }
+  if (falhas.length === destinatarios.length) return "falha_envio: " + falhas.join(", ");
   await rpc(db, "sayerlack_senha_portal_email_enviado", { p_rotacao: linha.rotacao_id });
-  return "enviado";
+  return falhas.length === 0 ? "enviado" : "enviado_parcial, falhou: " + falhas.join(", ");
 }
 
 async function promover(db: Db, rotacaoId: string, gatilho: string): Promise<string> {
@@ -225,7 +234,11 @@ async function promover(db: Db, rotacaoId: string, gatilho: string): Promise<str
   const email = await enviarEmailPendente(db);
   await alertar(db, "info", "Senha do portal Sayerlack trocada automaticamente",
     "A senha expirada foi trocada e confirmada com login real no portal. " +
-      (email === "enviado" ? "A senha nova foi enviada por e-mail. " : "O e-mail com a senha AINDA NAO saiu (" + email + "): confira SAYERLACK_SENHA_EMAIL_PARA/RESEND_API_KEY. ") +
+      (email === "enviado"
+        ? "A senha nova foi enviada por e-mail. "
+        : email.startsWith("enviado_parcial")
+        ? "A senha nova foi enviada por e-mail, mas NAO chegou a todos (" + email + "). "
+        : "O e-mail com a senha AINDA NAO saiu (" + email + "): confira SAYERLACK_SENHA_EMAIL_PARA/RESEND_API_KEY. ") +
       ((ids ?? []).length > 0 ? "Pedidos de volta na fila: " + (ids ?? []).map((i) => "#" + i).join(", ") + "." : ""),
     { rotacao_id: rotacaoId, gatilho, email });
   return "promovida";
