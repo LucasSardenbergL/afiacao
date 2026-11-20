@@ -96,6 +96,9 @@ FROM public.sales_orders o WHERE o.vendedor_user_id = '$LUCAS';
 INSERT INTO public.sales_orders (customer_user_id, account, total, status, order_date_kpi, vendedor_user_id)
 SELECT '40000000-0000-0000-0000-000000000001', 'colacor', 300, 'faturado', (m + interval '3 days')::date, '$REGINA'
 FROM generate_series('2026-06-01'::date, '2026-10-01'::date, interval '1 month') m;
+-- Colacor: 1 cliente que comprou 1x em jun/2026 → C em só 3 cortes (< 6) → taxa_c tem de ficar NULL.
+INSERT INTO public.sales_orders (customer_user_id, account, total, status, order_date_kpi, vendedor_user_id)
+VALUES ('40000000-0000-0000-0000-000000000002', 'colacor', 800, 'faturado', '2026-06-05', '$REGINA');
 INSERT INTO public.carteira_assignments VALUES ('$A1', '$REGINA', true), ('$X1', '$REGINA', true), ('$D1', '$REGINA', true),
   ('40000000-0000-0000-0000-000000000001', '$REGINA', true);
 SQL
@@ -127,6 +130,7 @@ eq "taxas, índice e estreia calibrados (não nulos)" "$(Pq -c "$(printf "$R" '(
 eq "meta = soma × índice" "$(Pq -c "$(printf "$R" '(meta = round((base+esp_c+esp_d+novos+inc_c+inc_d+inc_b+inc_cross)*indice_sazonal,2))::text')")" "true"
 eq "Regina ativa" "$(Pq -c "$(printf "$R" 'owner_ativo::text')")" "true"
 eq "Colacor sem histórico → meta NULL" "$(Pq -c "SELECT count(*) FILTER (WHERE meta IS NULL)||'/'||count(*) FROM public.meta_potencial_mensal WHERE account='colacor'")" "2/2"
+eq "Colacor: C em < 6 cortes → taxa_c NULL" "$(Pq -c "SELECT count(*) FILTER (WHERE taxa_c IS NULL) FROM public.meta_potencial_mensal WHERE account='colacor'")" "2"
 eq "carteira congelada (3 da Regina na oben)" "$(Pq -c "SELECT count(*) FROM public.meta_potencial_carteira WHERE account='oben' AND owner_user_id='$REGINA'")" "3"
 
 # ── congelada não recalcula (sync tardio de outubro) e realizado é vivo ──
