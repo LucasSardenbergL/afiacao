@@ -7,6 +7,7 @@ import { CrescimentoComparavelCard } from './CrescimentoComparavelCard';
 import { GestorExcecoes } from './GestorExcecoes';
 import { ClosersMtdHero } from './ClosersMtdHero';
 import { PedidosSemNotaBanner } from './PedidosSemNotaBanner';
+import { CombinadoDoDiaCard } from './CombinadoDoDiaCard';
 import { ViewAsPicker } from '@/components/impersonation/ViewAsPicker';
 import { MinhasTarefasCard } from '@/components/tarefas/MinhasTarefasCard';
 import { AtivarNotificacoesCard } from '@/components/push/AtivarNotificacoesCard';
@@ -37,6 +38,9 @@ export function MasterDashboard() {
 
       {/* "Estamos ganhando?" — placar de time (receita MTD + trend, ativos) */}
       <TeamKpiTiles />
+
+      {/* "O que exige ação?" — o combinado do dia: até 3 clientes por vendedora, encaminhado no WhatsApp */}
+      <CombinadoDoDiaCard />
 
       {/* "O que exige ação?" — gestão por exceção (Buddy v2). Lidera por dependência com
           Dados quebrados, que invalidam o placar acima. */}

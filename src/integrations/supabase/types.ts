@@ -25547,6 +25547,10 @@ export type Database = {
         }
         Returns: Json
       }
+      combinado_registrar: {
+        Args: { p_itens: Json; p_vendedora: string }
+        Returns: Json
+      }
       concluir_com_comprovacao: {
         Args: { p_leitura?: number; p_tarefa_id: string; p_url?: string }
         Returns: undefined
