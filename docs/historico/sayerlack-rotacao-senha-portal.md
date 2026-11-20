@@ -55,3 +55,13 @@ a cada expiração. Cobrar HTTPS da Sayerlack.
 - **Fronteira:** RPC `sayerlack_senha_portal_copiar()` (SECDEF, `has_role(uid,'master')` no corpo, EXECUTE só `authenticated`; anon, PUBLIC e service_role revogados). Vault sem ativa → `SEM_SENHA_NO_VAULT` (P0002), nunca o env. Rotação aberta → `TROCA_EM_ANDAMENTO` (55000).
 - **Auditoria / sensor de uso:** cada cópia grava `sayerlack_senha_portal_leituras` (user_id, versão do segredo = id da rodada, lido_em; sem senha), escritor único = a RPC, SELECT só master. "Está sendo usado?" = `SELECT count(*), max(lido_em) FROM sayerlack_senha_portal_leituras`.
 - **Prova:** `db/test-sayerlack-senha-portal.sh` K1–K8 (54 asserts nos 2 locales); `--falsificar` com 16 sabotagens, todas mortas (6 novas: gate de master aberto, Vault vazio copiando nada, cópia durante rotação, sem auditoria, anon executa, log aberto a staff).
+
+## v1.2 — cópia do e-mail para o comercial da Colacor (2026-11-20, #4015)
+
+A pedido do founder, o e-mail com a senha nova também vai para o comercial da Colacor (`EMAIL_SENHA_COPIAS` em `logica.ts`). O secret `SAYERLACK_SENHA_EMAIL_PARA` continua sendo o destinatário principal e agora aceita uma lista separada por `,`/`;`.
+
+O envio é **um por destinatário**, porque o remetente `onboarding@resend.dev` não tem domínio verificado e o Resend pode devolver 403 para um endereço que não seja o dono da conta. Recusa num destinatário não impede os outros. Só "nenhum saiu" deixa o e-mail pendente para repetir; se repetisse com um já entregue, a senha seria enviada de novo. Envio parcial vai para o alerta `info`, com o endereço e o status HTTP.
+
+Deploy: 17:35Z, 8/8 sha256 conferidos pelo agente do Lovable. Sonda (tentativa #1230, request 29028): **DEPLOY CONFIRMADO** com `v1.2-email-copia-colacor`, e `pendencias:deploy` deu exit 0. O commit do bot que veio junto (`c771d4bc`) só regenerou `types.ts` (+54 linhas) e não tocou `bun.lock`/`package.json`; não houve revert.
+
+**Sinal a observar:** na próxima rotação real, o alerta `info` deve dizer "enviada por e-mail" sem "NAO chegou a todos". Se aparecer `enviado_parcial … HTTP 403` para a Colacor, o remédio é verificar um domínio próprio no Resend e trocar o `FROM_EMAIL`.
