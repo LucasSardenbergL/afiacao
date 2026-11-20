@@ -30,6 +30,7 @@ import {
   gerarSenha,
   MAX_RECONCILIACOES,
   montarEmailSenha,
+  textoDaTelaSemSegredo,
   type SinaisPosTroca,
   type TipoLogin,
 } from "./logica.ts";
@@ -273,8 +274,9 @@ async function processarRodada(db: Db): Promise<Record<string, unknown>> {
   await rpc(db, "sayerlack_senha_portal_etapa", { p_rotacao: rotacaoId, p_etapa: "post_pode_ter_saido" });
 
   const troca = await browserless(FUNCAO_TROCAR, { usuario: SAYERLACK_PORTAL_USER, atual, nova, loginUrl: TOTVS_LOGIN_URL });
+  const sinaisTroca = troca?.sinais as SinaisPosTroca | undefined;
   const diagTroca = { cliqueFeito: troca?.cliqueFeito ?? null, erro: troca?.erro ?? null, trace: troca?.trace ?? null,
-    url: (troca?.sinais as SinaisPosTroca | undefined)?.url ?? null };
+    url: sinaisTroca?.url ?? null, texto_tela: textoDaTelaSemSegredo(sinaisTroca?.texto, [atual, nova]) };
 
   // Prova de que NÃO houve POST (o script parou antes do clique): candidata descartável com segurança.
   if (troca && troca.cliqueFeito === false) {
@@ -292,7 +294,8 @@ async function processarRodada(db: Db): Promise<Record<string, unknown>> {
     const motivo = d.acao === "falhar" ? d.motivo : "recusada";
     await rpc(db, "sayerlack_senha_portal_falhar", { p_rotacao: rotacaoId, p_erro: motivo, p_descartar: true });
     await alertar(db, "urgente", "Portal Sayerlack recusou a troca automatica de senha",
-      motivo + ". A senha atual segue a mesma; nao tento de novo por 6 horas. ACAO: trocar a senha a mao, atualizar " +
+      motivo + (diagTroca.texto_tela ? ' (tela do portal: "' + diagTroca.texto_tela.slice(0, 300) + '")' : "") +
+        ". A senha atual segue a mesma; nao tento de novo por 6 horas. ACAO: trocar a senha a mao, atualizar " +
         'SAYERLACK_PORTAL_PASS e chamar sayerlack-rotacionar-senha com {"acao":"adotar_env"}.', { rotacao_id: rotacaoId, ...diagTroca });
     return { resultado: "falhou_recusada", rotacao_id: rotacaoId };
   }

@@ -8,6 +8,9 @@
 const MAIUSCULAS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 const MINUSCULAS = "abcdefghijkmnopqrstuvwxyz";
 const DIGITOS = "23456789";
+// Especial obrigatório: a 1ª troca real (rodada c36305cb, 2026-11-20) foi RECUSADA pelo TOTVS com senha só de
+// letras+dígitos. Conjunto curto e sem aspas/barra/&/<>/espaço: nada que quebre ao digitar, colar ou repassar.
+const ESPECIAIS = "@#$%*!";
 const TODOS = MAIUSCULAS + MINUSCULAS + DIGITOS;
 export const TAMANHO_SENHA = 16;
 
@@ -21,7 +24,7 @@ function indice(n: number, bytes: () => number): number {
 }
 
 /**
- * Senha nova: 16 chars, ≥1 maiúscula, ≥1 minúscula, ≥1 dígito, diferente do usuário (política TOTVS:
+ * Senha nova: 16 chars, ≥1 maiúscula, ≥1 minúscula, ≥1 dígito, ≥1 especial, diferente do usuário (política TOTVS:
  * mínimo 8, ≠ usuário, ≠ últimas 10 — esta última é garantida pela aleatoriedade de ~94 bits).
  * `bytes` injeta a fonte aleatória (produção: crypto.getRandomValues).
  */
@@ -31,6 +34,7 @@ export function gerarSenha(usuario: string, bytes: () => number = byteSeguro): s
       MAIUSCULAS[indice(MAIUSCULAS.length, bytes)],
       MINUSCULAS[indice(MINUSCULAS.length, bytes)],
       DIGITOS[indice(DIGITOS.length, bytes)],
+      ESPECIAIS[indice(ESPECIAIS.length, bytes)],
     ];
     while (chars.length < TAMANHO_SENHA) chars.push(TODOS[indice(TODOS.length, bytes)]);
     // embaralha (Fisher–Yates) para as classes obrigatórias não ficarem sempre no começo
@@ -140,4 +144,23 @@ export function montarEmailSenha(usuario: string, senha: string, pedidos: number
       "Ela ja foi confirmada com um login real no portal e as integracoes ja estao usando-a. " +
       "Se for repassar, use um canal seguro e apague este e-mail depois.\n\n" + lista + "\n",
   };
+}
+
+/**
+ * Texto da tela pós-troca para diagnóstico (alerta + log da rodada), SEM as senhas: toda ocorrência de
+ * cada segredo vira `[senha]`, espaços são colapsados e o resultado é cortado. A 1ª recusa real
+ * (rodada c36305cb) não deixou o motivo escrito — sem isto, a próxima recusa também seria um chute.
+ */
+export function textoDaTelaSemSegredo(
+  texto: unknown,
+  segredos: ReadonlyArray<string | null | undefined>,
+  max = 600,
+): string | null {
+  if (typeof texto !== "string" || texto.trim() === "") return null;
+  let t = texto;
+  for (const s of segredos) {
+    if (typeof s === "string" && s.length >= 4) t = t.split(s).join("[senha]");
+  }
+  t = t.replace(/\s+/g, " ").trim();
+  return t.length > max ? t.slice(0, max) + "…" : t;
 }
