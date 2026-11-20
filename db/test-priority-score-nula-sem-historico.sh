@@ -209,7 +209,9 @@ sqlstate_de() { # $1 = payload jsonb, $2 = p_run_id SQL literal
 foto() { Pq -c "SELECT md5(string_agg(f::text, '|' ORDER BY f.id)) FROM public.farmer_client_scores f"; }
 
 echo "=== A — apply_score_updates ==="
-Ps -c "SELECT public.apply_score_updates('$(payload a '' 1 null sem_historico)'::jsonb, NULL)"
+# Via sqlstate_de (não Ps): se a RPC recusar o NULL, o vermelho tem de cair NESTE assert, não no
+# ON_ERROR_STOP abortando o script inteiro (a falsificação `null_rejeitado` exige o assert certo).
+eq "A1 NULL explícito é aceito" "$(sqlstate_de "$(payload a '' 1 null sem_historico)" NULL)" "OK"
 eq "A1 NULL explícito grava NULL sobre o 67" "$(prio a)" "NULL"
 Ps -c "SELECT public.apply_score_updates('$(payload b '' 1 31 ativo)'::jsonb, NULL)"
 eq "A2 número grava o número" "$(prio b)" "31"
@@ -302,5 +304,5 @@ fi
 echo
 echo "RESULTADO: $PASS OK, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
-[ "$PASS" -ge 30 ] || { echo "PASS abaixo do piso (30) — suite truncada"; exit 1; }
+[ "$PASS" -ge 34 ] || { echo "PASS abaixo do piso (34) — suite truncada"; exit 1; }
 echo "TESTE_PRIORITY_NULA_OK"
