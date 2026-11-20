@@ -2,7 +2,7 @@
  * Dados do placar da "Visão do CEO" na home do master. Lê o MESMO cache do Cockpit financeiro
  * (mesmas queryKey/queryFn — `consulta*Cockpit`), então o número da home é o número da tela de
  * destino do clique. Só 3 das 7 leituras do cockpit: resumo (caixa, títulos), DRE (margem) e
- * snapshots de projeção (NCG). Derivados puros em `@/lib/dashboard/ceo-placar`.
+ * snapshots de projeção (NCG). Derivados puros em `@/lib/financeiro/ceo-placar`.
  */
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -24,7 +24,7 @@ import {
   ncgDoEscopo,
   vencidosDoEscopo,
   type ResumoCnpj,
-} from '@/lib/dashboard/ceo-placar';
+} from '@/lib/financeiro/ceo-placar';
 
 export function useCeoPlacar() {
   const { selection } = useCompany();

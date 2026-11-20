@@ -12,19 +12,6 @@
 import type { Company, CompanySelection } from '@/contexts/CompanyContext';
 import { consolidarTitulos, type TotaisTitulos } from '@/lib/financeiro/resumo-titulos';
 
-const BRL_COMPACTO = new Intl.NumberFormat('pt-BR', {
-  style: 'currency',
-  currency: 'BRL',
-  notation: 'compact',
-  maximumFractionDigits: 1,
-});
-
-/** "R$ 1,2 mi" — o CEO lê ordem de grandeza; o valor exato vai no `title` do tile. */
-export function formatarBRLCompacto(v: number | null | undefined): string {
-  if (v === null || v === undefined || Number.isNaN(v)) return '—';
-  return BRL_COMPACTO.format(v);
-}
-
 const EMPRESAS_GRUPO: readonly Company[] = ['oben', 'colacor', 'colacor_sc'];
 
 export function empresasDoEscopo(selection: CompanySelection): Company[] {

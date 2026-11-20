@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   caixaDoEscopo,
   empresasDoEscopo,
-  formatarBRLCompacto,
   linhasPorEmpresa,
   margemUltimoMesFechado,
   ncgDoEscopo,
@@ -126,16 +125,5 @@ describe('linhasPorEmpresa', () => {
     expect(linhas[0].margem).toEqual({ valor: 0.25, mes: 10 });
     expect(linhas[1].margem).toEqual({ valor: null, mes: null });
     expect(linhas[1].caixa.saldo).toBe(50);
-  });
-});
-
-describe('formatarBRLCompacto', () => {
-  it('ausente vira travessão, não R$ 0', () => {
-    expect(formatarBRLCompacto(null)).toBe('—');
-    expect(formatarBRLCompacto(undefined)).toBe('—');
-  });
-
-  it('formata em ordem de grandeza', () => {
-    expect(formatarBRLCompacto(1_234_567)).toMatch(/1,2\s*mi/);
   });
 });

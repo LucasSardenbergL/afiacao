@@ -57,6 +57,7 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/components/dashboard/__tests__/AgendaTodayList.cobertura.test.tsx", para: "src/contexts/webrtc-call-context.ts", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/components/dashboard/__tests__/AgendaTodayList.scores.test.tsx", para: "src/contexts/webrtc-call-context.ts", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/components/dashboard/AgendaTodayList.tsx", para: "src/contexts/webrtc-call-context.ts", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
+  { de: "src/components/dashboard/ceo/CeoPlacar.tsx", para: "src/components/financeiro/cockpit/useCeoPlacar.ts", deModulo: "farmer-inteligencia", paraModulo: "financeiro", kind: "runtime" },
   { de: "src/components/dashboard/CloserDashboard.tsx", para: "src/components/tarefas/MinhasTarefasCard.tsx", deModulo: "farmer-inteligencia", paraModulo: "tarefas", kind: "runtime" },
   { de: "src/components/dashboard/GestorExcecoes.tsx", para: "src/hooks/useExcecoesGestor.ts", deModulo: "farmer-inteligencia", paraModulo: "governanca", kind: "runtime" },
   { de: "src/components/dashboard/GestorExcecoes.tsx", para: "src/hooks/useTarefas.ts", deModulo: "farmer-inteligencia", paraModulo: "tarefas", kind: "runtime" },

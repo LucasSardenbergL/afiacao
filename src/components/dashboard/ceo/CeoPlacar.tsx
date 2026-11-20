@@ -18,9 +18,9 @@ import { cn } from '@/lib/utils';
 import { track } from '@/lib/analytics';
 import { useCompany, COMPANIES } from '@/contexts/CompanyContext';
 import { useTeamKpis } from '@/hooks/useTeamKpis';
-import { useCeoPlacar } from '@/hooks/dashboard/useCeoPlacar';
+import { useCeoPlacar } from '@/components/financeiro/cockpit/useCeoPlacar';
 import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
-import { formatarBRLCompacto } from '@/lib/dashboard/ceo-placar';
+import { formatarBRLCompacto } from '@/lib/dashboard/ceo-formato';
 
 const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 
