@@ -114,7 +114,7 @@ export function ProductItemForm({
       <CardContent>
         <div className="relative mb-3">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Buscar produto..." value={productSearch} onChange={e => onSearchChange(e.target.value)} className="pl-9 h-9" />
+          <Input type="search" data-atalho="busca-produto" aria-label={`Buscar em ${title}`} placeholder="Buscar produto..." value={productSearch} onChange={e => onSearchChange(e.target.value)} className="pl-9 h-9" />
         </div>
         {(customerPricesLoading || precoLoading) && (
           <div className="flex items-center gap-1.5 mb-2 text-[11px] text-muted-foreground" role="status">

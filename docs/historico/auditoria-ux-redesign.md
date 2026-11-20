@@ -102,3 +102,7 @@ precificado de OUTRO cliente já selecionado (agora recusa). Resto: aria-label e
 (IA + carrinho), `EmptyState` no carrinho, "Verificando cadastro…" em vez de "Sem cadastro"
 transitório, ⌘↵ na IA, catálogo da IA memoizado. Fora: combobox com setas na busca de cliente,
 atalhos globais, rótulos do seletor de pagamento (CartSummaryBar).
+Fatia 2 (mesmo dia): busca de cliente vira combobox (↑/↓/Enter/Esc, `aria-activedescendant`; Enter
+sem destaque só escolhe resultado ÚNICO; nada escolhe com busca em voo), foco vai à busca de
+produto após escolher o cliente (só `pointer:fine`), atalhos `c`/`p`/`a` (escopo página) e nome
+acessível no seletor de pagamento. Teste falsificado com 2 sabotagens.

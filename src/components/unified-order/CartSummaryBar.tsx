@@ -88,12 +88,15 @@ function PaymentCombobox({
 }) {
   const [open, setOpen] = useState(false);
   const selectedLabel = formas.find(f => f.codigo === selected)?.descricao || '';
+  // Nome acessível no botão: o leitor anuncia "Pagamento Oben: 30/60 dias", não só "Selecione…".
 
   if (loading) {
     return (
-      <div>
+      <div role="status">
         <Label className="text-xs font-medium">{label}</Label>
-        <Loader2 className="w-4 h-4 animate-spin mt-1" />
+        <p className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden /> Carregando condições…
+        </p>
       </div>
     );
   }
@@ -107,17 +110,18 @@ function PaymentCombobox({
             variant="outline"
             role="combobox"
             aria-expanded={open}
+            aria-label={`${label}: ${selectedLabel || 'nenhuma condição selecionada'}`}
             className="w-full justify-between text-sm h-9 mt-1 font-normal"
           >
             <span className="truncate">
               {selected ? (
                 <>
-                  {customerRanking.includes(selected) ? '⭐ ' : ''}
+                  {customerRanking.includes(selected) ? <span aria-hidden>⭐ </span> : ''}
                   {selectedLabel}
                 </>
               ) : 'Selecione...'}
             </span>
-            <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+            <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" aria-hidden />
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
