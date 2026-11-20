@@ -422,6 +422,11 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
  * v2: auditar cada uma individualmente e cruzar com os grants reais.
  */
 export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
+  // Rotação da senha do portal Sayerlack (2026-11-20, migration 20261120130000): `promover` reenfileira os pedidos
+  // parados só pela senha (CAS em pedido_compra_sugerido, só sem portal_protocolo). Chamada SÓ pela edge
+  // sayerlack-rotacionar-senha (service_role). Fecha por PRIVILÉGIO: REVOKE de PUBLIC, anon e authenticated e
+  // postcondição A3 que ABORTA se anon/authenticated executarem; prova no harness db/test-sayerlack-senha-portal.sh.
+  'public.sayerlack_senha_portal_promover',
   // "Segurar compra" (2026-11-01, migration 20261101090000): foto interna (saldo×cmc, fornecedor, cobertura)
   // chamada SÓ pelas RPCs gateadas acima e pelo envelope como postgres. NÃO é exposta ao app: fecha por
   // PRIVILÉGIO — `REVOKE ALL … FROM PUBLIC, anon, authenticated` na migration e postcondição que ABORTA se
