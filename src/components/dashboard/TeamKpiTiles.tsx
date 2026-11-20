@@ -11,6 +11,33 @@ import { Users, Briefcase, CalendarRange, type LucideIcon } from 'lucide-react';
 import { useTeamKpis } from '@/hooks/useTeamKpis';
 import { useCompany } from '@/contexts/CompanyContext';
 import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
+import { useMetaPotencial } from '@/hooks/dashboard/useMetaPotencial';
+import { agregarMeta, type MetaAgregada } from '@/lib/dashboard/meta-potencial';
+import { MetaPotencialDetalhe } from '@/components/dashboard/MetaPotencialDetalhe';
+
+/** Linha(s) de meta no tile do mês: % + ritmo por dia útil; indisponível é DITO, nunca R$ 0. */
+function linhaMeta(m: MetaAgregada | null, carregando: boolean, erro: boolean): ReactNode {
+  if (erro) return <div>meta indisponível</div>;
+  if (carregando || !m) return null;
+  if (m.meta == null) return <div className="text-status-warning">meta indisponível (sem calibração)</div>;
+  const prov = m.status === 'provisoria' ? ' · provisória' : '';
+  return (
+    <>
+      <div className="text-foreground/80">
+        meta {formatBRL(m.meta)}
+        {m.pct != null && ` · ${formatarFracaoPct(m.pct)}`}
+        {prov}
+      </div>
+      <div>
+        {m.batida
+          ? 'meta batida'
+          : m.ritmo == null
+            ? 'sem dias úteis restantes'
+            : `precisa ${formatBRL(m.ritmo)}/dia útil · ${m.diasRestantes} ${m.diasRestantes === 1 ? 'dia' : 'dias'}`}
+      </div>
+    </>
+  );
+}
 
 function Tile({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: string; sub?: ReactNode }) {
   return (
@@ -58,20 +85,26 @@ export function TeamKpiTiles() {
         )
       : undefined;
   const escopoSub = `pedidos Omie · ${escopo}`;
+  const metaQ = useMetaPotencial();
+  const meta = metaQ.data ? agregarMeta(metaQ.data, selection) : null;
   const mesSub: ReactNode = isError ? (
     'indisponível'
   ) : (
     <>
       {data && trendMoM(data.variacaoMes)}
+      {linhaMeta(meta, metaQ.isLoading, metaQ.isError)}
       <div>{escopoSub}</div>
     </>
   );
 
   return (
-    <div className="grid grid-cols-3 gap-3">
-      <Tile icon={Users} label="Vendedores com pedido · mês" value={vendedores} sub={vendedoresSub} />
-      <Tile icon={Briefcase} label="Receita time · hoje" value={receita(data?.receitaHoje)} sub={isError ? 'indisponível' : escopoSub} />
-      <Tile icon={CalendarRange} label="Receita time · mês" value={receita(data?.receitaMes)} sub={mesSub} />
+    <div className="space-y-2">
+      <div className="grid grid-cols-3 gap-3">
+        <Tile icon={Users} label="Vendedores com pedido · mês" value={vendedores} sub={vendedoresSub} />
+        <Tile icon={Briefcase} label="Receita time · hoje" value={receita(data?.receitaHoje)} sub={isError ? 'indisponível' : escopoSub} />
+        <Tile icon={CalendarRange} label="Receita time · mês" value={receita(data?.receitaMes)} sub={mesSub} />
+      </div>
+      {meta && !meta.semLinhas && <MetaPotencialDetalhe m={meta} escopo={escopo} />}
     </div>
   );
 }
