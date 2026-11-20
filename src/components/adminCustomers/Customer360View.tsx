@@ -28,7 +28,9 @@ import { CustomerCallsTab } from '@/components/customer/CustomerCallsTab';
 import { CustomerVisitsTab } from '@/components/customer/CustomerVisitsTab';
 import { CustomerProcessTab } from '@/components/customer/CustomerProcessTab';
 import { CustomerContactsTab } from '@/components/customer/CustomerContactsTab';
-import { fmt, HEALTH_CLASSES, formatDocument } from './config';
+import {
+  NAO_APURADO, classeSaudeExibida, fmt, fmtGasto, fmtPrioridade, formatDocument, metricasExibiveis,
+} from './config';
 import { MetricCard, ScoreItem } from './cards';
 import { RequiresPoToggle } from './RequiresPoToggle';
 import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
@@ -58,7 +60,8 @@ export function Customer360View({
   onDeleteTool: (id: string) => void;
 }) {
   const navigate = useNavigate();
-  const healthInfo = HEALTH_CLASSES[score?.health_class || 'critico'];
+  // Sem score/classe → "Não avaliado"; o `|| 'critico'` anterior afirmava um veredito não apurado.
+  const healthInfo = classeSaudeExibida(score?.health_class ?? null);
   const waHref = customer.phone ? whatsappLink(customer.phone) : null;
 
   return (
@@ -127,7 +130,7 @@ export function Customer360View({
       {/* KPI Cards */}
       {score && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <MetricCard icon={DollarSign} label="Gasto mensal" value={fmt(score.avg_monthly_spend_180d)} />
+          <MetricCard icon={DollarSign} label="Gasto mensal" value={fmtGasto(metricasExibiveis(score).gasto)} />
           <MetricCard icon={Activity} label="Score saúde" value={score.health_score.toFixed(0)} />
           {/* churn_risk é PERCENTUAL 0–100, não fração: prod (2026-07-21) tem 6.632/6.632 linhas
               acima de 1 (mín. 33, máx. 100, média 96). O `* 100` que estava aqui exibia "9600%",
@@ -212,9 +215,17 @@ export function Customer360View({
                 {/* expansion_score é coluna sem produtor (null em 100% da base hoje) — guard
                     `== null` com fallback '—' em vez de afirmar "0.0" para quem não foi avaliado. */}
                 <ScoreItem label="Expansão" value={score.expansion_score == null ? '—' : score.expansion_score.toFixed(1)} />
-                <ScoreItem label="Prioridade" value={score.priority_score.toFixed(1)} />
-                <ScoreItem label="Dias s/ compra" value={String(score.days_since_last_purchase)} danger={score.days_since_last_purchase > 60} />
-                <ScoreItem label="Intervalo médio" value={`${score.avg_monthly_spend_180d > 0 ? Math.round(Number(score.avg_monthly_spend_180d)) : '-'}d`} />
+                <ScoreItem label="Prioridade" value={fmtPrioridade(metricasExibiveis(score).prioridade)} />
+                <ScoreItem
+                  label="Dias s/ compra"
+                  value={metricasExibiveis(score).dias == null ? NAO_APURADO : String(metricasExibiveis(score).dias)}
+                  danger={(metricasExibiveis(score).dias ?? 0) > 60}
+                />
+                {/* Antes lia avg_monthly_spend_180d (R$) e o exibia como DIAS. O intervalo é avg_repurchase_interval. */}
+                <ScoreItem
+                  label="Intervalo médio"
+                  value={score.avg_repurchase_interval == null ? NAO_APURADO : `${Math.round(score.avg_repurchase_interval)}d`}
+                />
               </div>
             </CardContent>
           </Card>

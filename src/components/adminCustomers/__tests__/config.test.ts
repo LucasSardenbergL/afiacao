@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { formatDocument, HEALTH_CLASSES, fmt } from "../config";
+import {
+  formatDocument, HEALTH_CLASSES, fmt, NAO_APURADO, fmtContagem, fmtGasto, fmtPrioridade,
+  classeSaudeExibida, metricasExibiveis,
+} from "../config";
 
 describe("adminCustomers/config", () => {
   it("formatDocument formata CPF/CNPJ e trata null/outros", () => {
@@ -18,5 +21,33 @@ describe("adminCustomers/config", () => {
 
   it("fmt em BRL", () => {
     expect(fmt(1000)).toContain("1.000,00");
+  });
+});
+
+describe("adminCustomers/config — ausente ≠ zero", () => {
+  const base = { days_since_last_purchase: 999, avg_monthly_spend_180d: 0, priority_score: 67 };
+
+  it("sem_historico: as sentinelas da edge (999d, R$ 0, prioridade 67) viram null", () => {
+    expect(metricasExibiveis({ ...base, sales_history_status: "sem_historico" }))
+      .toEqual({ dias: null, gasto: null, prioridade: null });
+  });
+
+  it("com histórico: zero MEDIDO é preservado (R$ 0,00 na janela de 180d é dado real)", () => {
+    expect(metricasExibiveis({ sales_history_status: "ativo", days_since_last_purchase: 218, avg_monthly_spend_180d: 0, priority_score: 32 }))
+      .toEqual({ dias: 218, gasto: 0, prioridade: 32 });
+  });
+
+  it("formatadores: null → '—'; prioridade inteira; contagem com milhar", () => {
+    expect(fmtGasto(null)).toBe(NAO_APURADO);
+    expect(fmtGasto(0)).toContain("0,00");
+    expect(fmtPrioridade(null)).toBe(NAO_APURADO);
+    expect(fmtPrioridade(34)).toBe("34");
+    expect(fmtContagem(16099)).toBe("16.099");
+  });
+
+  it("classe ausente ou desconhecida → 'Não avaliado', nunca 'Crítico'", () => {
+    expect(classeSaudeExibida(null).label).toBe("Não avaliado");
+    expect(classeSaudeExibida("xpto").label).toBe("Não avaliado");
+    expect(classeSaudeExibida("atencao").label).toBe("Atenção");
   });
 });

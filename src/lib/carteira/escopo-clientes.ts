@@ -172,7 +172,8 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
     map.set(s.customer_user_id, {
       customer_user_id: s.customer_user_id,
       health_score: s.health_score ?? 0,
-      health_class: s.health_class ?? 'critico',
+      // Sem `?? 'critico'`: classe ausente é "não avaliado", não um veredito.
+      health_class: s.health_class ?? null,
       // Sem `?? 0`: risco ausente chega como null ao consumidor (mesma razão do gross_margin_pct
       // abaixo). Coagir para 0 afirmaria "sem risco de churn" — o melhor resultado — sobre quem
       // não foi medido. churn_risk é 0–100 e 0 é conhecido.
@@ -180,10 +181,12 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
       // O #1565 corrigiu `churn_risk` NESTE mesmo map.set e deixou a linha abaixo. Coagir na
       // fronteira torna inertes os guards de quem lê o mapa (#1498) — mesma razão, mesmo helper.
       expansion_score: valorMedido(s.expansion_score),
-      priority_score: s.priority_score ?? 0,
-      avg_monthly_spend_180d: s.avg_monthly_spend_180d ?? 0,
-      days_since_last_purchase: s.days_since_last_purchase ?? 0,
-      category_count: s.category_count ?? 0,
+      // Sem `?? 0` (mesma razão do churn_risk acima): `days ?? 0` afirmava "comprou hoje" e
+      // `spend ?? 0` afirmava "R$ 0,00 medido" sobre quem não foi medido.
+      priority_score: s.priority_score ?? null,
+      avg_monthly_spend_180d: s.avg_monthly_spend_180d ?? null,
+      days_since_last_purchase: s.days_since_last_purchase ?? null,
+      category_count: s.category_count ?? null,
       // Sem `?? 0`: margem ausente tem de chegar como null ao consumidor. Coagir aqui tornaria
       // inertes os guards de quem lê este mapa (a armadilha da "correção só no consumidor").
       gross_margin_pct: margem?.margem ?? null,
@@ -192,6 +195,8 @@ export async function fetchScoresPorCustomer(ids: string[]): Promise<Map<string,
       // Cobertura de custo (#1567): mesma disciplina — contagem não computada chega como null.
       itens_com_custo: cobertura.itensComCusto,
       itens_sem_custo: cobertura.itensSemCusto,
+      // Já vinha no select mas não era mapeado: o 360 lia avg_monthly_spend_180d no lugar dele.
+      avg_repurchase_interval: s.avg_repurchase_interval ?? null,
       sales_history_status: s.sales_history_status ?? null,
     });
   }
