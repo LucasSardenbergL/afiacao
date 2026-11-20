@@ -1,15 +1,14 @@
-// Toolbar da listagem de pedidos: ações + filtro de empresa + busca.
+// Toolbar da listagem de pedidos: filtro de empresa + busca (as ações ficam em SalesOrdersAcoes).
 // Extraída verbatim de src/pages/SalesOrders.tsx (god-component split).
 import { useEffect, useRef, useState } from 'react';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Package, Printer, Building2, Search, Loader2 } from 'lucide-react';
+import { Plus, Package, Printer, Search, Loader2 } from 'lucide-react';
 import { type Account } from './types';
 
 interface SalesOrdersToolbarProps {
-  onNavigate: (path: string) => void;
   accountFilter: Account;
   setAccountFilter: (a: Account) => void;
   search: string;
@@ -21,7 +20,6 @@ interface SalesOrdersToolbarProps {
 export const BUSCA_DEBOUNCE_MS = 300;
 
 export function SalesOrdersToolbar({
-  onNavigate,
   accountFilter,
   setAccountFilter,
   search,
@@ -45,46 +43,23 @@ export function SalesOrdersToolbar({
   }, [search]);
 
   return (
-    <>
-      <div className="flex gap-2">
-        <Button onClick={() => onNavigate('/sales/new')} className="gap-2 flex-1">
-          <Plus className="w-4 h-4" />
-          Novo Pedido
-        </Button>
-        <Button variant="outline" onClick={() => onNavigate('/sales/products')} className="gap-2">
-          <Package className="w-4 h-4" />
-          Catálogo
-        </Button>
-        <Button variant="outline" onClick={() => onNavigate('/sales/print')} className="gap-2">
-          <Printer className="w-4 h-4" />
-          Imprimir
-        </Button>
-      </div>
-
-      {/* Account Filter — 3 empresas reais + Todos. Afiação foi unificada
-          em Colacor SC (módulo, não empresa). Cada card preserva o badge
-          "Afiação" quando _source='afiacao' pra distinção visual. */}
-      <Tabs value={accountFilter} onValueChange={(v) => setAccountFilter(v as Account)}>
-        <TabsList className="w-full grid grid-cols-4">
+    <div className="flex flex-col gap-2 md:flex-row md:items-center">
+      {/* 3 empresas reais + Todos. Afiação foi unificada em Colacor SC (módulo, não empresa);
+          a linha preserva a tag "Afiação" pra distinção visual. */}
+      <Tabs value={accountFilter} onValueChange={(v) => setAccountFilter(v as Account)} className="shrink-0">
+        <TabsList className="w-full justify-start overflow-x-auto md:w-auto">
           <TabsTrigger value="all">Todos</TabsTrigger>
-          <TabsTrigger value="oben" className="gap-1">
-            <Building2 className="w-3 h-3" />
-            Oben
-          </TabsTrigger>
-          <TabsTrigger value="colacor" className="gap-1">
-            <Building2 className="w-3 h-3" />
-            Colacor
-          </TabsTrigger>
-          <TabsTrigger value="colacor_sc" className="gap-1">
-            <Building2 className="w-3 h-3" />
-            Colacor SC
-          </TabsTrigger>
+          <TabsTrigger value="oben">Oben</TabsTrigger>
+          <TabsTrigger value="colacor">Colacor</TabsTrigger>
+          <TabsTrigger value="colacor_sc">Colacor SC</TabsTrigger>
         </TabsList>
       </Tabs>
 
-      <div className="relative">
+      <div className="relative flex-1 md:max-w-md md:ml-auto">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
+          type="search"
+          aria-label="Buscar pedidos"
           placeholder="Buscar por cliente, nº pedido, item ou valor..."
           value={rascunho}
           onChange={(e) => setRascunho(e.target.value)}
@@ -97,6 +72,26 @@ export function SalesOrdersToolbar({
           />
         )}
       </div>
-    </>
+    </div>
+  );
+}
+
+/** Ações da página (cabeçalho): criar pedido é a principal; catálogo e impressão em lote, secundárias. */
+export function SalesOrdersAcoes({ onNavigate }: { onNavigate: (path: string) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Button variant="outline" size="sm" onClick={() => onNavigate('/sales/products')} className="gap-1.5">
+        <Package className="w-4 h-4" />
+        Catálogo
+      </Button>
+      <Button variant="outline" size="sm" onClick={() => onNavigate('/sales/print')} className="gap-1.5">
+        <Printer className="w-4 h-4" />
+        Imprimir
+      </Button>
+      <Button size="sm" onClick={() => onNavigate('/sales/new')} className="gap-1.5">
+        <Plus className="w-4 h-4" />
+        Novo pedido
+      </Button>
+    </div>
   );
 }

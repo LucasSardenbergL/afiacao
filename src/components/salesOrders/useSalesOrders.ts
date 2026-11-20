@@ -343,6 +343,9 @@ export function useSalesOrders() {
     setSearch,
     limparFiltros,
     selectedIds,
+    // As LINHAS selecionadas (inclusive as que a busca/aba atual tirou da tela) — o diálogo de
+    // exclusão em lote mostra o alcance real, não só a contagem.
+    linhasSelecionadas: [...selecionados.values()],
     toggleSelect,
     clearSelection,
     orders,

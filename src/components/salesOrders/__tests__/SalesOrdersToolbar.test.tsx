@@ -1,10 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { SalesOrdersToolbar, BUSCA_DEBOUNCE_MS } from '../SalesOrdersToolbar';
+import { SalesOrdersToolbar, SalesOrdersAcoes, BUSCA_DEBOUNCE_MS } from '../SalesOrdersToolbar';
 
 function setup(overrides: Partial<React.ComponentProps<typeof SalesOrdersToolbar>> = {}) {
   const props: React.ComponentProps<typeof SalesOrdersToolbar> = {
-    onNavigate: vi.fn(),
     accountFilter: 'all',
     setAccountFilter: vi.fn(),
     search: '',
@@ -16,14 +15,15 @@ function setup(overrides: Partial<React.ComponentProps<typeof SalesOrdersToolbar
 }
 
 describe('SalesOrdersToolbar', () => {
-  it('navega para novo pedido, catálogo e imprimir', () => {
-    const props = setup();
-    fireEvent.click(screen.getByRole('button', { name: /Novo Pedido/ }));
+  it('ações do cabeçalho navegam para novo pedido, catálogo e imprimir', () => {
+    const onNavigate = vi.fn();
+    render(<SalesOrdersAcoes onNavigate={onNavigate} />);
+    fireEvent.click(screen.getByRole('button', { name: /Novo pedido/ }));
     fireEvent.click(screen.getByRole('button', { name: /Catálogo/ }));
     fireEvent.click(screen.getByRole('button', { name: /Imprimir/ }));
-    expect(props.onNavigate).toHaveBeenCalledWith('/sales/new');
-    expect(props.onNavigate).toHaveBeenCalledWith('/sales/products');
-    expect(props.onNavigate).toHaveBeenCalledWith('/sales/print');
+    expect(onNavigate).toHaveBeenCalledWith('/sales/new');
+    expect(onNavigate).toHaveBeenCalledWith('/sales/products');
+    expect(onNavigate).toHaveBeenCalledWith('/sales/print');
   });
 
   it('dispara setSearch UMA vez quando a digitação pausa (debounce), não a cada tecla', () => {

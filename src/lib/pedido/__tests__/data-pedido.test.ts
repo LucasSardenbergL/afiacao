@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { ehDataPuraUtc, formatarDataPedido } from '../data-pedido';
+import { diaDoPedido, ehDataPuraUtc, formatarDataPedido, horaDoPedido, rotuloDiaPedido } from '../data-pedido';
 
 describe('formatarDataPedido', () => {
   it('data-pura do sync (meia-noite UTC) → só a data, no dia UTC correto (não escorrega pro dia anterior)', () => {
@@ -56,5 +56,40 @@ describe('ehDataPuraUtc', () => {
     expect(ehDataPuraUtc(new Date('2026-06-10T00:00:01.000Z'))).toBe(false);
     expect(ehDataPuraUtc(new Date('2026-06-10T21:00:00.000Z'))).toBe(false);
     expect(ehDataPuraUtc(new Date('2026-06-10T13:00:00.000Z'))).toBe(false); // 1h ≠ meio-dia
+  });
+});
+
+describe('diaDoPedido / horaDoPedido (agrupamento da listagem)', () => {
+  it('data-pura do Omie (meio-dia e meia-noite UTC) usa o dia UTC e não tem hora', () => {
+    expect(diaDoPedido('2026-11-19T12:00:00.000Z')).toBe('2026-11-19');
+    expect(diaDoPedido('2026-11-19T00:00:00.000Z')).toBe('2026-11-19');
+    expect(horaDoPedido('2026-11-19T12:00:00.000Z')).toBeNull();
+  });
+
+  it('pedido do wizard usa o dia e a hora LOCAIS', () => {
+    const iso = '2026-11-19T15:32:10.123Z';
+    const d = new Date(iso);
+    expect(diaDoPedido(iso)).toBe(format(d, 'yyyy-MM-dd'));
+    expect(horaDoPedido(iso)).toBe(format(d, 'HH:mm'));
+  });
+
+  it('data inválida → null (nunca um dia inventado)', () => {
+    expect(diaDoPedido('lixo')).toBeNull();
+    expect(horaDoPedido('lixo')).toBeNull();
+  });
+});
+
+describe('rotuloDiaPedido', () => {
+  it('Hoje / Ontem relativos ao dia injetado, inclusive na virada de mês', () => {
+    expect(rotuloDiaPedido('2026-11-20', '2026-11-20')).toBe('Hoje');
+    expect(rotuloDiaPedido('2026-11-19', '2026-11-20')).toBe('Ontem');
+    expect(rotuloDiaPedido('2026-10-31', '2026-11-01')).toBe('Ontem');
+  });
+
+  it('mesmo ano: dia da semana + dia + mês; outro ano: com o ano', () => {
+    expect(rotuloDiaPedido('2026-11-17', '2026-11-20')).toBe(
+      (() => { const t = format(new Date(2026, 10, 17), "EEE, d 'de' MMM", { locale: ptBR }); return t.charAt(0).toUpperCase() + t.slice(1); })(),
+    );
+    expect(rotuloDiaPedido('2025-11-17', '2026-11-20')).toMatch(/2025$/);
   });
 });
