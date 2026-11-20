@@ -34,6 +34,7 @@ import {
   VENDEDOR,
   vendedorDoCadastro,
 } from "./decisao.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 type StatusRecibo =
   | "planejado" | "ja_certo" | "precondicao_falhou" | "alterado" | "verificado" | "divergente" | "indeterminado" | "erro_omie";
@@ -174,7 +175,7 @@ export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBl
     await bloco(p, d, o, res);
   } catch (e) {
     res.fim = false;
-    res.parou = `exceção: ${e instanceof Error ? e.message : String(e)}`;
+    res.parou = `exceção: ${mensagemDeErro(e) ?? "erro sem mensagem"}`;
   }
   fecharPendentes(res);
   return res;
