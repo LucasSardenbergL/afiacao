@@ -35,7 +35,7 @@ import {
   vendedorDoCadastro,
 } from "./decisao.ts";
 
-export type StatusRecibo =
+type StatusRecibo =
   | "planejado" | "ja_certo" | "precondicao_falhou" | "alterado" | "verificado" | "divergente" | "indeterminado" | "erro_omie";
 
 export interface Candidato {
@@ -68,7 +68,7 @@ export interface RespostaOmieSimples {
   fault: string | null;
 }
 
-export interface Pendente {
+interface Pendente {
   id: number;
   omie_codigo_cliente: number;
   customer_user_id: string | null;
@@ -93,14 +93,16 @@ export interface Dependencias {
   atualizar(id: number, patch: Partial<Recibo>): Promise<void>;
   /** UPDATE estreito do vendedor no espelho; true = exatamente 1 linha atualizada. */
   atualizarEspelho(conta: Conta, codigo: number, userId: string | null, alvo: number): Promise<boolean>;
-  /** TODOS os recibos 'alterado'/'indeterminado' da execução na conta (sem filtro de idade), em ordem de id. */
+  /** Lote orfaos: o vínculo (conta, código) → user ainda está no espelho FRESCO? Conferido logo antes de escrever. */
+  confirmarVinculo(conta: Conta, codigo: number, userId: string): Promise<boolean>;
+  /** TODOS os recibos 'alterado'/'indeterminado' da execução na conta (sem filtro de idade), o menos tocado primeiro. */
   pendentesVerificacao(execucaoId: string, conta: Conta): Promise<Pendente[]>;
   agora(): number;
   dormir(ms: number): Promise<void>;
   novoId(): string;
 }
 
-export interface ItemResultado {
+interface ItemResultado {
   omie_codigo_cliente: number;
   customer_user_id: string | null;
   nome_fantasia: string | null;
@@ -162,31 +164,42 @@ function fecharPendentes(res: ResultadoBloco) {
 }
 
 export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBloco): Promise<ResultadoBloco> {
+  const execucao_id = p.modo === "verificar" ? p.execucao_id! : d.novoId();
+  const res: ResultadoBloco = {
+    execucao_id, modo: p.modo, lote: p.lote, conta: p.conta, itens: [], contagem: {}, proximo_apos: null, fim: false, pendentes: 0, parou: null,
+  };
+  // Exceção no meio (banco, leitura) NÃO perde o execucao_id nem os itens já feitos (Codex r2 P1): o operador precisa
+  // deles para o modo verificar.
+  try {
+    await bloco(p, d, o, res);
+  } catch (e) {
+    res.fim = false;
+    res.parou = `exceção: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  fecharPendentes(res);
+  return res;
+}
+
+async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: ResultadoBloco): Promise<void> {
   const inicio = d.agora();
   const decorrido = () => d.agora() - inicio;
-  const execucao_id = p.modo === "verificar" ? p.execucao_id! : d.novoId();
-  const itens: ItemResultado[] = [];
-  const res: ResultadoBloco = {
-    execucao_id, modo: p.modo, lote: p.lote, conta: p.conta, itens, contagem: {}, proximo_apos: null, fim: false, pendentes: 0, parou: null,
-  };
+  const execucao_id = res.execucao_id;
+  const itens = res.itens;
 
-  if (p.modo === "verificar") {
-    await verificar(p, d, o, res);
-    fecharPendentes(res);
-    return res;
-  }
+  if (p.modo === "verificar") return await verificar(p, d, o, res);
 
   // O alvo tem de existir, estar ativo e ter o nome esperado NA CONTA — antes de tocar qualquer cliente.
   const donos = new Set<Dono>(p.lote === "saida_vendedora" ? ["REGINA"] : (p.escolhas ?? []).map((e) => e.dono));
   const vend = await d.listarVendedores();
-  if ("erro" in vend) { res.parou = `ListarVendedores falhou: ${vend.erro}`; return res; }
+  if ("erro" in vend) { res.parou = `ListarVendedores falhou: ${vend.erro}`; return; }
   for (const dono of donos) {
     const c = conferirAlvo(vend.vendedores, VENDEDOR[dono][p.conta], NOME_ESPERADO[dono]);
-    if (!c.ok) { res.parou = `alvo ${dono}/${p.conta}: ${c.erro}`; return res; }
+    if (!c.ok) { res.parou = `alvo ${dono}/${p.conta}: ${c.erro}`; return; }
   }
 
   const candidatos = await d.candidatos(p);
-  const aVerificar: { id: number; item: ItemResultado; hashAntes: string; lidoEm: number }[] = [];
+  // `esperado`: o vendedor que a prova tem de achar — o alvo (escrita feita) ou o de antes (fault, nada gravado).
+  const aVerificar: { id: number; item: ItemResultado; hashAntes: string; lidoEm: number; esperado: number | null; seConfirmar: StatusRecibo }[] = [];
   let processados = 0;
 
   for (const cand of candidatos) {
@@ -229,6 +242,7 @@ export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBl
       if (p.modo === "aplicar") item.espelho_ok = await d.atualizarEspelho(p.conta, cand.omie_codigo_cliente, cand.customer_user_id, alvo);
       await d.registrar({ ...base, status: "ja_certo", hash_antes: hashAntes, espelho_ok: item.espelho_ok });
       contar(res, "ja_certo");
+      if (item.espelho_ok === false) { res.parou = `espelho não atualizou no cliente ${cand.omie_codigo_cliente}`; break; }
       continue;
     }
     if (v.tipo === "precondicao_falhou") {
@@ -242,6 +256,15 @@ export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBl
       item.status = "planejado";
       await d.registrar({ ...base, status: "planejado", hash_antes: hashAntes });
       contar(res, "planejado");
+      continue;
+    }
+
+    // orfaos: a escolha do founder é por CLIENTE — o vínculo código→user tem de seguir fresco AGORA (Codex r2 P1).
+    if (p.lote === "orfaos" && !(cand.customer_user_id && await d.confirmarVinculo(p.conta, cand.omie_codigo_cliente, cand.customer_user_id))) {
+      item.status = "precondicao_falhou";
+      item.erro = "o vínculo do cliente mudou ou venceu no espelho";
+      await d.registrar({ ...base, status: "precondicao_falhou", hash_antes: hashAntes, erro: item.erro });
+      contar(res, "precondicao_falhou");
       continue;
     }
 
@@ -261,14 +284,19 @@ export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBl
     }
     // Releitura SEMPRE — inclusive depois de fault (um retry REDUNDANT pode esconder escrita feita; Codex P1).
     const relido = cadastroRelido(await d.relerCliente(cand.omie_codigo_cliente), cand.omie_codigo_cliente);
-    const depois = relido ? vendedorDoCadastro(relido) : null;
+    // Leitura CRUA: ilegível não vira "vazio" na comparação com o de antes (Codex r2 P2).
+    const depoisL = relido ? lerVendedor(relido) : "ilegivel";
+    const depois = depoisL === "ilegivel" ? null : depoisL;
     item.vendedor_depois = depois;
-    if (depois !== alvo) {
-      if (faultEscrita !== null && relido && depois === atual) {
-        item.status = "erro_omie"; // o Omie recusou e o cadastro segue como estava: nada gravado, segue o lote
+    if (depoisL !== alvo) {
+      if (faultEscrita !== null && relido && depoisL === leitura && leitura !== "ilegivel") {
+        // O Omie recusou e o vendedor segue o de antes. Pode ter mexido em OUTRO campo (Codex r2 P1): o recibo segue
+        // 'indeterminado' até a prova por hash confirmar que nada mudou ('erro_omie') — e o bloco continua.
+        item.status = "erro_omie";
         item.erro = faultEscrita;
-        await d.atualizar(id, { status: "erro_omie", vendedor_depois: depois, erro: faultEscrita });
+        await d.atualizar(id, { vendedor_depois: depois, erro: faultEscrita });
         contar(res, "erro_omie");
+        aVerificar.push({ id, item, hashAntes, lidoEm, esperado: atual, seConfirmar: "erro_omie" });
         continue;
       }
       item.status = faultEscrita !== null && !relido ? "indeterminado" : "divergente";
@@ -282,7 +310,7 @@ export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBl
     item.status = "alterado";
     await d.atualizar(id, { status: "alterado", vendedor_depois: depois, espelho_ok: item.espelho_ok, erro: faultEscrita });
     contar(res, "alterado");
-    aVerificar.push({ id, item, hashAntes, lidoEm });
+    aVerificar.push({ id, item, hashAntes, lidoEm, esperado: alvo, seConfirmar: "verificado" });
     if (!item.espelho_ok) { res.parou = `espelho não atualizou no cliente ${cand.omie_codigo_cliente}`; break; }
   }
   res.fim = res.parou === null && processados === candidatos.length && candidatos.length < p.limite;
@@ -294,13 +322,15 @@ export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBl
     if (decorrido() + Math.max(0, espera) > o.orcamentoTotalMs) break; // fica 'alterado' → modo verificar
     if (espera > 0) await d.dormir(espera);
     const cad = cadastroDe(await d.consultarCliente(x.item.omie_codigo_cliente), x.item.omie_codigo_cliente);
-    if (!cad) continue; // sem leitura não há prova: segue 'alterado'
+    if (!cad) continue; // sem leitura não há prova: segue 'alterado'/'indeterminado' → modo verificar
     const hashDepois = await hashCadastro(cad);
-    contar(res, "alterado", -1);
-    if (hashDepois === x.hashAntes && vendedorDoCadastro(cad) === x.item.vendedor_alvo) {
-      x.item.status = "verificado";
-      await d.atualizar(x.id, { status: "verificado", hash_depois: hashDepois });
-      contar(res, "verificado");
+    const statusAntes = x.item.status;
+    contar(res, statusAntes, -1);
+    if (hashDepois === x.hashAntes && lerVendedor(cad) === x.esperado) {
+      x.item.status = x.seConfirmar;
+      await d.atualizar(x.id, { status: x.seConfirmar, hash_depois: hashDepois });
+      contar(res, x.seConfirmar);
+      if (x.seConfirmar === "erro_omie") x.item.erro = `${x.item.erro ?? ""} (provado: nada gravado)`.trim();
     } else {
       x.item.status = "divergente";
       x.item.erro = "o cadastro mudou além do vendedor";
@@ -310,8 +340,6 @@ export async function processarBloco(p: Parametros, d: Dependencias, o: OpcoesBl
       res.fim = false;
     }
   }
-  fecharPendentes(res);
-  return res;
 }
 
 /**
@@ -335,15 +363,23 @@ async function verificar(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Re
     };
     res.itens.push(item);
     const cad = cadastroDe(await d.consultarCliente(x.omie_codigo_cliente), x.omie_codigo_cliente);
-    if (!cad) { item.erro = "ConsultarCliente sem o cadastro deste cliente"; restam++; continue; }
+    if (!cad) {
+      // Sem leitura: segue pendente, mas é TOCADO (atualizado_em) para ir ao fim da fila — um cliente excluído do Omie
+      // não pode travar a verificação dos outros (Codex r2 P2).
+      item.erro = "ConsultarCliente sem o cadastro deste cliente";
+      await d.atualizar(x.id, { erro: item.erro });
+      restam++;
+      continue;
+    }
     const h = await hashCadastro(cad);
-    const vend = vendedorDoCadastro(cad);
+    const vendL = lerVendedor(cad); // cru: ilegível ≠ vazio (Codex r2 P2)
+    const vend = vendL === "ilegivel" ? null : vendL;
     item.vendedor_depois = vend;
     let status: StatusRecibo;
-    if (x.hash_antes !== null && h === x.hash_antes && vend === x.vendedor_alvo) {
+    if (x.hash_antes !== null && h === x.hash_antes && vendL === x.vendedor_alvo) {
       status = "verificado";
       if (x.status === "indeterminado") item.espelho_ok = await d.atualizarEspelho(p.conta, x.omie_codigo_cliente, x.customer_user_id, x.vendedor_alvo);
-    } else if (x.status === "indeterminado" && x.hash_antes !== null && h === x.hash_antes && vend === x.vendedor_antes) {
+    } else if (x.status === "indeterminado" && x.hash_antes !== null && h === x.hash_antes && vendL === x.vendedor_antes) {
       status = "erro_omie";
       item.erro = "a escrita indeterminada não chegou ao Omie";
     } else {
@@ -356,6 +392,7 @@ async function verificar(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Re
       ...(item.espelho_ok === null ? {} : { espelho_ok: item.espelho_ok }),
     });
     contar(res, status);
+    if (item.espelho_ok === false) { res.parou = `espelho não atualizou no cliente ${x.omie_codigo_cliente}`; restam++; break; }
   }
-  res.fim = restam === 0;
+  res.fim = res.parou === null && restam === 0;
 }

@@ -5,9 +5,9 @@
 // o vendedor de ninguém para um código arbitrário.
 
 export type Conta = "oben" | "colacor" | "colacor_sc";
-export const CONTAS: readonly Conta[] = ["oben", "colacor", "colacor_sc"];
+const CONTAS: readonly Conta[] = ["oben", "colacor", "colacor_sc"];
 export type Lote = "saida_vendedora" | "orfaos";
-export type Modo = "dry_run" | "aplicar" | "verificar";
+type Modo = "dry_run" | "aplicar" | "verificar";
 export type Dono = "REGINA" | "LUCAS";
 
 /** Código de vendedor de cada pessoa em cada conta (omie_vendedor_map + ListarVendedores, conferidos em 2026-11-20). */
@@ -27,9 +27,9 @@ export const ORIGEM_SAIDA: Record<Conta, readonly number[]> = {
 export const NOME_ESPERADO: Record<Dono, string> = { REGINA: "REGINA", LUCAS: "LUCAS" };
 
 export const CONFIRMACAO_APLICAR = "TROCAR VENDEDOR NO OMIE";
-export const LIMITE_PADRAO = 15;
-export const LIMITE_MAX = 30;
-export const CANARIO_MAX = 10;
+const LIMITE_PADRAO = 15;
+const LIMITE_MAX = 30;
+const CANARIO_MAX = 10;
 
 export interface Parametros {
   modo: Modo;

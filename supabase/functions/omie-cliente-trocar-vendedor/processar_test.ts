@@ -25,6 +25,8 @@ interface Cenario {
   vendedores?: { codigo: number; nome: string; inativo: string }[];
   /** Hook para sabotar a escrita (ex.: o Omie apagar a transportadora junto). */
   espelhoFalha?: boolean;
+  vinculo?: (codigo: number, userId: string) => boolean;
+  registrarFalhaNo?: number;
   /** Resposta do Consultar sabotada (ex.: o Omie devolve OUTRO cliente). */
   consultaTroca?: (cod: number) => Record<string, unknown> | undefined;
   aoAlterar?: (payload: Record<string, unknown>, atual: Record<string, unknown>) => Record<string, unknown> | "indeterminada" | { fault: string; gravou?: boolean };
@@ -67,9 +69,12 @@ function montar(c: Cenario) {
     listarVendedores: async () => ({ vendedores: c.vendedores ?? [{ codigo: REGINA_OBEN, nome: "REGINA", inativo: "N" }] }),
     ehIndeterminada: (e) => e instanceof Indeterminada,
     candidatos: async () => c.candidatos,
-    registrar: async (r) => { const id = ++seq; recibos.set(id, { ...r }); criadoEm.set(id, relogio); return id; },
+    registrar: async (r) => {
+      if (c.registrarFalhaNo !== undefined && seq + 1 === c.registrarFalhaNo) throw new Error("banco caiu");
+      const id = ++seq; recibos.set(id, { ...r }); criadoEm.set(id, relogio); return id; },
     atualizar: async (id, patch) => { recibos.set(id, { ...recibos.get(id)!, ...patch }); },
     atualizarEspelho: async (conta, codigo, _u, alvo) => { espelho.push({ conta, codigo, alvo }); return c.espelhoFalha !== true; },
+    confirmarVinculo: async (_conta, codigo, userId) => (c.vinculo ? c.vinculo(codigo, userId) : true),
     pendentesVerificacao: async (eid, conta) => [...recibos.entries()]
       .filter(([, r]) => r.execucao_id === eid && r.account === conta && (r.status === "alterado" || r.status === "indeterminado"))
       .map(([id, r]) => ({
@@ -294,4 +299,56 @@ Deno.test("fault na escrita + releitura sem o cliente → 'indeterminado' (nunca
   igual(r.itens.map((i) => i.status), ["indeterminado"], "indeterminado");
   igual(m.recibos.get(1)!.status, "indeterminado", "recibo");
   igual(m.chamadas.includes("Consultar:2"), false, "parou");
+});
+
+Deno.test("Codex r2 P1: fault com vendedor inalterado mas OUTRO campo perdido → a prova por hash acusa 'divergente'", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN)]]);
+  const { d, recibos } = montar({
+    omie, candidatos: [cand(1)],
+    aoAlterar: (_p, atual) => { omie.set(1, { ...atual, recomendacoes: { codigo_vendedor: TATY_OBEN } }); return { fault: "REDUNDANT" }; },
+  });
+  const r = await processarBloco(params(APLICAR), d, OPC);
+  igual(r.itens[0].status, "divergente", "divergente");
+  igual(recibos.get(1)!.status, "divergente", "recibo");
+  igual(r.parou?.startsWith("divergência"), true, "parou");
+});
+
+Deno.test("Codex r2 P1: fault com cadastro intacto → 'erro_omie' PROVADO pelo hash, e o bloco segue", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN)], [2, cadastro(2, TATY_OBEN)]]);
+  let n = 0;
+  const { d, recibos } = montar({
+    omie, candidatos: [cand(1), cand(2)],
+    aoAlterar: (p, atual) => (++n === 1 ? { fault: "IE inválida" } : { ...atual, recomendacoes: p.recomendacoes }),
+  });
+  const r = await processarBloco(params(APLICAR), d, OPC);
+  igual(r.itens.map((i) => i.status), ["erro_omie", "verificado"], "status");
+  igual(recibos.get(1)!.status, "erro_omie", "recibo provado");
+});
+
+Deno.test("Codex r2 P1: 'ja_certo' com espelho que não atualiza → PARA o bloco", async () => {
+  const omie = new Map([[1, cadastro(1, REGINA_OBEN)], [2, cadastro(2, TATY_OBEN)]]);
+  const { d, chamadas } = montar({ omie, candidatos: [cand(1), cand(2)], espelhoFalha: true });
+  const r = await processarBloco(params(APLICAR), d, OPC);
+  igual(r.parou?.startsWith("espelho"), true, "parou");
+  igual(chamadas.includes("Consultar:2"), false, "não seguiu");
+});
+
+Deno.test("Codex r2 P1: orfaos com vínculo que mudou entre a seleção e a escrita → não escreve", async () => {
+  const omie = new Map([[1, cadastro(1, null)]]);
+  const { d, chamadas } = montar({
+    omie, candidatos: [{ omie_codigo_cliente: 1, customer_user_id: "u1", dono: "REGINA" }], vinculo: () => false,
+  });
+  const p = lerParametros({ ...APLICAR, lote: "orfaos", conta: "oben", escolhas: [{ customer_user_id: "00000000-0000-4000-8000-0000000000a1", dono: "REGINA" }] });
+  if (!p.ok) throw new Error(p.erro);
+  const r = await processarBloco(p.p, d, OPC);
+  igual(r.itens[0].status, "precondicao_falhou", "não toca");
+  igual(chamadas.filter((x) => x.startsWith("Alterar")), [], "sem escrita");
+});
+
+Deno.test("Codex r2 P1: exceção no meio do bloco devolve o execucao_id e os itens feitos (não 500 cego)", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN)], [2, cadastro(2, TATY_OBEN)]]);
+  const { d } = montar({ omie, candidatos: [cand(1), cand(2)], registrarFalhaNo: 2 });
+  const r = await processarBloco(params(APLICAR), d, OPC);
+  igual([r.execucao_id, r.fim, r.parou?.startsWith("exceção")], ["00000000-0000-4000-8000-000000000001", false, true], "resultado parcial");
+  igual(r.itens[0].status, "alterado", "o 1º ficou alterado, à espera do verificar");
 });

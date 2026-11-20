@@ -56,7 +56,19 @@ function montarDependencias(db: SupabaseClient, p: Parametros, cred: { appKey: s
     const falta = ultimaChamada + INTERVALO_OMIE_MS - Date.now();
     if (falta > 0) await dormir(falta);
     ultimaChamada = Date.now();
-    const r = await chamarOmie({ url, metodo, param, credenciais: cred }, { conta: p.conta, maxTentativas: 3, deadline: Date.now() + PRAZO_CHAMADA_OMIE_MS });
+    // AlterarCliente: UMA tentativa — repetir reenviaria o `recomendacoes` lido antes por cima de uma edição feita na
+    // espera (Codex r2 P1). Quem decide o desfecho é a releitura, sempre feita depois.
+    const escrita = metodo === "AlterarCliente";
+    let r;
+    try {
+      r = await chamarOmie({ url, metodo, param, credenciais: cred }, {
+        conta: p.conta, maxTentativas: escrita ? 1 : 3, deadline: Date.now() + PRAZO_CHAMADA_OMIE_MS,
+      });
+    } catch (e) {
+      // Leitura que estoura vira fault (o bloco segue e devolve o execucao_id); escrita indeterminada sobe.
+      if (ehEscritaIndeterminada(e)) throw e;
+      return { corpo: null, fault: redigirSegredo(mensagemDeErro(e) ?? "falha de transporte") };
+    }
     const fault = r.faultstring ? redigirSegredo(r.faultstring) : (!r.ok ? `HTTP ${r.status}` : (r.corpo ? null : "resposta ilegível"));
     return { corpo: r.corpo, fault };
   }
@@ -123,11 +135,17 @@ function montarDependencias(db: SupabaseClient, p: Parametros, cred: { appKey: s
       if (error) { console.warn(`[trocar-vendedor] espelho ${conta}/${codigo} não atualizou: ${error.message}`); return false; }
       return (data ?? []).length === 1;
     },
+    async confirmarVinculo(conta, codigo, userId) {
+      const { data, error } = await db.from("omie_customer_account_map_fresco")
+        .select("user_id").eq("account", conta).eq("omie_codigo_cliente", codigo);
+      if (error) throw new Error(`vínculo ${conta}/${codigo}: ${error.message}`);
+      return (data ?? []).length === 1 && String((data as { user_id: string }[])[0].user_id).toLowerCase() === userId.toLowerCase();
+    },
     async pendentesVerificacao(execucaoId, conta) {
       const { data, error } = await db.from(TABELA)
         .select("id, omie_codigo_cliente, customer_user_id, status, vendedor_antes, vendedor_alvo, hash_antes, criado_em")
         .eq("execucao_id", execucaoId).eq("account", conta).in("status", ["alterado", "indeterminado"])
-        .order("id", { ascending: true })
+        .order("atualizado_em", { ascending: true }).order("id", { ascending: true })
         .limit(1000);
       if (error) throw new Error(`pendentes: ${error.message}`);
       const linhas = data ?? [];
