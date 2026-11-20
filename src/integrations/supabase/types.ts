@@ -10592,6 +10592,160 @@ export type Database = {
           },
         ]
       }
+      pedido_portal_ajuste_email: {
+        Row: {
+          ajuste_ids: number[]
+          assunto: string | null
+          autorizado_em: string
+          bloqueado_em: string | null
+          bloqueio_motivo: string | null
+          cobranca1_alerta_em: string | null
+          cobranca1_enviada_em: string | null
+          cobranca1_gmail_message_id: string | null
+          cobranca1_indeterminado_em: string | null
+          cobranca1_modo: string | null
+          cobranca1_proxima_tentativa_em: string | null
+          cobranca1_reservado_em: string | null
+          cobranca1_rfc_message_id_proposto: string | null
+          cobranca1_tentativas: number
+          cobranca1_token: string | null
+          cobranca1_ultimo_erro: string | null
+          cobranca2_alerta_em: string | null
+          empresa: string
+          enviado_em: string | null
+          gmail_message_id: string | null
+          gmail_thread_id: string | null
+          indeterminado_em: string | null
+          origem: string
+          pedido_id: number
+          portal_protocolo: string
+          proxima_tentativa_em: string | null
+          reserva_token: string | null
+          reservado_em: string | null
+          resposta_log_id: number | null
+          resposta_observada_em: string | null
+          rfc_message_id_observado: string | null
+          rfc_message_id_proposto: string | null
+          tentativas: number
+          ultimo_erro: string | null
+        }
+        Insert: {
+          ajuste_ids: number[]
+          assunto?: string | null
+          autorizado_em?: string
+          bloqueado_em?: string | null
+          bloqueio_motivo?: string | null
+          cobranca1_alerta_em?: string | null
+          cobranca1_enviada_em?: string | null
+          cobranca1_gmail_message_id?: string | null
+          cobranca1_indeterminado_em?: string | null
+          cobranca1_modo?: string | null
+          cobranca1_proxima_tentativa_em?: string | null
+          cobranca1_reservado_em?: string | null
+          cobranca1_rfc_message_id_proposto?: string | null
+          cobranca1_tentativas?: number
+          cobranca1_token?: string | null
+          cobranca1_ultimo_erro?: string | null
+          cobranca2_alerta_em?: string | null
+          empresa: string
+          enviado_em?: string | null
+          gmail_message_id?: string | null
+          gmail_thread_id?: string | null
+          indeterminado_em?: string | null
+          origem: string
+          pedido_id: number
+          portal_protocolo: string
+          proxima_tentativa_em?: string | null
+          reserva_token?: string | null
+          reservado_em?: string | null
+          resposta_log_id?: number | null
+          resposta_observada_em?: string | null
+          rfc_message_id_observado?: string | null
+          rfc_message_id_proposto?: string | null
+          tentativas?: number
+          ultimo_erro?: string | null
+        }
+        Update: {
+          ajuste_ids?: number[]
+          assunto?: string | null
+          autorizado_em?: string
+          bloqueado_em?: string | null
+          bloqueio_motivo?: string | null
+          cobranca1_alerta_em?: string | null
+          cobranca1_enviada_em?: string | null
+          cobranca1_gmail_message_id?: string | null
+          cobranca1_indeterminado_em?: string | null
+          cobranca1_modo?: string | null
+          cobranca1_proxima_tentativa_em?: string | null
+          cobranca1_reservado_em?: string | null
+          cobranca1_rfc_message_id_proposto?: string | null
+          cobranca1_tentativas?: number
+          cobranca1_token?: string | null
+          cobranca1_ultimo_erro?: string | null
+          cobranca2_alerta_em?: string | null
+          empresa?: string
+          enviado_em?: string | null
+          gmail_message_id?: string | null
+          gmail_thread_id?: string | null
+          indeterminado_em?: string | null
+          origem?: string
+          pedido_id?: number
+          portal_protocolo?: string
+          proxima_tentativa_em?: string | null
+          reserva_token?: string | null
+          reservado_em?: string | null
+          resposta_log_id?: number | null
+          resposta_observada_em?: string | null
+          rfc_message_id_observado?: string | null
+          rfc_message_id_proposto?: string | null
+          tentativas?: number
+          ultimo_erro?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pedido_portal_ajuste_email_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: true
+            referencedRelation: "pedido_compra_sugerido"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pedido_portal_ajuste_email_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: true
+            referencedRelation: "v_des_pedidos_em_transito"
+            referencedColumns: ["pedido_id"]
+          },
+          {
+            foreignKeyName: "pedido_portal_ajuste_email_pedido_id_fkey"
+            columns: ["pedido_id"]
+            isOneToOne: true
+            referencedRelation: "vw_cancelamento_pos_disparo_sem_evidencia"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pedido_portal_ajuste_email_alerta: {
+        Row: {
+          alerta_id: number | null
+          criado_em: string
+          etapa: string
+          pedido_id: number
+        }
+        Insert: {
+          alerta_id?: number | null
+          criado_em?: string
+          etapa: string
+          pedido_id: number
+        }
+        Update: {
+          alerta_id?: number | null
+          criado_em?: string
+          etapa?: string
+          pedido_id?: number
+        }
+        Relationships: []
+      }
       pedido_portal_ajuste_qtde: {
         Row: {
           criado_em: string
@@ -24853,6 +25007,39 @@ export type Database = {
         Returns: string
       }
       afiacao_os_sync_kick: { Args: never; Returns: Json }
+      ajuste_lote_email_autorizar: {
+        Args: { p_n_ajustes: number; p_pedido_id: number; p_protocolo: string }
+        Returns: string
+      }
+      ajuste_lote_email_confirmar: {
+        Args: {
+          p_etapa: string
+          p_gmail_message_id: string
+          p_pedido_id: number
+          p_thread_id: string
+          p_token: string
+        }
+        Returns: string
+      }
+      ajuste_lote_email_falhou: {
+        Args: {
+          p_erro: string
+          p_espera_s?: number
+          p_etapa: string
+          p_pedido_id: number
+          p_tipo: string
+          p_token: string
+        }
+        Returns: string
+      }
+      ajuste_lote_email_registrar_rfc: {
+        Args: { p_pedido_id: number; p_rfc: string; p_token: string }
+        Returns: string
+      }
+      ajuste_lote_email_reservar: {
+        Args: { p_agora?: string; p_etapa: string }
+        Returns: Json
+      }
       analytics_ledger_registrar: {
         Args: { p_chave: string; p_evento: string; p_props?: Json }
         Returns: undefined
