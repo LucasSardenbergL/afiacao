@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PROVA PG17 — combinado_dia / combinado_registrar (migration 20261120200000): gate master, validação dos itens,
+# PROVA PG17 — combinado_dia / combinado_registrar (migrations 20261120200000 + 20261120210000 'esfriando'): gate master, validação dos itens,
 # upsert por (dia, vendedora) com n_copias, ACL fechada ao JWT. EXECUTA a RPC (PL/pgSQL é late-bound).
 # bash db/test-combinado-dia.sh > /tmp/t.log 2>&1; echo "exit=$?"
 set -euo pipefail
@@ -12,6 +12,7 @@ SLUG="combinado-dia"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL="${LC_ALL:-C}" LANG="${LANG:-C}"
 MIG="${MIG_COMBINADO:-$REPO_ROOT/supabase/migrations/20261120200000_combinado_dia.sql}"
+MIG2="${MIG_ESFRIANDO:-$REPO_ROOT/supabase/migrations/20261120210000_combinado_aceita_esfriando.sql}"
 
 [ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente: brew install postgresql@${PGVER}"; exit 1; }
 CELLAR="$(brew --prefix "postgresql@${PGVER}")"
@@ -54,6 +55,10 @@ SQL
 P -q -f "$MIG"
 P -q -f "$MIG"   # idempotente: re-colar não pode quebrar
 ok "migration aplica 2x sem erro"
+# 20261120210000: a PRE aceita o predecessor (recém-aplicado) e o próprio corpo (re-aplicar).
+P -q -f "$MIG2"
+P -q -f "$MIG2"
+ok "migration esfriando aplica 2x sem erro (PRE aceita predecessor e a si mesma)"
 
 # Chama a RPC como o usuário $1; imprime o SQLSTATE do erro, ou OK.
 chamar() {
@@ -78,6 +83,8 @@ eq "V1 lista vazia (22023)"            "$(chamar "$MASTER" "'$REGINA'" '[]')" "E
 eq "V2 4 itens (22023)"                "$(chamar "$MASTER" "'$REGINA'" '[{"tipo":"cobranca","cliente_ref":"1"},{"tipo":"cobranca","cliente_ref":"2"},{"tipo":"cobranca","cliente_ref":"3"},{"tipo":"cobranca","cliente_ref":"4"}]')" "ESTADO=22023"
 eq "V3 tipo desconhecido (22023)"      "$(chamar "$MASTER" "'$REGINA'" '[{"tipo":"brinde","cliente_ref":"1"}]')" "ESTADO=22023"
 eq "V4 sem cliente_ref (22023)"        "$(chamar "$MASTER" "'$REGINA'" '[{"tipo":"cobranca"}]')" "ESTADO=22023"
+eq "V3b tipo esfriando aceito"         "$(chamar "$MASTER" "'$REGINA'" '[{"tipo":"esfriando","empresa":"oben","cliente_ref":"e1","nome":"Gama","valor":null}]')" "NOTICE:  OK"
+P -q -c "DELETE FROM public.combinado_dia"
 eq "V5 nenhuma linha gravada até aqui" "$(Pq -c 'SELECT count(*) FROM public.combinado_dia')" "0"
 
 echo "── upsert por (dia, vendedora) ──"
@@ -93,6 +100,13 @@ F='public.combinado_registrar(uuid,jsonb)'
 eq "A1 anon sem EXECUTE"               "$(Pq -c "SELECT has_function_privilege('anon', '$F', 'EXECUTE')")" "f"
 eq "A2 authenticated com EXECUTE"      "$(Pq -c "SELECT has_function_privilege('authenticated', '$F', 'EXECUTE')")" "t"
 eq "A3 authenticated não lê a tabela"  "$(Pq -c "SELECT has_table_privilege('authenticated', 'public.combinado_dia', 'SELECT')")" "f"
+
+echo "── PRE anti-deriva ──"
+# Corpo vivo que não é nem o predecessor nem este: a migration tem de ABORTAR na PRE (P0001), sem recriar.
+P -q -c "CREATE OR REPLACE FUNCTION public.combinado_registrar(p_vendedora uuid, p_itens jsonb) RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS \$\$ BEGIN RETURN '{}'::jsonb; END \$\$;"
+DERIVA="$(P -q -f "$MIG2" 2>&1 || true)"
+case "$DERIVA" in *"PRE FALHOU"*) ok "D1 corpo derivado aborta na PRE" ;; *) bad "D1 corpo derivado NÃO abortou: [$DERIVA]" ;; esac
+eq "D2 corpo derivado ficou intocado" "$(Pq -c "SELECT prosrc LIKE '%RETURN ''{}''::jsonb%' FROM pg_proc WHERE oid = 'public.combinado_registrar(uuid,jsonb)'::regprocedure")" "t"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
