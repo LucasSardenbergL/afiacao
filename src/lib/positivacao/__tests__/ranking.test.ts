@@ -14,6 +14,14 @@ const c = (over: Partial<ClienteAPositivar>): ClienteAPositivar => ({
 });
 
 describe('rankAPositivar', () => {
+  it('prioridade MEDIDA 0 vence prioridade ausente, mesmo com churn 100 no ausente', () => {
+    const out = rankAPositivar([
+      c({ customer_user_id: 'sem_hist', priority_score: null, revenue_potential: null, churn_risk: 100 }),
+      c({ customer_user_id: 'comprador', priority_score: 0, revenue_potential: null, churn_risk: 0 }),
+    ]);
+    expect(out.map((x) => x.customer_user_id)).toEqual(['comprador', 'sem_hist']);
+  });
+
   it('prioriza maior priority_score, depois maior revenue_potential', () => {
     const out = rankAPositivar([
       c({ customer_user_id: 'a', priority_score: 10, revenue_potential: 100 }),

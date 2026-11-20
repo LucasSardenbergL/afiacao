@@ -4,8 +4,17 @@ import type { ClienteAPositivar } from './types';
 /** Ordena candidatos "a positivar" por prioridade comercial (não muta a entrada). */
 export function rankAPositivar(candidatos: ClienteAPositivar[]): ClienteAPositivar[] {
   return [...candidatos].sort((a, b) => {
-    const ps = (b.priority_score ?? 0) - (a.priority_score ?? 0);
-    if (ps !== 0) return ps;
+    // Prioridade MEDIDA (0 inclusive) vence ausente — mesma disciplina do potencial abaixo. Com
+    // `?? 0`, um sem_historico (priority null, churn 100) empatava com um comprador de prioridade
+    // medida 0 e o desempate por churn o punha à frente.
+    const psA = a.priority_score;
+    const psB = b.priority_score;
+    if (psA != null && psB == null) return -1;
+    if (psA == null && psB != null) return 1;
+    if (psA != null && psB != null) {
+      const ps = psB - psA;
+      if (ps !== 0) return ps;
+    }
     // ⚠️ Desempate por potencial só vale entre valores MEDIDOS. Com a coluna null em 100% da base,
     // `?? 0` fazia todo mundo empatar em 0 — inerte, mas silenciosamente: quando um produtor
     // nascer, cliente sem potencial medido seria ordenado como "potencial zero".

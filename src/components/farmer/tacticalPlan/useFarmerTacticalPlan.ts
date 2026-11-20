@@ -73,7 +73,7 @@ export function useFarmerTacticalPlan() {
         .from('farmer_client_scores')
         .select('customer_user_id, health_score, churn_risk')
         .in('farmer_id', ownerIds)
-        .order('priority_score', { ascending: false })
+        .order('priority_score', { ascending: false, nullsFirst: false })
         .order('customer_user_id', { ascending: true })
         .range(de, ate), 'farmer_client_scores/plano-tatico');
     if (!scores.length) return;

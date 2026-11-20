@@ -42,7 +42,7 @@ export function IntelligenceOperationalTab({ farmerId }: OperationalTabProps) {
         .from('farmer_client_scores')
         // Lista explícita: `select('*')` inclui gross_margin_pct, fechada para authenticated (FU4-F).
         .select('id, customer_user_id, health_score, health_class, priority_score, sales_history_status')
-        .order('priority_score', { ascending: false })
+        .order('priority_score', { ascending: false, nullsFirst: false })
         .limit(LIMITE_PRIORIDADE);
       if (farmerId) query = query.eq('farmer_id', farmerId);
       const { data, error } = await query;
