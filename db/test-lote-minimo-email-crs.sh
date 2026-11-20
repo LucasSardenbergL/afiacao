@@ -35,7 +35,7 @@ TOTAL_ESPERADO=75
 # Formato <nome>:<VERMELHOS>[:<VERDES>]; `ID!MARCA` exige a marca do motivo no vermelho.
 SABOTAGENS="sem_skip_locked:C1:C2 sem_skip_locked_so:C3:C1 sem_backfill:I0!B6 sem_tz:V6:V7 sem_feriado:V1:V2
             authenticated_executa:I0!B3 sem_write_once:W2:K2 confirma_sem_token:K1:B1
-            resposta_cega:S1:Q2 caixa_ignorada:W1:Q2 sem_dedupe:X1:Q3 atraso_nao_desarma:X5,Q7:X2
+            resposta_cega:S1:Q2 caixa_ignorada:W1:Q2 sem_dedupe:X1:Q3 atraso_nao_desarma:X5:X2 cobranca_atraso_nao_desarma:Q7:Q3
             sem_cancelado:CX1,CX2:S3 protocolo_substring:S4:S1"
 if [ "${1:-}" = "--falsificar" ]; then
   falhas=0
@@ -182,6 +182,9 @@ case "$SABOTAGEM" in
   atraso_nao_desarma) trocar "$MIG" "$TMPD/m.sql" "    UPDATE public.pedido_portal_ajuste_email
        SET bloqueado_em = p_agora, bloqueio_motivo = 'não saiu em 30 min: entregue ao founder'
      WHERE pedido_id = r.pedido_id;" "" ;;
+  cobranca_atraso_nao_desarma) trocar "$MIG" "$TMPD/m.sql" "(senão saem 2 cobranças).
+      UPDATE public.pedido_portal_ajuste_email SET cobranca1_alerta_em = p_agora, cobranca1_modo = 'alerta'
+       WHERE pedido_id = r.pedido_id;" "(senão saem 2 cobranças)." ;;
   sem_cancelado) trocar "$MIG" "$TMPD/m.sql" "                   AND (p.status IN ('cancelado', 'cancelado_humano', 'expirado_sem_aprovacao')
                         OR p.portal_situacao_codigo = '6'
                         OR coalesce(p.portal_situacao_texto, '') ILIKE '%cancel%'))" "                   AND false)" ;;
@@ -206,7 +209,7 @@ case "$SABOTAGEM" in
   resposta_cega) Pdb -q -c "CREATE OR REPLACE FUNCTION private._ajuste_lote_resposta_log(p_pedido_id bigint, p_protocolo text, p_desde timestamptz, p_agora timestamptz) RETURNS bigint LANGUAGE sql AS 'SELECT NULL::bigint';" ;;
   caixa_ignorada) Pdb -q -c "CREATE OR REPLACE FUNCTION private._ajuste_lote_caixa_coberta(p_agora timestamptz) RETURNS boolean LANGUAGE sql AS 'SELECT true';" ;;
   sem_dedupe) Pdb -q -c "ALTER TABLE public.pedido_portal_ajuste_email_alerta DROP CONSTRAINT pedido_portal_ajuste_email_alerta_pkey;" ;;
-  ""|sem_skip_locked|sem_skip_locked_so|sem_tz|sem_feriado|confirma_sem_token|atraso_nao_desarma|sem_cancelado|protocolo_substring) ;;
+  ""|sem_skip_locked|sem_skip_locked_so|sem_tz|sem_feriado|confirma_sem_token|atraso_nao_desarma|cobranca_atraso_nao_desarma|sem_cancelado|protocolo_substring) ;;
   *) echo "ERRO sabotagem desconhecida: $SABOTAGEM"; exit 1 ;;
 esac
 
