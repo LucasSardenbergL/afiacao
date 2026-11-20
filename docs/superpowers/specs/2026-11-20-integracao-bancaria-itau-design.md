@@ -1,6 +1,6 @@
-# Integração bancária Itaú → app → Omie — design
+# Automação bancária e financeira (Itaú primeiro) → app → Omie — design
 
-> Status: rascunho para aprovação do founder · 2026-11-20 · branch `claude/itau-omie-bank-integration-f75d76`
+> Status: **v2** (escopo ampliado pelo founder: programa de automação bancária, financeira e contábil), rascunho para aprovação · 2026-11-20 · branch `claude/itau-omie-bank-integration-f75d76`
 > 2ª opinião: Codex (gpt-6.2-astra, high) consultado no brainstorm. Levantamentos: Fable (banco prod read-only + pesquisa web).
 
 ## 1. Por quê
@@ -20,22 +20,36 @@ Os pagamentos são feitos **no Bankline** (founder, 2026-11-20). **Uma pessoa ba
 
 **O que o founder quer:** automatizar tudo. O app conversa direto com o Itaú, que é a fonte de verdade do banco, e repassa o resultado ao Omie, que fica como registro contábil. O escopo final cobre extrato e conciliação, retorno de cobrança, pagamentos e remessas.
 
+**v2 (founder, 2026-11-20): automatizar tudo que é banco e o trabalho administrativo, financeiro e contábil em volta dele.**
+- O app **sugere** os pagamentos que o Lucas tem de liberar.
+- O Lucas libera sozinho, sem a Jessica.
+- Liberado, o app inclui o pagamento no banco (Pix, boleto, TED).
+- O extrato consolidado de **todas** as contas sai para o e-mail da contabilidade assim que estiver disponível.
+- Outras automações contábeis entram conforme aparecerem.
+
 ## 2. Objetivos · não-objetivos · anti-objetivos
 
 **Objetivos**
 - O livro do Omie volta a bater com o Itaú, conta por conta e em centavos, a partir de uma data de corte.
 - A baixa de CP/CR e o lançamento de tarifas saem da mão da pessoa e passam por **aprovação no app**. Depois, quando houver sinal de precisão, ficam automáticos para os casamentos inequívocos.
-- Cobrança (boleto/Pix) e pagamentos (SISPAG) via API nas fases finais.
+- **Extrato consolidado** de todas as contas (Itaú nas 3 empresas, BB, Omie.CASH, Justa, adquirentes), validado e enviado à contabilidade quando estiver disponível.
+- **Pagamentos sugeridos pelo app.** O Lucas libera no app, o app inclui no Itaú e o Lucas confirma no Itaú com o token. A Jessica sai do processo.
+- Cobrança (boleto/Pix) via API, se houver demanda medida.
+- Automações contábeis de fechamento mensal (ver Frente F).
 
 **Não-objetivos (agora)**
-- Conciliação de Banco do Brasil e Omie.CASH. O desenho é multi-banco, mas a entrega é só Itaú.
-- Executar pagamento sem aprovação humana no Bankline. **Isso nunca acontece**, em nenhuma fase.
+- Conciliar e baixar no Omie contas que não sejam do Itaú. BB, Omie.CASH, Justa e adquirentes entram **na leitura e no extrato consolidado** primeiro. A conciliação delas vem depois do piloto Itaú.
+- **Pagamento sem a confirmação do Lucas com o token do Itaú. Nunca acontece, em nenhuma fase** (decisão do founder, 2026-11-20). Execução direta só pelo app fica adiada e exige os controles da Frente C.
+- O agente de código **nunca** dispara pagamento. Quem inclui é o app, depois do clique do Lucas.
 
 **Anti-objetivos (seria um fracasso mesmo funcionando)**
 - **Baixa em dobro:** o app e a pessoa, ou o app duas vezes, baixando o mesmo título.
 - **Fabricar número:** lançar ajuste para "zerar" a diferença, baixar pela data de vencimento, ou baixar só porque o status diz "atrasado".
 - **Escrever retroativo em período fechado** sem o aval do contador.
 - **Derrubar a App Key do Omie com erros:** depois de 10 erros vem o HTTP 425 e um bloqueio de 30 min, que também derruba o sync.
+- **Pagar em dobro:** sugerir ou incluir um título que já foi pago, agendado ou enviado.
+- **Pagar a quem não deve:** Pix cujo titular ou CNPJ, consultado no banco, não bate com o fornecedor; boleto com beneficiário diferente.
+- **Mandar à contabilidade um extrato incompleto como se fosse completo.** Conta faltante ou que não fecha aparece escrita no e-mail.
 
 ## 3. Abordagens consideradas
 
@@ -48,6 +62,24 @@ Os pagamentos são feitos **no Bankline** (founder, 2026-11-20). **Uma pessoa ba
 **Escolha:** A, com o pedido da API de Extrato ao gerente Itaú **em paralelo**, porque o prazo é do banco. O founder disse que quer automatizar tudo, e A é o caminho mais curto até isso. A API entra como troca de fonte.
 
 ## 4. Fases e critério para avançar
+
+### Programa (v2): frentes e ordem
+
+| Frente | O que entrega | Fases | Ordem |
+|---|---|---|---|
+| **A — Extrato consolidado + contabilidade** | Extrato de todas as contas no app, validado. E-mail à contabilidade quando estiver disponível. | F1 (Itaú Oben) → F1b (todas as contas + envio) | 1ª |
+| **B — Conciliação e baixa no Omie** | Fim da baixa manual | F2 → F3 | 2ª |
+| **C — Pagamentos** | Sugestão diária → liberação no app → inclusão no Itaú → confirmação com token → baixa após liquidação | F6 (antes da F5, sugestão do Codex) | 3ª |
+| **D — API Itaú** | Troca o upload pela API. Corre **em paralelo**, porque o prazo é do banco. | F4 | paralela |
+| **E — Cobrança** | Boleto/Pix próprios | F5 | se houver demanda medida |
+| **F — Contábil** | Pacote de fechamento mensal (extratos, conciliação, pendências), tarifas, impostos | a especificar depois da B | 4ª |
+
+A F2 já calcula a "sugestão do dia" em leitura, para a Frente C nascer sobre um livro conciliado. Sugestão sobre livro descolado paga em dobro.
+
+**Dependências reais (Codex v2):**
+- A F2 começa quando a **F1 estiver validada na Oben**, sem esperar as outras fontes.
+- A F1b corre **em paralelo** à Frente B.
+- A F6 só abre para a conta pagadora que estiver com **conciliação comprovada**.
 
 Cada fase só começa com **sinal positivo de uso da anterior, com denominador** (regra da casa, `docs/historico/fase-sem-sinal.md`). Cada superfície nasce com o seu sensor.
 
@@ -63,6 +95,24 @@ Cada fase só começa com **sinal positivo de uso da anterior, com denominador**
   - Duas tarifas iguais no mesmo dia são legítimas, por isso o ordinal entra na chave.
 - A tela mostra o extrato por conta e o **saldo Itaú vs saldo Omie** por dia.
 - **Avança quando** o financeiro usar o extrato para conferir um período real (sensor: `banco.extrato_importado` / `banco.extrato_conferido`).
+
+### F1b — Extrato consolidado de todas as contas + envio à contabilidade (só leitura)
+- Mesmo modelo `banco_extrato_*`, com uma **fonte por conta**. As fontes por conta estão em §4c.
+- **Uma conta bancária real conta uma vez.** Isso vale para a "Pix Itaú" e para as contrapartes que só existem no Omie.
+- Justa e adquirentes: confrontar bruto, taxas, antecipações e estornos com o crédito líquido. Na F1b isso só é **exibido**, sem conciliar.
+- **Pacote por período, por empresa e conta:**
+  - arquivo original;
+  - arquivo importável;
+  - resumo com saldos inicial e final, nº de movimentos e se fecha em centavos;
+  - pendências.
+- **Contas esperadas fixadas por CNPJ e período**, com as exclusões explícitas (ex.: B76). Período sem movimento também precisa estar coberto. Agenda de recebíveis **não** prova liquidação.
+- **Contas faltantes ou que não fecham aparecem escritas**, nunca omitidas. No prazo combinado com a contabilidade, as pendências são comunicadas mesmo que o pacote completo ainda não possa sair.
+- **Destinatários autorizados por empresa** (sem e-mail no código):
+  - o cadastro e qualquer alteração são confirmados pelo Lucas por canal independente;
+  - a autorização é conferida a cada acesso.
+- **Entrega por link autenticado, revogável e com expiração**, com só os documentos necessários (LGPD art. 6º, necessidade). Anexo só se a contabilidade exigir e o Lucas aprovar.
+- Cada envio fica registrado: o que foi, para quem, quando e o hash dos arquivos. Reenvio é explícito.
+- Sensor: `banco.pacote_contabil_enviado`, com denominador **contas validadas ÷ contas esperadas**.
 
 ### F2 — Conciliação em leitura (fila humana)
 Substitui a tela inerte `FinanceiroConciliacao`. Os defeitos (a)–(g) de `src/services/financeiroConciliacao.ts` são resolvidos por construção.
@@ -114,10 +164,39 @@ Substitui a tela inerte `FinanceiroConciliacao`. Os defeitos (a)–(g) de `src/s
 - O que se perder é recuperado por consulta ou retorno. Webhook, retorno e extrato apontam para a mesma liquidação.
 - Pilotar só com títulos novos.
 
-### F6 — Pagamentos SISPAG
-- O app monta a remessa ou o lote, e **a aprovação continua no Bankline** (alçada do Itaú).
-- A aprovação fica vinculada a beneficiário, conta, valor e data.
-- A baixa de CP só acontece **depois da liquidação confirmada** no extrato ou no retorno. Remessa aceita ou agendada continua pendente.
+### F6 — Pagamentos (Frente C; vem antes da F5)
+Fluxo decidido pelo founder (2026-11-20): **app + token Itaú**.
+1. **Sugestão diária.** O app monta a lista do que pagar a partir do CP do Omie. Antes, cruza essa lista com o extrato conciliado, os agendamentos e as ordens já enviadas, para não pagar em dobro. Prioridade e caixa vêm dos engines financeiros existentes.
+2. **Liberação no app pelo Lucas**, único aprovador. A liberação amarra empresa, conta pagadora, título/parcela, favorecido, valor e data. Mudou algo depois da liberação, precisa liberar de novo.
+3. **Inclusão no Itaú pelo app**, que nasce **pendente de alçada**. Reserva atômica por (empresa, título, parcela). Resultado desconhecido bloqueia novo envio até consultar o banco.
+4. **O Lucas confirma no app Itaú Empresas ou no Bankline com o token.** A última chave fica fora do nosso sistema. Assim, um app ou Supabase comprometido não consegue tirar dinheiro.
+5. **Baixa de CP no Omie só depois da liquidação confirmada** no extrato ou no retorno. Pagamento incluído ou agendado continua pendente.
+
+Controles desde o 1º pagamento (challenge Codex v2):
+- **A alçada é provada, não presumida.** Cada combinação de CNPJ × modalidade × canal (API ou CNAB) começa **desabilitada**. Só é habilitada com prova de três coisas:
+  - a ordem nasce pendente;
+  - só o Lucas autoriza, com token;
+  - a credencial do app não consegue liquidar.
+- **Corte de inclusões.** A partir da ativação, ninguém mais inclui pagamento de CP no Bankline para a conta do piloto. As pendências e os agendamentos anteriores são importados. **Imediatamente antes do envio**, o app revalida título, agendamentos e ordens. Se a consulta falhar ou estiver desatualizada, bloqueia.
+- **O destino exato entra na liberação** e é conferido no servidor antes da inclusão:
+  - Pix: chave, titular e documento;
+  - TED: banco, agência, conta, titular e documento;
+  - boleto: linha digitável, beneficiário, valor e a referência da obrigação.
+- **Uma liquidação, uma baixa.** Ordem, retorno e movimento de extrato se ligam à **mesma liquidação bancária**. O comando de baixa por parcela é único (UNIQUE), seja disparado pelo retorno ou pela F2/F3.
+- **Pix:** titular e CPF/CNPJ da chave consultados no Itaú (DICT) e comparados com o fornecedor do título. Divergência ou identidade insuficiente bloqueia.
+- **Boleto:** o beneficiário registrado é conferido com o fornecedor.
+- A credencial da API tem **escopo só de inclusão** quando o Itaú permitir.
+
+**Pré-condição (founder pergunta ao Itaú, por escrito):** para cada CNPJ e cada modalidade (Pix, boleto, TED), a inclusão por API nasce pendente da alçada do Lucas? Se a API não garantir isso, o caminho é **CNAB SISPAG com autorização bancária obrigatória**, com o mesmo fluxo e só outro transporte.
+
+**Adiado: execução direta só pelo app.** Exige, no mínimo:
+- passkey/MFA renovado por liberação;
+- executor isolado do Supabase, com credencial por CNPJ e verificação independente da liberação;
+- favorecidos permitidos, com alteração confirmada fora do app;
+- limites por operação e por dia, e janela de horário;
+- alertas externos e botão de bloqueio imediato.
+
+Só volta à mesa com decisão nova do founder.
 
 ## 4b. Invariantes do money-path (challenge do Codex, 2026-11-20 — todas obrigatórias antes da 1ª escrita)
 
@@ -149,6 +228,23 @@ Substitui a tela inerte `FinanceiroConciliacao`. Os defeitos (a)–(g) de `src/s
   - baixas corretas ÷ pagamentos elegíveis;
   - **zero** reutilização de evidência.
 
+## 4c. Fontes de extrato por conta (levantamento Fable, 2026-11-20)
+
+Hoje o app lê só o **livro do Omie**: `ListarMovimentos` vai para `fin_movimentacoes` e `ListarExtrato` serve só para saldo (`omie-financeiro/index.ts:626-640`). Esse livro serve para comparar, **nunca é a fonte do extrato**.
+
+| Conta | Fonte do extrato na F1b | Depois | Status |
+|---|---|---|---|
+| Itaú (3 empresas, + "Pix Itaú") | OFX/CNAB do Bankline | API de Extrato Itaú (F4) | arquivo confirmado; API depende do officer |
+| BB (Oben) | OFX do portal BB, a confirmar com arquivo real | API Extratos **v2** (mTLS provável). **A v1 sai do ar em 20/11/2026**, e a integração nativa do Omie com o BB pode parar junto | não confirmado |
+| Omie.CASH (SC, Oben) | `ListarExtrato` com movimentos, a testar com chamada read-only. Fallback: Excel exportado pela tela | — | export PDF/XLSX confirmado; API não confirmada |
+| Justa (Colacor, Oben) | extrato e agenda de recebíveis pela API Justa (portal `api.justa.com.vc`) ou export | — | endpoints não confirmados |
+| Adquirentes 950/971 | agenda de recebíveis do adquirente, a levantar | — | não levantado |
+| Desconto de duplicatas (B76) | fora da F1b; volume quase zero | — | — |
+
+- **Open Finance do Omie** (Itaú Empresas, D-1): existe, mas o extrato só vira lançamento quando alguém importa e concilia dentro do Omie. Não há API pública conhecida para ler o extrato bruto. **Não serve de fonte para o app**, só como alternativa operacional dentro do Omie.
+- **E-mail:** Resend, via `fetch` repetido em várias edges, nenhuma com anexo (`monthly-report/index.ts:328`). A F1b cria um helper em `_shared` e o primeiro envio com anexo ou link.
+- A F1b entra por fonte, na ordem: Itaú → BB → Omie.CASH → Justa → adquirentes. A cada fonte o pacote passa a dizer "N de M contas".
+
 ## 5. Restrições
 
 - Lovable Cloud: as 3 camadas de deploy são manuais (Publish · edge · migration), e migration custom não se auto-aplica (`docs/agent/deploy.md`).
@@ -166,9 +262,18 @@ Substitui a tela inerte `FinanceiroConciliacao`. Os defeitos (a)–(g) de `src/s
    - qual o formato e a autenticação do webhook de boleto?
    - quais as tarifas e os limites de requisição?
    - existe canal de arquivo (VAN/SFTP)?
+   - **pagamentos por API, para cada CNPJ e cada modalidade (Pix, boleto, TED):**
+     - a inclusão nasce pendente de alçada?
+     - o Lucas pode ser o único aprovador?
+     - existe credencial só de inclusão?
+     - quais os limites e horários?
+     - a API faz consulta DICT do titular?
+     - qual a chave de idempotência e como consultar depois de um timeout?
 2. Baixar no Bankline o extrato da Oben (conta Itaú principal) desde 01/11/2025, em OFX ou CNAB 240, para o piloto.
 3. Combinar com a pessoa que baixa à mão a transição para aprovar no app.
-4. Perguntar ao contador até que mês o período está fechado.
+4. Perguntar ao contador:
+   - até que mês o período está fechado;
+   - **o que ele quer receber**: formato (OFX, PDF, Excel), frequência, e-mail destinatário e se aceita link restrito em vez de anexo.
 
 ## 7. Decidido pelo builder (calls marcadas)
 
@@ -196,6 +301,8 @@ Substitui a tela inerte `FinanceiroConciliacao`. Os defeitos (a)–(g) de `src/s
    - o casamento procura títulos e baixas nas N;
    - a comparação de saldo soma as N;
    - a idempotência é pela conta **bancária**.
+
+5. **Escopo v2 e última chave do pagamento.** O app sugere, o Lucas libera sozinho no app, sem a Jessica, e o app inclui no Itaú. A **confirmação final é no Itaú, com o token** (opção "App + token Itaú", recomendada por mim e pelo Codex). → Vale a F6 como reescrita acima. A 7b.1 continua valendo para o casamento 1:1, só muda quem inclui o pagamento.
 
 ## 8. Fica para o builder
 
