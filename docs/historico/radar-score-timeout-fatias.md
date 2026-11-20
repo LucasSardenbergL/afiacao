@@ -1,6 +1,7 @@
 # Score do Radar parado por timeout (17–19/11/2026) → recálculo em fatias
 
-**Migration:** `supabase/migrations/20261120140000_radar_score_em_fatias.sql` · **Prova:** `db/test-radar-score-fatias.sh`
+**Migrations:** `supabase/migrations/20261120140000_radar_score_em_fatias.sql` e
+`20261120150000_radar_score_janela_madrugada.sql` · **Prova:** `db/test-radar-score-fatias.sh`
 · **Fixture:** `db/fixtures/radar-score-predecessora-prod-20261119.sql` (corpo vivo, md5 `49c21fef…`).
 
 ## O incidente
@@ -104,6 +105,18 @@ tabela:
    `radar-score-recalcular-continua` de 5 em 5 min das 07:00 às 08:55, ambos com `SET statement_timeout = '3min'`.
    Sem passada pendente, cada tick é só o gate (~0,5 s, pelos índices). O **`radar-avisar-lote-diario` passa de
    06:45 para 09:05**: o aviso é único por lote, e às 06:45 ainda sairia com "Score: pendente" no dia do lote.
+   **A 20261120150000 alarga a janela** (o próximo item explica o porquê): o `continua` passa a rodar de
+   01:00 a 05:55 e de 07:00 a 10:55 UTC (22:00–02:55 e 04:00–07:55 BRT, ~114 chamadas por dia), e o aviso vai
+   para **11:05 UTC** (08:05 BRT).
+
+### A 1ª chamada real mudou a janela
+
+Logo depois do apply, uma chamada manual (`db/2026-11-20-radar-score-tick-manual.sql`, recibo #1207) mediu o
+Mini de verdade: **40,9 s**, 8.630 das 93.511 páginas, **6.287 linhas regravadas, 0 pulados**. As primeiras
+páginas estão esparsas, com 6.576 linhas vivas, porque a reescrita de 17/11 deixou o começo do heap quase vazio.
+**Ritmo real: ~5–6 ms por linha regravada**, o dobro dos 2,9 ms estimados a partir do `aplicar_situacao`.
+Faltavam ~508 mil linhas, ou ~45–50 min de escrita, ~75 chamadas. Com a janela 06:30–08:55 (30 chamadas por
+dia), o lote novo levaria ~3 dias "pendente" na tela. A janela da madrugada fecha um lote numa noite.
 
 **Limites conhecidos (aceitos):** as contagens do resumo são somadas por faixa. Com escritor concorrente movendo
 linhas entre faixas, podem sair aproximadas (o resumo é observabilidade, e nenhum leitor decide por elas). Linha
@@ -121,5 +134,9 @@ observabilidade.
 ## Validação
 
 - Prova PG17 `db/test-radar-score-fatias.sh`: 45 PASS no controle; `--falsificar` com **15/15 sabotagens vermelhas** no assert declarado e controle verde na MESMA invocação, nos locales `C` e `pt_BR.UTF-8` (579 s cada, em paralelo). No CI entra com `falsificar=15 faixas=3` (`db/nucleo-ci.d/test-radar-score-fatias.txt`). Uma sabotagem nasceu verde (`passada_nao_reinicia` desligava só o lote, e o `lote_iniciado_em` ainda pegava a troca: camada redundante) e passou a desligar o reinício inteiro..
-- Aplicação: RECIBO_APLICACAO.
-- Prova em prod: RECIBO_PROD.
+- Aplicação (`bun run db:aplicar`, ensaio 🟢 antes de cada uma): 20261120140000 → recibo **#1206**
+  (sha256 `f646f8a4…`), e a 20261120150000 → recibo **#1209** (sha256 `d1af0207…`). 2ª testemunha via psql-ro:
+  md5 do corpo `8a0f2beb…`, `lock_timeout=5s`, `radar_score_passada` com RLS e fechada para authenticated, ACL
+  preservado (service_role sim, authenticated não), 3 jobs ativos como `postgres` nos horários novos.
+- 1ª chamada manual (recibo #1207): parcial por orçamento em 40,9 s, como medido acima.
+- Prova em prod: em observação desde 20/11 00:20 UTC — os ticks do cron (01:00–05:55 e 06:30–10:55 UTC) fecham a passada do lote 2026-11; o recibo (marca `radar_score_estado.lote = 2026-11`, ledger e zero `failed`) entra aqui num complemento.
