@@ -10671,6 +10671,36 @@ export type Database = {
           },
         ]
       }
+      pedido_sugerido_evento: {
+        Row: {
+          auth_uid: string | null
+          criado_em: string
+          detalhe: Json
+          evento: string
+          id: number
+          pedido_id: number
+          usuario: string | null
+        }
+        Insert: {
+          auth_uid?: string | null
+          criado_em?: string
+          detalhe?: Json
+          evento: string
+          id?: never
+          pedido_id: number
+          usuario?: string | null
+        }
+        Update: {
+          auth_uid?: string | null
+          criado_em?: string
+          detalhe?: Json
+          evento?: string
+          id?: never
+          pedido_id?: number
+          usuario?: string | null
+        }
+        Relationships: []
+      }
       pedido_total_liquido_conversoes: {
         Row: {
           account: string
@@ -13784,6 +13814,51 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_score_passada: {
+        Row: {
+          contagens: Json
+          filenode: unknown
+          id: number
+          iniciada_em: string
+          ja_cliente_n: number | null
+          lote: string | null
+          lote_iniciado_em: string | null
+          max_updated_at: string | null
+          paginas: number
+          proxima_pagina: number
+          rodadas: number
+          versao_formula: string
+        }
+        Insert: {
+          contagens: Json
+          filenode: unknown
+          id?: number
+          iniciada_em: string
+          ja_cliente_n?: number | null
+          lote?: string | null
+          lote_iniciado_em?: string | null
+          max_updated_at?: string | null
+          paginas: number
+          proxima_pagina: number
+          rodadas: number
+          versao_formula: string
+        }
+        Update: {
+          contagens?: Json
+          filenode?: unknown
+          id?: number
+          iniciada_em?: string
+          ja_cliente_n?: number | null
+          lote?: string | null
+          lote_iniciado_em?: string | null
+          max_updated_at?: string | null
+          paginas?: number
+          proxima_pagina?: number
+          rodadas?: number
+          versao_formula?: string
+        }
+        Relationships: []
+      }
       radar_sensor_falhas: {
         Row: {
           dia: string
@@ -16662,6 +16737,57 @@ export type Database = {
           request_id?: number | null
           status_envio_portal_no_disparo?: string | null
           tentativa_no_disparo?: number | null
+        }
+        Relationships: []
+      }
+      sayerlack_senha_rotacao: {
+        Row: {
+          atualizado_em: string
+          concluido_em: string | null
+          diagnostico: Json | null
+          email_enviado_em: string | null
+          email_pendente: boolean
+          erro: string | null
+          etapa: string | null
+          gatilho: string | null
+          id: string
+          iniciado_em: string | null
+          pedidos_reenfileirados: number[] | null
+          solicitado_em: string
+          status: string
+          tentativas_reconciliacao: number
+        }
+        Insert: {
+          atualizado_em?: string
+          concluido_em?: string | null
+          diagnostico?: Json | null
+          email_enviado_em?: string | null
+          email_pendente?: boolean
+          erro?: string | null
+          etapa?: string | null
+          gatilho?: string | null
+          id?: string
+          iniciado_em?: string | null
+          pedidos_reenfileirados?: number[] | null
+          solicitado_em?: string
+          status?: string
+          tentativas_reconciliacao?: number
+        }
+        Update: {
+          atualizado_em?: string
+          concluido_em?: string | null
+          diagnostico?: Json | null
+          email_enviado_em?: string | null
+          email_pendente?: boolean
+          erro?: string | null
+          etapa?: string | null
+          gatilho?: string | null
+          id?: string
+          iniciado_em?: string | null
+          pedidos_reenfileirados?: number[] | null
+          solicitado_em?: string
+          status?: string
+          tentativas_reconciliacao?: number
         }
         Relationships: []
       }
@@ -24620,6 +24746,17 @@ export type Database = {
           saldo: number
         }[]
       }
+      _sayerlack_vault_gravar: {
+        Args: { p_nome: string; p_rotacao: string; p_valor: string }
+        Returns: undefined
+      }
+      _sayerlack_vault_ler: {
+        Args: { p_nome: string }
+        Returns: {
+          rotacao: string
+          valor: string
+        }[]
+      }
       _tint_cobertura_bases_lista_email: {
         Args: { p_limit?: number }
         Returns: string
@@ -27920,6 +28057,65 @@ export type Database = {
         Returns: Json
       }
       sayerlack_retry_orfaos: { Args: never; Returns: Json }
+      sayerlack_senha_portal_adotar: {
+        Args: { p_origem: string; p_senha: string }
+        Returns: undefined
+      }
+      sayerlack_senha_portal_assumir: {
+        Args: never
+        Returns: {
+          candidata: string
+          modo: string
+          origem_atual: string
+          rotacao_id: string
+          senha_atual: string
+          tentativas_reconciliacao: number
+        }[]
+      }
+      sayerlack_senha_portal_credencial: {
+        Args: never
+        Returns: {
+          bloqueio: string
+          origem: string
+          rotacao_id: string
+          senha: string
+        }[]
+      }
+      sayerlack_senha_portal_email_enviado: {
+        Args: { p_rotacao: string }
+        Returns: undefined
+      }
+      sayerlack_senha_portal_email_pendente: {
+        Args: never
+        Returns: {
+          rotacao_id: string
+          senha: string
+        }[]
+      }
+      sayerlack_senha_portal_etapa: {
+        Args: { p_diagnostico?: Json; p_etapa: string; p_rotacao: string }
+        Returns: undefined
+      }
+      sayerlack_senha_portal_falhar: {
+        Args: { p_descartar: boolean; p_erro: string; p_rotacao: string }
+        Returns: undefined
+      }
+      sayerlack_senha_portal_gravar_candidata: {
+        Args: { p_rotacao: string; p_senha: string }
+        Returns: undefined
+      }
+      sayerlack_senha_portal_marcar_ambigua: {
+        Args: { p_diagnostico?: Json; p_erro: string; p_rotacao: string }
+        Returns: undefined
+      }
+      sayerlack_senha_portal_promover: {
+        Args: { p_rotacao: string }
+        Returns: number[]
+      }
+      sayerlack_senha_portal_solicitar: {
+        Args: { p_gatilho: string }
+        Returns: string
+      }
       sayerlack_vincular_po_manual: {
         Args: { p_ator: string; p_origem: string; p_pedido_id: number }
         Returns: Json
