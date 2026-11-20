@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import type { CompradorSugerido } from '@/lib/venda-cliente/sugestoes';
-import { cobrancasDoDia, recomprasDoDia, montarCombinado, textoCombinado } from '../combinado-dia';
+import {
+  cobrancasDoDia,
+  recomprasDoDia,
+  montarCombinado,
+  textoCombinado,
+  clientesEsfriando,
+  esfriandoDaVendedora,
+} from '../combinado-dia';
 
 /** Item da fila de cobrança, derivado da assinatura do módulo (sem importar de outro módulo no teste). */
 type FilaItem = Parameters<typeof cobrancasDoDia>[0][number];
@@ -79,6 +86,67 @@ describe('montarCombinado', () => {
     expect(it.valor).toBeNull();
     expect(it.detalhe).toContain('valor a confirmar');
     expect(it.detalhe).not.toMatch(/R\$\s?0,00/);
+  });
+});
+
+describe('clientesEsfriando', () => {
+  const ped = (c: string | null, dia: string | null, total: number | null = 100, account = 'oben') => ({
+    customer_user_id: c, order_date_kpi: dia, total, account,
+  });
+
+  it('[ES-JANELA] comprou no último ano e a última compra tem mais de 90 dias; ativo e velho demais ficam fora', () => {
+    const r = clientesEsfriando(
+      [
+        ped('esfriou', '2026-03-10', 300), ped('esfriou', '2026-08-01', 200, 'colacor'), // última 01/08 = 111 dias
+        ped('ativo', '2026-05-01'), ped('ativo', '2026-10-01'), // comprou há 50 dias
+        ped('limite', '2026-08-22'), // exatamente 90 dias: ainda não esfriou
+        ped('antigo', '2025-11-19'), // fora dos 12 meses
+        ped(null, '2026-04-01'), ped('semdata', null),
+      ],
+      HOJE,
+    );
+    expect(r).toEqual([
+      { clienteId: 'esfriou', empresa: 'colacor', ultimaCompra: '2026-08-01', diasSemCompra: 111, receita12m: 500 },
+    ]);
+  });
+
+  it('[ES-AUSENTE] pedido sem total deixa a receita null (nunca soma como zero) e vai ao fim', () => {
+    const r = clientesEsfriando(
+      [ped('a', '2026-06-01', null), ped('a', '2026-06-02', 900), ped('b', '2026-06-01', 50), ped('c', '2026-06-01', 700)],
+      HOJE,
+    );
+    expect(r.map((x) => [x.clienteId, x.receita12m])).toEqual([['c', 700], ['b', 50], ['a', null]]);
+  });
+
+  it('[ES-DONO] só a carteira da vendedora e sem quem já está na recompra dela', () => {
+    const lista = clientesEsfriando([ped('x', '2026-06-01'), ped('y', '2026-06-01'), ped('z', '2026-06-01')], HOJE);
+    const donos = new Map([['x', REGINA], ['y', REGINA], ['z', 'OUTRA']]);
+    expect(esfriandoDaVendedora(lista, donos, REGINA, new Set(['y'])).map((c) => c.clienteId)).toEqual(['x']);
+  });
+});
+
+describe('montarCombinado com esfriando', () => {
+  const esf = (id: string, receita: number | null) => ({
+    clienteId: id, empresa: 'oben', ultimaCompra: '2026-08-01', diasSemCompra: 111, receita12m: receita,
+  });
+
+  it('[CB-RODIZIO] cobrança → recompra → esfriando; fonte vazia passa a vez', () => {
+    const tres = montarCombinado([fila({ omieCodigoCliente: 1 })], recomprasDoDia([comprador('a', 900)]), [esf('e', 5000)]);
+    expect(tres.map((x) => `${x.tipo}:${x.clienteRef}`)).toEqual(['cobranca:1', 'recompra:a', 'esfriando:e']);
+    const semRecompra = montarCombinado([fila({ omieCodigoCliente: 1 }), fila({ omieCodigoCliente: 2 })], [], [esf('e', 1)]);
+    expect(semRecompra.map((x) => x.tipo)).toEqual(['cobranca', 'esfriando', 'cobranca']);
+    expect(montarCombinado([], [], [esf('a', 1), esf('b', 1), esf('c', 1), esf('d', 1)]).length).toBe(3);
+  });
+
+  it('[CB-ESF-TEXTO] nome do cadastro, dias sem comprar e o comprado em 12 meses; sem receita → "a confirmar", nunca R$ 0', () => {
+    const [comValor] = montarCombinado([], [], [esf('e', 12452)], new Map([['e', 'Marcenaria X']]));
+    expect(comValor.nome).toBe('Marcenaria X');
+    expect(comValor.detalhe).toMatch(/^esfriando: sem comprar há 111 dias · comprou R\$\s?12\.452,00 em 12 meses$/);
+    const [semValor] = montarCombinado([], [], [esf('f', null)]);
+    expect(semValor.valor).toBeNull();
+    expect(semValor.nome).toBe('cliente sem nome no cadastro');
+    expect(semValor.detalhe).toContain('a confirmar');
+    expect(semValor.detalhe).not.toMatch(/R\$\s?0,00/);
   });
 });
 
