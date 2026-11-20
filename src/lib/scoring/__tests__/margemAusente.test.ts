@@ -118,7 +118,7 @@ describe('formatMargemPct', () => {
 
   it('trata o valor como PERCENTUAL, sem multiplicar por 100', () => {
     // O bug que isto previne: `(53.47 * 100).toFixed(1)` exibia "5347.0%".
-    expect(formatMargemPct(53.47)).toBe('53.5%');
+    expect(formatMargemPct(53.47)).toBe('53,5%');
     expect(formatMargemPct(30)).toBe('30%');
   });
 
@@ -127,6 +127,6 @@ describe('formatMargemPct', () => {
     // formatador que adivinhava a unidade (`formatPctMaybe`) exibia "−14322%" aqui. Ele não
     // existe mais — virou o par explícito formatMargemPct (percentual) / formatarFracaoPct
     // (fração), cujo contraste está em components/customer360/__tests__/format.test.ts.
-    expect(formatMargemPct(-143.22)).toBe('-143.2%');
+    expect(formatMargemPct(-143.22)).toBe('-143,2%');
   });
 });
