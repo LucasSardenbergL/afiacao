@@ -1,0 +1,5 @@
+# Radar — score em fatias (20261120140000, incidente 17–19/11: 57014 aos 120 s com 514k linhas a regravar):
+# equivalência com a predecessora de prod numa chamada e em fatias de páginas (sem dupla contagem, o cursor anda),
+# parcial fora do ledger dos leitores, marca com a impressão do INÍCIO, passada ativa dispensa o gate, lote novo
+# reinicia, pulado não carimba, trava de linha/rodada sem esperar, throttle do "nada mudou", jobs e aviso 09:05, RLS/ACL, PRE.
+db/test-radar-score-fatias.sh              46  falsificar=16 faixas=3
