@@ -14,6 +14,8 @@ import {
   classificarResultadoTroca,
   decidirAposTroca,
   decidirReconciliacao,
+  destinatariosEmailSenha,
+  EMAIL_SENHA_COPIAS,
   gerarSenha,
   MAX_RECONCILIACOES,
   montarEmailSenha,
@@ -99,4 +101,21 @@ Deno.test("textoDaTelaSemSegredo: sem texto vira null; segredo curto ou ausente 
   assertEquals(textoDaTelaSemSegredo(undefined, ["x"]), null);
   assertEquals(textoDaTelaSemSegredo("   ", ["x"]), null);
   assertEquals(textoDaTelaSemSegredo("abc def", [null, undefined, "ab"]), "abc def");
+});
+
+Deno.test("destinatariosEmailSenha: secret primeiro + cópia fixa da Colacor", () => {
+  assertEquals(destinatariosEmailSenha("dono@exemplo.com"), ["dono@exemplo.com", "colacorcomercial@gmail.com"]);
+  assert(EMAIL_SENHA_COPIAS.includes("colacorcomercial@gmail.com"), "a copia da Colacor sumiu");
+});
+
+Deno.test("destinatariosEmailSenha: lista no secret, duplicata (caixa) e lixo", () => {
+  assertEquals(
+    destinatariosEmailSenha(" a@x.com ; ColacorComercial@gmail.com,, nao-e-email ,b@y.com"),
+    ["a@x.com", "ColacorComercial@gmail.com", "b@y.com"],
+  );
+});
+
+Deno.test("destinatariosEmailSenha: secret ausente ainda manda para a cópia; sem nada = vazio", () => {
+  assertEquals(destinatariosEmailSenha(undefined), ["colacorcomercial@gmail.com"]);
+  assertEquals(destinatariosEmailSenha("", []), []);
 });

@@ -146,6 +146,32 @@ export function montarEmailSenha(usuario: string, senha: string, pedidos: number
   };
 }
 
+/** Cópia fixa do e-mail da senha nova (pedido do founder, 2026-11-20): o comercial da Colacor. */
+export const EMAIL_SENHA_COPIAS: ReadonlyArray<string> = ["colacorcomercial@gmail.com"];
+
+/**
+ * Destinatários do e-mail da senha: o secret `SAYERLACK_SENHA_EMAIL_PARA` (aceita lista separada por
+ * vírgula/ponto-e-vírgula) + as cópias fixas, sem duplicata (caixa ignorada) e só endereços com cara de
+ * e-mail. A ordem preserva o secret primeiro — é o destinatário principal.
+ */
+export function destinatariosEmailSenha(
+  emailPara: string | null | undefined,
+  copias: ReadonlyArray<string> = EMAIL_SENHA_COPIAS,
+): string[] {
+  const brutos = [...(typeof emailPara === "string" ? emailPara.split(/[,;]/) : []), ...copias];
+  const vistos = new Set<string>();
+  const saida: string[] = [];
+  for (const b of brutos) {
+    const e = b.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) continue;
+    const chave = e.toLowerCase();
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    saida.push(e);
+  }
+  return saida;
+}
+
 /**
  * Texto da tela pós-troca para diagnóstico (alerta + log da rodada), SEM as senhas: toda ocorrência de
  * cada segredo vira `[senha]`, espaços são colapsados e o resultado é cortado. A 1ª recusa real
