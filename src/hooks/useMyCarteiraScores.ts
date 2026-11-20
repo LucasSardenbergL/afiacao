@@ -58,7 +58,7 @@ export function useMyCarteiraScores() {
       const { data, error } = await supabase.from('farmer_client_scores')
         .select('customer_user_id, farmer_id, health_score, health_class, priority_score, churn_risk, expansion_score, recover_score, revenue_potential, days_since_last_purchase, avg_monthly_spend_180d, signal_modifiers, sales_history_status, last_signal_recalc_at')
         .in('farmer_id', ownerIds)
-        .order('priority_score', { ascending: false })
+        .order('priority_score', { ascending: false, nullsFirst: false })
         .limit(200);
       if (error) throw error;
       return (data ?? []).map(({ farmer_id, signal_modifiers, ...row }) => ({

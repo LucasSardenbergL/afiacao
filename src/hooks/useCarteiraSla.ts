@@ -28,7 +28,7 @@ export function useCarteiraSla() {
         .select(
           'customer_user_id, farmer_id, health_class, churn_risk, last_contact_at, dias_sem_contato, sla_dias, vencido, priority_score',
         )
-        .order('priority_score', { ascending: false })
+        .order('priority_score', { ascending: false, nullsFirst: false })
         .limit(200)
         .returns<CarteiraSlaRow[]>();
       if (error) throw error;
