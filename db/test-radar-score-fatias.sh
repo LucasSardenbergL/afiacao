@@ -18,6 +18,7 @@
 #   B10 linha travada por outro escritor → a chamada encerra em `trava` com as faixas anteriores gravadas
 #   G1  linha com score_em ≥ início da passada não é recalculada nem contada (o filtro anti-dupla-contagem)
 #   C1  os 2 jobs: horário, comando com SET statement_timeout e dono postgres; o aviso do lote vai p/ 09:05 (C1b)
+#   C2  a 20261120150000 alarga a janela (01–05 e 07–10 UTC) e leva o aviso para 11:05
 #   D1  radar_score_passada com RLS e fechada: authenticated recebe 42501 · D2 ACL da função preservado
 #   E1  a faixa desce por Tid Range Scan (auto_explain dentro da função)
 #   F1  PRE: corpo vivo divergente ABORTA a migration e deixa o vivo intacto
@@ -30,10 +31,11 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261120140000_radar_score_em_fatias.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20261120150000_radar_score_janela_madrugada.sql"
 PRED="$REPO_ROOT/db/fixtures/radar-score-predecessora-prod-20261119.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_filtro_passada:G1a,G1b carimba_parcial:A3c sem_orcamento:A3a marca_impressao_fim:B6 sem_cursor:A2c passada_nao_reinicia:B7a noop_sem_throttle:B4a throttle_cego_lote:B4c gate_descarta_passada:B12 grava_com_pulados:B3 pulados_carimba:B3c trava_espera:B9 sem_tratar_trava:B10a passada_aberta:D1 aviso_cedo:C1b"
+  SABOTAGENS="sem_filtro_passada:G1a,G1b carimba_parcial:A3c sem_orcamento:A3a marca_impressao_fim:B6 sem_cursor:A2c passada_nao_reinicia:B7a noop_sem_throttle:B4a throttle_cego_lote:B4c gate_descarta_passada:B12 grava_com_pulados:B3 pulados_carimba:B3c trava_espera:B9 sem_tratar_trava:B10a passada_aberta:D1 aviso_cedo:C1b janela_curta:C2"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-score-fatias.XXXXXX")"
   # FAIXA (NUCLEO_FAIXA=i/k, passada por db/roda-nucleo-ci.sh quando o manifesto diz `faixas=k`): só a fatia
   # CANÔNICA i de k das sabotagens — da ((i-1)·T/k)+1 à (i·T/k) — depois do MESMO controle verde. Malformada ABORTA.
@@ -86,14 +88,17 @@ DATA="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-radar-score-fatias.XXXXXX")/data"
 LOCALE_TESTE="${LOCALE_TESTE:-C}"
 export LC_ALL="$LOCALE_TESTE" LANG="$LOCALE_TESTE"
 MIG_USADA="$(dirname "$DATA")/mig.sql"
+MIG2_USADA="$(dirname "$DATA")/mig2.sql"
 PGLOG="$(dirname "$DATA")/pg.log"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 
 cp "$MIG" "$MIG_USADA"
+cp "$MIG2" "$MIG2_USADA"
 
-sabotar() { # $1 = de, $2 = para (literal; troca TODAS as ocorrências)
-  python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
+sabotar() { # $1 = de, $2 = para (literal; troca TODAS as ocorrências); ALVO_SAB=2 sabota a 2ª migration
+  local alvo="$MIG_USADA"; [ "${ALVO_SAB:-1}" = 2 ] && alvo="$MIG2_USADA"
+  python3 -I - "$alvo" "$1" "$2" <<'PY'
 import sys
 p, de, para = sys.argv[1:]
 s = open(p, encoding="utf-8").read()
@@ -136,6 +141,8 @@ case "${SABOTAGEM:-}" in
   sem_tratar_trava)     cegar_md5; sabotar "    EXCEPTION WHEN lock_not_available OR deadlock_detected THEN" "    EXCEPTION WHEN division_by_zero THEN" ;;
   passada_aberta)       sabotar "REVOKE ALL ON TABLE public.radar_score_passada FROM PUBLIC, anon, authenticated;" "GRANT SELECT ON TABLE public.radar_score_passada TO authenticated;"
                         sabotar "    RAISE EXCEPTION 'P2 FALHOU: radar_score_passada legível" "    RAISE NOTICE 'P2 FALHOU: radar_score_passada legível" ;;
+  janela_curta)         ALVO_SAB=2 sabotar "  PERFORM cron.alter_job(job_id := v_id, schedule := '*/5 1-5,7-10 * * *', command := c_cmd);" "  NULL;"
+                        ALVO_SAB=2 sabotar "    RAISE EXCEPTION 'P1 FALHOU: radar-score-recalcular-continua fora" "    RAISE NOTICE 'P1 FALHOU: radar-score-recalcular-continua fora" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
@@ -444,6 +451,15 @@ eq "C1 jobs: horário, comando novo, ativos, dono postgres" \
 
 eq "C1b o aviso do lote sai depois da janela do score" \
   "$(Pq -c "SELECT schedule||'|'||command FROM cron.job WHERE jobname = 'radar-avisar-lote-diario'")" "5 9 * * *|SELECT public.radar_avisar_lote();"
+
+# C2: a 20261120150000 (janela da madrugada) — exige o corpo da 20261120140000 (TRAVA), por isso só sem
+# sabotagem no corpo. 2× = idempotente.
+if [ "$CORPO" = 0 ]; then
+  P -q -f "$MIG2_USADA"; P -q -f "$MIG2_USADA"
+  eq "C2 janela da madrugada: continua 01–05 e 07–10 UTC, diário intacto, aviso 11:05" \
+    "$(Pq -c "SELECT string_agg(jobname||'|'||schedule, ' ; ' ORDER BY jobname) FROM cron.job WHERE jobname IN ('radar-score-recalcular-continua','radar-score-recalcular-diario','radar-avisar-lote-diario')")" \
+    "radar-avisar-lote-diario|5 11 * * * ; radar-score-recalcular-continua|*/5 1-5,7-10 * * * ; radar-score-recalcular-diario|30,35,40,45,50,55 6 * * *"
+fi
 
 # D1/D2: fronteira. SQLSTATE por marcador ASCII (a mensagem muda com o locale); outro erro propaga.
 D1="$(P -qAt 2>&1 <<'SQL' || true

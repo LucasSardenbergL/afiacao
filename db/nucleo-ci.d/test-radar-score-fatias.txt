@@ -2,4 +2,4 @@
 # equivalência com a predecessora de prod numa chamada e em fatias de páginas (sem dupla contagem, o cursor anda),
 # parcial fora do ledger dos leitores, marca com a impressão do INÍCIO, passada ativa dispensa o gate, lote novo
 # reinicia, pulado não carimba, trava de linha/rodada sem esperar, throttle do "nada mudou", jobs e aviso 09:05, RLS/ACL, PRE.
-db/test-radar-score-fatias.sh              45  falsificar=15 faixas=3
+db/test-radar-score-fatias.sh              46  falsificar=16 faixas=3
