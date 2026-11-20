@@ -133,7 +133,7 @@ observabilidade.
 
 ## Validação
 
-- Prova PG17 `db/test-radar-score-fatias.sh`: 45 PASS no controle; `--falsificar` com **15/15 sabotagens vermelhas** no assert declarado e controle verde na MESMA invocação, nos locales `C` e `pt_BR.UTF-8` (579 s cada, em paralelo). No CI entra com `falsificar=15 faixas=3` (`db/nucleo-ci.d/test-radar-score-fatias.txt`). Uma sabotagem nasceu verde (`passada_nao_reinicia` desligava só o lote, e o `lote_iniciado_em` ainda pegava a troca: camada redundante) e passou a desligar o reinício inteiro..
+- Prova PG17 `db/test-radar-score-fatias.sh`: 45 PASS no controle; `--falsificar` com **16/16 sabotagens vermelhas** no assert declarado e controle verde na MESMA invocação, nos locales `C` e `pt_BR.UTF-8` (~10 min cada, em paralelo). No CI entra com `falsificar=16 faixas=3` (`db/nucleo-ci.d/test-radar-score-fatias.txt`). Uma sabotagem nasceu verde (`passada_nao_reinicia` desligava só o lote, e o `lote_iniciado_em` ainda pegava a troca: camada redundante) e passou a desligar o reinício inteiro..
 - Aplicação (`bun run db:aplicar`, ensaio 🟢 antes de cada uma): 20261120140000 → recibo **#1206**
   (sha256 `f646f8a4…`), e a 20261120150000 → recibo **#1209** (sha256 `d1af0207…`). 2ª testemunha via psql-ro:
   md5 do corpo `8a0f2beb…`, `lock_timeout=5s`, `radar_score_passada` com RLS e fechada para authenticated, ACL

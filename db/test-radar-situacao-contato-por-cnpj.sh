@@ -60,8 +60,10 @@ for f in "$FIXTURE" "$FIXTURE_DESFAZER" "$MIG_INTEG" "$MIG_PRED" "$MIG"; do
 done
 # radar_aplicar_situacao fica FORA do CV_FUNCOES (o predecessor tem de ser conferido antes da migration). Logo uma
 # migration POSTERIOR que mexa nele não entraria aqui e a prova seguiria verde sobre o corpo velho: recusa.
+# "Mexer" = DDL na função (CREATE/ALTER/DROP … FUNCTION radar_aplicar_situacao(); citar o nome num comentário não
+# conta (20261120140000 cita a duração medida dela e derrubava esta prova à toa).
 POSTERIORES="$(cd "$REPO_ROOT/supabase/migrations" && for m in *.sql; do
-  [[ "$m" > "$(basename "$MIG")" ]] && grep -lE 'radar_aplicar_situacao([^_]|$)' "$m"; done || true)"
+  [[ "$m" > "$(basename "$MIG")" ]] && grep -lE '(FUNCTION|PROCEDURE)[[:space:]]+(public\.)?radar_aplicar_situacao[[:space:]]*\(' "$m"; done || true)"
 if [ -n "$POSTERIORES" ]; then
   echo "PROVA DESATUALIZADA: migration posterior mexe em radar_aplicar_situacao — leve-a ao harness: $POSTERIORES"; exit 1
 fi
