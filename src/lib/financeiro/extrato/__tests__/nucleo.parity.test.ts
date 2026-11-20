@@ -8,9 +8,21 @@ const ROOT = process.cwd();
 const CANONICO = resolve(ROOT, 'src/lib/financeiro/extrato/nucleo.ts');
 const ESPELHO = resolve(ROOT, 'supabase/functions/_shared/extrato-nucleo.ts');
 
+// Mesma função de comparação para o teste real e para a calibração.
+const identicos = (a: string, b: string) => a === b;
+
 describe('paridade: extrato/nucleo (src) × extrato-nucleo (edge)', () => {
   it('os dois arquivos são byte-idênticos', () => {
-    expect(readFileSync(ESPELHO, 'utf8')).toBe(readFileSync(CANONICO, 'utf8'));
+    expect(identicos(readFileSync(ESPELHO, 'utf8'), readFileSync(CANONICO, 'utf8'))).toBe(true);
+  });
+
+  // Controle positivo de divergência: uma cópia alterada em 1 byte TEM de reprovar na comparação.
+  it('CALIBRAÇÃO: divergência de 1 byte deixa a paridade vermelha', () => {
+    const canonico = readFileSync(CANONICO, 'utf8');
+    const adulterado = canonico.replace('centavos', 'centavoz');
+    expect(adulterado).not.toBe(canonico);
+    expect(identicos(adulterado, canonico)).toBe(false);
+    expect(identicos(canonico + ' ', canonico)).toBe(false);
   });
 
   it('CALIBRAÇÃO: caminhos distintos e não-vazios', () => {

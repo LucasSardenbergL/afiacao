@@ -30,11 +30,12 @@ describe('decimalTextoParaCentavos', () => {
     ['10', 1000],
     ['0,5', 50],
     ['12.5', 1250],
+    ['1.234.567,89', 123456789],
   ])('%s -> %s', (entrada, esperado) => {
     expect(decimalTextoParaCentavos(entrada)).toBe(esperado);
   });
 
-  it.each([['12.345'], [''], ['  '], ['abc'], ['1,234,56'], ['1.234.567'], ['1,234'], ['1.2345'], ['NaN'], ['-']])(
+  it.each([['12.345'], ['1.2.3,45'], ['12.34,56'], ['.123,45'], [''], ['  '], ['abc'], ['1,234,56'], ['1.234.567'], ['1,234'], ['1.2345'], ['NaN'], ['-']])(
     '%j -> null',
     (entrada) => {
       expect(decimalTextoParaCentavos(entrada)).toBeNull();

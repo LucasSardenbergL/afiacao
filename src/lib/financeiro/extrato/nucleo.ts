@@ -65,6 +65,8 @@ export function decimalTextoParaCentavos(s: string): number | null {
   if (t.includes(',')) {
     const partes = t.split(',');
     if (partes.length !== 2) return null;
+    // milhar só bem posicionado: 1-3 dígitos + grupos de 3 (ou só dígitos, sem ponto)
+    if (!/^\d+$/.test(partes[0]) && !/^\d{1,3}(\.\d{3})+$/.test(partes[0])) return null;
     inteiro = partes[0].replace(/\./g, '');
     frac = partes[1];
   } else if (t.includes('.')) {
