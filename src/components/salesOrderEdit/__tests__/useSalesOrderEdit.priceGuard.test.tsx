@@ -2,7 +2,7 @@
 // NÃO pode persistir nem agendar o sync ao Omie. O input do card faz Number(value) || 0,
 // então esvaziar o campo vira 0 silencioso (PV com valor zerado = prejuízo / pedido
 // inválido). Botão desabilitado é só conveniência; o bloqueio real vive no handleSave.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
 const navigateSpy = vi.fn();
@@ -29,7 +29,9 @@ import { useSalesOrderEdit } from '../useSalesOrderEdit';
 const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
 // PR0.0-bis: loadOrder busca o omie_payload pelo canal staff SECDEF (fechado ao .select()).
-const mockedRpc = vi.mocked(supabase.rpc);
+// Mock "achatado" de propósito: `vi.mocked(supabase.rpc)` carrega a união de TODAS as RPCs do types.ts, e a cada
+// RPC nova ela cresce até o TS2589 ("excessively deep") — medido quando o types.ts ganhou as RPCs do e-mail ao CRS.
+const mockedRpc = vi.mocked(supabase.rpc) as unknown as Mock<(...args: unknown[]) => unknown>;
 const mockedTrack = vi.mocked(track);
 
 /** Builder auto-retornante até `.range()` — o catálogo de edição agora é PAGINADO

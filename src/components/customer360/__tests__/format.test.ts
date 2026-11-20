@@ -21,7 +21,7 @@ describe('formatContagemComTeto — lista com teto não se apresenta como total'
 describe('formatarFracaoPct — entrada é FRAÇÃO, sempre × 100', () => {
   it('converte fração em percentual', () => {
     expect(formatarFracaoPct(0.3)).toBe('30%');
-    expect(formatarFracaoPct(0.155)).toBe('15.5%');
+    expect(formatarFracaoPct(0.155)).toBe('15,5%');
     expect(formatarFracaoPct(0)).toBe('0%');
   });
 

@@ -3,7 +3,7 @@
 // o combobox então mostra rótulo vazio e convida o vendedor a escolher uma das 8 genéricas,
 // TROCANDO o prazo de um pedido já negociado (DSO errado). O seletor trava; a proteção
 // mesmo é o guard imperativo em handleSave (money-path §5).
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
 const navigateSpy = vi.fn();
@@ -23,7 +23,9 @@ import { useSalesOrderEdit } from '../useSalesOrderEdit';
 
 const mockedFrom = vi.mocked(supabase.from);
 const mockedInvoke = vi.mocked(supabase.functions.invoke);
-const mockedRpc = vi.mocked(supabase.rpc);
+// Mock "achatado" de propósito: `vi.mocked(supabase.rpc)` carrega a união de TODAS as RPCs do types.ts, e a cada
+// RPC nova ela cresce até o TS2589 ("excessively deep") — medido quando o types.ts ganhou as RPCs do e-mail ao CRS.
+const mockedRpc = vi.mocked(supabase.rpc) as unknown as Mock<(...args: unknown[]) => unknown>;
 
 interface PgBuilder {
   select: () => PgBuilder; eq: () => PgBuilder; or: () => PgBuilder; order: () => PgBuilder;
