@@ -70,7 +70,8 @@ function montarDependencias(db: SupabaseClient, p: Parametros, cred: { appKey: s
       const r = await omie(URL_VENDEDORES, "ListarVendedores", { pagina: 1, registros_por_pagina: 500 });
       if (r.fault || !r.corpo) return { erro: r.fault ?? "sem corpo" };
       // Página única de 500: a conta tem dezenas de vendedores. Mais de uma página = conferência incompleta → recusa.
-      if (Number(r.corpo.total_de_paginas ?? 1) > 1) return { erro: "ListarVendedores com mais de uma página" };
+      // Total AUSENTE também recusa (não se presume 1): conferência incompleta não autoriza escrita.
+      if (r.corpo.total_de_paginas !== 1) return { erro: `ListarVendedores: total_de_paginas ${String(r.corpo.total_de_paginas)} (esperado 1)` };
       const cad = r.corpo.cadastro;
       return Array.isArray(cad) ? { vendedores: cad as { codigo?: unknown; nome?: unknown; inativo?: unknown }[] } : { erro: "sem cadastro" };
     },
