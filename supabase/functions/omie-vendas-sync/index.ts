@@ -4048,8 +4048,10 @@ Deno.serve(async (req) => {
           // Só a ausência AFIRMADA libera o DELETE — com ou sem rastro ATP (Codex 2026-11-20, P1).
           // Antes, sem rastro a consulta indeterminada SEGUIA ("rascunho"), mas a falta de rastro não
           // prova ausência de envio (trilha que falhou junto com o write-back): o DELETE apagava a
-          // linha com o PV vivo no Omie. Rascunho de verdade responde "Não existem registros" ⇒
-          // ausente; recusar só custa um "tente de novo" quando o Omie está fora ou ilegível.
+          // linha com o PV vivo no Omie. Rascunho sai quando a resposta é uma ausência que o
+          // classificador RECONHECE (EOF "Não existem registros para a página" ou fault "pedido … não
+          // cadastrado/encontrado"); texto de ausência que ele não conhece também recusa — o warn
+          // abaixo é o que ensina a régua o texto real do Omie.
           if (consulta.tipo === "indeterminado") {
             if (ultimoGate === null) {
               console.warn(`[Omie Vendas][${orderAccount}] exclusão sem rastro de envio: consulta de ${cCodIntPed} indeterminada (${consulta.detalhe}) — recusada`);
