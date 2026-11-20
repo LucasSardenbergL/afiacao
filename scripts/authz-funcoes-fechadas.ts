@@ -235,6 +235,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
   // dela que a correção legítima sai); `anon` foi revogado nominalmente na própria migration que
   // a cria, junto com PUBLIC. O fecho por privilégio e o gate no corpo são complementares aqui:
   // sem o gate, qualquer authenticated (inclusive customer) corrigiria cancelamento de compra.
+  'public.sayerlack_senha_portal_copiar': {
+    fechadaPor: '20261120160000_sayerlack_senha_portal_copiar.sql',
+    permitido: PORTA_GATE,
+    motivo: 'botão Copiar senha do portal: senha ativa do Vault — só master no browser; gate has_role(master) no corpo, anon/PUBLIC/service_role revogados',
+  },
   'public.sayerlack_aceitar_portal': {
     fechadaPor: '20261111180000_sayerlack_aceitar_portal.sql',
     permitido: PORTA_GATE,

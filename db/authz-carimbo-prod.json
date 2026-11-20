@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-20T12:01:54.518Z",
-  "sourceHead": "335c33b52955ce2a68c992bc1e9c775e741335c4",
+  "medidoEm": "2026-11-20T12:08:57.059Z",
+  "sourceHead": "06413713d396ee0b49adf316c77d7bd15066a291",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,19 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 92 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 94 definição(ões) lida(s) para 92 chave(s) da allowlist.",
-      "contratoFingerprint": "cbc3447e515f9e9146ffa0294b8ef43f04bf71715fedc1c5a7b3a2a87f9a9d58",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 94 definição(ões) lida(s) para 93 chave(s) da allowlist.",
+      "contratoFingerprint": "0aab21449715a3b82e2721e2b62a0daef7f91dc68fe23c45a3e18bc05bb21b4c",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": []
+      "achados": [
+        {
+          "id": "f18eacfb3707a1d7",
+          "linha": "❌ public.sayerlack_senha_portal_copiar — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack_senha_portal_copiar está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-11-20",
+          "ultimaVez": "2026-11-20"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -108,7 +115,7 @@
       "script": "deriva:corpo:prod",
       "exit": 0,
       "resumo": "✅ deriva-corpo — 591 identidade(s) batem com o repo (512 em dia, 66 só cosméticas, 12 aceitas na baseline) e 34 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 591 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@e5c4a47a6 (fetch ok) · prod 2026-11-20 12:02:23.752981Z",
+      "denominador": "🔎 deriva-corpo — 591 identidade(s) conferida(s) · 34 aposentada(s) · ref origin/main@e5c4a47a6 (fetch ok) · prod 2026-11-20 12:09:23.592715Z",
       "contratoFingerprint": "4243a14825376b5053104b01074ed80be3bef325628041fd534ada298a610487",
       "auditorFingerprint": "3b1f38be117c2aafd7804b36b20e2de39cee5565430fc752349d4ddddcb76fd0",
       "achados": []
