@@ -105,13 +105,22 @@ linha por um `CASE` (ausente → NULL → adaptativo). A prova ganhou G1, uma ch
 facilita o teste. `GREATEST`/`LEAST` com argumento possivelmente NULL é fabricação silenciosa, da família de
 `Number(null) === 0`.
 
-## Folga
+## Folga (medida em prod, Mini, 20/11 13:10 UTC, em ensaio)
 
-- Por chamada: ≤ ~45 s de fatias, num teto de 5 min (~15%). A conclusão é a reconciliação (~8 s) mais os descartes.
-  Num mês como novembro (6.233 descartes), ela fica perto de 1 min (~20% do teto).
-- Por lote: ~573 mil linhas a ~5–6 ms ≈ 50–60 min de escrita, mais ~5 min de leitura ≈ 70–90 chamadas. A janela tem
-  ~120 chamadas por dia, então o lote fecha numa madrugada. O aviso do lote (11:05 UTC) espera a marca. Se a passada
-  não fechar em 30 h, ele sai assim mesmo, dizendo que a situação não foi aplicada (como antes).
+`db/2026-11-20-radar-situacao-tick-medido.sql --ensaio` com o corpo da 20261120180000 reabre o lote 2026-11 dentro
+da transação e faz ROLLBACK no fim:
+
+| Chamada | Duração | Teto 5 min | O que fez |
+|---|---:|---:|---|
+| Fatias | **42,6 s** | 14% | 34 fatias adaptativas, 0 escrita (lote já aplicado): a leitura cobre ~1/3 do lote por chamada |
+| Conclusão | **44,9 s** | 15% | a função de prod inteira: reconciliação, irregulares (3.010), verificados (15.228), 0 a gravar |
+
+- Com escrita (~5–6 ms por linha), uma chamada de fatias grava ~7–8 mil fotos. As ~573 mil do lote levam ~70–80
+  chamadas, e a janela tem ~120 por dia: o lote fecha numa madrugada.
+- A conclusão de um mês como novembro (6.233 descartes, cada um UPDATE não-HOT + contato) deve ficar perto de
+  1,5 min (~30% do teto), abaixo de 50%.
+- O aviso do lote (11:05 UTC) espera a marca. Se a passada não fechar em 30 h, ele sai assim mesmo, dizendo que a
+  situação não foi aplicada (como antes).
 
 ## Prova
 
