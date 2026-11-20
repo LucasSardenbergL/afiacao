@@ -61,11 +61,14 @@ export const PERSONA_CONFIG: Record<Persona, PersonaConfig> = {
     label: 'Tintométrico',
     description: 'Fórmulas, SKUs Oben, importações e erros.',
   },
+  // Master = CEO: o alerta do topo só disputa entre zonas com decisão de dinheiro (aging, orçamento
+  // parado, compra aguardando aprovação). Erro de importação tintométrica (score 95) e NF parada
+  // continuam nas zonas, mas não tomam o lugar de uma decisão (parecer Codex 2026-11-20).
   master: {
-    zoneOrder:     ['vendas', 'estoque', 'reposicao', 'financeiro', 'tintometrico', 'sistema'],
-    priorityZones: ['vendas', 'estoque', 'reposicao', 'financeiro', 'tintometrico', 'sistema'],
+    zoneOrder:     ['vendas', 'financeiro', 'reposicao', 'estoque', 'tintometrico', 'sistema'],
+    priorityZones: ['financeiro', 'vendas', 'reposicao'],
     label: 'Master',
-    description: 'Visão consolidada das 3 empresas, todos os módulos.',
+    description: 'Visão do CEO: resultado do grupo primeiro, operação depois.',
   },
   geral: {
     zoneOrder:     ['vendas', 'estoque', 'reposicao', 'financeiro', 'tintometrico', 'sistema'],
