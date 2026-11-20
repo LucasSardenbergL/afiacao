@@ -216,6 +216,9 @@ GRANT SELECT ON TABLE public.banco_conta, public.banco_conta_omie, public.banco_
 -- ── SECAO 3 — Storage: bucket privado banco-extratos ─────────────────────────────────────────
 -- Caminho {banco_conta_id}/{uuid}.{ext}. A company NAO vem no caminho: e sempre a da conta.
 -- So INSERT e SELECT; sem UPDATE nem DELETE (o arquivo e evidencia).
+-- O EXISTS roda como o CHAMADOR, entao a RLS de banco_conta ja esconde a conta alheia; o
+-- fin_user_can_access abaixo e defesa em profundidade (vale se a RLS de banco_conta afrouxar).
+-- A prova falsifica as duas camadas juntas e o vinculo pasta->conta sozinho.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES ('banco-extratos', 'banco-extratos', false, 10485760,
         ARRAY['text/plain', 'application/x-ofx', 'application/octet-stream'])

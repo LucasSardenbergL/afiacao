@@ -27,8 +27,9 @@ if [ "${1:-}" = "--falsificar" ]; then
     unique_por_empresa:t1_unique_conta_global
     grant_linha_aberto:t1_truncate_negado+t1_migration_aplica
     insert_aberto:t1_insert_direto_negado
-    storage_insert_sem_gate:t1_storage_outra_empresa_negado
-    storage_select_sem_gate:t1_storage_select_so_propria
+    storage_insert_sem_pasta:t1_storage_outra_empresa_negado
+    storage_select_sem_pasta:t1_storage_select_so_propria
+    storage_insert_sem_gate_nem_rls_conta:t1_storage_outra_empresa_negado
     ancora_sem_gate:t1_ancora_sem_acesso_negado
     ancora_anon:t1_ancora_execute_fechado+t1_migration_aplica
     ancora_dia_aberto:t1_ancora_dia_aberto_negado
@@ -112,8 +113,15 @@ case "${SABOTAGEM:-}" in
   # privilegio + policy de INSERT: a escrita direta passa
   insert_aberto)        sabotar "REVOKE ALL ON TABLE public.banco_extrato_linha FROM PUBLIC, anon, authenticated;" \
                                 "GRANT ALL ON TABLE public.banco_extrato_linha TO authenticated; CREATE POLICY sabot_ins ON public.banco_extrato_linha FOR INSERT TO authenticated WITH CHECK (true);" ;;
-  storage_insert_sem_gate) sabotar "public.fin_user_can_access(ci.company)" "true" ;;
-  storage_select_sem_gate) sabotar "public.fin_user_can_access(cs.company)" "true" ;;
+  # storage: a policy deixa de amarrar a 1a pasta do caminho a conta (qualquer conta visivel serve)
+  storage_insert_sem_pasta) sabotar "ci.id::text = (storage.foldername(objects.name))[1]" "true" ;;
+  storage_select_sem_pasta) sabotar "cs.id::text = (storage.foldername(objects.name))[1]" "true" ;;
+  # storage: sem o fin_user_can_access da policy E com banco_conta aberta. So o gate sozinho fica VERDE
+  # (a RLS de banco_conta, avaliada como o chamador, ja esconde a conta alheia no EXISTS): camada redundante.
+  storage_insert_sem_gate_nem_rls_conta)
+    sabotar "public.fin_user_can_access(ci.company)" "true"
+    sabotar "ON public.banco_conta FOR SELECT TO authenticated USING (public.fin_user_can_access(company));" \
+            "ON public.banco_conta FOR SELECT TO authenticated USING (true);" ;;
   ancora_sem_gate)      sabotar "IF NOT public.fin_user_can_access(v_company) THEN" "IF false THEN" ;;
   ancora_anon)          sabotar "REVOKE ALL ON FUNCTION public.banco_conta_registrar_ancora(uuid, date, bigint) FROM PUBLIC, anon;" \
                                 "GRANT EXECUTE ON FUNCTION public.banco_conta_registrar_ancora(uuid, date, bigint) TO anon;" ;;

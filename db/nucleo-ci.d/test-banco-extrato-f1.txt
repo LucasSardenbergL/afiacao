@@ -1,4 +1,4 @@
 # F1 do extrato bancario Itau (Task 1): 5 tabelas banco_* com RLS por fin_user_can_access(company), so SELECT para
 # authenticated (sem TRUNCATE), bucket privado banco-extratos com a pasta = conta, RPC da ancora manual e o seed da
-# conta Itau por empresa derivado de fin_contas_correntes (Pix Itau ligada, inativa fora). Migration aplicada 2x. 17 sabotagens.
-db/test-banco-extrato-f1.sh 42  falsificar=17
+# conta Itau por empresa derivado de fin_contas_correntes (Pix Itau ligada, inativa fora). Migration aplicada 2x. 18 sabotagens.
+db/test-banco-extrato-f1.sh 42  falsificar=18
