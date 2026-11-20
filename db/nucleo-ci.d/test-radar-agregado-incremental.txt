@@ -1,0 +1,7 @@
+# Mini, agregado do Radar incremental (20261120140000): o recálculo diário das 06:35 só move quem cruza o corte de
+# "estabelecida" (faixa (corte velho, corte novo + 1], pelo índice de fila) quando a impressão digital não mudou.
+# EQUIVALÊNCIA com o recálculo completo no mesmo instante em 11 ticks incrementais (fino, _sec, município, estado);
+# completo com escrita (updated_at, já-cliente sem bump, correção, exclusão contato 2 dias, contabilidade, lote),
+# na rede de 6 d 12 h, com corte à frente, com agregado incoerente (CHECK) e com escrita DURANTE o delta;
+# 0 seq scans de radar_empresas no incremental (pg_stat_xact); semente só sem escrita; completo novo = predecessor; ACL; PRE.
+db/test-radar-agregado-incremental.sh      76  falsificar=15
