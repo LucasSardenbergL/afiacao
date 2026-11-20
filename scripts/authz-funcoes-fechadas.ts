@@ -206,6 +206,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'único writer de reposicao_compra_suspensa; gate private.cap_compras_escrever (master)',
   },
+  'public._meta_potencial_estreias': {
+    fechadaPor: '20261120230000_meta_potencial.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'meta por potencial: lê unit_price para o valor da estreia de família — só via _meta_potencial_calcular ← meta_potencial_mes (gate master); REVOKE de PUBLIC, anon e authenticated, medido em prod (anon=f, authenticated=f em 2026-11-20)',
+  },
   'public.ajuste_lote_email_autorizar': {
     fechadaPor: '20261120190000_lote_minimo_email_crs.sql',
     permitido: PORTA_FECHADA,

@@ -26979,6 +26979,7 @@ export type Database = {
           total_itens: number
         }[]
       }
+      meta_potencial_mes: { Args: never; Returns: Json }
       melhoria_clientes_por_produto: {
         Args: { p_termo: string }
         Returns: Json
