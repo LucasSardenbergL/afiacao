@@ -91,3 +91,49 @@ export function decideStatus(args: {
   // (7) aplica.
   return 'aplicado';
 }
+
+// ── Exibição do SEGURADO na tela /admin/reposicao/mudancas-automaticas ──
+// O log grava, para um segurado, `depois = antes` (nada foi aplicado). O que o fusível BARROU está
+// em `*_sugerido` (migration 20260712140000). Mostrar `antes → depois` vira "2 → 2" — ruído.
+// Sugerido ausente (runs antigos) → null: ausente ≠ zero, nunca fabricar o valor barrado.
+export interface SeguradoExibicao {
+  maxAtual: number | null;
+  maxBarrado: number | null;
+  ppAtual: number | null;
+  ppBarrado: number | null;
+  /** maxBarrado / maxAtual, 1 casa. null se faltar base (>0) ou sugerido. */
+  fator: number | null;
+}
+
+const finito = (n: number | null | undefined): n is number => typeof n === 'number' && Number.isFinite(n);
+
+export function descreverSegurado(log: {
+  estoque_maximo_antes: number | null;
+  estoque_maximo_sugerido: number | null;
+  ponto_pedido_antes: number | null;
+  ponto_pedido_sugerido: number | null;
+}): SeguradoExibicao {
+  const maxAtual = finito(log.estoque_maximo_antes) ? log.estoque_maximo_antes : null;
+  const maxBarrado = finito(log.estoque_maximo_sugerido) ? log.estoque_maximo_sugerido : null;
+  const fator = maxAtual != null && maxAtual > 0 && maxBarrado != null
+    ? Math.round((maxBarrado / maxAtual) * 10) / 10
+    : null;
+  return {
+    maxAtual,
+    maxBarrado,
+    ppAtual: finito(log.ponto_pedido_antes) ? log.ponto_pedido_antes : null,
+    ppBarrado: finito(log.ponto_pedido_sugerido) ? log.ponto_pedido_sugerido : null,
+    fator,
+  };
+}
+
+// Recorrência: o mesmo SKU costuma ser segurado todo dia (medido 2026-11-20: 2 SKUs × 135 linhas).
+// `ciclos` inclui o run atual. null (consulta falhou/sem dado) → null: não afirmar "novo".
+export function rotuloRecorrencia(ciclos: number | null, desdeIso: string | null): string | null {
+  if (ciclos == null || !Number.isFinite(ciclos) || ciclos < 1) return null;
+  if (ciclos === 1) return 'novo hoje';
+  if (!desdeIso) return `segurado em ${ciclos} ciclos`;
+  const [a, m, d] = desdeIso.slice(0, 10).split('-');
+  if (!a || !m || !d) return `segurado em ${ciclos} ciclos`;
+  return `segurado em ${ciclos} ciclos desde ${d}/${m}/${a}`;
+}
