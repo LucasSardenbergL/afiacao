@@ -191,7 +191,11 @@ export function AlertaDrillSheet({
                 <Card>
                   <CardContent className="pt-4 text-sm space-y-1">
                     <div>Status: {statusBadge(drillEvento.status)}</div>
-                    <div className="text-muted-foreground">Por: {drillEvento.decidido_por ?? "—"} em {drillEvento.decidido_em ? new Date(drillEvento.decidido_em).toLocaleString("pt-BR") : "—"}</div>
+                    {drillEvento.status === "registrado" ? (
+                      <div className="text-muted-foreground">Registro automático — informativo, não pede decisão.</div>
+                    ) : (
+                      <div className="text-muted-foreground">Por: {drillEvento.decidido_por ?? "—"} em {drillEvento.decidido_em ? new Date(drillEvento.decidido_em).toLocaleString("pt-BR") : "—"}</div>
+                    )}
                     {drillEvento.justificativa_decisao && (
                       <div className="p-2 bg-muted/50 rounded text-xs">{drillEvento.justificativa_decisao}</div>
                     )}

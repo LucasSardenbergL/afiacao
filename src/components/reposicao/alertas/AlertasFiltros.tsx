@@ -75,6 +75,7 @@ export function AlertasFiltros({
                 <SelectItem value="pendente">Pendente</SelectItem>
                 <SelectItem value="aceito">Aceito</SelectItem>
                 <SelectItem value="resolvido_auto">Resolvido auto</SelectItem>
+                <SelectItem value="registrado">Registrado</SelectItem>
                 <SelectItem value="excluido">Excluído</SelectItem>
               </SelectContent>
             </Select>

@@ -45,6 +45,12 @@ export type Visao = "fila" | "registro";
 export const tiposDaVisao = (visao: Visao): readonly string[] =>
   visao === "fila" ? TIPOS_FILA : TIPOS_REGISTRO;
 
+// Status com que cada visão abre. A fila é "o que espera decisão" (pendente). O registro abre em
+// todos: a venda atípica nasce 'registrado' (migration 20261120180002), e abrir em "pendente"
+// esconderia justamente o que a visão existe para mostrar.
+export const statusPadraoDaVisao = (visao: Visao): string =>
+  visao === "fila" ? "pendente" : "__all__";
+
 // Onde o reativado se resolve (Religar/Descontinuar). Aceitar aqui fecharia o evento sem a decisão.
 export const ROTA_REVISAO_PARAMETROS = "/admin/reposicao/sessao/parametros?tab=ajuste";
 

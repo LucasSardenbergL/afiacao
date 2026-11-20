@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tipoLabel, fmt, PAGE_SIZE, idadeDias, podeAceitarEmLote, tiposDaVisao } from "../types";
+import { tipoLabel, fmt, PAGE_SIZE, idadeDias, podeAceitarEmLote, tiposDaVisao, statusPadraoDaVisao } from "../types";
 
 describe("tipoLabel", () => {
   it("mapeia os tipos conhecidos e faz passthrough do desconhecido", () => {
@@ -50,12 +50,22 @@ describe("tiposDaVisao", () => {
   });
 });
 
+describe("statusPadraoDaVisao", () => {
+  it("fila abre em pendente; registro abre em todos (venda atípica nasce 'registrado')", () => {
+    expect(statusPadraoDaVisao("fila")).toBe("pendente");
+    expect(statusPadraoDaVisao("registro")).toBe("__all__");
+  });
+});
+
 describe("podeAceitarEmLote", () => {
   const base = { status: "pendente", severidade: "info", tipo: "venda_atipica" };
   it("pendente não crítico de venda/LT/inativado → sim", () => {
     expect(podeAceitarEmLote(base)).toBe(true);
     expect(podeAceitarEmLote({ ...base, tipo: "lt_atipico" })).toBe(true);
     expect(podeAceitarEmLote({ ...base, tipo: "sku_inativado_omie" })).toBe(true);
+  });
+  it("registrado (venda atípica informativa) não entra no lote", () => {
+    expect(podeAceitarEmLote({ ...base, status: "registrado" })).toBe(false);
   });
   it("crítico, já decidido, sem grupo e reativado (decisão própria) → não", () => {
     expect(podeAceitarEmLote({ ...base, severidade: "critico" })).toBe(false);
