@@ -1,5 +1,5 @@
 -- =============================================================================
--- Radar: a foto da situação cadastral RFB passa a ser gravada em FATIAS de páginas, com cursor persistido
+-- Radar: a foto da situação cadastral RFB passa a ser gravada em FATIAS por CNPJ, com cursor persistido
 -- =============================================================================
 -- Medido em prod (psql-ro, 2026-11-20; docs/historico/radar-situacao-timeout-fatias.md): o cron
 -- radar-aplicar-situacao-diario levou 27m43s, de um teto de 30 min, em 17/11 06:05 UTC (porte Mini), ao aplicar o
@@ -10,35 +10,43 @@
 -- escrita custa 3–6 ms por linha: o próximo lote passa do teto.
 --
 -- O QUE MUDA (só radar_aplicar_situacao_pendente; radar_aplicar_situacao fica INTACTA, sem DDL):
---   1. Uma "passada" grava o passo (a) do lote mais novo por faixas FÍSICAS de páginas de radar_empresas (TID
---      Range Scan, leitura sequencial), com o MESMO SET e o MESMO predicado do passo (a) da função de prod (a
---      guarda de lote que nunca regride e o IS DISTINCT FROM). Faixa adaptativa (250 páginas no início, mira
---      1–4 s), orçamento de ~45 s por chamada com margem e cursor durável em radar_situacao_passada. A próxima
---      chamada continua dali.
+--   1. Uma "passada" grava o passo (a) de UM lote em fatias de CNPJs do próprio lote (radar_situacao_cadastral,
+--      pelo PK (cnpj, lote), em ordem), com o MESMO SET e o MESMO predicado do passo (a) da função de prod (a
+--      guarda de lote que nunca regride e o IS DISTINCT FROM). O cursor é o último CNPJ feito, e NÃO a posição
+--      física: o score regrava ~500 mil linhas nas mesmas madrugadas (UPDATE não-HOT move a linha de página), e um
+--      cursor por página perderia as linhas movidas para trás dele (Codex ALTO 5). Medido em prod: 5.000 CNPJs lidos
+--      em 2,7 s a frio (nested loop nos dois PKs), ~0,55 ms/linha contra 3–6 ms da escrita. Fatia adaptativa (1.000
+--      CNPJs no início, mira 1–4 s), orçamento de ~45 s por chamada com margem, cursor em radar_situacao_passada.
 --   2. Quando o cursor chega ao fim, a chamada seguinte CONCLUI chamando a função de prod inteira, como antes:
---      o passo (a) dela vira a reconciliação (relê o join, ~8 s em prod, e só grava o que as faixas não cobriram:
---      linha que outro escritor moveu para trás do cursor ou para além das páginas do início, linha inserida no
---      meio). Depois vêm os descartes (b) e o alerta (c), sem mudança nenhuma. A marca em radar_ingest_state e o
---      ledger radar.aplicar_situacao só são gravados nessa conclusão, com fotos_atualizadas = faixas + reconciliação.
---      Os leitores da marca (radar_avisar_lote, cliente_situacao_receita) não mudam.
---   3. Chamada PARCIAL não marca nada e registra em OUTRA acao (radar.aplicar_situacao_parcial, fail-open).
---   4. Passada de outro lote, de outro fechamento (re-finalizado) ou de outro arquivo físico (VACUUM FULL)
---      recomeça do zero. Lote mais velho pendente continua SUPERADO, sem efeito (20261027010000).
---   5. Trava de linha: lock_timeout 5 s. Faixa (ou conclusão) que não pega a trava encerra a chamada com o que já
---      fez (subtransação), sem erro. A faixa que escreve abre subtransação com XID: no máximo 60 por chamada.
---   6. Trava da rodada: pg_try_advisory_xact_lock. Outra rodada em curso → `adiado`.
---   Tamanho da faixa e orçamento: GUCs de sessão opcionais radar.situacao_paginas_fatia (fixa, sem adaptar) e
---   radar.situacao_orcamento (operação e prova); sem elas, adaptativo e 45 s.
+--      o passo (a) dela vira a reconciliação (relê o join, 7,9 s em prod, e grava só a linha que entrou em
+--      radar_empresas depois de o cursor passar pelo CNPJ dela). Depois vêm os descartes (b) e o alerta (c), sem
+--      mudança nenhuma. A marca em radar_ingest_state e o ledger radar.aplicar_situacao só são gravados nessa
+--      conclusão, com fotos_atualizadas = fatias + reconciliação. Os leitores da marca (radar_avisar_lote,
+--      cliente_situacao_receita) não mudam.
+--   3. A passada em curso TERMINA no lote dela, mesmo que um lote mais novo feche no meio (ele espera a próxima
+--      chamada). Abandonar deixaria parte das empresas com a foto do lote velho e parte sem, um estado que a
+--      predecessora nunca produz (Codex ALTO 1). Assim o resultado é o da predecessora rodada quando a passada
+--      começou, e o lote novo é aplicado depois, como ela faria. Sem passada, a regra é a de antes: só o lote
+--      complete MAIS NOVO é aplicado, o pendente mais velho é SUPERADO sem efeito. O "mais novo" é lido no MESMO
+--      snapshot do FOR (Codex ALTO 2: lido antes, um lote que fechasse entre os dois comandos era marcado superado
+--      por um mais velho, sem efeito). Passada cujo lote foi re-finalizado (outro finalizado_em) recomeça.
+--   4. Chamada PARCIAL não marca nada e registra em OUTRA acao (radar.aplicar_situacao_parcial, fail-open).
+--   5. Trava de linha: lock_timeout 5 s. Fatia (ou conclusão) que não pega a trava encerra a chamada com o que já
+--      fez (subtransação), sem erro. A fatia que escreve abre subtransação com XID: no máximo 60 por chamada.
+--   6. Trava da rodada: pg_try_advisory_xact_lock. Outra rodada em curso → `adiado`. A linha do lote da passada
+--      travada por outra sessão (SKIP LOCKED) → `adiado`, passada intacta.
+--   Tamanho da fatia e orçamento: GUCs de sessão opcionais radar.situacao_linhas_fatia (fixa, sem adaptar; 1 a
+--   100.000) e radar.situacao_orcamento (operação e prova); sem elas, adaptativo e 45 s.
 --
--- O resultado é o da função de prod: mesmas fotos, descartes, contatos, alerta e marca. A diferença é de tempo:
--- updated_at é o p_agora de cada chamada (o relógio de quando a linha foi gravada), e no meio da passada as linhas
--- já gravadas mostram a foto nova antes dos descartes, que saem na conclusão.
+-- O resultado (fotos, descartes, contatos, alerta, marca) é o da função de prod. A diferença é de tempo: updated_at
+-- é o p_agora de cada chamada, e no meio da passada as linhas já gravadas mostram a foto nova antes dos descartes,
+-- que leem o estado do instante da conclusão (já-cliente, status), como a predecessora leria naquele instante.
 --
 -- Cron: radar-aplicar-situacao-diario passa de 06:05 para de 5 em 5 min, nos minutos 2, 7, …, 57, das 00 às 05 e
 -- das 07 às 10 UTC (21:00–02:57 e 04:00–07:57 BRT). São as mesmas horas do radar-score-recalcular-continua, mas
--- 2 minutos depois dele, e cada chamada usa no máximo ~45 s. Comando com SET statement_timeout = '5min'. Sem lote
--- pendente, cada tick lê só radar_ingest_state (~50 ms, sem registro). ~120 chamadas por dia: um lote fecha numa
--- madrugada.
+-- 2 minutos depois dele, e cada chamada de fatias usa no máximo ~45 s. Comando com SET statement_timeout = '5min'.
+-- Sem lote pendente, cada tick lê só radar_ingest_state (~50 ms, sem registro). ~120 chamadas por dia: um lote fecha
+-- numa madrugada.
 --
 -- Recria função VIVA no molde TRAVA → PRE → CREATE → PÓS. A predecessora é o corpo de prod de 2026-11-20
 -- (db/fixtures/radar-situacao-pendente-prod-20261120.sql, md5 a99fd7dbdd0c8590698546b162f1a68f). Arquivo para
@@ -62,13 +70,13 @@ DECLARE
 BEGIN
   SELECT md5(p.prosrc) INTO v_vivo FROM pg_catalog.pg_proc p
    WHERE p.oid = to_regprocedure('public.radar_aplicar_situacao_pendente(timestamptz)');
-  IF v_vivo IS NULL OR v_vivo NOT IN ('a99fd7dbdd0c8590698546b162f1a68f', '635545c54bd7dd34dc3dcb461f351599') THEN
+  IF v_vivo IS NULL OR v_vivo NOT IN ('a99fd7dbdd0c8590698546b162f1a68f', '02af26b119ebda4f9bacfe32b42a3349') THEN
     RAISE EXCEPTION 'PRE FALHOU: radar_aplicar_situacao_pendente vivo (md5 %) não é o predecessor revisado nem este', v_vivo;
   END IF;
   SELECT md5(p.prosrc) INTO v_base FROM pg_catalog.pg_proc p
    WHERE p.oid = to_regprocedure('public.radar_aplicar_situacao(text,timestamptz)');
   IF v_base IS DISTINCT FROM '3b99d4ddd83b8b49b1a2965439d56002' THEN
-    RAISE EXCEPTION 'PRE FALHOU: a função de aplicação do lote viva (md5 %) não é a revisada — o passo (a) das faixas a espelha', v_base;
+    RAISE EXCEPTION 'PRE FALHOU: a função de aplicação do lote viva (md5 %) não é a revisada — o passo (a) das fatias a espelha', v_base;
   END IF;
   IF to_regclass('public.radar_ingest_state') IS NULL OR to_regclass('public.radar_situacao_cadastral') IS NULL THEN
     RAISE EXCEPTION 'PRE FALHOU: radar_ingest_state ou radar_situacao_cadastral ausente';
@@ -78,20 +86,19 @@ $pre$;
 
 -- Passada em curso da foto RFB: 1 linha, 1 escritor (radar_aplicar_situacao_pendente, SECURITY DEFINER).
 CREATE TABLE IF NOT EXISTS public.radar_situacao_passada (
-  id             smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-  lote           text NOT NULL CHECK (lote ~ '^[0-9]{4}-[0-9]{2}$'),
-  fechamento     timestamptz NOT NULL,
-  iniciada_em    timestamptz NOT NULL,
-  filenode       oid NOT NULL,
-  paginas        integer NOT NULL CHECK (paginas >= 0),
-  proxima_pagina integer NOT NULL CHECK (proxima_pagina >= 0),
-  rodadas        integer NOT NULL CHECK (rodadas >= 1),
-  fotos          bigint NOT NULL CHECK (fotos >= 0)
+  id                smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  lote              text NOT NULL CHECK (lote ~ '^[0-9]{4}-[0-9]{2}$'),
+  fechamento        timestamptz NOT NULL,
+  iniciada_em       timestamptz NOT NULL,
+  cursor_cnpj       text NOT NULL,
+  fatias_concluidas boolean NOT NULL,
+  rodadas           integer NOT NULL CHECK (rodadas >= 1),
+  fotos             bigint NOT NULL CHECK (fotos >= 0)
 );
 ALTER TABLE public.radar_situacao_passada ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.radar_situacao_passada FROM PUBLIC, anon, authenticated;
 COMMENT ON TABLE public.radar_situacao_passada IS
-  'Passada em curso da foto RFB do Radar (radar_aplicar_situacao_pendente em fatias de páginas): lote e fechamento (finalizado_em) da passada, cursor (proxima_pagina) e fotos gravadas. Apagar a linha recomeça a passada do zero.';
+  'Passada em curso da foto RFB do Radar (radar_aplicar_situacao_pendente em fatias de CNPJs do lote): lote e fechamento (finalizado_em) da passada, cursor (último CNPJ feito) e fotos gravadas. Apagar a linha recomeça a passada do zero.';
 
 CREATE OR REPLACE FUNCTION public.radar_aplicar_situacao_pendente(p_agora timestamp with time zone DEFAULT now())
  RETURNS jsonb
@@ -103,37 +110,35 @@ AS $function$
 DECLARE
   v_ini        timestamptz := clock_timestamp();
   r            record;
-  v_mais_novo  text;
   v_res        jsonb;
   v_lotes      jsonb := '[]'::jsonb;
   v_aplicados  integer := 0;
   v_marcados   integer;
-  -- Fatias (20261120170000): faixa física de páginas por comando, ADAPTATIVA (começa em 250 páginas; mira 1–4 s
-  -- por faixa) e orçamento por chamada com MARGEM: não abre faixa nova se o tempo gasto + 2× a última faixa passar
-  -- do orçamento. Um 57014 desfaria a chamada inteira (a função é uma transação só).
-  -- GUC de sessão (operação e prova): radar.situacao_paginas_fatia fixa o tamanho (sem adaptar); radar.situacao_orcamento.
-  c_paginas_guc CONSTANT integer := NULLIF(current_setting('radar.situacao_paginas_fatia', true), '')::integer;
-  c_paginas_ini CONSTANT integer := 250;
-  c_paginas_max CONSTANT integer := 2000;
+  v_adiado     text;
+  -- Fatias (20261120170000): CNPJs do lote em ordem, a partir do cursor, por comando. ADAPTATIVA (começa em
+  -- 1.000; mira 1–4 s por fatia) e orçamento por chamada com MARGEM: não abre fatia nova se o tempo gasto + 2× a
+  -- última passar do orçamento. Um 57014 desfaria a chamada inteira (a função é uma transação só).
+  -- GUC de sessão (operação e prova): radar.situacao_linhas_fatia fixa o tamanho (sem adaptar); radar.situacao_orcamento.
+  c_linhas_guc  CONSTANT integer := LEAST(100000, GREATEST(1,
+                  NULLIF(current_setting('radar.situacao_linhas_fatia', true), '')::integer));
+  c_linhas_ini  CONSTANT integer := 1000;
+  c_linhas_max  CONSTANT integer := 20000;
   c_orcamento   CONSTANT interval := COALESCE(
                   NULLIF(current_setting('radar.situacao_orcamento', true), '')::interval, interval '45 seconds');
-  -- Faixa que ESCREVE abre subtransação com XID (o bloco EXCEPTION); acima de 64 na mesma transação o PGPROC
+  -- Fatia que ESCREVE abre subtransação com XID (o bloco EXCEPTION); acima de 64 na mesma transação o PGPROC
   -- transborda (suboverflow). Teto abaixo disso.
   c_max_fatias_escritas CONSTANT integer := 60;
   v_pas          public.radar_situacao_passada%ROWTYPE;
   v_tem_passada  boolean;
-  v_filenode     oid;
   v_parcial      jsonb;
-  v_pag          integer;
-  v_ate          integer;
-  v_de_tid       tid;
-  v_ate_tid      tid;
   v_tam          integer;
   v_t0           timestamptz;
   v_ult          interval := interval '0';
   v_fatias       integer := 0;
   v_fatias_escritas integer := 0;
   v_interrompido text;
+  f_lidos        bigint;
+  f_ate          text;
   f_fotos        bigint;
   v_fotos_rod    bigint := 0;
 BEGIN
@@ -145,129 +150,139 @@ BEGIN
     RETURN jsonb_build_object('adiado', 'outra_rodada_em_andamento');
   END IF;
 
-  SELECT max(mes_referencia) INTO v_mais_novo FROM public.radar_ingest_state WHERE status = 'complete';
-
+  -- Passada válida = o lote dela segue complete e pendente no MESMO fechamento. Senão perdeu o objeto.
   SELECT * INTO v_pas FROM public.radar_situacao_passada WHERE id = 1;
   v_tem_passada := FOUND;
+  IF v_tem_passada AND NOT EXISTS (
+       SELECT 1 FROM public.radar_ingest_state s
+        WHERE s.mes_referencia = v_pas.lote AND s.status = 'complete' AND s.finalizado_em = v_pas.fechamento
+          AND s.situacao_aplicada_fechamento IS DISTINCT FROM s.finalizado_em) THEN
+    DELETE FROM public.radar_situacao_passada WHERE id = 1;
+    v_tem_passada := false;
+  END IF;
 
   FOR r IN
-    SELECT mes_referencia, finalizado_em
-      FROM public.radar_ingest_state
-     WHERE status = 'complete'
-       AND finalizado_em IS NOT NULL
-       AND situacao_aplicada_fechamento IS DISTINCT FROM finalizado_em
-     ORDER BY mes_referencia
-     FOR UPDATE SKIP LOCKED
+    SELECT i.mes_referencia, i.finalizado_em,
+           -- o "mais novo" no MESMO snapshot das linhas pendentes (Codex ALTO 2)
+           (SELECT max(m.mes_referencia) FROM public.radar_ingest_state m WHERE m.status = 'complete') AS mais_novo
+      FROM public.radar_ingest_state i
+     WHERE i.status = 'complete'
+       AND i.finalizado_em IS NOT NULL
+       AND i.situacao_aplicada_fechamento IS DISTINCT FROM i.finalizado_em
+     ORDER BY i.mes_referencia
+     FOR UPDATE OF i SKIP LOCKED
   LOOP
-    IF r.mes_referencia = v_mais_novo THEN
-      -- PASSADA do lote mais novo: continua a deste lote e fechamento, ou abre outra.
-      v_filenode := pg_relation_filenode('public.radar_empresas'::regclass);
-      IF v_tem_passada
-         AND (v_pas.lote IS DISTINCT FROM r.mes_referencia
-              OR v_pas.fechamento IS DISTINCT FROM r.finalizado_em
-              OR v_pas.filenode IS DISTINCT FROM v_filenode) THEN
-        -- Outro lote, re-finalização ou arquivo físico novo (VACUUM FULL/CLUSTER): as faixas feitas não valem.
-        v_tem_passada := false;
-      END IF;
+    IF v_tem_passada AND r.mes_referencia = v_pas.lote AND r.finalizado_em IS DISTINCT FROM v_pas.fechamento THEN
+      -- Re-finalizado entre a leitura da passada e o FOR: a passada não vale; segue a regra sem passada.
+      v_tem_passada := false;
+    END IF;
+    IF v_tem_passada AND r.mes_referencia > v_pas.lote THEN
+      -- A linha do lote da passada está travada por outra sessão (SKIP LOCKED): espera a próxima chamada.
+      v_adiado := 'lote_da_passada_travado';
+      EXIT;
+    END IF;
+
+    IF (v_tem_passada AND r.mes_referencia = v_pas.lote) OR (NOT v_tem_passada AND r.mes_referencia = r.mais_novo) THEN
       IF NOT v_tem_passada THEN
-        v_pas.id             := 1;
-        v_pas.lote           := r.mes_referencia;
-        v_pas.fechamento     := r.finalizado_em;
-        v_pas.iniciada_em    := p_agora;
-        v_pas.filenode       := v_filenode;
-        -- Páginas existentes no início. Versão de linha que nascer além delas é da própria passada (UPDATE
-        -- não-HOT) ou de escrita posterior: a conclusão reconcilia.
-        v_pas.paginas        := (pg_relation_size('public.radar_empresas'::regclass)
-                                 / current_setting('block_size')::bigint)::integer;
-        v_pas.proxima_pagina := 0;
-        v_pas.rodadas        := 0;
-        v_pas.fotos          := 0;
+        v_pas.id                := 1;
+        v_pas.lote              := r.mes_referencia;
+        v_pas.fechamento        := r.finalizado_em;
+        v_pas.iniciada_em       := p_agora;
+        v_pas.cursor_cnpj       := '';
+        v_pas.fatias_concluidas := false;
+        v_pas.rodadas           := 0;
+        v_pas.fotos             := 0;
         v_tem_passada := true;
       END IF;
       v_pas.rodadas := v_pas.rodadas + 1;
 
-      IF v_pas.proxima_pagina < v_pas.paginas THEN
-        v_pag := v_pas.proxima_pagina;
-        v_tam := GREATEST(1, COALESCE(c_paginas_guc, c_paginas_ini));
-        WHILE v_pag < v_pas.paginas LOOP
+      IF NOT v_pas.fatias_concluidas THEN
+        v_tam := COALESCE(c_linhas_guc, c_linhas_ini);
+        LOOP
           IF v_fatias > 0
              AND (clock_timestamp() - v_ini + 2 * v_ult > c_orcamento OR v_fatias_escritas >= c_max_fatias_escritas) THEN
             v_interrompido := 'orcamento';
             EXIT;
           END IF;
-          v_t0      := clock_timestamp();
-          v_ate     := LEAST(v_pag + v_tam, v_pas.paginas);
-          v_de_tid  := format('(%s,0)', v_pag)::tid;
-          v_ate_tid := format('(%s,0)', v_ate)::tid;
+          v_t0 := clock_timestamp();
           BEGIN
-            -- O passo (a) da função de prod, recortado na faixa: mesmo SET, mesmo predicado.
-            UPDATE public.radar_empresas re
-               SET rfb_situacao = s.situacao, rfb_situacao_data = s.data_situacao, rfb_situacao_lote = s.lote,
-                   updated_at = p_agora
-              FROM public.radar_situacao_cadastral s
-             WHERE re.ctid >= v_de_tid AND re.ctid < v_ate_tid
-               AND s.lote = r.mes_referencia AND s.cnpj = re.cnpj
-               AND (re.rfb_situacao_lote IS NULL OR re.rfb_situacao_lote <= r.mes_referencia)
-               AND (re.rfb_situacao IS DISTINCT FROM s.situacao
-                    OR re.rfb_situacao_data IS DISTINCT FROM s.data_situacao
-                    OR re.rfb_situacao_lote IS DISTINCT FROM s.lote);
-            GET DIAGNOSTICS f_fotos = ROW_COUNT;
+            -- O passo (a) da função de prod, recortado nos próximos CNPJs do lote: mesmo SET, mesmo predicado.
+            -- UM comando por fatia: a fatia, o UPDATE e o cursor partilham o MESMO snapshot.
+            WITH fatia AS MATERIALIZED (
+              SELECT s.cnpj, s.situacao, s.data_situacao, s.lote
+                FROM public.radar_situacao_cadastral s
+               WHERE s.lote = r.mes_referencia AND s.cnpj > v_pas.cursor_cnpj
+               ORDER BY s.cnpj
+               LIMIT v_tam
+            ), foto AS (
+              UPDATE public.radar_empresas re
+                 SET rfb_situacao = s.situacao, rfb_situacao_data = s.data_situacao, rfb_situacao_lote = s.lote,
+                     updated_at = p_agora
+                FROM fatia s
+               WHERE s.cnpj = re.cnpj
+                 AND (re.rfb_situacao_lote IS NULL OR re.rfb_situacao_lote <= r.mes_referencia)
+                 AND (re.rfb_situacao IS DISTINCT FROM s.situacao
+                      OR re.rfb_situacao_data IS DISTINCT FROM s.data_situacao
+                      OR re.rfb_situacao_lote IS DISTINCT FROM s.lote)
+              RETURNING re.cnpj
+            )
+            SELECT count(*), max(f.cnpj), (SELECT count(*) FROM foto)
+              INTO f_lidos, f_ate, f_fotos
+              FROM fatia f;
           EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
-            -- Linha travada por outro escritor: a faixa volta atrás (subtransação) e a chamada encerra com o feito.
+            -- Linha travada por outro escritor: a fatia volta atrás (subtransação) e a chamada encerra com o feito.
             v_interrompido := 'trava';
             EXIT;
           END;
-          v_fotos_rod := v_fotos_rod + f_fotos;
           v_fatias := v_fatias + 1;
+          IF f_lidos > 0 THEN
+            v_pas.cursor_cnpj := f_ate;
+          END IF;
+          v_fotos_rod := v_fotos_rod + f_fotos;
           IF f_fotos > 0 THEN
             v_fatias_escritas := v_fatias_escritas + 1;
           END IF;
-          v_pag := v_ate;
+          IF f_lidos < v_tam THEN
+            v_pas.fatias_concluidas := true;   -- o lote acabou nesta fatia
+            EXIT;
+          END IF;
           v_ult := clock_timestamp() - v_t0;
-          IF c_paginas_guc IS NULL THEN
+          IF c_linhas_guc IS NULL THEN
             IF v_ult > interval '4 seconds' THEN
-              v_tam := GREATEST(10, v_tam / 2);
+              v_tam := GREATEST(100, v_tam / 2);
             ELSIF v_ult < interval '1 second' THEN
-              v_tam := LEAST(c_paginas_max, v_tam + v_tam / 2);
+              v_tam := LEAST(c_linhas_max, v_tam + v_tam / 2);
             END IF;
           END IF;
         END LOOP;
-        v_pas.proxima_pagina := v_pag;
         v_pas.fotos := v_pas.fotos + v_fotos_rod;
         v_parcial := jsonb_build_object(
           'lote', r.mes_referencia, 'parcial', true,
-          'interrompido', COALESCE(v_interrompido, 'faixas_concluidas'),
-          'fotos_nesta_rodada', v_fotos_rod, 'faixas_nesta_rodada', v_fatias,
-          'passada', jsonb_build_object('iniciada_em', v_pas.iniciada_em, 'rodadas', v_pas.rodadas,
-                                        'paginas', v_pas.paginas, 'proxima_pagina', v_pas.proxima_pagina,
-                                        'fotos', v_pas.fotos));
-        -- A conclusão fica para a chamada seguinte: esta já gastou o orçamento das faixas.
-        CONTINUE;
+          'interrompido', CASE WHEN v_pas.fatias_concluidas THEN 'fatias_concluidas' ELSE v_interrompido END,
+          'fotos_nesta_rodada', v_fotos_rod, 'fatias_nesta_rodada', v_fatias);
+        -- A conclusão fica para a chamada seguinte: esta já gastou o orçamento das fatias.
+        EXIT;
       END IF;
 
-      -- CONCLUSÃO: a função de prod inteira. O passo (a) dela reconcilia o que as faixas não cobriram; (b) e (c)
+      -- CONCLUSÃO: a função de prod inteira. O passo (a) dela reconcilia o que as fatias não cobriram; (b) e (c)
       -- descartam e alertam como antes.
       BEGIN
         v_res := public.radar_aplicar_situacao(r.mes_referencia, p_agora);
       EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
-        v_parcial := jsonb_build_object(
-          'lote', r.mes_referencia, 'parcial', true, 'interrompido', 'trava_na_conclusao',
-          'passada', jsonb_build_object('iniciada_em', v_pas.iniciada_em, 'rodadas', v_pas.rodadas,
-                                        'paginas', v_pas.paginas, 'proxima_pagina', v_pas.proxima_pagina,
-                                        'fotos', v_pas.fotos));
-        CONTINUE;
+        v_parcial := jsonb_build_object('lote', r.mes_referencia, 'parcial', true, 'interrompido', 'trava_na_conclusao');
+        EXIT;
       END;
       v_res := v_res || jsonb_build_object(
         'fotos_atualizadas', v_pas.fotos + (v_res->>'fotos_atualizadas')::bigint,
         'passada', jsonb_build_object('iniciada_em', v_pas.iniciada_em, 'rodadas', v_pas.rodadas,
-                                      'paginas', v_pas.paginas, 'fotos_nas_faixas', v_pas.fotos,
+                                      'fotos_nas_fatias', v_pas.fotos,
                                       'fotos_na_conclusao', (v_res->>'fotos_atualizadas')::bigint));
       DELETE FROM public.radar_situacao_passada WHERE id = 1;
       v_tem_passada := false;
       v_aplicados := v_aplicados + 1;
     ELSE
       -- Foto superada: aplicar descartaria/alertaria por situação que o lote mais novo já pode ter revertido.
-      v_res := jsonb_build_object('lote', r.mes_referencia, 'superado_por', v_mais_novo);
+      v_res := jsonb_build_object('lote', r.mes_referencia, 'superado_por', r.mais_novo);
     END IF;
 
     UPDATE public.radar_ingest_state
@@ -280,26 +295,24 @@ BEGIN
         USING ERRCODE = '25000';
     END IF;
     v_lotes := v_lotes || v_res;
+    IF v_aplicados > 0 THEN
+      EXIT;   -- um lote aplicado por chamada: o seguinte (se houver) começa na próxima
+    END IF;
   END LOOP;
 
   IF v_parcial IS NOT NULL THEN
+    v_parcial := v_parcial || jsonb_build_object(
+      'passada', jsonb_build_object('iniciada_em', v_pas.iniciada_em, 'rodadas', v_pas.rodadas,
+                                    'cursor_cnpj', v_pas.cursor_cnpj, 'fotos', v_pas.fotos),
+      'duracao_ms', round(extract(epoch FROM clock_timestamp() - v_ini) * 1000)::integer);
     INSERT INTO public.radar_situacao_passada AS t
-           (id, lote, fechamento, iniciada_em, filenode, paginas, proxima_pagina, rodadas, fotos)
-    VALUES (1, v_pas.lote, v_pas.fechamento, v_pas.iniciada_em, v_pas.filenode, v_pas.paginas,
-            v_pas.proxima_pagina, v_pas.rodadas, v_pas.fotos)
+           (id, lote, fechamento, iniciada_em, cursor_cnpj, fatias_concluidas, rodadas, fotos)
+    VALUES (1, v_pas.lote, v_pas.fechamento, v_pas.iniciada_em, v_pas.cursor_cnpj, v_pas.fatias_concluidas,
+            v_pas.rodadas, v_pas.fotos)
     ON CONFLICT (id) DO UPDATE
        SET lote = EXCLUDED.lote, fechamento = EXCLUDED.fechamento, iniciada_em = EXCLUDED.iniciada_em,
-           filenode = EXCLUDED.filenode, paginas = EXCLUDED.paginas, proxima_pagina = EXCLUDED.proxima_pagina,
+           cursor_cnpj = EXCLUDED.cursor_cnpj, fatias_concluidas = EXCLUDED.fatias_concluidas,
            rodadas = EXCLUDED.rodadas, fotos = EXCLUDED.fotos;
-  ELSE
-    -- Passada que perdeu o objeto (lote já aplicado, superado ou re-finalizado). A linha de radar_ingest_state
-    -- travada por outra sessão (SKIP LOCKED) não descarta a passada dela: o lote dela segue pendente e mais novo.
-    DELETE FROM public.radar_situacao_passada p
-     WHERE p.id = 1
-       AND NOT EXISTS (SELECT 1 FROM public.radar_ingest_state s
-                        WHERE s.mes_referencia = p.lote AND s.mes_referencia = v_mais_novo
-                          AND s.status = 'complete' AND s.finalizado_em = p.fechamento
-                          AND s.situacao_aplicada_fechamento IS DISTINCT FROM s.finalizado_em);
   END IF;
 
   IF jsonb_array_length(v_lotes) > 0 THEN
@@ -308,8 +321,6 @@ BEGIN
             jsonb_build_object('lotes', v_lotes, 'aplicados', v_aplicados, 'marcados', jsonb_array_length(v_lotes)));
   END IF;
   IF v_parcial IS NOT NULL THEN
-    v_parcial := v_parcial || jsonb_build_object(
-      'duracao_ms', round(extract(epoch FROM clock_timestamp() - v_ini) * 1000)::integer);
     -- Observabilidade da passada em OUTRA acao (os leitores da aplicação veem só a conclusão); fail-open.
     BEGIN
       INSERT INTO public.acoes_execucoes (acao, origem, iniciado_em, finalizado_em, status, detalhes)
@@ -320,7 +331,8 @@ BEGIN
   END IF;
 
   RETURN jsonb_build_object('aplicados', v_aplicados, 'marcados', jsonb_array_length(v_lotes), 'lotes', v_lotes)
-         || CASE WHEN v_parcial IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('parcial', v_parcial) END;
+         || CASE WHEN v_parcial IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('parcial', v_parcial) END
+         || CASE WHEN v_adiado IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('adiado', v_adiado) END;
 END;
 $function$;
 
@@ -345,7 +357,7 @@ DECLARE
   f     CONSTANT regprocedure := to_regprocedure('public.radar_aplicar_situacao_pendente(timestamptz)');
 BEGIN
   -- P1: a função viva é ESTE arquivo (md5 exato do prosrc), SECURITY DEFINER com lock_timeout e search_path.
-  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = f) IS DISTINCT FROM '635545c54bd7dd34dc3dcb461f351599' THEN
+  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = f) IS DISTINCT FROM '02af26b119ebda4f9bacfe32b42a3349' THEN
     RAISE EXCEPTION 'P1 FALHOU: radar_aplicar_situacao_pendente vivo não é o corpo deste arquivo';
   END IF;
   IF NOT COALESCE((SELECT prosecdef AND proconfig @> ARRAY['lock_timeout=5s', 'search_path=public, pg_temp']

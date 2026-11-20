@@ -489,7 +489,7 @@ if (fin?.publicacao === "cron") {
   console.warn("⚠️ finalize sem `publicacao`: edge antiga (≤ v1.6) — os chunks escreveram direto na fila, sem publicação atômica");
 }
 if (temConhecidos && fin?.situacao_aplicacao === "cron") {
-  console.log("📅 situação cadastral: aplicada pelo job radar-aplicar-situacao-diario (06:05 UTC) — descartes e alerta ao gestor saem na próxima manhã, o aviso do lote às 06:45 depois disso");
+  console.log("📅 situação cadastral: aplicada pelo job radar-aplicar-situacao-diario em fatias, de madrugada (00–05 e 07–10 UTC) — descartes e alerta ao gestor saem quando a passada conclui, o aviso do lote às 11:05 UTC depois disso");
 } else if (temConhecidos && fin && !("situacao" in fin)) {
   console.warn("⚠️ finalize sem `situacao_aplicacao` nem `situacao`: edge antiga (v1.1) — a situação cadastral deste lote NÃO será aplicada");
 }

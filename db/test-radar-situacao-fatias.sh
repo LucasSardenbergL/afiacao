@@ -4,22 +4,28 @@
 # num UPDATE só). Parte dos corpos VIVOS de prod (fixture lida via psql-ro em 2026-11-20), aplica a migration REAL
 # duas vezes e assevera:
 #   A0  a fixture É o corpo de prod (md5 do prosrc das 3 funções)
-#   A1  EQUIVALÊNCIA: a passada em fatias (10 páginas por chamada, orçamento 0) + conclusão dá o MESMO estado que a
-#       predecessora numa chamada só — fotos, descartes, contatos, alerta, alertado_em, marca e resultado
-#   A2  1ª chamada PARCIAL (cursor = 10, interrompida por orçamento); parcial registra em
+#   A1  EQUIVALÊNCIA: a passada em fatias (100 CNPJs por chamada, orçamento 0) + conclusão dá o MESMO estado que a
+#       predecessora numa chamada só — fotos, descartes, contatos, alerta, alertado_em, marca e resultado — com um
+#       escritor concorrente que MOVE linhas de página no meio (UPDATE não-HOT, como o score: Codex ALTO 5)
+#   A2  1ª chamada PARCIAL (cursor = 100º CNPJ do lote, por orçamento); parcial registra em
 #       radar.aplicar_situacao_parcial e a conclusão em radar.aplicar_situacao (1 linha); o cursor anda (≤ N chamadas)
 #   A3  chamada parcial não marca radar_ingest_state
 #   A4  depois de aplicado, nova chamada é no-op (nada gravado, nenhum registro, sem passada)
-#   A5  a conclusão reconcilia a linha que as faixas não cobriram (inserida depois do fim das faixas)
-#   B7  lote novo no meio da passada → o velho vira SUPERADO e a passada recomeça do zero com o novo
+#   A5  a conclusão reconcilia SÓ a linha que entrou depois de o cursor passar por ela (as movidas não sobram)
+#   B7  lote novo fecha no meio da passada → a passada TERMINA no lote dela (B7a) e o estado final é o da
+#       predecessora aplicando os dois lotes em sequência, com CNPJs ausentes do lote novo dos 2 lados do cursor (B7b,
+#       Codex ALTO 1) · B8 sem passada, o pendente mais velho é superado e o mais novo abre a passada
 #   B9  outra rodada com a trava → adiado (não espera)
-#   B10 linha travada por outro escritor → `trava`, faixas anteriores gravadas, sem erro
-#   B11 linha travada na conclusão → parcial `trava_na_conclusao`, sem marca; depois conclui
-#   B13 linha do lote travada em radar_ingest_state (SKIP LOCKED) → a passada dele NÃO é descartada
+#   B10 linha travada por outro escritor → `trava`, fatias anteriores gravadas de fato, sem erro
+#   B11 linha travada na conclusão → parcial `trava_na_conclusao`, sem marca; depois conclui com o estado da
+#       predecessora (B11c)
+#   B13 linha do lote da passada travada (SKIP LOCKED) → passada intacta; com lote mais novo pendente → `adiado`
+#       sem abrir passada nova (B13b)
 #   C1  job: horário, comando com SET statement_timeout, ativo, dono postgres
 #   D1  radar_situacao_passada com RLS e fechada (authenticated → 42501) · D2 ACL e proconfig da função
-#   E1  a faixa desce por Tid Range Scan (auto_explain dentro da função)
+#   E1  a fatia lê o lote pelo PK (cnpj, lote) a partir do cursor (auto_explain na função)
 #   F1  PRE: corpo vivo divergente da pendente ABORTA · F2 corpo vivo divergente da função de aplicação ABORTA
+# Fora da prova (por construção, sem como forçar a corrida): o "mais novo" lido no mesmo snapshot do FOR (Codex ALTO 2).
 #
 #   bash db/test-radar-situacao-fatias.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   SABOTAGEM=<nome> bash db/test-radar-situacao-fatias.sh   # tem de ficar VERMELHA
@@ -32,7 +38,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261120170000_radar_situacao_em_fatias.sql"
 PRED="$REPO_ROOT/db/fixtures/radar-situacao-pendente-prod-20261120.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="marca_parcial:A3 sem_cursor:A2c sem_orcamento:A2a sem_guarda_lote:A1a sem_distinct:A1a,A1e passada_nao_reinicia:B7b trava_espera:B9 sem_tratar_trava:B10a conclusao_sem_tratar_trava:B11a apaga_passada_travada:B13 parcial_no_ledger:A2b conclusao_sem_funcao:A5 passada_aberta:D1 janela_errada:C1"
+  SABOTAGENS="marca_parcial:A3 sem_cursor:A2c sem_orcamento:A2a sem_guarda_lote:A1a sem_distinct:A1a,A1e abandona_passada:B7a aplica_superado:B8 trava_espera:B9 sem_tratar_trava:B10a conclusao_sem_tratar_trava:B11a validade_trava_lote:B13 ignora_trava_do_lote:B13b parcial_no_ledger:A2b conclusao_sem_funcao:A5 passada_aberta:D1 janela_errada:C1"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-sit-fatias.XXXXXX")"
   total_sab=$(( $(printf '%s\n' "$SABOTAGENS" | wc -w) ))
   sab_de=1; sab_ate=$total_sab
@@ -104,29 +110,28 @@ CORPO=0
 cegar_md5() { CORPO=1; sabotar "    RAISE EXCEPTION 'P1 FALHOU: radar_aplicar_situacao_pendente vivo não é" "    RAISE NOTICE 'P1 FALHOU: radar_aplicar_situacao_pendente vivo não é"; }
 case "${SABOTAGEM:-}" in
   "") ;;
-  marca_parcial)        cegar_md5; sabotar "        -- A conclusão fica para a chamada seguinte: esta já gastou o orçamento das faixas.
-        CONTINUE;" "        NULL;" ;;
-  sem_cursor)           cegar_md5; sabotar "        v_pag := v_pas.proxima_pagina;" "        v_pag := 0;" ;;
+  marca_parcial)        cegar_md5; sabotar "        -- A conclusão fica para a chamada seguinte: esta já gastou o orçamento das fatias.
+        EXIT;" "        NULL;" ;;
+  sem_cursor)           cegar_md5; sabotar "               WHERE s.lote = r.mes_referencia AND s.cnpj > v_pas.cursor_cnpj" "               WHERE s.lote = r.mes_referencia AND s.cnpj > ''" ;;
   sem_orcamento)        cegar_md5; sabotar "          IF v_fatias > 0
              AND (clock_timestamp()" "          IF false
              AND (clock_timestamp()" ;;
-  sem_guarda_lote)      cegar_md5; sabotar "               AND (re.rfb_situacao_lote IS NULL OR re.rfb_situacao_lote <= r.mes_referencia)
+  sem_guarda_lote)      cegar_md5; sabotar "                 AND (re.rfb_situacao_lote IS NULL OR re.rfb_situacao_lote <= r.mes_referencia)
 " "" ;;
-  sem_distinct)         cegar_md5; sabotar "               AND (re.rfb_situacao IS DISTINCT FROM s.situacao
-                    OR re.rfb_situacao_data" "               AND (true OR re.rfb_situacao IS DISTINCT FROM s.situacao
-                    OR re.rfb_situacao_data" ;;
-  passada_nao_reinicia) cegar_md5; sabotar "      IF v_tem_passada
-         AND (v_pas.lote IS DISTINCT FROM r.mes_referencia" "      IF false AND v_tem_passada
-         AND (v_pas.lote IS DISTINCT FROM r.mes_referencia" ;;
+  sem_distinct)         cegar_md5; sabotar "                 AND (re.rfb_situacao IS DISTINCT FROM s.situacao" "                 AND (true OR re.rfb_situacao IS DISTINCT FROM s.situacao" ;;
+  abandona_passada)     cegar_md5; sabotar "    IF (v_tem_passada AND r.mes_referencia = v_pas.lote) OR (NOT v_tem_passada AND r.mes_referencia = r.mais_novo) THEN" "    IF r.mes_referencia = r.mais_novo THEN" ;;
+  aplica_superado)      cegar_md5; sabotar "OR (NOT v_tem_passada AND r.mes_referencia = r.mais_novo) THEN" "OR (NOT v_tem_passada) THEN" ;;
   trava_espera)         cegar_md5; sabotar "  IF NOT pg_try_advisory_xact_lock(20261027, 1) THEN" "  PERFORM pg_advisory_xact_lock(20261027, 1);
   IF false THEN" ;;
   sem_tratar_trava)     cegar_md5; sabotar "          EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
             -- Linha travada" "          EXCEPTION WHEN division_by_zero THEN
             -- Linha travada" ;;
   conclusao_sem_tratar_trava) cegar_md5; sabotar "      EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
-        v_parcial := jsonb_build_object(" "      EXCEPTION WHEN division_by_zero THEN
-        v_parcial := jsonb_build_object(" ;;
-  apaga_passada_travada) cegar_md5; sabotar "       AND NOT EXISTS (SELECT 1 FROM public.radar_ingest_state s" "       AND true OR NOT EXISTS (SELECT 1 FROM public.radar_ingest_state s" ;;
+        v_parcial := jsonb_build_object('lote', r.mes_referencia, 'parcial', true, 'interrompido', 'trava_na_conclusao');" "      EXCEPTION WHEN division_by_zero THEN
+        v_parcial := jsonb_build_object('lote', r.mes_referencia, 'parcial', true, 'interrompido', 'trava_na_conclusao');" ;;
+  validade_trava_lote)  cegar_md5; sabotar "          AND s.situacao_aplicada_fechamento IS DISTINCT FROM s.finalizado_em) THEN" "          AND s.situacao_aplicada_fechamento IS DISTINCT FROM s.finalizado_em FOR UPDATE SKIP LOCKED) THEN" ;;
+  ignora_trava_do_lote) cegar_md5; sabotar "      v_adiado := 'lote_da_passada_travado';
+      EXIT;" "      v_tem_passada := false;" ;;
   parcial_no_ledger)    cegar_md5; sabotar "      VALUES ('radar.aplicar_situacao_parcial'," "      VALUES ('radar.aplicar_situacao'," ;;
   conclusao_sem_funcao) cegar_md5; sabotar "        v_res := public.radar_aplicar_situacao(r.mes_referencia, p_agora);" "        v_res := jsonb_build_object('lote', r.mes_referencia, 'fotos_atualizadas', 0);" ;;
   passada_aberta)       sabotar "REVOKE ALL ON TABLE public.radar_situacao_passada FROM PUBLIC, anon, authenticated;" "GRANT SELECT ON TABLE public.radar_situacao_passada TO authenticated;"
@@ -170,11 +175,13 @@ CREATE TABLE public.radar_empresas (
   rfb_situacao text CHECK (rfb_situacao IS NULL OR rfb_situacao = ANY (ARRAY['01','02','03','04','08'])),
   rfb_situacao_data date, rfb_situacao_lote text,
   updated_at timestamptz NOT NULL DEFAULT now(),
-  pad text);   -- ~10 linhas por página: a passada tem dezenas de faixas
+  score smallint,   -- o escritor concorrente da prova (como o score de prod: coluna indexada, UPDATE não-HOT)
+  pad text);        -- ~10 linhas por página
 ALTER TABLE public.radar_empresas ENABLE ROW LEVEL SECURITY;
 -- Como a prod: updated_at indexado (o UPDATE da foto é não-HOT e a versão nova pode mudar de página).
 CREATE INDEX idx_radar_empresas_updated_at ON public.radar_empresas (updated_at);
 CREATE INDEX idx_radar_lista ON public.radar_empresas (cnpj) WHERE NOT ja_cliente AND prospeccao_status <> 'descartado';
+CREATE INDEX idx_radar_lista_score ON public.radar_empresas (score DESC NULLS LAST, cnpj);
 CREATE TABLE public.radar_situacao_cadastral (
   cnpj text NOT NULL CHECK (cnpj ~ '^[0-9A-Z]{12}[0-9]{2}$'), lote text NOT NULL CHECK (lote ~ '^[0-9]{4}-[0-9]{2}$'),
   situacao text NOT NULL CHECK (situacao = ANY (ARRAY['01','02','03','04','08'])), data_situacao date,
@@ -247,7 +254,7 @@ UNION ALL
 SELECT lpad(i::text, 12, '0') || '00', '2026-11', '08', date '2026-10-01', '01', 'EXTINCAO'
   FROM generate_series(5001, 5003) i
 UNION ALL
--- a linha que entra DEPOIS das faixas (A5): o lote já a traz; radar_empresas a recebe no meio da passada
+-- a linha que entra DEPOIS das fatias (A5): o lote já a traz; radar_empresas a recebe no meio da passada
 SELECT '00000000999900', '2026-11', '04', date '2026-08-01', '63', 'OMISSAO DE DECLARACOES';
 -- i%19 com a foto 2026-11 já gravada: os valores do lote (onde coincide) — os que não coincidem regravam.
 UPDATE public.radar_empresas re SET rfb_situacao = s.situacao, rfb_situacao_data = s.data_situacao
@@ -266,145 +273,198 @@ AGORA="2026-11-17 06:05:00+00"
 NOVO="00000000999900"
 INSERE_NOVO="INSERT INTO public.radar_empresas (cnpj, razao_social, prospeccao_status, rfb_situacao, rfb_situacao_data, rfb_situacao_lote, updated_at, pad) VALUES ('$NOVO', 'Empresa Nova', 'a_contatar', '02', date '2000-01-01', '2026-10', timestamptz '2026-11-09 12:00+00', repeat('x', 700))"
 
-# Cópia ANTES da migration: a predecessora numa chamada só (a linha nova já existe) e a prova da PRE.
+# O lote 2026-12 (B7/B8/B13b): o de novembro SEM os CNPJs i%9 (ausentes do lote novo, dos dois lados do cursor) e
+# com i%31 de volta a ATIVA.
+DEZ_SQL="INSERT INTO public.radar_situacao_cadastral (cnpj, lote, situacao, data_situacao, motivo_codigo, motivo_descricao)
+SELECT cnpj, '2026-12',
+       CASE WHEN substr(cnpj, 1, 12)::bigint % 31 = 0 THEN '02' ELSE situacao END,
+       CASE WHEN substr(cnpj, 1, 12)::bigint % 31 = 0 THEN date '2026-12-01' ELSE data_situacao END,
+       CASE WHEN substr(cnpj, 1, 12)::bigint % 31 = 0 THEN NULL ELSE motivo_codigo END,
+       CASE WHEN substr(cnpj, 1, 12)::bigint % 31 = 0 THEN NULL ELSE motivo_descricao END
+  FROM public.radar_situacao_cadastral WHERE lote = '2026-11' AND substr(cnpj, 1, 12)::bigint % 9 <> 0;
+INSERT INTO public.radar_ingest_state (mes_referencia, status, iniciado_em, finalizado_em)
+VALUES ('2026-12', 'complete', '2026-12-14 10:00+00', '2026-12-14 21:00+00');"
+
+# Cópias ANTES da migration: a predecessora numa chamada só (a linha nova já existe), a predecessora aplicando
+# novembro e depois dezembro (B7b) e a prova da PRE.
 PD postgres -qc "CREATE DATABASE pred TEMPLATE base"
+PD postgres -qc "CREATE DATABASE pred7 TEMPLATE base"
 PD postgres -qc "CREATE DATABASE fpre TEMPLATE base"
 PDq pred -c "$INSERE_NOVO" >/dev/null
 J_PRED="$(PDq pred -c "SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text")"
 eq "A1' a predecessora aplicou o lote 2026-11 (sanidade do dado)" \
   "$(J "$J_PRED" aplicados)/$( [ "$(J "$J_PRED" 'lotes,0,fotos_atualizadas')" -gt 900 ] && echo muitas || echo poucas)/$( [ "$(J "$J_PRED" 'lotes,0,leads_descartados')" -gt 10 ] && echo descartou || echo nao)/$( [ "$(J "$J_PRED" 'lotes,0,clientes_alertados_novos')" -gt 3 ] && echo alertou || echo nao)" \
   "1/muitas/descartou/alertou"
+PDq pred7 -c "SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')" >/dev/null
+PDq pred7 -c "$DEZ_SQL" >/dev/null
+J_PRED7="$(PDq pred7 -c "SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text")"
+eq "B7' a predecessora aplicou dezembro depois de novembro (sanidade)" \
+  "$(J "$J_PRED7" aplicados)/$(J "$J_PRED7" 'lotes,0,lote')/$(PDq pred7 -c "SELECT count(*) > 20 FROM public.radar_empresas WHERE rfb_situacao_lote = '2026-11' AND substr(cnpj, 1, 12)::bigint % 9 = 0")" \
+  "1/2026-12/t"
 
 # ── Migration (2×: idempotente) ─────────────────────────────────────────────────────────────────────────
 PD base -q -f "$MIG_USADA" >/dev/null
 if [ "$CORPO" = 0 ]; then PD base -q -f "$MIG_USADA" >/dev/null; fi
-PD postgres -qc "CREATE DATABASE nova TEMPLATE base"
-PD postgres -qc "CREATE DATABASE nb TEMPLATE base"
+for db in nova nb nc nd; do PD postgres -qc "CREATE DATABASE $db TEMPLATE base"; done
 
-# Uma chamada em <db> com faixa ($2 páginas) e orçamento ($3).
-T() { PDq "$1" -c "SET radar.situacao_paginas_fatia = '$2'; SET radar.situacao_orcamento = '$3'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text"; }
-PAGINAS="$(PDq nova -c "SELECT pg_relation_size('public.radar_empresas') / current_setting('block_size')::int")"
-LIMITE=$(( PAGINAS / 10 + 3 ))
+# Uma chamada em <db> com fatia ($2 CNPJs) e orçamento ($3).
+T() { PDq "$1" -c "SET radar.situacao_linhas_fatia = '$2'; SET radar.situacao_orcamento = '$3'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text"; }
+cursor() { PDq "$1" -c "SELECT coalesce((SELECT lote || '|' || cursor_cnpj FROM public.radar_situacao_passada), '-')"; }
+N_LOTE="$(PDq nova -c "SELECT count(*) FROM public.radar_situacao_cadastral WHERE lote = '2026-11'")"
+LIMITE=$(( N_LOTE / 100 + 4 ))
+# CNPJ na posição $2 (1 = o primeiro) do lote $1, na ordem do cursor.
+pos() { PDq nova -c "SELECT cnpj FROM public.radar_situacao_cadastral WHERE lote = '$1' ORDER BY cnpj OFFSET $(( $2 - 1 )) LIMIT 1"; }
+# Linhas do lote, até o CNPJ $3 inclusive, que AINDA pedem foto (as fatias feitas não podem deixar nenhuma).
+falta() { PDq "$1" -c "SELECT count(*) FROM public.radar_situacao_cadastral s JOIN public.radar_empresas re ON re.cnpj = s.cnpj WHERE s.lote = '$2' AND s.cnpj <= '$3' AND (re.rfb_situacao_lote IS NULL OR re.rfb_situacao_lote <= s.lote) AND (re.rfb_situacao IS DISTINCT FROM s.situacao OR re.rfb_situacao_data IS DISTINCT FROM s.data_situacao OR re.rfb_situacao_lote IS DISTINCT FROM s.lote)"; }
+# Chama até as fatias do lote terminarem (ou o limite); ecoa "<chamadas>|<último interrompido>".
+ate_fatias() { local db="$1" n=0 j=""; while [ "$n" -lt "$LIMITE" ]; do j="$(T "$db" 100 0)"; n=$((n+1)); [ "$(J "$j" parcial,interrompido)" = "fatias_concluidas" ] && break; done; echo "$n|$(J "$j" parcial,interrompido)"; }
 
-# ── A: passada inteira em "nova" ─────────────────────────────────────────────────────────────────────────
-J1="$(T nova 10 0)"
-eq "A2a 1ª chamada parcial por orçamento, cursor = 10 páginas" \
-  "$(J "$J1" parcial,parcial)/$(J "$J1" parcial,interrompido)/$(PDq nova -c "SELECT proxima_pagina FROM public.radar_situacao_passada")" "true/orcamento/10"
-eq "A3 chamada parcial não marca o lote" \
-  "$(PDq nova -c "SELECT coalesce(situacao_aplicada_fechamento::text, 'pendente') FROM public.radar_ingest_state WHERE mes_referencia = '2026-11'")" "pendente"
-n=1; JT="$J1"
-while [ "$(J "$JT" parcial,interrompido)" != "faixas_concluidas" ] && [ "$(J "$JT" aplicados)" != "1" ] && [ "$n" -lt "$LIMITE" ]; do
-  JT="$(T nova 10 0)"; n=$((n+1))
-done
-eq "A2c o cursor anda: as faixas terminam em ≤ páginas/10 + 1 chamadas" \
-  "$( [ "$(J "$JT" parcial,interrompido)" = "faixas_concluidas" ] && [ "$n" -le $(( PAGINAS / 10 + 1 )) ] && echo sim || echo "nao(n=$n,ultimo=$(J "$JT" parcial,interrompido))")" "sim"
-# A linha nova entra DEPOIS das faixas (atrás do cursor ou além das páginas do início): só a conclusão a vê.
-PDq nova -c "$INSERE_NOVO" >/dev/null
-JC="$(T nova 10 0)"; n=$((n+1))
-eq "A5 a conclusão aplicou o lote e reconciliou a linha que as faixas não cobriram" \
-  "$(J "$JC" aplicados)/$(J "$JC" 'lotes,0,passada,fotos_na_conclusao')/$(PDq nova -c "SELECT rfb_situacao||'|'||rfb_situacao_lote||'|'||prospeccao_status FROM public.radar_empresas WHERE cnpj = '$NOVO'")" \
-  "1/1/04|2026-11|descartado"
-
-# A1: estado inteiro, componente por componente (pred = predecessora numa chamada; nova = fatias + conclusão).
+# Estado inteiro, componente por componente.
 empresas() { PDq "$1" -c "SELECT md5(string_agg(concat_ws('|', cnpj, rfb_situacao, rfb_situacao_data, rfb_situacao_lote, updated_at, prospeccao_status, descarte_motivo, prospeccao_atualizado_em), ',' ORDER BY cnpj)) FROM public.radar_empresas"; }
 contatos() { PDq "$1" -c "SELECT count(*)||':'||md5(string_agg(concat_ws('|', cnpj, acao, nota, criado_por, status_anterior, created_at), ',' ORDER BY cnpj, acao)) FROM public.radar_contatos"; }
 alerta()   { PDq "$1" -c "SELECT count(*)||':'||md5(string_agg(concat_ws('|', id, empresa, tipo, severidade, titulo, mensagem, status, metadata::text), ',' ORDER BY id)) FROM public.fornecedor_alerta"; }
 alertado() { PDq "$1" -c "SELECT md5(string_agg(concat_ws('|', cnpj, lote, alertado_em), ',' ORDER BY cnpj, lote)) FROM public.radar_situacao_cadastral"; }
 marca()    { PDq "$1" -c "SELECT string_agg(concat_ws('|', mes_referencia, situacao_aplicada_fechamento, situacao_aplicada_em, (situacao_resultado - 'passada')::text), ' ; ' ORDER BY mes_referencia) FROM public.radar_ingest_state"; }
+tudo()     { echo "$(empresas "$1")/$(contatos "$1")/$(alerta "$1")/$(alertado "$1")/$(marca "$1")"; }
+
+# ── A: passada inteira em "nova", com escritor que move linhas no meio ──────────────────────────────────
+J1="$(T nova 100 0)"
+eq "A2a 1ª chamada parcial por orçamento, cursor = 100º CNPJ do lote" \
+  "$(J "$J1" parcial,parcial)/$(J "$J1" parcial,interrompido)/$(cursor nova)" "true/orcamento/2026-11|$(pos 2026-11 100)"
+eq "A3 chamada parcial não marca o lote" \
+  "$(PDq nova -c "SELECT coalesce(situacao_aplicada_fechamento::text, 'pendente') FROM public.radar_ingest_state WHERE mes_referencia = '2026-11'")" "pendente"
+T nova 100 0 >/dev/null; T nova 100 0 >/dev/null
+# Escritor concorrente (como o score): UPDATE não-HOT em TODAS as linhas ainda não feitas — a versão nova muda de
+# página (para trás do ponto físico, inclusive). Coluna fora da comparação: o estado comparado não muda.
+CUR3="$(PDq nova -c "SELECT cursor_cnpj FROM public.radar_situacao_passada")"
+PDq nova -c "UPDATE public.radar_empresas SET score = coalesce(score, 0) + 1 WHERE cnpj > '$CUR3'" >/dev/null
+R="$(ate_fatias nova)"; n=$(( ${R%%|*} + 3 ))
+eq "A2c o cursor anda: as fatias terminam em ≤ CNPJs do lote/100 + 1 chamadas" \
+  "$( [ "${R#*|}" = "fatias_concluidas" ] && [ "$n" -le $(( N_LOTE / 100 + 1 )) ] && echo sim || echo "nao(n=$n,ultimo=${R#*|})")" "sim"
+# A linha nova entra DEPOIS de o cursor passar pelo CNPJ dela: só a conclusão a vê.
+PDq nova -c "$INSERE_NOVO" >/dev/null
+JC="$(T nova 100 0)"; n=$((n+1))
+eq "A5 a conclusão reconcilia só a linha que entrou depois do cursor (as movidas não sobram)" \
+  "$(J "$JC" aplicados)/$(J "$JC" 'lotes,0,passada,fotos_na_conclusao')/$(PDq nova -c "SELECT rfb_situacao||'|'||rfb_situacao_lote||'|'||prospeccao_status FROM public.radar_empresas WHERE cnpj = '$NOVO'")" \
+  "1/1/04|2026-11|descartado"
 eq "A1a radar_empresas igual à predecessora (foto, rótulo, updated_at, descarte)" "$(empresas nova)" "$(empresas pred)"
 eq "A1b radar_contatos igual (descartes por CNPJ)" "$(contatos nova)" "$(contatos pred)"
 eq "A1c fornecedor_alerta igual (o aviso do gestor)" "$(alerta nova)" "$(alerta pred)"
 eq "A1d alertado_em igual (dedupe)" "$(alertado nova)" "$(alertado pred)"
-eq "A1e marca e resultado iguais (fotos_atualizadas = faixas + conclusão)" "$(marca nova)" "$(marca pred)"
+eq "A1e marca e resultado iguais (fotos_atualizadas = fatias + conclusão)" "$(marca nova)" "$(marca pred)"
 eq "A2b ledger: 1 conclusão em radar.aplicar_situacao (= a da predecessora) e $((n-1)) parciais em radar.aplicar_situacao_parcial" \
   "$(PDq nova -c "SELECT (SELECT count(*) FROM public.acoes_execucoes WHERE acao = 'radar.aplicar_situacao')||'/'||(SELECT count(*) FROM public.acoes_execucoes WHERE acao = 'radar.aplicar_situacao_parcial')||'/'||(SELECT (detalhes #- '{lotes,0,passada}')::text FROM public.acoes_execucoes WHERE acao = 'radar.aplicar_situacao' ORDER BY id DESC LIMIT 1)")" \
   "1/$((n-1))/$(PDq pred -c "SELECT detalhes::text FROM public.acoes_execucoes WHERE acao = 'radar.aplicar_situacao'")"
 ANTES="$(empresas nova)/$(PDq nova -c "SELECT count(*) FROM public.acoes_execucoes")"
-J4="$(T nova 10 0)"
+J4="$(T nova 100 0)"
 eq "A4 depois de aplicado: no-op (nada gravado, nenhum registro, sem passada)" \
-  "$(J "$J4" aplicados)/$(J "$J4" marcados)/$(J "$J4" parcial)/$(empresas nova)/$(PDq nova -c "SELECT count(*) FROM public.acoes_execucoes")/$(PDq nova -c "SELECT count(*) FROM public.radar_situacao_passada")" \
-  "0/0//$ANTES/0"
+  "$(J "$J4" aplicados)/$(J "$J4" marcados)/$(J "$J4" parcial)/$(empresas nova)/$(PDq nova -c "SELECT count(*) FROM public.acoes_execucoes")/$(cursor nova)" \
+  "0/0//$ANTES/-"
 
-# ── B: concorrência, lote novo e conclusão travada em "nb" ──────────────────────────────────────────────
-# E1: a faixa desce por Tid Range Scan (plano real dentro da função, via auto_explain).
+# ── Concorrência em "nc" (só novembro), com o estado final comparado à predecessora ─────────────────────
+PDq nc -c "$INSERE_NOVO" >/dev/null
+# E1: a fatia desce pelo PK (cnpj, lote), o cursor (plano real dentro da função, via auto_explain). O lado de
+# radar_empresas aqui é tabela de 120 páginas (o planner prefere seq scan); em prod o EXPLAIN ANALYZE da fatia de
+# 5.000 CNPJs (20/11) deu nested loop pelos 2 PKs — docs/historico/radar-situacao-timeout-fatias.md.
 : > "$PGLOG"
-PDq nb -c "LOAD 'auto_explain'; SET auto_explain.log_min_duration = 0; SET auto_explain.log_nested_statements = on; SET radar.situacao_paginas_fatia = '10'; SET radar.situacao_orcamento = '0'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA') IS NOT NULL" >/dev/null
+PDq nc -c "LOAD 'auto_explain'; SET auto_explain.log_min_duration = 0; SET auto_explain.log_nested_statements = on; SET radar.situacao_linhas_fatia = '100'; SET radar.situacao_orcamento = '0'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA') IS NOT NULL" >/dev/null
 sleep 0.5
-eq "E1 a faixa usa Tid Range Scan em radar_empresas" \
-  "$( grep -q 'Tid Range Scan on radar_empresas' "$PGLOG" && echo sim || echo nao)" "sim"
+eq "E1 a fatia lê o lote pelo PK (cnpj, lote) a partir do cursor, sem Seq Scan em radar_situacao_cadastral" \
+  "$(grep -q 'Index Scan using radar_situacao_cadastral_pkey' "$PGLOG" && echo pk || echo sem_pk)/$(grep -q 'Seq Scan on radar_situacao_cadastral' "$PGLOG" && echo seq || echo semseq)" \
+  "pk/semseq"
 
 # B9: outra rodada com a trava → adiado, sem esperar.
-( PDq nb -c "BEGIN; SELECT pg_advisory_xact_lock(20261027, 1); SELECT pg_sleep(4); COMMIT;" >/dev/null 2>&1 ) &
+( PDq nc -c "BEGIN; SELECT pg_advisory_xact_lock(20261027, 1); SELECT pg_sleep(4); COMMIT;" >/dev/null 2>&1 ) &
 B9_PID=$!
-until [ "$(PDq nb -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = 20261027 AND objid = 1")" = "1" ]; do sleep 0.1; done
+until [ "$(PDq nc -c "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted AND classid = 20261027 AND objid = 1")" = "1" ]; do sleep 0.1; done
 T0=$(date +%s)
-J9="$(PDq nb -c "SET statement_timeout = '3s'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text" 2>&1 || true)"
+J9="$(PDq nc -c "SET statement_timeout = '3s'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text" 2>/dev/null || echo erro)"
 T9=$(( $(date +%s) - T0 ))
 eq "B9 trava da rodada ocupada → adiado em < 3 s" \
-  "$(PDq nb -c "SELECT CASE WHEN pg_input_is_valid(\$j\$$J9\$j\$, 'jsonb') THEN (\$j\$$J9\$j\$::jsonb)->>'adiado' ELSE 'erro' END")/$([ "$T9" -lt 3 ] && echo rapido || echo esperou)" \
+  "$(PDq nc -c "SELECT CASE WHEN pg_input_is_valid(\$j\$$J9\$j\$, 'jsonb') THEN (\$j\$$J9\$j\$::jsonb)->>'adiado' ELSE 'erro' END")/$([ "$T9" -lt 3 ] && echo rapido || echo esperou)" \
   "outra_rodada_em_andamento/rapido"
 wait "$B9_PID" || true
 
-# B10: linha travada na faixa 20–29 → a chamada (orçamento folgado) grava 10–19 e encerra em `trava` na 20.
-ALVO10="$(PDq nb -c "SELECT re.cnpj FROM public.radar_empresas re JOIN public.radar_situacao_cadastral s ON s.cnpj = re.cnpj AND s.lote = '2026-11' WHERE (re.ctid::text::point)[0] BETWEEN 20 AND 29 AND re.rfb_situacao_lote = '2026-10' ORDER BY re.cnpj LIMIT 1")"
-eq "B10' alvo da prova existe" "$([ -n "$ALVO10" ] && echo sim || echo nao)" "sim"
-( PDq nb -c "BEGIN; SELECT 1 FROM public.radar_empresas WHERE cnpj = '$ALVO10' FOR UPDATE; SELECT pg_sleep(9); COMMIT;" >/dev/null 2>&1 ) &
+# B10: linha travada na 3ª fatia → a chamada (orçamento folgado) grava a 2ª e encerra em `trava` na 3ª.
+ALVO10="$(PDq nc -c "SELECT s.cnpj FROM public.radar_situacao_cadastral s JOIN public.radar_empresas re ON re.cnpj = s.cnpj WHERE s.lote = '2026-11' AND s.cnpj > '$(pos 2026-11 200)' AND re.rfb_situacao_lote = '2026-10' ORDER BY s.cnpj LIMIT 1")"
+eq "B10' alvo da prova existe e está na 3ª fatia" \
+  "$([ -n "$ALVO10" ] && [[ "$ALVO10" < "$(pos 2026-11 301)" ]] && echo sim || echo nao)" "sim"
+( PDq nc -c "BEGIN; SELECT 1 FROM public.radar_empresas WHERE cnpj = '$ALVO10' FOR UPDATE; SELECT pg_sleep(9); COMMIT;" >/dev/null 2>&1 ) &
 B10_PID=$!
-until [ "$(PDq nb -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(9)%' AND state = 'active' AND pid <> pg_backend_pid()")" = "1" ]; do sleep 0.1; done
+until [ "$(PDq nc -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(9)%' AND state = 'active' AND pid <> pg_backend_pid()")" = "1" ]; do sleep 0.1; done
 sleep 0.3
-J10="$(PDq nb -c "SET radar.situacao_paginas_fatia = '10'; SET radar.situacao_orcamento = '1 hour'; SELECT public.radar_aplicar_situacao_pendente(timestamptz '$AGORA')::text" 2>&1 || true)"
-if [ "$(PDq nb -c "SELECT pg_input_is_valid(\$j\$$J10\$j\$, 'jsonb')")" = "t" ]; then
+ERR10="$(dirname "$DATA")/b10.err"
+J10="$(T nc 100 '1 hour' 2>"$ERR10" || true)"
+if [ "$(PDq nc -c "SELECT pg_input_is_valid(\$j\$$J10\$j\$, 'jsonb')")" = "t" ]; then
   eq "B10a linha travada → parcial em 'trava' (não erro)" "$(J "$J10" parcial,interrompido)" "trava"
-  eq "B10b a faixa anterior ficou gravada, o cursor parou na faixa travada" \
-    "$(PDq nb -c "SELECT proxima_pagina FROM public.radar_situacao_passada")" "20"
 else
-  eq "B10a linha travada → parcial em 'trava' (não erro)" "$(echo "$J10" | grep -o 'ERRO.*\|ERROR.*' | head -1 | cut -c1-60)" "json"
+  eq "B10a linha travada → parcial em 'trava' (não erro)" "$(grep -o 'ERRO.*\|ERROR.*' "$ERR10" | head -1 | cut -c1-60)" "json"
 fi
+eq "B10b o cursor parou no fim da 2ª fatia e as 2 primeiras fatias ficaram GRAVADAS (nenhuma linha delas pede foto)" \
+  "$(cursor nc)/$(falta nc 2026-11 "$(pos 2026-11 200)")" "2026-11|$(pos 2026-11 200)/0"
 wait "$B10_PID" || true
 
 # B13: a linha do lote em radar_ingest_state travada por outra sessão (SKIP LOCKED) → a passada dele fica.
-CUR13="$(PDq nb -c "SELECT proxima_pagina FROM public.radar_situacao_passada")"
-( PDq nb -c "BEGIN; SELECT 1 FROM public.radar_ingest_state WHERE mes_referencia = '2026-11' FOR UPDATE; SELECT pg_sleep(4); COMMIT;" >/dev/null 2>&1 ) &
+CUR13="$(cursor nc)"
+( PDq nc -c "BEGIN; SELECT 1 FROM public.radar_ingest_state WHERE mes_referencia = '2026-11' FOR UPDATE; SELECT pg_sleep(4); COMMIT;" >/dev/null 2>&1 ) &
 B13_PID=$!
-until [ "$(PDq nb -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(4)%' AND state = 'active' AND pid <> pg_backend_pid()")" = "1" ]; do sleep 0.1; done
-J13="$(T nb 10 0)"
+until [ "$(PDq nc -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(4)%' AND state = 'active' AND pid <> pg_backend_pid()")" = "1" ]; do sleep 0.1; done
+J13="$(T nc 100 0)"
 eq "B13 lote travado (SKIP LOCKED) → nada aplicado e a passada dele NÃO é descartada" \
-  "$(J "$J13" aplicados)/$(PDq nb -c "SELECT lote||'|'||proxima_pagina FROM public.radar_situacao_passada")" "0/2026-11|$CUR13"
+  "$(J "$J13" aplicados)/$(cursor nc)" "0/$CUR13"
 wait "$B13_PID" || true
 
-# B7: lote 2026-12 fecha no meio da passada do 2026-11 → o 2026-11 vira SUPERADO e a passada recomeça com o 2026-12.
-PDq nb -c "INSERT INTO public.radar_situacao_cadastral (cnpj, lote, situacao, data_situacao, motivo_codigo, motivo_descricao) SELECT cnpj, '2026-12', situacao, data_situacao, motivo_codigo, motivo_descricao FROM public.radar_situacao_cadastral WHERE lote = '2026-11'; INSERT INTO public.radar_ingest_state (mes_referencia, status, iniciado_em, finalizado_em) VALUES ('2026-12', 'complete', '2026-12-14 10:00+00', '2026-12-14 21:00+00')" >/dev/null
-J7="$(T nb 10 0)"
-eq "B7a o lote velho vira superado (marcado sem efeito)" \
-  "$(J "$J7" 'lotes,0,lote')/$(J "$J7" 'lotes,0,superado_por')" "2026-11/2026-12"
-eq "B7b a passada recomeça do zero com o lote novo" \
-  "$(PDq nb -c "SELECT lote||'|'||proxima_pagina||'|'||rodadas FROM public.radar_situacao_passada")" "2026-12|10|1"
-
 # B11: lead do lote travado na conclusão → parcial `trava_na_conclusao`, sem marca; depois da trava, conclui.
-n=0; JT="$J7"
-while [ "$(J "$JT" parcial,interrompido)" != "faixas_concluidas" ] && [ "$n" -lt "$LIMITE" ]; do JT="$(T nb 10 0)"; n=$((n+1)); done
-ALVO11="$(PDq nb -c "SELECT re.cnpj FROM public.radar_empresas re JOIN public.radar_situacao_cadastral s ON s.cnpj = re.cnpj AND s.lote = '2026-12' WHERE s.situacao = '08' AND NOT re.ja_cliente AND re.prospeccao_status = 'a_contatar' AND NOT EXISTS (SELECT 1 FROM public._t_docs d WHERE d.doc = re.cnpj) ORDER BY re.cnpj LIMIT 1")"
-eq "B11' alvo da prova existe e as faixas do lote novo terminaram" \
-  "$([ -n "$ALVO11" ] && echo sim || echo nao)/$(J "$JT" parcial,interrompido)" "sim/faixas_concluidas"
-( PDq nb -c "BEGIN; SELECT 1 FROM public.radar_empresas WHERE cnpj = '$ALVO11' FOR UPDATE; SELECT pg_sleep(8); COMMIT;" >/dev/null 2>&1 ) &
+R11="$(ate_fatias nc)"
+ALVO11="$(PDq nc -c "SELECT re.cnpj FROM public.radar_empresas re JOIN public.radar_situacao_cadastral s ON s.cnpj = re.cnpj AND s.lote = '2026-11' WHERE s.situacao = '08' AND NOT re.ja_cliente AND re.prospeccao_status = 'a_contatar' AND NOT EXISTS (SELECT 1 FROM public._t_docs d WHERE d.doc = re.cnpj) ORDER BY re.cnpj LIMIT 1")"
+eq "B11' alvo da prova existe e as fatias terminaram" "$([ -n "$ALVO11" ] && echo sim || echo nao)/${R11#*|}" "sim/fatias_concluidas"
+( PDq nc -c "BEGIN; SELECT 1 FROM public.radar_empresas WHERE cnpj = '$ALVO11' FOR UPDATE; SELECT pg_sleep(8); COMMIT;" >/dev/null 2>&1 ) &
 B11_PID=$!
-until [ "$(PDq nb -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(8)%' AND state = 'active' AND pid <> pg_backend_pid()")" = "1" ]; do sleep 0.1; done
+until [ "$(PDq nc -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(8)%' AND state = 'active' AND pid <> pg_backend_pid()")" = "1" ]; do sleep 0.3; done
 sleep 0.3
 ERR11="$(dirname "$DATA")/b11.err"
-J11="$(T nb 10 0 2>"$ERR11" || true)"   # stderr à parte: o DROP TABLE IF EXISTS da função emite NOTICE
-if [ "$(PDq nb -c "SELECT pg_input_is_valid(\$j\$$J11\$j\$, 'jsonb')")" = "t" ]; then
+J11="$(T nc 100 0 2>"$ERR11" || true)"   # stderr à parte: o DROP TABLE IF EXISTS da função emite NOTICE
+if [ "$(PDq nc -c "SELECT pg_input_is_valid(\$j\$$J11\$j\$, 'jsonb')")" = "t" ]; then
   eq "B11a trava na conclusão → parcial 'trava_na_conclusao' e o lote segue pendente" \
-    "$(J "$J11" parcial,interrompido)/$(PDq nb -c "SELECT coalesce(situacao_aplicada_fechamento::text, 'pendente') FROM public.radar_ingest_state WHERE mes_referencia = '2026-12'")" \
+    "$(J "$J11" parcial,interrompido)/$(PDq nc -c "SELECT coalesce(situacao_aplicada_fechamento::text, 'pendente') FROM public.radar_ingest_state WHERE mes_referencia = '2026-11'")" \
     "trava_na_conclusao/pendente"
 else
   eq "B11a trava na conclusão → parcial 'trava_na_conclusao' e o lote segue pendente" "$(grep -o 'ERRO.*\|ERROR.*' "$ERR11" | head -1 | cut -c1-60)" "json"
 fi
 wait "$B11_PID" || true
-J11b="$(T nb 10 0)"
-eq "B11b depois da trava a conclusão aplica e marca o lote novo" \
-  "$(J "$J11b" aplicados)/$(PDq nb -c "SELECT (situacao_aplicada_fechamento = finalizado_em)::text FROM public.radar_ingest_state WHERE mes_referencia = '2026-12'")/$(PDq nb -c "SELECT prospeccao_status FROM public.radar_empresas WHERE cnpj = '$ALVO11'")" \
-  "1/true/descartado"
+J11b="$(T nc 100 0)"
+eq "B11b depois da trava a conclusão aplica e marca" "$(J "$J11b" aplicados)/$(J "$J11b" 'lotes,0,lote')" "1/2026-11"
+eq "B11c depois das travas (rodada, fatia, linha do lote, conclusão) o estado é o da predecessora" "$(tudo nc)" "$(tudo pred)"
 
+# ── B7/B13b: lote novo no meio da passada, em "nb" ──────────────────────────────────────────────────────
+T nb 100 0 >/dev/null; T nb 100 0 >/dev/null; T nb 100 0 >/dev/null
+CUR7="$(PDq nb -c "SELECT cursor_cnpj FROM public.radar_situacao_passada")"
+PDq nb -c "$DEZ_SQL" >/dev/null
+J7="$(T nb 100 0)"
+eq "B7a dezembro fechou: a passada de novembro CONTINUA (cursor anda), novembro não é superado, dezembro espera" \
+  "$(PDq nb -c "SELECT lote || '|' || (cursor_cnpj > '$CUR7')::text FROM public.radar_situacao_passada")/$(J "$J7" marcados)/$(PDq nb -c "SELECT coalesce(situacao_aplicada_fechamento::text, 'pendente') FROM public.radar_ingest_state WHERE mes_referencia = '2026-12'")" \
+  "2026-11|true/0/pendente"
+# B13b: a linha de novembro travada e dezembro pendente → adiado, sem abrir passada de dezembro.
+CUR13b="$(cursor nb)"
+( PDq nb -c "BEGIN; SELECT 1 FROM public.radar_ingest_state WHERE mes_referencia = '2026-11' FOR UPDATE; SELECT pg_sleep(5); COMMIT;" >/dev/null 2>&1 ) &
+B13B_PID=$!
+until [ "$(PDq nb -c "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(5)%' AND state = 'active' AND pid <> pg_backend_pid()")" = "1" ]; do sleep 0.1; done
+J13b="$(T nb 100 0)"
+eq "B13b lote da passada travado com lote mais novo pendente → adiado e a passada não troca de lote" \
+  "$(J "$J13b" adiado)/$(cursor nb)" "lote_da_passada_travado/$CUR13b"
+wait "$B13B_PID" || true
+n=0
+while [ "$(PDq nb -c "SELECT coalesce((situacao_aplicada_fechamento = finalizado_em)::text, 'f') FROM public.radar_ingest_state WHERE mes_referencia = '2026-12'")" != "true" ] && [ "$n" -lt $(( LIMITE * 2 + 4 )) ]; do
+  T nb 100 0 >/dev/null 2>&1; n=$((n+1))
+done
+eq "B7b novembro concluído e dezembro aplicado depois: estado = predecessora aplicando os dois em sequência" \
+  "$(tudo nb)" "$(tudo pred7)"
+
+# B8: sem passada, dois lotes pendentes → o mais velho é superado e o mais novo abre a passada.
+PDq nd -c "$DEZ_SQL" >/dev/null
+J8="$(T nd 100 0)"
+eq "B8 sem passada: novembro superado por dezembro, a passada é de dezembro" \
+  "$(J "$J8" 'lotes,0,lote')/$(J "$J8" 'lotes,0,superado_por')/$(PDq nd -c "SELECT lote FROM public.radar_situacao_passada")" "2026-11/2026-12/2026-12"
 # ── C/D: job, fronteira, ACL ────────────────────────────────────────────────────────────────────────────
 eq "C1 job: de 5 em 5 min nas horas do score (00–05, 07–10 UTC), comando com SET statement_timeout, ativo, dono postgres" \
   "$(PDq base -c "SELECT schedule||'|'||command||'|'||active||'|'||username FROM cron.job WHERE jobname = 'radar-aplicar-situacao-diario'")" \
