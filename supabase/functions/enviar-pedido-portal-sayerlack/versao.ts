@@ -28,8 +28,10 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * registra a divergência portal ≠ Omie em `pedido_portal_ajuste_qtde` (Fase 1). Detalhe no changelog.
  * v1.16: recusa GRUPO_LEADTIME_MISMATCH grava a prova estruturada (`grupoLeadtime`) e chama a RPC
  * `reposicao_regrupar_por_recusa_portal`: corrige o grupo do SKU e cancela o pedido (o ciclo regera).
+ * v1.17: senha do portal do Vault. v1.18: autoriza o e-mail automático ao CRS (Fase 2a, `ajuste_lote_email_autorizar`)
+ * e o alerta do ajuste de lote passa a dizer "NÃO envie à mão" quando o envio é automático.
  */
-export const VERSAO = "v1.17-senha-do-vault";
+export const VERSAO = "v1.18-email-crs-autorizado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

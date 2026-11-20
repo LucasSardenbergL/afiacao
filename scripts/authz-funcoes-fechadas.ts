@@ -206,6 +206,26 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'único writer de reposicao_compra_suspensa; gate private.cap_compras_escrever (master)',
   },
+  'public.ajuste_lote_email_autorizar': {
+    fechadaPor: '20261120190000_lote_minimo_email_crs.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'lote mínimo Fase 2a: publica a autorização do e-mail ao CRS (1 por pedido) — só a edge enviar-pedido-portal-sayerlack (service_role); REVOKE de PUBLIC, anon e authenticated + postcondição B3',
+  },
+  'public.ajuste_lote_email_reservar': {
+    fechadaPor: '20261120190000_lote_minimo_email_crs.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'lote mínimo Fase 2a: reserva 1 pedido para o POST no Gmail — só a edge email-crs-ajuste-lote (service_role); REVOKE de PUBLIC, anon e authenticated + postcondição B3',
+  },
+  'public.ajuste_lote_email_confirmar': {
+    fechadaPor: '20261120190000_lote_minimo_email_crs.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'lote mínimo Fase 2a: grava o envio aceito pelo Gmail (thread, message id) — só a edge email-crs-ajuste-lote (service_role); REVOKE de PUBLIC, anon e authenticated + postcondição B3',
+  },
+  'public.ajuste_lote_email_falhou': {
+    fechadaPor: '20261120190000_lote_minimo_email_crs.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'lote mínimo Fase 2a: registra 4xx (libera) ou indeterminado (prende + alerta) — só a edge email-crs-ajuste-lote (service_role); REVOKE de PUBLIC, anon e authenticated + postcondição B3',
+  },
   'public.sayerlack_senha_portal_promover': {
     fechadaPor: '20261120130000_sayerlack_senha_portal_vault.sql',
     permitido: PORTA_FECHADA,

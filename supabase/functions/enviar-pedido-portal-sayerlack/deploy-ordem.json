@@ -1,0 +1,2 @@
+{ "formato": "deploy-ordem/1",
+  "depoisDe": [{ "edge": "email-crs-ajuste-lote", "motivo": "o envio v1.18 autoriza o e-mail ao CRS; sem a edge email-crs-ajuste-lote no ar, o cron de envio não encontra quem poste e o pedido cai no alerta de atraso (envie à mão)", "pr": 4021 }] }

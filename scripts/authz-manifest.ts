@@ -429,6 +429,14 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
  * v2: auditar cada uma individualmente e cruzar com os grants reais.
  */
 export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
+  // Lote mínimo Sayerlack Fase 2a (2026-11-20, migration 20261120190000): trilha do e-mail ao CRS. Chamadas SÓ pelas
+  // edges enviar-pedido-portal-sayerlack (autorizar) e email-crs-ajuste-lote (reservar/confirmar/falhou), ambas
+  // service_role. Fecha por PRIVILÉGIO: REVOKE de PUBLIC, anon e authenticated + postcondição B3 que ABORTA se
+  // anon/authenticated executarem; prova no harness db/test-lote-minimo-email-crs.sh (G1 + sabotagem authenticated_executa).
+  'public.ajuste_lote_email_autorizar',
+  'public.ajuste_lote_email_reservar',
+  'public.ajuste_lote_email_confirmar',
+  'public.ajuste_lote_email_falhou',
   // Rotação da senha do portal Sayerlack (2026-11-20, migration 20261120130000): `promover` reenfileira os pedidos
   // parados só pela senha (CAS em pedido_compra_sugerido, só sem portal_protocolo). Chamada SÓ pela edge
   // sayerlack-rotacionar-senha (service_role). Fecha por PRIVILÉGIO: REVOKE de PUBLIC, anon e authenticated e
