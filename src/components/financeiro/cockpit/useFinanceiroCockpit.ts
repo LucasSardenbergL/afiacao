@@ -114,6 +114,19 @@ async function lerInsumosFleuriet(): Promise<InsumosFleuriet> {
   return { balancos, ncg };
 }
 
+// Opções de consulta compartilhadas com a "Visão do CEO" da home (src/hooks/dashboard/useCeoPlacar.ts):
+// MESMA queryKey e MESMA queryFn → a home e o cockpit leem o mesmo cache e nunca divergem no número.
+export { EMPRESAS_COCKPIT, ResumoComTitulosFalhos };
+export const consultaResumoCockpit = () => ({ queryKey: [QK, 'resumo'] as const, queryFn: lerResumoCockpit });
+export const consultaDreCockpit = (ano: number, regime: 'caixa' | 'competencia') => ({
+  queryKey: [QK, 'dre', ano, regime] as const,
+  queryFn: () => Promise.all(EMPRESAS_COCKPIT.map(co => getDRE(co, ano, undefined, regime))).then(r => r.flat()),
+});
+export const consultaSnapshotsCockpit = () => ({
+  queryKey: [QK, 'snapshots'] as const,
+  queryFn: () => getProjecaoSnapshotsCockpit(EMPRESAS_COCKPIT),
+});
+
 export function useFinanceiroCockpit() {
   const [drillDown, setDrillDown] = useState<DrillDownType>(null);
   const queryClient = useQueryClient();
@@ -122,18 +135,15 @@ export function useFinanceiroCockpit() {
   const ano = new Date().getFullYear();
   const mes = new Date().getMonth() + 1;
 
-  const resumoQ = useQuery({ queryKey: [QK, 'resumo'], queryFn: lerResumoCockpit });
+  const resumoQ = useQuery(consultaResumoCockpit());
   // getAgingReceber LANÇA em erro (era EMPTY_AGING silencioso = "R$0 vencido" fabricado); o
   // fallback null é tratado como indisponível ('—'), nunca como carteira sã.
   const agingQ = useQuery({ queryKey: [QK, 'aging'], queryFn: () => getAgingReceber('all') });
-  const dreQ = useQuery({
-    queryKey: [QK, 'dre', ano, regime],
-    queryFn: () => Promise.all(EMPRESAS_COCKPIT.map(co => getDRE(co, ano, undefined, regime))).then(r => r.flat()),
-  });
+  const dreQ = useQuery(consultaDreCockpit(ano, regime));
   // getTopInadimplentes LANÇA em erro (era [] silencioso = falso "ninguém inadimplente").
   const inadQ = useQuery({ queryKey: [QK, 'inadimplentes'], queryFn: () => getTopInadimplentes('all', 5) });
   // Projeção 13s + NCG consolidados via snapshot real da engine A1 (não a RPC ingênua)
-  const snapsQ = useQuery({ queryKey: [QK, 'snapshots'], queryFn: () => getProjecaoSnapshotsCockpit(EMPRESAS_COCKPIT) });
+  const snapsQ = useQuery(consultaSnapshotsCockpit());
   const fleurietQ = useQuery({ queryKey: [QK, 'fleuriet'], queryFn: lerInsumosFleuriet });
   const confQ = useQuery({ queryKey: [QK, 'confiabilidade', ano, mes], queryFn: () => lerConfiabilidade(ano, mes) });
 

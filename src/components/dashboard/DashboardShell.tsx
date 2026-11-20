@@ -10,6 +10,8 @@ import { useCompany } from '@/contexts/CompanyContext';
 import { BriefZone } from './BriefZone';
 import { CockpitGrid } from './CockpitGrid';
 import { DashboardFooter } from './DashboardFooter';
+import { CeoVisao } from './ceo/CeoVisao';
+import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { useVendasZone } from '@/hooks/dashboard/useVendasZone';
 import { useEstoqueZone } from '@/hooks/dashboard/useEstoqueZone';
 import { useReposicaoZone } from '@/hooks/dashboard/useReposicaoZone';
@@ -33,6 +35,9 @@ export function DashboardShell() {
 function DashboardBody() {
   const { persona, source } = useDashboardPersonaContext();
   const { selection } = useCompany();
+  // Master (respeitando a lente "Ver como") abre a home pela Visão do CEO, qualquer que seja a
+  // persona inferida — departamento/heurística de rotas podem tirá-lo de 'master' (persona-detect).
+  const { displayIsMaster } = useDisplayAccess();
   // ESCRITOR ÚNICO de dashboard_visits (useLastVisit é só leitura e monta 3× aqui)
   useRegistrarVisitaDashboard({
     persona,
@@ -128,10 +133,16 @@ function DashboardBody() {
       >
         Pular pro cockpit
       </a>
-      <BriefZone winner={winner} />
-      <main className="flex-1">
-        <CockpitGrid />
-      </main>
+      {displayIsMaster ? (
+        <CeoVisao winner={winner} />
+      ) : (
+        <>
+          <BriefZone winner={winner} />
+          <main className="flex-1">
+            <CockpitGrid />
+          </main>
+        </>
+      )}
       <DashboardFooter />
     </div>
   );
