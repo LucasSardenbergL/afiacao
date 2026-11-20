@@ -20,7 +20,9 @@ import { cn } from '@/lib/utils';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useCustomerSegments } from '@/hooks/useCustomerSegments';
 import { decodeHtmlEntities } from '@/lib/format';
-import { fmt, HEALTH_CLASSES, formatDocument } from './config';
+import {
+  HEALTH_CLASSES, NAO_APURADO, classeSaudeExibida, fmtContagem, fmtGasto, fmtPrioridade, formatDocument, metricasExibiveis,
+} from './config';
 import type { Customer, ClientScore } from './types';
 
 export function CustomerListView({
@@ -133,7 +135,7 @@ export function CustomerListView({
             {/* Sob falha sem dado, "0 clientes na base" afirmaria base vazia — não medimos nada. */}
             {isError && customers.length === 0
               ? 'contagem indisponível'
-              : `${total} ${isCarteira ? 'clientes na carteira' : 'clientes na base'}`}
+              : `${fmtContagem(total)} ${isCarteira ? 'clientes na carteira' : 'clientes na base'}`}
           </p>
         </div>
       </div>
@@ -292,8 +294,10 @@ export function CustomerListView({
             <tbody>
               {filtered.map((customer) => {
                 const score = scores.get(customer.user_id);
-                const healthInfo = score ? HEALTH_CLASSES[score.health_class] : undefined;
+                const healthInfo = score ? classeSaudeExibida(score.health_class) : undefined;
                 const isSemHistorico = score?.sales_history_status === 'sem_historico';
+                // Sem histórico: 999d / R$ 0 / prioridade são sentinelas da edge, não medidas.
+                const metricas = score ? metricasExibiveis(score) : null;
 
                 return (
                   <tr
@@ -331,31 +335,31 @@ export function CustomerListView({
                         <Badge variant="outline" className="text-[10px] text-muted-foreground">Sem histórico</Badge>
                       ) : (
                         <Badge variant="outline" className={cn('text-[10px]', healthInfo?.className)}>
-                          {healthInfo?.label || 'N/A'}
+                          {healthInfo?.label ?? 'Não avaliado'}
                         </Badge>
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-right hidden lg:table-cell">
                       <span className="text-xs font-medium tabular-nums">
-                        {score ? fmt(score.avg_monthly_spend_180d) : '-'}
+                        {metricas ? fmtGasto(metricas.gasto) : NAO_APURADO}
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-center hidden lg:table-cell">
-                      {score?.days_since_last_purchase != null ? (
+                      {metricas?.dias != null ? (
                         <span className={cn(
                           'text-xs font-medium tabular-nums',
-                          score.days_since_last_purchase > 60 ? 'text-status-error' :
-                          score.days_since_last_purchase > 30 ? 'text-status-warning' :
+                          metricas.dias > 60 ? 'text-status-error' :
+                          metricas.dias > 30 ? 'text-status-warning' :
                           'text-muted-foreground'
                         )}>
-                          {score.days_since_last_purchase}d
+                          {metricas.dias}d
                         </span>
-                      ) : '-'}
+                      ) : <span className="text-xs text-muted-foreground">{NAO_APURADO}</span>}
                     </td>
                     <td className="px-3 py-2.5 text-right hidden md:table-cell">
-                      {score ? (
-                        <span className="text-xs font-semibold tabular-nums">{score.priority_score.toFixed(1)}</span>
-                      ) : '-'}
+                      {metricas?.prioridade != null ? (
+                        <span className="text-xs font-semibold tabular-nums">{fmtPrioridade(metricas.prioridade)}</span>
+                      ) : <span className="text-xs text-muted-foreground">{NAO_APURADO}</span>}
                     </td>
                     <td className="px-2 py-2.5">
                       <ChevronRight className="w-4 h-4 text-muted-foreground" />
@@ -419,7 +423,7 @@ export function CustomerListView({
           <p className="text-center text-xs text-muted-foreground py-4 border-t">
             {buscaNoServidor
               ? `Todos os resultados da busca carregados (${customers.length})`
-              : `Todos os clientes carregados (${total})`}
+              : `Todos os clientes carregados (${fmtContagem(total)})`}
           </p>
         )}
       </Card>

@@ -33,14 +33,18 @@ export interface UserTool {
 export interface ClientScore {
   customer_user_id: string;
   health_score: number;
-  health_class: string;
+  /** `null` = cliente nunca classificado — jamais defaultar para 'critico' (veredito fabricado). */
+  health_class: string | null;
   churn_risk: number | null;
   /** `null` = não apurado (coluna sem produtor) — jamais tratar como potencial zero. */
   expansion_score: number | null;
-  priority_score: number;
-  avg_monthly_spend_180d: number;
-  days_since_last_purchase: number;
-  category_count: number;
+  /** `null` = não apurado. A edge ainda grava número para `sem_historico` — a tela não o exibe. */
+  priority_score: number | null;
+  /** `null` = não apurado (≠ R$ 0,00 medido na janela de 180d). */
+  avg_monthly_spend_180d: number | null;
+  /** `null` = não apurado. A edge grava 999 como sentinela de "nunca comprou" — ver `diasDesdeCompraMedidos`. */
+  days_since_last_purchase: number | null;
+  category_count: number | null;
   /** PERCENTUAL (0–100, negativo válido). `null` = não apurada — jamais tratar como 0. */
   gross_margin_pct: number | null;
   /** `true` = o servidor NÃO concedeu a margem (sem `cap_custo_ler`, FU4-F) — não é "não apurada". */
