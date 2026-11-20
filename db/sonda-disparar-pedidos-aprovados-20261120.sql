@@ -1,3 +1,4 @@
+-- disparo de 2026-11-20T00:43:47Z (rotação de senha Sayerlack, 2ª leva)
 -- PASSO 1 — dispara as 1 edge(s) baratas da leva. Exige ESCRITA: lê o vault e
 --          faz INSERT, e o wrapper read-only recusa os dois — o que NÃO é o mesmo que
 --          "só o founder consegue". Caminho da SESSÃO: commite este .sql em db/ e rode
