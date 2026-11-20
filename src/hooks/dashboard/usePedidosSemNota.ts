@@ -14,7 +14,7 @@ import {
 } from '@/lib/dashboard/pedidos-sem-nota';
 
 /** Quantos clientes da faixa 30–90d o banner detalha (ordenados por receita). */
-export const TOPO_CLIENTES_SEM_NOTA = 10;
+const TOPO_CLIENTES_SEM_NOTA = 10;
 
 export interface PedidosSemNotaDados extends ResumoSemNota {
   janela: { de: string; ate: string };
