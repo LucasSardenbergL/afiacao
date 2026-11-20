@@ -1640,6 +1640,39 @@ export type Database = {
         }
         Relationships: []
       }
+      combinado_dia: {
+        Row: {
+          atualizado_em: string
+          criado_em: string
+          dia: string
+          id: number
+          itens: Json
+          master_id: string
+          n_copias: number
+          vendedora_id: string
+        }
+        Insert: {
+          atualizado_em?: string
+          criado_em?: string
+          dia: string
+          id?: number
+          itens: Json
+          master_id: string
+          n_copias?: number
+          vendedora_id: string
+        }
+        Update: {
+          atualizado_em?: string
+          criado_em?: string
+          dia?: string
+          id?: number
+          itens?: Json
+          master_id?: string
+          n_copias?: number
+          vendedora_id?: string
+        }
+        Relationships: []
+      }
       commercial_roles: {
         Row: {
           assigned_by: string | null
