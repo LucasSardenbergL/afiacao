@@ -47,3 +47,11 @@ a cada expiração. Cobrar HTTPS da Sayerlack.
 - Disparada depois da quarentena, já com a v1.1 (#4006). Ela trocou a senha, provou com login real até o dashboard, promoveu no Vault, mandou o e-mail às 11:16:53 e reenfileirou o **#4505** (`erro_nao_retentavel` → `pendente_envio_portal`).
 - Isso confirma a hipótese da 1ª recusa: o TOTVS exige **caractere especial**.
 - A partir daqui a fonte da verdade da senha é o Vault. O env `SAYERLACK_PORTAL_PASS` ficou velho, e só serve de bootstrap se o Vault for esvaziado.
+
+## Botão "Copiar senha do portal" (só master) — migration `20261120160000`
+
+- **Por quê:** o founder às vezes entra no portal à mão pelo Chrome. Com a senha só no Vault, ele precisava de um jeito de colar a ATIVA (e o Chrome oferece atualizar a senha salva). Gerenciador de senhas foi descartado: o Chrome não tem API de escrita, o Bitwarden grátis é frágil para gravar do servidor e o 1Password é pago.
+- **Onde:** card "Pedidos do portal Sayerlack" (`PedidosPortalCard`), botão `CopiarSenhaPortalButton`, visível só com `isMaster`.
+- **Fronteira:** RPC `sayerlack_senha_portal_copiar()` (SECDEF, `has_role(uid,'master')` no corpo, EXECUTE só `authenticated`; anon, PUBLIC e service_role revogados). Vault sem ativa → `SEM_SENHA_NO_VAULT` (P0002), nunca o env. Rotação aberta → `TROCA_EM_ANDAMENTO` (55000).
+- **Auditoria / sensor de uso:** cada cópia grava `sayerlack_senha_portal_leituras` (user_id, versão do segredo = id da rodada, lido_em; sem senha), escritor único = a RPC, SELECT só master. "Está sendo usado?" = `SELECT count(*), max(lido_em) FROM sayerlack_senha_portal_leituras`.
+- **Prova:** `db/test-sayerlack-senha-portal.sh` K1–K8 (54 asserts nos 2 locales); `--falsificar` com 16 sabotagens, todas mortas (6 novas: gate de master aberto, Vault vazio copiando nada, cópia durante rotação, sem auditoria, anon executa, log aberto a staff).

@@ -140,6 +140,13 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
   // 5.2 fatia 2 (2026-11-09): "aceitar o portal" — reescreve itens/custo/condição do pedido sem PO a partir da
   // leitura da divergência aberta e solta o gate do claim. SECURITY DEFINER por desenho: escreve pela porta única
   // `sayerlack_conferir_portal` (fechada para authenticated) e grava a trilha em acoes_execucoes. Staff decide.
+  // Botão "Copiar senha do portal" (20261120160000): devolve a senha ATIVA do portal Sayerlack (Vault) e audita
+  // quem leu. Só o master. Prova: db/test-sayerlack-senha-portal.sh (K1-K8, sabotagem gate_master_aberto).
+  'public.sayerlack_senha_portal_copiar': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'has_role', roles: ['master'] }] },
+    motivo: 'senha ativa do portal Sayerlack (Vault) para o master colar no Chrome — leitura auditada em sayerlack_senha_portal_leituras',
+  },
   'public.sayerlack_aceitar_portal': {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'has_role', roles: ['employee', 'master'] }] },

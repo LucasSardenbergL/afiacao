@@ -28078,6 +28078,7 @@ export type Database = {
           tentativas_reconciliacao: number
         }[]
       }
+      sayerlack_senha_portal_copiar: { Args: never; Returns: string }
       sayerlack_senha_portal_credencial: {
         Args: never
         Returns: {

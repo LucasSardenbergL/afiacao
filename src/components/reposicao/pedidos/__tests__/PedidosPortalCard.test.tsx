@@ -20,6 +20,7 @@ vi.mock('@/integrations/supabase/client', () => ({
 }));
 vi.mock('@/components/execucoes/UltimaExecucao', () => ({ UltimaExecucao: () => null }));
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ isMaster: false }) }));
 
 import { PedidosPortalCard } from '../PedidosPortalCard';
 import { painelV2 } from './painel-portal-fixture';
