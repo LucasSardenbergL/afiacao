@@ -13,14 +13,27 @@ user↔código; aliases fiscais podem somar mais). 125 clientes mapeados com ven
 
 | Camada | Antes | Depois |
 |---|---|---|
-| SQL | `venda_gate_credito(company, codigo, pedido)` | `venda_gate_credito_grupo(pedido, company, codigo, customer_user_id)` + `credito_grupo_pares(user)`: canônico + aliases `active`; `inactive`/`conflict` não expandem; par do pedido sempre no escopo; devolve `pares[]` |
+| SQL | `venda_gate_credito(company, codigo, pedido)` | `venda_gate_credito_grupo(pedido, company, codigo)` + `credito_grupo_pares(user)`: a RAIZ é o dono do par comprovado no mapa (nunca o UUID do pedido — pode ser o do vendedor); canônico + aliases `active`; `inactive`/`conflict` não expandem; devolve `pares[]` |
 | Edge, gate mudo | liberava com log `gate_indisponivel` | **segura**: erro retentável "Verificação de crédito indisponível — tente de novo em instantes." (erro, não `blocked` novo: bundle antigo trata erro como falha) |
-| Edge, edição | gate só se o total sobe | também se a **parcela muda** (`edicaoExigeGate`); sem `codigo_cliente` no consult avalia o grupo do cliente local, grupo vazio → segura |
-| Ingestão CR | `valor_documento \|\| 0` | sem valor legível → não grava (log); modo estrito lança |
+| Edge, edição | gate só se o total sobe; sem `codigo_cliente` liberava com log | também se a **parcela muda** (`edicaoExigeGate`); sem `codigo_cliente` no consult → **segura** |
+| Ingestão CR | `valor_documento \|\| 0` | só número/string decimal; sem valor legível → não grava (log); modo estrito lança |
 | Tela | "R$ X vencido" | "vencido no grupo: Colacor SC R$ 500,00 · Oben R$ 150,00" |
 
-Exceção continua por (pedido, par do pedido) e agora libera a dívida do grupo que o gestor vê no
-painel (que lista os pares). A v1 `venda_gate_credito` fica no banco.
+Exceção continua por (pedido, par do pedido) e libera a dívida do grupo que o gestor vê no painel
+(lista os pares — também no fluxo remoto, lidos do `detalhe` do log). Exceção criada ANTES do marco
+`credito_virada_grupo.aplicada_em` (gravado quando a migration é aplicada) foi aprovada vendo só o par
+→ **não** cobre dívida de outra empresa (`motivo='excecao_anterior_nao_cobre_grupo'`).
+A v1 `venda_gate_credito` fica no banco.
+
+Titularidade dos aliases (psql-ro 2026-11-20): 1.633/1.633 `active` têm o MESMO documento do profile
+do canônico; nenhum alias tem par próprio no mapa nem título fora dele → a expansão por alias não
+transfere dívida entre titulares hoje.
+
+## Risco residual aceito (review Codex P2)
+
+Sync de CR **não estrito** com título sem valor: o título é pulado só com `console.warn` — um título
+novo fica invisível e um existente mantém o saldo antigo até o próximo retrato estrito. Hoje há **0**
+títulos assim em prod; se aparecer, persistir pendência e condicionar `full_ok` (não feito aqui).
 
 ## Ordem de deploy (OBRIGATÓRIA)
 
