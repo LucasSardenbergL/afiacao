@@ -195,6 +195,8 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/financeiro/extrato/__tests__/nucleo.test.ts",
       "src/lib/financeiro/extrato/__tests__/nucleo.parity.test.ts",
       "src/lib/financeiro/extrato/__tests__/parser-ofx.test.ts",
+      "src/components/financeiro/extrato/__tests__/ResumoDiarioExtrato.test.tsx",
+      "src/services/__tests__/financeiroExtratoBancario.test.ts",
       "src/__tests__/financeiro.test.ts",
       "src/pages/__tests__/FinanceiroAnalytics.baixa-indisponivel.test.tsx",
       "src/pages/__tests__/FinanceiroDashboard.coerencia-pos-sync.test.tsx",
