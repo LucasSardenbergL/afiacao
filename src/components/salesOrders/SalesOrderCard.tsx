@@ -11,10 +11,13 @@ import {
 import { Trash2, Share2, Pencil, Printer, MoreHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatPrecoOuAusente } from '@/lib/format';
-import { horaDoPedido } from '@/lib/pedido/data-pedido';
-import { StatusBadge } from '@/components/StatusBadge';
-import type { OrderStatus } from '@/types';
+import { formatarDataPedido, horaDoPedido } from '@/lib/pedido/data-pedido';
+import { ORDER_STATUS, type OrderStatus } from '@/types';
+import { track } from '@/lib/analytics';
 import { podeExcluirPedido, rotuloEmpresa, statusDoPedido, tomDoStatus, type OrderFeedRow, type TomStatus } from './types';
+
+type AcaoPedido = 'compartilhar' | 'imprimir' | 'editar' | 'excluir';
+const rastrearAcao = (acao: AcaoPedido, via: 'hover' | 'menu') => track('sales.pedido_acao', { acao, via });
 
 /**
  * Grade compartilhada entre a linha e o cabeçalho de colunas da listagem (SalesOrders) — as duas
@@ -65,6 +68,13 @@ interface SalesOrderCardProps {
   onPrint: () => void;
   /** Aquece o cache do detalhe (hover) — imprimir/abrir ficam instantâneos. */
   onPrefetch?: () => void;
+  /**
+   * Filtro novo a caminho e esta linha é do filtro ANTERIOR (keepPreviousData): nada de selecionar,
+   * abrir ou agir sobre ela até a lista certa chegar. A seleção já feita fica como está.
+   */
+  suspenso?: boolean;
+  /** Lista sem grupos por dia ("Maior valor"): a linha mostra a data no lugar só da hora. */
+  mostrarData?: boolean;
 }
 
 export function SalesOrderCard({
@@ -79,6 +89,8 @@ export function SalesOrderCard({
   onOpenDetail,
   onPrint,
   onPrefetch,
+  suspenso = false,
+  mostrarData = false,
 }: SalesOrderCardProps) {
   const gatilhoRef = useRef<HTMLButtonElement>(null);
   const isAfiacao = order.origin === 'afiacao';
@@ -86,34 +98,56 @@ export function SalesOrderCard({
   const exclusao = podeExcluirPedido(order);
   const isSelectable = exclusao.ok;
   const podeEditar = !isAfiacao && !STATUS_NAO_EDITAVEIS.includes(order.status);
-  const status = statusDoPedido(order.status);
+  // Afiação usa o vocabulário de ORDER_STATUS; o tom (cor só no que pede atenção) é o mesmo da venda.
+  const status = isAfiacao && order.status in ORDER_STATUS
+    ? { label: ORDER_STATUS[order.status as OrderStatus].label }
+    : statusDoPedido(order.status);
   const cor = COR_DO_TOM[tomDoStatus(order.status)];
   const pv = order.order_number ? order.order_number.replace(/^0+/, '') || '0' : null;
   // item_quantity da view = soma das quantidades (o mesmo que o reduce antigo fazia).
   const quantidade = Number(order.item_quantity);
   const itens = Number.isFinite(quantidade) ? rotuloItens(quantidade) : null;
   const produtos = previaProdutos(order.item_names ?? []);
-  const hora = horaDoPedido(order.created_at);
+  const hora = mostrarData ? formatarDataPedido(order.created_at, 'dd/MM/yyyy HH:mm') : horaDoPedido(order.created_at);
   const detalhe = [produtos, hora].filter(Boolean).join(' · ');
   const nomeAcessivel = pv ? `pedido ${pv} de ${customerName}` : `pedido de ${customerName}`;
 
-  const abrir = () => (isAfiacao ? onNavigate(`/orders/${order.id}`) : onOpenDetail());
+  const abrir = (origem: 'linha' | 'nome') => {
+    if (suspenso) return;
+    track('sales.pedido_aberto', { origem });
+    if (isAfiacao) onNavigate(`/orders/${order.id}`);
+    else onOpenDetail();
+  };
+  const editar = (via: 'hover' | 'menu') => {
+    rastrearAcao('editar', via);
+    onNavigate(`/sales/edit/${order.id}`);
+  };
+  const compartilhar = (via: 'hover' | 'menu') => {
+    rastrearAcao('compartilhar', via);
+    onShare();
+  };
+  const imprimir = (via: 'hover' | 'menu') => {
+    rastrearAcao('imprimir', via);
+    onPrint();
+  };
   const parar = (e: React.SyntheticEvent) => e.stopPropagation();
 
   return (
     <div
       className={cn(
         GRADE_LINHA_PEDIDO,
-        'group cursor-pointer gap-y-1 px-3 py-2.5 transition-colors hover:bg-muted/40 md:py-2',
+        'group gap-y-1 px-3 py-2.5 transition-colors md:py-2',
+        suspenso ? 'cursor-wait' : 'cursor-pointer hover:bg-muted/40',
         checked && 'bg-muted/60 hover:bg-muted/60',
       )}
-      onClick={abrir}
+      onClick={() => abrir('linha')}
       onMouseEnter={onPrefetch}
     >
       <div className="[grid-area:check] flex items-center self-center">
         {isSelectable && (
           <Checkbox
             checked={checked}
+            disabled={suspenso}
             onClick={parar}
             onCheckedChange={(v) => onSelectChange(!!v)}
             aria-label={`Selecionar ${nomeAcessivel}`}
@@ -125,9 +159,10 @@ export function SalesOrderCard({
         <div className="flex min-w-0 items-center gap-1.5">
           <button
             type="button"
+            disabled={suspenso}
             onClick={(e) => {
               parar(e);
-              abrir();
+              abrir('nome');
             }}
             className="min-h-0 truncate rounded-sm text-left text-sm font-medium hover:underline focus-visible:ring-offset-0"
           >
@@ -160,14 +195,10 @@ export function SalesOrderCard({
       </div>
 
       <div className="[grid-area:status] min-w-0 pl-1 md:pl-0">
-        {isAfiacao ? (
-          <StatusBadge status={order.status as OrderStatus} size="sm" />
-        ) : (
-          <span className={cn('inline-flex items-center gap-1.5 text-xs md:text-sm', cor.texto)}>
-            <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', cor.ponto)} aria-hidden />
-            <span className="truncate">{status.label}</span>
-          </span>
-        )}
+        <span className={cn('inline-flex items-center gap-1.5 text-xs md:text-sm', cor.texto)}>
+          <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', cor.ponto)} aria-hidden />
+          <span className="truncate">{status.label}</span>
+        </span>
       </div>
 
       <div className="[grid-area:total] text-right">
@@ -178,16 +209,16 @@ export function SalesOrderCard({
       <div className="[grid-area:acoes] flex items-center justify-end gap-0.5" onClick={parar}>
         {/* Atalhos no desktop: aparecem no hover/foco da linha; no toque, tudo fica no "⋯". */}
         <div className="hidden items-center gap-0.5 transition-opacity md:flex md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
-          <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" onClick={onShare} title="Compartilhar via WhatsApp" aria-label={`Compartilhar ${nomeAcessivel}`}>
+          <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" disabled={suspenso} onClick={() => compartilhar('hover')} title="Compartilhar via WhatsApp" aria-label={`Compartilhar ${nomeAcessivel}`}>
             <Share2 className="h-3.5 w-3.5" />
           </Button>
           {!isAfiacao && (
-            <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" onClick={onPrint} title="Imprimir pedido" aria-label={`Imprimir ${nomeAcessivel}`}>
+            <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" disabled={suspenso} onClick={() => imprimir('hover')} title="Imprimir pedido" aria-label={`Imprimir ${nomeAcessivel}`}>
               <Printer className="h-3.5 w-3.5" />
             </Button>
           )}
           {podeEditar && (
-            <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" onClick={() => onNavigate(`/sales/edit/${order.id}`)} title="Editar pedido" aria-label={`Editar ${nomeAcessivel}`}>
+            <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" disabled={suspenso} onClick={() => editar('hover')} title="Editar pedido" aria-label={`Editar ${nomeAcessivel}`}>
               <Pencil className="h-3.5 w-3.5" />
             </Button>
           )}
@@ -195,21 +226,21 @@ export function SalesOrderCard({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button ref={gatilhoRef} variant="ghost" size="icon" className="h-7 w-7 min-h-0" aria-label={`Mais ações do ${nomeAcessivel}`}>
+            <Button ref={gatilhoRef} disabled={suspenso} variant="ghost" size="icon" className="h-7 w-7 min-h-0" aria-label={`Mais ações do ${nomeAcessivel}`}>
               <MoreHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" onClick={parar}>
             {podeEditar && (
-              <DropdownMenuItem onSelect={() => onNavigate(`/sales/edit/${order.id}`)}>
+              <DropdownMenuItem onSelect={() => editar('menu')}>
                 <Pencil className="mr-2 h-3.5 w-3.5" /> Editar
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onSelect={onShare}>
+            <DropdownMenuItem onSelect={() => compartilhar('menu')}>
               <Share2 className="mr-2 h-3.5 w-3.5" /> Compartilhar no WhatsApp
             </DropdownMenuItem>
             {!isAfiacao && (
-              <DropdownMenuItem onSelect={onPrint}>
+              <DropdownMenuItem onSelect={() => imprimir('menu')}>
                 <Printer className="mr-2 h-3.5 w-3.5" /> Imprimir
               </DropdownMenuItem>
             )}
@@ -218,7 +249,10 @@ export function SalesOrderCard({
                 <DropdownMenuSeparator />
                 {exclusao.ok ? (
                   <DropdownMenuItem
-                    onSelect={() => onPedirExclusao(gatilhoRef.current)}
+                    onSelect={() => {
+                      rastrearAcao('excluir', 'menu');
+                      onPedirExclusao(gatilhoRef.current);
+                    }}
                     disabled={excluindo}
                     className="text-status-error focus:text-status-error"
                   >

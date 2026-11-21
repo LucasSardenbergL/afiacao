@@ -13,9 +13,26 @@ type Linha = {
   omie_pedido_id: number | null; customer_user_id: string; customer_name: string | null;
   item_names: string[]; item_quantity: number; status: string; subtotal: number; total: number; busca: string;
 };
-type Pedido = { tabela: string; select?: string; count?: string; filtros: [string, string, string][]; range?: [number, number]; update?: unknown; in?: [string, string[]] };
+type Pedido = {
+  tabela: string; select?: string; count?: string; filtros: [string, string, string][]; range?: [number, number];
+  update?: unknown; in?: [string, string[]]; or?: string; ordens: [string, { ascending?: boolean; nullsFirst?: boolean } | undefined][];
+};
 
-const fake = vi.hoisted(() => ({ linhas: [] as Linha[], pedidos: [] as Pedido[] }));
+// `segurar`: enquanto houver, as respostas do order_feed esperam por ela (transição de filtro em voo).
+const fake = vi.hoisted(() => ({ linhas: [] as Linha[], pedidos: [] as Pedido[], segurar: null as Promise<void> | null }));
+const analytics = vi.hoisted(() => ({ track: vi.fn() }));
+
+// Avalia o predicado do `.or()` como o PostgREST avalia (só os operadores que a listagem usa).
+function casaOr(or: string, l: Linha): boolean {
+  return or.split(',').some((c) => {
+    const [col, op, ...resto] = c.split('.');
+    const v = resto.join('.');
+    const t = Date.parse(String(l[col as keyof Linha]));
+    if (op === 'gte') return t >= Date.parse(v);
+    if (op === 'eq') return t === Date.parse(v);
+    throw new Error(`operador do .or() não previsto no fake: ${op}`);
+  });
+}
 
 // O mesmo que a view faz em SQL: entidades HTML do nome, '\n' entre campos, total nos 2 formatos,
 // minúsculas e sem acento.
@@ -28,30 +45,38 @@ function buscaComoAView(l: Omit<Linha, 'busca'>): string {
 
 vi.mock('@/integrations/supabase/client', () => {
   const builder = (tabela: string) => {
-    const p: Pedido = { tabela, filtros: [] };
+    const p: Pedido = { tabela, filtros: [], ordens: [] };
     fake.pedidos.push(p);
     const b = {
       select(cols: string, opts?: { count?: string }) { p.select = cols; p.count = opts?.count; return b; },
       eq(col: string, v: string) { p.filtros.push(['eq', col, v]); return b; },
       ilike(col: string, v: string) { p.filtros.push(['ilike', col, v]); return b; },
-      order() { return b; },
+      order(col: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) { p.ordens.push([col, opts]); return b; },
+      or(f: string) { p.or = f; return b; },
       range(a: number, z: number) { p.range = [a, z]; return b; },
       update(v: unknown) { p.update = v; return b; },
       in(col: string, ids: string[]) { p.in = [col, ids]; return b; },
       then(ok: (r: unknown) => unknown, erro?: (e: unknown) => unknown) {
         if (tabela !== 'order_feed') return Promise.resolve({ data: null, error: null }).then(ok, erro);
+        const gate = fake.segurar ?? Promise.resolve();
+        return gate.then(() => responderFeed(p)).then(ok, erro);
+      },
+    };
+    return b;
+  };
+  const responderFeed = (p: Pedido) => {
         let rs = fake.linhas.filter((l) => p.filtros.every(([op, col, v]) => {
           const valor = String(l[col as keyof Linha] ?? '');
           return op === 'eq' ? valor === v : valor.toLowerCase().includes(v.replace(/^%|%$/g, '').toLowerCase());
         }));
-        rs = [...rs].sort((x, y) => y.created_at.localeCompare(x.created_at) || x.origin.localeCompare(y.origin) || x.id.localeCompare(y.id));
+        if (p.in && p.in[0] === 'status') rs = rs.filter((l) => p.in![1].includes(l.status));
+        if (p.or) rs = rs.filter((l) => casaOr(p.or!, l));
+        const porValor = p.ordens[0]?.[0] === 'total';
+        rs = [...rs].sort((x, y) => (porValor ? y.total - x.total : 0) || y.created_at.localeCompare(x.created_at) || x.origin.localeCompare(y.origin) || x.id.localeCompare(y.id));
         const [a, z] = p.range ?? [0, 999];
         const cols = (p.select ?? '').split(',');
         const data = rs.slice(a, z + 1).map((l) => Object.fromEntries(cols.map((c) => [c, l[c as keyof Linha]])));
-        return Promise.resolve({ data, error: null, count: p.count === 'exact' ? rs.length : null }).then(ok, erro);
-      },
-    };
-    return b;
+        return { data, error: null, count: p.count === 'exact' ? rs.length : null };
   };
   return {
     supabase: {
@@ -64,9 +89,13 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'u1' }, isStaff: true, loading: false, role: 'employee' }),
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
+vi.mock('@/lib/analytics', () => ({ track: analytics.track }));
 
 import { supabase } from '@/integrations/supabase/client';
 import { FEED_PAGE_SIZE, useSalesOrders } from '../useSalesOrders';
+import { filtroDoPeriodo } from '../feed';
+import { diaDoPedido } from '@/lib/pedido/data-pedido';
+import { format } from 'date-fns';
 
 const TOTAL = 6000;
 // Os pedidos-alvo moram FORA dos 5.000 mais recentes (o recorte que a tela antiga baixava).
@@ -96,10 +125,10 @@ function gerarLinhas(): Linha[] {
   });
 }
 
-function montar() {
+function montar(url = '/sales') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <MemoryRouter initialEntries={['/sales']}>
+    <MemoryRouter initialEntries={[url]}>
       <QueryClientProvider client={qc}>{children}</QueryClientProvider>
     </MemoryRouter>
   );
@@ -119,6 +148,8 @@ async function buscar(r: ReturnType<typeof montar>['result'], termo: string) {
 beforeEach(() => {
   fake.linhas = gerarLinhas();
   fake.pedidos = [];
+  fake.segurar = null;
+  analytics.track.mockClear();
 });
 
 describe('useSalesOrders — abertura', () => {
@@ -359,5 +390,128 @@ describe('useSalesOrders — exclusão concorrente do mesmo pedido', () => {
     expect(rollback.update).toEqual({ deleted_at: null });
     expect(rollback.in).toEqual(['id', [alvo.id]]);
     expect(rollback.filtros).toEqual([['eq', 'deleted_at', carimbo]]);
+  });
+});
+
+describe('useSalesOrders — filtros de status, período e ordem (no servidor)', () => {
+  const ultimoFeed = () => pedidosDoFeed().at(-1)!;
+  async function aplicar(r: ReturnType<typeof montar>['result'], f: () => void) {
+    fake.pedidos = [];
+    act(f);
+    await waitFor(() => expect(pedidosDoFeed().length).toBeGreaterThan(0));
+    await waitFor(() => expect(r.current.buscando).toBe(false));
+  }
+
+  it('"Rascunhos" vira .eq(status) e "Faturados" vira .in(status) — e a lista só traz esses', async () => {
+    fake.linhas[3].status = 'rascunho';
+    fake.linhas[4].status = 'faturado';
+    fake.linhas[5].status = 'entregue';
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await aplicar(result, () => result.current.setStatusFilter('rascunhos'));
+    expect(ultimoFeed().filtros).toContainEqual(['eq', 'status', 'rascunho']);
+    expect(result.current.orders.map((o) => o.id)).toEqual([fake.linhas[3].id]);
+
+    await aplicar(result, () => result.current.setStatusFilter('faturados'));
+    expect(ultimoFeed().in).toEqual(['status', ['faturado', 'entregue']]);
+    expect(result.current.orders.map((o) => o.status).sort()).toEqual(['entregue', 'faturado']);
+    expect(analytics.track).toHaveBeenCalledWith('sales.lista_filtro', { tipo: 'status', valor: 'faturados' });
+  });
+
+  it('"Maior valor" ordena por total DESC com ausente no fim, antes da ordem estável', async () => {
+    fake.linhas[10].total = 99_999;
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await aplicar(result, () => result.current.setOrdem('valor'));
+    expect(ultimoFeed().ordens[0]).toEqual(['total', { ascending: false, nullsFirst: false }]);
+    expect(ultimoFeed().ordens.map(([c]) => c)).toEqual(['total', 'created_at', 'origin', 'id']);
+    expect(result.current.orders[0].id).toBe(fake.linhas[10].id);
+  });
+
+  it('período corta pelo DIA CIVIL de diaDoPedido (data-pura UTC × hora local), no fuso do processo', async () => {
+    const agora = new Date();
+    const hoje = format(agora, 'yyyy-MM-dd');
+    const [a, m, d] = hoje.split('-').map(Number);
+    const inicioLocal = new Date(a, m - 1, d).getTime();
+    // Instantes nas bordas: data-pura de hoje às 00:00Z e 12:00Z, data-pura de ontem, wizard 1 min
+    // antes e 1 min depois da meia-noite local, wizard 3h antes da meia-noite local.
+    const instantes = [
+      Date.UTC(a, m - 1, d, 0), Date.UTC(a, m - 1, d, 12), Date.UTC(a, m - 1, d - 1, 12), Date.UTC(a, m - 1, d - 1, 0),
+      inicioLocal - 60_000, inicioLocal + 60_000, inicioLocal - 3 * 3_600_000 + 1,
+    ];
+    fake.linhas = instantes.map((t, i) => ({ ...fake.linhas[i], created_at: new Date(t).toISOString() }));
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await aplicar(result, () => result.current.setPeriodo('hoje'));
+
+    expect(ultimoFeed().or).toBe(filtroDoPeriodo('hoje'));
+    const esperado = fake.linhas.filter((l) => diaDoPedido(l.created_at)! >= hoje).map((l) => l.id).sort();
+    expect(esperado.length).toBeGreaterThan(0);
+    expect(result.current.orders.map((o) => o.id).sort()).toEqual(esperado);
+  });
+
+  it('"Limpar filtros" zera busca, empresa, status, período e ordem numa escrita só', async () => {
+    // Abre JÁ filtrado: a key padrão não está em cache, então o Limpar tem de ir ao servidor.
+    const { result } = montar('/sales?q=serra&empresa=oben&status=cancelados&periodo=7d&ordem=valor');
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current).toMatchObject({ accountFilter: 'oben', statusFilter: 'cancelados', periodo: '7d', ordem: 'valor', comFiltro: true });
+    expect(ultimoFeed().or).toBeTruthy();
+
+    await aplicar(result, () => result.current.limparFiltros());
+    expect(result.current).toMatchObject({
+      search: '', accountFilter: 'all', statusFilter: 'todos', periodo: 'tudo', ordem: 'recentes', comFiltro: false,
+    });
+    const f = ultimoFeed();
+    expect(f.filtros).toEqual([]);
+    expect(f.in).toBeUndefined();
+    expect(f.or).toBeUndefined();
+    expect(f.ordens[0][0]).toBe('created_at');
+  });
+
+  it('só o filtro de período ou de status já conta como "com filtros"', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.setPeriodo('30d'));
+    await waitFor(() => expect(result.current.comFiltro).toBe(true));
+  });
+});
+
+describe('useSalesOrders — troca de filtro com a lista anterior na tela (isPlaceholderData)', () => {
+  it('suspende a seleção sem perder a já feita, e solta quando a resposta nova chega', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const [a, b] = result.current.orders;
+    act(() => result.current.toggleSelect(a, true));
+
+    let liberar!: () => void;
+    fake.segurar = new Promise<void>((r) => { liberar = r; });
+    act(() => result.current.setAccountFilter('colacor'));
+    await waitFor(() => expect(result.current.buscando).toBe(true));
+
+    // Linhas na tela são da aba ANTERIOR: nem entram nem saem da seleção.
+    act(() => result.current.toggleSelect(b, true));
+    act(() => result.current.toggleSelect(a, false));
+    expect([...result.current.selectedIds]).toEqual([a.id]);
+
+    fake.segurar = null;
+    liberar();
+    await waitFor(() => expect(result.current.buscando).toBe(false));
+    act(() => result.current.toggleSelect(result.current.orders[0], true));
+    expect(result.current.selectedIds.size).toBe(2);
+  });
+});
+
+describe('useSalesOrders — medição da busca', () => {
+  it('manda só se achou algo, nunca o termo, uma vez por termo', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await buscar(result, 'zzz-nao-existe');
+    await waitFor(() => expect(analytics.track).toHaveBeenCalledWith('sales.lista_busca', { tem_resultado: false }));
+    await buscar(result, 'marcenaria');
+    await waitFor(() => expect(analytics.track).toHaveBeenCalledWith('sales.lista_busca', { tem_resultado: true }));
+    const buscas = analytics.track.mock.calls.filter(([e]) => e === 'sales.lista_busca');
+    expect(buscas).toHaveLength(2);
+    expect(JSON.stringify(analytics.track.mock.calls)).not.toMatch(/marcenaria|zzz/);
   });
 });
