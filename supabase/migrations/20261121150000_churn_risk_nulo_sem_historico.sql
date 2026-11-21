@@ -61,8 +61,8 @@ BEGIN
   END IF;
   SELECT md5(p.prosrc) INTO v_trigger FROM pg_catalog.pg_proc p
    WHERE p.oid = 'public.enqueue_visit_score_recalc_from_client_score()'::regprocedure;
-  IF v_trigger IS DISTINCT FROM 'f863be30b7a6a6c8d3ad4d6ab3d4cce2' AND v_trigger IS DISTINCT FROM '9bded5da29ea1cc7331139c440389ae6' THEN
-    RAISE EXCEPTION 'PRE FALHOU: enqueue_visit_score_recalc_from_client_score vivo tem md5 % (esperado o predecessor f863be30b7a6a6c8d3ad4d6ab3d4cce2 ou este 9bded5da29ea1cc7331139c440389ae6) — reler o corpo de prod antes de reaplicar',
+  IF v_trigger IS DISTINCT FROM 'f863be30b7a6a6c8d3ad4d6ab3d4cce2' AND v_trigger IS DISTINCT FROM 'fbed094342f63ec8313a349755c68a72' THEN
+    RAISE EXCEPTION 'PRE FALHOU: enqueue_visit_score_recalc_from_client_score vivo tem md5 % (esperado o predecessor f863be30b7a6a6c8d3ad4d6ab3d4cce2 ou este fbed094342f63ec8313a349755c68a72) — reler o corpo de prod antes de reaplicar',
       v_trigger;
   END IF;
 END
@@ -268,16 +268,20 @@ BEGIN
   -- Mesma exceção para o churn (migration 20261121150000): o 100→NULL de quem ERA e CONTINUA sem_historico é a
   -- correção do 100 fabricado, não mudança de insumo de visita — sem isto o 1º run enfileiraria ~15.766.
   -- O NOT EXISTS (challenge Codex 2026-11-21, P1): `sem_historico` vem da RECEITA dos itens, mas a visita
-  -- (visit-score-recalc-client, nuncaComprou) olha CABEÇALHO de pedido. Um sem_historico com pedido válido
-  -- sem receita teria a missão de visita mudada pelo 100→NULL — então só suprime quem não tem pedido NENHUM
-  -- (de qualquer status: mais estrito que a visita, e enfileirar a mais é o lado seguro). Prod 2026-11-21:
-  -- 0 dos 15.766 sem_historico têm qualquer linha em sales_orders. Índice: idx_sales_orders_customer_created.
+  -- (visit-score-recalc-client, nuncaComprou) olha CABEÇALHO de pedido de venda. Um sem_historico com pedido
+  -- válido sem receita teria a missão de visita mudada pelo 100→NULL — então só suprime quem não tem pedido
+  -- de VENDA, pelo MESMO universo canônico que a visita usa (STATUS_NAO_VENDA + deleted_at IS NULL): sem ele
+  -- nuncaComprou é verdadeiro e a visita nem lê o churn. Prod 2026-11-21: 0 dos 15.766 sem_historico têm
+  -- qualquer linha em sales_orders. Índice: idx_sales_orders_customer_created.
   v_churn_mudou := NEW.churn_risk IS DISTINCT FROM OLD.churn_risk
     AND NOT (NEW.churn_risk IS NULL
              AND OLD.sales_history_status IS NOT DISTINCT FROM 'sem_historico'
              AND NEW.sales_history_status IS NOT DISTINCT FROM 'sem_historico'
              AND NEW.customer_user_id IS NOT NULL
-             AND NOT EXISTS (SELECT 1 FROM public.sales_orders so WHERE so.customer_user_id = NEW.customer_user_id));
+             AND NOT EXISTS (SELECT 1 FROM public.sales_orders so
+                              WHERE so.customer_user_id = NEW.customer_user_id
+                                AND so.deleted_at IS NULL
+                                AND so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')));
 
   IF (v_prioridade_mudou
       OR v_churn_mudou
@@ -325,8 +329,8 @@ BEGIN
 
   SELECT md5(p.prosrc) AS md5, p.prosecdef, p.provolatile, p.proconfig
     INTO v FROM pg_catalog.pg_proc p WHERE p.oid = ft::regprocedure;
-  IF v.md5 IS DISTINCT FROM '9bded5da29ea1cc7331139c440389ae6' THEN
-    RAISE EXCEPTION 'PÓS FALHOU: % ficou com md5 % (esperado 9bded5da29ea1cc7331139c440389ae6)', ft, v.md5;
+  IF v.md5 IS DISTINCT FROM 'fbed094342f63ec8313a349755c68a72' THEN
+    RAISE EXCEPTION 'PÓS FALHOU: % ficou com md5 % (esperado fbed094342f63ec8313a349755c68a72)', ft, v.md5;
   END IF;
   IF NOT v.prosecdef OR v.provolatile <> 'v' OR v.proconfig IS DISTINCT FROM ARRAY['search_path=public'] THEN
     RAISE EXCEPTION 'PÓS FALHOU: % perdeu atributos (secdef %, vol %, config %)', ft, v.prosecdef, v.provolatile, v.proconfig;

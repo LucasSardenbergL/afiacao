@@ -55,4 +55,13 @@ describe('rankAPositivar', () => {
       expect(out.map((x) => x.customer_user_id)).toEqual(['A', 'C', 'B']);
     }
   });
+
+  it('churn MEDIDO (0 inclusive) vence churn ausente no último desempate (v1.7: sem_historico tem churn NULL)', () => {
+    const ausente = c({ customer_user_id: 'ausente', priority_score: 50, revenue_potential: null, churn_risk: null });
+    const zero = c({ customer_user_id: 'zero', priority_score: 50, revenue_potential: null, churn_risk: 0 });
+    const alto = c({ customer_user_id: 'alto', priority_score: 50, revenue_potential: null, churn_risk: 80 });
+    for (const entrada of [[ausente, zero, alto], [alto, ausente, zero], [zero, alto, ausente]]) {
+      expect(rankAPositivar(entrada).map((x) => x.customer_user_id)).toEqual(['alto', 'zero', 'ausente']);
+    }
+  });
 });

@@ -22,6 +22,7 @@
 #   F1  fencing: run que não é dono → 55000 · F2 p_run_id '' → 22004 · F3 o dono grava
 #   T1  sem_historico→sem_historico SEM pedido, churn 100→NULL isolado → NÃO enfileira
 #   T2  sem_historico→sem_historico COM pedido (cabeçalho), churn 100→NULL → ENFILEIRA (o par do Codex)
+#   T2b só pedido cancelado/apagado (fora do universo canônico) → NÃO enfileira
 #   T3  primeira venda (sem_historico→ativo, churn NULL→45) → ENFILEIRA
 #   T4  sem_historico→ativo com churn 100→NULL → ENFILEIRA (a exceção exige NEW sem_historico)
 #   T5  ativo→ativo, churn→NULL → ENFILEIRA (a exceção é só de sem_historico)
@@ -38,7 +39,7 @@ MIG_REAL="$REPO_ROOT/supabase/migrations/20261121150000_churn_risk_nulo_sem_hist
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
-  SABOTAGENS="guard_chave_ausente:L1 coalesce_volta:A1 null_rejeitado:A1 guard_prioridade_some:L2 trigger_sem_excecao:T1 trigger_ignora_pedido:T2 trigger_ignora_status_novo:T4 sem_fencing:F1 intervalo_sem_preservar:A4"
+  SABOTAGENS="guard_chave_ausente:L1 coalesce_volta:A1 null_rejeitado:A1 guard_prioridade_some:L2 trigger_sem_excecao:T1 trigger_ignora_pedido:T2 trigger_ignora_universo:T2b trigger_ignora_status_novo:T4 sem_fencing:F1 intervalo_sem_preservar:A4"
   LOGDIR="$(mktemp -d "/tmp/falsifica-churn-nulo.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -86,7 +87,7 @@ sab() { # $1 = padrão sed (BSD/GNU portátil via -i.bak)
   sed -i.bak "$1" "$MIG"; rm -f "$MIG.bak"
 }
 cegar_md5() { # a sabotagem muda o corpo → PRE/PÓS por md5 abortariam ANTES do assert sob teste
-  sab "s/v.md5 IS DISTINCT FROM '3507b641249de3ce80f714e6b39c7381'/false/; s/v.md5 IS DISTINCT FROM '9bded5da29ea1cc7331139c440389ae6'/false/"
+  sab "s/v.md5 IS DISTINCT FROM '3507b641249de3ce80f714e6b39c7381'/false/; s/v.md5 IS DISTINCT FROM 'fbed094342f63ec8313a349755c68a72'/false/"
   sab "s/v_apply IS DISTINCT FROM 'cfed7452509290eede629acc01619c62' AND/false AND/; s/v_trigger IS DISTINCT FROM 'f863be30b7a6a6c8d3ad4d6ab3d4cce2' AND/false AND/"
 }
 case "${SABOTAGEM:-}" in
@@ -96,7 +97,8 @@ case "${SABOTAGEM:-}" in
   null_rejeitado)         sab "s/WHERE NOT jsonb_exists(e.elem, 'churn_risk');/WHERE (e.elem->>'churn_risk') IS NULL;/" ;;
   guard_prioridade_some)  sab 's/IF v_sem_prioridade > 0 THEN/IF false THEN/' ;;
   trigger_sem_excecao)    sab 's/AND NOT (NEW.churn_risk IS NULL/AND NOT (false/' ;;
-  trigger_ignora_pedido)  sab 's/AND NOT EXISTS (SELECT 1 FROM public.sales_orders so WHERE so.customer_user_id = NEW.customer_user_id));/AND true);/' ;;
+  trigger_ignora_pedido)  sab 's/                                AND so.deleted_at IS NULL$/                                AND false/' ;;
+  trigger_ignora_universo) sab "s/                                AND so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')));/                                )));/" ;;
   trigger_ignora_status_novo) sab "s/AND NEW.sales_history_status IS NOT DISTINCT FROM 'sem_historico'\$/AND true/" ;;
   sem_fencing)            sab 's/  IF p_run_id IS NOT NULL THEN/  IF false THEN/' ;;
   intervalo_sem_preservar) sab 's/CASE WHEN u.tem_avg_repurchase_interval THEN u.avg_repurchase_interval ELSE f.avg_repurchase_interval END/u.avg_repurchase_interval/' ;;
@@ -189,11 +191,16 @@ INSERT INTO public.cli VALUES
   ('e','00000000-0000-0000-0000-00000000000e','sem_historico',100,NULL),
   ('f','00000000-0000-0000-0000-00000000000f','ativo',50,50),
   ('g','00000000-0000-0000-0000-000000000001','sem_historico',100,67),
-  ('h','00000000-0000-0000-0000-000000000002','sem_historico',100,NULL);
+  ('h','00000000-0000-0000-0000-000000000002','sem_historico',100,NULL),
+  ('i','00000000-0000-0000-0000-000000000003','sem_historico',100,NULL);
 INSERT INTO public.farmer_client_scores(customer_user_id, farmer_id, priority_score, churn_risk, sales_history_status, avg_repurchase_interval)
 SELECT uid, '00000000-0000-0000-0000-0000000000ff', prio, churn, status, 30 FROM public.cli;
 -- e: sem_historico pela RECEITA dos itens, mas com um CABEÇALHO de pedido válido (o caso que a visita vê como comprador).
 INSERT INTO public.sales_orders(customer_user_id, status) VALUES ('00000000-0000-0000-0000-00000000000e', 'faturado');
+-- i: só pedido CANCELADO e um APAGADO — fora do universo canônico, então a visita o trata como "nunca comprou".
+INSERT INTO public.sales_orders(customer_user_id, status, deleted_at) VALUES
+  ('00000000-0000-0000-0000-000000000003', 'cancelado', NULL),
+  ('00000000-0000-0000-0000-000000000003', 'faturado', now());
 SQL
 
 echo "=== aplica a migration (transação única, como o db:aplicar) ==="
@@ -272,6 +279,9 @@ eq "T1 100→NULL isolado de sem_historico SEM pedido NÃO enfileira" "$(fila d)
 aplica "$(payload e null null sem_historico)" "'dono'"
 eq "T2 sentinela: o churn de e virou NULL" "$(churn e)" "NULL"
 eq "T2 sem_historico COM pedido, 100→NULL → ENFILEIRA" "$(fila e)" "1"
+# T2b: i só tem pedido cancelado/apagado → fora do universo canônico → mesmo veredito do sem-pedido
+aplica "$(payload i null null sem_historico)" "'dono'"
+eq "T2b sem_historico só com pedido cancelado/apagado, 100→NULL → NÃO enfileira" "$(fila i)" "0"
 # T3: a (sem_historico, churn NULL desde A1) faz a primeira compra → ativo, 45
 Ps -c "UPDATE public.farmer_client_scores f SET churn_risk = NULL FROM public.cli c WHERE c.uid=f.customer_user_id AND c.nome='a'"
 Ps -c "DELETE FROM public.visit_score_recalc_queue"
@@ -329,5 +339,5 @@ fi
 echo
 echo "RESULTADO: $PASS OK, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
-[ "$PASS" -ge 41 ] || { echo "PASS abaixo do piso (41) — suite truncada"; exit 1; }
+[ "$PASS" -ge 42 ] || { echo "PASS abaixo do piso (42) — suite truncada"; exit 1; }
 echo "TESTE_CHURN_NULO_OK"

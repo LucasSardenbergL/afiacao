@@ -109,3 +109,11 @@ describe('selectObjective — margem DO CLIENTE ausente (null) não fabrica cons
     expect(selectObjective(0, 5, null, 25, 0, cap)).toBe('expansao_mix');
   });
 });
+
+describe('selectObjective — churn ausente (calculate-scores v1.7)', () => {
+  it('churn NULL não dispara recuperacao (o 100 fabricado de quem nunca comprou não volta como 0 nem como 100)', () => {
+    expect(selectObjective(null, 0, 30, 30, 10, 180)).not.toBe('recuperacao');
+    expect(selectObjective(null, 0, 30, 30, 10, 180, 'sem_historico')).toBe('ativacao');
+  });
+});
+
