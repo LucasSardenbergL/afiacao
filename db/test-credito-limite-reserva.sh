@@ -131,6 +131,8 @@ P -q -f "$MIG"
 # prod é MIG + MIGN, então toda aplicação/restauração aqui aplica as duas (Codex desenho P3-5).
 MIGN="$REPO_ROOT/supabase/migrations/20261121200000_credito_piso_pagto_parcial.sql"
 P -q -f "$MIGN"
+# marco da virada no passado: a regra "log pós-virada + 5 min" (MIGN) precisa de espaço para os cenários
+P -q -c "UPDATE public.credito_virada_piso_parcial SET aplicada_em = now() - interval '1 day';"
 echo "migrations aplicadas: ${#MIGS[@]} antecedentes + $(basename "$MIG") + $(basename "$MIGN")"
 
 # ══════════════════════════════════════════════════════════════════════════════

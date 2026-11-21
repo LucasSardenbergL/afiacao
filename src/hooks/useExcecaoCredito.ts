@@ -54,6 +54,9 @@ export function useBloqueioCreditoLog(salesOrderId: string, enabled: boolean) {
   return useQuery({
     queryKey: ['bloqueio-credito-log', salesOrderId],
     enabled,
+    // sempre fresco ao abrir: o reenvio pode ter bloqueado de novo há segundos (Codex delta P2-4)
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: async () => {
       const { data, error } = await supabase
         .from('venda_bloqueio_credito_log')
@@ -91,6 +94,9 @@ export function useExcecaoCreditoVigente(salesOrderId: string, enabled: boolean)
   return useQuery({
     queryKey: ['excecao-credito', salesOrderId],
     enabled,
+    // sempre fresco ao abrir: o reenvio pode ter bloqueado de novo há segundos (Codex delta P2-4)
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: async () => {
       const { data, error } = await supabase
         .from('venda_excecao_credito')

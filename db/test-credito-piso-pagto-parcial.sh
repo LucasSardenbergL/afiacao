@@ -328,6 +328,8 @@ asserts() {
   eq "P5d log pós-virada mas DEPOIS da aprovação → não cobre" "$(piso "$S1" oben 101 | J "['bloqueado']")" "True"
   limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; logbloq "$S1" oben "now() - interval '30 hours'"; excecao "$S1" oben 101 "$NOVA"
   eq "P5e só log ANTERIOR à virada → não cobre" "$(piso "$S1" oben 101 | J "['bloqueado']")" "True"
+  limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; logbloq "$S1" oben "now() - interval '1 day' + interval '2 minutes'"; excecao "$S1" oben 101 "$NOVA"
+  eq "P5g log nos 5 min após a virada (corrida do deploy: piso antigo) → não cobre" "$(piso "$S1" oben 101 | J "['bloqueado']")" "True"
   limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; logbloq "$S1" colacor_sc "now() - interval '1 hour'"; excecao "$S1" oben 101 "$NOVA"
   eq "P5f log de OUTRA empresa do mesmo pedido não vale → não cobre" "$(piso "$S1" oben 101 | J "['bloqueado']")" "True"
   limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; excecao "$S1" oben 101 "$ENTRE"
@@ -357,6 +359,9 @@ asserts() {
   titulos "colacor_sc:202:70:NULL"
   eq "P8e par de 2 donos + indeterminado só na conta irmã → PR 2 piso_indeterminado (guarda do piso.bloqueado)" "$(gate "$S1" oben 105 r1 1000 28 | J "['motivo']")" "piso_indeterminado"
   limpa; limite "$C" 10000 28 baixo >/dev/null
+  titulos "oben:101:75:0:PAGTO PARCIAL"; logbloq "$S1" oben "now() - interval '1 hour'"; excecao "$S1" oben 101 "$NOVA"
+  eq "P8f PAGTO PARCIAL saldo 0 vencido + exceção válida → PR 2 segue vermelho (nunca verde)" "$(gate "$S1" oben 101 r1 1000 28 | J "['faixa']")" "vermelho"
+  limpa; limite "$C" 10000 28 baixo >/dev/null
   titulos "oben:101:70:NULL"; logbloq "$S1" oben "now() - interval '1 hour'"; excecao "$S1" oben 101 "$NOVA"
   eq "P8d piso indeterminado coberto por exceção → PR 2 segue amarelo" "$(gate "$S1" oben 101 r1 1000 28 | J "['motivo']")" "piso_indeterminado"
   limpa
@@ -372,6 +377,8 @@ asserts() {
      "$(Pq -c "SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a WHERE p.oid = 'private.credito_avaliar_reservar'::regproc AND a.grantee <> p.proowner;")" "0"
   eq "P9c virada nova: 1 linha, RLS ligada, sandbox sem SELECT" \
      "$(Pq -c "SELECT (SELECT count(*) FROM public.credito_virada_piso_parcial)::text || (SELECT relrowsecurity FROM pg_class WHERE oid='public.credito_virada_piso_parcial'::regclass)::text || has_table_privilege('sandbox_exec_teste','public.credito_virada_piso_parcial','SELECT')::text;")" "1truefalse"
+  eq "P9f sandbox_exec não escreve exceção; anon/authenticated sem TRUNCATE no log/exceção" \
+     "$(Pq -c "SELECT has_table_privilege('sandbox_exec_teste','public.venda_excecao_credito','INSERT,UPDATE,DELETE,TRUNCATE') OR has_table_privilege('anon','public.venda_bloqueio_credito_log','TRUNCATE') OR has_table_privilege('authenticated','public.venda_excecao_credito','TRUNCATE');")" "f"
   eq "P9e sandbox_exec não escreve no log de bloqueio (forjaria o 'gestor viu')" \
      "$(Pq -c "SELECT has_table_privilege('sandbox_exec_teste','public.venda_bloqueio_credito_log','INSERT,UPDATE,DELETE,TRUNCATE');")" "f"
   eq "P9d marco do PR 1: anon/authenticated/sandbox sem acesso (TRUNCATE incluído)" \
@@ -446,6 +453,14 @@ limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; logbloq "$S1" colacor_sc "now() 
 sabota "F6c log de outra empresa do pedido aceito" \
   "t.replace(\"                            AND l.company = p_company\n\", \"\")" \
   "piso '$S1' oben 101 | J \"['bloqueado']\"" "True"
+limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; logbloq "$S1" oben "now() - interval '1 day' + interval '2 minutes'"; excecao "$S1" oben 101 "$NOVA"
+sabota "F6d sem a margem de 5 min (log da corrida do deploy aceito)" \
+  "t.replace(\"AND l.created_at >= v_virada_parcial + interval '5 minutes'\", \"AND l.created_at >= v_virada_parcial\")" \
+  "piso '$S1' oben 101 | J \"['bloqueado']\"" "True"
+limpa; limite "$C" 10000 28 baixo >/dev/null; titulos "oben:101:75:0:PAGTO PARCIAL"; logbloq "$S1" oben "now() - interval '1 hour'"; excecao "$S1" oben 101 "$NOVA"
+sabota "F8b PR 2 relê PAGTO PARCIAL só com saldo > 0 (saldo 0 + exceção vira verde)" \
+  "t.replace(\"count(*) FILTER (WHERE (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL') AND f.data_vencimento < v_corte\n\", \"count(*) FILTER (WHERE f.saldo > 0 AND f.data_vencimento < v_corte\n\")" \
+  "gate '$S1' oben 101 r1 1000 28 | J \"['faixa']\"" "vermelho"
 limpa; titulos "oben:101:75:0:PAGTO PARCIAL"
 sabota "F1b PAGTO PARCIAL de saldo 0 some (só saldo > 0 entra)" \
   "t.replace(\"          OR (f.status_titulo = 'PAGTO PARCIAL'\n              AND (f.data_vencimento IS NULL OR f.data_vencimento < v_corte))              -- parcial, qualquer saldo\n\", \"\")" \
@@ -490,9 +505,9 @@ P -q -f "$MIGN"
 python3 - "$MIGN" "$SAB/m.sql" <<'PY3'
 import sys
 t = open(sys.argv[1]).read()
-a = "    EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.venda_bloqueio_credito_log FROM %I', r.rolname);"
+a = "      EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE %s FROM %I', tb, r.rolname);"
 assert t.count(a) == 1, "alvo F11 ausente"
-open(sys.argv[2], "w").write(t.replace(a, "    NULL;", 1))
+open(sys.argv[2], "w").write(t.replace(a, "      NULL;", 1))
 PY3
 P -q -c "GRANT INSERT ON public.venda_bloqueio_credito_log TO sandbox_exec_teste;"
 if P -q -f "$SAB/m.sql" > "$SAB/f11.log" 2>&1; then

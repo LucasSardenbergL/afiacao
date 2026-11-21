@@ -201,7 +201,9 @@ BEGIN
                           WHERE l.sales_order_id = p_sales_order_id
                             AND l.company = p_company
                             AND l.acao IN ('bloqueado', 'bloqueado_edicao')
-                            AND l.created_at >= v_virada_parcial
+                            -- +5 min: um bloqueio decidido pelo piso ANTIGO e gravado logo após o
+                            -- commit desta migration (corrida do deploy) não conta (Codex delta P1-2)
+                            AND l.created_at >= v_virada_parcial + interval '5 minutes'
                             AND l.created_at <= v_excecao_criada)) THEN
     RETURN jsonb_build_object(
       'bloqueado', true, 'vencido', v_vencido, 'titulos', v_titulos,
@@ -324,9 +326,10 @@ BEGIN
          -- dívida possivelmente > 60 d que ninguém consegue medir (ausente ≠ zero)
          count(*) FILTER (WHERE (f.saldo IS NULL OR f.data_vencimento IS NULL)
                             AND (f.data_vencimento IS NULL OR f.data_vencimento < v_corte)),
-         count(*) FILTER (WHERE f.saldo > 0 AND f.data_vencimento < v_corte),
+         -- 20261121200000: PAGTO PARCIAL vencido conta com QUALQUER saldo espelhado (Codex delta P1-1)
+         count(*) FILTER (WHERE (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL') AND f.data_vencimento < v_corte),
          -- vencido > 60 d comprovado num status que o piso do PR 1 não lê
-         count(*) FILTER (WHERE f.saldo > 0 AND f.data_vencimento < v_corte
+         count(*) FILTER (WHERE (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL') AND f.data_vencimento < v_corte
                             AND f.status_titulo NOT IN ('A VENCER','ATRASADO','VENCE HOJE','ABERTO','VENCIDO','PARCIAL'))
     INTO v_titulos, v_indet, v_piso_indet, v_venc60, v_venc60_fora_piso
     FROM escopo e
@@ -543,12 +546,18 @@ $acl_tab$;
 -- ── venda_bloqueio_credito_log agora DECIDE se a exceção cobre o indeterminado: quem tem BYPASSRLS
 -- (sandbox_exec_*, default ACL de public) forjaria um log "visto". A escrita é da edge (service_role,
 -- policy própria); a RLS já barra authenticated/anon. Tira só a ESCRITA do sandbox (leitura fica).
+-- Idem venda_excecao_credito: o sandbox inseria a PRÓPRIA exceção (Codex delta P1-3, prod 2026-11-21).
+-- TRUNCATE passa por cima da RLS: sai de anon/authenticated nas duas (Codex delta P2-5).
 DO $acl_log$
 DECLARE
   r record;
+  tb text;
 BEGIN
-  FOR r IN SELECT rolname FROM pg_roles WHERE rolname LIKE 'sandbox\_exec%' LOOP
-    EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.venda_bloqueio_credito_log FROM %I', r.rolname);
+  FOREACH tb IN ARRAY ARRAY['public.venda_bloqueio_credito_log', 'public.venda_excecao_credito'] LOOP
+    FOR r IN SELECT rolname FROM pg_roles WHERE rolname LIKE 'sandbox\_exec%' LOOP
+      EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE %s FROM %I', tb, r.rolname);
+    END LOOP;
+    EXECUTE format('REVOKE TRUNCATE ON TABLE %s FROM anon, authenticated', tb);
   END LOOP;
 END
 $acl_log$;
@@ -609,7 +618,16 @@ BEGIN
     IF has_table_privilege(r.rolname, 'public.venda_bloqueio_credito_log', 'INSERT,UPDATE,DELETE,TRUNCATE') THEN
       RAISE EXCEPTION 'POS FALHOU: % ainda escreve em venda_bloqueio_credito_log', r.rolname;
     END IF;
+    IF has_table_privilege(r.rolname, 'public.venda_excecao_credito', 'INSERT,UPDATE,DELETE,TRUNCATE') THEN
+      RAISE EXCEPTION 'POS FALHOU: % ainda escreve em venda_excecao_credito', r.rolname;
+    END IF;
   END LOOP;
+  IF has_table_privilege('anon', 'public.venda_bloqueio_credito_log', 'TRUNCATE')
+     OR has_table_privilege('authenticated', 'public.venda_bloqueio_credito_log', 'TRUNCATE')
+     OR has_table_privilege('anon', 'public.venda_excecao_credito', 'TRUNCATE')
+     OR has_table_privilege('authenticated', 'public.venda_excecao_credito', 'TRUNCATE') THEN
+    RAISE EXCEPTION 'POS FALHOU: anon/authenticated com TRUNCATE no log/exceção de crédito';
+  END IF;
   IF (SELECT count(*) FROM public.credito_virada_piso_parcial) <> 1 THEN
     RAISE EXCEPTION 'POS FALHOU: credito_virada_piso_parcial não tem exatamente 1 linha';
   END IF;
