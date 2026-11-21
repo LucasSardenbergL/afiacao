@@ -478,3 +478,28 @@ describe('churn_risk ausente (calculate-scores v1.7: NULL para sem_historico) �
   });
 });
 
+
+// calculate-scores v1.8: dias/gasto NULL = não medido (sem linha na RPC de vendas), nunca o 999/R$0 sentinela.
+describe('base de vendas NULL (v1.8) — ausente é nomeado, e o score é o mesmo do sentinela', () => {
+  it('recuperação: dias NULL → penalidade não entra (= 999) e o ausente é nomeado', () => {
+    const comSentinela = scoreRecuperacao(mkInput({ churn_risk: 80, days_since_last_purchase: 999 }));
+    const comNulo = scoreRecuperacao(mkInput({ churn_risk: 80, days_since_last_purchase: null }));
+    expect(comNulo.score).toBe(comSentinela.score);
+    expect(comNulo.insumosAusentes).toContain('days_since_last_purchase');
+    expect(comSentinela.insumosAusentes).not.toContain('days_since_last_purchase');
+  });
+
+  it('recuperação: dias MEDIDOS seguem penalizando (não virou null por engano)', () => {
+    const recente = scoreRecuperacao(mkInput({ churn_risk: 80, days_since_last_purchase: 1 }));
+    const nulo = scoreRecuperacao(mkInput({ churn_risk: 80, days_since_last_purchase: null }));
+    expect(recente.score).toBeLessThan(nulo.score as number);
+  });
+
+  it('relacionamento: gasto NULL → boost não entra (= R$0) e o ausente é nomeado', () => {
+    const comZero = scoreRelacionamento(mkInput({ avg_monthly_spend_180d: 0 }));
+    const comNulo = scoreRelacionamento(mkInput({ avg_monthly_spend_180d: null }));
+    expect(comNulo.score).toBe(comZero.score);
+    expect(comNulo.insumosAusentes).toContain('avg_monthly_spend_180d');
+    expect(comZero.insumosAusentes).not.toContain('avg_monthly_spend_180d');
+  });
+});

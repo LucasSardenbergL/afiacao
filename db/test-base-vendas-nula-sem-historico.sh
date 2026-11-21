@@ -25,7 +25,8 @@
 #   T1  sem_historico, 999→NULL e 0→NULL isolados → NÃO enfileira (o dreno é 500/noite)
 #   T2  stale, dias 200→201 (só a base mudou) → NÃO enfileira (o trigger não observa a base, como antes)
 #   T3  primeira venda (sem_historico→ativo, churn/priority NULL→número, base NULL→medida) → ENFILEIRA 1
-#   T3b repetir o mesmo payload → nenhuma entrada adicional
+#   T3b com a 1ª entrada PROCESSADA, repetir o mesmo payload → nenhuma entrada nova (nada mudou)
+#   D1  insert esparso (só IDs, como reconcile_score_owner_from_carteira) nasce com dias/gasto NULL, não 0
 #   K1  ACL: anon/authenticated/PUBLIC sem EXECUTE; service_role e sandbox_exec com EXECUTE
 #   I1  idempotente: re-aplicar passa (PRE aceita "este")
 #   N1  PRE anti-deriva: corpo vivo desconhecido → aborta com 'PRE FALHOU' e NADA muda
@@ -37,7 +38,7 @@ MIG_REAL="$REPO_ROOT/supabase/migrations/20261121220000_base_vendas_nula_sem_his
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
-  SABOTAGENS="guard_base_some:L1 guard_so_dias:L1b coalesce_dias:A1 coalesce_gasto:A1b dias_null_rejeitado:A1 guard_churn_some:L2 sem_fencing:F1 trigger_observa_base:T1 intervalo_sem_preservar:A4"
+  SABOTAGENS="guard_base_some:L1 guard_so_dias:L1b coalesce_dias:A1 coalesce_gasto:A1b dias_null_rejeitado:A1 guard_churn_some:L2 sem_fencing:F1 trigger_observa_base:T1 intervalo_sem_preservar:A4 gasto_nao_gravado:A2 default_fica:D1"
   LOGDIR="$(mktemp -d "/tmp/falsifica-base-vendas-nula.XXXXXX")"
   echo "== CONTROLE =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -97,6 +98,8 @@ case "${SABOTAGEM:-}" in
   dias_null_rejeitado)  sab "s/  WHERE NOT jsonb_exists(e.elem, 'days_since_last_purchase')/  WHERE (e.elem->>'days_since_last_purchase') IS NULL/" ;;
   guard_churn_some)     sab 's/IF v_sem_churn > 0 THEN/IF false THEN/' ;;
   sem_fencing)          sab 's/  IF p_run_id IS NOT NULL THEN/  IF false THEN/' ;;
+  gasto_nao_gravado)    sab 's/    avg_monthly_spend_180d   = u.avg_monthly_spend_180d,/    avg_monthly_spend_180d   = f.avg_monthly_spend_180d,/' ;;
+  default_fica)         sab 's/  ALTER COLUMN days_since_last_purchase DROP DEFAULT,/  ALTER COLUMN days_since_last_purchase SET DEFAULT 0,/; s/  ALTER COLUMN avg_monthly_spend_180d   DROP DEFAULT;/  ALTER COLUMN avg_monthly_spend_180d   SET DEFAULT 0;/; s/AND column_default IS NOT NULL) THEN/AND false) THEN/' ;;
   intervalo_sem_preservar) sab 's/CASE WHEN u.tem_avg_repurchase_interval THEN u.avg_repurchase_interval ELSE f.avg_repurchase_interval END/u.avg_repurchase_interval/' ;;
   trigger_observa_base)
     # O mundo em que a fila OBSERVA a base: a transição 999→NULL enfileiraria os 15.766. T1 tem de acusar.
@@ -187,7 +190,7 @@ CREATE TABLE public.cli(nome text PRIMARY KEY, uid uuid, status text, dias int, 
 INSERT INTO public.cli VALUES
   ('a','00000000-0000-0000-0000-00000000000a','sem_historico',999,0,NULL,NULL),
   ('b','00000000-0000-0000-0000-00000000000b','ativo',12,350,30,30),
-  ('c','00000000-0000-0000-0000-00000000000c','stale',200,0,90,40),
+  ('c','00000000-0000-0000-0000-00000000000c','stale',200,75,90,40),
   ('d','00000000-0000-0000-0000-00000000000d','sem_historico',999,0,NULL,NULL),
   ('e','00000000-0000-0000-0000-00000000000e','stale',998,0,98,45),
   ('f','00000000-0000-0000-0000-00000000000f','ativo',40,800,50,50),
@@ -280,9 +283,19 @@ eq "T2 sentinela: os dias de c viraram 201" "$(col c days_since_last_purchase)" 
 eq "T2 stale, só a base mudou (200→201) → NÃO enfileira" "$(fila c)" "0"
 aplica "$(payload a 0 420 45 45 ativo)" "'dono'"
 eq "T3 primeira venda (base NULL→medida, churn/priority NULL→45) → ENFILEIRA 1" "$(fila a)" "1"
+# T3b: a 1ª entrada é PROCESSADA antes de repetir — assim o índice parcial + ON CONFLICT não escondem uma
+# 2ª tentativa indevida (achado Codex): repetir o mesmo payload não pode criar entrada PENDENTE nova.
+Ps -c "UPDATE public.visit_score_recalc_queue SET processed_at = now()"
 aplica "$(payload a 0 420 45 45 ativo)" "'dono'"
-eq "T3b repetir o mesmo payload → nenhuma entrada adicional" "$(fila a)" "1"
+eq "T3b repetir o mesmo payload (1ª entrada processada) → nenhuma pendente nova" "$(Pq -c "SELECT count(*) FROM public.visit_score_recalc_queue WHERE processed_at IS NULL")" "0"
 eq "T total: só a primeira venda entrou na fila" "$(Pq -c "SELECT count(*) FROM public.visit_score_recalc_queue")" "1"
+
+echo "=== D — defaults ==="
+# Insert esparso, como reconcile_score_owner_from_carteira (só customer_user_id/farmer_id).
+Ps -c "INSERT INTO public.cli VALUES ('n','00000000-0000-0000-0000-000000000009','novo',NULL,NULL,NULL,NULL)"
+Ps -c "INSERT INTO public.farmer_client_scores(customer_user_id, farmer_id) VALUES ('00000000-0000-0000-0000-000000000009','00000000-0000-0000-0000-0000000000ff')"
+eq "D1 insert esparso: dias nasce NULL (não 0 = 'comprou hoje')" "$(col n days_since_last_purchase)" "NULL"
+eq "D1 insert esparso: gasto nasce NULL (não R\$ 0)" "$(col n avg_monthly_spend_180d)" "NULL"
 
 echo "=== K — ACL ==="
 for r in anon authenticated; do
@@ -310,5 +323,5 @@ fi
 echo
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
-[ "$PASS" -ge 42 ] || { echo "PASS abaixo do piso (42) — suite truncada"; exit 1; }
+[ "$PASS" -ge 44 ] || { echo "PASS abaixo do piso (44) — suite truncada"; exit 1; }
 echo "TESTE_BASE_VENDAS_NULA_OK"

@@ -26,10 +26,13 @@ export function margemConhecida(raw: unknown): number | null {
  *  CONHECIDO, mas com guard EXPLÍCITO: `null > 0` é `false` em JS, então o desfecho aritmético
  *  já era certo por acidente; o guard troca a coincidência por decisão declarada (mesmo padrão
  *  de src/hooks/useTacticalPlan.ts:411 — `revPotential != null && revPotential > 0`). */
-export function profitPerHora(rev: number | null, avg: number, marginPct: unknown): number | null {
+// `avg` null = gasto não medido (calculate-scores v1.8): sem base de receita o R$/h é INDECIDÍVEL (null),
+// nunca o R$ 0/h que reprovaria o cliente como se tivesse medido zero (challenge Codex 2026-11-21).
+export function profitPerHora(rev: number | null, avg: number | null, marginPct: unknown): number | null {
   const margem = margemConhecida(marginPct);
   if (margem == null) return null;
   const baseRev = rev != null && rev > 0 ? rev : avg;
+  if (baseRev == null) return null;
   // 10% do GMV como proxy de margem operacional; visita ~15 min → 4 visitas/h.
   return (baseRev * (margem / 100) * 0.1) / (AVG_CALL_MINUTES / 60);
 }

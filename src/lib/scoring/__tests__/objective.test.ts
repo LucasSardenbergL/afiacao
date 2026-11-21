@@ -117,3 +117,11 @@ describe('selectObjective — churn ausente (calculate-scores v1.7)', () => {
   });
 });
 
+
+describe('selectObjective — dias NULL (calculate-scores v1.8)', () => {
+  it('dias não medidos não disparam reativação; medidos seguem', () => {
+    const cap = clampRecencyCapDays(180);
+    expect(selectObjective(70, 0, 30, 30, null, cap)).toBe('recuperacao');
+    expect(selectObjective(70, 0, 30, 30, 180, cap)).toBe('reativacao');
+  });
+});

@@ -256,7 +256,8 @@ async function executarLote(
         // ausente ≠ zero: revenue_potential nunca teve writer. `null` mantém "não sei"
         // distinguível de "potencial zero" — profitPerHora cai pro avgSpend com guard explícito.
         rev: valorMedido(r.revenue_potential),
-        avg: Number(r.avg_monthly_spend_180d ?? 0),
+        // ausente ≠ zero (calculate-scores v1.8: NULL = não medido) → profitPerHora devolve null, não R$ 0/h.
+        avg: valorMedido(r.avg_monthly_spend_180d),
         // ausente ≠ zero: `null` mantém "não sei" distinguível de "margem 0".
         marginPct: margemConhecida(r.gross_margin_pct),
       });

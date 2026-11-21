@@ -574,7 +574,8 @@ export const useTacticalPlan = () => {
     // por ACIDENTE — o `> 0 ?` logo abaixo o mandava para o avgSpend. Acidente não é guard: no
     // dia em que um produtor gravar potencial 0 APURADO, o código o trataria como ausência.
     const revPotential = valorMedido(score.revenue_potential);
-    const avgSpend = Number(score.avg_monthly_spend_180d || 0);
+    // NULL = gasto não medido (calculate-scores v1.8) → sem base, R$/h indecidível (null), não R$ 0/h.
+    const avgSpend = valorMedido(score.avg_monthly_spend_180d);
     // Margem desconhecida → R$/h INDECIDÍVEL, não zero. Com `|| 0` o gate reprovava o cliente por
     // omissão, e "não sei" ficava indistinguível de "não vale a ligação" na tela da vendedora.
     // Espelha profitPerHora de supabase/functions/_shared/tactical-margem.ts.
@@ -584,7 +585,7 @@ export const useTacticalPlan = () => {
     // Potencial ausente e potencial 0 caem ambos no avgSpend — comportamento PRESERVADO desta
     // entrega (só o `|| 0` saiu), agora por decisão declarada em vez de coincidência aritmética.
     const baseReceita = revPotential != null && revPotential > 0 ? revPotential : avgSpend;
-    const estimatedProfitPerHour = marginPct == null
+    const estimatedProfitPerHour = marginPct == null || baseReceita == null
       ? null
       : (baseReceita * (marginPct / 100) * 0.1) / (avgCallMinutes / 60);
 

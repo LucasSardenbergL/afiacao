@@ -11,7 +11,8 @@ export interface ScoreParaSelecao {
   customerUserId: string;
   priorityScore: number;
   revenuePotential: number;
-  avgSpend: number;
+  /** null = gasto não medido (calculate-scores v1.8) → R$/h indecidível, nunca R$ 0/h. */
+  avgSpend: number | null;
   /** null = margem DESCONHECIDA. Não confundir com 0, que é margem nula CONHECIDA. */
   marginPct: number | null;
 }
@@ -27,6 +28,7 @@ export function profitPerHora(
   const margem = margemConhecida(s.marginPct);
   if (margem == null) return null;
   const base = s.revenuePotential > 0 ? s.revenuePotential : s.avgSpend;
+  if (base == null) return null;
   const marginPerCall = base * (margem / 100) * 0.1;
   return marginPerCall / (AVG_CALL_MINUTES / 60);
 }

@@ -23,8 +23,10 @@
 --  observa só priority_score/churn_risk/expansion_score/signal_modifiers, e nenhum outro trigger de
 --  farmer_client_scores olha estas colunas — a transição 999→NULL / 0→NULL não enfileira nada (o dreno é
 --  500/noite; lição do #4032). Provado em db/test-base-vendas-nula-sem-historico.sh.
---  Colunas: já nullable em prod (information_schema, 2026-11-21) — nenhum ALTER. DEFAULT 0 continua nelas;
---  a edge manda as chaves SEMPRE (null explícito), senão o Postgres refabrica o 0.
+--  Colunas: já nullable em prod (information_schema, 2026-11-21). O DEFAULT 0 delas SAI (challenge Codex de
+--  revisão, 2026-11-21): `reconcile_score_owner_from_carteira` insere a linha só com (customer_user_id,
+--  farmer_id), e o default fabricava "0 dias = comprou hoje" e "gasto R$ 0" até o próximo run saudável. Sem
+--  default a linha nova nasce NULL ("ainda não medido"). A edge segue mandando as chaves SEMPRE.
 --
 -- TRAVA → PRE (md5(prosrc) ∈ {predecessor de prod, este}) → REPLACE → PÓS (corpo, atributos, ACL).
 -- Predecessor medido em prod (psql-ro, 2026-11-21 21:36 UTC) = o corpo de 20261121150000:
@@ -253,7 +255,12 @@ END $function$;
 REVOKE ALL ON FUNCTION public.apply_score_updates(jsonb, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.apply_score_updates(jsonb, text) TO service_role;
 
--- ── PÓS: corpo (md5 exato), atributos, ACL, trigger de fila intacto ─────────────────────────────────────────
+-- ── DEFAULT 0 sai das duas colunas (insert esparso nasce NULL, não "comprou hoje / R$ 0") ─────────────────────
+ALTER TABLE public.farmer_client_scores
+  ALTER COLUMN days_since_last_purchase DROP DEFAULT,
+  ALTER COLUMN avg_monthly_spend_180d   DROP DEFAULT;
+
+-- ── PÓS: corpo (md5 exato), atributos, ACL, defaults, trigger de fila intacto ─────────────────────────────────────────
 DO $post$
 DECLARE
   v record;
@@ -279,6 +286,13 @@ BEGIN
     RAISE EXCEPTION 'PÓS FALHOU: ACL de % (PUBLIC/anon/authenticated não executam; service_role executa)', fa;
   END IF;
 
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'farmer_client_scores'
+                AND column_name IN ('days_since_last_purchase', 'avg_monthly_spend_180d')
+                AND column_default IS NOT NULL) THEN
+    RAISE EXCEPTION 'PÓS FALHOU: days_since_last_purchase/avg_monthly_spend_180d ainda têm DEFAULT — insert esparso refabricaria 0';
+  END IF;
+
   -- O trigger de fila segue o de 20261121150000 (não observa dias/gasto): se alguém o trocou, esta migration
   -- não prova mais que a transição não enfileira.
   IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = ft::regprocedure)
@@ -286,6 +300,6 @@ BEGIN
     RAISE EXCEPTION 'PÓS FALHOU: % não é o corpo fbed094342f63ec8313a349755c68a72 — reavaliar a fila antes', ft;
   END IF;
 
-  RAISE NOTICE 'VALIDADO 20261121220000: apply_score_updates aceita dias/gasto NULL explicitos (chave ausente segue 23514)';
+  RAISE NOTICE 'VALIDADO 20261121220000: apply_score_updates aceita dias/gasto NULL explicitos (chave ausente segue 23514), colunas sem DEFAULT';
 END
 $post$;
