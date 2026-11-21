@@ -27305,6 +27305,7 @@ export type Database = {
           document: string
           email: string
           name: string
+          nome_ordenacao: string
           phone: string
           prioridade_ordenacao: number
           requires_po: boolean
