@@ -146,7 +146,9 @@ export interface BloqueioCreditoPedido {
 export interface ParVencidoCredito {
   company: 'oben' | 'colacor' | 'colacor_sc';
   codigo: number;
-  vencido: number;
+  /** null = valor INDETERMINADO (PAGTO PARCIAL ou saldo/vencimento ausente): o par segura, mas o
+   *  resíduo não é conhecido — nunca exibir como R$ 0 nem como o valor cheio. */
+  vencido: number | null;
   titulos: number;
   vencimento_mais_antigo: string | null;
 }

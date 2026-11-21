@@ -127,7 +127,11 @@ P -q -c "CREATE FUNCTION public.credito_vinculo_aviso(text) RETURNS text LANGUAG
          REVOKE ALL ON FUNCTION public.credito_vinculo_aviso(text) FROM PUBLIC;
          GRANT EXECUTE ON FUNCTION public.credito_vinculo_aviso(text) TO authenticated, service_role, sandbox_exec_teste;"
 P -q -f "$MIG"
-echo "migrations aplicadas: ${#MIGS[@]} antecedentes + $(basename "$MIG")"
+# 20261121200000 (piso vê PAGTO PARCIAL/indeterminado) REESCREVE private.credito_avaliar_reservar: a
+# prod é MIG + MIGN, então toda aplicação/restauração aqui aplica as duas (Codex desenho P3-5).
+MIGN="$REPO_ROOT/supabase/migrations/20261121200000_credito_piso_pagto_parcial.sql"
+P -q -f "$MIGN"
+echo "migrations aplicadas: ${#MIGS[@]} antecedentes + $(basename "$MIG") + $(basename "$MIGN")"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — SEED + helpers SQL do harness (o t_gate simula o wrapper do PR 5)
@@ -198,6 +202,7 @@ DO $g$ DECLARE t text; BEGIN
 SQL
 }
 grant_escritor
+aplica_real() { P -q -f "$MIG"; P -q -f "$MIGN"; grant_escritor; }
 
 limpa() { Pq -c "SELECT public.t_limpa();" >/dev/null; }
 # títulos: reseta e semeia "company:codigo:dias_vencido:saldo[:status]" (saldo NULL aceito; dias<0 = a vencer)
@@ -453,11 +458,18 @@ t = open(src).read(); n = eval(expr)
 assert n != t, "sabotagem não alterou o texto"
 open(dst, "w").write(n)
 PY
-  P -q -f "$SAB/m.sql"; grant_escritor
+  # a MESMA sabotagem na cópia de credito_avaliar_reservar da MIGN (sem exigir mudança: o alvo pode
+  # ser de outra função) — senão a MIGN reinstala a definição sã por cima do mutante
+  python3 - "$MIGN" "$SAB/n.sql" "$2" <<'PY'
+import sys
+src, dst, expr = sys.argv[1], sys.argv[2], sys.argv[3]
+t = open(src).read(); open(dst, "w").write(eval(expr))
+PY
+  P -q -f "$SAB/m.sql"; P -q -f "$SAB/n.sql"; grant_escritor
   local v; v=$(eval "$3")
   if [ -n "${5:-}" ] && [ "$v" != "$5" ]; then bad "$1 → mutante saiu [$v], esperado exatamente [$5]"
   elif [ "$v" != "$4" ]; then ok "$1 → assert-alvo ficou vermelho (veio $v)"; else bad "$1 → sabotei e o assert continuou verde ($v): sem dente"; fi
-  P -q -f "$MIG"; grant_escritor
+  aplica_real
 }
 
 echo "── falsificação ──"
@@ -503,7 +515,7 @@ else
   bad "F6 falhou por OUTRO motivo: $(head -c 300 "$SAB/f6.log")"
 fi
 eq "F6b … rollback do envelope: o índice derrubado segue ausente" "$(Pq -c "SELECT to_regclass('public.credito_solicitacao_uma_aberta') IS NULL;")" "t"
-P -q -f "$MIG"; grant_escritor
+aplica_real
 
 autorizado_cenario() { # S2 🟡 → Lucas autoriza; devolve nada
   limpa; limite "$C" 10000 28 baixo >/dev/null; gate "$S1" oben 101 r1 7000 28 >/dev/null
@@ -511,8 +523,11 @@ autorizado_cenario() { # S2 🟡 → Lucas autoriza; devolve nada
   como "$L" "SELECT public.credito_autorizar_solicitacao('$s', true, 'cliente bom')" >/dev/null
 }
 autorizado_cenario; titulos "colacor_sc:202:70:NULL"
+# Desde 20261121200000 o PISO também segura saldo NULL; a contagem do PR 2 só é a barreira ÚNICA quando
+# o piso libera por exceção do (pedido, par) → o cenário do F7 tem essa exceção (senão é redundante).
+Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.venda_excecao_credito (sales_order_id, company, omie_codigo_cliente, motivo, valido_ate, aprovado_por) VALUES ('$S2', 'oben', 101, 'teste', now() + interval '3 days', '$G')\$q\$);" >/dev/null
 sabota "F7 piso indeterminado depois da autorização → autorização libera" \
-  "t.replace(\"  ELSIF v_piso_indet > 0 THEN\", \"  ELSIF false THEN\")" \
+  "t.replace(\"  ELSIF v_piso_indet > 0 THEN\", \"  ELSIF false THEN\").replace(\"  ELSIF v_piso_indet > 0\n\", \"  ELSIF false\n\")" \
   "gate '$S2' oben 101 r1 7000 28 | J \"['motivo']\"" "piso_indeterminado"
 
 limpa; limite "$C" 10000 28 baixo >/dev/null; titulos "oben:101:75:300" "colacor_sc:202:75:300:PAGTO PARCIAL"

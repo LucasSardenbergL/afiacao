@@ -15,6 +15,13 @@ describe('paresDoDetalheLog', () => {
       { company: 'colacor', vencido: 70 },
     ]);
   });
+  it('"=null" (PAGTO PARCIAL / saldo ausente) é par LEGÍVEL de valor indeterminado — não some, não vira R$ 0', () => {
+    expect(paresDoDetalheLog('pares: colacor_sc/202=null, oben/100=150')).toEqual([
+      { company: 'colacor_sc', vencido: null },
+      { company: 'oben', vencido: 150 },
+    ]);
+    expect(paresDoDetalheLog('pares: oben/100=NULL, oben/101=nulo')).toBeUndefined();
+  });
   it('sem detalhe ou formato antigo → undefined (UI mostra só o total)', () => {
     expect(paresDoDetalheLog(null)).toBeUndefined();
     expect(paresDoDetalheLog('criacao: timeout')).toBeUndefined();

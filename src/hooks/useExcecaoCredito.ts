@@ -21,7 +21,8 @@ export interface ContextoBloqueioCredito {
   vencido: number | null;
   titulos: number | null;
   /** Vencido por empresa do GRUPO (gate do grupo, fluxo do submit). Ausente = só o total. */
-  pares?: Array<{ company: 'oben' | 'colacor' | 'colacor_sc'; vencido: number }>;
+  /** vencido null = valor indeterminado (PAGTO PARCIAL / saldo ausente) — o par segura. */
+  pares?: Array<{ company: 'oben' | 'colacor' | 'colacor_sc'; vencido: number | null }>;
 }
 
 const EMPRESAS_GRUPO = ['oben', 'colacor', 'colacor_sc'] as const;
@@ -30,6 +31,7 @@ const EMPRESAS_GRUPO = ['oben', 'colacor', 'colacor_sc'] as const;
  * Pares do grupo gravados pela edge no `detalhe` do log de bloqueio
  * ("pares: colacor_sc/202=500, oben/100=150") — para o gestor REMOTO ver a dívida por empresa.
  * Item ilegível é DESCARTADO (nunca vira R$ 0); nada legível → undefined (a UI mostra só o total).
+ * "=null" (a edge loga assim o par de valor indeterminado) é LEGÍVEL: vencido null, o par aparece.
  */
 export function paresDoDetalheLog(detalhe: string | null | undefined): ContextoBloqueioCredito['pares'] {
   if (!detalhe?.startsWith('pares: ')) return undefined;
@@ -37,8 +39,9 @@ export function paresDoDetalheLog(detalhe: string | null | undefined): ContextoB
     .slice('pares: '.length)
     .split(', ')
     .map((item) => {
-      const m = /^([a-z_]+)\/\d+=(\d+(?:\.\d+)?)$/.exec(item.trim());
+      const m = /^([a-z_]+)\/\d+=(\d+(?:\.\d+)?|null)$/.exec(item.trim());
       if (!m || !(EMPRESAS_GRUPO as readonly string[]).includes(m[1])) return null;
+      if (m[2] === 'null') return { company: m[1] as (typeof EMPRESAS_GRUPO)[number], vencido: null };
       const vencido = Number(m[2]);
       return vencido > 0 ? { company: m[1] as (typeof EMPRESAS_GRUPO)[number], vencido } : null;
     })

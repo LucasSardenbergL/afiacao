@@ -57,13 +57,15 @@ const NOME_EMPRESA: Record<ParVencidoCredito['company'], string> = {
   colacor_sc: 'Colacor SC',
 };
 
-/** Pares do gate do grupo, validados — item malformado é DESCARTADO (nunca vira R$ 0). */
+/** Pares do gate do grupo, validados — item malformado é DESCARTADO (nunca vira R$ 0).
+ *  `vencido: null` explícito é VÁLIDO: par que segura com valor indeterminado (PAGTO PARCIAL). */
 function paresDoGate(gate?: { pares?: unknown } | null): ParVencidoCredito[] {
   if (!Array.isArray(gate?.pares)) return [];
   return gate.pares.filter((p): p is ParVencidoCredito => {
     const q = p as Partial<ParVencidoCredito> | null;
     return !!q && typeof q.company === 'string' && q.company in NOME_EMPRESA
-      && typeof q.vencido === 'number' && Number.isFinite(q.vencido) && q.vencido > 0;
+      && (q.vencido === null
+        || (typeof q.vencido === 'number' && Number.isFinite(q.vencido) && q.vencido > 0));
   });
 }
 
@@ -74,7 +76,9 @@ function mensagemBloqueioCredito(
   const pares = paresDoGate(gate);
   if (pares.length > 0) {
     const porEmpresa = pares
-      .map((p) => `${NOME_EMPRESA[p.company]} R$ ${p.vencido.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+      .map((p) => `${NOME_EMPRESA[p.company]} ${p.vencido === null
+        ? 'valor a confirmar'
+        : `R$ ${p.vencido.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}`)
       .join(' · ');
     return (
       `Pedido ${conta} BLOQUEADO por crédito — vencido há 60+ dias no grupo: ${porEmpresa}. ` +

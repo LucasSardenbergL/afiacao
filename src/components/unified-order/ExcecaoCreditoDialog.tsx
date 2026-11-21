@@ -54,7 +54,9 @@ const contaLabel = (account: 'oben' | 'colacor') => (account === 'oben' ? 'Oben'
 const EMPRESA_LABEL = { oben: 'Oben', colacor: 'Colacor', colacor_sc: 'Colacor SC' } as const;
 /** "Colacor SC R$ 500,00 · Oben R$ 150,00" — a dívida pode estar em OUTRA empresa do grupo. */
 const porEmpresa = (ctx: ContextoBloqueioCredito) =>
-  (ctx.pares ?? []).map((p) => `${EMPRESA_LABEL[p.company]} ${formatBRL(p.vencido)}`).join(' · ');
+  (ctx.pares ?? [])
+    .map((p) => `${EMPRESA_LABEL[p.company]} ${p.vencido === null ? 'valor a confirmar' : formatBRL(p.vencido)}`)
+    .join(' · ');
 
 function resumoParaGestor(salesOrderId: string, ctx: ContextoBloqueioCredito): string {
   const valor = typeof ctx.vencido === 'number' ? formatBRL(ctx.vencido) : 'valor não informado';
