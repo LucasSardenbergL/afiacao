@@ -9,7 +9,8 @@ import type { ReactNode } from 'react';
  * tile mostrava "0 vendedores" para sempre, com a Regina lançando 65 pedidos no mês no Omie.
  */
 const { fetchPedidosMTD } = vi.hoisted(() => ({ fetchPedidosMTD: vi.fn() }));
-vi.mock('@/lib/dashboard/fetch-pedidos-mtd', () => ({ fetchPedidosMTD }));
+// O mês corrente vem com o vendedor (RPC pedidos_vendedor); o mês anterior, sem. Mesmo fake p/ os dois.
+vi.mock('@/lib/dashboard/fetch-pedidos-mtd', () => ({ fetchPedidosMTD, fetchPedidosMTDComVendedor: fetchPedidosMTD }));
 vi.mock('@/contexts/CompanyContext', () => ({ useCompany: () => ({ selection: 'colacor' }) }));
 vi.mock('@/lib/dashboard/sp-date', async (orig) => {
   const real = await orig<typeof import('@/lib/dashboard/sp-date')>();

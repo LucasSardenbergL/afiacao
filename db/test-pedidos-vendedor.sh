@@ -141,7 +141,7 @@ case "${SABOTAGEM:-}" in
   sem_employee)     sabotar 's/\n\s+OR public\.has_role\(v_uid, .employee.::public\.app_role\)\)/)/'; desliga_pos ;;
   sem_lote)         sabotar 's/IF p_ids IS NULL OR cardinality\(p_ids\) = 0 OR cardinality\(p_ids\) > 1000 THEN/IF false THEN/'; desliga_pos ;;
   invoker)          sabotar 's/^SECURITY DEFINER$/SECURITY INVOKER/m'; desliga_pos ;;
-  pos_grant_coluna) sabotar 's/^(GRANT EXECUTE ON FUNCTION public\.pedidos_vendedor.*)$/$1\nGRANT SELECT (vendedor_user_id) ON public.sales_orders TO authenticated;/m' ;;
+  pos_grant_coluna) sabotar "s/^(GRANT EXECUTE ON FUNCTION public\\.pedidos_vendedor.*)\$/\$1\\nGRANT SELECT (vendedor_user_id) ON public.sales_orders TO authenticated;/m" ;;
   pos_anon)         sabotar 's/TO authenticated, service_role;/TO authenticated, service_role, anon;/' ;;
   pos_invoker)      sabotar 's/^SECURITY DEFINER$/SECURITY INVOKER/m' ;;
   *) echo "INFRA: sabotagem desconhecida '$SABOTAGEM'"; exit 2 ;;
