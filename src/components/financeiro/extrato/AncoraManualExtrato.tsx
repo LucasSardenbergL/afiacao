@@ -12,12 +12,14 @@ interface Props {
   registrando: boolean;
   /** 'YYYY-MM-DD' de hoje em SP: o dia aberto, que não pode ser âncora. */
   hoje: string;
+  /** Véspera do início de um arquivo pendente por falta de saldo inicial: pré-preenche a data. */
+  dataSugerida?: string | null;
   onRegistrar: (data: string, saldoCentavos: number) => void;
 }
 
 /** Saldo de referência (manual): a âncora que destrava o 1º extrato de uma conta. Imutável depois de gravada. */
-export function AncoraManualExtrato({ ancoras, carregando, erro, registrando, hoje, onRegistrar }: Props) {
-  const [data, setData] = useState('');
+export function AncoraManualExtrato({ ancoras, carregando, erro, registrando, hoje, dataSugerida = null, onRegistrar }: Props) {
+  const [data, setData] = useState(dataSugerida ?? '');
   const [saldo, setSaldo] = useState('');
   const [erros, setErros] = useState<{ data?: string; saldo?: string }>({});
 
@@ -36,6 +38,10 @@ export function AncoraManualExtrato({ ancoras, carregando, erro, registrando, ho
       <p className="text-sm text-muted-foreground">
         Informe o saldo da conta ao fim de um dia já fechado (confira no app do banco). Depois de registrado, não pode ser
         alterado por aqui.
+      </p>
+      <p className="text-sm text-muted-foreground">
+        Se o extrato ficou pendente por não ter saldo inicial, informe o saldo da véspera do primeiro dia do arquivo
+        (início − 1 dia). Depois de registrar, reenvie o arquivo para ele ser reavaliado.
       </p>
       <form
         className="flex flex-wrap items-start gap-4"

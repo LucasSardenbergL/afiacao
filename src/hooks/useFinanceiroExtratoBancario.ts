@@ -59,7 +59,7 @@ export function useRegistrarAncora(contaId: string | null) {
       return registrarAncoraManual(contaId, v.data, v.saldoCentavos);
     },
     onSuccess: () => {
-      toast.success('Saldo de referência registrado.');
+      toast.success('Saldo de referência registrado. Se havia um extrato pendente, agora reenvie o arquivo.');
       void qc.invalidateQueries({ queryKey: CHAVE });
     },
     onError: avisarErroAncora,
