@@ -69,10 +69,10 @@ export function colunasForaDoContrato(
 
 /**
  * Exceções CONHECIDAS, com dono. Cada uma é um 403 em prod esperando conserto — não um "pode".
- * `omie_response` (fechada desde 20260709163500) entrou no checkout pelo #2932 (2026-10-10);
- * medido por psql-ro em 2026-11-21: has_column_privilege(authenticated, omie_response, SELECT) = f.
+ * Vazia: a última (checkout lendo `omie_response`, #2932) passou a ler pela RPC
+ * pedido_por_checkout (migration 20261121160000). Entrada nova aqui exige o 403 medido e o dono.
  */
-const CONHECIDOS = new Set(['src/services/orderSubmission/idempotency.ts:sales_orders:omie_response']);
+const CONHECIDOS = new Set<string>();
 
 describe('authz: select do front × colunas fechadas', () => {
   const contrato = tabelasPorColuna();
