@@ -8,8 +8,12 @@
  * - Margem bruta do ÚLTIMO MÊS FECHADO COMUM a todas as empresas do escopo — o cockpit usa o
  *   último mês de CADA CNPJ e pode misturar meses; aqui o mês é o mesmo e vai visível no tile.
  *   Mês sem receita líquida não conta como "fechado" (DRE vazia não vira margem 0%).
- * - CMV zerado (ou ausente) com receita > 0 é custo NÃO CLASSIFICADO, não margem de 100%
- *   (`lucro_bruto = receita_liquida − cmv`): a margem do escopo vira `null` com o motivo.
+ * - Margem bruta só de quem VENDE MERCADORIA. A Colacor SC só presta serviço (founder,
+ *   2026-11-21; DRE de prod: CMV 0 todo mês e o custo inteiro em despesas operacionais), então
+ *   `lucro_bruto = receita_liquida − 0` daria 100% sem significado: ela sai da conta e vai
+ *   listada em `servicoFora`.
+ * - Nas de mercadoria, CMV zerado (ou ausente) com receita > 0 é custo NÃO CLASSIFICADO, não
+ *   margem de 100%: a margem do escopo vira `null` com o motivo.
  * - NCG de snapshot sem estoque (`ncg_completa !== true`) vai marcada `completa: false` — o
  *   valor fica (é o mesmo do cockpit, que o mostra como "Parcial"), mas sem leitura de sinal.
  * - Caixa soma saldos entre CNPJs, mas caixa NÃO é fungível entre CNPJs: a lista de empresas
@@ -19,6 +23,9 @@ import type { Company, CompanySelection } from '@/contexts/CompanyContext';
 import { consolidarTitulos, type TotaisTitulos } from '@/lib/financeiro/resumo-titulos';
 
 const EMPRESAS_GRUPO: readonly Company[] = ['oben', 'colacor', 'colacor_sc'];
+
+/** CNPJs que só prestam serviço (sem CMV por natureza) — fora da margem bruta. */
+export const EMPRESAS_SERVICO: readonly Company[] = ['colacor_sc'];
 
 export function empresasDoEscopo(selection: CompanySelection): Company[] {
   return selection === 'all' ? [...EMPRESAS_GRUPO] : [selection];
@@ -50,6 +57,8 @@ export interface Margem {
   mes: number | null;
   /** Empresas do escopo com CMV zerado/ausente no mês (→ `valor` null). Vazio = margem confiável. */
   semCmv: Company[];
+  /** Empresas do escopo que só prestam serviço, deixadas fora da margem bruta. */
+  servicoFora: Company[];
 }
 
 export interface Caixa {
@@ -93,30 +102,33 @@ export function vencidosDoEscopo(resumo: Record<string, ResumoCnpj> | null, empr
 }
 
 /**
- * Margem bruta do último mês FECHADO (< mês corrente) presente em TODAS as empresas do escopo,
- * com receita líquida > 0 em cada uma.
+ * Margem bruta do último mês FECHADO (< mês corrente) presente em TODAS as empresas de
+ * mercadoria do escopo, com receita líquida > 0 em cada uma.
  */
 export function margemUltimoMesFechado(
   dre: readonly DreLinha[] | null,
   empresas: readonly Company[],
   mesCorrente: number,
 ): Margem {
-  if (!dre || empresas.length === 0) return { valor: null, mes: null, semCmv: [] };
-  const mesesPorEmpresa = empresas.map(
+  const servicoFora = empresas.filter((co) => EMPRESAS_SERVICO.includes(co));
+  const mercadoria = empresas.filter((co) => !EMPRESAS_SERVICO.includes(co));
+  const vazio: Margem = { valor: null, mes: null, semCmv: [], servicoFora };
+  if (!dre || mercadoria.length === 0) return vazio;
+  const mesesPorEmpresa = mercadoria.map(
     (co) => new Set(dre.filter((d) => d.company === co && d.mes < mesCorrente && d.receita_liquida > 0).map((d) => d.mes)),
   );
   const comuns = [...mesesPorEmpresa[0]].filter((m) => mesesPorEmpresa.every((s) => s.has(m)));
-  if (comuns.length === 0) return { valor: null, mes: null, semCmv: [] };
+  if (comuns.length === 0) return vazio;
   const mes = Math.max(...comuns);
-  const doMes = dre.filter((d) => d.mes === mes && empresas.includes(d.company as Company));
+  const doMes = dre.filter((d) => d.mes === mes && mercadoria.includes(d.company as Company));
   // Receita sem custo classificado não é margem de 100%: o grupo inteiro degrada (ausente ≠ zero).
-  const semCmv = empresas.filter((co) =>
+  const semCmv = mercadoria.filter((co) =>
     doMes.some((d) => d.company === co && d.receita_liquida > 0 && !(d.cmv !== null && d.cmv > 0)),
   );
-  if (semCmv.length > 0) return { valor: null, mes, semCmv };
+  if (semCmv.length > 0) return { valor: null, mes, semCmv, servicoFora };
   const receita = doMes.reduce((s, d) => s + d.receita_liquida, 0);
   const lucro = doMes.reduce((s, d) => s + d.lucro_bruto, 0);
-  return { valor: receita > 0 ? lucro / receita : null, mes, semCmv };
+  return { valor: receita > 0 ? lucro / receita : null, mes, semCmv, servicoFora };
 }
 
 export interface Ncg {
