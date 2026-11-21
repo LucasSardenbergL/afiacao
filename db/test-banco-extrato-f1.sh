@@ -238,7 +238,6 @@ case "${SABOTAGEM:-}" in
   t7_trava_frouxa)      sabotar "IF v_led IS NULL OR v_led NOT IN (" "IF false AND v_led NOT IN (" ;;
   # o REVOKE de anon some: o predecessor de teste (ACL default) fica aberto a anon
   t7_sem_revoke_anon)   sabotar "REVOKE ALL ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) FROM anon;" "" ;;
-  *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
   # 9b: a foto
   t9b_foto_sobrescreve)     sabotar "ON CONFLICT (company, omie_ncodcc, data) DO NOTHING;" "ON CONFLICT (company, omie_ncodcc, data) DO UPDATE SET saldo_centavos = EXCLUDED.saldo_centavos, fotografado_em = EXCLUDED.fotografado_em;" ;;
   t9b_foto_sem_on_conflict) sabotar "  ON CONFLICT (company, omie_ncodcc, data) DO NOTHING;" ";" ;;
@@ -263,6 +262,7 @@ case "${SABOTAGEM:-}" in
   t9b_foto_grant_aberto)    sabotar "GRANT SELECT ON TABLE public.fin_saldo_conta_diario TO authenticated;" "GRANT ALL ON TABLE public.fin_saldo_conta_diario TO authenticated;" ;;
   t9b_foto_funcao_anon)     sabotar "REVOKE ALL ON FUNCTION public.fin_fotografar_saldos() FROM anon;" "" ;;
   t9b_cron_horario)         sabotar "'0 8 * * *'" "'0 2 * * *'" ;;
+  *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
 
