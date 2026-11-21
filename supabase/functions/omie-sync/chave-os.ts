@@ -15,11 +15,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  *  #4042-follow-up: com a chave só do checkout, a OS do carrinho A "conferia" com o B).
  *  25 caracteres = o comprimento já aceito e ecoado inteiro pelo Omie em produção; 22 hex = 88 bits.
  *  Lança em orderId que não é UUID (fail-closed). */
-export async function chaveIntegracaoOS(orderId: unknown, omieCodigoCliente: number, assinatura: string | null): Promise<string> {
+export async function chaveIntegracaoOS(orderId: unknown, omieCodigoCliente: number, assinatura: string): Promise<string> {
   if (typeof orderId !== "string" || !UUID.test(orderId)) {
     throw new Error(`orderId inválido para a chave da OS (precisa ser UUID): ${JSON.stringify(orderId)}`);
   }
-  const base = `${orderId.toLowerCase()}|${omieCodigoCliente}|${assinatura ?? "∅"}`;
+  const base = `${orderId.toLowerCase()}|${omieCodigoCliente}|${assinatura}`;
   const dig = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(base)));
   const hex = Array.from(dig, (b) => b.toString(16).padStart(2, "0")).join("");
   return `OS_${hex.slice(0, 22)}`;
@@ -32,9 +32,10 @@ function centavos(v: unknown): string {
 }
 
 /** Assinatura do que este envio PEDE: a assinatura do front (#4042 — ferramenta + serviço +
- *  quantidade + pagamento + entrega) somada ao que só o payload sabe — cliente Omie, preço unitário
- *  de cada item, frete e total, em centavos. Sem a assinatura do front (build antigo do app em
- *  cache) devolve `null`: um pedido sem assinatura nunca "confere" com nada. */
+ *  quantidade + preço + pagamento + entrega) somada ao que o payload diz — cliente Omie, preço
+ *  unitário de cada item, frete e total, em centavos. Nunca `null`: o build antigo do app (em cache,
+ *  sem a assinatura do front) cai em "legado" mas segue comparado pelo PAYLOAD — sem isso, dois
+ *  carrinhos de valores diferentes do mesmo pedido gerariam a mesma chave (Codex, 3ª rodada). */
 export function montarAssinaturaOS(
   assinaturaFront: unknown,
   omieCodigoCliente: number,
@@ -44,14 +45,14 @@ export function montarAssinaturaOS(
     total?: unknown;
     payment_method?: unknown;
   },
-): string | null {
-  if (typeof assinaturaFront !== "string" || assinaturaFront.trim() === "") return null;
+): string {
+  const front = typeof assinaturaFront === "string" && assinaturaFront.trim() !== "" ? assinaturaFront : "legado";
   const itens = (orderData.items ?? [])
     .map((i) => `${String(i.userToolId ?? "-")}:${String(i.omie_codigo_servico ?? "-")}:${String(i.quantity ?? "-")}:${centavos(i.unitPrice)}`)
     .sort()
     .join("|");
   return [
-    assinaturaFront,
+    front,
     `cli=${omieCodigoCliente}`,
     `itens=${itens}`,
     `pg=${String(orderData.payment_method ?? "-")}`,
@@ -73,8 +74,10 @@ export type LeituraConsultaOS =
 export function lerConsultaOS(resposta: unknown, chave: string, omieCodigoCliente: number): LeituraConsultaOS {
   const r = (resposta ?? {}) as Record<string, unknown>;
   const cab = (r.Cabecalho ?? {}) as Record<string, unknown>;
-  const nCodOS = Number(cab.nCodOS);
-  if (!Number.isSafeInteger(nCodOS) || nCodOS <= 0) return { tipo: "invalida", motivo: "sem nCodOS inteiro positivo" };
+  const nCodOS = cab.nCodOS;
+  if (typeof nCodOS !== "number" || !Number.isSafeInteger(nCodOS) || nCodOS <= 0) {
+    return { tipo: "invalida", motivo: "sem nCodOS inteiro positivo" };
+  }
   if (cab.cCodIntOS !== chave) return { tipo: "invalida", motivo: `chave ecoada ${JSON.stringify(cab.cCodIntOS)} ≠ ${chave}` };
   if (Number(cab.nCodCli) !== omieCodigoCliente) {
     return { tipo: "invalida", motivo: `cliente da OS ${JSON.stringify(cab.nCodCli)} ≠ ${omieCodigoCliente}` };
@@ -93,9 +96,18 @@ export function lerConsultaOS(resposta: unknown, chave: string, omieCodigoClient
  *  `200 {}` passava pelo wrapper e o `result.nCodOS!` só existia no tipo. */
 export function inclusaoValida(resposta: unknown, chave: string): { nCodOS: number; cNumOS: string } | null {
   const r = (resposta ?? {}) as Record<string, unknown>;
-  const nCodOS = Number(r.nCodOS);
-  if (!Number.isSafeInteger(nCodOS) || nCodOS <= 0) return null;
+  const nCodOS = r.nCodOS;
+  if (typeof nCodOS !== "number" || !Number.isSafeInteger(nCodOS) || nCodOS <= 0) return null;
   if (r.cCodIntOS !== chave) return null;
   const cNumOS = r.cNumOS !== undefined && r.cNumOS !== null && String(r.cNumOS) !== "" ? String(r.cNumOS) : chave;
   return { nCodOS, cNumOS };
+}
+
+/** A falha do `ConsultarOS` afirma a ausência DA OS (e não de outra entidade — "Cliente/Vendedor não
+ *  cadastrado" casariam um marcador genérico; Codex, 3ª rodada)? Exige "ordem de serviço" + negação,
+ *  normalizado em ASCII. Mensagem que não casa = "não sei" — fail-closed: não reabre nada. */
+export function ausenciaDaOS(mensagem: string): boolean {
+  const t = mensagem.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (!t.includes("ordem de servico")) return false;
+  return ["nao cadastrad", "nao encontrad", "nao existe"].some((m) => t.includes(m));
 }

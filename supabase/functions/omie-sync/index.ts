@@ -9,8 +9,8 @@ import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts
 import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
 import { montarParcelasOS } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
-import { chaveIntegracaoOS, montarAssinaturaOS } from "./chave-os.ts";
-import { criarOuReconciliarOS, type DesfechoOS, OsCanceladaError, type ReservaOS } from "./os-idempotente.ts";
+import { montarAssinaturaOS } from "./chave-os.ts";
+import { criarOuReconciliarOS, type DesfechoOS, OsAcaoNoOmieError, type ReservaOS } from "./os-idempotente.ts";
 import { escapeHtml } from "../_shared/escape-html.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
@@ -599,7 +599,7 @@ async function criarOrdemServicoOmie(
   omieCodigoCliente: number,
   omieCodigoVendedor: number | undefined,
   order: PedidoOS,
-  assinatura: string | null,
+  assinatura: string,
 ): Promise<DesfechoOS> {
   const desfecho = await criarOuReconciliarOS({
     async reservar(linha) {
@@ -609,15 +609,16 @@ async function criarOrdemServicoOmie(
     },
     async lerReserva(id) {
       const { data, error } = await supabase.from("afiacao_os_envio")
-        .select("order_id, chave_integracao, assinatura, omie_codigo_cliente, omie_codigo_os, omie_numero_os")
+        .select("order_id, chave_integracao, assinatura, omie_codigo_cliente, omie_codigo_os, omie_numero_os, reservado_em")
         .eq("order_id", id).maybeSingle();
       if (error) throw new Error(`Leitura da reserva da OS falhou: ${error.message}`);
       return data as ReservaOS | null;
     },
-    async reabrir(id, chaveAnterior, nova) {
+    async reabrir(id, chaveAnterior, reservadaAntesDe, nova) {
       const { data, error } = await supabase.from("afiacao_os_envio")
         .update(nova)
         .eq("order_id", id).eq("chave_integracao", chaveAnterior).is("omie_codigo_os", null)
+        .lt("reservado_em", reservadaAntesDe)
         .select("order_id");
       if (error) throw new Error(`Reabrir a reserva da OS falhou: ${error.message}`);
       return (data ?? []).length === 1;
@@ -646,26 +647,21 @@ async function criarOrdemServicoOmie(
     montarPayload: (chave) => montarPayloadOS(chave, omieCodigoCliente, omieCodigoVendedor, order),
   });
 
-  // Espelho omie_ordens_servico: 1 linha por order_id (update_order/delete_order leem com
-  // maybeSingle). Completado em TODO desfecho que confere — quem vinculou pode ter caído antes de
-  // gravá-lo (Codex P1). Erro LANÇA: o reenvio é seguro e conclui.
+  // Espelho omie_ordens_servico: 1 linha por order_id (UNIQUE desde a migration 20261121120002 —
+  // update_order/delete_order leem com maybeSingle). Completado em TODO desfecho que confere: quem
+  // vinculou pode ter caído antes de gravá-lo (Codex P1). Upsert ignorando duplicata = atômico entre
+  // dois reenvios simultâneos. `payload_enviado` só o que ESTA chamada enviou (recalcular mudaria os
+  // vencimentos). Erro LANÇA: o reenvio é seguro e conclui.
   if (desfecho.conferencia === "confere") {
-    const { data: espelho, error: lerErr } = await supabase.from("omie_ordens_servico")
-      .select("id").eq("order_id", orderId).limit(1);
-    if (lerErr) throw new Error(`OS ${desfecho.cNumOS} existe no Omie, mas ler o registro local falhou: ${lerErr.message}. Reenvie para concluir.`);
-    if ((espelho ?? []).length === 0) {
-      const { error } = await supabase.from("omie_ordens_servico").insert({
-        order_id: orderId,
-        omie_numero_os: desfecho.cNumOS,
-        omie_codigo_os: desfecho.nCodOS,
-        status: "enviado",
-        payload_enviado: desfecho.payloadEnviado ?? montarPayloadOS(
-          await chaveIntegracaoOS(orderId, omieCodigoCliente, assinatura), omieCodigoCliente, omieCodigoVendedor, order,
-        ),
-        resposta_omie: desfecho.resposta,
-      });
-      if (error) throw new Error(`OS ${desfecho.cNumOS} existe no Omie, mas o registro local falhou: ${error.message}. Reenvie para concluir.`);
-    }
+    const { error } = await supabase.from("omie_ordens_servico").upsert({
+      order_id: orderId,
+      omie_numero_os: desfecho.cNumOS,
+      omie_codigo_os: desfecho.nCodOS,
+      status: "enviado",
+      payload_enviado: desfecho.payloadEnviado,
+      resposta_omie: desfecho.resposta ?? { recomposto: true, motivo: "payload da criacao indisponivel nesta chamada" },
+    }, { onConflict: "order_id", ignoreDuplicates: true });
+    if (error) throw new Error(`OS ${desfecho.cNumOS} existe no Omie, mas o registro local falhou: ${error.message}. Reenvie para concluir.`);
   }
 
   console.log(
@@ -1104,9 +1100,10 @@ Deno.serve(async (req) => {
             montarAssinaturaOS(body.assinaturaAfiacao, clienteResult.omieCodigoCliente, orderData),
           );
         } catch (e) {
-          // Cancelada: a mesma chave não aceita outra OS — o vendedor precisa da instrução, não de um 500.
-          if (!(e instanceof OsCanceladaError)) throw e;
-          result = { success: false, motivo: "os_cancelada", omie_os: { cNumOS: e.cNumOS }, error: e.message };
+          // Desfecho que pede AÇÃO do vendedor (cancelada, excluída, pedido mudou, aguardar): 200
+          // estruturado — num 500 o SDK do front só vê "non-2xx" e a instrução se perde (Codex).
+          if (!(e instanceof OsAcaoNoOmieError)) throw e;
+          result = { success: false, motivo: e.motivo, omie_os: e.cNumOS ? { cNumOS: e.cNumOS } : null, error: e.message };
           break;
         }
         const omieOs = { nCodOS: osResult.nCodOS, cNumOS: osResult.cNumOS };

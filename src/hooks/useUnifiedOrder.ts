@@ -1016,8 +1016,12 @@ export function useUnifiedOrder() {
           // sem a marca e o pedido poderia ser confirmado sem a OS — Codex P2).
           aoIniciarOsAfiacao: () => {
             if (checkoutEnvRef.current?.checkoutId !== checkoutId) return false;
-            checkoutEnvRef.current = { ...checkoutEnvRef.current, afiacaoPendente: true };
-            return persistCheckoutEnv(checkoutEnvRef.current);
+            const proximo: CheckoutEnvelope = { ...checkoutEnvRef.current, afiacaoPendente: true };
+            // Só publica a marca na memória se ela foi GRAVADA: senão um pendente falso bloquearia
+            // o vendedor por uma OS que nunca foi enviada (Codex P2).
+            if (!persistCheckoutEnv(proximo)) return false;
+            checkoutEnvRef.current = proximo;
+            return true;
           },
         });
         if (result.success && result.lastOrderData && result.allConfirmed) {
@@ -1058,11 +1062,7 @@ export function useUnifiedOrder() {
               description: 'O PV não foi criado no Omie. Um gestor pode aprovar uma exceção para este pedido — depois é só reenviar.',
             });
           } else if (result.errors.some(e => e.step.startsWith('afiacao_'))) {
-            // OS de Afiação que pede AÇÃO no Omie (divergente, sem confirmação, cancelada): "reenvie"
-            // seria a instrução errada.
-            toast.error('OS de Afiação: confira no Omie', {
-              description: result.errors.filter(e => e.step.startsWith('afiacao_')).map(e => e.message).join(' | '),
-            });
+            // Só a OS pede ação (o toast específico vai abaixo) — "reenvie" seria a instrução errada.
           } else {
             // Sucesso PARCIAL: NÃO limpar o carrinho nem resetar o envelope — o retry (mesma fp)
             // reusa a MESMA linha/chave e não duplica a conta de PRODUTO já enviada.
@@ -1072,6 +1072,14 @@ export function useUnifiedOrder() {
                 : checkoutEnvRef.current?.afiacaoOs
                   ? 'Reenvie — nem os produtos nem a OS de afiação já criada duplicam.'
                   : 'Reenvie — os produtos não duplicam, e a OS de afiação que já tiver sido criada é reaproveitada.',
+            });
+          }
+          // OS de Afiação que pede AÇÃO no Omie (divergente, sem confirmação, cancelada, excluída):
+          // toast PRÓPRIO, independente do bloqueio de crédito/ATP do mesmo envio (Codex P2).
+          const acoesOs = result.errors.filter(e => e.step.startsWith('afiacao_'));
+          if (acoesOs.length > 0) {
+            toast.error('OS de Afiação: confira no Omie', {
+              description: acoesOs.map(e => e.message).join(' | '),
             });
           }
           // Avisos não-bloqueio: "criado com avisos". Bloqueios (crédito/ATP/desconhecido)

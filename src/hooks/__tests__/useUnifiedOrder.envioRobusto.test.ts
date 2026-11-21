@@ -38,8 +38,15 @@ describe('useUnifiedOrder — fiação das guardas de envio', () => {
   it('OS idempotente: marca PENDENTE no mesmo envelope antes da edge, e devolve se gravou', () => {
     const corpo = corpoDo('submitOrder');
     expect(corpo).toContain('afiacaoPendente: checkoutEnvRef.current.afiacaoPendente ?? false,');
-    expect(corpo).toContain('checkoutEnvRef.current = { ...checkoutEnvRef.current, afiacaoPendente: true };');
-    expect(corpo).toContain('return persistCheckoutEnv(checkoutEnvRef.current);');
+    expect(corpo).toContain('const proximo: CheckoutEnvelope = { ...checkoutEnvRef.current, afiacaoPendente: true };');
+    expect(corpo).toMatch(/if \(!persistCheckoutEnv\(proximo\)\) return false;\s*checkoutEnvRef\.current = proximo;/);
+  });
+
+  it('OS idempotente: ação da OS no Omie tem toast PRÓPRIO, fora da cadeia de crédito/parcial', () => {
+    const corpo = corpoDo('submitOrder');
+    expect(corpo).toContain("const acoesOs = result.errors.filter(e => e.step.startsWith('afiacao_'));");
+    expect(corpo).toContain("toast.error('OS de Afiação: confira no Omie', {");
+    expect(corpo).toContain("!e.step.startsWith('afiacao_'));");
   });
 
   it('A4: orçamento parcial NÃO limpa o carrinho inteiro', () => {

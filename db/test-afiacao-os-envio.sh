@@ -34,6 +34,8 @@ CREATE TYPE public.app_role AS ENUM ('employee', 'customer', 'master');
 CREATE TABLE public.user_roles (user_id uuid, role public.app_role);
 GRANT SELECT ON public.user_roles TO authenticated;
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+CREATE TABLE public.omie_ordens_servico (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), order_id uuid, omie_codigo_os bigint);
+GRANT ALL ON public.omie_ordens_servico TO service_role;
 INSERT INTO public.user_roles VALUES ('00000000-0000-0000-0000-00000000000a', 'employee'),
                                      ('00000000-0000-0000-0000-00000000000c', 'customer');
 SQL
@@ -74,6 +76,11 @@ esperar_sqlstate "A4 (OS sem desfecho)" 23514 "SET LOCAL ROLE service_role; INSE
 esperar_sqlstate "A5 (chave duplicada)" 23505 "SET LOCAL ROLE service_role; INSERT INTO public.afiacao_os_envio (order_id, chave_integracao, omie_codigo_cliente) VALUES ('33333333-3333-4333-8333-333333333333','OS_1111111111114111811111',300)"
 esperar_sqlstate "A6 (authenticated insere)" 42501 "SET LOCAL ROLE authenticated; INSERT INTO public.afiacao_os_envio (order_id, chave_integracao, omie_codigo_cliente) VALUES ('44444444-4444-4444-8444-444444444444','OS_4444',300)"
 esperar_sqlstate "A6 (anon le)" 42501 "SET LOCAL ROLE anon; PERFORM 1 FROM public.afiacao_os_envio"
+
+esperar_sqlstate "A8 (espelho duplicado)" 23505 "SET LOCAL ROLE service_role; INSERT INTO public.omie_ordens_servico (order_id) VALUES ('66666666-6666-4666-8666-666666666666'), ('66666666-6666-4666-8666-666666666666')"
+UP=$(P -c "SET ROLE service_role; INSERT INTO public.omie_ordens_servico (order_id, omie_codigo_os) VALUES ('77777777-7777-4777-8777-777777777777', 1) ON CONFLICT (order_id) DO NOTHING; INSERT INTO public.omie_ordens_servico (order_id, omie_codigo_os) VALUES ('77777777-7777-4777-8777-777777777777', 2) ON CONFLICT (order_id) DO NOTHING; SELECT count(*)||':'||min(omie_codigo_os) FROM public.omie_ordens_servico WHERE order_id='77777777-7777-4777-8777-777777777777';")
+[ "$UP" = "1:1" ] || { echo "A9 FALHOU: upsert do espelho $UP"; exit 1; }
+echo "A9 ok: upsert do espelho mantem 1 linha (a 1a)"
 
 STAFF=$(P -c "SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000000a'; SET ROLE authenticated; SELECT count(*) FROM public.afiacao_os_envio;")
 CUST=$(P -c "SET request.jwt.claim.sub='00000000-0000-0000-0000-00000000000c'; SET ROLE authenticated; SELECT count(*) FROM public.afiacao_os_envio;")

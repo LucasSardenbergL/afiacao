@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS public.afiacao_os_envio (
   omie_numero_os      text,
   desfecho            text CHECK (desfecho IN ('incluida', 'reconciliada')),
   criado_em           timestamptz NOT NULL DEFAULT now(),
+  reservado_em        timestamptz NOT NULL DEFAULT now(),  -- reabrir só após a janela de um IncluirOS em voo
   confirmado_em       timestamptz,
   CONSTRAINT afiacao_os_envio_os_coerente CHECK (
     (omie_codigo_os IS NULL AND desfecho IS NULL AND confirmado_em IS NULL)
@@ -32,7 +33,15 @@ CREATE TABLE IF NOT EXISTS public.afiacao_os_envio (
   )
 );
 
+ALTER TABLE public.afiacao_os_envio ADD COLUMN IF NOT EXISTS reservado_em timestamptz NOT NULL DEFAULT now();
+
 ALTER TABLE public.afiacao_os_envio ENABLE ROW LEVEL SECURITY;
+
+-- Espelho da OS: 1 linha por pedido (update_order/delete_order leem com maybeSingle; 2 reenvios
+-- simultâneos inseriam 2 linhas — Codex). Pré-voo em prod 2026-11-21: 7 linhas, 0 order_id
+-- repetido. Só a omie-sync escreve nesta tabela.
+CREATE UNIQUE INDEX IF NOT EXISTS omie_ordens_servico_order_id_uniq
+  ON public.omie_ordens_servico (order_id);
 
 REVOKE ALL ON public.afiacao_os_envio FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.afiacao_os_envio TO authenticated;
@@ -99,7 +108,23 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'A7 FALHOU: CHECK de coerencia ausente ou na forma antiga (aceitava OS confirmada com codigo NULL)';
   END IF;
-  RAISE NOTICE 'afiacao_os_envio OK: tabela + RLS + ACL + PK + unique + check';
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = 'public.afiacao_os_envio'::regclass AND attname = 'reservado_em' AND attnotnull AND NOT attisdropped
+  ) THEN
+    RAISE EXCEPTION 'A8 FALHOU: reservado_em ausente - a edge nao consegue esperar a janela antes de reabrir';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE i.indrelid = 'public.omie_ordens_servico'::regclass AND c.relname = 'omie_ordens_servico_order_id_uniq'
+      AND i.indisunique AND i.indisvalid
+      AND i.indnatts = 1
+      AND i.indkey[0] = (SELECT attnum FROM pg_attribute WHERE attrelid = i.indrelid AND attname = 'order_id')
+  ) THEN
+    RAISE EXCEPTION 'A9 FALHOU: omie_ordens_servico sem UNIQUE valido em (order_id) - o upsert do espelho falha';
+  END IF;
+  RAISE NOTICE 'afiacao_os_envio OK: tabela + RLS + ACL + PK + unique + check + espelho unico';
 END
 $post$;
 

@@ -740,7 +740,35 @@ describe('submitOrder — OS de Afiação no reenvio (A1)', () => {
     expect(r.results).not.toContain('OS OS1 (já enviada)');
   });
 
-  it('edge diz que a OS foi CANCELADA no Omie → afiacao_cancelada com a instrução da edge', async () => {
+  it('edge pede para AGUARDAR (tentativa anterior em voo) → sync_os_omie com a instrução, sem marca', async () => {
+    vi.mocked(syncOrderToOmie).mockResolvedValueOnce(
+      { success: false, motivo: 'aguardar', error: 'Aguarde alguns minutos e reenvie.' } as never);
+    const { client } = makeSupabase();
+    const marcas: unknown[] = [];
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      aoConfirmarOsAfiacao: (m) => marcas.push(m),
+    }));
+    expect(marcas).toHaveLength(0);
+    expect(r.errors.find(e => e.step === 'sync_os_omie')?.message).toContain('Aguarde alguns minutos');
+    expect(r.allConfirmed).toBe(false);
+  });
+
+  it('edge diz que a OS foi EXCLUÍDA / o pedido mudou → afiacao_<motivo>, não confirma', async () => {
+    for (const motivo of ['os_excluida', 'pedido_mudou'] as const) {
+      vi.mocked(syncOrderToOmie).mockResolvedValueOnce({ success: false, motivo, error: `msg-${motivo}` } as never);
+      const { client } = makeSupabase();
+      const r = await submitOrder(makeParams({
+        supabase: client, customer: custAfiacao,
+        cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      }));
+      expect(r.errors.find(e => e.step === `afiacao_${motivo}`)?.message).toBe(`msg-${motivo}`);
+      expect(r.allConfirmed).toBe(false);
+    }
+  });
+
+  it('edge diz que a OS foi CANCELADA no Omie → afiacao_os_cancelada com a instrução da edge', async () => {
     vi.mocked(syncOrderToOmie).mockResolvedValueOnce(
       { success: false, motivo: 'os_cancelada', omie_os: { cNumOS: 'OS5' }, error: 'A OS OS5 deste pedido foi CANCELADA no Omie — Monte um pedido novo.' } as never);
     const { client } = makeSupabase();
@@ -748,7 +776,7 @@ describe('submitOrder — OS de Afiação no reenvio (A1)', () => {
       supabase: client, customer: custAfiacao,
       cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
     }));
-    expect(r.errors.find(e => e.step === 'afiacao_cancelada')?.message).toContain('Monte um pedido novo');
+    expect(r.errors.find(e => e.step === 'afiacao_os_cancelada')?.message).toContain('Monte um pedido novo');
     expect(r.allConfirmed).toBe(false);
   });
 

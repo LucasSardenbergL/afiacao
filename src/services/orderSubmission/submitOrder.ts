@@ -684,9 +684,17 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       }
       const result = await syncOrderToOmie(orderId, orderData, profileData, addressPayload, staffContext, assinaturaAfiacao);
       const numeroExistente = result.omie_os?.cNumOS ? ` ${result.omie_os.cNumOS}` : '';
-      if (!result.success && result.motivo === 'os_cancelada') {
-        results.push('OS Afiação (cancelada no Omie)');
-        errors.push({ step: 'afiacao_cancelada', message: result.error || `A OS de Afiação${numeroExistente} foi cancelada no Omie. Monte um pedido novo.` });
+      if (!result.success && result.motivo === 'aguardar') {
+        // Uma tentativa anterior ainda pode estar criando a OS: reenviar DEPOIS é a instrução certa.
+        results.push('OS Afiação (aguardando tentativa anterior)');
+        errors.push({ step: 'sync_os_omie', message: result.error || 'Uma tentativa anterior ainda pode criar a OS. Aguarde alguns minutos e reenvie.' });
+      } else if (!result.success && result.motivo) {
+        // Cancelada, excluída ou pedido que mudou durante a criação: ação no Omie, não reenvio.
+        results.push('OS Afiação (conferir no Omie)');
+        errors.push({
+          step: `afiacao_${result.motivo}`,
+          message: result.error || `A OS de Afiação${numeroExistente} precisa ser conferida no Omie antes de reenviar.`,
+        });
       } else if (!result.success && result.conferencia === 'diverge') {
         results.push('OS Afiação (já no Omie com ferramentas diferentes)');
         errors.push({
@@ -798,7 +806,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       e.step === 'bloqueio_tint_oben' || e.step === 'bloqueio_atp_oben' ||
       e.step === 'bloqueio_desconhecido_oben' || e.step === 'bloqueio_desconhecido_colacor' ||
       e.step === 'pv_divergente_oben' || e.step === 'pv_divergente_colacor' ||
-      e.step === 'afiacao_divergente' || e.step === 'afiacao_inconferivel' || e.step === 'afiacao_cancelada'),
+      e.step.startsWith('afiacao_')),
     bloqueiosCredito,
     bloqueioAtp,
   };
