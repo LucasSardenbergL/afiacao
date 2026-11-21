@@ -26,10 +26,13 @@ export function margemConhecida(raw: unknown): number | null {
  *  CONHECIDO, mas com guard EXPLÍCITO: `null > 0` é `false` em JS, então o desfecho aritmético
  *  já era certo por acidente; o guard troca a coincidência por decisão declarada (mesmo padrão
  *  de src/hooks/useTacticalPlan.ts:411 — `revPotential != null && revPotential > 0`). */
-export function profitPerHora(rev: number | null, avg: number, marginPct: unknown): number | null {
+// `avg` null = gasto não medido (calculate-scores v1.8): sem base de receita o R$/h é INDECIDÍVEL (null),
+// nunca o R$ 0/h que reprovaria o cliente como se tivesse medido zero (challenge Codex 2026-11-21).
+export function profitPerHora(rev: number | null, avg: number | null, marginPct: unknown): number | null {
   const margem = margemConhecida(marginPct);
   if (margem == null) return null;
   const baseRev = rev != null && rev > 0 ? rev : avg;
+  if (baseRev == null) return null;
   // 10% do GMV como proxy de margem operacional; visita ~15 min → 4 visitas/h.
   return (baseRev * (margem / 100) * 0.1) / (AVG_CALL_MINUTES / 60);
 }
@@ -99,14 +102,16 @@ export function calcularClusterMargin(
  *  abordagem que a vendedora leva para a rua. */
 export function classifyProfile(
   healthScore: number,
-  avgSpend: number,
+  // null = gasto não medido (calculate-scores v1.8: sem linha na RPC de vendas). Guard explícito: em JS
+  // `null < 500` é `true` e rotularia "não medido" como sensível a preço.
+  avgSpend: number | null,
   marginPct: number | null,
   categoryCount: number,
 ): string {
   const m = margemConhecida(marginPct);
-  if (m != null && avgSpend < 500 && m < 20) return 'sensivel_preco';
+  if (m != null && avgSpend != null && avgSpend < 500 && m < 20) return 'sensivel_preco';
   if (m != null && m > 35 && categoryCount <= 3) return 'orientado_qualidade';
-  if (avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
+  if (avgSpend != null && avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
   return 'misto';
 }
 
@@ -122,12 +127,13 @@ export function selectObjective(
   mixGap: number,
   marginPct: number | null,
   clusterMargin: number | null,
-  daysSince: number,
+  // null = dias não medidos (calculate-scores v1.8): sem recência medida não se afirma "parou de comprar".
+  daysSince: number | null,
   recencyCapDays: number,
   salesHistoryStatus: string | null = null,
 ): string {
   if (salesHistoryStatus === 'sem_historico') return 'ativacao';
-  if (daysSince >= recencyCapDays) return 'reativacao';
+  if (daysSince != null && daysSince >= recencyCapDays) return 'reativacao';
   if (churnRisk != null && churnRisk > 60) return 'recuperacao';
   if (mixGap > 3) return 'expansao_mix';
   const m = margemConhecida(marginPct);

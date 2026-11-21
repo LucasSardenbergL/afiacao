@@ -32,12 +32,13 @@ export function selectObjective(
   /** `null` = margem do cliente não apurada → consolidacao_margem fica INDECIDÍVEL (ver abaixo). */
   marginPct: number | null,
   clusterMargin: number | null,
-  daysSince: number,
+  // null = dias não medidos (calculate-scores v1.8): sem recência medida não se afirma "parou de comprar".
+  daysSince: number | null,
   recencyCapDays: number,
   salesHistoryStatus: string | null = null,
 ): string {
   if (salesHistoryStatus === 'sem_historico') return 'ativacao'; // sem venda válida → ativação (nada p/ recuperar/reativar)
-  if (daysSince >= recencyCapDays) return 'reativacao';
+  if (daysSince != null && daysSince >= recencyCapDays) return 'reativacao';
   if (churnRisk != null && churnRisk > 60) return 'recuperacao';
   if (mixGap > 3) return 'expansao_mix';
   // Cluster AUSENTE (null) → NÃO dispara consolidacao_margem. money-path: ausente ≠ número

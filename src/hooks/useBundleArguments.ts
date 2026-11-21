@@ -30,17 +30,18 @@ export type CustomerProfile = 'sensivel_preco' | 'orientado_qualidade' | 'orient
  */
 export const classifyCustomerProfile = (
   healthScore: number,
-  avgMonthlySpend: number,
+  // null = gasto não medido (calculate-scores v1.8) — guard explícito: `null < 500` é `true` em JS.
+  avgMonthlySpend: number | null,
   grossMarginPct: number | null,
   categoryCount: number
 ): CustomerProfile => {
   const margem = margemConhecida(grossMarginPct);
   // Price-sensitive: low spend, low margin tolerance
-  if (margem != null && avgMonthlySpend < 500 && margem < 20) return 'sensivel_preco';
+  if (margem != null && avgMonthlySpend != null && avgMonthlySpend < 500 && margem < 20) return 'sensivel_preco';
   // Quality-oriented: high margin, fewer categories (focused buyer)
   if (margem != null && margem > 35 && categoryCount <= 3) return 'orientado_qualidade';
   // Productivity-oriented: high spend, many categories, high health
-  if (avgMonthlySpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
+  if (avgMonthlySpend != null && avgMonthlySpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
   return 'misto';
 };
 

@@ -33,8 +33,9 @@ export interface CustomerScoreInputs {
   health_score: number;
   recover_score: number | null;
   revenue_potential: number | null;
-  avg_monthly_spend_180d: number;
-  days_since_last_purchase: number;
+  // null = não medido (calculate-scores v1.8: sem linha na RPC de vendas) — nunca o 999/R$0 sentinela.
+  avg_monthly_spend_180d: number | null;
+  days_since_last_purchase: number | null;
   // Classificação canônica do histórico de compra (calculate-scores; spec
   // 2026-06-20-sales-history-status-design). `null` = ainda não computado.
   sales_history_status: SalesHistoryStatus | null;

@@ -240,9 +240,14 @@ Deno.serve(async (req) => {
       const num = (v: unknown) => Number(v ?? 0);
       // churn_risk SAIU da lista acima: desde a calculate-scores v1.7 ele é NULL para quem nunca comprou
       // (15.766 linhas). Ausente atravessa como null — selectObjective o trata (sem_historico decide antes).
-      const healthScore = num(score.health_score), avgSpend = num(score.avg_monthly_spend_180d);
+      // avg_monthly_spend_180d e days_since_last_purchase SAÍRAM da lista do `num` acima: desde a calculate-scores
+      // v1.8 são NULL para quem nunca comprou (sem linha na RPC de vendas; eram o 999/R$0 sentinela).
+      // classifyProfile/selectObjective têm guard explícito de null, e o prompt recebe null, não "0 dias".
+      const healthScore = num(score.health_score);
+      const avgSpend: number | null = numeroValido(score.avg_monthly_spend_180d);
       const churnRisk: number | null = score.churn_risk == null ? null : Number(score.churn_risk);
-      const categoryCount = num(score.category_count), daysSince = num(score.days_since_last_purchase);
+      const categoryCount = num(score.category_count);
+      const daysSince: number | null = numeroValido(score.days_since_last_purchase);
       // [money-path "ausente ≠ zero"] expansion_score e revenue_potential são as DUAS colunas
       // que a 20260727130000_farmer_scores_colunas_orfas_null nulou de propósito (nenhum writer
       // as calcula) — e a migration está APLICADA: 6.633/6.633 NULL, `column_default` removido

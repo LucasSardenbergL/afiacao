@@ -148,3 +148,13 @@ describe('selecionarParaPregeracao', () => {
     });
   });
 });
+
+describe('profitPerHora — gasto NULL (calculate-scores v1.8)', () => {
+  it('sem potencial e gasto não medido → indecidível (null), não R$ 0/h', () => {
+    expect(profitPerHora({ revenuePotential: 0, avgSpend: null, marginPct: 30 })).toBeNull();
+  });
+  it('potencial medido segue decidindo mesmo com gasto NULL; gasto 0 medido dá 0', () => {
+    expect(profitPerHora({ revenuePotential: 1000, avgSpend: null, marginPct: 30 })).toBeCloseTo(120);
+    expect(profitPerHora({ revenuePotential: 0, avgSpend: 0, marginPct: 30 })).toBe(0);
+  });
+});

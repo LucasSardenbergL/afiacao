@@ -274,3 +274,21 @@ Deno.test("canária: o `expected` de cada caso DIFERE do que o código antigo da
   // zero_e_conhecido guarda o outro lado: margem 0 REAL não pode ser confundida com ausência.
   assertEquals(by("zero_e_conhecido").got, 0);
 });
+
+// ── calculate-scores v1.8: dias/gasto NULL = não medido (sem linha na RPC de vendas) ─────────────
+Deno.test("selectObjective: dias NULL não afirma 'parou de comprar' (sem reativação); medido segue", () => {
+  assertEquals(selectObjective(70, 0, 30, 30, null, 180), "recuperacao");
+  assertEquals(selectObjective(70, 0, 30, 30, 180, 180), "reativacao");
+  assertEquals(selectObjective(null, 9, null, null, null, 180, "sem_historico"), "ativacao");
+});
+
+Deno.test("classifyProfile: gasto NULL não vira 'sensível a preço' (null < 500 é true em JS)", () => {
+  assertEquals(classifyProfile(80, null, 10, 2), "misto");
+  assertEquals(classifyProfile(80, 300, 10, 2), "sensivel_preco");
+  assertEquals(classifyProfile(80, null, 40, 5), "misto");
+});
+
+Deno.test("profitPerHora: gasto NULL sem potencial → null (indecidível), não R$ 0/h; 0 medido → 0", () => {
+  assertEquals(profitPerHora(null, null, 30), null);
+  assertEquals(profitPerHora(0, 0, 30), 0);
+});

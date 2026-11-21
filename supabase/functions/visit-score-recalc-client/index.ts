@@ -106,8 +106,9 @@ interface CustomerScoreInputs {
   health_score: number;
   recover_score: number | null;
   revenue_potential: number | null;
-  avg_monthly_spend_180d: number;
-  days_since_last_purchase: number;
+  // null = não medido (calculate-scores v1.8: sem linha na RPC de vendas) — nunca o 999/R$0 sentinela.
+  avg_monthly_spend_180d: number | null;
+  days_since_last_purchase: number | null;
   // Classificação canônica do histórico de compra; null = ainda não computado.
   sales_history_status: 'ativo' | 'stale' | 'sem_historico' | null;
   signal_modifiers: ScoreAdjustment | null;
@@ -184,7 +185,11 @@ function scoreRecuperacao(c: CustomerScoreInputs, classesAtivas: Set<string>): M
     insumosMedidos++;
   }
 
-  const recencyPenalty = Math.max(0, 100 - c.days_since_last_purchase) * -0.1;
+  // Dias NULL = não medido (calculate-scores v1.8: sem linha na RPC de vendas, nunca o 999 sentinela). Sem
+  // recência medida a penalidade não entra (com o 999 ela já era 0) e o ausente é NOMEADO.
+  let recencyPenalty = 0;
+  if (c.days_since_last_purchase == null) insumosAusentes.push('days_since_last_purchase');
+  else recencyPenalty = Math.max(0, 100 - c.days_since_last_purchase) * -0.1;
   // aplicaveis(...).reduce(...) é o somaModifiers do src/ + o filtro FA4 (shadow-mode) que só
   // existe no edge: mantém SÓ modifiers de classe ATIVADA.
   const signalsBoost = aplicaveis(c.signal_modifiers?.breakdown?.churn, classesAtivas)
@@ -243,12 +248,15 @@ function scoreRelacionamento(c: CustomerScoreInputs): MissionResult {
   if (nuncaComprou(c)) return { score: 0, insumosAusentes: [] };
   // health_score é 0..100 (calculate-scores). * 0.5 → contribuição 0..50.
   const healthBoost = c.health_score * 0.5;
-  const revenueBoost = normalizeRevenue(c.avg_monthly_spend_180d) * 30;
+  const insumosAusentes: string[] = [];
+  // Gasto NULL = não medido (v1.8): o boost não entra (com o 0 sentinela ele já era 0) e o ausente é nomeado.
+  let revenueBoost = 0;
+  if (c.avg_monthly_spend_180d == null) insumosAusentes.push('avg_monthly_spend_180d');
+  else revenueBoost = normalizeRevenue(c.avg_monthly_spend_180d) * 30;
   // ?? 30 (não 365) — null = sem histórico de visita = sem relacionamento estabelecido.
   // Mesma decisão de src/lib/visit-scoring/missions.ts.
   const daysSinceVisitBoost = Math.min(40, (c.days_since_last_visit ?? 30) * 0.3);
   // churn_risk NULL (sem histórico, v1.7) não é "risco zero": a penalidade não entra e o ausente é nomeado.
-  const insumosAusentes: string[] = [];
   let riskPenalty = 0;
   if (c.churn_risk == null) insumosAusentes.push('churn_risk');
   else riskPenalty = c.churn_risk * 0.3;
@@ -433,8 +441,10 @@ async function recalcOne(
     health_score: Number(scores.health_score ?? 0),
     recover_score: valorMedido(scores.recover_score),
     revenue_potential: valorMedido(scores.revenue_potential),
-    avg_monthly_spend_180d: Number(scores.avg_monthly_spend_180d ?? 0),
-    days_since_last_purchase: Number(scores.days_since_last_purchase ?? 999),
+    // NULL = não medido (calculate-scores v1.8): o `?? 0` / `?? 999` refabricava o sentinela e o persistia
+    // em score_breakdown.inputs. As missões tratam a ausência (nomeiam, não somam).
+    avg_monthly_spend_180d: valorMedido(scores.avg_monthly_spend_180d),
+    days_since_last_purchase: valorMedido(scores.days_since_last_purchase),
     sales_history_status: statusHistorico(scores.sales_history_status),
     signal_modifiers: (scores.signal_modifiers ?? null) as ScoreAdjustment | null,
     days_since_last_visit: computeDays(lastVisitAt),

@@ -50,7 +50,7 @@ import { MODELO, toolDoModo } from "./plano-helpers.ts";
  * saem do contexto do modelo nos DOIS modos (`insumosSemMargem`), o system prompt ganha a regra
  * "margem é dado interno" e a tool estratégica deixa de pedir cenários de margem (`expected_result`).
  */
-export const VERSAO = "v1.6-churn-ausente-nao-e-zero";
+export const VERSAO = "v1.7-base-vendas-ausente-nao-e-zero";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
