@@ -12,14 +12,14 @@
 --   · omie_codigo_os/omie_numero_os = a OS que existe no Omie, gravados UMA vez
 --     (UPDATE … WHERE chave_integracao = <esta> AND omie_codigo_os IS NULL).
 -- Só a edge (service_role) escreve; staff só lê (diagnóstico).
--- Aditiva: nenhuma tabela existente muda.
+-- Aditiva: tabela nova + UNIQUE em omie_ordens_servico(order_id) (pré-voo: 0 repetidos).
 -- ============================================================
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS public.afiacao_os_envio (
   order_id            uuid PRIMARY KEY,
   chave_integracao    text NOT NULL UNIQUE,
-  assinatura          text,               -- NULL = front antigo (sem assinatura): nunca "confere"
+  assinatura          text,               -- a da tentativa que reservou (app antigo: "legado#…" + payload)
   omie_codigo_cliente bigint NOT NULL,
   omie_codigo_os      bigint,
   omie_numero_os      text,
