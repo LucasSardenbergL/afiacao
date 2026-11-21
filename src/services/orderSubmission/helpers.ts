@@ -68,7 +68,7 @@ export function findParcelaDesc(codigo: string, formas: FormaPagamento[]): strin
   return found?.descricao || codigo;
 }
 
-export function buildToolInfo(c: ServiceCartItem): string {
+function buildToolInfo(c: ServiceCartItem): string {
   const parts: string[] = [];
   parts.push(getToolName(c.userTool));
   const specs = c.userTool.specifications;
@@ -80,6 +80,39 @@ export function buildToolInfo(c: ServiceCartItem): string {
   }
   if (c.notes) parts.push(c.notes);
   return parts.join(' | ');
+}
+
+/**
+ * B4 (rodada 2): preço de serviço para APRESENTAÇÃO (resumo, WhatsApp, cupom). `null`, não-finito
+ * ou ≤ 0 = "a orçar" (o carrinho já trata 0 como a orçar legítimo) → `null`, nunca R$ 0,00.
+ * NÃO use no payload enviado ao Omie: lá o `unitPrice` segue o contrato de sempre.
+ */
+export function precoServicoParaExibicao(preco: number | null | undefined): number | null {
+  if (preco === null || preco === undefined || !Number.isFinite(preco) || preco <= 0) return null;
+  return preco;
+}
+
+/**
+ * B6 (rodada 2): o "Horário preferido" da aba Afiação aparecia no carrinho e se perdia no envio.
+ * Sem mudar o contrato da edge, ele vai na observação da OS (`orderData.notes` → `cObsOS`),
+ * à frente das ferramentas. Balcão não usa horário (a tela nem mostra o seletor).
+ */
+export function observacoesDaOsAfiacao(
+  serviceItems: ServiceCartItem[],
+  delivery: { option: string; timeSlot?: string },
+  timeSlots: ReadonlyArray<{ id: string; label: string }>,
+  observacao?: string | null,
+): string {
+  const partes: string[] = [];
+  // B1 (Codex P2): pedido só de Afiação perdia a "Observações do pedido" — a OS só levava ferramentas.
+  const obs = observacao?.trim();
+  if (obs) partes.push(obs);
+  if (delivery.option !== 'balcao' && delivery.timeSlot) {
+    const slot = timeSlots.find(t => t.id === delivery.timeSlot);
+    if (slot) partes.push(`Horário preferido: ${slot.label}`);
+  }
+  partes.push(...serviceItems.map(buildToolInfo).filter(Boolean));
+  return partes.join(' || ');
 }
 
 export function formatCustomerAddress(

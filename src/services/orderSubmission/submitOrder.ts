@@ -1,7 +1,7 @@
 import { syncOrderToOmie } from '@/services/omieService';
 import { logger } from '@/lib/logger';
 import { mensagemDoErroEdge } from '@/lib/invoke-function';
-import { DELIVERY_FEES } from '@/types';
+import { DELIVERY_FEES, TIME_SLOTS } from '@/types';
 import type {
   SubmitOrderParams,
   SubmitOrderResult,
@@ -12,7 +12,8 @@ import type {
 } from './types';
 import type { ServiceCartItem } from '@/hooks/unifiedOrder/types';
 import {
-  buildToolInfo,
+  observacoesDaOsAfiacao,
+  precoServicoParaExibicao,
   formatCustomerAddress,
   getToolName,
   missingAccountIdentities,
@@ -654,7 +655,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         subtotal: subtotals.service,
         delivery_fee: DELIVERY_FEES[delivery.option],
         total: subtotals.service + DELIVERY_FEES[delivery.option],
-        notes: serviceItems.map(buildToolInfo).filter(Boolean).join(' || '),
+        notes: observacoesDaOsAfiacao(serviceItems, delivery, TIME_SLOTS, meta.notes),
         payment_method: payment.afiacaoMethod,
       };
       const profileData = {
@@ -775,9 +776,11 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     ...serviceItems.map(c => ({
       description: c.servico?.descricao || getToolName(c.userTool),
       quantity: c.quantity,
-      unitPrice: getServicePrice(c) || 0,
+      // B4 (rodada 2): a orçar fica null na APRESENTAÇÃO (o payload da OS acima não muda).
+      unitPrice: precoServicoParaExibicao(getServicePrice(c)),
     })),
   ];
+  const itensAOrcar = allItems.filter(i => i.unitPrice === null).length;
 
   const total =
     subtotals.oben + subtotals.colacor +
@@ -788,6 +791,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     customerDocument: customer.cnpj_cpf || '',
     items: allItems,
     total,
+    itensAOrcar,
     orderNumbers: results,
     printDataList,
   };

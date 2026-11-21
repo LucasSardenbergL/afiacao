@@ -254,6 +254,7 @@ export function useUnifiedOrder() {
     customerPriceDatesColacor,
     selectedParcelaOben, setSelectedParcelaOben,
     selectedParcelaColacor, setSelectedParcelaColacor,
+    parcelasManuaisDaSelecao,
     customerParcelaRankingOben,
     customerParcelaRankingColacor,
     addresses,
@@ -434,7 +435,8 @@ export function useUnifiedOrder() {
     prazoDecisaoRef.current = {};
     clearCustomerInternal();
     setCart([]);
-    setOrdemCompra('');
+    // B2 (Codex P2): trocar de cliente leva junto os campos DO pedido — antes só a OC era limpa.
+    setOrdemCompra(''); setNotes(''); setReadyByDate(''); setSelectedTimeSlot('');
     checkoutEnvRef.current = null; persistCheckoutEnv(null);
     // user-tools cache é invalidado dentro de clearCustomerInternal
     // O RASCUNHO em disco é apagado pela página (onClearCustomer) — mesmo ciclo do envelope.
@@ -835,6 +837,15 @@ export function useUnifiedOrder() {
     }
   };
 
+  // B2 (rodada 2): o pedido gravado leva junto o que é DELE — observação, dia de entrega e OC. Antes só
+  // as observações eram limpas; o dia de entrega e a OC vazavam para o próximo pedido do mesmo cliente.
+  const limparCamposDoPedido = useCallback(() => {
+    setNotes('');
+    setReadyByDate('');
+    setOrdemCompra('');
+    setSelectedTimeSlot(''); // B6 (Codex P2): o horário da coleta é DESTA OS — não vaza para a próxima
+  }, []);
+
   // Submit — orchestrates state around the pure submit functions in services/orderSubmission
   // `aoGravar` amarra o RASCUNHO ao desfecho: null = tudo salvo (apagar), lista = carrinho que
   // sobrou após o parcial (gravar na hora). Roda ANTES do navigate — o rascunho não fica para trás.
@@ -868,7 +879,7 @@ export function useUnifiedOrder() {
         toast.success('Orçamento salvo', { description: result.results.join(' | ') });
         opts?.aoGravar?.(null);
         clearCart();
-        setNotes('');
+        limparCamposDoPedido();
         navigate('/sales/quotes');
       } else if (result.success) {
         // A4 (rodada 2): orçamento misto com UMA conta falhando não é "salvo". Tira do carrinho só
@@ -889,7 +900,7 @@ export function useUnifiedOrder() {
     selectedCustomer, user, customerUserId,
     obenProductItems, colacorProductItems, obenSubtotal, colacorProdSubtotal,
     deliveryOption, addresses, selectedAddress, notes,
-    clearCart, navigate, setCart, cart,
+    clearCart, limparCamposDoPedido, navigate, setCart, cart,
   ]);
 
   const submitOrder = useCallback(async (opts?: { atpBackorder?: { autorizado: true; motivo: string } }) => {
@@ -987,6 +998,7 @@ export function useUnifiedOrder() {
           delivery: {
             option: deliveryOption,
             selectedAddress: addresses.find(a => a.id === selectedAddress),
+            timeSlot: selectedTimeSlot,
           },
           meta: { notes, readyByDate, ordemCompra },
           companyProfiles,
@@ -1055,7 +1067,7 @@ export function useUnifiedOrder() {
           }
           if (result.allConfirmed) {
             clearCart();
-            setNotes('');
+            limparCamposDoPedido();
           } else if (bloqueios.length > 0) {
             // Trava de crédito: mensagem específica — "parcialmente enviado" esconderia a causa.
             toast.warning('Envio bloqueado por crédito', {
@@ -1117,8 +1129,8 @@ export function useUnifiedOrder() {
     volumesOben, volumesColacor,
     selectedParcelaOben, selectedParcelaColacor, afiacaoPaymentMethod,
     formasPagamentoOben, formasPagamentoColacor,
-    deliveryOption, addresses, selectedAddress,
-    notes, readyByDate, ordemCompra,
+    deliveryOption, addresses, selectedAddress, selectedTimeSlot,
+    notes, readyByDate, ordemCompra, limparCamposDoPedido,
     companyProfiles, defaultProductionAssigneeId,
     getServicePrice, clearCart, isCustomerMode,
     waitForAccountEnsure, loadingCustomer, searchParams,
@@ -1175,7 +1187,7 @@ export function useUnifiedOrder() {
     // Payment
     sortedFormasPagamentoOben, sortedFormasPagamentoColacor,
     selectedParcelaOben, setSelectedParcelaOben,
-    selectedParcelaColacor, setSelectedParcelaColacor,
+    selectedParcelaColacor, setSelectedParcelaColacor, parcelasManuaisDaSelecao,
     registrarEstadoPrazo,
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
     estadoFormasOben, estadoFormasColacor, recarregarFormas,

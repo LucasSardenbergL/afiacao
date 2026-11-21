@@ -11,8 +11,11 @@ interface OrderSuccessDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   customerName: string;
-  items: Array<{ description: string; quantity: number; unitPrice: number }>;
+  /** `unitPrice: null` = serviço A ORÇAR — sai "A orçar", nunca R$ 0,00 (B4, rodada 2). */
+  items: Array<{ description: string; quantity: number; unitPrice: number | null }>;
+  /** Soma do que tem preço. Com `itensAOrcar > 0` é rotulado "Subtotal conhecido". */
   total: number;
+  itensAOrcar?: number;
   orderNumbers: string[];
   onViewOrder: () => void;
   onShare: () => void;
@@ -34,6 +37,7 @@ export function OrderSuccessDialog({
   customerName,
   items,
   total,
+  itensAOrcar = 0,
   orderNumbers,
   onViewOrder,
   onShare,
@@ -137,11 +141,13 @@ export function OrderSuccessDialog({
                   <span className="text-muted-foreground">
                     {item.quantity}x {item.description}
                   </span>
-                  <span className="font-medium">
-                    {(item.quantity * item.unitPrice).toLocaleString('pt-BR', {
-                      style: 'currency',
-                      currency: 'BRL',
-                    })}
+                  <span className={item.unitPrice === null ? 'text-muted-foreground' : 'font-medium'}>
+                    {item.unitPrice === null
+                      ? 'A orçar'
+                      : (item.quantity * item.unitPrice).toLocaleString('pt-BR', {
+                        style: 'currency',
+                        currency: 'BRL',
+                      })}
                   </span>
                 </div>
               ))}
@@ -150,11 +156,16 @@ export function OrderSuccessDialog({
 
           <div className="pt-3 border-t">
             <div className="flex justify-between items-center">
-              <p className="font-semibold">Total</p>
+              <p className="font-semibold">{itensAOrcar > 0 ? 'Subtotal conhecido' : 'Total'}</p>
               <p className="text-lg font-bold">
                 {total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
               </p>
             </div>
+            {itensAOrcar > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Total a definir: {itensAOrcar} {itensAOrcar === 1 ? 'item' : 'itens'} a orçar.
+              </p>
+            )}
           </div>
 
           <div className="text-xs text-muted-foreground">

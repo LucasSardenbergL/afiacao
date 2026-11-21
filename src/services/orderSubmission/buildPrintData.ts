@@ -8,7 +8,7 @@ import type {
   ServiceCartItem,
 } from '@/hooks/unifiedOrder/types';
 import type { DeliveryOption } from '@/types';
-import { findParcelaDesc, getToolName } from './helpers';
+import { findParcelaDesc, getToolName, precoServicoParaExibicao } from './helpers';
 // Impressão sai do app: razão de MEI sem o CPF do titular (M1, 2026-11-11). `razao_fiscal` nunca vem aqui.
 import { razaoSemCpf } from '@/lib/omie/razao-exibicao';
 
@@ -131,14 +131,15 @@ export function buildPrintData(params: BuildPrintDataParams): PrintOrderData[] {
       customerPhone,
       condPagamento: afiacaoMethod === 'a_vista' ? 'À Vista' : afiacaoMethod,
       items: serviceItems.map(c => {
-        const price = getServicePrice(c) || 0;
+        // B4 (rodada 2): a orçar sai "—" no cupom (o layout já aceita null), nunca R$ 0,00.
+        const price = precoServicoParaExibicao(getServicePrice(c));
         return {
           codigo: c.servico?.omie_codigo_servico?.toString() || '-',
           descricao: c.servico?.descricao || getToolName(c.userTool),
           quantidade: c.quantity,
           unidade: 'SV',
           valorUnitario: price,
-          valorTotal: price * c.quantity,
+          valorTotal: price === null ? null : price * c.quantity,
         };
       }),
       subtotal: serviceSubtotal,

@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { useUnifiedOrder, type Product } from '@/hooks/useUnifiedOrder';
 import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
 import { useOrderDraft } from '@/hooks/useOrderDraft';
+import { lerParcelasDoRascunho, type ParcelasDoRascunho } from '@/hooks/unifiedOrder/parcela-manual';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
@@ -308,6 +309,7 @@ const UnifiedOrder = () => {
   // Salva snapshot enquanto vendedor digita; mostra dialog para restaurar se voltar à tela com cart vazio.
   // Limpa após pedido enviado com sucesso (orderSuccessOpen = true).
   const draftScope = user?.id ?? 'anon';
+  const { parcelasManuaisDaSelecao, setSelectedParcelaOben, setSelectedParcelaColacor } = h;
   const draftPayload = useMemo(
     () => ({
       cart: h.cart,
@@ -315,8 +317,10 @@ const UnifiedOrder = () => {
       customerName: h.selectedCustomer?.razao_social ?? null,
       notes: h.notes,
       ordemCompra: h.ordemCompra,
+      // B7 (rodada 2): só o prazo escolhido À MÃO nesta seleção — o do histórico é reaplicado sozinho.
+      parcelasManuais: parcelasManuaisDaSelecao(),
     }),
-    [h.cart, h.selectedCustomer, h.notes, h.ordemCompra],
+    [h.cart, h.selectedCustomer, h.notes, h.ordemCompra, parcelasManuaisDaSelecao],
   );
   const { draft, clear: clearDraft, dismiss: dismissDraft, gravarAgora: gravarRascunhoAgora } = useOrderDraft({
     scopeKey: draftScope,
@@ -365,6 +369,21 @@ const UnifiedOrder = () => {
     }
   }, [h.orderSuccessOpen, h.lastOrderData, isCustomerMode]);
 
+  const parcelasPendentesRef = useRef<{ codigoCliente: number; parcelas: ParcelasDoRascunho } | null>(null);
+  const aplicarParcelasDoRascunho = (p: ParcelasDoRascunho) => {
+    if (p.oben) h.setSelectedParcelaOben(p.oben);
+    if (p.colacor) h.setSelectedParcelaColacor(p.colacor);
+  };
+  const codigoClienteSelecionado = h.selectedCustomer?.codigo_cliente ?? null;
+  useEffect(() => {
+    const pendente = parcelasPendentesRef.current;
+    if (!pendente || codigoClienteSelecionado == null) return;
+    parcelasPendentesRef.current = null;
+    if (pendente.codigoCliente !== codigoClienteSelecionado) return;
+    if (pendente.parcelas.oben) setSelectedParcelaOben(pendente.parcelas.oben);
+    if (pendente.parcelas.colacor) setSelectedParcelaColacor(pendente.parcelas.colacor);
+  }, [codigoClienteSelecionado, setSelectedParcelaOben, setSelectedParcelaColacor]);
+
   const handleRestore = () => {
     if (!draft) return;
     const { state } = draft;
@@ -383,6 +402,16 @@ const UnifiedOrder = () => {
     if (codigoAtual == null && state.customerName) h.setCustomerSearch(state.customerName);
     if (typeof state.notes === 'string') h.setNotes(state.notes);
     if (typeof state.ordemCompra === 'string') h.setOrdemCompra(state.ordemCompra);
+    // B7 (rodada 2): o prazo escolhido à mão volta pelos setters EXPORTADOS (que marcam "manual" na
+    // seleção corrente), então a `ultima_parcela` do histórico não o sobrescreve. Sem cliente na tela,
+    // fica pendente até a vendedora selecionar o cliente DO rascunho (outro cliente = descarta).
+    const parcelas = lerParcelasDoRascunho(state.parcelasManuais);
+    // Codex P1: `codigo_cliente` 0 (cliente aberto pelo 360 sem cadastro Omie) não identifica ninguém —
+    // 0 === 0 aplicaria o prazo de A em B como escolha manual. Sem código positivo, o prazo não volta.
+    if (parcelas && typeof codigoRascunho === 'number' && codigoRascunho > 0) {
+      if (codigoAtual === codigoRascunho) aplicarParcelasDoRascunho(parcelas);
+      else parcelasPendentesRef.current = { codigoCliente: codigoRascunho, parcelas };
+    }
     setRestoreOpen(false);
     // Não limpa o draft — ele será reescrito naturalmente conforme o vendedor edita.
   };
@@ -391,6 +420,7 @@ const UnifiedOrder = () => {
   // quando havia envio pendente; descartar zera os DOIS — senão o próximo pedido idêntico sai
   // como "já enviado" e não é criado.
   const handleDiscardDraft = () => {
+    parcelasPendentesRef.current = null;
     clearDraft();
     h.descartarEnvelope();
     dismissDraft();
@@ -673,6 +703,7 @@ const UnifiedOrder = () => {
           customerName={h.lastOrderData.customerName}
           items={h.lastOrderData.items}
           total={h.lastOrderData.total}
+          itensAOrcar={h.lastOrderData.itensAOrcar}
           orderNumbers={h.lastOrderData.orderNumbers}
           printDataList={h.lastOrderData.printDataList}
           envioConfirmado={h.ultimoEnvioConfirmado}
@@ -685,6 +716,7 @@ const UnifiedOrder = () => {
               customerName: h.lastOrderData!.customerName,
               items: h.lastOrderData!.items,
               total: h.lastOrderData!.total,
+              itensAOrcar: h.lastOrderData!.itensAOrcar,
               orderNumbers: h.lastOrderData!.orderNumbers,
             });
           }}

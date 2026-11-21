@@ -14,7 +14,6 @@ vi.mock('../helpers', async (importOriginal) => {
     ...actual,
     formatCustomerAddress: vi.fn().mockReturnValue('Rua X, 1'),
     resolveCustomerPhone: vi.fn().mockResolvedValue('11999999999'),
-    buildToolInfo: vi.fn().mockReturnValue(''),
     getToolName: vi.fn().mockReturnValue('Tool'),
     findParcelaDesc: vi.fn().mockReturnValue(''),
   };
@@ -834,5 +833,52 @@ describe('submitOrder — OS de Afiação no reenvio (A1)', () => {
     }));
     expect(marcas).toHaveLength(0);
     expect(r.errors.map(e => e.step)).toContain('sync_os_omie');
+  });
+});
+
+// ── Rodada 2, PR B (dados errados ou perdidos) ──
+describe('submitOrder — B4 (a orçar) e B6 (horário da coleta)', () => {
+  const soServico = (over: Partial<SubmitOrderParams> = {}) => {
+    const { client } = makeSupabase();
+    return makeParams({
+      supabase: client,
+      customer: customerSintetico,
+      isCustomerMode: true,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      subtotals: { oben: 0, colacor: 0, service: 0 },
+      ...over,
+    });
+  };
+
+  it('B4: serviço sem preço sai null no resumo (A orçar), mas o payload da OS segue unitPrice 0', async () => {
+    const r = await submitOrder(soServico({ getServicePrice: () => null }));
+    expect(r.lastOrderData?.items[0].unitPrice).toBeNull();
+    expect(r.lastOrderData?.itensAOrcar).toBe(1);
+    const orderData = vi.mocked(syncOrderToOmie).mock.calls[0][1] as unknown as { items: Array<{ unitPrice: number }> };
+    expect(orderData.items[0].unitPrice).toBe(0);
+  });
+
+  it('B4: serviço com preço segue com o preço e itensAOrcar 0', async () => {
+    const r = await submitOrder(soServico({ getServicePrice: () => 45 }));
+    expect(r.lastOrderData?.items[0].unitPrice).toBe(45);
+    expect(r.lastOrderData?.itensAOrcar).toBe(0);
+  });
+
+  it('B6: o horário preferido vai na observação da OS (cObsOS) quando a modalidade usa endereço', async () => {
+    await submitOrder(soServico({ delivery: { option: 'coleta_entrega', selectedAddress: undefined, timeSlot: 'manha' } }));
+    const orderData = vi.mocked(syncOrderToOmie).mock.calls[0][1] as { notes: string };
+    expect(orderData.notes.startsWith('Horário preferido: Parte da Manhã || ')).toBe(true);
+  });
+
+  it('B1: a observação do pedido vai na OS (pedido só de Afiação não a perde)', async () => {
+    await submitOrder(soServico({ meta: { notes: '  Entregar no portao dos fundos ', readyByDate: '', ordemCompra: '' } }));
+    const orderData = vi.mocked(syncOrderToOmie).mock.calls[0][1] as { notes: string };
+    expect(orderData.notes.startsWith('Entregar no portao dos fundos || ')).toBe(true);
+  });
+
+  it('B6: balcão não leva horário (a tela nem mostra o seletor)', async () => {
+    await submitOrder(soServico({ delivery: { option: 'balcao', selectedAddress: undefined, timeSlot: 'manha' } }));
+    const orderData = vi.mocked(syncOrderToOmie).mock.calls[0][1] as { notes: string };
+    expect(orderData.notes).not.toContain('Horário');
   });
 });

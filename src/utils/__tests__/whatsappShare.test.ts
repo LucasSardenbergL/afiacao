@@ -204,3 +204,28 @@ describe('shareOrderViaWhatsApp — desconto de item', () => {
     );
   });
 });
+
+// B4 (rodada 2): serviço a orçar no WhatsApp do Novo Pedido.
+describe('shareOrderViaWhatsApp — itens a orçar (B4)', () => {
+  it('linha sem preço sai "A orçar" e o total vira "Subtotal conhecido" + "Total a definir"', () => {
+    shareOrderViaWhatsApp({
+      customerName: 'ACME',
+      items: [{ description: 'Lixa', quantity: 2, unitPrice: 10 }, { description: 'Afiação serra', quantity: 1, unitPrice: null }],
+      total: 20,
+      itensAOrcar: 1,
+      date: '21/11/2026',
+    });
+    const msg = decodedMessage();
+    expect(msg).toContain('• 1x Afiação serra - A orçar');
+    expect(msg).toContain('*Subtotal conhecido: R$');
+    expect(msg).toContain('Total a definir: 1 item a orçar');
+    expect(msg).not.toContain('*Total:');
+  });
+
+  it('sem itensAOrcar: mensagem de sempre ("*Total:")', () => {
+    shareOrderViaWhatsApp({ customerName: 'ACME', items: [{ description: 'Lixa', quantity: 2, unitPrice: 10 }], total: 20, date: '21/11/2026' });
+    const msg = decodedMessage();
+    expect(msg).toContain('*Total: R$');
+    expect(msg).not.toContain('Subtotal conhecido');
+  });
+});

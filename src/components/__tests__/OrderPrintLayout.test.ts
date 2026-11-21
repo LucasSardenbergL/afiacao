@@ -96,3 +96,24 @@ describe('openPrintOrder — desconto de item no cupom avulso', () => {
     expect(html).not.toContain('aviso interno');
   });
 });
+
+describe('openPrintOrder — B4: serviço a orçar no cupom (rodada 2)', () => {
+  const base: PrintOrderData = { ...comQuebra, quebraDesconto: undefined };
+
+  it('item sem preço unitário: rodapé diz SUBTOTAL CONHECIDO e quantos itens ficaram sem preço', () => {
+    const html = imprimir({
+      ...base,
+      items: [{ ...base.items[0], valorUnitario: null, valorTotal: null }, base.items[1]],
+      total: 50,
+    });
+    expect(html).toContain(`<span>SUBTOTAL CONHECIDO:</span><span>${fmt(50)}</span>`);
+    expect(html).toContain('Total a definir: 1 item sem preço');
+    expect(html).not.toContain('<span>TOTAL:</span>');
+  });
+
+  it('todos com preço: segue o TOTAL de sempre', () => {
+    const html = imprimir({ ...base, total: 50 });
+    expect(html).toContain(`<span>TOTAL:</span><span>${fmt(50)}</span>`);
+    expect(html).not.toContain('SUBTOTAL CONHECIDO');
+  });
+});

@@ -28,6 +28,12 @@ interface ShareOrderParams {
    * Ausente = a mensagem de sempre. Este módulo não confere conta nenhuma — escreve a que recebeu.
    */
   quebraDesconto?: { subtotalBruto: number; descontoTotal: number; itensApurados: number };
+  /**
+   * B4 (rodada 2): quantos itens não têm preço (serviço a orçar). > 0 = a linha do item sai
+   * "A orçar" e o total vira "Subtotal conhecido" + "Total a definir" — nunca R$ 0,00 nem um
+   * "Total" que é só parte do pedido. Ausente/0 = a mensagem de sempre.
+   */
+  itensAOrcar?: number;
 }
 
 export function shareOrderViaWhatsApp({
@@ -37,6 +43,7 @@ export function shareOrderViaWhatsApp({
   orderNumbers = [],
   date = new Date(),
   quebraDesconto,
+  itensAOrcar = 0,
 }: ShareOrderParams) {
   const itemsList = items
     .map(
@@ -47,7 +54,8 @@ export function shareOrderViaWhatsApp({
         // `lineTotal` null também não cai na conta bruta: é "não sei o líquido", e sai "—".
         const totalLinha =
           item.lineTotal !== undefined ? item.lineTotal : totalLinhaOuAusente(item.quantity, item.unitPrice);
-        return `• ${item.quantity}x ${item.description}${tintInfo} - ${formatPrecoOuAusente(totalLinha)}`;
+        const valor = itensAOrcar > 0 && item.unitPrice === null ? 'A orçar' : formatPrecoOuAusente(totalLinha);
+        return `• ${item.quantity}x ${item.description}${tintInfo} - ${valor}`;
       }
     )
     .join('\n');
@@ -73,10 +81,12 @@ export function shareOrderViaWhatsApp({
         minute: '2-digit',
       });
 
-  const msg = `*Pedido Colacor*\n\nCliente: ${customerName}${orderInfo}\n\nItens:\n${itemsList}\n\n${descontoInfo}*Total: ${total.toLocaleString(
-    'pt-BR',
-    { style: 'currency', currency: 'BRL' }
-  )}*\n\nData: ${dateStr}`;
+  const totalFmt = total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const totalInfo = itensAOrcar > 0
+    ? `*Subtotal conhecido: ${totalFmt}*\nTotal a definir: ${itensAOrcar} ${itensAOrcar === 1 ? 'item' : 'itens'} a orçar`
+    : `*Total: ${totalFmt}*`;
+
+  const msg = `*Pedido Colacor*\n\nCliente: ${customerName}${orderInfo}\n\nItens:\n${itemsList}\n\n${descontoInfo}${totalInfo}\n\nData: ${dateStr}`;
 
   const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
   window.open(whatsappUrl, '_blank');

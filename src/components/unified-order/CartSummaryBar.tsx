@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 import { Card, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -10,8 +11,7 @@ import {
   Send, Loader2, AlertCircle, Check, ChevronsUpDown, FileText, Calendar, CloudOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { format, addDays, startOfWeek } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { proximosDiasUteis } from '@/components/unified-order/dias-entrega';
 import type {
   ProductCartItem, ServiceCartItem, FormaPagamento,
 } from '@/hooks/useUnifiedOrder';
@@ -177,6 +177,7 @@ export function CartSummaryBar({
   onRecarregarFormas, avisoPrazo,
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
   readyByDate, setReadyByDate,
+  notes, setNotes,
   onSubmit, onSubmitQuote, offline = false,
 }: CartSummaryBarProps) {
   const hasOnlyProducts = (obenProductItems.length > 0 || colacorProductItems.length > 0) && serviceItems.length === 0;
@@ -200,21 +201,8 @@ export function CartSummaryBar({
   );
   const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0 || hasInvalidPrice || condicoesBloqueantes.length > 0;
 
-  // Generate weekdays (Mon-Fri) for current week
-  const weekDays = useMemo(() => {
-    const today = new Date();
-    const monday = startOfWeek(today, { weekStartsOn: 1 });
-    const days: { date: Date; label: string; value: string }[] = [];
-    for (let i = 0; i < 5; i++) {
-      const d = addDays(monday, i);
-      days.push({
-        date: d,
-        label: format(d, "EEEE dd/MM", { locale: ptBR }),
-        value: format(d, 'yyyy-MM-dd'),
-      });
-    }
-    return days;
-  }, []);
+  // B3 (rodada 2): próximos 5 dias úteis a partir de hoje — nunca um dia que já passou.
+  const diasEntrega = useMemo(() => proximosDiasUteis(new Date()), []);
 
   return (
     <>
@@ -287,18 +275,19 @@ export function CartSummaryBar({
           {/* Delivery day picker */}
           {setReadyByDate && (
             <div>
-              <Label className="text-xs font-medium flex items-center gap-1">
-                <Calendar className="h-3 w-3" />
-                Dia de entrega (semana atual)
+              <Label id="rotulo-dia-entrega" className="text-xs font-medium flex items-center gap-1">
+                <Calendar className="h-3 w-3" aria-hidden />
+                Dia de entrega (próximos dias úteis)
               </Label>
-              <div className="flex flex-wrap gap-1.5 mt-1.5">
-                {weekDays.map(d => (
+              <div role="group" aria-labelledby="rotulo-dia-entrega" className="flex flex-wrap gap-1.5 mt-1.5">
+                {diasEntrega.map(d => (
                   <button
                     key={d.value}
                     type="button"
+                    aria-pressed={readyByDate === d.value}
                     onClick={() => setReadyByDate(readyByDate === d.value ? '' : d.value)}
                     className={cn(
-                      "text-xs px-2.5 py-1.5 rounded-md border transition-colors capitalize",
+                      "text-xs min-h-9 [@media(pointer:coarse)]:min-h-11 px-2.5 py-1.5 rounded-md border transition-colors capitalize",
                       readyByDate === d.value
                         ? "bg-primary text-primary-foreground border-primary"
                         : "bg-background border-border hover:bg-accent hover:text-accent-foreground"
@@ -310,6 +299,18 @@ export function CartSummaryBar({
               </div>
             </div>
           )}
+          {/* B1 (rodada 2): `notes` sempre foi enviado (PV, OS e orçamento), mas não havia onde digitá-lo. */}
+          <div>
+            <Label htmlFor="observacoes-pedido" className="text-xs font-medium">Observações do pedido</Label>
+            <Textarea
+              id="observacoes-pedido"
+              rows={2}
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              className="text-sm mt-1"
+              placeholder="Ex.: entregar no portão dos fundos"
+            />
+          </div>
           {serviceItems.some(s => !s.servico) && (
             <p className="text-xs text-status-warning">
               <AlertCircle className="w-3 h-3 inline mr-1" />

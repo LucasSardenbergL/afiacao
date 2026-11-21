@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../helpers', () => ({
+vi.mock('../helpers', async (importOriginal) => ({
+  precoServicoParaExibicao: (await importOriginal<typeof import('../helpers')>()).precoServicoParaExibicao,
   findParcelaDesc: vi.fn((codigo: string) => `desc:${codigo}`),
   getToolName: vi.fn(() => 'FerramentaMock'),
 }));
@@ -154,6 +155,16 @@ describe('buildPrintData', () => {
       codigo: '999', descricao: 'Afiação', quantidade: 3, unidade: 'SV',
       valorUnitario: 25, valorTotal: 75,
     });
+  });
+
+  it('B4: serviço a orçar (preço null ou 0) sai "—" no cupom — valorUnitario/valorTotal null, nunca R$ 0,00', () => {
+    for (const preco of [null, 0]) {
+      const [bloco] = buildPrintData(makeParams({
+        serviceItems: [svcItem()], serviceSubtotal: 0, results: ['OS 1'], getServicePrice: () => preco,
+      }));
+      expect(bloco.items[0].valorUnitario).toBeNull();
+      expect(bloco.items[0].valorTotal).toBeNull();
+    }
   });
 
   it('os três → 3 blocos na ordem Oben, Colacor, Serviço', () => {
