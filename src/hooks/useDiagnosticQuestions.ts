@@ -53,8 +53,9 @@ export const useDiagnosticQuestions = () => {
       cnae?: string;
       customerType?: string;
       healthScore: number;
-      daysSinceLastPurchase?: number;
-      avgMonthlySpend?: number;
+      // null = não medido (calculate-scores v1.8); a edge (blocoCliente/campoNumerico) omite o campo.
+      daysSinceLastPurchase?: number | null;
+      avgMonthlySpend?: number | null;
       categoryCount?: number;
       recentProducts?: string[];
     },
