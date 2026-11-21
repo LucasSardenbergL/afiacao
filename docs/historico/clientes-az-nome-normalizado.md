@@ -54,3 +54,15 @@ então não mexe no começo do A–Z e não faz parte desta entrega.
 O hook `migration-collision-guard` deu 🔴 apontando a predecessora `20261121120001` como "em voo" em 13 worktrees.
 Era falso positivo: o arquivo já está na `origin/main` e o corpo em PROD é idêntico (md5 `46eb4a00…`). A PRE
 anti-deriva da migration é a proteção real contra outra sessão ter recriado a função no meio.
+
+## Incidente pós-merge: `types.ts` duplicado (main vermelha ~43 min)
+
+Linha do tempo (UTC): o founder colou a migration antes do merge → **17:13** o Lovable (`gpt-engineer-app[bot]`,
+`4807f3921` "Work in progress") regenerou `src/integrations/supabase/types.ts` já com `nome_ordenacao` → **17:21** o
+squash do #4061 acrescentou a MESMA linha em outro ponto do bloco (o git mesclou sem conflito) → typecheck da main:
+`TS2300 Duplicate identifier 'nome_ordenacao'` → **18:04** o #4063 (sessão churn-sem-historico) removeu a duplicata.
+
+Lição: com a ordem "migration → Publish" e o apply ANTES do merge, o Lovable regenera o `types.ts` e o tipo que o PR
+editou à mão chega em dobro. Depois do apply, e antes do merge, faça `git fetch` e confira
+`git log origin/main -- src/integrations/supabase/types.ts`: se o bot já trouxe a coluna, rebaseie e tire a sua
+linha. O PR verde não pega isso, porque o CI rodou na base anterior ao commit do bot.
