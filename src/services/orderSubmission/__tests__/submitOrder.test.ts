@@ -48,16 +48,6 @@ function makeSupabase(opts: MakeSupabaseOpts = {}) {
   });
   const insertSelect = vi.fn().mockReturnValue({ single });
   const insert = vi.fn().mockReturnValue({ select: insertSelect });
-  // ── caminho do LOOKUP idempotente: .from('sales_orders')
-  //    .select('id, omie_pedido_id').eq('checkout_id', …).eq('account', …).maybeSingle()
-  //    Fase 0 (sem linha prévia) → sempre null → ensureSalesOrderRow vai pro INSERT. ──
-  const maybeSingle = vi.fn().mockResolvedValue({ data: opts.lookupExisting ?? null, error: null });
-  const eqAccount = vi.fn().mockReturnValue({ maybeSingle });
-  const eqCheckout = vi.fn().mockReturnValue({ eq: eqAccount });
-  const lookupSelect = vi.fn().mockReturnValue({ eq: eqCheckout });
-  // .select() é polimórfico: com args (lookup) usa a cadeia .eq().eq().maybeSingle();
-  // após .insert() (sem args, ou só 'id') usa .single(). Diferenciamos pelo callsite:
-  // o lookup chama from().select(...) direto; o insert chama from().insert().select().single().
   // ── caminho do PREFLIGHT de vendabilidade: .from('omie_products')
   //    .select('id, ativo').in('id', ids). Default: todos os ids do carrinho ATIVOS
   //    (preflight passa) — só `produtosInativos` marca inativo. ──
@@ -74,12 +64,19 @@ function makeSupabase(opts: MakeSupabaseOpts = {}) {
         }),
       };
     }
-    return { insert, select: lookupSelect };
+    return { insert };
   });
   const invoke = vi.fn().mockImplementation(async (_name: string, arg: { body: { action?: string } }) =>
     opts.invokeImpl ? opts.invokeImpl(arg.body) : { data: { omie_numero_pedido: '999' }, error: null },
   );
-  const client = { from, functions: { invoke } } as unknown as SubmitClient;
+  // Lookup idempotente pela RPC pedido_por_checkout (omie_response é fechada por coluna; o select
+  // direto dava 403). Fase 0 (sem linha prévia) → [] → ensureSalesOrderRow vai pro INSERT.
+  const rpc = vi.fn().mockImplementation(async (nome: string) => {
+    if (nome !== 'pedido_por_checkout') throw new Error(`rpc inesperada no teste: ${nome}`);
+    const e = opts.lookupExisting;
+    return { data: e ? [{ id: e.id, omie_pedido_id: e.omie_pedido_id, pv_reconciliado: false, pv_consulta: null }] : [], error: null };
+  });
+  const client = { from, rpc, functions: { invoke } } as unknown as SubmitClient;
   return { client, from, insert, invoke };
 }
 

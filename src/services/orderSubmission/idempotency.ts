@@ -83,31 +83,49 @@ export async function ensureSalesOrderRow(
   const { checkoutId, account, origem, atendimentoId, fields } = args;
 
   type Existente = { id: string; omie_pedido_id: number | null; omie_response?: unknown };
+  // Pela RPC, não por `.from('sales_orders').select(... omie_response)`: omie_response é fechada por
+  // coluna para authenticated (o select direto dava 403 e derrubava todo checkout pelo app). A RPC
+  // devolve 0/1 linha do par (checkout_id, account) e a `consulta` do PV só quando reconciliado —
+  // que é tudo o que pvReconciliadoConfere lê. Migration 20261121160000.
   const findExisting = async (): Promise<Existente | null> => {
     const { data, error } = await supabase
-      .from('sales_orders').select('id, omie_pedido_id, omie_response')
-      .eq('checkout_id', checkoutId).eq('account', account).maybeSingle();
+      .rpc('pedido_por_checkout', { p_checkout_id: checkoutId, p_account: account });
     if (error) throw error;
-    return (data as Existente | null) ?? null;
+    const linhas = (data ?? []) as Array<{
+      id: string; omie_pedido_id: number | null; pv_reconciliado: boolean; pv_consulta: unknown;
+    }>;
+    if (linhas.length > 1) {
+      // UNIQUE (checkout_id, account) garante ≤1; mais que isso é dado quebrado — não escolher às cegas.
+      throw new Error(`pedido_por_checkout devolveu ${linhas.length} linhas para (checkout_id=${checkoutId}, account=${account})`);
+    }
+    const l = linhas[0];
+    if (!l) return null;
+    return {
+      id: l.id,
+      omie_pedido_id: l.omie_pedido_id,
+      omie_response: l.pv_reconciliado ? { reconciled: true, consulta: l.pv_consulta } : null,
+    };
   };
 
-  const existing = await findExisting();
-  const action = decideSalesOrderAction(existing);
-
-  if (action === 'skip') {
-    return { id: existing!.id, alreadySent: true, pvDivergente: !pvReconciliadoConfere(existing!.omie_response, fields.items) };
-  }
-
-  if (action === 'reuse') {
+  // skip/reuse sobre uma linha já lida — o MESMO caminho na 1ª leitura e na re-busca pós-23505
+  // (antes a corrida devolvia alreadySent sem conferir o PV reconciliado e sem atualizar o rascunho
+  // com o carrinho atual — Codex, 2026-11-21).
+  const tratarExistente = async (linha: Existente): Promise<{ id: string; alreadySent: boolean; pvDivergente?: boolean }> => {
+    if (decideSalesOrderAction(linha) === 'skip') {
+      return { id: linha.id, alreadySent: true, pvDivergente: !pvReconciliadoConfere(linha.omie_response, fields.items) };
+    }
     const { error } = await supabase.from('sales_orders').update({
       items: fields.items, subtotal: fields.subtotal, total: fields.total, notes: fields.notes,
       customer_document: fields.customer_document,
       customer_address: fields.customer_address, customer_phone: fields.customer_phone,
       ready_by_date: fields.ready_by_date,
-    }).eq('id', existing!.id);
+    }).eq('id', linha.id);
     if (error) throw error;
-    return { id: existing!.id, alreadySent: false };
-  }
+    return { id: linha.id, alreadySent: false };
+  };
+
+  const existing = await findExisting();
+  if (existing) return tratarExistente(existing);
 
   const { data, error } = await supabase.from('sales_orders').insert({
     ...fields, status: 'rascunho', account, checkout_id: checkoutId, origem, atendimento_id: atendimentoId,
@@ -116,7 +134,7 @@ export async function ensureSalesOrderRow(
   if (error) {
     if ((error as { code?: string }).code === '23505') {
       const raced = await findExisting();
-      if (raced) return { id: raced.id, alreadySent: decideSalesOrderAction(raced) === 'skip' };
+      if (raced) return tratarExistente(raced);
       // 23505 mas a linha conflitante sumiu antes da re-busca (deleção concorrente rara) —
       // erro contextual em vez do PostgresError 23505 opaco (anti-falha-silenciosa).
       throw new Error(

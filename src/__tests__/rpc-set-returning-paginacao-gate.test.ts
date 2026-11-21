@@ -222,6 +222,8 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 1, prova: '`SELECT count(*) FILTER (…), count(*) FILTER (…) FROM pedidos` — agregado sem GROUP BY, 1 linha sempre (medido em prod 2026-10-11)' }],
   ['resolver_cliente_por_telefone @ src/lib/call-session/resolve-customer.ts',
     { tipo: 'estrutural', teto: 1, prova: 'único `RETURN QUERY … LIMIT 1`; os demais ramos são `RETURN;` vazio — no máximo 1 linha (medido em prod 2026-10-11)' }],
+  ['pedido_por_checkout @ src/services/orderSubmission/idempotency.ts',
+    { tipo: 'estrutural', teto: 1, prova: '`WHERE checkout_id = p_checkout_id AND account = p_account` sobre o UNIQUE sales_orders_checkout_account_uq — no máximo 1 linha (o caller ainda recusa >1)' }],
   ['reverter_run_auto @ src/hooks/useParamAutoMudancas.ts',
     { tipo: 'estrutural', teto: 1, prova: 'um `RETURN NEXT` fora de laço' }],
   // 2026-10-11: entraram quando o types.ts regenerado (pós-migration 20261010204708) passou a

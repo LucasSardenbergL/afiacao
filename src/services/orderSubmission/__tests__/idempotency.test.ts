@@ -14,16 +14,25 @@ describe('decideSalesOrderAction', () => {
   });
 });
 
+// A busca da linha é pela RPC pedido_por_checkout (omie_response é fechada por coluna — o select
+// direto dava 403). O fake devolve o que a RPC devolveria: a consulta do PV só quando
+// `reconciled === true`. `.from().select()` direto PROÍBE a leitura (era o vetor do 403).
 function makeFakeSupabase(opts: {
-  existing?: { id: string; omie_pedido_id: number | null } | null;
+  existing?: { id: string; omie_pedido_id: number | null; omie_response?: unknown } | null;
   insertResult?: { data: { id: string } | null; error: { code?: string } | null };
 }) {
-  const calls = { inserted: false, updated: false };
+  const calls = { inserted: false, updated: false, rpc: [] as Array<[string, unknown]> };
   const fake = {
     from() { return this; },
-    select() { return this; },
-    eq() { return this; },
-    maybeSingle: async () => ({ data: opts.existing ?? null, error: null }),
+    select() { throw new Error('leitura direta de sales_orders — use a RPC pedido_por_checkout'); },
+    rpc: async (nome: string, args: unknown) => {
+      calls.rpc.push([nome, args]);
+      const e = opts.existing;
+      if (!e) return { data: [], error: null };
+      const r = e.omie_response as { reconciled?: unknown; consulta?: unknown } | null | undefined;
+      const rec = r?.reconciled === true;
+      return { data: [{ id: e.id, omie_pedido_id: e.omie_pedido_id, pv_reconciliado: rec, pv_consulta: rec ? r?.consulta ?? null : null }], error: null };
+    },
     insert(_r: unknown) { calls.inserted = true; return {
       select() { return this; },
       single: async () => opts.insertResult ?? { data: { id: 'NEW' }, error: null },
@@ -45,6 +54,24 @@ describe('ensureSalesOrderRow', () => {
     expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'X', alreadySent: false });
     expect(calls.inserted).toBe(true);
   });
+  it('busca a linha pela RPC pedido_por_checkout com o par (checkout_id, account) — não pelo select da coluna fechada', async () => {
+    const { fake, calls } = makeFakeSupabase({ existing: null });
+    await ensureSalesOrderRow(fake, baseArgs);
+    expect(calls.rpc).toEqual([['pedido_por_checkout', { p_checkout_id: 'ck-1', p_account: 'oben' }]]);
+  });
+  it('RPC devolvendo >1 linha é dado quebrado → erro, nunca escolhe às cegas', async () => {
+    const { fake } = makeFakeSupabase({ existing: null });
+    (fake as unknown as { rpc: unknown }).rpc = async () => ({
+      data: [{ id: 'A', omie_pedido_id: 1, pv_reconciliado: false, pv_consulta: null },
+             { id: 'B', omie_pedido_id: 2, pv_reconciliado: false, pv_consulta: null }], error: null });
+    await expect(ensureSalesOrderRow(fake, baseArgs)).rejects.toThrow(/devolveu 2 linhas/);
+  });
+  it('erro da RPC (ex.: 42501) propaga — não vira "linha inexistente"', async () => {
+    const { fake, calls } = makeFakeSupabase({ existing: null });
+    (fake as unknown as { rpc: unknown }).rpc = async () => ({ data: null, error: { code: '42501', message: 'PEDIDO_POR_CHECKOUT_ACESSO' } });
+    await expect(ensureSalesOrderRow(fake, baseArgs)).rejects.toMatchObject({ code: '42501' });
+    expect(calls.inserted).toBe(false);
+  });
   it('existe com omie_pedido_id → skip (alreadySent=true), não muta', async () => {
     const { fake, calls } = makeFakeSupabase({ existing: { id: 'Y', omie_pedido_id: 99 } });
     expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'Y', alreadySent: true, pvDivergente: false });
@@ -57,28 +84,43 @@ describe('ensureSalesOrderRow', () => {
   });
   it('corrida: insert 23505 → re-busca e reusa', async () => {
     let n = 0;
+    let atualizou = false;
     const fake = {
-      from() { return this; }, select() { return this; }, eq() { return this; },
-      maybeSingle: async () => (++n === 1 ? { data: null, error: null } : { data: { id: 'RACED', omie_pedido_id: null }, error: null }),
+      from() { return this; },
+      rpc: async () => (++n === 1 ? { data: [], error: null } : { data: [{ id: 'RACED', omie_pedido_id: null, pv_reconciliado: false, pv_consulta: null }], error: null }),
       insert() { return { select() { return this; }, single: async () => ({ data: null, error: { code: '23505' } }) }; },
-      update() { return { eq: async () => ({ error: null }) }; },
+      update() { atualizou = true; return { eq: async () => ({ error: null }) }; },
     } as unknown as SubmitClient;
     expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'RACED', alreadySent: false });
+    // o rascunho da tentativa vencedora recebe o carrinho ATUAL (mesmo caminho do reuse) — Codex P2
+    expect(atualizou).toBe(true);
   });
   it('corrida: insert 23505 → re-busca acha linha JÁ no Omie → skip (alreadySent=true)', async () => {
     let n = 0;
     const fake = {
-      from() { return this; }, select() { return this; }, eq() { return this; },
-      maybeSingle: async () => (++n === 1 ? { data: null, error: null } : { data: { id: 'RACED2', omie_pedido_id: 77 }, error: null }),
+      from() { return this; },
+      rpc: async () => (++n === 1 ? { data: [], error: null } : { data: [{ id: 'RACED2', omie_pedido_id: 77, pv_reconciliado: false, pv_consulta: null }], error: null }),
       insert() { return { select() { return this; }, single: async () => ({ data: null, error: { code: '23505' } }) }; },
       update() { return { eq: async () => ({ error: null }) }; },
     } as unknown as SubmitClient;
-    expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'RACED2', alreadySent: true });
+    expect(await ensureSalesOrderRow(fake, baseArgs)).toEqual({ id: 'RACED2', alreadySent: true, pvDivergente: false });
+  });
+  it('corrida: 23505 → re-busca acha PV RECONCILIADO divergente → pvDivergente (nunca "já enviado" às cegas) — Codex P1', async () => {
+    let n = 0;
+    const consulta = { pedido_venda_produto: { det: [{ produto: { codigo_produto: 1, quantidade: 3 } }] } };
+    const fake = {
+      from() { return this; },
+      rpc: async () => (++n === 1 ? { data: [], error: null } : { data: [{ id: 'RACED3', omie_pedido_id: 78, pv_reconciliado: true, pv_consulta: consulta }], error: null }),
+      insert() { return { select() { return this; }, single: async () => ({ data: null, error: { code: '23505' } }) }; },
+      update() { throw new Error('não deve atualizar linha já no Omie'); },
+    } as unknown as SubmitClient;
+    const args = { ...baseArgs, fields: { ...baseArgs.fields, items: [{ omie_codigo_produto: 1, quantidade: 2 }] } };
+    expect(await ensureSalesOrderRow(fake, args as never)).toEqual({ id: 'RACED3', alreadySent: true, pvDivergente: true });
   });
   it('corrida: insert 23505 mas a linha sumiu (raced=null) → erro contextual', async () => {
     const fake = {
-      from() { return this; }, select() { return this; }, eq() { return this; },
-      maybeSingle: async () => ({ data: null, error: null }),
+      from() { return this; },
+      rpc: async () => ({ data: [], error: null }),
       insert() { return { select() { return this; }, single: async () => ({ data: null, error: { code: '23505' } }) }; },
       update() { return { eq: async () => ({ error: null }) }; },
     } as unknown as SubmitClient;

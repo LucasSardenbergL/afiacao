@@ -177,3 +177,25 @@ porque mockam o supabase, que não conhece o ACL.
   (`src/services/orderSubmission/idempotency.ts`) lê `omie_response`, também fechada (psql-ro
   2026-11-21: `has_column_privilege` = f) desde o #2932. O checkout pelo app tomaria 403. Não houve
   nenhum pedido criado pelo app desde setembro, então os dados não mostram isso.
+
+### 2026-11-21 — o checkout lia `omie_response` (403 em prod), consertado
+
+- **Causa:** `ensureSalesOrderRow` pedia `id, omie_pedido_id, omie_response` direto. Sem GRANT de
+  coluna em `omie_response`, o PostgREST recusa a leitura inteira, e o checkout pelo app falhava antes
+  de inserir o pedido. Entrou pelo #2932 (conferência do PV reconciliado).
+- **Conserto:** RPC `pedido_por_checkout(uuid, text)` (migration `20261121160000`, SECURITY DEFINER,
+  gate = service_role ou `private.cap_pedido_escrever`, a mesma capability do INSERT). Devolve 0 ou 1
+  linha do par `(checkout_id, account)` e, só quando `reconciled` é literalmente `true`, a `consulta`
+  do PV. O resto de `omie_response` não sai. Prova: `db/test-pedido-por-checkout.sh` (17 asserts,
+  K1 reproduz o 42501 do select antigo, 2 locales, 9 sabotagens).
+- **Classe:** a lista `CONHECIDOS` de `scripts/authz-select-colunas.test.ts` ficou vazia.
+- **Codex (money-path):** sem achado na RPC. Apontou que a re-busca pós-23505 devolvia "já enviado"
+  sem conferir o PV reconciliado (P1) e sem atualizar o rascunho com o carrinho atual (P2). Os dois
+  foram consertados (o ramo da corrida passa pelo mesmo skip/reuse, falsificado). Fica de fora o P3:
+  o `UPDATE` do reuse filtra só por `id`, e uma corrida com o vínculo do PV pode sobrescrever a
+  observação local de um pedido já enviado. A edge recusa o reenvio, então o pedido no Omie não muda.
+- **Aplicada:** `db:aplicar`, recibo #1271 (2026-11-21), conferida por psql-ro.
+- **`types.ts`:** com o apply antes do merge, o bot do Lovable regenerou o `types.ts` da main já com
+  `pedido_por_checkout`, em outro ponto do bloco. O git mesclaria sem conflito e duplicaria a chave.
+  Conferido com `git log origin/main -- src/integrations/supabase/types.ts` antes do merge, como
+  manda a lição do #4061, e a cópia feita à mão foi retirada.
