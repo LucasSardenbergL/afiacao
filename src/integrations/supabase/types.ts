@@ -2469,6 +2469,21 @@ export type Database = {
         }
         Relationships: []
       }
+      credito_virada_piso_parcial: {
+        Row: {
+          aplicada_em: string
+          id: boolean
+        }
+        Insert: {
+          aplicada_em?: string
+          id?: boolean
+        }
+        Update: {
+          aplicada_em?: string
+          id?: boolean
+        }
+        Relationships: []
+      }
       cte_associados: {
         Row: {
           chave_acesso_cte: string
