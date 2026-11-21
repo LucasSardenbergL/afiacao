@@ -687,7 +687,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       if (!result.success && result.motivo === 'aguardar') {
         // Uma tentativa anterior ainda pode estar criando a OS: reenviar DEPOIS é a instrução certa.
         results.push('OS Afiação (aguardando tentativa anterior)');
-        errors.push({ step: 'sync_os_omie', message: result.error || 'Uma tentativa anterior ainda pode criar a OS. Aguarde alguns minutos e reenvie.' });
+        errors.push({ step: 'aguardar_os_afiacao', message: result.error || 'Uma tentativa anterior ainda pode criar a OS. Aguarde alguns minutos e reenvie.' });
       } else if (!result.success && result.motivo) {
         // Cancelada, excluída ou pedido que mudou durante a criação: ação no Omie, não reenvio.
         results.push('OS Afiação (conferir no Omie)');
@@ -806,7 +806,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       e.step === 'bloqueio_tint_oben' || e.step === 'bloqueio_atp_oben' ||
       e.step === 'bloqueio_desconhecido_oben' || e.step === 'bloqueio_desconhecido_colacor' ||
       e.step === 'pv_divergente_oben' || e.step === 'pv_divergente_colacor' ||
-      e.step.startsWith('afiacao_')),
+      e.step.startsWith('afiacao_') || e.step === 'aguardar_os_afiacao'),
     bloqueiosCredito,
     bloqueioAtp,
   };

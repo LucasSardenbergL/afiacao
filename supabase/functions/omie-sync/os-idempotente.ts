@@ -44,6 +44,9 @@ export interface DepsOS {
     reservadaAntesDe: string,
     nova: { chave_integracao: string; assinatura: string; omie_codigo_cliente: number; reservado_em: string },
   ): Promise<boolean>;
+  /** ADQUIRE a reserva para incluir: renova `reservado_em` só se ela segue nesta chave e sem OS.
+   *  true = esta chamada pode chamar o IncluirOS (e a janela de reabertura recomeça). */
+  adquirir(orderId: string, chave: string, agoraIso: string): Promise<boolean>;
   /** Grava a OS só se a reserva ainda estiver nesta chave e sem OS. true = esta chamada vinculou. */
   vincular(orderId: string, chave: string, os: { nCodOS: number; cNumOS: string; desfecho: "incluida" | "reconciliada" }): Promise<boolean>;
   incluirOS(osParams: Record<string, unknown>): Promise<unknown>;
@@ -167,6 +170,12 @@ export async function criarOuReconciliarOS(
     // 4. Mesmo carrinho, OS já vinculada: a resposta anterior se perdeu. Ela segue ativa no Omie?
     const c = await consultarNossa(deps, chave, cliente);
     if (c.achou) {
+      if (c.achou.nCodOS !== Number(reserva.omie_codigo_os)) {
+        // Mesma chave, OUTRA OS: o vínculo local (usado por alterar/excluir) não é a OS do Omie.
+        throw new Error(
+          `A OS vinculada a este pedido (${reserva.omie_codigo_os}) difere da que o Omie devolve pela chave (${c.achou.nCodOS}) — confira no Omie.`,
+        );
+      }
       return {
         nCodOS: c.achou.nCodOS, cNumOS: c.achou.cNumOS, reconciliada: true, primeiro: false,
         conferencia: "confere", payloadEnviado: null, resposta: null,
@@ -181,7 +190,15 @@ export async function criarOuReconciliarOS(
     throw naoConferiu(c);
   }
 
-  // 5. Inclusão com a chave do conteúdo.
+  // 5. Inclusão com a chave do conteúdo. Antes, ADQUIRE a reserva (renova o prazo no banco): enquanto
+  //    este IncluirOS pode concluir, nenhum outro carrinho reabre a reserva (Codex, 4ª rodada — o
+  //    reenvio de uma reserva antiga entrava em voo com o prazo vencido).
+  if (!(await deps.adquirir(orderId, chave, new Date(agora).toISOString()))) {
+    throw new OsAcaoNoOmieError(
+      "aguardar", null,
+      "Outro envio deste pedido mexeu na reserva da OS agora — nada foi criado. Aguarde alguns minutos e reenvie.",
+    );
+  }
   const payload = args.montarPayload(chave);
   let criada: { nCodOS: number; cNumOS: string } | null = null;
   let resposta: unknown = null;

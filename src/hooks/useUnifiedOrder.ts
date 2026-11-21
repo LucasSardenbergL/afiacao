@@ -1061,7 +1061,7 @@ export function useUnifiedOrder() {
             toast.warning('Envio bloqueado por crédito', {
               description: 'O PV não foi criado no Omie. Um gestor pode aprovar uma exceção para este pedido — depois é só reenviar.',
             });
-          } else if (result.errors.some(e => e.step.startsWith('afiacao_'))) {
+          } else if (result.errors.some(e => e.step.startsWith('afiacao_') || e.step === 'aguardar_os_afiacao')) {
             // Só a OS pede ação (o toast específico vai abaixo) — "reenvie" seria a instrução errada.
           } else {
             // Sucesso PARCIAL: NÃO limpar o carrinho nem resetar o envelope — o retry (mesma fp)
@@ -1077,9 +1077,15 @@ export function useUnifiedOrder() {
           // OS de Afiação que pede AÇÃO no Omie (divergente, sem confirmação, cancelada, excluída):
           // toast PRÓPRIO, independente do bloqueio de crédito/ATP do mesmo envio (Codex P2).
           const acoesOs = result.errors.filter(e => e.step.startsWith('afiacao_'));
+          const aguardarOs = result.errors.filter(e => e.step === 'aguardar_os_afiacao');
           if (acoesOs.length > 0) {
             toast.error('OS de Afiação: confira no Omie', {
               description: acoesOs.map(e => e.message).join(' | '),
+            });
+          } else if (aguardarOs.length > 0) {
+            // Uma instrução só, com o prazo (Codex P3): nem "parcialmente enviado" nem "criado com avisos".
+            toast.warning('OS de Afiação em processamento', {
+              description: aguardarOs.map(e => e.message).join(' | '),
             });
           }
           // Avisos não-bloqueio: "criado com avisos". Bloqueios (crédito/ATP/desconhecido)
@@ -1089,7 +1095,7 @@ export function useUnifiedOrder() {
             !e.step.startsWith('bloqueio_credito') &&
             !e.step.startsWith('bloqueio_atp') &&
             !e.step.startsWith('bloqueio_desconhecido') &&
-            !e.step.startsWith('afiacao_'));
+            !e.step.startsWith('afiacao_') && e.step !== 'aguardar_os_afiacao');
           if (avisos.length > 0) {
             toast.success('Pedido criado com avisos', {
               description: avisos.map(e => e.message).join(' | '),

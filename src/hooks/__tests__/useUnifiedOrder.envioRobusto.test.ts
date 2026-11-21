@@ -46,7 +46,8 @@ describe('useUnifiedOrder — fiação das guardas de envio', () => {
     const corpo = corpoDo('submitOrder');
     expect(corpo).toContain("const acoesOs = result.errors.filter(e => e.step.startsWith('afiacao_'));");
     expect(corpo).toContain("toast.error('OS de Afiação: confira no Omie', {");
-    expect(corpo).toContain("!e.step.startsWith('afiacao_'));");
+    expect(corpo).toContain("!e.step.startsWith('afiacao_') && e.step !== 'aguardar_os_afiacao');");
+    expect(corpo).toContain("toast.warning('OS de Afiação em processamento', {");
   });
 
   it('A4: orçamento parcial NÃO limpa o carrinho inteiro', () => {

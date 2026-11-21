@@ -40,7 +40,7 @@ export function montarAssinaturaOS(
   assinaturaFront: unknown,
   omieCodigoCliente: number,
   orderData: {
-    items?: Array<{ userToolId?: unknown; omie_codigo_servico?: unknown; quantity?: unknown; unitPrice?: unknown }>;
+    items?: Array<{ userToolId?: unknown; omie_codigo_servico?: unknown; quantity?: unknown; unitPrice?: unknown; category?: unknown }>;
     delivery_fee?: unknown;
     total?: unknown;
     payment_method?: unknown;
@@ -48,7 +48,8 @@ export function montarAssinaturaOS(
 ): string {
   const front = typeof assinaturaFront === "string" && assinaturaFront.trim() !== "" ? assinaturaFront : "legado";
   const itens = (orderData.items ?? [])
-    .map((i) => `${String(i.userToolId ?? "-")}:${String(i.omie_codigo_servico ?? "-")}:${String(i.quantity ?? "-")}:${centavos(i.unitPrice)}`)
+    // `category` vira o cDescServ do serviço avulso (sem código) — muda o que o Omie recebe (Codex, 4ª rodada).
+    .map((i) => `${String(i.userToolId ?? "-")}:${String(i.omie_codigo_servico ?? "-")}:${String(i.quantity ?? "-")}:${centavos(i.unitPrice)}:${encodeURIComponent(String(i.category ?? "-"))}`)
     .sort()
     .join("|");
   return [
@@ -108,6 +109,8 @@ export function inclusaoValida(resposta: unknown, chave: string): { nCodOS: numb
  *  normalizado em ASCII. Mensagem que não casa = "não sei" — fail-closed: não reabre nada. */
 export function ausenciaDaOS(mensagem: string): boolean {
   const t = mensagem.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  if (!t.includes("ordem de servico")) return false;
-  return ["nao cadastrad", "nao encontrad", "nao existe"].some((m) => t.includes(m));
+  // A negação tem de ser DA OS ("Ordem de Serviço não cadastrada…"), e nenhuma outra entidade pode
+  // aparecer negada ("Cliente da Ordem de Serviço não cadastrado" é sobre o cliente — Codex, 4ª rodada).
+  if (/\b(cliente|vendedor|produto|servico prestado|conta|categoria|projeto)\b[^.!]*\bnao (cadastrad|encontrad|exist)/.test(t)) return false;
+  return /\bordem de servico\s+(\S+\s+){0,1}nao (cadastrad|encontrad|exist)/.test(t);
 }

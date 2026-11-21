@@ -623,6 +623,14 @@ async function criarOrdemServicoOmie(
       if (error) throw new Error(`Reabrir a reserva da OS falhou: ${error.message}`);
       return (data ?? []).length === 1;
     },
+    async adquirir(id, chave, agoraIso) {
+      const { data, error } = await supabase.from("afiacao_os_envio")
+        .update({ reservado_em: agoraIso })
+        .eq("order_id", id).eq("chave_integracao", chave).is("omie_codigo_os", null)
+        .select("order_id");
+      if (error) throw new Error(`Adquirir a reserva da OS falhou: ${error.message}`);
+      return (data ?? []).length === 1;
+    },
     async vincular(id, chave, os) {
       const { data, error } = await supabase.from("afiacao_os_envio")
         .update({

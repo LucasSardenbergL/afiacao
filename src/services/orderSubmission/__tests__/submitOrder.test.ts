@@ -740,7 +740,7 @@ describe('submitOrder — OS de Afiação no reenvio (A1)', () => {
     expect(r.results).not.toContain('OS OS1 (já enviada)');
   });
 
-  it('edge pede para AGUARDAR (tentativa anterior em voo) → sync_os_omie com a instrução, sem marca', async () => {
+  it('edge pede para AGUARDAR (tentativa anterior em voo) → aguardar_os_afiacao com a instrução, sem marca', async () => {
     vi.mocked(syncOrderToOmie).mockResolvedValueOnce(
       { success: false, motivo: 'aguardar', error: 'Aguarde alguns minutos e reenvie.' } as never);
     const { client } = makeSupabase();
@@ -751,7 +751,7 @@ describe('submitOrder — OS de Afiação no reenvio (A1)', () => {
       aoConfirmarOsAfiacao: (m) => marcas.push(m),
     }));
     expect(marcas).toHaveLength(0);
-    expect(r.errors.find(e => e.step === 'sync_os_omie')?.message).toContain('Aguarde alguns minutos');
+    expect(r.errors.find(e => e.step === 'aguardar_os_afiacao')?.message).toContain('Aguarde alguns minutos');
     expect(r.allConfirmed).toBe(false);
   });
 
