@@ -70,3 +70,28 @@ Migration `20261121160000_credito_limite_reserva_decisao.sql`, **sem edge nem Pu
 - **Aplicada em prod 2026-11-21 19:22 UTC** pelo envelope (`db:aplicar`, tentativa #1274, sha256 `248bfaf1…`, commit `35d5c84a6` = main com #4066), o mesmo sha do ensaio. 2ª testemunha psql-ro: 7/7 tabelas com RLS e as 2 guardas; 0 grants fora da allowlist; `private.credito_avaliar_reservar` sem EXECUTE para anon/authenticated/service_role/sandbox; funções do aprovador só `authenticated`, as de proposta/grupo só `service_role`; allowlist = {Lucas}; ledger `aplicada`.
 - **Fora do PR 2 (declarado):** frescor e cobertura do sync no gate, transferência comprovada reserva→título com residual de faturamento parcial (P0-2 Codex), carga e reconciliação dos PVs abertos antes de ligar (P1-7) → PR 5. Revisão imutável e RPC pública por revisão → PR 3/5.
 - Rollback: `DROP` das 7 tabelas e das funções novas (founder, SQL Editor). Não há dado de negócio até o PR 4.
+
+## Correção: o piso enxerga PAGTO PARCIAL e saldo ausente (2026-11-21, migration `20261121200000`)
+
+**O furo (psql-ro 2026-11-21):** `status_titulo = 'PAGTO PARCIAL'` ficava fora do `IN (...)` do piso. Havia 45 títulos (R$ 60,7k), 28 deles vencidos > 60 d, em 22 pares. Em 13 desses pares nenhum outro título bloqueava, então a **venda saía**. O núcleo do PR 2 já lia o status. Além disso, o filtro `saldo > 0` deixava invisível qualquer título de saldo NULL (fail-open; 0 casos hoje).
+
+**Decisões (Codex desenho + diff):**
+
+| Caso | Antes | Depois |
+|---|---|---|
+| PAGTO PARCIAL vencido > 60 d | invisível | **bloqueia** (o status prova resíduo), com **qualquer** saldo espelhado (0/NULL contradiz o status, não o desmente) |
+| Valor dele | — | **indeterminado**: `saldo` é o valor CHEIO (`valor_recebido` nunca é preenchido) → `pares[].vencido = null`; o total sai `null` se algum título for indeterminado; chaves novas `valor_indeterminado`, `titulos_indeterminados`, `titulos_comprovados` |
+| Título aberto com saldo NULL (vencido ou sem vencimento), ou saldo > 0 sem vencimento | invisível | **segura**, `motivo='piso_indeterminado'` |
+| Exceção com título indeterminado no escopo | — | só cobre se foi aprovada **depois** de um log de bloqueio do (pedido, empresa) gerado **após** a virada (`credito_virada_piso_parcial`). Quem aprovou lendo o log antigo não viu o parcial → `excecao_anterior_nao_cobre_parcial` |
+| PR 2 (`private.credito_avaliar_reservar`) | — | corpo de prod (= repo) + 1 condição: piso que segura **só** por indeterminado → amarelo `piso_indeterminado` (não vermelho). Divergência mantida: PAGTO PARCIAL com exceção válida → vendas libera, o PR 2 segue vermelho |
+| ACL | EXECUTE para `sandbox_exec_*` (BYPASSRLS) nas 3 funções; `credito_virada_grupo` com ALL para anon/authenticated (TRUNCATE passa por cima da RLS) | allowlist via `aclexplode`: owner + `service_role` (+ SELECT do `claude_ro` nas tabelas de marco); postcondição pelo privilégio **efetivo** |
+
+**Front (Publish):** par de valor indeterminado aparece como "valor a confirmar" (antes sumia), na mensagem do vendedor, no parser do log e no diálogo. A mensagem distingue `piso_indeterminado` e `excecao_anterior_nao_cobre_parcial`. Exceção que o gate recusou (o bloqueio é mais novo que ela) **não esconde** mais o formulário. Isso também desfaz o laço "já aprovada, reenvie" que o PR 1 tinha com `excecao_anterior_nao_cobre_grupo`.
+
+**Lição (pega pelo teste, não pela revisão):** `saldo NULL > 0` vale NULL, não false. NULL some de `count(*) FILTER` e de `bool_and`, então um título de saldo NULL no MESMO par de um título conhecido escondia a indeterminação (total = 300). Corrigido com `COALESCE(..., false)` e sabotado (F2b).
+
+**Prova:** `db/test-credito-piso-pagto-parcial.sh` (144 asserts × controle + re-prova; 14 sabotagens + postcondição F9; executa e falsifica o ensaio de prod V1-V4) e `db/test-credito-limite-reserva.sh` (205, agora aplica a migration nova por cima, inclusive depois de cada sabotagem). Verde em `C` e `pt_BR.UTF-8`. Redundâncias declaradas: SUM→EXISTS na virada do grupo (a virada própria já segura, só muda o `motivo`).
+
+**Deploy:** migration (envelope `db:aplicar`) + Publish, em qualquer ordem. Front velho com banco novo: o par null é descartado (degrada, segura igual). **Sem edge** (a edge decide por `bloqueado` e loga `=null`; o tipo `pares[].vencido: number` dela é só de tipagem). Verificação comportamental de prod: `bun run db:aplicar db/verifica-credito-piso-pagto-parcial.sql --ensaio` (o `claude_ro` não executa o gate, por desenho).
+
+**Fora do escopo:** `PAGTO PARCIAL` segue fora de `OPEN_TITLE_STATUSES` (cashflow/NCG somaria o valor cheio — decisão do domínio financeiro).

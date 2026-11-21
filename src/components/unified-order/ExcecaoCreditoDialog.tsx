@@ -25,6 +25,7 @@ import {
   useAprovarExcecaoCredito,
   useBloqueioCreditoLog,
   useExcecaoCreditoVigente,
+  excecaoAindaVale,
   type ContextoBloqueioCredito, paresDoDetalheLog } from '@/hooks/useExcecaoCredito';
 import { formatBRL, formatDate } from '@/lib/reposicao';
 import { track } from '@/lib/analytics';
@@ -54,15 +55,20 @@ const contaLabel = (account: 'oben' | 'colacor') => (account === 'oben' ? 'Oben'
 const EMPRESA_LABEL = { oben: 'Oben', colacor: 'Colacor', colacor_sc: 'Colacor SC' } as const;
 /** "Colacor SC R$ 500,00 · Oben R$ 150,00" — a dívida pode estar em OUTRA empresa do grupo. */
 const porEmpresa = (ctx: ContextoBloqueioCredito) =>
-  (ctx.pares ?? []).map((p) => `${EMPRESA_LABEL[p.company]} ${formatBRL(p.vencido)}`).join(' · ');
+  (ctx.pares ?? [])
+    .map((p) => `${EMPRESA_LABEL[p.company]} ${p.vencido === null ? 'valor a confirmar' : formatBRL(p.vencido)}`)
+    .join(' · ');
 
 function resumoParaGestor(salesOrderId: string, ctx: ContextoBloqueioCredito): string {
-  const valor = typeof ctx.vencido === 'number' ? formatBRL(ctx.vencido) : 'valor não informado';
   const titulos = ctx.titulos ? ` (${ctx.titulos} título${ctx.titulos > 1 ? 's' : ''})` : '';
+  // valor null = indeterminado: pagamento parcial ou saldo/vencimento ausente — não afirmar atraso exato
+  const bloqueioTxt = typeof ctx.vencido === 'number'
+    ? `${formatBRL(ctx.vencido)} vencido há 60+ dias${titulos}`
+    : `valor a confirmar${titulos} — vencido há 60+ dias com pagamento parcial, ou título sem saldo/vencimento informado`;
   return (
     `Preciso de aprovação de exceção de crédito:\n` +
     `Cliente: ${ctx.nomeCliente} (código ${ctx.omieCodigoCliente} — conta ${contaLabel(ctx.account)})\n` +
-    `Bloqueio: ${valor} vencido há 60+ dias${titulos}\n` +
+    `Bloqueio: ${bloqueioTxt}\n` +
     (ctx.pares?.length ? `Por empresa do grupo: ${porEmpresa(ctx)}\n` : '') +
     `Pedido: ${salesOrderId}\n` +
     `Como aprovar: Pedidos → abrir o pedido do cliente → botão "Crédito" → Aprovar exceção. Depois eu reenvio o pedido.`
@@ -92,7 +98,8 @@ export function ExcecaoCreditoDialog({
   const [motivo, setMotivo] = useState('');
   const [validadeDias, setValidadeDias] = useState('7');
 
-  const logQuery = useBloqueioCreditoLog(salesOrderId, open && !bloqueio);
+  // sempre lido: além do contexto remoto, diz se o gate recusou a exceção vigente (bloqueou depois dela)
+  const logQuery = useBloqueioCreditoLog(salesOrderId, open);
   const excecaoQuery = useExcecaoCreditoVigente(salesOrderId, open);
   const aprovadoresQuery = useAprovadoresCredito(open && !isGestor);
   const { aprovar, salvando } = useAprovarExcecaoCredito(salesOrderId);
@@ -131,7 +138,7 @@ export function ExcecaoCreditoDialog({
   };
 
   const carregandoContexto = !bloqueio && logQuery.isPending;
-  const excecaoValida = excecaoQuery.data;
+  const excecaoValida = excecaoAindaVale(excecaoQuery.data, logQuery.data) ? excecaoQuery.data : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -167,7 +174,7 @@ export function ExcecaoCreditoDialog({
               <p className="text-muted-foreground">
                 {typeof ctx.vencido === 'number'
                   ? `${formatBRL(ctx.vencido)} vencido há 60+ dias`
-                  : 'Valor vencido não informado pelo gate'}
+                  : 'Valor a confirmar — pagamento parcial vencido, ou título sem saldo/vencimento informado'}
                 {ctx.titulos ? ` · ${ctx.titulos} título${ctx.titulos > 1 ? 's' : ''}` : ''}
                 {' '}· código Omie {ctx.omieCodigoCliente}
               </p>
