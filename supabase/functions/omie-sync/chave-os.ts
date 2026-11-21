@@ -5,19 +5,24 @@
 // Agora o front manda o `checkoutId` do envelope como `orderId` (estável entre reenvios do MESMO
 // checkout). A chave daqui é função PURA dele, e a edge reserva o pedido em `afiacao_os_envio`
 // (PK order_id) ANTES de chamar o Omie, com a assinatura do que foi pedido na 1ª tentativa
-// (migration 20261121120002). Este módulo é só a parte pura, testada em Deno (chave-os_test.ts).
+// (migration 20261121120002). Este módulo é só a parte pura, testada em Deno (os-idempotente_test.ts).
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** `cCodIntOS` determinístico do pedido. 25 caracteres = o comprimento já aceito e ecoado inteiro
- *  pelo Omie em produção (`OS_<8hex>_<13 dígitos>`), mesmo a documentação declarando `string 60`:
- *  prova servida vence documento. 22 hex do UUID ≈ 82 bits aleatórios — colisão desprezível.
- *  Lança em orderId que não é UUID (fail-closed: chave curta reconciliaria a OS de OUTRO pedido). */
-export function chaveIntegracaoOS(orderId: unknown): string {
+/** `cCodIntOS` determinístico do CONTEÚDO do pedido: hash de (orderId, cliente Omie, assinatura).
+ *  Mesmo checkout + mesmo carrinho → mesma chave → o Omie reconhece o reenvio. Carrinho diferente →
+ *  chave diferente: uma OS de outro carrinho NUNCA é achada pela chave deste (Codex, diff do
+ *  #4042-follow-up: com a chave só do checkout, a OS do carrinho A "conferia" com o B).
+ *  25 caracteres = o comprimento já aceito e ecoado inteiro pelo Omie em produção; 22 hex = 88 bits.
+ *  Lança em orderId que não é UUID (fail-closed). */
+export async function chaveIntegracaoOS(orderId: unknown, omieCodigoCliente: number, assinatura: string | null): Promise<string> {
   if (typeof orderId !== "string" || !UUID.test(orderId)) {
     throw new Error(`orderId inválido para a chave da OS (precisa ser UUID): ${JSON.stringify(orderId)}`);
   }
-  return `OS_${orderId.replace(/-/g, "").toLowerCase().slice(0, 22)}`;
+  const base = `${orderId.toLowerCase()}|${omieCodigoCliente}|${assinatura ?? "∅"}`;
+  const dig = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(base)));
+  const hex = Array.from(dig, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `OS_${hex.slice(0, 22)}`;
 }
 
 function centavos(v: unknown): string {
@@ -55,19 +60,7 @@ export function montarAssinaturaOS(
   ].join("#");
 }
 
-export type Conferencia = "confere" | "diverge" | "indeterminada";
-
-/** O envio de AGORA é o mesmo que reservou o pedido? Assinatura ausente de qualquer lado =
- *  `indeterminada` (não dá para afirmar nem negar — o vendedor confere no Omie); diferente =
- *  `diverge`; cliente Omie diferente = `diverge` mesmo com assinatura ausente. */
-export function conferirReserva(
-  reserva: { assinatura: string | null; omie_codigo_cliente: number | string },
-  atual: { assinatura: string | null; omieCodigoCliente: number },
-): Conferencia {
-  if (Number(reserva.omie_codigo_cliente) !== atual.omieCodigoCliente) return "diverge";
-  if (reserva.assinatura === null || atual.assinatura === null) return "indeterminada";
-  return reserva.assinatura === atual.assinatura ? "confere" : "diverge";
-}
+export type Conferencia = "confere" | "diverge";
 
 export type LeituraConsultaOS =
   | { tipo: "ok"; nCodOS: number; cNumOS: string }
@@ -81,24 +74,28 @@ export function lerConsultaOS(resposta: unknown, chave: string, omieCodigoClient
   const r = (resposta ?? {}) as Record<string, unknown>;
   const cab = (r.Cabecalho ?? {}) as Record<string, unknown>;
   const nCodOS = Number(cab.nCodOS);
-  if (!Number.isFinite(nCodOS) || nCodOS <= 0) return { tipo: "invalida", motivo: "sem nCodOS positivo" };
+  if (!Number.isSafeInteger(nCodOS) || nCodOS <= 0) return { tipo: "invalida", motivo: "sem nCodOS inteiro positivo" };
   if (cab.cCodIntOS !== chave) return { tipo: "invalida", motivo: `chave ecoada ${JSON.stringify(cab.cCodIntOS)} ≠ ${chave}` };
   if (Number(cab.nCodCli) !== omieCodigoCliente) {
     return { tipo: "invalida", motivo: `cliente da OS ${JSON.stringify(cab.nCodCli)} ≠ ${omieCodigoCliente}` };
   }
   const cNumOS = cab.cNumOS !== undefined && cab.cNumOS !== null && String(cab.cNumOS) !== "" ? String(cab.cNumOS) : chave;
   const info = (r.InfoCadastro ?? {}) as Record<string, unknown>;
-  if (String(info.cCancelada ?? "").toUpperCase() === "S") return { tipo: "cancelada", nCodOS, cNumOS };
+  const cancelada = String(info.cCancelada ?? "").toUpperCase();
+  if (cancelada === "S") return { tipo: "cancelada", nCodOS, cNumOS };
+  // Só "N" reconhecido afirma OS ativa — ausente/desconhecido não confirma nada (Codex P2).
+  if (cancelada !== "N") return { tipo: "invalida", motivo: `cCancelada ${JSON.stringify(info.cCancelada)} não reconhecido` };
   return { tipo: "ok", nCodOS, cNumOS };
 }
 
-/** A resposta do `IncluirOS` prova a criação? Exige código positivo e, quando o Omie ecoa a
- *  chave, que seja a nossa. `200 {}` passava pelo wrapper e o `result.nCodOS!` só existia no tipo. */
+/** A resposta do `IncluirOS` prova a criação? Exige código inteiro positivo e o eco EXATO da
+ *  chave (o Omie ecoa — ver `resposta_omie` em prod). Incompleta → o chamador consulta pela chave.
+ *  `200 {}` passava pelo wrapper e o `result.nCodOS!` só existia no tipo. */
 export function inclusaoValida(resposta: unknown, chave: string): { nCodOS: number; cNumOS: string } | null {
   const r = (resposta ?? {}) as Record<string, unknown>;
   const nCodOS = Number(r.nCodOS);
-  if (!Number.isFinite(nCodOS) || nCodOS <= 0) return null;
-  if (r.cCodIntOS !== undefined && r.cCodIntOS !== chave) return null;
+  if (!Number.isSafeInteger(nCodOS) || nCodOS <= 0) return null;
+  if (r.cCodIntOS !== chave) return null;
   const cNumOS = r.cNumOS !== undefined && r.cNumOS !== null && String(r.cNumOS) !== "" ? String(r.cNumOS) : chave;
   return { nCodOS, cNumOS };
 }

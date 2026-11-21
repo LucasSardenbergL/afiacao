@@ -69,6 +69,7 @@ esperar_sqlstate() { # rotulo sqlstate sql
   out=$(P -c "DO \$\$ BEGIN $3; RAISE EXCEPTION 'NAO_FALHOU'; EXCEPTION WHEN SQLSTATE '$2' THEN RAISE NOTICE 'ESPERADO'; END \$\$;" 2>&1) || { echo "$1 FALHOU: $out"; exit 1; }
   echo "$1 ok: SQLSTATE $2"
 }
+esperar_sqlstate "A4b (confirmada com codigo NULL)" 23514 "SET LOCAL ROLE service_role; INSERT INTO public.afiacao_os_envio (order_id, chave_integracao, omie_codigo_cliente, desfecho, confirmado_em) VALUES ('55555555-5555-4555-8555-555555555555','OS_5555',300,'incluida',now())"
 esperar_sqlstate "A4 (OS sem desfecho)" 23514 "SET LOCAL ROLE service_role; INSERT INTO public.afiacao_os_envio (order_id, chave_integracao, omie_codigo_cliente, omie_codigo_os) VALUES ('22222222-2222-4222-8222-222222222222','OS_2222',300,5)"
 esperar_sqlstate "A5 (chave duplicada)" 23505 "SET LOCAL ROLE service_role; INSERT INTO public.afiacao_os_envio (order_id, chave_integracao, omie_codigo_cliente) VALUES ('33333333-3333-4333-8333-333333333333','OS_1111111111114111811111',300)"
 esperar_sqlstate "A6 (authenticated insere)" 42501 "SET LOCAL ROLE authenticated; INSERT INTO public.afiacao_os_envio (order_id, chave_integracao, omie_codigo_cliente) VALUES ('44444444-4444-4444-8444-444444444444','OS_4444',300)"

@@ -3,23 +3,17 @@
 // (os-idempotente_test.ts) — a edge (`index.ts`) só liga as pontas.
 //
 // Ordem:
-//   1. reserva o pedido (INSERT … ON CONFLICT DO NOTHING na PK order_id) e RELÊ a linha — dois
-//      envios do mesmo checkout disputam a MESMA linha;
-//   2. a linha já tem OS → devolve ela, conferindo a assinatura da 1ª tentativa (imutável);
-//   3. a assinatura mudou e ainda não há OS → só reabre a reserva se o Omie PROVAR que a chave não
-//      existe lá (a 1ª tentativa pode ter criado a OS e perdido a resposta);
-//   4. IncluirOS com a chave determinística; QUALQUER falha (inclusive timeout e o "já cadastrado"
-//      cujo texto não conhecemos) → ConsultarOS pela chave; achou a NOSSA → reconcilia; não achou →
-//      relança o erro ORIGINAL;
-//   5. vincula a OS na reserva UMA vez (`WHERE omie_codigo_os IS NULL`); quem vinculou é o
-//      `primeiro` — só ele grava omie_ordens_servico/orders e manda o e-mail.
-import {
-  chaveIntegracaoOS,
-  type Conferencia,
-  conferirReserva,
-  inclusaoValida,
-  lerConsultaOS,
-} from "./chave-os.ts";
+//   1. chave = hash(orderId, cliente, assinatura) — mesmo checkout + mesmo carrinho = mesma chave;
+//   2. reserva o pedido (INSERT … ON CONFLICT DO NOTHING na PK order_id) e RELÊ a linha;
+//   3. a reserva tem OUTRA chave (o carrinho mudou desde a 1ª tentativa): se ela já tem OS, ou o
+//      Omie acha a OS pela chave ANTIGA → `diverge` (nada é criado). Só a ausência PROVADA da OS
+//      antiga reabre a reserva para a chave nova (UPDATE condicional na chave antiga, sem OS);
+//   4. mesma chave e OS já vinculada → devolve ela (o caso comum de "a resposta se perdeu");
+//   5. IncluirOS; QUALQUER falha (inclusive timeout e o "já cadastrado" cujo texto não conhecemos)
+//      → ConsultarOS pela chave; achou a NOSSA → reconcilia; não achou → relança o erro ORIGINAL;
+//   6. vincula a OS na reserva UMA vez (`WHERE chave = esta AND omie_codigo_os IS NULL`). Uma
+//      inclusão em voo cuja reserva foi reaberta para outra chave NÃO vincula — lança avisando.
+import { chaveIntegracaoOS, type Conferencia, inclusaoValida, lerConsultaOS } from "./chave-os.ts";
 
 export interface ReservaOS {
   order_id: string;
@@ -35,10 +29,10 @@ export interface DepsOS {
   reservar(linha: { order_id: string; chave_integracao: string; assinatura: string | null; omie_codigo_cliente: number }): Promise<void>;
   /** Relê a reserva. Lança em erro de banco; `null` = linha não existe (não deveria após reservar). */
   lerReserva(orderId: string): Promise<ReservaOS | null>;
-  /** Reabre a reserva SEM OS com a assinatura/cliente novos. Devolve true se trocou exatamente 1 linha. */
-  regravarAssinatura(orderId: string, assinaturaAnterior: string | null, nova: { assinatura: string | null; omie_codigo_cliente: number }): Promise<boolean>;
-  /** Grava a OS na reserva só se ainda não houver (`WHERE omie_codigo_os IS NULL`). true = esta chamada vinculou. */
-  vincular(orderId: string, os: { nCodOS: number; cNumOS: string; desfecho: "incluida" | "reconciliada" }): Promise<boolean>;
+  /** Reabre a reserva SEM OS da chave antiga para a nova. true = trocou exatamente 1 linha. */
+  reabrir(orderId: string, chaveAnterior: string, nova: { chave_integracao: string; assinatura: string | null; omie_codigo_cliente: number }): Promise<boolean>;
+  /** Grava a OS só se a reserva ainda estiver nesta chave e sem OS. true = esta chamada vinculou. */
+  vincular(orderId: string, chave: string, os: { nCodOS: number; cNumOS: string; desfecho: "incluida" | "reconciliada" }): Promise<boolean>;
   incluirOS(osParams: Record<string, unknown>): Promise<unknown>;
   consultarOS(chave: string): Promise<unknown>;
   /** Prova POSITIVA de que a OS não existe no Omie (o `osAusenteNoOmie` da edge). */
@@ -47,24 +41,33 @@ export interface DepsOS {
 }
 
 export type DesfechoOS = {
-    ok: true;
-    nCodOS: number;
-    cNumOS: string;
-    reconciliada: boolean;
-    /** Esta chamada é a que vinculou a OS (grava os registros locais e manda o e-mail). */
-    primeiro: boolean;
-    conferencia: Conferencia;
-    payloadEnviado: Record<string, unknown> | null;
-    resposta: unknown;
-  };
+  nCodOS: number;
+  cNumOS: string;
+  /** A OS já existia (reenvio do mesmo checkout ou criada por tentativa anterior). */
+  reconciliada: boolean;
+  /** Esta chamada vinculou a OS na reserva (só ela manda o e-mail). */
+  primeiro: boolean;
+  /** `diverge` = a OS que existe é de OUTRO carrinho deste pedido: nada de gravar `orders`. */
+  conferencia: Conferencia;
+  payloadEnviado: Record<string, unknown> | null;
+  resposta: unknown;
+};
+
+/** OS cancelada no Omie: a mesma chave não aceita outra OS — o vendedor precisa de pedido novo. */
+export class OsCanceladaError extends Error {
+  constructor(public cNumOS: string) {
+    super(`A OS ${cNumOS} deste pedido foi CANCELADA no Omie — não dá para recriá-la com a mesma chave. Monte um pedido novo.`);
+    this.name = "OsCanceladaError";
+  }
+}
 
 function erroMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** Consulta a OS pela chave depois de uma falha. `null` = não deu para achar a NOSSA OS (o chamador
- *  decide o que fazer com o erro original). Cancelada lança: o Omie não aceita outra OS com a mesma
- *  chave, então o vendedor precisa de um pedido novo. */
+/** Consulta a OS pela chave. `achou` = a NOSSA OS (chave, cliente, ativa); `ausente` = prova
+ *  positiva de que a OS não existe — e só da OS: um "cliente não cadastrado" casaria o marcador de
+ *  ausência sem dizer nada da OS (Codex P2), então não reabre nada. */
 async function consultarNossa(
   deps: DepsOS, chave: string, cliente: number,
 ): Promise<{ achou: { nCodOS: number; cNumOS: string; resposta: unknown } | null; ausente: boolean; erro?: unknown }> {
@@ -72,12 +75,11 @@ async function consultarNossa(
   try {
     resposta = await deps.consultarOS(chave);
   } catch (e) {
-    return { achou: null, ausente: deps.osAusente(e), erro: e };
+    const ausente = deps.osAusente(e) && !/cliente/i.test(erroMsg(e));
+    return { achou: null, ausente, erro: e };
   }
   const leitura = lerConsultaOS(resposta, chave, cliente);
-  if (leitura.tipo === "cancelada") {
-    throw new Error(`A OS ${leitura.cNumOS} deste pedido foi CANCELADA no Omie — não dá para recriá-la com a mesma chave. Monte um pedido novo.`);
-  }
+  if (leitura.tipo === "cancelada") throw new OsCanceladaError(leitura.cNumOS);
   if (leitura.tipo === "invalida") {
     deps.log?.(`[OS idempotente] ConsultarOS(${chave}) não comprovou a OS: ${leitura.motivo}`);
     return { achou: null, ausente: false };
@@ -96,40 +98,28 @@ export async function criarOuReconciliarOS(
   },
 ): Promise<DesfechoOS> {
   const { orderId, omieCodigoCliente: cliente, assinatura } = args;
-  const chave = chaveIntegracaoOS(orderId);
+  const chave = await chaveIntegracaoOS(orderId, cliente, assinatura);
 
   await deps.reservar({ order_id: orderId, chave_integracao: chave, assinatura, omie_codigo_cliente: cliente });
   const reserva = await deps.lerReserva(orderId);
   if (!reserva) throw new Error(`Reserva da OS do pedido ${orderId} não encontrada após gravar — envio abortado.`);
+  const temOS = reserva.omie_codigo_os !== null && Number(reserva.omie_codigo_os) > 0;
+
+  // 3. O carrinho (ou o cliente) mudou desde a tentativa que reservou o pedido.
   if (reserva.chave_integracao !== chave) {
-    throw new Error(`Reserva do pedido ${orderId} tem outra chave (${reserva.chave_integracao}) — envio abortado.`);
-  }
-
-  const conferencia = conferirReserva(reserva, { assinatura, omieCodigoCliente: cliente });
-
-  // 2. Já existe OS vinculada: o caso comum de "a resposta se perdeu" (a edge concluiu).
-  if (reserva.omie_codigo_os !== null && Number(reserva.omie_codigo_os) > 0) {
-    return {
-      ok: true,
-      nCodOS: Number(reserva.omie_codigo_os),
-      cNumOS: reserva.omie_numero_os ?? chave,
-      reconciliada: true,
-      primeiro: false,
-      conferencia,
-      payloadEnviado: null,
-      resposta: null,
-    };
-  }
-
-  // 3. Mudou o pedido (ou o cliente) e ainda não há OS vinculada: a 1ª tentativa pode ter criado
-  //    a OS no Omie e perdido a resposta. Só o Omie decide.
-  if (conferencia !== "confere") {
-    const c = await consultarNossa(deps, chave, Number(reserva.omie_codigo_cliente));
-    if (c.achou) {
-      const primeiro = await deps.vincular(orderId, { nCodOS: c.achou.nCodOS, cNumOS: c.achou.cNumOS, desfecho: "reconciliada" });
+    if (temOS) {
       return {
-        ok: true, nCodOS: c.achou.nCodOS, cNumOS: c.achou.cNumOS, reconciliada: true, primeiro,
-        conferencia, payloadEnviado: null, resposta: { reconciliada: true, consulta: c.achou.resposta },
+        nCodOS: Number(reserva.omie_codigo_os), cNumOS: reserva.omie_numero_os ?? reserva.chave_integracao,
+        reconciliada: true, primeiro: false, conferencia: "diverge", payloadEnviado: null, resposta: null,
+      };
+    }
+    const c = await consultarNossa(deps, reserva.chave_integracao, Number(reserva.omie_codigo_cliente));
+    if (c.achou) {
+      // A 1ª tentativa criou a OS e perdeu a resposta: registra o vínculo dela e acusa a divergência.
+      const vinculou = await deps.vincular(orderId, reserva.chave_integracao, { ...c.achou, desfecho: "reconciliada" });
+      return {
+        nCodOS: c.achou.nCodOS, cNumOS: c.achou.cNumOS, reconciliada: true, primeiro: vinculou,
+        conferencia: "diverge", payloadEnviado: null, resposta: { reconciliada: true, consulta: c.achou.resposta },
       };
     }
     if (!c.ausente) {
@@ -138,11 +128,17 @@ export async function criarOuReconciliarOS(
           `${c.erro ? ` (${erroMsg(c.erro)})` : ""}. Nada foi criado — tente de novo em instantes.`,
       );
     }
-    const trocou = await deps.regravarAssinatura(orderId, reserva.assinatura, { assinatura, omie_codigo_cliente: cliente });
-    if (!trocou) throw new Error(`Outro envio deste pedido mexeu na reserva ao mesmo tempo — nada foi criado. Tente de novo.`);
+    const reabriu = await deps.reabrir(orderId, reserva.chave_integracao, { chave_integracao: chave, assinatura, omie_codigo_cliente: cliente });
+    if (!reabriu) throw new Error(`Outro envio deste pedido mexeu na reserva ao mesmo tempo — nada foi criado. Tente de novo.`);
+  } else if (temOS) {
+    // 4. Mesmo carrinho, OS já vinculada: a resposta anterior se perdeu.
+    return {
+      nCodOS: Number(reserva.omie_codigo_os), cNumOS: reserva.omie_numero_os ?? chave,
+      reconciliada: true, primeiro: false, conferencia: "confere", payloadEnviado: null, resposta: null,
+    };
   }
 
-  // 4. Inclusão com a chave determinística.
+  // 5. Inclusão com a chave do conteúdo.
   const payload = args.montarPayload(chave);
   let criada: { nCodOS: number; cNumOS: string } | null = null;
   let resposta: unknown = null;
@@ -155,38 +151,33 @@ export async function criarOuReconciliarOS(
     erroInclusao = e;
   }
 
-  if (criada) {
-    const primeiro = await deps.vincular(orderId, { nCodOS: criada.nCodOS, cNumOS: criada.cNumOS, desfecho: "incluida" });
-    if (!primeiro) return await jaVinculada(deps, orderId, criada, "confere");
-    return { ok: true, ...criada, reconciliada: false, primeiro: true, conferencia: "confere", payloadEnviado: payload, resposta };
+  let os = criada;
+  let reconciliada = false;
+  if (!os) {
+    // Falhou: a OS pode existir mesmo assim (timeout, "já cadastrado", 200 incompleto).
+    deps.log?.(`[OS idempotente] IncluirOS(${chave}) falhou (${erroMsg(erroInclusao)}) — consultando pela chave`);
+    const c = await consultarNossa(deps, chave, cliente);
+    if (!c.achou) throw erroInclusao;
+    os = { nCodOS: c.achou.nCodOS, cNumOS: c.achou.cNumOS };
+    resposta = { reconciliada: true, erro_inclusao: erroMsg(erroInclusao), consulta: c.achou.resposta };
+    reconciliada = true;
   }
 
-  // Falhou: a OS pode existir mesmo assim (timeout, "já cadastrado", 200 sem corpo).
-  deps.log?.(`[OS idempotente] IncluirOS(${chave}) falhou (${erroMsg(erroInclusao)}) — consultando pela chave`);
-  const c = await consultarNossa(deps, chave, cliente);
-  if (!c.achou) throw erroInclusao;
-  const primeiro = await deps.vincular(orderId, { nCodOS: c.achou.nCodOS, cNumOS: c.achou.cNumOS, desfecho: "reconciliada" });
-  if (!primeiro) return await jaVinculada(deps, orderId, c.achou, "confere");
-  return {
-    ok: true, nCodOS: c.achou.nCodOS, cNumOS: c.achou.cNumOS, reconciliada: true, primeiro: true,
-    conferencia: "confere", payloadEnviado: payload,
-    resposta: { reconciliada: true, erro_inclusao: erroMsg(erroInclusao), consulta: c.achou.resposta },
-  };
-}
-
-/** Outro envio vinculou primeiro (corrida). Devolve a OS que ficou na reserva — e se ela não for a
- *  mesma que esta chamada viu no Omie, é anomalia: lança em vez de escolher uma. */
-async function jaVinculada(
-  deps: DepsOS, orderId: string, vista: { nCodOS: number; cNumOS: string }, conferencia: Conferencia,
-): Promise<DesfechoOS> {
-  const r = await deps.lerReserva(orderId);
-  if (!r || r.omie_codigo_os === null || Number(r.omie_codigo_os) !== vista.nCodOS) {
-    throw new Error(
-      `Pedido ${orderId}: a OS vinculada (${r?.omie_codigo_os ?? "nenhuma"}) difere da que o Omie devolveu (${vista.nCodOS}) — confira no Omie.`,
-    );
+  // 6. Vínculo único.
+  const vinculou = await deps.vincular(orderId, chave, { ...os, desfecho: reconciliada ? "reconciliada" : "incluida" });
+  if (!vinculou) {
+    const r = await deps.lerReserva(orderId);
+    if (!r || r.chave_integracao !== chave) {
+      throw new Error(
+        `O pedido mudou enquanto a OS ${os.cNumOS} era criada no Omie (com o carrinho anterior). Confira no Omie antes de reenviar.`,
+      );
+    }
+    if (r.omie_codigo_os === null || Number(r.omie_codigo_os) !== os.nCodOS) {
+      throw new Error(
+        `Pedido ${orderId}: a OS vinculada (${r.omie_codigo_os ?? "nenhuma"}) difere da que o Omie devolveu (${os.nCodOS}) — confira no Omie.`,
+      );
+    }
+    return { ...os, reconciliada: true, primeiro: false, conferencia: "confere", payloadEnviado: payload, resposta };
   }
-  return {
-    ok: true, nCodOS: vista.nCodOS, cNumOS: r.omie_numero_os ?? vista.cNumOS, reconciliada: true, primeiro: false,
-    conferencia, payloadEnviado: null, resposta: null,
-  };
+  return { ...os, reconciliada, primeiro: true, conferencia: "confere", payloadEnviado: payload, resposta };
 }

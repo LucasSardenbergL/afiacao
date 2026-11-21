@@ -1,8 +1,8 @@
 // Testa o CÓDIGO REAL de chave-os.ts + os-idempotente.ts no runtime real (Deno).
 // Roda com: deno test --no-remote supabase/functions/omie-sync/os-idempotente_test.ts
 // Cada caso casa a MARCA do ramo (texto da mensagem / campos do desfecho), nunca só "lançou".
-import { chaveIntegracaoOS, conferirReserva, inclusaoValida, lerConsultaOS, montarAssinaturaOS } from "./chave-os.ts";
-import { criarOuReconciliarOS, type DepsOS, type ReservaOS } from "./os-idempotente.ts";
+import { chaveIntegracaoOS, inclusaoValida, lerConsultaOS, montarAssinaturaOS } from "./chave-os.ts";
+import { criarOuReconciliarOS, type DepsOS, OsCanceladaError, type ReservaOS } from "./os-idempotente.ts";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`FALHOU: ${msg}`);
@@ -23,63 +23,57 @@ async function rejeitaCom(p: Promise<unknown>, marca: string, msg: string) {
 }
 
 const ORDER = "949fbfd9-1234-4abc-8def-0123456789ab";
-const CHAVE = "OS_949fbfd912344abc8def01";
 const CLI = 300;
+const K = (assinatura: string | null = "A", cli = CLI) => chaveIntegracaoOS(ORDER, cli, assinatura);
 
-/** Banco + Omie falsos: a reserva vive em memória, com a MESMA semântica do SQL (PK, update
- *  condicional). O Omie falso deduplica pela chave, como o Omie real faz com integração. */
-function mundo(opts: {
-  omieIncluir?: (p: Record<string, unknown>) => unknown;
-  omieConsultar?: (chave: string) => unknown;
-  reservaInicial?: Partial<ReservaOS>;
-} = {}) {
+/** Banco + Omie falsos: a reserva vive em memória com a MESMA semântica do SQL (PK, UPDATE
+ *  condicional em chave + omie_codigo_os IS NULL). O Omie falso guarda OS por chave e deduplica. */
+function mundo(opts: { omieIncluir?: (p: Record<string, unknown>, omie: Map<string, number>) => unknown; consultaFalha?: (chave: string) => Error | null } = {}) {
   const reservas = new Map<string, ReservaOS>();
-  if (opts.reservaInicial) {
-    reservas.set(ORDER, {
-      order_id: ORDER, chave_integracao: CHAVE, assinatura: null, omie_codigo_cliente: CLI,
-      omie_codigo_os: null, omie_numero_os: null, ...opts.reservaInicial,
-    });
-  }
-  const chamadas = { incluir: 0, consultar: 0, vincular: 0 };
+  const omie = new Map<string, number>(); // chave → nCodOS
+  let seq = 100;
+  const chamadas = { incluir: 0, consultar: 0 };
   const deps: DepsOS = {
     reservar(l) {
-      if (!reservas.has(l.order_id)) {
-        reservas.set(l.order_id, { ...l, omie_codigo_os: null, omie_numero_os: null });
-      }
+      if (!reservas.has(l.order_id)) reservas.set(l.order_id, { ...l, omie_codigo_os: null, omie_numero_os: null });
       return Promise.resolve();
     },
-    lerReserva(id) {
+    lerReserva: (id) => Promise.resolve(reservas.has(id) ? { ...reservas.get(id)! } : null),
+    reabrir(id, ant, nova) {
       const r = reservas.get(id);
-      return Promise.resolve(r ? { ...r } : null);
-    },
-    regravarAssinatura(id, anterior, nova) {
-      const r = reservas.get(id);
-      if (!r || r.omie_codigo_os !== null || r.assinatura !== anterior) return Promise.resolve(false);
-      r.assinatura = nova.assinatura;
-      r.omie_codigo_cliente = nova.omie_codigo_cliente;
+      if (!r || r.chave_integracao !== ant || r.omie_codigo_os !== null) return Promise.resolve(false);
+      Object.assign(r, nova);
       return Promise.resolve(true);
     },
-    vincular(id, os) {
-      chamadas.vincular++;
+    vincular(id, chave, os) {
       const r = reservas.get(id);
-      if (!r || r.omie_codigo_os !== null) return Promise.resolve(false);
-      r.omie_codigo_os = os.nCodOS;
-      r.omie_numero_os = os.cNumOS;
+      if (!r || r.chave_integracao !== chave || r.omie_codigo_os !== null) return Promise.resolve(false);
+      r.omie_codigo_os = os.nCodOS; r.omie_numero_os = os.cNumOS;
       return Promise.resolve(true);
     },
     incluirOS(p) {
       chamadas.incluir++;
-      return Promise.resolve().then(() => (opts.omieIncluir ?? (() => ({ nCodOS: 111, cNumOS: "624", cCodIntOS: CHAVE })))(p));
+      return Promise.resolve().then(() => {
+        if (opts.omieIncluir) return opts.omieIncluir(p, omie);
+        const chave = (p.Cabecalho as Record<string, string>).cCodIntOS;
+        if (omie.has(chave)) throw new Error("Erro Omie: Código de Integração já cadastrado");
+        const n = ++seq; omie.set(chave, n);
+        return { nCodOS: n, cNumOS: String(n), cCodIntOS: chave };
+      });
     },
     consultarOS(chave) {
       chamadas.consultar++;
-      return Promise.resolve().then(() => (opts.omieConsultar ?? (() => {
-        throw new Error("Erro Omie: Ordem de Serviço não cadastrada para o Código de Integração");
-      }))(chave));
+      return Promise.resolve().then(() => {
+        const f = opts.consultaFalha?.(chave);
+        if (f) throw f;
+        const n = omie.get(chave);
+        if (!n) throw new Error("Erro Omie: Ordem de Serviço não cadastrada para o Código de Integração");
+        return { Cabecalho: { nCodOS: n, cNumOS: String(n), cCodIntOS: chave, nCodCli: CLI }, InfoCadastro: { cCancelada: "N" } };
+      });
     },
-    osAusente: (e) => (e instanceof Error ? e.message : "").includes("não cadastrada"),
+    osAusente: (e) => (e instanceof Error ? e.message : "").includes("não cadastrad"),
   };
-  return { deps, reservas, chamadas };
+  return { deps, reservas, omie, chamadas };
 }
 
 const args = (assinatura: string | null = "A") => ({
@@ -87,37 +81,29 @@ const args = (assinatura: string | null = "A") => ({
   montarPayload: (chave: string) => ({ Cabecalho: { cCodIntOS: chave } }),
 });
 
-const consultaOk = (extra: Record<string, unknown> = {}) => () => ({
-  Cabecalho: { nCodOS: 111, cNumOS: "624", cCodIntOS: CHAVE, nCodCli: CLI },
-  InfoCadastro: { cCancelada: "N" },
-  ...extra,
-});
-
 // ── chave ──
-Deno.test("chave: determinística, 25 chars, mesma para o mesmo orderId", () => {
-  assertEq(chaveIntegracaoOS(ORDER), CHAVE, "chave do ORDER");
-  assertEq(chaveIntegracaoOS(ORDER).length, 25, "25 caracteres (o comprimento provado em prod)");
-  assertEq(chaveIntegracaoOS(ORDER.toUpperCase()), CHAVE, "caixa não muda a chave");
+Deno.test("chave: determinística, 25 chars; carrinho ou cliente diferente → outra chave", async () => {
+  const a = await K("A");
+  assertEq(a, await K("A"), "mesma entrada, mesma chave");
+  assertEq(a.length, 25, "25 caracteres (o comprimento provado em prod)");
+  assert(/^OS_[0-9a-f]{22}$/.test(a), "formato");
+  assert(a !== await K("B"), "assinatura muda a chave");
+  assert(a !== await K("A", 301), "cliente muda a chave");
+  assert(a !== await K(null), "sem assinatura ≠ com assinatura");
+  assertEq(await chaveIntegracaoOS(ORDER.toUpperCase(), CLI, "A"), a, "caixa do UUID não muda a chave");
 });
-Deno.test("chave: orderId que não é UUID → recusa (marca 'precisa ser UUID')", () => {
+Deno.test("chave: orderId que não é UUID → recusa (marca 'precisa ser UUID')", async () => {
   for (const ruim of ["", "abc", "949fbfd9", 123, null]) {
-    let msg = "";
-    try {
-      chaveIntegracaoOS(ruim);
-    } catch (e) {
-      msg = (e as Error).message;
-    }
-    assert(msg.includes("precisa ser UUID"), `recusa ${JSON.stringify(ruim)}`);
+    await rejeitaCom(chaveIntegracaoOS(ruim, CLI, "A"), "precisa ser UUID", `recusa ${JSON.stringify(ruim)}`);
   }
 });
 
-// ── assinatura / conferência ──
-Deno.test("assinatura: sem a do front → null (nunca 'confere')", () => {
+// ── assinatura ──
+Deno.test("assinatura: sem a do front → null", () => {
   assertEq(montarAssinaturaOS(undefined, CLI, { items: [] }), null, "undefined");
   assertEq(montarAssinaturaOS("  ", CLI, { items: [] }), null, "vazia");
-  assertEq(conferirReserva({ assinatura: null, omie_codigo_cliente: CLI }, { assinatura: "x", omieCodigoCliente: CLI }), "indeterminada", "reserva sem assinatura");
 });
-Deno.test("assinatura: preço, frete, total, pagamento e cliente mudam a assinatura; ordem dos itens não", () => {
+Deno.test("assinatura: preço, frete, total, pagamento e cliente mudam; ordem dos itens não", () => {
   const base = { items: [{ userToolId: "t1", omie_codigo_servico: 9, quantity: 1, unitPrice: 30 }, { userToolId: "t2", omie_codigo_servico: 9, quantity: 2, unitPrice: 10 }], delivery_fee: 0, total: 50, payment_method: "pix" };
   const a = montarAssinaturaOS("F", CLI, base);
   assertEq(montarAssinaturaOS("F", CLI, { ...base, items: [...base.items].reverse() }), a, "ordem dos itens");
@@ -127,63 +113,69 @@ Deno.test("assinatura: preço, frete, total, pagamento e cliente mudam a assinat
   assert(montarAssinaturaOS("F", 301, base) !== a, "cliente");
   assert(montarAssinaturaOS("G", CLI, base) !== a, "assinatura do front (ferramenta/entrega)");
 });
-Deno.test("conferirReserva: cliente diferente → diverge mesmo sem assinatura", () => {
-  assertEq(conferirReserva({ assinatura: null, omie_codigo_cliente: 999 }, { assinatura: null, omieCodigoCliente: CLI }), "diverge", "cliente");
-  assertEq(conferirReserva({ assinatura: "A", omie_codigo_cliente: String(CLI) }, { assinatura: "A", omieCodigoCliente: CLI }), "confere", "bigint em string");
-});
 
 // ── leitura do Omie ──
-Deno.test("lerConsultaOS: só aceita a NOSSA OS (chave, cliente, código positivo)", () => {
-  assertEq(lerConsultaOS(consultaOk()(), CHAVE, CLI).tipo, "ok", "ok");
-  assertEq(lerConsultaOS({ Cabecalho: { nCodOS: 111, cCodIntOS: "OS_outra", nCodCli: CLI } }, CHAVE, CLI).tipo, "invalida", "outra chave");
-  assertEq(lerConsultaOS({ Cabecalho: { nCodOS: 111, cCodIntOS: CHAVE, nCodCli: 1 } }, CHAVE, CLI).tipo, "invalida", "outro cliente");
-  assertEq(lerConsultaOS({}, CHAVE, CLI).tipo, "invalida", "vazia");
-  assertEq(lerConsultaOS(consultaOk({ InfoCadastro: { cCancelada: "S" } })(), CHAVE, CLI).tipo, "cancelada", "cancelada");
+Deno.test("lerConsultaOS: só aceita a NOSSA OS, ativa por 'N' explícito", async () => {
+  const c = await K();
+  const ok = { Cabecalho: { nCodOS: 111, cNumOS: "624", cCodIntOS: c, nCodCli: CLI }, InfoCadastro: { cCancelada: "N" } };
+  assertEq(lerConsultaOS(ok, c, CLI).tipo, "ok", "ok");
+  assertEq(lerConsultaOS({ ...ok, Cabecalho: { ...ok.Cabecalho, cCodIntOS: "OS_outra" } }, c, CLI).tipo, "invalida", "outra chave");
+  assertEq(lerConsultaOS({ ...ok, Cabecalho: { ...ok.Cabecalho, nCodCli: 1 } }, c, CLI).tipo, "invalida", "outro cliente");
+  assertEq(lerConsultaOS({ ...ok, Cabecalho: { ...ok.Cabecalho, nCodOS: 1.5 } }, c, CLI).tipo, "invalida", "nCodOS não inteiro");
+  assertEq(lerConsultaOS({ Cabecalho: ok.Cabecalho }, c, CLI).tipo, "invalida", "sem InfoCadastro");
+  assertEq(lerConsultaOS({}, c, CLI).tipo, "invalida", "vazia");
+  assertEq(lerConsultaOS({ ...ok, InfoCadastro: { cCancelada: "S" } }, c, CLI).tipo, "cancelada", "cancelada");
 });
-Deno.test("inclusaoValida: 200 {} e chave ecoada errada não provam a OS", () => {
-  assertEq(inclusaoValida({}, CHAVE), null, "{}");
-  assertEq(inclusaoValida({ nCodOS: 0 }, CHAVE), null, "nCodOS 0");
-  assertEq(inclusaoValida({ nCodOS: 5, cCodIntOS: "OS_x" }, CHAVE), null, "outra chave");
-  assertEq(inclusaoValida({ nCodOS: 5, cNumOS: "7", cCodIntOS: CHAVE }, CHAVE), { nCodOS: 5, cNumOS: "7" }, "válida");
+Deno.test("inclusaoValida: 200 {}, sem eco e eco errado não provam a OS", async () => {
+  const c = await K();
+  assertEq(inclusaoValida({}, c), null, "{}");
+  assertEq(inclusaoValida({ nCodOS: 5 }, c), null, "sem eco da chave");
+  assertEq(inclusaoValida({ nCodOS: 5, cCodIntOS: "OS_x" }, c), null, "outra chave");
+  assertEq(inclusaoValida({ nCodOS: 5, cNumOS: "7", cCodIntOS: c }, c), { nCodOS: 5, cNumOS: "7" }, "válida");
 });
 
 // ── orquestração ──
-Deno.test("1º envio: inclui com a chave determinística, vincula, primeiro=true", async () => {
+Deno.test("1º envio: inclui com a chave do conteúdo, vincula, primeiro=true", async () => {
   const m = mundo();
   const d = await criarOuReconciliarOS(m.deps, args());
-  assertEq([d.nCodOS, d.reconciliada, d.primeiro, d.conferencia], [111, false, true, "confere"], "desfecho");
-  assertEq((d.payloadEnviado?.Cabecalho as Record<string, unknown>).cCodIntOS, CHAVE, "payload leva a chave");
-  assertEq(m.reservas.get(ORDER)?.omie_codigo_os, 111, "vínculo gravado");
+  assertEq([d.reconciliada, d.primeiro, d.conferencia], [false, true, "confere"], "desfecho");
+  assertEq((d.payloadEnviado?.Cabecalho as Record<string, unknown>).cCodIntOS, await K(), "payload leva a chave");
+  assertEq(m.reservas.get(ORDER)?.omie_codigo_os, d.nCodOS, "vínculo gravado");
 });
 
 Deno.test("BUG do #4042: resposta perdida DEPOIS da edge concluir → reenvio NÃO chama IncluirOS", async () => {
   const m = mundo();
-  await criarOuReconciliarOS(m.deps, args());
+  const d1 = await criarOuReconciliarOS(m.deps, args());
   const d2 = await criarOuReconciliarOS(m.deps, args());
   assertEq(m.chamadas.incluir, 1, "IncluirOS uma vez só");
-  assertEq([d2.nCodOS, d2.reconciliada, d2.primeiro, d2.conferencia], [111, true, false, "confere"], "reenvio reconciliado");
+  assertEq([d2.nCodOS, d2.reconciliada, d2.primeiro, d2.conferencia], [d1.nCodOS, true, false, "confere"], "reenvio reconciliado");
 });
 
-Deno.test("BUG do #4042: Omie criou mas a EDGE perdeu a resposta → reenvio consulta pela chave e reconcilia", async () => {
-  let criada = false;
+Deno.test("BUG do #4042: Omie criou mas a resposta à EDGE se perdeu → a consulta pela chave reconcilia", async () => {
   const m = mundo({
-    omieIncluir: () => {
-      if (criada) throw new Error("Erro Omie: Código de Integração já cadastrado");
-      criada = true;
+    omieIncluir: (p, omie) => {
+      omie.set((p.Cabecalho as Record<string, string>).cCodIntOS, 777);
       throw new Error("Erro Omie: timeout em IncluirOS");
     },
-    omieConsultar: () => {
-      if (!criada) throw new Error("Erro Omie: Ordem de Serviço não cadastrada");
-      return consultaOk()();
-    },
   });
-  // 1ª tentativa: o IncluirOS "falha" (timeout) mas a OS ficou no Omie → a própria consulta já acha.
   const d = await criarOuReconciliarOS(m.deps, args());
-  assertEq([d.nCodOS, d.reconciliada, d.primeiro, d.conferencia], [111, true, true, "confere"], "reconciliada na mesma chamada");
+  assertEq([d.nCodOS, d.reconciliada, d.primeiro, d.conferencia], [777, true, true, "confere"], "reconciliada");
   assert(String((d.resposta as Record<string, unknown>).erro_inclusao).includes("timeout"), "erro da inclusão registrado");
-  const d2 = await criarOuReconciliarOS(m.deps, args());
-  assertEq(m.chamadas.incluir, 1, "reenvio não inclui de novo");
-  assertEq(d2.primeiro, false, "reenvio não é o primeiro");
+  assertEq(m.omie.size, 1, "uma OS só no Omie");
+});
+
+Deno.test("Codex P1-2: o vínculo falhou depois de criar → reenvio do MESMO carrinho conclui (confere)", async () => {
+  const m = mundo();
+  const vincOrig = m.deps.vincular;
+  let caiu = false;
+  m.deps.vincular = (id, chave, os) => {
+    if (!caiu) { caiu = true; return Promise.reject(new Error("queda do banco")); }
+    return vincOrig(id, chave, os);
+  };
+  await rejeitaCom(criarOuReconciliarOS(m.deps, args()), "queda do banco", "1ª chamada cai no vínculo");
+  const d = await criarOuReconciliarOS(m.deps, args());
+  assertEq([d.reconciliada, d.primeiro, d.conferencia], [true, true, "confere"], "reenvio reconcilia e vincula");
+  assertEq(m.omie.size, 1, "sem 2ª OS");
 });
 
 Deno.test("IncluirOS falhou e o Omie NÃO tem a OS → relança o erro ORIGINAL, nada vinculado", async () => {
@@ -192,75 +184,82 @@ Deno.test("IncluirOS falhou e o Omie NÃO tem a OS → relança o erro ORIGINAL,
   assertEq(m.reservas.get(ORDER)?.omie_codigo_os, null, "sem vínculo");
 });
 
-Deno.test("IncluirOS 200 {} → consulta; sem a OS lá → erro 'sem uma OS válida'", async () => {
+Deno.test("IncluirOS 200 {} e o Omie sem a OS → erro 'sem uma OS válida'", async () => {
   const m = mundo({ omieIncluir: () => ({}) });
   await rejeitaCom(criarOuReconciliarOS(m.deps, args()), "sem uma OS válida", "200 vazio não é sucesso");
 });
 
-Deno.test("consulta acha OS de OUTRO cliente → não confirma, relança o erro original", async () => {
+Deno.test("OS cancelada no Omie → OsCanceladaError (pedido novo)", async () => {
   const m = mundo({
     omieIncluir: () => { throw new Error("Erro Omie: já cadastrado"); },
-    omieConsultar: () => ({ Cabecalho: { nCodOS: 5, cCodIntOS: CHAVE, nCodCli: 1 } }),
   });
-  await rejeitaCom(criarOuReconciliarOS(m.deps, args()), "já cadastrado", "erro original preservado");
+  const c = await K();
+  m.deps.consultarOS = () => Promise.resolve({ Cabecalho: { nCodOS: 9, cNumOS: "9", cCodIntOS: c, nCodCli: CLI }, InfoCadastro: { cCancelada: "S" } });
+  let erro: unknown = null;
+  try { await criarOuReconciliarOS(m.deps, args()); } catch (e) { erro = e; }
+  assert(erro instanceof OsCanceladaError && erro.message.includes("CANCELADA"), "cancelada tipada");
 });
 
-Deno.test("OS cancelada no Omie → mensagem 'CANCELADA' (pedido novo)", async () => {
-  const m = mundo({
-    omieIncluir: () => { throw new Error("Erro Omie: já cadastrado"); },
-    omieConsultar: consultaOk({ InfoCadastro: { cCancelada: "S" } }),
-  });
-  await rejeitaCom(criarOuReconciliarOS(m.deps, args()), "CANCELADA", "cancelada");
-});
-
-Deno.test("Codex P1-1: carrinho B após a OS de A → diverge, e continua diverge no 2º reenvio", async () => {
+Deno.test("Codex P1-1 (diff): carrinho B depois da OS de A → diverge, e continua diverge no 2º reenvio", async () => {
   const m = mundo();
   await criarOuReconciliarOS(m.deps, args("A"));
   const d = await criarOuReconciliarOS(m.deps, args("B"));
-  assertEq([d.conferencia, d.primeiro], ["diverge", false], "1º reenvio com B");
   const d2 = await criarOuReconciliarOS(m.deps, args("B"));
-  assertEq(d2.conferencia, "diverge", "2º reenvio com B NÃO vira confere");
-  assertEq(m.reservas.get(ORDER)?.assinatura, "A", "assinatura da criação imutável");
+  assertEq([d.conferencia, d2.conferencia], ["diverge", "diverge"], "diverge nas duas");
+  assertEq(m.reservas.get(ORDER)?.chave_integracao, await K("A"), "reserva fica na chave da criação");
   assertEq(m.chamadas.incluir, 1, "nenhuma 2ª OS");
 });
 
-Deno.test("carrinho mudou, sem vínculo, mas a OS de A EXISTE no Omie (resposta perdida) → diverge, sem incluir", async () => {
-  const m = mundo({
-    reservaInicial: { assinatura: "A" },
-    omieConsultar: consultaOk(),
-  });
+Deno.test("carrinho mudou, OS de A no Omie sem vínculo (resposta perdida) → diverge, sem incluir B", async () => {
+  const m = mundo();
+  m.reservas.set(ORDER, { order_id: ORDER, chave_integracao: await K("A"), assinatura: "A", omie_codigo_cliente: CLI, omie_codigo_os: null, omie_numero_os: null });
+  m.omie.set(await K("A"), 555);
   const d = await criarOuReconciliarOS(m.deps, args("B"));
-  assertEq([d.conferencia, d.reconciliada, d.primeiro], ["diverge", true, true], "diverge reconciliada");
+  assertEq([d.conferencia, d.nCodOS], ["diverge", 555], "acusa a OS de A");
   assertEq(m.chamadas.incluir, 0, "não inclui");
+  assertEq(m.reservas.get(ORDER)?.omie_codigo_os, 555, "vínculo da OS de A gravado");
 });
 
-Deno.test("carrinho mudou e o Omie PROVA que a OS não existe (1ª tentativa rejeitada) → reabre e inclui B", async () => {
-  const m = mundo({ reservaInicial: { assinatura: "A" } });
+Deno.test("carrinho mudou e o Omie PROVA que a OS de A não existe → reabre e inclui B", async () => {
+  const m = mundo();
+  m.reservas.set(ORDER, { order_id: ORDER, chave_integracao: await K("A"), assinatura: "A", omie_codigo_cliente: CLI, omie_codigo_os: null, omie_numero_os: null });
   const d = await criarOuReconciliarOS(m.deps, args("B"));
   assertEq([d.conferencia, d.primeiro, d.reconciliada], ["confere", true, false], "inclui o carrinho novo");
-  assertEq(m.reservas.get(ORDER)?.assinatura, "B", "reserva reaberta com B");
+  assertEq(m.reservas.get(ORDER)?.chave_integracao, await K("B"), "reserva reaberta na chave de B");
+});
+
+Deno.test("Codex P2: 'Cliente não cadastrado' NÃO prova a ausência da OS → não reabre", async () => {
+  const m = mundo({ consultaFalha: () => new Error("Erro Omie: Cliente não cadastrado") });
+  m.reservas.set(ORDER, { order_id: ORDER, chave_integracao: await K("A"), assinatura: "A", omie_codigo_cliente: CLI, omie_codigo_os: null, omie_numero_os: null });
+  await rejeitaCom(criarOuReconciliarOS(m.deps, args("B")), "Não deu para conferir", "não reabre");
+  assertEq(m.chamadas.incluir, 0, "não inclui");
 });
 
 Deno.test("carrinho mudou e a consulta é INDETERMINADA → 'Não deu para conferir', nada criado", async () => {
-  const m = mundo({
-    reservaInicial: { assinatura: "A" },
-    omieConsultar: () => { throw new Error("Erro Omie: HTTP 503 em ConsultarOS"); },
-  });
+  const m = mundo({ consultaFalha: () => new Error("Erro Omie: HTTP 503 em ConsultarOS") });
+  m.reservas.set(ORDER, { order_id: ORDER, chave_integracao: await K("A"), assinatura: "A", omie_codigo_cliente: CLI, omie_codigo_os: null, omie_numero_os: null });
   await rejeitaCom(criarOuReconciliarOS(m.deps, args("B")), "Não deu para conferir", "indeterminado");
-  assertEq(m.chamadas.incluir, 0, "não inclui");
 });
 
-Deno.test("corrida: outro envio vinculou antes → devolve a OS vinculada, primeiro=false", async () => {
+Deno.test("Codex P1-1 (diff): inclusão de A em voo + B reabre a reserva → A NÃO vira 'confere'", async () => {
+  // A reserva e começa o IncluirOS; enquanto ele está em voo, B (outro carrinho) consulta a chave de
+  // A, vê ausência, reabre a reserva para a chave de B e inclui. A termina depois.
+  let liberarA!: () => void;
+  const portaA = new Promise<void>((r) => (liberarA = r));
   const m = mundo();
-  const vincularOrig = m.deps.vincular;
-  m.deps.vincular = async (id, os) => {
-    // o concorrente vence a corrida no meio
-    const r = m.reservas.get(id)!;
-    r.omie_codigo_os = os.nCodOS; r.omie_numero_os = os.cNumOS;
-    return await vincularOrig(id, os);
+  const incluirReal = m.deps.incluirOS;
+  const chaveA = await K("A");
+  m.deps.incluirOS = async (p) => {
+    if ((p.Cabecalho as Record<string, string>).cCodIntOS === chaveA) await portaA;
+    return await incluirReal(p);
   };
-  const d = await criarOuReconciliarOS(m.deps, args());
-  assertEq([d.primeiro, d.reconciliada, d.nCodOS], [false, true, 111], "perdedor não grava espelho");
+  const pA = criarOuReconciliarOS(m.deps, args("A"));
+  await new Promise((r) => setTimeout(r, 0));
+  const dB = await criarOuReconciliarOS(m.deps, args("B"));
+  assertEq(dB.conferencia, "confere", "B criou a sua OS");
+  liberarA();
+  await rejeitaCom(pA, "O pedido mudou enquanto a OS", "A avisa, nunca confirma");
+  assertEq(m.reservas.get(ORDER)?.omie_codigo_os, dB.nCodOS, "a reserva guarda a OS de B");
 });
 
 Deno.test("reserva some após gravar → aborta antes do Omie", async () => {

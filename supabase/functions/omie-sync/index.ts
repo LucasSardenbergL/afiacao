@@ -9,8 +9,8 @@ import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts
 import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
 import { montarParcelasOS } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
-import { montarAssinaturaOS } from "./chave-os.ts";
-import { criarOuReconciliarOS, type DesfechoOS, type ReservaOS } from "./os-idempotente.ts";
+import { chaveIntegracaoOS, montarAssinaturaOS } from "./chave-os.ts";
+import { criarOuReconciliarOS, type DesfechoOS, OsCanceladaError, type ReservaOS } from "./os-idempotente.ts";
 import { escapeHtml } from "../_shared/escape-html.ts";
 // Resend usado via fetch direto à REST API (https://api.resend.com/emails) para evitar dep npm
 
@@ -614,25 +614,24 @@ async function criarOrdemServicoOmie(
       if (error) throw new Error(`Leitura da reserva da OS falhou: ${error.message}`);
       return data as ReservaOS | null;
     },
-    async regravarAssinatura(id, anterior, nova) {
-      let q = supabase.from("afiacao_os_envio")
-        .update({ assinatura: nova.assinatura, omie_codigo_cliente: nova.omie_codigo_cliente })
-        .eq("order_id", id).is("omie_codigo_os", null);
-      q = anterior === null ? q.is("assinatura", null) : q.eq("assinatura", anterior);
-      const { data, error } = await q.select("order_id");
+    async reabrir(id, chaveAnterior, nova) {
+      const { data, error } = await supabase.from("afiacao_os_envio")
+        .update(nova)
+        .eq("order_id", id).eq("chave_integracao", chaveAnterior).is("omie_codigo_os", null)
+        .select("order_id");
       if (error) throw new Error(`Reabrir a reserva da OS falhou: ${error.message}`);
       return (data ?? []).length === 1;
     },
-    async vincular(id, os) {
+    async vincular(id, chave, os) {
       const { data, error } = await supabase.from("afiacao_os_envio")
         .update({
           omie_codigo_os: os.nCodOS, omie_numero_os: os.cNumOS, desfecho: os.desfecho,
           confirmado_em: new Date().toISOString(),
         })
-        .eq("order_id", id).is("omie_codigo_os", null).select("order_id");
+        .eq("order_id", id).eq("chave_integracao", chave).is("omie_codigo_os", null).select("order_id");
       if (error) {
-        // A OS EXISTE no Omie; perder o vínculo aqui faria o reenvio reconciliar pela chave (não duplica).
-        throw new Error(`OS ${os.cNumOS} criada no Omie, mas o vínculo local falhou: ${error.message}. Não reenvie sem conferir.`);
+        // A OS EXISTE no Omie; sem o vínculo, o reenvio reconcilia pela chave (não duplica).
+        throw new Error(`OS ${os.cNumOS} criada no Omie, mas o vínculo local falhou: ${error.message}. Reenvie para concluir.`);
       }
       return (data ?? []).length === 1;
     },
@@ -647,19 +646,25 @@ async function criarOrdemServicoOmie(
     montarPayload: (chave) => montarPayloadOS(chave, omieCodigoCliente, omieCodigoVendedor, order),
   });
 
-  // Só quem VINCULOU grava o espelho omie_ordens_servico (evita 2 linhas por order_id — o
-  // update_order/delete_order leem com maybeSingle).
-  if (desfecho.primeiro) {
-    const { error } = await supabase.from("omie_ordens_servico").insert({
-      order_id: orderId,
-      omie_numero_os: desfecho.cNumOS,
-      omie_codigo_os: desfecho.nCodOS,
-      status: "enviado",
-      payload_enviado: desfecho.payloadEnviado,
-      resposta_omie: desfecho.resposta,
-    });
-    if (error) {
-      console.error(`[Omie] OS ${desfecho.cNumOS} criada, mas o espelho omie_ordens_servico falhou (a reserva guarda o vínculo):`, error.message);
+  // Espelho omie_ordens_servico: 1 linha por order_id (update_order/delete_order leem com
+  // maybeSingle). Completado em TODO desfecho que confere — quem vinculou pode ter caído antes de
+  // gravá-lo (Codex P1). Erro LANÇA: o reenvio é seguro e conclui.
+  if (desfecho.conferencia === "confere") {
+    const { data: espelho, error: lerErr } = await supabase.from("omie_ordens_servico")
+      .select("id").eq("order_id", orderId).limit(1);
+    if (lerErr) throw new Error(`OS ${desfecho.cNumOS} existe no Omie, mas ler o registro local falhou: ${lerErr.message}. Reenvie para concluir.`);
+    if ((espelho ?? []).length === 0) {
+      const { error } = await supabase.from("omie_ordens_servico").insert({
+        order_id: orderId,
+        omie_numero_os: desfecho.cNumOS,
+        omie_codigo_os: desfecho.nCodOS,
+        status: "enviado",
+        payload_enviado: desfecho.payloadEnviado ?? montarPayloadOS(
+          await chaveIntegracaoOS(orderId, omieCodigoCliente, assinatura), omieCodigoCliente, omieCodigoVendedor, order,
+        ),
+        resposta_omie: desfecho.resposta,
+      });
+      if (error) throw new Error(`OS ${desfecho.cNumOS} existe no Omie, mas o registro local falhou: ${error.message}. Reenvie para concluir.`);
     }
   }
 
@@ -1088,49 +1093,42 @@ Deno.serve(async (req) => {
 
         // 2. Criar Ordem de Serviço (com vendedor se existir) — idempotente pelo orderId (= checkoutId
         //    do front): o reenvio do MESMO checkout devolve a OS que já existe em vez de criar outra.
-        const osResult = await criarOrdemServicoOmie(
-          supabaseAdmin,
-          orderId,
-          clienteResult.omieCodigoCliente,
-          clienteResult.omieCodigoVendedor,
-          orderData,
-          montarAssinaturaOS(body.assinaturaAfiacao, clienteResult.omieCodigoCliente, orderData),
-        );
+        let osResult: DesfechoOS;
+        try {
+          osResult = await criarOrdemServicoOmie(
+            supabaseAdmin,
+            orderId,
+            clienteResult.omieCodigoCliente,
+            clienteResult.omieCodigoVendedor,
+            orderData,
+            montarAssinaturaOS(body.assinaturaAfiacao, clienteResult.omieCodigoCliente, orderData),
+          );
+        } catch (e) {
+          // Cancelada: a mesma chave não aceita outra OS — o vendedor precisa da instrução, não de um 500.
+          if (!(e instanceof OsCanceladaError)) throw e;
+          result = { success: false, motivo: "os_cancelada", omie_os: { cNumOS: e.cNumOS }, error: e.message };
+          break;
+        }
         const omieOs = { nCodOS: osResult.nCodOS, cNumOS: osResult.cNumOS };
 
-        // A OS que já existe é de um pedido DIFERENTE do carrinho de agora (ou não dá para afirmar):
-        // nada de gravar este carrinho em `orders` nem confirmar ao front — o vendedor confere no Omie.
-        if (osResult.conferencia !== "confere") {
+        // A OS que já existe é de um carrinho DIFERENTE deste pedido: nada de gravar este carrinho em
+        // `orders` nem confirmar ao front — o vendedor confere no Omie.
+        if (osResult.conferencia === "diverge") {
           result = {
             success: false,
             reconciliada: true,
-            conferencia: osResult.conferencia,
+            conferencia: "diverge",
             omie_os: omieOs,
-            error: osResult.conferencia === "diverge"
-              ? `A OS ${osResult.cNumOS} já existe no Omie para este pedido, com ferramentas ou condições diferentes do carrinho atual.`
-              : `A OS ${osResult.cNumOS} já existe no Omie para este pedido, e não deu para conferir se é o mesmo carrinho.`,
+            error: `A OS ${osResult.cNumOS} já existe no Omie para este pedido, com ferramentas ou condições diferentes do carrinho atual.`,
           };
           break;
         }
 
-        // Reenvio do mesmo pedido cuja OS outra chamada já registrou: orders e e-mail já foram feitos
-        // por ela — só devolve a OS.
-        if (!osResult.primeiro) {
-          result = {
-            success: true,
-            reconciliada: true,
-            conferencia: osResult.conferencia,
-            omie_cliente: clienteResult.omieCodigoCliente,
-            omie_vendedor: clienteResult.omieCodigoVendedor || null,
-            omie_os: omieOs,
-          };
-          break;
-        }
-
-        // 3. Create the order record in the orders table
+        // 3. Registro em `orders` — idempotente (PK = orderId): o reenvio que reconcilia completa o
+        //    que a chamada anterior não chegou a gravar. Erro → success:false (o reenvio conclui).
         const { error: orderInsertError } = await supabaseAdmin
           .from("orders")
-          .insert({
+          .upsert({
             id: orderId,
             user_id: orderUserId,
             items: orderData.items,
@@ -1141,21 +1139,30 @@ Deno.serve(async (req) => {
             delivery_option: 'retirada',
             notes: orderData.notes || null,
             status: 'pedido_recebido',
-          });
+          }, { onConflict: "id", ignoreDuplicates: true });
 
         if (orderInsertError) {
-          console.error("[Omie Sync] Erro ao inserir pedido na tabela orders:", orderInsertError);
+          console.error("[Omie Sync] Erro ao gravar o pedido na tabela orders:", orderInsertError);
+          result = {
+            success: false,
+            reconciliada: osResult.reconciliada,
+            omie_os: omieOs,
+            error: `A OS ${osResult.cNumOS} foi criada no Omie, mas o registro do pedido falhou (${orderInsertError.message}). Reenvie — a OS não duplica.`,
+          };
+          break;
         }
 
-        // 3. Enviar notificação por email para administração (não bloqueia o fluxo)
-        try {
-          await sendOrderNotificationEmail(
-            profileData,
-            osResult.cNumOS,
-            orderData.items
-          );
-        } catch (notifyError) {
-          console.error("[Omie Sync] Erro ao enviar notificação (não crítico):", notifyError);
+        // 4. Notificação por e-mail: só quem vinculou a OS (o reenvio não repete o e-mail).
+        if (osResult.primeiro) {
+          try {
+            await sendOrderNotificationEmail(
+              profileData,
+              osResult.cNumOS,
+              orderData.items
+            );
+          } catch (notifyError) {
+            console.error("[Omie Sync] Erro ao enviar notificação (não crítico):", notifyError);
+          }
         }
 
         result = {
