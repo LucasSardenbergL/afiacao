@@ -19,3 +19,10 @@ Gate authorizeCronOrStaff; ação só master/service_role/cron-secret; sem cron 
 - **Correção:** `payloadAlterar` reenvia `estado` EXATAMENTE como o ConsultarCliente devolveu; o hash da verificação ≥61s prova que não mudou. `cidade` NÃO vai (Codex v1.1 P2: reenviar o nome lido poderia desfazer uma correção de município concorrente sem o hash acusar) — se o Omie passar a exigir, o canário mostra. Cadastro sem `estado` → `precondicao_falhou` (“cadastro sem estado no Omie (o AlterarCliente exige)”), sem escrever — inclusive no dry_run.
 - **Codex v1.1 P2 (preexistente):** o modo `verificar` agora PARA (`parou` preenchido, `fim=false`) ao achar `divergente` — antes podia anunciar fim.
 - O fake do Omie nos testes passou a recusar payload sem `estado`, como o real. Falsificado: 6 sabotagens vermelhas com controle verde na mesma invocação.
+
+## v1.2-payload-com-endereco (2026-11-21)
+
+- **Medido no 2º canário (v1.1, mesmos 8 clientes):** com só `estado`, o Omie recusou todos com `É obrigatório o preenchimento do endereço (Endereço, Número, Bairro, Cidade, Estado e CEP)`; releitura provou "nada gravado" em todos. O AlterarCliente valida o BLOCO de endereço inteiro.
+- **Correção:** `payloadAlterar` reenvia `endereco`, `endereco_numero`, `bairro`, `cidade`, `estado`, `cep` EXATAMENTE como o ConsultarCliente devolveu (nada além disso). Qualquer um vazio → `precondicao_falhou` ("endereço incompleto no Omie (o AlterarCliente exige): falta …"), sem escrever, inclusive no dry_run.
+- **Risco aceito** (o Codex v1.1 P2, agora forçado pelo Omie): uma correção de endereço feita por alguém na janela de ~1s entre o Consultar e o Alterar seria desfeita sem o hash acusar.
+- Falsificado: 4 sabotagens vermelhas (sem cep, sem pré-condição, só estado, branco aceito) com controle verde no início e no fim.

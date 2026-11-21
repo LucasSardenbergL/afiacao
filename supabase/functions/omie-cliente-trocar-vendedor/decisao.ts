@@ -167,7 +167,7 @@ export function recomendacoesDe(cad: Record<string, unknown>): Record<string, un
  * Risco aceito (Codex v1.1 P2, agora forçado pelo Omie): uma correção de endereço feita por alguém na janela de ~1s
  * entre o Consultar e o Alterar seria desfeita sem o hash acusar.
  */
-export const CAMPOS_ENDERECO = ["endereco", "endereco_numero", "bairro", "cidade", "estado", "cep"] as const;
+const CAMPOS_ENDERECO = ["endereco", "endereco_numero", "bairro", "cidade", "estado", "cep"] as const;
 
 /** Campos do bloco de endereço ausentes/vazios no cadastro lido (vazio = o AlterarCliente vai recusar). */
 export function enderecoFaltando(cad: Record<string, unknown>): string[] {
