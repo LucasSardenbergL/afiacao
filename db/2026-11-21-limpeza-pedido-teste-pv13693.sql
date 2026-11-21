@@ -41,7 +41,7 @@ BEGIN
               WHERE sales_order_id = '1a3c47e6-d767-4562-b9ff-d5afd7c9ae4b' AND status = 'ativa') THEN
     RAISE EXCEPTION 'P2_FALHOU: ainda há reserva ativa do pedido teste';
   END IF;
-  IF (SELECT count(*) FROM public.sales_orders WHERE notes LIKE 'TESTE CHECKOUT%') <> 1 THEN
+  IF (SELECT count(*) FROM public.sales_orders WHERE notes LIKE 'TESTE CHECKOUT%') IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'P3_FALHOU: esperado exatamente 1 pedido TESTE CHECKOUT';
   END IF;
   RAISE NOTICE 'limpeza do pedido teste PV 13693: pedido com deleted_at, reserva liberada';
