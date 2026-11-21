@@ -58,8 +58,12 @@ export function projetarItens(items: ItemPayload[]): Array<Record<string, unknow
   }));
 }
 
-/** Registra (ou reusa) a revisão. Falha → `null` (não segura o envio no PR 3). */
-export async function registrarRevisao(
+/**
+ * Registra (ou reusa) a revisão e devolve o que ENVIAR. Tudo — RPC, forma da resposta, parcela e
+ * correspondência item a item — é conferido AQUI dentro: qualquer falha descarta a revisão e o envio
+ * segue o payload original (caminho do PR 1). Revisão malformada nunca vira trava de venda (Codex diff P1).
+ */
+export async function registrarRevisao<T extends ItemPayload>(
   supabase: ClienteGate,
   args: {
     salesOrderId: string;
@@ -67,10 +71,10 @@ export async function registrarRevisao(
     contexto: "criacao" | "edicao";
     codigoCliente: number | null;
     parcela: { codigo: string; origem: OrigemParcela };
-    items: ItemPayload[];
+    items: T[];
     userId: string | null;
   },
-): Promise<RevisaoCredito | null> {
+): Promise<{ revisao: RevisaoCredito | null; itensEnvio: T[]; parcelaEnvio: string }> {
   try {
     const { data, error } = await supabase.rpc("credito_registrar_revisao", {
       p_sales_order_id: args.salesOrderId,
@@ -87,35 +91,56 @@ export async function registrarRevisao(
     if (!rev || typeof rev.revisao !== "string" || !Array.isArray(rev.itens)) {
       throw new Error("resposta sem 'revisao'/'itens'");
     }
-    return rev;
+    if (rev.codigo_parcela !== args.parcela.codigo) {
+      throw new Error(`parcela da revisão (${rev.codigo_parcela}) ≠ a do envio (${args.parcela.codigo})`);
+    }
+    return { revisao: rev, itensEnvio: itensDaRevisao(args.items, rev), parcelaEnvio: rev.codigo_parcela };
   } catch (e) {
     console.warn(
-      `[revisao-credito][${args.company}] revisão NÃO registrada (${args.contexto}, pedido ${args.salesOrderId}): ` +
-        `${mensagemDeErro(e) ?? "erro"} — segue o caminho do PR 1`,
+      `[revisao-credito][${args.company}] revisão DESCARTADA (${args.contexto}, pedido ${args.salesOrderId}): ` +
+        `${mensagemDeErro(e) ?? "erro"} — envio segue o payload (caminho do PR 1)`,
     );
-    return null;
+    return { revisao: null, itensEnvio: args.items, parcelaEnvio: args.parcela.codigo };
   }
 }
 
+const positivoFinito = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x) && x > 0;
+
 /**
  * Itens para o envio: os campos cosméticos (tint, descrição) vêm do payload; código, quantidade e
- * preço vêm DA REVISÃO. Divergência de tamanho ou de código item a item lança — não se envia algo
- * diferente do que foi registrado.
+ * preço vêm DA REVISÃO. Divergência de tamanho, de código item a item ou valor malformado lança
+ * (quem chama — `registrarRevisao` — descarta a revisão).
  */
-export function itensDaRevisao<T extends ItemPayload>(items: T[], rev: RevisaoCredito | null): T[] {
-  if (!rev) return items;
+export function itensDaRevisao<T extends ItemPayload>(items: T[], rev: RevisaoCredito): T[] {
   if (rev.itens.length !== items.length) {
-    throw new Error(`Revisão ${rev.revisao} tem ${rev.itens.length} itens e o envio ${items.length} — envio recusado`);
+    throw new Error(`Revisão ${rev.revisao} tem ${rev.itens.length} itens e o envio ${items.length}`);
   }
   return items.map((it, i) => {
     const r = rev.itens[i];
-    if (Number(it.omie_codigo_produto) !== Number(r.codigo_produto)) {
-      throw new Error(
-        `Revisão ${rev.revisao}: item ${i} é ${r.codigo_produto} e o envio ${it.omie_codigo_produto} — envio recusado`,
-      );
+    if (!Number.isSafeInteger(r?.codigo_produto) || !positivoFinito(r.quantidade) || !positivoFinito(r.valor_unitario)) {
+      throw new Error(`Revisão ${rev.revisao}: item ${i} malformado`);
+    }
+    if (Number(it.omie_codigo_produto) !== r.codigo_produto) {
+      throw new Error(`Revisão ${rev.revisao}: item ${i} é ${r.codigo_produto} e o envio ${it.omie_codigo_produto}`);
     }
     return { ...it, omie_codigo_produto: r.codigo_produto, quantidade: r.quantidade, valor_unitario: r.valor_unitario };
   });
+}
+
+/**
+ * Centavos com arredondamento half-up na 2ª casa, por LINHA (o mesmo `round(q × v, 2)` da revisão).
+ * Via texto decimal: `Math.round(1.005 * 100)` dá 100 (ponto flutuante); aqui dá 101.
+ */
+export function centavos(x: number): number {
+  if (!Number.isFinite(x)) return Number.NaN;
+  if (x < 0) return -centavos(-x);
+  const [inteiro, frac] = x.toFixed(6).split(".");
+  return Number(inteiro) * 100 + Number(frac.slice(0, 2)) + (Number(frac[2]) >= 5 ? 1 : 0);
+}
+
+/** Total em centavos, arredondado por linha. Quantidade/preço ausente conta 0 (só reduz o total ATUAL → mais gate). */
+export function totalCentavos(items: Array<{ quantidade?: unknown; valor_unitario?: unknown }>): number {
+  return items.reduce((s, it) => s + centavos((Number(it.quantidade) || 0) * (Number(it.valor_unitario) || 0)), 0);
 }
 
 /** Calendário da parcela SÓ quando provado pelo catálogo (override escalar não prova calendário). */
@@ -132,8 +157,12 @@ export async function calendarioDaParcela(
     if (error) throw new Error(error.message);
     const r = data as { fonte?: unknown; calendario?: unknown } | null;
     if (r?.fonte !== "catalogo" || !Array.isArray(r.calendario)) return null;
-    const cal = r.calendario.map(Number);
-    return cal.length > 0 && cal.every((d) => Number.isInteger(d) && d >= 0) ? cal : null;
+    // valores CRUS (sem Number(): null viraria 0 = à vista — Codex diff P2): inteiros 0..365, crescentes
+    const cal: unknown[] = r.calendario;
+    const ok = cal.length > 0 && cal.every((d, i) =>
+      typeof d === "number" && Number.isInteger(d) && d >= 0 && d <= 365 && (i === 0 || d > (cal[i - 1] as number))
+    );
+    return ok ? (cal as number[]) : null;
   } catch (e) {
     console.warn(`[revisao-credito][${company}] prazo da parcela ${codigo} indisponível: ${mensagemDeErro(e) ?? "erro"}`);
     return null;

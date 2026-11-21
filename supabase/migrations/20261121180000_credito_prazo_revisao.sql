@@ -34,7 +34,8 @@ DECLARE
   -- \s do JS = [ \t\n\v\f\r] + NBSP, U+1680, U+2000–U+200A, U+2028/9, U+202F, U+205F, U+3000, U+FEFF
   c_uni constant text := U&'\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF';
   c_ws  constant text := E'[ \\t\\n\\r\\f\\v]';
-  c_a   constant text := U&'[aA\00E0\00C0]';               -- [aà] com /i do JS
+  c_a   constant text := U&'[aA\00E0\00C0]';
+  c_trim constant text := E' \t\n\r\f' || chr(11);      -- \v do JS: E'\v' do PG é a LETRA v               -- [aà] com /i do JS
   c_lst constant text := '([0-9]{1,3}(?:' || E'[ \\t\\n\\r\\f\\v]' || '*/' || E'[ \\t\\n\\r\\f\\v]' || '*[0-9]{1,3})*)';
   d text;
   m text[];
@@ -47,22 +48,22 @@ DECLARE
 BEGIN
   IF p_descricao IS NULL THEN RETURN NULL; END IF;
   d := translate(p_descricao, c_uni, repeat(' ', length(c_uni)));
-  d := btrim(d, E' \t\n\r\f\v');
+  d := btrim(d, c_trim);
   IF d = '' THEN RETURN NULL; END IF;
 
   -- RE_A_VISTA: "A Vista" com qualificador só "(faturamento)"
-  IF d ~* ('^' || c_a || c_ws || '*vista(?:' || c_ws || '*\(' || c_ws || '*faturamento' || c_ws || '*\))?' || c_ws || '*$') THEN
+  IF d COLLATE "C" ~* ('^' || c_a || c_ws || '*vista(?:' || c_ws || '*\(' || c_ws || '*faturamento' || c_ws || '*\))?' || c_ws || '*$') THEN
     RETURN ARRAY[0];
   END IF;
 
   -- RE_A_VISTA_MAIS: "A Vista/30/60" = entrada à vista + calendário
-  m := regexp_match(d, '^' || c_a || c_ws || '*vista' || c_ws || '*/' || c_ws || '*' || c_lst || c_ws || '*$', 'i');
+  m := regexp_match(d COLLATE "C", '^' || c_a || c_ws || '*vista' || c_ws || '*/' || c_ws || '*' || c_lst || c_ws || '*$', 'i');
   IF m IS NOT NULL THEN
     v_lista := m[1];
     v_avista := true;
   ELSE
     -- RE_CALENDARIO: "Para 30 dias", "30/60/90", "30dd", "30 DDL"
-    m := regexp_match(d, '^(?:para' || c_ws || '+)?' || c_lst || c_ws || '*(?:dias?|ddl|dd)?' || c_ws || '*$', 'i');
+    m := regexp_match(d COLLATE "C", '^(?:para' || c_ws || '+)?' || c_lst || c_ws || '*(?:dias?|ddl|dd)?' || c_ws || '*$', 'i');
     IF m IS NULL THEN RETURN NULL; END IF;
     v_lista := m[1];
   END IF;
@@ -70,7 +71,7 @@ BEGIN
   -- lerDias: inteiros em (0, 365], estritamente crescentes
   v_dias := ARRAY[]::integer[];
   FOREACH v_parte IN ARRAY string_to_array(v_lista, '/') LOOP
-    v_x := btrim(v_parte, E' \t\n\r\f\v')::integer;
+    v_x := btrim(v_parte, c_trim)::integer;
     IF v_x <= 0 OR v_x > 365 THEN RETURN NULL; END IF;
     i := cardinality(v_dias);
     IF i > 0 AND v_x <= v_dias[i] THEN RETURN NULL; END IF;
@@ -83,7 +84,7 @@ BEGIN
 
   -- Número só e sem rótulo ("30") é ambíguo — não se adivinha que é prazo (RE_ROTULO_DE_PRAZO).
   IF cardinality(v_dias) = 1
-     AND NOT (d ~* ('^' || c_ws || '*para' || c_ws) OR d ~* ('(?:dias?|ddl|dd)' || c_ws || '*$')) THEN
+     AND NOT (d COLLATE "C" ~* ('^' || c_ws || '*para' || c_ws) OR d COLLATE "C" ~* ('(?:dias?|ddl|dd)' || c_ws || '*$')) THEN
     RETURN NULL;
   END IF;
   RETURN v_dias;
@@ -240,6 +241,10 @@ BEGIN
   IF v_cod IS NULL OR v_cod = '' THEN
     RETURN c_nulo || jsonb_build_object('motivo', 'sem_parcela');
   END IF;
+  IF v_cod = '999' THEN
+    -- "Informar o número de parcelas": o prazo é do PV, nunca do código — nem se o catálogo mudar.
+    RETURN c_nulo || jsonb_build_object('motivo', 'informar_parcelas');
+  END IF;
 
   -- override vigente = ÚLTIMA versão, inclusive revogação (prazo NULL → cai para o catálogo)
   SELECT o.id, o.prazo_dias INTO v_ov
@@ -354,11 +359,11 @@ BEGIN
     IF jsonb_typeof(v_el) <> 'object'
        OR jsonb_typeof(v_el -> 'quantidade') IS DISTINCT FROM 'number'
        OR jsonb_typeof(v_el -> 'valor_unitario') IS DISTINCT FROM 'number'
-       OR jsonb_typeof(v_el -> 'codigo_produto') NOT IN ('number', 'string') THEN
+       OR COALESCE(jsonb_typeof(v_el -> 'codigo_produto'), 'ausente') NOT IN ('number', 'string') THEN
       RAISE EXCEPTION 'credito_registrar_revisao: item malformado (%)', left(v_el::text, 200) USING ERRCODE = '22023';
     END IF;
     v_cod := btrim(v_el ->> 'codigo_produto');
-    IF v_cod !~ '^[0-9]{1,18}$' OR v_cod::bigint <= 0 THEN
+    IF v_cod IS NULL OR v_cod !~ '^[0-9]{1,15}$' OR v_cod::bigint <= 0 THEN
       RAISE EXCEPTION 'credito_registrar_revisao: código de produto inválido (%)', v_cod USING ERRCODE = '22023';
     END IF;
     v_q := (v_el ->> 'quantidade')::numeric;

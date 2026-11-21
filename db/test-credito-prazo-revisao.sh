@@ -28,13 +28,15 @@ SAB="$(mktemp -d "/tmp/sab-${SLUG}.XXXXXX")"
 cleanup() { exec 3>&- 2>/dev/null || true; "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")" "$SAB"; }
 trap cleanup EXIT
 
-"$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
+"$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale="${LC_ALL_TESTE:-C}" >/dev/null   # o BANCO no locale pedido (Codex diff P2)
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "/tmp/pg-${SLUG}.log" -w start >/dev/null
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
 PSQL=("$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1)
 P()  { "${PSQL[@]}" "$@"; }
 Pq() { P -tA -q "$@"; }
 
+echo "banco: $(Pq -c "SELECT datcollate || '/' || datctype FROM pg_database WHERE datname = current_database()" 2>/dev/null || P -tA -q -c "SELECT datcollate || '/' || datctype FROM pg_database WHERE datname = current_database()")"
+[ "$(P -tA -q -c "SELECT datctype FROM pg_database WHERE datname = current_database()")" = "${LC_ALL_TESTE:-C}" ] || { echo "❌ banco não está no locale pedido"; exit 1; }
 P -q -f "$REPO_ROOT/db/stubs-supabase.sql"   # auth.uid() = request.jwt.claims (fiel à prod)
 P -q <<'SQL'
 ALTER ROLE service_role BYPASSRLS;
@@ -148,8 +150,9 @@ echo "migrations aplicadas: ${#MIGS[@]} antecedentes + $(basename "$MIG") (2×)"
 SO1=b0000000-0000-0000-0000-000000000001   # oben
 SO2=b0000000-0000-0000-0000-000000000002   # colacor
 SO3=b0000000-0000-0000-0000-000000000003   # oben (concorrência)
+SO4=b0000000-0000-0000-0000-000000000004   # oben (evidência do override)
 P -q <<SQL
-INSERT INTO public.sales_orders(id, account) VALUES ('$SO1','oben'), ('$SO2','colacor'), ('$SO3','oben');
+INSERT INTO public.sales_orders(id, account) VALUES ('$SO1','oben'), ('$SO2','colacor'), ('$SO3','oben'), ('$SO4','oben');
 -- catálogo: grafias REAIS da OBEN (psql-ro 2026-11-21) + casos-limite; Colacor sem catálogo (como em prod)
 INSERT INTO public.omie_condicao_pagamento_catalogo(empresa, codigo, descricao, num_parcelas, ativo) VALUES
   ('OBEN','A28','Para 28 dias',1,true), ('OBEN','S41','28/42/56',3,true), ('OBEN','000','A Vista',1,true),
@@ -157,7 +160,8 @@ INSERT INTO public.omie_condicao_pagamento_catalogo(empresa, codigo, descricao, 
   ('OBEN','A30','Para 30 dias (C)',1,true), ('OBEN','003','3 Parcelas',3,true),
   ('OBEN','X01','Para 30 dias',NULL,true),   -- num_parcelas ausente: não prova
   ('OBEN','X02','30/60',3,true),             -- num_parcelas diverge
-  ('OBEN','X03','Para 45 dias',1,false);     -- inativo
+  ('OBEN','X03','Para 45 dias',1,false),     -- inativo
+  ('COLACOR','999','A Vista',1,true);        -- 999 CONTRADITÓRIO: nunca pode virar prazo 0
 
 CREATE FUNCTION public.t_try(p_sql text) RETURNS text LANGUAGE plpgsql AS \$f\$
 BEGIN EXECUTE p_sql; RETURN 'OK'; EXCEPTION WHEN OTHERS THEN RETURN SQLSTATE; END \$f\$;
@@ -237,6 +241,7 @@ asserts() {
   eq "P2.13 vazio → sem_parcela" "$(motivo "'','oben'")" "sem_parcela/-"
   eq "P2.14 NULL → NULL" "$(prazo "NULL,'oben'")" "NULL"
   eq "P2.15 empresa desconhecida" "$(motivo "'A28','xpto'")" "empresa_desconhecida/-"
+  eq "P2.16 999 contraditório no catálogo (Colacor 'A Vista') → NULL" "$(motivo "'999','colacor'")" "informar_parcelas/-"
 
   echo "P3 override (só o aprovador; append-only; versionado)"
   eq "P3.1 Lucas define colacor/A28=28" "$(Pq -c "SELECT public.t_ov('$L','colacor','A28',28,'catálogo Colacor ausente')")" "OK"
@@ -282,9 +287,17 @@ asserts() {
   eq "P4.18 origem inválida" "$(Pq -c "SELECT public.t_try(\$q\$SELECT public.t_rev('$SO1','oben','criacao',1,'A28','xpto','$I1')\$q\$)")" "22023"
   eq "P4.19 default_999 com outra parcela" "$(Pq -c "SELECT public.t_try(\$q\$SELECT public.t_rev('$SO1','oben','criacao',1,'A28','default_999','$I1')\$q\$)")" "22023"
   eq "P4.20 contexto inválido" "$(Pq -c "SELECT public.t_try(\$q\$SELECT public.t_rev('$SO1','oben','x',1,'A28','informada','$I1')\$q\$)")" "22023"
+  eq "P4.20b chave codigo_produto ausente" "$(Pq -c "SELECT public.t_try(\$q\$SELECT public.t_rev('$SO1','oben','criacao',1,'A28','informada','[{\"quantidade\":1,\"valor_unitario\":1}]')\$q\$)")" "22023"
+  eq "P4.20c código além da faixa segura do JS" "$(Pq -c "SELECT public.t_try(\$q\$SELECT public.t_rev('$SO1','oben','criacao',1,'A28','informada','[{\"codigo_produto\":\"9007199254740993\",\"quantidade\":1,\"valor_unitario\":1}]')\$q\$)")" "22023"
   eq "P4.21 nenhuma recusa gravou linha" "$(nrev)" "$n0"
-  Pq -c "SELECT public.t_ov('$L','oben','A28',35,'evidência nova')" >/dev/null
-  eq "P4.22 override novo → revisão nova com a evidência" "$(Pq -c "SELECT (j->>'seq')||'/'||(j->>'prazo_dias')||'/'||(j->>'prazo_fonte') FROM (SELECT public.t_rev('$SO1','oben','criacao',101,'A28','informada','$I1') j) x")/$(Pq -c "SELECT count(*) FROM public.credito_operacao_revisao WHERE prazo_override_id IS NOT NULL")" "5/35/override/1"
+  # só a EVIDÊNCIA muda (mesma operação, mesmo prazo 28): catálogo → override v1 → override v2
+  local e1 e2 e3
+  e1=$(revj "'$SO4','oben','criacao',101,'A28','informada',public.t_i1()" seq)
+  Pq -c "SELECT public.t_ov('$L','oben','A28',28,'evidência v1')" >/dev/null
+  e2=$(revj "'$SO4','oben','criacao',101,'A28','informada',public.t_i1()" seq)
+  Pq -c "SELECT public.t_ov('$L','oben','A28',28,'evidência v2')" >/dev/null
+  e3=$(revj "'$SO4','oben','criacao',101,'A28','informada',public.t_i1()" seq)
+  eq "P4.22 só a evidência muda → revisão nova a cada versão" "$e1/$e2/$e3/$(Pq -c "SELECT count(DISTINCT prazo_override_id) || ':' || string_agg(DISTINCT prazo_dias::text, ',') FROM public.credito_operacao_revisao WHERE sales_order_id='$SO4'")" "1/2/3/2:28"
   eq "P4.23 UPDATE com portão aberto → 42501" "$(tryas escritor_teste '' "SELECT set_config('credito.portao', (SELECT id::text FROM public.credito_operacao_revisao LIMIT 1), false); UPDATE public.credito_operacao_revisao SET valor_brl = 1")" "42501"
   eq "P4.24 DELETE → 42501" "$(tryas escritor_teste '' "SELECT set_config('credito.portao', (SELECT id::text FROM public.credito_operacao_revisao LIMIT 1), false); DELETE FROM public.credito_operacao_revisao")" "42501"
   eq "P4.25 TRUNCATE → 42501" "$(tryas escritor_teste '' "TRUNCATE public.credito_operacao_revisao")" "42501"
@@ -368,6 +381,18 @@ sabota "F7 deduplicação sem o devedor → outro cliente reusa a revisão" \
 sabota "F8 centavos pela soma (não por linha) → 2,01" \
   "t.replace('v_valor := v_valor + round(v_q * v_v, 2);', 'v_valor := v_valor + v_q * v_v;')" \
   "Pq -c \"SELECT round((public.t_rev('$SO2','colacor','criacao',601,'A28','informada','[{\\\"codigo_produto\\\":1,\\\"quantidade\\\":1,\\\"valor_unitario\\\":1.005},{\\\"codigo_produto\\\":2,\\\"quantidade\\\":1,\\\"valor_unitario\\\":1.005}]') ->> 'valor_brl')::numeric, 2)\"" "2.02"
+sabota "F11 deduplicação sem a evidência → override v2 reusa a revisão do v1" \
+  "t.replace(\"'override_id', v_prazo -> 'override_id', \", \"\")" \
+  "Pq -c \"SELECT public.t_ov('$L','oben','A28',28,'ev v1')\" >/dev/null; rev \"'$SO4','oben','criacao',101,'A28','informada',public.t_i1()\" >/dev/null; Pq -c \"SELECT public.t_ov('$L','oben','A28',28,'ev v2')\" >/dev/null; revj \"'$SO4','oben','criacao',101,'A28','informada',public.t_i1()\" seq" "2"
+sabota "F12 chave de produto ausente aceita (jsonb_typeof NULL)" \
+  "t.replace(\"COALESCE(jsonb_typeof(v_el -> 'codigo_produto'), 'ausente') NOT IN\", \"jsonb_typeof(v_el -> 'codigo_produto') NOT IN\").replace(\"IF v_cod IS NULL OR v_cod !~\", \"IF v_cod !~\")" \
+  "Pq -c \"SELECT public.t_try(\\\$q\\\$SELECT public.t_rev('$SO1','oben','criacao',1,'A28','informada','[{\\\"quantidade\\\":1,\\\"valor_unitario\\\":1}]')\\\$q\\\$)\"" "22023"
+sabota "F13 999 resolvido pelo catálogo → Colacor 'A Vista' vira prazo 0" \
+  "t.replace(\"  IF v_cod = '999' THEN\\n\", \"  IF false THEN\\n\")" \
+  "prazo \"'999','colacor'\"" "NULL"
+sabota "F14 trim com E'\\v' do PG (= letra v) → 'vA Vista' vira à vista" \
+  "t.replace(\"|| chr(11);\", \"|| 'v';\")" \
+  "Pq -c \"SELECT count(*) FROM public.t_fix WHERE public.credito_parse_calendario(descricao) IS DISTINCT FROM esperado\"" "0"
 aborta "F9 REVOKE de escrita esquecido (builder com INSERT)" \
   "t.replace(\"      EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON public.%I FROM %s', t, r.papel);\n\", '')"
 aborta "F10 parser devolve [0] para ilegível (ausente vira à vista)" \

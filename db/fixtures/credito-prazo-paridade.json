@@ -1395,6 +1395,55 @@
       "calendario": [
         0
       ]
+    },
+    {
+      "descricao": "vA Vista",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "A Vistav",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "\u000bA Vista",
+      "origem": "borda",
+      "calendario": [
+        0
+      ]
+    },
+    {
+      "descricao": "A Vista\u000b",
+      "origem": "borda",
+      "calendario": [
+        0
+      ]
+    },
+    {
+      "descricao": "Para 30 diasv",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "\u000bPara 30 dias",
+      "origem": "borda",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": "30\u000b/\u000b60",
+      "origem": "borda",
+      "calendario": [
+        30,
+        60
+      ]
+    },
+    {
+      "descricao": "v30/60",
+      "origem": "borda",
+      "calendario": null
     }
   ]
 }

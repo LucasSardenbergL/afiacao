@@ -11,7 +11,7 @@ import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelas
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
 import { concluirSyncPedidosIncremental } from "./desfecho-pedidos.ts";
 import { edicaoExigeGate, gateCredito, MENSAGEM_CREDITO_INDISPONIVEL } from "./gate-credito.ts";
-import { calendarioDaParcela, itensDaRevisao, parcelaEfetiva, registrarRevisao } from "./revisao-credito.ts";
+import { calendarioDaParcela, parcelaEfetiva, registrarRevisao, totalCentavos } from "./revisao-credito.ts";
 import { contadoresVendedorZerados, registrarVendedoresDaPagina } from "./vendedor-pedido.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
@@ -3063,7 +3063,7 @@ Deno.serve(async (req) => {
         // orçamento sem parcela vira 999 `default_999` com prazo NULL, nunca em silêncio. Não segura o
         // envio se falhar (spec §10: a trava nova só liga após a 1ª leva) — `null` = caminho do PR 1.
         const parcelaCriacao = parcelaEfetiva(codigo_parcela);
-        const revisaoCriacao = await registrarRevisao(supabaseAdmin, {
+        const { revisao: revisaoCriacao, itensEnvio, parcelaEnvio } = await registrarRevisao(supabaseAdmin, {
           salesOrderId: sales_order_id,
           company: account,
           contexto: "criacao",
@@ -3072,8 +3072,6 @@ Deno.serve(async (req) => {
           items,
           userId,
         });
-        const itensEnvio = itensDaRevisao(items, revisaoCriacao);
-        const parcelaEnvio = revisaoCriacao?.codigo_parcela ?? parcelaCriacao.codigo;
         // Trava de crédito Fase 2: bloqueia cliente com vencido 60+ sem exceção DESTE pedido.
         const credito = await gateCredito(supabaseAdmin, {
           company: account,
@@ -3498,7 +3496,7 @@ Deno.serve(async (req) => {
         // confiável do anti-duplicação e ANTES do verify-before-edit, da trava de crédito e de qualquer
         // mutação. 200 estruturado (como credito/tint_preco/atp), não throw: o 500 chega ao app só como
         // "non-2xx" e a instrução de editar no Omie se perderia. Sem override — é contrato, não exposição.
-        // Efeito colateral: quem passa daqui tem desconto zero, então o `totalAtualOmie` BRUTO da trava de
+        // Efeito colateral: quem passa daqui tem desconto zero, então o total atual (em centavos) da trava de
         // crédito abaixo é também o líquido.
         const descontoNoOmie = descontoNaLeituraDoOmie({ det: omieCurrentItems, total_pedido: omieTotalPedidoEdit });
         if (descontoNoOmie.acusado) {
@@ -3548,16 +3546,12 @@ Deno.serve(async (req) => {
         // Trava de crédito Fase 2 na EDIÇÃO — sobre estado CONFIÁVEL (consult ok + itens provados),
         // antes da fase destrutiva. Só bloqueia AUMENTO de exposição: total atual provado pelo
         // ConsultarPedido do Omie (nunca client/DB local — veredito Codex); reduzir dívida sempre pode.
-        const totalAtualOmie = omieCurrentItems.reduce(
-          (s, oi) =>
-            s + (Number(oi?.produto?.quantidade) || 0) * (Number(oi?.produto?.valor_unitario) || 0),
-          0,
-        );
         // Crédito-IA PR 3: parcela EFETIVA da edição = a informada, senão a ATUAL do PV (antes a
         // omissão regravava 999 — "Informar o número de parcelas" — por cima da condição real).
         // Revisão registrada antes do gate; o envio abaixo usa o conteúdo dela (não bloqueia se falhar).
         const parcelaEdicao = parcelaEfetiva(editParcela, omieParcelaEdit);
-        const revisaoEdicao = await registrarRevisao(supabaseAdmin, {
+        const { revisao: revisaoEdicao, itensEnvio: editItensEnvio, parcelaEnvio: editParcelaEnvio } =
+          await registrarRevisao(supabaseAdmin, {
           salesOrderId: editSoId,
           company: editAccount,
           contexto: "edicao",
@@ -3566,8 +3560,7 @@ Deno.serve(async (req) => {
           items: editItems,
           userId,
         });
-        const editItensEnvio = itensDaRevisao(editItems, revisaoEdicao);
-        const editParcelaEnvio = revisaoEdicao?.codigo_parcela ?? parcelaEdicao.codigo;
+        if (revisaoEdicao) console.log(`[Omie Vendas][${editAccount}] revisão de crédito ${revisaoEdicao.revisao} (seq ${revisaoEdicao.seq})`);
         const parcelaMudou = editParcelaEnvio.trim() !== String(omieParcelaEdit ?? "").trim();
         const [calendarioNovo, calendarioOmie] = parcelaMudou && omieParcelaEdit
           ? await Promise.all([
@@ -3575,9 +3568,14 @@ Deno.serve(async (req) => {
             calendarioDaParcela(supabaseAdmin, String(omieParcelaEdit), editAccount),
           ])
           : [null, null];
+        // Totais em CENTAVOS arredondados por linha (como a revisão e o Omie): somar o bruto deixava
+        // 2,00+2,02 → 2,01+2,01 (×0,5) passar como "não subiu" (Codex diff P1).
         if (edicaoExigeGate({
-          subtotalNovo: updatedSubtotal,
-          subtotalOmie: totalAtualOmie,
+          subtotalNovo: totalCentavos(editItensEnvio),
+          subtotalOmie: totalCentavos(omieCurrentItems.map((oi) => ({
+            quantidade: oi?.produto?.quantidade,
+            valor_unitario: oi?.produto?.valor_unitario,
+          }))),
           parcelaNova: editParcelaEnvio,
           parcelaOmie: omieParcelaEdit,
           calendarioNovo,
