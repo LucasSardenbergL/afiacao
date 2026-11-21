@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { Button } from '@/components/ui/button';
 import { ShoppingCart, Trash2, ChevronLeft, Loader2 } from 'lucide-react';
 import {
@@ -6,11 +7,10 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
-import { diaDoPedido, rotuloDiaPedido } from '@/lib/pedido/data-pedido';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
-import { decodeHtml, rotuloEmpresa, type OrderFeedRow } from '@/components/salesOrders/types';
+import { agruparPorDia, decodeHtml, EFEITO_DA_EXCLUSAO, rotuloEmpresa, type OrderFeedRow } from '@/components/salesOrders/types';
 import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
@@ -63,6 +63,12 @@ const SalesOrders = () => {
   // "não consegui ler" não chegar lá como "sem desconto".
   const descontosItensQuery = useDescontosItensPedido(detailRow);
   const [confirmandoLote, setConfirmandoLote] = useState(false);
+  // Confirmação de exclusão individual: UM diálogo na página, fora das linhas (dentro delas o clique
+  // no fundo do diálogo propagava pela árvore React até a linha e abria o detalhe — Codex 2ª rodada).
+  const [pedidoAExcluir, setPedidoAExcluir] = useState<OrderFeedRow | null>(null);
+  const gatilhoExclusaoRef = useRef<HTMLElement | null>(null);
+  // O cabeçalho do dia gruda ABAIXO da barra fixa do app (h-topbar; +1.75rem com a faixa do "Ver como").
+  const { isImpersonating } = useImpersonation();
 
   if (authLoading || loading) {
     return (
@@ -149,7 +155,7 @@ const SalesOrders = () => {
 
           {grupos.map((grupo) => (
             <section key={grupo.dia} aria-label={grupo.rotulo}>
-              <h2 className="sticky top-0 z-[1] border-b bg-muted/70 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-muted/50">
+              <h2 className={cn('sticky z-[1] border-b bg-muted/70 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-muted/50', isImpersonating ? 'top-[calc(theme(spacing.topbar)+1.75rem)]' : 'top-topbar')}>
                 {grupo.rotulo}
               </h2>
               <div className="divide-y">
@@ -162,7 +168,10 @@ const SalesOrders = () => {
                     checked={order.origin === 'sales' && selectedIds.has(order.id)}
                     onSelectChange={(v) => toggleSelect(order, v)}
                     onShare={() => handleShareOrder(order)}
-                    onDelete={() => deleteOrder(order)}
+                    onPedirExclusao={(gatilho) => {
+                      gatilhoExclusaoRef.current = gatilho;
+                      setPedidoAExcluir(order);
+                    }}
                     excluindo={order.origin === 'sales' && excluindoIds.has(order.id)}
                     onNavigate={navigate}
                     onOpenDetail={() => setDetailRow(order)}
@@ -221,7 +230,7 @@ const SalesOrders = () => {
                       : `${alcance.foraDaTela} pedidos selecionados não estão na lista atual (outra busca ou aba).`}
                   </p>
                 )}
-                <p>Os pedidos são excluídos também no Omie. Esta ação não pode ser desfeita por aqui.</p>
+                <p>{EFEITO_DA_EXCLUSAO}</p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -232,6 +241,36 @@ const SalesOrders = () => {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Excluir {plural(alcance.total, 'pedido', 'pedidos')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!pedidoAExcluir} onOpenChange={(aberto) => !aberto && setPedidoAExcluir(null)}>
+        <AlertDialogContent
+          onCloseAutoFocus={(e) => {
+            // Devolve o foco ao "⋯" de onde a exclusão saiu (se a linha ainda existir).
+            const gatilho = gatilhoExclusaoRef.current;
+            if (gatilho?.isConnected) {
+              e.preventDefault();
+              gatilho.focus();
+            }
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Excluir o pedido{pedidoAExcluir?.order_number ? ` ${pedidoAExcluir.order_number.replace(/^0+/, '') || '0'}` : ''}
+              {pedidoAExcluir ? ` de ${decodeHtml(pedidoAExcluir.customer_name || 'Cliente')}` : ''}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>{EFEITO_DA_EXCLUSAO}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => pedidoAExcluir && deleteOrder(pedidoAExcluir)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -258,25 +297,6 @@ const SalesOrders = () => {
 
 function plural(n: number, um: string, varios: string): string {
   return `${n.toLocaleString('pt-BR')} ${n === 1 ? um : varios}`;
-}
-
-interface GrupoDia {
-  dia: string;
-  rotulo: string;
-  pedidos: OrderFeedRow[];
-}
-
-// A lista vem ordenada por created_at DESC (useSalesOrders) → grupos contíguos, na ordem certa.
-// Data inválida não some: cai num grupo "Sem data" próprio.
-function agruparPorDia(pedidos: OrderFeedRow[]): GrupoDia[] {
-  const grupos: GrupoDia[] = [];
-  for (const p of pedidos) {
-    const dia = diaDoPedido(p.created_at) ?? 'sem-data';
-    const ultimo = grupos[grupos.length - 1];
-    if (ultimo && ultimo.dia === dia) ultimo.pedidos.push(p);
-    else grupos.push({ dia, rotulo: dia === 'sem-data' ? 'Sem data' : rotuloDiaPedido(dia), pedidos: [p] });
-  }
-  return grupos;
 }
 
 function alcanceDaExclusao(selecionadas: OrderFeedRow[], naTela: OrderFeedRow[]) {

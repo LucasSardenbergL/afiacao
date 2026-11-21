@@ -12,6 +12,11 @@ import { useUrlState } from '@/hooks/useUrlState';
 
 const local = vi.hoisted(() => ({ search: '' }));
 
+// A página lê só `isImpersonating` (altura do cabeçalho sticky); o provider real não interessa aqui.
+vi.mock('@/contexts/ImpersonationContext', () => ({
+  useImpersonation: () => ({ isImpersonating: false }),
+}));
+
 vi.mock('@/components/salesOrders/useSalesOrders', () => ({
   useSalesOrders: () => {
     const [filtros, setFiltros] = useUrlState({ q: '', empresa: 'all' });

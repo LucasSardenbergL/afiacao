@@ -30,7 +30,7 @@ function setup(o: OrderFeedRow, overrides: Partial<React.ComponentProps<typeof S
     checked: false,
     onSelectChange: vi.fn(),
     onShare: vi.fn(),
-    onDelete: vi.fn(),
+    onPedirExclusao: vi.fn(),
     onNavigate: vi.fn(),
     onOpenDetail: vi.fn(),
     onPrint: vi.fn(),
@@ -53,7 +53,8 @@ describe('SalesOrderCard (sales)', () => {
   });
 
   it('checkbox dispara onSelectChange sem navegar', () => {
-    const props = setup(order());
+    // Rascunho sem PV: excluível → selecionável para o lote.
+    const props = setup(order({ status: 'rascunho', omie_pedido_id: null }));
     fireEvent.click(screen.getByRole('checkbox'));
     expect(props.onSelectChange).toHaveBeenCalledWith(true);
     expect(props.onNavigate).not.toHaveBeenCalled();
@@ -87,14 +88,30 @@ describe('SalesOrderCard (sales)', () => {
     expect(screen.queryByTitle('Editar pedido')).toBeNull();
   });
 
-  it('excluir vem do menu "⋯" e só dispara onDelete após confirmar', () => {
-    const props = setup(order());
-    fireEvent.keyDown(screen.getByRole('button', { name: /Mais ações do pedido 123/ }), { key: 'Enter' });
+  it('excluir (rascunho sem PV) pede a exclusão à página com o "⋯" como gatilho de foco', () => {
+    const props = setup(order({ status: 'rascunho', omie_pedido_id: null }));
+    const gatilho = screen.getByRole('button', { name: /Mais ações do pedido 123/ });
+    fireEvent.keyDown(gatilho, { key: 'Enter' });
     fireEvent.click(screen.getByRole('menuitem', { name: /Excluir/ }));
-    expect(props.onDelete).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Excluir' }));
-    expect(props.onDelete).toHaveBeenCalledTimes(1);
+    expect(props.onPedirExclusao).toHaveBeenCalledWith(gatilho);
+    // A confirmação NÃO mora na linha (o clique no fundo dela abria o detalhe).
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(props.onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['importado do Omie', { status: 'importado' }, /Importado do Omie/],
+    ['já no Omie e não cancelado', { status: 'enviado', omie_pedido_id: 9 }, /cancele lá primeiro/],
+    ['Colacor SC', { account: 'colacor_sc', status: 'rascunho', omie_pedido_id: null }, /Colacor SC não são excluídos/],
+  ] as const)('%s: "Excluir" desabilitado com o motivo e sem checkbox', (_n, over, motivo) => {
+    const props = setup(order(over));
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    fireEvent.keyDown(screen.getByRole('button', { name: /Mais ações/ }), { key: 'Enter' });
+    const item = screen.getByRole('menuitem', { name: /Excluir/ });
+    expect(item.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText(motivo)).toBeTruthy();
+    fireEvent.click(item);
+    expect(props.onPedirExclusao).not.toHaveBeenCalled();
   });
 
   it('concordância: 1 item (não "1 itens")', () => {

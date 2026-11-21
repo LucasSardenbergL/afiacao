@@ -2,13 +2,9 @@
 // Densa e escaneável: no desktop é uma linha de tabela (cliente · PV · empresa · status · total ·
 // ações); no celular, um card de 2 linhas. UM só markup — a grade muda de forma por breakpoint
 // (grid-template-areas), então nenhum dado aparece duplicado no DOM.
-import { useState } from 'react';
+import { useRef } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -18,7 +14,7 @@ import { formatPrecoOuAusente } from '@/lib/format';
 import { horaDoPedido } from '@/lib/pedido/data-pedido';
 import { StatusBadge } from '@/components/StatusBadge';
 import type { OrderStatus } from '@/types';
-import { rotuloEmpresa, statusDoPedido, tomDoStatus, type OrderFeedRow, type TomStatus } from './types';
+import { podeExcluirPedido, rotuloEmpresa, statusDoPedido, tomDoStatus, type OrderFeedRow, type TomStatus } from './types';
 
 /**
  * Grade compartilhada entre a linha e o cabeçalho de colunas da listagem (SalesOrders) — as duas
@@ -56,7 +52,12 @@ interface SalesOrderCardProps {
   checked: boolean;
   onSelectChange: (checked: boolean) => void;
   onShare: () => void;
-  onDelete: () => void;
+  /**
+   * Pede a exclusão: a CONFIRMAÇÃO mora na página (um diálogo só, fora das linhas — dentro da linha
+   * o clique no fundo do diálogo caía no onClick dela e abria o detalhe). `gatilho` recebe o foco
+   * de volta quando o diálogo fecha.
+   */
+  onPedirExclusao: (gatilho: HTMLElement | null) => void;
   /** Exclusão deste pedido em voo: o "Excluir…" fica travado e diz "Excluindo…". */
   excluindo?: boolean;
   onNavigate: (path: string) => void;
@@ -72,16 +73,18 @@ export function SalesOrderCard({
   checked,
   onSelectChange,
   onShare,
-  onDelete,
+  onPedirExclusao,
   excluindo = false,
   onNavigate,
   onOpenDetail,
   onPrint,
   onPrefetch,
 }: SalesOrderCardProps) {
-  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  const gatilhoRef = useRef<HTMLButtonElement>(null);
   const isAfiacao = order.origin === 'afiacao';
-  const isSelectable = !isAfiacao; // só sales_orders são bulk-deletáveis
+  // A seleção só serve à exclusão em lote: só entra quem a edge pode excluir.
+  const exclusao = podeExcluirPedido(order);
+  const isSelectable = exclusao.ok;
   const podeEditar = !isAfiacao && !STATUS_NAO_EDITAVEIS.includes(order.status);
   const status = statusDoPedido(order.status);
   const cor = COR_DO_TOM[tomDoStatus(order.status)];
@@ -192,7 +195,7 @@ export function SalesOrderCard({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" aria-label={`Mais ações do ${nomeAcessivel}`}>
+            <Button ref={gatilhoRef} variant="ghost" size="icon" className="h-7 w-7 min-h-0" aria-label={`Mais ações do ${nomeAcessivel}`}>
               <MoreHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
@@ -213,38 +216,29 @@ export function SalesOrderCard({
             {!isAfiacao && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onSelect={() => setConfirmandoExclusao(true)}
-                  disabled={excluindo}
-                  className="text-status-error focus:text-status-error"
-                >
-                  <Trash2 className="mr-2 h-3.5 w-3.5" /> {excluindo ? 'Excluindo…' : 'Excluir…'}
-                </DropdownMenuItem>
+                {exclusao.ok ? (
+                  <DropdownMenuItem
+                    onSelect={() => onPedirExclusao(gatilhoRef.current)}
+                    disabled={excluindo}
+                    className="text-status-error focus:text-status-error"
+                  >
+                    <Trash2 className="mr-2 h-3.5 w-3.5" /> {excluindo ? 'Excluindo…' : 'Excluir…'}
+                  </DropdownMenuItem>
+                ) : (
+                  // Desabilitado COM o motivo: a vendedora sabe o que fazer em vez de tentar e levar erro.
+                  <DropdownMenuItem disabled className="flex-col items-start gap-0.5">
+                    <span className="flex items-center">
+                      <Trash2 className="mr-2 h-3.5 w-3.5" /> Excluir
+                    </span>
+                    <span className="max-w-[15rem] whitespace-normal text-[11px] leading-snug">{exclusao.motivo}</span>
+                  </DropdownMenuItem>
+                )}
               </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
 
-      {!isAfiacao && (
-        <AlertDialog open={confirmandoExclusao} onOpenChange={setConfirmandoExclusao}>
-          <AlertDialogContent onClick={parar}>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Excluir o {nomeAcessivel}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                O pedido sai da listagem e é excluído também no Omie. Esta ação não pode ser desfeita
-                por aqui.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-              <AlertDialogAction onClick={onDelete} disabled={excluindo} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                Excluir
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
     </div>
   );
 }
