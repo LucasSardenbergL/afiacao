@@ -85,7 +85,8 @@ const JANELA_MARGEM_DIAS = 365;
 
 /**
  * Por que o cliente não tem margem, quando o motivo é a JANELA: nenhuma compra nos últimos 12 meses.
- * Lê `days_since_last_purchase` (MEDIDO pelo calculate-scores; 999 = sem compra registrada) — é o
+ * Lê `days_since_last_purchase` (MEDIDO pelo calculate-scores; desde a v1.8 NULL = sem compra registrada,
+ * antes o 999 sentinela) — é o
  * que permite afirmar o motivo em vez de mostrar "—". Dias ausente/não-finito → null (não afirma nada).
  */
 export function legendaMargemSemCompraNaJanela(diasSemCompra: number | null | undefined): string | null {

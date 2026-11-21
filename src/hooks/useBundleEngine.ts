@@ -5,6 +5,7 @@ import { comNulo } from '@/lib/rpc-args';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { buscarMargensScores, type MargemScore } from '@/lib/scoring/margemScores';
+import { valorMedido } from '@/lib/scoring/margin';
 import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
 import { erroComCausa, mensagemDeErro } from '@/lib/erro-mensagem';
 import { captureException } from '@/lib/analytics';
@@ -90,12 +91,14 @@ export interface CustomerBundles {
   healthScore: number;
   bundles: BundleRecommendation[];
   individuais: IndividuaisDoCliente;
-  avgMonthlySpend: number;
+  /** `null` = gasto não medido (calculate-scores v1.8: quem nunca comprou) — nunca o R$ 0 sentinela. */
+  avgMonthlySpend: number | null;
   /** `null` = margem não apurada. NÃO trocar por 0: 0 classifica o cliente como "sensível a
    *  preço" via `classifyCustomerProfile`, um veredito que a ausência de dado não sustenta. */
   grossMarginPct: number | null;
   categoryCount: number;
-  daysSinceLastPurchase: number;
+  /** `null` = dias não medidos (calculate-scores v1.8) — o `|| 0` dizia "comprou hoje" no prompt. */
+  daysSinceLastPurchase: number | null;
   cnae: string;
   customerType: string;
   recentProducts: string[];
@@ -1032,11 +1035,11 @@ export const useBundleEngine = () => {
             healthScore,
             bundles: topBundles,
             individuais,
-            avgMonthlySpend: Number(score.avg_monthly_spend_180d || 0),
+            avgMonthlySpend: valorMedido(score.avg_monthly_spend_180d),
             // Sem cap_custo_ler a RPC devolve null: o perfil do cliente segue o ramo "margem desconhecida".
             grossMarginPct: margensDaCarteira.get(cid)?.margem ?? null,
             categoryCount: Number(score.category_count || 0),
-            daysSinceLastPurchase: Number(score.days_since_last_purchase || 0),
+            daysSinceLastPurchase: valorMedido(score.days_since_last_purchase),
             cnae: profile.cnae || '',
             customerType: profile.customer_type || '',
             recentProducts: purchasedProducts.slice(0, 5),

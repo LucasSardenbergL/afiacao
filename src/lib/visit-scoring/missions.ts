@@ -85,7 +85,11 @@ export function scoreRecuperacao(c: CustomerScoreInputs): MissionResult {
     insumosMedidos++;
   }
 
-  const recencyPenalty = Math.max(0, 100 - c.days_since_last_purchase) * -0.1;
+  // Dias NULL = não medido (calculate-scores v1.8: sem linha na RPC de vendas, nunca o 999 sentinela). Sem
+  // recência medida a penalidade não entra (com o 999 ela já era 0) e o ausente é NOMEADO.
+  let recencyPenalty = 0;
+  if (c.days_since_last_purchase == null) insumosAusentes.push('days_since_last_purchase');
+  else recencyPenalty = Math.max(0, 100 - c.days_since_last_purchase) * -0.1;
   const signalsBoost = somaModifiers(c.signal_modifiers?.breakdown?.churn) * 0.1;
 
   // REGRA ÚNICA (mesmo padrão de scoreExpansao): nenhum insumo medido → não avaliada. Alcançável
@@ -150,13 +154,16 @@ export function scoreRelacionamento(c: CustomerScoreInputs): MissionResult {
   // Sem compra não há relacionamento a manter (mesma razão da recuperação).
   if (nuncaComprou(c)) return { score: 0, insumosAusentes: [] };
   const healthBoost = c.health_score * 0.5;
-  const revenueBoost = normalizeRevenue(c.avg_monthly_spend_180d) * 30;
+  const insumosAusentes: string[] = [];
+  // Gasto NULL = não medido (v1.8): o boost não entra (com o 0 sentinela ele já era 0) e o ausente é nomeado.
+  let revenueBoost = 0;
+  if (c.avg_monthly_spend_180d == null) insumosAusentes.push('avg_monthly_spend_180d');
+  else revenueBoost = normalizeRevenue(c.avg_monthly_spend_180d) * 30;
   // null = nunca visitado: fallback conservador (30d) para não inflar score de relacionamento
   // sem histórico de visita real.
   const effectiveDays = c.days_since_last_visit ?? 30;
   const daysSinceVisitBoost = Math.min(40, effectiveDays * 0.3);
   // churn_risk NULL (sem histórico, v1.7) não é "risco zero": a penalidade não entra e o ausente é nomeado.
-  const insumosAusentes: string[] = [];
   let riskPenalty = 0;
   if (c.churn_risk == null) insumosAusentes.push('churn_risk');
   else riskPenalty = c.churn_risk * 0.3;

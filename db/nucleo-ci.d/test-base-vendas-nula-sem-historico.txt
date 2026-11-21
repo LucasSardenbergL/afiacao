@@ -1,0 +1,5 @@
+# Scores (20261121220000): days_since_last_purchase/avg_monthly_spend_180d NULL explícito aceito e gravado sem
+# COALESCE (sobre o 999/R$0 sentinela), zero e 999 MEDIDOS preservados, payload v1.7 segue aceito, chave AUSENTE
+# (qualquer das duas) derruba o lote misto com 23514 e zero linhas, guards de churn/priority e category_count CORE
+# intactos, fencing 55000/22004, a transição 999→NULL não enfileira visita (1ª venda enfileira 1), ACL, PRE anti-deriva.
+db/test-base-vendas-nula-sem-historico.sh 42 falsificar=9

@@ -257,11 +257,12 @@ export const getObjectiveLabel = (obj: string) => objectiveLabels[obj] || obj;
 // classifyCustomerProfile em useBundleArguments.ts). ⚠️ Os dois primeiros ramos exigem margem
 // CONHECIDA: `null < 20` é `true` em JS, então sem o guard todo cliente de gasto baixo e margem
 // não apurada sairia como "sensível a preço" — e esse rótulo entra no prompt da IA.
-const classifyProfile = (healthScore: number, avgSpend: number, marginPct: number | null, categoryCount: number): string => {
+// avgSpend null = gasto não medido (calculate-scores v1.8) — guard explícito, `null < 500` é `true` em JS.
+const classifyProfile = (healthScore: number, avgSpend: number | null, marginPct: number | null, categoryCount: number): string => {
   const m = margemConhecida(marginPct);
-  if (m != null && avgSpend < 500 && m < 20) return 'sensivel_preco';
+  if (m != null && avgSpend != null && avgSpend < 500 && m < 20) return 'sensivel_preco';
   if (m != null && m > 35 && categoryCount <= 3) return 'orientado_qualidade';
-  if (avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
+  if (avgSpend != null && avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
   return 'misto';
 };
 
@@ -640,13 +641,15 @@ export const useTacticalPlan = () => {
       const healthScore = Number(score.health_score || 0);
       // null = sem histórico (calculate-scores v1.7): ausente, nunca 0 — vai null ao plano e ao prompt.
       const churnRisk = score.churn_risk == null ? null : Number(score.churn_risk);
-      const avgSpend = Number(score.avg_monthly_spend_180d || 0);
+      // NULL = não medido (calculate-scores v1.8: quem nunca comprou) — atravessa até o prompt e o payload
+      // como null; classifyProfile/selectObjective têm guard. O `|| 0` dizia "gasta R$ 0" / "comprou hoje".
+      const avgSpend = valorMedido(score.avg_monthly_spend_180d);
       // Margem e cluster pela RPC com gate de projeção: sem cap_custo_ler os dois chegam null e o plano
       // segue o ramo "margem desconhecida" — o número não vai ao prompt nem fica gravado no plano.
       const margemCliente = await buscarMargemScore(customerId);
       const marginPct = margemCliente?.margem ?? null;
       const categoryCount = Number(score.category_count || 0);
-      const daysSince = Number(score.days_since_last_purchase || 0);
+      const daysSince = valorMedido(score.days_since_last_purchase);
       // [money-path "ausente ≠ zero"] Espelha a edge generate-tactical-plan: estas duas colunas
       // foram nuladas de propósito (20260727130000_farmer_scores_colunas_orfas_null) porque
       // nenhum writer as calcula — 6.633/6.633 NULL em prod, `column_default` removido. Com
