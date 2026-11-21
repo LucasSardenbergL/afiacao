@@ -18,13 +18,16 @@ export function useAdminCustomers() {
   // para a busca ir ao servidor no modo completa.
   const [searchParams] = useSearchParams();
   const busca = searchParams.get('search') ?? '';
+  // `?health=` e `?ordem=` idem: no modo completa o filtro e a ordem vão ao servidor, antes de paginar.
+  const saude = searchParams.get('health');
+  const ordem = searchParams.get('ordem');
   const { user, isStaff, loading: authLoading } = useAuth();
 
   const {
     customers, scores, total, isCarteira, loading, isError, refetch,
     hasNextPage, isFetchingNextPage, fetchNextPage, effectiveUserId,
-    buscaNoServidor, buscando, clienteAlvo,
-  } = useClientesScope({ busca, customerIdAlvo: customerId ?? null });
+    buscaNoServidor, buscando, clienteAlvo, filtroNoServidor, totalRecorte,
+  } = useClientesScope({ busca, saude, ordem, customerIdAlvo: customerId ?? null });
 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerTools, setCustomerTools] = useState<UserTool[]>([]);
@@ -154,6 +157,8 @@ export function useAdminCustomers() {
     scores,
     buscaNoServidor,
     buscando,
+    filtroNoServidor,
+    totalRecorte,
     /** Estado do deep link — a página mostra "não encontrado" em vez de cair na lista. */
     estadoDeepLink: clienteAlvo.estado,
     retryDeepLink: clienteAlvo.estado === 'erro' ? clienteAlvo.refetch : undefined,

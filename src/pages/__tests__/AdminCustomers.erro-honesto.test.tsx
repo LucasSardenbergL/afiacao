@@ -29,6 +29,11 @@ const PERFIS = [{
 }];
 
 function resposta(table: string): unknown {
+  // A lista da base completa vem da RPC listar_clientes_base (falha do mesmo jeito que profiles).
+  if (table === 'rpc:listar_clientes_base') {
+    if (falharProfiles) return { data: null, error: ERRO_TIMEOUT };
+    return { data: PERFIS.map((p) => ({ ...p, prioridade_ordenacao: null, total: PERFIS.length })), error: null };
+  }
   if (table === 'profiles') {
     if (falharProfiles) return { data: null, error: ERRO_TIMEOUT, count: null };
     return { data: PERFIS, error: null, count: PERFIS.length };
@@ -47,7 +52,9 @@ function chain(table: string): unknown {
   return c;
 }
 
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t) } }));
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: { from: (t: string) => chain(t), rpc: (fn: string) => chain(`rpc:${fn}`) },
+}));
 // `user` PRECISA ser o mesmo objeto entre renders: o AuthContext real guarda em `useState`
 // (identidade estável), e `useAdminCustomers` tem `useEffect(…, [user, isStaff])` que chama
 // `setCategories`. Um literal novo a cada chamada — como estava — dá dep sempre "nova" →

@@ -20,6 +20,8 @@ const AdminCustomers = () => {
     scores,
     buscaNoServidor,
     buscando,
+    filtroNoServidor,
+    totalRecorte,
     estadoDeepLink,
     retryDeepLink,
     categories,
@@ -122,6 +124,8 @@ const AdminCustomers = () => {
           onLoadMore={fetchNextPage}
           buscaNoServidor={buscaNoServidor}
           buscando={buscando}
+          filtroNoServidor={filtroNoServidor}
+          totalRecorte={totalRecorte}
         />
       )}
     </>

@@ -97,7 +97,7 @@ describe("CustomerListView", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText("Marcenaria Alfa")).toBeTruthy();
-    expect(screen.getByText("Todos os resultados da busca carregados (1)")).toBeTruthy();
+    expect(screen.getByText("Todos os resultados carregados (1)")).toBeTruthy();
   });
 
   it("carteira: busca local também casa telefone", () => {
@@ -117,5 +117,36 @@ describe("CustomerListView", () => {
     );
     expect(screen.queryByText("Nenhum cliente com esses filtros")).toBeNull();
     expect(screen.getByText("Nenhum cliente nas páginas carregadas até agora")).toBeTruthy();
+  });
+
+  it("filtro no servidor: não re-filtra saúde em memória (o recorte já veio filtrado)", () => {
+    // O score em memória diz "saudavel", o filtro pede "critico": filtrar aqui esconderia o
+    // cliente que o servidor afirmou ser crítico (score da página pode estar stale ou ausente).
+    render(
+      <MemoryRouter initialEntries={["/admin/customers?health=critico"]}>
+        <CustomerListView customers={[customer]} scores={new Map([["c1", score]])} loading={false} isError={false} onRetry={vi.fn()} total={5665} totalRecorte={1} isCarteira={false} filtroNoServidor onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Marcenaria Alfa")).toBeTruthy();
+    expect(screen.getByText("1 com esses filtros · 5.665 clientes na base")).toBeTruthy();
+  });
+
+  it("filtro no servidor e recorte vazio: afirma 'Nenhum cliente' (não há parte não lida)", () => {
+    render(
+      <MemoryRouter initialEntries={["/admin/customers?health=critico"]}>
+        <CustomerListView customers={[]} scores={new Map()} loading={false} isError={false} onRetry={vi.fn()} total={5665} totalRecorte={0} isCarteira={false} filtroNoServidor onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Nenhum cliente com esses filtros")).toBeTruthy();
+  });
+
+  it("carteira: filtro de saúde segue em memória (a carteira é lida inteira)", () => {
+    render(
+      <MemoryRouter initialEntries={["/admin/customers?health=critico"]}>
+        <CustomerListView customers={[customer]} scores={new Map([["c1", score]])} loading={false} isError={false} onRetry={vi.fn()} total={1} isCarteira onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Marcenaria Alfa")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Ordenar lista/i })).toBeNull();
   });
 });

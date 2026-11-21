@@ -11,6 +11,24 @@ export const HEALTH_CLASSES: Record<string, { label: string; className: string }
   novo: { label: 'Novo', className: 'text-muted-foreground' },
 };
 
+/** Valores do filtro "Saúde" (o mesmo vocabulário que a RPC `listar_clientes_base` aceita). */
+const FILTROS_SAUDE = ['saudavel', 'estavel', 'atencao', 'critico', 'sem_historico'] as const;
+export type FiltroSaude = (typeof FILTROS_SAUDE)[number];
+
+/**
+ * `?health=` da URL → filtro válido ou `null` (= todos). Valor desconhecido (link velho, digitado à
+ * mão) vira "todos" em vez de ir ao servidor, que o recusaria com 22023 e a tela diria "falha".
+ */
+export function normalizarFiltroSaude(v: string | null | undefined): FiltroSaude | null {
+  return (FILTROS_SAUDE as readonly string[]).includes(v ?? '') ? (v as FiltroSaude) : null;
+}
+
+/** Ordem da lista. `prioridade` = "Priorizar contatos" (padrão); `nome` = A–Z. */
+export type OrdemClientes = 'prioridade' | 'nome';
+export function normalizarOrdem(v: string | null | undefined): OrdemClientes {
+  return v === 'nome' ? 'nome' : 'prioridade';
+}
+
 export function formatDocument(doc: string | null) {
   if (!doc) return '-';
   if (doc.length === 11) return doc.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');

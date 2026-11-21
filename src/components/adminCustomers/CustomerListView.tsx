@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
   Loader2, Search, User, ChevronRight, Filter, Users, Save, Bookmark, X as XIcon,
-  AlertTriangle,
+  AlertTriangle, ArrowDownWideNarrow, ArrowDownAZ,
 } from 'lucide-react';
 import { EmptyState } from '@/components/EmptyState';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
@@ -22,6 +22,7 @@ import { useCustomerSegments } from '@/hooks/useCustomerSegments';
 import { decodeHtmlEntities } from '@/lib/format';
 import {
   HEALTH_CLASSES, NAO_APURADO, classeSaudeExibida, fmtContagem, fmtGasto, fmtPrioridade, formatDocument, metricasExibiveis,
+  normalizarOrdem, type OrdemClientes,
 } from './config';
 import type { Customer, ClientScore } from './types';
 
@@ -39,6 +40,8 @@ export function CustomerListView({
   onLoadMore,
   buscaNoServidor = false,
   buscando = false,
+  filtroNoServidor = false,
+  totalRecorte = null,
 }: {
   customers: Customer[];
   scores: Map<string, ClientScore>;
@@ -56,13 +59,23 @@ export function CustomerListView({
   buscaNoServidor?: boolean;
   /** Resultado do termo anterior à vista enquanto o novo é buscado. */
   buscando?: boolean;
+  /** Filtro de saúde e ordem já aplicados pelo servidor antes de paginar (base completa). */
+  filtroNoServidor?: boolean;
+  /** Tamanho do recorte (busca + saúde) no servidor; `null` = não informado. */
+  totalRecorte?: number | null;
 }) {
   const sentinelRef = useInfiniteScroll(onLoadMore, hasNextPage && !isFetchingNextPage);
   // Filtros sincronizados com URL (compartilhável, sobrevive a F5)
-  const [urlState, setUrlState] = useUrlState({ search: '', health: 'all' });
+  const [urlState, setUrlState] = useUrlState({ search: '', health: 'all', ordem: 'prioridade' });
   const searchQuery = urlState.search;
   const filterHealth = urlState.health;
   const setFilterHealth = (v: string) => setUrlState({ health: v });
+  // A ordem só é escolhível na base completa, onde o servidor a aplica antes de paginar. A carteira
+  // segue A–Z (a ordem de sempre dela) — sem controle que pareça ordenar e não ordene.
+  const ordem: OrdemClientes = normalizarOrdem(urlState.ordem);
+  const setOrdem = (v: OrdemClientes) => setUrlState({ ordem: v });
+  const ordenavel = filtroNoServidor;
+  const filtrando = !!searchQuery || filterHealth !== 'all';
 
   // O input de busca tem estado LOCAL e empurra pra URL com debounce: escrever
   // na URL a cada tecla (history.replace) re-renderizava todos os subscribers
@@ -96,7 +109,7 @@ export function CustomerListView({
     let result = customers;
     // Base completa: a busca foi ao servidor (filtrar aqui só enxergaria as páginas já
     // carregadas). Carteira: lida inteira, então o filtro local é completo — mesmas colunas
-    // da busca no servidor (useClientesScope COLUNAS_BUSCA).
+    // da busca no servidor (RPC listar_clientes_base: name/email/document/phone).
     if (searchQuery && !buscaNoServidor) {
       const q = searchQuery.toLowerCase();
       result = result.filter(c =>
@@ -106,7 +119,8 @@ export function CustomerListView({
         c.phone?.toLowerCase().includes(q)
       );
     }
-    if (filterHealth !== 'all') {
+    // Base completa: o filtro de saúde também foi ao servidor, ANTES da paginação.
+    if (filterHealth !== 'all' && !filtroNoServidor) {
       result = result.filter(c => {
         const score = scores.get(c.user_id);
         // sem_historico tem filtro próprio; nos filtros de SAÚDE ele NÃO entra (o badge dele é
@@ -117,7 +131,7 @@ export function CustomerListView({
       });
     }
     return result;
-  }, [customers, searchQuery, filterHealth, scores, buscaNoServidor]);
+  }, [customers, searchQuery, filterHealth, scores, buscaNoServidor, filtroNoServidor]);
 
   if (loading) {
     // PageSkeleton (não Loader2 full-page) — convenção §9; mesma troca feita
@@ -135,7 +149,9 @@ export function CustomerListView({
             {/* Sob falha sem dado, "0 clientes na base" afirmaria base vazia — não medimos nada. */}
             {isError && customers.length === 0
               ? 'contagem indisponível'
-              : `${fmtContagem(total)} ${isCarteira ? 'clientes na carteira' : 'clientes na base'}`}
+              : filtroNoServidor && filtrando && totalRecorte != null
+                ? `${fmtContagem(totalRecorte)} com esses filtros · ${fmtContagem(total)} clientes na base`
+                : `${fmtContagem(total)} ${isCarteira ? 'clientes na carteira' : 'clientes na base'}`}
           </p>
         </div>
       </div>
@@ -274,6 +290,22 @@ export function CustomerListView({
             <DropdownMenuItem onClick={() => setFilterHealth('sem_historico')}>⚪ Sem histórico</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {ordenavel && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-9 gap-1.5" aria-label="Ordenar lista">
+                {ordem === 'nome'
+                  ? <ArrowDownAZ className="w-3.5 h-3.5" />
+                  : <ArrowDownWideNarrow className="w-3.5 h-3.5" />}
+                {ordem === 'nome' ? 'A–Z' : 'Priorizar contatos'}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setOrdem('prioridade')}>Priorizar contatos</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setOrdem('nome')}>A–Z</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       {/* Dense Table */}
@@ -282,12 +314,30 @@ export function CustomerListView({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/30">
-                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Cliente</th>
+                <th
+                  className="text-left px-4 py-2.5 font-medium text-muted-foreground"
+                  aria-sort={ordenavel ? (ordem === 'nome' ? 'ascending' : 'none') : undefined}
+                >
+                  {ordenavel ? (
+                    <button type="button" onClick={() => setOrdem('nome')} className="inline-flex items-center gap-1 hover:text-foreground">
+                      Cliente {ordem === 'nome' && <ArrowDownAZ className="w-3 h-3" aria-hidden />}
+                    </button>
+                  ) : 'Cliente'}
+                </th>
                 <th className="text-left px-3 py-2.5 font-medium text-muted-foreground hidden md:table-cell">Documento</th>
                 <th className="text-center px-3 py-2.5 font-medium text-muted-foreground">Saúde</th>
                 <th className="text-right px-3 py-2.5 font-medium text-muted-foreground hidden lg:table-cell">Gasto mensal</th>
                 <th className="text-center px-3 py-2.5 font-medium text-muted-foreground hidden lg:table-cell">Dias s/ compra</th>
-                <th className="text-right px-3 py-2.5 font-medium text-muted-foreground hidden md:table-cell">Prioridade</th>
+                <th
+                  className="text-right px-3 py-2.5 font-medium text-muted-foreground hidden md:table-cell"
+                  aria-sort={ordenavel ? (ordem === 'prioridade' ? 'descending' : 'none') : undefined}
+                >
+                  {ordenavel ? (
+                    <button type="button" onClick={() => setOrdem('prioridade')} className="inline-flex items-center gap-1 hover:text-foreground">
+                      {ordem === 'prioridade' && <ArrowDownWideNarrow className="w-3 h-3" aria-hidden />} Prioridade
+                    </button>
+                  ) : 'Prioridade'}
+                </th>
                 <th className="w-10 px-2"></th>
               </tr>
             </thead>
@@ -384,9 +434,9 @@ export function CustomerListView({
                 onAction={onRetry}
               />
             </div>
-          ) : hasNextPage ? (
-            // Ainda há páginas: "nenhum cliente" seria afirmar sobre a parte NÃO lida. O filtro
-            // de saúde só enxerga o que já foi carregado (os scores não paginam com a base).
+          ) : hasNextPage && !filtroNoServidor ? (
+            // Ainda há páginas e o filtro é em memória: "nenhum cliente" seria afirmar sobre a
+            // parte NÃO lida. (Na base completa o filtro vai ao servidor — página vazia é fim.)
             <EmptyState
               icon={Search}
               title="Nenhum cliente nas páginas carregadas até agora"
@@ -421,8 +471,8 @@ export function CustomerListView({
         )}
         {!hasNextPage && customers.length > 0 && !isCarteira && (
           <p className="text-center text-xs text-muted-foreground py-4 border-t">
-            {buscaNoServidor
-              ? `Todos os resultados da busca carregados (${customers.length})`
+            {filtrando
+              ? `Todos os resultados carregados (${fmtContagem(totalRecorte ?? customers.length)})`
               : `Todos os clientes carregados (${fmtContagem(total)})`}
           </p>
         )}

@@ -9,16 +9,15 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useDisplayAccess } from '@/hooks/useDisplayAccess';
-import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
+import { isSearchablePostgrestTerm } from '@/lib/postgrest';
 import {
   resolveModoEscopo, fetchCarteiraClientes, fetchScoresPorCustomer, hashIds,
 } from '@/lib/carteira/escopo-clientes';
+import { normalizarFiltroSaude, normalizarOrdem, type FiltroSaude, type OrdemClientes } from './config';
 import type { Customer, ClientScore } from './types';
 
 const PAGE_SIZE = 100;
 const COLUNAS_PROFILE = 'user_id, name, email, phone, document, customer_type, created_at, requires_po';
-/** Colunas da busca no servidor — o filtro local da carteira usa as MESMAS (CustomerListView). */
-const COLUNAS_BUSCA = ['name', 'email', 'document', 'phone'];
 
 /**
  * Resolução do deep link `/admin/customers/:customerId`, independente das páginas carregadas.
@@ -63,12 +62,26 @@ export interface ClientesScope {
   buscaNoServidor: boolean;
   /** A lista à vista é o resultado do termo ANTERIOR enquanto o novo é buscado. */
   buscando: boolean;
+  /**
+   * `true` no modo completa: filtro de saúde e ordem já vêm aplicados pelo SERVIDOR, antes da
+   * paginação (RPC `listar_clientes_base`) — a tela não re-filtra nem re-ordena em memória.
+   */
+  filtroNoServidor: boolean;
+  /**
+   * Tamanho do recorte (busca + saúde) no servidor, antes de paginar. `null` = carteira (a lista
+   * em memória é o recorte) ou 1ª página ainda não chegou — nunca "0" fabricado.
+   */
+  totalRecorte: number | null;
   clienteAlvo: ClienteAlvo;
 }
 
-export function useClientesScope({ busca = '', customerIdAlvo = null }: {
+export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade', customerIdAlvo = null }: {
   /** Termo da URL (`?search=`), já debounced pela lista. */
   busca?: string;
+  /** Filtro de saúde da URL (`?health=`); `null`/desconhecido = todos. */
+  saude?: string | null;
+  /** Ordem da URL (`?ordem=`); padrão "Priorizar contatos". */
+  ordem?: string | null;
   /** `:customerId` do deep link. */
   customerIdAlvo?: string | null;
 } = {}): ClientesScope {
@@ -89,41 +102,54 @@ export function useClientesScope({ busca = '', customerIdAlvo = null }: {
     queryFn: () => fetchCarteiraClientes({ isImpersonating, effectiveUserId, baseId }),
   });
 
-  /* ─── MODO COMPLETA: base inteira paginada + count exato ─── */
-  // Com termo de busca, a busca vai ao SERVIDOR: filtrar em memória só enxergava as páginas já
-  // carregadas (incidente 2026-10-09: "HELIOMAR" → "Nenhum cliente" com o cliente existindo).
+  /* ─── MODO COMPLETA: base inteira paginada NO SERVIDOR + count exato ─── */
+  // Busca, filtro de saúde e ordem vão ao SERVIDOR, antes da paginação (RPC listar_clientes_base,
+  // SECURITY INVOKER — mesma RLS da leitura direta de profiles/farmer_client_scores). Filtrar ou
+  // ordenar em memória só enxergaria as páginas já carregadas (incidente 2026-10-09: "HELIOMAR" →
+  // "Nenhum cliente"; e "Crítico" → "nenhum nas páginas carregadas"). O teto é o EIXO: a ordem
+  // por prioridade tem de nascer onde o score mora, não nos 100 primeiros por nome.
   const termo = busca.trim();
   const buscaNoServidor = !isCarteira && isSearchablePostgrestTerm(termo);
   const termoServidor = buscaNoServidor ? termo : '';
+  const saudeServidor: FiltroSaude | null = isCarteira ? null : normalizarFiltroSaude(saude);
+  const ordemServidor: OrdemClientes = normalizarOrdem(ordem);
   const baseQuery = useInfiniteQuery({
-    queryKey: ['admin-clientes-base', termoServidor],
+    queryKey: ['admin-clientes-base', termoServidor, saudeServidor, ordemServidor],
     enabled: queriesReady && !isCarteira,
-    // Trocar o termo troca a key: sem isto `isLoading` volta a true e a página inteira vira
-    // skeleton — desmontando o input no meio da digitação. Mantém o resultado anterior à vista
-    // (sinalizado por `buscando`) até o novo chegar.
+    // Trocar termo/filtro/ordem troca a key: sem isto `isLoading` volta a true e a página inteira
+    // vira skeleton — desmontando o input no meio da digitação. Mantém o resultado anterior à
+    // vista (sinalizado por `buscando`) até o novo chegar.
     placeholderData: keepPreviousData,
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
-      const start = (pageParam as number) * PAGE_SIZE;
-      let q = supabase
-        .from('profiles')
-        .select(COLUNAS_PROFILE)
-        .eq('is_employee', false);
-      if (termoServidor) q = q.or(ilikeOr(COLUNAS_BUSCA, termoServidor));
-      // Ordem TOTAL (name não é único): sem o desempate por user_id o `.range` pode repetir ou
-      // pular homônimos na fronteira entre páginas.
-      const { data, error } = await q
+      // A ordem TOTAL (prioridade → name → user_id) e o LIMIT/OFFSET moram na RPC: o `.range`
+      // não repete nem pula homônimos na fronteira entre páginas. PAGE_SIZE < teto de 1.000.
+      const { data, error } = await supabase.rpc('listar_clientes_base', {
+        p_busca: termoServidor || undefined,
+        p_saude: saudeServidor ?? undefined,
+        p_ordem: ordemServidor,
+        p_limite: PAGE_SIZE,
+        p_offset: (pageParam as number) * PAGE_SIZE,
+      })
+        // A RPC já ordena e pagina (LIMIT/OFFSET). O `.order` repete as MESMAS chaves (mesmo eixo,
+        // mesma collation; prioridade_ordenacao vem NULL na ordem 'nome') — não muda a sequência,
+        // só a declara estável; o `.range` é o cinto do teto de 1.000. Gates G7 + rpc-set-returning.
+        .order('prioridade_ordenacao', { ascending: false, nullsFirst: false })
         .order('name')
         .order('user_id')
-        .range(start, start + PAGE_SIZE - 1);
+        .range(0, PAGE_SIZE - 1);
       if (error) throw error;
       // data null SEM error = malformada, não página vazia (classe #1338→#1564): o `|| []`
       // encerraria o infinite scroll como se a base tivesse acabado.
-      if (data == null) throw new Error('profiles (base completa): data null sem error — malformada, não é fim');
-      return data as Customer[];
+      if (data == null) throw new Error('listar_clientes_base: data null sem error — malformada, não é fim');
+      const linhas = data as Array<Customer & { prioridade_ordenacao: number | null; total: number | string }>;
+      // `total` vem repetido em toda linha (count do recorte antes de paginar); página vazia = 0.
+      const totalRecorte = linhas.length > 0 ? Number(linhas[0].total) : (pageParam === 0 ? 0 : null);
+      const customers = linhas.map(({ prioridade_ordenacao: _p, total: _t, ...c }) => c as Customer);
+      return { customers, totalRecorte };
     },
     getNextPageParam: (lastPage, allPages) =>
-      lastPage.length === PAGE_SIZE ? allPages.length : undefined,
+      lastPage.customers.length === PAGE_SIZE ? allPages.length : undefined,
   });
 
   const baseCountQuery = useQuery({
@@ -142,7 +168,7 @@ export function useClientesScope({ busca = '', customerIdAlvo = null }: {
 
   const customers = useMemo<Customer[]>(() => {
     if (isCarteira) return carteiraQuery.data?.customers ?? [];
-    return baseQuery.data?.pages.flat() ?? [];
+    return baseQuery.data?.pages.flatMap((p) => p.customers) ?? [];
   }, [isCarteira, carteiraQuery.data, baseQuery.data]);
 
   /* ─── DEEP LINK: cliente por id, sem depender das páginas carregadas ─── */
@@ -220,6 +246,7 @@ export function useClientesScope({ busca = '', customerIdAlvo = null }: {
   }, [scoresQuery.data, alvoScoreQuery.data]);
 
   const total = isCarteira ? customers.length : (baseCountQuery.data ?? customers.length);
+  const totalRecorte = isCarteira ? null : (baseQuery.data?.pages[0]?.totalRecorte ?? null);
   const loading = isCarteira ? carteiraQuery.isLoading : baseQuery.isLoading;
 
   return {
@@ -236,6 +263,8 @@ export function useClientesScope({ busca = '', customerIdAlvo = null }: {
     effectiveUserId,
     buscaNoServidor,
     buscando: !isCarteira && baseQuery.isPlaceholderData,
+    filtroNoServidor: !isCarteira,
+    totalRecorte,
     clienteAlvo,
   };
 }
