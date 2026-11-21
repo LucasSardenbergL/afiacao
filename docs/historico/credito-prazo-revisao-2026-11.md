@@ -34,6 +34,20 @@ O porte do `.trim()` do JS usou `btrim(d, E' \t\n\r\f\v')`. O PG só reconhece `
 
 (d) a retomada vincula o PV à revisão despachada, porque a chave `PV_<id>` é a mesma em todas as revisões; (e) despacho serializado por revisão, com resultado registrado; (f) tint/ATP antes da reserva, retomada por perna no checkout misto e contrato explícito de troca de parcela no editor (PR 6). Também: popular o catálogo da Colacor, sem o qual todo prazo Colacor é `NULL` e cai em 🟡 até haver override.
 
+## Deploy (2026-11-21)
+
+- **Migration**: `bun run db:aplicar` a partir da main mergeada (#4083 → `3dee4c38e`). Ensaio verde; aplicação em **`db_aplicacoes` #1293 `aplicada`** às 23:20:24Z, sha256 `6e7b6c6a…2562069`. Pré-voo na PROD antes do ensaio: 0 dos 7 objetos novos existiam e as dependências estavam presentes.
+- **2ª testemunha** por catálogo, via psql-ro:
+  - RLS ligado nas 2 tabelas, com 2 triggers de guarda em cada uma.
+  - SECURITY DEFINER em 4 das 5 funções: o parser é IMMUTABLE e não precisa.
+  - EXECUTE: `service_role` em parse/resolver/prazo_dias/registrar; `authenticated` só em `definir_prazo_override`. `anon` sem SELECT e `authenticated` sem INSERT.
+  - O `claude_ro` recebe "permission denied" ao executar, o que é o ACL agindo.
+- **2ª testemunha por execução**, via conector Lovable no mesmo banco, amarrada pelo recibo #1293: `999`→`NULL`, `A28`→28, vazio→`NULL`, Colacor→`NULL`, `S41`→calendário `[28,42,56]` e prazo 56, fonte catálogo.
+- **Edge**: `omie-vendas-sync` foi ao ar como **v1.45**, que contém a v1.44 desta entrega e o #4087 por cima. O deploy veio do pacote `4e0af36df9a3` (main `ca5453817`), com os 40/40 hashes conferidos pelo agente.
+  - O sensor de edição saiu 1 por causa do `commit_sha` na resposta. O commit é `f2461146e`, que só toca `src/integrations/supabase/types.ts` (+132 linhas, os tipos das tabelas e RPCs novas). É o arquivo gerado tolerado (#3206), então não houve reversão.
+  - Sonda pelo relé: `deploy_sonda_disparar` → request 30876. Em ≤ 2 min o `pendencias:deploy` mostrou a edge servindo `v1.45-estoque-sem-saldo-nao-zera` e entrando no "confere" (90 edges).
+- Sem Publish: não há front.
+
 ## Como reverter
 
 Edge: voltar `omie-vendas-sync` para v1.43 (não depende das tabelas novas). Banco: `DROP` das 2 tabelas e 5 funções novas. Ainda não há dado de negócio: nada decide com a revisão até o PR 5.
