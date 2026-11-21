@@ -134,5 +134,11 @@ dependia do debounce de 600 ms (refresh antes restaurava a conta já salva) e o 
 deixava o último rascunho em disco. Agora: descartar com envelope presente pede confirmação
 ("Descartar mesmo assim") e zera os dois; "Trocar e limpar" apaga o rascunho; o orçamento chama
 `aoGravar` antes do `navigate` (total apaga, parcial grava o resto na hora via `gravarAgora`), e
-`clear()` cancela o autosave em voo. Fica fora: a chave do envelope não é por usuário (aparelho
-compartilhado).
+`clear()` cancela o autosave em voo. Codex (P1 7) acrescentou no mesmo eixo: troca de cliente
+com envio/orçamento em voo é barrada; orçamento com envio de PEDIDO pendente é barrado (gravaria
+2ª linha da conta já enviada); o rascunho é gravado no commit do envelope e apagado no sucesso
+total DENTRO do hook (`cicloRascunhoRef` — vale com a tela desmontada e nos reenvios do ATP).
+Ficam como follow-up (pré-existentes): envelope com chave global, não por usuário (descarte de B
+apaga o de A); `cCodIntOS` da OS com `Date.now()` (resposta perdida = OS duplicada); deep link/IA
+trocando o cliente com o restore aberto. Falsificado: 12 sabotagens, controle verde na mesma
+invocação, todas vermelhas pela asserção esperada.
