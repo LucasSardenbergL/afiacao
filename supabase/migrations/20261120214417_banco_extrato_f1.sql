@@ -158,6 +158,10 @@ CREATE TABLE IF NOT EXISTS public.banco_extrato_arquivo (
   detalhe                 text,
   enviado_por             uuid NOT NULL,
   enviado_em              timestamptz NOT NULL DEFAULT now(),
+  -- quando o BANCO gerou o arquivo (DTSERVER do OFX / data+hora do header CNAB), vindo da edge com fuso
+  -- explicito. O dia so esta fechado se o arquivo foi gerado DEPOIS dele (Task 2, Ruling 6): um OFX
+  -- baixado as 10h do dia X e enviado em X+1 traz o dia X parcial.
+  gerado_em               timestamptz NOT NULL,
   conferido_por           uuid,
   conferido_em            timestamptz,
   CONSTRAINT banco_extrato_arquivo_periodo_ck CHECK (periodo_fim >= periodo_inicio),
@@ -249,7 +253,8 @@ CREATE POLICY banco_extratos_storage_select ON storage.objects FOR SELECT TO aut
 -- Exige usuario com acesso a empresa DA CONTA (a company nunca vem do chamador). O dia corrente (SP)
 -- ainda esta aberto: recusado. Mesmo valor de novo = idempotente (devolve o id); valor DIFERENTE para
 -- a mesma (conta, data) manual = recusado (23505) — nao sobrescreve em silencio uma ancora que pode ja
--- ter servido de base para aceitar um arquivo.
+-- ter servido de base para aceitar um arquivo. Valor que diverge do S(d) de um arquivo ACEITO do mesmo
+-- dia = recusado (23514, marca ANCORA_DIVERGE_DO_ARQUIVO).
 CREATE OR REPLACE FUNCTION public.banco_conta_registrar_ancora(p_banco_conta_id uuid, p_data date, p_saldo_centavos bigint)
 RETURNS uuid
 LANGUAGE plpgsql
@@ -282,6 +287,21 @@ BEGIN
   END IF;
   -- mesma trava do banco_extrato_registrar: a ancora nao entra no meio de uma avaliacao de continuidade
   PERFORM pg_advisory_xact_lock(hashtext(p_banco_conta_id::text));
+
+  -- a ancora tem de bater com o S(d) que um arquivo ACEITO ja da para o dia (Ruling 7): divergiu = 23514
+  -- com a marca ANCORA_DIVERGE_DO_ARQUIVO, nada gravado. Sem isso, uma ancora digitada errada depois do
+  -- arquivo encunharia a conta (todo upload futuro do trecho viraria descontinuidade_saldo). Depende de
+  -- READ COMMITTED: a leitura abaixo, apos a trava, ve o que o registrar ja comitou. Substituicao/remocao
+  -- de ancora nao existe na F1 (Ruling 4): correcao = operacao master via SQL documentada.
+  SELECT s.saldo_centavos INTO v_saldo
+    FROM public.banco_extrato_saldos_conhecidos(p_banco_conta_id, p_data, p_data) s
+   WHERE s.fonte = 'arquivo' AND s.saldo_centavos <> p_saldo_centavos
+   LIMIT 1;
+  IF v_saldo IS NOT NULL THEN
+    RAISE EXCEPTION 'banco_conta_registrar_ancora: ANCORA_DIVERGE_DO_ARQUIVO em % (ancora=% arquivo_aceito=%)',
+      p_data, p_saldo_centavos, v_saldo USING ERRCODE = '23514';
+  END IF;
+  v_saldo := NULL;
 
   INSERT INTO public.banco_conta_ancora (company, banco_conta_id, data, saldo_final_dia_centavos, origem, registrado_por)
   VALUES (v_company, p_banco_conta_id, p_data, p_saldo_centavos, 'manual', v_uid)
@@ -412,10 +432,16 @@ REVOKE ALL ON FUNCTION public.banco_extrato_aux_centavos(jsonb) FROM PUBLIC, ano
 -- banco_extrato_registrar: decide se um extrato e aceito. Chamada SO pela edge (service_role).
 -- Ordem de decisao (a 1a que falha define o resultado), tudo sob a trava da conta:
 --   0 conta (company DERIVADA dela)  1 idempotencia por (conta, sha256)  2 identidade  3 dia corrente
---   4 linhas  5 fechamento  6 formato/estrategia  7 sobreposicao  8 continuidade  9 aceite.
+--   (3b dia nao fechado na geracao do arquivo)  4 linhas  5 fechamento  6 formato/estrategia  7 sobreposicao  8 continuidade  9 aceite.
 -- pendente_revisao/recusado gravam o ARQUIVO (para a tela), nunca linhas.
 -- Erro de CONTRATO do payload (campo obrigatorio ausente/malformado, bug da edge e nao do arquivo)
 -- levanta 22023 e nao grava nada.
+-- Concorrencia: depende de READ COMMITTED. Cada comando apos a pg_advisory_xact_lock tira snapshot NOVO
+-- e ve o que a sessao anterior (que segurava a trava) comitou. Chamada dentro de uma transacao
+-- REPEATABLE READ/SERIALIZABLE cujo snapshot foi tirado ANTES da trava leria dados velhos (idempotencia e
+-- continuidade furadas). A edge chama por .rpc() em autocommit (READ COMMITTED): ok. Nao chame de outro jeito.
+-- Contrato da edge (Task 6): `gerado_em` = timestamptz ISO COM fuso (Z ou +-hh:mm) da geracao pelo banco;
+-- `descricao` de toda linha e string — arquivo sem memo manda '' (nunca null/ausente: linha_invalida).
 CREATE OR REPLACE FUNCTION public.banco_extrato_registrar(p jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -438,6 +464,8 @@ DECLARE
   v_path         text;
   v_enviado_por  uuid;
   v_hoje         date;
+  v_gerado_em    timestamptz;
+  v_gerado_sp    date;
   v_ini          date;
   v_fim          date;
   v_inicial      bigint;
@@ -516,6 +544,17 @@ BEGIN
   IF v_enviado_por IS NULL OR v_hoje IS NULL THEN
     RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (enviado_por/hoje)' USING ERRCODE = '22023';
   END IF;
+  -- gerado_em: obrigatorio, ISO com fuso EXPLICITO (sem fuso dependeria do TimeZone da sessao = ambiguo)
+  IF jsonb_typeof(p->'gerado_em') IS DISTINCT FROM 'string'
+     OR (p->>'gerado_em') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\.[0-9]+)?)?(Z|[+-][0-9]{2}(:?[0-9]{2})?)$' THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (gerado_em)' USING ERRCODE = '22023';
+  END IF;
+  BEGIN
+    v_gerado_em := (p->>'gerado_em')::timestamptz;
+  EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format THEN
+    RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (gerado_em)' USING ERRCODE = '22023';
+  END;
+  v_gerado_sp := (v_gerado_em AT TIME ZONE 'America/Sao_Paulo')::date;
   IF v_ext IS NULL OR jsonb_typeof(v_ext) <> 'object' THEN
     RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (extrato)' USING ERRCODE = '22023';
   END IF;
@@ -550,8 +589,9 @@ BEGIN
 
   <<avalia>>
   BEGIN
-    -- 2. identidade (so digitos)
-    v_banco   := regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g');
+    -- 2. identidade (so digitos). O codigo do banco compara SEM zeros a esquerda (o OFX do Itau traz
+    --    BANKID 0341; banco_conta guarda 341). '000' vira '' = ausente. Agencia e conta: exatas.
+    v_banco   := ltrim(regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g'), '0');
     v_agencia := regexp_replace(coalesce(v_ext->>'agencia', ''), '[^0-9]', '', 'g');
     v_conta   := regexp_replace(coalesce(v_ext->>'conta', ''), '[^0-9]', '', 'g');
     IF v_banco = '' OR v_agencia = '' OR v_conta = '' THEN
@@ -559,10 +599,10 @@ BEGIN
       v_detalhe := format('banco=%s agencia=%s conta=%s', v_banco <> '', v_agencia <> '', v_conta <> '');
       EXIT avalia;
     END IF;
-    IF v_banco <> v_c_banco OR v_agencia <> v_c_agencia OR v_conta <> v_c_conta THEN
+    IF v_banco <> ltrim(v_c_banco, '0') OR v_agencia <> v_c_agencia OR v_conta <> v_c_conta THEN
       v_status := 'recusado'; v_motivo := 'conta_divergente';
       v_detalhe := format('banco_confere=%s agencia_confere=%s conta_confere=%s',
-                          v_banco = v_c_banco, v_agencia = v_c_agencia, v_conta = v_c_conta);
+                          v_banco = ltrim(v_c_banco, '0'), v_agencia = v_c_agencia, v_conta = v_c_conta);
       EXIT avalia;
     END IF;
 
@@ -570,6 +610,13 @@ BEGIN
     IF v_fim >= v_hoje THEN
       v_status := 'recusado'; v_motivo := 'periodo_inclui_dia_corrente';
       v_detalhe := format('periodo_fim=%s hoje=%s', v_fim, v_hoje);
+      EXIT avalia;
+    END IF;
+    -- 3b. ...e o dia ainda estava aberto quando o BANCO gerou o arquivo (Ruling 6): baixado as 10h do dia X
+    --     e enviado em X+1, o arquivo traz o dia X PARCIAL. Motivo proprio (o dia corrente e o do upload).
+    IF v_fim >= v_gerado_sp THEN
+      v_status := 'recusado'; v_motivo := 'dia_nao_fechado_na_geracao';
+      v_detalhe := format('periodo_fim=%s gerado_em_sp=%s', v_fim, v_gerado_sp);
       EXIT avalia;
     END IF;
 
@@ -678,12 +725,15 @@ BEGIN
 
     -- 8. continuidade: N(d) = S(d) para TODO d em [inicio - 1, fim] em que S(d) existe (vespera,
     --    dias comuns e o fim contra a abertura do arquivo que comeca em fim + 1).
-    --    Sem saldo inicial o arquivo e ancorado pelo FINAL: N(d) = final - movimentos depois de d,
-    --    e so vale se houver ao menos um S(d) para conferir.
+    --    Sem saldo inicial o arquivo e ancorado pelo FINAL: N(d) = final - movimentos depois de d, e so
+    --    vale se houver S(ini - 1), a VESPERA (Ruling 5). So ela confere TODAS as linhas: N(fim) = final
+    --    e identidade aritmetica, entao um S(d) no meio/fim do periodo deixaria passar sem conferencia as
+    --    linhas ate d (linha omitida + final certo = aceito com abertura fabricada). Sem vespera =
+    --    pendente/sem_saldo_inicial, mesmo havendo S(d) adiante. Com inicial, confere todo S(d) do intervalo.
     v_abertura := coalesce(v_inicial, v_final - v_soma);
-    IF v_inicial IS NULL AND NOT EXISTS (SELECT 1 FROM public.banco_extrato_saldos_conhecidos(v_conta_id, v_ini - 1, v_fim)) THEN
+    IF v_inicial IS NULL AND NOT EXISTS (SELECT 1 FROM public.banco_extrato_saldos_conhecidos(v_conta_id, v_ini - 1, v_ini - 1)) THEN
       v_status := 'pendente_revisao'; v_motivo := 'sem_saldo_inicial';
-      v_detalhe := format('nenhum saldo conhecido entre %s e %s (arquivo aceito ou ancora)', v_ini - 1, v_fim);
+      v_detalhe := format('nenhum saldo conhecido na vespera %s (arquivo aceito ou ancora)', v_ini - 1);
       EXIT avalia;
     END IF;
     SELECT k.data, k.saldo_centavos, k.n, k.fonte INTO v_d, v_s, v_n, v_fonte
@@ -715,16 +765,17 @@ BEGIN
   IF v_arquivo_id IS NULL THEN
     INSERT INTO public.banco_extrato_arquivo (company, banco_conta_id, formato, storage_path, sha256, periodo_inicio, periodo_fim,
                                               saldo_inicial_centavos, saldo_final_centavos, saldo_abertura_centavos,
-                                              qtd_linhas, qtd_linhas_novas, status, motivo, detalhe, enviado_por)
+                                              qtd_linhas, qtd_linhas_novas, status, motivo, detalhe, enviado_por, gerado_em)
     VALUES (v_company, v_conta_id, v_formato, v_path, v_sha, v_ini, v_fim,
             v_inicial, v_final, CASE WHEN v_status = 'aceito' THEN v_abertura END,
-            v_qtd, 0, v_status, v_motivo, v_detalhe, v_enviado_por)
+            v_qtd, 0, v_status, v_motivo, v_detalhe, v_enviado_por, v_gerado_em)
     RETURNING id INTO v_arquivo_id;
   ELSE
-    -- reavaliacao do MESMO arquivo (mesmo hash): a linha e atualizada, nunca duplicada. O caminho e o
-    -- autor do 1o envio ficam (mesmos bytes).
+    -- reavaliacao do MESMO arquivo (mesmo hash): a linha e atualizada, nunca duplicada. O storage_path e o
+    -- autor do 1o envio FICAM (mesmos bytes): a edge deve reusar o objeto ja gravado (ou apagar o seu
+    -- novo) — um objeto regravado em outro path fica orfao no bucket, sem linha que aponte para ele.
     UPDATE public.banco_extrato_arquivo
-       SET formato = v_formato, periodo_inicio = v_ini, periodo_fim = v_fim,
+       SET formato = v_formato, periodo_inicio = v_ini, periodo_fim = v_fim, gerado_em = v_gerado_em,
            saldo_inicial_centavos = v_inicial, saldo_final_centavos = v_final,
            saldo_abertura_centavos = CASE WHEN v_status = 'aceito' THEN v_abertura END,
            qtd_linhas = v_qtd, qtd_linhas_novas = 0,

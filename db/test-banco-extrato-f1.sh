@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Prova PG17 — F1 do extrato bancario Itau. Task 1: esquema, RLS, privilegios, bucket, ancora manual e seed.
 # Task 2: banco_extrato_registrar (ordem de decisao 0-9), marcar_conferido, resumo_dia, concorrencia (2 psql).
+# Fix da Task 2: vespera obrigatoria sem inicial (Ruling 5), gerado_em (Ruling 6), ancora x arquivo (Ruling 7), banco 0341.
 # Plano: docs/superpowers/plans/2026-11-20-f1-extrato-bancario-itau.md (Tasks 1 e 2).
 # Migration sob prova: supabase/migrations/20261120214417_banco_extrato_f1.sql (aplicada INTEIRA, 2x).
 #
@@ -49,7 +50,13 @@ if [ "${1:-}" = "--falsificar" ]; then
     t2_sem_fechamento:t2_nao_fecha_diferenca_1_centavo
     t2_sem_exigir_ancora:t2_sem_saldo_inicial_sem_ancora
     t2_ignora_banco:t2_outro_banco_mesmos_digitos
-    t2_chave_repetida_aceita:t2_chave_repetida_no_arquivo"
+    t2_chave_repetida_aceita:t2_chave_repetida_no_arquivo
+    t2_ancora_qualquer_dia:t2_sem_saldo_inicial_ancora_no_meio_nao_ancora+t2_sem_saldo_inicial_so_sucessor_nao_ancora
+    t2_gerado_em_ignorado:t2_dia_nao_fechado_na_geracao+t2_gerado_em_fuso_sp
+    t2_gerado_em_utc:t2_gerado_em_fuso_sp
+    t2_gerado_em_opcional:t2_gerado_em_ausente+t2_gerado_em_sem_fuso
+    t2_ancora_sem_conferir_arquivo:t2_ancora_diverge_do_arquivo+t2_ancora_diverge_da_vespera_do_arquivo
+    t2_banco_sem_normalizar:t2_banco_zero_a_esquerda+t2_banco_so_zeros_incompleto"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-banco-extrato-f1.XXXXXX")"
   echo "== CONTROLE (locale=${LOCALE_TESTE:-C}) =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -168,8 +175,26 @@ case "${SABOTAGEM:-}" in
   t2_sem_fechamento)    sabotar "IF v_inicial IS NOT NULL AND v_inicial + v_soma <> v_final THEN" "IF false THEN" ;;
   # sem saldo inicial e sem nenhum S(d): o arquivo se ancora nele mesmo (tautologia) e passaria
   t2_sem_exigir_ancora) sabotar "IF v_inicial IS NULL AND NOT EXISTS" "IF false AND NOT EXISTS" ;;
-  t2_ignora_banco)      sabotar "IF v_banco <> v_c_banco OR v_agencia <> v_c_agencia" "IF v_agencia <> v_c_agencia" ;;
+  t2_ignora_banco)      sabotar "IF v_banco <> ltrim(v_c_banco, '0') OR v_agencia <> v_c_agencia" "IF v_agencia <> v_c_agencia" ;;
   t2_chave_repetida_aceita) sabotar "GROUP BY x.chave HAVING count(*) > 1" "GROUP BY x.chave HAVING count(*) > 99" ;;
+  # C1/Ruling 5: sem inicial, volta a aceitar QUALQUER S(d) do intervalo como ancora (nao so a vespera)
+  t2_ancora_qualquer_dia) sabotar "banco_extrato_saldos_conhecidos(v_conta_id, v_ini - 1, v_ini - 1)) THEN" \
+                                  "banco_extrato_saldos_conhecidos(v_conta_id, v_ini - 1, v_fim)) THEN" ;;
+  # I1/Ruling 6: o passo 3b some (so o dia do upload conta)
+  t2_gerado_em_ignorado) sabotar "IF v_fim >= v_gerado_sp THEN" "IF false THEN" ;;
+  # I1: o dia da geracao medido em UTC, nao em SP
+  t2_gerado_em_utc)     sabotar "(v_gerado_em AT TIME ZONE 'America/Sao_Paulo')::date" "(v_gerado_em AT TIME ZONE 'UTC')::date" ;;
+  # I1: gerado_em deixa de ser obrigatorio/com fuso (a validacao de contrato some)
+  t2_gerado_em_opcional)
+    sabotar "IF jsonb_typeof(p->'gerado_em') IS DISTINCT FROM 'string'" "IF false AND jsonb_typeof(p->'gerado_em') IS DISTINCT FROM 'string'"
+    sabotar ")?)\$' THEN" ")?)\$' AND false THEN" ;;
+  # I2/Ruling 7: a ancora nao e conferida contra o arquivo aceito
+  t2_ancora_sem_conferir_arquivo) sabotar "  IF v_saldo IS NOT NULL THEN
+    RAISE EXCEPTION 'banco_conta_registrar_ancora: ANCORA_DIVERGE" "  IF false THEN
+    RAISE EXCEPTION 'banco_conta_registrar_ancora: ANCORA_DIVERGE" ;;
+  # Minor (a): codigo do banco comparado sem normalizar zeros a esquerda
+  t2_banco_sem_normalizar) sabotar "ltrim(regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g'), '0')" \
+                                   "regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g')" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
@@ -199,6 +224,23 @@ END \$t\$;
 SQL
 )
   printf '%s\n' "$out" | grep -oE 'ESTADO=[0-9A-Z]{5}' | tail -1 | cut -d= -f2
+}
+# estado_marca <uid> <role> <sql> <MARCA> -> "SQLSTATE|marca_presente" — casa a SQLSTATE E a marca ASCII do ramo
+# na mensagem (23514 tambem sai de um CHECK qualquer; so a marca prova que foi ESTE ramo).
+estado_marca() {
+  local out
+  out=$(P -qAt 2>&1 <<SQL
+SET test.uid = '$1';
+SET ROLE $2;
+DO \$t\$ BEGIN
+  EXECUTE \$q\$$3\$q\$;
+  RAISE NOTICE 'ESTADO=00000|f';
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'ESTADO=%|%', SQLSTATE, strpos(SQLERRM, '$4') > 0;
+END \$t\$;
+SQL
+)
+  printf '%s\n' "$out" | grep -oE 'ESTADO=[0-9A-Z]{5}\|[tf]' | tail -1 | cut -d= -f2
 }
 # como <uid> <sql> -> ultimo valor, sob SET ROLE authenticated (RLS vale)
 como() { Pq -c "SET test.uid = '$1'; SET ROLE authenticated; $2" | tail -1; }
@@ -319,16 +361,16 @@ eq "t1_vinculo_omie_unico a mesma conta Omie nao entra em 2 contas bancarias (23
 eq "t1_fk_company_coerente filho com company diferente da conta e recusado (23503)" \
    "$(estado '' postgres "INSERT INTO public.banco_conta_omie (banco_conta_id, company, omie_ncodcc) VALUES ('$ID_OBEN', 'colacor', 9999)")" "23503"
 eq "t1_linha_valor_positivo valor 0 e recusado (23514)" \
-   "$(estado '' postgres "INSERT INTO public.banco_extrato_arquivo (id, company, banco_conta_id, formato, storage_path, sha256, periodo_inicio, periodo_fim, saldo_final_centavos, qtd_linhas, qtd_linhas_novas, status, enviado_por) VALUES ('00000000-0000-0000-0000-00000000f0f0', 'oben', '$ID_OBEN', 'ofx', '$ID_OBEN/z.ofx', repeat('c', 64), '2026-11-01', '2026-11-01', 0, 1, 0, 'recusado', '$U_STAFF'); INSERT INTO public.banco_extrato_linha (company, banco_conta_id, arquivo_id, data, sentido, valor_centavos, descricao, chave) VALUES ('oben', '$ID_OBEN', '00000000-0000-0000-0000-00000000f0f0', '2026-11-01', 'C', 0, 'x', 'k0')")" "23514"
+   "$(estado '' postgres "INSERT INTO public.banco_extrato_arquivo (id, company, banco_conta_id, formato, storage_path, sha256, periodo_inicio, periodo_fim, saldo_final_centavos, qtd_linhas, qtd_linhas_novas, status, enviado_por, gerado_em) VALUES ('00000000-0000-0000-0000-00000000f0f0', 'oben', '$ID_OBEN', 'ofx', '$ID_OBEN/z.ofx', repeat('c', 64), '2026-11-01', '2026-11-01', 0, 1, 0, 'recusado', '$U_STAFF', now()); INSERT INTO public.banco_extrato_linha (company, banco_conta_id, arquivo_id, data, sentido, valor_centavos, descricao, chave) VALUES ('oben', '$ID_OBEN', '00000000-0000-0000-0000-00000000f0f0', '2026-11-01', 'C', 0, 'x', 'k0')")" "23514"
 eq "t1_arquivo_path_da_conta storage_path fora da pasta da conta e recusado (23514)" \
-   "$(estado '' postgres "INSERT INTO public.banco_extrato_arquivo (company, banco_conta_id, formato, storage_path, sha256, periodo_inicio, periodo_fim, saldo_final_centavos, qtd_linhas, qtd_linhas_novas, status, enviado_por) VALUES ('oben', '$ID_OBEN', 'ofx', '$ID_COL/z.ofx', repeat('d', 64), '2026-11-01', '2026-11-01', 0, 0, 0, 'recusado', '$U_STAFF')")" "23514"
+   "$(estado '' postgres "INSERT INTO public.banco_extrato_arquivo (company, banco_conta_id, formato, storage_path, sha256, periodo_inicio, periodo_fim, saldo_final_centavos, qtd_linhas, qtd_linhas_novas, status, enviado_por, gerado_em) VALUES ('oben', '$ID_OBEN', 'ofx', '$ID_COL/z.ofx', repeat('d', 64), '2026-11-01', '2026-11-01', 0, 0, 0, 'recusado', '$U_STAFF', now())")" "23514"
 
 # ── ZONA 3: fixture de extrato (como postgres) para os asserts de RLS ──
 P -q <<SQL || echo "FAIL t1_fixture_extrato — insercao falhou"
 INSERT INTO public.banco_extrato_arquivo (id, company, banco_conta_id, formato, storage_path, sha256, periodo_inicio, periodo_fim,
-  saldo_inicial_centavos, saldo_final_centavos, saldo_abertura_centavos, qtd_linhas, qtd_linhas_novas, status, enviado_por) VALUES
-  ('00000000-0000-0000-0000-0000000000f1', 'oben',    '$ID_OBEN', 'ofx', '$ID_OBEN/a.ofx', repeat('a', 64), '2026-11-02', '2026-11-03', 1000, 1500, 1000, 2, 2, 'aceito', '$U_STAFF'),
-  ('00000000-0000-0000-0000-0000000000f2', 'colacor', '$ID_COL',  'ofx', '$ID_COL/b.ofx',  repeat('b', 64), '2026-11-02', '2026-11-02', 0, 300, 0, 1, 1, 'aceito', '$U_STAFF');
+  saldo_inicial_centavos, saldo_final_centavos, saldo_abertura_centavos, qtd_linhas, qtd_linhas_novas, status, enviado_por, gerado_em) VALUES
+  ('00000000-0000-0000-0000-0000000000f1', 'oben',    '$ID_OBEN', 'ofx', '$ID_OBEN/a.ofx', repeat('a', 64), '2026-11-02', '2026-11-03', 1000, 1500, 1000, 2, 2, 'aceito', '$U_STAFF', now()),
+  ('00000000-0000-0000-0000-0000000000f2', 'colacor', '$ID_COL',  'ofx', '$ID_COL/b.ofx',  repeat('b', 64), '2026-11-02', '2026-11-02', 0, 300, 0, 1, 1, 'aceito', '$U_STAFF', now());
 INSERT INTO public.banco_extrato_linha (company, banco_conta_id, arquivo_id, data, sentido, valor_centavos, descricao, chave) VALUES
   ('oben',    '$ID_OBEN', '00000000-0000-0000-0000-0000000000f1', '2026-11-02', 'C', 700, 'deposito', 'k1'),
   ('oben',    '$ID_OBEN', '00000000-0000-0000-0000-0000000000f1', '2026-11-03', 'D', 200, 'tarifa',   'k2'),
@@ -452,11 +494,13 @@ lin() {
   printf '{"data":"%s","sentido":"%s","valor_centavos":%s,"descricao":"lanc %s","documento":%s,"id_bancario":null,"chave":"%s|%s|%s|%s|%s"}' \
     "$1" "$2" "$3" "$3" "$([ -n "${5:-}" ] && printf '"%s"' "$5" || printf 'null')" "$1" "$2" "$3" "${5:-}" "${4:-1}"
 }
-# pay <shaN> <conta_id> <NN> <ini> <fim> <inicial|null> <final> <linhas>   (env: FORMATO ESTR HOJE_P BANCO AG CC_P EXTRA)
+# pay <shaN> <conta_id> <NN> <ini> <fim> <inicial|null> <final> <linhas>
+#   (env: FORMATO ESTR HOJE_P GERADO_P SEM_GERADO=1 BANCO AG CC_P EXTRA)
 pay() {
-  local cc="2000$3"
-  printf '{"banco_conta_id":"%s","formato":"%s","estrategia_chave":"%s","storage_path":"%s/%s.ofx","sha256":"%s","enviado_por":"%s","hoje":"%s"%s,"extrato":{"banco":"%s","agencia":"%s","conta":"%s","periodo_inicio":"%s","periodo_fim":"%s","saldo_inicial_centavos":%s,"saldo_final_centavos":%s,"linhas":[%s]}}' \
-    "$2" "${FORMATO:-ofx}" "${ESTR:-tupla}" "$2" "$(sha "$1")" "$(sha "$1")" "$U_STAFF" "${HOJE_P:-2026-11-20}" "${EXTRA:-}" \
+  local cc="2000$3" gj
+  if [ "${SEM_GERADO:-}" = 1 ]; then gj=''; else gj=",\"gerado_em\":\"${GERADO_P:-2026-11-19T12:00:00-03:00}\""; fi
+  printf '{"banco_conta_id":"%s","formato":"%s","estrategia_chave":"%s","storage_path":"%s/%s.ofx","sha256":"%s","enviado_por":"%s","hoje":"%s"%s%s,"extrato":{"banco":"%s","agencia":"%s","conta":"%s","periodo_inicio":"%s","periodo_fim":"%s","saldo_inicial_centavos":%s,"saldo_final_centavos":%s,"linhas":[%s]}}' \
+    "$2" "${FORMATO:-ofx}" "${ESTR:-tupla}" "$2" "$(sha "$1")" "$(sha "$1")" "$U_STAFF" "${HOJE_P:-2026-11-20}" "$gj" "${EXTRA:-}" \
     "${BANCO:-341}" "${AG-0000}" "${CC_P:-${cc:0:5}-${cc:5}}" "$4" "$5" "$6" "$7" "$8"
 }
 RES_PADRAO="r->>'status'||'|'||coalesce(r->>'motivo','-')"
@@ -496,6 +540,11 @@ J=$(BANCO=756 pay 104 "$C04" 04 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
 eq "t2_outro_banco_mesmos_digitos mesma agencia/conta em outro banco = conta_divergente" "$(reg "$J")/$(nlin "$C04")" "recusado|conta_divergente/0"
 J=$(AG='' pay 105 "$C04" 04 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
 eq "t2_identidade_incompleta agencia ausente" "$(reg "$J")" "recusado|identidade_incompleta"
+J=$(BANCO=000 pay 143 "$C04" 04 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_banco_so_zeros_incompleto codigo '000' (vazio apos tirar zeros) = identidade_incompleta" "$(reg "$J")" "recusado|identidade_incompleta"
+C25=$(conta_nova 25)
+J=$(BANCO=0341 pay 144 "$C25" 25 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_banco_zero_a_esquerda BANKID 0341 casa com a conta 341" "$(reg "$J")/$(nlin "$C25")" "aceito|-/1"
 J=$(pay 106 00000000-0000-0000-0000-00000000dead 99 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
 eq "t2_conta_desconhecida sem arquivo gravado (arquivo_id nulo)" \
    "$(reg "$J" "r->>'status'||'|'||(r->>'motivo')||'|'||coalesce(r->>'arquivo_id','NULL')")" "recusado|conta_desconhecida|NULL"
@@ -510,6 +559,27 @@ eq "t2_reavalia_recusado_dia_corrente o mesmo hash, amanha, e aceito na MESMA li
    "$(reg "$J" "r->>'status'||'|'||(r->>'arquivo_id')")/$(narq "$C05")/$(nlin "$C05")/$(Pq -c "SELECT coalesce(motivo,'-')||'|'||saldo_abertura_centavos FROM public.banco_extrato_arquivo WHERE id='$ID05'")" \
    "aceito|$ID05/1/2/-|1000"
 
+# ── Ruling 6: o dia so esta fechado se o BANCO gerou o arquivo depois dele (gerado_em, em SP) ──
+C24=$(conta_nova 24)
+J=$(GERADO_P='2026-10-02T10:00:00-03:00' HOJE_P=$D3 pay 145 "$C24" 24 $D1 $D2 1000 1300 "$(lin $D1 C 500),$(lin $D2 D 200)")
+eq "t2_dia_nao_fechado_na_geracao baixado as 10h do dia 2, enviado no dia 3, fim = dia 2: recusado, nenhuma linha, gerado_em gravado" \
+   "$(reg "$J" "r->>'status'||'|'||(r->>'motivo')||'|'||(r->>'detalhe')")/$(nlin "$C24")/$(Pq -c "SELECT gerado_em = '2026-10-02T10:00:00-03:00'::timestamptz FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C24' AND sha256='$(sha 145)'")" \
+   "recusado|dia_nao_fechado_na_geracao|periodo_fim=2026-10-02 gerado_em_sp=2026-10-02/0/t"
+J=$(GERADO_P='2026-10-03T01:00:00Z' HOJE_P=$D3 pay 146 "$C24" 24 $D1 $D2 1000 1300 "$(lin $D1 C 500),$(lin $D2 D 200)")
+eq "t2_gerado_em_fuso_sp 01:00 UTC do dia 3 = 22:00 do dia 2 em SP: o dia 2 ainda estava aberto" \
+   "$(reg "$J")/$(nlin "$C24")" "recusado|dia_nao_fechado_na_geracao/0"
+J=$(GERADO_P='2026-10-03T03:00:00Z' HOJE_P=$D3 pay 147 "$C24" 24 $D1 $D2 1000 1300 "$(lin $D1 C 500),$(lin $D2 D 200)")
+eq "t2_gerado_em_meia_noite_sp_aceita controle: 03:00 UTC do dia 3 = 00:00 do dia 3 em SP -> aceito, gerado_em gravado" \
+   "$(reg "$J")/$(nlin "$C24")/$(Pq -c "SELECT gerado_em = '2026-10-03T03:00:00Z'::timestamptz FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C24' AND sha256='$(sha 147)'")" \
+   "aceito|-/2/t"
+C27=$(conta_nova 27)
+J=$(SEM_GERADO=1 pay 148 "$C27" 27 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_gerado_em_ausente contrato quebrado = 22023, nada gravado" \
+   "$(estado '' service_role "SELECT public.banco_extrato_registrar(\$j\$$J\$j\$::jsonb)")/$(narq "$C27")" "22023/0"
+J=$(GERADO_P='2026-10-03T10:00:00' pay 149 "$C27" 27 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_gerado_em_sem_fuso sem fuso explicito (dependeria do TimeZone da sessao) = 22023, nada gravado" \
+   "$(estado '' service_role "SELECT public.banco_extrato_registrar(\$j\$$J\$j\$::jsonb)")/$(narq "$C27")" "22023/0"
+
 # ── linhas e fechamento ──
 C06=$(conta_nova 06)
 J=$(pay 108 "$C06" 06 $D1 $D1 1000 1499 "$(lin $D1 C 500)")
@@ -523,7 +593,7 @@ eq "t2_chave_repetida_no_arquivo" "$(reg "$J" "r->>'motivo'||'|'||(r->>'detalhe'
 J=$(pay 111 "$C06" 06 $D1 $D1 1000 1000 '{"data":"2026-10-01","sentido":"C","valor_centavos":12.5,"descricao":"x","documento":null,"id_bancario":null,"chave":"k"}')
 eq "t2_valor_nao_inteiro e linha_invalida (nao erro, nao arredonda)" "$(reg "$J" "r->>'motivo'||'|'||(r->>'detalhe')")" "linha_invalida|linha 1: valor_centavos invalido"
 eq "t2_payload_sem_saldo_final contrato quebrado = 22023, nada gravado" \
-   "$(estado '' service_role "SELECT public.banco_extrato_registrar('{\"banco_conta_id\":\"$C06\",\"formato\":\"ofx\",\"estrategia_chave\":\"tupla\",\"storage_path\":\"$C06/x.ofx\",\"sha256\":\"$(sha 112)\",\"enviado_por\":\"$U_STAFF\",\"hoje\":\"2026-11-20\",\"extrato\":{\"banco\":\"341\",\"agencia\":\"0000\",\"conta\":\"20000-6\",\"periodo_inicio\":\"2026-10-01\",\"periodo_fim\":\"2026-10-01\",\"saldo_inicial_centavos\":0,\"linhas\":[]}}'::jsonb)")/$(narq "$C06")" \
+   "$(estado '' service_role "SELECT public.banco_extrato_registrar('{\"banco_conta_id\":\"$C06\",\"formato\":\"ofx\",\"estrategia_chave\":\"tupla\",\"storage_path\":\"$C06/x.ofx\",\"sha256\":\"$(sha 112)\",\"enviado_por\":\"$U_STAFF\",\"hoje\":\"2026-11-20\",\"gerado_em\":\"2026-11-19T12:00:00-03:00\",\"extrato\":{\"banco\":\"341\",\"agencia\":\"0000\",\"conta\":\"20000-6\",\"periodo_inicio\":\"2026-10-01\",\"periodo_fim\":\"2026-10-01\",\"saldo_inicial_centavos\":0,\"linhas\":[]}}'::jsonb)")/$(narq "$C06")" \
    "22023/4"
 
 # ── formato / estrategia ──
@@ -581,11 +651,29 @@ eq "t2_reavalia_pendente_quando_ancora_chega com a ancora do dia 1, o mesmo hash
    "aceito|$ID12/1/1/500"
 
 C13=$(conta_nova 13)
-Pq -c "SET test.uid = '$U_OBEN'; SET ROLE authenticated; SELECT public.banco_conta_registrar_ancora('$C13', '$D2', 2000)" >/dev/null 2>&1
+Pq -c "SET test.uid = '$U_OBEN'; SET ROLE authenticated; SELECT public.banco_conta_registrar_ancora('$C13', '$D0', 1900)" >/dev/null 2>&1
 J=$(pay 127 "$C13" 13 $D1 $D3 null 1950 "$(lin $D1 C 100),$(lin $D3 D 50)")
-eq "t2_sem_saldo_inicial_com_ancora_aceita ancora no MEIO do periodo ancora o arquivo; abertura derivada" \
+eq "t2_sem_saldo_inicial_com_ancora_aceita ancora na VESPERA (ini-1) ancora o arquivo; abertura derivada" \
    "$(reg "$J")/$(Pq -c "SELECT saldo_abertura_centavos||'|'||(saldo_inicial_centavos IS NULL) FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C13'")" \
    "aceito|-/1900|true"
+# Ruling 5: sem inicial, S(d) no MEIO do periodo nao ancora (as linhas ate d nao seriam conferidas)
+C22=$(conta_nova 22)
+Pq -c "SET test.uid = '$U_OBEN'; SET ROLE authenticated; SELECT public.banco_conta_registrar_ancora('$C22', '$D2', 2000)" >/dev/null 2>&1
+J=$(pay 139 "$C22" 22 $D1 $D3 null 1950 "$(lin $D1 C 100),$(lin $D3 D 50)")
+eq "t2_sem_saldo_inicial_ancora_no_meio_nao_ancora ancora no dia 2 de um arquivo 1-3 sem inicial: pendente, nenhuma linha" \
+   "$(reg "$J" "r->>'status'||'|'||(r->>'motivo')||'|'||(r->>'detalhe')")/$(nlin "$C22")" \
+   "pendente_revisao|sem_saldo_inicial|nenhum saldo conhecido na vespera 2026-09-30 (arquivo aceito ou ancora)/0"
+# O cenario do parecer (C1): dia 3 aceito com inicial 1000 da S(2)=1000. Um OFX do dia 2 SEM inicial, final 1000 e
+# so +500 (falta o -200 que o banco lancou) teria abertura fabricada 500 e seria aceito. Agora: pendente. Depois o
+# dia 1 correto (final 700) entra limpo, e a reavaliacao do OFX ruim acusa a descontinuidade no lugar certo.
+C23=$(conta_nova 23)
+R3=$(reg "$(pay 140 "$C23" 23 $D3 $D3 1000 1050 "$(lin $D3 C 50)")")
+J=$(pay 141 "$C23" 23 $D2 $D2 null 1000 "$(lin $D2 C 500)")
+R2=$(reg "$J")
+R1=$(reg "$(pay 142 "$C23" 23 $D1 $D1 500 700 "$(lin $D1 C 200)")")
+eq "t2_sem_saldo_inicial_so_sucessor_nao_ancora dia3 aceito | dia2 sem inicial so com S(fim) = pendente | dia1 correto aceito | dia2 reavaliado = descontinuidade | linhas" \
+   "$R3/$R2/$R1/$(reg "$J" "r->>'status'||'|'||(r->>'motivo')||'|'||(r->>'detalhe')")/$(nlin "$C23")" \
+   "aceito|-/pendente_revisao|sem_saldo_inicial/aceito|-/pendente_revisao|descontinuidade_saldo|data=2026-10-01 diferenca_centavos=-200 arquivo=500 conhecido=700 fonte=arquivo/2"
 
 C14=$(conta_nova 14)
 Pq -c "SET test.uid = '$U_OBEN'; SET ROLE authenticated; SELECT public.banco_conta_registrar_ancora('$C14', '$D0', 5000)" >/dev/null 2>&1
@@ -599,6 +687,21 @@ J=$(pay 129 "$C20" 20 $D1 $D1 null 5200 "$(lin $D1 C 100)")
 eq "t2_ancora_divergente arquivo sem inicial que nao bate com a ancora: descontinuidade" \
    "$(reg "$J" "r->>'motivo'||'|'||(r->>'detalhe')")/$(nlin "$C20")" \
    "descontinuidade_saldo|data=2026-09-30 diferenca_centavos=100 arquivo=5100 conhecido=5000 fonte=ancora_manual/0"
+
+# ── Ruling 7: a ancora manual e conferida contra o S(d) de arquivo ACEITO do mesmo dia ──
+C26=$(conta_nova 26)
+R1=$(reg "$(pay 150 "$C26" 26 $D1 $D1 1000 1500 "$(lin $D1 C 500)")")
+nanc() { Pq -c "SELECT count(*) FROM public.banco_conta_ancora WHERE banco_conta_id = '$1'" 2>&1; }
+eq "t2_ancora_diverge_do_arquivo dia 1 aceito (S=1500), ancora 1400: 23514 com a marca, nada gravado" \
+   "$R1/$(estado_marca "$U_OBEN" authenticated "SELECT public.banco_conta_registrar_ancora('$C26', '$D1', 1400)" ANCORA_DIVERGE_DO_ARQUIVO)/$(nanc "$C26")" \
+   "aceito|-/23514|t/0"
+eq "t2_ancora_diverge_da_vespera_do_arquivo vespera do aceito (S(ini-1)=1000), ancora 999: 23514 com a marca, nada gravado" \
+   "$(estado_marca "$U_OBEN" authenticated "SELECT public.banco_conta_registrar_ancora('$C26', '$D0', 999)" ANCORA_DIVERGE_DO_ARQUIVO)/$(nanc "$C26")" \
+   "23514|t/0"
+AI1=$(Pq -c "SET test.uid = '$U_OBEN'; SET ROLE authenticated; SELECT public.banco_conta_registrar_ancora('$C26', '$D1', 1500)" 2>&1 | tail -1)
+eq "t2_ancora_igual_ao_arquivo_ok mesmo valor do arquivo grava; repetir devolve o mesmo id (idempotente)" \
+   "$(Pq -c "SET test.uid = '$U_OBEN'; SET ROLE authenticated; SELECT public.banco_conta_registrar_ancora('$C26', '$D1', 1500) = '$AI1'::uuid" 2>&1 | tail -1)/$(nanc "$C26")" \
+   "t/1"
 
 # fora de ordem: dias 1 e 3 aceitos, depois o dia 2 (as DUAS fronteiras)
 C15=$(conta_nova 15)
