@@ -142,3 +142,12 @@ Ficam como follow-up (pré-existentes): envelope com chave global, não por usu�
 apaga o de A); `cCodIntOS` da OS com `Date.now()` (resposta perdida = OS duplicada); deep link/IA
 trocando o cliente com o restore aberto. Falsificado: 12 sabotagens, controle verde na mesma
 invocação, todas vermelhas pela asserção esperada.
+Follow-up do PR A — **prazo Colacor com o código Oben** (2026-11-21): a sugestão de prazo da
+seleção chamava `buscar_ultima_parcela` na Colacor com `cust.codigo_cliente` (código OBEN), em
+paralelo ao lookup do código Colacor. Os códigos colidem entre contas: o 101 da Oben pode ser outro
+comprador na Colacor → o PV Colacor do 202 saía com o prazo do 101. Agora a parcela Colacor espera
+o MESMO promise do lookup por documento (slot 3, sem `.catch` — o tri-state do auto-cadastro segue
+vendo a falha) e usa `codigoParaParcelaColacor` (`parcela-colacor.ts`): lookup > código Colacor do
+cadastro > **nada** (não consulta; prazo fica '999'). Seleção trocada durante o lookup não gasta
+ListarPedidos. A7 intacto. Só front. Codex: 3 P2 (seleção velha consultando; teste cego à conta do
+lookup e a um `.catch`) → corrigidos. Falsificado: 8 sabotagens nos dois locales.

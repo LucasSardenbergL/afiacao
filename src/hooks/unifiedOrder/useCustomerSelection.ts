@@ -6,6 +6,7 @@ import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { marcaParcelaManualVazia, podeSugerirParcela, type MarcaParcelaManual } from './parcela-manual';
+import { codigoParaParcelaColacor, type LookupClienteColacor } from './parcela-colacor';
 import { maskDocument } from '@/lib/format';
 import { eqText, orFilter } from '@/lib/postgrest';
 import { chaveDocumentoParaBusca } from '@/lib/omie/documento-cliente';
@@ -495,21 +496,36 @@ export function useCustomerSelection({
       // a sph com created_at = data de CARGA, e a leitura por created_at mascarava o preço
       // real (456 grupos; migration 20260625120000). A `buscar_ultima_parcela` fica
       // (1 ListarPedidos/conta, já sem colisão) p/ preservar a sugestão de prazo.
+      const lookupClienteColacor = cust.cnpj_cpf
+        ? supabase.functions.invoke('omie-vendas-sync', {
+            body: { action: 'buscar_cliente', document: cust.cnpj_cpf, account: 'colacor' },
+          })
+        : Promise.resolve({ data: null });
+      // Prazo COLACOR: consulta com o código da PRÓPRIA Colacor, resolvido ANTES pelo lookup
+      // por documento (serial: ListarClientes → ListarPedidos, métodos diferentes). NUNCA o
+      // código Oben — as contas colidem (ver parcela-colacor.ts). Sem código → não consulta.
+      const parcelaColacorPromise = (async () => {
+        const lookup = await lookupClienteColacor.then(
+          (r) => (r && !('error' in r && r.error) ? (r.data as LookupClienteColacor | null) : null),
+          () => null,
+        );
+        // Seleção trocada durante o lookup: não gasta ListarPedidos da Colacor por cliente velho.
+        if (isStale()) return { data: null };
+        const codigoParcelaColacor = codigoParaParcelaColacor(lookup, cust.codigo_cliente_colacor);
+        if (codigoParcelaColacor === null) return { data: null };
+        return supabase.functions.invoke('omie-vendas-sync', {
+          body: { action: 'buscar_ultima_parcela', codigo_cliente: codigoParcelaColacor, account: 'colacor' },
+        });
+      })();
       const settledResults = await Promise.allSettled([
         supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account: 'oben' },
         }),
-        supabase.functions.invoke('omie-vendas-sync', {
-          body: { action: 'buscar_ultima_parcela', codigo_cliente: cust.codigo_cliente, account: 'colacor' },
-        }),
+        parcelaColacorPromise,
         localUserId
           ? supabase.rpc('get_ultimos_precos_cliente', { p_customer: localUserId })
           : Promise.resolve({ data: null }),
-        cust.cnpj_cpf
-          ? supabase.functions.invoke('omie-vendas-sync', {
-              body: { action: 'buscar_cliente', document: cust.cnpj_cpf, account: 'colacor' },
-            })
-          : Promise.resolve({ data: null }),
+        lookupClienteColacor,
         cust.cnpj_cpf
           ? supabase.functions.invoke('omie-sync', {
               body: { action: 'buscar_cliente_por_documento', document: cust.cnpj_cpf },
