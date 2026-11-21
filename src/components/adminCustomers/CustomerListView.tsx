@@ -1,6 +1,6 @@
 // Lista de clientes (segmentos, busca, filtros, tabela densa, scroll infinito).
 // Extraído verbatim de src/pages/AdminCustomers.tsx (god-component split).
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { Button } from '@/components/ui/button';
@@ -23,8 +23,9 @@ import { useCustomerSegments } from '@/hooks/useCustomerSegments';
 import { decodeHtmlEntities } from '@/lib/format';
 import {
   HEALTH_CLASSES, NAO_APURADO, classeSaudeExibida, fmtContagem, fmtGasto, fmtPrioridade, formatDocument, metricasExibiveis,
-  motivoContato, normalizarOrdem, rotuloContagem, type OrdemClientes,
+  motivoContato, normalizarOrdem, rotuloContagem, TAMANHO_PAGINA_CLIENTES, type OrdemClientes,
 } from './config';
+import { registrarUsoClientes, type ModoClientes } from './sensorClientes';
 import type { Customer, ClientScore } from './types';
 
 /** Ajuda da coluna "Prioridade", em linguagem de vendedor. */
@@ -74,16 +75,30 @@ export function CustomerListView({
   /** Tamanho do recorte (busca + saúde) no servidor; `null` = não informado. */
   totalRecorte?: number | null;
 }) {
-  const sentinelRef = useInfiniteScroll(onLoadMore, hasNextPage && !isFetchingNextPage);
   // Filtros sincronizados com URL (compartilhável, sobrevive a F5)
   const [urlState, setUrlState] = useUrlState({ search: '', health: 'all', ordem: 'prioridade' });
   const searchQuery = urlState.search;
   const filterHealth = urlState.health;
-  const setFilterHealth = (v: string) => setUrlState({ health: v });
   // A ordem só é escolhível na base completa, onde o servidor a aplica antes de paginar. A carteira
   // segue A–Z (a ordem de sempre dela) — sem controle que pareça ordenar e não ordene.
   const ordem: OrdemClientes = normalizarOrdem(urlState.ordem);
-  const setOrdem = (v: OrdemClientes) => setUrlState({ ordem: v });
+  // Sensor de uso (sensorClientes.ts): o modo que o vendedor VÊ — a carteira não tem ordem escolhível.
+  const modo: ModoClientes = isCarteira ? 'carteira' : ordem;
+  const setFilterHealth = (v: string) => {
+    if (v !== filterHealth) registrarUsoClientes({ acao: 'filtro_saude', modo, valor: v });
+    setUrlState({ health: v });
+  };
+  const setOrdem = (v: OrdemClientes, origem: 'menu' | 'cabecalho') => {
+    if (!isCarteira && v !== ordem) registrarUsoClientes({ acao: 'modo_trocado', de: ordem, para: v, origem });
+    setUrlState({ ordem: v });
+  };
+  const carregarMais = () => {
+    // Página que está SENDO pedida (1ª = a que já veio com a lista).
+    const pagina = Math.ceil(customers.length / TAMANHO_PAGINA_CLIENTES) + 1;
+    registrarUsoClientes({ acao: 'pagina_carregada', modo, pagina });
+    onLoadMore();
+  };
+  const sentinelRef = useInfiniteScroll(carregarMais, hasNextPage && !isFetchingNextPage);
   const ordenavel = filtroNoServidor;
   const filtrando = !!searchQuery || filterHealth !== 'all';
 
@@ -100,7 +115,11 @@ export function CustomerListView({
   const debouncedInput = useDebouncedValue(searchInput, 300);
   useEffect(() => {
     // Digitação → URL: dispara SÓ quando o termo debounced muda.
-    if (debouncedInput !== urlState.search) setUrlState({ search: debouncedInput });
+    if (debouncedInput !== urlState.search) {
+      // Sensor: só o FATO de buscar (o termo nunca sai daqui). Gatilho = digitação, não URL externa.
+      if (debouncedInput.trim()) registrarUsoClientes({ acao: 'busca_usada', modo });
+      setUrlState({ search: debouncedInput });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedInput]);
   useEffect(() => {
@@ -142,6 +161,14 @@ export function CustomerListView({
     }
     return result;
   }, [customers, searchQuery, filterHealth, scores, buscaNoServidor, filtroNoServidor]);
+
+  // Sensor: a lista montou PRONTA, 1x por montagem, no modo em que abriu (o ledger dedupa por dia).
+  const aberturaRegistrada = useRef(false);
+  useEffect(() => {
+    if (loading || aberturaRegistrada.current) return;
+    aberturaRegistrada.current = true;
+    registrarUsoClientes({ acao: 'lista_aberta', modo });
+  }, [loading, modo]);
 
   if (loading) {
     // PageSkeleton (não Loader2 full-page) — convenção §9; mesma troca feita
@@ -313,8 +340,8 @@ export function CustomerListView({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setOrdem('prioridade')}>Priorizar contatos</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setOrdem('nome')}>A–Z</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setOrdem('prioridade', 'menu')}>Priorizar contatos</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setOrdem('nome', 'menu')}>A–Z</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -331,7 +358,7 @@ export function CustomerListView({
                   aria-sort={ordenavel ? (ordem === 'nome' ? 'ascending' : 'none') : undefined}
                 >
                   {ordenavel ? (
-                    <button type="button" onClick={() => setOrdem('nome')} className="inline-flex items-center gap-1 hover:text-foreground">
+                    <button type="button" onClick={() => setOrdem('nome', 'cabecalho')} className="inline-flex items-center gap-1 hover:text-foreground">
                       Cliente {ordem === 'nome' && <ArrowDownAZ className="w-3 h-3" aria-hidden />}
                     </button>
                   ) : 'Cliente'}
@@ -346,7 +373,7 @@ export function CustomerListView({
                 >
                   <span className="inline-flex items-center gap-1">
                     {ordenavel ? (
-                      <button type="button" onClick={() => setOrdem('prioridade')} className="inline-flex items-center gap-1 hover:text-foreground">
+                      <button type="button" onClick={() => setOrdem('prioridade', 'cabecalho')} className="inline-flex items-center gap-1 hover:text-foreground">
                         {ordem === 'prioridade' && <ArrowDownWideNarrow className="w-3 h-3" aria-hidden />} Prioridade
                       </button>
                     ) : 'Prioridade'}
@@ -368,7 +395,7 @@ export function CustomerListView({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((customer) => {
+              {filtered.map((customer, indice) => {
                 const score = scores.get(customer.user_id);
                 const healthInfo = score ? classeSaudeExibida(score.health_class) : undefined;
                 const isSemHistorico = score?.sales_history_status === 'sem_historico';
@@ -380,7 +407,12 @@ export function CustomerListView({
                   <tr
                     key={customer.user_id}
                     className="border-b last:border-b-0 hover:bg-muted/30 cursor-pointer transition-colors"
-                    onClick={() => onSelect(customer)}
+                    onClick={() => {
+                      registrarUsoClientes({
+                        acao: 'cliente_aberto', modo, posicao: indice + 1, filtroSaude: filterHealth, comBusca: !!searchQuery,
+                      });
+                      onSelect(customer);
+                    }}
                   >
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2.5">
@@ -490,7 +522,7 @@ export function CustomerListView({
             {isFetchingNextPage ? (
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
             ) : (
-              <Button variant="outline" size="sm" onClick={onLoadMore}>
+              <Button variant="outline" size="sm" onClick={carregarMais}>
                 Carregar mais
               </Button>
             )}

@@ -13,10 +13,10 @@ import { isSearchablePostgrestTerm } from '@/lib/postgrest';
 import {
   resolveModoEscopo, fetchCarteiraClientes, fetchScoresPorCustomer, hashIds,
 } from '@/lib/carteira/escopo-clientes';
-import { normalizarFiltroSaude, normalizarOrdem, type FiltroSaude, type OrdemClientes } from './config';
+import { TAMANHO_PAGINA_CLIENTES, normalizarFiltroSaude, normalizarOrdem, type FiltroSaude, type OrdemClientes } from './config';
 import type { Customer, ClientScore } from './types';
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = TAMANHO_PAGINA_CLIENTES;
 const COLUNAS_PROFILE = 'user_id, name, email, phone, document, customer_type, created_at, requires_po';
 
 /**
