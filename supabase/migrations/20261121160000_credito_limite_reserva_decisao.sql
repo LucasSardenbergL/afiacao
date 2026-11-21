@@ -36,6 +36,9 @@ BEGIN
     RAISE EXCEPTION '%: TRUNCATE recusado (crédito é trilha de auditoria)', TG_TABLE_NAME
       USING ERRCODE = '42501';
   END IF;
+  IF TG_OP = 'DELETE' AND TG_TABLE_NAME <> 'credito_aprovador' THEN
+    RAISE EXCEPTION '%: DELETE recusado (trilha de crédito)', TG_TABLE_NAME USING ERRCODE = '42501';
+  END IF;
   v_linha := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
   IF v_portao IS NULL OR v_portao IS DISTINCT FROM (v_linha ->> TG_ARGV[0]) THEN
     RAISE EXCEPTION '%: escrita só pelas RPCs de crédito (portão ausente ou de outra linha)', TG_TABLE_NAME
@@ -81,7 +84,7 @@ CREATE TABLE IF NOT EXISTS public.credito_limite_proposta (
   grupo_user_id uuid NOT NULL,
   grupo_assinatura text NOT NULL,
   limite_versao_base integer,                     -- versão do vigente quando foi proposta (NULL = não havia)
-  limite_sugerido_brl numeric NOT NULL CHECK (limite_sugerido_brl >= 0),
+  limite_sugerido_brl numeric NOT NULL CHECK (limite_sugerido_brl >= 0 AND limite_sugerido_brl < 1e12),
   prazo_max_dias integer NOT NULL CHECK (prazo_max_dias BETWEEN 0 AND 365),
   risco text NOT NULL CHECK (risco IN ('baixo','medio','alto','sem_evidencia')),
   confianca numeric CHECK (confianca IS NULL OR confianca BETWEEN 0 AND 1),
@@ -105,7 +108,7 @@ CREATE INDEX IF NOT EXISTS credito_limite_proposta_grupo_idx
 -- Limite VIGENTE por grupo (raiz canônica). 1 writer: credito_aprovar_proposta.
 CREATE TABLE IF NOT EXISTS public.credito_limite (
   grupo_user_id uuid PRIMARY KEY,
-  limite_brl numeric NOT NULL CHECK (limite_brl >= 0),
+  limite_brl numeric NOT NULL CHECK (limite_brl >= 0 AND limite_brl < 1e12),
   prazo_max_dias integer NOT NULL CHECK (prazo_max_dias BETWEEN 0 AND 365),
   risco text NOT NULL CHECK (risco IN ('baixo','medio','alto','sem_evidencia')),
   versao integer NOT NULL CHECK (versao >= 1),
@@ -126,7 +129,7 @@ CREATE TABLE IF NOT EXISTS public.credito_decisao_pedido (
   grupo_user_id uuid,
   grupo_assinatura text,
   revisao text NOT NULL,
-  valor_brl numeric NOT NULL CHECK (valor_brl > 0),
+  valor_brl numeric NOT NULL CHECK (valor_brl > 0 AND valor_brl < 1e12),
   prazo_dias integer,
   faixa text NOT NULL CHECK (faixa IN ('verde','amarelo','vermelho')),
   motivo text NOT NULL CHECK (motivo IN (
@@ -156,7 +159,7 @@ CREATE TABLE IF NOT EXISTS public.credito_reserva (
   modo text NOT NULL CHECK (modo IN ('sombra','efetivo')),
   grupo_user_id uuid NOT NULL,
   revisao text NOT NULL,
-  valor_brl numeric NOT NULL CHECK (valor_brl > 0),
+  valor_brl numeric NOT NULL CHECK (valor_brl > 0 AND valor_brl < 1e12),
   status text NOT NULL DEFAULT 'ativa' CHECK (status IN ('ativa','substituida','transferida','liberada')),
   encerrada_em timestamptz,
   motivo_encerramento text,
@@ -178,7 +181,7 @@ CREATE TABLE IF NOT EXISTS public.credito_solicitacao (
   sales_order_id uuid NOT NULL,
   company text NOT NULL CHECK (company IN ('oben','colacor','colacor_sc')),
   revisao text NOT NULL,
-  valor_brl numeric NOT NULL CHECK (valor_brl > 0),
+  valor_brl numeric NOT NULL CHECK (valor_brl > 0 AND valor_brl < 1e12),
   prazo_dias integer,
   motivo text NOT NULL,
   status text NOT NULL DEFAULT 'aberta' CHECK (status IN ('aberta','autorizada','recusada','cancelada')),
@@ -195,7 +198,7 @@ CREATE TABLE IF NOT EXISTS public.credito_autorizacao (
   solicitacao_id uuid NOT NULL UNIQUE REFERENCES public.credito_solicitacao(id),
   autorizada boolean NOT NULL,
   revisao text NOT NULL,
-  valor_max_brl numeric NOT NULL CHECK (valor_max_brl > 0),
+  valor_max_brl numeric NOT NULL CHECK (valor_max_brl > 0 AND valor_max_brl < 1e12),
   prazo_max_dias integer,                         -- NULL = aceitou o prazo (ilegível) DESTA revisão
   motivo text NOT NULL CHECK (length(btrim(motivo)) >= 3),
   autorizado_por uuid NOT NULL,
@@ -213,9 +216,17 @@ BEGIN
                            'credito_decisao_pedido','credito_reserva','credito_solicitacao',
                            'credito_autorizacao'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-    EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.%I '
-                   'FROM PUBLIC, anon, authenticated, service_role', t);
-    EXECUTE format('REVOKE ALL ON public.%I FROM anon', t);
+    -- fecho por ALLOWLIST (P0 Codex diff): o default ACL de public dá INSERT também a
+    -- sandbox_exec* (builder do Lovable, BYPASSRLS). Sai a escrita de TODO grantee que não é o dono.
+    EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon', t);
+    FOR r IN SELECT DISTINCT a.grantee::regrole::text AS papel
+               FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+              WHERE c.oid = ('public.' || t)::regclass AND a.grantee <> 0 AND a.grantee <> c.relowner LOOP
+      EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON public.%I FROM %s', t, r.papel);
+      IF r.papel NOT IN ('authenticated', 'service_role', 'claude_ro') THEN
+        EXECUTE format('REVOKE SELECT ON public.%I FROM %s', t, r.papel);
+      END IF;
+    END LOOP;
     EXECUTE format('DROP TRIGGER IF EXISTS credito_guarda_truncate ON public.%I', t);
     EXECUTE format('CREATE TRIGGER credito_guarda_truncate BEFORE TRUNCATE ON public.%I '
                    'FOR EACH STATEMENT EXECUTE FUNCTION public.credito_guarda_escrita(''id'')', t);
@@ -531,8 +542,11 @@ $$;
 
 -- ── 6. Núcleo do gate: avalia, reserva e registra ──────────────────────────────────────────
 -- Em `private` e SEM grant a ninguém (nem service_role): os valores entram escalares, e o que é
--- avaliado tem de ser o que é enviado. O PR 3 cria a revisão imutável e o PR 5 expõe a RPC
--- service_role que lê pedido/par/total/parcela DA REVISÃO e chama este núcleo (P1-3 Codex).
+-- avaliado tem de ser o que é enviado. O PR 3 cria a revisão imutável (com ORDEM entre revisões)
+-- e o PR 5 expõe a RPC service_role que lê pedido/par/total/parcela DA REVISÃO e chama este núcleo.
+-- Condição de ativação herdada (Codex diff P1-3): o escritor de omie_customer_account_map tem de
+-- tomar o mesmo advisory lock das raízes afetadas — sem isso, trocar a titularidade de um par com
+-- uma reserva ainda não commitada permite 2 reservas. Até o PR 5 nada chama este núcleo.
 CREATE OR REPLACE FUNCTION private.credito_avaliar_reservar(
   p_sales_order_id uuid,
   p_company text,
@@ -559,13 +573,16 @@ DECLARE
   v_tem_lim boolean := false;
   v_res public.credito_reserva%ROWTYPE;
   v_tem_res boolean := false;
+  v_dec_res public.credito_decisao_pedido%ROWTYPE;
+  v_lastro_limite boolean := false;  -- a reserva ativa veio do limite VIGENTE deste grupo
+  v_lastro_aut boolean := false;     -- … ou de autorização ainda válida DESTA revisão
   v_reusa boolean := false;
-  v_res_legit boolean := false;   -- a reserva ativa ainda tem lastro (limite ou autorização válida)
-  v_base numeric := 0;            -- quanto da reserva ativa já está "aprovado" (só o acréscimo é cobrado)
+  v_base numeric := 0;               -- quanto da reserva ativa já está aprovado pelo limite
   v_aut_id uuid;
   v_titulos numeric;
   v_indet integer;
   v_piso_indet integer;
+  v_venc60 integer;
   v_venc60_fora_piso integer;
   v_reservas numeric;
   v_faixa text;
@@ -583,8 +600,9 @@ BEGIN
   IF p_modo IS NULL OR p_modo NOT IN ('sombra','efetivo') THEN
     RAISE EXCEPTION 'credito_avaliar_reservar: modo sombra|efetivo obrigatório' USING ERRCODE = '22023';
   END IF;
-  IF p_valor IS NULL OR p_valor <= 0 THEN
-    RAISE EXCEPTION 'credito_avaliar_reservar: valor do pedido ausente ou não positivo' USING ERRCODE = '22023';
+  -- NaN/Infinity ordenam acima de tudo em numeric: o teto barra os dois (Codex diff P1-7)
+  IF p_valor IS NULL OR p_valor <= 0 OR p_valor >= 1e12 THEN
+    RAISE EXCEPTION 'credito_avaliar_reservar: valor do pedido ausente, não positivo ou não finito' USING ERRCODE = '22023';
   END IF;
   -- O lock só serializa se cada comando vê o commit do anterior (snapshot por comando).
   IF current_setting('transaction_isolation') <> 'read committed' THEN
@@ -592,46 +610,59 @@ BEGIN
       current_setting('transaction_isolation') USING ERRCODE = '25000';
   END IF;
 
-  -- 1) piso (PR 1). Falha aqui propaga: o chamador segura (fail-closed).
-  v_piso := public.venda_gate_credito_grupo(p_sales_order_id, p_company, p_codigo);
+  -- 1) raiz → lock da fila do grupo → TUDO o mais é lido depois do lock (Codex diff P1-2)
   v_raiz := public.credito_grupo_raiz(p_company, p_codigo);
   v_root := (v_raiz ->> 'raiz')::uuid;
-
-  IF (v_piso ->> 'bloqueado')::boolean THEN
-    v_faixa := 'vermelho'; v_motivo := 'piso_vencido_60d';
-  ELSIF v_root IS NULL THEN
-    v_faixa := 'amarelo'; v_motivo := v_raiz ->> 'motivo';
-  ELSE
-    -- 2) fila única do grupo: reservas e aprovações do mesmo grupo se serializam aqui
+  IF v_root IS NOT NULL THEN
     PERFORM pg_advisory_xact_lock(hashtextextended('credito_grupo:' || v_root::text, 0));
-    -- a composição pode ter mudado enquanto esperávamos: relê a raiz SOB o lock (P0-1 Codex)
+    -- a composição pode ter mudado enquanto esperávamos: relê a raiz SOB o lock
     IF (public.credito_grupo_raiz(p_company, p_codigo) ->> 'raiz')::uuid IS DISTINCT FROM v_root THEN
       v_faixa := 'amarelo'; v_motivo := 'grupo_mudou';
     END IF;
     v_assin := public.credito_grupo_assinatura(v_root);
+  END IF;
 
-    -- exposição: títulos abertos de TODOS os pares do grupo (∪ par do pedido), deduplicados.
-    -- Vocabulário = OPEN_TITLE_STATUSES + 'PAGTO PARCIAL' (existe em prod e está aberto; o saldo
-    -- dele é o valor cheio porque valor_recebido não é preenchido → superestima = lado seguro).
-    WITH escopo AS (
-      SELECT p_company AS company, p_codigo AS codigo
-      UNION
-      SELECT g.company, g.omie_codigo_cliente FROM public.credito_grupo_pares(v_root) g
-    )
-    SELECT COALESCE(sum(f.saldo) FILTER (WHERE f.saldo > 0), 0),
-           count(*) FILTER (WHERE f.saldo IS NULL),
-           -- dívida possivelmente > 60 d que o piso não consegue medir (ausente ≠ zero)
-           count(*) FILTER (WHERE (f.saldo IS NULL OR f.data_vencimento IS NULL)
-                              AND (f.data_vencimento IS NULL OR f.data_vencimento < v_corte)),
-           -- vencido > 60 d comprovado num status que o piso do PR 1 não lê
-           count(*) FILTER (WHERE f.saldo > 0 AND f.data_vencimento < v_corte
-                              AND f.status_titulo NOT IN ('A VENCER','ATRASADO','VENCE HOJE','ABERTO','VENCIDO','PARCIAL'))
-      INTO v_titulos, v_indet, v_piso_indet, v_venc60_fora_piso
-      FROM escopo e
-      JOIN public.fin_contas_receber f ON f.company = e.company AND f.omie_codigo_cliente = e.codigo
-     WHERE f.status_titulo IN ('A VENCER','ATRASADO','VENCE HOJE','ABERTO','VENCIDO','PARCIAL','PAGTO PARCIAL');
+  -- piso do PR 1 (falha propaga: o chamador segura — fail-closed)
+  v_piso := public.venda_gate_credito_grupo(p_sales_order_id, p_company, p_codigo);
 
-    -- reservas ativas de OUTROS pedidos no MESMO modo, somadas pelo PAR (independe da raiz que gravou)
+  -- títulos abertos do par do pedido ∪ pares do grupo, deduplicados — mesmo SEM raiz.
+  -- Vocabulário = OPEN_TITLE_STATUSES + 'PAGTO PARCIAL' (existe em prod e está aberto; o saldo
+  -- dele é o valor cheio porque valor_recebido não é preenchido → superestima = lado seguro).
+  WITH escopo AS (
+    SELECT p_company AS company, p_codigo AS codigo
+    UNION
+    SELECT g.company, g.omie_codigo_cliente FROM public.credito_grupo_pares(v_root) g WHERE v_root IS NOT NULL
+  )
+  SELECT COALESCE(sum(f.saldo) FILTER (WHERE f.saldo > 0), 0),
+         count(*) FILTER (WHERE f.saldo IS NULL),
+         -- dívida possivelmente > 60 d que ninguém consegue medir (ausente ≠ zero)
+         count(*) FILTER (WHERE (f.saldo IS NULL OR f.data_vencimento IS NULL)
+                            AND (f.data_vencimento IS NULL OR f.data_vencimento < v_corte)),
+         count(*) FILTER (WHERE f.saldo > 0 AND f.data_vencimento < v_corte),
+         -- vencido > 60 d comprovado num status que o piso do PR 1 não lê
+         count(*) FILTER (WHERE f.saldo > 0 AND f.data_vencimento < v_corte
+                            AND f.status_titulo NOT IN ('A VENCER','ATRASADO','VENCE HOJE','ABERTO','VENCIDO','PARCIAL'))
+    INTO v_titulos, v_indet, v_piso_indet, v_venc60, v_venc60_fora_piso
+    FROM escopo e
+    JOIN public.fin_contas_receber f ON f.company = e.company AND f.omie_codigo_cliente = e.codigo
+   WHERE e.codigo IS NOT NULL
+     AND f.status_titulo IN ('A VENCER','ATRASADO','VENCE HOJE','ABERTO','VENCIDO','PARCIAL','PAGTO PARCIAL');
+
+  IF (v_piso ->> 'bloqueado')::boolean
+     OR v_venc60_fora_piso > 0                                       -- a exceção do piso não viu isto
+     OR (v_venc60 > 0 AND v_piso ->> 'motivo' <> 'excecao_valida')  -- piso lido antes de o título chegar
+  THEN
+    v_faixa := 'vermelho'; v_motivo := 'piso_vencido_60d';
+  ELSIF v_piso_indet > 0 THEN
+    -- antes de QUALQUER liberação: nem reserva antiga nem autorização pulam isto
+    v_faixa := 'amarelo'; v_motivo := 'piso_indeterminado';
+  ELSIF v_root IS NULL THEN
+    v_faixa := 'amarelo'; v_motivo := v_raiz ->> 'motivo';
+  ELSIF v_motivo IS NOT NULL THEN
+    NULL;  -- grupo_mudou sob o lock
+  ELSE
+    -- reservas ativas de OUTROS pedidos no MESMO modo: pelo PAR atual do grupo OU pela raiz que as
+    -- gravou (troca de código Omie não pode sumir com a reserva — Codex diff P1-4)
     WITH escopo AS (
       SELECT p_company AS company, p_codigo AS codigo
       UNION
@@ -639,17 +670,10 @@ BEGIN
     )
     SELECT COALESCE(sum(r.valor_brl), 0) INTO v_reservas
       FROM public.credito_reserva r
-      JOIN escopo e ON e.company = r.company AND e.codigo = r.omie_codigo_cliente
      WHERE r.status = 'ativa' AND r.modo = p_modo
+       AND (r.grupo_user_id = v_root
+            OR EXISTS (SELECT 1 FROM escopo e WHERE e.company = r.company AND e.codigo = r.omie_codigo_cliente))
        AND NOT (r.sales_order_id = p_sales_order_id AND r.company = p_company);
-
-    -- revisão já encerrada/superada não volta a reservar (P1-5 Codex)
-    IF EXISTS (SELECT 1 FROM public.credito_reserva r
-                WHERE r.sales_order_id = p_sales_order_id AND r.company = p_company
-                  AND r.modo = p_modo AND r.revisao = p_revisao AND r.status <> 'ativa') THEN
-      RAISE EXCEPTION 'credito_avaliar_reservar: revisao_encerrada (% já foi substituída ou encerrada)', p_revisao
-        USING ERRCODE = 'P0001';
-    END IF;
 
     SELECT * INTO v_res FROM public.credito_reserva r
      WHERE r.sales_order_id = p_sales_order_id AND r.company = p_company
@@ -658,16 +682,26 @@ BEGIN
     SELECT * INTO v_lim FROM public.credito_limite l WHERE l.grupo_user_id = v_root;
     v_tem_lim := FOUND;
 
-    -- a reserva ativa só conta como "já aprovada" se ainda tem lastro: veio do limite, ou de
-    -- autorização AINDA válida (P1-5 Codex). Sem lastro, o pedido é reavaliado do zero.
+    -- revisão já encerrada/superada não volta a reservar — salvo se ELA é a ativa (Codex diff P1-6)
+    IF NOT (v_tem_res AND v_res.revisao = p_revisao)
+       AND EXISTS (SELECT 1 FROM public.credito_reserva r
+                    WHERE r.sales_order_id = p_sales_order_id AND r.company = p_company
+                      AND r.modo = p_modo AND r.revisao = p_revisao AND r.status <> 'ativa') THEN
+      RAISE EXCEPTION 'credito_avaliar_reservar: revisao_encerrada (% já foi substituída ou encerrada)', p_revisao
+        USING ERRCODE = 'P0001';
+    END IF;
+
+    -- lastro da reserva ativa (Codex diff P1-5): do limite só se for o VIGENTE e do mesmo grupo;
+    -- de autorização só para a MESMA revisão e enquanto vale. Só o lastro de limite vira "base".
     IF v_tem_res THEN
-      SELECT COALESCE(d.motivo = 'dentro_limite'
-             OR (d.motivo = 'autorizado' AND EXISTS (SELECT 1 FROM public.credito_autorizacao a
-                                                      WHERE a.id = d.autorizacao_id AND a.valido_ate > now())), false)
-        INTO v_res_legit
-        FROM public.credito_decisao_pedido d WHERE d.id = v_res.decisao_id;
-      v_reusa := v_res_legit AND v_res.revisao = p_revisao;
-      v_base := CASE WHEN v_res_legit THEN v_res.valor_brl ELSE 0 END;
+      SELECT * INTO v_dec_res FROM public.credito_decisao_pedido d WHERE d.id = v_res.decisao_id;
+      v_lastro_limite := v_dec_res.motivo = 'dentro_limite' AND v_tem_lim
+                         AND v_dec_res.limite_versao = v_lim.versao AND v_dec_res.grupo_user_id = v_root;
+      v_lastro_aut := v_dec_res.motivo = 'autorizado' AND v_res.revisao = p_revisao
+                      AND EXISTS (SELECT 1 FROM public.credito_autorizacao a
+                                   WHERE a.id = v_dec_res.autorizacao_id AND a.valido_ate > now());
+      v_reusa := v_res.revisao = p_revisao AND (v_lastro_limite OR v_lastro_aut);
+      v_base := CASE WHEN v_lastro_limite THEN v_res.valor_brl ELSE 0 END;
     END IF;
 
     SELECT a.id INTO v_aut_id
@@ -680,15 +714,7 @@ BEGIN
      ORDER BY a.created_at DESC
      LIMIT 1;
 
-    IF v_motivo IS NOT NULL THEN
-      NULL;  -- grupo_mudou sob o lock
-    ELSIF v_venc60_fora_piso > 0 THEN
-      -- a exceção do piso não cobre dívida que o piso não viu
-      v_faixa := 'vermelho'; v_motivo := 'piso_vencido_60d';
-    ELSIF v_piso_indet > 0 THEN
-      -- antes de QUALQUER liberação (P1-6 Codex): nem reserva antiga nem autorização pulam isto
-      v_faixa := 'amarelo'; v_motivo := 'piso_indeterminado';
-    ELSIF v_reusa THEN
+    IF v_reusa THEN
       v_faixa := 'verde'; v_motivo := 'reserva_existente'; v_res_id := v_res.id;
     ELSIF v_aut_id IS NOT NULL THEN
       v_faixa := 'verde'; v_motivo := 'autorizado';
@@ -707,7 +733,7 @@ BEGIN
     ELSIF v_indet > 0 THEN
       v_faixa := 'amarelo'; v_motivo := 'exposicao_indeterminada';
     ELSIF p_valor > v_base AND v_titulos + v_reservas + p_valor > v_lim.limite_brl THEN
-      -- só o ACRÉSCIMO é cobrado: edição que reduz ou mantém o valor não estoura
+      -- só o ACRÉSCIMO sobre o que o limite vigente já cobria é cobrado
       v_faixa := 'amarelo'; v_motivo := 'estoura_limite';
     ELSE
       v_faixa := 'verde'; v_motivo := 'dentro_limite';
@@ -728,13 +754,13 @@ BEGIN
     CASE WHEN v_tem_lim THEN v_lim.versao END,
     CASE WHEN v_motivo = 'autorizado' THEN v_aut_id END, v_piso, p_solicitante);
 
-  -- 4) reserva no 🟢 (nova revisão: a antiga vira 'substituida' e a nova cobre o MAIOR dos dois —
-  --    redução só solta depois que o Omie confirmar, PR 5/6)
+  -- 4) reserva no 🟢 (a anterior vira 'substituida'; a nova cobre o MAIOR dos dois — redução só
+  --    solta depois que o Omie confirmar, PR 5/6)
   IF v_faixa = 'verde' AND v_motivo <> 'reserva_existente' THEN
     IF v_tem_res THEN
       PERFORM public.credito_portao(v_res.id::text);
       UPDATE public.credito_reserva
-         SET status = 'substituida', encerrada_em = now(), motivo_encerramento = 'nova revisão ' || p_revisao
+         SET status = 'substituida', encerrada_em = now(), motivo_encerramento = 'reavaliada na revisão ' || p_revisao
        WHERE id = v_res.id AND status = 'ativa';
     END IF;
     v_res_id := gen_random_uuid();
@@ -746,7 +772,7 @@ BEGIN
   END IF;
 
   -- 5) 🟡 efetivo resolvível pelo aprovador → solicitação (1 aberta por pedido+empresa+revisão).
-  --    Pendência cadastral não vai à fila: aprovar não a resolveria (P2-11 Codex).
+  --    Pendência cadastral não vai à fila: aprovar não a resolveria.
   IF v_faixa = 'amarelo' AND p_modo = 'efetivo'
      AND v_motivo NOT IN ('sem_grupo','grupo_conflito','piso_indeterminado','grupo_mudou') THEN
     SELECT s.id INTO v_sol_id FROM public.credito_solicitacao s
@@ -794,6 +820,36 @@ GRANT EXECUTE ON FUNCTION public.credito_aprovar_proposta(uuid, text) TO authent
 GRANT EXECUTE ON FUNCTION public.credito_recusar_proposta(uuid, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.credito_autorizar_solicitacao(uuid, boolean, text, integer) TO authenticated;
 
+-- Allowlist de EXECUTE: sai todo grantee direto que não é o dono nem o papel previsto
+-- (o default ACL dá EXECUTE a sandbox_exec_<ref> em função nova — P0 Codex diff).
+DO $acl$
+DECLARE
+  f record;
+  g record;
+BEGIN
+  FOR f IN SELECT p.oid, p.oid::regprocedure::text AS sig, p.proowner,
+                  CASE WHEN p.proname IN ('credito_sou_aprovador','credito_aprovar_proposta',
+                                          'credito_recusar_proposta','credito_autorizar_solicitacao') THEN 'authenticated'
+                       WHEN p.proname IN ('credito_grupo_raiz','credito_grupo_assinatura','credito_propor_limite') THEN 'service_role'
+                  END AS pode
+             FROM pg_proc p
+            WHERE (p.pronamespace = 'public'::regnamespace
+                   AND p.proname IN ('credito_guarda_escrita','credito_portao','credito_grupo_raiz','credito_grupo_assinatura',
+                                     'credito_propor_limite','credito_sou_aprovador','credito_aprovar_proposta',
+                                     'credito_recusar_proposta','credito_autorizar_solicitacao'))
+               OR (p.pronamespace = 'private'::regnamespace AND p.proname = 'credito_avaliar_reservar') LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', f.sig);
+    FOR g IN SELECT DISTINCT a.grantee::regrole::text AS papel
+               FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+              WHERE p.oid = f.oid AND a.grantee <> 0 AND a.grantee <> f.proowner LOOP
+      IF g.papel IS DISTINCT FROM f.pode THEN
+        EXECUTE format('REVOKE ALL ON FUNCTION %s FROM %s', f.sig, g.papel);
+      END IF;
+    END LOOP;
+  END LOOP;
+END
+$acl$;
+
 -- ── 8. Postcondição (envelope, docs/agent/database.md §Escrita) ────────────────────────────
 DO $post$
 DECLARE
@@ -831,6 +887,51 @@ BEGIN
       RAISE EXCEPTION 'POS FALHOU: anon lê %', t;
     END IF;
   END LOOP;
+  -- nenhum grantee além do dono escreve; SELECT só authenticated/service_role/claude_ro (allowlist: sem authenticated)
+  SELECT count(*) INTO v_n
+    FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+   WHERE c.relnamespace = 'public'::regnamespace
+     AND c.relname IN ('credito_aprovador','credito_limite_proposta','credito_limite','credito_decisao_pedido',
+                       'credito_reserva','credito_solicitacao','credito_autorizacao')
+     AND a.grantee <> c.relowner
+     AND (a.privilege_type <> 'SELECT'
+          OR a.grantee = 0
+          OR a.grantee::regrole::text NOT IN ('authenticated','service_role','claude_ro')
+          OR (c.relname = 'credito_aprovador' AND a.grantee::regrole::text = 'authenticated'));
+  IF v_n > 0 THEN
+    RAISE EXCEPTION 'POS FALHOU: % grant(s) fora da allowlist nas tabelas de crédito', v_n;
+  END IF;
+  SELECT count(*) INTO v_n
+    FROM pg_class c JOIN pg_attribute at ON at.attrelid = c.oid AND at.attacl IS NOT NULL
+   WHERE c.relnamespace = 'public'::regnamespace AND c.relname LIKE 'credito\_%';
+  IF v_n > 0 THEN
+    RAISE EXCEPTION 'POS FALHOU: grant de coluna em tabela de crédito';
+  END IF;
+  -- EXECUTE: nenhum grantee direto além do dono e do papel previsto, e nada para PUBLIC
+  SELECT count(*) INTO v_n
+    FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
+   WHERE ((p.pronamespace = 'public'::regnamespace AND p.proname LIKE 'credito\_%'
+           AND p.proname NOT IN ('credito_grupo_pares'))
+          OR (p.pronamespace = 'private'::regnamespace AND p.proname = 'credito_avaliar_reservar'))
+     AND a.grantee <> p.proowner
+     AND (a.grantee = 0
+          OR a.grantee::regrole::text IS DISTINCT FROM
+             CASE WHEN p.proname IN ('credito_sou_aprovador','credito_aprovar_proposta',
+                                     'credito_recusar_proposta','credito_autorizar_solicitacao') THEN 'authenticated'
+                  WHEN p.proname IN ('credito_grupo_raiz','credito_grupo_assinatura','credito_propor_limite') THEN 'service_role'
+             END);
+  IF v_n > 0 THEN
+    RAISE EXCEPTION 'POS FALHOU: % EXECUTE fora da allowlist nas funções de crédito', v_n;
+  END IF;
+  -- índices que sustentam "1 reserva ativa" e "1 solicitação aberta" (Codex diff P2-8)
+  IF NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass('public.credito_reserva_uma_ativa_por_pedido')
+                  AND i.indisunique AND i.indisvalid
+                  AND pg_get_indexdef(i.indexrelid) ~ '\(sales_order_id, company, modo\) WHERE \(status = ''ativa''')
+     OR NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass('public.credito_solicitacao_uma_aberta')
+                  AND i.indisunique AND i.indisvalid
+                  AND pg_get_indexdef(i.indexrelid) ~ '\(sales_order_id, company, revisao\) WHERE \(status = ''aberta''') THEN
+    RAISE EXCEPTION 'POS FALHOU: índice único parcial de reserva/solicitação ausente ou diferente';
+  END IF;
   IF has_table_privilege('authenticated', 'public.credito_aprovador', 'SELECT') THEN
     RAISE EXCEPTION 'POS FALHOU: authenticated lê a allowlist';
   END IF;

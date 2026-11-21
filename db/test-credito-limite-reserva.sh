@@ -43,6 +43,12 @@ GRANT USAGE ON SCHEMA auth, public TO authenticated, anon, service_role;
 -- sem isto o harness nasce fechado por acidente e os REVOKE não são testados.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;
+-- … e o papel do builder do Lovable (sandbox_exec_<ref>, BYPASSRLS): INSERT em tabela e EXECUTE em
+-- função nova, medido em prod (pg_default_acl, psql-ro 2026-11-21) — P0 Codex diff.
+CREATE ROLE sandbox_exec_teste BYPASSRLS;
+GRANT USAGE ON SCHEMA public TO sandbox_exec_teste;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO sandbox_exec_teste;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO sandbox_exec_teste;
 SQL
 
 PASS=0; FAIL=0
@@ -173,15 +179,19 @@ BEGIN EXECUTE p_sql; END \$f\$;
 -- papel de teste COM DML e BYPASSRLS: isola o TRIGGER das outras barreiras (P1-9 Codex)
 CREATE ROLE escritor_teste BYPASSRLS;
 GRANT USAGE ON SCHEMA public TO escritor_teste;
-GRANT EXECUTE ON FUNCTION public.t_try(text) TO escritor_teste;
+GRANT EXECUTE ON FUNCTION public.t_try(text) TO escritor_teste, sandbox_exec_teste;
 SQL
-P -q <<'SQL'
+# o papel de teste perde o DML a cada aplicação da migration (a allowlist o revoga — certo!):
+# re-conceder DEPOIS de cada aplicação, senão o 42501 do R4/F5 vem do privilégio e não do trigger.
+grant_escritor() { P -q <<'SQL'
 DO $g$ DECLARE t text; BEGIN
   FOREACH t IN ARRAY ARRAY['credito_limite','credito_decisao_pedido','credito_reserva','credito_solicitacao',
                            'credito_autorizacao','credito_limite_proposta','credito_aprovador'] LOOP
     EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON public.%I TO escritor_teste', t);
   END LOOP; END $g$;
 SQL
+}
+grant_escritor
 
 limpa() { Pq -c "SELECT public.t_limpa();" >/dev/null; }
 # títulos: reseta e semeia "company:codigo:dias_vencido:saldo[:status]" (saldo NULL aceito; dias<0 = a vencer)
@@ -210,7 +220,7 @@ ativas() { Pq -c "SELECT COALESCE(sum(valor_brl),0)::bigint FROM public.credito_
 # saída: "<faixa B>|<bloqueio observado 0/1>|<R$ em reservas ativas>|<B terminou com A aberta 0/1>"
 corrida() {
   limpa; limite "$C" 10000 28 baixo >/dev/null
-  rm -f "$SAB"/a.out "$SAB"/b.out "$SAB"/b.done "$SAB"/a.fifo; mkfifo "$SAB/a.fifo"
+  rm -f "$SAB"/a.out "$SAB"/b.out "$SAB"/b.done "$SAB"/b.rc "$SAB"/a.fifo; mkfifo "$SAB/a.fifo"
   "${PSQL[@]}" -tA -q < "$SAB/a.fifo" > "$SAB/a.out" 2>&1 &
   local apsql=$!
   exec 3>"$SAB/a.fifo"
@@ -219,7 +229,7 @@ corrida() {
   echo "SELECT 'A:' || (public.t_gate('$S1','oben',101,'r1',7000,28) ->> 'faixa');" >&3
   local i=0; until grep -q '^A:' "$SAB/a.out" 2>/dev/null; do i=$((i+1)); [ $i -gt 200 ] && break; sleep 0.05; done
   local apid; apid=$(grep '^PID:' "$SAB/a.out" | cut -d: -f2)
-  ( Pq -c "SELECT 'B:' || (public.t_gate('$S2','colacor_sc',202,'r1',7000,28) ->> 'faixa');" > "$SAB/b.out" 2>&1; touch "$SAB/b.done" ) &
+  ( rcb=0; Pq -c "SELECT 'B:' || (public.t_gate('$S2','colacor_sc',202,'r1',7000,28) ->> 'faixa');" > "$SAB/b.out" 2>&1 || rcb=$?; echo "$rcb" > "$SAB/b.rc"; touch "$SAB/b.done" ) &
   local bjob=$! bloq=0 n
   for i in $(seq 1 100); do
     n=$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE $apid = ANY(pg_blocking_pids(pid));")
@@ -229,8 +239,8 @@ corrida() {
   done
   local b_antes=0; [ -f "$SAB/b.done" ] && b_antes=1
   echo "COMMIT;" >&3; exec 3>&-
-  wait "$apsql" || true; wait "$bjob" || true
-  echo "$(grep -o 'B:[a-z]*' "$SAB/b.out" | cut -d: -f2)|$bloq|$(ativas)|$b_antes|$(grep -o 'A:[a-z]*' "$SAB/a.out" | cut -d: -f2)"
+  local rca=0; wait "$apsql" || rca=$?; wait "$bjob" || true
+  echo "$(grep -o 'B:[a-z]*' "$SAB/b.out" | cut -d: -f2)|$bloq|$(ativas)|$b_antes|$(grep -o 'A:[a-z]*' "$SAB/a.out" | cut -d: -f2)|$rca|$(cat "$SAB/b.rc")"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -241,7 +251,7 @@ asserts() {
 
   echo "· concorrência"
   eq "C1 2×R\$7k com R\$10k em 2 sessões → A verde, B amarelo, B bloqueada OBSERVADA, R\$7k reservados" \
-     "$(corrida)" "amarelo|1|7000|0|verde"
+     "$(corrida)" "amarelo|1|7000|0|verde|0|0"
 
   echo "· faixas"
   limpa
@@ -273,6 +283,8 @@ asserts() {
   eq "D6 PAGTO PARCIAL vencido 75 d (piso do PR 1 não lê) → vermelho" "$(gate "$S1" oben 101 r1 1000 28 | J "['faixa']")" "vermelho"
   titulos "oben:101:-5:9500:PAGTO PARCIAL"
   eq "D6b PAGTO PARCIAL a vencer entra na exposição (9,5k + 1k > 10k)" "$(gate "$S1" oben 101 r1 1000 28 | J "['motivo']")" "estoura_limite"
+  titulos "oben:999:75:300:PAGTO PARCIAL"
+  eq "D6c PAGTO PARCIAL vencido num par SEM dono → vermelho (não sem_grupo)" "$(gate "$S1" oben 999 r1 1000 28 | J "['faixa']")" "vermelho"
   titulos "colacor_sc:202:75:300"
   g=$(gate "$S1" oben 101 r1 1000 28)
   eq "D7 piso (vencido > 60 d no grupo) → vermelho piso_vencido_60d" "$(echo "$g" | J "['motivo']")" "piso_vencido_60d"
@@ -294,6 +306,17 @@ asserts() {
   eq "D12 par sem dono → sem_grupo" "$(echo "$g" | J "['motivo']")" "sem_grupo"
   eq "D12b … pendência cadastral, sem solicitação" "$(echo "$g" | J "[\"pendencia_cadastral\"], d[\"solicitacao_id\"]")" "(True, None)"
   eq "D12c grupo com alias CONFLICT → grupo_conflito" "$(gate "$S1" colacor 601 r1 1000 28 | J "['motivo']")" "grupo_conflito"
+
+  limpa; limite "$C" 10000 28 baixo >/dev/null; gate "$S1" oben 101 r1 7000 28 >/dev/null
+  Pq -c "UPDATE public.omie_customer_account_map SET omie_codigo_cliente = 107 WHERE omie_codigo_cliente = 101;" >/dev/null
+  limite "$C" 10000 28 baixo >/dev/null
+  eq "D13 troca do código Omie (101→107) não some com a reserva ativa → estoura" "$(gate "$S2" oben 107 r1 7000 28 | J "['motivo']")" "estoura_limite"
+  Pq -c "UPDATE public.omie_customer_account_map SET omie_codigo_cliente = 101 WHERE omie_codigo_cliente = 107;" >/dev/null
+
+  echo "· não finito"
+  eq "N1 proposta com limite NaN → 23514" "$(Pq -c "SELECT public.t_try(\$q\$SELECT public.credito_propor_limite('$C','NaN',28,'baixo',NULL,'{}'::jsonb,NULL,NULL,'m','v',now(),public.credito_grupo_assinatura('$C'),NULL)\$q\$);")" "23514"
+  eq "N1b proposta com limite Infinity → 23514" "$(Pq -c "SELECT public.t_try(\$q\$SELECT public.credito_propor_limite('$C','Infinity',28,'baixo',NULL,'{}'::jsonb,NULL,NULL,'m','v',now(),public.credito_grupo_assinatura('$C'),NULL)\$q\$);")" "23514"
+  eq "N2 pedido de valor Infinity → 22023" "$(Pq -c "SELECT public.t_try(\$q\$SELECT public.t_gate('$S3','oben',101,'r9','Infinity',28)\$q\$);")" "22023"
 
   echo "· retry, edição, modo"
   limpa; limite "$C" 10000 28 baixo >/dev/null
@@ -338,6 +361,18 @@ asserts() {
   Pq -c "SELECT public.t_forca('UPDATE public.credito_autorizacao SET valido_ate = now() - interval ''1 minute''');" >/dev/null
   eq "S7 autorização vencida: retry não reusa a reserva dela" "$(gate "$S2" oben 101 r1 7000 28 | J "['motivo']")" "estoura_limite"
 
+  # autorização de r1 não vira crédito para r2 (Codex diff P1-5)
+  limpa; limite "$C" 10000 28 baixo >/dev/null; gate "$S1" oben 101 r1 7000 28 >/dev/null
+  s=$(gate "$S2" oben 101 r1 7000 14 | J "['solicitacao_id']")
+  como "$L" "SELECT public.credito_autorizar_solicitacao('$s', true, 'só r1')" >/dev/null
+  gate "$S2" oben 101 r1 7000 14 >/dev/null
+  eq "S8 r2 (mesmo valor, prazo maior) NÃO herda a autorização de r1 → estoura" "$(gate "$S2" oben 101 r2 7000 28 | J "['motivo']")" "estoura_limite"
+  # revisão reavaliada continua retentável (Codex diff P1-6)
+  Pq -c "SELECT public.t_forca('UPDATE public.credito_autorizacao SET valido_ate = now() - interval ''1 minute''');" >/dev/null
+  limite "$C" 20000 28 baixo >/dev/null
+  eq "S9 r1 com autorização vencida e limite maior → reavaliada dentro_limite" "$(gate "$S2" oben 101 r1 7000 14 | J "['motivo']")" "dentro_limite"
+  eq "S9b retry de r1 → reserva_existente (não P0001)" "$(gate "$S2" oben 101 r1 7000 14 | J "['motivo']")" "reserva_existente"
+
   echo "· aprovação de limite (allowlist)"
   limpa
   local p1 p2
@@ -372,6 +407,10 @@ asserts() {
   eq "R4c TRIGGER: valor da reserva não muda → 42501" "$(comorole escritor_teste "UPDATE public.credito_reserva SET valor_brl = 1")" "42501"
   eq "R4d TRIGGER: TRUNCATE → 42501" "$(comorole escritor_teste "TRUNCATE public.credito_decisao_pedido CASCADE")" "42501"
   eq "R4e TRIGGER: master na allowlist via DML → 42501" "$(comorole escritor_teste "INSERT INTO public.credito_aprovador VALUES ('$M2','eu')")" "42501"
+
+  eq "R4f TRIGGER: DELETE da trilha mesmo COM portão → 42501" "$(comorole escritor_teste "SELECT pg_catalog.set_config('credito.portao', (SELECT id::text FROM public.credito_decisao_pedido LIMIT 1), false); DELETE FROM public.credito_decisao_pedido WHERE id = (SELECT id FROM public.credito_decisao_pedido LIMIT 1)")" "42501"
+  eq "R5 papel do builder (sandbox_exec, BYPASSRLS) insere limite → 42501" "$(comorole sandbox_exec_teste "INSERT INTO public.credito_limite VALUES ('$D',100000,28,'baixo',1,'x',now(),(SELECT id FROM public.credito_limite_proposta LIMIT 1),'$L',now())")" "42501"
+  eq "R5b … nem executa a proposta/aprovação" "$(Pq -c "SELECT has_function_privilege('sandbox_exec_teste','public.credito_propor_limite(uuid,numeric,integer,text,numeric,jsonb,jsonb,jsonb,text,text,timestamptz,text,integer)','EXECUTE')::text || has_function_privilege('sandbox_exec_teste','public.credito_aprovar_proposta(uuid,text)','EXECUTE')::text;")" "falsefalse"
 
   echo "· ACL"
   local f
@@ -408,16 +447,17 @@ t = open(src).read(); n = eval(expr)
 assert n != t, "sabotagem não alterou o texto"
 open(dst, "w").write(n)
 PY
-  P -q -f "$SAB/m.sql"
+  P -q -f "$SAB/m.sql"; grant_escritor
   local v; v=$(eval "$3")
-  if [ "$v" != "$4" ]; then ok "$1 → assert-alvo ficou vermelho (veio $v)"; else bad "$1 → sabotei e o assert continuou verde ($v): sem dente"; fi
-  P -q -f "$MIG"
+  if [ -n "${5:-}" ] && [ "$v" != "$5" ]; then bad "$1 → mutante saiu [$v], esperado exatamente [$5]"
+  elif [ "$v" != "$4" ]; then ok "$1 → assert-alvo ficou vermelho (veio $v)"; else bad "$1 → sabotei e o assert continuou verde ($v): sem dente"; fi
+  P -q -f "$MIG"; grant_escritor
 }
 
 echo "── falsificação ──"
 sabota "F1 sem advisory lock no gate → a corrida dá 2 🟢 (R\$14k)" \
   "t.replace(\"    PERFORM pg_advisory_xact_lock(hashtextextended('credito_grupo:' || v_root::text, 0));\n\", \"\")" \
-  "corrida" "amarelo|1|7000|0|verde"
+  "corrida" "amarelo|1|7000|0|verde|0|0" "verde|0|14000|1|verde|0|0"
 
 limpa
 P1=$(Pq -c "SELECT public.credito_propor_limite('$C',10000,28,'baixo',0.9,'{}'::jsonb,NULL,NULL,'m','v1',now(),public.credito_grupo_assinatura('$C'),NULL);")
@@ -427,7 +467,7 @@ sabota "F2 aprovação sem allowlist → master estranho aprova" \
 
 limpa; limite "$C" 10000 28 baixo >/dev/null; titulos "oben:101:-5:NULL:A VENCER"
 sabota "F3 saldo NULL tratado como zero → indeterminado vira 🟢" \
-  "t.replace(\"           count(*) FILTER (WHERE f.saldo IS NULL),\n\", \"           0,\n\")" \
+  "t.replace(\"         count(*) FILTER (WHERE f.saldo IS NULL),\n\", \"         0,\n\")" \
   "gate '$S1' oben 101 r1 1000 28 | J \"['motivo']\"" "exposicao_indeterminada"
 
 limpa; limite "$C" 10000 28 baixo >/dev/null; gate "$S1" oben 101 r1 7000 28 >/dev/null
@@ -439,23 +479,25 @@ sabota "F5 trigger sem portão → papel com DML grava decisão direto" \
   "t.replace(\"IF v_portao IS NULL OR v_portao IS DISTINCT FROM (v_linha ->> TG_ARGV[0]) THEN\", \"IF false THEN\")" \
   "comorole escritor_teste \"INSERT INTO public.credito_decisao_pedido(id,sales_order_id,company,modo,revisao,valor_brl,faixa,motivo,piso) VALUES (gen_random_uuid(),'$S3','oben','efetivo','x',1,'verde','dentro_limite','{}')\"" "42501"
 
-# F6: REVOKE de service_role esquecido → a POSTCONDIÇÃO aborta (estado "nasce aberto" simulado com GRANT)
+# F6: escrita de um grantee fora da allowlist esquecida → a POSTCONDIÇÃO aborta, e no envelope
+# (transação única, como o db:aplicar) NADA fica: o índice derrubado antes continua ausente.
 python3 - "$MIG" "$SAB/m.sql" <<'PY2'
 import sys
 t = open(sys.argv[1]).read()
-a = "'FROM PUBLIC, anon, authenticated, service_role', t);"
+a = "WHERE c.oid = ('public.' || t)::regclass AND a.grantee <> 0 AND a.grantee <> c.relowner LOOP"
 assert t.count(a) == 1, "alvo F6 ausente"
-open(sys.argv[2], "w").write(t.replace(a, "'FROM PUBLIC, anon, authenticated', t);"))
+open(sys.argv[2], "w").write(t.replace(a, a.replace(" LOOP", " AND a.grantee::regrole::text <> 'service_role' LOOP")))
 PY2
-Pq -c "GRANT INSERT ON public.credito_limite TO service_role;" >/dev/null
-if P -q -f "$SAB/m.sql" > "$SAB/f6.log" 2>&1; then
-  bad "F6 REVOKE esquecido → a migration APLICOU (postcondição sem dente)"
+Pq -c "GRANT INSERT ON public.credito_limite TO service_role; DROP INDEX public.credito_solicitacao_uma_aberta;" >/dev/null
+if P -1 -q -f "$SAB/m.sql" > "$SAB/f6.log" 2>&1; then
+  bad "F6 grant esquecido → a migration APLICOU (postcondição sem dente)"
 elif grep -q "POS FALHOU: service_role escreve direto em credito_limite" "$SAB/f6.log"; then
-  ok "F6 REVOKE esquecido → postcondição abortou a aplicação"
+  ok "F6 grant esquecido → postcondição abortou a aplicação"
 else
   bad "F6 falhou por OUTRO motivo: $(head -c 300 "$SAB/f6.log")"
 fi
-P -q -f "$MIG"
+eq "F6b … rollback do envelope: o índice derrubado segue ausente" "$(Pq -c "SELECT to_regclass('public.credito_solicitacao_uma_aberta') IS NULL;")" "t"
+P -q -f "$MIG"; grant_escritor
 
 autorizado_cenario() { # S2 🟡 → Lucas autoriza; devolve nada
   limpa; limite "$C" 10000 28 baixo >/dev/null; gate "$S1" oben 101 r1 7000 28 >/dev/null
@@ -464,24 +506,41 @@ autorizado_cenario() { # S2 🟡 → Lucas autoriza; devolve nada
 }
 autorizado_cenario; titulos "colacor_sc:202:70:NULL"
 sabota "F7 piso indeterminado depois da autorização → autorização libera" \
-  "t.replace(\"    ELSIF v_piso_indet > 0 THEN\", \"    ELSIF false THEN\")" \
+  "t.replace(\"  ELSIF v_piso_indet > 0 THEN\", \"  ELSIF false THEN\")" \
   "gate '$S2' oben 101 r1 7000 28 | J \"['motivo']\"" "piso_indeterminado"
 
-limpa; limite "$C" 10000 28 baixo >/dev/null; titulos "oben:101:75:300:PAGTO PARCIAL"
-sabota "F8 sem o vencido fora do vocabulário do piso → PAGTO PARCIAL vencido passa" \
-  "t.replace(\"    ELSIF v_venc60_fora_piso > 0 THEN\", \"    ELSIF false THEN\")" \
+limpa; limite "$C" 10000 28 baixo >/dev/null; titulos "oben:101:75:300" "colacor_sc:202:75:300:PAGTO PARCIAL"
+Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.venda_excecao_credito (sales_order_id, company, omie_codigo_cliente, motivo, valido_ate, aprovado_por) VALUES ('$S1','oben',101,'gestor viu o ATRASADO', now() + interval '1 day', '$G')\$q\$);" >/dev/null
+sabota "F8 sem o vencido fora do vocabulário do piso → PAGTO PARCIAL vencido passa sob exceção" \
+  "t.replace(\"     OR v_venc60_fora_piso > 0 \", \"     OR false \")" \
   "gate '$S1' oben 101 r1 1000 28 | J \"['faixa']\"" "vermelho"
 
 autorizado_cenario; titulos; gate "$S2" oben 101 r1 7000 28 >/dev/null
 Pq -c "SELECT public.t_forca('UPDATE public.credito_autorizacao SET valido_ate = now() - interval ''1 minute''');" >/dev/null
 sabota "F9 reuso ignora a validade da autorização → retry libera com autorização vencida" \
-  "t.replace(\"WHERE a.id = d.autorizacao_id AND a.valido_ate > now()))\", \"WHERE a.id = d.autorizacao_id))\")" \
+  "t.replace(\"WHERE a.id = v_dec_res.autorizacao_id AND a.valido_ate > now());\", \"WHERE a.id = v_dec_res.autorizacao_id);\")" \
   "gate '$S2' oben 101 r1 7000 28 | J \"['motivo']\"" "estoura_limite"
 
 limpa; limite "$C" 10000 28 baixo >/dev/null; gate "$S1" oben 101 r1 7000 28 sombra >/dev/null
 sabota "F10 reservas sem filtro de modo → sombra ocupa o efetivo" \
   "t.replace(\"     WHERE r.status = 'ativa' AND r.modo = p_modo\n\", \"     WHERE r.status = 'ativa'\n\")" \
   "gate '$S2' oben 101 r1 7000 28 | J \"['faixa']\"" "verde"
+
+limpa; limite "$C" 10000 28 baixo >/dev/null; gate "$S1" oben 101 r1 7000 28 >/dev/null
+Pq -c "UPDATE public.omie_customer_account_map SET omie_codigo_cliente = 107 WHERE omie_codigo_cliente = 101;" >/dev/null
+limite "$C" 10000 28 baixo >/dev/null
+sabota "F11 reservas só pelo par atual → troca de código some com a reserva" \
+  "t.replace(\"       AND (r.grupo_user_id = v_root\n            OR EXISTS\", \"       AND (false\n            OR EXISTS\")" \
+  "gate '$S2' oben 107 r1 7000 28 | J \"['motivo']\"" "estoura_limite"
+Pq -c "UPDATE public.omie_customer_account_map SET omie_codigo_cliente = 101 WHERE omie_codigo_cliente = 107;" >/dev/null
+
+limpa; limite "$C" 10000 28 baixo >/dev/null; gate "$S1" oben 101 r1 7000 28 >/dev/null
+SOL=$(gate "$S2" oben 101 r1 7000 14 | J "['solicitacao_id']")
+como "$L" "SELECT public.credito_autorizar_solicitacao('$SOL', true, 'só r1')" >/dev/null
+gate "$S2" oben 101 r1 7000 14 >/dev/null
+sabota "F12 reserva AUTORIZADA vira base de outra revisão → r2 passa dentro_limite" \
+  "t.replace(\"      v_base := CASE WHEN v_lastro_limite THEN\", \"      v_base := CASE WHEN v_lastro_limite OR v_lastro_aut OR v_dec_res.motivo = 'autorizado' THEN\")" \
+  "gate '$S2' oben 101 r2 7000 28 | J \"['motivo']\"" "estoura_limite"
 
 echo "── re-prova pós-restauração ──"
 asserts
