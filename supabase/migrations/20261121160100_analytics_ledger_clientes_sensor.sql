@@ -17,7 +17,7 @@
 -- teste src/lib/__tests__/analytics-ledger-paridade.test.ts lê ESTE arquivo). Molde TRAVA → PRE → CREATE → PÓS:
 -- a PRE aborta se o corpo vivo não for o predecessor nem este. A PÓS exige os 20 eventos e anon sem EXECUTE.
 --
--- Aplicação: `bun run db:aplicar supabase/migrations/20261121153713_analytics_ledger_clientes_sensor.sql`
+-- Aplicação: `bun run db:aplicar supabase/migrations/20261121160100_analytics_ledger_clientes_sensor.sql`
 -- (sem BEGIN/COMMIT: o executor fornece a transação).
 -- ============================================================
 

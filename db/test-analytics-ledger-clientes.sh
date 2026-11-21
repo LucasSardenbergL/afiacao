@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA PG17 — 20261121153713_analytics_ledger_clientes_sensor.sql                ║
+# ║  PROVA PG17 — 20261121160100_analytics_ledger_clientes_sensor.sql                ║
 # ║      bash db/test-analytics-ledger-clientes.sh > /tmp/t.log 2>&1; echo "exit=$?"  ║
 # ║  (NÃO pipe pra tail — engole o exit≠0.)  Locale: LOCALE_TESTE=pt_BR.UTF-8 roda    ║
 # ║  a mesma prova no outro locale (as sentinelas são ASCII, caixa fixa).             ║
@@ -71,7 +71,7 @@ echo "═══ setup pronto (PG17 :$PORT) ═══"
 
 M_BASE="$REPO_ROOT/supabase/migrations/20260825214545_analytics_outbox.sql"
 M_PRED="$REPO_ROOT/supabase/migrations/20261121123119_banco_extrato_f1.sql"
-MIG="$REPO_ROOT/supabase/migrations/20261121153713_analytics_ledger_clientes_sensor.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261121160100_analytics_ledger_clientes_sensor.sql"
 ADOCAO="$REPO_ROOT/db/sensor-clientes-adocao.sql"
 MD5_ESTE="907cc5afe8c36e43f456160da8774260"
 
