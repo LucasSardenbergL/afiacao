@@ -119,5 +119,8 @@ por conta (`contasSalvas`/`contasPendentes`), só as linhas pendentes ficam. **A
 carrinho com envio em voo era apagado pelo `clearCart` → mutadores via `protegerDuranteEnvio`.
 **A6** pendência de ERP abria com título de sucesso e apagava o rascunho → título e
 `clearTrigger` por `allConfirmed`. **A7** a `ultima_parcela` do histórico sobrescrevia o prazo
-escolhido à mão → marca manual por conta com o token da seleção. Falsificado: 12 sabotagens,
-uma camada por vez, controle verde na mesma invocação.
+escolhido à mão → marca manual por conta com o token da seleção. Codex (P0 0 · P1 11): a
+assinatura da OS ganhou pagamento+entrega, OS sem ferramentas não confirma, vias da IA barradas;
+os pré-existentes (confirmação perdida na rede = idempotência na edge; descarte/troca × envelope;
+duas abas; prazo Colacor sugerido com o código Oben) ficaram como follow-up no PR. Falsificado:
+15 sabotagens, uma camada por vez, controle verde na mesma invocação.
