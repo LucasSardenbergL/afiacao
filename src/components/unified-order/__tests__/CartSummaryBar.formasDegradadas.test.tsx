@@ -1,8 +1,27 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import type React from 'react';
 import { CartSummaryBar } from '../CartSummaryBar';
+import { BarraEnvioPedido, type BarraEnvioPedidoProps } from '../BarraEnvioPedido';
 import type { ProductCartItem } from '@/hooks/unifiedOrder/types';
 import type { EstadoFormasUI } from '@/services/orderSubmission/formasDegradacao';
+
+
+// C1/C2 (rodada 2): o Enviar/Orçamento saíram do CartSummaryBar para a BarraEnvioPedido. O
+// fechamento é o par renderizado pela página — as mesmas props alimentam os dois.
+type PropsFechamento = React.ComponentProps<typeof CartSummaryBar> & Partial<BarraEnvioPedidoProps>;
+function Fechamento(p: PropsFechamento) {
+  return (
+    <>
+      <CartSummaryBar {...p} />
+      <BarraEnvioPedido
+        temCliente carregandoCliente={false} exigeCondicao servicosAOrcar={0}
+        submitting={false} vendedorDivergencias={[]} totalEstimated={0} onSubmit={vi.fn()}
+        {...p}
+      />
+    </>
+  );
+}
 
 function prod(account: 'oben' | 'colacor'): ProductCartItem {
   return {
@@ -51,39 +70,39 @@ const botaoEnviar = () => screen.getByRole('button', { name: /enviar pedido/i })
 
 describe('CartSummaryBar — degradação das condições de pagamento chega à tela', () => {
   it('sem degradação → nenhum aviso, envio liberado', () => {
-    render(<CartSummaryBar {...makeProps({ estadoFormasOben: OK })} />);
+    render(<Fechamento {...makeProps({ estadoFormasOben: OK })} />);
     expect(screen.queryByText(/condições do omie indisponíveis/i)).toBeNull();
     expect(botaoEnviar().disabled).toBe(false);
   });
 
   // COMPATIBILIDADE (item 3): edge antiga não manda `degraded` → o hook produz o default.
   it('props de estado AUSENTES (edge antiga) → nenhum aviso falso, envio liberado', () => {
-    render(<CartSummaryBar {...makeProps()} />);
+    render(<Fechamento {...makeProps()} />);
     expect(screen.queryByText(/condições do omie indisponíveis/i)).toBeNull();
     expect(botaoEnviar().disabled).toBe(false);
   });
 
   it('degradado SEM prova → aviso visível com motivo, mas envio segue liberado', () => {
-    render(<CartSummaryBar {...makeProps({ estadoFormasOben: DEGRADADO })} />);
+    render(<Fechamento {...makeProps({ estadoFormasOben: DEGRADADO })} />);
     expect(screen.getByText(/condições do omie indisponíveis/i)).toBeTruthy();
     expect(screen.getByText(/rate limit/i)).toBeTruthy();
     expect(botaoEnviar().disabled).toBe(false);
   });
 
   it('degradado COM prova (cliente usa condição ausente) → envio BLOQUEADO e o código citado', () => {
-    render(<CartSummaryBar {...makeProps({ estadoFormasOben: DEGRADADO_COM_PROVA })} />);
+    render(<Fechamento {...makeProps({ estadoFormasOben: DEGRADADO_COM_PROVA })} />);
     expect(botaoEnviar().disabled).toBe(true);
     expect(screen.getAllByText(/A17/).length).toBeGreaterThan(0);
   });
 
   it('bloqueio NÃO trava o orçamento — é a saída do vendedor (não grava codigo_parcela)', () => {
-    render(<CartSummaryBar {...makeProps({ estadoFormasOben: DEGRADADO_COM_PROVA })} />);
+    render(<Fechamento {...makeProps({ estadoFormasOben: DEGRADADO_COM_PROVA })} />);
     const orcamento = screen.getByRole('button', { name: /orçamento/i }) as HTMLButtonElement;
     expect(orcamento.disabled).toBe(false);
   });
 
   it('degradação de conta SEM item no carrinho não bloqueia (a condição dela não é enviada)', () => {
-    render(<CartSummaryBar {...makeProps({
+    render(<Fechamento {...makeProps({
       obenProductItems: [prod('oben')],
       colacorProductItems: [],
       estadoFormasOben: OK,
@@ -93,7 +112,7 @@ describe('CartSummaryBar — degradação das condições de pagamento chega à 
   });
 
   it('a MESMA degradação na conta COM item bloqueia — o par que prova o detector', () => {
-    render(<CartSummaryBar {...makeProps({
+    render(<Fechamento {...makeProps({
       obenProductItems: [],
       colacorProductItems: [prod('colacor')],
       estadoFormasOben: OK,
@@ -104,19 +123,19 @@ describe('CartSummaryBar — degradação das condições de pagamento chega à 
 
   it('falha total da consulta → aviso de indisponível, sem inventar bloqueio', () => {
     const erro: EstadoFormasUI = { degradado: false, motivo: null, erro: true, condicoesAusentes: [] };
-    render(<CartSummaryBar {...makeProps({ estadoFormasOben: erro })} />);
+    render(<Fechamento {...makeProps({ estadoFormasOben: erro })} />);
     expect(screen.getByText(/não foi possível carregar as condições/i)).toBeTruthy();
     expect(botaoEnviar().disabled).toBe(false);
   });
 
   it('oferece "Tentar de novo" quando há como recarregar', () => {
     const onRecarregarFormas = vi.fn();
-    render(<CartSummaryBar {...makeProps({ estadoFormasOben: DEGRADADO, onRecarregarFormas })} />);
+    render(<Fechamento {...makeProps({ estadoFormasOben: DEGRADADO, onRecarregarFormas })} />);
     expect(screen.getByRole('button', { name: /tentar de novo/i })).toBeTruthy();
   });
 
   it('durante o loading não mostra aviso (estado ainda indefinido, não degradado)', () => {
-    render(<CartSummaryBar {...makeProps({ estadoFormasOben: DEGRADADO, loadingFormas: true })} />);
+    render(<Fechamento {...makeProps({ estadoFormasOben: DEGRADADO, loadingFormas: true })} />);
     expect(screen.queryByText(/condições do omie indisponíveis/i)).toBeNull();
   });
 });

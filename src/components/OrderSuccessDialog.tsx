@@ -1,6 +1,6 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, Share2, Eye, Printer, ArrowLeft, ShieldAlert, AlertTriangle } from 'lucide-react';
+import { CheckCircle, Share2, Eye, Printer, ArrowLeft, ShieldAlert, AlertTriangle, Plus } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { openPrintOrder, type PrintOrderData } from '@/components/OrderPrintLayout';
@@ -22,6 +22,8 @@ interface OrderSuccessDialogProps {
   printDataList?: PrintOrderData[];
   returnTo?: string | null;
   onVoltarFila?: () => void;
+  /** C4 (rodada 2): recomeça um pedido limpo. Só aparece com envio confirmado em todas as contas. */
+  onNovoPedido?: () => void;
   /** Contas travadas pela trava de crédito (Fase 2) — o PV NÃO foi criado no Omie. */
   bloqueiosCredito?: BloqueioCreditoPedido[];
   /** Abre o fluxo de exceção (gestor aprova / vendedor leva ao gestor). */
@@ -44,6 +46,7 @@ export function OrderSuccessDialog({
   printDataList,
   returnTo,
   onVoltarFila,
+  onNovoPedido,
   bloqueiosCredito,
   onResolverBloqueio,
   envioConfirmado,
@@ -197,6 +200,12 @@ export function OrderSuccessDialog({
             <Share2 className="w-4 h-4" />
             WhatsApp
           </Button>
+          {onNovoPedido && envioConfirmado && (
+            <Button variant="default" onClick={onNovoPedido} className="flex-1 gap-2 basis-full">
+              <Plus className="w-4 h-4" />
+              Novo pedido
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

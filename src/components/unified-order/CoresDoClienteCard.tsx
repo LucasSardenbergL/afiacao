@@ -50,10 +50,15 @@ const fmtData = (iso: string) => {
  * daquela compra (podendo trocar embalagem/acabamento no dialog).
  * Não renderiza nada quando o cliente não tem cor no histórico.
  */
+const CORES_VISIVEIS = 8;
+
 export function CoresDoClienteCard({
   cores, coresFiltradas, busca, onBuscaChange, isLoading, onRepetirCor, umToque, onAdicionarUmToque,
 }: CoresDoClienteCardProps) {
   const [aberto, setAberto] = useState(true);
+  // C3 (rodada 2): sem rolagem interna (prendia o dedo no celular) — mostra as primeiras e expande.
+  const [todas, setTodas] = useState(false);
+  const visiveis = todas ? coresFiltradas : coresFiltradas.slice(0, CORES_VISIVEIS);
 
   if (!isLoading && cores.length === 0) return null;
 
@@ -89,8 +94,8 @@ export function CoresDoClienteCard({
                   className="pl-9 h-9"
                 />
               </div>
-              <div className="max-h-[320px] overflow-y-auto space-y-2">
-                {coresFiltradas.map((cor) => (
+              <div className="space-y-2">
+                {visiveis.map((cor) => (
                   <div key={cor.nome} className="rounded-lg border p-2">
                     <p className="text-xs font-medium flex items-center gap-1.5">
                       🎨 {cor.nome}
@@ -167,6 +172,11 @@ export function CoresDoClienteCard({
                     </div>
                   </div>
                 ))}
+                {visiveis.length < coresFiltradas.length && (
+                  <Button type="button" variant="ghost" size="sm" className="w-full text-xs" onClick={() => setTodas(true)}>
+                    Ver mais {coresFiltradas.length - visiveis.length} cores
+                  </Button>
+                )}
                 {coresFiltradas.length === 0 && (
                   <p className="text-xs text-muted-foreground py-2">
                     Nenhuma cor do histórico casa com “{busca}”.

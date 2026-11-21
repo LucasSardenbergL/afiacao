@@ -4,7 +4,8 @@
  *
  * - Vendas em pedidos MTD vs mesmos dias do mês anterior (`useTeamKpis`, segue o seletor). É
  *   PEDIDO, não receita contábil — o rótulo diz isso.
- * - Margem bruta do último mês fechado comum (DRE, regime visível).
+ * - Margem bruta do último mês fechado comum (DRE, regime visível), só das empresas de
+ *   mercadoria — a Colacor SC só presta serviço e aparece como "serviço", não como 100%.
  * - Saldo bancário líquido (soma dos CNPJs) + quais CNPJs estão negativos — caixa não é
  *   fungível entre CNPJs, então o total nunca aparece sozinho como "disponível".
  * - Recebíveis vencidos em R$ e % da carteira aberta.
@@ -122,11 +123,15 @@ export function CeoPlacar() {
           detalhe={
             p.erro.dre
               ? 'leitura da DRE falhou'
-              : p.margem.semCmv.length > 0
-                ? `${rotuloMes(p.margem.mes)}: CMV não classificado em ${nomes(p.margem.semCmv)}`
-                : p.margem.mes === null
-                  ? 'sem mês anterior com receita em todas'
-                  : `${rotuloMes(p.margem.mes)} · DRE ${p.regime === 'caixa' ? 'caixa' : 'competência'}`
+              : selection !== 'all' && p.margem.servicoFora.length > 0
+                ? 'só serviço: custo nas despesas, sem margem bruta'
+                : p.margem.semCmv.length > 0
+                  ? `${rotuloMes(p.margem.mes)}: CMV não classificado em ${nomes(p.margem.semCmv)}`
+                  : p.margem.mes === null
+                    ? 'sem mês anterior com receita em todas'
+                    : `${rotuloMes(p.margem.mes)} · DRE ${p.regime === 'caixa' ? 'caixa' : 'competência'}${
+                        p.margem.servicoFora.length > 0 ? ` · sem ${nomes(p.margem.servicoFora)} (serviço)` : ''
+                      }`
           }
           para="/financeiro/cockpit"
           carregando={p.carregando.dre}
@@ -202,7 +207,9 @@ export function CeoPlacar() {
                 <tr key={l.empresa} className="border-b border-border last:border-0">
                   <th scope="row" className="px-4 py-2 text-left font-medium">{COMPANIES[l.empresa].shortName}</th>
                   <td className="px-4 py-2 text-right">
-                    {l.margem.semCmv.length > 0 ? (
+                    {l.margem.servicoFora.length > 0 ? (
+                      <span className="text-muted-foreground" title="Só presta serviço: sem CMV, o custo está nas despesas operacionais">serviço</span>
+                    ) : l.margem.semCmv.length > 0 ? (
                       <span className="text-status-warning" title="CMV não classificado no mês — margem não calculada">sem CMV</span>
                     ) : (
                       formatarFracaoPct(l.margem.valor)
