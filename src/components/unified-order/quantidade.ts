@@ -4,11 +4,6 @@
  * "12" passava por "1" — no carrinho, a quantidade mudava no meio da digitação.
  */
 
-/** Só dígitos no buffer — teclado numérico do celular ainda deixa colar "12,5" ou "-3". */
-export function digitosDaQuantidade(texto: string): string {
-  return texto.replace(/\D/g, '');
-}
-
 /**
  * Valor a gravar quando o usuário sai do campo. Vazio, zero ou inválido VOLTA ao anterior —
  * nunca vira 0 (item sumiria do total) nem 1 (quantidade inventada).

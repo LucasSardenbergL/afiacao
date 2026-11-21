@@ -9,6 +9,8 @@ describe('estadoDoCatalogo — falhou ≠ vazio', () => {
   it('erro sem dado → falhou', () => expect(q({ isError: true })).toBe('falhou'));
   it('erro sem dado, tentando de novo → carregando', () => expect(q({ isError: true, isFetching: true })).toBe('carregando'));
   it('erro COM dado em mãos (refetch falhou) → ok, a lista vale', () => expect(q({ isError: true, temDados: true })).toBe('ok'));
+  it('sem rede e sem cache (pending + paused) → falhou, não "carregando" eterno', () =>
+    expect(q({ isPending: true, isPaused: true })).toBe('falhou'));
   it('sucesso → ok', () => expect(q({ temDados: true })).toBe('ok'));
 });
 
@@ -20,7 +22,10 @@ describe('estadoListaProdutos', () => {
     expect(estadoListaProdutos({ catalogo: 'ok', quantidade: 0, termo: 'lixa' })).toBe('sem_resultado');
   });
   it('catálogo ok, sem termo e sem produto → catalogo_vazio', () => {
-    expect(estadoListaProdutos({ catalogo: 'ok', quantidade: 0, termo: '  ' })).toBe('catalogo_vazio');
+    expect(estadoListaProdutos({ catalogo: 'ok', quantidade: 0, termo: '' })).toBe('catalogo_vazio');
+  });
+  it('busca só com espaços sem casamento → sem_resultado, nunca "catálogo vazio"', () => {
+    expect(estadoListaProdutos({ catalogo: 'ok', quantidade: 0, termo: '   ' })).toBe('sem_resultado');
   });
   it('com produtos → lista', () => {
     expect(estadoListaProdutos({ catalogo: 'ok', quantidade: 3, termo: 'lixa' })).toBe('lista');

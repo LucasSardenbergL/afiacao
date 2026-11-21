@@ -304,11 +304,11 @@ export function useProductCatalog({
     // C6 (rodada 2): "não consegui carregar o catálogo" ≠ "nenhum produto encontrado".
     estadoCatalogoOben: estadoDoCatalogo({
       isPending: obenQuery.isPending, isError: obenQuery.isError,
-      isFetching: obenQuery.isFetching, temDados: obenQuery.data !== undefined,
+      isFetching: obenQuery.isFetching, isPaused: obenQuery.isPaused, temDados: obenQuery.data !== undefined,
     }),
     estadoCatalogoColacor: estadoDoCatalogo({
       isPending: colacorQuery.isPending, isError: colacorQuery.isError,
-      isFetching: colacorQuery.isFetching, temDados: colacorQuery.data !== undefined,
+      isFetching: colacorQuery.isFetching, isPaused: colacorQuery.isPaused, temDados: colacorQuery.data !== undefined,
     }),
     tentarCatalogoDeNovo: loadProductsForAccount,
     productSearch,

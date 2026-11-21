@@ -53,6 +53,7 @@ import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
 import { CartItemList } from '@/components/unified-order/CartItemList';
 import { CartSummaryBar } from '@/components/unified-order/CartSummaryBar';
 import { BarraEnvioPedido } from '@/components/unified-order/BarraEnvioPedido';
+import { motivosEnvioBloqueado, envioBloqueado, type EntradaMotivosEnvio } from '@/components/unified-order/motivos-envio';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { useRegisterShortcuts } from '@/components/shell/ShortcutsRegistry';
 
@@ -464,12 +465,13 @@ const UnifiedOrder = () => {
   // não há botão — limpar perderia o reenvio que não duplica.
   const handleNovoPedido = () => {
     if (!h.ultimoEnvioConfirmado) return;
-    if (!isCustomerMode && !h.clearCustomer()) return; // envio em voo → nada é apagado
-    clearDraft();
-    h.setCustomerSearch('');
-    h.setProductSearch('');
+    if (!h.iniciarNovoPedido()) return; // envio em voo ou envelope vivo → nada é apagado
     parcelasPendentesRef.current = null;
+    coresDoCliente.setBusca('');
     h.setOrderSuccessOpen(false);
+    // Sem os parâmetros do pedido anterior (?customer, ?repeat, ?origem…): recarregar não pode
+    // voltar a selecionar A nem replicar o pedido antigo (Codex P2). O returnTo da fila fica.
+    h.navigate(returnTo ? `/sales/new?returnTo=${encodeURIComponent(returnTo)}` : '/sales/new', { replace: true });
     window.scrollTo({ top: 0 });
   };
 
@@ -482,6 +484,18 @@ const UnifiedOrder = () => {
   const showProductTabs = !isCustomerMode;
   const showAIAssistant = !isCustomerMode;
   const customerReady = !!h.selectedCustomer;
+  // C5: a MESMA entrada alimenta a barra e o "Enviar pedido agora" da reconexão (Codex P1: o banner
+  // testava só `submitting` e contornava os motivos).
+  const entradaMotivosEnvio: EntradaMotivosEnvio = {
+    temCliente: !!h.selectedCustomer, carregandoCliente: h.loadingCustomer,
+    obenProductItems: h.obenProductItems, colacorProductItems: h.colacorProductItems,
+    serviceItems: h.serviceItems, vendedorDivergencias: h.vendedorDivergencias,
+    estadoFormasOben: isCustomerMode ? undefined : h.estadoFormasOben,
+    estadoFormasColacor: isCustomerMode ? undefined : h.estadoFormasColacor,
+    loadingFormas: h.loadingFormas, exigeCondicao: !isCustomerMode,
+    selectedParcelaOben: h.selectedParcelaOben, selectedParcelaColacor: h.selectedParcelaColacor,
+  };
+  const reconexaoBloqueada = envioBloqueado(h.submitting, motivosEnvioBloqueado(entradaMotivosEnvio));
   const servicosAOrcar = h.serviceItems.filter(i => { const p = h.getServicePrice(i); return p === null || !(p > 0); }).length;
 
   return (
@@ -516,7 +530,7 @@ const UnifiedOrder = () => {
             <Wifi className="w-4 h-4 shrink-0" />
             Conexão restabelecida. Seu pedido está salvo como rascunho.
           </div>
-          <Button size="sm" onClick={offlineSubmit.onReconnectSubmit} disabled={h.submitting} className="shrink-0">
+          <Button size="sm" onClick={offlineSubmit.onReconnectSubmit} disabled={reconexaoBloqueada} className="shrink-0">
             Enviar pedido agora
           </Button>
         </div>
@@ -726,13 +740,7 @@ const UnifiedOrder = () => {
           componente). Aparece assim que há cliente OU carrinho, com o motivo quando está cinza. */}
       {(h.selectedCustomer || h.cart.length > 0) && (
         <BarraEnvioPedido
-          temCliente={!!h.selectedCustomer} carregandoCliente={h.loadingCustomer}
-          obenProductItems={h.obenProductItems} colacorProductItems={h.colacorProductItems}
-          serviceItems={h.serviceItems} vendedorDivergencias={h.vendedorDivergencias}
-          estadoFormasOben={isCustomerMode ? undefined : h.estadoFormasOben}
-          estadoFormasColacor={isCustomerMode ? undefined : h.estadoFormasColacor}
-          loadingFormas={h.loadingFormas} exigeCondicao={!isCustomerMode}
-          selectedParcelaOben={h.selectedParcelaOben} selectedParcelaColacor={h.selectedParcelaColacor}
+          {...entradaMotivosEnvio}
           submitting={h.submitting} totalEstimated={h.totalEstimated} servicosAOrcar={servicosAOrcar}
           onSubmit={offlineSubmit.onSubmit}
           onSubmitQuote={handleSubmitQuote}

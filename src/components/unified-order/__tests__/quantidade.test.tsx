@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { useState } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { confirmarQuantidade, digitosDaQuantidade } from '../quantidade';
+import { confirmarQuantidade } from '../quantidade';
 import { QuantidadeInput } from '../QuantidadeInput';
 
 describe('confirmarQuantidade — vazio/inválido volta ao anterior', () => {
@@ -19,9 +19,8 @@ describe('confirmarQuantidade — vazio/inválido volta ao anterior', () => {
     expect(confirmarQuantidade(texto, anterior)).toBe(esperado);
   });
 
-  it('digitosDaQuantidade tira o que não é dígito', () => {
-    expect(digitosDaQuantidade('1a2-')).toBe('12');
-    expect(digitosDaQuantidade('')).toBe('');
+  it('"12,5" colado é inválido (nunca 125)', () => {
+    expect(confirmarQuantidade('12,5', 3)).toBe(3);
   });
 });
 
@@ -86,10 +85,23 @@ describe('QuantidadeInput — buffer local até blur/Enter', () => {
     expect(campo().value).toBe('2');
   });
 
-  it('letras digitadas não entram no buffer', () => {
-    render(<Carrinho inicial={2} onDelta={vi.fn()} />);
+  it('colar "12,5" e sair volta ao anterior — nada vai ao carrinho (Codex P1)', () => {
+    const onDelta = vi.fn();
+    render(<Carrinho inicial={3} onDelta={onDelta} />);
     fireEvent.focus(campo());
-    fireEvent.change(campo(), { target: { value: '3x' } });
+    fireEvent.change(campo(), { target: { value: '12,5' } });
+    fireEvent.blur(campo());
+    expect(onDelta).not.toHaveBeenCalled();
     expect(campo().value).toBe('3');
+  });
+
+  it('focar e sair SEM editar não desfaz uma mudança feita por fora (Codex P1)', () => {
+    const onCommit = vi.fn();
+    const { rerender } = render(<QuantidadeInput value={3} onCommit={onCommit} aria-label="Quantidade" />);
+    fireEvent.focus(campo());
+    rerender(<QuantidadeInput value={8} onCommit={onCommit} aria-label="Quantidade" />); // replicação somou 5
+    fireEvent.blur(campo());
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(campo().value).toBe('8');
   });
 });

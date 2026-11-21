@@ -161,7 +161,7 @@ export function ProductItemForm({
             tone="operational"
             icon={SearchX}
             title="Nenhum produto encontrado"
-            description={`Nada em ${titleMinusculo} para “${productSearch.trim()}”. Tente o código ou outra palavra.`}
+            description={productSearch.trim() ? `Nada em ${titleMinusculo} para “${productSearch.trim()}”. Tente o código ou outra palavra.` : 'A busca só tem espaços — digite o código ou parte da descrição.'}
             className="py-6"
           />
         ) : estadoLista === 'catalogo_vazio' ? (

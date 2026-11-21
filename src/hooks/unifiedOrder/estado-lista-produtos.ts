@@ -9,13 +9,15 @@ export interface EntradaEstadoCatalogo {
   isPending: boolean;
   isError: boolean;
   isFetching: boolean;
+  /** `pending` + `paused`: sem rede e sem cache — não está carregando, está parado (Codex P2). */
+  isPaused?: boolean;
   temDados: boolean;
 }
 
 /** Estado do catálogo de uma conta, a partir da query. Erro COM dado em mãos não é falha: a lista vale. */
 export function estadoDoCatalogo(q: EntradaEstadoCatalogo): 'carregando' | 'falhou' | 'ok' {
   if (q.temDados) return 'ok';
-  if (q.isPending) return 'carregando';
+  if (q.isPending) return q.isPaused ? 'falhou' : 'carregando';
   if (q.isError) return q.isFetching ? 'carregando' : 'falhou';
   return 'ok';
 }
@@ -27,5 +29,7 @@ export function estadoListaProdutos(e: {
 }): EstadoListaProdutos {
   if (e.catalogo !== 'ok') return e.catalogo;
   if (e.quantidade > 0) return 'lista';
-  return e.termo.trim() ? 'sem_resultado' : 'catalogo_vazio';
+  // Termo CRU: o filtro procura o texto literal (espaços inclusive) — "   " sem casamento é
+  // "sem resultado", não "catálogo vazio" (Codex P2).
+  return e.termo !== '' ? 'sem_resultado' : 'catalogo_vazio';
 }

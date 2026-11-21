@@ -185,3 +185,13 @@ encontrado". **C7** quantidade aplicava cada tecla (`parseInt('')||1`: apagar vi
 por 1) → `QuantidadeInput` com buffer, commit SÓ no blur (Enter só tira o foco — dois commits no
 mesmo evento duplicariam o delta), vazio/0/inválido volta ao anterior, Esc descarta; lixeira com
 44px no toque.
+Codex (P0 0 · P1 5 · P2 4), corrigidos no PR: "12,5" colado virava 125 (o buffer filtrava dígitos
+antes de validar → texto cru até o blur); focar+sair sem editar desfazia mudança feita por fora
+(commit só com edição); "Novo pedido" via `clearCustomer` apagava o envelope/rascunho PERSISTIDOS,
+que são por usuário — levava o checkout pendente de OUTRA aba → `iniciarNovoPedido` não toca a
+persistência (o sucesso já a zerou) e recusa com envelope vivo; a OS seguinte herdava prazo e
+modalidade de entrega → voltam ao padrão; "Enviar pedido agora" da reconexão contornava os motivos
+→ mesma entrada da barra. P2: catálogo `pending+paused` (sem rede, sem cache) = "falhou", não
+"carregando" eterno; busca só com espaços = "sem resultado"; o reset limpa a busca de cores e tira
+`?customer`/`?repeat` da URL. Fica de fora: o HUD de ligação (`z-40`, 320px) pode cobrir a barra
+num celular de 360px durante a chamada. Falsificado: 7 sabotagens + controle verde na mesma invocação.
