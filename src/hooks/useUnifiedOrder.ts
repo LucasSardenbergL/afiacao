@@ -405,6 +405,7 @@ export function useUnifiedOrder() {
   const {
     obenProducts, colacorProducts,
     loadingObenProducts, loadingColacorProducts,
+    estadoCatalogoOben, estadoCatalogoColacor, tentarCatalogoDeNovo,
     productSearch, setProductSearch,
     filteredObenProducts, filteredColacorProducts,
   } = catalog;
@@ -1174,6 +1175,7 @@ export function useUnifiedOrder() {
     // Products
     obenProducts, colacorProducts, productSearch, setProductSearch,
     loadingObenProducts, loadingColacorProducts,
+    estadoCatalogoOben, estadoCatalogoColacor, tentarCatalogoDeNovo,
     customerPricesOben, customerPricesColacor,
     filteredObenProducts, filteredColacorProducts,
     customerPurchaseHistory,

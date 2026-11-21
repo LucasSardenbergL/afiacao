@@ -165,3 +165,23 @@ contrato da edge intacto; balcão não leva). **B7** o rascunho não guardava o 
 (ATP bloqueia → refresh → restaura → PV com a `ultima_parcela`) → `parcelasManuais` no rascunho
 (só a conta marcada NESTA seleção) reaplicado pelos setters exportados; sem cliente na tela fica
 pendente até selecionar o cliente DO rascunho (outro = descarta).
+
+Rodada 2 — PR C, **celular e fechamento** (2026-11-21, só front · Publish): **C1/C2** total + Enviar
+ficavam no fim da coluna do carrinho (no celular, depois de TODOS os produtos; no desktop, abaixo
+da dobra com carrinho longo) → `BarraEnvioPedido` `sticky bottom-0` como filho DIRETO da página
+(o bloco que a contém é a página inteira → presa ao fim da tela nos dois tamanhos) com
+`env(safe-area-inset-bottom)`; `sticky` ocupa lugar no fluxo, então o próprio espaço da barra é o
+padding compensatório e o último item nunca fica coberto (o `fixed` exigiria `pb-*` casado com a
+altura). **C3** `max-h`+`overflow-y-auto` aninhados (carrinho 50vh, lista de produtos 400px, cores
+320px) prendiam o dedo → a página rola; cores mostram 8 + "Ver mais". A lista do combobox de
+cliente segue com `max-h-64`. **C4** "Novo pedido" no diálogo de sucesso — só com envio CONFIRMADO
+em todas as contas (pendência de ERP mantém o reenvio que não duplica); zera cliente, buscas e
+rascunho sem recarregar. **C5** Enviar cinza diz POR QUÊ: `motivosEnvioBloqueado` é a ÚNICA fonte
+do `disabled` (`envioBloqueado`), com `aria-describedby`; o gate ganhou "carregando cliente",
+"carregando condições" e "sem condição" (antes só o `submitOrder` barrava com toast, ou nada).
+**C6** catálogo que não carregou virava lista vazia ("não existe") → `estadoDoCatalogo` (erro COM
+dado em mãos = ok) + `EmptyState` "Não consegui carregar" com "Tentar de novo" ≠ "Nenhum produto
+encontrado". **C7** quantidade aplicava cada tecla (`parseInt('')||1`: apagar virava 1, "12" passava
+por 1) → `QuantidadeInput` com buffer, commit SÓ no blur (Enter só tira o foco — dois commits no
+mesmo evento duplicariam o delta), vazio/0/inválido volta ao anterior, Esc descarta; lixeira com
+44px no toque.

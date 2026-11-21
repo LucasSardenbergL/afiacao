@@ -75,7 +75,8 @@ describe('Novo Pedido — fiação do PR B', () => {
 
   it('B4: o carrinho trata serviço com preço ≤0 como A orçar e rotula Subtotal conhecido', () => {
     expect(carrinho).toContain('{price !== null && price > 0 ? (');
-    expect(carrinho).toContain("{servicosAOrcar > 0 && totalEstimated > 0 ? 'Subtotal conhecido' : 'Total'}");
+    // C2 (PR C): o rótulo virou `rotuloTotal` (mesmo no carrinho e na barra de envio) — testado puro.
+    expect(carrinho).toContain('rotuloTotal(totalEstimated, servicosAOrcar)');
   });
 
   it('B4/B5: a busca de produto usa os rótulos honestos (sem `estoque ?? 0`)', () => {
