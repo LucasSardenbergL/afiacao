@@ -409,3 +409,21 @@ Deno.test("Codex v1.3 P2: fault sem tempo para a prova → resposta 'indetermina
   igual([r.itens[0].status, recibos.get(1)!.status], ["indeterminado", "indeterminado"], "resposta = recibo");
   igual([r.contagem.indeterminado, r.contagem.erro_omie ?? 0], [1, 0], "contagem");
 });
+
+Deno.test("v1.4: divergência NOMEIA o campo que mudou (de → para) no erro do item e do recibo", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, { importado_api: "N" })]]);
+  const { d, recibos } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => ({ ...atual, recomendacoes: payload.recomendacoes, importado_api: "S" }) });
+  const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  igual(r.itens[0].status, "divergente", "status");
+  igual(r.itens[0].erro, 'o cadastro mudou além do vendedor: importado_api: "N" → "S"', "erro nomeia o campo");
+  igual(recibos.get(1)!.erro, r.itens[0].erro, "recibo igual");
+});
+
+Deno.test("v1.4: texto vazio NÃO vai no payload (o Omie recusa vazio em campo com domínio)", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, { tipo_atividade: "", bloqueado: " ", complemento: "SALA 1" })]]);
+  const enviados: Record<string, unknown>[] = [];
+  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return { ...atual, recomendacoes: payload.recomendacoes }; } });
+  const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  igual(r.itens[0].status, "verificado", "status");
+  igual(["tipo_atividade" in enviados[0], "bloqueado" in enviados[0], enviados[0].complemento], [false, false, "SALA 1"], "vazios fora, preenchido vai");
+});
