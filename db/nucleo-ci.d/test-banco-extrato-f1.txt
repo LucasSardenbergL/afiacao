@@ -7,4 +7,5 @@
 # contra o arquivo aceito; codigo do banco sem zeros a esquerda; gerado_em no futuro recusado. Migration aplicada 2x.
 # Reavaliacao mede gerado_em contra o 1o envio; fuso fora de faixa = 22023. 40 sabotagens.
 # Task 7: sensores banco.extrato_importado/conferido no ledger (allowlist, ACL, trava do predecessor). 46 sabotagens.
-db/test-banco-extrato-f1.sh 107  falsificar=46
+# Task 9b: foto diaria do saldo Omie (fin_saldo_conta_diario + fin_fotografar_saldos + cron 0 8 * * *) e saldo_omie_centavos no resumo. 60 sabotagens.
+db/test-banco-extrato-f1.sh 124  falsificar=60
