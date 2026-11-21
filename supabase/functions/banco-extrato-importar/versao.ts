@@ -21,7 +21,9 @@ export const respostaSonda = criarRespostaSonda("banco-extrato-importar");
 //
 // v1.0: nascimento (F1 extrato bancário, Task 6). Só OFX; CNAB 240 é recusado como
 // `formato_desconhecido/cnab240_ainda_nao_suportado` até existir o parser (Task 5).
-export const VERSAO = "v1.0-extrato-ofx";
+//
+// v1.1: o parser OFX recusa DTEND anterior a DTSTART (`data_invalida`) em vez de deixar a RPC levantar 22023.
+export const VERSAO = "v1.1-extrato-ofx";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
@@ -30,7 +32,8 @@ export const EFEITO =
 
 /**
  * Estratégia de chave de dedupe das linhas quando `banco_conta.estrategia_chave` é NULL.
- * 'tupla' (data+sentido+valor+descrição normalizada+documento, com contador de repetição) não
+ * 'tupla' (data+sentido+valor+documento, com contador de repetição; a descrição normalizada fica FORA da
+ * chave de propósito, pois o banco pode reescrevê-la entre exports) não
  * depende de o banco entregar um id estável por lançamento.
  * ATENÇÃO: a Task 0 (medição do arquivo REAL do Itaú) pode trocar este valor para 'id_bancario'
  * (FITID estável); trocar é mudança de comportamento → bump de VERSAO. Uma vez gravadas linhas com
