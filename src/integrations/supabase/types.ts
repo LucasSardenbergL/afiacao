@@ -170,6 +170,45 @@ export type Database = {
         }
         Relationships: []
       }
+      afiacao_os_envio: {
+        Row: {
+          assinatura: string | null
+          chave_integracao: string
+          confirmado_em: string | null
+          criado_em: string
+          desfecho: string | null
+          omie_codigo_cliente: number
+          omie_codigo_os: number | null
+          omie_numero_os: string | null
+          order_id: string
+          reservado_em: string
+        }
+        Insert: {
+          assinatura?: string | null
+          chave_integracao: string
+          confirmado_em?: string | null
+          criado_em?: string
+          desfecho?: string | null
+          omie_codigo_cliente: number
+          omie_codigo_os?: number | null
+          omie_numero_os?: string | null
+          order_id: string
+          reservado_em?: string
+        }
+        Update: {
+          assinatura?: string | null
+          chave_integracao?: string
+          confirmado_em?: string | null
+          criado_em?: string
+          desfecho?: string | null
+          omie_codigo_cliente?: number
+          omie_codigo_os?: number | null
+          omie_numero_os?: string | null
+          order_id?: string
+          reservado_em?: string
+        }
+        Relationships: []
+      }
       afiacao_os_sync_fila: {
         Row: {
           atualizado_em: string
@@ -436,6 +475,239 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "selfservice_meus_pedidos"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      banco_conta: {
+        Row: {
+          agencia_digitos: string
+          ativo: boolean
+          banco_codigo: string
+          company: string
+          conta_digitos: string
+          descricao: string | null
+          estrategia_chave: string | null
+          formato: string | null
+          id: string
+        }
+        Insert: {
+          agencia_digitos: string
+          ativo?: boolean
+          banco_codigo: string
+          company: string
+          conta_digitos: string
+          descricao?: string | null
+          estrategia_chave?: string | null
+          formato?: string | null
+          id?: string
+        }
+        Update: {
+          agencia_digitos?: string
+          ativo?: boolean
+          banco_codigo?: string
+          company?: string
+          conta_digitos?: string
+          descricao?: string | null
+          estrategia_chave?: string | null
+          formato?: string | null
+          id?: string
+        }
+        Relationships: []
+      }
+      banco_conta_ancora: {
+        Row: {
+          banco_conta_id: string
+          company: string
+          data: string
+          id: string
+          origem: string
+          registrado_em: string
+          registrado_por: string
+          saldo_final_dia_centavos: number
+        }
+        Insert: {
+          banco_conta_id: string
+          company: string
+          data: string
+          id?: string
+          origem: string
+          registrado_em?: string
+          registrado_por: string
+          saldo_final_dia_centavos: number
+        }
+        Update: {
+          banco_conta_id?: string
+          company?: string
+          data?: string
+          id?: string
+          origem?: string
+          registrado_em?: string
+          registrado_por?: string
+          saldo_final_dia_centavos?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "banco_conta_ancora_conta_fk"
+            columns: ["banco_conta_id", "company"]
+            isOneToOne: false
+            referencedRelation: "banco_conta"
+            referencedColumns: ["id", "company"]
+          },
+        ]
+      }
+      banco_conta_omie: {
+        Row: {
+          banco_conta_id: string
+          company: string
+          omie_ncodcc: number
+        }
+        Insert: {
+          banco_conta_id: string
+          company: string
+          omie_ncodcc: number
+        }
+        Update: {
+          banco_conta_id?: string
+          company?: string
+          omie_ncodcc?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "banco_conta_omie_conta_fk"
+            columns: ["banco_conta_id", "company"]
+            isOneToOne: false
+            referencedRelation: "banco_conta"
+            referencedColumns: ["id", "company"]
+          },
+        ]
+      }
+      banco_extrato_arquivo: {
+        Row: {
+          banco_conta_id: string
+          company: string
+          conferido_em: string | null
+          conferido_por: string | null
+          detalhe: string | null
+          enviado_em: string
+          enviado_por: string
+          formato: string
+          gerado_em: string
+          id: string
+          motivo: string | null
+          periodo_fim: string
+          periodo_inicio: string
+          qtd_linhas: number
+          qtd_linhas_novas: number
+          saldo_abertura_centavos: number | null
+          saldo_final_centavos: number
+          saldo_inicial_centavos: number | null
+          sha256: string
+          status: string
+          storage_path: string
+        }
+        Insert: {
+          banco_conta_id: string
+          company: string
+          conferido_em?: string | null
+          conferido_por?: string | null
+          detalhe?: string | null
+          enviado_em?: string
+          enviado_por: string
+          formato: string
+          gerado_em: string
+          id?: string
+          motivo?: string | null
+          periodo_fim: string
+          periodo_inicio: string
+          qtd_linhas: number
+          qtd_linhas_novas: number
+          saldo_abertura_centavos?: number | null
+          saldo_final_centavos: number
+          saldo_inicial_centavos?: number | null
+          sha256: string
+          status: string
+          storage_path: string
+        }
+        Update: {
+          banco_conta_id?: string
+          company?: string
+          conferido_em?: string | null
+          conferido_por?: string | null
+          detalhe?: string | null
+          enviado_em?: string
+          enviado_por?: string
+          formato?: string
+          gerado_em?: string
+          id?: string
+          motivo?: string | null
+          periodo_fim?: string
+          periodo_inicio?: string
+          qtd_linhas?: number
+          qtd_linhas_novas?: number
+          saldo_abertura_centavos?: number | null
+          saldo_final_centavos?: number
+          saldo_inicial_centavos?: number | null
+          sha256?: string
+          status?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "banco_extrato_arquivo_conta_fk"
+            columns: ["banco_conta_id", "company"]
+            isOneToOne: false
+            referencedRelation: "banco_conta"
+            referencedColumns: ["id", "company"]
+          },
+        ]
+      }
+      banco_extrato_linha: {
+        Row: {
+          arquivo_id: string
+          banco_conta_id: string
+          chave: string
+          company: string
+          data: string
+          descricao: string
+          documento: string | null
+          id: string
+          id_bancario: string | null
+          sentido: string
+          valor_centavos: number
+        }
+        Insert: {
+          arquivo_id: string
+          banco_conta_id: string
+          chave: string
+          company: string
+          data: string
+          descricao: string
+          documento?: string | null
+          id?: string
+          id_bancario?: string | null
+          sentido: string
+          valor_centavos: number
+        }
+        Update: {
+          arquivo_id?: string
+          banco_conta_id?: string
+          chave?: string
+          company?: string
+          data?: string
+          descricao?: string
+          documento?: string | null
+          id?: string
+          id_bancario?: string | null
+          sentido?: string
+          valor_centavos?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "banco_extrato_linha_arquivo_fk"
+            columns: ["arquivo_id", "banco_conta_id", "company"]
+            isOneToOne: false
+            referencedRelation: "banco_extrato_arquivo"
+            referencedColumns: ["id", "banco_conta_id", "company"]
           },
         ]
       }
@@ -1820,6 +2092,21 @@ export type Database = {
           unidade_destino?: string
           unidade_origem?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      credito_virada_grupo: {
+        Row: {
+          aplicada_em: string
+          id: boolean
+        }
+        Insert: {
+          aplicada_em?: string
+          id?: boolean
+        }
+        Update: {
+          aplicada_em?: string
+          id?: boolean
         }
         Relationships: []
       }
@@ -6278,6 +6565,30 @@ export type Database = {
           regime_inputs?: Json
           updated_at?: string
           updated_by?: string | null
+        }
+        Relationships: []
+      }
+      fin_saldo_conta_diario: {
+        Row: {
+          company: string
+          data: string
+          fotografado_em: string
+          omie_ncodcc: number
+          saldo_centavos: number
+        }
+        Insert: {
+          company: string
+          data: string
+          fotografado_em?: string
+          omie_ncodcc: number
+          saldo_centavos: number
+        }
+        Update: {
+          company?: string
+          data?: string
+          fotografado_em?: string
+          omie_ncodcc?: number
+          saldo_centavos?: number
         }
         Relationships: []
       }
@@ -16608,6 +16919,7 @@ export type Database = {
           customer_user_id: string
           deleted_at: string | null
           discount: number
+          envio_omie_reivindicado_em: string | null
           gemeo_importado_id: string | null
           hash_payload: string | null
           id: string
@@ -16644,6 +16956,7 @@ export type Database = {
           customer_user_id: string
           deleted_at?: string | null
           discount?: number
+          envio_omie_reivindicado_em?: string | null
           gemeo_importado_id?: string | null
           hash_payload?: string | null
           id?: string
@@ -16680,6 +16993,7 @@ export type Database = {
           customer_user_id?: string
           deleted_at?: string | null
           discount?: number
+          envio_omie_reivindicado_em?: string | null
           gemeo_importado_id?: string | null
           hash_payload?: string | null
           id?: string
@@ -25505,6 +25819,41 @@ export type Database = {
         Returns: undefined
       }
       authz_contract_version: { Args: never; Returns: number }
+      banco_conta_registrar_ancora: {
+        Args: {
+          p_banco_conta_id: string
+          p_data: string
+          p_saldo_centavos: number
+        }
+        Returns: string
+      }
+      banco_extrato_aux_centavos: { Args: { p: Json }; Returns: number }
+      banco_extrato_aux_data: { Args: { p: string }; Returns: string }
+      banco_extrato_marcar_conferido: {
+        Args: { p_arquivo_id: string }
+        Returns: undefined
+      }
+      banco_extrato_registrar: { Args: { p: Json }; Returns: Json }
+      banco_extrato_resumo_dia: {
+        Args: { p_ate: string; p_banco_conta_id: string; p_de: string }
+        Returns: {
+          coberto: boolean
+          creditos_centavos: number
+          data: string
+          debitos_centavos: number
+          saldo_final_dia_centavos: number
+          saldo_omie_centavos: number
+        }[]
+      }
+      banco_extrato_saldos_conhecidos: {
+        Args: { p_ate: string; p_banco_conta_id: string; p_de: string }
+        Returns: {
+          data: string
+          fonte: string
+          fonte_id: string
+          saldo_centavos: number
+        }[]
+      }
       buscar_skus_candidatos: {
         Args: { p_termos: string[] }
         Returns: {
@@ -25875,6 +26224,15 @@ export type Database = {
           p_usuario: string
         }
         Returns: Json
+      }
+      credito_grupo_pares: {
+        Args: { p_user_id: string }
+        Returns: {
+          company: string
+          omie_codigo_cliente: number
+          origem: string
+          user_id: string
+        }[]
       }
       credito_vinculo_aviso: { Args: { p_cnpj: string }; Returns: Json }
       credito_vinculo_aviso_registrar: {
@@ -26431,6 +26789,7 @@ export type Database = {
           valor_sem_classificacao: number
         }[]
       }
+      fin_fotografar_saldos: { Args: never; Returns: number }
       fin_projecao_13_semanas: {
         Args: { p_company?: string; p_saldo_inicial?: number }
         Returns: {
@@ -28496,6 +28855,14 @@ export type Database = {
         }[]
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
+      sales_order_excluir_sem_envio: {
+        Args: { p_sales_order_id: string; p_somente_orcamento?: boolean }
+        Returns: string
+      }
+      sales_order_reivindicar_envio: {
+        Args: { p_sales_order_id: string }
+        Returns: boolean
+      }
       sales_orders_instante_envio: { Args: never; Returns: string }
       sales_orders_registrar_vendedor_omie: {
         Args: { p_account: string; p_pedidos: Json }
@@ -28940,6 +29307,10 @@ export type Database = {
       }
       venda_fechar_desfechos: { Args: { p_hoje?: string }; Returns: number }
       venda_gate_credito: {
+        Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
+        Returns: Json
+      }
+      venda_gate_credito_grupo: {
         Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
         Returns: Json
       }
