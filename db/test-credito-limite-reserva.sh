@@ -120,7 +120,13 @@ MIGS=("$REPO_ROOT/supabase/migrations/20260702233000_trava_credito_fase2.sql"
       "$REPO_ROOT/supabase/migrations/20260703140000_trava_credito_gate_excecao_por_par.sql"
       "$REPO_ROOT/supabase/migrations/20261121120000_trava_credito_piso_grupo.sql")
 MIG="$REPO_ROOT/supabase/migrations/20261121160000_credito_limite_reserva_decisao.sql"
-for m in "${MIGS[@]}" "$MIG"; do P -q -f "$m"; done
+for m in "${MIGS[@]}"; do P -q -f "$m"; done
+# ISCA: em prod há credito_* de OUTRA feature com grant legítimo a authenticated (credito_vinculo_aviso,
+# medido no ensaio 2026-11-21). A migration não pode mexer nela nem contá-la na postcondição.
+P -q -c "CREATE FUNCTION public.credito_vinculo_aviso(text) RETURNS text LANGUAGE sql AS \$f\$ SELECT \$1 \$f\$;
+         REVOKE ALL ON FUNCTION public.credito_vinculo_aviso(text) FROM PUBLIC;
+         GRANT EXECUTE ON FUNCTION public.credito_vinculo_aviso(text) TO authenticated, service_role, sandbox_exec_teste;"
+P -q -f "$MIG"
 echo "migrations aplicadas: ${#MIGS[@]} antecedentes + $(basename "$MIG")"
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -425,6 +431,7 @@ asserts() {
   for f in "public.credito_aprovar_proposta(uuid,text)" "public.credito_autorizar_solicitacao(uuid,boolean,text,integer)"; do
     eq "X3 authenticated (com gate), não anon: $f" "$(Pq -c "SELECT has_function_privilege('anon','$f','EXECUTE')::text||has_function_privilege('authenticated','$f','EXECUTE')::text;")" "falsetrue"
   done
+  eq "X5 isca de outra feature (credito_vinculo_aviso) intacta" "$(Pq -c "SELECT has_function_privilege('authenticated','public.credito_vinculo_aviso(text)','EXECUTE')::text||has_function_privilege('sandbox_exec_teste','public.credito_vinculo_aviso(text)','EXECUTE')::text;")" "truetrue"
   eq "X4 allowlist = {Lucas}" "$(Pq -c "SELECT string_agg(user_id::text, ',') FROM public.credito_aprovador;")" "$L"
 }
 

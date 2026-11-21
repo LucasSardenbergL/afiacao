@@ -903,15 +903,21 @@ BEGIN
   END IF;
   SELECT count(*) INTO v_n
     FROM pg_class c JOIN pg_attribute at ON at.attrelid = c.oid AND at.attacl IS NOT NULL
-   WHERE c.relnamespace = 'public'::regnamespace AND c.relname LIKE 'credito\_%';
+   WHERE c.relnamespace = 'public'::regnamespace
+     AND c.relname IN ('credito_aprovador','credito_limite_proposta','credito_limite','credito_decisao_pedido',
+                       'credito_reserva','credito_solicitacao','credito_autorizacao');
   IF v_n > 0 THEN
     RAISE EXCEPTION 'POS FALHOU: grant de coluna em tabela de crédito';
   END IF;
   -- EXECUTE: nenhum grantee direto além do dono e do papel previsto, e nada para PUBLIC
   SELECT count(*) INTO v_n
     FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a
-   WHERE ((p.pronamespace = 'public'::regnamespace AND p.proname LIKE 'credito\_%'
-           AND p.proname NOT IN ('credito_grupo_pares'))
+   -- lista NOMINAL: há outras credito_* em prod (credito_vinculo_aviso*, de outra feature, com
+   -- grants legítimos — ensaio de 2026-11-21) que não são deste PR
+   WHERE ((p.pronamespace = 'public'::regnamespace
+           AND p.proname IN ('credito_guarda_escrita','credito_portao','credito_grupo_raiz','credito_grupo_assinatura',
+                             'credito_propor_limite','credito_sou_aprovador','credito_aprovar_proposta',
+                             'credito_recusar_proposta','credito_autorizar_solicitacao'))
           OR (p.pronamespace = 'private'::regnamespace AND p.proname = 'credito_avaliar_reservar'))
      AND a.grantee <> p.proowner
      AND (a.grantee = 0
