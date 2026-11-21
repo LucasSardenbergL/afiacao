@@ -277,6 +277,15 @@ function str(v: unknown): string | null {
   return typeof v === 'string' ? v : null;
 }
 
+/** Best-effort: nunca lança nem esconde o erro original que motivou a limpeza. */
+async function removerObjetoOrfao(storagePath: string): Promise<void> {
+  try {
+    await supabase.storage.from('banco-extratos').remove([storagePath]);
+  } catch {
+    // órfão no bucket é aceitável; o erro que a tela mostra é o da edge
+  }
+}
+
 /** Sobe o arquivo ao bucket (path `{conta}/{uuid}.{ext}`) e chama a edge. 422 → erro `parse`; 500 → `interno`. */
 export async function enviarExtrato(file: File, conta: Pick<BancoConta, 'id'>): Promise<RespostaImport> {
   const storagePath = `${conta.id}/${crypto.randomUUID()}.${extensaoDe(file.name)}`;
@@ -294,7 +303,12 @@ export async function enviarExtrato(file: File, conta: Pick<BancoConta, 'id'>): 
       const m = str((ep as Record<string, unknown>).motivo);
       throw new ErroEnvioExtrato('parse', str((ep as Record<string, unknown>).detalhe) ?? 'Arquivo inválido', m);
     }
-    if (st === 403) throw new ErroEnvioExtrato('acesso', 'Sem acesso a esta conta bancária.');
+    // 400/401/403/404: a edge recusou ANTES de processar — o objeto recém-enviado fica órfão, tenta-se removê-lo.
+    // 422/500 não removem: a edge pode ter registrado o arquivo e o objeto é a evidência.
+    if (st === 400 || st === 401 || st === 403 || st === 404) await removerObjetoOrfao(storagePath);
+    if (st === 401 || st === 403) {
+      throw new ErroEnvioExtrato('acesso', 'Sem permissão para importar extrato bancário nesta conta.');
+    }
     if (st === 400 || st === 404) {
       throw new ErroEnvioExtrato('requisicao', str(corpo?.erro) ?? 'Requisição inválida.');
     }

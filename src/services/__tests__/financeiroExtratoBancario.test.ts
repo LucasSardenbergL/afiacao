@@ -6,11 +6,12 @@ const rpc = vi.fn();
 const from = vi.fn();
 const upload = vi.fn();
 const invoke = vi.fn();
+const remove = vi.fn();
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     rpc: (...a: unknown[]) => rpc(...a),
     from: (...a: unknown[]) => from(...a),
-    storage: { from: () => ({ upload: (...a: unknown[]) => upload(...a) }) },
+    storage: { from: () => ({ upload: (...a: unknown[]) => upload(...a), remove: (...a: unknown[]) => remove(...a) }) },
     functions: { invoke: (...a: unknown[]) => invoke(...a) },
   },
 }));
@@ -119,5 +120,46 @@ describe('enviarExtrato', () => {
     upload.mockResolvedValue({ error: null });
     invoke.mockResolvedValue({ data: null, error: httpErr(403, { erro: 'forbidden' }) });
     await expect(enviarExtrato(arquivo, { id: 'c' })).rejects.toMatchObject({ classe: 'acesso' });
+  });
+
+  it('401 e 403 têm mensagem própria de permissão (não "falha interna")', async () => {
+    for (const st of [401, 403]) {
+      upload.mockResolvedValue({ error: null });
+      remove.mockResolvedValue({ data: [], error: null });
+      invoke.mockResolvedValue({ data: null, error: httpErr(st, { erro: 'Forbidden' }) });
+      const e = await enviarExtrato(arquivo, { id: 'c' }).catch((x) => x);
+      expect(e).toBeInstanceOf(ErroEnvioExtrato);
+      expect(e.classe).toBe('acesso');
+      expect(e.message).toContain('permissão para importar extrato');
+    }
+  });
+
+  it.each([400, 401, 403, 404])('%i: a edge recusou antes de processar -> tenta remover o objeto recém-enviado', async (st) => {
+    upload.mockResolvedValue({ error: null });
+    remove.mockResolvedValue({ data: [], error: null });
+    invoke.mockResolvedValue({ data: null, error: httpErr(st, { erro: 'x' }) });
+    await expect(enviarExtrato(arquivo, { id: 'conta-9' })).rejects.toBeInstanceOf(ErroEnvioExtrato);
+    const path = upload.mock.calls[0][0] as string;
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith([path]);
+  });
+
+  it.each([422, 500])('%i: a edge pode ter processado -> NÃO remove o objeto (evidência)', async (st) => {
+    upload.mockResolvedValue({ error: null });
+    invoke.mockResolvedValue({
+      data: null,
+      error: httpErr(st, st === 422 ? { erro_parse: { motivo: 'data_invalida', detalhe: 'd' } } : { erro: 'erro_interno' }),
+    });
+    await expect(enviarExtrato(arquivo, { id: 'c' })).rejects.toBeInstanceOf(ErroEnvioExtrato);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('falha ou exceção do remove não esconde o erro original', async () => {
+    upload.mockResolvedValue({ error: null });
+    invoke.mockResolvedValue({ data: null, error: httpErr(404, { erro: 'conta nao encontrada' }) });
+    remove.mockResolvedValueOnce({ data: null, error: { message: 'boom' } });
+    await expect(enviarExtrato(arquivo, { id: 'c' })).rejects.toMatchObject({ classe: 'requisicao', message: 'conta nao encontrada' });
+    remove.mockRejectedValueOnce(new Error('rede'));
+    await expect(enviarExtrato(arquivo, { id: 'c' })).rejects.toMatchObject({ classe: 'requisicao', message: 'conta nao encontrada' });
   });
 });
