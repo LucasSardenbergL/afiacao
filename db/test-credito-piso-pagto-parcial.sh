@@ -146,8 +146,6 @@ D=d0000000-0000-0000-0000-000000000001
 E=e0000000-0000-0000-0000-000000000001
 E2=e2000000-0000-0000-0000-000000000001
 S1=aaaaaaaa-0000-0000-0000-000000000001
-S2=aaaaaaaa-0000-0000-0000-000000000002
-S3=aaaaaaaa-0000-0000-0000-000000000003
 P -q <<SQL
 INSERT INTO public.customer_canonical_alias VALUES ('$A1','$C','active'), ('$E2','$E','conflict');
 INSERT INTO public.omie_customer_account_map(user_id, account, omie_codigo_cliente) VALUES
@@ -203,9 +201,7 @@ DO $g$ DECLARE t text; BEGIN
 SQL
 }
 grant_escritor
-aplica_real() { P -q -f "$MIG"; P -q -f "$MIGN"; grant_escritor; }
 
-limpa() { Pq -c "SELECT public.t_limpa();" >/dev/null; }
 # títulos: reseta e semeia "company:codigo:dias_vencido:saldo[:status]" (saldo NULL aceito; dias<0 = a vencer)
 titulos() {
   local sql="SELECT public.t_forca('DELETE FROM public.fin_contas_receber');"
