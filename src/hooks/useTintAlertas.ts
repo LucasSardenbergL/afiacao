@@ -6,20 +6,28 @@ import { agruparPorCor, contagemDoBadge, type CorRejeitada, type LinhaDeErro } f
 const ACCOUNT = 'oben';
 
 type FormulasRejeitadas = {
-  /** Quando o último run de fórmulas começou — a janela termina nele. */
+  /** Quando o último run de fórmulas começou — mostrado no card; a janela NÃO termina nele. */
   runEm: string | null;
   /** Soma de `tint_sync_runs.errors` na janela — pode ser >0 com a lista vazia (detalhe faltou). */
   rejeicoesNaJanela: number;
   cores: CorRejeitada[];
 };
 
-/** Janela que o card cobre, ancorada no ÚLTIMO run (não em "agora": balcão desligado ≠ zero erro). */
+/**
+ * Janela que o card cobre: as últimas N horas a partir de AGORA.
+ *
+ * Antes era ancorada no último run de fórmulas ("balcão desligado ≠ zero erro"). Só que o run de
+ * fórmulas é ESPARSO (só roda quando há fórmula nova; o de catálogos roda a cada ciclo): de
+ * 19/11 17:26 a 21/11/2026 nenhum rodou e o card ficou mostrando "ESTOJO DE COURO" — cor que o
+ * founder já tinha apagado no balcão — como se fosse atual. O card conta EVENTOS de rejeição;
+ * "nenhuma rejeição nas últimas 24h" é verdade quando não houve run, e o carimbo `runEm` segue no ar.
+ */
 export const JANELA_HORAS = 24;
 
 const QUERY_KEY = ['tint-formulas-rejeitadas'] as const;
 
 /**
- * Fórmulas que o guard REJEITOU nas 24h até o último run de fórmulas — deduplicadas por cor.
+ * Fórmulas que o guard REJEITOU nas últimas 24h — deduplicadas por cor.
  *
  * Antes o card lia `tint_importacoes.erros_detalhe`, coluna que o writer vivo (`tint_promote_sync_run`)
  * NUNCA preenche (0 de 4.160 linhas com erro, psql-ro 2026-10-18). O detalhe vive em
@@ -43,7 +51,7 @@ async function lerFormulasRejeitadas(): Promise<FormulasRejeitadas | null> {
   // Sem run nenhum não há o que listar — `null` aqui é "não existe", não "não li".
   if (!ultimo.data) return null;
 
-  const inicio = new Date(new Date(ultimo.data.started_at).getTime() - JANELA_HORAS * 3_600_000).toISOString();
+  const inicio = new Date(Date.now() - JANELA_HORAS * 3_600_000).toISOString();
 
   // Teto do PostgREST é 1.000 linhas SILENCIOSO — as duas leituras paginam (`fetchAllPages`
   // lança em página perdida em vez de devolver o parcial como se fosse tudo).

@@ -397,7 +397,7 @@ export default function TintDashboard() {
               Fórmulas rejeitadas pela fonte
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              Nas {JANELA_HORAS}h até o último sync de fórmulas ({rejeitadas.runEm ? new Date(rejeitadas.runEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'})
+              Nas últimas {JANELA_HORAS}h (último sync de fórmulas: {rejeitadas.runEm ? new Date(rejeitadas.runEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'})
               {' · '}{rejeitadas.cores.length} {rejeitadas.cores.length === 1 ? 'cor' : 'cores'} com receita barrada.
               {' '}O guard não importa a receita barrada e mantém a anterior; a correção é na fonte, não aqui.
             </p>

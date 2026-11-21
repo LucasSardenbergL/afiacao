@@ -59,6 +59,24 @@ describe('useTintAlertas — erros lidos pelos runs da janela', () => {
     expect(result.current.data?.rejeicoesNaJanela).toBe(3);
   });
 
+  it('a janela termina AGORA, não no último run (run de fórmulas esparso não congela o card)', async () => {
+    // Último run 2 dias atrás (ULTIMO = 31/10 12:00); agora = 02/11 12:00. Ancorada no run, a janela
+    // começaria em 30/10 12:00 e o card mostraria rejeições velhas como atuais (ESTOJO DE COURO, 21/11/2026).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-02T12:00:00Z'));
+    try {
+      runsDaJanela = [];
+      const { result } = setup();
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+      const gte = daTabela('tint_sync_runs').find((c) => c.metodo === 'gte');
+      expect(gte?.args).toEqual(['started_at', '2026-11-01T12:00:00.000Z']);
+      expect(result.current.data?.runEm).toBe(ULTIMO.started_at);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('sem run na janela não consulta tint_sync_errors (`.in()` vazio não é filtro)', async () => {
     runsDaJanela = [];
     const { result } = setup();
