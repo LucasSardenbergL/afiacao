@@ -129,3 +129,20 @@ Deno.test("edicaoExigeGate: undefined vs '999' é a mesma parcela", () => {
 Deno.test("edicaoExigeGate: parcela some (vira 999 no envio) com PV em 028 → exige", () => {
   assertEquals(edicaoExigeGate({ subtotalNovo: 90, subtotalOmie: 100, parcelaNova: "", parcelaOmie: "028" }), true);
 });
+
+// ── PR 3: troca de parcela só dispensa o gate com PROVA de que o risco não subiu (dominância) ──
+Deno.test("PR3 edicaoExigeGate: 28→90 dias mesmo total (catálogo) → exige", () => {
+  assertEquals(edicaoExigeGate({ subtotalNovo: 100, subtotalOmie: 100, parcelaNova: "A90", parcelaOmie: "A28", calendarioNovo: [90], calendarioOmie: [28] }), true);
+});
+Deno.test("PR3 edicaoExigeGate: 90→28 dias (catálogo) → não exige", () => {
+  assertEquals(edicaoExigeGate({ subtotalNovo: 100, subtotalOmie: 100, parcelaNova: "A28", parcelaOmie: "A90", calendarioNovo: [28], calendarioOmie: [90] }), false);
+});
+Deno.test("PR3 edicaoExigeGate: 30/60/90 → 75 dias encurta o máximo mas atrasa o recebimento → exige", () => {
+  assertEquals(edicaoExigeGate({ subtotalNovo: 100, subtotalOmie: 100, parcelaNova: "A75", parcelaOmie: "T90", calendarioNovo: [75], calendarioOmie: [30, 60, 90] }), true);
+});
+Deno.test("PR3 edicaoExigeGate: prazo ilegível de um lado → exige", () => {
+  assertEquals(edicaoExigeGate({ subtotalNovo: 100, subtotalOmie: 100, parcelaNova: "999", parcelaOmie: "A28", calendarioNovo: null, calendarioOmie: [28] }), true);
+});
+Deno.test("PR3 edicaoExigeGate: total sobe mesmo com prazo menor → exige", () => {
+  assertEquals(edicaoExigeGate({ subtotalNovo: 101, subtotalOmie: 100, parcelaNova: "A28", parcelaOmie: "A90", calendarioNovo: [28], calendarioOmie: [90] }), true);
+});

@@ -215,3 +215,62 @@
 - **RLS** sob `SET ROLE authenticated` + `request.jwt.claims`: gestor lê; vendedor (employee operacional) e customer leem 0; ninguém escreve direto (nem service_role) — `42501`/trigger.
 - Ausente ≠ zero, assinatura, desatualizado, risco, prazo, retry, edição (substituição e 🟡 preserva a antiga).
 - **Falsificação** (controle verde na MESMA invocação; uma camada por vez): F1 sem advisory lock → C1 dá 2 🟢; F2 gate sem allowlist → master estranho aprova; F3 `COALESCE(saldo,0)` → indeterminado vira 🟢; F4 exposição sem reservas → estoura vira 🟢; F5 trigger sem portão → service_role escreve direto; F6 postcondição: REVOKE esquecido aborta a migration.
+
+---
+
+# PR 3 — Prazo em dias no SQL + revisão imutável da operação (plano detalhado, 2026-11-21)
+
+**Entrega:** 1 migration (`supabase/migrations/20261121180000_credito_prazo_revisao.sql`) + prova PG17 (`db/test-credito-prazo-revisao.sh`) + edge `omie-vendas-sync` (revisão antes do gate, envio a partir da revisão, parcela efetiva na edição, `edicaoExigeGate` por prazo). **Sem Publish** — nenhum front muda (a conversão de orçamento passa a gravar a parcela implícita na revisão, no servidor). Nada consome a revisão para DECIDIR até o PR 5; o efeito em venda hoje é só (a) a edição sem parcela não regrava `999` por cima da parcela real e (b) a edição que só troca a parcela sem subir o prazo não chama o piso.
+
+**Fatos de prod (psql-ro, 2026-11-21):**
+- `sales_orders` **não tem coluna de parcela**; a parcela só vive no payload do chamador (`criar_pedido`/`alterar_pedido`), e `omie_payload` está nulo nos pedidos desde 2026-08.
+- `omie_condicao_pagamento_catalogo` (PK `empresa, codigo`, `empresa` em MAIÚSCULA): **só `OBEN`, 145 linhas ativas**; `dias_parcelas` vazio em todas; **Colacor = 0 linhas**; nenhum writer no repo.
+- `OBEN/999` = **"Informar o número de parcelas"** (`num_parcelas = 999`), não à vista (o fallback de `listarFormasPagamento` o rotula "A Vista" — errado, follow-up). `OBEN/000` = "A Vista".
+- Gramática (145): `Para N dias` 39 · `N/N…` 81 · `A Vista/N…` 11 · `A Vista` 1 · ilegíveis por desenho: `N Parcela(s)` 7, `(C)` 5, `Informar…` 1.
+
+## Desenho
+
+**Parser em SQL** — `credito_parse_calendario(descricao text) RETURNS integer[]` (IMMUTABLE, porte FIEL de `parseCalendarioParcela`, `src/lib/unified-order/prazo-sugestao.ts`): `[0]` = à vista; `NULL` = ilegível, nunca default. Paridade travada por **fixture compartilhada** (`db/fixtures/credito-prazo-paridade.json`: as 145 descrições reais + casos de borda, com o esperado gerado pelo parser TS): o vitest prova TS = fixture; o PG17 prova SQL = fixture.
+
+**Override** — `credito_prazo_override` **append-only** (`id, company, codigo_parcela, prazo_dias NULL|0..365, motivo NOT NULL, criado_por, criado_em`); vigente = última linha por `(company, codigo_parcela)`; `prazo_dias NULL` = revoga (volta ao catálogo). Escrita só por `credito_definir_prazo_override(company, codigo, prazo_dias, motivo)` — authenticated, gate `credito_sou_aprovador()` (o Lucas) → `42501`. Mesma guarda do PR 2 (`credito_guarda_escrita` + portão GUC, fecho de ACL por allowlist).
+
+**Prazo** — `credito_prazo_resolver(codigo, account) RETURNS jsonb {prazo_dias, fonte}` e `credito_prazo_dias(codigo, account) RETURNS integer` (wrapper): account normalizado `oben|colacor|colacor_sc` (outro → `NULL`); 1º override vigente (`fonte='override'`); senão catálogo ativo da empresa (`OBEN|COLACOR|COLACOR_SC`) → `max(calendário)` **só se** `cardinality(calendário) = num_parcelas` quando este existe (`fonte='catalogo'`); senão `NULL` (`fonte=null`). Código vazio/`NULL` → `NULL`. **Nunca 0 nem 999 por falta.**
+
+**Revisão imutável** — `credito_operacao_revisao` (append-only): `id uuid` (é o `revisao` text do PR 2), `sales_order_id`, `company`, `seq` (1, 2, … por pedido+company — a ORDEM entre revisões que o PR 5 exige, condição (b) do PR 2), `contexto criacao|edicao`, `codigo_parcela NOT NULL` (o que VAI ao Omie), `parcela_informada boolean` (false = chamador não mandou → implícita), `prazo_dias NULL` + `prazo_fonte`, `itens jsonb` (projeção money-path do que vai ao Omie: `[{codigo_produto, quantidade, valor_unitario}]` na ordem do envio), `valor_brl` (calculado NO SERVIDOR = Σ q×v, 2 casas), `conteudo_md5`, `criada_por`, `criada_em`. UNIQUE `(sales_order_id, company, seq)`.
+- `credito_registrar_revisao(p_sales_order_id, p_company, p_contexto, p_codigo_parcela, p_itens, p_user_id)` — **service_role**. `pg_advisory_xact_lock` por (pedido, company); valida itens (array não vazio; código inteiro > 0; quantidade e valor finitos e > 0 — senão `22023`, nada gravado); parcela vazia/`NULL` → `'999'` com `parcela_informada=false` (a conversão sem parcela **não vira 999 em silêncio**: fica gravada como implícita e com `prazo_dias NULL` → o gate v2 do PR 5 dá 🟡 `prazo_ilegivel`); conteúdo igual ao da ÚLTIMA revisão → devolve a mesma (`reusada=true`, retry não cria revisão); senão `seq+1`. Devolve `{revisao, seq, codigo_parcela, parcela_informada, prazo_dias, prazo_fonte, itens, valor_brl, reusada}`.
+
+**Edge `omie-vendas-sync`**
+- `criar_pedido`: registra a revisão **antes** do gate (o avaliado nasce antes da decisão); revisão que falha → **segura** o envio (mesmo erro retentável do gate indisponível — fail-closed); o envio usa `codigo_parcela` e `quantidade/valor_unitario/codigo` **da revisão devolvida** (por construção, o enviado = o avaliado; demais campos cosméticos do item seguem do payload, por índice, com tamanho conferido).
+- `alterar_pedido`: parcela efetiva = a informada, senão **a atual do Omie** (`omieParcelaEdit`), senão `999` — acaba o regravar `999` por cima da parcela real. Revisão `edicao` registrada antes do gate; o envio usa a revisão.
+- `edicaoExigeGate({subtotalNovo, subtotalOmie, parcelaNova, parcelaOmie, prazoNovo, prazoOmie})`: subtotal sobe → sim; mesma parcela → não; **os dois prazos legíveis e `prazoNovo ≤ prazoOmie` → não**; senão sim (prazo ilegível nunca prova que não subiu).
+- Bump `VERSAO` + `sonda:fingerprint -- --write`.
+
+**Fora do PR 3 (declarado):** popular o catálogo da Colacor (sem ele todo prazo Colacor é `NULL` → 🟡 até override — o PR 5 mede a fração); rótulo "A Vista" do fallback `999` em `listarFormasPagamento`; escolher a parcela na conversão do orçamento (UX — PR 6, "aprovar com outro prazo"); `pedido-programado-enviar` herda o mesmo caminho (revisão implícita quando sem `cfg.codigo_parcela`).
+
+## Prova (`db/test-credito-prazo-revisao.sh`, PG17, `LC_ALL=C` e `pt_BR.UTF-8`)
+- **P1 paridade:** as 145 descrições reais + bordas → SQL = fixture TS (inclui `(C)`, `N Parcelas`, `Informar…`, `A Vista/1/1`, `30` nu, `A Vista (30 dias)`, `0`, `366`).
+- **P2 prazo:** override vence catálogo; override revogado volta ao catálogo; `999`/vazio/`NULL`/empresa desconhecida/Colacor sem catálogo → `NULL`; `num_parcelas` divergente → `NULL`; inativo ignorado.
+- **P3 override ACL:** Lucas grava; master fora da allowlist, employee e service_role → `42501`; ninguém escreve direto (trigger/ACL).
+- **P4 revisão:** seq 1/2; retry idêntico reusa; sem parcela → `999` implícita com prazo `NULL`; item inválido (NaN, 0, negativo, código não inteiro, array vazio) → `22023` sem linha; UPDATE/DELETE recusados; `valor_brl` do servidor; concorrência de 2 registros do mesmo conteúdo → 1 linha (advisory lock).
+- **Falsificação** (controle verde na MESMA invocação; uma camada por vez): F1 parser devolve `0` para ilegível → P1/P2 vermelhos; F2 override sem gate de aprovador → P3 vermelho; F3 sem advisory lock → P4 concorrência vermelho; F4 sem checagem de `num_parcelas` → P2 vermelho; F5 parcela vazia vira `'000'` → P4 vermelho.
+- **Edge (Deno):** `edicaoExigeGate` (28→90 mesmo total → sim; 90→28 → não; ilegível → sim; mesma parcela → não); `itensDaRevisao` (envio = revisão; tamanho divergente lança).
+
+## Revisão pós-Codex (desenho, 2026-11-21, gpt-6.2-astra high — 2 P0 + 6 P1 + 1 P2)
+
+**Acatados no PR 3 (substituem o que conflitar acima):**
+- **Devedor na revisão (P1):** grava `omie_codigo_cliente` comprovado pela edge (nullable = não comprovado) e ele entra na igualdade de deduplicação — retry com outro cliente gera revisão nova.
+- **Sem fail-closed novo (P1):** revisão que falha **não** segura o envio no PR 3 (contrariaria o §10 — a trava nova só liga após a 1ª leva). A edge loga, devolve `revisao: null` e segue o caminho do PR 1 (piso continua fail-closed). No enforcement (PR 6) revisão válida passa a ser exigida antes de mutar.
+- **Origem da parcela (P1):** `parcela_origem` = `informada | herdada_omie | default_999` (substitui `parcela_informada`); códigos textuais preservados (`000` ≠ `0`). Edição sem parcela herda a do PV confirmado; sem nenhuma das duas, segue `999` como hoje (`default_999`, prazo `NULL`).
+- **Edição por DOMINÂNCIA, não por máximo (P1):** pular o piso só se a parcela é a mesma, ou se os DOIS calendários vêm do catálogo e o novo **domina-ou-iguala** o antigo (em todo vencimento, fração recebida ≥). `30/60/90 → 75 dias` reavalia. Override escalar, ilegível ou `999` nunca provam → reavalia.
+- **Resolvedor sem certeza fabricada (P1):** `fonte=catalogo` exige linha ativa, calendário válido e `num_parcelas` **presente** e igual à cardinalidade (inclui a entrada à vista). Override de `999` **vetado** (o código significa "informar parcelas" — prazo individual precisa de evidência do PV).
+- **Override versionado (P1):** definição/revogação serializada por advisory lock em `(company, codigo)`, `versao` monotônica; vigente = última linha incluindo revogações. A revisão grava `prazo_override_id` (a evidência); prazo/fonte/override entram na igualdade — mudança de evidência gera revisão nova.
+- **Correspondência por item (P1):** o envio usa `codigo/quantidade/valor_unitario` da revisão por índice e confere o código item a item (não só o tamanho).
+- **Centavos (P2):** `valor_brl = Σ round(q × v, 2)` por linha (como o Omie totaliza o item); caso fracionário (2 × R$ 1,005) na prova.
+- Ator de sistema: `p_user_id` nullable (pedido programado chama como service_role).
+
+**Condições herdadas pelo PR 5 (antes de a revisão RESERVAR crédito):**
+- (d) **retomada vincula o PV à revisão despachada** (P0): a chave Omie `PV_<sales_order_id>` é a mesma em todas as revisões — duplicata no retry precisa conferir cliente, itens, preços, total e parcela do PV contra a revisão; divergência ou leitura incompleta deixa a exposição pendente de reconciliação.
+- (e) **despacho serializado por revisão** (P0): claim atômico da revisão vigente por pedido/conta (uma tentativa em voo), resultado registrado por revisão; na edição, conferir o PV de origem antes do 1º delete e parcela+total após `TotalizarPedido`; resultado ambíguo bloqueia novo despacho e redução de reserva.
+- (f) gates tint/ATP antes da reserva, ou encerrar a tentativa recusada antes do envio; retomada por perna no checkout misto; congelar tint/PC/NF para reenvio pós-aprovação (PR 6); contrato explícito de "troca de parcela" com a condição original esperada no editor (PR 6).
+
+**Revisão pós-Codex (diff, 2026-11-21, gpt-6.2-astra high — 4 P1 + 6 P2, todos acatados):** `E'\v'` do PG é a LETRA `v` (o trim comia "v" das pontas) → `chr(11)` + regex sob `COLLATE "C"`; item sem a chave `codigo_produto` passava (`jsonb_typeof(NULL) NOT IN` = NULL) → recusa; revisão malformada lançava fora do `try` e travaria a venda → validação e mapeamento dentro de `registrarRevisao`, falha descarta a revisão e segue o payload; edição comparava subtotais brutos → centavos por linha nos dois lados; `999` → `NULL` antes de override/catálogo (catálogo contraditório não dá prazo 0); calendário validado cru (`[null]` não vira à vista); código de produto limitado à faixa segura do JS; harness passa o locale ao `initdb` (antes o `pt_BR` era só do shell); testes com valores distintos e com SÓ a evidência mudando. Prova: 148 ok + 14 falsificações em `C` e `pt_BR.UTF-8` (banco de fato).

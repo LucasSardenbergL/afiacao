@@ -9,6 +9,7 @@
 //  - bloqueio exige log DURÁVEL (a aprovação remota do gestor lê o último log do pedido).
 
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { dominaOuIguala } from "./revisao-credito.ts";
 
 /** O subconjunto do SupabaseClient que este módulo usa — facilita o duplo de teste. */
 export interface ClienteGate {
@@ -131,17 +132,25 @@ function normalizarParcela(p: string | null | undefined): string {
 }
 
 /**
- * Edição precisa passar pelo gate? Sim se o subtotal SOBE (mais exposição) ou se a
- * parcela MUDA (prazo pode ter subido com o mesmo total — P1 Codex 2026-11-20). No PR 1
- * qualquer troca de parcela basta: o gate só cobra o piso, inofensivo para quem está em dia.
- * "Só se o prazo sobe" chega no PR 3 com credito_prazo_dias.
+ * Edição precisa passar pelo gate? Sim se o subtotal SOBE (mais exposição). Se só a parcela
+ * MUDA (P1 Codex 2026-11-20), o PR 3 dispensa o gate apenas quando há PROVA de que o risco não
+ * subiu: os dois calendários vêm do catálogo (`credito_prazo_resolver`, fonte=catalogo) e o novo
+ * domina-ou-iguala o antigo em todo vencimento. Override escalar, parcela ilegível ou `999` não
+ * provam nada → passa pelo gate (revisão pós-Codex do PR 3: 30/60/90 → 75 dias reavalia).
+ * `parcelaNova` deve ser a parcela EFETIVA (informada, senão a atual do PV).
  */
 export function edicaoExigeGate(args: {
   subtotalNovo: number;
   subtotalOmie: number;
   parcelaNova: string | null | undefined;
   parcelaOmie: string | null | undefined;
+  calendarioNovo?: number[] | null;
+  calendarioOmie?: number[] | null;
 }): boolean {
   if (args.subtotalNovo > args.subtotalOmie) return true;
-  return normalizarParcela(args.parcelaNova) !== normalizarParcela(args.parcelaOmie);
+  if (normalizarParcela(args.parcelaNova) === normalizarParcela(args.parcelaOmie)) return false;
+  if (args.calendarioNovo && args.calendarioOmie && dominaOuIguala(args.calendarioNovo, args.calendarioOmie)) {
+    return false;
+  }
+  return true;
 }
