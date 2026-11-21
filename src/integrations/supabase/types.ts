@@ -26932,6 +26932,27 @@ export type Database = {
           user_id: string
         }[]
       }
+      listar_clientes_base: {
+        Args: {
+          p_busca?: string
+          p_limite?: number
+          p_offset?: number
+          p_ordem?: string
+          p_saude?: string
+        }
+        Returns: {
+          created_at: string
+          customer_type: string
+          document: string
+          email: string
+          name: string
+          phone: string
+          prioridade_ordenacao: number
+          requires_po: boolean
+          total: number
+          user_id: string
+        }[]
+      }
       listar_pedidos_a_separar: {
         Args: { p_account: string }
         Returns: {

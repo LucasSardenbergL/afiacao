@@ -14,11 +14,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
  */
 
 type Op = [string, unknown[]];
-interface Chamada { table: string; ops: Op[] }
+/** `table` = tabela do `.from()`, ou `rpc:<nome>` com `args` para `.rpc()`. */
+interface Chamada { table: string; ops: Op[]; args?: Record<string, unknown> }
 
 const h = vi.hoisted(() => ({
   modo: 'completa' as 'completa' | 'carteira',
-  chamadas: [] as { table: string; ops: [string, unknown[]][] }[],
+  chamadas: [] as { table: string; ops: [string, unknown[]][]; args?: Record<string, unknown> }[],
   alvoPorId: null as Record<string, unknown> | null,
   /** Segura a 1ª página da base até ser liberada — simula a lista mais lenta que a leitura por id. */
   liberarBase: null as null | (() => void),
@@ -36,10 +37,15 @@ const HELIOMAR = perfil('fa2df777-ee84-460a-a606-6f0e117ad663', 'JOSE HELIOMAR M
 const tem = (ops: Op[], m: string) => ops.some(([n]) => n === m);
 
 function resposta(c: Chamada): unknown {
+  if (c.table === 'rpc:listar_clientes_base') {
+    // Servidor simulado: a busca casa HELIOMAR, que NÃO está nas páginas carregadas sem busca;
+    // o filtro "critico" casa 37 clientes no recorte inteiro (só 1 vem nesta página).
+    if (c.args?.p_busca) return { data: [{ ...HELIOMAR, prioridade_ordenacao: 40, total: 1 }], error: null };
+    if (c.args?.p_saude === 'critico') return { data: [{ ...HELIOMAR, prioridade_ordenacao: 40, total: 37 }], error: null };
+    return { data: [{ ...WALTER, prioridade_ordenacao: 60, total: 5665 }], error: null };
+  }
   if (c.table === 'profiles') {
     if (tem(c.ops, 'maybeSingle')) return { data: h.alvoPorId, error: null };
-    // Servidor simulado: a busca casa HELIOMAR, que NÃO está nas páginas carregadas sem busca.
-    if (tem(c.ops, 'or')) return { data: [HELIOMAR], error: null, count: 1 };
     if (tem(c.ops, 'in')) return { data: [WALTER], error: null };
     return { data: [WALTER], error: null, count: 5665 };
   }
@@ -49,8 +55,8 @@ function resposta(c: Chamada): unknown {
   return { data: [], error: null, count: 0 };
 }
 
-function chain(table: string): unknown {
-  const registro: Chamada = { table, ops: [] };
+function chain(table: string, args?: Record<string, unknown>): unknown {
+  const registro: Chamada = { table, ops: [], args };
   h.chamadas.push(registro);
   const c: Record<string, unknown> = {};
   for (const m of [
@@ -59,7 +65,7 @@ function chain(table: string): unknown {
     'upsert', 'insert', 'update', 'delete',
   ]) c[m] = (...args: unknown[]) => { registro.ops.push([m, args]); return c; };
   c.then = (resolve: (v: unknown) => void) => {
-    const ehPaginaBase = table === 'profiles' && tem(registro.ops, 'range');
+    const ehPaginaBase = table === 'rpc:listar_clientes_base';
     if (h.atrasarBase && ehPaginaBase) {
       h.liberarBase = () => resolve(resposta(registro));
       return;
@@ -69,7 +75,12 @@ function chain(table: string): unknown {
   return c;
 }
 
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t) } }));
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: {
+    from: (t: string) => chain(t),
+    rpc: (fn: string, args?: Record<string, unknown>) => chain(`rpc:${fn}`, args),
+  },
+}));
 vi.mock('@/contexts/AuthContext', () => {
   const user = { id: 'staff-1' };
   return { useAuth: () => ({ user, isStaff: true, loading: false }) };
@@ -108,6 +119,7 @@ const renderEm = (url: string) => {
 };
 
 const queriesDeProfiles = () => h.chamadas.filter((c) => c.table === 'profiles');
+const paginasDaBase = () => h.chamadas.filter((c) => c.table === 'rpc:listar_clientes_base');
 
 beforeEach(() => {
   h.modo = 'completa';
@@ -119,23 +131,19 @@ beforeEach(() => {
 });
 
 describe('AdminCustomers — busca na base completa vai ao servidor', () => {
-  it('termo na URL: consulta profiles com ilike e mostra quem está fora das páginas carregadas', async () => {
+  it('termo na URL: a busca vai à RPC e mostra quem está fora das páginas carregadas', async () => {
     renderEm('/admin/customers?search=HELIOMAR');
 
     expect(await screen.findByText('JOSE HELIOMAR MARTINS JUNIOR')).toBeTruthy();
     expect(screen.queryByText(/Nenhum cliente com esses filtros/i)).toBeNull();
 
-    const busca = queriesDeProfiles().find((c) => tem(c.ops, 'or'));
+    const busca = paginasDaBase().find((c) => c.args?.p_busca === 'HELIOMAR');
     expect(busca, 'a busca não foi ao servidor').toBeTruthy();
-    const or = busca!.ops.find(([m]) => m === 'or')![1][0] as string;
-    for (const col of ['name', 'email', 'document', 'phone']) {
-      expect(or).toContain(`${col}.ilike.%HELIOMAR%`);
-    }
-    // Escopo preservado: funcionário nunca entra na lista.
-    expect(busca!.ops).toContainEqual(['eq', ['is_employee', false]]);
-    // Ordem TOTAL para o .range não repetir/pular homônimos.
-    const ordens = busca!.ops.filter(([m]) => m === 'order').map(([, a]) => a[0]);
-    expect(ordens).toEqual(['name', 'user_id']);
+    // Paginação no servidor, dentro do teto de 1.000 do PostgREST (a ordem total mora na RPC,
+    // provada em db/test-listar-clientes-base.sh).
+    expect(busca!.args).toMatchObject({ p_limite: 100, p_offset: 0, p_ordem: 'prioridade' });
+    // A base não é mais lida crua por página (só count/head e leitura por id).
+    expect(queriesDeProfiles().some((c) => tem(c.ops, 'range'))).toBe(false);
   });
 
   it('digitar no campo dispara a busca no servidor (após o debounce)', async () => {
@@ -154,7 +162,60 @@ describe('AdminCustomers — busca na base completa vai ao servidor', () => {
     renderEm('/admin/customers?search=HELIOMAR');
 
     expect(await screen.findByText(/Nenhum cliente com esses filtros/i)).toBeTruthy();
+    expect(paginasDaBase()).toHaveLength(0);
     expect(queriesDeProfiles().some((c) => tem(c.ops, 'or'))).toBe(false);
+  });
+});
+
+describe('AdminCustomers — ordem e filtro de saúde no servidor (base completa)', () => {
+  it('abre em "Priorizar contatos": a 1ª página já vem ordenada por prioridade', async () => {
+    renderEm('/admin/customers');
+    await screen.findByText('WALTER JOSE NOGUEIRA');
+
+    expect(paginasDaBase()[0].args).toMatchObject({ p_ordem: 'prioridade', p_offset: 0 });
+    expect(paginasDaBase()[0].args?.p_saude).toBeUndefined();
+    expect(screen.getByRole('button', { name: /Ordenar lista/i }).textContent).toMatch(/Priorizar contatos/);
+  });
+
+  it('?ordem=nome pede A–Z ao servidor', async () => {
+    renderEm('/admin/customers?ordem=nome');
+    await screen.findByText('WALTER JOSE NOGUEIRA');
+
+    expect(paginasDaBase().at(-1)!.args).toMatchObject({ p_ordem: 'nome' });
+  });
+
+  it('clicar no cabeçalho "Cliente" troca a ordem para A–Z no servidor', async () => {
+    renderEm('/admin/customers');
+    await screen.findByText('WALTER JOSE NOGUEIRA');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Cliente/ }));
+    await waitFor(() => { expect(paginasDaBase().at(-1)!.args).toMatchObject({ p_ordem: 'nome' }); });
+  });
+
+  it('?health=critico filtra NO SERVIDOR e mostra o total do recorte, não o da página', async () => {
+    renderEm('/admin/customers?health=critico');
+
+    // Sem score carregado para HELIOMAR, o filtro em memória o esconderia — o servidor já filtrou.
+    expect(await screen.findByText('JOSE HELIOMAR MARTINS JUNIOR')).toBeTruthy();
+    expect(paginasDaBase().at(-1)!.args).toMatchObject({ p_saude: 'critico' });
+    expect(screen.getByText(/37 com esses filtros/)).toBeTruthy();
+    expect(screen.queryByText(/páginas carregadas até agora/i)).toBeNull();
+  });
+
+  it('?health desconhecido vira "todos" (não vai ao servidor, que recusaria com 22023)', async () => {
+    renderEm('/admin/customers?health=otimo');
+    await screen.findByText('WALTER JOSE NOGUEIRA');
+
+    expect(paginasDaBase().at(-1)!.args?.p_saude).toBeUndefined();
+  });
+
+  it('carteira: sem controle de ordem (segue A–Z) e sem RPC da base', async () => {
+    h.modo = 'carteira';
+    renderEm('/admin/customers');
+    await screen.findByText('WALTER JOSE NOGUEIRA');
+
+    expect(screen.queryByRole('button', { name: /Ordenar lista/i })).toBeNull();
+    expect(paginasDaBase()).toHaveLength(0);
   });
 });
 
