@@ -5,6 +5,7 @@ import {
   decidir,
   hashCadastro,
   lerParametros,
+  enderecoFaltando,
   payloadAlterar,
   textoParaHash,
   VENDEDOR,
@@ -21,8 +22,7 @@ const CAD = {
   info: { dAlt: "20/08/2026", hAlt: "10:24:45", uAlt: "P1" },
   recomendacoes: { codigo_transportadora: 8689697767, codigo_vendedor: 8689670840, gerar_boletos: "N" },
   tags: [{ tag: "Cliente" }],
-  estado: "MG",
-  cidade: "ITAUNA (MG)",
+  endereco: "RUA A", endereco_numero: "10", bairro: "CENTRO", cidade: "ITAUNA (MG)", estado: "MG", cep: "35680-000",
 };
 
 Deno.test("decidir saida_vendedora: troca só quem está num código de origem DA MESMA conta", () => {
@@ -53,7 +53,7 @@ Deno.test("payloadAlterar: recomendacoes inteiro, só o vendedor muda, nada fisc
   const p = payloadAlterar(CAD, 8689670842);
   igual(p, {
     codigo_cliente_omie: 8689681368,
-    estado: "MG",
+    endereco: "RUA A", endereco_numero: "10", bairro: "CENTRO", cidade: "ITAUNA (MG)", estado: "MG", cep: "35680-000",
     recomendacoes: { codigo_transportadora: 8689697767, codigo_vendedor: 8689670842, gerar_boletos: "N" },
   }, "payload");
   igual(CAD.recomendacoes.codigo_vendedor, 8689670840, "não muta o cadastro lido");
@@ -62,7 +62,7 @@ Deno.test("payloadAlterar: recomendacoes inteiro, só o vendedor muda, nada fisc
 Deno.test("hash ignora vendedor e info, e enxerga qualquer outra mudança", async () => {
   const depois = { ...CAD, info: { dAlt: "21/11/2026" }, recomendacoes: { ...CAD.recomendacoes, codigo_vendedor: 8689670842 } };
   igual(await hashCadastro(CAD), await hashCadastro(depois), "só vendedor+info mudaram");
-  const ordem = { cidade: "ITAUNA (MG)", estado: "MG", tags: CAD.tags, recomendacoes: { gerar_boletos: "N", codigo_vendedor: 1, codigo_transportadora: 8689697767 }, razao_social: "X LTDA", codigo_cliente_omie: 8689681368 };
+  const ordem = { endereco: "RUA A", endereco_numero: "10", bairro: "CENTRO", cidade: "ITAUNA (MG)", estado: "MG", cep: "35680-000", tags: CAD.tags, recomendacoes: { gerar_boletos: "N", codigo_vendedor: 1, codigo_transportadora: 8689697767 }, razao_social: "X LTDA", codigo_cliente_omie: 8689681368 };
   igual(await hashCadastro(CAD), await hashCadastro(ordem), "ordem das chaves não importa");
   const transp = { ...CAD, recomendacoes: { ...CAD.recomendacoes, codigo_transportadora: 0 } };
   if (await hashCadastro(CAD) === await hashCadastro(transp)) throw new Error("transportadora zerada passou despercebida");
@@ -108,10 +108,14 @@ Deno.test("lerParametros verificar: exige execucao_id", () => {
   igual(lerParametros({ modo: "verificar", lote: "saida_vendedora", conta: "oben", execucao_id: "33f59dc7-0000-4000-8000-000000000001" }).ok, true, "com id");
 });
 
-Deno.test("v1.1 payloadAlterar: estado vai como o Omie devolveu, cidade nunca; sem estado = null (não há payload aceitável)", () => {
-  igual(payloadAlterar({ ...CAD, estado: "" }, 1), null, "estado vazio");
-  igual(payloadAlterar({ ...CAD, estado: "  " }, 1), null, "estado em branco");
-  const { estado: _e, ...semEstado } = CAD;
-  igual(payloadAlterar(semEstado, 1), null, "sem a chave estado");
-  igual(Object.keys(payloadAlterar(CAD, 1)!).sort(), ["codigo_cliente_omie", "estado", "recomendacoes"], "cidade NUNCA vai (Codex v1.1 P2)");
+Deno.test("v1.2 payloadAlterar: bloco de endereço inteiro como lido; qualquer campo vazio = null", () => {
+  for (const k of ["endereco", "endereco_numero", "bairro", "cidade", "estado", "cep"]) {
+    igual(payloadAlterar({ ...CAD, [k]: "" }, 1), null, `${k} vazio`);
+    igual(payloadAlterar({ ...CAD, [k]: "  " }, 1), null, `${k} em branco`);
+    const { [k]: _x, ...sem } = CAD as Record<string, unknown>;
+    igual(payloadAlterar(sem, 1), null, `sem ${k}`);
+  }
+  igual(enderecoFaltando({ ...CAD, bairro: "", cep: 0 }), ["bairro", "cep"], "lista o que falta");
+  igual(Object.keys(payloadAlterar({ ...CAD, complemento: "SALA 2", telefone1_numero: "9" }, 1)!).sort(),
+    ["bairro", "cep", "cidade", "codigo_cliente_omie", "endereco", "endereco_numero", "estado", "recomendacoes"], "nada fora do bloco vai");
 });

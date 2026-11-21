@@ -160,18 +160,28 @@ export function recomendacoesDe(cad: Record<string, unknown>): Record<string, un
 }
 
 /**
- * O AlterarCliente do Omie recusa o payload sem `estado` ("É obrigatório o preenchimento do endereço (Estado)",
- * medido no canário de 2026-11-21), mesmo trocando só o vendedor. Então `estado` vai de volta EXATAMENTE como o
- * ConsultarCliente devolveu — o hash do cadastro na verificação prova que não mudou. `cidade` NÃO vai: reenviar o
- * nome lido poderia desfazer uma correção de município feita entre a leitura e a escrita sem o hash acusar (Codex v1.1 P2).
- * Cadastro sem `estado` não tem payload aceitável: `null` (o chamador recusa como pré-condição, sem escrever).
+ * Bloco de endereço que o AlterarCliente do Omie EXIGE em toda alteração, mesmo trocando só o vendedor. Medido nos
+ * canários de 2026-11-21: sem nada de endereço → "É obrigatório o preenchimento do endereço (Estado)"; só com
+ * `estado` → "... (Endereço, Número, Bairro, Cidade, Estado e CEP)". Esses campos vão de volta EXATAMENTE como o
+ * ConsultarCliente devolveu; o hash do cadastro na verificação prova que nada mudou.
+ * Risco aceito (Codex v1.1 P2, agora forçado pelo Omie): uma correção de endereço feita por alguém na janela de ~1s
+ * entre o Consultar e o Alterar seria desfeita sem o hash acusar.
  */
+export const CAMPOS_ENDERECO = ["endereco", "endereco_numero", "bairro", "cidade", "estado", "cep"] as const;
+
+/** Campos do bloco de endereço ausentes/vazios no cadastro lido (vazio = o AlterarCliente vai recusar). */
+export function enderecoFaltando(cad: Record<string, unknown>): string[] {
+  return CAMPOS_ENDERECO.filter((k) => typeof cad[k] !== "string" || (cad[k] as string).trim() === "");
+}
+
+/** Payload do AlterarCliente, ou `null` se o endereço lido está incompleto (o chamador recusa sem escrever). */
 export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Record<string, unknown> | null {
   const codigo = cad.codigo_cliente_omie;
   if (!ehInteiroPositivo(codigo)) throw new Error("cadastro sem codigo_cliente_omie");
-  if (typeof cad.estado !== "string" || cad.estado.trim() === "") return null;
+  if (enderecoFaltando(cad).length > 0) return null;
   const rec = cad.recomendacoes && typeof cad.recomendacoes === "object" ? cad.recomendacoes as Record<string, unknown> : {};
-  const p: Record<string, unknown> = { codigo_cliente_omie: codigo, estado: cad.estado };
+  const p: Record<string, unknown> = { codigo_cliente_omie: codigo };
+  for (const k of CAMPOS_ENDERECO) p[k] = cad[k];
   p.recomendacoes = { ...rec, codigo_vendedor: alvo };
   return p;
 }

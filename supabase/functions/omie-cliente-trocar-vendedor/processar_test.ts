@@ -14,7 +14,7 @@ class Indeterminada extends Error {}
 function cadastro(codigo: number, vendedor: number | null, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     codigo_cliente_omie: codigo, nome_fantasia: `CLI ${codigo}`, razao_social: "X", info: { dAlt: "01/01/2026" },
-    estado: "MG", cidade: "ITAUNA (MG)",
+    endereco: "RUA A", endereco_numero: "10", bairro: "CENTRO", cidade: "ITAUNA (MG)", estado: "MG", cep: "35680-000",
     recomendacoes: { codigo_transportadora: 77, gerar_boletos: "N", ...(vendedor === null ? {} : { codigo_vendedor: vendedor }) },
     ...extra,
   };
@@ -57,9 +57,9 @@ function montar(c: Cenario) {
       const cod = payload.codigo_cliente_omie as number;
       chamadas.push(`Alterar:${cod}`);
       const atual = c.omie.get(cod)!;
-      // O Omie real recusa payload sem `estado` (canário de 2026-11-21) — o fake imita, sem gravar nada.
-      if (typeof payload.estado !== "string" || payload.estado === "") {
-        return { corpo: null, fault: "ERROR: É obrigatório o preenchimento do endereço (Estado)." };
+      // O Omie real recusa payload sem o bloco de endereço inteiro (canários de 2026-11-21) — o fake imita, sem gravar nada.
+      if (["endereco", "endereco_numero", "bairro", "cidade", "estado", "cep"].some((k) => typeof payload[k] !== "string" || payload[k] === "")) {
+        return { corpo: null, fault: "ERROR: É obrigatório o preenchimento do endereço (Endereço, Número, Bairro, Cidade, Estado e CEP)." };
       }
       const r = c.aoAlterar ? c.aoAlterar(payload, atual) : { ...atual, recomendacoes: payload.recomendacoes };
       if (r === "indeterminada") throw new Indeterminada("sem desfecho");
@@ -358,25 +358,26 @@ Deno.test("Codex r2 P1: exceção no meio do bloco devolve o execucao_id e os it
   igual(r.itens[0].status, "alterado", "o 1º ficou alterado, à espera do verificar");
 });
 
-Deno.test("v1.1: cadastro SEM estado no Omie → 'precondicao_falhou' no dry_run e no aplicar, sem AlterarCliente", async () => {
+Deno.test("v1.2: cadastro com endereço incompleto no Omie → 'precondicao_falhou' no dry_run e no aplicar, sem AlterarCliente", async () => {
   for (const modo of ["dry_run", "aplicar"] as const) {
-    const omie = new Map([[1, cadastro(1, TATY_OBEN, { estado: "" })], [2, cadastro(2, TATY_OBEN)]]);
+    const omie = new Map([[1, cadastro(1, TATY_OBEN, { bairro: "", cep: "  " })], [2, cadastro(2, TATY_OBEN)]]);
     const { d, chamadas } = montar({ omie, candidatos: [cand(1), cand(2)] });
     const r = await processarBloco(params(modo === "aplicar" ? { modo, confirmo: "TROCAR VENDEDOR NO OMIE" } : { modo }), d, OPC);
     igual(r.itens.map((i) => [i.omie_codigo_cliente, i.status]), [[1, "precondicao_falhou"], [2, modo === "dry_run" ? "planejado" : "verificado"]], `${modo}: status`);
-    igual(r.itens[0].erro, "cadastro sem estado no Omie (o AlterarCliente exige)", `${modo}: motivo`);
+    igual(r.itens[0].erro, "endereço incompleto no Omie (o AlterarCliente exige): falta bairro, cep", `${modo}: motivo`);
     if (chamadas.includes("Alterar:1")) throw new Error(`${modo}: escreveu no cliente sem estado`);
     igual(omie.get(1)!.recomendacoes, cadastro(1, TATY_OBEN).recomendacoes, `${modo}: Omie igual`);
   }
 });
 
-Deno.test("v1.1: o payload enviado ao Omie leva o estado lido e nunca a cidade (o fake recusa sem estado)", async () => {
-  const omie = new Map([[1, cadastro(1, TATY_OBEN, { estado: "SC", cidade: "JOINVILLE (SC)" })]]);
+Deno.test("v1.2: o payload enviado ao Omie leva o bloco de endereço EXATAMENTE como lido", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, { estado: "SC", cidade: "JOINVILLE (SC)", cep: "89201-000" })]]);
   const enviados: Record<string, unknown>[] = [];
   const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return { ...atual, recomendacoes: payload.recomendacoes }; } });
   const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
   igual(r.itens[0].status, "verificado", "status");
-  igual([enviados[0].estado, "cidade" in enviados[0]], ["SC", false], "estado do lido; cidade não vai");
+  igual(["endereco", "endereco_numero", "bairro", "cidade", "estado", "cep"].map((k) => enviados[0][k]), ["RUA A", "10", "CENTRO", "JOINVILLE (SC)", "SC", "89201-000"], "endereço do lido");
+  igual(Object.keys(enviados[0]).sort(), ["bairro", "cep", "cidade", "codigo_cliente_omie", "endereco", "endereco_numero", "estado", "recomendacoes"], "nada além do endereço e das recomendações");
 });
 
 Deno.test("Codex v1.1 P2: verificar que acha 'divergente' PARA (parou preenchido, fim=false), não anuncia fim", async () => {
