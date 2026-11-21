@@ -149,7 +149,7 @@ export class ErroEnvioExtrato extends Error {
 // ── Acesso ao banco (cliente sem tipos das tabelas banco_*) ───────────────────────────────────
 interface Resultado<T> {
   data: T | null;
-  error: { message: string } | null;
+  error: { message: string; code?: string } | null;
 }
 interface ConsultaSemTipo<T> extends PromiseLike<Resultado<T>> {
   select(cols: string): ConsultaSemTipo<T>;
@@ -248,6 +248,75 @@ export async function resumoDia(bancoContaId: string, de: string, ate: string): 
 export async function marcarConferido(arquivoId: string): Promise<void> {
   const { error } = await db.rpc<null>('banco_extrato_marcar_conferido', { p_arquivo_id: arquivoId });
   if (error) falha('Falha ao marcar como conferido', error);
+}
+
+// ── Âncora manual (saldo de referência) ───────────────────────────────────────────────────────
+export type OrigemAncora = 'manual' | 'cnab';
+
+export interface AncoraConta {
+  id: string;
+  data: string;
+  /** Saldo ao fim do dia em centavos; `null` se o banco não devolveu (nunca 0). */
+  saldo: number | null;
+  origem: OrigemAncora;
+  registradoEm: string;
+}
+
+export class ErroAncora extends Error {
+  constructor(
+    public readonly classe: 'divergente_arquivo' | 'ja_existe' | 'dia_aberto' | 'sem_permissao' | 'conta' | 'invalido' | 'outro',
+    mensagem: string,
+  ) {
+    super(mensagem);
+    this.name = 'ErroAncora';
+  }
+}
+
+export async function listarAncoras(bancoContaId: string): Promise<AncoraConta[]> {
+  const { data, error } = await db
+    .from<
+      { id: string; data: string; saldo_final_dia_centavos: number | string | null; origem: string; registrado_em: string }[]
+    >('banco_conta_ancora')
+    .select('id, data, saldo_final_dia_centavos, origem, registrado_em')
+    .eq('banco_conta_id', bancoContaId)
+    .order('data', { ascending: false })
+    .limit(LIMITE_ARQUIVOS);
+  if (error) falha('Falha ao listar saldos de referência', error);
+  return (data ?? []).map((a) => ({
+    id: a.id,
+    data: a.data,
+    saldo: numOuNull(a.saldo_final_dia_centavos),
+    origem: a.origem === 'cnab' ? 'cnab' : 'manual',
+    registradoEm: a.registrado_em,
+  }));
+}
+
+/** Registra o saldo ao fim de um dia fechado como âncora MANUAL (RPC é o juiz; imutável depois de gravada). */
+export async function registrarAncoraManual(bancoContaId: string, data: string, saldoCentavos: number): Promise<string> {
+  if (!Number.isSafeInteger(saldoCentavos)) throw new ErroAncora('invalido', 'Saldo inválido: informe um valor em reais com centavos.');
+  const { data: id, error } = await db.rpc<string>('banco_conta_registrar_ancora', {
+    p_banco_conta_id: bancoContaId,
+    p_data: data,
+    p_saldo_centavos: saldoCentavos,
+  });
+  if (error) {
+    switch (error.code) {
+      case '23514':
+        throw new ErroAncora('divergente_arquivo', 'Este saldo diverge do extrato já aceito para o dia. Confira o valor digitado.');
+      case '23505':
+        throw new ErroAncora('ja_existe', 'Já existe saldo de referência manual para este dia com outro saldo. Ele não pode ser alterado aqui.');
+      case '22023':
+        throw new ErroAncora('dia_aberto', 'Este dia ainda não fechou. Use uma data até ontem.');
+      case '42501':
+        throw new ErroAncora('sem_permissao', 'Sem permissão para registrar saldo de referência nesta conta.');
+      case 'P0002':
+        throw new ErroAncora('conta', 'Conta bancária inexistente ou inativa.');
+      default:
+        throw new ErroAncora('outro', `Falha ao registrar o saldo de referência: ${error.message}`);
+    }
+  }
+  if (typeof id !== 'string') throw new ErroAncora('outro', 'A RPC não devolveu o id da âncora.');
+  return id;
 }
 
 // ── Envio ─────────────────────────────────────────────────────────────────────────────────────

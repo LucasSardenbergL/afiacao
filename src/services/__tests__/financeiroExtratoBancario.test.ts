@@ -20,8 +20,11 @@ import {
   ErroEnvioExtrato,
   MOTIVOS_PARSE,
   MOTIVOS_REGISTRO,
+  ErroAncora,
   enviarExtrato,
+  listarAncoras,
   marcarConferido,
+  registrarAncoraManual,
   resumoDia,
   textoDoMotivo,
 } from '../financeiroExtratoBancario';
@@ -161,5 +164,64 @@ describe('enviarExtrato', () => {
     await expect(enviarExtrato(arquivo, { id: 'c' })).rejects.toMatchObject({ classe: 'requisicao', message: 'conta nao encontrada' });
     remove.mockRejectedValueOnce(new Error('rede'));
     await expect(enviarExtrato(arquivo, { id: 'c' })).rejects.toMatchObject({ classe: 'requisicao', message: 'conta nao encontrada' });
+  });
+});
+
+describe('registrarAncoraManual', () => {
+  it('chama banco_conta_registrar_ancora com os parâmetros certos e centavos inteiros', async () => {
+    rpc.mockResolvedValue({ data: 'id-1', error: null });
+    const id = await registrarAncoraManual('conta-1', '2026-11-19', -1234567);
+    expect(rpc).toHaveBeenCalledWith('banco_conta_registrar_ancora', {
+      p_banco_conta_id: 'conta-1',
+      p_data: '2026-11-19',
+      p_saldo_centavos: -1234567,
+    });
+    expect(id).toBe('id-1');
+  });
+  it('recusa centavos não inteiro/não finito sem chamar a RPC', async () => {
+    await expect(registrarAncoraManual('c', '2026-11-19', 10.5)).rejects.toBeInstanceOf(ErroAncora);
+    await expect(registrarAncoraManual('c', '2026-11-19', Number.NaN)).rejects.toBeInstanceOf(ErroAncora);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it.each([
+    ['23514', 'divergente_arquivo', 'extrato já aceito'],
+    ['23505', 'ja_existe', 'outro saldo'],
+    ['22023', 'dia_aberto', 'ainda não fechou'],
+    ['42501', 'sem_permissao', 'permissão'],
+    ['P0002', 'conta', 'Conta'],
+  ])('erro %s vira ErroAncora %s com texto próprio', async (code, classe, trecho) => {
+    rpc.mockResolvedValue({ data: null, error: { code, message: 'banco_conta_registrar_ancora: x' } });
+    const e = await registrarAncoraManual('c', '2026-11-19', 100).catch((x) => x);
+    expect(e).toBeInstanceOf(ErroAncora);
+    expect(e.classe).toBe(classe);
+    expect(e.message).toContain(trecho);
+  });
+  it('erro desconhecido vira classe outro', async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: 'XX000', message: 'boom' } });
+    await expect(registrarAncoraManual('c', '2026-11-19', 100)).rejects.toMatchObject({ classe: 'outro' });
+  });
+});
+
+describe('listarAncoras', () => {
+  it('lê banco_conta_ancora com ordem e limite explícitos e marca a origem', async () => {
+    const chain: Record<string, unknown> = {};
+    const calls: string[] = [];
+    for (const m of ['select', 'eq', 'order', 'limit']) {
+      chain[m] = (...a: unknown[]) => {
+        calls.push(`${m}:${a.join(',')}`);
+        return m === 'limit' ? Promise.resolve({ data: [
+          { id: 'a1', data: '2026-11-19', saldo_final_dia_centavos: '150000', origem: 'manual', registrado_em: '2026-11-21T10:00:00Z' },
+          { id: 'a2', data: '2026-11-18', saldo_final_dia_centavos: null, origem: 'cnab', registrado_em: '2026-11-20T10:00:00Z' },
+        ], error: null }) : chain;
+      };
+    }
+    from.mockReturnValue(chain);
+    const r = await listarAncoras('conta-1');
+    expect(from).toHaveBeenCalledWith('banco_conta_ancora');
+    expect(calls.some((c) => c.startsWith('order:data'))).toBe(true);
+    expect(calls.some((c) => c.startsWith('limit:'))).toBe(true);
+    expect(calls).toContain('eq:banco_conta_id,conta-1');
+    expect(r[0]).toMatchObject({ id: 'a1', origem: 'manual', saldo: 150000 });
+    expect(r[1]).toMatchObject({ origem: 'cnab', saldo: null });
   });
 });

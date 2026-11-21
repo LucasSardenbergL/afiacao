@@ -7,11 +7,15 @@ import { EmptyState } from '@/components/EmptyState';
 import { UploadExtrato } from '@/components/financeiro/extrato/UploadExtrato';
 import { ListaArquivosExtrato } from '@/components/financeiro/extrato/ListaArquivosExtrato';
 import { ResumoDiarioExtrato } from '@/components/financeiro/extrato/ResumoDiarioExtrato';
+import { AncoraManualExtrato } from '@/components/financeiro/extrato/AncoraManualExtrato';
+import { hojeSaoPaulo } from '@/lib/financeiro/extrato/saldo-manual';
 import {
+  useAncorasConta,
   useArquivosExtrato,
   useContasBancarias,
   useImportarExtrato,
   useMarcarConferido,
+  useRegistrarAncora,
   useResumoDiarioExtrato,
 } from '@/hooks/useFinanceiroExtratoBancario';
 import { useUrlState } from '@/hooks/useUrlState';
@@ -39,6 +43,8 @@ export default function FinanceiroExtratoBancario() {
   const resumo = useResumoDiarioExtrato(janela ? contaId : null, de, ate);
   const importar = useImportarExtrato(conta);
   const conferir = useMarcarConferido();
+  const ancoras = useAncorasConta(contaId);
+  const registrarAncora = useRegistrarAncora(contaId);
 
   if (contas.isLoading) return <PageSkeleton variant="list" />;
   if (contas.error) {
@@ -106,6 +112,20 @@ export default function FinanceiroExtratoBancario() {
           ) : (
             <ResumoDiarioExtrato dias={resumo.data ?? []} />
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Saldo de referência (manual)</CardTitle></CardHeader>
+        <CardContent>
+          <AncoraManualExtrato
+            ancoras={ancoras.data ?? []}
+            carregando={ancoras.isLoading}
+            erro={ancoras.error ? (mensagemDeErro(ancoras.error) ?? 'erro desconhecido') : null}
+            registrando={registrarAncora.isPending}
+            hoje={hojeSaoPaulo()}
+            onRegistrar={(data, saldoCentavos) => registrarAncora.mutate({ data, saldoCentavos })}
+          />
         </CardContent>
       </Card>
 

@@ -6,11 +6,14 @@ import { track } from '@/lib/analytics';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import {
+  ErroAncora,
   ErroEnvioExtrato,
   enviarExtrato,
+  listarAncoras,
   listarArquivos,
   listarContasBancarias,
   marcarConferido,
+  registrarAncoraManual,
   resumoDia,
   textoDoMotivoDesconhecido,
   type BancoConta,
@@ -28,6 +31,38 @@ export function useArquivosExtrato(contaId: string | null) {
     queryKey: [...CHAVE, 'arquivos', contaId],
     queryFn: () => listarArquivos(contaId as string),
     enabled: contaId !== null,
+  });
+}
+
+export function useAncorasConta(contaId: string | null) {
+  return useQuery({
+    queryKey: [...CHAVE, 'ancoras', contaId],
+    queryFn: () => listarAncoras(contaId as string),
+    enabled: contaId !== null,
+  });
+}
+
+export function avisarErroAncora(e: unknown): void {
+  if (e instanceof ErroAncora) {
+    toast.error(e.message);
+    return;
+  }
+  toast.error(`Falha ao registrar o saldo de referência: ${mensagemDeErro(e) ?? 'erro desconhecido'}`);
+}
+
+/** Escrita com a identidade REAL da sessão (a RPC usa auth.uid()); na lente "Ver como" o write-guard bloqueia. */
+export function useRegistrarAncora(contaId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { data: string; saldoCentavos: number }) => {
+      if (contaId === null) throw new Error('Escolha uma conta bancária.');
+      return registrarAncoraManual(contaId, v.data, v.saldoCentavos);
+    },
+    onSuccess: () => {
+      toast.success('Saldo de referência registrado.');
+      void qc.invalidateQueries({ queryKey: CHAVE });
+    },
+    onError: avisarErroAncora,
   });
 }
 
