@@ -393,3 +393,118 @@ export function fecha(inicial: number, linhas: LinhaExtrato[], final: number): {
 
   Conferir com `bun run pendencias:deploy`.
 - [ ] **Step 4: Sinal da F1 (critério para a F2):** query no ledger de `banco.extrato_conferido` ≥ 1 para a conta Itaú Oben, num período real completo, com o denominador de dias cobertos ÷ dias do período.
+
+---
+
+## Apêndice — Task 9, Step 1: descoberta (regra v1, NÃO calibrada)
+
+> Medido em prod via `psql-ro` (só leitura, agregados) em 2026-11-21. Nada disto vira código na F1: a RPC `banco_extrato_omie_dia`, a tabela `banco_regra_calibracao` e o gate de exibição esperam a calibração com o extrato real (Tasks 0/10). Até lá a coluna Omie mostra "indisponível (regra não calibrada)".
+>
+> Achado lateral: as transferências (TRAR/TRAP) somem do espelho a partir de jul/2026 (oben: 93 em jun → 0 em jul, 4 em ago, 0 depois; colacor: 0 desde jul). Pode ser mudança de operação ou falha de sync; investigação fora da F1.
+
+### 2. Regra v1 proposta
+
+```sql
+-- regra_versao = 'v1' — movimento Omie REALIZADO por dia e por sentido
+-- Entra: ótica CONTA CORRENTE, naturezas de caixa, valor > 0, com data efetiva.
+WITH contas AS (
+  SELECT bco.company, bco.omie_ncodcc
+    FROM public.banco_conta_omie bco
+   WHERE bco.banco_conta_id = p_banco_conta_id
+),
+linhas AS (
+  SELECT m.id, m.company, m.omie_ncodcc, m.natureza, m.valor,
+         m.omie_codigo_lancamento, m.omie_ncodbaixa, m.updated_at, m.created_at,
+         m.categoria_descricao AS grupo,
+         COALESCE(m.data_credito_omie, m.data_pagamento_omie) AS data_efetiva
+    FROM public.fin_movimentacoes m
+    JOIN contas c ON c.company = m.company AND c.omie_ncodcc = m.omie_ncodcc
+   WHERE m.categoria_descricao IN ('CONTA_CORRENTE_REC', 'CONTA_CORRENTE_PAG')
+     AND m.natureza IN ('BAXR', 'APBR', 'TRAR', 'EXTR',      -- créditos
+                        'BAXP', 'APEP', 'TRAP', 'EXTP')      -- débitos
+     AND m.valor > 0
+     AND COALESCE(m.data_credito_omie, m.data_pagamento_omie) BETWEEN p_de AND p_ate
+),
+-- versões da MESMA baixa: uma linha por (empresa, título, nCodBaixa), a observada por último
+baixas AS (
+  SELECT DISTINCT ON (l.company, l.omie_codigo_lancamento, l.omie_ncodbaixa) l.*
+    FROM linhas l
+   WHERE l.omie_ncodbaixa IS NOT NULL
+   ORDER BY l.company, l.omie_codigo_lancamento, l.omie_ncodbaixa,
+            l.updated_at DESC NULLS LAST, l.created_at DESC NULLS LAST, l.id DESC
+),
+sem_id AS (SELECT l.* FROM linhas l WHERE l.omie_ncodbaixa IS NULL),
+atuais AS (SELECT * FROM baixas UNION ALL SELECT * FROM sem_id),
+validas AS (
+  SELECT a.*
+    FROM atuais a
+   WHERE
+     -- baixa cancelada: o título voltou a aberto/cancelado e a baixa sobrou no espelho
+     NOT (a.natureza IN ('BAXR', 'APBR') AND EXISTS (
+            SELECT 1 FROM public.fin_contas_receber r
+             WHERE r.company = a.company AND r.omie_codigo_lancamento = a.omie_codigo_lancamento
+               AND r.status_titulo NOT IN ('RECEBIDO', 'PAGTO PARCIAL')))
+     AND NOT (a.natureza = 'BAXP' AND EXISTS (
+            SELECT 1 FROM public.fin_contas_pagar p
+             WHERE p.company = a.company AND p.omie_codigo_lancamento = a.omie_codigo_lancamento
+               AND p.status_titulo NOT IN ('PAGO', 'PAGTO PARCIAL')))
+     -- transferência entre duas contas Omie da MESMA conta bancária (ex.: "Pix Itaú" ↔ Itaú)
+     AND NOT (a.natureza IN ('TRAP', 'TRAR') AND EXISTS (
+            SELECT 1 FROM public.fin_movimentacoes o
+              JOIN contas c2 ON c2.company = o.company AND c2.omie_ncodcc = o.omie_ncodcc
+             WHERE o.company = a.company
+               AND o.natureza = CASE a.natureza WHEN 'TRAP' THEN 'TRAR' ELSE 'TRAP' END
+               AND o.omie_ncodcc <> a.omie_ncodcc
+               AND o.valor = a.valor
+               AND COALESCE(o.data_credito_omie, o.data_pagamento_omie) = a.data_efetiva))
+)
+SELECT v.data_efetiva AS data,
+       COALESCE(round(sum(v.valor) FILTER (WHERE v.grupo = 'CONTA_CORRENTE_REC') * 100), 0)::bigint AS creditos_centavos,
+       COALESCE(round(sum(v.valor) FILTER (WHERE v.grupo = 'CONTA_CORRENTE_PAG') * 100), 0)::bigint AS debitos_centavos,
+       'v1'::text AS regra_versao
+  FROM validas v
+ GROUP BY v.data_efetiva
+ ORDER BY v.data_efetiva;
+```
+
+Dia sem linha na saída = **sem dado**, não "R$0": a RPC não deve gerar série densa com zeros, e a tela trata dia ausente como ausente. O `COALESCE(...,0)` só vale dentro de um dia que tem movimento no outro sentido.
+
+### 3. Decisões e justificativa
+
+1. **Só a ótica `CONTA_CORRENTE_*` (`categoria_descricao`).** Q3: o mesmo pagamento aparece de novo em `CONTA_A_RECEBER`/`CONTA_A_PAGAR` com valor>0 (≈43 mil créditos e ≈15 mil débitos "RECEBIDO/PAGO"). Somar por `natureza` sem esse filtro dobra o caixa. É o filtro mais importante da regra.
+2. **Lista positiva de naturezas** (BAXR, APBR, TRAR, EXTR / BAXP, APEP, TRAP, EXTP). Q3: na ótica CC, toda linha de origem de inclusão (APIR/MANR/VENR/DEVR/RPTR, DEVP/COMP/MANP/RPTP/BARP/CTEP/IMPP) tem `valor = 0` em 100%. Lista positiva (e não "tudo menos X") porque natureza nova não deve entrar sozinha no número.
+3. **`valor > 0`** — cobre `t9_omie_dia_ignora_previsao_valor_zero`; redundante com (1)+(2) hoje, fica como cinto.
+4. **Previsão com valor positivo não é realizado.** Q3: `PREVISAO_PEDIDO_VENDA`/`PREVISAO_ORDEM_SERVICO` têm valor>0 em 836 de 886 linhas e nenhuma data efetiva; saem pelo grupo. Cobre `t9_previsao_valor_positivo_nao_e_realizado` — filtrar só por `valor > 0` deixaria essas linhas entrar.
+5. **Data efetiva = `COALESCE(data_credito_omie, data_pagamento_omie)`; nunca `data_movimento`.** `data_movimento` cai em registro/previsão/vencimento quando falta o pagamento. `data_credito_omie` é a data da ótica do caixa e só existe em baixas; TRA*/EXT* só têm `data_pagamento_omie`. Onde as duas existem, nunca diferem (0 linhas). Linha sem nenhuma das duas (≈80 no total; 15 na conta Itaú da oben, todas de 2026) **fica fora** — não se inventa data.
+6. **Sentido por grupo** (`_REC` = crédito, `_PAG` = débito), não por sinal: `valor` é `Math.abs` na ingestão e não há negativo no espelho.
+7. **Dedupe de versão por `(company, título, omie_ncodbaixa)`**, última observação. Q4: 4 baixas duplicadas na oben. Mesmo critério da `v_titulo_baixas`.
+8. **TRA*/EXT* entram sem dedupe.** Não têm título nem `nCodBaixa`. Os repetidos por (conta, data, valor) — 76 EXTP na colacor_sc, 50 na oben — podem ser tarifas idênticas legítimas no mesmo dia ou versões velhas; não há como distinguir. Deduplicar apagaria lançamento real; não deduplicar pode contar versão. Escolha v1: não deduplicar, e deixar a calibração dizer.
+9. **Transferência entra** (TRAR crédito, TRAP débito): Q8 mostra que o Itaú é destino de transferências vindas de caixa, adquirente e outros bancos — é dinheiro que de fato pousa no extrato. **Só sai** a transferência entre duas contas Omie ligadas à mesma conta bancária (Pix Itaú ↔ Itaú: 2 pares medidos), que não existe no extrato.
+10. **"Pix Itaú" entra na soma** por estar em `banco_conta_omie` — é onde caem APBR/BAXR de Pix (colacor 30 linhas em 2026). Cobre `t9_omie_dia_soma_pix_itau`. Atenção: na oben a conta com "pix" no nome é `AC/950`, não `CC/341`; o vínculo é decisão humana no cadastro, não inferência por nome.
+11. **Baixa cancelada: fora quando o título hoje não está liquidado.** Q5c: 4 baixas de 2026 (~R$3.250) apontam para título `ATRASADO`/`CANCELADO`. `PAGTO PARCIAL` fica dentro (46 linhas, baixa parcial legítima). Limite conhecido: baixa cancelada **e refeita** (título volta a RECEBIDO) não é detectável e fica contada duas vezes. Cobre `t9_ignora_baixa_cancelada`.
+12. **Créditos e débitos calibrados separadamente** (`t9_creditos_e_debitos_calibrados_separadamente`): os dois lados têm qualidade muito diferente (ver riscos 2 e 3). Recomendo que o gate de exibição permita mostrar um lado sem o outro, em vez de exigir os dois.
+
+### 4. Riscos
+
+1. **O Omie não espelha o extrato; espelha o que alguém baixou.** Na conta Itaú da oben em outubro não há nenhum EXT*/TRA* — tarifas, impostos, folha e qualquer débito sem título não aparecem. O total diário de débitos tende a ficar **abaixo** do extrato de forma estrutural.
+2. **Débito é registrado com atraso** (p50 8 dias, p90 48, e 1 BAXP em novembro até o dia 21). Qualquer período recente vai divergir por atraso, não por erro de regra. A calibração precisa de janela fechada há ≥ 60–90 dias, e a tela não pode comparar débitos de dias recentes.
+3. **Transferências somem do espelho a partir de jul/2026** (oben: de ~60/mês para 0). Ou a operação mudou, ou o sync deixou de trazê-las. Se for o sync, os créditos por transferência (R$1 milhão caixa→Itaú desde 2025 na oben) estão faltando no segundo semestre.
+4. **Granularidade:** o banco credita em lote (cobrança, cartão, depósito do caixa); o Omie tem uma baixa por título. O total do dia pode bater sem que as linhas batam — e vice-versa quando a data de baixa no Omie é a do pagamento do cliente e o crédito cai em D+1/D+2. Há 22 linhas de 2026 com data efetiva em sábado/domingo.
+5. **Dinheiro baixado em outra conta:** baixas em `CX` e `AC` só chegam ao Itaú por transferência (ver risco 3). Com a transferência ausente, esse crédito do extrato fica sem par.
+6. **Sem identidade em TRA*/EXT*:** versões velhas não são separáveis de lançamentos repetidos legítimos (decisão 8).
+7. **Estorno perde o sinal** (`Math.abs`) e baixa cancelada-e-refeita conta em dobro (decisão 11). Não mensurável pelo espelho.
+8. **Linhas sem data efetiva** (15 na conta Itaú da oben em 2026) ficam fora até a releitura — subcontagem pequena e silenciosa; vale expor a contagem ao lado do número.
+9. **`conciliado` é sempre `false`** — não há marca de conciliação do Omie para usar como segunda fonte.
+
+### 5. Perguntas que só a calibração com o extrato real (Task 0/10) responde
+
+1. Nos dias conferidos, créditos Omie = créditos do extrato? E débitos? (denominador: dias que batem ÷ dias cobertos, por lado.)
+2. A data de baixa no Omie é a do crédito em conta ou a do pagamento pelo cliente (boleto D+1, cartão D+N)? Existe deslocamento sistemático?
+3. Tarifas, impostos, folha e débitos automáticos aparecem em algum lugar do Omie para o Itaú, ou ficam só no extrato? (define se débito é comparável.)
+4. Por que TRA* para em jul/2026 — mudança de processo ou falha de sync?
+5. Os EXTP repetidos (mesma conta/data/valor) são tarifas idênticas reais ou versões velhas?
+6. Quais `omie_ncodcc` compõem cada conta bancária (a "Pix Itaú" é a mesma conta do Itaú? e a `AC/950` com "pix" da oben?).
+7. O crédito de cobrança/cartão chega líquido de tarifa no extrato enquanto o Omie baixa o bruto?
+8. As 4 baixas de título `ATRASADO`/`CANCELADO` são mesmo canceladas? Há cancelada-e-refeita no período conferido?
+9. Depósito do caixa: entra no extrato como um crédito único que corresponde a uma TRAR, ou a várias baixas em `CX`?
+10. Qual a idade mínima de um dia para o lado débito ser considerado "fechado" no Omie?
