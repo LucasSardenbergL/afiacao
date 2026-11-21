@@ -14,6 +14,7 @@ class Indeterminada extends Error {}
 function cadastro(codigo: number, vendedor: number | null, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     codigo_cliente_omie: codigo, nome_fantasia: `CLI ${codigo}`, razao_social: "X", info: { dAlt: "01/01/2026" },
+    estado: "MG", cidade: "ITAUNA (MG)",
     recomendacoes: { codigo_transportadora: 77, gerar_boletos: "N", ...(vendedor === null ? {} : { codigo_vendedor: vendedor }) },
     ...extra,
   };
@@ -56,6 +57,10 @@ function montar(c: Cenario) {
       const cod = payload.codigo_cliente_omie as number;
       chamadas.push(`Alterar:${cod}`);
       const atual = c.omie.get(cod)!;
+      // O Omie real recusa payload sem `estado` (canário de 2026-11-21) — o fake imita, sem gravar nada.
+      if (typeof payload.estado !== "string" || payload.estado === "") {
+        return { corpo: null, fault: "ERROR: É obrigatório o preenchimento do endereço (Estado)." };
+      }
       const r = c.aoAlterar ? c.aoAlterar(payload, atual) : { ...atual, recomendacoes: payload.recomendacoes };
       if (r === "indeterminada") throw new Indeterminada("sem desfecho");
       if ("fault" in r && typeof r.fault === "string") {
@@ -351,4 +356,25 @@ Deno.test("Codex r2 P1: exceção no meio do bloco devolve o execucao_id e os it
   const r = await processarBloco(params(APLICAR), d, OPC);
   igual([r.execucao_id, r.fim, r.parou?.startsWith("exceção")], ["00000000-0000-4000-8000-000000000001", false, true], "resultado parcial");
   igual(r.itens[0].status, "alterado", "o 1º ficou alterado, à espera do verificar");
+});
+
+Deno.test("v1.1: cadastro SEM estado no Omie → 'precondicao_falhou' no dry_run e no aplicar, sem AlterarCliente", async () => {
+  for (const modo of ["dry_run", "aplicar"] as const) {
+    const omie = new Map([[1, cadastro(1, TATY_OBEN, { estado: "" })], [2, cadastro(2, TATY_OBEN)]]);
+    const { d, chamadas } = montar({ omie, candidatos: [cand(1), cand(2)] });
+    const r = await processarBloco(params(modo === "aplicar" ? { modo, confirmo: "TROCAR VENDEDOR NO OMIE" } : { modo }), d, OPC);
+    igual(r.itens.map((i) => [i.omie_codigo_cliente, i.status]), [[1, "precondicao_falhou"], [2, modo === "dry_run" ? "planejado" : "verificado"]], `${modo}: status`);
+    igual(r.itens[0].erro, "cadastro sem estado no Omie (o AlterarCliente exige)", `${modo}: motivo`);
+    if (chamadas.includes("Alterar:1")) throw new Error(`${modo}: escreveu no cliente sem estado`);
+    igual(omie.get(1)!.recomendacoes, cadastro(1, TATY_OBEN).recomendacoes, `${modo}: Omie igual`);
+  }
+});
+
+Deno.test("v1.1: o payload enviado ao Omie leva estado/cidade iguais aos lidos (o fake recusa sem estado)", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, { estado: "SC", cidade: "JOINVILLE (SC)" })]]);
+  const enviados: Record<string, unknown>[] = [];
+  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return { ...atual, recomendacoes: payload.recomendacoes }; } });
+  const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  igual(r.itens[0].status, "verificado", "status");
+  igual([enviados[0].estado, enviados[0].cidade], ["SC", "JOINVILLE (SC)"], "estado/cidade do payload");
 });
