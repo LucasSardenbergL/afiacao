@@ -1,6 +1,6 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { CheckCircle, Share2, Eye, Printer, ArrowLeft, ShieldAlert } from 'lucide-react';
+import { CheckCircle, Share2, Eye, Printer, ArrowLeft, ShieldAlert, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { openPrintOrder, type PrintOrderData } from '@/components/OrderPrintLayout';
@@ -23,6 +23,9 @@ interface OrderSuccessDialogProps {
   bloqueiosCredito?: BloqueioCreditoPedido[];
   /** Abre o fluxo de exceção (gestor aprova / vendedor leva ao gestor). */
   onResolverBloqueio?: (b: BloqueioCreditoPedido) => void;
+  /** A6 (rodada 2): `allConfirmed` do envio. false = alguma conta ficou pendente no ERP —
+   *  o título NÃO pode dizer "sucesso" (antes só o bloqueio de crédito mudava o título). */
+  envioConfirmado: boolean;
 }
 
 export function OrderSuccessDialog({
@@ -39,6 +42,7 @@ export function OrderSuccessDialog({
   onVoltarFila,
   bloqueiosCredito,
   onResolverBloqueio,
+  envioConfirmado,
 }: OrderSuccessDialogProps) {
   const handlePrint = () => {
     if (!printDataList || printDataList.length === 0) return;
@@ -49,6 +53,7 @@ export function OrderSuccessDialog({
   };
 
   const temBloqueio = (bloqueiosCredito?.length ?? 0) > 0;
+  const pendenteErp = !temBloqueio && !envioConfirmado;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -57,14 +62,26 @@ export function OrderSuccessDialog({
           <div className="flex items-center gap-2 mb-2">
             {temBloqueio ? (
               <ShieldAlert className="w-6 h-6 text-status-error" />
+            ) : pendenteErp ? (
+              <AlertTriangle className="w-6 h-6 text-status-warning" />
             ) : (
               <CheckCircle className="w-6 h-6 text-primary" />
             )}
             <DialogTitle>
-              {temBloqueio ? 'Pedido salvo — envio bloqueado por crédito' : 'Pedido criado com sucesso!'}
+              {temBloqueio
+                ? 'Pedido salvo — envio bloqueado por crédito'
+                : pendenteErp
+                  ? 'Pedido salvo — pendente no ERP'
+                  : 'Pedido criado com sucesso!'}
             </DialogTitle>
           </div>
         </DialogHeader>
+
+        {pendenteErp && (
+          <p className="text-sm text-status-warning bg-status-warning/10 border border-status-warning/30 rounded-lg p-3">
+            Alguma parte não foi confirmada no Omie. O carrinho e o rascunho foram mantidos — confira os números abaixo e reenvie o que ficou pendente.
+          </p>
+        )}
 
         <div className="space-y-4">
           <div>

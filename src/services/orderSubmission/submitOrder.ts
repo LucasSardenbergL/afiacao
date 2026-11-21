@@ -24,6 +24,7 @@ import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard
 import { parseBloqueioAtp, mensagemRecusasAtp } from './atp';
 import type { BloqueioAtpPedido } from './atp';
 import { aguardarRegistrosComTeto, desfechoDosErros, registrarDecisaoPrazo } from './prazoDecisao';
+import { assinaturaServicosAfiacao } from './checkout-envelope';
 // O nome do cliente que sai do app (bloqueio de crédito, e-mail, lastOrderData) sem o CPF de MEI (M1, 2026-11-11).
 import { nomeClienteExibicao } from '@/lib/omie/razao-exibicao';
 
@@ -76,6 +77,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     payment, delivery, meta, companyProfiles, defaultProductionAssigneeId,
     getServicePrice, supabase, isCustomerMode = false,
     checkoutId, origem = null, atendimentoId = null, atpBackorder, prazoDecisao,
+    afiacaoJaEnviada = null, aoConfirmarOsAfiacao,
   } = params;
   const { obenProductItems, colacorProductItems, serviceItems } = cart;
   const errors: SubmitErrorEntry[] = [];
@@ -564,7 +566,24 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   }
 
   // ──────────────── Afiação ────────────────
-  if (serviceItems.length > 0) {
+  // A1 (rodada 2): o Omie NÃO deduplica a OS (o cCodIntOS do edge leva Date.now()) e o orderId
+  // abaixo é novo a cada chamada. Sem esta guarda, "Tentar novamente" do ATP, o backorder e o
+  // reenvio após falha parcial recriavam a OS. A marca vem do envelope de checkout (mesmo pedido).
+  const assinaturaAfiacao = assinaturaServicosAfiacao(serviceItems.map(c => ({
+    userToolId: c.userTool.id, codigoServico: c.servico?.omie_codigo_servico, quantity: c.quantity,
+  })), { pagamento: payment.afiacaoMethod, entrega: delivery.option });
+  if (serviceItems.length > 0 && afiacaoJaEnviada && afiacaoJaEnviada.assinatura === assinaturaAfiacao) {
+    results.push(afiacaoJaEnviada.numero ? `OS ${afiacaoJaEnviada.numero} (já enviada)` : 'OS Afiação (já enviada)');
+  } else if (afiacaoJaEnviada) {
+    // OS de afiação mudou DEPOIS de existir no Omie (ferramentas, pagamento, entrega — ou TODAS as
+    // ferramentas removidas, que confirmaria um resumo sem a OS aberta; Codex P1): nem "já enviada"
+    // (mentiria sobre o que o ERP tem) nem 2ª OS em silêncio. Mesmo desenho do pv_divergente.
+    results.push('OS Afiação (já no Omie com ferramentas diferentes)');
+    errors.push({
+      step: 'afiacao_divergente',
+      message: `A OS de Afiação${afiacaoJaEnviada.numero ? ` ${afiacaoJaEnviada.numero}` : ''} já foi criada no Omie numa tentativa anterior, com ferramentas ou condições diferentes do carrinho atual. Corrija direto no Omie — não reenvie.`,
+    });
+  } else if (serviceItems.length > 0) {
     try {
       const orderId = crypto.randomUUID();
       const orderItems = serviceItems.map((c: ServiceCartItem) => {
@@ -615,6 +634,13 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       const result = await syncOrderToOmie(orderId, orderData, profileData, addressPayload, staffContext);
       if (result.success) {
         results.push(`OS ${result.omie_os?.cNumOS || ''}`);
+        const numero = result.omie_os?.cNumOS ? String(result.omie_os.cNumOS) : null;
+        try {
+          aoConfirmarOsAfiacao?.({ assinatura: assinaturaAfiacao, numero });
+        } catch (persistErr: unknown) {
+          // Persistir a marca é do caller; falhar aqui NÃO desfaz a OS criada — só loga.
+          logger.error('Falha ao registrar a OS de Afiação no envelope', { stage: 'afiacao_marca', error: persistErr });
+        }
       } else {
         results.push('OS Afiação (pendente ERP)');
         errors.push({ step: 'sync_os_omie', message: 'Falha ao sincronizar OS com Omie' });
@@ -708,7 +734,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       e.step === 'bloqueio_credito_oben' || e.step === 'bloqueio_credito_colacor' ||
       e.step === 'bloqueio_tint_oben' || e.step === 'bloqueio_atp_oben' ||
       e.step === 'bloqueio_desconhecido_oben' || e.step === 'bloqueio_desconhecido_colacor' ||
-      e.step === 'pv_divergente_oben' || e.step === 'pv_divergente_colacor'),
+      e.step === 'pv_divergente_oben' || e.step === 'pv_divergente_colacor' ||
+      e.step === 'afiacao_divergente'),
     bloqueiosCredito,
     bloqueioAtp,
   };

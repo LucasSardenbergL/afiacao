@@ -106,3 +106,21 @@ Fatia 2 (mesmo dia): busca de cliente vira combobox (↑/↓/Enter/Esc, `aria-ac
 sem destaque só escolhe resultado ÚNICO; nada escolhe com busca em voo), foco vai à busca de
 produto após escolher o cliente (só `pointer:fine`), atalhos `c`/`p`/`a` (escopo página) e nome
 acessível no seletor de pagamento. Teste falsificado com 2 sabotagens.
+Rodada 2 — PR A, robustez do ENVIO (mesmo dia; B = dados errados, C = celular ficam em PRs próprios):
+**A1** a OS de Afiação era RECRIADA no reenvio (o `orderId` nascia novo a cada chamada e o
+`omie-sync` monta o `cCodIntOS` com `Date.now()` — o Omie não deduplica; a fp do envelope só cobre
+PRODUTO) → marca `{assinatura, numero}` no envelope de checkout, gravada por callback no instante
+da confirmação; reenvio do mesmo envelope pula ("já enviada") ou, se as ferramentas mudaram,
+`afiacao_divergente` (nunca 2ª OS calada). **A2** o ramo `conflict` do envelope deixava
+`submittingRef` ligado → "Enviar" morto até recarregar; **A3** "Salvar orçamento" sem guarda de
+re-entrância → as duas saem de `executarComTravaDeEnvio` (try/finally, único ponto que liga a
+trava). **A4** orçamento misto com uma conta falhando virava "salvo" e limpava tudo → desfecho
+por conta (`contasSalvas`/`contasPendentes`), só as linhas pendentes ficam. **A5** editar o
+carrinho com envio em voo era apagado pelo `clearCart` → mutadores via `protegerDuranteEnvio`.
+**A6** pendência de ERP abria com título de sucesso e apagava o rascunho → título e
+`clearTrigger` por `allConfirmed`. **A7** a `ultima_parcela` do histórico sobrescrevia o prazo
+escolhido à mão → marca manual por conta com o token da seleção. Codex (P0 0 · P1 11): a
+assinatura da OS ganhou pagamento+entrega, OS sem ferramentas não confirma, vias da IA barradas;
+os pré-existentes (confirmação perdida na rede = idempotência na edge; descarte/troca × envelope;
+duas abas; prazo Colacor sugerido com o código Oben) ficaram como follow-up no PR. Falsificado:
+15 sabotagens, uma camada por vez, controle verde na mesma invocação.

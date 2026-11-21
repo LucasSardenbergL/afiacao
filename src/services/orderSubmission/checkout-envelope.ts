@@ -2,6 +2,27 @@ export interface CheckoutEnvelope {
   checkoutId: string; fingerprint: string; committed: boolean;
   // Metadata da ponte CONGELADA na criação (Fase 1): nunca lida ao vivo no submit.
   customerUserId?: string | null; origem?: string | null; atendimentoId?: string | null;
+  /** A1 (rodada 2): OS de Afiação já confirmada NESTE envelope. A fp só cobre PRODUTO, então o
+   *  reenvio (falha parcial, "Tentar novamente" do ATP, backorder) reusaria o envelope e
+   *  recriaria a OS — o Omie não deduplica. Presente = pular o bloco Afiação. */
+  afiacaoOs?: MarcaOsAfiacao | null;
+}
+
+/** O que foi confirmado da OS de Afiação: quais ferramentas/serviços (assinatura) e o nº da OS. */
+export interface MarcaOsAfiacao {
+  assinatura: string;
+  numero: string | null;
+}
+
+/** Assinatura estável (ordem-independente) da OS de afiação: ferramenta + serviço + quantidade por
+ *  item, mais forma de pagamento e entrega (vão na OS — trocar depois deixaria o comprovante
+ *  diferente do Omie; Codex P1). Observação/foto não entram: mudá-las não justifica uma 2ª OS. */
+export function assinaturaServicosAfiacao(
+  itens: ReadonlyArray<{ userToolId: string; codigoServico: number | string | null | undefined; quantity: number }>,
+  condicoes: { pagamento: string | null | undefined; entrega: string | null | undefined },
+): string {
+  const linhas = itens.map(i => `${i.userToolId}:${i.codigoServico ?? '-'}:${i.quantity}`).sort().join('|');
+  return `${linhas}#pg=${condicoes.pagamento ?? '-'}#ent=${condicoes.entrega ?? '-'}`;
 }
 export type CheckoutDecision = 'reuse' | 'new' | 'conflict';
 
