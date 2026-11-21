@@ -524,13 +524,18 @@ autorizado_cenario() { # S2 🟡 → Lucas autoriza; devolve nada
 }
 autorizado_cenario; titulos "colacor_sc:202:70:NULL"
 # Desde 20261121200000 o PISO também segura saldo NULL; a contagem do PR 2 só é a barreira ÚNICA quando
-# o piso libera por exceção do (pedido, par) → o cenário do F7 tem essa exceção (senão é redundante).
+# o piso libera por exceção do (pedido, par) → o cenário do F7 tem essa exceção (senão é redundante),
+# aprovada DEPOIS de um bloqueio pós-virada (senão o piso a recusa por indeterminado — 20261121200000).
+Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.venda_bloqueio_credito_log (company, omie_codigo_cliente, sales_order_id, acao, created_at) VALUES ('oben', 101, '$S2', 'bloqueado', now() - interval '1 second')\$q\$);" >/dev/null
 Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.venda_excecao_credito (sales_order_id, company, omie_codigo_cliente, motivo, valido_ate, aprovado_por) VALUES ('$S2', 'oben', 101, 'teste', now() + interval '3 days', '$G')\$q\$);" >/dev/null
 sabota "F7 piso indeterminado depois da autorização → autorização libera" \
   "t.replace(\"  ELSIF v_piso_indet > 0 THEN\", \"  ELSIF false THEN\").replace(\"  ELSIF v_piso_indet > 0\n\", \"  ELSIF false\n\")" \
   "gate '$S2' oben 101 r1 7000 28 | J \"['motivo']\"" "piso_indeterminado"
 
 limpa; limite "$C" 10000 28 baixo >/dev/null; titulos "oben:101:75:300" "colacor_sc:202:75:300:PAGTO PARCIAL"
+# bloqueio pós-virada ANTES da aprovação: o piso (20261121200000) aceita a exceção p/ o parcial; só o
+# fora_piso do PR 2 segura — a divergência declarada (vendas libera, PR 2 vermelho)
+Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.venda_bloqueio_credito_log (company, omie_codigo_cliente, sales_order_id, acao, created_at) VALUES ('oben', 101, '$S1', 'bloqueado', now() - interval '1 second')\$q\$);" >/dev/null
 Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.venda_excecao_credito (sales_order_id, company, omie_codigo_cliente, motivo, valido_ate, aprovado_por) VALUES ('$S1','oben',101,'gestor viu o ATRASADO', now() + interval '1 day', '$G')\$q\$);" >/dev/null
 sabota "F8 sem o vencido fora do vocabulário do piso → PAGTO PARCIAL vencido passa sob exceção" \
   "t.replace(\"     OR v_venc60_fora_piso > 0 \", \"     OR false \")" \

@@ -23,9 +23,11 @@
 -- ACL: as 3 funções do gate tinham EXECUTE para sandbox_exec_* (BYPASSRLS, herdado do default ACL de
 --  public). Fecha por ALLOWLIST via aclexplode (owner + service_role), como 20261121160000.
 --
--- VIRADA PRÓPRIA (Codex desenho P1-1): exceção criada ANTES desta migration foi aprovada sem ver
---  PAGTO PARCIAL/indeterminado → não cobre o pedido se houver título assim no escopo (mesmo par
---  inclusive): motivo 'excecao_anterior_nao_cobre_parcial'. Prod hoje: 0 exceções criadas.
+-- VIRADA PRÓPRIA (Codex desenho P1-1 + diff P1-1): com título PAGTO PARCIAL/indeterminado no escopo
+--  (mesmo par inclusive), a exceção só cobre se foi aprovada DEPOIS de um log de bloqueio do pedido
+--  gerado pelo piso novo (entre a virada e a aprovação) — senão o gestor aprovou sem ver o parcial:
+--  motivo 'excecao_anterior_nao_cobre_parcial'. Prod 2026-11-21: 0 exceções e 0 logs de bloqueio.
+--  PAGTO PARCIAL vencido bloqueia com QUALQUER saldo espelhado (0 contradiz o status; prod: 0 casos).
 --
 -- PR 2 (Codex desenho P2-3, opção 5a): private.credito_avaliar_reservar trata piso que segura SÓ por
 --  título indeterminado como amarelo/piso_indeterminado (não vermelho) — corpo de PROD (= repo,
@@ -105,7 +107,10 @@ BEGIN
     SELECT e.company, e.codigo, f.saldo, f.data_vencimento,
            -- vencido > 60 d com resíduo comprovado (PAGTO PARCIAL incluído: o status prova resíduo).
            -- COALESCE: saldo/vencimento NULL dão NULL (não false) — NULL some de FILTER e de bool_and.
-           COALESCE(f.saldo > 0 AND f.data_vencimento < v_corte, false) AS comprovado,
+           -- PAGTO PARCIAL vencido é comprovado QUALQUER que seja o saldo espelhado (0/NULL contradiz o
+           -- status, não o desmente — Codex diff P1-2).
+           COALESCE(f.data_vencimento < v_corte
+                    AND (f.saldo > 0 OR f.status_titulo = 'PAGTO PARCIAL'), false) AS comprovado,
            -- valor do vencido > 60 d conhecido: só saldo > 0, vencido, fora de PAGTO PARCIAL
            COALESCE(f.saldo > 0 AND f.data_vencimento < v_corte
             AND f.status_titulo <> 'PAGTO PARCIAL', false) AS valor_conhecido
@@ -117,6 +122,8 @@ BEGIN
              (f.saldo > 0 AND f.data_vencimento < v_corte)                                  -- comprovado
           OR (f.saldo IS NULL AND (f.data_vencimento IS NULL OR f.data_vencimento < v_corte)) -- saldo ausente
           OR (f.saldo > 0 AND f.data_vencimento IS NULL)                                   -- vencimento ausente
+          OR (f.status_titulo = 'PAGTO PARCIAL'
+              AND (f.data_vencimento IS NULL OR f.data_vencimento < v_corte))              -- parcial, qualquer saldo
            )
   ),
   por_par AS (
@@ -182,10 +189,20 @@ BEGIN
       'motivo', 'excecao_anterior_nao_cobre_grupo');
   END IF;
 
-  -- Exceção anterior a ESTA virada + título que a regra anterior omitia (PAGTO PARCIAL / saldo ou
-  -- vencimento ausente), em qualquer par → não cobre. Sem marco → toda exceção é antiga (lado seguro).
+  -- Título que a regra anterior OMITIA (PAGTO PARCIAL / saldo ou vencimento ausente), em qualquer par:
+  -- a exceção só o cobre se o gestor aprovou DEPOIS de um bloqueio já avaliado pelo piso novo — log de
+  -- bloqueio do (pedido, empresa) entre a virada e a aprovação. Aprovar lendo o log ANTIGO (que não
+  -- listava o parcial) não cobre (Codex diff P1-1). Exceção anterior à virada nunca tem esse log.
+  -- Sem marco → nada cobre o indeterminado (lado seguro).
   SELECT aplicada_em INTO v_virada_parcial FROM public.credito_virada_piso_parcial;
-  IF v_excecao_id IS NOT NULL AND (v_virada_parcial IS NULL OR v_excecao_criada < v_virada_parcial) AND v_indet > 0 THEN
+  IF v_excecao_id IS NOT NULL AND v_indet > 0
+     AND (v_virada_parcial IS NULL
+          OR NOT EXISTS (SELECT 1 FROM public.venda_bloqueio_credito_log l
+                          WHERE l.sales_order_id = p_sales_order_id
+                            AND l.company = p_company
+                            AND l.acao IN ('bloqueado', 'bloqueado_edicao')
+                            AND l.created_at >= v_virada_parcial
+                            AND l.created_at <= v_excecao_criada)) THEN
     RETURN jsonb_build_object(
       'bloqueado', true, 'vencido', v_vencido, 'titulos', v_titulos,
       'vencimento_mais_antigo', v_mais_antigo, 'excecao_id', null,

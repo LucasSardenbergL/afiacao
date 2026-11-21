@@ -33,7 +33,7 @@ import { nomeClienteExibicao } from '@/lib/omie/razao-exibicao';
 /** Resposta estruturada dos gates do edge (crédito Fase 2 / tint Fase 3 — não cria o PV). */
 interface GateCreditoPayload {
   blocked?: string;
-  gate?: { vencido?: number | null; titulos?: number | null; pares?: unknown } | null;
+  gate?: { vencido?: number | null; titulos?: number | null; pares?: unknown; motivo?: string } | null;
   /** Fase 3: bloqueios do gate tintométrico (preço obsoleto/fórmula morta). */
   bloqueios?: Array<{ cor_id?: string; motivo?: string; detalhe?: string }>;
 }
@@ -71,8 +71,18 @@ function paresDoGate(gate?: { pares?: unknown } | null): ParVencidoCredito[] {
 
 function mensagemBloqueioCredito(
   conta: string,
-  gate?: { vencido?: number | null; titulos?: number | null; pares?: unknown } | null,
+  gate?: { vencido?: number | null; titulos?: number | null; pares?: unknown; motivo?: unknown } | null,
 ): string {
+  const sufixo = 'O pedido ficou salvo: um gestor pode aprovar uma exceção para ESTE pedido e aí é só reenviar.';
+  // indeterminado ≠ atraso comprovado: não afirmar "vencido há 60+ dias" (Codex diff P2-4)
+  if (gate?.motivo === 'piso_indeterminado') {
+    return `Pedido ${conta} BLOQUEADO por crédito — há título em aberto no grupo com saldo ou vencimento ` +
+      `não informado (a confirmar com o financeiro). ${sufixo}`;
+  }
+  if (gate?.motivo === 'excecao_anterior_nao_cobre_parcial') {
+    return `Pedido ${conta} BLOQUEADO por crédito — a exceção aprovada não viu um título com pagamento ` +
+      `parcial ou valor a confirmar. Peça ao gestor uma NOVA aprovação para este pedido e reenvie.`;
+  }
   const pares = paresDoGate(gate);
   if (pares.length > 0) {
     const porEmpresa = pares

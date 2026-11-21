@@ -439,6 +439,28 @@ describe('submitOrder', () => {
     }));
   });
 
+  it.each([
+    ['piso_indeterminado', 'saldo ou vencimento', 'vencido há 60+ dias'],
+    ['excecao_anterior_nao_cobre_parcial', 'NOVA aprovação', 'vencido há 60+ dias no grupo'],
+  ])('trava de crédito: motivo %s tem mensagem própria (não afirma atraso que o gate não comprovou)', async (motivo, contem, naoContem) => {
+    const { client } = makeSupabase({
+      insertId: 'so-oben',
+      invokeImpl: () => ({
+        data: { success: false, blocked: 'credito', gate: { vencido: null, titulos: 1, motivo, pares: [] } },
+        error: null,
+      }),
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    const msg = r.errors.find((e) => e.step === 'bloqueio_credito_oben')?.message ?? '';
+    expect(msg).toContain('BLOQUEADO por crédito');
+    expect(msg).toContain(contem);
+    expect(msg).not.toContain(naoContem);
+  });
+
   it('trava de crédito Colacor: bloqueado NÃO cria ordem de produção (o PV não existe)', async () => {
     const { client, invoke } = makeSupabase({
       insertId: 'so-col',

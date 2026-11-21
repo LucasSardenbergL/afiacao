@@ -68,6 +68,24 @@ export function useBloqueioCreditoLog(salesOrderId: string, enabled: boolean) {
   });
 }
 
+/**
+ * A exceção vigente ainda vale para a tela? NÃO se o gate bloqueou o pedido DEPOIS dela — ele a
+ * recusou (ex.: aprovada vendo o log antigo, sem o PAGTO PARCIAL; ou anterior à virada do grupo) e o
+ * gestor precisa reaprovar vendo o bloqueio novo. Sem isso a tela esconde o formulário e manda
+ * reenviar para sempre (Codex diff P1-1, 20261121200000). Datas ilegíveis → mantém a exceção (a
+ * decisão é do gate; aqui só se escolhe qual formulário mostrar).
+ */
+export function excecaoAindaVale(
+  excecao: { created_at?: string | null } | null | undefined,
+  ultimoBloqueio: { created_at?: string | null } | null | undefined,
+): boolean {
+  if (!excecao) return false;
+  const tExc = Date.parse(excecao.created_at ?? '');
+  const tBloq = Date.parse(ultimoBloqueio?.created_at ?? '');
+  if (!Number.isFinite(tExc) || !Number.isFinite(tBloq)) return true;
+  return tBloq <= tExc;
+}
+
 /** Exceção ainda válida do pedido (evita dupla aprovação; instrui o reenvio). */
 export function useExcecaoCreditoVigente(salesOrderId: string, enabled: boolean) {
   return useQuery({
@@ -76,7 +94,7 @@ export function useExcecaoCreditoVigente(salesOrderId: string, enabled: boolean)
     queryFn: async () => {
       const { data, error } = await supabase
         .from('venda_excecao_credito')
-        .select('id, valido_ate, motivo')
+        .select('id, valido_ate, motivo, created_at')
         .eq('sales_order_id', salesOrderId)
         .gt('valido_ate', new Date().toISOString())
         .order('created_at', { ascending: false })

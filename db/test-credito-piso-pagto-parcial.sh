@@ -234,6 +234,10 @@ JX() { python3 -c "import sys,json; d=json.load(sys.stdin); print($1)"; }
 piso() { Pq -c "SELECT public.venda_gate_credito_grupo('$1', '$2', $3);"; }
 # exceção do (pedido, par) gravada direto (RLS/aprovação já provadas na v1); $4 = created_at (SQL)
 excecao() { Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.venda_excecao_credito (sales_order_id, company, omie_codigo_cliente, motivo, valido_ate, aprovado_por, created_at) VALUES ('$1', '$2', $3, 'teste', now() + interval '3 days', '$G', $4)\$q\$);" >/dev/null; }
+# log de bloqueio do pedido (o que a edge grava ao bloquear); $3 = created_at (SQL)
+logbloq() { Pq -c "SELECT public.t_forca(\$q\$INSERT INTO public.venda_bloqueio_credito_log (company, omie_codigo_cliente, sales_order_id, acao, created_at) VALUES ('$2', 101, '$1', 'bloqueado', $3)\$q\$);" >/dev/null; }
+# limpa também os logs de bloqueio (o t_limpa do PR 2 não os toca)
+limpa() { Pq -c "SELECT public.t_limpa(); SELECT public.t_forca('DELETE FROM public.venda_bloqueio_credito_log');" >/dev/null; }
 # título com vencimento NULL (o helper titulos() sempre grava data)
 sem_vencimento() { Pq -c "SELECT public.t_forca(\$q\$DELETE FROM public.fin_contas_receber; INSERT INTO public.fin_contas_receber(company, omie_codigo_cliente, saldo, status_titulo, data_vencimento) VALUES ('oben', 101, $1, 'ATRASADO', NULL)\$q\$);" >/dev/null; }
 # marcos: PR 1 há 2 dias; ESTA virada há 1 dia → exceção "entre" = criada há 36 h
@@ -263,6 +267,12 @@ asserts() {
   eq "P1g PAGTO PARCIAL só no ALIAS, pedido na oben → bloqueia (grupo)" "$(piso "$S1" oben 101 | J "['bloqueado']")" "True"
   titulos "oben:999:75:500:PAGTO PARCIAL"
   eq "P1h PAGTO PARCIAL em par sem dono → bloqueia o próprio par" "$(piso "$S1" oben 999 | J "['bloqueado']")" "True"
+  titulos "oben:101:75:0:PAGTO PARCIAL"
+  eq "P1i PAGTO PARCIAL vencido com saldo espelhado 0 → bloqueia (o status prova resíduo)" "$(piso "$S1" oben 101 | J "['motivo']")" "vencido_60d_sem_excecao"
+  titulos "oben:101:75:NULL:PAGTO PARCIAL"
+  eq "P1j PAGTO PARCIAL vencido com saldo NULL → bloqueia comprovado" "$(piso "$S1" oben 101 | J "['motivo']")" "vencido_60d_sem_excecao"
+  Pq -c "SELECT public.t_forca(\$q\$DELETE FROM public.fin_contas_receber; INSERT INTO public.fin_contas_receber(company, omie_codigo_cliente, saldo, status_titulo, data_vencimento) VALUES ('oben', 101, 0, 'PAGTO PARCIAL', NULL)\$q\$);" >/dev/null
+  eq "P1k PAGTO PARCIAL sem vencimento (saldo 0) → piso_indeterminado" "$(piso "$S1" oben 101 | J "['motivo']")" "piso_indeterminado"
   titulos "oben:101:-5:500:PAGTO PARCIAL"
   eq "P2 PAGTO PARCIAL a vencer → não bloqueia" "$(piso "$S1" oben 101 | J "['motivo']")" "sem_vencido_60d"
   titulos "oben:101:60:500:PAGTO PARCIAL"
@@ -307,14 +317,23 @@ asserts() {
   eq "P4m MESMO par: 300 + saldo NULL → par e total null (não 300)" "$(echo "$g" | J "['pares'][0]['vencido']")$(echo "$g" | J "['vencido']")" "NoneNone"
 
   echo "· exceção e as duas viradas"
-  limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; excecao "$S1" oben 101 "$NOVA"
-  eq "P5 exceção NOVA do (pedido, par) cobre PAGTO PARCIAL" "$(piso "$S1" oben 101 | J "['motivo']")" "excecao_valida"
+  # aprovação DEPOIS de um bloqueio já avaliado pelo piso novo (log entre a virada e a exceção)
+  limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; logbloq "$S1" oben "now() - interval '1 hour'"; excecao "$S1" oben 101 "$NOVA"
+  eq "P5 exceção aprovada após bloqueio NOVO cobre PAGTO PARCIAL" "$(piso "$S1" oben 101 | J "['motivo']")" "excecao_valida"
   titulos "oben:101:70:NULL"
-  eq "P5b exceção NOVA cobre indeterminado" "$(piso "$S1" oben 101 | J "['motivo']")" "excecao_valida"
+  eq "P5b … e cobre indeterminado" "$(piso "$S1" oben 101 | J "['motivo']")" "excecao_valida"
+  limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; excecao "$S1" oben 101 "$NOVA"
+  eq "P5c exceção NOVA sem log de bloqueio pós-virada (gestor leu o log antigo) → não cobre" "$(piso "$S1" oben 101 | J "['motivo']")" "excecao_anterior_nao_cobre_parcial"
+  logbloq "$S1" oben "now() + interval '1 minute'"
+  eq "P5d log pós-virada mas DEPOIS da aprovação → não cobre" "$(piso "$S1" oben 101 | J "['bloqueado']")" "True"
+  limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; logbloq "$S1" oben "now() - interval '30 hours'"; excecao "$S1" oben 101 "$NOVA"
+  eq "P5e só log ANTERIOR à virada → não cobre" "$(piso "$S1" oben 101 | J "['bloqueado']")" "True"
+  limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; logbloq "$S1" colacor_sc "now() - interval '1 hour'"; excecao "$S1" oben 101 "$NOVA"
+  eq "P5f log de OUTRA empresa do mesmo pedido não vale → não cobre" "$(piso "$S1" oben 101 | J "['bloqueado']")" "True"
   limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; excecao "$S1" oben 101 "$ENTRE"
   eq "P6 exceção ANTERIOR a esta virada + PAGTO PARCIAL no MESMO par → não cobre" "$(piso "$S1" oben 101 | J "['motivo']")" "excecao_anterior_nao_cobre_parcial"
   titulos "oben:101:75:300"
-  eq "P6b … sem título omitido pela regra antiga → cobre" "$(piso "$S1" oben 101 | J "['motivo']")" "excecao_valida"
+  eq "P6b … sem título omitido pela regra antiga → cobre (sem log, como antes)" "$(piso "$S1" oben 101 | J "['motivo']")" "excecao_valida"
   titulos "oben:101:70:NULL"
   eq "P6c exceção anterior + saldo NULL → não cobre" "$(piso "$S1" oben 101 | J "['bloqueado']")" "True"
   limpa; titulos "oben:101:75:300" "colacor_sc:202:75:500:PAGTO PARCIAL"
@@ -331,7 +350,14 @@ asserts() {
   eq "P8b PAGTO PARCIAL vencido → PR 2 vermelho" "$(gate "$S1" oben 101 r1 1000 28 | J "['motivo']")" "piso_vencido_60d"
   titulos "oben:101:75:300"
   eq "P8c vencido comum → PR 2 vermelho" "$(gate "$S1" oben 101 r1 1000 28 | J "['faixa']")" "vermelho"
-  titulos "oben:101:70:NULL"; excecao "$S1" oben 101 "$NOVA"
+  titulos "oben:101:70:NULL"; logbloq "$S1" oben "now() - interval '1 hour'"; excecao "$S1" oben 101 "$NOVA"
+  limpa; limite "$C" 10000 28 baixo >/dev/null
+  # par com DOIS donos no mapa: o PR 2 não resolve raiz (relê só o par); o piso expande os 2 grupos
+  Pq -c "INSERT INTO public.omie_customer_account_map(user_id, account, omie_codigo_cliente) VALUES ('$D', 'oben', 105), ('$C', 'oben', 105);" >/dev/null
+  titulos "colacor_sc:202:70:NULL"
+  eq "P8e par de 2 donos + indeterminado só na conta irmã → PR 2 piso_indeterminado (guarda do piso.bloqueado)" "$(gate "$S1" oben 105 r1 1000 28 | J "['motivo']")" "piso_indeterminado"
+  limpa; limite "$C" 10000 28 baixo >/dev/null
+  titulos "oben:101:70:NULL"; logbloq "$S1" oben "now() - interval '1 hour'"; excecao "$S1" oben 101 "$NOVA"
   eq "P8d piso indeterminado coberto por exceção → PR 2 segue amarelo" "$(gate "$S1" oben 101 r1 1000 28 | J "['motivo']")" "piso_indeterminado"
   limpa
 
@@ -406,9 +432,28 @@ sabota "F5 sem o ramo vencimento NULL" \
   "piso '$S1' oben 101 | J \"['motivo']\"" "piso_indeterminado"
 
 limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; excecao "$S1" oben 101 "$ENTRE"
-sabota "F6 sem a virada própria (exceção antiga cobre PAGTO PARCIAL)" \
-  "t.replace(\"(v_virada_parcial IS NULL OR v_excecao_criada < v_virada_parcial) AND v_indet > 0 THEN\", \"false THEN\")" \
+sabota "F6 sem a exigência de bloqueio pós-virada (exceção antiga cobre PAGTO PARCIAL)" \
+  "t.replace(\"          OR NOT EXISTS (SELECT 1 FROM public.venda_bloqueio_credito_log l\", \"          OR false AND NOT EXISTS (SELECT 1 FROM public.venda_bloqueio_credito_log l\")" \
   "piso '$S1' oben 101 | J \"['motivo']\"" "excecao_anterior_nao_cobre_parcial"
+
+limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; excecao "$S1" oben 101 "$NOVA"; logbloq "$S1" oben "now() + interval '1 minute'"
+sabota "F6b log DEPOIS da aprovação aceito (gestor não viu o bloqueio)" \
+  "t.replace(\"                            AND l.created_at <= v_excecao_criada)) THEN\", \"                            )) THEN\")" \
+  "piso '$S1' oben 101 | J \"['bloqueado']\"" "True"
+limpa; titulos "oben:101:75:500:PAGTO PARCIAL"; logbloq "$S1" colacor_sc "now() - interval '1 hour'"; excecao "$S1" oben 101 "$NOVA"
+sabota "F6c log de outra empresa do pedido aceito" \
+  "t.replace(\"                            AND l.company = p_company\n\", \"\")" \
+  "piso '$S1' oben 101 | J \"['bloqueado']\"" "True"
+limpa; titulos "oben:101:75:0:PAGTO PARCIAL"
+sabota "F1b PAGTO PARCIAL de saldo 0 some (só saldo > 0 entra)" \
+  "t.replace(\"          OR (f.status_titulo = 'PAGTO PARCIAL'\n              AND (f.data_vencimento IS NULL OR f.data_vencimento < v_corte))              -- parcial, qualquer saldo\n\", \"\")" \
+  "piso '$S1' oben 101 | J \"['bloqueado']\"" "True"
+limpa; limite "$C" 10000 28 baixo >/dev/null
+Pq -c "INSERT INTO public.omie_customer_account_map(user_id, account, omie_codigo_cliente) VALUES ('$D', 'oben', 105), ('$C', 'oben', 105);" >/dev/null
+titulos "colacor_sc:202:70:NULL"
+sabota "F10 PR 2 sem a guarda do piso.bloqueado (par de 2 donos cai em sem_grupo)" \
+  "t.replace(\"        OR (v_piso ->> 'bloqueado')::boolean  -- piso indeterminado que a releitura não viu: nunca libera\n\", \"\")" \
+  "gate '$S1' oben 105 r1 1000 28 | J \"['motivo']\"" "piso_indeterminado"
 
 limpa; titulos "oben:101:75:300" "colacor_sc:202:75:500:PAGTO PARCIAL"; excecao "$S1" oben 101 "now() - interval '3 days'"
 sabota "F7 virada do grupo volta a SOMAR — REDUNDANTE: a virada própria ainda segura, só o motivo muda" \
@@ -454,6 +499,11 @@ P -q -f "$REPO_ROOT/supabase/migrations/20261121120000_trava_credito_piso_grupo.
 if P -q -f "$VER" > "$SAB/v.log" 2>&1; then bad "V3 verificação passou com o piso ANTIGO"
 elif grep -q "VERIFICA FALHOU: oben/101 não bloqueou" "$SAB/v.log"; then ok "V3 piso antigo → verificação FALHA (tem dente)"
 else bad "V3 outro erro: $(head -c 300 "$SAB/v.log")"; fi
+P -q -f "$MIGN"
+P -q -c "CREATE OR REPLACE FUNCTION public.venda_gate_credito_grupo(p_sales_order_id uuid, p_company text, p_codigo bigint) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS \$f\$ SELECT '{}'::jsonb \$f\$;"
+if P -q -f "$VER" > "$SAB/v.log" 2>&1; then bad "V4 verificação passou com o gate devolvendo {}"
+elif grep -q "VERIFICA FALHOU: oben/101 não bloqueou" "$SAB/v.log"; then ok "V4 gate devolvendo {} → verificação FALHA (IS DISTINCT FROM)"
+else bad "V4 outro erro: $(head -c 300 "$SAB/v.log")"; fi
 P -q -f "$MIGN"; limpa
 
 echo "── re-prova pós-restauração ──"

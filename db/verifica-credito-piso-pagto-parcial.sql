@@ -13,18 +13,20 @@ DECLARE
 BEGIN
   FOR r IN SELECT DISTINCT f.company, f.omie_codigo_cliente
              FROM public.fin_contas_receber f
-            WHERE f.status_titulo = 'PAGTO PARCIAL' AND f.saldo > 0 AND f.data_vencimento < v_corte LOOP
+            WHERE f.status_titulo = 'PAGTO PARCIAL' AND f.data_vencimento < v_corte LOOP  -- qualquer saldo
     g := public.venda_gate_credito_grupo(gen_random_uuid(), r.company, r.omie_codigo_cliente);
     v_pares := v_pares + 1;
-    IF (g ->> 'bloqueado')::boolean THEN v_bloq := v_bloq + 1; END IF;
-    IF g -> 'vencido' = 'null'::jsonb THEN v_null := v_null + 1; END IF;
-    IF NOT (g ->> 'bloqueado')::boolean OR g ->> 'motivo' <> 'vencido_60d_sem_excecao' THEN
+    -- IS DISTINCT FROM: resposta sem a chave ({}) dá NULL e NÃO pode passar (Codex diff P2-3)
+    IF (g -> 'bloqueado') IS DISTINCT FROM 'true'::jsonb
+       OR (g -> 'motivo') IS DISTINCT FROM '"vencido_60d_sem_excecao"'::jsonb THEN
       RAISE EXCEPTION 'VERIFICA FALHOU: %/% não bloqueou (%)', r.company, r.omie_codigo_cliente, g ->> 'motivo';
     END IF;
-    IF g -> 'vencido' <> 'null'::jsonb THEN
+    v_bloq := v_bloq + 1;
+    IF NOT (g ? 'vencido') OR (g -> 'vencido') IS DISTINCT FROM 'null'::jsonb THEN
       RAISE EXCEPTION 'VERIFICA FALHOU: %/% reportou vencido % (esperado null: valor indeterminado)',
-        r.company, r.omie_codigo_cliente, g ->> 'vencido';
+        r.company, r.omie_codigo_cliente, COALESCE(g ->> 'vencido', '<ausente>');
     END IF;
+    v_null := v_null + 1;
   END LOOP;
   IF v_pares = 0 THEN
     RAISE EXCEPTION 'VERIFICA FALHOU: 0 pares com PAGTO PARCIAL vencido > 60 d — nada provado (ausente ≠ ok)';
