@@ -405,6 +405,7 @@ export function useUnifiedOrder() {
   const {
     obenProducts, colacorProducts,
     loadingObenProducts, loadingColacorProducts,
+    estadoCatalogoOben, estadoCatalogoColacor, tentarCatalogoDeNovo,
     productSearch, setProductSearch,
     filteredObenProducts, filteredColacorProducts,
   } = catalog;
@@ -846,6 +847,25 @@ export function useUnifiedOrder() {
     setSelectedTimeSlot(''); // B6 (Codex P2): o horário da coleta é DESTA OS — não vaza para a próxima
   }, []);
 
+  // C4 (rodada 2): "Novo pedido" após envio CONFIRMADO. Diferente do "Trocar cliente", NÃO toca a
+  // persistência do envelope nem o rascunho: os dois são por USUÁRIO (compartilhados entre abas) e o
+  // sucesso desta aba já os zerou — apagar de novo levaria o checkout pendente de OUTRA aba (Codex P1).
+  // Fail-closed: envelope vivo aqui = envio não confirmado → não recomeça.
+  const iniciarNovoPedido = useCallback((): boolean => {
+    if (submittingRef.current) { avisarCarrinhoTravado(); return false; }
+    if (checkoutEnvRef.current) return false;
+    prazoDecisaoRef.current = {};
+    if (!isCustomerMode) clearCustomerInternal();
+    setCart([]);
+    limparCamposDoPedido();
+    // A OS seguinte não herda o prazo nem a modalidade de entrega da anterior (Codex P1).
+    setAfiacaoPaymentMethod('a_vista');
+    setDeliveryOption('coleta_entrega');
+    setProductSearch('');
+    setCustomerSearch('');
+    return true;
+  }, [isCustomerMode, clearCustomerInternal, setCart, limparCamposDoPedido, setProductSearch, setCustomerSearch]);
+
   // Submit — orchestrates state around the pure submit functions in services/orderSubmission
   // `aoGravar` amarra o RASCUNHO ao desfecho: null = tudo salvo (apagar), lista = carrinho que
   // sobrou após o parcial (gravar na hora). Roda ANTES do navigate — o rascunho não fica para trás.
@@ -1170,10 +1190,11 @@ export function useUnifiedOrder() {
     authLoading, user, isStaff, isCustomerMode,
     // Customer
     customerSearch, setCustomerSearch, customers, selectedCustomer, searchingCustomers, customerSearchFalhou, tentarBuscaDeNovo,
-    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, envelopeCheckoutAtual, descartarEnvelope, cicloRascunhoRef,
+    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, iniciarNovoPedido, envelopeCheckoutAtual, descartarEnvelope, cicloRascunhoRef,
     // Products
     obenProducts, colacorProducts, productSearch, setProductSearch,
     loadingObenProducts, loadingColacorProducts,
+    estadoCatalogoOben, estadoCatalogoColacor, tentarCatalogoDeNovo,
     customerPricesOben, customerPricesColacor,
     filteredObenProducts, filteredColacorProducts,
     customerPurchaseHistory,

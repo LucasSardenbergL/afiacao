@@ -1,9 +1,12 @@
 import { useState, useMemo } from 'react';
 import { Input } from '@/components/ui/input';
+import { EmptyState } from '@/components/EmptyState';
+import { QuantidadeInput } from '@/components/unified-order/QuantidadeInput';
+import { estadoListaProdutos } from '@/hooks/unifiedOrder/estado-lista-produtos';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Search, Plus, Loader2, Package, FileText } from 'lucide-react';
+import { Search, Plus, Loader2, Package, FileText, SearchX, CloudOff } from 'lucide-react';
 import { keyDeSku, type CurrentSpec } from '@/lib/knowledge-base/spec-link';
 import { FichaTecnicaSheet } from '@/components/unified-order/FichaTecnicaSheet';
 import { usePrecoCockpit, type ItemCockpitInput } from '@/hooks/usePrecoCockpit';
@@ -48,6 +51,9 @@ interface ProductItemFormProps {
   /** Tier/mult ainda carregando → o preço de partida não é FIRME: o ADD fica desabilitado
    *  (evita nascer item tier C sem o mult, não-determinístico). */
   precoLoading?: boolean;
+  /** C6 (rodada 2): o catálogo da conta não carregou — a lista vazia NÃO é "nenhum produto". */
+  catalogoFalhou?: boolean;
+  onTentarDeNovo?: () => void;
 }
 
 export function ProductItemForm({
@@ -56,7 +62,13 @@ export function ProductItemForm({
   customerPricesLoading = false, specsByKey, canSeeFicha = false,
   selosByKey, canSeeVendaAssistida = false, customerUserId = null,
   getPrecoNascimento, precoLoading = false,
+  catalogoFalhou = false, onTentarDeNovo,
 }: ProductItemFormProps) {
+  const estadoLista = estadoListaProdutos({
+    catalogo: loading ? 'carregando' : catalogoFalhou ? 'falhou' : 'ok',
+    quantidade: products.length,
+    termo: productSearch,
+  });
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [fichaAberta, setFichaAberta] = useState<string | null>(null);
 
@@ -95,6 +107,7 @@ export function ProductItemForm({
 
   const getQty = (id: string) => quantities[id] ?? 1;
   const setQty = (id: string, v: number) => setQuantities(prev => ({ ...prev, [id]: Math.max(1, v) }));
+  const titleMinusculo = title.charAt(0).toLowerCase() + title.slice(1);
 
   const formatDate = (dateStr: string) => {
     try {
@@ -129,10 +142,33 @@ export function ProductItemForm({
             testId="aviso-cockpit-lista"
           />
         )}
-        {loading ? (
-          <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+        {estadoLista === 'carregando' ? (
+          <div role="status" className="flex items-center justify-center gap-1.5 py-4 text-xs text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> Carregando produtos…
+          </div>
+        ) : estadoLista === 'falhou' ? (
+          <EmptyState
+            tone="operational"
+            icon={CloudOff}
+            title="Não consegui carregar os produtos"
+            description={`A lista de ${titleMinusculo} não chegou — não é que o produto não exista. Confira a conexão e tente de novo.`}
+            actionLabel={onTentarDeNovo ? 'Tentar de novo' : undefined}
+            onAction={onTentarDeNovo}
+            className="py-6"
+          />
+        ) : estadoLista === 'sem_resultado' ? (
+          <EmptyState
+            tone="operational"
+            icon={SearchX}
+            title="Nenhum produto encontrado"
+            description={productSearch.trim() ? `Nada em ${titleMinusculo} para “${productSearch.trim()}”. Tente o código ou outra palavra.` : 'A busca só tem espaços — digite o código ou parte da descrição.'}
+            className="py-6"
+          />
+        ) : estadoLista === 'catalogo_vazio' ? (
+          <EmptyState tone="operational" icon={Package} title="Nenhum produto neste catálogo" description="Ainda não há produto ativo cadastrado nesta conta." className="py-6" />
         ) : (
-          <div className="max-h-[400px] overflow-y-auto space-y-1">
+          // C3 (rodada 2): sem `max-h` + `overflow-y-auto` — rolagem dentro da página prendia o dedo.
+          <div className="space-y-1">
             {products.map(product => {
               const isInCart = productItems.some(c => c.product.id === product.id);
               const customerPrice = prices[product.omie_codigo_produto];
@@ -204,15 +240,11 @@ export function ProductItemForm({
                   <div className="flex items-center gap-2 mt-1.5">
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-muted-foreground">Qtd:</span>
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        min={1}
+                      <QuantidadeInput
                         value={qty}
-                        onFocus={e => e.target.select()}
-                        onChange={e => setQty(product.id, parseInt(e.target.value) || 1)}
-                        className="h-7 w-16 text-xs text-center"
+                        aria-label={`Quantidade de ${product.descricao}`}
+                        onCommit={v => setQty(product.id, v)}
+                        className="h-7 w-16 text-xs text-center [@media(pointer:coarse)]:h-11"
                       />
                     </div>
                     {ficha && (

@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import {
-  Send, Loader2, AlertCircle, Check, ChevronsUpDown, FileText, Calendar, CloudOff,
+  Loader2, AlertCircle, Check, ChevronsUpDown, Calendar,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { proximosDiasUteis } from '@/components/unified-order/dias-entrega';
@@ -32,9 +32,6 @@ interface CartSummaryBarProps {
   obenProductItems: ProductCartItem[];
   colacorProductItems: ProductCartItem[];
   serviceItems: ServiceCartItem[];
-  totalEstimated: number;
-  submitting: boolean;
-  vendedorDivergencias: string[];
   // Payment
   sortedFormasPagamentoOben: FormaPagamento[];
   sortedFormasPagamentoColacor: FormaPagamento[];
@@ -64,11 +61,8 @@ interface CartSummaryBarProps {
   // Ready by date
   readyByDate?: string;
   setReadyByDate?: (v: string) => void;
-  // Actions
-  onSubmit: () => void;
+  /** Só decide o texto do aviso de condição indisponível ("salve como orçamento"). */
   onSubmitQuote?: () => void;
-  /** Quando true, o botão vira "salvar rascunho" (vendedor offline). */
-  offline?: boolean;
 }
 
 function PaymentCombobox({
@@ -167,7 +161,6 @@ function PaymentCombobox({
 
 export function CartSummaryBar({
   obenProductItems, colacorProductItems, serviceItems,
-  submitting, vendedorDivergencias,
   sortedFormasPagamentoOben, sortedFormasPagamentoColacor,
   selectedParcelaOben, setSelectedParcelaOben,
   selectedParcelaColacor, setSelectedParcelaColacor,
@@ -178,9 +171,8 @@ export function CartSummaryBar({
   ordemCompra, setOrdemCompra, isOrdemCompraCustomer,
   readyByDate, setReadyByDate,
   notes, setNotes,
-  onSubmit, onSubmitQuote, offline = false,
+  onSubmitQuote,
 }: CartSummaryBarProps) {
-  const hasOnlyProducts = (obenProductItems.length > 0 || colacorProductItems.length > 0) && serviceItems.length === 0;
   // Guard money-path (espelha submitOrder/submitQuote): produto a preço ≤ 0 barra o envio
   // na UI antes do clique — defense-in-depth + feedback imediato (o item fica destacado no
   // carrinho). Serviço de afiação não entra (preço 0 = "a orçar" legítimo).
@@ -199,7 +191,6 @@ export function CartSummaryBar({
     ]),
     [obenProductItems.length, colacorProductItems.length, estadoFormasOben, estadoFormasColacor],
   );
-  const disableSubmit = submitting || serviceItems.some(s => !s.servico) || vendedorDivergencias.length > 0 || hasInvalidPrice || condicoesBloqueantes.length > 0;
 
   // B3 (rodada 2): próximos 5 dias úteis a partir de hoje — nunca um dia que já passou.
   const diasEntrega = useMemo(() => proximosDiasUteis(new Date()), []);
@@ -330,26 +321,8 @@ export function CartSummaryBar({
               {onSubmitQuote && ' Você pode salvar como orçamento e enviar quando o Omie voltar.'}
             </p>
           )}
-          <Button className="w-full gap-2" onClick={onSubmit} disabled={disableSubmit}>
-            {submitting ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : offline ? (
-              <CloudOff className="w-4 h-4" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
-            {offline ? 'Sem conexão — salvar rascunho' : 'Enviar pedido'}
-            {!offline && (() => {
-              const count = (obenProductItems.length > 0 ? 1 : 0) + (colacorProductItems.length > 0 ? 1 : 0) + (serviceItems.length > 0 ? 1 : 0);
-              return count > 1 ? <span className="text-[10px] opacity-70">({count} pedidos)</span> : null;
-            })()}
-          </Button>
-          {hasOnlyProducts && onSubmitQuote && (
-            <Button variant="outline" className="w-full gap-2" onClick={onSubmitQuote} disabled={submitting || hasInvalidPrice}>
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-              Salvar como Orçamento
-            </Button>
-          )}
+          {/* C1/C2 (rodada 2): o Enviar, o Orçamento e o total moraram aqui; agora ficam na
+              BarraEnvioPedido, presa ao fim da tela — os avisos acima continuam junto dos campos. */}
         </CardContent>
       </Card>
 
