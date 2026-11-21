@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useCompany } from '@/contexts/CompanyContext';
 import { hojeSP, addDias, inicioMes, periodoMesAnterior } from '@/lib/dashboard/sp-date';
 import { somarReceita, contarVendedoresComPedido, variacaoPct } from '@/lib/dashboard/team-kpis';
-import { fetchPedidosMTD } from '@/lib/dashboard/fetch-pedidos-mtd';
+import { fetchPedidosMTD, fetchPedidosMTDComVendedor } from '@/lib/dashboard/fetch-pedidos-mtd';
 
 export interface TeamKpis {
   receitaHoje: number;
@@ -37,8 +37,9 @@ export function useTeamKpis() {
       const prior = periodoMesAnterior(hoje); // mesmo período do mês passado, p/ trend MoM
 
       const [orders, ordersAnterior] = await Promise.all([
-        // Receita do mês paginada (deriva hoje + mês); lança em erro (money honesto, não R$0).
-        fetchPedidosMTD(selection, mesInicio, amanha),
+        // Receita do mês paginada (deriva hoje + mês) + vendedor do Omie de cada pedido (RPC — a
+        // coluna é fechada para authenticated); lança em erro (money honesto, não R$0).
+        fetchPedidosMTDComVendedor(selection, mesInicio, amanha),
         // Mesmo período do mês passado (trend MoM); também paginado + lança em erro.
         fetchPedidosMTD(selection, prior.de, prior.ate),
       ]);
