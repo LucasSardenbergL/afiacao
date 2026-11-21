@@ -14,7 +14,7 @@ class Indeterminada extends Error {}
 function cadastro(codigo: number, vendedor: number | null, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     codigo_cliente_omie: codigo, nome_fantasia: `CLI ${codigo}`, razao_social: "X", info: { dAlt: "01/01/2026" },
-    endereco: "RUA A", endereco_numero: "10", bairro: "CENTRO", cidade: "ITAUNA (MG)", estado: "MG", cep: "35680-000",
+    endereco: "RUA A", endereco_numero: "10", bairro: "CENTRO", cidade: "ITAUNA (MG)", estado: "MG", cep: "35680-000", email: "a@b.com", tags: [{ tag: "Cliente" }],
     recomendacoes: { codigo_transportadora: 77, gerar_boletos: "N", ...(vendedor === null ? {} : { codigo_vendedor: vendedor }) },
     ...extra,
   };
@@ -61,6 +61,8 @@ function montar(c: Cenario) {
       if (["endereco", "endereco_numero", "bairro", "cidade", "estado", "cep"].some((k) => typeof payload[k] !== "string" || payload[k] === "")) {
         return { corpo: null, fault: "ERROR: É obrigatório o preenchimento do endereço (Endereço, Número, Bairro, Cidade, Estado e CEP)." };
       }
+      if (typeof payload.email !== "string" || payload.email === "") return { corpo: null, fault: "ERROR: É obrigatório o preenchimento do e-mail." };
+      if ("tags" in payload || "info" in payload) throw new Error("payload levou lista/objeto do cadastro");
       const r = c.aoAlterar ? c.aoAlterar(payload, atual) : { ...atual, recomendacoes: payload.recomendacoes };
       if (r === "indeterminada") throw new Indeterminada("sem desfecho");
       if ("fault" in r && typeof r.fault === "string") {
@@ -370,14 +372,14 @@ Deno.test("v1.2: cadastro com endereço incompleto no Omie → 'precondicao_falh
   }
 });
 
-Deno.test("v1.2: o payload enviado ao Omie leva o bloco de endereço EXATAMENTE como lido", async () => {
+Deno.test("v1.3: o payload leva os escalares EXATAMENTE como lidos (endereço, e-mail…) e nenhuma lista/objeto", async () => {
   const omie = new Map([[1, cadastro(1, TATY_OBEN, { estado: "SC", cidade: "JOINVILLE (SC)", cep: "89201-000" })]]);
   const enviados: Record<string, unknown>[] = [];
   const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return { ...atual, recomendacoes: payload.recomendacoes }; } });
   const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
   igual(r.itens[0].status, "verificado", "status");
   igual(["endereco", "endereco_numero", "bairro", "cidade", "estado", "cep"].map((k) => enviados[0][k]), ["RUA A", "10", "CENTRO", "JOINVILLE (SC)", "SC", "89201-000"], "endereço do lido");
-  igual(Object.keys(enviados[0]).sort(), ["bairro", "cep", "cidade", "codigo_cliente_omie", "endereco", "endereco_numero", "estado", "recomendacoes"], "nada além do endereço e das recomendações");
+  igual(Object.keys(enviados[0]).sort(), ["bairro", "cep", "cidade", "codigo_cliente_omie", "email", "endereco", "endereco_numero", "estado", "nome_fantasia", "razao_social", "recomendacoes"], "escalares como lidos + recomendações; nada de info/tags");
 });
 
 Deno.test("Codex v1.1 P2: verificar que acha 'divergente' PARA (parou preenchido, fim=false), não anuncia fim", async () => {
@@ -390,4 +392,12 @@ Deno.test("Codex v1.1 P2: verificar que acha 'divergente' PARA (parou preenchido
   const v = await processarBloco(params({ modo: "verificar", execucao_id: "00000000-0000-4000-8000-000000000001" }), m.d, OPC);
   igual(v.itens.map((i) => i.status), ["divergente"], "divergente");
   igual([v.parou, v.fim], ["cadastro divergente no cliente 1", false], "para o operador");
+});
+
+Deno.test("v1.3: cadastro SEM e-mail na conta que exige → Omie recusa, 'erro_omie' provado (nada gravado), bloco segue", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, { email: "" })], [2, cadastro(2, TATY_OBEN)]]);
+  const { d } = montar({ omie, candidatos: [cand(1), cand(2)] });
+  const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  igual(r.itens.map((i) => [i.omie_codigo_cliente, i.status]), [[1, "erro_omie"], [2, "verificado"]], "status");
+  igual(omie.get(1)!.recomendacoes, cadastro(1, TATY_OBEN).recomendacoes, "cliente 1 intacto");
 });
