@@ -5,6 +5,7 @@ import {
   decidir,
   hashCadastro,
   lerParametros,
+  blocosPreenchidos,
   enderecoFaltando,
   payloadAlterar,
   textoParaHash,
@@ -49,10 +50,11 @@ Deno.test("vendedorDoCadastro: 0/ausente/lixo = null, string numérica aceita", 
   igual(vendedorDoCadastro({ recomendacoes: { codigo_vendedor: "12a" } }), null, "string lixo");
 });
 
-Deno.test("payloadAlterar: recomendacoes inteiro, só o vendedor muda, nada fiscal vai", () => {
+Deno.test("payloadAlterar: recomendacoes inteiro, só o vendedor muda; escalares voltam como lidos, sem info/tags", () => {
   const p = payloadAlterar(CAD, 8689670842);
   igual(p, {
     codigo_cliente_omie: 8689681368,
+    razao_social: "X LTDA",
     endereco: "RUA A", endereco_numero: "10", bairro: "CENTRO", cidade: "ITAUNA (MG)", estado: "MG", cep: "35680-000",
     recomendacoes: { codigo_transportadora: 8689697767, codigo_vendedor: 8689670842, gerar_boletos: "N" },
   }, "payload");
@@ -108,7 +110,7 @@ Deno.test("lerParametros verificar: exige execucao_id", () => {
   igual(lerParametros({ modo: "verificar", lote: "saida_vendedora", conta: "oben", execucao_id: "33f59dc7-0000-4000-8000-000000000001" }).ok, true, "com id");
 });
 
-Deno.test("v1.2 payloadAlterar: bloco de endereço inteiro como lido; qualquer campo vazio = null", () => {
+Deno.test("v1.2/v1.3 payloadAlterar: endereço vazio = null; payload = escalares como lidos", () => {
   for (const k of ["endereco", "endereco_numero", "bairro", "cidade", "estado", "cep"]) {
     igual(payloadAlterar({ ...CAD, [k]: "" }, 1), null, `${k} vazio`);
     igual(payloadAlterar({ ...CAD, [k]: "  " }, 1), null, `${k} em branco`);
@@ -116,6 +118,11 @@ Deno.test("v1.2 payloadAlterar: bloco de endereço inteiro como lido; qualquer c
     igual(payloadAlterar(sem, 1), null, `sem ${k}`);
   }
   igual(enderecoFaltando({ ...CAD, bairro: "", cep: 0 }), ["bairro", "cep"], "lista o que falta");
-  igual(Object.keys(payloadAlterar({ ...CAD, complemento: "SALA 2", telefone1_numero: "9" }, 1)!).sort(),
-    ["bairro", "cep", "cidade", "codigo_cliente_omie", "endereco", "endereco_numero", "estado", "recomendacoes"], "nada fora do bloco vai");
+  const p = payloadAlterar({ ...CAD, complemento: "SALA 2", email: "x@y.com", inativo: "N", valor_limite_credito: 0, bloq: true, nan: NaN, nada: null, dadosBancarios: { banco: "1" }, separar_endereco: "S", pesquisar_cep: "S" }, 1)!;
+  igual(Object.keys(p).sort(), ["bairro", "bloq", "cep", "cidade", "codigo_cliente_omie", "complemento", "email", "endereco", "endereco_numero", "estado", "inativo", "razao_social", "recomendacoes", "valor_limite_credito"], "v1.3: só escalares + recomendações (sem info/tags/objetos/null/NaN)");
+  igual([p.email, p.complemento, p.valor_limite_credito, p.bloq], ["x@y.com", "SALA 2", 0, true], "valores como lidos");
+});
+
+Deno.test("v1.3 blocosPreenchidos: lista só listas/objetos NÃO vazios, fora info/recomendacoes", () => {
+  igual(blocosPreenchidos({ ...CAD, caracteristicas: [], enderecoEntrega: { entEndereco: "R" }, dadosBancarios: {} }), ["enderecoEntrega", "tags"], "blocos");
 });

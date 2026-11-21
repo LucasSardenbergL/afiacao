@@ -160,12 +160,15 @@ export function recomendacoesDe(cad: Record<string, unknown>): Record<string, un
 }
 
 /**
- * Bloco de endereço que o AlterarCliente do Omie EXIGE em toda alteração, mesmo trocando só o vendedor. Medido nos
- * canários de 2026-11-21: sem nada de endereço → "É obrigatório o preenchimento do endereço (Estado)"; só com
- * `estado` → "... (Endereço, Número, Bairro, Cidade, Estado e CEP)". Esses campos vão de volta EXATAMENTE como o
- * ConsultarCliente devolveu; o hash do cadastro na verificação prova que nada mudou.
- * Risco aceito (Codex v1.1 P2, agora forçado pelo Omie): uma correção de endereço feita por alguém na janela de ~1s
- * entre o Consultar e o Alterar seria desfeita sem o hash acusar.
+ * O AlterarCliente do Omie valida os campos OBRIGATÓRIOS da conta contra o PAYLOAD (não contra o cadastro gravado).
+ * Medido nos canários de 2026-11-21, um campo por vez: sem endereço → "(Estado)"; só estado → "(Endereço, Número,
+ * Bairro, Cidade, Estado e CEP)"; com o endereço → "É obrigatório o preenchimento do e-mail". Por isso o payload leva
+ * TODOS os campos ESCALARES (texto/número/booleano) do cadastro EXATAMENTE como o ConsultarCliente devolveu, mais
+ * `recomendacoes` com só o vendedor trocado. Listas e objetos (tags, caracteristicas, dadosBancarios,
+ * enderecoEntrega, info…) NÃO vão: no Omie eles têm semântica de substituição — omitidos, ficam como estão.
+ * O hash do cadastro inteiro na verificação prova que nada além do vendedor mudou.
+ * Risco aceito (Codex v1.1 P2, forçado pelo Omie): edição concorrente de um desses campos na janela de ~1s entre o
+ * Consultar e o Alterar seria desfeita sem o hash acusar.
  */
 const CAMPOS_ENDERECO = ["endereco", "endereco_numero", "bairro", "cidade", "estado", "cep"] as const;
 
@@ -174,14 +177,30 @@ export function enderecoFaltando(cad: Record<string, unknown>): string[] {
   return CAMPOS_ENDERECO.filter((k) => typeof cad[k] !== "string" || (cad[k] as string).trim() === "");
 }
 
+/** Escalares que são INSTRUÇÃO ao Omie (processar o endereço), não dado do cadastro — nunca reenviar (Codex v1.3 P2). */
+const INSTRUCOES = new Set(["separar_endereco", "pesquisar_cep"]);
+
+/** Listas/objetos preenchidos no cadastro (fora `info`/`recomendacoes`): o que o payload OMITE e o Omie deve preservar. */
+export function blocosPreenchidos(cad: Record<string, unknown>): string[] {
+  return Object.entries(cad)
+    .filter(([k, v]) => k !== "info" && k !== "recomendacoes" && v !== null && typeof v === "object" &&
+      (Array.isArray(v) ? v.length > 0 : Object.keys(v as object).length > 0))
+    .map(([k]) => k).sort();
+}
+
+function ehEscalar(v: unknown): boolean {
+  return typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
+}
+
 /** Payload do AlterarCliente, ou `null` se o endereço lido está incompleto (o chamador recusa sem escrever). */
 export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Record<string, unknown> | null {
   const codigo = cad.codigo_cliente_omie;
   if (!ehInteiroPositivo(codigo)) throw new Error("cadastro sem codigo_cliente_omie");
   if (enderecoFaltando(cad).length > 0) return null;
   const rec = cad.recomendacoes && typeof cad.recomendacoes === "object" ? cad.recomendacoes as Record<string, unknown> : {};
-  const p: Record<string, unknown> = { codigo_cliente_omie: codigo };
-  for (const k of CAMPOS_ENDERECO) p[k] = cad[k];
+  const p: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(cad)) if (ehEscalar(v) && !INSTRUCOES.has(k)) p[k] = v;
+  p.codigo_cliente_omie = codigo;
   p.recomendacoes = { ...rec, codigo_vendedor: alvo };
   return p;
 }
