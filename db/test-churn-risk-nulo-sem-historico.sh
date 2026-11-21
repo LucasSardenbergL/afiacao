@@ -98,7 +98,7 @@ case "${SABOTAGEM:-}" in
   guard_prioridade_some)  sab 's/IF v_sem_prioridade > 0 THEN/IF false THEN/' ;;
   trigger_sem_excecao)    sab 's/AND NOT (NEW.churn_risk IS NULL/AND NOT (false/' ;;
   trigger_ignora_pedido)  sab 's/                                AND so.deleted_at IS NULL$/                                AND false/' ;;
-  trigger_ignora_universo) sab "s/                                AND so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')));/                                )));/" ;;
+  trigger_ignora_universo) sab "s/                                AND so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')));/                                ));/" ;;
   trigger_ignora_status_novo) sab "s/AND NEW.sales_history_status IS NOT DISTINCT FROM 'sem_historico'\$/AND true/" ;;
   sem_fencing)            sab 's/  IF p_run_id IS NOT NULL THEN/  IF false THEN/' ;;
   intervalo_sem_preservar) sab 's/CASE WHEN u.tem_avg_repurchase_interval THEN u.avg_repurchase_interval ELSE f.avg_repurchase_interval END/u.avg_repurchase_interval/' ;;
