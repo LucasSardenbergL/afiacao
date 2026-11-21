@@ -243,15 +243,14 @@ function analisarOfx(bytes: Uint8Array): ResultadoParse {
           throw new Recusa('data_invalida', `SALDO ANTERIOR fora da vespera do DTSTART (${data}, esperado ${vespera})`);
         }
         saldoAnterior = valor;
-      } else if (rotulo === ROTULO_SALDO_DIA) {
+      } else {
+        // rotuloDeSaldo só devolve a allowlist: aqui é SALDO DIA.
         if (data < periodoInicio || data > periodoFim) {
           throw new Recusa('data_invalida', `SALDO DIA fora do periodo (${data} em ${periodoInicio}..${periodoFim})`);
         }
         if (saldosDia.has(data)) throw new Recusa('formato_desconhecido', `mais de um SALDO DIA em ${data}`);
         saldosDia.set(data, valor);
         posSaldoDia.set(data, pos);
-      } else {
-        throw new Recusa('formato_desconhecido', `rotulo SALDO desconhecido: ${rotulo.slice(0, 40)}`);
       }
       continue;
     }
