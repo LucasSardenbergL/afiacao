@@ -231,6 +231,7 @@ export function fecha(inicial: number, linhas: LinhaExtrato[], final: number): {
   - `DTSTART`/`DTEND` → período (8 primeiros dígitos). `DTEND` exclusivo à meia-noite vira o dia anterior.
   - `STMTTRN`: `TRNAMT` < 0 → `D`; `FITID` → `idBancario`; `CHECKNUM`/`REFNUM` → `documento`; `MEMO`/`NAME` → `descricao`.
   - `LEDGERBAL/BALAMT` → `saldoFinalCentavos`, com sinal. `saldoInicialCentavos` = `null` (decisão 4).
+  - **Revisto pela T0 (v2, R22–R26):** ver o apêndice "Task 0 medida". O `saldoInicialCentavos = null` deixou de ser regra: no Bankline ele vem do `SALDO ANTERIOR` do arquivo.
   - `TRNAMT` = 0 → `valor_invalido`.
 
 - [ ] **Step 1: Testes vermelhos:**
@@ -508,3 +509,30 @@ Dia sem linha na saída = **sem dado**, não "R$0": a RPC não deve gerar série
 8. As 4 baixas de título `ATRASADO`/`CANCELADO` são mesmo canceladas? Há cancelada-e-refeita no período conferido?
 9. Depósito do caixa: entra no extrato como um crédito único que corresponde a uma TRAR, ou a várias baixas em `CX`?
 10. Qual a idade mínima de um dia para o lado débito ser considerado "fechado" no Omie?
+
+## Apêndice — Task 0 medida: parser OFX v2 no layout real do Bankline (R22–R26)
+
+A T0 mediu os dois OFX reais da Oben (só agregados, sem conteúdo no repo). Os dois eram recusados (`BRANCHID ausente`) e, atrás disso, as linhas de saldo virariam 29 lançamentos fabricados. Decisões, já implementadas em `parser-ofx.ts` (e no espelho da edge, v1.2):
+
+- **R22, sem BRANCHID:** com BANKID 341/0341 e ACCTID de exatamente 10 dígitos, agência = 4 primeiros e conta com DV = 6 restantes. Qualquer outra forma → `campo_ausente`. Um corte errado vira `conta_divergente` na RPC. Conferido em prod que as 3 contas cadastradas têm agência de 4 e conta de 6 dígitos.
+- **R23, linhas de SALDO:** allowlist exata, já normalizada: `SALDO ANTERIOR` e `SALDO TOTAL DISPONIVEL DIA` (o rótulo real; "SALDO DIA" no briefing é abreviação). Qualquer outra descrição começando com `SALDO` → `formato_desconhecido`.
+  - O `SALDO ANTERIOR` precisa ser único e datado de DTSTART−1. Vira `saldoInicialCentavos`.
+  - O `SALDO DIA` precisa ser único por dia, cair dentro do período e aparecer em todo dia com movimento e só nele. Senão, recusa.
+  - Encadeamento obrigatório: anterior + Σ do dia = SALDO DIA de cada dia (`valor_invalido` se não fechar). O saldo final é o último SALDO DIA.
+  - SALDO DIA sem SALDO ANTERIOR → `campo_ausente`.
+- **R24, LEDGERBAL:** o Bankline manda o saldo de HOJE (DTASOF = DTSERVER). Ele só vale como saldo final quando o DTASOF cai em `periodoFim`. Com SALDO DIA presente, o SALDO DIA manda. Sem SALDO DIA e com DTASOF fora do fim → `campo_ausente`.
+- **R25, encoding:** se os bytes forem UTF-8 válido, decodifica como UTF-8. Senão, usa o 1252 declarado.
+- **R26, chave:** `estrategia_chave` segue `tupla`, porque o FITID é posicional e houve colisão entre exportações. CHECKNUM == FITID → `documento = null`. O `idBancario` segue sendo o FITID, só como informação.
+- **Efeito:** o arquivo do Bankline se ancora sozinho (`saldo_inicial_centavos` presente → a RPC fecha em centavos e confere a continuidade). A âncora manual vira só conferência externa.
+- **Endurecimento pela 2ª opinião (Codex, REPROVA → corrigido):**
+  - Arquivo sem `</BANKTRANLIST>`, `</STMTRS>` ou `</OFX>` → recusa por truncamento. Com SALDO DIA, o LEDGERBAL, que vem depois da lista, deixou de proteger contra arquivo cortado.
+  - O rótulo de SALDO é procurado como palavra no MEMO **e** no NAME. MEMO e NAME divergentes, ou com prefixo, → recusa.
+  - Mais de um LEDGERBAL → recusa.
+  - O SALDO DIA precisa ser a última linha do dia e ter TRNTYPE coerente com o sinal.
+  - O DTASOF à meia-noite só vale no instante do DTEND exclusivo.
+  - Quando o LEDGERBAL é do mesmo corte do fim do período, ele precisa bater com o SALDO DIA.
+  - REFNUM == FITID também anula o documento.
+  - O corte 4+6 só vale com o BANKID cru `341`/`0341`.
+- **Risco residual aceito (registrado no PR):**
+  - Um 1252 legítimo que por acaso seja UTF-8 válido seria lido como UTF-8.
+  - Na sobreposição, sem documento estável, a troca de uma linha por outra de mesmo valor e mesmo dia não é vista pela tupla. A descrição fica fora da chave por desenho da RPC; é follow-up, não muda neste PR.

@@ -23,7 +23,13 @@ export const respostaSonda = criarRespostaSonda("banco-extrato-importar");
 // `formato_desconhecido/cnab240_ainda_nao_suportado` até existir o parser (Task 5).
 //
 // v1.1: o parser OFX recusa DTEND anterior a DTSTART (`data_invalida`) em vez de deixar a RPC levantar 22023.
-export const VERSAO = "v1.1-extrato-ofx";
+//
+// v1.2: parser OFX v2 no layout REAL do Itaú Bankline (T0): sem BRANCHID (ACCTID = agência 4 + conta 6),
+// linhas SALDO ANTERIOR / SALDO TOTAL DISPONÍVEL DIA viram saldo inicial/final (encadeamento diário
+// obrigatório, nunca lançamento), LEDGERBAL só no fim do período, UTF-8 real vence o 1252 declarado e
+// documento null quando CHECKNUM == FITID. O arquivo passa a se ancorar sozinho (saldo_inicial presente).
+// Endurecido pela 2ª opinião: truncamento, rótulo em NAME, LEDGERBAL duplicado/meia-noite/divergente → recusa.
+export const VERSAO = "v1.2-extrato-ofx-bankline";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

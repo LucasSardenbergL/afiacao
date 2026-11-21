@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseOfx } from '../parser-ofx.ts';
+import { fecha } from '../nucleo.ts';
 import type { ResultadoParse } from '../nucleo.ts';
 
 const FIX = resolve(process.cwd(), 'src/lib/financeiro/extrato/__tests__/fixtures');
@@ -143,11 +144,12 @@ describe('parseOfx — recusas', () => {
 
 describe('parseOfx — variações', () => {
   it('DTEND só data ou hora diferente de 00:00:00 -> o próprio dia', () => {
-    expect(ok(parseOfx(cp1252(troca(SGML, '20261120000000[-3:BRT]\n<STMTTRN>', '20261120\n<STMTTRN>')))).periodoFim).toBe('2026-11-20');
-    expect(ok(parseOfx(cp1252(troca(SGML, '20261120000000[-3:BRT]\n<STMTTRN>', '20261120235959[-3:BRT]\n<STMTTRN>')))).periodoFim).toBe('2026-11-20');
+    const asofFim = (s: string) => troca(s, '<DTASOF>20261120000000', '<DTASOF>20261120235959');
+    expect(ok(parseOfx(cp1252(asofFim(troca(SGML, '20261120000000[-3:BRT]\n<STMTTRN>', '20261120\n<STMTTRN>'))))).periodoFim).toBe('2026-11-20');
+    expect(ok(parseOfx(cp1252(asofFim(troca(SGML, '20261120000000[-3:BRT]\n<STMTTRN>', '20261120235959[-3:BRT]\n<STMTTRN>'))))).periodoFim).toBe('2026-11-20');
   });
   it('DTEND 00:00:00 no dia 1º volta ao mês anterior', () => {
-    const s = troca(troca(SGML, '20261120000000[-3:BRT]\n<STMTTRN>', '20261201000000[-3:BRT]\n<STMTTRN>'), '20261119000000[-3:BRT]\n<TRNAMT>', '20261130000000[-3:BRT]\n<TRNAMT>');
+    const s = troca(troca(troca(SGML, '20261120000000[-3:BRT]\n<STMTTRN>', '20261201000000[-3:BRT]\n<STMTTRN>'), '20261119000000[-3:BRT]\n<TRNAMT>', '20261130000000[-3:BRT]\n<TRNAMT>'), '<DTASOF>20261120000000', '<DTASOF>20261201000000');
     expect(ok(parseOfx(cp1252(s))).periodoFim).toBe('2026-11-30');
   });
   it('DTEND (00:00 exclusivo) que vira véspera do DTSTART -> data_invalida, mesmo sem lançamentos (export de um dia só)', () => {
@@ -161,7 +163,7 @@ describe('parseOfx — variações', () => {
     expect(recusa(parseOfx(cp1252(umDia)))).toBe('data_invalida');
   });
   it('DTEND == DTSTART (hora diferente de 00:00:00) é um dia só válido', () => {
-    const s = troca(SGML, '<DTEND>20261120000000[-3:BRT]', '<DTEND>20261101235959[-3:BRT]');
+    const s = troca(troca(SGML, '<DTEND>20261120000000[-3:BRT]', '<DTEND>20261101235959[-3:BRT]'), '<DTASOF>20261120000000', '<DTASOF>20261101235959');
     const semLanc = s.replace(/<STMTTRN>[\s\S]*?<\/STMTTRN>\n/g, '');
     const e = ok(parseOfx(cp1252(semLanc)));
     expect(e.periodoInicio).toBe('2026-11-01');
@@ -194,5 +196,163 @@ describe('parseOfx — variações', () => {
   it('AVAILBAL não é confundido com LEDGERBAL', () => {
     const s = troca(SGML, '</LEDGERBAL>', '</LEDGERBAL>\n<AVAILBAL>\n<BALAMT>999.99\n</AVAILBAL>');
     expect(ok(parseOfx(cp1252(s))).saldoFinalCentavos).toBe(-25010);
+  });
+});
+
+// Layout REAL do Bankline (T0, só agregados): sem BRANCHID, ACCTID = agência(4)+conta(6), linhas
+// SALDO ANTERIOR / SALDO TOTAL DISPONÍVEL DIA como STMTTRN, LEDGERBAL de HOJE, cabeçalho 1252 com
+// bytes UTF-8, CHECKNUM = FITID posicional. Fixture sintética (agência 0000, conta 000000).
+const BL = texto('itau-bankline.ofx');
+const SD = 'SALDO TOTAL DISPONÍVEL DIA';
+function recusaCom(r: ResultadoParse, motivo: string, marca: string) {
+  if (r.ok) throw new Error(`esperava recusa ${motivo}/${marca}, veio ok`);
+  expect(r.motivo).toBe(motivo);
+  expect(r.detalhe).toContain(marca); // a MARCA do ramo, não "recusou algo"
+}
+const blTrn = (data: string, valor: string, fitid: string, memo: string) =>
+  `<STMTTRN>\n<TRNTYPE>${valor.startsWith('-') ? 'DEBIT' : 'CREDIT'}\n<DTPOSTED>${data}100000[-03:EST]\n<TRNAMT>${valor}\n<FITID>${fitid}\n<CHECKNUM>${fitid}\n<MEMO>${memo}\n</STMTTRN>\n`;
+const semSaldos = (s: string) => s.replace(/<STMTTRN>\n(?:(?!<\/STMTTRN>)[\s\S])*<MEMO>SALDO[^\n]*\n<\/STMTTRN>\n/g, '');
+
+describe('parseOfx — layout real Itaú Bankline (R22–R26)', () => {
+  // parse por teste (não no describe): uma sabotagem derruba o teste da camada, não a coleta inteira
+  const E = () => ok(parseOfx(utf8(BL)));
+  it('R22: sem BRANCHID, BANKID 0341 e ACCTID de 10 dígitos -> agência 4 + conta 6', () => {
+    expect(E().banco).toBe('0341');
+    expect(E().agencia).toBe('0000');
+    expect(E().conta).toBe('000000');
+    expect(E().periodoInicio).toBe('2026-10-01');
+    expect(E().periodoFim).toBe('2026-10-05');
+    expect(E().geradoEm).toBe('2026-11-21T10:00:00-03:00');
+  });
+  it('R22: corte vale para BANKID 341 sem zero à esquerda', () => {
+    expect(ok(parseOfx(utf8(troca(BL, '<BANKID>0341', '<BANKID>341')))).conta).toBe('000000');
+  });
+  it('R23: linhas de SALDO não viram lançamento; ancora sozinho (inicial + Σ = final)', () => {
+    expect(E().linhas.map((l) => l.descricao)).toEqual(['TAR PACOTE', 'PIX RECEBIDO', 'BOLETO PAGO', 'TED RECEBIDA']);
+    expect(E().saldoInicialCentavos).toBe(100000);
+    expect(E().saldoFinalCentavos).toBe(5025); // último SALDO DIA, NÃO o LEDGERBAL de hoje (99999)
+    expect(fecha(E().saldoInicialCentavos ?? NaN, E().linhas, E().saldoFinalCentavos).fecha).toBe(true);
+  });
+  it('R26: documento null quando CHECKNUM == FITID; idBancario segue o FITID', () => {
+    expect(E().linhas.every((l) => l.documento === null)).toBe(true);
+    expect(E().linhas[0].idBancario).toBe('20261001001');
+    const s = troca(BL, '<CHECKNUM>20261001001', '<CHECKNUM>777');
+    expect(ok(parseOfx(utf8(s))).linhas[0].documento).toBe('777');
+  });
+  it('R25: bytes UTF-8 com cabeçalho 1252 decodificam como UTF-8; 1252 de verdade continua aceito', () => {
+    expect(ok(parseOfx(cp1252(BL))).saldoFinalCentavos).toBe(5025); // 'Í' = 0xCD, UTF-8 inválido -> 1252
+  });
+  it('R23: SALDO DIA que não fecha -> valor_invalido', () => {
+    recusaCom(parseOfx(utf8(troca(BL, '<TRNAMT>850.25', '<TRNAMT>850.26'))), 'valor_invalido', 'SALDO DIA nao fecha');
+    // o último dia também é conferido (não só o saldo final contra o inicial)
+    recusaCom(parseOfx(utf8(troca(BL, '<TRNAMT>-49.75', '<TRNAMT>-49.76'))), 'valor_invalido', 'SALDO DIA nao fecha');
+  });
+  it('R23: rótulo SALDO fora da allowlist -> formato_desconhecido', () => {
+    recusaCom(parseOfx(utf8(troca(BL, '<MEMO>TED RECEBIDA', '<MEMO>SALDO APLIC AUT'))), 'formato_desconhecido', 'rotulo SALDO desconhecido');
+    recusaCom(parseOfx(utf8(troca(BL, `<MEMO>${SD}`, '<MEMO>SALDO DIA'))), 'formato_desconhecido', 'rotulo SALDO desconhecido');
+  });
+  it('R23: dois SALDO ANTERIOR -> formato_desconhecido', () => {
+    const extra = blTrn('20260930', '1000.00', '20260930002', 'SALDO ANTERIOR');
+    recusaCom(parseOfx(utf8(troca(BL, '</BANKTRANLIST>', `${extra}</BANKTRANLIST>`))), 'formato_desconhecido', 'mais de um SALDO ANTERIOR');
+  });
+  it('R23: SALDO ANTERIOR fora da véspera do DTSTART -> data_invalida', () => {
+    recusaCom(parseOfx(utf8(troca(BL, '<DTPOSTED>20260930', '<DTPOSTED>20260929'))), 'data_invalida', 'SALDO ANTERIOR fora da vespera');
+  });
+  it('R23: SALDO DIA em dia sem movimento ou fora do período -> recusa', () => {
+    const semMov = blTrn('20261004', '50.25', '20261004001', SD);
+    recusaCom(parseOfx(utf8(troca(BL, '</BANKTRANLIST>', `${semMov}</BANKTRANLIST>`))), 'formato_desconhecido', 'SALDO DIA em dia sem movimento');
+    const fora = blTrn('20261006', '50.25', '20261006001', SD);
+    recusaCom(parseOfx(utf8(troca(BL, '</BANKTRANLIST>', `${fora}</BANKTRANLIST>`))), 'data_invalida', 'SALDO DIA fora do periodo');
+  });
+  it('R23: dois SALDO DIA no mesmo dia, ou dia com movimento sem SALDO DIA -> formato_desconhecido', () => {
+    const dup = blTrn('20261005', '50.25', '20261005003', SD);
+    recusaCom(parseOfx(utf8(troca(BL, '</BANKTRANLIST>', `${dup}</BANKTRANLIST>`))), 'formato_desconhecido', 'mais de um SALDO DIA');
+    const semSd = BL.replace(blTrn('20261003', '-49.75', '20261003002', SD), '');
+    expect(semSd).not.toBe(BL);
+    recusaCom(parseOfx(utf8(semSd)), 'formato_desconhecido', 'dia com movimento sem SALDO DIA');
+  });
+  it('R23: SALDO DIA sem SALDO ANTERIOR -> campo_ausente', () => {
+    const s = BL.replace(blTrn('20260930', '1000.00', '20260930001', 'SALDO ANTERIOR'), '');
+    expect(s).not.toBe(BL);
+    recusaCom(parseOfx(utf8(s)), 'campo_ausente', 'SALDO ANTERIOR ausente');
+  });
+  it('R22: ACCTID de 9 ou 11 dígitos, não numérico, ou banco não Itaú sem BRANCHID -> campo_ausente', () => {
+    recusaCom(parseOfx(utf8(troca(BL, '<ACCTID>0000000000', '<ACCTID>000000000'))), 'campo_ausente', 'BRANCHID ausente');
+    recusaCom(parseOfx(utf8(troca(BL, '<ACCTID>0000000000', '<ACCTID>00000000000'))), 'campo_ausente', 'BRANCHID ausente');
+    recusaCom(parseOfx(utf8(troca(BL, '<ACCTID>0000000000', '<ACCTID>0000-000000'))), 'campo_ausente', 'BRANCHID ausente');
+    recusaCom(parseOfx(utf8(troca(BL, '<BANKID>0341', '<BANKID>0001'))), 'campo_ausente', 'BRANCHID ausente');
+    recusaCom(parseOfx(utf8(sem(BL, '<BANKID>0341\n'))), 'campo_ausente', 'BRANCHID ausente');
+  });
+  it('R24: sem SALDO DIA e LEDGERBAL fora do fim do período -> campo_ausente (nunca fabricar)', () => {
+    const s = semSaldos(BL);
+    expect(s).not.toContain('<MEMO>SALDO');
+    recusaCom(parseOfx(utf8(s)), 'campo_ausente', 'LEDGERBAL fora do fim do periodo');
+  });
+  it('R24: sem SALDO DIA e DTASOF no último dia -> LEDGERBAL é o saldo final; inicial null', () => {
+    const s = troca(semSaldos(BL), '<DTASOF>20261121100000', '<DTASOF>20261005100000');
+    const x = ok(parseOfx(utf8(s)));
+    expect(x.saldoFinalCentavos).toBe(99999);
+    expect(x.saldoInicialCentavos).toBeNull();
+  });
+  it('R24: com SALDO DIA presente, ele manda; LEDGERBAL de hoje é ignorado, ausente não faz falta', () => {
+    expect(E().saldoFinalCentavos).toBe(5025); // LEDGERBAL 999.99 de 21/11 não é comparável
+    expect(ok(parseOfx(utf8(BL.replace(/<LEDGERBAL>[\s\S]*<\/LEDGERBAL>\n/, '')))).saldoFinalCentavos).toBe(5025);
+  });
+  it('R24: LEDGERBAL do MESMO corte (fim do período) tem de concordar com o SALDO DIA', () => {
+    const noFim = troca(BL, '<DTASOF>20261121100000', '<DTASOF>20261005100000');
+    recusaCom(parseOfx(utf8(noFim)), 'valor_invalido', 'LEDGERBAL do fim do periodo diverge do SALDO DIA');
+    expect(ok(parseOfx(utf8(troca(noFim, '<BALAMT>999.99', '<BALAMT>50.25')))).saldoFinalCentavos).toBe(5025);
+  });
+  it('R24: DTASOF à meia-noite é ambíguo — só vale no instante do DTEND exclusivo', () => {
+    const base = semSaldos(BL);
+    recusaCom(parseOfx(utf8(troca(base, '<DTASOF>20261121100000', '<DTASOF>20261005000000'))), 'campo_ausente', 'LEDGERBAL fora do fim do periodo');
+    const excl = troca(troca(base, '<DTEND>20261005100000', '<DTEND>20261006000000'), '<DTASOF>20261121100000', '<DTASOF>20261006000000');
+    const x = ok(parseOfx(utf8(excl)));
+    expect(x.periodoFim).toBe('2026-10-05');
+    expect(x.saldoFinalCentavos).toBe(99999);
+  });
+  it('R24: LEDGERBAL sem DTASOF e sem SALDO DIA -> campo_ausente', () => {
+    recusaCom(parseOfx(utf8(sem(semSaldos(BL), '<DTASOF>20261121100000[-03:EST]\n'))), 'campo_ausente', 'DTASOF ausente');
+  });
+  it('saldo negativo e zero nas linhas de SALDO são valores reais', () => {
+    // -49.75 no dia 03 já é negativo; zera o dia 05 ajustando o movimento
+    const s = troca(troca(BL, '<TRNAMT>100.00', '<TRNAMT>49.75'), '<TRNAMT>50.25\n<FITID>20261005002', '<TRNAMT>0.00\n<FITID>20261005002');
+    expect(ok(parseOfx(utf8(s))).saldoFinalCentavos).toBe(0);
+  });
+});
+
+describe('parseOfx — achados da 2ª opinião (Codex)', () => {
+  it('arquivo truncado logo após um SALDO DIA -> formato_desconhecido (não fecha "certinho" com saldo velho)', () => {
+    const corte = BL.indexOf('<STMTTRN>\n<TRNTYPE>DEBIT\n<DTPOSTED>20261003');
+    expect(corte).toBeGreaterThan(0);
+    recusaCom(parseOfx(utf8(BL.slice(0, corte))), 'formato_desconhecido', 'arquivo truncado');
+  });
+  it('rótulo de SALDO no NAME com MEMO diferente, ou com prefixo -> formato_desconhecido', () => {
+    const noName = troca(BL, `<MEMO>${SD}\n</STMTTRN>`, `<MEMO>POSICAO\n<NAME>${SD}\n</STMTTRN>`);
+    recusaCom(parseOfx(utf8(noName)), 'formato_desconhecido', 'MEMO e NAME divergentes');
+    recusaCom(parseOfx(utf8(troca(BL, `<MEMO>${SD}`, `<MEMO>*** ${SD}`))), 'formato_desconhecido', 'rotulo SALDO desconhecido');
+    // rótulo só no NAME (sem MEMO) também é linha de saldo, não lançamento
+    const soName = troca(BL, `<MEMO>${SD}\n</STMTTRN>`, `<NAME>${SD}\n</STMTTRN>`);
+    expect(ok(parseOfx(utf8(soName))).linhas).toHaveLength(4);
+  });
+  it('mais de um LEDGERBAL -> formato_desconhecido (valor e data não se misturam entre blocos)', () => {
+    const dois = troca(BL, '</LEDGERBAL>', '</LEDGERBAL>\n<LEDGERBAL>\n<BALAMT>1.00\n<DTASOF>20261005100000[-03:EST]\n</LEDGERBAL>');
+    recusaCom(parseOfx(utf8(dois)), 'formato_desconhecido', 'mais de um LEDGERBAL');
+  });
+  it('REFNUM igual ao FITID também não vira documento', () => {
+    const s = troca(BL, '<CHECKNUM>20261001001', '<REFNUM>20261001001');
+    expect(ok(parseOfx(utf8(s))).linhas[0].documento).toBeNull();
+  });
+  it('movimento depois do SALDO DIA no mesmo dia -> formato_desconhecido', () => {
+    const tarde = blTrn('20261005', '0.01', '20261005003', 'TARIFA');
+    const s = troca(troca(BL, '</BANKTRANLIST>', `${tarde}</BANKTRANLIST>`), '<TRNAMT>100.00', '<TRNAMT>99.99');
+    recusaCom(parseOfx(utf8(s)), 'formato_desconhecido', 'movimento depois do SALDO DIA');
+  });
+  it('linha de SALDO com TRNTYPE incoerente com o sinal -> valor_invalido', () => {
+    const s = troca(BL, '<TRNTYPE>CREDIT\n<DTPOSTED>20261005100000[-03:EST]\n<TRNAMT>50.25', '<TRNTYPE>DEBIT\n<DTPOSTED>20261005100000[-03:EST]\n<TRNAMT>50.25');
+    recusaCom(parseOfx(utf8(s)), 'valor_invalido', 'TRNTYPE DEBIT incoerente');
+  });
+  it('BANKID que só vira 341 depois de tirar não-dígitos (34X1) não autoriza o corte -> campo_ausente', () => {
+    recusaCom(parseOfx(utf8(troca(BL, '<BANKID>0341', '<BANKID>34X1'))), 'campo_ausente', 'BRANCHID ausente');
   });
 });
