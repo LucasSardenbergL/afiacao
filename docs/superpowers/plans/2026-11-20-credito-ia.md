@@ -192,7 +192,7 @@
 - `credito_propor_limite(...)` — service_role (edge do PR 4). Calcula assinatura e versão-base no servidor.
 - `credito_aprovar_proposta(id, motivo)` / `credito_recusar_proposta(id, motivo)` — authenticated, gate `IF NOT (private.cap_credito_escrever(uid) AND <allowlist>)` → `42501`. Recusa proposta com versão-base ≠ vigente (`P0001 proposta_desatualizada`) ou assinatura ≠ atual (`grupo_mudou`).
 - `credito_autorizar_solicitacao(id, autorizar, motivo, validade_horas)` — authenticated, mesmo gate. Solicitar ≠ autorizar: a solicitação nasce no gate; a autorização só por aqui.
-- `credito_avaliar_reservar(pedido, company, código, revisão, valor, prazo_dias, solicitante)` — service_role. **Transação com `pg_advisory_xact_lock` por raiz** (também tomado pela aprovação de proposta), relê títulos + reservas ativas e decide:
+- `private.credito_avaliar_reservar(pedido, company, código, revisão, valor, prazo_dias, modo, solicitante)` — **núcleo sem grant a ninguém** (Codex desenho P1-3): o PR 5 expõe a RPC service_role que lê os valores DA REVISÃO (PR 3) e chama o núcleo. **Transação com `pg_advisory_xact_lock` por raiz** (também tomado pela aprovação de proposta), relê títulos + reservas ativas e decide:
   1. piso (`venda_gate_credito_grupo`) bloqueado → 🔴 `piso_vencido_60d` (autorização de limite **não** cobre o piso);
   2. raiz nula → 🟡 `sem_grupo|grupo_conflito`;
   3. reserva ativa da MESMA revisão → 🟢 `reserva_existente` (retry reusa);
@@ -202,7 +202,9 @@
   7. título aberto com saldo `NULL` → 🟡 `exposicao_indeterminada` (ausente ≠ zero);
   8. títulos + reservas ativas de OUTROS pedidos + valor > limite → 🟡 `estoura_limite`;
   9. senão 🟢 `dentro_limite` + reserva. Nova revisão do mesmo pedido: a reserva antiga vira `substituida` e a nova reserva `greatest(antiga, nova)` (redução só libera após confirmação do Omie — PR 5/6); 🟡 numa edição mantém a reserva antiga intacta.
-- `credito_reserva_encerrar(id, status, motivo)` — service_role; `transferida|liberada`. A transferência reserva→título com conferência de NF/parcelas (§9.2) é do PR 5.
+- ~~`credito_reserva_encerrar`~~ **removida** (Codex desenho P0-2): encerrar sem contrapartida apaga exposição. A transferência comprovada reserva→título, com residual de faturamento parcial, nasce no PR 5.
+- **Revisão pós-Codex (diff, 2026-11-21):** fecho de escrita/EXECUTE por **allowlist** (`aclexplode`; o default ACL de `public` dá INSERT/EXECUTE a `sandbox_exec_<ref>`, BYPASSRLS); piso e títulos lidos **depois** do lock; reservas somadas por par **ou** raiz; lastro da reserva só do limite vigente ou da autorização da mesma revisão; teto finito contra NaN/Infinity.
+- **Condições herdadas pelo PR 5 (ativação):** (a) o escritor de `omie_customer_account_map` toma o advisory lock das raízes afetadas (Codex diff P1-3: trocar a titularidade com reserva não commitada permite 2 reservas); (b) ordem entre revisões vem da revisão imutável do PR 3 (uma `r1` antiga autorizada tarde não pode substituir uma `r2` ativa); (c) frescor do sync, transferência reserva→título e carga dos PVs abertos.
 
 **Fora do PR 2 (declarado):** frescor/cobertura do sync por empresa no gate (§9.5) e transferência comprovada reserva→título (§9.2) → PR 5; parser de prazo e revisão imutável → PR 3; redução automática → PR 4/5; aprovação em lote → PR 4.
 
