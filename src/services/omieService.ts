@@ -39,8 +39,10 @@ interface OmieSyncResult {
   };
   /** v1.15: a OS já existia para este pedido (reenvio do mesmo checkout). */
   reconciliada?: boolean;
-  /** v1.15: a OS existente é o mesmo carrinho? `diverge`/`indeterminada` vêm com success:false. */
-  conferencia?: 'confere' | 'diverge' | 'indeterminada';
+  /** v1.15: a OS existente é o mesmo carrinho? `diverge` vem com success:false. */
+  conferencia?: 'confere' | 'diverge';
+  /** v1.15: `os_cancelada` = a OS deste pedido foi cancelada no Omie (pedido novo). */
+  motivo?: 'os_cancelada';
   error?: string;
 }
 

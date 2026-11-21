@@ -21,10 +21,14 @@ export interface MarcaOsAfiacao {
  *  item, mais forma de pagamento e entrega (vão na OS — trocar depois deixaria o comprovante
  *  diferente do Omie; Codex P1). Observação/foto não entram: mudá-las não justifica uma 2ª OS. */
 export function assinaturaServicosAfiacao(
-  itens: ReadonlyArray<{ userToolId: string; codigoServico: number | string | null | undefined; quantity: number }>,
+  itens: ReadonlyArray<{ userToolId: string; codigoServico: number | string | null | undefined; quantity: number; preco?: number | null }>,
   condicoes: { pagamento: string | null | undefined; entrega: string | null | undefined },
 ): string {
-  const linhas = itens.map(i => `${i.userToolId}:${i.codigoServico ?? '-'}:${i.quantity}`).sort().join('|');
+  // Preço em centavos (Codex P1 do follow-up): o atalho "já enviada" pulava a edge mesmo com o preço
+  // da afiação alterado — o comprovante sairia com um valor que a OS do Omie não tem. Marca antiga
+  // (sem preço) deixa de casar → afiacao_divergente: fail-closed, o vendedor confere no Omie.
+  const preco = (p: number | null | undefined) => (p === null || p === undefined || !Number.isFinite(p) ? '-' : String(Math.round(p * 100)));
+  const linhas = itens.map(i => `${i.userToolId}:${i.codigoServico ?? '-'}:${i.quantity}:${preco(i.preco)}`).sort().join('|');
   return `${linhas}#pg=${condicoes.pagamento ?? '-'}#ent=${condicoes.entrega ?? '-'}`;
 }
 export type CheckoutDecision = 'reuse' | 'new' | 'conflict';

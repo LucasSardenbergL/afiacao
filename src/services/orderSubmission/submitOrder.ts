@@ -601,6 +601,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   // outra (follow-up Codex do #4042).
   const assinaturaAfiacao = assinaturaServicosAfiacao(serviceItems.map(c => ({
     userToolId: c.userTool.id, codigoServico: c.servico?.omie_codigo_servico, quantity: c.quantity,
+    preco: getServicePrice(c) || 0,
   })), { pagamento: payment.afiacaoMethod, entrega: delivery.option });
   if (serviceItems.length > 0 && afiacaoJaEnviada && afiacaoJaEnviada.assinatura === assinaturaAfiacao) {
     results.push(afiacaoJaEnviada.numero ? `OS ${afiacaoJaEnviada.numero} (já enviada)` : 'OS Afiação (já enviada)');
@@ -670,24 +671,27 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         // Vendedor é por-conta: NUNCA cair no vendedor Oben (comissão errada). Ausente = null (edge tolera).
         customerCodigoVendedor: customer.codigo_vendedor_afiacao ?? null,
       };
+      let marcou = true;
       try {
-        aoIniciarOsAfiacao?.();
+        if (aoIniciarOsAfiacao) marcou = aoIniciarOsAfiacao() === true;
       } catch (persistErr: unknown) {
+        marcou = false;
         logger.error('Falha ao marcar a OS de Afiação como pendente no envelope', { stage: 'afiacao_pendente', error: persistErr });
+      }
+      if (!marcou) {
+        // Sem a marca gravada, um refresh confirmaria o pedido sem a OS: não envia (Codex P2).
+        throw new Error('Não foi possível registrar a tentativa da OS neste navegador — nada foi enviado ao Omie. Libere o armazenamento do navegador e reenvie.');
       }
       const result = await syncOrderToOmie(orderId, orderData, profileData, addressPayload, staffContext, assinaturaAfiacao);
       const numeroExistente = result.omie_os?.cNumOS ? ` ${result.omie_os.cNumOS}` : '';
-      if (!result.success && result.conferencia === 'diverge') {
+      if (!result.success && result.motivo === 'os_cancelada') {
+        results.push('OS Afiação (cancelada no Omie)');
+        errors.push({ step: 'afiacao_cancelada', message: result.error || `A OS de Afiação${numeroExistente} foi cancelada no Omie. Monte um pedido novo.` });
+      } else if (!result.success && result.conferencia === 'diverge') {
         results.push('OS Afiação (já no Omie com ferramentas diferentes)');
         errors.push({
           step: 'afiacao_divergente',
           message: `A OS de Afiação${numeroExistente} já foi criada no Omie numa tentativa anterior, com ferramentas ou condições diferentes do carrinho atual. Corrija direto no Omie — não reenvie.`,
-        });
-      } else if (!result.success && result.conferencia === 'indeterminada') {
-        results.push('OS Afiação (já no Omie — conferir)');
-        errors.push({
-          step: 'afiacao_inconferivel',
-          message: `A OS de Afiação${numeroExistente} já existe no Omie para este pedido, e não deu para conferir se é o mesmo carrinho. Confira no Omie antes de reenviar.`,
         });
       } else if (result.success) {
         results.push(result.reconciliada
@@ -702,7 +706,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         }
       } else {
         results.push('OS Afiação (pendente ERP)');
-        errors.push({ step: 'sync_os_omie', message: 'Falha ao sincronizar OS com Omie' });
+        errors.push({ step: 'sync_os_omie', message: result.error || 'Falha ao sincronizar OS com Omie' });
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Falha ao sincronizar OS com Omie';
@@ -794,7 +798,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       e.step === 'bloqueio_tint_oben' || e.step === 'bloqueio_atp_oben' ||
       e.step === 'bloqueio_desconhecido_oben' || e.step === 'bloqueio_desconhecido_colacor' ||
       e.step === 'pv_divergente_oben' || e.step === 'pv_divergente_colacor' ||
-      e.step === 'afiacao_divergente' || e.step === 'afiacao_inconferivel'),
+      e.step === 'afiacao_divergente' || e.step === 'afiacao_inconferivel' || e.step === 'afiacao_cancelada'),
     bloqueiosCredito,
     bloqueioAtp,
   };

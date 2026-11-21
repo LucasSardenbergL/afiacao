@@ -49,9 +49,10 @@ function loadCheckoutEnv(): CheckoutEnvelope | null {
   if (typeof localStorage === 'undefined') return null;
   try { const r = localStorage.getItem(CHECKOUT_ENV_KEY); return r ? JSON.parse(r) as CheckoutEnvelope : null; } catch { return null; }
 }
-function persistCheckoutEnv(e: CheckoutEnvelope | null) {
-  if (typeof localStorage === 'undefined') return;
-  try { if (e) localStorage.setItem(CHECKOUT_ENV_KEY, JSON.stringify(e)); else localStorage.removeItem(CHECKOUT_ENV_KEY); } catch { /* quota */ }
+/** true = gravado (ou não há storage — então também não há envelope velho para ressuscitar). */
+function persistCheckoutEnv(e: CheckoutEnvelope | null): boolean {
+  if (typeof localStorage === 'undefined') return true;
+  try { if (e) localStorage.setItem(CHECKOUT_ENV_KEY, JSON.stringify(e)); else localStorage.removeItem(CHECKOUT_ENV_KEY); return true; } catch { return false; /* quota */ }
 }
 
 // Re-export shared types for backwards compatibility
@@ -1011,10 +1012,12 @@ export function useUnifiedOrder() {
           },
           // Follow-up Codex do #4042: OS possivelmente criada (a confirmação pode se perder).
           afiacaoPendente: checkoutEnvRef.current.afiacaoPendente ?? false,
+          // false = não gravou: o service NÃO chama a edge (um refresh ressuscitaria o envelope
+          // sem a marca e o pedido poderia ser confirmado sem a OS — Codex P2).
           aoIniciarOsAfiacao: () => {
-            if (checkoutEnvRef.current?.checkoutId !== checkoutId) return;
+            if (checkoutEnvRef.current?.checkoutId !== checkoutId) return false;
             checkoutEnvRef.current = { ...checkoutEnvRef.current, afiacaoPendente: true };
-            persistCheckoutEnv(checkoutEnvRef.current);
+            return persistCheckoutEnv(checkoutEnvRef.current);
           },
         });
         if (result.success && result.lastOrderData && result.allConfirmed) {
@@ -1054,6 +1057,12 @@ export function useUnifiedOrder() {
             toast.warning('Envio bloqueado por crédito', {
               description: 'O PV não foi criado no Omie. Um gestor pode aprovar uma exceção para este pedido — depois é só reenviar.',
             });
+          } else if (result.errors.some(e => e.step.startsWith('afiacao_'))) {
+            // OS de Afiação que pede AÇÃO no Omie (divergente, sem confirmação, cancelada): "reenvie"
+            // seria a instrução errada.
+            toast.error('OS de Afiação: confira no Omie', {
+              description: result.errors.filter(e => e.step.startsWith('afiacao_')).map(e => e.message).join(' | '),
+            });
           } else {
             // Sucesso PARCIAL: NÃO limpar o carrinho nem resetar o envelope — o retry (mesma fp)
             // reusa a MESMA linha/chave e não duplica a conta de PRODUTO já enviada.
@@ -1071,7 +1080,8 @@ export function useUnifiedOrder() {
           const avisos = result.errors.filter(e =>
             !e.step.startsWith('bloqueio_credito') &&
             !e.step.startsWith('bloqueio_atp') &&
-            !e.step.startsWith('bloqueio_desconhecido'));
+            !e.step.startsWith('bloqueio_desconhecido') &&
+            !e.step.startsWith('afiacao_'));
           if (avisos.length > 0) {
             toast.success('Pedido criado com avisos', {
               description: avisos.map(e => e.message).join(' | '),

@@ -93,8 +93,9 @@ export interface SubmitOrderParams {
    *  recebeu confirmação — a OS pode existir no Omie. Remover todas as ferramentas não pode
    *  "confirmar" o pedido por cima dela. */
   afiacaoPendente?: boolean;
-  /** Chamado ANTES de chamar a edge da OS: o caller marca o envelope como "OS possivelmente criada". */
-  aoIniciarOsAfiacao?: () => void;
+  /** Chamado ANTES de chamar a edge da OS: o caller marca o envelope como "OS possivelmente criada".
+   *  `false` (ou exceção) = a marca não foi gravada → a edge NÃO é chamada. */
+  aoIniciarOsAfiacao?: () => boolean;
 }
 
 export interface SubmitErrorEntry {
