@@ -27306,6 +27306,7 @@ export type Database = {
           email: string
           name: string
           phone: string
+          nome_ordenacao: string
           prioridade_ordenacao: number
           requires_po: boolean
           total: number

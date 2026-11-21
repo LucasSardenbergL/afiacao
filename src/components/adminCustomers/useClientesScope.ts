@@ -125,7 +125,7 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
     placeholderData: keepPreviousData,
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
-      // A ordem TOTAL (prioridade → name → user_id) e o LIMIT/OFFSET moram na RPC: o `.range`
+      // A ordem TOTAL (prioridade → nome_ordenacao → name → user_id) e o LIMIT/OFFSET moram na RPC: o `.range`
       // não repete nem pula homônimos na fronteira entre páginas. PAGE_SIZE < teto de 1.000.
       const { data, error } = await supabase.rpc('listar_clientes_base', {
         p_busca: termoServidor || undefined,
@@ -137,7 +137,10 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
         // A RPC já ordena e pagina (LIMIT/OFFSET). O `.order` repete as MESMAS chaves (mesmo eixo,
         // mesma collation; prioridade_ordenacao vem NULL na ordem 'nome') — não muda a sequência,
         // só a declara estável; o `.range` é o cinto do teto de 1.000. Gates G7 + rpc-set-returning.
+        // nome_ordenacao = o nome do Omie normalizado (private.nome_ordenacao, migration
+        // 20261121132032): sem prefixo MEI/entidade HTML/símbolo — o A–Z não abre com lixo.
         .order('prioridade_ordenacao', { ascending: false, nullsFirst: false })
+        .order('nome_ordenacao', { ascending: true, nullsFirst: false })
         .order('name')
         .order('user_id')
         .range(0, PAGE_SIZE - 1);

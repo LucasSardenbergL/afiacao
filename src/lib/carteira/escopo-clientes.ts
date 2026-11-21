@@ -38,10 +38,42 @@ export function marcarCobertura<T extends { user_id: string }>(
   });
 }
 
-export function ordenarPorNome<T extends { name: string }>(items: T[]): T[] {
-  return [...items].sort((a, b) =>
-    (a.name ?? '').localeCompare(b.name ?? '', 'pt-BR', { sensitivity: 'base' }),
-  );
+/**
+ * Chave de ordenação A–Z de um nome vindo do Omie — gêmea de `private.nome_ordenacao` (migration
+ * 20261121132032), que ordena a base completa no servidor. Mesmas regras: sem acento, minúscula,
+ * entidade HTML (`&amp;`, `&apos;`) vira espaço, sai o prefixo de MEI "NN.NNN.NNN " (raiz do CNPJ
+ * colada no nome), todo não-alfanumérico vira espaço, espaços colapsados. Só-lixo → `null` (fim
+ * da lista). O nome EXIBIDO não muda — isto é só a chave.
+ */
+export function chaveOrdenacaoNome(nome: string | null | undefined): string | null {
+  if (nome == null) return null;
+  const chave = nome
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[øØ]/g, 'o')
+    .toLowerCase()
+    .replace(/&(#[0-9]+|#x[0-9a-f]+|[a-z]+);/g, ' ')
+    .replace(/^[^a-z0-9]*[0-9]{2}\.[0-9]{3}\.[0-9]{3}\s+/, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  return chave === '' ? null : chave;
+}
+
+/** A–Z pela chave normalizada (só-lixo no fim); desempate estável pelo nome cru e pelo user_id. */
+export function ordenarPorNome<T extends { name: string; user_id?: string }>(items: T[]): T[] {
+  const comChave = items.map((item) => ({ item, chave: chaveOrdenacaoNome(item.name) }));
+  comChave.sort((a, b) => {
+    if (a.chave !== b.chave) {
+      if (a.chave === null) return 1;
+      if (b.chave === null) return -1;
+      const c = a.chave.localeCompare(b.chave, 'pt-BR');
+      if (c !== 0) return c;
+    }
+    const n = (a.item.name ?? '').localeCompare(b.item.name ?? '', 'pt-BR');
+    if (n !== 0) return n;
+    return (a.item.user_id ?? '').localeCompare(b.item.user_id ?? '');
+  });
+  return comChave.map((x) => x.item);
 }
 
 /** Quebra ids em lotes e concatena os resultados, em ordem. Propaga erro de qualquer lote. */
