@@ -31,9 +31,14 @@ describe('assinaturaServicosAfiacao (A1)', () => {
     const { assinaturaServicosAfiacao } = await import('../checkout-envelope');
     const a = { userToolId: 't1', codigoServico: 'S1', quantity: 1 };
     const b = { userToolId: 't2', codigoServico: 'S2', quantity: 2 };
-    expect(assinaturaServicosAfiacao([a, b])).toBe(assinaturaServicosAfiacao([b, a]));
-    expect(assinaturaServicosAfiacao([a])).not.toBe(assinaturaServicosAfiacao([{ ...a, quantity: 2 }]));
-    expect(assinaturaServicosAfiacao([a])).not.toBe(assinaturaServicosAfiacao([{ ...a, userToolId: 't9' }]));
-    expect(assinaturaServicosAfiacao([a])).not.toBe(assinaturaServicosAfiacao([{ ...a, codigoServico: 'S9' }]));
+    const c = { pagamento: 'pix', entrega: 'balcao' };
+    const sig = (itens: Array<typeof a>, cond = c) => assinaturaServicosAfiacao(itens, cond);
+    expect(sig([a, b])).toBe(sig([b, a]));
+    expect(sig([a])).not.toBe(sig([{ ...a, quantity: 2 }]));
+    expect(sig([a])).not.toBe(sig([{ ...a, userToolId: 't9' }]));
+    expect(sig([a])).not.toBe(sig([{ ...a, codigoServico: 'S9' }]));
+    // Codex P1: pagamento e entrega vão na OS — trocá-los depois não pode passar por "já enviada".
+    expect(sig([a])).not.toBe(sig([a], { ...c, pagamento: '30dd' }));
+    expect(sig([a])).not.toBe(sig([a], { ...c, entrega: 'coleta' }));
   });
 });

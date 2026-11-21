@@ -471,7 +471,8 @@ const UnifiedOrder = () => {
               hasCustomerSelected={!!h.selectedCustomer}
               isLoading={h.submitting}
               precoNascimentoPorId={h.precoNascimentoPorId}
-              precoLoading={h.precoPartidaLoading}
+              // A5 (rodada 2): com envio em voo o "Adicionar" da sugestão desabilita (o hook também barra).
+              precoLoading={h.precoPartidaLoading || h.submitting}
             />
           )}
 

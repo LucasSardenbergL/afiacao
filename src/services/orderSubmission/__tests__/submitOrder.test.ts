@@ -622,6 +622,34 @@ describe('submitOrder — OS de Afiação no reenvio (A1)', () => {
     expect(r.allConfirmed).toBe(false);
   });
 
+  it('Codex P1: forma de pagamento da Afiação mudou depois da OS → afiacao_divergente, não "já enviada"', async () => {
+    const { client } = makeSupabase();
+    const marcas: Array<{ assinatura: string; numero: string | null }> = [];
+    const base = {
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+    };
+    await submitOrder(makeParams({ ...base, aoConfirmarOsAfiacao: (m) => marcas.push(m) }));
+    const r = await submitOrder(makeParams({
+      ...base, afiacaoJaEnviada: marcas[0],
+      payment: { parcelaOben: '1', parcelaColacor: '1', afiacaoMethod: '30dd', formasPagamentoOben: [], formasPagamentoColacor: [] },
+    }));
+    expect(syncOrderToOmie).toHaveBeenCalledTimes(1);
+    expect(r.errors.map(e => e.step)).toContain('afiacao_divergente');
+  });
+
+  it('Codex P1: TODAS as ferramentas removidas com a OS já criada → não confirma um resumo sem a OS', async () => {
+    const { client } = makeSupabase();
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+      afiacaoJaEnviada: { assinatura: 'qualquer', numero: 'OS1' },
+    }));
+    expect(r.errors.map(e => e.step)).toContain('afiacao_divergente');
+    expect(r.allConfirmed).toBe(false);
+  });
+
   it('OS NÃO confirmada (falha no Omie) → sem marca: o reenvio deve tentar de novo', async () => {
     vi.mocked(syncOrderToOmie).mockResolvedValueOnce({ success: false, error: 'x' } as never);
     const { client } = makeSupabase();

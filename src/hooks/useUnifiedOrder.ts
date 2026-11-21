@@ -39,6 +39,11 @@ import {
   type EstadoFormasUI,
 } from '@/services/orderSubmission/formasDegradacao';
 
+// A5 (rodada 2): aviso único quando algo tenta mudar o carrinho com envio em voo.
+function avisarCarrinhoTravado() {
+  toast.info('Aguarde o envio terminar para mudar o carrinho.');
+}
+
 const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
 function loadCheckoutEnv(): CheckoutEnvelope | null {
   if (typeof localStorage === 'undefined') return null;
@@ -351,7 +356,7 @@ export function useUnifiedOrder() {
     updateQuantity: updateQuantityBruto, updateProductPrice: updateProductPriceBruto,
     updateTintDiscount: updateTintDiscountBruto, aplicarDescontoCores: aplicarDescontoCoresBruto,
     removeFromCart: removeFromCartBruto,
-  }, () => toast.info('Aguarde o envio terminar para mudar o carrinho.')), [
+  }, avisarCarrinhoTravado), [
     addProductToCartBruto, addTintProductToCartBruto, addServiceToCartBruto,
     updateServiceServicoBruto, updateServiceNotesBruto, updateServicePhotosBruto,
     updateQuantityBruto, updateProductPriceBruto, updateTintDiscountBruto,
@@ -561,6 +566,8 @@ export function useUnifiedOrder() {
 
   // Voice / Image handlers
   const handleVoiceItemsIdentified = (identifiedItems: IdentifiedItem[]) => {
+    // A5: estas vias escrevem direto no setCart — mesma trava dos mutadores protegidos.
+    if (submittingRef.current) { avisarCarrinhoTravado(); return; }
     const newItems: ServiceCartItem[] = identifiedItems.map((item) => {
       const tool = userTools.find(t => t.id === item.userToolId);
       const servico = servicos.find(s => s.omie_codigo_servico === item.omie_codigo_servico) || null;
@@ -582,6 +589,8 @@ export function useUnifiedOrder() {
   };
 
   const handleImageCategoryIdentified = (categoryId: string) => {
+    // A5: estas vias escrevem direto no setCart — mesma trava dos mutadores protegidos.
+    if (submittingRef.current) { avisarCarrinhoTravado(); return; }
     const matchingTools = userTools.filter(t => t.tool_category_id === categoryId);
     if (matchingTools.length > 0) {
       let addedCount = 0;
@@ -681,6 +690,8 @@ export function useUnifiedOrder() {
 
   // Unified AI handler
   const handleUnifiedAIResult = useCallback((result: AIOrderResult) => {
+    // A5: estas vias escrevem direto no setCart — mesma trava dos mutadores protegidos.
+    if (submittingRef.current) { avisarCarrinhoTravado(); return; }
     const newCartItems: CartItem[] = [];
     const allProducts = [...obenProducts, ...colacorProducts];
     for (const aiProd of result.products) {

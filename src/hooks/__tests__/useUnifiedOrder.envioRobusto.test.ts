@@ -46,6 +46,19 @@ describe('useUnifiedOrder — fiação das guardas de envio', () => {
     expect(hook).toMatch(/updateQuantity, updateProductPrice, updateTintDiscount, aplicarDescontoCores, removeFromCart,\n\s*\} = mutadoresDoCarrinho;/);
   });
 
+  it('A5 (Codex P1): as vias da IA/voz/imagem que escrevem direto no setCart também barram com envio em voo', () => {
+    for (const sig of [
+      'const handleVoiceItemsIdentified = (identifiedItems: IdentifiedItem[]) => {',
+      'const handleImageCategoryIdentified = (categoryId: string) => {',
+      'const handleUnifiedAIResult = useCallback((result: AIOrderResult) => {',
+    ]) {
+      const ini = hook.indexOf(sig);
+      expect(ini, sig).toBeGreaterThan(-1);
+      expect(hook.slice(ini, ini + 400)).toContain('if (submittingRef.current) { avisarCarrinhoTravado(); return; }');
+    }
+    expect(pagina).toContain('precoLoading={h.precoPartidaLoading || h.submitting}');
+  });
+
   it('A6: o rascunho só some com o envio confirmado; o diálogo recebe o desfecho', () => {
     expect(pagina).toContain('clearTrigger: h.orderSuccessOpen && h.ultimoEnvioConfirmado,');
     expect(pagina).toContain('envioConfirmado={h.ultimoEnvioConfirmado}');

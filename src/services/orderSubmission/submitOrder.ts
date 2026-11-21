@@ -571,16 +571,17 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   // reenvio após falha parcial recriavam a OS. A marca vem do envelope de checkout (mesmo pedido).
   const assinaturaAfiacao = assinaturaServicosAfiacao(serviceItems.map(c => ({
     userToolId: c.userTool.id, codigoServico: c.servico?.omie_codigo_servico, quantity: c.quantity,
-  })));
+  })), { pagamento: payment.afiacaoMethod, entrega: delivery.option });
   if (serviceItems.length > 0 && afiacaoJaEnviada && afiacaoJaEnviada.assinatura === assinaturaAfiacao) {
     results.push(afiacaoJaEnviada.numero ? `OS ${afiacaoJaEnviada.numero} (já enviada)` : 'OS Afiação (já enviada)');
-  } else if (serviceItems.length > 0 && afiacaoJaEnviada) {
-    // Ferramentas mudaram DEPOIS de a OS existir no Omie: nem "já enviada" (mentiria sobre o que
-    // o ERP tem) nem 2ª OS em silêncio. Mesmo desenho do pv_divergente dos produtos.
+  } else if (afiacaoJaEnviada) {
+    // OS de afiação mudou DEPOIS de existir no Omie (ferramentas, pagamento, entrega — ou TODAS as
+    // ferramentas removidas, que confirmaria um resumo sem a OS aberta; Codex P1): nem "já enviada"
+    // (mentiria sobre o que o ERP tem) nem 2ª OS em silêncio. Mesmo desenho do pv_divergente.
     results.push('OS Afiação (já no Omie com ferramentas diferentes)');
     errors.push({
       step: 'afiacao_divergente',
-      message: `A OS de Afiação${afiacaoJaEnviada.numero ? ` ${afiacaoJaEnviada.numero}` : ''} já foi criada no Omie com as ferramentas de uma tentativa anterior, diferentes das atuais. Corrija direto no Omie — não reenvie.`,
+      message: `A OS de Afiação${afiacaoJaEnviada.numero ? ` ${afiacaoJaEnviada.numero}` : ''} já foi criada no Omie numa tentativa anterior, com ferramentas ou condições diferentes do carrinho atual. Corrija direto no Omie — não reenvie.`,
     });
   } else if (serviceItems.length > 0) {
     try {
