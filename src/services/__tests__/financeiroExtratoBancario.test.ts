@@ -62,10 +62,14 @@ describe('mapa de motivo', () => {
     }
   });
 
-  it('a união de registro bate com os v_motivo := da migration (sem motivo esquecido)', () => {
+  it('a união de registro bate com TODA forma de emitir motivo na migration (sem motivo esquecido)', () => {
     const sql = readFileSync(resolve(__dirname, '../../../supabase/migrations/20261121123119_banco_extrato_f1.sql'), 'utf8');
-    const noSql = new Set([...sql.matchAll(/v_motivo := '([a-z_]+)'/g)].map((m) => m[1]));
+    // Formas: (a) `v_motivo := 'x'`; (b) `'motivo', 'x'` em jsonb_build_object (RETURN direto).
+    const noSql = new Set([...sql.matchAll(/(?:v_motivo :=|'motivo',)\s*'([a-z_]+)'/g)].map((m) => m[1]));
     expect([...noSql].sort()).toEqual([...MOTIVOS_REGISTRO].sort());
+    // Nenhuma OUTRA forma: todo `'motivo',` e todo `v_motivo :=` tem RHS literal, NULL ou a variável v_motivo.
+    const rhs = [...sql.matchAll(/(?:v_motivo :=|'motivo',)\s*([^;,)\s]+)/g)].map((m) => m[1]);
+    for (const r of rhs) expect(r, `RHS de motivo não coberto pelo teste: ${r}`).toMatch(/^('[a-z_]+'|NULL|v_motivo)$/);
   });
 });
 

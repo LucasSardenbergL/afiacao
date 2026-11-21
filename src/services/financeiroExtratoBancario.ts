@@ -14,8 +14,9 @@ export const STATUS_ARQUIVO = ['aceito', 'pendente_revisao', 'recusado'] as cons
 export type StatusArquivo = (typeof STATUS_ARQUIVO)[number];
 export type StatusImport = StatusArquivo | 'ja_importado';
 
-/** Fonte: `v_motivo := '...'` no corpo de banco_extrato_registrar (migration F1). */
+/** Fonte: `v_motivo := '...'` e `'motivo', '...'` (RETURN direto) no corpo de banco_extrato_registrar (migration F1). */
 export const MOTIVOS_REGISTRO = [
+  'conta_desconhecida',
   'identidade_incompleta',
   'conta_divergente',
   'periodo_inclui_dia_corrente',
@@ -47,6 +48,8 @@ export type MotivoExtrato = MotivoRegistro | MotivoParse;
 
 export function textoDoMotivo(m: MotivoExtrato): string {
   switch (m) {
+    case 'conta_desconhecida':
+      return 'Conta bancária desconhecida: não há conta cadastrada para este arquivo.';
     case 'identidade_incompleta':
       return 'O arquivo não traz banco, agência e conta completos.';
     case 'conta_divergente':
