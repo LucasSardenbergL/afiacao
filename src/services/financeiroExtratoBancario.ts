@@ -122,6 +122,8 @@ export interface ResumoDia {
   creditos: number | null;
   debitos: number | null;
   saldoFinal: number | null;
+  /** Foto do saldo Omie do dia (Σ das contas Omie ligadas); `null` se faltar a foto de qualquer uma. Não depende de `coberto`. */
+  saldoOmie: number | null;
 }
 
 export interface RespostaImport {
@@ -229,6 +231,7 @@ export async function resumoDia(bancoContaId: string, de: string, ate: string): 
       creditos_centavos: number | string | null;
       debitos_centavos: number | string | null;
       saldo_final_dia_centavos: number | string | null;
+      saldo_omie_centavos: number | string | null;
     }[]
   >('banco_extrato_resumo_dia', { p_banco_conta_id: bancoContaId, p_de: de, p_ate: ate });
   if (error) falha('Falha ao carregar o resumo diário', error);
@@ -238,6 +241,7 @@ export async function resumoDia(bancoContaId: string, de: string, ate: string): 
     creditos: r.coberto === true ? numOuNull(r.creditos_centavos) : null,
     debitos: r.coberto === true ? numOuNull(r.debitos_centavos) : null,
     saldoFinal: r.coberto === true ? numOuNull(r.saldo_final_dia_centavos) : null,
+    saldoOmie: numOuNull(r.saldo_omie_centavos),
   }));
 }
 

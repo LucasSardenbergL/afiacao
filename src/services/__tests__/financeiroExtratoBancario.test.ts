@@ -33,8 +33,8 @@ describe('resumoDia', () => {
   it('chama a RPC com p_de/p_ate e não lê banco_extrato_linha', async () => {
     rpc.mockResolvedValue({
       data: [
-        { data: '2026-11-10', coberto: false, creditos_centavos: null, debitos_centavos: null, saldo_final_dia_centavos: null },
-        { data: '2026-11-11', coberto: true, creditos_centavos: 0, debitos_centavos: '250', saldo_final_dia_centavos: 1000 },
+        { data: '2026-11-10', coberto: false, creditos_centavos: null, debitos_centavos: null, saldo_final_dia_centavos: null, saldo_omie_centavos: '7000' },
+        { data: '2026-11-11', coberto: true, creditos_centavos: 0, debitos_centavos: '250', saldo_final_dia_centavos: 1000, saldo_omie_centavos: null },
       ],
       error: null,
     });
@@ -45,8 +45,8 @@ describe('resumoDia', () => {
       p_ate: '2026-11-11',
     });
     expect(from).not.toHaveBeenCalledWith('banco_extrato_linha');
-    expect(r[0]).toMatchObject({ coberto: false, creditos: null, debitos: null, saldoFinal: null });
-    expect(r[1]).toMatchObject({ coberto: true, creditos: 0, debitos: 250, saldoFinal: 1000 });
+    expect(r[0]).toMatchObject({ coberto: false, creditos: null, debitos: null, saldoFinal: null, saldoOmie: 7000 });
+    expect(r[1]).toMatchObject({ coberto: true, creditos: 0, debitos: 250, saldoFinal: 1000, saldoOmie: null });
   });
 
   it('erro da RPC propaga (não vira lista vazia)', async () => {
