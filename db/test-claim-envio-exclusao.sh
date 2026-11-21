@@ -50,6 +50,7 @@ CREATE OR REPLACE FUNCTION private.cap_pedido_escrever(uuid) RETURNS boolean LAN
 GRANT USAGE ON SCHEMA private TO authenticated;
 ALTER TABLE public.sales_orders ENABLE ROW LEVEL SECURITY;
 GRANT SELECT, DELETE ON public.sales_orders TO authenticated;
+GRANT ALL ON public.sales_orders TO service_role;
 GRANT UPDATE (deleted_at, status) ON public.sales_orders TO authenticated;
 CREATE POLICY sales_orders_select_t ON public.sales_orders FOR SELECT TO authenticated USING (true);
 CREATE POLICY sales_orders_delete_staff ON public.sales_orders
@@ -90,7 +91,18 @@ corrida() { # $1 = SQL da sessão 1 (segura) · $2 = SQL da sessão 2 (espera) �
   echo "$esperou:$(tr -d '\n' < "$out2")"; rm -f "$out2"
 }
 
-FRONT_DELETE="SET ROLE authenticated; WITH d AS (DELETE FROM public.sales_orders WHERE id='$A' RETURNING 1) SELECT count(*) FROM d;"
+
+# DELETE direto do front (o SalesQuotes antigo): tem de ser NEGADO por privilégio (42501), nunca
+# "apagou 0" em silêncio nem "apagou 1". Imprime: negado | <nº de linhas apagadas>.
+front_delete() {
+  local out
+  if out="$(P -q -tA -c "SET ROLE authenticated; WITH d AS (DELETE FROM public.sales_orders WHERE id='$A' RETURNING 1) SELECT count(*) FROM d;" 2>&1)"; then
+    echo "$out"
+  elif printf '%s' "$out" | grep -q 'permission denied'; then echo negado
+  else echo "erro-inesperado: $out"; fi
+}
+excluir_orc() { Pq -c "SELECT public.sales_order_excluir_sem_envio('$A', true);"; }
+reset_st() { Pq -c "TRUNCATE public.sales_orders; INSERT INTO public.sales_orders(id, status) VALUES ('$A', '$1');" >/dev/null; }
 
 suite() {
   echo "── unitário ──"
@@ -105,6 +117,18 @@ suite() {
   reset NULL "now() - interval '11 minutes'"; eq "U6 claim de 11 min não barra"       "$(excluir)" "excluido"
   Pq -c "TRUNCATE public.sales_orders;" >/dev/null; eq "U7 exclusão de inexistente = ausente (idempotente)" "$(excluir)" "ausente"
 
+  echo "── intenção 'orçamento' (tela desatualizada — Codex P2) ──"
+  reset_st enviado;   eq "O1 somente_orcamento em linha que virou pedido RECUSA" "$(excluir_orc)" "nao_e_orcamento"
+  eq "O1b linha fica" "$(existe)" "1"
+  reset_st orcamento; eq "O2 somente_orcamento em orçamento apaga"     "$(excluir_orc)" "excluido"
+  reset_st rascunho;  eq "O3 somente_orcamento em rascunho apaga"      "$(excluir_orc)" "excluido"
+  reset_st enviado;   eq "O4 sem a intenção (exclusão de pedido) não olha status" "$(excluir)" "excluido"
+
+  echo "── DELETE direto do cliente: acabou (Codex BLOQUEANTE ×3) ──"
+  reset NULL NULL
+  eq "D1 orçamento LEGADO (carimbo NULL — enviado antes da migration, PV pode estar vivo): DELETE do front NEGADO" "$(front_delete)" "negado"
+  eq "D1b linha fica" "$(existe)" "1"
+
   echo "── concorrência (2 sessões, lock de linha) ──"
   reset NULL NULL
   eq "C1 envio reivindica 1º → a exclusão que ESPEROU o lock vê o carimbo e recusa" \
@@ -114,35 +138,29 @@ suite() {
   eq "C2 exclusão apaga 1º → o envio que ESPEROU o lock não reivindica" \
     "$(corrida "SELECT public.sales_order_excluir_sem_envio('$A')" "SELECT public.sales_order_reivindicar_envio('$A')")" "1:f"
   reset NULL NULL
-  eq "C4 envio reivindica 1º → o DELETE do front (authenticated, RLS) que ESPEROU o lock não apaga o orçamento" \
-    "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "$FRONT_DELETE")" "1:0"
-  eq "C4b orçamento fica" "$(existe)" "1"
-  reset NULL "now() - interval '11 minutes'"
-  eq "U8 DELETE do front NÃO apaga orçamento já reivindicado, mesmo velho (PV pode estar vivo — vai pela edge)" "$(Pq -q -c "$FRONT_DELETE")" "0"
-  reset NULL NULL
-  eq "U8b DELETE do front apaga orçamento nunca enviado" "$(Pq -q -c "$FRONT_DELETE")" "1"
-  reset NULL NULL
   eq "C3 front marca deleted_at 1º → o envio que ESPEROU o lock não reivindica" \
     "$(corrida "UPDATE public.sales_orders SET deleted_at=now() WHERE id='$A'" "SELECT public.sales_order_reivindicar_envio('$A')")" "1:f"
 }
 
-haspriv() { Pq -c "SELECT has_function_privilege('$1','public.$2(uuid)','EXECUTE');"; }
+haspriv() { Pq -c "SELECT has_function_privilege('$1','public.$2','EXECUTE');"; }
 echo "── grants ──"
-for fn in sales_order_reivindicar_envio sales_order_excluir_sem_envio; do
-  eq "G $fn: service_role EXECUTE" "$(haspriv service_role $fn)" "t"
-  eq "G $fn: authenticated SEM"    "$(haspriv authenticated $fn)" "f"
-  eq "G $fn: anon SEM"             "$(haspriv anon $fn)" "f"
+for fn in "sales_order_reivindicar_envio(uuid)" "sales_order_excluir_sem_envio(uuid, boolean)"; do
+  eq "G $fn: service_role EXECUTE" "$(haspriv service_role "$fn")" "t"
+  eq "G $fn: authenticated SEM"    "$(haspriv authenticated "$fn")" "f"
+  eq "G $fn: anon SEM"             "$(haspriv anon "$fn")" "f"
 done
+eq "G authenticated sem DELETE em sales_orders" "$(Pq -c "SELECT has_table_privilege('authenticated','public.sales_orders','DELETE');")" "f"
+eq "G policy de DELETE do cliente removida" "$(Pq -c "SELECT count(*) FROM pg_policies WHERE tablename='sales_orders' AND policyname='sales_orders_delete_staff';")" "0"
 
 suite
 
 echo "── falsificação (versões sem a condição; cada uma tem de reprovar o assert que a mira) ──"
 P -q <<'SQL'
-CREATE OR REPLACE FUNCTION public.sales_order_excluir_sem_envio(p_sales_order_id uuid) RETURNS text
+CREATE OR REPLACE FUNCTION public.sales_order_excluir_sem_envio(p_sales_order_id uuid, p_somente_orcamento boolean DEFAULT false) RETURNS text
 LANGUAGE plpgsql SET search_path = public AS $$
 DECLARE v_n integer;
 BEGIN
-  DELETE FROM public.sales_orders WHERE id = p_sales_order_id;  -- SABOTADA: ignora o claim
+  DELETE FROM public.sales_orders WHERE id = p_sales_order_id;  -- SABOTADA: ignora o claim e o status
   GET DIAGNOSTICS v_n = ROW_COUNT;
   RETURN CASE WHEN v_n = 1 THEN 'excluido' ELSE 'ausente' END;
 END $$;
@@ -157,22 +175,13 @@ reset NULL NULL
 eq "F1 exclusão sem condição APAGA apesar do envio em curso (o bug)" \
   "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "SELECT public.sales_order_excluir_sem_envio('$A')")" "1:excluido"
 reset "now()" NULL; eq "F2 claim sem condição reivindica pedido em exclusão (o bug)" "$(claim)" "t"
-P -q -c "DROP POLICY sales_orders_delete_staff ON public.sales_orders;
+reset_st enviado;   eq "F7 RPC sem a intenção apaga pedido convertido pela tela de orçamentos (o bug P2)" "$(excluir_orc)" "excluido"
+# o estado ANTES desta migration: DELETE concedido + a policy da 20260724120000
+P -q -c "GRANT DELETE ON public.sales_orders TO authenticated;
   CREATE POLICY sales_orders_delete_staff ON public.sales_orders FOR DELETE TO authenticated
   USING ((SELECT private.cap_pedido_escrever((SELECT auth.uid()))) AND omie_pedido_id IS NULL AND status IN ('orcamento','rascunho'));"
-P -q -f "$MIG" >/dev/null   # repõe as RPCs; e a policy SEM a condição volta a ser recriada…
-P -q -c "DROP POLICY sales_orders_delete_staff ON public.sales_orders;
-  CREATE POLICY sales_orders_delete_staff ON public.sales_orders FOR DELETE TO authenticated
-  USING ((SELECT private.cap_pedido_escrever((SELECT auth.uid()))) AND omie_pedido_id IS NULL AND status IN ('orcamento','rascunho'));"
-reset NULL NULL   # …por isso a sabotagem da policy é aplicada DEPOIS da migration
-eq "F4 policy sem a condição do claim deixa o front apagar durante o envio (o bug do Codex)" \
-  "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "$FRONT_DELETE")" "1:1"
-P -q -c "DROP POLICY sales_orders_delete_staff ON public.sales_orders;
-  CREATE POLICY sales_orders_delete_staff ON public.sales_orders FOR DELETE TO authenticated
-  USING ((SELECT private.cap_pedido_escrever((SELECT auth.uid()))) AND omie_pedido_id IS NULL AND status IN ('orcamento','rascunho')
-         AND (envio_omie_reivindicado_em IS NULL OR envio_omie_reivindicado_em < now() - interval '10 minutes'));"
-reset NULL "now() - interval '11 minutes'"
-eq "F6 policy com janela de 10 min apaga orçamento reivindicado e velho (PV órfão — o 2º bloqueante do Codex)" "$(Pq -q -c "$FRONT_DELETE")" "1"
+reset NULL NULL
+eq "F4 com o DELETE direto de volta, o front apaga o orçamento legado sem consultar o Omie (o 3º bloqueante)" "$(front_delete)" "1"
 if P -q -c "GRANT UPDATE (envio_omie_reivindicado_em) ON public.sales_orders TO authenticated;" >/dev/null 2>&1 \
    && ! P -q -f "$MIG" >/dev/null 2>&1; then ok "F5 postcondição A6 aborta a migration se o cliente puder reescrever o carimbo"
 else bad "F5 postcondição A6 não abortou com UPDATE do carimbo concedido a authenticated"; fi
@@ -181,9 +190,9 @@ P -q -f "$MIG" >/dev/null
 reset NULL NULL
 eq "F3 migration reaplicada fecha de novo" \
   "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "SELECT public.sales_order_excluir_sem_envio('$A')")" "1:envio_em_curso"
-reset NULL NULL
-eq "F3b policy reaplicada fecha o DELETE do front de novo" \
-  "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "$FRONT_DELETE")" "1:0"
+reset NULL NULL;  eq "F3b e nega de novo o DELETE direto do front" "$(front_delete)" "negado"
+reset_st enviado; eq "F3c e a intenção de orçamento volta a recusar" "$(excluir_orc)" "nao_e_orcamento"
+
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"

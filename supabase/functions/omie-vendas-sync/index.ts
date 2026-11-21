@@ -3985,6 +3985,8 @@ Deno.serve(async (req) => {
 
       case "excluir_pedido": {
         const { omie_pedido_id: pedidoId, sales_order_id: soId } = params;
+        // Intenção da tela de orçamentos: só apaga se a linha AINDA é orçamento/rascunho (Codex P2).
+        const somenteOrcamento = params.somente_orcamento === true;
         if (!soId) throw new Error("ID do pedido é obrigatório");
 
         // Identidade do BANCO, nunca do request (Codex 2026-10-11): conta, PID e origem vêm da linha.
@@ -4098,10 +4100,13 @@ Deno.serve(async (req) => {
         // Omie acima pode dizer "ausente" porque o IncluirPedido ainda não gravou (Colacor não tem
         // rastro ATP); o lock de linha faz o envio e a exclusão disputarem o MESMO pedido.
         const { data: desfechoDel, error: delError } = await supabaseAdmin
-          .rpc("sales_order_excluir_sem_envio", { p_sales_order_id: soId });
+          .rpc("sales_order_excluir_sem_envio", { p_sales_order_id: soId, p_somente_orcamento: somenteOrcamento });
         if (delError) throw new Error(`Exclusão recusada: falha ao apagar o pedido (${delError.message}).`);
         if (desfechoDel === "envio_em_curso") {
           throw new Error("Exclusão recusada: o pedido está sendo enviado ao Omie agora. Tente de novo em alguns minutos.");
+        }
+        if (desfechoDel === "nao_e_orcamento") {
+          throw new Error("Exclusão recusada: este registro não é mais um orçamento (virou pedido?). Recarregue a página.");
         }
         if (desfechoDel !== "excluido" && desfechoDel !== "ausente") {
           throw new Error(`Exclusão recusada: resposta inesperada ao apagar o pedido (${String(desfechoDel)}).`);

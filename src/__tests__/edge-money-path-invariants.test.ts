@@ -5175,6 +5175,8 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
     expect(exclusao, 'REGRESSÃO: DELETE solto de sales_orders voltou ao excluir_pedido').not.toMatch(/\.delete\(\)/);
     const rpcDel = exclusao.slice(exclusao.indexOf('.rpc("sales_order_excluir_sem_envio"'));
     expect(rpcDel, 'envio em curso RECUSA').toMatch(/"envio_em_curso"[\s\S]{0,40}throw new Error\(/);
+    expect(rpcDel, 'a intenção de orçamento chega à RPC').toMatch(/p_somente_orcamento: somenteOrcamento/);
+    expect(rpcDel, 'linha que deixou de ser orçamento RECUSA').toMatch(/"nao_e_orcamento"[\s\S]{0,40}throw new Error\(/);
     const criar = removerComentarios(src.slice(src.indexOf('case "criar_pedido": {'), src.indexOf('case "excluir_pedido": {')));
     const claim = criar.indexOf('.rpc("sales_order_reivindicar_envio"');
     const envio = criar.indexOf('await criarPedidoVenda(');

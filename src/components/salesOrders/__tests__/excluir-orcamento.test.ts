@@ -1,54 +1,34 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const h = vi.hoisted(() => ({
-  resp: { data: null as unknown, error: null as unknown },
-  edge: { data: null as unknown, error: null as unknown },
-  eq: vi.fn(), select: vi.fn(), invoke: vi.fn(),
-}));
+const h = vi.hoisted(() => ({ edge: { data: null as unknown, error: null as unknown }, invoke: vi.fn(), from: vi.fn() }));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
-    from: () => ({
-      delete: () => ({
-        eq: (...a: unknown[]) => {
-          h.eq(...a);
-          return { select: (...b: unknown[]) => { h.select(...b); return Promise.resolve(h.resp); } };
-        },
-      }),
-    }),
+    from: (...a: unknown[]) => { h.from(...a); throw new Error('DELETE direto não existe mais'); },
     functions: { invoke: (...a: unknown[]) => { h.invoke(...a); return Promise.resolve(h.edge); } },
   },
 }));
 
 import { excluirOrcamento } from '../excluir-orcamento';
 
-beforeEach(() => { h.eq.mockReset(); h.select.mockReset(); h.invoke.mockReset(); h.edge = { data: { success: true }, error: null }; });
+beforeEach(() => { h.invoke.mockReset(); h.from.mockReset(); h.edge = { data: { success: true }, error: null }; });
 
 describe('excluirOrcamento', () => {
-  it('nunca enviado (o DELETE direto apagou 1 linha): resolve sem chamar a edge', async () => {
-    h.resp = { data: [{ id: 'q1' }], error: null };
-    await expect(excluirOrcamento('q1')).resolves.toBeUndefined();
-    expect(h.eq).toHaveBeenCalledWith('id', 'q1');
-    expect(h.select).toHaveBeenCalledWith('id');
-    expect(h.invoke).not.toHaveBeenCalled();
-  });
-
-  it('RLS barrou (0 linhas — já passou por envio): vai pela edge excluir_pedido, que confere o Omie', async () => {
-    h.resp = { data: [], error: null };
+  it('vai SEMPRE pela edge, com a intenção de orçamento — nunca DELETE direto', async () => {
     await expect(excluirOrcamento('q1')).resolves.toBeUndefined();
     expect(h.invoke).toHaveBeenCalledWith('omie-vendas-sync', {
-      body: { action: 'excluir_pedido', sales_order_id: 'q1', omie_pedido_id: null },
+      body: { action: 'excluir_pedido', sales_order_id: 'q1', omie_pedido_id: null, somente_orcamento: true },
     });
+    expect(h.from).not.toHaveBeenCalled();
   });
 
-  it('a edge recusa (ex.: PV existe no Omie): RECUSA com o motivo, nunca "excluído"', async () => {
-    h.resp = { data: [], error: null };
-    h.edge = { data: null, error: { message: 'Exclusão recusada: o pedido existe no Omie (PV 9).' } };
-    await expect(excluirOrcamento('q1')).rejects.toThrow('existe no Omie');
+  it('a edge recusa com HTTP 500: o motivo vem do CORPO (error.context), não da mensagem genérica do SDK', async () => {
+    const corpo = new Response(JSON.stringify({ error: 'Exclusão recusada: o pedido existe no Omie (PV 9).' }), { status: 500 });
+    h.edge = { data: null, error: Object.assign(new Error('Edge Function returned a non-2xx status code'), { context: corpo }) };
+    await expect(excluirOrcamento('q1')).rejects.toThrow('o pedido existe no Omie (PV 9)');
   });
 
-  it('erro do PostgREST no DELETE: propaga sem chamar a edge', async () => {
-    h.resp = { data: null, error: { message: 'rls' } };
-    await expect(excluirOrcamento('q1')).rejects.toEqual({ message: 'rls' });
-    expect(h.invoke).not.toHaveBeenCalled();
+  it('erro sem corpo legível: cai na mensagem do SDK (nunca resolve)', async () => {
+    h.edge = { data: null, error: new Error('falha de rede') };
+    await expect(excluirOrcamento('q1')).rejects.toThrow('falha de rede');
   });
 });

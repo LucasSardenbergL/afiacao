@@ -2,25 +2,20 @@ import { supabase } from '@/integrations/supabase/client';
 import { mensagemDoErroEdge } from '@/lib/invoke-function';
 
 /**
- * Exclui um orçamento/rascunho.
+ * Exclui um orçamento/rascunho — SEMPRE pela edge `excluir_pedido` (migration 20261120230001).
  *
- * 1. DELETE direto (policy `sales_orders_delete_staff`): só apaga o que nunca foi enviado ao Omie —
- *    sem PID, em orçamento/rascunho e SEM reivindicação de envio (migration 20261120230001). RLS que
- *    barra não dá erro, devolve 0 linhas — por isso o `.select('id')`.
- * 2. 0 linhas ⇒ a edge `excluir_pedido`: o orçamento passou por um envio (pode ter PV vivo no Omie
- *    com o write-back perdido); a edge consulta `PV_<id>` e só apaga com ausência AFIRMADA, ou
- *    recusa dizendo por quê. Nunca "Orçamento excluído" sem ter apagado.
+ * O DELETE direto do cliente acabou (REVOKE DELETE): um orçamento que passou por um envio — mesmo
+ * antes do claim existir — pode ter PV vivo no Omie com o write-back perdido. A edge consulta
+ * `PV_<id>`, só apaga com ausência AFIRMADA e pela RPC condicionada ao claim do envio; com
+ * `somente_orcamento`, também recusa se a linha deixou de ser orçamento (tela desatualizada).
+ * Recusa ⇒ erro com o motivo da edge, nunca "Orçamento excluído".
  */
 export async function excluirOrcamento(id: string): Promise<void> {
-  const { data, error } = await supabase.from('sales_orders').delete().eq('id', id).select('id');
-  if (error) throw error;
-  if (data && data.length > 0) return;
-
-  const { error: edgeErr } = await supabase.functions.invoke('omie-vendas-sync', {
-    body: { action: 'excluir_pedido', sales_order_id: id, omie_pedido_id: null },
+  const { error } = await supabase.functions.invoke('omie-vendas-sync', {
+    body: { action: 'excluir_pedido', sales_order_id: id, omie_pedido_id: null, somente_orcamento: true },
   });
-  if (edgeErr) {
-    const motivo = (await mensagemDoErroEdge(edgeErr)) ?? edgeErr.message ?? String(edgeErr);
+  if (error) {
+    const motivo = (await mensagemDoErroEdge(error)) ?? error.message ?? String(error);
     throw new Error(motivo);
   }
 }
