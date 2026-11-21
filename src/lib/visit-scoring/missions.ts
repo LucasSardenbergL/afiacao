@@ -67,8 +67,14 @@ export function scoreRecuperacao(c: CustomerScoreInputs): MissionResult {
   const insumosAusentes: string[] = [];
   let insumosMedidos = 0;
 
-  const churnBoost = c.churn_risk * 0.5;
-  insumosMedidos++; // churn_risk sempre tem produtor (nunca null no tipo) — sustenta a missão sozinho
+  // churn_risk é NULL para quem nunca comprou (calculate-scores v1.7, migration 20261121150000): o 100 de
+  // `sem_historico` era fabricado. Ausente é NOMEADO e não entra na soma — `null * 0.5` daria 0 medido.
+  let churnBoost = 0;
+  if (c.churn_risk == null) insumosAusentes.push('churn_risk');
+  else {
+    churnBoost = c.churn_risk * 0.5;
+    insumosMedidos++;
+  }
 
   // Guard explícito ANTES do uso: `null * 0.3` é 0 em JS, que afirmaria "medi e não há o que
   // recuperar". Sem produtor, o componente simplesmente não entra na soma.
@@ -82,9 +88,9 @@ export function scoreRecuperacao(c: CustomerScoreInputs): MissionResult {
   const recencyPenalty = Math.max(0, 100 - c.days_since_last_purchase) * -0.1;
   const signalsBoost = somaModifiers(c.signal_modifiers?.breakdown?.churn) * 0.1;
 
-  // REGRA ÚNICA (mesmo padrão de scoreExpansao): nenhum insumo medido → não avaliada. Hoje é
-  // inatingível aqui — churn_risk sempre tem produtor — mas a regra existe uma vez só e vale
-  // para as duas funções por igual.
+  // REGRA ÚNICA (mesmo padrão de scoreExpansao): nenhum insumo medido → não avaliada. Alcançável
+  // desde a v1.7: churn NULL (sem histórico) com recover_score sem produtor. Vale para as duas
+  // funções por igual.
   if (insumosMedidos === 0) return { score: null, insumosAusentes };
 
   const score = clamp(churnBoost + recoverBoost + recencyPenalty + signalsBoost, 0, 100);
@@ -149,9 +155,13 @@ export function scoreRelacionamento(c: CustomerScoreInputs): MissionResult {
   // sem histórico de visita real.
   const effectiveDays = c.days_since_last_visit ?? 30;
   const daysSinceVisitBoost = Math.min(40, effectiveDays * 0.3);
-  const riskPenalty = c.churn_risk * 0.3;
+  // churn_risk NULL (sem histórico, v1.7) não é "risco zero": a penalidade não entra e o ausente é nomeado.
+  const insumosAusentes: string[] = [];
+  let riskPenalty = 0;
+  if (c.churn_risk == null) insumosAusentes.push('churn_risk');
+  else riskPenalty = c.churn_risk * 0.3;
   const score = clamp(healthBoost + revenueBoost + daysSinceVisitBoost - riskPenalty, 0, 100);
-  return { score, insumosAusentes: [] };
+  return { score, insumosAusentes };
 }
 
 /**

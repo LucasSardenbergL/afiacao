@@ -238,7 +238,10 @@ Deno.serve(async (req) => {
       // mixGap 8 (money-path.md §2, corolário JS). Só se troca `?? 0` por null onde a ausência
       // REALMENTE chega — e onde o consumidor sabe tratá-la.
       const num = (v: unknown) => Number(v ?? 0);
-      const healthScore = num(score.health_score), churnRisk = num(score.churn_risk), avgSpend = num(score.avg_monthly_spend_180d);
+      // churn_risk SAIU da lista acima: desde a calculate-scores v1.7 ele é NULL para quem nunca comprou
+      // (15.766 linhas). Ausente atravessa como null — selectObjective o trata (sem_historico decide antes).
+      const healthScore = num(score.health_score), avgSpend = num(score.avg_monthly_spend_180d);
+      const churnRisk: number | null = score.churn_risk == null ? null : Number(score.churn_risk);
       const categoryCount = num(score.category_count), daysSince = num(score.days_since_last_purchase);
       // [money-path "ausente ≠ zero"] expansion_score e revenue_potential são as DUAS colunas
       // que a 20260727130000_farmer_scores_colunas_orfas_null nulou de propósito (nenhum writer

@@ -19,6 +19,8 @@ import {
 // priority_score NULL para quem nunca comprou (sem_historico) — e o ramo salesRefreshFatal pelo status
 // persistido. Mesma razão de morar em `_shared`: testável sob --no-remote.
 import { prioridadeNoRefreshFatal, prioridadePorStatus } from "../_shared/prioridade-historico.ts";
+// churn_risk NULL para quem nunca comprou (sem_historico) — mesma regra e mesmo ramo fatal (v1.7).
+import { churnNoRefreshFatal, churnPorStatus } from "../_shared/churn-historico.ts";
 // Frequência de recompra (Venda por cliente, 1a): intervalo medido ou NULL, e a classe de saúde.
 // Espelho verbatim de src/lib/scoring/frequencia.ts — paridade em __tests__/frequencia.test.ts.
 import {
@@ -85,7 +87,8 @@ interface FarmerClientScoreSeed {
   farmer_id: string;
   health_score: number;
   health_class: string;
-  churn_risk: number;
+  // null = ainda não computado (seed): o compute do MESMO run grava o valor, ou NULL se sem_historico.
+  churn_risk: number | null;
   // null = sem histórico de vendas: prioridade não se aplica (_shared/prioridade-historico.ts), nunca 67/0.
   priority_score: number | null;
   days_since_last_purchase: number;
@@ -124,7 +127,9 @@ interface ScoreUpdate {
   farmer_id: string;
   health_score: number;
   health_class: string;
-  churn_risk: number;
+  // null = sem histórico de vendas: risco de perda não se aplica (_shared/churn-historico.ts), nunca 100.
+  // Chave OBRIGATÓRIA na RPC (ausente = 23514 no lote); null explícito é aceito (migration 20261121150000).
+  churn_risk: number | null;
   // null = sem histórico de vendas: prioridade não se aplica (_shared/prioridade-historico.ts), nunca 67/0.
   // Chave OBRIGATÓRIA na RPC (ausente = 23514 no lote); null explícito é aceito (migration 20261120210000).
   priority_score: number | null;
@@ -169,7 +174,9 @@ interface HealthHistoryRecord {
   // o mesmo 0 (money-path.md §2 — o par consumidor E produtor).
   x_score: number | null;
   s_score: number | null;
-  churn_risk: number;
+  // null = sem histórico de vendas (_shared/churn-historico.ts). Coluna nullable com DEFAULT 0 → a chave vai
+  // SEMPRE presente (null explícito), senão o Postgres refabrica o zero.
+  churn_risk: number | null;
 }
 
 interface PriorityLogRecord {
@@ -182,7 +189,8 @@ interface PriorityLogRecord {
   // 673.790 linhas do log dizem hoje, sem nunca ter havido produtor. Coluna nullable com DEFAULT 0
   // → null EXPLÍCITO, senão o Postgres refabrica o zero.
   margin_potential_component: number | null;
-  churn_risk_component: number;
+  // null = churn não se aplica (sem_historico) — Math.round(null) refabricaria 0. Nullable, DEFAULT 0.
+  churn_risk_component: number | null;
   // null = sem intervalo de recompra medido → o componente saiu do priority (renormalizado).
   repurchase_component: number | null;
   goal_proximity_component: number;
@@ -708,7 +716,9 @@ Deno.serve(async (req) => {
               farmer_id: ownerMap.get(client.user_id) ?? defaultFarmerId,
               health_score: 0,
               health_class: 'novo',
-              churn_risk: 0,
+              // NULL, não 0: recém-semeado não tem risco MEDIDO (o 0 afirmava "risco nenhum" se o compute
+              // deste run não chegasse a gravar). O compute logo abaixo grava o valor, ou NULL se sem_historico.
+              churn_risk: null,
               // NULL, não 0: recém-semeado ainda não foi computado. O compute logo abaixo, no MESMO run,
               // grava o valor (calculado, ou NULL se sem_historico — _shared/prioridade-historico.ts).
               priority_score: null,
@@ -931,6 +941,8 @@ Deno.serve(async (req) => {
 
       const healthClass = classeSaude(healthScore);
 
+      // Cálculo cru: é o COMPONENTE da prioridade (ativo/stale idênticos ao v1.6). O valor GRAVADO é
+      // `churnGravado`, abaixo — NULL para quem nunca comprou.
       const churnRisk = Math.max(0, Math.min(100, 100 - healthScore));
 
       // --- Priority Score ---
@@ -972,6 +984,11 @@ Deno.serve(async (req) => {
       const priorityScore = statusDoRun != null
         ? prioridadePorStatus(statusDoRun, priorityCalculada)
         : prioridadeNoRefreshFatal(client.sales_history_status, priorityCalculada, valorMedido(client.priority_score));
+      // Mesma regra para o churn GRAVADO (v1.7): quem NUNCA comprou não tem o que perder — NULL, não o 100 que
+      // `100 − health` fabricava para 15.766 clientes. Ramo fatal pelo status persistido; desconhecido preserva.
+      const churnGravado = statusDoRun != null
+        ? churnPorStatus(statusDoRun, churnRisk)
+        : churnNoRefreshFatal(client.sales_history_status, churnRisk, valorMedido(client.churn_risk));
 
       updates.push({
         id: client.id,
@@ -981,7 +998,7 @@ Deno.serve(async (req) => {
         farmer_id: client.farmer_id,
         health_score: healthScore,
         health_class: healthClass,
-        churn_risk: churnRisk,
+        churn_risk: churnGravado,
         priority_score: priorityScore,
         rf_score: Math.round(recencyScore),
         // Math.round(null) é 0 — o arredondamento fabricaria justamente o número que este PR
@@ -1032,7 +1049,7 @@ Deno.serve(async (req) => {
         // O null tem de atravessar até a coluna (nullable, DEFAULT 0 → chave presente com null).
         x_score: crossSellScore == null ? null : Math.round(crossSellScore),
         s_score: engagementScore == null ? null : Math.round(engagementScore),
-        churn_risk: churnRisk,
+        churn_risk: churnGravado,
       });
 
       priorityLogRecords.push({
@@ -1041,7 +1058,9 @@ Deno.serve(async (req) => {
         priority_score: priorityScore,
         // idem: null = componente ausente do score, não "apurei e deu zero".
         margin_potential_component: marginPotentialComp == null ? null : Math.round(marginPotentialComp),
-        churn_risk_component: Math.round(churnComp),
+        // O componente LOGADO segue o churn GRAVADO: NULL quando não se aplica (sem_historico, ou status
+        // desconhecido com churn anterior nulo). Para ativo/stale é o mesmo número do v1.6.
+        churn_risk_component: churnGravado == null ? null : Math.round(churnComp),
         // idem: null = sem intervalo medido (Math.round(null) refabricaria 0).
         repurchase_component: repurchaseComp == null ? null : Math.round(repurchaseComp),
         goal_proximity_component: Math.round(goalComp),

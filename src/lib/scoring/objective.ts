@@ -26,7 +26,8 @@ import { margemConhecida } from '@/lib/scoring/margin';
  * retunar T. Ver docs/historico/bugs-resolvidos.md.
  */
 export function selectObjective(
-  churnRisk: number,
+  // null = sem histórico (calculate-scores v1.7): risco não medido não dispara recuperação.
+  churnRisk: number | null,
   mixGap: number,
   /** `null` = margem do cliente não apurada → consolidacao_margem fica INDECIDÍVEL (ver abaixo). */
   marginPct: number | null,
@@ -37,7 +38,7 @@ export function selectObjective(
 ): string {
   if (salesHistoryStatus === 'sem_historico') return 'ativacao'; // sem venda válida → ativação (nada p/ recuperar/reativar)
   if (daysSince >= recencyCapDays) return 'reativacao';
-  if (churnRisk > 60) return 'recuperacao';
+  if (churnRisk != null && churnRisk > 60) return 'recuperacao';
   if (mixGap > 3) return 'expansao_mix';
   // Cluster AUSENTE (null) → NÃO dispara consolidacao_margem. money-path: ausente ≠ número
   // fabricado. Antes o caller passava 25 mágico p/ carteira vazia e `margem < 20` empurrava

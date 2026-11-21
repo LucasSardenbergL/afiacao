@@ -23,7 +23,7 @@ export interface CustomerScoreInputs {
   customer_user_id: string;
   farmer_id: string;
   // de farmer_client_scores
-  churn_risk: number;
+  churn_risk: number | null; // NULL = sem histórico de vendas (calculate-scores v1.7): ausente, nunca 0
   // ⚠️ `number | null`: estas três colunas NUNCA tiveram produtor — NULL em 6.633/6.633 linhas
   // (medido 2026-07-27). O tipo `number` anterior MENTIA, e era o que permitia `Number(x ?? 0)`
   // passar despercebido. Guardado por src/__tests__/potencial-nao-medido-gate.test.ts (src/) e
