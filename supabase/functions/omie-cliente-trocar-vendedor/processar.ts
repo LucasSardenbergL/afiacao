@@ -29,6 +29,7 @@ import {
   type Lote,
   NOME_ESPERADO,
   type Parametros,
+  enderecoFaltando,
   payloadAlterar,
   recomendacoesDe,
   VENDEDOR,
@@ -256,7 +257,7 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
     const payload = payloadAlterar(cad, alvo);
     if (!payload) {
       item.status = "precondicao_falhou";
-      item.erro = "cadastro sem estado no Omie (o AlterarCliente exige)";
+      item.erro = `endereço incompleto no Omie (o AlterarCliente exige): falta ${enderecoFaltando(cad).join(", ")}`;
       await d.registrar({ ...base, status: "precondicao_falhou", hash_antes: hashAntes, erro: item.erro });
       contar(res, "precondicao_falhou");
       continue;
