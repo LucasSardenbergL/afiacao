@@ -13,7 +13,7 @@ import {
  *
  * `submitting` não é motivo: o próprio botão mostra o spinner.
  */
-export type CodigoMotivoEnvio =
+type CodigoMotivoEnvio =
   | 'sem_cliente'
   | 'carregando_cliente'
   | 'carrinho_vazio'
