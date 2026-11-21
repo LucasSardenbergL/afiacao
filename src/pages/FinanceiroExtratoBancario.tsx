@@ -19,7 +19,8 @@ import {
   useResumoDiarioExtrato,
 } from '@/hooks/useFinanceiroExtratoBancario';
 import { useUrlState } from '@/hooks/useUrlState';
-import { limitesDoMes } from '@/components/financeiro/extrato/formatar';
+import { limitesDoMes, vesperaDoPendenteSemSaldo } from '@/components/financeiro/extrato/formatar';
+import { useAuth } from '@/contexts/AuthContext';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 /** 'YYYY-MM' do mês corrente (America/Sao_Paulo) como padrão do filtro. */
@@ -29,6 +30,8 @@ function mesAtual(): string {
 }
 
 export default function FinanceiroExtratoBancario() {
+  // isStaff REAL (não o da lente "Ver como"): a edge só aceita JWT de staff.
+  const { isStaff } = useAuth();
   const mesPadrao = useMemo(mesAtual, []);
   const [filtros, setFiltros] = useUrlState({ conta: '', mes: mesPadrao });
   const contas = useContasBancarias();
@@ -45,6 +48,8 @@ export default function FinanceiroExtratoBancario() {
   const conferir = useMarcarConferido();
   const ancoras = useAncorasConta(contaId);
   const registrarAncora = useRegistrarAncora(contaId);
+
+  const dataSugerida = vesperaDoPendenteSemSaldo(arquivos.data ?? []);
 
   if (contas.isLoading) return <PageSkeleton variant="list" />;
   if (contas.error) {
@@ -99,7 +104,9 @@ export default function FinanceiroExtratoBancario() {
             className="h-10 rounded-md border border-input bg-background px-3 text-sm"
           />
         </div>
-        <UploadExtrato desabilitado={false} enviando={importar.isPending} onArquivo={(f) => importar.mutate(f)} />
+        {isStaff && (
+          <UploadExtrato desabilitado={false} enviando={importar.isPending} onArquivo={(f) => importar.mutate(f)} />
+        )}
       </div>
 
       <Card>
@@ -119,6 +126,8 @@ export default function FinanceiroExtratoBancario() {
         <CardHeader><CardTitle className="text-base">Saldo de referência (manual)</CardTitle></CardHeader>
         <CardContent>
           <AncoraManualExtrato
+            key={`${conta.id}:${dataSugerida ?? ''}`}
+            dataSugerida={dataSugerida}
             ancoras={ancoras.data ?? []}
             carregando={ancoras.isLoading}
             erro={ancoras.error ? (mensagemDeErro(ancoras.error) ?? 'erro desconhecido') : null}

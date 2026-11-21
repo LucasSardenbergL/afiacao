@@ -1,6 +1,6 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { ResumoDia } from '@/services/financeiroExtratoBancario';
-import { diferencaDoCorte, formatarCentavos, formatarDataIso } from './formatar';
+import { diferencaDoCorte, formatarCentavos, formatarDataIso, INDISPONIVEL } from './formatar';
 
 function Celula({ valor, className }: { valor: number | null; className?: string }) {
   return (
@@ -30,7 +30,7 @@ export function ResumoDiarioExtrato({ dias }: { dias: ResumoDia[] }) {
         <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
           <div>
             <dt className="text-xs text-muted-foreground">Data de corte</dt>
-            <dd className="tabular-nums">{corte.dataCorte === null ? formatarCentavos(null) : formatarDataIso(corte.dataCorte)}</dd>
+            <dd className="tabular-nums">{corte.dataCorte === null ? INDISPONIVEL : formatarDataIso(corte.dataCorte)}</dd>
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">Saldo Itaú</dt>

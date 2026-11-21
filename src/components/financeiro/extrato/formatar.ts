@@ -1,6 +1,9 @@
+import { addDias } from '@/lib/time/sp-day';
+import type { ArquivoExtrato } from '@/services/financeiroExtratoBancario';
+
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
-const INDISPONIVEL = 'indisponível';
+export const INDISPONIVEL = 'indisponível';
 
 /** Centavos inteiros → "R$ 1.234,56". `null`/ausente → "indisponível" (NUNCA R$ 0,00). */
 export function formatarCentavos(c: number | null | undefined): string {
@@ -12,6 +15,20 @@ export function formatarCentavos(c: number | null | undefined): string {
 export function formatarDataIso(d: string): string {
   const [a, m, dia] = d.split('-');
   return a && m && dia ? `${dia}/${m}/${a}` : d;
+}
+
+/**
+ * Véspera ('YYYY-MM-DD') do início do arquivo `pendente_revisao`/`sem_saldo_inicial` mais recente — a data da âncora
+ * que o destrava (S(início − 1)). Aritmética de calendário via `addDias`, sem fuso. Sem pendente → `null`.
+ */
+export function vesperaDoPendenteSemSaldo(arquivos: ArquivoExtrato[]): string | null {
+  let alvo: ArquivoExtrato | null = null;
+  for (const a of arquivos) {
+    if (a.status !== 'pendente_revisao' || a.motivo !== 'sem_saldo_inicial') continue;
+    if (alvo === null || a.enviadoEm > alvo.enviadoEm) alvo = a;
+  }
+  if (alvo === null) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(alvo.periodoInicio) ? addDias(alvo.periodoInicio, -1) : null;
 }
 
 export interface DiaComSaldos {
