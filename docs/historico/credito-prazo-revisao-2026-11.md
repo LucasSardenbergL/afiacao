@@ -22,9 +22,13 @@ Programa: `docs/superpowers/specs/2026-11-20-credito-ia-design.md` · plano `doc
 
 ## Prova
 
-- `db/test-credito-prazo-revisao.sh`: 138 asserts + 10 falsificações (cada uma vermelha pelo motivo certo, controle verde na mesma invocação), em `LC_ALL=C` e `pt_BR.UTF-8`. A corrida de 2 sessões prova que o registro concorrente do mesmo conteúdo gera 1 linha; com o lock trocado por compartilhado, B colide no `seq` (`23505`).
+- `db/test-credito-prazo-revisao.sh`: 148 asserts + 14 falsificações (cada uma vermelha pelo motivo certo, controle verde na mesma invocação), com o BANCO criado em `C` e em `pt_BR.UTF-8`. A corrida de 2 sessões prova que o registro concorrente do mesmo conteúdo gera 1 linha; com o lock trocado por compartilhado, B colide no `seq` (`23505`).
 - Deno: `gate-credito_test.ts` (dominância na edição) e `revisao-credito_test.ts` (parcela efetiva, envio = revisão, falha não bloqueia).
-- 2ª opinião Codex no desenho (2 P0 + 6 P1 + 1 P2) e no diff.
+- 2ª opinião Codex no desenho (2 P0 + 6 P1 + 1 P2) e no diff (4 P1 + 6 P2, todos acatados).
+
+## Lição: `E'\v'` no PostgreSQL é a letra `v`
+
+O porte do `.trim()` do JS usou `btrim(d, E' \t\n\r\f\v')`. O PG só reconhece `\b \f \n \r \t` em string `E''`; `\v` vira `v`, e o trim passou a comer a letra "v" das pontas (`vA Vista` → `[0]` no SQL, `null` no TS). O CREATE passa, a postcondição não testa esse caso, e só a fixture de paridade com borda proposital pegaria. Use `chr(11)`. Dentro de REGEX (`'[\\v]'`) o `\v` é do motor ARE e funciona — a armadilha é só no literal `E''`.
 
 ## Herdado pelo PR 5 (antes de a revisão reservar crédito)
 
