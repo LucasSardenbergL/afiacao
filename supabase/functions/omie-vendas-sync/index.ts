@@ -11,6 +11,7 @@ import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelas
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
 import { concluirSyncPedidosIncremental } from "./desfecho-pedidos.ts";
 import { edicaoExigeGate, gateCredito, MENSAGEM_CREDITO_INDISPONIVEL } from "./gate-credito.ts";
+import { calendarioDaParcela, itensDaRevisao, parcelaEfetiva, registrarRevisao } from "./revisao-credito.ts";
 import { contadoresVendedorZerados, registrarVendedoresDaPagina } from "./vendedor-pedido.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
@@ -3057,6 +3058,22 @@ Deno.serve(async (req) => {
           account,
           codigo_cliente != null ? Number(codigo_cliente) : null,
         );
+        // Crédito-IA PR 3: revisão imutável ANTES do gate — o avaliado nasce antes da decisão e o
+        // envio abaixo usa o conteúdo DELA (parcela efetiva + código/quantidade/preço). Conversão de
+        // orçamento sem parcela vira 999 `default_999` com prazo NULL, nunca em silêncio. Não segura o
+        // envio se falhar (spec §10: a trava nova só liga após a 1ª leva) — `null` = caminho do PR 1.
+        const parcelaCriacao = parcelaEfetiva(codigo_parcela);
+        const revisaoCriacao = await registrarRevisao(supabaseAdmin, {
+          salesOrderId: sales_order_id,
+          company: account,
+          contexto: "criacao",
+          codigoCliente: ident.codigo_cliente,
+          parcela: parcelaCriacao,
+          items,
+          userId,
+        });
+        const itensEnvio = itensDaRevisao(items, revisaoCriacao);
+        const parcelaEnvio = revisaoCriacao?.codigo_parcela ?? parcelaCriacao.codigo;
         // Trava de crédito Fase 2: bloqueia cliente com vencido 60+ sem exceção DESTE pedido.
         const credito = await gateCredito(supabaseAdmin, {
           company: account,
@@ -3188,16 +3205,16 @@ Deno.serve(async (req) => {
           sales_order_id,
           ident.codigo_cliente,
           ident.codigo_vendedor,
-          items,
+          itensEnvio,
           observacao,
-          codigo_parcela,
+          parcelaEnvio,
           account,
           quantidade_volumes,
           ordem_compra,
           dados_adicionais_nf,
           numero_pedido_cliente
         );
-        result = { success: true, ...pedido };
+        result = { success: true, ...pedido, revisao_credito: revisaoCriacao?.revisao ?? null };
         break;
       }
 
@@ -3536,11 +3553,35 @@ Deno.serve(async (req) => {
             s + (Number(oi?.produto?.quantidade) || 0) * (Number(oi?.produto?.valor_unitario) || 0),
           0,
         );
+        // Crédito-IA PR 3: parcela EFETIVA da edição = a informada, senão a ATUAL do PV (antes a
+        // omissão regravava 999 — "Informar o número de parcelas" — por cima da condição real).
+        // Revisão registrada antes do gate; o envio abaixo usa o conteúdo dela (não bloqueia se falhar).
+        const parcelaEdicao = parcelaEfetiva(editParcela, omieParcelaEdit);
+        const revisaoEdicao = await registrarRevisao(supabaseAdmin, {
+          salesOrderId: editSoId,
+          company: editAccount,
+          contexto: "edicao",
+          codigoCliente: omieCodigoClienteEdit,
+          parcela: parcelaEdicao,
+          items: editItems,
+          userId,
+        });
+        const editItensEnvio = itensDaRevisao(editItems, revisaoEdicao);
+        const editParcelaEnvio = revisaoEdicao?.codigo_parcela ?? parcelaEdicao.codigo;
+        const parcelaMudou = editParcelaEnvio.trim() !== String(omieParcelaEdit ?? "").trim();
+        const [calendarioNovo, calendarioOmie] = parcelaMudou && omieParcelaEdit
+          ? await Promise.all([
+            calendarioDaParcela(supabaseAdmin, editParcelaEnvio, editAccount),
+            calendarioDaParcela(supabaseAdmin, String(omieParcelaEdit), editAccount),
+          ])
+          : [null, null];
         if (edicaoExigeGate({
           subtotalNovo: updatedSubtotal,
           subtotalOmie: totalAtualOmie,
-          parcelaNova: editParcela,
+          parcelaNova: editParcelaEnvio,
           parcelaOmie: omieParcelaEdit,
+          calendarioNovo,
+          calendarioOmie,
         })) {
           // Sem codigo_cliente no consult não há par COMPROVADO para expandir o grupo → a edição
           // fica INDETERMINADA e é segurada (antes: liberava com log). P1 review Codex 2026-11-20.
@@ -3635,8 +3676,8 @@ Deno.serve(async (req) => {
         })();
         console.log(`[Omie Vendas][${editAccount}] CFOP padrão extraído: ${defaultCfop}`);
 
-        for (let index = 0; index < editItems.length; index++) {
-          const item = editItems[index];
+        for (let index = 0; index < editItensEnvio.length; index++) {
+          const item = editItensEnvio[index];
           const itemCode = getOmieItemIntegrationCode(index);
           const inclPayload: Record<string, unknown> = {
             codigo_pedido: codigoPedido,
@@ -3697,7 +3738,7 @@ Deno.serve(async (req) => {
           codigo_pedido: codigoPedido,
           data_previsao: paraDataOmie(hojeSP()),
           etapa: "10",
-          codigo_parcela: editParcela || "999",
+          codigo_parcela: editParcelaEnvio,
         };
 
         const editInfoAdic: Record<string, unknown> = {
