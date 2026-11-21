@@ -157,3 +157,23 @@ sync de 2h da edge nova, que já rodou antes do backfill.
 - **Lidos sem código** (o Omie não traz vendedor no pedido): Colacor 290, Oben 8.
 - **Não lidos:** 28 pedidos, quase todos `importado`, que o `ListarPedidos` não devolveu. O sync de 2h os pega
   se reaparecerem.
+
+## 2026-11-21 — o placar lia a coluna fechada (403 em prod)
+
+O PR #4025 pôs `vendedor_user_id` no `.select()` de `fetch-pedidos-mtd` e `fetch-pedidos-sem-nota`.
+`sales_orders` é fechada por coluna e essa coluna não tem GRANT de leitura (de propósito, ver acima).
+Por isso o PostgREST devolvia 403 na leitura INTEIRA: os 3 tiles do Meu dia do CEO e o ranking ficavam
+"indisponível", e aparecia o banner "não consegui medir os pedidos sem nota". Os testes passavam
+porque mockam o supabase, que não conhece o ACL.
+
+- **Conserto:** RPC `pedidos_vendedor(uuid[])` (migration `20261121140000`, SECURITY DEFINER, gate
+  de staff, lote de 1 a 1000, aplicada pelo `db:aplicar`, recibo #1259). O front lê os pedidos sem a
+  coluna e anexa o vendedor por lote de 500 (`src/lib/dashboard/anexar-vendedor.ts`). Prova:
+  `db/test-pedidos-vendedor.sh` (11 asserts, 2 locales, 7 sabotagens).
+- **Classe:** `scripts/authz-select-colunas.test.ts` confere toda cadeia `.from('<tabela fechada
+  por coluna>')…select('<literal>')` de `src/` contra `AUTHZ_TABELAS_FECHADAS`. Falsificado: o
+  select antigo fica vermelho e aponta o arquivo e a linha.
+- **Achado de passagem (exceção conhecida no teste, com dono):** `ensureSalesOrderRow`
+  (`src/services/orderSubmission/idempotency.ts`) lê `omie_response`, também fechada (psql-ro
+  2026-11-21: `has_column_privilege` = f) desde o #2932. O checkout pelo app tomaria 403. Não houve
+  nenhum pedido criado pelo app desde setembro, então os dados não mostram isso.
