@@ -55,3 +55,17 @@ Edge volta a chamar `venda_gate_credito` (a função v1 está intacta). Não há
 ## Quando medir
 
 24 h após o deploy: `select acao, count(*), count(*) filter (where detalhe not like '%' || company || '/' || omie_codigo_cliente || '=%') as so_outra_empresa from venda_bloqueio_credito_log where created_at > now()-interval '24 hours' and detalhe like 'pares:%' group by 1;` — `so_outra_empresa` > 0 = o furo sendo fechado (bloqueio que a v1 não faria); `gate_indisponivel` > 0 = investigar (agora segura venda).
+
+---
+
+# PR 2 — banco do limite, da reserva e da decisão (2026-11-21)
+
+Migration `20261121160000_credito_limite_reserva_decisao.sql`, **sem edge nem Publish**, sem efeito em pedido: nada chama o núcleo do gate (`private.credito_avaliar_reservar`, sem grant) até o PR 5 (sombra), que expõe a RPC por **revisão** (PR 3).
+
+- **Reserva transacional:** `pg_advisory_xact_lock` por raiz do grupo, com a raiz relida sob o lock; reservas somadas pelo **par** (sobrevivem a troca de raiz); exige READ COMMITTED (`25000` fora dele). Prova com 2 `psql` concorrentes e bloqueio **observado** (`pg_blocking_pids`): 2×R$ 7k contra R$ 10k → 1 🟢 + 1 🟡. Sem o lock, o mutante dá 2 🟢 e R$ 14k.
+- **Solicitar ≠ autorizar:** o 🟡 abre `credito_solicitacao`; só `credito_autorizar_solicitacao` (cap + allowlist `credito_aprovador` = Lucas) cria `credito_autorizacao`, amarrada a revisão, valor, prazo e validade. Ela não cobre o piso nem o piso indeterminado. Reserva vinda de autorização vencida perde o lastro.
+- **Escrita:** REVOKE de DML (inclusive de `service_role` e por coluna) **+** trigger com portão GUC `credito.portao` = id da linha. A GUC sozinha é forjável numa sessão SQL; quem fecha é o REVOKE. O trigger é provado à parte, com um papel que tem DML e BYPASSRLS.
+- **Achado medido (psql-ro 2026-11-21):** `fin_contas_receber.status_titulo='PAGTO PARCIAL'` existe em prod (45 títulos, R$ 60,7k, **28 vencidos > 60 d**, 29 pares) e **não** está em `OPEN_TITLE_STATUSES`. O piso do PR 1 não o vê; o `saldo` dele é o valor cheio (`valor_recebido` nunca é preenchido). No gate novo: entra na exposição pelo valor cheio (o lado seguro) e, vencido > 60 d, vira 🔴. **O piso do PR 1 segue cego a isso — follow-up money-path.**
+- Prova: `db/test-credito-limite-reserva.sh` (178 asserts em `LC_ALL=C` e `pt_BR.UTF-8`, 10 falsificações com controle verde na mesma invocação). Codex: desenho com 11 achados (2 P0), todos incorporados.
+- **Fora do PR 2 (declarado):** frescor e cobertura do sync no gate, transferência comprovada reserva→título com residual de faturamento parcial (P0-2 Codex), carga e reconciliação dos PVs abertos antes de ligar (P1-7) → PR 5. Revisão imutável e RPC pública por revisão → PR 3/5.
+- Rollback: `DROP` das 7 tabelas e das funções novas (founder, SQL Editor). Não há dado de negócio até o PR 4.
