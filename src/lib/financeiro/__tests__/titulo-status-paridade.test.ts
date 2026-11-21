@@ -9,10 +9,13 @@ import { describe, expect, it } from 'vitest';
 import { OPEN_NOT_OVERDUE_TITLE_STATUSES, OPEN_TITLE_STATUSES } from '../titulo-status';
 
 const MIGRATION = 'supabase/migrations/20260703140000_trava_credito_gate_excecao_por_par.sql';
+// PR 1 crédito-IA (2026-11-20): o gate VIGENTE na edge passou a ser venda_gate_credito_grupo; a v1
+// fica no banco como rollback — as duas precisam do mesmo vocabulário.
+const MIGRATION_GRUPO = 'supabase/migrations/20261121120000_trava_credito_piso_grupo.sql';
 
 describe('paridade do vocabulário de status (gate de crédito)', () => {
-  it('o IN(...) do gate SQL tem EXATAMENTE os OPEN_TITLE_STATUSES', () => {
-    const sql = readFileSync(MIGRATION, 'utf8');
+  it.each([MIGRATION, MIGRATION_GRUPO])('o IN(...) do gate SQL tem EXATAMENTE os OPEN_TITLE_STATUSES (%s)', (arquivo) => {
+    const sql = readFileSync(arquivo, 'utf8');
     const m = sql.match(/status_titulo IN \(([^)]+)\)/);
     expect(m, 'filtro status_titulo IN (...) não encontrado na migration').toBeTruthy();
     const doSql = m![1]

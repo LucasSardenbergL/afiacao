@@ -374,6 +374,40 @@ describe('submitOrder', () => {
     ]);
   });
 
+  it('trava de crédito do GRUPO: dívida em OUTRA empresa aparece nomeada na mensagem e nos pares', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-oben',
+      invokeImpl: () => ({
+        data: {
+          success: false, blocked: 'credito',
+          gate: {
+            vencido: 650, titulos: 2, motivo: 'vencido_60d_sem_excecao',
+            pares: [
+              { company: 'colacor_sc', codigo: 202, vencido: 500, titulos: 1, vencimento_mais_antigo: '2026-08-01' },
+              { company: 'oben', codigo: 100, vencido: 150, titulos: 1, vencimento_mais_antigo: '2026-09-01' },
+            ],
+          },
+        },
+        error: null,
+      }),
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    const msg = r.errors.find((e) => e.step === 'bloqueio_credito_oben')?.message ?? '';
+    expect(msg).toContain('Colacor SC R$ 500,00');
+    expect(msg).toContain('Oben R$ 150,00');
+    expect(r.bloqueiosCredito?.[0]).toEqual(expect.objectContaining({
+      vencido: 650,
+      pares: [
+        expect.objectContaining({ company: 'colacor_sc', vencido: 500 }),
+        expect.objectContaining({ company: 'oben', vencido: 150 }),
+      ],
+    }));
+  });
+
   it('trava de crédito Colacor: bloqueado NÃO cria ordem de produção (o PV não existe)', async () => {
     const { client, invoke } = makeSupabase({
       insertId: 'so-col',
