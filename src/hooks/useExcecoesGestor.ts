@@ -19,7 +19,7 @@ const metrica = (m: Json | null, chave: string): number | null =>
   m !== null && typeof m === 'object' && !Array.isArray(m) ? num(m[chave]) : null;
 
 /** Console de exceções do founder (3 fontes determinísticas). */
-export function useExcecoesGestor(): { data: ConsoleExcecoes | null; isLoading: boolean; refetchAll: () => void } {
+export function useExcecoesGestor(): { data: ConsoleExcecoes | null; isLoading: boolean; isError: boolean; refetchAll: () => void } {
   const saudeQ = useDataHealth();
 
   const decisoesQ = useQuery({
@@ -133,5 +133,8 @@ export function useExcecoesGestor(): { data: ConsoleExcecoes | null; isLoading: 
   }, [isLoading, saudeQ.data, decisoesQ.data, tarefasQ.data, profilesQ.data]);
 
   const refetchAll = () => { saudeQ.refetch(); decisoesQ.refetch(); tarefasQ.refetch(); };
-  return { data, isLoading, refetchAll };
+  // Leitura que falha ≠ "tudo no lugar": quem consome distingue erro de vazio (`profilesQ` só
+  // enfeita nomes — falhar nele não esconde exceção nenhuma).
+  const isError = saudeQ.isError || decisoesQ.isError || tarefasQ.isError;
+  return { data, isLoading, isError, refetchAll };
 }

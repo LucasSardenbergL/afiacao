@@ -121,7 +121,13 @@ function DashboardBody() {
       keys: 'r',
       label: 'Recarregar dashboard',
       group: 'Dashboard',
-      handler: () => { queryClient.invalidateQueries({ queryKey: ['dashboard'] }); },
+      // As chaves REAIS das leituras da home: o placar do CEO lê o cache do cockpit financeiro e as
+      // vendas de `team-kpis`; `dashboard` cobre as demais personas.
+      handler: () => {
+        for (const queryKey of [['dashboard'], ['financeiro-cockpit'], ['team-kpis'], ['gestor-excecoes']]) {
+          queryClient.invalidateQueries({ queryKey });
+        }
+      },
     },
   ], [navigate, queryClient]));
 
