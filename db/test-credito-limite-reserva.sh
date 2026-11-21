@@ -212,7 +212,7 @@ titulos() {
 }
 limite() { Pq -c "SELECT public.t_limite('$1', $2, $3, '$4'${5:+, $5});"; }
 # gate: pedido company codigo revisao valor prazo [modo]
-gate() { Pq -c "SELECT public.t_gate('$1', '$2', $3, '$4', $5, $6${7:+, '$7'});"; }
+gate() { local m=""; [ -n "${7:-}" ] && m=", '$7'"; Pq -c "SELECT public.t_gate('$1', '$2', $3, '$4', $5, $6$m);"; }
 J() { python3 -c "import sys,json; d=json.load(sys.stdin); v=d$1; print(v)"; }
 # executa SQL como usuário autenticado (JWT de prod: request.jwt.claims) e devolve OK|SQLSTATE
 como() { Pq -c "SELECT pg_catalog.set_config('request.jwt.claims', '{\"sub\":\"$1\",\"role\":\"authenticated\"}', false);" \
@@ -420,10 +420,9 @@ asserts() {
 
   echo "· ACL"
   local f
-  for f in "private.credito_avaliar_reservar(uuid,text,bigint,text,numeric,integer,text,uuid)"; do
-    eq "X1 ninguém executa o núcleo do gate (anon/authenticated/service_role)" \
-       "$(Pq -c "SELECT has_function_privilege('anon','$f','EXECUTE')::text||has_function_privilege('authenticated','$f','EXECUTE')::text||has_function_privilege('service_role','$f','EXECUTE')::text;")" "falsefalsefalse"
-  done
+  f="private.credito_avaliar_reservar(uuid,text,bigint,text,numeric,integer,text,uuid)"
+  eq "X1 ninguém executa o núcleo do gate (anon/authenticated/service_role)" \
+     "$(Pq -c "SELECT has_function_privilege('anon','$f','EXECUTE')::text||has_function_privilege('authenticated','$f','EXECUTE')::text||has_function_privilege('service_role','$f','EXECUTE')::text;")" "falsefalsefalse"
   for f in "public.credito_grupo_raiz(text,bigint)" "public.credito_grupo_assinatura(uuid)" \
            "public.credito_propor_limite(uuid,numeric,integer,text,numeric,jsonb,jsonb,jsonb,text,text,timestamptz,text,integer)"; do
     eq "X2 só service_role: $f" "$(Pq -c "SELECT has_function_privilege('anon','$f','EXECUTE')::text||has_function_privilege('authenticated','$f','EXECUTE')::text||has_function_privilege('service_role','$f','EXECUTE')::text;")" "falsefalsetrue"
