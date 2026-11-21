@@ -56,7 +56,8 @@ if [ "${1:-}" = "--falsificar" ]; then
     t2_gerado_em_utc:t2_gerado_em_fuso_sp
     t2_gerado_em_opcional:t2_gerado_em_ausente+t2_gerado_em_sem_fuso
     t2_ancora_sem_conferir_arquivo:t2_ancora_diverge_do_arquivo+t2_ancora_diverge_da_vespera_do_arquivo
-    t2_banco_sem_normalizar:t2_banco_zero_a_esquerda+t2_banco_so_zeros_incompleto"
+    t2_banco_sem_normalizar:t2_banco_zero_a_esquerda+t2_banco_so_zeros_incompleto
+    t2_gerado_em_futuro_aceito:t2_gerado_em_no_futuro"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-banco-extrato-f1.XXXXXX")"
   echo "== CONTROLE (locale=${LOCALE_TESTE:-C}) =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -192,6 +193,8 @@ case "${SABOTAGEM:-}" in
   t2_ancora_sem_conferir_arquivo) sabotar "  IF v_saldo IS NOT NULL THEN
     RAISE EXCEPTION 'banco_conta_registrar_ancora: ANCORA_DIVERGE" "  IF false THEN
     RAISE EXCEPTION 'banco_conta_registrar_ancora: ANCORA_DIVERGE" ;;
+  # Ruling 8: gerado_em adiantado deixa de ser recusado
+  t2_gerado_em_futuro_aceito) sabotar "IF v_gerado_em > now() + interval '10 minutes' THEN" "IF false THEN" ;;
   # Minor (a): codigo do banco comparado sem normalizar zeros a esquerda
   t2_banco_sem_normalizar) sabotar "ltrim(regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g'), '0')" \
                                    "regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g')" ;;
@@ -572,6 +575,15 @@ J=$(GERADO_P='2026-10-03T03:00:00Z' HOJE_P=$D3 pay 147 "$C24" 24 $D1 $D2 1000 13
 eq "t2_gerado_em_meia_noite_sp_aceita controle: 03:00 UTC do dia 3 = 00:00 do dia 3 em SP -> aceito, gerado_em gravado" \
    "$(reg "$J")/$(nlin "$C24")/$(Pq -c "SELECT gerado_em = '2026-10-03T03:00:00Z'::timestamptz FROM public.banco_extrato_arquivo WHERE banco_conta_id='$C24' AND sha256='$(sha 147)'")" \
    "aceito|-/2/t"
+# Ruling 8: gerado_em adiantado (> now() + 10 min) e recusado; dentro da tolerancia segue para as demais regras
+C28=$(conta_nova 28)
+ISO_MAIS() { Pq -c "SELECT to_char((now() + interval '$1') AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')" 2>&1; }
+J=$(GERADO_P="$(ISO_MAIS '1 day')" pay 151 "$C28" 28 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_gerado_em_no_futuro gerado_em = now() + 1 dia: recusado, nenhuma linha" \
+   "$(reg "$J")/$(nlin "$C28")" "recusado|gerado_em_no_futuro/0"
+J=$(GERADO_P="$(ISO_MAIS '5 minutes')" pay 152 "$C28" 28 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_gerado_em_tolerancia_5min controle: now() + 5 min segue para as demais regras (aceito)" \
+   "$(reg "$J")/$(nlin "$C28")" "aceito|-/1"
 C27=$(conta_nova 27)
 J=$(SEM_GERADO=1 pay 148 "$C27" 27 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
 eq "t2_gerado_em_ausente contrato quebrado = 22023, nada gravado" \

@@ -614,6 +614,13 @@ BEGIN
     END IF;
     -- 3b. ...e o dia ainda estava aberto quando o BANCO gerou o arquivo (Ruling 6): baixado as 10h do dia X
     --     e enviado em X+1, o arquivo traz o dia X PARCIAL. Motivo proprio (o dia corrente e o do upload).
+    --     Antes: gerado_em no FUTURO (tolerancia de 10 min de relogio) e recusado (Ruling 8) — um DTSERVER
+    --     adiantado faria o dia parecer fechado e contornaria a regra abaixo.
+    IF v_gerado_em > now() + interval '10 minutes' THEN
+      v_status := 'recusado'; v_motivo := 'gerado_em_no_futuro';
+      v_detalhe := format('gerado_em=%s agora=%s', v_gerado_em, now());
+      EXIT avalia;
+    END IF;
     IF v_fim >= v_gerado_sp THEN
       v_status := 'recusado'; v_motivo := 'dia_nao_fechado_na_geracao';
       v_detalhe := format('periodo_fim=%s gerado_em_sp=%s', v_fim, v_gerado_sp);

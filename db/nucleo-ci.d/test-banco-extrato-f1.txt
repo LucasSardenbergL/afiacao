@@ -4,5 +4,6 @@
 # corrente, fechamento, formato, sobreposicao por multiconjunto, continuidade nas duas fronteiras, idempotencia e
 # reavaliacao por hash, concorrencia com 2 psql), marcar_conferido e resumo_dia (NULL fora da cobertura).
 # Fix da Task 2: sem inicial so a VESPERA ancora; gerado_em (dia fechado na geracao, em SP); ancora manual conferida
-# contra o arquivo aceito; codigo do banco sem zeros a esquerda. Migration aplicada 2x. 37 sabotagens.
-db/test-banco-extrato-f1.sh 97  falsificar=37
+# contra o arquivo aceito; codigo do banco sem zeros a esquerda; gerado_em no futuro recusado. Migration aplicada 2x.
+# 38 sabotagens.
+db/test-banco-extrato-f1.sh 99  falsificar=38
