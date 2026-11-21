@@ -28,7 +28,7 @@ const OFX = [
   "<FITID>202611030001", "<CHECKNUM>000123", "<MEMO>TARIFA PACOTE", "</STMTTRN>",
   "<STMTTRN>", "<TRNTYPE>CREDIT", "<DTPOSTED>20261119000000[-3:BRT]", "<TRNAMT>5000.00",
   "<FITID>202611190002", "<REFNUM>REF9", "<NAME>PIX RECEBIDO", "</STMTTRN>",
-  "</BANKTRANLIST>", "<LEDGERBAL>", "<BALAMT>-250.10", "<DTASOF>20261119000000[-3:BRT]",
+  "</BANKTRANLIST>", "<LEDGERBAL>", "<BALAMT>-250.10", "<DTASOF>20261120000000[-3:BRT]",
   "</LEDGERBAL>", "</STMTRS>", "</STMTTRNRS>", "</BANKMSGSRSV1>", "</OFX>",
 ].join("\n");
 
@@ -214,4 +214,45 @@ Deno.test("estrategia_chave desconhecida na conta -> 500, sem chamar a RPC", asy
   const r = await processar(f.deps, entrada({ estrategia_chave: "xyz" }), USUARIO);
   igual(r.status, 500, "status");
   igual(f.registrados.length, 0, "nao chama a RPC");
+});
+
+// Layout REAL do Bankline (T0), sintético: sem BRANCHID, ACCTID 10 dígitos, linhas de SALDO como
+// STMTTRN, LEDGERBAL de hoje, CHECKNUM = FITID, acento UTF-8 com cabeçalho 1252.
+const trnBl = (data: string, valor: string, fitid: string, memo: string) => [
+  "<STMTTRN>", `<TRNTYPE>${valor.startsWith("-") ? "DEBIT" : "CREDIT"}`, `<DTPOSTED>${data}100000[-03:EST]`,
+  `<TRNAMT>${valor}`, `<FITID>${fitid}`, `<CHECKNUM>${fitid}`, `<MEMO>${memo}`, "</STMTTRN>",
+];
+const OFX_BANKLINE = [
+  "OFXHEADER:100", "DATA:OFXSGML", "VERSION:102", "SECURITY:NONE", "ENCODING:USASCII",
+  "CHARSET:1252", "COMPRESSION:NONE", "OLDFILEUID:NONE", "NEWFILEUID:NONE", "",
+  "<OFX>", "<SIGNONMSGSRSV1>", "<SONRS>", "<STATUS>", "<CODE>0", "<SEVERITY>INFO", "</STATUS>",
+  "<DTSERVER>20261121100000[-03:EST]", "<LANGUAGE>POR", "</SONRS>", "</SIGNONMSGSRSV1>",
+  "<BANKMSGSRSV1>", "<STMTTRNRS>", "<TRNUID>1001", "<STATUS>", "<CODE>0", "<SEVERITY>INFO", "</STATUS>",
+  "<STMTRS>", "<CURDEF>BRL", "<BANKACCTFROM>", "<BANKID>0341", "<ACCTID>0000000000", "<ACCTTYPE>CHECKING",
+  "</BANKACCTFROM>", "<BANKTRANLIST>", "<DTSTART>20261001100000[-03:EST]", "<DTEND>20261005100000[-03:EST]",
+  ...trnBl("20260930", "1000.00", "20260930001", "SALDO ANTERIOR"),
+  ...trnBl("20261001", "-200.00", "20261001001", "TAR PACOTE"),
+  ...trnBl("20261001", "50.25", "20261001002", "PIX RECEBIDO"),
+  ...trnBl("20261001", "850.25", "20261001003", "SALDO TOTAL DISPONÍVEL DIA"),
+  ...trnBl("20261005", "100.00", "20261005001", "TED RECEBIDA"),
+  ...trnBl("20261005", "950.25", "20261005002", "SALDO TOTAL DISPONÍVEL DIA"),
+  "</BANKTRANLIST>", "<LEDGERBAL>", "<BALAMT>999.99", "<DTASOF>20261121100000[-03:EST]", "</LEDGERBAL>",
+  "</STMTRS>", "</STMTTRNRS>", "</BANKMSGSRSV1>", "</OFX>",
+].join("\n");
+
+Deno.test("OFX layout Bankline -> registra ancorado sozinho: sem linhas de SALDO, inicial do arquivo, documento null", async () => {
+  const f = falsas(enc(OFX_BANKLINE), { resultado: "aceito" }, new Date("2026-11-21T15:00:00Z"));
+  const r = await processar(f.deps, entrada(), USUARIO);
+  igual(r.status, 200, "status");
+  igual(f.registrados.length, 1, "registra uma vez");
+  const p = f.registrados[0] as Record<string, unknown>;
+  const ext = p.extrato as Record<string, unknown>;
+  igual([ext.banco, ext.agencia, ext.conta], ["0341", "0000", "000000"], "R22: agencia 4 + conta 6");
+  igual(ext.saldo_inicial_centavos, 100000, "R23: SALDO ANTERIOR vira saldo inicial");
+  igual(ext.saldo_final_centavos, 95025, "R23/R24: ultimo SALDO DIA, nao o LEDGERBAL de hoje");
+  const linhas = ext.linhas as Record<string, unknown>[];
+  igual(linhas.map((l) => l.descricao), ["TAR PACOTE", "PIX RECEBIDO", "TED RECEBIDA"], "linhas de SALDO fora");
+  igual(linhas.map((l) => l.documento), [null, null, null], "R26: CHECKNUM == FITID -> documento null");
+  igual(p.estrategia_chave, "tupla", "estrategia padrao segue tupla");
+  igual(linhas.map((l) => l.chave), ["2026-10-01|D|20000||1", "2026-10-01|C|5025||1", "2026-10-05|C|10000||1"], "tupla sem documento posicional");
 });
