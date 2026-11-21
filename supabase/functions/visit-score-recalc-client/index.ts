@@ -99,7 +99,7 @@ interface ScoreAdjustment {
 interface CustomerScoreInputs {
   customer_user_id: string;
   farmer_id: string;
-  churn_risk: number;
+  churn_risk: number | null; // NULL = sem histórico de vendas (calculate-scores v1.7): ausente, nunca 0
   // ⚠️ `number | null`: estas três colunas NUNCA tiveram produtor — NULL em 6.633/6.633 linhas
   // (medido 2026-07-27). Espelha CustomerScoreInputs de src/lib/visit-scoring/types.ts.
   expansion_score: number | null;
@@ -166,8 +166,14 @@ function scoreRecuperacao(c: CustomerScoreInputs, classesAtivas: Set<string>): M
   const insumosAusentes: string[] = [];
   let insumosMedidos = 0;
 
-  const churnBoost = c.churn_risk * 0.5;
-  insumosMedidos++; // churn_risk sempre tem produtor (nunca null no tipo) — sustenta a missão sozinho
+  // churn_risk é NULL para quem nunca comprou (calculate-scores v1.7, migration 20261121150000): o 100 de
+  // `sem_historico` era fabricado. Ausente é NOMEADO e não entra na soma — `null * 0.5` daria 0 medido.
+  let churnBoost = 0;
+  if (c.churn_risk == null) insumosAusentes.push('churn_risk');
+  else {
+    churnBoost = c.churn_risk * 0.5;
+    insumosMedidos++;
+  }
 
   // Guard explícito ANTES do uso: `null * 0.3` é 0 em JS, que afirmaria "medi e não há o que
   // recuperar". Sem produtor, o componente simplesmente não entra na soma.
@@ -184,8 +190,8 @@ function scoreRecuperacao(c: CustomerScoreInputs, classesAtivas: Set<string>): M
   const signalsBoost = aplicaveis(c.signal_modifiers?.breakdown?.churn, classesAtivas)
     .reduce((s, m) => s + m.delta * m.decayedWeight, 0) * 0.1;
 
-  // REGRA ÚNICA (mesmo padrão de scoreExpansao): nenhum insumo medido → não avaliada. Hoje é
-  // inatingível aqui — churn_risk sempre tem produtor — mas a regra existe uma vez só.
+  // REGRA ÚNICA (mesmo padrão de scoreExpansao): nenhum insumo medido → não avaliada. Alcançável
+  // desde a v1.7: churn NULL (sem histórico) com recover_score sem produtor.
   if (insumosMedidos === 0) return { score: null, insumosAusentes };
 
   const score = clamp(churnBoost + recoverBoost + recencyPenalty + signalsBoost, 0, 100);
@@ -241,9 +247,13 @@ function scoreRelacionamento(c: CustomerScoreInputs): MissionResult {
   // ?? 30 (não 365) — null = sem histórico de visita = sem relacionamento estabelecido.
   // Mesma decisão de src/lib/visit-scoring/missions.ts.
   const daysSinceVisitBoost = Math.min(40, (c.days_since_last_visit ?? 30) * 0.3);
-  const riskPenalty = c.churn_risk * 0.3;
+  // churn_risk NULL (sem histórico, v1.7) não é "risco zero": a penalidade não entra e o ausente é nomeado.
+  const insumosAusentes: string[] = [];
+  let riskPenalty = 0;
+  if (c.churn_risk == null) insumosAusentes.push('churn_risk');
+  else riskPenalty = c.churn_risk * 0.3;
   const score = clamp(healthBoost + revenueBoost + daysSinceVisitBoost - riskPenalty, 0, 100);
-  return { score, insumosAusentes: [] };
+  return { score, insumosAusentes };
 }
 
 /**
@@ -415,7 +425,8 @@ async function recalcOne(
   const inputs: CustomerScoreInputs = {
     customer_user_id,
     farmer_id,
-    churn_risk: Number(scores.churn_risk ?? 0),
+    // NULL = sem histórico (calculate-scores v1.7): ausente ≠ zero — o `?? 0` fabricava "risco nenhum".
+    churn_risk: valorMedido(scores.churn_risk),
     // ausente ≠ zero: as 3 colunas abaixo nunca tiveram writer (NULL em 6.633/6.633 linhas).
     // valorMedido degrada para null em vez de fabricar 0 — as missões tratam a ausência.
     expansion_score: valorMedido(scores.expansion_score),

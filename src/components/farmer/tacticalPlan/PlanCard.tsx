@@ -52,7 +52,7 @@ export const PlanCard = ({
             <p className="text-muted-foreground">Health</p>
           </div>
           <div className="bg-muted/50 rounded p-1">
-            <p className="font-bold">{Math.round(plan.churnRisk)}%</p>
+            <p className="font-bold">{plan.churnRisk == null ? '—' : `${Math.round(plan.churnRisk)}%`}</p>
             <p className="text-muted-foreground">Churn</p>
           </div>
           <div className="bg-muted/50 rounded p-1">

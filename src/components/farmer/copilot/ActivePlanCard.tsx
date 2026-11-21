@@ -74,7 +74,7 @@ export function ActivePlanCard({ activePlan, showPlan, onToggle }: ActivePlanCar
             <div className="flex gap-1.5">
               <Badge variant="outline" className="text-[7px]">{getObjectiveLabel(activePlan.strategicObjective)}</Badge>
               <Badge variant="outline" className="text-[7px]">HS: {Math.round(activePlan.healthScore)}</Badge>
-              <Badge variant="outline" className="text-[7px]">Churn: {Math.round(activePlan.churnRisk)}%</Badge>
+              <Badge variant="outline" className="text-[7px]">Churn: {activePlan.churnRisk == null ? '—' : `${Math.round(activePlan.churnRisk)}%`}</Badge>
             </div>
             {activePlan.approachStrategy && (
               <p className="text-muted-foreground">{activePlan.approachStrategy}</p>

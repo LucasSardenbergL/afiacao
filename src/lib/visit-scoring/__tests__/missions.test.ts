@@ -451,3 +451,30 @@ describe('computeVisitScore com missão não avaliada', () => {
     expect(typeof r.visit_score).toBe('number');
   });
 });
+
+describe('churn_risk ausente (calculate-scores v1.7: NULL para sem_historico) — nunca vira 0 medido', () => {
+  // Caso que a v1.7 torna alcançável: status sem_historico pela receita, mas cabeçalho de pedido válido
+  // (sales_orders_count > 0) — a visita o trata como comprador e chega a ler o churn.
+  const comPedidoSemChurn = mkInput({ churn_risk: null, sales_history_status: 'sem_historico', sales_orders_count: 1 });
+
+  it('recuperação: churn e recover ausentes → não avaliada (null), com os dois nomeados', () => {
+    const r = scoreRecuperacao(comPedidoSemChurn);
+    expect(r.score).toBeNull();
+    expect(r.insumosAusentes).toEqual(['churn_risk', 'recover_score']);
+  });
+
+  it('recuperação: churn ausente com recover medido → só o recover pontua', () => {
+    const r = scoreRecuperacao(mkInput({ churn_risk: null, recover_score: 50, days_since_last_purchase: 100 }));
+    expect(r.score).toBe(15);
+    expect(r.insumosAusentes).toEqual(['churn_risk']);
+  });
+
+  it('relacionamento: churn ausente não é risco zero — penalidade fora e ausente nomeado', () => {
+    const r = scoreRelacionamento(mkInput({ churn_risk: null, health_score: 50 }));
+    const medidoZero = scoreRelacionamento(mkInput({ churn_risk: 0, health_score: 50 }));
+    expect(r.score).toBe(medidoZero.score);
+    expect(r.insumosAusentes).toEqual(['churn_risk']);
+    expect(medidoZero.insumosAusentes).toEqual([]);
+  });
+});
+

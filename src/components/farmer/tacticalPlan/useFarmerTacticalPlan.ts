@@ -108,7 +108,8 @@ export function useFarmerTacticalPlan() {
       id: s.customer_user_id,
       name: profileMap.get(s.customer_user_id) || semNome(s.customer_user_id),
       healthScore: Number(s.health_score || 0),
-      churnRisk: Number(s.churn_risk || 0),
+      // null = sem histórico (calculate-scores v1.7): ausente, nunca 0.
+      churnRisk: s.churn_risk == null ? null : Number(s.churn_risk),
     })));
   };
 

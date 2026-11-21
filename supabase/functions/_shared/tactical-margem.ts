@@ -117,7 +117,8 @@ export function classifyProfile(
  *  valor já numerizado). Sem a margem do cliente a regra de consolidação é indecidível —
  *  não se afirma "margem baixa vs. pares" sem saber a margem. */
 export function selectObjective(
-  churnRisk: number,
+  // null = sem histórico (calculate-scores v1.7): risco não medido não dispara recuperação.
+  churnRisk: number | null,
   mixGap: number,
   marginPct: number | null,
   clusterMargin: number | null,
@@ -127,7 +128,7 @@ export function selectObjective(
 ): string {
   if (salesHistoryStatus === 'sem_historico') return 'ativacao';
   if (daysSince >= recencyCapDays) return 'reativacao';
-  if (churnRisk > 60) return 'recuperacao';
+  if (churnRisk != null && churnRisk > 60) return 'recuperacao';
   if (mixGap > 3) return 'expansao_mix';
   const m = margemConhecida(marginPct);
   const c = margemConhecida(clusterMargin);

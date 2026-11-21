@@ -1,0 +1,4 @@
+# Scores (20261121150000): churn_risk NULL explícito aceito e gravado sem COALESCE, chave AUSENTE derruba o lote
+# misto com 23514 e zero linhas (guard do priority intacto), fencing 55000/22004 intacto, trigger ignora só o
+# 100→NULL isolado de sem_historico SEM pedido nenhum (pedido no universo canônico, 1ª venda, ativo→NULL, stale enfileiram), PRE anti-deriva.
+db/test-churn-risk-nulo-sem-historico.sh 42 falsificar=10

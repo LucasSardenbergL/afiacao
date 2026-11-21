@@ -190,6 +190,10 @@ Deno.test("objective: dormência >= teto → reativacao", () => {
   assertEquals(selectObjective(10, 0, 30, 40, 180, 180, null), "reativacao");
 });
 
+Deno.test("objective: churn NULL (v1.7) → NÃO recuperacao", () => {
+  assertEquals(selectObjective(null, 0, 30, 40, 10, 180, null), "consolidacao_margem");
+});
+
 Deno.test("objective: churn > 60 → recuperacao", () => {
   assertEquals(selectObjective(61, 0, 30, 40, 10, 180, null), "recuperacao");
 });

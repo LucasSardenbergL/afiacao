@@ -32,5 +32,5 @@ export interface CustomerLite {
   id: string;
   name: string;
   healthScore: number;
-  churnRisk: number;
+  churnRisk: number | null; // null = sem histórico (calculate-scores v1.7)
 }

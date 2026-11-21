@@ -56,7 +56,7 @@ export interface TacticalPlan {
 
   // Diagnosis
   healthScore: number;
-  churnRisk: number;
+  churnRisk: number | null; // null = sem histórico (calculate-scores v1.7)
   mixGap: number;
   /** PERCENTUAL (0–100), ou null quando a margem era desconhecida na geração do plano — ou não foi
    *  concedida/lida (ver `acessoMargem`). Sai da RPC get_planos_margem, nunca da tabela (FU4-F). */
@@ -362,7 +362,8 @@ export const useTacticalPlan = () => {
       customerName: profileMap.get(d.customer_user_id) || 'Cliente',
       planType: tipoDoPlano(d.plan_type),
       healthScore: Number(d.health_score || 0),
-      churnRisk: Number(d.churn_risk ?? 0), // ?? (não ||): churn=0 é valor real (cliente saudável), não ausência
+      // null atravessa (sem histórico, calculate-scores v1.7): o card mostra "—", nunca "0%". 0 segue valor real.
+      churnRisk: d.churn_risk == null ? null : Number(d.churn_risk),
       mixGap: Number(d.mix_gap || 0),
       // O plano persistido grava a margem do cliente no INSTANTE da geração; pós-#1495 ela
       // pode ser null, e `Number(null || 0)` a exibiria como "0,0%" — margem nula apurada.
@@ -472,7 +473,8 @@ export const useTacticalPlan = () => {
         filtro,
         desdeIso,
       )
-        .order('churn_risk', { ascending: false })
+        // nullsFirst:false — DESC do Postgres põe NULL no topo; plano sem risco medido não fura a fila.
+        .order('churn_risk', { ascending: false, nullsFirst: false })
         .order('generated_at', { ascending: false })
         .limit(LIMITE_FILA));
 
@@ -636,7 +638,8 @@ export const useTacticalPlan = () => {
       }
 
       const healthScore = Number(score.health_score || 0);
-      const churnRisk = Number(score.churn_risk ?? 0); // ?? (não ||): churn=0 é valor real, não ausência
+      // null = sem histórico (calculate-scores v1.7): ausente, nunca 0 — vai null ao plano e ao prompt.
+      const churnRisk = score.churn_risk == null ? null : Number(score.churn_risk);
       const avgSpend = Number(score.avg_monthly_spend_180d || 0);
       // Margem e cluster pela RPC com gate de projeção: sem cap_custo_ler os dois chegam null e o plano
       // segue o ramo "margem desconhecida" — o número não vai ao prompt nem fica gravado no plano.

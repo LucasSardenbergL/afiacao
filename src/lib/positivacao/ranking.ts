@@ -32,6 +32,13 @@ export function rankAPositivar(candidatos: ClienteAPositivar[]): ClienteAPositiv
       const rp = rpB - rpA;
       if (rp !== 0) return rp;
     }
-    return (b.churn_risk ?? 0) - (a.churn_risk ?? 0);
+    // Churn MEDIDO (0 inclusive) vence ausente, pelo mesmo motivo: desde a calculate-scores v1.7 o
+    // churn de quem nunca comprou é NULL, e `?? 0` o empataria com um comprador de risco medido 0.
+    const crA = valorMedido(a.churn_risk);
+    const crB = valorMedido(b.churn_risk);
+    if (crA != null && crB == null) return -1;
+    if (crA == null && crB != null) return 1;
+    if (crA == null || crB == null) return 0;
+    return crB - crA;
   });
 }
