@@ -614,7 +614,9 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
          O underline é a "spine" visual do app — gradient sutil que distingue Colacor de
          qualquer template Vercel genérico. Aparece só na sidebar expandida. */}
       <div className={cn(
-        'flex items-center h-topbar pt-[env(safe-area-inset-top)] border-b border-sidebar-border px-3',
+        'flex items-center border-b border-sidebar-border px-3',
+        // Alinha com a topbar: com a faixa "Ver como" a área segura já ficou na faixa.
+        isImpersonating ? 'h-12' : 'h-topbar pt-[env(safe-area-inset-top)]',
         collapsed ? 'justify-center' : 'justify-between'
       )}>
         {!collapsed && (
@@ -735,11 +737,13 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
   return (
     <header
       className={cn(
-        'fixed right-0 z-30 h-topbar border-b border-border bg-card/80 backdrop-blur-sm flex items-center justify-between transition-all duration-200',
+        'fixed right-0 z-30 border-b border-border bg-card/80 backdrop-blur-sm flex items-center justify-between transition-all duration-200',
         // viewport-fit=cover: conteúdo abaixo da barra de status e fora do notch no paisagem.
-        'pt-[env(safe-area-inset-top)] pl-[calc(1rem+env(safe-area-inset-left))] pr-[calc(1rem+env(safe-area-inset-right))]',
+        'pl-[calc(1rem+env(safe-area-inset-left))] pr-[calc(1rem+env(safe-area-inset-right))]',
         'left-0 lg:left-sidebar',
-        isImpersonating ? 'faixa-ver-como-top' : 'top-0',
+        // Com a faixa "Ver como", É ELA que cobre a barra de status: a topbar fica com 48px logo
+        // abaixo (senão a área segura entraria duas vezes — Codex P2).
+        isImpersonating ? 'faixa-ver-como-top h-12' : 'top-0 h-topbar pt-[env(safe-area-inset-top)]',
         sidebarCollapsed && 'lg:left-sidebar-collapsed'
       )}
     >
@@ -897,7 +901,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <AppShellProvider>
       <ShortcutsRegistryProvider>
         <CommandsRegistryProvider>
-          <div className={cn('min-h-screen bg-background density-compact', isImpersonating && 'pt-[calc(1.75rem+env(safe-area-inset-top))]')}>
+          {/* Faixa (1.75rem + área segura) + topbar de 48px = 1.75rem + pt-topbar (que já tem a área segura). */}
+          <div className={cn('min-h-screen bg-background density-compact', isImpersonating && 'pt-7')}>
             <ImpersonationBanner />
             {/* Desktop sidebar */}
             <div className="hidden lg:block">
