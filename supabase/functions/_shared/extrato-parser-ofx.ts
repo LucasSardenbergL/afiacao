@@ -184,6 +184,9 @@ function parse(bytes: Uint8Array): ResultadoParse {
   const banco = bancoDig === '' ? null : bancoDig;
   const periodoInicio = dataSimples(exige('DTSTART', topo.get('DTSTART')), 'DTSTART');
   const periodoFim = dataFim(exige('DTEND', topo.get('DTEND')));
+  if (periodoFim < periodoInicio) {
+    throw new Recusa('data_invalida', `DTEND ${periodoFim} anterior a DTSTART ${periodoInicio}`);
+  }
 
   const sf = valorComSinal(exige('LEDGERBAL/BALAMT', saldo), 'BALAMT');
   const saldoFinalCentavos = sf.negativo && sf.centavos !== 0 ? -sf.centavos : sf.centavos;

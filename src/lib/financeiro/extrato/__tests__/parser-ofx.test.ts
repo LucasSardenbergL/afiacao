@@ -150,6 +150,23 @@ describe('parseOfx — variações', () => {
     const s = troca(troca(SGML, '20261120000000[-3:BRT]\n<STMTTRN>', '20261201000000[-3:BRT]\n<STMTTRN>'), '20261119000000[-3:BRT]\n<TRNAMT>', '20261130000000[-3:BRT]\n<TRNAMT>');
     expect(ok(parseOfx(cp1252(s))).periodoFim).toBe('2026-11-30');
   });
+  it('DTEND (00:00 exclusivo) que vira véspera do DTSTART -> data_invalida, mesmo sem lançamentos (export de um dia só)', () => {
+    const umDia = troca(SGML, '<DTEND>20261120000000[-3:BRT]', '<DTEND>20261101000000[-3:BRT]');
+    const semLanc = umDia.replace(/<STMTTRN>[\s\S]*?<\/STMTTRN>\n/g, '');
+    expect(semLanc.includes('<STMTTRN>')).toBe(false);
+    const r = parseOfx(cp1252(semLanc));
+    expect(recusa(r)).toBe('data_invalida');
+    expect(!r.ok && r.detalhe).toContain('DTEND');
+    // com lançamentos continua recusado como data_invalida
+    expect(recusa(parseOfx(cp1252(umDia)))).toBe('data_invalida');
+  });
+  it('DTEND == DTSTART (hora diferente de 00:00:00) é um dia só válido', () => {
+    const s = troca(SGML, '<DTEND>20261120000000[-3:BRT]', '<DTEND>20261101235959[-3:BRT]');
+    const semLanc = s.replace(/<STMTTRN>[\s\S]*?<\/STMTTRN>\n/g, '');
+    const e = ok(parseOfx(cp1252(semLanc)));
+    expect(e.periodoInicio).toBe('2026-11-01');
+    expect(e.periodoFim).toBe('2026-11-01');
+  });
   it('fusos: [-3] e [5.5:IST]', () => {
     expect(ok(parseOfx(cp1252(troca(SGML, '[-3:BRT]\n<LANGUAGE>', '[-3]\n<LANGUAGE>')))).geradoEm).toBe('2026-11-20T10:15:00-03:00');
     expect(ok(parseOfx(cp1252(troca(SGML, '[-3:BRT]\n<LANGUAGE>', '[5.5:IST]\n<LANGUAGE>')))).geradoEm).toBe('2026-11-20T10:15:00+05:30');
