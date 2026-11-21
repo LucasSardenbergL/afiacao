@@ -19,45 +19,46 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261121123119_banco_extrato_f1.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  # <sabotagem>:<assert(s) que TEM de acusa-la, separados por +>
-  SABOTAGENS="sem_rls_linha:t1_rls_le_so_empresa_permitida+t1_migration_aplica
+  # <sabotagem>:<VERMELHOS> (idioma do gate falsificar-exige-assert): IDs unidos por "," = E -- TODOS tem de
+  # aparecer como "FAIL <id> " no log da rodada sabotada. Nenhuma entrada declara :VERDES.
+  SABOTAGENS="sem_rls_linha:t1_rls_le_so_empresa_permitida,t1_migration_aplica
     policy_linha_aberta:t1_rls_le_so_empresa_permitida
-    seed_banco_999:t1_seed_pix_itau_ligada+t1_migration_aplica
-    seed_sem_pix:t1_seed_pix_itau_ligada+t1_migration_aplica
+    seed_banco_999:t1_seed_pix_itau_ligada,t1_migration_aplica
+    seed_sem_pix:t1_seed_pix_itau_ligada,t1_migration_aplica
     seed_liga_inativa:t1_seed_ignora_inativa
     seed_sem_normalizar:t1_seed_normaliza_digitos
     unique_por_empresa:t1_unique_conta_global
-    grant_linha_aberto:t1_truncate_negado+t1_migration_aplica
+    grant_linha_aberto:t1_truncate_negado,t1_migration_aplica
     insert_aberto:t1_insert_direto_negado
     storage_insert_sem_pasta:t1_storage_outra_empresa_negado
     storage_select_sem_pasta:t1_storage_select_so_propria
     storage_insert_sem_gate_nem_rls_conta:t1_storage_outra_empresa_negado
     ancora_sem_gate:t1_ancora_sem_acesso_negado
-    ancora_anon:t1_ancora_execute_fechado+t1_migration_aplica
+    ancora_anon:t1_ancora_execute_fechado,t1_migration_aplica
     ancora_dia_aberto:t1_ancora_dia_aberto_negado
     ancora_sobrescreve:t1_ancora_divergente_negada
     pre_sem_duas_principais:t1_pre_duas_principais_aborta
     tabela_sem_if_not_exists:t1_idempotente
     t2_sem_lock:t2_concorrencia
-    t2_sobreposicao_subconjunto:t2_sobreposicao_divergente_nao_grava_linha+t2_sobreposicao_divergente_compensada
+    t2_sobreposicao_subconjunto:t2_sobreposicao_divergente_nao_grava_linha,t2_sobreposicao_divergente_compensada
     t2_resumo_coalesce:t2_resumo_dia_sem_cobertura_null
     t2_continuidade_so_vespera:t2_fora_de_ordem_dia2_confere_dia3
-    t2_reavalia_preso:t2_reavalia_recusado_dia_corrente+t2_reavalia_pendente_quando_ancora_chega
+    t2_reavalia_preso:t2_reavalia_recusado_dia_corrente,t2_reavalia_pendente_quando_ancora_chega
     t2_company_do_payload:t2_company_do_payload_ignorada
-    t2_registrar_aberto:t2_rpc_fechada_para_authenticated+t1_migration_aplica
+    t2_registrar_aberto:t2_rpc_fechada_para_authenticated,t1_migration_aplica
     t2_conferido_sem_gate:t2_conferido_exige_acesso
     t2_dia_corrente_aberto:t2_dia_corrente
     t2_sem_fechamento:t2_nao_fecha_diferenca_1_centavo
     t2_sem_exigir_ancora:t2_sem_saldo_inicial_sem_ancora
     t2_ignora_banco:t2_outro_banco_mesmos_digitos
     t2_chave_repetida_aceita:t2_chave_repetida_no_arquivo
-    t2_ancora_qualquer_dia:t2_sem_saldo_inicial_ancora_no_meio_nao_ancora+t2_sem_saldo_inicial_so_sucessor_nao_ancora
-    t2_gerado_em_ignorado:t2_dia_nao_fechado_na_geracao+t2_gerado_em_fuso_sp
+    t2_ancora_qualquer_dia:t2_sem_saldo_inicial_ancora_no_meio_nao_ancora,t2_sem_saldo_inicial_so_sucessor_nao_ancora
+    t2_gerado_em_ignorado:t2_dia_nao_fechado_na_geracao,t2_gerado_em_fuso_sp
     t2_gerado_em_utc:t2_gerado_em_fuso_sp
-    t2_gerado_em_opcional:t2_gerado_em_ausente+t2_gerado_em_sem_fuso
-    t2_ancora_sem_conferir_arquivo:t2_ancora_diverge_do_arquivo+t2_ancora_diverge_da_vespera_do_arquivo
-    t2_banco_sem_normalizar:t2_banco_zero_a_esquerda+t2_banco_so_zeros_incompleto
-    t2_gerado_em_futuro_aceito:t2_gerado_em_no_futuro+t2_reavalia_gerado_em_no_futuro_segue_recusado
+    t2_gerado_em_opcional:t2_gerado_em_ausente,t2_gerado_em_sem_fuso
+    t2_ancora_sem_conferir_arquivo:t2_ancora_diverge_do_arquivo,t2_ancora_diverge_da_vespera_do_arquivo
+    t2_banco_sem_normalizar:t2_banco_zero_a_esquerda,t2_banco_so_zeros_incompleto
+    t2_gerado_em_futuro_aceito:t2_gerado_em_no_futuro,t2_reavalia_gerado_em_no_futuro_segue_recusado
     t2_futuro_so_now:t2_reavalia_gerado_em_no_futuro_segue_recusado
     t2_fuso_fora_da_faixa_escapa:t2_gerado_em_fuso_fora_da_faixa
     t7_sem_importado:t7_ledger_aceita_eventos_banco
@@ -75,7 +76,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   echo "OK controle verde ($(grep -c '^PASS ' "$LOGDIR/controle.log") asserts)"
   falhas=0; n_sab=0
   for par in $SABOTAGENS; do
-    s="${par%%:*}"; alvos="${par#*:}"; n_sab=$((n_sab+1))
+    s="${par%%:*}"; alvos="${par#*:}"; verm="${alvos%%:*}"; n_sab=$((n_sab+1))
     if SABOTAGEM="$s" bash "$0" > "$LOGDIR/$s.log" 2>&1; then
       echo "FALHA $s: suite ficou VERDE"; falhas=$((falhas+1)); continue
     fi
@@ -83,11 +84,11 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "FALHA $s: sabotagem NAO aplicou"; falhas=$((falhas+1)); continue
     fi
     faltou=""
-    for a in ${alvos//+/ }; do
+    for a in ${verm//,/ }; do
       grep -qF -- "FAIL $a " "$LOGDIR/$s.log" || faltou="$faltou $a"
     done
     if [ -z "$faltou" ]; then
-      echo "OK $s: vermelha em [${alvos//+/, }]"
+      echo "OK $s: vermelha em [${verm//,/, }]"
     else
       echo "FALHA $s: vermelha, mas NAO em [$faltou ] (log: $LOGDIR/$s.log)"; falhas=$((falhas+1))
     fi
