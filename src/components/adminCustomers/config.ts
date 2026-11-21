@@ -1,6 +1,9 @@
 // Helpers e constantes do AdminCustomers.
 // Extraídos verbatim de src/pages/AdminCustomers.tsx (god-component split).
 
+/** Linhas por página da base completa (RPC `listar_clientes_base`); < teto de 1.000 do PostgREST. */
+export const TAMANHO_PAGINA_CLIENTES = 100;
+
 export const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 export const HEALTH_CLASSES: Record<string, { label: string; className: string }> = {

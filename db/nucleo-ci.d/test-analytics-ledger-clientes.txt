@@ -1,0 +1,5 @@
+# Allowlist do ledger ganha os 6 sensores `clientes.*` (20261121160100, tela /admin/customers): os eventos gravam,
+# dedup por dia, fora da lista 22023, ACL nas duas pontas (anon e PUBLIC); PRE/PÓS por md5 + por evento + ACL,
+# 5 sabotagens inline (aplicadas com -1, como o db:aplicar) com controle verde na mesma invocação; e a query
+# versionada db/sensor-clientes-adocao.sql roda sobre dados semeados e devolve o denominador por papel.
+db/test-analytics-ledger-clientes.sh 22

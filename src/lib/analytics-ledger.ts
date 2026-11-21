@@ -106,7 +106,20 @@ export type EventoLedger =
    * Um dia do extrato foi marcado como CONFERIDO contra o Omie (`banco_extrato_marcar_conferido`). Chave = conta:dia →
    * 1 por titular, dia conferido e dia civil. É o sinal de que o extrato virou rotina de conferência, não só upload.
    */
-  | 'banco.extrato_conferido';
+  | 'banco.extrato_conferido'
+  /**
+   * Tela Clientes (/admin/customers): sensor de uso do programa #4027…#4065 (Priorizar contatos × A–Z, filtro
+   * de saúde, busca, abrir cliente, carregar mais). Props só enums e inteiros — nenhum id, nome, documento ou
+   * termo de busca (LGPD). Chaves e payload: src/components/adminCustomers/sensorClientes.ts. Leitura com
+   * denominador: db/sensor-clientes-adocao.sql. É a régua da fase "Em risco" / "Primeira compra".
+   * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
+   */
+  | 'clientes.lista_aberta'
+  | 'clientes.modo_trocado'
+  | 'clientes.filtro_saude'
+  | 'clientes.busca_usada'
+  | 'clientes.cliente_aberto'
+  | 'clientes.pagina_carregada';
 
 /**
  * Registra um evento decisório no ledger server-side.
