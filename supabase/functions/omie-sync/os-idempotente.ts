@@ -20,7 +20,7 @@ import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { ausenciaDaOS, chaveIntegracaoOS, type Conferencia, inclusaoValida, lerConsultaOS } from "./chave-os.ts";
 
 /** Maior duração de um IncluirOS em voo (teto do relógio da chamada: 140s) + folga. */
-export const JANELA_INCLUSAO_EM_VOO_MS = 3 * 60_000;
+const JANELA_INCLUSAO_EM_VOO_MS = 3 * 60_000;
 
 export interface ReservaOS {
   order_id: string;
