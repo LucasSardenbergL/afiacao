@@ -24,7 +24,7 @@ export function useAdminCustomers() {
   const { user, isStaff, loading: authLoading } = useAuth();
 
   const {
-    customers, scores, total, isCarteira, loading, isError, refetch,
+    customers, scores, total, contagemPendente, isCarteira, loading, isError, refetch,
     hasNextPage, isFetchingNextPage, fetchNextPage, effectiveUserId,
     buscaNoServidor, buscando, clienteAlvo, filtroNoServidor, totalRecorte,
   } = useClientesScope({ busca, saude, ordem, customerIdAlvo: customerId ?? null });
@@ -164,6 +164,7 @@ export function useAdminCustomers() {
     retryDeepLink: clienteAlvo.estado === 'erro' ? clienteAlvo.refetch : undefined,
     categories,
     total,
+    contagemPendente,
     isCarteira,
     selectedCustomer,
     customerTools,

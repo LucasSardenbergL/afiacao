@@ -26,6 +26,7 @@ const AdminCustomers = () => {
     retryDeepLink,
     categories,
     total,
+    contagemPendente,
     isCarteira,
     selectedCustomer,
     customerTools,
@@ -117,6 +118,7 @@ const AdminCustomers = () => {
           isError={isError}
           onRetry={refetch}
           total={total}
+          contagemPendente={contagemPendente}
           isCarteira={isCarteira}
           onSelect={handleSelectCustomer}
           hasNextPage={hasNextPage}

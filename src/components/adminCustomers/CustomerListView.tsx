@@ -8,9 +8,10 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
-  Loader2, Search, User, ChevronRight, Filter, Users, Save, Bookmark, X as XIcon,
-  AlertTriangle, ArrowDownWideNarrow, ArrowDownAZ,
+  Loader2, Search, ChevronRight, Filter, Users, Save, Bookmark, X as XIcon,
+  AlertTriangle, ArrowDownWideNarrow, ArrowDownAZ, Info,
 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { EmptyState } from '@/components/EmptyState';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import {
@@ -22,9 +23,14 @@ import { useCustomerSegments } from '@/hooks/useCustomerSegments';
 import { decodeHtmlEntities } from '@/lib/format';
 import {
   HEALTH_CLASSES, NAO_APURADO, classeSaudeExibida, fmtContagem, fmtGasto, fmtPrioridade, formatDocument, metricasExibiveis,
-  normalizarOrdem, type OrdemClientes,
+  motivoContato, normalizarOrdem, rotuloContagem, type OrdemClientes,
 } from './config';
 import type { Customer, ClientScore } from './types';
+
+/** Ajuda da coluna "Prioridade", em linguagem de vendedor. */
+const TEXTO_AJUDA_PRIORIDADE =
+  'Nota que ordena quem contatar primeiro: quanto maior, mais cedo. Junta o risco de perder o cliente, '
+  + 'a hora da recompra e a meta. "—" = sem histórico de compra: não entra na fila de recompra.';
 
 export function CustomerListView({
   customers,
@@ -33,6 +39,7 @@ export function CustomerListView({
   isError,
   onRetry,
   total,
+  contagemPendente = false,
   isCarteira,
   onSelect,
   hasNextPage,
@@ -49,7 +56,10 @@ export function CustomerListView({
   /** Falha da fonte da lista (§7): vazia por FALHA ≠ vazia de verdade. */
   isError: boolean;
   onRetry: () => void;
-  total: number;
+  /** Total CONFIRMADO pela fonte; `null` = ainda não chegou ou indisponível (nunca vira 0). */
+  total: number | null;
+  /** A contagem ainda está sendo buscada (com `total` null → "N clientes carregados"). */
+  contagemPendente?: boolean;
   isCarteira: boolean;
   onSelect: (c: Customer) => void;
   hasNextPage: boolean;
@@ -139,6 +149,8 @@ export function CustomerListView({
     return <PageSkeleton variant="list" />;
   }
 
+  const rotuloBase = rotuloContagem({ total, pendente: contagemPendente, carregados: customers.length, isCarteira });
+
   return (
     <div className="space-y-4">
       {/* Page header */}
@@ -150,8 +162,8 @@ export function CustomerListView({
             {isError && customers.length === 0
               ? 'contagem indisponível'
               : filtroNoServidor && filtrando && totalRecorte != null
-                ? `${fmtContagem(totalRecorte)} com esses filtros · ${fmtContagem(total)} clientes na base`
-                : `${fmtContagem(total)} ${isCarteira ? 'clientes na carteira' : 'clientes na base'}`}
+                ? `${fmtContagem(totalRecorte)} com esses filtros · ${rotuloBase}`
+                : rotuloBase}
           </p>
         </div>
       </div>
@@ -283,11 +295,11 @@ export function CustomerListView({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => setFilterHealth('all')}>Todos</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setFilterHealth('saudavel')}>🟢 Saudável</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setFilterHealth('estavel')}>🔵 Estável</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setFilterHealth('atencao')}>🟡 Atenção</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setFilterHealth('critico')}>🔴 Crítico</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setFilterHealth('sem_historico')}>⚪ Sem histórico</DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" onClick={() => setFilterHealth('saudavel')}><span className="h-2 w-2 rounded-full bg-status-success" aria-hidden />Saudável</DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" onClick={() => setFilterHealth('estavel')}><span className="h-2 w-2 rounded-full bg-status-info" aria-hidden />Estável</DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" onClick={() => setFilterHealth('atencao')}><span className="h-2 w-2 rounded-full bg-status-warning" aria-hidden />Atenção</DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" onClick={() => setFilterHealth('critico')}><span className="h-2 w-2 rounded-full bg-status-error" aria-hidden />Crítico</DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" onClick={() => setFilterHealth('sem_historico')}><span className="h-2 w-2 rounded-full bg-muted-foreground/40" aria-hidden />Sem histórico</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
         {ordenavel && (
@@ -326,17 +338,31 @@ export function CustomerListView({
                 </th>
                 <th className="text-left px-3 py-2.5 font-medium text-muted-foreground hidden md:table-cell">Documento</th>
                 <th className="text-center px-3 py-2.5 font-medium text-muted-foreground">Saúde</th>
-                <th className="text-right px-3 py-2.5 font-medium text-muted-foreground hidden lg:table-cell">Gasto mensal</th>
+                <th className="text-right px-3 py-2.5 font-medium text-muted-foreground hidden lg:table-cell">Média mensal (180d)</th>
                 <th className="text-center px-3 py-2.5 font-medium text-muted-foreground hidden lg:table-cell">Dias s/ compra</th>
                 <th
                   className="text-right px-3 py-2.5 font-medium text-muted-foreground hidden md:table-cell"
                   aria-sort={ordenavel ? (ordem === 'prioridade' ? 'descending' : 'none') : undefined}
                 >
-                  {ordenavel ? (
-                    <button type="button" onClick={() => setOrdem('prioridade')} className="inline-flex items-center gap-1 hover:text-foreground">
-                      {ordem === 'prioridade' && <ArrowDownWideNarrow className="w-3 h-3" aria-hidden />} Prioridade
-                    </button>
-                  ) : 'Prioridade'}
+                  <span className="inline-flex items-center gap-1">
+                    {ordenavel ? (
+                      <button type="button" onClick={() => setOrdem('prioridade')} className="inline-flex items-center gap-1 hover:text-foreground">
+                        {ordem === 'prioridade' && <ArrowDownWideNarrow className="w-3 h-3" aria-hidden />} Prioridade
+                      </button>
+                    ) : 'Prioridade'}
+                    <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button type="button" aria-label="O que é a prioridade" className="hover:text-foreground">
+                          <Info className="w-3 h-3" aria-hidden />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-64 text-left font-normal">
+                        {TEXTO_AJUDA_PRIORIDADE}
+                      </TooltipContent>
+                    </Tooltip>
+                    </TooltipProvider>
+                  </span>
                 </th>
                 <th className="w-10 px-2"></th>
               </tr>
@@ -348,6 +374,7 @@ export function CustomerListView({
                 const isSemHistorico = score?.sales_history_status === 'sem_historico';
                 // Sem histórico: 999d / R$ 0 / prioridade são sentinelas da edge, não medidas.
                 const metricas = score ? metricasExibiveis(score) : null;
+                const motivo = motivoContato(score);
 
                 return (
                   <tr
@@ -357,9 +384,6 @@ export function CustomerListView({
                   >
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                          <User className="w-4 h-4 text-primary" />
-                        </div>
                         <div className="min-w-0">
                           <p className="font-medium truncate text-foreground flex items-center gap-1.5">
                             <span className="truncate">{decodeHtmlEntities(customer.name)}</span>
@@ -369,6 +393,9 @@ export function CustomerListView({
                               </Badge>
                             )}
                           </p>
+                          {motivo && (
+                            <p className="text-xs text-muted-foreground truncate">{motivo}</p>
+                          )}
                           {customer.phone && (
                             <p className="text-xs text-muted-foreground">{customer.phone}</p>
                           )}
@@ -473,7 +500,7 @@ export function CustomerListView({
           <p className="text-center text-xs text-muted-foreground py-4 border-t">
             {filtrando
               ? `Todos os resultados carregados (${fmtContagem(totalRecorte ?? customers.length)})`
-              : `Todos os clientes carregados (${fmtContagem(total)})`}
+              : `Todos os clientes carregados (${fmtContagem(customers.length)})`}
           </p>
         )}
       </Card>

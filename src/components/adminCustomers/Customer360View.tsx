@@ -130,7 +130,7 @@ export function Customer360View({
       {/* KPI Cards */}
       {score && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <MetricCard icon={DollarSign} label="Gasto mensal" value={fmtGasto(metricasExibiveis(score).gasto)} />
+          <MetricCard icon={DollarSign} label="Média mensal (180d)" value={fmtGasto(metricasExibiveis(score).gasto)} />
           <MetricCard icon={Activity} label="Score saúde" value={score.health_score.toFixed(0)} />
           {/* churn_risk é PERCENTUAL 0–100, não fração: prod (2026-07-21) tem 6.632/6.632 linhas
               acima de 1 (mín. 33, máx. 100, média 96). O `* 100` que estava aqui exibia "9600%",
