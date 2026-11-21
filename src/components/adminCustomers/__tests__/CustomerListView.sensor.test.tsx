@@ -90,10 +90,11 @@ describe('CustomerListView — sensor de uso', () => {
     }
   });
 
-  it('filtro de saúde pelo menu registra o valor; o mesmo valor de novo não', () => {
+  it('filtro de saúde pelo menu registra o valor escolhido', async () => {
     setup({}, '/admin/customers?health=critico');
-    fireEvent.pointerDown(screen.getByRole('button', { name: /Saúde/ }), { button: 0, ctrlKey: false });
-    fireEvent.click(screen.getByRole('menuitem', { name: /Atenção/ }));
+    // Radix abre o menu por teclado no jsdom (o pointerdown dele exige PointerEvent real).
+    fireEvent.keyDown(screen.getByRole('button', { name: /Saúde/ }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Atenção/ }));
     expect(usoMock).toHaveBeenCalledWith({ acao: 'filtro_saude', modo: 'prioridade', valor: 'atencao' });
   });
 
