@@ -2,13 +2,18 @@ import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import type { CompanySelection } from '@/contexts/CompanyContext';
+import { anexarVendedor } from './anexar-vendedor';
 
 export interface PedidoMTDRow {
+  id: string;
   total: number | null;
   status: string | null;
   /** Cliente do pedido — o ranking credita a venda ao dono da carteira dele. */
   customer_user_id: string | null;
   order_date_kpi: string | null;
+}
+
+export interface PedidoMTDComVendedorRow extends PedidoMTDRow {
   /** Vendedor registrado no Omie (quem vendeu) — o tile "vendedores com pedido" do Master. */
   vendedor_user_id: string | null;
 }
@@ -25,11 +30,13 @@ export async function fetchPedidosMTD(
   deISO: string,
   ateISO: string,
 ): Promise<PedidoMTDRow[]> {
+  // SEM vendedor_user_id no select: a coluna é fechada para authenticated (403 na leitura inteira) —
+  // quem precisa dele usa fetchPedidosMTDComVendedor (RPC pedidos_vendedor).
   return fetchAllPagesComMensagem<PedidoMTDRow>(
     (de, ate) => {
       let q = supabase
         .from('sales_orders')
-        .select('total, status, customer_user_id, order_date_kpi, vendedor_user_id')
+        .select('id, total, status, customer_user_id, order_date_kpi')
         // O universo de VENDA na query (era só o deleted_at, e o status vinha do isPedidoValido em
         // memória com uma cópia de 2 status — orçamento e pendente contariam como receita).
         .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
@@ -42,4 +49,16 @@ export async function fetchPedidosMTD(
     'sales_orders/dashboard-mtd',
     'sales_orders (MTD)',
   );
+}
+
+/**
+ * `fetchPedidosMTD` + o vendedor do Omie de cada pedido, pela RPC `pedidos_vendedor` (a coluna não
+ * pode ir no `.select()`). Lança se qualquer das duas leituras falhar.
+ */
+export async function fetchPedidosMTDComVendedor(
+  selection: CompanySelection,
+  deISO: string,
+  ateISO: string,
+): Promise<PedidoMTDComVendedorRow[]> {
+  return anexarVendedor(await fetchPedidosMTD(selection, deISO, ateISO));
 }

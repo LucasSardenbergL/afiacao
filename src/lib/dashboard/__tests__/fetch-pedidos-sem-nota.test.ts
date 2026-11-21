@@ -24,7 +24,18 @@ function builder() {
     Promise.resolve(respostas.shift() ?? { data: [], error: null }).then(ok, no);
   return b;
 }
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: () => builder() } }));
+let rpcs: string[][] = [];
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: {
+    from: () => builder(),
+    rpc: (_fn: string, args: { p_ids: string[] }) => ({
+      order: () => ({ range: async () => {
+        rpcs.push(args.p_ids);
+        return { data: args.p_ids.filter((id) => id === 'P1').map((id) => ({ id, vendedor_user_id: 'V1' })), error: null };
+      } }),
+    }),
+  },
+}));
 
 import { fetchPedidosSemNota } from '../fetch-pedidos-sem-nota';
 import { PAGINA_JANELA } from '../paginar-por-id';
@@ -36,6 +47,7 @@ const janela = { de: '2025-10-12', ate: '2026-09-12' };
 beforeEach(() => {
   consultas = [];
   respostas = [];
+  rpcs = [];
 });
 
 describe('fetchPedidosSemNota', () => {
@@ -64,5 +76,14 @@ describe('fetchPedidosSemNota', () => {
     ];
     await expect(fetchPedidosSemNota('oben', janela)).rejects.toThrow('timeout');
     expect(chamou(consultas[1], 'gt')[0].args).toEqual(['id', p[p.length - 1].id]);
+  });
+
+  it('[SN-VENDEDOR] select sem a coluna fechada; vendedor vem da RPC, ausente → null', async () => {
+    respostas = [{ data: [{ id: 'P1', total: 1, account: 'oben' }, { id: 'P2', total: 2, account: 'oben' }], error: null }];
+    const rows = await fetchPedidosSemNota('oben', janela);
+    const cols = String(chamou(consultas[0], 'select')[0].args[0]).split(',').map((c) => c.trim());
+    expect(cols).not.toContain('vendedor_user_id');
+    expect(rpcs).toEqual([['P1', 'P2']]);
+    expect(rows.map((r) => [r.id, r.vendedor_user_id])).toEqual([['P1', 'V1'], ['P2', null]]);
   });
 });

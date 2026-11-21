@@ -27468,6 +27468,13 @@ export type Database = {
         Returns: undefined
       }
       pedidos_programados_watchdog_claims: { Args: never; Returns: number }
+      pedidos_vendedor: {
+        Args: { p_ids: string[] }
+        Returns: {
+          id: string
+          vendedor_user_id: string
+        }[]
+      }
       picking_coleta_reservar: { Args: { p_account: string }; Returns: Json }
       picking_concluir: {
         Args: {

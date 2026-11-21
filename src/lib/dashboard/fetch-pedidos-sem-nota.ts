@@ -4,6 +4,7 @@ import type { CompanySelection } from '@/contexts/CompanyContext';
 import type { Janela } from './crescimento-comparavel';
 import { PAGINA_JANELA, paginarPorId } from './paginar-por-id';
 import { STATUS_SEM_NOTA } from './pedidos-sem-nota';
+import { anexarVendedor } from './anexar-vendedor';
 
 import type { PedidoSemNotaDetalhe } from './pedidos-sem-nota';
 
@@ -16,11 +17,19 @@ export type PedidoSemNotaRow = PedidoSemNotaDetalhe;
  * (`src/lib/gates/universo-pedidos-ts-registro.ts`): a pergunta é "quanto da venda ainda não virou
  * nota?", não "quanto vendemos?". Paginada por cursor; lança em qualquer falha.
  */
-export function fetchPedidosSemNota(selection: CompanySelection, janela: Janela): Promise<PedidoSemNotaRow[]> {
-  return paginarPorId('sales_orders (sem nota)', (cursor) => {
+export async function fetchPedidosSemNota(selection: CompanySelection, janela: Janela): Promise<PedidoSemNotaRow[]> {
+  return anexarVendedor(await lerPedidosSemNota(selection, janela));
+}
+
+/** A leitura paginada, SEM vendedor_user_id: coluna fechada para authenticated (403) — vem da RPC. */
+function lerPedidosSemNota(
+  selection: CompanySelection,
+  janela: Janela,
+): Promise<Array<Omit<PedidoSemNotaRow, 'vendedor_user_id'>>> {
+  return paginarPorId<Omit<PedidoSemNotaRow, 'vendedor_user_id'>>('sales_orders (sem nota)', (cursor) => {
     let q = supabase
       .from('sales_orders')
-      .select('id, total, account, order_date_kpi, customer_user_id, vendedor_user_id, omie_numero_pedido')
+      .select('id, total, account, order_date_kpi, customer_user_id, omie_numero_pedido')
       .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
       .is('deleted_at', null)
       .in('status', [...STATUS_SEM_NOTA])
