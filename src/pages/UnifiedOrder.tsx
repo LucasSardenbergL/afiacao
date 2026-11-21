@@ -466,7 +466,7 @@ const UnifiedOrder = () => {
   const handleNovoPedido = () => {
     if (!h.ultimoEnvioConfirmado) return;
     if (!h.iniciarNovoPedido()) return; // envio em voo ou envelope vivo → nada é apagado
-    parcelasPendentesRef.current = null;
+    restorePendenteRef.current = null; // rascunho "esperando o cliente" do pedido anterior não volta
     coresDoCliente.setBusca('');
     h.setOrderSuccessOpen(false);
     // Sem os parâmetros do pedido anterior (?customer, ?repeat, ?origem…): recarregar não pode
