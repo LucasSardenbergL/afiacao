@@ -137,7 +137,7 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/omie-nfe-reconcile/index.ts', 1],
   ['supabase/functions/omie-sync-metadados/index.ts', 1],
   ['supabase/functions/omie-sync-status-produtos/index.ts', 4],
-  ['supabase/functions/omie-sync/index.ts', 14],
+  ['supabase/functions/omie-sync/index.ts', 13], // 14→13: o espelho omie_ordens_servico da OS agora checa o erro (OS idempotente)
   ['supabase/functions/omie-vendas-sync/index.ts', 3],
   ['supabase/functions/omie-webhook/index.ts', 2],
   ['supabase/functions/pedido-programado-enviar/index.ts', 2],

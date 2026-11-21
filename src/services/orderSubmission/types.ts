@@ -84,11 +84,18 @@ export interface SubmitOrderParams {
    *  com o desfecho real (fail-open: nunca segura a venda). Ausente = sem aviso na tela. */
   prazoDecisao?: PrazoDecisaoPorConta;
   /** A1 (rodada 2): marca da OS de Afiação JÁ confirmada neste MESMO envelope de checkout.
-   *  O Omie não deduplica a OS (cCodIntOS leva Date.now()) → presente = NÃO recriar no reenvio. */
+   *  Presente = NÃO chamar a edge no reenvio (a edge também é idempotente pelo checkoutId). */
   afiacaoJaEnviada?: MarcaOsAfiacao | null;
   /** A1: chamado assim que a OS de Afiação é confirmada, ANTES do resto do envio terminar —
    *  o caller persiste a marca no envelope (sobrevive a exceção posterior e a refresh). */
   aoConfirmarOsAfiacao?: (marca: MarcaOsAfiacao) => void;
+  /** Follow-up Codex do #4042: uma tentativa ANTERIOR deste envelope chamou a edge da OS e não
+   *  recebeu confirmação — a OS pode existir no Omie. Remover todas as ferramentas não pode
+   *  "confirmar" o pedido por cima dela. */
+  afiacaoPendente?: boolean;
+  /** Chamado ANTES de chamar a edge da OS: o caller marca o envelope como "OS possivelmente criada".
+   *  `false` (ou exceção) = a marca não foi gravada → a edge NÃO é chamada. */
+  aoIniciarOsAfiacao?: () => boolean;
 }
 
 export interface SubmitErrorEntry {

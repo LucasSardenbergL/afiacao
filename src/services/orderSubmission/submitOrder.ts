@@ -104,7 +104,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     payment, delivery, meta, companyProfiles, defaultProductionAssigneeId,
     getServicePrice, supabase, isCustomerMode = false,
     checkoutId, origem = null, atendimentoId = null, atpBackorder, prazoDecisao,
-    afiacaoJaEnviada = null, aoConfirmarOsAfiacao,
+    afiacaoJaEnviada = null, aoConfirmarOsAfiacao, afiacaoPendente = false, aoIniciarOsAfiacao,
   } = params;
   const { obenProductItems, colacorProductItems, serviceItems } = cart;
   const errors: SubmitErrorEntry[] = [];
@@ -595,11 +595,13 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   }
 
   // ──────────────── Afiação ────────────────
-  // A1 (rodada 2): o Omie NÃO deduplica a OS (o cCodIntOS do edge leva Date.now()) e o orderId
-  // abaixo é novo a cada chamada. Sem esta guarda, "Tentar novamente" do ATP, o backorder e o
-  // reenvio após falha parcial recriavam a OS. A marca vem do envelope de checkout (mesmo pedido).
+  // A1 (rodada 2): com a OS confirmada neste envelope, o reenvio ("Tentar novamente" do ATP,
+  // backorder, falha parcial) nem chama a edge. Quando a confirmação NÃO chegou (rede/timeout), a
+  // edge v1.15 é idempotente pelo orderId = checkoutId: devolve a OS que já existe em vez de criar
+  // outra (follow-up Codex do #4042).
   const assinaturaAfiacao = assinaturaServicosAfiacao(serviceItems.map(c => ({
     userToolId: c.userTool.id, codigoServico: c.servico?.omie_codigo_servico, quantity: c.quantity,
+    preco: getServicePrice(c) || 0,
   })), { pagamento: payment.afiacaoMethod, entrega: delivery.option });
   if (serviceItems.length > 0 && afiacaoJaEnviada && afiacaoJaEnviada.assinatura === assinaturaAfiacao) {
     results.push(afiacaoJaEnviada.numero ? `OS ${afiacaoJaEnviada.numero} (já enviada)` : 'OS Afiação (já enviada)');
@@ -612,9 +614,18 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       step: 'afiacao_divergente',
       message: `A OS de Afiação${afiacaoJaEnviada.numero ? ` ${afiacaoJaEnviada.numero}` : ''} já foi criada no Omie numa tentativa anterior, com ferramentas ou condições diferentes do carrinho atual. Corrija direto no Omie — não reenvie.`,
     });
+  } else if (serviceItems.length === 0 && afiacaoPendente) {
+    // Uma tentativa anterior chamou a edge da OS e a confirmação não chegou: a OS pode existir no
+    // Omie. Tirar todas as ferramentas e reenviar confirmaria o pedido por cima dela (Codex P1).
+    results.push('OS Afiação (tentativa anterior sem confirmação)');
+    errors.push({
+      step: 'afiacao_inconferivel',
+      message: 'Uma tentativa anterior deste pedido enviou a OS de Afiação e a confirmação não chegou — ela pode ter sido criada no Omie. Confira no Omie antes de seguir sem as ferramentas.',
+    });
   } else if (serviceItems.length > 0) {
     try {
-      const orderId = crypto.randomUUID();
+      // Estável entre reenvios do MESMO checkout: a edge deriva o cCodIntOS dele e reserva o pedido.
+      const orderId = checkoutId;
       const orderItems = serviceItems.map((c: ServiceCartItem) => {
         const price = getServicePrice(c);
         return {
@@ -660,9 +671,40 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         // Vendedor é por-conta: NUNCA cair no vendedor Oben (comissão errada). Ausente = null (edge tolera).
         customerCodigoVendedor: customer.codigo_vendedor_afiacao ?? null,
       };
-      const result = await syncOrderToOmie(orderId, orderData, profileData, addressPayload, staffContext);
-      if (result.success) {
-        results.push(`OS ${result.omie_os?.cNumOS || ''}`);
+      let marcou = true;
+      try {
+        if (aoIniciarOsAfiacao) marcou = aoIniciarOsAfiacao() === true;
+      } catch (persistErr: unknown) {
+        marcou = false;
+        logger.error('Falha ao marcar a OS de Afiação como pendente no envelope', { stage: 'afiacao_pendente', error: persistErr });
+      }
+      if (!marcou) {
+        // Sem a marca gravada, um refresh confirmaria o pedido sem a OS: não envia (Codex P2).
+        throw new Error('Não foi possível registrar a tentativa da OS neste navegador — nada foi enviado ao Omie. Libere o armazenamento do navegador e reenvie.');
+      }
+      const result = await syncOrderToOmie(orderId, orderData, profileData, addressPayload, staffContext, assinaturaAfiacao);
+      const numeroExistente = result.omie_os?.cNumOS ? ` ${result.omie_os.cNumOS}` : '';
+      if (!result.success && result.motivo === 'aguardar') {
+        // Uma tentativa anterior ainda pode estar criando a OS: reenviar DEPOIS é a instrução certa.
+        results.push('OS Afiação (aguardando tentativa anterior)');
+        errors.push({ step: 'aguardar_os_afiacao', message: result.error || 'Uma tentativa anterior ainda pode criar a OS. Aguarde alguns minutos e reenvie.' });
+      } else if (!result.success && result.motivo) {
+        // Cancelada, excluída ou pedido que mudou durante a criação: ação no Omie, não reenvio.
+        results.push('OS Afiação (conferir no Omie)');
+        errors.push({
+          step: `afiacao_${result.motivo}`,
+          message: result.error || `A OS de Afiação${numeroExistente} precisa ser conferida no Omie antes de reenviar.`,
+        });
+      } else if (!result.success && result.conferencia === 'diverge') {
+        results.push('OS Afiação (já no Omie com ferramentas diferentes)');
+        errors.push({
+          step: 'afiacao_divergente',
+          message: `A OS de Afiação${numeroExistente} já foi criada no Omie numa tentativa anterior, com ferramentas ou condições diferentes do carrinho atual. Corrija direto no Omie — não reenvie.`,
+        });
+      } else if (result.success) {
+        results.push(result.reconciliada
+          ? `OS ${result.omie_os?.cNumOS || ''} (já existia)`
+          : `OS ${result.omie_os?.cNumOS || ''}`);
         const numero = result.omie_os?.cNumOS ? String(result.omie_os.cNumOS) : null;
         try {
           aoConfirmarOsAfiacao?.({ assinatura: assinaturaAfiacao, numero });
@@ -672,7 +714,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         }
       } else {
         results.push('OS Afiação (pendente ERP)');
-        errors.push({ step: 'sync_os_omie', message: 'Falha ao sincronizar OS com Omie' });
+        errors.push({ step: 'sync_os_omie', message: result.error || 'Falha ao sincronizar OS com Omie' });
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Falha ao sincronizar OS com Omie';
@@ -764,7 +806,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       e.step === 'bloqueio_tint_oben' || e.step === 'bloqueio_atp_oben' ||
       e.step === 'bloqueio_desconhecido_oben' || e.step === 'bloqueio_desconhecido_colacor' ||
       e.step === 'pv_divergente_oben' || e.step === 'pv_divergente_colacor' ||
-      e.step === 'afiacao_divergente'),
+      e.step.startsWith('afiacao_') || e.step === 'aguardar_os_afiacao'),
     bloqueiosCredito,
     bloqueioAtp,
   };

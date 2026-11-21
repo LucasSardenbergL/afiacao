@@ -47,7 +47,10 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 //   na Oben). O lookup do criar_cliente_afiacao (o da conta e o da razão fiscal) passa a ser o ESTRITO de
 //   `_shared/lookup-cliente-estrito.ts`: pagina, 2+ códigos = AMBIGUO, contagem contraditória = INDETERMINADO (MÉDIO 2
 //   do Codex no #3803).
-export const VERSAO = "v1.14-email-html-escapado";
+// v1.15 (2026-11-21) — sync_order IDEMPOTENTE por pedido: cCodIntOS determinístico do orderId (= checkoutId do
+//   front), reserva em afiacao_os_envio (migration 20261121120002) ANTES do IncluirOS, e falha do IncluirOS consulta a
+//   OS pela chave. OS que já existe com outro carrinho → success:false + conferencia (follow-up Codex do #4042).
+export const VERSAO = "v1.15-os-idempotente";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

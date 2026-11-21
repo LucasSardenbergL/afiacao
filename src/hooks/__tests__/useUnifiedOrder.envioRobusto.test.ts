@@ -32,7 +32,22 @@ describe('useUnifiedOrder — fiação das guardas de envio', () => {
   it('A1: o envio lê a marca da OS do envelope e grava a marca no MESMO envelope', () => {
     const corpo = corpoDo('submitOrder');
     expect(corpo).toContain('afiacaoJaEnviada: checkoutEnvRef.current.afiacaoOs ?? null,');
-    expect(corpo).toContain('checkoutEnvRef.current = { ...checkoutEnvRef.current, afiacaoOs: marca };');
+    expect(corpo).toContain('checkoutEnvRef.current = { ...checkoutEnvRef.current, afiacaoOs: marca, afiacaoPendente: false };');
+  });
+
+  it('OS idempotente: marca PENDENTE no mesmo envelope antes da edge, e devolve se gravou', () => {
+    const corpo = corpoDo('submitOrder');
+    expect(corpo).toContain('afiacaoPendente: checkoutEnvRef.current.afiacaoPendente ?? false,');
+    expect(corpo).toContain('const proximo: CheckoutEnvelope = { ...checkoutEnvRef.current, afiacaoPendente: true };');
+    expect(corpo).toMatch(/if \(!persistCheckoutEnv\(proximo\)\) return false;\s*checkoutEnvRef\.current = proximo;/);
+  });
+
+  it('OS idempotente: ação da OS no Omie tem toast PRÓPRIO, fora da cadeia de crédito/parcial', () => {
+    const corpo = corpoDo('submitOrder');
+    expect(corpo).toContain("const acoesOs = result.errors.filter(e => e.step.startsWith('afiacao_'));");
+    expect(corpo).toContain("toast.error('OS de Afiação: confira no Omie', {");
+    expect(corpo).toContain("!e.step.startsWith('afiacao_') && e.step !== 'aguardar_os_afiacao');");
+    expect(corpo).toContain("toast.warning('OS de Afiação em processamento', {");
   });
 
   it('A4: orçamento parcial NÃO limpa o carrinho inteiro', () => {

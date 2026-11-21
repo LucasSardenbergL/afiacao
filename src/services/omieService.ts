@@ -37,6 +37,12 @@ interface OmieSyncResult {
     nCodOS: number;
     cNumOS: string;
   };
+  /** v1.15: a OS já existia para este pedido (reenvio do mesmo checkout). */
+  reconciliada?: boolean;
+  /** v1.15: a OS existente é o mesmo carrinho? `diverge` vem com success:false. */
+  conferencia?: 'confere' | 'diverge';
+  /** v1.15: desfecho que pede ação do vendedor (a mensagem vem em `error`). */
+  motivo?: 'os_cancelada' | 'os_excluida' | 'pedido_mudou' | 'aguardar';
   error?: string;
 }
 
@@ -49,7 +55,10 @@ export async function syncOrderToOmie(
     customerOmieCode: number;
     customerUserId?: string | null;
     customerCodigoVendedor?: number | null;
-  }
+  },
+  /** Assinatura da OS (ferramentas/serviço/qtd/pagamento/entrega): a edge a guarda na reserva do
+   *  pedido e compara no reenvio do mesmo orderId. */
+  assinaturaAfiacao?: string,
 ): Promise<OmieSyncResult> {
   try {
     const { data, error } = await supabase.functions.invoke("omie-sync", {
@@ -60,6 +69,7 @@ export async function syncOrderToOmie(
         profileData,
         addressData,
         staffContext,
+        assinaturaAfiacao,
       },
     });
 
