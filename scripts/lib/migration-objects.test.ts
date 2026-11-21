@@ -286,7 +286,9 @@ describe('corpus real — nenhuma CREATE POLICY custom fica fora do inventário'
     // as 5 EXECUTE format conhecidas — mudou? revise o descarte. 4ª e 5ª:
     // 20261113120000_seg_scanner_politicas_select_abertas.sql (laços *_select_staff ×11 e
     // *_select_aprovados ×4; já aplicada, imutável — a validação dela é a query do PR #3879).
-    expect(dinamicas).toBe(5);
+    // 6ª: 20261121160000_credito_limite_reserva_decisao.sql (laço *_select_gestor ×6 — a
+    // leitura por papel é provada sob SET ROLE authenticated em db/test-credito-limite-reserva.sh).
+    expect(dinamicas).toBe(6);
   });
 });
 
