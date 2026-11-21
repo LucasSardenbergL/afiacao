@@ -33,6 +33,7 @@ import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
 import * as omieCliente from "../omie-cliente/versao.ts";
 import * as recommendMod from "../recommend/versao.ts";
 import * as cashflow from "../fin-cashflow-engine/versao.ts";
+import * as bancoExtratoImportar from "../banco-extrato-importar/versao.ts";
 import * as syncEstoque from "../omie-sync-estoque/versao.ts";
 import * as syncNfes from "../omie-sync-nfes-recebidas/versao.ts";
 import * as nfeWebhook from "../omie-nfe-webhook/versao.ts";
@@ -338,6 +339,8 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // Fase 2a do lote mínimo (2026-11-20): e-mail ao FORNECEDOR (crs@sayerlack) pelo Gmail do founder — irreversível
   // fora do nosso banco. Gate `authorizeCronOrStaff`, como as da 11ª leva.
   { nome: "email-crs-ajuste-lote", mod: emailCrsAjusteLote },
+  // F1 extrato bancário: escreve banco_extrato_* via RPC (service_role). Gate `authorizeCronOrStaff`.
+  { nome: "banco-extrato-importar", mod: bancoExtratoImportar },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
