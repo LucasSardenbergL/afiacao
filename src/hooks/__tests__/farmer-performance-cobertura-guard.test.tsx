@@ -16,16 +16,23 @@ import { renderHook, act } from '@testing-library/react';
 const FARMER = 'farmer-self';
 const OTHER = 'outro-farmer';
 
-type Q = { table: string; eq: Array<[string, unknown]>; insert?: Record<string, unknown> };
+type Q = { table: string; eq: Array<[string, unknown]>; insert?: Record<string, unknown>; range?: [number, number] };
 let queries: Q[] = [];
 
 // Estado controlável por teste
 let covCoveredRows: unknown[] = [];   // linhas de carteira_coverage onde covered_user_id = alvo
 let covCoveringRows: unknown[] = [];  // linhas onde covering_user_id = alvo
 let covError: unknown = null;         // força erro na leitura de cobertura (fail-closed)
+let scoreRows: unknown[] = [];        // farmer_client_scores da carteira (paginado por .range)
+let scoreErroNaPagina: number | null = null; // página (0-based) de farmer_client_scores que devolve erro
 let authState: { user: { id: string } | null; role: string | null } = { user: { id: FARMER }, role: 'employee' };
 
 function result(q: Q): { data: unknown; error: unknown } {
+  if (q.table === 'farmer_client_scores' && q.range) {
+    const [de, ate] = q.range;
+    if (scoreErroNaPagina != null && de === scoreErroNaPagina * 1000) return { data: null, error: { message: 'pagina boom' } };
+    return { data: scoreRows.slice(de, ate + 1), error: null };
+  }
   if (q.table === 'carteira_coverage') {
     if (covError) return { data: null, error: covError };
     const byCovered = q.eq.some(([c]) => c === 'covered_user_id');
@@ -39,7 +46,8 @@ function chain(table: string): unknown {
   const q: Q = { table, eq: [] };
   queries.push(q);
   const c: Record<string, unknown> = {};
-  for (const m of ['select', 'gte', 'lt', 'lte', 'gt', 'is', 'not', 'in', 'order', 'limit', 'range', 'or', 'filter', 'single', 'maybeSingle']) c[m] = () => c;
+  for (const m of ['select', 'gte', 'lt', 'lte', 'gt', 'is', 'not', 'in', 'order', 'limit', 'or', 'filter', 'single', 'maybeSingle']) c[m] = () => c;
+  c.range = (de: number, ate: number) => { q.range = [de, ate]; return c; };
   c.eq = (col: string, val: unknown) => { q.eq.push([col, val]); return c; };
   c.insert = (payload: Record<string, unknown>) => { q.insert = payload; return c; };
   c.then = (resolve: (v: unknown) => void) => resolve(result(q));
@@ -62,6 +70,8 @@ beforeEach(() => {
   covCoveredRows = [];
   covCoveringRows = [];
   covError = null;
+  scoreRows = [];
+  scoreErroNaPagina = null;
   authState = { user: { id: FARMER }, role: 'employee' };
   vi.clearAllMocks();
 });
@@ -123,5 +133,34 @@ describe('calculateScores — guard de cobertura (dívida D1 latente)', () => {
     const { result: r } = renderHook(() => useFarmerPerformance());
     await act(async () => { await r.current.calculateScores(OTHER); });
     expect(insertedScore()).toBeTruthy();
+  });
+});
+
+// IPF/LTV (#4088 follow-up): a carteira inteira entra (paginada) e o gasto NÃO medido sai da base do LTV.
+describe('calculateScores — LTV sobre a carteira inteira e só gasto medido', () => {
+  const linha = (gasto: number | null) => ({ churn_risk: null, category_count: 0, avg_monthly_spend_180d: gasto, health_score: 0 });
+
+  it('carteira > 1.000 linhas: a 2ª página entra no LTV (o corte de 1.000 não decide)', async () => {
+    // 1.000 sem gasto medido na 1ª página; os 2 compradores só existem na 2ª.
+    scoreRows = [...Array.from({ length: 1000 }, () => linha(null)), linha(2000), linha(2000)];
+    const { result: r } = renderHook(() => useFarmerPerformance());
+    await act(async () => { await r.current.calculateScores(FARMER); });
+    expect(insertedScore()?.insert?.ipf_ltv_evolution).toBe(100);
+  });
+
+  it('gasto NULL fora da base; 0 medido conta', async () => {
+    scoreRows = [linha(null), linha(null), linha(1000), linha(0)];
+    const { result: r } = renderHook(() => useFarmerPerformance());
+    await act(async () => { await r.current.calculateScores(FARMER); });
+    expect(insertedScore()?.insert?.ipf_ltv_evolution).toBe(25); // média 500 / 2000
+  });
+
+  it('FAIL-CLOSED: página de farmer_client_scores com erro → NÃO persiste (carteira parcial não vira índice)', async () => {
+    scoreRows = Array.from({ length: 1500 }, () => linha(100));
+    scoreErroNaPagina = 1;
+    const { result: r } = renderHook(() => useFarmerPerformance());
+    await act(async () => { await r.current.calculateScores(FARMER); });
+    expect(insertedScore()).toBeFalsy();
+    expect(toast.error).toHaveBeenCalled();
   });
 });

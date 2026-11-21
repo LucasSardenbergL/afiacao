@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { componenteMeta, deriveSalesBase, finitoOuNulo, tetoGasto } from '../salesBase';
+import { componenteMeta, deriveSalesBase, finitoOuNulo, mediaGastoMedido, tetoGasto } from '../salesBase';
 
 describe('deriveSalesBase (v1.8 — ausente é NULL, nunca o 999/R$0 sentinela)', () => {
   it('ausente (undefined/null = sem linha na RPC) → dias NULL, gasto NULL, categorias 0', () => {
@@ -134,5 +134,17 @@ describe('paridade src ↔ edge (base de vendas v1.8)', () => {
     expect(edge).not.toMatch(/avg_monthly_spend_180d\s*\?\?\s*0\b/);
     expect(edge).not.toMatch(/days_since_last_purchase\s*\|\|\s*0/);
     expect(edge).not.toMatch(/avg_monthly_spend_180d\s*\|\|\s*0/);
+  });
+});
+
+describe('mediaGastoMedido (LTV do IPF — base = gasto medido)', () => {
+  it('NULL sai do numerador e do denominador; 0 medido conta', () => {
+    expect(mediaGastoMedido([null, 400, null, 0, null])).toEqual({ media: 200, medidos: 2 });
+  });
+  it('nenhum medido → media null (não R$ 0)', () => {
+    expect(mediaGastoMedido([null, undefined, ''])).toEqual({ media: null, medidos: 0 });
+  });
+  it('numeric-string do PostgREST é lido', () => {
+    expect(mediaGastoMedido(['300', 100])).toEqual({ media: 200, medidos: 2 });
   });
 });
