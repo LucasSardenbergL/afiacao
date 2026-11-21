@@ -22,7 +22,10 @@ export async function anexarVendedor<T extends { id: string }>(
   const ids = [...new Set(pedidos.map((p) => p.id))];
   for (let i = 0; i < ids.length; i += LOTE_VENDEDOR) {
     const lote = ids.slice(i, i + LOTE_VENDEDOR);
-    const { data, error } = await supabase.rpc('pedidos_vendedor', { p_ids: lote });
+    // `.range()` explícito: o lote (≤ LOTE_VENDEDOR ids) devolve no máximo um lote de linhas.
+    const { data, error } = await supabase
+      .rpc('pedidos_vendedor', { p_ids: lote })
+      .range(0, LOTE_VENDEDOR - 1);
     if (error) throw new Error(`pedidos_vendedor: ${error.message}`);
     if (!Array.isArray(data)) throw new Error('pedidos_vendedor: data null sem error');
     for (const linha of data) vendedorPorId.set(linha.id, linha.vendedor_user_id ?? null);

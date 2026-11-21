@@ -28,10 +28,12 @@ let rpcs: string[][] = [];
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: () => builder(),
-    rpc: async (_fn: string, args: { p_ids: string[] }) => {
-      rpcs.push(args.p_ids);
-      return { data: args.p_ids.filter((id) => id === 'P1').map((id) => ({ id, vendedor_user_id: 'V1' })), error: null };
-    },
+    rpc: (_fn: string, args: { p_ids: string[] }) => ({
+      range: async () => {
+        rpcs.push(args.p_ids);
+        return { data: args.p_ids.filter((id) => id === 'P1').map((id) => ({ id, vendedor_user_id: 'V1' })), error: null };
+      },
+    }),
   },
 }));
 

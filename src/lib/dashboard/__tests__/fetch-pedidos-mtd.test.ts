@@ -27,10 +27,12 @@ let rpcResposta: (ids: string[]) => Resposta = (ids) => ({ data: ids.map((id) =>
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: () => builder(),
-    rpc: async (fn: string, args: { p_ids: string[] }) => {
-      rpcs.push({ fn, args });
-      return rpcResposta(args.p_ids);
-    },
+    rpc: (fn: string, args: { p_ids: string[] }) => ({
+      range: async () => {
+        rpcs.push({ fn, args });
+        return rpcResposta(args.p_ids);
+      },
+    }),
   },
 }));
 const captureExceptionMock = vi.fn();
