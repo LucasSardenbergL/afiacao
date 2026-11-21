@@ -37,7 +37,10 @@ type ClienteAlvo =
 export interface ClientesScope {
   customers: Customer[];
   scores: Map<string, ClientScore>;
-  total: number;
+  /** Total CONFIRMADO pela fonte; `null` = pendente ou indisponível (nunca vira 0). */
+  total: number | null;
+  /** A contagem ainda está sendo buscada. */
+  contagemPendente: boolean;
   isCarteira: boolean;
   loading: boolean;
   hasNextPage: boolean;
