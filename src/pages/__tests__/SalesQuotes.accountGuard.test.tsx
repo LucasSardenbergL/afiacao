@@ -68,7 +68,7 @@ vi.mock('@/integrations/supabase/client', () => {
         if (table === 'sales_orders') h.updateSalesOrder(payload);
         return { eq: () => Promise.resolve({ error: null }) };
       },
-      delete: () => ({ eq: () => Promise.resolve({ error: null }) }),
+      delete: () => ({ eq: () => ({ select: () => Promise.resolve({ data: [{ id: "x" }], error: null }) }) }),
     };
     return api;
   };

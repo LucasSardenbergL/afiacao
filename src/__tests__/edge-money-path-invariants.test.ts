@@ -5144,7 +5144,7 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
 
   it('sentinela: recortou o criarPedidoVenda, o excluir_pedido e a edição', () => {
     expect(fn).toContain('"IncluirPedido"');
-    expect(exclusao).toContain('.delete()');
+    expect(exclusao).toContain('.rpc("sales_order_excluir_sem_envio"');
     expect(exclusao.length).toBeGreaterThan(1500);
     expect(edicao).toContain('existingOrder');
   });
@@ -5164,13 +5164,31 @@ describe('guardrail money-path: PV reconciliado e exclusão sem PID (ATP 3.3)', 
 
   it('a exclusão sem PID consulta a chave PV_<id> ANTES do DELETE e recusa quando o PV existe', () => {
     const consulta = exclusao.indexOf('"ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }');
-    const del = exclusao.indexOf('.delete()');
+    const del = exclusao.indexOf('.rpc("sales_order_excluir_sem_envio"');
     expect(consulta, 'REGRESSÃO: excluir sem PID voltou a apagar sem consultar o Omie').toBeGreaterThan(-1);
     expect(consulta).toBeLessThan(del);
     const existe = exclusao.indexOf('consulta.tipo === "existe"');
     expect(existe).toBeGreaterThan(consulta);
     expect(exclusao.slice(existe, del), 'PV achado: recupera o vínculo e LANÇA (não apaga)').toMatch(/\.rpc\("atp_confirmar_pv"[\s\S]*throw new Error\(/);
     expect(exclusao, 'a janela de envio em curso precede a consulta').toMatch(/JANELA_ENVIO_EM_CURSO_MS[\s\S]*"ConsultarPedido"/);
+  });
+
+  // Codex 2026-11-20 (P1, corrida envio × exclusão): o DELETE físico é o da RPC condicionada ao claim
+  // do envio, e o envio reivindica o pedido (RECUSANDO sem o claim) ANTES do IncluirPedido.
+  it('exclusão só apaga pela RPC condicionada; o envio reivindica o pedido antes de criar no Omie', () => {
+    expect(exclusao, 'REGRESSÃO: DELETE solto de sales_orders voltou ao excluir_pedido').not.toMatch(/\.delete\(\)/);
+    const rpcDel = exclusao.slice(exclusao.indexOf('.rpc("sales_order_excluir_sem_envio"'));
+    expect(rpcDel, 'envio em curso RECUSA').toMatch(/"envio_em_curso"[\s\S]{0,40}throw new Error\(/);
+    expect(rpcDel, 'a intenção de orçamento chega à RPC').toMatch(/p_somente_orcamento: somenteOrcamento/);
+    expect(rpcDel, 'linha que deixou de ser orçamento RECUSA').toMatch(/"nao_e_orcamento"[\s\S]{0,40}throw new Error\(/);
+    const criar = removerComentarios(src.slice(src.indexOf('case "criar_pedido": {'), src.indexOf('case "excluir_pedido": {')));
+    const claim = criar.indexOf('.rpc("sales_order_reivindicar_envio"');
+    const envio = criar.indexOf('await criarPedidoVenda(');
+    expect(claim, 'REGRESSÃO: criar_pedido sem claim do envio').toBeGreaterThan(-1);
+    expect(claim, 'o claim precede o envio ao Omie').toBeLessThan(envio);
+    const entre = criar.slice(claim, envio);
+    expect(entre, 'falha da RPC de claim RECUSA').toMatch(/if \(claimErr\) \{\s*throw new Error\(/);
+    expect(entre, 'claim negado RECUSA').toMatch(/if \(reivindicou !== true\) \{\s*throw new Error\(/);
   });
 
   // Codex 2026-11-20 (P1): sem rastro ATP a consulta indeterminada SEGUIA para o DELETE físico.
@@ -5211,7 +5229,7 @@ describe('guardrail money-path: excluir pedido não finge cancelar no Omie', () 
   const exclusao = removerComentarios(src.slice(ex, src.indexOf('case "sync_pedidos": {', ex)));
 
   it('sentinela: recortou o excluir_pedido', () => {
-    expect(exclusao).toContain('.delete()');
+    expect(exclusao).toContain('.rpc("sales_order_excluir_sem_envio"');
   });
 
   it('nenhuma chamada de cancelamento/exclusão no Omie dentro do excluir_pedido', () => {
@@ -5222,7 +5240,7 @@ describe('guardrail money-path: excluir pedido não finge cancelar no Omie', () 
   it('pedido com PID só sai com o veredito (canônica cancelada; importado nunca), ANTES do DELETE', () => {
     const v = exclusao.indexOf('vereditoExclusaoNoOmie(');
     expect(v).toBeGreaterThan(-1);
-    expect(v).toBeLessThan(exclusao.indexOf('.delete()'));
+    expect(v).toBeLessThan(exclusao.indexOf('.rpc("sales_order_excluir_sem_envio"'));
     expect(exclusao).toMatch(/if \(!veredito\.permitido\) throw new Error\(/);
   });
 

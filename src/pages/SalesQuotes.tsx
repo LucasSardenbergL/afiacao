@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { excluirOrcamento } from '@/components/salesOrders/excluir-orcamento';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import { itensPedidoDoJson, type ItemPedidoJson } from '@/lib/pedido/itens-json';
@@ -80,10 +81,7 @@ const SalesQuotes = () => {
   };
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('sales_orders').delete().eq('id', id);
-      if (error) throw error;
-    },
+    mutationFn: (id: string) => excluirOrcamento(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sales-quotes'] });
       toast.success('Orçamento excluído');
