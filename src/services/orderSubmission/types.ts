@@ -11,6 +11,7 @@ import type {
 } from '@/hooks/unifiedOrder/types';
 import type { DeliveryOption } from '@/types';
 import type { PrazoDecisaoPorConta } from './prazoDecisao';
+import type { MarcaOsAfiacao } from './checkout-envelope';
 
 export type SubmitClient = SupabaseClient<Database>;
 
@@ -84,10 +85,10 @@ export interface SubmitOrderParams {
   prazoDecisao?: PrazoDecisaoPorConta;
   /** A1 (rodada 2): marca da OS de Afiação JÁ confirmada neste MESMO envelope de checkout.
    *  O Omie não deduplica a OS (cCodIntOS leva Date.now()) → presente = NÃO recriar no reenvio. */
-  afiacaoJaEnviada?: import('./checkout-envelope').MarcaOsAfiacao | null;
+  afiacaoJaEnviada?: MarcaOsAfiacao | null;
   /** A1: chamado assim que a OS de Afiação é confirmada, ANTES do resto do envio terminar —
    *  o caller persiste a marca no envelope (sobrevive a exceção posterior e a refresh). */
-  aoConfirmarOsAfiacao?: (marca: import('./checkout-envelope').MarcaOsAfiacao) => void;
+  aoConfirmarOsAfiacao?: (marca: MarcaOsAfiacao) => void;
 }
 
 export interface SubmitErrorEntry {
