@@ -66,7 +66,21 @@ if [ "${1:-}" = "--falsificar" ]; then
     t7_perde_evento_antigo:t7_ledger_mantem_eventos_antigos
     t7_allowlist_aberta:t7_ledger_fora_da_allowlist_22023
     t7_trava_frouxa:t7_trava_predecessor_divergente_aborta
-    t7_sem_revoke_anon:t7_ledger_acl_fechado"
+    t7_sem_revoke_anon:t7_ledger_acl_fechado
+    t9b_foto_sobrescreve:t9b_foto_idempotente
+    t9b_foto_sem_on_conflict:t9b_foto_idempotente
+    t9b_foto_coalesce_zero:t9b_saldo_null_nao_vira_zero
+    t9b_foto_trunca:t9b_foto_arredonda,t9b_soma_pix_itau
+    t9b_foto_float:t9b_foto_arredonda
+    t9b_foto_data_menos_1:t9b_foto_data_e_saldo_data
+    t9b_resumo_coalesce:t9b_resumo_null_se_falta_uma_das_n_contas
+    t9b_resumo_soma_parcial:t9b_resumo_null_se_falta_uma_das_n_contas
+    t9b_resumo_sem_company:t9b_soma_pix_itau
+    t9b_foto_sem_rls:t9b_rls_le_so_empresa_permitida,t1_migration_aplica
+    t9b_foto_policy_aberta:t9b_rls_le_so_empresa_permitida
+    t9b_foto_grant_aberto:t9b_truncate_negado,t1_migration_aplica
+    t9b_foto_funcao_anon:t9b_funcao_fechada,t1_migration_aplica
+    t9b_cron_horario:t9b_cron_agendado"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-banco-extrato-f1.XXXXXX")"
   echo "== CONTROLE (locale=${LOCALE_TESTE:-C}) =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -225,6 +239,30 @@ case "${SABOTAGEM:-}" in
   # o REVOKE de anon some: o predecessor de teste (ACL default) fica aberto a anon
   t7_sem_revoke_anon)   sabotar "REVOKE ALL ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) FROM anon;" "" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
+  # 9b: a foto
+  t9b_foto_sobrescreve)     sabotar "ON CONFLICT (company, omie_ncodcc, data) DO NOTHING;" "ON CONFLICT (company, omie_ncodcc, data) DO UPDATE SET saldo_centavos = EXCLUDED.saldo_centavos, fotografado_em = EXCLUDED.fotografado_em;" ;;
+  t9b_foto_sem_on_conflict) sabotar "  ON CONFLICT (company, omie_ncodcc, data) DO NOTHING;" ";" ;;
+  t9b_foto_coalesce_zero)   sabotar "round(fc.saldo_atual * 100)::bigint" "round(coalesce(fc.saldo_atual, 0) * 100)::bigint"
+                            sabotar "WHERE fc.saldo_atual IS NOT NULL AND fc.saldo_data IS NOT NULL" "WHERE fc.saldo_data IS NOT NULL" ;;
+  t9b_foto_trunca)          sabotar "round(fc.saldo_atual * 100)::bigint" "trunc(fc.saldo_atual * 100)::bigint" ;;
+  t9b_foto_float)           sabotar "round(fc.saldo_atual * 100)::bigint" "(fc.saldo_atual::float8 * 100)::bigint" ;;
+  t9b_foto_data_menos_1)    sabotar "SELECT fc.company, fc.omie_ncodcc, fc.saldo_data, round" "SELECT fc.company, fc.omie_ncodcc, fc.saldo_data - 1, round" ;;
+  # 9b: o resumo
+  t9b_resumo_coalesce)      sabotar "         om.saldo
+    FROM cob c" "         coalesce(om.saldo, 0)
+    FROM cob c" ;;
+  t9b_resumo_soma_parcial)  sabotar "CASE WHEN count(f.saldo_centavos) = (SELECT count(*) FROM vinc) THEN" "CASE WHEN count(f.saldo_centavos) > 0 THEN" ;;
+  t9b_resumo_sem_company)   sabotar "ON f.company = v.company AND f.omie_ncodcc" "ON f.omie_ncodcc" ;;
+  # 9b: RLS, privilegios, funcao, cron
+  t9b_foto_sem_rls)         sabotar "ALTER TABLE public.fin_saldo_conta_diario ENABLE ROW LEVEL SECURITY;" "" ;;
+  t9b_foto_policy_aberta)   sabotar "FOR SELECT TO authenticated
+  USING (public.fin_user_can_access(company));
+-- REVOKE ALL tira" "FOR SELECT TO authenticated
+  USING (true);
+-- REVOKE ALL tira" ;;
+  t9b_foto_grant_aberto)    sabotar "GRANT SELECT ON TABLE public.fin_saldo_conta_diario TO authenticated;" "GRANT ALL ON TABLE public.fin_saldo_conta_diario TO authenticated;" ;;
+  t9b_foto_funcao_anon)     sabotar "REVOKE ALL ON FUNCTION public.fin_fotografar_saldos() FROM anon;" "" ;;
+  t9b_cron_horario)         sabotar "'0 8 * * *'" "'0 2 * * *'" ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
 
@@ -378,6 +416,27 @@ BEGIN
   ON CONFLICT (chave_dedup) DO NOTHING;
 END;
 $function$;
+
+-- Task 9b: pg_cron nao existe no PG17 da prova; cron.job vem de stubs-supabase.sql. Espelho do contrato do pg_cron >= 1.4:
+-- schedule(jobname, ...) e UPSERT por jobname; unschedule(jobname) apaga e devolve true (erro se nao existe, como o real).
+CREATE OR REPLACE FUNCTION cron.schedule(p_job_name text, p_schedule text, p_command text) RETURNS bigint LANGUAGE plpgsql AS $f$
+DECLARE v_id bigint;
+BEGIN
+  SELECT j.jobid INTO v_id FROM cron.job j WHERE j.jobname = p_job_name;
+  IF v_id IS NULL THEN
+    SELECT coalesce(max(j.jobid), 0) + 1 INTO v_id FROM cron.job j;
+    INSERT INTO cron.job (jobid, schedule, command, jobname, active) VALUES (v_id, p_schedule, p_command, p_job_name, true);
+  ELSE
+    UPDATE cron.job SET schedule = p_schedule, command = p_command WHERE jobid = v_id;
+  END IF;
+  RETURN v_id;
+END $f$;
+CREATE OR REPLACE FUNCTION cron.unschedule(p_job_name text) RETURNS boolean LANGUAGE plpgsql AS $f$
+BEGIN
+  DELETE FROM cron.job WHERE jobname = p_job_name;
+  IF NOT FOUND THEN RAISE EXCEPTION 'could not find valid entry for job %', p_job_name; END IF;
+  RETURN true;
+END $f$;
 
 CREATE SCHEMA storage;
 GRANT USAGE ON SCHEMA storage TO anon, authenticated, service_role;
@@ -937,6 +996,66 @@ if DB=prove_trava P -q -f "$MIG_USADA" > "$(dirname "$DATA")/trava.log" 2>&1; th
 eq "t7_trava_predecessor_divergente_aborta exit da migration / sentinela do PRE / corpo vivo intacto" \
    "$TRAVA_RC/$(grep -c 'PRE FALHOU ledger' "$(dirname "$DATA")/trava.log")/$([ "$(DB=prove_trava Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE proname='analytics_ledger_registrar'" 2>&1)" = "$MD5_ANT" ] && echo intacto || echo alterado)" \
    "1/1/intacto"
+
+# ══ TASK 9b: foto diaria do saldo Omie (fin_saldo_conta_diario / fin_fotografar_saldos / cron / resumo) ══════
+echo "=== T9b: foto do saldo Omie ==="
+# A fixture de fin_contas_correntes nasce SEM saldo. Aqui o sync "chegou": colacor 2001 (1234.565 -> arredonda para
+# 123457 centavos), 2002 (100.00), oben 1001 com saldo NULL (ausente, nao 0), colacor 2004 com saldo mas SEM saldo_data
+# (sem dia nao ha PK: nao grava) e colacor_sc 3001 com 0.00 REAL (zero de verdade grava).
+P -q <<'SQL' || echo "FAIL t9b_fixture — saldos nao aplicados"
+UPDATE public.fin_contas_correntes SET saldo_data = '2026-11-10', saldo_atual = 1234.565 WHERE company = 'colacor' AND omie_ncodcc = 2001;
+UPDATE public.fin_contas_correntes SET saldo_data = '2026-11-10', saldo_atual = 100.00   WHERE company = 'colacor' AND omie_ncodcc = 2002;
+UPDATE public.fin_contas_correntes SET saldo_data = '2026-11-10', saldo_atual = NULL     WHERE company = 'oben' AND omie_ncodcc = 1001;
+UPDATE public.fin_contas_correntes SET saldo_data = NULL,         saldo_atual = 55.00    WHERE company = 'colacor' AND omie_ncodcc = 2004;
+UPDATE public.fin_contas_correntes SET saldo_data = '2026-11-10', saldo_atual = 0.00     WHERE company = 'colacor_sc' AND omie_ncodcc = 3001;
+SQL
+FOTO_N1=$(Pq -c "SELECT public.fin_fotografar_saldos()" 2>&1 | tail -1)
+# o sync de DEPOIS muda o saldo da 2001 (mesma saldo_data): a 1a foto do dia vence
+P -q -c "UPDATE public.fin_contas_correntes SET saldo_atual = 999.00 WHERE company = 'colacor' AND omie_ncodcc = 2001" || echo "FAIL t9b_fixture — update 2001"
+FOTO_N2=$(Pq -c "SELECT public.fin_fotografar_saldos()" 2>&1 | tail -1)
+eq "t9b_foto_idempotente 1a rodada insere 3, a 2a insere 0, a linha da 2001 segue a 1a foto (123457) e ha 3 linhas" \
+   "$FOTO_N1/$FOTO_N2/$(Pq -c "SELECT saldo_centavos FROM public.fin_saldo_conta_diario WHERE company='colacor' AND omie_ncodcc=2001" 2>&1)/$(Pq -c "SELECT count(*) FROM public.fin_saldo_conta_diario" 2>&1)" \
+   "3/0/123457/3"
+eq "t9b_saldo_null_nao_vira_zero saldo_atual NULL (oben 1001) e saldo_data NULL (colacor 2004) nao gravam linha" \
+   "$(Pq -c "SELECT count(*) FROM public.fin_saldo_conta_diario WHERE (company, omie_ncodcc) IN (('oben', 1001), ('colacor', 2004))" 2>&1)" "0"
+eq "t9b_saldo_zero_real_grava 0.00 declarado pelo Omie (colacor_sc 3001) grava 0 — zero real nao e ausente" \
+   "$(Pq -c "SELECT saldo_centavos FROM public.fin_saldo_conta_diario WHERE company='colacor_sc' AND omie_ncodcc=3001" 2>&1)" "0"
+eq "t9b_foto_arredonda 1234.565 vira 123457 centavos (round em numeric, sem float) e 100.00 vira 10000" \
+   "$(Pq -c "SELECT string_agg(omie_ncodcc||':'||saldo_centavos, ',' ORDER BY omie_ncodcc) FROM public.fin_saldo_conta_diario WHERE company='colacor'" 2>&1)" "2001:123457,2002:10000"
+eq "t9b_foto_data_e_saldo_data a data da foto e a saldo_data que o Omie declara (Ruling 14), com fotografado_em preenchido" \
+   "$(Pq -c "SELECT string_agg(to_char(data,'YYYY-MM-DD')||'|'||(fotografado_em IS NOT NULL), ',' ORDER BY omie_ncodcc) FROM public.fin_saldo_conta_diario WHERE company='colacor'" 2>&1)" "2026-11-10|true,2026-11-10|true"
+
+# fotos manuais (como postgres): a 2001 tambem no dia 11 (a 2002 NAO); e uma 'oben' 2001 de outra empresa (mesmo ncodcc)
+P -q -c "INSERT INTO public.fin_saldo_conta_diario (company, omie_ncodcc, data, saldo_centavos) VALUES ('colacor', 2001, '2026-11-11', 5000), ('oben', 2001, '2026-11-10', 777)" || echo "FAIL t9b_fixture — fotos manuais"
+SOMA_FMT="string_agg(to_char(data, 'YYYY-MM-DD')||':'||coalesce(saldo_omie_centavos::text, 'NULL'), ' ' ORDER BY data)"
+eq "t9b_soma_pix_itau colacor dia 10: principal 2001 (123457) + Pix Itau 2002 (10000) = 133457; a foto 'oben' 2001 (777) nao entra" \
+   "$(como "$U_STAFF" "SELECT saldo_omie_centavos FROM public.banco_extrato_resumo_dia('$ID_COL', '2026-11-10', '2026-11-10')" 2>&1)" "133457"
+eq "t9b_resumo_null_se_falta_uma_das_n_contas dia 11 so tem a foto da 2001 (falta a 2002) e dia 12 nao tem nenhuma: NULL nos dois, nunca soma parcial nem 0" \
+   "$(como "$U_STAFF" "SELECT $SOMA_FMT FROM public.banco_extrato_resumo_dia('$ID_COL', '2026-11-11', '2026-11-12')" 2>&1)" "2026-11-11:NULL 2026-11-12:NULL"
+eq "t9b_resumo_uma_conta_sem_foto_null oben (1 vinculo, 1001 sem foto no dia 10): NULL" \
+   "$(como "$U_STAFF" "SELECT $SOMA_FMT FROM public.banco_extrato_resumo_dia('$ID_OBEN', '2026-11-10', '2026-11-10')" 2>&1)" "2026-11-10:NULL"
+C90=$(conta_nova 90)
+eq "t9b_resumo_conta_sem_vinculo_null conta bancaria sem nenhuma conta Omie ligada: NULL (soma de nada nao e 0)" \
+   "$(como "$U_STAFF" "SELECT $SOMA_FMT FROM public.banco_extrato_resumo_dia('$C90', '2026-11-10', '2026-11-10')" 2>&1)" "2026-11-10:NULL"
+eq "t9b_resumo_rls_sem_permissao_null sem permissao financeira o vinculo e a foto sao invisiveis (INVOKER): NULL, nao a soma" \
+   "$(como "$U_SEM" "SELECT $SOMA_FMT FROM public.banco_extrato_resumo_dia('$ID_COL', '2026-11-10', '2026-11-10')" 2>&1)" "2026-11-10:NULL"
+
+eq "t9b_rls_le_so_empresa_permitida sem permissao 0 linhas; so oben 1 (a da oben); staff 5" \
+   "$(como "$U_SEM" "SELECT count(*) FROM public.fin_saldo_conta_diario" 2>&1)/$(como "$U_OBEN" "SELECT count(*)||'-'||string_agg(DISTINCT company, ',') FROM public.fin_saldo_conta_diario" 2>&1)/$(como "$U_STAFF" "SELECT count(*) FROM public.fin_saldo_conta_diario" 2>&1)" \
+   "0/1-oben/5"
+eq "t9b_rls_anon_sem_select anon nao le a tabela (42501)" "$(estado '' anon "SELECT count(*) FROM public.fin_saldo_conta_diario")" "42501"
+eq "t9b_insert_direto_negado staff (passa na RLS de leitura) nao insere direto (42501)" \
+   "$(estado "$U_STAFF" authenticated "INSERT INTO public.fin_saldo_conta_diario (company, omie_ncodcc, data, saldo_centavos) VALUES ('colacor', 9, '2026-11-10', 1)")" "42501"
+eq "t9b_truncate_negado nenhum privilegio de escrita/TRUNCATE para anon/authenticated" \
+   "$(Pq -c "SELECT count(*) FROM unnest(ARRAY['anon','authenticated']) r, unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) pr WHERE has_table_privilege(r, 'public.fin_saldo_conta_diario', pr)" 2>&1)" "0"
+eq "t9b_policy_unica 1 policy, de SELECT, para authenticated, com RLS ligada" \
+   "$(Pq -c "SELECT count(*)||'/'||count(*) FILTER (WHERE cmd = 'SELECT' AND roles = '{authenticated}')||'/'||(SELECT relrowsecurity FROM pg_class WHERE oid = 'public.fin_saldo_conta_diario'::regclass) FROM pg_policies WHERE schemaname='public' AND tablename='fin_saldo_conta_diario'" 2>&1)" "1/1/true"
+eq "t9b_funcao_fechada PUBLIC|anon|authenticated sem EXECUTE, SECURITY DEFINER; anon e staff autenticado chamando = 42501" \
+   "$(Pq -c "SELECT has_function_privilege('public', 'public.fin_fotografar_saldos()', 'EXECUTE')||'|'||has_function_privilege('anon', 'public.fin_fotografar_saldos()', 'EXECUTE')||'|'||has_function_privilege('authenticated', 'public.fin_fotografar_saldos()', 'EXECUTE')||'|'||(SELECT prosecdef FROM pg_proc WHERE oid = 'public.fin_fotografar_saldos()'::regprocedure)" 2>&1)/$(estado '' anon "SELECT public.fin_fotografar_saldos()")/$(estado "$U_STAFF" authenticated "SELECT public.fin_fotografar_saldos()")" \
+   "false|false|false|true/42501/42501"
+eq "t9b_cron_agendado exatamente 1 job fin-fotografar-saldos (mesmo apos 2 aplicacoes), 0 8 * * * (05:00 SP), SQL puro sem http_post" \
+   "$(Pq -c "SELECT count(*)||'|'||min(schedule)||'|'||min(command)||'|'||(min(command) NOT LIKE '%http_post%') FROM cron.job WHERE jobname = 'fin-fotografar-saldos'" 2>&1)" \
+   "1|0 8 * * *|SELECT public.fin_fotografar_saldos();|true"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

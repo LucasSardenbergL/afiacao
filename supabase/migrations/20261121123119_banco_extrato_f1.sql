@@ -14,7 +14,7 @@
 --   SECAO 5  seed da conta Itau por empresa (derivada do Omie) ... Task 1
 --   SECAO 6  RPCs do extrato (registrar / conferido / resumo) .... Task 2
 --   SECAO 7  sensores no ledger .................................. Task 7
---   SECAO 8  foto diaria do saldo Omie ........................... Task 9b (a vir)
+--   SECAO 8  foto diaria do saldo Omie + cron .................... Task 9b
 --   SECAO 9  POS (postcondicao, sempre por ultimo) ............... Task 1 (+ as tasks seguintes)
 --
 -- Valores em CENTAVOS inteiros (bigint). Ausente != zero: o que falta e NULL, nunca 0.
@@ -55,13 +55,13 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'fin_contas_correntes'
-         AND column_name IN ('company','omie_ncodcc','descricao','banco','agencia','numero_conta','tipo','ativo')) <> 8 THEN
-    RAISE EXCEPTION 'PRE FALHOU dependencia: fin_contas_correntes sem as colunas que o seed le.';
+         AND column_name IN ('company','omie_ncodcc','descricao','banco','agencia','numero_conta','tipo','ativo','saldo_data','saldo_atual')) <> 10 THEN
+    RAISE EXCEPTION 'PRE FALHOU dependencia: fin_contas_correntes sem as colunas que o seed e a foto de saldo (SECAO 8) leem.';
   END IF;
 
   -- re-apply: tabela banco_* que ja existe tem de ser DESTA migration (marca no COMMENT); senao e de
   -- outra sessao e o CREATE IF NOT EXISTS a aceitaria calado com outro formato.
-  FOREACH v_t IN ARRAY ARRAY['banco_conta','banco_conta_omie','banco_conta_ancora','banco_extrato_arquivo','banco_extrato_linha'] LOOP
+  FOREACH v_t IN ARRAY ARRAY['banco_conta','banco_conta_omie','banco_conta_ancora','banco_extrato_arquivo','banco_extrato_linha','fin_saldo_conta_diario'] LOOP
     IF to_regclass('public.' || v_t) IS NOT NULL THEN
       v_marca := obj_description(to_regclass('public.' || v_t), 'pg_class');
       IF v_marca IS NULL OR v_marca NOT LIKE 'banco_extrato_f1:%' THEN
@@ -863,8 +863,10 @@ GRANT EXECUTE ON FUNCTION public.banco_extrato_marcar_conferido(uuid) TO authent
 -- Dia sem cobertura: coberto=false e os tres valores NULL (ausente != zero). Dia coberto sem movimento:
 -- 0, 0 e o saldo. O saldo vem de banco_extrato_saldos_conhecidos (fonte 'arquivo'); se dois arquivos
 -- aceitos divergirem no mesmo dia (nao deveria: a continuidade impede), o saldo e NULL, nunca um chute.
+-- saldo_omie_centavos (Task 9b): foto do saldo Omie do dia (fin_saldo_conta_diario, SECAO 8), independe da
+-- cobertura do extrato. data da foto = saldo_data que o Omie declara (Ruling 14), nao reinterpretada.
 CREATE OR REPLACE FUNCTION public.banco_extrato_resumo_dia(p_banco_conta_id uuid, p_de date, p_ate date)
-RETURNS TABLE (data date, coberto boolean, creditos_centavos bigint, debitos_centavos bigint, saldo_final_dia_centavos bigint)
+RETURNS TABLE (data date, coberto boolean, creditos_centavos bigint, debitos_centavos bigint, saldo_final_dia_centavos bigint, saldo_omie_centavos bigint)
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
@@ -900,15 +902,29 @@ BEGIN
       FROM public.banco_extrato_saldos_conhecidos(p_banco_conta_id, p_de, p_ate) s
      WHERE s.fonte = 'arquivo'
      GROUP BY s.data
+  ), vinc AS (
+    SELECT o.company, o.omie_ncodcc FROM public.banco_conta_omie o WHERE o.banco_conta_id = p_banco_conta_id
+  ), omie AS (
+    -- saldo Omie do dia = soma das fotos de TODAS as contas Omie ligadas; falta a foto de qualquer uma = NULL
+    -- (nunca a soma parcial, nunca 0). Conta sem vinculo nenhum: sem linha aqui, o LEFT JOIN abaixo da NULL.
+    SELECT dias.d,
+           CASE WHEN count(f.saldo_centavos) = (SELECT count(*) FROM vinc) THEN sum(f.saldo_centavos)::bigint END AS saldo
+      FROM dias
+     CROSS JOIN vinc v
+      LEFT JOIN public.fin_saldo_conta_diario f
+        ON f.company = v.company AND f.omie_ncodcc = v.omie_ncodcc AND f.data = dias.d
+     GROUP BY dias.d
   )
   SELECT c.d,
          c.coberto,
          CASE WHEN c.coberto THEN coalesce(m.cred, 0) END,
          CASE WHEN c.coberto THEN coalesce(m.deb, 0) END,
-         CASE WHEN c.coberto THEN s.saldo END
+         CASE WHEN c.coberto THEN s.saldo END,
+         om.saldo
     FROM cob c
     LEFT JOIN mov m ON m.d = c.d
     LEFT JOIN sal s ON s.d = c.d
+    LEFT JOIN omie om ON om.d = c.d
    ORDER BY c.d;
 END
 $fn$;
@@ -1000,6 +1016,105 @@ REVOKE ALL ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) FROM
 REVOKE ALL ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) FROM anon;
 GRANT EXECUTE ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) TO authenticated;
 -- ── SECAO 8 — foto diaria do saldo Omie (Task 9b) ────────────────────────────────────────────
+-- fin_contas_correntes guarda SO a foto corrente do saldo (sobrescrita a cada sync). Esta tabela guarda o
+-- historico: uma linha por (company, conta Omie, saldo_data), a PRIMEIRA foto do dia vence (ON CONFLICT DO
+-- NOTHING). data = saldo_data que o Omie declara (Ruling 14); fotografado_em = quando a foto foi tirada.
+-- Ausente != zero: saldo_atual NULL (ou saldo_data NULL) NAO grava linha. numeric*100 arredondado em
+-- numeric -> bigint (sem float). Escrita so pela funcao abaixo; leitura por fin_user_can_access(company).
+
+-- PRE: o objeto alheio (tabela fin_saldo_conta_diario sem a marca) ja foi barrado na SECAO 0, antes de criar qualquer coisa.
+
+CREATE TABLE IF NOT EXISTS public.fin_saldo_conta_diario (
+  company         text NOT NULL,
+  omie_ncodcc     bigint NOT NULL,
+  data            date NOT NULL,
+  saldo_centavos  bigint NOT NULL,
+  fotografado_em  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT fin_saldo_conta_diario_pkey PRIMARY KEY (company, omie_ncodcc, data)
+);
+COMMENT ON TABLE public.fin_saldo_conta_diario IS 'banco_extrato_f1: foto diaria do saldo Omie (data = saldo_data declarada pelo Omie), uma linha por conta/dia, a 1a foto vence.';
+
+ALTER TABLE public.fin_saldo_conta_diario ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS fin_saldo_conta_diario_select ON public.fin_saldo_conta_diario;
+CREATE POLICY fin_saldo_conta_diario_select ON public.fin_saldo_conta_diario FOR SELECT TO authenticated
+  USING (public.fin_user_can_access(company));
+-- REVOKE ALL tira tambem TRUNCATE (que FURA a RLS) e o ALL que o default ACL de prod concede.
+REVOKE ALL ON TABLE public.fin_saldo_conta_diario FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON TABLE public.fin_saldo_conta_diario TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.fin_fotografar_saldos()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_n integer;
+BEGIN
+  INSERT INTO public.fin_saldo_conta_diario (company, omie_ncodcc, data, saldo_centavos, fotografado_em)
+  SELECT fc.company, fc.omie_ncodcc, fc.saldo_data, round(fc.saldo_atual * 100)::bigint, now()
+    FROM public.fin_contas_correntes fc
+   WHERE fc.saldo_atual IS NOT NULL AND fc.saldo_data IS NOT NULL
+  ON CONFLICT (company, omie_ncodcc, data) DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;   -- linhas NOVAS desta rodada (0 = o dia ja estava fotografado)
+END
+$fn$;
+-- Rodada pelo pg_cron (postgres, dono). Ninguem mais: fechar PUBLIC E anon E authenticated, nomeando as roles.
+REVOKE ALL ON FUNCTION public.fin_fotografar_saldos() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.fin_fotografar_saldos() FROM anon;
+REVOKE ALL ON FUNCTION public.fin_fotografar_saldos() FROM authenticated;
+
+-- Ruling 15: 08:00 UTC = 05:00 America/Sao_Paulo, depois do sync das 03:00 BRT (fin-sync-base-diario, '0 6 * * *').
+-- SQL puro: nada de net.http_post (sem timeout de HTTP a esquecer). Idempotente: desagenda se existir.
+DO $cron$
+BEGIN
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'fin-fotografar-saldos') THEN
+    PERFORM cron.unschedule('fin-fotografar-saldos');
+  END IF;
+  PERFORM cron.schedule('fin-fotografar-saldos', '0 8 * * *', 'SELECT public.fin_fotografar_saldos();');
+END
+$cron$;
+
+-- POS da SECAO 8: tabela, RLS, policy, ACL, funcao, coluna nova do resumo e o job, relidos do catalogo.
+DO $post_foto$
+DECLARE
+  v_f text := 'public.fin_fotografar_saldos()';
+BEGIN
+  IF to_regclass('public.fin_saldo_conta_diario') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = to_regclass('public.fin_saldo_conta_diario') AND relrowsecurity) THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU foto_rls: fin_saldo_conta_diario ausente ou sem RLS.';
+  END IF;
+  IF (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'fin_saldo_conta_diario') <> 1
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'fin_saldo_conta_diario'
+                      AND cmd = 'SELECT' AND roles = '{authenticated}') THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU foto_policy: fin_saldo_conta_diario fora de 1 policy SELECT para authenticated.';
+  END IF;
+  IF has_table_privilege('anon', 'public.fin_saldo_conta_diario', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+     OR has_table_privilege('authenticated', 'public.fin_saldo_conta_diario', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+     OR NOT has_table_privilege('authenticated', 'public.fin_saldo_conta_diario', 'SELECT') THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU foto_privilegio: fin_saldo_conta_diario com ACL fora do desenho (anon nada, authenticated so SELECT).';
+  END IF;
+  IF to_regprocedure(v_f) IS NULL
+     OR NOT (SELECT p.prosecdef FROM pg_proc p WHERE p.oid = to_regprocedure(v_f))
+     OR has_function_privilege('public', v_f, 'EXECUTE')
+     OR has_function_privilege('anon', v_f, 'EXECUTE')
+     OR has_function_privilege('authenticated', v_f, 'EXECUTE') THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU foto_funcao: fin_fotografar_saldos ausente, sem SECURITY DEFINER ou com EXECUTE para PUBLIC/anon/authenticated.';
+  END IF;
+  IF NOT (SELECT p.proconfig @> ARRAY['search_path=public, pg_temp'] FROM pg_proc p WHERE p.oid = to_regprocedure(v_f)) THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU foto_search_path: fin_fotografar_saldos sem search_path fixo.';
+  END IF;
+  IF (SELECT count(*) FROM cron.job WHERE jobname = 'fin-fotografar-saldos'
+        AND schedule = '0 8 * * *' AND command = 'SELECT public.fin_fotografar_saldos();') <> 1
+     OR (SELECT count(*) FROM cron.job WHERE command LIKE '%fin_fotografar_saldos%') <> 1 THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU foto_cron: job fin-fotografar-saldos fora de 1 x 0 8 * * * com SQL puro.';
+  END IF;
+  IF pg_get_function_result(to_regprocedure('public.banco_extrato_resumo_dia(uuid,date,date)')) NOT LIKE '%, saldo_omie_centavos bigint)' THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU resumo_omie: banco_extrato_resumo_dia sem saldo_omie_centavos ao fim do RETURNS TABLE.';
+  END IF;
+END
+$post_foto$;
 
 -- ── SECAO 9 — POS: o que esta migration promete, relido do catalogo e dos dados ───────────────
 DO $post$
