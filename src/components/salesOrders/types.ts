@@ -1,3 +1,4 @@
+import { diaDoPedido, rotuloDiaPedido } from '@/lib/pedido/data-pedido';
 // Tipos + constantes + helpers da listagem de pedidos de venda.
 // Extraídos verbatim de src/pages/SalesOrders.tsx (god-component split).
 import type { Tables } from '@/integrations/supabase/types';
@@ -152,4 +153,56 @@ export function rotuloEmpresa(account: string | null | undefined): string {
     case 'colacor_sc': return 'Colacor SC';
     default: return account ? account : '—';
   }
+}
+
+/**
+ * Se a exclusão deste pedido tem chance de passar, e por que não. ESPELHO do contrato da edge
+ * (`omie-vendas-sync` → `excluir_pedido` + `vereditoExclusaoNoOmie` em `_shared/atp-pv-omie.ts`),
+ * que segue sendo a AUTORIDADE — aqui só se evita oferecer uma ação que a edge sempre recusa:
+ *  - o app NÃO cancela nem exclui nada no Omie; só tira o registro do app;
+ *  - só contas `oben` e `colacor` (Colacor SC é recusada);
+ *  - registro importado do Omie nunca sai (o app espelha o Omie, inclusive os cancelados);
+ *  - pedido do app que já está no Omie só sai depois que o cancelamento FEITO NO OMIE chegou pelo sync.
+ */
+export function podeExcluirPedido(
+  order: Pick<OrderFeedRow, 'origin' | 'account' | 'status' | 'omie_pedido_id'>,
+): { ok: true } | { ok: false; motivo: string } {
+  if (order.origin !== 'sales') return { ok: false, motivo: 'Ordem de afiação não é excluída por aqui.' };
+  if (order.account !== 'oben' && order.account !== 'colacor') {
+    return { ok: false, motivo: `Pedidos da ${rotuloEmpresa(order.account)} não são excluídos pelo app.` };
+  }
+  if (order.status === 'importado') {
+    return { ok: false, motivo: 'Importado do Omie: fica no app espelhando o Omie. Para cancelar, cancele no Omie.' };
+  }
+  if (order.omie_pedido_id != null && order.status !== 'cancelado') {
+    return { ok: false, motivo: 'Já está no Omie: cancele lá primeiro; quando o cancelamento chegar pelo sync, a exclusão libera.' };
+  }
+  return { ok: true };
+}
+
+/** Texto honesto do que a exclusão faz (o app não mexe no Omie). */
+export const EFEITO_DA_EXCLUSAO = 'O pedido sai do app. Nada é alterado no Omie.';
+
+export interface GrupoDia {
+  dia: string;
+  rotulo: string;
+  pedidos: OrderFeedRow[];
+}
+
+// Agrupa pela chave de DIA CIVIL, não por vizinhança: a lista vem por created_at DESC, mas a data-pura
+// do Omie (meio-dia/meia-noite UTC = dia UTC) e a hora real do wizard (dia LOCAL) intercalam — em
+// São Paulo, 21/11 12:00Z · 21/11 01:00Z · 21/11 00:00Z dá os dias 21, 20, 21, e o "só vizinhos"
+// abria o 21 duas vezes (com chave React repetida). Grupos em ordem de dia DESC; "Sem data" no fim.
+// Dentro do grupo a ordem do feed se mantém.
+export function agruparPorDia(pedidos: OrderFeedRow[]): GrupoDia[] {
+  const porDia = new Map<string, OrderFeedRow[]>();
+  for (const p of pedidos) {
+    const dia = diaDoPedido(p.created_at) ?? 'sem-data';
+    const lista = porDia.get(dia);
+    if (lista) lista.push(p);
+    else porDia.set(dia, [p]);
+  }
+  return [...porDia.entries()]
+    .sort(([a], [b]) => (a === 'sem-data' ? 1 : b === 'sem-data' ? -1 : b.localeCompare(a)))
+    .map(([dia, lista]) => ({ dia, rotulo: dia === 'sem-data' ? 'Sem data' : rotuloDiaPedido(dia), pedidos: lista }));
 }
