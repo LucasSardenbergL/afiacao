@@ -96,7 +96,17 @@ export type EventoLedger =
    * 'abriu' com cnpj NULL). É o que mede quais fichas são abertas — em especial as com selo de vínculo/sucessor.
    * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
    */
-  | 'radar.ficha_aberta';
+  | 'radar.ficha_aberta'
+  /**
+   * Um extrato bancário (Itaú) foi IMPORTADO com sucesso (`banco_extrato_registrar` → aceito). Chave = conta:arquivo →
+   * 1 por titular, arquivo e dia. Mede a adoção da importação (F1): quem sobe extrato, e com que frequência.
+   */
+  | 'banco.extrato_importado'
+  /**
+   * Um dia do extrato foi marcado como CONFERIDO contra o Omie (`banco_extrato_marcar_conferido`). Chave = conta:dia →
+   * 1 por titular, dia conferido e dia civil. É o sinal de que o extrato virou rotina de conferência, não só upload.
+   */
+  | 'banco.extrato_conferido';
 
 /**
  * Registra um evento decisório no ledger server-side.

@@ -124,6 +124,16 @@ describe('lens-write-guard', () => {
     expect(c.calls).toEqual(['rpc']);
   });
 
+  it('na lente: o resumo diário do extrato bancário (leitura pura) passa; as RPCs de escrita do extrato seguem bloqueadas', async () => {
+    const c = createLensGuardedClient(makeFakeClient());
+    setLensActive(true);
+    await c.rpc('banco_extrato_resumo_dia');
+    expect(c.calls).toEqual(['rpc']);
+    await expect(c.rpc('banco_conta_registrar_ancora')).rejects.toBeInstanceOf(LensReadOnlyError);
+    await expect(c.rpc('banco_extrato_marcar_conferido')).rejects.toBeInstanceOf(LensReadOnlyError);
+    expect(c.calls).toEqual(['rpc']);
+  });
+
   it('na lente: rpc de ESCRITA com nome ambíguo FORA da allowlist (ciclo_/sugerir_) é bloqueada', async () => {
     // Guarda contra allowlistar às cegas: ciclo_oportunidade_do_dia e
     // sugerir_negociacao_paralela_hoje GERAM pedidos/sugestões (escrita).

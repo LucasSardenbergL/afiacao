@@ -115,6 +115,7 @@ const FinanceiroFechamento = lazyRota(() => import("./pages/FinanceiroFechamento
 const FinanceiroAnalytics = lazyRota(() => import("./pages/FinanceiroAnalytics"));
 const FinanceiroCockpit = lazyRota(() => import("./pages/FinanceiroCockpit"));
 const FinanceiroConciliacao = lazyRota(() => import("./pages/FinanceiroConciliacao"));
+const FinanceiroExtratoBancario = lazyRota(() => import("./pages/FinanceiroExtratoBancario"));
 const FinanceiroOrcamento = lazyRota(() => import("./pages/FinanceiroOrcamento"));
 const GestaoGruposCliente = lazyRota(() => import("./pages/GestaoGruposCliente"));
 const GrupoCliente360 = lazyRota(() => import("./pages/GrupoCliente360"));
@@ -247,6 +248,7 @@ const arvoreDeRotas = (
         <Route path="financeiro/analytics" element={<FinanceiroAnalytics />} />
         <Route path="financeiro/cockpit" element={<FinanceiroCockpit />} />
         <Route path="financeiro/conciliacao" element={<FinanceiroConciliacao />} />
+        <Route path="financeiro/extrato-bancario" element={<FinanceiroExtratoBancario />} />
         <Route path="financeiro/orcamento" element={<FinanceiroOrcamento />} />
         <Route path="financeiro/intercompany" element={<FinanceiroIntercompany />} />
         <Route path="financeiro/intercompany/fila" element={<FinanceiroIntercompanyFila />} />

@@ -1,0 +1,11 @@
+# F1 do extrato bancario Itau (Tasks 1 e 2). Task 1: 5 tabelas banco_* com RLS por fin_user_can_access(company), so
+# SELECT para authenticated (sem TRUNCATE), bucket privado banco-extratos com a pasta = conta, RPC da ancora manual e o
+# seed da conta Itau por empresa derivado de fin_contas_correntes. Task 2: banco_extrato_registrar (identidade, dia
+# corrente, fechamento, formato, sobreposicao por multiconjunto, continuidade nas duas fronteiras, idempotencia e
+# reavaliacao por hash, concorrencia com 2 psql), marcar_conferido e resumo_dia (NULL fora da cobertura).
+# Fix da Task 2: sem inicial so a VESPERA ancora; gerado_em (dia fechado na geracao, em SP); ancora manual conferida
+# contra o arquivo aceito; codigo do banco sem zeros a esquerda; gerado_em no futuro recusado. Migration aplicada 2x.
+# Reavaliacao mede gerado_em contra o 1o envio; fuso fora de faixa = 22023. 40 sabotagens.
+# Task 7: sensores banco.extrato_importado/conferido no ledger (allowlist, ACL, trava do predecessor). 46 sabotagens.
+# Task 9b: foto diaria do saldo Omie (fin_saldo_conta_diario + fin_fotografar_saldos + cron 0 8 * * *) e saldo_omie_centavos no resumo. 60 sabotagens.
+db/test-banco-extrato-f1.sh 124  falsificar=60

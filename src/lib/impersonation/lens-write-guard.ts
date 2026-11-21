@@ -65,6 +65,9 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   // Crédito (migration 20261106205557) — STABLE, só lê: o aviso de vínculo com cliente que tem título vencido.
   // O sensor (credito_vinculo_aviso_registrar) GRAVA e fica de fora de propósito.
   'credito_vinculo_aviso',
+  // Extrato bancário F1 (migration 20261121123119) — STABLE, SECURITY INVOKER, leitura pura: o resumo diário da tela.
+  // banco_conta_registrar_ancora / banco_extrato_marcar_conferido GRAVAM e ficam de fora de propósito.
+  'banco_extrato_resumo_dia',
 ]);
 function isReadOnlyRpc(name: string): boolean {
   return name.startsWith('get_') || name.startsWith('list_') || RPC_READONLY_ALLOWLIST.has(name);

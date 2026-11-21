@@ -195,6 +195,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Target, label: 'Orçamento', path: '/financeiro/orcamento', staffOnly: true },
       { icon: TrendingUp, label: 'Retorno & Valor', path: '/financeiro/valor', masterOnly: true },
       { icon: Percent, label: 'Regime Tributário', path: '/financeiro/regime-tributario', masterOnly: true },
+      { icon: Landmark, label: 'Extrato Bancário', path: '/financeiro/extrato-bancario', staffOnly: true },
       { icon: Landmark, label: 'Custo de Funding', path: '/financeiro/funding', masterOnly: true },
       { icon: Banknote, label: 'Antecipação', path: '/financeiro/antecipacao', masterOnly: true },
       { icon: Crosshair, label: 'Cockpit de Valor', path: '/financeiro/valor-cockpit', gestorComercialOuMaster: true },

@@ -50,6 +50,7 @@
     "supabase/functions/_shared/limpeza-fonte.ts",
     "supabase/functions/_shared/sayerlack-sku.ts",
     "supabase/functions/_shared/embalagem-captura-helpers.ts",
+    "supabase/functions/_shared/extrato-nucleo.ts",
     "src/integrations/supabase/types.ts",
     "src/components/ui/**",
     "src/components/NvoipDialer.tsx",
