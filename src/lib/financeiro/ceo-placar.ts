@@ -25,7 +25,7 @@ import { consolidarTitulos, type TotaisTitulos } from '@/lib/financeiro/resumo-t
 const EMPRESAS_GRUPO: readonly Company[] = ['oben', 'colacor', 'colacor_sc'];
 
 /** CNPJs que só prestam serviço (sem CMV por natureza) — fora da margem bruta. */
-export const EMPRESAS_SERVICO: readonly Company[] = ['colacor_sc'];
+const EMPRESAS_SERVICO: readonly Company[] = ['colacor_sc'];
 
 export function empresasDoEscopo(selection: CompanySelection): Company[] {
   return selection === 'all' ? [...EMPRESAS_GRUPO] : [selection];
