@@ -13,7 +13,7 @@ import type { ClienteGate } from "./gate-credito.ts";
 
 export type OrigemParcela = "informada" | "herdada_omie" | "default_999";
 
-export interface ItemRevisao {
+interface ItemRevisao {
   codigo_produto: number;
   quantidade: number;
   valor_unitario: number;
@@ -50,7 +50,7 @@ export function parcelaEfetiva(
 }
 
 /** Projeção money-path do que vai ao Omie, na ordem do envio. */
-export function projetarItens(items: ItemPayload[]): Array<Record<string, unknown>> {
+function projetarItens(items: ItemPayload[]): Array<Record<string, unknown>> {
   return items.map((it) => ({
     codigo_produto: it.omie_codigo_produto,
     quantidade: it.quantidade,
