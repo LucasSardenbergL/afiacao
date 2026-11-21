@@ -101,8 +101,12 @@ export function observacoesDaOsAfiacao(
   serviceItems: ServiceCartItem[],
   delivery: { option: string; timeSlot?: string },
   timeSlots: ReadonlyArray<{ id: string; label: string }>,
+  observacao?: string | null,
 ): string {
   const partes: string[] = [];
+  // B1 (Codex P2): pedido só de Afiação perdia a "Observações do pedido" — a OS só levava ferramentas.
+  const obs = observacao?.trim();
+  if (obs) partes.push(obs);
   if (delivery.option !== 'balcao' && delivery.timeSlot) {
     const slot = timeSlots.find(t => t.id === delivery.timeSlot);
     if (slot) partes.push(`Horário preferido: ${slot.label}`);

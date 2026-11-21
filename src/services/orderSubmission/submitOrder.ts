@@ -655,7 +655,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         subtotal: subtotals.service,
         delivery_fee: DELIVERY_FEES[delivery.option],
         total: subtotals.service + DELIVERY_FEES[delivery.option],
-        notes: observacoesDaOsAfiacao(serviceItems, delivery, TIME_SLOTS),
+        notes: observacoesDaOsAfiacao(serviceItems, delivery, TIME_SLOTS, meta.notes),
         payment_method: payment.afiacaoMethod,
       };
       const profileData = {

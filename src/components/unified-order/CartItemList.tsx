@@ -61,6 +61,8 @@ export function CartItemList({
   getServicePrice, getCartIndex,
   customerUserId, customerName, condicaoPrazoOben,
 }: CartItemListProps) {
+  // B4 (Codex P2): serviço sem preço (null/≤0) é A ORÇAR já no carrinho — o rodapé não pode dizer "Total".
+  const servicosAOrcar = serviceItems.filter(i => { const p = getServicePrice(i); return p === null || !(p > 0); }).length;
   // #6 (B): faixa do cockpit na linha do carrinho — aqui o tint_formula_id existe,
   // então a linha tinta recebe o custo REAL (base+corantes); item normal usa o preço
   // negociado. Chave composta (tint repete codigo por cor).
@@ -344,7 +346,7 @@ export function CartItemList({
                           </p>
                           {item.notes && <p className="text-[10px] text-muted-foreground italic truncate">Obs: {item.notes}</p>}
                         </div>
-                        {price !== null ? (
+                        {price !== null && price > 0 ? (
                           <span className="text-xs font-semibold shrink-0">{fmt(price * item.quantity)}</span>
                         ) : (
                           <span className="text-[10px] text-muted-foreground italic shrink-0">A orçar</span>
@@ -385,7 +387,7 @@ export function CartItemList({
               </div>
             )}
             <div className="flex justify-between items-center">
-              <span className="text-sm font-bold">Total</span>
+              <span className="text-sm font-bold">{servicosAOrcar > 0 && totalEstimated > 0 ? 'Subtotal conhecido' : 'Total'}</span>
               <span className="text-sm font-bold">{totalEstimated > 0 ? fmt(totalEstimated) : 'A definir'}</span>
             </div>
 

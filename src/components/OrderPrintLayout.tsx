@@ -117,6 +117,15 @@ export function tdDescontoHtml(data: PrintOrderData, item: PrintOrderData['items
   return `<td style="padding:6px 4px;border:1px solid #ddd;text-align:right;font-size:11px">${fmt(item.descontoValor)}</td>`;
 }
 
+/** B4 (Codex P2): item sem preço (serviço a orçar) não entra na soma — rotular "TOTAL" seria
+ *  afirmar um total que não existe. Ausente ≠ zero: diz quantos itens ficaram de fora. */
+export function totalDoCupomHtml(data: Pick<PrintOrderData, 'items' | 'total'>): string {
+  const semPreco = data.items.filter(i => i.valorUnitario === null).length;
+  if (semPreco === 0) return `<div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>`;
+  return `<div class="row total-row"><span>SUBTOTAL CONHECIDO:</span><span>${fmt(data.total)}</span></div>`
+    + `<div class="row"><span>Total a definir: ${semPreco} ${semPreco === 1 ? 'item' : 'itens'} sem preço</span></div>`;
+}
+
 /** Subtotal BRUTO e Desconto do rodapé; com linha não apurada, o rótulo diz quantos itens entraram. */
 export function totaisComDescontoHtml(data: PrintOrderData): string {
   const q = data.quebraDesconto;
@@ -232,7 +241,7 @@ export function openPrintOrder(data: PrintOrderData) {
   ${totaisComDescontoHtml(data)}${showDesconto ? `<div class="row"><span>Subtotal:</span><span>${fmt(data.subtotal)}</span></div>` : ''}
   ${showDesconto ? `<div class="row"><span>Desconto:</span><span>- ${fmt(data.desconto)}</span></div>` : ''}
   
-  <div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>
+  ${totalDoCupomHtml(data)}
 </div>
 
 ${data.condPagamento || installmentText ? `

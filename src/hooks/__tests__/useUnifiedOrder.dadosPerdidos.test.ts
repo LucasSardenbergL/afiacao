@@ -11,6 +11,7 @@ const hook = readFileSync(resolve(raiz, 'src/hooks/useUnifiedOrder.ts'), 'utf8')
 const selecao = readFileSync(resolve(raiz, 'src/hooks/unifiedOrder/useCustomerSelection.ts'), 'utf8');
 const pagina = readFileSync(resolve(raiz, 'src/pages/UnifiedOrder.tsx'), 'utf8');
 const busca = readFileSync(resolve(raiz, 'src/components/unified-order/ProductItemForm.tsx'), 'utf8');
+const carrinho = readFileSync(resolve(raiz, 'src/components/unified-order/CartItemList.tsx'), 'utf8');
 
 function corpoDo(nome: string): string {
   const ini = hook.indexOf(`const ${nome} = useCallback(`);
@@ -25,6 +26,12 @@ describe('Novo Pedido — fiação do PR B', () => {
     expect(corpo).toContain("setNotes('');");
     expect(corpo).toContain("setReadyByDate('');");
     expect(corpo).toContain("setOrdemCompra('');");
+    expect(corpo).toContain("setSelectedTimeSlot('');");
+  });
+
+  it('B2: trocar de cliente limpa observação, dia de entrega, horário e OC (não só a OC)', () => {
+    const corpo = corpoDo('clearCustomer');
+    expect(corpo).toContain("setOrdemCompra(''); setNotes(''); setReadyByDate(''); setSelectedTimeSlot('');");
   });
 
   it('B2: sucesso TOTAL do pedido e orçamento salvo limpam os campos do pedido', () => {
@@ -50,6 +57,13 @@ describe('Novo Pedido — fiação do PR B', () => {
     // O guard de cliente diferente segue ANTES (rascunho de outro cliente não aplica nada).
     expect(restore.indexOf("toast.error('Rascunho de outro cliente'")).toBeLessThan(restore.indexOf('lerParcelasDoRascunho'));
     expect(pagina).toContain('if (pendente.codigoCliente !== codigoClienteSelecionado) return;');
+    // codigo_cliente 0 não identifica ninguém: 0 === 0 aplicaria o prazo de A em B.
+    expect(restore).toContain("if (parcelas && typeof codigoRascunho === 'number' && codigoRascunho > 0) {");
+  });
+
+  it('B4: o carrinho trata serviço com preço ≤0 como A orçar e rotula Subtotal conhecido', () => {
+    expect(carrinho).toContain('{price !== null && price > 0 ? (');
+    expect(carrinho).toContain("{servicosAOrcar > 0 && totalEstimated > 0 ? 'Subtotal conhecido' : 'Total'}");
   });
 
   it('B4/B5: a busca de produto usa os rótulos honestos (sem `estoque ?? 0`)', () => {

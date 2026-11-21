@@ -435,7 +435,8 @@ export function useUnifiedOrder() {
     prazoDecisaoRef.current = {};
     clearCustomerInternal();
     setCart([]);
-    setOrdemCompra('');
+    // B2 (Codex P2): trocar de cliente leva junto os campos DO pedido — antes só a OC era limpa.
+    setOrdemCompra(''); setNotes(''); setReadyByDate(''); setSelectedTimeSlot('');
     checkoutEnvRef.current = null; persistCheckoutEnv(null);
     // user-tools cache é invalidado dentro de clearCustomerInternal
     // O RASCUNHO em disco é apagado pela página (onClearCustomer) — mesmo ciclo do envelope.
@@ -842,6 +843,7 @@ export function useUnifiedOrder() {
     setNotes('');
     setReadyByDate('');
     setOrdemCompra('');
+    setSelectedTimeSlot(''); // B6 (Codex P2): o horário da coleta é DESTA OS — não vaza para a próxima
   }, []);
 
   // Submit — orchestrates state around the pure submit functions in services/orderSubmission

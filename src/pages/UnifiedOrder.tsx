@@ -406,7 +406,9 @@ const UnifiedOrder = () => {
     // seleção corrente), então a `ultima_parcela` do histórico não o sobrescreve. Sem cliente na tela,
     // fica pendente até a vendedora selecionar o cliente DO rascunho (outro cliente = descarta).
     const parcelas = lerParcelasDoRascunho(state.parcelasManuais);
-    if (parcelas && codigoRascunho != null) {
+    // Codex P1: `codigo_cliente` 0 (cliente aberto pelo 360 sem cadastro Omie) não identifica ninguém —
+    // 0 === 0 aplicaria o prazo de A em B como escolha manual. Sem código positivo, o prazo não volta.
+    if (parcelas && typeof codigoRascunho === 'number' && codigoRascunho > 0) {
       if (codigoAtual === codigoRascunho) aplicarParcelasDoRascunho(parcelas);
       else parcelasPendentesRef.current = { codigoCliente: codigoRascunho, parcelas };
     }

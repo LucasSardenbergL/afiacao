@@ -871,6 +871,12 @@ describe('submitOrder — B4 (a orçar) e B6 (horário da coleta)', () => {
     expect(orderData.notes.startsWith('Horário preferido: Parte da Manhã || ')).toBe(true);
   });
 
+  it('B1: a observação do pedido vai na OS (pedido só de Afiação não a perde)', async () => {
+    await submitOrder(soServico({ meta: { notes: '  Entregar no portao dos fundos ', readyByDate: '', ordemCompra: '' } }));
+    const orderData = vi.mocked(syncOrderToOmie).mock.calls[0][1] as { notes: string };
+    expect(orderData.notes.startsWith('Entregar no portao dos fundos || ')).toBe(true);
+  });
+
   it('B6: balcão não leva horário (a tela nem mostra o seletor)', async () => {
     await submitOrder(soServico({ delivery: { option: 'balcao', selectedAddress: undefined, timeSlot: 'manha' } }));
     const orderData = vi.mocked(syncOrderToOmie).mock.calls[0][1] as { notes: string };
