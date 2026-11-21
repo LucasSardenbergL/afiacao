@@ -13,7 +13,7 @@
 --   SECAO 4  RPC banco_conta_registrar_ancora .................... Task 1
 --   SECAO 5  seed da conta Itau por empresa (derivada do Omie) ... Task 1
 --   SECAO 6  RPCs do extrato (registrar / conferido / resumo) .... Task 2
---   SECAO 7  sensores no ledger .................................. Task 7 (a vir)
+--   SECAO 7  sensores no ledger .................................. Task 7
 --   SECAO 8  foto diaria do saldo Omie ........................... Task 9b (a vir)
 --   SECAO 9  POS (postcondicao, sempre por ultimo) ............... Task 1 (+ as tasks seguintes)
 --
@@ -915,7 +915,90 @@ $fn$;
 REVOKE ALL ON FUNCTION public.banco_extrato_resumo_dia(uuid, date, date) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.banco_extrato_resumo_dia(uuid, date, date) TO authenticated, service_role;
 
--- ── SECAO 7 — sensores no ledger (Task 7) ────────────────────────────────────────────────────
+-- ── SECAO 7 — sensores no ledger (Task 7) ──────────────────────────────────────────────────
+-- analytics_ledger_registrar: a allowlist ganha 'banco.extrato_importado' e 'banco.extrato_conferido'.
+-- Corpo = o VIVO de prod, medido em 2026-11-21 (psql-ro): md5(pg_get_functiondef) 6f30ecc9be396721a4e154929ba798b2,
+-- 1 overload, SECURITY DEFINER, search_path ''. md5(prosrc) 7dc8856407bf4379b4e34556f42ba748 (= corpo da
+-- 20261106132259_radar_abriu_ficha_com_cnpj.sql). Muda SO a allowlist. CREATE OR REPLACE preserva o ACL;
+-- o REVOKE/GRANT e reemitido nomeando as roles.
+
+-- TRAVA, antes de ler: ALTER sem efeito (mesma volatilidade VIVA) prende a funcao ate o fim.
+DO $trava_ledger$
+BEGIN
+  ALTER FUNCTION public.analytics_ledger_registrar(text, text, jsonb) VOLATILE;
+END
+$trava_ledger$;
+
+-- PRE: o md5 EXATO do corpo vivo esta em (predecessor de prod, este). Ausente ou outro corpo ABORTA (outra
+-- sessao mexeu na allowlist: reconcilie antes). Aceitar "este" torna a migration re-aplicavel.
+DO $pre_ledger$
+DECLARE
+  v_led text := (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.analytics_ledger_registrar(text,text,jsonb)'));
+BEGIN
+  IF v_led IS NULL OR v_led NOT IN ('7dc8856407bf4379b4e34556f42ba748', '0d010ca3cd3e7dac733ae4f93ba90cf5') THEN
+    RAISE EXCEPTION 'PRE FALHOU ledger: analytics_ledger_registrar vivo (md5 %) nao e o predecessor nem este - outra sessao mexeu na allowlist; reconcilie antes', v_led;
+  END IF;
+END
+$pre_ledger$;
+
+CREATE OR REPLACE FUNCTION public.analytics_ledger_registrar(p_evento text, p_chave text, p_props jsonb DEFAULT '{}'::jsonb)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+DECLARE
+  v_uid  uuid := auth.uid();
+  v_dia  text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD');
+BEGIN
+  -- SECURITY DEFINER bypassa RLS ⇒ o gate vive AQUI, na fronteira.
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'analytics_ledger_registrar: exige usuario autenticado'
+      USING ERRCODE = '28000';
+  END IF;
+
+  -- Allowlist FECHADA: o ledger não é canal genérico de escrita no banco.
+  IF p_evento NOT IN ('carteira.mixgap_servido', 'navegacao.rota_servida', 'dashboard.crescimento_comparavel_servido',
+                      'venda.ficha_aberta', 'venda.contato_registrado', 'venda.tel_clicado', 'venda.painel_aberto',
+                      'financeiro.ciclo_aberto', 'reposicao.corantes_aberta', 'reposicao.raio_x_aberta',
+                      'reposicao.raio_x_decisao', 'radar.ficha_aberta',
+                      'banco.extrato_importado', 'banco.extrato_conferido') THEN
+    RAISE EXCEPTION 'analytics_ledger_registrar: evento % fora da allowlist', p_evento
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF pg_column_size(coalesce(p_props, '{}'::jsonb)) > 2048 THEN
+    RAISE EXCEPTION 'analytics_ledger_registrar: props acima do teto'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Teto por titular/dia — guard contra flood por chave variada. Silencioso de
+  -- propósito: telemetria nunca quebra a tela de quem está trabalhando.
+  IF (
+    SELECT count(*) FROM public.analytics_outbox
+    WHERE user_id = v_uid AND ocorrido_em > now() - interval '1 day'
+  ) >= 500 THEN
+    RETURN;
+  END IF;
+
+  INSERT INTO public.analytics_outbox (evento, distinct_id, user_id, props, chave_dedup)
+  VALUES (
+    p_evento,
+    v_uid::text,                       -- casa com identify(userId) do front
+    v_uid,
+    coalesce(p_props, '{}'::jsonb),
+    -- left() protege o teto do CHECK e do índice B-tree; o dia fecha a janela
+    -- de dedup (mesmo estado revisto amanhã é sinal NOVO, não repetição).
+    'ledger:' || v_uid::text || ':' || p_evento || ':' || left(coalesce(p_chave, ''), 100) || ':' || v_dia
+  )
+  ON CONFLICT (chave_dedup) DO NOTHING;
+END;
+$function$;
+
+-- CLAUDE.md: revogar NOMEANDO as roles - FROM PUBLIC nao tira anon. Reemitir e idempotente.
+REVOKE ALL ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) FROM anon;
+GRANT EXECUTE ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) TO authenticated;
 -- ── SECAO 8 — foto diaria do saldo Omie (Task 9b) ────────────────────────────────────────────
 
 -- ── SECAO 9 — POS: o que esta migration promete, relido do catalogo e dos dados ───────────────
@@ -1012,3 +1095,27 @@ BEGIN
   END IF;
 END
 $post$;
+
+-- ── SECAO 9b — POS do ledger (Task 7): corpo, ACL e SECURITY relidos do catalogo ───────────────
+DO $post_ledger$
+DECLARE
+  v_oid oid := to_regprocedure('public.analytics_ledger_registrar(text,text,jsonb)');
+BEGIN
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU ledger: analytics_ledger_registrar ausente.';
+  END IF;
+  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_oid) <> '0d010ca3cd3e7dac733ae4f93ba90cf5' THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU ledger: corpo vivo nao e o desta migration.';
+  END IF;
+  IF (SELECT count(*) FROM pg_catalog.pg_proc WHERE proname = 'analytics_ledger_registrar' AND pronamespace = 'public'::regnamespace) <> 1 THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU ledger: overload inesperado de analytics_ledger_registrar.';
+  END IF;
+  IF NOT (SELECT p.prosecdef AND p.proconfig @> ARRAY['search_path=""'] FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU ledger: SECURITY DEFINER ou search_path vazio perdido.';
+  END IF;
+  IF has_function_privilege('public', v_oid, 'EXECUTE') OR has_function_privilege('anon', v_oid, 'EXECUTE')
+     OR NOT has_function_privilege('authenticated', v_oid, 'EXECUTE') THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU ledger: ACL fora do desenho (PUBLIC/anon fechados, authenticated aberto).';
+  END IF;
+END
+$post_ledger$;

@@ -59,7 +59,13 @@ if [ "${1:-}" = "--falsificar" ]; then
     t2_banco_sem_normalizar:t2_banco_zero_a_esquerda+t2_banco_so_zeros_incompleto
     t2_gerado_em_futuro_aceito:t2_gerado_em_no_futuro+t2_reavalia_gerado_em_no_futuro_segue_recusado
     t2_futuro_so_now:t2_reavalia_gerado_em_no_futuro_segue_recusado
-    t2_fuso_fora_da_faixa_escapa:t2_gerado_em_fuso_fora_da_faixa"
+    t2_fuso_fora_da_faixa_escapa:t2_gerado_em_fuso_fora_da_faixa
+    t7_sem_importado:t7_ledger_aceita_eventos_banco
+    t7_sem_conferido:t7_ledger_aceita_eventos_banco
+    t7_perde_evento_antigo:t7_ledger_mantem_eventos_antigos
+    t7_allowlist_aberta:t7_ledger_fora_da_allowlist_22023
+    t7_trava_frouxa:t7_trava_predecessor_divergente_aborta
+    t7_sem_revoke_anon:t7_ledger_acl_fechado"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-banco-extrato-f1.XXXXXX")"
   echo "== CONTROLE (locale=${LOCALE_TESTE:-C}) =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -204,6 +210,19 @@ case "${SABOTAGEM:-}" in
   # Minor (a): codigo do banco comparado sem normalizar zeros a esquerda
   t2_banco_sem_normalizar) sabotar "ltrim(regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g'), '0')" \
                                    "regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g')" ;;
+  # ── Task 7 (ledger). As de allowlist neutralizam a POS (md5 do corpo) para provar a camada do TESTE sozinha ──
+  t7_sem_importado)     sabotar "'banco.extrato_importado', 'banco.extrato_conferido') THEN" "'banco.extrato_conferido') THEN"
+                        sabotar "WHERE oid = v_oid) <> '" "WHERE oid = v_oid) = '" ;;
+  t7_sem_conferido)     sabotar "'banco.extrato_importado', 'banco.extrato_conferido') THEN" "'banco.extrato_importado') THEN"
+                        sabotar "WHERE oid = v_oid) <> '" "WHERE oid = v_oid) = '" ;;
+  t7_perde_evento_antigo) sabotar "'reposicao.raio_x_decisao', 'radar.ficha_aberta'," "'reposicao.raio_x_decisao',"
+                        sabotar "WHERE oid = v_oid) <> '" "WHERE oid = v_oid) = '" ;;
+  t7_allowlist_aberta)  sabotar "IF p_evento NOT IN (" "IF false AND p_evento NOT IN ("
+                        sabotar "WHERE oid = v_oid) <> '" "WHERE oid = v_oid) = '" ;;
+  # a trava do predecessor deixa de abortar corpo divergente
+  t7_trava_frouxa)      sabotar "IF v_led IS NULL OR v_led NOT IN (" "IF false AND v_led NOT IN (" ;;
+  # o REVOKE de anon some: o predecessor de teste (ACL default) fica aberto a anon
+  t7_sem_revoke_anon)   sabotar "REVOKE ALL ON FUNCTION public.analytics_ledger_registrar(text, text, jsonb) FROM anon;" "" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
@@ -298,6 +317,66 @@ CREATE TABLE public.fin_contas_correntes (
   saldo_data date, saldo_atual numeric, ativo boolean,
   UNIQUE (company, omie_ncodcc)
 );
+
+-- Task 7: o ledger. analytics_outbox (colunas que a funcao usa; FK de user_id omitida) e o PREDECESSOR: corpo IDENTICO
+-- ao VIVO de prod (pg_get_functiondef medido em psql-ro 2026-11-21: md5 6f30ecc9be396721a4e154929ba798b2; md5 prosrc
+-- 7dc8856407bf4379b4e34556f42ba748). ACL = o default (anon com EXECUTE): o REVOKE da migration tem de fechar.
+CREATE TABLE public.analytics_outbox (
+  id bigserial PRIMARY KEY, event_id uuid NOT NULL DEFAULT gen_random_uuid(), evento text NOT NULL,
+  distinct_id text NOT NULL, user_id uuid NULL, props jsonb NOT NULL DEFAULT '{}'::jsonb,
+  chave_dedup text NOT NULL UNIQUE, ocorrido_em timestamptz NOT NULL DEFAULT now());
+CREATE OR REPLACE FUNCTION public.analytics_ledger_registrar(p_evento text, p_chave text, p_props jsonb DEFAULT '{}'::jsonb)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+DECLARE
+  v_uid  uuid := auth.uid();
+  v_dia  text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD');
+BEGIN
+  -- SECURITY DEFINER bypassa RLS ⇒ o gate vive AQUI, na fronteira.
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'analytics_ledger_registrar: exige usuario autenticado'
+      USING ERRCODE = '28000';
+  END IF;
+
+  -- Allowlist FECHADA: o ledger não é canal genérico de escrita no banco.
+  IF p_evento NOT IN ('carteira.mixgap_servido', 'navegacao.rota_servida', 'dashboard.crescimento_comparavel_servido',
+                      'venda.ficha_aberta', 'venda.contato_registrado', 'venda.tel_clicado', 'venda.painel_aberto',
+                      'financeiro.ciclo_aberto', 'reposicao.corantes_aberta', 'reposicao.raio_x_aberta',
+                      'reposicao.raio_x_decisao', 'radar.ficha_aberta') THEN
+    RAISE EXCEPTION 'analytics_ledger_registrar: evento % fora da allowlist', p_evento
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF pg_column_size(coalesce(p_props, '{}'::jsonb)) > 2048 THEN
+    RAISE EXCEPTION 'analytics_ledger_registrar: props acima do teto'
+      USING ERRCODE = '22023';
+  END IF;
+
+  -- Teto por titular/dia — guard contra flood por chave variada. Silencioso de
+  -- propósito: telemetria nunca quebra a tela de quem está trabalhando.
+  IF (
+    SELECT count(*) FROM public.analytics_outbox
+    WHERE user_id = v_uid AND ocorrido_em > now() - interval '1 day'
+  ) >= 500 THEN
+    RETURN;
+  END IF;
+
+  INSERT INTO public.analytics_outbox (evento, distinct_id, user_id, props, chave_dedup)
+  VALUES (
+    p_evento,
+    v_uid::text,                       -- casa com identify(userId) do front
+    v_uid,
+    coalesce(p_props, '{}'::jsonb),
+    -- left() protege o teto do CHECK e do índice B-tree; o dia fecha a janela
+    -- de dedup (mesmo estado revisto amanhã é sinal NOVO, não repetição).
+    'ledger:' || v_uid::text || ':' || p_evento || ':' || left(coalesce(p_chave, ''), 100) || ':' || v_dia
+  )
+  ON CONFLICT (chave_dedup) DO NOTHING;
+END;
+$function$;
 
 CREATE SCHEMA storage;
 GRANT USAGE ON SCHEMA storage TO anon, authenticated, service_role;
@@ -825,6 +904,38 @@ ID17=$(arq_id "$C17" 138)
 eq "t2_concorrencia 1 aceito + 1 ja_importado com o MESMO arquivo_id; 1 arquivo; linhas = as do arquivo; a 2a comecou com a 1a aberta" \
    "${R_1:-ERRO:$(head -c 200 "$TMPC/conc1.log")}/${R_2:-ERRO:$(head -c 200 "$TMPC/conc2.log")}/$(narq "$C17")/$(nlin "$C17")/$(grep -o '^ANTES=.*' "$TMPC/conc2.log")" \
    "aceito|$ID17/ja_importado|$ID17/1/3/ANTES=0"
+
+# ── T7: sensores no ledger (analytics_ledger_registrar ganha banco.extrato_importado/conferido) ──
+echo "=== T7: ledger ==="
+LEDGER_SQL() { echo "SELECT public.analytics_ledger_registrar('$1', 'k7', '{}'::jsonb)"; }
+EST_IMP=$(estado "$U_STAFF" authenticated "$(LEDGER_SQL banco.extrato_importado)")
+EST_CONF=$(estado "$U_STAFF" authenticated "$(LEDGER_SQL banco.extrato_conferido)")
+eq "t7_ledger_aceita_eventos_banco importado/conferido aceitos (00000) e gravados no outbox, 1 linha cada" \
+   "$EST_IMP/$EST_CONF/$(Pq -c "SELECT string_agg(evento||'='||n, ',' ORDER BY evento) FROM (SELECT evento, count(*) n FROM public.analytics_outbox WHERE user_id = '$U_STAFF' AND evento LIKE 'banco.extrato_%' GROUP BY evento) q" 2>&1)" \
+   "00000/00000/banco.extrato_conferido=1,banco.extrato_importado=1"
+EST_ANT=$(estado "$U_STAFF" authenticated "$(LEDGER_SQL radar.ficha_aberta)")
+EST_ANT2=$(estado "$U_STAFF" authenticated "$(LEDGER_SQL reposicao.raio_x_decisao)")
+eq "t7_ledger_mantem_eventos_antigos radar.ficha_aberta e reposicao.raio_x_decisao seguem aceitos e gravados" \
+   "$EST_ANT/$EST_ANT2/$(Pq -c "SELECT count(*) FROM public.analytics_outbox WHERE user_id = '$U_STAFF' AND evento IN ('radar.ficha_aberta','reposicao.raio_x_decisao')" 2>&1)" \
+   "00000/00000/2"
+eq "t7_ledger_fora_da_allowlist_22023 evento fora da allowlist segue recusado (22023) e nada e gravado" \
+   "$(estado "$U_STAFF" authenticated "$(LEDGER_SQL banco.extrato_inventado)")/$(Pq -c "SELECT count(*) FROM public.analytics_outbox WHERE evento = 'banco.extrato_inventado'" 2>&1)" "22023/0"
+eq "t7_ledger_sem_login_28000 sem titular autenticado, mesmo com evento valido" \
+   "$(estado '' authenticated "$(LEDGER_SQL banco.extrato_importado)")" "28000"
+eq "t7_ledger_acl_fechado anon sem EXECUTE (42501), PUBLIC fechado, authenticated aberto" \
+   "$(estado '' anon "$(LEDGER_SQL banco.extrato_importado)")/$(Pq -c "SELECT has_function_privilege('public','public.analytics_ledger_registrar(text,text,jsonb)','EXECUTE')||'|'||has_function_privilege('anon','public.analytics_ledger_registrar(text,text,jsonb)','EXECUTE')||'|'||has_function_privilege('authenticated','public.analytics_ledger_registrar(text,text,jsonb)','EXECUTE')" 2>&1)" \
+   "42501/false|false|true"
+
+# trava: predecessor DIVERGENTE (corpo vivo != prod) aborta a migration sem tocar a funcao
+echo "=== T7: trava do predecessor ==="
+"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove_trava || { echo "createdb prove_trava falhou"; exit 1; }
+stubs prove_trava || { echo "stubs prove_trava falharam"; exit 1; }
+DB=prove_trava P -q -c "CREATE OR REPLACE FUNCTION public.analytics_ledger_registrar(p_evento text, p_chave text, p_props jsonb DEFAULT '{}'::jsonb) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path TO '' AS \$f\$ BEGIN RETURN; END; \$f\$" > /dev/null || echo "FAIL t7_fixture_trava — predecessor divergente nao criado"
+MD5_ANT=$(DB=prove_trava Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE proname='analytics_ledger_registrar'" 2>&1)
+if DB=prove_trava P -q -f "$MIG_USADA" > "$(dirname "$DATA")/trava.log" 2>&1; then TRAVA_RC=0; else TRAVA_RC=1; fi
+eq "t7_trava_predecessor_divergente_aborta exit da migration / sentinela do PRE / corpo vivo intacto" \
+   "$TRAVA_RC/$(grep -c 'PRE FALHOU ledger' "$(dirname "$DATA")/trava.log")/$([ "$(DB=prove_trava Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE proname='analytics_ledger_registrar'" 2>&1)" = "$MD5_ANT" ] && echo intacto || echo alterado)" \
+   "1/1/intacto"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
