@@ -1,0 +1,166 @@
+# Crédito definido por IA — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** limite de crédito do grupo e prazo máximo definidos por IA, aplicados na liberação do pedido (venda + OS), com o duvidoso indo para aprovação do Lucas.
+
+**Architecture:** IA assíncrona (edge Anthropic) propõe limite/prazo sob travas determinísticas; Lucas aprova; gate SQL síncrono e transacional na edge `omie-vendas-sync` reserva limite e decide 🟢/🔴/🟡. Programa de 8 PRs; **este documento detalha o PR 1** e mantém o roteiro dos PRs 2–8 — cada um ganha o seu plano detalhado quando começar (o PR 5 mede o que calibra o 6).
+
+**Tech Stack:** Supabase Postgres (PL/pgSQL, prova PG17 `db/test-*.sh`), edges Deno (`supabase/functions/`), React 18 + TS strict + react-query, vitest.
+
+**Spec:** `docs/superpowers/specs/2026-11-20-credito-ia-design.md` (ler §9 e §10 — substituem o que conflitar em §5/§6).
+
+## Global Constraints
+
+- Ausente ≠ zero: insumo de crédito faltando vira `null`/🟡, nunca `0` (`docs/agent/money-path.md` §2).
+- Piso inegociável: vencido > 60 dias (data civil `America/Sao_Paulo`) bloqueia sem exceção humana.
+- Aprovador de crédito: **só o Lucas** (allowlist de 1 linha + `cap_credito_escrever`) — a partir do PR 2.
+- Apetite: K = 3× compra média mensal 180 d; cliente comprovadamente novo R$ 5.000 e prazo ≤ 28 d.
+- IA recebe só números, enums e flags — nunca razão social, observações ou texto livre.
+- RPC de gate: `SECURITY DEFINER`, `SET search_path = public`, `REVOKE … FROM anon, authenticated, PUBLIC`, `GRANT … TO service_role`.
+- Migration nova nunca edita migration antiga; `CREATE OR REPLACE` só após pré-voo `pg_get_functiondef` da PROD.
+- Vocabulário de status de título aberto: `('A VENCER','ATRASADO','VENCE HOJE','ABERTO','VENCIDO','PARCIAL')` (paridade com `src/lib/financeiro/titulo-status.ts`).
+- Arquivo novo em `src/` precisa de dono em `src/lib/modulos/manifesto.ts`.
+- Edge alterada: bump de `VERSAO` + `sonda:fingerprint -- --write`; os 6 gates de edge no CI.
+- Cada PR: review Codex no diff (`scripts/codex-async.sh` em background) antes de sair de draft.
+
+## Review Focus
+
+1. **Cliente com vencido em OUTRA empresa do grupo** compra na Oben/Colacor → deve bloquear (o furo medido: 93 pedidos/26 clientes/R$ 143 mil em 90 d). Teste: Task 1 A3, Task 2 T3.
+2. **Cliente que é alias fiscal** (`@placeholder.local`, sem profile) ou canônico com aliases → a dívida de todos soma. Teste: Task 1 A4/A5.
+3. **Alias em `conflict`/`inactive`** → não expande (não fabrica vínculo), mas o par do próprio pedido continua avaliado. Teste: Task 1 A6.
+4. **Banco instável no envio** (RPC do gate falha) → pedido NÃO sai; vendedora vê "verificação de crédito indisponível, tente de novo" e a retentativa funciona. Teste: Task 3 T2, Task 5 V2.
+5. **Edição que só troca o prazo** (28→90 d, mesmo total) → passa pelo gate. Teste: Task 4 T1.
+
+---
+
+## Roteiro do programa (PRs 2–8 — plano detalhado de cada um quando começar)
+
+| PR | Entrega | Critério de pronto | Deploy |
+|---|---|---|---|
+| **1** | Correções do piso atual (este plano) | furo do grupo fechado, fail-closed, prazo na edição, sem zero na ingestão | migration · edges `omie-vendas-sync` + `omie-financeiro` · Publish |
+| 2 | Banco: grupo versionado, `credito_limite`, `credito_limite_proposta`, `credito_reserva`, `credito_decisao_pedido`, solicitação ≠ autorização, allowlist de aprovador | prova PG17 incl. **2 sessões concorrentes** (2×R$7k com R$10k → 1 🟢 + 1 🟡) | migration |
+| 3 | Prazo em dias no SQL (`credito_prazo_dias(codigo_parcela, account)` + override) + revisão imutável da operação (o avaliado = o enviado; conversão de orçamento resolve parcela efetiva) | parcela ilegível → `null`; conversão sem parcela não vira `999` sem avaliação | migration · edge · Publish |
+| 4 | Edge `credito-ia-avaliar` (ficha → Claude tool-use → travas → proposta) + `/credito/limites` com aprovação em lote da 1ª leva | 1ª leva gerada para a carteira ativa; nada vigente sem aprovação | migration · edge · Publish |
+| 5 | Gate v2 em **modo sombra** (decisão + reserva simuladas) + sensores (concordância, faixa por motivo, tempo até decisão) + backtest IA × regra em safras vencidas | 2+ semanas de distribuição de faixas; backtest documentado | migration · edge · Publish |
+| 6 | Fila `/credito/fila` + recomendação assíncrona + alerta push ao Lucas (> 2 h) + enforcement da venda ligado | condições do spec §9.10 cumpridas e 1ª leva aprovada | migration · edge · Publish |
+| 7 | OS da Afiação no gate v2 (reserva no ponto de concessão, `submitOrder.ts:615`) | OS com prazo passa pelas 3 faixas | migration · edge · Publish |
+| 8 | Painel de crédito (exposição, bloqueios, concordância, liberados que atrasaram) | leitura gestor/master | Publish |
+
+---
+
+# PR 1 — Correções do piso atual
+
+**Por que primeiro:** fecha furos que existem hoje e não depende de nada do programa. Medido em prod (psql-ro, 2026-11-20): 125 clientes mapeados têm vencido > 60 d; em 90 dias, 93 pedidos (26 clientes, R$ 143.507) foram enviados/faturados em **outra** conta do grupo, que o gate por par não viu. `fin_contas_receber.valor_documento = 0`: 0 linhas hoje (furo latente). Aliases `active`: 1.633. `omie_customer_account_map`: 1 código por (user, account), contas `oben|colacor|colacor_sc`.
+
+**Antes de começar:** `git fetch && gh pr list --state open --search "omie-vendas-sync OR credito"`; se houver PR aberto tocando `omie-vendas-sync/index.ts` perto de `gateCredito`, coordene (arquivo quente). Pré-voo: `md5(pg_get_functiondef('public.venda_gate_credito(text,bigint,uuid)'))` na PROD = `8cb5137de6999edcb6af72ad31022564` (2026-11-20) — se mudou, releia a PROD antes.
+
+### Task 1: SQL — pares do grupo + gate de piso sobre o grupo
+
+**Files:**
+- Create: `supabase/migrations/20261121120000_trava_credito_piso_grupo.sql`
+- Create: `db/test-trava-credito-piso-grupo.sh` (copie o arranque PG17 de `db/test-trava-credito-fase2.sh`)
+
+**Interfaces:**
+- Produces:
+  - `public.credito_grupo_pares(p_user_id uuid) RETURNS TABLE(company text, omie_codigo_cliente bigint, user_id uuid, origem text)` — `STABLE SECURITY DEFINER`, só `service_role`. Resolve o canônico (`p_user_id` se não for alias `active`; senão o `canonical_user_id`), expande todos os aliases `active` desse canônico, e junta `omie_customer_account_map` (`account`→`company`). `origem ∈ ('canonico','alias')`. Aliases `inactive`/`conflict` não expandem.
+  - `public.venda_gate_credito_grupo(p_sales_order_id uuid, p_company text, p_codigo bigint, p_customer_user_id uuid) RETURNS jsonb` — mesmo contrato de `venda_gate_credito` (`bloqueado, vencido, titulos, vencimento_mais_antigo, excecao_id, motivo`) **mais** `pares jsonb` (array `{company, codigo, vencido, titulos}` só dos pares com vencido > 0) e `grupo_resolvido boolean`. Escopo = união de `(p_company, p_codigo)` com `credito_grupo_pares(p_customer_user_id)`, deduplicado. Exceção: mesma regra de hoje (pedido + par do pedido + `valido_ate > now()`). `motivo ∈ ('sem_codigo','sem_vencido_60d','vencido_60d_sem_excecao','excecao_valida')`; `sem_codigo` só quando o par do pedido é nulo **e** o grupo não tem pares.
+  - `venda_gate_credito(text,bigint,uuid)` **fica intacta** (rollback = edge volta a chamá-la).
+
+- [ ] **Step 1: Escreva os asserts no harness** (sementes: 1 canônico C com par oben=101; alias A1 `active` com par colacor_sc=202; alias A2 `conflict` com par colacor=303; títulos vencidos 75 d em cada par conforme o assert):
+  - A1 sem vencido em nenhum par → `bloqueado=false, motivo='sem_vencido_60d'`.
+  - A2 vencido só no par do pedido (oben 101) → `bloqueado=true`, `pares` com 1 item.
+  - A3 **vencido só em colacor_sc 202 (alias active), pedido em oben 101** → `bloqueado=true`, `pares[0].company='colacor_sc'`. *(o furo)*
+  - A4 chamando com `p_customer_user_id = A1` (o alias) → mesmo resultado de A3 (resolve o canônico).
+  - A5 vencido de 59 d → não bloqueia; 61 d → bloqueia (corte em SP).
+  - A6 vencido só no par 303 do alias `conflict` → `bloqueado=false` (não expande).
+  - A7 exceção válida para (pedido, oben 101) com vencido em colacor_sc → `bloqueado=false, motivo='excecao_valida'`; exceção de outro pedido → `bloqueado=true`.
+  - A8 `has_function_privilege('anon'|'authenticated', …,'EXECUTE')` = false para as duas funções; `service_role` = true.
+  - A9 `p_codigo NULL` e `p_customer_user_id` sem pares → `motivo='sem_codigo'`; `p_codigo NULL` com grupo vencido → `bloqueado=true`.
+  - Marcador final `FIM-OK` e `-v ON_ERROR_STOP=1`.
+- [ ] **Step 2:** `bash db/test-trava-credito-piso-grupo.sh > /tmp/pg.log 2>&1; rc=$?; tail -c 1500 /tmp/pg.log; [ "$rc" -ne 0 ]` → esperado: falha (funções não existem).
+- [ ] **Step 3:** escreva a migration (funções + REVOKE/GRANT nomeando `anon, authenticated, PUBLIC`).
+- [ ] **Step 4:** rode o harness → `exit 0` e `FIM-OK` colados.
+- [ ] **Step 5: Commit** (antes de falsificar).
+- [ ] **Step 6: Falsifique com controle verde na mesma invocação** — modo `--falsificar` no harness: roda a suíte limpa (deve passar), depois sabota uma camada por vez e exige vermelho: (F1) remover a expansão de alias → A3 vermelho; (F2) expandir também `conflict` → A6 vermelho; (F3) corte em UTC/`-59` → A5 vermelho; (F4) exceção sem filtro de par → A7 vermelho. Rode em `LC_ALL=C` e `pt_BR.UTF-8`.
+- [ ] **Step 7: Commit.**
+
+### Task 2: Edge — `gateCredito` chama o gate do grupo
+
+**Files:**
+- Modify: `supabase/functions/omie-vendas-sync/index.ts:2487-2560` (`gateCredito`), `:3146` (criação), `:3621` (edição)
+- Create: `supabase/functions/omie-vendas-sync/gate-credito.ts` + `gate-credito_test.ts`
+
+**Interfaces:**
+- Consumes: `venda_gate_credito_grupo` (Task 1).
+- Produces: `export async function gateCredito(supabase, args: { company: Account; codigo: number | null; customerUserId: string | null; salesOrderId: string; userId: string | null; contexto: "criacao" | "edicao" }): Promise<{ permitido: true } | { permitido: false; motivo: "credito"; gate: GateCreditoResultado } | { permitido: false; motivo: "credito_indisponivel"; detalhe: string }>` — movida para `gate-credito.ts` (testável); `GateCreditoResultado` ganha `pares` e `grupo_resolvido`.
+- `customerUserId` = `soRow.customer_user_id` na criação; na edição, lido de `sales_orders` pelo `editSoId` (nunca do payload).
+
+- [ ] **Step 1: Testes Deno** (supabase fake que devolve `rpc` configurável):
+  - T1 rpc devolve `bloqueado:true` → `{permitido:false, motivo:'credito'}` e insert em `venda_bloqueio_credito_log` com `acao='bloqueado'`.
+  - T3 rpc chamado com `p_customer_user_id` = o argumento (assert no nome e valor do parâmetro).
+  - T4 log de bloqueio falha → lança `Error` cuja mensagem contém `sem log durável`.
+- [ ] **Step 2:** rode `bun run test:edges` filtrado → falha.
+- [ ] **Step 3:** extraia `gateCredito` para `gate-credito.ts`, troque a RPC, propague `customerUserId` nos dois call sites.
+- [ ] **Step 4:** testes passam; `bun run edges:typecheck` e `bun run edges:sintaxe` com exit 0.
+- [ ] **Step 5: Commit.**
+
+### Task 3: Edge — fail-closed quando o gate não responde
+
+**Files:** `supabase/functions/omie-vendas-sync/gate-credito.ts`, `gate-credito_test.ts`, e os 2 call sites em `index.ts`.
+
+**Interfaces:**
+- Produces: resposta HTTP do edge `{ success:false, blocked:"credito_indisponivel", detalhe }` (criação e edição). Log `acao='gate_indisponivel'` continua sendo gravado (best-effort agora — falhar o log não muda o desfecho, que já é segurar).
+- Substitui também o ramo de edição "aumento provado sem `codigo_cliente`" (`index.ts:~3604`): em vez de liberar com log, chama o gate com `codigo=null` + `customerUserId` (o grupo pode resolver); se o grupo não tiver pares → `credito_indisponivel`.
+
+- [ ] **Step 1: Testes:** T2 rpc lança → `{permitido:false, motivo:'credito_indisponivel'}` (nunca `permitido:true`) e houve tentativa de insert `gate_indisponivel`; T5 rpc lança **e** log falha → ainda `credito_indisponivel` (não lança, não libera).
+- [ ] **Step 2:** falham. **Step 3:** implemente. **Step 4:** passam + typecheck/sintaxe exit 0. **Step 5: Commit.**
+
+### Task 4: Edge — edição que troca o prazo passa pelo gate
+
+**Files:** `supabase/functions/omie-vendas-sync/index.ts` (bloco de `alterar_pedido`, condição `updatedSubtotal > totalAtualOmie` ~`:3602`); extraia a decisão para `gate-credito.ts`.
+
+**Interfaces:**
+- Produces: `export function edicaoExigeGate(args: { subtotalNovo: number; subtotalOmie: number; parcelaNova: string | null | undefined; parcelaOmie: string | null | undefined }): boolean` — `true` se o subtotal sobe **ou** se a parcela muda (normalizada: `null`/`""`/`"999"` contam como `"999"`). Qualquer troca de parcela basta no PR 1 (o gate só cobra o piso, então é inofensivo para quem está em dia); "só se o prazo sobe" chega no PR 3 com `credito_prazo_dias`.
+- `parcelaOmie` = `omieCurrent.cabecalho.codigo_parcela` do `ConsultarPedido` já feito no fluxo.
+
+- [ ] **Step 1: Testes:** T1 mesmo total, `"028"`→`"090"` → `true`; T6 mesmo total e mesma parcela → `false`; T7 total sobe, mesma parcela → `true`; T8 `undefined` vs `"999"` → `false`.
+- [ ] **Step 2–4:** falha → implemente e use no `alterar_pedido` → passa.
+- [ ] **Step 5: Commit.**
+
+### Task 5: Front — novo desfecho e dívida do grupo na tela
+
+**Files:**
+- Modify: `src/services/orderSubmission/submitOrder.ts:304,458-461` (tratamento de `blocked`)
+- Modify: `src/components/unified-order/ExcecaoCreditoDialog.tsx`, `src/components/unified-order/AlertaCreditoCliente.tsx` (mostrar `pares`)
+- Test: o teste vitest existente de `submitOrder` (co-localizado no mesmo módulo; se não houver, `src/services/orderSubmission/submitOrder.credito.test.ts` com dono no manifesto)
+
+**Interfaces:**
+- Consumes: `blocked: "credito" | "credito_indisponivel"`, `gate.pares[]` (Tasks 2–3).
+
+- [ ] **Step 1: Testes vitest:** V1 `blocked:'credito'` com `pares` de 2 empresas → o resultado de submit expõe os 2 pares (empresa + valor) para o diálogo; V2 `blocked:'credito_indisponivel'` → resultado `status:'erro_retentavel'` com mensagem `Verificação de crédito indisponível — tente de novo em instantes.` e o pedido local **não** é marcado `enviado`; V3 checkout misto (oben ok, colacor `credito_indisponivel`) → oben segue o fluxo atual e colacor fica pendente.
+- [ ] **Step 2–4:** falha → implemente (toast `sonner`; no diálogo, lista "Vencido por empresa: Colacor SC R$ X (desde dd/mm)") → `heavy bun run test` e `bun run typecheck` exit 0.
+- [ ] **Step 5: Commit.**
+
+### Task 6: Ingestão — título sem valor não vira zero
+
+**Files:**
+- Create: `supabase/functions/omie-financeiro/mapear-titulo.ts` + `mapear-titulo_test.ts`
+- Modify: `supabase/functions/omie-financeiro/index.ts:~948` (mapper de CR), `versao.ts`
+
+**Interfaces:**
+- Produces: `export function valorDocumentoTitulo(t: { valor_documento?: unknown; nValorTitulo?: unknown }): number | null` — número finito ≥ 0 ou `null` (string vazia, ausente, `NaN` → `null`; **`0` explícito do Omie continua `0`**).
+- No mapper: `null` → o título **não** é gravado e entra num contador `cr_titulos_sem_valor` devolvido no resultado do sync e gravado no log da execução (coluna é `NOT NULL`; gravar 0 esconderia dívida do gate). Hoje há 0 casos em prod, então o efeito esperado é nenhum.
+
+- [ ] **Step 1: Testes:** `valorDocumentoTitulo({})` → `null`; `({valor_documento:""})` → `null`; `({valor_documento:0})` → `0`; `({nValorTitulo:"1234.5"})` → `1234.5`; `({valor_documento:"abc"})` → `null`.
+- [ ] **Step 2–4:** falha → implemente e use → passa.
+- [ ] **Step 5: Commit.**
+
+### Task 7: Fecho do PR 1
+
+- [ ] Bump `VERSAO` de `omie-vendas-sync` e `omie-financeiro`; `bun run sonda:fingerprint -- --write`; `bun run sonda:bump` exit 0.
+- [ ] Suíte: `heavy bun run typecheck`, `bun lint`, `heavy bun run test`, `bun run test:edges`, `bun run edges:typecheck`, `bun run edges:sintaxe`, `bash db/test-trava-credito-piso-grupo.sh`, `bash db/test-trava-credito-fase2.sh` (regressão da v1) — todos com exit 0 colado.
+- [ ] Review Codex do diff em background (`scripts/codex-async.sh`, modo review); acatar P1.
+- [ ] Registro: `docs/historico/credito-piso-grupo-2026-11.md` (o furo medido, a decisão fail-closed, como reverter: edge volta a chamar `venda_gate_credito`).
+- [ ] PR (não-draft só após o verde + Codex) com título `fix(credito): trava vê o grupo inteiro + fail-closed + prazo na edição [migration 20261121120000 PENDENTE · edges omie-vendas-sync + omie-financeiro · Publish]`; Auto-fix ligado.
+- [ ] Deploy na ordem: **migration** → **edges** → **Publish**; depois `bun run pendencias:deploy` e verificação em prod: `venda_gate_credito_grupo` existe com ACL certo, e em 24 h `venda_bloqueio_credito_log` mostra bloqueios com `pares` de outra empresa.

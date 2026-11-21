@@ -217,3 +217,47 @@ describe('submitQuote', () => {
     expect(insert).not.toHaveBeenCalled();
   });
 });
+
+// ─── A4 (rodada 2): orçamento misto com falha parcial NÃO é "salvo" — desfecho POR CONTA ───
+describe('submitQuote — desfecho por conta (A4)', () => {
+  it('Colacor falha (Oben ok) → contasSalvas=[oben], contasPendentes=[colacor]', async () => {
+    const { client } = makeSupabase({ colacorError: { message: 'fk' } });
+    const r = await submitQuote(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [colacorItem()] },
+      subtotals: { oben: 20, colacor: 50 },
+    }));
+    expect(r.contasSalvas).toEqual(['oben']);
+    expect(r.contasPendentes).toEqual(['colacor']);
+  });
+
+  it('as duas gravam → nada pendente', async () => {
+    const { client } = makeSupabase();
+    const r = await submitQuote(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [colacorItem()] },
+      subtotals: { oben: 20, colacor: 50 },
+    }));
+    expect(r.contasSalvas).toEqual(['oben', 'colacor']);
+    expect(r.contasPendentes).toEqual([]);
+  });
+
+  it('Oben falha (aborta antes da Colacor) → nada salvo, as duas pendentes', async () => {
+    const { client } = makeSupabase({ obenError: { message: 'rls' } });
+    const r = await submitQuote(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [colacorItem()] },
+      subtotals: { oben: 20, colacor: 50 },
+    }));
+    expect(r.success).toBe(false);
+    expect(r.contasSalvas).toEqual([]);
+    expect(r.contasPendentes).toEqual(['oben', 'colacor']);
+  });
+
+  it('mensagem do parcial diz o que gravou e o que ficou', async () => {
+    const { mensagemOrcamentoParcial } = await import('../submitQuote');
+    expect(mensagemOrcamentoParcial(['oben'], ['colacor'])).toBe(
+      'Orçamento Oben salvo; Colacor pendente — os itens pendentes seguem no carrinho',
+    );
+  });
+});

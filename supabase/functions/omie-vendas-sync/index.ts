@@ -10,6 +10,7 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
 import { concluirSyncPedidosIncremental } from "./desfecho-pedidos.ts";
+import { edicaoExigeGate, gateCredito, MENSAGEM_CREDITO_INDISPONIVEL } from "./gate-credito.ts";
 import { contadoresVendedorZerados, registrarVendedoresDaPagina } from "./vendedor-pedido.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
@@ -2469,94 +2470,8 @@ async function criarPedidoVenda(
 }
 
 // ─── Observabilidade do sync em fin_sync_log (best-effort) ───
-// ── Trava de crédito Fase 2 — gate na fronteira comum (TODAS as vias de pedido
-// passam por aqui). Spec + veredito Codex: docs/superpowers/specs/trava-credito-fase2.md
-// Prova PG17 da RPC: db/test-trava-credito-fase2.sh. Regras:
-//  - bloqueia só com EVIDÊNCIA POSITIVA (vencido 60+ na conta do pedido, sem exceção do pedido);
-//  - fail-open em indisponibilidade SÓ depois de log durável (log falhou → erro, não allow cego);
-//  - toda decisão relevante vira linha em venda_bloqueio_credito_log (medição da fase).
-interface GateCreditoResultado {
-  bloqueado: boolean;
-  vencido: number | null;
-  titulos: number;
-  vencimento_mais_antigo: string | null;
-  excecao_id: string | null;
-  motivo: string;
-}
-
-async function gateCredito(
-  supabase: SupabaseClient,
-  company: Account,
-  codigo: number | null,
-  salesOrderId: string,
-  userId: string | null,
-  contexto: "criacao" | "edicao",
-): Promise<{ permitido: true } | { permitido: false; gate: GateCreditoResultado }> {
-  let gate: GateCreditoResultado;
-  try {
-    const { data, error } = await supabase.rpc("venda_gate_credito", {
-      p_company: company,
-      p_codigo: codigo,
-      p_sales_order_id: salesOrderId,
-    });
-    if (error) throw new Error(error.message);
-    gate = data as GateCreditoResultado;
-  } catch (rpcErr) {
-    const msg = rpcErr instanceof Error ? rpcErr.message : String(rpcErr);
-    const { error: logErr } = await supabase.from("venda_bloqueio_credito_log").insert({
-      company,
-      omie_codigo_cliente: codigo,
-      sales_order_id: salesOrderId,
-      acao: "gate_indisponivel",
-      user_id: userId,
-      detalhe: `${contexto}: ${msg}`.slice(0, 500),
-    });
-    if (logErr) {
-      // Nem o log gravou → infraestrutura degradada; allow cego seria invisível.
-      throw new Error(`Gate de crédito indisponível e sem log (${logErr.message}) — tente novamente.`);
-    }
-    console.warn(`[gate-credito][${company}] indisponível (${contexto}): ${msg} — liberado COM log`);
-    return { permitido: true };
-  }
-
-  if (!gate.bloqueado) {
-    if (gate.excecao_id) {
-      // Liberação por exceção é auditada (best-effort: falha de auditoria de sucesso não trava venda).
-      const { error: logErr } = await supabase.from("venda_bloqueio_credito_log").insert({
-        company,
-        omie_codigo_cliente: codigo,
-        sales_order_id: salesOrderId,
-        acao: "liberado_excecao",
-        vencido: gate.vencido,
-        titulos: gate.titulos,
-        user_id: userId,
-        excecao_id: gate.excecao_id,
-      });
-      if (logErr) console.warn(`[gate-credito] log liberado_excecao falhou: ${logErr.message}`);
-    }
-    return { permitido: true };
-  }
-
-  const { error: logErr } = await supabase.from("venda_bloqueio_credito_log").insert({
-    company,
-    omie_codigo_cliente: codigo,
-    sales_order_id: salesOrderId,
-    acao: contexto === "edicao" ? "bloqueado_edicao" : "bloqueado",
-    vencido: gate.vencido,
-    titulos: gate.titulos,
-    user_id: userId,
-  });
-  if (logErr) {
-    // (a) Log de bloqueio DURÁVEL — simétrico ao ramo gate_indisponivel acima. A aprovação
-    // REMOTA do gestor (SalesOrderDetailSheet → useBloqueioCreditoLog) resolve o contexto do
-    // form pelo ÚLTIMO log do pedido; um bloqueio sem rastro deixaria o gestor SEM form
-    // (exceção às cegas não). Se nem o log grava = infra degradada → ERRO, nunca devolver
-    // {blocked:'credito'} silencioso e irrastreável. O caller (submitOrder) reexecuta — o
-    // gate é STABLE/idempotente e reprova o mesmo bloqueio (com log, na retentativa saudável).
-    throw new Error(`Bloqueio de crédito sem log durável (${logErr.message}) — tente novamente.`);
-  }
-  return { permitido: false, gate };
-}
+// ── Trava de crédito (piso vencido > 60 d sobre o GRUPO, fail-closed) — ver ./gate-credito.ts.
+// Toda via de pedido passa por aqui: criar_pedido e alterar_pedido chamam o gate.
 
 // ── Gate tintométrico Fase 3 — revalidação de preço na fronteira comum ──
 // TODA via de pedido (submit, conversão de orçamento, edição, retry) cruza
@@ -3143,14 +3058,19 @@ Deno.serve(async (req) => {
           codigo_cliente != null ? Number(codigo_cliente) : null,
         );
         // Trava de crédito Fase 2: bloqueia cliente com vencido 60+ sem exceção DESTE pedido.
-        const credito = await gateCredito(
-          supabaseAdmin,
-          account,
-          ident.codigo_cliente,
-          sales_order_id,
+        const credito = await gateCredito(supabaseAdmin, {
+          company: account,
+          codigo: ident.codigo_cliente,
+          salesOrderId: sales_order_id,
           userId,
-          "criacao",
-        );
+          contexto: "criacao",
+        });
+        if (!credito.permitido && credito.motivo === "credito_indisponivel") {
+          // Fail-closed (P1 Codex 2026-11-20): gate mudo SEGURA o envio. ERRO (não `blocked`
+          // novo) de propósito: todo bundle — inclusive o antigo em cache — trata erro como
+          // falha retentável; um `blocked` desconhecido poderia ser lido como sucesso.
+          throw new Error(`${MENSAGEM_CREDITO_INDISPONIVEL} (${credito.detalhe})`);
+        }
         if (!credito.permitido) {
           result = { success: false, blocked: "credito", gate: credito.gate };
           break;
@@ -3465,6 +3385,7 @@ Deno.serve(async (req) => {
         let omieCurrentItems: OmieDetalheItem[] = [];
         let consultEditOk = false;
         let omieCodigoClienteEdit: number | null = null;
+        let omieParcelaEdit: string | null = null;
         let omieTotalPedidoEdit: { valor_descontos?: unknown } | null = null;
         try {
           const consultResult = (await callOmieVendasApi(
@@ -3483,11 +3404,11 @@ Deno.serve(async (req) => {
           )) as {
             pedido_venda_produto?: {
               det?: OmieDetalheItem[];
-              cabecalho?: { codigo_cliente?: number };
+              cabecalho?: { codigo_cliente?: number; codigo_parcela?: string };
               total_pedido?: { valor_descontos?: unknown };
             };
             det?: OmieDetalheItem[];
-            cabecalho?: { codigo_cliente?: number };
+            cabecalho?: { codigo_cliente?: number; codigo_parcela?: string };
             total_pedido?: { valor_descontos?: unknown };
           } | null;
           // Omie returns items under pedido_venda_produto.det
@@ -3503,6 +3424,10 @@ Deno.serve(async (req) => {
           omieCodigoClienteEdit =
             Number(consultResult?.pedido_venda_produto?.cabecalho?.codigo_cliente) ||
             Number(consultResult?.cabecalho?.codigo_cliente) ||
+            null;
+          omieParcelaEdit =
+            consultResult?.pedido_venda_produto?.cabecalho?.codigo_parcela ??
+            consultResult?.cabecalho?.codigo_parcela ??
             null;
           console.log(`[Omie Vendas][${editAccount}] Pedido consultado: ${omieCurrentItems.length} itens no Omie`);
         } catch (consultErr) {
@@ -3611,37 +3536,41 @@ Deno.serve(async (req) => {
             s + (Number(oi?.produto?.quantidade) || 0) * (Number(oi?.produto?.valor_unitario) || 0),
           0,
         );
-        if (updatedSubtotal > totalAtualOmie) {
+        if (edicaoExigeGate({
+          subtotalNovo: updatedSubtotal,
+          subtotalOmie: totalAtualOmie,
+          parcelaNova: editParcela,
+          parcelaOmie: omieParcelaEdit,
+        })) {
+          // Sem codigo_cliente no consult não há par COMPROVADO para expandir o grupo → a edição
+          // fica INDETERMINADA e é segurada (antes: liberava com log). P1 review Codex 2026-11-20.
           if (omieCodigoClienteEdit === null) {
-            // Aumento PROVADO mas consult veio sem codigo_cliente — gate(null) responderia
-            // 'sem_codigo' e liberaria por AUSÊNCIA de dado. Fail-open do CRÉDITO (os itens já
-            // são confiáveis pelo guard acima; só o gate é pulado) — allow SÓ com log durável.
             const { error: logErr } = await supabaseAdmin.from("venda_bloqueio_credito_log").insert({
               company: editAccount,
               omie_codigo_cliente: null,
               sales_order_id: editSoId,
               acao: "gate_indisponivel",
               user_id: userId,
-              detalhe: "edicao: aumento provado, mas ConsultarPedido sem codigo_cliente — gate não avaliável",
+              detalhe: "edicao: ConsultarPedido sem codigo_cliente — gate não avaliável, edição SEGURADA",
             });
-            if (logErr) {
-              throw new Error(
-                `Gate de crédito sem cliente identificado na edição e sem log (${logErr.message}) — tente novamente.`,
-              );
-            }
-          } else {
-            const creditoEdit = await gateCredito(
-              supabaseAdmin,
-              editAccount,
-              omieCodigoClienteEdit,
-              editSoId,
-              userId,
-              "edicao",
+            if (logErr) console.warn(`[gate-credito] log gate_indisponivel (edição sem código) falhou: ${logErr.message}`);
+            throw new Error(
+              `${MENSAGEM_CREDITO_INDISPONIVEL} (edição: cliente do pedido não identificado no Omie)`,
             );
-            if (!creditoEdit.permitido) {
-              result = { success: false, blocked: "credito", contexto: "edicao", gate: creditoEdit.gate };
-              break;
-            }
+          }
+          const creditoEdit = await gateCredito(supabaseAdmin, {
+            company: editAccount,
+            codigo: omieCodigoClienteEdit,
+            salesOrderId: editSoId,
+            userId,
+            contexto: "edicao",
+          });
+          if (!creditoEdit.permitido && creditoEdit.motivo === "credito_indisponivel") {
+            throw new Error(`${MENSAGEM_CREDITO_INDISPONIVEL} (${creditoEdit.detalhe})`);
+          }
+          if (!creditoEdit.permitido) {
+            result = { success: false, blocked: "credito", contexto: "edicao", gate: creditoEdit.gate };
+            break;
           }
         }
 
@@ -4281,7 +4210,7 @@ Deno.serve(async (req) => {
         // CANÁRIA de deploy da trava de crédito Fase 2 — NÃO escreve, NÃO chama o Omie, NÃO
         // cria PV. Prova, sobre o edge DEPLOYADO (não a `main`), duas coisas que o commit de
         // deploy não prova: (1) esta action RESPONDE → o gate subiu no MESMO build (senão viria
-        // "ação desconhecida" = binário velho); (2) a RPC venda_gate_credito MORDE — para um par
+        // "ação desconhecida" = binário velho); (2) a RPC venda_gate_credito_grupo MORDE — para um par
         // sabidamente bloqueável ela retorna bloqueado=true. A RPC é STABLE (100% read-only), o
         // sales_order_id é sintético (sem exceção → bloqueia se o par é bloqueável). Gated por
         // authorizeCronOrStaff como toda action.
@@ -4299,12 +4228,14 @@ Deno.serve(async (req) => {
           };
           break;
         }
-        const { data, error } = await supabaseAdmin.rpc("venda_gate_credito", {
+        // PR 1 (2026-11-20): prova o gate do GRUPO — um `codigo` cuja dívida esteja SÓ numa conta
+        // irmã do grupo prova a mordida do furo fechado.
+        const { data, error } = await supabaseAdmin.rpc("venda_gate_credito_grupo", {
+          p_sales_order_id: crypto.randomUUID(),
           p_company: account,
           p_codigo: codigoProbe,
-          p_sales_order_id: crypto.randomUUID(),
         });
-        if (error) throw new Error(`credito_gate_probe: RPC venda_gate_credito falhou: ${error.message}`);
+        if (error) throw new Error(`credito_gate_probe: RPC venda_gate_credito_grupo falhou: ${error.message}`);
         const gp = data as { bloqueado?: boolean; motivo?: string } | null;
         result = {
           success: true,

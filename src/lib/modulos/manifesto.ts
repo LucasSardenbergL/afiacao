@@ -75,6 +75,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/Index.dica-dashboard.test.tsx",
       "src/pages/home/__tests__/**",
       "src/components/__tests__/OrderPrintLayout.test.ts",
+      "src/components/__tests__/OrderSuccessDialog.pendencia.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
@@ -270,6 +271,7 @@ export const MODULOS: ModuloApp[] = [
     ],
     testes: [
       "src/__tests__/edge-money-path-invariants.test.ts",
+      "src/hooks/__tests__/excecao-credito-pares-do-log.test.ts",
       "src/components/unified-order/__tests__/TierClienteBadge.estados.test.tsx",
       "src/components/unified-order/__tests__/CustomerSearch.teclado.test.tsx",
       "src/pages/__tests__/SalesProducts.catalogo-paginado.test.tsx",
@@ -291,6 +293,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useReguaPreco.test.tsx",
       "src/hooks/__tests__/useReguaPreco360.test.tsx",
       "src/hooks/__tests__/useUnifiedOrder.accountGuard.test.ts",
+      "src/hooks/__tests__/useUnifiedOrder.envioRobusto.test.ts",
       "src/hooks/__tests__/cross-sell-escopo-sob-falha.test.tsx",
       "src/hooks/__tests__/leitoresObenProof.fatia3.test.ts",
       "src/pages/__tests__/UnifiedOrder.catalisador-erro-honesto.test.tsx",

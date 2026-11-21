@@ -24,7 +24,8 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("omie-financeiro");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.11-cr-resfriamento-pos-vazia";
+// v1.12 (2026-11-20, crédito-IA PR 1): título de CR sem valor_documento legível não é gravado como R$ 0.
+export const VERSAO = "v1.12-cr-sem-valor-nao-vira-zero";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

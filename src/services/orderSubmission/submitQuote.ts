@@ -14,6 +14,9 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
   const { obenProductItems, colacorProductItems } = cart;
   const errors: SubmitErrorEntry[] = [];
   const results: string[] = [];
+  // A4 (rodada 2): o desfecho é POR CONTA — orçamento misto com uma conta falhando não é "salvo".
+  const contasSalvas: Array<'oben' | 'colacor'> = [];
+  const contasPendentes: Array<'oben' | 'colacor'> = [];
 
   if (obenProductItems.length === 0 && colacorProductItems.length === 0) {
     return { success: false, results: [], errors: [{ step: 'validate', message: 'Carrinho vazio' }] };
@@ -86,6 +89,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
       });
       if (error) throw error;
       results.push('Orçamento Oben salvo');
+      contasSalvas.push('oben');
     } catch (e) {
       logger.critical('Failed to insert quote in Supabase', {
         stage: 'supabase_insert',
@@ -100,6 +104,9 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         success: false,
         results,
         errors: [{ step: 'insert_oben_quote', message: e instanceof Error ? e.message : 'Erro ao salvar orçamento Oben' }],
+        // Oben aborta ANTES da Colacor: nada gravou — as duas contas seguem pendentes.
+        contasSalvas: [],
+        contasPendentes: colacorProductItems.length > 0 ? ['oben', 'colacor'] : ['oben'],
       };
     }
   }
@@ -132,6 +139,7 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
       });
       if (error) throw error;
       results.push('Orçamento Colacor salvo');
+      contasSalvas.push('colacor');
     } catch (e) {
       logger.critical('Failed to insert quote in Supabase', {
         stage: 'supabase_insert',
@@ -142,13 +150,28 @@ export async function submitQuote(params: SubmitQuoteParams): Promise<SubmitQuot
         kind: 'quote',
         error: e,
       });
+      contasPendentes.push('colacor');
       errors.push({ step: 'insert_colacor_quote', message: e instanceof Error ? e.message : 'Erro ao salvar orçamento Colacor' });
     }
   }
 
   return {
-    success: results.length > 0,
+    success: contasSalvas.length > 0,
     results,
     errors,
+    contasSalvas,
+    contasPendentes,
   };
+}
+
+const NOME_CONTA: Record<'oben' | 'colacor', string> = { oben: 'Oben', colacor: 'Colacor' };
+
+/** A4 (rodada 2): título do desfecho parcial — diz o que gravou e o que ficou, por conta. */
+export function mensagemOrcamentoParcial(
+  salvas: ReadonlyArray<'oben' | 'colacor'>,
+  pendentes: ReadonlyArray<'oben' | 'colacor'>,
+): string {
+  const s = salvas.map(c => NOME_CONTA[c]).join(' e ');
+  const p = pendentes.map(c => NOME_CONTA[c]).join(' e ');
+  return `Orçamento ${s} salvo; ${p} pendente — os itens pendentes seguem no carrinho`;
 }

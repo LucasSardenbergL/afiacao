@@ -11,6 +11,7 @@ import type {
 } from '@/hooks/unifiedOrder/types';
 import type { DeliveryOption } from '@/types';
 import type { PrazoDecisaoPorConta } from './prazoDecisao';
+import type { MarcaOsAfiacao } from './checkout-envelope';
 
 export type SubmitClient = SupabaseClient<Database>;
 
@@ -82,6 +83,12 @@ export interface SubmitOrderParams {
   /** Frente B (PR1): o que o aviso de prazo mostrou por conta; gravado após o envio de cada conta
    *  com o desfecho real (fail-open: nunca segura a venda). Ausente = sem aviso na tela. */
   prazoDecisao?: PrazoDecisaoPorConta;
+  /** A1 (rodada 2): marca da OS de Afiação JÁ confirmada neste MESMO envelope de checkout.
+   *  O Omie não deduplica a OS (cCodIntOS leva Date.now()) → presente = NÃO recriar no reenvio. */
+  afiacaoJaEnviada?: MarcaOsAfiacao | null;
+  /** A1: chamado assim que a OS de Afiação é confirmada, ANTES do resto do envio terminar —
+   *  o caller persiste a marca no envelope (sobrevive a exceção posterior e a refresh). */
+  aoConfirmarOsAfiacao?: (marca: MarcaOsAfiacao) => void;
 }
 
 export interface SubmitErrorEntry {
@@ -118,6 +125,17 @@ export interface BloqueioCreditoPedido {
   /** Snapshot computado pelo gate no edge. null = gate não informou (nunca fabricar 0). */
   vencido: number | null;
   titulos: number | null;
+  /** PR 1 crédito-IA: dívida vencida por empresa do GRUPO (o gate olha as 3). Ausente = edge antigo. */
+  pares?: ParVencidoCredito[];
+}
+
+/** Uma empresa do grupo com vencido > 60 d, como o gate venda_gate_credito_grupo devolve. */
+export interface ParVencidoCredito {
+  company: 'oben' | 'colacor' | 'colacor_sc';
+  codigo: number;
+  vencido: number;
+  titulos: number;
+  vencimento_mais_antigo: string | null;
 }
 
 export interface SubmitOrderResult {
@@ -148,7 +166,12 @@ export interface SubmitQuoteParams {
 }
 
 export interface SubmitQuoteResult {
+  /** true = ALGUMA conta gravou (pode ser parcial — ver contasPendentes). */
   success: boolean;
   results: string[];
   errors: SubmitErrorEntry[];
+  /** A4 (rodada 2): contas cujo orçamento FOI gravado. O caller tira do carrinho só estas. */
+  contasSalvas?: Array<'oben' | 'colacor'>;
+  /** A4: contas com itens cujo orçamento NÃO foi gravado — as linhas ficam no carrinho. */
+  contasPendentes?: Array<'oben' | 'colacor'>;
 }

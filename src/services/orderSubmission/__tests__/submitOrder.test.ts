@@ -374,6 +374,40 @@ describe('submitOrder', () => {
     ]);
   });
 
+  it('trava de crédito do GRUPO: dívida em OUTRA empresa aparece nomeada na mensagem e nos pares', async () => {
+    const { client } = makeSupabase({
+      insertId: 'so-oben',
+      invokeImpl: () => ({
+        data: {
+          success: false, blocked: 'credito',
+          gate: {
+            vencido: 650, titulos: 2, motivo: 'vencido_60d_sem_excecao',
+            pares: [
+              { company: 'colacor_sc', codigo: 202, vencido: 500, titulos: 1, vencimento_mais_antigo: '2026-08-01' },
+              { company: 'oben', codigo: 100, vencido: 150, titulos: 1, vencimento_mais_antigo: '2026-09-01' },
+            ],
+          },
+        },
+        error: null,
+      }),
+    });
+    const r = await submitOrder(makeParams({
+      supabase: client,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    }));
+    const msg = r.errors.find((e) => e.step === 'bloqueio_credito_oben')?.message ?? '';
+    expect(msg).toContain('Colacor SC R$ 500,00');
+    expect(msg).toContain('Oben R$ 150,00');
+    expect(r.bloqueiosCredito?.[0]).toEqual(expect.objectContaining({
+      vencido: 650,
+      pares: [
+        expect.objectContaining({ company: 'colacor_sc', vencido: 500 }),
+        expect.objectContaining({ company: 'oben', vencido: 150 }),
+      ],
+    }));
+  });
+
   it('trava de crédito Colacor: bloqueado NÃO cria ordem de produção (o PV não existe)', async () => {
     const { client, invoke } = makeSupabase({
       insertId: 'so-col',
@@ -581,5 +615,85 @@ describe('submitOrder — gate ATP Oben (fase 2)', () => {
     expect(r.results).toContain('PV Oben (bloqueado: gate_futuro_xyz)');
     expect(r.allConfirmed).toBe(false);
     expect(r.errors.some((e) => e.step === 'bloqueio_desconhecido_oben')).toBe(true);
+  });
+});
+
+// ─── A1 (rodada 2): a OS de Afiação NÃO pode ser recriada no reenvio do MESMO envelope ───
+// O Omie não deduplica a OS (cCodIntOS leva Date.now()) e o orderId nasce novo a cada chamada:
+// "Tentar novamente" do ATP, backorder e reenvio após falha parcial criavam uma 2ª OS.
+describe('submitOrder — OS de Afiação no reenvio (A1)', () => {
+  const custAfiacao = { ...customer, codigo_cliente_afiacao: 300 } as OmieCustomer;
+
+  it('falha parcial (Oben pendente) + reenvio com a marca → a OS é criada UMA vez só', async () => {
+    const { client } = makeSupabase({
+      invokeImpl: () => ({ data: null, error: { message: 'Omie fora' } }),
+    });
+    const marcas: Array<{ assinatura: string; numero: string | null }> = [];
+    const base = {
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [serviceItem()] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+    };
+    const r1 = await submitOrder(makeParams({ ...base, aoConfirmarOsAfiacao: (m) => marcas.push(m) }));
+    expect(r1.allConfirmed).toBe(false);
+    expect(marcas).toHaveLength(1);
+    expect(marcas[0].numero).toBe('OS1');
+
+    const r2 = await submitOrder(makeParams({ ...base, afiacaoJaEnviada: marcas[0] }));
+    expect(syncOrderToOmie).toHaveBeenCalledTimes(1);
+    expect(r2.results).toContain('OS OS1 (já enviada)');
+  });
+
+  it('marca de OUTRAS ferramentas → não recria nem finge "já enviada": afiacao_divergente', async () => {
+    const { client } = makeSupabase();
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      afiacaoJaEnviada: { assinatura: 'outra-ferramenta:SVC1:1', numero: 'OS9' },
+    }));
+    expect(syncOrderToOmie).not.toHaveBeenCalled();
+    expect(r.errors.map(e => e.step)).toContain('afiacao_divergente');
+    expect(r.allConfirmed).toBe(false);
+  });
+
+  it('Codex P1: forma de pagamento da Afiação mudou depois da OS → afiacao_divergente, não "já enviada"', async () => {
+    const { client } = makeSupabase();
+    const marcas: Array<{ assinatura: string; numero: string | null }> = [];
+    const base = {
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+    };
+    await submitOrder(makeParams({ ...base, aoConfirmarOsAfiacao: (m) => marcas.push(m) }));
+    const r = await submitOrder(makeParams({
+      ...base, afiacaoJaEnviada: marcas[0],
+      payment: { parcelaOben: '1', parcelaColacor: '1', afiacaoMethod: '30dd', formasPagamentoOben: [], formasPagamentoColacor: [] },
+    }));
+    expect(syncOrderToOmie).toHaveBeenCalledTimes(1);
+    expect(r.errors.map(e => e.step)).toContain('afiacao_divergente');
+  });
+
+  it('Codex P1: TODAS as ferramentas removidas com a OS já criada → não confirma um resumo sem a OS', async () => {
+    const { client } = makeSupabase();
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+      afiacaoJaEnviada: { assinatura: 'qualquer', numero: 'OS1' },
+    }));
+    expect(r.errors.map(e => e.step)).toContain('afiacao_divergente');
+    expect(r.allConfirmed).toBe(false);
+  });
+
+  it('OS NÃO confirmada (falha no Omie) → sem marca: o reenvio deve tentar de novo', async () => {
+    vi.mocked(syncOrderToOmie).mockResolvedValueOnce({ success: false, error: 'x' } as never);
+    const { client } = makeSupabase();
+    const marcas: unknown[] = [];
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      aoConfirmarOsAfiacao: (m) => marcas.push(m),
+    }));
+    expect(marcas).toHaveLength(0);
+    expect(r.errors.map(e => e.step)).toContain('sync_os_omie');
   });
 });
