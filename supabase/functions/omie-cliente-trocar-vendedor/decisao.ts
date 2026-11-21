@@ -177,6 +177,17 @@ export function enderecoFaltando(cad: Record<string, unknown>): string[] {
   return CAMPOS_ENDERECO.filter((k) => typeof cad[k] !== "string" || (cad[k] as string).trim() === "");
 }
 
+/** Escalares que são INSTRUÇÃO ao Omie (processar o endereço), não dado do cadastro — nunca reenviar (Codex v1.3 P2). */
+const INSTRUCOES = new Set(["separar_endereco", "pesquisar_cep"]);
+
+/** Listas/objetos preenchidos no cadastro (fora `info`/`recomendacoes`): o que o payload OMITE e o Omie deve preservar. */
+export function blocosPreenchidos(cad: Record<string, unknown>): string[] {
+  return Object.entries(cad)
+    .filter(([k, v]) => k !== "info" && k !== "recomendacoes" && v !== null && typeof v === "object" &&
+      (Array.isArray(v) ? v.length > 0 : Object.keys(v as object).length > 0))
+    .map(([k]) => k).sort();
+}
+
 function ehEscalar(v: unknown): boolean {
   return typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
 }
@@ -188,7 +199,7 @@ export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Reco
   if (enderecoFaltando(cad).length > 0) return null;
   const rec = cad.recomendacoes && typeof cad.recomendacoes === "object" ? cad.recomendacoes as Record<string, unknown> : {};
   const p: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(cad)) if (ehEscalar(v)) p[k] = v;
+  for (const [k, v] of Object.entries(cad)) if (ehEscalar(v) && !INSTRUCOES.has(k)) p[k] = v;
   p.codigo_cliente_omie = codigo;
   p.recomendacoes = { ...rec, codigo_vendedor: alvo };
   return p;

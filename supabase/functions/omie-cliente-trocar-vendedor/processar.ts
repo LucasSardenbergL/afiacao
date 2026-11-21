@@ -29,6 +29,7 @@ import {
   type Lote,
   NOME_ESPERADO,
   type Parametros,
+  blocosPreenchidos,
   enderecoFaltando,
   payloadAlterar,
   recomendacoesDe,
@@ -114,6 +115,8 @@ interface ItemResultado {
   status: StatusRecibo;
   espelho_ok: boolean | null;
   erro: string | null;
+  /** Listas/objetos PREENCHIDOS no cadastro lido (não vão no payload) — para escolher o canário que prova a preservação. */
+  blocos?: string[];
 }
 
 export interface ResultadoBloco {
@@ -230,6 +233,7 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
       continue;
     }
     item.nome_fantasia = texto(cad.nome_fantasia);
+    item.blocos = blocosPreenchidos(cad);
     const leitura = lerVendedor(cad);
     const atual = leitura === "ilegivel" ? null : leitura;
     item.vendedor_antes = atual;
@@ -300,12 +304,13 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
     item.vendedor_depois = depois;
     if (depoisL !== alvo) {
       if (faultEscrita !== null && relido && depoisL === leitura && leitura !== "ilegivel") {
-        // O Omie recusou e o vendedor segue o de antes. Pode ter mexido em OUTRO campo (Codex r2 P1): o recibo segue
-        // 'indeterminado' até a prova por hash confirmar que nada mudou ('erro_omie') — e o bloco continua.
-        item.status = "erro_omie";
+        // O Omie recusou e o vendedor segue o de antes. Pode ter mexido em OUTRO campo (Codex r2 P1): recibo E resposta
+        // seguem 'indeterminado' até a prova por hash confirmar que nada mudou ('erro_omie') — e o bloco continua.
+        // (Codex v1.3 P2: antes a resposta já dizia 'erro_omie' sem prova quando faltava tempo para verificar.)
+        item.status = "indeterminado";
         item.erro = faultEscrita;
         await d.atualizar(id, { vendedor_depois: depois, erro: faultEscrita });
-        contar(res, "erro_omie");
+        contar(res, "indeterminado");
         aVerificar.push({ id, item, hashAntes, lidoEm, esperado: atual, seConfirmar: "erro_omie" });
         continue;
       }

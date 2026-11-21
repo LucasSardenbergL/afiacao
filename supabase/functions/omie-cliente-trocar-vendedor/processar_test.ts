@@ -401,3 +401,11 @@ Deno.test("v1.3: cadastro SEM e-mail na conta que exige → Omie recusa, 'erro_o
   igual(r.itens.map((i) => [i.omie_codigo_cliente, i.status]), [[1, "erro_omie"], [2, "verificado"]], "status");
   igual(omie.get(1)!.recomendacoes, cadastro(1, TATY_OBEN).recomendacoes, "cliente 1 intacto");
 });
+
+Deno.test("Codex v1.3 P2: fault sem tempo para a prova → resposta 'indeterminado' (nunca 'erro_omie' sem prova)", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, { email: "" })]]);
+  const { d, recibos } = montar({ omie, candidatos: [cand(1)] });
+  const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, { ...OPC, orcamentoTotalMs: 10_000 });
+  igual([r.itens[0].status, recibos.get(1)!.status], ["indeterminado", "indeterminado"], "resposta = recibo");
+  igual([r.contagem.indeterminado, r.contagem.erro_omie ?? 0], [1, 0], "contagem");
+});

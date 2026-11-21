@@ -5,6 +5,7 @@ import {
   decidir,
   hashCadastro,
   lerParametros,
+  blocosPreenchidos,
   enderecoFaltando,
   payloadAlterar,
   textoParaHash,
@@ -117,7 +118,11 @@ Deno.test("v1.2/v1.3 payloadAlterar: endereço vazio = null; payload = escalares
     igual(payloadAlterar(sem, 1), null, `sem ${k}`);
   }
   igual(enderecoFaltando({ ...CAD, bairro: "", cep: 0 }), ["bairro", "cep"], "lista o que falta");
-  const p = payloadAlterar({ ...CAD, complemento: "SALA 2", email: "x@y.com", inativo: "N", valor_limite_credito: 0, bloq: true, nan: NaN, nada: null, dadosBancarios: { banco: "1" } }, 1)!;
+  const p = payloadAlterar({ ...CAD, complemento: "SALA 2", email: "x@y.com", inativo: "N", valor_limite_credito: 0, bloq: true, nan: NaN, nada: null, dadosBancarios: { banco: "1" }, separar_endereco: "S", pesquisar_cep: "S" }, 1)!;
   igual(Object.keys(p).sort(), ["bairro", "bloq", "cep", "cidade", "codigo_cliente_omie", "complemento", "email", "endereco", "endereco_numero", "estado", "inativo", "razao_social", "recomendacoes", "valor_limite_credito"], "v1.3: só escalares + recomendações (sem info/tags/objetos/null/NaN)");
   igual([p.email, p.complemento, p.valor_limite_credito, p.bloq], ["x@y.com", "SALA 2", 0, true], "valores como lidos");
+});
+
+Deno.test("v1.3 blocosPreenchidos: lista só listas/objetos NÃO vazios, fora info/recomendacoes", () => {
+  igual(blocosPreenchidos({ ...CAD, caracteristicas: [], enderecoEntrega: { entEndereco: "R" }, dadosBancarios: {} }), ["enderecoEntrega", "tags"], "blocos");
 });
