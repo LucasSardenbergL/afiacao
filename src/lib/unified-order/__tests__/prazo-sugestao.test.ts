@@ -256,3 +256,19 @@ describe('parseCalendarioParcela — gramática REAL do catálogo Omie da Oben (
     expect(sugerirParcela({ formas, parcelaAtual: 'AV2', vencido: 500, diasVencidoMax: 61 })).toEqual({ tipo: 'nenhuma', motivoSistema: 'sem_forma_menor' });
   });
 });
+
+// Paridade TS ↔ SQL (crédito-IA PR 3): `credito_parse_calendario` (migration 20261121180000) é porte
+// deste parser; a MESMA fixture é cobrada no PG17 por db/test-credito-prazo-revisao.sh. Se o parser
+// mudar, regenere a fixture e o SQL junto — divergir aqui é o gate e o pedido lendo prazos diferentes.
+describe('paridade com credito_parse_calendario (fixture compartilhada)', () => {
+  const fixture = JSON.parse(readFileSync('db/fixtures/credito-prazo-paridade.json', 'utf8')) as {
+    casos: { descricao: string; origem: string; calendario: number[] | null }[];
+  };
+  it('cobre o catálogo real e as bordas', () => {
+    expect(fixture.casos.filter((c) => c.origem === 'catalogo_oben').length).toBeGreaterThanOrEqual(100);
+    expect(fixture.casos.some((c) => c.calendario === null)).toBe(true);
+  });
+  it.each(fixture.casos.map((c) => [JSON.stringify(c.descricao), c] as const))('%s', (_d, c) => {
+    expect(parseCalendarioParcela(c.descricao)).toEqual(c.calendario);
+  });
+});

@@ -254,3 +254,21 @@
 - **P4 revisão:** seq 1/2; retry idêntico reusa; sem parcela → `999` implícita com prazo `NULL`; item inválido (NaN, 0, negativo, código não inteiro, array vazio) → `22023` sem linha; UPDATE/DELETE recusados; `valor_brl` do servidor; concorrência de 2 registros do mesmo conteúdo → 1 linha (advisory lock).
 - **Falsificação** (controle verde na MESMA invocação; uma camada por vez): F1 parser devolve `0` para ilegível → P1/P2 vermelhos; F2 override sem gate de aprovador → P3 vermelho; F3 sem advisory lock → P4 concorrência vermelho; F4 sem checagem de `num_parcelas` → P2 vermelho; F5 parcela vazia vira `'000'` → P4 vermelho.
 - **Edge (Deno):** `edicaoExigeGate` (28→90 mesmo total → sim; 90→28 → não; ilegível → sim; mesma parcela → não); `itensDaRevisao` (envio = revisão; tamanho divergente lança).
+
+## Revisão pós-Codex (desenho, 2026-11-21, gpt-6.2-astra high — 2 P0 + 6 P1 + 1 P2)
+
+**Acatados no PR 3 (substituem o que conflitar acima):**
+- **Devedor na revisão (P1):** grava `omie_codigo_cliente` comprovado pela edge (nullable = não comprovado) e ele entra na igualdade de deduplicação — retry com outro cliente gera revisão nova.
+- **Sem fail-closed novo (P1):** revisão que falha **não** segura o envio no PR 3 (contrariaria o §10 — a trava nova só liga após a 1ª leva). A edge loga, devolve `revisao: null` e segue o caminho do PR 1 (piso continua fail-closed). No enforcement (PR 6) revisão válida passa a ser exigida antes de mutar.
+- **Origem da parcela (P1):** `parcela_origem` = `informada | herdada_omie | default_999` (substitui `parcela_informada`); códigos textuais preservados (`000` ≠ `0`). Edição sem parcela herda a do PV confirmado; sem nenhuma das duas, segue `999` como hoje (`default_999`, prazo `NULL`).
+- **Edição por DOMINÂNCIA, não por máximo (P1):** pular o piso só se a parcela é a mesma, ou se os DOIS calendários vêm do catálogo e o novo **domina-ou-iguala** o antigo (em todo vencimento, fração recebida ≥). `30/60/90 → 75 dias` reavalia. Override escalar, ilegível ou `999` nunca provam → reavalia.
+- **Resolvedor sem certeza fabricada (P1):** `fonte=catalogo` exige linha ativa, calendário válido e `num_parcelas` **presente** e igual à cardinalidade (inclui a entrada à vista). Override de `999` **vetado** (o código significa "informar parcelas" — prazo individual precisa de evidência do PV).
+- **Override versionado (P1):** definição/revogação serializada por advisory lock em `(company, codigo)`, `versao` monotônica; vigente = última linha incluindo revogações. A revisão grava `prazo_override_id` (a evidência); prazo/fonte/override entram na igualdade — mudança de evidência gera revisão nova.
+- **Correspondência por item (P1):** o envio usa `codigo/quantidade/valor_unitario` da revisão por índice e confere o código item a item (não só o tamanho).
+- **Centavos (P2):** `valor_brl = Σ round(q × v, 2)` por linha (como o Omie totaliza o item); caso fracionário (2 × R$ 1,005) na prova.
+- Ator de sistema: `p_user_id` nullable (pedido programado chama como service_role).
+
+**Condições herdadas pelo PR 5 (antes de a revisão RESERVAR crédito):**
+- (d) **retomada vincula o PV à revisão despachada** (P0): a chave Omie `PV_<sales_order_id>` é a mesma em todas as revisões — duplicata no retry precisa conferir cliente, itens, preços, total e parcela do PV contra a revisão; divergência ou leitura incompleta deixa a exposição pendente de reconciliação.
+- (e) **despacho serializado por revisão** (P0): claim atômico da revisão vigente por pedido/conta (uma tentativa em voo), resultado registrado por revisão; na edição, conferir o PV de origem antes do 1º delete e parcela+total após `TotalizarPedido`; resultado ambíguo bloqueia novo despacho e redução de reserva.
+- (f) gates tint/ATP antes da reserva, ou encerrar a tentativa recusada antes do envio; retomada por perna no checkout misto; congelar tint/PC/NF para reenvio pós-aprovação (PR 6); contrato explícito de "troca de parcela" com a condição original esperada no editor (PR 6).

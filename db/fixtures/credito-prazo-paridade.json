@@ -1,0 +1,1400 @@
+{
+  "_gerado_por": "parseCalendarioParcela (src/lib/unified-order/prazo-sugestao.ts) — regenere se o parser mudar",
+  "casos": [
+    {
+      "descricao": "A Vista",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0
+      ]
+    },
+    {
+      "descricao": "1 Parcela",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "2 Parcelas",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "3 Parcelas",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "4 Parcelas",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "5 Parcelas",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "6 Parcelas",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "36 Parcelas",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "40/55",
+      "origem": "catalogo_oben",
+      "calendario": [
+        40,
+        55
+      ]
+    },
+    {
+      "descricao": "35/55/65",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35,
+        55,
+        65
+      ]
+    },
+    {
+      "descricao": "A Vista/1/1",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "32/42/52",
+      "origem": "catalogo_oben",
+      "calendario": [
+        32,
+        42,
+        52
+      ]
+    },
+    {
+      "descricao": "Informar o número de parcelas",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "Para 1 dia",
+      "origem": "catalogo_oben",
+      "calendario": [
+        1
+      ]
+    },
+    {
+      "descricao": "Para 3 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        3
+      ]
+    },
+    {
+      "descricao": "Para 4 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        4
+      ]
+    },
+    {
+      "descricao": "Para 5 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        5
+      ]
+    },
+    {
+      "descricao": "Para 7 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        7
+      ]
+    },
+    {
+      "descricao": "Para 10 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        10
+      ]
+    },
+    {
+      "descricao": "Para 11 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        11
+      ]
+    },
+    {
+      "descricao": "Para 13 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        13
+      ]
+    },
+    {
+      "descricao": "Para 14 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        14
+      ]
+    },
+    {
+      "descricao": "Para 15 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        15
+      ]
+    },
+    {
+      "descricao": "Para 17 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        17
+      ]
+    },
+    {
+      "descricao": "Para 20 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        20
+      ]
+    },
+    {
+      "descricao": "Para 21 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        21
+      ]
+    },
+    {
+      "descricao": "Para 22 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        22
+      ]
+    },
+    {
+      "descricao": "Para 25 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        25
+      ]
+    },
+    {
+      "descricao": "Para 28 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28
+      ]
+    },
+    {
+      "descricao": "Para 29 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        29
+      ]
+    },
+    {
+      "descricao": "Para 30 dias (C)",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "Para 35 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35
+      ]
+    },
+    {
+      "descricao": "Para 36 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        36
+      ]
+    },
+    {
+      "descricao": "Para 40 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        40
+      ]
+    },
+    {
+      "descricao": "Para 42 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        42
+      ]
+    },
+    {
+      "descricao": "Para 45 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        45
+      ]
+    },
+    {
+      "descricao": "Para 50 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        50
+      ]
+    },
+    {
+      "descricao": "Para 56 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        56
+      ]
+    },
+    {
+      "descricao": "Para 60 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        60
+      ]
+    },
+    {
+      "descricao": "Para 75 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        75
+      ]
+    },
+    {
+      "descricao": "25/35/42",
+      "origem": "catalogo_oben",
+      "calendario": [
+        25,
+        35,
+        42
+      ]
+    },
+    {
+      "descricao": "Para 13 dias (C)",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "Para 90 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        90
+      ]
+    },
+    {
+      "descricao": "Para 2 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        2
+      ]
+    },
+    {
+      "descricao": "Para 4 dias (C)",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "Para 6 dias (C)",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "Para 34 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        34
+      ]
+    },
+    {
+      "descricao": "24/42/56",
+      "origem": "catalogo_oben",
+      "calendario": [
+        24,
+        42,
+        56
+      ]
+    },
+    {
+      "descricao": "28/30/45",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        30,
+        45
+      ]
+    },
+    {
+      "descricao": "35/55",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35,
+        55
+      ]
+    },
+    {
+      "descricao": "21/51",
+      "origem": "catalogo_oben",
+      "calendario": [
+        21,
+        51
+      ]
+    },
+    {
+      "descricao": "15/45",
+      "origem": "catalogo_oben",
+      "calendario": [
+        15,
+        45
+      ]
+    },
+    {
+      "descricao": "Para 8 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        8
+      ]
+    },
+    {
+      "descricao": "30/40/60",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        40,
+        60
+      ]
+    },
+    {
+      "descricao": "35/45/65",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35,
+        45,
+        65
+      ]
+    },
+    {
+      "descricao": "7/14",
+      "origem": "catalogo_oben",
+      "calendario": [
+        7,
+        14
+      ]
+    },
+    {
+      "descricao": "1/28",
+      "origem": "catalogo_oben",
+      "calendario": [
+        1,
+        28
+      ]
+    },
+    {
+      "descricao": "40/75",
+      "origem": "catalogo_oben",
+      "calendario": [
+        40,
+        75
+      ]
+    },
+    {
+      "descricao": "45/70",
+      "origem": "catalogo_oben",
+      "calendario": [
+        45,
+        70
+      ]
+    },
+    {
+      "descricao": "32/39/46",
+      "origem": "catalogo_oben",
+      "calendario": [
+        32,
+        39,
+        46
+      ]
+    },
+    {
+      "descricao": "25/42/56",
+      "origem": "catalogo_oben",
+      "calendario": [
+        25,
+        42,
+        56
+      ]
+    },
+    {
+      "descricao": "28/56/72",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        56,
+        72
+      ]
+    },
+    {
+      "descricao": "30/30",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "A Vista/1",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0,
+        1
+      ]
+    },
+    {
+      "descricao": "28/42/56/72/87",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        42,
+        56,
+        72,
+        87
+      ]
+    },
+    {
+      "descricao": "30/60",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        60
+      ]
+    },
+    {
+      "descricao": "45/60",
+      "origem": "catalogo_oben",
+      "calendario": [
+        45,
+        60
+      ]
+    },
+    {
+      "descricao": "21/28/35",
+      "origem": "catalogo_oben",
+      "calendario": [
+        21,
+        28,
+        35
+      ]
+    },
+    {
+      "descricao": "28/35/42",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        35,
+        42
+      ]
+    },
+    {
+      "descricao": "25/56",
+      "origem": "catalogo_oben",
+      "calendario": [
+        25,
+        56
+      ]
+    },
+    {
+      "descricao": "30/45",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        45
+      ]
+    },
+    {
+      "descricao": "28/56",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        56
+      ]
+    },
+    {
+      "descricao": "30/60/90",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        60,
+        90
+      ]
+    },
+    {
+      "descricao": "60/75/90",
+      "origem": "catalogo_oben",
+      "calendario": [
+        60,
+        75,
+        90
+      ]
+    },
+    {
+      "descricao": "30/45/60",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        45,
+        60
+      ]
+    },
+    {
+      "descricao": "30/60/90/120",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        60,
+        90,
+        120
+      ]
+    },
+    {
+      "descricao": "A Vista/30",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0,
+        30
+      ]
+    },
+    {
+      "descricao": "A Vista/30/60",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0,
+        30,
+        60
+      ]
+    },
+    {
+      "descricao": "A Vista/30/60/90",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0,
+        30,
+        60,
+        90
+      ]
+    },
+    {
+      "descricao": "A Vista/30/60/90/120/150",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0,
+        30,
+        60,
+        90,
+        120,
+        150
+      ]
+    },
+    {
+      "descricao": "28/42",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        42
+      ]
+    },
+    {
+      "descricao": "28/42/56",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        42,
+        56
+      ]
+    },
+    {
+      "descricao": "14/28",
+      "origem": "catalogo_oben",
+      "calendario": [
+        14,
+        28
+      ]
+    },
+    {
+      "descricao": "A Vista/30/60/90/120",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0,
+        30,
+        60,
+        90,
+        120
+      ]
+    },
+    {
+      "descricao": "21/42",
+      "origem": "catalogo_oben",
+      "calendario": [
+        21,
+        42
+      ]
+    },
+    {
+      "descricao": "21/35",
+      "origem": "catalogo_oben",
+      "calendario": [
+        21,
+        35
+      ]
+    },
+    {
+      "descricao": "28/56/84",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        56,
+        84
+      ]
+    },
+    {
+      "descricao": "A Vista/28",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0,
+        28
+      ]
+    },
+    {
+      "descricao": "35/45/55",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35,
+        45,
+        55
+      ]
+    },
+    {
+      "descricao": "30/45/60/75",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        45,
+        60,
+        75
+      ]
+    },
+    {
+      "descricao": "28/35/42/49/56",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        35,
+        42,
+        49,
+        56
+      ]
+    },
+    {
+      "descricao": "42/56",
+      "origem": "catalogo_oben",
+      "calendario": [
+        42,
+        56
+      ]
+    },
+    {
+      "descricao": "20/40",
+      "origem": "catalogo_oben",
+      "calendario": [
+        20,
+        40
+      ]
+    },
+    {
+      "descricao": "15/30",
+      "origem": "catalogo_oben",
+      "calendario": [
+        15,
+        30
+      ]
+    },
+    {
+      "descricao": "40/70",
+      "origem": "catalogo_oben",
+      "calendario": [
+        40,
+        70
+      ]
+    },
+    {
+      "descricao": "20/40/60",
+      "origem": "catalogo_oben",
+      "calendario": [
+        20,
+        40,
+        60
+      ]
+    },
+    {
+      "descricao": "60/90",
+      "origem": "catalogo_oben",
+      "calendario": [
+        60,
+        90
+      ]
+    },
+    {
+      "descricao": "30/60/90/120/150/180",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        60,
+        90,
+        120,
+        150,
+        180
+      ]
+    },
+    {
+      "descricao": "30/40",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        40
+      ]
+    },
+    {
+      "descricao": "A Vista/28/56",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0,
+        28,
+        56
+      ]
+    },
+    {
+      "descricao": "30/60/90/120/150",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        60,
+        90,
+        120,
+        150
+      ]
+    },
+    {
+      "descricao": "25/35",
+      "origem": "catalogo_oben",
+      "calendario": [
+        25,
+        35
+      ]
+    },
+    {
+      "descricao": "28/45",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        45
+      ]
+    },
+    {
+      "descricao": "Para 30 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": "35/60",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35,
+        60
+      ]
+    },
+    {
+      "descricao": "28/56/70",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        56,
+        70
+      ]
+    },
+    {
+      "descricao": "21/28/35/42/56/70",
+      "origem": "catalogo_oben",
+      "calendario": [
+        21,
+        28,
+        35,
+        42,
+        56,
+        70
+      ]
+    },
+    {
+      "descricao": "A Vista/28/42",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0,
+        28,
+        42
+      ]
+    },
+    {
+      "descricao": "Para 19 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        19
+      ]
+    },
+    {
+      "descricao": "28/52",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        52
+      ]
+    },
+    {
+      "descricao": "35/45",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35,
+        45
+      ]
+    },
+    {
+      "descricao": "25/35/45",
+      "origem": "catalogo_oben",
+      "calendario": [
+        25,
+        35,
+        45
+      ]
+    },
+    {
+      "descricao": "Para 18 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        18
+      ]
+    },
+    {
+      "descricao": "36/46",
+      "origem": "catalogo_oben",
+      "calendario": [
+        36,
+        46
+      ]
+    },
+    {
+      "descricao": "Para 41 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        41
+      ]
+    },
+    {
+      "descricao": "Para 32 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        32
+      ]
+    },
+    {
+      "descricao": "Para 6 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        6
+      ]
+    },
+    {
+      "descricao": "Para 38 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        38
+      ]
+    },
+    {
+      "descricao": "Para 48 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        48
+      ]
+    },
+    {
+      "descricao": "Para 52 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        52
+      ]
+    },
+    {
+      "descricao": "30/60/75 (C)",
+      "origem": "catalogo_oben",
+      "calendario": null
+    },
+    {
+      "descricao": "21/28/35/42/49/56/63",
+      "origem": "catalogo_oben",
+      "calendario": [
+        21,
+        28,
+        35,
+        42,
+        49,
+        56,
+        63
+      ]
+    },
+    {
+      "descricao": "35/45/55/65",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35,
+        45,
+        55,
+        65
+      ]
+    },
+    {
+      "descricao": "5/10",
+      "origem": "catalogo_oben",
+      "calendario": [
+        5,
+        10
+      ]
+    },
+    {
+      "descricao": "25/40/55",
+      "origem": "catalogo_oben",
+      "calendario": [
+        25,
+        40,
+        55
+      ]
+    },
+    {
+      "descricao": "40/80",
+      "origem": "catalogo_oben",
+      "calendario": [
+        40,
+        80
+      ]
+    },
+    {
+      "descricao": "35/45/60",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35,
+        45,
+        60
+      ]
+    },
+    {
+      "descricao": "45/60/75/90",
+      "origem": "catalogo_oben",
+      "calendario": [
+        45,
+        60,
+        75,
+        90
+      ]
+    },
+    {
+      "descricao": "Para 24 dias",
+      "origem": "catalogo_oben",
+      "calendario": [
+        24
+      ]
+    },
+    {
+      "descricao": "35/70",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35,
+        70
+      ]
+    },
+    {
+      "descricao": "56/70",
+      "origem": "catalogo_oben",
+      "calendario": [
+        56,
+        70
+      ]
+    },
+    {
+      "descricao": "28/42/56/72",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        42,
+        56,
+        72
+      ]
+    },
+    {
+      "descricao": "30/42/52",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        42,
+        52
+      ]
+    },
+    {
+      "descricao": "A Vista/21",
+      "origem": "catalogo_oben",
+      "calendario": [
+        0,
+        21
+      ]
+    },
+    {
+      "descricao": "30/60/75",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        60,
+        75
+      ]
+    },
+    {
+      "descricao": "28/35/42/56/59",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        35,
+        42,
+        56,
+        59
+      ]
+    },
+    {
+      "descricao": "30/90",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        90
+      ]
+    },
+    {
+      "descricao": "45/60/75/90/105",
+      "origem": "catalogo_oben",
+      "calendario": [
+        45,
+        60,
+        75,
+        90,
+        105
+      ]
+    },
+    {
+      "descricao": "30/70",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        70
+      ]
+    },
+    {
+      "descricao": "28/35/45/60",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        35,
+        45,
+        60
+      ]
+    },
+    {
+      "descricao": "26/37",
+      "origem": "catalogo_oben",
+      "calendario": [
+        26,
+        37
+      ]
+    },
+    {
+      "descricao": "7/14/21/28/35/42",
+      "origem": "catalogo_oben",
+      "calendario": [
+        7,
+        14,
+        21,
+        28,
+        35,
+        42
+      ]
+    },
+    {
+      "descricao": "35/50",
+      "origem": "catalogo_oben",
+      "calendario": [
+        35,
+        50
+      ]
+    },
+    {
+      "descricao": "28/45/56",
+      "origem": "catalogo_oben",
+      "calendario": [
+        28,
+        45,
+        56
+      ]
+    },
+    {
+      "descricao": "30/45/70",
+      "origem": "catalogo_oben",
+      "calendario": [
+        30,
+        45,
+        70
+      ]
+    },
+    {
+      "descricao": "",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "   ",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "à vista",
+      "origem": "borda",
+      "calendario": [
+        0
+      ]
+    },
+    {
+      "descricao": "A VISTA",
+      "origem": "borda",
+      "calendario": [
+        0
+      ]
+    },
+    {
+      "descricao": "A Vista (faturamento)",
+      "origem": "borda",
+      "calendario": [
+        0
+      ]
+    },
+    {
+      "descricao": "A Vista (30 dias)",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "30",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "30 dias",
+      "origem": "borda",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": "30dd",
+      "origem": "borda",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": "30 DDL",
+      "origem": "borda",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": "para 30 DIAS",
+      "origem": "borda",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": "30 / 60 / 90",
+      "origem": "borda",
+      "calendario": [
+        30,
+        60,
+        90
+      ]
+    },
+    {
+      "descricao": "60/30",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "0",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "0 dias",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "366 dias",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "365 dias",
+      "origem": "borda",
+      "calendario": [
+        365
+      ]
+    },
+    {
+      "descricao": "Para 366 dias",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "A Vista/",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "Boleto",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "30/60/",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "1000 dias",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "30,5 dias",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "-30 dias",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "Para  30  dias",
+      "origem": "borda",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": "28/56/84 DDL",
+      "origem": "borda",
+      "calendario": [
+        28,
+        56,
+        84
+      ]
+    },
+    {
+      "descricao": "30/60/90 dias",
+      "origem": "borda",
+      "calendario": [
+        30,
+        60,
+        90
+      ]
+    },
+    {
+      "descricao": "À VISTA",
+      "origem": "borda",
+      "calendario": [
+        0
+      ]
+    },
+    {
+      "descricao": "À Vista/30",
+      "origem": "borda",
+      "calendario": [
+        0,
+        30
+      ]
+    },
+    {
+      "descricao": "Para 30 dias",
+      "origem": "borda",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": " 30 dias　",
+      "origem": "borda",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": "Para 030 dias",
+      "origem": "borda",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": "Para 30 dias\n",
+      "origem": "borda",
+      "calendario": [
+        30
+      ]
+    },
+    {
+      "descricao": "Para ٣٠ dias",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "30/60/90/120/150/180/210 dias",
+      "origem": "borda",
+      "calendario": [
+        30,
+        60,
+        90,
+        120,
+        150,
+        180,
+        210
+      ]
+    },
+    {
+      "descricao": "Ã Vista",
+      "origem": "borda",
+      "calendario": null
+    },
+    {
+      "descricao": "a vista(faturamento)",
+      "origem": "borda",
+      "calendario": [
+        0
+      ]
+    }
+  ]
+}
