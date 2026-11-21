@@ -60,6 +60,27 @@ describe('useCustomerSelection — fiação do prazo Colacor', () => {
     expect(selecao).toContain('if (codigoParcelaColacor === null) return { data: null };');
   });
 
+  it('o lookup que fornece o código é o da CONTA Colacor e não engole a rejeição (tri-state do slot 3)', () => {
+    // Forma exata: account 'colacor' (trocar p/ 'oben' reabre o bug) e SEM .catch no promise
+    // compartilhado (um .catch transformaria falha em "cliente ausente" → auto-cadastro às cegas).
+    expect(selecao).toContain(
+      [
+        'const lookupClienteColacor = cust.cnpj_cpf',
+        "        ? supabase.functions.invoke('omie-vendas-sync', {",
+        "            body: { action: 'buscar_cliente', document: cust.cnpj_cpf, account: 'colacor' },",
+        '          })',
+        '        : Promise.resolve({ data: null });',
+      ].join('\n'),
+    );
+    expect(selecao).not.toMatch(/lookupClienteColacor\s*\.catch/);
+  });
+
+  it('seleção trocada durante o lookup não dispara a consulta de prazo', () => {
+    expect(selecao).toMatch(
+      /const lookup = await lookupClienteColacor\.then\([\s\S]*?\);\n[^\n]*\n\s+if \(isStale\(\)\) return \{ data: null \};\n\s+const codigoParcelaColacor/,
+    );
+  });
+
   it('o lookup Colacor é o MESMO promise do slot 3 e a parcela Colacor espera por ele', () => {
     expect(selecao).toContain('const lookup = await lookupClienteColacor.then(');
     expect(selecao).toMatch(/parcelaColacorPromise,\n\s+localUserId\n[\s\S]*?\n\s+lookupClienteColacor,\n/);

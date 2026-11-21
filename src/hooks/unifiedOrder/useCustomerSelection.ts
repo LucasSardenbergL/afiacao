@@ -509,6 +509,8 @@ export function useCustomerSelection({
           (r) => (r && !('error' in r && r.error) ? (r.data as LookupClienteColacor | null) : null),
           () => null,
         );
+        // Seleção trocada durante o lookup: não gasta ListarPedidos da Colacor por cliente velho.
+        if (isStale()) return { data: null };
         const codigoParcelaColacor = codigoParaParcelaColacor(lookup, cust.codigo_cliente_colacor);
         if (codigoParcelaColacor === null) return { data: null };
         return supabase.functions.invoke('omie-vendas-sync', {
