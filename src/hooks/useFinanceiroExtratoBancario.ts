@@ -42,7 +42,7 @@ export function useAncorasConta(contaId: string | null) {
   });
 }
 
-export function avisarErroAncora(e: unknown): void {
+function avisarErroAncora(e: unknown): void {
   if (e instanceof ErroAncora) {
     toast.error(e.message);
     return;
@@ -75,7 +75,7 @@ export function useResumoDiarioExtrato(contaId: string | null, de: string, ate: 
 }
 
 /** Toast por status/motivo (texto pt-BR). Falha de infra nunca é apresentada como "arquivo recusado". */
-export function avisarResultadoImport(r: RespostaImport): void {
+function avisarResultadoImport(r: RespostaImport): void {
   const motivo = textoDoMotivoDesconhecido(r.motivo);
   switch (r.status) {
     case 'aceito':
@@ -97,7 +97,7 @@ export function avisarResultadoImport(r: RespostaImport): void {
   }
 }
 
-export function avisarErroEnvio(e: unknown): void {
+function avisarErroEnvio(e: unknown): void {
   if (e instanceof ErroEnvioExtrato) {
     switch (e.classe) {
       case 'parse':

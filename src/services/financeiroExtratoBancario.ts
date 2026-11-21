@@ -10,9 +10,9 @@ import type { MotivoRecusaParse } from '@/lib/financeiro/extrato/nucleo';
 
 // ── Uniões ────────────────────────────────────────────────────────────────────────────────────
 /** Fonte: CHECK de banco_extrato_arquivo.status (migration F1) + 'ja_importado' (retorno de banco_extrato_registrar). */
-export const STATUS_ARQUIVO = ['aceito', 'pendente_revisao', 'recusado'] as const;
+const STATUS_ARQUIVO = ['aceito', 'pendente_revisao', 'recusado'] as const;
 export type StatusArquivo = (typeof STATUS_ARQUIVO)[number];
-export type StatusImport = StatusArquivo | 'ja_importado';
+type StatusImport = StatusArquivo | 'ja_importado';
 
 /** Fonte: `v_motivo := '...'` e `'motivo', '...'` (RETURN direto) no corpo de banco_extrato_registrar (migration F1). */
 export const MOTIVOS_REGISTRO = [
@@ -29,7 +29,7 @@ export const MOTIVOS_REGISTRO = [
   'sem_saldo_inicial',
   'descontinuidade_saldo',
 ] as const;
-export type MotivoRegistro = (typeof MOTIVOS_REGISTRO)[number];
+type MotivoRegistro = (typeof MOTIVOS_REGISTRO)[number];
 
 /** Fonte: `MotivoRecusaParse` (núcleo) — o que a edge devolve em `erro_parse` (422). */
 export const MOTIVOS_PARSE = [
@@ -39,7 +39,7 @@ export const MOTIVOS_PARSE = [
   'data_invalida',
   'lancamento_nao_efetivado',
 ] as const satisfies readonly MotivoRecusaParse[];
-export type MotivoParse = (typeof MOTIVOS_PARSE)[number];
+type MotivoParse = (typeof MOTIVOS_PARSE)[number];
 /** Compile-time: a lista acima cobre TODA a união do núcleo (se o núcleo ganhar motivo, quebra aqui). */
 const _parseCompleto: MotivoRecusaParse extends MotivoParse ? true : never = true;
 void _parseCompleto;
@@ -251,7 +251,7 @@ export async function marcarConferido(arquivoId: string): Promise<void> {
 }
 
 // ── Âncora manual (saldo de referência) ───────────────────────────────────────────────────────
-export type OrigemAncora = 'manual' | 'cnab';
+type OrigemAncora = 'manual' | 'cnab';
 
 export interface AncoraConta {
   id: string;

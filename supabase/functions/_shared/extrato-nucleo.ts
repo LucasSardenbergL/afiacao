@@ -3,8 +3,8 @@
 // (a edge roda sob `deno test --no-remote` e não pode importar de `src/`). Paridade provada em
 // __tests__/nucleo.parity.test.ts. As chaves geradas aqui são gravadas em banco_extrato_linha.chave.
 
-export type Sentido = 'C' | 'D';
-export type FormatoExtrato = 'ofx' | 'cnab240';
+type Sentido = 'C' | 'D';
+type FormatoExtrato = 'ofx' | 'cnab240';
 
 export interface LinhaExtrato {
   data: string;
@@ -15,7 +15,7 @@ export interface LinhaExtrato {
   idBancario: string | null;
 }
 
-export interface ExtratoParseado {
+interface ExtratoParseado {
   formato: FormatoExtrato;
   /** Código do banco (BANKID só dígitos, zeros à esquerda preservados); null quando o arquivo não traz. */
   banco: string | null;

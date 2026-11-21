@@ -1,6 +1,6 @@
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
-export const INDISPONIVEL = 'indisponível';
+const INDISPONIVEL = 'indisponível';
 
 /** Centavos inteiros → "R$ 1.234,56". `null`/ausente → "indisponível" (NUNCA R$ 0,00). */
 export function formatarCentavos(c: number | null | undefined): string {

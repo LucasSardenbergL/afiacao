@@ -6,7 +6,7 @@ import { parseOfx } from "../_shared/extrato-parser-ofx.ts";
 import {
   chavesDasLinhas,
   type EstrategiaChave,
-  type ExtratoParseado,
+  type ResultadoParse,
 } from "../_shared/extrato-nucleo.ts";
 import { ESTRATEGIA_CHAVE_PADRAO } from "./versao.ts";
 
@@ -70,7 +70,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 type Formato = "ofx" | "cnab240" | "desconhecido";
 
 /** Detecta pelo CONTEÚDO (não pela extensão): OFX por cabeçalho/tag; CNAB por todas as linhas de 240. */
-export function detectarFormato(bytes: Uint8Array): Formato {
+function detectarFormato(bytes: Uint8Array): Formato {
   if (bytes.length === 0) return "desconhecido";
   const texto = new TextDecoder("latin1").decode(bytes); // 1 byte = 1 coluna
   const semBom = texto.replace(/^﻿|^ï»¿/, "");
@@ -92,7 +92,7 @@ function montarPayload(
   hoje: string,
   sha256: string,
   estrategia: EstrategiaChave,
-  extrato: ExtratoParseado,
+  extrato: Extract<ResultadoParse, { ok: true }>["extrato"],
   chaves: string[],
 ): Record<string, unknown> {
   return {

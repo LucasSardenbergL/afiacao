@@ -123,7 +123,7 @@ function valorComSinal(v: string, campo: string): { negativo: boolean; centavos:
   return { negativo: v.trim().startsWith('-'), centavos: c };
 }
 
-function parse(bytes: Uint8Array): ResultadoParse {
+function analisarOfx(bytes: Uint8Array): ResultadoParse {
   const texto = decodificar(bytes);
   const ini = texto.search(/<OFX[\s>]/i);
   if (ini < 0) throw new Recusa('formato_desconhecido', 'sem <OFX>');
@@ -229,7 +229,7 @@ function parse(bytes: Uint8Array): ResultadoParse {
 
 export function parseOfx(bytes: Uint8Array): ResultadoParse {
   try {
-    return parse(bytes);
+    return analisarOfx(bytes);
   } catch (e) {
     if (e instanceof Recusa) return { ok: false, motivo: e.motivo, detalhe: e.detalhe };
     throw e;
