@@ -170,6 +170,45 @@ export type Database = {
         }
         Relationships: []
       }
+      afiacao_os_envio: {
+        Row: {
+          assinatura: string | null
+          chave_integracao: string
+          confirmado_em: string | null
+          criado_em: string
+          desfecho: string | null
+          omie_codigo_cliente: number
+          omie_codigo_os: number | null
+          omie_numero_os: string | null
+          order_id: string
+          reservado_em: string
+        }
+        Insert: {
+          assinatura?: string | null
+          chave_integracao: string
+          confirmado_em?: string | null
+          criado_em?: string
+          desfecho?: string | null
+          omie_codigo_cliente: number
+          omie_codigo_os?: number | null
+          omie_numero_os?: string | null
+          order_id: string
+          reservado_em?: string
+        }
+        Update: {
+          assinatura?: string | null
+          chave_integracao?: string
+          confirmado_em?: string | null
+          criado_em?: string
+          desfecho?: string | null
+          omie_codigo_cliente?: number
+          omie_codigo_os?: number | null
+          omie_numero_os?: string | null
+          order_id?: string
+          reservado_em?: string
+        }
+        Relationships: []
+      }
       afiacao_os_sync_fila: {
         Row: {
           atualizado_em: string
@@ -1820,6 +1859,21 @@ export type Database = {
           unidade_destino?: string
           unidade_origem?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      credito_virada_grupo: {
+        Row: {
+          aplicada_em: string
+          id: boolean
+        }
+        Insert: {
+          aplicada_em?: string
+          id?: boolean
+        }
+        Update: {
+          aplicada_em?: string
+          id?: boolean
         }
         Relationships: []
       }
@@ -16608,6 +16662,7 @@ export type Database = {
           customer_user_id: string
           deleted_at: string | null
           discount: number
+          envio_omie_reivindicado_em: string | null
           gemeo_importado_id: string | null
           hash_payload: string | null
           id: string
@@ -16644,6 +16699,7 @@ export type Database = {
           customer_user_id: string
           deleted_at?: string | null
           discount?: number
+          envio_omie_reivindicado_em?: string | null
           gemeo_importado_id?: string | null
           hash_payload?: string | null
           id?: string
@@ -16680,6 +16736,7 @@ export type Database = {
           customer_user_id?: string
           deleted_at?: string | null
           discount?: number
+          envio_omie_reivindicado_em?: string | null
           gemeo_importado_id?: string | null
           hash_payload?: string | null
           id?: string
@@ -25876,6 +25933,15 @@ export type Database = {
         }
         Returns: Json
       }
+      credito_grupo_pares: {
+        Args: { p_user_id: string }
+        Returns: {
+          company: string
+          omie_codigo_cliente: number
+          origem: string
+          user_id: string
+        }[]
+      }
       credito_vinculo_aviso: { Args: { p_cnpj: string }; Returns: Json }
       credito_vinculo_aviso_registrar: {
         Args: {
@@ -28496,6 +28562,14 @@ export type Database = {
         }[]
       }
       route_city_norm: { Args: { raw: string }; Returns: string }
+      sales_order_excluir_sem_envio: {
+        Args: { p_sales_order_id: string; p_somente_orcamento?: boolean }
+        Returns: string
+      }
+      sales_order_reivindicar_envio: {
+        Args: { p_sales_order_id: string }
+        Returns: boolean
+      }
       sales_orders_instante_envio: { Args: never; Returns: string }
       sales_orders_registrar_vendedor_omie: {
         Args: { p_account: string; p_pedidos: Json }
@@ -28940,6 +29014,10 @@ export type Database = {
       }
       venda_fechar_desfechos: { Args: { p_hoje?: string }; Returns: number }
       venda_gate_credito: {
+        Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
+        Returns: Json
+      }
+      venda_gate_credito_grupo: {
         Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
         Returns: Json
       }
