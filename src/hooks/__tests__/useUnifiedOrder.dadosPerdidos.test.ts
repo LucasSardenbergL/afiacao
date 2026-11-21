@@ -52,13 +52,25 @@ describe('Novo Pedido — fiação do PR B', () => {
     const ini = pagina.indexOf('const handleRestore = () => {');
     const restore = pagina.slice(ini, pagina.indexOf('\n  };', ini));
     expect(restore).toContain('lerParcelasDoRascunho(state.parcelasManuais)');
-    expect(restore).toContain('if (codigoAtual === codigoRascunho) aplicarParcelasDoRascunho(parcelas);');
-    expect(restore).toContain('parcelasPendentesRef.current = { codigoCliente: codigoRascunho, parcelas };');
+    expect(restore).toContain('const decisao = decidirRestore(codigoRascunho, codigoAtual);');
     // O guard de cliente diferente segue ANTES (rascunho de outro cliente não aplica nada).
-    expect(restore.indexOf("toast.error('Rascunho de outro cliente'")).toBeLessThan(restore.indexOf('lerParcelasDoRascunho'));
-    expect(pagina).toContain('if (pendente.codigoCliente !== codigoClienteSelecionado) return;');
-    // codigo_cliente 0 não identifica ninguém: 0 === 0 aplicaria o prazo de A em B.
-    expect(restore).toContain("if (parcelas && typeof codigoRascunho === 'number' && codigoRascunho > 0) {");
+    expect(restore.indexOf("if (decisao === 'recusar') {")).toBeLessThan(restore.indexOf('lerParcelasDoRascunho'));
+    // codigo_cliente 0 não identifica ninguém: o prazo só volta com cliente identificado.
+    expect(restore).toContain('aplicarDadosDoRascunho(dados, codigoClienteIdentifica(codigoRascunho));');
+    expect(pagina).toContain('if (prazoVolta && d.parcelas?.oben) h.setSelectedParcelaOben(d.parcelas.oben);');
+  });
+
+  it('follow-up #4068: sem cliente na tela, o restore INTEIRO espera o cliente do rascunho', () => {
+    const ini = pagina.indexOf('const handleRestore = () => {');
+    const restore = pagina.slice(ini, pagina.indexOf('\n  };', ini));
+    const ramoEspera = restore.slice(restore.indexOf("if (decisao === 'esperarCliente'"), restore.indexOf('} else {'));
+    expect(ramoEspera).toContain('restorePendenteRef.current = { codigoCliente: codigoRascunho');
+    // No ramo de espera NADA do rascunho entra na tela (carrinho, observação, OC).
+    expect(ramoEspera).not.toContain('aplicarDadosDoRascunho(');
+    expect(ramoEspera).not.toContain('h.setCart(');
+    // A seleção resolve a pendência: só o cliente DO rascunho aplica.
+    expect(pagina).toContain('const decisao = resolverRestorePendente(pendente.codigoCliente, codigoClienteSelecionado);');
+    expect(pagina).toContain("if (decisao === 'aplicar') { aplicarDadosRef.current(pendente.dados, true); return; }");
   });
 
   it('B4: o carrinho trata serviço com preço ≤0 como A orçar e rotula Subtotal conhecido', () => {
