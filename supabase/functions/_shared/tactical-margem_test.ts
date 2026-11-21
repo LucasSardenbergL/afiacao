@@ -287,3 +287,8 @@ Deno.test("classifyProfile: gasto NULL não vira 'sensível a preço' (null < 50
   assertEquals(classifyProfile(80, 300, 10, 2), "sensivel_preco");
   assertEquals(classifyProfile(80, null, 40, 5), "misto");
 });
+
+Deno.test("profitPerHora: gasto NULL sem potencial → null (indecidível), não R$ 0/h; 0 medido → 0", () => {
+  assertEquals(profitPerHora(null, null, 30), null);
+  assertEquals(profitPerHora(0, 0, 30), 0);
+});
