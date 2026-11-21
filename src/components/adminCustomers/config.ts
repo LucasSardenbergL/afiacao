@@ -12,7 +12,7 @@ export const HEALTH_CLASSES: Record<string, { label: string; className: string }
 };
 
 /** Valores do filtro "Saúde" (o mesmo vocabulário que a RPC `listar_clientes_base` aceita). */
-export const FILTROS_SAUDE = ['saudavel', 'estavel', 'atencao', 'critico', 'sem_historico'] as const;
+const FILTROS_SAUDE = ['saudavel', 'estavel', 'atencao', 'critico', 'sem_historico'] as const;
 export type FiltroSaude = (typeof FILTROS_SAUDE)[number];
 
 /**
