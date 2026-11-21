@@ -303,11 +303,22 @@ sabota "F5 UNION ALL (título contado 2x)" \
   "t.replace(\"SELECT p_company AS company, p_codigo AS codigo\n    UNION\n\", \"SELECT p_company AS company, p_codigo AS codigo\n    UNION ALL\n\")" \
   "gate '$S1' \"'oben'\" 101 | J \"['titulos']\"" "2"
 
-sabota "F6 REVOKE esquecido (authenticated executa)" \
-  "t.replace(\"REVOKE EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint) FROM anon, authenticated, PUBLIC;\", \"GRANT EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint) TO authenticated;\")" \
-  "Pq -c \"SELECT has_function_privilege('authenticated','public.venda_gate_credito_grupo(uuid,text,bigint)','EXECUTE');\"" "f"
-# F6 deixou o GRANT a authenticated colado (CREATE OR REPLACE preserva ACL) → limpa explicitamente
-P -q -c "REVOKE EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid,text,bigint) FROM authenticated;"
+# F6: REVOKE esquecido → a POSTCONDIÇÃO da migration aborta a aplicação (é ela o dente agora).
+python3 - "$MIG" "$SAB/m.sql" <<'PY2'
+import sys
+t = open(sys.argv[1]).read()
+a = "REVOKE EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint) FROM anon, authenticated, PUBLIC;"
+assert a in t, "alvo F6 ausente"
+open(sys.argv[2], "w").write(t.replace(a, "GRANT EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint) TO authenticated;", 1))
+PY2
+if P -q -f "$SAB/m.sql" > "$SAB/f6.log" 2>&1; then
+  bad "F6 REVOKE esquecido → a migration APLICOU (postcondição sem dente)"
+elif grep -q "POS FALHOU: public.venda_gate_credito_grupo(uuid,text,bigint) executável por anon/authenticated" "$SAB/f6.log"; then
+  ok "F6 REVOKE esquecido → postcondição abortou a aplicação"
+else
+  bad "F6 falhou por OUTRO motivo: $(head -c 300 "$SAB/f6.log")"
+fi
+P -q -f "$MIG"
 titulos "colacor_sc:202:75:500"
 excecao_s1_oben
 P -q -c "UPDATE public.venda_excecao_credito SET created_at = now() - interval '1 day';"

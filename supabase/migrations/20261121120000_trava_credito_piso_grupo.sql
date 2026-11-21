@@ -191,3 +191,35 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint) FROM anon, authenticated, PUBLIC;
 GRANT EXECUTE ON FUNCTION public.venda_gate_credito_grupo(uuid, text, bigint) TO service_role;
+
+-- Postcondição (envelope de aplicação, docs/agent/database.md §Escrita): aborta a transação se algo não pegou.
+DO $post$
+DECLARE
+  f text;
+BEGIN
+  FOREACH f IN ARRAY ARRAY['public.credito_grupo_pares(uuid)', 'public.venda_gate_credito_grupo(uuid,text,bigint)'] LOOP
+    IF to_regprocedure(f) IS NULL THEN
+      RAISE EXCEPTION 'POS FALHOU: % não existe', f;
+    END IF;
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = to_regprocedure(f)) THEN
+      RAISE EXCEPTION 'POS FALHOU: % não é SECURITY DEFINER', f;
+    END IF;
+    IF has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('authenticated', f, 'EXECUTE') THEN
+      RAISE EXCEPTION 'POS FALHOU: % executável por anon/authenticated', f;
+    END IF;
+    IF NOT has_function_privilege('service_role', f, 'EXECUTE') THEN
+      RAISE EXCEPTION 'POS FALHOU: % sem EXECUTE para service_role', f;
+    END IF;
+  END LOOP;
+  IF (SELECT count(*) FROM public.credito_virada_grupo) <> 1 THEN
+    RAISE EXCEPTION 'POS FALHOU: credito_virada_grupo não tem exatamente 1 linha';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.credito_virada_grupo'::regclass) THEN
+    RAISE EXCEPTION 'POS FALHOU: credito_virada_grupo sem RLS';
+  END IF;
+  -- a v1 segue intacta (rollback da edge = voltar a chamá-la)
+  IF to_regprocedure('public.venda_gate_credito(text,bigint,uuid)') IS NULL THEN
+    RAISE EXCEPTION 'POS FALHOU: venda_gate_credito v1 sumiu';
+  END IF;
+END
+$post$;
