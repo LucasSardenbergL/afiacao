@@ -146,12 +146,17 @@ cv_cadeia() {
 #     guarda farmer_tactical_plans. Predecessoras NA ORDEM de prod: A e B da fcs (a B exige get_scores_margem) e a
 #     B do ftp (a A dela, get_planos_margem, o snapshot de 2026-10-15 já traz). Pares com a mesma chave rodam na
 #     ordem desta lista. Re-aplicar a B do ftp numa cadeia que já a tem é no-op (idempotente).
+#   · 20261121220000 (dias/gasto NULL, #4088) entra na cadeia de quem guarda farmer_client_scores pelo DROP DEFAULT;
+#     o PRE dela exige o apply_score_updates do churn (3507b…), que só a 20261121150000 produz — e esta, como a
+#     20261120210001 (priority) antes dela, só faz CREATE OR REPLACE de função, sem DDL sobre objeto guardado.
 CV_PREDECESSORAS=(
   "20261010210000_motor_desconta_comprometido.sql:20261009194000_motor_unidades_concentrado_wp.sql"
   "20261014120100_fcs_margem_fecha_coluna.sql:20261014120000_fcs_margem_rpc_projecao.sql"
   "20261018160000_fcs_ftp_fecha_escrita_default.sql:20261014120000_fcs_margem_rpc_projecao.sql"
   "20261018160000_fcs_ftp_fecha_escrita_default.sql:20261014120100_fcs_margem_fecha_coluna.sql"
   "20261018160000_fcs_ftp_fecha_escrita_default.sql:20261015120100_tactical_plans_margem_fecha_coluna.sql"
+  "20261121220000_base_vendas_nula_sem_historico.sql:20261120210001_priority_score_nula_sem_historico.sql"
+  "20261121220000_base_vendas_nula_sem_historico.sql:20261121150000_churn_risk_nulo_sem_historico.sql"
 )
 
 # CV_FORA — migrations que tocam objeto guardado mas NÃO cabem em nenhuma cadeia montada sobre este snapshot: dependem
