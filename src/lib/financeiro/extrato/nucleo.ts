@@ -17,6 +17,8 @@ export interface LinhaExtrato {
 
 export interface ExtratoParseado {
   formato: FormatoExtrato;
+  /** Código do banco (BANKID só dígitos, zeros à esquerda preservados); null quando o arquivo não traz. */
+  banco: string | null;
   agencia: string | null;
   conta: string;
   periodoInicio: string;
@@ -24,6 +26,8 @@ export interface ExtratoParseado {
   saldoInicialCentavos: number | null;
   saldoFinalCentavos: number;
   linhas: LinhaExtrato[];
+  /** Instante de geração do arquivo: ISO 8601 com offset explícito (ex. 2026-11-20T10:15:00-03:00). */
+  geradoEm: string;
 }
 
 export type MotivoRecusaParse =
