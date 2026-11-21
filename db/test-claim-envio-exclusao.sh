@@ -96,9 +96,9 @@ corrida() { # $1 = SQL da sessão 1 (segura) · $2 = SQL da sessão 2 (espera) �
 # "apagou 0" em silêncio nem "apagou 1". Imprime: negado | <nº de linhas apagadas>.
 front_delete() {
   local out
-  if out="$(P -q -tA -c "SET ROLE authenticated; WITH d AS (DELETE FROM public.sales_orders WHERE id='$A' RETURNING 1) SELECT count(*) FROM d;" 2>&1)"; then
+  if out="$(P -q -tA -v VERBOSITY=verbose -c "SET ROLE authenticated; WITH d AS (DELETE FROM public.sales_orders WHERE id='$A' RETURNING 1) SELECT count(*) FROM d;" 2>&1)"; then
     echo "$out"
-  elif printf '%s' "$out" | grep -q 'permission denied'; then echo negado
+  elif printf '%s' "$out" | grep -q 'ERROR:  42501:'; then echo negado   # SQLSTATE literal, não o texto (locale)
   else echo "erro-inesperado: $out"; fi
 }
 excluir_orc() { Pq -c "SELECT public.sales_order_excluir_sem_envio('$A', true);"; }
