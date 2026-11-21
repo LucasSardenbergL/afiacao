@@ -68,7 +68,7 @@ export function findParcelaDesc(codigo: string, formas: FormaPagamento[]): strin
   return found?.descricao || codigo;
 }
 
-export function buildToolInfo(c: ServiceCartItem): string {
+function buildToolInfo(c: ServiceCartItem): string {
   const parts: string[] = [];
   parts.push(getToolName(c.userTool));
   const specs = c.userTool.specifications;

@@ -14,7 +14,6 @@ vi.mock('../helpers', async (importOriginal) => {
     ...actual,
     formatCustomerAddress: vi.fn().mockReturnValue('Rua X, 1'),
     resolveCustomerPhone: vi.fn().mockResolvedValue('11999999999'),
-    buildToolInfo: vi.fn().mockReturnValue(''),
     getToolName: vi.fn().mockReturnValue('Tool'),
     findParcelaDesc: vi.fn().mockReturnValue(''),
   };

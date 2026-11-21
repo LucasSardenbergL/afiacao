@@ -119,7 +119,7 @@ export function tdDescontoHtml(data: PrintOrderData, item: PrintOrderData['items
 
 /** B4 (Codex P2): item sem preço (serviço a orçar) não entra na soma — rotular "TOTAL" seria
  *  afirmar um total que não existe. Ausente ≠ zero: diz quantos itens ficaram de fora. */
-export function totalDoCupomHtml(data: Pick<PrintOrderData, 'items' | 'total'>): string {
+function totalDoCupomHtml(data: Pick<PrintOrderData, 'items' | 'total'>): string {
   const semPreco = data.items.filter(i => i.valorUnitario === null).length;
   if (semPreco === 0) return `<div class="row total-row"><span>TOTAL:</span><span>${fmt(data.total)}</span></div>`;
   return `<div class="row total-row"><span>SUBTOTAL CONHECIDO:</span><span>${fmt(data.total)}</span></div>`
