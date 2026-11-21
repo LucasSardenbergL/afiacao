@@ -18,7 +18,7 @@
 -- Depende do PR 2 (20261121160000, em prod): credito_guarda_escrita, credito_portao,
 -- credito_sou_aprovador, pode_ver_carteira_completa.
 -- Prova PG17: db/test-credito-prazo-revisao.sh (asserts + concorrência + falsificação).
--- Reversão: DROP das 2 tabelas e 6 funções novas (a edge v-anterior não as chama).
+-- Reversão: DROP das 2 tabelas e 5 funções novas (a edge v-anterior não as chama).
 -- ============================================================
 
 -- ── 1. Parser da descrição da parcela (porte de parseCalendarioParcela) ─────────────────────
@@ -531,6 +531,6 @@ BEGIN
     RAISE EXCEPTION 'POS FALHOU: prazo fabricado para parcela ausente/999/empresa desconhecida';
   END IF;
   r := 'ok';
-  RAISE NOTICE 'credito_prazo_revisao: 2 tabelas + 6 funções, RLS, guardas e ACL provados (%)', r;
+  RAISE NOTICE 'credito_prazo_revisao: 2 tabelas + 5 funções, RLS, guardas e ACL provados (%)', r;
 END
 $post$;
