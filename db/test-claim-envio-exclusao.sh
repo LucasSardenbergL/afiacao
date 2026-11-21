@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PROVA PG17 — disputa atômica envio × exclusão (migration 20261120210002_sales_orders_claim_envio_omie).
+# PROVA PG17 — disputa atômica envio × exclusão (migration 20261120230001_sales_orders_claim_envio_omie).
 # Executa as RPCs (PL/pgSQL é late-bound), prova os grants com o DEFAULT PRIVILEGE do Supabase
 # replicado, prova a CONCORRÊNCIA com duas sessões reais (a 2ª espera o lock da 1ª — conferido em
 # pg_stat_activity, não por sleep) e FALSIFICA: as versões sem a condição reprovam o mesmo assert.
@@ -36,7 +36,7 @@ ok()  { PASS=$((PASS+1)); echo "  ✅ $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  ❌ $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 — esperado [$3], veio [$2]"; fi; }
 
-MIG="$REPO_ROOT/supabase/migrations/20261120210002_sales_orders_claim_envio_omie.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261120230001_sales_orders_claim_envio_omie.sql"
 A='00000000-0000-0000-0000-00000000000a'
 
 P -q <<'SQL'

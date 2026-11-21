@@ -5,7 +5,7 @@ import { mensagemDoErroEdge } from '@/lib/invoke-function';
  * Exclui um orçamento/rascunho.
  *
  * 1. DELETE direto (policy `sales_orders_delete_staff`): só apaga o que nunca foi enviado ao Omie —
- *    sem PID, em orçamento/rascunho e SEM reivindicação de envio (migration 20261120210002). RLS que
+ *    sem PID, em orçamento/rascunho e SEM reivindicação de envio (migration 20261120230001). RLS que
  *    barra não dá erro, devolve 0 linhas — por isso o `.select('id')`.
  * 2. 0 linhas ⇒ a edge `excluir_pedido`: o orçamento passou por um envio (pode ter PV vivo no Omie
  *    com o write-back perdido); a edge consulta `PV_<id>` e só apaga com ausência AFIRMADA, ou

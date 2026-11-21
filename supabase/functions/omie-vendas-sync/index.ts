@@ -3251,7 +3251,7 @@ Deno.serve(async (req) => {
             // caller antigo, falha de TRANSPORTE: segue como hoje (o registro acima mede o furo)
           }
         }
-        // Claim ATÔMICO do envio (migration 20261120210002), o mais perto possível do IncluirPedido:
+        // Claim ATÔMICO do envio (migration 20261120230001), o mais perto possível do IncluirPedido:
         // carimba o pedido SÓ se ele não está marcado para exclusão. A leitura de deleted_at lá em
         // cima é só o atalho; esta é a disputa de verdade com o excluir_pedido (lock de linha).
         // Falha da RPC RECUSA: sem o carimbo a exclusão concorrente apagaria o pedido com o PV vivo.
@@ -4093,7 +4093,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        // DELETE condicionado (migration 20261120210002): só apaga se nenhum envio reivindicou o
+        // DELETE condicionado (migration 20261120230001): só apaga se nenhum envio reivindicou o
         // pedido nos últimos 10 min. É o ponto ATÔMICO da corrida envio × exclusão — a consulta ao
         // Omie acima pode dizer "ausente" porque o IncluirPedido ainda não gravou (Colacor não tem
         // rastro ATP); o lock de linha faz o envio e a exclusão disputarem o MESMO pedido.
