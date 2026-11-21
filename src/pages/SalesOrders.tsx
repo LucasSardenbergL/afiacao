@@ -356,9 +356,10 @@ const SalesOrders = () => {
         }}
         onRepeat={() => {
           const o = detailQuery.data?.order;
-          if (!o) return;
-          track('sales.pedido_acao', { acao: 'repetir', via: 'painel' });
-          navigate(`/sales/new?customer=${o.customer_user_id}&repeat=${o.id}`);
+          if (o) {
+            track('sales.pedido_acao', { acao: 'repetir', via: 'painel' });
+            navigate(`/sales/new?customer=${o.customer_user_id}&repeat=${o.id}`);
+          }
         }}
       />
     </div>
