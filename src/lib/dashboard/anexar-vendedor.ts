@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 
 /**
  * Lote da RPC `pedidos_vendedor` — abaixo do teto de 1000 dela (e do cap de linhas do PostgREST,
@@ -18,17 +19,21 @@ export const LOTE_VENDEDOR = 500;
 export async function anexarVendedor<T extends { id: string }>(
   pedidos: T[],
 ): Promise<Array<T & { vendedor_user_id: string | null }>> {
-  const vendedorPorId = new Map<string, string | null>();
   const ids = [...new Set(pedidos.map((p) => p.id))];
-  for (let i = 0; i < ids.length; i += LOTE_VENDEDOR) {
-    const lote = ids.slice(i, i + LOTE_VENDEDOR);
-    // `.range()` explícito: o lote (≤ LOTE_VENDEDOR ids) devolve no máximo um lote de linhas.
-    const { data, error } = await supabase
-      .rpc('pedidos_vendedor', { p_ids: lote })
-      .range(0, LOTE_VENDEDOR - 1);
-    if (error) throw new Error(`pedidos_vendedor: ${error.message}`);
-    if (!Array.isArray(data)) throw new Error('pedidos_vendedor: data null sem error');
-    for (const linha of data) vendedorPorId.set(linha.id, linha.vendedor_user_id ?? null);
-  }
+  const lotes: string[][] = [];
+  for (let i = 0; i < ids.length; i += LOTE_VENDEDOR) lotes.push(ids.slice(i, i + LOTE_VENDEDOR));
+  // Cada lote pelo paginador canônico (ordem estável por id + telemetria de página perdida). Um lote
+  // de ≤ LOTE_VENDEDOR ids cabe numa página só; o paginador garante que nada é truncado em silêncio.
+  const respostas = await Promise.all(
+    lotes.map((lote) =>
+      fetchAllPagesComMensagem<{ id: string; vendedor_user_id: string | null }>(
+        (de, ate) => supabase.rpc('pedidos_vendedor', { p_ids: lote }).order('id', { ascending: true }).range(de, ate),
+        'rpc/pedidos_vendedor',
+        'pedidos_vendedor',
+      ),
+    ),
+  );
+  const vendedorPorId = new Map<string, string | null>();
+  for (const linha of respostas.flat()) vendedorPorId.set(linha.id, linha.vendedor_user_id ?? null);
   return pedidos.map((p) => ({ ...p, vendedor_user_id: vendedorPorId.get(p.id) ?? null }));
 }

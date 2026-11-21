@@ -30,12 +30,12 @@ export async function fetchPedidosMTD(
   deISO: string,
   ateISO: string,
 ): Promise<PedidoMTDRow[]> {
+  // SEM vendedor_user_id no select: a coluna é fechada para authenticated (403 na leitura inteira) —
+  // quem precisa dele usa fetchPedidosMTDComVendedor (RPC pedidos_vendedor).
   return fetchAllPagesComMensagem<PedidoMTDRow>(
     (de, ate) => {
       let q = supabase
         .from('sales_orders')
-        // SEM vendedor_user_id: a coluna é fechada para authenticated (403 na leitura inteira) —
-        // quem precisa dele usa fetchPedidosMTDComVendedor (RPC pedidos_vendedor).
         .select('id, total, status, customer_user_id, order_date_kpi')
         // O universo de VENDA na query (era só o deleted_at, e o status vinha do isPedidoValido em
         // memória com uma cópia de 2 status — orçamento e pendente contariam como receita).

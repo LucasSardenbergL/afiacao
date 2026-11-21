@@ -28,10 +28,10 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: () => builder(),
     rpc: (fn: string, args: { p_ids: string[] }) => ({
-      range: async () => {
+      order: () => ({ range: async () => {
         rpcs.push({ fn, args });
         return rpcResposta(args.p_ids);
-      },
+      } }),
     }),
   },
 }));
@@ -118,8 +118,6 @@ describe('fetchPedidosMTD', () => {
   it('[MTD-VENDEDOR-ERRO] RPC falhou → LANÇA com a marca (tile "—", nunca "0 vendedores")', async () => {
     resposta = { data: [{ id: 'P1', total: 10, status: 'faturado', customer_user_id: 'C1', order_date_kpi: '2026-10-01' }], error: null };
     rpcResposta = () => ({ data: null, error: { message: 'PEDIDOS_VENDEDOR_ACESSO: requer staff' } });
-    await expect(fetchPedidosMTDComVendedor('oben', '2026-10-01', '2026-10-07')).rejects.toThrow(
-      'pedidos_vendedor: PEDIDOS_VENDEDOR_ACESSO: requer staff',
-    );
+    await expect(fetchPedidosMTDComVendedor('oben', '2026-10-01', '2026-10-07')).rejects.toThrow('PEDIDOS_VENDEDOR_ACESSO: requer staff');
   });
 });

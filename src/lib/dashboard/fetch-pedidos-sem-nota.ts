@@ -18,10 +18,17 @@ export type PedidoSemNotaRow = PedidoSemNotaDetalhe;
  * nota?", não "quanto vendemos?". Paginada por cursor; lança em qualquer falha.
  */
 export async function fetchPedidosSemNota(selection: CompanySelection, janela: Janela): Promise<PedidoSemNotaRow[]> {
-  const pedidos = await paginarPorId<Omit<PedidoSemNotaRow, 'vendedor_user_id'>>('sales_orders (sem nota)', (cursor) => {
+  return anexarVendedor(await lerPedidosSemNota(selection, janela));
+}
+
+/** A leitura paginada, SEM vendedor_user_id: coluna fechada para authenticated (403) — vem da RPC. */
+function lerPedidosSemNota(
+  selection: CompanySelection,
+  janela: Janela,
+): Promise<Array<Omit<PedidoSemNotaRow, 'vendedor_user_id'>>> {
+  return paginarPorId<Omit<PedidoSemNotaRow, 'vendedor_user_id'>>('sales_orders (sem nota)', (cursor) => {
     let q = supabase
       .from('sales_orders')
-      // SEM vendedor_user_id: coluna fechada para authenticated (403) — vem da RPC pedidos_vendedor.
       .select('id, total, account, order_date_kpi, customer_user_id, omie_numero_pedido')
       .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
       .is('deleted_at', null)
@@ -32,5 +39,4 @@ export async function fetchPedidosSemNota(selection: CompanySelection, janela: J
     if (cursor != null) q = q.gt('id', cursor);
     return q.order('id', { ascending: true }).limit(PAGINA_JANELA);
   });
-  return anexarVendedor(pedidos);
 }
