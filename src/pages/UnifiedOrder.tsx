@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useOfflineSubmit } from '@/hooks/useOfflineSubmit';
 import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
+import { decidirDescarteRascunho } from '@/services/orderSubmission/checkout-envelope';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { AlertaCreditoCliente } from '@/components/unified-order/AlertaCreditoCliente';
 import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
@@ -317,7 +318,7 @@ const UnifiedOrder = () => {
     }),
     [h.cart, h.selectedCustomer, h.notes, h.ordemCompra],
   );
-  const { draft, clear: clearDraft, dismiss: dismissDraft } = useOrderDraft({
+  const { draft, clear: clearDraft, dismiss: dismissDraft, gravarAgora: gravarRascunhoAgora } = useOrderDraft({
     scopeKey: draftScope,
     state: draftPayload,
     shouldSave: h.cart.length > 0,
@@ -325,6 +326,16 @@ const UnifiedOrder = () => {
     // (ou bloqueio) mantém o carrinho — apagar o rascunho perderia o pedido num refresh.
     clearTrigger: h.orderSuccessOpen && h.ultimoEnvioConfirmado,
   });
+
+  // Ciclo único envelope × rascunho no ENVIO: o rascunho em disco é o carrinho exato do envelope
+  // (gravado no commit) e morre com ele no sucesso total — sem depender do debounce nem do
+  // clearTrigger desta página (que não roda se ela desmontou durante o envio).
+  useEffect(() => {
+    h.cicloRascunhoRef.current = {
+      aoComprometer: () => gravarRascunhoAgora(draftPayload),
+      aoConfirmarTudo: clearDraft,
+    };
+  }, [h.cicloRascunhoRef, gravarRascunhoAgora, draftPayload, clearDraft]);
 
   // Gate offline-first do envio: offline salva rascunho (já auto-salvo acima) e expõe
   // CTA de reconexão; nunca enfileira (submitOrder cria PV cobrado no Omie).
@@ -376,11 +387,29 @@ const UnifiedOrder = () => {
     // Não limpa o draft — ele será reescrito naturalmente conforme o vendedor edita.
   };
 
+  // Ciclo ÚNICO envelope × rascunho (follow-up Codex do #4042). O diálogo já pediu confirmação
+  // quando havia envio pendente; descartar zera os DOIS — senão o próximo pedido idêntico sai
+  // como "já enviado" e não é criado.
   const handleDiscardDraft = () => {
     clearDraft();
+    h.descartarEnvelope();
     dismissDraft();
     setRestoreOpen(false);
   };
+
+  // "Trocar e limpar": o hook zera carrinho + envelope; o rascunho em disco vai junto — restaurá-lo
+  // depois e reenviar criaria checkout NOVO e duplicaria o PV/OS já enviados.
+  const handleClearCustomer = () => {
+    if (h.clearCustomer()) clearDraft(); // barrada com envio em voo → nada é apagado
+  };
+
+  // Orçamento: o rascunho segue o desfecho NA HORA (sem esperar o debounce de 600 ms).
+  const handleSubmitQuote = () => h.submitQuote({
+    aoGravar: (restante) => {
+      if (restante === null || restante.length === 0) clearDraft();
+      else gravarRascunhoAgora({ ...draftPayload, cart: restante });
+    },
+  });
 
   if (h.authLoading) {
     return <PageSkeleton variant="form" />;
@@ -440,7 +469,7 @@ const UnifiedOrder = () => {
               customers={h.customers} searchingCustomers={h.searchingCustomers}
               loadingCustomer={h.loadingCustomer} validatingVendedor={h.validatingVendedor}
               vendedorDivergencias={h.vendedorDivergencias}
-              onSelectCustomer={h.selectCustomer} onClearCustomer={h.clearCustomer}
+              onSelectCustomer={h.selectCustomer} onClearCustomer={handleClearCustomer}
               searchFalhou={h.customerSearchFalhou} onTentarDeNovo={h.tentarBuscaDeNovo} itensNoCarrinho={h.cart.length}
             />
           )}
@@ -624,7 +653,7 @@ const UnifiedOrder = () => {
               isOrdemCompraCustomer={h.isOrdemCompraCustomer}
               readyByDate={h.readyByDate} setReadyByDate={h.setReadyByDate}
               onSubmit={offlineSubmit.onSubmit}
-              onSubmitQuote={h.submitQuote}
+              onSubmitQuote={handleSubmitQuote}
               offline={offlineSubmit.offline}
             />
           )}
@@ -697,6 +726,7 @@ const UnifiedOrder = () => {
           itemCount={Array.isArray(draft.state.cart) ? draft.state.cart.length : 0}
           onRestore={handleRestore}
           onDiscard={handleDiscardDraft}
+          envioPendente={decidirDescarteRascunho(h.envelopeCheckoutAtual()) === 'confirmar'}
         />
       )}
 

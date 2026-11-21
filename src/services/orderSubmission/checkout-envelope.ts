@@ -51,3 +51,14 @@ export function decideCheckoutEnvelope(stored: CheckoutEnvelope | null, fingerpr
   if (stored.committed) return 'conflict';
   return 'new';
 }
+
+/**
+ * Ciclo de vida ÚNICO envelope × rascunho (follow-up Codex do #4042). O envelope só existe enquanto
+ * há um envio amarrado (o sucesso TOTAL o zera); se ele sobrevive ao descarte do rascunho, o
+ * próximo pedido IDÊNTICO sai como 'reuse' ("já enviado") e não é criado. Então o descarte com
+ * envelope presente pede confirmação e zera os dois; sem envelope, descarta direto.
+ */
+export type DescarteRascunho = 'descartar' | 'confirmar';
+export function decidirDescarteRascunho(stored: CheckoutEnvelope | null): DescarteRascunho {
+  return stored ? 'confirmar' : 'descartar';
+}

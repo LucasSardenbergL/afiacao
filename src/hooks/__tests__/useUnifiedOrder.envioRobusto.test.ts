@@ -72,3 +72,63 @@ describe('useUnifiedOrder — fiação das guardas de envio', () => {
     expect(selecao).toContain('setSelectedParcelaColacor: escolherParcelaColacor,');
   });
 });
+
+// ── Ciclo ÚNICO envelope × rascunho (follow-up Codex do #4042) — FIAÇÃO na página/hook ──
+// Comportamento: ciclo-rascunho.test.ts, useOrderDraft.ciclo.test.ts, RestoreDraftDialog.envioPendente.
+describe('UnifiedOrder — envelope e rascunho morrem juntos', () => {
+  function corpoPagina(nome: string): string {
+    const ini = pagina.indexOf(`const ${nome} = `);
+    expect(ini, `${nome} não encontrado`).toBeGreaterThan(-1);
+    return pagina.slice(ini, pagina.indexOf('\n  };', ini));
+  }
+
+  it('bug 1: descartar o rascunho zera o envelope (pedido idêntico seguinte é NOVO)', () => {
+    expect(corpoPagina('handleDiscardDraft')).toContain('h.descartarEnvelope();');
+    expect(pagina).toContain("envioPendente={decidirDescarteRascunho(h.envelopeCheckoutAtual()) === 'confirmar'}");
+  });
+
+  it('bug 2: "Trocar e limpar" apaga o rascunho em disco junto com o envelope', () => {
+    expect(corpoPagina('handleClearCustomer')).toContain('if (h.clearCustomer()) clearDraft();');
+    expect(pagina).toContain('onClearCustomer={handleClearCustomer}');
+    expect(pagina).not.toContain('onClearCustomer={h.clearCustomer}');
+  });
+
+  it('bug 3: orçamento salvo amarra o rascunho ao desfecho NA HORA (total apaga, parcial grava o resto)', () => {
+    const q = corpoPagina('handleSubmitQuote');
+    expect(q).toContain('clearDraft();');
+    expect(q).toContain('gravarRascunhoAgora({ ...draftPayload, cart: restante });');
+    expect(pagina).toContain('onSubmitQuote={handleSubmitQuote}');
+    const corpo = corpoDo('submitQuote');
+    // total: aoGravar(null) ANTES do navigate; parcial: o MESMO recorte do carrinho vai pro disco
+    expect(corpo.indexOf('opts?.aoGravar?.(null);')).toBeGreaterThan(-1);
+    expect(corpo.indexOf('opts?.aoGravar?.(null);')).toBeLessThan(corpo.indexOf("navigate('/sales/quotes');"));
+    expect(corpo).toContain('opts?.aoGravar?.(carrinhoAposOrcamentoParcial(cart, salvas));');
+  });
+});
+
+// ── Pós-Codex (ciclo único): troca durante envio, sucesso com a tela desmontada, envio antes do debounce ──
+describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
+  it('troca de cliente com envio em voo é barrada e a página NÃO apaga o rascunho', () => {
+    const ini = hook.indexOf('const clearCustomer = useCallback(');
+    const corpo = hook.slice(ini, hook.indexOf('\n  }, [', ini));
+    expect(corpo).toContain('if (submittingRef.current) { avisarCarrinhoTravado(); return false; }');
+    expect(pagina).toContain('if (h.clearCustomer()) clearDraft();');
+  });
+
+  it('orçamento com envio de pedido pendente é barrado ANTES de gravar (sem 2ª linha da conta enviada)', () => {
+    const corpo = corpoDo('submitQuote');
+    const barra = corpo.indexOf('if (checkoutEnvRef.current) {');
+    expect(barra).toBeGreaterThan(-1);
+    expect(barra).toBeLessThan(corpo.indexOf('submitQuoteService('));
+  });
+
+  it('envio: rascunho gravado no commit do envelope e apagado no sucesso TOTAL dentro do hook', () => {
+    const corpo = corpoDo('submitOrder');
+    const commit = corpo.indexOf('persistCheckoutEnv(checkoutEnvRef.current);\n      cicloRascunhoRef.current.aoComprometer?.();');
+    expect(commit).toBeGreaterThan(-1);
+    expect(commit).toBeLessThan(corpo.indexOf('submitOrderService('));
+    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; persistCheckoutEnv\(null\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
+    expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora(draftPayload),');
+    expect(pagina).toContain('aoConfirmarTudo: clearDraft,');
+  });
+});
