@@ -195,3 +195,7 @@ porque mockam o supabase, que não conhece o ACL.
   o `UPDATE` do reuse filtra só por `id`, e uma corrida com o vínculo do PV pode sobrescrever a
   observação local de um pedido já enviado. A edge recusa o reenvio, então o pedido no Omie não muda.
 - **Aplicada:** `db:aplicar`, recibo #1271 (2026-11-21), conferida por psql-ro.
+- **`types.ts`:** com o apply antes do merge, o bot do Lovable regenerou o `types.ts` da main já com
+  `pedido_por_checkout`, em outro ponto do bloco. O git mesclaria sem conflito e duplicaria a chave.
+  Conferido com `git log origin/main -- src/integrations/supabase/types.ts` antes do merge, como
+  manda a lição do #4061, e a cópia feita à mão foi retirada.

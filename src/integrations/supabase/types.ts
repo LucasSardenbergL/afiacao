@@ -27879,15 +27879,6 @@ export type Database = {
         Returns: undefined
       }
       pedidos_programados_watchdog_claims: { Args: never; Returns: number }
-      pedido_por_checkout: {
-        Args: { p_account: string; p_checkout_id: string }
-        Returns: {
-          id: string
-          omie_pedido_id: number
-          pv_consulta: Json
-          pv_reconciliado: boolean
-        }[]
-      }
       pedidos_vendedor: {
         Args: { p_ids: string[] }
         Returns: {
