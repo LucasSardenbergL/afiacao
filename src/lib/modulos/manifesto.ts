@@ -198,6 +198,8 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/financeiro/extrato/__tests__/saldo-manual.test.ts",
       "src/components/financeiro/extrato/__tests__/ResumoDiarioExtrato.test.tsx",
       "src/components/financeiro/extrato/__tests__/AncoraManualExtrato.test.tsx",
+      "src/components/financeiro/extrato/__tests__/formatar.test.ts",
+      "src/pages/__tests__/FinanceiroExtratoBancario.test.tsx",
       "src/services/__tests__/financeiroExtratoBancario.test.ts",
       "src/__tests__/financeiro.test.ts",
       "src/pages/__tests__/FinanceiroAnalytics.baixa-indisponivel.test.tsx",
