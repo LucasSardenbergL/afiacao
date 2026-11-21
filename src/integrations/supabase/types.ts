@@ -2095,6 +2095,365 @@ export type Database = {
         }
         Relationships: []
       }
+      credito_aprovador: {
+        Row: {
+          incluido_em: string
+          motivo: string
+          user_id: string
+        }
+        Insert: {
+          incluido_em?: string
+          motivo: string
+          user_id: string
+        }
+        Update: {
+          incluido_em?: string
+          motivo?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      credito_autorizacao: {
+        Row: {
+          autorizada: boolean
+          autorizado_por: string
+          created_at: string
+          id: string
+          motivo: string
+          prazo_max_dias: number | null
+          revisao: string
+          solicitacao_id: string
+          valido_ate: string
+          valor_max_brl: number
+        }
+        Insert: {
+          autorizada: boolean
+          autorizado_por: string
+          created_at?: string
+          id: string
+          motivo: string
+          prazo_max_dias?: number | null
+          revisao: string
+          solicitacao_id: string
+          valido_ate: string
+          valor_max_brl: number
+        }
+        Update: {
+          autorizada?: boolean
+          autorizado_por?: string
+          created_at?: string
+          id?: string
+          motivo?: string
+          prazo_max_dias?: number | null
+          revisao?: string
+          solicitacao_id?: string
+          valido_ate?: string
+          valor_max_brl?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credito_autorizacao_solicitacao_id_fkey"
+            columns: ["solicitacao_id"]
+            isOneToOne: true
+            referencedRelation: "credito_solicitacao"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credito_decisao_pedido: {
+        Row: {
+          autorizacao_id: string | null
+          company: string
+          created_at: string
+          exposicao_reservas_brl: number | null
+          exposicao_titulos_brl: number | null
+          faixa: string
+          grupo_assinatura: string | null
+          grupo_user_id: string | null
+          id: string
+          limite_brl: number | null
+          limite_versao: number | null
+          modo: string
+          motivo: string
+          omie_codigo_cliente: number | null
+          piso: Json
+          prazo_dias: number | null
+          prazo_max_dias: number | null
+          reserva_anterior_brl: number | null
+          revisao: string
+          sales_order_id: string
+          solicitante: string | null
+          valor_brl: number
+        }
+        Insert: {
+          autorizacao_id?: string | null
+          company: string
+          created_at?: string
+          exposicao_reservas_brl?: number | null
+          exposicao_titulos_brl?: number | null
+          faixa: string
+          grupo_assinatura?: string | null
+          grupo_user_id?: string | null
+          id: string
+          limite_brl?: number | null
+          limite_versao?: number | null
+          modo: string
+          motivo: string
+          omie_codigo_cliente?: number | null
+          piso: Json
+          prazo_dias?: number | null
+          prazo_max_dias?: number | null
+          reserva_anterior_brl?: number | null
+          revisao: string
+          sales_order_id: string
+          solicitante?: string | null
+          valor_brl: number
+        }
+        Update: {
+          autorizacao_id?: string | null
+          company?: string
+          created_at?: string
+          exposicao_reservas_brl?: number | null
+          exposicao_titulos_brl?: number | null
+          faixa?: string
+          grupo_assinatura?: string | null
+          grupo_user_id?: string | null
+          id?: string
+          limite_brl?: number | null
+          limite_versao?: number | null
+          modo?: string
+          motivo?: string
+          omie_codigo_cliente?: number | null
+          piso?: Json
+          prazo_dias?: number | null
+          prazo_max_dias?: number | null
+          reserva_anterior_brl?: number | null
+          revisao?: string
+          sales_order_id?: string
+          solicitante?: string | null
+          valor_brl?: number
+        }
+        Relationships: []
+      }
+      credito_limite: {
+        Row: {
+          aprovado_por: string
+          ficha_calculada_em: string
+          grupo_assinatura: string
+          grupo_user_id: string
+          limite_brl: number
+          origem_proposta_id: string
+          prazo_max_dias: number
+          risco: string
+          versao: number
+          vigente_desde: string
+        }
+        Insert: {
+          aprovado_por: string
+          ficha_calculada_em: string
+          grupo_assinatura: string
+          grupo_user_id: string
+          limite_brl: number
+          origem_proposta_id: string
+          prazo_max_dias: number
+          risco: string
+          versao: number
+          vigente_desde?: string
+        }
+        Update: {
+          aprovado_por?: string
+          ficha_calculada_em?: string
+          grupo_assinatura?: string
+          grupo_user_id?: string
+          limite_brl?: number
+          origem_proposta_id?: string
+          prazo_max_dias?: number
+          risco?: string
+          versao?: number
+          vigente_desde?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credito_limite_origem_proposta_id_fkey"
+            columns: ["origem_proposta_id"]
+            isOneToOne: false
+            referencedRelation: "credito_limite_proposta"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credito_limite_proposta: {
+        Row: {
+          confianca: number | null
+          created_at: string
+          decidido_em: string | null
+          decidido_por: string | null
+          ficha: Json
+          ficha_calculada_em: string
+          grupo_assinatura: string
+          grupo_user_id: string
+          id: string
+          limite_sugerido_brl: number
+          limite_versao_base: number | null
+          modelo: string | null
+          motivo_decisao: string | null
+          prazo_max_dias: number
+          risco: string
+          saida_ia: Json | null
+          status: string
+          travas: Json | null
+          versao_politica: string | null
+        }
+        Insert: {
+          confianca?: number | null
+          created_at?: string
+          decidido_em?: string | null
+          decidido_por?: string | null
+          ficha: Json
+          ficha_calculada_em: string
+          grupo_assinatura: string
+          grupo_user_id: string
+          id?: string
+          limite_sugerido_brl: number
+          limite_versao_base?: number | null
+          modelo?: string | null
+          motivo_decisao?: string | null
+          prazo_max_dias: number
+          risco: string
+          saida_ia?: Json | null
+          status?: string
+          travas?: Json | null
+          versao_politica?: string | null
+        }
+        Update: {
+          confianca?: number | null
+          created_at?: string
+          decidido_em?: string | null
+          decidido_por?: string | null
+          ficha?: Json
+          ficha_calculada_em?: string
+          grupo_assinatura?: string
+          grupo_user_id?: string
+          id?: string
+          limite_sugerido_brl?: number
+          limite_versao_base?: number | null
+          modelo?: string | null
+          motivo_decisao?: string | null
+          prazo_max_dias?: number
+          risco?: string
+          saida_ia?: Json | null
+          status?: string
+          travas?: Json | null
+          versao_politica?: string | null
+        }
+        Relationships: []
+      }
+      credito_reserva: {
+        Row: {
+          company: string
+          created_at: string
+          decisao_id: string
+          encerrada_em: string | null
+          grupo_user_id: string
+          id: string
+          modo: string
+          motivo_encerramento: string | null
+          omie_codigo_cliente: number
+          revisao: string
+          sales_order_id: string
+          status: string
+          valor_brl: number
+        }
+        Insert: {
+          company: string
+          created_at?: string
+          decisao_id: string
+          encerrada_em?: string | null
+          grupo_user_id: string
+          id: string
+          modo: string
+          motivo_encerramento?: string | null
+          omie_codigo_cliente: number
+          revisao: string
+          sales_order_id: string
+          status?: string
+          valor_brl: number
+        }
+        Update: {
+          company?: string
+          created_at?: string
+          decisao_id?: string
+          encerrada_em?: string | null
+          grupo_user_id?: string
+          id?: string
+          modo?: string
+          motivo_encerramento?: string | null
+          omie_codigo_cliente?: number
+          revisao?: string
+          sales_order_id?: string
+          status?: string
+          valor_brl?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credito_reserva_decisao_id_fkey"
+            columns: ["decisao_id"]
+            isOneToOne: false
+            referencedRelation: "credito_decisao_pedido"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credito_solicitacao: {
+        Row: {
+          company: string
+          created_at: string
+          decidida_em: string | null
+          decisao_id: string
+          id: string
+          motivo: string
+          prazo_dias: number | null
+          revisao: string
+          sales_order_id: string
+          status: string
+          valor_brl: number
+        }
+        Insert: {
+          company: string
+          created_at?: string
+          decidida_em?: string | null
+          decisao_id: string
+          id: string
+          motivo: string
+          prazo_dias?: number | null
+          revisao: string
+          sales_order_id: string
+          status?: string
+          valor_brl: number
+        }
+        Update: {
+          company?: string
+          created_at?: string
+          decidida_em?: string | null
+          decisao_id?: string
+          id?: string
+          motivo?: string
+          prazo_dias?: number | null
+          revisao?: string
+          sales_order_id?: string
+          status?: string
+          valor_brl?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credito_solicitacao_decisao_id_fkey"
+            columns: ["decisao_id"]
+            isOneToOne: false
+            referencedRelation: "credito_decisao_pedido"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       credito_virada_grupo: {
         Row: {
           aplicada_em: string
@@ -26225,6 +26584,20 @@ export type Database = {
         }
         Returns: Json
       }
+      credito_aprovar_proposta: {
+        Args: { p_motivo?: string; p_proposta_id: string }
+        Returns: Json
+      }
+      credito_autorizar_solicitacao: {
+        Args: {
+          p_autorizar: boolean
+          p_motivo: string
+          p_solicitacao_id: string
+          p_validade_horas?: number
+        }
+        Returns: string
+      }
+      credito_grupo_assinatura: { Args: { p_raiz: string }; Returns: string }
       credito_grupo_pares: {
         Args: { p_user_id: string }
         Returns: {
@@ -26234,6 +26607,34 @@ export type Database = {
           user_id: string
         }[]
       }
+      credito_grupo_raiz: {
+        Args: { p_codigo: number; p_company: string }
+        Returns: Json
+      }
+      credito_portao: { Args: { p_chave: string }; Returns: undefined }
+      credito_propor_limite: {
+        Args: {
+          p_confianca: number
+          p_ficha: Json
+          p_ficha_calculada_em: string
+          p_grupo_assinatura: string
+          p_grupo_user_id: string
+          p_limite_brl: number
+          p_limite_versao_base: number
+          p_modelo: string
+          p_prazo_max_dias: number
+          p_risco: string
+          p_saida_ia: Json
+          p_travas: Json
+          p_versao_politica: string
+        }
+        Returns: string
+      }
+      credito_recusar_proposta: {
+        Args: { p_motivo: string; p_proposta_id: string }
+        Returns: undefined
+      }
+      credito_sou_aprovador: { Args: never; Returns: boolean }
       credito_vinculo_aviso: { Args: { p_cnpj: string }; Returns: Json }
       credito_vinculo_aviso_registrar: {
         Args: {
