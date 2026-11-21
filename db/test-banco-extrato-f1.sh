@@ -57,7 +57,9 @@ if [ "${1:-}" = "--falsificar" ]; then
     t2_gerado_em_opcional:t2_gerado_em_ausente+t2_gerado_em_sem_fuso
     t2_ancora_sem_conferir_arquivo:t2_ancora_diverge_do_arquivo+t2_ancora_diverge_da_vespera_do_arquivo
     t2_banco_sem_normalizar:t2_banco_zero_a_esquerda+t2_banco_so_zeros_incompleto
-    t2_gerado_em_futuro_aceito:t2_gerado_em_no_futuro"
+    t2_gerado_em_futuro_aceito:t2_gerado_em_no_futuro+t2_reavalia_gerado_em_no_futuro_segue_recusado
+    t2_futuro_so_now:t2_reavalia_gerado_em_no_futuro_segue_recusado
+    t2_fuso_fora_da_faixa_escapa:t2_gerado_em_fuso_fora_da_faixa"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-banco-extrato-f1.XXXXXX")"
   echo "== CONTROLE (locale=${LOCALE_TESTE:-C}) =="
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -194,7 +196,11 @@ case "${SABOTAGEM:-}" in
     RAISE EXCEPTION 'banco_conta_registrar_ancora: ANCORA_DIVERGE" "  IF false THEN
     RAISE EXCEPTION 'banco_conta_registrar_ancora: ANCORA_DIVERGE" ;;
   # Ruling 8: gerado_em adiantado deixa de ser recusado
-  t2_gerado_em_futuro_aceito) sabotar "IF v_gerado_em > now() + interval '10 minutes' THEN" "IF false THEN" ;;
+  t2_gerado_em_futuro_aceito) sabotar "IF v_gerado_em > least(now(), v_enviado_ant) + interval '10 minutes' THEN" "IF false THEN" ;;
+  # N1: a reavaliacao volta a medir so contra now() (o 1o envio e ignorado)
+  t2_futuro_so_now)     sabotar "IF v_gerado_em > least(now(), v_enviado_ant) + interval '10 minutes' THEN" "IF v_gerado_em > now() + interval '10 minutes' THEN" ;;
+  # N2: o handler deixa de capturar o 22009 do fuso fora de faixa
+  t2_fuso_fora_da_faixa_escapa) sabotar " OR invalid_time_zone_displacement_value THEN" " THEN" ;;
   # Minor (a): codigo do banco comparado sem normalizar zeros a esquerda
   t2_banco_sem_normalizar) sabotar "ltrim(regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g'), '0')" \
                                    "regexp_replace(coalesce(v_ext->>'banco', ''), '[^0-9]', '', 'g')" ;;
@@ -315,6 +321,8 @@ for d in prove prove_pre; do
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres "$d" || { echo "createdb $d falhou"; exit 1; }
   stubs "$d" || { echo "stubs $d falharam"; exit 1; }
 done
+# evidencia do locale REAL do cluster (o que o initdb gravou), nao do env: datcollate/datctype de template1 e prove
+echo "LOCALE_INITDB template1=$(DB=template1 Pq -c "SELECT datcollate||'/'||datctype FROM pg_database WHERE datname='template1'" 2>&1) prove=$(Pq -c "SELECT datcollate||'/'||datctype FROM pg_database WHERE datname='prove'" 2>&1) LC_ALL=$LC_ALL"
 
 # fixture de contas Omie: colacor = principal + Pix Itau ativa + Pix inativa + outro banco; oben = so a principal;
 # colacor_sc = so outro banco (sem Itau -> nenhuma banco_conta, e nenhuma POS deve exigir uma).
@@ -584,13 +592,27 @@ eq "t2_gerado_em_no_futuro gerado_em = now() + 1 dia: recusado, nenhuma linha" \
 J=$(GERADO_P="$(ISO_MAIS '5 minutes')" pay 152 "$C28" 28 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
 eq "t2_gerado_em_tolerancia_5min controle: now() + 5 min segue para as demais regras (aceito)" \
    "$(reg "$J")/$(nlin "$C28")" "aceito|-/1"
+# N1: recusado por gerado_em no futuro e reenviado DEPOIS que o relogio alcanca o horario mentido. Simula: o 1o envio
+# (now()+1 dia, recusado) tem enviado_em empurrado 2 dias para tras; o reenvio do MESMO hash traz gerado_em = now()-1h,
+# ja no passado, mas 2 dias DEPOIS do 1o envio dos mesmos bytes -> continua recusado, 0 linhas.
+C29=$(conta_nova 29)
+J=$(GERADO_P="$(ISO_MAIS '1 day')" pay 154 "$C29" 29 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+R1=$(reg "$J")
+Pq -c "UPDATE public.banco_extrato_arquivo SET enviado_em = now() - interval '2 days' WHERE banco_conta_id = '$C29' AND sha256 = '$(sha 154)'" >/dev/null 2>&1
+J=$(GERADO_P="$(ISO_MAIS '-1 hour')" pay 154 "$C29" 29 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_reavalia_gerado_em_no_futuro_segue_recusado 1o envio recusado | reenvio apos o horario mentido: recusado, mesma linha, 0 linhas" \
+   "$R1/$(reg "$J")/$(narq "$C29")/$(nlin "$C29")" "recusado|gerado_em_no_futuro/recusado|gerado_em_no_futuro/1/0"
 C27=$(conta_nova 27)
 J=$(SEM_GERADO=1 pay 148 "$C27" 27 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
 eq "t2_gerado_em_ausente contrato quebrado = 22023, nada gravado" \
-   "$(estado '' service_role "SELECT public.banco_extrato_registrar(\$j\$$J\$j\$::jsonb)")/$(narq "$C27")" "22023/0"
+   "$(estado_marca '' service_role "SELECT public.banco_extrato_registrar(\$j\$$J\$j\$::jsonb)" 'payload invalido (gerado_em)')/$(narq "$C27")" "22023|t/0"
 J=$(GERADO_P='2026-10-03T10:00:00' pay 149 "$C27" 27 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
-eq "t2_gerado_em_sem_fuso sem fuso explicito (dependeria do TimeZone da sessao) = 22023, nada gravado" \
-   "$(estado '' service_role "SELECT public.banco_extrato_registrar(\$j\$$J\$j\$::jsonb)")/$(narq "$C27")" "22023/0"
+eq "t2_gerado_em_sem_fuso sem fuso explicito (dependeria do TimeZone da sessao) = 22023 com a marca, nada gravado" \
+   "$(estado_marca '' service_role "SELECT public.banco_extrato_registrar(\$j\$$J\$j\$::jsonb)" 'payload invalido (gerado_em)')/$(narq "$C27")" "22023|t/0"
+# N2: fuso fora de +-15:59 (22009 no cast) tambem e contrato = 22023 com a marca
+J=$(GERADO_P='2026-10-03T10:00:00+16:00' pay 153 "$C27" 27 $D1 $D1 1000 1500 "$(lin $D1 C 500)")
+eq "t2_gerado_em_fuso_fora_da_faixa +16:00 = 22023 com a marca (nao 22009), nada gravado" \
+   "$(estado_marca '' service_role "SELECT public.banco_extrato_registrar(\$j\$$J\$j\$::jsonb)" 'payload invalido (gerado_em)')/$(narq "$C27")" "22023|t/0"
 
 # ── linhas e fechamento ──
 C06=$(conta_nova 06)

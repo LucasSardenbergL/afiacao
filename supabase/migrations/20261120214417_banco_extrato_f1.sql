@@ -473,6 +473,7 @@ DECLARE
   v_qtd          int;
   v_arquivo_id   uuid;
   v_status_ant   text;
+  v_enviado_ant  timestamptz;
   v_status       text;
   v_motivo       text;
   v_detalhe      text;
@@ -551,7 +552,8 @@ BEGIN
   END IF;
   BEGIN
     v_gerado_em := (p->>'gerado_em')::timestamptz;
-  EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format THEN
+  EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format OR invalid_time_zone_displacement_value THEN
+    -- 22009 (fuso fora de +-15:59, ex. +16:00) tambem e contrato quebrado, nao erro desconhecido
     RAISE EXCEPTION 'banco_extrato_registrar: payload invalido (gerado_em)' USING ERRCODE = '22023';
   END;
   v_gerado_sp := (v_gerado_em AT TIME ZONE 'America/Sao_Paulo')::date;
@@ -579,7 +581,7 @@ BEGIN
   v_qtd := jsonb_array_length(v_linhas);
 
   -- 1. idempotencia: aceito = ja_importado; outro status = reavalia e atualiza ESSA linha.
-  SELECT a.id, a.status INTO v_arquivo_id, v_status_ant
+  SELECT a.id, a.status, a.enviado_em INTO v_arquivo_id, v_status_ant, v_enviado_ant
     FROM public.banco_extrato_arquivo a
    WHERE a.banco_conta_id = v_conta_id AND a.sha256 = v_sha;
   IF v_status_ant = 'aceito' THEN
@@ -615,10 +617,12 @@ BEGIN
     -- 3b. ...e o dia ainda estava aberto quando o BANCO gerou o arquivo (Ruling 6): baixado as 10h do dia X
     --     e enviado em X+1, o arquivo traz o dia X PARCIAL. Motivo proprio (o dia corrente e o do upload).
     --     Antes: gerado_em no FUTURO (tolerancia de 10 min de relogio) e recusado (Ruling 8) — um DTSERVER
-    --     adiantado faria o dia parecer fechado e contornaria a regra abaixo.
-    IF v_gerado_em > now() + interval '10 minutes' THEN
+    --     adiantado faria o dia parecer fechado e contornaria a regra abaixo. Na REAVALIACAO do mesmo hash
+    --     mede contra o 1o envio (least ignora o NULL do 1o envio = so now()): os bytes ja existiam em
+    --     enviado_em, entao um gerado_em posterior e mentira mesmo depois que o relogio o alcanca.
+    IF v_gerado_em > least(now(), v_enviado_ant) + interval '10 minutes' THEN
       v_status := 'recusado'; v_motivo := 'gerado_em_no_futuro';
-      v_detalhe := format('gerado_em=%s agora=%s', v_gerado_em, now());
+      v_detalhe := format('gerado_em=%s referencia=%s', v_gerado_em, least(now(), v_enviado_ant));
       EXIT avalia;
     END IF;
     IF v_fim >= v_gerado_sp THEN
