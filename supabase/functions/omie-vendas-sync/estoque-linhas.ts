@@ -23,7 +23,7 @@ export interface ItemPosEstoqueVendas {
   nSaldo?: unknown;
 }
 
-export interface LinhaEstoque<A extends string = string> {
+interface LinhaEstoque<A extends string = string> {
   id: string;
   omie_codigo_produto: number;
   account: A;
