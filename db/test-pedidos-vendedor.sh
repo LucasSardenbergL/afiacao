@@ -139,7 +139,7 @@ case "${SABOTAGEM:-}" in
   "") ;;
   sem_gate)         sabotar 's/  IF NOT \(coalesce\(auth\.role\(\)/  IF false AND NOT (coalesce(auth.role()/'; desliga_pos ;;
   sem_employee)     sabotar 's/\n\s+OR public\.has_role\(v_uid, .employee.::public\.app_role\)\)/)/'; desliga_pos ;;
-  sem_lote)         sabotar 's/IF p_ids IS NULL OR cardinality/IF false AND p_ids IS NULL OR cardinality/'; desliga_pos ;;
+  sem_lote)         sabotar 's/IF p_ids IS NULL OR cardinality\(p_ids\) = 0 OR cardinality\(p_ids\) > 1000 THEN/IF false THEN/'; desliga_pos ;;
   invoker)          sabotar 's/^SECURITY DEFINER$/SECURITY INVOKER/m'; desliga_pos ;;
   pos_grant_coluna) sabotar 's/^(GRANT EXECUTE ON FUNCTION public\.pedidos_vendedor.*)$/$1\nGRANT SELECT (vendedor_user_id) ON public.sales_orders TO authenticated;/m' ;;
   pos_anon)         sabotar 's/TO authenticated, service_role;/TO authenticated, service_role, anon;/' ;;
