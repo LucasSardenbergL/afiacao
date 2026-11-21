@@ -37,6 +37,7 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
   'public.liberar_reserva_checkout': { tipo: 'lookup', motivo: 'ATP 3.2: preserva a reserva cujo pedido já virou PV no Omie (por id)' },
   'public.reservar_estoque': { tipo: 'lookup', motivo: 'ATP 3.2: recusa substituir reserva cujo pedido já virou PV no Omie (por id)' },
   'public.atp_gate_pedido': { tipo: 'lookup', motivo: 'ATP: gate de UM pedido (por id)' },
+  'public.sales_order_excluir_sem_envio': { tipo: 'lookup', motivo: 'claim envio × exclusão: apaga UM pedido (por id) se nenhum envio o reivindicou; relê o status dele' },
   'public.atp_reservas_pendentes': { tipo: 'lookup', motivo: 'ATP: lista reservas ativas com o status do pedido vinculado (por id da reserva)' },
   'public.ensure_picking_task_for_sales_order': { tipo: 'lookup', motivo: 'picking: cria a tarefa de UM pedido (por id), com o gate operacional próprio' },
   'public.order_items_herdar_created_at_omie': { tipo: 'lookup', motivo: 'gatilho: o item herda a data do SEU pedido (por id)' },
