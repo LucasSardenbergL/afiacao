@@ -151,3 +151,17 @@ vendo a falha) e usa `codigoParaParcelaColacor` (`parcela-colacor.ts`): lookup >
 cadastro > **nada** (não consulta; prazo fica '999'). Seleção trocada durante o lookup não gasta
 ListarPedidos. A7 intacto. Só front. Codex: 3 P2 (seleção velha consultando; teste cego à conta do
 lookup e a um `.catch`) → corrigidos. Falsificado: 8 sabotagens nos dois locales.
+Rodada 2 — PR B, **dados errados ou perdidos** (2026-11-21, só front · Publish): **B1** `notes` ia no
+PV/OS/orçamento mas a barra do carrinho não tinha campo → `Textarea` "Observações do pedido".
+**B2** dia de entrega e OC vazavam para o próximo pedido (só `setNotes('')` no sucesso) →
+`limparCamposDoPedido` no sucesso TOTAL e no orçamento salvo. **B3** "Dia de entrega" montava
+seg–sex da semana corrente (`startOfWeek`: na quinta oferecia dias passados) → `proximosDiasUteis`
+(hoje entra se útil; `aria-pressed`). **B4** serviço a orçar virava R$ 0,00 no resumo, WhatsApp e
+cupom → `precoServicoParaExibicao` (null/≤0 = "A orçar"), `itensAOrcar` no `lastOrderData` e total
+"Subtotal conhecido · Total a definir"; produto sem preço na busca = "Sob consulta". O `unitPrice` do
+payload da OS NÃO mudou. **B5** estoque null = "Est: 0" vermelho → selo neutro "Est: —". **B6** o
+"Horário preferido" da Afiação se perdia → vai na observação da OS (`orderData.notes` → `cObsOS`,
+contrato da edge intacto; balcão não leva). **B7** o rascunho não guardava o prazo escolhido à mão
+(ATP bloqueia → refresh → restaura → PV com a `ultima_parcela`) → `parcelasManuais` no rascunho
+(só a conta marcada NESTA seleção) reaplicado pelos setters exportados; sem cliente na tela fica
+pendente até selecionar o cliente DO rascunho (outro = descarta).

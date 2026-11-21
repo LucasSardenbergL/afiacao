@@ -43,6 +43,8 @@ interface SubmitPayment {
 interface SubmitDelivery {
   option: DeliveryOption;
   selectedAddress: AddressData | undefined;
+  /** B6 (rodada 2): horário preferido de coleta/entrega da Afiação (`TIME_SLOTS[].id`). Vazio = não escolhido. */
+  timeSlot?: string;
 }
 
 interface SubmitMeta {
@@ -106,7 +108,8 @@ export interface SubmitErrorEntry {
 export interface LastOrderItem {
   description: string;
   quantity: number;
-  unitPrice: number;
+  /** B4 (rodada 2): `null` = serviço A ORÇAR — o resumo e o WhatsApp mostram "A orçar", nunca R$ 0,00. */
+  unitPrice: number | null;
   codigo?: string;
   unidade?: string;
   tintCorId?: string;
@@ -117,7 +120,10 @@ export interface LastOrderDataShape {
   customerName: string;
   customerDocument: string;
   items: LastOrderItem[];
+  /** Soma do que tem preço. Com `itensAOrcar > 0` é SUBTOTAL CONHECIDO, não o total do pedido. */
   total: number;
+  /** B4 (rodada 2): quantos itens saíram sem preço (a orçar). 0 = `total` é o total de fato. */
+  itensAOrcar: number;
   orderNumbers: string[];
   printDataList: PrintOrderData[];
 }

@@ -26,3 +26,34 @@ describe('OrderSuccessDialog — título pelo desfecho real (A6)', () => {
     expect(screen.getByText('Pedido criado com sucesso!')).toBeTruthy();
   });
 });
+
+// B4 (rodada 2): serviço "a orçar" aparecia como R$ 0,00 e o total como se fosse o do pedido.
+describe('OrderSuccessDialog — a orçar (B4)', () => {
+  it('item sem preço sai "A orçar" e o total vira "Subtotal conhecido" com o aviso', () => {
+    render(
+      <OrderSuccessDialog
+        open onOpenChange={vi.fn()} customerName="ACME"
+        items={[{ description: 'Lixa', quantity: 2, unitPrice: 10 }, { description: 'Afiação serra', quantity: 1, unitPrice: null }]}
+        total={20} itensAOrcar={1}
+        orderNumbers={['PV 1']} onViewOrder={vi.fn()} onShare={vi.fn()} envioConfirmado
+      />,
+    );
+    expect(screen.getByText('A orçar')).toBeTruthy();
+    expect(screen.queryByText(/R\$\s0,00/)).toBeNull();
+    expect(screen.getByText('Subtotal conhecido')).toBeTruthy();
+    expect(screen.queryByText('Total')).toBeNull();
+    expect(screen.getByText(/Total a definir: 1 item a orçar/)).toBeTruthy();
+  });
+
+  it('sem item a orçar: "Total" de sempre', () => {
+    render(
+      <OrderSuccessDialog
+        open onOpenChange={vi.fn()} customerName="ACME"
+        items={[{ description: 'Lixa', quantity: 2, unitPrice: 10 }]} total={20}
+        orderNumbers={['PV 1']} onViewOrder={vi.fn()} onShare={vi.fn()} envioConfirmado
+      />,
+    );
+    expect(screen.getByText('Total')).toBeTruthy();
+    expect(screen.queryByText('Subtotal conhecido')).toBeNull();
+  });
+});

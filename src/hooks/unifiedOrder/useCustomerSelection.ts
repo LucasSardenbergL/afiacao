@@ -5,7 +5,7 @@ import type { Json } from '@/integrations/supabase/types';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
-import { marcaParcelaManualVazia, podeSugerirParcela, type MarcaParcelaManual } from './parcela-manual';
+import { marcaParcelaManualVazia, podeSugerirParcela, parcelasManuaisParaRascunho, type MarcaParcelaManual } from './parcela-manual';
 import { codigoParaParcelaColacor, type LookupClienteColacor } from './parcela-colacor';
 import { maskDocument } from '@/lib/format';
 import { eqText, orFilter } from '@/lib/postgrest';
@@ -123,6 +123,14 @@ export function useCustomerSelection({
     parcelaManualRef.current = { ...parcelaManualRef.current, colacor: selectionTokenRef.current };
     setSelectedParcelaColacor(v);
   }, []);
+  // B7 (rodada 2): o rascunho grava só o prazo escolhido à mão NESTA seleção (lido na hora — a ref
+  // não re-renderiza, mas toda escolha manual muda o state da parcela, que re-dispara o memo do rascunho).
+  const parcelasManuaisDaSelecao = useCallback(
+    () => parcelasManuaisParaRascunho(parcelaManualRef.current, selectionTokenRef.current, {
+      oben: selectedParcelaOben, colacor: selectedParcelaColacor,
+    }),
+    [selectedParcelaOben, selectedParcelaColacor],
+  );
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);
 
@@ -778,6 +786,7 @@ export function useCustomerSelection({
     // Parcelas
     selectedParcelaOben, setSelectedParcelaOben: escolherParcelaOben,
     selectedParcelaColacor, setSelectedParcelaColacor: escolherParcelaColacor,
+    parcelasManuaisDaSelecao,
     customerParcelaRankingOben,
     customerParcelaRankingColacor,
     // Addresses (lista vem do useQuery; selectedAddress permanece como state)

@@ -15,6 +15,7 @@ import type { OpcaoResolvida } from '@/lib/venda-assistida/resolver-opcao';
 import { cn } from '@/lib/utils';
 import type { Product, ProductCartItem } from '@/hooks/useUnifiedOrder';
 import { fmt } from '@/hooks/useUnifiedOrder';
+import { rotuloPrecoProduto, seloEstoque } from '@/components/unified-order/exibicao-produto';
 import { format } from 'date-fns';
 
 interface ProductItemFormProps {
@@ -186,10 +187,18 @@ export function ProductItemForm({
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-xs font-semibold">{fmt(getPrecoNascimento ? getPrecoNascimento(product) : (customerPrice || product.valor_unitario))}</p>
-                      <Badge variant={product.estoque > 0 ? 'outline' : 'destructive'} className="text-[9px] mt-0.5">
-                        Est: {product.estoque ?? 0}
-                      </Badge>
+                      <p className="text-xs font-semibold">{rotuloPrecoProduto(getPrecoNascimento ? getPrecoNascimento(product) : (customerPrice || product.valor_unitario))}</p>
+                      {(() => {
+                        const est = seloEstoque(product.estoque);
+                        return (
+                          <Badge
+                            variant={est.tom === 'zerado' ? 'destructive' : 'outline'}
+                            className={cn('text-[9px] mt-0.5', est.tom === 'ausente' && 'text-muted-foreground')}
+                          >
+                            {est.texto}
+                          </Badge>
+                        );
+                      })()}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 mt-1.5">
