@@ -27436,6 +27436,15 @@ export type Database = {
           total: number
         }[]
       }
+      pedido_por_checkout: {
+        Args: { p_account: string; p_checkout_id: string }
+        Returns: {
+          id: string
+          omie_pedido_id: number
+          pv_consulta: Json
+          pv_reconciliado: boolean
+        }[]
+      }
       pedido_total_liquido_classificar: {
         Args: { p_corte: string; p_ids?: string[] }
         Returns: {
