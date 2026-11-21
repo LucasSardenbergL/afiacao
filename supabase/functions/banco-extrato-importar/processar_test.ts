@@ -7,6 +7,7 @@ import { ESTRATEGIA_CHAVE_PADRAO } from "./versao.ts";
 const CONTA = "11111111-1111-4111-8111-111111111111";
 const USUARIO = { id: "22222222-2222-4222-8222-222222222222" };
 const enc = (s: string) => new TextEncoder().encode(s);
+type CorpoErroParse = { erro_parse: { motivo: unknown; detalhe?: unknown } };
 
 function igual(recebido: unknown, esperado: unknown, msg: string): void {
   const a = JSON.stringify(recebido), b = JSON.stringify(esperado);
@@ -89,19 +90,19 @@ Deno.test("OFX valido -> registrar com 1 linha por STMTTRN e as chaves de chaves
   igual(r.corpo, { resultado: "aceito" }, "corpo = JSON da RPC");
   igual(f.baixados, [`${CONTA}/abc.ofx`], "baixou o path");
   igual(f.registrados.length, 1, "registrar 1x");
-  const p = f.registrados[0] as Record<string, any>; // deno-lint-ignore no-explicit-any
+  const p = f.registrados[0] as Record<string, unknown>;
   igual(p.banco_conta_id, CONTA, "banco_conta_id");
   igual(p.formato, "ofx", "formato");
   igual(p.storage_path, `${CONTA}/abc.ofx`, "storage_path");
   igual(p.enviado_por, USUARIO.id, "enviado_por");
   igual(p.estrategia_chave, ESTRATEGIA_CHAVE_PADRAO, "estrategia padrao quando a conta e null");
   igual(p.hoje, "2026-11-20", "hoje");
-  igual(/^[0-9a-f]{64}$/.test(p.sha256), true, "sha256 hex minusculo");
+  igual(/^[0-9a-f]{64}$/.test(String(p.sha256)), true, "sha256 hex minusculo");
   const dig = await crypto.subtle.digest("SHA-256", enc(OFX));
   igual(p.sha256, [...new Uint8Array(dig)].map((b) => b.toString(16).padStart(2, "0")).join(""), "sha256 sobre os bytes");
   igual(typeof p.gerado_em, "string", "gerado_em string");
-  igual(/(Z|[+-]\d{2}:?\d{2})$/.test(p.gerado_em), true, "gerado_em com fuso");
-  const ext = p.extrato as Record<string, any>;
+  igual(/(Z|[+-]\d{2}:?\d{2})$/.test(String(p.gerado_em)), true, "gerado_em com fuso");
+  const ext = p.extrato as Record<string, unknown>;
   igual(ext.agencia, "0000", "agencia");
   igual(ext.conta, "000000", "conta");
   igual(ext.periodo_inicio, "2026-11-01", "periodo_inicio");
@@ -126,9 +127,9 @@ Deno.test("OFX valido -> registrar com 1 linha por STMTTRN e as chaves de chaves
 Deno.test("estrategia da conta vence a padrao", async () => {
   const f = falsas(enc(OFX));
   await processar(f.deps, entrada({ estrategia_chave: "id_bancario" }), USUARIO);
-  const p = f.registrados[0] as Record<string, any>;
+  const p = f.registrados[0] as Record<string, unknown>;
   igual(p.estrategia_chave, "id_bancario", "estrategia");
-  const linhas = (p.extrato as Record<string, any>).linhas as Record<string, unknown>[];
+  const linhas = (p.extrato as Record<string, unknown>).linhas as Record<string, unknown>[];
   igual(linhas.map((l) => l.chave), ["id:202611030001", "id:202611190002"], "chaves id_bancario");
 });
 
@@ -144,7 +145,7 @@ Deno.test("CNAB de 239 colunas -> 422 formato_desconhecido, sem registrar", asyn
   const f = falsas(enc(["A".repeat(239), "B".repeat(239)].join("\r\n")));
   const r = await processar(f.deps, entrada(), USUARIO);
   igual(r.status, 422, "status");
-  igual((r.corpo as any).erro_parse.motivo, "formato_desconhecido", "motivo");
+  igual((r.corpo as CorpoErroParse).erro_parse.motivo, "formato_desconhecido", "motivo");
   igual(f.registrados.length, 0, "nao chama a RPC");
 });
 
@@ -152,7 +153,7 @@ Deno.test("CNAB de 240 colunas -> 422 formato_desconhecido/cnab240_ainda_nao_sup
   const f = falsas(enc(["A".repeat(240), "B".repeat(240)].join("\r\n")));
   const r = await processar(f.deps, entrada(), USUARIO);
   igual(r.status, 422, "status");
-  igual((r.corpo as any).erro_parse, { motivo: "formato_desconhecido", detalhe: "cnab240_ainda_nao_suportado" }, "erro_parse");
+  igual((r.corpo as CorpoErroParse).erro_parse, { motivo: "formato_desconhecido", detalhe: "cnab240_ainda_nao_suportado" }, "erro_parse");
   igual(f.registrados.length, 0, "nao chama a RPC");
 });
 
@@ -161,7 +162,7 @@ Deno.test("arquivo vazio e lixo -> 422 formato_desconhecido", async () => {
     const f = falsas(b);
     const r = await processar(f.deps, entrada(), USUARIO);
     igual(r.status, 422, "status");
-    igual((r.corpo as any).erro_parse.motivo, "formato_desconhecido", "motivo");
+    igual((r.corpo as CorpoErroParse).erro_parse.motivo, "formato_desconhecido", "motivo");
     igual(f.registrados.length, 0, "nao registra");
   }
 });
@@ -171,7 +172,7 @@ Deno.test("OFX malformado (sem BALAMT) -> 422 com o motivo do parser, sem regist
   const f = falsas(enc(quebrado));
   const r = await processar(f.deps, entrada(), USUARIO);
   igual(r.status, 422, "status");
-  igual(typeof (r.corpo as any).erro_parse.motivo, "string", "motivo");
+  igual(typeof (r.corpo as CorpoErroParse).erro_parse.motivo, "string", "motivo");
   igual(f.registrados.length, 0, "nao registra");
 });
 

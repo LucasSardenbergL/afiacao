@@ -73,7 +73,7 @@ type Formato = "ofx" | "cnab240" | "desconhecido";
 function detectarFormato(bytes: Uint8Array): Formato {
   if (bytes.length === 0) return "desconhecido";
   const texto = new TextDecoder("latin1").decode(bytes); // 1 byte = 1 coluna
-  const semBom = texto.replace(/^﻿|^ï»¿/, "");
+  const semBom = texto.replace(/^\uFEFF|^\u00EF\u00BB\u00BF/, "");
   const cabeca = semBom.trimStart().slice(0, 4096).toUpperCase();
   if (cabeca.startsWith("OFXHEADER") || cabeca.includes("<OFX>")) return "ofx";
   const linhas = semBom.split(/\r\n|\r|\n/).filter((l) => l.length > 0);
