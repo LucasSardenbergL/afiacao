@@ -327,6 +327,16 @@ const UnifiedOrder = () => {
     clearTrigger: h.orderSuccessOpen && h.ultimoEnvioConfirmado,
   });
 
+  // Ciclo único envelope × rascunho no ENVIO: o rascunho em disco é o carrinho exato do envelope
+  // (gravado no commit) e morre com ele no sucesso total — sem depender do debounce nem do
+  // clearTrigger desta página (que não roda se ela desmontou durante o envio).
+  useEffect(() => {
+    h.cicloRascunhoRef.current = {
+      aoComprometer: () => gravarRascunhoAgora(draftPayload),
+      aoConfirmarTudo: clearDraft,
+    };
+  }, [h.cicloRascunhoRef, gravarRascunhoAgora, draftPayload, clearDraft]);
+
   // Gate offline-first do envio: offline salva rascunho (já auto-salvo acima) e expõe
   // CTA de reconexão; nunca enfileira (submitOrder cria PV cobrado no Omie).
   const net = useNetworkStatus();
@@ -390,8 +400,7 @@ const UnifiedOrder = () => {
   // "Trocar e limpar": o hook zera carrinho + envelope; o rascunho em disco vai junto — restaurá-lo
   // depois e reenviar criaria checkout NOVO e duplicaria o PV/OS já enviados.
   const handleClearCustomer = () => {
-    h.clearCustomer();
-    clearDraft();
+    if (h.clearCustomer()) clearDraft(); // barrada com envio em voo → nada é apagado
   };
 
   // Orçamento: o rascunho segue o desfecho NA HORA (sem esperar o debounce de 600 ms).

@@ -88,7 +88,7 @@ describe('UnifiedOrder — envelope e rascunho morrem juntos', () => {
   });
 
   it('bug 2: "Trocar e limpar" apaga o rascunho em disco junto com o envelope', () => {
-    expect(corpoPagina('handleClearCustomer')).toMatch(/h\.clearCustomer\(\);\s*clearDraft\(\);/);
+    expect(corpoPagina('handleClearCustomer')).toContain('if (h.clearCustomer()) clearDraft();');
     expect(pagina).toContain('onClearCustomer={handleClearCustomer}');
     expect(pagina).not.toContain('onClearCustomer={h.clearCustomer}');
   });
@@ -103,5 +103,32 @@ describe('UnifiedOrder — envelope e rascunho morrem juntos', () => {
     expect(corpo.indexOf('opts?.aoGravar?.(null);')).toBeGreaterThan(-1);
     expect(corpo.indexOf('opts?.aoGravar?.(null);')).toBeLessThan(corpo.indexOf("navigate('/sales/quotes');"));
     expect(corpo).toContain('opts?.aoGravar?.(carrinhoAposOrcamentoParcial(cart, salvas));');
+  });
+});
+
+// ── Pós-Codex (ciclo único): troca durante envio, sucesso com a tela desmontada, envio antes do debounce ──
+describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
+  it('troca de cliente com envio em voo é barrada e a página NÃO apaga o rascunho', () => {
+    const ini = hook.indexOf('const clearCustomer = useCallback(');
+    const corpo = hook.slice(ini, hook.indexOf('\n  }, [', ini));
+    expect(corpo).toContain('if (submittingRef.current) { avisarCarrinhoTravado(); return false; }');
+    expect(pagina).toContain('if (h.clearCustomer()) clearDraft();');
+  });
+
+  it('orçamento com envio de pedido pendente é barrado ANTES de gravar (sem 2ª linha da conta enviada)', () => {
+    const corpo = corpoDo('submitQuote');
+    const barra = corpo.indexOf('if (checkoutEnvRef.current) {');
+    expect(barra).toBeGreaterThan(-1);
+    expect(barra).toBeLessThan(corpo.indexOf('submitQuoteService('));
+  });
+
+  it('envio: rascunho gravado no commit do envelope e apagado no sucesso TOTAL dentro do hook', () => {
+    const corpo = corpoDo('submitOrder');
+    const commit = corpo.indexOf('persistCheckoutEnv(checkoutEnvRef.current);\n      cicloRascunhoRef.current.aoComprometer?.();');
+    expect(commit).toBeGreaterThan(-1);
+    expect(commit).toBeLessThan(corpo.indexOf('submitOrderService('));
+    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; persistCheckoutEnv\(null\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
+    expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora(draftPayload),');
+    expect(pagina).toContain('aoConfirmarTudo: clearDraft,');
   });
 });

@@ -426,7 +426,10 @@ export function useUnifiedOrder() {
   useEffect(() => { const { colacor: _c, ...resto } = prazoDecisaoRef.current; prazoDecisaoRef.current = resto; }, [selectedCustomer?.codigo_cliente_colacor]);
 
   // Wrap clearCustomer to also clear cart + ordem de compra
-  const clearCustomer = useCallback(() => {
+  // Retorna false quando BARRADA: com envio/orçamento em voo, a troca apagaria o envelope antes de
+  // `aoConfirmarOsAfiacao` carimbar a OS e a resposta atrasada ressuscitaria o rascunho (Codex P1).
+  const clearCustomer = useCallback((): boolean => {
+    if (submittingRef.current) { avisarCarrinhoTravado(); return false; }
     prazoDecisaoRef.current = {};
     clearCustomerInternal();
     setCart([]);
@@ -434,11 +437,17 @@ export function useUnifiedOrder() {
     checkoutEnvRef.current = null; persistCheckoutEnv(null);
     // user-tools cache é invalidado dentro de clearCustomerInternal
     // O RASCUNHO em disco é apagado pela página (onClearCustomer) — mesmo ciclo do envelope.
+    return true;
   }, [clearCustomerInternal, setCart]);
 
   // Ciclo único envelope × rascunho: a página pergunta antes de descartar o rascunho e, se a
   // vendedora confirmar, zera o envelope junto (o próximo pedido igual é NOVO, não "já enviado").
   const envelopeCheckoutAtual = useCallback(() => checkoutEnvRef.current, []);
+  // A página registra aqui o rascunho (vale também para os reenvios do ATP, que chamam submitOrder
+  // por dentro). `aoComprometer`: o envelope acabou de ser gravado → grava o rascunho EXATO do envio,
+  // sem esperar o debounce. `aoConfirmarTudo`: sucesso TOTAL → apaga o rascunho antes de qualquer UI,
+  // mesmo com a página já desmontada (navegou durante o envio) — Codex P1.
+  const cicloRascunhoRef = useRef<{ aoComprometer?: () => void; aoConfirmarTudo?: () => void }>({});
   const descartarEnvelope = useCallback(() => {
     checkoutEnvRef.current = null; persistCheckoutEnv(null);
   }, []);
@@ -830,6 +839,14 @@ export function useUnifiedOrder() {
   // sobrou após o parcial (gravar na hora). Roda ANTES do navigate — o rascunho não fica para trás.
   const submitQuote = useCallback(async (opts?: { aoGravar?: (restante: CartItem[] | null) => void }) => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
+    // Ciclo único: com envio de PEDIDO pendente (parcial/bloqueado), o orçamento gravaria outra linha
+    // da conta já enviada (convertê-la = 2º PV) e deixaria o envelope órfão (Codex P1). Fail-closed.
+    if (checkoutEnvRef.current) {
+      toast.error('Há um envio de pedido pendente para este carrinho', {
+        description: 'Reenvie o pedido pendente ou use "Trocar e limpar" para começar um orçamento novo.',
+      });
+      return;
+    }
     // A3 (rodada 2): mesma trava por REF do submitOrder — o toque duplo gravava 2 orçamentos.
     await executarComTravaDeEnvio(submittingRef, setSubmitting, async () => {
       const result = await submitQuoteService({
@@ -940,6 +957,7 @@ export function useUnifiedOrder() {
         checkoutEnvRef.current = { ...checkoutEnvRef.current, committed: true } as CheckoutEnvelope;
       }
       persistCheckoutEnv(checkoutEnvRef.current);
+      cicloRascunhoRef.current.aoComprometer?.();
       const checkoutId = checkoutEnvRef.current.checkoutId;
       try {
         // Etapa 3 (spec preco-realtime): a seleção dispara o auto-cadastro em
@@ -992,6 +1010,10 @@ export function useUnifiedOrder() {
             persistCheckoutEnv(checkoutEnvRef.current);
           },
         });
+        if (result.success && result.lastOrderData && result.allConfirmed) {
+          checkoutEnvRef.current = null; persistCheckoutEnv(null); // sucesso TOTAL → próximo pedido = novo envelope
+          cicloRascunhoRef.current.aoConfirmarTudo?.();
+        }
         if (result.success && result.lastOrderData) {
           setLastOrderData(result.lastOrderData);
           // A6 (rodada 2): o resumo e a limpeza do rascunho seguem o desfecho REAL do ERP.
@@ -1020,7 +1042,6 @@ export function useUnifiedOrder() {
           if (result.allConfirmed) {
             clearCart();
             setNotes('');
-            checkoutEnvRef.current = null; persistCheckoutEnv(null); // sucesso TOTAL → próximo pedido = novo envelope
           } else if (bloqueios.length > 0) {
             // Trava de crédito: mensagem específica — "parcialmente enviado" esconderia a causa.
             toast.warning('Envio bloqueado por crédito', {
@@ -1106,7 +1127,7 @@ export function useUnifiedOrder() {
     authLoading, user, isStaff, isCustomerMode,
     // Customer
     customerSearch, setCustomerSearch, customers, selectedCustomer, searchingCustomers, customerSearchFalhou, tentarBuscaDeNovo,
-    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, envelopeCheckoutAtual, descartarEnvelope,
+    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, envelopeCheckoutAtual, descartarEnvelope, cicloRascunhoRef,
     // Products
     obenProducts, colacorProducts, productSearch, setProductSearch,
     loadingObenProducts, loadingColacorProducts,
