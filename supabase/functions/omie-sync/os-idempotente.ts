@@ -16,6 +16,7 @@
 //   6. vincula a OS na reserva UMA vez (`WHERE chave = esta AND omie_codigo_os IS NULL`).
 // Desfecho que pede AÇÃO do vendedor sai como `OsAcaoNoOmieError` (a edge responde 200 estruturado,
 // não 500 — o SDK do front só vê "non-2xx" e a instrução se perderia).
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { ausenciaDaOS, chaveIntegracaoOS, type Conferencia, inclusaoValida, lerConsultaOS } from "./chave-os.ts";
 
 /** Maior duração de um IncluirOS em voo (teto do relógio da chamada: 140s) + folga. */
@@ -83,7 +84,7 @@ export class OsAcaoNoOmieError extends Error {
 }
 
 function erroMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return mensagemDeErro(e) ?? "erro sem mensagem";
 }
 
 /** Consulta a OS pela chave. `achou` = a NOSSA OS (chave, cliente, ativa); `ausente` = prova

@@ -1,6 +1,7 @@
 // Testa o CÓDIGO REAL de chave-os.ts + os-idempotente.ts no runtime real (Deno).
 // Roda com: deno test --no-remote supabase/functions/omie-sync/os-idempotente_test.ts
 // Cada caso casa a MARCA do ramo (texto da mensagem / campos do desfecho), nunca só "lançou".
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { ausenciaDaOS, chaveIntegracaoOS, inclusaoValida, lerConsultaOS, montarAssinaturaOS } from "./chave-os.ts";
 import { criarOuReconciliarOS, type DepsOS, OsAcaoNoOmieError, type ReservaOS } from "./os-idempotente.ts";
 
@@ -15,7 +16,7 @@ async function rejeitaCom(p: Promise<unknown>, marca: string, msg: string) {
   try {
     await p;
   } catch (e) {
-    const m = e instanceof Error ? e.message : String(e);
+    const m = mensagemDeErro(e) ?? "";
     if (!m.includes(marca)) throw new Error(`FALHOU: ${msg} — lançou outra coisa: ${m}`);
     return;
   }
@@ -91,7 +92,7 @@ function mundo(opts: { omieIncluir?: (p: Record<string, unknown>, omie: Map<stri
         return { Cabecalho: { nCodOS: n, cNumOS: String(n), cCodIntOS: chave, nCodCli: CLI }, InfoCadastro: { cCancelada: "N" } };
       });
     },
-    osAusente: (e) => (e instanceof Error ? e.message : "").includes("não cadastrad"),
+    osAusente: (e) => (mensagemDeErro(e) ?? "").includes("não cadastrad"),
   };
   return { deps, reservas, omie, chamadas };
 }

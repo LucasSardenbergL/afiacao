@@ -23,7 +23,7 @@ trap cleanup EXIT
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$(dirname "$DATA")/pg.log" -w start >/dev/null
-P() { "$PGBIN/psql" -h /tmp -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -qAt "$@"; }
+P() { "$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d postgres -v ON_ERROR_STOP=1 -qAt "$@"; }
 
 P <<'SQL'
 CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS;
@@ -52,7 +52,7 @@ INSERT INTO public.afiacao_os_envio (order_id, chave_integracao, assinatura, omi
 VALUES ('11111111-1111-4111-8111-111111111111', 'OS_1111111111114111811111', 'B', 300)
 ON CONFLICT (order_id) DO NOTHING;
 DO $$ BEGIN
-  IF (SELECT assinatura FROM public.afiacao_os_envio) <> 'A' OR (SELECT count(*) FROM public.afiacao_os_envio) <> 1 THEN
+  IF (SELECT assinatura FROM public.afiacao_os_envio) IS DISTINCT FROM 'A' OR (SELECT count(*) FROM public.afiacao_os_envio) IS DISTINCT FROM 1::bigint THEN
     RAISE EXCEPTION 'A2 FALHOU: 2a reserva sobrescreveu a assinatura da 1a';
   END IF;
 END $$;
