@@ -214,27 +214,28 @@ const blTrn = (data: string, valor: string, fitid: string, memo: string) =>
 const semSaldos = (s: string) => s.replace(/<STMTTRN>\n(?:(?!<\/STMTTRN>)[\s\S])*<MEMO>SALDO[^\n]*\n<\/STMTTRN>\n/g, '');
 
 describe('parseOfx — layout real Itaú Bankline (R22–R26)', () => {
-  const e = ok(parseOfx(utf8(BL)));
+  // parse por teste (não no describe): uma sabotagem derruba o teste da camada, não a coleta inteira
+  const E = () => ok(parseOfx(utf8(BL)));
   it('R22: sem BRANCHID, BANKID 0341 e ACCTID de 10 dígitos -> agência 4 + conta 6', () => {
-    expect(e.banco).toBe('0341');
-    expect(e.agencia).toBe('0000');
-    expect(e.conta).toBe('000000');
-    expect(e.periodoInicio).toBe('2026-10-01');
-    expect(e.periodoFim).toBe('2026-10-05');
-    expect(e.geradoEm).toBe('2026-11-21T10:00:00-03:00');
+    expect(E().banco).toBe('0341');
+    expect(E().agencia).toBe('0000');
+    expect(E().conta).toBe('000000');
+    expect(E().periodoInicio).toBe('2026-10-01');
+    expect(E().periodoFim).toBe('2026-10-05');
+    expect(E().geradoEm).toBe('2026-11-21T10:00:00-03:00');
   });
   it('R22: corte vale para BANKID 341 sem zero à esquerda', () => {
     expect(ok(parseOfx(utf8(troca(BL, '<BANKID>0341', '<BANKID>341')))).conta).toBe('000000');
   });
   it('R23: linhas de SALDO não viram lançamento; ancora sozinho (inicial + Σ = final)', () => {
-    expect(e.linhas.map((l) => l.descricao)).toEqual(['TAR PACOTE', 'PIX RECEBIDO', 'BOLETO PAGO', 'TED RECEBIDA']);
-    expect(e.saldoInicialCentavos).toBe(100000);
-    expect(e.saldoFinalCentavos).toBe(5025); // último SALDO DIA, NÃO o LEDGERBAL de hoje (99999)
-    expect(fecha(e.saldoInicialCentavos ?? NaN, e.linhas, e.saldoFinalCentavos).fecha).toBe(true);
+    expect(E().linhas.map((l) => l.descricao)).toEqual(['TAR PACOTE', 'PIX RECEBIDO', 'BOLETO PAGO', 'TED RECEBIDA']);
+    expect(E().saldoInicialCentavos).toBe(100000);
+    expect(E().saldoFinalCentavos).toBe(5025); // último SALDO DIA, NÃO o LEDGERBAL de hoje (99999)
+    expect(fecha(E().saldoInicialCentavos ?? NaN, E().linhas, E().saldoFinalCentavos).fecha).toBe(true);
   });
   it('R26: documento null quando CHECKNUM == FITID; idBancario segue o FITID', () => {
-    expect(e.linhas.every((l) => l.documento === null)).toBe(true);
-    expect(e.linhas[0].idBancario).toBe('20261001001');
+    expect(E().linhas.every((l) => l.documento === null)).toBe(true);
+    expect(E().linhas[0].idBancario).toBe('20261001001');
     const s = troca(BL, '<CHECKNUM>20261001001', '<CHECKNUM>777');
     expect(ok(parseOfx(utf8(s))).linhas[0].documento).toBe('777');
   });
@@ -294,7 +295,7 @@ describe('parseOfx — layout real Itaú Bankline (R22–R26)', () => {
     expect(x.saldoInicialCentavos).toBeNull();
   });
   it('R24: com SALDO DIA presente, ele manda; LEDGERBAL de hoje é ignorado, ausente não faz falta', () => {
-    expect(e.saldoFinalCentavos).toBe(5025); // LEDGERBAL 999.99 de 21/11 não é comparável
+    expect(E().saldoFinalCentavos).toBe(5025); // LEDGERBAL 999.99 de 21/11 não é comparável
     expect(ok(parseOfx(utf8(BL.replace(/<LEDGERBAL>[\s\S]*<\/LEDGERBAL>\n/, '')))).saldoFinalCentavos).toBe(5025);
   });
   it('R24: LEDGERBAL do MESMO corte (fim do período) tem de concordar com o SALDO DIA', () => {
