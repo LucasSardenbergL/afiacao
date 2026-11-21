@@ -2348,6 +2348,104 @@ export type Database = {
         }
         Relationships: []
       }
+      credito_operacao_revisao: {
+        Row: {
+          codigo_parcela: string
+          company: string
+          conteudo_md5: string
+          contexto: string
+          criada_em: string
+          criada_por: string | null
+          id: string
+          itens: Json
+          omie_codigo_cliente: number | null
+          parcela_origem: string
+          prazo_dias: number | null
+          prazo_fonte: string | null
+          prazo_override_id: string | null
+          sales_order_id: string
+          seq: number
+          valor_brl: number
+        }
+        Insert: {
+          codigo_parcela: string
+          company: string
+          conteudo_md5: string
+          contexto: string
+          criada_em?: string
+          criada_por?: string | null
+          id?: string
+          itens: Json
+          omie_codigo_cliente?: number | null
+          parcela_origem: string
+          prazo_dias?: number | null
+          prazo_fonte?: string | null
+          prazo_override_id?: string | null
+          sales_order_id: string
+          seq: number
+          valor_brl: number
+        }
+        Update: {
+          codigo_parcela?: string
+          company?: string
+          conteudo_md5?: string
+          contexto?: string
+          criada_em?: string
+          criada_por?: string | null
+          id?: string
+          itens?: Json
+          omie_codigo_cliente?: number | null
+          parcela_origem?: string
+          prazo_dias?: number | null
+          prazo_fonte?: string | null
+          prazo_override_id?: string | null
+          sales_order_id?: string
+          seq?: number
+          valor_brl?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credito_operacao_revisao_prazo_override_id_fkey"
+            columns: ["prazo_override_id"]
+            isOneToOne: false
+            referencedRelation: "credito_prazo_override"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credito_prazo_override: {
+        Row: {
+          codigo_parcela: string
+          company: string
+          criado_em: string
+          criado_por: string
+          id: string
+          motivo: string
+          prazo_dias: number | null
+          versao: number
+        }
+        Insert: {
+          codigo_parcela: string
+          company: string
+          criado_em?: string
+          criado_por: string
+          id?: string
+          motivo: string
+          prazo_dias?: number | null
+          versao: number
+        }
+        Update: {
+          codigo_parcela?: string
+          company?: string
+          criado_em?: string
+          criado_por?: string
+          id?: string
+          motivo?: string
+          prazo_dias?: number | null
+          versao?: number
+        }
+        Relationships: []
+      }
       credito_reserva: {
         Row: {
           company: string
@@ -26612,6 +26710,15 @@ export type Database = {
         }
         Returns: string
       }
+      credito_definir_prazo_override: {
+        Args: {
+          p_codigo_parcela: string
+          p_company: string
+          p_motivo: string
+          p_prazo_dias: number
+        }
+        Returns: Json
+      }
       credito_grupo_assinatura: { Args: { p_raiz: string }; Returns: string }
       credito_grupo_pares: {
         Args: { p_user_id: string }
@@ -26626,7 +26733,19 @@ export type Database = {
         Args: { p_codigo: number; p_company: string }
         Returns: Json
       }
+      credito_parse_calendario: {
+        Args: { p_descricao: string }
+        Returns: number[]
+      }
       credito_portao: { Args: { p_chave: string }; Returns: undefined }
+      credito_prazo_dias: {
+        Args: { p_account: string; p_codigo_parcela: string }
+        Returns: number
+      }
+      credito_prazo_resolver: {
+        Args: { p_account: string; p_codigo_parcela: string }
+        Returns: Json
+      }
       credito_propor_limite: {
         Args: {
           p_confianca: number
@@ -26648,6 +26767,19 @@ export type Database = {
       credito_recusar_proposta: {
         Args: { p_motivo: string; p_proposta_id: string }
         Returns: undefined
+      }
+      credito_registrar_revisao: {
+        Args: {
+          p_codigo_parcela: string
+          p_company: string
+          p_contexto: string
+          p_itens: Json
+          p_omie_codigo_cliente: number
+          p_parcela_origem: string
+          p_sales_order_id: string
+          p_user_id?: string
+        }
+        Returns: Json
       }
       credito_sou_aprovador: { Args: never; Returns: boolean }
       credito_vinculo_aviso: { Args: { p_cnpj: string }; Returns: Json }
