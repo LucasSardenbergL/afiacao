@@ -149,4 +149,28 @@ describe("CustomerListView", () => {
     expect(screen.queryByText("Marcenaria Alfa")).toBeNull();
     expect(screen.queryByRole("button", { name: /Ordenar lista/i })).toBeNull();
   });
+  describe("polimento da lista", () => {
+    it("motivo do contato aparece sob o nome (visível sem as colunas do desktop)", () => {
+      setup();
+      expect(screen.getByText("Saudável · 10d sem compra")).toBeTruthy();
+    });
+
+    it("base com count null e sem pendência: 'contagem indisponível', nunca '0 clientes na base'", () => {
+      setup({ total: null, isCarteira: false });
+      expect(screen.getByText("contagem indisponível")).toBeTruthy();
+      expect(screen.queryByText(/0 clientes na base/)).toBeNull();
+    });
+
+    it("contagem pendente: diz quantos carregou; rodapé conta o que está na tela", () => {
+      setup({ total: null, contagemPendente: true, isCarteira: false });
+      expect(screen.getByText("1 clientes carregados")).toBeTruthy();
+      expect(screen.getByText("Todos os clientes carregados (1)")).toBeTruthy();
+    });
+
+    it("coluna de gasto diz o que mede", () => {
+      setup({ isCarteira: false });
+      expect(screen.getByText("Média mensal (180d)")).toBeTruthy();
+      expect(screen.queryByText("Gasto mensal")).toBeNull();
+    });
+  });
 });

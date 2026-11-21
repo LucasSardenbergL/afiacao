@@ -37,7 +37,10 @@ type ClienteAlvo =
 export interface ClientesScope {
   customers: Customer[];
   scores: Map<string, ClientScore>;
-  total: number;
+  /** Total CONFIRMADO pela fonte; `null` = pendente ou indisponível (nunca vira 0). */
+  total: number | null;
+  /** A contagem ainda está sendo buscada. */
+  contagemPendente: boolean;
   isCarteira: boolean;
   loading: boolean;
   hasNextPage: boolean;
@@ -162,7 +165,8 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
         .select('user_id', { count: 'exact', head: true })
         .eq('is_employee', false);
       if (error) throw error;
-      return count ?? 0;
+      // `count: null` sem error = contagem não informada — NÃO é base vazia (ausente ≠ zero).
+      return count ?? null;
     },
   });
 
@@ -245,7 +249,12 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
     return new Map([...base, ...alvoScoreQuery.data]);
   }, [scoresQuery.data, alvoScoreQuery.data]);
 
-  const total = isCarteira ? customers.length : (baseCountQuery.data ?? customers.length);
+  // Total só CONFIRMADO: carteira = inteira em memória após sucesso; base = count do servidor.
+  // `null` + `contagemPendente` → a tela diz "N carregados"; `null` sem pendência → indisponível.
+  const total: number | null = isCarteira
+    ? (carteiraQuery.isSuccess ? customers.length : null)
+    : (baseCountQuery.data ?? null);
+  const contagemPendente = isCarteira ? carteiraQuery.isPending : baseCountQuery.isPending;
   const totalRecorte = isCarteira ? null : (baseQuery.data?.pages[0]?.totalRecorte ?? null);
   const loading = isCarteira ? carteiraQuery.isLoading : baseQuery.isLoading;
 
@@ -253,6 +262,7 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
     customers,
     scores,
     total,
+    contagemPendente,
     isCarteira,
     loading,
     hasNextPage: isCarteira ? false : !!baseQuery.hasNextPage,

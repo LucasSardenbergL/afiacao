@@ -74,3 +74,38 @@ export function metricasExibiveis(score: {
     prioridade: score.priority_score,
   };
 }
+
+/**
+ * Cabeçalho de contagem. `total` só é afirmado quando CONFIRMADO pela fonte; enquanto a contagem
+ * não chega, diz quantos já foram carregados (é o que se sabe); falha ou `count: null` →
+ * "contagem indisponível". Nunca "0 clientes na base" por ausência de dado.
+ */
+export function rotuloContagem({ total, pendente, carregados, isCarteira }: {
+  total: number | null;
+  pendente: boolean;
+  carregados: number;
+  isCarteira: boolean;
+}): string {
+  if (total != null) return `${fmtContagem(total)} ${isCarteira ? 'clientes na carteira' : 'clientes na base'}`;
+  if (pendente) return `${fmtContagem(carregados)} clientes carregados`;
+  return 'contagem indisponível';
+}
+
+/**
+ * Motivo do contato, numa linha sob o nome (aparece no celular, onde as colunas somem).
+ * "Atenção · 66d sem compra"; sem histórico → "Sem histórico de compra"; sem recência medida,
+ * só a classe — nunca dias fabricados. Sem score → `null` (nada a afirmar).
+ */
+export function motivoContato(score: {
+  sales_history_status: string | null;
+  health_class: string | null;
+  days_since_last_purchase: number | null;
+  avg_monthly_spend_180d: number | null;
+  priority_score: number | null;
+} | null | undefined): string | null {
+  if (!score) return null;
+  if (score.sales_history_status === 'sem_historico') return 'Sem histórico de compra';
+  const { label } = classeSaudeExibida(score.health_class);
+  const { dias } = metricasExibiveis(score);
+  return dias != null ? `${label} · ${dias}d sem compra` : label;
+}
