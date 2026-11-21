@@ -372,6 +372,8 @@ asserts() {
      "$(Pq -c "SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a WHERE p.oid = 'private.credito_avaliar_reservar'::regproc AND a.grantee <> p.proowner;")" "0"
   eq "P9c virada nova: 1 linha, RLS ligada, sandbox sem SELECT" \
      "$(Pq -c "SELECT (SELECT count(*) FROM public.credito_virada_piso_parcial)::text || (SELECT relrowsecurity FROM pg_class WHERE oid='public.credito_virada_piso_parcial'::regclass)::text || has_table_privilege('sandbox_exec_teste','public.credito_virada_piso_parcial','SELECT')::text;")" "1truefalse"
+  eq "P9e sandbox_exec não escreve no log de bloqueio (forjaria o 'gestor viu')" \
+     "$(Pq -c "SELECT has_table_privilege('sandbox_exec_teste','public.venda_bloqueio_credito_log','INSERT,UPDATE,DELETE,TRUNCATE');")" "f"
   eq "P9d marco do PR 1: anon/authenticated/sandbox sem acesso (TRUNCATE incluído)" \
      "$(Pq -c "SELECT bool_or(has_table_privilege(r, 'public.credito_virada_grupo', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE')) FROM unnest(ARRAY['anon','authenticated','sandbox_exec_teste']) r;")" "f"
 }
@@ -481,6 +483,24 @@ elif grep -q "POS FALHOU: public.venda_gate_credito_grupo(uuid,text,bigint) tem 
   ok "F9 allowlist sem REVOKE → postcondição abortou a aplicação"
 else
   bad "F9 falhou por OUTRO motivo: $(head -c 300 "$SAB/f9.log")"
+fi
+P -q -f "$MIGN"
+
+# F11: sem o REVOKE de escrita do sandbox no log → a POSTCONDIÇÃO aborta
+python3 - "$MIGN" "$SAB/m.sql" <<'PY3'
+import sys
+t = open(sys.argv[1]).read()
+a = "    EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.venda_bloqueio_credito_log FROM %I', r.rolname);"
+assert t.count(a) == 1, "alvo F11 ausente"
+open(sys.argv[2], "w").write(t.replace(a, "    NULL;", 1))
+PY3
+P -q -c "GRANT INSERT ON public.venda_bloqueio_credito_log TO sandbox_exec_teste;"
+if P -q -f "$SAB/m.sql" > "$SAB/f11.log" 2>&1; then
+  bad "F11 sandbox escreve no log → a migration APLICOU (postcondição sem dente)"
+elif grep -q "POS FALHOU: sandbox_exec_teste ainda escreve em venda_bloqueio_credito_log" "$SAB/f11.log"; then
+  ok "F11 sandbox escreve no log → postcondição abortou a aplicação"
+else
+  bad "F11 falhou por OUTRO motivo: $(head -c 300 "$SAB/f11.log")"
 fi
 P -q -f "$MIGN"
 

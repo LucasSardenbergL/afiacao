@@ -540,6 +540,19 @@ BEGIN
 END
 $acl_tab$;
 
+-- ── venda_bloqueio_credito_log agora DECIDE se a exceção cobre o indeterminado: quem tem BYPASSRLS
+-- (sandbox_exec_*, default ACL de public) forjaria um log "visto". A escrita é da edge (service_role,
+-- policy própria); a RLS já barra authenticated/anon. Tira só a ESCRITA do sandbox (leitura fica).
+DO $acl_log$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT rolname FROM pg_roles WHERE rolname LIKE 'sandbox\_exec%' LOOP
+    EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.venda_bloqueio_credito_log FROM %I', r.rolname);
+  END LOOP;
+END
+$acl_log$;
+
 -- ── Postcondição (envelope de aplicação, docs/agent/database.md §Escrita) ───────────────────
 DO $post$
 DECLARE
@@ -590,6 +603,11 @@ BEGIN
     IF has_table_privilege(r.rolname, 'public.credito_virada_grupo', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE')
        OR has_table_privilege(r.rolname, 'public.credito_virada_piso_parcial', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE') THEN
       RAISE EXCEPTION 'POS FALHOU: % ainda acessa tabela de marco', r.rolname;
+    END IF;
+  END LOOP;
+  FOR r IN SELECT rolname FROM pg_roles WHERE rolname LIKE 'sandbox\_exec%' LOOP
+    IF has_table_privilege(r.rolname, 'public.venda_bloqueio_credito_log', 'INSERT,UPDATE,DELETE,TRUNCATE') THEN
+      RAISE EXCEPTION 'POS FALHOU: % ainda escreve em venda_bloqueio_credito_log', r.rolname;
     END IF;
   END LOOP;
   IF (SELECT count(*) FROM public.credito_virada_piso_parcial) <> 1 THEN
