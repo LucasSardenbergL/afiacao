@@ -14,6 +14,7 @@ class Indeterminada extends Error {}
 function cadastro(codigo: number, vendedor: number | null, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     codigo_cliente_omie: codigo, nome_fantasia: `CLI ${codigo}`, razao_social: "X", info: { dAlt: "01/01/2026" },
+    estado: "MG", cidade: "ITAUNA (MG)",
     recomendacoes: { codigo_transportadora: 77, gerar_boletos: "N", ...(vendedor === null ? {} : { codigo_vendedor: vendedor }) },
     ...extra,
   };
@@ -56,6 +57,10 @@ function montar(c: Cenario) {
       const cod = payload.codigo_cliente_omie as number;
       chamadas.push(`Alterar:${cod}`);
       const atual = c.omie.get(cod)!;
+      // O Omie real recusa payload sem `estado` (canário de 2026-11-21) — o fake imita, sem gravar nada.
+      if (typeof payload.estado !== "string" || payload.estado === "") {
+        return { corpo: null, fault: "ERROR: É obrigatório o preenchimento do endereço (Estado)." };
+      }
       const r = c.aoAlterar ? c.aoAlterar(payload, atual) : { ...atual, recomendacoes: payload.recomendacoes };
       if (r === "indeterminada") throw new Indeterminada("sem desfecho");
       if ("fault" in r && typeof r.fault === "string") {
@@ -351,4 +356,37 @@ Deno.test("Codex r2 P1: exceção no meio do bloco devolve o execucao_id e os it
   const r = await processarBloco(params(APLICAR), d, OPC);
   igual([r.execucao_id, r.fim, r.parou?.startsWith("exceção")], ["00000000-0000-4000-8000-000000000001", false, true], "resultado parcial");
   igual(r.itens[0].status, "alterado", "o 1º ficou alterado, à espera do verificar");
+});
+
+Deno.test("v1.1: cadastro SEM estado no Omie → 'precondicao_falhou' no dry_run e no aplicar, sem AlterarCliente", async () => {
+  for (const modo of ["dry_run", "aplicar"] as const) {
+    const omie = new Map([[1, cadastro(1, TATY_OBEN, { estado: "" })], [2, cadastro(2, TATY_OBEN)]]);
+    const { d, chamadas } = montar({ omie, candidatos: [cand(1), cand(2)] });
+    const r = await processarBloco(params(modo === "aplicar" ? { modo, confirmo: "TROCAR VENDEDOR NO OMIE" } : { modo }), d, OPC);
+    igual(r.itens.map((i) => [i.omie_codigo_cliente, i.status]), [[1, "precondicao_falhou"], [2, modo === "dry_run" ? "planejado" : "verificado"]], `${modo}: status`);
+    igual(r.itens[0].erro, "cadastro sem estado no Omie (o AlterarCliente exige)", `${modo}: motivo`);
+    if (chamadas.includes("Alterar:1")) throw new Error(`${modo}: escreveu no cliente sem estado`);
+    igual(omie.get(1)!.recomendacoes, cadastro(1, TATY_OBEN).recomendacoes, `${modo}: Omie igual`);
+  }
+});
+
+Deno.test("v1.1: o payload enviado ao Omie leva o estado lido e nunca a cidade (o fake recusa sem estado)", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, { estado: "SC", cidade: "JOINVILLE (SC)" })]]);
+  const enviados: Record<string, unknown>[] = [];
+  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return { ...atual, recomendacoes: payload.recomendacoes }; } });
+  const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  igual(r.itens[0].status, "verificado", "status");
+  igual([enviados[0].estado, "cidade" in enviados[0]], ["SC", false], "estado do lido; cidade não vai");
+});
+
+Deno.test("Codex v1.1 P2: verificar que acha 'divergente' PARA (parou preenchido, fim=false), não anuncia fim", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN)]]);
+  const m = montar({ omie, candidatos: [cand(1)] });
+  const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), m.d, { ...OPC, orcamentoTotalMs: 10_000 });
+  igual(r.itens[0].status, "alterado", "alterado");
+  omie.set(1, { ...omie.get(1)!, razao_social: "MUDOU" }); // alguém mexeu em outro campo antes da prova
+  await m.d.dormir(61_000);
+  const v = await processarBloco(params({ modo: "verificar", execucao_id: "00000000-0000-4000-8000-000000000001" }), m.d, OPC);
+  igual(v.itens.map((i) => i.status), ["divergente"], "divergente");
+  igual([v.parou, v.fim], ["cadastro divergente no cliente 1", false], "para o operador");
 });

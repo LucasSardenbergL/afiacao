@@ -159,11 +159,21 @@ export function recomendacoesDe(cad: Record<string, unknown>): Record<string, un
   return rec && typeof rec === "object" && !Array.isArray(rec) ? { ...(rec as Record<string, unknown>) } : null;
 }
 
-export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Record<string, unknown> {
+/**
+ * O AlterarCliente do Omie recusa o payload sem `estado` ("É obrigatório o preenchimento do endereço (Estado)",
+ * medido no canário de 2026-11-21), mesmo trocando só o vendedor. Então `estado` vai de volta EXATAMENTE como o
+ * ConsultarCliente devolveu — o hash do cadastro na verificação prova que não mudou. `cidade` NÃO vai: reenviar o
+ * nome lido poderia desfazer uma correção de município feita entre a leitura e a escrita sem o hash acusar (Codex v1.1 P2).
+ * Cadastro sem `estado` não tem payload aceitável: `null` (o chamador recusa como pré-condição, sem escrever).
+ */
+export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Record<string, unknown> | null {
   const codigo = cad.codigo_cliente_omie;
   if (!ehInteiroPositivo(codigo)) throw new Error("cadastro sem codigo_cliente_omie");
+  if (typeof cad.estado !== "string" || cad.estado.trim() === "") return null;
   const rec = cad.recomendacoes && typeof cad.recomendacoes === "object" ? cad.recomendacoes as Record<string, unknown> : {};
-  return { codigo_cliente_omie: codigo, recomendacoes: { ...rec, codigo_vendedor: alvo } };
+  const p: Record<string, unknown> = { codigo_cliente_omie: codigo, estado: cad.estado };
+  p.recomendacoes = { ...rec, codigo_vendedor: alvo };
+  return p;
 }
 
 function canonico(v: unknown): unknown {

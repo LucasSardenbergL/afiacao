@@ -253,6 +253,14 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
       contar(res, "precondicao_falhou");
       continue;
     }
+    const payload = payloadAlterar(cad, alvo);
+    if (!payload) {
+      item.status = "precondicao_falhou";
+      item.erro = "cadastro sem estado no Omie (o AlterarCliente exige)";
+      await d.registrar({ ...base, status: "precondicao_falhou", hash_antes: hashAntes, erro: item.erro });
+      contar(res, "precondicao_falhou");
+      continue;
+    }
     if (p.modo === "dry_run") {
       item.status = "planejado";
       await d.registrar({ ...base, status: "planejado", hash_antes: hashAntes });
@@ -273,7 +281,7 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
     const id = await d.registrar({ ...base, status: "indeterminado", hash_antes: hashAntes });
     let faultEscrita: string | null = null;
     try {
-      faultEscrita = (await d.alterarCliente(payloadAlterar(cad, alvo))).fault;
+      faultEscrita = (await d.alterarCliente(payload)).fault;
     } catch (e) {
       if (!d.ehIndeterminada(e)) throw e;
       item.status = "indeterminado";
@@ -394,6 +402,8 @@ async function verificar(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Re
     });
     contar(res, status);
     if (item.espelho_ok === false) { res.parou = `espelho não atualizou no cliente ${x.omie_codigo_cliente}`; restam++; break; }
+    // Divergência PARA o operador também no modo verificar — senão `fim=true, parou=null` esconde o dano (Codex v1.1 P2).
+    if (status === "divergente") { res.parou = `cadastro divergente no cliente ${x.omie_codigo_cliente}`; break; }
   }
   res.fim = res.parou === null && restam === 0;
 }
