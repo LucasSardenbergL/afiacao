@@ -118,7 +118,9 @@ suite() {
     "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "$FRONT_DELETE")" "1:0"
   eq "C4b orçamento fica" "$(existe)" "1"
   reset NULL "now() - interval '11 minutes'"
-  eq "U8 DELETE do front sem envio recente apaga" "$(Pq -q -c "$FRONT_DELETE")" "1"
+  eq "U8 DELETE do front NÃO apaga orçamento já reivindicado, mesmo velho (PV pode estar vivo — vai pela edge)" "$(Pq -q -c "$FRONT_DELETE")" "0"
+  reset NULL NULL
+  eq "U8b DELETE do front apaga orçamento nunca enviado" "$(Pq -q -c "$FRONT_DELETE")" "1"
   reset NULL NULL
   eq "C3 front marca deleted_at 1º → o envio que ESPEROU o lock não reivindica" \
     "$(corrida "UPDATE public.sales_orders SET deleted_at=now() WHERE id='$A'" "SELECT public.sales_order_reivindicar_envio('$A')")" "1:f"
@@ -165,6 +167,12 @@ P -q -c "DROP POLICY sales_orders_delete_staff ON public.sales_orders;
 reset NULL NULL   # …por isso a sabotagem da policy é aplicada DEPOIS da migration
 eq "F4 policy sem a condição do claim deixa o front apagar durante o envio (o bug do Codex)" \
   "$(corrida "SELECT public.sales_order_reivindicar_envio('$A')" "$FRONT_DELETE")" "1:1"
+P -q -c "DROP POLICY sales_orders_delete_staff ON public.sales_orders;
+  CREATE POLICY sales_orders_delete_staff ON public.sales_orders FOR DELETE TO authenticated
+  USING ((SELECT private.cap_pedido_escrever((SELECT auth.uid()))) AND omie_pedido_id IS NULL AND status IN ('orcamento','rascunho')
+         AND (envio_omie_reivindicado_em IS NULL OR envio_omie_reivindicado_em < now() - interval '10 minutes'));"
+reset NULL "now() - interval '11 minutes'"
+eq "F6 policy com janela de 10 min apaga orçamento reivindicado e velho (PV órfão — o 2º bloqueante do Codex)" "$(Pq -q -c "$FRONT_DELETE")" "1"
 if P -q -c "GRANT UPDATE (envio_omie_reivindicado_em) ON public.sales_orders TO authenticated;" >/dev/null 2>&1 \
    && ! P -q -f "$MIG" >/dev/null 2>&1; then ok "F5 postcondição A6 aborta a migration se o cliente puder reescrever o carimbo"
 else bad "F5 postcondição A6 não abortou com UPDATE do carimbo concedido a authenticated"; fi

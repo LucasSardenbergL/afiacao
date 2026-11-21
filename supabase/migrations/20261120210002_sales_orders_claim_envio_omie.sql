@@ -12,8 +12,9 @@
 --     uma invocação de envio). Sob READ COMMITTED, o DELETE que espera o lock re-avalia o WHERE na
 --     versão nova (EvalPlanQual): o carimbo concorrente é VISTO e a linha fica.
 --   • policy sales_orders_delete_staff (o DELETE direto de orçamento/rascunho pelo front, ex.
---     SalesQuotes) ganha a MESMA condição do claim — senão a exclusão de orçamento furava a disputa
---     durante a conversão em pedido (Codex 2026-11-20, BLOQUEANTE). Cobre também build antigo.
+--     SalesQuotes) só apaga o que NENHUM envio reivindicou — senão a exclusão de orçamento furava a
+--     disputa durante a conversão, e depois dela apagaria PV vivo com write-back perdido (Codex
+--     2026-11-20, BLOQUEANTE ×2). O reivindicado vai pela edge excluir_pedido. Cobre build antigo.
 -- RPCs: só a edge (service_role). A coluna nova NÃO entra na allowlist de UPDATE por coluna de
 -- `authenticated` (migration 20260724120000): o cliente não consegue zerar o carimbo.
 -- ============================================================
@@ -88,8 +89,9 @@ CREATE POLICY sales_orders_delete_staff ON public.sales_orders
     (SELECT private.cap_pedido_escrever((SELECT auth.uid())))
     AND omie_pedido_id IS NULL
     AND status IN ('orcamento', 'rascunho')
-    AND (envio_omie_reivindicado_em IS NULL
-         OR envio_omie_reivindicado_em < now() - interval '10 minutes')
+    -- só orçamento NUNCA reivindicado por um envio: o já reivindicado pode ter PV vivo no Omie com o
+    -- write-back perdido — exclui pela edge, que consulta PV_<id> e exige ausência AFIRMADA (Codex).
+    AND envio_omie_reivindicado_em IS NULL
   );
 
 REVOKE ALL ON FUNCTION public.sales_order_reivindicar_envio(uuid) FROM PUBLIC, anon, authenticated;
@@ -124,8 +126,8 @@ BEGIN
     SELECT 1 FROM pg_policies
      WHERE schemaname = 'public' AND tablename = 'sales_orders' AND policyname = 'sales_orders_delete_staff'
        AND cmd = 'DELETE' AND roles = '{authenticated}'
-       AND qual LIKE '%envio_omie_reivindicado_em%' AND qual LIKE '%cap_pedido_escrever%'
-       AND qual LIKE '%omie_pedido_id IS NULL%'
+       AND qual LIKE '%envio_omie_reivindicado_em IS NULL%' AND qual NOT LIKE '%interval%'
+       AND qual LIKE '%cap_pedido_escrever%' AND qual LIKE '%omie_pedido_id IS NULL%'
   ) THEN
     RAISE EXCEPTION 'A5 FALHOU: policy de DELETE sem a condição do claim — orçamento em conversão apagável pelo front';
   END IF;
