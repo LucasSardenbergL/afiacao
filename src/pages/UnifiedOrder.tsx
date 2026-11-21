@@ -52,6 +52,8 @@ import type { ProdutoLinhaOmie } from '@/lib/venda-assistida/montar-embalagens';
 import { ServiceItemForm } from '@/components/unified-order/ServiceItemForm';
 import { CartItemList } from '@/components/unified-order/CartItemList';
 import { CartSummaryBar } from '@/components/unified-order/CartSummaryBar';
+import { BarraEnvioPedido } from '@/components/unified-order/BarraEnvioPedido';
+import { motivosEnvioBloqueado, envioBloqueado, type EntradaMotivosEnvio } from '@/components/unified-order/motivos-envio';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { useRegisterShortcuts } from '@/components/shell/ShortcutsRegistry';
 
@@ -457,6 +459,22 @@ const UnifiedOrder = () => {
     },
   });
 
+  // C4 (rodada 2): "Novo pedido" na tela de sucesso — recomeça do zero sem recarregar a página.
+  // O diálogo só oferece com envio CONFIRMADO em todas as contas: aí o hook já zerou carrinho,
+  // campos do pedido, envelope e rascunho; aqui sai o resto (cliente, buscas). Com pendência de ERP
+  // não há botão — limpar perderia o reenvio que não duplica.
+  const handleNovoPedido = () => {
+    if (!h.ultimoEnvioConfirmado) return;
+    if (!h.iniciarNovoPedido()) return; // envio em voo ou envelope vivo → nada é apagado
+    restorePendenteRef.current = null; // rascunho "esperando o cliente" do pedido anterior não volta
+    coresDoCliente.setBusca('');
+    h.setOrderSuccessOpen(false);
+    // Sem os parâmetros do pedido anterior (?customer, ?repeat, ?origem…): recarregar não pode
+    // voltar a selecionar A nem replicar o pedido antigo (Codex P2). O returnTo da fila fica.
+    h.navigate(returnTo ? `/sales/new?returnTo=${encodeURIComponent(returnTo)}` : '/sales/new', { replace: true });
+    window.scrollTo({ top: 0 });
+  };
+
   if (h.authLoading) {
     return <PageSkeleton variant="form" />;
   }
@@ -466,6 +484,19 @@ const UnifiedOrder = () => {
   const showProductTabs = !isCustomerMode;
   const showAIAssistant = !isCustomerMode;
   const customerReady = !!h.selectedCustomer;
+  // C5: a MESMA entrada alimenta a barra e o "Enviar pedido agora" da reconexão (Codex P1: o banner
+  // testava só `submitting` e contornava os motivos).
+  const entradaMotivosEnvio: EntradaMotivosEnvio = {
+    temCliente: !!h.selectedCustomer, carregandoCliente: h.loadingCustomer,
+    obenProductItems: h.obenProductItems, colacorProductItems: h.colacorProductItems,
+    serviceItems: h.serviceItems, vendedorDivergencias: h.vendedorDivergencias,
+    estadoFormasOben: isCustomerMode ? undefined : h.estadoFormasOben,
+    estadoFormasColacor: isCustomerMode ? undefined : h.estadoFormasColacor,
+    loadingFormas: h.loadingFormas, exigeCondicao: !isCustomerMode,
+    selectedParcelaOben: h.selectedParcelaOben, selectedParcelaColacor: h.selectedParcelaColacor,
+  };
+  const reconexaoBloqueada = envioBloqueado(h.submitting, motivosEnvioBloqueado(entradaMotivosEnvio));
+  const servicosAOrcar = h.serviceItems.filter(i => { const p = h.getServicePrice(i); return p === null || !(p > 0); }).length;
 
   return (
     <div className="max-w-5xl mx-auto space-y-4 pb-6">
@@ -499,7 +530,7 @@ const UnifiedOrder = () => {
             <Wifi className="w-4 h-4 shrink-0" />
             Conexão restabelecida. Seu pedido está salvo como rascunho.
           </div>
-          <Button size="sm" onClick={offlineSubmit.onReconnectSubmit} disabled={h.submitting} className="shrink-0">
+          <Button size="sm" onClick={offlineSubmit.onReconnectSubmit} disabled={reconexaoBloqueada} className="shrink-0">
             Enviar pedido agora
           </Button>
         </div>
@@ -595,21 +626,23 @@ const UnifiedOrder = () => {
                   </TabsList>
                   <TabsContent value="oben">
                     <ProductItemForm title="Produtos Oben" products={h.filteredObenProducts} prices={h.customerPricesOben}
-                      loading={h.loadingObenProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
+                      loading={h.estadoCatalogoOben === 'carregando'} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
                       customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer}
                       specsByKey={fichasByKey} canSeeFicha={h.isStaff}
                       selosByKey={selosByKey} canSeeVendaAssistida={h.isStaff} customerUserId={h.customerUserId}
-                      getPrecoNascimento={h.getProductPrice} precoLoading={h.precoPartidaLoading} />
+                      getPrecoNascimento={h.getProductPrice} precoLoading={h.precoPartidaLoading}
+                      catalogoFalhou={h.estadoCatalogoOben === 'falhou'} onTentarDeNovo={() => { void h.tentarCatalogoDeNovo('oben'); }} />
                   </TabsContent>
                   <TabsContent value="colacor">
                     <ProductItemForm title="Produtos Colacor" products={h.filteredColacorProducts} prices={h.customerPricesColacor}
-                      loading={h.loadingColacorProducts} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
+                      loading={h.estadoCatalogoColacor === 'carregando'} productSearch={h.productSearch} onSearchChange={h.setProductSearch}
                       productItems={h.productItems} onAddProduct={h.addProductToCart}
                       customerPurchaseHistory={h.customerPurchaseHistory} customerPricesLoading={h.loadingCustomer}
                       specsByKey={fichasByKey} canSeeFicha={h.isStaff}
                       selosByKey={selosByKey} canSeeVendaAssistida={h.isStaff} customerUserId={h.customerUserId}
-                      getPrecoNascimento={h.getProductPrice} precoLoading={h.precoPartidaLoading} />
+                      getPrecoNascimento={h.getProductPrice} precoLoading={h.precoPartidaLoading}
+                      catalogoFalhou={h.estadoCatalogoColacor === 'falhou'} onTentarDeNovo={() => { void h.tentarCatalogoDeNovo('colacor'); }} />
                   </TabsContent>
                   <TabsContent value="services">
                     <ServiceItemForm
@@ -680,8 +713,7 @@ const UnifiedOrder = () => {
           {h.cart.length > 0 && h.selectedCustomer && (
             <CartSummaryBar
               cart={h.cart} obenProductItems={h.obenProductItems} colacorProductItems={h.colacorProductItems}
-              serviceItems={h.serviceItems} totalEstimated={h.totalEstimated} submitting={h.submitting}
-              vendedorDivergencias={h.vendedorDivergencias}
+              serviceItems={h.serviceItems}
               sortedFormasPagamentoOben={isCustomerMode ? [] : h.sortedFormasPagamentoOben}
               sortedFormasPagamentoColacor={isCustomerMode ? [] : h.sortedFormasPagamentoColacor}
               selectedParcelaOben={h.selectedParcelaOben} setSelectedParcelaOben={h.setSelectedParcelaOben}
@@ -698,13 +730,23 @@ const UnifiedOrder = () => {
               ordemCompra={h.ordemCompra} setOrdemCompra={h.setOrdemCompra}
               isOrdemCompraCustomer={h.isOrdemCompraCustomer}
               readyByDate={h.readyByDate} setReadyByDate={h.setReadyByDate}
-              onSubmit={offlineSubmit.onSubmit}
               onSubmitQuote={handleSubmitQuote}
-              offline={offlineSubmit.offline}
             />
           )}
         </div>
       </div>
+
+      {/* C1/C2/C5 (rodada 2): total + Enviar presos ao fim da tela (filho direto da página — ver o
+          componente). Aparece assim que há cliente OU carrinho, com o motivo quando está cinza. */}
+      {(h.selectedCustomer || h.cart.length > 0) && (
+        <BarraEnvioPedido
+          {...entradaMotivosEnvio}
+          submitting={h.submitting} totalEstimated={h.totalEstimated} servicosAOrcar={servicosAOrcar}
+          onSubmit={offlineSubmit.onSubmit}
+          onSubmitQuote={handleSubmitQuote}
+          offline={offlineSubmit.offline}
+        />
+      )}
 
       {h.customerUserId && (
         <AddToolDialog open={h.addToolDialogOpen} onOpenChange={h.setAddToolDialogOpen}
@@ -737,6 +779,7 @@ const UnifiedOrder = () => {
             });
           }}
           returnTo={returnTo}
+          onNovoPedido={handleNovoPedido}
           onVoltarFila={() => { h.setOrderSuccessOpen(false); if (returnTo) h.navigate(returnTo); }}
           bloqueiosCredito={h.bloqueiosCredito}
           onResolverBloqueio={(b) => { h.setOrderSuccessOpen(false); setExcecaoBloqueio(b); }}

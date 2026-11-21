@@ -24,6 +24,17 @@ describe('paridade do vocabulário de status (gate de crédito)', () => {
       .sort();
     expect(doSql).toEqual([...OPEN_TITLE_STATUSES].sort());
   });
+
+  // 20261121200000: o piso VIGENTE lê OPEN_TITLE_STATUSES + 'PAGTO PARCIAL' (aberto, valor indeterminado —
+  // fica FORA de OPEN_TITLE_STATUSES de propósito: o cashflow somaria o valor cheio).
+  it('o piso vigente (20261121200000) lê EXATAMENTE OPEN_TITLE_STATUSES + PAGTO PARCIAL', () => {
+    const sql = readFileSync('supabase/migrations/20261121200000_credito_piso_pagto_parcial.sql', 'utf8');
+    const m = sql.match(/status_titulo IN \(([^)]+)\)/);
+    expect(m, 'filtro status_titulo IN (...) não encontrado na migration').toBeTruthy();
+    const doSql = m![1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).sort();
+    expect(doSql).toEqual([...OPEN_TITLE_STATUSES, 'PAGTO PARCIAL'].sort());
+    expect(OPEN_TITLE_STATUSES as readonly string[]).not.toContain('PAGTO PARCIAL');
+  });
 });
 
 // Frente B (PR1, 2026-10-31): a RPC venda_prazo_aviso lê fin_contas_receber com o MESMO vocabulário

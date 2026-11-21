@@ -92,32 +92,45 @@ describe('margemUltimoMesFechado', () => {
   ];
 
   it('usa o último mês fechado COMUM a todas as empresas do escopo', () => {
-    expect(margemUltimoMesFechado(DRE, ['oben', 'colacor'], 11)).toEqual({ valor: 400 / 1500, mes: 9, semCmv: [] });
+    expect(margemUltimoMesFechado(DRE, ['oben', 'colacor'], 11)).toEqual({ valor: 400 / 1500, mes: 9, semCmv: [], servicoFora: [] });
   });
 
   it('empresa sozinha usa o próprio último mês fechado, nunca o corrente', () => {
-    expect(margemUltimoMesFechado(DRE, ['oben'], 11)).toEqual({ valor: 0.25, mes: 10, semCmv: [] });
+    expect(margemUltimoMesFechado(DRE, ['oben'], 11)).toEqual({ valor: 0.25, mes: 10, semCmv: [], servicoFora: [] });
   });
 
-  it('CMV zerado/ausente com receita é custo não classificado, nunca margem de 100%', () => {
-    const semCusto: DreLinha = { company: 'colacor_sc', mes: 10, receita_liquida: 800, lucro_bruto: 800, cmv: 0 };
-    const nulo: DreLinha = { ...semCusto, cmv: null };
+  it('empresa de serviço (Colacor SC) sai da margem bruta — nunca 100%, nunca derruba o grupo', () => {
+    const sc: DreLinha = { company: 'colacor_sc', mes: 10, receita_liquida: 800, lucro_bruto: 800, cmv: 0 };
     const base = [dre('oben', 10, 1000, 250), dre('colacor', 10, 500, 200)];
+    expect(margemUltimoMesFechado([...base, sc], ['oben', 'colacor', 'colacor_sc'], 11))
+      .toEqual({ valor: 450 / 1500, mes: 10, semCmv: [], servicoFora: ['colacor_sc'] });
+    // SC sem DRE no mês também não trava o mês comum do grupo.
+    expect(margemUltimoMesFechado(base, ['oben', 'colacor', 'colacor_sc'], 11))
+      .toEqual({ valor: 450 / 1500, mes: 10, semCmv: [], servicoFora: ['colacor_sc'] });
+    expect(margemUltimoMesFechado([...base, sc], ['colacor_sc'], 11))
+      .toEqual({ valor: null, mes: null, semCmv: [], servicoFora: ['colacor_sc'] });
+  });
+
+  it('empresa de mercadoria com CMV zerado/ausente é custo não classificado, nunca margem de 100%', () => {
+    const semCusto: DreLinha = { company: 'colacor', mes: 10, receita_liquida: 500, lucro_bruto: 500, cmv: 0 };
+    const nulo: DreLinha = { ...semCusto, cmv: null };
+    const base = [dre('oben', 10, 1000, 250)];
     for (const linha of [semCusto, nulo]) {
       expect(margemUltimoMesFechado([...base, linha], ['oben', 'colacor', 'colacor_sc'], 11))
-        .toEqual({ valor: null, mes: 10, semCmv: ['colacor_sc'] });
-      expect(margemUltimoMesFechado([...base, linha], ['colacor_sc'], 11))
-        .toEqual({ valor: null, mes: 10, semCmv: ['colacor_sc'] });
+        .toEqual({ valor: null, mes: 10, semCmv: ['colacor'], servicoFora: ['colacor_sc'] });
+      expect(margemUltimoMesFechado([...base, linha], ['colacor'], 11))
+        .toEqual({ valor: null, mes: 10, semCmv: ['colacor'], servicoFora: [] });
     }
     // Controle: com custo classificado a mesma linha vira margem normal.
-    expect(margemUltimoMesFechado([...base, { ...semCusto, lucro_bruto: 200, cmv: 600 }], ['oben', 'colacor', 'colacor_sc'], 11))
-      .toEqual({ valor: 650 / 2300, mes: 10, semCmv: [] });
+    expect(margemUltimoMesFechado([...base, { ...semCusto, lucro_bruto: 200, cmv: 300 }], ['oben', 'colacor'], 11))
+      .toEqual({ valor: 450 / 1500, mes: 10, semCmv: [], servicoFora: [] });
   });
 
   it('sem mês comum ou sem DRE → null (nunca 0%)', () => {
-    expect(margemUltimoMesFechado(DRE, ['oben', 'colacor_sc'], 11)).toEqual({ valor: null, mes: null, semCmv: [] });
-    expect(margemUltimoMesFechado(null, ['oben'], 11)).toEqual({ valor: null, mes: null, semCmv: [] });
-    expect(margemUltimoMesFechado(DRE, ['oben'], 1)).toEqual({ valor: null, mes: null, semCmv: [] });
+    const vazio = { valor: null, mes: null, semCmv: [], servicoFora: [] };
+    expect(margemUltimoMesFechado(DRE, ['oben', 'colacor'], 9)).toEqual(vazio);
+    expect(margemUltimoMesFechado(null, ['oben'], 11)).toEqual(vazio);
+    expect(margemUltimoMesFechado(DRE, ['oben'], 1)).toEqual(vazio);
   });
 });
 
@@ -154,8 +167,8 @@ describe('linhasPorEmpresa', () => {
   it('uma linha por CNPJ, cada uma com a própria régua', () => {
     const linhas = linhasPorEmpresa(RESUMO, [dre('oben', 10, 1000, 250)], null, ['oben', 'colacor'], 11);
     expect(linhas.map((l) => l.empresa)).toEqual(['oben', 'colacor']);
-    expect(linhas[0].margem).toEqual({ valor: 0.25, mes: 10, semCmv: [] });
-    expect(linhas[1].margem).toEqual({ valor: null, mes: null, semCmv: [] });
+    expect(linhas[0].margem).toEqual({ valor: 0.25, mes: 10, semCmv: [], servicoFora: [] });
+    expect(linhas[1].margem).toEqual({ valor: null, mes: null, semCmv: [], servicoFora: [] });
     expect(linhas[1].caixa.saldo).toBe(50);
   });
 });

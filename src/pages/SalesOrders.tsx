@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { Button } from '@/components/ui/button';
-import { ShoppingCart, Trash2, ChevronLeft, Loader2 } from 'lucide-react';
+import { ShoppingCart, Trash2, ChevronLeft, Loader2, AlertTriangle, WifiOff } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -18,6 +18,9 @@ import { useDescontosItensPedido } from '@/components/salesOrders/useDescontosIt
 import { SalesOrdersAcoes, SalesOrdersToolbar } from '@/components/salesOrders/SalesOrdersToolbar';
 import { GRADE_LINHA_PEDIDO, SalesOrderCard } from '@/components/salesOrders/SalesOrderCard';
 import { SalesOrderDetailSheet } from '@/components/salesOrders/SalesOrderDetailSheet';
+import { useNetworkStatus } from '@/hooks/useNetworkStatus';
+import { track } from '@/lib/analytics';
+import { format } from 'date-fns';
 
 const SalesOrders = () => {
   const {
@@ -25,6 +28,9 @@ const SalesOrders = () => {
     authLoading,
     loading,
     loadError,
+    refetchError,
+    pausadoSemDados,
+    dataUpdatedAt,
     refetch,
     buscando,
     hasNextPage,
@@ -33,9 +39,16 @@ const SalesOrders = () => {
     nextPageError,
     accountFilter,
     setAccountFilter,
+    statusFilter,
+    setStatusFilter,
+    periodo,
+    setPeriodo,
+    ordem,
+    setOrdem,
     search,
     setSearch,
     limparFiltros,
+    comFiltro,
     selectedIds,
     linhasSelecionadas,
     toggleSelect,
@@ -69,6 +82,7 @@ const SalesOrders = () => {
   const gatilhoExclusaoRef = useRef<HTMLElement | null>(null);
   // O cabeçalho do dia gruda ABAIXO da barra fixa do app (h-topbar; +1.75rem com a faixa do "Ver como").
   const { isImpersonating } = useImpersonation();
+  const { online } = useNetworkStatus();
 
   if (authLoading || loading) {
     return (
@@ -78,20 +92,30 @@ const SalesOrders = () => {
 
   // Erro só derruba a tela quando NÃO há dados — refetch de fundo que falha não
   // descarta um cache válido com milhares de pedidos (codex P2).
-  if (loadError && orders.length === 0) {
+  if ((loadError || pausadoSemDados) && orders.length === 0) {
     return (
-      <div className="max-w-4xl mx-auto pt-16 text-center space-y-3">
-        <p className="text-sm text-muted-foreground">Não foi possível carregar os pedidos.</p>
-        <Button variant="outline" size="sm" onClick={() => refetch()}>
-          Tentar novamente
-        </Button>
+      <div className="max-w-4xl mx-auto pt-8">
+        <EmptyState
+          tone="operational"
+          icon={online ? AlertTriangle : WifiOff}
+          title="Não foi possível carregar os pedidos"
+          description={online ? 'O servidor não respondeu. Tente de novo em instantes.' : 'Sem conexão com a internet.'}
+          actionLabel="Tentar de novo"
+          onAction={() => refetch()}
+        />
       </div>
     );
   }
 
-  const comFiltro = !!search.trim() || accountFilter !== 'all';
-  const grupos = agruparPorDia(orders);
-  const alcance = alcanceDaExclusao(linhasSelecionadas, orders);
+  // "Maior valor" desliga os grupos por dia: agrupar reordenaria por data e quebraria a ordem
+  // prometida. Aí a linha mostra a data no lugar da hora.
+  const porValor = ordem === 'valor';
+  const grupos = porValor
+    ? [{ dia: 'valor', rotulo: '', pedidos: orders }]
+    : agruparPorDia(orders);
+  // Na transição de filtro as linhas na tela são do filtro ANTERIOR: não contam como "na tela".
+  const alcance = alcanceDaExclusao(linhasSelecionadas, buscando ? [] : orders);
+  const horaDosDados = dataUpdatedAt ? format(new Date(dataUpdatedAt), 'HH:mm') : null;
 
   return (
     <div className="max-w-6xl mx-auto space-y-4 pb-24">
@@ -111,10 +135,32 @@ const SalesOrders = () => {
       <SalesOrdersToolbar
         accountFilter={accountFilter}
         setAccountFilter={setAccountFilter}
+        statusFilter={statusFilter}
+        setStatusFilter={setStatusFilter}
+        periodo={periodo}
+        setPeriodo={setPeriodo}
+        ordem={ordem}
+        setOrdem={setOrdem}
         search={search}
         setSearch={setSearch}
         buscando={buscando}
       />
+
+      {!online && orders.length > 0 && (
+        <p role="status" className="flex items-center gap-2 rounded-md border px-3 py-2 text-xs text-status-warning">
+          <WifiOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          {horaDosDados ? `Sem conexão — mostrando dados de ${horaDosDados}` : 'Sem conexão — mostrando os últimos dados carregados'}
+        </p>
+      )}
+      {online && refetchError && orders.length > 0 && (
+        <p role="status" className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-status-warning" aria-hidden />
+          {horaDosDados ? `Não consegui atualizar a lista — mostrando dados de ${horaDosDados}.` : 'Não consegui atualizar a lista.'}
+          <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => refetch()}>
+            Tentar de novo
+          </button>
+        </p>
+      )}
 
       {orders.length === 0 ? (
         <EmptyState
@@ -122,7 +168,7 @@ const SalesOrders = () => {
           title={comFiltro ? 'Nenhum pedido com esses filtros' : 'Nenhum pedido ainda'}
           description={
             comFiltro
-              ? 'Tente ajustar a busca ou trocar a aba de empresa.'
+              ? 'Tente ajustar a busca, o status, o período ou a aba de empresa.'
               : 'Crie seu primeiro pedido pra começar a operar.'
           }
           actionLabel={comFiltro ? 'Limpar filtros' : 'Novo pedido'}
@@ -135,7 +181,7 @@ const SalesOrders = () => {
           }}
         />
       ) : (
-        <div className={cn('rounded-lg border bg-card transition-opacity', buscando && 'opacity-60')}>
+        <div className={cn('rounded-lg border bg-card transition-opacity', buscando && 'opacity-60')} aria-busy={buscando || undefined}>
           {/* Cabeçalho de colunas — só no desktop; usa a MESMA grade da linha. */}
           <div
             className={cn(
@@ -154,10 +200,12 @@ const SalesOrders = () => {
           </div>
 
           {grupos.map((grupo) => (
-            <section key={grupo.dia} aria-label={grupo.rotulo}>
-              <h2 className={cn('sticky z-[1] border-b bg-muted/70 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-muted/50', isImpersonating ? 'top-[calc(theme(spacing.topbar)+1.75rem)]' : 'top-topbar')}>
-                {grupo.rotulo}
-              </h2>
+            <section key={grupo.dia} aria-label={porValor ? 'Pedidos por maior valor' : grupo.rotulo}>
+              {!porValor && (
+                <h2 className={cn('sticky z-[1] border-b bg-muted/70 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-muted/50', isImpersonating ? 'top-[calc(theme(spacing.topbar)+1.75rem)]' : 'top-topbar')}>
+                  {grupo.rotulo}
+                </h2>
+              )}
               <div className="divide-y">
                 {grupo.pedidos.map((order) => (
                   <SalesOrderCard
@@ -173,6 +221,8 @@ const SalesOrders = () => {
                       setPedidoAExcluir(order);
                     }}
                     excluindo={order.origin === 'sales' && excluindoIds.has(order.id)}
+                    suspenso={buscando}
+                    mostrarData={porValor}
                     onNavigate={navigate}
                     onOpenDetail={() => setDetailRow(order)}
                     onPrint={() => printOrder(order)}
@@ -207,6 +257,8 @@ const SalesOrders = () => {
             label: 'Excluir',
             icon: Trash2,
             variant: 'destructive',
+            // Filtro novo a caminho: espera a lista certa antes de abrir o alcance do lote.
+            disabled: buscando,
             onClick: () => setConfirmandoLote(true),
           },
         ]}
@@ -237,7 +289,11 @@ const SalesOrders = () => {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => deleteSelected()}
+              disabled={buscando}
+              onClick={() => {
+                track('sales.lote_excluir', { n: alcance.total });
+                void deleteSelected();
+              }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Excluir {plural(alcance.total, 'pedido', 'pedidos')}
@@ -283,12 +339,27 @@ const SalesOrders = () => {
         customerName={detailQuery.data?.customerName ?? decodeHtml(detailRow?.customer_name || 'Cliente')}
         descontosItens={descontosItensQuery}
         onClose={() => setDetailRow(null)}
-        onPrint={() => detailRow && printOrder(detailRow)}
-        onShare={() => detailRow && handleShareOrder(detailRow)}
-        onEdit={() => detailRow && navigate(`/sales/edit/${detailRow.id}`)}
+        onPrint={() => {
+          if (!detailRow) return;
+          track('sales.pedido_acao', { acao: 'imprimir', via: 'painel' });
+          void printOrder(detailRow);
+        }}
+        onShare={() => {
+          if (!detailRow) return;
+          track('sales.pedido_acao', { acao: 'compartilhar', via: 'painel' });
+          void handleShareOrder(detailRow);
+        }}
+        onEdit={() => {
+          if (!detailRow) return;
+          track('sales.pedido_acao', { acao: 'editar', via: 'painel' });
+          navigate(`/sales/edit/${detailRow.id}`);
+        }}
         onRepeat={() => {
           const o = detailQuery.data?.order;
-          if (o) navigate(`/sales/new?customer=${o.customer_user_id}&repeat=${o.id}`);
+          if (o) {
+            track('sales.pedido_acao', { acao: 'repetir', via: 'painel' });
+            navigate(`/sales/new?customer=${o.customer_user_id}&repeat=${o.id}`);
+          }
         }}
       />
     </div>

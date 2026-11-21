@@ -288,7 +288,9 @@ describe('corpus real — nenhuma CREATE POLICY custom fica fora do inventário'
     // *_select_aprovados ×4; já aplicada, imutável — a validação dela é a query do PR #3879).
     // 6ª: 20261121160000_credito_limite_reserva_decisao.sql (laço *_select_gestor ×6 — a
     // leitura por papel é provada sob SET ROLE authenticated em db/test-credito-limite-reserva.sh).
-    expect(dinamicas).toBe(6);
+    // 7ª: 20261121180000_credito_prazo_revisao.sql (laço *_select_gestor ×2 — provada sob SET ROLE
+    // authenticated em db/test-credito-prazo-revisao.sh, P4.27–P4.29).
+    expect(dinamicas).toBe(7);
   });
 });
 

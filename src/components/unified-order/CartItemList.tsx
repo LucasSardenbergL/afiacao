@@ -1,4 +1,3 @@
-import { Input } from '@/components/ui/input';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +24,8 @@ import { isInvalidProductPrice } from '@/services/orderSubmission/priceGuard';
 import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { PriceInput } from './PriceInput';
+import { QuantidadeInput } from './QuantidadeInput';
+import { rotuloTotal } from './rotulo-total';
 import { DescontoCoresPedido } from './DescontoCoresPedido';
 import { fmtPct } from './fmt-pct';
 
@@ -224,7 +225,8 @@ export function CartItemList({
                 type="button"
                 onClick={() => onRemoveFromCart(cartIdx)}
                 aria-label={`Remover ${item.product.descricao}${item.tint_cor_id ? ` (cor ${item.tint_cor_id})` : ''}`}
-                className="group shrink-0 -m-1.5 p-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:p-3 [@media(pointer:coarse)]:-m-3"
+                // C7 (rodada 2): ≥44px no toque (antes 14px de ícone + 24px de padding = 38px).
+                className="group shrink-0 -m-1.5 p-1.5 inline-flex items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11 [@media(pointer:coarse)]:p-0 [@media(pointer:coarse)]:-m-2.5"
               >
                 <Trash2 className="w-3.5 h-3.5 text-muted-foreground group-hover:text-destructive" aria-hidden />
               </button>
@@ -234,19 +236,10 @@ export function CartItemList({
                 <Button size="sm" variant="outline" className="h-6 w-6 p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => onUpdateQuantity(cartIdx, -1)} aria-label={`Diminuir quantidade de ${item.product.descricao}`}>
                   <Minus className="w-3 h-3" aria-hidden />
                 </Button>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  min={1}
+                <QuantidadeInput
                   value={item.quantity}
                   aria-label={`Quantidade de ${item.product.descricao}${item.tint_cor_id ? ` (cor ${item.tint_cor_id})` : ''}`}
-                  onFocus={e => e.target.select()}
-                  onChange={e => {
-                    const newQty = parseInt(e.target.value) || 1;
-                    const delta = newQty - item.quantity;
-                    if (delta !== 0) onUpdateQuantity(cartIdx, delta);
-                  }}
+                  onCommit={qtd => onUpdateQuantity(cartIdx, qtd - item.quantity)}
                   className="h-6 w-12 text-xs text-center p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-14"
                 />
                 <Button size="sm" variant="outline" className="h-6 w-6 p-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" onClick={() => onUpdateQuantity(cartIdx, 1)} aria-label={`Aumentar quantidade de ${item.product.descricao}`}>
@@ -284,7 +277,9 @@ export function CartItemList({
   );
 
   return (
-    <Card className="flex flex-col max-h-[50vh] overflow-hidden">
+    // C3 (rodada 2): sem rolagem própria — `max-h-[50vh]` + `overflow-y-auto` prendia o dedo dentro
+    // do carrinho no celular. A página rola; o total e o Enviar ficam na barra fixa (BarraEnvioPedido).
+    <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2">
           <ShoppingCart className="w-4 h-4" />
@@ -292,7 +287,7 @@ export function CartItemList({
           {cart.length > 0 && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{cart.length}</Badge>}
         </CardTitle>
       </CardHeader>
-      <CardContent className="overflow-y-auto flex-1 min-h-0">
+      <CardContent>
         {cart.length === 0 ? (
           <EmptyState
             tone="operational"
@@ -387,8 +382,8 @@ export function CartItemList({
               </div>
             )}
             <div className="flex justify-between items-center">
-              <span className="text-sm font-bold">{servicosAOrcar > 0 && totalEstimated > 0 ? 'Subtotal conhecido' : 'Total'}</span>
-              <span className="text-sm font-bold">{totalEstimated > 0 ? fmt(totalEstimated) : 'A definir'}</span>
+              <span className="text-sm font-bold">{rotuloTotal(totalEstimated, servicosAOrcar).rotulo}</span>
+              <span className="text-sm font-bold">{rotuloTotal(totalEstimated, servicosAOrcar).valor}</span>
             </div>
 
             <div className="flex flex-wrap gap-1">

@@ -21,7 +21,8 @@ export interface ContextoBloqueioCredito {
   vencido: number | null;
   titulos: number | null;
   /** Vencido por empresa do GRUPO (gate do grupo, fluxo do submit). Ausente = só o total. */
-  pares?: Array<{ company: 'oben' | 'colacor' | 'colacor_sc'; vencido: number }>;
+  /** vencido null = valor indeterminado (PAGTO PARCIAL / saldo ausente) — o par segura. */
+  pares?: Array<{ company: 'oben' | 'colacor' | 'colacor_sc'; vencido: number | null }>;
 }
 
 const EMPRESAS_GRUPO = ['oben', 'colacor', 'colacor_sc'] as const;
@@ -30,6 +31,7 @@ const EMPRESAS_GRUPO = ['oben', 'colacor', 'colacor_sc'] as const;
  * Pares do grupo gravados pela edge no `detalhe` do log de bloqueio
  * ("pares: colacor_sc/202=500, oben/100=150") — para o gestor REMOTO ver a dívida por empresa.
  * Item ilegível é DESCARTADO (nunca vira R$ 0); nada legível → undefined (a UI mostra só o total).
+ * "=null" (a edge loga assim o par de valor indeterminado) é LEGÍVEL: vencido null, o par aparece.
  */
 export function paresDoDetalheLog(detalhe: string | null | undefined): ContextoBloqueioCredito['pares'] {
   if (!detalhe?.startsWith('pares: ')) return undefined;
@@ -37,8 +39,9 @@ export function paresDoDetalheLog(detalhe: string | null | undefined): ContextoB
     .slice('pares: '.length)
     .split(', ')
     .map((item) => {
-      const m = /^([a-z_]+)\/\d+=(\d+(?:\.\d+)?)$/.exec(item.trim());
+      const m = /^([a-z_]+)\/\d+=(\d+(?:\.\d+)?|null)$/.exec(item.trim());
       if (!m || !(EMPRESAS_GRUPO as readonly string[]).includes(m[1])) return null;
+      if (m[2] === 'null') return { company: m[1] as (typeof EMPRESAS_GRUPO)[number], vencido: null };
       const vencido = Number(m[2]);
       return vencido > 0 ? { company: m[1] as (typeof EMPRESAS_GRUPO)[number], vencido } : null;
     })
@@ -51,6 +54,9 @@ export function useBloqueioCreditoLog(salesOrderId: string, enabled: boolean) {
   return useQuery({
     queryKey: ['bloqueio-credito-log', salesOrderId],
     enabled,
+    // sempre fresco ao abrir: o reenvio pode ter bloqueado de novo há segundos (Codex delta P2-4)
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: async () => {
       const { data, error } = await supabase
         .from('venda_bloqueio_credito_log')
@@ -65,15 +71,36 @@ export function useBloqueioCreditoLog(salesOrderId: string, enabled: boolean) {
   });
 }
 
+/**
+ * A exceção vigente ainda vale para a tela? NÃO se o gate bloqueou o pedido DEPOIS dela — ele a
+ * recusou (ex.: aprovada vendo o log antigo, sem o PAGTO PARCIAL; ou anterior à virada do grupo) e o
+ * gestor precisa reaprovar vendo o bloqueio novo. Sem isso a tela esconde o formulário e manda
+ * reenviar para sempre (Codex diff P1-1, 20261121200000). Datas ilegíveis → mantém a exceção (a
+ * decisão é do gate; aqui só se escolhe qual formulário mostrar).
+ */
+export function excecaoAindaVale(
+  excecao: { created_at?: string | null } | null | undefined,
+  ultimoBloqueio: { created_at?: string | null } | null | undefined,
+): boolean {
+  if (!excecao) return false;
+  const tExc = Date.parse(excecao.created_at ?? '');
+  const tBloq = Date.parse(ultimoBloqueio?.created_at ?? '');
+  if (!Number.isFinite(tExc) || !Number.isFinite(tBloq)) return true;
+  return tBloq <= tExc;
+}
+
 /** Exceção ainda válida do pedido (evita dupla aprovação; instrui o reenvio). */
 export function useExcecaoCreditoVigente(salesOrderId: string, enabled: boolean) {
   return useQuery({
     queryKey: ['excecao-credito', salesOrderId],
     enabled,
+    // sempre fresco ao abrir: o reenvio pode ter bloqueado de novo há segundos (Codex delta P2-4)
+    staleTime: 0,
+    refetchOnMount: 'always',
     queryFn: async () => {
       const { data, error } = await supabase
         .from('venda_excecao_credito')
-        .select('id, valido_ate, motivo')
+        .select('id, valido_ate, motivo, created_at')
         .eq('sales_order_id', salesOrderId)
         .gt('valido_ate', new Date().toISOString())
         .order('created_at', { ascending: false })

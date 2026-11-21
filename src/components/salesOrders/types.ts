@@ -129,10 +129,24 @@ export function statusDoPedido(status: string): { label: string; variant: 'defau
 /** Tom visual do status na listagem: cor só no que pede atenção; o resto fica neutro. */
 export type TomStatus = 'success' | 'warning' | 'error' | 'info' | 'neutral';
 
+// warning = "pede ação de alguém da equipe": rascunho por enviar, afiação pronta esperando o cliente
+// ser avisado / a retirada, coleta por agendar.
 const TOM_DO_STATUS: Record<string, TomStatus> = {
   rascunho: 'warning',
+  pronto: 'warning',
+  pronto_entrega: 'warning',
+  aguardando_coleta: 'warning',
   enviado: 'info',
   separacao: 'info',
+  // afiação em curso (vocabulário de ORDER_STATUS)
+  pedido_recebido: 'info',
+  recebido_balcao: 'info',
+  em_triagem: 'info',
+  orcamento_enviado: 'info',
+  aprovado: 'info',
+  em_afiacao: 'info',
+  controle_qualidade: 'info',
+  em_rota: 'info',
   faturado: 'success',
   entregue: 'success',
   cancelado: 'error',

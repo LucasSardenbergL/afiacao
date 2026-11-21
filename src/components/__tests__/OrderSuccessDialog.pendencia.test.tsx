@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { OrderSuccessDialog } from '../OrderSuccessDialog';
 
 // A6 (rodada 2): pendência de ERP abria o resumo com título de SUCESSO (só o bloqueio de crédito
@@ -55,5 +55,25 @@ describe('OrderSuccessDialog — a orçar (B4)', () => {
     );
     expect(screen.getByText('Total')).toBeTruthy();
     expect(screen.queryByText('Subtotal conhecido')).toBeNull();
+  });
+});
+
+// C4 (rodada 2): depois de enviar, recomeçar um pedido limpo sem recarregar a página.
+describe('OrderSuccessDialog — Novo pedido', () => {
+  const base = {
+    open: true, onOpenChange: vi.fn(), customerName: 'Cliente X', items: [], total: 10, orderNumbers: ['PV 123'],
+    onViewOrder: vi.fn(), onShare: vi.fn(),
+  };
+
+  it('envio confirmado → "Novo pedido" chama o reset', () => {
+    const onNovoPedido = vi.fn();
+    render(<OrderSuccessDialog {...base} envioConfirmado onNovoPedido={onNovoPedido} />);
+    fireEvent.click(screen.getByRole('button', { name: /novo pedido/i }));
+    expect(onNovoPedido).toHaveBeenCalledTimes(1);
+  });
+
+  it('pendência de ERP → sem "Novo pedido" (limpar perderia o reenvio)', () => {
+    render(<OrderSuccessDialog {...base} envioConfirmado={false} onNovoPedido={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /novo pedido/i })).toBeNull();
   });
 });
