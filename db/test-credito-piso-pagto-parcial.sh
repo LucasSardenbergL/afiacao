@@ -439,6 +439,23 @@ else
 fi
 P -q -f "$MIGN"
 
+echo "── verificação de prod (db/verifica-credito-piso-pagto-parcial.sql) EXECUTADA ──"
+VER="$REPO_ROOT/db/verifica-credito-piso-pagto-parcial.sql"
+limpa; titulos "oben:101:75:500:PAGTO PARCIAL" "colacor_sc:202:80:90:PAGTO PARCIAL" "oben:101:75:300"
+if P -q -f "$VER" > "$SAB/v.log" 2>&1 && grep -q "VERIFICA OK: 2 pares PAGTO PARCIAL vencido > 60 d · 2 bloqueados · 2 com vencido null" "$SAB/v.log"; then
+  ok "V1 verificação passa com o piso novo (2 pares)"
+else bad "V1 verificação: $(head -c 300 "$SAB/v.log")"; fi
+limpa
+if P -q -f "$VER" > "$SAB/v.log" 2>&1; then bad "V2 verificação passou com 0 pares (ausente virou ok)"
+elif grep -q "VERIFICA FALHOU: 0 pares" "$SAB/v.log"; then ok "V2 0 pares → verificação FALHA (ausente ≠ ok)"
+else bad "V2 outro erro: $(head -c 300 "$SAB/v.log")"; fi
+titulos "oben:101:75:500:PAGTO PARCIAL"
+P -q -f "$REPO_ROOT/supabase/migrations/20261121120000_trava_credito_piso_grupo.sql"
+if P -q -f "$VER" > "$SAB/v.log" 2>&1; then bad "V3 verificação passou com o piso ANTIGO"
+elif grep -q "VERIFICA FALHOU: oben/101 não bloqueou" "$SAB/v.log"; then ok "V3 piso antigo → verificação FALHA (tem dente)"
+else bad "V3 outro erro: $(head -c 300 "$SAB/v.log")"; fi
+P -q -f "$MIGN"; limpa
+
 echo "── re-prova pós-restauração ──"
 asserts
 
