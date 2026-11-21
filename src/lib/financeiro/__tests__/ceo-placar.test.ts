@@ -31,6 +31,7 @@ const dre = (company: string, mes: number, receita: number, lucro: number): DreL
   mes,
   receita_liquida: receita,
   lucro_bruto: lucro,
+  cmv: receita - lucro,
 });
 
 describe('empresasDoEscopo', () => {
@@ -42,8 +43,8 @@ describe('empresasDoEscopo', () => {
 
 describe('caixaDoEscopo', () => {
   it('soma o saldo e a posição líquida do escopo', () => {
-    expect(caixaDoEscopo(RESUMO, ['oben', 'colacor', 'colacor_sc'])).toEqual({ saldo: 160, posicaoLiquida: 1000 });
-    expect(caixaDoEscopo(RESUMO, ['colacor'])).toEqual({ saldo: 50, posicaoLiquida: 400 });
+    expect(caixaDoEscopo(RESUMO, ['oben', 'colacor', 'colacor_sc'])).toEqual({ saldo: 160, posicaoLiquida: 1000, empresasNegativas: [] });
+    expect(caixaDoEscopo(RESUMO, ['colacor'])).toEqual({ saldo: 50, posicaoLiquida: 400, empresasNegativas: [] });
   });
 
   it('ausente ≠ zero: um CNPJ sem saldo anula o saldo do grupo', () => {
@@ -52,10 +53,17 @@ describe('caixaDoEscopo', () => {
     expect(caixaDoEscopo(resumo, ['oben']).saldo).toBe(100);
   });
 
+  it('lista os CNPJs com saldo negativo que o total compensa (caixa não é fungível)', () => {
+    const resumo = { ...RESUMO, colacor: r(-327, 500, 50), colacor_sc: r(-203, 0, 0) };
+    const c = caixaDoEscopo(resumo, ['oben', 'colacor', 'colacor_sc']);
+    expect(c.saldo).toBe(100 - 327 - 203);
+    expect(c.empresasNegativas).toEqual(['colacor', 'colacor_sc']);
+  });
+
   it('CNPJ fora do resumo ou resumo nulo → null', () => {
     const { colacor_sc: _fora, ...resumo } = RESUMO;
-    expect(caixaDoEscopo(resumo, ['oben', 'colacor_sc'])).toEqual({ saldo: null, posicaoLiquida: null });
-    expect(caixaDoEscopo(null, ['oben'])).toEqual({ saldo: null, posicaoLiquida: null });
+    expect(caixaDoEscopo(resumo, ['oben', 'colacor_sc'])).toEqual({ saldo: null, posicaoLiquida: null, empresasNegativas: [] });
+    expect(caixaDoEscopo(null, ['oben'])).toEqual({ saldo: null, posicaoLiquida: null, empresasNegativas: [] });
   });
 });
 
@@ -84,17 +92,32 @@ describe('margemUltimoMesFechado', () => {
   ];
 
   it('usa o último mês fechado COMUM a todas as empresas do escopo', () => {
-    expect(margemUltimoMesFechado(DRE, ['oben', 'colacor'], 11)).toEqual({ valor: 400 / 1500, mes: 9 });
+    expect(margemUltimoMesFechado(DRE, ['oben', 'colacor'], 11)).toEqual({ valor: 400 / 1500, mes: 9, semCmv: [] });
   });
 
   it('empresa sozinha usa o próprio último mês fechado, nunca o corrente', () => {
-    expect(margemUltimoMesFechado(DRE, ['oben'], 11)).toEqual({ valor: 0.25, mes: 10 });
+    expect(margemUltimoMesFechado(DRE, ['oben'], 11)).toEqual({ valor: 0.25, mes: 10, semCmv: [] });
+  });
+
+  it('CMV zerado/ausente com receita é custo não classificado, nunca margem de 100%', () => {
+    const semCusto: DreLinha = { company: 'colacor_sc', mes: 10, receita_liquida: 800, lucro_bruto: 800, cmv: 0 };
+    const nulo: DreLinha = { ...semCusto, cmv: null };
+    const base = [dre('oben', 10, 1000, 250), dre('colacor', 10, 500, 200)];
+    for (const linha of [semCusto, nulo]) {
+      expect(margemUltimoMesFechado([...base, linha], ['oben', 'colacor', 'colacor_sc'], 11))
+        .toEqual({ valor: null, mes: 10, semCmv: ['colacor_sc'] });
+      expect(margemUltimoMesFechado([...base, linha], ['colacor_sc'], 11))
+        .toEqual({ valor: null, mes: 10, semCmv: ['colacor_sc'] });
+    }
+    // Controle: com custo classificado a mesma linha vira margem normal.
+    expect(margemUltimoMesFechado([...base, { ...semCusto, lucro_bruto: 200, cmv: 600 }], ['oben', 'colacor', 'colacor_sc'], 11))
+      .toEqual({ valor: 650 / 2300, mes: 10, semCmv: [] });
   });
 
   it('sem mês comum ou sem DRE → null (nunca 0%)', () => {
-    expect(margemUltimoMesFechado(DRE, ['oben', 'colacor_sc'], 11)).toEqual({ valor: null, mes: null });
-    expect(margemUltimoMesFechado(null, ['oben'], 11)).toEqual({ valor: null, mes: null });
-    expect(margemUltimoMesFechado(DRE, ['oben'], 1)).toEqual({ valor: null, mes: null });
+    expect(margemUltimoMesFechado(DRE, ['oben', 'colacor_sc'], 11)).toEqual({ valor: null, mes: null, semCmv: [] });
+    expect(margemUltimoMesFechado(null, ['oben'], 11)).toEqual({ valor: null, mes: null, semCmv: [] });
+    expect(margemUltimoMesFechado(DRE, ['oben'], 1)).toEqual({ valor: null, mes: null, semCmv: [] });
   });
 });
 
@@ -102,14 +125,23 @@ describe('ncgDoEscopo', () => {
   const FONTE = {
     data_referencia: '2026-11-19',
     ncg_por_empresa: [
-      { company: 'oben', ncg: 300, presente: true },
-      { company: 'colacor', ncg: 200, presente: true },
-      { company: 'colacor_sc', ncg: null, presente: false },
+      { company: 'oben', ncg: 300, presente: true, completa: true },
+      { company: 'colacor', ncg: 200, presente: true, completa: true },
+      { company: 'colacor_sc', ncg: null, presente: false, completa: false },
     ],
   };
 
   it('soma os CNPJs presentes do escopo', () => {
-    expect(ncgDoEscopo(FONTE, ['oben', 'colacor'])).toEqual({ valor: 500, dataReferencia: '2026-11-19' });
+    expect(ncgDoEscopo(FONTE, ['oben', 'colacor'])).toEqual({ valor: 500, dataReferencia: '2026-11-19', completa: true });
+  });
+
+  it('snapshot sem estoque marca a NCG como parcial (valor mantido, igual ao cockpit)', () => {
+    const fonte = {
+      ...FONTE,
+      ncg_por_empresa: FONTE.ncg_por_empresa.map((n) => (n.company === 'colacor' ? { ...n, completa: false } : n)),
+    };
+    expect(ncgDoEscopo(fonte, ['oben', 'colacor'])).toEqual({ valor: 500, dataReferencia: '2026-11-19', completa: false });
+    expect(ncgDoEscopo(fonte, ['oben']).completa).toBe(true);
   });
 
   it('um CNPJ ausente anula o grupo', () => {
@@ -122,8 +154,8 @@ describe('linhasPorEmpresa', () => {
   it('uma linha por CNPJ, cada uma com a própria régua', () => {
     const linhas = linhasPorEmpresa(RESUMO, [dre('oben', 10, 1000, 250)], null, ['oben', 'colacor'], 11);
     expect(linhas.map((l) => l.empresa)).toEqual(['oben', 'colacor']);
-    expect(linhas[0].margem).toEqual({ valor: 0.25, mes: 10 });
-    expect(linhas[1].margem).toEqual({ valor: null, mes: null });
+    expect(linhas[0].margem).toEqual({ valor: 0.25, mes: 10, semCmv: [] });
+    expect(linhas[1].margem).toEqual({ valor: null, mes: null, semCmv: [] });
     expect(linhas[1].caixa.saldo).toBe(50);
   });
 });

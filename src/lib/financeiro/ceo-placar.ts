@@ -8,6 +8,12 @@
  * - Margem bruta do ÚLTIMO MÊS FECHADO COMUM a todas as empresas do escopo — o cockpit usa o
  *   último mês de CADA CNPJ e pode misturar meses; aqui o mês é o mesmo e vai visível no tile.
  *   Mês sem receita líquida não conta como "fechado" (DRE vazia não vira margem 0%).
+ * - CMV zerado (ou ausente) com receita > 0 é custo NÃO CLASSIFICADO, não margem de 100%
+ *   (`lucro_bruto = receita_liquida − cmv`): a margem do escopo vira `null` com o motivo.
+ * - NCG de snapshot sem estoque (`ncg_completa !== true`) vai marcada `completa: false` — o
+ *   valor fica (é o mesmo do cockpit, que o mostra como "Parcial"), mas sem leitura de sinal.
+ * - Caixa soma saldos entre CNPJs, mas caixa NÃO é fungível entre CNPJs: a lista de empresas
+ *   com saldo negativo acompanha o total, para o positivo de uma não esconder o aperto de outra.
  */
 import type { Company, CompanySelection } from '@/contexts/CompanyContext';
 import { consolidarTitulos, type TotaisTitulos } from '@/lib/financeiro/resumo-titulos';
@@ -27,11 +33,13 @@ export interface DreLinha {
   mes: number;
   receita_liquida: number;
   lucro_bruto: number;
+  /** Custo da mercadoria vendida (positivo). Zero/ausente com receita = custo não classificado. */
+  cmv: number | null;
 }
 
 /** Recorte mínimo do consolidado de projeção (NCG por CNPJ). */
 export interface NcgFonte {
-  ncg_por_empresa: { company: string; ncg: number | null; presente: boolean }[];
+  ncg_por_empresa: { company: string; ncg: number | null; presente: boolean; completa: boolean }[];
   data_referencia: string | null;
 }
 
@@ -40,12 +48,16 @@ export interface Margem {
   valor: number | null;
   /** Mês (1-12) usado; `null` quando indisponível. */
   mes: number | null;
+  /** Empresas do escopo com CMV zerado/ausente no mês (→ `valor` null). Vazio = margem confiável. */
+  semCmv: Company[];
 }
 
 export interface Caixa {
   saldo: number | null;
   /** A receber − a pagar (títulos abertos). */
   posicaoLiquida: number | null;
+  /** CNPJs do escopo com saldo bancário negativo (o total os compensa com o saldo dos outros). */
+  empresasNegativas: Company[];
 }
 
 export interface Vencidos {
@@ -55,13 +67,18 @@ export interface Vencidos {
 }
 
 export function caixaDoEscopo(resumo: Record<string, ResumoCnpj> | null, empresas: readonly Company[]): Caixa {
-  if (!resumo || empresas.length === 0) return { saldo: null, posicaoLiquida: null };
+  const vazio: Caixa = { saldo: null, posicaoLiquida: null, empresasNegativas: [] };
+  if (!resumo || empresas.length === 0) return vazio;
   const linhas = empresas.map((co) => resumo[co]);
-  if (linhas.some((l) => l === undefined)) return { saldo: null, posicaoLiquida: null };
+  if (linhas.some((l) => l === undefined)) return vazio;
   const saldo = linhas.some((l) => l.saldo_total_cc === null)
     ? null
     : linhas.reduce((s, l) => s + (l.saldo_total_cc as number), 0);
-  return { saldo, posicaoLiquida: consolidarTitulos(linhas).posicao_liquida };
+  const empresasNegativas = empresas.filter((co) => {
+    const v = resumo[co].saldo_total_cc;
+    return v !== null && v < 0;
+  });
+  return { saldo, posicaoLiquida: consolidarTitulos(linhas).posicao_liquida, empresasNegativas };
 }
 
 export function vencidosDoEscopo(resumo: Record<string, ResumoCnpj> | null, empresas: readonly Company[]): Vencidos {
@@ -84,33 +101,44 @@ export function margemUltimoMesFechado(
   empresas: readonly Company[],
   mesCorrente: number,
 ): Margem {
-  if (!dre || empresas.length === 0) return { valor: null, mes: null };
+  if (!dre || empresas.length === 0) return { valor: null, mes: null, semCmv: [] };
   const mesesPorEmpresa = empresas.map(
     (co) => new Set(dre.filter((d) => d.company === co && d.mes < mesCorrente && d.receita_liquida > 0).map((d) => d.mes)),
   );
   const comuns = [...mesesPorEmpresa[0]].filter((m) => mesesPorEmpresa.every((s) => s.has(m)));
-  if (comuns.length === 0) return { valor: null, mes: null };
+  if (comuns.length === 0) return { valor: null, mes: null, semCmv: [] };
   const mes = Math.max(...comuns);
   const doMes = dre.filter((d) => d.mes === mes && empresas.includes(d.company as Company));
+  // Receita sem custo classificado não é margem de 100%: o grupo inteiro degrada (ausente ≠ zero).
+  const semCmv = empresas.filter((co) =>
+    doMes.some((d) => d.company === co && d.receita_liquida > 0 && !(d.cmv !== null && d.cmv > 0)),
+  );
+  if (semCmv.length > 0) return { valor: null, mes, semCmv };
   const receita = doMes.reduce((s, d) => s + d.receita_liquida, 0);
   const lucro = doMes.reduce((s, d) => s + d.lucro_bruto, 0);
-  return { valor: receita > 0 ? lucro / receita : null, mes };
+  return { valor: receita > 0 ? lucro / receita : null, mes, semCmv };
 }
 
 export interface Ncg {
   valor: number | null;
   dataReferencia: string | null;
+  /** `false` quando algum CNPJ do escopo calculou a NCG sem estoque (valor parcial). */
+  completa: boolean;
 }
 
 export function ncgDoEscopo(fonte: NcgFonte | null, empresas: readonly Company[]): Ncg {
-  if (!fonte || empresas.length === 0) return { valor: null, dataReferencia: null };
+  if (!fonte || empresas.length === 0) return { valor: null, dataReferencia: null, completa: false };
   let soma = 0;
+  let completa = true;
   for (const co of empresas) {
     const linha = fonte.ncg_por_empresa.find((n) => n.company === co);
-    if (!linha || !linha.presente || linha.ncg === null) return { valor: null, dataReferencia: fonte.data_referencia };
+    if (!linha || !linha.presente || linha.ncg === null) {
+      return { valor: null, dataReferencia: fonte.data_referencia, completa: false };
+    }
     soma += linha.ncg;
+    if (!linha.completa) completa = false;
   }
-  return { valor: soma, dataReferencia: fonte.data_referencia };
+  return { valor: soma, dataReferencia: fonte.data_referencia, completa };
 }
 
 export interface LinhaEmpresa {

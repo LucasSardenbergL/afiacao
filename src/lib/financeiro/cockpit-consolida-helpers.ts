@@ -24,7 +24,8 @@ export type SemanaConsolidada = {
 export type CockpitConsolidado = {
   projecao13: SemanaConsolidada[];
   ncg_total: number;
-  ncg_por_empresa: { company: string; ncg: number | null; presente: boolean }[];
+  /** `completa` = snapshot com `ncg_completa === true` (sem estoque → NCG parcial, até o sinal pode virar). */
+  ncg_por_empresa: { company: string; ncg: number | null; presente: boolean; completa: boolean }[];
   ncg_parcial: boolean;
   saldo_tesouraria_total: number;
   saldo_tesouraria_parcial: boolean;
@@ -107,7 +108,7 @@ export function consolidarCockpit(input: { esperadas: string[]; snapshots: Snaps
   // 4. NCG.
   const ncg_por_empresa = esperadas.map((c) => {
     const s = coorte.get(c);
-    return { company: c, ncg: s ? s.ncg : null, presente: !!s };
+    return { company: c, ncg: s ? s.ncg : null, presente: !!s, completa: !!s && s.ncg_completa === true };
   });
   let ncgTotalRaw = 0;
   let algumNcgNull = false;

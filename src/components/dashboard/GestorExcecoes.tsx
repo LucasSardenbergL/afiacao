@@ -61,7 +61,7 @@ function LinhaItem({ linha, onRodarAgente }: { linha: LinhaExcecao; onRodarAgent
 
 /** Console de exceções do founder (Buddy v2). Determinístico, master-only. */
 export function GestorExcecoes() {
-  const { data, isLoading, refetchAll } = useExcecoesGestor();
+  const { data, isLoading, isError, refetchAll } = useExcecoesGestor();
   const shownRef = useRef(false);
 
   useEffect(() => {
@@ -100,7 +100,14 @@ export function GestorExcecoes() {
         <p className="text-2xs text-muted-foreground">Só o que precisa de atenção hoje. Cada linha mostra a fonte e o frescor.</p>
         <UltimaExecucao acao={ACAO_ATUALIZAR_ANALISE} />
       </CardHeader>
-      {!data || data.vazio ? (
+      {isError ? (
+        <div className="flex items-center gap-2 p-6 text-2xs text-status-error" role="alert">
+          Não consegui ler as exceções — a ausência aqui não significa que está tudo no lugar.
+          <Button variant="ghost" size="sm" onClick={refetchAll}>Tentar de novo</Button>
+        </div>
+      ) : !data ? (
+        <div className="p-6 text-2xs text-muted-foreground">Carregando exceções…</div>
+      ) : data.vazio ? (
         <div className="p-6 text-2xs text-muted-foreground">Tudo no lugar hoje 🎯</div>
       ) : (
         <div className="divide-y divide-border">

@@ -5,18 +5,21 @@
  * - Vendas em pedidos MTD vs mesmos dias do mês anterior (`useTeamKpis`, segue o seletor). É
  *   PEDIDO, não receita contábil — o rótulo diz isso.
  * - Margem bruta do último mês fechado comum (DRE, regime visível).
- * - Caixa disponível (saldo bancário) + posição líquida dos títulos.
+ * - Saldo bancário líquido (soma dos CNPJs) + quais CNPJs estão negativos — caixa não é
+ *   fungível entre CNPJs, então o total nunca aparece sozinho como "disponível".
  * - Recebíveis vencidos em R$ e % da carteira aberta.
- * - NCG (necessidade de capital de giro) com data do snapshot.
+ * - NCG (necessidade de capital de giro) com data do snapshot; a leitura do sinal (folga ×
+ *   capital preso) só aparece com a NCG completa — sem estoque até o sinal pode virar.
  *
- * Ausente ≠ zero em todos: leitura que falha ou CNPJ faltando → "—".
+ * Ausente ≠ zero em todos: leitura que falha ou CNPJ faltando → "—". Falha de leitura diz
+ * "leitura falhou" (nunca se disfarça de "sem dado"); CMV zerado → margem "—" com o motivo.
  */
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { track } from '@/lib/analytics';
-import { useCompany, COMPANIES } from '@/contexts/CompanyContext';
+import { useCompany, COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { useTeamKpis } from '@/hooks/useTeamKpis';
 import { useCeoPlacar } from '@/components/financeiro/cockpit/useCeoPlacar';
 import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
@@ -78,6 +81,16 @@ function rotuloMes(mes: number | null): string {
   return mes === null ? '' : MESES[mes - 1];
 }
 
+function nomes(empresas: readonly Company[]): string {
+  return empresas.map((e) => COMPANIES[e].shortName).join(', ');
+}
+
+/** NCG ≤ 0 = passivo operacional financia o giro (mesma régua do cockpit financeiro). */
+function leituraNcg(valor: number, completa: boolean): string {
+  if (!completa) return 'parcial · snapshot sem estoque';
+  return valor <= 0 ? 'folga: fornecedores financiam o giro' : 'capital preso no giro';
+}
+
 function dataCurta(iso: string | null): string {
   if (!iso) return '';
   const [, m, d] = iso.slice(0, 10).split('-');
@@ -107,22 +120,34 @@ export function CeoPlacar() {
           rotulo="Margem bruta"
           valor={formatarFracaoPct(p.margem.valor)}
           detalhe={
-            p.margem.mes === null
-              ? 'sem mês fechado comum na DRE'
-              : `${rotuloMes(p.margem.mes)} fechado · DRE ${p.regime === 'caixa' ? 'caixa' : 'competência'}`
+            p.erro.dre
+              ? 'leitura da DRE falhou'
+              : p.margem.semCmv.length > 0
+                ? `${rotuloMes(p.margem.mes)}: CMV não classificado em ${nomes(p.margem.semCmv)}`
+                : p.margem.mes === null
+                  ? 'sem mês anterior com receita em todas'
+                  : `${rotuloMes(p.margem.mes)} · DRE ${p.regime === 'caixa' ? 'caixa' : 'competência'}`
           }
           para="/financeiro/cockpit"
           carregando={p.carregando.dre}
         />
         <Kpi
           id="caixa"
-          rotulo="Caixa disponível"
+          rotulo={selection === 'all' ? 'Saldo bancário líquido' : 'Saldo bancário'}
           valor={formatarBRLCompacto(p.caixa.saldo)}
           titulo={p.caixa.saldo === null ? undefined : formatBRL(p.caixa.saldo)}
           detalhe={
-            p.caixa.saldo === null
-              ? 'saldo de alguma conta indisponível'
-              : `a receber − a pagar: ${formatarBRLCompacto(p.caixa.posicaoLiquida)}`
+            p.erro.resumo
+              ? 'leitura falhou'
+              : p.caixa.saldo === null
+                ? 'saldo de alguma conta indisponível'
+                : p.caixa.empresasNegativas.length > 0
+                  ? (
+                      <span className="text-status-warning">
+                        {selection === 'all' ? `compensa saldo negativo: ${nomes(p.caixa.empresasNegativas)}` : 'conta no negativo'}
+                      </span>
+                    )
+                  : 'soma das contas bancárias'
           }
           para="/financeiro/cockpit"
           carregando={p.carregando.resumo}
@@ -132,7 +157,13 @@ export function CeoPlacar() {
           rotulo="Recebíveis vencidos"
           valor={formatarBRLCompacto(p.vencidos.valor)}
           titulo={p.vencidos.valor === null ? undefined : formatBRL(p.vencidos.valor)}
-          detalhe={p.vencidos.pct === null ? 'títulos indisponíveis' : `${formatarFracaoPct(p.vencidos.pct)} da carteira aberta`}
+          detalhe={
+            p.erro.resumo
+              ? 'leitura falhou'
+              : p.vencidos.pct === null
+                ? 'títulos indisponíveis'
+                : `${formatarFracaoPct(p.vencidos.pct)} da carteira aberta`
+          }
           para="/financeiro/cockpit"
           carregando={p.carregando.resumo}
         />
@@ -141,7 +172,13 @@ export function CeoPlacar() {
           rotulo="Capital de giro (NCG)"
           valor={formatarBRLCompacto(p.ncg.valor)}
           titulo={p.ncg.valor === null ? undefined : formatBRL(p.ncg.valor)}
-          detalhe={p.ncg.valor === null ? 'snapshot ausente em alguma empresa' : `absorvido pelo giro · ${dataCurta(p.ncg.dataReferencia)}`}
+          detalhe={
+            p.erro.ncg
+              ? 'leitura falhou'
+              : p.ncg.valor === null
+                ? 'snapshot ausente em alguma empresa'
+                : `${leituraNcg(p.ncg.valor, p.ncg.completa)} · ${dataCurta(p.ncg.dataReferencia)}`
+          }
           para="/financeiro/capital-giro"
           carregando={p.carregando.ncg}
         />
@@ -165,17 +202,26 @@ export function CeoPlacar() {
                 <tr key={l.empresa} className="border-b border-border last:border-0">
                   <th scope="row" className="px-4 py-2 text-left font-medium">{COMPANIES[l.empresa].shortName}</th>
                   <td className="px-4 py-2 text-right">
-                    {formatarFracaoPct(l.margem.valor)}
+                    {l.margem.semCmv.length > 0 ? (
+                      <span className="text-status-warning" title="CMV não classificado no mês — margem não calculada">sem CMV</span>
+                    ) : (
+                      formatarFracaoPct(l.margem.valor)
+                    )}
                     {l.margem.mes !== null && <span className="ml-1 text-muted-foreground">{rotuloMes(l.margem.mes)}</span>}
                   </td>
-                  <td className="px-4 py-2 text-right">{formatarBRLCompacto(l.caixa.saldo)}</td>
+                  <td className={cn('px-4 py-2 text-right', l.caixa.saldo !== null && l.caixa.saldo < 0 && 'text-status-warning')}>
+                    {formatarBRLCompacto(l.caixa.saldo)}
+                  </td>
                   <td className="px-4 py-2 text-right">
                     {formatarBRLCompacto(l.vencidos.valor)}
                     {l.vencidos.pct !== null && (
                       <span className="ml-1 text-muted-foreground">{formatarFracaoPct(l.vencidos.pct)}</span>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-right">{formatarBRLCompacto(l.ncg.valor)}</td>
+                  <td className="px-4 py-2 text-right">
+                    {formatarBRLCompacto(l.ncg.valor)}
+                    {l.ncg.valor !== null && !l.ncg.completa && <span className="ml-1 text-muted-foreground">parcial</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -184,7 +230,7 @@ export function CeoPlacar() {
       )}
 
       <p className="text-2xs text-muted-foreground">
-        Escopo: {escopo}. Vendas seguem o seletor de empresa; o cockpit financeiro de destino mostra o grupo.
+        Escopo: {escopo}. Todos os números seguem o seletor de empresa; o cockpit financeiro de destino mostra o grupo.
       </p>
     </div>
   );

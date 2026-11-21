@@ -16,6 +16,7 @@ import {
   consultaSnapshotsCockpit,
 } from '@/components/financeiro/cockpit/useFinanceiroCockpit';
 import { consolidarCockpit } from '@/lib/financeiro/cockpit-consolida-helpers';
+import { hojeSP } from '@/lib/time/sp-day';
 import {
   caixaDoEscopo,
   empresasDoEscopo,
@@ -29,9 +30,8 @@ import {
 export function useCeoPlacar() {
   const { selection } = useCompany();
   const { regime } = useFinanceiroRegime();
-  const agora = new Date();
-  const ano = agora.getFullYear();
-  const mesCorrente = agora.getMonth() + 1;
+  // Mesmo relógio do tile de vendas (`useTeamKpis`): dia em São Paulo, não o fuso do browser.
+  const [ano, mesCorrente] = hojeSP().split('-').map(Number);
 
   const resumoQ = useQuery(consultaResumoCockpit());
   const dreQ = useQuery(consultaDreCockpit(ano, regime));
@@ -51,6 +51,9 @@ export function useCeoPlacar() {
   return {
     regime,
     carregando: { resumo: resumoQ.isPending, dre: dreQ.isPending, ncg: snapsQ.isPending },
+    // Falha de leitura ≠ dado ausente: a tela diz "leitura falhou", não "sem mês fechado".
+    // Resumo com títulos falhos ainda tem o saldo CC — só é erro total sem resumo nenhum.
+    erro: { resumo: resumo === null && resumoQ.isError, dre: dreQ.isError, ncg: snapsQ.isError },
     caixa: caixaDoEscopo(resumo, empresas),
     vencidos: vencidosDoEscopo(resumo, empresas),
     margem: margemUltimoMesFechado(dre, empresas, mesCorrente),

@@ -114,7 +114,7 @@ describe('consolidarCockpit', () => {
     expect(r.parcial).toBe(true);
     expect(r.ncg_total).toBe(300);
     expect(r.projecao13[0].completa).toBe(false);
-    expect(r.ncg_por_empresa.find(e => e.company === 'colacor_sc')).toEqual({ company: 'colacor_sc', ncg: null, presente: false });
+    expect(r.ncg_por_empresa.find(e => e.company === 'colacor_sc')).toEqual({ company: 'colacor_sc', ncg: null, presente: false, completa: false });
   });
 
   it('ncg null ≠ ncg 0; null fora da soma + ncg_parcial', () => {
@@ -135,6 +135,7 @@ describe('consolidarCockpit', () => {
       const r = consolidarCockpit({ esperadas: ESP, snapshots: snaps });
       expect(r.ncg_total).toBe(30);
       expect(r.ncg_parcial).toBe(true);
+      expect(r.ncg_por_empresa.map((e) => e.completa)).toEqual([true, true, false]);
     }
   });
 

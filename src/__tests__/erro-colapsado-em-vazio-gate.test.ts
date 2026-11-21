@@ -114,7 +114,6 @@ const BASELINE = new Map<string, number>([
   ["src/components/adminPrime/PrimePlanosTab.tsx", 1],
   ["src/components/customerDashboard/RecomendacoesCliente.tsx", 1],
   ["src/components/dashboard/FollowupsSugeridosCard.tsx", 1],
-  ["src/components/dashboard/GestorExcecoes.tsx", 1],
   ["src/components/des/checkinQualitativo/useCheckinQualitativo.ts", 1],
   // 2→1 (v6 lote 3b, 2026-11-05): o "faltam p/ próxima faixa" passou a sair da posição derivada
   // (posicao-ao-vivo.ts), e a posição desconhecida bloqueia a aba antes — sem `posQuery.data` cru.
