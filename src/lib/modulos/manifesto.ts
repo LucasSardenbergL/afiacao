@@ -294,6 +294,8 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useReguaPreco360.test.tsx",
       "src/hooks/__tests__/useUnifiedOrder.accountGuard.test.ts",
       "src/hooks/__tests__/useUnifiedOrder.envioRobusto.test.ts",
+      "src/hooks/__tests__/useOrderDraft.ciclo.test.ts",
+      "src/components/unified-order/__tests__/RestoreDraftDialog.envioPendente.test.tsx",
       "src/hooks/__tests__/cross-sell-escopo-sob-falha.test.tsx",
       "src/hooks/__tests__/leitoresObenProof.fatia3.test.ts",
       "src/pages/__tests__/UnifiedOrder.catalisador-erro-honesto.test.tsx",

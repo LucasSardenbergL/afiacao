@@ -72,3 +72,36 @@ describe('useUnifiedOrder — fiação das guardas de envio', () => {
     expect(selecao).toContain('setSelectedParcelaColacor: escolherParcelaColacor,');
   });
 });
+
+// ── Ciclo ÚNICO envelope × rascunho (follow-up Codex do #4042) — FIAÇÃO na página/hook ──
+// Comportamento: ciclo-rascunho.test.ts, useOrderDraft.ciclo.test.ts, RestoreDraftDialog.envioPendente.
+describe('UnifiedOrder — envelope e rascunho morrem juntos', () => {
+  function corpoPagina(nome: string): string {
+    const ini = pagina.indexOf(`const ${nome} = `);
+    expect(ini, `${nome} não encontrado`).toBeGreaterThan(-1);
+    return pagina.slice(ini, pagina.indexOf('\n  };', ini));
+  }
+
+  it('bug 1: descartar o rascunho zera o envelope (pedido idêntico seguinte é NOVO)', () => {
+    expect(corpoPagina('handleDiscardDraft')).toContain('h.descartarEnvelope();');
+    expect(pagina).toContain("envioPendente={decidirDescarteRascunho(h.envelopeCheckoutAtual()) === 'confirmar'}");
+  });
+
+  it('bug 2: "Trocar e limpar" apaga o rascunho em disco junto com o envelope', () => {
+    expect(corpoPagina('handleClearCustomer')).toMatch(/h\.clearCustomer\(\);\s*clearDraft\(\);/);
+    expect(pagina).toContain('onClearCustomer={handleClearCustomer}');
+    expect(pagina).not.toContain('onClearCustomer={h.clearCustomer}');
+  });
+
+  it('bug 3: orçamento salvo amarra o rascunho ao desfecho NA HORA (total apaga, parcial grava o resto)', () => {
+    const q = corpoPagina('handleSubmitQuote');
+    expect(q).toContain('clearDraft();');
+    expect(q).toContain('gravarRascunhoAgora({ ...draftPayload, cart: restante });');
+    expect(pagina).toContain('onSubmitQuote={handleSubmitQuote}');
+    const corpo = corpoDo('submitQuote');
+    // total: aoGravar(null) ANTES do navigate; parcial: o MESMO recorte do carrinho vai pro disco
+    expect(corpo.indexOf('opts?.aoGravar?.(null);')).toBeGreaterThan(-1);
+    expect(corpo.indexOf('opts?.aoGravar?.(null);')).toBeLessThan(corpo.indexOf("navigate('/sales/quotes');"));
+    expect(corpo).toContain('opts?.aoGravar?.(carrinhoAposOrcamentoParcial(cart, salvas));');
+  });
+});

@@ -14,7 +14,7 @@ import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection'
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
 import { precoPartida } from '@/lib/pricing/precoPartida';
-import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial } from '@/services/orderSubmission';
+import { submitOrder as submitOrderService, submitQuote as submitQuoteService, mensagemOrcamentoParcial, carrinhoAposOrcamentoParcial } from '@/services/orderSubmission';
 import type { LastOrderDataShape, BloqueioCreditoPedido, BloqueioAtpPedido } from '@/services/orderSubmission';
 import type { ContaPedido, PrazoDecisaoEstado, PrazoDecisaoPorConta } from '@/services/orderSubmission/prazoDecisao';
 import { track } from '@/lib/analytics';
@@ -433,7 +433,15 @@ export function useUnifiedOrder() {
     setOrdemCompra('');
     checkoutEnvRef.current = null; persistCheckoutEnv(null);
     // user-tools cache é invalidado dentro de clearCustomerInternal
+    // O RASCUNHO em disco é apagado pela página (onClearCustomer) — mesmo ciclo do envelope.
   }, [clearCustomerInternal, setCart]);
+
+  // Ciclo único envelope × rascunho: a página pergunta antes de descartar o rascunho e, se a
+  // vendedora confirmar, zera o envelope junto (o próximo pedido igual é NOVO, não "já enviado").
+  const envelopeCheckoutAtual = useCallback(() => checkoutEnvRef.current, []);
+  const descartarEnvelope = useCallback(() => {
+    checkoutEnvRef.current = null; persistCheckoutEnv(null);
+  }, []);
 
 
   const sortedFormasPagamentoOben = useMemo(() => {
@@ -818,7 +826,9 @@ export function useUnifiedOrder() {
   };
 
   // Submit — orchestrates state around the pure submit functions in services/orderSubmission
-  const submitQuote = useCallback(async () => {
+  // `aoGravar` amarra o RASCUNHO ao desfecho: null = tudo salvo (apagar), lista = carrinho que
+  // sobrou após o parcial (gravar na hora). Roda ANTES do navigate — o rascunho não fica para trás.
+  const submitQuote = useCallback(async (opts?: { aoGravar?: (restante: CartItem[] | null) => void }) => {
     if (!selectedCustomer || cart.length === 0 || !user) return;
     // A3 (rodada 2): mesma trava por REF do submitOrder — o toque duplo gravava 2 orçamentos.
     await executarComTravaDeEnvio(submittingRef, setSubmitting, async () => {
@@ -838,14 +848,16 @@ export function useUnifiedOrder() {
       const pendentes = result.contasPendentes ?? [];
       if (result.success && pendentes.length === 0) {
         toast.success('Orçamento salvo', { description: result.results.join(' | ') });
+        opts?.aoGravar?.(null);
         clearCart();
         setNotes('');
         navigate('/sales/quotes');
       } else if (result.success) {
         // A4 (rodada 2): orçamento misto com UMA conta falhando não é "salvo". Tira do carrinho só
         // as linhas da conta gravada (reenviar não a duplica) e mantém as pendentes — sem navegar.
-        const salvas = new Set(result.contasSalvas ?? []);
-        setCart(prev => prev.filter(c => !(c.type === 'product' && salvas.has(c.account as 'oben' | 'colacor'))));
+        const salvas = result.contasSalvas ?? [];
+        opts?.aoGravar?.(carrinhoAposOrcamentoParcial(cart, salvas));
+        setCart(prev => carrinhoAposOrcamentoParcial(prev, salvas));
         toast.warning(mensagemOrcamentoParcial([...salvas], pendentes), {
           description: result.errors[0]?.message || 'Falha desconhecida',
         });
@@ -856,10 +868,10 @@ export function useUnifiedOrder() {
       }
     });
   }, [
-    selectedCustomer, cart.length, user, customerUserId,
+    selectedCustomer, user, customerUserId,
     obenProductItems, colacorProductItems, obenSubtotal, colacorProdSubtotal,
     deliveryOption, addresses, selectedAddress, notes,
-    clearCart, navigate, setCart,
+    clearCart, navigate, setCart, cart,
   ]);
 
   const submitOrder = useCallback(async (opts?: { atpBackorder?: { autorizado: true; motivo: string } }) => {
@@ -1094,7 +1106,7 @@ export function useUnifiedOrder() {
     authLoading, user, isStaff, isCustomerMode,
     // Customer
     customerSearch, setCustomerSearch, customers, selectedCustomer, searchingCustomers, customerSearchFalhou, tentarBuscaDeNovo,
-    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer,
+    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, envelopeCheckoutAtual, descartarEnvelope,
     // Products
     obenProducts, colacorProducts, productSearch, setProductSearch,
     loadingObenProducts, loadingColacorProducts,

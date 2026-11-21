@@ -97,14 +97,30 @@ export function useOrderDraft<T>({
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [shouldSave]);
 
+  // Cancela o autosave em voo ANTES de apagar: sem isso, um timer agendado com o carrinho antigo
+  // reescreveria o rascunho depois do clear (ciclo envelope × rascunho, follow-up do #4042).
   const clear = useCallback(() => {
+    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
     if (typeof localStorage !== 'undefined') localStorage.removeItem(key(scopeKey));
     setDraft(null);
+  }, [scopeKey]);
+
+  /** Grava o rascunho NA HORA (sem debounce) — para quando uma parte do carrinho acabou de ser
+   *  gravada no ERP e um refresh dentro da janela do debounce a restauraria (e a duplicaria). */
+  const gravarAgora = useCallback((agora: T) => {
+    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const payload: OrderDraft<T> = { state: agora, savedAt: new Date().toISOString(), scopeKey };
+      localStorage.setItem(key(scopeKey), JSON.stringify(payload));
+    } catch {
+      // quota — ignora
+    }
   }, [scopeKey]);
 
   const dismiss = useCallback(() => {
     setDraft(null);
   }, []);
 
-  return { draft, clear, dismiss };
+  return { draft, clear, dismiss, gravarAgora };
 }

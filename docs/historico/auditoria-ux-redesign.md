@@ -124,3 +124,15 @@ assinatura da OS ganhou pagamento+entrega, OS sem ferramentas não confirma, via
 os pré-existentes (confirmação perdida na rede = idempotência na edge; descarte/troca × envelope;
 duas abas; prazo Colacor sugerido com o código Oben) ficaram como follow-up no PR. Falsificado:
 15 sabotagens, uma camada por vez, controle verde na mesma invocação.
+
+**Ciclo único envelope × rascunho (follow-up Codex do #4042, 2026-11-21, decisão do founder:
+mesmo ciclo de vida).** O envelope de checkout e o rascunho viviam separados: (1) "Descartar" o
+rascunho após envio parcial preservava o envelope → o pedido idêntico seguinte saía `reuse`
+("já enviado") e não era criado; (2) "Trocar e limpar" zerava o envelope mas deixava o rascunho →
+restaurar e reenviar criava checkout novo e DUPLICAVA o PV Colacor e a OS; (3) orçamento parcial
+dependia do debounce de 600 ms (refresh antes restaurava a conta já salva) e o orçamento total
+deixava o último rascunho em disco. Agora: descartar com envelope presente pede confirmação
+("Descartar mesmo assim") e zera os dois; "Trocar e limpar" apaga o rascunho; o orçamento chama
+`aoGravar` antes do `navigate` (total apaga, parcial grava o resto na hora via `gravarAgora`), e
+`clear()` cancela o autosave em voo. Fica fora: a chave do envelope não é por usuário (aparelho
+compartilhado).

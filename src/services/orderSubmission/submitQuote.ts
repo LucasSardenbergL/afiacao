@@ -175,3 +175,15 @@ export function mensagemOrcamentoParcial(
   const p = pendentes.map(c => NOME_CONTA[c]).join(' e ');
   return `Orçamento ${s} salvo; ${p} pendente — os itens pendentes seguem no carrinho`;
 }
+
+/** A4 (rodada 2) + ciclo do rascunho: após um orçamento PARCIAL, ficam no carrinho só as linhas
+ *  das contas que NÃO foram gravadas (reenviar não duplica a conta salva). Serviços e contas
+ *  pendentes ficam. O mesmo recorte grava o rascunho NA HORA — um refresh antes do debounce
+ *  restauraria a conta salva e o reenvio a duplicaria. */
+export function carrinhoAposOrcamentoParcial<T extends { type: string; account?: string | null }>(
+  cart: ReadonlyArray<T>,
+  contasSalvas: ReadonlyArray<'oben' | 'colacor'>,
+): T[] {
+  const salvas = new Set<string>(contasSalvas);
+  return cart.filter(c => !(c.type === 'product' && c.account != null && salvas.has(c.account)));
+}
