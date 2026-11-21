@@ -3,6 +3,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { SalesOrderCard } from '../SalesOrderCard';
 import type { OrderFeedRow } from '../types';
 
+const analytics = vi.hoisted(() => ({ track: vi.fn() }));
+vi.mock('@/lib/analytics', () => ({ track: analytics.track }));
+
 // O card consome a linha da view order_feed (listagem enxuta).
 function order(p: Partial<OrderFeedRow> = {}): OrderFeedRow {
   return {
@@ -145,5 +148,46 @@ describe('SalesOrderCard (afiação)', () => {
     expect(screen.queryByRole('checkbox')).toBeNull(); // não selecionável
     fireEvent.click(screen.getByText('ACME Ltda'));
     expect(props.onNavigate).toHaveBeenCalledWith('/orders/o1');
+  });
+});
+
+describe('SalesOrderCard — transição de filtro (suspenso)', () => {
+  it('não abre, não seleciona e não age sobre a linha do filtro anterior', () => {
+    const props = setup(order({ status: 'rascunho', omie_pedido_id: null }), { suspenso: true });
+    expect((screen.getByRole('checkbox') as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /Compartilhar pedido/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: /Mais ações/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByText('Oben'));
+    expect(props.onOpenDetail).not.toHaveBeenCalled();
+    expect(props.onSelectChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('SalesOrderCard — medição', () => {
+  it('abrir pela linha e agir pelo atalho do hover vão ao track com origem/via', () => {
+    analytics.track.mockClear();
+    const props = setup(order());
+    fireEvent.click(screen.getByText('Oben'));
+    expect(props.onOpenDetail).toHaveBeenCalled();
+    expect(analytics.track).toHaveBeenCalledWith('sales.pedido_aberto', { origem: 'linha' });
+    fireEvent.click(screen.getByRole('button', { name: /Imprimir pedido/ }));
+    expect(props.onPrint).toHaveBeenCalled();
+    expect(analytics.track).toHaveBeenCalledWith('sales.pedido_acao', { acao: 'imprimir', via: 'hover' });
+  });
+});
+
+describe('SalesOrderCard — "Maior valor" (sem grupos por dia)', () => {
+  it('mostra a data junto da hora; data-pura do Omie sai sem hora fabricada', () => {
+    setup(order({ created_at: '2026-05-20T12:00:00.000Z' }), { mostrarData: true });
+    expect(screen.getByText(/20\/05\/2026/)).toBeTruthy();
+  });
+});
+
+describe('tomDoStatus — o que pede ação', () => {
+  it('afiação pronta para entrega ganha o tom de ação, como o rascunho', async () => {
+    const { tomDoStatus } = await import('../types');
+    expect(tomDoStatus('pronto_entrega')).toBe('warning');
+    expect(tomDoStatus('rascunho')).toBe('warning');
+    expect(tomDoStatus('importado')).toBe('neutral');
   });
 });

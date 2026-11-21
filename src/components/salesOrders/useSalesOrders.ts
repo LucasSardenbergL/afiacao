@@ -20,7 +20,11 @@ import {
   type OrderFeedRow,
   type PaginaFeed,
 } from './types';
-import { COLUNAS_LISTAGEM_FEED, dedupeFeedRows, feedRowDaLinha, padraoBuscaFeed } from './feed';
+import {
+  COLUNAS_LISTAGEM_FEED, dedupeFeedRows, ehFiltroStatus, ehOrdem, ehPeriodo, feedRowDaLinha, filtroDoPeriodo,
+  padraoBuscaFeed, STATUS_DO_FILTRO, type FiltroStatusFeed, type OrdemFeed, type PeriodoFeed,
+} from './feed';
+import { track } from '@/lib/analytics';
 import { fetchOrderDetail, orderDetailQueryKey } from './useSalesOrderDetail';
 import { descontosItensQueryKey } from './useDescontosItensPedido';
 import { softDeleteOrder } from './soft-delete';
@@ -37,19 +41,41 @@ export const FEED_PAGE_SIZE = 50;
 const EMPRESAS: readonly Account[] = ['all', 'oben', 'colacor', 'colacor_sc'];
 const ehEmpresa = (v: string): v is Account => (EMPRESAS as readonly string[]).includes(v);
 
+const FILTROS_PADRAO = { q: '', empresa: 'all', status: 'todos', periodo: 'tudo', ordem: 'recentes' };
+
 export function useSalesOrders() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user, isStaff, loading: authLoading, role } = useAuth();
   // Filtros na URL (compartilháveis, sobrevivem ao F5). `q` chega aqui já com debounce: quem segura
   // a digitação é a toolbar, para cada tecla não re-renderizar a lista inteira.
-  const [filtros, setFiltros] = useUrlState({ q: '', empresa: 'all' });
+  const [filtros, setFiltros] = useUrlState(FILTROS_PADRAO);
   const search = filtros.q;
+  // Valor desconhecido na URL (link velho, digitado à mão) cai no padrão — nunca num filtro torto.
   const accountFilter: Account = ehEmpresa(filtros.empresa) ? filtros.empresa : 'all';
+  const statusFilter: FiltroStatusFeed = ehFiltroStatus(filtros.status) ? filtros.status : 'todos';
+  const periodo: PeriodoFeed = ehPeriodo(filtros.periodo) ? filtros.periodo : 'tudo';
+  const ordem: OrdemFeed = ehOrdem(filtros.ordem) ? filtros.ordem : 'recentes';
   const setSearch = (q: string) => setFiltros({ q });
-  const setAccountFilter = (empresa: Account) => setFiltros({ empresa });
-  // Uma escrita só: as duas chaves mudam juntas na URL.
-  const limparFiltros = () => setFiltros({ q: '', empresa: 'all' });
+  const setAccountFilter = (empresa: Account) => {
+    track('sales.lista_filtro', { tipo: 'empresa', valor: empresa });
+    setFiltros({ empresa });
+  };
+  const setStatusFilter = (status: FiltroStatusFeed) => {
+    track('sales.lista_filtro', { tipo: 'status', valor: status });
+    setFiltros({ status });
+  };
+  const setPeriodo = (p: PeriodoFeed) => {
+    track('sales.lista_filtro', { tipo: 'periodo', valor: p });
+    setFiltros({ periodo: p });
+  };
+  const setOrdem = (o: OrdemFeed) => {
+    track('sales.lista_filtro', { tipo: 'ordem', valor: o });
+    setFiltros({ ordem: o });
+  };
+  // Uma escrita só: TODAS as chaves voltam ao padrão juntas na URL.
+  const limparFiltros = () => setFiltros(FILTROS_PADRAO);
+  const comFiltro = !!search.trim() || accountFilter !== 'all' || statusFilter !== 'todos' || periodo !== 'tudo';
   // Seleção guarda a LINHA, não só o id: trocar a busca tira o pedido da tela, e o bulk delete ainda
   // precisa dele (omie_pedido_id, origin).
   const [selecionados, setSelecionados] = useState<Map<string, OrderFeedRow>>(new Map());
@@ -64,8 +90,10 @@ export function useSalesOrders() {
   // que o optimistic e a reconciliação do delete varrem.
   const feedKeyBase = useMemo(() => ['order-feed', user?.id] as const, [user?.id]);
   const padrao = padraoBuscaFeed(search);
+  // O corte do período entra na key já calculado: virar o dia muda o corte e a key (sem cache velho).
+  const cortePeriodo = filtroDoPeriodo(periodo);
   const feedQuery = useInfiniteQuery({
-    queryKey: [...feedKeyBase, accountFilter, padrao],
+    queryKey: [...feedKeyBase, accountFilter, padrao, statusFilter, cortePeriodo, ordem],
     enabled: isStaff && !!user,
     staleTime: 60_000,
     // Trocar a busca mantém a lista anterior na tela até a nova chegar (sem piscar o skeleton).
@@ -78,6 +106,11 @@ export function useSalesOrders() {
         .select(COLUNAS_LISTAGEM_FEED, { count: pageParam === 0 && !padrao ? 'exact' : undefined });
       if (accountFilter !== 'all') query = query.eq('account', accountFilter);
       if (padrao) query = query.ilike('busca', padrao);
+      if (statusFilter === 'rascunhos') query = query.eq('status', 'rascunho');
+      else if (statusFilter !== 'todos') query = query.in('status', [...STATUS_DO_FILTRO[statusFilter]]);
+      if (cortePeriodo) query = query.or(cortePeriodo);
+      // "Maior valor": total ausente (null) vai pro FIM — nunca é lido como zero nem sobe na frente.
+      if (ordem === 'valor') query = query.order('total', { ascending: false, nullsFirst: false });
       const { data, error, count } = await query
         .order('created_at', { ascending: false })
         .order('origin', { ascending: true })
@@ -97,6 +130,18 @@ export function useSalesOrders() {
   );
   // Total do servidor para a aba atual (null com busca — ver queryFn).
   const totalCount = feedQuery.data?.pages[0]?.count ?? null;
+  // Filtro/aba nova a caminho com as linhas da anterior na tela (keepPreviousData): elas NÃO são do
+  // filtro atual, então seleção e ações ficam suspensas até a resposta chegar (Codex, 2ª rodada).
+  const emTransicao = feedQuery.isPlaceholderData;
+
+  // Medição da busca: só se ela achou algo — o TERMO nunca sai daqui. 1 evento por termo assentado.
+  const buscaMedida = useRef<string | null>(null);
+  const buscaAssentada = !!padrao && feedQuery.isSuccess && !emTransicao;
+  useEffect(() => {
+    if (!buscaAssentada || buscaMedida.current === padrao) return;
+    buscaMedida.current = padrao;
+    track('sales.lista_busca', { tem_resultado: orders.length > 0 });
+  }, [buscaAssentada, padrao, orders.length]);
 
   /* ─── Logos das empresas (cupom de impressão) — cache 24h ─── */
   const logosQuery = useQuery({
@@ -361,6 +406,7 @@ export function useSalesOrders() {
   };
 
   const toggleSelect = (row: OrderFeedRow, checked: boolean) => {
+    if (emTransicao) return; // linha da aba/filtro anterior: não entra nem sai da seleção agora
     setSelecionados((prev) => {
       const next = new Map(prev);
       if (checked) next.set(row.id, row);
@@ -376,18 +422,32 @@ export function useSalesOrders() {
     authLoading,
     loading: feedQuery.isLoading,
     loadError: feedQuery.isError,
+    // Refetch de FUNDO que falhou com o cache na tela (a lista segue, a tela avisa discretamente).
+    refetchError: feedQuery.isRefetchError,
+    // Sem rede e sem cache: a query PAUSA (networkMode 'online') com isLoading=false e lista vazia —
+    // sem isto a tela diria "Nenhum pedido ainda".
+    pausadoSemDados: feedQuery.isPending && feedQuery.fetchStatus === 'paused',
+    // Quando os dados na tela chegaram do servidor (faixa "Sem conexão — mostrando dados de HH:MM").
+    dataUpdatedAt: feedQuery.dataUpdatedAt,
     refetch: feedQuery.refetch,
-    // Busca/aba nova a caminho com a lista anterior na tela (placeholderData).
-    buscando: feedQuery.isPlaceholderData,
+    // Busca/aba nova a caminho com a lista anterior na tela (placeholderData): seleção e ações suspensas.
+    buscando: emTransicao,
     hasNextPage: feedQuery.hasNextPage,
     fetchNextPage: feedQuery.fetchNextPage,
     isFetchingNextPage: feedQuery.isFetchingNextPage,
     nextPageError: feedQuery.isFetchNextPageError,
     accountFilter,
     setAccountFilter,
+    statusFilter,
+    setStatusFilter,
+    periodo,
+    setPeriodo,
+    ordem,
+    setOrdem,
     search,
     setSearch,
     limparFiltros,
+    comFiltro,
     selectedIds,
     // As LINHAS selecionadas (inclusive as que a busca/aba atual tirou da tela) — o diálogo de
     // exclusão em lote mostra o alcance real, não só a contagem.
