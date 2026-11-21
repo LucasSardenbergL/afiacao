@@ -3,7 +3,7 @@
 # Task 2: banco_extrato_registrar (ordem de decisao 0-9), marcar_conferido, resumo_dia, concorrencia (2 psql).
 # Fix da Task 2: vespera obrigatoria sem inicial (Ruling 5), gerado_em (Ruling 6), ancora x arquivo (Ruling 7), banco 0341.
 # Plano: docs/superpowers/plans/2026-11-20-f1-extrato-bancario-itau.md (Tasks 1 e 2).
-# Migration sob prova: supabase/migrations/20261120214417_banco_extrato_f1.sql (aplicada INTEIRA, 2x).
+# Migration sob prova: supabase/migrations/20261121123119_banco_extrato_f1.sql (aplicada INTEIRA, 2x).
 #
 # Fixtures: NENHUM numero real de agencia/conta. Agencia '0000'; contas '00000-0' (colacor) e '00000-1' (oben,
 # so para nao colidir no UNIQUE global). Os ACLs default espelham prod (pg_default_acl medido 2026-11-20:
@@ -16,7 +16,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIG="$REPO_ROOT/supabase/migrations/20261120214417_banco_extrato_f1.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261121123119_banco_extrato_f1.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert(s) que TEM de acusa-la, separados por +>
