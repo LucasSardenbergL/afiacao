@@ -2,6 +2,8 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { complementoParaCadastro, criarClienteComRegraRadar, emailParaCadastro, lerExigenciaRadar } from "./radar-cadastro.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { planejarLinhasEstoque } from "./estoque-linhas.ts";
+import { codigoExplicito } from "../_shared/pos-estoque.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "../_shared/lookup-cliente-estrito.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
@@ -76,7 +78,7 @@ interface OmieProdutoCadastro {
 
 interface OmiePosEstoque {
   nCodProd?: number;
-  nSaldo?: number;
+  nSaldo?: unknown; // o contrato diz number; a gravação não confia (./estoque-linhas.ts)
 }
 
 interface OmieClienteCadastro {
@@ -571,6 +573,7 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
   // mesma distinção do syncProducts: fim REAL (avaliarPagina) ≠ lote esgotado.
   let fimReal = false;
   let totalUpdated = 0;
+  let totalSemSaldo = 0; // produtos locais vindos sem nSaldo explícito — não gravados
   let pagesProcessed = 0;
 
   // mesmo fix do syncProducts: força a 1ª iteração p/ startPage>1 funcionar (era no-op). startPage=1 inalterado.
@@ -613,8 +616,8 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
     const updatedAt = new Date().toISOString();
 
     const productCodes = produtos
-      .map((prod) => Number(prod.nCodProd))
-      .filter((code: number) => Number.isFinite(code));
+      .map((prod) => codigoExplicito(prod.nCodProd)) // `Number([123])` = 123 inventaria o SKU (./estoque-linhas.ts)
+      .filter((code): code is number => code !== null);
 
     if (productCodes.length > 0) {
       const { data: existingProducts, error: existingError } = await supabase
@@ -630,25 +633,12 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
           ((existingProducts ?? []) as OmieProductMapRow[]).map((product) => [Number(product.omie_codigo_produto), product.id])
         );
 
-        type StockRow = { id: string; omie_codigo_produto: number; account: Account; estoque: number; updated_at: string };
-        const stockRows = produtos.reduce<StockRow[]>((rows, prod) => {
-          const omieCodigoProduto = Number(prod.nCodProd);
-          const existingId = existingMap.get(omieCodigoProduto);
-
-          if (!Number.isFinite(omieCodigoProduto) || !existingId) {
-            return rows;
-          }
-
-          rows.push({
-            id: existingId,
-            omie_codigo_produto: omieCodigoProduto,
-            account,
-            estoque: Number(prod.nSaldo ?? 0),
-            updated_at: updatedAt,
-          });
-
-          return rows;
-        }, []);
+        // Sem `nSaldo` explícito o produto não é tocado — ausente ≠ zero (./estoque-linhas.ts).
+        const { linhas: stockRows, semSaldo } = planejarLinhasEstoque(produtos, existingMap, account, updatedAt);
+        totalSemSaldo += semSaldo.length;
+        if (semSaldo.length > 0) {
+          console.warn(`[Omie Vendas][${account}] ${semSaldo.length} produtos da página ${pagina} vieram sem nSaldo explícito — estoque NÃO gravado (ausente ≠ zero): ${semSaldo.slice(0, 20).join(",")}`);
+        }
 
         if (stockRows.length > 0) {
           // Não há unique constraint (omie_codigo_produto,account) — usar UPDATE por id
@@ -668,7 +658,7 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
           totalUpdated += okCount;
         }
 
-        const skippedProducts = productCodes.length - stockRows.length;
+        const skippedProducts = productCodes.length - stockRows.length - semSaldo.length;
         if (skippedProducts > 0) {
           console.log(`[Omie Vendas][${account}] ${skippedProducts} produtos da página ${pagina} foram ignorados por não existirem localmente`);
         }
@@ -681,7 +671,7 @@ async function syncEstoque(supabase: SupabaseClient, startPage = 1, maxPages = 3
   }
 
   const complete = fimReal || pagina > totalPaginas;
-  return { totalUpdated, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
+  return { totalUpdated, totalSemSaldo, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
 }
 
 // Buscar/listar clientes na empresa de vendas
