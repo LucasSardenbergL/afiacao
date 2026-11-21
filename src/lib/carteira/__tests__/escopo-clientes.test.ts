@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  resolveModoEscopo, chunk, marcarCobertura, ordenarPorNome, coletarEmLotes,
+  resolveModoEscopo, chunk, marcarCobertura, ordenarPorNome, chaveOrdenacaoNome, coletarEmLotes,
   hashIds, ownersAtivosDoAlvo,
 } from '@/lib/carteira/escopo-clientes';
 
@@ -42,6 +42,49 @@ describe('ordenarPorNome', () => {
   it('ordena respeitando acento e caixa pt-BR', () => {
     const out = ordenarPorNome([{ name: 'Bruno' }, { name: 'Ávila' }, { name: 'ana' }]);
     expect(out.map((x) => x.name)).toEqual(['ana', 'Ávila', 'Bruno']);
+  });
+  it('ignora a sujeira do Omie: prefixo MEI, entidade HTML, símbolo inicial; só-lixo no fim', () => {
+    const out = ordenarPorNome([
+      { name: '+++' },
+      { name: '04.763.245 BRUNO  SILVA' },
+      { name: '&apos;CHARLES&apos;' },
+      { name: 'Charlie' },
+      { name: '. ÁGUIA AZUL' },
+      { name: 'Alfa' },
+      { name: '3M DO BRASIL' },
+    ]);
+    expect(out.map((x) => x.name)).toEqual([
+      '3M DO BRASIL', '. ÁGUIA AZUL', 'Alfa', '04.763.245 BRUNO  SILVA', '&apos;CHARLES&apos;', 'Charlie', '+++',
+    ]);
+  });
+  it('nomes idênticos desempatam pelo user_id; mesma chave fica junta', () => {
+    const out = ordenarPorNome([
+      { name: 'Zeta', user_id: 'q' },
+      { name: '3M', user_id: 'b' },
+      { name: 'S &amp; A', user_id: 'k' },
+      { name: '3M', user_id: 'a' },
+      { name: 's a', user_id: 'z' },
+    ]);
+    const ids = out.map((x) => x.user_id);
+    expect(ids.slice(0, 2)).toEqual(['a', 'b']);
+    expect(new Set(ids.slice(2, 4))).toEqual(new Set(['k', 'z']));
+    expect(ids[4]).toBe('q');
+  });
+});
+
+describe('chaveOrdenacaoNome — gêmea de private.nome_ordenacao (mesmos casos da postcondição A2)', () => {
+  it.each([
+    ['04.763.245 MARCO ANTÔNIO  DE OLIVEIRA', 'marco antonio de oliveira'],
+    ['&apos;PALLET&apos;S EMBALAR&apos;', 'pallet s embalar'],
+    ['S &amp; A GRANITOS', 's a granitos'],
+    ['. ON ART E DESIGN', 'on art e design'],
+    ['3M DO BRASIL LTDA', '3m do brasil ltda'],
+    ['(RR) MÓVEIS ÇÃ', 'rr moveis ca'],
+    ['+++', null],
+    ['', null],
+    [null, null],
+  ])('%s → %s', (entrada, esperado) => {
+    expect(chaveOrdenacaoNome(entrada)).toBe(esperado);
   });
 });
 
