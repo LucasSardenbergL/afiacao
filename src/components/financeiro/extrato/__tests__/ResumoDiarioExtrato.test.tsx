@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ResumoDiarioExtrato } from '../ResumoDiarioExtrato';
+import { INDISPONIVEL } from '../formatar';
 import type { ResumoDia } from '@/services/financeiroExtratoBancario';
 
 const diaNaoCoberto: ResumoDia = { data: '2026-11-10', coberto: false, creditos: null, debitos: null, saldoFinal: null, saldoOmie: null };
@@ -74,5 +75,9 @@ describe('Diferença do corte', () => {
   it('diferença zero REAL (Itaú = Omie) mostra R$ 0,00', () => {
     render(<ResumoDiarioExtrato dias={[{ ...dias[1], saldoOmie: 150000 }]} />);
     expect(screen.getByTestId('diferenca-valor').textContent).toMatch(/R\$\s?0,00/);
+  });
+  it('sem dia coberto, a data de corte mostra INDISPONIVEL', () => {
+    render(<ResumoDiarioExtrato dias={[diaNaoCoberto]} />);
+    expect(screen.getAllByText(INDISPONIVEL).length).toBeGreaterThanOrEqual(4);
   });
 });

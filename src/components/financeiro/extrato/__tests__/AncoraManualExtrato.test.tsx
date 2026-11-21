@@ -66,4 +66,17 @@ describe('AncoraManualExtrato', () => {
     montar(vi.fn(), { ancoras: [], erro: 'falhou' });
     expect(screen.getByText(/falhou/)).toBeTruthy();
   });
+  it('explica a véspera e o reenvio do arquivo', () => {
+    montar();
+    expect(screen.getByText(/véspera/)).toBeTruthy();
+    expect(screen.getByText(/reenvie o arquivo/)).toBeTruthy();
+  });
+  it('data sugerida (véspera do pendente) vem pré-preenchida', () => {
+    montar(vi.fn(), { dataSugerida: '2026-11-09' });
+    expect((screen.getByLabelText('Data') as HTMLInputElement).value).toBe('2026-11-09');
+  });
+  it('sem sugestão, a data fica vazia', () => {
+    montar();
+    expect((screen.getByLabelText('Data') as HTMLInputElement).value).toBe('');
+  });
 });
