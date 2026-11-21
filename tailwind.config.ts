@@ -144,7 +144,9 @@ export default {
         "24": "96px",
         "sidebar": "240px",
         "sidebar-collapsed": "56px",
-        "topbar": "48px",
+        // viewport-fit=cover: a barra do app cresce pela área segura do topo (barra de status do iPhone
+        // no PWA `black-translucent`); h-/pt-/top-topbar acompanham. Sem notch, env() = 0 → 48px.
+        "topbar": "calc(48px + env(safe-area-inset-top, 0px))",
       },
       borderRadius: {
         lg: "var(--radius)",

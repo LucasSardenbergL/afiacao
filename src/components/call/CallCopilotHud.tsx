@@ -44,7 +44,9 @@ export function CallCopilotHud() {
 
   return (
     <>
-      <div className="fixed bottom-4 left-4 z-40 w-[320px] rounded-lg border border-border bg-card shadow-lg">
+      {/* Sobe acima da barra de envio do Novo Pedido (`--rodape-fixo`, já com a área segura) e
+          cabe em 360px — antes cobria o total e o Enviar no celular (P2 do Codex, #4086). */}
+      <div className="fixed bottom-[calc(1rem+max(var(--rodape-fixo,0px),env(safe-area-inset-bottom)))] left-[calc(1rem+env(safe-area-inset-left))] z-40 w-[min(320px,calc(100vw-2rem))] rounded-lg border border-border bg-card shadow-lg">
         <header className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border">
           <div className="flex items-center gap-2 min-w-0">
             <span className="w-2 h-2 rounded-full bg-status-success animate-pulse shrink-0" />

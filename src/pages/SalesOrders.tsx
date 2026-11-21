@@ -202,7 +202,7 @@ const SalesOrders = () => {
           {grupos.map((grupo) => (
             <section key={grupo.dia} aria-label={porValor ? 'Pedidos por maior valor' : grupo.rotulo}>
               {!porValor && (
-                <h2 className={cn('sticky z-[1] border-b bg-muted/70 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-muted/50', isImpersonating ? 'top-[calc(theme(spacing.topbar)+1.75rem)]' : 'top-topbar')}>
+                <h2 className={cn('sticky z-[1] border-b bg-muted/70 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-muted/50', isImpersonating ? 'top-[calc(theme(spacing.topbar)+1.75rem+env(safe-area-inset-top))]' : 'top-topbar')}>
                   {grupo.rotulo}
                 </h2>
               )}
