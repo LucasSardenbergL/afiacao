@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const trackMock = vi.fn();
-const ledgerMock = vi.fn(() => Promise.resolve());
+const trackMock = vi.fn((..._a: unknown[]) => undefined);
+const ledgerMock = vi.fn((..._a: unknown[]) => Promise.resolve());
 let lente = false;
 vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => trackMock(...a) }));
 vi.mock('@/lib/analytics-ledger', () => ({ registrarNoLedger: (...a: unknown[]) => ledgerMock(...a) }));
