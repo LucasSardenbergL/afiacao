@@ -95,3 +95,14 @@ Migration `20261121160000_credito_limite_reserva_decisao.sql`, **sem edge nem Pu
 **Deploy:** migration (envelope `db:aplicar`) + Publish, em qualquer ordem. Front velho com banco novo: o par null é descartado (degrada, segura igual). **Sem edge** (a edge decide por `bloqueado` e loga `=null`; o tipo `pares[].vencido: number` dela é só de tipagem). Verificação comportamental de prod: `bun run db:aplicar db/verifica-credito-piso-pagto-parcial.sql --ensaio` (o `claude_ro` não executa o gate, por desenho).
 
 **Fora do escopo:** `PAGTO PARCIAL` segue fora de `OPEN_TITLE_STATUSES` (cashflow/NCG somaria o valor cheio — decisão do domínio financeiro).
+
+**Aplicado em prod (2026-11-21 21:37 UTC):** `bun run db:aplicar` a partir da main mergeada (`8923921d5`, #4081). Ledger `db_aplicacoes` #1283 `aplicada`, sha256 `43cd74d7…`. Pré-voo: `pg_get_functiondef` de `venda_gate_credito_grupo` e de `private.credito_avaliar_reservar` = os corpos do PR 1/PR 2 (md5 iguais aos da medição da manhã). Ensaio antes do apply OK (a postcondição de ACL passou em prod).
+- **Comportamental** (`db/verifica-credito-piso-pagto-parcial.sql --ensaio`, ROLLBACK): `VERIFICA OK: 22 pares PAGTO PARCIAL vencido > 60 d · 22 bloqueados · 22 com vencido null`.
+- **2ª testemunha psql-ro:**
+  - as defs têm `'PAGTO PARCIAL'`, `piso_indeterminado`, a margem de 5 min e `titulos_comprovados`;
+  - EXECUTE: `credito_grupo_pares`/`venda_gate_credito_grupo`/`venda_gate_credito` = {postgres, service_role}; `credito_avaliar_reservar` = {postgres};
+  - tabelas de marco: só `claude_ro:SELECT` além de owner/service_role;
+  - `sandbox_exec`/`sandbox_exec_fzvklzpomgnyikkfkzai` sem escrita em `venda_bloqueio_credito_log`/`venda_excecao_credito`;
+  - anon/authenticated sem TRUNCATE;
+  - `credito_virada_piso_parcial` com 1 linha.
+- **Falta:** Publish (front: "valor a confirmar" + mensagem por motivo + exceção recusada reabre o formulário). Sem ele, o banco já segura; só a tela degrada.
