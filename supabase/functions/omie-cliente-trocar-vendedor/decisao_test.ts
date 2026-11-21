@@ -54,7 +54,6 @@ Deno.test("payloadAlterar: recomendacoes inteiro, só o vendedor muda, nada fisc
   igual(p, {
     codigo_cliente_omie: 8689681368,
     estado: "MG",
-    cidade: "ITAUNA (MG)",
     recomendacoes: { codigo_transportadora: 8689697767, codigo_vendedor: 8689670842, gerar_boletos: "N" },
   }, "payload");
   igual(CAD.recomendacoes.codigo_vendedor, 8689670840, "não muta o cadastro lido");
@@ -109,11 +108,10 @@ Deno.test("lerParametros verificar: exige execucao_id", () => {
   igual(lerParametros({ modo: "verificar", lote: "saida_vendedora", conta: "oben", execucao_id: "33f59dc7-0000-4000-8000-000000000001" }).ok, true, "com id");
 });
 
-Deno.test("v1.1 payloadAlterar: estado/cidade vão como o Omie devolveu; sem estado = null (não há payload aceitável)", () => {
+Deno.test("v1.1 payloadAlterar: estado vai como o Omie devolveu, cidade nunca; sem estado = null (não há payload aceitável)", () => {
   igual(payloadAlterar({ ...CAD, estado: "" }, 1), null, "estado vazio");
   igual(payloadAlterar({ ...CAD, estado: "  " }, 1), null, "estado em branco");
   const { estado: _e, ...semEstado } = CAD;
   igual(payloadAlterar(semEstado, 1), null, "sem a chave estado");
-  const { cidade: _c, ...semCidade } = CAD;
-  igual(payloadAlterar(semCidade, 1), { codigo_cliente_omie: 8689681368, estado: "MG", recomendacoes: { ...CAD.recomendacoes, codigo_vendedor: 1 } }, "sem cidade: manda só o estado");
+  igual(Object.keys(payloadAlterar(CAD, 1)!).sort(), ["codigo_cliente_omie", "estado", "recomendacoes"], "cidade NUNCA vai (Codex v1.1 P2)");
 });

@@ -370,11 +370,23 @@ Deno.test("v1.1: cadastro SEM estado no Omie → 'precondicao_falhou' no dry_run
   }
 });
 
-Deno.test("v1.1: o payload enviado ao Omie leva estado/cidade iguais aos lidos (o fake recusa sem estado)", async () => {
+Deno.test("v1.1: o payload enviado ao Omie leva o estado lido e nunca a cidade (o fake recusa sem estado)", async () => {
   const omie = new Map([[1, cadastro(1, TATY_OBEN, { estado: "SC", cidade: "JOINVILLE (SC)" })]]);
   const enviados: Record<string, unknown>[] = [];
   const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return { ...atual, recomendacoes: payload.recomendacoes }; } });
   const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
   igual(r.itens[0].status, "verificado", "status");
-  igual([enviados[0].estado, enviados[0].cidade], ["SC", "JOINVILLE (SC)"], "estado/cidade do payload");
+  igual([enviados[0].estado, "cidade" in enviados[0]], ["SC", false], "estado do lido; cidade não vai");
+});
+
+Deno.test("Codex v1.1 P2: verificar que acha 'divergente' PARA (parou preenchido, fim=false), não anuncia fim", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN)]]);
+  const m = montar({ omie, candidatos: [cand(1)] });
+  const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), m.d, { ...OPC, orcamentoTotalMs: 10_000 });
+  igual(r.itens[0].status, "alterado", "alterado");
+  omie.set(1, { ...omie.get(1)!, razao_social: "MUDOU" }); // alguém mexeu em outro campo antes da prova
+  await m.d.dormir(61_000);
+  const v = await processarBloco(params({ modo: "verificar", execucao_id: "00000000-0000-4000-8000-000000000001" }), m.d, OPC);
+  igual(v.itens.map((i) => i.status), ["divergente"], "divergente");
+  igual([v.parou, v.fim], ["cadastro divergente no cliente 1", false], "para o operador");
 });

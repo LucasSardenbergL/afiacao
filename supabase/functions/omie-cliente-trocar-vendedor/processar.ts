@@ -402,6 +402,8 @@ async function verificar(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Re
     });
     contar(res, status);
     if (item.espelho_ok === false) { res.parou = `espelho não atualizou no cliente ${x.omie_codigo_cliente}`; restam++; break; }
+    // Divergência PARA o operador também no modo verificar — senão `fim=true, parou=null` esconde o dano (Codex v1.1 P2).
+    if (status === "divergente") { res.parou = `cadastro divergente no cliente ${x.omie_codigo_cliente}`; break; }
   }
   res.fim = res.parou === null && restam === 0;
 }
