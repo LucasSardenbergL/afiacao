@@ -164,3 +164,52 @@
 - [ ] Registro: `docs/historico/credito-piso-grupo-2026-11.md` (o furo medido, a decisão fail-closed, como reverter: edge volta a chamar `venda_gate_credito`).
 - [ ] PR (não-draft só após o verde + Codex) com título `fix(credito): trava vê o grupo inteiro + fail-closed + prazo na edição [migration 20261121120000 PENDENTE · edges omie-vendas-sync + omie-financeiro · Publish]`; Auto-fix ligado.
 - [ ] Deploy na ordem: **migration** → **edges** → **Publish**; depois `bun run pendencias:deploy` e verificação em prod: `venda_gate_credito_grupo` existe com ACL certo, e em 24 h `venda_bloqueio_credito_log` mostra bloqueios com `pares` de outra empresa.
+
+---
+
+# PR 2 — Banco do limite, da reserva e da decisão (plano detalhado, 2026-11-21)
+
+**Entrega:** 1 migration (`supabase/migrations/20261121160000_credito_limite_reserva_decisao.sql`) + prova PG17 (`db/test-credito-limite-reserva.sh`). **Sem edge, sem Publish, sem efeito em pedido:** nada chama as RPCs novas até o PR 5 (sombra). Deploy = migration via `bun run db:aplicar` (envelope).
+
+**Fatos de prod (psql-ro, 2026-11-21):** único master = Lucas (`user_id 414a9727-ad1d-4998-914e-9c6ccf26cf50`, `profiles.name='Lucas Sardenberg'`); `private.cap_credito_escrever(uuid)` = master-only (`md5(functiondef)=4389a0b7d6a996a42a57fd3d36626f53`); nenhuma tabela `credito_*` além de `credito_virada_grupo`; `fin_contas_receber.saldo` é nullable (0 nulos hoje); 0 pares do mapa com >1 dono; 0 aliases `conflict`.
+
+## Desenho
+
+**Raiz do grupo** — `credito_grupo_raiz(p_company, p_codigo) RETURNS jsonb {raiz, motivo}`: dono ÚNICO do par em `omie_customer_account_map` (0 ou >1 dono → `sem_grupo`); dono alias `active` → canônico; dono alias `conflict`, ou qualquer alias `conflict` do canônico → `grupo_conflito`. Mesmo eixo do PR 1 (raiz = dono do PAR comprovado, nunca o UUID do pedido).
+
+**Grupo versionado por assinatura** — `credito_grupo_assinatura(raiz) = md5` dos pares ordenados de `credito_grupo_pares(raiz)`. O limite guarda a assinatura da aprovação; assinatura atual ≠ a do limite → 🟡 `grupo_mudou` (mudança de composição reavalia).
+
+**Tabelas** (todas RLS ligada; SELECT só `pode_ver_carteira_completa`; sem policy de escrita; `REVOKE INSERT,UPDATE,DELETE,TRUNCATE` de `anon, authenticated, service_role, PUBLIC`; trigger `BEFORE INSERT/UPDATE/DELETE` exige o portão GUC `credito.portao` = id da linha, que só as RPCs setam — PostgREST cru, edge com service_role e SQL na mão não escrevem):
+- `credito_aprovador` — allowlist (`user_id` PK). 1 linha: o Lucas. Sem RLS de leitura (só as RPCs leem).
+- `credito_limite_proposta` — imutável no conteúdo; só `status pendente → aprovada|recusada|expirada` pela RPC de decisão. Guarda `limite_versao_base` (versão do vigente quando foi proposta) e `grupo_assinatura`.
+- `credito_limite` — vigente por `grupo_user_id` (PK): `limite_brl`, `prazo_max_dias`, `risco`, `versao`, `grupo_assinatura`, `ficha_calculada_em`, `origem_proposta_id`, `aprovado_por`. **1 writer**: `credito_aprovar_proposta` (o 2º writer — redução automática — é de PR futuro e será declarado).
+- `credito_decisao_pedido` — append-only (UPDATE/DELETE sempre recusados): pedido, company, código, raiz, **revisão**, valor, prazo, faixa, motivo, exposição (títulos, reservas), limite/versão usados, resultado do piso, reserva/solicitação/autorização.
+- `credito_reserva` — `ativa → substituida|transferida|liberada`; 1 ativa por (pedido, company) (índice único parcial).
+- `credito_solicitacao` — criada pelo gate no 🟡 (1 aberta por pedido+company+revisão). **Não autoriza nada.**
+- `credito_autorizacao` — registro SEPARADO, 1 por solicitação, amarrado a revisão, valor máx, prazo máx, motivo e validade.
+
+**RPCs**
+- `credito_propor_limite(...)` — service_role (edge do PR 4). Calcula assinatura e versão-base no servidor.
+- `credito_aprovar_proposta(id, motivo)` / `credito_recusar_proposta(id, motivo)` — authenticated, gate `IF NOT (private.cap_credito_escrever(uid) AND <allowlist>)` → `42501`. Recusa proposta com versão-base ≠ vigente (`P0001 proposta_desatualizada`) ou assinatura ≠ atual (`grupo_mudou`).
+- `credito_autorizar_solicitacao(id, autorizar, motivo, validade_horas)` — authenticated, mesmo gate. Solicitar ≠ autorizar: a solicitação nasce no gate; a autorização só por aqui.
+- `credito_avaliar_reservar(pedido, company, código, revisão, valor, prazo_dias, solicitante)` — service_role. **Transação com `pg_advisory_xact_lock` por raiz** (também tomado pela aprovação de proposta), relê títulos + reservas ativas e decide:
+  1. piso (`venda_gate_credito_grupo`) bloqueado → 🔴 `piso_vencido_60d` (autorização de limite **não** cobre o piso);
+  2. raiz nula → 🟡 `sem_grupo|grupo_conflito`;
+  3. reserva ativa da MESMA revisão → 🟢 `reserva_existente` (retry reusa);
+  4. autorização válida p/ (pedido, company, revisão) com valor ≤ máx e prazo ≤ máx → 🟢 `autorizado` (reserva);
+  5. sem limite → 🟡 `sem_limite`; assinatura mudou → 🟡 `grupo_mudou`; ficha > 14 d → 🟡 `limite_desatualizado`; risco `alto|sem_evidencia` → 🟡 `risco_*`;
+  6. prazo `NULL` → 🟡 `prazo_ilegivel`; prazo > máx → 🟡 `prazo_acima`;
+  7. título aberto com saldo `NULL` → 🟡 `exposicao_indeterminada` (ausente ≠ zero);
+  8. títulos + reservas ativas de OUTROS pedidos + valor > limite → 🟡 `estoura_limite`;
+  9. senão 🟢 `dentro_limite` + reserva. Nova revisão do mesmo pedido: a reserva antiga vira `substituida` e a nova reserva `greatest(antiga, nova)` (redução só libera após confirmação do Omie — PR 5/6); 🟡 numa edição mantém a reserva antiga intacta.
+- `credito_reserva_encerrar(id, status, motivo)` — service_role; `transferida|liberada`. A transferência reserva→título com conferência de NF/parcelas (§9.2) é do PR 5.
+
+**Fora do PR 2 (declarado):** frescor/cobertura do sync por empresa no gate (§9.5) e transferência comprovada reserva→título (§9.2) → PR 5; parser de prazo e revisão imutável → PR 3; redução automática → PR 4/5; aprovação em lote → PR 4.
+
+## Prova (`db/test-credito-limite-reserva.sh`, PG17 porta 5462, `LC_ALL=C` e `pt_BR.UTF-8`)
+- **C1 concorrência real:** limite R$ 10k; sessão A (psql via FIFO) abre transação e reserva R$ 7k sem commitar; sessão B pede R$ 7k e o orquestrador **observa** B bloqueada (`pg_blocking_pids`); A commita → B = 🟡 `estoura_limite`. Resultado 1 🟢 + 1 🟡.
+- **Allowlist:** master fora da allowlist aprova → SQLSTATE `42501`; employee gerencial → `42501`; uid nulo (service_role) → `42501`; Lucas → ok.
+- **Solicitar ≠ autorizar:** 🟡 cria solicitação; repetir o gate segue 🟡; só após `credito_autorizar_solicitacao` vira 🟢; autorização não cobre revisão nova, valor maior, nem o piso.
+- **RLS** sob `SET ROLE authenticated` + `request.jwt.claims`: gestor lê; vendedor (employee operacional) e customer leem 0; ninguém escreve direto (nem service_role) — `42501`/trigger.
+- Ausente ≠ zero, assinatura, desatualizado, risco, prazo, retry, edição (substituição e 🟡 preserva a antiga).
+- **Falsificação** (controle verde na MESMA invocação; uma camada por vez): F1 sem advisory lock → C1 dá 2 🟢; F2 gate sem allowlist → master estranho aprova; F3 `COALESCE(saldo,0)` → indeterminado vira 🟢; F4 exposição sem reservas → estoura vira 🟢; F5 trigger sem portão → service_role escreve direto; F6 postcondição: REVOKE esquecido aborta a migration.
