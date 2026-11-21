@@ -4,6 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { proporcaoChurnBaixo } from '@/lib/scoring/churn';
+import { mediaGastoMedido } from '@/lib/scoring/salesBase';
+import { fetchAllPages } from '@/lib/postgrest';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
 
 export interface PerformanceScore {
@@ -207,11 +209,19 @@ export const useFarmerPerformance = () => {
         .eq('farmer_id', farmerId)
         .gte('created_at', startStr));
 
-      // Fetch client scores (current snapshot)
-      const { data: clientScores } = (await supabase
-        .from('farmer_client_scores')
-        .select('churn_risk, category_count, avg_monthly_spend_180d, health_score')
-        .eq('farmer_id', farmerId));
+      // Fetch client scores (current snapshot) — PAGINADO. A leitura single-shot de antes era cortada em
+      // 1.000 linhas pelo PostgREST, sem erro, e as carteiras têm 14.177 e 2.842 (prod, psql-ro, 2026-11-21):
+      // mix, LTV e churn saíam de um recorte arbitrário de 1.000. `fetchAllPages` LANÇA em página com erro →
+      // o catch abaixo não persiste o score (fail-closed: carteira parcial não vira índice).
+      const clientScores = await fetchAllPages(
+        (de, ate) => supabase
+          .from('farmer_client_scores')
+          .select('id, churn_risk, category_count, avg_monthly_spend_180d, health_score')
+          .eq('farmer_id', farmerId)
+          .order('id', { ascending: true })
+          .range(de, ate),
+        'farmer_client_scores/ipf',
+      );
 
       // Fetch copilot sessions
       const { data: copilotSessions } = (await supabase
@@ -222,7 +232,7 @@ export const useFarmerPerformance = () => {
 
       const plansArr: TacticalPlanRow[] = plans || [];
       const callsArr: FarmerCallRow[] = calls || [];
-      const clientArr: ClientScoreRow[] = clientScores || [];
+      const clientArr: ClientScoreRow[] = clientScores;
       const copilotArr: CopilotSessionRow[] = copilotSessions || [];
 
       const totalCalls = callsArr.length;
@@ -290,11 +300,12 @@ export const useFarmerPerformance = () => {
         : 0;
       const ipfMixExpansion = Math.round(Math.min(100, (avgCategories / 6) * 100));
 
-      // 4. LTV evolution: avg monthly spend (target R$2000)
-      const avgSpend = clientArr.length > 0
-        ? clientArr.reduce((s, c) => s + Number(c.avg_monthly_spend_180d || 0), 0) / clientArr.length
-        : 0;
-      const ipfLtvEvolution = Math.round(Math.min(100, (avgSpend / 2000) * 100));
+      // 4. LTV evolution: gasto mensal médio de quem tem gasto MEDIDO (target R$2000). O não medido (NULL desde
+      // a calculate-scores v1.8 — quem nunca comprou) sai da base, como o churn desconhecido no item 5: o
+      // `Number(x || 0)` o contava como R$ 0 e a carteira de 14.177 (286 medidos) pontuava 0 em vez de 9.
+      // Ninguém medido → 0, mesma convenção do item 5 com `comRisco = 0`.
+      const { media: avgSpend } = mediaGastoMedido(clientArr.map((c) => c.avg_monthly_spend_180d));
+      const ipfLtvEvolution = avgSpend == null ? 0 : Math.round(Math.min(100, (avgSpend / 2000) * 100));
 
       // 5. Churn reduction: % de clientes com risco de churn conhecido E baixo (<30%).
       // A BASE é quem tem risco conhecido, não a carteira inteira. O `?? 100` do #1561 consertou

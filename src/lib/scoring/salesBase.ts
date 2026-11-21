@@ -79,3 +79,23 @@ export function tetoGasto(gastos: Iterable<number | null>): number {
   return max;
 }
 // MIRROR-END
+
+/**
+ * Média do gasto mensal sobre os clientes com gasto MEDIDO — a base do LTV do IPF do vendedor
+ * (`useFarmerPerformance`). O não medido (NULL desde a calculate-scores v1.8: quem nunca comprou) sai do
+ * numerador E do denominador, como o churn desconhecido em `proporcaoChurnBaixo`; o `Number(x || 0)`
+ * anterior o contava como R$ 0 e diluía a média de quem compra (prod 2026-11-21: carteira de 14.177 com
+ * 286 medidos → R$ 4 em vez de R$ 187). Gasto 0 MEDIDO (stale sem venda na janela) conta como 0.
+ * `media` null = nenhum cliente com gasto medido.
+ */
+export function mediaGastoMedido(gastos: Iterable<unknown>): { media: number | null; medidos: number } {
+  let soma = 0;
+  let medidos = 0;
+  for (const g of gastos) {
+    const v = finitoOuNulo(g);
+    if (v == null) continue;
+    soma += v;
+    medidos++;
+  }
+  return { media: medidos > 0 ? soma / medidos : null, medidos };
+}
