@@ -21,7 +21,7 @@ export interface ClienteGate {
   };
 }
 
-export interface ParVencido {
+interface ParVencido {
   company: string;
   codigo: number;
   vencido: number;
