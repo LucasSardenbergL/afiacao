@@ -684,6 +684,94 @@ describe('submitOrder — OS de Afiação no reenvio (A1)', () => {
     expect(r.allConfirmed).toBe(false);
   });
 
+  // ── Follow-up Codex do #4042: a confirmação se PERDE (rede/timeout) e o envelope fica sem marca ──
+  it('orderId da OS = checkoutId (estável entre reenvios) + assinatura vai para a edge', async () => {
+    const { client } = makeSupabase();
+    const base = {
+      supabase: client, customer: custAfiacao, checkoutId: 'chk-estavel',
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+    };
+    await submitOrder(makeParams(base));
+    await submitOrder(makeParams(base));
+    const calls = vi.mocked(syncOrderToOmie).mock.calls;
+    expect(calls.map(c => c[0])).toEqual(['chk-estavel', 'chk-estavel']);
+    expect(typeof calls[0][5]).toBe('string');
+    expect(calls[0][5]).toContain('#pg=pix');
+  });
+
+  it('marca o envelope como PENDENTE antes de chamar a edge', async () => {
+    const { client } = makeSupabase();
+    const ordem: string[] = [];
+    vi.mocked(syncOrderToOmie).mockImplementationOnce(async () => {
+      ordem.push('edge');
+      return { success: true, omie_os: { nCodOS: 1, cNumOS: 'OS1' } } as never;
+    });
+    await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      aoIniciarOsAfiacao: () => ordem.push('pendente'),
+    }));
+    expect(ordem).toEqual(['pendente', 'edge']);
+  });
+
+  it('edge reconciliou a MESMA OS (reenvio) → marca o envelope e diz "já existia"', async () => {
+    vi.mocked(syncOrderToOmie).mockResolvedValueOnce(
+      { success: true, reconciliada: true, conferencia: 'confere', omie_os: { nCodOS: 1, cNumOS: 'OS7' } } as never);
+    const { client } = makeSupabase();
+    const marcas: Array<{ numero: string | null }> = [];
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      aoConfirmarOsAfiacao: (m) => marcas.push(m),
+    }));
+    expect(r.results).toContain('OS OS7 (já existia)');
+    expect(marcas.map(m => m.numero)).toEqual(['OS7']);
+    expect(r.allConfirmed).toBe(true);
+  });
+
+  it('edge achou a OS de OUTRO carrinho (diverge) → afiacao_divergente, sem marca', async () => {
+    vi.mocked(syncOrderToOmie).mockResolvedValueOnce(
+      { success: false, reconciliada: true, conferencia: 'diverge', omie_os: { nCodOS: 1, cNumOS: 'OS8' } } as never);
+    const { client } = makeSupabase();
+    const marcas: unknown[] = [];
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      aoConfirmarOsAfiacao: (m) => marcas.push(m),
+    }));
+    expect(marcas).toHaveLength(0);
+    expect(r.errors.find(e => e.step === 'afiacao_divergente')?.message).toContain('OS de Afiação OS8 já foi criada');
+    expect(r.allConfirmed).toBe(false);
+  });
+
+  it('edge não conseguiu conferir (indeterminada) → afiacao_inconferivel, sem marca', async () => {
+    vi.mocked(syncOrderToOmie).mockResolvedValueOnce(
+      { success: false, reconciliada: true, conferencia: 'indeterminada', omie_os: { nCodOS: 1, cNumOS: 'OS9' } } as never);
+    const { client } = makeSupabase();
+    const marcas: unknown[] = [];
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [], colacorProductItems: [], serviceItems: [serviceItem()] },
+      aoConfirmarOsAfiacao: (m) => marcas.push(m),
+    }));
+    expect(marcas).toHaveLength(0);
+    expect(r.errors.find(e => e.step === 'afiacao_inconferivel')?.message).toContain('não deu para conferir');
+    expect(r.allConfirmed).toBe(false);
+  });
+
+  it('Codex P1: OS PENDENTE + todas as ferramentas removidas → não confirma o pedido por cima', async () => {
+    const { client } = makeSupabase();
+    const r = await submitOrder(makeParams({
+      supabase: client, customer: custAfiacao,
+      cart: { obenProductItems: [obenItem()], colacorProductItems: [], serviceItems: [] },
+      subtotals: { oben: 20, colacor: 0, service: 0 },
+      afiacaoPendente: true,
+    }));
+    expect(syncOrderToOmie).not.toHaveBeenCalled();
+    expect(r.errors.find(e => e.step === 'afiacao_inconferivel')?.message).toContain('a confirmação não chegou');
+    expect(r.allConfirmed).toBe(false);
+  });
+
   it('OS NÃO confirmada (falha no Omie) → sem marca: o reenvio deve tentar de novo', async () => {
     vi.mocked(syncOrderToOmie).mockResolvedValueOnce({ success: false, error: 'x' } as never);
     const { client } = makeSupabase();

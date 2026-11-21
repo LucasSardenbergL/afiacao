@@ -1006,7 +1006,14 @@ export function useUnifiedOrder() {
             // Grava na hora (antes do fim do envio): sobrevive a exceção posterior e a refresh.
             // Só no envelope DESTE envio — nunca carimbar um envelope trocado no meio.
             if (checkoutEnvRef.current?.checkoutId !== checkoutId) return;
-            checkoutEnvRef.current = { ...checkoutEnvRef.current, afiacaoOs: marca };
+            checkoutEnvRef.current = { ...checkoutEnvRef.current, afiacaoOs: marca, afiacaoPendente: false };
+            persistCheckoutEnv(checkoutEnvRef.current);
+          },
+          // Follow-up Codex do #4042: OS possivelmente criada (a confirmação pode se perder).
+          afiacaoPendente: checkoutEnvRef.current.afiacaoPendente ?? false,
+          aoIniciarOsAfiacao: () => {
+            if (checkoutEnvRef.current?.checkoutId !== checkoutId) return;
+            checkoutEnvRef.current = { ...checkoutEnvRef.current, afiacaoPendente: true };
             persistCheckoutEnv(checkoutEnvRef.current);
           },
         });
@@ -1055,7 +1062,7 @@ export function useUnifiedOrder() {
                 ? 'Alguma conta ficou pendente no ERP. Reenvie — os produtos não duplicam.'
                 : checkoutEnvRef.current?.afiacaoOs
                   ? 'Reenvie — nem os produtos nem a OS de afiação já criada duplicam.'
-                  : 'Os produtos não duplicam no reenvio. A OS de afiação não foi confirmada — confira no Omie antes de reenviar.',
+                  : 'Reenvie — os produtos não duplicam, e a OS de afiação que já tiver sido criada é reaproveitada.',
             });
           }
           // Avisos não-bloqueio: "criado com avisos". Bloqueios (crédito/ATP/desconhecido)

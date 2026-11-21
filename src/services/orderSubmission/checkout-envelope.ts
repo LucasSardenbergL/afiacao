@@ -6,6 +6,9 @@ export interface CheckoutEnvelope {
    *  reenvio (falha parcial, "Tentar novamente" do ATP, backorder) reusaria o envelope e
    *  recriaria a OS — o Omie não deduplica. Presente = pular o bloco Afiação. */
   afiacaoOs?: MarcaOsAfiacao | null;
+  /** Follow-up Codex do #4042: a edge da OS foi chamada neste envelope sem confirmação chegar
+   *  (a OS pode existir no Omie). Limpa quando a marca `afiacaoOs` é gravada. */
+  afiacaoPendente?: boolean;
 }
 
 /** O que foi confirmado da OS de Afiação: quais ferramentas/serviços (assinatura) e o nº da OS. */
