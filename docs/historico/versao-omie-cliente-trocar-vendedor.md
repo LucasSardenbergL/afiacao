@@ -16,5 +16,6 @@ Gate authorizeCronOrStaff; ação só master/service_role/cron-secret; sem cron 
 ## v1.1-payload-com-estado (2026-11-21)
 
 - **Medido no canário (8 clientes, 3 contas):** o AlterarCliente recusou TODOS com `É obrigatório o preenchimento do endereço (Estado)` — o payload só com `codigo_cliente_omie` + `recomendacoes` não basta. A releitura provou "nada gravado" em todos (fail-safe funcionou).
-- **Correção:** `payloadAlterar` reenvia `estado` (e `cidade`, se houver) EXATAMENTE como o ConsultarCliente devolveu; o hash da verificação ≥61s prova que não mudaram. Cadastro sem `estado` → `precondicao_falhou` (“cadastro sem estado no Omie (o AlterarCliente exige)”), sem escrever — inclusive no dry_run.
-- O fake do Omie nos testes passou a recusar payload sem `estado`, como o real. Falsificado: 4 sabotagens vermelhas com controle verde na mesma invocação.
+- **Correção:** `payloadAlterar` reenvia `estado` EXATAMENTE como o ConsultarCliente devolveu; o hash da verificação ≥61s prova que não mudou. `cidade` NÃO vai (Codex v1.1 P2: reenviar o nome lido poderia desfazer uma correção de município concorrente sem o hash acusar) — se o Omie passar a exigir, o canário mostra. Cadastro sem `estado` → `precondicao_falhou` (“cadastro sem estado no Omie (o AlterarCliente exige)”), sem escrever — inclusive no dry_run.
+- **Codex v1.1 P2 (preexistente):** o modo `verificar` agora PARA (`parou` preenchido, `fim=false`) ao achar `divergente` — antes podia anunciar fim.
+- O fake do Omie nos testes passou a recusar payload sem `estado`, como o real. Falsificado: 6 sabotagens vermelhas com controle verde na mesma invocação.
