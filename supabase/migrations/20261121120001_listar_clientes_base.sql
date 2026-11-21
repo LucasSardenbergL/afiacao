@@ -98,8 +98,10 @@ BEGIN
                AND s.health_class = v_saude
                AND s.sales_history_status IS DISTINCT FROM 'sem_historico'))
   )
+  -- prioridade_ordenacao = a chave de prioridade DESTA ordenação: NULL na ordem 'nome', para o
+  -- `.order()` estável do cliente (mesmas chaves, por cima) não re-ordenar a página A–Z.
   SELECT r.uid, r.nome, r.mail, r.fone, r.doc, r.tipo, r.criado, r.exige_po,
-         r.prio, count(*) OVER ()
+         CASE WHEN p_ordem = 'prioridade' THEN r.prio END, count(*) OVER ()
   FROM recorte r
   ORDER BY
     CASE WHEN p_ordem = 'prioridade' THEN r.prio END DESC NULLS LAST,

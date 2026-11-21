@@ -148,6 +148,8 @@ SQL
     "$(nomes $MASTER "")" "Charlie,Bravo,Eco 100%,Alfa,Delta,Foxtrot"
   eq "master · prioridade_ordenacao de sem_historico é NULL (67 cravado não vaza)" \
     "$(como $MASTER "SELECT coalesce(prioridade_ordenacao::text,'NULL') FROM public.listar_clientes_base() WHERE name='Alfa';" | tail -1)" "NULL"
+  eq "master · ordem nome: prioridade_ordenacao toda NULL (o .order do cliente não re-ordena)" \
+    "$(como $MASTER "SELECT count(prioridade_ordenacao) FROM public.listar_clientes_base(p_ordem => 'nome');" | tail -1)" "0"
   eq "master · ordem nome (A–Z, a de antes)" \
     "$(nomes $MASTER "p_ordem => 'nome'")" "Alfa,Bravo,Charlie,Delta,Eco 100%,Foxtrot"
   eq "funcionário is_employee fora da lista" \
@@ -220,6 +222,7 @@ sabota "sem REVOKE anon"                      '/FROM anon;/d' "migration aplica"
 sabota "desempate por uid, não por nome"      's/^    r\.nome,$/    r.uid,/' "master · prioridade: compradores"
 sabota "curinga do usuário vira curinga"      "s/private\.padrao_like_contem\(v_busca\)/('%' || v_busca || '%')/g" "busca 'o_1' é literal"
 sabota "termo sem conteúdo vira sem filtro"   's/AND \(v_busca IS NULL/AND (private.padrao_like_contem(v_busca) IS NULL/' "busca '_' (sem conteúdo útil)"
+sabota "nome expõe a prioridade"            "s/CASE WHEN p_ordem = 'prioridade' THEN r.prio END, count/r.prio, count/" "master · ordem nome: prioridade_ordenacao"
 sabota "total depois da paginação"            's/count\(\*\) OVER \(\)/1::bigint/' "total em toda linha"
 
 echo "falsificação: $FALS_OK/$FALS_TOTAL sabotagens pegas"

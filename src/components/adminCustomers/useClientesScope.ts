@@ -131,8 +131,12 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
         p_limite: PAGE_SIZE,
         p_offset: (pageParam as number) * PAGE_SIZE,
       })
-        // A RPC já pagina (LIMIT p_limite); o `.range` é o cinto do teto de 1.000 do PostgREST —
-        // nunca pede mais que uma página, e o gate rpc-set-returning-paginacao exige a fronteira.
+        // A RPC já ordena e pagina (LIMIT/OFFSET). O `.order` repete as MESMAS chaves (mesmo eixo,
+        // mesma collation; prioridade_ordenacao vem NULL na ordem 'nome') — não muda a sequência,
+        // só a declara estável; o `.range` é o cinto do teto de 1.000. Gates G7 + rpc-set-returning.
+        .order('prioridade_ordenacao', { ascending: false, nullsFirst: false })
+        .order('name')
+        .order('user_id')
         .range(0, PAGE_SIZE - 1);
       if (error) throw error;
       // data null SEM error = malformada, não página vazia (classe #1338→#1564): o `|| []`

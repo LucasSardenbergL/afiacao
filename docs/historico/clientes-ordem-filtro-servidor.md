@@ -13,6 +13,6 @@
 
 **Carteira não mudou.** A ordem continua A–Z (`ordenarPorNome`) e o filtro continua em memória. A carteira é lida inteira, então o filtro em memória é completo, e não há controle de ordem nesse modo.
 
-**Prova.** `db/test-listar-clientes-base.sh` (PG17): controle 29/29 e 9/9 sabotagens, cada uma acusada pelo próprio assert. A falsificação pegou uma cegueira do harness: sem o `ALTER DEFAULT PRIVILEGES` do Supabase (EXECUTE direto a `anon`), remover o `REVOKE … FROM anon` passava verde. No vitest, o controle ficou verde e as 4 sabotagens do front deram vermelho.
+**Prova.** `db/test-listar-clientes-base.sh` (PG17): controle 30/30 e 10/10 sabotagens, cada uma acusada pelo próprio assert. A falsificação pegou uma cegueira do harness: sem o `ALTER DEFAULT PRIVILEGES` do Supabase (EXECUTE direto a `anon`), remover o `REVOKE … FROM anon` passava verde. No vitest, o controle ficou verde e as 4 sabotagens do front deram vermelho.
 
 **Custo na PROD** (pré-voo psql-ro, 16.099 no recorte): cerca de 40 ms por página com cache quente e cerca de 870 ms a frio. O sort é top-N heapsort.
