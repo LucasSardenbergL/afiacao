@@ -79,7 +79,14 @@ describe('WebRTCDialer — ownership por instância (sessão WebRTC é global)',
     render(<WebRTCDialer phoneNumber="37999990000" customerName="Cliente A" />);
     fireEvent.click(screen.getByText('ligar'));
     expect(claimCall).toHaveBeenCalledTimes(1);
-    expect(makeCall).toHaveBeenCalledWith('37999990000');
+    expect(makeCall).toHaveBeenCalledWith('37999990000', { clienteOrigemId: null });
+  });
+
+  it('ligar de uma ficha leva o id do cliente como candidato a dono (onda 2, item 9)', () => {
+    h.ctx = makeCtx();
+    render(<WebRTCDialer phoneNumber="37999990000" customerName="Cliente A" customerId="cli-a" />);
+    fireEvent.click(screen.getByText('ligar'));
+    expect(makeCall).toHaveBeenCalledWith('37999990000', { clienteOrigemId: 'cli-a' });
   });
 
   it('clicar Ligar com OUTRA chamada ativa NÃO rouba a sessão (não reivindica nem disca)', () => {

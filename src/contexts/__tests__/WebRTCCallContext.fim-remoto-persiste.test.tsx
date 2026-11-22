@@ -84,6 +84,8 @@ vi.mock('@/integrations/supabase/client', () => ({
 import { toast } from 'sonner';
 import { WebRTCCallProvider } from '../WebRTCCallContext';
 import { useWebRTCCallContext } from '../webrtc-call-context';
+import { resolveCustomerByPhone } from '@/lib/call-session/resolve-customer';
+import { resolveCallParty } from '@/lib/call-log/recording-policy';
 import { SipClient } from '@/lib/sip/sip-client';
 import type { IncomingCallInfo } from '@/lib/sip/types';
 
@@ -214,5 +216,29 @@ describe('revisão adversária (2026-10-10): a sessão não herda nem cede conte
     });
     expect(sipClientMock.makeCall).not.toHaveBeenCalled();
     expect(toast.error).toHaveBeenCalledWith('Encerre a ligação atual antes de iniciar outra.');
+  });
+
+  it('ligação feita da ficha: o cliente de origem vai ao reconhecimento E à gravação (onda 2, item 9)', async () => {
+    const { result, rerender } = renderHook(() => useWebRTCCallContext(), { wrapper });
+    await waitFor(() => expect(SipClient).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await result.current.makeCall('37933334444', { clienteOrigemId: 'cli-da-ficha' });
+    });
+    expect(resolveCallParty).toHaveBeenCalledWith('37933334444', { clienteOrigemId: 'cli-da-ficha' });
+    act(() => handler('stateChange')('established'));
+    act(() => {
+      transcricao.turns = [turnoFinal];
+      rerender();
+    });
+    act(() => handler('stateChange')('ended'));
+    await waitFor(() => expect(insertMock).toHaveBeenCalledTimes(1));
+    expect(resolveCustomerByPhone).toHaveBeenCalledWith(expect.any(String), { clienteOrigemId: 'cli-da-ficha' });
+  });
+
+  it('ligação recebida não tem cliente de origem', async () => {
+    await ligacaoAtendida();
+    act(() => handler('stateChange')('ended'));
+    await waitFor(() => expect(insertMock).toHaveBeenCalledTimes(1));
+    expect(resolveCustomerByPhone).toHaveBeenCalledWith(expect.any(String), { clienteOrigemId: null });
   });
 });

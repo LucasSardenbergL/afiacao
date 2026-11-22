@@ -4,7 +4,10 @@ import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { useWebRTCCallContextOptional } from '@/contexts/webrtc-call-context';
 import { CallDialerView, type CallDialerViewProps } from './CallDialerView';
 
-type Props = Pick<CallDialerViewProps, 'phoneNumber' | 'customerName' | 'onCallEnd' | 'compact' | 'floating'>;
+type Props = Pick<CallDialerViewProps, 'phoneNumber' | 'customerName' | 'onCallEnd' | 'compact' | 'floating'> & {
+  /** Cliente de onde a ligação sai — candidato a dono da gravação (validado no resolver). */
+  customerId?: string | null;
+};
 
 /**
  * Dialer WebRTC in-app. A sessão WebRTC é ÚNICA/global (WebRTCCallContext), então
@@ -16,7 +19,7 @@ type Props = Pick<CallDialerViewProps, 'phoneNumber' | 'customerName' | 'onCallE
  * Usa o contexto OPCIONAL: se o provider ainda não montou (cold load), degrada pro
  * botão idle em vez de lançar (não derruba a árvore).
  */
-export function WebRTCDialer(props: Props) {
+export function WebRTCDialer({ customerId, ...props }: Props) {
   const id = useId();
   const ctx = useWebRTCCallContextOptional();
   // `owned` = este dialer é o dono da chamada atual (e o contexto existe).
@@ -53,7 +56,7 @@ export function WebRTCDialer(props: Props) {
           return;
         }
         ctx.claimCall(id);
-        void ctx.makeCall(props.phoneNumber);
+        void ctx.makeCall(props.phoneNumber, { clienteOrigemId: customerId ?? null });
       }}
       onEndCall={() => { void ctx?.endCall(); }}
       remoteStream={owned ? owned.remoteStream : null}

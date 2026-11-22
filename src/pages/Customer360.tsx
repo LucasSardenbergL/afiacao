@@ -30,7 +30,7 @@ import { IdentityColumn } from '@/components/customer360/IdentityColumn';
 import { ActivityColumn } from '@/components/customer360/ActivityColumn';
 import { VozTarefaDialog } from '@/components/tarefas/VozTarefaDialog';
 import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
-import { lerOrigemLista, urlListaClientes } from '@/components/adminCustomers/navegacao';
+import { lerOrigemLista, urlFichaCliente, urlListaClientes } from '@/components/adminCustomers/navegacao';
 
 export default function Customer360() {
   const { customerId } = useParams<{ customerId: string }>();
@@ -40,6 +40,13 @@ export default function Customer360() {
   const voltarParaLista = () => {
     const origem = lerOrigemLista(location.state);
     navigate(urlListaClientes(origem?.query ?? ''), { state: { rolagem: origem?.rolagem ?? null } });
+  };
+  // A ficha de cadastro (ferramentas, exige OC, chamadas/visitas/contatos) é uma porta DA 360 — e leva
+  // a fila junto, para o "Clientes" de lá voltar à mesma lista.
+  const abrirCadastro = () => {
+    if (!customerId) return;
+    const origem = lerOrigemLista(location.state);
+    navigate(urlFichaCliente(customerId, origem?.query ?? ''), { state: origem ? { origemLista: origem } : undefined });
   };
   const { user, isMaster, isGestorComercial, isStaff } = useAuth();
   const [abrirVozTarefa, setAbrirVozTarefa] = useState(false);
@@ -148,6 +155,7 @@ export default function Customer360() {
             scoreSemLeitura={scoreSemLeitura}
             isPj={isPj}
             onBack={voltarParaLista}
+            onAbrirCadastro={abrirCadastro}
           />
           {podeCriarTarefaPorVoz && (
             <div className="absolute top-3 right-3">

@@ -162,7 +162,7 @@ export function ContactRow({
             ) : (
               <span className="inline-flex items-center gap-1">
                 {formatPhone(contact.phone)}
-                <CallButton phone={contact.phone} customerName={displayName} variant="icon" />
+                <CallButton phone={contact.phone} customerName={displayName} customerId={contact.customer_user_id} variant="icon" />
               </span>
             )}
           </div>

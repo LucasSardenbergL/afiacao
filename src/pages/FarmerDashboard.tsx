@@ -212,7 +212,7 @@ const FarmerDashboard = () => {
                         </div>
                         <div className="flex items-center gap-0.5 shrink-0">
                           {phone ? (
-                            <CallButton phone={phone} customerName={item.customer_name} variant="icon" />
+                            <CallButton phone={phone} customerName={item.customer_name} customerId={item.customer_user_id} variant="icon" />
                           ) : (
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -233,7 +233,7 @@ const FarmerDashboard = () => {
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button size="icon" variant="ghost" className="h-8 w-8"
-                                onClick={() => navigate(`/admin/customers/${item.customer_user_id}`)}>
+                                onClick={() => navigate(`/admin/customers/${item.customer_user_id}/360`)}>
                                 <Eye className="w-3.5 h-3.5" />
                               </Button>
                             </TooltipTrigger>

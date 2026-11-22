@@ -23,7 +23,7 @@ export function CardCarteira({ card }: { card: CardCarteiraVM }) {
         )}
       </div>
       <div className="flex items-center gap-2">
-        {card.phone && <CallButton phone={card.phone} customerName={card.nome} variant="icon" />}
+        {card.phone && <CallButton phone={card.phone} customerName={card.nome} customerId={card.customer_user_id} variant="icon" />}
         <Button
           size="sm"
           variant="outline"

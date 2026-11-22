@@ -43,7 +43,7 @@ export function CallHistoryRow({ row, onCallBack }: { row: CallLogRow; onCallBac
       <div className="flex gap-1">
         {known && (
           <Button size="sm" variant="ghost" className="h-7 text-xs"
-            onClick={() => navigate(`/admin/customers/${row.customer_user_id}`)}>ver cliente</Button>
+            onClick={() => navigate(`/admin/customers/${row.customer_user_id}/360`)}>ver cliente</Button>
         )}
         <Button size="sm" variant="outline" className="h-7 text-xs"
           disabled={!canCall}

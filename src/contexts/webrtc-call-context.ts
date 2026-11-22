@@ -29,7 +29,8 @@ export interface WebRTCCallContextValue {
   callId: string | null;
   callDuration: number;
   audioLink: string | null;
-  makeCall: (phoneNumber: string, opts?: { forceRecord?: boolean }) => Promise<void>;
+  /** `clienteOrigemId`: a ficha/linha de onde a ligação saiu — candidato a dono, validado no resolver. */
+  makeCall: (phoneNumber: string, opts?: { forceRecord?: boolean; clienteOrigemId?: string | null }) => Promise<void>;
   endCall: () => Promise<void>;
   /** Ownership de UI: id do <WebRTCDialer> que iniciou a chamada atual (via claimCall).
    *  Em telas com VÁRIOS dialers (listas), só o dono reflete o estado ativo — os

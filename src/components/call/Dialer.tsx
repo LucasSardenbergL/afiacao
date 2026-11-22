@@ -5,7 +5,10 @@ const WebRTCDialer = lazy(() =>
   import('./WebRTCDialer').then((m) => ({ default: m.WebRTCDialer }))
 );
 
-type Props = Pick<CallDialerViewProps, 'phoneNumber' | 'customerName' | 'onCallEnd' | 'compact' | 'floating'>;
+type Props = Pick<CallDialerViewProps, 'phoneNumber' | 'customerName' | 'onCallEnd' | 'compact' | 'floating'> & {
+  /** Cliente de onde a ligação sai — candidato a dono da gravação (validado no resolver). */
+  customerId?: string | null;
+};
 
 /**
  * Dialer in-app. WebRTC é o único backend ativo (o `floating` é repassado e
