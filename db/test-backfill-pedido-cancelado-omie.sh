@@ -11,6 +11,7 @@ SLUG="backfill-cancelado"
 TMP="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")"
 DATA="$TMP/data"
 export LC_ALL=C LANG=C
+# shellcheck disable=SC1091  # caminho resolvido em runtime a partir de REPO_ROOT
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMP"; }
 trap cleanup EXIT
