@@ -86,7 +86,22 @@ export type OrderFeedRow = Omit<LinhaOrderFeed, (typeof COLUNAS_FEED_EXIGIDAS)[n
 export interface PaginaFeed {
   rows: OrderFeedRow[];
   count: number | null;
-  offset: number;
+  /**
+   * Chave da ÚLTIMA linha como o servidor a devolveu — a próxima página começa depois dela (keyset).
+   * Guardada na leitura, não derivada de `rows`: o optimistic da exclusão tira linhas da página, e o
+   * cursor não pode andar para trás com ele. `null` = página vazia.
+   */
+  cursor: CursorFeed | null;
+  /** A página veio cheia (FEED_PAGE_SIZE linhas lidas): pode haver mais. Também imune ao optimistic. */
+  cheia: boolean;
+}
+
+/** Cursor do feed: as colunas da ordem (`total` só na ordem "Maior valor"), em texto exato do servidor. */
+export interface CursorFeed {
+  total: string | null;
+  created_at: string;
+  origin: string;
+  id: string;
 }
 
 // Detalhe completo de um pedido, buscado por (origin, id) ao abrir o painel /

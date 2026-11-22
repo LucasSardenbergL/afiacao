@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { Button } from '@/components/ui/button';
 import { ShoppingCart, Trash2, ChevronLeft, Loader2, AlertTriangle, WifiOff, Plus, X as XIcon } from 'lucide-react';
@@ -78,6 +78,9 @@ const SalesOrders = () => {
   // Desconto de cada item (order_items) para o painel: a query vai INTEIRA, com o estado, para
   // "não consegui ler" não chegar lá como "sem desconto".
   const descontosItensQuery = useDescontosItensPedido(detailRow);
+  // Alcance do lote calculado ao ABRIR o diálogo (não a cada render da lista): `null` = fechado. O
+  // último alcance fica guardado para o diálogo não piscar "0 pedidos" na animação de fechar.
+  const [alcanceLote, setAlcanceLote] = useState<AlcanceExclusao | null>(null);
   const [confirmandoLote, setConfirmandoLote] = useState(false);
   // Confirmação de exclusão individual: UM diálogo na página, fora das linhas (dentro delas o clique
   // no fundo do diálogo propagava pela árvore React até a linha e abria o detalhe — Codex 2ª rodada).
@@ -106,6 +109,36 @@ const SalesOrders = () => {
     bloqueado: !!detailRow || !!pedidoAExcluir || confirmandoLote,
   });
 
+  // Ações das linhas: as MESMAS funções para todas (o hook devolve funções novas a cada render, então
+  // a ref guarda a última). Com elas estáveis, o `memo` do SalesOrderCard re-renderiza só a linha
+  // que mudou — marcar um checkbox em 1.000 linhas renderizava as 1.000.
+  const atual = useRef({ toggleSelect, handleShareOrder, printOrder, prefetchDetail, navigate });
+  atual.current = { toggleSelect, handleShareOrder, printOrder, prefetchDetail, navigate };
+  const acoesDaLinha = useMemo(() => ({
+    onNavigate: (path: string) => atual.current.navigate(path),
+    onSelectChange: (order: OrderFeedRow, v: boolean) => atual.current.toggleSelect(order, v),
+    onShare: (order: OrderFeedRow) => void atual.current.handleShareOrder(order),
+    onPrint: (order: OrderFeedRow) => void atual.current.printOrder(order),
+    onPrefetch: (order: OrderFeedRow) => atual.current.prefetchDetail(order),
+    onPedirExclusao: (order: OrderFeedRow, gatilho: HTMLElement | null) => {
+      gatilhoExclusaoRef.current = gatilho;
+      setPedidoAExcluir(order);
+    },
+    onOpenDetail: (order: OrderFeedRow, chave: string) => {
+      origemDoDetalheRef.current = chave;
+      setDetailRow(order);
+    },
+  }), []);
+
+  // "Maior valor" desliga os grupos por dia: agrupar reordenaria por data e quebraria a ordem
+  // prometida. Aí a linha mostra a data no lugar da hora. Memo: só a lista muda os grupos.
+  const porValor = ordem === 'valor';
+  const grupos = useMemo(
+    () => (porValor ? [{ dia: 'valor', rotulo: '', pedidos: orders }] : agruparPorDia(orders)),
+    [porValor, orders],
+  );
+  const chaves = useMemo(() => new Set(orders.map(chaveDaLinha)), [orders]);
+
   if (authLoading || loading) {
     return (
       <PageSkeleton variant="list" />
@@ -129,18 +162,11 @@ const SalesOrders = () => {
     );
   }
 
-  // "Maior valor" desliga os grupos por dia: agrupar reordenaria por data e quebraria a ordem
-  // prometida. Aí a linha mostra a data no lugar da hora.
-  const porValor = ordem === 'valor';
-  const grupos = porValor
-    ? [{ dia: 'valor', rotulo: '', pedidos: orders }]
-    : agruparPorDia(orders);
-  // Na transição de filtro as linhas na tela são do filtro ANTERIOR: não contam como "na tela".
-  const alcance = alcanceDaExclusao(linhasSelecionadas, buscando ? [] : orders);
+  const alcance = alcanceLote ?? ALCANCE_VAZIO;
   const horaDosDados = dataUpdatedAt ? format(new Date(dataUpdatedAt), 'HH:mm') : null;
   // Roving tabindex: a linha ativa fica no Tab; se ela saiu da lista (filtro), a primeira assume.
-  const chaves = grupos.flatMap((g) => g.pedidos.map(chaveDaLinha));
-  const chaveFocavel = linhaAtiva && chaves.includes(linhaAtiva) ? linhaAtiva : chaves[0] ?? null;
+  const primeira = grupos[0]?.pedidos[0];
+  const chaveFocavel = linhaAtiva && chaves.has(linhaAtiva) ? linhaAtiva : primeira ? chaveDaLinha(primeira) : null;
 
   return (
     <div className="max-w-6xl mx-auto space-y-4 pb-24">
@@ -277,24 +303,18 @@ const SalesOrders = () => {
                         customerName={decodeHtml(order.customer_name || 'Cliente')}
                         // A seleção é por id de sales_orders: uma afiação com o mesmo id não acende junto.
                         checked={order.origin === 'sales' && selectedIds.has(order.id)}
-                        onSelectChange={(v) => toggleSelect(order, v)}
-                        onShare={() => handleShareOrder(order)}
-                        onPedirExclusao={(gatilho) => {
-                          gatilhoExclusaoRef.current = gatilho;
-                          setPedidoAExcluir(order);
-                        }}
+                        onSelectChange={acoesDaLinha.onSelectChange}
+                        onShare={acoesDaLinha.onShare}
+                        onPedirExclusao={acoesDaLinha.onPedirExclusao}
                         excluindo={order.origin === 'sales' && excluindoIds.has(order.id)}
                         suspenso={buscando}
                         mostrarData={porValor}
-                        onNavigate={navigate}
-                        onOpenDetail={() => {
-                          origemDoDetalheRef.current = chave;
-                          setDetailRow(order);
-                        }}
-                        onPrint={() => printOrder(order)}
-                        onPrefetch={() => prefetchDetail(order)}
+                        onNavigate={acoesDaLinha.onNavigate}
+                        onOpenDetail={acoesDaLinha.onOpenDetail}
+                        onPrint={acoesDaLinha.onPrint}
+                        onPrefetch={acoesDaLinha.onPrefetch}
                         focavel={chave === chaveFocavel}
-                        onFocusLinha={() => setLinhaAtiva(chave)}
+                        onFocusLinha={setLinhaAtiva}
                         onMover={mover}
                       />
                     );
@@ -330,7 +350,11 @@ const SalesOrders = () => {
             variant: 'destructive',
             // Filtro novo a caminho: espera a lista certa antes de abrir o alcance do lote.
             disabled: buscando,
-            onClick: () => setConfirmandoLote(true),
+            onClick: () => {
+              // Na transição de filtro as linhas na tela são do filtro ANTERIOR: não contam como "na tela".
+              setAlcanceLote(alcanceDaExclusao(linhasSelecionadas, buscando ? [] : orders));
+              setConfirmandoLote(true);
+            },
           },
         ]}
       />
@@ -473,7 +497,14 @@ function plural(n: number, um: string, varios: string): string {
   return `${n.toLocaleString('pt-BR')} ${n === 1 ? um : varios}`;
 }
 
-function alcanceDaExclusao(selecionadas: OrderFeedRow[], naTela: OrderFeedRow[]) {
+interface AlcanceExclusao {
+  total: number;
+  porEmpresa: [string, number][];
+  foraDaTela: number;
+}
+const ALCANCE_VAZIO: AlcanceExclusao = { total: 0, porEmpresa: [], foraDaTela: 0 };
+
+function alcanceDaExclusao(selecionadas: OrderFeedRow[], naTela: OrderFeedRow[]): AlcanceExclusao {
   const visiveis = new Set(naTela.filter((o) => o.origin === 'sales').map((o) => o.id));
   const contagem = new Map<string, number>();
   for (const o of selecionadas) {
