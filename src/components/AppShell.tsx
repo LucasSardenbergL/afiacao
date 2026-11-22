@@ -901,8 +901,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <AppShellProvider>
       <ShortcutsRegistryProvider>
         <CommandsRegistryProvider>
-          {/* Faixa (1.75rem + área segura) + topbar de 48px = 1.75rem + pt-topbar (que já tem a área segura). */}
-          <div className={cn('min-h-screen bg-background density-compact', isImpersonating && 'pt-7')}>
+          {/* Faixa (1.75rem + área segura) + topbar de 48px = 1.75rem + pt-topbar (que já tem a área segura).
+              `--faixa-ver-como` alimenta o token `topo-conteudo` (sticky/fixed/alturas das páginas). */}
+          <div className={cn('min-h-screen bg-background density-compact', isImpersonating && 'pt-7 [--faixa-ver-como:1.75rem]')}>
             <ImpersonationBanner />
             {/* Desktop sidebar */}
             <div className="hidden lg:block">
