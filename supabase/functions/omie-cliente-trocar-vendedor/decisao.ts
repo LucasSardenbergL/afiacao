@@ -236,6 +236,18 @@ export function textoParaHash(cad: Record<string, unknown>): string {
  * Quais campos mudaram entre duas leituras, pelo MESMO recorte do hash (sem info/vendedor) — para o recibo DIZER o
  * que divergiu (v1.4: o canário 4 achou 'divergente' sem saber qual campo). Caminhos com valores curtos, no máx. 20.
  */
+/** Campos de CONTROLE cujo valor pode aparecer no recibo (sem dado pessoal/bancário — Codex v1.4 P2). */
+const CAMPOS_SEGUROS = new Set([
+  "importado_api", "inativo", "bloqueado", "bloquear_faturamento", "bloquear_exclusao", "tipo_atividade", "estado",
+  "cidade", "cidade_ibge", "codigo_pais", "pessoa_fisica", "exterior", "optante_simples_nacional", "contribuinte",
+  "produtor_rural", "valor_limite_credito", "enviar_anexos", "tag",
+]);
+
+function valorSeguro(caminho: string): boolean {
+  if (caminho.startsWith("recomendacoes.") || caminho.startsWith("tags.")) return true;
+  return CAMPOS_SEGUROS.has(caminho.split(".").pop() ?? "");
+}
+
 export function camposDiferentes(antes: Record<string, unknown>, depois: Record<string, unknown>): string[] {
   const a = JSON.parse(textoParaHash(antes)) as unknown;
   const b = JSON.parse(textoParaHash(depois)) as unknown;
@@ -249,7 +261,10 @@ export function camposDiferentes(antes: Record<string, unknown>, depois: Record<
       for (const k of [...new Set([...Object.keys(kx), ...Object.keys(ky)])].sort()) andar(kx[k], ky[k], cam ? `${cam}.${k}` : k);
       return;
     }
-    if (JSON.stringify(x) !== JSON.stringify(y)) out.push(`${cam || "(raiz)"}: ${curto(x)} → ${curto(y)}`);
+    if (JSON.stringify(x) === JSON.stringify(y)) return;
+    const c = cam || "(raiz)";
+    if (valorSeguro(c)) out.push(`${c}: ${curto(x)} → ${curto(y)}`);
+    else out.push(`${c}: ${x === undefined ? "adicionado" : y === undefined ? "removido" : "alterado"}`);
   };
   andar(a, b, "");
   return out;

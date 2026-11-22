@@ -130,6 +130,8 @@ Deno.test("v1.3 blocosPreenchidos: lista só listas/objetos NÃO vazios, fora in
 
 Deno.test("v1.4 camposDiferentes: caminhos aninhados, ausente, e ignora info/vendedor", () => {
   const depois = { ...CAD, info: { dAlt: "x" }, recomendacoes: { ...CAD.recomendacoes, codigo_vendedor: 1, gerar_boletos: "S" }, tags: [], novo: 1 };
-  igual(camposDiferentes(CAD, depois), ['novo: (ausente) → 1', 'recomendacoes.gerar_boletos: "N" → "S"', 'tags.0: {"tag":"Cliente"} → (ausente)'], "diff");
+  igual(camposDiferentes(CAD, depois), ['novo: adicionado', 'recomendacoes.gerar_boletos: "N" → "S"', 'tags.0: {"tag":"Cliente"} → (ausente)'], "diff");
   igual(camposDiferentes(CAD, { ...CAD, info: { dAlt: "y" } }), [], "info não conta");
+  igual(camposDiferentes({ ...CAD, email: "a@b.com", cnpj_cpf: "1" }, { ...CAD, email: "z@b.com", telefone1_numero: "9" }),
+    ["cnpj_cpf: removido", "email: alterado", "telefone1_numero: adicionado"], "dado pessoal: só o tipo de mudança, nunca o valor");
 });

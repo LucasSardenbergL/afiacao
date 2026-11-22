@@ -427,3 +427,11 @@ Deno.test("v1.4: texto vazio NÃO vai no payload (o Omie recusa vazio em campo c
   igual(r.itens[0].status, "verificado", "status");
   igual(["tipo_atividade" in enviados[0], "bloqueado" in enviados[0], enviados[0].complemento], [false, false, "SALA 1"], "vazios fora, preenchido vai");
 });
+
+Deno.test("Codex v1.4 P2: divergência SÓ no vendedor (hash bate) → erro diz esperado × lido, não 'mudou além'", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN)]]);
+  let consultas = 0;
+  const { d } = montar({ omie, candidatos: [cand(1)], consultaTroca: (cod) => (++consultas === 2 ? cadastro(cod, 999) : undefined) });
+  const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  igual([r.itens[0].status, r.itens[0].erro], ["divergente", `vendedor esperado ${REGINA_OBEN}, lido 999`], "diagnóstico certo");
+});

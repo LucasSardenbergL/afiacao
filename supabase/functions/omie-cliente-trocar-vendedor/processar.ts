@@ -350,7 +350,10 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
     } else {
       x.item.status = "divergente";
       const dif = camposDiferentes(x.cadAntes, cad);
-      x.item.erro = `o cadastro mudou além do vendedor${dif.length ? `: ${dif.join("; ")}` : ""}`.slice(0, 1500);
+      const vendLido = lerVendedor(cad);
+      x.item.erro = (dif.length
+        ? `o cadastro mudou além do vendedor: ${dif.join("; ")}`
+        : `vendedor esperado ${x.esperado ?? "vazio"}, lido ${vendLido === "ilegivel" ? "ilegível" : vendLido ?? "vazio"}`).slice(0, 1500);
       await d.atualizar(x.id, { status: "divergente", hash_depois: hashDepois, erro: x.item.erro });
       contar(res, "divergente");
       res.parou = `divergência no cliente ${x.item.omie_codigo_cliente}`;
