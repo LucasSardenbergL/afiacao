@@ -16,7 +16,7 @@ export const respostaSonda = criarRespostaSonda("omie-cliente-trocar-vendedor");
  * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
  * O CHANGELOG de cada versão vive em `docs/historico/versao-omie-cliente-trocar-vendedor.md`.
  */
-export const VERSAO = "v1.4-sem-vazios-e-diff";
+export const VERSAO = "v1.5-entidades-html";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

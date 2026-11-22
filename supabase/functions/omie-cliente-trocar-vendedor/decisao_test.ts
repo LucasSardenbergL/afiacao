@@ -7,6 +7,7 @@ import {
   lerParametros,
   blocosPreenchidos,
   camposDiferentes,
+  decodificarEntidades,
   enderecoFaltando,
   payloadAlterar,
   textoParaHash,
@@ -134,4 +135,46 @@ Deno.test("v1.4 camposDiferentes: caminhos aninhados, ausente, e ignora info/ven
   igual(camposDiferentes(CAD, { ...CAD, info: { dAlt: "y" } }), [], "info não conta");
   igual(camposDiferentes({ ...CAD, email: "a@b.com", cnpj_cpf: "1" }, { ...CAD, email: "z@b.com", telefone1_numero: "9" }),
     ["cnpj_cpf: removido", "email: alterado", "telefone1_numero: adicionado"], "dado pessoal: só o tipo de mudança, nunca o valor");
+});
+
+// v1.5 — entidades HTML (lote 1 v1.4: 5 'divergente' por `&amp;`→`&` normalizado pelo próprio Omie).
+const OBS_MULTI = "Linha 1: PEDIR P/ JOAO &amp; MARIA\nLinha 2: &quot;urgente&quot; &lt;ok&gt;\r\nLinha 3: d&#39;agua &#233; &#xE7;";
+
+Deno.test("decodificarEntidades: nomeadas, numéricas e hex numa passada só; inválidas ficam", () => {
+  igual(decodificarEntidades("TRES R MOVEIS &amp; CIA LTDA"), "TRES R MOVEIS & CIA LTDA", "amp");
+  igual(decodificarEntidades(OBS_MULTI), "Linha 1: PEDIR P/ JOAO & MARIA\nLinha 2: \"urgente\" <ok>\r\nLinha 3: d'agua é ç", "multilinha");
+  igual(decodificarEntidades("&AMP; &apos;"), "& '", "caixa e apos");
+  igual(decodificarEntidades("&amp;lt;"), "&lt;", "uma passada só");
+  igual(decodificarEntidades("&#0; &#xD800; &#1114112; &nbsp; & solto &amp"), "&#0; &#xD800; &#1114112; &nbsp; & solto &amp", "inválidas intactas");
+  igual(decodificarEntidades("SEM ENTIDADE"), "SEM ENTIDADE", "identidade");
+});
+
+Deno.test("payloadAlterar v1.5: texto vai decodificado (razão, fantasia, obs multilinha); número intacto", () => {
+  const cad = { ...CAD, razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", observacao: OBS_MULTI };
+  const p = payloadAlterar(cad, 8689670842) as Record<string, unknown>;
+  igual(p.razao_social, "TRES R MOVEIS & CIA LTDA", "razão");
+  igual(p.nome_fantasia, "MOVEIS & CIA", "fantasia");
+  igual(p.observacao, "Linha 1: PEDIR P/ JOAO & MARIA\nLinha 2: \"urgente\" <ok>\r\nLinha 3: d'agua é ç", "obs");
+  igual(p.codigo_cliente_omie, 8689681368, "código");
+});
+
+Deno.test("hash v1.5: &amp; gravado decodificado pelo Omie NÃO é divergência; qualquer outra mudança é", async () => {
+  const antes = { ...CAD, razao_social: "TRES R MOVEIS &amp; CIA LTDA", observacao: OBS_MULTI, tags: [{ tag: "A &amp; B" }] };
+  const normalizado = {
+    ...antes, razao_social: "TRES R MOVEIS & CIA LTDA", tags: [{ tag: "A & B" }],
+    observacao: "Linha 1: PEDIR P/ JOAO & MARIA\nLinha 2: \"urgente\" <ok>\r\nLinha 3: d'agua é ç",
+    recomendacoes: { ...CAD.recomendacoes, codigo_vendedor: 8689670842 }, info: { dAlt: "22/11/2026" },
+  };
+  igual(await hashCadastro(normalizado), await hashCadastro(antes), "normalização = mesmo hash");
+  igual(camposDiferentes(antes, normalizado), [], "diff vazio na normalização");
+
+  const outraRazao = { ...normalizado, razao_social: "TRES R MOVEIS E CIA LTDA" };
+  if (await hashCadastro(outraRazao) === await hashCadastro(antes)) throw new Error("troca &→E tem de mudar o hash");
+  igual(camposDiferentes(antes, outraRazao), ["razao_social: alterado"], "diff nomeia razão");
+
+  const obsSemLinha = { ...normalizado, observacao: normalizado.observacao.replace("\r\n", "\n") };
+  if (await hashCadastro(obsSemLinha) === await hashCadastro(antes)) throw new Error("quebra de linha diferente tem de mudar o hash");
+
+  const ampPerdido = { ...normalizado, razao_social: "TRES R MOVEIS  CIA LTDA" };
+  if (await hashCadastro(ampPerdido) === await hashCadastro(antes)) throw new Error("& sumido tem de mudar o hash");
 });

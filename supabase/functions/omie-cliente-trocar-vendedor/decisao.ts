@@ -192,6 +192,26 @@ function ehEscalar(v: unknown): boolean {
   return typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
 }
 
+/**
+ * Decodifica entidades HTML num texto, numa ÚNICA passada (v1.5). Medido no lote 1 (v1.4, 2026-11-22): cadastros
+ * antigos estão gravados com `&amp;` ("MOVEIS &amp; CIA"); a tela do Omie mostra "&", mas o ConsultarCliente devolve a
+ * entidade. Reenviado como lido, o Omie grava o texto DECODIFICADO — o valor exibido não muda, mas a leitura da API
+ * sim, e o hash acusava 'divergente'. Uma passada só: `&amp;lt;` vira `&lt;` (não `<`) — se o Omie ainda normalizar
+ * de novo, o hash ACUSA (direção segura). Código numérico inválido (0, surrogate, > U+10FFFF) fica como está.
+ */
+const ENTIDADE = /&(?:(amp|lt|gt|quot|apos)|#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6}));/gi;
+const NOMEADAS: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+export function decodificarEntidades(s: string): string {
+  if (!s.includes("&")) return s;
+  return s.replace(ENTIDADE, (m, nome: string | undefined, dec: string | undefined, hex: string | undefined) => {
+    if (nome) return NOMEADAS[nome.toLowerCase()];
+    const cp = dec !== undefined ? Number.parseInt(dec, 10) : Number.parseInt(hex as string, 16);
+    if (cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return m;
+    return String.fromCodePoint(cp);
+  });
+}
+
 /** Payload do AlterarCliente, ou `null` se o endereço lido está incompleto (o chamador recusa sem escrever). */
 export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Record<string, unknown> | null {
   const codigo = cad.codigo_cliente_omie;
@@ -203,14 +223,21 @@ export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Reco
   // "tag [tipo_atividade] incorreto", "tag [bloqueado] deve ser 'S' ou 'N'". Omitido, o campo fica como está.
   for (const [k, v] of Object.entries(cad)) {
     if (!ehEscalar(v) || INSTRUCOES.has(k) || (typeof v === "string" && v.trim() === "")) continue;
-    p[k] = v;
+    // Texto vai DECODIFICADO (v1.5): é o que o Omie grava de qualquer jeito e o que a tela já mostra.
+    p[k] = typeof v === "string" ? decodificarEntidades(v) : v;
   }
   p.codigo_cliente_omie = codigo;
   p.recomendacoes = { ...rec, codigo_vendedor: alvo };
   return p;
 }
 
+/**
+ * Forma canônica do recorte do hash/diff: chaves ordenadas e TODO texto (em qualquer profundidade) com entidades
+ * decodificadas (v1.5) — nos DOIS lados, para `&amp;`→`&` gravado pelo próprio Omie não virar divergência. Qualquer
+ * outra mudança de texto continua mudando o hash.
+ */
 function canonico(v: unknown): unknown {
+  if (typeof v === "string") return decodificarEntidades(v);
   if (Array.isArray(v)) return v.map(canonico);
   if (v && typeof v === "object") {
     const o = v as Record<string, unknown>;
