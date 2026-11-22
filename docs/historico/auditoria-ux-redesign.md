@@ -195,3 +195,19 @@ modalidade de entrega → voltam ao padrão; "Enviar pedido agora" da reconexão
 "carregando" eterno; busca só com espaços = "sem resultado"; o reset limpa a busca de cores e tira
 `?customer`/`?repeat` da URL. Fica de fora: o HUD de ligação (`z-40`, 320px) pode cobrir a barra
 num celular de 360px durante a chamada. Falsificado: 7 sabotagens + controle verde na mesma invocação.
+
+**Painel da ligação × barra de envio + `viewport-fit=cover` (follow-up do #4086, 2026-11-21).** O HUD
+da ligação (`fixed` 320px no rodapé, `z-40`) cobria o total e o Enviar num celular de 360px → os dois
+ficam visíveis: a `BarraEnvioPedido` publica em `--rodape-fixo` (no `<html>`) quanto do rodapé ocupa
+— do TOPO dela ao fim da tela, não só a altura, porque no fim da rolagem ela sobe pelo padding
+(Codex P2) — e o HUD e o painel de transferência sobem por essa variável; o HUD cabe em
+`min(320px, 100vw − 2rem)`. `viewport-fit=cover` ligado: o PWA já usava `black-translucent`, então
+o topo ia para baixo da barra de status sem `env()` para compensar. O token `spacing.topbar` virou
+`calc(48px + env(safe-area-inset-top))` (h-/pt-/top-topbar acompanham), os cabeçalhos do shell
+ganham `pt` da área segura, a topbar e o conteúdo ganham as laterais (notch no paisagem) e o fundo
+(indicador de início), o drawer e os sheets (X abaixo da barra de status — Codex P1) idem. Com a faixa
+"Ver como", é ELA que cobre a barra de status e a topbar fica com 48px exatos (a área segura entrava
+duas vezes — Codex P2). Ficam de fora (já estavam sob a barra de status antes — `black-translucent`
+sem `cover`): cabeçalhos `sticky top-0` de página (conferência de NF-e, `/docs`), o "Mostrar
+transcrição" em `top-20`, o overlay do scanner de lote, rodapés de recebimento a 16px da borda e os
+`calc(100vh − 48px)` do WhatsApp/Ajuda. Sem teste em aparelho.

@@ -36,7 +36,7 @@ export function ImpersonationBanner() {
   // Outras pessoas pra trocar direto pelo banner (a lista já exclui o próprio master).
   const outros = targets.filter((t) => t.id !== target.id);
   return (
-    <div className="fixed top-0 inset-x-0 z-50 h-7 bg-status-warning-bold text-white text-xs flex items-center justify-center gap-3 px-3">
+    <div className="fixed top-0 inset-x-0 z-50 h-[calc(1.75rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] bg-status-warning-bold text-white text-xs flex items-center justify-center gap-3 px-3">
       <Eye className="w-3.5 h-3.5 shrink-0" />
       <span className="truncate">
         Vendo como <strong>{target.nome}</strong>

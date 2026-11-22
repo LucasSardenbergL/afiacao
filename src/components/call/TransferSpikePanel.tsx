@@ -19,7 +19,7 @@ export function TransferSpikePanel() {
   if (!enabled || !ctx?.isEstablished || !ctx.spikeTransfer) return null;
 
   return (
-    <div className="fixed bottom-24 right-4 z-50 w-64 space-y-2 rounded-lg border border-status-warning/40 bg-card p-3 shadow-lg">
+    <div className="fixed bottom-[calc(6rem+max(var(--rodape-fixo,0px),env(safe-area-inset-bottom)))] right-[calc(1rem+env(safe-area-inset-right))] z-50 w-64 space-y-2 rounded-lg border border-status-warning/40 bg-card p-3 shadow-lg">
       <p className="text-xs font-medium text-status-warning">⚠ Spike transferência (teste)</p>
       <Input
         value={ext}

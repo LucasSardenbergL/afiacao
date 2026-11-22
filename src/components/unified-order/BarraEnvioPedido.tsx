@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Send, Loader2, FileText, CloudOff, AlertCircle } from 'lucide-react';
 import { findInvalidPricedProductItems } from '@/services/orderSubmission/priceGuard';
 import { motivosEnvioBloqueado, envioBloqueado, type EntradaMotivosEnvio } from './motivos-envio';
 import { rotuloTotal } from './rotulo-total';
+import { useReservaRodape } from './reserva-rodape';
 
 export interface BarraEnvioPedidoProps extends EntradaMotivosEnvio {
   submitting: boolean;
@@ -33,6 +34,9 @@ export function BarraEnvioPedido(props: BarraEnvioPedidoProps) {
   const motivos = motivosEnvioBloqueado(props);
   const desabilitado = envioBloqueado(submitting, motivos);
   const total = rotuloTotal(totalEstimated, servicosAOrcar);
+  // Os painéis da ligação (HUD, transferência) sobem acima desta barra em vez de cobri-la.
+  const barraRef = useRef<HTMLDivElement>(null);
+  useReservaRodape(barraRef);
 
   const hasOnlyProducts = (obenProductItems.length > 0 || colacorProductItems.length > 0) && serviceItems.length === 0;
   // Orçamento: mesma regra de antes — barra só preço inválido (não grava codigo_parcela).
@@ -44,6 +48,7 @@ export function BarraEnvioPedido(props: BarraEnvioPedidoProps) {
 
   return (
     <div
+      ref={barraRef}
       role="region"
       aria-label="Envio do pedido"
       data-testid="barra-envio-pedido"

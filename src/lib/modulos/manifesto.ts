@@ -308,6 +308,7 @@ export const MODULOS: ModuloApp[] = [
       "src/components/unified-order/__tests__/motivos-envio.test.ts",
       "src/components/unified-order/__tests__/quantidade.test.tsx",
       "src/components/unified-order/__tests__/fechamento-mobile.test.tsx",
+      "src/components/unified-order/__tests__/rodape-safe-area.test.tsx",
       "src/hooks/unifiedOrder/__tests__/estado-lista-produtos.test.ts",
       "src/components/unified-order/__tests__/dias-entrega.test.ts",
       "src/components/unified-order/__tests__/exibicao-produto.test.ts",

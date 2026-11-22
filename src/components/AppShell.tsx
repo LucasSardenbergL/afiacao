@@ -606,7 +606,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
     <aside
       className={cn(
         'fixed left-0 bottom-0 z-40 flex flex-col overflow-hidden bg-sidebar border-r border-sidebar-border transition-all duration-200',
-        isImpersonating ? 'top-7' : 'top-0',
+        isImpersonating ? 'faixa-ver-como-top' : 'top-0',
         collapsed ? 'w-sidebar-collapsed' : 'w-sidebar'
       )}
     >
@@ -614,7 +614,9 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
          O underline é a "spine" visual do app — gradient sutil que distingue Colacor de
          qualquer template Vercel genérico. Aparece só na sidebar expandida. */}
       <div className={cn(
-        'flex items-center h-topbar border-b border-sidebar-border px-3',
+        'flex items-center border-b border-sidebar-border px-3',
+        // Alinha com a topbar: com a faixa "Ver como" a área segura já ficou na faixa.
+        isImpersonating ? 'h-12' : 'h-topbar pt-[env(safe-area-inset-top)]',
         collapsed ? 'justify-center' : 'justify-between'
       )}>
         {!collapsed && (
@@ -735,9 +737,13 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
   return (
     <header
       className={cn(
-        'fixed right-0 z-30 h-topbar border-b border-border bg-card/80 backdrop-blur-sm flex items-center justify-between px-4 transition-all duration-200',
+        'fixed right-0 z-30 border-b border-border bg-card/80 backdrop-blur-sm flex items-center justify-between transition-all duration-200',
+        // viewport-fit=cover: conteúdo abaixo da barra de status e fora do notch no paisagem.
+        'pl-[calc(1rem+env(safe-area-inset-left))] pr-[calc(1rem+env(safe-area-inset-right))]',
         'left-0 lg:left-sidebar',
-        isImpersonating ? 'top-7' : 'top-0',
+        // Com a faixa "Ver como", É ELA que cobre a barra de status: a topbar fica com 48px logo
+        // abaixo (senão a área segura entraria duas vezes — Codex P2).
+        isImpersonating ? 'faixa-ver-como-top h-12' : 'top-0 h-topbar pt-[env(safe-area-inset-top)]',
         sidebarCollapsed && 'lg:left-sidebar-collapsed'
       )}
     >
@@ -807,8 +813,8 @@ const MobileNav = React.memo(function MobileNav({ open, onClose }: { open: boole
   return (
     <>
       <div className="fixed inset-0 z-50 bg-black/50 lg:hidden" onClick={onClose} />
-      <div className="fixed left-0 top-0 bottom-0 z-50 flex w-64 flex-col overflow-hidden bg-sidebar border-r border-sidebar-border lg:hidden animate-slide-in-right">
-        <div className="flex items-center justify-between h-topbar border-b border-sidebar-border px-3">
+      <div className="fixed left-0 top-0 bottom-0 z-50 flex w-[calc(16rem+env(safe-area-inset-left))] pl-[env(safe-area-inset-left)] pb-[env(safe-area-inset-bottom)] flex-col overflow-hidden bg-sidebar border-r border-sidebar-border lg:hidden animate-slide-in-right">
+        <div className="flex items-center justify-between h-topbar pt-[env(safe-area-inset-top)] border-b border-sidebar-border px-3">
           <div className="flex items-baseline gap-0.5">
             <span
               className="text-foreground text-base"
@@ -895,6 +901,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <AppShellProvider>
       <ShortcutsRegistryProvider>
         <CommandsRegistryProvider>
+          {/* Faixa (1.75rem + área segura) + topbar de 48px = 1.75rem + pt-topbar (que já tem a área segura). */}
           <div className={cn('min-h-screen bg-background density-compact', isImpersonating && 'pt-7')}>
             <ImpersonationBanner />
             {/* Desktop sidebar */}
@@ -916,7 +923,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 collapsed && 'lg:ml-sidebar-collapsed'
               )}
             >
-              <div className="p-4 lg:p-6">
+              {/* viewport-fit=cover: o conteúdo respeita notch (paisagem) e indicador de início. */}
+              <div className="p-4 lg:p-6 pl-[calc(1rem+env(safe-area-inset-left))] pr-[calc(1rem+env(safe-area-inset-right))] pb-[calc(1rem+env(safe-area-inset-bottom))] lg:pl-[calc(1.5rem+env(safe-area-inset-left))] lg:pr-[calc(1.5rem+env(safe-area-inset-right))] lg:pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
                 <ExigenciaDeVersao />
                 <GlobalBreadcrumbs />
                 {children}

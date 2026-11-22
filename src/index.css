@@ -382,6 +382,8 @@
 
   /* ── Mobile safe areas ── */
   .safe-top { padding-top: env(safe-area-inset-top); }
+  /* Faixa do "Ver como" (h-7) + a área segura do topo — a barra do app e o shell descem juntos. */
+  .faixa-ver-como-top { top: calc(1.75rem + env(safe-area-inset-top, 0px)); }
   .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
 
   /* ── Scrollbar ── */
