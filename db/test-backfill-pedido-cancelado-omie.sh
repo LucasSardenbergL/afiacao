@@ -44,6 +44,24 @@ CREATE TABLE public.sales_orders (
   deleted_at     timestamptz,
   updated_at     timestamptz NOT NULL DEFAULT '2026-01-01'
 );
+-- Contador de UPDATE por linha: a idempotência se prova por "nenhuma linha foi ESCRITA", não por
+-- updated_at (que um UPDATE redundante sem trigger de carimbo não anda — challenge Codex).
+DROP TABLE IF EXISTS public._escritas;
+CREATE TABLE public._escritas (id int, n int NOT NULL DEFAULT 0);
+CREATE OR REPLACE FUNCTION public._contar() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN INSERT INTO public._escritas (id, n) VALUES (NEW.id, 1); RETURN NEW; END $f$;
+CREATE TRIGGER _conta_escrita BEFORE UPDATE ON public.sales_orders FOR EACH ROW EXECUTE FUNCTION public._contar();
+-- Stub do trigger de coerência de PROD (mesmo NOME, CONSTRAINT TRIGGER DEFERRABLE INITIALLY
+-- DEFERRED): a linha com total = -1 faz o papel do pedido legado incoerente (23514).
+CREATE OR REPLACE FUNCTION public._coerencia() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+  IF NEW.total = -1 THEN
+    RAISE EXCEPTION 'pedido % incoerente (stub)', NEW.id USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END $f$;
+CREATE CONSTRAINT TRIGGER trg_pedido_venda_coerencia_cab AFTER INSERT OR UPDATE ON public.sales_orders
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public._coerencia();
 SQL
 }
 
@@ -78,9 +96,9 @@ bateria() {
     v="$(estado)"
     [ "$v" = "$ESPERADO" ] || { echo "    · [EFEITO] veio [$v]"; falhou=1; }
     # [IDEMPOTENTE] 2ª aplicação: nenhuma linha tocada (updated_at não anda se o UPDATE não pega nada)
-    P -q -c "UPDATE public.sales_orders SET updated_at = '2026-01-01'" >/dev/null
+    P -q -c "TRUNCATE public._escritas" >/dev/null
     if aplicar "$arq"; then
-      v="$(Pq -c "SELECT count(*) FROM public.sales_orders WHERE updated_at <> '2026-01-01'")"
+      v="$(Pq -c "SELECT count(*) FROM public._escritas")"
       [ "$v" = "0" ] || { echo "    · [IDEMPOTENTE] 2ª rodada tocou $v linha(s)"; falhou=1; }
       [ "$(estado)" = "$ESPERADO" ] || { echo "    · [IDEMPOTENTE] estado mudou na 2ª rodada"; falhou=1; }
     else echo "    · [IDEMPOTENTE] 2ª rodada falhou: $(grep -m1 -E 'ERRO|ERROR' "$TMP/apply.out" | cut -c1-160)"; falhou=1; fi
@@ -97,6 +115,15 @@ bateria() {
     grep -q 'P0001' "$TMP/apply.out" || { echo "    · [APP-AVANÇADO] falhou por OUTRO motivo: $(grep -m1 -E 'ERRO|ERROR' "$TMP/apply.out" | cut -c1-160)"; falhou=1; }
     v="$(Pq -c "SELECT count(*) FROM public.sales_orders WHERE status = 'cancelado'")"
     [ "$v" = "1" ] || { echo "    · [APP-AVANÇADO] o aborto não desfez tudo ($v cancelados, esperado 1)"; falhou=1; }
+  fi
+  # [ENSAIO-COERÊNCIA] o --ensaio (BEGIN … ROLLBACK) tem de VER o 23514 de uma linha incoerente
+  #   da lista; com o trigger só no COMMIT, o ensaio passaria e o apply real cairia.
+  esquema; semear
+  P -q -c "SET session_replication_role = replica; UPDATE public.sales_orders SET total = -1 WHERE id = 1" >/dev/null   # legado: já incoerente antes do backfill
+  if P -q -c 'BEGIN' -f "$arq" -c 'ROLLBACK' >"$TMP/apply.out" 2>&1 && ! grep -q '23514' "$TMP/apply.out"; then
+    echo "    · [ENSAIO-COERÊNCIA] o ensaio passou com linha incoerente na lista"; falhou=1
+  else
+    grep -q '23514' "$TMP/apply.out" || { echo "    · [ENSAIO-COERÊNCIA] falhou por OUTRO motivo: $(grep -m1 -E 'ERRO|ERROR' "$TMP/apply.out" | cut -c1-160)"; falhou=1; }
   fi
   # [LISTA-TRUNCADA] a mesma lista sem o 1º PID da oben → a contagem embutida ABORTA (P0001).
   esquema; semear
@@ -131,6 +158,8 @@ sabotar "casa só por PID (sem conta)" "   WHERE c.conta = so.account
      AND c.pid" "   WHERE c.pid"
 sabotar "alvo inclui rascunho"        "ARRAY['importado','separacao','enviado','faturado']" "ARRAY['importado','separacao','enviado','faturado','rascunho']"
 sabotar "postcondição cega"           "IF v_resto IS DISTINCT FROM 0 THEN" "IF false THEN"
+sabotar "coerência só no commit"      "SET CONSTRAINTS public.trg_pedido_venda_coerencia_cab IMMEDIATE;" "-- (sabotado)"
+sabotar "UPDATE redundante (reescreve o já cancelado)" "ARRAY['importado','separacao','enviado','faturado']" "ARRAY['importado','separacao','enviado','faturado','cancelado']"
 sabotar "contagem da lista frouxa"    "IF v_oben IS DISTINCT FROM" "IF false AND v_oben IS DISTINCT FROM"
 
 echo "── CONTROLE FINAL (arquivo real, de novo) ──"
