@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 
 export const Section = ({ id, title, children }: { id: string; title: string; children: ReactNode }) => (
-  <section id={id} className="mb-12">
+  <section id={id} className="mb-12 scroll-mt-[calc(theme(spacing.topo-conteudo)+5rem)]">
     <h2 className="text-2xl font-black mb-4 border-b-2 pb-2 border-primary/20">{title}</h2>
     {children}
   </section>

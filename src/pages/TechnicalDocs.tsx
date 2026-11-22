@@ -15,7 +15,7 @@ const TechnicalDocs = () => {
   return (
     <div className="min-h-screen bg-background">
       {/* Print controls - hidden on print */}
-      <div className="print:hidden sticky top-0 z-50 bg-background/95 backdrop-blur border-b p-4 flex items-center justify-between">
+      <div className="print:hidden sticky top-topo-conteudo z-20 bg-background/95 backdrop-blur border-b p-4 flex items-center justify-between">
         <h1 className="text-lg font-bold">Documentação Técnica</h1>
         <Button onClick={handlePrint} className="gap-2">
           <FileDown className="h-4 w-4" />
