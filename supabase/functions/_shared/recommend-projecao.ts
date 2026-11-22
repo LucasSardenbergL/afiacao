@@ -40,7 +40,7 @@ export interface CandidatoProjetavel {
   recommendation_type: string;
   explanation_text: string;
   explanation_key: string;
-  estoque: number;
+  estoque: number | null;
   cost_final: number | null;
   cost_source: string;
   cost_confidence: number;

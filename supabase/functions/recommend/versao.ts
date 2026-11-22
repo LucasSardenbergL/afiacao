@@ -47,8 +47,12 @@ export const respostaSonda = criarRespostaSonda("recommend");
  * acontecido ou não. É exatamente o pré-flight `main`×prod que o `deploy.md` firmou em 765e984ba —
  * e a lição concreta é que o marcador cobre a fatia que o BUMPOU, não a janela de tempo: uma fatia
  * que entra DEPOIS do bump e ANTES do deploy volta a ser invisível.
+ *
+ * `v1.9-estoque-desconhecido` (2026-11-21): estoque `null` (#4087) deixou de descartar o produto
+ * como "sem estoque" e sai na resposta como `null` em vez de 0 fabricado — só o saldo SABIDAMENTE
+ * ≤ 0 tira o candidato (`_shared/estoque-desconhecido.ts`).
  */
-export const VERSAO = "v1.8-tipos-client";
+export const VERSAO = "v1.9-estoque-desconhecido";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

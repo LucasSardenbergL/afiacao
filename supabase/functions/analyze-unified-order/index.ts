@@ -17,6 +17,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { razaoSemCpf } from "../_shared/razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { escolherContaPorEstoque, rotuloEstoqueCurto, rotuloEstoquePrompt } from "../_shared/estoque-desconhecido.ts";
 import {
   type AcumuladorCache,
   acumularUsoCache,
@@ -770,7 +771,7 @@ Deno.serve(async (req) => {
     const produtosLista = prodList.map((p) =>
       // Sem `Preço:` — a IA não precifica. Era a ÚNICA fonte de preço do modelo (a TABELA), e ele
       // a ecoava no `unit_price` do item e na prosa da `message` como se fosse o preço do cliente.
-      `- ID:${p.id} | Código:${p.codigo} | ${p.descricao} | Conta:${p.account || 'oben'} | Estoque:${p.estoque ?? 0}`
+      `- ID:${p.id} | Código:${p.codigo} | ${p.descricao} | Conta:${p.account || 'oben'} | ${rotuloEstoquePrompt(p.estoque)}`
     ).join("\n");
 
     // Format user tools
@@ -1330,7 +1331,7 @@ Deno.serve(async (req) => {
     }
 
     // ─── Multi-account optimization: for each product, find equivalent in both accounts ───
-    // Pick the account with LESS stock (to clear smaller batches first)
+    // Pick the account by stock (see escolherContaPorEstoque — unknown stock is not zero)
     const prodMap = new Map<string, ProdutoCatalogo>(prodList.map((p) => [p.id, p]));
     const optimizedProducts: AIProduct[] = [];
     const processedCodes = new Set<string>();
@@ -1352,13 +1353,12 @@ Deno.serve(async (req) => {
       );
 
       if (equivalent) {
-        const currentStock = prod.estoque ?? 0;
-        const otherStock = equivalent.estoque ?? 0;
-        
-        // Pick the one with LESS stock (to clear inventory)
-        // If equal, prefer current selection
-        if (otherStock > 0 && otherStock < currentStock) {
-          console.log(`[analyze-unified-order] Switching ${baseCode} from ${prod.account}(est:${currentStock}) to ${otherAccount}(est:${otherStock}) - less stock`);
+        // Regra em `escolherContaPorEstoque`: saldo conhecido > 0 primeiro (o menor entre eles),
+        // desconhecido depois, zero real por último — `null` não vence nem perde como se fosse 0.
+        const currentStock = rotuloEstoqueCurto(prod.estoque);
+        const otherStock = rotuloEstoqueCurto(equivalent.estoque);
+        if (escolherContaPorEstoque(prod.estoque, equivalent.estoque) === "outra") {
+          console.log(`[analyze-unified-order] Switching ${baseCode} from ${prod.account}(est:${currentStock}) to ${otherAccount}(est:${otherStock})`);
           optimizedProducts.push({
             ...vp,
             product_id: equivalent.id,

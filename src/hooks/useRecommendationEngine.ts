@@ -15,7 +15,8 @@ export interface RecommendationItem {
   recommendation_type: string;
   explanation_text: string;
   explanation_key: string;
-  estoque: number;
+  /** `null` = estoque desconhecido (o Omie não mandou saldo) — ausente ≠ zero. */
+  estoque: number | null;
   // Bloco inteiro AUSENTE sem cap_custo_ler — a decisão é do servidor, não do browser.
   // `score_final` mora aqui porque é insumo da inversão: com os pesos e os sub-scores dá para
   // isolar o termo de EIP e recuperar a margem a menos de uma transformação afim.
