@@ -13,6 +13,7 @@ import {
   carregarEstoqueLocalNulo,
   carregarPosicoesLocaisNaoZero,
   contradicaoDaResposta,
+  contradicaoNoFimDoLote,
   type EscritorPostgrest,
   metadataDoZeramento,
   zerarConfirmadosForaDaLista,
@@ -276,6 +277,7 @@ Deno.test("orquestrador — confirma em lote, zera o confirmado nas duas tabelas
     estoqueZerado: 1,
     estoqueZeradoNulo: 0,
     recusadosCas: 0,
+    catalogoAdiado: 0,
     chamadasConfirmacao: 1,
     estranhosNaConfirmacao: 0,
     pulado: null,
@@ -374,7 +376,7 @@ Deno.test("metadata — o passo que não rodou (loader falhou) é null, nunca 0,
 Deno.test("metadata — rodada apurada: contagens em snake_case; pulado e falhas só quando existem", () => {
   const base = {
     candidatos: 3, candidatosNulos: 0, puladoNulos: null, confirmadosZero: 1, naoZero: 1, desconhecidos: 1, posicoesZeradas: 1, estoqueZerado: 1, estoqueZeradoNulo: 0,
-    recusadosCas: 0, chamadasConfirmacao: 1, estranhosNaConfirmacao: 0, pulado: null, falhas: [] as string[],
+    recusadosCas: 0, catalogoAdiado: 0, chamadasConfirmacao: 1, estranhosNaConfirmacao: 0, pulado: null, falhas: [] as string[],
   };
   assertEquals(metadataDoZeramento(base, null), {
     zeramento_candidatos: 3,
@@ -386,6 +388,7 @@ Deno.test("metadata — rodada apurada: contagens em snake_case; pulado e falhas
     zerados_estoque: 1,
     zerados_estoque_nulo: 0,
     zeramento_recusados_cas: 0,
+    zeramento_catalogo_adiado: 0,
     zeramento_chamadas: 1,
     zeramento_estranhos: 0,
   });
@@ -583,7 +586,15 @@ Deno.test("contradição — página curta com nTotPaginas declarando mais, ou d
   // mesmo dia em outro formato, ou formato ilegível: não contradiz (não trava o zeramento por formato)
   assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "2026-11-21" }, 1, 100, "21/11/2026"), null);
   assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: " 21/11/2026 " }, 1, 100, "21/11/2026"), null);
-  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "21-11-26" }, 1, 100, "21/11/2026"), null);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "21-11-26" }, 1, 100, "21/11/2026") !== null, true); // presente e ilegível VETA
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "20-11-2026" }, 1, 100, "21/11/2026") !== null, true);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "31/02/2026" }, 1, 100, "21/11/2026") !== null, true); // dia inexistente
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "" }, 1, 100, "21/11/2026"), null); // vazio = ausente
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nPagina: 1 }, 2, 100, "21/11/2026") !== null, true); // página repetida
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nPagina: 2, nRegistros: 1 }, 2, 100, "21/11/2026"), null);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nRegistros: 2 }, 1, 100, "21/11/2026") !== null, true); // truncado
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nTotPaginas: "x" }, 1, 100, "21/11/2026") !== null, true);
+  assertEquals([contradicaoNoFimDoLote({ nTotRegistros: 2 }, 1) !== null, contradicaoNoFimDoLote({ nTotRegistros: 3 }, 3), contradicaoNoFimDoLote({}, 7)], [true, null, null]);
   assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "2026-11-20T00:00:00" }, 1, 100, "21/11/2026") !== null, true);
 });
 
@@ -639,7 +650,7 @@ Deno.test("aplicar — espelho de posição recusado pelo CAS: o catálogo do ME
     estoque: [{ id: "p7", omie_codigo_produto: 7, casUpdatedAt: "2026-11-21T22:00:00.5+00:00", estoqueLidoNulo: true, set: { estoque: 0 } }],
   });
   assertEquals([tab.inventory_position[0].saldo, tab.omie_products[0].estoque], [12, null]);
-  assertEquals([r.posicoesZeradas, r.estoqueZerado, r.recusadosCas], [0, 0, 2]);
+  assertEquals([r.posicoesZeradas, r.estoqueZerado, r.recusadosCas, r.catalogoAdiado], [0, 0, 1, 1]);
 });
 
 Deno.test("orquestrador — loader da trilha NULL que FALHA não cancela a ≠ 0: falha registrada, nulos null", async () => {
@@ -661,4 +672,60 @@ Deno.test("orquestrador — loader da trilha NULL que FALHA não cancela a ≠ 0
   assertEquals([r.candidatos, r.candidatosNulos, r.estoqueZerado], [1, null, 1]);
   assertEquals(r.falhas.some((f) => f.startsWith("trilha NULL não apurada")), true, JSON.stringify(r.falhas));
   assertEquals(metadataDoZeramento(r, null).zeramento_candidatos_nulos, null);
+});
+
+// ════════ adversarial do Codex, 2ª rodada (2026-11-21) ════════
+
+function lotes51(): { inventory_position: Linha[]; omie_products: Linha[] } {
+  const produtos: Linha[] = [];
+  for (let c = 1; c <= 51; c++) produtos.push(nulo(`p${String(c).padStart(3, "0")}`, 100 + c));
+  return { inventory_position: [], omie_products: produtos };
+}
+
+Deno.test("orquestrador — saldo ≠ 0 visto em OUTRO lote VETA o zero do lote que pediu o código", async () => {
+  const tab = lotes51();
+  const r = await rodarNulo(tab, (p) => {
+    const pedidos = (p.lista_produtos as Array<{ nCodProd: number }>).map((x) => x.nCodProd);
+    return Promise.resolve({ produtos: pedidos.includes(101) ? [{ nCodProd: 101, nSaldo: 0 }] : [{ nCodProd: 151, nSaldo: 0 }, { nCodProd: 101, nSaldo: 9 }] });
+  });
+  assertEquals([tab.omie_products[0].estoque, tab.omie_products[50].estoque], [null, 0]);
+  assertEquals([r.naoZero >= 1, r.estoqueZeradoNulo], [true, 1]);
+});
+
+Deno.test("orquestrador — página REPETIDA (nPagina 1 em resposta à 2) invalida o lote: nada zera", async () => {
+  const tab = { inventory_position: [], omie_products: [nulo("p7", 7)] };
+  const cheia = Array.from({ length: 100 }, () => ({ nCodProd: 7, nSaldo: 0 }));
+  const r = await rodarNulo(tab, (p) => Promise.resolve(p.nPagina === 3 ? { nPagina: 3, produtos: [{ nCodProd: 7, nSaldo: 0 }] } : { nPagina: 1, produtos: cheia }));
+  assertEquals([tab.omie_products[0].estoque, r.estoqueZerado], [null, 0]);
+  assertEquals(r.falhas.some((f) => f.includes("nPagina")), true, JSON.stringify(r.falhas));
+});
+
+Deno.test("orquestrador — nRegistros/nTotRegistros maior que o array (truncado): nada zera", async () => {
+  for (const resposta of [{ nRegistros: 2, produtos: [{ nCodProd: 7, nSaldo: 0 }] }, { nTotRegistros: 2, produtos: [{ nCodProd: 7, nSaldo: 0 }] }]) {
+    const tab = { inventory_position: [], omie_products: [nulo("p7", 7)] };
+    const r = await rodarNulo(tab, () => Promise.resolve(resposta));
+    assertEquals([tab.omie_products[0].estoque, r.estoqueZerado, r.falhas.length], [null, 0, 1], JSON.stringify(r.falhas));
+  }
+});
+
+Deno.test("orquestrador — trilhas em lotes SEPARADOS: ilegível no lote NULL não impede o zero da ≠ 0, que é escrito ANTES", async () => {
+  const tab = {
+    inventory_position: [],
+    omie_products: [{ id: "p5", account: "colacor", omie_codigo_produto: 5, estoque: 9, updated_at: "u" }, nulo("p7", 7)],
+  };
+  const pedidos: number[][] = [];
+  let estoqueDo5NaChamadaNulo: unknown = "não chamado";
+  const r = await rodarNulo(tab, (p) => {
+    const cods = (p.lista_produtos as Array<{ nCodProd: number }>).map((x) => x.nCodProd);
+    pedidos.push(cods);
+    if (cods.includes(7)) {
+      estoqueDo5NaChamadaNulo = tab.omie_products[0].estoque;
+      return Promise.resolve({ produtos: [{ nCodProd: 7, nSaldo: 0 }, { nCodProd: "lixo", nSaldo: 0 }] });
+    }
+    return Promise.resolve({ produtos: [{ nCodProd: 5, nSaldo: 0 }] });
+  });
+  assertEquals(pedidos, [[5], [7]]);
+  assertEquals(estoqueDo5NaChamadaNulo, 0); // a ≠ 0 já estava escrita quando a NULL foi confirmada
+  assertEquals([tab.omie_products[0].estoque, tab.omie_products[1].estoque], [0, null]);
+  assertEquals([r.estoqueZerado, r.estoqueZeradoNulo], [1, 0]);
 });

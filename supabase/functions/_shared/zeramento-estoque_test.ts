@@ -83,7 +83,7 @@ Deno.test("candidatos — posição local com saldo ≠ 0 FORA da listagem é ca
     posicoesLocais: [pos(1, 5, "2026-10-05T12:00:00Z"), pos(3, 2.43, "2026-08-27T10:00:00Z"), pos(4, -1, "2026-09-01T00:00:00Z")],
     estoqueLocal: [],
   });
-  assertEquals(r, { aConfirmar: [3, 4], candidatos: 2, candidatosNulos: 0, pulado: null, puladoNulos: null });
+  assertEquals(r, { aConfirmar: [3, 4], aConfirmarNulos: 0, candidatos: 2, candidatosNulos: 0, pulado: null, puladoNulos: null });
 });
 
 Deno.test("candidatos — saldo 0, null, ausente ou não-numérico nunca é candidato", () => {
@@ -467,17 +467,31 @@ Deno.test("candidatos NULL — acima do orçamento a rodada confirma uma JANELA 
   assertEquals(acima.puladoNulos !== null && acima.puladoNulos.includes("janela rotativa"), true, String(acima.puladoNulos));
 });
 
-Deno.test("candidatos NULL — a janela rotativa cobre TODOS os NULLs em ⌈N/250⌉ rodadas (nenhum trava para sempre)", () => {
-  const n = 2 * LIMITE_CANDIDATOS_NULOS + 37;
-  const nulos = Array.from({ length: n }, (_, i) => est(`n${i}`, 1000 + i, null));
-  const vistos = new Set<number>();
-  const rodadas = Math.ceil(n / LIMITE_CANDIDATOS_NULOS);
-  for (let r = 0; r < rodadas; r++) {
-    const p = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [], estoqueLocal: nulos, rodada: 9000 * rodadas + r });
-    assertEquals(p.aConfirmar.length, LIMITE_CANDIDATOS_NULOS);
-    for (const c of p.aConfirmar) vistos.add(c);
+Deno.test("candidatos NULL — a janela cobre TODOS mesmo quando o cron só vê rodadas PARES (cadência :15) e N oscila", () => {
+  const base = 59_000_000; // ~2026 em blocos de 30 min
+  const cobertos = (n: number, rodadas: number[]) => {
+    const nulos = Array.from({ length: n }, (_, i) => est(`n${i}`, 1000 + i, null));
+    const vistos = new Set<number>();
+    for (const r of rodadas) {
+      const p = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [], estoqueLocal: nulos, rodada: r });
+      assertEquals([p.aConfirmar.length, p.aConfirmarNulos], [LIMITE_CANDIDATOS_NULOS, LIMITE_CANDIDATOS_NULOS]);
+      for (const c of p.aConfirmar) vistos.add(c);
+    }
+    return vistos.size;
+  };
+  const pares = Array.from({ length: 48 }, (_, k) => base + 2 * k); // 1 dia do cron horário
+  assertEquals(cobertos(500, pares), 500); // `rodada × 250 mod 500` começaria sempre em 0
+  assertEquals(cobertos(1037, pares), 1037);
+  // N oscilando 500/1000 (o contraexemplo do Codex): o código do índice 499 entra em alguma rodada
+  const alvo = 1000 + 499;
+  let entrou = false;
+  for (let k = 0; k < 48 && !entrou; k++) {
+    const n = k % 2 === 0 ? 500 : 1000;
+    const nulos = Array.from({ length: n }, (_, i) => est(`n${i}`, 1000 + i, null));
+    const p = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [], estoqueLocal: nulos, rodada: base + k });
+    entrou = p.aConfirmar.includes(alvo);
   }
-  assertEquals(vistos.size, n);
+  assertEquals(entrou, true);
 });
 
 Deno.test("rodadaDoRelogio — bloco de 30 min; ISO ilegível é 0", () => {

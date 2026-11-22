@@ -31,13 +31,14 @@ export const CONFIRMACAO_POR_CHAMADA = 50;
 /**
  * Orçamento por rodada da trilha NULL (catálogo com `estoque IS NULL` = saldo desconhecido, que o
  * produto novo herda desde a migration 20261121220100). 250 = 5 lotes de confirmação por rodada.
- * Acima dele a rodada confirma uma JANELA ROTATIVA de 250 (início = rodada × 250, mod N, sobre os
+ * Acima dele a rodada confirma uma JANELA ROTATIVA de 250 (início = {rodada·φ}·N, sobre os
  * códigos ordenados): nem "pula tudo" (251 NULLs travariam para sempre — Codex P2) nem "os N
  * primeiros" (o eternamente-desconhecido ocuparia as vagas toda rodada). Sem estado: a rodada é o
  * bloco de 30 min do relógio. Medido em 2026-11-21: 0 NULL, 5–38 SKUs novos/mês por conta.
  */
 export const LIMITE_CANDIDATOS_NULOS = 250;
 const RODADA_MS = 30 * 60 * 1000;
+const RAZAO_AUREA = 0.6180339887498949;
 
 /** Índice da rodada (bloco de 30 min) para a janela rotativa da trilha NULL; ISO ilegível = 0. */
 export function rodadaDoRelogio(nowIso: string): number {
@@ -88,7 +89,10 @@ export type Confirmacao =
   | { tipo: "desconhecido"; motivo: string };
 
 export interface PlanoCandidatos {
+  /** A trilha ≠ 0 primeiro, a NULL no fim (os últimos `aConfirmarNulos` códigos). */
   aConfirmar: number[];
+  /** Quantos dos últimos códigos de `aConfirmar` são da trilha NULL (lotes e escrita SEPARADOS). */
+  aConfirmarNulos: number;
   /** Candidatos da trilha ≠ 0 (os que o limite de anomalia mede) — fora os NULL. */
   candidatos: number;
   /** Candidatos da trilha NULL (catálogo com estoque desconhecido, fora da listagem). */
@@ -191,7 +195,7 @@ export function planejarCandidatos(args: {
   const uniao = [...porPosicao.map((p) => p.cod), ...porEstoque];
   const candidatos = uniao.length;
   const candidatosNulos = porNulo.length;
-  const pular = (motivo: string): PlanoCandidatos => ({ aConfirmar: [], candidatos, candidatosNulos, pulado: motivo, puladoNulos: motivo });
+  const pular = (motivo: string): PlanoCandidatos => ({ aConfirmar: [], aConfirmarNulos: 0, candidatos, candidatosNulos, pulado: motivo, puladoNulos: motivo });
   if (listados.size === 0) return pular("snapshot de posição vazio — ausência de tudo não é zero de tudo");
   if (!completude.completa) return pular(`listagem incompleta: ${completude.motivo}`);
   const limite = limiteAnomalia(listados.size);
@@ -199,17 +203,21 @@ export function planejarCandidatos(args: {
     return pular(`${candidatos} candidatos passa do limite de anomalia de ${limite} — listagem suspeita, nada confirmado`);
   }
   if (candidatosNulos > LIMITE_CANDIDATOS_NULOS) {
-    const inicio = (Math.abs(Math.trunc(rodada)) * LIMITE_CANDIDATOS_NULOS) % candidatosNulos;
+    // Início pela razão áurea (Codex P2, 2ª rodada): `rodada × 250 mod N` dependia da cadência — o
+    // cron a :15 só vê rodadas pares e, com N = 500, o início era sempre 0. {r·φ} é equidistribuído
+    // em QUALQUER subsequência aritmética de rodadas, então nenhuma posição fica fora para sempre.
+    const inicio = Math.floor(((Math.abs(Math.trunc(rodada)) * RAZAO_AUREA) % 1) * candidatosNulos);
     const janela = Array.from({ length: LIMITE_CANDIDATOS_NULOS }, (_, i) => porNulo[(inicio + i) % candidatosNulos]);
     return {
       aConfirmar: [...uniao, ...janela],
+      aConfirmarNulos: janela.length,
       candidatos,
       candidatosNulos,
       pulado: null,
       puladoNulos: `${candidatosNulos} candidatos NULL passa do orçamento de ${LIMITE_CANDIDATOS_NULOS} — janela rotativa a partir da posição ${inicio}`,
     };
   }
-  return { aConfirmar: [...uniao, ...porNulo], candidatos, candidatosNulos, pulado: null, puladoNulos: null };
+  return { aConfirmar: [...uniao, ...porNulo], aConfirmarNulos: porNulo.length, candidatos, candidatosNulos, pulado: null, puladoNulos: null };
 }
 
 // Um pedido por lote de CONFIRMACAO_POR_CHAMADA códigos, na MESMA data de posição da listagem.

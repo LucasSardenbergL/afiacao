@@ -14,6 +14,7 @@
 //   da posição, updated_at do catálogo) + valor ≠ 0: a linha só muda se ninguém a escreveu depois da
 //   leitura; a que outro writer regravou fica (conta como recusada).
 import { mensagemDeErro } from "./erro-mensagem.ts";
+import { codigoExplicito, numeroExplicito } from "./pos-estoque.ts";
 import { type BancoPostgrest, fetchAllKeyset } from "./paginate.ts";
 import {
   type AtualizacaoEstoque,
@@ -61,6 +62,8 @@ export interface ResultadoZeramento {
   /** Subconjunto de `estoqueZerado` cujo valor lido era NULL (nunca somar os dois). */
   estoqueZeradoNulo: number;
   recusadosCas: number;
+  /** Catálogo NÃO tentado porque o espelho de posição do mesmo código não foi escrito (≠ recusa de CAS). */
+  catalogoAdiado: number;
   chamadasConfirmacao: number;
   estranhosNaConfirmacao: number;
   pulado: string | null;
@@ -124,7 +127,7 @@ export async function aplicarEscritaConfirmada(
   db: EscritorPostgrest,
   empresa: string | null,
   plano: { posicoes: AtualizacaoPosicao[]; estoque: AtualizacaoEstoque[] },
-): Promise<{ posicoesZeradas: number; estoqueZerado: number; estoqueZeradoNulo: number; recusadosCas: number; falhas: string[] }> {
+): Promise<{ posicoesZeradas: number; estoqueZerado: number; estoqueZeradoNulo: number; recusadosCas: number; catalogoAdiado: number; falhas: string[] }> {
   let posicoesZeradas = 0;
   let estoqueZerado = 0;
   let estoqueZeradoNulo = 0;
@@ -132,6 +135,7 @@ export async function aplicarEscritaConfirmada(
   // da confirmação — o catálogo desse código não recebe o zero nesta rodada (Codex P2).
   const posicaoNaoEscrita = new Set<number>();
   let recusadosCas = 0;
+  let catalogoAdiado = 0;
   const falhas: string[] = [];
 
   for (const u of plano.posicoes) {
@@ -152,7 +156,7 @@ export async function aplicarEscritaConfirmada(
   if (empresa !== null) {
     for (const u of plano.estoque) {
       if (posicaoNaoEscrita.has(u.omie_codigo_produto)) {
-        recusadosCas++;
+        catalogoAdiado++;
         continue;
       }
       const base = db.from("omie_products")
@@ -172,42 +176,133 @@ export async function aplicarEscritaConfirmada(
       }
     }
   }
-  return { posicoesZeradas, estoqueZerado, estoqueZeradoNulo, recusadosCas, falhas };
+  return { posicoesZeradas, estoqueZerado, estoqueZeradoNulo, recusadosCas, catalogoAdiado, falhas };
 }
 
-// A resposta de uma página da confirmação que CONTRADIZ o pedido invalida o lote (Codex P1):
-// - página curta com `nTotPaginas` declarando mais páginas — o local com saldo pode estar na próxima;
-// - `dDataPosicao` devolvida (quando vem) diferente da pedida — é o retrato de outro dia.
-// Campo ausente não contradiz (o fim continua sendo a página curta).
+// A resposta de uma página da confirmação que CONTRADIZ o pedido invalida o lote (Codex P1, 2 rodadas).
+// Campo AUSENTE não contradiz (o fim continua sendo a página curta); campo PRESENTE que contradiz ou
+// que não se consegue ler, sim — é a resposta dizendo algo que o zero não pode ignorar:
+// - `nPagina` devolvida ≠ pedida (página repetida: a pedida, onde podia estar o local positivo, não veio);
+// - `nRegistros` ≠ itens do array (array declaradamente truncado);
+// - página curta com `nTotPaginas` declarando mais páginas;
+// - `dDataPosicao` de outro DIA civil, ou ilegível (o retrato pode ser de outro dia).
+// `nTotRegistros` é conferido no fim do lote, contra o acumulado (`contradicaoNoFimDoLote`).
 export function contradicaoDaResposta(resposta: Record<string, unknown>, pagina: number, porPagina: number, dataPedida: string): string | null {
   const produtos = Array.isArray(resposta.produtos) ? resposta.produtos : [];
-  const declarado = numeroExplicitoInteiro(resposta.nTotPaginas);
-  if (produtos.length < porPagina && declarado !== null && declarado > pagina) {
-    return `página curta (${produtos.length} de ${porPagina}) mas nTotPaginas=${declarado} — paginação contraditória`;
+  const campo = (k: string): { presente: boolean; n: number | null } =>
+    resposta[k] === undefined || resposta[k] === null ? { presente: false, n: null } : { presente: true, n: numeroExplicitoInteiro(resposta[k]) };
+  const nPagina = campo("nPagina");
+  if (nPagina.presente && nPagina.n !== pagina) return `nPagina devolvida ${String(resposta.nPagina)} ≠ pedida ${pagina} — página repetida ou trocada`;
+  const nRegistros = campo("nRegistros");
+  if (nRegistros.presente && nRegistros.n !== produtos.length) {
+    return `nRegistros=${String(resposta.nRegistros)} mas a página trouxe ${produtos.length} item(ns) — array truncado`;
   }
-  // Compara o DIA, não o texto: formato que não parseia não contradiz (um formato inesperado do Omie
-  // não pode travar todo o zeramento — ausente/ilegível ≠ contradição).
-  const devolvida = diaDaData(resposta.dDataPosicao);
-  const pedida = diaDaData(dataPedida);
-  if (devolvida !== null && pedida !== null && devolvida !== pedida) {
-    return `dDataPosicao devolvida ${String(resposta.dDataPosicao).trim()} ≠ pedida ${dataPedida}`;
+  const declarado = campo("nTotPaginas");
+  if (declarado.presente && declarado.n === null) return `nTotPaginas ilegível (${String(resposta.nTotPaginas).slice(0, 20)})`;
+  if (produtos.length < porPagina && declarado.n !== null && declarado.n > pagina) {
+    return `página curta (${produtos.length} de ${porPagina}) mas nTotPaginas=${declarado.n} — paginação contraditória`;
+  }
+  const bruta = resposta.dDataPosicao;
+  if (bruta !== undefined && bruta !== null && !(typeof bruta === "string" && bruta.trim() === "")) {
+    const devolvida = diaDaData(bruta);
+    const pedida = diaDaData(dataPedida);
+    if (devolvida === null) return `dDataPosicao devolvida ilegível (${String(bruta).slice(0, 20)})`;
+    if (pedida !== null && devolvida !== pedida) return `dDataPosicao devolvida ${String(bruta).trim()} ≠ pedida ${dataPedida}`;
   }
   return null;
 }
 
-/** "DD/MM/AAAA" ou "AAAA-MM-DD" (com hora opcional depois) → "AAAA-MM-DD"; qualquer outra coisa → null. */
+/** No fim do lote: `nTotRegistros` (quando a última página o traz) tem de bater com o acumulado. */
+export function contradicaoNoFimDoLote(ultima: Record<string, unknown>, acumulado: number): string | null {
+  const v = ultima.nTotRegistros;
+  if (v === undefined || v === null) return null;
+  const n = numeroExplicitoInteiro(v);
+  return n === acumulado ? null : `nTotRegistros=${String(v).slice(0, 20)} mas o lote acumulou ${acumulado} item(ns)`;
+}
+
+/** Dia CIVIL: "DD/MM/AAAA" ou "AAAA-MM-DD" (hora opcional depois) → "AAAA-MM-DD"; outra forma ou dia inexistente → null. */
 export function diaDaData(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const t = v.trim();
   const br = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(t);
-  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
   const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(t);
-  return iso ? `${iso[1]}-${iso[2]}-${iso[3]}` : null;
+  const [a, m, d] = br ? [br[3], br[2], br[1]] : iso ? [iso[1], iso[2], iso[3]] : [null, null, null];
+  if (a === null || m === null || d === null) return null;
+  const dt = new Date(Date.UTC(Number(a), Number(m) - 1, Number(d)));
+  if (dt.getUTCFullYear() !== Number(a) || dt.getUTCMonth() !== Number(m) - 1 || dt.getUTCDate() !== Number(d)) return null;
+  return `${a}-${m}-${d}`;
 }
 
 function numeroExplicitoInteiro(v: unknown): number | null {
   const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : NaN;
   return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+// A confirmação de UMA trilha. A resposta é PAGINADA (uma entrada por local): o lote só vale com a
+// paginação TERMINADA numa página curta e sem contradição. Página que falha, resposta sem lista,
+// contradição ou teto de páginas = lote inteiro desconhecido (Codex P1: decidir pela página 1 zerava
+// produto com saldo em outro local). Cada lote AUTORIZA o zero só dos SEUS códigos (o item de outro
+// código é estranho; um ilegível só contamina o próprio lote) — mas um saldo explícito ≠ 0 visto em
+// QUALQUER resposta da trilha VETA o zero daquele código (Codex P1, 2ª rodada: o lote 2 dizendo 9
+// era descartado e o lote 1 zerava).
+async function confirmarTrilha(
+  d: { chamarOmie: (params: Record<string, unknown>) => Promise<unknown>; dataPosicao: string },
+  codigosTrilha: number[],
+  resultado: ResultadoZeramento,
+): Promise<Map<number, Confirmacao>> {
+  const porCodigo = new Map<number, Confirmacao>();
+  const vetados = new Set<number>();
+  for (const pedido of montarPedidosConfirmacao(codigosTrilha, d.dataPosicao)) {
+    const codigos = (pedido.lista_produtos as Array<{ nCodProd: number }>).map((x) => x.nCodProd);
+    const porPagina = Number(pedido.nRegPorPagina);
+    const doLote: unknown[] = [];
+    let terminou = false;
+    for (let pagina = 1; pagina <= MAX_PAGINAS_CONFIRMACAO; pagina++) {
+      resultado.chamadasConfirmacao++;
+      let resposta: Record<string, unknown> & { produtos: unknown[] };
+      try {
+        const bruta = (await d.chamarOmie({ ...pedido, nPagina: pagina })) as Record<string, unknown> | null;
+        if (bruta == null || !Array.isArray(bruta.produtos)) {
+          resultado.falhas.push(`confirmação (página ${pagina}): resposta sem lista de produtos`);
+          break;
+        }
+        resposta = bruta as Record<string, unknown> & { produtos: unknown[] };
+      } catch (e) {
+        resultado.falhas.push(`confirmação (página ${pagina}): ${(mensagemDeErro(e) ?? "erro sem mensagem utilizável").slice(0, 200)}`);
+        break;
+      }
+      for (const cod of codigosComSaldoNaoZero(resposta.produtos)) vetados.add(cod); // veto vale mesmo de página inválida
+      const contradicao = contradicaoDaResposta(resposta, pagina, porPagina, String(pedido.dDataPosicao));
+      if (contradicao !== null) {
+        resultado.falhas.push(`confirmação (página ${pagina}): ${contradicao}`);
+        break;
+      }
+      doLote.push(...resposta.produtos);
+      if (resposta.produtos.length < porPagina) {
+        const noFim = contradicaoNoFimDoLote(resposta, doLote.length);
+        if (noFim !== null) resultado.falhas.push(`confirmação (página ${pagina}): ${noFim}`);
+        else terminou = true;
+        break;
+      }
+    }
+    const veredito = terminou ? interpretarConfirmacao(codigos, doLote) : interpretarConfirmacao(codigos, [], new Set(codigos));
+    resultado.estranhosNaConfirmacao += veredito.estranhos;
+    for (const [cod, c] of veredito.porCodigo) porCodigo.set(cod, c);
+  }
+  for (const cod of vetados) if (porCodigo.get(cod)?.tipo === "zero") porCodigo.set(cod, { tipo: "nao_zero" });
+  return porCodigo;
+}
+
+function codigosComSaldoNaoZero(itens: unknown[]): number[] {
+  const out: number[] = [];
+  for (const it of itens) {
+    if (typeof it !== "object" || it === null) continue;
+    const reg = it as Record<string, unknown>;
+    const cod = codigoExplicito(reg.nCodProd);
+    const saldo = numeroExplicito(reg.nSaldo);
+    if (cod !== null && saldo !== null && saldo !== 0) out.push(cod);
+  }
+  return out;
 }
 
 // O passo inteiro, depois de o writer gravar as posições listadas: descobre os candidatos (posição
@@ -259,6 +354,7 @@ export async function zerarConfirmadosForaDaLista(d: {
     estoqueZerado: 0,
     estoqueZeradoNulo: 0,
     recusadosCas: 0,
+    catalogoAdiado: 0,
     chamadasConfirmacao: 0,
     estranhosNaConfirmacao: 0,
     pulado: plano.pulado,
@@ -266,61 +362,27 @@ export async function zerarConfirmadosForaDaLista(d: {
   };
   if (plano.aConfirmar.length === 0) return resultado;
 
-  // A resposta é PAGINADA (uma entrada por local): o lote só vale com a paginação TERMINADA numa
-  // página curta. Página que falha, resposta sem lista ou teto de páginas = lote inteiro desconhecido
-  // (Codex P1 no adversarial: decidir pela página 1 zerava produto com saldo em outro local).
-  // Cada lote é interpretado contra os SEUS códigos (Codex P1): o item de outro código que um lote
-  // devolve é estranho e não confirma nada; um ilegível só contamina o próprio lote.
-  const porCodigo = new Map<number, Confirmacao>();
-  let estranhos = 0;
-  for (const pedido of montarPedidosConfirmacao(plano.aConfirmar, d.dataPosicao)) {
-    const codigos = (pedido.lista_produtos as Array<{ nCodProd: number }>).map((x) => x.nCodProd);
-    const porPagina = Number(pedido.nRegPorPagina);
-    const doLote: unknown[] = [];
-    let terminou = false;
-    for (let pagina = 1; pagina <= MAX_PAGINAS_CONFIRMACAO; pagina++) {
-      resultado.chamadasConfirmacao++;
-      let produtos: unknown[];
-      try {
-        const resposta = (await d.chamarOmie({ ...pedido, nPagina: pagina })) as { produtos?: unknown } | null;
-        if (resposta == null || !Array.isArray(resposta.produtos)) {
-          resultado.falhas.push(`confirmação (página ${pagina}): resposta sem lista de produtos`);
-          break;
-        }
-        const contradicao = contradicaoDaResposta(resposta, pagina, porPagina, String(pedido.dDataPosicao));
-        if (contradicao !== null) {
-          resultado.falhas.push(`confirmação (página ${pagina}): ${contradicao}`);
-          break;
-        }
-        produtos = resposta.produtos;
-      } catch (e) {
-        resultado.falhas.push(`confirmação (página ${pagina}): ${(mensagemDeErro(e) ?? "erro sem mensagem utilizável").slice(0, 200)}`);
-        break;
-      }
-      doLote.push(...produtos);
-      if (produtos.length < porPagina) {
-        terminou = true;
-        break;
-      }
+  // Duas trilhas, lotes e escrita SEPARADOS (Codex P2, 2ª rodada): a ≠ 0 confirma e ESCREVE primeiro —
+  // um ilegível num lote NULL não a contamina e um worker que expira na trilha NULL não perde o zero
+  // já confirmado da ≠ 0.
+  const corte = plano.aConfirmar.length - plano.aConfirmarNulos;
+  for (const trilha of [plano.aConfirmar.slice(0, corte), plano.aConfirmar.slice(corte)]) {
+    if (trilha.length === 0) continue;
+    const porCodigo = await confirmarTrilha(d, trilha, resultado);
+    for (const c of porCodigo.values()) {
+      if (c.tipo === "zero") resultado.confirmadosZero++;
+      else if (c.tipo === "nao_zero") resultado.naoZero++;
+      else resultado.desconhecidos++;
     }
-    const doVeredito = terminou ? interpretarConfirmacao(codigos, doLote) : interpretarConfirmacao(codigos, [], new Set(codigos));
-    estranhos += doVeredito.estranhos;
-    for (const [cod, c] of doVeredito.porCodigo) porCodigo.set(cod, c);
+    const escrita = planejarEscritaConfirmada({ posicoesLocais, estoqueLocal, confirmacoes: porCodigo, nowIso: d.nowIso });
+    const aplicado = await aplicarEscritaConfirmada(d.escritor, d.empresa, escrita);
+    resultado.posicoesZeradas += aplicado.posicoesZeradas;
+    resultado.estoqueZerado += aplicado.estoqueZerado;
+    resultado.estoqueZeradoNulo += aplicado.estoqueZeradoNulo;
+    resultado.recusadosCas += aplicado.recusadosCas;
+    resultado.catalogoAdiado += aplicado.catalogoAdiado;
+    resultado.falhas.push(...aplicado.falhas);
   }
-  resultado.estranhosNaConfirmacao = estranhos;
-  for (const c of porCodigo.values()) {
-    if (c.tipo === "zero") resultado.confirmadosZero++;
-    else if (c.tipo === "nao_zero") resultado.naoZero++;
-    else resultado.desconhecidos++;
-  }
-
-  const escrita = planejarEscritaConfirmada({ posicoesLocais, estoqueLocal, confirmacoes: porCodigo, nowIso: d.nowIso });
-  const aplicado = await aplicarEscritaConfirmada(d.escritor, d.empresa, escrita);
-  resultado.posicoesZeradas = aplicado.posicoesZeradas;
-  resultado.estoqueZerado = aplicado.estoqueZerado;
-  resultado.estoqueZeradoNulo = aplicado.estoqueZeradoNulo;
-  resultado.recusadosCas = aplicado.recusadosCas;
-  resultado.falhas.push(...aplicado.falhas);
   return resultado;
 }
 
@@ -345,6 +407,7 @@ export function metadataDoZeramento(
     zerados_estoque: r.estoqueZerado,
     zerados_estoque_nulo: r.estoqueZeradoNulo,
     zeramento_recusados_cas: r.recusadosCas,
+    zeramento_catalogo_adiado: r.catalogoAdiado,
     zeramento_chamadas: r.chamadasConfirmacao,
     zeramento_estranhos: r.estranhosNaConfirmacao,
     ...(r.pulado ? { zeramento_pulado: r.pulado } : {}),
