@@ -14,7 +14,7 @@ import { type ClienteCota, classificarFaultCota, comVezOmie, CotaOmieIndisponive
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { classificarConsulta, classificarErro, coletarJanela, type Consulta, faultDeCota } from "./decisao.ts";
 
-export const OMIE_PEDIDO_URL = "https://app.omie.com.br/api/v1/produtos/pedido/";
+const OMIE_PEDIDO_URL = "https://app.omie.com.br/api/v1/produtos/pedido/";
 export type Conta = "oben" | "colacor";
 
 /** O mínimo do cliente Supabase que a orquestração usa (o mesmo da trava). */
@@ -28,9 +28,9 @@ export interface Deps {
   deadline?: number;
 }
 
-export interface JanelaPedida { de: string; ate: string; tipo: "corrente" | "cursor" }
+interface JanelaPedida { de: string; ate: string; tipo: "corrente" | "cursor" }
 
-export type ResultadoJanela =
+type ResultadoJanela =
   | { tipo: JanelaPedida["tipo"]; de: string; ate: string; desfecho: "registrada"; resumo: unknown }
   | { tipo: JanelaPedida["tipo"]; de: string; ate: string; desfecho: "incompleta" | "recusada"; motivo: string };
 
@@ -54,7 +54,7 @@ export function dataOmie(iso: string): string {
 }
 
 /** Identidade da credencial SEM o segredo: 32 hex do sha-256 da app_key. */
-export async function hashAppKey(appKey: string): Promise<string> {
+async function hashAppKey(appKey: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(appKey));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
 }
@@ -63,7 +63,7 @@ export async function hashAppKey(appKey: string): Promise<string> {
  * Texto de cota para a trava compartilhada registrar. Um 425/429 cujo corpo não tem o texto do bloqueio (ex.: corpo de
  * EOF) ainda é bloqueio: sem isto `comVezOmie` não o registraria (Codex rodada 2, P0-1).
  */
-export function textoDeCota(r: RespostaOmie): string | null {
+function textoDeCota(r: RespostaOmie): string | null {
   const t = faultDeCota(r);
   if (t === null) return null;
   const f = classificarFaultCota(t);

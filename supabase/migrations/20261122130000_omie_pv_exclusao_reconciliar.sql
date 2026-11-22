@@ -1036,9 +1036,16 @@ BEGIN
                   AND tgrelid = 'public.sales_orders'::regclass AND tgenabled <> 'D') THEN
     RAISE EXCEPTION 'A7 FALHOU: trigger de durabilidade ausente/desligado — o rollback do front ressuscita PV baixado';
   END IF;
-  IF (SELECT count(*) FROM public.omie_pv_conferencia WHERE prova ? 'origem_historica') <> 11 THEN
-    RAISE EXCEPTION 'A8 FALHOU: os 11 PVs limpos à mão não estão no ledger como aplicados (% de 11)',
-      (SELECT count(*) FROM public.omie_pv_conferencia WHERE prova ? 'origem_historica');
+  -- Todo PV histórico ELEGÍVEL (todas as linhas ocultas) entrou no ledger: 11 em prod; 0 no banco vazio de uma prova
+  -- que reaplica o histórico de migrations (o predicado é o mesmo do INSERT acima).
+  IF (SELECT count(*) FROM (
+        SELECT so.omie_pedido_id FROM public.sales_orders so
+         WHERE so.account = 'oben' AND so.omie_pedido_id = ANY (ARRAY[12215613527, 12049288140, 12121835342, 12121839465,
+               12122021156, 12136268451, 12156020937, 12158135460, 12169921125, 12172563575, 12172847394]::bigint[])
+         GROUP BY so.omie_pedido_id HAVING bool_and(so.deleted_at IS NOT NULL)) e
+       WHERE NOT EXISTS (SELECT 1 FROM public.omie_pv_conferencia c
+                          WHERE c.account = 'oben' AND c.omie_pedido_id = e.omie_pedido_id AND c.aplicado_em IS NOT NULL)) > 0 THEN
+    RAISE EXCEPTION 'A8 FALHOU: PV histórico limpo à mão fora do ledger — a durabilidade não o cobre';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'omie-pv-exclusao-reconciliar' AND active
                   AND command LIKE '%timeout_milliseconds:=150000%' AND command LIKE '%x-cron-secret%'
