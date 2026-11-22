@@ -22,8 +22,9 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 /** Resposta da sonda desta edge, com a identidade embutida (ver `criarRespostaSonda`). */
 export const respostaSonda = criarRespostaSonda("omie-sync-metadados");
 
+// v1.4 (2026-11-21) — só re-empacota `_shared/zeramento-estoque.ts` (importa `avaliarCompletudeListagem`, que NÃO mudou): a trilha NULL do zeramento não roda aqui.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.3-inativa-ausentes";
+export const VERSAO = "v1.4-zeramento-estoque-nulo";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
