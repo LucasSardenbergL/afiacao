@@ -41,6 +41,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 // (sem imobilizado/uso e consumo); CMV = 12 meses fechados exigidos. Ausente → null + motivo.
 import { calcularPme, cmvTtmFechado, colunasSerieEstoque, resolverEstoque, type EstoqueOmie } from "./estoque-pme.ts";
 import { colunasCpVencidoFora, medirCpVencidoForaProjecao, type CpVencidoForaProjecao } from "./cp-vencido.ts";
+import { colunasComposicaoNcg } from "./ncg-composicao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -1545,6 +1546,9 @@ async function calcularComDados(
         // v2.4: CP vencido fora da projeção em colunas DEDICADAS (db/2026-11-14-fin-projecao-snapshots-cp-vencido.sql), 1 writer:
         // este cron. Só medida — o `dados` (semanas) acima não muda. Exige a migration aplicada ANTES.
         ...colunasCpVencidoFora(cp_vencido_fora),
+        // v2.5: composição da NCG (ACO/PCO) em 6 colunas DEDICADAS (db/2026-11-22-fin-projecao-snapshots-ncg-composicao.sql),
+        // 1 writer: este cron. `ncg_estoque` NULL = NCG parcial; tudo NULL = não medido. Exige a migration ANTES.
+        ...colunasComposicaoNcg(ncg),
       }),
     );
   }
