@@ -1,6 +1,17 @@
 # Publish automático do Lovable pela API (2026-10-11)
 
-> ⚠️ **Estado em 2026-10-16: DESLIGADO na prática.** O secret `LOVABLE_API_KEY` não está configurado, então o workflow sai `success` sem publicar (run 38888350365). O desenho abaixo vale quando o secret for cadastrado; até lá, Publish é manual — ver `docs/agent/deploy.md` (Camada 2).
+> ⚠️ **Estado em 2026-11-22: DESLIGADO na prática** (secret `LOVABLE_API_KEY` ausente — run 45023928279 saiu `success` sem publicar).
+> **Reverificado em 2026-11-22 nas docs atuais:** criar API key exige **Business ou Enterprise** (docs.lovable.dev/features/api-keys.md — Free/Pro veem "upgrade prompt");
+> `POST /v1/projects/{id}/publish` marca "**Plan:** Business or higher" e 402 "Public API access requires Business or higher"
+> (docs.lovable.dev/api-reference/deploy-domains/publish-project.md); a tabela de planos marca "Lovable API" e "Workspace publish" como "—" no Pro.
+> **Não há auto-publish nativo**: o GitHub só sincroniza para DENTRO do Lovable, e o ar "keeps showing the version you published" até novo Publish
+> (features/publish.md, integrations/github.md). No Pro, o caminho é o **vigia local** (`scripts/lovable-vigia.sh`, launchd): tick barato
+> `scripts/lovable-publish.sh --julgar` (sem chave, sem API) e, só no veredito `PUBLICAR`, `claude -p` (Haiku) com `mcp__lovable__deploy_project`.
+> **Bloqueio em 2026-11-22:** o `claude` CLI do Mac está deslogado (`claude auth status` → `loggedIn:false`; `claude -p` → "OAuth session expired") —
+> o app desktop usa a própria auth e não a empresta a processos do launchd. Requer `claude setup-token` pelo founder.
+> **Achado do julgamento real (2026-11-22):** o gate RETÉM qualquer intervalo que toque `supabase/functions/` até alguém liberar o SHA — e o ar só anda
+> com Publish, então UM commit de edge (#4123, "sem Publish") segura o front indefinidamente. Para ~100% sem clique, o gate de edge precisa de
+> outra regra (ex.: liberar quando a edge do intervalo já está atestada no ledger `deploy_atestacoes`) — decisão pendente.
 
 **Incidente que motiva:** "merge ≠ produção" — `steu.lovable.app` serve o build velho até alguém
 clicar Publish (lição de 2026-05-31; recorrente no `/fecho`). A API do Lovable passou a expor

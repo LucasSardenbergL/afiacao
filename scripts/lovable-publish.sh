@@ -33,7 +33,9 @@
 #
 # Ambiente: LOVABLE_API_KEY (obrigatório) · LOVABLE_PROJECT_ID · APP_URL · LOVABLE_API_BASE ·
 #   LP_LIBERAR_SHA · LP_ESPERA_SYNC/LP_ESPERA_DEPLOY/LP_ESPERA_AR (s) · LP_SLEEP (testes).
-# Uso: scripts/lovable-publish.sh [<sha-head>]
+# Uso: scripts/lovable-publish.sh [--julgar] [<sha-head>]
+#   --julgar: roda SÓ os passos 1-3 (sem API, sem chave) e sai `VEREDITO=PUBLICAR` (exit 0) quando
+#   haveria Publish — é o tick barato do vigia local (scripts/lovable-vigia.sh), que publica pelo MCP.
 # Teste: scripts/test-lovable-publish.sh
 set -u
 
@@ -55,7 +57,9 @@ trap 'rm -rf "$TMP"' EXIT
 fim() { echo "VEREDITO=$2"; exit "$1"; }
 mecanica() { echo "  motivo: $1"; fim 6 MECANICA; }
 
-[ -n "${LOVABLE_API_KEY:-}" ] || mecanica "LOVABLE_API_KEY ausente"
+JULGAR=0
+[ "${1:-}" = --julgar ] && { JULGAR=1; shift; }
+[ "$JULGAR" = 1 ] || [ -n "${LOVABLE_API_KEY:-}" ] || mecanica "LOVABLE_API_KEY ausente"
 command -v jq >/dev/null || mecanica "jq ausente"
 HEAD_SHA=$(git rev-parse --verify "${1:-HEAD}^{commit}" 2>/dev/null) || mecanica "HEAD não resolve: ${1:-HEAD}"
 
@@ -110,6 +114,7 @@ fi
 
 # ── 3. há algo publicável? ─────────────────────────────────────────────────────────────────────
 if ! grep -qvE "$INERTE" "$TMP/diff"; then fim 0 NADA_A_PUBLICAR; fi
+[ "$JULGAR" = 1 ] && fim 0 PUBLICAR
 
 # ── 4. workspace do Lovable em HEAD ────────────────────────────────────────────────────────────
 t=0
