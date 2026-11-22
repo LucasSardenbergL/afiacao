@@ -204,10 +204,9 @@ export function contradicaoDaResposta(resposta: Record<string, unknown>, pagina:
   }
   const bruta = resposta.dDataPosicao;
   if (bruta !== undefined && bruta !== null && !(typeof bruta === "string" && bruta.trim() === "")) {
+    // Presente e ilegível também veta: `null !== pedida` (o dia pedido é sempre legível — é nosso).
     const devolvida = diaDaData(bruta);
-    const pedida = diaDaData(dataPedida);
-    if (devolvida === null) return `dDataPosicao devolvida ilegível (${String(bruta).slice(0, 20)})`;
-    if (pedida !== null && devolvida !== pedida) return `dDataPosicao devolvida ${String(bruta).trim()} ≠ pedida ${dataPedida}`;
+    if (devolvida !== diaDaData(dataPedida)) return `dDataPosicao devolvida ${String(bruta).trim().slice(0, 20)} ≠ pedida ${dataPedida}`;
   }
   return null;
 }
@@ -220,17 +219,14 @@ export function contradicaoNoFimDoLote(ultima: Record<string, unknown>, acumulad
   return n === acumulado ? null : `nTotRegistros=${String(v).slice(0, 20)} mas o lote acumulou ${acumulado} item(ns)`;
 }
 
-/** Dia CIVIL: "DD/MM/AAAA" ou "AAAA-MM-DD" (hora opcional depois) → "AAAA-MM-DD"; outra forma ou dia inexistente → null. */
+/** Dia CIVIL: "DD/MM/AAAA" ou "AAAA-MM-DD" (hora opcional depois) → "AAAA-MM-DD"; outra forma → null. */
 export function diaDaData(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const t = v.trim();
   const br = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(t);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
   const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(t);
-  const [a, m, d] = br ? [br[3], br[2], br[1]] : iso ? [iso[1], iso[2], iso[3]] : [null, null, null];
-  if (a === null || m === null || d === null) return null;
-  const dt = new Date(Date.UTC(Number(a), Number(m) - 1, Number(d)));
-  if (dt.getUTCFullYear() !== Number(a) || dt.getUTCMonth() !== Number(m) - 1 || dt.getUTCDate() !== Number(d)) return null;
-  return `${a}-${m}-${d}`;
+  return iso ? `${iso[1]}-${iso[2]}-${iso[3]}` : null;
 }
 
 function numeroExplicitoInteiro(v: unknown): number | null {
