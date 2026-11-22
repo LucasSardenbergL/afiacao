@@ -284,46 +284,57 @@ describe('caixaProjetadoDoEscopo', () => {
 
 describe('cobrança do CEO', () => {
   const linha = (o: Record<string, unknown>) => ({
-    company: 'oben', omie_codigo_cliente: 1, nome_cliente: 'Cliente A', saldo_vencido: 100,
-    dias_vencido_max: 10, dona_user_id: 'u1', dona_nome: 'Ana', promessa_situacao: null, ...o,
+    company: 'oben', omie_codigo_cliente: 1, nome_cliente: 'Cliente A', saldo_vencido: 100, n_vencidas: 1,
+    dias_vencido_max: 10, dona_user_id: 'u1', dona_nome: 'Ana', estado: 'a_contatar', promessa_situacao: null, ...o,
   });
+  const dev = (o: Record<string, unknown>) => devedorDaFila(linha(o))!;
 
   it('devedorDaFila: chave empresa × código; saldo ausente vira null, nunca 0', () => {
     expect(devedorDaFila(linha({}))).toEqual({
-      company: 'oben', codigo: 1, nome: 'Cliente A', saldoVencido: 100, diasMax: 10, responsavel: 'Ana', promessaVencida: false,
+      company: 'oben', codigo: 1, nome: 'Cliente A', saldoVencido: 100, nVencidas: 1, diasMax: 10, antigo: false,
+      responsavel: 'Ana', estado: 'a_contatar', promessaVencida: false,
     });
-    expect(devedorDaFila(linha({ saldo_vencido: null }))?.saldoVencido).toBeNull();
-    expect(devedorDaFila(linha({ saldo_vencido: '250.5' }))?.saldoVencido).toBe(250.5);
-    expect(devedorDaFila(linha({ dona_user_id: null }))?.responsavel).toBeNull();
-    expect(devedorDaFila(linha({ nome_cliente: '  ' }))?.nome).toBeNull();
-    expect(devedorDaFila(linha({ promessa_situacao: 'vencida' }))?.promessaVencida).toBe(true);
+    expect(dev({ saldo_vencido: null }).saldoVencido).toBeNull();
+    expect(dev({ saldo_vencido: '250.5' }).saldoVencido).toBe(250.5);
+    expect(dev({ dona_user_id: null }).responsavel).toBeNull();
+    expect(dev({ nome_cliente: '  ' }).nome).toBeNull();
+    expect(dev({ promessa_situacao: 'vencida' }).promessaVencida).toBe(true);
+    expect(dev({ dias_vencido_max: 366 }).antigo).toBe(true);
+    expect(dev({ dias_vencido_max: 365 }).antigo).toBe(false);
     expect(devedorDaFila(linha({ company: 'outra' }))).toBeNull();
     expect(devedorDaFila(linha({ omie_codigo_cliente: null }))).toBeNull();
   });
 
   it('mesmo cliente em 2 empresas credoras são 2 devedores (cadastros fiscais legítimos)', () => {
-    const a = devedorDaFila(linha({ company: 'oben', saldo_vencido: 300 }));
-    const b = devedorDaFila(linha({ company: 'colacor_sc', saldo_vencido: 200 }));
-    const c = cobrancaDoEscopo({ oben: [a!], colacor: [], colacor_sc: [b!] }, ['oben', 'colacor', 'colacor_sc']);
+    const c = cobrancaDoEscopo(
+      { oben: [dev({ saldo_vencido: 300 })], colacor: [], colacor_sc: [dev({ company: 'colacor_sc', saldo_vencido: 200 })] },
+      ['oben', 'colacor', 'colacor_sc'],
+    );
     expect(c?.devedores).toBe(2);
     expect(c?.top.map((d) => [d.company, d.saldoVencido])).toEqual([['oben', 300], ['colacor_sc', 200]]);
   });
 
-  it('resume sem responsável, promessas vencidas e saldo desconhecido; top ordenado e limitado', () => {
-    const fila = [
-      devedorDaFila(linha({ omie_codigo_cliente: 1, saldo_vencido: 50, dona_user_id: null }))!,
-      devedorDaFila(linha({ omie_codigo_cliente: 2, saldo_vencido: 500, promessa_situacao: 'vencida' }))!,
-      devedorDaFila(linha({ omie_codigo_cliente: 3, saldo_vencido: 0 }))!,
-      devedorDaFila(linha({ omie_codigo_cliente: 4, saldo_vencido: null, dona_user_id: null }))!,
-      devedorDaFila(linha({ omie_codigo_cliente: 5, saldo_vencido: 70, dona_user_id: null }))!,
-    ];
-    const c = cobrancaDoEscopo({ oben: fila }, ['oben'], 2);
+  it('ordem acionável: promessa vencida, depois por saldo até 1 ano, antigos no fim; fora da fila quem aguarda', () => {
+    const promessa = dev({ omie_codigo_cliente: 1, saldo_vencido: 10, estado: 'promessa', promessa_situacao: 'vencida' });
+    const grande = dev({ omie_codigo_cliente: 2, saldo_vencido: 500, estado: 'contatado' });
+    const antigoGrande = dev({ omie_codigo_cliente: 3, saldo_vencido: 9000, dias_vencido_max: 800 });
+    const pequeno = dev({ omie_codigo_cliente: 4, saldo_vencido: 50, dona_user_id: null });
+    const disputa = dev({ omie_codigo_cliente: 5, saldo_vencido: 7000, estado: 'disputa' });
+    const c = cobrancaDoEscopo({ oben: [antigoGrande, pequeno, disputa, grande, promessa] }, ['oben']);
+    expect(c?.top).toEqual([promessa, grande, pequeno, antigoGrande]);
+    expect(c?.aguardando).toBe(1);
+    expect(c?.devedores).toBe(5);
+    expect(c?.semResponsavel).toEqual({ n: 1, valor: 50 });
+    expect(cobrancaDoEscopo({ oben: [antigoGrande, pequeno, grande, promessa] }, ['oben'], 2)?.top).toEqual([promessa, grande]);
+  });
+
+  it('promessa vencida com saldo ilegível não some; caso sem vencido não é "saldo desconhecido"', () => {
+    const c = cobrancaDoEscopo(
+      { oben: [dev({ saldo_vencido: null, promessa_situacao: 'vencida' }), dev({ omie_codigo_cliente: 2, saldo_vencido: null, n_vencidas: 0 })] },
+      ['oben'],
+    );
     expect(c).toEqual({
-      devedores: 3,
-      semResponsavel: { n: 2, valor: 120 },
-      promessasVencidas: 1,
-      saldoDesconhecido: 1,
-      top: [fila[1], fila[4]],
+      devedores: 0, semResponsavel: { n: 0, valor: 0 }, promessasVencidas: 1, saldoDesconhecido: 1, aguardando: 0, top: [],
     });
   });
 
@@ -331,7 +342,7 @@ describe('cobrança do CEO', () => {
     expect(cobrancaDoEscopo({ oben: [] }, ['oben', 'colacor'])).toBeNull();
     expect(cobrancaDoEscopo(null, ['oben'])).toBeNull();
     expect(cobrancaDoEscopo({ oben: [] }, ['oben'])).toEqual({
-      devedores: 0, semResponsavel: { n: 0, valor: 0 }, promessasVencidas: 0, saldoDesconhecido: 0, top: [],
+      devedores: 0, semResponsavel: { n: 0, valor: 0 }, promessasVencidas: 0, saldoDesconhecido: 0, aguardando: 0, top: [],
     });
   });
 });

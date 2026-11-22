@@ -277,12 +277,19 @@ export interface DevedorCobranca {
   nome: string | null;
   /** `null` = saldo desconhecido (ausente ≠ zero). */
   saldoVencido: number | null;
+  /** Títulos vencidos do cliente; `null` = desconhecido. 0 = caso aberto sem vencido (não é dívida). */
+  nVencidas: number | null;
   diasMax: number | null;
+  /** Atraso acima de 1 ano: provável perda — vai para o fim do "cobrar primeiro" (o valor fica no total). */
+  antigo: boolean;
   responsavel: string | null;
+  /** Estado do caso na fila (`a_contatar`, `contatado`, `promessa`, `pago_informado`, `negociado`, `disputa`, `cancelado_gestao`). */
+  estado: string;
   promessaVencida: boolean;
 }
 
 const COMPANIES_VALIDAS: readonly Company[] = EMPRESAS_GRUPO;
+const DIAS_CARTEIRA_ANTIGA = 365;
 const numeroOuNull = (v: unknown): number | null => {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
   return Number.isFinite(n) ? n : null;
@@ -294,6 +301,7 @@ export function devedorDaFila(raw: Record<string, unknown>): DevedorCobranca | n
   const codigo = numeroOuNull(raw.omie_codigo_cliente);
   if (!COMPANIES_VALIDAS.includes(company) || codigo === null) return null;
   const nome = typeof raw.nome_cliente === 'string' && raw.nome_cliente.trim() !== '' ? raw.nome_cliente.trim() : null;
+  const diasMax = numeroOuNull(raw.dias_vencido_max);
   const responsavel = raw.dona_user_id
     ? typeof raw.dona_nome === 'string' && raw.dona_nome.trim() !== '' ? raw.dona_nome.trim() : 'sem nome'
     : null;
@@ -302,22 +310,33 @@ export function devedorDaFila(raw: Record<string, unknown>): DevedorCobranca | n
     codigo,
     nome,
     saldoVencido: numeroOuNull(raw.saldo_vencido),
-    diasMax: numeroOuNull(raw.dias_vencido_max),
+    nVencidas: numeroOuNull(raw.n_vencidas),
+    diasMax,
+    antigo: diasMax !== null && diasMax > DIAS_CARTEIRA_ANTIGA,
     responsavel,
+    estado: typeof raw.estado === 'string' && raw.estado !== '' ? raw.estado : 'a_contatar',
     promessaVencida: raw.promessa_situacao === 'vencida',
   };
 }
+
+/** Estados em que cobrar agora é a ação: falta contato ou o contato não virou acordo. */
+const ESTADOS_ACIONAVEIS = new Set(['a_contatar', 'contatado']);
 
 export interface Cobranca {
   /** Devedores com saldo vencido > 0. */
   devedores: number;
   semResponsavel: { n: number; valor: number };
+  /** Promessas vencidas em qualquer caso da fila — inclusive com saldo ilegível (não some). */
   promessasVencidas: number;
-  /** Linhas com saldo desconhecido — o total fica incompleto e o card diz quantas. */
+  /** Com vencido e saldo desconhecido — o total fica incompleto e o card diz quantas. */
   saldoDesconhecido: number;
-  /** Maiores saldos vencidos do escopo (até 5), maior primeiro. */
+  /** Com saldo > 0 em pagamento informado, negociação, disputa ou cancelados pela gestão. */
+  aguardando: number;
+  /** Até `limite` devedores para cobrar: promessa vencida, depois a contatar/contatado até 1 ano, por saldo; antigos no fim. */
   top: DevedorCobranca[];
 }
+
+const acionavel = (d: DevedorCobranca) => d.promessaVencida || ESTADOS_ACIONAVEIS.has(d.estado);
 
 /** `null` quando a fila de alguma empresa do escopo não foi lida (ausente ≠ "ninguém deve"). */
 export function cobrancaDoEscopo(
@@ -329,11 +348,16 @@ export function cobrancaDoEscopo(
   const linhas = empresas.flatMap((co) => filas[co] as readonly DevedorCobranca[]);
   const devendo = linhas.filter((d) => d.saldoVencido !== null && d.saldoVencido > 0);
   const semResp = devendo.filter((d) => d.responsavel === null);
+  const prioridade = (d: DevedorCobranca) => (d.promessaVencida ? 0 : d.antigo ? 2 : 1);
   return {
     devedores: devendo.length,
     semResponsavel: { n: semResp.length, valor: semResp.reduce((s, d) => s + (d.saldoVencido as number), 0) },
-    promessasVencidas: devendo.filter((d) => d.promessaVencida).length,
-    saldoDesconhecido: linhas.filter((d) => d.saldoVencido === null).length,
-    top: [...devendo].sort((a, b) => (b.saldoVencido as number) - (a.saldoVencido as number)).slice(0, limite),
+    promessasVencidas: linhas.filter((d) => d.promessaVencida).length,
+    saldoDesconhecido: linhas.filter((d) => d.saldoVencido === null && d.nVencidas !== 0).length,
+    aguardando: devendo.filter((d) => !acionavel(d)).length,
+    top: devendo
+      .filter(acionavel)
+      .sort((a, b) => prioridade(a) - prioridade(b) || (b.saldoVencido as number) - (a.saldoVencido as number))
+      .slice(0, limite),
   };
 }
