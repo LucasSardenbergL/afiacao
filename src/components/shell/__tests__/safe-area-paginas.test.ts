@@ -27,6 +27,9 @@ describe('sticky/fixed abaixo da barra do app (não na barra de status)', () => 
     ['src/components/picking/ScanBar.tsx', "'sticky top-topo-conteudo z-20"],
     ['src/components/call/TranscriptionPanel.tsx', 'fixed right-0 top-topo-conteudo bottom-0 pb-[env(safe-area-inset-bottom)]'],
     ['src/pages/FarmerCalls.tsx', 'top-[calc(theme(spacing.topo-conteudo)+2rem)]'],
+    ['src/pages/AdminReposicaoAumentoDetail.tsx', 'lg:sticky lg:top-[calc(theme(spacing.topo-conteudo)+1rem)]'],
+    ['src/components/reposicao/promocaoDetail/EstadoAcoesSidebar.tsx', 'lg:sticky lg:top-[calc(theme(spacing.topo-conteudo)+1rem)]'],
+    ['src/components/docs/primitives.tsx', 'scroll-mt-[calc(theme(spacing.topo-conteudo)+5rem)]'],
   ])('%s', (arquivo, classe) => {
     expect(ler(arquivo)).toContain(classe);
   });
@@ -42,6 +45,17 @@ describe('telas cheias e rodapés fixos respeitam o indicador de início', () =>
     expect(ler('src/components/recebimento/LoteScannerOCR.tsx')).toContain(
       'fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]',
     );
+  });
+  it.each([
+    ['src/components/ui/bulk-actions-bar.tsx'],
+    ['src/pages/PedidoProgramadoDetalhe.tsx'],
+  ])('%s: barra flutuante a 1rem ACIMA do indicador de início', (arquivo) => {
+    const s = ler(arquivo);
+    expect(s).toContain('fixed bottom-[calc(1rem+env(safe-area-inset-bottom))]');
+    expect(s).not.toMatch(/fixed bottom-4\b/);
+  });
+  it('shell: sob a lente o <main> desconta a faixa do mínimo (sem rolagem de 1.75rem)', () => {
+    expect(ler('src/components/AppShell.tsx')).toContain("'pt-topbar min-h-[calc(100dvh-var(--faixa-ver-como,0px))]");
   });
   it('"Finalizar Conferência" sobe pela área segura do fim', () => {
     expect(ler('src/pages/RecebimentoConferencia.tsx')).toContain('pb-[calc(1rem+env(safe-area-inset-bottom))]');

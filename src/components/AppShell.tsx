@@ -919,7 +919,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {/* Main content */}
             <main
               className={cn(
-                'pt-topbar min-h-screen transition-all duration-200',
+                // Sob a lente o wrapper já tem pt-7: o mínimo desconta a faixa (senão sobra rolagem de 1.75rem — Codex).
+                'pt-topbar min-h-[calc(100dvh-var(--faixa-ver-como,0px))] transition-all duration-200',
                 'lg:ml-sidebar',
                 collapsed && 'lg:ml-sidebar-collapsed'
               )}
