@@ -246,6 +246,24 @@ Teste: `src/components/shell/__tests__/safe-area-paginas.test.ts`, um teste-text
 sabotagem por fiação e controle verde na mesma invocação. O CSS gerado foi conferido à mão. Não houve
 teste em aparelho.
 
+**Reversão pelo #4105, restauração e Publish (2026-11-22).** O #4102 mergeou às 02:38. Às 02:57, o
+squash do #4105 (`claude/clientes-ondas-1-2-a1e5f3`, branch defasada) desfez os 19 arquivos dele. Nesses
+arquivos, `git diff 12936e3a1 f4fdcf60a` era byte a byte o inverso do #4102 (22106 B dos dois lados,
+as mesmas 138 linhas). Nenhum outro PR recente foi atropelado. O sinal veio do
+`git log -S topo-conteudo -- tailwind.config.ts`, que listou o #4105 além do #4102. O #4107 reaplicou nos
+19 arquivos o estado de `12936e3a1` (sem tocar o #4105).
+
+Antes do Publish, `deriva:corpo:prod` acusou AUSENTE a `banco_extrato_omie_dia` do #4104, que o front
+da main já chama. A sessão a aplicou por `db:aplicar`: pré-voo `psql-ro` 🟢, ensaio com ROLLBACK, recibo
+**#1307**, 2ª testemunha (INVOKER, sem EXECUTE para `anon`, tabela com RLS) e deriva em exit 0. Os bytes
+foram conferidos em `steu.lovable.app`, onde `index-5h5jQmAL.css` tem `.top-topo-conteudo`,
+`--faixa-ver-como` e as alturas `100dvh` (antes, `index-P-eAPjZ9.css` não tinha nenhum dos três).
+
+Armadilha de medição: o CSS de produção é uma linha só. `grep -c` conta linhas, e o minificador
+mexe nos espaços (`var(--faixa-ver-como, 0px)` dentro do token × `var(--faixa-ver-como,0px)` fora dele).
+Meça com `grep -oF` e um controle positivo no mesmo comando (`faixa-ver-como-top`). No zsh, `$F` sem
+aspas não faz word-split, e um `git diff -- $F` vazio se lê como "idêntico". Use `${=F}`.
+
 **Follow-ups do #4068 e do #4087 (2026-11-21, só front).** **A** desde a edge `omie-vendas-sync`
 v1.45 o `omie_products.estoque` chega `null` quando falta `nSaldo`, e o front o transformava em 0: a
 venda assistida (`UnifiedOrder` → `montarBaseEmbalagens`) mostrava "Encomenda" para saldo que
