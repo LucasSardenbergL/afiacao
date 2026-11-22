@@ -1,6 +1,7 @@
 import type { PostHog } from 'posthog-js';
 import { logger } from '@/lib/logger';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { marcarFalhaDeImportOpcional } from '@/lib/preload-rota';
 import { resolverBuildEm, resolverBuildId } from '@/lib/build-id';
 
 /**
@@ -155,6 +156,7 @@ export function initAnalytics(): void {
       }
     })
     .catch((e) => {
+      marcarFalhaDeImportOpcional(e); // analytics nunca recarrega a página (loop do Safari, 2026-11-22)
       initStarted = false;
       logger.error('Falha ao carregar/inicializar PostHog', {
         error: mensagemDeErro(e) ?? '(sem mensagem)',

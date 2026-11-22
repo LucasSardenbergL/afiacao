@@ -8,6 +8,7 @@ import {
   ESTADO_INICIAL,
   avaliarResposta,
   buildIdDoManifesto,
+  buscarAssetComRecuoSemCookie,
   cachesDescartaveis,
   entryPrimeiro,
   estadoComLegado,
@@ -210,5 +211,53 @@ describe('cookie `__dpl` do host (2026-10-19): o preparo busca SEM cookies', () 
     const src = readFileSync(new URL('../../sw/sw.ts', import.meta.url), 'utf8');
     expect(src).toContain('fetch(url, opcoesDeBusca(e))');
     expect(src).not.toMatch(/credentials:\s*['"](same-origin|include)['"]/);
+  });
+});
+
+describe('asset fora da release (2026-11-22, loop de recarga no Safari): recuo SEM cookie', () => {
+  // Um Safari de iPhone pinado num deployment velho pedia `vendor-posthog-<hash novo>.js`
+  // (fora do precache) com cookie → 404 → `vite:preloadError` → reload, ~550× em 2h20.
+  const URL_ASSET = 'https://steu.lovable.app/assets/vendor-posthog-Bmxtik4_.js';
+  const resp = (status: number, ct: string) => ({ status, type: 'basic', headers: { get: (n: string) => (n === 'content-type' ? ct : null) } });
+  const fakeBuscar = (comCookie: ReturnType<typeof resp> | Error, semCookie: ReturnType<typeof resp> | Error) => {
+    const chamadas: Array<string | undefined> = [];
+    const buscar = async (credentials?: 'omit') => {
+      chamadas.push(credentials);
+      const r = credentials === 'omit' ? semCookie : comCookie;
+      if (r instanceof Error) throw r;
+      return r;
+    };
+    return { buscar, chamadas };
+  };
+
+  it('com cookie 404 e sem cookie 200 → serve o 200 sem cookie', async () => {
+    const ok = resp(200, 'text/javascript');
+    const { buscar, chamadas } = fakeBuscar(resp(404, 'text/html'), ok);
+    expect(await buscarAssetComRecuoSemCookie(URL_ASSET, buscar)).toBe(ok);
+    expect(chamadas).toEqual([undefined, 'omit']);
+  });
+
+  it('com cookie devolve o fallback HTML-200 da SPA num .js → também refaz sem cookie', async () => {
+    const ok = resp(200, 'application/javascript');
+    const { buscar } = fakeBuscar(resp(200, 'text/html'), ok);
+    expect(await buscarAssetComRecuoSemCookie(URL_ASSET, buscar)).toBe(ok);
+  });
+
+  it('com cookie servível → uma busca só (não gasta o recuo)', async () => {
+    const ok = resp(200, 'text/javascript');
+    const { buscar, chamadas } = fakeBuscar(ok, resp(200, 'text/javascript'));
+    expect(await buscarAssetComRecuoSemCookie(URL_ASSET, buscar)).toBe(ok);
+    expect(chamadas).toEqual([undefined]);
+  });
+
+  it('recuo também quebrado ou sem rede → devolve a 1ª resposta, como antes', async () => {
+    const primeira = resp(404, 'text/html');
+    expect(await buscarAssetComRecuoSemCookie(URL_ASSET, fakeBuscar(primeira, resp(404, 'text/html')).buscar)).toBe(primeira);
+    expect(await buscarAssetComRecuoSemCookie(URL_ASSET, fakeBuscar(primeira, new Error('offline')).buscar)).toBe(primeira);
+  });
+
+  it('o SW usa o recuo no responderEstatico para /assets/*.js|css', () => {
+    const src = readFileSync(new URL('../../sw/sw.ts', import.meta.url), 'utf8');
+    expect(src).toContain('buscarAssetComRecuoSemCookie(req.url, (credentials) => (credentials ? fetch(req.url, { credentials }) : fetch(req)))');
   });
 });
