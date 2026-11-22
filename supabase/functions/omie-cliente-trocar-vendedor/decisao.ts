@@ -256,6 +256,9 @@ export function decodificarComoOmie(s: string): string {
   return s.replace(/&(?:amp|lt|gt|quot|apos);/g, (m) => DECODIFICA[m]);
 }
 
+/** Campos em que o Omie foi VISTO codificando o `&` recebido (ConsultarCliente de leitura, 2026-11-22). */
+const CAMPOS_AMP_MEDIDO = new Set(["razao_social", "nome_fantasia", "observacao"]);
+
 /** Quantas vezes decodificar o texto lido antes de reenviar: 1 no fluxo normal; 2 no reparo (entidade dupla). */
 const voltas = (reparo: boolean) => reparo ? 2 : 1;
 function decodificarN(s: string, n: number): string {
@@ -290,8 +293,11 @@ export function textosQueMudariam(cad: Record<string, unknown>, reparo: boolean)
     .filter(([k, v]) => {
       if (typeof v !== "string" || v.trim() === "" || INSTRUCOES.has(k)) return false;
       const enviado = textoEnviado(v, reparo);
-      // Só `&`→`&amp;` e `'`→`&apos;` foram MEDIDOS; enviar `<` `>` `"` dependeria de codificação não medida (Codex v1.6 P2).
-      return /[<>"]/.test(enviado) || codificarComoOmie(enviado) !== esperado[k];
+      // Só `&`→`&amp;` foi MEDIDO, e só nestes campos (Codex v1.6 P2 e r2 P1): enviar `<` `>` `"` `'`, ou `&` em
+      // identificador/endereço/outro campo, dependeria de comportamento não medido do Omie → recusa sem escrever.
+      if (/[<>"']/.test(enviado)) return true;
+      if (enviado.includes("&") && !CAMPOS_AMP_MEDIDO.has(k)) return true;
+      return codificarComoOmie(enviado) !== esperado[k];
     })
     .map(([k]) => k).sort();
 }

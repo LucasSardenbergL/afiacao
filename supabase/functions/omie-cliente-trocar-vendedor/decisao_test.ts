@@ -164,10 +164,14 @@ Deno.test("payloadAlterar v1.6: texto vai decodificado uma vez; reparo, duas", (
 });
 
 Deno.test("textosQueMudariam: & ou ' crus e entidade fora das 5 recusam; codificado certo passa", () => {
-  igual(textosQueMudariam({ ...CAD, razao_social: "MOVEIS &amp; CIA", observacao: "JOAO &amp; MARIA\nbase d&apos;água" }, false), [], "canônico medido");
+  igual(textosQueMudariam({ ...CAD, razao_social: "MOVEIS &amp; CIA", nome_fantasia: "A &amp; B", observacao: "JOAO &amp; MARIA\nLINHA 2" }, false), [], "& nos campos medidos");
+  igual(textosQueMudariam({ ...CAD, observacao: "base d&apos;água" }, false), ["observacao"], "&apos; (apóstrofo não medido) recusa");
+  igual(textosQueMudariam({ ...CAD, codigo_cliente_integracao: "ERP-A&amp;B", endereco: "RUA A &amp; B" }, false),
+    ["codigo_cliente_integracao", "endereco"], "Codex v1.6 r2 P1: & fora dos campos medidos recusa");
   igual(textosQueMudariam({ ...CAD, observacao: OBS }, false), ["observacao"], "&lt; &gt; &quot; não medidos recusam (Codex v1.6 P2)");
   igual(textosQueMudariam({ ...CAD, razao_social: "P&D LTDA", complemento: "D'AVILA", observacao: "&#39;x", bairro: "&nbsp;" }, false),
     ["bairro", "complemento", "observacao", "razao_social"], "crus/fora das 5");
   igual(textosQueMudariam({ ...CAD, razao_social: "MOVEIS &amp;amp; CIA" }, true), [], "reparo do dano");
+  igual(textosQueMudariam({ ...CAD, observacao: "d&amp;apos;água" }, true), ["observacao"], "reparo de &apos; não medido recusa");
   igual(textosQueMudariam({ ...CAD, razao_social: "P&amp;D" }, true), ["razao_social"], "reparo de texto sem dano duplo recusa");
 });

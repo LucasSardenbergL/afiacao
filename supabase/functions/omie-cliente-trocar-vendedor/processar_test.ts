@@ -444,13 +444,13 @@ const gravaComoOmie = (payload: Record<string, unknown>, atual: Record<string, u
   return r;
 };
 
-Deno.test("v1.6: cadastro com &amp;/&apos; → payload decodificado, Omie recodifica e o hash bate LITERAL ('verificado')", async () => {
-  const orig = { razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", observacao: "base d&apos;água\nLINHA 2" };
+Deno.test("v1.6: cadastro com &amp; → payload decodificado, Omie recodifica e o hash bate LITERAL ('verificado')", async () => {
+  const orig = { razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", observacao: "JOAO &amp; MARIA\nLINHA 2" };
   const omie = new Map([[1, cadastro(1, TATY_OBEN, orig)]]);
   const enviados: Record<string, unknown>[] = [];
   const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return gravaComoOmie(payload, atual); } });
   const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
-  igual([enviados[0].razao_social, enviados[0].observacao], ["TRES R MOVEIS & CIA LTDA", "base d'água\nLINHA 2"], "payload decodificado");
+  igual([enviados[0].razao_social, enviados[0].observacao], ["TRES R MOVEIS & CIA LTDA", "JOAO & MARIA\nLINHA 2"], "payload decodificado");
   igual([omie.get(1)?.razao_social, omie.get(1)?.observacao], [orig.razao_social, orig.observacao], "Omie regravou o original");
   igual(r.itens[0].status, "verificado", "status");
 });
@@ -470,11 +470,11 @@ const provaDe = async (cod: number, cad: Record<string, unknown>) => ({ [cod]: {
 const REPARAR = { modo: "aplicar", lote: "reparo_entidades", confirmo: "TROCAR VENDEDOR NO OMIE" };
 
 Deno.test("v1.6 reparo_entidades: &amp;amp; volta a &amp; e fica 'verificado'; vendedor segue o alvo", async () => {
-  const dano = cadastro(1, REGINA_OBEN, { razao_social: "TRES R MOVEIS &amp;amp; CIA LTDA", observacao: "d&amp;apos;água" });
+  const dano = cadastro(1, REGINA_OBEN, { razao_social: "TRES R MOVEIS &amp;amp; CIA LTDA", observacao: "P&amp;amp;D\nLINHA 2" });
   const omie = new Map([[1, dano]]);
   const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: gravaComoOmie });
   const r = await processarBloco(params(REPARAR), d, { ...OPC, provasReparo: await provaDe(1, dano) });
-  igual([omie.get(1)?.razao_social, omie.get(1)?.observacao], ["TRES R MOVEIS &amp; CIA LTDA", "d&apos;água"], "reparado");
+  igual([omie.get(1)?.razao_social, omie.get(1)?.observacao], ["TRES R MOVEIS &amp; CIA LTDA", "P&amp;D\nLINHA 2"], "reparado");
   igual([r.itens[0].status, r.itens[0].vendedor_depois], ["verificado", REGINA_OBEN], "status");
 });
 
