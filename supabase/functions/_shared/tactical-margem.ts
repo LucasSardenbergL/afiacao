@@ -93,26 +93,49 @@ export function calcularClusterMargin(
   return margens.reduce((s, m) => s + m, 0) / margens.length;
 }
 
-/** Perfil comercial do cliente — espelho de useTacticalPlan.ts:187 (classifyProfile).
+/** Fronteiras do perfil em FAMÍLIAS em 12m (decisão de 2026-11-22: mantidos 3/4, agora na unidade certa —
+ *  em prod o corte ≤3 cai na mediana das famílias dos compradores). Espelho de src/lib/scoring/objective.ts. */
+const PERFIL_FAMILIAS_FOCO_MAX = 3;
+const PERFIL_FAMILIAS_AMPLO_MIN = 4;
+
+/** Perfil comercial do cliente — espelho de `classifyProfile` em src/hooks/useTacticalPlan.ts e de
+ *  `classifyCustomerProfile` em src/hooks/useBundleArguments.ts (mudou aqui, mude lá).
  *
  *  Os dois primeiros ramos dependem da margem e só disparam com margem CONHECIDA.
  *  ⚠️ Sem esse guard a coerção do JS fabricaria diagnóstico: `null < 20` é `true`
  *  (null coage a 0), então todo cliente de gasto baixo e margem desconhecida seria
  *  rotulado "sensível a preço" — e esse rótulo entra no prompt da IA e molda a
- *  abordagem que a vendedora leva para a rua. */
+ *  abordagem que a vendedora leva para a rua.
+ *
+ *  `familias12m` = famílias de produto DISTINTAS em 12 meses (`familiasDoPerfil`). Antes era
+ *  `category_count`, que conta PRODUTOS distintos (10 cores da mesma tinta = 10): o cliente focado em
+ *  2 famílias com 15 SKUs nunca saía "orientado a qualidade". `null` = amplitude não medida → os ramos
+ *  de mix NÃO disparam (sem `null <= 3`, que é `true` em JS e afirmaria "poucas famílias"). */
 export function classifyProfile(
   healthScore: number,
   // null = gasto não medido (calculate-scores v1.8: sem linha na RPC de vendas). Guard explícito: em JS
   // `null < 500` é `true` e rotularia "não medido" como sensível a preço.
   avgSpend: number | null,
   marginPct: number | null,
-  categoryCount: number,
+  familias12m: number | null,
 ): string {
   const m = margemConhecida(marginPct);
+  const f = familias12m != null && Number.isFinite(familias12m) ? familias12m : null;
   if (m != null && avgSpend != null && avgSpend < 500 && m < 20) return 'sensivel_preco';
-  if (m != null && m > 35 && categoryCount <= 3) return 'orientado_qualidade';
-  if (avgSpend != null && avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
+  if (m != null && m > 35 && f != null && f <= PERFIL_FAMILIAS_FOCO_MAX) return 'orientado_qualidade';
+  if (avgSpend != null && avgSpend > 2000 && f != null && f >= PERFIL_FAMILIAS_AMPLO_MIN && healthScore > 60) {
+    return 'orientado_produtividade';
+  }
   return 'misto';
+}
+
+/** Famílias em 12m para o PERFIL (≠ `mixGapFamilias`). Sem linha na RPC `familias_12m_clientes` ou
+ *  `familias_12m` null → `null`: o perfil não afirma "poucas famílias" a partir de ausência. O mixGap
+ *  trata comprador sem linha como 0 MEDIDO para empurrar expansão; aqui o mesmo 0 viraria o rótulo
+ *  "orientado a qualidade" — um veredito sobre o cliente que a ausência de compra não sustenta. */
+export function familiasDoPerfil(linha: { familias_12m: number | null } | null | undefined): number | null {
+  const n = linha?.familias_12m;
+  return n != null && Number.isFinite(n) ? n : null;
 }
 
 /** Meta da amplitude de mix: famílias de produto (omie_products.familia) distintas em 12 meses. */

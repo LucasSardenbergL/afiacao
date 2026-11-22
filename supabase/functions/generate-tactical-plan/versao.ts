@@ -53,8 +53,12 @@ import { MODELO, toolDoModo } from "./plano-helpers.ts";
  * `v1.8-mixgap-por-familia` (Amplitude de mix, 2026-11-21): o `mixGap` deixa de ser `8 − category_count`
  * (PRODUTOS distintos) e passa a `6 − famílias distintas em 12 meses` pela RPC `familias_12m_clientes`
  * (migration 20261121230000); não medido (nunca comprou / itens sem família) → null, sem expansao_mix.
+ *
+ * `v1.9-perfil-por-familia` (2026-11-22): `classifyProfile` deixa de usar `category_count` (produtos
+ * distintos) e decide qualidade (≤3) / produtividade (≥4) por famílias distintas em 12 meses, a mesma
+ * linha da RPC do mixGap (`familiasDoPerfil`). Sem linha / família null → o perfil não afirma mix.
  */
-export const VERSAO = "v1.8-mixgap-por-familia";
+export const VERSAO = "v1.9-perfil-por-familia";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

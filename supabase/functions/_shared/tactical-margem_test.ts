@@ -9,6 +9,7 @@ import {
   avaliarCanariaMargem,
   calcularClusterMargin,
   classifyProfile,
+  familiasDoPerfil,
   margemConhecida,
   mixGapFamilias,
   profitPerHora,
@@ -254,6 +255,33 @@ Deno.test("profile: margem AUSENTE não vira 'orientado_qualidade'", () => {
 Deno.test("profile: margem ausente ainda permite o ramo que NÃO usa margem", () => {
   // orientado_produtividade não depende de margem — segue decidível.
   assertEquals(classifyProfile(70, 3000, null, 5), "orientado_produtividade");
+});
+
+// ── classifyProfile por FAMÍLIA em 12m (não por category_count = produtos distintos) ─────────
+Deno.test("profile: fronteiras 3/4 em FAMÍLIAS — ≤3 foca (qualidade), ≥4 amplo (produtividade)", () => {
+  assertEquals(classifyProfile(50, 1000, 40, 3), "orientado_qualidade");
+  assertEquals(classifyProfile(50, 1000, 40, 4), "misto");
+  assertEquals(classifyProfile(70, 3000, 25, 4), "orientado_produtividade");
+  assertEquals(classifyProfile(70, 3000, 25, 3), "misto");
+  assertEquals(classifyProfile(50, 1000, 40, 0), "orientado_qualidade"); // 0 MEDIDO é conhecido
+});
+
+Deno.test("profile: famílias AUSENTES não afirmam mix (null <= 3 é true em JS!)", () => {
+  assertEquals(classifyProfile(50, 1000, 40, null), "misto");
+  assertEquals(classifyProfile(70, 3000, 25, null), "misto");
+  assertEquals(classifyProfile(50, 1000, 40, Number.NaN), "misto");
+  // o ramo que NÃO usa mix segue decidível
+  assertEquals(classifyProfile(50, 400, 10, null), "sensivel_preco");
+});
+
+Deno.test("familiasDoPerfil: sem linha / família null → null (≠ mixGapFamilias, que mede 0)", () => {
+  assertEquals(familiasDoPerfil(undefined), null);
+  assertEquals(familiasDoPerfil(null), null);
+  assertEquals(familiasDoPerfil({ familias_12m: null }), null);
+  assertEquals(familiasDoPerfil({ familias_12m: 0 }), 0);
+  assertEquals(familiasDoPerfil({ familias_12m: 7 }), 7);
+  // o mixGap do MESMO comprador sem linha é a meta inteira (0 medido) — o perfil não herda isso
+  assertEquals(mixGapFamilias("stale", undefined), 6);
 });
 
 // ── Canária comportamental (#1498): a prova de DEPLOY que a edge expõe via {canary:true} ─────

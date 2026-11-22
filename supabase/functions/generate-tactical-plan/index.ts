@@ -13,7 +13,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import { exigirLeitura } from "../_shared/leitura-critica.ts";
-import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, mixGapFamilias, selectObjective } from "../_shared/tactical-margem.ts";
+import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, familiasDoPerfil, margemConhecida, mixGapFamilias, selectObjective } from "../_shared/tactical-margem.ts";
 import { inicioDaJanelaFila } from "../_shared/tactical-fila.ts";
 import {
   ehJaNaFilaDaRpc,
@@ -285,7 +285,9 @@ Deno.serve(async (req) => {
       // Margem (do cliente ou do cluster) ausente → a regra de consolidacao_margem NÃO dispara:
       // o guard null que o front já tinha e que este lado não tinha, porque o fallback 25
       // garantia um número — fabricado.
-      const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);
+      // Perfil por FAMÍLIA em 12m (mesma linha da RPC do mixGap), não por category_count (produtos
+      // distintos — erro de unidade). Sem linha / família null → null: o perfil não afirma "poucas famílias".
+      const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, familiasDoPerfil(familiasCliente?.[0]));
       const recencyCapDays = clampRecencyCapDays(recencyCapRow?.value);
       const strategicObjective = selectObjective(
         churnRisk, mixGap, marginPct, clusterMargin, daysSince, recencyCapDays, salesHistoryStatus,

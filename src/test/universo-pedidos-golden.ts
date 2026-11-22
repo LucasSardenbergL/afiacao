@@ -206,6 +206,17 @@ export function gerarUniversoGolden(nPedidos = 6_500): UniversoGolden {
         margem_visivel: true,
       })),
       farmer_melhores_individuais_por_cliente: [],
+      // Amplitude de mix do PERFIL do cartão (bundle). Por ÍNDICE, sem consumir o PRNG — senão todo o
+      // universo acima mudaria. 1 em 5 clientes sem linha (não comprou na janela), 1 em 11 com família null.
+      familias_12m_clientes: clientes
+        .map((cid, i) => ({ cid, i }))
+        .filter(({ i }) => i % 5 !== 0)
+        .map(({ cid, i }) => ({
+          customer_user_id: cid,
+          familias_12m: i % 11 === 0 ? null : i % 9,
+          itens_12m: 12,
+          itens_sem_familia: i % 11 === 0 ? 12 : 0,
+        })),
     },
   };
 }

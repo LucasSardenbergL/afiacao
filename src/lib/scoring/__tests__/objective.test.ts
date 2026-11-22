@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { selectObjective, clampRecencyCapDays, mixGapFamilias, META_FAMILIAS_MIX } from '../objective';
+import {
+  selectObjective,
+  clampRecencyCapDays,
+  mixGapFamilias,
+  META_FAMILIAS_MIX,
+  familiasDoPerfil,
+} from '../objective';
 
 describe('clampRecencyCapDays', () => {
   it('default 180 quando ausente/null/NaN (money-path: Number(null)===0 fabricaria fronteira de 30)', () => {
@@ -144,5 +150,24 @@ describe('mixGapFamilias (plano tático — meta 6 por família, não 8 por prod
   it('selectObjective: mixGap null não dispara expansao_mix', () => {
     expect(selectObjective(10, null, 30, 40, 10, 180, 'ativo')).not.toBe('expansao_mix');
     expect(selectObjective(10, 4, 30, 40, 10, 180, 'ativo')).toBe('expansao_mix');
+  });
+});
+
+describe('familiasDoPerfil (perfil do cliente — ausente ≠ zero, ≠ mixGapFamilias)', () => {
+  it('sem linha ou família null → null (não afirma "poucas famílias")', () => {
+    expect(familiasDoPerfil(undefined)).toBeNull();
+    expect(familiasDoPerfil(null)).toBeNull();
+    expect(familiasDoPerfil({ familias_12m: null })).toBeNull();
+    expect(familiasDoPerfil({ familias_12m: Number.NaN })).toBeNull();
+  });
+
+  it('número medido passa intacto, inclusive 0', () => {
+    expect(familiasDoPerfil({ familias_12m: 0 })).toBe(0);
+    expect(familiasDoPerfil({ familias_12m: 7 })).toBe(7);
+  });
+
+  it('o MESMO comprador sem linha: mixGap mede 0 família (gap = meta), o perfil não', () => {
+    expect(mixGapFamilias('stale', undefined)).toBe(META_FAMILIAS_MIX);
+    expect(familiasDoPerfil(undefined)).toBeNull();
   });
 });

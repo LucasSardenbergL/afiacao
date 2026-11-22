@@ -135,8 +135,9 @@ export const CustomerBundleCard = ({ data, expanded, onToggle, bundleArgs, argGe
   ).length;
 
   // grossMarginPct passa SEM `|| 0`: o guard dentro de classifyCustomerProfile só funciona se o
-  // null chegar até lá. Coagir aqui tornaria a correção inerte (a armadilha do #1508).
-  const profile = classifyCustomerProfile(data.healthScore, data.avgMonthlySpend, data.grossMarginPct, data.categoryCount || 0);
+  // null chegar até lá. Coagir aqui tornaria a correção inerte (a armadilha do #1508). Idem famílias:
+  // `familias12m` null (não medido) chega como null — nada de `|| 0`, que afirmaria "poucas famílias".
+  const profile = classifyCustomerProfile(data.healthScore, data.avgMonthlySpend, data.grossMarginPct, data.familias12m);
   const profileInfo = profileLabels[profile];
 
   const customerCtx = {
