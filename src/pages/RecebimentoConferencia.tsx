@@ -492,7 +492,7 @@ export default function RecebimentoConferencia() {
   return (
     <div className="max-w-2xl mx-auto pb-32">
       {/* Header */}
-      <div className="sticky top-0 z-30 bg-background border-b border-border px-4 py-3 space-y-3">
+      <div className="sticky top-topo-conteudo z-30 bg-background border-b border-border px-4 py-3 space-y-3">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={() => navigate('/recebimento')}>
             <ArrowLeft className="h-5 w-5" />
@@ -669,7 +669,7 @@ export default function RecebimentoConferencia() {
 
       {/* Finalize button */}
       {canFinalize && (
-        <div className="fixed bottom-0 left-0 right-0 z-30 p-4 bg-background border-t border-border">
+        <div className="fixed bottom-0 left-0 right-0 z-30 p-4 pl-[calc(1rem+env(safe-area-inset-left))] pr-[calc(1rem+env(safe-area-inset-right))] pb-[calc(1rem+env(safe-area-inset-bottom))] bg-background border-t border-border">
           <Button
             className={cn(
               'w-full h-14 text-base font-semibold',

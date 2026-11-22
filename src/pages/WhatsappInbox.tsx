@@ -95,7 +95,7 @@ export default function WhatsappInbox() {
   const messages = threadQuery.data ?? [];
 
   return (
-    <div className="flex h-[calc(100vh-3rem)]">
+    <div className="flex h-[calc(100dvh-theme(spacing.topo-conteudo)-2rem-env(safe-area-inset-bottom))] lg:h-[calc(100dvh-theme(spacing.topo-conteudo)-3rem-env(safe-area-inset-bottom))]">
       <aside className="w-80 border-r overflow-y-auto">
         {naoConsegui(estadoSla) && (
           <div className="p-3 pb-0">
