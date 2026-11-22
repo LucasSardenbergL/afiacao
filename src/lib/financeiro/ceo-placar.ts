@@ -185,7 +185,7 @@ export function linhasPorEmpresa(
 }
 
 /** Por que um CNPJ não tem projeção utilizável (→ falta do escopo `null`). */
-export type MotivoSemProjecao = 'ausente' | 'desatualizada' | 'incompleta';
+type MotivoSemProjecao = 'ausente' | 'desatualizada' | 'incompleta';
 
 interface RupturaEmpresa {
   empresa: Company;

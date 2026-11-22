@@ -25,7 +25,6 @@ import { track } from '@/lib/analytics';
 import { useCompany, COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { useTeamKpis } from '@/hooks/useTeamKpis';
 import { useCeoPlacar } from '@/components/financeiro/cockpit/useCeoPlacar';
-import type { CaixaProjetado, MotivoSemProjecao } from '@/lib/financeiro/ceo-placar';
 import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
 import { formatarBRLCompacto } from '@/lib/dashboard/ceo-formato';
 
@@ -94,6 +93,10 @@ function leituraNcg(valor: number, completa: boolean): string {
   if (!completa) return 'parcial · snapshot sem estoque';
   return valor <= 0 ? 'folga: fornecedores financiam o giro' : 'capital preso no giro';
 }
+
+// Tipos pela ponte `useCeoPlacar` (o dashboard não importa a lib do financeiro — gate de fronteiras).
+type CaixaProjetado = ReturnType<typeof useCeoPlacar>['caixaProjetado'];
+type MotivoSemProjecao = NonNullable<CaixaProjetado['porEmpresa'][number]['motivo']>;
 
 const MOTIVO_SEM_PROJECAO: Record<MotivoSemProjecao, string> = {
   ausente: 'sem projeção',
