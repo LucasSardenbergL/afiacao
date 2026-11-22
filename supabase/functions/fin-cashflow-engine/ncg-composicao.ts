@@ -24,7 +24,7 @@ const TETO = 1e10;
  * FRONTEIRA (0,35000000000000003 − 0,3), e quem recusa tem de ser o helper, nunca o CHECK (achado Codex).
  * O erro legítimo é ≤ 3 centavos (6 parcelas arredondadas a ±0,005).
  */
-export const NCG_TOLERANCIA_FECHAMENTO = 0.04;
+const NCG_TOLERANCIA_FECHAMENTO = 0.04;
 
 export type ComposicaoNcgEntrada = {
   aco: { cr_aberto: number; estoque: number | null; adiantamentos: number };
