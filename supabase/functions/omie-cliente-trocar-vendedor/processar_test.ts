@@ -523,3 +523,15 @@ Deno.test("v1.6: recibo do reparo grava lote 'saida_vendedora' (CHECK do banco s
   await processarBloco(params(REPARAR), d, { ...OPC, provasReparo: await provaDe(1, dano) });
   igual([...new Set([...recibos.values()].map((x) => x.lote))], ["saida_vendedora"], "lote no recibo");
 });
+
+Deno.test("v1.6 reparo + verificar tardio: 'nada gravado' dá 'divergente'; gravado dá 'verificado' (recibo guarda o hash ESPERADO)", async () => {
+  for (const grava of [false, true]) {
+    const dano = cadastro(1, REGINA_OBEN, { razao_social: "X &amp;amp; Y" });
+    const m = montar({ omie: new Map([[1, dano]]), candidatos: [cand(1)], aoAlterar: grava ? gravaComoOmie : (_p, atual) => ({ ...atual }) });
+    const r = await processarBloco(params(REPARAR), m.d, { ...OPC, orcamentoTotalMs: 10_000, provasReparo: await provaDe(1, dano) });
+    igual(r.itens[0].status, "alterado", `grava=${grava}: alterado`);
+    await m.d.dormir(61_000);
+    const v = await processarBloco(params({ modo: "verificar", lote: "reparo_entidades", execucao_id: "00000000-0000-4000-8000-000000000001" }), m.d, OPC);
+    igual(v.itens.map((i) => i.status), [grava ? "verificado" : "divergente"], `grava=${grava}: verificar`);
+  }
+});
