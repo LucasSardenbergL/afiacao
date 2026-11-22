@@ -274,3 +274,46 @@
 - (f) gates tint/ATP antes da reserva, ou encerrar a tentativa recusada antes do envio; retomada por perna no checkout misto; congelar tint/PC/NF para reenvio pós-aprovação (PR 6); contrato explícito de "troca de parcela" com a condição original esperada no editor (PR 6).
 
 **Revisão pós-Codex (diff, 2026-11-21, gpt-6.2-astra high — 4 P1 + 6 P2, todos acatados):** `E'\v'` do PG é a LETRA `v` (o trim comia "v" das pontas) → `chr(11)` + regex sob `COLLATE "C"`; item sem a chave `codigo_produto` passava (`jsonb_typeof(NULL) NOT IN` = NULL) → recusa; revisão malformada lançava fora do `try` e travaria a venda → validação e mapeamento dentro de `registrarRevisao`, falha descarta a revisão e segue o payload; edição comparava subtotais brutos → centavos por linha nos dois lados; `999` → `NULL` antes de override/catálogo (catálogo contraditório não dá prazo 0); calendário validado cru (`[null]` não vira à vista); código de produto limitado à faixa segura do JS; harness passa o locale ao `initdb` (antes o `pt_BR` era só do shell); testes com valores distintos e com SÓ a evidência mudando. Prova: 148 ok + 14 falsificações em `C` e `pt_BR.UTF-8` (banco de fato).
+
+---
+
+# PR 4 — Edge `credito-ia-avaliar` + `/credito/limites` com aprovação em lote (plano detalhado, 2026-11-22 — RASCUNHO pré-Codex)
+
+**Entrega:** 1 migration (`credito_ficha`, `credito_carteira_ativa`, `credito_aprovar_propostas_lote`, cron) + prova PG17 (`db/test-credito-ficha-lote.sh`) + edge nova `credito-ia-avaliar` + tela `/credito/limites`. **Sem efeito no pedido** (o gate v2 só lê `credito_limite` a partir do PR 5). Critério: 1ª leva gerada para a carteira ativa; nada vigente sem a aprovação do Lucas.
+
+**Fatos de prod (psql-ro, 2026-11-22):** 0 propostas, 0 limites. Mapa: oben 15.794 · colacor 5.489 · colacor_sc 5.379 pares. 693 pares com título não cancelado emitido em 180 d (692 com dono único, 1 sem dono) ⇒ ~600 grupos na 1ª leva. **`fin_contas_receber.data_recebimento` = NULL em 100%** (45 mil) ⇒ comportamento de pagamento vem de `v_ciclo_cliente_resumo` (por par) e `v_titulo_baixas`, nunca do CR. Sync CR por empresa em `sync_state` (`fin_cr_incremental_ok`, `account`), hoje 08:20Z nas 3. `colacor_sc` não tem `sales_orders` (NFS-e) ⇒ compra média do grupo é **subestimada** quando há par SC com título — flag `compra_media_cobertura='parcial'` (subestimar = lado seguro do teto K).
+
+## Desenho
+
+**Carteira ativa** — `credito_carteira_ativa() RETURNS TABLE(raiz uuid)` (service_role): raízes (`credito_grupo_raiz`) dos pares com título não cancelado emitido em 180 d **ou** título aberto **ou** `sales_orders` faturável em 180 d. Par sem raiz (sem dono/conflito) fica fora — o gate v2 já o põe em 🟡 `sem_grupo`.
+
+**Ficha** — `credito_ficha(p_raiz uuid) RETURNS jsonb` (STABLE, SECURITY DEFINER, service_role). **Só números, enums e flags** (anti-injection §9.9 — nem nome, nem CNPJ, nem observação). Captura junto `grupo_assinatura`, `limite_versao_base`, `calculada_em`. Campos (cada um `null` + `motivos_ausencia[]` quando falta, nunca 0):
+- `pares` (n por empresa), `exposicao_aberta_brl` total e por empresa (status abertos + `PAGTO PARCIAL`; qualquer saldo NULL ⇒ total NULL + flag `exposicao_indeterminada`);
+- `vencido_brl` por faixa 1–15 / 16–60 / >60 d (data civil SP); `piso_bloqueado` (vencido > 60 d comprovado — mesmo predicado do piso);
+- `compra_media_mensal_180d_brl` = Σ `sales_orders` faturáveis dos membros / 6 (filtro de `get_customer_sales_summary`, `deleted_at IS NULL`), `maior_compra_180d_brl`, `compra_media_cobertura`;
+- pagamento (agregado ponderado dos pares em `v_ciclo_cliente_resumo`): `atraso_p50`, `atraso_p80`, `pct_valor_atrasado`, `prazo_concedido_pond`, `n_parcelas`, `primeira_emissao_dias` (tempo de relacionamento);
+- `maior_prazo_honrado_dias`: máx(`data_vencimento − data_emissao`) dos títulos `RECEBIDO` com `v_titulo_baixas.data_baixa_final ≤ vencimento + 5 d`;
+- `historico`: `n_titulos_total`, `n_pedidos_total` (em qualquer empresa) ⇒ `comprovadamente_novo` = ambos 0;
+- `sync_cr_horas` por empresa do grupo (> 48 h ⇒ flag `sync_defasado`);
+- `situacao_receita` (enum `ativa|nao_ativa|desconhecida`, via `radar_situacao_cadastral` pelo CNPJ dos títulos — ausência = `desconhecida`, não fato).
+
+**Edge `credito-ia-avaliar`** (nova; Anthropic direto, `criarClienteAnthropic` + `MODELO_PADRAO`, política no `system` com `cache_control`, `temperature: 0`, `tool_choice: auto`, `stop_reason` conferido; gate `authorizeCronOrStaff`; `comRegistro` slug `credito.avaliar_limites`; sonda `versao.ts`). Por invocação: até `N=12` raízes da carteira **sem proposta `pendente`** e **sem proposta nos últimos 7 d** (1ª leva + reavaliação semanal no mesmo laço), concorrência 3, orçamento de tempo 110 s. Por raiz: ficha (SQL) → Claude (`propor_limite`: `limite_sugerido_brl`, `prazo_max_dias`, `risco`, `confianca`, `motivos[]{campo, texto}`, `alertas[]`) → **travas em TS puro** (`travas.ts`, testes Deno) → `credito_propor_limite`. IA não chamou a tool / saída inválida ⇒ **sem proposta** para a raiz (registra no `detalhes`), nunca número fabricado.
+
+**Travas (código, ordem fixa, cada corte registrado em `travas[]` com antes/depois):**
+1. `piso_bloqueado` ⇒ limite = exposição aberta (NULL ⇒ 0) e `risco=alto`;
+2. `comprovadamente_novo` ⇒ limite ≤ R$ 5.000, prazo ≤ 28;
+3. senão compra média `null` ⇒ limite ≤ R$ 5.000; senão limite ≤ 3 × compra média;
+4. prazo ≤ degrau seguinte a `maior_prazo_honrado_dias` (degraus 7/14/21/28/35/42/56/63/70/84/90/120); sem prazo honrado ⇒ ≤ 28;
+5. `situacao_receita=nao_ativa` ⇒ `risco=alto`;
+6. insumo crítico null (exposição, compra média, pagamento) ou `sync_defasado` ⇒ `confianca ≤ 0,5`;
+7. saneamento: limite finito, ≥ 0, arredondado a R$ 100 para baixo; prazo inteiro 0..365.
+
+**Aprovação em lote** — `credito_aprovar_propostas_lote(p_ids uuid[], p_motivo text) RETURNS jsonb` (authenticated, mesmo gate `cap_credito_escrever` + allowlist ⇒ `42501`; ≤ 500 ids): por id, subtransação chamando `credito_aprovar_proposta`; recusa a proposta cuja ficha tem > 14 d (`proposta_vencida`); devolve `{aprovadas, falhas[{id, erro}]}` — falha de um não desfaz os outros.
+
+**Cron** — `credito-ia-avaliar` a cada 15 min (`net.http_post` com `timeout_milliseconds` explícito, segredo do vault no padrão dos crons existentes). A carteira inteira (~600) sai em ~13 h na 1ª leva; depois só as raízes vencidas de 7 d.
+
+**Tela `/credito/limites`** (módulo novo `credito` no manifesto; leitura por RLS `pode_ver_carteira_completa`, ação só para `credito_sou_aprovador()`): propostas pendentes agrupadas por faixa (risco × tamanho), com limite IA → limite pós-trava, cortes, motivos, exposição, compra média; selecionar faixa inteira → aprovar em lote; recusar com motivo; aba de vigentes. Nome do cliente vem de `profiles` na TELA (nunca vai à IA). Botão "Avaliar agora" (`useMutation` + `<UltimaExecucao acao="credito.avaliar_limites">` — o registro é da edge).
+
+**Sensor (nasce com a superfície, no ledger):** a própria `credito_limite_proposta` (status, decidido_em, travas) — concordância IA×Lucas = aprovadas/recusadas por risco; query no registro.
+
+**Fora do PR 4 (declarado):** redução automática por novo vencido (sem limite vigente não há o que reduzir; nasce no PR 5 junto do gate sombra); expirar propostas pendentes antigas (a aprovação em lote já recusa ficha > 14 d); eventos (novo vencido, 1º pedido) como gatilho.
