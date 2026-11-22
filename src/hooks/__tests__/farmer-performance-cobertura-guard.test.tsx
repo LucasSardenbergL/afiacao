@@ -174,15 +174,16 @@ describe('calculateScores — LTV sobre a carteira inteira e só gasto medido', 
   });
 });
 
-// Amplitude de mix do IPF (decisão do founder, 2026-11-21): famílias em 12m, base = clientes ativos, meta 6.
+// Amplitude de mix do IPF (decisão do founder, 2026-11-21): famílias em 12m, base = quem comprou na janela, meta 6.
 describe('calculateScores — Amplitude de mix por família', () => {
   const cli = (id: string, status: string, extra: Record<string, unknown> = {}) =>
     ({ customer_user_id: id, churn_risk: null, avg_monthly_spend_180d: status === 'sem_historico' ? null : 100, health_score: 0, sales_history_status: status, ...extra });
 
-  it('carteira mista: só ativos no denominador (prospects e stale fora)', async () => {
-    // ativos a1 (4 famílias) e a2 (2) → média 3 → 50 pts; 98 prospects e 1 stale (9 famílias) não entram
-    scoreRows = [cli('a1', 'ativo'), cli('a2', 'ativo'), cli('s1', 'stale'), ...Array.from({ length: 98 }, (_, k) => cli(`p${k}`, 'sem_historico'))];
-    familiaRows = [{ customer_user_id: 'a1', familias_12m: 4 }, { customer_user_id: 'a2', familias_12m: 2 }, { customer_user_id: 's1', familias_12m: 9 }];
+  it('carteira mista: só quem comprou nos 12m no denominador (prospects e stale sem compra fora, não 0)', async () => {
+    // a1 ativo (4 famílias) e s1 stale que comprou na janela (2) → média 3 → 50 pts.
+    // s2 stale sem item nos 12m e 98 prospects: sem linha na RPC → fora (como 0, a média cairia para 0,06).
+    scoreRows = [cli('a1', 'ativo'), cli('s1', 'stale'), cli('s2', 'stale'), ...Array.from({ length: 98 }, (_, k) => cli(`p${k}`, 'sem_historico'))];
+    familiaRows = [{ customer_user_id: 'a1', familias_12m: 4 }, { customer_user_id: 's1', familias_12m: 2 }];
     const { result: r } = renderHook(() => useFarmerPerformance());
     await act(async () => { await r.current.calculateScores(FARMER); });
     expect(insertedScore()?.insert?.ipf_mix_expansion).toBe(50);

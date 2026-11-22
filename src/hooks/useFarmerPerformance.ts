@@ -80,7 +80,6 @@ interface FarmerCallRow {
 
 interface ClientScoreRow {
   customer_user_id: string | null;
-  sales_history_status: string | null;
   churn_risk: number | string | null;
   avg_monthly_spend_180d: number | string | null;
   health_score: number | string | null;
@@ -219,7 +218,7 @@ export const useFarmerPerformance = () => {
       const clientScores = await fetchAllPages(
         (de, ate) => supabase
           .from('farmer_client_scores')
-          .select('id, customer_user_id, churn_risk, avg_monthly_spend_180d, health_score, sales_history_status')
+          .select('id, customer_user_id, churn_risk, avg_monthly_spend_180d, health_score')
           .eq('farmer_id', farmerId)
           .order('id', { ascending: true })
           .range(de, ate),
@@ -308,8 +307,8 @@ export const useFarmerPerformance = () => {
       const marginPerHour = combinedTime > 0 ? (combinedMargin / combinedTime) * 3600 : 0;
       const ipfMarginPerHour = Math.round(Math.min(100, marginPerHour));
 
-      // 3. Amplitude de mix: média de FAMÍLIAS distintas em 12 meses dos clientes ativos (meta 6, decisão do
-      // founder 2026-11-21). Antes era a média de `category_count` (PRODUTOS distintos) sobre a carteira
+      // 3. Amplitude de mix: média de FAMÍLIAS distintas em 12 meses de quem comprou NA JANELA (meta 6, decisão
+      // do founder 2026-11-21). Antes era a média de `category_count` (PRODUTOS distintos) sobre a carteira
       // inteira: 0,18 (3 pts) com 14.177 clientes, e 100 travado quando só sobre compradores. Ninguém na base
       // → null: o componente fica FORA da nota (renormalizada abaixo), nunca 0 fabricado.
       const { media: avgFamilias } = mediaAmplitudeMix(clientArr, familiasPorCliente);

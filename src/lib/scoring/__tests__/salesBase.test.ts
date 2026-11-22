@@ -149,20 +149,19 @@ describe('mediaGastoMedido (LTV do IPF — base = gasto medido)', () => {
   });
 });
 
-describe('mediaAmplitudeMix (Amplitude de mix do IPF — famílias em 12m, base ativa)', () => {
-  const c = (id: string | null, sales_history_status: string | null) => ({ customer_user_id: id, sales_history_status });
-  it('carteira mista: só ativos entram; sem_historico, stale e status null ficam fora', () => {
-    const fam = new Map<string, number | null>([['a1', 4], ['a2', 2], ['s1', 9], ['n1', 7]]);
-    expect(mediaAmplitudeMix([c('a1', 'ativo'), c('a2', 'ativo'), c('s1', 'stale'), c('p1', 'sem_historico'), c('n1', null)], fam))
-      .toEqual({ media: 3, base: 2 });
+describe('mediaAmplitudeMix (Amplitude de mix do IPF — famílias em 12m, só quem comprou na janela)', () => {
+  const c = (id: string | null) => ({ customer_user_id: id });
+  it('carteira mista: só quem tem linha na RPC (comprou nos 12m) entra; prospect e stale sem compra ficam fora', () => {
+    // a1 ativo 4 · s1 stale que comprou na janela 2 · s2 stale sem compra (sem linha) · p1 prospect (sem linha)
+    const fam = new Map<string, number | null>([['a1', 4], ['s1', 2]]);
+    expect(mediaAmplitudeMix([c('a1'), c('s1'), c('s2'), c('p1')], fam)).toEqual({ media: 3, base: 2 });
   });
-  it('ativo sem linha na RPC = 0 família medida; familias null (sem cadastro) sai da base', () => {
-    const fam = new Map<string, number | null>([['a1', 6], ['a3', null]]);
-    expect(mediaAmplitudeMix([c('a1', 'ativo'), c('a2', 'ativo'), c('a3', 'ativo'), c(null, 'ativo')], fam))
-      .toEqual({ media: 3, base: 2 });
+  it('familias null (itens sem família cadastrada) sai da base; linha de cliente de fora da carteira é ignorada', () => {
+    const fam = new Map<string, number | null>([['a1', 6], ['a3', null], ['outro', 1]]);
+    expect(mediaAmplitudeMix([c('a1'), c('a3'), c(null)], fam)).toEqual({ media: 6, base: 1 });
   });
   it('carteira só com quem nunca comprou → media null (nunca 0)', () => {
-    expect(mediaAmplitudeMix([c('p1', 'sem_historico'), c('p2', 'sem_historico')], new Map())).toEqual({ media: null, base: 0 });
+    expect(mediaAmplitudeMix([c('p1'), c('p2')], new Map())).toEqual({ media: null, base: 0 });
     expect(mediaAmplitudeMix([], new Map())).toEqual({ media: null, base: 0 });
   });
 });

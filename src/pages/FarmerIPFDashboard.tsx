@@ -98,7 +98,7 @@ const FarmerIPFDashboard = () => {
               <CardContent className="p-3 pt-0 space-y-3">
                 <IPFMetric label="Margem Incremental" value={latestScore.ipfIncrementalMargin} weight={25} icon={DollarSign} />
                 <IPFMetric label="Margem por Hora" value={latestScore.ipfMarginPerHour} weight={25} icon={TrendingUp} />
-                <IPFMetric label="Expansão de Mix" value={latestScore.ipfMixExpansion} weight={20} icon={Target} />
+                <IPFMetric label="Amplitude de mix" value={latestScore.ipfMixExpansion} weight={20} icon={Target} />
                 <IPFMetric label="Evolução de LTV" value={latestScore.ipfLtvEvolution} weight={15} icon={BarChart3} />
                 <IPFMetric label="Redução de Churn" value={latestScore.ipfChurnReduction} weight={15} icon={ShieldCheck} />
               </CardContent>
