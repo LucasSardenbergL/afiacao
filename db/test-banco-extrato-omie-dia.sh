@@ -408,13 +408,14 @@ eq t9_intervalo_invalido \
 echo "=== PRE: seed ambiguo ==="
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove_pre || { echo "createdb prove_pre falhou"; exit 1; }
 stubs prove_pre || { echo "stubs prove_pre falharam"; exit 1; }
-DB=prove_pre P -q -c "CREATE TABLE public.fin_movimentacoes (id uuid, company text, omie_ncodcc bigint, natureza text, valor numeric(15,2), omie_codigo_lancamento bigint, omie_ncodbaixa bigint, categoria_descricao text, data_credito_omie date, data_pagamento_omie date, created_at timestamptz, updated_at timestamptz);
+if ! { DB=prove_pre P -q -c "CREATE TABLE public.fin_movimentacoes (id uuid, company text, omie_ncodcc bigint, natureza text, valor numeric(15,2), omie_codigo_lancamento bigint, omie_ncodbaixa bigint, categoria_descricao text, data_credito_omie date, data_pagamento_omie date, created_at timestamptz, updated_at timestamptz);
   CREATE TABLE public.fin_contas_receber (company text, omie_codigo_lancamento bigint, status_titulo text);
   CREATE TABLE public.fin_contas_pagar (company text, omie_codigo_lancamento bigint, status_titulo text);
   INSERT INTO public.fin_contas_correntes (company, omie_ncodcc, descricao, banco, agencia, numero_conta, tipo, ativo) VALUES ('oben', 1001, 'Itau Oben', '341', '0000', '00000-1', 'CC', true);" \
   && DB=prove_pre P -q -f "$MIG_F1" > "$(dirname "$DATA")/pre-f1.log" 2>&1 \
-  && DB=prove_pre P -q -c "INSERT INTO public.banco_conta (company, banco_codigo, agencia_digitos, conta_digitos) VALUES ('oben', '341', '0000', '000002')" \
-  || { echo "fixture prove_pre falhou: $(head -c 300 "$(dirname "$DATA")/pre-f1.log")"; exit 1; }
+  && DB=prove_pre P -q -c "INSERT INTO public.banco_conta (company, banco_codigo, agencia_digitos, conta_digitos) VALUES ('oben', '341', '0000', '000002')"; }; then
+  echo "fixture prove_pre falhou: $(head -c 300 "$(dirname "$DATA")/pre-f1.log")"; exit 1
+fi
 if DB=prove_pre P -q -1 -f "$MIG_USADA" > "$(dirname "$DATA")/pre.log" 2>&1; then PRE_RC=0; else PRE_RC=1; fi
 eq t9_pre_seed_ambiguo_aborta \
   "$PRE_RC/$(grep -c 'PRE FALHOU seed_ambiguo' "$(dirname "$DATA")/pre.log")/$(DB=prove_pre Pq -c "SELECT to_regclass('public.banco_regra_calibracao') IS NULL")" \
