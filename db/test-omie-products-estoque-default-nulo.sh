@@ -92,7 +92,7 @@ fi
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale="$LOCALE_TESTE" >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMPD/pg.log" -w start >/dev/null
 
-P()  { "$PGBIN/psql" -h /tmp -p "$PORT" -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
+P()  { "$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d postgres -q -v ON_ERROR_STOP=1 "$@"; }
 Pq() { P -At "$@"; }
 
 PASS=0; FAIL=0
