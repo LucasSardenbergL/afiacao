@@ -436,24 +436,26 @@ Deno.test("Codex v1.4 P2: divergência SÓ no vendedor (hash bate) → erro diz 
   igual([r.itens[0].status, r.itens[0].erro], ["divergente", `vendedor esperado ${REGINA_OBEN}, lido 999`], "diagnóstico certo");
 });
 
-// Omie como medido no lote 1 (v1.4): grava os escalares recebidos (texto decodificado) + recomendacoes.
-const gravaEscalares = (payload: Record<string, unknown>, atual: Record<string, unknown>) => ({ ...atual, ...payload });
+// Omie como medido no lote 1 (v1.4): grava os escalares recebidos com `&amp;` DECODIFICADO + recomendacoes.
+const gravaComoOmie = (payload: Record<string, unknown>, atual: Record<string, unknown>) => {
+  const r: Record<string, unknown> = { ...atual };
+  for (const [k, v] of Object.entries(payload)) r[k] = typeof v === "string" ? v.replaceAll("&amp;", "&") : v;
+  return r;
+};
 
-Deno.test("v1.5: cadastro com &amp; → payload decodificado, Omie grava '&' e o recibo fica 'verificado' (não divergente)", async () => {
-  const obs = "PEDIR P/ JOAO &amp; MARIA\nNAO ENTREGAR &lt;SAB&gt;";
-  const omie = new Map([[1, cadastro(1, TATY_OBEN, { razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", obs_internas: obs })]]);
+Deno.test("v1.5: cadastro com &amp; → payload como lido, Omie grava '&' e o recibo fica 'verificado' (não divergente)", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, { razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", observacao: "JOAO &amp; MARIA\nLINHA 2" })]]);
   const enviados: Record<string, unknown>[] = [];
-  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return gravaEscalares(payload, atual); } });
+  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return gravaComoOmie(payload, atual); } });
   const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
-  igual([enviados[0].razao_social, enviados[0].nome_fantasia, enviados[0].obs_internas],
-    ["TRES R MOVEIS & CIA LTDA", "MOVEIS & CIA", "PEDIR P/ JOAO & MARIA\nNAO ENTREGAR <SAB>"], "payload decodificado");
+  igual(enviados[0].razao_social, "TRES R MOVEIS &amp; CIA LTDA", "payload como lido");
   igual(omie.get(1)?.razao_social, "TRES R MOVEIS & CIA LTDA", "Omie gravou decodificado");
   igual(r.itens[0].status, "verificado", "status");
 });
 
-Deno.test("v1.5: com &amp; normalizado, mudança REAL de outro texto ainda vira 'divergente' nomeando o campo", async () => {
+Deno.test("v1.5: com &amp; normalizado, mudança REAL de outro campo ainda vira 'divergente' nomeando só ele", async () => {
   const omie = new Map([[1, cadastro(1, TATY_OBEN, { razao_social: "TRES R MOVEIS &amp; CIA LTDA" })]]);
-  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => ({ ...gravaEscalares(payload, atual), complemento: "SALA 9" }) });
+  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => ({ ...gravaComoOmie(payload, atual), complemento: "SALA 9" }) });
   const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
   igual(r.itens[0].status, "divergente", "status");
   if (!String(r.itens[0].erro).includes("complemento: adicionado") || String(r.itens[0].erro).includes("razao_social")) {

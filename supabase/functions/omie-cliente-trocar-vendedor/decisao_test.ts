@@ -7,7 +7,7 @@ import {
   lerParametros,
   blocosPreenchidos,
   camposDiferentes,
-  decodificarEntidades,
+  normalizarAmp,
   enderecoFaltando,
   payloadAlterar,
   textoParaHash,
@@ -137,44 +137,52 @@ Deno.test("v1.4 camposDiferentes: caminhos aninhados, ausente, e ignora info/ven
     ["cnpj_cpf: removido", "email: alterado", "telefone1_numero: adicionado"], "dado pessoal: só o tipo de mudança, nunca o valor");
 });
 
-// v1.5 — entidades HTML (lote 1 v1.4: 5 'divergente' por `&amp;`→`&` normalizado pelo próprio Omie).
-const OBS_MULTI = "Linha 1: PEDIR P/ JOAO &amp; MARIA\nLinha 2: &quot;urgente&quot; &lt;ok&gt;\r\nLinha 3: d&#39;agua &#233; &#xE7;";
+// v1.5 — `&amp;` (lote 1 v1.4: 5 'divergente' por `&amp;`→`&` gravado pelo próprio Omie). Codex v1.5 P1: só o medido.
+const OBS_MULTI = "Linha 1: JOAO &amp; MARIA\nLinha 2: &lt;SAB&gt;\r\nLinha 3: P&amp;D";
 
-Deno.test("decodificarEntidades: nomeadas, numéricas e hex numa passada só; inválidas ficam", () => {
-  igual(decodificarEntidades("TRES R MOVEIS &amp; CIA LTDA"), "TRES R MOVEIS & CIA LTDA", "amp");
-  igual(decodificarEntidades(OBS_MULTI), "Linha 1: PEDIR P/ JOAO & MARIA\nLinha 2: \"urgente\" <ok>\r\nLinha 3: d'agua é ç", "multilinha");
-  igual(decodificarEntidades("&AMP; &apos;"), "& '", "caixa e apos");
-  igual(decodificarEntidades("&amp;lt;"), "&lt;", "uma passada só");
-  igual(decodificarEntidades("&#0; &#xD800; &#1114112; &nbsp; & solto &amp"), "&#0; &#xD800; &#1114112; &nbsp; & solto &amp", "inválidas intactas");
-  igual(decodificarEntidades("SEM ENTIDADE"), "SEM ENTIDADE", "identidade");
+Deno.test("normalizarAmp: só &amp; → &, literal, uma passada; outras entidades intactas", () => {
+  igual(normalizarAmp("TRES R MOVEIS &amp; CIA LTDA"), "TRES R MOVEIS & CIA LTDA", "amp");
+  igual(normalizarAmp(OBS_MULTI), "Linha 1: JOAO & MARIA\nLinha 2: &lt;SAB&gt;\r\nLinha 3: P&D", "multilinha");
+  igual(normalizarAmp("&amp;amp;"), "&amp;", "uma passada só");
+  igual(normalizarAmp("&AMP; &#38; &quot; &amp"), "&AMP; &#38; &quot; &amp", "outras grafias intactas");
 });
 
-Deno.test("payloadAlterar v1.5: texto vai decodificado (razão, fantasia, obs multilinha); número intacto", () => {
-  const cad = { ...CAD, razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", observacao: OBS_MULTI };
+Deno.test("payloadAlterar v1.5: texto continua indo COMO LIDO (o Omie é quem normaliza)", () => {
+  const cad = { ...CAD, razao_social: "TRES R MOVEIS &amp; CIA LTDA", codigo_cliente_integracao: "ERP-&#49;" };
   const p = payloadAlterar(cad, 8689670842) as Record<string, unknown>;
-  igual(p.razao_social, "TRES R MOVEIS & CIA LTDA", "razão");
-  igual(p.nome_fantasia, "MOVEIS & CIA", "fantasia");
-  igual(p.observacao, "Linha 1: PEDIR P/ JOAO & MARIA\nLinha 2: \"urgente\" <ok>\r\nLinha 3: d'agua é ç", "obs");
-  igual(p.codigo_cliente_omie, 8689681368, "código");
+  igual([p.razao_social, p.codigo_cliente_integracao], ["TRES R MOVEIS &amp; CIA LTDA", "ERP-&#49;"], "como lido");
 });
 
-Deno.test("hash v1.5: &amp; gravado decodificado pelo Omie NÃO é divergência; qualquer outra mudança é", async () => {
-  const antes = { ...CAD, razao_social: "TRES R MOVEIS &amp; CIA LTDA", observacao: OBS_MULTI, tags: [{ tag: "A &amp; B" }] };
+Deno.test("hash v1.5: &amp;→& em razão/fantasia/obs NÃO é divergência; qualquer outra mudança é", async () => {
+  const antes = { ...CAD, razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", observacao: OBS_MULTI };
   const normalizado = {
-    ...antes, razao_social: "TRES R MOVEIS & CIA LTDA", tags: [{ tag: "A & B" }],
-    observacao: "Linha 1: PEDIR P/ JOAO & MARIA\nLinha 2: \"urgente\" <ok>\r\nLinha 3: d'agua é ç",
+    ...antes, razao_social: "TRES R MOVEIS & CIA LTDA", nome_fantasia: "MOVEIS & CIA",
+    observacao: "Linha 1: JOAO & MARIA\nLinha 2: &lt;SAB&gt;\r\nLinha 3: P&D",
     recomendacoes: { ...CAD.recomendacoes, codigo_vendedor: 8689670842 }, info: { dAlt: "22/11/2026" },
   };
   igual(await hashCadastro(normalizado), await hashCadastro(antes), "normalização = mesmo hash");
   igual(camposDiferentes(antes, normalizado), [], "diff vazio na normalização");
 
-  const outraRazao = { ...normalizado, razao_social: "TRES R MOVEIS E CIA LTDA" };
-  if (await hashCadastro(outraRazao) === await hashCadastro(antes)) throw new Error("troca &→E tem de mudar o hash");
-  igual(camposDiferentes(antes, outraRazao), ["razao_social: alterado"], "diff nomeia razão");
+  const muda = async (extra: Record<string, unknown>, base: Record<string, unknown> = antes) =>
+    (await hashCadastro({ ...normalizado, ...extra })) !== (await hashCadastro(base));
+  const casos: [string, Record<string, unknown>][] = [
+    ["& virou E", { razao_social: "TRES R MOVEIS E CIA LTDA" }],
+    ["& sumiu", { razao_social: "TRES R MOVEIS  CIA LTDA" }],
+    ["&lt; decodificado (não medido)", { observacao: "Linha 1: JOAO & MARIA\nLinha 2: <SAB>\r\nLinha 3: P&D" }],
+    ["quebra de linha", { observacao: "Linha 1: JOAO & MARIA\nLinha 2: &lt;SAB&gt;\nLinha 3: P&D" }],
+  ];
+  for (const [nome, extra] of casos) if (!(await muda(extra))) throw new Error(`${nome}: tem de mudar o hash`);
+  igual(camposDiferentes(antes, { ...normalizado, razao_social: "X" }), ["razao_social: alterado"], "diff nomeia razão");
+});
 
-  const obsSemLinha = { ...normalizado, observacao: normalizado.observacao.replace("\r\n", "\n") };
-  if (await hashCadastro(obsSemLinha) === await hashCadastro(antes)) throw new Error("quebra de linha diferente tem de mudar o hash");
-
-  const ampPerdido = { ...normalizado, razao_social: "TRES R MOVEIS  CIA LTDA" };
-  if (await hashCadastro(ampPerdido) === await hashCadastro(antes)) throw new Error("& sumido tem de mudar o hash");
+Deno.test("Codex v1.5 P1: identificador, campo fora da lista e lista/objeto seguem LITERAIS (&amp;→& acusa)", async () => {
+  const pares: [string, Record<string, unknown>, Record<string, unknown>][] = [
+    ["codigo_cliente_integracao", { codigo_cliente_integracao: "ERP-&amp;1" }, { codigo_cliente_integracao: "ERP-&1" }],
+    ["endereco (fora da lista)", { endereco: "RUA A &amp; B" }, { endereco: "RUA A & B" }],
+    ["tag", { tags: [{ tag: "A &amp; B" }] }, { tags: [{ tag: "A & B" }] }],
+    ["entidade numérica na razão", { razao_social: "ERP-&#49;" }, { razao_social: "ERP-1" }],
+  ];
+  for (const [nome, a, b] of pares) {
+    if (await hashCadastro({ ...CAD, ...a }) === await hashCadastro({ ...CAD, ...b })) throw new Error(`${nome}: tem de acusar`);
+  }
 });

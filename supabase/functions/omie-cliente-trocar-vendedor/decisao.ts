@@ -193,23 +193,18 @@ function ehEscalar(v: unknown): boolean {
 }
 
 /**
- * Decodifica entidades HTML num texto, numa ÚNICA passada (v1.5). Medido no lote 1 (v1.4, 2026-11-22): cadastros
- * antigos estão gravados com `&amp;` ("MOVEIS &amp; CIA"); a tela do Omie mostra "&", mas o ConsultarCliente devolve a
- * entidade. Reenviado como lido, o Omie grava o texto DECODIFICADO — o valor exibido não muda, mas a leitura da API
- * sim, e o hash acusava 'divergente'. Uma passada só: `&amp;lt;` vira `&lt;` (não `<`) — se o Omie ainda normalizar
- * de novo, o hash ACUSA (direção segura). Código numérico inválido (0, surrogate, > U+10FFFF) fica como está.
+ * Normalização TOLERADA na verificação (v1.5, Codex v1.5 P1: restrita ao MEDIDO). Lote 1 (v1.4, 2026-11-22): cadastros
+ * antigos estão gravados com `&amp;` ("MOVEIS &amp; CIA"); a tela do Omie mostra "&", o ConsultarCliente devolve a
+ * entidade, e o reenvio faz o próprio Omie gravar o texto DECODIFICADO (Histórico do Omie, colacor 393821802: razão
+ * social, nome fantasia, observações). Valor exibido idêntico, leitura da API diferente → hash acusava 'divergente'.
+ * Por isso, SÓ nestes campos de EXIBIÇÃO e SÓ `&amp;` → `&` (literal, uma passada) entra igual no recorte do hash/diff.
+ * Identificador (`codigo_cliente_integracao`, documento, e-mail), flag, lista/objeto e qualquer outra entidade seguem
+ * comparados LITERALMENTE: se o Omie mexer neles, o hash acusa (direção segura). O payload continua indo COMO LIDO.
  */
-const ENTIDADE = /&(?:(amp|lt|gt|quot|apos)|#([0-9]{1,7})|#[xX]([0-9a-fA-F]{1,6}));/gi;
-const NOMEADAS: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+export const CAMPOS_AMP_TOLERADO = new Set(["razao_social", "nome_fantasia", "observacao", "obs_detalhadas"]);
 
-export function decodificarEntidades(s: string): string {
-  if (!s.includes("&")) return s;
-  return s.replace(ENTIDADE, (m, nome: string | undefined, dec: string | undefined, hex: string | undefined) => {
-    if (nome) return NOMEADAS[nome.toLowerCase()];
-    const cp = dec !== undefined ? Number.parseInt(dec, 10) : Number.parseInt(hex as string, 16);
-    if (cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return m;
-    return String.fromCodePoint(cp);
-  });
+export function normalizarAmp(s: string): string {
+  return s.replaceAll("&amp;", "&");
 }
 
 /** Payload do AlterarCliente, ou `null` se o endereço lido está incompleto (o chamador recusa sem escrever). */
@@ -223,21 +218,14 @@ export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Reco
   // "tag [tipo_atividade] incorreto", "tag [bloqueado] deve ser 'S' ou 'N'". Omitido, o campo fica como está.
   for (const [k, v] of Object.entries(cad)) {
     if (!ehEscalar(v) || INSTRUCOES.has(k) || (typeof v === "string" && v.trim() === "")) continue;
-    // Texto vai DECODIFICADO (v1.5): é o que o Omie grava de qualquer jeito e o que a tela já mostra.
-    p[k] = typeof v === "string" ? decodificarEntidades(v) : v;
+    p[k] = v;
   }
   p.codigo_cliente_omie = codigo;
   p.recomendacoes = { ...rec, codigo_vendedor: alvo };
   return p;
 }
 
-/**
- * Forma canônica do recorte do hash/diff: chaves ordenadas e TODO texto (em qualquer profundidade) com entidades
- * decodificadas (v1.5) — nos DOIS lados, para `&amp;`→`&` gravado pelo próprio Omie não virar divergência. Qualquer
- * outra mudança de texto continua mudando o hash.
- */
 function canonico(v: unknown): unknown {
-  if (typeof v === "string") return decodificarEntidades(v);
   if (Array.isArray(v)) return v.map(canonico);
   if (v && typeof v === "object") {
     const o = v as Record<string, unknown>;
@@ -249,6 +237,8 @@ function canonico(v: unknown): unknown {
 /** Texto canônico do cadastro SEM o vendedor e sem `info` (dAlt/hAlt/uAlt mudam a cada gravação). Vira hash; nunca é gravado. */
 export function textoParaHash(cad: Record<string, unknown>): string {
   const { info: _info, ...resto } = cad;
+  // v1.5: `&amp;` → `&` só nos campos de exibição de 1º nível, nos DOIS lados (ver CAMPOS_AMP_TOLERADO).
+  for (const k of CAMPOS_AMP_TOLERADO) if (typeof resto[k] === "string") resto[k] = normalizarAmp(resto[k] as string);
   const rec = resto.recomendacoes && typeof resto.recomendacoes === "object"
     ? { ...(resto.recomendacoes as Record<string, unknown>) }
     : resto.recomendacoes;
