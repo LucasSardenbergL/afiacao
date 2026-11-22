@@ -90,7 +90,7 @@ export const respostaSonda = criarRespostaSonda("omie-analytics-sync");
  * empresa, e cliente da Colacor sem usuário nunca era lido. A tela de não-vinculados segue só `oben`.
  * Leitura em prod após o deploy: `omie_nao_vinculados_state` ganha linhas `colacor_sc`/`colacor`.
  *
- * v1.16 (2026-11-21) — o zero confirmado (_shared/zeramento-estoque.ts) também resolve `omie_products.estoque IS NULL` (produto novo, migration 20261121220100): trilha NULL com loader e CAS `IS NULL` próprios, fora do limite de anomalia, teto de custo de 250 por rodada; metadata ganha `zeramento_candidatos_nulos`/`zeramento_nulos_pulado`. Sem migration, sem ordem de deploy.
+ * v1.16 (2026-11-21) — o zero confirmado (_shared/zeramento-estoque.ts) também resolve `omie_products.estoque IS NULL` (produto novo, migration 20261121220100): trilha NULL com loader e CAS `IS NULL` próprios, fora do limite de anomalia, teto de custo de 250 por rodada; metadata ganha `zeramento_candidatos_nulos`/`zeramento_nulos_pulado`. Adversarial Codex: confirmação com paginação/data contraditória invalida o lote; cada lote é interpretado contra os próprios códigos; catálogo não zera se o CAS do espelho recusou; acima do orçamento, janela rotativa; loader NULL que falha não cancela a trilha ≠ 0; `zerados_estoque_nulo`. Sem migration, sem ordem de deploy.
  */
 export const VERSAO = "v1.16-zeramento-estoque-nulo";
 
