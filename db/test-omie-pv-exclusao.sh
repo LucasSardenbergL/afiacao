@@ -38,7 +38,7 @@ MIG_COTA="$REPO_ROOT/supabase/migrations/20261010204708_omie_cota_metodo.sql"
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="uma_ausencia_basta:C1 sem_intervalo:C3 presenca_nao_zera:C4 sem_omie_relido:C6 sem_vez_1h:C7
               sem_teto_erros:C8 sem_terminal_na_baixa:C11 sem_duravel:D1,D2 divergencia_um_sentido:B5
-              sem_teto_pvs:B7 sem_identidade:C0 sem_lock_linhas:S1"
+              sem_teto_pvs:B7 sem_identidade:C0 sem_lock_linhas:S1 sem_releitura_ids:S3 atribuicao_so_visivel:D5"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -191,6 +191,10 @@ ALTER TABLE public.sales_orders DISABLE TRIGGER trg_sales_orders_pv_excluido_omi
     RETURN QUERY SELECT NULL::bigint, NULL::bigint, 'identidade_nao_confirmada'::text; RETURN;" ;;
   sem_lock_linhas)
     trocar "$MIG" "  PERFORM 1 FROM public.sales_orders so WHERE so.id = ANY (COALESCE(v_ids, '{}'::uuid[])) ORDER BY so.id FOR UPDATE;" "" ;;
+  sem_releitura_ids)
+    trocar "$MIG" "  IF v_ids2 IS DISTINCT FROM v_ids THEN" "  IF false THEN" ;;
+  atribuicao_so_visivel)
+    trocar "$MIG" "  FOR EACH ROW WHEN (NEW.omie_pedido_id IS NOT NULL)" "  FOR EACH ROW WHEN (NEW.omie_pedido_id IS NOT NULL AND NEW.deleted_at IS NULL)" ;;
   *) echo "INFRA: sabotagem desconhecida: $SAB"; exit 1 ;;
 esac
 if [ -n "$SAB" ]; then
@@ -227,7 +231,7 @@ CREATE FUNCTION cron.schedule(p_nome text, p_sched text, p_cmd text) RETURNS big
 CREATE TABLE public.sales_orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account text NOT NULL, status text NOT NULL, total numeric,
   omie_pedido_id bigint, hash_payload text, order_date_kpi date, deleted_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT now(), gemeo_importado_id uuid, envio_omie_reivindicado_em timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now() - interval '3 days', gemeo_importado_id uuid, envio_omie_reivindicado_em timestamptz,
   omie_reconciliado_em timestamptz);
 CREATE TABLE public.estoque_reservas (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), pool text NOT NULL CHECK (pool = 'oben'), omie_codigo_produto bigint NOT NULL,
@@ -449,11 +453,12 @@ echo "── S. concorrência (2 sessões)"
 # S1: o sync relê o PV (omie_reconciliado_em) numa transação aberta enquanto a 2ª ausência chega. A baixa trava a
 # linha, espera o commit do sync e RELÊ: tem de ver a presença e não baixar.
 P -q -c "INSERT INTO sales_orders (account,status,total,omie_pedido_id,hash_payload,order_date_kpi,created_at) VALUES ('oben','importado',100,2009,'omie_oben_2009',t_seg(),now()-interval '3 days')"
+P -q -c "INSERT INTO sales_orders (account,status,total,omie_pedido_id,created_at,deleted_at) VALUES ('oben','enviado',100,2009,now()-interval '3 days',now()-interval '1 day')"
 P -q -c "UPDATE omie_pv_conferencia SET contradicao='parado_no_teste' WHERE omie_pedido_id=2008"
 P -q -t -c "SELECT t_passar(24*60+1)"
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"; P -q -c "SELECT t_consultar($EX,'ausente')" >/dev/null
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"
-( P -q -c "BEGIN; UPDATE sales_orders SET omie_reconciliado_em = now() + interval '1 minute' WHERE omie_pedido_id=2009; SELECT pg_sleep(2); COMMIT;" >/dev/null 2>&1 ) &
+( P -q -c "BEGIN; UPDATE sales_orders SET omie_reconciliado_em = now() + interval '1 minute' WHERE omie_pedido_id=2009 AND deleted_at IS NOT NULL; SELECT pg_sleep(2); COMMIT;" >/dev/null 2>&1 ) &
 SYNC=$!
 sleep 0.5
 R="$(E "SELECT t_consultar($EX,'ausente')->>'efeito'")"
@@ -474,6 +479,31 @@ P -q -c "UPDATE sales_orders SET deleted_at=NULL WHERE id='00000000-0000-0000-00
 wait "$BAIXA" || true
 eq "S2 rollback do front concorrente com a baixa: linha fica oculta" "$(E "SELECT (deleted_at IS NOT NULL)::text FROM sales_orders WHERE id='00000000-0000-0000-0000-00000000c010'")/$(E "SELECT (aplicado_em IS NOT NULL)::text FROM omie_pv_conferencia WHERE omie_pedido_id=2010")" "true/true"
 
+# S3: um write-back troca o PID de uma linha de V (2011 → 2099) enquanto a 2ª ausência de V chega. A baixa trava a
+# linha pelo UUID, espera o commit e RELÊ o conjunto pelo predicado: mudou ⇒ adia, e a linha de 2099 fica viva.
+P -q -c "INSERT INTO sales_orders (id,account,status,total,omie_pedido_id,hash_payload,order_date_kpi,created_at) VALUES ('00000000-0000-0000-0000-00000000c011','oben','importado',100,2011,'omie_oben_2011',t_seg(),now()-interval '3 days')"
+P -q -c "INSERT INTO sales_orders (id,account,status,total,omie_pedido_id,created_at) VALUES ('00000000-0000-0000-0000-00000000a011','oben','enviado',100,2011,now()-interval '3 days')"
+P -q -c "UPDATE omie_pv_conferencia SET contradicao='parado_no_teste' WHERE omie_pedido_id IN (2009,2010) AND aplicado_em IS NULL"
+P -q -t -c "SELECT t_passar(24*60+1)" >/dev/null
+EX="$(E "SELECT t_ciclo('oben', $PRES)")"; P -q -c "SELECT t_consultar($EX,'ausente')" >/dev/null
+EX="$(E "SELECT t_ciclo('oben', $PRES)")"
+( P -q -c "BEGIN; UPDATE sales_orders SET omie_pedido_id = 2099 WHERE id='00000000-0000-0000-0000-00000000a011'; SELECT pg_sleep(2); COMMIT;" >/dev/null 2>&1 ) &
+WB=$!
+sleep 0.5
+R="$(E "SELECT t_consultar($EX,'ausente')->>'motivo'")"
+wait "$WB" || true
+eq "S3 PID trocado por write-back concorrente: baixa adiada, a linha de 2099 viva" "$R/$(E "SELECT count(*) FROM sales_orders WHERE id='00000000-0000-0000-0000-00000000a011' AND deleted_at IS NULL AND omie_pedido_id=2099")" "linhas_mudaram/1"
+
+echo "── D'. atribuição de PID durante o soft-delete do front; terminal depois da baixa"
+P -q -c "INSERT INTO sales_orders (id,account,status,total,omie_pedido_id,deleted_at) VALUES ('00000000-0000-0000-0000-00000000a098','oben','enviado',70,NULL,now())"
+P -q -c "UPDATE sales_orders SET omie_pedido_id=2005 WHERE id='00000000-0000-0000-0000-00000000a098'"
+P -q -c "UPDATE sales_orders SET deleted_at=NULL WHERE id='00000000-0000-0000-0000-00000000a098'"
+eq "D5 PID atribuído com o soft-delete provisório gravado: contradição e o rollback devolve a linha" \
+  "$(E "SELECT (SELECT contradicao FROM omie_pv_conferencia WHERE omie_pedido_id=2005)||'/'||(SELECT count(*) FROM sales_orders WHERE id='00000000-0000-0000-0000-00000000a098' AND deleted_at IS NULL)")" "pid_atribuido_apos_baixa/1"
+P -q -c "UPDATE sales_orders SET status='faturado' WHERE omie_pedido_id=2006 AND hash_payload IS NOT NULL"
+eq "D6 status terminal gravado depois da baixa vira contradição (linha segue oculta)" \
+  "$(E "SELECT (SELECT contradicao FROM omie_pv_conferencia WHERE omie_pedido_id=2006)||'/'||(SELECT count(*) FROM sales_orders WHERE omie_pedido_id=2006 AND deleted_at IS NULL)")" "terminal_apos_baixa/0"
+
 echo "── A. ACL / RLS / histórico"
 eq "A1 anon não executa RPC" "$(Pq -c "SET ROLE anon; SELECT omie_pv_triagem_janelas('oben')" 2>&1 | grep -c '42501')" "1"
 eq "A2 authenticated não executa a RPC da baixa" "$(Pq -c "SET ROLE authenticated; SELECT omie_pv_consulta_registrar(1,'ausente','{}')" 2>&1 | grep -c '42501')" "1"
@@ -482,6 +512,9 @@ eq "A4 staff lê o ledger; outro logado não" \
   "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000bb'; SELECT count(*)>0 FROM omie_pv_conferencia" 2>&1)/$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000ee'; SELECT count(*) FROM omie_pv_conferencia" 2>&1)" "t/0"
 eq "A5 identidade não é legível nem por staff" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000bb'; SELECT count(*) FROM omie_pv_identidade" 2>&1 | grep -c '42501')" "1"
 eq "A6 os 11 históricos no ledger como aplicados" "$(E "SELECT count(*) FROM omie_pv_conferencia WHERE prova ? 'origem_historica' AND aplicado_em IS NOT NULL")" "11"
+eq "A8 sequências IDENTITY fechadas para anon/authenticated/service_role" \
+  "$(E "SELECT count(*) FROM unnest(ARRAY['omie_pv_execucao','omie_pv_triagem_log','omie_pv_consulta_log','omie_pv_baixa_reserva']) t, unnest(ARRAY['anon','authenticated','service_role']) r WHERE has_sequence_privilege(r, pg_get_serial_sequence('public.'||t,'id'), 'USAGE')")" "0"
+eq "A9 app_hash ilegível por staff" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000bb'; SELECT app_hash FROM omie_pv_execucao LIMIT 1" 2>&1 | grep -c '42501')" "1"
 eq "A7 cron com timeout explícito" "$(E "SELECT count(*) FROM cron.job WHERE jobname='omie-pv-exclusao-reconciliar' AND command LIKE '%timeout_milliseconds:=150000%'")" "1"
 
 echo "PASS=$PASS  FAIL=$FAIL"

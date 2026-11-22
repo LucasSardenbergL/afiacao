@@ -60,7 +60,8 @@ Deno.serve(async (req: Request) => {
       // Em série: uma conta não divide a janela de tempo da outra; o erro de uma não derruba a outra.
       for (const conta of CONTAS) {
         try {
-          resultados.push(await reconciliarConta(conta, { db, credenciais: credenciaisDe(conta) }));
+          // 60 s por conta: as duas cabem nos 150 s do cron com folga para as RPCs.
+          resultados.push(await reconciliarConta(conta, { db, credenciais: credenciaisDe(conta), deadline: Date.now() + 60_000 }));
         } catch (e) {
           resultados.push({ conta, execucao: "erro", janelas: [], consulta: null, parou_por_cota: null, erro: (mensagemDeErro(e) ?? "erro").slice(0, 300) });
         }

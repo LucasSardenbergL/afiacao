@@ -109,8 +109,11 @@ Deno.test("janela incompleta: item sem codigo_pedido", async () => {
   assertEquals(j.completa, false);
 });
 Deno.test("janela incompleta: teto de páginas", async () => {
-  const j = await coletarJanela(() => Promise.resolve(pagina([7], 1, 1)), 3);
+  // PIDs DISTINTOS por página: a janela só pode terminar incompleta pelo TETO (não por página repetida).
+  let n = 0;
+  const j = await coletarJanela(() => Promise.resolve(pagina([++n], 1, 1)), 3);
   assertEquals(j.completa, false);
+  assertEquals(j.completa === false && j.motivo, "teto de 3 páginas");
 });
 
 // ── Codex de desenho rodada 2 (P0-1/P0-2) ─────────────────────────────────────────────────────────
@@ -157,4 +160,21 @@ Deno.test("presença por página chega mesmo quando a janela termina incompleta"
   const j = await coletarJanela(roteiro([p1, resp(502, {})]), 50, (pids) => { vistos.push(pids); return Promise.resolve(); });
   assertEquals(j.completa, false);
   assertEquals(vistos, [[11]]);
+});
+
+// ── Codex de código (P0-3, P1) ───────────────────────────────────────────────────────────────────
+Deno.test("presença sai ANTES de rejeitar a página: item ilegível e total acima do teto", async () => {
+  const vistos: number[][] = [];
+  const guardar = (p: number[]) => { vistos.push(p); return Promise.resolve(); };
+  const ilegivel = resp(200, { total_de_paginas: 1, pedido_venda_produto: [{ cabecalho: { codigo_pedido: 21 } }, { cabecalho: {} }] });
+  assertEquals((await coletarJanela(roteiro([ilegivel]), 50, guardar)).completa, false);
+  const teto = resp(200, { total_de_paginas: 7, pedido_venda_produto: [{ cabecalho: { codigo_pedido: 22 } }] });
+  assertEquals((await coletarJanela(roteiro([teto]), 3, guardar)).completa, false);
+  assertEquals(vistos, [[21], [22]]);
+});
+
+Deno.test("indeterminado: faultcode BRUTO não-string (objeto) com o texto de ausência", () => {
+  assertEquals(tipo(resp(500, { faultstring: FAULT_REAL, faultcode: { x: 1 } })), "indeterminado");
+  assertEquals(tipo(resp(500, { faultstring: FAULT_REAL, faultcode: ["SOAP-ENV:Client"] })), "indeterminado");
+  assertEquals(tipo(resp(500, { faultstring: FAULT_REAL })), "ausente");
 });

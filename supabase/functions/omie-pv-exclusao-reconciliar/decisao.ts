@@ -48,7 +48,9 @@ export function classificarConsulta(r: RespostaOmie, codigoPedido: number): Cons
   if (r.faultstring !== null) {
     const f = r.faultstring;
     const m = FAULT_PEDIDO_AUSENTE.exec(f.trim());
-    const codeOk = r.faultcode === null || FAULTCODE_ACEITO.test(r.faultcode);
+    // Campo BRUTO (Codex código P1): o transporte normaliza objeto/array em null — isso não pode virar "aceito".
+    const fcBruto = r.corpo?.faultcode;
+    const codeOk = fcBruto === undefined || fcBruto === null || (typeof fcBruto === "string" && FAULTCODE_ACEITO.test(fcBruto));
     if (m && Number(m[1]) === codigoPedido && r.status === 500 && codeOk) return { tipo: "ausente", fault: f.slice(0, 300) };
     return { tipo: "indeterminado", detalhe: `fault não reconhecido: ${f.slice(0, 200)}` };
   }
@@ -129,6 +131,17 @@ export async function coletarJanela(
     }
     const lista = r.corpo.pedido_venda_produto;
     if (!Array.isArray(lista)) return { completa: false, motivo: `página ${pagina}: sem pedido_venda_produto`, paginas: pagina };
+    // PRESENÇA antes de qualquer veredito sobre a página (Codex código P0-3): um PID válido visto é fato, mesmo que
+    // a página seja rejeitada logo abaixo (total acima do teto, item ilegível, página repetida).
+    const daPagina: number[] = [];
+    let itemInvalido = false;
+    for (const p of lista) {
+      const cod = (p as { cabecalho?: { codigo_pedido?: unknown } })?.cabecalho?.codigo_pedido;
+      if (typeof cod !== "number" || !Number.isSafeInteger(cod) || cod <= 0) itemInvalido = true;
+      else daPagina.push(cod);
+    }
+    if (aoLerPagina && daPagina.length > 0) await aoLerPagina(daPagina);
+    if (itemInvalido) return { completa: false, motivo: `página ${pagina}: item sem codigo_pedido válido`, paginas: pagina };
     try {
       total = proximoTotalPaginas(total, Number(r.corpo.total_de_paginas ?? NaN) || undefined, maxPaginas);
     } catch (e) {
@@ -139,15 +152,6 @@ export async function coletarJanela(
     const veredito = avaliarPagina(lista.length, pagina, total);
     if (veredito === "anomalia") return { completa: false, motivo: `página ${pagina} vazia antes do fim declarado (${total})`, paginas: pagina };
     if (veredito === "fim") break;
-    const daPagina: number[] = [];
-    for (const p of lista) {
-      const cod = (p as { cabecalho?: { codigo_pedido?: unknown } })?.cabecalho?.codigo_pedido;
-      if (typeof cod !== "number" || !Number.isSafeInteger(cod) || cod <= 0) {
-        return { completa: false, motivo: `página ${pagina}: item sem codigo_pedido válido`, paginas: pagina };
-      }
-      daPagina.push(cod);
-    }
-    if (aoLerPagina) await aoLerPagina(daPagina);
     // Página repetida (a API devolvendo a mesma página) = paginação que deslizou: incompleta.
     if (daPagina.length > 0 && daPagina.every((c) => pids.includes(c))) {
       return { completa: false, motivo: `página ${pagina} repete PIDs já lidos`, paginas: pagina };

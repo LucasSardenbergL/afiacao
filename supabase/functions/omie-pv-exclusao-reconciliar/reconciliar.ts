@@ -24,6 +24,8 @@ export interface Deps {
   db: Db;
   credenciais: { appKey: string; appSecret: string } | null;
   fetchImpl?: typeof fetch;
+  /** Relógio da conta (epoch ms): toda chamada ao Omie divide ESTE prazo (cron dá 150 s para as duas contas). */
+  deadline?: number;
 }
 
 export interface JanelaPedida { de: string; ate: string; tipo: "corrente" | "cursor" }
@@ -64,7 +66,17 @@ export async function hashAppKey(appKey: string): Promise<string> {
 export function textoDeCota(r: RespostaOmie): string | null {
   const t = faultDeCota(r);
   if (t === null) return null;
-  return classificarFaultCota(t) ? t : BLOQUEIO_PADRAO;
+  const f = classificarFaultCota(t);
+  // 425/429 vence o texto: "requisição concorrente" com status de bloqueio é bloqueio (a trava não registra o
+  // concorrente, e a outra edge entraria na hora — Codex código P1).
+  if ((r.status === 425 || r.status === 429) && (f === null || f.tipo === "concorrente")) return BLOQUEIO_PADRAO;
+  return f ? t : BLOQUEIO_PADRAO;
+}
+
+/** Timeout/abort do fetch: o Omie pode seguir processando — `comVezOmie` só retém a vez para DOMException. */
+function comoTimeout(e: unknown): unknown {
+  const msg = mensagemDeErro(e) ?? "";
+  return /timeout|abort|prazo|sem tempo/i.test(msg) && !(e instanceof DOMException) ? new DOMException(msg, "TimeoutError") : e;
 }
 
 function lerJanelas(data: unknown): JanelaPedida[] {
@@ -111,7 +123,8 @@ export async function reconciliarConta(conta: Conta, deps: Deps): Promise<Result
 
   try {
     await triagem(conta, execucaoId, credenciais, deps, out);
-    if (out.parou_por_cota === null) await confirmacao(conta, execucaoId, credenciais, deps, out);
+    // Triagem que falhou pode ter perdido uma PRESENÇA no meio (Codex código P0-3): sem confirmação nesta execução.
+    if (out.parou_por_cota === null && out.erro === null) await confirmacao(conta, execucaoId, credenciais, deps, out);
   } finally {
     const { error } = await db.rpc("omie_pv_execucao_encerrar", {
       p_execucao_id: execucaoId,
@@ -152,7 +165,9 @@ async function triagem(
               filtrar_por_data_ate: dataOmie(j.ate),
             },
             credenciais,
-          }, { conta, maxTentativas: 1, fetchImpl: deps.fetchImpl }), textoDeCota);
+          }, { conta, maxTentativas: 1, fetchImpl: deps.fetchImpl, deadline: deps.deadline }).catch((e) => {
+            throw comoTimeout(e);
+          }), textoDeCota);
         cota = textoDeCota(r);
         return r;
       }, 6, async (pids) => {
@@ -224,7 +239,7 @@ async function confirmacao(
     try {
       const r = await chamarOmie({
         url: OMIE_PEDIDO_URL, metodo: "ConsultarPedido", param: { codigo_pedido: pid }, credenciais,
-      }, { conta, maxTentativas: 1, fetchImpl: deps.fetchImpl });
+      }, { conta, maxTentativas: 1, fetchImpl: deps.fetchImpl, deadline: deps.deadline });
       cota = textoDeCota(r);
       consulta = classificarConsulta(r, pid);
     } catch (e) {
@@ -266,7 +281,9 @@ async function registrarConsulta(db: Db, logId: number, resultado: string, detal
   for (let tentativa = 1; ; tentativa++) {
     const { data, error } = await db.rpc("omie_pv_consulta_registrar", { p_log_id: logId, p_resultado: resultado, p_detalhe: detalhe ?? {} });
     if (!error) return data;
-    if (tentativa >= 3 || !/deadlock|40P01|40001|serializ/i.test(error.message)) {
+    const codigo = (error as { code?: unknown }).code;
+    const repetivel = codigo === "40P01" || codigo === "40001" || /deadlock|40P01|40001|serializ|impasse/i.test(error.message);
+    if (tentativa >= 3 || !repetivel) {
       throw new Error(`omie_pv_consulta_registrar: ${error.message}`);
     }
     await new Promise((r) => setTimeout(r, 200 * tentativa));

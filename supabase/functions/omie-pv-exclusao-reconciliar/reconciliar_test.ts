@@ -272,3 +272,37 @@ Deno.test("a execução é encerrada no banco com o resumo, também quando a con
   assertEquals(chamadas.at(-1)?.fn, "omie_pv_execucao_encerrar");
   assertEquals(chamadas.at(-1)?.args.p_execucao_id, 42);
 });
+
+// ── Codex de código (P0-3, P1, P2) ───────────────────────────────────────────────────────────────
+Deno.test("falha ao PERSISTIR a presença: nenhuma consulta nesta execução", async () => {
+  let n = 0;
+  const { db, chamadas } = dbFalso({ ...base, omie_pv_presenca_registrar: () => (++n === 2 ? { data: null, error: { message: "falhou" } } : { data: {}, error: null }) });
+  const { f, metodos } = fetchFalso([pagina([1]), EOF, pagina([2])]);
+  const r = await reconciliarConta("oben", { db, credenciais: CRED, fetchImpl: f });
+  assertEquals(metodos.includes("ConsultarPedido"), false);
+  assertEquals(chamadas.some((c) => c.fn === "omie_pv_proxima_consulta"), false);
+  assertEquals(r.erro?.includes("presenca"), true);
+});
+
+Deno.test("425 com texto de CONCORRÊNCIA na listagem: registrado como bloqueio (não devolvido calado)", async () => {
+  const { db, chamadas } = dbFalso(base);
+  const { f } = fetchFalso([{ status: 425, corpo: { faultstring: "Já existe uma requisição desse método em execução" } }]);
+  const r = await reconciliarConta("oben", { db, credenciais: CRED, fetchImpl: f });
+  const fault = chamadas.find((c) => c.fn === "omie_cota_registrar_fault");
+  assertEquals(fault?.args.p_metodo, "ListarPedidos");
+  assertEquals(Number(fault?.args.p_bloqueio_segundos) >= 1800, true);
+  assertEquals(r.parou_por_cota !== null, true);
+});
+
+Deno.test("deadlock em pt_BR pelo SQLSTATE (code 40P01): repete o mesmo log_id", async () => {
+  let n = 0;
+  const { db, chamadas } = dbFalso({
+    ...base,
+    omie_pv_consulta_registrar: () => (++n === 1
+      ? { data: null, error: { message: "impasse detectado", code: "40P01" } as { message: string } }
+      : { data: { efeito: "ausencia" }, error: null }),
+  });
+  const { f } = fetchFalso([pagina([1]), EOF, pagina([2]), EOF, FAULT_AUSENTE]);
+  await reconciliarConta("oben", { db, credenciais: CRED, fetchImpl: f });
+  assertEquals(chamadas.filter((c) => c.fn === "omie_pv_consulta_registrar").length, 2);
+});

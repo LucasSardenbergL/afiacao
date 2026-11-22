@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS public.omie_pv_execucao (
   iniciada_em            timestamptz NOT NULL DEFAULT now(),
   identidade_confirmada  boolean NOT NULL DEFAULT false,
   chamadas_listar        integer NOT NULL DEFAULT 0 CHECK (chamadas_listar >= 0),
+  listar_em              timestamptz[] NOT NULL DEFAULT '{}',
   encerrada_em           timestamptz,
   resumo                 jsonb
 );
@@ -162,7 +163,8 @@ GRANT SELECT ON TABLE public.omie_pv_conferencia TO authenticated, service_role;
 DROP POLICY IF EXISTS omie_pv_conferencia_select_staff ON public.omie_pv_conferencia;
 CREATE POLICY omie_pv_conferencia_select_staff ON public.omie_pv_conferencia FOR SELECT TO authenticated USING (
   (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
-GRANT SELECT ON TABLE public.omie_pv_execucao TO authenticated, service_role;
+GRANT SELECT (id, account, iniciada_em, identidade_confirmada, chamadas_listar, listar_em, encerrada_em, resumo)
+  ON TABLE public.omie_pv_execucao TO authenticated, service_role;   -- app_hash fica de fora (identidade)
 DROP POLICY IF EXISTS omie_pv_execucao_select_staff ON public.omie_pv_execucao;
 CREATE POLICY omie_pv_execucao_select_staff ON public.omie_pv_execucao FOR SELECT TO authenticated USING (
   (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
@@ -242,11 +244,13 @@ DECLARE v public.omie_pv_execucao%ROWTYPE;
 BEGIN
   v := private.omie_pv_execucao_viva(p_execucao_id);
   PERFORM pg_advisory_xact_lock(hashtextextended('omie_pv_listar:' || v.account, 0));
-  IF (SELECT COALESCE(sum(e.chamadas_listar), 0) FROM public.omie_pv_execucao e
-       WHERE e.account = v.account AND e.iniciada_em > now() - interval '60 minutes') >= 6 THEN
+  -- Janela MÓVEL pelo instante de cada concessão (Codex código P1): a execução inteira não sai da conta de uma vez.
+  IF (SELECT count(*) FROM public.omie_pv_execucao e CROSS JOIN LATERAL unnest(e.listar_em) t(em)
+       WHERE e.account = v.account AND e.iniciada_em > now() - interval '3 hours' AND t.em > now() - interval '60 minutes') >= 6 THEN
     RETURN false;
   END IF;
-  UPDATE public.omie_pv_execucao e SET chamadas_listar = e.chamadas_listar + 1 WHERE e.id = p_execucao_id;
+  UPDATE public.omie_pv_execucao e SET chamadas_listar = e.chamadas_listar + 1, listar_em = e.listar_em || clock_timestamp()
+   WHERE e.id = p_execucao_id;
   RETURN true;
 END;
 $$;
@@ -352,7 +356,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
   WITH linhas AS (
-    SELECT so.omie_pedido_id AS pid, so.created_at
+    SELECT so.omie_pedido_id AS pid, GREATEST(so.created_at, so.updated_at) AS created_at
       FROM public.sales_orders so
       LEFT JOIN public.sales_orders g ON g.id = so.gemeo_importado_id
      WHERE so.account = p_account
@@ -564,6 +568,7 @@ DECLARE
   v_max_soma  numeric := CASE p_account WHEN 'oben' THEN 2700 ELSE 1000 END;
   v_c         public.omie_pv_conferencia%ROWTYPE;
   v_ids       uuid[];
+  v_ids2      uuid[];
   v_res       uuid[];
   v_res2      uuid[];
   v_cks       uuid[];
@@ -609,6 +614,15 @@ BEGIN
   SELECT array_agg(so.id ORDER BY so.id) INTO v_ids
     FROM public.sales_orders so WHERE so.account = p_account AND so.omie_pedido_id = p_pid;
   PERFORM 1 FROM public.sales_orders so WHERE so.id = ANY (COALESCE(v_ids, '{}'::uuid[])) ORDER BY so.id FOR UPDATE;
+  -- Releitura pelo PREDICADO depois do lock (Codex código P0-1): um write-back concorrente pode ter trocado o PID de
+  -- uma linha travada (ela sairia escondida com as ausências de outro PV) ou trazido uma linha nova.
+  SELECT array_agg(so.id ORDER BY so.id) INTO v_ids2
+    FROM public.sales_orders so WHERE so.account = p_account AND so.omie_pedido_id = p_pid;
+  IF v_ids2 IS DISTINCT FROM v_ids THEN
+    UPDATE public.omie_pv_conferencia c SET adiado_motivo = 'linhas_mudaram', atualizado_em = now()
+     WHERE c.account = p_account AND c.omie_pedido_id = p_pid;
+    RETURN jsonb_build_object('efeito', 'adiado', 'motivo', 'linhas_mudaram');
+  END IF;
 
   -- (2) Revalidação SOB os locks.
   SELECT array_agg(r.id ORDER BY r.id) INTO v_res2
@@ -819,8 +833,18 @@ $$;
 -- ── 10. durabilidade da baixa em sales_orders ─────────────────────────────────────────────────────────────────────
 -- Nome ordena DEPOIS de trg_sales_orders_gemeo_* (o BEFORE INSERT da importada já tem o lock do gêmeo, que a baixa
 -- também toma: uma importação tardia espera a baixa e nasce oculta). Rollback do front (`deleted_at: null`) vira no-op.
--- PID ATRIBUÍDO depois a uma linha (write-back tardio do envio — Codex rodada 2, P0-4) não é escondido em silêncio:
--- vira contradição para revisão (o pedido pode ser venda real).
+-- IDENTIDADE atribuída depois da baixa (write-back do envio, recuperação do PV vivo em `excluir_pedido` — inclusive com
+-- o soft-delete provisório do front já gravado, Codex código P0-2) NUNCA é escondida em silêncio: a LINHA fica isenta
+-- (omie_pv_linha_isenta) e o PV vira contradição. Status terminal gravado depois da baixa também vira contradição.
+CREATE TABLE IF NOT EXISTS public.omie_pv_linha_isenta (
+  sales_order_id  uuid PRIMARY KEY,
+  account         text NOT NULL,
+  omie_pedido_id  bigint NOT NULL,
+  criado_em       timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.omie_pv_linha_isenta ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.omie_pv_linha_isenta FROM PUBLIC, anon, authenticated, service_role;
+
 CREATE OR REPLACE FUNCTION public.sales_orders_pv_excluido_omie_duravel()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -833,13 +857,28 @@ BEGIN
     RETURN NEW;
   END IF;
   IF TG_OP = 'INSERT' THEN
-    NEW.deleted_at := now();
-  ELSIF OLD.omie_pedido_id IS DISTINCT FROM NEW.omie_pedido_id OR OLD.account IS DISTINCT FROM NEW.account THEN
+    IF NEW.deleted_at IS NULL THEN NEW.deleted_at := now(); END IF;
+    RETURN NEW;
+  END IF;
+  IF OLD.omie_pedido_id IS DISTINCT FROM NEW.omie_pedido_id OR OLD.account IS DISTINCT FROM NEW.account THEN
+    INSERT INTO public.omie_pv_linha_isenta (sales_order_id, account, omie_pedido_id)
+    VALUES (NEW.id, NEW.account, NEW.omie_pedido_id) ON CONFLICT (sales_order_id) DO NOTHING;
     UPDATE public.omie_pv_conferencia c
        SET contradicao = COALESCE(c.contradicao, 'pid_atribuido_apos_baixa'), contradicao_em = COALESCE(c.contradicao_em, now()),
            atualizado_em = now()
      WHERE c.account = NEW.account AND c.omie_pedido_id = NEW.omie_pedido_id;
-  ELSE
+    RETURN NEW;
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.omie_pv_linha_isenta i WHERE i.sales_order_id = NEW.id) THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.status IS DISTINCT FROM OLD.status AND NEW.status IN ('faturado', 'cancelado') THEN
+    UPDATE public.omie_pv_conferencia c
+       SET contradicao = COALESCE(c.contradicao, 'terminal_apos_baixa'), contradicao_em = COALESCE(c.contradicao_em, now()),
+           atualizado_em = now()
+     WHERE c.account = NEW.account AND c.omie_pedido_id = NEW.omie_pedido_id;
+  END IF;
+  IF NEW.deleted_at IS NULL THEN
     NEW.deleted_at := COALESCE(OLD.deleted_at, now());
   END IF;
   RETURN NEW;
@@ -847,8 +886,8 @@ END;
 $$;
 DROP TRIGGER IF EXISTS trg_sales_orders_pv_excluido_omie ON public.sales_orders;
 CREATE TRIGGER trg_sales_orders_pv_excluido_omie
-  BEFORE INSERT OR UPDATE OF deleted_at, omie_pedido_id, account ON public.sales_orders
-  FOR EACH ROW WHEN (NEW.deleted_at IS NULL AND NEW.omie_pedido_id IS NOT NULL)
+  BEFORE INSERT OR UPDATE OF deleted_at, omie_pedido_id, account, status ON public.sales_orders
+  FOR EACH ROW WHEN (NEW.omie_pedido_id IS NOT NULL)
   EXECUTE FUNCTION public.sales_orders_pv_excluido_omie_duravel();
 
 -- ── 11. os 11 PVs já limpos à mão ganham a mesma durabilidade (Codex rodada 2, P1) ───────────────────────────────
@@ -868,6 +907,17 @@ HAVING bool_and(so.deleted_at IS NOT NULL)
 ON CONFLICT (account, omie_pedido_id) DO NOTHING;
 
 -- ── 12. ACL: RPCs só service_role; helpers privados de ninguém ────────────────────────────────────────────────────
+-- Sequências IDENTITY nascem com a ACL default do postgres em public (ALL para anon/authenticated/service_role —
+-- db/lib/corpo-vivo-acl.sql): só as RPCs (SECURITY DEFINER, dono postgres) avançam o contador (Codex código P1).
+DO $seq$
+DECLARE t text; q text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['omie_pv_execucao', 'omie_pv_triagem_log', 'omie_pv_consulta_log', 'omie_pv_baixa_reserva'] LOOP
+    q := pg_get_serial_sequence('public.' || t, 'id');
+    EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM PUBLIC, anon, authenticated, service_role', q);
+  END LOOP;
+END
+$seq$;
 REVOKE ALL ON FUNCTION public.omie_pv_execucao_iniciar(text, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.omie_pv_listar_vez(bigint) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.omie_pv_execucao_encerrar(bigint, jsonb) FROM PUBLIC, anon, authenticated;
@@ -928,6 +978,20 @@ BEGIN
         AND policyname = tablename || '_select_staff' AND cmd = 'SELECT') <> 6
      OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'omie_pv_identidade') THEN
     RAISE EXCEPTION 'A3c FALHOU: policies de leitura de staff ≠ 6 (ou a identidade ganhou policy)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM unnest(ARRAY['omie_pv_execucao', 'omie_pv_triagem_log', 'omie_pv_consulta_log', 'omie_pv_baixa_reserva']) x(tab),
+                  unnest(ARRAY['anon', 'authenticated', 'service_role']) y(papel)
+              WHERE has_sequence_privilege(y.papel, pg_get_serial_sequence('public.' || x.tab, 'id'), 'USAGE')
+                 OR has_sequence_privilege(y.papel, pg_get_serial_sequence('public.' || x.tab, 'id'), 'UPDATE')) THEN
+    RAISE EXCEPTION 'A3d FALHOU: sequência IDENTITY de omie_pv_* utilizável fora das RPCs';
+  END IF;
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.omie_pv_linha_isenta'::regclass)
+     OR has_table_privilege('authenticated', 'public.omie_pv_linha_isenta', 'SELECT')
+     OR has_table_privilege('service_role', 'public.omie_pv_linha_isenta', 'INSERT') THEN
+    RAISE EXCEPTION 'A3e FALHOU: omie_pv_linha_isenta sem RLS ou aberta';
+  END IF;
+  IF has_column_privilege('authenticated', 'public.omie_pv_execucao', 'app_hash', 'SELECT') THEN
+    RAISE EXCEPTION 'A3f FALHOU: app_hash legível por authenticated';
   END IF;
   IF has_table_privilege('authenticated', 'public.omie_pv_identidade', 'SELECT') THEN
     RAISE EXCEPTION 'A3b FALHOU: omie_pv_identidade legível por authenticated';

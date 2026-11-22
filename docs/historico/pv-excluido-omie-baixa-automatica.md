@@ -35,5 +35,5 @@ orçamento próprio de ≤ 4 tentativas cobradas/24h por conta (o bloqueio é na
 coordenar `ConsultarPedido` na trava numa leva de deploy própria.
 
 ## Onde olhar
-- Revisão humana: `SELECT * FROM omie_pv_conferencia WHERE contradicao IS NOT NULL AND aplicado_em IS NULL`.
+- Revisão humana: `SELECT * FROM omie_pv_conferencia WHERE contradicao IS NOT NULL` (inclui as pós-baixa: `reapareceu_apos_baixa`, `pid_atribuido_apos_baixa`, `terminal_apos_baixa`, que nascem com `aplicado_em`).
 - Cobertura: `omie_pv_triagem_log` (semanas registradas × recusadas) e `omie_pv_execucao.resumo`.
