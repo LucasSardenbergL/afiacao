@@ -38,7 +38,7 @@ import { EmptyState } from '@/components/EmptyState';
 import {
   urlCliente360, urlNovoPedido, urlPedidosDoCliente, type OrigemLista,
 } from '@/lib/nav/clientes';
-import { registrarUsoClientes, type AcaoFicha } from './sensorClientes';
+import { registrarUsoClientes, type AcaoFicha } from '@/lib/nav/sensor-clientes';
 import type { Customer, ClientScore, ToolCategory, UserTool, SalesOrder } from './types';
 
 export function Customer360View({

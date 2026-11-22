@@ -36,6 +36,30 @@ export function useMinhasTarefas({ enabled = true }: { enabled?: boolean } = {})
   });
 }
 
+/**
+ * Próxima ação da ficha 360: as tarefas ABERTAS deste cliente que quem lê enxerga (a RLS de tarefas
+ * filtra por responsável/criador — "nenhuma" quer dizer "nenhuma visível para você", e a tela diz isso).
+ * Atrasadas primeiro, depois o vencimento efetivo mais próximo.
+ */
+export function useTarefasAbertasDoCliente(customerId: string | undefined, { limite = 3 }: { limite?: number } = {}) {
+  return useQuery({
+    queryKey: ['tarefas-abertas-cliente', customerId, limite],
+    enabled: !!customerId,
+    staleTime: 30_000,
+    queryFn: async (): Promise<TarefaEstado[]> => {
+      const { data, error } = await sel()
+        .select('*')
+        .eq('customer_user_id', customerId as string)
+        .eq('status', 'aberta')
+        .order('atrasada', { ascending: false })
+        .order('effective_due', { ascending: true })
+        .limit(limite);
+      if (error) throw error;
+      return (data ?? []).map(paraTarefaEstado);
+    },
+  });
+}
+
 /** Lista do founder: tarefas que ELE criou + status. */
 export function useTarefasQueCriei(filtroStatus: 'todas' | 'aberta' | 'concluida' | 'cancelada' = 'todas') {
   const { user } = useAuth();
@@ -79,6 +103,7 @@ export function useTarefaMutations() {
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['minhas-tarefas'] });
     qc.invalidateQueries({ queryKey: ['tarefas-que-criei'] });
+    qc.invalidateQueries({ queryKey: ['tarefas-abertas-cliente'] });
     qc.invalidateQueries({ queryKey: ['tarefa-sugestoes'] });
     qc.invalidateQueries({ queryKey: ['tarefas-badge-count'] });
   };

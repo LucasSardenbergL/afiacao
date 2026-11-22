@@ -9,7 +9,7 @@ vi.mock('@/lib/impersonation/lens-write-guard', () => ({ isLensActive: () => len
 
 import {
   modoClientes, montarEventoClientes, normalizarFiltroSensor, registrarUsoClientes, type UsoClientes,
-} from '../sensorClientes';
+} from '../sensor-clientes';
 
 /** Um uso de cada ação — a suíte anti-PII roda sobre TODOS. */
 const USOS: UsoClientes[] = [

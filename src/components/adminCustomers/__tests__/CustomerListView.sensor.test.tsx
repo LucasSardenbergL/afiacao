@@ -4,12 +4,15 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import type { Customer, ClientScore } from '../types';
 
 const usoMock = vi.fn();
-vi.mock('../sensorClientes', async (original) => ({
-  ...(await original<typeof import('../sensorClientes')>()),
+vi.mock('@/lib/nav/sensor-clientes', async (original) => ({
+  ...(await original<typeof import('@/lib/nav/sensor-clientes')>()),
   registrarUsoClientes: (u: unknown) => usoMock(u),
 }));
 
 import { CustomerListView } from '../CustomerListView';
+// Último contato (onda 3) tem teste próprio; aqui a lista só precisa de uma leitura vazia e lida.
+vi.mock('../useUltimoContato', () => ({ useUltimoContato: () => ({ porCliente: new Map(), estado: 'ok' }) }));
+
 
 beforeAll(() => {
   vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} });

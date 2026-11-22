@@ -3,6 +3,12 @@ import { MemoryRouter } from "react-router-dom";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { CustomerListView } from "../CustomerListView";
 import type { Customer, ClientScore } from "../types";
+// Último contato (onda 3) tem teste próprio; aqui a lista só precisa de uma leitura vazia e lida.
+const ultimo = vi.hoisted(() => ({ estado: 'ok' as 'ok' | 'falha' | 'carregando', porCliente: new Map<string, unknown>(), ids: [] as string[][] }));
+vi.mock('../useUltimoContato', () => ({
+  useUltimoContato: (ids: string[]) => { ultimo.ids.push(ids); return { porCliente: ultimo.porCliente, estado: ultimo.estado }; },
+}));
+
 
 beforeAll(() => {
   // useInfiniteScroll usa IntersectionObserver, ausente no jsdom.
@@ -173,5 +179,23 @@ describe("CustomerListView", () => {
       expect(screen.getByText("Média mensal (180d)")).toBeTruthy();
       expect(screen.queryByText("Gasto mensal")).toBeNull();
     });
+  });
+});
+
+describe("CustomerListView — último contato (onda 3)", () => {
+  it("UMA leitura em lote com os ids da tela, e o contato aparece na linha", () => {
+    ultimo.estado = 'ok';
+    ultimo.porCliente = new Map([["c1", { clienteId: "c1", em: new Date().toISOString(), desfecho: "vai_pedir" }]]);
+    ultimo.ids.length = 0;
+    setup();
+    expect(ultimo.ids.at(-1)).toEqual(["c1"]);
+    expect(screen.getByTestId("ultimo-contato").textContent).toBe("contato hoje · vai pedir");
+  });
+
+  it("leitura com falha: 'indisponível', nunca 'sem contato'", () => {
+    ultimo.estado = 'falha';
+    ultimo.porCliente = new Map();
+    setup();
+    expect(screen.getByTestId("ultimo-contato").textContent).toBe("último contato indisponível");
   });
 });

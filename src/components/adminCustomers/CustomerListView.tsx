@@ -28,8 +28,10 @@ import {
   metricasExibiveis, motivoContato, normalizarOrdem, prioridadeDisponivel, rotuloContagem, TAMANHO_PAGINA_CLIENTES,
   type EstadoScores, type OrdemClientes,
 } from './config';
-import { modoClientes, registrarUsoClientes, type ModoClientes } from './sensorClientes';
+import { modoClientes, registrarUsoClientes, type ModoClientes } from '@/lib/nav/sensor-clientes';
 import type { Customer, ClientScore } from './types';
+import { rotuloUltimoContato } from './ultimoContato';
+import { useUltimoContato } from './useUltimoContato';
 
 /** Ajuda da coluna "Prioridade", em linguagem de vendedor. */
 const TEXTO_AJUDA_PRIORIDADE =
@@ -91,7 +93,7 @@ export function CustomerListView({
   // A ordem vale nos DOIS modos: na base completa o servidor a aplica antes de paginar; na carteira
   // (lida inteira em memória, com os scores) ela é aplicada aqui — espelho da ordem do servidor.
   const ordem: OrdemClientes = normalizarOrdem(urlState.ordem);
-  // Sensor de uso (sensorClientes.ts): o modo que o vendedor VÊ, carteira e base separadas.
+  // Sensor de uso (lib/nav/sensor-clientes.ts): o modo que o vendedor VÊ, carteira e base separadas.
   const modo: ModoClientes = modoClientes(isCarteira, ordem);
   const setFilterHealth = (v: string) => {
     if (v !== filterHealth) registrarUsoClientes({ acao: 'filtro_saude', modo, valor: v });
@@ -177,6 +179,11 @@ export function CustomerListView({
     // A ordem já vem aplicada: do servidor (base completa) ou do useClientesScope (carteira).
     return result;
   }, [customers, searchQuery, filterHealth, scores, buscaNoServidor, filtroNoServidor, estadoSaude]);
+
+  // Último contato (onda 3): UMA leitura em lote dos clientes desta tela — nunca uma por linha.
+  const idsVisiveis = useMemo(() => filtered.map((c) => c.user_id), [filtered]);
+  const ultimoContato = useUltimoContato(idsVisiveis);
+  const hoje = useMemo(() => new Date(), []);
 
   // Voltar da ficha: a lista volta na mesma posição (a rolagem viaja no `location.state`).
   const location = useLocation();
@@ -466,6 +473,7 @@ export function CustomerListView({
                 // Sem histórico: 999d / R$ 0 / prioridade são sentinelas da edge, não medidas.
                 const metricas = score ? metricasExibiveis(score) : null;
                 const motivo = motivoContato(score);
+                const contato = rotuloUltimoContato(ultimoContato.porCliente.get(customer.user_id), ultimoContato.estado, hoje);
 
                 return (
                   <tr
@@ -491,6 +499,9 @@ export function CustomerListView({
                           </p>
                           {motivo && (
                             <p className="text-xs text-muted-foreground truncate">{motivo}</p>
+                          )}
+                          {contato && (
+                            <p className="text-xs text-muted-foreground truncate" data-testid="ultimo-contato">{contato}</p>
                           )}
                           {customer.phone && (
                             <p className="text-xs text-muted-foreground">{customer.phone}</p>

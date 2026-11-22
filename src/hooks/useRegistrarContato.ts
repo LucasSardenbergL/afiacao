@@ -49,6 +49,8 @@ export function useRegistrarContato() {
         com_motivo: !!v.motivo,
       });
       void qc.invalidateQueries({ queryKey: ['venda-contatos-do-dia'] });
+      void qc.invalidateQueries({ queryKey: ['ultimo-contato-clientes'] });
+      void qc.invalidateQueries({ queryKey: ['c360-interactions'] });
     },
     onError: (e) => {
       const codigo = (e as { code?: string } | null)?.code;

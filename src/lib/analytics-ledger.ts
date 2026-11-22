@@ -110,7 +110,7 @@ export type EventoLedger =
   /**
    * Tela Clientes (/admin/customers): sensor de uso do programa #4027…#4065 (Priorizar contatos × A–Z, filtro
    * de saúde, busca, abrir cliente, carregar mais). Props só enums e inteiros — nenhum id, nome, documento ou
-   * termo de busca (LGPD). Chaves e payload: src/components/adminCustomers/sensorClientes.ts. Leitura com
+   * termo de busca (LGPD). Chaves e payload: src/lib/nav/sensor-clientes.ts. Leitura com
    * denominador: db/sensor-clientes-adocao.sql. É a régua da fase "Em risco" / "Primeira compra".
    * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
    */
