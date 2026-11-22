@@ -70,6 +70,9 @@ if [ -f "$WT/scripts/lovable-vigia.sh" ] && ! cmp -s "$WT/scripts/lovable-vigia.
     && log "vigia atualizado para a versão de ${HEAD_SHA:0:8}"
 fi
 
+# main sem o --julgar (instalado antes do merge do próprio vigia) → espera calado, sem aviso
+grep -q -- '--julgar' "$WT/scripts/lovable-publish.sh" 2>/dev/null || { log "main sem lovable-publish.sh --julgar — aguardando"; exit 0; }
+
 julgar() { (cd "$WT" && LP_LIBERAR_SHA="${1:-}" bash scripts/lovable-publish.sh --julgar "$HEAD_SHA") > "$EST/julgar.txt" 2>&1; }
 veredito() { tail -1 "$EST/julgar.txt" | sed -n 's/^VEREDITO=//p'; }
 ar_curto() { sed -n 's/^ar=\([0-9a-f]*\) .*/\1/p' "$EST/julgar.txt" | head -1; }
