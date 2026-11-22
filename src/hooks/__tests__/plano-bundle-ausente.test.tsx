@@ -43,7 +43,8 @@ let rpcErro: { message: string } | null = null;
 function recordRpc(fn: string, args: Record<string, unknown>) {
   rpcCalls.push({ fn, args });
   // A margem vem da RPC `get_scores_margem` desde o fecho da coluna (FU4-F): sem linha = sem margem.
-  const r = fn === 'get_scores_margem'
+  // Amplitude de mix (20261121230000): famílias do cliente em 12m — o erro simulado é o de `criar_plano_tatico`.
+  const r = fn === 'get_scores_margem' || fn === 'familias_12m_clientes'
     ? { data: [], error: null }
     : rpcErro ? { data: null, error: rpcErro } : { data: 'plan-1', error: null };
   // A leitura de vendáveis é PAGINADA (`fetchAllPages`) desde que o cap de 1.000 do PostgREST

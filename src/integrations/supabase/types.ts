@@ -26926,6 +26926,15 @@ export type Database = {
       }
       expirar_planos_taticos: { Args: { _dias?: number }; Returns: number }
       expirar_reservas_vencidas: { Args: never; Returns: Json }
+      familias_12m_clientes: {
+        Args: { p_customer_user_id?: string; p_farmer_id?: string }
+        Returns: {
+          customer_user_id: string
+          familias_12m: number | null
+          itens_12m: number
+          itens_sem_familia: number
+        }[]
+      }
       farmer_association_rules_substituir: {
         Args: { p_regras: Json }
         Returns: number

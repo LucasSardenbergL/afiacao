@@ -259,8 +259,8 @@ const ExecutiveDashboard = () => {
                           <p>$/Hora</p>
                         </div>
                         <div>
-                          <p className="font-medium">{s.ipfMixExpansion}</p>
-                          <p>Mix</p>
+                          <p className="font-medium">{s.ipfMixExpansion ?? '—'}</p>
+                          <p>Amplitude</p>
                         </div>
                         <div>
                           <p className="font-medium">{s.ipfLtvEvolution}</p>

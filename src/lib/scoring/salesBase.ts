@@ -99,3 +99,46 @@ export function mediaGastoMedido(gastos: Iterable<unknown>): { media: number | n
   }
   return { media: medidos > 0 ? soma / medidos : null, medidos };
 }
+
+/**
+ * "Amplitude de mix" do IPF do vendedor (`useFarmerPerformance`): média de famílias distintas em 12 meses
+ * sobre os clientes da carteira que COMPRARAM NA JANELA (≥1 item válido nos 12 meses). Decisão do founder
+ * (2026-11-21, opção 3 + denominador "b"): só compradores, na MESMA janela do numerador. `familias` vem da
+ * RPC `familias_12m_clientes` (migration 20261121230000), que só devolve quem tem item na janela:
+ *  - cliente SEM linha na RPC → sem observação de mix na janela → FORA da base (não entra como 0). Vale
+ *    para o prospect (`sem_historico`) e para o stale que não comprou nos 12 meses;
+ *  - linha com `familias_12m` null (itens sem família cadastrada) → fora da base (lacuna, não zero).
+ * O status não decide: o stale que comprou dentro dos 12 meses entra (a base "só ativos" o perderia; a
+ * "ativo+stale" punia inatividade com 0 — prod 2026-11-21: A 10 e B 38 em vez de 48 e 79).
+ * `media` null = ninguém comprou na janela → o componente fica FORA da nota (nunca 0 fabricado).
+ */
+export function mediaAmplitudeMix(
+  clientes: Iterable<{ customer_user_id: string | null }>,
+  familias: ReadonlyMap<string, number | null>,
+): { media: number | null; base: number } {
+  let soma = 0;
+  let base = 0;
+  for (const c of clientes) {
+    if (c.customer_user_id == null || !familias.has(c.customer_user_id)) continue;
+    const v = finitoOuNulo(familias.get(c.customer_user_id));
+    if (v == null) continue;
+    soma += v;
+    base++;
+  }
+  return { media: base > 0 ? soma / base : null, base };
+}
+
+/**
+ * Média ponderada que RENORMALIZA sobre os componentes medidos: componente `null` (sem base — ex.: mix de
+ * carteira sem comprador) sai com o seu peso, em vez de entrar como 0. Nenhum medido → null.
+ */
+export function mediaPonderadaMedida(componentes: Array<{ valor: number | null; peso: number }>): number | null {
+  let soma = 0;
+  let pesos = 0;
+  for (const { valor, peso } of componentes) {
+    if (valor == null || !Number.isFinite(valor)) continue;
+    soma += valor * peso;
+    pesos += peso;
+  }
+  return pesos > 0 ? soma / pesos : null;
+}

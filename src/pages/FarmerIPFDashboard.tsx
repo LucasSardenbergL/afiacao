@@ -98,7 +98,7 @@ const FarmerIPFDashboard = () => {
               <CardContent className="p-3 pt-0 space-y-3">
                 <IPFMetric label="Margem Incremental" value={latestScore.ipfIncrementalMargin} weight={25} icon={DollarSign} />
                 <IPFMetric label="Margem por Hora" value={latestScore.ipfMarginPerHour} weight={25} icon={TrendingUp} />
-                <IPFMetric label="Expansão de Mix" value={latestScore.ipfMixExpansion} weight={20} icon={Target} />
+                <IPFMetric label="Amplitude de mix" value={latestScore.ipfMixExpansion} weight={20} icon={Target} />
                 <IPFMetric label="Evolução de LTV" value={latestScore.ipfLtvEvolution} weight={15} icon={BarChart3} />
                 <IPFMetric label="Redução de Churn" value={latestScore.ipfChurnReduction} weight={15} icon={ShieldCheck} />
               </CardContent>
@@ -165,7 +165,8 @@ const FarmerIPFDashboard = () => {
   );
 };
 
-const IPFMetric = ({ label, value, weight, icon: Icon }: { label: string; value: number; weight: number; icon: LucideIcon }) => (
+// value null = componente sem base (ex.: mix de carteira sem comprador) → "—", fora da nota; nunca 0.
+const IPFMetric = ({ label, value, weight, icon: Icon }: { label: string; value: number | null; weight: number; icon: LucideIcon }) => (
   <div>
     <div className="flex items-center justify-between mb-1">
       <div className="flex items-center gap-1.5">
@@ -173,9 +174,13 @@ const IPFMetric = ({ label, value, weight, icon: Icon }: { label: string; value:
         <span className="text-[10px]">{label}</span>
         <Badge variant="outline" className="text-[7px] h-3 px-1">{weight}%</Badge>
       </div>
-      <span className={`text-xs font-bold ${scoreColor(value)}`}>{value}</span>
+      {value == null
+        ? <span className="text-xs font-bold text-muted-foreground">—</span>
+        : <span className={`text-xs font-bold ${scoreColor(value)}`}>{value}</span>}
     </div>
-    <Progress value={value} className={`h-1.5 ${scoreBarColor(value)}`} />
+    {value == null
+      ? <Progress value={0} className="h-1.5" />
+      : <Progress value={value} className={`h-1.5 ${scoreBarColor(value)}`} />}
   </div>
 );
 

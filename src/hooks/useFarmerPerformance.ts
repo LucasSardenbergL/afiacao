@@ -4,7 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { proporcaoChurnBaixo } from '@/lib/scoring/churn';
-import { mediaGastoMedido } from '@/lib/scoring/salesBase';
+import { META_FAMILIAS_MIX } from '@/lib/scoring/objective';
+import { mediaAmplitudeMix, mediaGastoMedido, mediaPonderadaMedida } from '@/lib/scoring/salesBase';
 import { fetchAllPages } from '@/lib/postgrest';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
 
@@ -27,7 +28,8 @@ export interface PerformanceScore {
   // IPF
   ipfIncrementalMargin: number;
   ipfMarginPerHour: number;
-  ipfMixExpansion: number;
+  /** null = carteira sem comprador (mix sem base) — exibido como "—", fora da nota. */
+  ipfMixExpansion: number | null;
   ipfLtvEvolution: number;
   ipfChurnReduction: number;
   ipfTotal: number;
@@ -77,8 +79,8 @@ interface FarmerCallRow {
 }
 
 interface ClientScoreRow {
+  customer_user_id: string | null;
   churn_risk: number | string | null;
-  category_count: number | string | null;
   avg_monthly_spend_180d: number | string | null;
   health_score: number | string | null;
 }
@@ -109,7 +111,7 @@ export const useFarmerPerformance = () => {
     ieeTotal: Number(d.iee_total || 0),
     ipfIncrementalMargin: Number(d.ipf_incremental_margin || 0),
     ipfMarginPerHour: Number(d.ipf_margin_per_hour || 0),
-    ipfMixExpansion: Number(d.ipf_mix_expansion || 0),
+    ipfMixExpansion: d.ipf_mix_expansion == null ? null : Number(d.ipf_mix_expansion),
     ipfLtvEvolution: Number(d.ipf_ltv_evolution || 0),
     ipfChurnReduction: Number(d.ipf_churn_reduction || 0),
     ipfTotal: Number(d.ipf_total || 0),
@@ -216,12 +218,23 @@ export const useFarmerPerformance = () => {
       const clientScores = await fetchAllPages(
         (de, ate) => supabase
           .from('farmer_client_scores')
-          .select('id, churn_risk, category_count, avg_monthly_spend_180d, health_score')
+          .select('id, customer_user_id, churn_risk, avg_monthly_spend_180d, health_score')
           .eq('farmer_id', farmerId)
           .order('id', { ascending: true })
           .range(de, ate),
         'farmer_client_scores/ipf',
       );
+
+      // Amplitude de mix (20261121230000): famílias distintas por cliente em 12 meses — PAGINADO (o PostgREST
+      // capa .rpc() em 1.000) e fail-closed como a carteira: página com erro lança e o score não é persistido.
+      const familiasRows = await fetchAllPages(
+        (de, ate) => supabase
+          .rpc('familias_12m_clientes', { p_farmer_id: farmerId })
+          .order('customer_user_id', { ascending: true })
+          .range(de, ate),
+        'familias_12m_clientes/ipf',
+      );
+      const familiasPorCliente = new Map(familiasRows.map((f) => [f.customer_user_id, f.familias_12m] as const));
 
       // Fetch copilot sessions
       const { data: copilotSessions } = (await supabase
@@ -294,11 +307,12 @@ export const useFarmerPerformance = () => {
       const marginPerHour = combinedTime > 0 ? (combinedMargin / combinedTime) * 3600 : 0;
       const ipfMarginPerHour = Math.round(Math.min(100, marginPerHour));
 
-      // 3. Mix expansion: avg categories across clients (target 6+)
-      const avgCategories = clientArr.length > 0
-        ? clientArr.reduce((s, c) => s + Number(c.category_count || 0), 0) / clientArr.length
-        : 0;
-      const ipfMixExpansion = Math.round(Math.min(100, (avgCategories / 6) * 100));
+      // 3. Amplitude de mix: média de FAMÍLIAS distintas em 12 meses de quem comprou NA JANELA (meta 6, decisão
+      // do founder 2026-11-21). Antes era a média de `category_count` (PRODUTOS distintos) sobre a carteira
+      // inteira: 0,18 (3 pts) com 14.177 clientes, e 100 travado quando só sobre compradores. Ninguém na base
+      // → null: o componente fica FORA da nota (renormalizada abaixo), nunca 0 fabricado.
+      const { media: avgFamilias } = mediaAmplitudeMix(clientArr, familiasPorCliente);
+      const ipfMixExpansion = avgFamilias == null ? null : Math.round(Math.min(100, (avgFamilias / META_FAMILIAS_MIX) * 100));
 
       // 4. LTV evolution: gasto mensal médio de quem tem gasto MEDIDO (target R$2000). O não medido (NULL desde
       // a calculate-scores v1.8 — quem nunca comprou) sai da base, como o churn desconhecido no item 5: o
@@ -320,14 +334,15 @@ export const useFarmerPerformance = () => {
         ? Math.round((lowChurnClients / comRisco) * 100)
         : 0;
 
-      // IPF Total (weighted average)
-      const ipfTotal = Math.round(
-        ipfIncrementalMargin * 0.25 +
-        ipfMarginPerHour * 0.25 +
-        ipfMixExpansion * 0.20 +
-        ipfLtvEvolution * 0.15 +
-        ipfChurnReduction * 0.15
-      );
+      // IPF Total (média ponderada RENORMALIZADA sobre os componentes medidos: mix null sai com o seu peso)
+      const ipfTotalBruto = mediaPonderadaMedida([
+        { valor: ipfIncrementalMargin, peso: 0.25 },
+        { valor: ipfMarginPerHour, peso: 0.25 },
+        { valor: ipfMixExpansion, peso: 0.20 },
+        { valor: ipfLtvEvolution, peso: 0.15 },
+        { valor: ipfChurnReduction, peso: 0.15 },
+      ]);
+      const ipfTotal = ipfTotalBruto == null ? null : Math.round(ipfTotalBruto);
 
       // Save score
       const scoreData = {

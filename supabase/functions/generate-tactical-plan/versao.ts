@@ -49,8 +49,12 @@ import { MODELO, toolDoModo } from "./plano-helpers.ts";
  * `v1.5-margem-fora-do-prompt` (FU4-F, plano tático): a margem do cliente, a dos pares e a do bundle
  * saem do contexto do modelo nos DOIS modos (`insumosSemMargem`), o system prompt ganha a regra
  * "margem é dado interno" e a tool estratégica deixa de pedir cenários de margem (`expected_result`).
+ *
+ * `v1.8-mixgap-por-familia` (Amplitude de mix, 2026-11-21): o `mixGap` deixa de ser `8 − category_count`
+ * (PRODUTOS distintos) e passa a `6 − famílias distintas em 12 meses` pela RPC `familias_12m_clientes`
+ * (migration 20261121230000); não medido (nunca comprou / itens sem família) → null, sem expansao_mix.
  */
-export const VERSAO = "v1.7-base-vendas-ausente-nao-e-zero";
+export const VERSAO = "v1.8-mixgap-por-familia";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
