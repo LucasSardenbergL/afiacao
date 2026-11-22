@@ -1699,8 +1699,9 @@ function novoNaoResultado(): NaoResultado {
 function acumularNaoResultado(acc: NaoResultado, codigo: string, valor: number, isReceita: boolean): void {
   const chave = codigo || '(sem código)';
   const item = acc.por_codigo[chave] ?? (acc.por_codigo[chave] = { saidas: 0, entradas: 0 });
-  if (isReceita) { acc.entradas += valor; item.entradas += valor; }
-  else { acc.saidas += valor; item.saidas += valor; }
+  const lado = isReceita ? 'entradas' : 'saidas';
+  acc[lado] += valor;
+  item[lado] += valor;
 }
 
 // Rebaixa a confiança pelas pendências da fase 2. Mapa inválido também pode fabricar

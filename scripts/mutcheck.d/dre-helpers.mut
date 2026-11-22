@@ -22,3 +22,5 @@ PEGA | fase 2: pendência = lançamento ≠ 0, não só positivo (!== vira >) | 
 PEGA | fase 2: entrada fora_dre não vira saída (isReceita invertido) | s/if \(isReceita\) \{ acc\.entradas/if (!isReceita) { acc.entradas/
 PEGA | fase 2: pendência fora_dre rebaixa para baixa (baixa vira media) | s/if \(motivoFora\) \{ nivel = 'baixa'/if (motivoFora) { nivel = 'media'/
 PEGA | fase 2: mapa inválido rebaixa (> 0 vira > 5) | s/if \(input\.mapeamentosInvalidos > 0\) \{/if (input.mapeamentosInvalidos > 5) {/
+PEGA | v1.13: nao_resultado não é herdável por prefixo (removido da lista) | s/^  'fora_dre', 'nao_resultado', 'ded_icms', 'ded_iss'/  'fora_dre', 'ded_icms', 'ded_iss'/
+PEGA | v1.13: entrada nao_resultado não vira saída (lado invertido) | s/const lado = isReceita \? 'entradas' : 'saidas';/const lado = isReceita ? 'saidas' : 'entradas';/

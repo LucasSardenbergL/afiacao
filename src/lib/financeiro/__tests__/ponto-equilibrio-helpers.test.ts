@@ -376,6 +376,21 @@ describe('despesasNoDRE / somaCodigosPorPrefixo — fase 2 tira o fora_dre da fa
 });
 
 describe('v1.13 — nao_resultado (patrimonial) fora do PE e da folha', () => {
+  it('o patrimonial sai do universo em balde PRÓPRIO (não como "outras despesas") e não mexe no PE', () => {
+    const base = pontoEquilibrio({ meses: dozeFase2(), classificacao: CLASS });
+    const comPatrimonial = dozeFase2(() => ({
+      despesas: { '2.01.01': 60, '2.04.01': 25, '2.06.01': 5, '2.05.03': 10, '2.07.01': 7 },
+      composicao_despesas: {
+        '2.01.01': { cmv: 60 }, '2.04.01': { despesas_operacionais: 25 }, '2.06.01': { ded_icms: 5 },
+        '2.05.03': { fora_dre: 10 }, '2.07.01': { nao_resultado: 7 },
+      },
+    }));
+    const r = pontoEquilibrio({ meses: comPatrimonial, classificacao: CLASS });
+    expect(r.motivo).toBe('ok');
+    expect(r.excluido_nao_resultado_ttm).toBeCloseTo(84, 2);
+    expect(r.excluido_outras_ttm).toBeCloseTo(base.excluido_outras_ttm, 2);
+    expect(r.pe_receita).toBeCloseTo(base.pe_receita as number, 2);
+  });
   it('distribuição (2.03.76) e INSS retido (2.03.06) em nao_resultado não entram na folha (Codex: R$ 900 viravam folha)', () => {
     const m = mesUniforme(2026, 1, {
       despesas: { '2.03.01': 10, '2.03.76': 900, '2.03.06': 3 },

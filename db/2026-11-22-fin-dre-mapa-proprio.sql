@@ -41,7 +41,7 @@ DECLARE
   v_versao_esperada constant text := 'v1.13-dre-nao-resultado';
   v_versao_sugestor constant text := 'v1.2-nao-resultado-nao-sugerivel';
   v_fonte_sugestor  constant text := '970cd1e826bd395841fa809ac991b70b54e1dafa62dc30482c229828b52b1484';
-  v_fonte_esperada  constant text := 'c81090bcaa7e35391f16010559883cded8a77a474c889dbc88006786c327416e';
+  v_fonte_esperada  constant text := 'e6c43a4a9a835b8957e781ce03b2f03ce9bbb9d69a375681648b4d669d7cee9f';
   v record;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint
