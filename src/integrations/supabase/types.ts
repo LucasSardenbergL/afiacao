@@ -7027,6 +7027,12 @@ export type Database = {
           id: string
           liquidez_operacional_liquida: number | null
           ncg: number | null
+          ncg_adiantamentos: number | null
+          ncg_cp_fornecedor: number | null
+          ncg_cr_aberto: number | null
+          ncg_estoque: number | null
+          ncg_folha_30d: number | null
+          ncg_tributos_a_pagar: number | null
           premissas: Json
           saldo_tesouraria: number | null
           snapshot_at: string
@@ -7051,6 +7057,12 @@ export type Database = {
           id?: string
           liquidez_operacional_liquida?: number | null
           ncg?: number | null
+          ncg_adiantamentos?: number | null
+          ncg_cp_fornecedor?: number | null
+          ncg_cr_aberto?: number | null
+          ncg_estoque?: number | null
+          ncg_folha_30d?: number | null
+          ncg_tributos_a_pagar?: number | null
           premissas: Json
           saldo_tesouraria?: number | null
           snapshot_at?: string
@@ -7075,6 +7087,12 @@ export type Database = {
           id?: string
           liquidez_operacional_liquida?: number | null
           ncg?: number | null
+          ncg_adiantamentos?: number | null
+          ncg_cp_fornecedor?: number | null
+          ncg_cr_aberto?: number | null
+          ncg_estoque?: number | null
+          ncg_folha_30d?: number | null
+          ncg_tributos_a_pagar?: number | null
           premissas?: Json
           saldo_tesouraria?: number | null
           snapshot_at?: string
