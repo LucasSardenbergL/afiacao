@@ -176,11 +176,12 @@ export function PontoEquilibrioCard({ company }: { company: string }) {
               )}
 
               {/* DRE fase 2: o que a composição do snapshot tirou do universo do PE (imposto já entra pelas deduções). */}
-              {data.excluido_deducoes_ttm + data.excluido_imposto_lucro_ttm + data.excluido_outras_ttm !== 0 && (
+              {data.excluido_deducoes_ttm + data.excluido_imposto_lucro_ttm + data.excluido_outras_ttm + data.excluido_nao_resultado_ttm !== 0 && (
                 <p className="text-xs text-muted-foreground">
                   Fora das despesas do PE, pela classificação da DRE: {fmt(data.excluido_deducoes_ttm)} em impostos
-                  sobre a receita (já contados nas deduções), {fmt(data.excluido_imposto_lucro_ttm)} em IRPJ/CSLL e{' '}
-                  {fmt(data.excluido_outras_ttm)} em outras despesas (12 meses).
+                  sobre a receita (já contados nas deduções), {fmt(data.excluido_imposto_lucro_ttm)} em IRPJ/CSLL,{' '}
+                  {fmt(data.excluido_outras_ttm)} em outras despesas e {fmt(data.excluido_nao_resultado_ttm)} em
+                  movimentos patrimoniais que não são resultado (12 meses).
                 </p>
               )}
 

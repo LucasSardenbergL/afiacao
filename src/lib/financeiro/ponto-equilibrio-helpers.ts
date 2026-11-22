@@ -100,6 +100,8 @@ export interface PontoEquilibrioResult {
   custo_compartilhado_pendente_latente: boolean;
   /** DRE fase 2 — TTM tirado do PE pela composição do snapshot (disclosure, não entra no PE). */
   excluido_fora_dre_ttm: number;
+  /** v1.13 — patrimonial definitivo (aporte, imobilizado, retenção já no bruto…), fora do PE. */
+  excluido_nao_resultado_ttm: number;
   excluido_deducoes_ttm: number; // ICMS/PIS/COFINS/2.09… do CP: já entram via deducoes_col
   excluido_imposto_lucro_ttm: number; // IRPJ/CSLL
   excluido_outras_ttm: number; // outras_despesas e qualquer linha fora das 5
@@ -131,7 +133,8 @@ export function despesasNoDRE(m: MesDRE): Record<string, number> {
   if (comp == null) return m.despesas;
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(m.despesas)) {
-    const semFora = v - (comp[k]?.fora_dre ?? 0);
+    // v1.13: o patrimonial (nao_resultado) também não é folha/custo — ex.: 2.03.06 INSS retido na SC.
+    const semFora = v - (comp[k]?.fora_dre ?? 0) - (comp[k]?.nao_resultado ?? 0);
     if (semFora !== 0) out[k] = semFora;
   }
   return out;
@@ -158,7 +161,7 @@ const TOL_COMPOSICAO = 0.01; // R$ — arredondamento de centavos
  */
 function universoOperacional(m: MesDRE): {
   despesas: Record<string, number>;
-  excluido: { fora_dre: number; deducoes: number; imposto_lucro: number; outras: number };
+  excluido: { fora_dre: number; nao_resultado: number; deducoes: number; imposto_lucro: number; outras: number };
 } | null {
   const comp = m.composicao_despesas;
   if (comp == null || typeof comp !== 'object') return null;
@@ -166,7 +169,7 @@ function universoOperacional(m: MesDRE): {
   const chavesComp = Object.keys(comp);
   if (chavesDesp.length !== chavesComp.length) return null;
   const despesas: Record<string, number> = {};
-  const excluido = { fora_dre: 0, deducoes: 0, imposto_lucro: 0, outras: 0 };
+  const excluido = { fora_dre: 0, nao_resultado: 0, deducoes: 0, imposto_lucro: 0, outras: 0 };
   const porLinha: Record<string, number> = {};
   for (const k of chavesDesp) {
     const linhas = comp[k];
@@ -178,6 +181,7 @@ function universoOperacional(m: MesDRE): {
       soma += v;
       if ((LINHAS_PE as readonly string[]).includes(linha)) { operacional += v; porLinha[linha] = (porLinha[linha] ?? 0) + v; }
       else if (linha === 'fora_dre') excluido.fora_dre += v;
+      else if (linha === 'nao_resultado') excluido.nao_resultado += v;
       else if (LINHAS_DEDUCAO.has(linha)) excluido.deducoes += v;
       else if (LINHAS_IMPOSTO_LUCRO.has(linha)) excluido.imposto_lucro += v;
       else excluido.outras += v;
@@ -225,6 +229,7 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     custo_compartilhado_mensal: 0,
     custo_compartilhado_origem: null,
     excluido_fora_dre_ttm: 0,
+    excluido_nao_resultado_ttm: 0,
     excluido_deducoes_ttm: 0,
     excluido_imposto_lucro_ttm: 0,
     excluido_outras_ttm: 0,
@@ -240,7 +245,7 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
 
   // ── DRE fase 2: universo do PE por mês, pela composição do PRÓPRIO snapshot ─────────────────
   // Nunca o mapa atual reinterpretando mês antigo. Composição incompleta/divergente ⇒ inconsistente.
-  const excl = { fora_dre: 0, deducoes: 0, imposto_lucro: 0, outras: 0 };
+  const excl = { fora_dre: 0, nao_resultado: 0, deducoes: 0, imposto_lucro: 0, outras: 0 };
   let composicaoInvalida = false;
   let deducoesColLegadoTTM = 0;
   let receitaLegadoTTM = 0;
@@ -253,6 +258,7 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     const r = universoOperacional(m);
     if (r == null) { composicaoInvalida = true; return m; }
     excl.fora_dre += r.excluido.fora_dre;
+    excl.nao_resultado += r.excluido.nao_resultado;
     excl.deducoes += r.excluido.deducoes;
     excl.imposto_lucro += r.excluido.imposto_lucro;
     excl.outras += r.excluido.outras;
@@ -310,6 +316,7 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     nao_operacional_share_pct: share,
     periodo_label: label,
     excluido_fora_dre_ttm: excl.fora_dre,
+    excluido_nao_resultado_ttm: excl.nao_resultado,
     excluido_deducoes_ttm: excl.deducoes,
     excluido_imposto_lucro_ttm: excl.imposto_lucro,
     excluido_outras_ttm: excl.outras,
@@ -414,6 +421,7 @@ export function pontoEquilibrio(input: PontoEquilibrioInput): PontoEquilibrioRes
     custo_compartilhado_mensal: rateioValido ? rateio!.valor_mensal : 0,
     custo_compartilhado_origem: rateioValido ? rateio!.origem : null,
     excluido_fora_dre_ttm: excl.fora_dre,
+    excluido_nao_resultado_ttm: excl.nao_resultado,
     excluido_deducoes_ttm: excl.deducoes,
     excluido_imposto_lucro_ttm: excl.imposto_lucro,
     excluido_outras_ttm: excl.outras,

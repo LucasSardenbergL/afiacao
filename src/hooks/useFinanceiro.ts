@@ -472,7 +472,8 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
       if (c.detalhamento) {
         // mapas inválidos de TODAS as empresas (antes ficava só o da 1ª linha), com a origem
         const invalidos = rows.flatMap((r) => (r.detalhamento?.mapeamentos_invalidos ?? []).map((i) => ({ ...i, empresa: r.company })));
-        const det = { ...c.detalhamento, mapeamentos_invalidos: invalidos };
+        // v1.13: nao_resultado é por empresa; o spread herdaria o da 1ª linha como se fosse do grupo.
+        const det = { ...c.detalhamento, mapeamentos_invalidos: invalidos, nao_resultado: undefined };
         if (confs.length > 0) {
           const pior = confs.reduce((a, b) => (NIVEL[b.nivel] < NIVEL[a.nivel] ? b : a));
           const motivos = confs.flatMap((x) => x.motivos);

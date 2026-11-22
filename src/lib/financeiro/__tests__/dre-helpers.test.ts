@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario, novoForaDRE, acumularForaDRE, aplicarPendenciasConfianca, linhasDreMapeaveis, provisorioConsolidado, foraDreConsolidado, novoNaoResultado, acumularNaoResultado } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
@@ -406,6 +408,8 @@ describe('linhasDreMapeaveis (tela de mapeamento, fase 2)', () => {
     const l = linhasDreMapeaveis('colacor_sc');
     expect(l).toContain('das');
     expect(l).toContain('fora_dre');
+    expect(l).toContain('nao_resultado');
+    expect(l).toContain('ded_icms'); // ICMS ST/DIFAL recolhido fora do DAS
     expect(l).not.toContain('irpj');
     expect(l).not.toContain('csll');
   });
@@ -474,5 +478,20 @@ describe('nao_resultado (v1.13) — patrimonial definitivo, sem pendência', () 
       const r = classificarLinhaDRE({ categoria_codigo: '', categoria_descricao: d, isReceita: false, regime: 'presumido', mapping: M([]) });
       expect(r.linha).not.toBe('nao_resultado');
     }
+  });
+});
+
+describe('v1.13 — a EDGE de fato roteia nao_resultado (gate textual: o helper isolado não prova o laço)', () => {
+  // Codex adversarial 2026-11-22: remover a chamada real no laço `processar` mantinha esta suíte verde.
+  const fonte = readFileSync(resolve(__dirname, '../../../../supabase/functions/omie-financeiro/index.ts'), 'utf8');
+  it('o laço desvia nao_resultado para o acumulador (antes do else que soma em totais)', () => {
+    expect(fonte).toMatch(/else if \(c\.linha === "nao_resultado"\) acumularNaoResultado\(naoResultado, cod, val, isReceita\);\n\s*else totais\[c\.linha\]/);
+  });
+  it('o snapshot publica detalhamento.nao_resultado', () => {
+    expect(fonte).toMatch(/\n\s*nao_resultado: naoResultado,\n/);
+  });
+  it('a edge declara nao_resultado como válido e não-herdável (espelho do helper)', () => {
+    expect(fonte).toMatch(/'fora_dre', 'nao_resultado',\n\s*\/\/ baldes legados/);
+    expect(fonte).toMatch(/LINHAS_NAO_HERDAVEIS = new Set<string>\(\[\n\s*'fora_dre', 'nao_resultado',/);
   });
 });

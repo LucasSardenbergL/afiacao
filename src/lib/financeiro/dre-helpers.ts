@@ -380,8 +380,9 @@ export function linhasDreMapeaveis(company: string): string[] {
   if (regime === undefined) return [...LINHAS_MAPA_BASE];
   // Presumido também oferece DAS: empresa que migrou do Simples (colacor até 2022) tem DAS
   // histórico, e o motor honra 'das' em qualquer regime (vai para deduções).
+  // Simples: DAS + ICMS recolhido FORA da guia (ST/DIFAL/antecipação) — o motor honra ded_icms em qualquer regime.
   const impostos = regime === 'simples'
-    ? ['das']
+    ? ['das', 'ded_icms']
     : ['ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll'];
   return [...LINHAS_MAPA_BASE, ...impostos, 'fora_dre', 'nao_resultado'];
 }

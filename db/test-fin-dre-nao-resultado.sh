@@ -35,7 +35,8 @@ FIX="$REPO_ROOT/db/fixtures/fin-dre-mapa-proprio-prod-20261122.sql"
 TMPD="$(dirname "$DATA")"
 for f in "$MIG" "$MAPA" "$FIX"; do [ -f "$f" ] || { echo "FALTA $f"; exit 2; }; done
 FONTE="$(sed -n "s/^  v_fonte_esperada  constant text := '\([0-9a-f]\{64\}\)';\$/\1/p" "$MAPA")"
-[ ${#FONTE} -eq 64 ] || { echo "fonte esperada não encontrada no script do mapa"; exit 2; }
+FONTE_SUG="$(sed -n "s/^  v_fonte_sugestor  constant text := '\([0-9a-f]\{64\}\)';\$/\1/p" "$MAPA")"
+[ ${#FONTE} -eq 64 ] && [ ${#FONTE_SUG} -eq 64 ] || { echo "fontes esperadas não encontradas no script do mapa"; exit 2; }
 echo "═══ setup pronto (PG17 :$PORT) ═══"
 
 # ZONA 1 — tabelas como em PROD (psql-ro 2026-11-22: CHECKs da fase 2, UNIQUE, notas/updated_at)
@@ -114,10 +115,16 @@ P -q -c "INSERT INTO deploy_atestacoes VALUES ('r1', now() - interval '2 min', '
                                               ('r2', now() - interval '1 min', 'omie-financeiro', 'v1.13-dre-nao-resultado', 'outra-fonte', 'sonda');"
 if aplica_mapa >/dev/null 2>&1; then bad "P2 aplicou com a observação MAIS RECENTE divergente"; else ok "P2 observação mais recente divergente barra"; fi
 P -q -c "INSERT INTO deploy_atestacoes VALUES ('r3', now(), 'omie-financeiro', 'v1.13-dre-nao-resultado', '$FONTE', 'sonda');"
+# P3: motor certo mas sugestor v1.1 ainda servido (sugeriria nao_resultado entre empresas) ⇒ barra
+P -q -c "INSERT INTO deploy_atestacoes VALUES ('s1', now(), 'fin-suggest-mapping', 'v1.1-gate-auth-canonico', 'velha', 'sonda');"
+if out=$(aplica_mapa 2>&1); then bad "P3 aplicou com fin-suggest-mapping v1.1"; else
+  case "$out" in *"precondicao: fin-suggest-mapping servida"*) ok "P3 precondição barra sugestor velho" ;; *) bad "P3 outro motivo: ${out:0:200}" ;; esac; fi
+eq "P3b mapa intacto" "$(snap)" "$MAPA_VIGENTE"
+P -q -c "INSERT INTO deploy_atestacoes VALUES ('s2', now() + interval '1 s', 'fin-suggest-mapping', 'v1.2-nao-resultado-nao-sugerivel', '$FONTE_SUG', 'sonda');"
 
 # F-mapa: postcondição sabotada (contagem) tem de abortar; descrição do Omie renomeada também.
 cp "$MAPA" "$TMPD/sab-mapa.sql"
-sed -i.bak "s/IF v_ok IS DISTINCT FROM 236 THEN/IF v_ok IS DISTINCT FROM 237 THEN/" "$TMPD/sab-mapa.sql"
+sed -i.bak "s/IF v_ok IS DISTINCT FROM 232 THEN/IF v_ok IS DISTINCT FROM 233 THEN/" "$TMPD/sab-mapa.sql"
 if cmp -s "$TMPD/sab-mapa.sql" "$MAPA"; then bad "F-mapa-contagem: sed não aplicou"; else
   if aplica_mapa "$TMPD/sab-mapa.sql" >/dev/null 2>&1; then bad "F-mapa-contagem: sabotada PASSOU"; else ok "F-mapa-contagem: postcondição abortou"; fi; fi
 eq "F-mapa-contagem: rollback" "$(snap)" "$MAPA_VIGENTE"
@@ -131,13 +138,13 @@ P -q -c "UPDATE fin_categorias SET descricao = 'Pagamento de Empréstimos', upda
 # C1: outra mão gravou decisão divergente antes do apply ⇒ aborta (não convive em silêncio)
 P -q -c "INSERT INTO fin_categoria_dre_mapping (company, omie_codigo, dre_linha) VALUES ('oben','2.05.03','despesas_operacionais');"
 if out=$(aplica_mapa 2>&1); then bad "C1 aplicou sobre decisão divergente"; else
-  case "$out" in *"postcondicao: 235 de 236"*) ok "C1 decisão divergente aborta (235 de 236)" ;; *) bad "C1 outro motivo: ${out:0:200}" ;; esac; fi
+  case "$out" in *"postcondicao: 231 de 232"*) ok "C1 decisão divergente aborta (231 de 232)" ;; *) bad "C1 outro motivo: ${out:0:200}" ;; esac; fi
 P -q -c "DELETE FROM fin_categoria_dre_mapping WHERE company='oben' AND omie_codigo='2.05.03';"
 
 # A: o controle verde
 aplica_mapa && ok "A0 mapa real aplicou (controle verde, mesma invocação)"
 aplica_mapa && ok "A0b reaplicação idempotente"
-eq "A1 total de linhas = vigente + 115 novas" "$(Pq -c "SELECT count(*) FROM fin_categoria_dre_mapping;")" "$((BASE_MAPA + 115))"
+eq "A1 total de linhas = vigente + 111 novas" "$(Pq -c "SELECT count(*) FROM fin_categoria_dre_mapping;")" "$((BASE_MAPA + 111))"
 L() { Pq -c "SELECT dre_linha FROM fin_categoria_dre_mapping WHERE company='$1' AND omie_codigo='$2';"; }
 eq "A2 oben empréstimo pago → fora_dre" "$(L oben 2.05.03)" "fora_dre"
 eq "A3 oben ICMS → ded_icms" "$(L oben 2.06.01)" "ded_icms"
@@ -153,7 +160,12 @@ eq "A11 devolução de compra (CR) → outras_receitas, nunca cmv" "$(L oben 1.0
 eq "A12 colacor 'Simples Nacional' histórico → das" "$(L colacor 2.06.99)" "das"
 eq "A13 _default intocado e sem patrimonial" "$(Pq -c "SELECT count(*) FILTER (WHERE dre_linha IN ('fora_dre','nao_resultado')) || '/' || count(*) FROM fin_categoria_dre_mapping WHERE company='_default';")" "0/36"
 eq "A14 nada mapeado em slot <Disponível>" "$(Pq -c "SELECT count(*) FROM fin_categoria_dre_mapping m JOIN fin_categorias c USING (company, omie_codigo) WHERE c.descricao LIKE '%Dispon%';")" "0"
-eq "A15 notas guardam a descrição da decisão" "$(Pq -c "SELECT count(*) FROM fin_categoria_dre_mapping WHERE notas LIKE 'mapa-proprio 2026-11-22 · desc=%';")" "125"
+eq "A15 notas guardam a descrição da decisão" "$(Pq -c "SELECT count(*) FROM fin_categoria_dre_mapping WHERE notas LIKE 'mapa-proprio 2026-11-22 · desc=%';")" "121"
+
+eq "A16 SC INSS/IRRF (retenção no bruto) → nao_resultado" "$(L colacor_sc 2.03.06)/$(L colacor_sc 2.03.08)" "nao_resultado/nao_resultado"
+eq "A17 SC FGTS (patronal real) segue despesa" "$(L colacor_sc 2.03.07)" "despesas_administrativas"
+eq "A18 colacor venda de bens → fora_dre (ganho não apurado)" "$(L colacor 1.04.06)" "fora_dre"
+eq "A19 ambíguos da fase 2 seguem sem decisão (2.03.78/2.06.93/2.06.94/2.01.01)" "$(L colacor 2.03.78)|$(L colacor 2.06.93)|$(L colacor 2.06.94)|$(L colacor 2.01.01)" "|||"
 
 echo "═══ PASS=$PASS FAIL=$FAIL ═══"
 [ "$FAIL" -eq 0 ] && echo "PROVA-VERDE-FIM"

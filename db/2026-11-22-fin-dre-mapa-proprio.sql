@@ -10,27 +10,37 @@
 -- reescopado pelo parecer Codex de 2026-11-22):
 --   • decisão EXATA por (empresa, código) só para as contas COM USO no histórico de
 --     fin_dre_competencia_base (+ as que a colacor já tinha). Conta nunca usada, slot <Disponível>
---     e grupo ambíguo ficam SEM mapa: título futuro nelas cai na heurística com mapeado:false.
+--     e grupo ambíguo ficam SEM decisão PRÓPRIA: título futuro nelas cai no `_default` (se o código
+--     existir lá — mapeado:true, limitação conhecida do merge) ou na heurística com mapeado:false.
 --   • duas classificações independentes (Claude por regra+exceção, Fable às cegas) reconciliadas;
 --     divergência resolvida mantendo a decisão vigente da colacor quando era só adm×operacional.
 --   • toda linha respeita a DIREÇÃO (CR em linha credora, CP em devedora, ou fora_dre/nao_resultado):
 --     o motor soma sem sinal. Por isso devolução de compra (1.03.01, CR) vai para outras_receitas,
---     não cmv. Exceções conhecidas: colacor 2.01.01 e 2.09.01 têm uso MISTO CR/CP (R$ 2,1 mil no
---     histórico) — nenhuma linha acerta as duas direções sem sinal por natureza (onda futura).
+--     não cmv (margem bruta subestimada em ~0,4% na oben — linha redutora de CMV é onda futura).
+--     Uso MISTO CR/CP fica sem decisão nova: colacor 2.01.01 (segue no `_default`) e 2.09.01
+--     (decisão da fase 2 intocada) — nenhuma linha acerta as duas direções sem sinal por natureza.
+--   • SC 2.03.06/2.03.08 (INSS/IRRF) = retenção já no salário BRUTO (errata F3 2026-07-09) ⇒
+--     nao_resultado. Venda de bem (colacor 1.04.06) = fora_dre: o ganho depende do valor contábil.
+--   • colacor 2.03.78, 2.06.93, 2.06.94 seguem SEM decisão (ambíguos registrados na fase 2: exigem
+--     conciliação contra a folha / a nota bruta / a nota de entrada — Codex adversarial).
 --   • a colacor troca 10 linhas fora_dre → nao_resultado (imobilizado, CAPEX, distribuição de lucro):
 --     não têm composição pendente e deixavam a DRE provisória por motivo falso.
 --
 -- Anti-deriva: UPDATE só onde a linha atual é a esperada; INSERT com ON CONFLICT DO NOTHING; a
--- POSTCONDIÇÃO exige os 236 pares exatos E a descrição de cada código em fin_categorias igual à
+-- POSTCONDIÇÃO exige os 232 pares exatos E a descrição de cada código em fin_categorias igual à
 -- da decisão (código reutilizado/renomeado no Omie ⇒ aborta em vez de classificar a conta nova
 -- com a decisão da velha).
--- ⚠️ `v_fonte_esperada` = hash de `omie-financeiro` em supabase/functions/_shared/sonda-fingerprints.ts
---    no commit que vai para prod. Mudou a edge → regrave o fingerprint E este literal.
+-- ⚠️ `v_fonte_*` = hashes de `omie-financeiro` e `fin-suggest-mapping` em
+--    supabase/functions/_shared/sonda-fingerprints.ts no commit que vai para prod. Mudou a edge →
+--    regrave o fingerprint E o literal. A `fin-suggest-mapping` v1.1 sugeriria `nao_resultado` de
+--    uma empresa para outra (lote "aplicar sugestões de alta") — por isso também é precondição.
 -- ============================================================================================
 
 DO $pre$
 DECLARE
   v_versao_esperada constant text := 'v1.13-dre-nao-resultado';
+  v_versao_sugestor constant text := 'v1.2-nao-resultado-nao-sugerivel';
+  v_fonte_sugestor  constant text := '970cd1e826bd395841fa809ac991b70b54e1dafa62dc30482c229828b52b1484';
   v_fonte_esperada  constant text := 'c81090bcaa7e35391f16010559883cded8a77a474c889dbc88006786c327416e';
   v record;
 BEGIN
@@ -51,6 +61,18 @@ BEGIN
   IF v.versao IS DISTINCT FROM v_versao_esperada OR v.fonte IS DISTINCT FROM v_fonte_esperada THEN
     RAISE EXCEPTION 'precondicao: omie-financeiro servida = % / % (via %, %) — esperado % / %',
       v.versao, v.fonte, v.via, v.observado_em, v_versao_esperada, v_fonte_esperada;
+  END IF;
+  SELECT t.versao, t.fonte, t.via, t.observado_em INTO v
+    FROM (
+      SELECT request_id, observado_em, versao, fonte, via FROM public.deploy_atestacoes WHERE edge = 'fin-suggest-mapping'
+      UNION ALL
+      SELECT request_id, observado_em, versao, fonte, via FROM public.deploy_atestacoes_janela_viva() WHERE edge = 'fin-suggest-mapping'
+    ) t
+   ORDER BY t.observado_em DESC, t.request_id DESC
+   LIMIT 1;
+  IF v.versao IS DISTINCT FROM v_versao_sugestor OR v.fonte IS DISTINCT FROM v_fonte_sugestor THEN
+    RAISE EXCEPTION 'precondicao: fin-suggest-mapping servida = % / % (via %, %) — esperado % / %',
+      v.versao, v.fonte, v.via, v.observado_em, v_versao_sugestor, v_fonte_sugestor;
   END IF;
 END
 $pre$;
@@ -82,17 +104,13 @@ INSERT INTO public.fin_categoria_dre_mapping (company, omie_codigo, dre_linha, n
   ('colacor', '1.04.02', 'outras_receitas', 'mapa-proprio 2026-11-22 · desc=Reembolso de Despesas'),
   ('colacor', '1.04.03', 'nao_resultado', 'mapa-proprio 2026-11-22 · desc=Empréstimos/Financiamentos · patrimonial definitivo (sem pendência)'),
   ('colacor', '1.04.05', 'outras_receitas', 'mapa-proprio 2026-11-22 · desc=Outras Receitas'),
-  ('colacor', '1.04.06', 'nao_resultado', 'mapa-proprio 2026-11-22 · desc=Venda de Bens · patrimonial definitivo (sem pendência)'),
-  ('colacor', '2.01.01', 'cmv', 'mapa-proprio 2026-11-22 · desc=Compras de Mercadorias para Revenda'),
+  ('colacor', '1.04.06', 'fora_dre', 'mapa-proprio 2026-11-22 · desc=Venda de Bens · composição pendente (principal×encargos ou ganho de alienação não apurado)'),
   ('colacor', '2.01.02', 'cmv', 'mapa-proprio 2026-11-22 · desc=Frete'),
   ('colacor', '2.01.03', 'cmv', 'mapa-proprio 2026-11-22 · desc=Compras de Materia Prima'),
   ('colacor', '2.01.98', 'deducoes', 'mapa-proprio 2026-11-22 · desc=Credito de Clientes'),
-  ('colacor', '2.03.78', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Adiantamento De Salário'),
   ('colacor', '2.04.13', 'ded_iss', 'mapa-proprio 2026-11-22 · desc=ISS'),
   ('colacor', '2.05.01', 'despesas_financeiras', 'mapa-proprio 2026-11-22 · desc=Seguros'),
   ('colacor', '2.05.02', 'despesas_financeiras', 'mapa-proprio 2026-11-22 · desc=Multas'),
-  ('colacor', '2.06.93', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Ret de Nota Fiscal de Serviço'),
-  ('colacor', '2.06.94', 'cmv', 'mapa-proprio 2026-11-22 · desc=ICMS ST'),
   ('colacor', '2.06.95', 'ded_icms', 'mapa-proprio 2026-11-22 · desc=ICMS Diferença de alíquota'),
   ('colacor', '2.06.99', 'das', 'mapa-proprio 2026-11-22 · desc=Simples Nacional'),
   ('colacor', '2.11.85', 'cmv', 'mapa-proprio 2026-11-22 · desc=Material uso produção'),
@@ -112,9 +130,9 @@ INSERT INTO public.fin_categoria_dre_mapping (company, omie_codigo, dre_linha, n
   ('colacor_sc', '2.03.03', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Férias'),
   ('colacor_sc', '2.03.04', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Rescisões'),
   ('colacor_sc', '2.03.05', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=13º Salário'),
-  ('colacor_sc', '2.03.06', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=INSS'),
+  ('colacor_sc', '2.03.06', 'nao_resultado', 'mapa-proprio 2026-11-22 · desc=INSS · patrimonial definitivo (sem pendência)'),
   ('colacor_sc', '2.03.07', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=FGTS'),
-  ('colacor_sc', '2.03.08', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=IRRF'),
+  ('colacor_sc', '2.03.08', 'nao_resultado', 'mapa-proprio 2026-11-22 · desc=IRRF · patrimonial definitivo (sem pendência)'),
   ('colacor_sc', '2.03.11', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Vale Transporte'),
   ('colacor_sc', '2.03.14', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Outros Benefícios'),
   ('colacor_sc', '2.03.94', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Alimentação e Lanches'),
@@ -126,7 +144,7 @@ INSERT INTO public.fin_categoria_dre_mapping (company, omie_codigo, dre_linha, n
   ('colacor_sc', '2.04.03', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Água e Esgoto'),
   ('colacor_sc', '2.04.09', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=IPTU'),
   ('colacor_sc', '2.04.11', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Advogados'),
-  ('colacor_sc', '2.05.03', 'fora_dre', 'mapa-proprio 2026-11-22 · desc=Pagamento de Empréstimos · parcela principal+encargos sem separação (composição pendente)'),
+  ('colacor_sc', '2.05.03', 'fora_dre', 'mapa-proprio 2026-11-22 · desc=Pagamento de Empréstimos · composição pendente (principal×encargos ou ganho de alienação não apurado)'),
   ('colacor_sc', '2.06.01', 'ded_icms', 'mapa-proprio 2026-11-22 · desc=ICMS'),
   ('colacor_sc', '2.06.97', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Taxas Diversas'),
   ('colacor_sc', '2.06.98', 'ded_icms', 'mapa-proprio 2026-11-22 · desc=ICMS Diferença de alíquota'),
@@ -167,13 +185,13 @@ INSERT INTO public.fin_categoria_dre_mapping (company, omie_codigo, dre_linha, n
   ('oben', '2.04.97', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Manutenção de Veiculos'),
   ('oben', '2.04.98', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Manutenção e Reparos'),
   ('oben', '2.04.99', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Consultoria'),
-  ('oben', '2.05.03', 'fora_dre', 'mapa-proprio 2026-11-22 · desc=Pagamento de Empréstimos · parcela principal+encargos sem separação (composição pendente)'),
+  ('oben', '2.05.03', 'fora_dre', 'mapa-proprio 2026-11-22 · desc=Pagamento de Empréstimos · composição pendente (principal×encargos ou ganho de alienação não apurado)'),
   ('oben', '2.06.01', 'ded_icms', 'mapa-proprio 2026-11-22 · desc=ICMS'),
   ('oben', '2.06.03', 'ded_pis', 'mapa-proprio 2026-11-22 · desc=PIS'),
   ('oben', '2.06.04', 'ded_cofins', 'mapa-proprio 2026-11-22 · desc=COFINS'),
   ('oben', '2.06.05', 'irpj', 'mapa-proprio 2026-11-22 · desc=IRPJ'),
   ('oben', '2.06.06', 'csll', 'mapa-proprio 2026-11-22 · desc=Contribuição Social'),
-  ('oben', '2.06.94', 'fora_dre', 'mapa-proprio 2026-11-22 · desc=Parcelamento Impostos Federais · parcela principal+encargos sem separação (composição pendente)'),
+  ('oben', '2.06.94', 'fora_dre', 'mapa-proprio 2026-11-22 · desc=Parcelamento Impostos Federais · composição pendente (principal×encargos ou ganho de alienação não apurado)'),
   ('oben', '2.06.96', 'ded_icms', 'mapa-proprio 2026-11-22 · desc=ICMS Diferença de alíquota'),
   ('oben', '2.06.97', 'despesas_administrativas', 'mapa-proprio 2026-11-22 · desc=Taxas Diversas'),
   ('oben', '2.06.98', 'csll', 'mapa-proprio 2026-11-22 · desc=CSLL'),
@@ -208,8 +226,7 @@ BEGIN
   ('colacor', '1.04.02', 'outras_receitas', 'Reembolso de Despesas'),
   ('colacor', '1.04.03', 'nao_resultado', 'Empréstimos/Financiamentos'),
   ('colacor', '1.04.05', 'outras_receitas', 'Outras Receitas'),
-  ('colacor', '1.04.06', 'nao_resultado', 'Venda de Bens'),
-  ('colacor', '2.01.01', 'cmv', 'Compras de Mercadorias para Revenda'),
+  ('colacor', '1.04.06', 'fora_dre', 'Venda de Bens'),
   ('colacor', '2.01.02', 'cmv', 'Frete'),
   ('colacor', '2.01.03', 'cmv', 'Compras de Materia Prima'),
   ('colacor', '2.01.96', 'despesas_administrativas', 'Compra de Material Uso e Consumo'),
@@ -239,7 +256,6 @@ BEGIN
   ('colacor', '2.03.14', 'despesas_administrativas', 'Premios de Produtividade'),
   ('colacor', '2.03.76', 'nao_resultado', 'Distribuição de Lucros'),
   ('colacor', '2.03.77', 'despesas_administrativas', 'FGTS RESCISÓRIO'),
-  ('colacor', '2.03.78', 'despesas_administrativas', 'Adiantamento De Salário'),
   ('colacor', '2.03.79', 'despesas_administrativas', 'Segurança e Medicina do Trabalho'),
   ('colacor', '2.03.80', 'despesas_administrativas', 'Paq CCT Contribuição Sindical'),
   ('colacor', '2.03.81', 'despesas_administrativas', 'Benefícios Concedidos'),
@@ -293,8 +309,6 @@ BEGIN
   ('colacor', '2.06.90', 'fora_dre', 'Parcelamento Impostos Federais'),
   ('colacor', '2.06.91', 'csll', 'CSLL'),
   ('colacor', '2.06.92', 'despesas_administrativas', 'Taxas Diversas'),
-  ('colacor', '2.06.93', 'despesas_administrativas', 'Ret de Nota Fiscal de Serviço'),
-  ('colacor', '2.06.94', 'cmv', 'ICMS ST'),
   ('colacor', '2.06.95', 'ded_icms', 'ICMS Diferença de alíquota'),
   ('colacor', '2.06.96', 'fora_dre', 'Simples Nacional parcelados'),
   ('colacor', '2.06.97', 'fora_dre', 'ICMS Parcelados'),
@@ -359,9 +373,9 @@ BEGIN
   ('colacor_sc', '2.03.03', 'despesas_administrativas', 'Férias'),
   ('colacor_sc', '2.03.04', 'despesas_administrativas', 'Rescisões'),
   ('colacor_sc', '2.03.05', 'despesas_administrativas', '13º Salário'),
-  ('colacor_sc', '2.03.06', 'despesas_administrativas', 'INSS'),
+  ('colacor_sc', '2.03.06', 'nao_resultado', 'INSS'),
   ('colacor_sc', '2.03.07', 'despesas_administrativas', 'FGTS'),
-  ('colacor_sc', '2.03.08', 'despesas_administrativas', 'IRRF'),
+  ('colacor_sc', '2.03.08', 'nao_resultado', 'IRRF'),
   ('colacor_sc', '2.03.11', 'despesas_administrativas', 'Vale Transporte'),
   ('colacor_sc', '2.03.14', 'despesas_administrativas', 'Outros Benefícios'),
   ('colacor_sc', '2.03.94', 'despesas_administrativas', 'Alimentação e Lanches'),
@@ -440,8 +454,8 @@ BEGIN
   SELECT count(*) INTO v_ok
     FROM _mapa_esperado e JOIN public.fin_categoria_dre_mapping m
       ON m.company = e.company AND m.omie_codigo = e.codigo AND m.dre_linha = e.linha;
-  IF v_ok IS DISTINCT FROM 236 THEN
-    RAISE EXCEPTION 'postcondicao: % de 236 pares (codigo ja mapeado para outra linha por outra mao?)', v_ok;
+  IF v_ok IS DISTINCT FROM 232 THEN
+    RAISE EXCEPTION 'postcondicao: % de 232 pares (codigo ja mapeado para outra linha por outra mao?)', v_ok;
   END IF;
 
   SELECT string_agg(e.company || ' ' || e.codigo || ' [' || coalesce(c.descricao, '<ausente>') || ']', '; ')

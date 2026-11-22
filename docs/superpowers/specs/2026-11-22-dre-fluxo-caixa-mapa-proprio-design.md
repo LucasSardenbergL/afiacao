@@ -2,6 +2,8 @@
 
 > 2026-11-22. Money-path. Levantamento: medido em prod via `psql-ro` (janela 12m fechados 2025-11..2026-10).
 > Ordem: **Onda A (DRE: motor v1.6 + mapa explícito por empresa)** → **Onda B (DRE: extrato sem título)** → **Onda C (DFC: fluxo_linha + realizado por atividade)**.
+>
+> ⚠️ **REESCOPADO após o parecer Codex (2026-11-22) — o que foi entregue está em `docs/historico/dre-mapa-proprio-nao-resultado.md`:** A.1 (sinal por natureza) foi **descartado** nesta onda (quebra PE/orçamento); entrou a linha `nao_resultado` (v1.13) e o mapa só das contas com uso, respeitando a direção. Ondas B e C exigem antes resolver identidade/dedupe de `fin_movimentacoes` (P0 do Codex).
 
 ## 1. Diagnóstico (fatos medidos)
 

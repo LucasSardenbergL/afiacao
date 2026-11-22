@@ -374,3 +374,14 @@ describe('despesasNoDRE / somaCodigosPorPrefixo — fase 2 tira o fora_dre da fa
     expect(somaCodigosPorPrefixo([legado], ['2.03'])).toBe(60);
   });
 });
+
+describe('v1.13 — nao_resultado (patrimonial) fora do PE e da folha', () => {
+  it('distribuição (2.03.76) e INSS retido (2.03.06) em nao_resultado não entram na folha (Codex: R$ 900 viravam folha)', () => {
+    const m = mesUniforme(2026, 1, {
+      despesas: { '2.03.01': 10, '2.03.76': 900, '2.03.06': 3 },
+      composicao_despesas: { '2.03.01': { despesas_administrativas: 10 }, '2.03.76': { nao_resultado: 900 }, '2.03.06': { nao_resultado: 3 } },
+    });
+    expect(despesasNoDRE(m)).toEqual({ '2.03.01': 10 });
+    expect(somaCodigosPorPrefixo([m], ['2.03'])).toBe(10);
+  });
+});
