@@ -22,6 +22,9 @@ const AdminCustomers = () => {
     buscando,
     filtroNoServidor,
     totalRecorte,
+    scoresEstado,
+    refetchScores,
+    origemLista,
     estadoDeepLink,
     retryDeepLink,
     categories,
@@ -33,6 +36,8 @@ const AdminCustomers = () => {
     orders,
     loadingTools,
     loadingOrders,
+    ordersErro,
+    retryOrders,
     addToolDialogOpen,
     setAddToolDialogOpen,
     hasNextPage,
@@ -106,6 +111,9 @@ const AdminCustomers = () => {
           categories={categories}
           loadingTools={loadingTools}
           loadingOrders={loadingOrders}
+          ordersErro={ordersErro}
+          onRetryOrders={retryOrders}
+          origemLista={origemLista}
           onBack={handleBack}
           onAddTool={() => setAddToolDialogOpen(true)}
           onDeleteTool={handleDeleteTool}
@@ -128,6 +136,8 @@ const AdminCustomers = () => {
           buscando={buscando}
           filtroNoServidor={filtroNoServidor}
           totalRecorte={totalRecorte}
+          scoresEstado={scoresEstado}
+          onRetryScores={refetchScores}
         />
       )}
     </>

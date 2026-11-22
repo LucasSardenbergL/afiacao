@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   formatDocument, HEALTH_CLASSES, fmt, NAO_APURADO, fmtContagem, fmtGasto, fmtPrioridade,
-  classeSaudeExibida, metricasExibiveis,
+  classeSaudeExibida, metricasExibiveis, estadoFiltroSaude, prioridadeDisponivel,
 } from "../config";
 
 describe("adminCustomers/config", () => {
@@ -49,5 +49,31 @@ describe("adminCustomers/config — ausente ≠ zero", () => {
     expect(classeSaudeExibida(null).label).toBe("Não avaliado");
     expect(classeSaudeExibida("xpto").label).toBe("Não avaliado");
     expect(classeSaudeExibida("atencao").label).toBe("Atenção");
+  });
+});
+
+describe('estadoFiltroSaude — mapa vazio de scores não vira "nenhum Crítico"', () => {
+  it('"Todos" é inativo em qualquer estado', () => {
+    expect(estadoFiltroSaude({ filtro: 'all', filtroNoServidor: false, scoresEstado: 'falha' })).toBe('inativo');
+  });
+  it('base completa: o servidor aplica — scores locais não importam', () => {
+    expect(estadoFiltroSaude({ filtro: 'critico', filtroNoServidor: true, scoresEstado: 'carregando' })).toBe('aplicado');
+  });
+  it('carteira: só aplica com scores lidos; senão herda carregando/falha', () => {
+    expect(estadoFiltroSaude({ filtro: 'critico', filtroNoServidor: false, scoresEstado: 'ok' })).toBe('aplicado');
+    expect(estadoFiltroSaude({ filtro: 'critico', filtroNoServidor: false, scoresEstado: 'carregando' })).toBe('carregando');
+    expect(estadoFiltroSaude({ filtro: 'sem_historico', filtroNoServidor: false, scoresEstado: 'falha' })).toBe('falha');
+  });
+});
+
+describe('prioridadeDisponivel', () => {
+  it('carteira em "prioridade" sem scores lidos: indisponível (cai no A–Z e a tela avisa)', () => {
+    expect(prioridadeDisponivel({ ordem: 'prioridade', filtroNoServidor: false, scoresEstado: 'carregando' })).toBe(false);
+    expect(prioridadeDisponivel({ ordem: 'prioridade', filtroNoServidor: false, scoresEstado: 'falha' })).toBe(false);
+    expect(prioridadeDisponivel({ ordem: 'prioridade', filtroNoServidor: false, scoresEstado: 'ok' })).toBe(true);
+  });
+  it('A–Z e base completa sempre disponíveis', () => {
+    expect(prioridadeDisponivel({ ordem: 'nome', filtroNoServidor: false, scoresEstado: 'falha' })).toBe(true);
+    expect(prioridadeDisponivel({ ordem: 'prioridade', filtroNoServidor: true, scoresEstado: 'falha' })).toBe(true);
   });
 });

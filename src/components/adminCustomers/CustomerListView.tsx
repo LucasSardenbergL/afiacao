@@ -1,6 +1,7 @@
 // Lista de clientes (segmentos, busca, filtros, tabela densa, scroll infinito).
 // Extraído verbatim de src/pages/AdminCustomers.tsx (god-component split).
 import { useState, useMemo, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { Button } from '@/components/ui/button';
@@ -21,11 +22,13 @@ import { cn } from '@/lib/utils';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useCustomerSegments } from '@/hooks/useCustomerSegments';
 import { decodeHtmlEntities } from '@/lib/format';
+import { lerRolagemARestaurar } from './navegacao';
 import {
-  HEALTH_CLASSES, NAO_APURADO, classeSaudeExibida, fmtContagem, fmtGasto, fmtPrioridade, formatDocument, metricasExibiveis,
-  motivoContato, normalizarOrdem, rotuloContagem, TAMANHO_PAGINA_CLIENTES, type OrdemClientes,
+  HEALTH_CLASSES, NAO_APURADO, classeSaudeExibida, estadoFiltroSaude, fmtContagem, fmtGasto, fmtPrioridade, formatDocument,
+  metricasExibiveis, motivoContato, normalizarOrdem, prioridadeDisponivel, rotuloContagem, TAMANHO_PAGINA_CLIENTES,
+  type EstadoScores, type OrdemClientes,
 } from './config';
-import { registrarUsoClientes, type ModoClientes } from './sensorClientes';
+import { modoClientes, registrarUsoClientes, type ModoClientes } from './sensorClientes';
 import type { Customer, ClientScore } from './types';
 
 /** Ajuda da coluna "Prioridade", em linguagem de vendedor. */
@@ -50,6 +53,8 @@ export function CustomerListView({
   buscando = false,
   filtroNoServidor = false,
   totalRecorte = null,
+  scoresEstado = 'ok',
+  onRetryScores,
 }: {
   customers: Customer[];
   scores: Map<string, ClientScore>;
@@ -74,22 +79,28 @@ export function CustomerListView({
   filtroNoServidor?: boolean;
   /** Tamanho do recorte (busca + saúde) no servidor; `null` = não informado. */
   totalRecorte?: number | null;
+  /** Leitura dos scores: na carteira o filtro de saúde e a prioridade dependem dela (em memória). */
+  scoresEstado?: EstadoScores;
+  /** Retry só dos scores. */
+  onRetryScores?: () => void;
 }) {
   // Filtros sincronizados com URL (compartilhável, sobrevive a F5)
   const [urlState, setUrlState] = useUrlState({ search: '', health: 'all', ordem: 'prioridade' });
   const searchQuery = urlState.search;
   const filterHealth = urlState.health;
-  // A ordem só é escolhível na base completa, onde o servidor a aplica antes de paginar. A carteira
-  // segue A–Z (a ordem de sempre dela) — sem controle que pareça ordenar e não ordene.
+  // A ordem vale nos DOIS modos: na base completa o servidor a aplica antes de paginar; na carteira
+  // (lida inteira em memória, com os scores) ela é aplicada aqui — espelho da ordem do servidor.
   const ordem: OrdemClientes = normalizarOrdem(urlState.ordem);
-  // Sensor de uso (sensorClientes.ts): o modo que o vendedor VÊ — a carteira não tem ordem escolhível.
-  const modo: ModoClientes = isCarteira ? 'carteira' : ordem;
+  // Sensor de uso (sensorClientes.ts): o modo que o vendedor VÊ, carteira e base separadas.
+  const modo: ModoClientes = modoClientes(isCarteira, ordem);
   const setFilterHealth = (v: string) => {
     if (v !== filterHealth) registrarUsoClientes({ acao: 'filtro_saude', modo, valor: v });
     setUrlState({ health: v });
   };
   const setOrdem = (v: OrdemClientes, origem: 'menu' | 'cabecalho') => {
-    if (!isCarteira && v !== ordem) registrarUsoClientes({ acao: 'modo_trocado', de: ordem, para: v, origem });
+    if (v !== ordem) {
+      registrarUsoClientes({ acao: 'modo_trocado', de: modo, para: modoClientes(isCarteira, v), origem });
+    }
     setUrlState({ ordem: v });
   };
   const carregarMais = () => {
@@ -99,8 +110,11 @@ export function CustomerListView({
     onLoadMore();
   };
   const sentinelRef = useInfiniteScroll(carregarMais, hasNextPage && !isFetchingNextPage);
-  const ordenavel = filtroNoServidor;
+  // Ordenável nos dois modos (antes só na base completa: a vendedora só tinha o A–Z).
+  const ordenavel = true;
   const filtrando = !!searchQuery || filterHealth !== 'all';
+  const estadoSaude = estadoFiltroSaude({ filtro: filterHealth, filtroNoServidor, scoresEstado });
+  const prioridadeOk = prioridadeDisponivel({ ordem, filtroNoServidor, scoresEstado });
 
   // O input de busca tem estado LOCAL e empurra pra URL com debounce: escrever
   // na URL a cada tecla (history.replace) re-renderizava todos os subscribers
@@ -148,8 +162,9 @@ export function CustomerListView({
         c.phone?.toLowerCase().includes(q)
       );
     }
-    // Base completa: o filtro de saúde também foi ao servidor, ANTES da paginação.
-    if (filterHealth !== 'all' && !filtroNoServidor) {
+    // Base completa: o filtro de saúde também foi ao servidor, ANTES da paginação. Carteira sem os
+    // scores lidos (carregando/falha): NÃO filtra — o mapa vazio diria "nenhum Crítico"; a tela avisa.
+    if (filterHealth !== 'all' && !filtroNoServidor && estadoSaude === 'aplicado') {
       result = result.filter(c => {
         const score = scores.get(c.user_id);
         // sem_historico tem filtro próprio; nos filtros de SAÚDE ele NÃO entra (o badge dele é
@@ -159,8 +174,19 @@ export function CustomerListView({
         return score?.health_class === filterHealth;
       });
     }
+    // A ordem já vem aplicada: do servidor (base completa) ou do useClientesScope (carteira).
     return result;
-  }, [customers, searchQuery, filterHealth, scores, buscaNoServidor, filtroNoServidor]);
+  }, [customers, searchQuery, filterHealth, scores, buscaNoServidor, filtroNoServidor, estadoSaude]);
+
+  // Voltar da ficha: a lista volta na mesma posição (a rolagem viaja no `location.state`).
+  const location = useLocation();
+  const rolagemRestaurada = useRef(false);
+  useEffect(() => {
+    if (loading || rolagemRestaurada.current) return;
+    rolagemRestaurada.current = true;
+    const y = lerRolagemARestaurar(location.state);
+    if (y != null) requestAnimationFrame(() => window.scrollTo({ top: y }));
+  }, [loading, location.state]);
 
   // Sensor: a lista montou PRONTA, 1x por montagem, no modo em que abriu (o ledger dedupa por dia).
   const aberturaRegistrada = useRef(false);
@@ -346,6 +372,44 @@ export function CustomerListView({
           </DropdownMenu>
         )}
       </div>
+
+      {(estadoSaude === 'carregando' || estadoSaude === 'falha') && (
+        <div
+          role={estadoSaude === 'falha' ? 'alert' : 'status'}
+          className={cn(
+            'flex items-center justify-between gap-3 rounded-lg border p-3 text-xs',
+            estadoSaude === 'falha'
+              ? 'border-status-warning/30 bg-status-warning/5 text-status-warning'
+              : 'border-border bg-muted/30 text-muted-foreground',
+          )}
+        >
+          <span className="inline-flex items-center gap-2">
+            {estadoSaude === 'carregando' ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden /> : <AlertTriangle className="w-3.5 h-3.5" aria-hidden />}
+            {estadoSaude === 'carregando'
+              ? 'Carregando a saúde dos clientes — o filtro de saúde ainda não foi aplicado.'
+              : 'Não foi possível ler a saúde dos clientes — o filtro de saúde NÃO foi aplicado. A lista abaixo mostra todos os clientes da busca.'}
+          </span>
+          {estadoSaude === 'falha' && onRetryScores && (
+            <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={onRetryScores}>Tentar novamente</Button>
+          )}
+        </div>
+      )}
+      {!prioridadeOk && estadoSaude !== 'carregando' && estadoSaude !== 'falha' && (
+        <div
+          role={scoresEstado === 'falha' ? 'alert' : 'status'}
+          className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground"
+        >
+          <span className="inline-flex items-center gap-2">
+            {scoresEstado === 'carregando' ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden /> : <AlertTriangle className="w-3.5 h-3.5" aria-hidden />}
+            {scoresEstado === 'carregando'
+              ? 'Carregando as prioridades — por enquanto a lista está em ordem alfabética.'
+              : 'Não foi possível ler as prioridades — a lista está em ordem alfabética.'}
+          </span>
+          {scoresEstado === 'falha' && onRetryScores && (
+            <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={onRetryScores}>Tentar novamente</Button>
+          )}
+        </div>
+      )}
 
       {/* Dense Table */}
       <Card>

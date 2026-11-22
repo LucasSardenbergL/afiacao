@@ -96,7 +96,7 @@ export function ScanBar({
   return (
     <div
       className={cn(
-        'sticky top-topo-conteudo z-20 -mx-4 lg:-mx-6 px-4 lg:px-6 py-3 bg-card border-b border-border',
+        'sticky top-topbar z-20 -mx-4 lg:-mx-6 px-4 lg:px-6 py-3 bg-card border-b border-border',
         className,
       )}
     >

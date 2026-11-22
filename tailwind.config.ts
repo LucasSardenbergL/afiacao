@@ -147,10 +147,6 @@ export default {
         // viewport-fit=cover: a barra do app cresce pela área segura do topo (barra de status do iPhone
         // no PWA `black-translucent`); h-/pt-/top-topbar acompanham. Sem notch, env() = 0 → 48px.
         "topbar": "calc(48px + env(safe-area-inset-top, 0px))",
-        // Onde o conteúdo começa: topbar + faixa "Ver como" (o shell publica `--faixa-ver-como`
-        // = 1.75rem na lente; fora dela, 0). Use em sticky/fixed/altura de página — não precisa
-        // de useImpersonation() (que lança fora do provider).
-        "topo-conteudo": "calc(48px + env(safe-area-inset-top, 0px) + var(--faixa-ver-como, 0px))",
       },
       borderRadius: {
         lg: "var(--radius)",

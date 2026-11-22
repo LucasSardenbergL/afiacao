@@ -149,7 +149,7 @@ export default function LoteScannerOCR({ onLoteCapturado, onCancelar }: LoteScan
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-card border-b border-border">
         <h2 className="text-base font-semibold text-foreground flex items-center gap-2">

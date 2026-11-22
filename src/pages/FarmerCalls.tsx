@@ -597,7 +597,7 @@ const FarmerCalls = () => {
         <Button
           size="sm"
           variant="outline"
-          className="fixed right-[calc(1rem+env(safe-area-inset-right))] top-[calc(theme(spacing.topo-conteudo)+2rem)] z-30 gap-1.5"
+          className="fixed right-4 top-20 z-30 gap-1.5"
           onClick={() => setTranscriptionPanelOpen(true)}
         >
           Mostrar transcrição

@@ -41,7 +41,14 @@ export const FEED_PAGE_SIZE = 50;
 const EMPRESAS: readonly Account[] = ['all', 'oben', 'colacor', 'colacor_sc'];
 const ehEmpresa = (v: string): v is Account => (EMPRESAS as readonly string[]).includes(v);
 
-const FILTROS_PADRAO = { q: '', empresa: 'all', status: 'todos', periodo: 'tudo', ordem: 'recentes' };
+const FILTROS_PADRAO = { q: '', empresa: 'all', status: 'todos', periodo: 'tudo', ordem: 'recentes', customer: '' };
+
+/** `?customer=` válido (uuid do `customer_user_id`) ou `null`. Valor torto cai no padrão (todos). */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function clienteDoFiltro(v: string | null | undefined): string | null {
+  const t = (v ?? '').trim();
+  return UUID.test(t) ? t.toLowerCase() : null;
+}
 
 export function useSalesOrders() {
   const navigate = useNavigate();
@@ -56,6 +63,10 @@ export function useSalesOrders() {
   const statusFilter: FiltroStatusFeed = ehFiltroStatus(filtros.status) ? filtros.status : 'todos';
   const periodo: PeriodoFeed = ehPeriodo(filtros.periodo) ? filtros.periodo : 'tudo';
   const ordem: OrdemFeed = ehOrdem(filtros.ordem) ? filtros.ordem : 'recentes';
+  // Pedidos de UM cliente (a ficha manda `/sales?customer=<id>`): antes o parâmetro era ignorado e o
+  // "Ver todos" do cliente abria todos os pedidos da empresa.
+  const clienteFiltro = clienteDoFiltro(filtros.customer);
+  const limparCliente = () => setFiltros({ customer: '' });
   const setSearch = (q: string) => setFiltros({ q });
   const setAccountFilter = (empresa: Account) => {
     track('sales.lista_filtro', { tipo: 'empresa', valor: empresa });
@@ -75,7 +86,7 @@ export function useSalesOrders() {
   };
   // Uma escrita só: TODAS as chaves voltam ao padrão juntas na URL.
   const limparFiltros = () => setFiltros(FILTROS_PADRAO);
-  const comFiltro = !!search.trim() || accountFilter !== 'all' || statusFilter !== 'todos' || periodo !== 'tudo';
+  const comFiltro = !!search.trim() || accountFilter !== 'all' || statusFilter !== 'todos' || periodo !== 'tudo' || !!clienteFiltro;
   // Seleção guarda a LINHA, não só o id: trocar a busca tira o pedido da tela, e o bulk delete ainda
   // precisa dele (omie_pedido_id, origin).
   const [selecionados, setSelecionados] = useState<Map<string, OrderFeedRow>>(new Map());
@@ -93,7 +104,7 @@ export function useSalesOrders() {
   // O corte do período entra na key já calculado: virar o dia muda o corte e a key (sem cache velho).
   const cortePeriodo = filtroDoPeriodo(periodo);
   const feedQuery = useInfiniteQuery({
-    queryKey: [...feedKeyBase, accountFilter, padrao, statusFilter, cortePeriodo, ordem],
+    queryKey: [...feedKeyBase, accountFilter, padrao, statusFilter, cortePeriodo, ordem, clienteFiltro],
     enabled: isStaff && !!user,
     staleTime: 60_000,
     // Trocar a busca mantém a lista anterior na tela até a nova chegar (sem piscar o skeleton).
@@ -105,6 +116,7 @@ export function useSalesOrders() {
         .from('order_feed')
         .select(COLUNAS_LISTAGEM_FEED, { count: pageParam === 0 && !padrao ? 'exact' : undefined });
       if (accountFilter !== 'all') query = query.eq('account', accountFilter);
+      if (clienteFiltro) query = query.eq('customer_user_id', clienteFiltro);
       if (padrao) query = query.ilike('busca', padrao);
       if (statusFilter === 'rascunhos') query = query.eq('status', 'rascunho');
       else if (statusFilter !== 'todos') query = query.in('status', [...STATUS_DO_FILTRO[statusFilter]]);
@@ -448,6 +460,8 @@ export function useSalesOrders() {
     setSearch,
     limparFiltros,
     comFiltro,
+    clienteFiltro,
+    limparCliente,
     selectedIds,
     // As LINHAS selecionadas (inclusive as que a busca/aba atual tirou da tela) — o diálogo de
     // exclusão em lote mostra o alcance real, não só a contagem.

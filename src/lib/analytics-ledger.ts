@@ -119,7 +119,8 @@ export type EventoLedger =
   | 'clientes.filtro_saude'
   | 'clientes.busca_usada'
   | 'clientes.cliente_aberto'
-  | 'clientes.pagina_carregada';
+  | 'clientes.pagina_carregada'
+  | 'clientes.ficha_acao';
 
 /**
  * Registra um evento decisório no ledger server-side.

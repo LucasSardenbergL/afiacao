@@ -4,7 +4,10 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import type { Customer, ClientScore } from '../types';
 
 const usoMock = vi.fn();
-vi.mock('../sensorClientes', () => ({ registrarUsoClientes: (u: unknown) => usoMock(u) }));
+vi.mock('../sensorClientes', async (original) => ({
+  ...(await original<typeof import('../sensorClientes')>()),
+  registrarUsoClientes: (u: unknown) => usoMock(u),
+}));
 
 import { CustomerListView } from '../CustomerListView';
 
@@ -44,9 +47,17 @@ describe('CustomerListView — sensor de uso', () => {
     expect(aberturas).toEqual([[{ acao: 'lista_aberta', modo: 'nome' }]]);
   });
 
-  it('carteira abre como modo "carteira" (sem ordem escolhível)', () => {
+  it('carteira abre no modo da ordem que a vendedora vê (padrão: priorizar)', () => {
     setup({ isCarteira: true, filtroNoServidor: false, hasNextPage: false });
-    expect(usoMock).toHaveBeenCalledWith({ acao: 'lista_aberta', modo: 'carteira' });
+    expect(usoMock).toHaveBeenCalledWith({ acao: 'lista_aberta', modo: 'carteira_prioridade' });
+  });
+
+  it('carteira tem o seletor de ordem e a troca é medida como carteira', () => {
+    setup({ isCarteira: true, filtroNoServidor: false, hasNextPage: false });
+    fireEvent.click(screen.getByRole('button', { name: /^Cliente/ }));
+    expect(usoMock).toHaveBeenCalledWith({
+      acao: 'modo_trocado', de: 'carteira_prioridade', para: 'carteira_nome', origem: 'cabecalho',
+    });
   });
 
   it('não registra abertura enquanto carrega', () => {
@@ -104,5 +115,35 @@ describe('CustomerListView — sensor de uso', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Carregar mais' }));
     expect(usoMock).toHaveBeenCalledWith({ acao: 'pagina_carregada', modo: 'prioridade', pagina: 2 });
     expect(props.onLoadMore).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('CustomerListView — filtro de saúde na carteira sem scores lidos', () => {
+  const carteira = { isCarteira: true, filtroNoServidor: false, hasNextPage: false, scores: new Map() } as const;
+
+  it('scores carregando: avisa e NÃO diz "nenhum cliente" — a lista segue à vista', () => {
+    setup({ ...carteira, scoresEstado: 'carregando' }, '/admin/customers?health=critico');
+    expect(screen.getByText(/Carregando a saúde dos clientes/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nenhum cliente com esses filtros/)).not.toBeInTheDocument();
+    expect(screen.getByText('Alfa')).toBeInTheDocument();
+  });
+
+  it('scores com falha: alerta com "Tentar novamente" que refaz só os scores', () => {
+    const onRetryScores = vi.fn();
+    setup({ ...carteira, scoresEstado: 'falha', onRetryScores }, '/admin/customers?health=critico');
+    expect(screen.getByRole('alert')).toHaveTextContent(/filtro de saúde NÃO foi aplicado/);
+    fireEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }));
+    expect(onRetryScores).toHaveBeenCalledTimes(1);
+  });
+
+  it('busca por nome continua valendo com os scores em falha', () => {
+    setup({ ...carteira, scoresEstado: 'falha' }, '/admin/customers?health=critico&search=bet');
+    expect(screen.getByText('Beta')).toBeInTheDocument();
+    expect(screen.queryByText('Alfa')).not.toBeInTheDocument();
+  });
+
+  it('scores lidos: o filtro é aplicado de verdade (nenhum crítico → vazio honesto)', () => {
+    setup({ isCarteira: true, filtroNoServidor: false, hasNextPage: false, scoresEstado: 'ok' }, '/admin/customers?health=critico');
+    expect(screen.getByText(/Nenhum cliente com esses filtros/)).toBeInTheDocument();
   });
 });

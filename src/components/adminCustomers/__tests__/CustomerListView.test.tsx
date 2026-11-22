@@ -140,14 +140,15 @@ describe("CustomerListView", () => {
     expect(screen.getByText("Nenhum cliente com esses filtros")).toBeTruthy();
   });
 
-  it("carteira: filtro de saúde segue em memória (a carteira é lida inteira)", () => {
+  it("carteira: filtro de saúde segue em memória (a carteira é lida inteira) e a ordem é escolhível", () => {
     render(
       <MemoryRouter initialEntries={["/admin/customers?health=critico"]}>
         <CustomerListView customers={[customer]} scores={new Map([["c1", score]])} loading={false} isError={false} onRetry={vi.fn()} total={1} isCarteira onSelect={vi.fn()} hasNextPage={false} isFetchingNextPage={false} onLoadMore={vi.fn()} />
       </MemoryRouter>,
     );
     expect(screen.queryByText("Marcenaria Alfa")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Ordenar lista/i })).toBeNull();
+    // Onda 1: a carteira também prioriza — o seletor de ordem aparece para a vendedora.
+    expect(screen.getByRole("button", { name: /Ordenar lista/i })).toBeTruthy();
   });
   describe("polimento da lista", () => {
     it("motivo do contato aparece sob o nome (visível sem as colunas do desktop)", () => {

@@ -8,7 +8,7 @@ vi.mock('@/lib/analytics-ledger', () => ({ registrarNoLedger: (...a: unknown[]) 
 vi.mock('@/lib/impersonation/lens-write-guard', () => ({ isLensActive: () => lente }));
 
 import {
-  montarEventoClientes, normalizarFiltroSensor, registrarUsoClientes, type UsoClientes,
+  modoClientes, montarEventoClientes, normalizarFiltroSensor, registrarUsoClientes, type UsoClientes,
 } from '../sensorClientes';
 
 /** Um uso de cada ação — a suíte anti-PII roda sobre TODOS. */
@@ -16,14 +16,17 @@ const USOS: UsoClientes[] = [
   { acao: 'lista_aberta', modo: 'prioridade' },
   { acao: 'modo_trocado', de: 'prioridade', para: 'nome', origem: 'menu' },
   { acao: 'filtro_saude', modo: 'nome', valor: 'critico' },
-  { acao: 'busca_usada', modo: 'carteira' },
+  { acao: 'busca_usada', modo: 'carteira_prioridade' },
   { acao: 'cliente_aberto', modo: 'prioridade', posicao: 3, filtroSaude: 'atencao', comBusca: true },
   { acao: 'pagina_carregada', modo: 'nome', pagina: 2 },
+  { acao: 'modo_trocado', de: 'carteira_prioridade', para: 'carteira_nome', origem: 'cabecalho' },
+  { acao: 'ficha_acao', ficha: 'cadastro', tipo: 'novo_pedido' },
+  { acao: 'ficha_acao', ficha: '360', tipo: 'ligar' },
 ];
 
 // ALLOWLIST de chaves do payload: campo novo (id, nome, termo…) tem de entrar aqui de propósito, com revisão de LGPD.
-const CHAVES_PERMITIDAS = new Set(['modo', 'de', 'para', 'origem', 'valor', 'posicao', 'filtro_saude', 'com_busca', 'pagina']);
-const VALOR_PERMITIDO = /^(prioridade|nome|carteira|menu|cabecalho|all|saudavel|estavel|atencao|critico|sem_historico|outro)$/;
+const CHAVES_PERMITIDAS = new Set(['modo', 'de', 'para', 'origem', 'valor', 'posicao', 'filtro_saude', 'com_busca', 'pagina', 'ficha', 'tipo']);
+const VALOR_PERMITIDO = /^(prioridade|nome|carteira_prioridade|carteira_nome|cadastro|360|ligar|novo_pedido|abrir_360|ver_pedidos|menu|cabecalho|all|saudavel|estavel|atencao|critico|sem_historico|outro)$/;
 
 beforeEach(() => {
   trackMock.mockClear();
@@ -78,9 +81,12 @@ describe('sensorClientes — chaves de dedup (1 linha por titular × chave × di
       'prioridade',
       'prioridade>nome',
       'nome:critico',
-      'carteira',
+      'carteira_prioridade',
       'prioridade:atencao:b:3',
       'nome:2',
+      'carteira_prioridade>carteira_nome',
+      'cadastro:novo_pedido',
+      '360:ligar',
     ]);
   });
 
@@ -88,6 +94,20 @@ describe('sensorClientes — chaves de dedup (1 linha por titular × chave × di
     const base = { acao: 'cliente_aberto', modo: 'prioridade', posicao: 1, filtroSaude: 'all' } as const;
     expect(montarEventoClientes({ ...base, comBusca: true }).chave)
       .not.toBe(montarEventoClientes({ ...base, comBusca: false }).chave);
+  });
+});
+
+describe('modoClientes — carteira e base separadas no sinal', () => {
+  it('a carteira grava a ordem que a vendedora VÊ', () => {
+    expect(modoClientes(true, 'prioridade')).toBe('carteira_prioridade');
+    expect(modoClientes(true, 'nome')).toBe('carteira_nome');
+    expect(modoClientes(false, 'prioridade')).toBe('prioridade');
+    expect(modoClientes(false, 'nome')).toBe('nome');
+  });
+
+  it('ficha_acao: evento próprio, sem id do cliente', () => {
+    const e = montarEventoClientes({ acao: 'ficha_acao', ficha: 'cadastro', tipo: 'abrir_360' });
+    expect(e).toEqual({ evento: 'clientes.ficha_acao', chave: 'cadastro:abrir_360', props: { ficha: 'cadastro', tipo: 'abrir_360' } });
   });
 });
 

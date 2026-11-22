@@ -901,9 +901,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <AppShellProvider>
       <ShortcutsRegistryProvider>
         <CommandsRegistryProvider>
-          {/* Faixa (1.75rem + área segura) + topbar de 48px = 1.75rem + pt-topbar (que já tem a área segura).
-              `--faixa-ver-como` alimenta o token `topo-conteudo` (sticky/fixed/alturas das páginas). */}
-          <div className={cn('min-h-screen bg-background density-compact', isImpersonating && 'pt-7 [--faixa-ver-como:1.75rem]')}>
+          {/* Faixa (1.75rem + área segura) + topbar de 48px = 1.75rem + pt-topbar (que já tem a área segura). */}
+          <div className={cn('min-h-screen bg-background density-compact', isImpersonating && 'pt-7')}>
             <ImpersonationBanner />
             {/* Desktop sidebar */}
             <div className="hidden lg:block">
@@ -919,8 +918,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {/* Main content */}
             <main
               className={cn(
-                // Sob a lente o wrapper já tem pt-7: o mínimo desconta a faixa (senão sobra rolagem de 1.75rem — Codex).
-                'pt-topbar min-h-[calc(100dvh-var(--faixa-ver-como,0px))] transition-all duration-200',
+                'pt-topbar min-h-screen transition-all duration-200',
                 'lg:ml-sidebar',
                 collapsed && 'lg:ml-sidebar-collapsed'
               )}

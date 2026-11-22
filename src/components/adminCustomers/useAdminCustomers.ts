@@ -4,15 +4,19 @@
 // Aqui: estado de detalhe (cliente selecionado, ferramentas, pedidos) + mutações.
 // Spec: docs/superpowers/specs/2026-06-11-clientes-escopo-carteira-design.md
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { useClientesScope } from './useClientesScope';
+import {
+  lerOrigemLista, montarOrigemLista, urlFichaCliente, urlListaClientes,
+} from './navegacao';
 import type { Customer, ToolCategory, UserTool, SalesOrder } from './types';
 
 export function useAdminCustomers() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { customerId } = useParams<{ customerId?: string }>();
   // `?search=` é escrito (com debounce) pela CustomerListView via useUrlState; aqui só lemos,
   // para a busca ir ao servidor no modo completa.
@@ -26,7 +30,7 @@ export function useAdminCustomers() {
   const {
     customers, scores, total, contagemPendente, isCarteira, loading, isError, refetch,
     hasNextPage, isFetchingNextPage, fetchNextPage, effectiveUserId,
-    buscaNoServidor, buscando, clienteAlvo, filtroNoServidor, totalRecorte,
+    buscaNoServidor, buscando, clienteAlvo, filtroNoServidor, totalRecorte, scoresEstado, refetchScores,
   } = useClientesScope({ busca, saude, ordem, customerIdAlvo: customerId ?? null });
 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -35,6 +39,8 @@ export function useAdminCustomers() {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [loadingTools, setLoadingTools] = useState(false);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  // Falha da leitura dos pedidos ≠ "nenhum pedido registrado" (ausente ≠ vazio).
+  const [ordersErro, setOrdersErro] = useState(false);
   const [addToolDialogOpen, setAddToolDialogOpen] = useState(false);
   // De quem já carregamos ferramentas/pedidos — evita recarregar a cada página da lista.
   const detalheCarregadoDe = useRef<string | null>(null);
@@ -100,8 +106,9 @@ export function useAdminCustomers() {
 
   const loadCustomerOrders = async (userId: string) => {
     setLoadingOrders(true);
+    setOrdersErro(false);
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('sales_orders')
         .select('id, total, status, created_at, items')
         .eq('customer_user_id', userId)
@@ -109,9 +116,14 @@ export function useAdminCustomers() {
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(20);
-      setOrders((data || []) as SalesOrder[]);
+      if (error) throw error;
+      // data null SEM error = resposta malformada, não "nenhum pedido".
+      if (data == null) throw new Error('sales_orders: data null sem error');
+      setOrders(data as SalesOrder[]);
     } catch (error) {
       console.error('Error loading orders:', error);
+      setOrders([]);
+      setOrdersErro(true);
     } finally {
       setLoadingOrders(false);
     }
@@ -122,7 +134,11 @@ export function useAdminCustomers() {
     setSelectedCustomer(customer);
     loadCustomerTools(customer.user_id);
     loadCustomerOrders(customer.user_id);
-    navigate(`/admin/customers/${customer.user_id}`);
+    // A ficha leva a FILA de origem (busca/saúde/ordem na URL + rolagem no state). A entrada da lista
+    // no histórico também ganha a rolagem, para o voltar do NAVEGADOR cair na mesma posição.
+    const origem = montarOrigemLista(location.search, window.scrollY);
+    navigate({ pathname: location.pathname, search: location.search }, { replace: true, state: { rolagem: origem.rolagem } });
+    navigate(urlFichaCliente(customer.user_id, origem.query), { state: { origemLista: origem } });
   };
 
   const handleDeleteTool = async (toolId: string) => {
@@ -139,7 +155,13 @@ export function useAdminCustomers() {
   const handleBack = () => {
     detalheCarregadoDe.current = null;
     setSelectedCustomer(null);
-    navigate('/admin/customers');
+    // Volta para a fila de onde veio; sem origem (deep link), a fila que a URL da ficha carrega.
+    const origem = lerOrigemLista(location.state);
+    navigate(urlListaClientes(origem?.query ?? location.search), { state: { rolagem: origem?.rolagem ?? null } });
+  };
+
+  const retryOrders = () => {
+    if (selectedCustomer) loadCustomerOrders(selectedCustomer.user_id);
   };
 
   const reloadSelectedTools = () => {
@@ -159,6 +181,10 @@ export function useAdminCustomers() {
     buscando,
     filtroNoServidor,
     totalRecorte,
+    scoresEstado,
+    refetchScores,
+    /** Origem da ficha (fila da lista) — repassada ao abrir a 360 a partir dela. */
+    origemLista: lerOrigemLista(location.state),
     /** Estado do deep link — a página mostra "não encontrado" em vez de cair na lista. */
     estadoDeepLink: clienteAlvo.estado,
     retryDeepLink: clienteAlvo.estado === 'erro' ? clienteAlvo.refetch : undefined,
@@ -171,6 +197,8 @@ export function useAdminCustomers() {
     orders,
     loadingTools,
     loadingOrders,
+    ordersErro,
+    retryOrders,
     addToolDialogOpen,
     setAddToolDialogOpen,
     hasNextPage,

@@ -364,7 +364,7 @@ export default function AdminReposicaoAumentoDetail() {
           </div>
 
           {/* Sidebar direita */}
-          <div className="lg:sticky lg:top-[calc(theme(spacing.topo-conteudo)+1rem)] self-start space-y-4">
+          <div className="lg:sticky lg:top-4 self-start space-y-4">
             <EstadoAcoesSidebar
               isNew={isNew}
               estadoAtual={estadoAtual}

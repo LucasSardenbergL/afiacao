@@ -11,9 +11,11 @@ import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { isSearchablePostgrestTerm } from '@/lib/postgrest';
 import {
-  resolveModoEscopo, fetchCarteiraClientes, fetchScoresPorCustomer, hashIds,
+  resolveModoEscopo, fetchCarteiraClientes, fetchScoresPorCustomer, hashIds, ordenarCarteira,
 } from '@/lib/carteira/escopo-clientes';
-import { TAMANHO_PAGINA_CLIENTES, normalizarFiltroSaude, normalizarOrdem, type FiltroSaude, type OrdemClientes } from './config';
+import {
+  TAMANHO_PAGINA_CLIENTES, normalizarFiltroSaude, normalizarOrdem, type EstadoScores, type FiltroSaude, type OrdemClientes,
+} from './config';
 import type { Customer, ClientScore } from './types';
 
 const PAGE_SIZE = TAMANHO_PAGINA_CLIENTES;
@@ -76,6 +78,14 @@ export interface ClientesScope {
    */
   totalRecorte: number | null;
   clienteAlvo: ClienteAlvo;
+  /**
+   * Estado da leitura dos SCORES da lista. Sem isto o mapa vazio de quem ainda carrega (ou falhou)
+   * fazia o filtro local de saúde da carteira dizer "nenhum cliente" e a prioridade sumir — falha
+   * apresentada como resultado. Com dado em cache e refetch falho, segue 'ok' (o dado é o último lido).
+   */
+  scoresEstado: EstadoScores;
+  /** Retry só dos scores (o "Tentar novamente" do aviso do filtro de saúde). */
+  refetchScores: () => void;
 }
 
 export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade', customerIdAlvo = null }: {
@@ -247,11 +257,22 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
     staleTime: 60_000,
     queryFn: () => fetchScoresPorCustomer([alvoForaDaLista as string]),
   });
+  const scoresEstado: EstadoScores = visibleIds.length === 0 || scoresQuery.data
+    ? 'ok'
+    : scoresQuery.isError ? 'falha' : 'carregando';
   const scores = useMemo(() => {
     const base = scoresQuery.data ?? new Map<string, ClientScore>();
     if (!alvoScoreQuery.data?.size) return base;
     return new Map([...base, ...alvoScoreQuery.data]);
   }, [scoresQuery.data, alvoScoreQuery.data]);
+
+  // Carteira (lida inteira): a ordem escolhida é aplicada AQUI, com os scores — espelho da ordem do
+  // servidor na base completa. Os ids/hash dos scores usam a lista crua (A–Z), não esta: reordenar
+  // não pode trocar a key e re-buscar os scores. Sem scores (carregando/falha) cai no A–Z.
+  const customersNaOrdem = useMemo<Customer[]>(
+    () => (isCarteira ? ordenarCarteira(customers, scores, ordemServidor) : customers),
+    [isCarteira, customers, scores, ordemServidor],
+  );
 
   // Total só CONFIRMADO: carteira = inteira em memória após sucesso; base = count do servidor.
   // `null` + `contagemPendente` → a tela diz "N carregados"; `null` sem pendência → indisponível.
@@ -263,7 +284,7 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
   const loading = isCarteira ? carteiraQuery.isLoading : baseQuery.isLoading;
 
   return {
-    customers,
+    customers: customersNaOrdem,
     scores,
     total,
     contagemPendente,
@@ -280,5 +301,7 @@ export function useClientesScope({ busca = '', saude = null, ordem = 'prioridade
     filtroNoServidor: !isCarteira,
     totalRecorte,
     clienteAlvo,
+    scoresEstado,
+    refetchScores: () => { scoresQuery.refetch(); },
   };
 }

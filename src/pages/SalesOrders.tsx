@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { Button } from '@/components/ui/button';
-import { ShoppingCart, Trash2, ChevronLeft, Loader2, AlertTriangle, WifiOff, Plus } from 'lucide-react';
+import { ShoppingCart, Trash2, ChevronLeft, Loader2, AlertTriangle, WifiOff, Plus, X as XIcon } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -50,6 +50,8 @@ const SalesOrders = () => {
     setSearch,
     limparFiltros,
     comFiltro,
+    clienteFiltro,
+    limparCliente,
     selectedIds,
     linhasSelecionadas,
     toggleSelect,
@@ -156,6 +158,28 @@ const SalesOrders = () => {
       </div>
       {/* Anúncio da seleção por teclado (o nome da linha não muda ao marcar). */}
       <p role="status" className="sr-only">{anuncio}</p>
+
+      {clienteFiltro && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted pl-2.5 pr-1 py-1">
+            <span>
+              Pedidos de{' '}
+              <span className="font-medium">
+                {/* O nome vem das linhas já filtradas; sem linha (cliente sem pedido), não inventa nome. */}
+                {orders.find((o) => o.customer_name)?.customer_name ?? 'um cliente'}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={limparCliente}
+              className="p-0.5 text-muted-foreground hover:text-foreground"
+              aria-label="Ver pedidos de todos os clientes"
+            >
+              <XIcon className="w-3 h-3" />
+            </button>
+          </span>
+        </div>
+      )}
 
       <SalesOrdersToolbar
         accountFilter={accountFilter}

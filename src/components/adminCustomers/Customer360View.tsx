@@ -34,6 +34,11 @@ import {
 import { MetricCard, ScoreItem } from './cards';
 import { RequiresPoToggle } from './RequiresPoToggle';
 import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
+import { EmptyState } from '@/components/EmptyState';
+import {
+  urlCliente360, urlNovoPedido, urlPedidosDoCliente, type OrigemLista,
+} from './navegacao';
+import { registrarUsoClientes, type AcaoFicha } from './sensorClientes';
 import type { Customer, ClientScore, ToolCategory, UserTool, SalesOrder } from './types';
 
 export function Customer360View({
@@ -44,6 +49,9 @@ export function Customer360View({
   categories: _categories,
   loadingTools,
   loadingOrders,
+  ordersErro = false,
+  onRetryOrders,
+  origemLista = null,
   onBack,
   onAddTool,
   onDeleteTool,
@@ -55,6 +63,11 @@ export function Customer360View({
   categories: ToolCategory[];
   loadingTools: boolean;
   loadingOrders: boolean;
+  /** Leitura dos pedidos falhou — a aba diz, em vez de "Nenhum pedido registrado". */
+  ordersErro?: boolean;
+  onRetryOrders?: () => void;
+  /** Fila de onde a ficha foi aberta — viaja para a 360, cujo voltar devolve a mesma fila. */
+  origemLista?: OrigemLista | null;
   onBack: () => void;
   onAddTool: () => void;
   onDeleteTool: (id: string) => void;
@@ -63,6 +76,11 @@ export function Customer360View({
   // Sem score/classe → "Não avaliado"; o `|| 'critico'` anterior afirmava um veredito não apurado.
   const healthInfo = classeSaudeExibida(score?.health_class ?? null);
   const waHref = customer.phone ? whatsappLink(customer.phone) : null;
+  const medir = (tipo: AcaoFicha) => registrarUsoClientes({ acao: 'ficha_acao', ficha: 'cadastro', tipo });
+  const verPedidos = () => {
+    medir('ver_pedidos');
+    navigate(urlPedidosDoCliente(customer.user_id));
+  };
 
   return (
     <div className="space-y-4">
@@ -95,13 +113,19 @@ export function Customer360View({
 
         <div className="flex items-center gap-1.5">
           <Button size="sm" variant="default" className="gap-1.5 h-8"
-            onClick={() => navigate(`/admin/customers/${customer.user_id}/360`)}
+            onClick={() => {
+              medir('abrir_360');
+              navigate(urlCliente360(customer.user_id), { state: origemLista ? { origemLista } : undefined });
+            }}
           >
             <Sparkles className="w-3.5 h-3.5" />
             Ver 360°
           </Button>
           <Button size="sm" variant="outline" className="gap-1.5 h-8"
-            onClick={() => navigate(`/sales/new`)}
+            onClick={() => {
+              medir('novo_pedido');
+              navigate(urlNovoPedido(customer.user_id));
+            }}
           >
             <ShoppingCart className="w-3.5 h-3.5" />
             Novo pedido
@@ -142,7 +166,8 @@ export function Customer360View({
             value={score.churn_risk == null ? '—' : `${score.churn_risk.toFixed(0)}%`}
             danger={score.churn_risk != null && score.churn_risk > 50}
           />
-          <MetricCard icon={Package} label="Categorias" value={String(score.category_count)} />
+          {/* category_count null = não apurado: `String(null)` mostrava "null" na tela. */}
+          <MetricCard icon={Package} label="Categorias" value={score.category_count == null ? NAO_APURADO : String(score.category_count)} />
         </div>
       )}
 
@@ -166,7 +191,10 @@ export function Customer360View({
               <div className="flex items-center gap-2 text-sm">
                 <Phone className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <span className="flex-1">{formatBrPhone(customer.phone)}</span>
-                <CallButton phone={customer.phone} customerName={customer.name} variant="icon" />
+                {/* Captura: mede a intenção de ligar sem mexer no discador. */}
+                <span className="inline-flex" onClickCapture={() => medir('ligar')}>
+                  <CallButton phone={customer.phone} customerName={customer.name} variant="icon" />
+                </span>
                 {waHref && (
                   <a
                     href={waHref}
@@ -267,6 +295,20 @@ export function Customer360View({
             <div className="flex justify-center py-8">
               <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
             </div>
+          ) : ordersErro ? (
+            // Falha de leitura ≠ cliente sem pedido (ausente ≠ vazio).
+            <Card role="alert">
+              <EmptyState
+                icon={AlertTriangle}
+                tone="operational"
+                title="Não foi possível carregar os pedidos"
+                description="A leitura falhou — não dá pra afirmar que o cliente não tem pedidos."
+                actionLabel="Tentar novamente"
+                onAction={onRetryOrders}
+                secondaryActionLabel="Ver na lista de pedidos"
+                onSecondaryAction={verPedidos}
+              />
+            </Card>
           ) : orders.length === 0 ? (
             <Card>
               <CardContent className="py-8 text-center">
@@ -290,7 +332,14 @@ export function Customer360View({
                     {orders.map((order) => {
                       const items = Array.isArray(order.items) ? order.items : [];
                       return (
-                        <tr key={order.id} className="border-b last:border-b-0 hover:bg-muted/20">
+                        <tr
+                          key={order.id}
+                          className="border-b last:border-b-0 hover:bg-muted/20 cursor-pointer"
+                          onClick={verPedidos}
+                          tabIndex={0}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); verPedidos(); } }}
+                          aria-label="Abrir os pedidos deste cliente"
+                        >
                           <td className="px-4 py-2 text-xs">
                             {format(new Date(order.created_at), 'dd/MM/yy', { locale: ptBR })}
                           </td>
@@ -306,6 +355,11 @@ export function Customer360View({
                     })}
                   </tbody>
                 </table>
+              </div>
+              <div className="flex justify-end border-t px-4 py-2">
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={verPedidos}>
+                  Ver todos os pedidos
+                </Button>
               </div>
             </Card>
           )}
