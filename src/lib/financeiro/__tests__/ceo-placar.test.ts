@@ -3,6 +3,7 @@ import {
   caixaDoEscopo,
   caixaProjetadoDoEscopo,
   cobrancaDoEscopo,
+  composicaoMargem,
   devedorDaFila,
   empresasDoEscopo,
   linhasPorEmpresa,
@@ -344,5 +345,35 @@ describe('cobrança do CEO', () => {
     expect(cobrancaDoEscopo({ oben: [] }, ['oben'])).toEqual({
       devedores: 0, semResponsavel: { n: 0, valor: 0 }, promessasVencidas: 0, saldoDesconhecido: 0, aguardando: 0, top: [],
     });
+  });
+});
+
+describe('composicaoMargem', () => {
+  const linha = (company: string, mes: number, receita: number, cmv: number | null, extra: Partial<DreLinha> = {}): DreLinha => ({
+    company, mes, receita_liquida: receita, cmv, lucro_bruto: receita - (cmv ?? 0), ...extra,
+  });
+
+  it('receita, CMV, lucro e margem por empresa de mercadoria no mês do tile; SC (serviço) fora', () => {
+    const dre = [
+      linha('oben', 9, 1000, 600), linha('oben', 10, 1000, 650, { qtd_categorias_sem_mapeamento: 2 }),
+      linha('colacor', 10, 500, 300, { qtd_categorias_sem_mapeamento: 0, resultado_provisorio: true }),
+      linha('colacor_sc', 10, 800, 0),
+    ];
+    const c = composicaoMargem(dre, ['oben', 'colacor', 'colacor_sc'], 11);
+    expect(c.mes).toBe(10);
+    expect(c.linhas).toEqual([
+      { empresa: 'oben', receitaLiquida: 1000, cmv: 650, lucroBruto: 350, margem: 0.35, margemAnterior: 0.4, semMapeamento: 2, provisorio: false },
+      { empresa: 'colacor', receitaLiquida: 500, cmv: 300, lucroBruto: 200, margem: 0.4, margemAnterior: null, semMapeamento: 0, provisorio: true },
+    ]);
+  });
+
+  it('tile sem margem (CMV não classificado ou sem mês comum) → composição vazia, nunca parcial', () => {
+    expect(composicaoMargem([linha('oben', 10, 1000, 0)], ['oben'], 11)).toEqual({ mes: null, linhas: [] });
+    expect(composicaoMargem(null, ['oben'], 11)).toEqual({ mes: null, linhas: [] });
+    expect(composicaoMargem([linha('oben', 10, 1000, 600)], ['oben', 'colacor'], 11)).toEqual({ mes: null, linhas: [] });
+  });
+
+  it('confiança ausente fica null ("não informada"), nunca "mapeada"', () => {
+    expect(composicaoMargem([linha('oben', 10, 1000, 600)], ['oben'], 11).linhas[0].semMapeamento).toBeNull();
   });
 });

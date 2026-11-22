@@ -48,6 +48,10 @@ export interface DreLinha {
   lucro_bruto: number;
   /** Custo da mercadoria vendida (positivo). Zero/ausente com receita = custo não classificado. */
   cmv: number | null;
+  /** Categorias que caíram na heurística por descrição (sem mapeamento explícito). */
+  qtd_categorias_sem_mapeamento?: number | null;
+  /** Mês ainda aberto na contabilidade da DRE. */
+  resultado_provisorio?: boolean | null;
 }
 
 /** Recorte mínimo do consolidado de projeção (NCG por CNPJ). */
@@ -360,4 +364,52 @@ export function cobrancaDoEscopo(
       .sort((a, b) => prioridade(a) - prioridade(b) || (b.saldoVencido as number) - (a.saldoVencido as number))
       .slice(0, limite),
   };
+}
+
+export interface LinhaComposicaoMargem {
+  empresa: Company;
+  receitaLiquida: number;
+  cmv: number;
+  lucroBruto: number;
+  margem: number;
+  /** Margem do mês anterior com receita e CMV > 0; `null` sem base. */
+  margemAnterior: number | null;
+  /** Categorias sem mapeamento explícito no mês (heurística) — `null` = não informado. */
+  semMapeamento: number | null;
+  provisorio: boolean;
+}
+
+/**
+ * De onde vem a margem bruta do tile: receita, CMV e lucro por empresa de MERCADORIA no mesmo mês
+ * do tile, com a margem do mês anterior e a confiança do mapeamento — para decidir preço olhando o
+ * custo, não só o percentual. Vazio quando o tile não tem margem (sem mês comum ou CMV ausente).
+ */
+export function composicaoMargem(
+  dre: readonly DreLinha[] | null,
+  empresas: readonly Company[],
+  mesCorrente: number,
+): { mes: number | null; linhas: LinhaComposicaoMargem[] } {
+  const m = margemUltimoMesFechado(dre, empresas, mesCorrente);
+  if (!dre || m.valor === null || m.mes === null) return { mes: null, linhas: [] };
+  const mes = m.mes;
+  const linhaDo = (co: Company, mm: number) => dre.find((d) => d.company === co && d.mes === mm);
+  const linhas = empresas
+    .filter((co) => !m.servicoFora.includes(co))
+    .map((co): LinhaComposicaoMargem | null => {
+      const d = linhaDo(co, mes);
+      if (!d || d.cmv === null || d.receita_liquida <= 0) return null;
+      const ant = linhaDo(co, mes - 1);
+      return {
+        empresa: co,
+        receitaLiquida: d.receita_liquida,
+        cmv: d.cmv,
+        lucroBruto: d.lucro_bruto,
+        margem: d.lucro_bruto / d.receita_liquida,
+        margemAnterior: ant && ant.receita_liquida > 0 && ant.cmv !== null && ant.cmv > 0 ? ant.lucro_bruto / ant.receita_liquida : null,
+        semMapeamento: typeof d.qtd_categorias_sem_mapeamento === 'number' ? d.qtd_categorias_sem_mapeamento : null,
+        provisorio: d.resultado_provisorio === true,
+      };
+    })
+    .filter((l): l is LinhaComposicaoMargem => l !== null);
+  return { mes, linhas };
 }
