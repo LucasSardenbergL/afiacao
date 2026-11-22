@@ -17,7 +17,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "algorithm-a-audit": "1dfdbb0bbfe1fbfddbb23f0351666aa192122efb5d4f39a9b558b3eb6b66319c",
   "analytics-outbox-drain": "b03bbf880f09d2f08d3320def1f7d617506869d063ca0023af65292511c9fded",
   "analyze-services": "5539ebf104b34bbd5659d661f87a54ce3f1eec499c0bd5e169dc8bbf9cc3da12",
-  "analyze-unified-order": "f7a36a51deebfc8f5793dccd824cd5f5222056ab74fed0d756cd85dfe03f357c",
+  "analyze-unified-order": "73fcab36839679fa26549cdc605e621b9fda415d5ef122e878e8ff7430c18b4a",
   "banco-extrato-importar": "00fe48bb5afb57a28ccd8f33480f62d8ead8478305aaaff213fc5fab0cb908c4",
   "biometric-auth": "2655fe84217284ea05757baacad69215a52fc244d9f44badf5a1cf307668228e",
   "calculate-scores": "87516a657f259720e2705d9f8e12c4c7d8f005f150556d5b838633e4994f70bb",
