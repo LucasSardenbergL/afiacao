@@ -21,7 +21,10 @@ export type Consulta =
 // O PID é extraído DA PRÓPRIA cláusula de ausência e tem de ser o consultado. A régua frouxa (regex de
 // "pedido … não cadastrado" + código em qualquer lugar) aceitava `Pedido [X] - cliente não cadastrado`
 // (Codex, desenho 2026-11-21, P0-2): qualquer texto fora desta forma é indeterminado.
-const FAULT_PEDIDO_AUSENTE = /^\s*(?:ERROR:\s*)?Pedido n[aã]o cadastrado para o C[oó]digo \[(\d+)\]\s*!?\s*$/i;
+// Endurecida no Codex de desenho rodada 2 (P0-1): "ERROR:" e "!" obrigatórios, caixa e acentos EXATOS, só HTTP 500 (o
+// status medido), e faultcode ausente ou de cliente SOAP — 401/403/502 com o mesmo texto não é ausência.
+const FAULT_PEDIDO_AUSENTE = /^ERROR: Pedido não cadastrado para o Código \[(\d+)\] ?!$/;
+const FAULTCODE_ACEITO = /^SOAP-ENV:Client(?:-\d+)?$/;
 
 function codigoDoCabecalho(corpo: Record<string, unknown> | null): { cab: Record<string, unknown> | null; info: Record<string, unknown> | null } {
   const pvp = corpo?.pedido_venda_produto as Record<string, unknown> | undefined;
@@ -44,8 +47,9 @@ export function classificarConsulta(r: RespostaOmie, codigoPedido: number): Cons
   if (r.status === 425 || r.status === 429) return { tipo: "indeterminado", detalhe: `HTTP ${r.status}` };
   if (r.faultstring !== null) {
     const f = r.faultstring;
-    const m = FAULT_PEDIDO_AUSENTE.exec(f);
-    if (m && Number(m[1]) === codigoPedido) return { tipo: "ausente", fault: f.slice(0, 300) };
+    const m = FAULT_PEDIDO_AUSENTE.exec(f.trim());
+    const codeOk = r.faultcode === null || FAULTCODE_ACEITO.test(r.faultcode);
+    if (m && Number(m[1]) === codigoPedido && r.status === 500 && codeOk) return { tipo: "ausente", fault: f.slice(0, 300) };
     return { tipo: "indeterminado", detalhe: `fault não reconhecido: ${f.slice(0, 200)}` };
   }
   if (!r.ok) return { tipo: "indeterminado", detalhe: `HTTP ${r.status} sem faultstring` };
@@ -90,13 +94,32 @@ export type Janela =
 
 export type BuscarPagina = (pagina: number) => Promise<RespostaOmie>;
 
-export async function coletarJanela(buscar: BuscarPagina, maxPaginas = 50): Promise<Janela> {
+/** EOF do contrato, com a página QUE ele nega (tem de ser a pedida — Codex rodada 2, P0-1). */
+const EOF_PAGINA = /n[aã]o existem registros para a p[aá]gina \[(\d+)\]/i;
+
+/**
+ * Lê a janela inteira. `aoLerPagina` recebe os PIDs de CADA página final lida, mesmo que a janela termine
+ * incompleta: presença vista é fato e zera a sequência de ausências (Codex rodada 2, P0-2).
+ */
+export async function coletarJanela(
+  buscar: BuscarPagina,
+  maxPaginas = 50,
+  aoLerPagina?: (pids: number[]) => Promise<void>,
+): Promise<Janela> {
   const pids: number[] = [];
   let total = 1;
   let declarado: number | undefined;
   for (let pagina = 1; pagina <= maxPaginas; pagina++) {
     const r = await buscar(pagina);
+    // Status de cota/bloqueio vence o corpo: um 425 com texto de EOF NÃO é fim de janela.
+    if (r.status === 425 || r.status === 429 || faultDeCota(r) !== null) {
+      return { completa: false, motivo: `página ${pagina}: cota/bloqueio (HTTP ${r.status})`, paginas: pagina };
+    }
     if (r.faultstring && /n[aã]o existem registros/i.test(r.faultstring)) {
+      const eof = EOF_PAGINA.exec(r.faultstring);
+      if (!eof || Number(eof[1]) !== pagina) {
+        return { completa: false, motivo: `página ${pagina}: EOF de outra página (${r.faultstring.slice(0, 80)})`, paginas: pagina };
+      }
       // EOF do contrato. Na página 1 = janela vazia (0 pedidos); depois = fim, se não faltou página.
       if (pagina < total) return { completa: false, motivo: `EOF na página ${pagina} de ${total}`, paginas: pagina };
       break;
@@ -116,13 +139,20 @@ export async function coletarJanela(buscar: BuscarPagina, maxPaginas = 50): Prom
     const veredito = avaliarPagina(lista.length, pagina, total);
     if (veredito === "anomalia") return { completa: false, motivo: `página ${pagina} vazia antes do fim declarado (${total})`, paginas: pagina };
     if (veredito === "fim") break;
+    const daPagina: number[] = [];
     for (const p of lista) {
       const cod = (p as { cabecalho?: { codigo_pedido?: unknown } })?.cabecalho?.codigo_pedido;
       if (typeof cod !== "number" || !Number.isSafeInteger(cod) || cod <= 0) {
         return { completa: false, motivo: `página ${pagina}: item sem codigo_pedido válido`, paginas: pagina };
       }
-      pids.push(cod);
+      daPagina.push(cod);
     }
+    if (aoLerPagina) await aoLerPagina(daPagina);
+    // Página repetida (a API devolvendo a mesma página) = paginação que deslizou: incompleta.
+    if (daPagina.length > 0 && daPagina.every((c) => pids.includes(c))) {
+      return { completa: false, motivo: `página ${pagina} repete PIDs já lidos`, paginas: pagina };
+    }
+    pids.push(...daPagina);
     if (pagina === maxPaginas) return { completa: false, motivo: `teto de ${maxPaginas} páginas`, paginas: pagina };
   }
   const unicos = [...new Set(pids)];

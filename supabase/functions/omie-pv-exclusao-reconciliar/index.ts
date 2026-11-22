@@ -62,7 +62,7 @@ Deno.serve(async (req: Request) => {
         try {
           resultados.push(await reconciliarConta(conta, { db, credenciais: credenciaisDe(conta) }));
         } catch (e) {
-          resultados.push({ conta, janelas: [], consulta: null, parou_por_cota: null, erro: (mensagemDeErro(e) ?? "erro").slice(0, 300) });
+          resultados.push({ conta, execucao: "erro", janelas: [], consulta: null, parou_por_cota: null, erro: (mensagemDeErro(e) ?? "erro").slice(0, 300) });
         }
       }
       return resultados;

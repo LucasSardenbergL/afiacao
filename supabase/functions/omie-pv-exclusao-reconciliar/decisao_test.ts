@@ -82,8 +82,8 @@ Deno.test("indeterminado: 425 real de bloqueio, e faultDeCota o reconhece", () =
 // ── coletarJanela ──
 const pagina = (cods: number[], totPag: number, totReg: number) =>
   resp(200, { pagina: 1, total_de_paginas: totPag, total_de_registros: totReg, pedido_venda_produto: cods.map((c) => ({ cabecalho: { codigo_pedido: c } })) });
-const EOF_OMIE = resp(500, { faultstring: "ERROR: Não existem registros para a página [3]!" });
-const roteiro = (paginas: ReturnType<typeof resp>[]) => (n: number) => Promise.resolve(paginas[n - 1] ?? EOF_OMIE);
+const eofDe = (n: number) => resp(500, { faultstring: `ERROR: Não existem registros para a página [${n}]!` });
+const roteiro = (paginas: ReturnType<typeof resp>[]) => (n: number) => Promise.resolve(paginas[n - 1] ?? eofDe(n));
 
 Deno.test("janela completa: lê até o EOF e devolve os PIDs", async () => {
   const j = await coletarJanela(roteiro([pagina([1, 2], 2, 3), pagina([3], 2, 3)]));
@@ -111,4 +111,50 @@ Deno.test("janela incompleta: item sem codigo_pedido", async () => {
 Deno.test("janela incompleta: teto de páginas", async () => {
   const j = await coletarJanela(() => Promise.resolve(pagina([7], 1, 1)), 3);
   assertEquals(j.completa, false);
+});
+
+// ── Codex de desenho rodada 2 (P0-1/P0-2) ─────────────────────────────────────────────────────────
+Deno.test("indeterminado: texto INTEGRAL de ausência com HTTP 401/403/502/200 não é ausência", () => {
+  for (const st of [200, 401, 403, 502]) {
+    assertEquals(tipo(resp(st, { faultstring: FAULT_REAL, faultcode: "SOAP-ENV:Client-103" })), "indeterminado");
+  }
+});
+
+Deno.test("indeterminado: ausência sem 'ERROR:' ou sem '!' ou em outra caixa", () => {
+  for (const f of [`Pedido não cadastrado para o Código [${PID}] !`, `ERROR: Pedido não cadastrado para o Código [${PID}]`,
+                   `ERROR: PEDIDO NÃO CADASTRADO PARA O CÓDIGO [${PID}] !`]) {
+    assertEquals(tipo(resp(500, { faultstring: f, faultcode: "SOAP-ENV:Client-103" })), "indeterminado");
+  }
+});
+
+Deno.test("indeterminado: faultcode de servidor/autenticação com o texto de ausência", () => {
+  assertEquals(tipo(resp(500, { faultstring: FAULT_REAL, faultcode: "SOAP-ENV:Server" })), "indeterminado");
+  assertEquals(tipo(resp(500, { faultstring: FAULT_REAL, faultcode: "MISUSE_API_PROCESS" })), "indeterminado");
+});
+
+Deno.test("janela incompleta: 425 com texto de EOF NÃO é fim", async () => {
+  const p1 = resp(200, { total_de_paginas: 1, total_de_registros: 1, pedido_venda_produto: [{ cabecalho: { codigo_pedido: 1 } }] });
+  const falso425 = resp(425, { faultstring: "ERROR: Não existem registros para a página [2]!" });
+  const j = await coletarJanela(roteiro([p1, falso425]));
+  assertEquals(j.completa, false);
+});
+
+Deno.test("janela incompleta: EOF que nega OUTRA página", async () => {
+  const p1 = resp(200, { total_de_paginas: 1, total_de_registros: 1, pedido_venda_produto: [{ cabecalho: { codigo_pedido: 1 } }] });
+  const j = await coletarJanela(roteiro([p1, eofDe(7)]));
+  assertEquals(j.completa, false);
+});
+
+Deno.test("janela incompleta: página repetida", async () => {
+  const p = resp(200, { total_de_paginas: 2, pedido_venda_produto: [{ cabecalho: { codigo_pedido: 1 } }] });
+  const j = await coletarJanela(roteiro([p, p]));
+  assertEquals(j.completa, false);
+});
+
+Deno.test("presença por página chega mesmo quando a janela termina incompleta", async () => {
+  const vistos: number[][] = [];
+  const p1 = resp(200, { total_de_paginas: 3, pedido_venda_produto: [{ cabecalho: { codigo_pedido: 11 } }] });
+  const j = await coletarJanela(roteiro([p1, resp(502, {})]), 50, (pids) => { vistos.push(pids); return Promise.resolve(); });
+  assertEquals(j.completa, false);
+  assertEquals(vistos, [[11]]);
 });
