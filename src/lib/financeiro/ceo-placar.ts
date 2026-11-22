@@ -50,8 +50,15 @@ export interface DreLinha {
   cmv: number | null;
   /** Categorias que caíram na heurística por descrição (sem mapeamento explícito). */
   qtd_categorias_sem_mapeamento?: number | null;
+  /**
+   * Fração (0..1) do CMV classificada pela heurística de descrição (edge omie-financeiro v1.14). Ausente
+   * (snapshot anterior / migration não aplicada) ou NULL (CMV ≤ 0) = não medido — nunca 0%.
+   */
+  cmv_heuristica_pct?: number | null;
   /** Mês ainda aberto na contabilidade da DRE. */
   resultado_provisorio?: boolean | null;
+  /** Só o motivo do provisório (`detalhamento.fora_dre.motivo`), que a edge já grava. */
+  detalhamento?: { fora_dre?: { motivo?: string | null } | null } | null;
 }
 
 /** Recorte mínimo do consolidado de projeção (NCG por CNPJ). */
@@ -376,9 +383,18 @@ export interface LinhaComposicaoMargem {
   margem: number;
   /** Margem do mês anterior com receita e CMV > 0; `null` sem base. */
   margemAnterior: number | null;
-  /** Categorias da DRE INTEIRA (não só CMV) sem mapeamento explícito no mês — `null` = não informado. */
-  semMapeamento: number | null;
+  /** Fração (0..1) do CMV do mês que veio da heurística de descrição — `null` = não medido. */
+  cmvHeuristicaPct: number | null;
   provisorio: boolean;
+  /** Por que a DRE está provisória (texto da edge); `null` quando não é provisória ou sem motivo gravado. */
+  motivoProvisorio: string | null;
+}
+
+const motivoTexto = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null);
+
+/** Fração 0..1 lida da coluna; qualquer outra coisa (ausente, NULL, fora de faixa) é "não medido". */
+function fracaoMedida(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
 }
 
 /**
@@ -408,8 +424,9 @@ export function composicaoMargem(
         lucroBruto: d.receita_liquida - d.cmv,
         margem: (d.receita_liquida - d.cmv) / d.receita_liquida,
         margemAnterior: ant && ant.receita_liquida > 0 && ant.cmv !== null && ant.cmv > 0 ? (ant.receita_liquida - ant.cmv) / ant.receita_liquida : null,
-        semMapeamento: typeof d.qtd_categorias_sem_mapeamento === 'number' ? d.qtd_categorias_sem_mapeamento : null,
+        cmvHeuristicaPct: fracaoMedida(d.cmv_heuristica_pct),
         provisorio: d.resultado_provisorio === true,
+        motivoProvisorio: d.resultado_provisorio === true ? motivoTexto(d.detalhamento?.fora_dre?.motivo) : null,
       };
     })
     .filter((l): l is LinhaComposicaoMargem => l !== null);

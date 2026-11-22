@@ -355,15 +355,18 @@ describe('composicaoMargem', () => {
 
   it('receita, CMV, lucro e margem por empresa de mercadoria no mês do tile; SC (serviço) fora', () => {
     const dre = [
-      linha('oben', 9, 1000, 600), linha('oben', 10, 1000, 650, { qtd_categorias_sem_mapeamento: 2 }),
-      linha('colacor', 10, 500, 300, { qtd_categorias_sem_mapeamento: 0, resultado_provisorio: true }),
+      linha('oben', 9, 1000, 600), linha('oben', 10, 1000, 650, { cmv_heuristica_pct: 0.25 }),
+      linha('colacor', 10, 500, 300, {
+        cmv_heuristica_pct: 0, resultado_provisorio: true,
+        detalhamento: { fora_dre: { motivo: 'Saídas fora do DRE com composição pendente.' } },
+      }),
       linha('colacor_sc', 10, 800, 0),
     ];
     const c = composicaoMargem(dre, ['oben', 'colacor', 'colacor_sc'], 11);
     expect(c.mes).toBe(10);
     expect(c.linhas).toEqual([
-      { empresa: 'oben', receitaLiquida: 1000, cmv: 650, lucroBruto: 350, margem: 0.35, margemAnterior: 0.4, semMapeamento: 2, provisorio: false },
-      { empresa: 'colacor', receitaLiquida: 500, cmv: 300, lucroBruto: 200, margem: 0.4, margemAnterior: null, semMapeamento: 0, provisorio: true },
+      { empresa: 'oben', receitaLiquida: 1000, cmv: 650, lucroBruto: 350, margem: 0.35, margemAnterior: 0.4, cmvHeuristicaPct: 0.25, provisorio: false, motivoProvisorio: null },
+      { empresa: 'colacor', receitaLiquida: 500, cmv: 300, lucroBruto: 200, margem: 0.4, margemAnterior: null, cmvHeuristicaPct: 0, provisorio: true, motivoProvisorio: 'Saídas fora do DRE com composição pendente.' },
     ]);
   });
 
@@ -379,7 +382,26 @@ describe('composicaoMargem', () => {
     expect(margemUltimoMesFechado([incoerente], ['oben'], 11).valor).toBeCloseTo(0.4);
   });
 
-  it('confiança ausente fica null ("não informada"), nunca "mapeada"', () => {
-    expect(composicaoMargem([linha('oben', 10, 1000, 600)], ['oben'], 11).linhas[0].semMapeamento).toBeNull();
+  it('CMV por heurística ausente (snapshot antigo / sem migration), NULL ou fora de 0..1 → null, nunca 0%', () => {
+    const pct = (o: Record<string, unknown>) =>
+      composicaoMargem([linha('oben', 10, 1000, 600, o as Partial<DreLinha>)], ['oben'], 11).linhas[0].cmvHeuristicaPct;
+    expect(pct({})).toBeNull();
+    expect(pct({ cmv_heuristica_pct: null })).toBeNull();
+    expect(pct({ cmv_heuristica_pct: 1.2 })).toBeNull();
+    expect(pct({ cmv_heuristica_pct: -0.1 })).toBeNull();
+    expect(pct({ cmv_heuristica_pct: '0.4' })).toBeNull();
+    // Controle: 0 medido continua 0 (todo o CMV mapeado), e 1 é o teto aceito.
+    expect(pct({ cmv_heuristica_pct: 0 })).toBe(0);
+    expect(pct({ cmv_heuristica_pct: 1 })).toBe(1);
+  });
+
+  it('motivo do provisório só quando a DRE é provisória; texto vazio/ausente → null', () => {
+    const m = (o: Record<string, unknown>) =>
+      composicaoMargem([linha('oben', 10, 1000, 600, o as Partial<DreLinha>)], ['oben'], 11).linhas[0].motivoProvisorio;
+    const det = { fora_dre: { motivo: 'pendente' } };
+    expect(m({ resultado_provisorio: true, detalhamento: det })).toBe('pendente');
+    expect(m({ resultado_provisorio: false, detalhamento: det })).toBeNull();
+    expect(m({ resultado_provisorio: true, detalhamento: { fora_dre: { motivo: '  ' } } })).toBeNull();
+    expect(m({ resultado_provisorio: true })).toBeNull();
   });
 });

@@ -26,7 +26,8 @@ export const respostaSonda = criarRespostaSonda("omie-financeiro");
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 // v1.12 (2026-11-20, crédito-IA PR 1): título de CR sem valor_documento legível não é gravado como R$ 0.
 // v1.13 (2026-11-22, DRE mapa próprio): linha `nao_resultado` (patrimonial definitivo, sem pendência) no detalhamento.
-export const VERSAO = "v1.13-dre-nao-resultado";
+// v1.14 (2026-11-22, Placar do CEO entrega 3): DRE grava cmv_heuristica + cmv_heuristica_pct (colunas dedicadas).
+export const VERSAO = "v1.14-dre-cmv-heuristica";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
