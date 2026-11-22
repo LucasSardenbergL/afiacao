@@ -94,13 +94,26 @@ e "DRE provisória"). Tudo vem do mesmo cache da DRE do cockpit; nenhuma leitura
 - **Em aberto (engine `omie-financeiro`):** gravar o valor e o percentual do CMV classificado por
   heurística (`viaFallback`), para medir a confiança do CMV de verdade, e o motivo de "provisória".
 
-## Fase 5 — composição da NCG: depende da engine
+## Fase 5 — composição da NCG (2026-11-22)
 
-Recebíveis, estoque, adiantamentos, fornecedores, folha e tributos existem só dentro de
-`calcularNCG` (`fin-cashflow-engine`). O snapshot grava o total e o estoque. Recompor no front com o
-resumo não fecharia com a NCG oficial, por causa das regras de folha em 30 dias e de tributos. A entrega
-certa é a engine gravar `aco`/`pco` no snapshot, deploy da edge e depois a UI, junto com o P2 da fase 2
-(contagem dupla na semana corrente).
+**Backend primeiro (engine v2.5).** `calcularNCG` já separava o ACO (CR aberto, estoque e
+adiantamentos) e o PCO (CP fornecedor, folha 30 d e tributos a pagar), mas o snapshot só gravava o
+total. Agora grava as 6 parcelas em colunas dedicadas `ncg_*`
+(`db/2026-11-22-fin-projecao-snapshots-ncg-composicao.sql`), com 1 writer, o cron.
+
+- **Ausente ≠ zero, em 3 sabores.** `ncg_cr_aberto` NULL quer dizer não medido (snapshot anterior à
+  v2.5). Com ele presente, `ncg_estoque` NULL é a NCG parcial e `ncg_adiantamentos` NULL é "não
+  segregado": a empresa não tem categoria de adiantamento configurada, e o adiantamento, se houver,
+  está dentro do CP fornecedor. Antes o cálculo gravaria 0 como se fosse medido (Codex P2).
+- **O CHECK nunca derruba o snapshot.** O helper `ncg-composicao.ts` espelha o CHECK, valida a faixa
+  **depois** do arredondamento (`9999999999,999` vira `1e10`, Codex P1) e exige folga de fechamento
+  0,04, mais estrita que os 0,05 do banco, porque na fronteira o float do JS e o numeric discordam
+  (Codex P2).
+- **Provas:** teste Deno pelo handler (vermelho antes, com controle verde), falsificação do helper
+  (3 sabotagens, cada uma acusada pelo seu caso) e harness PG17 (controle 17/17, 6 sabotagens).
+- **Ordem de deploy:** migration → edge v2.5 → só então o PR da UI. A leitura do cockpit
+  (`getProjecaoSnapshotsCockpit`) nomeia colunas, e a UI antes da migration derrubaria o placar
+  inteiro com 42703.
 
 ## Fases seguintes (sem sinal de uso ainda, não iniciadas)
 
