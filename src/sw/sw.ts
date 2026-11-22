@@ -26,6 +26,7 @@ import {
   ESTADO_INICIAL,
   avaliarResposta,
   buildIdDoManifesto,
+  buscarAssetComRecuoSemCookie,
   cachesDescartaveis,
   estadoComLegado,
   faltantes,
@@ -283,8 +284,13 @@ async function responderEstatico(req: Request, e: EventoFetch): Promise<Response
     const legado = await (await caches.open(CACHE_LEGADO)).match(req, { ignoreSearch: true });
     if (legado) return legado;
   }
-  const r = await fetch(req);
-  if (/^\/assets\/.*\.(?:js|css)$/i.test(url.pathname) && servivel(req.url, r)) {
+  const ehAsset = /^\/assets\/.*\.(?:js|css)$/i.test(url.pathname);
+  // Asset fora da release com cookie `__dpl` pinado num deployment velho → 404/HTML.
+  // Refaz sem cookie (ver `buscarAssetComRecuoSemCookie`; loop do Safari 2026-11-22).
+  const r = ehAsset
+    ? await buscarAssetComRecuoSemCookie(req.url, (credentials) => (credentials ? fetch(req.url, { credentials }) : fetch(req)))
+    : await fetch(req);
+  if (ehAsset && servivel(req.url, r)) {
     const copia = r.clone();
     e.waitUntil(caches.open(CACHE_ASSETS_PROGRESSIVO).then((c) => c.put(req, copia)));
   }

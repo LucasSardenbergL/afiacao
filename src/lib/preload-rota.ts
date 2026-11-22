@@ -83,16 +83,31 @@ export function liberarGuardasQuandoEstavel(
   }, prazoMs);
 }
 
-/** Recarrega 1× por sessão (guarda anti-loop). Devolve se recarregou. */
+/**
+ * Recarrega 1× por sessão (guarda anti-loop). Devolve se recarregou.
+ * Sem `sessionStorage` (lança ao ler/gravar) NÃO recarrega: sem guarda, uma falha
+ * persistente viraria recarga sem fim. A tela de erro/"Recarregar" fica com o usuário.
+ */
 function recarregarUmaVez(): boolean {
   try {
     if (sessionStorage.getItem('__preload_error_reloaded__')) return false;
     sessionStorage.setItem('__preload_error_reloaded__', '1');
   } catch {
-    // sessionStorage indisponível: ainda assim recarrega (sem guarda).
+    return false;
   }
   recarregar();
   return true;
+}
+
+/**
+ * Import OPCIONAL (analytics): a falha dele não pode recarregar a página. Chame no `.catch`
+ * do import (roda antes da decisão do ouvinte, que espera um macrotask). Incidente
+ * 2026-11-22: o `import('posthog-js')` passa pelo preload do Vite, que dispara
+ * `vite:preloadError` mesmo com `.catch`; num Safari pinado num deployment velho ele
+ * falhava a cada boot e a página recarregou ~550× em 2h20.
+ */
+export function marcarFalhaDeImportOpcional(erro: unknown): void {
+  marcar(errosEspeculativos, erro);
 }
 
 /**

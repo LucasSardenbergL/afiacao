@@ -238,6 +238,33 @@ export function respostaServivel(url: string, r: { status: number; type?: string
   return avaliarResposta(url, { ok: true, status: 200, contentType: r.contentType }) === 'ok';
 }
 
+/**
+ * Busca um asset `/assets/*.js|css` fora da release (ex.: `vendor-posthog`, ignorado no
+ * precache) e, se a resposta COM cookie não for servível, refaz SEM cookie.
+ *
+ * Mesmo mecanismo do `opcoesDeBusca`: o cookie `__dpl` pina o aparelho num deployment
+ * velho, que não tem o hash do build novo (404/HTML). Incidente 2026-11-22: um Safari de
+ * iPhone, depois de aceitar a atualização, recarregou ~550× em 2h20 — o import do
+ * PostHog falhava a cada boot, o Vite disparava `vite:preloadError` e a página recarregava.
+ * Sem cookie, o pedido cai no deployment atual (o que serviu o `sw.js`). Com cookie primeiro
+ * porque um Publish MAIS NOVO pode já ter tirado o hash do deployment atual, e o pinado tê-lo.
+ */
+export async function buscarAssetComRecuoSemCookie<R extends { status: number; type?: string; headers: { get(n: string): string | null } }>(
+  url: string,
+  buscar: (credentials?: 'omit') => Promise<R>,
+): Promise<R> {
+  const ok = (r: R) => respostaServivel(url, { status: r.status, type: r.type, contentType: r.headers.get('content-type') });
+  const comCookie = await buscar();
+  if (ok(comCookie)) return comCookie;
+  try {
+    const semCookie = await buscar('omit');
+    if (ok(semCookie)) return semCookie;
+  } catch {
+    // rede caiu no recuo: devolve a 1ª resposta, como antes
+  }
+  return comCookie;
+}
+
 /** Navegações que NUNCA vêm do cache (OAuth do Lovable, rotas internas). */
 const NAVEGACAO_SO_REDE = [/^\/~oauth/, /^\/__/];
 

@@ -11,6 +11,7 @@ import {
   registrarRotas,
   instalarRecuperacaoDeChunk,
   liberarGuardasQuandoEstavel,
+  marcarFalhaDeImportOpcional,
   PRAZO_APP_ESTAVEL_MS,
   usePrefetchRota,
 } from '@/lib/preload-rota';
@@ -528,6 +529,50 @@ describe('guarda anti-loop sobrevive ao boot (Safari recarregando sem fim, 2026-
     await vi.advanceTimersByTimeAsync(1);
     expect(recarregar).toHaveBeenCalledTimes(1);
     desinstalar();
+  });
+
+  it('sessionStorage que lança: NÃO recarrega (sem guarda, seria recarga sem fim)', async () => {
+    vi.useFakeTimers();
+    const recarregar = vi.fn();
+    const desinstalar = instalarRecuperacaoDeChunk(recarregar);
+    // Como o Safari com armazenamento bloqueado: o próprio acesso a `sessionStorage` lança.
+    const original = Object.getOwnPropertyDescriptor(window, 'sessionStorage')!;
+    Object.defineProperty(window, 'sessionStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('The operation is insecure.', 'SecurityError');
+      },
+    });
+    try {
+      falhaDeChunk();
+      falhaDeChunk();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(recarregar).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, 'sessionStorage', original);
+      desinstalar();
+    }
+  });
+
+  it('import opcional (analytics) que falha não recarrega; falha de chunk real ainda recarrega 1×', async () => {
+    vi.useFakeTimers();
+    const recarregar = vi.fn();
+    const desinstalar = instalarRecuperacaoDeChunk(recarregar);
+    // Como o preload do Vite: dispara o evento e rejeita com o MESMO erro; o `.catch` marca.
+    const erroPosthog = new TypeError('Importing a module script failed.');
+    window.dispatchEvent(Object.assign(new Event('vite:preloadError', { cancelable: true }), { payload: erroPosthog }));
+    await Promise.reject(erroPosthog).catch((e: unknown) => marcarFalhaDeImportOpcional(e));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(recarregar).not.toHaveBeenCalled();
+    falhaDeChunk();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(recarregar).toHaveBeenCalledTimes(1);
+    desinstalar();
+  });
+
+  it('analytics.ts marca a falha do import do posthog como opcional', () => {
+    const src = readFileSync('src/lib/analytics.ts', 'utf8');
+    expect(src).toMatch(/\.catch\(\(e\) => \{\s*marcarFalhaDeImportOpcional\(e\);/);
   });
 
   it('main.tsx não apaga a guarda na hora do boot', () => {
