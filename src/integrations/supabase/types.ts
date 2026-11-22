@@ -711,6 +711,68 @@ export type Database = {
           },
         ]
       }
+      banco_regra_calibracao: {
+        Row: {
+          ate: string
+          banco_conta_id: string
+          company: string
+          de: string
+          dias_batem_creditos: number
+          dias_batem_debitos: number
+          dias_com_movimento_creditos: number
+          dias_com_movimento_debitos: number
+          dias_conferidos: number
+          divergencias_explicadas_creditos: number
+          divergencias_explicadas_debitos: number
+          id: string
+          medido_em: string
+          notas: string
+          regra_versao: string
+        }
+        Insert: {
+          ate: string
+          banco_conta_id: string
+          company: string
+          de: string
+          dias_batem_creditos: number
+          dias_batem_debitos: number
+          dias_com_movimento_creditos: number
+          dias_com_movimento_debitos: number
+          dias_conferidos: number
+          divergencias_explicadas_creditos: number
+          divergencias_explicadas_debitos: number
+          id?: string
+          medido_em?: string
+          notas: string
+          regra_versao: string
+        }
+        Update: {
+          ate?: string
+          banco_conta_id?: string
+          company?: string
+          de?: string
+          dias_batem_creditos?: number
+          dias_batem_debitos?: number
+          dias_com_movimento_creditos?: number
+          dias_com_movimento_debitos?: number
+          dias_conferidos?: number
+          divergencias_explicadas_creditos?: number
+          divergencias_explicadas_debitos?: number
+          id?: string
+          medido_em?: string
+          notas?: string
+          regra_versao?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "banco_regra_calibracao_conta_fk"
+            columns: ["banco_conta_id", "company"]
+            isOneToOne: false
+            referencedRelation: "banco_conta"
+            referencedColumns: ["id", "company"]
+          },
+        ]
+      }
       cache_lotes: {
         Row: {
           cache_key: string
@@ -26304,6 +26366,17 @@ export type Database = {
       banco_extrato_marcar_conferido: {
         Args: { p_arquivo_id: string }
         Returns: undefined
+      }
+      banco_extrato_omie_dia: {
+        Args: { p_ate: string; p_banco_conta_id: string; p_de: string }
+        Returns: {
+          creditos_calibrado: boolean
+          creditos_centavos: number
+          data: string
+          debitos_calibrado: boolean
+          debitos_centavos: number
+          regra_versao: string
+        }[]
       }
       banco_extrato_registrar: { Args: { p: Json }; Returns: Json }
       banco_extrato_resumo_dia: {
