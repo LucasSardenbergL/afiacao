@@ -6,8 +6,7 @@ import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
 import { atenderSondaOptions } from "../_shared/sonda-cron.ts";
 import { clienteCotaDoAmbiente, comVezOmie, sinalDaChamada } from "../_shared/omie-cota.ts";
 import {
-  omieEtapaToStatus,
-  etapaConhecida,
+  statusOmieReconciliavel,
   subtotalPedidoComDesconto,
   construirItemsJson,
   precoUnitarioOmie,
@@ -114,6 +113,8 @@ interface OmiePedidoCabecalho {
 interface OmiePedidoVenda {
   cabecalho?: OmiePedidoCabecalho;
   det?: OmiePedidoItem[];
+  // `cancelado` = 'S' ⟹ cancelado no Omie em QUALQUER etapa (statusOmieReconciliavel).
+  infoCadastro?: { cancelado?: string };
 }
 
 interface OmieListarPedidosResponse {
@@ -401,7 +402,7 @@ async function reprocessOrders(
           // status atual. Quem decide se o status LOCAL ainda é gerido pelo Omie é a RPC, dentro
           // da transação: decidir isso aqui exigiria ler o status antes de escrever, e é
           // exatamente esse intervalo entre ler e escrever que esta entrega existe para fechar.
-          status_omie: etapaConhecida(cab.etapa) ? omieEtapaToStatus(cab.etapa) : null,
+          status_omie: statusOmieReconciliavel(cab.etapa, pedido.infoCadastro),
           // [A1] total (calculado acima) e itemsJson pelo canon compartilhado.
           total,
           items: construirItemsJson(itens),

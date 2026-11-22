@@ -41,6 +41,38 @@ export function etapaConhecida(etapa: string | undefined | null): boolean {
   return ETAPAS_CONHECIDAS.has(etapa || "");
 }
 
+/** O pedido está CANCELADO no Omie? A marca é `infoCadastro.cancelado === 'S'`, e ela vale em
+ *  QUALQUER etapa: o Omie congela o pedido cancelado na etapa em que ele estava. Medido em
+ *  2026-11-21 na listagem completa das duas contas (35.794 PVs): 100% dos parados em etapa 20 e
+ *  99,8% dos em 50 têm a marca; 98% dos em etapa 10 também; os de etapa 60/70 com a marca têm só
+ *  títulos a receber CANCELADOS (NF cancelada). Antes o sync só lia a etapa 80 e ~R$ 8,3 mi de
+ *  pedido cancelado contavam como venda (decisão do founder: cancelado não é venda).
+ *  Só a forma EXATA 'S' conta — campo ausente ou outro valor = não cancelado (precisão>recall:
+ *  não tiramos venda do universo por leitura malformada). */
+export function canceladoNoOmie(info: { cancelado?: unknown } | null | undefined): boolean {
+  return info?.cancelado === "S";
+}
+
+/** Status local de um pedido lido do Omie: cancelado (marca) vence a etapa. É o que o sync
+ *  grava na INSERÇÃO do pedido. */
+export function omieStatusDoPedido(
+  etapa: string | undefined | null,
+  info: { cancelado?: unknown } | null | undefined,
+): string {
+  return canceladoNoOmie(info) ? "cancelado" : omieEtapaToStatus(etapa);
+}
+
+/** Status que o reprocess manda à RPC `reconciliar_pedidos_omie`, ou `null` = "não sei" (a RPC
+ *  mantém o atual). A marca de cancelado é SABIDA mesmo com etapa desconhecida; sem ela, só
+ *  etapa conhecida reconcilia ([A4]). */
+export function statusOmieReconciliavel(
+  etapa: string | undefined | null,
+  info: { cancelado?: unknown } | null | undefined,
+): string | null {
+  if (canceladoNoOmie(info)) return "cancelado";
+  return etapaConhecida(etapa) ? omieEtapaToStatus(etapa) : null;
+}
+
 interface DetInput {
   produto?: {
     codigo_produto?: number | string;

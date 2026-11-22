@@ -29,7 +29,7 @@ import {
   vereditoExclusaoNoOmie,
 } from "../_shared/atp-pv-omie.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
-import { aplicarCorPreservandoItens, apurarSubtotalPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
+import { aplicarCorPreservandoItens, apurarSubtotalPedido, omieStatusDoPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
 import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
@@ -167,7 +167,8 @@ interface OmiePedidoCabecalho {
 interface OmiePedidoVendaProduto {
   cabecalho?: OmiePedidoCabecalho;
   det?: OmieDetalheItem[];
-  infoCadastro?: { dInc?: string };
+  // `cancelado` = 'S' ⟹ pedido cancelado no Omie em QUALQUER etapa (omieStatusDoPedido).
+  infoCadastro?: { dInc?: string; cancelado?: string };
   // `codVend` = vendedor do PRÓPRIO pedido (não do cadastro do cliente) → ./vendedor-pedido.ts
   informacoes_adicionais?: { codVend?: unknown } | null;
 }
@@ -1466,12 +1467,9 @@ async function syncPedidos(
         });
       }
 
-      let status = 'importado';
-      const etapa = cab.etapa || '';
-      if (etapa === '60' || etapa === '70') status = 'faturado';
-      else if (etapa === '50') status = 'separacao';
-      else if (etapa === '20') status = 'enviado';
-      else if (etapa === '80') status = 'cancelado';
+      // Cancelado no Omie (`infoCadastro.cancelado='S'`) vence a etapa — o Omie congela o pedido
+      // cancelado na etapa em que ele estava (canon em _shared/omie-pedido.ts).
+      const status = omieStatusDoPedido(cab.etapa, pedido.infoCadastro);
 
       // Data canônica do pedido: dInc (inclusão no Omie = quando o cliente comprou) → previsão de
       // entrega → hoje (civil SP). UMA verdade para order_date_kpi (KPI de positivação) E created_at
@@ -1744,12 +1742,9 @@ async function repararOrfaosItens(
         continue;
       }
 
-      let status = 'importado';
-      const etapa = cab.etapa || '';
-      if (etapa === '60' || etapa === '70') status = 'faturado';
-      else if (etapa === '50') status = 'separacao';
-      else if (etapa === '20') status = 'enviado';
-      else if (etapa === '80') status = 'cancelado';
+      // Cancelado no Omie (`infoCadastro.cancelado='S'`) vence a etapa — o Omie congela o pedido
+      // cancelado na etapa em que ele estava (canon em _shared/omie-pedido.ts).
+      const status = omieStatusDoPedido(cab.etapa, pv.infoCadastro);
 
       pedidosRpc.push({
         account, hash_payload: pai.hash_payload, omie_pedido_id: pid,
