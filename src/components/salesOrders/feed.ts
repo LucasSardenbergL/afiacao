@@ -26,7 +26,7 @@ const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0
  * Colunas que a listagem baixa — todas as da view MENOS `busca`, que só serve de filtro no servidor.
  * O `select` tipado do supabase-js deriva daqui o tipo da linha (`LinhaOrderFeed`).
  */
-export const COLUNAS_LISTAGEM_FEED =
+const COLUNAS_LISTAGEM_FEED =
   'origin,id,created_at,account,order_number,omie_pedido_id,customer_user_id,customer_name,item_names,item_quantity,status,subtotal,total' as const;
 
 /**

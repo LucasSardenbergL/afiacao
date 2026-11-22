@@ -135,7 +135,7 @@ const SalesOrders = () => {
   // O dia de HOJE entra na dependência: o rótulo "Hoje"/"Ontem" vira à meia-noite mesmo com o cache igual.
   const hoje = format(new Date(), 'yyyy-MM-dd');
   const grupos = useMemo(
-    () => (porValor ? [{ dia: 'valor', rotulo: '', pedidos: orders }] : agruparPorDia(orders)),
+    () => (porValor ? [{ dia: 'valor', rotulo: '', pedidos: orders }] : agruparPorDia(orders, hoje)),
     [porValor, orders, hoje],
   );
   const chaves = useMemo(() => new Set(orders.map(chaveDaLinha)), [orders]);

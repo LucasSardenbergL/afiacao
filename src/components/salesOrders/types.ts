@@ -226,7 +226,8 @@ export interface GrupoDia {
 // São Paulo, 21/11 12:00Z · 21/11 01:00Z · 21/11 00:00Z dá os dias 21, 20, 21, e o "só vizinhos"
 // abria o 21 duas vezes (com chave React repetida). Grupos em ordem de dia DESC; "Sem data" no fim.
 // Dentro do grupo a ordem do feed se mantém.
-export function agruparPorDia(pedidos: OrderFeedRow[]): GrupoDia[] {
+/** `hoje` (yyyy-MM-dd local) decide o rótulo "Hoje"/"Ontem"; quem memoiza passa o dia para o memo virar à meia-noite. */
+export function agruparPorDia(pedidos: OrderFeedRow[], hoje?: string): GrupoDia[] {
   const porDia = new Map<string, OrderFeedRow[]>();
   for (const p of pedidos) {
     const dia = diaDoPedido(p.created_at) ?? 'sem-data';
@@ -236,5 +237,5 @@ export function agruparPorDia(pedidos: OrderFeedRow[]): GrupoDia[] {
   }
   return [...porDia.entries()]
     .sort(([a], [b]) => (a === 'sem-data' ? 1 : b === 'sem-data' ? -1 : b.localeCompare(a)))
-    .map(([dia, lista]) => ({ dia, rotulo: dia === 'sem-data' ? 'Sem data' : rotuloDiaPedido(dia), pedidos: lista }));
+    .map(([dia, lista]) => ({ dia, rotulo: dia === 'sem-data' ? 'Sem data' : rotuloDiaPedido(dia, hoje), pedidos: lista }));
 }
