@@ -29,13 +29,21 @@ const LIMITE_ANOMALIA_FRACAO = 0.25;
 /** Códigos por lote de confirmação. A resposta é PAGINADA (um produto tem uma entrada por local). */
 export const CONFIRMACAO_POR_CHAMADA = 50;
 /**
- * Teto de custo da trilha NULL (catálogo com `estoque IS NULL` = saldo desconhecido, que o produto
- * novo herda desde a migration 20261121220100). 250 = 5 lotes de confirmação por rodada de 30 min.
- * Acima dele a trilha NULL inteira é pulada (motivo em `puladoNulos`), a trilha ≠ 0 segue — nunca
- * "os N primeiros": o eternamente-desconhecido (produto que o Omie não devolve na confirmação)
- * ocuparia as vagas toda rodada. Medido em 2026-11-21: 0 NULL, 5–38 SKUs novos/mês por conta.
+ * Orçamento por rodada da trilha NULL (catálogo com `estoque IS NULL` = saldo desconhecido, que o
+ * produto novo herda desde a migration 20261121220100). 250 = 5 lotes de confirmação por rodada.
+ * Acima dele a rodada confirma uma JANELA ROTATIVA de 250 (início = rodada × 250, mod N, sobre os
+ * códigos ordenados): nem "pula tudo" (251 NULLs travariam para sempre — Codex P2) nem "os N
+ * primeiros" (o eternamente-desconhecido ocuparia as vagas toda rodada). Sem estado: a rodada é o
+ * bloco de 30 min do relógio. Medido em 2026-11-21: 0 NULL, 5–38 SKUs novos/mês por conta.
  */
 export const LIMITE_CANDIDATOS_NULOS = 250;
+const RODADA_MS = 30 * 60 * 1000;
+
+/** Índice da rodada (bloco de 30 min) para a janela rotativa da trilha NULL; ISO ilegível = 0. */
+export function rodadaDoRelogio(nowIso: string): number {
+  const t = Date.parse(nowIso);
+  return Number.isFinite(t) && t > 0 ? Math.floor(t / RODADA_MS) : 0;
+}
 /** Páginas por lote de confirmação; lote que não termina nelas fica inteiro desconhecido. */
 export const MAX_PAGINAS_CONFIRMACAO = 5;
 
@@ -87,7 +95,7 @@ export interface PlanoCandidatos {
   candidatosNulos: number;
   /** Motivo de NADA ter sido confirmado nesta rodada; null quando a confirmação segue. */
   pulado: string | null;
-  /** Motivo de a trilha NULL não ter sido confirmada (rodada pulada ou teto de custo); null = seguiu. */
+  /** Motivo de a trilha NULL não ter sido confirmada inteira (rodada pulada ou janela rotativa); null = toda. */
   puladoNulos: string | null;
 }
 
@@ -137,15 +145,18 @@ export function limiteAnomalia(nListados: number): number {
 // esta trilha, o SKU novo com zero REAL ficava NULL sem prazo. Ela NÃO entra no limite de anomalia —
 // o NULL não "sumiu" da listagem (nunca esteve nela), então não é sinal de listagem suspeita, e um
 // acúmulo de eternamente-desconhecidos não pode travar o zeramento dos congelados. Tem teto de custo
-// próprio (LIMITE_CANDIDATOS_NULOS) e segue os gates de rodada (snapshot vazio, incompleta, anomalia):
+// próprio (LIMITE_CANDIDATOS_NULOS, janela rotativa) e segue os gates de rodada (snapshot vazio, incompleta, anomalia):
 // a rodada que não confia na própria listagem não confirma nada.
 export function planejarCandidatos(args: {
   listados: ReadonlySet<number>;
   completude: CompletudeListagem;
   posicoesLocais: LinhaPosicaoLocal[];
   estoqueLocal: LinhaEstoqueLocal[];
+  /** Índice da rodada (`rodadaDoRelogio`) — só move a janela da trilha NULL acima do orçamento. */
+  rodada?: number;
 }): PlanoCandidatos {
   const { listados, completude, posicoesLocais, estoqueLocal } = args;
+  const rodada = args.rodada ?? 0;
   const porPosicao: Array<{ cod: number; synced: string }> = [];
   const vistos = new Set<number>();
   for (const l of posicoesLocais) {
@@ -188,12 +199,14 @@ export function planejarCandidatos(args: {
     return pular(`${candidatos} candidatos passa do limite de anomalia de ${limite} — listagem suspeita, nada confirmado`);
   }
   if (candidatosNulos > LIMITE_CANDIDATOS_NULOS) {
+    const inicio = (Math.abs(Math.trunc(rodada)) * LIMITE_CANDIDATOS_NULOS) % candidatosNulos;
+    const janela = Array.from({ length: LIMITE_CANDIDATOS_NULOS }, (_, i) => porNulo[(inicio + i) % candidatosNulos]);
     return {
-      aConfirmar: uniao,
+      aConfirmar: [...uniao, ...janela],
       candidatos,
       candidatosNulos,
       pulado: null,
-      puladoNulos: `${candidatosNulos} candidatos NULL passa do teto de custo de ${LIMITE_CANDIDATOS_NULOS} — trilha NULL não confirmada`,
+      puladoNulos: `${candidatosNulos} candidatos NULL passa do orçamento de ${LIMITE_CANDIDATOS_NULOS} — janela rotativa a partir da posição ${inicio}`,
     };
   }
   return { aConfirmar: [...uniao, ...porNulo], candidatos, candidatosNulos, pulado: null, puladoNulos: null };

@@ -19,6 +19,7 @@ import {
   type AtualizacaoEstoque,
   type AtualizacaoPosicao,
   type CompletudeListagem,
+  type Confirmacao,
   espelhosDaMesmaConta,
   interpretarConfirmacao,
   type LinhaEstoqueLocal,
@@ -27,6 +28,7 @@ import {
   montarPedidosConfirmacao,
   planejarCandidatos,
   planejarEscritaConfirmada,
+  rodadaDoRelogio,
 } from "./zeramento-estoque.ts";
 
 interface RespostaEscrita {
@@ -48,13 +50,16 @@ export interface EscritorPostgrest {
 
 export interface ResultadoZeramento {
   candidatos: number;
-  candidatosNulos: number;
+  /** null = a trilha NULL não foi apurada (o loader dela falhou; a ≠ 0 seguiu). */
+  candidatosNulos: number | null;
   puladoNulos: string | null;
   confirmadosZero: number;
   naoZero: number;
   desconhecidos: number;
   posicoesZeradas: number;
   estoqueZerado: number;
+  /** Subconjunto de `estoqueZerado` cujo valor lido era NULL (nunca somar os dois). */
+  estoqueZeradoNulo: number;
   recusadosCas: number;
   chamadasConfirmacao: number;
   estranhosNaConfirmacao: number;
@@ -119,9 +124,13 @@ export async function aplicarEscritaConfirmada(
   db: EscritorPostgrest,
   empresa: string | null,
   plano: { posicoes: AtualizacaoPosicao[]; estoque: AtualizacaoEstoque[] },
-): Promise<{ posicoesZeradas: number; estoqueZerado: number; recusadosCas: number; falhas: string[] }> {
+): Promise<{ posicoesZeradas: number; estoqueZerado: number; estoqueZeradoNulo: number; recusadosCas: number; falhas: string[] }> {
   let posicoesZeradas = 0;
   let estoqueZerado = 0;
+  let estoqueZeradoNulo = 0;
+  // Código cujo espelho de posição NÃO foi escrito (CAS recusou ou erro): alguém o regravou depois
+  // da confirmação — o catálogo desse código não recebe o zero nesta rodada (Codex P2).
+  const posicaoNaoEscrita = new Set<number>();
   let recusadosCas = 0;
   const falhas: string[] = [];
 
@@ -137,10 +146,15 @@ export async function aplicarEscritaConfirmada(
     else if (!Array.isArray(data)) falhas.push(`inventory_position ${u.omie_codigo_produto}: resposta malformada`);
     else if (data.length === 0) recusadosCas++;
     else posicoesZeradas += data.length;
+    if (error || !Array.isArray(data) || data.length === 0) posicaoNaoEscrita.add(u.omie_codigo_produto);
   }
 
   if (empresa !== null) {
     for (const u of plano.estoque) {
+      if (posicaoNaoEscrita.has(u.omie_codigo_produto)) {
+        recusadosCas++;
+        continue;
+      }
       const base = db.from("omie_products")
         .update(u.set)
         .eq("id", u.id)
@@ -152,10 +166,35 @@ export async function aplicarEscritaConfirmada(
       if (error) falhas.push(descreverErro(`omie_products ${u.omie_codigo_produto}`, error));
       else if (!Array.isArray(data)) falhas.push(`omie_products ${u.omie_codigo_produto}: resposta malformada`);
       else if (data.length === 0) recusadosCas++;
-      else estoqueZerado += data.length;
+      else {
+        estoqueZerado += data.length;
+        if (u.estoqueLidoNulo) estoqueZeradoNulo += data.length;
+      }
     }
   }
-  return { posicoesZeradas, estoqueZerado, recusadosCas, falhas };
+  return { posicoesZeradas, estoqueZerado, estoqueZeradoNulo, recusadosCas, falhas };
+}
+
+// A resposta de uma página da confirmação que CONTRADIZ o pedido invalida o lote (Codex P1):
+// - página curta com `nTotPaginas` declarando mais páginas — o local com saldo pode estar na próxima;
+// - `dDataPosicao` devolvida (quando vem) diferente da pedida — é o retrato de outro dia.
+// Campo ausente não contradiz (o fim continua sendo a página curta).
+export function contradicaoDaResposta(resposta: Record<string, unknown>, pagina: number, porPagina: number, dataPedida: string): string | null {
+  const produtos = Array.isArray(resposta.produtos) ? resposta.produtos : [];
+  const declarado = numeroExplicitoInteiro(resposta.nTotPaginas);
+  if (produtos.length < porPagina && declarado !== null && declarado > pagina) {
+    return `página curta (${produtos.length} de ${porPagina}) mas nTotPaginas=${declarado} — paginação contraditória`;
+  }
+  const data = resposta.dDataPosicao;
+  if (typeof data === "string" && data.trim() !== "" && data.trim() !== dataPedida) {
+    return `dDataPosicao devolvida ${data.trim()} ≠ pedida ${dataPedida}`;
+  }
+  return null;
+}
+
+function numeroExplicitoInteiro(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? Number(v) : NaN;
+  return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 // O passo inteiro, depois de o writer gravar as posições listadas: descobre os candidatos (posição
@@ -176,32 +215,51 @@ export async function zerarConfirmadosForaDaLista(d: {
   nowIso: string;
 }): Promise<ResultadoZeramento> {
   const posicoesLocais = await carregarPosicoesLocaisNaoZero(d.leitor, espelhosDaMesmaConta(d.account));
-  const estoqueLocal = d.empresa === null
-    ? []
-    : [...await carregarEstoqueLocalNaoZero(d.leitor, d.empresa), ...await carregarEstoqueLocalNulo(d.leitor, d.empresa)];
-  const plano = planejarCandidatos({ listados: d.listados, completude: d.completude, posicoesLocais, estoqueLocal });
+  const estoqueNaoZero = d.empresa === null ? [] : await carregarEstoqueLocalNaoZero(d.leitor, d.empresa);
+  // A trilha NULL é ADITIVA: o loader dela falhar não pode cancelar a ≠ 0 já lida (Codex P2) — a
+  // falha vai para `falhas` e `candidatosNulos` fica null (não apurado, nunca 0).
+  let estoqueNulo: LinhaEstoqueLocal[] = [];
+  let falhaNulo: string | null = null;
+  if (d.empresa !== null) {
+    try {
+      estoqueNulo = await carregarEstoqueLocalNulo(d.leitor, d.empresa);
+    } catch (e) {
+      falhaNulo = `trilha NULL não apurada: ${(mensagemDeErro(e) ?? "erro sem mensagem utilizável").slice(0, 200)}`;
+    }
+  }
+  const estoqueLocal = [...estoqueNaoZero, ...estoqueNulo];
+  const plano = planejarCandidatos({
+    listados: d.listados,
+    completude: d.completude,
+    posicoesLocais,
+    estoqueLocal,
+    rodada: rodadaDoRelogio(d.nowIso),
+  });
   const resultado: ResultadoZeramento = {
     candidatos: plano.candidatos,
-    candidatosNulos: plano.candidatosNulos,
-    puladoNulos: plano.puladoNulos,
+    candidatosNulos: falhaNulo === null ? plano.candidatosNulos : null,
+    puladoNulos: falhaNulo ?? plano.puladoNulos,
     confirmadosZero: 0,
     naoZero: 0,
     desconhecidos: 0,
     posicoesZeradas: 0,
     estoqueZerado: 0,
+    estoqueZeradoNulo: 0,
     recusadosCas: 0,
     chamadasConfirmacao: 0,
     estranhosNaConfirmacao: 0,
     pulado: plano.pulado,
-    falhas: [],
+    falhas: falhaNulo === null ? [] : [falhaNulo],
   };
   if (plano.aConfirmar.length === 0) return resultado;
 
   // A resposta é PAGINADA (uma entrada por local): o lote só vale com a paginação TERMINADA numa
   // página curta. Página que falha, resposta sem lista ou teto de páginas = lote inteiro desconhecido
   // (Codex P1 no adversarial: decidir pela página 1 zerava produto com saldo em outro local).
-  const itens: unknown[] = [];
-  const incompletos = new Set<number>();
+  // Cada lote é interpretado contra os SEUS códigos (Codex P1): o item de outro código que um lote
+  // devolve é estranho e não confirma nada; um ilegível só contamina o próprio lote.
+  const porCodigo = new Map<number, Confirmacao>();
+  let estranhos = 0;
   for (const pedido of montarPedidosConfirmacao(plano.aConfirmar, d.dataPosicao)) {
     const codigos = (pedido.lista_produtos as Array<{ nCodProd: number }>).map((x) => x.nCodProd);
     const porPagina = Number(pedido.nRegPorPagina);
@@ -216,6 +274,11 @@ export async function zerarConfirmadosForaDaLista(d: {
           resultado.falhas.push(`confirmação (página ${pagina}): resposta sem lista de produtos`);
           break;
         }
+        const contradicao = contradicaoDaResposta(resposta, pagina, porPagina, String(pedido.dDataPosicao));
+        if (contradicao !== null) {
+          resultado.falhas.push(`confirmação (página ${pagina}): ${contradicao}`);
+          break;
+        }
         produtos = resposta.produtos;
       } catch (e) {
         resultado.falhas.push(`confirmação (página ${pagina}): ${(mensagemDeErro(e) ?? "erro sem mensagem utilizável").slice(0, 200)}`);
@@ -227,11 +290,10 @@ export async function zerarConfirmadosForaDaLista(d: {
         break;
       }
     }
-    if (terminou) itens.push(...doLote);
-    else for (const c of codigos) incompletos.add(c);
+    const doVeredito = terminou ? interpretarConfirmacao(codigos, doLote) : interpretarConfirmacao(codigos, [], new Set(codigos));
+    estranhos += doVeredito.estranhos;
+    for (const [cod, c] of doVeredito.porCodigo) porCodigo.set(cod, c);
   }
-
-  const { porCodigo, estranhos } = interpretarConfirmacao(plano.aConfirmar, itens, incompletos);
   resultado.estranhosNaConfirmacao = estranhos;
   for (const c of porCodigo.values()) {
     if (c.tipo === "zero") resultado.confirmadosZero++;
@@ -243,6 +305,7 @@ export async function zerarConfirmadosForaDaLista(d: {
   const aplicado = await aplicarEscritaConfirmada(d.escritor, d.empresa, escrita);
   resultado.posicoesZeradas = aplicado.posicoesZeradas;
   resultado.estoqueZerado = aplicado.estoqueZerado;
+  resultado.estoqueZeradoNulo = aplicado.estoqueZeradoNulo;
   resultado.recusadosCas = aplicado.recusadosCas;
   resultado.falhas.push(...aplicado.falhas);
   return resultado;
@@ -267,6 +330,7 @@ export function metadataDoZeramento(
     zeramento_desconhecidos: r.desconhecidos,
     zerados_posicao: r.posicoesZeradas,
     zerados_estoque: r.estoqueZerado,
+    zerados_estoque_nulo: r.estoqueZeradoNulo,
     zeramento_recusados_cas: r.recusadosCas,
     zeramento_chamadas: r.chamadasConfirmacao,
     zeramento_estranhos: r.estranhosNaConfirmacao,

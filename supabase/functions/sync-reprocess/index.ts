@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { type Account, contaReprocessValida } from "./conta.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCron, corsHeaders } from "../_shared/auth.ts";
@@ -73,7 +74,6 @@ type ItemReconciliarComDesconto = ItemReconciliar & { desconto_valor: number | n
 // Teto anti-runaway do ListarPedidos (reprocessOrders): 500 × 100 = 50k pedidos numa janela >> real.
 const MAX_PAGINAS_PEDIDOS = 500;
 
-type Account = "oben" | "colacor";
 
 // ── Omie response shapes ──
 interface OmieProdutoItem {
@@ -931,6 +931,13 @@ Deno.serve(async (req) => {
     if (erroParseCorpo) throw erroParseCorpo;
     const body = corpoBruto;
     const { action, account = "oben" } = body;
+    // Conta fora do tipo escolheria as credenciais da Oben para outro espelho (./conta.ts). Recusa ANTES de ler/escrever.
+    if (!contaReprocessValida(account)) {
+      return new Response(JSON.stringify({ error: `account inválida: ${JSON.stringify(account).slice(0, 40)} (esperado "oben" ou "colacor")` }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const cfg = await loadReprocessConfig(supabaseAdmin);
     let result: unknown;

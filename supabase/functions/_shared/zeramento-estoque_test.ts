@@ -18,6 +18,7 @@ import {
   montarPedidosConfirmacao,
   planejarCandidatos,
   planejarEscritaConfirmada,
+  rodadaDoRelogio,
 } from "./zeramento-estoque.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -457,13 +458,30 @@ Deno.test("candidatos NULL — não contam no limite de anomalia (o NULL não su
   assertEquals([r.candidatos, r.candidatosNulos, r.pulado, r.aConfirmar.length], [1, 60, null, 61]);
 });
 
-Deno.test("candidatos NULL — acima do teto de custo a trilha NULL é pulada inteira; a ≠ 0 segue", () => {
+Deno.test("candidatos NULL — acima do orçamento a rodada confirma uma JANELA ROTATIVA; a ≠ 0 segue inteira", () => {
   const nulos = (n: number) => Array.from({ length: n }, (_, i) => est(`n${i}`, 1000 + i, null));
   const noTeto = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [pos(7, 2, null)], estoqueLocal: nulos(LIMITE_CANDIDATOS_NULOS) });
   assertEquals([noTeto.aConfirmar.length, noTeto.puladoNulos], [LIMITE_CANDIDATOS_NULOS + 1, null]);
   const acima = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [pos(7, 2, null)], estoqueLocal: nulos(LIMITE_CANDIDATOS_NULOS + 1) });
-  assertEquals([acima.aConfirmar, acima.pulado], [[7], null]);
-  assertEquals(acima.puladoNulos !== null && acima.puladoNulos.includes("teto de custo"), true, String(acima.puladoNulos));
+  assertEquals([acima.aConfirmar.length, acima.aConfirmar[0], acima.pulado], [LIMITE_CANDIDATOS_NULOS + 1, 7, null]);
+  assertEquals(acima.puladoNulos !== null && acima.puladoNulos.includes("janela rotativa"), true, String(acima.puladoNulos));
+});
+
+Deno.test("candidatos NULL — a janela rotativa cobre TODOS os NULLs em ⌈N/250⌉ rodadas (nenhum trava para sempre)", () => {
+  const n = 2 * LIMITE_CANDIDATOS_NULOS + 37;
+  const nulos = Array.from({ length: n }, (_, i) => est(`n${i}`, 1000 + i, null));
+  const vistos = new Set<number>();
+  const rodadas = Math.ceil(n / LIMITE_CANDIDATOS_NULOS);
+  for (let r = 0; r < rodadas; r++) {
+    const p = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [], estoqueLocal: nulos, rodada: 9000 * rodadas + r });
+    assertEquals(p.aConfirmar.length, LIMITE_CANDIDATOS_NULOS);
+    for (const c of p.aConfirmar) vistos.add(c);
+  }
+  assertEquals(vistos.size, n);
+});
+
+Deno.test("rodadaDoRelogio — bloco de 30 min; ISO ilegível é 0", () => {
+  assertEquals([rodadaDoRelogio("1970-01-01T00:59:59Z"), rodadaDoRelogio("1970-01-01T01:00:00Z"), rodadaDoRelogio("lixo")], [1, 2, 0]);
 });
 
 Deno.test("candidatos NULL — rodada pulada (incompleta/vazia) também não confirma NULL", () => {
