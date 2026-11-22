@@ -321,13 +321,16 @@ const UnifiedOrder = () => {
       // PR 2.2 (rodada 3): a chave do envelope deste cliente — para achar o envio pendente do rascunho
       // ANTES de o cliente ser re-selecionado (o diálogo de restaurar abre com o carrinho vazio).
       customerChaveEnvelope: chaveClienteEnvelope(h.selectedCustomer),
+      // O id desta cópia do pedido: restaurar o rascunho (refresh, outra aba) volta com ELE, nunca com
+      // um id novo — a lápide do hook barra a cópia que outra aba já concluiu.
+      checkoutId: h.idRascunho,
       customerName: h.selectedCustomer?.razao_social ?? null,
       notes: h.notes,
       ordemCompra: h.ordemCompra,
       // B7 (rodada 2): só o prazo escolhido À MÃO nesta seleção — o do histórico é reaplicado sozinho.
       parcelasManuais: parcelasManuaisDaSelecao(),
     }),
-    [h.cart, h.selectedCustomer, h.notes, h.ordemCompra, parcelasManuaisDaSelecao],
+    [h.cart, h.selectedCustomer, h.notes, h.ordemCompra, parcelasManuaisDaSelecao, h.idRascunho],
   );
   const { draft, clear: clearDraft, dismiss: dismissDraft, gravarAgora: gravarRascunhoAgora } = useOrderDraft({
     scopeKey: draftScope,
@@ -343,10 +346,11 @@ const UnifiedOrder = () => {
   // clearTrigger desta página (que não roda se ela desmontou durante o envio).
   useEffect(() => {
     h.cicloRascunhoRef.current = {
-      aoComprometer: () => gravarRascunhoAgora(draftPayload),
+      // O id do envelope RECÉM-reservado ainda não chegou ao memo (a reserva roda antes do re-render).
+      aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, checkoutId: h.envelopeCheckoutAtual()?.checkoutId ?? draftPayload.checkoutId }),
       aoConfirmarTudo: clearDraft,
     };
-  }, [h.cicloRascunhoRef, gravarRascunhoAgora, draftPayload, clearDraft]);
+  }, [h.cicloRascunhoRef, h.envelopeCheckoutAtual, gravarRascunhoAgora, draftPayload, clearDraft]);
 
   // Gate offline-first do envio: offline salva rascunho (já auto-salvo acima) e expõe
   // CTA de reconexão; nunca enfileira (submitOrder cria PV cobrado no Omie).
@@ -459,6 +463,7 @@ const UnifiedOrder = () => {
       });
       return;
     }
+    h.adotarIdDoRascunho(state.checkoutId);
     const dados: DadosDoRascunho = {
       cart: state.cart, notes: state.notes, ordemCompra: state.ordemCompra,
       parcelas: lerParcelasDoRascunho(state.parcelasManuais),
@@ -488,7 +493,7 @@ const UnifiedOrder = () => {
   const handleDiscardDraft = () => {
     restorePendenteRef.current = null;
     clearDraft();
-    h.descartarEnvelope(chaveEnvelopeDoRascunho);
+    h.descartarEnvelope(chaveEnvelopeDoRascunho, [draft?.state.customerCodigoCliente].filter(Boolean).map(String));
     dismissDraft();
     setRestoreOpen(false);
   };

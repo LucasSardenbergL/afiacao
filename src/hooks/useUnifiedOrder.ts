@@ -29,8 +29,9 @@ import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import { computeCheckoutFingerprint, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
 import {
-  chaveClienteEnvelope, chaveEnvelope, classificarMudancaOutraAba, comTravaEntreAbas, garantirIdentidadeRascunho,
-  gravarEnvelope, lerEnvelope, migrarEnvelopeLegado, removerEnvelopeSeFor, reservarEnvio, type ArmazemEnvelope,
+  chaveClienteEnvelope, chaveEnvelope, classificarMudancaOutraAba, comTravaEntreAbas, concluirEnvio,
+  descartarLegadoDoCliente, garantirIdentidadeRascunho, gravarSeAindaFor, lerEnvelope, marcarConcluido,
+  moverEnvelope, reservarEnvio, type ArmazemEnvelope,
 } from '@/services/orderSubmission/envelope-armazenado';
 import { executarComTravaDeEnvio, protegerDuranteEnvio } from '@/services/orderSubmission/travaEnvio';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
@@ -417,27 +418,51 @@ export function useUnifiedOrder() {
   // `committed:false` = só a identidade do rascunho (nada foi a servidor). O envio relê o armazém.
   const checkoutEnvRef = useRef<CheckoutEnvelope | null>(null);
   const chaveEnvRef = useRef<string | null>(null);
+  // O id DESTA CÓPIA do pedido (rascunho restaurado ou nascido aqui). NÃO segue o evento `storage`: se a
+  // outra aba concluir e limpar, esta continua sabendo qual id tem — e a lápide a impede de pegar outro
+  // (Codex P0). Zera só pelas ações desta aba (trocar/limpar cliente, descartar, sucesso total).
+  const idDaAbaRef = useRef<string | null>(null);
+  const [idRascunho, setIdRascunho] = useState<string | null>(null);
+  const definirIdDaAba = useCallback((id: string | null) => { idDaAbaRef.current = id; setIdRascunho(id); }, []);
+  // Incrementa a cada troca/limpeza DESTA aba: chave que muda sem troca = o mesmo cliente ganhou código.
+  const geracaoClienteRef = useRef(0);
+  const chaveAnteriorRef = useRef<{ chave: string; geracao: number } | null>(null);
   const chaveClienteEnv = chaveClienteEnvelope(selectedCustomer);
-  const customerKeyFp = selectedCustomer
-    ? String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '') : '';
   const userIdEnv = user?.id ?? null;
   useEffect(() => {
-    if (submittingRef.current) return; // a troca é barrada em voo; nunca re-apontar o envelope do envio
+    if (submittingRef.current) return; // nunca re-apontar o envelope em voo (reroda no fim: `submitting`)
     const arm = armazemLocal();
     const chave = userIdEnv && chaveClienteEnv ? chaveEnvelope(userIdEnv, chaveClienteEnv) : null;
+    const anterior = chaveAnteriorRef.current;
+    if (arm && chave && userIdEnv && anterior && anterior.chave !== chave
+      && anterior.geracao === geracaoClienteRef.current && anterior.chave.startsWith(chaveEnvelope(userIdEnv, ''))) {
+      moverEnvelope(arm, anterior.chave, chave); // o MESMO cliente ganhou chave nova (Codex P0)
+    }
+    chaveAnteriorRef.current = chave ? { chave, geracao: geracaoClienteRef.current } : null;
     chaveEnvRef.current = chave;
-    if (!arm || !chave) { checkoutEnvRef.current = null; return; }
-    migrarEnvelopeLegado(arm, chave, customerKeyFp);
-    checkoutEnvRef.current = lerEnvelope(arm, chave);
-  }, [userIdEnv, chaveClienteEnv, customerKeyFp]);
-  /** true = gravado na chave do par atual. Sem par (sem usuário/cliente) só aceita APAGAR. */
+    checkoutEnvRef.current = arm && chave ? lerEnvelope(arm, chave) : null;
+    if (checkoutEnvRef.current && !idDaAbaRef.current) definirIdDaAba(checkoutEnvRef.current.checkoutId);
+  }, [userIdEnv, chaveClienteEnv, submitting, definirIdDaAba]);
+  /**
+   * Grava na chave do par SÓ se o guardado ainda é o envelope desta aba: as marcas da OS e a limpeza não
+   * atropelam o commit de outra aba (Codex P0). Sem par (sem usuário/cliente) só aceita apagar.
+   */
   const persistCheckoutEnv = (e: CheckoutEnvelope | null): boolean => {
     const arm = armazemLocal();
     if (!arm) return true;
     const chave = chaveEnvRef.current;
     if (!chave) return e === null;
-    return gravarEnvelope(arm, chave, e);
+    const esperado = e?.checkoutId ?? checkoutEnvRef.current?.checkoutId ?? null;
+    if (e === null && esperado === null) return true; // esta aba não conhece envelope: nada dela a apagar
+    return gravarSeAindaFor(arm, chave, esperado, e);
   };
+  /** Solta o envelope desta aba ao trocar/descartar: o comprometido vira LÁPIDE (outra aba com a mesma
+   *  cópia não o reenvia com id novo); o não comprometido só sai. */
+  const soltarEnvelopeDaAba = useCallback((chave: string | null, env: CheckoutEnvelope | null) => {
+    const arm = armazemLocal();
+    if (arm && userIdEnv && env?.committed) marcarConcluido(arm, userIdEnv, env.checkoutId);
+    if (arm && chave && env) gravarSeAindaFor(arm, chave, env.checkoutId, null);
+  }, [userIdEnv]);
 
   // Frente B (PR1): o que o aviso de prazo mostrou por conta (congelado na tela). Ref, não state:
   // só o ENVIO lê, e a tela já re-renderiza pelo próprio componente. Zera ao trocar/limpar cliente.
@@ -463,11 +488,12 @@ export function useUnifiedOrder() {
     setCart([]);
     // B2 (Codex P2): trocar de cliente leva junto os campos DO pedido — antes só a OC era limpa.
     setOrdemCompra(''); setNotes(''); setReadyByDate(''); setSelectedTimeSlot('');
-    checkoutEnvRef.current = null; persistCheckoutEnv(null);
+    soltarEnvelopeDaAba(chaveEnvRef.current, checkoutEnvRef.current);
+    checkoutEnvRef.current = null; geracaoClienteRef.current += 1; definirIdDaAba(null);
     // user-tools cache é invalidado dentro de clearCustomerInternal
     // O RASCUNHO em disco é apagado pela página (onClearCustomer) — mesmo ciclo do envelope.
     return true;
-  }, [clearCustomerInternal, setCart]);
+  }, [clearCustomerInternal, setCart, soltarEnvelopeDaAba, definirIdDaAba]);
 
   // Ciclo único envelope × rascunho: a página pergunta antes de descartar o rascunho e, se a
   // vendedora confirmar, zera o envelope junto (o próximo pedido igual é NOVO, não "já enviado").
@@ -478,10 +504,16 @@ export function useUnifiedOrder() {
     if (!temItens || submittingRef.current) return;
     const arm = armazemLocal();
     const chave = chaveEnvRef.current;
-    if (!arm || !chave) return;
-    const e = garantirIdentidadeRascunho(arm, chave, () => crypto.randomUUID());
-    if (e) checkoutEnvRef.current = e;
-  }, [temItens, userIdEnv, chaveClienteEnv]);
+    if (!arm || !chave || !userIdEnv) return;
+    // Sob a MESMA trava da reserva: o rascunho de uma aba não grava por cima do commit da outra.
+    void comTravaEntreAbas(`checkout:${chave}`, () =>
+      garantirIdentidadeRascunho(arm, userIdEnv, chave, idDaAbaRef.current, () => crypto.randomUUID()),
+    ).then(e => {
+      if (!e || chaveEnvRef.current !== chave || submittingRef.current) return;
+      checkoutEnvRef.current = e;
+      definirIdDaAba(e.checkoutId);
+    });
+  }, [temItens, userIdEnv, chaveClienteEnv, definirIdDaAba]);
 
   // Outra aba mexeu no envelope DESTE par → espelha e avisa (o mesmo pedido aberto em duas abas).
   useEffect(() => {
@@ -515,7 +547,7 @@ export function useUnifiedOrder() {
 
   // Rascunho restaurável ANTES de o cliente ser selecionado: a página passa a chave do cliente do
   // rascunho para achar (e descartar) o envelope certo. Só o comprometido conta como envio pendente.
-  const envelopeDoPar = (chaveCliente?: string | null): { chave: string | null; env: CheckoutEnvelope | null } => {
+  const envelopeDoPar = useCallback((chaveCliente?: string | null): { chave: string | null; env: CheckoutEnvelope | null } => {
     const arm = armazemLocal();
     if (chaveCliente === undefined || chaveCliente === chaveClienteEnv) {
       return { chave: chaveEnvRef.current, env: checkoutEnvRef.current };
@@ -523,18 +555,26 @@ export function useUnifiedOrder() {
     if (!arm || !userIdEnv || !chaveCliente) return { chave: null, env: null };
     const chave = chaveEnvelope(userIdEnv, chaveCliente);
     return { chave, env: lerEnvelope(arm, chave) };
-  };
-  const envelopeCheckoutAtual = (chaveCliente?: string | null) => envelopeDoPar(chaveCliente).env;
+  }, [chaveClienteEnv, userIdEnv]);
+  const envelopeCheckoutAtual = useCallback((chaveCliente?: string | null) => envelopeDoPar(chaveCliente).env, [envelopeDoPar]);
   // A página registra aqui o rascunho (vale também para os reenvios do ATP, que chamam submitOrder
   // por dentro). `aoComprometer`: o envelope acabou de ser gravado → grava o rascunho EXATO do envio,
   // sem esperar o debounce. `aoConfirmarTudo`: sucesso TOTAL → apaga o rascunho antes de qualquer UI,
   // mesmo com a página já desmontada (navegou durante o envio) — Codex P1.
   const cicloRascunhoRef = useRef<{ aoComprometer?: () => void; aoConfirmarTudo?: () => void }>({});
-  const descartarEnvelope = (chaveCliente?: string | null) => {
-    const { chave } = envelopeDoPar(chaveCliente);
+  /** `prefixosFpLegado`: os customerKey de antes do PR 2.2 deste cliente (o envelope legado sai junto,
+   *  senão o retry exato o ressuscitaria — Codex P1). */
+  const descartarEnvelope = (chaveCliente?: string | null, prefixosFpLegado: string[] = []) => {
+    const { chave, env } = envelopeDoPar(chaveCliente);
+    soltarEnvelopeDaAba(chave, env);
     const arm = armazemLocal();
+    if (arm) descartarLegadoDoCliente(arm, prefixosFpLegado);
     if (chave === chaveEnvRef.current) checkoutEnvRef.current = null;
-    if (arm && chave) gravarEnvelope(arm, chave, null);
+    definirIdDaAba(null);
+  };
+  /** Restaurar o rascunho traz o id DAQUELA cópia do pedido (a lápide barra se ela já foi concluída). */
+  const adotarIdDoRascunho = (id: unknown) => {
+    if (typeof id === 'string' && id.length > 0) definirIdDaAba(id);
   };
 
 
@@ -1064,7 +1104,10 @@ export function useUnifiedOrder() {
         });
         return;
       }
-      const reserva = await comTravaEntreAbas(`checkout:${chaveEnv}`, () => reservarEnvio(arm, chaveEnv, fingerprint, (idDoRascunho) => {
+      const userIdEnvio = user.id;
+      const reserva = await comTravaEntreAbas(`checkout:${chaveEnv}`, () => reservarEnvio(arm, {
+        userId: userIdEnvio, chave: chaveEnv, fingerprint, idDaAba: idDaAbaRef.current,
+      }, (idDoRascunho) => {
         // CONGELA a metadata da ponte UMA VEZ, na criação do envelope. Anti-troca-de-cliente:
         // a navegação SPA muda os query params sem remontar o estado do pedido, então uma ligação
         // ENTRANTE de B durante o pedido de A NÃO pode herdar origem/atendimento de A. O helper só
@@ -1085,6 +1128,18 @@ export function useUnifiedOrder() {
           atendimentoId: bridge.atendimentoId,
         };
       }));
+      if (reserva.decisao === 'indeterminado') {
+        toast.error('Não foi possível conferir se este pedido já foi enviado', {
+          description: 'O registro de envio deste navegador está ilegível. Confira no Omie antes de reenviar; se não houver pedido, use "Trocar e limpar" e monte de novo.',
+        });
+        return;
+      }
+      if (reserva.decisao === 'ja_concluido') {
+        toast.error('Este pedido já foi enviado em outra aba', {
+          description: 'Confira o pedido no Omie. Para um pedido novo, use "Trocar e limpar" ou "Novo pedido".',
+        });
+        return;
+      }
       if (reserva.decisao === 'conflict') {
         checkoutEnvRef.current = reserva.envelope;
         toast.error('Há um envio pendente para este cliente com outro carrinho', {
@@ -1093,6 +1148,7 @@ export function useUnifiedOrder() {
         return;
       }
       checkoutEnvRef.current = reserva.envelope;
+      definirIdDaAba(reserva.envelope.checkoutId);
       if (!reserva.gravou) {
         // Fail-closed: sem o envelope em disco, um refresh no meio do envio perderia o checkoutId e o
         // reenvio criaria outro PV. Não chama a edge.
@@ -1169,7 +1225,7 @@ export function useUnifiedOrder() {
           },
         });
         if (result.success && result.lastOrderData && result.allConfirmed) {
-          checkoutEnvRef.current = null; removerEnvelopeSeFor(arm, chaveEnv, checkoutId); // sucesso TOTAL → próximo pedido = novo envelope (só apaga se ainda for o DESTE envio)
+          checkoutEnvRef.current = null; if (!concluirEnvio(arm, userIdEnvio, chaveEnv, checkoutId)) toast.warning('Recarregue a página antes do próximo pedido deste cliente', { description: 'O navegador não registrou a conclusão deste envio.' }); definirIdDaAba(null); // sucesso TOTAL: lápide + envelope solto (só o DESTE envio)
           cicloRascunhoRef.current.aoConfirmarTudo?.();
         }
         if (result.success && result.lastOrderData) {
@@ -1255,6 +1311,7 @@ export function useUnifiedOrder() {
       }
     });
   }, [
+    definirIdDaAba,
     selectedCustomer, cart.length, user, customerUserId,
     obenProductItems, colacorProductItems, serviceItems,
     obenSubtotal, colacorProdSubtotal, serviceSubtotal,
@@ -1302,7 +1359,7 @@ export function useUnifiedOrder() {
     authLoading, user, isStaff, isCustomerMode,
     // Customer
     customerSearch, setCustomerSearch, customers, selectedCustomer, searchingCustomers, customerSearchFalhou, tentarBuscaDeNovo,
-    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, iniciarNovoPedido, envelopeCheckoutAtual, descartarEnvelope, cicloRascunhoRef,
+    loadingCustomer, customerUserId, selectCustomer, selectCustomerByUserId, clearCustomer, iniciarNovoPedido, envelopeCheckoutAtual, descartarEnvelope, adotarIdDoRascunho, idRascunho, cicloRascunhoRef,
     // Products
     obenProducts, colacorProducts, productSearch, setProductSearch,
     loadingObenProducts, loadingColacorProducts,
