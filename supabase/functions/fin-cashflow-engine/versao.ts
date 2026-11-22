@@ -60,7 +60,8 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // prova em cp-vencido-fora_test.ts). O INSERT nomeia as colunas: a migration vai ANTES do deploy.
 // v2.4 → v2.5: grava a COMPOSIÇÃO da NCG no snapshot — 6 colunas ncg_* (cr_aberto, estoque, adiantamentos,
 // cp_fornecedor, folha_30d, tributos_a_pagar; migration db/2026-11-22-fin-projecao-snapshots-ncg-composicao.sql).
-// Só medida: `ncg`, semanas e saldos IDÊNTICOS. `ncg_estoque` NULL = NCG parcial. O INSERT nomeia as colunas:
+// Só medida: `ncg`, semanas e saldos IDÊNTICOS. `ncg_cr_aberto` NULL = não medido; com ele presente,
+// `ncg_estoque` NULL = NCG parcial e `ncg_adiantamentos` NULL = não segregado. O INSERT nomeia as colunas:
 // a migration vai ANTES do deploy.
 export const VERSAO = "v2.5-ncg-composicao";
 

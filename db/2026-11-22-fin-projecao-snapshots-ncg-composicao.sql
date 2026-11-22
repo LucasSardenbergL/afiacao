@@ -12,8 +12,12 @@
 --
 -- Ausente ≠ zero:
 --   - snapshot anterior à v2.5 = as 6 colunas NULL (não medido) — sem DEFAULT 0;
---   - estoque sem fonte = `ncg_estoque` NULL com as outras 5 presentes = NCG PARCIAL;
---   - medido = as 5 obrigatórias presentes e fechando com `ncg` (folga de 5 centavos de arredondamento).
+--   - medido = CR, CP fornecedor, folha e tributos presentes, fechando com `ncg` (folga de 5 centavos; o
+--     helper da edge exige 4, para o float do JS nunca cruzar a fronteira que o numeric recusa);
+--   - estoque sem fonte = `ncg_estoque` NULL com o CR presente = NCG PARCIAL;
+--   - empresa sem categoria de adiantamento configurada = `ncg_adiantamentos` NULL (não segregado: o
+--     adiantamento, se houver, está dentro de `ncg_cp_fornecedor`).
+-- Leitor: `ncg_cr_aberto IS NULL` = não medido; só com ele presente os outros NULL têm significado.
 --
 -- Aditiva e idempotente (ADD COLUMN IF NOT EXISTS / DROP CONSTRAINT IF EXISTS). ORDEM DE DEPLOY: ESTE
 -- arquivo → edge v2.5 (o INSERT nomeia as colunas; sem elas o snapshot diário falha alto). Postcondição no fim.
@@ -42,19 +46,18 @@ ALTER TABLE public.fin_projecao_snapshots ADD CONSTRAINT fin_projecao_snapshots_
   AND (ncg_tributos_a_pagar IS NULL OR (ncg_tributos_a_pagar <> 'NaN' AND ncg_tributos_a_pagar >= 0 AND ncg_tributos_a_pagar < 10000000000))
 );
 
--- Coerência: tudo ausente (não medido), ou as 5 obrigatórias presentes fechando com o total `ncg`.
--- O estoque entra por COALESCE: NULL é a NCG parcial, cujo total também o somou como ausente.
+-- Coerência: tudo ausente (não medido), ou as 4 obrigatórias presentes fechando com o total `ncg`.
+-- Estoque e adiantamentos entram por COALESCE: NULL é a parcela que o total também somou como ausente.
 ALTER TABLE public.fin_projecao_snapshots DROP CONSTRAINT IF EXISTS fin_projecao_snapshots_ncg_composicao_coerencia_ck;
 ALTER TABLE public.fin_projecao_snapshots ADD CONSTRAINT fin_projecao_snapshots_ncg_composicao_coerencia_ck CHECK (
   (ncg_cr_aberto IS NULL AND ncg_estoque IS NULL AND ncg_adiantamentos IS NULL
     AND ncg_cp_fornecedor IS NULL AND ncg_folha_30d IS NULL AND ncg_tributos_a_pagar IS NULL)
   OR (ncg_cr_aberto IS NOT NULL
-    AND ncg_adiantamentos IS NOT NULL
     AND ncg_cp_fornecedor IS NOT NULL
     AND ncg_folha_30d IS NOT NULL
     AND ncg_tributos_a_pagar IS NOT NULL
     AND ncg IS NOT NULL
-    AND abs(ncg_cr_aberto + COALESCE(ncg_estoque, 0) + ncg_adiantamentos
+    AND abs(ncg_cr_aberto + COALESCE(ncg_estoque, 0) + COALESCE(ncg_adiantamentos, 0)
             - ncg_cp_fornecedor - ncg_folha_30d - ncg_tributos_a_pagar - ncg) <= 0.05)
 );
 

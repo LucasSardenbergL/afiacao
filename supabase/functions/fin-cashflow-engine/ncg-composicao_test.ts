@@ -32,6 +32,7 @@ const CPS = [
   cp(1, somarDias(HOJE, 10), 1234.56, "2.05.01"), // fornecedor
   cp(2, somarDias(HOJE, 12), 300, "3.99.01"),     // tributo a pagar
   cp(3, somarDias(HOJE, 5), 70000, "2.10.01"),    // folha no ERP na janela de 30 d (> recorrente)
+  cp(4, somarDias(HOJE, 20), 450, "2.03.01"),     // adiantamento a fornecedor (ACO, segregado pela config)
 ];
 const CRS = Array.from({ length: 30 }, (_, i) => ({
   id: uuid(i, 1), saldo: 3000 + i, valor_documento: 3000 + i, valor_recebido: 0,
@@ -58,7 +59,7 @@ const CONFIG = {
     caixa_negativo_semanas: 13, ncg_deficit_alerta: 0, dias_cobertura_min: 30,
     inadimplencia_max_pct: 5, concentracao_top1_max_pct: 20, pmr_crescimento_max_pct_90d: 10,
   },
-  adiantamento_categorias_codigos: [],
+  adiantamento_categorias_codigos: ["2.03.01"],
 };
 const ESTOQUE_GIRO = { valor_giro: 500000, skus_giro: 900, cobertura_pct: 97, valor_sem_classificacao: 0 };
 const RPCS: Record<string, unknown> = {
@@ -160,18 +161,18 @@ Deno.test("fixture: a NCG completa tem estoque e a parcial não", () => {
 Deno.test("snapshot completo: as 6 colunas ncg_* casam EXATO e fecham com o total", () => {
   igual(
     composicao(COMPLETA.snapshot),
-    { cr_aberto: 90435, estoque: 500000, adiantamentos: 0, cp_fornecedor: 1234.56, folha_30d: 70000, tributos_a_pagar: 300 },
+    { cr_aberto: 90435, estoque: 500000, adiantamentos: 450, cp_fornecedor: 1234.56, folha_30d: 70000, tributos_a_pagar: 300 },
     "colunas ncg_* (completa)",
   );
   const n = ncgDe(COMPLETA);
   igual(composicao(COMPLETA.snapshot), { ...n.aco, ...n.pco, total: undefined }, "colunas ≠ resposta ncg.aco/ncg.pco");
-  igual(Math.round((COMPLETA.snapshot.ncg as number) * 100), Math.round((90435 + 500000 - 1234.56 - 70000 - 300) * 100), "NCG total");
+  igual(Math.round((COMPLETA.snapshot.ncg as number) * 100), Math.round((90435 + 500000 + 450 - 1234.56 - 70000 - 300) * 100), "NCG total");
 });
 
 Deno.test("snapshot sem estoque: ncg_estoque NULL (nunca 0), as outras 5 medidas — parcial", () => {
   igual(
     composicao(PARCIAL.snapshot),
-    { cr_aberto: 90435, estoque: null, adiantamentos: 0, cp_fornecedor: 1234.56, folha_30d: 70000, tributos_a_pagar: 300 },
+    { cr_aberto: 90435, estoque: null, adiantamentos: 450, cp_fornecedor: 1234.56, folha_30d: 70000, tributos_a_pagar: 300 },
     "colunas ncg_* (parcial)",
   );
 });
@@ -189,7 +190,7 @@ const NULAS = {
 
 Deno.test("helper: composição coerente passa em centavos", () => {
   igual(
-    colunasComposicaoNcg({ ...BASE, aco: { ...BASE.aco, cr_aberto: 100.004 }, valor: 95.004 }),
+    colunasComposicaoNcg({ ...BASE, aco: { ...BASE.aco, cr_aberto: 100.004 }, valor: 95.004 }, true),
     { ncg_cr_aberto: 100, ncg_estoque: 50, ncg_adiantamentos: 10, ncg_cp_fornecedor: 40, ncg_folha_30d: 20, ncg_tributos_a_pagar: 5 },
     "coerente",
   );
@@ -203,6 +204,24 @@ Deno.test("helper: fora de faixa ou que não fecha → as 6 NULL (não medido)",
     ["estoque NaN", { ...BASE, aco: { ...BASE.aco, estoque: NaN } }],
     ["total infinito", { ...BASE, valor: Infinity }],
     ["não fecha", { ...BASE, valor: 96 }],
+    // Achado Codex P1: passa na faixa ANTES de arredondar, vira 1e10 depois — o CHECK (< 1e10) recusaria.
+    ["teto após arredondar", {
+      aco: { cr_aberto: 0, estoque: 9999999999.999, adiantamentos: 0 },
+      pco: { cp_fornecedor: 0, folha_30d: 0, tributos_a_pagar: 0 }, valor: 9999999999.999,
+    }],
+    // Achado Codex P2: na fronteira o float aceita 0,05 e o numeric do banco não; o helper recusa antes.
+    ["fronteira do fechamento", {
+      aco: { cr_aberto: 0.1, estoque: 0.2, adiantamentos: 0 },
+      pco: { cp_fornecedor: 0, folha_30d: 0, tributos_a_pagar: 0 }, valor: 0.35000000000000003,
+    }],
   ];
-  for (const [nome, entrada] of casos) igual(colunasComposicaoNcg(entrada), NULAS, `caso ${nome}`);
+  for (const [nome, entrada] of casos) igual(colunasComposicaoNcg(entrada, true), NULAS, `caso ${nome}`);
+});
+
+Deno.test("helper: sem categoria de adiantamento configurada → ncg_adiantamentos NULL (não segregado), resto medido", () => {
+  igual(
+    colunasComposicaoNcg({ ...BASE, aco: { ...BASE.aco, adiantamentos: 0 }, valor: 85 }, false),
+    { ncg_cr_aberto: 100, ncg_estoque: 50, ncg_adiantamentos: null, ncg_cp_fornecedor: 40, ncg_folha_30d: 20, ncg_tributos_a_pagar: 5 },
+    "não segregado",
+  );
 });

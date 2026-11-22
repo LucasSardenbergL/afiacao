@@ -1547,8 +1547,9 @@ async function calcularComDados(
         // este cron. Só medida — o `dados` (semanas) acima não muda. Exige a migration aplicada ANTES.
         ...colunasCpVencidoFora(cp_vencido_fora),
         // v2.5: composição da NCG (ACO/PCO) em 6 colunas DEDICADAS (db/2026-11-22-fin-projecao-snapshots-ncg-composicao.sql),
-        // 1 writer: este cron. `ncg_estoque` NULL = NCG parcial; tudo NULL = não medido. Exige a migration ANTES.
-        ...colunasComposicaoNcg(ncg),
+        // 1 writer: este cron. `ncg_cr_aberto` NULL = não medido; com ele presente, `ncg_estoque` NULL = NCG parcial. Exige a migration ANTES.
+        // Sem categoria de adiantamento configurada o adiantamento não é segregado → NULL, não 0 medido.
+        ...colunasComposicaoNcg(ncg, dados.config.adiantamento_categorias_codigos.length > 0),
       }),
     );
   }
