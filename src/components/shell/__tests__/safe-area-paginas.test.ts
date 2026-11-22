@@ -55,7 +55,12 @@ describe('telas cheias e rodapés fixos respeitam o indicador de início', () =>
     expect(s).not.toMatch(/fixed bottom-4\b/);
   });
   it('shell: sob a lente o <main> desconta a faixa do mínimo (sem rolagem de 1.75rem)', () => {
-    expect(ler('src/components/AppShell.tsx')).toContain("'pt-topbar min-h-[calc(100dvh-var(--faixa-ver-como,0px))]");
+    expect(ler('src/components/AppShell.tsx')).toContain("'pt-topbar min-h-[calc(100svh-var(--faixa-ver-como,0px))]");
+  });
+  it('shell: o mínimo do <main> não acompanha a barra do navegador (dvh) nem anima (tela piscando no celular)', () => {
+    const s = ler('src/components/AppShell.tsx');
+    expect(s).not.toContain('min-h-[calc(100dvh-var(--faixa-ver-como');
+    expect(s).toContain('min-h-[calc(100svh-var(--faixa-ver-como,0px))] transition-[margin] duration-200');
   });
   it('"Finalizar Conferência" sobe pela área segura do fim', () => {
     expect(ler('src/pages/RecebimentoConferencia.tsx')).toContain('pb-[calc(1rem+env(safe-area-inset-bottom))]');
