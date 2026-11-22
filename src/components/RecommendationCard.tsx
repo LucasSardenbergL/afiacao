@@ -63,7 +63,9 @@ export const RecommendationCard = React.memo(function RecommendationCard({
           </div>
           <div className="text-right shrink-0">
             <p className="text-base font-bold text-primary">{fmt(item.price)}</p>
-            <p className="text-[10px] text-muted-foreground">{item.estoque} em estoque</p>
+            <p className="text-[10px] text-muted-foreground">
+              {item.estoque === null ? 'estoque desconhecido' : `${item.estoque} em estoque`}
+            </p>
           </div>
         </div>
 

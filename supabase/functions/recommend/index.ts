@@ -14,6 +14,7 @@ import { carregarCluster, carregarInsumos } from "../_shared/recommend-leituras.
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { lerEstoque, semSaldoConhecido } from "../_shared/estoque-desconhecido.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 
 const corsHeaders = {
@@ -97,7 +98,7 @@ interface Candidate {
   cost_confidence: number;
   cost_ranking: number | null;
   familia: string | null;
-  estoque: number;
+  estoque: number | null;
   margin: number | null;
   assoc_score: number;
   /** `null` = similaridade NÃO MEDIDA (disjuntor da RPC). Distinto de 0 = "medi, ninguém compra". */
@@ -259,7 +260,7 @@ async function recommend(
 
   for (const p of products) {
     if (basketSet.has(p.id)) continue;
-    if ((p.estoque || 0) <= 0) continue;
+    if (semSaldoConhecido(p.estoque)) continue; // desconhecido (null) segue candidato: ausente ≠ zero
 
     const cost = costMap[p.id];
     const price = p.valor_unitario || 0;
@@ -328,7 +329,7 @@ async function recommend(
       descricao: p.descricao, codigo: p.codigo, price,
       cost_final: custoConfiavel, cost_source: cost?.cost_source || "UNKNOWN",
       cost_confidence: cost?.cost_confidence || 0, cost_ranking: custoRanking, familia: p.familia,
-      estoque: p.estoque || 0, margin: margemExibida, assoc_score: assoc, sim_score: sim,
+      estoque: lerEstoque(p.estoque), margin: margemExibida, assoc_score: assoc, sim_score: sim,
       ctx_score: ctx, probability, eip, eiltv, score_final: 0,
       explanation_text: explanationText, explanation_key: explanationKey,
       recommendation_type: recType, penalties,

@@ -83,8 +83,9 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  * `v1.3-ia-nao-precifica`: a edge deixou de decidir preço (fronteira `montarRespostaAnalise`, canária
  * `ia-nao-precifica-v1`); v1.4 = hotfix do BOOT_ERROR. Por quê: docs/historico/ia-nao-precifica.md.
  * `v1.6-so-imagem-2-passos`: só-imagem transcreve a foto e ranqueia catálogo/perfis INTEIROS (transcricao.ts). v1.10 (2026-11-11): candidato do Omie ao LLM/log/resposta com o CPF de MEI mascarado.
+ * `v1.12-estoque-desconhecido` (2026-11-21): estoque `null` (#4087) não vira 0 — a IA lê "estoque desconhecido" e a escolha de conta põe saldo conhecido > 0 antes do desconhecido e o zero real por último (`_shared/estoque-desconhecido.ts`).
  */
-export const VERSAO = "v1.11-dados-na-mensagem";
+export const VERSAO = "v1.12-estoque-desconhecido";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
