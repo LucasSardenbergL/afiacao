@@ -9,6 +9,7 @@ import {
   rotuloEstoquePrompt,
   semSaldoConhecido,
 } from "./estoque-desconhecido.ts";
+import { escolherContaPorQuantidade } from "../analyze-unified-order/escolha-conta.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -63,6 +64,52 @@ Deno.test("escolha de conta — positivo > desconhecido > zero; menor saldo entr
   for (const [a, o, esperado] of casos) {
     assertEquals(escolherContaPorEstoque(a, o), esperado, `atual=${a} outra=${o} → esperado ${esperado}`);
   }
+});
+
+Deno.test("escolha de conta por QUANTIDADE — cobre o pedido > parcial > desconhecido > zero", () => {
+  // (atual, outra, quantidade) → resultado
+  const casos: Array<[unknown, unknown, unknown, "atual" | "outra"]> = [
+    [3, 10, 5, "outra"], // Codex P2 no #4095: 3 não cobre 5, 10 cobre
+    [10, 3, 5, "atual"], // a regra antiga trocava para a de 3, que não cobre
+    [10, 6, 5, "outra"], // as duas cobrem: vence o MENOR saldo (esvaziar o lote menor)
+    [6, 10, 5, "atual"],
+    [5, 8, 5, "atual"], // saldo == quantidade cobre
+    [2, 4, 5, "outra"], // nenhuma cobre: vence o MAIOR saldo (cobrir o máximo)
+    [4, 2, 5, "atual"],
+    [4, 4, 5, "atual"], // empate mantém a escolha da IA
+    [null, 3, 5, "outra"], // parcial conhecido vence desconhecido
+    [null, 10, 5, "outra"],
+    [10, null, 5, "atual"],
+    [0, null, 5, "outra"], // desconhecido vence zero real
+    [null, 0, 5, "atual"],
+    [0, 2, 5, "outra"], // parcial vence zero real
+    [null, null, 5, "atual"],
+    [0, 0, 5, "atual"],
+  ];
+  for (const [a, o, q, esperado] of casos) {
+    assertEquals(escolherContaPorQuantidade(a, o, q), esperado, `atual=${a} outra=${o} qtd=${q} → esperado ${esperado}`);
+  }
+});
+
+Deno.test("escolha por quantidade — quantidade ausente/inválida degrada para a regra por saldo", () => {
+  for (const q of [undefined, null, "", 0, -2, Number.NaN, "abc"]) {
+    for (const [a, o] of [[10, 3], [3, 10], [10, null], [0, null], [5, 5]] as Array<[unknown, unknown]>) {
+      assertEquals(
+        escolherContaPorQuantidade(a, o, q),
+        escolherContaPorEstoque(a, o),
+        `qtd=${String(q)} atual=${a} outra=${o} deveria cair na regra por saldo`,
+      );
+    }
+  }
+});
+
+Deno.test("call-site — analyze-unified-order escolhe a conta passando a quantidade pedida", async () => {
+  const fonte = await Deno.readTextFile(new URL("../analyze-unified-order/index.ts", import.meta.url));
+  assertEquals(
+    fonte.includes("escolherContaPorQuantidade(prod.estoque, equivalent.estoque, vp.quantity)"),
+    true,
+    "analyze-unified-order não passa vp.quantity para a escolha de conta",
+  );
 });
 
 // ── Call-sites: as edges leitoras não podem voltar a fabricar 0 de `estoque` ──

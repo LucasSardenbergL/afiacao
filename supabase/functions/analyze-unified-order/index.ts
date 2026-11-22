@@ -17,7 +17,8 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { razaoSemCpf } from "../_shared/razao-fiscal.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
-import { escolherContaPorEstoque, rotuloEstoqueCurto, rotuloEstoquePrompt } from "../_shared/estoque-desconhecido.ts";
+import { rotuloEstoqueCurto, rotuloEstoquePrompt } from "../_shared/estoque-desconhecido.ts";
+import { escolherContaPorQuantidade } from "./escolha-conta.ts";
 import {
   type AcumuladorCache,
   acumularUsoCache,
@@ -1331,7 +1332,7 @@ Deno.serve(async (req) => {
     }
 
     // ─── Multi-account optimization: for each product, find equivalent in both accounts ───
-    // Pick the account by stock (see escolherContaPorEstoque — unknown stock is not zero)
+    // Pick the account by stock AND the ordered quantity (see escolha-conta.ts — unknown stock is not zero)
     const prodMap = new Map<string, ProdutoCatalogo>(prodList.map((p) => [p.id, p]));
     const optimizedProducts: AIProduct[] = [];
     const processedCodes = new Set<string>();
@@ -1353,11 +1354,11 @@ Deno.serve(async (req) => {
       );
 
       if (equivalent) {
-        // Regra em `escolherContaPorEstoque`: saldo conhecido > 0 primeiro (o menor entre eles),
-        // desconhecido depois, zero real por último — `null` não vence nem perde como se fosse 0.
+        // Regra em `escolherContaPorQuantidade`: cobre o pedido (menor saldo) > cobre em parte
+        // (maior saldo) > desconhecido > zero real. Quantidade inválida cai na regra só por saldo.
         const currentStock = rotuloEstoqueCurto(prod.estoque);
         const otherStock = rotuloEstoqueCurto(equivalent.estoque);
-        if (escolherContaPorEstoque(prod.estoque, equivalent.estoque) === "outra") {
+        if (escolherContaPorQuantidade(prod.estoque, equivalent.estoque, vp.quantity) === "outra") {
           console.log(`[analyze-unified-order] Switching ${baseCode} from ${prod.account}(est:${currentStock}) to ${otherAccount}(est:${otherStock})`);
           optimizedProducts.push({
             ...vp,
