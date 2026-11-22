@@ -1,4 +1,4 @@
-// /sales com 1.000 linhas: marcar UM checkbox não pode re-renderizar a lista inteira nem reagrupar
+// /sales com muitas linhas: marcar UM checkbox não pode re-renderizar a lista inteira nem reagrupar
 // por dia, e o alcance do lote só é calculado ao ABRIR o diálogo. A contagem de renders vem de uma
 // espia no formatador do total (cada render de linha o chama 2×: aria-label e coluna Total) e o
 // tempo, do React Profiler — os números ficam no PR (antes × depois).
@@ -49,12 +49,15 @@ vi.mock('@/components/salesOrders/alcance-exclusao', async () => {
   };
 });
 
-const N = 1000;
+// 300 no repo (o render síncrono de 1.000 linhas no jsdom segura o worker do vitest por dezenas de
+// segundos numa máquina carregada → "Timeout calling onTaskUpdate"). A medida de 1.000 linhas,
+// antes × depois, está no PR desta mudança; a asserção (≤1 linha re-renderizada) não depende de N.
+const N = 300;
 const ORDERS: OrderFeedRow[] = Array.from({ length: N }, (_, i) => ({
   origin: 'sales',
   id: `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`,
-  // 10 dias, 100 pedidos por dia
-  created_at: new Date(Date.UTC(2026, 10, 21, 15) - Math.floor(i / 100) * 86_400_000 - (i % 100) * 60_000).toISOString(),
+  // 10 dias, 30 pedidos por dia
+  created_at: new Date(Date.UTC(2026, 10, 21, 15) - Math.floor(i / 30) * 86_400_000 - (i % 30) * 60_000).toISOString(),
   account: i % 2 ? 'oben' : 'colacor',
   order_number: null,
   omie_pedido_id: null,
@@ -141,7 +144,7 @@ function montar() {
   );
 }
 
-describe('/sales com 1.000 linhas — custo de marcar um checkbox', () => {
+describe('/sales com 300 linhas — custo de marcar um checkbox', () => {
   it('re-renderiza só a linha marcada, não reagrupa e não calcula o alcance com o diálogo fechado', () => {
     montar();
     const montagem = { linhas: h.formatar.n / 2, ms };
