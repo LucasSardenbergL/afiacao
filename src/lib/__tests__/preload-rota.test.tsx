@@ -10,6 +10,8 @@ import {
   prefetchRota,
   registrarRotas,
   instalarRecuperacaoDeChunk,
+  liberarGuardasQuandoEstavel,
+  PRAZO_APP_ESTAVEL_MS,
   usePrefetchRota,
 } from '@/lib/preload-rota';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
@@ -484,5 +486,53 @@ describe('usePrefetchRota (F5): intenção de ponteiro e foco', () => {
     onLine.mockRestore();
     prefetchRota('/a');
     expect(carregar).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('guarda anti-loop sobrevive ao boot (Safari recarregando sem fim, 2026-11-22)', () => {
+  const falhaDeChunk = () => {
+    const erro = new TypeError('Failed to fetch dynamically imported module');
+    window.dispatchEvent(Object.assign(new Event('vite:preloadError', { cancelable: true }), { payload: erro }));
+  };
+
+  it('falha persistente: recarrega 1× e, no boot seguinte, a 2ª falha NÃO recarrega', async () => {
+    vi.useFakeTimers();
+    const recarregar = vi.fn();
+    const desinstalar = instalarRecuperacaoDeChunk(recarregar);
+    // 1º carregamento: o boot arma a liberação e o chunk falha logo em seguida.
+    liberarGuardasQuandoEstavel();
+    falhaDeChunk();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(recarregar).toHaveBeenCalledTimes(1);
+    // 2º carregamento (mesma aba: sessionStorage persiste): boot de novo + mesma falha.
+    liberarGuardasQuandoEstavel();
+    falhaDeChunk();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(recarregar).toHaveBeenCalledTimes(1);
+    desinstalar();
+  });
+
+  it('app estável pelo prazo: a guarda é liberada e uma falha POSTERIOR volta a recuperar', async () => {
+    vi.useFakeTimers();
+    const recarregar = vi.fn();
+    const desinstalar = instalarRecuperacaoDeChunk(recarregar);
+    sessionStorage.setItem('__preload_error_reloaded__', '1');
+    sessionStorage.setItem('__boot_recovery_attempted__', '1');
+    liberarGuardasQuandoEstavel();
+    await vi.advanceTimersByTimeAsync(PRAZO_APP_ESTAVEL_MS - 1);
+    expect(sessionStorage.getItem('__preload_error_reloaded__')).toBe('1');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sessionStorage.getItem('__preload_error_reloaded__')).toBeNull();
+    expect(sessionStorage.getItem('__boot_recovery_attempted__')).toBeNull();
+    falhaDeChunk();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(recarregar).toHaveBeenCalledTimes(1);
+    desinstalar();
+  });
+
+  it('main.tsx não apaga a guarda na hora do boot', () => {
+    const main = readFileSync('src/main.tsx', 'utf8');
+    expect(main).not.toContain('sessionStorage.removeItem("__preload_error_reloaded__")');
+    expect(main).toContain('liberarGuardasQuandoEstavel();');
   });
 });
