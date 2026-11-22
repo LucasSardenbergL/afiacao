@@ -1,6 +1,6 @@
 // Toolbar da listagem de pedidos: empresa + busca; status, período e ordem (as ações ficam em SalesOrdersAcoes).
 // Extraída verbatim de src/pages/SalesOrders.tsx (god-component split).
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -45,6 +45,8 @@ interface SalesOrdersToolbarProps {
   setSearch: (v: string) => void;
   /** Busca nova a caminho do servidor (a lista ainda mostra o resultado anterior). */
   buscando?: boolean;
+  /** O atalho "/" da página foca a busca por aqui. */
+  buscaRef?: RefObject<HTMLInputElement>;
 }
 
 export const BUSCA_DEBOUNCE_MS = 300;
@@ -61,6 +63,7 @@ export function SalesOrdersToolbar({
   search,
   setSearch,
   buscando = false,
+  buscaRef,
 }: SalesOrdersToolbarProps) {
   // O input é controlado por um rascunho LOCAL: cada tecla re-renderiza só a toolbar, e o termo
   // sobe (URL → query no servidor) quando a digitação pausa.
@@ -95,8 +98,10 @@ export function SalesOrdersToolbar({
       <div className="relative flex-1 md:max-w-md md:ml-auto">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
+          ref={buscaRef}
           type="search"
           aria-label="Buscar pedidos"
+          aria-keyshortcuts="/"
           placeholder="Buscar por cliente, nº pedido, item ou valor..."
           value={rascunho}
           onChange={(e) => setRascunho(e.target.value)}
@@ -175,7 +180,8 @@ export function SalesOrdersAcoes({ onNavigate }: { onNavigate: (path: string) =>
         <Printer className="w-4 h-4" />
         Imprimir
       </Button>
-      <Button size="sm" onClick={() => onNavigate('/sales/new')} className="gap-1.5">
+      {/* No celular o "Novo pedido" mora no botão fixo do rodapé (SalesOrders), ao alcance do polegar. */}
+      <Button size="sm" onClick={() => onNavigate('/sales/new')} className="hidden gap-1.5 md:inline-flex" aria-keyshortcuts="n">
         <Plus className="w-4 h-4" />
         Novo pedido
       </Button>

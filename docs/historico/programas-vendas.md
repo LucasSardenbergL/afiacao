@@ -425,3 +425,10 @@ não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor únic
   sensor, rótulos, tipo das colunas na PÓS — todos corrigidos).
 - **Deploy:** migration ✅ (sessão) · Publish = founder (a aba nova exige a migration — já aplicada; o front antigo
   convive: parado aparece sem sugerido e o Aprovar dele é recusado pelo servidor).
+
+## /sales PR B — teclado, painel e celular (2026-11-21)
+
+- Teclado pelo registro do app: `/` busca · `j`/`k` (e ↑/↓ na linha) movem · `Enter` abre · `x` seleciona só o que `podeExcluirPedido` aceita · `n` novo; Cmd-K: filtrar rascunhos/em andamento, limpar filtros. Roving tabindex por linha dentro de `role="table"` (não `grid`: célula-a-célula brigaria com checkbox/"⋯").
+- **Lição (Codex, WCAG 2.1.4):** atalho de UMA letra só vale com o foco na lista ou em lugar nenhum — o `ShortcutsRegistry` ganhou `enabled?(e)`, avaliado ANTES do `preventDefault` (antes, `n` com foco em "Catálogo" navegava, e `/` num menu era consumido). `Enter` nunca no registro global: o `preventDefault` engoliria o Enter de botões e diálogos.
+- Painel abre com o resumo da linha (cliente, PV, status, total) + skeleton só no corpo; erro com "Tentar de novo"; foco volta à linha de origem (fallback: 1ª linha → busca).
+- Celular: produtos·hora visíveis, "Novo pedido" fixo no rodapé (some com a seleção), alvos 44px em `pointer:coarse`; atalhos de hover só com ponteiro fino (em tablet de toque invadiam o Total).

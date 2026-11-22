@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { SalesOrderDetailSheet } from '../SalesOrderDetailSheet';
 import type { SalesOrder } from '../types';
 import type { FatiaDescontosItens } from '../descontosDoPainel';
@@ -76,15 +76,54 @@ describe('SalesOrderDetailSheet', () => {
     expect(screen.queryByText('DELTA INTERIORES')).toBeNull();
   });
 
-  it('aberto + carregando (detalhe em voo) mostra spinner, sem conteúdo', () => {
-    setup(null, { open: true, loading: true });
-    expect(screen.queryByText('DELTA INTERIORES')).toBeNull();
-    expect(document.querySelector('.animate-spin')).toBeTruthy();
+  it('aberto + carregando: cabeçalho já com o resumo da linha, skeleton só no corpo', () => {
+    render(
+      <SalesOrderDetailSheet
+        open
+        loading
+        order={null}
+        resumo={{ status: 'rascunho', account: 'oben', pv: '0011326', total: 180, created_at: '2026-06-02T21:00:00Z' }}
+        customerName="DELTA INTERIORES"
+        descontosItens={SEM_DESCONTO}
+        onClose={vi.fn()} onPrint={vi.fn()} onShare={vi.fn()} onEdit={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('DELTA INTERIORES')).toBeTruthy();
+    expect(screen.getByText('11326')).toBeTruthy(); // PV sem zeros à esquerda
+    expect(screen.getByText(/R\$\s*180,00/)).toBeTruthy();
+    expect(screen.getByTestId('detalhe-carregando')).toBeTruthy();
+    // Nada do corpo (itens/ações) antes do detalhe chegar.
+    expect(screen.queryByText('BASE PU ACRI FOSCO')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Imprimir/ })).toBeNull();
   });
 
-  it('aberto + falha do detalhe mostra mensagem honesta', () => {
-    setup(null, { open: true, loading: false });
+  it('resumo sem total: o cabeçalho diz "—", nunca R$ 0,00', () => {
+    render(
+      <SalesOrderDetailSheet
+        open loading order={null}
+        resumo={{ status: 'rascunho', account: 'oben', pv: null, total: null }}
+        customerName="DELTA INTERIORES" descontosItens={SEM_DESCONTO}
+        onClose={vi.fn()} onPrint={vi.fn()} onShare={vi.fn()} onEdit={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/R\$\s*0,00/)).toBeNull();
+    expect(screen.getByText('—')).toBeTruthy();
+  });
+
+  it('aberto + falha do detalhe: mensagem honesta e "Tentar de novo" chama onRetry', () => {
+    const onRetry = vi.fn();
+    render(
+      <SalesOrderDetailSheet
+        open erro onRetry={onRetry} order={null}
+        resumo={{ status: 'rascunho', account: 'oben', pv: '0011326', total: 180 }}
+        customerName="DELTA INTERIORES" descontosItens={SEM_DESCONTO}
+        onClose={vi.fn()} onPrint={vi.fn()} onShare={vi.fn()} onEdit={vi.fn()}
+      />,
+    );
     expect(screen.getByText('Não foi possível carregar o pedido.')).toBeTruthy();
+    expect(screen.getByText('DELTA INTERIORES')).toBeTruthy(); // o cabeçalho não cai junto
+    fireEvent.click(screen.getByRole('button', { name: 'Tentar de novo' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it('botão Repetir aparece pra pedido comercial e dispara onRepeat', () => {

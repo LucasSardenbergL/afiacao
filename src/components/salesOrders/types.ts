@@ -178,6 +178,9 @@ export function rotuloEmpresa(account: string | null | undefined): string {
  *  - registro importado do Omie nunca sai (o app espelha o Omie, inclusive os cancelados);
  *  - pedido do app que já está no Omie só sai depois que o cancelamento FEITO NO OMIE chegou pelo sync.
  */
+/** Chave estável da linha (a MESMA do `key` React na listagem): o teclado e o retorno de foco a usam. */
+export const chaveDaLinha = (o: Pick<OrderFeedRow, 'origin' | 'id'>) => `${o.origin}-${o.id}`;
+
 export function podeExcluirPedido(
   order: Pick<OrderFeedRow, 'origin' | 'account' | 'status' | 'omie_pedido_id'>,
 ): { ok: true } | { ok: false; motivo: string } {

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { Button } from '@/components/ui/button';
-import { ShoppingCart, Trash2, ChevronLeft, Loader2, AlertTriangle, WifiOff } from 'lucide-react';
+import { ShoppingCart, Trash2, ChevronLeft, Loader2, AlertTriangle, WifiOff, Plus } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -10,13 +10,14 @@ import { cn } from '@/lib/utils';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
-import { agruparPorDia, decodeHtml, EFEITO_DA_EXCLUSAO, rotuloEmpresa, type OrderFeedRow } from '@/components/salesOrders/types';
+import { agruparPorDia, chaveDaLinha, decodeHtml, EFEITO_DA_EXCLUSAO, rotuloEmpresa, type OrderFeedRow } from '@/components/salesOrders/types';
 import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
 import { useDescontosItensPedido } from '@/components/salesOrders/useDescontosItensPedido';
 import { SalesOrdersAcoes, SalesOrdersToolbar } from '@/components/salesOrders/SalesOrdersToolbar';
 import { GRADE_LINHA_PEDIDO, SalesOrderCard } from '@/components/salesOrders/SalesOrderCard';
+import { SELETOR_LINHA, useTecladoPedidos } from '@/components/salesOrders/useTecladoPedidos';
 import { SalesOrderDetailSheet } from '@/components/salesOrders/SalesOrderDetailSheet';
 import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { track } from '@/lib/analytics';
@@ -84,6 +85,25 @@ const SalesOrders = () => {
   const { isImpersonating } = useImpersonation();
   const { online } = useNetworkStatus();
 
+  // Teclado: linha ativa (roving tabindex), busca focável por "/" e retorno de foco ao fechar o painel.
+  const listaRef = useRef<HTMLDivElement>(null);
+  const buscaRef = useRef<HTMLInputElement>(null);
+  const [linhaAtiva, setLinhaAtiva] = useState<string | null>(null);
+  const origemDoDetalheRef = useRef<string | null>(null);
+  const { mover, anuncio } = useTecladoPedidos({
+    listaRef,
+    buscaRef,
+    orders,
+    selectedIds,
+    toggleSelect,
+    navigate,
+    setStatusFilter,
+    limparFiltros,
+    comFiltro,
+    buscando,
+    bloqueado: !!detailRow || !!pedidoAExcluir || confirmandoLote,
+  });
+
   if (authLoading || loading) {
     return (
       <PageSkeleton variant="list" />
@@ -116,6 +136,9 @@ const SalesOrders = () => {
   // Na transição de filtro as linhas na tela são do filtro ANTERIOR: não contam como "na tela".
   const alcance = alcanceDaExclusao(linhasSelecionadas, buscando ? [] : orders);
   const horaDosDados = dataUpdatedAt ? format(new Date(dataUpdatedAt), 'HH:mm') : null;
+  // Roving tabindex: a linha ativa fica no Tab; se ela saiu da lista (filtro), a primeira assume.
+  const chaves = grupos.flatMap((g) => g.pedidos.map(chaveDaLinha));
+  const chaveFocavel = linhaAtiva && chaves.includes(linhaAtiva) ? linhaAtiva : chaves[0] ?? null;
 
   return (
     <div className="max-w-6xl mx-auto space-y-4 pb-24">
@@ -131,6 +154,8 @@ const SalesOrders = () => {
         </div>
         <SalesOrdersAcoes onNavigate={navigate} />
       </div>
+      {/* Anúncio da seleção por teclado (o nome da linha não muda ao marcar). */}
+      <p role="status" className="sr-only">{anuncio}</p>
 
       <SalesOrdersToolbar
         accountFilter={accountFilter}
@@ -144,6 +169,7 @@ const SalesOrders = () => {
         search={search}
         setSearch={setSearch}
         buscando={buscando}
+        buscaRef={buscaRef}
       />
 
       {!online && orders.length > 0 && (
@@ -182,56 +208,77 @@ const SalesOrders = () => {
         />
       ) : (
         <div className={cn('rounded-lg border bg-card transition-opacity', buscando && 'opacity-60')} aria-busy={buscando || undefined}>
-          {/* Cabeçalho de colunas — só no desktop; usa a MESMA grade da linha. */}
-          <div
-            className={cn(
-              GRADE_LINHA_PEDIDO,
-              'hidden md:grid border-b px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground',
-            )}
-            aria-hidden
-          >
-            <span className="[grid-area:check]" />
-            <span className="[grid-area:cliente]">Cliente</span>
-            <span className="[grid-area:pv]">PV</span>
-            <span className="[grid-area:empresa]">Empresa</span>
-            <span className="[grid-area:status]">Status</span>
-            <span className="[grid-area:total] text-right">Total</span>
-            <span className="[grid-area:acoes]" />
-          </div>
-
-          {grupos.map((grupo) => (
-            <section key={grupo.dia} aria-label={porValor ? 'Pedidos por maior valor' : grupo.rotulo}>
-              {!porValor && (
-                <h2 className={cn('sticky z-[1] border-b bg-muted/70 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur supports-[backdrop-filter]:bg-muted/50', isImpersonating ? 'top-[calc(theme(spacing.topbar)+1.75rem)]' : 'top-topbar')}>
-                  {grupo.rotulo}
-                </h2>
-              )}
-              <div className="divide-y">
-                {grupo.pedidos.map((order) => (
-                  <SalesOrderCard
-                    key={`${order.origin}-${order.id}`}
-                    order={order}
-                    customerName={decodeHtml(order.customer_name || 'Cliente')}
-                    // A seleção é por id de sales_orders: uma afiação com o mesmo id não acende junto.
-                    checked={order.origin === 'sales' && selectedIds.has(order.id)}
-                    onSelectChange={(v) => toggleSelect(order, v)}
-                    onShare={() => handleShareOrder(order)}
-                    onPedirExclusao={(gatilho) => {
-                      gatilhoExclusaoRef.current = gatilho;
-                      setPedidoAExcluir(order);
-                    }}
-                    excluindo={order.origin === 'sales' && excluindoIds.has(order.id)}
-                    suspenso={buscando}
-                    mostrarData={porValor}
-                    onNavigate={navigate}
-                    onOpenDetail={() => setDetailRow(order)}
-                    onPrint={() => printOrder(order)}
-                    onPrefetch={() => prefetchDetail(order)}
-                  />
-                ))}
+          {/* Semântica de TABELA para o leitor de tela; a linha é focável (roving tabindex — ver
+              useTecladoPedidos). O cabeçalho de colunas só APARECE no desktop, mas existe para o leitor
+              também no celular (sr-only). */}
+          <div ref={listaRef} role="table" aria-label="Pedidos" aria-describedby="sales-dica-teclado">
+            <p id="sales-dica-teclado" className="sr-only">
+              Use j e k ou as setas para mover entre os pedidos, Enter para abrir e x para selecionar.
+            </p>
+            <div role="rowgroup">
+              <div
+                role="row"
+                className={cn(
+                  GRADE_LINHA_PEDIDO,
+                  'sr-only md:not-sr-only md:grid border-b px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground',
+                )}
+              >
+                <span role="columnheader" className="[grid-area:check]"><span className="sr-only">Seleção</span></span>
+                <span role="columnheader" className="[grid-area:cliente]">Cliente</span>
+                <span role="columnheader" className="[grid-area:pv]">PV</span>
+                <span role="columnheader" className="[grid-area:empresa]">Empresa</span>
+                <span role="columnheader" className="[grid-area:status]">Status</span>
+                <span role="columnheader" className="[grid-area:total] text-right">Total</span>
+                <span role="columnheader" className="[grid-area:acoes]"><span className="sr-only">Ações</span></span>
               </div>
-            </section>
-          ))}
+            </div>
+
+            {grupos.map((grupo) => (
+              <div role="rowgroup" key={grupo.dia} aria-label={porValor ? 'Pedidos por maior valor' : grupo.rotulo}>
+                {!porValor && (
+                  // O sticky fica na LINHA (filha direta do grupo): no h2 de dentro ele só grudaria na própria linha.
+                  <div role="row" className={cn('sticky z-[1] border-b bg-muted/70 px-3 py-1.5 backdrop-blur supports-[backdrop-filter]:bg-muted/50', isImpersonating ? 'top-[calc(theme(spacing.topbar)+1.75rem)]' : 'top-topbar')}>
+                    <div role="cell" aria-colspan={7}>
+                      <h2 className="text-xs font-medium text-muted-foreground">{grupo.rotulo}</h2>
+                    </div>
+                  </div>
+                )}
+                <div className="divide-y">
+                  {grupo.pedidos.map((order) => {
+                    const chave = chaveDaLinha(order);
+                    return (
+                      <SalesOrderCard
+                        key={chave}
+                        order={order}
+                        customerName={decodeHtml(order.customer_name || 'Cliente')}
+                        // A seleção é por id de sales_orders: uma afiação com o mesmo id não acende junto.
+                        checked={order.origin === 'sales' && selectedIds.has(order.id)}
+                        onSelectChange={(v) => toggleSelect(order, v)}
+                        onShare={() => handleShareOrder(order)}
+                        onPedirExclusao={(gatilho) => {
+                          gatilhoExclusaoRef.current = gatilho;
+                          setPedidoAExcluir(order);
+                        }}
+                        excluindo={order.origin === 'sales' && excluindoIds.has(order.id)}
+                        suspenso={buscando}
+                        mostrarData={porValor}
+                        onNavigate={navigate}
+                        onOpenDetail={() => {
+                          origemDoDetalheRef.current = chave;
+                          setDetailRow(order);
+                        }}
+                        onPrint={() => printOrder(order)}
+                        onPrefetch={() => prefetchDetail(order)}
+                        focavel={chave === chaveFocavel}
+                        onFocusLinha={() => setLinhaAtiva(chave)}
+                        onMover={mover}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
 
           <div ref={sentinelaRef} className="flex flex-col items-center gap-2 border-t py-4 text-xs text-muted-foreground">
             {isFetchingNextPage && <Loader2 aria-label="Carregando mais pedidos" className="w-4 h-4 animate-spin" />}
@@ -332,10 +379,42 @@ const SalesOrders = () => {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Celular: "Novo pedido" ao alcance do polegar. Some com a seleção — a BulkActionsBar ocupa o rodapé. */}
+      {selectedIds.size === 0 && (
+        <Button
+          size="touch"
+          onClick={() => navigate('/sales/new')}
+          className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 gap-2 rounded-full shadow-lg md:hidden"
+        >
+          <Plus className="h-4 w-4" aria-hidden />
+          Novo pedido
+        </Button>
+      )}
+
       <SalesOrderDetailSheet
         open={!!detailRow}
         loading={detailQuery.isPending}
+        erro={detailQuery.isError}
+        onRetry={() => void detailQuery.refetch()}
         order={detailQuery.data?.order ?? null}
+        resumo={detailRow ? {
+          status: detailRow.status,
+          account: detailRow.account,
+          pv: detailRow.order_number,
+          total: Number(detailRow.total),
+          created_at: detailRow.created_at,
+        } : null}
+        onCloseAutoFocus={(e) => {
+          // Painel controlado sem trigger: o foco volta à linha de onde ele abriu; se ela saiu da lista
+          // (o feed mudou com o painel aberto), à primeira linha; com a lista vazia, à busca.
+          const chave = origemDoDetalheRef.current;
+          const linhas = Array.from(listaRef.current?.querySelectorAll<HTMLElement>(SELETOR_LINHA) ?? []);
+          const alvo = linhas.find((el) => el.dataset.linhaPedido === chave) ?? linhas[0] ?? buscaRef.current;
+          if (alvo) {
+            e.preventDefault();
+            alvo.focus();
+          }
+        }}
         customerName={detailQuery.data?.customerName ?? decodeHtml(detailRow?.customer_name || 'Cliente')}
         descontosItens={descontosItensQuery}
         onClose={() => setDetailRow(null)}

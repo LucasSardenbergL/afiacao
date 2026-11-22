@@ -14,9 +14,15 @@ import { formatPrecoOuAusente } from '@/lib/format';
 import { formatarDataPedido, horaDoPedido } from '@/lib/pedido/data-pedido';
 import { ORDER_STATUS, type OrderStatus } from '@/types';
 import { track } from '@/lib/analytics';
-import { podeExcluirPedido, rotuloEmpresa, statusDoPedido, tomDoStatus, type OrderFeedRow, type TomStatus } from './types';
+import { chaveDaLinha, podeExcluirPedido, rotuloEmpresa, statusDoPedido, tomDoStatus, type OrderFeedRow, type TomStatus } from './types';
 
 type AcaoPedido = 'compartilhar' | 'imprimir' | 'editar' | 'excluir';
+
+/**
+ * Alvo de toque: o visual fica pequeno (denso), mas em ponteiro grosso o botão volta aos 44px que o
+ * `min-h-0` anularia (src/index.css, WCAG 2.5.5).
+ */
+const TOQUE_44 = '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11';
 const rastrearAcao = (acao: AcaoPedido, via: 'hover' | 'menu') => track('sales.pedido_acao', { acao, via });
 
 /**
@@ -75,6 +81,14 @@ interface SalesOrderCardProps {
   suspenso?: boolean;
   /** Lista sem grupos por dia ("Maior valor"): a linha mostra a data no lugar só da hora. */
   mostrarData?: boolean;
+  /**
+   * Roving tabindex: só UMA linha da lista fica no Tab (a ativa); as outras se alcançam por j/k ou ↑/↓.
+   */
+  focavel?: boolean;
+  /** A linha recebeu foco (clique, Tab, j/k): vira a linha ativa da página. */
+  onFocusLinha?: () => void;
+  /** ↑/↓ com o foco na linha: move para a vizinha (o mesmo que k/j). */
+  onMover?: (delta: 1 | -1) => void;
 }
 
 export function SalesOrderCard({
@@ -91,6 +105,9 @@ export function SalesOrderCard({
   onPrefetch,
   suspenso = false,
   mostrarData = false,
+  focavel = false,
+  onFocusLinha,
+  onMover,
 }: SalesOrderCardProps) {
   const gatilhoRef = useRef<HTMLButtonElement>(null);
   const isAfiacao = order.origin === 'afiacao';
@@ -112,7 +129,7 @@ export function SalesOrderCard({
   const detalhe = [produtos, hora].filter(Boolean).join(' · ');
   const nomeAcessivel = pv ? `pedido ${pv} de ${customerName}` : `pedido de ${customerName}`;
 
-  const abrir = (origem: 'linha' | 'nome') => {
+  const abrir = (origem: 'linha' | 'nome' | 'teclado') => {
     if (suspenso) return;
     track('sales.pedido_aberto', { origem });
     if (isAfiacao) onNavigate(`/orders/${order.id}`);
@@ -134,16 +151,41 @@ export function SalesOrderCard({
 
   return (
     <div
+      role="row"
+      tabIndex={focavel ? 0 : -1}
+      data-linha-pedido={chaveDaLinha(order)}
+      aria-label={`${nomeAcessivel}, ${status.label}, ${formatPrecoOuAusente(Number(order.total))}`}
       className={cn(
         GRADE_LINHA_PEDIDO,
         'group gap-y-1 px-3 py-2.5 transition-colors md:py-2',
+        'outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+        // j/k rolam a linha para a vista: a margem desconta a barra fixa + título do dia (+ faixa "Ver como").
+        'scroll-mt-[calc(theme(spacing.topbar)+4.5rem)]',
         suspenso ? 'cursor-wait' : 'cursor-pointer hover:bg-muted/40',
         checked && 'bg-muted/60 hover:bg-muted/60',
       )}
       onClick={() => abrir('linha')}
       onMouseEnter={onPrefetch}
+      onFocus={(e) => {
+        // Foco num controle de DENTRO da linha também a torna ativa (Tab até o "⋯" conta).
+        onFocusLinha?.();
+        if (e.target === e.currentTarget) onPrefetch?.();
+      }}
+      onKeyDown={(e) => {
+        // Só quando o foco está NA linha (Enter num botão interno é do botão), sem modificador
+        // (Ctrl/Alt/Meta/Shift+seta são do sistema ou do leitor de tela) e se ninguém já tratou.
+        if (e.target !== e.currentTarget || e.defaultPrevented) return;
+        if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          abrir('teclado');
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          onMover?.(e.key === 'ArrowDown' ? 1 : -1);
+        }
+      }}
     >
-      <div className="[grid-area:check] flex items-center self-center">
+      <div role="cell" className="[grid-area:check] flex items-center self-center">
         {isSelectable && (
           <Checkbox
             checked={checked}
@@ -155,7 +197,7 @@ export function SalesOrderCard({
         )}
       </div>
 
-      <div className="[grid-area:cliente] min-w-0">
+      <div role="cell" className="[grid-area:cliente] min-w-0">
         <div className="flex min-w-0 items-center gap-1.5">
           <button
             type="button"
@@ -164,9 +206,11 @@ export function SalesOrderCard({
               parar(e);
               abrir('nome');
             }}
-            className="min-h-0 truncate rounded-sm text-left text-sm font-medium hover:underline focus-visible:ring-offset-0"
+            // A área de toque cresce por um ::after (±12px) — o texto continua denso; o truncate mora no
+            // span de dentro porque overflow:hidden no botão cortaria o ::after.
+            className="relative min-h-0 min-w-0 max-w-full rounded-sm text-left text-sm font-medium hover:underline focus-visible:ring-offset-0 after:absolute after:inset-x-0 after:-inset-y-3 after:content-['']"
           >
-            {customerName}
+            <span className="block truncate">{customerName}</span>
           </button>
           {/* Afiação opera sob Colacor SC — a tag distingue serviço de venda. */}
           {isAfiacao && (
@@ -175,10 +219,11 @@ export function SalesOrderCard({
             </span>
           )}
         </div>
-        {detalhe && <p className="hidden truncate text-xs text-muted-foreground md:block">{detalhe}</p>}
+        {/* No celular também (compacto): a hora e o que foi vendido acham o pedido de olho. */}
+        {detalhe && <p className="truncate text-[11px] leading-4 text-muted-foreground md:text-xs">{detalhe}</p>}
       </div>
 
-      <div className="[grid-area:pv] text-xs text-muted-foreground md:text-sm">
+      <div role="cell" className="[grid-area:pv] text-xs text-muted-foreground md:text-sm">
         {pv ? (
           <>
             <span className="md:hidden">PV </span>
@@ -189,36 +234,38 @@ export function SalesOrderCard({
         )}
       </div>
 
-      <div className="[grid-area:empresa] truncate text-xs text-muted-foreground md:text-sm">
+      <div role="cell" className="[grid-area:empresa] truncate text-xs text-muted-foreground md:text-sm">
         <span className="md:hidden" aria-hidden>· </span>
         {rotuloEmpresa(order.account)}
       </div>
 
-      <div className="[grid-area:status] min-w-0 pl-1 md:pl-0">
+      <div role="cell" className="[grid-area:status] min-w-0 pl-1 md:pl-0">
         <span className={cn('inline-flex items-center gap-1.5 text-xs md:text-sm', cor.texto)}>
           <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', cor.ponto)} aria-hidden />
           <span className="truncate">{status.label}</span>
         </span>
       </div>
 
-      <div className="[grid-area:total] text-right">
+      <div role="cell" className="[grid-area:total] text-right">
         <p className="font-tabular text-sm font-semibold">{formatPrecoOuAusente(Number(order.total))}</p>
         {itens && <p className="text-[11px] leading-4 text-muted-foreground">{itens}</p>}
       </div>
 
-      <div className="[grid-area:acoes] flex items-center justify-end gap-0.5" onClick={parar}>
+      <div role="cell" className="[grid-area:acoes] flex items-center justify-end gap-0.5" onClick={parar}>
         {/* Atalhos no desktop: aparecem no hover/foco da linha; no toque, tudo fica no "⋯". */}
-        <div className="hidden items-center gap-0.5 transition-opacity md:flex md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
-          <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" disabled={suspenso} onClick={() => compartilhar('hover')} title="Compartilhar via WhatsApp" aria-label={`Compartilhar ${nomeAcessivel}`}>
+        {/* Só com ponteiro FINO: em tablet de toque (md + coarse) os 44px de cada botão invadiriam o Total,
+            e um alvo invisível (opacity-0) levaria o toque. */}
+        <div className="hidden items-center gap-0.5 transition-opacity md:[@media(pointer:fine)]:flex md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
+          <Button variant="ghost" size="icon" className={cn('h-7 w-7 min-h-0', TOQUE_44)} disabled={suspenso} onClick={() => compartilhar('hover')} title="Compartilhar via WhatsApp" aria-label={`Compartilhar ${nomeAcessivel}`}>
             <Share2 className="h-3.5 w-3.5" />
           </Button>
           {!isAfiacao && (
-            <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" disabled={suspenso} onClick={() => imprimir('hover')} title="Imprimir pedido" aria-label={`Imprimir ${nomeAcessivel}`}>
+            <Button variant="ghost" size="icon" className={cn('h-7 w-7 min-h-0', TOQUE_44)} disabled={suspenso} onClick={() => imprimir('hover')} title="Imprimir pedido" aria-label={`Imprimir ${nomeAcessivel}`}>
               <Printer className="h-3.5 w-3.5" />
             </Button>
           )}
           {podeEditar && (
-            <Button variant="ghost" size="icon" className="h-7 w-7 min-h-0" disabled={suspenso} onClick={() => editar('hover')} title="Editar pedido" aria-label={`Editar ${nomeAcessivel}`}>
+            <Button variant="ghost" size="icon" className={cn('h-7 w-7 min-h-0', TOQUE_44)} disabled={suspenso} onClick={() => editar('hover')} title="Editar pedido" aria-label={`Editar ${nomeAcessivel}`}>
               <Pencil className="h-3.5 w-3.5" />
             </Button>
           )}
@@ -226,7 +273,7 @@ export function SalesOrderCard({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button ref={gatilhoRef} disabled={suspenso} variant="ghost" size="icon" className="h-7 w-7 min-h-0" aria-label={`Mais ações do ${nomeAcessivel}`}>
+            <Button ref={gatilhoRef} disabled={suspenso} variant="ghost" size="icon" className={cn('h-7 w-7 min-h-0', TOQUE_44)} aria-label={`Mais ações do ${nomeAcessivel}`}>
               <MoreHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
