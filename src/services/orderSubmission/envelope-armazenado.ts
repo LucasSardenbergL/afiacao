@@ -30,9 +30,9 @@ export interface ArmazemEnvelope {
   removeItem(chave: string): void;
 }
 
-export const PREFIXO_ENVELOPE = 'unified_order_checkout_env:v2:';
+const PREFIXO_ENVELOPE = 'unified_order_checkout_env:v2:';
 /** Nonce que carrega um checkoutId LITERAL (envelope legado assumido pelo vendedor). */
-export const PREFIXO_NONCE_LITERAL = 'id:';
+const PREFIXO_NONCE_LITERAL = 'id:';
 
 /** O nonce que retoma o envio `e` nesta cópia: o dele, ou o id literal se for legado. */
 export function nonceParaAssumir(e: CheckoutEnvelope): string {
@@ -127,7 +127,7 @@ export function lerEnvelope(arm: ArmazemEnvelope, chave: string): CheckoutEnvelo
 }
 
 /** true = gravado (ou removido). false = o armazém recusou (quota/privado) — quem chama NÃO envia. */
-export function gravarEnvelope(arm: ArmazemEnvelope, chave: string, e: CheckoutEnvelope | null): boolean {
+function gravarEnvelope(arm: ArmazemEnvelope, chave: string, e: CheckoutEnvelope | null): boolean {
   try {
     if (e) arm.setItem(chave, JSON.stringify(e)); else arm.removeItem(chave);
     return true;
