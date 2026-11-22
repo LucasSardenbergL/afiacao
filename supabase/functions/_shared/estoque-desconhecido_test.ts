@@ -92,8 +92,9 @@ Deno.test("escolha de conta por QUANTIDADE — cobre o pedido > parcial > descon
 });
 
 Deno.test("escolha por quantidade — quantidade ausente/inválida degrada para a regra por saldo", () => {
+  // [0.5, 10] separa "regra por saldo" (fica na 0.5) de "quantidade fabricada = 1" (troca para 10).
   for (const q of [undefined, null, "", 0, -2, Number.NaN, "abc"]) {
-    for (const [a, o] of [[10, 3], [3, 10], [10, null], [0, null], [5, 5]] as Array<[unknown, unknown]>) {
+    for (const [a, o] of [[10, 3], [3, 10], [10, null], [0, null], [5, 5], [0.5, 10]] as Array<[unknown, unknown]>) {
       assertEquals(
         escolherContaPorQuantidade(a, o, q),
         escolherContaPorEstoque(a, o),
