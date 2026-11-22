@@ -177,7 +177,7 @@ export default function RotaListaLigacao() {
                 {c.bucket && <Badge variant="secondary">{BUCKET_LABEL[c.bucket] ?? c.bucket}</Badge>}
                 <span className="kpi-value text-sm w-24 text-right">R$ {Math.round(c.valorDaLigacao)}</span>
                 {c.phone
-                  ? <CallButton phone={c.phone} customerName={c.name} variant="icon" />
+                  ? <CallButton phone={c.phone} customerName={c.name} customerId={c.customerUserId} variant="icon" />
                   : <span className="text-xs text-muted-foreground w-8 text-center">—</span>}
                 <OutcomeMenu
                   customerUserId={c.customerUserId}

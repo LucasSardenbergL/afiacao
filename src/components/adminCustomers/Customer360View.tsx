@@ -97,6 +97,7 @@ export function Customer360View({
             <User className="w-6 h-6 text-primary" />
           </div>
           <div>
+            <p className="text-2xs uppercase tracking-wide text-muted-foreground">Cadastro e ferramentas</p>
             <h1 className="text-lg font-semibold text-foreground">{decodeHtmlEntities(customer.name)}</h1>
             <div className="flex items-center gap-2 mt-0.5">
               {customer.document && (
@@ -193,7 +194,7 @@ export function Customer360View({
                 <span className="flex-1">{formatBrPhone(customer.phone)}</span>
                 {/* Captura: mede a intenção de ligar sem mexer no discador. */}
                 <span className="inline-flex" onClickCapture={() => medir('ligar')}>
-                  <CallButton phone={customer.phone} customerName={customer.name} variant="icon" />
+                  <CallButton phone={customer.phone} customerName={customer.name} customerId={customer.user_id} variant="icon" />
                 </span>
                 {waHref && (
                   <a

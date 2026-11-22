@@ -50,12 +50,15 @@ async function persistCallSession(opts: {
   analyses: SpinAnalysis[];
   dialedPhone: string;
   atendimentoId: string | null;
+  clienteOrigemId: string | null;
 }): Promise<void> {
   try {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { customerUserId, phoneDialed } = await resolveCustomerByPhone(opts.dialedPhone);
+    const { customerUserId, phoneDialed } = await resolveCustomerByPhone(opts.dialedPhone, {
+      clienteOrigemId: opts.clienteOrigemId,
+    });
 
     // Reverse-link best-effort: grava atendimento_id em farmer_calls quando disponível.
     // O link primário confiável é sales_orders.atendimento_id — este é auxiliar (só existe
@@ -154,6 +157,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     phone: string;
     atendimentoId: string | null;
     estabelecida: boolean;
+    /** Ficha de onde a ligação saiu (só na feita) — candidato a dono no persist. */
+    clienteOrigemId: string | null;
   } | null>(null);
   const callStateRef = useRef<WebRTCCallState>('idle');         // espelho p/ o makeCall (callback estável) ler o estado
   const incomingPartyRef = useRef<{ sipCallId: string; party: ResolvedCallParty } | null>(null);
@@ -263,6 +268,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       analyses,
       dialedPhone: sessao.phone,
       atendimentoId: sessao.atendimentoId,
+      clienteOrigemId: sessao.clienteOrigemId,
     });
   }, []);
 
@@ -351,7 +357,10 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
     }
   }
 
-  const makeCall = useCallback(async (phoneNumber: string, opts?: { forceRecord?: boolean }) => {
+  const makeCall = useCallback(async (
+    phoneNumber: string,
+    opts?: { forceRecord?: boolean; clienteOrigemId?: string | null },
+  ) => {
     if (isLensActive()) {
       toast.error('Ligação indisponível na lente (somente leitura). Saia da lente para ligar.');
       return;
@@ -401,7 +410,8 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
       // Telefonia — resolve quem é o número e decide se grava (cliente/fornecedor → auto;
       // ou forceRecord pelo caller). recordingRef guia preroll/transcrição/persist abaixo.
       const { data: { user } } = await supabase.auth.getUser();
-      const party = await resolveCallParty(phoneNumber);
+      const clienteOrigemId = opts?.clienteOrigemId ?? null;
+      const party = await resolveCallParty(phoneNumber, { clienteOrigemId });
       if (callGenerationRef.current === gen) setCurrentParty(party);
       const record = (opts?.forceRecord ?? false) || shouldAutoRecord(party.kind);
       recordingRef.current = record;
@@ -422,7 +432,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
       // PR4 — Reset refs de sessão antes de iniciar nova chamada
       analysisHistoryRef.current = [];
-        sessaoRef.current = { startedAt: new Date(), phone: normalized, atendimentoId, estabelecida: false };
+        sessaoRef.current = { startedAt: new Date(), phone: normalized, atendimentoId, estabelecida: false, clienteOrigemId };
 
       cleanupAudioResources();
 
@@ -533,7 +543,7 @@ export function WebRTCCallProvider({ children }: ProviderProps) {
 
     // Reset refs de sessão (mesma lógica do makeCall pro persist funcionar)
     analysisHistoryRef.current = [];
-    sessaoRef.current = { startedAt: new Date(), phone: incomingCall.phone, atendimentoId, estabelecida: false };
+    sessaoRef.current = { startedAt: new Date(), phone: incomingCall.phone, atendimentoId, estabelecida: false, clienteOrigemId: null };
     // Inbound atendido sempre grava (preroll + transcrição inalterados) → persist habilitado.
     // dialedSipCallIdRef fica null: o fechamento da call_log do inbound é feito pelo
     // listener 'incomingClosed' (SipClient), não pelo endCall.

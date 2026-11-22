@@ -101,13 +101,13 @@ export function AgendaTodayList() {
     );
   }
 
-  const handleCall = async (phone: string | null) => {
+  const handleCall = async (phone: string | null, clienteOrigemId: string) => {
     if (!phone) {
       toast.error('Cliente sem telefone cadastrado');
       return;
     }
     try {
-      await makeCall(phone);
+      await makeCall(phone, { clienteOrigemId });
     } catch (err) {
       toast.error('Erro ao discar', { description: err instanceof Error ? err.message : '' });
     }
@@ -140,7 +140,7 @@ export function AgendaTodayList() {
         return (
           <div key={item.customer_user_id} className="p-3 flex items-center gap-3 hover:bg-muted/30">
             <Icon className={`w-4 h-4 ${meta.color} shrink-0`} />
-            <Link to={`/admin/customers/${item.customer_user_id}`} className="flex-1 min-w-0">
+            <Link to={`/admin/customers/${item.customer_user_id}/360`} className="flex-1 min-w-0">
               <div className="text-sm font-medium truncate">{info?.name ?? '…'}</div>
               <div className="text-2xs text-muted-foreground flex items-center gap-2 flex-wrap">
                 <Badge variant="outline" className="text-2xs">{meta.label}</Badge>
@@ -155,7 +155,7 @@ export function AgendaTodayList() {
               size="sm"
               variant="outline"
               className="gap-1.5 shrink-0"
-              onClick={() => handleCall(info?.phone ?? null)}
+              onClick={() => handleCall(info?.phone ?? null, item.customer_user_id)}
               disabled={!info?.phone}
             >
               <Phone className="w-3.5 h-3.5" />

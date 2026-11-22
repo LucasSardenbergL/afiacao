@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, renderHook, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 /**
@@ -108,6 +108,14 @@ vi.mock('@/lib/analytics', () => ({ captureException: vi.fn(), track: vi.fn() })
 import AdminCustomers from '../AdminCustomers';
 import { useClientesScope } from '@/components/adminCustomers/useClientesScope';
 
+/** Stand-in da página 360: mostra o id e a fila que a lista mandou no state. */
+function Destino360() {
+  const { customerId } = useParams();
+  const location = useLocation();
+  const origem = (location.state as { origemLista?: { query: string } } | null)?.origemLista;
+  return <div>360 de {customerId} · fila: {origem ? `[${origem.query}]` : 'nenhuma'}</div>;
+}
+
 const renderEm = (url: string) => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -116,6 +124,7 @@ const renderEm = (url: string) => {
         <Routes>
           <Route path="/admin/customers" element={<AdminCustomers />} />
           <Route path="/admin/customers/:customerId" element={<AdminCustomers />} />
+          <Route path="/admin/customers/:customerId/360" element={<Destino360 />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -318,5 +327,14 @@ describe('useClientesScope — contrato do deep link', () => {
 
     h.liberarBase!();
     await waitFor(() => { expect(result.current.clienteAlvo.estado).toBe('encontrado'); });
+  });
+});
+
+describe('AdminCustomers — a lista abre a 360 (onda 2: uma ficha só como destino)', () => {
+  it('clicar no cliente leva à 360 com a fila de origem (busca/ordem) no state', async () => {
+    renderEm('/admin/customers?ordem=nome');
+    fireEvent.click(await screen.findByText('WALTER JOSE NOGUEIRA'));
+    expect(await screen.findByText(`360 de ${WALTER.user_id} · fila: [?ordem=nome]`)).toBeTruthy();
+    expect(screen.queryByText(/ficha:/)).toBeNull();
   });
 });

@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { useClientesScope } from './useClientesScope';
 import {
-  lerOrigemLista, montarOrigemLista, urlFichaCliente, urlListaClientes,
+  lerOrigemLista, montarOrigemLista, urlCliente360, urlListaClientes,
 } from './navegacao';
 import type { Customer, ToolCategory, UserTool, SalesOrder } from './types';
 
@@ -129,16 +129,14 @@ export function useAdminCustomers() {
     }
   };
 
+  // A lista abre a 360 — o MESMO destino da carteira, positivação, busca global e follow-ups (onda 2).
+  // A ficha de cadastro segue existindo como "Cadastro e ferramentas", aberta de dentro da 360.
   const handleSelectCustomer = (customer: Customer) => {
-    detalheCarregadoDe.current = customer.user_id;
-    setSelectedCustomer(customer);
-    loadCustomerTools(customer.user_id);
-    loadCustomerOrders(customer.user_id);
-    // A ficha leva a FILA de origem (busca/saúde/ordem na URL + rolagem no state). A entrada da lista
-    // no histórico também ganha a rolagem, para o voltar do NAVEGADOR cair na mesma posição.
+    // A 360 leva a FILA de origem (busca/saúde/ordem + rolagem no state). A entrada da lista no
+    // histórico também ganha a rolagem, para o voltar do NAVEGADOR cair na mesma posição.
     const origem = montarOrigemLista(location.search, window.scrollY);
     navigate({ pathname: location.pathname, search: location.search }, { replace: true, state: { rolagem: origem.rolagem } });
-    navigate(urlFichaCliente(customer.user_id, origem.query), { state: { origemLista: origem } });
+    navigate(urlCliente360(customer.user_id), { state: { origemLista: origem } });
   };
 
   const handleDeleteTool = async (toolId: string) => {
