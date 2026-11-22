@@ -1,11 +1,14 @@
 // Painel lateral (read-only) com o conteúdo de um pedido de venda.
 // Abre ao clicar no card da listagem — ver itens/valores/observações sem sair
 // da lista, e disparar Imprimir / Compartilhar / Editar.
+// Abre JÁ com o que a linha sabe (cliente, PV, status, total, data) no cabeçalho; só o corpo espera o
+// detalhe (skeleton). Falha do detalhe → mensagem + "Tentar de novo", sem derrubar o cabeçalho.
 import { useState } from 'react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Printer, Share2, Pencil, Loader2, RotateCcw, ShieldAlert } from 'lucide-react';
+import { Printer, Share2, Pencil, RotateCcw, ShieldAlert, AlertTriangle } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
@@ -21,7 +24,15 @@ interface SalesOrderDetailSheetProps {
   // controla o Sheet e `loading` mostra o estado enquanto `order` é null.
   open: boolean;
   loading?: boolean;
+  /** A busca do detalhe falhou (≠ ainda carregando): mostra a falha e o "Tentar de novo". */
+  erro?: boolean;
+  onRetry?: () => void;
   order: SalesOrder | null;
+  /**
+   * O que a LINHA da listagem já sabe — o cabeçalho aparece com isso antes do detalhe chegar.
+   * Quando o detalhe chega, ele manda (é a leitura mais fresca).
+   */
+  resumo?: ResumoDoPedido | null;
   customerName: string;
   /**
    * A query de `order_items` do pedido (`useDescontosItensPedido`), INTEIRA: estado junto com o dado.
@@ -34,6 +45,21 @@ interface SalesOrderDetailSheetProps {
   onEdit: () => void;
   /** "Repetir pedido": abre o wizard com cliente + itens deste pedido. */
   onRepeat?: () => void;
+  /**
+   * Repassado ao Sheet: o painel é controlado SEM trigger, então quem abriu (a linha) decide para
+   * onde o foco volta ao fechar.
+   */
+  onCloseAutoFocus?: (e: Event) => void;
+}
+
+/** Campos da linha da listagem que bastam para o cabeçalho do painel. */
+interface ResumoDoPedido {
+  status: string;
+  account?: string | null;
+  /** Nº do PV no Omie (com zeros à esquerda, como vem da view). */
+  pv?: string | null;
+  total: number | null;
+  created_at?: string | null;
 }
 
 // Era `(v || 0).toLocaleString(...)`: o `|| 0` engolia o preco ausente e exibia R$ 0,00,
@@ -62,7 +88,10 @@ function rotuloDesconto(apurados: number, itens: number): string {
 export function SalesOrderDetailSheet({
   open,
   loading,
+  erro = false,
+  onRetry,
   order,
+  resumo,
   customerName,
   descontosItens,
   onClose,
@@ -70,10 +99,15 @@ export function SalesOrderDetailSheet({
   onShare,
   onEdit,
   onRepeat,
+  onCloseAutoFocus,
 }: SalesOrderDetailSheetProps) {
-  const status = order ? statusDoPedido(order.status) : null;
-  const accountLabel = rotuloEmpresa(order?.account);
-  const pv = order?.omie_numero_pedido ? order.omie_numero_pedido.replace(/^0+/, '') || '0' : null;
+  // Cabeçalho: o detalhe manda quando chega; até lá, o resumo da linha.
+  const cab = order
+    ? { status: order.status, account: order.account, pv: order.omie_numero_pedido, total: order.total, created_at: order.created_at }
+    : resumo ?? null;
+  const status = cab ? statusDoPedido(cab.status) : null;
+  const accountLabel = rotuloEmpresa(cab?.account ?? undefined);
+  const pv = cab?.pv ? cab.pv.replace(/^0+/, '') || '0' : null;
   // Trava de crédito (Fase 2): ponto de aprovação do gestor FORA do wizard — a
   // vendedora manda o resumo (WhatsApp), o gestor abre o pedido aqui e aprova.
   const [excecaoOpen, setExcecaoOpen] = useState(false);
@@ -85,42 +119,79 @@ export function SalesOrderDetailSheet({
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="w-full sm:max-w-md overflow-y-auto flex flex-col">
+      <SheetContent className="w-full sm:max-w-md overflow-y-auto flex flex-col" onCloseAutoFocus={onCloseAutoFocus}>
+        {cab && (
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2 flex-wrap text-base">
+              <span className="truncate">{customerName}</span>
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
+                {accountLabel}
+              </Badge>
+              {status && (
+                <Badge variant={status.variant} className="shrink-0">
+                  {status.label}
+                </Badge>
+              )}
+            </SheetTitle>
+            <SheetDescription className="text-xs">
+              {pv && (
+                <>
+                  PV <span className="font-tabular text-foreground">{pv}</span>
+                  {' · '}
+                </>
+              )}
+              {cab.created_at && (
+                <>
+                  {formatarDataPedido(cab.created_at)}
+                  {' · '}
+                </>
+              )}
+              <span className="font-tabular text-foreground">{fmt(cab.total)}</span>
+            </SheetDescription>
+          </SheetHeader>
+        )}
+        {!cab && open && (
+          // Sem resumo nem detalhe (não deveria acontecer pela listagem): o título é obrigatório no diálogo.
+          <SheetHeader>
+            <SheetTitle className="text-base">{customerName}</SheetTitle>
+            <SheetDescription className="sr-only">Detalhe do pedido</SheetDescription>
+          </SheetHeader>
+        )}
+        {/* Status persistente (fora do trecho que troca): o leitor de tela ouve "carregando" → "carregado". */}
+        {open && (
+          <p role="status" className="sr-only">
+            {order ? 'Pedido carregado' : loading ? 'Carregando o pedido…' : ''}
+          </p>
+        )}
         {!order && loading && (
-          <div className="flex-1 flex items-center justify-center">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          <div className="flex-1 space-y-3 py-4" data-testid="detalhe-carregando" aria-hidden>
+            <Skeleton className="h-3 w-24" />
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="flex items-start justify-between gap-3 border-b border-border/50 pb-2">
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3 w-1/3" />
+                </div>
+                <Skeleton className="h-4 w-16" />
+              </div>
+            ))}
           </div>
         )}
         {!order && !loading && open && (
-          <p className="text-sm text-muted-foreground pt-8 text-center">
-            Não foi possível carregar o pedido.
-          </p>
+          <div role="alert" className="flex flex-col items-center gap-3 pt-8 text-center">
+            <AlertTriangle className="h-5 w-5 text-status-warning" aria-hidden />
+            <p className="text-sm text-muted-foreground">
+              {erro ? 'Não foi possível carregar o pedido.' : 'Não encontrei o detalhe deste pedido.'}
+            </p>
+            {onRetry && (
+              <Button variant="outline" size="sm" onClick={onRetry}>
+                Tentar de novo
+              </Button>
+            )}
+          </div>
         )}
         {order && (
           <>
-            <SheetHeader>
-              <SheetTitle className="flex items-center gap-2 flex-wrap text-base">
-                <span className="truncate">{customerName}</span>
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
-                  {accountLabel}
-                </Badge>
-                {status && (
-                  <Badge variant={status.variant} className="shrink-0">
-                    {status.label}
-                  </Badge>
-                )}
-              </SheetTitle>
-              <SheetDescription className="text-xs">
-                {pv && (
-                  <>
-                    PV <span className="font-tabular text-foreground">{pv}</span>
-                    {' · '}
-                  </>
-                )}
-                {formatarDataPedido(order.created_at)}
-              </SheetDescription>
-            </SheetHeader>
-
             <div className="flex-1 space-y-4 py-4">
               {/* Itens */}
               <div>

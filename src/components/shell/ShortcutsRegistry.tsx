@@ -38,6 +38,11 @@ export interface Shortcut {
   handler: (e: KeyboardEvent) => void;
   /** Permite atalho mesmo em campo de input (use com parcimônia). */
   allowInInput?: boolean;
+  /**
+   * Decide ANTES de consumir a tecla se o atalho vale agora (ex.: só com o foco na lista da página).
+   * `false` → o evento segue intacto (sem preventDefault) para quem tem o foco.
+   */
+  enabled?: (e: KeyboardEvent) => boolean;
 }
 
 interface RegistryEntry extends Shortcut {
@@ -99,6 +104,7 @@ export function ShortcutsRegistryProvider({ children }: { children: ReactNode })
       for (const s of ref.current) {
         if (s.keys.toLowerCase() === combo) {
           if (fromInput && !s.allowInInput && !hasMod) continue;
+          if (s.enabled && !s.enabled(e)) continue;
           e.preventDefault();
           // Telemetria: rastreia uso real de atalhos pra validar adoção
           track('shortcut.triggered', {
