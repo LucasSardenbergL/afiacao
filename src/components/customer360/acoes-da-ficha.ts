@@ -15,7 +15,7 @@ export interface CreditoLido {
   } | null;
 }
 
-export type TomCredito = 'neutro' | 'ok' | 'alerta';
+type TomCredito = 'neutro' | 'ok' | 'alerta';
 
 export interface ResumoCredito {
   tom: TomCredito;
