@@ -29,7 +29,7 @@ import {
   vereditoExclusaoNoOmie,
 } from "../_shared/atp-pv-omie.ts";
 import { deltaEdicaoOben } from "../_shared/atp-edicao.ts";
-import { aplicarCorPreservandoItens, apurarSubtotalPedido, omieStatusDoPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
+import { aplicarCorPreservandoItens, apurarSubtotalPedido, canceladoNoOmie, omieStatusDoPedido, precoUnitarioOmie } from "../_shared/omie-pedido.ts";
 import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
@@ -2377,12 +2377,22 @@ async function criarPedidoVenda(
     const consulta = await callOmieVendasApi(
       "produtos/pedido/", "ConsultarPedido", { codigo_pedido_integracao: cCodIntPed }, account,
     ) as {
-      pedido_venda_produto?: { cabecalho?: { codigo_pedido?: number; numero_pedido?: string | number } };
+      pedido_venda_produto?: {
+        cabecalho?: { codigo_pedido?: number; numero_pedido?: string | number };
+        infoCadastro?: { cancelado?: string };
+      };
       cabecalho?: { codigo_pedido?: number; numero_pedido?: string | number };
+      infoCadastro?: { cancelado?: string };
     } | null;
     const cab = consulta?.pedido_venda_produto?.cabecalho ?? consulta?.cabecalho;
     if (!cab?.codigo_pedido) {
       throw new Error(`Omie (${account}) reportou pedido duplicado mas ConsultarPedido(${cCodIntPed}) não retornou o pedido — reconciliação falhou.`);
+    }
+    // Cancelado no Omie vence (decisão do founder 2026-11-21): o PV que a chave já tem pode ter
+    // sido CANCELADO entre a tentativa anterior e esta. Vincular gravaria 'enviado' num pedido
+    // que não é venda — recusa, NADA é gravado, e o vendedor vê o motivo (challenge Codex 2026-11-22).
+    if (canceladoNoOmie(consulta?.pedido_venda_produto?.infoCadastro ?? consulta?.infoCadastro)) {
+      throw new Error(`Omie (${account}): o PV ${cab.codigo_pedido} da chave ${cCodIntPed} já existe e está CANCELADO no Omie — não vinculo pedido cancelado como enviado.`);
     }
     omie_pedido_id = cab.codigo_pedido;
     omie_numero_pedido = cab.numero_pedido ?? cab.codigo_pedido;

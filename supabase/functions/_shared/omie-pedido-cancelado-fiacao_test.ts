@@ -22,6 +22,10 @@ Deno.test("omie-vendas-sync: os dois pontos de status usam omieStatusDoPedido co
     "[FIO-REPARO] repararOrfaosItens não passa a marca infoCadastro do pedido consultado",
   );
   exigir(
+    /if \(canceladoNoOmie\(consulta\?\.pedido_venda_produto\?\.infoCadastro \?\? consulta\?\.infoCadastro\)\) \{\s*throw /.test(src),
+    "[FIO-DUPLICADO] a recuperação de PV duplicado vincula sem recusar o PV cancelado no Omie",
+  );
+  exigir(
     !/etapa\s*===\s*['"]80['"]/.test(src),
     "[MAPA-INLINE] voltou um mapa etapa→status inline (cego à marca de cancelado)",
   );
