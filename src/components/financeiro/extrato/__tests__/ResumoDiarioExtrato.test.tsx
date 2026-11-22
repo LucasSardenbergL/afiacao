@@ -112,9 +112,17 @@ describe('Movimento Omie por dia — gate fail-closed (F1 Task 9)', () => {
     expect(d).toBe(OMIE_NAO_CALIBRADO);
   });
 
-  it('calibrado e dia sem linha Omie → "indisponível", nunca R$ 0,00', () => {
+  it('calibrado e dia sem linha Omie (valores NULL) → "indisponível", nunca R$ 0,00', () => {
+    const omie = montarMovimentoOmie([
+      { data: '2026-10-05', creditos_centavos: null, debitos_centavos: null, regra_versao: 'v1', creditos_calibrado: true, debitos_calibrado: true },
+    ]);
+    const { container } = render(<ResumoDiarioExtrato dias={[dia]} omie={omie} />);
+    expect(colunasOmie(container)).toEqual(['indisponível', 'indisponível']);
+  });
+
+  it('dia que a resposta Omie não trouxe → não calibrado (fail-closed por dia)', () => {
     const outro = { ...dia, data: '2026-10-06' };
     const { container } = render(<ResumoDiarioExtrato dias={[outro]} omie={rpc(true, true)} />);
-    expect(colunasOmie(container)).toEqual(['indisponível', 'indisponível']);
+    expect(colunasOmie(container)).toEqual([OMIE_NAO_CALIBRADO, OMIE_NAO_CALIBRADO]);
   });
 });

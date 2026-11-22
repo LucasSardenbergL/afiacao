@@ -20,7 +20,7 @@ export interface LinhaOmieDiaRpc {
   debitos_calibrado: boolean | null;
 }
 
-export interface MovimentoOmieDia {
+interface MovimentoOmieDia {
   creditos: number | null;
   debitos: number | null;
   creditosCalibrado: boolean;
