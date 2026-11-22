@@ -56,8 +56,31 @@ mesmos problemas, e três deles foram confirmados no código. O PR é só front-
   (recorrências expandidas desde segunda sobre o saldo bancário do dia). Isso fica para a engine, não
   para o placar.
 
+## Fase 3 — "Cobrar primeiro" (2026-11-22)
+
+Mesmo override do founder (sem sinal de uso). **Não criei tela nova:** `/cobranca` já tem fila,
+responsável, promessa e régua de WhatsApp. O placar resume e leva até ela.
+
+- **Fonte:** a mesma RPC `cobranca_fila`, lida pelo `useCeoPlacar` por empresa do escopo, em chave de
+  cache própria (`['financeiro-cockpit','cobranca-ceo',empresa]`). Ela é chamada pelo nome, sem
+  importar o módulo de cobrança, por causa do gate de fronteiras.
+- **Chave do devedor = empresa credora × código do cliente no Omie, nunca o nome.** Em prod, os títulos
+  ATRASADO têm `nome_cliente` e `cnpj_cpf` vazios em 100%. O nome vem da view da fila (100% preenchido).
+  O mesmo cliente em duas credoras aparece como dois devedores (cadastros fiscais legítimos).
+- **Ordem (Codex P2):** promessa vencida primeiro, depois "a contatar/contatado" por saldo, e quem passa
+  de 1 ano de atraso no fim, marcado "antigo" (o valor continua no total). Pagamento informado, acordo,
+  disputa e cancelado pela gestão saem do top e entram na contagem "aguardando".
+- **Ausente ≠ zero (Codex P1):** se a fila de alguma empresa não foi lida, o card diz que falhou. Uma
+  promessa vencida com saldo ilegível continua contada. Caso aberto sem vencido não é "saldo
+  desconhecido".
+- **Links (Codex P1):** a fila de `/cobranca` é por empresa (o padrão é a Oben), então todo link leva
+  `?empresa=`. No grupo, o tile de vencidos continua no cockpit consolidado.
+- **Em aberto:** separar a carteira antiga **por título**. A RPC só dá o atraso máximo por cliente, e
+  isso desloca também parcelas recentes do mesmo cliente. O tile de vencidos (status `ATRASADO`) e a
+  fila (que inclui `A VENCER`/`VENCE HOJE` já vencidos pela data) usam réguas diferentes (Codex P2).
+
 ## Fases seguintes (sem sinal de uso ainda, não iniciadas)
 
-Vencidos abertos para cobrança ·
+
 composição da margem (CMV e confiança do mapeamento) · composição da NCG · vendas por empresa em dias
 úteis. O sensor já existe: `dashboard.ceo.kpi_click`.
