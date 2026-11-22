@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   caixaDoEscopo,
   caixaProjetadoDoEscopo,
+  cobrancaDoEscopo,
+  devedorDaFila,
   empresasDoEscopo,
   linhasPorEmpresa,
   margemUltimoMesFechado,
@@ -277,5 +279,70 @@ describe('caixaProjetadoDoEscopo', () => {
     const r = caixaProjetadoDoEscopo([snap('oben', HOJE, 100, [...Array(13).fill(100), -50], 14)], ['oben'], HOJE);
     expect(r.falta).toBe(0);
     expect(r.porEmpresa[0].primeiraNegativa).toBeNull();
+  });
+});
+
+describe('cobrança do CEO', () => {
+  const linha = (o: Record<string, unknown>) => ({
+    company: 'oben', omie_codigo_cliente: 1, nome_cliente: 'Cliente A', saldo_vencido: 100, n_vencidas: 1,
+    dias_vencido_max: 10, dona_user_id: 'u1', dona_nome: 'Ana', estado: 'a_contatar', promessa_situacao: null, ...o,
+  });
+  const dev = (o: Record<string, unknown>) => devedorDaFila(linha(o))!;
+
+  it('devedorDaFila: chave empresa × código; saldo ausente vira null, nunca 0', () => {
+    expect(devedorDaFila(linha({}))).toEqual({
+      company: 'oben', codigo: 1, nome: 'Cliente A', saldoVencido: 100, nVencidas: 1, diasMax: 10, antigo: false,
+      responsavel: 'Ana', estado: 'a_contatar', promessaVencida: false,
+    });
+    expect(dev({ saldo_vencido: null }).saldoVencido).toBeNull();
+    expect(dev({ saldo_vencido: '250.5' }).saldoVencido).toBe(250.5);
+    expect(dev({ dona_user_id: null }).responsavel).toBeNull();
+    expect(dev({ nome_cliente: '  ' }).nome).toBeNull();
+    expect(dev({ promessa_situacao: 'vencida' }).promessaVencida).toBe(true);
+    expect(dev({ dias_vencido_max: 366 }).antigo).toBe(true);
+    expect(dev({ dias_vencido_max: 365 }).antigo).toBe(false);
+    expect(devedorDaFila(linha({ company: 'outra' }))).toBeNull();
+    expect(devedorDaFila(linha({ omie_codigo_cliente: null }))).toBeNull();
+  });
+
+  it('mesmo cliente em 2 empresas credoras são 2 devedores (cadastros fiscais legítimos)', () => {
+    const c = cobrancaDoEscopo(
+      { oben: [dev({ saldo_vencido: 300 })], colacor: [], colacor_sc: [dev({ company: 'colacor_sc', saldo_vencido: 200 })] },
+      ['oben', 'colacor', 'colacor_sc'],
+    );
+    expect(c?.devedores).toBe(2);
+    expect(c?.top.map((d) => [d.company, d.saldoVencido])).toEqual([['oben', 300], ['colacor_sc', 200]]);
+  });
+
+  it('ordem acionável: promessa vencida, depois por saldo até 1 ano, antigos no fim; fora da fila quem aguarda', () => {
+    const promessa = dev({ omie_codigo_cliente: 1, saldo_vencido: 10, estado: 'promessa', promessa_situacao: 'vencida' });
+    const grande = dev({ omie_codigo_cliente: 2, saldo_vencido: 500, estado: 'contatado' });
+    const antigoGrande = dev({ omie_codigo_cliente: 3, saldo_vencido: 9000, dias_vencido_max: 800 });
+    const pequeno = dev({ omie_codigo_cliente: 4, saldo_vencido: 50, dona_user_id: null });
+    const disputa = dev({ omie_codigo_cliente: 5, saldo_vencido: 7000, estado: 'disputa' });
+    const c = cobrancaDoEscopo({ oben: [antigoGrande, pequeno, disputa, grande, promessa] }, ['oben']);
+    expect(c?.top).toEqual([promessa, grande, pequeno, antigoGrande]);
+    expect(c?.aguardando).toBe(1);
+    expect(c?.devedores).toBe(5);
+    expect(c?.semResponsavel).toEqual({ n: 1, valor: 50 });
+    expect(cobrancaDoEscopo({ oben: [antigoGrande, pequeno, grande, promessa] }, ['oben'], 2)?.top).toEqual([promessa, grande]);
+  });
+
+  it('promessa vencida com saldo ilegível não some; caso sem vencido não é "saldo desconhecido"', () => {
+    const c = cobrancaDoEscopo(
+      { oben: [dev({ saldo_vencido: null, promessa_situacao: 'vencida' }), dev({ omie_codigo_cliente: 2, saldo_vencido: null, n_vencidas: 0 })] },
+      ['oben'],
+    );
+    expect(c).toEqual({
+      devedores: 0, semResponsavel: { n: 0, valor: 0 }, promessasVencidas: 1, saldoDesconhecido: 1, aguardando: 0, top: [],
+    });
+  });
+
+  it('fila de alguma empresa do escopo não lida → null (nunca "ninguém deve")', () => {
+    expect(cobrancaDoEscopo({ oben: [] }, ['oben', 'colacor'])).toBeNull();
+    expect(cobrancaDoEscopo(null, ['oben'])).toBeNull();
+    expect(cobrancaDoEscopo({ oben: [] }, ['oben'])).toEqual({
+      devedores: 0, semResponsavel: { n: 0, valor: 0 }, promessasVencidas: 0, saldoDesconhecido: 0, aguardando: 0, top: [],
+    });
   });
 });
