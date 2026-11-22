@@ -74,6 +74,9 @@ export function statusOmieReconciliavel(
   info: { cancelado?: unknown } | null | undefined,
 ): string | null {
   if (canceladoNoOmie(info)) return "cancelado";
+  // Etapa 80 é cancelado por si só (regra antiga, preservada): sem isto um 80 sem marca
+  // conservaria um 'faturado' (2ª rodada Codex).
+  if ((etapa || "") === "80") return "cancelado";
   if (info?.cancelado !== "N") return null;
   return etapaConhecida(etapa) ? omieEtapaToStatus(etapa) : null;
 }

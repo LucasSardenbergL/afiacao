@@ -395,7 +395,7 @@ Deno.test("statusOmieReconciliavel: marca ausente/ilegível = não sei (não rea
   eq(statusOmieReconciliavel("60", {}), null, "60 sem o campo cancelado");
   eq(statusOmieReconciliavel("60", { cancelado: "n" }), null, "60 + 'n' minúsculo");
   eq(statusOmieReconciliavel("50", { cancelado: "" }), null, "50 + marca vazia");
-  eq(statusOmieReconciliavel("80", undefined), null, "80 sem marca também é não-sei");
+  eq(statusOmieReconciliavel("80", undefined), "cancelado", "80 sem marca segue cancelado (a etapa basta)");
 });
 
 Deno.test("todo status que a marca produz está na lista gerida enviada à RPC", () => {
