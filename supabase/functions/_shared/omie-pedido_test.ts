@@ -385,7 +385,17 @@ Deno.test("RECONCILIÁVEL (reprocess): marca vence etapa DESCONHECIDA; sem marca
   eq(statusOmieReconciliavel("99", { cancelado: "N" }), null, "etapa desconhecida sem marca");
   eq(statusOmieReconciliavel("10", {}), null, "10 não é etapa conhecida (A4)");
   eq(statusOmieReconciliavel("60", { cancelado: "N" }), "faturado", "60 + N");
-  eq(statusOmieReconciliavel("80", undefined), "cancelado", "80 sem marca");
+  eq(statusOmieReconciliavel("80", { cancelado: "N" }), "cancelado", "80 + N (0 casos medidos)");
+});
+
+Deno.test("statusOmieReconciliavel: marca ausente/ilegível = não sei (não reativa pela etapa congelada)", () => {
+  // Pedido que o backfill cancelou não pode voltar a 'faturado' por um payload sem infoCadastro.
+  eq(statusOmieReconciliavel("60", undefined), null, "60 sem infoCadastro");
+  eq(statusOmieReconciliavel("60", null), null, "60 com infoCadastro null");
+  eq(statusOmieReconciliavel("60", {}), null, "60 sem o campo cancelado");
+  eq(statusOmieReconciliavel("60", { cancelado: "n" }), null, "60 + 'n' minúsculo");
+  eq(statusOmieReconciliavel("50", { cancelado: "" }), null, "50 + marca vazia");
+  eq(statusOmieReconciliavel("80", undefined), null, "80 sem marca também é não-sei");
 });
 
 Deno.test("todo status que a marca produz está na lista gerida enviada à RPC", () => {

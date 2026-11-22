@@ -64,12 +64,17 @@ export function omieStatusDoPedido(
 
 /** Status que o reprocess manda à RPC `reconciliar_pedidos_omie`, ou `null` = "não sei" (a RPC
  *  mantém o atual). A marca de cancelado é SABIDA mesmo com etapa desconhecida; sem ela, só
- *  etapa conhecida reconcilia ([A4]). */
+ *  etapa conhecida reconcilia ([A4]).
+ *  Marca AUSENTE/ilegível = "não sei" (null), nunca "não cancelado": senão um pedido que o backfill
+ *  cancelou voltaria a 'faturado' pela etapa congelada num payload sem `infoCadastro` (challenge
+ *  Codex 2026-11-22). Ausente ≠ 'N'. Medido: o ListarPedidos (o mesmo do reprocess) devolveu S/N em
+ *  100% dos 35.794 PVs das duas contas — o null não desliga a reconciliação hoje. */
 export function statusOmieReconciliavel(
   etapa: string | undefined | null,
   info: { cancelado?: unknown } | null | undefined,
 ): string | null {
   if (canceladoNoOmie(info)) return "cancelado";
+  if (info?.cancelado !== "N") return null;
   return etapaConhecida(etapa) ? omieEtapaToStatus(etapa) : null;
 }
 
