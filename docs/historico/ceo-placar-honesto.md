@@ -91,8 +91,8 @@ e "DRE provisória"). Tudo vem do mesmo cache da DRE do cockpit; nenhuma leitura
   CMV, então a coluna se chama "Mapeamento da DRE". `resultado_provisorio` acende com qualquer
   lançamento fora da DRE no mês: o rótulo é "DRE provisória". Hoje a Oben tem uma dúzia de categorias
   sem mapeamento e a Colacor aparece provisória em todo mês.
-- **Em aberto (engine `omie-financeiro`):** gravar o valor e o percentual do CMV classificado por
-  heurística (`viaFallback`), para medir a confiança do CMV de verdade, e o motivo de "provisória".
+- **Feito na Fase 4b (abaixo):** o valor e o percentual do CMV classificado por heurística, e o
+  motivo de "provisória".
 
 ## Fase 5 — composição da NCG (2026-11-22)
 
@@ -115,8 +115,53 @@ total. Agora grava as 6 parcelas em colunas dedicadas `ncg_*`
   (`getProjecaoSnapshotsCockpit`) nomeia colunas, e a UI antes da migration derrubaria o placar
   inteiro com 42703.
 
+## Fase 4b — confiança do CMV (engine `omie-financeiro` v1.14, 2026-11-22)
+
+Fecha o "em aberto" da Fase 4. A DRE grava, em colunas dedicadas de `fin_dre_snapshots`
+(`db/2026-11-22-fin-dre-snapshots-cmv-heuristica.sql`, 1 writer: o upsert de `calcularDRE`):
+`cmv_heuristica`, o R$ do CMV classificado pela heurística de descrição (`viaFallback`, o que inclui
+mapeamento inválido e lançamento sem código de categoria), e `cmv_heuristica_pct`, a fração do CMV
+(0..1). O card troca "Mapeamento da DRE" por **"CMV por heurística: X%"** e lista, sob a tabela, o
+motivo de cada "DRE provisória" (`detalhamento.fora_dre.motivo`, que a edge já gravava; texto, não
+sinal money-path, então segue no jsonb).
+
+- **Ausente ≠ zero, em 3 sabores.** As duas NULL = não medido (snapshot anterior à v1.14, bundle sem
+  a marca do contrato, valor fora de faixa) e a UI mostra "—". `cmv_heuristica` presente com o pct
+  NULL = sem fração interpretável (CMV ≤ 0, ou heurística fora de 0..100% do CMV, como um estorno
+  mapeado maior que o CMV mapeado). 0% só quando todo o CMV veio de mapeamento explícito.
+- **O CHECK nunca derruba o upsert.** O helper `cmv-heuristica.ts` espelha os CHECKs de faixa e de
+  coerência (|pct − valor/cmv| ≤ 0,0001) e valida a faixa **depois** do arredondamento. O Codex (P2)
+  mostrou que o caso de fronteira original (`0,1 + 0,2`) não distinguia a guarda antes ou depois: o
+  caso que distingue é `0,7 + 0,1` (razão 1,0000…02, que só arredondada vira 100%). A coerência usa
+  `CASE WHEN cmv > 0`, e não `AND`, porque o Postgres não garante a ordem do `AND`: com CMV 0 sairia
+  division_by_zero (22012), e não check_violation.
+- **Gatilho contra bundle velho.** O upsert de um bundle anterior (ou de um rollback) não nomeia as
+  colunas, e no UPDATE manteria o valor de outra apuração ao lado do `cmv` novo: o pct mentiria, ou o
+  CHECK derrubaria a DRE. O BEFORE trigger `trg_fin_dre_snapshots_contrato_cmv_heuristica` anula as
+  duas quando falta `detalhamento.contrato.cmv_heuristica`, no mesmo molde do gatilho da fase 2, que
+  não foi tocado.
+- **Camadas que não existem por serem inertes.** Uma checagem de folga no helper (verdadeira por
+  construção) e um `+ 0` contra `-0` (some no JSON) foram retirados: sabotados, o teste continuava
+  verde. `cmv <= 0` → `< 0` é mutante equivalente (com CMV 0 a razão dá NaN/∞ e a guarda de
+  finitude devolve o mesmo NULL).
+- **Provas:** teste Deno pelo handler (4 casos vermelhos antes, controle "cmv total" verde),
+  falsificação da regra e do helper (controle verde e 9 sabotagens na mesma invocação), harness PG17
+  (controle 22/22, 5 sabotagens, S3 e S5 exigindo a causa: 22012 e `P3 FALHOU`). Codex sem P1.
+- **Ordem de deploy:** migration → edge v1.14 → Publish. O front lê `select *`, então pode ir no
+  mesmo PR: sem a migration, a coluna chega ausente e a UI mostra "—". A edge antes da migration
+  falharia alto no upsert.
+
+## Em aberto
+
+- **Contagem dupla na semana corrente (`fin-cashflow-engine`), entrega 2 da série: não publicada,
+  por decisão.** O Codex deu P1: a recorrência não tem status de pagamento, e tirá-la pela data
+  esconderia a folha não paga (erro otimista, que silencia `cobertura_baixa` e `caixa_negativo`). Na
+  PROD (psql-ro, 22/11/2026), `fin_eventos_recorrentes` e `fin_eventos_eventuais` têm 0 linhas nas 3
+  empresas: a contagem dupla é latente. **Reabrir quando o 1º recorrente for cadastrado.** A
+  reconciliação exige evidência de liquidação (vínculo recorrência → movimentação ou CP), que o modelo
+  ainda não tem.
+
 ## Fases seguintes (sem sinal de uso ainda, não iniciadas)
 
-
- vendas por empresa em dias
-úteis. O sensor já existe: `dashboard.ceo.kpi_click`.
+UI "Como a NCG se forma" (Fase 5, só depois das colunas `ncg_*` confirmadas na PROD) · vendas por
+empresa em dias úteis. O sensor já existe: `dashboard.ceo.kpi_click`.

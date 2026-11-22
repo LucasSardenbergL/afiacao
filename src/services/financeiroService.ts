@@ -105,6 +105,9 @@ export interface FinDRE {
   fora_dre?: number | null;
   /** DRE fase 2 — true = composição fora_dre pendente (resultado provisório); null = pré-fase 2/desconhecido. */
   resultado_provisorio?: boolean | null;
+  /** CMV classificado pela heurística (R$) e sua fração do CMV (0..1) — edge omie-financeiro v1.14. Ausente/NULL = não medido. */
+  cmv_heuristica?: number | null;
+  cmv_heuristica_pct?: number | null;
   /** Só no consolidado: alguma empresa do mês sem o dado (pré-fase 2) ⇒ fora_dre é soma parcial. */
   fora_dre_parcial?: boolean;
   detalhamento: {

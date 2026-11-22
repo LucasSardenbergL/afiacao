@@ -28,6 +28,7 @@ import {
   fingerprintPagina,
 } from "../_shared/omie-paginacao.ts";
 import { colunasResumo, type ColunasResumo } from "./resumo-movimento.ts";
+import { colunasCmvHeuristica } from "./cmv-heuristica.ts";
 import { chamarOmieComPolitica } from "./omie-chamada.ts";
 import {
   decidirModoCR,
@@ -1969,6 +1970,9 @@ async function calcularDRE(
   let valorTotal = 0, valorMapeado = 0, valorGenerico = 0;
   let temImpostoNaoMapeado = false;
   let fallbackValor = 0, caixaValor = 0;
+  // Confiança do CMV (v1.14): R$ do CMV classificado pela heurística de descrição (viaFallback), inclusive
+  // lançamento sem código de categoria. Vai a colunas dedicadas via `colunasCmvHeuristica`.
+  let cmvHeuristicaValor = 0;
   const GENERICOS = ["OUTROS", "DIVERSOS", "AJUSTE", "TRANSFER"];
 
   function processar(rows: Array<Record<string, unknown>>, isReceita: boolean) {
@@ -2008,6 +2012,7 @@ async function calcularDRE(
       if (c.linha === "fora_dre") acumularForaDRE(foraDRE, cod, val, isReceita);
       else if (c.linha === "nao_resultado") acumularNaoResultado(naoResultado, cod, val, isReceita);
       else totais[c.linha] = (totais[c.linha] ?? 0) + val;
+      if (c.linha === "cmv" && c.viaFallback) cmvHeuristicaValor += val;
       if (c.mapeamentoInvalido) {
         const k = `${isReceita ? "CR" : "CP"}|${cod}`;
         const prev = mapeamentosInvalidos.get(k);
@@ -2103,6 +2108,9 @@ async function calcularDRE(
     fora_dre: Math.round(foraDRE.saidas * 100) / 100,
     resultado_provisorio: foraDRE.composicao_pendente,
     qtd_categorias_sem_mapeamento: unique.length,
+    // v1.14 (colunas dedicadas, 1 writer = este upsert): CMV via heurística em R$ e fração do CMV.
+    // pct NULL = sem base (CMV ≤ 0); NULL nas duas = snapshot anterior à v1.14. O helper espelha o CHECK.
+    ...colunasCmvHeuristica({ cmvTotal: dre.cmv, cmvHeuristica: cmvHeuristicaValor }),
     detalhamento: {
       receitas: detalheReceitas,
       despesas: detalheDespesas,
@@ -2116,7 +2124,9 @@ async function calcularDRE(
       fora_dre: foraDRE,
       nao_resultado: naoResultado,
       mapeamentos_invalidos: [...mapeamentosInvalidos.values()],
-      contrato: { versao: "dre-fora-dre-v1", motor: VERSAO },
+      // `cmv_heuristica`: o gatilho do banco anula as colunas cmv_heuristica* quando a marca falta
+      // (bundle velho que não as reescreve deixaria valor de outra apuração ao lado do cmv novo).
+      contrato: { versao: "dre-fora-dre-v1", motor: VERSAO, cmv_heuristica: "v1" },
       imposto_teorico,
       delta_imposto_pct,
       config_tributaria_completa: configTrib.completa,
