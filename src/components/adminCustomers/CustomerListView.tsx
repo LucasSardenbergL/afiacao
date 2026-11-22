@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useCustomerSegments } from '@/hooks/useCustomerSegments';
 import { decodeHtmlEntities } from '@/lib/format';
-import { lerRolagemARestaurar } from './navegacao';
+import { lerRolagemARestaurar } from '@/lib/nav/clientes';
 import {
   HEALTH_CLASSES, NAO_APURADO, classeSaudeExibida, estadoFiltroSaude, fmtContagem, fmtGasto, fmtPrioridade, formatDocument,
   metricasExibiveis, motivoContato, normalizarOrdem, prioridadeDisponivel, rotuloContagem, TAMANHO_PAGINA_CLIENTES,

@@ -4,6 +4,11 @@
 // busca, o filtro de saúde, a ordem e a posição em que ela estava (onda 1, item 6). Os filtros moram
 // na URL (`useUrlState`), então a origem é a query string da lista + a rolagem da janela.
 // Funções PURAS: o teste trava quais parâmetros viajam e como a origem é lida do `location.state`.
+//
+// Onda 2 (item 8): a 360 é o destino ÚNICO de "abrir cliente" (lista, agenda, telefonia, carteira…);
+// a ficha antiga em /admin/customers/:id virou "Cadastro e ferramentas", aberta pela 360. Por isso este
+// helper saiu de `adminCustomers/` para `lib/nav/` (plataforma): a 360 (farmer-inteligencia) e a lista
+// (admin-crm) o usam sem uma aresta de fronteira entre os dois módulos.
 
 /** Parâmetros da lista que definem a FILA (o resto da URL não viaja). */
 const PARAMS_DA_FILA = ['search', 'health', 'ordem'] as const;
@@ -36,12 +41,20 @@ export function urlListaClientes(query: string = ''): string {
   return `/admin/customers${queryDaFila(query)}`;
 }
 
-/** Ficha (cadastro) do cliente, carregando a fila na URL — a lista por trás segue a mesma key. */
-export function urlFichaCliente(customerId: string, query: string = ''): string {
+/**
+ * "Cadastro e ferramentas" do cliente (a ficha antiga), carregando a fila na URL — a lista por trás
+ * segue a mesma key. NÃO é destino de "abrir cliente": quem abre cliente usa `urlCliente360`.
+ */
+export function urlCadastroCliente(customerId: string, query: string = ''): string {
   return `/admin/customers/${encodeURIComponent(customerId)}${queryDaFila(query)}`;
 }
 
-/** Visão 360 do cliente. */
+/** `location.state` que leva a fila de origem adiante (ou nada, quando a tela não veio da lista). */
+export function estadoComOrigem(origem: OrigemLista | null | undefined): { origemLista: OrigemLista } | undefined {
+  return origem ? { origemLista: origem } : undefined;
+}
+
+/** Visão 360 do cliente — o destino único de "abrir cliente". */
 export function urlCliente360(customerId: string): string {
   return `/admin/customers/${encodeURIComponent(customerId)}/360`;
 }

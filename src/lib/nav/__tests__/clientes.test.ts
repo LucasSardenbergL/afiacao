@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  lerOrigemLista, lerRolagemARestaurar, montarOrigemLista, queryDaFila, urlCliente360, urlFichaCliente,
+  estadoComOrigem, lerOrigemLista, lerRolagemARestaurar, montarOrigemLista, queryDaFila, urlCliente360, urlCadastroCliente,
   urlListaClientes, urlNovoPedido, urlPedidosDoCliente,
-} from '../navegacao';
+} from '../clientes';
 
 describe('queryDaFila — só busca, saúde e ordem viajam', () => {
   it('mantém os 3 parâmetros da fila, em ordem fixa, e descarta o resto', () => {
@@ -19,7 +19,7 @@ describe('URLs', () => {
   it('lista e ficha carregam a fila', () => {
     expect(urlListaClientes('?health=critico&x=1')).toBe('/admin/customers?health=critico');
     expect(urlListaClientes()).toBe('/admin/customers');
-    expect(urlFichaCliente('abc', '?ordem=nome')).toBe('/admin/customers/abc?ordem=nome');
+    expect(urlCadastroCliente('abc', '?ordem=nome')).toBe('/admin/customers/abc?ordem=nome');
   });
   it('novo pedido e pedidos levam o cliente (antes /sales/new ia sem ele)', () => {
     expect(urlNovoPedido('u-1')).toBe('/sales/new?customer=u-1');
@@ -28,7 +28,20 @@ describe('URLs', () => {
   });
   it('id é codificado (nunca injeta segmento/parâmetro)', () => {
     expect(urlNovoPedido('a&b=c')).toBe('/sales/new?customer=a%26b%3Dc');
-    expect(urlFichaCliente('a/b')).toBe('/admin/customers/a%2Fb');
+    expect(urlCadastroCliente('a/b')).toBe('/admin/customers/a%2Fb');
+  });
+});
+
+describe('estadoComOrigem — o state que leva a fila adiante (lista → 360 → Cadastro)', () => {
+  it('com origem → { origemLista }; sem origem → undefined (nunca state vazio fingindo fila)', () => {
+    const origem = montarOrigemLista('?search=ab', 50);
+    expect(estadoComOrigem(origem)).toEqual({ origemLista: origem });
+    expect(estadoComOrigem(null)).toBeUndefined();
+    expect(estadoComOrigem(undefined)).toBeUndefined();
+  });
+  it('o state montado volta intacto pelo leitor', () => {
+    const origem = montarOrigemLista('?health=critico&ordem=nome', 300);
+    expect(lerOrigemLista(estadoComOrigem(origem))).toEqual(origem);
   });
 });
 

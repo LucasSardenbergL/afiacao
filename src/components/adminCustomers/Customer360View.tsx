@@ -37,7 +37,7 @@ import { AgendarVisitaDialog } from '@/components/visitas/AgendarVisitaDialog';
 import { EmptyState } from '@/components/EmptyState';
 import {
   urlCliente360, urlNovoPedido, urlPedidosDoCliente, type OrigemLista,
-} from './navegacao';
+} from '@/lib/nav/clientes';
 import { registrarUsoClientes, type AcaoFicha } from './sensorClientes';
 import type { Customer, ClientScore, ToolCategory, UserTool, SalesOrder } from './types';
 
