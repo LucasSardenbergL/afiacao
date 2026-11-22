@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 import { acompanharRegistro, aplicadorPadrao } from "./lib/pwa-atualizacao";
-import { instalarRecuperacaoDeChunk, prefetchRota } from "./lib/preload-rota";
+import { instalarRecuperacaoDeChunk, liberarGuardasQuandoEstavel, prefetchRota } from "./lib/preload-rota";
 
 /** Carimbo de build: o Vite (`define`) substitui por uma string literal com o short SHA
  *  do commit, ou "dev" se o build não tiver git. O cron/verify-frontend.sh grepa o SHA
@@ -99,12 +99,8 @@ if (__PWA_ENABLED__) {
 }
 
 // Sinaliza pro watchdog de boot (no index.html) que o bundle executou e o React
-// montou. Limpar as guardas de recuperação permite que o watchdog/preloadError
-// recuperem de novo caso uma falha POSTERIOR estrague o app na mesma sessão.
+// montou. As guardas de recuperação só são liberadas depois de o app ficar estável
+// (apagá-las aqui, na hora, transformava falha de chunk persistente em recarga sem
+// fim — a "tela piscando" do Safari, 2026-11-22). Ver `liberarGuardasQuandoEstavel`.
 window.__APP_BOOTED__ = true;
-try {
-  sessionStorage.removeItem("__boot_recovery_attempted__");
-  sessionStorage.removeItem("__preload_error_reloaded__");
-} catch {
-  // ignore
-}
+liberarGuardasQuandoEstavel();

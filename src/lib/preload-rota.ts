@@ -55,6 +55,34 @@ const marcar = (erros: Erros, erro: unknown) => {
 };
 const contem = (erros: Erros, erro: unknown) => (ehObjeto(erro) ? erros.objetos.has(erro) : erros.primitivos.has(erro));
 
+/** Chaves das guardas anti-loop (esta e a do watchdog de boot no index.html). */
+export const GUARDAS_DE_RECUPERACAO = ['__boot_recovery_attempted__', '__preload_error_reloaded__'] as const;
+/** Quanto o app precisa ficar de pé, sem recarregar, para as guardas valerem de novo. */
+export const PRAZO_APP_ESTAVEL_MS = 15_000;
+
+/**
+ * Libera as guardas de recuperação só depois de o app ficar ESTÁVEL por `prazoMs`.
+ *
+ * Antes elas eram apagadas logo após o `render()` do boot — ANTES de qualquer chunk
+ * lazy ter a chance de falhar. Com uma falha de chunk PERSISTENTE (cache do aparelho
+ * num estado ruim) o ciclo era: falha → recarrega 1× → boot apaga a guarda → falha →
+ * recarrega... sem fim. Medido em 2026-11-22: um Safari de iPhone recarregou a página
+ * ~160× em 14 min (`telemetria_vitals.navegacao='recarga'`) — o que o usuário via como
+ * "a tela piscando". Com o prazo, a 2ª falha seguida acha a guarda de pé e para.
+ */
+export function liberarGuardasQuandoEstavel(
+  prazoMs: number = PRAZO_APP_ESTAVEL_MS,
+  agendar: (fn: () => void, ms: number) => unknown = setTimeout,
+): void {
+  agendar(() => {
+    try {
+      for (const chave of GUARDAS_DE_RECUPERACAO) sessionStorage.removeItem(chave);
+    } catch {
+      // sessionStorage indisponível: não há guarda a liberar.
+    }
+  }, prazoMs);
+}
+
 /** Recarrega 1× por sessão (guarda anti-loop). Devolve se recarregou. */
 function recarregarUmaVez(): boolean {
   try {
