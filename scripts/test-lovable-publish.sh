@@ -69,6 +69,17 @@ roda() {
 semeia() { rm -f "$F"/*; echo "$1" > "$F/ar"; echo "$2" > "$F/ws"; echo 202 > "$F/post_code"; echo completed > "$F/dep_status"; }
 sem_post() { if grep -q '^POST' "$F/log"; then echo "FALHOU [$CENARIO]: fez POST"; fail=1; fi; }
 
+# --julgar: o tick do vigia local — sem chave e sem tocar a API; PUBLICAR só onde o modo cheio publicaria
+julga() { local esp="$1" ver="$2" head="$3" out rc; : > "$F/log"
+  out=$(PATH="$BIN:$PATH" LP_FAKE="$F" APP_URL=https://app.test LOVABLE_API_BASE=https://api.test \
+    env -u LOVABLE_API_KEY bash "$ALVO" --julgar "$head" 2>&1); rc=$?
+  if [ "$rc" != "$esp" ] || ! printf '%s' "$out" | tail -1 | grep -qx "VEREDITO=$ver"; then
+    echo "FALHOU [$CENARIO]: esperado rc=$esp $ver, veio rc=$rc"; printf '%s\n' "$out" | sed 's/^/    /'; fail=1; fi
+  if grep -q 'api.test' "$F/log"; then echo "FALHOU [$CENARIO]: --julgar tocou a API"; fail=1; fi; }
+CENARIO=julgar_publicar; semeia "$BASE" "$FRONT"; julga 0 PUBLICAR "$FRONT"
+CENARIO=julgar_retido;   semeia "$BASE" "$FRONT2"; julga 10 RETIDO "$FRONT2"
+CENARIO=julgar_ja;       semeia "$FRONT2" "$FRONT2"; julga 0 JA_NO_AR "$FRONT2"
+
 CENARIO=ja_no_ar;      semeia "$FRONT2" "$FRONT2"; roda 0 JA_NO_AR "$FRONT2"; sem_post
 CENARIO=publicado;     semeia "$BASE" "$FRONT"; echo "$FRONT" > "$F/vira"; roda 0 PUBLICADO "$FRONT"
 CENARIO=retido;        semeia "$BASE" "$FRONT2"; roda 10 RETIDO "$FRONT2"; sem_post
