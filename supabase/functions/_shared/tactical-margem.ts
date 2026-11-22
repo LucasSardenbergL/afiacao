@@ -116,7 +116,7 @@ export function classifyProfile(
 }
 
 /** Meta da amplitude de mix: famílias de produto (omie_products.familia) distintas em 12 meses. */
-export const META_FAMILIAS_MIX = 6;
+const META_FAMILIAS_MIX = 6;
 
 /**
  * mixGap do plano tático = META_FAMILIAS_MIX − famílias distintas do cliente em 12 meses (RPC
