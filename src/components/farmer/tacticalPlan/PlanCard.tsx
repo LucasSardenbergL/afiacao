@@ -56,7 +56,7 @@ export const PlanCard = ({
             <p className="text-muted-foreground">Churn</p>
           </div>
           <div className="bg-muted/50 rounded p-1">
-            <p className="font-bold">{plan.mixGap}</p>
+            <p className="font-bold">{plan.mixGap ?? "—"}</p>
             <p className="text-muted-foreground">Gap Mix</p>
           </div>
           <div className="bg-muted/50 rounded p-1">

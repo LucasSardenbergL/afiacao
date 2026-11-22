@@ -115,6 +115,28 @@ export function classifyProfile(
   return 'misto';
 }
 
+/** Meta da amplitude de mix: famílias de produto (omie_products.familia) distintas em 12 meses. */
+export const META_FAMILIAS_MIX = 6;
+
+/**
+ * mixGap do plano tático = META_FAMILIAS_MIX − famílias distintas do cliente em 12 meses (RPC
+ * `familias_12m_clientes`, migration 20261121230000). Antes era `8 − category_count`, que conta PRODUTOS
+ * distintos (10 cores da mesma tinta = 10): erro de unidade. Ausente ≠ zero:
+ *  - status `sem_historico`/desconhecido → null (nunca comprou; selectObjective já decide `ativacao`);
+ *  - comprador SEM linha na RPC (nenhum item válido na janela) → 0 família MEDIDA → gap = meta;
+ *  - linha com `familias_12m` null (itens sem família cadastrada) → null (lacuna de cadastro, não zero).
+ */
+export function mixGapFamilias(
+  salesHistoryStatus: string | null,
+  linha: { familias_12m: number | null } | null | undefined,
+): number | null {
+  if (salesHistoryStatus !== 'ativo' && salesHistoryStatus !== 'stale') return null;
+  if (linha == null) return META_FAMILIAS_MIX;
+  const n = linha.familias_12m;
+  if (n == null || !Number.isFinite(n)) return null;
+  return Math.max(0, META_FAMILIAS_MIX - n);
+}
+
 /** Objetivo estratégico — espelho de src/lib/scoring/objective.ts.
  *  Regras em ORDEM (a primeira que casa vence); ver o oráculo para o porquê de cada fronteira.
  *
@@ -124,7 +146,8 @@ export function classifyProfile(
 export function selectObjective(
   // null = sem histórico (calculate-scores v1.7): risco não medido não dispara recuperação.
   churnRisk: number | null,
-  mixGap: number,
+  // null = mix não medido (nunca comprou, ou itens sem família) → não dispara expansao_mix.
+  mixGap: number | null,
   marginPct: number | null,
   clusterMargin: number | null,
   // null = dias não medidos (calculate-scores v1.8): sem recência medida não se afirma "parou de comprar".
@@ -135,7 +158,7 @@ export function selectObjective(
   if (salesHistoryStatus === 'sem_historico') return 'ativacao';
   if (daysSince != null && daysSince >= recencyCapDays) return 'reativacao';
   if (churnRisk != null && churnRisk > 60) return 'recuperacao';
-  if (mixGap > 3) return 'expansao_mix';
+  if (mixGap != null && mixGap > 3) return 'expansao_mix';
   const m = margemConhecida(marginPct);
   const c = margemConhecida(clusterMargin);
   if (m != null && c != null && m < c * 0.8) return 'consolidacao_margem';

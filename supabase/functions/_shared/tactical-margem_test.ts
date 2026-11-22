@@ -10,6 +10,7 @@ import {
   calcularClusterMargin,
   classifyProfile,
   margemConhecida,
+  mixGapFamilias,
   profitPerHora,
   PROFIT_PER_HOUR_THRESHOLD,
   selecionarParaPregeracao,
@@ -200,6 +201,19 @@ Deno.test("objective: churn > 60 → recuperacao", () => {
 
 Deno.test("objective: mixGap > 3 → expansao_mix", () => {
   assertEquals(selectObjective(10, 4, 30, 40, 10, 180, null), "expansao_mix");
+});
+
+Deno.test("objective: mixGap null (não medido) NÃO dispara expansao_mix", () => {
+  assertEquals(selectObjective(10, null, 30, 40, 10, 180, null) === "expansao_mix", false);
+});
+
+Deno.test("mixGapFamilias: meta 6 por FAMÍLIA; ausente ≠ zero", () => {
+  assertEquals(mixGapFamilias("ativo", { familias_12m: 2 }), 4);
+  assertEquals(mixGapFamilias("stale", { familias_12m: 9 }), 0);
+  assertEquals(mixGapFamilias("stale", undefined), 6); // comprador sem item na janela = 0 família medida
+  assertEquals(mixGapFamilias("ativo", { familias_12m: null }), null); // itens sem família cadastrada
+  assertEquals(mixGapFamilias("sem_historico", undefined), null);
+  assertEquals(mixGapFamilias(null, { familias_12m: 3 }), null);
 });
 
 Deno.test("objective: margem abaixo de 80% do cluster → consolidacao_margem", () => {

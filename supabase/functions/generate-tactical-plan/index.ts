@@ -12,7 +12,7 @@ import { criarClienteAnthropic } from "../_shared/anthropic-cliente.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
-import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, selectObjective } from "../_shared/tactical-margem.ts";
+import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, mixGapFamilias, selectObjective } from "../_shared/tactical-margem.ts";
 import { inicioDaJanelaFila } from "../_shared/tactical-fila.ts";
 import {
   ehJaNaFilaDaRpc,
@@ -209,7 +209,7 @@ Deno.serve(async (req) => {
         'pares da carteira p/ cluster de margem',
       ).catch(() => [] as Array<{ gross_margin_pct: number | null }>);
 
-      const [{ data: score }, { data: profile }, { data: bundles }, peersCluster, { data: objEvents }, { data: recencyCapRow }] = await Promise.all([
+      const [{ data: score }, { data: profile }, { data: bundles }, peersCluster, { data: objEvents }, { data: recencyCapRow }, familiasRes] = await Promise.all([
         // Opção A: 1 linha por cliente (customer_user_id único). NÃO filtrar por farmer_id —
         // score stale pós-reatribuição (dono ≠ farmerId) virava "sem_score" falso e PULAVA o
         // plano do cliente reatribuído. Espelha useTacticalPlan.checkEfficiency (admin = service role).
@@ -225,7 +225,11 @@ Deno.serve(async (req) => {
         // do modelo, não o 90 hardcode. Ausente → clampRecencyCapDays default 180. limit(1) p/ maybeSingle
         // não lançar em chave duplicada. Espelha useTacticalPlan.ts:341 (caminho front) + calculate-scores.
         admin.from('farmer_algorithm_config').select('value').eq('key', 'hs_recency_cap_days').limit(1).maybeSingle(),
+        // Amplitude de mix (20261121230000): famílias distintas do cliente em 12 meses — 0 ou 1 linha.
+        admin.rpc('familias_12m_clientes', { p_customer_user_id: customerId }),
       ]);
+      // Falha da RPC ≠ "0 famílias": lança (o plano não sai com mixGap fabricado).
+      if (familiasRes.error) throw new Error(`familias_12m_clientes: ${familiasRes.error.message}`);
       if (!score) {
         return new Response(JSON.stringify({ skipped: 'sem_score' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
@@ -268,7 +272,8 @@ Deno.serve(async (req) => {
       // plausível o bastante para não levantar suspeita. Mesma correção que o front já
       // aplicou em objective.ts; o edge era o lado que faltava.
       const clusterMargin = calcularClusterMargin(peersCluster);
-      const mixGap = Math.max(0, 8 - categoryCount);
+      // mixGap por FAMÍLIA (meta 6), não por produto distinto (`8 − category_count` era erro de unidade).
+      const mixGap = mixGapFamilias(salesHistoryStatus, (familiasRes.data as Array<{ familias_12m: number | null }> | null)?.[0]);
 
       // classifyProfile/selectObjective — _shared/tactical-margem.ts, espelho TESTADO de
       // useTacticalPlan.ts + objective.ts (antes eram encadeamentos inline não-testados).

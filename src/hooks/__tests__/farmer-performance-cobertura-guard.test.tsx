@@ -25,6 +25,8 @@ let covCoveringRows: unknown[] = [];  // linhas onde covering_user_id = alvo
 let covError: unknown = null;         // força erro na leitura de cobertura (fail-closed)
 let scoreRows: unknown[] = [];        // farmer_client_scores da carteira (paginado por .range)
 let scoreErroNaPagina: number | null = null; // página (0-based) de farmer_client_scores que devolve erro
+let familiaRows: unknown[] = [];      // rpc familias_12m_clientes (paginada por .range)
+let familiaErro: unknown = null;      // força erro na RPC de famílias (fail-closed)
 let authState: { user: { id: string } | null; role: string | null } = { user: { id: FARMER }, role: 'employee' };
 
 function result(q: Q): { data: unknown; error: unknown } {
@@ -32,6 +34,11 @@ function result(q: Q): { data: unknown; error: unknown } {
     const [de, ate] = q.range;
     if (scoreErroNaPagina != null && de === scoreErroNaPagina * 1000) return { data: null, error: { message: 'pagina boom' } };
     return { data: scoreRows.slice(de, ate + 1), error: null };
+  }
+  if (q.table === 'rpc:familias_12m_clientes') {
+    if (familiaErro) return { data: null, error: familiaErro };
+    const [de, ate] = q.range ?? [0, 999];
+    return { data: familiaRows.slice(de, ate + 1), error: null };
   }
   if (q.table === 'carteira_coverage') {
     if (covError) return { data: null, error: covError };
@@ -55,7 +62,7 @@ function chain(table: string): unknown {
 }
 
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: (t: string) => chain(t) },
+  supabase: { from: (t: string) => chain(t), rpc: (fn: string) => chain(`rpc:${fn}`) },
 }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: authState.user, role: authState.role }) }));
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
@@ -72,6 +79,8 @@ beforeEach(() => {
   covError = null;
   scoreRows = [];
   scoreErroNaPagina = null;
+  familiaRows = [];
+  familiaErro = null;
   authState = { user: { id: FARMER }, role: 'employee' };
   vi.clearAllMocks();
 });
@@ -165,27 +174,45 @@ describe('calculateScores — LTV sobre a carteira inteira e só gasto medido', 
   });
 });
 
-// Mix do IPF (decisão do founder, 2026-11-21): só COMPRADORES (ativo/stale) entram na média de categorias.
-describe('calculateScores — mix só sobre compradores', () => {
-  const cli = (status: string, cc: number | null) =>
-    ({ churn_risk: null, category_count: cc, avg_monthly_spend_180d: status === 'sem_historico' ? null : 100, health_score: 0, sales_history_status: status });
+// Amplitude de mix do IPF (decisão do founder, 2026-11-21): famílias em 12m, base = clientes ativos, meta 6.
+describe('calculateScores — Amplitude de mix por família', () => {
+  const cli = (id: string, status: string, extra: Record<string, unknown> = {}) =>
+    ({ customer_user_id: id, churn_risk: null, avg_monthly_spend_180d: status === 'sem_historico' ? null : 100, health_score: 0, sales_history_status: status, ...extra });
 
-  it('carteira mista: quem nunca comprou sai do denominador', async () => {
-    // compradores: 3 e 3 (média 3 → 50 pts); 98 sem_historico com 0 diluiriam para 0,06 (1 pt)
-    scoreRows = [cli('ativo', 3), cli('stale', 3), ...Array.from({ length: 98 }, () => cli('sem_historico', 0))];
+  it('carteira mista: só ativos no denominador (prospects e stale fora)', async () => {
+    // ativos a1 (4 famílias) e a2 (2) → média 3 → 50 pts; 98 prospects e 1 stale (9 famílias) não entram
+    scoreRows = [cli('a1', 'ativo'), cli('a2', 'ativo'), cli('s1', 'stale'), ...Array.from({ length: 98 }, (_, k) => cli(`p${k}`, 'sem_historico'))];
+    familiaRows = [{ customer_user_id: 'a1', familias_12m: 4 }, { customer_user_id: 'a2', familias_12m: 2 }, { customer_user_id: 's1', familias_12m: 9 }];
     const { result: r } = renderHook(() => useFarmerPerformance());
     await act(async () => { await r.current.calculateScores(FARMER); });
     expect(insertedScore()?.insert?.ipf_mix_expansion).toBe(50);
   });
 
+  it('famílias > 1.000 linhas: a 2ª página da RPC entra (o corte de 1.000 não decide)', async () => {
+    scoreRows = [cli('a1', 'ativo')];
+    familiaRows = [...Array.from({ length: 1000 }, (_, k) => ({ customer_user_id: `x${k}`, familias_12m: 1 })), { customer_user_id: 'a1', familias_12m: 6 }];
+    const { result: r } = renderHook(() => useFarmerPerformance());
+    await act(async () => { await r.current.calculateScores(FARMER); });
+    expect(insertedScore()?.insert?.ipf_mix_expansion).toBe(100);
+  });
+
   it('carteira só com quem nunca comprou: mix null e fora da nota (renormalizada), nunca 0', async () => {
     // churn conhecido e baixo em todos → churn 100 pts; margem/hora/LTV = 0.
-    scoreRows = Array.from({ length: 50 }, () => ({ ...cli('sem_historico', 0), churn_risk: 10 }));
+    scoreRows = Array.from({ length: 50 }, (_, k) => cli(`p${k}`, 'sem_historico', { churn_risk: 10 }));
     const { result: r } = renderHook(() => useFarmerPerformance());
     await act(async () => { await r.current.calculateScores(FARMER); });
     const ins = insertedScore()?.insert;
     expect(ins?.ipf_mix_expansion).toBeNull();
     // renormaliza sobre os 80% medidos: 100×0,15/0,80 = 18,75 → 19 (com mix 0 fabricado daria 15)
     expect(ins?.ipf_total).toBe(19);
+  });
+
+  it('FAIL-CLOSED: RPC de famílias com erro → NÃO persiste (erro não vira 0 família)', async () => {
+    scoreRows = [cli('a1', 'ativo')];
+    familiaErro = { message: 'rpc boom' };
+    const { result: r } = renderHook(() => useFarmerPerformance());
+    await act(async () => { await r.current.calculateScores(FARMER); });
+    expect(insertedScore()).toBeFalsy();
+    expect(toast.error).toHaveBeenCalled();
   });
 });

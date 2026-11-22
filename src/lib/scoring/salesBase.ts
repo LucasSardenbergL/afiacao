@@ -100,31 +100,39 @@ export function mediaGastoMedido(gastos: Iterable<unknown>): { media: number | n
   return { media: medidos > 0 ? soma / medidos : null, medidos };
 }
 
-/** Status de `farmer_client_scores.sales_history_status` que significam venda MEDIDA (comprador). */
-const STATUS_COMPRADOR = new Set(['ativo', 'stale']);
+/**
+ * Base da "Amplitude de mix" do IPF: clientes ATIVOS (`sales_history_status = 'ativo'`). Decisão do founder
+ * (2026-11-21, opção 3): famílias reais em 12 meses, meta 6, sobre compradores — e a régua conferida em prod
+ * (A ≈ 55, B ≈ 92) é a da base ativa. Quem nunca comprou (`sem_historico`) nunca entra; o `stale` também não:
+ * 228 dos 247 stale do vendedor A não têm item nos 12 meses e entrariam com 0, medindo INATIVIDADE em vez de
+ * amplitude (o churn já mede isso). Desenho revisto pelo Codex (2026-11-21).
+ */
+const STATUS_BASE_AMPLITUDE = new Set(['ativo']);
 
 /**
- * Média de categorias sobre os COMPRADORES — a base do mix do IPF do vendedor (`useFarmerPerformance`).
- * Decisão do founder (2026-11-21): quem nunca comprou (`sem_historico`) sai do numerador E do denominador.
- * O critério é o STATUS, não o valor: `category_count` de quem não tem venda vem 0 (contagem de produtos
- * sem item, ver `deriveSalesBase`), então filtrar por "> 0" apagaria o comprador de fato com 0 e "não NULL"
- * não filtraria nada. Prod 2026-11-21: carteira de 14.177 com 286 compradores → média 0,18 (3 pontos) em
- * vez de 8,78. Comprador com `category_count` não finito também sai (lacuna de dado, não zero).
- * `media` null = nenhum comprador → o componente fica FORA da nota (nunca 0 fabricado).
+ * Média de famílias distintas em 12 meses sobre a base da amplitude (`STATUS_BASE_AMPLITUDE`) — o mix do IPF
+ * do vendedor (`useFarmerPerformance`). `familias` vem da RPC `familias_12m_clientes` (migration
+ * 20261121230000), que só devolve quem tem item na janela:
+ *  - cliente da base SEM linha na RPC → 0 família MEDIDA na janela (a leitura foi completa: o hook pagina e
+ *    lança em erro, nunca chega aqui com mapa parcial);
+ *  - linha com `familias_12m` null (itens sem família cadastrada) → sai da base (lacuna, não zero).
+ * `media` null = ninguém na base → o componente fica FORA da nota (nunca 0 fabricado).
  */
-export function mediaCategoriasCompradores(
-  clientes: Iterable<{ sales_history_status: unknown; category_count: unknown }>,
-): { media: number | null; compradores: number } {
+export function mediaAmplitudeMix(
+  clientes: Iterable<{ customer_user_id: string | null; sales_history_status: unknown }>,
+  familias: ReadonlyMap<string, number | null>,
+): { media: number | null; base: number } {
   let soma = 0;
-  let compradores = 0;
+  let base = 0;
   for (const c of clientes) {
-    if (typeof c.sales_history_status !== 'string' || !STATUS_COMPRADOR.has(c.sales_history_status)) continue;
-    const v = finitoOuNulo(c.category_count);
+    if (c.customer_user_id == null) continue;
+    if (typeof c.sales_history_status !== 'string' || !STATUS_BASE_AMPLITUDE.has(c.sales_history_status)) continue;
+    const v = familias.has(c.customer_user_id) ? finitoOuNulo(familias.get(c.customer_user_id)) : 0;
     if (v == null) continue;
     soma += v;
-    compradores++;
+    base++;
   }
-  return { media: compradores > 0 ? soma / compradores : null, compradores };
+  return { media: base > 0 ? soma / base : null, base };
 }
 
 /**

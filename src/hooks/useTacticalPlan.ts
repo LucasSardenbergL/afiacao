@@ -4,7 +4,7 @@ import type { Json } from '@/integrations/supabase/types';
 import { exigirColunas } from '@/lib/linha-view';
 import { comNulo } from '@/lib/rpc-args';
 import { invokeFunction } from '@/lib/invoke-function';
-import { selectObjective, clampRecencyCapDays, objetivoFinal } from '@/lib/scoring/objective';
+import { selectObjective, clampRecencyCapDays, objetivoFinal, mixGapFamilias } from '@/lib/scoring/objective';
 import { margemConhecida, mediaMargensConhecidas, valorMedido } from '@/lib/scoring/margin';
 import { numerosDoBundle } from '@/lib/tactical/bundle-numeros';
 import { ehJaGeradoHoje } from '@/lib/tactical/plano-duplicata';
@@ -57,7 +57,8 @@ export interface TacticalPlan {
   // Diagnosis
   healthScore: number;
   churnRisk: number | null; // null = sem histórico (calculate-scores v1.7)
-  mixGap: number;
+  /** null = mix não medido (nunca comprou, ou itens sem família cadastrada). */
+  mixGap: number | null;
   /** PERCENTUAL (0–100), ou null quando a margem era desconhecida na geração do plano — ou não foi
    *  concedida/lida (ver `acessoMargem`). Sai da RPC get_planos_margem, nunca da tabela (FU4-F). */
   currentMarginPct: number | null;
@@ -365,7 +366,7 @@ export const useTacticalPlan = () => {
       healthScore: Number(d.health_score || 0),
       // null atravessa (sem histórico, calculate-scores v1.7): o card mostra "—", nunca "0%". 0 segue valor real.
       churnRisk: d.churn_risk == null ? null : Number(d.churn_risk),
-      mixGap: Number(d.mix_gap || 0),
+      mixGap: d.mix_gap == null ? null : Number(d.mix_gap),
       // O plano persistido grava a margem do cliente no INSTANTE da geração; pós-#1495 ela
       // pode ser null, e `Number(null || 0)` a exibiria como "0,0%" — margem nula apurada.
       // Desde o FU4-F ela chega pela RPC já tri-estado (margemConhecida aplicado em margemPlanos.ts).
@@ -611,6 +612,7 @@ export const useTacticalPlan = () => {
         { data: score },
         { data: profile },
         { data: recencyCapRow },
+        familiasRes,
       ] = await Promise.all([
         // Opção A: lookup por customer_user_id (único); sem farmer_id (RLS gateia). Ver checkEfficiency.
         // Lista explícita: `select('*')` inclui gross_margin_pct, fechada para authenticated (FU4-F).
@@ -620,7 +622,11 @@ export const useTacticalPlan = () => {
         // ACOMPANHA o teto do modelo (não hardcode). Ausente → clampRecencyCapDays default 180. limit(1)
         // pra maybeSingle nunca lançar em chave duplicada (não quebrar a geração por quirk de config).
         supabase.from('farmer_algorithm_config').select('value').eq('key', 'hs_recency_cap_days').limit(1).maybeSingle(),
+        // Amplitude de mix (20261121230000): famílias distintas do cliente em 12 meses — 0 ou 1 linha.
+        supabase.rpc('familias_12m_clientes', { p_customer_user_id: customerId }),
       ]);
+      // Falha da RPC ≠ "0 famílias": lança e o catch não gera plano com mixGap fabricado.
+      if (familiasRes.error) throw familiasRes.error;
 
       if (!score) {
         toast.error('Cliente sem score calculado');
@@ -723,7 +729,7 @@ export const useTacticalPlan = () => {
         .order('id', { ascending: false })
         .limit(2));
 
-      const mixGap = Math.max(0, 8 - categoryCount);
+      const mixGap = mixGapFamilias(salesHistoryStatus, familiasRes.data?.[0]);
       const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);
       const recencyCapDays = clampRecencyCapDays(recencyCapRow?.value);
       const strategicObjective = selectObjective(churnRisk, mixGap, marginPct, clusterMargin, daysSince, recencyCapDays, salesHistoryStatus);

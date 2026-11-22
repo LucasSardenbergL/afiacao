@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { componenteMeta, deriveSalesBase, finitoOuNulo, mediaCategoriasCompradores, mediaGastoMedido, mediaPonderadaMedida, tetoGasto } from '../salesBase';
+import { componenteMeta, deriveSalesBase, finitoOuNulo, mediaAmplitudeMix, mediaGastoMedido, mediaPonderadaMedida, tetoGasto } from '../salesBase';
 
 describe('deriveSalesBase (v1.8 — ausente é NULL, nunca o 999/R$0 sentinela)', () => {
   it('ausente (undefined/null = sem linha na RPC) → dias NULL, gasto NULL, categorias 0', () => {
@@ -149,18 +149,21 @@ describe('mediaGastoMedido (LTV do IPF — base = gasto medido)', () => {
   });
 });
 
-describe('mediaCategoriasCompradores (mix do IPF — só compradores)', () => {
-  const c = (sales_history_status: string | null, category_count: unknown) => ({ sales_history_status, category_count });
-  it('carteira mista: sem_historico (e status null) fora da base; comprador com 0 conta', () => {
-    expect(mediaCategoriasCompradores([c('ativo', 8), c('stale', 0), c('sem_historico', 0), c(null, 5), c('ativo', '4')]))
-      .toEqual({ media: 4, compradores: 3 });
+describe('mediaAmplitudeMix (Amplitude de mix do IPF — famílias em 12m, base ativa)', () => {
+  const c = (id: string | null, sales_history_status: string | null) => ({ customer_user_id: id, sales_history_status });
+  it('carteira mista: só ativos entram; sem_historico, stale e status null ficam fora', () => {
+    const fam = new Map<string, number | null>([['a1', 4], ['a2', 2], ['s1', 9], ['n1', 7]]);
+    expect(mediaAmplitudeMix([c('a1', 'ativo'), c('a2', 'ativo'), c('s1', 'stale'), c('p1', 'sem_historico'), c('n1', null)], fam))
+      .toEqual({ media: 3, base: 2 });
   });
-  it('comprador com category_count NULL/não finito sai (lacuna, não zero)', () => {
-    expect(mediaCategoriasCompradores([c('ativo', null), c('ativo', 'x'), c('stale', 6)])).toEqual({ media: 6, compradores: 1 });
+  it('ativo sem linha na RPC = 0 família medida; familias null (sem cadastro) sai da base', () => {
+    const fam = new Map<string, number | null>([['a1', 6], ['a3', null]]);
+    expect(mediaAmplitudeMix([c('a1', 'ativo'), c('a2', 'ativo'), c('a3', 'ativo'), c(null, 'ativo')], fam))
+      .toEqual({ media: 3, base: 2 });
   });
-  it('só quem nunca comprou → media null (nunca 0)', () => {
-    expect(mediaCategoriasCompradores([c('sem_historico', 0), c('sem_historico', 0)])).toEqual({ media: null, compradores: 0 });
-    expect(mediaCategoriasCompradores([])).toEqual({ media: null, compradores: 0 });
+  it('carteira só com quem nunca comprou → media null (nunca 0)', () => {
+    expect(mediaAmplitudeMix([c('p1', 'sem_historico'), c('p2', 'sem_historico')], new Map())).toEqual({ media: null, base: 0 });
+    expect(mediaAmplitudeMix([], new Map())).toEqual({ media: null, base: 0 });
   });
 });
 

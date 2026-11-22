@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectObjective, clampRecencyCapDays } from '../objective';
+import { selectObjective, clampRecencyCapDays, mixGapFamilias, META_FAMILIAS_MIX } from '../objective';
 
 describe('clampRecencyCapDays', () => {
   it('default 180 quando ausente/null/NaN (money-path: Number(null)===0 fabricaria fronteira de 30)', () => {
@@ -123,5 +123,26 @@ describe('selectObjective — dias NULL (calculate-scores v1.8)', () => {
     const cap = clampRecencyCapDays(180);
     expect(selectObjective(70, 0, 30, 30, null, cap)).toBe('recuperacao');
     expect(selectObjective(70, 0, 30, 30, 180, cap)).toBe('reativacao');
+  });
+});
+
+describe('mixGapFamilias (plano tático — meta 6 por família, não 8 por produto)', () => {
+  it('gap = meta − famílias distintas em 12m, piso 0', () => {
+    expect(META_FAMILIAS_MIX).toBe(6);
+    expect(mixGapFamilias('ativo', { familias_12m: 2 })).toBe(4);
+    expect(mixGapFamilias('stale', { familias_12m: 9 })).toBe(0);
+  });
+  it('comprador sem linha na RPC = 0 família medida → gap = meta', () => {
+    expect(mixGapFamilias('stale', undefined)).toBe(6);
+    expect(mixGapFamilias('ativo', null)).toBe(6);
+  });
+  it('ausente ≠ zero: nunca comprou, status desconhecido ou itens sem família → null', () => {
+    expect(mixGapFamilias('sem_historico', undefined)).toBeNull();
+    expect(mixGapFamilias(null, { familias_12m: 3 })).toBeNull();
+    expect(mixGapFamilias('ativo', { familias_12m: null })).toBeNull();
+  });
+  it('selectObjective: mixGap null não dispara expansao_mix', () => {
+    expect(selectObjective(10, null, 30, 40, 10, 180, 'ativo')).not.toBe('expansao_mix');
+    expect(selectObjective(10, 4, 30, 40, 10, 180, 'ativo')).toBe('expansao_mix');
   });
 });

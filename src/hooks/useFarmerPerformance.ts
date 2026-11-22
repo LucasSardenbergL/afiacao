@@ -4,7 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { proporcaoChurnBaixo } from '@/lib/scoring/churn';
-import { mediaCategoriasCompradores, mediaGastoMedido, mediaPonderadaMedida } from '@/lib/scoring/salesBase';
+import { META_FAMILIAS_MIX } from '@/lib/scoring/objective';
+import { mediaAmplitudeMix, mediaGastoMedido, mediaPonderadaMedida } from '@/lib/scoring/salesBase';
 import { fetchAllPages } from '@/lib/postgrest';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
 
@@ -78,9 +79,9 @@ interface FarmerCallRow {
 }
 
 interface ClientScoreRow {
+  customer_user_id: string | null;
   sales_history_status: string | null;
   churn_risk: number | string | null;
-  category_count: number | string | null;
   avg_monthly_spend_180d: number | string | null;
   health_score: number | string | null;
 }
@@ -218,12 +219,23 @@ export const useFarmerPerformance = () => {
       const clientScores = await fetchAllPages(
         (de, ate) => supabase
           .from('farmer_client_scores')
-          .select('id, churn_risk, category_count, avg_monthly_spend_180d, health_score, sales_history_status')
+          .select('id, customer_user_id, churn_risk, avg_monthly_spend_180d, health_score, sales_history_status')
           .eq('farmer_id', farmerId)
           .order('id', { ascending: true })
           .range(de, ate),
         'farmer_client_scores/ipf',
       );
+
+      // Amplitude de mix (20261121230000): famílias distintas por cliente em 12 meses — PAGINADO (o PostgREST
+      // capa .rpc() em 1.000) e fail-closed como a carteira: página com erro lança e o score não é persistido.
+      const familiasRows = await fetchAllPages(
+        (de, ate) => supabase
+          .rpc('familias_12m_clientes', { p_farmer_id: farmerId })
+          .order('customer_user_id', { ascending: true })
+          .range(de, ate),
+        'familias_12m_clientes/ipf',
+      );
+      const familiasPorCliente = new Map(familiasRows.map((f) => [f.customer_user_id, f.familias_12m] as const));
 
       // Fetch copilot sessions
       const { data: copilotSessions } = (await supabase
@@ -296,12 +308,12 @@ export const useFarmerPerformance = () => {
       const marginPerHour = combinedTime > 0 ? (combinedMargin / combinedTime) * 3600 : 0;
       const ipfMarginPerHour = Math.round(Math.min(100, marginPerHour));
 
-      // 3. Mix expansion: média de categorias dos COMPRADORES (status ativo/stale; target 6+). Quem nunca
-      // comprou sai da base (decisão do founder, 2026-11-21): a carteira de 14.177 com 286 compradores
-      // pontuava 3 (média 0,18) em vez de 100 (8,78). Nenhum comprador → null: o mix fica FORA da nota
-      // (renormalizada abaixo), nunca 0 fabricado.
-      const { media: avgCategories } = mediaCategoriasCompradores(clientArr);
-      const ipfMixExpansion = avgCategories == null ? null : Math.round(Math.min(100, (avgCategories / 6) * 100));
+      // 3. Amplitude de mix: média de FAMÍLIAS distintas em 12 meses dos clientes ativos (meta 6, decisão do
+      // founder 2026-11-21). Antes era a média de `category_count` (PRODUTOS distintos) sobre a carteira
+      // inteira: 0,18 (3 pts) com 14.177 clientes, e 100 travado quando só sobre compradores. Ninguém na base
+      // → null: o componente fica FORA da nota (renormalizada abaixo), nunca 0 fabricado.
+      const { media: avgFamilias } = mediaAmplitudeMix(clientArr, familiasPorCliente);
+      const ipfMixExpansion = avgFamilias == null ? null : Math.round(Math.min(100, (avgFamilias / META_FAMILIAS_MIX) * 100));
 
       // 4. LTV evolution: gasto mensal médio de quem tem gasto MEDIDO (target R$2000). O não medido (NULL desde
       // a calculate-scores v1.8 — quem nunca comprou) sai da base, como o churn desconhecido no item 5: o
