@@ -18,7 +18,8 @@ export interface ProdutoLinhaOmie {
   omie_codigo_produto: number;
   descricao: string;
   valor_unitario: number;
-  estoque: number;
+  /** `null` = estoque NÃO informado (desde o #4087 a sync não grava 0 sem `nSaldo`). Ausente ≠ zero. */
+  estoque: number | null;
 }
 
 function precoDoCliente(
@@ -40,7 +41,9 @@ export function montarBaseEmbalagens(
     return {
       valor: precoDoCliente(p.omie_codigo_produto, p.valor_unitario, customerPrices ?? {}),
       litros: litrosDaEmbalagem(sufixo, p.descricao),
-      estoque: Number.isFinite(p.estoque) ? p.estoque : 0,
+      // Ausente ≠ zero: estoque desconhecido segue `null` até o resolver (que não o trata como
+      // "sem estoque" — senão a venda assistida mostrava "Encomenda" para saldo que ninguém leu).
+      estoque: typeof p.estoque === 'number' && Number.isFinite(p.estoque) ? p.estoque : null,
     };
   });
 }

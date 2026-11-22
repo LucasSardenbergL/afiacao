@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 import { useUnifiedOrder, type Product } from '@/hooks/useUnifiedOrder';
 import { useOrderDeepLink } from '@/hooks/useOrderDeepLink';
 import { useOrderDraft } from '@/hooks/useOrderDraft';
-import { lerParcelasDoRascunho, type ParcelasDoRascunho } from '@/hooks/unifiedOrder/parcela-manual';
+import { decidirParcelaDoRascunho, lerParcelasDoRascunho, type ParcelasDoRascunho } from '@/hooks/unifiedOrder/parcela-manual';
 import { codigoClienteIdentifica, decidirRestore, resolverRestorePendente } from '@/hooks/unifiedOrder/restore-rascunho';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -105,7 +105,7 @@ const UnifiedOrder = () => {
         omie_codigo_produto: p.omie_codigo_produto,
         descricao: p.descricao,
         valor_unitario: p.valor_unitario,
-        estoque: p.estoque ?? 0,
+        estoque: p.estoque ?? null, // ausente ≠ zero (follow-up #4087): não vira "Encomenda"
       });
     }
     // Preço-do-cliente (último praticado) POR CONTA — omie_codigo_produto colide entre Oben/Colacor,
@@ -384,9 +384,48 @@ const UnifiedOrder = () => {
     if (typeof d.ordemCompra === 'string') h.setOrdemCompra(d.ordemCompra);
     // B7 (rodada 2): o prazo escolhido à mão volta pelos setters EXPORTADOS, então a `ultima_parcela`
     // do histórico não o sobrescreve. Só com cliente identificado (código 0 não identifica ninguém).
-    if (prazoVolta && d.parcelas?.oben) h.setSelectedParcelaOben(d.parcelas.oben);
-    if (prazoVolta && d.parcelas?.colacor) h.setSelectedParcelaColacor(d.parcelas.colacor);
+    // Follow-up do #4068: só volta o código que a lista do Omie DESTA conta ainda tem.
+    if (prazoVolta && d.parcelas?.oben) reaplicarParcelaDoRascunho('oben', d.parcelas.oben);
+    if (prazoVolta && d.parcelas?.colacor) reaplicarParcelaDoRascunho('colacor', d.parcelas.colacor);
   };
+  // Lista POR CONTA (Codex P1): o `loadingFormas` global junta as duas consultas — a Colacor
+  // carregando fazia o prazo da Oben, já conferível, sair como "inconferível".
+  const decidirParcelaDaConta = (conta: 'oben' | 'colacor', codigo: string) => {
+    const formas = conta === 'oben' ? h.sortedFormasPagamentoOben : h.sortedFormasPagamentoColacor;
+    const estado = conta === 'oben' ? h.estadoFormasOben : h.estadoFormasColacor;
+    return decidirParcelaDoRascunho(codigo, { formas, degradado: estado.degradado, carregada: !estado.erro });
+  };
+  const avisarParcelaRetirada = (conta: 'oben' | 'colacor', codigo: string) => {
+    // Prova positiva (lista completa sem o código): bloqueia o envio enquanto ele estiver selecionado,
+    // inclusive se a sugestão do histórico o trouxer de volta (Codex P1).
+    h.marcarParcelaRetirada(conta, codigo);
+    toast.warning(`Prazo ${conta === 'oben' ? 'Oben' : 'Colacor'} do rascunho não existe mais no Omie`, {
+      description: `O prazo ${codigo} foi retirado. Escolha o prazo de novo antes de enviar.`,
+    });
+  };
+  // Restore com a lista da conta ainda chegando: reaplica (preserva a escolha manual, como antes) e
+  // confere quando ela chegar.
+  const [parcelasAConferir, setParcelasAConferir] = useState<{ oben: string | null; colacor: string | null }>({ oben: null, colacor: null });
+  const reaplicarParcelaDoRascunho = (conta: 'oben' | 'colacor', codigo: string) => {
+    const decisao = decidirParcelaDaConta(conta, codigo);
+    if (decisao === 'retirada') { avisarParcelaRetirada(conta, codigo); return; }
+    (conta === 'oben' ? h.setSelectedParcelaOben : h.setSelectedParcelaColacor)(codigo);
+    if (decisao === 'inconferivel') setParcelasAConferir(p => ({ ...p, [conta]: codigo }));
+  };
+  const conferirParcelasRef = useRef({ decidirParcelaDaConta, avisarParcelaRetirada });
+  conferirParcelasRef.current = { decidirParcelaDaConta, avisarParcelaRetirada };
+  useEffect(() => {
+    for (const conta of ['oben', 'colacor'] as const) {
+      const codigo = parcelasAConferir[conta];
+      if (!codigo) continue;
+      const decisao = conferirParcelasRef.current.decidirParcelaDaConta(conta, codigo);
+      if (decisao === 'inconferivel') continue;
+      setParcelasAConferir(p => ({ ...p, [conta]: null }));
+      if (decisao === 'retirada') conferirParcelasRef.current.avisarParcelaRetirada(conta, codigo);
+    }
+  }, [parcelasAConferir, h.sortedFormasPagamentoOben, h.sortedFormasPagamentoColacor, h.estadoFormasOben, h.estadoFormasColacor]);
+  // Troca de cliente: o que estava a conferir era da seleção anterior.
+  useEffect(() => { setParcelasAConferir({ oben: null, colacor: null }); }, [h.selectedCustomer?.codigo_cliente]);
   const aplicarDadosRef = useRef(aplicarDadosDoRascunho);
   aplicarDadosRef.current = aplicarDadosDoRascunho;
   const codigoClienteSelecionado = h.selectedCustomer?.codigo_cliente ?? null;
@@ -696,7 +735,7 @@ const UnifiedOrder = () => {
           <CartItemList
             cart={h.cart} obenProductItems={h.obenProductItems} colacorProductItems={h.colacorProductItems}
             serviceItems={h.serviceItems} obenSubtotal={h.obenSubtotal} colacorProdSubtotal={h.colacorProdSubtotal}
-            serviceSubtotal={h.serviceSubtotal} totalEstimated={h.totalEstimated}
+            serviceSubtotal={h.serviceSubtotalExibicao} totalEstimated={h.totalEstimated}
             deliveryOption={h.deliveryOption} selectedTimeSlot={h.selectedTimeSlot}
             onUpdateQuantity={h.updateQuantity} onUpdateProductPrice={h.updateProductPrice}
             onUpdateTintDiscount={h.updateTintDiscount} onAplicarDescontoCores={h.aplicarDescontoCores}

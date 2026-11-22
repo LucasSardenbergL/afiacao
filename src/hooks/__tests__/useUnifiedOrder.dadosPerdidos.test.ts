@@ -57,7 +57,9 @@ describe('Novo Pedido — fiação do PR B', () => {
     expect(restore.indexOf("if (decisao === 'recusar') {")).toBeLessThan(restore.indexOf('lerParcelasDoRascunho'));
     // codigo_cliente 0 não identifica ninguém: o prazo só volta com cliente identificado.
     expect(restore).toContain('aplicarDadosDoRascunho(dados, codigoClienteIdentifica(codigoRascunho));');
-    expect(pagina).toContain('if (prazoVolta && d.parcelas?.oben) h.setSelectedParcelaOben(d.parcelas.oben);');
+    // Follow-up do #4068: segue pelo setter EXPORTADO, mas conferido contra a lista do Omie.
+    expect(pagina).toContain("if (prazoVolta && d.parcelas?.oben) reaplicarParcelaDoRascunho('oben', d.parcelas.oben);");
+    expect(pagina).toContain("(conta === 'oben' ? h.setSelectedParcelaOben : h.setSelectedParcelaColacor)(codigo);");
   });
 
   it('follow-up #4068: sem cliente na tela, o restore INTEIRO espera o cliente do rascunho', () => {

@@ -274,7 +274,7 @@ export function useSalesOrderEdit() {
       descricao: tintPendingProduct.descricao,
       unidade: tintPendingProduct.unidade,
       valor_unitario: tintPendingProduct.valor_unitario,
-      estoque: tintPendingProduct.estoque ?? 0,
+      estoque: tintPendingProduct.estoque ?? null, // ausente ≠ zero (follow-up #4087)
       ativo: tintPendingProduct.ativo ?? true,
       omie_codigo_produto: tintPendingProduct.omie_codigo_produto,
       account: tintPendingProduct.account,

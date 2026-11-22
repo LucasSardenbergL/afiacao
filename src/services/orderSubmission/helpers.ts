@@ -93,6 +93,22 @@ export function precoServicoParaExibicao(preco: number | null | undefined): numb
 }
 
 /**
+ * Follow-up do #4068 (Codex): soma de serviços para APRESENTAÇÃO — só preço > 0, coerente com a
+ * linha (que mostra "A orçar" para ≤ 0). Antes o preço negativo entrava na soma e o subtotal
+ * ficava menor que a soma das linhas visíveis. NÃO use no payload: o `subtotal` da OS segue o
+ * contrato de sempre (`serviceSubtotal` do carrinho).
+ */
+export function subtotalServicosParaExibicao<T extends { quantity: number }>(
+  itens: ReadonlyArray<T>,
+  precoDe: (item: T) => number | null | undefined,
+): number {
+  return itens.reduce((s, c) => {
+    const preco = precoServicoParaExibicao(precoDe(c));
+    return s + (preco === null ? 0 : preco * c.quantity);
+  }, 0);
+}
+
+/**
  * B6 (rodada 2): o "Horário preferido" da aba Afiação aparecia no carrinho e se perdia no envio.
  * Sem mudar o contrato da edge, ele vai na observação da OS (`orderData.notes` → `cObsOS`),
  * à frente das ferramentas. Balcão não usa horário (a tela nem mostra o seletor).

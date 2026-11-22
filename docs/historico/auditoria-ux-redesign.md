@@ -211,3 +211,32 @@ duas vezes — Codex P2). Ficam de fora (já estavam sob a barra de status antes
 sem `cover`): cabeçalhos `sticky top-0` de página (conferência de NF-e, `/docs`), o "Mostrar
 transcrição" em `top-20`, o overlay do scanner de lote, rodapés de recebimento a 16px da borda e os
 `calc(100vh − 48px)` do WhatsApp/Ajuda. Sem teste em aparelho.
+
+**Follow-ups do #4068 e do #4087 (2026-11-21, só front).** **A** desde a edge `omie-vendas-sync`
+v1.45 o `omie_products.estoque` chega `null` quando falta `nSaldo`, e o front o transformava em 0: a
+venda assistida (`UnifiedOrder` → `montarBaseEmbalagens`) mostrava "Encomenda" para saldo que
+ninguém leu. Agora o null segue null até o `resolverOpcaoVenda`, que ganhou `STOCK_UNKNOWN`: o preço
+fecharia se o saldo desconhecido existir, então o selo fica neutro ("Est: —", a grafia do
+`seloEstoque`) com o MESMO R$/L da encomenda (só o rótulo muda). Saldo INFORMADO ≤ 0 segue
+"Encomenda". `Product.estoque` (carrinho e IA) virou `number | null` (o tipo mentia: o banco já
+devolvia null), e a edição de pedido parou de fabricar 0. As edges leitoras (`?? 0` no
+`analyze-unified-order`) ficam com a sessão das edges. **B1** reconfirmar à mão o prazo já
+selecionado não re-renderizava (mesmo valor), então o memo do rascunho seguia sem a marca "manual" →
+espelho da marca em state. **B2** código de parcela retirado do Omie entre gravar e restaurar era
+reaplicado às cegas (bloqueava o histórico, envio liberado) → `decidirParcelaDoRascunho` confere
+contra a lista carregada (degradada = aplica, porque o bloqueio de condição ausente já barra; lista
+não carregada = não reaplica e avisa). **B3** preço de serviço negativo somava no subtotal mas a
+linha dizia "A orçar" → `subtotalServicosParaExibicao` (só > 0) na tela, no cupom e no resumo
+pós-envio; o `subtotal` do payload da OS não mudou. **B4** "hoje" do seletor de entrega congelava no
+1º render → `useHojeLocal` (meia-noite + volta da aba) e a data que ficou no passado é desmarcada.
+**B5** OS já confirmada + horário trocado caía em "já enviada" seco → a marca do envelope guarda o
+`cObsOS` que foi e o resultado avisa que a OS ficou no horário antigo (a assinatura idempotente
+segue sem `notes`; OS reconciliada = observação desconhecida, não avisa). Codex (P0 0 · P1 2 · P2 2),
+corrigidos no PR: a conferência do B2 usava o `loadingFormas` GLOBAL (a Colacor carregando descartava
+o prazo Oben válido) → por conta, e lista ainda chegando reaplica e confere quando chega; o código
+PROVADO retirado voltava pela `ultima_parcela` e saía no PV → entra nas condições ausentes enquanto
+selecionado (botão e caminho de envio; só com prova positiva, porque a lista é ao vivo do Omie e
+nada garante o `999` nela); o aviso do B5 ia dentro de `results`, que vira o "Nº" do cupom e a linha
+do WhatsApp → aviso não-bloqueante ("criado com avisos"); o timer da virada acorda com folga → o
+envio confere `ready_by_date` pelo relógio de agora. Falsificado: 23 sabotagens, uma camada por vez,
+controle verde na mesma invocação, em `C` e `pt_BR.UTF-8`.

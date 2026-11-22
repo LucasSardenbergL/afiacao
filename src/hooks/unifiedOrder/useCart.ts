@@ -10,6 +10,7 @@ import type {
   UserTool,
 } from '@/hooks/useUnifiedOrder';
 import { nascerItemProduto } from './nascimento-item';
+import { subtotalServicosParaExibicao } from '@/services/orderSubmission/helpers';
 import {
   aplicarDescontoNasCores,
   mesmoDesconto,
@@ -99,7 +100,13 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
       return s + (price !== null ? price * c.quantity : 0);
     }, 0);
   }, [serviceItems, getServicePrice]);
-  const totalEstimated = obenSubtotal + colacorProdSubtotal + serviceSubtotal;
+  // Apresentação (resumo/total na tela): só preço > 0, como a linha. `serviceSubtotal` acima segue
+  // indo no payload da OS — não muda (follow-up do #4068).
+  const serviceSubtotalExibicao = useMemo(
+    () => subtotalServicosParaExibicao(serviceItems, getServicePrice),
+    [serviceItems, getServicePrice],
+  );
+  const totalEstimated = obenSubtotal + colacorProdSubtotal + serviceSubtotalExibicao;
 
   /* ─── Product actions ─── */
   const addProductToCart = useCallback(
@@ -372,6 +379,7 @@ export function useCart({ getProductPrice, getServicePrice, servicos }: UseCartA
     obenSubtotal,
     colacorProdSubtotal,
     serviceSubtotal,
+    serviceSubtotalExibicao,
     totalEstimated,
     // actions
     addProductToCart,

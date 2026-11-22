@@ -51,3 +51,39 @@ export function lerParcelasDoRascunho(v: unknown): ParcelasDoRascunho | null {
   const colacor = typeof o.colacor === 'string' && o.colacor ? o.colacor : null;
   return oben || colacor ? { oben, colacor } : null;
 }
+
+/**
+ * Follow-up do #4068 (Codex): o código de parcela do rascunho pode ter sido RETIRADO do Omie entre
+ * gravar e restaurar. Reaplicá-lo às cegas bloqueava a sugestão do histórico (marca "manual") e o
+ * envio seguia habilitado com um prazo que o ERP não tem mais. Confere contra a lista CARREGADA:
+ *   - `aplicar`      → o código existe na lista; ou a lista está DEGRADADA (parcial) — aí o código
+ *                      ausente já é barrado pelo bloqueio de `condicoesDoClienteIndisponiveis`.
+ *   - `retirada`     → lista completa (não degradada) e o código não está nela.
+ *   - `inconferivel` → a lista DESTA conta ainda não chegou (carregando/erro/vazia): a tela reaplica
+ *                      (preserva a escolha manual) e confere de novo quando a lista chegar.
+ */
+export type DecisaoParcelaDoRascunho = 'aplicar' | 'retirada' | 'inconferivel';
+
+export function decidirParcelaDoRascunho(
+  codigo: string,
+  lista: { formas: ReadonlyArray<{ codigo: string }>; degradado: boolean; carregada: boolean },
+): DecisaoParcelaDoRascunho {
+  if (!lista.carregada || lista.formas.length === 0) return 'inconferivel';
+  if (lista.formas.some(f => f.codigo === codigo)) return 'aplicar';
+  return lista.degradado ? 'aplicar' : 'retirada';
+}
+
+/**
+ * Follow-up do #4068 (Codex P1): o código PROVADO retirado (lista completa sem ele) pode voltar pela
+ * sugestão do histórico (`ultima_parcela`) — e a lista completa não o acusa, porque
+ * `condicoesDoClienteIndisponiveis` só olha lista degradada. Enquanto ele estiver selecionado,
+ * entra nas condições ausentes: o mesmo bloqueio fail-closed do botão E do caminho de envio.
+ */
+export function condicoesComParcelaRetirada(
+  ausentes: ReadonlyArray<string>,
+  retirada: string | null,
+  selecionada: string,
+): string[] {
+  if (!retirada || retirada !== selecionada || ausentes.includes(retirada)) return [...ausentes];
+  return [...ausentes, retirada];
+}

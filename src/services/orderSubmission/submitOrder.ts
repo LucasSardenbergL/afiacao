@@ -14,6 +14,7 @@ import type { ServiceCartItem } from '@/hooks/unifiedOrder/types';
 import {
   observacoesDaOsAfiacao,
   precoServicoParaExibicao,
+  subtotalServicosParaExibicao,
   formatCustomerAddress,
   getToolName,
   missingAccountIdentities,
@@ -26,7 +27,7 @@ import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard
 import { parseBloqueioAtp, mensagemRecusasAtp } from './atp';
 import type { BloqueioAtpPedido } from './atp';
 import { aguardarRegistrosComTeto, desfechoDosErros, registrarDecisaoPrazo } from './prazoDecisao';
-import { assinaturaServicosAfiacao } from './checkout-envelope';
+import { assinaturaServicosAfiacao, avisoOsAfiacaoDesatualizada } from './checkout-envelope';
 // O nome do cliente que sai do app (bloqueio de crédito, e-mail, lastOrderData) sem o CPF de MEI (M1, 2026-11-11).
 import { nomeClienteExibicao } from '@/lib/omie/razao-exibicao';
 
@@ -618,8 +619,14 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     userToolId: c.userTool.id, codigoServico: c.servico?.omie_codigo_servico, quantity: c.quantity,
     preco: getServicePrice(c) || 0,
   })), { pagamento: payment.afiacaoMethod, entrega: delivery.option });
+  // O que vai no `cObsOS` (horário da coleta + observação + ferramentas): fora da assinatura.
+  const observacaoOsAfiacao = observacoesDaOsAfiacao(serviceItems, delivery, TIME_SLOTS, meta.notes);
   if (serviceItems.length > 0 && afiacaoJaEnviada && afiacaoJaEnviada.assinatura === assinaturaAfiacao) {
     results.push(afiacaoJaEnviada.numero ? `OS ${afiacaoJaEnviada.numero} (já enviada)` : 'OS Afiação (já enviada)');
+    // Follow-up do #4068: horário trocado depois da OS existir → avisa que a OS ficou no antigo.
+    // Step fora de `afiacao_*`: é aviso ("criado com avisos"), não bloqueia nem desconfirma o envio.
+    const avisoOs = avisoOsAfiacaoDesatualizada(afiacaoJaEnviada, observacaoOsAfiacao);
+    if (avisoOs) errors.push({ step: 'aviso_os_afiacao_desatualizada', message: avisoOs });
   } else if (afiacaoJaEnviada) {
     // OS de afiação mudou DEPOIS de existir no Omie (ferramentas, pagamento, entrega — ou TODAS as
     // ferramentas removidas, que confirmaria um resumo sem a OS aberta; Codex P1): nem "já enviada"
@@ -669,7 +676,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         subtotal: subtotals.service,
         delivery_fee: DELIVERY_FEES[delivery.option],
         total: subtotals.service + DELIVERY_FEES[delivery.option],
-        notes: observacoesDaOsAfiacao(serviceItems, delivery, TIME_SLOTS, meta.notes),
+        notes: observacaoOsAfiacao,
         payment_method: payment.afiacaoMethod,
       };
       const profileData = {
@@ -722,7 +729,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
           : `OS ${result.omie_os?.cNumOS || ''}`);
         const numero = result.omie_os?.cNumOS ? String(result.omie_os.cNumOS) : null;
         try {
-          aoConfirmarOsAfiacao?.({ assinatura: assinaturaAfiacao, numero });
+          // OS reconciliada (já existia): a observação dela é a da 1ª tentativa, que não sabemos → null.
+          aoConfirmarOsAfiacao?.({ assinatura: assinaturaAfiacao, numero, observacao: result.reconciliada ? null : observacaoOsAfiacao });
         } catch (persistErr: unknown) {
           // Persistir a marca é do caller; falhar aqui NÃO desfaz a OS criada — só loga.
           logger.error('Falha ao registrar a OS de Afiação no envelope', { stage: 'afiacao_marca', error: persistErr });
@@ -757,7 +765,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     serviceItems,
     obenSubtotal: subtotals.oben,
     colacorSubtotal: subtotals.colacor,
-    serviceSubtotal: subtotals.service,
+    // Cupom = apresentação: só preço > 0, como a linha (follow-up do #4068). O payload da OS não muda.
+    serviceSubtotal: subtotalServicosParaExibicao(serviceItems, getServicePrice),
     parcelaOben: payment.parcelaOben,
     parcelaColacor: payment.parcelaColacor,
     formasPagamentoOben: payment.formasPagamentoOben,
@@ -796,9 +805,10 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
   ];
   const itensAOrcar = allItems.filter(i => i.unitPrice === null).length;
 
+  // Resumo pós-envio (apresentação): serviço soma só preço > 0, como a linha "A orçar".
   const total =
     subtotals.oben + subtotals.colacor +
-    subtotals.service + DELIVERY_FEES[delivery.option];
+    subtotalServicosParaExibicao(serviceItems, getServicePrice) + DELIVERY_FEES[delivery.option];
 
   const lastOrderData = {
     customerName: nomeClienteExibicao(customer),

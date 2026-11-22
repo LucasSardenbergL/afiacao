@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  subtotalServicosParaExibicao,
   missingAccountIdentities,
   isValidOmieClientCode,
   omieAccountIdentityMissingMessage,
@@ -97,5 +98,23 @@ describe('omieAccountIdentityMissingMessage (fail-closed pt-BR por conta)', () =
 
   it('conta desconhecida cai no próprio identificador (não quebra)', () => {
     expect(omieAccountIdentityMissingMessage('xyz')).toContain('xyz');
+  });
+});
+
+// Follow-up do #4068 (Codex): preço de serviço negativo somava no subtotal, mas a linha dizia "A orçar".
+describe('subtotalServicosParaExibicao', () => {
+  const precoDe = (i: { preco: number | null; quantity: number }) => i.preco;
+  it('soma só preço > 0 (× quantidade); negativo, zero e null = a orçar, fora da soma', () => {
+    const itens = [
+      { preco: 50, quantity: 2 },
+      { preco: -30, quantity: 1 },
+      { preco: 0, quantity: 3 },
+      { preco: null, quantity: 1 },
+      { preco: Number.NaN, quantity: 1 },
+    ];
+    expect(subtotalServicosParaExibicao(itens, precoDe)).toBe(100);
+  });
+  it('sem itens → 0', () => {
+    expect(subtotalServicosParaExibicao([], precoDe)).toBe(0);
   });
 });
