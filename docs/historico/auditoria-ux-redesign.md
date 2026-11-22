@@ -292,3 +292,18 @@ nada garante o `999` nela); o aviso do B5 ia dentro de `results`, que vira o "N�
 do WhatsApp → aviso não-bloqueante ("criado com avisos"); o timer da virada acorda com folga → o
 envio confere `ready_by_date` pelo relógio de agora. Falsificado: 23 sabotagens, uma camada por vez,
 controle verde na mesma invocação, em `C` e `pt_BR.UTF-8`.
+
+### Novo Pedido — Rodada 3, Onda 1: dinheiro e dados (2026-11-22)
+
+**PR 2.1 — parcelas da OS em centavos** (edge `omie-sync` v1.16). A última parcela era calculada em REAIS
+inteiros (`total − ⌊total/n⌋·(n−1)`): R$ 100 em 3x ia ao Omie como 33,33 + 33,33 + 34,00 = R$ 100,66.
+`ratearTotalEmParcelas` (`omie-sync/parcelas-os.ts`) rateia em centavos com o saldo na última e lança
+em entrada inválida. Medido antes em prod (psql-ro sobre `omie_ordens_servico.payload_enviado`): só
+7 OS na história (última em 26/02/2026), todas de 1 parcela, **nenhuma com soma errada** — o defeito
+estava latente, sem estrago a reparar. Teste de propriedade (≈2.000 totais × n de 1 a 12: soma exata,
+centavo exato, saldo em [0, n)). Codex (P0 0 · médio 2 · baixo 2), corrigidos no PR: parcela de R$ 0,00
+passava (0,02 em 3x) → recusa `centavos < n` (o Omie exige nValor > 0); meio centavo caía pelo binário
+(1,005 → 1,00) → `toFixed(6)` antes do `round`; string numérica no `orderData` virava 500 → `Number()`
+na entrada; `nPercentual` (33,33/33,33/33,34) divergia do valor rateado → `parcelasComValor` deriva o
+percentual do valor, saldo na última fecha 100,00. Falsificado uma camada por vez, controle verde na
+mesma invocação.

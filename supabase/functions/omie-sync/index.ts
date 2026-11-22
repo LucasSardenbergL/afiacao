@@ -7,7 +7,7 @@ import { paginaDeClientesPorDocumento, primeiroClientePorDocumento } from "./bus
 import { buscarClienteEstrito } from "../_shared/lookup-cliente-estrito.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
-import { montarParcelasOS, ratearTotalEmParcelas } from "./parcelas-os.ts";
+import { montarParcelasOS, parcelasComValor } from "./parcelas-os.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { montarAssinaturaOS } from "./chave-os.ts";
 import { criarOuReconciliarOS, type DesfechoOS, OsAcaoNoOmieError, type ReservaOS } from "./os-idempotente.ts";
@@ -574,11 +574,11 @@ function montarPayloadOS(
   };
 
   // Só incluir Parcelas se o total for > 0 (Omie exige nValor > 0)
-  if (order.total > 0) {
-    // Rateio em centavos com o saldo na última (`./parcelas-os.ts`): a soma bate com o total ao centavo.
-    const valores = ratearTotalEmParcelas(order.total, parcelas.length);
-    const parcelasComValor = parcelas.map((p, i) => ({ ...p, nValor: valores[i] }));
-    osParams.Parcelas = parcelasComValor;
+  // `Number()`: o orderData chega do JSON do cliente — "100.00" passava pela coerção da fórmula antiga.
+  const totalOS = Number(order.total);
+  if (totalOS > 0) {
+    // Rateio em centavos com o saldo na última e o percentual derivado do valor (`./parcelas-os.ts`).
+    osParams.Parcelas = parcelasComValor(parcelas, totalOS);
   }
 
   // Log do payload para debug
