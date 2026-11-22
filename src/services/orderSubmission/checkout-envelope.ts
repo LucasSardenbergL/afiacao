@@ -83,6 +83,8 @@ export function decideCheckoutEnvelope(stored: CheckoutEnvelope | null, fingerpr
  * envelope presente pede confirmação e zera os dois; sem envelope, descarta direto.
  */
 export type DescarteRascunho = 'descartar' | 'confirmar';
+// PR 2.2 (rodada 3): o envelope NÃO comprometido é só a identidade do rascunho (nada foi a servidor) —
+// descartá-lo não perde envio nenhum, então não pede confirmação.
 export function decidirDescarteRascunho(stored: CheckoutEnvelope | null): DescarteRascunho {
-  return stored ? 'confirmar' : 'descartar';
+  return stored?.committed ? 'confirmar' : 'descartar';
 }

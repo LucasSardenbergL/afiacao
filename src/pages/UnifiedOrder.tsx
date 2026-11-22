@@ -25,6 +25,7 @@ import { useNetworkStatus } from '@/hooks/useNetworkStatus';
 import { useOfflineSubmit } from '@/hooks/useOfflineSubmit';
 import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
 import { decidirDescarteRascunho } from '@/services/orderSubmission/checkout-envelope';
+import { chaveClienteEnvelope } from '@/services/orderSubmission/envelope-armazenado';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { AlertaCreditoCliente } from '@/components/unified-order/AlertaCreditoCliente';
 import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
@@ -317,6 +318,9 @@ const UnifiedOrder = () => {
     () => ({
       cart: h.cart,
       customerCodigoCliente: h.selectedCustomer?.codigo_cliente ?? null,
+      // PR 2.2 (rodada 3): a chave do envelope deste cliente — para achar o envio pendente do rascunho
+      // ANTES de o cliente ser re-selecionado (o diálogo de restaurar abre com o carrinho vazio).
+      customerChaveEnvelope: chaveClienteEnvelope(h.selectedCustomer),
       customerName: h.selectedCustomer?.razao_social ?? null,
       notes: h.notes,
       ordemCompra: h.ordemCompra,
@@ -476,10 +480,15 @@ const UnifiedOrder = () => {
   // Ciclo ÚNICO envelope × rascunho (follow-up Codex do #4042). O diálogo já pediu confirmação
   // quando havia envio pendente; descartar zera os DOIS — senão o próximo pedido idêntico sai
   // como "já enviado" e não é criado.
+  // Rascunho de antes do PR 2.2 não tem a chave: cai no código Oben, que era a identidade de então.
+  const chaveEnvelopeDoRascunho: string | undefined = draft
+    ? (draft.state.customerChaveEnvelope
+      ?? (draft.state.customerCodigoCliente ? `oben:${draft.state.customerCodigoCliente}` : undefined))
+    : undefined;
   const handleDiscardDraft = () => {
     restorePendenteRef.current = null;
     clearDraft();
-    h.descartarEnvelope();
+    h.descartarEnvelope(chaveEnvelopeDoRascunho);
     dismissDraft();
     setRestoreOpen(false);
   };
@@ -856,7 +865,7 @@ const UnifiedOrder = () => {
           itemCount={Array.isArray(draft.state.cart) ? draft.state.cart.length : 0}
           onRestore={handleRestore}
           onDiscard={handleDiscardDraft}
-          envioPendente={decidirDescarteRascunho(h.envelopeCheckoutAtual()) === 'confirmar'}
+          envioPendente={decidirDescarteRascunho(h.envelopeCheckoutAtual(chaveEnvelopeDoRascunho)) === 'confirmar'}
         />
       )}
 

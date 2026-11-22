@@ -99,7 +99,7 @@ describe('UnifiedOrder — envelope e rascunho morrem juntos', () => {
 
   it('bug 1: descartar o rascunho zera o envelope (pedido idêntico seguinte é NOVO)', () => {
     expect(corpoPagina('handleDiscardDraft')).toContain('h.descartarEnvelope();');
-    expect(pagina).toContain("envioPendente={decidirDescarteRascunho(h.envelopeCheckoutAtual()) === 'confirmar'}");
+    expect(pagina).toContain("envioPendente={decidirDescarteRascunho(h.envelopeCheckoutAtual(chaveEnvelopeDoRascunho)) === 'confirmar'}");
   });
 
   it('bug 2: "Trocar e limpar" apaga o rascunho em disco junto com o envelope', () => {
@@ -139,10 +139,12 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
 
   it('envio: rascunho gravado no commit do envelope e apagado no sucesso TOTAL dentro do hook', () => {
     const corpo = corpoDo('submitOrder');
-    const commit = corpo.indexOf('persistCheckoutEnv(checkoutEnvRef.current);\n      cicloRascunhoRef.current.aoComprometer?.();');
+    // PR 2.2: o commit é gravado pela RESERVA (relê o armazém do par sob trava entre abas); o rascunho vem logo após.
+    const commit = corpo.indexOf('checkoutEnvRef.current = reserva.envelope;\n      if (!reserva.gravou) {');
+    expect(corpo.indexOf('cicloRascunhoRef.current.aoComprometer?.();')).toBeGreaterThan(commit);
     expect(commit).toBeGreaterThan(-1);
     expect(commit).toBeLessThan(corpo.indexOf('submitOrderService('));
-    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; persistCheckoutEnv\(null\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
+    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; removerEnvelopeSeFor\(arm, chaveEnv, checkoutId\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
     expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora(draftPayload),');
     expect(pagina).toContain('aoConfirmarTudo: clearDraft,');
   });

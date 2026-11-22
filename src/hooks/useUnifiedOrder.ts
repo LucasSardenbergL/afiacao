@@ -27,7 +27,11 @@ import type { IdentifiedItem } from '@/components/VoiceServiceInput';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
-import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+import { computeCheckoutFingerprint, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
+import {
+  chaveClienteEnvelope, chaveEnvelope, classificarMudancaOutraAba, comTravaEntreAbas, garantirIdentidadeRascunho,
+  gravarEnvelope, lerEnvelope, migrarEnvelopeLegado, removerEnvelopeSeFor, reservarEnvio, type ArmazemEnvelope,
+} from '@/services/orderSubmission/envelope-armazenado';
 import { executarComTravaDeEnvio, protegerDuranteEnvio } from '@/services/orderSubmission/travaEnvio';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -46,15 +50,10 @@ function avisarCarrinhoTravado() {
   toast.info('Aguarde o envio terminar para mudar o carrinho.');
 }
 
-const CHECKOUT_ENV_KEY = 'unified_order_checkout_env';
-function loadCheckoutEnv(): CheckoutEnvelope | null {
-  if (typeof localStorage === 'undefined') return null;
-  try { const r = localStorage.getItem(CHECKOUT_ENV_KEY); return r ? JSON.parse(r) as CheckoutEnvelope : null; } catch { return null; }
-}
-/** true = gravado (ou não há storage — então também não há envelope velho para ressuscitar). */
-function persistCheckoutEnv(e: CheckoutEnvelope | null): boolean {
-  if (typeof localStorage === 'undefined') return true;
-  try { if (e) localStorage.setItem(CHECKOUT_ENV_KEY, JSON.stringify(e)); else localStorage.removeItem(CHECKOUT_ENV_KEY); return true; } catch { return false; /* quota */ }
+// PR 2.2 (rodada 3): o envelope mora por USUÁRIO + CLIENTE (`envelope-armazenado.ts`). `null` = sem
+// localStorage (SSR/teste) — e então também não há envelope velho para ressuscitar.
+function armazemLocal(): ArmazemEnvelope | null {
+  return typeof localStorage === 'undefined' ? null : localStorage;
 }
 
 // Re-export shared types for backwards compatibility
@@ -414,7 +413,31 @@ export function useUnifiedOrder() {
 
   // Idempotência: envelope {checkout_id, fingerprint, committed} durável (refresh).
   // A fp amarra o checkout ao pedido; reseta só no clearCustomer e no sucesso TOTAL.
-  const checkoutEnvRef = useRef<CheckoutEnvelope | null>(loadCheckoutEnv());
+  // PR 2.2 (rodada 3): a chave é do par (usuário, cliente) e o ref ESPELHA o que está guardado nela —
+  // `committed:false` = só a identidade do rascunho (nada foi a servidor). O envio relê o armazém.
+  const checkoutEnvRef = useRef<CheckoutEnvelope | null>(null);
+  const chaveEnvRef = useRef<string | null>(null);
+  const chaveClienteEnv = chaveClienteEnvelope(selectedCustomer);
+  const customerKeyFp = selectedCustomer
+    ? String(selectedCustomer.local_user_id || selectedCustomer.codigo_cliente || '') : '';
+  const userIdEnv = user?.id ?? null;
+  useEffect(() => {
+    if (submittingRef.current) return; // a troca é barrada em voo; nunca re-apontar o envelope do envio
+    const arm = armazemLocal();
+    const chave = userIdEnv && chaveClienteEnv ? chaveEnvelope(userIdEnv, chaveClienteEnv) : null;
+    chaveEnvRef.current = chave;
+    if (!arm || !chave) { checkoutEnvRef.current = null; return; }
+    migrarEnvelopeLegado(arm, chave, customerKeyFp);
+    checkoutEnvRef.current = lerEnvelope(arm, chave);
+  }, [userIdEnv, chaveClienteEnv, customerKeyFp]);
+  /** true = gravado na chave do par atual. Sem par (sem usuário/cliente) só aceita APAGAR. */
+  const persistCheckoutEnv = (e: CheckoutEnvelope | null): boolean => {
+    const arm = armazemLocal();
+    if (!arm) return true;
+    const chave = chaveEnvRef.current;
+    if (!chave) return e === null;
+    return gravarEnvelope(arm, chave, e);
+  };
 
   // Frente B (PR1): o que o aviso de prazo mostrou por conta (congelado na tela). Ref, não state:
   // só o ENVIO lê, e a tela já re-renderiza pelo próprio componente. Zera ao trocar/limpar cliente.
@@ -448,15 +471,71 @@ export function useUnifiedOrder() {
 
   // Ciclo único envelope × rascunho: a página pergunta antes de descartar o rascunho e, se a
   // vendedora confirmar, zera o envelope junto (o próximo pedido igual é NOVO, não "já enviado").
-  const envelopeCheckoutAtual = useCallback(() => checkoutEnvRef.current, []);
+  // O identificador NASCE com o rascunho: primeiro item no carrinho deste cliente → envelope não
+  // comprometido na chave do par. O envio o reaproveita (`reservarEnvio`) — e a outra aba também.
+  const temItens = cart.length > 0;
+  useEffect(() => {
+    if (!temItens || submittingRef.current) return;
+    const arm = armazemLocal();
+    const chave = chaveEnvRef.current;
+    if (!arm || !chave) return;
+    const e = garantirIdentidadeRascunho(arm, chave, () => crypto.randomUUID());
+    if (e) checkoutEnvRef.current = e;
+  }, [temItens, userIdEnv, chaveClienteEnv]);
+
+  // Outra aba mexeu no envelope DESTE par → espelha e avisa (o mesmo pedido aberto em duas abas).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const aoMudar = (ev: StorageEvent) => {
+      const chave = chaveEnvRef.current;
+      const arm = armazemLocal();
+      if (!chave || !arm || ev.key !== chave) return;
+      const mudanca = classificarMudancaOutraAba(ev.newValue, checkoutEnvRef.current?.checkoutId ?? null);
+      if (!submittingRef.current) checkoutEnvRef.current = lerEnvelope(arm, chave);
+      if (mudanca === 'enviou') {
+        toast.warning('Este pedido está aberto em outra aba', {
+          id: 'pedido-outra-aba',
+          description: 'A outra aba enviou este cliente. Reenviar o mesmo carrinho daqui não duplica, mas o que mudar aqui não entra no pedido já enviado.',
+        });
+      } else if (mudanca === 'liberou') {
+        toast.warning('O pedido deste cliente foi concluído ou descartado em outra aba', {
+          id: 'pedido-outra-aba',
+          description: 'Confira na outra aba antes de enviar daqui: este envio criaria um pedido novo.',
+        });
+      } else if (mudanca === 'editando') {
+        toast.info('Este cliente está aberto em outra aba', {
+          id: 'pedido-outra-aba',
+          description: 'Use uma aba só para este pedido.',
+        });
+      }
+    };
+    window.addEventListener('storage', aoMudar);
+    return () => window.removeEventListener('storage', aoMudar);
+  }, []);
+
+  // Rascunho restaurável ANTES de o cliente ser selecionado: a página passa a chave do cliente do
+  // rascunho para achar (e descartar) o envelope certo. Só o comprometido conta como envio pendente.
+  const envelopeDoPar = (chaveCliente?: string | null): { chave: string | null; env: CheckoutEnvelope | null } => {
+    const arm = armazemLocal();
+    if (chaveCliente === undefined || chaveCliente === chaveClienteEnv) {
+      return { chave: chaveEnvRef.current, env: checkoutEnvRef.current };
+    }
+    if (!arm || !userIdEnv || !chaveCliente) return { chave: null, env: null };
+    const chave = chaveEnvelope(userIdEnv, chaveCliente);
+    return { chave, env: lerEnvelope(arm, chave) };
+  };
+  const envelopeCheckoutAtual = (chaveCliente?: string | null) => envelopeDoPar(chaveCliente).env;
   // A página registra aqui o rascunho (vale também para os reenvios do ATP, que chamam submitOrder
   // por dentro). `aoComprometer`: o envelope acabou de ser gravado → grava o rascunho EXATO do envio,
   // sem esperar o debounce. `aoConfirmarTudo`: sucesso TOTAL → apaga o rascunho antes de qualquer UI,
   // mesmo com a página já desmontada (navegou durante o envio) — Codex P1.
   const cicloRascunhoRef = useRef<{ aoComprometer?: () => void; aoConfirmarTudo?: () => void }>({});
-  const descartarEnvelope = useCallback(() => {
-    checkoutEnvRef.current = null; persistCheckoutEnv(null);
-  }, []);
+  const descartarEnvelope = (chaveCliente?: string | null) => {
+    const { chave } = envelopeDoPar(chaveCliente);
+    const arm = armazemLocal();
+    if (chave === chaveEnvRef.current) checkoutEnvRef.current = null;
+    if (arm && chave) gravarEnvelope(arm, chave, null);
+  };
 
 
   const sortedFormasPagamentoOben = useMemo(() => {
@@ -864,7 +943,7 @@ export function useUnifiedOrder() {
   // Fail-closed: envelope vivo aqui = envio não confirmado → não recomeça.
   const iniciarNovoPedido = useCallback((): boolean => {
     if (submittingRef.current) { avisarCarrinhoTravado(); return false; }
-    if (checkoutEnvRef.current) return false;
+    if (checkoutEnvRef.current?.committed) return false;
     prazoDecisaoRef.current = {};
     if (!isCustomerMode) clearCustomerInternal();
     setCart([]);
@@ -884,7 +963,7 @@ export function useUnifiedOrder() {
     if (!selectedCustomer || cart.length === 0 || !user) return;
     // Ciclo único: com envio de PEDIDO pendente (parcial/bloqueado), o orçamento gravaria outra linha
     // da conta já enviada (convertê-la = 2º PV) e deixaria o envelope órfão (Codex P1). Fail-closed.
-    if (checkoutEnvRef.current) {
+    if (checkoutEnvRef.current?.committed) {
       toast.error('Há um envio de pedido pendente para este carrinho', {
         description: 'Reenvie o pedido pendente ou use "Trocar e limpar" para começar um orçamento novo.',
       });
@@ -974,19 +1053,24 @@ export function useUnifiedOrder() {
         ...colacorProductItems.map(c => ({ account: 'colacor', omie_codigo_produto: c.product.omie_codigo_produto, quantity: c.quantity, unit_price: c.unit_price })),
       ];
       const fingerprint = computeCheckoutFingerprint(customerKey, fpItems);
-      const decision = decideCheckoutEnvelope(checkoutEnvRef.current, fingerprint);
-      if (decision === 'conflict') {
-        toast.error('Há um envio pendente para este cliente com outro carrinho', {
-          description: 'Reenvie o pedido pendente (mesmo carrinho) ou limpe o cliente para começar um novo.',
+      // PR 2.2 (rodada 3): a decisão LÊ o armazém do par (não a memória desta aba) e grava o commit na
+      // MESMA seção crítica entre abas — a aba com memória velha reusa o checkoutId da outra (mesmo
+      // carrinho) ou cai em conflito; o id do rascunho é reaproveitado. Nunca id novo por engano.
+      const arm = armazemLocal();
+      const chaveEnv = chaveEnvRef.current;
+      if (!arm || !chaveEnv) {
+        toast.error('Não foi possível preparar o envio', {
+          description: 'Recarregue a página e confira o cliente antes de enviar.',
         });
         return;
       }
-      if (decision === 'new') {
+      const reserva = await comTravaEntreAbas(`checkout:${chaveEnv}`, () => reservarEnvio(arm, chaveEnv, fingerprint, (idDoRascunho) => {
         // CONGELA a metadata da ponte UMA VEZ, na criação do envelope. Anti-troca-de-cliente:
         // a navegação SPA muda os query params sem remontar o estado do pedido, então uma ligação
         // ENTRANTE de B durante o pedido de A NÃO pode herdar origem/atendimento de A. O helper só
         // aplica a metadata da ligação quando ?customer== o cliente realmente selecionado; o submit
-        // lê SEMPRE do envelope abaixo, nunca da URL ao vivo.
+        // lê SEMPRE do envelope abaixo, nunca da URL ao vivo. (No 'reuse' o envelope guardado é
+        // mantido com a metadata CONGELADA na criação — o spread do `reservarEnvio`.)
         const bridge = resolveBridgeMetadata({
           urlCustomer: searchParams.get('customer'),
           selectedCustomerUserId: customerUserId,
@@ -994,20 +1078,30 @@ export function useUnifiedOrder() {
           urlAtendimento: searchParams.get('atendimento'),
           isCustomerMode,
         });
-        checkoutEnvRef.current = {
-          checkoutId: crypto.randomUUID(), fingerprint, committed: true,
+        return {
+          checkoutId: idDoRascunho ?? crypto.randomUUID(), fingerprint, committed: true,
           customerUserId: customerUserId ?? null,
           origem: bridge.origem,
           atendimentoId: bridge.atendimentoId,
         };
-      } else {
-        // reuse: mantém o MESMO checkoutId E a metadata da ponte CONGELADA na criação (não
-        // re-capturar da URL — o spread preserva origem/atendimento/customerUserId originais).
-        // commit trava a fp (editar o carrinho depois = conflito).
-        checkoutEnvRef.current = { ...checkoutEnvRef.current, committed: true } as CheckoutEnvelope;
+      }));
+      if (reserva.decisao === 'conflict') {
+        checkoutEnvRef.current = reserva.envelope;
+        toast.error('Há um envio pendente para este cliente com outro carrinho', {
+          description: 'Reenvie o pedido pendente (mesmo carrinho) ou limpe o cliente para começar um novo.',
+        });
+        return;
       }
-      persistCheckoutEnv(checkoutEnvRef.current);
-      cicloRascunhoRef.current.aoComprometer?.();
+      checkoutEnvRef.current = reserva.envelope;
+      if (!reserva.gravou) {
+        // Fail-closed: sem o envelope em disco, um refresh no meio do envio perderia o checkoutId e o
+        // reenvio criaria outro PV. Não chama a edge.
+        toast.error('Não foi possível salvar o envio neste navegador', {
+          description: 'Libere espaço do navegador (ou saia da janela privada) e envie de novo.',
+        });
+        return;
+      }
+      cicloRascunhoRef.current.aoComprometer?.(); // o envelope já foi gravado pela reserva acima
       const checkoutId = checkoutEnvRef.current.checkoutId;
       try {
         // Etapa 3 (spec preco-realtime): a seleção dispara o auto-cadastro em
@@ -1075,7 +1169,7 @@ export function useUnifiedOrder() {
           },
         });
         if (result.success && result.lastOrderData && result.allConfirmed) {
-          checkoutEnvRef.current = null; persistCheckoutEnv(null); // sucesso TOTAL → próximo pedido = novo envelope
+          checkoutEnvRef.current = null; removerEnvelopeSeFor(arm, chaveEnv, checkoutId); // sucesso TOTAL → próximo pedido = novo envelope (só apaga se ainda for o DESTE envio)
           cicloRascunhoRef.current.aoConfirmarTudo?.();
         }
         if (result.success && result.lastOrderData) {
