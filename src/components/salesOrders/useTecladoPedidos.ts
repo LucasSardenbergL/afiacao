@@ -133,7 +133,7 @@ export function useTecladoPedidos(p: Params) {
     });
     return [
       comando('sales.filtrar-rascunhos', 'Pedidos: filtrar rascunhos', 'filtrar_rascunhos',
-        () => atual.current.setStatusFilter('rascunhos'), ['rascunho', 'pendente']),
+        () => atual.current.setStatusFilter('rascunhos'), ['rascunhos', 'nao enviados']),
       comando('sales.filtrar-em-andamento', 'Pedidos: filtrar em andamento', 'filtrar_em_andamento',
         () => atual.current.setStatusFilter('em_andamento'), ['andamento', 'aberto']),
       ...(comFiltro ? [comando('sales.limpar-filtros', 'Pedidos: limpar filtros', 'limpar_filtros', () => atual.current.limparFiltros())] : []),
