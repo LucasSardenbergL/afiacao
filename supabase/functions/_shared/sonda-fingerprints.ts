@@ -34,7 +34,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "enviar-pedido-portal-sayerlack": "1025c5008e06fc68b3fd66baf57437575e4cae28cd10433059883db797f13131",
   "enviar-push": "38302707026818b24e43f4936dea80f7648c68b2c1351385c7ddd5e396bdd9d5",
   "extrair-sinais-ligacao": "eca9cc25b742126263e301466bf289f9fb97a04d8e127ef5bdd585a74f36e641",
-  "fin-cashflow-engine": "9daaec6e9b3d76933fc730dc8a4046dcea765364f09a088aa6f7485bf8cc6d47",
+  "fin-cashflow-engine": "6e774c33265573071496a27a9e4fb41efa41fdaf4d542da689609c158189d57c",
   "fin-funding": "2ae9a29464b2a55d6f9b799c9f9d6ef95a3469e2eb17ad9163ffcc7718904ee7",
   "fin-ic-reconcile": "ebc3e3997d0f9b1f6fc333604e409a2feeb9d10d12f0b5f2920d0110841a2aa0",
   "fin-next-best-action": "df75e5018d489af2fa32e659df49b353177c9935ef48df5533dabda54b821f2e",
