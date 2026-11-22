@@ -30,3 +30,21 @@ Desenho: `docs/superpowers/specs/2026-11-22-dre-fluxo-caixa-mapa-proprio-design.
 ## Ordem de deploy
 
 migration `20261122140000` → edges `omie-financeiro` v1.13 **e** `fin-suggest-mapping` v1.2 atestadas → `db:aplicar` do script (precondição confere as duas) → recálculo: competência de todos os anos em ordem cronológica, **depois** os dois regimes de novo (o imposto teórico lê o trimestre já persistido — Codex) → Publish.
+
+## Deploy (2026-11-22, pela sessão)
+
+- **Migration** `20261122140000` aplicada pelo conector (envelope: idempotente + transacional + postcondição; pré-voo psql-ro 🟢; `wt:preflight` 🟢). 2ª testemunha psql-ro: CHECK com `nao_resultado`, `_default` recusa, 0 linha de prova.
+- **Edges** `omie-financeiro` v1.13 e `fin-suggest-mapping` v1.2 pelo MCP (colagem do `pendencias:prompt`, 22/22 hashes contra `fa9c2647d`, "No files were edited."). Sonda `db/2026-11-22-sonda-dre-v1.13-2edges.sql` (recibo #1321): **DEPLOY CONFIRMADO** nas duas. O `lovable-sensor-edicao` saiu 1 por SINAL na resposta (`edit_id`/`commit_sha`), mas o único commit do bot (`b72833eee`) só regenerou `types.ts` (colunas de NCG de outra entrega) — tolerado, nada a reverter.
+- **Mapa** `db/2026-11-22-fin-dre-mapa-proprio.sql` (recibo #1323): psql-ro confere 232/232 pares, mapa 157 → 268 linhas, 121 notas com descrição.
+- **Recálculo** em 3 passos (recibos #1324–#1327): competência de todos os anos com snapshot; competência de novo + caixa 2026 (o teórico lê o trimestre persistido); o caixa 2026 de colacor (57014) e oben (`WORKER_RESOURCE_LIMIT`) falhou FECHADO por carga com 13 requisições simultâneas e foi refeito um por vez — 200 nos dois. 139/139 snapshots regravados, todos com `detalhamento.nao_resultado`.
+- **Publish SEGURADO:** `pendencias:deploy` sai 1 por `fin-cashflow-engine` v2.5 e `omie-sync` v1.16 (entregas de OUTRAS sessões, sem deploy) — publicar agora subiria o front delas sem o backend. O front desta entrega (rótulo no mapeamento, card do PE) só é cosmético sobre dados já corretos.
+
+### Antes → depois (competência, 12m nov/25–out/26, R$ mil)
+
+| Empresa | Resultado | Deduções | Despesa operacional | fora_dre | Provisório | Confiança alta |
+|---|---|---|---|---|---|---|
+| oben | 237 → **996** | 0 → 361 | 1.296 → 0 (adm 104, com 6, IRPJ/CSLL 59) | 0 → 766 | 0 → 12 meses | 1 → 0 |
+| colacor_sc | −304 → **−277** | 0 → 2 | 463 → 0 (adm 434) | 0 → 26 | 0 → 2 meses | 0 → 10 |
+| colacor | −141 → −141 | 238 → 238 | 54 → 54 | 382 → 372 | 12 → 12 | 0 → 0 |
+
+⚠️ O salto da oben é o **principal + juros** de empréstimo (R$ 612k) e de parcelamento (R$ 154k) saindo da despesa: o lucro operacional agora está certo, mas os 12 meses ficam **provisórios** porque os juros dentro da parcela são despesa financeira que o Omie não separa. A captação registrada é quase nula (R$ 18,9k em 1.04.03) contra R$ 612k pagos — vale conciliar a dívida da oben (mútuo? antecipação não lançada?).
