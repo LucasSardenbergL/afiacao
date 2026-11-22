@@ -10,7 +10,9 @@
  *   fungível entre CNPJs, então o total nunca aparece sozinho como "disponível".
  * - Falta de caixa nas 13 semanas: soma dos déficits no pior saldo de cada CNPJ (sem abater a
  *   sobra de outro), com quem já está negativo ou a partir de quando, e a semana do pior saldo.
- * - Recebíveis vencidos em R$ e % da carteira aberta.
+ * - Recebíveis vencidos em R$ e % da carteira aberta; o clique abre a fila de /cobranca.
+ * - "Cobrar primeiro": maiores vencidos por empresa credora × cliente no Omie (nunca por nome), com
+ *   responsável e promessa vencida — mesma RPC da tela de cobrança.
  * - NCG (necessidade de capital de giro) com data do snapshot; a leitura do sinal (folga ×
  *   capital preso) só aparece com a NCG completa — sem estoque até o sinal pode virar.
  *
@@ -144,6 +146,81 @@ function dataCurta(iso: string | null): string {
   return `${d}/${m}`;
 }
 
+type CobrancaCeo = ReturnType<typeof useCeoPlacar>['cobranca'];
+
+/** Quem cobrar primeiro: maiores vencidos por empresa credora × cliente no Omie, com dono e promessa. */
+function CardCobranca({ c, erro, carregando, grupo }: { c: CobrancaCeo; erro: boolean; carregando: boolean; grupo: boolean }) {
+  return (
+    <Card className="p-4" data-testid="ceo-cobranca">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">Cobrar primeiro</div>
+        <Link
+          to="/cobranca"
+          onClick={() => track('dashboard.ceo.cobranca_click', { origem: 'card' })}
+          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          Abrir cobrança →
+        </Link>
+      </div>
+      {carregando ? (
+        <p className="mt-2 text-xs text-muted-foreground">Lendo a fila de cobrança…</p>
+      ) : erro || c === null ? (
+        <p className="mt-2 text-xs text-status-error">
+          Não consegui ler a fila de cobrança — a ausência aqui não quer dizer que ninguém deve.
+        </p>
+      ) : c.top.length === 0 ? (
+        <p className="mt-2 text-xs text-muted-foreground">Nenhum cliente com título vencido.</p>
+      ) : (
+        <>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {c.devedores} {c.devedores === 1 ? 'cliente' : 'clientes'} com vencido
+            {c.semResponsavel.n > 0 && (
+              <span className="text-status-warning">
+                {' '}· {c.semResponsavel.n} sem responsável ({formatarBRLCompacto(c.semResponsavel.valor)})
+              </span>
+            )}
+            {c.promessasVencidas > 0 && (
+              <span className="text-status-warning">
+                {' '}· {c.promessasVencidas} {c.promessasVencidas === 1 ? 'promessa vencida' : 'promessas vencidas'}
+              </span>
+            )}
+            {c.saldoDesconhecido > 0 && <> · {c.saldoDesconhecido} sem saldo conhecido</>}
+          </p>
+          <table className="mt-2 w-full text-xs tabular-nums">
+            <caption className="sr-only">Maiores vencidos</caption>
+            <thead>
+              <tr className="border-b border-border text-2xs uppercase tracking-wide text-muted-foreground">
+                <th scope="col" className="py-1.5 pr-3 text-left font-normal">Cliente</th>
+                <th scope="col" className="py-1.5 pr-3 text-right font-normal">Vencido</th>
+                <th scope="col" className="py-1.5 pr-3 text-right font-normal">Atraso</th>
+                <th scope="col" className="py-1.5 text-left font-normal">Responsável</th>
+              </tr>
+            </thead>
+            <tbody>
+              {c.top.map((d) => (
+                <tr key={`${d.company}-${d.codigo}`} className="border-b border-border last:border-0">
+                  <th scope="row" className="py-1.5 pr-3 text-left font-medium">
+                    {d.nome ?? `cód. ${d.codigo}`}
+                    {grupo && <span className="ml-1 font-normal text-muted-foreground">{COMPANIES[d.company].shortName}</span>}
+                  </th>
+                  <td className="py-1.5 pr-3 text-right" title={d.saldoVencido === null ? undefined : formatBRL(d.saldoVencido)}>
+                    {formatarBRLCompacto(d.saldoVencido)}
+                  </td>
+                  <td className="py-1.5 pr-3 text-right">{d.diasMax === null ? '—' : `${d.diasMax} d`}</td>
+                  <td className="py-1.5 text-left">
+                    {d.responsavel ?? <span className="text-status-warning">sem responsável</span>}
+                    {d.promessaVencida && <span className="ml-1 text-status-warning">· promessa vencida</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function CeoPlacar() {
   const { selection, companyInfo } = useCompany();
   const vendas = useTeamKpis();
@@ -224,7 +301,7 @@ export function CeoPlacar() {
                 ? 'títulos indisponíveis'
                 : `${formatarFracaoPct(p.vencidos.pct)} da carteira aberta`
           }
-          para="/financeiro/cockpit"
+          para="/cobranca"
           carregando={p.carregando.resumo}
         />
         <Kpi
@@ -301,6 +378,13 @@ export function CeoPlacar() {
           </table>
         </Card>
       )}
+
+      <CardCobranca
+        c={p.cobranca}
+        erro={p.erro.cobranca}
+        carregando={p.carregando.cobranca}
+        grupo={selection === 'all'}
+      />
 
       <p className="text-2xs text-muted-foreground">
         Escopo: {escopo}. Todos os números seguem o seletor de empresa; o cockpit financeiro de destino mostra o grupo.

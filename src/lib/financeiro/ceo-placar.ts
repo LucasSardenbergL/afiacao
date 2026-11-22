@@ -265,3 +265,75 @@ export function caixaProjetadoDoEscopo(
   const dias = dataCoorte === null ? NaN : Math.round((Date.parse(hoje) - Date.parse(dataCoorte)) / DIA_MS);
   return { falta, porEmpresa, diasDefasagem: Number.isFinite(dias) ? dias : null };
 }
+
+/**
+ * Cobrança para o CEO — fonte: RPC `cobranca_fila` (uma linha por empresa credora × cliente no Omie
+ * DAQUELA empresa). A chave é (company, omie_codigo_cliente), nunca o nome: o cliente do grupo tem 2
+ * cadastros fiscais legítimos e `nome_cliente`/`cnpj_cpf` dos títulos vêm vazios em prod.
+ */
+export interface DevedorCobranca {
+  company: Company;
+  codigo: number;
+  nome: string | null;
+  /** `null` = saldo desconhecido (ausente ≠ zero). */
+  saldoVencido: number | null;
+  diasMax: number | null;
+  responsavel: string | null;
+  promessaVencida: boolean;
+}
+
+const COMPANIES_VALIDAS: readonly Company[] = EMPRESAS_GRUPO;
+const numeroOuNull = (v: unknown): number | null => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+};
+
+/** Linha crua da RPC → devedor; linha sem empresa/código válidos é descartada (não é devedor). */
+export function devedorDaFila(raw: Record<string, unknown>): DevedorCobranca | null {
+  const company = raw.company as Company;
+  const codigo = numeroOuNull(raw.omie_codigo_cliente);
+  if (!COMPANIES_VALIDAS.includes(company) || codigo === null) return null;
+  const nome = typeof raw.nome_cliente === 'string' && raw.nome_cliente.trim() !== '' ? raw.nome_cliente.trim() : null;
+  const responsavel = raw.dona_user_id
+    ? typeof raw.dona_nome === 'string' && raw.dona_nome.trim() !== '' ? raw.dona_nome.trim() : 'sem nome'
+    : null;
+  return {
+    company,
+    codigo,
+    nome,
+    saldoVencido: numeroOuNull(raw.saldo_vencido),
+    diasMax: numeroOuNull(raw.dias_vencido_max),
+    responsavel,
+    promessaVencida: raw.promessa_situacao === 'vencida',
+  };
+}
+
+export interface Cobranca {
+  /** Devedores com saldo vencido > 0. */
+  devedores: number;
+  semResponsavel: { n: number; valor: number };
+  promessasVencidas: number;
+  /** Linhas com saldo desconhecido — o total fica incompleto e o card diz quantas. */
+  saldoDesconhecido: number;
+  /** Maiores saldos vencidos do escopo (até 5), maior primeiro. */
+  top: DevedorCobranca[];
+}
+
+/** `null` quando a fila de alguma empresa do escopo não foi lida (ausente ≠ "ninguém deve"). */
+export function cobrancaDoEscopo(
+  filas: Partial<Record<Company, readonly DevedorCobranca[]>> | null,
+  empresas: readonly Company[],
+  limite = 5,
+): Cobranca | null {
+  if (!filas || empresas.length === 0 || empresas.some((co) => filas[co] === undefined)) return null;
+  const linhas = empresas.flatMap((co) => filas[co] as readonly DevedorCobranca[]);
+  const devendo = linhas.filter((d) => d.saldoVencido !== null && d.saldoVencido > 0);
+  const semResp = devendo.filter((d) => d.responsavel === null);
+  return {
+    devedores: devendo.length,
+    semResponsavel: { n: semResp.length, valor: semResp.reduce((s, d) => s + (d.saldoVencido as number), 0) },
+    promessasVencidas: devendo.filter((d) => d.promessaVencida).length,
+    saldoDesconhecido: linhas.filter((d) => d.saldoVencido === null).length,
+    top: [...devendo].sort((a, b) => (b.saldoVencido as number) - (a.saldoVencido as number)).slice(0, limite),
+  };
+}
