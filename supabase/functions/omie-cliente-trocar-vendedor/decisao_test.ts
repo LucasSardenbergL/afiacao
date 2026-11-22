@@ -7,6 +7,7 @@ import {
   lerParametros,
   blocosPreenchidos,
   camposDiferentes,
+  normalizarAmp,
   enderecoFaltando,
   payloadAlterar,
   textoParaHash,
@@ -134,4 +135,54 @@ Deno.test("v1.4 camposDiferentes: caminhos aninhados, ausente, e ignora info/ven
   igual(camposDiferentes(CAD, { ...CAD, info: { dAlt: "y" } }), [], "info não conta");
   igual(camposDiferentes({ ...CAD, email: "a@b.com", cnpj_cpf: "1" }, { ...CAD, email: "z@b.com", telefone1_numero: "9" }),
     ["cnpj_cpf: removido", "email: alterado", "telefone1_numero: adicionado"], "dado pessoal: só o tipo de mudança, nunca o valor");
+});
+
+// v1.5 — `&amp;` (lote 1 v1.4: 5 'divergente' por `&amp;`→`&` gravado pelo próprio Omie). Codex v1.5 P1: só o medido.
+const OBS_MULTI = "Linha 1: JOAO &amp; MARIA\nLinha 2: &lt;SAB&gt;\r\nLinha 3: P&amp;D";
+
+Deno.test("normalizarAmp: só &amp; → &, literal, uma passada; outras entidades intactas", () => {
+  igual(normalizarAmp("TRES R MOVEIS &amp; CIA LTDA"), "TRES R MOVEIS & CIA LTDA", "amp");
+  igual(normalizarAmp(OBS_MULTI), "Linha 1: JOAO & MARIA\nLinha 2: &lt;SAB&gt;\r\nLinha 3: P&D", "multilinha");
+  igual(normalizarAmp("&amp;amp;"), "&amp;", "uma passada só");
+  igual(normalizarAmp("&AMP; &#38; &quot; &amp"), "&AMP; &#38; &quot; &amp", "outras grafias intactas");
+});
+
+Deno.test("payloadAlterar v1.5: texto continua indo COMO LIDO (o Omie é quem normaliza)", () => {
+  const cad = { ...CAD, razao_social: "TRES R MOVEIS &amp; CIA LTDA", codigo_cliente_integracao: "ERP-&#49;" };
+  const p = payloadAlterar(cad, 8689670842) as Record<string, unknown>;
+  igual([p.razao_social, p.codigo_cliente_integracao], ["TRES R MOVEIS &amp; CIA LTDA", "ERP-&#49;"], "como lido");
+});
+
+Deno.test("hash v1.5: &amp;→& em razão/fantasia/obs NÃO é divergência; qualquer outra mudança é", async () => {
+  const antes = { ...CAD, razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", observacao: OBS_MULTI };
+  const normalizado = {
+    ...antes, razao_social: "TRES R MOVEIS & CIA LTDA", nome_fantasia: "MOVEIS & CIA",
+    observacao: "Linha 1: JOAO & MARIA\nLinha 2: &lt;SAB&gt;\r\nLinha 3: P&D",
+    recomendacoes: { ...CAD.recomendacoes, codigo_vendedor: 8689670842 }, info: { dAlt: "22/11/2026" },
+  };
+  igual(await hashCadastro(normalizado), await hashCadastro(antes), "normalização = mesmo hash");
+  igual(camposDiferentes(antes, normalizado), [], "diff vazio na normalização");
+
+  const muda = async (extra: Record<string, unknown>, base: Record<string, unknown> = antes) =>
+    (await hashCadastro({ ...normalizado, ...extra })) !== (await hashCadastro(base));
+  const casos: [string, Record<string, unknown>][] = [
+    ["& virou E", { razao_social: "TRES R MOVEIS E CIA LTDA" }],
+    ["& sumiu", { razao_social: "TRES R MOVEIS  CIA LTDA" }],
+    ["&lt; decodificado (não medido)", { observacao: "Linha 1: JOAO & MARIA\nLinha 2: <SAB>\r\nLinha 3: P&D" }],
+    ["quebra de linha", { observacao: "Linha 1: JOAO & MARIA\nLinha 2: &lt;SAB&gt;\nLinha 3: P&D" }],
+  ];
+  for (const [nome, extra] of casos) if (!(await muda(extra))) throw new Error(`${nome}: tem de mudar o hash`);
+  igual(camposDiferentes(antes, { ...normalizado, razao_social: "X" }), ["razao_social: alterado"], "diff nomeia razão");
+});
+
+Deno.test("Codex v1.5 P1: identificador, campo fora da lista e lista/objeto seguem LITERAIS (&amp;→& acusa)", async () => {
+  const pares: [string, Record<string, unknown>, Record<string, unknown>][] = [
+    ["codigo_cliente_integracao", { codigo_cliente_integracao: "ERP-&amp;1" }, { codigo_cliente_integracao: "ERP-&1" }],
+    ["endereco (fora da lista)", { endereco: "RUA A &amp; B" }, { endereco: "RUA A & B" }],
+    ["tag", { tags: [{ tag: "A &amp; B" }] }, { tags: [{ tag: "A & B" }] }],
+    ["entidade numérica na razão", { razao_social: "ERP-&#49;" }, { razao_social: "ERP-1" }],
+  ];
+  for (const [nome, a, b] of pares) {
+    if (await hashCadastro({ ...CAD, ...a }) === await hashCadastro({ ...CAD, ...b })) throw new Error(`${nome}: tem de acusar`);
+  }
 });

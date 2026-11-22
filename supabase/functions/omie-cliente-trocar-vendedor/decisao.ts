@@ -192,6 +192,21 @@ function ehEscalar(v: unknown): boolean {
   return typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
 }
 
+/**
+ * Normalização TOLERADA na verificação (v1.5, Codex v1.5 P1: restrita ao MEDIDO). Lote 1 (v1.4, 2026-11-22): cadastros
+ * antigos estão gravados com `&amp;` ("MOVEIS &amp; CIA"); a tela do Omie mostra "&", o ConsultarCliente devolve a
+ * entidade, e o reenvio faz o próprio Omie gravar o texto DECODIFICADO (Histórico do Omie, colacor 393821802: razão
+ * social, nome fantasia, observações). Valor exibido idêntico, leitura da API diferente → hash acusava 'divergente'.
+ * Por isso, SÓ nestes campos de EXIBIÇÃO e SÓ `&amp;` → `&` (literal, uma passada) entra igual no recorte do hash/diff.
+ * Identificador (`codigo_cliente_integracao`, documento, e-mail), flag, lista/objeto e qualquer outra entidade seguem
+ * comparados LITERALMENTE: se o Omie mexer neles, o hash acusa (direção segura). O payload continua indo COMO LIDO.
+ */
+const CAMPOS_AMP_TOLERADO = new Set(["razao_social", "nome_fantasia", "observacao", "obs_detalhadas"]);
+
+export function normalizarAmp(s: string): string {
+  return s.replaceAll("&amp;", "&");
+}
+
 /** Payload do AlterarCliente, ou `null` se o endereço lido está incompleto (o chamador recusa sem escrever). */
 export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Record<string, unknown> | null {
   const codigo = cad.codigo_cliente_omie;
@@ -222,6 +237,8 @@ function canonico(v: unknown): unknown {
 /** Texto canônico do cadastro SEM o vendedor e sem `info` (dAlt/hAlt/uAlt mudam a cada gravação). Vira hash; nunca é gravado. */
 export function textoParaHash(cad: Record<string, unknown>): string {
   const { info: _info, ...resto } = cad;
+  // v1.5: `&amp;` → `&` só nos campos de exibição de 1º nível, nos DOIS lados (ver CAMPOS_AMP_TOLERADO).
+  for (const k of CAMPOS_AMP_TOLERADO) if (typeof resto[k] === "string") resto[k] = normalizarAmp(resto[k] as string);
   const rec = resto.recomendacoes && typeof resto.recomendacoes === "object"
     ? { ...(resto.recomendacoes as Record<string, unknown>) }
     : resto.recomendacoes;
