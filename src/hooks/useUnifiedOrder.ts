@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { condicoesComParcelaRetirada } from './unifiedOrder/parcela-manual';
+import { dataEntregaJaPassou } from '@/components/unified-order/dias-entrega';
 import { OmieServico } from '@/services/omieService';
 import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
@@ -338,7 +340,7 @@ export function useUnifiedOrder() {
     activeTab, setActiveTab,
     productItems, obenProductItems, colacorProductItems, serviceItems, cartProductIds,
     volumesOben, volumesColacor,
-    obenSubtotal, colacorProdSubtotal, serviceSubtotal, totalEstimated,
+    obenSubtotal, colacorProdSubtotal, serviceSubtotal, serviceSubtotalExibicao, totalEstimated,
     addProductToCart: addProductToCartBruto, addTintProductToCart: addTintProductToCartBruto,
     addServiceToCart: addServiceToCartBruto,
     updateServiceServico: updateServiceServicoBruto, updateServiceNotes: updateServiceNotesBruto,
@@ -488,18 +490,27 @@ export function useUnifiedOrder() {
   // `buscar_ultima_parcela` — fonte INDEPENDENTE desta query, logo não degradam juntas).
   // `condicoesAusentes` não-vazio é a prova positiva de que a lista genérica não serve
   // para ESTE cliente; é o que autoriza o bloqueio do envio (precisão > recall).
+  // Follow-up do #4068 (Codex P1): código de parcela PROVADO retirado do Omie no restore do rascunho
+  // (lista completa sem ele). Se a sugestão do histórico o trouxer de volta, bloqueia como condição
+  // ausente — no botão e no caminho de envio. Por cliente: troca de cliente zera.
+  const [parcelasRetiradas, setParcelasRetiradas] = useState<{ oben: string | null; colacor: string | null }>({ oben: null, colacor: null });
+  const marcarParcelaRetirada = useCallback((conta: 'oben' | 'colacor', codigo: string) => {
+    setParcelasRetiradas(p => ({ ...p, [conta]: codigo }));
+  }, []);
+  useEffect(() => { setParcelasRetiradas({ oben: null, colacor: null }); }, [selectedCustomer?.codigo_cliente]);
+
   const estadoFormasOben = useMemo<EstadoFormasUI>(() => {
     const estado = obenFormasQuery.data ?? { formas: [], degradado: false, motivo: null };
     return {
       degradado: estado.degradado,
       motivo: estado.motivo,
       erro: obenFormasQuery.isError,
-      condicoesAusentes: condicoesDoClienteIndisponiveis(
+      condicoesAusentes: condicoesComParcelaRetirada(condicoesDoClienteIndisponiveis(
         estado,
         [selectedParcelaOben, ...customerParcelaRankingOben],
-      ),
+      ), parcelasRetiradas.oben, selectedParcelaOben),
     };
-  }, [obenFormasQuery.data, obenFormasQuery.isError, selectedParcelaOben, customerParcelaRankingOben]);
+  }, [obenFormasQuery.data, obenFormasQuery.isError, selectedParcelaOben, customerParcelaRankingOben, parcelasRetiradas.oben]);
 
   const estadoFormasColacor = useMemo<EstadoFormasUI>(() => {
     const estado = colacorFormasQuery.data ?? { formas: [], degradado: false, motivo: null };
@@ -507,12 +518,12 @@ export function useUnifiedOrder() {
       degradado: estado.degradado,
       motivo: estado.motivo,
       erro: colacorFormasQuery.isError,
-      condicoesAusentes: condicoesDoClienteIndisponiveis(
+      condicoesAusentes: condicoesComParcelaRetirada(condicoesDoClienteIndisponiveis(
         estado,
         [selectedParcelaColacor, ...customerParcelaRankingColacor],
-      ),
+      ), parcelasRetiradas.colacor, selectedParcelaColacor),
     };
-  }, [colacorFormasQuery.data, colacorFormasQuery.isError, selectedParcelaColacor, customerParcelaRankingColacor]);
+  }, [colacorFormasQuery.data, colacorFormasQuery.isError, selectedParcelaColacor, customerParcelaRankingColacor, parcelasRetiradas.colacor]);
 
   const isCustomerMode = !authLoading && !isStaff;
   // Índice no stepper da página: customer tem só ['Itens','Revisão'] (0/1); staff ['Cliente','Itens','Revisão'].
@@ -946,6 +957,13 @@ export function useUnifiedOrder() {
       toast.error(mensagemCondicoesIndisponiveis(bloqueioFormas));
       return;
     }
+    // Follow-up do #4068 (Codex P2): o seletor limpa a data na virada, mas o timer acorda com folga —
+    // o clique logo após a meia-noite gravaria `ready_by_date` de ontem. Confere pelo relógio de agora.
+    if (dataEntregaJaPassou(readyByDate)) {
+      setReadyByDate('');
+      toast.error('Dia de entrega vencido', { description: 'O dia escolhido já passou. Escolha o dia de novo e envie.' });
+      return;
+    }
     // A2 (rodada 2): a trava liga e desliga SÓ em executarComTravaDeEnvio — o ramo 'conflict'
     // abaixo fazia `return` sem soltar a ref e todo envio seguinte morria calado.
     await executarComTravaDeEnvio(submittingRef, setSubmitting, async () => {
@@ -1211,7 +1229,7 @@ export function useUnifiedOrder() {
     selectedParcelaColacor, setSelectedParcelaColacor, parcelasManuaisDaSelecao,
     registrarEstadoPrazo,
     loadingFormas, customerParcelaRankingOben, customerParcelaRankingColacor,
-    estadoFormasOben, estadoFormasColacor, recarregarFormas,
+    estadoFormasOben, estadoFormasColacor, recarregarFormas, marcarParcelaRetirada,
     afiacaoPaymentMethod, setAfiacaoPaymentMethod,
     volumesOben, volumesColacor,
     ordemCompra, setOrdemCompra,
@@ -1230,7 +1248,7 @@ export function useUnifiedOrder() {
     updateQuantity, updateProductPrice, updateTintDiscount, aplicarDescontoCores, removeFromCart,
     getProductPrice, getServicePrice,
     // Totals
-    obenSubtotal, colacorProdSubtotal, serviceSubtotal, totalEstimated,
+    obenSubtotal, colacorProdSubtotal, serviceSubtotal, serviceSubtotalExibicao, totalEstimated,
     currentStep,
     // Handlers
     handleVoiceItemsIdentified, handleImageCategoryIdentified,

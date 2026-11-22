@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { montarBaseEmbalagens, type ProdutoLinhaOmie } from '../montar-embalagens';
 
-const prod = (omie_codigo_produto: number, descricao: string, valor_unitario: number, estoque: number): ProdutoLinhaOmie =>
+const prod = (omie_codigo_produto: number, descricao: string, valor_unitario: number, estoque: number | null): ProdutoLinhaOmie =>
   ({ omie_codigo_produto, descricao, valor_unitario, estoque });
 
 describe('montarBaseEmbalagens', () => {
@@ -31,9 +31,17 @@ describe('montarBaseEmbalagens', () => {
     expect(emb.litros).toBeNull();
   });
 
-  it('estoque inválido (NaN) → 0', () => {
+  // Follow-up do #4087: ausente ≠ zero — saldo não informado segue null (não vira "sem estoque").
+  it('estoque inválido (NaN) → null', () => {
     const [emb] = montarBaseEmbalagens([prod(5, 'PRIMER PU FL.6269.02GL', 300, NaN)], {});
-    expect(emb.estoque).toBe(0);
+    expect(emb.estoque).toBeNull();
+  });
+
+  it('estoque NÃO informado (null) → null, nunca 0; estoque 0 informado segue 0', () => {
+    const [ausente] = montarBaseEmbalagens([prod(6, 'PRIMER PU FL.6269.02GL', 300, null)], {});
+    expect(ausente.estoque).toBeNull();
+    const [zero] = montarBaseEmbalagens([prod(7, 'PRIMER PU FL.6269.02GL', 300, 0)], {});
+    expect(zero.estoque).toBe(0);
   });
 
   it('lista vazia → []', () => {

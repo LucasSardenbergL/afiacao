@@ -11,7 +11,8 @@
  * em estoque. Codex (P0): SELLABLE_NOW exige PRECIFICADO (preço confiável) — sem preço não promete.
  */
 
-export type EstadoVenda = 'SELLABLE_NOW' | 'ORDERABLE' | 'TECHNICAL_ONLY';
+/** STOCK_UNKNOWN (follow-up do #4087): fecharia o preço se o saldo NÃO informado existir — neutro. */
+export type EstadoVenda = 'SELLABLE_NOW' | 'ORDERABLE' | 'TECHNICAL_ONLY' | 'STOCK_UNKNOWN';
 
 export interface DisponibilidadeInput {
   /** Existe vínculo boletim↔SKU confirmado pra a base (casamento). */

@@ -59,7 +59,8 @@ export interface Product {
   codigo: string;
   descricao: string;
   valor_unitario: number;
-  estoque: number;
+  /** `null` = saldo não informado (ausente ≠ zero). Já chegava null do banco; o tipo mentia. */
+  estoque: number | null;
   account?: string;
 }
 

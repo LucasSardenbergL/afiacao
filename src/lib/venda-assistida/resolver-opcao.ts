@@ -15,8 +15,8 @@ import type { EstadoVenda } from './resolver-estado';
  */
 
 export interface EmbalagemComEstoque extends EmbalagemPreco {
-  /** Saldo indicativo (cache ~10min — não é promessa dura). */
-  estoque: number;
+  /** Saldo indicativo (cache ~10min — não é promessa dura). `null` = não informado (≠ 0). */
+  estoque: number | null;
 }
 
 export interface ResolverOpcaoInput {
@@ -38,7 +38,11 @@ export interface OpcaoResolvida {
 }
 
 const emEstoque = (e: EmbalagemComEstoque): boolean =>
-  Number.isFinite(e.estoque) && e.estoque > 0;
+  typeof e.estoque === 'number' && Number.isFinite(e.estoque) && e.estoque > 0;
+
+/** Pode estar em estoque: saldo > 0 OU saldo não informado (ausente ≠ zero). */
+const talvezEmEstoque = (e: EmbalagemComEstoque): boolean =>
+  e.estoque === null || emEstoque(e);
 
 export function resolverOpcaoVenda(input: ResolverOpcaoInput): OpcaoResolvida {
   // Sem casamento → não há produto vendável; só alternativa técnica.
@@ -69,5 +73,16 @@ export function resolverOpcaoVenda(input: ResolverOpcaoInput): OpcaoResolvida {
     catalisadorEmbalagens: catalisadorParam(input.catalisadorEmbalagens),
     proporcaoPct: input.proporcaoPct,
   });
+  // STOCK_UNKNOWN (follow-up do #4087): o preço FECHARIA se as embalagens de saldo NÃO informado
+  // estivessem disponíveis → não dá para dizer "Encomenda" (nem "Em estoque"): estado neutro. O preço
+  // exibido é o MESMO da encomenda (só o rótulo muda — nada de preço novo). Se nem assim fecha, a
+  // falta é REAL (saldo informado ≤ 0) → ORDERABLE.
+  const fechariaComSaldoDesconhecido = precoLitroPreparado({
+    baseEmbalagens: input.baseEmbalagens.filter(talvezEmEstoque),
+    temCatalisador: input.temCatalisador,
+    catalisadorEmbalagens: catalisadorParam(input.catalisadorEmbalagens.filter(talvezEmEstoque)),
+    proporcaoPct: input.proporcaoPct,
+  }).status === 'ok';
+  if (fechariaComSaldoDesconhecido) return { estado: 'STOCK_UNKNOWN', preco: precoEncomenda };
   return { estado: 'ORDERABLE', preco: precoEncomenda };
 }

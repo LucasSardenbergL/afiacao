@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { resolverOpcaoVenda, type EmbalagemComEstoque } from '../resolver-opcao';
 
-const e = (valor: number, litros: number | null, estoque: number): EmbalagemComEstoque => ({ valor, litros, estoque });
+const e = (valor: number, litros: number | null, estoque: number | null): EmbalagemComEstoque => ({ valor, litros, estoque });
 
 describe('resolverOpcaoVenda (estado + preço coerentes — fecha P0.2 do Codex)', () => {
   it('sem SKU confirmado → TECHNICAL_ONLY, sem preço', () => {
@@ -69,5 +69,47 @@ describe('resolverOpcaoVenda (estado + preço coerentes — fecha P0.2 do Codex)
     });
     expect(r.estado).toBe('ORDERABLE');
     expect(r.preco.status).toBe('incomplete'); // catalisador obrigatório sem SKU
+  });
+});
+
+// Follow-up do #4087: `omie_products.estoque` pode chegar null (sync v1.45 não grava 0 sem nSaldo).
+describe('resolverOpcaoVenda — estoque NÃO informado (ausente ≠ zero)', () => {
+  it('base com saldo desconhecido → STOCK_UNKNOWN (não "Encomenda"), com o MESMO preço da encomenda', () => {
+    const desconhecido = resolverOpcaoVenda({
+      temSkuConfirmado: true, temCatalisador: false, proporcaoPct: null,
+      baseEmbalagens: [e(360, 3.6, null)], catalisadorEmbalagens: [],
+    });
+    expect(desconhecido.estado).toBe('STOCK_UNKNOWN');
+    const zerado = resolverOpcaoVenda({
+      temSkuConfirmado: true, temCatalisador: false, proporcaoPct: null,
+      baseEmbalagens: [e(360, 3.6, 0)], catalisadorEmbalagens: [],
+    });
+    expect(zerado.estado).toBe('ORDERABLE');
+    // Só o rótulo muda: o preço é o mesmo que a encomenda mostraria.
+    expect(desconhecido.preco).toEqual(zerado.preco);
+  });
+
+  it('catalisador obrigatório com saldo desconhecido e base em estoque → STOCK_UNKNOWN', () => {
+    const r = resolverOpcaoVenda({
+      temSkuConfirmado: true, temCatalisador: true, proporcaoPct: 10,
+      baseEmbalagens: [e(360, 3.6, 5)], catalisadorEmbalagens: [e(90, 0.9, null)],
+    });
+    expect(r.estado).toBe('STOCK_UNKNOWN');
+  });
+
+  it('saldo INFORMADO zero no catalisador obrigatório → ORDERABLE (falta real), mesmo com a base desconhecida', () => {
+    const r = resolverOpcaoVenda({
+      temSkuConfirmado: true, temCatalisador: true, proporcaoPct: 10,
+      baseEmbalagens: [e(360, 3.6, null)], catalisadorEmbalagens: [e(90, 0.9, 0)],
+    });
+    expect(r.estado).toBe('ORDERABLE');
+  });
+
+  it('em estoque informado vence o desconhecido → SELLABLE_NOW', () => {
+    const r = resolverOpcaoVenda({
+      temSkuConfirmado: true, temCatalisador: false, proporcaoPct: null,
+      baseEmbalagens: [e(360, 3.6, 4), e(1500, 18, null)], catalisadorEmbalagens: [],
+    });
+    expect(r.estado).toBe('SELLABLE_NOW');
   });
 });

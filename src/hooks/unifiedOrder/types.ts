@@ -71,7 +71,8 @@ export interface Product {
   descricao: string;
   unidade: string;
   valor_unitario: number;
-  estoque: number;
+  /** `null` = saldo NÃO informado (a sync v1.45 não grava 0 sem `nSaldo`). Ausente ≠ zero. */
+  estoque: number | null;
   ativo: boolean;
   omie_codigo_produto: number;
   account?: string;

@@ -115,21 +115,29 @@ export function useCustomerSelection({
   // A7 (rodada 2): escolha MANUAL por conta, carimbada com o token da seleção (ver parcela-manual.ts).
   // Os setters EXPORTADOS (só a tela os chama) marcam; os resets/sugestões internos usam os crus.
   const parcelaManualRef = useRef<MarcaParcelaManual>(marcaParcelaManualVazia());
+  // Follow-up do #4068 (Codex): confirmar à mão o prazo que JÁ aparece selecionado não muda o state
+  // da parcela (mesmo valor → o React não re-renderiza) — só a ref mudava, o memo do rascunho seguia
+  // sem a marca "manual" e, após um refresh, a `ultima_parcela` do histórico vencia a escolha
+  // explícita. A marca tem um espelho em STATE (objeto novo a cada escolha manual → re-render e memo
+  // do rascunho invalidado); a ref segue para as leituras assíncronas (sugestão do histórico).
+  const [marcaManual, setMarcaManual] = useState<MarcaParcelaManual>(marcaParcelaManualVazia);
   const escolherParcelaOben = useCallback((v: string) => {
     parcelaManualRef.current = { ...parcelaManualRef.current, oben: selectionTokenRef.current };
+    setMarcaManual(parcelaManualRef.current);
     setSelectedParcelaOben(v);
   }, []);
   const escolherParcelaColacor = useCallback((v: string) => {
     parcelaManualRef.current = { ...parcelaManualRef.current, colacor: selectionTokenRef.current };
+    setMarcaManual(parcelaManualRef.current);
     setSelectedParcelaColacor(v);
   }, []);
   // B7 (rodada 2): o rascunho grava só o prazo escolhido à mão NESTA seleção (lido na hora — a ref
-  // não re-renderiza, mas toda escolha manual muda o state da parcela, que re-dispara o memo do rascunho).
+  // não re-renderiza; o espelho `marcaManual` é quem re-dispara o memo do rascunho a cada escolha).
   const parcelasManuaisDaSelecao = useCallback(
-    () => parcelasManuaisParaRascunho(parcelaManualRef.current, selectionTokenRef.current, {
+    () => parcelasManuaisParaRascunho(marcaManual, selectionTokenRef.current, {
       oben: selectedParcelaOben, colacor: selectedParcelaColacor,
     }),
-    [selectedParcelaOben, selectedParcelaColacor],
+    [marcaManual, selectedParcelaOben, selectedParcelaColacor],
   );
   const [customerParcelaRankingOben, setCustomerParcelaRankingOben] = useState<string[]>([]);
   const [customerParcelaRankingColacor, setCustomerParcelaRankingColacor] = useState<string[]>([]);

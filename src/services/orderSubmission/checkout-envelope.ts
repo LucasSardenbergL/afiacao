@@ -15,6 +15,23 @@ export interface CheckoutEnvelope {
 export interface MarcaOsAfiacao {
   assinatura: string;
   numero: string | null;
+  /** Follow-up do #4068: observação (`cObsOS`, com o horário da coleta) que FOI na OS confirmada.
+   *  Fora da assinatura de propósito (mudá-la não justifica 2ª OS) — serve só para AVISAR que a OS
+   *  ficou com a antiga. `null`/ausente = desconhecida (OS reconciliada, marca antiga) → não avisa. */
+  observacao?: string | null;
+}
+
+/**
+ * Aviso do atalho "OS já enviada" quando a observação/horário do carrinho mudou depois da OS existir:
+ * o reenvio NÃO a atualiza (a assinatura idempotente não inclui `notes` — de propósito, para não
+ * duplicar a OS), e o "já enviada" seco fazia a vendedora achar que o horário novo tinha ido.
+ * `null` = nada a avisar (igual, ou a observação da OS é desconhecida). Vai como AVISO não-bloqueante,
+ * nunca dentro de `results` (Codex P2: `results` vira o "Nº" do cupom e a linha do WhatsApp).
+ */
+export function avisoOsAfiacaoDesatualizada(marca: MarcaOsAfiacao, observacaoAtual: string): string | null {
+  if (typeof marca.observacao !== 'string' || marca.observacao === observacaoAtual) return null;
+  const os = marca.numero ? `A OS ${marca.numero}` : 'A OS de Afiação';
+  return `${os} já estava no Omie e NÃO foi atualizada: o horário/observação novos não foram para ela. Ajuste direto no Omie.`;
 }
 
 /** Assinatura estável (ordem-independente) da OS de afiação: ferramenta + serviço + quantidade por

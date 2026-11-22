@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -11,7 +11,8 @@ import {
   Loader2, AlertCircle, Check, ChevronsUpDown, Calendar,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { proximosDiasUteis } from '@/components/unified-order/dias-entrega';
+import { toast } from 'sonner';
+import { dataEntregaVencida, dataLocalDeISO, proximosDiasUteis, useHojeLocal } from '@/components/unified-order/dias-entrega';
 import type {
   ProductCartItem, ServiceCartItem, FormaPagamento,
 } from '@/hooks/useUnifiedOrder';
@@ -193,7 +194,16 @@ export function CartSummaryBar({
   );
 
   // B3 (rodada 2): próximos 5 dias úteis a partir de hoje — nunca um dia que já passou.
-  const diasEntrega = useMemo(() => proximosDiasUteis(new Date()), []);
+  // Follow-up do #4068: "hoje" acompanha a virada do dia (antes congelava no 1º render).
+  const hoje = useHojeLocal();
+  const diasEntrega = useMemo(() => proximosDiasUteis(dataLocalDeISO(hoje)), [hoje]);
+  // Escolha que ficou no passado com a virada: limpa (iria como `ready_by_date` vencido) e avisa.
+  const entregaVencida = dataEntregaVencida(readyByDate, diasEntrega);
+  useEffect(() => {
+    if (!entregaVencida || !setReadyByDate) return;
+    setReadyByDate('');
+    toast.info('Dia de entrega desmarcado', { description: 'O dia escolhido já passou. Escolha o dia de novo.' });
+  }, [entregaVencida, setReadyByDate]);
 
   return (
     <>

@@ -101,6 +101,11 @@ export function descreverSelo(opcao: OpcaoResolvida): SeloDescricao {
   if (opcao.preco.status !== 'ok') {
     return { estadoLabel: 'Sob consulta', estadoTone: 'muted', temPreco: false, valorLitro: null };
   }
+  // Ausente ≠ zero: saldo não informado não é "Encomenda" (nem "Em estoque") — selo neutro,
+  // na mesma grafia do `seloEstoque` da linha do produto ("Est: —").
+  if (opcao.estado === 'STOCK_UNKNOWN') {
+    return { estadoLabel: 'Est: —', estadoTone: 'muted', temPreco: true, valorLitro: opcao.preco.valorLitroPreparado };
+  }
   const sellable = opcao.estado === 'SELLABLE_NOW';
   return {
     estadoLabel: sellable ? 'Em estoque' : 'Encomenda',

@@ -32,7 +32,7 @@ const row = (
   omie_codigo_produto: number,
   descricao: string,
   valor_unitario: number,
-  estoque: number,
+  estoque: number | null,
 ): ProdutoLinhaOmie => ({ omie_codigo_produto, descricao, valor_unitario, estoque });
 
 const catalog = (
@@ -250,5 +250,29 @@ describe('descreverSelo', () => {
     expect(d.valorLitro).toBeNull();
     expect(d.estadoLabel).toBe('Sob consulta'); // preço incompleto domina (P1)
     expect(d.estadoTone).toBe('muted');
+  });
+});
+
+// Follow-up do #4087: saldo não informado = selo neutro, nunca "Encomenda" nem "Em estoque".
+describe('descreverSelo — estoque desconhecido', () => {
+  it('STOCK_UNKNOWN + preço ok → "Est: —", tom neutro, com o preço', () => {
+    const opcao = resolverOpcaoVenda({
+      temSkuConfirmado: true, temCatalisador: false, proporcaoPct: null,
+      baseEmbalagens: [{ valor: 360, litros: 3.6, estoque: null }], catalisadorEmbalagens: [],
+    });
+    const d = descreverSelo(opcao);
+    expect(d.estadoLabel).toBe('Est: —');
+    expect(d.estadoTone).toBe('muted');
+    expect(d.temPreco).toBe(true);
+    expect(d.valorLitro).not.toBeNull();
+  });
+
+  it('montarSelosVendaAssistida: produto com estoque null no catálogo NÃO sai "Encomenda"', () => {
+    const specs = [spec({ account: 'oben', omie_codigo_produto: 501, kb_product_spec_id: 'B-NULL' })];
+    const cat = catalog({ account: 'oben', row: row(501, 'PRIMER PU FL.6269.02GL', 300, null) });
+    const selos = montarSelosVendaAssistida(specs, cat, {});
+    const opcao = selos.get(keyDeSku('oben', 501));
+    expect(opcao).toBeDefined();
+    expect(descreverSelo(opcao!).estadoLabel).not.toBe('Encomenda');
   });
 });

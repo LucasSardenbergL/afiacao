@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeCheckoutFingerprint, decideCheckoutEnvelope } from '../checkout-envelope';
+import { computeCheckoutFingerprint, decideCheckoutEnvelope, avisoOsAfiacaoDesatualizada } from '../checkout-envelope';
 
 describe('computeCheckoutFingerprint', () => {
   const a = { account: 'oben', omie_codigo_produto: 1, quantity: 2, unit_price: 10 };
@@ -40,5 +40,23 @@ describe('assinaturaServicosAfiacao (A1)', () => {
     // Codex P1: pagamento e entrega vão na OS — trocá-los depois não pode passar por "já enviada".
     expect(sig([a])).not.toBe(sig([a], { ...c, pagamento: '30dd' }));
     expect(sig([a])).not.toBe(sig([a], { ...c, entrega: 'coleta' }));
+  });
+});
+
+// Follow-up do #4068 (Codex): horário trocado depois da OS confirmada — o reenvio NÃO atualiza a OS
+// (a assinatura idempotente não inclui notes, de propósito). A tela tem que AVISAR.
+describe('avisoOsAfiacaoDesatualizada', () => {
+  const obsAntiga = 'Horário preferido: Manhã (8h-12h) || Serra 300mm';
+  it('observação igual à que foi na OS → sem aviso', () => {
+    expect(avisoOsAfiacaoDesatualizada({ assinatura: 'x', numero: '77', observacao: obsAntiga }, obsAntiga)).toBeNull();
+  });
+  it('horário mudou → avisa que a OS ficou no antigo, citando o número', () => {
+    const r = avisoOsAfiacaoDesatualizada({ assinatura: 'x', numero: '77', observacao: obsAntiga }, 'Horário preferido: Tarde (13h-18h) || Serra 300mm');
+    expect(r).toContain('A OS 77 ');
+    expect(r).toContain('Ajuste direto no Omie.');
+  });
+  it('observação da OS desconhecida (reconciliada / marca antiga) → não inventa aviso', () => {
+    expect(avisoOsAfiacaoDesatualizada({ assinatura: 'x', numero: null, observacao: null }, 'qualquer')).toBeNull();
+    expect(avisoOsAfiacaoDesatualizada({ assinatura: 'x', numero: null }, 'qualquer')).toBeNull();
   });
 });
