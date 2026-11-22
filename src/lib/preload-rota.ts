@@ -56,7 +56,7 @@ const marcar = (erros: Erros, erro: unknown) => {
 const contem = (erros: Erros, erro: unknown) => (ehObjeto(erro) ? erros.objetos.has(erro) : erros.primitivos.has(erro));
 
 /** Chaves das guardas anti-loop (esta e a do watchdog de boot no index.html). */
-export const GUARDAS_DE_RECUPERACAO = ['__boot_recovery_attempted__', '__preload_error_reloaded__'] as const;
+const GUARDAS_DE_RECUPERACAO = ['__boot_recovery_attempted__', '__preload_error_reloaded__'] as const;
 /** Quanto o app precisa ficar de pé, sem recarregar, para as guardas valerem de novo. */
 export const PRAZO_APP_ESTAVEL_MS = 15_000;
 
