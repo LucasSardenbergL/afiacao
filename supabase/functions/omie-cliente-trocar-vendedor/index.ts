@@ -6,7 +6,7 @@
 // (ver `_shared/razao-fiscal.ts`: nada fiscal é reenviado).
 //
 // Contrato (POST JSON):
-//   { modo: "dry_run" | "aplicar" | "verificar", lote: "saida_vendedora" | "orfaos", conta: "oben"|"colacor"|"colacor_sc",
+//   { modo: "dry_run" | "aplicar" | "verificar", lote: "saida_vendedora" | "orfaos" | "reparo_entidades", conta: "oben"|"colacor"|"colacor_sc",
 //     limite?: 1..30 (15), apos?: codigo_cliente_omie (paginação), clientes?: [códigos] (canário, ≤10),
 //     escolhas?: [{customer_user_id, dono: "REGINA"|"LUCAS"}] (lote orfaos), execucao_id?: uuid (verificar),
 //     confirmo?: "TROCAR VENDEDOR NO OMIE" (obrigatório no aplicar) }
@@ -22,7 +22,7 @@ import { chamarOmie } from "../_shared/omie-cliente.ts";
 import { ehEscritaIndeterminada } from "../_shared/omie-chamada-relogio.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
-import { type Conta, lerParametros, ORIGEM_SAIDA, type Parametros, VENDEDOR } from "./decisao.ts";
+import { type Conta, lerParametros, ORIGEM_SAIDA, type Parametros, REPARO_ENTIDADES, VENDEDOR } from "./decisao.ts";
 import { type Candidato, type Dependencias, processarBloco, type Recibo, type RespostaOmieSimples } from "./processar.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -102,6 +102,9 @@ function montarDependencias(db: SupabaseClient, p: Parametros, cred: { appKey: s
       const donoPorUser = new Map<string, "REGINA" | "LUCAS">();
       if (pp.lote === "saida_vendedora") {
         q = q.in("omie_codigo_vendedor", [...ORIGEM_SAIDA[pp.conta]]);
+      } else if (pp.lote === "reparo_entidades") {
+        // Lista FECHADA no código (v1.6); o vendedor é conferido no Omie pelo decidir(), não pelo espelho.
+        q = q.in("omie_codigo_cliente", [...REPARO_ENTIDADES[pp.conta]]);
       } else {
         for (const e of pp.escolhas ?? []) donoPorUser.set(e.customer_user_id, e.dono);
         q = q.in("user_id", [...donoPorUser.keys()]);
@@ -111,7 +114,7 @@ function montarDependencias(db: SupabaseClient, p: Parametros, cred: { appKey: s
       return (data ?? []).map((r: { omie_codigo_cliente: number; user_id: string | null }) => ({
         omie_codigo_cliente: Number(r.omie_codigo_cliente),
         customer_user_id: r.user_id,
-        dono: pp.lote === "saida_vendedora" ? "REGINA" : donoPorUser.get(String(r.user_id).toLowerCase())!,
+        dono: pp.lote !== "orfaos" ? "REGINA" : donoPorUser.get(String(r.user_id).toLowerCase())!,
       }));
     },
     async registrar(r: Recibo) {

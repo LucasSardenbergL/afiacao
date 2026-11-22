@@ -436,29 +436,47 @@ Deno.test("Codex v1.4 P2: divergência SÓ no vendedor (hash bate) → erro diz 
   igual([r.itens[0].status, r.itens[0].erro], ["divergente", `vendedor esperado ${REGINA_OBEN}, lido 999`], "diagnóstico certo");
 });
 
-// Omie como medido no lote 1 (v1.4): grava os escalares recebidos com `&amp;` DECODIFICADO + recomendacoes.
+// Omie como medido em 2026-11-22: CODIFICA o texto recebido (& < > " ') antes de gravar.
+const codificar = (x: string) => x.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 const gravaComoOmie = (payload: Record<string, unknown>, atual: Record<string, unknown>) => {
   const r: Record<string, unknown> = { ...atual };
-  for (const [k, v] of Object.entries(payload)) r[k] = typeof v === "string" ? v.replaceAll("&amp;", "&") : v;
+  for (const [k, v] of Object.entries(payload)) r[k] = typeof v === "string" ? codificar(v) : v;
   return r;
 };
 
-Deno.test("v1.5: cadastro com &amp; → payload como lido, Omie grava '&' e o recibo fica 'verificado' (não divergente)", async () => {
-  const omie = new Map([[1, cadastro(1, TATY_OBEN, { razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", observacao: "JOAO &amp; MARIA\nLINHA 2" })]]);
+Deno.test("v1.6: cadastro com &amp;/&apos; → payload decodificado, Omie recodifica e o hash bate LITERAL ('verificado')", async () => {
+  const orig = { razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", observacao: "base d&apos;água\nLINHA 2" };
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, orig)]]);
   const enviados: Record<string, unknown>[] = [];
   const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return gravaComoOmie(payload, atual); } });
   const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
-  igual(enviados[0].razao_social, "TRES R MOVEIS &amp; CIA LTDA", "payload como lido");
-  igual(omie.get(1)?.razao_social, "TRES R MOVEIS & CIA LTDA", "Omie gravou decodificado");
+  igual([enviados[0].razao_social, enviados[0].observacao], ["TRES R MOVEIS & CIA LTDA", "base d'água\nLINHA 2"], "payload decodificado");
+  igual([omie.get(1)?.razao_social, omie.get(1)?.observacao], [orig.razao_social, orig.observacao], "Omie regravou o original");
   igual(r.itens[0].status, "verificado", "status");
 });
 
-Deno.test("v1.5: com &amp; normalizado, mudança REAL de outro campo ainda vira 'divergente' nomeando só ele", async () => {
-  const omie = new Map([[1, cadastro(1, TATY_OBEN, { razao_social: "TRES R MOVEIS &amp; CIA LTDA" })]]);
-  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => ({ ...gravaComoOmie(payload, atual), complemento: "SALA 9" }) });
+Deno.test("v1.6: o Omie da v1.4 (reenvio como lido) seria pego — & cru no cadastro → 'precondicao_falhou' sem AlterarCliente", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, { razao_social: "P&D LTDA" })]]);
+  const enviados: Record<string, unknown>[] = [];
+  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return gravaComoOmie(payload, atual); } });
   const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
-  igual(r.itens[0].status, "divergente", "status");
-  if (!String(r.itens[0].erro).includes("complemento: adicionado") || String(r.itens[0].erro).includes("razao_social")) {
-    throw new Error(`erro deve nomear só complemento: ${r.itens[0].erro}`);
-  }
+  igual([r.itens[0].status, enviados.length], ["precondicao_falhou", 0], "recusa sem escrever");
+  if (!String(r.itens[0].erro).includes("razao_social")) throw new Error(`erro deve nomear o campo: ${r.itens[0].erro}`);
+});
+
+Deno.test("v1.6 reparo_entidades: &amp;amp; volta a &amp; e fica 'verificado'; vendedor segue o alvo", async () => {
+  const omie = new Map([[1, cadastro(1, REGINA_OBEN, { razao_social: "TRES R MOVEIS &amp;amp; CIA LTDA", observacao: "d&amp;apos;água" })]]);
+  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: gravaComoOmie });
+  const r = await processarBloco(params({ modo: "aplicar", lote: "reparo_entidades", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  igual([omie.get(1)?.razao_social, omie.get(1)?.observacao], ["TRES R MOVEIS &amp; CIA LTDA", "d&apos;água"], "reparado");
+  igual([r.itens[0].status, r.itens[0].vendedor_depois], ["verificado", REGINA_OBEN], "status");
+});
+
+Deno.test("v1.6 reparo_entidades: Omie que NÃO grava → 'divergente' (nunca 'verificado'), e quem não está no alvo não é tocado", async () => {
+  const omie = new Map([[1, cadastro(1, REGINA_OBEN, { razao_social: "X &amp;amp; Y" })], [2, cadastro(2, TATY_OBEN, { razao_social: "X &amp;amp; Y" })]]);
+  const enviados: Record<string, unknown>[] = [];
+  const { d } = montar({ omie, candidatos: [cand(2), cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return { ...atual }; } });
+  const r = await processarBloco(params({ modo: "aplicar", lote: "reparo_entidades", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  igual(r.itens.map((i) => i.status), ["precondicao_falhou", "divergente"], "status");
+  igual(enviados.length, 1, "só o do alvo recebeu AlterarCliente");
 });

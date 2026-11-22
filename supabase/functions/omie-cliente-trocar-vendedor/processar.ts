@@ -33,6 +33,8 @@ import {
   camposDiferentes,
   enderecoFaltando,
   payloadAlterar,
+  cadastroEsperado,
+  textosQueMudariam,
   recomendacoesDe,
   VENDEDOR,
   vendedorDoCadastro,
@@ -195,7 +197,7 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
   if (p.modo === "verificar") return await verificar(p, d, o, res);
 
   // O alvo tem de existir, estar ativo e ter o nome esperado NA CONTA — antes de tocar qualquer cliente.
-  const donos = new Set<Dono>(p.lote === "saida_vendedora" ? ["REGINA"] : (p.escolhas ?? []).map((e) => e.dono));
+  const donos = new Set<Dono>(p.lote !== "orfaos" ? ["REGINA"] : (p.escolhas ?? []).map((e) => e.dono));
   const vend = await d.listarVendedores();
   if ("erro" in vend) { res.parou = `ListarVendedores falhou: ${vend.erro}`; return; }
   for (const dono of donos) {
@@ -241,6 +243,10 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
     base.vendedor_antes = atual;
     base.recomendacoes_antes = recomendacoesDe(cad);
     const hashAntes = await hashCadastro(cad);
+    // v1.6: o que a releitura TEM de mostrar depois da escrita (no reparo, uma camada de entidade a menos nos textos).
+    const reparo = p.lote === "reparo_entidades";
+    const cadEsperado = cadastroEsperado(cad, reparo);
+    const hashEsperado = await hashCadastro(cadEsperado);
     const v = decidir(p.lote, p.conta, leitura, alvo);
 
     if (v.tipo === "ja_certo") {
@@ -259,7 +265,15 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
       contar(res, "precondicao_falhou");
       continue;
     }
-    const payload = payloadAlterar(cad, alvo);
+    const mudariam = textosQueMudariam(cad, reparo);
+    if (mudariam.length > 0) {
+      item.status = "precondicao_falhou";
+      item.erro = `texto que o Omie regravaria diferente (ele codifica & < > " '): ${mudariam.join(", ")}`;
+      await d.registrar({ ...base, status: "precondicao_falhou", hash_antes: hashAntes, erro: item.erro });
+      contar(res, "precondicao_falhou");
+      continue;
+    }
+    const payload = payloadAlterar(cad, alvo, reparo);
     if (!payload) {
       item.status = "precondicao_falhou";
       item.erro = `endereço incompleto no Omie (o AlterarCliente exige): falta ${enderecoFaltando(cad).join(", ")}`;
@@ -284,7 +298,9 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
     }
 
     // aplicar — o recibo nasce 'indeterminado' e só sai disso com prova.
-    const id = await d.registrar({ ...base, status: "indeterminado", hash_antes: hashAntes });
+    // Reparo (v1.6): o recibo guarda o hash ESPERADO — no modo verificar, "nada gravado" (hash original) tem de dar
+    // 'divergente', nunca 'verificado' (o vendedor já era o alvo antes, então só o hash distingue).
+    const id = await d.registrar({ ...base, status: "indeterminado", hash_antes: reparo ? hashEsperado : hashAntes });
     let faultEscrita: string | null = null;
     try {
       faultEscrita = (await d.alterarCliente(payload)).fault;
@@ -326,7 +342,7 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
     item.status = "alterado";
     await d.atualizar(id, { status: "alterado", vendedor_depois: depois, espelho_ok: item.espelho_ok, erro: faultEscrita });
     contar(res, "alterado");
-    aVerificar.push({ id, item, hashAntes, cadAntes: cad, lidoEm, esperado: alvo, seConfirmar: "verificado" });
+    aVerificar.push({ id, item, hashAntes: hashEsperado, cadAntes: cadEsperado, lidoEm, esperado: alvo, seConfirmar: "verificado" });
     if (!item.espelho_ok) { res.parou = `espelho não atualizou no cliente ${cand.omie_codigo_cliente}`; break; }
   }
   res.fim = res.parou === null && processados === candidatos.length && candidatos.length < p.limite;

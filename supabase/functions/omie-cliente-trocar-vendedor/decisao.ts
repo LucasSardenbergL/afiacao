@@ -6,7 +6,7 @@
 
 export type Conta = "oben" | "colacor" | "colacor_sc";
 const CONTAS: readonly Conta[] = ["oben", "colacor", "colacor_sc"];
-export type Lote = "saida_vendedora" | "orfaos";
+export type Lote = "saida_vendedora" | "orfaos" | "reparo_entidades";
 type Modo = "dry_run" | "aplicar" | "verificar";
 export type Dono = "REGINA" | "LUCAS";
 
@@ -21,6 +21,17 @@ export const ORIGEM_SAIDA: Record<Conta, readonly number[]> = {
   oben: [8689670840],
   colacor: [4231476928],
   colacor_sc: [3545068889, 3545068960, 3545068923, 3545068907],
+};
+
+/**
+ * Lote `reparo_entidades` (v1.6): os cadastros que a v1.3/v1.4/v1.5 regravaram com entidade DUPLA (`&amp;amp;`,
+ * `&amp;apos;`) — medido por ConsultarCliente de leitura em 2026-11-22. O vendedor deles JÁ é a Regina; o reparo
+ * reenvia o texto decodificado duas vezes e o Omie, que codifica a entrada, volta a gravar o original. Lista FECHADA.
+ */
+export const REPARO_ENTIDADES: Record<Conta, readonly number[]> = {
+  oben: [8689681515],
+  colacor: [393821747, 393821802, 393822107, 393823340],
+  colacor_sc: [3545069324, 3545069485],
 };
 
 /** Nome que o ListarVendedores tem de devolver para o código-alvo (guarda contra código trocado/reaproveitado). */
@@ -60,7 +71,9 @@ export function lerParametros(corpo: unknown): { ok: true; p: Parametros } | { o
     return { ok: false, erro: `aplicar exige confirmo: "${CONFIRMACAO_APLICAR}"` };
   }
   const lote = c.lote;
-  if (lote !== "saida_vendedora" && lote !== "orfaos") return { ok: false, erro: "lote deve ser saida_vendedora | orfaos" };
+  if (lote !== "saida_vendedora" && lote !== "orfaos" && lote !== "reparo_entidades") {
+    return { ok: false, erro: "lote deve ser saida_vendedora | orfaos | reparo_entidades" };
+  }
   const conta = c.conta;
   if (typeof conta !== "string" || !(CONTAS as readonly string[]).includes(conta)) {
     return { ok: false, erro: "conta deve ser oben | colacor | colacor_sc" };
@@ -139,7 +152,12 @@ export type Veredito =
  */
 export function decidir(lote: Lote, conta: Conta, atual: LeituraVendedor, alvo: number): Veredito {
   if (atual === "ilegivel") return { tipo: "precondicao_falhou", motivo: "vendedor atual ilegível" };
+  if (lote === "reparo_entidades" && atual === alvo) return { tipo: "trocar" };
   if (atual === alvo) return { tipo: "ja_certo" };
+  if (lote === "reparo_entidades") {
+    // O vendedor já foi trocado; aqui "trocar" = regravar o texto (o vendedor vai igual ao alvo). Fora da lista: não toca.
+    return { tipo: "precondicao_falhou", motivo: `reparo só para quem já está no alvo; vendedor atual ${atual ?? "vazio"}` };
+  }
   if (lote === "saida_vendedora") {
     if (atual !== null && ORIGEM_SAIDA[conta].includes(atual)) return { tipo: "trocar" };
     return { tipo: "precondicao_falhou", motivo: `vendedor atual ${atual ?? "vazio"} não é da vendedora que saiu` };
@@ -193,22 +211,64 @@ function ehEscalar(v: unknown): boolean {
 }
 
 /**
- * Normalização TOLERADA na verificação (v1.5, Codex v1.5 P1: restrita ao MEDIDO). Lote 1 (v1.4, 2026-11-22): cadastros
- * antigos estão gravados com `&amp;` ("MOVEIS &amp; CIA"); a tela do Omie mostra "&", o ConsultarCliente devolve a
- * entidade, e o reenvio faz o próprio Omie gravar o texto DECODIFICADO (Histórico do Omie, colacor 393821802: razão
- * social, nome fantasia, observações). Valor exibido idêntico, leitura da API diferente → hash acusava 'divergente'.
- * Por isso, SÓ nestes campos de EXIBIÇÃO e SÓ `&amp;` → `&` (literal, uma passada) entra igual no recorte do hash/diff.
- * Identificador (`codigo_cliente_integracao`, documento, e-mail), flag, lista/objeto e qualquer outra entidade seguem
- * comparados LITERALMENTE: se o Omie mexer neles, o hash acusa (direção segura). O payload continua indo COMO LIDO.
+ * O Omie CODIFICA a entrada de texto do AlterarCliente (estilo htmlspecialchars): `&`→`&amp;`, `<`→`&lt;`, `>`→`&gt;`,
+ * `"`→`&quot;`, `'`→`&apos;`. Medido em 2026-11-22 (ConsultarCliente de leitura): a v1.4/v1.5 reenviou "MOVEIS &amp; CIA"
+ * como lido e o Omie gravou "MOVEIS &amp;amp; CIA"; uma observação "d&apos;água" virou "d&amp;apos;água". Por isso
+ * (v1.6) o texto vai DECODIFICADO uma vez — o inverso exato — e o Omie regrava o original; o hash compara LITERAL.
  */
-const CAMPOS_AMP_TOLERADO = new Set(["razao_social", "nome_fantasia", "observacao", "obs_detalhadas"]);
+const CODIFICA: [string, string][] = [["&", "&amp;"], ["<", "&lt;"], [">", "&gt;"], ['"', "&quot;"], ["'", "&apos;"]];
+const DECODIFICA: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'" };
 
-export function normalizarAmp(s: string): string {
-  return s.replaceAll("&amp;", "&");
+/** O que o Omie grava quando recebe `x`. */
+export function codificarComoOmie(x: string): string {
+  let r = x;
+  for (const [de, para] of CODIFICA) r = r.replaceAll(de, para);
+  return r;
+}
+
+/** Inverso de `codificarComoOmie`, numa passada, só as 5 entidades que o Omie produz (literal, caixa fixa). */
+export function decodificarComoOmie(s: string): string {
+  return s.replace(/&(?:amp|lt|gt|quot|apos);/g, (m) => DECODIFICA[m]);
+}
+
+/** Quantas vezes decodificar o texto lido antes de reenviar: 1 no fluxo normal; 2 no reparo (entidade dupla). */
+const voltas = (reparo: boolean) => reparo ? 2 : 1;
+function decodificarN(s: string, n: number): string {
+  let r = s;
+  for (let i = 0; i < n; i++) r = decodificarComoOmie(r);
+  return r;
+}
+
+/** Texto a ENVIAR por campo escalar. */
+function textoEnviado(s: string, reparo: boolean): string {
+  return decodificarN(s, voltas(reparo));
+}
+
+/**
+ * Cadastro que a releitura TEM de mostrar depois da escrita: no fluxo normal, o próprio lido; no reparo, os textos
+ * escalares com UMA camada de entidade a menos (o original antes do dano). É o lado "antes" do hash da verificação.
+ */
+export function cadastroEsperado(cad: Record<string, unknown>, reparo: boolean): Record<string, unknown> {
+  if (!reparo) return cad;
+  const r: Record<string, unknown> = { ...cad };
+  for (const [k, v] of Object.entries(cad)) if (typeof v === "string") r[k] = decodificarComoOmie(v);
+  return r;
+}
+
+/**
+ * Campos escalares de texto que o Omie regravaria DIFERENTE do esperado (ex.: `&` ou `'` crus, entidade fora das 5):
+ * o chamador recusa sem escrever (pré-condição). Só nomes de campo — nunca o valor (dado pessoal).
+ */
+export function textosQueMudariam(cad: Record<string, unknown>, reparo: boolean): string[] {
+  const esperado = cadastroEsperado(cad, reparo);
+  return Object.entries(cad)
+    .filter(([k, v]) => typeof v === "string" && v.trim() !== "" && !INSTRUCOES.has(k) &&
+      codificarComoOmie(textoEnviado(v, reparo)) !== esperado[k])
+    .map(([k]) => k).sort();
 }
 
 /** Payload do AlterarCliente, ou `null` se o endereço lido está incompleto (o chamador recusa sem escrever). */
-export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Record<string, unknown> | null {
+export function payloadAlterar(cad: Record<string, unknown>, alvo: number, reparo = false): Record<string, unknown> | null {
   const codigo = cad.codigo_cliente_omie;
   if (!ehInteiroPositivo(codigo)) throw new Error("cadastro sem codigo_cliente_omie");
   if (enderecoFaltando(cad).length > 0) return null;
@@ -218,7 +278,7 @@ export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Reco
   // "tag [tipo_atividade] incorreto", "tag [bloqueado] deve ser 'S' ou 'N'". Omitido, o campo fica como está.
   for (const [k, v] of Object.entries(cad)) {
     if (!ehEscalar(v) || INSTRUCOES.has(k) || (typeof v === "string" && v.trim() === "")) continue;
-    p[k] = v;
+    p[k] = typeof v === "string" ? textoEnviado(v, reparo) : v;
   }
   p.codigo_cliente_omie = codigo;
   p.recomendacoes = { ...rec, codigo_vendedor: alvo };
@@ -237,8 +297,6 @@ function canonico(v: unknown): unknown {
 /** Texto canônico do cadastro SEM o vendedor e sem `info` (dAlt/hAlt/uAlt mudam a cada gravação). Vira hash; nunca é gravado. */
 export function textoParaHash(cad: Record<string, unknown>): string {
   const { info: _info, ...resto } = cad;
-  // v1.5: `&amp;` → `&` só nos campos de exibição de 1º nível, nos DOIS lados (ver CAMPOS_AMP_TOLERADO).
-  for (const k of CAMPOS_AMP_TOLERADO) if (typeof resto[k] === "string") resto[k] = normalizarAmp(resto[k] as string);
   const rec = resto.recomendacoes && typeof resto.recomendacoes === "object"
     ? { ...(resto.recomendacoes as Record<string, unknown>) }
     : resto.recomendacoes;
