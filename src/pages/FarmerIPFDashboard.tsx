@@ -165,7 +165,8 @@ const FarmerIPFDashboard = () => {
   );
 };
 
-const IPFMetric = ({ label, value, weight, icon: Icon }: { label: string; value: number; weight: number; icon: LucideIcon }) => (
+// value null = componente sem base (ex.: mix de carteira sem comprador) → "—", fora da nota; nunca 0.
+const IPFMetric = ({ label, value, weight, icon: Icon }: { label: string; value: number | null; weight: number; icon: LucideIcon }) => (
   <div>
     <div className="flex items-center justify-between mb-1">
       <div className="flex items-center gap-1.5">
@@ -173,9 +174,13 @@ const IPFMetric = ({ label, value, weight, icon: Icon }: { label: string; value:
         <span className="text-[10px]">{label}</span>
         <Badge variant="outline" className="text-[7px] h-3 px-1">{weight}%</Badge>
       </div>
-      <span className={`text-xs font-bold ${scoreColor(value)}`}>{value}</span>
+      {value == null
+        ? <span className="text-xs font-bold text-muted-foreground">—</span>
+        : <span className={`text-xs font-bold ${scoreColor(value)}`}>{value}</span>}
     </div>
-    <Progress value={value} className={`h-1.5 ${scoreBarColor(value)}`} />
+    {value == null
+      ? <Progress value={0} className="h-1.5" />
+      : <Progress value={value} className={`h-1.5 ${scoreBarColor(value)}`} />}
   </div>
 );
 

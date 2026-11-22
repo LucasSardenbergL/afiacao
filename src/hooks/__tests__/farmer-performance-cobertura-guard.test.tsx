@@ -138,7 +138,7 @@ describe('calculateScores — guard de cobertura (dívida D1 latente)', () => {
 
 // IPF/LTV (#4088 follow-up): a carteira inteira entra (paginada) e o gasto NÃO medido sai da base do LTV.
 describe('calculateScores — LTV sobre a carteira inteira e só gasto medido', () => {
-  const linha = (gasto: number | null) => ({ churn_risk: null, category_count: 0, avg_monthly_spend_180d: gasto, health_score: 0 });
+  const linha = (gasto: number | null) => ({ churn_risk: null, category_count: 0, avg_monthly_spend_180d: gasto, health_score: 0, sales_history_status: gasto == null ? 'sem_historico' : 'ativo' });
 
   it('carteira > 1.000 linhas: a 2ª página entra no LTV (o corte de 1.000 não decide)', async () => {
     // 1.000 sem gasto medido na 1ª página; os 2 compradores só existem na 2ª.
@@ -162,5 +162,30 @@ describe('calculateScores — LTV sobre a carteira inteira e só gasto medido', 
     await act(async () => { await r.current.calculateScores(FARMER); });
     expect(insertedScore()).toBeFalsy();
     expect(toast.error).toHaveBeenCalled();
+  });
+});
+
+// Mix do IPF (decisão do founder, 2026-11-21): só COMPRADORES (ativo/stale) entram na média de categorias.
+describe('calculateScores — mix só sobre compradores', () => {
+  const cli = (status: string, cc: number | null) =>
+    ({ churn_risk: null, category_count: cc, avg_monthly_spend_180d: status === 'sem_historico' ? null : 100, health_score: 0, sales_history_status: status });
+
+  it('carteira mista: quem nunca comprou sai do denominador', async () => {
+    // compradores: 3 e 3 (média 3 → 50 pts); 98 sem_historico com 0 diluiriam para 0,06 (1 pt)
+    scoreRows = [cli('ativo', 3), cli('stale', 3), ...Array.from({ length: 98 }, () => cli('sem_historico', 0))];
+    const { result: r } = renderHook(() => useFarmerPerformance());
+    await act(async () => { await r.current.calculateScores(FARMER); });
+    expect(insertedScore()?.insert?.ipf_mix_expansion).toBe(50);
+  });
+
+  it('carteira só com quem nunca comprou: mix null e fora da nota (renormalizada), nunca 0', async () => {
+    // churn conhecido e baixo em todos → churn 100 pts; margem/hora/LTV = 0.
+    scoreRows = Array.from({ length: 50 }, () => ({ ...cli('sem_historico', 0), churn_risk: 10 }));
+    const { result: r } = renderHook(() => useFarmerPerformance());
+    await act(async () => { await r.current.calculateScores(FARMER); });
+    const ins = insertedScore()?.insert;
+    expect(ins?.ipf_mix_expansion).toBeNull();
+    // renormaliza sobre os 80% medidos: 100×0,15/0,80 = 18,75 → 19 (com mix 0 fabricado daria 15)
+    expect(ins?.ipf_total).toBe(19);
   });
 });

@@ -99,3 +99,45 @@ export function mediaGastoMedido(gastos: Iterable<unknown>): { media: number | n
   }
   return { media: medidos > 0 ? soma / medidos : null, medidos };
 }
+
+/** Status de `farmer_client_scores.sales_history_status` que significam venda MEDIDA (comprador). */
+const STATUS_COMPRADOR = new Set(['ativo', 'stale']);
+
+/**
+ * Média de categorias sobre os COMPRADORES — a base do mix do IPF do vendedor (`useFarmerPerformance`).
+ * Decisão do founder (2026-11-21): quem nunca comprou (`sem_historico`) sai do numerador E do denominador.
+ * O critério é o STATUS, não o valor: `category_count` de quem não tem venda vem 0 (contagem de produtos
+ * sem item, ver `deriveSalesBase`), então filtrar por "> 0" apagaria o comprador de fato com 0 e "não NULL"
+ * não filtraria nada. Prod 2026-11-21: carteira de 14.177 com 286 compradores → média 0,18 (3 pontos) em
+ * vez de 8,78. Comprador com `category_count` não finito também sai (lacuna de dado, não zero).
+ * `media` null = nenhum comprador → o componente fica FORA da nota (nunca 0 fabricado).
+ */
+export function mediaCategoriasCompradores(
+  clientes: Iterable<{ sales_history_status: unknown; category_count: unknown }>,
+): { media: number | null; compradores: number } {
+  let soma = 0;
+  let compradores = 0;
+  for (const c of clientes) {
+    if (typeof c.sales_history_status !== 'string' || !STATUS_COMPRADOR.has(c.sales_history_status)) continue;
+    const v = finitoOuNulo(c.category_count);
+    if (v == null) continue;
+    soma += v;
+    compradores++;
+  }
+  return { media: compradores > 0 ? soma / compradores : null, compradores };
+}
+
+/**
+ * Média ponderada que RENORMALIZA sobre os componentes medidos: componente `null` (sem base — ex.: mix de
+ * carteira sem comprador) sai com o seu peso, em vez de entrar como 0. Nenhum medido → null.
+ */
+export function mediaPonderadaMedida(componentes: Array<{ valor: number | null; peso: number }>): number | null {
+  let soma = 0;
+  let pesos = 0;
+  for (const { valor, peso } of componentes) {
+    if (valor == null || !Number.isFinite(valor)) continue;
+    soma += valor * peso;
+    pesos += peso;
+  }
+  return pesos > 0 ? soma / pesos : null;
+}

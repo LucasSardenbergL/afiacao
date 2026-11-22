@@ -4,7 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { proporcaoChurnBaixo } from '@/lib/scoring/churn';
-import { mediaGastoMedido } from '@/lib/scoring/salesBase';
+import { mediaCategoriasCompradores, mediaGastoMedido, mediaPonderadaMedida } from '@/lib/scoring/salesBase';
 import { fetchAllPages } from '@/lib/postgrest';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
 
@@ -27,7 +27,8 @@ export interface PerformanceScore {
   // IPF
   ipfIncrementalMargin: number;
   ipfMarginPerHour: number;
-  ipfMixExpansion: number;
+  /** null = carteira sem comprador (mix sem base) — exibido como "—", fora da nota. */
+  ipfMixExpansion: number | null;
   ipfLtvEvolution: number;
   ipfChurnReduction: number;
   ipfTotal: number;
@@ -77,6 +78,7 @@ interface FarmerCallRow {
 }
 
 interface ClientScoreRow {
+  sales_history_status: string | null;
   churn_risk: number | string | null;
   category_count: number | string | null;
   avg_monthly_spend_180d: number | string | null;
@@ -109,7 +111,7 @@ export const useFarmerPerformance = () => {
     ieeTotal: Number(d.iee_total || 0),
     ipfIncrementalMargin: Number(d.ipf_incremental_margin || 0),
     ipfMarginPerHour: Number(d.ipf_margin_per_hour || 0),
-    ipfMixExpansion: Number(d.ipf_mix_expansion || 0),
+    ipfMixExpansion: d.ipf_mix_expansion == null ? null : Number(d.ipf_mix_expansion),
     ipfLtvEvolution: Number(d.ipf_ltv_evolution || 0),
     ipfChurnReduction: Number(d.ipf_churn_reduction || 0),
     ipfTotal: Number(d.ipf_total || 0),
@@ -216,7 +218,7 @@ export const useFarmerPerformance = () => {
       const clientScores = await fetchAllPages(
         (de, ate) => supabase
           .from('farmer_client_scores')
-          .select('id, churn_risk, category_count, avg_monthly_spend_180d, health_score')
+          .select('id, churn_risk, category_count, avg_monthly_spend_180d, health_score, sales_history_status')
           .eq('farmer_id', farmerId)
           .order('id', { ascending: true })
           .range(de, ate),
@@ -294,11 +296,12 @@ export const useFarmerPerformance = () => {
       const marginPerHour = combinedTime > 0 ? (combinedMargin / combinedTime) * 3600 : 0;
       const ipfMarginPerHour = Math.round(Math.min(100, marginPerHour));
 
-      // 3. Mix expansion: avg categories across clients (target 6+)
-      const avgCategories = clientArr.length > 0
-        ? clientArr.reduce((s, c) => s + Number(c.category_count || 0), 0) / clientArr.length
-        : 0;
-      const ipfMixExpansion = Math.round(Math.min(100, (avgCategories / 6) * 100));
+      // 3. Mix expansion: média de categorias dos COMPRADORES (status ativo/stale; target 6+). Quem nunca
+      // comprou sai da base (decisão do founder, 2026-11-21): a carteira de 14.177 com 286 compradores
+      // pontuava 3 (média 0,18) em vez de 100 (8,78). Nenhum comprador → null: o mix fica FORA da nota
+      // (renormalizada abaixo), nunca 0 fabricado.
+      const { media: avgCategories } = mediaCategoriasCompradores(clientArr);
+      const ipfMixExpansion = avgCategories == null ? null : Math.round(Math.min(100, (avgCategories / 6) * 100));
 
       // 4. LTV evolution: gasto mensal médio de quem tem gasto MEDIDO (target R$2000). O não medido (NULL desde
       // a calculate-scores v1.8 — quem nunca comprou) sai da base, como o churn desconhecido no item 5: o
@@ -320,14 +323,15 @@ export const useFarmerPerformance = () => {
         ? Math.round((lowChurnClients / comRisco) * 100)
         : 0;
 
-      // IPF Total (weighted average)
-      const ipfTotal = Math.round(
-        ipfIncrementalMargin * 0.25 +
-        ipfMarginPerHour * 0.25 +
-        ipfMixExpansion * 0.20 +
-        ipfLtvEvolution * 0.15 +
-        ipfChurnReduction * 0.15
-      );
+      // IPF Total (média ponderada RENORMALIZADA sobre os componentes medidos: mix null sai com o seu peso)
+      const ipfTotalBruto = mediaPonderadaMedida([
+        { valor: ipfIncrementalMargin, peso: 0.25 },
+        { valor: ipfMarginPerHour, peso: 0.25 },
+        { valor: ipfMixExpansion, peso: 0.20 },
+        { valor: ipfLtvEvolution, peso: 0.15 },
+        { valor: ipfChurnReduction, peso: 0.15 },
+      ]);
+      const ipfTotal = ipfTotalBruto == null ? null : Math.round(ipfTotalBruto);
 
       // Save score
       const scoreData = {

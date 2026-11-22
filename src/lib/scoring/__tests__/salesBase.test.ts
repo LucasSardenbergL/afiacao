@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import { componenteMeta, deriveSalesBase, finitoOuNulo, mediaGastoMedido, tetoGasto } from '../salesBase';
+import { componenteMeta, deriveSalesBase, finitoOuNulo, mediaCategoriasCompradores, mediaGastoMedido, mediaPonderadaMedida, tetoGasto } from '../salesBase';
 
 describe('deriveSalesBase (v1.8 — ausente é NULL, nunca o 999/R$0 sentinela)', () => {
   it('ausente (undefined/null = sem linha na RPC) → dias NULL, gasto NULL, categorias 0', () => {
@@ -146,5 +146,30 @@ describe('mediaGastoMedido (LTV do IPF — base = gasto medido)', () => {
   });
   it('numeric-string do PostgREST é lido', () => {
     expect(mediaGastoMedido(['300', 100])).toEqual({ media: 200, medidos: 2 });
+  });
+});
+
+describe('mediaCategoriasCompradores (mix do IPF — só compradores)', () => {
+  const c = (sales_history_status: string | null, category_count: unknown) => ({ sales_history_status, category_count });
+  it('carteira mista: sem_historico (e status null) fora da base; comprador com 0 conta', () => {
+    expect(mediaCategoriasCompradores([c('ativo', 8), c('stale', 0), c('sem_historico', 0), c(null, 5), c('ativo', '4')]))
+      .toEqual({ media: 4, compradores: 3 });
+  });
+  it('comprador com category_count NULL/não finito sai (lacuna, não zero)', () => {
+    expect(mediaCategoriasCompradores([c('ativo', null), c('ativo', 'x'), c('stale', 6)])).toEqual({ media: 6, compradores: 1 });
+  });
+  it('só quem nunca comprou → media null (nunca 0)', () => {
+    expect(mediaCategoriasCompradores([c('sem_historico', 0), c('sem_historico', 0)])).toEqual({ media: null, compradores: 0 });
+    expect(mediaCategoriasCompradores([])).toEqual({ media: null, compradores: 0 });
+  });
+});
+
+describe('mediaPonderadaMedida (IPF total renormalizado)', () => {
+  it('componente null sai com o seu peso', () => {
+    expect(mediaPonderadaMedida([{ valor: 100, peso: 0.25 }, { valor: null, peso: 0.75 }])).toBe(100);
+    expect(mediaPonderadaMedida([{ valor: 100, peso: 0.5 }, { valor: 0, peso: 0.5 }])).toBe(50);
+  });
+  it('nada medido → null', () => {
+    expect(mediaPonderadaMedida([{ valor: null, peso: 1 }])).toBeNull();
   });
 });
