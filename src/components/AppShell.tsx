@@ -920,7 +920,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <main
               className={cn(
                 // Sob a lente o wrapper já tem pt-7: o mínimo desconta a faixa (senão sobra rolagem de 1.75rem — Codex).
-                'pt-topbar min-h-[calc(100dvh-var(--faixa-ver-como,0px))] transition-all duration-200',
+                // `svh`, não `dvh`: no celular o `dvh` muda a cada vez que a barra do navegador
+                // some/volta ao rolar — o mínimo da página inteira mudava junto (e animava, com o
+                // `transition-all`), a altura do documento oscilava e a tela PISCAVA. `svh` é fixo.
+                // A transição fica só na margem (é ela que anima o recolher da sidebar no desktop).
+                'pt-topbar min-h-[calc(100svh-var(--faixa-ver-como,0px))] transition-[margin] duration-200',
                 'lg:ml-sidebar',
                 collapsed && 'lg:ml-sidebar-collapsed'
               )}

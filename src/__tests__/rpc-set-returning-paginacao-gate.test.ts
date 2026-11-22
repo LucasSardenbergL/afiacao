@@ -204,6 +204,11 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 4, prova: '`UNION ALL` de 4 SELECTs agregados sem GROUP BY' }],
   ['get_whatsapp_funil @ src/hooks/useWhatsappFunil.ts',
     { tipo: 'estrutural', teto: 1, prova: 'SELECT de subqueries escalares, sem FROM' }],
+  // Entrou no types.ts pela regeneração do Lovable (38243d090) — o gate só passou a vê-la ali. Corpo de PROD conferido
+  // (psql-ro, 2026-11-22): `p_ate - p_de > 400` → RAISE 22023, e o SELECT final é `FROM dias` (generate_series de 1 linha
+  // por dia) com JOIN/LEFT JOIN chaveados pelo dia.
+  ['banco_extrato_omie_dia @ src/services/financeiroExtratoBancario.ts',
+    { tipo: 'estrutural', teto: 401, prova: '1 linha por dia de generate_series(0, p_ate - p_de); a função recusa intervalo > 401 dias (22023)' }],
   // RPCs de ESCRITA do "segurar compra": devolvem 1 linha por SKU de p_skus (unnest DISTINCT). O hook FATIA o array em
   // lotes de LOTE_RPC_SKUS=200 (useFinanceiroCompraSuspensa.ts) — o teto é do lado do cliente, por construção.
   ['reposicao_compra_suspender @ src/hooks/useFinanceiroCompraSuspensa.ts',
