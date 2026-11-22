@@ -20,6 +20,10 @@ ficha, próxima ação, crédito na ficha) espera sinal de uso. O sensor `client
    (plataforma). Com isso, a aresta `pages/Customer360.tsx → adminCustomers/navegacao.ts`, registrada na
    onda 1, saiu da baseline de fronteiras. A sessão irmã "clientes-onda-2" achou esse ponto, os links da
    `IdentityColumn` e a previsão de demanda; o código veio do commit local dela, c14e8e078.
+   ⚠️ Esse bloco (helper em `lib/nav`, links da `IdentityColumn`, previsão de demanda e o denominador
+   abaixo) foi enviado DEPOIS do merge automático do #4110 e ficou órfão na branch. Ele entrou num PR de
+   follow-up. Lição: depois de abrir o PR, todo push extra precisa entrar antes do merge automático.
+   Confira `gh pr view --json state` antes do push.
 2. **Ligação com o cliente de origem (item 9).** O `CallButton` recebia só nome e telefone, e o
    `resolveCustomerByPhone` resolvia o cliente de novo pelo número. Com telefone compartilhado (19% dos
    clientes), a ligação feita da ficha do próprio cliente ia para a conferência sem dono. Agora
@@ -36,7 +40,7 @@ ficha, próxima ação, crédito na ficha) espera sinal de uso. O sensor `client
    fonte, porque o WebRTC fura o write-guard (`docs/agent/impersonation.md`). Não houve SQL: a RPC
    `resolver_cliente_por_telefone` continua sendo a fonte do reconhecimento.
    **Denominador hoje = 0.** Em prod, em 2026-11-22 (psql-ro), `farmer_calls` tinha 0 linhas e
-   `call_log` tinha 20: nenhuma ligação gravada virou registro até agora. O item 9 previne um defeito que
+   `call_log` tinha 20 (de 2026-05-28 a 2026-06-09): nenhuma ligação gravada virou registro até agora. O item 9 previne um defeito que
    ainda não aconteceu. É barato e fica com teste, mas o efeito só se mede quando houver ligações.
    Acompanhamento:
    `SELECT count(*) AS ligacoes, count(*) FILTER (WHERE customer_user_id IS NULL) AS sem_cliente FROM public.farmer_calls;`
