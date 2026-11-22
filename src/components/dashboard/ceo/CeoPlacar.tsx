@@ -4,7 +4,8 @@
  *
  * - Vendas em pedidos MTD vs mesmos dias do mês anterior (`useTeamKpis`, segue o seletor). É
  *   PEDIDO, não receita contábil — o rótulo diz isso.
- * - Margem bruta do último mês fechado comum (DRE, regime visível), só das empresas de
+ * - Margem bruta do último mês fechado comum (DRE, regime visível) — com a composição (receita, CMV,
+ *   lucro, mês anterior e confiança do mapeamento) por empresa num card próprio —, só das empresas de
  *   mercadoria — a Colacor SC só presta serviço e aparece como "serviço", não como 100%.
  * - Saldo bancário líquido (soma dos CNPJs) + quais CNPJs estão negativos — caixa não é
  *   fungível entre CNPJs, então o total nunca aparece sozinho como "disponível".
@@ -250,6 +251,74 @@ function CardCobranca({ c, erro, carregando, empresas }: {
   );
 }
 
+type ComposicaoMargemCeo = ReturnType<typeof useCeoPlacar>['composicaoMargem'];
+
+/** De onde vem a margem do tile: receita, CMV e lucro (receita − CMV) por empresa de mercadoria, com o mapeamento da DRE. */
+function CardComposicaoMargem({ c, regime }: { c: ComposicaoMargemCeo; regime: string }) {
+  if (c.mes === null || c.linhas.length === 0) return null;
+  return (
+    <Card className="overflow-x-auto p-4" data-testid="ceo-composicao-margem">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          Como a margem se forma · {rotuloMes(c.mes)} · DRE {regime === 'caixa' ? 'caixa' : 'competência'}
+        </div>
+        <Link
+          to="/financeiro/cockpit"
+          onClick={() => track('dashboard.ceo.kpi_click', { kpi: 'composicao_margem' })}
+          className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          Abrir DRE →
+        </Link>
+      </div>
+      <table className="mt-2 w-full text-xs tabular-nums">
+        <caption className="sr-only">Composição da margem bruta por empresa</caption>
+        <thead>
+          <tr className="border-b border-border text-2xs uppercase tracking-wide text-muted-foreground">
+            <th scope="col" className="py-1.5 pr-3 text-left font-normal">Empresa</th>
+            <th scope="col" className="py-1.5 pr-3 text-right font-normal">Receita líquida</th>
+            <th scope="col" className="py-1.5 pr-3 text-right font-normal">CMV</th>
+            <th scope="col" className="py-1.5 pr-3 text-right font-normal">Lucro bruto</th>
+            <th scope="col" className="py-1.5 pr-3 text-right font-normal">Margem</th>
+            <th scope="col" className="py-1.5 pr-3 text-right font-normal">Mês anterior</th>
+            <th scope="col" className="py-1.5 text-left font-normal">Mapeamento da DRE</th>
+          </tr>
+        </thead>
+        <tbody>
+          {c.linhas.map((l) => (
+            <tr key={l.empresa} className="border-b border-border last:border-0">
+              <th scope="row" className="py-1.5 pr-3 text-left font-medium">{COMPANIES[l.empresa].shortName}</th>
+              <td className="py-1.5 pr-3 text-right" title={formatBRL(l.receitaLiquida)}>{formatarBRLCompacto(l.receitaLiquida)}</td>
+              <td className="py-1.5 pr-3 text-right" title={formatBRL(l.cmv)}>{formatarBRLCompacto(l.cmv)}</td>
+              <td className="py-1.5 pr-3 text-right" title={formatBRL(l.lucroBruto)}>{formatarBRLCompacto(l.lucroBruto)}</td>
+              <td className="py-1.5 pr-3 text-right font-medium">{formatarFracaoPct(l.margem)}</td>
+              <td className="py-1.5 pr-3 text-right text-muted-foreground">{formatarFracaoPct(l.margemAnterior)}</td>
+              <td className="py-1.5 text-left">
+                {l.semMapeamento !== null && l.semMapeamento > 0 ? (
+                  <span
+                    className="text-status-warning"
+                    title="Categorias da DRE inteira (não só do CMV) classificadas pela descrição, sem mapeamento explícito"
+                  >
+                    {l.semMapeamento} {l.semMapeamento === 1 ? 'categoria' : 'categorias'} sem mapeamento
+                  </span>
+                ) : l.semMapeamento === null ? (
+                  <span className="text-muted-foreground">não informada</span>
+                ) : (
+                  <span className="text-muted-foreground">mapeada</span>
+                )}
+                {l.provisorio && (
+                  <span className="ml-1 text-status-warning" title="Há lançamentos fora da DRE no mês">
+                    · DRE provisória
+                  </span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
 export function CeoPlacar() {
   const { selection, companyInfo } = useCompany();
   const vendas = useTeamKpis();
@@ -407,6 +476,8 @@ export function CeoPlacar() {
           </table>
         </Card>
       )}
+
+      <CardComposicaoMargem c={p.composicaoMargem} regime={p.regime} />
 
       <CardCobranca
         c={p.cobranca}

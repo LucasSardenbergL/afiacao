@@ -79,8 +79,31 @@ responsável, promessa e régua de WhatsApp. O placar resume e leva até ela.
   isso desloca também parcelas recentes do mesmo cliente. O tile de vencidos (status `ATRASADO`) e a
   fila (que inclui `A VENCER`/`VENCE HOJE` já vencidos pela data) usam réguas diferentes (Codex P2).
 
+## Fase 4 — "Como a margem se forma" (2026-11-22)
+
+O card mostra, no mesmo mês e regime do tile, para cada empresa de mercadoria: receita líquida, CMV,
+lucro bruto, margem, margem do mês anterior e o mapeamento da DRE (categorias sem mapeamento explícito
+e "DRE provisória"). Tudo vem do mesmo cache da DRE do cockpit; nenhuma leitura nova.
+
+- **Lucro pela identidade receita − CMV**, no tile e no card. O `lucro_bruto` gravado não é usado: um
+  snapshot incoerente inflaria a margem (Codex P1; 0 de 139 DREs de prod são incoerentes hoje).
+- **Rótulos honestos (Codex P2/P3).** `qtd_categorias_sem_mapeamento` conta a DRE inteira, não só o
+  CMV, então a coluna se chama "Mapeamento da DRE". `resultado_provisorio` acende com qualquer
+  lançamento fora da DRE no mês: o rótulo é "DRE provisória". Hoje a Oben tem uma dúzia de categorias
+  sem mapeamento e a Colacor aparece provisória em todo mês.
+- **Em aberto (engine `omie-financeiro`):** gravar o valor e o percentual do CMV classificado por
+  heurística (`viaFallback`), para medir a confiança do CMV de verdade, e o motivo de "provisória".
+
+## Fase 5 — composição da NCG: depende da engine
+
+Recebíveis, estoque, adiantamentos, fornecedores, folha e tributos existem só dentro de
+`calcularNCG` (`fin-cashflow-engine`). O snapshot grava o total e o estoque. Recompor no front com o
+resumo não fecharia com a NCG oficial, por causa das regras de folha em 30 dias e de tributos. A entrega
+certa é a engine gravar `aco`/`pco` no snapshot, deploy da edge e depois a UI, junto com o P2 da fase 2
+(contagem dupla na semana corrente).
+
 ## Fases seguintes (sem sinal de uso ainda, não iniciadas)
 
 
-composição da margem (CMV e confiança do mapeamento) · composição da NCG · vendas por empresa em dias
+ vendas por empresa em dias
 úteis. O sensor já existe: `dashboard.ceo.kpi_click`.
