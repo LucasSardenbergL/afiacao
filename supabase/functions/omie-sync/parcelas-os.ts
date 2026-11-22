@@ -38,3 +38,23 @@ export function montarParcelasOS(
     }),
   };
 }
+
+// Rateio do TOTAL da OS pelas parcelas, em CENTAVOS INTEIROS (PR 2.1 da rodada 3 do Novo Pedido).
+// O código antigo dividia a última parcela em REAIS inteiros (`Math.floor(total / n)`): R$ 100 em 3 vezes
+// ia ao Omie como 33,33 + 33,33 + 34,00 = R$ 100,66. Aqui cada parcela recebe ⌊centavos / n⌋ e a ÚLTIMA
+// leva o saldo, então a soma é SEMPRE o total, ao centavo. Total não finito, ≤ 0 ou n < 1 → lança: o
+// chamador só pede rateio quando há total > 0 (o Omie exige nValor > 0), e número inventado aqui é PV errado.
+export function ratearTotalEmParcelas(totalReais: number, n: number): number[] {
+  if (!Number.isFinite(totalReais) || totalReais <= 0) {
+    throw new Error(`ratearTotalEmParcelas: total inválido (${totalReais})`);
+  }
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`ratearTotalEmParcelas: quantidade de parcelas inválida (${n})`);
+  }
+  const centavos = Math.round(totalReais * 100);
+  const base = Math.floor(centavos / n);
+  const valores: number[] = [];
+  for (let i = 0; i < n - 1; i++) valores.push(base / 100);
+  valores.push((centavos - base * (n - 1)) / 100);
+  return valores;
+}

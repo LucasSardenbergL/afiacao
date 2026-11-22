@@ -50,7 +50,9 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 // v1.15 (2026-11-21) — sync_order IDEMPOTENTE por pedido: cCodIntOS determinístico do orderId (= checkoutId do
 //   front), reserva em afiacao_os_envio (migration 20261121120002) ANTES do IncluirOS, e falha do IncluirOS consulta a
 //   OS pela chave. OS que já existe com outro carrinho → success:false + conferencia (follow-up Codex do #4042).
-export const VERSAO = "v1.15-os-idempotente";
+// v1.16 (2026-11-22) — parcelas da OS rateadas em CENTAVOS com o saldo na última (`ratearTotalEmParcelas`): a última
+//   era calculada em reais inteiros e R$ 100 em 3x ia como 33,33 + 33,33 + 34,00 = 100,66 (PR 2.1, rodada 3).
+export const VERSAO = "v1.16-parcelas-centavos";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
