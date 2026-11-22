@@ -144,7 +144,7 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
     expect(corpo.indexOf('cicloRascunhoRef.current.aoComprometer?.();')).toBeGreaterThan(commit);
     expect(commit).toBeGreaterThan(-1);
     expect(commit).toBeLessThan(corpo.indexOf('submitOrderService('));
-    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; concluirEnvio\(arm, chaveEnv, checkoutId\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
+    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; void comTravaEntreAbas\(`checkout:\$\{chaveEnv\}`, \(\) => concluirEnvio\(arm, chaveEnv, checkoutId\)\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
     expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, nonce: h.nonceDoRascunho() }),');
     expect(pagina).toContain('aoConfirmarTudo: clearDraft,');
   });

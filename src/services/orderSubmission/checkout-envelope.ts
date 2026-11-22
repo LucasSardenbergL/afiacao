@@ -1,5 +1,8 @@
 export interface CheckoutEnvelope {
   checkoutId: string; fingerprint: string; committed: boolean;
+  /** PR 2.2 (rodada 3): o nonce da cópia que DERIVOU este checkoutId (`idDoEnvio`). Ausente = envelope
+   *  legado (id sorteado). Adotá-lo é como outra aba/um refresh retoma ESTE envio sem id novo. */
+  nonce?: string | null;
   // Metadata da ponte CONGELADA na criação (Fase 1): nunca lida ao vivo no submit.
   customerUserId?: string | null; origem?: string | null; atendimentoId?: string | null;
   /** A1 (rodada 2): OS de Afiação já confirmada NESTE envelope. A fp só cobre PRODUTO, então o

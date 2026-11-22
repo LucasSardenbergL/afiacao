@@ -31,6 +31,14 @@ export interface ArmazemEnvelope {
 }
 
 export const PREFIXO_ENVELOPE = 'unified_order_checkout_env:v2:';
+/** Nonce que carrega um checkoutId LITERAL (envelope legado assumido pelo vendedor). */
+export const PREFIXO_NONCE_LITERAL = 'id:';
+
+/** O nonce que retoma o envio `e` nesta cópia: o dele, ou o id literal se for legado. */
+export function nonceParaAssumir(e: CheckoutEnvelope): string {
+  return e.nonce || `${PREFIXO_NONCE_LITERAL}${e.checkoutId}`;
+}
+
 /** A chave fixa de antes (sem dono). Nunca migrada: só reaproveitada no retry EXATO do mesmo carrinho. */
 export const CHAVE_ENVELOPE_LEGADA = 'unified_order_checkout_env';
 
@@ -59,7 +67,9 @@ export function chaveEnvelope(userId: string, chaveCliente: string): string {
  */
 export function mesmoCliente(a: IdentidadeCliente | null | undefined, b: IdentidadeCliente | null | undefined): boolean {
   if (!a || !b) return false;
-  const iguais = (x: unknown, y: unknown) => x != null && x !== '' && y != null && y !== '' && String(x) === String(y);
+  // Código Omie 0 não identifica ninguém (cliente sem cadastro naquela conta) — Codex P1.
+  const id = (x: unknown) => (x == null || x === '' || x === 0 || x === '0' ? null : String(x));
+  const iguais = (x: unknown, y: unknown) => id(x) !== null && id(x) === id(y);
   return iguais(a.local_user_id, b.local_user_id) || iguais(a.codigo_cliente, b.codigo_cliente)
     || iguais(a.codigo_cliente_colacor, b.codigo_cliente_colacor);
 }
@@ -77,6 +87,8 @@ export function assinaturaItens(fingerprint: string): string {
  */
 export async function idDoEnvio(nonce: string, fingerprint: string): Promise<string> {
   if (!nonce) throw new Error('idDoEnvio: nonce vazio');
+  // Cópia que ASSUMIU um envelope legado (id sorteado, sem nonce): o id é o dele, literal.
+  if (nonce.startsWith(PREFIXO_NONCE_LITERAL)) return nonce.slice(PREFIXO_NONCE_LITERAL.length);
   const dados = new TextEncoder().encode(`checkout-v1|${nonce}|${assinaturaItens(fingerprint)}`);
   const h = new Uint8Array(await crypto.subtle.digest('SHA-256', dados)).slice(0, 16);
   h[6] = (h[6] & 0x0f) | 0x80; // versão 8 (RFC 9562: formato livre)
@@ -131,6 +143,10 @@ export function gravarSeAindaFor(arm: ArmazemEnvelope, chave: string, idEsperado
 
 export type ReservaEnvio =
   | { decisao: 'conflict'; envelope: CheckoutEnvelope }
+  /** Envio pendente do MESMO carrinho feito por OUTRA cópia (outra aba, rascunho perdido, legado). Pode ser
+   *  o mesmo pedido OU um pedido novo idêntico — a máquina não distingue, o VENDEDOR decide (Codex P0 ×2:
+   *  reusar sozinho engolia o pedido novo; ignorar duplicava o mesmo). */
+  | { decisao: 'outra_copia'; envelope: CheckoutEnvelope }
   | { decisao: 'indeterminado' }
   | { decisao: 'new' | 'reuse'; envelope: CheckoutEnvelope; gravou: boolean };
 
@@ -145,11 +161,12 @@ export interface PedidoDeReserva {
 
 /**
  * A reserva do envio, sob `comTravaEntreAbas`: lê a chave do par (não a memória da aba), decide e grava o
- * envelope COMPROMETIDO. `criar(id)` monta o envelope novo com a metadata da ponte.
- *  - par com envio comprometido do MESMO carrinho → `reuse` (o id guardado; o servidor diz "já enviado")
- *  - par com envio comprometido de OUTRO carrinho → `conflict` (a conta já enviada não sai de novo)
+ * envelope COMPROMETIDO. `criar(id)` monta o envelope novo com a metadata da ponte (e o nonce).
  *  - par ilegível → `indeterminado`
- *  - senão, retry EXATO de um envelope legado → `reuse` do id legado; senão `new` com o id calculado.
+ *  - envio comprometido de OUTRO carrinho → `conflict` (a conta já enviada não sai de novo)
+ *  - envio comprometido do MESMO carrinho e MESMO id (esta cópia) → `reuse` (o servidor diz "já enviado")
+ *  - envio comprometido do MESMO carrinho com OUTRO id, ou legado do mesmo cliente+carrinho → `outra_copia`
+ *  - senão → `new` com o id calculado.
  */
 export function reservarEnvio(arm: ArmazemEnvelope, p: PedidoDeReserva, criar: (id: string) => CheckoutEnvelope): ReservaEnvio {
   const l = lerEnvelopeEstrito(arm, p.chave);
@@ -158,12 +175,14 @@ export function reservarEnvio(arm: ArmazemEnvelope, p: PedidoDeReserva, criar: (
   const guardado = l.estado === 'presente' && l.envelope.committed ? l.envelope : null;
   if (guardado) {
     if (assinaturaItens(guardado.fingerprint) !== itens) return { decisao: 'conflict', envelope: guardado };
+    if (guardado.checkoutId !== p.idCalculado) return { decisao: 'outra_copia', envelope: guardado };
     const envelope = { ...guardado, fingerprint: p.fingerprint, committed: true };
     return { decisao: 'reuse', envelope, gravou: gravarEnvelope(arm, p.chave, envelope) };
   }
   const leg = lerEnvelopeEstrito(arm, CHAVE_ENVELOPE_LEGADA);
   if (leg.estado === 'presente' && leg.envelope.committed && assinaturaItens(leg.envelope.fingerprint) === itens
     && p.prefixosLegado.some(px => px && leg.envelope.fingerprint.startsWith(`${px}#`))) {
+    if (leg.envelope.checkoutId !== p.idCalculado) return { decisao: 'outra_copia', envelope: leg.envelope };
     const envelope = { ...leg.envelope, fingerprint: p.fingerprint, committed: true };
     return { decisao: 'reuse', envelope, gravou: gravarEnvelope(arm, p.chave, envelope) };
   }

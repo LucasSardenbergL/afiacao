@@ -319,6 +319,10 @@ Desenho final (`envelope-armazenado.ts`, 3ª versão):
   Mesma cópia + mesmo carrinho ⇒ mesmo id em qualquer aba ⇒ o servidor responde "já enviado"
   (`sales_orders.checkout_id` + conta; OS por `cCodIntOS`). Carrinho diferente ⇒ id diferente ⇒ pedido novo.
   **A lápide é o servidor.**
+- **Outra cópia, mesmo carrinho, quem decide é o vendedor:** com envio pendente do mesmo carrinho feito por
+  OUTRA cópia (outro id: outra aba, rascunho perdido, legado), a reserva devolve `outra_copia` e o envio é
+  barrado com a ação "É o mesmo pedido", que adota o nonce daquele envio (o legado entra como `id:<checkoutId>`).
+  Codex, rodada 3: reusar sozinho engolia um pedido novo idêntico, e ignorar duplicava o mesmo pedido.
 - O envelope COMPROMETIDO fica na chave por usuário + cliente e trava o carrinho depois de um envio parcial.
   O envio relê essa chave sob Web Locks. Leitura ilegível vira `indeterminado` e barra o envio.
 - O legado só é reaproveitado no retry com os mesmos itens e o mesmo cliente.
@@ -327,13 +331,16 @@ Desenho final (`envelope-armazenado.ts`, 3ª versão):
 
 Desenho para a Onda 3: `nonce` = id da linha do rascunho no servidor, envelope comprometido = "enviado".
 
-Codex em três rodadas: as duas primeiras versões, com "lápide" local de ids concluídos, caíram com 4 P0 cada.
+Codex em quatro rodadas: as duas primeiras versões, com "lápide" local de ids concluídos, caíram com 4 P0 cada.
 Restaurar uma cópia concluída trocava o id; um pedido com outra quantidade virava "já enviado"; o retry do
 legado era ignorado; destino ocupado trocava o id. O id derivado fecha a classe: o único jeito de nascer id
 novo é mudar o carrinho ou girar o nonce, e nenhum dos dois engole um pedido legítimo.
 
 Fica registrado:
-- **Troca aceita:** com um envio parcial pendente, um 2º pedido idêntico do mesmo par reusa o id guardado ("já enviado").
+- **Troca aceita:** o vendedor responde "é o mesmo pedido?" no caso ambíguo (um toque a mais, só com pendente).
+- Código Omie `0` não identifica cliente (`mesmoCliente`).
+- O descarte só solta o envelope que o diálogo mostrou.
+- A conclusão roda sob a mesma trava da reserva.
 - **Risco residual:** sem Web Locks, resta a janela da trava de edição pós-parcial. O PV duplicado do mesmo
   carrinho segue impedido pelo id derivado.
 - **Preexistentes, para a Onda 3 (rascunho no servidor):**

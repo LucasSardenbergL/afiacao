@@ -30,7 +30,7 @@ import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import { computeCheckoutFingerprint, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
 import {
   chaveClienteEnvelope, chaveEnvelope, classificarMudancaOutraAba, comTravaEntreAbas, concluirEnvio,
-  descartarLegadoDoCliente, gravarSeAindaFor, idDoEnvio, lerEnvelope, mesmoCliente, moverEnvelope, reservarEnvio,
+  descartarLegadoDoCliente, gravarSeAindaFor, idDoEnvio, lerEnvelope, mesmoCliente, moverEnvelope, nonceParaAssumir, reservarEnvio,
   type ArmazemEnvelope, type IdentidadeCliente,
 } from '@/services/orderSubmission/envelope-armazenado';
 import { executarComTravaDeEnvio, protegerDuranteEnvio } from '@/services/orderSubmission/travaEnvio';
@@ -558,6 +558,7 @@ export function useUnifiedOrder() {
   const descartarEnvelope = (chaveCliente?: string | null, prefixosFpLegado: string[] = [], idMostrado?: string | null) => {
     const { chave, env } = envelopeDoPar(chaveCliente);
     const arm = armazemLocal();
+    // Só o envelope que o diálogo MOSTROU: o que outra aba comprometeu depois não é deste descarte (Codex P1).
     if (arm && chave && env && (idMostrado === undefined || idMostrado === env.checkoutId)) {
       gravarSeAindaFor(arm, chave, env.checkoutId, null);
     }
@@ -1122,7 +1123,7 @@ export function useUnifiedOrder() {
           isCustomerMode,
         });
         return {
-          checkoutId: id, fingerprint, committed: true,
+          checkoutId: id, fingerprint, committed: true, nonce: nonceRef.current,
           customerUserId: customerUserId ?? null,
           origem: bridge.origem,
           atendimentoId: bridge.atendimentoId,
@@ -1131,6 +1132,24 @@ export function useUnifiedOrder() {
       if (reserva.decisao === 'indeterminado') {
         toast.error('Não foi possível conferir se este pedido já foi enviado', {
           description: 'O registro de envio deste navegador está ilegível. Confira no Omie antes de reenviar; se não houver pedido, use "Trocar e limpar" e monte de novo.',
+        });
+        return;
+      }
+      if (reserva.decisao === 'outra_copia') {
+        // Mesmo carrinho com envio pendente de OUTRA cópia: o mesmo pedido (outra aba, rascunho perdido) ou um
+        // pedido novo idêntico. Só o vendedor sabe — e cada erro custa caro (2º PV × pedido engolido).
+        const pendente = reserva.envelope;
+        toast.error('Já há um envio pendente deste cliente com este mesmo carrinho', {
+          id: 'envio-outra-copia',
+          duration: 20000,
+          description: 'Foi feito em outra aba (ou antes de recarregar). Se é o MESMO pedido, toque em "É o mesmo pedido" e envie de novo: não duplica. Se é OUTRO pedido, conclua ou descarte o pendente antes.',
+          action: {
+            label: 'É o mesmo pedido',
+            onClick: () => {
+              definirNonce(nonceParaAssumir(pendente), identidadeAtualRef.current);
+              toast.info('Pronto. Toque em Enviar de novo para concluir o mesmo pedido.');
+            },
+          },
         });
         return;
       }
@@ -1218,7 +1237,7 @@ export function useUnifiedOrder() {
           },
         });
         if (result.success && result.lastOrderData && result.allConfirmed) {
-          checkoutEnvRef.current = null; concluirEnvio(arm, chaveEnv, checkoutId); definirNonce(null); // sucesso TOTAL: solta o envelope DESTE envio e gira o nonce (o próximo idêntico é novo)
+          checkoutEnvRef.current = null; void comTravaEntreAbas(`checkout:${chaveEnv}`, () => concluirEnvio(arm, chaveEnv, checkoutId)); definirNonce(null); // sucesso TOTAL: solta o envelope DESTE envio sob a trava e gira o nonce; se a remoção falhar, o que sobra tem outro id → 'outra_copia', nunca "já enviado" calado
           cicloRascunhoRef.current.aoConfirmarTudo?.();
         }
         if (result.success && result.lastOrderData) {

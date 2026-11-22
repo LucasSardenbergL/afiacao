@@ -492,10 +492,13 @@ const UnifiedOrder = () => {
     ? (draft.state.customerChaveEnvelope
       ?? (draft.state.customerCodigoCliente ? `oben:${draft.state.customerCodigoCliente}` : undefined))
     : undefined;
+  // O envelope que o diálogo de restaurar MOSTROU (null = nenhum): o descarte só solta esse.
+  const idEnvioMostradoRef = useRef<string | null>(null);
+  idEnvioMostradoRef.current = draft ? (h.envelopeCheckoutAtual(chaveEnvelopeDoRascunho)?.checkoutId ?? null) : null;
   const handleDiscardDraft = () => {
     restorePendenteRef.current = null;
     clearDraft();
-    h.descartarEnvelope(chaveEnvelopeDoRascunho, [draft?.state.customerCodigoCliente].filter(Boolean).map(String));
+    h.descartarEnvelope(chaveEnvelopeDoRascunho, [draft?.state.customerCodigoCliente].filter(Boolean).map(String), idEnvioMostradoRef.current);
     dismissDraft();
     setRestoreOpen(false);
   };

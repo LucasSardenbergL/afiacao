@@ -14,6 +14,7 @@ import {
   lerEnvelopeEstrito,
   mesmoCliente,
   moverEnvelope,
+  nonceParaAssumir,
   reservarEnvio,
   type ArmazemEnvelope,
   type ReservaEnvio,
@@ -111,12 +112,37 @@ describe('duas abas / refresh com a MESMA cópia do pedido (o P0)', () => {
     expect(lerEnvelope(arm, K)?.checkoutId).toBe(idDe(ra));
   });
 
-  it('parcial pendente + mesmo carrinho com OUTRO nonce → reuse do id guardado (não cria 2º PV)', async () => {
+  it('envio pendente + mesmo carrinho de OUTRA cópia → outra_copia: nem engole (pedido novo idêntico) nem duplica (Codex P0)', async () => {
     const arm = armazem();
     const ra = await aba(arm, 'N1').enviar(FP1);
     const rb = await aba(arm, 'N2').enviar(FP1);
+    expect(rb.decisao).toBe('outra_copia');
+    expect(rb.decisao === 'outra_copia' && rb.envelope.checkoutId).toBe(idDe(ra));
+    expect(lerEnvelope(arm, K)?.checkoutId).toBe(idDe(ra)); // nada gravado por cima
+  });
+
+  it('"É o mesmo pedido": B assume o nonce do pendente → mesmo id; e depois que A limpa, continua o MESMO id (Codex P0)', async () => {
+    const arm = armazem();
+    const a = aba(arm, 'N1');
+    const ra = await a.enviar(FP1);
+    const pendente = lerEnvelope(arm, K) as CheckoutEnvelope;
+    const nonceAssumido = nonceParaAssumir({ ...pendente, nonce: 'N1' });
+    const rb = await aba(arm, nonceAssumido).enviar(FP1);
     expect(rb.decisao).toBe('reuse');
     expect(idDe(rb)).toBe(idDe(ra));
+    a.concluir(ra);
+    expect(idDe(await aba(arm, nonceAssumido).enviar(FP1))).toBe(idDe(ra)); // servidor: "já enviado"
+  });
+
+  it('remoção que falha no sucesso: o próximo pedido idêntico (nonce novo) cai em outra_copia, nunca "já enviado" calado', async () => {
+    const arm = armazem();
+    const a = aba(arm, 'N1');
+    const ra = await a.enviar(FP1);
+    const removeItem = arm.removeItem;
+    arm.removeItem = () => { throw new Error('falhou'); };
+    expect(concluirEnvio(arm, K, idDe(ra) as string)).toBe(false);
+    arm.removeItem = removeItem;
+    expect((await aba(arm, 'N2').enviar(FP1)).decisao).toBe('outra_copia');
   });
 
   it('o sucesso de uma aba não apaga o envelope que OUTRA aba comprometeu depois', async () => {
@@ -145,7 +171,7 @@ describe('duas abas / refresh com a MESMA cópia do pedido (o P0)', () => {
         return r;
       },
     };
-    const [i1, i2] = [await idDoEnvio('N1', FP1), await idDoEnvio('N2', FP1)];
+    const [i1, i2] = [await idDoEnvio('N1', FP1), await idDoEnvio('N1', FP1)]; // a mesma cópia em duas abas
     const res = (id: string) => reservarEnvio(arm, { chave: K, fingerprint: FP1, idCalculado: id, prefixosLegado: [] }, criar);
     const [a, b] = await Promise.all([comTravaEntreAbas('t', () => res(i1), travas), comTravaEntreAbas('t', () => res(i2), travas)]);
     expect([a.decisao, b.decisao]).toEqual(['new', 'reuse']);
@@ -175,6 +201,9 @@ describe('chave por usuário + cliente', () => {
     expect(mesmoCliente({ codigo_cliente: 5 }, { codigo_cliente: 6 })).toBe(false);
     expect(mesmoCliente({ local_user_id: '' }, { local_user_id: '' })).toBe(false);
     expect(mesmoCliente(null, { codigo_cliente: 5 })).toBe(false);
+    // código Omie 0 = sem cadastro naquela conta: não identifica (Codex P1)
+    expect(mesmoCliente({ local_user_id: 'a', codigo_cliente: 0 }, { local_user_id: 'b', codigo_cliente: 0 })).toBe(false);
+    expect(mesmoCliente({ codigo_cliente: '0' }, { codigo_cliente: 0 })).toBe(false);
   });
 });
 
@@ -228,12 +257,16 @@ describe('chave que muda no meio do pedido (autocadastro trouxe código — Code
 
 describe('envelope legado (chave fixa de antes do PR 2.2)', () => {
   const legado: CheckoutEnvelope = { checkoutId: 'L', fingerprint: FP1, committed: true };
-  it('retry EXATO do mesmo carrinho reaproveita o id legado (envio em voo no dia do deploy)', async () => {
+  it('retry do mesmo carrinho com legado pendente → outra_copia; assumido ("id:L") → reuse do id legado', async () => {
     const arm = armazem();
     arm.setItem(CHAVE_ENVELOPE_LEGADA, JSON.stringify(legado));
     const r = await aba(arm, 'N').enviar(FP1);
-    expect(r.decisao).toBe('reuse');
-    expect(idDe(r)).toBe('L');
+    expect(r.decisao).toBe('outra_copia');
+    expect(nonceParaAssumir(legado)).toBe('id:L');
+    expect(await idDoEnvio('id:L', FP1)).toBe('L');
+    const r2 = await aba(arm, 'id:L').enviar(FP1);
+    expect(r2.decisao).toBe('reuse');
+    expect(idDe(r2)).toBe('L');
   });
   it('outro carrinho do mesmo cliente NÃO é absorvido e o legado não é apagado de carona', async () => {
     const arm = armazem();
@@ -249,7 +282,7 @@ describe('envelope legado (chave fixa de antes do PR 2.2)', () => {
   it('concluir o envio do id legado solta o legado', async () => {
     const arm = armazem();
     arm.setItem(CHAVE_ENVELOPE_LEGADA, JSON.stringify(legado));
-    const a = aba(arm, 'N');
+    const a = aba(arm, 'id:L');
     a.concluir(await a.enviar(FP1));
     expect(arm.getItem(CHAVE_ENVELOPE_LEGADA)).toBeNull();
   });
