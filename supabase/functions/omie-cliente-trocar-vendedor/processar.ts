@@ -34,6 +34,9 @@ import {
   enderecoFaltando,
   payloadAlterar,
   cadastroEsperado,
+  hashNoRecorte,
+  type ProvaReparo,
+  REPARO_ENTIDADES,
   textosQueMudariam,
   recomendacoesDe,
   VENDEDOR,
@@ -146,6 +149,8 @@ export interface OpcoesBloco {
   orcamentoEscritaMs: number;
   /** A partir daqui não começa verificação nova; o resto fica para o modo verificar. */
   orcamentoTotalMs: number;
+  /** Só para teste: substitui a lista fechada de provas do reparo (produção usa REPARO_ENTIDADES). */
+  provasReparo?: Record<number, ProvaReparo>;
 }
 
 const texto = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -218,7 +223,9 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
       vendedor_antes: null, vendedor_alvo: alvo, vendedor_depois: null, status: "erro_omie", espelho_ok: null, erro: null,
     };
     const base: Omit<Recibo, "status"> = {
-      execucao_id, lote: p.lote, modo: p.modo === "aplicar" ? "aplicar" : "dry_run", account: p.conta,
+      // O CHECK do banco só conhece saida_vendedora|orfaos: o reparo é do mesmo programa (identificável por
+    // vendedor_antes = vendedor_alvo + execucao_id). Sem migration (v1.6).
+    execucao_id, lote: p.lote === "reparo_entidades" ? "saida_vendedora" : p.lote, modo: p.modo === "aplicar" ? "aplicar" : "dry_run", account: p.conta,
       omie_codigo_cliente: cand.omie_codigo_cliente, customer_user_id: cand.customer_user_id,
       vendedor_antes: null, vendedor_alvo: alvo, executado_por: o.executadoPor,
     };
@@ -264,6 +271,28 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
       await d.registrar({ ...base, status: "precondicao_falhou", hash_antes: hashAntes, erro: v.motivo });
       contar(res, "precondicao_falhou");
       continue;
+    }
+    if (reparo) {
+      const prova = (o.provasReparo ?? REPARO_ENTIDADES[p.conta])[cand.omie_codigo_cliente];
+      const motivo = !prova ? "cliente fora da lista do reparo"
+        : hashEsperado === hashAntes ? null
+        : await hashNoRecorte(cadEsperado, prova.recorte) !== prova.hash ? "o texto reparado não reproduz o cadastro de antes do dano (hash do recibo)"
+        : null;
+      if (hashEsperado === hashAntes && prova) {
+        // Nada a reparar (sem entidade dupla): não escreve (Codex v1.6 P3).
+        item.status = "ja_certo";
+        item.vendedor_depois = atual;
+        await d.registrar({ ...base, status: "ja_certo", hash_antes: hashAntes });
+        contar(res, "ja_certo");
+        continue;
+      }
+      if (motivo) {
+        item.status = "precondicao_falhou";
+        item.erro = `reparo: ${motivo}`;
+        await d.registrar({ ...base, status: "precondicao_falhou", hash_antes: hashAntes, erro: item.erro });
+        contar(res, "precondicao_falhou");
+        continue;
+      }
     }
     const mudariam = textosQueMudariam(cad, reparo);
     if (mudariam.length > 0) {

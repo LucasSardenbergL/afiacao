@@ -164,7 +164,8 @@ Deno.test("payloadAlterar v1.6: texto vai decodificado uma vez; reparo, duas", (
 });
 
 Deno.test("textosQueMudariam: & ou ' crus e entidade fora das 5 recusam; codificado certo passa", () => {
-  igual(textosQueMudariam({ ...CAD, razao_social: "MOVEIS &amp; CIA", observacao: OBS }, false), [], "canônico");
+  igual(textosQueMudariam({ ...CAD, razao_social: "MOVEIS &amp; CIA", observacao: "JOAO &amp; MARIA\nbase d&apos;água" }, false), [], "canônico medido");
+  igual(textosQueMudariam({ ...CAD, observacao: OBS }, false), ["observacao"], "&lt; &gt; &quot; não medidos recusam (Codex v1.6 P2)");
   igual(textosQueMudariam({ ...CAD, razao_social: "P&D LTDA", complemento: "D'AVILA", observacao: "&#39;x", bairro: "&nbsp;" }, false),
     ["bairro", "complemento", "observacao", "razao_social"], "crus/fora das 5");
   igual(textosQueMudariam({ ...CAD, razao_social: "MOVEIS &amp;amp; CIA" }, true), [], "reparo do dano");

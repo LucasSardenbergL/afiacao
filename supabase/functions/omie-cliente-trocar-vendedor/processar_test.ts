@@ -1,6 +1,6 @@
 // Fluxo do bloco com Omie e banco FALSOS (sem rede).
 // Roda com: deno test --no-remote --allow-read=supabase/functions supabase/functions/omie-cliente-trocar-vendedor/
-import { lerParametros, type Parametros, VENDEDOR } from "./decisao.ts";
+import { cadastroEsperado as esperadoDe, hashCadastro as hashDe, lerParametros, type Parametros, VENDEDOR } from "./decisao.ts";
 import { type Candidato, type Dependencias, processarBloco, type Recibo, type RespostaOmieSimples } from "./processar.ts";
 
 function igual(a: unknown, b: unknown, msg: string) {
@@ -464,19 +464,62 @@ Deno.test("v1.6: o Omie da v1.4 (reenvio como lido) seria pego — & cru no cada
   if (!String(r.itens[0].erro).includes("razao_social")) throw new Error(`erro deve nomear o campo: ${r.itens[0].erro}`);
 });
 
+// Prova do reparo para o teste: o hash do cadastro "de antes do dano" (o lido com uma camada a menos).
+
+const provaDe = async (cod: number, cad: Record<string, unknown>) => ({ [cod]: { hash: await hashDe(esperadoDe(cad, true)), recorte: "literal" as const } });
+const REPARAR = { modo: "aplicar", lote: "reparo_entidades", confirmo: "TROCAR VENDEDOR NO OMIE" };
+
 Deno.test("v1.6 reparo_entidades: &amp;amp; volta a &amp; e fica 'verificado'; vendedor segue o alvo", async () => {
-  const omie = new Map([[1, cadastro(1, REGINA_OBEN, { razao_social: "TRES R MOVEIS &amp;amp; CIA LTDA", observacao: "d&amp;apos;água" })]]);
+  const dano = cadastro(1, REGINA_OBEN, { razao_social: "TRES R MOVEIS &amp;amp; CIA LTDA", observacao: "d&amp;apos;água" });
+  const omie = new Map([[1, dano]]);
   const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: gravaComoOmie });
-  const r = await processarBloco(params({ modo: "aplicar", lote: "reparo_entidades", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  const r = await processarBloco(params(REPARAR), d, { ...OPC, provasReparo: await provaDe(1, dano) });
   igual([omie.get(1)?.razao_social, omie.get(1)?.observacao], ["TRES R MOVEIS &amp; CIA LTDA", "d&apos;água"], "reparado");
   igual([r.itens[0].status, r.itens[0].vendedor_depois], ["verificado", REGINA_OBEN], "status");
 });
 
 Deno.test("v1.6 reparo_entidades: Omie que NÃO grava → 'divergente' (nunca 'verificado'), e quem não está no alvo não é tocado", async () => {
-  const omie = new Map([[1, cadastro(1, REGINA_OBEN, { razao_social: "X &amp;amp; Y" })], [2, cadastro(2, TATY_OBEN, { razao_social: "X &amp;amp; Y" })]]);
+  const c1 = cadastro(1, REGINA_OBEN, { razao_social: "X &amp;amp; Y" }), c2 = cadastro(2, TATY_OBEN, { razao_social: "X &amp;amp; Y" });
+  const omie = new Map([[1, c1], [2, c2]]);
   const enviados: Record<string, unknown>[] = [];
   const { d } = montar({ omie, candidatos: [cand(2), cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return { ...atual }; } });
-  const r = await processarBloco(params({ modo: "aplicar", lote: "reparo_entidades", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  const r = await processarBloco(params(REPARAR), d, { ...OPC, provasReparo: { ...await provaDe(1, c1), ...await provaDe(2, c2) } });
   igual(r.itens.map((i) => i.status), ["precondicao_falhou", "divergente"], "status");
   igual(enviados.length, 1, "só o do alvo recebeu AlterarCliente");
+});
+
+Deno.test("Codex v1.6 P1: reparo cuja camada a menos NÃO reproduz o hash do recibo → recusa sem escrever; fora da lista também", async () => {
+  const dano = cadastro(1, REGINA_OBEN, { razao_social: "X &amp;amp; Y" });
+  const outro = cadastro(2, REGINA_OBEN, { razao_social: "X &amp;amp; Y" });
+  const omie = new Map([[1, dano], [2, outro]]);
+  const enviados: Record<string, unknown>[] = [];
+  const { d } = montar({ omie, candidatos: [cand(1), cand(2)], aoAlterar: (payload, atual) => { enviados.push(payload); return gravaComoOmie(payload, atual); } });
+  const r = await processarBloco(params(REPARAR), d, { ...OPC, provasReparo: { 1: { hash: "0".repeat(64), recorte: "literal" } } });
+  igual(r.itens.map((i) => i.status), ["precondicao_falhou", "precondicao_falhou"], "status");
+  igual(enviados.length, 0, "nenhuma escrita");
+  if (!String(r.itens[0].erro).includes("não reproduz") || !String(r.itens[1].erro).includes("fora da lista")) throw new Error(`motivos: ${r.itens.map((i) => i.erro)}`);
+});
+
+Deno.test("Codex v1.6 P3: reparo de cadastro SEM entidade dupla → 'ja_certo', sem AlterarCliente", async () => {
+  const limpo = cadastro(1, REGINA_OBEN, { razao_social: "SEM ENTIDADE" });
+  const omie = new Map([[1, limpo]]);
+  const enviados: Record<string, unknown>[] = [];
+  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return atual; } });
+  const r = await processarBloco(params(REPARAR), d, { ...OPC, provasReparo: await provaDe(1, limpo) });
+  igual([r.itens[0].status, enviados.length], ["ja_certo", 0], "não escreve");
+});
+
+Deno.test("Codex v1.6 P2: &lt; &gt; &quot; (codificação não medida) → 'precondicao_falhou' sem escrever", async () => {
+  const omie = new Map([[1, cadastro(1, TATY_OBEN, { observacao: "NAO ENTREGAR &lt;SAB&gt;" })]]);
+  const enviados: Record<string, unknown>[] = [];
+  const { d } = montar({ omie, candidatos: [cand(1)], aoAlterar: (payload, atual) => { enviados.push(payload); return gravaComoOmie(payload, atual); } });
+  const r = await processarBloco(params({ modo: "aplicar", confirmo: "TROCAR VENDEDOR NO OMIE" }), d, OPC);
+  igual([r.itens[0].status, enviados.length], ["precondicao_falhou", 0], "recusa");
+});
+
+Deno.test("v1.6: recibo do reparo grava lote 'saida_vendedora' (CHECK do banco só conhece saida_vendedora|orfaos)", async () => {
+  const dano = cadastro(1, REGINA_OBEN, { razao_social: "X &amp;amp; Y" });
+  const { d, recibos } = montar({ omie: new Map([[1, dano]]), candidatos: [cand(1)], aoAlterar: gravaComoOmie });
+  await processarBloco(params(REPARAR), d, { ...OPC, provasReparo: await provaDe(1, dano) });
+  igual([...new Set([...recibos.values()].map((x) => x.lote))], ["saida_vendedora"], "lote no recibo");
 });

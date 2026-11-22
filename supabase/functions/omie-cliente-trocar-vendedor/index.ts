@@ -104,7 +104,7 @@ function montarDependencias(db: SupabaseClient, p: Parametros, cred: { appKey: s
         q = q.in("omie_codigo_vendedor", [...ORIGEM_SAIDA[pp.conta]]);
       } else if (pp.lote === "reparo_entidades") {
         // Lista FECHADA no código (v1.6); o vendedor é conferido no Omie pelo decidir(), não pelo espelho.
-        q = q.in("omie_codigo_cliente", [...REPARO_ENTIDADES[pp.conta]]);
+        q = q.in("omie_codigo_cliente", Object.keys(REPARO_ENTIDADES[pp.conta]).map(Number));
       } else {
         for (const e of pp.escolhas ?? []) donoPorUser.set(e.customer_user_id, e.dono);
         q = q.in("user_id", [...donoPorUser.keys()]);

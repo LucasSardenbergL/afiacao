@@ -28,11 +28,36 @@ export const ORIGEM_SAIDA: Record<Conta, readonly number[]> = {
  * `&amp;apos;`) — medido por ConsultarCliente de leitura em 2026-11-22. O vendedor deles JÁ é a Regina; o reparo
  * reenvia o texto decodificado duas vezes e o Omie, que codifica a entrada, volta a gravar o original. Lista FECHADA.
  */
-export const REPARO_ENTIDADES: Record<Conta, readonly number[]> = {
-  oben: [8689681515],
-  colacor: [393821747, 393821802, 393822107, 393823340],
-  colacor_sc: [3545069324, 3545069485],
+/**
+ * Prova do original (Codex v1.6 P1): o `hash_antes` do recibo da escrita que causou o dano — o cadastro ANTES dele.
+ * O reparo só escreve se o lido com uma camada de entidade a menos reproduzir EXATAMENTE esse hash; senão recusa.
+ * `recorte`: a v1.5 calculava o hash com `&amp;`→`&` em razão/fantasia/observações (a do canário 393823340).
+ * Medido em 2026-11-22: nos 4 cadastros colacor lidos, a camada a menos BATE com o hash; o lido atual não.
+ */
+export type ProvaReparo = { hash: string; recorte: "literal" | "v1.5-amp" };
+export const REPARO_ENTIDADES: Record<Conta, Readonly<Record<number, ProvaReparo>>> = {
+  oben: { 8689681515: { hash: "0c77cac367b625a5f805fb2f020be630df0a741a871f4c6c9c27622ef017787c", recorte: "literal" } },
+  colacor: {
+    393821747: { hash: "992268030567c60ad63406e5ed5ce4c2b70d7aa11323a26971eeab1a9c6b7ed7", recorte: "literal" },
+    393821802: { hash: "5d24dc34391272d57c6e56c1d3a131138e8d26d939a6910fe8d42093c96500c8", recorte: "literal" },
+    393822107: { hash: "f5fb07a6b95e24edebfeec6240a55a292ba3ee6d425c4eaa7fe0d0848a2457ab", recorte: "literal" },
+    393823340: { hash: "2e96dd12f27d0985addcf599a67fe128f55156650cf69985b6254de58991908b", recorte: "v1.5-amp" },
+  },
+  colacor_sc: {
+    3545069324: { hash: "2b53f53ac65ffe9f55cb03a63e580151f3db718fb49e52e442622820ecb11b7e", recorte: "literal" },
+    3545069485: { hash: "1febd1ca0d3aba3857d187e7ca07e62052158f0f4fd94a0f573fa40d2c6116e7", recorte: "literal" },
+  },
 };
+
+/** O hash no recorte em que a prova foi gravada (a v1.5 normalizava `&amp;` em 4 campos de exibição). */
+export async function hashNoRecorte(cad: Record<string, unknown>, recorte: ProvaReparo["recorte"]): Promise<string> {
+  if (recorte === "literal") return hashCadastro(cad);
+  const c: Record<string, unknown> = { ...cad };
+  for (const k of ["razao_social", "nome_fantasia", "observacao", "obs_detalhadas"]) {
+    if (typeof c[k] === "string") c[k] = (c[k] as string).replaceAll("&amp;", "&");
+  }
+  return hashCadastro(c);
+}
 
 /** Nome que o ListarVendedores tem de devolver para o código-alvo (guarda contra código trocado/reaproveitado). */
 export const NOME_ESPERADO: Record<Dono, string> = { REGINA: "REGINA", LUCAS: "LUCAS" };
@@ -262,8 +287,12 @@ export function cadastroEsperado(cad: Record<string, unknown>, reparo: boolean):
 export function textosQueMudariam(cad: Record<string, unknown>, reparo: boolean): string[] {
   const esperado = cadastroEsperado(cad, reparo);
   return Object.entries(cad)
-    .filter(([k, v]) => typeof v === "string" && v.trim() !== "" && !INSTRUCOES.has(k) &&
-      codificarComoOmie(textoEnviado(v, reparo)) !== esperado[k])
+    .filter(([k, v]) => {
+      if (typeof v !== "string" || v.trim() === "" || INSTRUCOES.has(k)) return false;
+      const enviado = textoEnviado(v, reparo);
+      // Só `&`→`&amp;` e `'`→`&apos;` foram MEDIDOS; enviar `<` `>` `"` dependeria de codificação não medida (Codex v1.6 P2).
+      return /[<>"]/.test(enviado) || codificarComoOmie(enviado) !== esperado[k];
+    })
     .map(([k]) => k).sort();
 }
 
