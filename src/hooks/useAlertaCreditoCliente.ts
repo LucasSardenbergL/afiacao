@@ -122,6 +122,30 @@ function fetchTitulosVencidosPar(par: ParCliente, corte: string): Promise<Titulo
   );
 }
 
+/** Vencido 60+ dos pares (company, código), com o frescor do sync. Lança em qualquer falha de leitura. */
+async function buscarAlertaCredito(pares: ParCliente[]): Promise<AlertaCredito | null> {
+  if (pares.length === 0) return null;
+  const corte = format(subDays(new Date(), ALERTA_CREDITO.diasVencidoMin), 'yyyy-MM-dd');
+
+  const [porPar, syncRes] = await Promise.all([
+    Promise.all(pares.map((p) => fetchTitulosVencidosPar(p, corte))),
+    supabase
+      .from('fin_sync_log')
+      .select('completed_at')
+      .in('action', ['sync_contas_receber', 'sync_all'])
+      .eq('status', 'complete')
+      .order('completed_at', { ascending: false })
+      .limit(1),
+  ]);
+  if (syncRes.error) throw new Error(syncRes.error.message);
+
+  return computeAlertaCredito(
+    porPar.flat(),
+    (syncRes.data?.[0]?.completed_at as string | null) ?? null,
+    new Date(),
+  );
+}
+
 export function useAlertaCreditoCliente(cliente: ClienteComCodigos | null | undefined) {
   const pares = paresDoCliente(cliente);
   const chave = pares.map((p) => `${p.company}:${p.codigo}`).join('|');
@@ -130,27 +154,80 @@ export function useAlertaCreditoCliente(cliente: ClienteComCodigos | null | unde
     queryKey: ['alerta-credito', chave],
     enabled: pares.length > 0,
     staleTime: 60_000,
-    queryFn: async (): Promise<AlertaCredito | null> => {
-      if (pares.length === 0) return null;
-      const corte = format(subDays(new Date(), ALERTA_CREDITO.diasVencidoMin), 'yyyy-MM-dd');
+    queryFn: () => buscarAlertaCredito(pares),
+  });
+}
 
-      const [porPar, syncRes] = await Promise.all([
-        Promise.all(pares.map((p) => fetchTitulosVencidosPar(p, corte))),
-        supabase
-          .from('fin_sync_log')
-          .select('completed_at')
-          .in('action', ['sync_contas_receber', 'sync_all'])
-          .eq('status', 'complete')
-          .order('completed_at', { ascending: false })
-          .limit(1),
-      ]);
-      if (syncRes.error) throw new Error(syncRes.error.message);
+/** Uma linha de `omie_customer_account_map_fresco` (a prova fresca usuário × conta × código). */
+export interface ContaOmieMapeada {
+  user_id: string;
+  account: string;
+  omie_codigo_cliente: number | null;
+}
 
-      return computeAlertaCredito(
-        porPar.flat(),
-        (syncRes.data?.[0]?.completed_at as string | null) ?? null,
-        new Date(),
-      );
+const CONTAS_RECEBER = new Set<ParCliente['company']>(['oben', 'colacor', 'colacor_sc']);
+
+/**
+ * Pares (company, código) a partir das contas mapeadas do cliente e dos aliases do grupo. Conta fora das
+ * 3 empresas do contas a receber, código 0/null e duplicatas saem. A ordem é estável (company, código).
+ */
+export function paresDasContas(contas: ContaOmieMapeada[]): ParCliente[] {
+  const vistos = new Map<string, ParCliente>();
+  for (const c of contas) {
+    if (!CONTAS_RECEBER.has(c.account as ParCliente['company'])) continue;
+    if (c.omie_codigo_cliente == null || !(c.omie_codigo_cliente > 0)) continue;
+    const par: ParCliente = { company: c.account as ParCliente['company'], codigo: c.omie_codigo_cliente };
+    vistos.set(`${par.company}:${par.codigo}`, par);
+  }
+  return [...vistos.values()].sort((x, y) => x.company.localeCompare(y.company) || x.codigo - y.codigo);
+}
+
+/**
+ * Crédito na FICHA (por `customer_user_id`, onde não há os códigos do wizard em mãos).
+ * - `semConta`: nenhuma conta Omie mapeada para o cliente nem para os aliases → não há o que somar.
+ * - `alerta`: null = nenhum título em aberto vencido há 60+ dias nas contas lidas (leitura POSITIVA:
+ *   quem abre a ficha é staff, e staff passa em `fin_user_can_access`).
+ * - `aliasesConferidos`: a RLS de `customer_canonical_alias` só abre para gestor/master. Para os demais,
+ *   o 2º cadastro do grupo (outra empresa) NÃO entra, e a tela tem de dizer que a soma pode ser parcial.
+ * - `conflito`: alias em `conflict` = identidade ambígua → não se afirma soma nenhuma.
+ * Falha de qualquer leitura LANÇA (a ficha mostra "indisponível", nunca "nada vencido").
+ */
+export interface CreditoDaFicha {
+  semConta: boolean;
+  conflito: boolean;
+  aliasesConferidos: boolean;
+  alerta: AlertaCredito | null;
+}
+
+export function useCreditoDoCliente(customerId: string | undefined, { lerAliases }: { lerAliases: boolean }) {
+  return useQuery({
+    queryKey: ['credito-ficha', customerId, lerAliases],
+    enabled: !!customerId,
+    staleTime: 60_000,
+    queryFn: async (): Promise<CreditoDaFicha> => {
+      const id = customerId as string;
+      let usuarios = [id];
+      let conflito = false;
+      if (lerAliases) {
+        const { data, error } = await supabase
+          .from('customer_canonical_alias')
+          .select('alias_user_id, status')
+          .eq('canonical_user_id', id);
+        if (error) throw new Error(error.message);
+        conflito = (data ?? []).some((a) => a.status === 'conflict');
+        usuarios = [id, ...(data ?? []).filter((a) => a.status === 'active').map((a) => a.alias_user_id)];
+      }
+      if (conflito) return { semConta: false, conflito: true, aliasesConferidos: lerAliases, alerta: null };
+
+      const { data: contas, error } = await supabase
+        .from('omie_customer_account_map_fresco')
+        .select('user_id, account, omie_codigo_cliente')
+        .in('user_id', usuarios);
+      if (error) throw new Error(error.message);
+      const pares = paresDasContas((contas ?? []) as ContaOmieMapeada[]);
+      if (pares.length === 0) return { semConta: true, conflito: false, aliasesConferidos: lerAliases, alerta: null };
+
+      return { semConta: false, conflito: false, aliasesConferidos: lerAliases, alerta: await buscarAlertaCredito(pares) };
     },
   });
 }

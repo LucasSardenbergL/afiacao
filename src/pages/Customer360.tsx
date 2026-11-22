@@ -27,6 +27,7 @@ import { CustomerHero } from '@/components/customer360/CustomerHero';
 import { CustomerKpiStrip } from '@/components/customer360/CustomerKpiStrip';
 import { leituraDaQuery } from '@/components/customer360/kpi-rotulos';
 import { IdentityColumn } from '@/components/customer360/IdentityColumn';
+import { AcoesDaFicha } from '@/components/customer360/AcoesDaFicha';
 import { ActivityColumn } from '@/components/customer360/ActivityColumn';
 import { VozTarefaDialog } from '@/components/tarefas/VozTarefaDialog';
 import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
@@ -168,6 +169,9 @@ export default function Customer360() {
         <SeloSituacaoReceita customerUserId={customerId} superficie="ficha" />
 
         <CustomerKpiStrip faturamento12m={leitura12m} metricas={leituraMetricas} score={s} />
+
+        {/* Onda 3: desfecho do contato, próxima ação e crédito — o que a vendedora faz a partir daqui */}
+        {customerId && isStaff && <AcoesDaFicha customerId={customerId} customerName={customer.name ?? 'Cliente'} />}
 
         {/* ─── Grid principal ─── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
