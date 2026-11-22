@@ -6,6 +6,7 @@ import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { buscarMargensScores, type MargemScore } from '@/lib/scoring/margemScores';
 import { valorMedido } from '@/lib/scoring/margin';
+import { familiasDoPerfil } from '@/lib/scoring/objective';
 import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
 import { erroComCausa, mensagemDeErro } from '@/lib/erro-mensagem';
 import { captureException } from '@/lib/analytics';
@@ -97,6 +98,10 @@ export interface CustomerBundles {
    *  preço" via `classifyCustomerProfile`, um veredito que a ausência de dado não sustenta. */
   grossMarginPct: number | null;
   categoryCount: number;
+  /** Famílias distintas em 12m (RPC `familias_12m_clientes`) — a unidade do PERFIL do cliente
+   *  (`classifyCustomerProfile`). `null` = não medido (sem item na janela, família não cadastrada ou
+   *  leitura falhou): o perfil não afirma "poucas famílias". `categoryCount` segue indo ao prompt. */
+  familias12m: number | null;
   /** `null` = dias não medidos (calculate-scores v1.8) — o `|| 0` dizia "comprou hoje" no prompt. */
   daysSinceLastPurchase: number | null;
   cnae: string;
@@ -339,6 +344,21 @@ export const useBundleEngine = () => {
         captureException(e, { fonte: 'get_scores_margem/bundle' });
         return new Map<string, MargemScore>();
       });
+      // Amplitude de mix (20261121230000) para o PERFIL do cartão — mesmo papel da margem acima: alimenta
+      // só o argumento, não o bundle. Paginada (o PostgREST capa .rpc() em 1.000). Falha → mapa vazio:
+      // todo cliente cai em "famílias não medidas" (o perfil não afirma mix), e a falha vai ao Sentry.
+      const familiasDaCarteira = await fetchAllPages(
+        (de, ate) => supabase
+          .rpc('familias_12m_clientes', { p_farmer_id: effectiveUserId })
+          .order('customer_user_id', { ascending: true })
+          .range(de, ate),
+        'familias_12m_clientes/bundle',
+      )
+        .then((linhas) => new Map(linhas.map((f) => [f.customer_user_id, f] as const)))
+        .catch((e: unknown) => {
+          captureException(e, { fonte: 'familias_12m_clientes/bundle' });
+          return new Map<string, { familias_12m: number | null }>();
+        });
 
       // As duas paginadas estouram a capa de 1.000 do PostgREST (3.108 SKUs ativos, 5.668
       // perfis) e vinham truncadas em silêncio: o profileMap deixava a maioria dos clientes sem
@@ -1039,6 +1059,7 @@ export const useBundleEngine = () => {
             // Sem cap_custo_ler a RPC devolve null: o perfil do cliente segue o ramo "margem desconhecida".
             grossMarginPct: margensDaCarteira.get(cid)?.margem ?? null,
             categoryCount: Number(score.category_count || 0),
+            familias12m: familiasDoPerfil(familiasDaCarteira.get(cid)),
             daysSinceLastPurchase: valorMedido(score.days_since_last_purchase),
             cnae: profile.cnae || '',
             customerType: profile.customer_type || '',

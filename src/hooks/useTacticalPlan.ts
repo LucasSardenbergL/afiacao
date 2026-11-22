@@ -4,7 +4,15 @@ import type { Json } from '@/integrations/supabase/types';
 import { exigirColunas } from '@/lib/linha-view';
 import { comNulo } from '@/lib/rpc-args';
 import { invokeFunction } from '@/lib/invoke-function';
-import { selectObjective, clampRecencyCapDays, objetivoFinal, mixGapFamilias } from '@/lib/scoring/objective';
+import {
+  selectObjective,
+  clampRecencyCapDays,
+  objetivoFinal,
+  mixGapFamilias,
+  familiasDoPerfil,
+  PERFIL_FAMILIAS_FOCO_MAX,
+  PERFIL_FAMILIAS_AMPLO_MIN,
+} from '@/lib/scoring/objective';
 import { fetchAllPages } from '@/lib/postgrest';
 import { margemConhecida, mediaMargensConhecidas, valorMedido } from '@/lib/scoring/margin';
 import { numerosDoBundle } from '@/lib/tactical/bundle-numeros';
@@ -260,11 +268,14 @@ export const getObjectiveLabel = (obj: string) => objectiveLabels[obj] || obj;
 // CONHECIDA: `null < 20` é `true` em JS, então sem o guard todo cliente de gasto baixo e margem
 // não apurada sairia como "sensível a preço" — e esse rótulo entra no prompt da IA.
 // avgSpend null = gasto não medido (calculate-scores v1.8) — guard explícito, `null < 500` é `true` em JS.
-const classifyProfile = (healthScore: number, avgSpend: number | null, marginPct: number | null, categoryCount: number): string => {
+// familias12m = famílias distintas em 12m (familiasDoPerfil), NÃO category_count (produtos distintos —
+// erro de unidade). null = não medido → os ramos de mix não disparam (`null <= 3` é `true` em JS).
+const classifyProfile = (healthScore: number, avgSpend: number | null, marginPct: number | null, familias12m: number | null): string => {
   const m = margemConhecida(marginPct);
+  const f = familias12m != null && Number.isFinite(familias12m) ? familias12m : null;
   if (m != null && avgSpend != null && avgSpend < 500 && m < 20) return 'sensivel_preco';
-  if (m != null && m > 35 && categoryCount <= 3) return 'orientado_qualidade';
-  if (avgSpend != null && avgSpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
+  if (m != null && m > 35 && f != null && f <= PERFIL_FAMILIAS_FOCO_MAX) return 'orientado_qualidade';
+  if (avgSpend != null && avgSpend > 2000 && f != null && f >= PERFIL_FAMILIAS_AMPLO_MIN && healthScore > 60) return 'orientado_produtividade';
   return 'misto';
 };
 
@@ -737,7 +748,7 @@ export const useTacticalPlan = () => {
         .limit(2));
 
       const mixGap = mixGapFamilias(salesHistoryStatus, familiasRes[0]);
-      const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);
+      const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, familiasDoPerfil(familiasRes[0]));
       const recencyCapDays = clampRecencyCapDays(recencyCapRow?.value);
       const strategicObjective = selectObjective(churnRisk, mixGap, marginPct, clusterMargin, daysSince, recencyCapDays, salesHistoryStatus);
 

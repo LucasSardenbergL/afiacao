@@ -33,3 +33,30 @@ describe('classifyCustomerProfile — margem ausente não fabrica rótulo', () =
     expect(classifyCustomerProfile(50, 300, 40, 2)).toBe('orientado_qualidade');
   });
 });
+
+/**
+ * O 4º argumento é FAMÍLIAS distintas em 12m (RPC familias_12m_clientes), não `category_count` (produtos
+ * distintos). Fronteiras 3/4 mantidas na unidade certa; `null` (não medido) não afirma mix.
+ */
+describe('classifyCustomerProfile — mix por FAMÍLIA em 12m', () => {
+  it('≤3 famílias + margem alta → qualidade; 4 → misto', () => {
+    expect(classifyCustomerProfile(50, 1000, 40, 3)).toBe('orientado_qualidade');
+    expect(classifyCustomerProfile(50, 1000, 40, 4)).toBe('misto');
+  });
+
+  it('≥4 famílias + gasto alto + saúde → produtividade; 3 → misto', () => {
+    expect(classifyCustomerProfile(70, 3000, 25, 4)).toBe('orientado_produtividade');
+    expect(classifyCustomerProfile(70, 3000, 25, 3)).toBe('misto');
+  });
+
+  it('famílias null NÃO viram "poucas famílias" (null <= 3 é true em JS)', () => {
+    expect(classifyCustomerProfile(50, 1000, 40, null)).toBe('misto');
+    expect(classifyCustomerProfile(70, 3000, 25, null)).toBe('misto');
+    expect(classifyCustomerProfile(50, 1000, 40, Number.NaN)).toBe('misto');
+  });
+
+  it('0 família MEDIDA é conhecida; o ramo sem mix segue decidível com famílias null', () => {
+    expect(classifyCustomerProfile(50, 1000, 40, 0)).toBe('orientado_qualidade');
+    expect(classifyCustomerProfile(50, 400, 10, null)).toBe('sensivel_preco');
+  });
+});

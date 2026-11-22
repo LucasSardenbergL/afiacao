@@ -4,6 +4,7 @@ import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { margemConhecida } from '@/lib/scoring/margin';
+import { PERFIL_FAMILIAS_AMPLO_MIN, PERFIL_FAMILIAS_FOCO_MAX } from '@/lib/scoring/objective';
 
 export interface BundleArgument {
   diagnostico: string;
@@ -33,15 +34,18 @@ export const classifyCustomerProfile = (
   // null = gasto não medido (calculate-scores v1.8) — guard explícito: `null < 500` é `true` em JS.
   avgMonthlySpend: number | null,
   grossMarginPct: number | null,
-  categoryCount: number
+  // Famílias distintas em 12m (`familiasDoPerfil`), NÃO `category_count` (produtos distintos: 10 cores da
+  // mesma tinta = 10 — erro de unidade). null = não medido → os ramos de mix não disparam.
+  familias12m: number | null
 ): CustomerProfile => {
   const margem = margemConhecida(grossMarginPct);
+  const f = familias12m != null && Number.isFinite(familias12m) ? familias12m : null;
   // Price-sensitive: low spend, low margin tolerance
   if (margem != null && avgMonthlySpend != null && avgMonthlySpend < 500 && margem < 20) return 'sensivel_preco';
-  // Quality-oriented: high margin, fewer categories (focused buyer)
-  if (margem != null && margem > 35 && categoryCount <= 3) return 'orientado_qualidade';
-  // Productivity-oriented: high spend, many categories, high health
-  if (avgMonthlySpend != null && avgMonthlySpend > 2000 && categoryCount >= 4 && healthScore > 60) return 'orientado_produtividade';
+  // Quality-oriented: high margin, poucas famílias (comprador focado)
+  if (margem != null && margem > 35 && f != null && f <= PERFIL_FAMILIAS_FOCO_MAX) return 'orientado_qualidade';
+  // Productivity-oriented: high spend, muitas famílias, high health
+  if (avgMonthlySpend != null && avgMonthlySpend > 2000 && f != null && f >= PERFIL_FAMILIAS_AMPLO_MIN && healthScore > 60) return 'orientado_produtividade';
   return 'misto';
 };
 

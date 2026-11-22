@@ -23,6 +23,26 @@ export function mixGapFamilias(
 }
 
 /**
+ * Fronteiras do PERFIL comercial (classifyProfile / classifyCustomerProfile) em famílias distintas em
+ * 12 meses — antes eram os mesmos 3/4 aplicados a `category_count` (PRODUTOS distintos: erro de unidade).
+ * Decisão de 2026-11-22: mantidos 3/4 na unidade certa (em prod o ≤3 cai na mediana das famílias dos
+ * compradores). Espelho de supabase/functions/_shared/tactical-margem.ts.
+ */
+export const PERFIL_FAMILIAS_FOCO_MAX = 3;
+export const PERFIL_FAMILIAS_AMPLO_MIN = 4;
+
+/**
+ * Famílias em 12m para o PERFIL (≠ `mixGapFamilias`). Sem linha na RPC `familias_12m_clientes` ou
+ * `familias_12m` null/não-finito → `null`: o perfil não afirma "poucas famílias" a partir de ausência.
+ * O mixGap trata comprador sem linha como 0 MEDIDO para empurrar expansão; no perfil o mesmo 0 viraria
+ * o rótulo "orientado a qualidade" — um veredito sobre o cliente que a ausência de compra não sustenta.
+ */
+export function familiasDoPerfil(linha: { familias_12m: number | null } | null | undefined): number | null {
+  const n = linha?.familias_12m;
+  return n != null && Number.isFinite(n) ? n : null;
+}
+
+/**
  * Objetivo estratégico do plano tático do farmer — rótulo categórico que entra no
  * prompt da IA (`generate-tactical-plan`) e molda o plano de abordagem.
  *

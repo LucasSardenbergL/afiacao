@@ -20,9 +20,9 @@
        "price": 291.16
       }
      ],
-     "support": 0.02823481616900264,
-     "confidence": 0.5887126865671641,
-     "lift": 14.682325977869274,
+     "support": 0.028234816169,
+     "confidence": 0.588712686567,
+     "lift": 14.6823259779,
      "pBundle": 356.4,
      "affinityBundle": 3.564,
      "complexityFactor": 1,
@@ -40,6 +40,7 @@
    "avgMonthlySpend": 314.5,
    "grossMarginPct": null,
    "categoryCount": 0,
+   "familias12m": 4,
    "daysSinceLastPurchase": 254,
    "cnae": "2222",
    "customerType": "industria",
@@ -71,9 +72,9 @@
        "price": 120
       }
      ],
-     "support": 0.025594149908592323,
-     "confidence": 0.5915948275862069,
-     "lift": 15.309426267726291,
+     "support": 0.0255941499086,
+     "confidence": 0.591594827586,
+     "lift": 15.3094262677,
      "pBundle": 310.6,
      "affinityBundle": 3.1064,
      "complexityFactor": 1,
@@ -94,9 +95,9 @@
        "price": 51.22
       }
      ],
-     "support": 0.026203534430225474,
-     "confidence": 0.5802853697749196,
-     "lift": 14.991495272148558,
+     "support": 0.0262035344302,
+     "confidence": 0.580285369775,
+     "lift": 14.9914952721,
      "pBundle": 298.4,
      "affinityBundle": 2.9837,
      "complexityFactor": 1,
@@ -114,6 +115,7 @@
    "avgMonthlySpend": 4444.49,
    "grossMarginPct": 31.2,
    "categoryCount": 3,
+   "familias12m": 7,
    "daysSinceLastPurchase": 266,
    "cnae": "2222",
    "customerType": "industria",
@@ -145,9 +147,9 @@
        "price": 220.24
       }
      ],
-     "support": 0.02823481616900264,
-     "confidence": 0.5772270114942528,
-     "lift": 14.682325977869274,
+     "support": 0.028234816169,
+     "confidence": 0.577227011494,
+     "lift": 14.6823259779,
      "pBundle": 256.9,
      "affinityBundle": 2.5687,
      "complexityFactor": 1,
@@ -165,6 +167,7 @@
    "avgMonthlySpend": 1985.93,
    "grossMarginPct": 9.6,
    "categoryCount": 1,
+   "familias12m": 1,
    "daysSinceLastPurchase": 321,
    "cnae": "2222",
    "customerType": "revenda",
@@ -196,9 +199,9 @@
        "price": 131.18
       }
      ],
-     "support": 0.04184440381880967,
-     "confidence": 0.6005368597989778,
-     "lift": 9.227146595630924,
+     "support": 0.0418444038188,
+     "confidence": 0.600536859799,
+     "lift": 9.22714659563,
      "pBundle": 237,
      "affinityBundle": 2.3695,
      "complexityFactor": 1,
@@ -219,9 +222,9 @@
        "price": 220.24
       }
      ],
-     "support": 0.043875685557586835,
-     "confidence": 0.6022100738248761,
-     "lift": 8.917977301351641,
+     "support": 0.0438756855576,
+     "confidence": 0.602210073825,
+     "lift": 8.91797730135,
      "pBundle": 229.7,
      "affinityBundle": 2.2965,
      "complexityFactor": 1,
@@ -239,6 +242,7 @@
    "avgMonthlySpend": 1388.8,
    "grossMarginPct": 39.4,
    "categoryCount": 8,
+   "familias12m": null,
    "daysSinceLastPurchase": 295,
    "cnae": "2222",
    "customerType": "revenda",
@@ -270,9 +274,9 @@
        "price": 120
       }
      ],
-     "support": 0.025594149908592323,
-     "confidence": 0.5915948275862069,
-     "lift": 15.309426267726291,
+     "support": 0.0255941499086,
+     "confidence": 0.591594827586,
+     "lift": 15.3094262677,
      "pBundle": 196.7,
      "affinityBundle": 1.9673,
      "complexityFactor": 1,
@@ -293,9 +297,9 @@
        "price": 131.18
       }
      ],
-     "support": 0.03026609790777981,
-     "confidence": 0.5874830623306233,
-     "lift": 14.901229681691321,
+     "support": 0.0302660979078,
+     "confidence": 0.587483062331,
+     "lift": 14.9012296817,
      "pBundle": 190.1,
      "affinityBundle": 1.9015,
      "complexityFactor": 1,
@@ -313,6 +317,7 @@
    "avgMonthlySpend": 3681.69,
    "grossMarginPct": 32.9,
    "categoryCount": 3,
+   "familias12m": 3,
    "daysSinceLastPurchase": 73,
    "cnae": "3101",
    "customerType": "industria",
@@ -344,9 +349,9 @@
        "price": 65.04
       }
      ],
-     "support": 0.026203534430225474,
-     "confidence": 0.5755537974683544,
-     "lift": 14.991495272148558,
+     "support": 0.0262035344302,
+     "confidence": 0.575553797468,
+     "lift": 14.9914952721,
      "pBundle": 192.5,
      "affinityBundle": 1.9249,
      "complexityFactor": 1,
@@ -364,6 +369,7 @@
    "avgMonthlySpend": 3193.17,
    "grossMarginPct": 3.6,
    "categoryCount": 9,
+   "familias12m": null,
    "daysSinceLastPurchase": 118,
    "cnae": "2222",
    "customerType": "industria",
@@ -395,9 +401,9 @@
        "price": 75.95
       }
      ],
-     "support": 0.04123501929717652,
-     "confidence": 0.6355838515447636,
-     "lift": 9.545077591208656,
+     "support": 0.0412350192972,
+     "confidence": 0.635583851545,
+     "lift": 9.54507759121,
      "pBundle": 187.6,
      "affinityBundle": 1.8759,
      "complexityFactor": 1,
@@ -415,6 +421,7 @@
    "avgMonthlySpend": 4292.01,
    "grossMarginPct": 7,
    "categoryCount": 9,
+   "familias12m": 6,
    "daysSinceLastPurchase": 375,
    "cnae": "3101",
    "customerType": "revenda",
@@ -446,9 +453,9 @@
        "price": 70.35
       }
      ],
-     "support": 0.045805403209425145,
-     "confidence": 0.6161504177025241,
-     "lift": 8.952702400563476,
+     "support": 0.0458054032094,
+     "confidence": 0.616150417703,
+     "lift": 8.95270240056,
      "pBundle": 179.3,
      "affinityBundle": 1.7928,
      "complexityFactor": 1,
@@ -469,9 +476,9 @@
        "price": 366.39
       }
      ],
-     "support": 0.045500710948608566,
-     "confidence": 0.6120181862975654,
-     "lift": 8.64806154673117,
+     "support": 0.0455007109486,
+     "confidence": 0.612018186298,
+     "lift": 8.64806154673,
      "pBundle": 172,
      "affinityBundle": 1.7202,
      "complexityFactor": 1,
@@ -489,6 +496,7 @@
    "avgMonthlySpend": 3435.44,
    "grossMarginPct": 4.3,
    "categoryCount": 3,
+   "familias12m": 4,
    "daysSinceLastPurchase": 203,
    "cnae": "2222",
    "customerType": "industria",
@@ -520,9 +528,9 @@
        "price": 325.05
       }
      ],
-     "support": 0.026914483038797482,
-     "confidence": 0.5809394409937888,
-     "lift": 14.8723926191427,
+     "support": 0.0269144830388,
+     "confidence": 0.580939440994,
+     "lift": 14.8723926191,
      "pBundle": 171.7,
      "affinityBundle": 1.7173,
      "complexityFactor": 1,
@@ -540,6 +548,7 @@
    "avgMonthlySpend": 3666.62,
    "grossMarginPct": 17.6,
    "categoryCount": 9,
+   "familias12m": 6,
    "daysSinceLastPurchase": 137,
    "cnae": "3101",
    "customerType": "industria",
@@ -571,9 +580,9 @@
        "price": 75.95
       }
      ],
-     "support": 0.04123501929717652,
-     "confidence": 0.6527690700104494,
-     "lift": 9.545077591208656,
+     "support": 0.0412350192972,
+     "confidence": 0.65276907001,
+     "lift": 9.54507759121,
      "pBundle": 162.3,
      "affinityBundle": 1.623,
      "complexityFactor": 1,
@@ -594,9 +603,9 @@
        "price": 75.95
       }
      ],
-     "support": 0.04184440381880967,
-     "confidence": 0.6367280398925969,
-     "lift": 9.227146595630924,
+     "support": 0.0418444038188,
+     "confidence": 0.636728039893,
+     "lift": 9.22714659563,
      "pBundle": 153,
      "affinityBundle": 1.5304,
      "complexityFactor": 1,
@@ -614,6 +623,7 @@
    "avgMonthlySpend": 3446.5,
    "grossMarginPct": 7.6,
    "categoryCount": 7,
+   "familias12m": null,
    "daysSinceLastPurchase": 172,
    "cnae": "2222",
    "customerType": "industria",
@@ -645,9 +655,9 @@
        "price": 220.24
       }
      ],
-     "support": 0.04052407068860451,
-     "confidence": 0.5956664524880417,
-     "lift": 8.88914023880302,
+     "support": 0.0405240706886,
+     "confidence": 0.595666452488,
+     "lift": 8.8891402388,
      "pBundle": 135.9,
      "affinityBundle": 1.3591,
      "complexityFactor": 1,
@@ -665,6 +675,7 @@
    "avgMonthlySpend": 4708.09,
    "grossMarginPct": 3.3,
    "categoryCount": 4,
+   "familias12m": null,
    "daysSinceLastPurchase": 290,
    "cnae": "2222",
    "customerType": "industria",
@@ -696,9 +707,9 @@
        "price": 291.16
       }
      ],
-     "support": 0.02823481616900264,
-     "confidence": 0.5887126865671641,
-     "lift": 14.682325977869274,
+     "support": 0.028234816169,
+     "confidence": 0.588712686567,
+     "lift": 14.6823259779,
      "pBundle": 129,
      "affinityBundle": 1.29,
      "complexityFactor": 1,
@@ -716,6 +727,7 @@
    "avgMonthlySpend": 1337.09,
    "grossMarginPct": null,
    "categoryCount": 1,
+   "familias12m": 2,
    "daysSinceLastPurchase": 270,
    "cnae": "2222",
    "customerType": "revenda",
@@ -747,9 +759,9 @@
        "price": 131.18
       }
      ],
-     "support": 0.04184440381880967,
-     "confidence": 0.6005368597989778,
-     "lift": 9.227146595630924,
+     "support": 0.0418444038188,
+     "confidence": 0.600536859799,
+     "lift": 9.22714659563,
      "pBundle": 110.1,
      "affinityBundle": 1.1008,
      "complexityFactor": 1,
@@ -767,6 +779,7 @@
    "avgMonthlySpend": 466.13,
    "grossMarginPct": 32.3,
    "categoryCount": 5,
+   "familias12m": 1,
    "daysSinceLastPurchase": 366,
    "cnae": "2222",
    "customerType": "industria",
@@ -798,9 +811,9 @@
        "price": 131.36
       }
      ],
-     "support": 0.04113345521023766,
-     "confidence": 0.6030769644924221,
-     "lift": 9.360898986598446,
+     "support": 0.0411334552102,
+     "confidence": 0.603076964492,
+     "lift": 9.3608989866,
      "pBundle": 108.4,
      "affinityBundle": 1.0838,
      "complexityFactor": 1,
@@ -821,9 +834,9 @@
        "price": 325.05
       }
      ],
-     "support": 0.03788340442819419,
-     "confidence": 0.59284905011431,
-     "lift": 9.516240528660035,
+     "support": 0.0378834044282,
+     "confidence": 0.592849050114,
+     "lift": 9.51624052866,
      "pBundle": 108.3,
      "affinityBundle": 1.0831,
      "complexityFactor": 1,
@@ -841,6 +854,7 @@
    "avgMonthlySpend": 4562.83,
    "grossMarginPct": 18.3,
    "categoryCount": 2,
+   "familias12m": 8,
    "daysSinceLastPurchase": 67,
    "cnae": "2222",
    "customerType": "revenda",
@@ -872,9 +886,9 @@
        "price": 70.35
       }
      ],
-     "support": 0.04174283973187081,
-     "confidence": 0.6089527251468205,
-     "lift": 9.042967991020713,
+     "support": 0.0417428397319,
+     "confidence": 0.608952725147,
+     "lift": 9.04296799102,
      "pBundle": 106.8,
      "affinityBundle": 1.0684,
      "complexityFactor": 1,
@@ -892,6 +906,7 @@
    "avgMonthlySpend": 4080.04,
    "grossMarginPct": 1.2,
    "categoryCount": 5,
+   "familias12m": null,
    "daysSinceLastPurchase": 125,
    "cnae": "3101",
    "customerType": "industria",
@@ -923,9 +938,9 @@
        "price": 325.05
       }
      ],
-     "support": 0.03788340442819419,
-     "confidence": 0.59284905011431,
-     "lift": 9.516240528660035,
+     "support": 0.0378834044282,
+     "confidence": 0.592849050114,
+     "lift": 9.51624052866,
      "pBundle": 104.1,
      "affinityBundle": 1.0411,
      "complexityFactor": 1,
@@ -946,9 +961,9 @@
        "price": 131.36
       }
      ],
-     "support": 0.03920373755839935,
-     "confidence": 0.5891366206147741,
-     "lift": 9.32617388738661,
+     "support": 0.0392037375584,
+     "confidence": 0.589136620615,
+     "lift": 9.32617388739,
      "pBundle": 101.4,
      "affinityBundle": 1.0139,
      "complexityFactor": 1,
@@ -966,6 +981,7 @@
    "avgMonthlySpend": 3548.21,
    "grossMarginPct": 35.1,
    "categoryCount": 0,
+   "familias12m": 2,
    "daysSinceLastPurchase": 120,
    "cnae": "2222",
    "customerType": "revenda",
@@ -997,9 +1013,9 @@
        "price": 291.16
       }
      ],
-     "support": 0.04377412147064798,
-     "confidence": 0.6307385486361297,
-     "lift": 8.73379869674143,
+     "support": 0.0437741214706,
+     "confidence": 0.630738548636,
+     "lift": 8.73379869674,
      "pBundle": 98.6,
      "affinityBundle": 0.9863,
      "complexityFactor": 1,
@@ -1017,6 +1033,7 @@
    "avgMonthlySpend": 875.48,
    "grossMarginPct": 28.8,
    "categoryCount": 8,
+   "familias12m": 0,
    "daysSinceLastPurchase": 94,
    "cnae": "3101",
    "customerType": "revenda",
@@ -1048,9 +1065,9 @@
        "price": 70.35
       }
      ],
-     "support": 0.045805403209425145,
-     "confidence": 0.6523415977961433,
-     "lift": 8.952702400563476,
+     "support": 0.0458054032094,
+     "confidence": 0.652341597796,
+     "lift": 8.95270240056,
      "pBundle": 93.1,
      "affinityBundle": 0.9314,
      "complexityFactor": 1,
@@ -1068,6 +1085,7 @@
    "avgMonthlySpend": 1274.77,
    "grossMarginPct": null,
    "categoryCount": 8,
+   "familias12m": 5,
    "daysSinceLastPurchase": 165,
    "cnae": "2222",
    "customerType": "revenda",
@@ -1099,9 +1117,9 @@
        "price": 291.16
       }
      ],
-     "support": 0.04052407068860451,
-     "confidence": 0.6043857634902411,
-     "lift": 8.88914023880302,
+     "support": 0.0405240706886,
+     "confidence": 0.60438576349,
+     "lift": 8.8891402388,
      "pBundle": 86.4,
      "affinityBundle": 0.864,
      "complexityFactor": 1,
@@ -1119,6 +1137,7 @@
    "avgMonthlySpend": 833.03,
    "grossMarginPct": 5.8,
    "categoryCount": 3,
+   "familias12m": 8,
    "daysSinceLastPurchase": 19,
    "cnae": "2222",
    "customerType": "industria",
@@ -1150,9 +1169,9 @@
        "price": 291.16
       }
      ],
-     "support": 0.0398131220800325,
-     "confidence": 0.6017664840355186,
-     "lift": 9.008242891808877,
+     "support": 0.03981312208,
+     "confidence": 0.601766484036,
+     "lift": 9.00824289181,
      "pBundle": 83,
      "affinityBundle": 0.8296,
      "complexityFactor": 1,
@@ -1170,6 +1189,7 @@
    "avgMonthlySpend": 1095.27,
    "grossMarginPct": 30.7,
    "categoryCount": 4,
+   "familias12m": 8,
    "daysSinceLastPurchase": 177,
    "cnae": "2222",
    "customerType": "industria",
@@ -1201,9 +1221,9 @@
        "price": 51.22
       }
      ],
-     "support": 0.03717245581962218,
-     "confidence": 0.6093801973611266,
-     "lift": 9.635343181665894,
+     "support": 0.0371724558196,
+     "confidence": 0.609380197361,
+     "lift": 9.63534318167,
      "pBundle": 50.1,
      "affinityBundle": 0.5013,
      "complexityFactor": 1,
@@ -1221,6 +1241,7 @@
    "avgMonthlySpend": 3077.35,
    "grossMarginPct": 22.1,
    "categoryCount": 5,
+   "familias12m": 4,
    "daysSinceLastPurchase": 181,
    "cnae": "2222",
    "customerType": "revenda",
@@ -1252,9 +1273,9 @@
        "price": 70.35
       }
      ],
-     "support": 0.045805403209425145,
-     "confidence": 0.6161504177025241,
-     "lift": 8.952702400563476,
+     "support": 0.0458054032094,
+     "confidence": 0.616150417703,
+     "lift": 8.95270240056,
      "pBundle": 42.3,
      "affinityBundle": 0.4234,
      "complexityFactor": 1,
@@ -1272,6 +1293,7 @@
    "avgMonthlySpend": 1819.97,
    "grossMarginPct": 5.9,
    "categoryCount": 1,
+   "familias12m": 4,
    "daysSinceLastPurchase": 203,
    "cnae": "2222",
    "customerType": "revenda",
@@ -1303,9 +1325,9 @@
        "price": 497.07
       }
      ],
-     "support": 0.044485070079219986,
-     "confidence": 0.5934959349593496,
-     "lift": 8.220075207306648,
+     "support": 0.0444850700792,
+     "confidence": 0.593495934959,
+     "lift": 8.22007520731,
      "pBundle": 36.7,
      "affinityBundle": 0.3675,
      "complexityFactor": 1,
@@ -1323,6 +1345,7 @@
    "avgMonthlySpend": 2807.31,
    "grossMarginPct": 12.5,
    "categoryCount": 5,
+   "familias12m": null,
    "daysSinceLastPurchase": 203,
    "cnae": "2222",
    "customerType": "revenda",
@@ -1354,9 +1377,9 @@
        "price": 120
       }
      ],
-     "support": 0.025594149908592323,
-     "confidence": 0.5915948275862069,
-     "lift": 15.309426267726291,
+     "support": 0.0255941499086,
+     "confidence": 0.591594827586,
+     "lift": 15.3094262677,
      "pBundle": 33.1,
      "affinityBundle": 0.331,
      "complexityFactor": 1,
@@ -1374,6 +1397,7 @@
    "avgMonthlySpend": 4208.48,
    "grossMarginPct": 17.3,
    "categoryCount": 5,
+   "familias12m": 3,
    "daysSinceLastPurchase": 49,
    "cnae": "3101",
    "customerType": "revenda",
@@ -1405,9 +1429,9 @@
        "price": 131.18
       }
      ],
-     "support": 0.03026609790777981,
-     "confidence": 0.5874830623306233,
-     "lift": 14.901229681691321,
+     "support": 0.0302660979078,
+     "confidence": 0.587483062331,
+     "lift": 14.9012296817,
      "pBundle": 27.4,
      "affinityBundle": 0.2737,
      "complexityFactor": 1,
@@ -1425,6 +1449,7 @@
    "avgMonthlySpend": 579.48,
    "grossMarginPct": null,
    "categoryCount": 3,
+   "familias12m": 0,
    "daysSinceLastPurchase": 126,
    "cnae": "3101",
    "customerType": "industria",
@@ -1456,9 +1481,9 @@
        "price": 75.95
       }
      ],
-     "support": 0.04123501929717652,
-     "confidence": 0.6527690700104494,
-     "lift": 9.545077591208656,
+     "support": 0.0412350192972,
+     "confidence": 0.65276907001,
+     "lift": 9.54507759121,
      "pBundle": 26.1,
      "affinityBundle": 0.2615,
      "complexityFactor": 1,
@@ -1476,6 +1501,7 @@
    "avgMonthlySpend": 2128.77,
    "grossMarginPct": null,
    "categoryCount": 4,
+   "familias12m": 3,
    "daysSinceLastPurchase": 374,
    "cnae": "3101",
    "customerType": "revenda",
@@ -1507,9 +1533,9 @@
        "price": 291.16
       }
      ],
-     "support": 0.03920373755839935,
-     "confidence": 0.6178075141533711,
-     "lift": 9.32617388738661,
+     "support": 0.0392037375584,
+     "confidence": 0.617807514153,
+     "lift": 9.32617388739,
      "pBundle": 20.6,
      "affinityBundle": 0.2057,
      "complexityFactor": 1,
@@ -1527,6 +1553,7 @@
    "avgMonthlySpend": 963.09,
    "grossMarginPct": null,
    "categoryCount": 4,
+   "familias12m": 3,
    "daysSinceLastPurchase": 181,
    "cnae": "3101",
    "customerType": "industria",
@@ -1553,9 +1580,9 @@
    "consequentNames": [
     "Produto 27"
    ],
-   "support": 0.014625228519195612,
-   "confidence": 0.5373134328358209,
-   "lift": 20.665578358208954,
+   "support": 0.0146252285192,
+   "confidence": 0.537313432836,
+   "lift": 20.6655783582,
    "type": "sequential"
   },
   {
@@ -1571,9 +1598,9 @@
    "consequentNames": [
     "Produto 24"
    ],
-   "support": 0.014625228519195612,
+   "support": 0.0146252285192,
    "confidence": 0.5625,
-   "lift": 20.665578358208954,
+   "lift": 20.6655783582,
    "type": "sequential"
   },
   {
@@ -1589,9 +1616,9 @@
    "consequentNames": [
     "Produto 2"
    ],
-   "support": 0.03656307129798903,
-   "confidence": 0.5863192182410424,
-   "lift": 9.953274177243626,
+   "support": 0.036563071298,
+   "confidence": 0.586319218241,
+   "lift": 9.95327417724,
    "type": "sequential"
   },
   {
@@ -1607,9 +1634,9 @@
    "consequentNames": [
     "Produto 1"
    ],
-   "support": 0.03656307129798903,
-   "confidence": 0.6206896551724138,
-   "lift": 9.953274177243626,
+   "support": 0.036563071298,
+   "confidence": 0.620689655172,
+   "lift": 9.95327417724,
    "type": "sequential"
   },
   {
@@ -1625,9 +1652,9 @@
    "consequentNames": [
     "Produto 26"
    ],
-   "support": 0.04042250660166565,
-   "confidence": 0.6440129449838188,
-   "lift": 9.407939846158278,
+   "support": 0.0404225066017,
+   "confidence": 0.644012944984,
+   "lift": 9.40793984616,
    "type": "sequential"
   },
   {
@@ -1643,9 +1670,9 @@
    "consequentNames": [
     "Produto 25"
    ],
-   "support": 0.04042250660166565,
-   "confidence": 0.5905044510385756,
-   "lift": 9.407939846158277,
+   "support": 0.0404225066017,
+   "confidence": 0.590504451039,
+   "lift": 9.40793984616,
    "type": "sequential"
   },
   {
@@ -1661,9 +1688,9 @@
    "consequentNames": [
     "Produto 23"
    ],
-   "support": 0.037781840341255334,
-   "confidence": 0.5886075949367089,
-   "lift": 9.317412186088161,
+   "support": 0.0377818403413,
+   "confidence": 0.588607594937,
+   "lift": 9.31741218609,
    "type": "sequential"
   },
   {
@@ -1679,9 +1706,9 @@
    "consequentNames": [
     "Produto 22"
    ],
-   "support": 0.037781840341255334,
-   "confidence": 0.5980707395498392,
-   "lift": 9.317412186088161,
+   "support": 0.0377818403413,
+   "confidence": 0.59807073955,
+   "lift": 9.31741218609,
    "type": "sequential"
   },
   {
@@ -1697,9 +1724,9 @@
    "consequentNames": [
     "Produto 7"
    ],
-   "support": 0.045906967296364,
-   "confidence": 0.6124661246612466,
-   "lift": 9.136881005173688,
+   "support": 0.0459069672964,
+   "confidence": 0.612466124661,
+   "lift": 9.13688100517,
    "type": "sequential"
   },
   {
@@ -1715,9 +1742,9 @@
    "consequentNames": [
     "Produto 5"
    ],
-   "support": 0.045906967296364,
-   "confidence": 0.6848484848484848,
-   "lift": 9.136881005173688,
+   "support": 0.0459069672964,
+   "confidence": 0.684848484848,
+   "lift": 9.13688100517,
    "type": "sequential"
   },
   {
@@ -1733,9 +1760,9 @@
    "consequentNames": [
     "Produto 17"
    ],
-   "support": 0.03920373755839935,
-   "confidence": 0.5993788819875776,
-   "lift": 9.079206880076445,
+   "support": 0.0392037375584,
+   "confidence": 0.599378881988,
+   "lift": 9.07920688008,
    "type": "sequential"
   },
   {
@@ -1751,9 +1778,9 @@
    "consequentNames": [
     "Produto 16"
    ],
-   "support": 0.03920373755839935,
-   "confidence": 0.5938461538461538,
-   "lift": 9.079206880076445,
+   "support": 0.0392037375584,
+   "confidence": 0.593846153846,
+   "lift": 9.07920688008,
    "type": "sequential"
   },
   {
@@ -1769,9 +1796,9 @@
    "consequentNames": [
     "Produto 28"
    ],
-   "support": 0.039609993906154786,
-   "confidence": 0.6310679611650486,
-   "lift": 9.005065428450823,
+   "support": 0.0396099939062,
+   "confidence": 0.631067961165,
+   "lift": 9.00506542845,
    "type": "sequential"
   },
   {
@@ -1787,9 +1814,9 @@
    "consequentNames": [
     "Produto 25"
    ],
-   "support": 0.039609993906154786,
-   "confidence": 0.5652173913043478,
-   "lift": 9.005065428450822,
+   "support": 0.0396099939062,
+   "confidence": 0.565217391304,
+   "lift": 9.00506542845,
    "type": "sequential"
   },
   {
@@ -1805,9 +1832,9 @@
    "consequentNames": [
     "Produto 26"
    ],
-   "support": 0.04245378834044282,
-   "confidence": 0.6057971014492753,
-   "lift": 8.849671010192234,
+   "support": 0.0424537883404,
+   "confidence": 0.605797101449,
+   "lift": 8.84967101019,
    "type": "sequential"
   },
   {
@@ -1823,9 +1850,9 @@
    "consequentNames": [
     "Produto 28"
    ],
-   "support": 0.04245378834044282,
-   "confidence": 0.6201780415430267,
-   "lift": 8.849671010192232,
+   "support": 0.0424537883404,
+   "confidence": 0.620178041543,
+   "lift": 8.84967101019,
    "type": "sequential"
   },
   {
@@ -1841,9 +1868,9 @@
    "consequentNames": [
     "Produto 13"
    ],
-   "support": 0.04570383912248629,
-   "confidence": 0.6198347107438017,
-   "lift": 8.768523795953264,
+   "support": 0.0457038391225,
+   "confidence": 0.619834710744,
+   "lift": 8.76852379595,
    "type": "sequential"
   },
   {
@@ -1859,9 +1886,9 @@
    "consequentNames": [
     "Produto 10"
    ],
-   "support": 0.04570383912248629,
-   "confidence": 0.646551724137931,
-   "lift": 8.768523795953264,
+   "support": 0.0457038391225,
+   "confidence": 0.646551724138,
+   "lift": 8.76852379595,
    "type": "sequential"
   },
   {
@@ -1877,9 +1904,9 @@
    "consequentNames": [
     "Produto 20"
    ],
-   "support": 0.04184440381880967,
-   "confidence": 0.6149253731343284,
-   "lift": 8.699073597529594,
+   "support": 0.0418444038188,
+   "confidence": 0.614925373134,
+   "lift": 8.69907359753,
    "type": "sequential"
   },
   {
@@ -1895,9 +1922,9 @@
    "consequentNames": [
     "Produto 19"
    ],
-   "support": 0.04184440381880967,
-   "confidence": 0.5919540229885057,
-   "lift": 8.699073597529594,
+   "support": 0.0418444038188,
+   "confidence": 0.591954022989,
+   "lift": 8.69907359753,
    "type": "sequential"
   },
   {
@@ -1913,9 +1940,9 @@
    "consequentNames": [
     "Produto 11"
    ],
-   "support": 0.043875685557586835,
-   "confidence": 0.6206896551724138,
-   "lift": 8.280908326324644,
+   "support": 0.0438756855576,
+   "confidence": 0.620689655172,
+   "lift": 8.28090832632,
    "type": "sequential"
   },
   {
@@ -1931,9 +1958,9 @@
    "consequentNames": [
     "Produto 13"
    ],
-   "support": 0.043875685557586835,
-   "confidence": 0.5853658536585366,
-   "lift": 8.280908326324642,
+   "support": 0.0438756855576,
+   "confidence": 0.585365853659,
+   "lift": 8.28090832632,
    "type": "sequential"
   },
   {
@@ -1949,9 +1976,9 @@
    "consequentNames": [
     "Produto 10"
    ],
-   "support": 0.04509445460085314,
-   "confidence": 0.6016260162601627,
-   "lift": 8.159242088288654,
+   "support": 0.0450944546009,
+   "confidence": 0.60162601626,
+   "lift": 8.15924208829,
    "type": "sequential"
   },
   {
@@ -1967,9 +1994,9 @@
    "consequentNames": [
     "Produto 11"
    ],
-   "support": 0.04509445460085314,
-   "confidence": 0.6115702479338843,
-   "lift": 8.159242088288652,
+   "support": 0.0450944546009,
+   "confidence": 0.611570247934,
+   "lift": 8.15924208829,
    "type": "sequential"
   }
  ],
