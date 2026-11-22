@@ -16,7 +16,8 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("fin-suggest-mapping");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-gate-auth-canonico";
+// v1.2 (2026-11-22): `nao_resultado` nunca é sugerido entre empresas (decisão por empresa, como fora_dre).
+export const VERSAO = "v1.2-nao-resultado-nao-sugerivel";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

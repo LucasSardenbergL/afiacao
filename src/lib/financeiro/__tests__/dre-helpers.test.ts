@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario, novoForaDRE, acumularForaDRE, aplicarPendenciasConfianca, linhasDreMapeaveis, provisorioConsolidado, foraDreConsolidado } from '../dre-helpers';
+import { classificarLinhaDRE, REGIME_POR_EMPRESA, resolverDataCaixa, valorCaixaEfetivo, dedupePorCodigo, bucketizarCaixa, montarDRE, scoreConfianca, calcularRBT12, aliquotaEfetivaSimples, anexoPorFatorR, impostoTeoricoSimples, impostoTeoricoPresumido, normalizarConfigTributario, novoForaDRE, acumularForaDRE, aplicarPendenciasConfianca, linhasDreMapeaveis, provisorioConsolidado, foraDreConsolidado, novoNaoResultado, acumularNaoResultado } from '../dre-helpers';
 
 const M = (pairs: Array<[string, string]>) => new Map<string, string>(pairs);
 
@@ -388,17 +388,19 @@ describe('acumularForaDRE / aplicarPendenciasConfianca (fase 2)', () => {
 });
 
 describe('linhasDreMapeaveis (tela de mapeamento, fase 2)', () => {
-  it('_default: nunca fora_dre nem imposto específico (vale para a empresa do Simples também)', () => {
+  it('_default: nunca fora_dre/nao_resultado nem imposto específico (vale para a empresa do Simples também)', () => {
     const l = linhasDreMapeaveis('_default');
     expect(l).not.toContain('fora_dre');
+    expect(l).not.toContain('nao_resultado');
     expect(l).not.toContain('irpj');
     expect(l).not.toContain('das');
     expect(l).toContain('impostos');
   });
-  it('presumido (colacor): específicos + fora_dre, sem DAS', () => {
+  it('presumido (colacor): específicos + fora_dre + nao_resultado; DAS só pelo histórico do Simples', () => {
     const l = linhasDreMapeaveis('colacor');
-    expect(l).toEqual(expect.arrayContaining(['ded_icms', 'ded_pis', 'ded_cofins', 'ded_iss', 'ded_ipi', 'irpj', 'csll', 'fora_dre']));
-    expect(l).not.toContain('das');
+    expect(l).toEqual(expect.arrayContaining(['ded_icms', 'ded_pis', 'ded_cofins', 'ded_iss', 'ded_ipi', 'irpj', 'csll', 'fora_dre', 'nao_resultado']));
+    // a colacor foi do Simples até 2022: o DAS daqueles anos é dedução legítima (o motor honra 'das' em qualquer regime)
+    expect(l).toContain('das');
   });
   it('Simples (colacor_sc): DAS + fora_dre, sem IRPJ/CSLL', () => {
     const l = linhasDreMapeaveis('colacor_sc');
@@ -429,5 +431,48 @@ describe('consolidado fase 2 (provisório tri-state, fora_dre parcial)', () => {
     expect(foraDreConsolidado([100, 50])).toEqual({ valor: 150, parcial: false });
     expect(foraDreConsolidado([100, null])).toEqual({ valor: 100, parcial: true });
     expect(foraDreConsolidado([null, undefined])).toEqual({ valor: null, parcial: true });
+  });
+});
+
+describe('nao_resultado (v1.13) — patrimonial definitivo, sem pendência', () => {
+  const cls = (cod: string, m: Map<string, string>, isReceita = false) =>
+    classificarLinhaDRE({ categoria_codigo: cod, categoria_descricao: cod, isReceita, regime: 'presumido', mapping: m });
+
+  it('código EXATO nao_resultado é mapeado e válido', () => {
+    const r = cls('1.04.04', M([['1.04.04', 'nao_resultado']]), true);
+    expect(r.linha).toBe('nao_resultado');
+    expect(r.mapeado).toBe(true);
+    expect(r.mapeamentoInvalido).toBeNull();
+  });
+
+  it('NÃO é herdado por prefixo: filho novo de 2.07 fica sem mapa', () => {
+    const r = cls('2.07.88', M([['2.07', 'nao_resultado']]));
+    expect(r.linha).not.toBe('nao_resultado');
+    expect(r.mapeado).toBe(false);
+  });
+
+  it('montarDRE ignora nao_resultado em todo subtotal', () => {
+    const base = { receita_bruta: 100000, cmv: 40000, despesas_operacionais: 20000 };
+    const antes = montarDRE({ regime: 'presumido', totais: tot(base) });
+    const depois = montarDRE({ regime: 'presumido', totais: tot({ ...base, nao_resultado: 70000 }) });
+    expect(depois).toEqual(antes);
+  });
+
+  it('acumula entradas/saídas por código e NÃO cria pendência nem rebaixa a confiança', () => {
+    const acc = novoNaoResultado();
+    acumularNaoResultado(acc, '1.04.04', 7213, true);
+    acumularNaoResultado(acc, '2.07.02', 100, false);
+    acumularNaoResultado(acc, '2.07.02', 50, false);
+    expect(acc).toEqual({ entradas: 7213, saidas: 150, por_codigo: { '1.04.04': { entradas: 7213, saidas: 0 }, '2.07.02': { entradas: 0, saidas: 150 } } });
+    const alta = scoreConfianca({ pct_mapeado_valor: 1, fallback_pct: 0, share_generico: 0, tem_imposto_nao_mapeado: false });
+    // a pendência é só do fora_dre: um aporte puro não deixa o resultado provisório
+    expect(aplicarPendenciasConfianca(alta, { foraDRE: novoForaDRE(), mapeamentosInvalidos: 0, regime: 'competencia' })).toEqual(alta);
+  });
+
+  it('heurística nunca devolve nao_resultado (sair do resultado é decisão explícita)', () => {
+    for (const d of ['APORTE DE CAPITAL', 'COMPRA DE IMOBILIZADO', 'TRANSFERENCIA']) {
+      const r = classificarLinhaDRE({ categoria_codigo: '', categoria_descricao: d, isReceita: false, regime: 'presumido', mapping: M([]) });
+      expect(r.linha).not.toBe('nao_resultado');
+    }
   });
 });

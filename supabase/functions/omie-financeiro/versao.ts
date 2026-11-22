@@ -25,7 +25,8 @@ export const respostaSonda = criarRespostaSonda("omie-financeiro");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 // v1.12 (2026-11-20, crédito-IA PR 1): título de CR sem valor_documento legível não é gravado como R$ 0.
-export const VERSAO = "v1.12-cr-sem-valor-nao-vira-zero";
+// v1.13 (2026-11-22, DRE mapa próprio): linha `nao_resultado` (patrimonial definitivo, sem pendência) no detalhamento.
+export const VERSAO = "v1.13-dre-nao-resultado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

@@ -56,6 +56,11 @@ const lerForaDre: Leitor<NonNullable<DetalhamentoDre['fora_dre']>> = (v, onde) =
   };
 };
 
+const lerNaoResultado: Leitor<NonNullable<DetalhamentoDre['nao_resultado']>> = (v, onde) => {
+  const o = objeto(v, onde);
+  return { ...lerSaidasEntradas(o, onde), por_codigo: campo(o, 'por_codigo', registro(lerSaidasEntradas), onde) };
+};
+
 type MapeamentoInvalido = NonNullable<DetalhamentoDre['mapeamentos_invalidos']>[number];
 const lerMapeamentoInvalido: Leitor<MapeamentoInvalido> = (v, onde) => {
   const o = objeto(v, onde);
@@ -86,6 +91,7 @@ export const lerDetalhamentoDre: Leitor<DetalhamentoDre> = (v, onde) => {
   opcional(d, o, 'delta_imposto_pct', anulavel(numero), onde);
   opcional(d, o, 'config_tributaria_completa', booleano, onde);
   opcional(d, o, 'fora_dre', lerForaDre, onde);
+  opcional(d, o, 'nao_resultado', lerNaoResultado, onde);
   opcional(d, o, 'mapeamentos_invalidos', lista(lerMapeamentoInvalido), onde);
   return d;
 };
