@@ -1,7 +1,8 @@
 // Coluna de identidade (Contato, Contatos extras, Endereço, Score comercial) do Customer 360.
 // Extraída de src/pages/Customer360.tsx (god-component split).
-import { Link } from 'react-router-dom';
-import { Mail, Phone, Building2, User, Users, MapPin, Heart } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { Mail, Phone, Building2, User, Users, MapPin, Heart, Wrench } from 'lucide-react';
+import { estadoComOrigem, lerOrigemLista, urlCadastroCliente } from '@/lib/nav/clientes';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,8 +27,22 @@ export function IdentityColumn({
   /** Leitura do score que NÃO aconteceu (sem score em mãos). Sem isto o card sumia como "sem score". */
   scoreSemLeitura?: EstadoSemLeitura | null;
 }) {
+  // "Cadastro e ferramentas" (a ficha antiga) é aberto DAQUI — a 360 é o destino de "abrir cliente".
+  // A fila de origem viaja junto: o voltar do Cadastro devolve a mesma lista (onda 2, item 8).
+  const origem = lerOrigemLista(useLocation().state);
+  const urlCadastro = customerId ? urlCadastroCliente(customerId, origem?.query ?? '') : null;
+  const estadoCadastro = estadoComOrigem(origem);
   return (
     <div className="lg:col-span-1 space-y-4">
+      {urlCadastro && (
+        <Button asChild variant="outline" size="sm" className="w-full justify-start gap-2">
+          <Link to={urlCadastro} state={estadoCadastro} data-testid="c360-link-cadastro">
+            <Wrench className="w-3.5 h-3.5" />
+            Cadastro e ferramentas
+            <span className="ml-auto text-2xs text-muted-foreground">exige OC · chamadas · visitas</span>
+          </Link>
+        </Button>
+      )}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -92,7 +107,7 @@ export function IdentityColumn({
       </Card>
 
       {/* Contatos extras (PR-CONTACTS) — dono, gerente, comprador, etc.
-          Edição completa em /admin/customers detail. Aqui é leitura compacta. */}
+          Edição completa em "Cadastro e ferramentas". Aqui é leitura compacta. */}
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center gap-2 space-y-0">
           <Users className="w-4 h-4 text-muted-foreground" />
@@ -120,7 +135,7 @@ export function IdentityColumn({
               <Separator className="my-2" />
               <div className="text-right">
                 <Button asChild variant="ghost" size="sm" className="h-7 text-xs">
-                  <Link to={`/admin/customers/${customerId}`}>
+                  <Link to={urlCadastro ?? '/admin/customers'} state={estadoCadastro}>
                     Gerenciar contatos
                   </Link>
                 </Button>
@@ -132,7 +147,7 @@ export function IdentityColumn({
                 Nenhum contato extra cadastrado.
               </p>
               <Button asChild variant="outline" size="sm" className="h-7 text-xs">
-                <Link to={`/admin/customers/${customerId}`}>
+                <Link to={urlCadastro ?? '/admin/customers'} state={estadoCadastro}>
                   Adicionar contato
                 </Link>
               </Button>

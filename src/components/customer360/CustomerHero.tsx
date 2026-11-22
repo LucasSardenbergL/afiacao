@@ -2,7 +2,7 @@
 // Extraído de src/pages/Customer360.tsx (god-component split).
 import { Link } from 'react-router-dom';
 import {
-  ArrowLeft, Wrench, Building2, Calendar, MessageSquare, ShoppingBag, AlertCircle, Activity,
+  ArrowLeft, Building2, Calendar, MessageSquare, ShoppingBag, AlertCircle, Activity,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,14 +20,12 @@ import type { Customer, CustomerScore } from './viewTypes';
 import type { EstadoSemLeitura } from '@/lib/leitura/estado-de-leitura';
 
 export function CustomerHero({
-  customer, score: s, isPj, onBack, onAbrirCadastro, scoreSemLeitura = null,
+  customer, score: s, isPj, onBack, scoreSemLeitura = null,
 }: {
   customer: Customer;
   score: CustomerScore;
   isPj: boolean;
   onBack: () => void;
-  /** Abre o "Cadastro e ferramentas" (a ficha de cadastro: ferramentas, exige OC, chamadas, visitas). */
-  onAbrirCadastro?: () => void;
   /** Leitura do score que NÃO aconteceu (sem score em mãos): o chip não pode dizer "Sem score". */
   scoreSemLeitura?: EstadoSemLeitura | null;
 }) {
@@ -62,12 +60,6 @@ export function CustomerHero({
         </Button>
         <span>/</span>
         <span className="text-foreground">360°</span>
-        {onAbrirCadastro && (
-          <Button variant="ghost" size="sm" className="h-7 px-2 ml-auto" onClick={onAbrirCadastro}>
-            <Wrench className="w-3.5 h-3.5 mr-1" />
-            Cadastro e ferramentas
-          </Button>
-        )}
       </div>
 
       {/* ─── Hero ─── */}
