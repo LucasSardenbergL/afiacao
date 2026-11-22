@@ -16,8 +16,13 @@
 --
 -- DECISÃO — só o DEFAULT, SEM backfill: o 0 já gravado pode ser saldo REAL informado pelo Omie, e a linha não
 -- guarda a proveniência (inserido-pelo-DEFAULT vs. atualizado-pelo-sync-com-0). Reescrever 0→NULL às cegas
--- apagaria saldo medido; o próximo sync de estoque sobrescreve o valor de qualquer forma. Backfill só com
--- evidência por linha — não há, então nenhum.
+-- apagaria saldo medido. Backfill só com evidência por linha — não há, então nenhum.
+--
+-- LIMITE CONHECIDO (Codex, 2026-11-21): o NULL sai quando o sync de estoque lista o SKU com saldo ≠ 0. Um SKU
+-- novo com zero REAL pode ficar NULL sem prazo: a listagem padrão traz só saldo ≠ 0, e o "zero com dono"
+-- (_shared/zeramento-estoque-io.ts) busca candidatos com `.not("estoque","eq",0)`, cego a NULL. Enquanto
+-- isso, `reposicao_cold_start_parametros` (filtro `estoque_catalogo IS NOT NULL`) não o semeia — fail-closed.
+-- Incluir NULL no zeramento é PR de edge à parte.
 --
 -- `SET DEFAULT NULL` (e não `DROP DEFAULT`): mesmo efeito — o PG não grava pg_attrdef para default NULL
 -- constante, então `atthasdef` vira false — sem DDL de DROP no arquivo. Idempotente: re-rodar é no-op.
