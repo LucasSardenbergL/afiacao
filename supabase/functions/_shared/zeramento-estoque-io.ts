@@ -220,7 +220,7 @@ export function contradicaoNoFimDoLote(ultima: Record<string, unknown>, acumulad
 }
 
 /** Dia CIVIL: "DD/MM/AAAA" ou "AAAA-MM-DD" (hora opcional depois) → "AAAA-MM-DD"; outra forma → null. */
-export function diaDaData(v: unknown): string | null {
+function diaDaData(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const t = v.trim();
   const br = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(t);
