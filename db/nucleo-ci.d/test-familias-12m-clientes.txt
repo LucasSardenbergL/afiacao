@@ -2,4 +2,4 @@
 # exata, created_at quando order_date_kpi falta), pedido cancelado fora, item sem família = NULL (não 0),
 # carteira filtrada, sem filtro = 0 linhas, SECURITY INVOKER (RLS do chamador), anon barrado por 42501.
 # Falsificação: 10 sabotagens na mesma invocação do controle verde.
-db/test-familias-12m-clientes.sh
+db/test-familias-12m-clientes.sh  10

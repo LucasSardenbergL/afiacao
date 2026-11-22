@@ -190,4 +190,5 @@ suite
 
 echo "═══ RESULTADO: controle pass=$PASS fail=$FAIL · falsificação dentes=$FALS_OK sem-dente=$FALS_BAD ═══"
 if [ "$FAIL" -ne 0 ] || [ "$FALS_BAD" -ne 0 ] || [ "$FALS_OK" -ne 10 ]; then exit 1; fi
+echo "PASS=$PASS  FAIL=$FAIL"
 echo "PROVA-FAMILIAS-12M-OK"
