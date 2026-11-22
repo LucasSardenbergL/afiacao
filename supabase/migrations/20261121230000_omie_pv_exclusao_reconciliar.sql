@@ -245,9 +245,11 @@ DECLARE v public.omie_pv_execucao%ROWTYPE;
 BEGIN
   v := private.omie_pv_execucao_viva(p_execucao_id);
   PERFORM pg_advisory_xact_lock(hashtextextended('omie_pv_listar:' || v.account, 0));
-  -- Janela MÓVEL pelo instante de cada concessão (Codex código P1): a execução inteira não sai da conta de uma vez.
+  -- Janela MÓVEL pelo instante de cada concessão (Codex código P1). 55 min, não 60/70: o cron é de hora em hora, e uma
+  -- janela ≥ o período faz a execução herdar as concessões da anterior e o cursor histórico nunca andar (Codex código
+  -- rodada 3). A concessão precede o envio físico em ≤ 60 s (relógio da conta), então o regime fica em ≤ 6 por hora.
   IF (SELECT count(*) FROM public.omie_pv_execucao e CROSS JOIN LATERAL unnest(e.listar_em) t(em)
-       WHERE e.account = v.account AND e.iniciada_em > now() - interval '3 hours' AND t.em > now() - interval '70 minutes') >= 6 THEN
+       WHERE e.account = v.account AND e.iniciada_em > now() - interval '3 hours' AND t.em > now() - interval '55 minutes') >= 6 THEN
     RETURN false;
   END IF;
   UPDATE public.omie_pv_execucao e SET chamadas_listar = e.chamadas_listar + 1, listar_em = e.listar_em || clock_timestamp()

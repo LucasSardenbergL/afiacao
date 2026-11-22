@@ -335,6 +335,11 @@ eq "I4 credencial da Oben usada na Colacor" "$(E "SELECT motivo FROM omie_pv_exe
 EX="$(E "SELECT max(id) FROM omie_pv_execucao WHERE account='oben'")"
 eq "I5 orçamento de listagem: 6 concedidas, a 7ª não" \
   "$(E "SELECT string_agg(omie_pv_listar_vez($EX)::text, ',') FROM generate_series(1,7)")" "true,true,true,true,true,true,false"
+# a execução seguinte (cron 1h depois) tem as 6 de novo: a janela não herda as concessões da anterior
+P -q -c "UPDATE omie_pv_execucao SET listar_em = ARRAY(SELECT t - interval '58 minutes' FROM unnest(listar_em) t), iniciada_em = iniciada_em - interval '58 minutes' WHERE id=$EX"
+EXB="$(E "SELECT execucao_id FROM omie_pv_execucao_iniciar('oben', repeat('a',32))")"
+eq "I6 execução 58 min depois volta a ter as 6 chamadas (o cursor não morre de fome)" \
+  "$(E "SELECT count(*) FILTER (WHERE v) FROM (SELECT omie_pv_listar_vez($EXB) v FROM generate_series(1,6)) x")" "6"
 
 echo "── T. triagem"
 EX="$(E "SELECT t_ciclo('oben', $PRES)")"
