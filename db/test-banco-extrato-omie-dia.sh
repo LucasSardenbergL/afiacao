@@ -51,11 +51,18 @@ if [ "${1:-}" = "--falsificar" ]; then
     gate_sem_coalesce:t9_gate_sem_calibracao_null
     gate_zero_dias:t9_gate_zero_dias_fecha
     gate_qualquer_versao:t9_outra_versao_nao_calibra
+    gate_sem_movimento:t9_gate_so_zero_igual_zero_fecha
+    periodo_ignorado:t9_gate_fora_do_periodo_medido
+    janela_antes_do_dedup:t9_dedup_antes_da_janela
+    sentido_coalesce_zero:t9_sentido_sem_linha_null
+    service_role_escreve:t9_calibracao_escrita_negada,t9_migration_aplica
+    policy_aberta_sem_pos:t9_calibracao_rls
+    pre_sem_ambiguo:t9_pre_seed_ambiguo_aborta
     dia_sem_linha_zero:t9_dia_sem_linha_null
     definer:t9_rls_sem_acesso,t9_migration_aplica
     anon_exec:t9_rpc_acl,t9_migration_aplica
     tabela_sem_rls:t9_calibracao_rls,t9_migration_aplica
-    policy_aberta:t9_calibracao_rls
+    policy_aberta:t9_calibracao_rls,t9_migration_aplica
     grant_aberto:t9_calibracao_escrita_negada,t9_migration_aplica
     seed_errado:t9_seed_calibracao_oben,t9_migration_aplica
     seed_errado_sem_pos:t9_seed_calibracao_oben,t9_gate_oben_seed_fechado
@@ -135,21 +142,31 @@ case "${SABOTAGEM:-}" in
   sem_pix)              sabotar "WHERE bco.banco_conta_id = p_banco_conta_id" \
                           "WHERE bco.banco_conta_id = p_banco_conta_id AND bco.omie_ncodcc = (SELECT min(x.omie_ncodcc) FROM public.banco_conta_omie x WHERE x.banco_conta_id = p_banco_conta_id)" ;;
   # gate
-  gate_c_aberto)        sabotar "CASE WHEN v_cal_c THEN agg.cred END" "CASE WHEN true THEN agg.cred END" ;;
-  gate_d_aberto)        sabotar "CASE WHEN v_cal_d THEN agg.deb END" "CASE WHEN true THEN agg.deb END" ;;
+  gate_c_aberto)        sabotar "CASE WHEN v_conta_c AND medido.dentro THEN agg.cred END" "CASE WHEN true THEN agg.cred END" ;;
+  gate_d_aberto)        sabotar "CASE WHEN v_conta_d AND medido.dentro THEN agg.deb END" "CASE WHEN true THEN agg.deb END" ;;
   gate_lados_juntos)    sabotar "AND k.dias_batem_debitos + k.divergencias_explicadas_debitos = k.dias_conferidos" \
                           "AND k.dias_batem_creditos + k.divergencias_explicadas_creditos = k.dias_conferidos" ;;
   gate_bool_or)         sabotar "coalesce(bool_and(" "coalesce(bool_or(" ;;
   gate_sem_coalesce)    sabotar "coalesce(bool_and(" "(bool_and("
                         sabotar "k.dias_conferidos), false)" "k.dias_conferidos))" ;;
   gate_zero_dias)       sabotar "k.dias_conferidos > 0" "k.dias_conferidos >= 0" ;;
-  gate_qualquer_versao) sabotar "WHERE k.banco_conta_id = p_banco_conta_id AND k.regra_versao = c_versao;" "WHERE k.banco_conta_id = p_banco_conta_id;" ;;
-  dia_sem_linha_zero)   sabotar "CASE WHEN v_cal_c THEN agg.cred END" "CASE WHEN v_cal_c THEN coalesce(agg.cred, 0) END" ;;
+  gate_qualquer_versao) sabotar "AND k.regra_versao = c_versao" "" ;;
+  gate_sem_movimento)   sabotar "k.dias_conferidos > 0 AND k.dias_com_movimento_creditos > 0" "k.dias_conferidos > 0" ;;
+  periodo_ignorado)     sabotar "AND dias.d BETWEEN k.de AND k.ate" "" ;;
+  janela_antes_do_dedup) sabotar "-- SEM filtro de periodo aqui: o dedup abaixo precisa ver todas as versoes da baixa (o periodo vai no agg)" \
+                          "AND COALESCE(m.data_credito_omie, m.data_pagamento_omie) BETWEEN p_de AND p_ate" ;;
+  sentido_coalesce_zero) sabotar "sum((v.valor * 100)::bigint) FILTER (WHERE v.grupo = 'CONTA_CORRENTE_PAG')::bigint AS deb" \
+                          "COALESCE(sum((v.valor * 100)::bigint) FILTER (WHERE v.grupo = 'CONTA_CORRENTE_PAG'), 0)::bigint AS deb" ;;
+  dia_sem_linha_zero)   sabotar "CASE WHEN v_conta_c AND medido.dentro THEN agg.cred END" "CASE WHEN v_conta_c AND medido.dentro THEN coalesce(agg.cred, 0) END" ;;
   # seguranca / ACL
   definer)              sabotar "SECURITY INVOKER" "SECURITY DEFINER" ;;
   anon_exec)            sabotar "REVOKE ALL ON FUNCTION public.banco_extrato_omie_dia(uuid, date, date) FROM PUBLIC, anon;" "" ;;
   tabela_sem_rls)       sabotar "ALTER TABLE public.banco_regra_calibracao ENABLE ROW LEVEL SECURITY;" "" ;;
   policy_aberta)        sabotar "TO authenticated USING (public.fin_user_can_access(company));" "TO authenticated USING (true);" ;;
+  service_role_escreve) sabotar "FROM PUBLIC, anon, authenticated, service_role;" "FROM PUBLIC, anon, authenticated;" ;;
+  policy_aberta_sem_pos) sabotar "TO authenticated USING (public.fin_user_can_access(company));" "TO authenticated USING (true);"
+                        sabotar "AND qual = 'fin_user_can_access(company)') THEN" ") THEN" ;;
+  pre_sem_ambiguo)      sabotar "WHERE company = 'oben' AND banco_codigo = '341') > 1 THEN" "WHERE company = 'oben' AND banco_codigo = '341') > 99 THEN" ;;
   grant_aberto)         sabotar "GRANT SELECT ON TABLE public.banco_regra_calibracao TO authenticated;" "GRANT ALL ON TABLE public.banco_regra_calibracao TO authenticated;" ;;
   # seed e re-apply
   seed_errado)          sabotar "       7, 7, 0, 0," "       31, 31, 0, 0," ;;
@@ -237,7 +254,7 @@ echo "=== aplica a F1 (dependencia, intacta) ==="
 P -q -f "$MIG_F1" > "$(dirname "$DATA")/f1.log" 2>&1 || { echo "FAIL t9_migration_aplica — F1 nao aplicou: $(head -c 400 "$(dirname "$DATA")/f1.log")"; echo "PASS=0 FAIL=1"; exit 1; }
 
 echo "=== aplica a migration (1a vez) ==="
-if P -q -f "$MIG_USADA" > "$(dirname "$DATA")/mig1.log" 2>&1; then
+if P -q -1 -f "$MIG_USADA" > "$(dirname "$DATA")/mig1.log" 2>&1; then
   echo "PASS t9_migration_aplica"; PASS=$((PASS+1))
 else
   echo "FAIL t9_migration_aplica — $(head -c 400 "$(dirname "$DATA")/mig1.log")"; FAIL=$((FAIL+1))
@@ -248,12 +265,12 @@ ID_COL=$(Pq -c "SELECT id FROM public.banco_conta WHERE company='colacor'")
 
 echo "=== seed ==="
 eq t9_seed_calibracao_oben \
-  "$(Pq -c "SELECT format('%s|%s|%s|%s|%s|%s|%s|%s', regra_versao, de, ate, dias_conferidos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos) FROM public.banco_regra_calibracao WHERE banco_conta_id = '$ID_OBEN'")" \
-  "v1|2026-10-01|2026-10-31|31|7|7|0|0"
+  "$(Pq -c "SELECT format('%s|%s|%s|%s|%s|%s|%s|%s|%s|%s', regra_versao, de, ate, dias_conferidos, dias_com_movimento_creditos, dias_com_movimento_debitos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos) FROM public.banco_regra_calibracao WHERE banco_conta_id = '$ID_OBEN'")" \
+  "v1|2026-10-01|2026-10-31|31|24|24|7|7|0|0"
 
 echo "=== re-apply ==="
 N_ANTES=$(Pq -c "SELECT count(*) FROM public.banco_regra_calibracao")
-if P -q -f "$MIG_USADA" > "$(dirname "$DATA")/mig2.log" 2>&1; then RC2=0; else RC2=1; fi
+if P -q -1 -f "$MIG_USADA" > "$(dirname "$DATA")/mig2.log" 2>&1; then RC2=0; else RC2=1; fi
 eq t9_idempotente "$RC2|$(Pq -c "SELECT count(*) FROM public.banco_regra_calibracao")" "0|$N_ANTES"
 
 # ── fixture de movimento ──
@@ -293,13 +310,19 @@ INSERT INTO public.fin_movimentacoes (company, omie_ncodcc, natureza, valor, omi
   -- D13: TRAR na principal vinda de conta Omie de OUTRO banco (2004 nao e desta conta bancaria)
   ('colacor',2001,'TRAR',300.00,NULL,NULL,'CONTA_CORRENTE_REC',NULL,'2026-10-17',NULL,'2026-10-17 10:00+00'),
   ('colacor',2004,'TRAP',300.00,NULL,NULL,'CONTA_CORRENTE_PAG',NULL,'2026-10-17',NULL,'2026-10-17 10:00+00'),
+  -- D31/N01: baixa 30 do titulo 13 corrigida de 31/10 (velha) para 01/11 (nova) — 31/10 nao pode ressuscitar a velha
+  ('colacor',2001,'BAXR', 20.00,13,30,'CONTA_CORRENTE_REC','2026-10-31','2026-10-31',NULL,'2026-10-31 10:00+00'),
+  ('colacor',2001,'BAXR', 20.00,13,30,'CONTA_CORRENTE_REC','2026-11-01','2026-11-01',NULL,'2026-11-02 10:00+00'),
+  -- N05: dado fora do periodo de qualquer calibracao
+  ('colacor',2001,'BAXR', 12.00,11,31,'CONTA_CORRENTE_REC','2026-11-05','2026-11-05',NULL,'2026-11-05 10:00+00'),
   -- oben D01: tem dado, mas a calibracao da oben (seed) reprovou
   ('oben',1001,'BAXR',100.00,91,1,'CONTA_CORRENTE_REC','2026-10-05','2026-10-05',NULL,'2026-10-05 10:00+00');
 SQL
 # calibracao da colacor que APROVA os dois lados (todo dia bate ou explicado), escrita como o envelope faria (postgres)
 P -q -c "INSERT INTO public.banco_regra_calibracao (company, banco_conta_id, regra_versao, de, ate, dias_conferidos,
+  dias_com_movimento_creditos, dias_com_movimento_debitos,
   dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas)
-  VALUES ('colacor', '$ID_COL', 'v1', '2026-09-01', '2026-09-30', 30, 28, 27, 2, 3, 'fixture: aprovada')" \
+  VALUES ('colacor', '$ID_COL', 'v1', '2026-10-01', '2026-10-31', 31, 20, 18, 28, 27, 3, 4, 'fixture: aprovada')" \
   || { echo "fixture de calibracao falhou"; exit 1; }
 
 SEL="format('%s|%s|%s|%s', creditos_centavos, debitos_centavos, creditos_calibrado, debitos_calibrado)"
@@ -316,17 +339,20 @@ echo "=== regra v1 ==="
 eq t9_omie_dia_soma_pix_itau                 "$(dia "$U_STAFF" "$ID_COL" 2026-10-05)" "15000|3000|t|t"
 eq t9_otica_conta_corrente_nao_dobra         "$(dia "$U_STAFF" "$ID_COL" 2026-10-05)" "15000|3000|t|t"
 eq t9_omie_dia_ignora_previsao_valor_zero    "$(dia "$U_STAFF" "$ID_COL" 2026-10-06)" "||t|t"
-eq t9_dedup_versao_da_baixa                  "$(dia "$U_STAFF" "$ID_COL" 2026-10-07)" "4500|0|t|t"
+eq t9_dedup_versao_da_baixa                  "$(dia "$U_STAFF" "$ID_COL" 2026-10-07)" "4500||t|t"
 eq t9_transferencia_mesma_conta_bancaria_sai "$(dia "$U_STAFF" "$ID_COL" 2026-10-08)" "||t|t"
-eq t9_data_efetiva_nao_e_data_movimento      "$(dia "$U_STAFF" "$ID_COL" 2026-10-09)" "8000|0|t|t"
-eq t9_data_credito_prevalece                 "$(dia "$U_STAFF" "$ID_COL" 2026-10-09)/$(dia "$U_STAFF" "$ID_COL" 2026-10-10)" "8000|0|t|t/||t|t"
+eq t9_data_efetiva_nao_e_data_movimento      "$(dia "$U_STAFF" "$ID_COL" 2026-10-09)" "8000||t|t"
+eq t9_data_credito_prevalece                 "$(dia "$U_STAFF" "$ID_COL" 2026-10-09)/$(dia "$U_STAFF" "$ID_COL" 2026-10-10)" "8000||t|t/||t|t"
 eq t9_dia_sem_linha_null                     "$(dia "$U_STAFF" "$ID_COL" 2026-10-11)" "||t|t"
 eq t9_previsao_valor_positivo_nao_e_realizado "$(dia "$U_STAFF" "$ID_COL" 2026-10-12)" "||t|t"
 eq t9_natureza_fora_da_lista_nao_entra       "$(dia "$U_STAFF" "$ID_COL" 2026-10-13)" "||t|t"
 eq t9_ignora_baixa_cancelada                 "$(dia "$U_STAFF" "$ID_COL" 2026-10-14)" "||t|t"
-eq t9_pagto_parcial_entra                    "$(dia "$U_STAFF" "$ID_COL" 2026-10-15)" "1000|0|t|t"
+eq t9_pagto_parcial_entra                    "$(dia "$U_STAFF" "$ID_COL" 2026-10-15)" "1000||t|t"
 eq t9_ignora_baixa_cancelada_pagar           "$(dia "$U_STAFF" "$ID_COL" 2026-10-16)" "||t|t"
-eq t9_transferencia_externa_entra            "$(dia "$U_STAFF" "$ID_COL" 2026-10-17)" "30000|0|t|t"
+eq t9_transferencia_externa_entra            "$(dia "$U_STAFF" "$ID_COL" 2026-10-17)" "30000||t|t"
+eq t9_sentido_sem_linha_null                 "$(dia "$U_STAFF" "$ID_COL" 2026-10-07)" "4500||t|t"
+eq t9_dedup_antes_da_janela                  "$(dia "$U_STAFF" "$ID_COL" 2026-10-31)" "||t|t"
+eq t9_gate_fora_do_periodo_medido            "$(dia "$U_STAFF" "$ID_COL" 2026-11-05)" "||f|f"
 eq t9_serie_densa_uma_linha_por_dia \
   "$(como "$U_STAFF" "SELECT count(*) || '|' || count(DISTINCT data) || '|' || min(data) || '|' || max(data) FROM public.banco_extrato_omie_dia('$ID_COL', '2026-10-01', '2026-10-31')")" \
   "31|31|2026-10-01|2026-10-31"
@@ -335,13 +361,16 @@ echo "=== gate ==="
 eq t9_gate_sem_calibracao_null \
   "$(dia_tx "DELETE FROM public.banco_regra_calibracao WHERE banco_conta_id = '$ID_COL'" 2026-10-05)" "||f|f"
 eq t9_creditos_e_debitos_calibrados_separadamente \
-  "$(dia_tx "INSERT INTO public.banco_regra_calibracao (company, banco_conta_id, regra_versao, de, ate, dias_conferidos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas) VALUES ('colacor', '$ID_COL', 'v1', '2026-10-01', '2026-10-31', 31, 31, 20, 0, 0, 'so creditos')" 2026-10-05)" \
+  "$(dia_tx "DELETE FROM public.banco_regra_calibracao WHERE banco_conta_id = '$ID_COL'; INSERT INTO public.banco_regra_calibracao (company, banco_conta_id, regra_versao, de, ate, dias_conferidos, dias_com_movimento_creditos, dias_com_movimento_debitos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas) VALUES ('colacor', '$ID_COL', 'v1', '2026-10-01', '2026-10-31', 31, 20, 20, 31, 20, 0, 0, 'so creditos')" 2026-10-05)" \
   "15000||t|f"
 eq t9_gate_reprovada_fecha \
-  "$(dia_tx "INSERT INTO public.banco_regra_calibracao (company, banco_conta_id, regra_versao, de, ate, dias_conferidos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas) VALUES ('colacor', '$ID_COL', 'v1', '2026-10-01', '2026-10-31', 31, 10, 10, 0, 0, 'reprovada')" 2026-10-05)" \
+  "$(dia_tx "INSERT INTO public.banco_regra_calibracao (company, banco_conta_id, regra_versao, de, ate, dias_conferidos, dias_com_movimento_creditos, dias_com_movimento_debitos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas) VALUES ('colacor', '$ID_COL', 'v1', '2026-10-05', '2026-10-05', 1, 1, 1, 0, 0, 0, 0, 'reprovada')" 2026-10-05)" \
   "||f|f"
 eq t9_gate_zero_dias_fecha \
-  "$(dia_tx "DELETE FROM public.banco_regra_calibracao WHERE banco_conta_id = '$ID_COL'; INSERT INTO public.banco_regra_calibracao (company, banco_conta_id, regra_versao, de, ate, dias_conferidos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas) VALUES ('colacor', '$ID_COL', 'v1', '2026-10-01', '2026-10-01', 0, 0, 0, 0, 0, 'vazia')" 2026-10-05)" \
+  "$(dia_tx "DELETE FROM public.banco_regra_calibracao WHERE banco_conta_id = '$ID_COL'; INSERT INTO public.banco_regra_calibracao (company, banco_conta_id, regra_versao, de, ate, dias_conferidos, dias_com_movimento_creditos, dias_com_movimento_debitos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas) VALUES ('colacor', '$ID_COL', 'v1', '2026-10-01', '2026-10-31', 0, 0, 0, 0, 0, 0, 0, 'vazia')" 2026-10-05)" \
+  "||f|f"
+eq t9_gate_so_zero_igual_zero_fecha \
+  "$(dia_tx "DELETE FROM public.banco_regra_calibracao WHERE banco_conta_id = '$ID_COL'; INSERT INTO public.banco_regra_calibracao (company, banco_conta_id, regra_versao, de, ate, dias_conferidos, dias_com_movimento_creditos, dias_com_movimento_debitos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas) VALUES ('colacor', '$ID_COL', 'v1', '2026-10-01', '2026-10-31', 31, 0, 0, 31, 31, 0, 0, 'so domingos')" 2026-10-05)" \
   "||f|f"
 eq t9_outra_versao_nao_calibra \
   "$(dia_tx "UPDATE public.banco_regra_calibracao SET regra_versao = 'v2' WHERE banco_conta_id = '$ID_COL'" 2026-10-05)" \
@@ -357,13 +386,28 @@ eq t9_calibracao_rls \
   "$(como "$U_OBEN" "SELECT count(*) FROM public.banco_regra_calibracao")/$(como "$U_SEM" "SELECT count(*) FROM public.banco_regra_calibracao")/$(como "$U_STAFF" "SELECT count(*) FROM public.banco_regra_calibracao")" \
   "1/0/2"
 eq t9_calibracao_escrita_negada \
-  "$(estado "$U_STAFF" authenticated "INSERT INTO public.banco_regra_calibracao (company, banco_conta_id, regra_versao, de, ate, dias_conferidos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas) VALUES ('colacor', '$ID_COL', 'v1', '2026-08-01', '2026-08-31', 31, 31, 31, 0, 0, 'forjada')")/$(estado "$U_STAFF" authenticated "UPDATE public.banco_regra_calibracao SET dias_batem_creditos = 31")/$(estado "$U_STAFF" authenticated "TRUNCATE public.banco_regra_calibracao")" \
-  "42501/42501/42501"
+  "$(estado "$U_STAFF" authenticated "INSERT INTO public.banco_regra_calibracao (company, banco_conta_id, regra_versao, de, ate, dias_conferidos, dias_com_movimento_creditos, dias_com_movimento_debitos, dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas) VALUES ('colacor', '$ID_COL', 'v1', '2026-08-01', '2026-08-31', 31, 20, 20, 31, 31, 0, 0, 'forjada')")/$(estado "$U_STAFF" authenticated "UPDATE public.banco_regra_calibracao SET dias_batem_creditos = 31")/$(estado "$U_STAFF" authenticated "TRUNCATE public.banco_regra_calibracao")/$(estado "" service_role "UPDATE public.banco_regra_calibracao SET dias_batem_creditos = 31")/$(estado "" service_role "TRUNCATE public.banco_regra_calibracao")" \
+  "42501/42501/42501/42501/42501"
 
 echo "=== entradas invalidas ==="
 eq t9_intervalo_invalido \
   "$(estado "$U_STAFF" authenticated "SELECT * FROM public.banco_extrato_omie_dia('$ID_COL', '2026-10-05', '2026-10-01')")/$(estado "$U_STAFF" authenticated "SELECT * FROM public.banco_extrato_omie_dia('$ID_COL', '2025-01-01', '2026-10-01')")/$(estado "$U_STAFF" authenticated "SELECT * FROM public.banco_extrato_omie_dia(NULL, '2026-10-01', '2026-10-01')")" \
   "22023/22023/22004"
+
+echo "=== PRE: seed ambiguo ==="
+"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove_pre || { echo "createdb prove_pre falhou"; exit 1; }
+stubs prove_pre || { echo "stubs prove_pre falharam"; exit 1; }
+DB=prove_pre P -q -c "CREATE TABLE public.fin_movimentacoes (id uuid, company text, omie_ncodcc bigint, natureza text, valor numeric(15,2), omie_codigo_lancamento bigint, omie_ncodbaixa bigint, categoria_descricao text, data_credito_omie date, data_pagamento_omie date, created_at timestamptz, updated_at timestamptz);
+  CREATE TABLE public.fin_contas_receber (company text, omie_codigo_lancamento bigint, status_titulo text);
+  CREATE TABLE public.fin_contas_pagar (company text, omie_codigo_lancamento bigint, status_titulo text);
+  INSERT INTO public.fin_contas_correntes (company, omie_ncodcc, descricao, banco, agencia, numero_conta, tipo, ativo) VALUES ('oben', 1001, 'Itau Oben', '341', '0000', '00000-1', 'CC', true);" \
+  && DB=prove_pre P -q -f "$MIG_F1" > "$(dirname "$DATA")/pre-f1.log" 2>&1 \
+  && DB=prove_pre P -q -c "INSERT INTO public.banco_conta (company, banco_codigo, agencia_digitos, conta_digitos) VALUES ('oben', '341', '0000', '000002')" \
+  || { echo "fixture prove_pre falhou: $(head -c 300 "$(dirname "$DATA")/pre-f1.log")"; exit 1; }
+if DB=prove_pre P -q -1 -f "$MIG_USADA" > "$(dirname "$DATA")/pre.log" 2>&1; then PRE_RC=0; else PRE_RC=1; fi
+eq t9_pre_seed_ambiguo_aborta \
+  "$PRE_RC/$(grep -c 'PRE FALHOU seed_ambiguo' "$(dirname "$DATA")/pre.log")/$(DB=prove_pre Pq -c "SELECT to_regclass('public.banco_regra_calibracao') IS NULL")" \
+  "1/1/t"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

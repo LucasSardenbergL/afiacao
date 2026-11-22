@@ -1,5 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { MotivoRecusaParse } from '@/lib/financeiro/extrato/nucleo';
+import { montarMovimentoOmie, type LinhaOmieDiaRpc, type MovimentoOmie } from '@/lib/financeiro/extrato/omie-realizado';
 
 /**
  * Serviço da tela /financeiro/extrato-bancario (F1 — extrato Itaú). Valores em CENTAVOS inteiros.
@@ -243,6 +244,20 @@ export async function resumoDia(bancoContaId: string, de: string, ate: string): 
     saldoFinal: r.coberto === true ? numOuNull(r.saldo_final_dia_centavos) : null,
     saldoOmie: numOuNull(r.saldo_omie_centavos),
   }));
+}
+
+/**
+ * Movimento Omie realizado por dia (regra v1), com o gate fail-closed por lado: lado não calibrado → `null`.
+ * Lê só a RPC (agregado por dia, ≤ 401 linhas — nunca `fin_movimentacoes` crua, capa de 1000 do PostgREST).
+ */
+export async function movimentoOmieDia(bancoContaId: string, de: string, ate: string): Promise<MovimentoOmie> {
+  const { data, error } = await db.rpc<LinhaOmieDiaRpc[]>('banco_extrato_omie_dia', {
+    p_banco_conta_id: bancoContaId,
+    p_de: de,
+    p_ate: ate,
+  });
+  if (error) falha('Falha ao carregar o movimento Omie', error);
+  return montarMovimentoOmie(data);
 }
 
 export async function marcarConferido(arquivoId: string): Promise<void> {

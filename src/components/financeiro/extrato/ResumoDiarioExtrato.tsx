@@ -1,5 +1,6 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { ResumoDia } from '@/services/financeiroExtratoBancario';
+import { MOVIMENTO_OMIE_FECHADO, type MovimentoOmie } from '@/lib/financeiro/extrato/omie-realizado';
 import { diferencaDoCorte, formatarCentavos, formatarDataIso, INDISPONIVEL } from './formatar';
 
 function Celula({ valor, className }: { valor: number | null; className?: string }) {
@@ -10,13 +11,27 @@ function Celula({ valor, className }: { valor: number | null; className?: string
   );
 }
 
+export const OMIE_NAO_CALIBRADO = 'indisponível (regra não calibrada)';
+
+/** Célula do movimento Omie: lado não calibrado → OMIE_NAO_CALIBRADO (nunca o número); calibrado e sem dado → "indisponível". */
+function CelulaOmie({ calibrado, valor }: { calibrado: boolean; valor: number | null }) {
+  if (!calibrado) {
+    return <TableCell className="text-right text-xs text-muted-foreground">{OMIE_NAO_CALIBRADO}</TableCell>;
+  }
+  return <Celula valor={valor} />;
+}
+
 /**
  * Resumo diário do extrato. Dia não coberto por arquivo aceito → "indisponível" (ausente ≠ zero).
- * Coluna Omie = foto diária do saldo Omie (`saldo_omie_centavos`); `null` → "indisponível".
+ * Créditos/Débitos Omie = movimento realizado por dia (regra calibrada contra o extrato, F1 Task 9), com gate
+ * FAIL-CLOSED por lado e por dia: sem calibração aprovada que cubra o dia (ou sem resposta) → "indisponível (regra não
+ * calibrada)".
+ * Saldo Omie = foto diária do saldo Omie (`saldo_omie_centavos`); `null` → "indisponível".
  * "Diferença do corte" = saldo Itaú − saldo Omie no último dia coberto com saldo Itaú conhecido; ainda NÃO calibrada.
  */
-export function ResumoDiarioExtrato({ dias }: { dias: ResumoDia[] }) {
+export function ResumoDiarioExtrato({ dias, omie }: { dias: ResumoDia[]; omie?: MovimentoOmie | null }) {
   const corte = diferencaDoCorte(dias);
+  const mov = omie ?? MOVIMENTO_OMIE_FECHADO;
   return (
     <>
       <section className="mb-4 rounded-md border p-3 text-sm" data-testid="diferenca-do-corte">
@@ -53,6 +68,8 @@ export function ResumoDiarioExtrato({ dias }: { dias: ResumoDia[] }) {
             <TableHead className="text-right">Créditos</TableHead>
             <TableHead className="text-right">Débitos</TableHead>
             <TableHead className="text-right">Saldo do dia</TableHead>
+            <TableHead className="text-right">Créditos Omie</TableHead>
+            <TableHead className="text-right">Débitos Omie</TableHead>
             <TableHead className="text-right">Saldo Omie</TableHead>
           </TableRow>
         </TableHeader>
@@ -63,6 +80,8 @@ export function ResumoDiarioExtrato({ dias }: { dias: ResumoDia[] }) {
               <Celula valor={d.coberto ? d.creditos : null} />
               <Celula valor={d.coberto ? d.debitos : null} />
               <Celula valor={d.coberto ? d.saldoFinal : null} />
+              <CelulaOmie calibrado={mov.porDia[d.data]?.creditosCalibrado === true} valor={mov.porDia[d.data]?.creditos ?? null} />
+              <CelulaOmie calibrado={mov.porDia[d.data]?.debitosCalibrado === true} valor={mov.porDia[d.data]?.debitos ?? null} />
               <Celula valor={d.saldoOmie} />
             </TableRow>
           ))}

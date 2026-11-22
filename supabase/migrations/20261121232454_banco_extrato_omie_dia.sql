@@ -8,18 +8,22 @@
 --   1. public.banco_regra_calibracao: o resultado MEDIDO da calibracao de uma versao da regra contra o extrato
 --      aceito (contagens por lado, nunca valores). Escrita so por migration/envelope (authenticated: so SELECT).
 --   2. public.banco_extrato_omie_dia(conta, de, ate): SECURITY INVOKER (RLS vale), uma linha por dia de [de, ate],
---      soma as N omie_ncodcc de banco_conta_omie pela regra v1. GATE FAIL-CLOSED NO SERVIDOR: o lado (creditos ou
---      debitos) so sai com numero se TODAS as calibracoes registradas da versao, para a conta, tiverem todo dia
---      conferido batendo ou com divergencia explicada; senao o valor e NULL e o flag *_calibrado = false.
---      Dia sem nenhuma linha Omie = NULL (ausente != zero), mesmo calibrado.
---   3. Seed: a calibracao v1 medida em 2026-11-21 (Oben, out/2026): 31 dias conferidos; batem 7 (os 7 dias sem
---      movimento nos dois lados) em creditos e 7 em debitos; 0 divergencias explicadas -> os DOIS lados fechados.
+--      soma as N omie_ncodcc de banco_conta_omie pela regra v1. GATE FAIL-CLOSED NO SERVIDOR, por lado e POR DIA: o
+--      lado (creditos ou debitos) do dia D so sai com numero se (a) TODAS as calibracoes registradas da versao, para
+--      a conta, tiverem todo dia conferido batendo ou explicado E pelo menos 1 dia com movimento naquele lado, e
+--      (b) D estiver DENTRO do periodo de alguma calibracao da versao (a medicao nao vale para dia que nao mediu,
+--      p.ex. debito recente ainda sem baixa). Senao o valor e NULL e o flag *_calibrado = false.
+--      Sentido sem linha Omie no dia = NULL (ausente != zero), mesmo calibrado: nao se fabrica 0 por ausencia.
+--   3. Seed: a calibracao v1 medida em 2026-11-21 (Oben, out/2026): 31 dias conferidos, 24 com movimento por lado;
+--      batem 7 (so os 7 dias sem movimento nos dois lados) em creditos e 7 em debitos; 0 explicadas -> os DOIS
+--      lados fechados.
 --
 -- Regra v1 (inalterada da descoberta; a calibracao NAO justificou uma v2 -- ver o PR e o apendice do plano):
 --   otica CONTA_CORRENTE_REC (credito) / CONTA_CORRENTE_PAG (debito); naturezas BAXR/APBR/TRAR/EXTR e
 --   BAXP/APEP/TRAP/EXTP (lista POSITIVA); valor > 0; data efetiva = COALESCE(data_credito_omie,
 --   data_pagamento_omie) (nunca vencimento/data_movimento); dedup por (company, titulo, omie_ncodbaixa) ficando a
---   ultima observacao; fora a baixa de titulo hoje nao liquidado e a transferencia entre duas contas Omie da
+--   ultima observacao, ANTES do filtro de periodo (uma baixa corrigida para fora da janela nao ressuscita a versao
+--   velha dentro dela); fora a baixa de titulo hoje nao liquidado e a transferencia entre duas contas Omie da
 --   MESMA conta bancaria.
 --
 -- Molde TRAVA -> PRE -> CREATE -> POS. Idempotente, sem BEGIN/COMMIT. Nenhum numero de agencia/conta aqui.
@@ -58,6 +62,11 @@ BEGIN
     RAISE EXCEPTION 'PRE FALHOU dependencia: fin_movimentacoes.valor nao e numeric(,2).';
   END IF;
 
+  -- o seed liga a medicao a A conta Itau da oben: mais de uma = ambiguo, aborta (nunca copia para as duas).
+  IF (SELECT count(*) FROM public.banco_conta WHERE company = 'oben' AND banco_codigo = '341') > 1 THEN
+    RAISE EXCEPTION 'PRE FALHOU seed_ambiguo: mais de uma banco_conta Itau da oben; a calibracao medida nao tem dono unico. Nada foi criado.';
+  END IF;
+
   -- re-apply: a tabela que ja existe tem de ser DESTA migration (marca no COMMENT).
   IF to_regclass('public.banco_regra_calibracao') IS NOT NULL THEN
     v_marca := obj_description(to_regclass('public.banco_regra_calibracao'), 'pg_class');
@@ -72,7 +81,8 @@ $pre$;
 -- Uma linha = uma medicao da regra <regra_versao> na conta, no periodo [de, ate]. Os lados sao independentes
 -- (apendice, decisao 12): o gate de cada lado olha so as suas colunas. "batem" conta dia em que a soma Omie e a
 -- do extrato sao iguais ao centavo (inclusive 0 = 0, dia sem movimento nos dois lados); "explicadas" conta dia
--- divergente cuja diferenca INTEIRA foi atribuida a uma causa conhecida.
+-- divergente cuja diferenca INTEIRA foi atribuida a uma causa conhecida. "com_movimento" conta dia com movimento
+-- naquele lado em pelo menos uma das fontes: sem nenhum, a medicao so viu 0 = 0 e nao calibra o lado.
 CREATE TABLE IF NOT EXISTS public.banco_regra_calibracao (
   id                                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company                           text NOT NULL,
@@ -81,6 +91,8 @@ CREATE TABLE IF NOT EXISTS public.banco_regra_calibracao (
   de                                date NOT NULL,
   ate                               date NOT NULL,
   dias_conferidos                   integer NOT NULL,
+  dias_com_movimento_creditos       integer NOT NULL,
+  dias_com_movimento_debitos        integer NOT NULL,
   dias_batem_creditos               integer NOT NULL,
   dias_batem_debitos                integer NOT NULL,
   divergencias_explicadas_creditos  integer NOT NULL,
@@ -89,7 +101,9 @@ CREATE TABLE IF NOT EXISTS public.banco_regra_calibracao (
   medido_em                         timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT banco_regra_calibracao_periodo_ck CHECK (ate >= de AND dias_conferidos BETWEEN 0 AND (ate - de + 1)),
   CONSTRAINT banco_regra_calibracao_contagens_ck CHECK (
-        dias_batem_creditos >= 0 AND dias_batem_debitos >= 0
+        dias_com_movimento_creditos BETWEEN 0 AND dias_conferidos
+    AND dias_com_movimento_debitos BETWEEN 0 AND dias_conferidos
+    AND dias_batem_creditos >= 0 AND dias_batem_debitos >= 0
     AND divergencias_explicadas_creditos >= 0 AND divergencias_explicadas_debitos >= 0
     AND dias_batem_creditos + divergencias_explicadas_creditos <= dias_conferidos
     AND dias_batem_debitos + divergencias_explicadas_debitos <= dias_conferidos),
@@ -103,8 +117,10 @@ DROP POLICY IF EXISTS banco_regra_calibracao_select ON public.banco_regra_calibr
 CREATE POLICY banco_regra_calibracao_select
   ON public.banco_regra_calibracao FOR SELECT TO authenticated USING (public.fin_user_can_access(company));
 -- REVOKE ALL tira tambem TRUNCATE (que FURA a RLS) e o ALL que o default ACL de prod concede.
-REVOKE ALL ON TABLE public.banco_regra_calibracao FROM PUBLIC, anon, authenticated;
-GRANT SELECT ON TABLE public.banco_regra_calibracao TO authenticated;
+-- service_role tambem: o default ACL de prod lhe da ALL (inclusive TRUNCATE), e ela poderia trocar uma reprovacao
+-- por aprovacao fora do envelope. Escrita = so o dono (migration/envelope).
+REVOKE ALL ON TABLE public.banco_regra_calibracao FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON TABLE public.banco_regra_calibracao TO authenticated, service_role;
 
 -- -- SECAO 2 -- RPC banco_extrato_omie_dia ----------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.banco_extrato_omie_dia(p_banco_conta_id uuid, p_de date, p_ate date)
@@ -118,8 +134,8 @@ AS $fn$
 #variable_conflict use_column
 DECLARE
   c_versao CONSTANT text := 'v1';
-  v_cal_c  boolean;
-  v_cal_d  boolean;
+  v_conta_c boolean;
+  v_conta_d boolean;
 BEGIN
   IF p_banco_conta_id IS NULL OR p_de IS NULL OR p_ate IS NULL THEN
     RAISE EXCEPTION 'banco_extrato_omie_dia: conta, de e ate sao obrigatorios' USING ERRCODE = '22004';
@@ -128,19 +144,27 @@ BEGIN
     RAISE EXCEPTION 'banco_extrato_omie_dia: intervalo invalido (de % ate %, maximo 401 dias)', p_de, p_ate USING ERRCODE = '22023';
   END IF;
 
-  -- GATE: sem calibracao (ou sem acesso a ela, pela RLS) = fechado. Uma calibracao reprovada fecha o lado
-  -- mesmo que outra tenha passado (bool_and). Zero dia conferido nao calibra nada.
-  SELECT coalesce(bool_and(k.dias_conferidos > 0
+  -- GATE (parte da conta): sem calibracao (ou sem acesso a ela, pela RLS) = fechado. Uma calibracao reprovada
+  -- fecha o lado mesmo que outra tenha passado (bool_and). Zero dia conferido, ou nenhum dia com movimento no
+  -- lado (so 0 = 0), nao calibra o lado. A parte do DIA (dentro de um periodo medido) vai na consulta.
+  SELECT coalesce(bool_and(k.dias_conferidos > 0 AND k.dias_com_movimento_creditos > 0
                            AND k.dias_batem_creditos + k.divergencias_explicadas_creditos = k.dias_conferidos), false),
-         coalesce(bool_and(k.dias_conferidos > 0
+         coalesce(bool_and(k.dias_conferidos > 0 AND k.dias_com_movimento_debitos > 0
                            AND k.dias_batem_debitos + k.divergencias_explicadas_debitos = k.dias_conferidos), false)
-    INTO v_cal_c, v_cal_d
+    INTO v_conta_c, v_conta_d
     FROM public.banco_regra_calibracao k
    WHERE k.banco_conta_id = p_banco_conta_id AND k.regra_versao = c_versao;
 
   RETURN QUERY
   WITH dias AS (
     SELECT p_de + g AS d FROM generate_series(0, p_ate - p_de) g
+  ),
+  medido AS (
+    SELECT dias.d,
+           EXISTS (SELECT 1 FROM public.banco_regra_calibracao k
+                    WHERE k.banco_conta_id = p_banco_conta_id AND k.regra_versao = c_versao
+                      AND dias.d BETWEEN k.de AND k.ate) AS dentro
+      FROM dias
   ),
   contas AS (
     SELECT bco.company, bco.omie_ncodcc
@@ -158,7 +182,7 @@ BEGIN
        AND m.natureza IN ('BAXR', 'APBR', 'TRAR', 'EXTR',
                           'BAXP', 'APEP', 'TRAP', 'EXTP')
        AND m.valor > 0
-       AND COALESCE(m.data_credito_omie, m.data_pagamento_omie) BETWEEN p_de AND p_ate
+       -- SEM filtro de periodo aqui: o dedup abaixo precisa ver todas as versoes da baixa (o periodo vai no agg)
   ),
   -- versoes da MESMA baixa: uma linha por (empresa, titulo, nCodBaixa), a observada por ultimo
   baixas AS (
@@ -197,20 +221,23 @@ BEGIN
                  AND COALESCE(o.data_credito_omie, o.data_pagamento_omie) = a.data_efetiva))
   ),
   agg AS (
-    -- dentro de um dia COM linha, o sentido sem linha e 0 real; dia sem linha nenhuma nao aparece aqui (NULL abaixo)
+    -- sentido sem linha no dia = NULL (sem COALESCE): um credito chegando nao prova que o debito do dia ja foi
+    -- baixado (atraso de baixa de debito: p90 48 dias). A versao vigente da baixa e filtrada pelo periodo SO aqui.
     SELECT v.data_efetiva AS d,
-           COALESCE(sum((v.valor * 100)::bigint) FILTER (WHERE v.grupo = 'CONTA_CORRENTE_REC'), 0)::bigint AS cred,
-           COALESCE(sum((v.valor * 100)::bigint) FILTER (WHERE v.grupo = 'CONTA_CORRENTE_PAG'), 0)::bigint AS deb
+           sum((v.valor * 100)::bigint) FILTER (WHERE v.grupo = 'CONTA_CORRENTE_REC')::bigint AS cred,
+           sum((v.valor * 100)::bigint) FILTER (WHERE v.grupo = 'CONTA_CORRENTE_PAG')::bigint AS deb
       FROM validas v
+     WHERE v.data_efetiva BETWEEN p_de AND p_ate
      GROUP BY v.data_efetiva
   )
   SELECT dias.d,
-         CASE WHEN v_cal_c THEN agg.cred END,
-         CASE WHEN v_cal_d THEN agg.deb END,
+         CASE WHEN v_conta_c AND medido.dentro THEN agg.cred END,
+         CASE WHEN v_conta_d AND medido.dentro THEN agg.deb END,
          c_versao,
-         v_cal_c,
-         v_cal_d
+         v_conta_c AND medido.dentro,
+         v_conta_d AND medido.dentro
     FROM dias
+    JOIN medido ON medido.d = dias.d
     LEFT JOIN agg ON agg.d = dias.d
    ORDER BY dias.d;
 END
@@ -223,9 +250,9 @@ GRANT EXECUTE ON FUNCTION public.banco_extrato_omie_dia(uuid, date, date) TO aut
 -- -- SECAO 3 -- seed: a calibracao v1 medida (Oben, out/2026) -------------------------------------------
 -- Medido em 2026-11-21 via psql-ro contra os 2 OFX aceitos (01-20/10 e 10-31/10). So contagens.
 INSERT INTO public.banco_regra_calibracao
-  (company, banco_conta_id, regra_versao, de, ate, dias_conferidos,
+  (company, banco_conta_id, regra_versao, de, ate, dias_conferidos, dias_com_movimento_creditos, dias_com_movimento_debitos,
    dias_batem_creditos, dias_batem_debitos, divergencias_explicadas_creditos, divergencias_explicadas_debitos, notas)
-SELECT b.company, b.id, 'v1', DATE '2026-10-01', DATE '2026-10-31', 31,
+SELECT b.company, b.id, 'v1', DATE '2026-10-01', DATE '2026-10-31', 31, 24, 24,
        7, 7, 0, 0,
        'v1 NAO calibrada. 24 dias com movimento em cada lado, 0 batem ao centavo (os 7 que batem sao 0=0). '
        || 'Creditos: estrutural (desconto de duplicatas e cobranca em lote no banco x baixa por titulo no Omie). '
@@ -248,11 +275,13 @@ BEGIN
   END IF;
   SELECT count(*) INTO v_n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'banco_regra_calibracao';
   IF v_n <> 1 OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'banco_regra_calibracao'
-                               AND cmd = 'SELECT' AND roles = '{authenticated}') THEN
-    RAISE EXCEPTION 'POSTCONDICAO FALHOU policy: banco_regra_calibracao com % policy(s) (esperado 1, SELECT, authenticated).', v_n;
+                               AND cmd = 'SELECT' AND roles = '{authenticated}'
+                               AND qual = 'fin_user_can_access(company)') THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU policy: banco_regra_calibracao com % policy(s) (esperado 1, SELECT, authenticated, USING fin_user_can_access(company)).', v_n;
   END IF;
   IF has_table_privilege('anon', 'public.banco_regra_calibracao', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
      OR has_table_privilege('authenticated', 'public.banco_regra_calibracao', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+     OR has_table_privilege('service_role', 'public.banco_regra_calibracao', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
      OR NOT has_table_privilege('authenticated', 'public.banco_regra_calibracao', 'SELECT') THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU privilegio: banco_regra_calibracao com ACL fora do desenho.';
   END IF;
@@ -277,6 +306,7 @@ BEGIN
      AND NOT EXISTS (SELECT 1 FROM public.banco_regra_calibracao k JOIN public.banco_conta b ON b.id = k.banco_conta_id
                       WHERE b.company = 'oben' AND b.banco_codigo = '341' AND k.regra_versao = 'v1'
                         AND k.de = DATE '2026-10-01' AND k.ate = DATE '2026-10-31' AND k.dias_conferidos = 31
+                        AND k.dias_com_movimento_creditos = 24 AND k.dias_com_movimento_debitos = 24
                         AND k.dias_batem_creditos = 7 AND k.dias_batem_debitos = 7
                         AND k.divergencias_explicadas_creditos = 0 AND k.divergencias_explicadas_debitos = 0) THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU seed: calibracao v1 out/2026 da oben ausente ou com numeros diferentes do medido.';

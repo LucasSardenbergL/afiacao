@@ -1,0 +1,5 @@
+# F1 Task 9: movimento Omie realizado por dia (regra v1) em banco_extrato_omie_dia (INVOKER, soma as N omie_ncodcc
+# da conta bancaria), banco_regra_calibracao (RLS, so SELECT) e o gate fail-closed POR LADO no servidor (sem
+# calibracao / reprovada / zero dias / outra versao = NULL). Seed: calibracao v1 out/2026 da oben (nao calibrada).
+# Aplica a F1 intacta antes (stubs extraidos da prova dela). Migration aplicada 2x. 30 sabotagens.
+db/test-banco-extrato-omie-dia.sh 29  falsificar=30
