@@ -17,7 +17,10 @@
 //      parcial é saldo CERTO e o desconhecido pode ser zero;
 //   4. zero real (ou negativo).
 // Empate mantém a escolha da IA. Quantidade ausente ou inválida (não-número, ≤ 0) NÃO vira 1 nem 0:
-// degrada para `escolherContaPorEstoque`, a regra anterior (ausente ≠ zero).
+// degrada para `escolherContaPorEstoque`, a regra anterior (ausente ≠ zero). Na edge, porém,
+// `sanitizarListaIA` (saida-ia.ts) já troca a quantidade inválida pelo `1` DECLARADO no schema da
+// tool, e é esse `1` que a linha leva ao carrinho: escolher a conta que cobre a linha real é o certo
+// (Codex, revisão deste PR). A degradação fica como defesa para quem chamar o helper direto.
 
 import { escolherContaPorEstoque, lerEstoque } from "../_shared/estoque-desconhecido.ts";
 
