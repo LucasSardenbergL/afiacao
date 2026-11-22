@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeAlertaCredito, paresDoCliente, ALERTA_CREDITO } from '../useAlertaCreditoCliente';
+import { computeAlertaCredito, paresDoCliente, paresDasContas, ALERTA_CREDITO } from '../useAlertaCreditoCliente';
 
 const AGORA = new Date('2026-07-02T12:00:00Z');
 
@@ -77,5 +77,29 @@ describe('computeAlertaCredito', () => {
     const dentroDaJanela = new Date(AGORA.getTime() - (ALERTA_CREDITO.defasagemMaxHoras - 1) * 3_600_000).toISOString();
     const alerta = computeAlertaCredito([{ saldo: 100, data_vencimento: '2026-01-01' }], dentroDaJanela, AGORA);
     expect(alerta!.dadoDefasado).toBe(false);
+  });
+});
+
+describe('paresDasContas — ficha 360 (cliente + aliases do grupo)', () => {
+  it('junta as 3 empresas do contas a receber, sem duplicar e em ordem estável', () => {
+    const pares = paresDasContas([
+      { user_id: 'canon', account: 'oben', omie_codigo_cliente: 10 },
+      { user_id: 'alias', account: 'colacor_sc', omie_codigo_cliente: 30 },
+      { user_id: 'canon', account: 'colacor', omie_codigo_cliente: 20 },
+      { user_id: 'canon', account: 'oben', omie_codigo_cliente: 10 },
+    ]);
+    expect(pares).toEqual([
+      { company: 'colacor', codigo: 20 },
+      { company: 'colacor_sc', codigo: 30 },
+      { company: 'oben', codigo: 10 },
+    ]);
+  });
+
+  it('conta fora do contas a receber e código 0/null ficam fora', () => {
+    expect(paresDasContas([
+      { user_id: 'x', account: 'servicos', omie_codigo_cliente: 99 },
+      { user_id: 'x', account: 'oben', omie_codigo_cliente: 0 },
+      { user_id: 'x', account: 'colacor', omie_codigo_cliente: null },
+    ])).toEqual([]);
   });
 });

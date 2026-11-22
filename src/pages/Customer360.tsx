@@ -28,6 +28,9 @@ import { CustomerKpiStrip } from '@/components/customer360/CustomerKpiStrip';
 import { leituraDaQuery } from '@/components/customer360/kpi-rotulos';
 import { IdentityColumn } from '@/components/customer360/IdentityColumn';
 import { AcoesDaFicha } from '@/components/customer360/AcoesDaFicha';
+import { CriarTarefaDialog } from '@/components/tarefas/CriarTarefaDialog';
+import { useTarefasAbertasDoCliente } from '@/hooks/useTarefas';
+import { useCreditoDoCliente } from '@/hooks/useAlertaCreditoCliente';
 import { ActivityColumn } from '@/components/customer360/ActivityColumn';
 import { VozTarefaDialog } from '@/components/tarefas/VozTarefaDialog';
 import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
@@ -44,6 +47,11 @@ export default function Customer360() {
   };
   const { user, isMaster, isGestorComercial, isStaff } = useAuth();
   const [abrirVozTarefa, setAbrirVozTarefa] = useState(false);
+  const [abrirCriarTarefa, setAbrirCriarTarefa] = useState(false);
+  // Onda 3: próxima ação (tarefas abertas visíveis) e crédito (vencido 60+ nas 3 empresas + aliases).
+  // A RLS dos aliases só abre para gestor/master — os demais leem sem eles e a ficha avisa.
+  const tarefasAbertas = useTarefasAbertasDoCliente(customerId);
+  const credito = useCreditoDoCliente(customerId, { lerAliases: isMaster || isGestorComercial });
 
   const { data: customer, status: statusCore, fetchStatus: fetchCore, refetch: refetchCore } =
     useCustomerCore(customerId);
@@ -171,7 +179,14 @@ export default function Customer360() {
         <CustomerKpiStrip faturamento12m={leitura12m} metricas={leituraMetricas} score={s} />
 
         {/* Onda 3: desfecho do contato, próxima ação e crédito — o que a vendedora faz a partir daqui */}
-        {customerId && isStaff && <AcoesDaFicha customerId={customerId} customerName={customer.name ?? 'Cliente'} />}
+        {customerId && isStaff && (
+          <AcoesDaFicha
+            customerId={customerId}
+            tarefas={tarefasAbertas}
+            credito={credito}
+            onCriarTarefa={user ? () => setAbrirCriarTarefa(true) : undefined}
+          />
+        )}
 
         {/* ─── Grid principal ─── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -194,6 +209,17 @@ export default function Customer360() {
           />
         </div>
       </div>
+
+      {user && customerId && (
+        <CriarTarefaDialog
+          open={abrirCriarTarefa}
+          onOpenChange={setAbrirCriarTarefa}
+          cliente={{ customer_user_id: customerId, nome: customer.name ?? 'Cliente' }}
+          assignedTo={user.id}
+          // Mesmo default explícito da tarefa por voz (§#9 acima): não derivar a conta.
+          empresa="oben"
+        />
+      )}
 
       {/* Dialog de criar tarefa por voz com cliente fixo */}
       {podeCriarTarefaPorVoz && customerId && (

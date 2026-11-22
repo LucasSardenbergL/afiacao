@@ -1,7 +1,19 @@
 // Onda 3 da tela Clientes: o que a ficha 360 pode AFIRMAR sobre crédito e próxima ação. Funções PURAS.
 // Ausente ≠ zero: falha de leitura nunca vira "nada vencido" nem "nenhuma tarefa".
 
-import type { CreditoDaFicha } from '@/hooks/useAlertaCreditoCliente';
+/** Forma do crédito da ficha (espelha `CreditoDaFicha` de useAlertaCreditoCliente — tipo estrutural). */
+export interface CreditoLido {
+  semConta: boolean;
+  conflito: boolean;
+  aliasesConferidos: boolean;
+  alerta: {
+    vencido: number;
+    titulos: number;
+    vencimentoMaisAntigo: string | null;
+    syncAt: string | null;
+    dadoDefasado: boolean;
+  } | null;
+}
 
 export type TomCredito = 'neutro' | 'ok' | 'alerta';
 
@@ -24,7 +36,7 @@ const dataBr = (iso: string) => {
  */
 export function resumoCredito(
   estado: 'carregando' | 'falha' | 'ok',
-  dado: CreditoDaFicha | undefined,
+  dado: CreditoLido | undefined,
 ): ResumoCredito {
   if (estado === 'carregando') return { tom: 'neutro', titulo: 'Lendo o contas a receber…', notas: [] };
   if (estado === 'falha' || !dado) return { tom: 'neutro', titulo: 'Crédito indisponível (a leitura falhou)', notas: [] };

@@ -71,6 +71,7 @@ vi.mock('@/components/customer360/CustomerHero', () => ({
 vi.mock('@/components/customer360/CustomerKpiStrip', () => ({ CustomerKpiStrip: () => null }));
 vi.mock('@/components/customer360/IdentityColumn', () => ({ IdentityColumn: () => null }));
 vi.mock('@/components/customer360/ActivityColumn', () => ({ ActivityColumn: () => null }));
+vi.mock('@/components/customer360/AcoesDaFicha', () => ({ AcoesDaFicha: () => null }));
 
 import Customer360 from '../Customer360';
 

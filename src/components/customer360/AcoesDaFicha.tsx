@@ -1,7 +1,6 @@
 // Onda 3 da tela Clientes — o que a vendedora FAZ a partir da 360: registrar o desfecho do contato,
 // ver/criar a próxima ação e saber o crédito antes de oferecer. Cada bloco tem estado próprio: falha de
 // uma leitura não esconde as outras, e nenhuma ausência vira zero.
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CalendarClock, ClipboardCheck, Landmark, Plus } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -11,11 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { BotoesContato } from '@/components/venda-cliente/BotoesContato';
-import { CriarTarefaDialog } from '@/components/tarefas/CriarTarefaDialog';
-import { useTarefasAbertasDoCliente } from '@/hooks/useTarefas';
-import { useCreditoDoCliente } from '@/hooks/useAlertaCreditoCliente';
 import { registrarUsoClientes } from '@/lib/nav/sensor-clientes';
-import { resumoCredito, rotuloPrazoTarefa } from './acoes-da-ficha';
+import { resumoCredito, rotuloPrazoTarefa, type CreditoLido } from './acoes-da-ficha';
 
 const estadoDe = (q: { data: unknown; isError: boolean }) =>
   q.data !== undefined ? 'ok' as const : q.isError ? 'falha' as const : 'carregando' as const;
@@ -44,14 +40,22 @@ function useNaMinhaCarteira(customerId: string) {
   });
 }
 
-export function AcoesDaFicha({ customerId, customerName }: { customerId: string; customerName: string }) {
-  const { user, isMaster, isGestorComercial } = useAuth();
-  const { isImpersonating } = useImpersonation();
-  const [criarTarefa, setCriarTarefa] = useState(false);
+interface TarefaDaFicha { id: string; descricao: string; atrasada: boolean; effective_due: string | null }
+interface Leitura<T> { data: T | undefined; isError: boolean }
 
+/**
+ * Apresentação dos 3 blocos. A PÁGINA (Customer360) compõe os módulos donos — tarefas e financeiro — e
+ * passa as leituras; aqui só se decide o que cada estado pode afirmar.
+ */
+export function AcoesDaFicha({ customerId, tarefas, credito, onCriarTarefa }: {
+  customerId: string;
+  tarefas: Leitura<TarefaDaFicha[]>;
+  credito: Leitura<CreditoLido>;
+  /** Abre a criação de tarefa (a página renderiza o diálogo). Ausente = sem botão. */
+  onCriarTarefa?: () => void;
+}) {
+  const { isImpersonating } = useImpersonation();
   const naCarteira = useNaMinhaCarteira(customerId);
-  const tarefas = useTarefasAbertasDoCliente(customerId);
-  const credito = useCreditoDoCliente(customerId, { lerAliases: isMaster || isGestorComercial });
   const resumo = resumoCredito(estadoDe(credito), credito.data);
 
   return (
@@ -83,13 +87,13 @@ export function AcoesDaFicha({ customerId, customerName }: { customerId: string;
         <CardHeader className="pb-3 flex flex-row items-center gap-2 space-y-0">
           <CalendarClock className="w-4 h-4 text-muted-foreground" />
           <CardTitle className="text-sm font-medium">Próxima ação</CardTitle>
-          {user && (
+          {onCriarTarefa && (
             <Button
               size="sm" variant="ghost" className="h-7 ml-auto text-xs gap-1"
               disabled={isImpersonating}
               onClick={() => {
                 registrarUsoClientes({ acao: 'ficha_acao', ficha: '360', tipo: 'criar_tarefa' });
-                setCriarTarefa(true);
+                onCriarTarefa();
               }}
             >
               <Plus className="w-3.5 h-3.5" /> Tarefa
@@ -144,16 +148,6 @@ export function AcoesDaFicha({ customerId, customerName }: { customerId: string;
         </CardContent>
       </Card>
 
-      {user && (
-        <CriarTarefaDialog
-          open={criarTarefa}
-          onOpenChange={setCriarTarefa}
-          cliente={{ customer_user_id: customerId, nome: customerName }}
-          assignedTo={user.id}
-          // Mesmo default explícito da tarefa por voz desta tela (Customer360.tsx §#9): não derivar a conta.
-          empresa="oben"
-        />
-      )}
     </div>
   );
 }

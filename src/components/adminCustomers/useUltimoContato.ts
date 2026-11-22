@@ -39,7 +39,7 @@ export function useUltimoContato(ids: string[]): { porCliente: Map<string, Regis
               .order('id', { ascending: true })
               .range(de, ate),
             'venda_contato/ultimo-contato', 'venda_contato'),
-          fetchAllPagesComMensagem<{ customer_user_id: string; status: string | null; created_at: string }>(
+          fetchAllPagesComMensagem<{ customer_user_id: string | null; status: string | null; created_at: string }>(
             (de, ate) => supabase.from('route_contact_log')
               .select('customer_user_id, status, created_at')
               .in('customer_user_id', lote)
@@ -50,7 +50,9 @@ export function useUltimoContato(ids: string[]): { porCliente: Map<string, Regis
         ]);
         return [
           ...fichas.map((f) => ({ clienteId: f.comprador_id, em: f.atualizado_em, desfecho: f.resultado })),
-          ...rotas.map((r) => ({ clienteId: r.customer_user_id, em: r.created_at, desfecho: r.status })),
+          ...rotas.flatMap((r) => (r.customer_user_id
+            ? [{ clienteId: r.customer_user_id, em: r.created_at, desfecho: r.status }]
+            : [])),
         ];
       }));
       return porLote.flat();
