@@ -71,6 +71,7 @@ describe('fiação: painéis da ligação e viewport-fit=cover', () => {
   it('faixa "Ver como": a área segura entra UMA vez (topbar de 48px abaixo da faixa) — Codex P2', () => {
     const shell = ler('src/components/AppShell.tsx');
     expect(shell).toContain("isImpersonating ? 'faixa-ver-como-top h-12' : 'top-0 h-topbar pt-[env(safe-area-inset-top)]'");
-    expect(shell).toContain("isImpersonating && 'pt-7'");
+    // pt-7 = a faixa; a mesma classe publica --faixa-ver-como (token topo-conteudo).
+    expect(shell).toContain("isImpersonating && 'pt-7 [--faixa-ver-como:1.75rem]'");
   });
 });
