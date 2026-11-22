@@ -67,7 +67,8 @@ Deno.test("escolha de conta — positivo > desconhecido > zero; menor saldo entr
 
 // ── Call-sites: as edges leitoras não podem voltar a fabricar 0 de `estoque` ──
 const LEITORES = ["../recommend/index.ts", "../analyze-unified-order/index.ts"];
-const FABRICA_ZERO = /\bestoque\s*(\?\?|\|\|)\s*0\b/;
+// `?? 0` / `|| 0` e as coerções que fazem o mesmo em silêncio (`Number(null) === 0`, Codex P2).
+const FABRICA_ZERO = /\bestoque\s*(\?\?|\|\|)\s*0\b|\b(Number|parseFloat|parseInt)\(\s*[\w.?]*estoque\b/;
 
 Deno.test("call-sites — recommend e analyze-unified-order não convertem estoque null em 0", async () => {
   for (const rel of LEITORES) {
@@ -76,4 +77,9 @@ Deno.test("call-sites — recommend e analyze-unified-order não convertem estoq
     assertEquals(linha ?? null, null, `${rel} ainda fabrica 0 a partir de estoque: ${linha}`);
     assertEquals(fonte.includes('from "../_shared/estoque-desconhecido.ts"'), true, `${rel} não usa o helper`);
   }
+});
+
+Deno.test("call-site — a resposta da recommend leva o estoque pelo helper (null chega null ao card)", async () => {
+  const fonte = await Deno.readTextFile(new URL("../recommend/index.ts", import.meta.url));
+  assertEquals(fonte.includes("estoque: lerEstoque(p.estoque),"), true, "recommend não projeta estoque via lerEstoque");
 });
