@@ -10,7 +10,10 @@ import { FalhaLeituraCritica } from "./leitura-critica.ts";
 import {
   aplicarEscritaConfirmada,
   carregarEstoqueLocalNaoZero,
+  carregarEstoqueLocalNulo,
   carregarPosicoesLocaisNaoZero,
+  contradicaoDaResposta,
+  contradicaoNoFimDoLote,
   type EscritorPostgrest,
   metadataDoZeramento,
   zerarConfirmadosForaDaLista,
@@ -51,6 +54,12 @@ function fakeDb(
         pg.filtros.push(`not:${col} ${op} ${String(v)}`);
         if (op !== "eq") throw new Error(`double: .not(_, ${op}) não implementado`);
         preds.push((l) => l[col] !== null && l[col] !== undefined && !igual(l[col], v)); // NOT(col = v): NULL não passa
+        return q;
+      },
+      is(col: string, v: unknown) {
+        pg.filtros.push(`is:${col}=${String(v)}`);
+        if (v !== null) throw new Error("double: .is só com null");
+        preds.push((l) => l[col] === null || l[col] === undefined); // IS NULL
         return q;
       },
       gt(col: string, v: unknown) { pg.filtros.push(`gt:${col}`); preds.push((l) => String(l[col]) > String(v)); return q; },
@@ -193,7 +202,7 @@ Deno.test("aplicar — catálogo: UPDATE por id + empresa + CAS do estoque lido,
   const { escritor, escritas } = fakeDb(tab);
   const r = await aplicarEscritaConfirmada(escritor, "oben", {
     posicoes: [],
-    estoque: [{ id: "p1", omie_codigo_produto: 7, casUpdatedAt: "2026-10-05T08:33:05.1+00:00", set: { estoque: 0 } }],
+    estoque: [{ id: "p1", omie_codigo_produto: 7, casUpdatedAt: "2026-10-05T08:33:05.1+00:00", estoqueLidoNulo: false, set: { estoque: 0 } }],
   });
   assertEquals(escritas[0].tabela, "omie_products");
   assertEquals(escritas[0].set, { estoque: 0 });
@@ -259,12 +268,16 @@ Deno.test("orquestrador — confirma em lote, zera o confirmado nas duas tabelas
   assertEquals(tab.omie_products[1].estoque, 5);
   assertEquals(r, {
     candidatos: 2,
+    candidatosNulos: 0,
+    puladoNulos: null,
     confirmadosZero: 1,
     naoZero: 1,
     desconhecidos: 0,
     posicoesZeradas: 1,
     estoqueZerado: 1,
+    estoqueZeradoNulo: 0,
     recusadosCas: 0,
+    catalogoAdiado: 0,
     chamadasConfirmacao: 1,
     estranhosNaConfirmacao: 0,
     pulado: null,
@@ -362,17 +375,20 @@ Deno.test("metadata — o passo que não rodou (loader falhou) é null, nunca 0,
 
 Deno.test("metadata — rodada apurada: contagens em snake_case; pulado e falhas só quando existem", () => {
   const base = {
-    candidatos: 3, confirmadosZero: 1, naoZero: 1, desconhecidos: 1, posicoesZeradas: 1, estoqueZerado: 1,
-    recusadosCas: 0, chamadasConfirmacao: 1, estranhosNaConfirmacao: 0, pulado: null, falhas: [] as string[],
+    candidatos: 3, candidatosNulos: 0, puladoNulos: null, confirmadosZero: 1, naoZero: 1, desconhecidos: 1, posicoesZeradas: 1, estoqueZerado: 1, estoqueZeradoNulo: 0,
+    recusadosCas: 0, catalogoAdiado: 0, chamadasConfirmacao: 1, estranhosNaConfirmacao: 0, pulado: null, falhas: [] as string[],
   };
   assertEquals(metadataDoZeramento(base, null), {
     zeramento_candidatos: 3,
+    zeramento_candidatos_nulos: 0,
     zeramento_confirmados_zero: 1,
     zeramento_nao_zero: 1,
     zeramento_desconhecidos: 1,
     zerados_posicao: 1,
     zerados_estoque: 1,
+    zerados_estoque_nulo: 0,
     zeramento_recusados_cas: 0,
+    zeramento_catalogo_adiado: 0,
     zeramento_chamadas: 1,
     zeramento_estranhos: 0,
   });
@@ -474,4 +490,242 @@ Deno.test("metadata — rodada sem apuração (snapshot vazio) diz por quê, com
     zeramento_candidatos: null,
     zeramento_pulado: "snapshot de posição vazio",
   });
+});
+
+// ════════ trilha NULL (estoque desconhecido do produto novo, migration 20261121220100) ════════
+
+function nulo(id: string, cod: number, updated_at = "2026-11-21T22:00:00.5+00:00"): Linha {
+  return { id, account: "colacor", omie_codigo_produto: cod, estoque: null, updated_at, codigo: `N${cod}` };
+}
+
+Deno.test("carregarEstoqueLocalNulo — só a empresa e estoque IS NULL (o `not eq 0` é cego a NULL)", async () => {
+  const { leitor, leituras } = fakeDb({
+    omie_products: [nulo("p1", 1), { id: "p2", account: "colacor", omie_codigo_produto: 2, estoque: 0 }, { id: "p3", account: "colacor", omie_codigo_produto: 3, estoque: 4 }, { ...nulo("p4", 4), account: "oben" }],
+  });
+  const out = await carregarEstoqueLocalNulo(leitor, "colacor");
+  assertEquals(out.map((l) => l.id), ["p1"]);
+  assertEquals(leituras[0].colunas, "id, omie_codigo_produto, estoque, updated_at");
+  assertEquals(leituras[0].filtros.slice(0, 2), ["eq:account=colacor", "is:estoque=null"]);
+});
+
+Deno.test("aplicar — catálogo lido NULL: CAS `.is(estoque, null)`, nunca `.neq(estoque, 0)` (que recusaria sempre)", async () => {
+  const tab = { omie_products: [nulo("p1", 7)] };
+  const { escritor, escritas } = fakeDb(tab);
+  const r = await aplicarEscritaConfirmada(escritor, "colacor", {
+    posicoes: [],
+    estoque: [{ id: "p1", omie_codigo_produto: 7, casUpdatedAt: "2026-11-21T22:00:00.5+00:00", estoqueLidoNulo: true, set: { estoque: 0 } }],
+  });
+  assertEquals(escritas[0].filtros, ["eq:id=p1", "eq:account=colacor", "is:estoque=null", "eq:updated_at=2026-11-21T22:00:00.5+00:00"]);
+  assertEquals([r.estoqueZerado, r.recusadosCas, r.falhas], [1, 0, []]);
+  assertEquals([tab.omie_products[0].estoque, tab.omie_products[0].codigo], [0, "N7"]);
+});
+
+Deno.test("aplicar — NULL que ganhou saldo depois da leitura: o CAS recusa e o positivo fica", async () => {
+  const tab = { omie_products: [{ ...nulo("p1", 7, "2026-11-21T22:30:00+00:00"), estoque: 6 }] }; // o sync gravou 6
+  const { escritor } = fakeDb(tab);
+  const r = await aplicarEscritaConfirmada(escritor, "colacor", {
+    posicoes: [],
+    estoque: [{ id: "p1", omie_codigo_produto: 7, casUpdatedAt: "2026-11-21T22:00:00.5+00:00", estoqueLidoNulo: true, set: { estoque: 0 } }],
+  });
+  assertEquals([r.estoqueZerado, r.recusadosCas], [0, 1]);
+  assertEquals(tab.omie_products[0].estoque, 6);
+});
+
+function rodarNulo(tab: Record<string, Linha[]>, chamarOmie: (p: Record<string, unknown>) => Promise<unknown>) {
+  const { leitor, escritor } = fakeDb(tab);
+  return zerarConfirmadosForaDaLista({
+    leitor,
+    escritor,
+    chamarOmie,
+    account: "colacor_vendas",
+    empresa: "colacor",
+    listados: new Set([1]),
+    completude: { completa: true },
+    dataPosicao: "21/11/2026",
+    nowIso: NOW,
+  });
+}
+
+Deno.test("orquestrador — SKU novo NULL com zero CONFIRMADO pelo Omie sai do NULL para 0", async () => {
+  const tab = { inventory_position: [], omie_products: [nulo("p7", 7), { ...nulo("p1", 1), estoque: 5 }] };
+  const pedidos: Array<Record<string, unknown>> = [];
+  const r = await rodarNulo(tab, (p) => {
+    pedidos.push(p);
+    return Promise.resolve({ produtos: [{ nCodProd: 7, nSaldo: 0, nCMC: 0 }] });
+  });
+  assertEquals(pedidos.map((p) => p.lista_produtos), [[{ nCodProd: 7 }]]);
+  assertEquals(tab.omie_products[0].estoque, 0);
+  assertEquals(tab.omie_products[1].estoque, 5); // listado: intocado
+  assertEquals([r.candidatos, r.candidatosNulos, r.confirmadosZero, r.estoqueZerado, r.recusadosCas], [0, 1, 1, 1, 0]);
+});
+
+Deno.test("orquestrador — SKU NULL que o Omie NÃO confirma (ausente, sem saldo, positivo ou falha) fica NULL", async () => {
+  const respostas: Array<() => Promise<unknown>> = [
+    () => Promise.resolve({ produtos: [] }), // ausente da confirmação
+    () => Promise.resolve({ produtos: [{ nCodProd: 7, nSaldo: null }] }), // saldo não explícito
+    () => Promise.resolve({ produtos: [{ nCodProd: 7, nSaldo: 3 }] }), // não-zero (o próximo sync grava)
+    () => Promise.reject(new Error("Omie: Consumo redundante")),
+  ];
+  for (const resp of respostas) {
+    const tab = { inventory_position: [], omie_products: [nulo("p7", 7)] };
+    const r = await rodarNulo(tab, resp);
+    assertEquals(tab.omie_products[0].estoque, null, `ficou ${String(tab.omie_products[0].estoque)}`);
+    assertEquals([r.candidatosNulos, r.confirmadosZero, r.estoqueZerado], [1, 0, 0]);
+  }
+});
+
+// ════════ adversarial do Codex na trilha NULL (2026-11-21) ════════
+
+Deno.test("contradição — página curta com nTotPaginas declarando mais, ou data devolvida diferente: lote inválido", () => {
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nTotPaginas: 2 }, 1, 100, "21/11/2026") !== null, true);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nTotPaginas: "3" }, 2, 100, "21/11/2026") !== null, true);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "20/11/2026" }, 1, 100, "21/11/2026") !== null, true);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nTotPaginas: 1, dDataPosicao: "21/11/2026" }, 1, 100, "21/11/2026"), null);
+  assertEquals(contradicaoDaResposta({ produtos: [{}] }, 1, 100, "21/11/2026"), null); // ausente não contradiz
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nTotPaginas: 2 }, 2, 100, "21/11/2026"), null);
+  // mesmo dia em outro formato, ou formato ilegível: não contradiz (não trava o zeramento por formato)
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "2026-11-21" }, 1, 100, "21/11/2026"), null);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: " 21/11/2026 " }, 1, 100, "21/11/2026"), null);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "21-11-26" }, 1, 100, "21/11/2026") !== null, true); // presente e ilegível VETA
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "20-11-2026" }, 1, 100, "21/11/2026") !== null, true);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "31/02/2026" }, 1, 100, "21/11/2026") !== null, true); // dia inexistente
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "" }, 1, 100, "21/11/2026"), null); // vazio = ausente
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nPagina: 1 }, 2, 100, "21/11/2026") !== null, true); // página repetida
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nPagina: 2, nRegistros: 1 }, 2, 100, "21/11/2026"), null);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nRegistros: 2 }, 1, 100, "21/11/2026") !== null, true); // truncado
+  assertEquals(contradicaoDaResposta({ produtos: [{}], nTotPaginas: "x" }, 1, 100, "21/11/2026") !== null, true);
+  assertEquals([contradicaoNoFimDoLote({ nTotRegistros: 2 }, 1) !== null, contradicaoNoFimDoLote({ nTotRegistros: 3 }, 3), contradicaoNoFimDoLote({}, 7)], [true, null, null]);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "2026-11-20T00:00:00" }, 1, 100, "21/11/2026") !== null, true);
+});
+
+Deno.test("orquestrador — página curta com nTotPaginas=2 (o local positivo está na 2ª): NULL e posição ficam", async () => {
+  const tab = { inventory_position: [posicao("a", "colacor_vendas", 7, 8, "2026-11-01T00:00:00Z")], omie_products: [nulo("p7", 7)] };
+  const r = await rodarNulo(tab, (p) =>
+    Promise.resolve(p.nPagina === 1 ? { nTotPaginas: 2, produtos: [{ nCodProd: 7, nSaldo: 0 }] } : { nTotPaginas: 2, produtos: [{ nCodProd: 7, nSaldo: 8 }] })
+  );
+  assertEquals([tab.omie_products[0].estoque, tab.inventory_position[0].saldo], [null, 8]);
+  assertEquals([r.confirmadosZero, r.estoqueZerado, r.posicoesZeradas], [0, 0, 0]);
+  assertEquals(r.falhas.some((f) => f.includes("nTotPaginas")), true, JSON.stringify(r.falhas));
+});
+
+Deno.test("orquestrador — confirmação com dDataPosicao de OUTRO dia não zera o NULL", async () => {
+  const tab = { inventory_position: [], omie_products: [nulo("p7", 7)] };
+  const r = await rodarNulo(tab, () => Promise.resolve({ dDataPosicao: "20/11/2026", produtos: [{ nCodProd: 7, nSaldo: 0 }] }));
+  assertEquals([tab.omie_products[0].estoque, r.estoqueZerado], [null, 0]);
+});
+
+Deno.test("orquestrador — um lote NÃO confirma código de outro lote (o 51 que o lote 1 trouxe é estranho)", async () => {
+  const produtos: Linha[] = [];
+  for (let c = 1; c <= 51; c++) produtos.push(nulo(`p${String(c).padStart(3, "0")}`, 100 + c));
+  const tab = { inventory_position: [], omie_products: produtos };
+  const r = await rodarNulo(tab, (p) => {
+    const pedidos = (p.lista_produtos as Array<{ nCodProd: number }>).map((x) => x.nCodProd);
+    // o lote 1 (101..150) devolve também o 151 com 0; o lote 2 (só o 151) volta vazio
+    return Promise.resolve({ produtos: pedidos.includes(101) ? [{ nCodProd: 151, nSaldo: 0 }] : [] });
+  });
+  assertEquals(tab.omie_products[50].estoque, null);
+  assertEquals([r.estoqueZerado, r.estranhosNaConfirmacao], [0, 1]);
+});
+
+Deno.test("orquestrador — ilegível num lote só contamina AQUELE lote: o zero do outro lote vale", async () => {
+  const produtos: Linha[] = [];
+  for (let c = 1; c <= 51; c++) produtos.push(nulo(`p${String(c).padStart(3, "0")}`, 100 + c));
+  const tab = { inventory_position: [], omie_products: produtos };
+  const r = await rodarNulo(tab, (p) => {
+    const pedidos = (p.lista_produtos as Array<{ nCodProd: number }>).map((x) => x.nCodProd);
+    return Promise.resolve({ produtos: pedidos.includes(101) ? [{ nCodProd: 101, nSaldo: 0 }] : [{ nCodProd: "lixo", nSaldo: 0 }, { nCodProd: 151, nSaldo: 0 }] });
+  });
+  assertEquals([tab.omie_products[0].estoque, tab.omie_products[50].estoque], [0, null]);
+  assertEquals(r.estoqueZeradoNulo, 1);
+});
+
+Deno.test("aplicar — espelho de posição recusado pelo CAS: o catálogo do MESMO código não recebe o zero", async () => {
+  const tab = {
+    inventory_position: [posicao("a", "vendas", 7, 12, "2026-11-21T22:31:00Z")], // regravada depois da leitura
+    omie_products: [nulo("p7", 7)],
+  };
+  const { escritor } = fakeDb(tab);
+  const r = await aplicarEscritaConfirmada(escritor, "colacor", {
+    posicoes: [{ account: "vendas", omie_codigo_produto: 7, casSyncedAt: "2026-11-01T00:00:00Z", set: { saldo: 0 } }],
+    estoque: [{ id: "p7", omie_codigo_produto: 7, casUpdatedAt: "2026-11-21T22:00:00.5+00:00", estoqueLidoNulo: true, set: { estoque: 0 } }],
+  });
+  assertEquals([tab.inventory_position[0].saldo, tab.omie_products[0].estoque], [12, null]);
+  assertEquals([r.posicoesZeradas, r.estoqueZerado, r.recusadosCas, r.catalogoAdiado], [0, 0, 1, 1]);
+});
+
+Deno.test("orquestrador — loader da trilha NULL que FALHA não cancela a ≠ 0: falha registrada, nulos null", async () => {
+  // leituras: 1 = posição, 2 = catálogo ≠0 (página com dado), 3 = catálogo ≠0 (página vazia), 4 = NULL → erro
+  const tab = { inventory_position: [], omie_products: [{ id: "p5", account: "colacor", omie_codigo_produto: 5, estoque: 5, updated_at: "u" }, nulo("p7", 7)] };
+  const { leitor, escritor } = fakeDb(tab, { erroNaLeitura: 4 });
+  const r = await zerarConfirmadosForaDaLista({
+    leitor,
+    escritor,
+    chamarOmie: () => Promise.resolve({ produtos: [{ nCodProd: 5, nSaldo: 0 }] }),
+    account: "colacor_vendas",
+    empresa: "colacor",
+    listados: new Set([1]),
+    completude: { completa: true },
+    dataPosicao: "21/11/2026",
+    nowIso: NOW,
+  });
+  assertEquals([tab.omie_products[0].estoque, tab.omie_products[1].estoque], [0, null]);
+  assertEquals([r.candidatos, r.candidatosNulos, r.estoqueZerado], [1, null, 1]);
+  assertEquals(r.falhas.some((f) => f.startsWith("trilha NULL não apurada")), true, JSON.stringify(r.falhas));
+  assertEquals(metadataDoZeramento(r, null).zeramento_candidatos_nulos, null);
+});
+
+// ════════ adversarial do Codex, 2ª rodada (2026-11-21) ════════
+
+function lotes51(): { inventory_position: Linha[]; omie_products: Linha[] } {
+  const produtos: Linha[] = [];
+  for (let c = 1; c <= 51; c++) produtos.push(nulo(`p${String(c).padStart(3, "0")}`, 100 + c));
+  return { inventory_position: [], omie_products: produtos };
+}
+
+Deno.test("orquestrador — saldo ≠ 0 visto em OUTRO lote VETA o zero do lote que pediu o código", async () => {
+  const tab = lotes51();
+  const r = await rodarNulo(tab, (p) => {
+    const pedidos = (p.lista_produtos as Array<{ nCodProd: number }>).map((x) => x.nCodProd);
+    return Promise.resolve({ produtos: pedidos.includes(101) ? [{ nCodProd: 101, nSaldo: 0 }] : [{ nCodProd: 151, nSaldo: 0 }, { nCodProd: 101, nSaldo: 9 }] });
+  });
+  assertEquals([tab.omie_products[0].estoque, tab.omie_products[50].estoque], [null, 0]);
+  assertEquals([r.naoZero >= 1, r.estoqueZeradoNulo], [true, 1]);
+});
+
+Deno.test("orquestrador — página REPETIDA (nPagina 1 em resposta à 2) invalida o lote: nada zera", async () => {
+  const tab = { inventory_position: [], omie_products: [nulo("p7", 7)] };
+  const cheia = Array.from({ length: 100 }, () => ({ nCodProd: 7, nSaldo: 0 }));
+  const r = await rodarNulo(tab, (p) => Promise.resolve(p.nPagina === 3 ? { nPagina: 3, produtos: [{ nCodProd: 7, nSaldo: 0 }] } : { nPagina: 1, produtos: cheia }));
+  assertEquals([tab.omie_products[0].estoque, r.estoqueZerado], [null, 0]);
+  assertEquals(r.falhas.some((f) => f.includes("nPagina")), true, JSON.stringify(r.falhas));
+});
+
+Deno.test("orquestrador — nRegistros/nTotRegistros maior que o array (truncado): nada zera", async () => {
+  for (const resposta of [{ nRegistros: 2, produtos: [{ nCodProd: 7, nSaldo: 0 }] }, { nTotRegistros: 2, produtos: [{ nCodProd: 7, nSaldo: 0 }] }]) {
+    const tab = { inventory_position: [], omie_products: [nulo("p7", 7)] };
+    const r = await rodarNulo(tab, () => Promise.resolve(resposta));
+    assertEquals([tab.omie_products[0].estoque, r.estoqueZerado, r.falhas.length], [null, 0, 1], JSON.stringify(r.falhas));
+  }
+});
+
+Deno.test("orquestrador — trilhas em lotes SEPARADOS: ilegível no lote NULL não impede o zero da ≠ 0, que é escrito ANTES", async () => {
+  const tab = {
+    inventory_position: [],
+    omie_products: [{ id: "p5", account: "colacor", omie_codigo_produto: 5, estoque: 9, updated_at: "u" }, nulo("p7", 7)],
+  };
+  const pedidos: number[][] = [];
+  let estoqueDo5NaChamadaNulo: unknown = "não chamado";
+  const r = await rodarNulo(tab, (p) => {
+    const cods = (p.lista_produtos as Array<{ nCodProd: number }>).map((x) => x.nCodProd);
+    pedidos.push(cods);
+    if (cods.includes(7)) {
+      estoqueDo5NaChamadaNulo = tab.omie_products[0].estoque;
+      return Promise.resolve({ produtos: [{ nCodProd: 7, nSaldo: 0 }, { nCodProd: "lixo", nSaldo: 0 }] });
+    }
+    return Promise.resolve({ produtos: [{ nCodProd: 5, nSaldo: 0 }] });
+  });
+  assertEquals(pedidos, [[5], [7]]);
+  assertEquals(estoqueDo5NaChamadaNulo, 0); // a ≠ 0 já estava escrita quando a NULL foi confirmada
+  assertEquals([tab.omie_products[0].estoque, tab.omie_products[1].estoque], [0, null]);
+  assertEquals([r.estoqueZerado, r.estoqueZeradoNulo], [1, 0]);
 });

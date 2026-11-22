@@ -11,12 +11,14 @@ import {
   CONFIRMACAO_POR_CHAMADA,
   interpretarConfirmacao,
   espelhosDaMesmaConta,
+  LIMITE_CANDIDATOS_NULOS,
   limiteAnomalia,
   type LinhaEstoqueLocal,
   type LinhaPosicaoLocal,
   montarPedidosConfirmacao,
   planejarCandidatos,
   planejarEscritaConfirmada,
+  rodadaDoRelogio,
 } from "./zeramento-estoque.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -81,7 +83,7 @@ Deno.test("candidatos — posição local com saldo ≠ 0 FORA da listagem é ca
     posicoesLocais: [pos(1, 5, "2026-10-05T12:00:00Z"), pos(3, 2.43, "2026-08-27T10:00:00Z"), pos(4, -1, "2026-09-01T00:00:00Z")],
     estoqueLocal: [],
   });
-  assertEquals(r, { aConfirmar: [3, 4], candidatos: 2, pulado: null });
+  assertEquals(r, { aConfirmar: [3, 4], aConfirmarNulos: 0, candidatos: 2, candidatosNulos: 0, pulado: null, puladoNulos: null });
 });
 
 Deno.test("candidatos — saldo 0, null, ausente ou não-numérico nunca é candidato", () => {
@@ -359,7 +361,7 @@ Deno.test("escrita — catálogo: só linha resolvida sem ambiguidade e estoque 
     ]),
     nowIso: NOW,
   });
-  assertEquals(plano.estoque, [{ id: "a", omie_codigo_produto: 7, casUpdatedAt: UPD, set: { estoque: 0 } }]);
+  assertEquals(plano.estoque, [{ id: "a", omie_codigo_produto: 7, casUpdatedAt: UPD, estoqueLidoNulo: false, set: { estoque: 0 } }]);
 });
 
 // ════════ o contraexemplo do Codex, ponta a ponta na lógica pura ════════
@@ -435,4 +437,85 @@ Deno.test("confirmação — código de LOTE incompleto (paginação não termin
   const { porCodigo } = interpretarConfirmacao([34, 35], [{ nCodProd: 34, nSaldo: 0, nCMC: 5 }, { nCodProd: 35, nSaldo: 0, nCMC: 5 }], new Set([34]));
   assertEquals(porCodigo.get(34)?.tipo, "desconhecido");
   assertEquals(porCodigo.get(35)?.tipo, "zero");
+});
+
+// ════════ trilha NULL (estoque desconhecido do produto novo) ════════
+
+Deno.test("candidatos NULL — catálogo NULL fora da lista é candidato da trilha NULL; listado, lixo ou ambíguo não", () => {
+  const r = planejarCandidatos({
+    listados: new Set([1]),
+    completude: COMPLETA,
+    posicoesLocais: [pos(5, 3, "2026-09-01T00:00:00Z")],
+    estoqueLocal: [est("a", 9, null), est("b", 1, null), est("c", 6, "abc"), est("d", 8, null), est("e", 8, null), est("f", 5, null), est("g", 4, null)],
+  });
+  assertEquals(r.aConfirmar, [5, 4, 9]); // ≠0 primeiro; NULL depois, por código; 5 já é candidato pela posição
+  assertEquals([r.candidatos, r.candidatosNulos, r.pulado, r.puladoNulos], [1, 2, null, null]);
+});
+
+Deno.test("candidatos NULL — não contam no limite de anomalia (o NULL não sumiu da lista: nunca esteve nela)", () => {
+  const nulos = Array.from({ length: 60 }, (_, i) => est(`n${i}`, 1000 + i, null));
+  const r = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [pos(7, 2, null)], estoqueLocal: nulos });
+  assertEquals([r.candidatos, r.candidatosNulos, r.pulado, r.aConfirmar.length], [1, 60, null, 61]);
+});
+
+Deno.test("candidatos NULL — acima do orçamento a rodada confirma uma JANELA ROTATIVA; a ≠ 0 segue inteira", () => {
+  const nulos = (n: number) => Array.from({ length: n }, (_, i) => est(`n${i}`, 1000 + i, null));
+  const noTeto = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [pos(7, 2, null)], estoqueLocal: nulos(LIMITE_CANDIDATOS_NULOS) });
+  assertEquals([noTeto.aConfirmar.length, noTeto.puladoNulos], [LIMITE_CANDIDATOS_NULOS + 1, null]);
+  const acima = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [pos(7, 2, null)], estoqueLocal: nulos(LIMITE_CANDIDATOS_NULOS + 1) });
+  assertEquals([acima.aConfirmar.length, acima.aConfirmar[0], acima.pulado], [LIMITE_CANDIDATOS_NULOS + 1, 7, null]);
+  assertEquals(acima.puladoNulos !== null && acima.puladoNulos.includes("janela rotativa"), true, String(acima.puladoNulos));
+});
+
+Deno.test("candidatos NULL — a janela cobre TODOS mesmo quando o cron só vê rodadas PARES (cadência :15) e N oscila", () => {
+  const base = 59_000_000; // ~2026 em blocos de 30 min
+  const cobertos = (n: number, rodadas: number[]) => {
+    const nulos = Array.from({ length: n }, (_, i) => est(`n${i}`, 1000 + i, null));
+    const vistos = new Set<number>();
+    for (const r of rodadas) {
+      const p = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [], estoqueLocal: nulos, rodada: r });
+      assertEquals([p.aConfirmar.length, p.aConfirmarNulos], [LIMITE_CANDIDATOS_NULOS, LIMITE_CANDIDATOS_NULOS]);
+      for (const c of p.aConfirmar) vistos.add(c);
+    }
+    return vistos.size;
+  };
+  const pares = Array.from({ length: 48 }, (_, k) => base + 2 * k); // 1 dia do cron horário
+  assertEquals(cobertos(500, pares), 500); // `rodada × 250 mod 500` começaria sempre em 0
+  assertEquals(cobertos(1037, pares), 1037);
+  // N oscilando 500/1000 (o contraexemplo do Codex): o código do índice 499 entra em alguma rodada
+  const alvo = 1000 + 499;
+  let entrou = false;
+  for (let k = 0; k < 48 && !entrou; k++) {
+    const n = k % 2 === 0 ? 500 : 1000;
+    const nulos = Array.from({ length: n }, (_, i) => est(`n${i}`, 1000 + i, null));
+    const p = planejarCandidatos({ listados: new Set([1]), completude: COMPLETA, posicoesLocais: [], estoqueLocal: nulos, rodada: base + k });
+    entrou = p.aConfirmar.includes(alvo);
+  }
+  assertEquals(entrou, true);
+});
+
+Deno.test("rodadaDoRelogio — bloco de 30 min; ISO ilegível é 0", () => {
+  assertEquals([rodadaDoRelogio("1970-01-01T00:59:59Z"), rodadaDoRelogio("1970-01-01T01:00:00Z"), rodadaDoRelogio("lixo")], [1, 2, 0]);
+});
+
+Deno.test("candidatos NULL — rodada pulada (incompleta/vazia) também não confirma NULL", () => {
+  const inc = planejarCandidatos({ listados: new Set([1]), completude: { completa: false, motivo: "x" }, posicoesLocais: [], estoqueLocal: [est("a", 9, null)] });
+  assertEquals([inc.aConfirmar, inc.candidatosNulos, inc.puladoNulos], [[], 1, "listagem incompleta: x"]);
+  const vazio = planejarCandidatos({ listados: new Set(), completude: COMPLETA, posicoesLocais: [], estoqueLocal: [est("a", 9, null)] });
+  assertEquals(vazio.aConfirmar, []);
+});
+
+Deno.test("escrita NULL — zero confirmado de catálogo NULL vira UPDATE com CAS de NULL; não confirmado, nada", () => {
+  const plano = planejarEscritaConfirmada({
+    posicoesLocais: [],
+    estoqueLocal: [est("a", 7, null), est("b", 8, null), est("c", 9, null, null), est("d", 6, "abc")],
+    confirmacoes: new Map([
+      [7, { tipo: "zero", cmc: null, precoMedio: null } as const],
+      [8, { tipo: "desconhecido", motivo: "ausente da resposta de confirmação" } as const],
+      [9, { tipo: "zero", cmc: null, precoMedio: null } as const],
+      [6, { tipo: "zero", cmc: null, precoMedio: null } as const],
+    ]),
+    nowIso: NOW,
+  });
+  assertEquals(plano.estoque, [{ id: "a", omie_codigo_produto: 7, casUpdatedAt: UPD, estoqueLidoNulo: true, set: { estoque: 0 } }]);
 });

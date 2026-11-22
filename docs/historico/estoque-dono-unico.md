@@ -530,3 +530,75 @@ Sem achado: membro inativo, `grupo_id` nulo e SKU em 2 grupos (o DDL impede), em
 **No ar (2026-10-10).** PR #2903 mergeado: `3199902ac`. O deploy foi pelo pacote `pendencias:pacote`, montado contra `51eecb8ce`, com os 16 hashes batendo, a edge Active e a resposta "No files were edited.". O sensor `lovable-sensor-edicao` deu SEM_EDICAO (envio às 14:50:30Z). Validação na prod:
 - **Sonda no ledger** (`db/sonda-omie-sync-estoque-v19-2026-10-10.sql`, via `db:aplicar`): o ensaio rodou e o real virou o recibo #306. Resultado: HTTP 200, `v1.9-pendente-po-app-em-unidade-omie`, fonte `80a8ff43…`, **DEPLOY CONFIRMADO**. No `pendencias:deploy`, a `omie-sync-estoque` aparece em ✅ confere.
 - **1º run do cron v1.9** (`reposicao_po_observado_run`, psql-ro): `concluido_em` 15:40:50Z, `versao_edge` v1.9, `pendente_aplicado = true`, `skus_divergentes = 0`. A 2ª testemunha (a observação contra `sea.estoque_pendente_entrada`) fechou na unidade nova.
+
+## Fase 5 — o zero confirmado também resolve o NULL do produto novo (2026-11-21, branch `claude/zeramento-estoque-null`)
+
+**Por quê.** A migration `20261121220100_omie_products_estoque_default_nulo` (#4096) tirou o `DEFAULT 0` de
+`omie_products.estoque`: produto novo nasce NULL ("saldo desconhecido"). O NULL só saía quando a listagem
+padrão (só saldo ≠ 0) trazia o SKU — e o zeramento era cego a NULL em 3 pontos (loader `NOT (estoque = 0)`,
+`planejarCandidatos`, CAS `estoque <> 0`). O SKU novo com zero REAL ficava NULL sem prazo, e o cold start da
+reposição (`estoque_catalogo IS NOT NULL`) não o semeava.
+
+**Medição (prod, 2026-11-21, psql-ro).** 0 linhas NULL (colacor 4.383, oben 3.716 — a migration acabou de
+entrar); SKUs novos 5–38/mês por conta; o zeramento atual faz 0–1 chamada de confirmação por rodada.
+
+**O conserto** (edges `omie-analytics-sync` v1.16, `sync-reprocess` v1.21, `omie-sync-metadados` v1.4 só
+re-empacota): trilha NULL própria em `_shared/zeramento-estoque{,-io}.ts`:
+- loader `carregarEstoqueLocalNulo` com `.is("estoque", null)`; CAS do valor por trilha (`IS NULL` × `<> 0`),
+  sempre com o `updated_at` lido — sem `.or()` no UPDATE (42703);
+- NULL literal fora da listagem é candidato; lixo não-numérico continua fora;
+- **fora do limite de anomalia** (o NULL nunca esteve na listagem, não sinaliza listagem suspeita; os
+  eternamente-desconhecidos não podem travar o zeramento dos congelados) e com **teto de custo próprio de 250**
+  (5 lotes): acima dele a trilha NULL inteira é pulada, nunca "os N primeiros"; os gates de rodada (vazio,
+  incompleta, anomalia) também pulam o NULL;
+- metadata: `zeramento_candidatos` segue só ≠ 0; novos `zeramento_candidatos_nulos` e `zeramento_nulos_pulado`.
+
+**O adversarial do código (Codex `max`, 469 s, 181k tokens — 3 P1 + 3 P2, sem P0) mudou** (as ressalvas
+valiam para a confirmação que JÁ servia a trilha ≠ 0 — o NULL→0 só as tornou mais caras):
+- **P1** página curta com `nTotPaginas` declarando mais páginas encerrava a confirmação (o local positivo da
+  página 2 sumia) e `dDataPosicao` devolvida de outro dia era aceita → `contradicaoDaResposta` invalida o lote
+  (a data compara o DIA civil);
+- **P1** um lote confirmava código pedido por OUTRO lote, e um ilegível contaminava todos os lotes → cada lote
+  é interpretado contra os próprios códigos;
+- **P1 (anterior)** o `sync-reprocess` aceitava `account` fora de `oben`/`colacor` e caía nas credenciais da
+  Oben para o espelho Colacor → `sync-reprocess/conta.ts` recusa com 400 antes de ler/escrever (prod: os 3
+  crons só mandam `oben`/`colacor`);
+- **P2** o catálogo recebia o zero mesmo com o CAS do espelho de posição recusado (alguém regravou depois da
+  confirmação) → o código fica de fora nesta rodada;
+- **P2** o teto "pula tudo" travava 251 NULLs para sempre → **janela rotativa** de 250 (rodada = bloco de 30
+  min do relógio, sem estado);
+- **P2** a falha só do loader NULL cancelava a trilha ≠ 0 → vira falha registrada e `zeramento_candidatos_nulos: null`;
+- metadata ganha `zerados_estoque_nulo` (subconjunto de `zerados_estoque`; nunca somar). Backoff por SKU
+  adiado: com 0 NULL hoje, falta o dado de quantos ficam desconhecidos — a métrica é
+  `zeramento_candidatos_nulos` × `zerados_estoque_nulo` no `sync_state.metadata`.
+
+**A 2ª rodada (Codex `high`, 639 s, 84k tokens — 3 P1 + 2 P2, sem P0) mudou:**
+- **P1 (regressão da 1ª correção)** com a interpretação por lote, um saldo 9 do mesmo SKU devolvido por OUTRO
+  lote era descartado e o lote 1 zerava → o zero continua autorizado só pelo lote que pediu, mas um saldo
+  explícito ≠ 0 visto em QUALQUER resposta da trilha (até de página inválida) **veta**;
+- **P1** página repetida (`nPagina` 1 em resposta à 2) e array truncado (`nRegistros`/`nTotRegistros` maior que
+  o que veio) eram aceitos → conferidos quando presentes; ausentes não contradizem;
+- **P1** `dDataPosicao` presente e ilegível passava → veta (só AUSENTE/vazia não contradiz). Sem evidência de
+  retorno ISO em prod; o Omie documenta `string 10`;
+- **P2** `rodada × 250 mod N` dependia da cadência (o cron a :15 só vê rodadas pares: com N = 500 o início era
+  sempre 0) → início `{rodada·φ}·N` (razão áurea: equidistribuído em qualquer subsequência de rodadas);
+- **P2** as trilhas dividiam lote e escrita (um ilegível no lote NULL travava a ≠ 0; worker expirando na NULL
+  perdia o zero já confirmado da ≠ 0) → lotes separados e a ≠ 0 **escreve antes** de a NULL ser confirmada;
+- métrica: o catálogo pulado por espelho não escrito conta em `zeramento_catalogo_adiado`, não como recusa de CAS.
+
+⚠️ **Risco a conferir no 1º dia:** `nRegistros`/`nTotRegistros`/`nPagina` são lidos agora também na trilha
+≠ 0, que está em prod desde 06/10. Se a semântica do Omie divergir (ex.: contar produtos e não entradas por
+local), TODO lote vira desconhecido — é fail-closed e VISÍVEL: `zeramento_falhas` com "nRegistros"/
+"nTotRegistros"/"nPagina" e `zeramento_confirmados_zero` caindo a 0 em `sync_state.metadata`.
+
+**Fora.** `omie-vendas-sync` não empacota o módulo (fan-out do fingerprint não a lista): o comentário de
+`estoque-linhas.ts:14` ("o zeramento pula linha NULL") ficou desatualizado e é corrigido na próxima mudança
+daquela edge — não vale um deploy só de comentário.
+
+**Prova.** Deno: 68 casos nos dois `_test.ts` (NULL→0 confirmado; NULL não confirmado — ausente, sem saldo,
+positivo, falha — fica NULL; CAS `IS NULL`; CAS que recusa o NULL que ganhou saldo). Falsificação com controle
+verde na mesma invocação: 7 sabotagens (loader cego, planejador pula, CAS `neq`, escrita sem confirmação,
+escrita ignora NULL, NULL na anomalia, sem teto) + 8 das correções do adversarial (paginação, data, lote
+global, espelho recusado, loader NULL, janela fixa, conta, dia da data) + as da 2ª rodada; re-rodadas juntas
+num script só no fim: **20/20 vermelhas** (2 camadas que ficaram VERDES — data ilegível e dia inexistente —
+eram redundantes com a comparação do dia e saíram).
