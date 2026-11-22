@@ -602,3 +602,51 @@ escrita ignora NULL, NULL na anomalia, sem teto) + 8 das correções do adversar
 global, espelho recusado, loader NULL, janela fixa, conta, dia da data) + as da 2ª rodada; re-rodadas juntas
 num script só no fim: **20/20 vermelhas** (2 camadas que ficaram VERDES — data ilegível e dia inexistente —
 eram redundantes com a comparação do dia e saíram).
+
+## O deploy da Fase 5 (2026-11-22)
+
+**Leva.** Ledger antes do envio (`pendencias:deploy`, 10:28Z): `omie-analytics-sync`, `sync-reprocess` e
+`omie-sync-metadados` em DIVERGE_P1, mais `tactical-plans-batch` em DIVERGE_P2 (fecho mudou sem bump), que
+foi junto na mesma colagem por política de leva agrupada. Pacote `9329228cf75d` de `origin/main@f4fdcf60a`,
+pré-condição de banco ✅ (12 RPCs). Antes do envio: `list_messages` (último pedido às 02:12Z, anterior ao
+merge do #4101 às 02:27Z) e PRs abertos (só 1 de docs), portanto sem pedido redundante.
+
+**Envio (MCP, 10:33Z).** O agente conferiu **79/79 hashes** (48 arquivos distintos) e publicou as 4,
+terminando com `No files were edited.` (custo: 2,7 créditos). O `send_message` estourou o timeout do cliente
+e a resposta foi recuperada por `get_message`, sem reenviar. Sensor `lovable-sensor-edicao` às 10:39Z
+(7,5 min após o envio) deu **SEM_EDICAO**: 0 commits `gpt-engineer-app`.
+
+**Atestação.**
+- `omie-analytics-sync` v1.16 e `sync-reprocess` v1.21: atestadas pelo **cron de sonda** às 10:37Z (as duas
+  estão na allowlist), sem sonda humana.
+- `omie-sync-metadados` v1.4 e `tactical-plans-batch` v1.2: atestadas por **uma** sonda humana via envelope
+  (`db/sonda-zeramento-nulo-20261122.sql`, sha256 `e29013ed…`, recibo #1305 do `db:aplicar`). Passo 2 pelo
+  psql-ro: as duas com HTTP 200, `versao` e `fonte` iguais à main, **DEPLOY CONFIRMADO**.
+- `pendencias:deploy` às 10:51Z: as 4 em ✅ CONFERE.
+
+**1º run — `omie-analytics-sync` v1.16 (`sync_state`, inventory):**
+
+| conta | run | candidatos | nulos | zerados_nulo | catálogo_adiado | confirmados_zero | falhas |
+|---|---|---|---|---|---|---|---|
+| `vendas` | 11:00Z | 0 | 0 | 0 | 0 | 0 | — |
+| `colacor_vendas` | 11:15Z | 4 | 0 | 0 | 0 | 0 | Omie: "Não existem registros para a página [1]!" |
+| `servicos` | 11:25Z | 0 | 0 | 0 | 0 | 0 | — |
+
+- `zeramento_candidatos_nulos` chegou como **número** nas 3 contas, o que mostra que o loader NULL rodou.
+  O 0 era o esperado, porque não há NULL hoje.
+- A falha da `colacor_vendas` vem de antes do deploy (o run das 10:15Z, ainda na v1.15, trouxe a mesma
+  mensagem). São os 4 órfãos excluídos no Omie, descritos na Fase 2: a confirmação devolve fault de lista
+  vazia, o lote fica inválido e nada é zerado (ausente ≠ zero).
+- **O risco do 1º dia não foi exercido, nem para o bem nem para o mal.** Nenhuma falha cita
+  `nRegistros`/`nTotRegistros`/`nPagina`, mas também não houve candidato ≠ 0 legítimo que chegasse a uma
+  resposta paginada válida: `vendas` e `servicos` tiveram 0 candidatos, e a `colacor` parou no fault antes de
+  ler a paginação. `confirmados_zero: 0` é o mesmo número de antes do deploy. Isso é ausência de dado, não
+  aprovação. A prova vem no 1º run com candidato fora dos 4 órfãos: se ele trouxer `confirmados_zero > 0`,
+  a semântica de paginação suposta se confirma; se trouxer falha de paginação, a semântica do Omie diverge.
+  Consulta para conferir:
+  `select account, last_sync_at, metadata->>'zeramento_candidatos', metadata->>'zeramento_confirmados_zero', metadata->'zeramento_falhas' from sync_state where entity_type='inventory';`
+
+**1º run — `sync-reprocess` v1.21 (`sync_reprocess_log`, inventory/oben):** run das 12:15Z `complete`, sem
+`error_message`, com `zeramento_candidatos: 0`, `zeramento_candidatos_nulos: 0` (número: o loader NULL rodou),
+`zerados_estoque_nulo: 0`, `zeramento_catalogo_adiado: 0`, sem `zeramento_falhas` e `confirmados_zero: 0`.
+Com 0 candidatos o risco de paginação também não foi exercido aqui; vale a mesma consulta, em `sync_reprocess_log`.
