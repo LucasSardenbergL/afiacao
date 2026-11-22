@@ -105,4 +105,4 @@ Migration `20261121160000_credito_limite_reserva_decisao.sql`, **sem edge nem Pu
   - `sandbox_exec`/`sandbox_exec_fzvklzpomgnyikkfkzai` sem escrita em `venda_bloqueio_credito_log`/`venda_excecao_credito`;
   - anon/authenticated sem TRUNCATE;
   - `credito_virada_piso_parcial` com 1 linha.
-- **Falta:** Publish (front: "valor a confirmar" + mensagem por motivo + exceção recusada reabre o formulário). Sem ele, o banco já segura; só a tela degrada.
+- **Publish feito pelo founder (2026-11-22).** Bytes de `steu.lovable.app` conferidos: os chunks `ExcecaoCreditoDialog-*`/`useUnifiedOrder-*` contêm "valor a confirmar" e `excecao_anterior_nao_cobre_parcial`. Bytes = disponibilidade, não adoção (o SW troca no clique do cliente). As 3 camadas estão no ar: migration, Publish e edge (sem mudança de edge).
