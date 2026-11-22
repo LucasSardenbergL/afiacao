@@ -10,7 +10,8 @@ import { cn } from '@/lib/utils';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
-import { agruparPorDia, chaveDaLinha, decodeHtml, EFEITO_DA_EXCLUSAO, rotuloEmpresa, type OrderFeedRow } from '@/components/salesOrders/types';
+import { agruparPorDia, chaveDaLinha, decodeHtml, EFEITO_DA_EXCLUSAO, type OrderFeedRow } from '@/components/salesOrders/types';
+import { ALCANCE_VAZIO, alcanceDaExclusao, type AlcanceExclusao } from '@/components/salesOrders/alcance-exclusao';
 import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
@@ -495,27 +496,6 @@ const SalesOrders = () => {
 
 function plural(n: number, um: string, varios: string): string {
   return `${n.toLocaleString('pt-BR')} ${n === 1 ? um : varios}`;
-}
-
-interface AlcanceExclusao {
-  total: number;
-  porEmpresa: [string, number][];
-  foraDaTela: number;
-}
-const ALCANCE_VAZIO: AlcanceExclusao = { total: 0, porEmpresa: [], foraDaTela: 0 };
-
-function alcanceDaExclusao(selecionadas: OrderFeedRow[], naTela: OrderFeedRow[]): AlcanceExclusao {
-  const visiveis = new Set(naTela.filter((o) => o.origin === 'sales').map((o) => o.id));
-  const contagem = new Map<string, number>();
-  for (const o of selecionadas) {
-    const empresa = rotuloEmpresa(o.account);
-    contagem.set(empresa, (contagem.get(empresa) ?? 0) + 1);
-  }
-  return {
-    total: selecionadas.length,
-    porEmpresa: [...contagem.entries()],
-    foraDaTela: selecionadas.filter((o) => !visiveis.has(o.id)).length,
-  };
 }
 
 // O total só vem sem busca (com busca contaria os ~32 k de novo — ver useSalesOrders).

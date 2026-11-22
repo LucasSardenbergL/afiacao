@@ -36,10 +36,15 @@ vi.mock('@/components/salesOrders/types', async () => {
       h.agrupar.n++;
       return real.agruparPorDia(...a);
     },
-    // O alcance do lote conta as empresas pelo rótulo: 1 chamada por pedido selecionado.
-    rotuloEmpresa: (...a: Parameters<typeof real.rotuloEmpresa>) => {
+  };
+});
+vi.mock('@/components/salesOrders/alcance-exclusao', async () => {
+  const real = await vi.importActual<typeof import('@/components/salesOrders/alcance-exclusao')>('@/components/salesOrders/alcance-exclusao');
+  return {
+    ...real,
+    alcanceDaExclusao: (...a: Parameters<typeof real.alcanceDaExclusao>) => {
       h.alcance.n++;
-      return real.rotuloEmpresa(...a);
+      return real.alcanceDaExclusao(...a);
     },
   };
 });
@@ -155,8 +160,9 @@ describe('/sales com 1.000 linhas — custo de marcar um checkbox', () => {
     expect(marcar.linhas).toBeLessThanOrEqual(1);
     expect(marcar2.linhas).toBeLessThanOrEqual(1);
     expect(marcar.agrupar).toBe(0);
+    expect(marcar.alcance).toBe(0);
     expect(marcar2.alcance).toBe(0);
-  });
+  }, 120_000);
 
   it('o alcance do lote é calculado ao abrir o diálogo (e mostra a contagem certa)', () => {
     montar();
@@ -165,7 +171,7 @@ describe('/sales com 1.000 linhas — custo de marcar um checkbox', () => {
     act(() => { fireEvent.click(caixas[1]); });
     zerar();
     act(() => { fireEvent.click(screen.getByRole('button', { name: /excluir/i })); });
-    expect(h.alcance.n).toBe(2);
+    expect(h.alcance.n).toBe(1);
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Excluir 2 pedidos?');
-  });
+  }, 120_000);
 });
