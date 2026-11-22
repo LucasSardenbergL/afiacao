@@ -31,7 +31,8 @@ TESTE_F1="$REPO_ROOT/db/test-banco-extrato-f1.sh"
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<VERMELHOS> (idioma do gate falsificar-exige-assert): IDs unidos por "," = E -- TODOS tem de
   # aparecer como "FAIL <id> " no log da rodada sabotada. Nenhuma entrada declara :VERDES.
-  SABOTAGENS="sem_grupo:t9_otica_conta_corrente_nao_dobra,t9_previsao_valor_positivo_nao_e_realizado
+  SABOTAGENS="sem_grupo:t9_otica_conta_corrente_nao_dobra
+    sem_grupo_sentido_por_natureza:t9_previsao_valor_positivo_nao_e_realizado
     lista_aberta:t9_natureza_fora_da_lista_nao_entra
     sem_valor_positivo:t9_omie_dia_ignora_previsao_valor_zero
     data_movimento:t9_data_efetiva_nao_e_data_movimento
@@ -48,22 +49,25 @@ if [ "${1:-}" = "--falsificar" ]; then
     gate_d_aberto:t9_gate_sem_calibracao_null
     gate_lados_juntos:t9_creditos_e_debitos_calibrados_separadamente
     gate_bool_or:t9_gate_reprovada_fecha
-    gate_sem_coalesce:t9_gate_sem_calibracao_null
-    gate_zero_dias:t9_gate_zero_dias_fecha
     gate_qualquer_versao:t9_outra_versao_nao_calibra
-    gate_sem_movimento:t9_gate_so_zero_igual_zero_fecha
+    gate_sem_movimento:t9_gate_so_zero_igual_zero_fecha,t9_gate_zero_dias_fecha
     periodo_ignorado:t9_gate_fora_do_periodo_medido
     janela_antes_do_dedup:t9_dedup_antes_da_janela
     sentido_coalesce_zero:t9_sentido_sem_linha_null
-    service_role_escreve:t9_calibracao_escrita_negada,t9_migration_aplica
+    service_role_escreve:t9_calibracao_escrita_negada
+    service_role_escreve_pos:t9_migration_aplica
     policy_aberta_sem_pos:t9_calibracao_rls
     pre_sem_ambiguo:t9_pre_seed_ambiguo_aborta
     dia_sem_linha_zero:t9_dia_sem_linha_null
-    definer:t9_rls_sem_acesso,t9_migration_aplica
-    anon_exec:t9_rpc_acl,t9_migration_aplica
-    tabela_sem_rls:t9_calibracao_rls,t9_migration_aplica
-    policy_aberta:t9_calibracao_rls,t9_migration_aplica
-    grant_aberto:t9_calibracao_escrita_negada,t9_migration_aplica
+    definer:t9_rls_sem_acesso,t9_rpc_acl
+    definer_pos:t9_migration_aplica
+    anon_exec:t9_rpc_acl
+    anon_exec_pos:t9_migration_aplica
+    tabela_sem_rls:t9_calibracao_rls
+    tabela_sem_rls_pos:t9_migration_aplica
+    policy_aberta:t9_migration_aplica
+    grant_aberto:t9_calibracao_escrita_negada
+    grant_aberto_pos:t9_migration_aplica
     seed_errado:t9_seed_calibracao_oben,t9_migration_aplica
     seed_errado_sem_pos:t9_seed_calibracao_oben,t9_gate_oben_seed_fechado
     tabela_sem_if_not_exists:t9_idempotente
@@ -124,10 +128,15 @@ if de not in s:
 open(p, "w", encoding="utf-8").write(s.replace(de, para))
 PY
 }
+# desarma a POS (RAISE vira NOTICE): prova a camada do TESTE sozinha, sem o rollback do -1 abortar a fixture
+sem_pos() { sabotar "RAISE EXCEPTION 'POSTCONDICAO FALHOU" "RAISE NOTICE 'POSTCONDICAO FALHOU"; }
 case "${SABOTAGEM:-}" in
   "") ;;
   # regra v1 — uma camada por vez
   sem_grupo)            sabotar "WHERE m.categoria_descricao IN ('CONTA_CORRENTE_REC', 'CONTA_CORRENTE_PAG')" "WHERE true" ;;
+  # sem o filtro de otica E com o sentido pela natureza: a previsao com valor > 0 vira credito
+  sem_grupo_sentido_por_natureza) sabotar "WHERE m.categoria_descricao IN ('CONTA_CORRENTE_REC', 'CONTA_CORRENTE_PAG')" "WHERE true"
+                        sabotar "FILTER (WHERE v.grupo = 'CONTA_CORRENTE_REC')" "FILTER (WHERE v.natureza IN ('BAXR', 'APBR', 'TRAR', 'EXTR'))" ;;
   lista_aberta)         sabotar "'BAXP', 'APEP', 'TRAP', 'EXTP')" "'BAXP', 'APEP', 'TRAP', 'EXTP', 'MANR')" ;;
   sem_valor_positivo)   sabotar "AND m.valor > 0" "AND m.valor >= 0" ;;
   data_movimento)       sabotar "COALESCE(m.data_credito_omie, m.data_pagamento_omie)" "COALESCE(m.data_credito_omie, m.data_pagamento_omie, m.data_movimento)" ;;
@@ -147,11 +156,8 @@ case "${SABOTAGEM:-}" in
   gate_lados_juntos)    sabotar "AND k.dias_batem_debitos + k.divergencias_explicadas_debitos = k.dias_conferidos" \
                           "AND k.dias_batem_creditos + k.divergencias_explicadas_creditos = k.dias_conferidos" ;;
   gate_bool_or)         sabotar "coalesce(bool_and(" "coalesce(bool_or(" ;;
-  gate_sem_coalesce)    sabotar "coalesce(bool_and(" "(bool_and("
-                        sabotar "k.dias_conferidos), false)" "k.dias_conferidos))" ;;
-  gate_zero_dias)       sabotar "k.dias_conferidos > 0" "k.dias_conferidos >= 0" ;;
   gate_qualquer_versao) sabotar "AND k.regra_versao = c_versao" "" ;;
-  gate_sem_movimento)   sabotar "k.dias_conferidos > 0 AND k.dias_com_movimento_creditos > 0" "k.dias_conferidos > 0" ;;
+  gate_sem_movimento)   sabotar "bool_and(k.dias_com_movimento_creditos > 0" "bool_and(true" ;;
   periodo_ignorado)     sabotar "AND dias.d BETWEEN k.de AND k.ate" "" ;;
   janela_antes_do_dedup) sabotar "-- SEM filtro de periodo aqui: o dedup abaixo precisa ver todas as versoes da baixa (o periodo vai no agg)" \
                           "AND COALESCE(m.data_credito_omie, m.data_pagamento_omie) BETWEEN p_de AND p_ate" ;;
@@ -159,15 +165,20 @@ case "${SABOTAGEM:-}" in
                           "COALESCE(sum((v.valor * 100)::bigint) FILTER (WHERE v.grupo = 'CONTA_CORRENTE_PAG'), 0)::bigint AS deb" ;;
   dia_sem_linha_zero)   sabotar "CASE WHEN v_conta_c AND medido.dentro THEN agg.cred END" "CASE WHEN v_conta_c AND medido.dentro THEN coalesce(agg.cred, 0) END" ;;
   # seguranca / ACL
-  definer)              sabotar "SECURITY INVOKER" "SECURITY DEFINER" ;;
-  anon_exec)            sabotar "REVOKE ALL ON FUNCTION public.banco_extrato_omie_dia(uuid, date, date) FROM PUBLIC, anon;" "" ;;
-  tabela_sem_rls)       sabotar "ALTER TABLE public.banco_regra_calibracao ENABLE ROW LEVEL SECURITY;" "" ;;
+  definer)              sabotar "SECURITY INVOKER" "SECURITY DEFINER"; sem_pos ;;
+  definer_pos)          sabotar "SECURITY INVOKER" "SECURITY DEFINER" ;;
+  anon_exec)            sabotar "REVOKE ALL ON FUNCTION public.banco_extrato_omie_dia(uuid, date, date) FROM PUBLIC, anon;" ""; sem_pos ;;
+  anon_exec_pos)        sabotar "REVOKE ALL ON FUNCTION public.banco_extrato_omie_dia(uuid, date, date) FROM PUBLIC, anon;" "" ;;
+  tabela_sem_rls)       sabotar "ALTER TABLE public.banco_regra_calibracao ENABLE ROW LEVEL SECURITY;" ""; sem_pos ;;
+  tabela_sem_rls_pos)   sabotar "ALTER TABLE public.banco_regra_calibracao ENABLE ROW LEVEL SECURITY;" "" ;;
   policy_aberta)        sabotar "TO authenticated USING (public.fin_user_can_access(company));" "TO authenticated USING (true);" ;;
-  service_role_escreve) sabotar "FROM PUBLIC, anon, authenticated, service_role;" "FROM PUBLIC, anon, authenticated;" ;;
+  service_role_escreve) sabotar "FROM PUBLIC, anon, authenticated, service_role;" "FROM PUBLIC, anon, authenticated;"; sem_pos ;;
+  service_role_escreve_pos) sabotar "FROM PUBLIC, anon, authenticated, service_role;" "FROM PUBLIC, anon, authenticated;" ;;
   policy_aberta_sem_pos) sabotar "TO authenticated USING (public.fin_user_can_access(company));" "TO authenticated USING (true);"
                         sabotar "AND qual = 'fin_user_can_access(company)') THEN" ") THEN" ;;
   pre_sem_ambiguo)      sabotar "WHERE company = 'oben' AND banco_codigo = '341') > 1 THEN" "WHERE company = 'oben' AND banco_codigo = '341') > 99 THEN" ;;
-  grant_aberto)         sabotar "GRANT SELECT ON TABLE public.banco_regra_calibracao TO authenticated;" "GRANT ALL ON TABLE public.banco_regra_calibracao TO authenticated;" ;;
+  grant_aberto)         sabotar "GRANT SELECT ON TABLE public.banco_regra_calibracao TO authenticated, service_role;" "GRANT ALL ON TABLE public.banco_regra_calibracao TO authenticated, service_role;"; sem_pos ;;
+  grant_aberto_pos)     sabotar "GRANT SELECT ON TABLE public.banco_regra_calibracao TO authenticated, service_role;" "GRANT ALL ON TABLE public.banco_regra_calibracao TO authenticated, service_role;" ;;
   # seed e re-apply
   seed_errado)          sabotar "       7, 7, 0, 0," "       31, 31, 0, 0," ;;
   seed_errado_sem_pos)  sabotar "       7, 7, 0, 0," "       31, 31, 0, 0,"

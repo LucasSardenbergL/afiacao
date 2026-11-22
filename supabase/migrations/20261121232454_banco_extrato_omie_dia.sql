@@ -145,11 +145,11 @@ BEGIN
   END IF;
 
   -- GATE (parte da conta): sem calibracao (ou sem acesso a ela, pela RLS) = fechado. Uma calibracao reprovada
-  -- fecha o lado mesmo que outra tenha passado (bool_and). Zero dia conferido, ou nenhum dia com movimento no
-  -- lado (so 0 = 0), nao calibra o lado. A parte do DIA (dentro de um periodo medido) vai na consulta.
-  SELECT coalesce(bool_and(k.dias_conferidos > 0 AND k.dias_com_movimento_creditos > 0
+  -- fecha o lado mesmo que outra tenha passado (bool_and). Nenhum dia com movimento no lado (so 0 = 0; inclui
+  -- zero dia conferido, pelo CHECK com_movimento <= conferidos) nao calibra o lado. A parte do DIA (dentro de um periodo medido) vai na consulta.
+  SELECT coalesce(bool_and(k.dias_com_movimento_creditos > 0
                            AND k.dias_batem_creditos + k.divergencias_explicadas_creditos = k.dias_conferidos), false),
-         coalesce(bool_and(k.dias_conferidos > 0 AND k.dias_com_movimento_debitos > 0
+         coalesce(bool_and(k.dias_com_movimento_debitos > 0
                            AND k.dias_batem_debitos + k.divergencias_explicadas_debitos = k.dias_conferidos), false)
     INTO v_conta_c, v_conta_d
     FROM public.banco_regra_calibracao k
