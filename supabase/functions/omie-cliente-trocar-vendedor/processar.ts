@@ -30,6 +30,7 @@ import {
   NOME_ESPERADO,
   type Parametros,
   blocosPreenchidos,
+  camposDiferentes,
   enderecoFaltando,
   payloadAlterar,
   recomendacoesDe,
@@ -204,7 +205,7 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
 
   const candidatos = await d.candidatos(p);
   // `esperado`: o vendedor que a prova tem de achar — o alvo (escrita feita) ou o de antes (fault, nada gravado).
-  const aVerificar: { id: number; item: ItemResultado; hashAntes: string; lidoEm: number; esperado: number | null; seConfirmar: StatusRecibo }[] = [];
+  const aVerificar: { id: number; item: ItemResultado; hashAntes: string; cadAntes: Record<string, unknown>; lidoEm: number; esperado: number | null; seConfirmar: StatusRecibo }[] = [];
   let processados = 0;
 
   for (const cand of candidatos) {
@@ -311,7 +312,7 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
         item.erro = faultEscrita;
         await d.atualizar(id, { vendedor_depois: depois, erro: faultEscrita });
         contar(res, "indeterminado");
-        aVerificar.push({ id, item, hashAntes, lidoEm, esperado: atual, seConfirmar: "erro_omie" });
+        aVerificar.push({ id, item, hashAntes, cadAntes: cad, lidoEm, esperado: atual, seConfirmar: "erro_omie" });
         continue;
       }
       item.status = faultEscrita !== null && !relido ? "indeterminado" : "divergente";
@@ -325,7 +326,7 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
     item.status = "alterado";
     await d.atualizar(id, { status: "alterado", vendedor_depois: depois, espelho_ok: item.espelho_ok, erro: faultEscrita });
     contar(res, "alterado");
-    aVerificar.push({ id, item, hashAntes, lidoEm, esperado: alvo, seConfirmar: "verificado" });
+    aVerificar.push({ id, item, hashAntes, cadAntes: cad, lidoEm, esperado: alvo, seConfirmar: "verificado" });
     if (!item.espelho_ok) { res.parou = `espelho não atualizou no cliente ${cand.omie_codigo_cliente}`; break; }
   }
   res.fim = res.parou === null && processados === candidatos.length && candidatos.length < p.limite;
@@ -348,7 +349,11 @@ async function bloco(p: Parametros, d: Dependencias, o: OpcoesBloco, res: Result
       if (x.seConfirmar === "erro_omie") x.item.erro = `${x.item.erro ?? ""} (provado: nada gravado)`.trim();
     } else {
       x.item.status = "divergente";
-      x.item.erro = "o cadastro mudou além do vendedor";
+      const dif = camposDiferentes(x.cadAntes, cad);
+      const vendLido = lerVendedor(cad);
+      x.item.erro = (dif.length
+        ? `o cadastro mudou além do vendedor: ${dif.join("; ")}`
+        : `vendedor esperado ${x.esperado ?? "vazio"}, lido ${vendLido === "ilegivel" ? "ilegível" : vendLido ?? "vazio"}`).slice(0, 1500);
       await d.atualizar(x.id, { status: "divergente", hash_depois: hashDepois, erro: x.item.erro });
       contar(res, "divergente");
       res.parou = `divergência no cliente ${x.item.omie_codigo_cliente}`;

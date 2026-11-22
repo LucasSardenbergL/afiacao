@@ -199,7 +199,12 @@ export function payloadAlterar(cad: Record<string, unknown>, alvo: number): Reco
   if (enderecoFaltando(cad).length > 0) return null;
   const rec = cad.recomendacoes && typeof cad.recomendacoes === "object" ? cad.recomendacoes as Record<string, unknown> : {};
   const p: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(cad)) if (ehEscalar(v) && !INSTRUCOES.has(k)) p[k] = v;
+  // Texto VAZIO não vai (v1.4): o Omie valida o que recebe e recusa vazio em campo com domínio — medido no canário 4:
+  // "tag [tipo_atividade] incorreto", "tag [bloqueado] deve ser 'S' ou 'N'". Omitido, o campo fica como está.
+  for (const [k, v] of Object.entries(cad)) {
+    if (!ehEscalar(v) || INSTRUCOES.has(k) || (typeof v === "string" && v.trim() === "")) continue;
+    p[k] = v;
+  }
   p.codigo_cliente_omie = codigo;
   p.recomendacoes = { ...rec, codigo_vendedor: alvo };
   return p;
@@ -225,6 +230,44 @@ export function textoParaHash(cad: Record<string, unknown>): string {
   // sem o objeto passa a ter `{codigo_vendedor}` depois da troca, e isso não pode virar falso 'divergente' (Codex P2).
   const vazio = rec === null || rec === undefined || (typeof rec === "object" && Object.keys(rec as object).length === 0);
   return JSON.stringify(canonico({ ...resto, recomendacoes: vazio ? undefined : rec }));
+}
+
+/**
+ * Quais campos mudaram entre duas leituras, pelo MESMO recorte do hash (sem info/vendedor) — para o recibo DIZER o
+ * que divergiu (v1.4: o canário 4 achou 'divergente' sem saber qual campo). Caminhos com valores curtos, no máx. 20.
+ */
+/** Campos de CONTROLE cujo valor pode aparecer no recibo (sem dado pessoal/bancário — Codex v1.4 P2). */
+const CAMPOS_SEGUROS = new Set([
+  "importado_api", "inativo", "bloqueado", "bloquear_faturamento", "bloquear_exclusao", "tipo_atividade", "estado",
+  "cidade", "cidade_ibge", "codigo_pais", "pessoa_fisica", "exterior", "optante_simples_nacional", "contribuinte",
+  "produtor_rural", "valor_limite_credito", "enviar_anexos", "tag",
+]);
+
+function valorSeguro(caminho: string): boolean {
+  if (caminho.startsWith("recomendacoes.") || caminho.startsWith("tags.")) return true;
+  return CAMPOS_SEGUROS.has(caminho.split(".").pop() ?? "");
+}
+
+export function camposDiferentes(antes: Record<string, unknown>, depois: Record<string, unknown>): string[] {
+  const a = JSON.parse(textoParaHash(antes)) as unknown;
+  const b = JSON.parse(textoParaHash(depois)) as unknown;
+  const out: string[] = [];
+  const curto = (v: unknown) => v === undefined ? "(ausente)" : JSON.stringify(v).slice(0, 60);
+  const andar = (x: unknown, y: unknown, cam: string) => {
+    if (out.length >= 20) return;
+    const ox = x !== null && typeof x === "object", oy = y !== null && typeof y === "object";
+    if (ox && oy && Array.isArray(x) === Array.isArray(y)) {
+      const kx = x as Record<string, unknown>, ky = y as Record<string, unknown>;
+      for (const k of [...new Set([...Object.keys(kx), ...Object.keys(ky)])].sort()) andar(kx[k], ky[k], cam ? `${cam}.${k}` : k);
+      return;
+    }
+    if (JSON.stringify(x) === JSON.stringify(y)) return;
+    const c = cam || "(raiz)";
+    if (valorSeguro(c)) out.push(`${c}: ${curto(x)} → ${curto(y)}`);
+    else out.push(`${c}: ${x === undefined ? "adicionado" : y === undefined ? "removido" : "alterado"}`);
+  };
+  andar(a, b, "");
+  return out;
 }
 
 export async function hashCadastro(cad: Record<string, unknown>): Promise<string> {

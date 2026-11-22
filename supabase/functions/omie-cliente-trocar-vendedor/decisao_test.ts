@@ -6,6 +6,7 @@ import {
   hashCadastro,
   lerParametros,
   blocosPreenchidos,
+  camposDiferentes,
   enderecoFaltando,
   payloadAlterar,
   textoParaHash,
@@ -125,4 +126,12 @@ Deno.test("v1.2/v1.3 payloadAlterar: endereço vazio = null; payload = escalares
 
 Deno.test("v1.3 blocosPreenchidos: lista só listas/objetos NÃO vazios, fora info/recomendacoes", () => {
   igual(blocosPreenchidos({ ...CAD, caracteristicas: [], enderecoEntrega: { entEndereco: "R" }, dadosBancarios: {} }), ["enderecoEntrega", "tags"], "blocos");
+});
+
+Deno.test("v1.4 camposDiferentes: caminhos aninhados, ausente, e ignora info/vendedor", () => {
+  const depois = { ...CAD, info: { dAlt: "x" }, recomendacoes: { ...CAD.recomendacoes, codigo_vendedor: 1, gerar_boletos: "S" }, tags: [], novo: 1 };
+  igual(camposDiferentes(CAD, depois), ['novo: adicionado', 'recomendacoes.gerar_boletos: "N" → "S"', 'tags.0: {"tag":"Cliente"} → (ausente)'], "diff");
+  igual(camposDiferentes(CAD, { ...CAD, info: { dAlt: "y" } }), [], "info não conta");
+  igual(camposDiferentes({ ...CAD, email: "a@b.com", cnpj_cpf: "1" }, { ...CAD, email: "z@b.com", telefone1_numero: "9" }),
+    ["cnpj_cpf: removido", "email: alterado", "telefone1_numero: adicionado"], "dado pessoal: só o tipo de mudança, nunca o valor");
 });
