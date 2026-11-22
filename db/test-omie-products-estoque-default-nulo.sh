@@ -147,7 +147,8 @@ else bad "I1 re-aplicar — $(grep -m1 'ERROR' "$TMPD/reapply.log" || echo sem-e
 
 # N1 — postcondição tem dente: coluna NOT NULL → a migration TEM de abortar com o A3 (P0001).
 P -c "DELETE FROM public.omie_products WHERE estoque IS NULL; ALTER TABLE public.omie_products ALTER COLUMN estoque SET NOT NULL"
-if P -1 -v VERBOSITY=verbose -f "$MIG" > "$TMPD/n1.log" 2>&1; then
+# lc_messages=C no servidor e no cliente: em pt_BR o prefixo vira "ERRO:" — sentinela ASCII fixa nos 2 locales.
+if PGOPTIONS="-c lc_messages=C" LC_MESSAGES=C P -1 -v VERBOSITY=verbose -f "$MIG" > "$TMPD/n1.log" 2>&1; then
   bad "N1 postcondicao morde NOT NULL — a migration PASSOU com a coluna NOT NULL"
 elif grep -q '^psql:.*ERROR:  P0001: A3 FALHOU' "$TMPD/n1.log"; then
   ok "N1 postcondicao morde NOT NULL (P0001 A3)"
