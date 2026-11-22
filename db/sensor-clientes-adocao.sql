@@ -52,7 +52,8 @@ WITH papel AS (
   FROM abriu a LEFT JOIN papel p USING (user_id) GROUP BY 1
 ), eventos(evento) AS (
   VALUES ('clientes.lista_aberta'), ('clientes.modo_trocado'), ('clientes.filtro_saude'),
-         ('clientes.busca_usada'), ('clientes.cliente_aberto'), ('clientes.pagina_carregada')
+         ('clientes.busca_usada'), ('clientes.cliente_aberto'), ('clientes.pagina_carregada'),
+         ('clientes.ficha_acao')
 ), uso AS (
   SELECT o.evento, coalesce(p.papel, 'sem_papel') AS papel,
          count(DISTINCT o.user_id) AS usuarios,
@@ -83,6 +84,9 @@ SELECT o.evento,
                    WHEN (o.props->>'posicao')::int <= 50 THEN 'pos_11_50'
                    ELSE 'pos_51_mais' END
          WHEN 'clientes.pagina_carregada' THEN (o.props->>'modo') || ':pag_' || (o.props->>'pagina')
+         -- Onda 1: ação a partir da ficha (ficha:tipo). `carteira_prioridade` em lista_aberta/cliente_aberto
+         -- é a VENDEDORA usando a priorização; `carteira` (sem sufixo) é o A–Z de antes da onda 1.
+         WHEN 'clientes.ficha_acao'       THEN (o.props->>'ficha') || ':' || (o.props->>'tipo')
        END AS valor,
        count(DISTINCT o.user_id) AS usuarios,
        count(*) AS linhas

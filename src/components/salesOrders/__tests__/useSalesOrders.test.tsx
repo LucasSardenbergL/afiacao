@@ -515,3 +515,32 @@ describe('useSalesOrders — medição da busca', () => {
     expect(JSON.stringify(analytics.track.mock.calls)).not.toMatch(/marcenaria|zzz/);
   });
 });
+
+describe('useSalesOrders — pedidos de UM cliente (?customer=, vindo da ficha)', () => {
+  const CLIENTE = '11111111-2222-4333-8444-555555555555';
+
+  it('?customer=<uuid> vira filtro no servidor por customer_user_id', async () => {
+    const { result } = montar(`/sales?customer=${CLIENTE}`);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.clienteFiltro).toBe(CLIENTE);
+    expect(result.current.comFiltro).toBe(true);
+    expect(pedidosDoFeed()[0].filtros).toContainEqual(['eq', 'customer_user_id', CLIENTE]);
+  });
+
+  it('valor torto no ?customer= é ignorado (cai em todos), nunca vai ao servidor', async () => {
+    const { result } = montar('/sales?customer=nao-e-uuid');
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.clienteFiltro).toBeNull();
+    expect(pedidosDoFeed()[0].filtros).toEqual([]);
+  });
+
+  it('limparCliente tira o filtro e a lista volta a todos (key nova)', async () => {
+    const { result } = montar(`/sales?customer=${CLIENTE}`);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    fake.pedidos = [];
+    act(() => result.current.limparCliente());
+    await waitFor(() => expect(result.current.clienteFiltro).toBeNull());
+    await waitFor(() => expect(pedidosDoFeed().length).toBeGreaterThan(0));
+    expect(pedidosDoFeed().at(-1)?.filtros).toEqual([]);
+  });
+});

@@ -41,7 +41,7 @@ export function EstadoAcoesSidebar({
   onOpenCancel,
 }: EstadoAcoesSidebarProps) {
   return (
-    <Card className="lg:sticky lg:top-[calc(theme(spacing.topo-conteudo)+1rem)]">
+    <Card className="lg:sticky lg:top-4">
       <CardHeader>
         <CardTitle className="text-base">Estado e ações</CardTitle>
       </CardHeader>

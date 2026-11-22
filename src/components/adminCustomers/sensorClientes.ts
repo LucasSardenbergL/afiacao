@@ -15,8 +15,22 @@ import { track } from '@/lib/analytics';
 import { registrarNoLedger, type EventoLedger } from '@/lib/analytics-ledger';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 
-/** Modo ativo da lista: as duas ordens da base completa, ou a carteira (sempre A–Z, sem controle). */
-export type ModoClientes = 'prioridade' | 'nome' | 'carteira';
+/**
+ * Modo ativo da lista: as duas ordens da base completa e as duas da carteira. Até a onda 1 a carteira
+ * era sempre A–Z e gravava `carteira`; agora ela ordena e grava `carteira_prioridade`/`carteira_nome`
+ * — é esse o sinal que mede se a VENDEDORA usa a priorização (antes só o gestor tinha a ordem).
+ */
+export type ModoClientes = 'prioridade' | 'nome' | 'carteira_prioridade' | 'carteira_nome';
+
+export function modoClientes(isCarteira: boolean, ordem: 'prioridade' | 'nome'): ModoClientes {
+  if (!isCarteira) return ordem;
+  return ordem === 'nome' ? 'carteira_nome' : 'carteira_prioridade';
+}
+
+/** De qual ficha saiu a ação: o cadastro (/admin/customers/:id) ou a visão 360. */
+type FichaClientes = 'cadastro' | '360';
+/** Ações de contato/venda medidas a partir da ficha. */
+export type AcaoFicha = 'ligar' | 'novo_pedido' | 'abrir_360' | 'ver_pedidos';
 
 const FILTROS_SAUDE = ['all', 'saudavel', 'estavel', 'atencao', 'critico', 'sem_historico'] as const;
 export type FiltroSaudeSensor = (typeof FILTROS_SAUDE)[number] | 'outro';
@@ -38,7 +52,8 @@ export type UsoClientes =
   | { acao: 'filtro_saude'; modo: ModoClientes; valor: string }
   | { acao: 'busca_usada'; modo: ModoClientes }
   | { acao: 'cliente_aberto'; modo: ModoClientes; posicao: number; filtroSaude: string; comBusca: boolean }
-  | { acao: 'pagina_carregada'; modo: ModoClientes; pagina: number };
+  | { acao: 'pagina_carregada'; modo: ModoClientes; pagina: number }
+  | { acao: 'ficha_acao'; ficha: FichaClientes; tipo: AcaoFicha };
 
 export interface EventoClientes {
   evento: EventoLedger & `clientes.${string}`;
@@ -81,6 +96,13 @@ export function montarEventoClientes(uso: UsoClientes): EventoClientes {
         props: { modo: uso.modo, pagina },
       };
     }
+    case 'ficha_acao':
+      // Sem id do cliente: a contagem responde "quem age a partir da ficha, e como" — não "com quem".
+      return {
+        evento: 'clientes.ficha_acao',
+        chave: `${uso.ficha}:${uso.tipo}`,
+        props: { ficha: uso.ficha, tipo: uso.tipo },
+      };
   }
 }
 

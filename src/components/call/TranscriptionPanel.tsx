@@ -51,7 +51,7 @@ export function TranscriptionPanel({
           animate={{ x: 0, opacity: 1 }}
           exit={{ x: '100%', opacity: 0 }}
           transition={{ type: 'tween', duration: 0.2 }}
-          className="fixed right-0 top-topo-conteudo bottom-0 pb-[env(safe-area-inset-bottom)] pr-[env(safe-area-inset-right)] w-full md:w-[400px] bg-card border-l border-border z-40 flex flex-col shadow-lg"
+          className="fixed right-0 top-topbar bottom-0 w-full md:w-[400px] bg-card border-l border-border z-40 flex flex-col shadow-lg"
         >
           {/* Header */}
           <header className="flex items-center justify-between p-4 border-b border-border shrink-0">

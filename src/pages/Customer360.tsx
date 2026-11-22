@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
@@ -30,10 +30,17 @@ import { IdentityColumn } from '@/components/customer360/IdentityColumn';
 import { ActivityColumn } from '@/components/customer360/ActivityColumn';
 import { VozTarefaDialog } from '@/components/tarefas/VozTarefaDialog';
 import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
+import { lerOrigemLista, urlListaClientes } from '@/components/adminCustomers/navegacao';
 
 export default function Customer360() {
   const { customerId } = useParams<{ customerId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Voltar devolve a FILA de origem (busca/saúde/ordem + rolagem), quando a 360 foi aberta da lista.
+  const voltarParaLista = () => {
+    const origem = lerOrigemLista(location.state);
+    navigate(urlListaClientes(origem?.query ?? ''), { state: { rolagem: origem?.rolagem ?? null } });
+  };
   const { user, isMaster, isGestorComercial, isStaff } = useAuth();
   const [abrirVozTarefa, setAbrirVozTarefa] = useState(false);
 
@@ -102,7 +109,7 @@ export default function Customer360() {
               Tentar de novo
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={() => navigate('/admin/customers')}>
+          <Button size="sm" variant="ghost" onClick={voltarParaLista}>
             Voltar para Clientes
           </Button>
         </div>
@@ -119,7 +126,7 @@ export default function Customer360() {
         description="Pode ter sido removido ou o link está errado. Volte pra lista e tente de novo."
         tone="operational"
         actionLabel="Voltar para Clientes"
-        onAction={() => navigate('/admin/customers')}
+        onAction={voltarParaLista}
       />
     );
   }
@@ -140,7 +147,7 @@ export default function Customer360() {
             score={s}
             scoreSemLeitura={scoreSemLeitura}
             isPj={isPj}
-            onBack={() => navigate('/admin/customers')}
+            onBack={voltarParaLista}
           />
           {podeCriarTarefaPorVoz && (
             <div className="absolute top-3 right-3">

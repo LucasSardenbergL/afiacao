@@ -32,6 +32,39 @@ export function normalizarOrdem(v: string | null | undefined): OrdemClientes {
   return v === 'nome' ? 'nome' : 'prioridade';
 }
 
+/** Estado da leitura dos scores da lista (useClientesScope). */
+export type EstadoScores = 'carregando' | 'falha' | 'ok';
+
+/**
+ * O que a tela pode afirmar sobre o filtro de saúde.
+ * - `inativo`: filtro "Todos".
+ * - `aplicado`: o recorte é real — no servidor (base completa) ou em memória com scores lidos.
+ * - `carregando` / `falha`: carteira com filtro escolhido e scores AINDA não lidos / não lidos. O mapa
+ *   vazio não pode virar "nenhum cliente Crítico": a tela avisa e NÃO filtra (a busca segue valendo).
+ */
+export type EstadoFiltroSaude = 'inativo' | 'aplicado' | 'carregando' | 'falha';
+export function estadoFiltroSaude({ filtro, filtroNoServidor, scoresEstado }: {
+  filtro: string;
+  filtroNoServidor: boolean;
+  scoresEstado: EstadoScores;
+}): EstadoFiltroSaude {
+  if (filtro === 'all') return 'inativo';
+  if (filtroNoServidor) return 'aplicado';
+  return scoresEstado === 'ok' ? 'aplicado' : scoresEstado;
+}
+
+/**
+ * A ordem "Priorizar contatos" da CARTEIRA depende dos scores (em memória). Sem eles a lista cai no
+ * A–Z, e a tela tem de dizer — senão "Priorizar contatos" no botão afirmaria uma ordem que não há.
+ */
+export function prioridadeDisponivel({ ordem, filtroNoServidor, scoresEstado }: {
+  ordem: OrdemClientes;
+  filtroNoServidor: boolean;
+  scoresEstado: EstadoScores;
+}): boolean {
+  return ordem !== 'prioridade' || filtroNoServidor || scoresEstado === 'ok';
+}
+
 export function formatDocument(doc: string | null) {
   if (!doc) return '-';
   if (doc.length === 11) return doc.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');

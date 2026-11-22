@@ -24,6 +24,9 @@ const h = vi.hoisted(() => ({
   /** Segura a 1ª página da base até ser liberada — simula a lista mais lenta que a leitura por id. */
   liberarBase: null as null | (() => void),
   atrasarBase: false,
+  /** Carteira semeada (onda 1): perfis e linhas de farmer_client_scores. `null` = o WALTER de sempre. */
+  carteira: null as Record<string, unknown>[] | null,
+  scores: [] as Record<string, unknown>[],
 }));
 
 const perfil = (user_id: string, name: string) => ({
@@ -46,12 +49,13 @@ function resposta(c: Chamada): unknown {
   }
   if (c.table === 'profiles') {
     if (tem(c.ops, 'maybeSingle')) return { data: h.alvoPorId, error: null };
-    if (tem(c.ops, 'in')) return { data: [WALTER], error: null };
+    if (tem(c.ops, 'in')) return { data: h.carteira ?? [WALTER], error: null };
     return { data: [WALTER], error: null, count: 5665 };
   }
   if (c.table === 'carteira_assignments') {
-    return { data: [{ customer_user_id: WALTER.user_id, owner_user_id: 'staff-1' }], error: null };
+    return { data: (h.carteira ?? [WALTER]).map((p) => ({ customer_user_id: p.user_id, owner_user_id: 'staff-1' })), error: null };
   }
+  if (c.table === 'farmer_client_scores') return { data: h.scores, error: null };
   return { data: [], error: null, count: 0 };
 }
 
@@ -122,6 +126,8 @@ const queriesDeProfiles = () => h.chamadas.filter((c) => c.table === 'profiles')
 const paginasDaBase = () => h.chamadas.filter((c) => c.table === 'rpc:listar_clientes_base');
 
 beforeEach(() => {
+  h.carteira = null;
+  h.scores = [];
   h.modo = 'completa';
   h.chamadas.length = 0;
   h.alvoPorId = null;
@@ -209,13 +215,43 @@ describe('AdminCustomers — ordem e filtro de saúde no servidor (base completa
     expect(paginasDaBase().at(-1)!.args?.p_saude).toBeUndefined();
   });
 
-  it('carteira: sem controle de ordem (segue A–Z) e sem RPC da base', async () => {
+  it('carteira: ordena em memória (seletor de ordem presente) e sem RPC da base', async () => {
     h.modo = 'carteira';
     renderEm('/admin/customers');
     await screen.findByText('WALTER JOSE NOGUEIRA');
 
-    expect(screen.queryByRole('button', { name: /Ordenar lista/i })).toBeNull();
+    // Onda 1: a vendedora também prioriza — a carteira inteira está em memória com os scores.
+    expect(screen.getByRole('button', { name: /Ordenar lista/i })).toBeTruthy();
     expect(paginasDaBase()).toHaveLength(0);
+  });
+});
+
+describe('AdminCustomers — carteira priorizada (onda 1)', () => {
+  const ANA = perfil('aaaaaaaa-0000-4000-8000-000000000001', 'ANA MOVEIS');
+  const BRUNO = perfil('bbbbbbbb-0000-4000-8000-000000000002', 'BRUNO MARCENARIA');
+  const CARLA = perfil('cccccccc-0000-4000-8000-000000000003', 'CARLA ESQUADRIAS');
+  const linha = (user_id: string, priority_score: number | null, sales_history_status = 'ativo') => ({
+    customer_user_id: user_id, priority_score, sales_history_status, health_class: 'atencao', health_score: 50,
+  });
+  const nomesNaTabela = () =>
+    screen.getAllByRole('row').slice(1).map((r) => r.querySelector('td span.truncate')?.textContent);
+
+  it('padrão "Priorizar contatos": prioridade DESC, sem prioridade no fim', async () => {
+    h.modo = 'carteira';
+    h.carteira = [ANA, BRUNO, CARLA];
+    h.scores = [linha(ANA.user_id, 10), linha(BRUNO.user_id, 90), linha(CARLA.user_id, 70, 'sem_historico')];
+    renderEm('/admin/customers');
+    await waitFor(() => expect(nomesNaTabela()).toEqual(['BRUNO MARCENARIA', 'ANA MOVEIS', 'CARLA ESQUADRIAS']));
+  });
+
+  it('?ordem=nome: A–Z', async () => {
+    h.modo = 'carteira';
+    h.carteira = [BRUNO, CARLA, ANA];
+    h.scores = [linha(ANA.user_id, 10), linha(BRUNO.user_id, 90)];
+    renderEm('/admin/customers?ordem=nome');
+    await screen.findByText('BRUNO MARCENARIA');
+    await waitFor(() => expect(screen.getAllByText(/Atenção/).length).toBeGreaterThan(0));
+    expect(nomesNaTabela()).toEqual(['ANA MOVEIS', 'BRUNO MARCENARIA', 'CARLA ESQUADRIAS']);
   });
 });
 

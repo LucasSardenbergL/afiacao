@@ -76,6 +76,45 @@ export function ordenarPorNome<T extends { name: string; user_id?: string }>(ite
   return comChave.map((x) => x.item);
 }
 
+/**
+ * Chave de prioridade da ordenação — gêmea do `prio` da RPC `listar_clientes_base`: quem nunca
+ * comprou (`sem_historico`) tem prioridade sentinela da edge, não medida → `null`. Sem score, ou
+ * valor não finito, também `null`. Nunca 0: 0 é uma prioridade medida (a mais baixa), ausente não é.
+ */
+export function chavePrioridade(
+  score: Pick<ClientScore, 'priority_score' | 'sales_history_status'> | undefined,
+): number | null {
+  if (!score || score.sales_history_status === 'sem_historico') return null;
+  const p = score.priority_score;
+  return typeof p === 'number' && Number.isFinite(p) ? p : null;
+}
+
+/**
+ * Ordem da CARTEIRA (lida inteira em memória), espelho da ordem da base completa no servidor:
+ * `prioridade` = prioridade DESC com ausente no FIM, desempate pela mesma chave do A–Z (nome
+ * normalizado → nome cru → user_id), então a ordem é total e estável; `nome` = A–Z.
+ * Não muta a entrada.
+ */
+export function ordenarCarteira<T extends { name: string; user_id: string }>(
+  items: T[],
+  scores: Map<string, Pick<ClientScore, 'priority_score' | 'sales_history_status'>>,
+  ordem: 'prioridade' | 'nome',
+): T[] {
+  const porNome = ordenarPorNome(items);
+  if (ordem === 'nome') return porNome;
+  // Posição no A–Z = desempate (sort é estável, mas a posição explícita não depende disso).
+  const indexado = porNome.map((item, pos) => ({ item, pos, prio: chavePrioridade(scores.get(item.user_id)) }));
+  indexado.sort((a, b) => {
+    if (a.prio !== b.prio) {
+      if (a.prio === null) return 1;
+      if (b.prio === null) return -1;
+      if (b.prio !== a.prio) return b.prio - a.prio;
+    }
+    return a.pos - b.pos;
+  });
+  return indexado.map((x) => x.item);
+}
+
 /** Quebra ids em lotes e concatena os resultados, em ordem. Propaga erro de qualquer lote. */
 export async function coletarEmLotes<I, O>(
   ids: I[],

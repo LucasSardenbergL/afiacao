@@ -259,7 +259,7 @@ const PedidoProgramadoDetalhe = () => {
 
       {/* Barra de agendamento */}
       {itensSelecionados.length > 0 && (
-        <div className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 bg-background border rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 z-40">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-background border rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 z-40">
           <span className="text-sm">{itensSelecionados.length} selecionado(s)</span>
           <Input
             type="date"

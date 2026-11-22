@@ -51,3 +51,36 @@ export function useCustomerCalls(customerId: string | null) {
     },
   });
 }
+
+/** Última ligação REGISTRADA do cliente — com ou sem transcrição (o resumo pré-visita só quer a recência). */
+export interface CustomerLastCall {
+  started_at: string;
+  call_result: string | null;
+}
+
+/**
+ * `useCustomerCalls` só traz chamadas com transcrição (é a fonte da timeline rica). O "Última
+ * ligação" do resumo lia dela e dizia "nenhuma" para quem foi ligado sem transcrição. Aqui: a mais
+ * recente de `farmer_calls`, qualquer uma. `null` = nenhuma visível; erro LANÇA (≠ "nenhuma").
+ */
+export function useCustomerLastCall(customerId: string | null) {
+  return useQuery({
+    queryKey: ['customer-last-call', customerId],
+    enabled: !!customerId,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+    queryFn: async (): Promise<CustomerLastCall | null> => {
+      if (!customerId) return null;
+      const { data, error } = await supabase
+        .from('farmer_calls')
+        .select('started_at, call_result')
+        .eq('customer_user_id', customerId)
+        .order('started_at', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      // data null SEM error = malformada, não "nenhuma ligação".
+      if (data == null) throw new Error('farmer_calls: data null sem error');
+      return (data[0] as CustomerLastCall | undefined) ?? null;
+    },
+  });
+}
