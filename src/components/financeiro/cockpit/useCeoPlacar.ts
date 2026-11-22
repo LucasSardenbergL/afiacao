@@ -19,6 +19,7 @@ import { consolidarCockpit } from '@/lib/financeiro/cockpit-consolida-helpers';
 import { hojeSP } from '@/lib/time/sp-day';
 import {
   caixaDoEscopo,
+  caixaProjetadoDoEscopo,
   empresasDoEscopo,
   linhasPorEmpresa,
   margemUltimoMesFechado,
@@ -31,7 +32,8 @@ export function useCeoPlacar() {
   const { selection } = useCompany();
   const { regime } = useFinanceiroRegime();
   // Mesmo relógio do tile de vendas (`useTeamKpis`): dia em São Paulo, não o fuso do browser.
-  const [ano, mesCorrente] = hojeSP().split('-').map(Number);
+  const hoje = hojeSP();
+  const [ano, mesCorrente] = hoje.split('-').map(Number);
 
   const resumoQ = useQuery(consultaResumoCockpit());
   const dreQ = useQuery(consultaDreCockpit(ano, regime));
@@ -58,6 +60,7 @@ export function useCeoPlacar() {
     vencidos: vencidosDoEscopo(resumo, empresas),
     margem: margemUltimoMesFechado(dre, empresas, mesCorrente),
     ncg: ncgDoEscopo(ncgFonte, empresas),
+    caixaProjetado: caixaProjetadoDoEscopo(snapsQ.data ?? null, empresas, hoje),
     porEmpresa: selection === 'all' ? linhasPorEmpresa(resumo, dre, ncgFonte, empresas, mesCorrente) : [],
   };
 }

@@ -8,6 +8,8 @@
  *   mercadoria — a Colacor SC só presta serviço e aparece como "serviço", não como 100%.
  * - Saldo bancário líquido (soma dos CNPJs) + quais CNPJs estão negativos — caixa não é
  *   fungível entre CNPJs, então o total nunca aparece sozinho como "disponível".
+ * - Falta de caixa nas 13 semanas: soma dos déficits no pior saldo de cada CNPJ (sem abater a
+ *   sobra de outro), com quem já está negativo ou a partir de quando, e a semana do pior saldo.
  * - Recebíveis vencidos em R$ e % da carteira aberta.
  * - NCG (necessidade de capital de giro) com data do snapshot; a leitura do sinal (folga ×
  *   capital preso) só aparece com a NCG completa — sem estoque até o sinal pode virar.
@@ -23,12 +25,13 @@ import { track } from '@/lib/analytics';
 import { useCompany, COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { useTeamKpis } from '@/hooks/useTeamKpis';
 import { useCeoPlacar } from '@/components/financeiro/cockpit/useCeoPlacar';
+import type { CaixaProjetado, MotivoSemProjecao } from '@/lib/financeiro/ceo-placar';
 import { formatBRL, formatarFracaoPct } from '@/components/customer360/format';
 import { formatarBRLCompacto } from '@/lib/dashboard/ceo-formato';
 
 const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 
-type KpiId = 'vendas' | 'margem' | 'caixa' | 'vencidos' | 'ncg';
+type KpiId = 'vendas' | 'margem' | 'caixa' | 'caixa13' | 'vencidos' | 'ncg';
 
 function Kpi({
   id,
@@ -92,6 +95,46 @@ function leituraNcg(valor: number, completa: boolean): string {
   return valor <= 0 ? 'folga: fornecedores financiam o giro' : 'capital preso no giro';
 }
 
+const MOTIVO_SEM_PROJECAO: Record<MotivoSemProjecao, string> = {
+  ausente: 'sem projeção',
+  desatualizada: 'projeção desatualizada',
+  incompleta: 'projeção incompleta',
+};
+
+/** Quem fica negativo, desde quando e o pior saldo — caixa não é fungível entre CNPJs. */
+function detalheCaixa13(c: CaixaProjetado, grupo: boolean): ReactNode {
+  const sem = c.porEmpresa.filter((r) => r.motivo !== null);
+  if (c.falta === null) {
+    if (sem.length === 0) return 'projeção indisponível';
+    const motivo = MOTIVO_SEM_PROJECAO[sem[0].motivo as MotivoSemProjecao];
+    return grupo ? `${motivo}: ${nomes(sem.map((r) => r.empresa))}` : motivo;
+  }
+  // Coorte antiga: "já negativa" passaria por hoje — data o estado pelo snapshot.
+  const defasada = c.diasDefasagem !== null && c.diasDefasagem > 1;
+  const dataSnap = dataCurta(c.porEmpresa[0]?.snapshot ?? null);
+  const sufixo = defasada ? ` · projeção de ${dataSnap}` : '';
+  const negativas = c.porEmpresa.filter((r) => r.pior !== null && r.pior.saldo < 0);
+  if (c.falta === 0 || negativas.length === 0) return `nenhum CNPJ fica negativo${sufixo}`;
+  const quem = negativas
+    .map((r) => {
+      const quando = r.negativaHoje
+        ? defasada ? `negativa em ${dataSnap}` : 'já negativa'
+        : `negativa a partir de ${dataCurta(r.primeiraNegativa)}`;
+      return grupo ? `${COMPANIES[r.empresa].shortName} ${quando}` : quando;
+    })
+    .join('; ');
+  // A soma não tem UMA data: só cita a semana do pior quando é a mesma em todos (Codex P3).
+  const semanasPior = new Set(negativas.map((r) => (r.pior as { inicio: string }).inicio));
+  const pior = semanasPior.size === 1 ? ` · pior em ${dataCurta([...semanasPior][0])}` : '';
+  return (
+    <span className="text-status-warning">
+      {quem}
+      {pior}
+      {sufixo}
+    </span>
+  );
+}
+
 function dataCurta(iso: string | null): string {
   if (!iso) return '';
   const [, m, d] = iso.slice(0, 10).split('-');
@@ -106,7 +149,7 @@ export function CeoPlacar() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Kpi
           id="vendas"
           rotulo="Vendas no mês · pedidos"
@@ -158,6 +201,15 @@ export function CeoPlacar() {
           carregando={p.carregando.resumo}
         />
         <Kpi
+          id="caixa13"
+          rotulo="Falta de caixa · 13 semanas"
+          valor={p.caixaProjetado.falta === 0 ? 'nenhuma' : formatarBRLCompacto(p.caixaProjetado.falta)}
+          titulo={p.caixaProjetado.falta ? formatBRL(p.caixaProjetado.falta) : undefined}
+          detalhe={p.erro.ncg ? 'leitura falhou' : detalheCaixa13(p.caixaProjetado, selection === 'all')}
+          para="/financeiro/capital-giro?aba=fluxo"
+          carregando={p.carregando.ncg}
+        />
+        <Kpi
           id="vencidos"
           rotulo="Recebíveis vencidos"
           valor={formatarBRLCompacto(p.vencidos.valor)}
@@ -198,6 +250,7 @@ export function CeoPlacar() {
                 <th scope="col" className="px-4 py-2 text-left font-normal">Empresa</th>
                 <th scope="col" className="px-4 py-2 text-right font-normal">Margem bruta</th>
                 <th scope="col" className="px-4 py-2 text-right font-normal">Caixa</th>
+                <th scope="col" className="px-4 py-2 text-right font-normal">Pior saldo · 13 sem</th>
                 <th scope="col" className="px-4 py-2 text-right font-normal">Vencidos</th>
                 <th scope="col" className="px-4 py-2 text-right font-normal">NCG</th>
               </tr>
@@ -219,6 +272,16 @@ export function CeoPlacar() {
                   <td className={cn('px-4 py-2 text-right', l.caixa.saldo !== null && l.caixa.saldo < 0 && 'text-status-warning')}>
                     {formatarBRLCompacto(l.caixa.saldo)}
                   </td>
+                  {(() => {
+                    const r = p.caixaProjetado.porEmpresa.find((e) => e.empresa === l.empresa);
+                    const pior = r?.pior ?? null;
+                    return (
+                      <td className={cn('px-4 py-2 text-right', pior !== null && pior.saldo < 0 && 'text-status-warning')}>
+                        {formatarBRLCompacto(pior ? pior.saldo : null)}
+                        {pior && <span className="ml-1 text-muted-foreground">{dataCurta(pior.inicio)}</span>}
+                      </td>
+                    );
+                  })()}
                   <td className="px-4 py-2 text-right">
                     {formatarBRLCompacto(l.vencidos.valor)}
                     {l.vencidos.pct !== null && (

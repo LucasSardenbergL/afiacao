@@ -267,6 +267,9 @@ describe('parseSnapshotSemanas (Number(null) não fabrica 0)', () => {
   it('campo core inválido → semana dropada; dados não-array → []', () => {
     expect(parseSnapshotSemanas([{ inicio: '', total_entradas: 1, total_saidas: 1, saldo_final: 1, saldo_inicial: 9 }])).toEqual([]);
     expect(parseSnapshotSemanas([{ inicio: '2026-05-25', total_entradas: 'x', total_saidas: 1, saldo_final: 1, saldo_inicial: 9 }])).toEqual([]);
+    // null/string NÃO viram 0 (Number(null) === 0 fabricava "saldo zero" — Codex P1 2026-11-21).
+    expect(parseSnapshotSemanas([{ inicio: '2026-05-25', total_entradas: 1, total_saidas: 1, saldo_final: null, saldo_inicial: 9 }])).toEqual([]);
+    expect(parseSnapshotSemanas([{ inicio: '2026-05-25', total_entradas: '5', total_saidas: 1, saldo_final: 1, saldo_inicial: 9 }])).toEqual([]);
     expect(parseSnapshotSemanas(null)).toEqual([]);
     expect(parseSnapshotSemanas({})).toEqual([]);
   });
