@@ -14,6 +14,7 @@ import {
   listarContasBancarias,
   marcarConferido,
   registrarAncoraManual,
+  movimentoOmieDia,
   resumoDia,
   textoDoMotivoDesconhecido,
   type BancoConta,
@@ -70,6 +71,14 @@ export function useResumoDiarioExtrato(contaId: string | null, de: string, ate: 
   return useQuery({
     queryKey: [...CHAVE, 'resumo', contaId, de, ate],
     queryFn: () => resumoDia(contaId as string, de, ate),
+    enabled: contaId !== null,
+  });
+}
+
+export function useMovimentoOmieDia(contaId: string | null, de: string, ate: string) {
+  return useQuery({
+    queryKey: [...CHAVE, 'omie-dia', contaId, de, ate],
+    queryFn: () => movimentoOmieDia(contaId as string, de, ate),
     enabled: contaId !== null,
   });
 }

@@ -536,3 +536,36 @@ A T0 mediu os dois OFX reais da Oben (só agregados, sem conteúdo no repo). Os 
 - **Risco residual aceito (registrado no PR):**
   - Um 1252 legítimo que por acaso seja UTF-8 válido seria lido como UTF-8.
   - Na sobreposição, sem documento estável, a troca de uma linha por outra de mesmo valor e mesmo dia não é vista pela tupla. A descrição fica fora da chave por desenho da RPC; é follow-up, não muda neste PR.
+
+## Apêndice — Task 9, Step 2: calibração medida (regra v1 × extrato real)
+
+> Medido em prod via `psql-ro` (só leitura, só agregados e contagens) em 2026-11-21, contra os 2 OFX aceitos da conta Itaú da Oben (01–20/10 e 10–31/10/2026). A conta tem **1** `omie_ncodcc` vinculada (a "AC/950" com "pix" no nome não está ligada — decisão de cadastro, não inferência). Registrado em `banco_regra_calibracao` pela migration `20261121232454_banco_extrato_omie_dia.sql`.
+
+### Denominador
+
+| Lado | Dias cobertos | Dias com movimento (qualquer lado) | Dias que batem ao centavo |
+|---|---|---|---|
+| Créditos | 31 | 24 | **0** (os 7 "batem" registrados são 0 = 0) |
+| Débitos | 31 | 24 | **0** (só boleto/Pix/pagamentos do extrato contra o Omie: 8/24) |
+
+### Divergências, classificadas
+
+**Créditos (estrutural, não é defeito da regra):**
+1. **Desconto de duplicatas** (antecipação de recebíveis): ~63% do valor creditado no mês. Não tem baixa no Omie.
+2. **Cobrança liquidada em lote**: o banco credita 20 lançamentos de cobrança no mês; o Omie tem 325 BAXR (uma por título). Casamento 1:1 por valor: 3/325 no mesmo dia, 8/325 em ±5 dias.
+3. **Título descontado pago pelo cliente**: vira BAXR no Omie sem crédito novo no banco (o dinheiro já veio na antecipação). Por isso o crédito Omie é ~2× a cobrança + Pix do extrato.
+4. Só no banco: estornos, rendimentos e tarifas de título.
+
+**Débitos (o que é de título casa; o resto só existe no banco):**
+1. **Boleto pago casa 1:1 no mesmo dia**: 27/33 linhas de boleto do extrato têm BAXP de mesmo valor no mesmo dia (30/33 em ±5). Do lado Omie, 29/37 BAXP casam no mesmo dia e 33/37 em ±5.
+2. **Só no banco**: tarifas e custas, juros, IOF, débito automático e encargos do desconto (parcial, baixa, parcela). O débito do extrato é 1,55× o do Omie no mês.
+3. **Baixa datada em fim de semana**: 3 dias com BAXP só no Omie (sábado/domingo), debitados no banco em outro dia.
+
+**Transferências:** 0 TRAR/TRAP nesta conta em outubro no Omie. Não dá para atribuir divergência de outubro ao sumiço das transferências desde jul/2026 (investigado em outra sessão); os créditos só-banco de outubro são desconto e lote, não transferência identificável.
+
+### Decisão
+
+- **Regra v1 mantida e registrada como NÃO calibrada nos dois lados.** Nenhuma v2 é justificada pelo dado: a divergência não é de data nem de filtro, é de **escopo**. O Omie não lança desconto, tarifa, juros, IOF nem débito automático, e baixa título a título o que o banco liquida em lote. Fechar por dia exigiria conciliação linha a linha (F2), não uma soma diária.
+- O gate não foi afrouxado para mostrar "o que casa": exibir só os débitos de boleto seria escolher o subconjunto que bate, e isso é forçar a regra.
+- **Na tela:** as colunas "Créditos Omie" e "Débitos Omie" mostram "indisponível (regra não calibrada)". O gate fica no servidor (`banco_extrato_omie_dia` devolve `NULL` no lado não calibrado) e é repetido no front (`montarMovimentoOmie`).
+- **Recalibração:** uma nova medição entra como linha nova em `banco_regra_calibracao`, pelo envelope. Uma calibração reprovada da mesma versão fecha o lado mesmo que outra passe (`bool_and`).

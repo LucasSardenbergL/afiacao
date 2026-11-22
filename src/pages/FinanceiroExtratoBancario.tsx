@@ -16,6 +16,7 @@ import {
   useImportarExtrato,
   useMarcarConferido,
   useRegistrarAncora,
+  useMovimentoOmieDia,
   useResumoDiarioExtrato,
 } from '@/hooks/useFinanceiroExtratoBancario';
 import { useUrlState } from '@/hooks/useUrlState';
@@ -44,6 +45,8 @@ export default function FinanceiroExtratoBancario() {
 
   const arquivos = useArquivosExtrato(contaId);
   const resumo = useResumoDiarioExtrato(janela ? contaId : null, de, ate);
+  // falha/carregando do lado Omie = coluna fechada (fail-closed), sem derrubar o resumo do banco
+  const omie = useMovimentoOmieDia(janela ? contaId : null, de, ate);
   const importar = useImportarExtrato(conta);
   const conferir = useMarcarConferido();
   const ancoras = useAncorasConta(contaId);
@@ -117,7 +120,7 @@ export default function FinanceiroExtratoBancario() {
           ) : resumo.error ? (
             <p className="text-sm text-status-error">Falha ao carregar o resumo: {mensagemDeErro(resumo.error) ?? 'erro desconhecido'}</p>
           ) : (
-            <ResumoDiarioExtrato dias={resumo.data ?? []} />
+            <ResumoDiarioExtrato dias={resumo.data ?? []} omie={omie.data ?? null} />
           )}
         </CardContent>
       </Card>

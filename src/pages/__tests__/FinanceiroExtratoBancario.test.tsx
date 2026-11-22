@@ -13,6 +13,7 @@ vi.mock('@/hooks/useFinanceiroExtratoBancario', () => ({
       qtdLinhasNovas: 1, enviadoEm: '2026-11-20T10:00:00Z', conferidoEm: null },
   ]),
   useResumoDiarioExtrato: () => ok([]),
+  useMovimentoOmieDia: () => ok(null),
   useAncorasConta: () => ok([]),
   useImportarExtrato: () => ({ isPending: false, mutate: vi.fn() }),
   useMarcarConferido: () => ({ isPending: false, mutate: vi.fn(), variables: null }),
