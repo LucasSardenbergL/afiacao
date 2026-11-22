@@ -137,7 +137,9 @@ export function margemUltimoMesFechado(
   );
   if (semCmv.length > 0) return { valor: null, mes, semCmv, servicoFora };
   const receita = doMes.reduce((s, d) => s + d.receita_liquida, 0);
-  const lucro = doMes.reduce((s, d) => s + d.lucro_bruto, 0);
+  // Lucro pela identidade (receita − CMV), não pelo `lucro_bruto` gravado: snapshot incoerente não
+  // infla a margem (Codex P1 2026-11-22; 0 de 139 incoerentes em prod hoje).
+  const lucro = doMes.reduce((s, d) => s + (d.receita_liquida - (d.cmv as number)), 0);
   return { valor: receita > 0 ? lucro / receita : null, mes, semCmv, servicoFora };
 }
 
@@ -374,7 +376,7 @@ export interface LinhaComposicaoMargem {
   margem: number;
   /** Margem do mês anterior com receita e CMV > 0; `null` sem base. */
   margemAnterior: number | null;
-  /** Categorias sem mapeamento explícito no mês (heurística) — `null` = não informado. */
+  /** Categorias da DRE INTEIRA (não só CMV) sem mapeamento explícito no mês — `null` = não informado. */
   semMapeamento: number | null;
   provisorio: boolean;
 }
@@ -403,9 +405,9 @@ export function composicaoMargem(
         empresa: co,
         receitaLiquida: d.receita_liquida,
         cmv: d.cmv,
-        lucroBruto: d.lucro_bruto,
-        margem: d.lucro_bruto / d.receita_liquida,
-        margemAnterior: ant && ant.receita_liquida > 0 && ant.cmv !== null && ant.cmv > 0 ? ant.lucro_bruto / ant.receita_liquida : null,
+        lucroBruto: d.receita_liquida - d.cmv,
+        margem: (d.receita_liquida - d.cmv) / d.receita_liquida,
+        margemAnterior: ant && ant.receita_liquida > 0 && ant.cmv !== null && ant.cmv > 0 ? (ant.receita_liquida - ant.cmv) / ant.receita_liquida : null,
         semMapeamento: typeof d.qtd_categorias_sem_mapeamento === 'number' ? d.qtd_categorias_sem_mapeamento : null,
         provisorio: d.resultado_provisorio === true,
       };

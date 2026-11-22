@@ -373,6 +373,12 @@ describe('composicaoMargem', () => {
     expect(composicaoMargem([linha('oben', 10, 1000, 600)], ['oben', 'colacor'], 11)).toEqual({ mes: null, linhas: [] });
   });
 
+  it('lucro pela identidade receita − CMV: lucro_bruto gravado incoerente não infla a margem', () => {
+    const incoerente: DreLinha = { company: 'oben', mes: 10, receita_liquida: 100, cmv: 60, lucro_bruto: 90 };
+    expect(composicaoMargem([incoerente], ['oben'], 11).linhas[0]).toMatchObject({ lucroBruto: 40, margem: 0.4 });
+    expect(margemUltimoMesFechado([incoerente], ['oben'], 11).valor).toBeCloseTo(0.4);
+  });
+
   it('confiança ausente fica null ("não informada"), nunca "mapeada"', () => {
     expect(composicaoMargem([linha('oben', 10, 1000, 600)], ['oben'], 11).linhas[0].semMapeamento).toBeNull();
   });

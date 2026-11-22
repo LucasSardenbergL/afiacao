@@ -253,7 +253,7 @@ function CardCobranca({ c, erro, carregando, empresas }: {
 
 type ComposicaoMargemCeo = ReturnType<typeof useCeoPlacar>['composicaoMargem'];
 
-/** De onde vem a margem do tile: receita, CMV e lucro por empresa de mercadoria, com a confiança da DRE. */
+/** De onde vem a margem do tile: receita, CMV e lucro (receita − CMV) por empresa de mercadoria, com o mapeamento da DRE. */
 function CardComposicaoMargem({ c, regime }: { c: ComposicaoMargemCeo; regime: string }) {
   if (c.mes === null || c.linhas.length === 0) return null;
   return (
@@ -280,7 +280,7 @@ function CardComposicaoMargem({ c, regime }: { c: ComposicaoMargemCeo; regime: s
             <th scope="col" className="py-1.5 pr-3 text-right font-normal">Lucro bruto</th>
             <th scope="col" className="py-1.5 pr-3 text-right font-normal">Margem</th>
             <th scope="col" className="py-1.5 pr-3 text-right font-normal">Mês anterior</th>
-            <th scope="col" className="py-1.5 text-left font-normal">Confiança</th>
+            <th scope="col" className="py-1.5 text-left font-normal">Mapeamento da DRE</th>
           </tr>
         </thead>
         <tbody>
@@ -294,7 +294,10 @@ function CardComposicaoMargem({ c, regime }: { c: ComposicaoMargemCeo; regime: s
               <td className="py-1.5 pr-3 text-right text-muted-foreground">{formatarFracaoPct(l.margemAnterior)}</td>
               <td className="py-1.5 text-left">
                 {l.semMapeamento !== null && l.semMapeamento > 0 ? (
-                  <span className="text-status-warning" title="Categorias classificadas pela descrição, sem mapeamento explícito na DRE">
+                  <span
+                    className="text-status-warning"
+                    title="Categorias da DRE inteira (não só do CMV) classificadas pela descrição, sem mapeamento explícito"
+                  >
                     {l.semMapeamento} {l.semMapeamento === 1 ? 'categoria' : 'categorias'} sem mapeamento
                   </span>
                 ) : l.semMapeamento === null ? (
@@ -302,7 +305,11 @@ function CardComposicaoMargem({ c, regime }: { c: ComposicaoMargemCeo; regime: s
                 ) : (
                   <span className="text-muted-foreground">mapeada</span>
                 )}
-                {l.provisorio && <span className="ml-1 text-status-warning">· provisório</span>}
+                {l.provisorio && (
+                  <span className="ml-1 text-status-warning" title="Há lançamentos fora da DRE no mês">
+                    · DRE provisória
+                  </span>
+                )}
               </td>
             </tr>
           ))}
