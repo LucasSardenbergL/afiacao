@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   caixaDoEscopo,
+  caixaProjetadoDoEscopo,
   empresasDoEscopo,
   linhasPorEmpresa,
   margemUltimoMesFechado,
@@ -9,6 +10,7 @@ import {
   type DreLinha,
   type ResumoCnpj,
 } from '../ceo-placar';
+import type { SnapshotEmpresa } from '../cockpit-consolida-helpers';
 
 const r = (saldo: number | null, receber: number | null, vencido: number | null, pagar = 0): ResumoCnpj => ({
   saldo_total_cc: saldo,
@@ -170,5 +172,110 @@ describe('linhasPorEmpresa', () => {
     expect(linhas[0].margem).toEqual({ valor: 0.25, mes: 10, semCmv: [], servicoFora: [] });
     expect(linhas[1].margem).toEqual({ valor: null, mes: null, semCmv: [], servicoFora: [] });
     expect(linhas[1].caixa.saldo).toBe(50);
+  });
+});
+
+describe('caixaProjetadoDoEscopo', () => {
+  const HOJE = '2026-11-21';
+  const segunda = (i: number) => new Date(Date.UTC(2026, 10, 16 + 7 * i)).toISOString().slice(0, 10);
+  /** abertura + fechamentos; completa até 13 semanas repetindo o último fechamento. */
+  const snap = (company: string, at: string, abertura: number | null, fechamentos: number[], n = 13): SnapshotEmpresa => {
+    const fins = Array.from({ length: n }, (_, i) => fechamentos[Math.min(i, fechamentos.length - 1)]);
+    return {
+      company,
+      snapshot_at: `${at}T10:00:00Z`,
+      ncg: null,
+      ncg_completa: null,
+      saldo_tesouraria: abertura,
+      semanas: fins.map((fim, i) => ({
+        inicio: segunda(i),
+        total_entradas: 0,
+        total_saidas: 0,
+        saldo_inicial: i === 0 ? abertura : fins[i - 1],
+        saldo_final: fim,
+      })),
+    };
+  };
+  const GRUPO = ['oben', 'colacor', 'colacor_sc'] as const;
+
+  it('falta = Σ déficit no pior saldo de cada CNPJ, sem abater a sobra de outro (prod 21/11)', () => {
+    const r = caixaProjetadoDoEscopo(
+      [
+        snap('colacor', HOJE, -327, [-333, -272, -361]),
+        snap('colacor_sc', HOJE, -203, [-211, -234, -220]),
+        snap('oben', HOJE, 854, [858, 932, 1149]),
+      ],
+      [...GRUPO],
+      HOJE,
+    );
+    expect(r.falta).toBe(361 + 234);
+    expect(r.diasDefasagem).toBe(0);
+    expect(r.porEmpresa).toEqual([
+      { empresa: 'oben', motivo: null, negativaHoje: false, primeiraNegativa: null, pior: { inicio: '2026-11-16', saldo: 854 }, snapshot: HOJE },
+      { empresa: 'colacor', motivo: null, negativaHoje: true, primeiraNegativa: '2026-11-16', pior: { inicio: '2026-11-30', saldo: -361 }, snapshot: HOJE },
+      { empresa: 'colacor_sc', motivo: null, negativaHoje: true, primeiraNegativa: '2026-11-16', pior: { inicio: '2026-11-23', saldo: -234 }, snapshot: HOJE },
+    ]);
+  });
+
+  it('positiva hoje que vira negativa: semana de virada e pior saldo', () => {
+    const r = caixaProjetadoDoEscopo([snap('oben', HOJE, 100, [50, -30, -80, 10])], ['oben'], HOJE);
+    expect(r.falta).toBe(80);
+    expect(r.porEmpresa[0]).toMatchObject({ negativaHoje: false, primeiraNegativa: '2026-11-23', pior: { inicio: '2026-11-30', saldo: -80 } });
+  });
+
+  it('abertura negativa pior que todo fechamento: o pior é o de agora', () => {
+    const r = caixaProjetadoDoEscopo([snap('oben', HOJE, -500, [-400, -300])], ['oben'], HOJE);
+    expect(r.falta).toBe(500);
+    expect(r.porEmpresa[0].pior).toEqual({ inicio: '2026-11-16', saldo: -500 });
+  });
+
+  it('ninguém negativo → falta 0 (zero legítimo)', () => {
+    expect(caixaProjetadoDoEscopo([snap('oben', HOJE, 10, [20, 30])], ['oben'], HOJE).falta).toBe(0);
+  });
+
+  it('ausente ≠ zero: CNPJ sem snapshot anula a falta e diz o motivo', () => {
+    const r = caixaProjetadoDoEscopo([snap('colacor', HOJE, -10, [-20])], ['oben', 'colacor'], HOJE);
+    expect(r.falta).toBeNull();
+    expect(r.porEmpresa.map((e) => e.motivo)).toEqual(['ausente', null]);
+    expect(caixaProjetadoDoEscopo(null, ['oben'], HOJE)).toEqual({ falta: null, porEmpresa: [], diasDefasagem: null });
+  });
+
+  it('horizonte incompleto (semana faltando ou abertura nula) → null, nunca "nenhuma"', () => {
+    const curta = snap('oben', HOJE, 100, [100], 12);
+    const buraco = snap('oben', HOJE, 100, [100]);
+    buraco.semanas = buraco.semanas.filter((_, i) => i !== 5);
+    const semAbertura = snap('oben', HOJE, null, [-10, 50]);
+    for (const s of [curta, buraco, semAbertura]) {
+      const r = caixaProjetadoDoEscopo([s], ['oben'], HOJE);
+      expect(r.falta).toBeNull();
+      expect(r.porEmpresa[0].motivo).toBe('incompleta');
+    }
+  });
+
+  it('mesma coorte do cockpit: CNPJ com snapshot de dia anterior é "desatualizada"', () => {
+    const r = caixaProjetadoDoEscopo(
+      [snap('oben', '2026-11-20', 10, [20]), snap('colacor', HOJE, 5, [6])],
+      ['oben', 'colacor'],
+      HOJE,
+    );
+    expect(r.falta).toBeNull();
+    expect(r.porEmpresa.map((e) => e.motivo)).toEqual(['desatualizada', null]);
+  });
+
+  it('usa o snapshot mais recente de cada CNPJ e mede a defasagem pela coorte', () => {
+    const r = caixaProjetadoDoEscopo(
+      [snap('oben', '2026-11-10', -999, [-999]), snap('oben', '2026-11-18', 10, [20]), snap('colacor', '2026-11-18', 5, [6])],
+      ['oben', 'colacor'],
+      HOJE,
+    );
+    expect(r.falta).toBe(0);
+    expect(r.porEmpresa[0].snapshot).toBe('2026-11-18');
+    expect(r.diasDefasagem).toBe(3);
+  });
+
+  it('horizonte de 13 semanas: a 14ª semana não entra', () => {
+    const r = caixaProjetadoDoEscopo([snap('oben', HOJE, 100, [...Array(13).fill(100), -50], 14)], ['oben'], HOJE);
+    expect(r.falta).toBe(0);
+    expect(r.porEmpresa[0].primeiraNegativa).toBeNull();
   });
 });

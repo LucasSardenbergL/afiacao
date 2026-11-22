@@ -18,9 +18,15 @@
  *   valor fica (é o mesmo do cockpit, que o mostra como "Parcial"), mas sem leitura de sinal.
  * - Caixa soma saldos entre CNPJs, mas caixa NÃO é fungível entre CNPJs: a lista de empresas
  *   com saldo negativo acompanha o total, para o positivo de uma não esconder o aperto de outra.
+ * - Caixa projetado (13 semanas, snapshot "realista" da engine A1, mesma coorte do cockpit): por CNPJ,
+ *   se já está negativo,
+ *   a partir de que semana fica negativo e o PIOR saldo do horizonte. A falta de caixa do escopo é
+ *   a soma dos déficits no pior saldo de cada CNPJ — sem abater a sobra de outro (caixa não é
+ *   fungível). CNPJ sem projeção → total `null`. Snapshot de antes de ontem vai com a defasagem.
  */
 import type { Company, CompanySelection } from '@/contexts/CompanyContext';
 import { consolidarTitulos, type TotaisTitulos } from '@/lib/financeiro/resumo-titulos';
+import type { SnapshotEmpresa } from '@/lib/financeiro/cockpit-consolida-helpers';
 
 const EMPRESAS_GRUPO: readonly Company[] = ['oben', 'colacor', 'colacor_sc'];
 
@@ -176,4 +182,86 @@ export function linhasPorEmpresa(
     margem: margemUltimoMesFechado(dre, [empresa], mesCorrente),
     ncg: ncgDoEscopo(ncg, [empresa]),
   }));
+}
+
+/** Por que um CNPJ não tem projeção utilizável (→ falta do escopo `null`). */
+type MotivoSemProjecao = 'ausente' | 'desatualizada' | 'incompleta';
+
+interface RupturaEmpresa {
+  empresa: Company;
+  /** `null` = projeção utilizável; senão os demais campos são null/false. */
+  motivo: MotivoSemProjecao | null;
+  /** Saldo já negativo na abertura da 1ª semana projetada. */
+  negativaHoje: boolean;
+  /** Início (YYYY-MM-DD) da 1ª semana com saldo negativo; `null` = positiva no horizonte. */
+  primeiraNegativa: string | null;
+  /** Menor saldo do horizonte (abertura incluída) e a semana em que ocorre. */
+  pior: { inicio: string; saldo: number } | null;
+  /** Data (YYYY-MM-DD) do snapshot usado. */
+  snapshot: string | null;
+}
+
+export interface CaixaProjetado {
+  /** Σ dos déficits (−pior saldo) dos CNPJs que ficam negativos; 0 = ninguém fica; `null` = algum sem projeção. */
+  falta: number | null;
+  porEmpresa: RupturaEmpresa[];
+  /** Dias entre hoje e a data da coorte de snapshots (`null` sem snapshot). */
+  diasDefasagem: number | null;
+}
+
+const HORIZONTE_SEMANAS = 13;
+const DIA_MS = 86_400_000;
+
+/**
+ * Exige o horizonte INTEIRO: 13 semanas de 7 em 7 dias e a abertura da 1ª conhecida (Codex P1,
+ * 2026-11-21) — semana faltando pode esconder o pior saldo, e abertura nula fabricaria "já negativa".
+ */
+function rupturaDaEmpresa(ultimo: SnapshotEmpresa | undefined, empresa: Company, dataCoorte: string | null): RupturaEmpresa {
+  const sem = (motivo: MotivoSemProjecao): RupturaEmpresa => ({
+    empresa, motivo, negativaHoje: false, primeiraNegativa: null, pior: null, snapshot: ultimo ? ultimo.snapshot_at.slice(0, 10) : null,
+  });
+  if (!ultimo) return sem('ausente');
+  // Mesma coorte do cockpit: snapshot de data anterior à mais recente do grupo é desatualizado.
+  if (dataCoorte !== null && ultimo.snapshot_at.slice(0, 10) !== dataCoorte) return sem('desatualizada');
+  const semanas = [...ultimo.semanas].sort((a, b) => a.inicio.localeCompare(b.inicio)).slice(0, HORIZONTE_SEMANAS);
+  const consecutivas = semanas.every((w, i) => i === 0 || Date.parse(w.inicio) - Date.parse(semanas[i - 1].inicio) === 7 * DIA_MS);
+  const abertura = semanas[0]?.saldo_inicial ?? null;
+  if (semanas.length < HORIZONTE_SEMANAS || !consecutivas || abertura === null) return sem('incompleta');
+  const negativaHoje = abertura < 0;
+  const primeira = negativaHoje ? semanas[0] : semanas.find((w) => w.saldo_final < 0);
+  let pior = { inicio: semanas[0].inicio, saldo: abertura };
+  for (const w of semanas) if (w.saldo_final < pior.saldo) pior = { inicio: w.inicio, saldo: w.saldo_final };
+  return {
+    empresa,
+    motivo: null,
+    negativaHoje,
+    primeiraNegativa: primeira ? primeira.inicio : null,
+    pior,
+    snapshot: ultimo.snapshot_at.slice(0, 10),
+  };
+}
+
+export function caixaProjetadoDoEscopo(
+  snapshots: readonly SnapshotEmpresa[] | null,
+  empresas: readonly Company[],
+  hoje: string,
+): CaixaProjetado {
+  if (!snapshots || empresas.length === 0) return { falta: null, porEmpresa: [], diasDefasagem: null };
+  const ultimos = new Map<string, SnapshotEmpresa>();
+  for (const s of snapshots) {
+    const atual = ultimos.get(s.company);
+    if (!atual || Date.parse(s.snapshot_at) > Date.parse(atual.snapshot_at)) ultimos.set(s.company, s);
+  }
+  // Coorte = data mais recente entre TODOS os CNPJs lidos (régua do `consolidarCockpit`).
+  let dataCoorte: string | null = null;
+  for (const s of ultimos.values()) {
+    const d = s.snapshot_at.slice(0, 10);
+    if (dataCoorte === null || d > dataCoorte) dataCoorte = d;
+  }
+  const porEmpresa = empresas.map((co) => rupturaDaEmpresa(ultimos.get(co), co, dataCoorte));
+  const falta = porEmpresa.some((r) => r.motivo !== null)
+    ? null
+    : porEmpresa.reduce((s, r) => s + (r.pior && r.pior.saldo < 0 ? -r.pior.saldo : 0), 0);
+  const dias = dataCoorte === null ? NaN : Math.round((Date.parse(hoje) - Date.parse(dataCoorte)) / DIA_MS);
+  return { falta, porEmpresa, diasDefasagem: Number.isFinite(dias) ? dias : null };
 }

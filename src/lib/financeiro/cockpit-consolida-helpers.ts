@@ -53,14 +53,17 @@ export function ncgCompleta(ncgParcial: unknown): boolean | null {
   return ncgParcial === false ? true : ncgParcial === true ? false : null;
 }
 
+/** Só número finito vale; null/string/ausente → NaN (descarta a semana). `Number(null) === 0` fabricava saldo. */
+const numeroJson = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
+
 export function parseSnapshotSemanas(dadosRaw: unknown): SnapshotSemana[] {
   if (!Array.isArray(dadosRaw)) return [];
   return (dadosRaw as Array<Record<string, unknown>>)
     .map((w) => ({
       inicio: w && typeof w.inicio === 'string' ? w.inicio : '',
-      total_entradas: Number(w?.total_entradas),
-      total_saidas: Number(w?.total_saidas),
-      saldo_final: Number(w?.saldo_final),
+      total_entradas: numeroJson(w?.total_entradas),
+      total_saidas: numeroJson(w?.total_saidas),
+      saldo_final: numeroJson(w?.saldo_final),
       // jsonb retorna número; null/ausente/não-número → null (ausente ≠ 0).
       saldo_inicial: typeof w?.saldo_inicial === 'number' && Number.isFinite(w.saldo_inicial) ? w.saldo_inicial : null,
     }))

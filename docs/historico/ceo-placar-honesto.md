@@ -36,8 +36,28 @@ mesmos problemas, e três deles foram confirmados no código. O PR é só front-
   `GestorExcecoes.tsx` na baseline.
 - O mês corrente vem de `hojeSP()` (`@/lib/time/sp-day`), não de `new Date()`.
 
+## Fase 2 — falta de caixa em 13 semanas por CNPJ (2026-11-21)
+
+**Override do founder:** a fase começou sem o sinal de uso da fase 1 (0 `dashboard.ceo.kpi_click` em
+14 dias, com o placar no ar havia ~1 dia).
+
+- **Os dados mudaram a pergunta.** Na projeção realista de 21/11, duas das três empresas já abrem o
+  horizonte com saldo negativo e pioram até o fim dele; a terceira fica positiva nas 13 semanas.
+  "Primeira semana negativa" seria "agora" nas duas, então a métrica é o **pior saldo de cada CNPJ**.
+- **Tile "Falta de caixa · 13 semanas"** = Σ max(0, −pior saldo) por CNPJ, sem abater a sobra de outro.
+  O Codex validou a métrica: dimensiona o aporte de cada CNPJ e aqui coincide com o pico simultâneo. A
+  tabela ganhou a coluna "Pior saldo · 13 sem". O clique abre `/financeiro/capital-giro?aba=fluxo`.
+- **Régua (Codex P1):** horizonte de 13 semanas consecutivas e abertura conhecida, senão "projeção
+  incompleta". Mesma coorte do cockpit: um snapshot de dia anterior aparece como "projeção
+  desatualizada". Qualquer CNPJ sem projeção → total "—". `parseSnapshotSemanas` deixou de converter
+  `null`/string em 0 (em prod todas as semanas dos últimos 60 dias são numéricas, nada real é
+  descartado).
+- **Em aberto (Codex P2, engine):** a semana corrente pode contar duas vezes uma saída já debitada
+  (recorrências expandidas desde segunda sobre o saldo bancário do dia). Isso fica para a engine, não
+  para o placar.
+
 ## Fases seguintes (sem sinal de uso ainda, não iniciadas)
 
-Caixa em 13 semanas por CNPJ (primeira semana negativa e o déficit) · vencidos abertos para cobrança ·
+Vencidos abertos para cobrança ·
 composição da margem (CMV e confiança do mapeamento) · composição da NCG · vendas por empresa em dias
 úteis. O sensor já existe: `dashboard.ceo.kpi_click`.
