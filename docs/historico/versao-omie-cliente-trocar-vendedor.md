@@ -52,3 +52,19 @@ Gate authorizeCronOrStaff; ação só master/service_role/cron-secret; sem cron 
 - Falsificado: sabotagens vermelhas (tolerância removida, tolerância em todo campo, decode de toda entidade, payload decodificado) com controle verde no início e no fim.
 - **Codex v1.5 r2:** sem P1. P2 não acatado: a tolerância é simétrica (`&`→`&amp;` também passa) — o hash compara lado a lado, sem direção; as duas grafias exibem o MESMO texto na tela do Omie, então não há dano de negócio a esconder. P3 não acatado: as duas chaves de observação ficam (o pior caso é tolerar `&amp;`↔`&` num texto de exibição).
 - **Risco a medir no canário:** `observacao`/`obs_detalhadas` são os nomes da API para "Observações" — se o Omie normalizar outro campo, o bloco para em `divergente` e o diff nomeia o campo.
+
+## v1.6-texto-decodificado-e-reparo (2026-11-22)
+
+- **A premissa da v1.5 era FALSA.** O canário v1.5 (colacor 393823340, exec `e422b489`) deu `divergente`. Um ConsultarCliente de leitura mostrou `ODMAR &amp;amp; ODILEY…`, e os divergentes da v1.4 estão iguais (393821802 `TRES R MOVEIS &amp;amp; CIA LTDA`; observação `d&amp;apos;água`, que era `d&apos;água`). **O Omie CODIFICA a entrada de texto** (`&`→`&amp;`, `'`→`&apos;`, estilo htmlspecialchars). Reenviar o texto como lido gravou entidade DUPLA: dano, não normalização.
+- **Correção:** cada texto escalar vai decodificado UMA vez (`&amp; &lt; &gt; &quot; &apos;`, literal, uma passada: o inverso exato). O Omie recodifica e grava o original, e o hash compara LITERAL. A tolerância da v1.5 saiu.
+- **Pré-condição nova:** um texto que o Omie regravaria diferente (`codificar(decodificar(s)) ≠ s`: `&`/`'` crus, entidade fora das 5) dá `precondicao_falhou` sem AlterarCliente, nomeando só o campo.
+- **Lote `reparo_entidades`:** lista FECHADA no código (`REPARO_ENTIDADES`) com os 7 cadastros que a v1.3–v1.5 gravaram com entidade dupla: oben 8689681515; colacor 393821747, 393821802, 393822107, 393823340; colacor_sc 3545069324, 3545069485. Só toca quem já está no alvo (Regina). Envia o texto decodificado DUAS vezes; o esperado na releitura é o lido com uma camada a menos. O recibo guarda o hash ESPERADO, para o `verificar` nunca chamar de `verificado` um "nada gravado".
+- **Codex v1.6 r1:** 4 P1, todos tratados.
+  - Reparo sem prova do original: o reparo agora só escreve se o lido com uma camada a menos reproduzir EXATAMENTE o `hash_antes` do recibo da escrita que causou o dano. Esse hash fica fixo por cliente em `REPARO_ENTIDADES`; a 393823340 usa o recorte da v1.5. Medido: bate nos 4 colacor lidos, e o lido atual não bate.
+  - CHECK de `lote` no banco: o recibo do reparo grava `lote='saida_vendedora'`, sem migration.
+  - Recibo v1.5 pendente: nenhum `alterado`/`indeterminado` em 2026-11-22.
+  - Edição concorrente: risco já aceito.
+  - P2: `<` `>` `"` ficam bloqueados. P3: reparo sem diferença vira `ja_certo` sem escrever.
+- **Codex v1.6 r2 (P1):** a medição só cobre o `&` em campos de exibição. Só `&` pode ser enviado, e só em `razao_social`, `nome_fantasia` e `observacao`; `'`, `<`, `>`, `"` ou `&` em outro campo (identificador, endereço) viram `precondicao_falhou`. Por isso o reparo da colacor 393821802, que tem `&amp;apos;` na observação, fica RECUSADO: conserto manual ou medição à parte.
+- Falsificado: 12 sabotagens vermelhas, com controle verde no início e no fim.
+- **Limite conhecido:** no reparo, um fault do Omie (nada gravado) aparece como `divergente`, não `erro_omie`, porque o vendedor já era o alvo e só o hash distingue. É a direção segura.

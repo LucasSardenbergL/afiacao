@@ -7,7 +7,10 @@ import {
   lerParametros,
   blocosPreenchidos,
   camposDiferentes,
-  normalizarAmp,
+  cadastroEsperado,
+  codificarComoOmie,
+  decodificarComoOmie,
+  textosQueMudariam,
   enderecoFaltando,
   payloadAlterar,
   textoParaHash,
@@ -137,52 +140,38 @@ Deno.test("v1.4 camposDiferentes: caminhos aninhados, ausente, e ignora info/ven
     ["cnpj_cpf: removido", "email: alterado", "telefone1_numero: adicionado"], "dado pessoal: só o tipo de mudança, nunca o valor");
 });
 
-// v1.5 — `&amp;` (lote 1 v1.4: 5 'divergente' por `&amp;`→`&` gravado pelo próprio Omie). Codex v1.5 P1: só o medido.
-const OBS_MULTI = "Linha 1: JOAO &amp; MARIA\nLinha 2: &lt;SAB&gt;\r\nLinha 3: P&amp;D";
+// v1.6 — o Omie CODIFICA a entrada (& < > " '). Medido 2026-11-22: "&amp;" reenviado virou "&amp;amp;"; "d&apos;água"
+// virou "d&amp;apos;água".
+const OBS = "JOAO &amp; MARIA\nbase d&apos;água &lt;SAB&gt; &quot;X&quot;";
 
-Deno.test("normalizarAmp: só &amp; → &, literal, uma passada; outras entidades intactas", () => {
-  igual(normalizarAmp("TRES R MOVEIS &amp; CIA LTDA"), "TRES R MOVEIS & CIA LTDA", "amp");
-  igual(normalizarAmp(OBS_MULTI), "Linha 1: JOAO & MARIA\nLinha 2: &lt;SAB&gt;\r\nLinha 3: P&D", "multilinha");
-  igual(normalizarAmp("&amp;amp;"), "&amp;", "uma passada só");
-  igual(normalizarAmp("&AMP; &#38; &quot; &amp"), "&AMP; &#38; &quot; &amp", "outras grafias intactas");
+Deno.test("codificar/decodificarComoOmie: inversos nas 5 entidades; uma passada; o resto intacto", () => {
+  igual(codificarComoOmie("A & B <c> \"d\" 'e'"), "A &amp; B &lt;c&gt; &quot;d&quot; &apos;e&apos;", "codifica");
+  igual(decodificarComoOmie(OBS), "JOAO & MARIA\nbase d'água <SAB> \"X\"", "decodifica multilinha");
+  igual(codificarComoOmie(decodificarComoOmie(OBS)), OBS, "ida e volta = original");
+  igual(decodificarComoOmie("&amp;amp;"), "&amp;", "uma passada");
+  igual(decodificarComoOmie("&AMP; &#38; &nbsp; &amp"), "&AMP; &#38; &nbsp; &amp", "fora das 5: intacto");
 });
 
-Deno.test("payloadAlterar v1.5: texto continua indo COMO LIDO (o Omie é quem normaliza)", () => {
-  const cad = { ...CAD, razao_social: "TRES R MOVEIS &amp; CIA LTDA", codigo_cliente_integracao: "ERP-&#49;" };
+Deno.test("payloadAlterar v1.6: texto vai decodificado uma vez; reparo, duas", () => {
+  const cad = { ...CAD, razao_social: "MOVEIS &amp; CIA", observacao: OBS };
   const p = payloadAlterar(cad, 8689670842) as Record<string, unknown>;
-  igual([p.razao_social, p.codigo_cliente_integracao], ["TRES R MOVEIS &amp; CIA LTDA", "ERP-&#49;"], "como lido");
+  igual([p.razao_social, p.observacao], ["MOVEIS & CIA", "JOAO & MARIA\nbase d'água <SAB> \"X\""], "normal");
+  const dano = { ...CAD, razao_social: "MOVEIS &amp;amp; CIA", observacao: "d&amp;apos;água" };
+  const r = payloadAlterar(dano, 8689670842, true) as Record<string, unknown>;
+  igual([r.razao_social, r.observacao], ["MOVEIS & CIA", "d'água"], "reparo");
+  igual([cadastroEsperado(dano, true).razao_social, cadastroEsperado(dano, true).observacao], ["MOVEIS &amp; CIA", "d&apos;água"], "esperado do reparo");
+  igual(cadastroEsperado(cad, false), cad, "esperado normal = lido");
 });
 
-Deno.test("hash v1.5: &amp;→& em razão/fantasia/obs NÃO é divergência; qualquer outra mudança é", async () => {
-  const antes = { ...CAD, razao_social: "TRES R MOVEIS &amp; CIA LTDA", nome_fantasia: "MOVEIS &amp; CIA", observacao: OBS_MULTI };
-  const normalizado = {
-    ...antes, razao_social: "TRES R MOVEIS & CIA LTDA", nome_fantasia: "MOVEIS & CIA",
-    observacao: "Linha 1: JOAO & MARIA\nLinha 2: &lt;SAB&gt;\r\nLinha 3: P&D",
-    recomendacoes: { ...CAD.recomendacoes, codigo_vendedor: 8689670842 }, info: { dAlt: "22/11/2026" },
-  };
-  igual(await hashCadastro(normalizado), await hashCadastro(antes), "normalização = mesmo hash");
-  igual(camposDiferentes(antes, normalizado), [], "diff vazio na normalização");
-
-  const muda = async (extra: Record<string, unknown>, base: Record<string, unknown> = antes) =>
-    (await hashCadastro({ ...normalizado, ...extra })) !== (await hashCadastro(base));
-  const casos: [string, Record<string, unknown>][] = [
-    ["& virou E", { razao_social: "TRES R MOVEIS E CIA LTDA" }],
-    ["& sumiu", { razao_social: "TRES R MOVEIS  CIA LTDA" }],
-    ["&lt; decodificado (não medido)", { observacao: "Linha 1: JOAO & MARIA\nLinha 2: <SAB>\r\nLinha 3: P&D" }],
-    ["quebra de linha", { observacao: "Linha 1: JOAO & MARIA\nLinha 2: &lt;SAB&gt;\nLinha 3: P&D" }],
-  ];
-  for (const [nome, extra] of casos) if (!(await muda(extra))) throw new Error(`${nome}: tem de mudar o hash`);
-  igual(camposDiferentes(antes, { ...normalizado, razao_social: "X" }), ["razao_social: alterado"], "diff nomeia razão");
-});
-
-Deno.test("Codex v1.5 P1: identificador, campo fora da lista e lista/objeto seguem LITERAIS (&amp;→& acusa)", async () => {
-  const pares: [string, Record<string, unknown>, Record<string, unknown>][] = [
-    ["codigo_cliente_integracao", { codigo_cliente_integracao: "ERP-&amp;1" }, { codigo_cliente_integracao: "ERP-&1" }],
-    ["endereco (fora da lista)", { endereco: "RUA A &amp; B" }, { endereco: "RUA A & B" }],
-    ["tag", { tags: [{ tag: "A &amp; B" }] }, { tags: [{ tag: "A & B" }] }],
-    ["entidade numérica na razão", { razao_social: "ERP-&#49;" }, { razao_social: "ERP-1" }],
-  ];
-  for (const [nome, a, b] of pares) {
-    if (await hashCadastro({ ...CAD, ...a }) === await hashCadastro({ ...CAD, ...b })) throw new Error(`${nome}: tem de acusar`);
-  }
+Deno.test("textosQueMudariam: & ou ' crus e entidade fora das 5 recusam; codificado certo passa", () => {
+  igual(textosQueMudariam({ ...CAD, razao_social: "MOVEIS &amp; CIA", nome_fantasia: "A &amp; B", observacao: "JOAO &amp; MARIA\nLINHA 2" }, false), [], "& nos campos medidos");
+  igual(textosQueMudariam({ ...CAD, observacao: "base d&apos;água" }, false), ["observacao"], "&apos; (apóstrofo não medido) recusa");
+  igual(textosQueMudariam({ ...CAD, codigo_cliente_integracao: "ERP-A&amp;B", endereco: "RUA A &amp; B" }, false),
+    ["codigo_cliente_integracao", "endereco"], "Codex v1.6 r2 P1: & fora dos campos medidos recusa");
+  igual(textosQueMudariam({ ...CAD, observacao: OBS }, false), ["observacao"], "&lt; &gt; &quot; não medidos recusam (Codex v1.6 P2)");
+  igual(textosQueMudariam({ ...CAD, razao_social: "P&D LTDA", complemento: "D'AVILA", observacao: "&#39;x", bairro: "&nbsp;" }, false),
+    ["bairro", "complemento", "observacao", "razao_social"], "crus/fora das 5");
+  igual(textosQueMudariam({ ...CAD, razao_social: "MOVEIS &amp;amp; CIA" }, true), [], "reparo do dano");
+  igual(textosQueMudariam({ ...CAD, observacao: "d&amp;apos;água" }, true), ["observacao"], "reparo de &apos; não medido recusa");
+  igual(textosQueMudariam({ ...CAD, razao_social: "P&amp;D" }, true), ["razao_social"], "reparo de texto sem dano duplo recusa");
 });
