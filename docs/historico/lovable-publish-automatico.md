@@ -7,11 +7,7 @@
 > **Não há auto-publish nativo**: o GitHub só sincroniza para DENTRO do Lovable, e o ar "keeps showing the version you published" até novo Publish
 > (features/publish.md, integrations/github.md). No Pro, o caminho é o **vigia local** (`scripts/lovable-vigia.sh`, launchd): tick barato
 > `scripts/lovable-publish.sh --julgar` (sem chave, sem API) e, só no veredito `PUBLICAR`, `claude -p` (Haiku) com `mcp__lovable__deploy_project`.
-> **Bloqueio em 2026-11-22:** o `claude` CLI do Mac está deslogado (`claude auth status` → `loggedIn:false`; `claude -p` → "OAuth session expired") —
-> o app desktop usa a própria auth e não a empresta a processos do launchd. Requer `claude setup-token` pelo founder.
-> **Achado do julgamento real (2026-11-22):** o gate RETÉM qualquer intervalo que toque `supabase/functions/` até alguém liberar o SHA — e o ar só anda
-> com Publish, então UM commit de edge (#4123, "sem Publish") segura o front indefinidamente. Para ~100% sem clique, o gate de edge precisa de
-> outra regra (ex.: liberar quando a edge do intervalo já está atestada no ledger `deploy_atestacoes`) — decisão pendente.
+> **Vigia local (2026-11-22):** ver § "Vigia local no Mac" abaixo.
 
 **Incidente que motiva:** "merge ≠ produção" — `steu.lovable.app` serve o build velho até alguém
 clicar Publish (lição de 2026-05-31; recorrente no `/fecho`). A API do Lovable passou a expor
@@ -64,3 +60,30 @@ afirmar que "roda a cada merge".
 `scripts/test-lovable-publish.sh` (no `test:hooks`): 20 cenários com curl falso + controle
 sabotado na mesma invocação. Falsificado em cópia, camada por camada (corrida, 503, prova pelo ar
 com CDN lento, ancestralidade, nada-a-publicar, liberar_sha): todas vermelhas.
+
+## Vigia local no Mac (2026-11-22) — o caminho no plano Pro
+
+`scripts/lovable-vigia.sh`, instalado por `scripts/lovable-vigia-instalar.sh` como LaunchAgent
+`dev.afiacao.lovable-vigia` (180 s). Clone PRÓPRIO em `~/.local/share/afiacao/vigia-repo` (checkout
+de `origin/main` a cada tick — nunca um worktree de sessão); estado/log em
+`~/.local/state/afiacao/lovable-vigia/` (`vigia.log` rotacionado 1 MB×3; `touch pausado` pausa).
+
+- **Tick sem LLM:** `lovable-publish.sh --julgar` (passos 1-3, sem chave/API). Só `PUBLICAR` chama
+  `claude -p --model haiku --allowedTools "mcp__lovable__get_project mcp__lovable__deploy_project"`;
+  o modelo confere `latest_commit_sha == main` antes do `deploy_project {name: steu}` (~US$ 0,04).
+- **Gate de edge com evidência, não com clique:** o julgamento real de 2026-11-22 deu RETIDO por um
+  commit de edge "sem Publish" (#4123) — e como o ar só anda com Publish, o gate de diff seguraria
+  o front PARA SEMPRE. Regra nova (só no vigia, que tem `psql-ro`): intervalo com SÓ
+  `supabase/functions/` → libera se `bun run pendencias:deploy` sair **0** (toda edge da main
+  servida, pelo ledger `deploy_atestacoes`); 1 = espera (aviso 1x/SHA); 2 = mecânica, não libera.
+  **Migration** no intervalo segue RETIDA: aviso 1x/SHA e liberação manual `echo <sha> > liberar`.
+- **Prova pelo ar** (carimbo servido == main, até 8 min); falha → backoff 5/15/60 min no MESMO SHA
+  e, na 3ª, notificação macOS + Issue; main nova destrava.
+- **Auth:** o app desktop não empresta login a processos do launchd — `claude auth status` dava
+  `loggedIn:false`. Token de 1 ano (`claude setup-token`) no Keychain, serviço `claude-vigia-lovable`.
+  **Mordida:** no painel do app o token sai MASCARADO e quebrado em 2 linhas; copiar só a visível
+  gravou 29/79 de 108 caracteres. Confira tamanho/prefixo `sk-ant-oat` sem exibir o valor.
+- **Ensaios** (clone descartável + ar falso em `http.server`, `LV_SECO=1`): edge+ledger=0 → PUBLICAR;
+  migration → 1 aviso em 2 ticks, sem publicar; `claude` falso com erro → `1/3` e o tick seguinte
+  não re-chama; ar em dia → NADA_A_PUBLICAR.
+- **Fora do alcance:** Mac desligado/dormindo = sem Publish (o workflow do GitHub segue sem chave).

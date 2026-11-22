@@ -120,7 +120,7 @@ esac
 
 # ── backoff no MESMO SHA ───────────────────────────────────────────────────────────────────────
 AGORA=$(date +%s); N=0
-if read -r T_SHA T_N T_PROX < "$EST/tentativa" 2>/dev/null && [ "$T_SHA" = "$HEAD_SHA" ]; then
+if read -r T_SHA T_N T_PROX 2>/dev/null < "$EST/tentativa" && [ "$T_SHA" = "$HEAD_SHA" ]; then
   N=$T_N
   [ "$N" -ge 3 ] && exit 0                       # desistiu deste SHA (já avisou); main nova destrava
   [ "$AGORA" -lt "$T_PROX" ] && exit 0
