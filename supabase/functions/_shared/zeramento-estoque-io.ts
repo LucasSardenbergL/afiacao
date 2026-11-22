@@ -185,11 +185,24 @@ export function contradicaoDaResposta(resposta: Record<string, unknown>, pagina:
   if (produtos.length < porPagina && declarado !== null && declarado > pagina) {
     return `página curta (${produtos.length} de ${porPagina}) mas nTotPaginas=${declarado} — paginação contraditória`;
   }
-  const data = resposta.dDataPosicao;
-  if (typeof data === "string" && data.trim() !== "" && data.trim() !== dataPedida) {
-    return `dDataPosicao devolvida ${data.trim()} ≠ pedida ${dataPedida}`;
+  // Compara o DIA, não o texto: formato que não parseia não contradiz (um formato inesperado do Omie
+  // não pode travar todo o zeramento — ausente/ilegível ≠ contradição).
+  const devolvida = diaDaData(resposta.dDataPosicao);
+  const pedida = diaDaData(dataPedida);
+  if (devolvida !== null && pedida !== null && devolvida !== pedida) {
+    return `dDataPosicao devolvida ${String(resposta.dDataPosicao).trim()} ≠ pedida ${dataPedida}`;
   }
   return null;
+}
+
+/** "DD/MM/AAAA" ou "AAAA-MM-DD" (com hora opcional depois) → "AAAA-MM-DD"; qualquer outra coisa → null. */
+export function diaDaData(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  const br = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(t);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(t);
+  return iso ? `${iso[1]}-${iso[2]}-${iso[3]}` : null;
 }
 
 function numeroExplicitoInteiro(v: unknown): number | null {

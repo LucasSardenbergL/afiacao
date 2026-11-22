@@ -580,6 +580,11 @@ Deno.test("contradição — página curta com nTotPaginas declarando mais, ou d
   assertEquals(contradicaoDaResposta({ produtos: [{}], nTotPaginas: 1, dDataPosicao: "21/11/2026" }, 1, 100, "21/11/2026"), null);
   assertEquals(contradicaoDaResposta({ produtos: [{}] }, 1, 100, "21/11/2026"), null); // ausente não contradiz
   assertEquals(contradicaoDaResposta({ produtos: [{}], nTotPaginas: 2 }, 2, 100, "21/11/2026"), null);
+  // mesmo dia em outro formato, ou formato ilegível: não contradiz (não trava o zeramento por formato)
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "2026-11-21" }, 1, 100, "21/11/2026"), null);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: " 21/11/2026 " }, 1, 100, "21/11/2026"), null);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "21-11-26" }, 1, 100, "21/11/2026"), null);
+  assertEquals(contradicaoDaResposta({ produtos: [{}], dDataPosicao: "2026-11-20T00:00:00" }, 1, 100, "21/11/2026") !== null, true);
 });
 
 Deno.test("orquestrador — página curta com nTotPaginas=2 (o local positivo está na 2ª): NULL e posição ficam", async () => {
