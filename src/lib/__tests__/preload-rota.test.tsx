@@ -535,8 +535,13 @@ describe('guarda anti-loop sobrevive ao boot (Safari recarregando sem fim, 2026-
     vi.useFakeTimers();
     const recarregar = vi.fn();
     const desinstalar = instalarRecuperacaoDeChunk(recarregar);
-    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('SecurityError');
+    // Como o Safari com armazenamento bloqueado: o próprio acesso a `sessionStorage` lança.
+    const original = Object.getOwnPropertyDescriptor(window, 'sessionStorage')!;
+    Object.defineProperty(window, 'sessionStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('The operation is insecure.', 'SecurityError');
+      },
     });
     try {
       falhaDeChunk();
@@ -544,7 +549,7 @@ describe('guarda anti-loop sobrevive ao boot (Safari recarregando sem fim, 2026-
       await vi.advanceTimersByTimeAsync(1);
       expect(recarregar).not.toHaveBeenCalled();
     } finally {
-      getItem.mockRestore();
+      Object.defineProperty(window, 'sessionStorage', original);
       desinstalar();
     }
   });
