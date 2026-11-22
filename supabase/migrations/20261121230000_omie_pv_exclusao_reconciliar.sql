@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS public.omie_pv_execucao (
   chamadas_listar        integer NOT NULL DEFAULT 0 CHECK (chamadas_listar >= 0),
   listar_em              timestamptz[] NOT NULL DEFAULT '{}',
   encerrada_em           timestamptz,
+  triagem_ok             boolean,
   resumo                 jsonb
 );
 CREATE INDEX IF NOT EXISTS omie_pv_execucao_conta_em ON public.omie_pv_execucao (account, iniciada_em DESC);
@@ -163,7 +164,7 @@ GRANT SELECT ON TABLE public.omie_pv_conferencia TO authenticated, service_role;
 DROP POLICY IF EXISTS omie_pv_conferencia_select_staff ON public.omie_pv_conferencia;
 CREATE POLICY omie_pv_conferencia_select_staff ON public.omie_pv_conferencia FOR SELECT TO authenticated USING (
   (SELECT public.has_role(auth.uid(), 'employee'::public.app_role)) OR (SELECT public.has_role(auth.uid(), 'master'::public.app_role)));
-GRANT SELECT (id, account, iniciada_em, identidade_confirmada, chamadas_listar, listar_em, encerrada_em, resumo)
+GRANT SELECT (id, account, iniciada_em, identidade_confirmada, chamadas_listar, listar_em, encerrada_em, triagem_ok, resumo)
   ON TABLE public.omie_pv_execucao TO authenticated, service_role;   -- app_hash fica de fora (identidade)
 DROP POLICY IF EXISTS omie_pv_execucao_select_staff ON public.omie_pv_execucao;
 CREATE POLICY omie_pv_execucao_select_staff ON public.omie_pv_execucao FOR SELECT TO authenticated USING (
@@ -246,7 +247,7 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('omie_pv_listar:' || v.account, 0));
   -- Janela MÓVEL pelo instante de cada concessão (Codex código P1): a execução inteira não sai da conta de uma vez.
   IF (SELECT count(*) FROM public.omie_pv_execucao e CROSS JOIN LATERAL unnest(e.listar_em) t(em)
-       WHERE e.account = v.account AND e.iniciada_em > now() - interval '3 hours' AND t.em > now() - interval '60 minutes') >= 6 THEN
+       WHERE e.account = v.account AND e.iniciada_em > now() - interval '3 hours' AND t.em > now() - interval '70 minutes') >= 6 THEN
     RETURN false;
   END IF;
   UPDATE public.omie_pv_execucao e SET chamadas_listar = e.chamadas_listar + 1, listar_em = e.listar_em || clock_timestamp()
@@ -261,7 +262,10 @@ LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  UPDATE public.omie_pv_execucao e SET encerrada_em = now(), resumo = p_resumo
+  UPDATE public.omie_pv_execucao e
+     SET encerrada_em = now(), resumo = p_resumo,
+         -- triagem que errou pode ter perdido a gravação de uma PRESENÇA (Codex código rodada 2, P0-3)
+         triagem_ok = (p_resumo ? 'erro') AND (p_resumo->'erro') = 'null'::jsonb
    WHERE e.id = p_execucao_id AND e.encerrada_em IS NULL;
 $$;
 
@@ -790,7 +794,13 @@ BEGIN
       UPDATE public.omie_pv_conferencia c SET ultimo_resultado = 'ausente', atualizado_em = now()
        WHERE c.account = v_l.account AND c.omie_pedido_id = v_l.omie_pedido_id;
       v_efeito := jsonb_build_object('efeito', 'ausencia_fora_de_ordem');
-    ELSIF v_c.ausencias_afirmadas = 0 OR (v_pres IS NOT NULL AND v_pres >= v_c.primeira_ausencia_afirmada_em) THEN
+    ELSIF v_c.ausencias_afirmadas = 0 OR (v_pres IS NOT NULL AND v_pres >= v_c.primeira_ausencia_afirmada_em)
+       -- Alguma execução desta conta, desde a 1ª ausência, terminou sem triagem limpa (ou nem terminou): uma presença
+       -- pode ter se perdido no meio — a contagem RECOMEÇA nesta ausência (Codex código rodada 2, P0-3).
+       OR EXISTS (SELECT 1 FROM public.omie_pv_execucao e
+                   WHERE e.account = v_l.account AND e.id <> v_l.execucao_id
+                     AND e.iniciada_em >= v_c.primeira_ausencia_afirmada_em
+                     AND e.triagem_ok IS NOT TRUE) THEN
       UPDATE public.omie_pv_conferencia c
          SET ausencias_afirmadas = 1, primeira_ausencia_afirmada_em = v_t, ultima_ausencia_afirmada_em = v_t,
              ultima_ausencia_registrada_em = now(), primeira_ausencia_log_id = v_l.id,
@@ -837,10 +847,12 @@ $$;
 -- o soft-delete provisório do front já gravado, Codex código P0-2) NUNCA é escondida em silêncio: a LINHA fica isenta
 -- (omie_pv_linha_isenta) e o PV vira contradição. Status terminal gravado depois da baixa também vira contradição.
 CREATE TABLE IF NOT EXISTS public.omie_pv_linha_isenta (
-  sales_order_id  uuid PRIMARY KEY,
+  sales_order_id  uuid NOT NULL,
   account         text NOT NULL,
   omie_pedido_id  bigint NOT NULL,
-  criado_em       timestamptz NOT NULL DEFAULT now()
+  criado_em       timestamptz NOT NULL DEFAULT now(),
+  -- A isenção é da LINHA NAQUELE PV (Codex código rodada 2): se a linha passar a outro PID, a baixa dele vale.
+  PRIMARY KEY (sales_order_id, account, omie_pedido_id)
 );
 ALTER TABLE public.omie_pv_linha_isenta ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.omie_pv_linha_isenta FROM PUBLIC, anon, authenticated, service_role;
@@ -862,14 +874,15 @@ BEGIN
   END IF;
   IF OLD.omie_pedido_id IS DISTINCT FROM NEW.omie_pedido_id OR OLD.account IS DISTINCT FROM NEW.account THEN
     INSERT INTO public.omie_pv_linha_isenta (sales_order_id, account, omie_pedido_id)
-    VALUES (NEW.id, NEW.account, NEW.omie_pedido_id) ON CONFLICT (sales_order_id) DO NOTHING;
+    VALUES (NEW.id, NEW.account, NEW.omie_pedido_id) ON CONFLICT (sales_order_id, account, omie_pedido_id) DO NOTHING;
     UPDATE public.omie_pv_conferencia c
        SET contradicao = COALESCE(c.contradicao, 'pid_atribuido_apos_baixa'), contradicao_em = COALESCE(c.contradicao_em, now()),
            atualizado_em = now()
      WHERE c.account = NEW.account AND c.omie_pedido_id = NEW.omie_pedido_id;
     RETURN NEW;
   END IF;
-  IF EXISTS (SELECT 1 FROM public.omie_pv_linha_isenta i WHERE i.sales_order_id = NEW.id) THEN
+  IF EXISTS (SELECT 1 FROM public.omie_pv_linha_isenta i
+              WHERE i.sales_order_id = NEW.id AND i.account = NEW.account AND i.omie_pedido_id = NEW.omie_pedido_id) THEN
     RETURN NEW;
   END IF;
   IF NEW.status IS DISTINCT FROM OLD.status AND NEW.status IN ('faturado', 'cancelado') THEN

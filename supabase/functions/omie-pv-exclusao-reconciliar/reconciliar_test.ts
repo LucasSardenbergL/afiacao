@@ -306,3 +306,13 @@ Deno.test("deadlock em pt_BR pelo SQLSTATE (code 40P01): repete o mesmo log_id",
   await reconciliarConta("oben", { db, credenciais: CRED, fetchImpl: f });
   assertEquals(chamadas.filter((c) => c.fn === "omie_pv_consulta_registrar").length, 2);
 });
+
+Deno.test("prazo da conta vencido ANTES do fetch: zero chamadas ao Omie e a vez da listagem é devolvida", async () => {
+  const { db, chamadas } = dbFalso(base);
+  const { f, metodos } = fetchFalso([]);
+  const r = await reconciliarConta("oben", { db, credenciais: CRED, fetchImpl: f, deadline: Date.now() - 1 });
+  assertEquals(metodos, []);
+  assertEquals(chamadas.some((c) => c.fn === "omie_cota_liberar" && c.args.p_metodo === "ListarPedidos"), true);
+  assertEquals(chamadas.some((c) => c.fn === "omie_pv_proxima_consulta"), false);
+  assertEquals(r.erro !== null, true);
+});

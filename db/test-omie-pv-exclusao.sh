@@ -38,7 +38,8 @@ MIG_COTA="$REPO_ROOT/supabase/migrations/20261010204708_omie_cota_metodo.sql"
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="uma_ausencia_basta:C1 sem_intervalo:C3 presenca_nao_zera:C4 sem_omie_relido:C6 sem_vez_1h:C7
               sem_teto_erros:C8 sem_terminal_na_baixa:C11 sem_duravel:D1,D2 divergencia_um_sentido:B5
-              sem_teto_pvs:B7 sem_identidade:C0 sem_lock_linhas:S1 sem_releitura_ids:S3 atribuicao_so_visivel:D5"
+              sem_teto_pvs:B7 sem_identidade:C0 sem_lock_linhas:S1 sem_releitura_ids:S3 atribuicao_so_visivel:D5
+              isencao_por_uuid:D7 sem_reinicio_execucao:C12"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -195,6 +196,11 @@ ALTER TABLE public.sales_orders DISABLE TRIGGER trg_sales_orders_pv_excluido_omi
     trocar "$MIG" "  IF v_ids2 IS DISTINCT FROM v_ids THEN" "  IF false THEN" ;;
   atribuicao_so_visivel)
     trocar "$MIG" "  FOR EACH ROW WHEN (NEW.omie_pedido_id IS NOT NULL)" "  FOR EACH ROW WHEN (NEW.omie_pedido_id IS NOT NULL AND NEW.deleted_at IS NULL)" ;;
+  isencao_por_uuid)
+    trocar "$MIG" "              WHERE i.sales_order_id = NEW.id AND i.account = NEW.account AND i.omie_pedido_id = NEW.omie_pedido_id) THEN" \
+      "              WHERE i.sales_order_id = NEW.id) THEN" ;;
+  sem_reinicio_execucao)
+    trocar "$MIG" "                     AND e.triagem_ok IS NOT TRUE) THEN" "                     AND false) THEN" ;;
   *) echo "INFRA: sabotagem desconhecida: $SAB"; exit 1 ;;
 esac
 if [ -n "$SAB" ]; then
@@ -269,6 +275,8 @@ CREATE FUNCTION t_hoje() RETURNS date LANGUAGE sql AS $f$ SELECT (now() AT TIME 
 CREATE FUNCTION t_passar(m integer) RETURNS void LANGUAGE plpgsql AS $f$
 DECLARE d interval := make_interval(mins => m);
 BEGIN
+  -- o tempo passou: as execuções abertas terminaram LIMPAS (o caso sujo é provado à parte, em C12)
+  UPDATE public.omie_pv_execucao SET encerrada_em = COALESCE(encerrada_em, now()), triagem_ok = COALESCE(triagem_ok, true);
   UPDATE public.omie_pv_execucao SET iniciada_em = iniciada_em - d, encerrada_em = encerrada_em - d;
   UPDATE public.omie_pv_consulta_log SET reservada_em = reservada_em - d, registrada_em = registrada_em - d;
   UPDATE public.omie_pv_conferencia SET suspeito_desde = suspeito_desde - d, ultima_suspeita_em = ultima_suspeita_em - d,
@@ -504,6 +512,26 @@ P -q -c "UPDATE sales_orders SET status='faturado' WHERE omie_pedido_id=2006 AND
 eq "D6 status terminal gravado depois da baixa vira contradição (linha segue oculta)" \
   "$(E "SELECT (SELECT contradicao FROM omie_pv_conferencia WHERE omie_pedido_id=2006)||'/'||(SELECT count(*) FROM sales_orders WHERE omie_pedido_id=2006 AND deleted_at IS NULL)")" "terminal_apos_baixa/0"
 
+P -q -c "UPDATE sales_orders SET omie_pedido_id=2013 WHERE id='00000000-0000-0000-0000-00000000a098'"
+P -q -c "INSERT INTO omie_pv_conferencia (account, omie_pedido_id, aplicado_em, prova) VALUES ('oben', 2013, now(), '{\"origem_historica\": \"teste D7\"}')"
+P -q -c "UPDATE sales_orders SET deleted_at=now() WHERE id='00000000-0000-0000-0000-00000000a098'"
+P -q -c "UPDATE sales_orders SET deleted_at=NULL WHERE id='00000000-0000-0000-0000-00000000a098'"
+eq "D7 isenção é da linha NAQUELE PV: passou a outro PID baixado, o rollback não ressuscita" \
+  "$(E "SELECT count(*) FROM sales_orders WHERE id='00000000-0000-0000-0000-00000000a098' AND deleted_at IS NULL")" "0"
+
+echo "── C12. execução com triagem suja entre as ausências reinicia a contagem"
+P -q -c "INSERT INTO sales_orders (account,status,total,omie_pedido_id,hash_payload,order_date_kpi,created_at) VALUES ('oben','importado',100,2014,'omie_oben_2014',t_seg(),now()-interval '3 days')"
+P -q -c "UPDATE omie_pv_conferencia SET contradicao='parado_no_teste' WHERE omie_pedido_id=2011 AND aplicado_em IS NULL"
+P -q -t -c "SELECT t_passar(24*60+1)" >/dev/null
+EX="$(E "SELECT t_ciclo('oben', $PRES)")"; P -q -c "SELECT t_consultar($EX,'ausente')" >/dev/null
+P -q -t -c "SELECT t_passar(30)" >/dev/null
+# uma execução entre as duas ausências cuja triagem falhou (a presença de 2014 pode ter se perdido nela)
+P -q -c "INSERT INTO omie_pv_execucao (account, app_hash, iniciada_em, encerrada_em, triagem_ok) VALUES ('oben', repeat('a',32), now(), now(), false)"
+P -q -t -c "SELECT t_passar(40)" >/dev/null
+EX="$(E "SELECT t_ciclo('oben', $PRES)")"
+eq "C12 2ª ausência depois de uma execução com triagem que falhou: recomeça em 1, sem baixa" \
+  "$(E "SELECT coalesce((t_consultar($EX,'ausente'))->>'sequencia', 'efeito?')")/$(E "SELECT count(*) FROM sales_orders WHERE omie_pedido_id=2014 AND deleted_at IS NULL")" "1/1"
+
 echo "── A. ACL / RLS / histórico"
 eq "A1 anon não executa RPC" "$(Pq -c "SET ROLE anon; SELECT omie_pv_triagem_janelas('oben')" 2>&1 | grep -c '42501')" "1"
 eq "A2 authenticated não executa a RPC da baixa" "$(Pq -c "SET ROLE authenticated; SELECT omie_pv_consulta_registrar(1,'ausente','{}')" 2>&1 | grep -c '42501')" "1"
@@ -511,7 +539,7 @@ eq "A3 service_role executa" "$(Pq -c "SET ROLE service_role; SELECT count(*) FR
 eq "A4 staff lê o ledger; outro logado não" \
   "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000bb'; SELECT count(*)>0 FROM omie_pv_conferencia" 2>&1)/$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000ee'; SELECT count(*) FROM omie_pv_conferencia" 2>&1)" "t/0"
 eq "A5 identidade não é legível nem por staff" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000bb'; SELECT count(*) FROM omie_pv_identidade" 2>&1 | grep -c '42501')" "1"
-eq "A6 os 11 históricos no ledger como aplicados" "$(E "SELECT count(*) FROM omie_pv_conferencia WHERE prova ? 'origem_historica' AND aplicado_em IS NOT NULL")" "11"
+eq "A6 os 11 históricos no ledger como aplicados" "$(E "SELECT count(*) FROM omie_pv_conferencia WHERE prova->>'origem_historica' LIKE 'limpeza manual%' AND aplicado_em IS NOT NULL")" "11"
 eq "A8 sequências IDENTITY fechadas para anon/authenticated/service_role" \
   "$(E "SELECT count(*) FROM unnest(ARRAY['omie_pv_execucao','omie_pv_triagem_log','omie_pv_consulta_log','omie_pv_baixa_reserva']) t, unnest(ARRAY['anon','authenticated','service_role']) r WHERE has_sequence_privilege(r, pg_get_serial_sequence('public.'||t,'id'), 'USAGE')")" "0"
 eq "A9 app_hash ilegível por staff" "$(Pq -c "SET ROLE authenticated; SET request.jwt.claim.sub='00000000-0000-0000-0000-0000000000bb'; SELECT app_hash FROM omie_pv_execucao LIMIT 1" 2>&1 | grep -c '42501')" "1"

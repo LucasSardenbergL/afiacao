@@ -3,5 +3,5 @@
 # 2 ausências com a 2ª iniciada ≥ 1h depois da 1ª resposta, presença (triagem/consulta/sync) zera, baixa com tetos
 # por conta (PVs, R$), reserva pelo par próprio + trilha + impacto, divergência nos 2 sentidos, durabilidade
 # (rollback do front, importação tardia, PID atribuído depois), 2 sessões, ACL/RLS, 11 históricos.
-db/test-omie-pv-exclusao.sh 58  falsificar=14
+db/test-omie-pv-exclusao.sh 60  falsificar=16
 # Codex de código: releitura das linhas sob lock (S3), PID atribuído no soft-delete (D5), terminal pós-baixa (D6), sequências e app_hash (A8/A9).

@@ -76,7 +76,13 @@ export function textoDeCota(r: RespostaOmie): string | null {
 /** Timeout/abort do fetch: o Omie pode seguir processando — `comVezOmie` só retém a vez para DOMException. */
 function comoTimeout(e: unknown): unknown {
   const msg = mensagemDeErro(e) ?? "";
-  return /timeout|abort|prazo|sem tempo/i.test(msg) && !(e instanceof DOMException) ? new DOMException(msg, "TimeoutError") : e;
+  if (naoFoiFeita(msg)) return e; // a chamada NÃO saiu: devolver a vez é o certo
+  return /timeout|abort|prazo/i.test(msg) && !(e instanceof DOMException) ? new DOMException(msg, "TimeoutError") : e;
+}
+
+/** O relógio recusou ANTES do fetch (sem tempo dentro do teto): nada chegou ao Omie. */
+function naoFoiFeita(msg: string): boolean {
+  return /a chamada N[ÃA]O foi feita/i.test(msg);
 }
 
 function lerJanelas(data: unknown): JanelaPedida[] {
@@ -244,6 +250,13 @@ async function confirmacao(
       consulta = classificarConsulta(r, pid);
     } catch (e) {
       const msg = mensagemDeErro(e) ?? "erro sem mensagem";
+      if (naoFoiFeita(msg)) {
+        // Sem tempo antes do fetch: nada saiu — devolve a vez e não cobra a tentativa (Codex código rodada 2).
+        await db.rpc("omie_cota_liberar", { p_conta: conta, p_metodo: "ConsultarPedido", p_token: token });
+        await registrarConsulta(db, logId, "nao_enviada", { motivo: "sem_tempo", detalhe: msg.slice(0, 200) });
+        out.consulta = { desfecho: "nao_enviada", detalhe: "sem_tempo" };
+        return;
+      }
       consulta = classificarErro(msg);
       cota = classificarFaultCota(msg) ? msg : null;
       // Timeout: o Omie pode seguir processando — não devolver a vez (o lease vence sozinho).
