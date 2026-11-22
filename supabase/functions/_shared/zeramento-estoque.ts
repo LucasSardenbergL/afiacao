@@ -28,6 +28,14 @@ const LIMITE_ANOMALIA_MIN = 50;
 const LIMITE_ANOMALIA_FRACAO = 0.25;
 /** Códigos por lote de confirmação. A resposta é PAGINADA (um produto tem uma entrada por local). */
 export const CONFIRMACAO_POR_CHAMADA = 50;
+/**
+ * Teto de custo da trilha NULL (catálogo com `estoque IS NULL` = saldo desconhecido, que o produto
+ * novo herda desde a migration 20261121220100). 250 = 5 lotes de confirmação por rodada de 30 min.
+ * Acima dele a trilha NULL inteira é pulada (motivo em `puladoNulos`), a trilha ≠ 0 segue — nunca
+ * "os N primeiros": o eternamente-desconhecido (produto que o Omie não devolve na confirmação)
+ * ocuparia as vagas toda rodada. Medido em 2026-11-21: 0 NULL, 5–38 SKUs novos/mês por conta.
+ */
+export const LIMITE_CANDIDATOS_NULOS = 250;
 /** Páginas por lote de confirmação; lote que não termina nelas fica inteiro desconhecido. */
 export const MAX_PAGINAS_CONFIRMACAO = 5;
 
@@ -73,10 +81,14 @@ export type Confirmacao =
 
 export interface PlanoCandidatos {
   aConfirmar: number[];
-  /** Todos os candidatos descobertos — iguais a `aConfirmar` salvo quando a rodada é pulada. */
+  /** Candidatos da trilha ≠ 0 (os que o limite de anomalia mede) — fora os NULL. */
   candidatos: number;
+  /** Candidatos da trilha NULL (catálogo com estoque desconhecido, fora da listagem). */
+  candidatosNulos: number;
   /** Motivo de NADA ter sido confirmado nesta rodada; null quando a confirmação segue. */
   pulado: string | null;
+  /** Motivo de a trilha NULL não ter sido confirmada (rodada pulada ou teto de custo); null = seguiu. */
+  puladoNulos: string | null;
 }
 
 export interface AtualizacaoPosicao {
@@ -90,6 +102,8 @@ export interface AtualizacaoEstoque {
   id: string;
   omie_codigo_produto: number;
   casUpdatedAt: string;
+  /** O estoque LIDO era NULL: o CAS do valor é `IS NULL` (o `<> 0` da trilha ≠ 0 nunca pega NULL). */
+  estoqueLidoNulo: boolean;
   set: { estoque: 0 };
 }
 
@@ -117,6 +131,14 @@ export function limiteAnomalia(nListados: number): number {
 // Candidatos = posição local (desta conta) com saldo ≠ 0 explícito OU estoque de catálogo (desta
 // empresa, código resolvido sem ambiguidade) ≠ 0, cujo código NÃO veio na listagem. As posições
 // vão primeiro, da mais velha para a mais nova (ordem determinística do lote de confirmação).
+//
+// Trilha NULL: o catálogo com `estoque` NULL (literal — lixo não-numérico continua fora) fora da
+// listagem também é candidato. O produto novo nasce NULL e a listagem padrão só traz saldo ≠ 0: sem
+// esta trilha, o SKU novo com zero REAL ficava NULL sem prazo. Ela NÃO entra no limite de anomalia —
+// o NULL não "sumiu" da listagem (nunca esteve nela), então não é sinal de listagem suspeita, e um
+// acúmulo de eternamente-desconhecidos não pode travar o zeramento dos congelados. Tem teto de custo
+// próprio (LIMITE_CANDIDATOS_NULOS) e segue os gates de rodada (snapshot vazio, incompleta, anomalia):
+// a rodada que não confia na própria listagem não confirma nada.
 export function planejarCandidatos(args: {
   listados: ReadonlySet<number>;
   completude: CompletudeListagem;
@@ -137,31 +159,44 @@ export function planejarCandidatos(args: {
 
   const idByCod = buildProductIdMap(estoqueLocal);
   const porEstoque: number[] = [];
+  const porNulo: number[] = [];
   for (const l of estoqueLocal) {
     const cod = codigoValido(l.omie_codigo_produto);
     if (cod === null || l.id == null || idByCod.get(cod) !== String(l.id)) continue; // ambíguo ou perdedora
+    if (listados.has(cod) || vistos.has(cod)) continue;
+    if (l.estoque === null) {
+      vistos.add(cod);
+      porNulo.push(cod);
+      continue;
+    }
     const estoque = numeroExplicito(l.estoque);
-    if (estoque === null || estoque === 0 || listados.has(cod) || vistos.has(cod)) continue;
+    if (estoque === null || estoque === 0) continue;
     vistos.add(cod);
     porEstoque.push(cod);
   }
   porEstoque.sort((a, b) => a - b);
+  porNulo.sort((a, b) => a - b);
 
   const uniao = [...porPosicao.map((p) => p.cod), ...porEstoque];
   const candidatos = uniao.length;
-  if (listados.size === 0) {
-    return { aConfirmar: [], candidatos, pulado: "snapshot de posição vazio — ausência de tudo não é zero de tudo" };
-  }
-  if (!completude.completa) return { aConfirmar: [], candidatos, pulado: `listagem incompleta: ${completude.motivo}` };
+  const candidatosNulos = porNulo.length;
+  const pular = (motivo: string): PlanoCandidatos => ({ aConfirmar: [], candidatos, candidatosNulos, pulado: motivo, puladoNulos: motivo });
+  if (listados.size === 0) return pular("snapshot de posição vazio — ausência de tudo não é zero de tudo");
+  if (!completude.completa) return pular(`listagem incompleta: ${completude.motivo}`);
   const limite = limiteAnomalia(listados.size);
   if (candidatos > limite) {
+    return pular(`${candidatos} candidatos passa do limite de anomalia de ${limite} — listagem suspeita, nada confirmado`);
+  }
+  if (candidatosNulos > LIMITE_CANDIDATOS_NULOS) {
     return {
-      aConfirmar: [],
+      aConfirmar: uniao,
       candidatos,
-      pulado: `${candidatos} candidatos passa do limite de anomalia de ${limite} — listagem suspeita, nada confirmado`,
+      candidatosNulos,
+      pulado: null,
+      puladoNulos: `${candidatosNulos} candidatos NULL passa do teto de custo de ${LIMITE_CANDIDATOS_NULOS} — trilha NULL não confirmada`,
     };
   }
-  return { aConfirmar: uniao, candidatos, pulado: null };
+  return { aConfirmar: [...uniao, ...porNulo], candidatos, candidatosNulos, pulado: null, puladoNulos: null };
 }
 
 // Um pedido por lote de CONFIRMACAO_POR_CHAMADA códigos, na MESMA data de posição da listagem.
@@ -279,11 +314,13 @@ export function planejarEscritaConfirmada(args: {
   for (const l of estoqueLocal) {
     const cod = codigoValido(l.omie_codigo_produto);
     if (cod === null || l.id == null || idByCod.get(cod) !== String(l.id) || vistosEst.has(cod)) continue;
+    // NULL literal = saldo desconhecido (trilha NULL); o zero confirmado o resolve com CAS `IS NULL`.
+    const lidoNulo = l.estoque === null;
     const valor = numeroExplicito(l.estoque);
     // Sem updated_at não há versão para o CAS: fora (nunca UPDATE cego).
-    if (valor === null || valor === 0 || l.updated_at == null || confirmacoes.get(cod)?.tipo !== "zero") continue;
+    if ((!lidoNulo && (valor === null || valor === 0)) || l.updated_at == null || confirmacoes.get(cod)?.tipo !== "zero") continue;
     vistosEst.add(cod);
-    estoque.push({ id: String(l.id), omie_codigo_produto: cod, casUpdatedAt: l.updated_at, set: { estoque: 0 } });
+    estoque.push({ id: String(l.id), omie_codigo_produto: cod, casUpdatedAt: l.updated_at, estoqueLidoNulo: lidoNulo, set: { estoque: 0 } });
   }
   return { posicoes, estoque };
 }

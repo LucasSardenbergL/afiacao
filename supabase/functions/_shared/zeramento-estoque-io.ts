@@ -6,6 +6,9 @@
 // - KEYSET, não offset: o filtro é sobre saldo/estoque, que o próprio sync de 30 min reescreve — com
 //   offset, linha que entra no recorte entre páginas devolve a anterior DUPLICADA. O helper LANÇA em
 //   página que falha: lista vazia por falha de transporte pareceria "ninguém a zerar".
+// - Trilha NULL (`omie_products.estoque IS NULL` = saldo desconhecido do produto novo): loader e CAS
+//   PRÓPRIOS com `.is("estoque", null)` — o `NOT (estoque = 0)` e o `estoque <> 0` são cegos a NULL, e
+//   `.or()` num UPDATE do PostgREST dá 42703 (CLAUDE.md §PostgREST).
 // - UPDATE, nunca upsert: o upsert de linha completa podia restaurar codigo/descricao lidos antes e
 //   apagar um positivo gravado depois da leitura (Codex no desenho). O CAS é a VERSÃO lida (synced_at
 //   da posição, updated_at do catálogo) + valor ≠ 0: a linha só muda se ninguém a escreveu depois da
@@ -45,6 +48,8 @@ export interface EscritorPostgrest {
 
 export interface ResultadoZeramento {
   candidatos: number;
+  candidatosNulos: number;
+  puladoNulos: string | null;
   confirmadosZero: number;
   naoZero: number;
   desconhecidos: number;
@@ -90,6 +95,21 @@ export async function carregarEstoqueLocalNaoZero(db: BancoPostgrest, empresa: s
   );
 }
 
+export async function carregarEstoqueLocalNulo(db: BancoPostgrest, empresa: string): Promise<LinhaEstoqueLocal[]> {
+  return await fetchAllKeyset<EstoqueComId, string>(
+    (cursor, limite) => {
+      let q = db.from<EstoqueComId>("omie_products")
+        .select("id, omie_codigo_produto, estoque, updated_at")
+        .eq("account", empresa)
+        .is("estoque", null);
+      if (cursor !== null) q = q.gt("id", cursor);
+      return q.order("id", { ascending: true }).limit(limite);
+    },
+    (l) => l.id,
+    "omie_products (estoque NULL)",
+  );
+}
+
 function descreverErro(prefixo: string, error: { message: string; code?: string | null }): string {
   return `${prefixo}: ${error.code ?? "sem código"} ${String(error.message).slice(0, 160)}`;
 }
@@ -121,11 +141,12 @@ export async function aplicarEscritaConfirmada(
 
   if (empresa !== null) {
     for (const u of plano.estoque) {
-      const { data, error } = await db.from("omie_products")
+      const base = db.from("omie_products")
         .update(u.set)
         .eq("id", u.id)
-        .eq("account", empresa)
-        .neq("estoque", 0)
+        .eq("account", empresa);
+      // CAS do VALOR por trilha: `<> 0` nunca pega NULL, `IS NULL` só pega NULL (sem `.or()`: 42703).
+      const { data, error } = await (u.estoqueLidoNulo ? base.is("estoque", null) : base.neq("estoque", 0))
         .eq("updated_at", u.casUpdatedAt)
         .select("id");
       if (error) falhas.push(descreverErro(`omie_products ${u.omie_codigo_produto}`, error));
@@ -155,10 +176,14 @@ export async function zerarConfirmadosForaDaLista(d: {
   nowIso: string;
 }): Promise<ResultadoZeramento> {
   const posicoesLocais = await carregarPosicoesLocaisNaoZero(d.leitor, espelhosDaMesmaConta(d.account));
-  const estoqueLocal = d.empresa === null ? [] : await carregarEstoqueLocalNaoZero(d.leitor, d.empresa);
+  const estoqueLocal = d.empresa === null
+    ? []
+    : [...await carregarEstoqueLocalNaoZero(d.leitor, d.empresa), ...await carregarEstoqueLocalNulo(d.leitor, d.empresa)];
   const plano = planejarCandidatos({ listados: d.listados, completude: d.completude, posicoesLocais, estoqueLocal });
   const resultado: ResultadoZeramento = {
     candidatos: plano.candidatos,
+    candidatosNulos: plano.candidatosNulos,
+    puladoNulos: plano.puladoNulos,
     confirmadosZero: 0,
     naoZero: 0,
     desconhecidos: 0,
@@ -236,6 +261,7 @@ export function metadataDoZeramento(
   }
   return {
     zeramento_candidatos: r.candidatos,
+    zeramento_candidatos_nulos: r.candidatosNulos,
     zeramento_confirmados_zero: r.confirmadosZero,
     zeramento_nao_zero: r.naoZero,
     zeramento_desconhecidos: r.desconhecidos,
@@ -245,6 +271,7 @@ export function metadataDoZeramento(
     zeramento_chamadas: r.chamadasConfirmacao,
     zeramento_estranhos: r.estranhosNaConfirmacao,
     ...(r.pulado ? { zeramento_pulado: r.pulado } : {}),
+    ...(r.puladoNulos && r.puladoNulos !== r.pulado ? { zeramento_nulos_pulado: r.puladoNulos } : {}),
     ...(r.falhas.length > 0 ? { zeramento_falhas: r.falhas.slice(0, 5), zeramento_falhas_total: r.falhas.length } : {}),
   };
 }
