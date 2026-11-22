@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { useClientesScope } from './useClientesScope';
 import {
   lerOrigemLista, montarOrigemLista, urlCliente360, urlListaClientes,
-} from './navegacao';
+} from '@/lib/nav/clientes';
 import type { Customer, ToolCategory, UserTool, SalesOrder } from './types';
 
 export function useAdminCustomers() {

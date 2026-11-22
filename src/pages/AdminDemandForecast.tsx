@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { urlCliente360 } from '@/lib/nav/clientes';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -292,7 +293,7 @@ const AdminDemandForecast = () => {
                 <CustomerCard 
                   key={customer.userId} 
                   customer={customer}
-                  onViewCustomer={() => navigate(`/admin/customers/${customer.userId}`)}
+                  onViewCustomer={() => navigate(urlCliente360(customer.userId))}
                   onCreateOrder={() => navigate(`/sales/new?customer=${customer.userId}`)}
                 />
               ))}
