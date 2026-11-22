@@ -26930,7 +26930,7 @@ export type Database = {
         Args: { p_customer_user_id?: string; p_farmer_id?: string }
         Returns: {
           customer_user_id: string
-          familias_12m: number | null
+          familias_12m: number
           itens_12m: number
           itens_sem_familia: number
         }[]
