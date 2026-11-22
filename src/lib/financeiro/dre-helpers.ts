@@ -20,14 +20,14 @@ type DreLinha =
   | 'despesas_financeiras' | 'outras_despesas'
   | 'ded_icms' | 'ded_iss' | 'ded_pis' | 'ded_cofins' | 'ded_ipi'
   | 'das' | 'irpj' | 'csll'
-  | 'fora_dre';
+  | 'fora_dre' | 'nao_resultado';
 
 const DRE_LINHAS_VALIDAS = new Set<string>([
   'receita_bruta', 'deducoes', 'receitas_financeiras', 'outras_receitas',
   'cmv', 'despesas_operacionais', 'despesas_administrativas', 'despesas_comerciais',
   'despesas_financeiras', 'outras_despesas',
   'ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll',
-  'fora_dre',
+  'fora_dre', 'nao_resultado',
   // baldes legados aceitos do mapping antigo:
   'impostos',
 ]);
@@ -36,7 +36,7 @@ const DRE_LINHAS_VALIDAS = new Set<string>([
 // ninguém decidiu (ex.: um 2.07.88 novo) para fora do DRE ou para um imposto específico.
 // Ancestral mais próximo com uma delas ⇒ o filho fica SEM mapa (heurística, mapeado:false).
 const LINHAS_NAO_HERDAVEIS = new Set<string>([
-  'fora_dre', 'ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll',
+  'fora_dre', 'nao_resultado', 'ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll',
 ]);
 
 // Mapa explícito que o motor não pode honrar. Nunca vira mapeado:true (fabricaria resultado
@@ -313,6 +313,29 @@ function motivoForaDRE(acc: ForaDRE, regime: 'caixa' | 'competencia'): string | 
   return `${brl(acc.saidas)} em saídas e ${brl(acc.entradas)} em entradas ${oque} fora do DRE (empréstimo/parcelamento/investimento) com composição pendente (principal × juros) — resultado provisório.`;
 }
 
+// v1.13: movimento PATRIMONIAL definitivo (aporte, distribuição, imobilizado, empréstimo
+// TOMADO, aplicação/resgate, adiantamento, transferência) — não é resultado e, ao contrário do
+// fora_dre, NÃO tem composição pendente: não deixa o resultado provisório nem rebaixa a confiança.
+// Sai de todo subtotal (montarDRE só lê linhas nomeadas) mas fica visível no detalhamento.
+// Parcela de empréstimo/parcelamento (principal × juros não separados) continua fora_dre.
+export type NaoResultado = {
+  saidas: number;
+  entradas: number;
+  por_codigo: Record<string, { saidas: number; entradas: number }>;
+};
+
+export function novoNaoResultado(): NaoResultado {
+  return { saidas: 0, entradas: 0, por_codigo: {} };
+}
+
+export function acumularNaoResultado(acc: NaoResultado, codigo: string, valor: number, isReceita: boolean): void {
+  const chave = codigo || '(sem código)';
+  const item = acc.por_codigo[chave] ?? (acc.por_codigo[chave] = { saidas: 0, entradas: 0 });
+  const lado = isReceita ? 'entradas' : 'saidas';
+  acc[lado] += valor;
+  item[lado] += valor;
+}
+
 // Rebaixa a confiança pelas pendências da fase 2. Mapa inválido também pode fabricar
 // resultado (o valor caiu na heurística), por isso rebaixa mesmo sem fora_dre.
 export function aplicarPendenciasConfianca(confianca: Confianca, input: { foraDRE: ForaDRE; mapeamentosInvalidos: number; regime: 'caixa' | 'competencia' }): Confianca {
@@ -356,10 +379,13 @@ export function linhasDreMapeaveis(company: string): string[] {
   if (company === '_default') return [...LINHAS_MAPA_BASE];
   const regime = REGIME_POR_EMPRESA[company];
   if (regime === undefined) return [...LINHAS_MAPA_BASE];
+  // Presumido também oferece DAS: empresa que migrou do Simples (colacor até 2022) tem DAS
+  // histórico, e o motor honra 'das' em qualquer regime (vai para deduções).
+  // Simples: DAS + ICMS recolhido FORA da guia (ST/DIFAL/antecipação) — o motor honra ded_icms em qualquer regime.
   const impostos = regime === 'simples'
-    ? ['das']
-    : ['ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'irpj', 'csll'];
-  return [...LINHAS_MAPA_BASE, ...impostos, 'fora_dre'];
+    ? ['das', 'ded_icms']
+    : ['ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll'];
+  return [...LINHAS_MAPA_BASE, ...impostos, 'fora_dre', 'nao_resultado'];
 }
 
 export type ReceitaMensal = { ano: number; mes: number; receita_bruta: number };

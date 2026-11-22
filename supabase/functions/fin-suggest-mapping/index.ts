@@ -20,7 +20,7 @@ type DreLinha =
   | 'despesas_financeiras' | 'receitas_financeiras'
   | 'outras_receitas' | 'outras_despesas' | 'impostos'
   // DRE fase 2 — existem no mapa (CHECK), mas só por decisão da própria empresa:
-  | 'ded_icms' | 'ded_iss' | 'ded_pis' | 'ded_cofins' | 'ded_ipi' | 'das' | 'irpj' | 'csll' | 'fora_dre';
+  | 'ded_icms' | 'ded_iss' | 'ded_pis' | 'ded_cofins' | 'ded_ipi' | 'das' | 'irpj' | 'csll' | 'fora_dre' | 'nao_resultado';
 
 // Sugestão cruzada (o que OUTRA empresa mapeou) só copia linha que vale para a empresa-alvo:
 // fora_dre NUNCA (sair do DRE é decisão de natureza por empresa) e imposto específico só se o
@@ -28,7 +28,7 @@ type DreLinha =
 const REGIME_POR_EMPRESA: Record<string, 'simples' | 'presumido'> = { colacor: 'presumido', oben: 'presumido', colacor_sc: 'simples' };
 const SO_PRESUMIDO = new Set<string>(['ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'irpj', 'csll']);
 function sugerivelPara(linha: string, company: string): boolean {
-  if (linha === 'fora_dre') return false;
+  if (linha === 'fora_dre' || linha === 'nao_resultado') return false;
   const regime = REGIME_POR_EMPRESA[company];
   if (SO_PRESUMIDO.has(linha)) return regime === 'presumido';
   if (linha === 'das') return regime === 'simples';

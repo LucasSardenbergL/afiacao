@@ -1414,14 +1414,14 @@ type DreLinha =
   | 'despesas_financeiras' | 'outras_despesas'
   | 'ded_icms' | 'ded_iss' | 'ded_pis' | 'ded_cofins' | 'ded_ipi'
   | 'das' | 'irpj' | 'csll'
-  | 'fora_dre';
+  | 'fora_dre' | 'nao_resultado';
 
 const DRE_LINHAS_VALIDAS = new Set<string>([
   'receita_bruta', 'deducoes', 'receitas_financeiras', 'outras_receitas',
   'cmv', 'despesas_operacionais', 'despesas_administrativas', 'despesas_comerciais',
   'despesas_financeiras', 'outras_despesas',
   'ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll',
-  'fora_dre',
+  'fora_dre', 'nao_resultado',
   // baldes legados aceitos do mapping antigo:
   'impostos',
 ]);
@@ -1430,7 +1430,7 @@ const DRE_LINHAS_VALIDAS = new Set<string>([
 // ninguém decidiu (ex.: um 2.07.88 novo) para fora do DRE ou para um imposto específico.
 // Ancestral mais próximo com uma delas ⇒ o filho fica SEM mapa (heurística, mapeado:false).
 const LINHAS_NAO_HERDAVEIS = new Set<string>([
-  'fora_dre', 'ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll',
+  'fora_dre', 'nao_resultado', 'ded_icms', 'ded_iss', 'ded_pis', 'ded_cofins', 'ded_ipi', 'das', 'irpj', 'csll',
 ]);
 
 // Mapa explícito que o motor não pode honrar. Nunca vira mapeado:true (fabricaria resultado
@@ -1679,6 +1679,29 @@ function motivoForaDRE(acc: ForaDRE, regime: 'caixa' | 'competencia'): string | 
   const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const oque = regime === 'caixa' ? 'movimentado' : 'em títulos segregados';
   return `${brl(acc.saidas)} em saídas e ${brl(acc.entradas)} em entradas ${oque} fora do DRE (empréstimo/parcelamento/investimento) com composição pendente (principal × juros) — resultado provisório.`;
+}
+
+// v1.13: movimento PATRIMONIAL definitivo (aporte, distribuição, imobilizado, empréstimo
+// TOMADO, aplicação/resgate, adiantamento, transferência) — não é resultado e, ao contrário do
+// fora_dre, NÃO tem composição pendente: não deixa o resultado provisório nem rebaixa a confiança.
+// Sai de todo subtotal (montarDRE só lê linhas nomeadas) mas fica visível no detalhamento.
+// Parcela de empréstimo/parcelamento (principal × juros não separados) continua fora_dre.
+type NaoResultado = {
+  saidas: number;
+  entradas: number;
+  por_codigo: Record<string, { saidas: number; entradas: number }>;
+};
+
+function novoNaoResultado(): NaoResultado {
+  return { saidas: 0, entradas: 0, por_codigo: {} };
+}
+
+function acumularNaoResultado(acc: NaoResultado, codigo: string, valor: number, isReceita: boolean): void {
+  const chave = codigo || '(sem código)';
+  const item = acc.por_codigo[chave] ?? (acc.por_codigo[chave] = { saidas: 0, entradas: 0 });
+  const lado = isReceita ? 'entradas' : 'saidas';
+  acc[lado] += valor;
+  item[lado] += valor;
 }
 
 // Rebaixa a confiança pelas pendências da fase 2. Mapa inválido também pode fabricar
@@ -1941,6 +1964,7 @@ async function calcularDRE(
   const composicaoReceitas: Record<string, Record<string, number>> = {};
   const composicaoDespesas: Record<string, Record<string, number>> = {};
   const foraDRE = novoForaDRE();
+  const naoResultado = novoNaoResultado();
   const mapeamentosInvalidos = new Map<string, MapeamentoInvalido & { codigo_titulo: string; valor_afetado: number }>();
   let valorTotal = 0, valorMapeado = 0, valorGenerico = 0;
   let temImpostoNaoMapeado = false;
@@ -1982,6 +2006,7 @@ async function calcularDRE(
       // fora_dre NÃO vai para totais (nenhuma linha do resultado), mas segue no detalhamento,
       // em valorTotal/valorMapeado e no caixa/fallback: o desembolso é real.
       if (c.linha === "fora_dre") acumularForaDRE(foraDRE, cod, val, isReceita);
+      else if (c.linha === "nao_resultado") acumularNaoResultado(naoResultado, cod, val, isReceita);
       else totais[c.linha] = (totais[c.linha] ?? 0) + val;
       if (c.mapeamentoInvalido) {
         const k = `${isReceita ? "CR" : "CP"}|${cod}`;
@@ -2089,6 +2114,7 @@ async function calcularDRE(
       composicao_receitas: composicaoReceitas,
       composicao_despesas: composicaoDespesas,
       fora_dre: foraDRE,
+      nao_resultado: naoResultado,
       mapeamentos_invalidos: [...mapeamentosInvalidos.values()],
       contrato: { versao: "dre-fora-dre-v1", motor: VERSAO },
       imposto_teorico,

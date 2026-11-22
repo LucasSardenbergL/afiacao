@@ -121,6 +121,8 @@ export interface FinDRE {
     config_tributaria_completa?: boolean;
     // DRE fase 2
     fora_dre?: { saidas: number; entradas: number; por_codigo: Record<string, { saidas: number; entradas: number }>; composicao_pendente: boolean; motivo: string | null };
+    /** v1.13: patrimonial definitivo fora do resultado (sem pendência). Ausente = snapshot anterior. */
+    nao_resultado?: { saidas: number; entradas: number; por_codigo: Record<string, { saidas: number; entradas: number }> };
     mapeamentos_invalidos?: Array<{ codigo: string; valor: string; origem: 'exato' | 'prefixo'; motivo: string; codigo_titulo: string; valor_afetado: number; empresa?: string }>;
   };
 }
@@ -909,6 +911,7 @@ const DRE_LINHAS_SO_MAPA = [
   { value: 'irpj', label: 'IRPJ', tipo: 'D' },
   { value: 'csll', label: 'CSLL', tipo: 'D' },
   { value: 'fora_dre', label: 'Fora do DRE (composição pendente)', tipo: 'D' },
+  { value: 'nao_resultado', label: 'Não é resultado (aporte, imobilizado, empréstimo tomado, adiantamento, transferência)', tipo: 'D' },
 ] as const;
 
 type OpcaoLinhaDRE = { value: string; label: string; tipo: 'R' | 'D' };
