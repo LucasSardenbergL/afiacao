@@ -84,8 +84,11 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // (nunca somar as duas), ausente enquanto a RPC no ar não separar. → sensor-que-mede-mudanca-nao-responde-nulificacao.md
 // v1.18 (2026-10-10, picking v2 Fase 0.2) — `ListarPedidos` pede a vez na trava `omie_cota_metodo`
 // (_shared/omie-cota.ts); vez negada LANÇA (chamada não feita). Migration 20261010204708 antes.
+// v1.22 (2026-11-21): o status_omie mandado à `reconciliar_pedidos_omie` é 'cancelado' quando o Omie marca
+// `infoCadastro.cancelado='S'`, qualquer que seja a etapa (canon `statusOmieReconciliavel`). Nenhuma
+// pré-condição de banco: 'cancelado' já é status gerido pelo Omie na RPC.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. v1.21 (2026-11-21) — o zero confirmado (_shared/zeramento-estoque.ts) também resolve `omie_products.estoque IS NULL` (produto novo, migration 20261121220100): trilha NULL com loader e CAS `IS NULL` próprios, fora do limite de anomalia, teto de custo de 250 por rodada; metadata ganha `zeramento_candidatos_nulos`/`zeramento_nulos_pulado`. Adversarial Codex: confirmação com paginação/data contraditória invalida o lote; cada lote é interpretado contra os próprios códigos; catálogo não zera se o CAS do espelho recusou; acima do orçamento, janela rotativa; loader NULL que falha não cancela a trilha ≠ 0; `zerados_estoque_nulo` + o corpo com `account` fora de oben/colacor é recusado com 400 antes de ler/escrever (./conta.ts). Sem migration, sem ordem de deploy. */
-export const VERSAO = "v1.21-zeramento-estoque-nulo";
+export const VERSAO = "v1.22-cancelado-vence-etapa";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = // v1.12 (2026-09-27, P2 Codex): run de pedidos que ABORTA grava o metadata apurado até o abort (não apurado = null, nunca 0) — ./apuracao-pedidos.ts. Nota aqui e não na linha do VERSAO: `scripts/sonda-versao-sql.ts` exige aquela linha limpa até o fim.
