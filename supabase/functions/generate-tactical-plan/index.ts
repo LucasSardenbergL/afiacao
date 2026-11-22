@@ -12,6 +12,7 @@ import { criarClienteAnthropic } from "../_shared/anthropic-cliente.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { fetchAll } from "../_shared/paginate.ts";
+import { exigirLeitura } from "../_shared/leitura-critica.ts";
 import { avaliarCanariaMargem, calcularClusterMargin, classifyProfile, margemConhecida, mixGapFamilias, selectObjective } from "../_shared/tactical-margem.ts";
 import { inicioDaJanelaFila } from "../_shared/tactical-fila.ts";
 import {
@@ -228,8 +229,8 @@ Deno.serve(async (req) => {
         // Amplitude de mix (20261121230000): famílias distintas do cliente em 12 meses — 0 ou 1 linha.
         admin.rpc('familias_12m_clientes', { p_customer_user_id: customerId }),
       ]);
-      // Falha da RPC ≠ "0 famílias": lança (o plano não sai com mixGap fabricado).
-      if (familiasRes.error) throw new Error(`familias_12m_clientes: ${familiasRes.error.message}`);
+      // Falha da RPC ≠ "0 famílias": exigirLeitura LANÇA (o plano não sai com mixGap fabricado). 0 ou 1 linha.
+      const familiasCliente = exigirLeitura(familiasRes, 'familias_12m_clientes') as Array<{ familias_12m: number | null }> | null;
       if (!score) {
         return new Response(JSON.stringify({ skipped: 'sem_score' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
@@ -273,7 +274,7 @@ Deno.serve(async (req) => {
       // aplicou em objective.ts; o edge era o lado que faltava.
       const clusterMargin = calcularClusterMargin(peersCluster);
       // mixGap por FAMÍLIA (meta 6), não por produto distinto (`8 − category_count` era erro de unidade).
-      const mixGap = mixGapFamilias(salesHistoryStatus, (familiasRes.data as Array<{ familias_12m: number | null }> | null)?.[0]);
+      const mixGap = mixGapFamilias(salesHistoryStatus, familiasCliente?.[0]);
 
       // classifyProfile/selectObjective — _shared/tactical-margem.ts, espelho TESTADO de
       // useTacticalPlan.ts + objective.ts (antes eram encadeamentos inline não-testados).

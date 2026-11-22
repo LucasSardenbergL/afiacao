@@ -5,6 +5,7 @@ import { exigirColunas } from '@/lib/linha-view';
 import { comNulo } from '@/lib/rpc-args';
 import { invokeFunction } from '@/lib/invoke-function';
 import { selectObjective, clampRecencyCapDays, objetivoFinal, mixGapFamilias } from '@/lib/scoring/objective';
+import { fetchAllPages } from '@/lib/postgrest';
 import { margemConhecida, mediaMargensConhecidas, valorMedido } from '@/lib/scoring/margin';
 import { numerosDoBundle } from '@/lib/tactical/bundle-numeros';
 import { ehJaGeradoHoje } from '@/lib/tactical/plano-duplicata';
@@ -622,11 +623,17 @@ export const useTacticalPlan = () => {
         // ACOMPANHA o teto do modelo (não hardcode). Ausente → clampRecencyCapDays default 180. limit(1)
         // pra maybeSingle nunca lançar em chave duplicada (não quebrar a geração por quirk de config).
         supabase.from('farmer_algorithm_config').select('value').eq('key', 'hs_recency_cap_days').limit(1).maybeSingle(),
-        // Amplitude de mix (20261121230000): famílias distintas do cliente em 12 meses — 0 ou 1 linha.
-        supabase.rpc('familias_12m_clientes', { p_customer_user_id: customerId }),
+        // Amplitude de mix (20261121230000): famílias distintas do cliente em 12 meses — 0 ou 1 linha. Paginado
+        // pelo mesmo helper (uma página basta) e fail-closed: falha da RPC LANÇA e o catch não gera plano com
+        // mixGap fabricado ("erro" ≠ "0 famílias").
+        fetchAllPages(
+          (de, ate) => supabase
+            .rpc('familias_12m_clientes', { p_customer_user_id: customerId })
+            .order('customer_user_id', { ascending: true })
+            .range(de, ate),
+          'familias_12m_clientes/plano',
+        ),
       ]);
-      // Falha da RPC ≠ "0 famílias": lança e o catch não gera plano com mixGap fabricado.
-      if (familiasRes.error) throw familiasRes.error;
 
       if (!score) {
         toast.error('Cliente sem score calculado');
@@ -729,7 +736,7 @@ export const useTacticalPlan = () => {
         .order('id', { ascending: false })
         .limit(2));
 
-      const mixGap = mixGapFamilias(salesHistoryStatus, familiasRes.data?.[0]);
+      const mixGap = mixGapFamilias(salesHistoryStatus, familiasRes[0]);
       const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);
       const recencyCapDays = clampRecencyCapDays(recencyCapRow?.value);
       const strategicObjective = selectObjective(churnRisk, mixGap, marginPct, clusterMargin, daysSince, recencyCapDays, salesHistoryStatus);
