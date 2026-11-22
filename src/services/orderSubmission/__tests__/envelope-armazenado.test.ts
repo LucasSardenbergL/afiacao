@@ -1,19 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHAVE_ENVELOPE_LEGADA,
-  MAX_CONCLUIDOS,
+  assinaturaItens,
   chaveClienteEnvelope,
   chaveEnvelope,
   classificarMudancaOutraAba,
   comTravaEntreAbas,
   concluirEnvio,
   descartarLegadoDoCliente,
-  estaConcluido,
-  garantirIdentidadeRascunho,
   gravarSeAindaFor,
+  idDoEnvio,
   lerEnvelope,
   lerEnvelopeEstrito,
-  marcarConcluido,
+  mesmoCliente,
   moverEnvelope,
   reservarEnvio,
   type ArmazemEnvelope,
@@ -31,157 +30,108 @@ function armazem(): ArmazemEnvelope {
   };
 }
 
-let seq = 0;
-const gerarId = () => `id-${++seq}`;
-const criarCom = (id: string | null): CheckoutEnvelope => ({ checkoutId: id ?? gerarId(), fingerprint: '', committed: false });
-
 const VEND_A = 'user-a';
 const VEND_B = 'user-b';
-const CLI = 'oben:123';
-const FP1 = 'cli#oben:1:2:10.00';
-const FP2 = 'cli#oben:1:3:10.00';
-const K = chaveEnvelope(VEND_A, CLI);
+const K = chaveEnvelope(VEND_A, 'oben:123');
+const FP1 = '123#oben:1:2:10.00';
+const FP2 = '123#oben:1:3:10.00';
+const criar = (id: string): CheckoutEnvelope => ({ checkoutId: id, fingerprint: '', committed: true });
 
-/** Uma "aba": o id da cópia que ela carrega (rascunho), como o hook guarda em `idDaAbaRef`. */
-function aba(arm: ArmazemEnvelope, userId = VEND_A, chave = K) {
-  let id: string | null = null;
+/** Uma "aba": o nonce da cópia (o hook guarda em `nonceRef` e no rascunho em disco). */
+function aba(arm: ArmazemEnvelope, nonce: string, chave = K) {
   return {
-    get id() { return id; },
-    abrirRascunho() { id = garantirIdentidadeRascunho(arm, userId, chave, id, gerarId)?.checkoutId ?? id; return id; },
-    restaurar(x: string | null) { id = x; },
-    enviar(fp: string): ReservaEnvio {
-      const r = reservarEnvio(arm, { userId, chave, fingerprint: fp, idDaAba: id }, criarCom);
-      if (r.decisao === 'new' || r.decisao === 'reuse') id = r.envelope.checkoutId;
-      return r;
+    async enviar(fp: string): Promise<ReservaEnvio> {
+      const idCalculado = await idDoEnvio(nonce, fp);
+      return reservarEnvio(arm, { chave, fingerprint: fp, idCalculado, prefixosLegado: ['123'] }, criar);
     },
-    concluir() { if (id) concluirEnvio(arm, userId, chave, id); id = null; },
+    concluir(r: ReservaEnvio) { if (r.decisao === 'new' || r.decisao === 'reuse') concluirEnvio(arm, chave, r.envelope.checkoutId); },
   };
 }
 const idDe = (r: ReservaEnvio) => (r.decisao === 'new' || r.decisao === 'reuse' ? r.envelope.checkoutId : null);
 
-describe('chave por usuário + cliente', () => {
-  it('vendedores diferentes no MESMO computador não compartilham envelope (o B herdava o do A)', () => {
-    const arm = armazem();
-    const a = aba(arm, VEND_A, chaveEnvelope(VEND_A, CLI)).enviar(FP1);
-    expect(lerEnvelope(arm, chaveEnvelope(VEND_B, CLI))).toBeNull();
-    const b = aba(arm, VEND_B, chaveEnvelope(VEND_B, CLI)).enviar(FP1);
-    expect(b.decisao).toBe('new');
-    expect(idDe(b)).not.toBe(idDe(a));
+describe('idDoEnvio: o id deriva da cópia (nonce) + itens', () => {
+  it('determinístico, formato UUID, e muda com o nonce ou com os itens', async () => {
+    const a = await idDoEnvio('n1', FP1);
+    expect(a).toBe(await idDoEnvio('n1', FP1));
+    expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(await idDoEnvio('n2', FP1)).not.toBe(a);
+    expect(await idDoEnvio('n1', FP2)).not.toBe(a);
   });
-
-  it('clientes diferentes do mesmo vendedor não se atropelam (o slot único era sobrescrito)', () => {
-    const arm = armazem();
-    const k1 = chaveEnvelope(VEND_A, 'oben:1');
-    const r1 = aba(arm, VEND_A, k1).enviar(FP1);
-    aba(arm, VEND_A, chaveEnvelope(VEND_A, 'oben:2')).enviar(FP2);
-    expect(lerEnvelope(arm, k1)?.checkoutId).toBe(idDe(r1));
+  it('o prefixo do cliente NÃO entra (o cliente ganhar usuário local não troca o id — Codex P1)', async () => {
+    expect(await idDoEnvio('n1', 'uuid-local#oben:1:2:10.00')).toBe(await idDoEnvio('n1', FP1));
+    expect(assinaturaItens(FP1)).toBe('oben:1:2:10.00');
   });
-
-  it('identidade do cliente: usuário local (mais estável), senão Oben, senão Colacor, senão nenhuma', () => {
-    expect(chaveClienteEnvelope({ local_user_id: 'u', codigo_cliente: 9 })).toBe('local:u');
-    expect(chaveClienteEnvelope({ codigo_cliente: 9, codigo_cliente_colacor: 8 })).toBe('oben:9');
-    expect(chaveClienteEnvelope({ codigo_cliente: null, codigo_cliente_colacor: 8 })).toBe('colacor:8');
-    expect(chaveClienteEnvelope({})).toBeNull();
-    expect(chaveClienteEnvelope(null)).toBeNull();
+  it('nonce vazio lança (nunca deriva id de nada)', async () => {
+    await expect(idDoEnvio('', FP1)).rejects.toThrow(/^idDoEnvio: nonce vazio$/);
   });
 });
 
-describe('duas abas, mesmo vendedor e cliente (o P0)', () => {
-  it('o id nasce no rascunho e o envio REAPROVEITA esse id', () => {
+describe('duas abas / refresh com a MESMA cópia do pedido (o P0)', () => {
+  it('as duas abas enviam o mesmo carrinho → o MESMO id (o servidor diz "já enviado")', async () => {
     const arm = armazem();
-    const a = aba(arm);
-    const id = a.abrirRascunho();
-    const r = a.enviar(FP1);
-    expect(r.decisao).toBe('new');
-    expect(idDe(r)).toBe(id);
-    expect(lerEnvelope(arm, K)).toMatchObject({ checkoutId: id, fingerprint: FP1, committed: true });
+    const ra = await aba(arm, 'N').enviar(FP1);
+    const rb = await aba(arm, 'N').enviar(FP1);
+    expect(idDe(rb)).toBe(idDe(ra));
   });
 
-  it('a aba B, com a memória velha, envia o MESMO carrinho → reusa o checkoutId da A (não cria 2º PV)', () => {
+  it('A conclui e LIMPA; B (ou um refresh que restaurou a cópia) envia o mesmo carrinho → mesmo id (Codex P0)', async () => {
     const arm = armazem();
-    const a = aba(arm); const b = aba(arm);
-    a.abrirRascunho(); b.abrirRascunho();
-    const ra = a.enviar(FP1);
-    const rb = b.enviar(FP1);
+    const a = aba(arm, 'N');
+    const ra = await a.enviar(FP1);
+    a.concluir(ra);
+    expect(lerEnvelope(arm, K)).toBeNull();
+    const rb = await aba(arm, 'N').enviar(FP1);
+    expect(rb.decisao).toBe('new');
+    expect(idDe(rb)).toBe(idDe(ra)); // mesmo id → dedup do servidor, sem 2º PV
+  });
+
+  it('A conclui 1 unidade; B, com a mesma cópia, envia 2 → id DIFERENTE (pedido novo, não "já enviado" — Codex P1)', async () => {
+    const arm = armazem();
+    const a = aba(arm, 'N');
+    const ra = await a.enviar(FP1);
+    a.concluir(ra);
+    const rb = await aba(arm, 'N').enviar(FP2);
+    expect(rb.decisao).toBe('new');
+    expect(idDe(rb)).not.toBe(idDe(ra));
+  });
+
+  it('depois do sucesso, o nonce gira: o próximo pedido IDÊNTICO é NOVO', async () => {
+    const arm = armazem();
+    const a1 = aba(arm, 'N1');
+    const r1 = await a1.enviar(FP1); a1.concluir(r1);
+    const r2 = await aba(arm, 'N2').enviar(FP1);
+    expect(idDe(r2)).not.toBe(idDe(r1));
+  });
+
+  it('envio PARCIAL pendente + outro carrinho na outra aba → conflito (a conta já enviada não sai de novo)', async () => {
+    const arm = armazem();
+    const ra = await aba(arm, 'N').enviar(FP1);
+    const rb = await aba(arm, 'N').enviar(FP2);
+    expect(rb.decisao).toBe('conflict');
+    expect(lerEnvelope(arm, K)?.checkoutId).toBe(idDe(ra));
+  });
+
+  it('parcial pendente + mesmo carrinho com OUTRO nonce → reuse do id guardado (não cria 2º PV)', async () => {
+    const arm = armazem();
+    const ra = await aba(arm, 'N1').enviar(FP1);
+    const rb = await aba(arm, 'N2').enviar(FP1);
     expect(rb.decisao).toBe('reuse');
     expect(idDe(rb)).toBe(idDe(ra));
   });
 
-  it('a A conclui e LIMPA; a B, minutos depois, envia a mesma cópia → recusada, nunca id novo (Codex P0)', () => {
+  it('o sucesso de uma aba não apaga o envelope que OUTRA aba comprometeu depois', async () => {
     const arm = armazem();
-    const a = aba(arm); const b = aba(arm);
-    a.abrirRascunho(); b.abrirRascunho();
-    a.enviar(FP1);
-    a.concluir();
-    expect(lerEnvelope(arm, K)).toBeNull();
-    expect(b.enviar(FP1).decisao).toBe('ja_concluido');
-    // ...mesmo que outra cópia tenha aberto um rascunho novo no par depois disso
-    aba(arm).abrirRascunho();
-    expect(b.enviar(FP1).decisao).toBe('ja_concluido');
+    const velho = await aba(arm, 'N1').enviar(FP1);
+    concluirEnvio(arm, K, idDe(velho) as string);
+    const novo = await aba(arm, 'N2').enviar(FP2);
+    expect(concluirEnvio(arm, K, idDe(velho) as string)).toBe(true);
+    expect(lerEnvelope(arm, K)?.checkoutId).toBe(idDe(novo));
   });
 
-  it('refresh na B depois do sucesso da A: o rascunho restaurado traz o id e a lápide barra', () => {
+  it('gravarSeAindaFor: a marca da OS de uma aba não atropela o commit de outra', async () => {
     const arm = armazem();
-    const a = aba(arm);
-    const id = a.abrirRascunho();
-    a.enviar(FP1); a.concluir();
-    const bDepoisDoRefresh = aba(arm);
-    bDepoisDoRefresh.restaurar(id);
-    expect(bDepoisDoRefresh.enviar(FP1).decisao).toBe('ja_concluido');
-  });
-
-  it('a aba B com OUTRO carrinho cai em conflito, sem gravar por cima do envelope da A', () => {
-    const arm = armazem();
-    const ra = aba(arm).enviar(FP1);
-    expect(aba(arm).enviar(FP2).decisao).toBe('conflict');
-    expect(lerEnvelope(arm, K)?.checkoutId).toBe(idDe(ra));
-  });
-
-  it('o rascunho de uma aba NÃO troca o id que a outra já comprometeu', () => {
-    const arm = armazem();
-    const ra = aba(arm).enviar(FP1);
-    const b = aba(arm);
-    expect(b.abrirRascunho()).toBe(idDe(ra));
-    expect(lerEnvelope(arm, K)?.committed).toBe(true);
-  });
-
-  it('depois do sucesso, o próximo pedido IDÊNTICO desta aba é NOVO (não vira "já enviado")', () => {
-    const arm = armazem();
-    const a = aba(arm);
-    const r1 = a.enviar(FP1); a.concluir();
-    const r2 = a.enviar(FP1);
-    expect(r2.decisao).toBe('new');
-    expect(idDe(r2)).not.toBe(idDe(r1));
-  });
-
-  it('remoção que falha no sucesso: a lápide manda e o próximo pedido idêntico é NOVO (Codex P1)', () => {
-    const arm = armazem();
-    const a = aba(arm);
-    const r1 = a.enviar(FP1);
-    const removeItem = arm.removeItem;
-    arm.removeItem = () => { throw new Error('falhou'); };
-    a.concluir();
-    arm.removeItem = removeItem;
-    expect(lerEnvelope(arm, K)?.checkoutId).toBe(idDe(r1)); // ficou lá
-    const r2 = aba(arm).enviar(FP1);
-    expect(r2.decisao).toBe('new');
-    expect(idDe(r2)).not.toBe(idDe(r1));
-  });
-
-  it('o sucesso de uma aba não apaga o envelope NOVO que outra aba gravou depois', () => {
-    const arm = armazem();
-    const velho = idDe(aba(arm).enviar(FP1)) as string;
-    marcarConcluido(arm, VEND_A, velho);
-    const novo = idDe(aba(arm).enviar(FP2));
-    concluirEnvio(arm, VEND_A, K, velho);
-    expect(lerEnvelope(arm, K)?.checkoutId).toBe(novo);
-  });
-
-  it('gravarSeAindaFor: marca da OS de uma aba não atropela o commit de outra', () => {
-    const arm = armazem();
-    const ra = aba(arm).enviar(FP1);
-    const alheio: CheckoutEnvelope = { checkoutId: 'outro', fingerprint: FP1, committed: true };
-    expect(gravarSeAindaFor(arm, K, 'outro', alheio)).toBe(false);
+    const ra = await aba(arm, 'N').enviar(FP1);
+    expect(gravarSeAindaFor(arm, K, 'outro', { checkoutId: 'outro', fingerprint: FP1, committed: true })).toBe(false);
     expect(lerEnvelope(arm, K)?.checkoutId).toBe(idDe(ra));
   });
 
@@ -195,13 +145,11 @@ describe('duas abas, mesmo vendedor e cliente (o P0)', () => {
         return r;
       },
     };
-    const res = (fp: string) => reservarEnvio(arm, { userId: VEND_A, chave: K, fingerprint: fp, idDaAba: null }, criarCom);
-    const [a, b] = await Promise.all([
-      comTravaEntreAbas('t', () => res(FP1), travas),
-      comTravaEntreAbas('t', () => res(FP1), travas),
-    ]);
+    const [i1, i2] = [await idDoEnvio('N1', FP1), await idDoEnvio('N2', FP1)];
+    const res = (id: string) => reservarEnvio(arm, { chave: K, fingerprint: FP1, idCalculado: id, prefixosLegado: [] }, criar);
+    const [a, b] = await Promise.all([comTravaEntreAbas('t', () => res(i1), travas), comTravaEntreAbas('t', () => res(i2), travas)]);
     expect([a.decisao, b.decisao]).toEqual(['new', 'reuse']);
-    expect(idDe(a)).toBe(idDe(b));
+    expect(idDe(b)).toBe(idDe(a));
   });
 
   it('sem Web Locks, a trava roda a seção direto (jsdom/navegador antigo)', async () => {
@@ -209,112 +157,116 @@ describe('duas abas, mesmo vendedor e cliente (o P0)', () => {
   });
 });
 
-describe('leitura que falha NÃO autoriza id novo (Codex P0)', () => {
-  it('envelope ilegível → indeterminado (era "new" com id novo)', () => {
+describe('chave por usuário + cliente', () => {
+  it('vendedores diferentes no MESMO computador não compartilham envelope (o B herdava o do A)', async () => {
     const arm = armazem();
-    arm.setItem(K, '{nao json');
-    expect(aba(arm).enviar(FP1).decisao).toBe('indeterminado');
-    arm.setItem(K, JSON.stringify({ checkoutId: '', fingerprint: 'x', committed: true }));
-    expect(aba(arm).enviar(FP1).decisao).toBe('indeterminado');
+    await aba(arm, 'N', chaveEnvelope(VEND_A, 'oben:123')).enviar(FP1);
+    expect(lerEnvelope(arm, chaveEnvelope(VEND_B, 'oben:123'))).toBeNull();
+    expect((await aba(arm, 'M', chaveEnvelope(VEND_B, 'oben:123')).enviar(FP2)).decisao).toBe('new');
   });
-  it('getItem que lança → indeterminado', () => {
-    const arm = armazem();
-    arm.getItem = () => { throw new Error('SecurityError'); };
-    expect(lerEnvelopeEstrito(arm, K).estado).toBe('ilegivel');
-    expect(aba(arm).enviar(FP1).decisao).toBe('indeterminado');
+  it('identidade do cliente: usuário local (mais estável), senão Oben, senão Colacor, senão nenhuma', () => {
+    expect(chaveClienteEnvelope({ local_user_id: 'u', codigo_cliente: 9 })).toBe('local:u');
+    expect(chaveClienteEnvelope({ codigo_cliente: 9, codigo_cliente_colacor: 8 })).toBe('oben:9');
+    expect(chaveClienteEnvelope({ codigo_cliente: null, codigo_cliente_colacor: 8 })).toBe('colacor:8');
+    expect(chaveClienteEnvelope({})).toBeNull();
   });
-  it('lápide ilegível → indeterminado (não dá para provar que a cópia não foi concluída)', () => {
-    const arm = armazem();
-    const a = aba(arm); a.abrirRascunho();
-    arm.setItem(`unified_order_checkout_concluidos:v2:${VEND_A}`, '{quebrado');
-    expect(estaConcluido(arm, VEND_A, 'x')).toBe('ilegivel');
-    expect(a.enviar(FP1).decisao).toBe('indeterminado');
-  });
-  it('quota cheia: a reserva devolve gravou=false (o hook não chama a edge)', () => {
-    const arm = armazem();
-    arm.setItem = () => { throw new Error('QuotaExceededError'); };
-    const r = aba(arm).enviar(FP1);
-    expect(r.decisao === 'new' && r.gravou).toBe(false);
-    expect(r.decisao).toBe('new');
+  it('mesmoCliente: compartilha um código não-vazio; vazio/zero-string não identifica', () => {
+    expect(mesmoCliente({ codigo_cliente_colacor: 7 }, { codigo_cliente: 5, codigo_cliente_colacor: 7 })).toBe(true);
+    expect(mesmoCliente({ codigo_cliente: 5 }, { codigo_cliente: 6 })).toBe(false);
+    expect(mesmoCliente({ local_user_id: '' }, { local_user_id: '' })).toBe(false);
+    expect(mesmoCliente(null, { codigo_cliente: 5 })).toBe(false);
   });
 });
 
-describe('lápide', () => {
-  it('guarda só as MAX_CONCLUIDOS mais recentes e é idempotente', () => {
+describe('leitura que falha NÃO libera o envio (Codex P0)', () => {
+  it('envelope ilegível ou sem campos → indeterminado', async () => {
     const arm = armazem();
-    for (let i = 0; i < MAX_CONCLUIDOS + 5; i++) marcarConcluido(arm, VEND_A, `c${i}`);
-    marcarConcluido(arm, VEND_A, `c${MAX_CONCLUIDOS + 4}`);
-    expect(estaConcluido(arm, VEND_A, 'c0')).toBe(false);
-    expect(estaConcluido(arm, VEND_A, `c${MAX_CONCLUIDOS + 4}`)).toBe(true);
-    expect(estaConcluido(arm, VEND_B, `c${MAX_CONCLUIDOS + 4}`)).toBe(false);
+    arm.setItem(K, '{nao json');
+    expect((await aba(arm, 'N').enviar(FP1)).decisao).toBe('indeterminado');
+    arm.setItem(K, JSON.stringify({ checkoutId: '', fingerprint: 'x', committed: true }));
+    expect((await aba(arm, 'N').enviar(FP1)).decisao).toBe('indeterminado');
   });
-  it('rascunho restaurado com id CONCLUÍDO não volta a ser identidade: nasce id novo', () => {
+  it('getItem que lança → indeterminado', async () => {
     const arm = armazem();
-    marcarConcluido(arm, VEND_A, 'velho');
-    expect(garantirIdentidadeRascunho(arm, VEND_A, K, 'velho', gerarId)?.checkoutId).not.toBe('velho');
+    arm.getItem = () => { throw new Error('SecurityError'); };
+    expect(lerEnvelopeEstrito(arm, K).estado).toBe('ilegivel');
+    expect((await aba(arm, 'N').enviar(FP1)).decisao).toBe('indeterminado');
+  });
+  it('quota cheia: a reserva devolve gravou=false (o hook não chama a edge)', async () => {
+    const arm = armazem();
+    arm.setItem = () => { throw new Error('QuotaExceededError'); };
+    const r = await aba(arm, 'N').enviar(FP1);
+    expect(r.decisao).toBe('new');
+    expect(r.decisao === 'new' && r.gravou).toBe(false);
   });
 });
 
 describe('chave que muda no meio do pedido (autocadastro trouxe código — Codex P0)', () => {
-  it('moverEnvelope leva o envelope ao par novo e o retry reusa o id', () => {
+  const kVelha = chaveEnvelope(VEND_A, 'colacor:7');
+  const kNova = chaveEnvelope(VEND_A, 'oben:7');
+  it('moverEnvelope leva a trava do carrinho para o par novo', async () => {
     const arm = armazem();
-    const kVelha = chaveEnvelope(VEND_A, 'colacor:7');
-    const kNova = chaveEnvelope(VEND_A, 'oben:7');
-    const r1 = aba(arm, VEND_A, kVelha).enviar(FP1);
+    const r1 = await aba(arm, 'N', kVelha).enviar(FP1);
     expect(moverEnvelope(arm, kVelha, kNova)).toBe(true);
     expect(lerEnvelope(arm, kVelha)).toBeNull();
-    const r2 = aba(arm, VEND_A, kNova).enviar(FP1); // refresh: a aba não tem id em memória
-    expect(r2.decisao).toBe('reuse');
-    expect(idDe(r2)).toBe(idDe(r1));
+    expect((await aba(arm, 'N', kNova).enviar(FP2)).decisao).toBe('conflict');
+    expect(idDe(await aba(arm, 'N', kNova).enviar(FP1))).toBe(idDe(r1));
   });
-  it('não sobrescreve um par novo ocupado', () => {
+  it('não sobrescreve OUTRO envio comprometido no par novo', async () => {
     const arm = armazem();
-    const kVelha = chaveEnvelope(VEND_A, 'colacor:7');
-    const kNova = chaveEnvelope(VEND_A, 'oben:7');
-    aba(arm, VEND_A, kVelha).enviar(FP1);
-    const ocupado = idDe(aba(arm, VEND_A, kNova).enviar(FP2));
+    await aba(arm, 'N', kVelha).enviar(FP1);
+    const ocupado = await aba(arm, 'M', kNova).enviar(FP2);
     expect(moverEnvelope(arm, kVelha, kNova)).toBe(false);
-    expect(lerEnvelope(arm, kNova)?.checkoutId).toBe(ocupado);
+    expect(lerEnvelope(arm, kNova)?.checkoutId).toBe(idDe(ocupado));
+  });
+  it('mesmo sem mover, o retry da MESMA cópia na chave nova deriva o mesmo id', async () => {
+    const arm = armazem();
+    const r1 = await aba(arm, 'N', kVelha).enviar(FP1);
+    expect(idDe(await aba(arm, 'N', kNova).enviar(FP1))).toBe(idDe(r1));
   });
 });
 
 describe('envelope legado (chave fixa de antes do PR 2.2)', () => {
-  const legado: CheckoutEnvelope = { checkoutId: 'L', fingerprint: '123#oben:1:2:10.00', committed: true };
-  it('retry EXATO do mesmo carrinho reaproveita o id legado (envio em voo no dia do deploy)', () => {
+  const legado: CheckoutEnvelope = { checkoutId: 'L', fingerprint: FP1, committed: true };
+  it('retry EXATO do mesmo carrinho reaproveita o id legado (envio em voo no dia do deploy)', async () => {
     const arm = armazem();
     arm.setItem(CHAVE_ENVELOPE_LEGADA, JSON.stringify(legado));
-    const r = aba(arm).enviar(legado.fingerprint);
+    const r = await aba(arm, 'N').enviar(FP1);
     expect(r.decisao).toBe('reuse');
     expect(idDe(r)).toBe('L');
   });
-  it('outro carrinho do mesmo cliente NÃO é absorvido pelo legado (outro vendedor no mesmo PC)', () => {
+  it('outro carrinho do mesmo cliente NÃO é absorvido e o legado não é apagado de carona', async () => {
     const arm = armazem();
     arm.setItem(CHAVE_ENVELOPE_LEGADA, JSON.stringify(legado));
-    const r = aba(arm).enviar('123#oben:1:9:10.00');
-    expect(r.decisao).toBe('new');
-    expect(idDe(r)).not.toBe('L');
-    expect(arm.getItem(CHAVE_ENVELOPE_LEGADA)).not.toBeNull(); // nunca migrado/apagado de carona
-  });
-  it('legado já concluído não é reaproveitado', () => {
-    const arm = armazem();
-    arm.setItem(CHAVE_ENVELOPE_LEGADA, JSON.stringify(legado));
-    marcarConcluido(arm, VEND_A, 'L');
-    expect(idDe(aba(arm).enviar(legado.fingerprint))).not.toBe('L');
-  });
-  it('descartar o rascunho do cliente solta o legado dele (prefixo exato: 12 ≠ 123)', () => {
-    const arm = armazem();
-    arm.setItem(CHAVE_ENVELOPE_LEGADA, JSON.stringify(legado));
-    descartarLegadoDoCliente(arm, ['12']);
+    expect(idDe(await aba(arm, 'N').enviar(FP2))).not.toBe('L');
     expect(arm.getItem(CHAVE_ENVELOPE_LEGADA)).not.toBeNull();
-    descartarLegadoDoCliente(arm, ['123']);
+  });
+  it('legado de OUTRO cliente com os mesmos itens não é reaproveitado (prefixo exato: 12 ≠ 123)', async () => {
+    const arm = armazem();
+    arm.setItem(CHAVE_ENVELOPE_LEGADA, JSON.stringify({ ...legado, fingerprint: '12#oben:1:2:10.00' }));
+    expect(idDe(await aba(arm, 'N').enviar(FP1))).not.toBe('L');
+  });
+  it('concluir o envio do id legado solta o legado', async () => {
+    const arm = armazem();
+    arm.setItem(CHAVE_ENVELOPE_LEGADA, JSON.stringify(legado));
+    const a = aba(arm, 'N');
+    a.concluir(await a.enviar(FP1));
+    expect(arm.getItem(CHAVE_ENVELOPE_LEGADA)).toBeNull();
+  });
+  it('descartar o rascunho solta o legado SÓ do mesmo cliente E carrinho', () => {
+    const arm = armazem();
+    arm.setItem(CHAVE_ENVELOPE_LEGADA, JSON.stringify(legado));
+    descartarLegadoDoCliente(arm, ['123'], FP2);
+    descartarLegadoDoCliente(arm, ['12'], FP1);
+    expect(arm.getItem(CHAVE_ENVELOPE_LEGADA)).not.toBeNull();
+    descartarLegadoDoCliente(arm, ['123'], FP1);
     expect(arm.getItem(CHAVE_ENVELOPE_LEGADA)).toBeNull();
   });
 });
 
 describe('aviso de outra aba (evento storage)', () => {
-  it('commit na outra aba = enviou; rascunho = editando; remoção do que eu conhecia = liberou', () => {
+  it('commit na outra aba = enviou; remoção do que eu conhecia = liberou; resto = nada', () => {
     expect(classificarMudancaOutraAba(JSON.stringify({ checkoutId: 'x', fingerprint: 'f', committed: true }), null)).toBe('enviou');
-    expect(classificarMudancaOutraAba(JSON.stringify({ checkoutId: 'x', fingerprint: '', committed: false }), 'x')).toBe('editando');
     expect(classificarMudancaOutraAba(null, 'x')).toBe('liberou');
     expect(classificarMudancaOutraAba(null, null)).toBeNull();
     expect(classificarMudancaOutraAba('{lixo', 'x')).toBeNull();

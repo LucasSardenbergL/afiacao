@@ -310,25 +310,33 @@ mesma invocação.
 
 **PR 2.2 — envelope de envio à prova de abas** (só front). O envelope `{checkoutId, fingerprint, committed}`
 (a chave de idempotência do PV e da OS) ficava numa chave FIXA do localStorage, sem dono, e o `checkoutId`
-nascia no clique a partir da memória da aba: duas abas com o mesmo carrinho, ou um refresh que perdesse o
-envelope, geravam dois PVs; num PC compartilhado o vendedor B herdava o envelope do A.
-`envelope-armazenado.ts`:
-- a chave passa a ser por usuário + cliente (a identidade mais estável primeiro: usuário local, Oben, Colacor);
-- o id nasce com o rascunho (`committed:false`) e viaja no rascunho em disco;
-- o envio relê o armazém e decide/grava sob Web Locks (`reservarEnvio`);
-- uma lápide por usuário registra o id concluído, e a cópia já enviada em outra aba é recusada em vez de ganhar id novo;
-- leitura ilegível vira `indeterminado` e barra o envio;
-- o legado só é reaproveitado no retry com fingerprint EXATA, nunca migrado de carona;
-- quando a chave do mesmo cliente muda no meio do pedido, o envelope é movido;
-- o evento `storage` avisa "pedido aberto em outra aba".
+era SORTEADO no clique a partir da memória da aba: duas abas com o mesmo carrinho, ou um refresh que
+perdesse o envelope, geravam dois PVs; num PC compartilhado o vendedor B herdava o envelope do A.
 
-Desenho para a Onda 3: `checkoutId` = id da linha do rascunho no servidor, `committed` = enviado, lápide = concluído.
+Desenho final (`envelope-armazenado.ts`, 3ª versão):
+- **O id é DERIVADO, não sorteado:** `idDoEnvio(nonce, itens)` = SHA-256 em formato UUID. O `nonce` nasce
+  com o rascunho, viaja nele e gira no fim do ciclo (sucesso total, descarte, troca de cliente, novo pedido).
+  Mesma cópia + mesmo carrinho ⇒ mesmo id em qualquer aba ⇒ o servidor responde "já enviado"
+  (`sales_orders.checkout_id` + conta; OS por `cCodIntOS`). Carrinho diferente ⇒ id diferente ⇒ pedido novo.
+  **A lápide é o servidor.**
+- O envelope COMPROMETIDO fica na chave por usuário + cliente e trava o carrinho depois de um envio parcial.
+  O envio relê essa chave sob Web Locks. Leitura ilegível vira `indeterminado` e barra o envio.
+- O legado só é reaproveitado no retry com os mesmos itens e o mesmo cliente.
+- Quando o mesmo cliente ganha outra chave, o envelope é movido. Cliente trocado gira o nonce.
+- O evento `storage` avisa "pedido aberto em outra aba".
 
-Codex na 1ª versão: **4 P0 e 6 P1**. Os P0 e três P1 (remoção que falha, legado ressuscitado no descarte, mutações sem conferir o id) foram corrigidos neste PR. Falsificado: 10 sabotagens, uma camada por vez, controle verde na mesma invocação, em `C` e `pt_BR.UTF-8`.
+Desenho para a Onda 3: `nonce` = id da linha do rascunho no servidor, envelope comprometido = "enviado".
+
+Codex em três rodadas: as duas primeiras versões, com "lápide" local de ids concluídos, caíram com 4 P0 cada.
+Restaurar uma cópia concluída trocava o id; um pedido com outra quantidade virava "já enviado"; o retry do
+legado era ignorado; destino ocupado trocava o id. O id derivado fecha a classe: o único jeito de nascer id
+novo é mudar o carrinho ou girar o nonce, e nenhum dos dois engole um pedido legítimo.
 
 Fica registrado:
-- **Troca aceita:** dois pedidos NOVOS idênticos do mesmo par, abertos ao mesmo tempo, viram um ("já enviado"). Separá-los exige id por aba, o que reabre o P0.
-- **Risco residual:** sem Web Locks (Safari < 15.4), resta a janela de um getItem→setItem.
+- **Troca aceita:** com um envio parcial pendente, um 2º pedido idêntico do mesmo par reusa o id guardado ("já enviado").
+- **Risco residual:** sem Web Locks, resta a janela da trava de edição pós-parcial. O PV duplicado do mesmo
+  carrinho segue impedido pelo id derivado.
 - **Preexistentes, para a Onda 3 (rascunho no servidor):**
   - o rascunho é por usuário, então o sucesso da aba A apaga o rascunho pendente da aba B;
-  - o restore decide só pelo código Oben, e o rascunho Colacor/local pode ser aplicado sem cliente.
+  - o restore decide só pelo código Oben;
+  - uma cópia já concluída em outra aba ainda pode virar orçamento.

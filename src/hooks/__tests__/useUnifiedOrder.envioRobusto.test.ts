@@ -140,12 +140,12 @@ describe('useUnifiedOrder — ciclo do rascunho no ENVIO e na troca', () => {
   it('envio: rascunho gravado no commit do envelope e apagado no sucesso TOTAL dentro do hook', () => {
     const corpo = corpoDo('submitOrder');
     // PR 2.2: o commit é gravado pela RESERVA (relê o armazém do par sob trava entre abas); o rascunho vem logo após.
-    const commit = corpo.indexOf('definirIdDaAba(reserva.envelope.checkoutId);\n      if (!reserva.gravou) {');
+    const commit = corpo.indexOf('checkoutEnvRef.current = reserva.envelope;\n      if (!reserva.gravou) {');
     expect(corpo.indexOf('cicloRascunhoRef.current.aoComprometer?.();')).toBeGreaterThan(commit);
     expect(commit).toBeGreaterThan(-1);
     expect(commit).toBeLessThan(corpo.indexOf('submitOrderService('));
-    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; if \(!concluirEnvio\(arm, userIdEnvio, chaveEnv, checkoutId\)\)[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
-    expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, checkoutId: h.envelopeCheckoutAtual()?.checkoutId ?? draftPayload.checkoutId }),');
+    expect(corpo).toMatch(/result\.allConfirmed\) \{\n\s*checkoutEnvRef\.current = null; concluirEnvio\(arm, chaveEnv, checkoutId\);[^\n]*\n\s*cicloRascunhoRef\.current\.aoConfirmarTudo\?\.\(\);/);
+    expect(pagina).toContain('aoComprometer: () => gravarRascunhoAgora({ ...draftPayload, nonce: h.nonceDoRascunho() }),');
     expect(pagina).toContain('aoConfirmarTudo: clearDraft,');
   });
 });
