@@ -212,6 +212,40 @@ sem `cover`): cabeçalhos `sticky top-0` de página (conferência de NF-e, `/doc
 transcrição" em `top-20`, o overlay do scanner de lote, rodapés de recebimento a 16px da borda e os
 `calc(100vh − 48px)` do WhatsApp/Ajuda. Sem teste em aparelho.
 
+**Área segura nas páginas que o #4094 deixou de fora (pendências do Codex, 2026-11-21).** Já
+existiam antes do `viewport-fit=cover` (não é regressão), mas ficaram visíveis com ele. Um token
+novo, `spacing.topo-conteudo` = `topbar` + `var(--faixa-ver-como, 0px)`, marca onde o conteúdo começa.
+O shell publica `--faixa-ver-como: 1.75rem` junto do `pt-7` da lente. Assim, sticky, fixed e alturas
+acompanham a faixa "Ver como" sem chamar `useImpersonation()`, que lança erro fora do provider e
+quebraria os testes de render das páginas. O padrão ternário de `SalesOrders` continua valendo onde
+já existe. Mudanças:
+- `sticky top-0` → `top-topo-conteudo` em `RecebimentoConferencia` ("Voltar") e `/docs` ("Exportar PDF",
+  z-50 → z-20, abaixo da topbar);
+- `ScanBar` e `TranscriptionPanel` saem de `top-topbar` para `top-topo-conteudo`, e o painel ganha `pb`/`pr`
+  de área segura;
+- "Mostrar transcrição" sai de `top-20` para `top-[calc(theme(spacing.topo-conteudo)+2rem)]` (80px no desktop);
+- o overlay do scanner de lote ganha pt/pb/pl/pr de `env()`, e "Finalizar Conferência" ganha
+  `pb-[calc(1rem+env(safe-area-inset-bottom))]`;
+- o WhatsApp passa a `100dvh − topo-conteudo − (2rem | lg:3rem) − inset do fim`, que é o padding do shell;
+- a Ajuda deixa a `--topbar-height` indefinida e passa a `100dvh − topo-conteudo − inset do fim`. O `-m-4`
+  segue cancelando só o 1rem, e a área segura fica como calha.
+
+O Codex revisou o diff e trouxe mais pontos do mesmo padrão, também corrigidos:
+- sob a lente, o `<main>` desconta a faixa do `min-h` (era `min-h-screen` mais o `pt-7`, o que dava 1.75rem de rolagem);
+- os painéis laterais da Reposição saem de `lg:top-4`, que ficava sob a topbar, para `topo-conteudo + 1rem`;
+- as seções de `/docs` ganham `scroll-margin` abaixo das duas barras;
+- `bulk-actions-bar` e "Criar envio" saem de `bottom-4` para `1rem + inset do fim`.
+
+Ficaram fora de escopo, por virem de antes e não serem de área segura:
+- o aviso `ExigenciaDeVersao` em fluxo, que é transitório, empurra a Ajuda e o WhatsApp para baixo;
+- o scanner de lote em paisagem, com `45vh` fixo para a câmera, corta o "Confirmar Lote";
+- o `min-h-[100dvh]` da `SeparacaoV2`, dentro do shell;
+- o `sticky top-20` do nav `xl:` em `DesignSystem`/`UXRules`, que é só desktop e sem inset.
+
+Teste: `src/components/shell/__tests__/safe-area-paginas.test.ts`, um teste-texto falsificado com uma
+sabotagem por fiação e controle verde na mesma invocação. O CSS gerado foi conferido à mão. Não houve
+teste em aparelho.
+
 **Follow-ups do #4068 e do #4087 (2026-11-21, só front).** **A** desde a edge `omie-vendas-sync`
 v1.45 o `omie_products.estoque` chega `null` quando falta `nSaldo`, e o front o transformava em 0: a
 venda assistida (`UnifiedOrder` → `montarBaseEmbalagens`) mostrava "Encomenda" para saldo que
