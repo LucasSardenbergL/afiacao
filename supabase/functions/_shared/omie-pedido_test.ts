@@ -2,6 +2,9 @@
 import {
   omieEtapaToStatus,
   etapaConhecida,
+  canceladoNoOmie,
+  omieStatusDoPedido,
+  statusOmieReconciliavel,
   subtotalPedidoComDesconto,
   apurarSubtotalPedido,
   construirItemsJson,
@@ -351,4 +354,51 @@ Deno.test("aplicarCorPreservandoItens: só a COR entra; o resto do item-jsonb é
        [{ omie_codigo_produto: "8", tint_nome_cor: "PRETO" }])!,
      [{ omie_codigo_produto: 8, valor_unitario: 7, tint_nome_cor: "PRETO" }],
      "casa por código mesmo com tipos diferentes");
+});
+
+// ── Cancelado no Omie vence a etapa (decisão do founder 2026-11-21: cancelado não é venda) ──
+// O Omie congela o pedido cancelado na etapa em que ele estava; a marca é infoCadastro.cancelado.
+Deno.test("CANCELADO: a marca 'S' vira 'cancelado' em TODA etapa, inclusive faturado", () => {
+  for (const etapa of ["10", "20", "50", "60", "70", "80", "", "99"]) {
+    eq(omieStatusDoPedido(etapa, { cancelado: "S" }), "cancelado", `etapa ${etapa} + S`);
+  }
+});
+
+Deno.test("NÃO-CANCELADO: 'N', ausente, null ou forma não exata mantém o mapa da etapa", () => {
+  eq(omieStatusDoPedido("20", { cancelado: "N" }), "enviado", "20 + N");
+  eq(omieStatusDoPedido("60", {}), "faturado", "60 sem campo");
+  eq(omieStatusDoPedido("50", null), "separacao", "50 sem infoCadastro");
+  eq(omieStatusDoPedido("50", undefined), "separacao", "50 infoCadastro undefined");
+  // precisão>recall: só a forma EXATA tira o pedido do universo de venda
+  eq(omieStatusDoPedido("60", { cancelado: "s" }), "faturado", "minúscula não conta");
+  eq(omieStatusDoPedido("60", { cancelado: true }), "faturado", "boolean não conta");
+  eq(omieStatusDoPedido("60", { cancelado: " S" }), "faturado", "com espaço não conta");
+  eq(canceladoNoOmie({ cancelado: "S" }), true, "S");
+  eq(canceladoNoOmie({ cancelado: "N" }), false, "N");
+});
+
+Deno.test("RECONCILIÁVEL (reprocess): marca vence etapa DESCONHECIDA; sem marca, etapa desconhecida = null", () => {
+  eq(statusOmieReconciliavel("99", { cancelado: "S" }), "cancelado", "etapa desconhecida + S");
+  eq(statusOmieReconciliavel(undefined, { cancelado: "S" }), "cancelado", "sem etapa + S");
+  eq(statusOmieReconciliavel("20", { cancelado: "S" }), "cancelado", "20 + S");
+  eq(statusOmieReconciliavel("60", { cancelado: "S" }), "cancelado", "60 + S");
+  eq(statusOmieReconciliavel("99", { cancelado: "N" }), null, "etapa desconhecida sem marca");
+  eq(statusOmieReconciliavel("10", {}), null, "10 não é etapa conhecida (A4)");
+  eq(statusOmieReconciliavel("60", { cancelado: "N" }), "faturado", "60 + N");
+  eq(statusOmieReconciliavel("80", { cancelado: "N" }), "cancelado", "80 + N (0 casos medidos)");
+});
+
+Deno.test("statusOmieReconciliavel: marca ausente/ilegível = não sei (não reativa pela etapa congelada)", () => {
+  // Pedido que o backfill cancelou não pode voltar a 'faturado' por um payload sem infoCadastro.
+  eq(statusOmieReconciliavel("60", undefined), null, "60 sem infoCadastro");
+  eq(statusOmieReconciliavel("60", null), null, "60 com infoCadastro null");
+  eq(statusOmieReconciliavel("60", {}), null, "60 sem o campo cancelado");
+  eq(statusOmieReconciliavel("60", { cancelado: "n" }), null, "60 + 'n' minúsculo");
+  eq(statusOmieReconciliavel("50", { cancelado: "" }), null, "50 + marca vazia");
+  eq(statusOmieReconciliavel("80", undefined), "cancelado", "80 sem marca segue cancelado (a etapa basta)");
+});
+
+Deno.test("todo status que a marca produz está na lista gerida enviada à RPC", () => {
+  const s = statusOmieReconciliavel("50", { cancelado: "S" });
+  if (s === null || !STATUS_GERIDO_OMIE.includes(s)) throw new Error(`status fora da lista gerida: ${s}`);
 });
