@@ -465,6 +465,10 @@ export function useSalesOrders() {
     refetch: feedQuery.refetch,
     // Busca/aba nova a caminho com a lista anterior na tela (placeholderData): seleção e ações suspensas.
     buscando: emTransicao,
+    // Qualquer leitura do feed em voo (inclusive a reconciliação da exclusão): a rolagem espera. O
+    // `fetchNextPage` cancelaria o refetch e anexaria a próxima página pelo cursor VELHO — um pedido
+    // cuja exclusão falhou ficaria fora da lista (Codex, PR C).
+    atualizando: feedQuery.isFetching,
     hasNextPage: feedQuery.hasNextPage,
     fetchNextPage: feedQuery.fetchNextPage,
     isFetchingNextPage: feedQuery.isFetchingNextPage,

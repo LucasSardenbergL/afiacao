@@ -35,6 +35,7 @@ const SalesOrders = () => {
     dataUpdatedAt,
     refetch,
     buscando,
+    atualizando,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
@@ -70,7 +71,7 @@ const SalesOrders = () => {
   // "Tentar de novo" decide (sem ele, o sentinela visível re-dispararia em laço).
   const sentinelaRef = useInfiniteScroll(
     () => fetchNextPage(),
-    !!hasNextPage && !isFetchingNextPage && !nextPageError,
+    !!hasNextPage && !isFetchingNextPage && !atualizando && !nextPageError,
   );
 
   // Pedido selecionado na listagem → o painel busca o detalhe completo por id.
@@ -79,9 +80,6 @@ const SalesOrders = () => {
   // Desconto de cada item (order_items) para o painel: a query vai INTEIRA, com o estado, para
   // "não consegui ler" não chegar lá como "sem desconto".
   const descontosItensQuery = useDescontosItensPedido(detailRow);
-  // Alcance do lote calculado ao ABRIR o diálogo (não a cada render da lista): `null` = fechado. O
-  // último alcance fica guardado para o diálogo não piscar "0 pedidos" na animação de fechar.
-  const [alcanceLote, setAlcanceLote] = useState<AlcanceExclusao | null>(null);
   const [confirmandoLote, setConfirmandoLote] = useState(false);
   // Confirmação de exclusão individual: UM diálogo na página, fora das linhas (dentro delas o clique
   // no fundo do diálogo propagava pela árvore React até a linha e abria o detalhe — Codex 2ª rodada).
@@ -134,11 +132,23 @@ const SalesOrders = () => {
   // "Maior valor" desliga os grupos por dia: agrupar reordenaria por data e quebraria a ordem
   // prometida. Aí a linha mostra a data no lugar da hora. Memo: só a lista muda os grupos.
   const porValor = ordem === 'valor';
+  // O dia de HOJE entra na dependência: o rótulo "Hoje"/"Ontem" vira à meia-noite mesmo com o cache igual.
+  const hoje = format(new Date(), 'yyyy-MM-dd');
   const grupos = useMemo(
     () => (porValor ? [{ dia: 'valor', rotulo: '', pedidos: orders }] : agruparPorDia(orders)),
-    [porValor, orders],
+    [porValor, orders, hoje],
   );
   const chaves = useMemo(() => new Set(orders.map(chaveDaLinha)), [orders]);
+  // Alcance do lote só com o diálogo ABERTO (não a cada render da lista) — e vivo enquanto aberto: a
+  // busca com debounce pode assentar depois de abrir, e o aviso "fora da lista" tem de acompanhar
+  // (Codex, PR C). O último fica guardado para o diálogo não piscar "0 pedidos" ao fechar.
+  const alcanceAberto = useMemo(
+    // Na transição de filtro as linhas na tela são do filtro ANTERIOR: não contam como "na tela".
+    () => (confirmandoLote ? alcanceDaExclusao(linhasSelecionadas, buscando ? [] : orders) : null),
+    [confirmandoLote, linhasSelecionadas, buscando, orders],
+  );
+  const ultimoAlcance = useRef<AlcanceExclusao>(ALCANCE_VAZIO);
+  if (alcanceAberto) ultimoAlcance.current = alcanceAberto;
 
   if (authLoading || loading) {
     return (
@@ -163,7 +173,7 @@ const SalesOrders = () => {
     );
   }
 
-  const alcance = alcanceLote ?? ALCANCE_VAZIO;
+  const alcance = alcanceAberto ?? ultimoAlcance.current;
   const horaDosDados = dataUpdatedAt ? format(new Date(dataUpdatedAt), 'HH:mm') : null;
   // Roving tabindex: a linha ativa fica no Tab; se ela saiu da lista (filtro), a primeira assume.
   const primeira = grupos[0]?.pedidos[0];
@@ -351,11 +361,7 @@ const SalesOrders = () => {
             variant: 'destructive',
             // Filtro novo a caminho: espera a lista certa antes de abrir o alcance do lote.
             disabled: buscando,
-            onClick: () => {
-              // Na transição de filtro as linhas na tela são do filtro ANTERIOR: não contam como "na tela".
-              setAlcanceLote(alcanceDaExclusao(linhasSelecionadas, buscando ? [] : orders));
-              setConfirmandoLote(true);
-            },
+            onClick: () => setConfirmandoLote(true),
           },
         ]}
       />

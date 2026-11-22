@@ -237,4 +237,19 @@ describe('SalesOrderCard — prefetch só com o ponteiro parado', () => {
       vi.useRealTimers();
     }
   });
+
+  it('sair com o mouse não cancela o prefetch que o foco do teclado ainda sustenta', () => {
+    vi.useFakeTimers();
+    try {
+      const onPrefetch = vi.fn();
+      setup(order(), { onPrefetch });
+      fireEvent.focus(linha());
+      fireEvent.mouseEnter(linha());
+      fireEvent.mouseLeave(linha());
+      act(() => { vi.advanceTimersByTime(ATRASO_PREFETCH_MS); });
+      expect(onPrefetch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

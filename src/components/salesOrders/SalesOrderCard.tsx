@@ -122,15 +122,19 @@ export const SalesOrderCard = memo(function SalesOrderCard({
 }: SalesOrderCardProps) {
   const gatilhoRef = useRef<HTMLButtonElement>(null);
   const chave = chaveDaLinha(order);
-  // Prefetch adiado: um timer por linha, cancelado ao sair (mouse/foco) e ao desmontar.
+  // Prefetch adiado: um timer por linha, que só cai quando NEM o ponteiro NEM o foco seguem na linha
+  // (sair com o mouse não cancela o que o foco do teclado ainda sustenta — Codex) e ao desmontar.
   const timerPrefetch = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelarPrefetch = () => {
+  const presenca = useRef({ ponteiro: false, foco: false });
+  const sair = (modo: 'ponteiro' | 'foco') => {
+    presenca.current[modo] = false;
+    if (presenca.current.ponteiro || presenca.current.foco) return;
     if (timerPrefetch.current !== null) clearTimeout(timerPrefetch.current);
     timerPrefetch.current = null;
   };
-  const agendarPrefetch = () => {
-    if (!onPrefetch) return;
-    cancelarPrefetch();
+  const entrar = (modo: 'ponteiro' | 'foco') => {
+    presenca.current[modo] = true;
+    if (!onPrefetch || timerPrefetch.current !== null) return;
     timerPrefetch.current = setTimeout(() => {
       timerPrefetch.current = null;
       onPrefetch(order);
@@ -197,16 +201,16 @@ export const SalesOrderCard = memo(function SalesOrderCard({
         checked && 'bg-muted/60 hover:bg-muted/60',
       )}
       onClick={() => abrir('linha')}
-      onMouseEnter={agendarPrefetch}
-      onMouseLeave={cancelarPrefetch}
+      onMouseEnter={() => entrar('ponteiro')}
+      onMouseLeave={() => sair('ponteiro')}
       onFocus={(e) => {
         // Foco num controle de DENTRO da linha também a torna ativa (Tab até o "⋯" conta).
         onFocusLinha?.(chave);
-        if (e.target === e.currentTarget) agendarPrefetch();
+        if (e.target === e.currentTarget) entrar('foco');
       }}
       onBlur={(e) => {
         // j/k passando rápido pela linha não aquece; o foco indo para um controle de dentro, sim.
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) cancelarPrefetch();
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) sair('foco');
       }}
       onKeyDown={(e) => {
         // Só quando o foco está NA linha (Enter num botão interno é do botão), sem modificador
