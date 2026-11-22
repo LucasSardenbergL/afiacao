@@ -201,7 +201,7 @@ function ehEscalar(v: unknown): boolean {
  * Identificador (`codigo_cliente_integracao`, documento, e-mail), flag, lista/objeto e qualquer outra entidade seguem
  * comparados LITERALMENTE: se o Omie mexer neles, o hash acusa (direção segura). O payload continua indo COMO LIDO.
  */
-export const CAMPOS_AMP_TOLERADO = new Set(["razao_social", "nome_fantasia", "observacao", "obs_detalhadas"]);
+const CAMPOS_AMP_TOLERADO = new Set(["razao_social", "nome_fantasia", "observacao", "obs_detalhadas"]);
 
 export function normalizarAmp(s: string): string {
   return s.replaceAll("&amp;", "&");
