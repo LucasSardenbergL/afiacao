@@ -25,7 +25,9 @@ security find-generic-password -s claude-vigia-lovable >/dev/null 2>&1 \
 mkdir -p "$BASE" "$EST" "$HOME/Library/LaunchAgents"
 
 if [ ! -d "$WT/.git" ]; then
-  git clone -q --reference "$AQUI" --dissociate "$(git -C "$AQUI" remote get-url origin)" "$WT"
+  # --reference não aceita worktree ligado: usa o repo principal (dono do .git comum)
+  PRINCIPAL=$(dirname "$(cd "$AQUI" && cd "$(git rev-parse --git-common-dir)" && pwd)")
+  git clone -q --reference "$PRINCIPAL" --dissociate "$(git -C "$AQUI" remote get-url origin)" "$WT"
 fi
 git -C "$WT" fetch -q origin main
 (cd "$WT" && git checkout -q --detach origin/main && bun install --frozen-lockfile >/dev/null)
