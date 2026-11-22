@@ -4,8 +4,8 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import type { Customer, ClientScore } from '../types';
 
 const usoMock = vi.fn();
-vi.mock('../sensorClientes', async (original) => ({
-  ...(await original<typeof import('../sensorClientes')>()),
+vi.mock('@/lib/nav/sensor-clientes', async (original) => ({
+  ...(await original<typeof import('@/lib/nav/sensor-clientes')>()),
   registrarUsoClientes: (u: unknown) => usoMock(u),
 }));
 

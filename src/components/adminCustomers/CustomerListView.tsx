@@ -28,7 +28,7 @@ import {
   metricasExibiveis, motivoContato, normalizarOrdem, prioridadeDisponivel, rotuloContagem, TAMANHO_PAGINA_CLIENTES,
   type EstadoScores, type OrdemClientes,
 } from './config';
-import { modoClientes, registrarUsoClientes, type ModoClientes } from './sensorClientes';
+import { modoClientes, registrarUsoClientes, type ModoClientes } from '@/lib/nav/sensor-clientes';
 import type { Customer, ClientScore } from './types';
 
 /** Ajuda da coluna "Prioridade", em linguagem de vendedor. */
@@ -91,7 +91,7 @@ export function CustomerListView({
   // A ordem vale nos DOIS modos: na base completa o servidor a aplica antes de paginar; na carteira
   // (lida inteira em memória, com os scores) ela é aplicada aqui — espelho da ordem do servidor.
   const ordem: OrdemClientes = normalizarOrdem(urlState.ordem);
-  // Sensor de uso (sensorClientes.ts): o modo que o vendedor VÊ, carteira e base separadas.
+  // Sensor de uso (lib/nav/sensor-clientes.ts): o modo que o vendedor VÊ, carteira e base separadas.
   const modo: ModoClientes = modoClientes(isCarteira, ordem);
   const setFilterHealth = (v: string) => {
     if (v !== filterHealth) registrarUsoClientes({ acao: 'filtro_saude', modo, valor: v });

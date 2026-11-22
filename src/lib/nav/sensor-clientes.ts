@@ -29,8 +29,8 @@ export function modoClientes(isCarteira: boolean, ordem: 'prioridade' | 'nome'):
 
 /** De qual ficha saiu a ação: o cadastro (/admin/customers/:id) ou a visão 360. */
 type FichaClientes = 'cadastro' | '360';
-/** Ações de contato/venda medidas a partir da ficha. */
-export type AcaoFicha = 'ligar' | 'novo_pedido' | 'abrir_360' | 'ver_pedidos';
+/** Ações medidas nas fichas. A 360 (onda 3) mede o desfecho registrado, a tarefa criada e a abertura do Cadastro. */
+export type AcaoFicha = 'ligar' | 'novo_pedido' | 'abrir_360' | 'ver_pedidos' | 'registrar_desfecho' | 'criar_tarefa' | 'abrir_cadastro';
 
 const FILTROS_SAUDE = ['all', 'saudavel', 'estavel', 'atencao', 'critico', 'sem_historico'] as const;
 export type FiltroSaudeSensor = (typeof FILTROS_SAUDE)[number] | 'outro';
