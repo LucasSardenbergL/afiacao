@@ -307,3 +307,28 @@ passava (0,02 em 3x) → recusa `centavos < n` (o Omie exige nValor > 0); meio c
 na entrada; `nPercentual` (33,33/33,33/33,34) divergia do valor rateado → `parcelasComValor` deriva o
 percentual do valor, saldo na última fecha 100,00. Falsificado uma camada por vez, controle verde na
 mesma invocação.
+
+**PR 2.2 — envelope de envio à prova de abas** (só front). O envelope `{checkoutId, fingerprint, committed}`
+(a chave de idempotência do PV e da OS) ficava numa chave FIXA do localStorage, sem dono, e o `checkoutId`
+nascia no clique a partir da memória da aba: duas abas com o mesmo carrinho, ou um refresh que perdesse o
+envelope, geravam dois PVs; num PC compartilhado o vendedor B herdava o envelope do A.
+`envelope-armazenado.ts`:
+- a chave passa a ser por usuário + cliente (a identidade mais estável primeiro: usuário local, Oben, Colacor);
+- o id nasce com o rascunho (`committed:false`) e viaja no rascunho em disco;
+- o envio relê o armazém e decide/grava sob Web Locks (`reservarEnvio`);
+- uma lápide por usuário registra o id concluído, e a cópia já enviada em outra aba é recusada em vez de ganhar id novo;
+- leitura ilegível vira `indeterminado` e barra o envio;
+- o legado só é reaproveitado no retry com fingerprint EXATA, nunca migrado de carona;
+- quando a chave do mesmo cliente muda no meio do pedido, o envelope é movido;
+- o evento `storage` avisa "pedido aberto em outra aba".
+
+Desenho para a Onda 3: `checkoutId` = id da linha do rascunho no servidor, `committed` = enviado, lápide = concluído.
+
+Codex na 1ª versão: **4 P0 e 6 P1**. Os P0 e três P1 (remoção que falha, legado ressuscitado no descarte, mutações sem conferir o id) foram corrigidos neste PR. Falsificado: 10 sabotagens, uma camada por vez, controle verde na mesma invocação, em `C` e `pt_BR.UTF-8`.
+
+Fica registrado:
+- **Troca aceita:** dois pedidos NOVOS idênticos do mesmo par, abertos ao mesmo tempo, viram um ("já enviado"). Separá-los exige id por aba, o que reabre o P0.
+- **Risco residual:** sem Web Locks (Safari < 15.4), resta a janela de um getItem→setItem.
+- **Preexistentes, para a Onda 3 (rascunho no servidor):**
+  - o rascunho é por usuário, então o sucesso da aba A apaga o rascunho pendente da aba B;
+  - o restore decide só pelo código Oben, e o rascunho Colacor/local pode ser aplicado sem cliente.
