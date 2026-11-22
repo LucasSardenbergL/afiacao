@@ -553,6 +553,25 @@ re-empacota): trilha NULL própria em `_shared/zeramento-estoque{,-io}.ts`:
   incompleta, anomalia) também pulam o NULL;
 - metadata: `zeramento_candidatos` segue só ≠ 0; novos `zeramento_candidatos_nulos` e `zeramento_nulos_pulado`.
 
+**O adversarial do código (Codex `max`, 469 s, 181k tokens — 3 P1 + 3 P2, sem P0) mudou** (as ressalvas
+valiam para a confirmação que JÁ servia a trilha ≠ 0 — o NULL→0 só as tornou mais caras):
+- **P1** página curta com `nTotPaginas` declarando mais páginas encerrava a confirmação (o local positivo da
+  página 2 sumia) e `dDataPosicao` devolvida de outro dia era aceita → `contradicaoDaResposta` invalida o lote
+  (a data compara o DIA; formato ilegível não contradiz, para não travar o zeramento por formato);
+- **P1** um lote confirmava código pedido por OUTRO lote, e um ilegível contaminava todos os lotes → cada lote
+  é interpretado contra os próprios códigos;
+- **P1 (anterior)** o `sync-reprocess` aceitava `account` fora de `oben`/`colacor` e caía nas credenciais da
+  Oben para o espelho Colacor → `sync-reprocess/conta.ts` recusa com 400 antes de ler/escrever (prod: os 3
+  crons só mandam `oben`/`colacor`);
+- **P2** o catálogo recebia o zero mesmo com o CAS do espelho de posição recusado (alguém regravou depois da
+  confirmação) → o código fica de fora nesta rodada;
+- **P2** o teto "pula tudo" travava 251 NULLs para sempre → **janela rotativa** de 250 (rodada = bloco de 30
+  min do relógio, sem estado), coberta inteira em ⌈N/250⌉ rodadas;
+- **P2** a falha só do loader NULL cancelava a trilha ≠ 0 → vira falha registrada e `zeramento_candidatos_nulos: null`;
+- metadata ganha `zerados_estoque_nulo` (subconjunto de `zerados_estoque`; nunca somar). Backoff por SKU
+  adiado: com 0 NULL hoje, falta o dado de quantos ficam desconhecidos — a métrica é
+  `zeramento_candidatos_nulos` × `zerados_estoque_nulo` no `sync_state.metadata`.
+
 **Fora.** `omie-vendas-sync` não empacota o módulo (fan-out do fingerprint não a lista): o comentário de
 `estoque-linhas.ts:14` ("o zeramento pula linha NULL") ficou desatualizado e é corrigido na próxima mudança
 daquela edge — não vale um deploy só de comentário.
@@ -560,4 +579,5 @@ daquela edge — não vale um deploy só de comentário.
 **Prova.** Deno: 68 casos nos dois `_test.ts` (NULL→0 confirmado; NULL não confirmado — ausente, sem saldo,
 positivo, falha — fica NULL; CAS `IS NULL`; CAS que recusa o NULL que ganhou saldo). Falsificação com controle
 verde na mesma invocação: 7 sabotagens (loader cego, planejador pula, CAS `neq`, escrita sem confirmação,
-escrita ignora NULL, NULL na anomalia, sem teto) — todas vermelhas.
+escrita ignora NULL, NULL na anomalia, sem teto) + 8 das correções do adversarial (paginação, data, lote
+global, espelho recusado, loader NULL, janela fixa, conta, dia da data) — todas vermelhas.
