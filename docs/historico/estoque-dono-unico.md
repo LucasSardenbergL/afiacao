@@ -530,3 +530,34 @@ Sem achado: membro inativo, `grupo_id` nulo e SKU em 2 grupos (o DDL impede), em
 **No ar (2026-10-10).** PR #2903 mergeado: `3199902ac`. O deploy foi pelo pacote `pendencias:pacote`, montado contra `51eecb8ce`, com os 16 hashes batendo, a edge Active e a resposta "No files were edited.". O sensor `lovable-sensor-edicao` deu SEM_EDICAO (envio às 14:50:30Z). Validação na prod:
 - **Sonda no ledger** (`db/sonda-omie-sync-estoque-v19-2026-10-10.sql`, via `db:aplicar`): o ensaio rodou e o real virou o recibo #306. Resultado: HTTP 200, `v1.9-pendente-po-app-em-unidade-omie`, fonte `80a8ff43…`, **DEPLOY CONFIRMADO**. No `pendencias:deploy`, a `omie-sync-estoque` aparece em ✅ confere.
 - **1º run do cron v1.9** (`reposicao_po_observado_run`, psql-ro): `concluido_em` 15:40:50Z, `versao_edge` v1.9, `pendente_aplicado = true`, `skus_divergentes = 0`. A 2ª testemunha (a observação contra `sea.estoque_pendente_entrada`) fechou na unidade nova.
+
+## Fase 5 — o zero confirmado também resolve o NULL do produto novo (2026-11-21, branch `claude/zeramento-estoque-null`)
+
+**Por quê.** A migration `20261121220100_omie_products_estoque_default_nulo` (#4096) tirou o `DEFAULT 0` de
+`omie_products.estoque`: produto novo nasce NULL ("saldo desconhecido"). O NULL só saía quando a listagem
+padrão (só saldo ≠ 0) trazia o SKU — e o zeramento era cego a NULL em 3 pontos (loader `NOT (estoque = 0)`,
+`planejarCandidatos`, CAS `estoque <> 0`). O SKU novo com zero REAL ficava NULL sem prazo, e o cold start da
+reposição (`estoque_catalogo IS NOT NULL`) não o semeava.
+
+**Medição (prod, 2026-11-21, psql-ro).** 0 linhas NULL (colacor 4.383, oben 3.716 — a migration acabou de
+entrar); SKUs novos 5–38/mês por conta; o zeramento atual faz 0–1 chamada de confirmação por rodada.
+
+**O conserto** (edges `omie-analytics-sync` v1.16, `sync-reprocess` v1.21, `omie-sync-metadados` v1.4 só
+re-empacota): trilha NULL própria em `_shared/zeramento-estoque{,-io}.ts`:
+- loader `carregarEstoqueLocalNulo` com `.is("estoque", null)`; CAS do valor por trilha (`IS NULL` × `<> 0`),
+  sempre com o `updated_at` lido — sem `.or()` no UPDATE (42703);
+- NULL literal fora da listagem é candidato; lixo não-numérico continua fora;
+- **fora do limite de anomalia** (o NULL nunca esteve na listagem, não sinaliza listagem suspeita; os
+  eternamente-desconhecidos não podem travar o zeramento dos congelados) e com **teto de custo próprio de 250**
+  (5 lotes): acima dele a trilha NULL inteira é pulada, nunca "os N primeiros"; os gates de rodada (vazio,
+  incompleta, anomalia) também pulam o NULL;
+- metadata: `zeramento_candidatos` segue só ≠ 0; novos `zeramento_candidatos_nulos` e `zeramento_nulos_pulado`.
+
+**Fora.** `omie-vendas-sync` não empacota o módulo (fan-out do fingerprint não a lista): o comentário de
+`estoque-linhas.ts:14` ("o zeramento pula linha NULL") ficou desatualizado e é corrigido na próxima mudança
+daquela edge — não vale um deploy só de comentário.
+
+**Prova.** Deno: 68 casos nos dois `_test.ts` (NULL→0 confirmado; NULL não confirmado — ausente, sem saldo,
+positivo, falha — fica NULL; CAS `IS NULL`; CAS que recusa o NULL que ganhou saldo). Falsificação com controle
+verde na mesma invocação: 7 sabotagens (loader cego, planejador pula, CAS `neq`, escrita sem confirmação,
+escrita ignora NULL, NULL na anomalia, sem teto) — todas vermelhas.
