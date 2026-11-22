@@ -5,9 +5,10 @@
 // de sales_orders | orders) pro shape SalesOrder que painel/impressão/share consomem.
 import type { Json } from '@/integrations/supabase/types';
 import { exigirColunas } from '@/lib/linha-view';
-import { ilikeContainsPattern, orFilter } from '@/lib/postgrest';
+import { filtroKeysetApos, grupoAnd, grupoOr, ilikeContainsPattern, orFilter } from '@/lib/postgrest';
 import {
   COLUNAS_FEED_EXIGIDAS,
+  type CursorFeed,
   type AfiacaoItemRaw,
   type LinhaOrderFeed,
   type AfiacaoOrderRow,
@@ -25,7 +26,7 @@ const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0
  * Colunas que a listagem baixa — todas as da view MENOS `busca`, que só serve de filtro no servidor.
  * O `select` tipado do supabase-js deriva daqui o tipo da linha (`LinhaOrderFeed`).
  */
-export const COLUNAS_LISTAGEM_FEED =
+const COLUNAS_LISTAGEM_FEED =
   'origin,id,created_at,account,order_number,omie_pedido_id,customer_user_id,customer_name,item_names,item_quantity,status,subtotal,total' as const;
 
 /**
@@ -94,6 +95,46 @@ export function filtroDoPeriodo(periodo: PeriodoFeed, agora: Date = new Date()):
   return orFilter(...clausulas);
 }
 
+/**
+ * Colunas de UMA página: as da listagem + o `total` em TEXTO, só para o cursor da ordem "Maior valor".
+ * O `total` é `numeric` com até 14 casas na prod (18 caracteres): como número JS ele perde precisão,
+ * e um cursor arredondado pularia ou repetiria os pedidos empatados no valor.
+ */
+export const COLUNAS_PAGINA_FEED = `${COLUNAS_LISTAGEM_FEED},total_cursor:total::text` as const;
+
+/** Cursor da última linha lida (texto exato do servidor), ou `null` em página vazia. */
+export function cursorDaPagina(
+  linhas: readonly { origin: string | null; id: string | null; created_at: string | null; total_cursor: string | null }[],
+): CursorFeed | null {
+  const u = linhas[linhas.length - 1];
+  if (!u) return null;
+  // As 3 da ordem estável são exigidas (feedRowDaLinha já lança antes); o total pode faltar.
+  if (!u.origin || !u.id || !u.created_at) throw new Error('order_feed: linha sem a chave do cursor');
+  return { total: u.total_cursor, created_at: u.created_at, origin: u.origin, id: u.id };
+}
+
+/**
+ * Predicado do `.or()` de uma página: o corte do período e/ou o "depois do cursor" (keyset), na
+ * MESMA ordem dos `.order()` da consulta — `[total DESC NULLS LAST,] created_at DESC, origin, id`.
+ * `null` = nada a filtrar. Os dois juntos vão num `and(…)` só: um `.or()` por vez na query.
+ */
+export function filtroDaPaginaFeed(
+  cursor: CursorFeed | null,
+  ordem: OrdemFeed,
+  cortePeriodo: string | null,
+): string | null {
+  if (!cursor) return cortePeriodo;
+  const estavel = [
+    { coluna: 'created_at', ascendente: false, valor: cursor.created_at },
+    { coluna: 'origin', ascendente: true, valor: cursor.origin },
+    { coluna: 'id', ascendente: true, valor: cursor.id },
+  ];
+  const keyset = filtroKeysetApos(
+    ordem === 'valor' ? [{ coluna: 'total', ascendente: false, valor: cursor.total, anulavel: true }, ...estavel] : estavel,
+  );
+  return cortePeriodo ? orFilter(grupoAnd(grupoOr(cortePeriodo), keyset)) : orFilter(keyset);
+}
+
 const ORIGENS_FEED: readonly OrderFeedRow['origin'][] = ['sales', 'afiacao'];
 
 /**
@@ -107,9 +148,9 @@ export function feedRowDaLinha(linha: LinhaOrderFeed): OrderFeedRow {
   return { ...linha, origin };
 }
 
-// Dedupe por (origin, id) preservando a 1ª ocorrência. Defesa contra o caso raro
-// de escrita concorrente durante o fetch paginado por offset (uma inserção entre
-// as páginas pode deslocar e repetir uma linha — duplicata quebraria as keys do React).
+// Dedupe por (origin, id) preservando a 1ª ocorrência. Defesa em profundidade: com o cursor
+// (keyset) uma linha só se repete se ela MUDAR de posição na ordem entre duas páginas (ex.: o
+// `total` editado na ordem "Maior valor") — duplicata quebraria as keys do React.
 export function dedupeFeedRows(rows: OrderFeedRow[]): OrderFeedRow[] {
   const seen = new Set<string>();
   const out: OrderFeedRow[] = [];

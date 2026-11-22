@@ -124,6 +124,61 @@ export function orFilter(...clauses: string[]): string {
   return clauses.join(',');
 }
 
+/** Grupo `and(c1,c2,…)` de uma árvore lógica do PostgREST (cláusulas já montadas por helper). */
+export function grupoAnd(...clauses: string[]): string {
+  return `and(${clauses.join(',')})`;
+}
+
+/** Grupo `or(c1,c2,…)` de uma árvore lógica do PostgREST (cláusulas já montadas por helper). */
+export function grupoOr(...clauses: string[]): string {
+  return `or(${clauses.join(',')})`;
+}
+
+/**
+ * Valor entre aspas para uma cláusula da árvore lógica. Diferente da busca, aqui o valor é uma
+ * CHAVE (cursor) e não pode ser "limpo": tirar um caractere mudaria a chave e o cursor pularia ou
+ * repetiria linhas. Metacaractere do parser (`"` `\` — dentro das aspas, `,` `()` já são literais)
+ * LANÇA: é bug de código, nunca dado do usuário.
+ */
+function valorCitado(valor: string): string {
+  if (/["\\]/.test(valor)) throw new Error('postgrest: valor de cursor com metacaractere do .or()');
+  return `"${valor}"`;
+}
+
+/** Uma coluna da chave do keyset, na direção do `.order()` da consulta. */
+export interface ColunaKeyset {
+  coluna: string;
+  ascendente: boolean;
+  /** Valor da ÚLTIMA linha já lida, como o PostgREST o devolveu em texto (sem perda de precisão). */
+  valor: string | null;
+  /** A coluna aceita NULL e ele vem no FIM (`nullsFirst: false` / padrão do ASC). */
+  anulavel?: boolean;
+}
+
+/**
+ * Predicado "depois desta linha" para paginação por CURSOR (keyset) numa ordem de várias colunas,
+ * com ASC/DESC misto e NULL no fim: `(c1 depois de v1) OR (c1 = v1 AND (c2 depois de v2) …)`.
+ * Devolve UMA cláusula (`or(…)`/`and(…)`/simples) — passe por `.or(orFilter(…))` ou combine com
+ * `grupoAnd`. A última coluna tem de ser única e não nula (o desempate), senão o cursor é ambíguo.
+ *
+ * Por que não offset: excluir uma linha de uma página já lida desloca as seguintes, e a próxima
+ * página começaria uma linha adiante — um pedido some sem sinal (achado do Codex no /sales).
+ */
+export function filtroKeysetApos(chave: readonly ColunaKeyset[]): string {
+  const [col, ...resto] = chave;
+  if (!col) throw new Error('postgrest: keyset sem colunas');
+  if (col.valor === null) {
+    if (!col.anulavel || resto.length === 0) throw new Error(`postgrest: keyset com ${col.coluna} nulo`);
+    // NULL no fim: depois de uma linha nula só vêm as nulas que desempatam depois dela.
+    return grupoAnd(`${col.coluna}.is.null`, filtroKeysetApos(resto));
+  }
+  const v = valorCitado(col.valor);
+  const depois = [`${col.coluna}.${col.ascendente ? 'gt' : 'lt'}.${v}`];
+  if (col.anulavel) depois.push(`${col.coluna}.is.null`);
+  if (resto.length > 0) depois.push(grupoAnd(`${col.coluna}.eq.${v}`, filtroKeysetApos(resto)));
+  return depois.length === 1 ? depois[0] : grupoOr(...depois);
+}
+
 /**
  * Igualdade EXATA sem distinção de caixa, para vários valores numa coluna:
  * `col.ilike."v1",col.ilike."v2"` (ILIKE sem curinga = igualdade case-insensitive; aspas

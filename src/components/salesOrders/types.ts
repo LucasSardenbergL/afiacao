@@ -86,7 +86,22 @@ export type OrderFeedRow = Omit<LinhaOrderFeed, (typeof COLUNAS_FEED_EXIGIDAS)[n
 export interface PaginaFeed {
   rows: OrderFeedRow[];
   count: number | null;
-  offset: number;
+  /**
+   * Chave da ÚLTIMA linha como o servidor a devolveu — a próxima página começa depois dela (keyset).
+   * Guardada na leitura, não derivada de `rows`: o optimistic da exclusão tira linhas da página, e o
+   * cursor não pode andar para trás com ele. `null` = página vazia.
+   */
+  cursor: CursorFeed | null;
+  /** A página veio cheia (FEED_PAGE_SIZE linhas lidas): pode haver mais. Também imune ao optimistic. */
+  cheia: boolean;
+}
+
+/** Cursor do feed: as colunas da ordem (`total` só na ordem "Maior valor"), em texto exato do servidor. */
+export interface CursorFeed {
+  total: string | null;
+  created_at: string;
+  origin: string;
+  id: string;
 }
 
 // Detalhe completo de um pedido, buscado por (origin, id) ao abrir o painel /
@@ -211,7 +226,8 @@ export interface GrupoDia {
 // São Paulo, 21/11 12:00Z · 21/11 01:00Z · 21/11 00:00Z dá os dias 21, 20, 21, e o "só vizinhos"
 // abria o 21 duas vezes (com chave React repetida). Grupos em ordem de dia DESC; "Sem data" no fim.
 // Dentro do grupo a ordem do feed se mantém.
-export function agruparPorDia(pedidos: OrderFeedRow[]): GrupoDia[] {
+/** `hoje` (yyyy-MM-dd local) decide o rótulo "Hoje"/"Ontem"; quem memoiza passa o dia para o memo virar à meia-noite. */
+export function agruparPorDia(pedidos: OrderFeedRow[], hoje?: string): GrupoDia[] {
   const porDia = new Map<string, OrderFeedRow[]>();
   for (const p of pedidos) {
     const dia = diaDoPedido(p.created_at) ?? 'sem-data';
@@ -221,5 +237,5 @@ export function agruparPorDia(pedidos: OrderFeedRow[]): GrupoDia[] {
   }
   return [...porDia.entries()]
     .sort(([a], [b]) => (a === 'sem-data' ? 1 : b === 'sem-data' ? -1 : b.localeCompare(a)))
-    .map(([dia, lista]) => ({ dia, rotulo: dia === 'sem-data' ? 'Sem data' : rotuloDiaPedido(dia), pedidos: lista }));
+    .map(([dia, lista]) => ({ dia, rotulo: dia === 'sem-data' ? 'Sem data' : rotuloDiaPedido(dia, hoje), pedidos: lista }));
 }

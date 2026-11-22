@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { SalesOrderCard } from '../SalesOrderCard';
+import { act, render, screen, fireEvent } from '@testing-library/react';
+import { ATRASO_PREFETCH_MS, SalesOrderCard } from '../SalesOrderCard';
 import type { OrderFeedRow } from '../types';
 
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
@@ -59,7 +59,7 @@ describe('SalesOrderCard (sales)', () => {
     // Rascunho sem PV: excluível → selecionável para o lote.
     const props = setup(order({ status: 'rascunho', omie_pedido_id: null }));
     fireEvent.click(screen.getByRole('checkbox'));
-    expect(props.onSelectChange).toHaveBeenCalledWith(true);
+    expect(props.onSelectChange).toHaveBeenCalledWith(props.order, true);
     expect(props.onNavigate).not.toHaveBeenCalled();
   });
 
@@ -96,7 +96,7 @@ describe('SalesOrderCard (sales)', () => {
     const gatilho = screen.getByRole('button', { name: /Mais ações do pedido 123/ });
     fireEvent.keyDown(gatilho, { key: 'Enter' });
     fireEvent.click(screen.getByRole('menuitem', { name: /Excluir/ }));
-    expect(props.onPedirExclusao).toHaveBeenCalledWith(gatilho);
+    expect(props.onPedirExclusao).toHaveBeenCalledWith(props.order, gatilho);
     // A confirmação NÃO mora na linha (o clique no fundo dela abria o detalhe).
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(props.onOpenDetail).not.toHaveBeenCalled();
@@ -189,5 +189,67 @@ describe('tomDoStatus — o que pede ação', () => {
     expect(tomDoStatus('pronto_entrega')).toBe('warning');
     expect(tomDoStatus('rascunho')).toBe('warning');
     expect(tomDoStatus('importado')).toBe('neutral');
+  });
+});
+
+describe('SalesOrderCard — prefetch só com o ponteiro parado', () => {
+  const linha = () => screen.getByRole('row');
+
+  it(`passar o mouse rápido NÃO aquece; parar ${ATRASO_PREFETCH_MS} ms aquece uma vez, com o pedido`, () => {
+    vi.useFakeTimers();
+    try {
+      const onPrefetch = vi.fn();
+      const props = setup(order(), { onPrefetch });
+      fireEvent.mouseEnter(linha());
+      act(() => { vi.advanceTimersByTime(ATRASO_PREFETCH_MS - 1); });
+      fireEvent.mouseLeave(linha());
+      act(() => { vi.advanceTimersByTime(ATRASO_PREFETCH_MS * 4); });
+      expect(onPrefetch).not.toHaveBeenCalled();
+
+      fireEvent.mouseEnter(linha());
+      act(() => { vi.advanceTimersByTime(ATRASO_PREFETCH_MS); });
+      expect(onPrefetch).toHaveBeenCalledTimes(1);
+      expect(onPrefetch).toHaveBeenCalledWith(props.order);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('foco passando (j/k) também espera; perder o foco cancela; desmontar cancela', () => {
+    vi.useFakeTimers();
+    try {
+      const onPrefetch = vi.fn();
+      const { unmount } = render(
+        <SalesOrderCard
+          order={order()} customerName="ACME Ltda" checked={false} onSelectChange={vi.fn()} onShare={vi.fn()}
+          onPedirExclusao={vi.fn()} onNavigate={vi.fn()} onOpenDetail={vi.fn()} onPrint={vi.fn()} onPrefetch={onPrefetch}
+        />,
+      );
+      fireEvent.focus(linha());
+      fireEvent.blur(linha());
+      act(() => { vi.advanceTimersByTime(ATRASO_PREFETCH_MS * 2); });
+      expect(onPrefetch).not.toHaveBeenCalled();
+      fireEvent.mouseEnter(linha());
+      unmount();
+      act(() => { vi.advanceTimersByTime(ATRASO_PREFETCH_MS * 2); });
+      expect(onPrefetch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sair com o mouse não cancela o prefetch que o foco do teclado ainda sustenta', () => {
+    vi.useFakeTimers();
+    try {
+      const onPrefetch = vi.fn();
+      setup(order(), { onPrefetch });
+      fireEvent.focus(linha());
+      fireEvent.mouseEnter(linha());
+      fireEvent.mouseLeave(linha());
+      act(() => { vi.advanceTimersByTime(ATRASO_PREFETCH_MS); });
+      expect(onPrefetch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

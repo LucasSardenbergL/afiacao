@@ -2,7 +2,7 @@
 // Densa e escaneável: no desktop é uma linha de tabela (cliente · PV · empresa · status · total ·
 // ações); no celular, um card de 2 linhas. UM só markup — a grade muda de forma por breakpoint
 // (grid-template-areas), então nenhum dado aparece duplicado no DOM.
-import { useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import {
@@ -55,25 +55,36 @@ function previaProdutos(nomes: readonly string[]): string | null {
   return limpos.length > 2 ? `${primeiros} +${limpos.length - 2}` : primeiros;
 }
 
+/**
+ * Permanência do ponteiro (ou do foco) antes de aquecer o cache do detalhe: varrer a lista com o
+ * mouse não dispara as leituras de pedido, payload, perfil e descontos de cada linha que cruza.
+ */
+export const ATRASO_PREFETCH_MS = 250;
+
+// Os callbacks recebem o PEDIDO (e não são closures por linha): a página passa as MESMAS funções a
+// todas as linhas, e o `memo` só re-renderiza a linha cujas props de dado mudaram (ex.: `checked`).
 interface SalesOrderCardProps {
   order: OrderFeedRow;
   customerName: string;
   checked: boolean;
-  onSelectChange: (checked: boolean) => void;
-  onShare: () => void;
+  onSelectChange: (order: OrderFeedRow, checked: boolean) => void;
+  onShare: (order: OrderFeedRow) => void;
   /**
    * Pede a exclusão: a CONFIRMAÇÃO mora na página (um diálogo só, fora das linhas — dentro da linha
    * o clique no fundo do diálogo caía no onClick dela e abria o detalhe). `gatilho` recebe o foco
    * de volta quando o diálogo fecha.
    */
-  onPedirExclusao: (gatilho: HTMLElement | null) => void;
+  onPedirExclusao: (order: OrderFeedRow, gatilho: HTMLElement | null) => void;
   /** Exclusão deste pedido em voo: o "Excluir…" fica travado e diz "Excluindo…". */
   excluindo?: boolean;
   onNavigate: (path: string) => void;
-  onOpenDetail: () => void;
-  onPrint: () => void;
-  /** Aquece o cache do detalhe (hover) — imprimir/abrir ficam instantâneos. */
-  onPrefetch?: () => void;
+  onOpenDetail: (order: OrderFeedRow, chave: string) => void;
+  onPrint: (order: OrderFeedRow) => void;
+  /**
+   * Aquece o cache do detalhe — imprimir/abrir ficam instantâneos. Só depois de ATRASO_PREFETCH_MS
+   * com o ponteiro (ou o foco) parado na linha; sair antes cancela.
+   */
+  onPrefetch?: (order: OrderFeedRow) => void;
   /**
    * Filtro novo a caminho e esta linha é do filtro ANTERIOR (keepPreviousData): nada de selecionar,
    * abrir ou agir sobre ela até a lista certa chegar. A seleção já feita fica como está.
@@ -85,13 +96,13 @@ interface SalesOrderCardProps {
    * Roving tabindex: só UMA linha da lista fica no Tab (a ativa); as outras se alcançam por j/k ou ↑/↓.
    */
   focavel?: boolean;
-  /** A linha recebeu foco (clique, Tab, j/k): vira a linha ativa da página. */
-  onFocusLinha?: () => void;
+  /** A linha recebeu foco (clique, Tab, j/k): vira a linha ativa da página (pela chave). */
+  onFocusLinha?: (chave: string) => void;
   /** ↑/↓ com o foco na linha: move para a vizinha (o mesmo que k/j). */
   onMover?: (delta: 1 | -1) => void;
 }
 
-export function SalesOrderCard({
+export const SalesOrderCard = memo(function SalesOrderCard({
   order,
   customerName,
   checked,
@@ -110,6 +121,31 @@ export function SalesOrderCard({
   onMover,
 }: SalesOrderCardProps) {
   const gatilhoRef = useRef<HTMLButtonElement>(null);
+  const chave = chaveDaLinha(order);
+  // Prefetch adiado: um timer por linha, que só cai quando NEM o ponteiro NEM o foco seguem na linha
+  // (sair com o mouse não cancela o que o foco do teclado ainda sustenta — Codex) e ao desmontar.
+  const timerPrefetch = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const presenca = useRef({ ponteiro: false, foco: false });
+  const sair = (modo: 'ponteiro' | 'foco') => {
+    presenca.current[modo] = false;
+    if (presenca.current.ponteiro || presenca.current.foco) return;
+    if (timerPrefetch.current !== null) clearTimeout(timerPrefetch.current);
+    timerPrefetch.current = null;
+  };
+  const entrar = (modo: 'ponteiro' | 'foco') => {
+    presenca.current[modo] = true;
+    if (!onPrefetch || timerPrefetch.current !== null) return;
+    timerPrefetch.current = setTimeout(() => {
+      timerPrefetch.current = null;
+      onPrefetch(order);
+    }, ATRASO_PREFETCH_MS);
+  };
+  useEffect(() => {
+    const timer = timerPrefetch;
+    return () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+    };
+  }, []);
   const isAfiacao = order.origin === 'afiacao';
   // A seleção só serve à exclusão em lote: só entra quem a edge pode excluir.
   const exclusao = podeExcluirPedido(order);
@@ -133,7 +169,7 @@ export function SalesOrderCard({
     if (suspenso) return;
     track('sales.pedido_aberto', { origem });
     if (isAfiacao) onNavigate(`/orders/${order.id}`);
-    else onOpenDetail();
+    else onOpenDetail(order, chave);
   };
   const editar = (via: 'hover' | 'menu') => {
     rastrearAcao('editar', via);
@@ -141,11 +177,11 @@ export function SalesOrderCard({
   };
   const compartilhar = (via: 'hover' | 'menu') => {
     rastrearAcao('compartilhar', via);
-    onShare();
+    onShare(order);
   };
   const imprimir = (via: 'hover' | 'menu') => {
     rastrearAcao('imprimir', via);
-    onPrint();
+    onPrint(order);
   };
   const parar = (e: React.SyntheticEvent) => e.stopPropagation();
 
@@ -153,7 +189,7 @@ export function SalesOrderCard({
     <div
       role="row"
       tabIndex={focavel ? 0 : -1}
-      data-linha-pedido={chaveDaLinha(order)}
+      data-linha-pedido={chave}
       aria-label={`${nomeAcessivel}, ${status.label}, ${formatPrecoOuAusente(Number(order.total))}`}
       className={cn(
         GRADE_LINHA_PEDIDO,
@@ -165,11 +201,16 @@ export function SalesOrderCard({
         checked && 'bg-muted/60 hover:bg-muted/60',
       )}
       onClick={() => abrir('linha')}
-      onMouseEnter={onPrefetch}
+      onMouseEnter={() => entrar('ponteiro')}
+      onMouseLeave={() => sair('ponteiro')}
       onFocus={(e) => {
         // Foco num controle de DENTRO da linha também a torna ativa (Tab até o "⋯" conta).
-        onFocusLinha?.();
-        if (e.target === e.currentTarget) onPrefetch?.();
+        onFocusLinha?.(chave);
+        if (e.target === e.currentTarget) entrar('foco');
+      }}
+      onBlur={(e) => {
+        // j/k passando rápido pela linha não aquece; o foco indo para um controle de dentro, sim.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) sair('foco');
       }}
       onKeyDown={(e) => {
         // Só quando o foco está NA linha (Enter num botão interno é do botão), sem modificador
@@ -191,7 +232,7 @@ export function SalesOrderCard({
             checked={checked}
             disabled={suspenso}
             onClick={parar}
-            onCheckedChange={(v) => onSelectChange(!!v)}
+            onCheckedChange={(v) => onSelectChange(order, !!v)}
             aria-label={`Selecionar ${nomeAcessivel}`}
           />
         )}
@@ -298,7 +339,7 @@ export function SalesOrderCard({
                   <DropdownMenuItem
                     onSelect={() => {
                       rastrearAcao('excluir', 'menu');
-                      onPedirExclusao(gatilhoRef.current);
+                      onPedirExclusao(order, gatilhoRef.current);
                     }}
                     disabled={excluindo}
                     className="text-status-error focus:text-status-error"
@@ -322,4 +363,4 @@ export function SalesOrderCard({
 
     </div>
   );
-}
+});

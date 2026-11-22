@@ -23,6 +23,9 @@ import {
   eqInt,
   eqText,
   orFilter,
+  filtroKeysetApos,
+  grupoAnd,
+  grupoOr,
   imatchTokensSemAcento,
   ilikeExatoOr,
   tokensDeBusca,
@@ -706,5 +709,42 @@ describe('ilikeExatoOr — igualdade sem caixa (código de cor do 1 toque)', () 
   it('valor com metacaractere do .or()/LIKE é DESCARTADO, não limpo (limpar casaria outra cor)', () => {
     expect(ilikeExatoOr('cor_id', ['34%', '3_6J', 'a,b', 'x)', '*'])).toBe('');
     expect(ilikeExatoOr('cor_id', ['34%', '346J'])).toBe('cor_id.ilike."346J"');
+  });
+});
+
+describe('filtroKeysetApos (paginação por cursor)', () => {
+  const estavel = [
+    { coluna: 'created_at', ascendente: false, valor: '2026-11-06T12:00:00+00:00' },
+    { coluna: 'origin', ascendente: true, valor: 'sales' },
+    { coluna: 'id', ascendente: true, valor: 'a9a702bd-e72b-4232-8560-4c7805fd51c1' },
+  ];
+
+  it('DESC/ASC misto: cada nível é "depois" na própria direção, empatando nos anteriores', () => {
+    expect(filtroKeysetApos(estavel)).toBe(
+      'or(created_at.lt."2026-11-06T12:00:00+00:00",and(created_at.eq."2026-11-06T12:00:00+00:00",'
+        + 'or(origin.gt."sales",and(origin.eq."sales",id.gt."a9a702bd-e72b-4232-8560-4c7805fd51c1"))))',
+    );
+  });
+
+  it('coluna anulável com NULL no fim: valor presente inclui os nulos; cursor nulo só segue entre nulos', () => {
+    const comTotal = [{ coluna: 'total', ascendente: false, valor: '125.12345678901234', anulavel: true }, ...estavel.slice(2)];
+    expect(filtroKeysetApos(comTotal)).toBe(
+      'or(total.lt."125.12345678901234",total.is.null,and(total.eq."125.12345678901234",id.gt."a9a702bd-e72b-4232-8560-4c7805fd51c1"))',
+    );
+    expect(filtroKeysetApos([{ ...comTotal[0], valor: null }, ...comTotal.slice(1)])).toBe(
+      'and(total.is.null,id.gt."a9a702bd-e72b-4232-8560-4c7805fd51c1")',
+    );
+  });
+
+  it('chave sem desempate, nulo não anulável ou metacaractere LANÇAM (nunca "limpa" a chave)', () => {
+    expect(() => filtroKeysetApos([])).toThrow('keyset sem colunas');
+    expect(() => filtroKeysetApos([{ coluna: 'id', ascendente: true, valor: null }])).toThrow('keyset com id nulo');
+    expect(() => filtroKeysetApos([{ coluna: 'total', ascendente: false, valor: null, anulavel: true }])).toThrow('keyset com total nulo');
+    expect(() => filtroKeysetApos([{ coluna: 'id', ascendente: true, valor: 'a"b' }])).toThrow('valor de cursor com metacaractere');
+    expect(() => filtroKeysetApos([{ coluna: 'id', ascendente: true, valor: 'a\\b' }])).toThrow('valor de cursor com metacaractere');
+  });
+
+  it('grupos and/or compõem a árvore lógica', () => {
+    expect(grupoAnd(grupoOr('a.eq.1', 'b.eq.2'), 'c.eq.3')).toBe('and(or(a.eq.1,b.eq.2),c.eq.3)');
   });
 });

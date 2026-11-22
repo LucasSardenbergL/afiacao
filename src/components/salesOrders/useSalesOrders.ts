@@ -1,7 +1,7 @@
 // Lógica da listagem de pedidos de venda — sobre a view order_feed (read model único).
 //
 // A view tem ~32 k pedidos. A listagem abre com uma página de FEED_PAGE_SIZE (ordem estável:
-// created_at desc, origin, id) e carrega mais ao rolar; aba de empresa e busca vão como filtro
+// created_at desc, origin, id) e carrega mais ao rolar, por CURSOR (keyset) — não por offset; aba de empresa e busca vão como filtro
 // pro servidor, então a busca alcança TODOS os pedidos. Antes a tela drenava 5 × 1.000 linhas a
 // cada abertura (1,19 MB) e filtrava em JS — a busca não achava pedido fora desse recorte
 // (plano v4, lote 8 — C3). A busca compara com a coluna `busca` da view (migration 20261101221452).
@@ -17,11 +17,12 @@ import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import {
   type Account,
+  type CursorFeed,
   type OrderFeedRow,
   type PaginaFeed,
 } from './types';
 import {
-  COLUNAS_LISTAGEM_FEED, dedupeFeedRows, ehFiltroStatus, ehOrdem, ehPeriodo, feedRowDaLinha, filtroDoPeriodo,
+  COLUNAS_PAGINA_FEED, cursorDaPagina, dedupeFeedRows, ehFiltroStatus, ehOrdem, ehPeriodo, feedRowDaLinha, filtroDaPaginaFeed, filtroDoPeriodo,
   padraoBuscaFeed, STATUS_DO_FILTRO, type FiltroStatusFeed, type OrdemFeed, type PeriodoFeed,
 } from './feed';
 import { track } from '@/lib/analytics';
@@ -109,31 +110,40 @@ export function useSalesOrders() {
     staleTime: 60_000,
     // Trocar a busca mantém a lista anterior na tela até a nova chegar (sem piscar o skeleton).
     placeholderData: keepPreviousData,
-    initialPageParam: 0,
+    initialPageParam: null as CursorFeed | null,
     queryFn: async ({ pageParam }): Promise<PaginaFeed> => {
       // count só na 1ª página e só sem busca: com busca ele seria um 2º scan dos ~32 k na mesma query.
       let query = supabase
         .from('order_feed')
-        .select(COLUNAS_LISTAGEM_FEED, { count: pageParam === 0 && !padrao ? 'exact' : undefined });
+        .select(COLUNAS_PAGINA_FEED, { count: pageParam === null && !padrao ? 'exact' : undefined });
       if (accountFilter !== 'all') query = query.eq('account', accountFilter);
       if (clienteFiltro) query = query.eq('customer_user_id', clienteFiltro);
       if (padrao) query = query.ilike('busca', padrao);
       if (statusFilter === 'rascunhos') query = query.eq('status', 'rascunho');
       else if (statusFilter !== 'todos') query = query.in('status', [...STATUS_DO_FILTRO[statusFilter]]);
-      if (cortePeriodo) query = query.or(cortePeriodo);
+      // Corte do período e/ou "depois da última linha lida" (keyset) — um `.or()` só.
+      const predicado = filtroDaPaginaFeed(pageParam, ordem, cortePeriodo);
+      if (predicado) query = query.or(predicado);
       // "Maior valor": total ausente (null) vai pro FIM — nunca é lido como zero nem sobe na frente.
       if (ordem === 'valor') query = query.order('total', { ascending: false, nullsFirst: false });
       const { data, error, count } = await query
         .order('created_at', { ascending: false })
         .order('origin', { ascending: true })
         .order('id', { ascending: true })
-        .range(pageParam, pageParam + FEED_PAGE_SIZE - 1);
+        .range(0, FEED_PAGE_SIZE - 1);
       if (error) throw error;
-      return { rows: (data ?? []).map(feedRowDaLinha), count: count ?? null, offset: pageParam };
+      const linhas = data ?? [];
+      return {
+        rows: linhas.map(({ total_cursor: _cursor, ...linha }) => feedRowDaLinha(linha)),
+        count: count ?? null,
+        cursor: cursorDaPagina(linhas),
+        cheia: linhas.length === FEED_PAGE_SIZE,
+      };
     },
-    // Página parcial = acabou. Offset com ordem estável; um pedido novo entre duas páginas desloca
-    // uma linha, e o dedupe abaixo tira a duplicata.
-    getNextPageParam: (ultima) => (ultima.rows.length < FEED_PAGE_SIZE ? undefined : ultima.offset + FEED_PAGE_SIZE),
+    // Cursor (keyset), não offset: excluir um pedido de uma página já lida deslocaria as seguintes e
+    // a próxima começaria uma linha adiante — o pedido sumiria (Codex). Página parcial = acabou; o
+    // `cheia`/`cursor` vêm da LEITURA, então o optimistic da exclusão não encerra nem recua a rolagem.
+    getNextPageParam: (ultima) => (ultima.cheia ? ultima.cursor : undefined),
   });
 
   const orders = useMemo(
@@ -204,9 +214,20 @@ export function useSalesOrders() {
   // Aquece o cache do detalhe (e do desconto dos itens) no hover (catch silencioso — é só
   // otimização). Também mitiga o popup-blocker: com cache quente, o window.open da impressão
   // e do WhatsApp roda imediato no clique (dentro da user activation).
+  // Quem adia é a linha (SalesOrderCard: só após ATRASO_PREFETCH_MS de permanência); aqui, o que está
+  // fresco em cache (dentro do staleTime de 60 s) ou já a caminho não sai de novo. Dado VENCIDO sai:
+  // é o aquecimento que deixa o clique de imprimir/compartilhar instantâneo (popup-blocker).
+  const jaAquecido = (queryKey: readonly unknown[]) => {
+    const estado = queryClient.getQueryState(queryKey);
+    if (!estado) return false;
+    if (estado.fetchStatus === 'fetching') return true;
+    return estado.data !== undefined && !estado.isInvalidated && Date.now() - estado.dataUpdatedAt < 60_000;
+  };
   const prefetchDetail = (row: OrderFeedRow) => {
-    void getDetail(row).catch(() => {});
-    void getDescontosItens(row).catch(() => {});
+    if (!jaAquecido(orderDetailQueryKey(user?.id, row.origin, row.id))) void getDetail(row).catch(() => {});
+    if (row.origin === 'sales' && !jaAquecido(descontosItensQueryKey(user?.id, row.id))) {
+      void getDescontosItens(row).catch(() => {});
+    }
   };
 
   // Imprime o cupom (mesmo layout de /sales/print). Espera o detalhe completo
@@ -444,6 +465,10 @@ export function useSalesOrders() {
     refetch: feedQuery.refetch,
     // Busca/aba nova a caminho com a lista anterior na tela (placeholderData): seleção e ações suspensas.
     buscando: emTransicao,
+    // Qualquer leitura do feed em voo (inclusive a reconciliação da exclusão): a rolagem espera. O
+    // `fetchNextPage` cancelaria o refetch e anexaria a próxima página pelo cursor VELHO — um pedido
+    // cuja exclusão falhou ficaria fora da lista (Codex, PR C).
+    atualizando: feedQuery.isFetching,
     hasNextPage: feedQuery.hasNextPage,
     fetchNextPage: feedQuery.fetchNextPage,
     isFetchingNextPage: feedQuery.isFetchingNextPage,

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { Button } from '@/components/ui/button';
 import { ShoppingCart, Trash2, ChevronLeft, Loader2, AlertTriangle, WifiOff, Plus, X as XIcon } from 'lucide-react';
@@ -10,7 +10,8 @@ import { cn } from '@/lib/utils';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
-import { agruparPorDia, chaveDaLinha, decodeHtml, EFEITO_DA_EXCLUSAO, rotuloEmpresa, type OrderFeedRow } from '@/components/salesOrders/types';
+import { agruparPorDia, chaveDaLinha, decodeHtml, EFEITO_DA_EXCLUSAO, type OrderFeedRow } from '@/components/salesOrders/types';
+import { ALCANCE_VAZIO, alcanceDaExclusao, type AlcanceExclusao } from '@/components/salesOrders/alcance-exclusao';
 import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
@@ -34,6 +35,7 @@ const SalesOrders = () => {
     dataUpdatedAt,
     refetch,
     buscando,
+    atualizando,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
@@ -69,7 +71,7 @@ const SalesOrders = () => {
   // "Tentar de novo" decide (sem ele, o sentinela visível re-dispararia em laço).
   const sentinelaRef = useInfiniteScroll(
     () => fetchNextPage(),
-    !!hasNextPage && !isFetchingNextPage && !nextPageError,
+    !!hasNextPage && !isFetchingNextPage && !atualizando && !nextPageError,
   );
 
   // Pedido selecionado na listagem → o painel busca o detalhe completo por id.
@@ -106,6 +108,48 @@ const SalesOrders = () => {
     bloqueado: !!detailRow || !!pedidoAExcluir || confirmandoLote,
   });
 
+  // Ações das linhas: as MESMAS funções para todas (o hook devolve funções novas a cada render, então
+  // a ref guarda a última). Com elas estáveis, o `memo` do SalesOrderCard re-renderiza só a linha
+  // que mudou — marcar um checkbox em 1.000 linhas renderizava as 1.000.
+  const atual = useRef({ toggleSelect, handleShareOrder, printOrder, prefetchDetail, navigate });
+  atual.current = { toggleSelect, handleShareOrder, printOrder, prefetchDetail, navigate };
+  const acoesDaLinha = useMemo(() => ({
+    onNavigate: (path: string) => atual.current.navigate(path),
+    onSelectChange: (order: OrderFeedRow, v: boolean) => atual.current.toggleSelect(order, v),
+    onShare: (order: OrderFeedRow) => void atual.current.handleShareOrder(order),
+    onPrint: (order: OrderFeedRow) => void atual.current.printOrder(order),
+    onPrefetch: (order: OrderFeedRow) => atual.current.prefetchDetail(order),
+    onPedirExclusao: (order: OrderFeedRow, gatilho: HTMLElement | null) => {
+      gatilhoExclusaoRef.current = gatilho;
+      setPedidoAExcluir(order);
+    },
+    onOpenDetail: (order: OrderFeedRow, chave: string) => {
+      origemDoDetalheRef.current = chave;
+      setDetailRow(order);
+    },
+  }), []);
+
+  // "Maior valor" desliga os grupos por dia: agrupar reordenaria por data e quebraria a ordem
+  // prometida. Aí a linha mostra a data no lugar da hora. Memo: só a lista muda os grupos.
+  const porValor = ordem === 'valor';
+  // O dia de HOJE entra na dependência: o rótulo "Hoje"/"Ontem" vira à meia-noite mesmo com o cache igual.
+  const hoje = format(new Date(), 'yyyy-MM-dd');
+  const grupos = useMemo(
+    () => (porValor ? [{ dia: 'valor', rotulo: '', pedidos: orders }] : agruparPorDia(orders, hoje)),
+    [porValor, orders, hoje],
+  );
+  const chaves = useMemo(() => new Set(orders.map(chaveDaLinha)), [orders]);
+  // Alcance do lote só com o diálogo ABERTO (não a cada render da lista) — e vivo enquanto aberto: a
+  // busca com debounce pode assentar depois de abrir, e o aviso "fora da lista" tem de acompanhar
+  // (Codex, PR C). O último fica guardado para o diálogo não piscar "0 pedidos" ao fechar.
+  const alcanceAberto = useMemo(
+    // Na transição de filtro as linhas na tela são do filtro ANTERIOR: não contam como "na tela".
+    () => (confirmandoLote ? alcanceDaExclusao(linhasSelecionadas, buscando ? [] : orders) : null),
+    [confirmandoLote, linhasSelecionadas, buscando, orders],
+  );
+  const ultimoAlcance = useRef<AlcanceExclusao>(ALCANCE_VAZIO);
+  if (alcanceAberto) ultimoAlcance.current = alcanceAberto;
+
   if (authLoading || loading) {
     return (
       <PageSkeleton variant="list" />
@@ -129,18 +173,11 @@ const SalesOrders = () => {
     );
   }
 
-  // "Maior valor" desliga os grupos por dia: agrupar reordenaria por data e quebraria a ordem
-  // prometida. Aí a linha mostra a data no lugar da hora.
-  const porValor = ordem === 'valor';
-  const grupos = porValor
-    ? [{ dia: 'valor', rotulo: '', pedidos: orders }]
-    : agruparPorDia(orders);
-  // Na transição de filtro as linhas na tela são do filtro ANTERIOR: não contam como "na tela".
-  const alcance = alcanceDaExclusao(linhasSelecionadas, buscando ? [] : orders);
+  const alcance = alcanceAberto ?? ultimoAlcance.current;
   const horaDosDados = dataUpdatedAt ? format(new Date(dataUpdatedAt), 'HH:mm') : null;
   // Roving tabindex: a linha ativa fica no Tab; se ela saiu da lista (filtro), a primeira assume.
-  const chaves = grupos.flatMap((g) => g.pedidos.map(chaveDaLinha));
-  const chaveFocavel = linhaAtiva && chaves.includes(linhaAtiva) ? linhaAtiva : chaves[0] ?? null;
+  const primeira = grupos[0]?.pedidos[0];
+  const chaveFocavel = linhaAtiva && chaves.has(linhaAtiva) ? linhaAtiva : primeira ? chaveDaLinha(primeira) : null;
 
   return (
     <div className="max-w-6xl mx-auto space-y-4 pb-24">
@@ -277,24 +314,18 @@ const SalesOrders = () => {
                         customerName={decodeHtml(order.customer_name || 'Cliente')}
                         // A seleção é por id de sales_orders: uma afiação com o mesmo id não acende junto.
                         checked={order.origin === 'sales' && selectedIds.has(order.id)}
-                        onSelectChange={(v) => toggleSelect(order, v)}
-                        onShare={() => handleShareOrder(order)}
-                        onPedirExclusao={(gatilho) => {
-                          gatilhoExclusaoRef.current = gatilho;
-                          setPedidoAExcluir(order);
-                        }}
+                        onSelectChange={acoesDaLinha.onSelectChange}
+                        onShare={acoesDaLinha.onShare}
+                        onPedirExclusao={acoesDaLinha.onPedirExclusao}
                         excluindo={order.origin === 'sales' && excluindoIds.has(order.id)}
                         suspenso={buscando}
                         mostrarData={porValor}
-                        onNavigate={navigate}
-                        onOpenDetail={() => {
-                          origemDoDetalheRef.current = chave;
-                          setDetailRow(order);
-                        }}
-                        onPrint={() => printOrder(order)}
-                        onPrefetch={() => prefetchDetail(order)}
+                        onNavigate={acoesDaLinha.onNavigate}
+                        onOpenDetail={acoesDaLinha.onOpenDetail}
+                        onPrint={acoesDaLinha.onPrint}
+                        onPrefetch={acoesDaLinha.onPrefetch}
                         focavel={chave === chaveFocavel}
-                        onFocusLinha={() => setLinhaAtiva(chave)}
+                        onFocusLinha={setLinhaAtiva}
                         onMover={mover}
                       />
                     );
@@ -471,20 +502,6 @@ const SalesOrders = () => {
 
 function plural(n: number, um: string, varios: string): string {
   return `${n.toLocaleString('pt-BR')} ${n === 1 ? um : varios}`;
-}
-
-function alcanceDaExclusao(selecionadas: OrderFeedRow[], naTela: OrderFeedRow[]) {
-  const visiveis = new Set(naTela.filter((o) => o.origin === 'sales').map((o) => o.id));
-  const contagem = new Map<string, number>();
-  for (const o of selecionadas) {
-    const empresa = rotuloEmpresa(o.account);
-    contagem.set(empresa, (contagem.get(empresa) ?? 0) + 1);
-  }
-  return {
-    total: selecionadas.length,
-    porEmpresa: [...contagem.entries()],
-    foraDaTela: selecionadas.filter((o) => !visiveis.has(o.id)).length,
-  };
 }
 
 // O total só vem sem busca (com busca contaria os ~32 k de novo — ver useSalesOrders).

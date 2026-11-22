@@ -22,16 +22,48 @@ type Pedido = {
 const fake = vi.hoisted(() => ({ linhas: [] as Linha[], pedidos: [] as Pedido[], segurar: null as Promise<void> | null }));
 const analytics = vi.hoisted(() => ({ track: vi.fn() }));
 
-// Avalia o predicado do `.or()` como o PostgREST avalia (só os operadores que a listagem usa).
+// Avalia o predicado do `.or()` como o PostgREST avalia a árvore lógica: lista separada por vírgula
+// no nível de cima, grupos `and(…)`/`or(…)` aninhados, valor opcionalmente entre aspas. Só os
+// operadores que a listagem usa; o resto LANÇA (o fake nunca aprova o que não entende).
+function dividirNoTopo(s: string): string[] {
+  const partes: string[] = [];
+  let prof = 0, aspas = false, ini = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"') aspas = !aspas;
+    else if (!aspas && c === '(') prof++;
+    else if (!aspas && c === ')') prof--;
+    else if (!aspas && prof === 0 && c === ',') { partes.push(s.slice(ini, i)); ini = i + 1; }
+  }
+  partes.push(s.slice(ini));
+  return partes;
+}
+function comparar(col: string, a: unknown, b: string): number {
+  if (col === 'created_at') return Date.parse(String(a)) - Date.parse(b);
+  if (col === 'total') return Number(a) - Number(b);
+  const x = String(a);
+  return x < b ? -1 : x > b ? 1 : 0;
+}
+function casaNo(no: string, l: Linha): boolean {
+  const grupo = /^(and|or)\((.*)\)$/.exec(no);
+  if (grupo) {
+    const filhos = dividirNoTopo(grupo[2]);
+    return grupo[1] === 'and' ? filhos.every((f) => casaNo(f, l)) : filhos.some((f) => casaNo(f, l));
+  }
+  const [col, op, ...resto] = no.split('.');
+  const v = resto.join('.').replace(/^"(.*)"$/, '$1');
+  const atual = l[col as keyof Linha];
+  if (op === 'is' && v === 'null') return atual === null || atual === undefined;
+  if (atual === null || atual === undefined) return false; // comparação com NULL nunca casa (SQL)
+  const d = comparar(col, atual, v);
+  if (op === 'gte') return d >= 0;
+  if (op === 'eq') return d === 0;
+  if (op === 'lt') return d < 0;
+  if (op === 'gt') return d > 0;
+  throw new Error(`operador do .or() não previsto no fake: ${op}`);
+}
 function casaOr(or: string, l: Linha): boolean {
-  return or.split(',').some((c) => {
-    const [col, op, ...resto] = c.split('.');
-    const v = resto.join('.');
-    const t = Date.parse(String(l[col as keyof Linha]));
-    if (op === 'gte') return t >= Date.parse(v);
-    if (op === 'eq') return t === Date.parse(v);
-    throw new Error(`operador do .or() não previsto no fake: ${op}`);
-  });
+  return dividirNoTopo(or).some((c) => casaNo(c, l));
 }
 
 // O mesmo que a view faz em SQL: entidades HTML do nome, '\n' entre campos, total nos 2 formatos,
@@ -75,7 +107,12 @@ vi.mock('@/integrations/supabase/client', () => {
         rs = [...rs].sort((x, y) => (porValor ? y.total - x.total : 0) || y.created_at.localeCompare(x.created_at) || x.origin.localeCompare(y.origin) || x.id.localeCompare(y.id));
         const [a, z] = p.range ?? [0, 999];
         const cols = (p.select ?? '').split(',');
-        const data = rs.slice(a, z + 1).map((l) => Object.fromEntries(cols.map((c) => [c, l[c as keyof Linha]])));
+        // `alias:coluna::text` (o cursor do total) sai como o PostgREST o devolve: texto exato.
+        const valor = (l: Linha, c: string) => {
+          const m = /^(\w+):(\w+)::text$/.exec(c);
+          return m ? [m[1], String(l[m[2] as keyof Linha])] : [c, l[c as keyof Linha]];
+        };
+        const data = rs.slice(a, z + 1).map((l) => Object.fromEntries(cols.map((c) => valor(l, c))));
         return { data, error: null, count: p.count === 'exact' ? rs.length : null };
   };
   return {
@@ -174,9 +211,97 @@ describe('useSalesOrders — abertura', () => {
     fake.pedidos = [];
     await act(() => result.current.fetchNextPage());
     await waitFor(() => expect(result.current.orders).toHaveLength(FEED_PAGE_SIZE + 7));
-    expect(pedidosDoFeed()[0].range).toEqual([FEED_PAGE_SIZE, 2 * FEED_PAGE_SIZE - 1]);
+    // cursor, não offset: a 2ª página pede de novo as 50 primeiras DEPOIS da última linha lida
+    expect(pedidosDoFeed()[0].range).toEqual([0, FEED_PAGE_SIZE - 1]);
+    expect(pedidosDoFeed()[0].or).toBeTruthy();
     expect(pedidosDoFeed()[0].count).toBeUndefined();
     expect(result.current.hasNextPage).toBe(false);
+  });
+});
+
+// Ordem que a view aplica, escrita à parte do fake (comparação de string por unidade de código).
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+function ordenar(ls: Linha[], porValor = false): string[] {
+  return [...ls]
+    .sort((x, y) => (porValor ? y.total - x.total : 0) || -cmp(x.created_at, y.created_at) || cmp(x.origin, y.origin) || cmp(x.id, y.id))
+    .map((l) => l.id);
+}
+async function rolarAte(r: ReturnType<typeof montar>['result'], n: number) {
+  while (r.current.orders.length < n && r.current.hasNextPage) {
+    const antes = r.current.orders.length;
+    await act(() => r.current.fetchNextPage());
+    await waitFor(() => expect(r.current.isFetchingNextPage).toBe(false));
+    if (r.current.orders.length === antes) break;
+  }
+}
+
+describe('useSalesOrders — paginação por cursor (keyset)', () => {
+  it('pedido excluído no servidor numa página já lida NÃO faz o seguinte sumir na próxima', async () => {
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const esperado = ordenar(fake.linhas).slice(0, 2 * FEED_PAGE_SIZE + 1);
+    // Outra pessoa exclui o 10º pedido da 1ª página (já na tela): com offset, o antigo 51º viraria
+    // o 50º e a 2ª página começaria no 52º — o 51º sumiria sem sinal.
+    const excluido = esperado[9];
+    fake.linhas = fake.linhas.filter((l) => l.id !== excluido);
+    await rolarAte(result, 2 * FEED_PAGE_SIZE);
+    const ids = result.current.orders.map((o) => o.id);
+    expect(ids).toContain(esperado[FEED_PAGE_SIZE]); // o antigo 51º
+    expect(ids).toEqual(esperado.slice(0, 2 * FEED_PAGE_SIZE));
+  });
+
+  it('created_at empatado entre a 50ª e a 51ª linha: desempata por origin/id sem pular nem repetir', async () => {
+    // 12 pedidos no MESMO instante (a data-pura 12:00Z do Omie — 15 empatados na prod), dos dois
+    // origins, atravessando a fronteira da página.
+    const mesmo = fake.linhas[44].created_at;
+    fake.linhas = fake.linhas.map((l, i) =>
+      i >= 44 && i < 56 ? { ...l, created_at: mesmo, origin: i % 3 === 0 ? 'afiacao' : 'sales' } : l,
+    );
+    const esperado = ordenar(fake.linhas).slice(0, 3 * FEED_PAGE_SIZE);
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await rolarAte(result, 3 * FEED_PAGE_SIZE);
+    expect(result.current.orders.map((o) => o.id)).toEqual(esperado);
+  });
+
+  it('"Maior valor": o cursor muda de eixo (total) e pagina certo com valor empatado na fronteira', async () => {
+    // Valores em degraus de 30 pedidos: TODA fronteira de página cai no meio de um empate de total,
+    // e dentro do degrau o created_at desempata.
+    fake.linhas = fake.linhas.slice(0, 400).map((l, i) => ({ ...l, total: 1000 - Math.floor(i / 30) * 10.25 }));
+    fake.linhas.reverse(); // a ordem de inserção não ajuda o fake
+    const esperado = ordenar(fake.linhas, true).slice(0, 4 * FEED_PAGE_SIZE);
+    const { result } = montar('/sales?ordem=valor');
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await rolarAte(result, 4 * FEED_PAGE_SIZE);
+    expect(result.current.orders.map((o) => o.id)).toEqual(esperado);
+    expect(pedidosDoFeed().at(-1)?.or).toContain('total.lt.');
+  });
+
+  it('cursor + período vão num `.or()` só (and de or), e o período segue cortando nas páginas seguintes', async () => {
+    const agora = Date.now();
+    fake.linhas = fake.linhas.map((l, i) => ({ ...l, created_at: new Date(agora - i * 60_000).toISOString() }));
+    const { result } = montar('/sales?periodo=30d');
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    fake.pedidos = [];
+    await act(() => result.current.fetchNextPage());
+    await waitFor(() => expect(result.current.isFetchingNextPage).toBe(false));
+    const or = pedidosDoFeed()[0].or ?? '';
+    expect(or.startsWith('and(or(created_at.gte.')).toBe(true);
+  });
+
+  it('o optimistic da exclusão não encerra a rolagem nem recua o cursor', async () => {
+    fake.linhas = fake.linhas.slice(0, FEED_PAGE_SIZE + 7);
+    const { result } = montar();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let soltar!: () => void;
+    fake.segurar = new Promise((r) => { soltar = r; }); // a reconciliação fica em voo
+    await act(() => result.current.deleteOrder(result.current.orders[FEED_PAGE_SIZE - 1]));
+    expect(result.current.orders).toHaveLength(FEED_PAGE_SIZE - 1);
+    // a página tem 49 linhas na tela, mas veio CHEIA do servidor: ainda há mais
+    expect(result.current.hasNextPage).toBe(true);
+    fake.segurar = null;
+    soltar();
+    await waitFor(() => expect(result.current.orders).toHaveLength(FEED_PAGE_SIZE));
   });
 });
 
