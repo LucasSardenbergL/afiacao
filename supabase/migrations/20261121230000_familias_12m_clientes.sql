@@ -1,6 +1,6 @@
 -- ============================================================================================================
 -- familias_12m_clientes — "Amplitude de mix": famílias de produto (omie_products.familia) DISTINTAS que cada
--- cliente comprou nos últimos 12 meses (365 dias, dia de SP).
+-- cliente comprou nos últimos 12 meses: 365 datas civis de SP, hoje incluído (d−364 … d; pedido futuro fora).
 -- Migration MANUAL (custom não auto-aplica no Lovable): aplicar pelo envelope (`bun run db:aplicar`), que
 -- fornece a transação.
 --
@@ -12,12 +12,14 @@
 --
 -- CONTRATO (lido pelo front e pela edge):
 --  * Filtra por vendedor (p_farmer_id → clientes da carteira em farmer_client_scores) OU por cliente
---    (p_customer_user_id). Os dois NULL → zero linhas (nunca a base inteira).
+--    (p_customer_user_id) — modos EXCLUSIVOS: os dois NULL ou os dois preenchidos → zero linhas (nunca a
+--    base inteira, nem a união ambígua carteira+cliente).
 --  * Só devolve cliente com ≥1 item válido na janela (mesmo filtro de status/deleted_at e mesma data de
 --    get_customer_sales_summary). Cliente AUSENTE do retorno = não comprou na janela; quem chama decide se
 --    isso é 0 medido (comprador fora da janela) ou não medido (nunca comprou) — nunca esta função.
 --  * familias_12m NULL = o cliente tem item na janela mas NENHUM com família cadastrada (lacuna de cadastro,
---    não zero). Família parcial conta só as conhecidas; itens_sem_familia expõe a lacuna.
+--    não zero). Família parcial conta só as conhecidas (mínimo conhecido); itens_sem_familia expõe a lacuna.
+--    Prod 2026-11-21: 1 item sem família em ~13 mil na janela.
 --  * SECURITY INVOKER: a RLS de quem chama vale (staff lê order_items/sales_orders/omie_products/
 --    farmer_client_scores; o customer só os próprios). Sem SECURITY DEFINER, sem gate próprio a furar.
 --  * Ordenado por customer_user_id: o PostgREST capa em 1.000 linhas (inclusive .rpc()) → quem chama pagina
@@ -43,11 +45,13 @@ AS $function$
     SELECT fcs.customer_user_id AS cid
       FROM public.farmer_client_scores fcs
      WHERE p_farmer_id IS NOT NULL
+       AND p_customer_user_id IS NULL
        AND fcs.farmer_id = p_farmer_id
        AND fcs.customer_user_id IS NOT NULL
     UNION
     SELECT p_customer_user_id
      WHERE p_customer_user_id IS NOT NULL
+       AND p_farmer_id IS NULL
   ),
   itens AS (
     SELECT oi.customer_user_id AS cid, p.familia
@@ -59,7 +63,7 @@ AS $function$
        AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
        AND so.deleted_at IS NULL
        AND COALESCE(so.order_date_kpi, (so.created_at AT TIME ZONE 'America/Sao_Paulo')::date)
-           BETWEEN h.d - 365 AND h.d
+           BETWEEN h.d - 364 AND h.d
   )
   SELECT i.cid,
          CASE WHEN count(i.familia) = 0 THEN NULL
@@ -97,9 +101,10 @@ BEGIN
   END IF;
   -- Late-bound: executa de verdade (sem filtro → zero linhas por contrato, mas o corpo é planejado e rodado).
   PERFORM 1 FROM public.familias_12m_clientes(NULL, NULL);
-  IF EXISTS (SELECT 1 FROM public.familias_12m_clientes(NULL, NULL)) THEN
-    RAISE EXCEPTION 'POS FALHOU: % sem filtro devolveu linhas (deveria ser zero)', fa;
+  IF EXISTS (SELECT 1 FROM public.familias_12m_clientes(NULL, NULL))
+     OR EXISTS (SELECT 1 FROM public.familias_12m_clientes(gen_random_uuid(), gen_random_uuid())) THEN
+    RAISE EXCEPTION 'POS FALHOU: % sem filtro (ou com os dois) devolveu linhas (deveria ser zero)', fa;
   END IF;
-  RAISE NOTICE 'VALIDADO 20261121230000: familias_12m_clientes INVOKER/STABLE, ACL fechada a PUBLIC/anon, sem filtro = 0 linhas';
+  RAISE NOTICE 'VALIDADO 20261121230000: familias_12m_clientes INVOKER/STABLE, ACL fechada a PUBLIC/anon, sem filtro ou filtro duplo = 0 linhas';
 END
 $post$;
